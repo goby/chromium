@@ -4,18 +4,21 @@
 
 #include "components/google/core/browser/google_url_tracker.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/google/core/browser/google_pref_names.h"
 #include "components/google/core/browser/google_switches.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
@@ -26,12 +29,13 @@ const char GoogleURLTracker::kDefaultGoogleHomepage[] =
 const char GoogleURLTracker::kSearchDomainCheckURL[] =
     "https://www.google.com/searchdomaincheck?format=domain&type=chrome";
 
-GoogleURLTracker::GoogleURLTracker(scoped_ptr<GoogleURLTrackerClient> client,
-                                   Mode mode)
-    : client_(client.Pass()),
-      google_url_(mode == UNIT_TEST_MODE ?
-          kDefaultGoogleHomepage :
-          client_->GetPrefs()->GetString(prefs::kLastKnownGoogleURL)),
+GoogleURLTracker::GoogleURLTracker(
+    std::unique_ptr<GoogleURLTrackerClient> client,
+    Mode mode)
+    : client_(std::move(client)),
+      google_url_(mode == UNIT_TEST_MODE ? kDefaultGoogleHomepage
+                                         : client_->GetPrefs()->GetString(
+                                               prefs::kLastKnownGoogleURL)),
       fetcher_id_(0),
       in_startup_sleep_(true),
       already_fetched_(false),
@@ -79,14 +83,14 @@ void GoogleURLTracker::RequestServerCheck(bool force) {
   }
 }
 
-scoped_ptr<GoogleURLTracker::Subscription> GoogleURLTracker::RegisterCallback(
-    const OnGoogleURLUpdatedCallback& cb) {
+std::unique_ptr<GoogleURLTracker::Subscription>
+GoogleURLTracker::RegisterCallback(const OnGoogleURLUpdatedCallback& cb) {
   return callback_list_.Add(cb);
 }
 
 void GoogleURLTracker::OnURLFetchComplete(const net::URLFetcher* source) {
   // Delete the fetcher on this function's exit.
-  scoped_ptr<net::URLFetcher> clean_up_fetcher(fetcher_.release());
+  std::unique_ptr<net::URLFetcher> clean_up_fetcher(std::move(fetcher_));
 
   // Don't update the URL if the request didn't succeed.
   if (!source->GetStatus().is_success() || (source->GetResponseCode() != 200)) {
@@ -97,7 +101,7 @@ void GoogleURLTracker::OnURLFetchComplete(const net::URLFetcher* source) {
   // See if the response data was valid.  It should be ".google.<TLD>".
   std::string url_str;
   source->GetResponseAsString(&url_str);
-  base::TrimWhitespace(url_str, base::TRIM_ALL, &url_str);
+  base::TrimWhitespaceASCII(url_str, base::TRIM_ALL, &url_str);
   if (!base::StartsWith(url_str, ".google.",
                         base::CompareCase::INSENSITIVE_ASCII))
     return;

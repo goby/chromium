@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -122,7 +122,7 @@ TEST_F(LoggingTest, LogIsOn) {
   EXPECT_TRUE(kDfatalIsFatal == LOG_IS_ON(DFATAL));
 }
 
-TEST_F(LoggingTest, LoggingIsLazy) {
+TEST_F(LoggingTest, LoggingIsLazyBySeverity) {
   MockLogSource mock_log_source;
   EXPECT_CALL(mock_log_source, Log()).Times(0);
 
@@ -151,6 +151,24 @@ TEST_F(LoggingTest, LoggingIsLazy) {
   DVPLOG_IF(1, true) << mock_log_source.Log();
 }
 
+TEST_F(LoggingTest, LoggingIsLazyByDestination) {
+  MockLogSource mock_log_source;
+  MockLogSource mock_log_source_error;
+  EXPECT_CALL(mock_log_source, Log()).Times(0);
+
+  // Severity >= ERROR is always printed to stderr.
+  EXPECT_CALL(mock_log_source_error, Log()).Times(1).
+      WillRepeatedly(Return("log message"));
+
+  LoggingSettings settings;
+  settings.logging_dest = LOG_NONE;
+  InitLogging(settings);
+
+  LOG(INFO) << mock_log_source.Log();
+  LOG(WARNING) << mock_log_source.Log();
+  LOG(ERROR) << mock_log_source_error.Log();
+}
+
 // Official builds have CHECKs directly call BreakDebugger.
 #if !defined(OFFICIAL_BUILD)
 
@@ -173,7 +191,7 @@ TEST_F(LoggingTest, CheckStreamsAreLazy) {
 #endif
 
 TEST_F(LoggingTest, DebugLoggingReleaseBehavior) {
-#if !defined(NDEBUG)
+#if !defined(NDEBUG) || defined(DCHECK_ALWAYS_ON)
   int debug_only_variable = 1;
 #endif
   // These should avoid emitting references to |debug_only_variable|
@@ -199,6 +217,14 @@ TEST_F(LoggingTest, DcheckStreamsAreLazy) {
 #endif
 }
 
+void DcheckEmptyFunction1() {
+  // Provide a body so that Release builds do not cause the compiler to
+  // optimize DcheckEmptyFunction1 and DcheckEmptyFunction2 as a single
+  // function, which breaks the Dcheck tests below.
+  LOG(INFO) << "DcheckEmptyFunction1";
+}
+void DcheckEmptyFunction2() {}
+
 TEST_F(LoggingTest, Dcheck) {
 #if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
   // Release build.
@@ -208,7 +234,7 @@ TEST_F(LoggingTest, Dcheck) {
   // Release build with real DCHECKS.
   SetLogAssertHandler(&LogSink);
   EXPECT_TRUE(DCHECK_IS_ON());
-  EXPECT_FALSE(DLOG_IS_ON(DCHECK));
+  EXPECT_TRUE(DLOG_IS_ON(DCHECK));
 #else
   // Debug build.
   SetLogAssertHandler(&LogSink);
@@ -223,6 +249,48 @@ TEST_F(LoggingTest, Dcheck) {
   EXPECT_EQ(DCHECK_IS_ON() ? 2 : 0, log_sink_call_count);
   DCHECK_EQ(0, 1);
   EXPECT_EQ(DCHECK_IS_ON() ? 3 : 0, log_sink_call_count);
+
+  // Test DCHECK on std::nullptr_t
+  log_sink_call_count = 0;
+  const void* p_null = nullptr;
+  const void* p_not_null = &p_null;
+  DCHECK_EQ(p_null, nullptr);
+  DCHECK_EQ(nullptr, p_null);
+  DCHECK_NE(p_not_null, nullptr);
+  DCHECK_NE(nullptr, p_not_null);
+  EXPECT_EQ(0, log_sink_call_count);
+
+  // Test DCHECK on a scoped enum.
+  enum class Animal { DOG, CAT };
+  DCHECK_EQ(Animal::DOG, Animal::DOG);
+  EXPECT_EQ(0, log_sink_call_count);
+  DCHECK_EQ(Animal::DOG, Animal::CAT);
+  EXPECT_EQ(DCHECK_IS_ON() ? 1 : 0, log_sink_call_count);
+
+  // Test DCHECK on functions and function pointers.
+  log_sink_call_count = 0;
+  struct MemberFunctions {
+    void MemberFunction1() {
+      // See the comment in DcheckEmptyFunction1().
+      LOG(INFO) << "Do not merge with MemberFunction2.";
+    }
+    void MemberFunction2() {}
+  };
+  void (MemberFunctions::*mp1)() = &MemberFunctions::MemberFunction1;
+  void (MemberFunctions::*mp2)() = &MemberFunctions::MemberFunction2;
+  void (*fp1)() = DcheckEmptyFunction1;
+  void (*fp2)() = DcheckEmptyFunction2;
+  void (*fp3)() = DcheckEmptyFunction1;
+  DCHECK_EQ(fp1, fp3);
+  EXPECT_EQ(0, log_sink_call_count);
+  DCHECK_EQ(mp1, &MemberFunctions::MemberFunction1);
+  EXPECT_EQ(0, log_sink_call_count);
+  DCHECK_EQ(mp2, &MemberFunctions::MemberFunction2);
+  EXPECT_EQ(0, log_sink_call_count);
+  DCHECK_EQ(fp1, fp2);
+  EXPECT_EQ(DCHECK_IS_ON() ? 1 : 0, log_sink_call_count);
+  DCHECK_EQ(mp2, &MemberFunctions::MemberFunction1);
+  EXPECT_EQ(DCHECK_IS_ON() ? 2 : 0, log_sink_call_count);
 }
 
 TEST_F(LoggingTest, DcheckReleaseBehavior) {

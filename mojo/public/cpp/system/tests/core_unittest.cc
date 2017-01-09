@@ -9,10 +9,10 @@
 #include "mojo/public/cpp/system/core.h"
 
 #include <stddef.h>
-
+#include <stdint.h>
 #include <map>
+#include <utility>
 
-#include "mojo/public/cpp/system/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace mojo {
@@ -102,7 +102,7 @@ TEST(CoreCppTest, Basic) {
     EXPECT_EQ(kInvalidHandleValue, h.get().value());
 
     // This should be a no-op.
-    Close(h.Pass());
+    Close(std::move(h));
 
     // It should still be invalid.
     EXPECT_EQ(kInvalidHandleValue, h.get().value());
@@ -212,7 +212,7 @@ TEST(CoreCppTest, Basic) {
       EXPECT_EQ(kSignalAll, states[1].satisfiable_signals);
 
       // Test closing |h1| explicitly.
-      Close(h1.Pass());
+      Close(std::move(h1));
       EXPECT_FALSE(h1.get().is_valid());
 
       // Make sure |h1| is closed.
@@ -305,9 +305,9 @@ TEST(CoreCppTest, Basic) {
 
       memset(buffer, 0, sizeof(buffer));
       buffer_size = static_cast<uint32_t>(sizeof(buffer));
-      for (size_t i = 0; i < MOJO_ARRAYSIZE(handles); i++)
+      for (size_t i = 0; i < arraysize(handles); i++)
         handles[i] = kInvalidHandleValue;
-      handles_count = static_cast<uint32_t>(MOJO_ARRAYSIZE(handles));
+      handles_count = static_cast<uint32_t>(arraysize(handles));
       EXPECT_EQ(MOJO_RESULT_OK,
                 ReadMessageRaw(h0.get(),
                                buffer,
@@ -333,9 +333,9 @@ TEST(CoreCppTest, Basic) {
 
       memset(buffer, 0, sizeof(buffer));
       buffer_size = static_cast<uint32_t>(sizeof(buffer));
-      for (size_t i = 0; i < MOJO_ARRAYSIZE(handles); i++)
+      for (size_t i = 0; i < arraysize(handles); i++)
         handles[i] = kInvalidHandleValue;
-      handles_count = static_cast<uint32_t>(MOJO_ARRAYSIZE(handles));
+      handles_count = static_cast<uint32_t>(arraysize(handles));
       EXPECT_EQ(MOJO_RESULT_OK,
                 ReadMessageRaw(mp.handle1.get(),
                                buffer,
@@ -365,7 +365,8 @@ TEST(CoreCppTest, TearDownWithMessagesEnqueued) {
     // Send a handle over the previously-establish message pipe.
     ScopedMessagePipeHandle h2;
     ScopedMessagePipeHandle h3;
-    CreateMessagePipe(nullptr, &h2, &h3);
+    if (CreateMessagePipe(nullptr, &h2, &h3) != MOJO_RESULT_OK)
+      CreateMessagePipe(nullptr, &h2, &h3);  // Must be old EDK.
 
     // Write a message to |h2|, before we send |h3|.
     const char kWorld[] = "world!";
@@ -418,7 +419,8 @@ TEST(CoreCppTest, TearDownWithMessagesEnqueued) {
     // Send a handle over the previously-establish message pipe.
     ScopedMessagePipeHandle h2;
     ScopedMessagePipeHandle h3;
-    CreateMessagePipe(nullptr, &h2, &h3);
+    if (CreateMessagePipe(nullptr, &h2, &h3) != MOJO_RESULT_OK)
+      CreateMessagePipe(nullptr, &h2, &h3);  // Must be old EDK.
 
     // Write a message to |h2|, before we send |h3|.
     const char kWorld[] = "world!";
@@ -463,30 +465,57 @@ TEST(CoreCppTest, TearDownWithMessagesEnqueued) {
 }
 
 TEST(CoreCppTest, ScopedHandleMoveCtor) {
-  ScopedSharedBufferHandle buffer1;
-  EXPECT_EQ(MOJO_RESULT_OK, CreateSharedBuffer(nullptr, 1024, &buffer1));
+  ScopedSharedBufferHandle buffer1 = SharedBufferHandle::Create(1024);
   EXPECT_TRUE(buffer1.is_valid());
 
-  ScopedSharedBufferHandle buffer2;
-  EXPECT_EQ(MOJO_RESULT_OK, CreateSharedBuffer(nullptr, 1024, &buffer2));
+  ScopedSharedBufferHandle buffer2 = SharedBufferHandle::Create(1024);
   EXPECT_TRUE(buffer2.is_valid());
 
   // If this fails to close buffer1, ScopedHandleBase::CloseIfNecessary() will
   // assert.
-  buffer1 = buffer2.Pass();
+  buffer1 = std::move(buffer2);
 
   EXPECT_TRUE(buffer1.is_valid());
   EXPECT_FALSE(buffer2.is_valid());
 }
 
-TEST(CoreCppTest, ScopedHandleMoveCtorSelf) {
-  ScopedSharedBufferHandle buffer1;
-  EXPECT_EQ(MOJO_RESULT_OK, CreateSharedBuffer(nullptr, 1024, &buffer1));
-  EXPECT_TRUE(buffer1.is_valid());
+TEST(CoreCppTest, BasicSharedBuffer) {
+  ScopedSharedBufferHandle h0 = SharedBufferHandle::Create(100);
+  ASSERT_TRUE(h0.is_valid());
 
-  buffer1 = buffer1.Pass();
+  // Map everything.
+  ScopedSharedBufferMapping mapping = h0->Map(100);
+  ASSERT_TRUE(mapping);
+  static_cast<char*>(mapping.get())[50] = 'x';
 
-  EXPECT_TRUE(buffer1.is_valid());
+  // Duplicate |h0| to |h1|.
+  ScopedSharedBufferHandle h1 =
+      h0->Clone(SharedBufferHandle::AccessMode::READ_ONLY);
+  ASSERT_TRUE(h1.is_valid());
+
+  // Close |h0|.
+  h0.reset();
+
+  // The mapping should still be good.
+  static_cast<char*>(mapping.get())[51] = 'y';
+
+  // Unmap it.
+  mapping.reset();
+
+  // Map half of |h1|.
+  mapping = h1->MapAtOffset(50, 50);
+  ASSERT_TRUE(mapping);
+
+  // It should have what we wrote.
+  EXPECT_EQ('x', static_cast<char*>(mapping.get())[0]);
+  EXPECT_EQ('y', static_cast<char*>(mapping.get())[1]);
+
+  // Unmap it.
+  mapping.reset();
+  h1.reset();
+
+  // Creating a 1 EB shared buffer should fail without crashing.
+  EXPECT_FALSE(SharedBufferHandle::Create(1ULL << 60).is_valid());
 }
 
 // TODO(vtl): Write data pipe tests.

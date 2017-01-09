@@ -5,7 +5,11 @@
 #ifndef CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_ANDROID_H_
 #define CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_ANDROID_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/android/scoped_java_ref.h"
+#include "base/macros.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 
 namespace content {
@@ -16,18 +20,21 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   void OnDataChanged() override;
   bool IsNative() const override;
   void OnLocationChanged() override;
+  base::string16 GetValue() const override;
 
   bool PlatformIsLeaf() const override;
 
   bool IsCheckable() const;
   bool IsChecked() const;
-  bool IsClickable() const;
+  bool IsClickable() const override;
+  bool IsCollapsed() const;
   bool IsCollection() const;
   bool IsCollectionItem() const;
   bool IsContentInvalid() const;
   bool IsDismissable() const;
   bool IsEditableText() const;
   bool IsEnabled() const;
+  bool IsExpanded() const;
   bool IsFocusable() const;
   bool IsFocused() const;
   bool IsHeading() const;
@@ -41,12 +48,27 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   bool IsSlider() const;
   bool IsVisibleToUser() const;
 
+  // This returns true for all nodes that we should navigate to.
+  // Nodes that have a generic role, no accessible name, and aren't
+  // focusable or clickable aren't interesting.
+  bool IsInterestingOnAndroid() const;
+
+  // If this node is interesting (IsInterestingOnAndroid() returns true),
+  // returns |this|. If not, it recursively checks all of the
+  // platform children of this node, and if just a single one is
+  // interesting, returns that one. If no descendants are interesting, or
+  // if more than one is interesting, returns nullptr.
+  const BrowserAccessibilityAndroid* GetSoleInterestingNodeFromSubtree() const;
+
   bool CanOpenPopup() const;
 
   bool HasFocusableChild() const;
+  bool HasNonEmptyValue() const;
 
   const char* GetClassName() const;
-  base::string16 GetText() const;
+  base::string16 GetText() const override;
+
+  base::string16 GetRoleDescription() const;
 
   int GetItemIndex() const;
   int GetItemCount() const;
@@ -93,21 +115,21 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   // Calls GetLineBoundaries or GetWordBoundaries depending on the value
   // of |granularity|, or fails if anything else is passed in |granularity|.
   void GetGranularityBoundaries(int granularity,
-                                std::vector<int32>* starts,
-                                std::vector<int32>* ends,
+                                std::vector<int32_t>* starts,
+                                std::vector<int32_t>* ends,
                                 int offset);
 
   // Append line start and end indices for the text of this node
   // (as returned by GetText()), adding |offset| to each one.
-  void GetLineBoundaries(std::vector<int32>* line_starts,
-                         std::vector<int32>* line_ends,
+  void GetLineBoundaries(std::vector<int32_t>* line_starts,
+                         std::vector<int32_t>* line_ends,
                          int offset);
 
   // Append word start and end indices for the text of this node
   // (as returned by GetText()) to |word_starts| and |word_ends|,
   // adding |offset| to each one.
-  void GetWordBoundaries(std::vector<int32>* word_starts,
-                         std::vector<int32>* word_ends,
+  void GetWordBoundaries(std::vector<int32_t>* word_starts,
+                         std::vector<int32_t>* word_ends,
                          int offset);
 
  private:
@@ -116,7 +138,7 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
 
   BrowserAccessibilityAndroid();
 
-  bool HasOnlyStaticTextChildren() const;
+  bool HasOnlyTextChildren() const;
   bool HasOnlyTextAndImageChildren() const;
   bool IsIframe() const;
 

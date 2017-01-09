@@ -2,18 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/cocoa/history_menu_bridge.h"
+
 #import <Cocoa/Cocoa.h>
+
+#include <initializer_list>
+#include <memory>
 #include <vector>
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/sessions/chrome_tab_restore_service_client.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
-#include "chrome/browser/ui/cocoa/history_menu_bridge.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/favicon_base/favicon_types.h"
 #include "components/sessions/core/persistent_tab_restore_service.h"
@@ -30,7 +34,7 @@ class MockTRS : public sessions::PersistentTabRestoreService {
  public:
   MockTRS(Profile* profile)
       : sessions::PersistentTabRestoreService(
-            make_scoped_ptr(new ChromeTabRestoreServiceClient(profile)),
+            base::WrapUnique(new ChromeTabRestoreServiceClient(profile)),
             nullptr) {}
   MOCK_CONST_METHOD0(entries, const sessions::TabRestoreService::Entries&());
 };
@@ -93,14 +97,35 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
     return item;
   }
 
-  MockTRS::Tab CreateSessionTab(const std::string& url,
-                                const std::string& title) {
-    MockTRS::Tab tab;
-    tab.current_navigation_index = 0;
-    tab.navigations.push_back(
-        sessions::SerializedNavigationEntryTestHelper::CreateNavigation(
-            url, title));
+  MockTRS::Entries CreateSessionEntries(
+      std::initializer_list<MockTRS::Entry*> entries) {
+    MockTRS::Entries ret;
+    for (auto* entry : entries)
+      ret.emplace_back(entry);
+    return ret;
+  }
+
+  MockTRS::Tab* CreateSessionTab(SessionID::id_type id,
+                                 const std::string& url,
+                                 const std::string& title) {
+    auto tab = new MockTRS::Tab;
+    tab->id = id;
+    tab->current_navigation_index = 0;
+    tab->navigations.push_back(
+        sessions::SerializedNavigationEntryTestHelper::CreateNavigation(url,
+                                                                        title));
     return tab;
+  }
+
+  MockTRS::Window* CreateSessionWindow(
+      SessionID::id_type id,
+      std::initializer_list<MockTRS::Tab*> tabs) {
+    auto window = new MockTRS::Window;
+    window->id = id;
+    window->tabs.reserve(tabs.size());
+    for (auto* tab : tabs)
+      window->tabs.emplace_back(std::move(tab));
+    return window;
   }
 
   void GetFaviconForHistoryItem(HistoryMenuBridge::HistoryItem* item) {
@@ -112,7 +137,7 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
     bridge_->GotFaviconData(item, image_result);
   }
 
-  scoped_ptr<MockBridge> bridge_;
+  std::unique_ptr<MockBridge> bridge_;
 };
 
 // Edge case test for clearing until the end of a menu.
@@ -209,16 +234,11 @@ TEST_F(HistoryMenuBridgeTest, AddItemToMenu) {
 
 // Test that the menu is created for a set of simple tabs.
 TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabs) {
-  scoped_ptr<MockTRS> trs(new MockTRS(profile()));
-  MockTRS::Entries entries;
-
-  MockTRS::Tab tab1 = CreateSessionTab("http://google.com", "Google");
-  tab1.id = 24;
-  entries.push_back(&tab1);
-
-  MockTRS::Tab tab2 = CreateSessionTab("http://apple.com", "Apple");
-  tab2.id = 42;
-  entries.push_back(&tab2);
+  std::unique_ptr<MockTRS> trs(new MockTRS(profile()));
+  auto entries{CreateSessionEntries({
+    CreateSessionTab(24, "http://google.com", "Google"),
+    CreateSessionTab(42, "http://apple.com", "Apple"),
+  })};
 
   using ::testing::ReturnRef;
   EXPECT_CALL(*trs.get(), entries()).WillOnce(ReturnRef(entries));
@@ -243,34 +263,20 @@ TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabs) {
 
 // Test that the menu is created for a mix of windows and tabs.
 TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabsAndWindows) {
-  scoped_ptr<MockTRS> trs(new MockTRS(profile()));
-  MockTRS::Entries entries;
-
-  MockTRS::Tab tab1 = CreateSessionTab("http://google.com", "Google");
-  tab1.id = 24;
-  entries.push_back(&tab1);
-
-  MockTRS::Window win1;
-  win1.id = 30;
-  win1.tabs.push_back(CreateSessionTab("http://foo.com", "foo"));
-  win1.tabs[0].id = 31;
-  win1.tabs.push_back(CreateSessionTab("http://bar.com", "bar"));
-  win1.tabs[1].id = 32;
-  entries.push_back(&win1);
-
-  MockTRS::Tab tab2 = CreateSessionTab("http://apple.com", "Apple");
-  tab2.id = 42;
-  entries.push_back(&tab2);
-
-  MockTRS::Window win2;
-  win2.id = 50;
-  win2.tabs.push_back(CreateSessionTab("http://magic.com", "magic"));
-  win2.tabs[0].id = 51;
-  win2.tabs.push_back(CreateSessionTab("http://goats.com", "goats"));
-  win2.tabs[1].id = 52;
-  win2.tabs.push_back(CreateSessionTab("http://teleporter.com", "teleporter"));
-  win2.tabs[1].id = 53;
-  entries.push_back(&win2);
+  std::unique_ptr<MockTRS> trs(new MockTRS(profile()));
+  auto entries{CreateSessionEntries({
+    CreateSessionTab(24, "http://google.com", "Google"),
+    CreateSessionWindow(30, {
+      CreateSessionTab(31, "http://foo.com", "foo"),
+      CreateSessionTab(32, "http://bar.com", "bar"),
+    }),
+    CreateSessionTab(42, "http://apple.com", "Apple"),
+    CreateSessionWindow(50, {
+      CreateSessionTab(51, "http://magic.com", "magic"),
+      CreateSessionTab(52, "http://goats.com", "goats"),
+      CreateSessionTab(53, "http://teleporter.com", "teleporter"),
+    }),
+  })};
 
   using ::testing::ReturnRef;
   EXPECT_CALL(*trs.get(), entries()).WillOnce(ReturnRef(entries));
@@ -298,6 +304,8 @@ TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabsAndWindows) {
   EXPECT_TRUE([[submenu1 itemAtIndex:1] isSeparatorItem]);
   EXPECT_NSEQ(@"foo", [[submenu1 itemAtIndex:2] title]);
   EXPECT_NSEQ(@"bar", [[submenu1 itemAtIndex:3] title]);
+  EXPECT_EQ(31, hist2->tabs[0]->session_id);
+  EXPECT_EQ(32, hist2->tabs[1]->session_id);
 
   NSMenuItem* item3 = [menu itemAtIndex:2];
   MockBridge::HistoryItem* hist3 = bridge_->HistoryItemForMenuItem(item3);
@@ -318,6 +326,9 @@ TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabsAndWindows) {
   EXPECT_NSEQ(@"magic", [[submenu2 itemAtIndex:2] title]);
   EXPECT_NSEQ(@"goats", [[submenu2 itemAtIndex:3] title]);
   EXPECT_NSEQ(@"teleporter", [[submenu2 itemAtIndex:4] title]);
+  EXPECT_EQ(51, hist4->tabs[0]->session_id);
+  EXPECT_EQ(52, hist4->tabs[1]->session_id);
+  EXPECT_EQ(53, hist4->tabs[2]->session_id);
 }
 
 // Tests that we properly request an icon from the FaviconService.

@@ -5,17 +5,21 @@
 #include "content/common/site_isolation_policy.h"
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/lazy_instance.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 
 namespace content {
 
 // static
 bool SiteIsolationPolicy::AreCrossProcessFramesPossible() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kSitePerProcess) ||
-         GetContentClient()->IsSupplementarySiteIsolationModeEnabled();
+  return UseDedicatedProcessesForAllSites() ||
+         IsTopDocumentIsolationEnabled() ||
+         GetContentClient()->IsSupplementarySiteIsolationModeEnabled() ||
+         base::FeatureList::IsEnabled(::features::kGuestViewCrossProcessFrames);
 }
 
 // static
@@ -25,15 +29,18 @@ bool SiteIsolationPolicy::UseDedicatedProcessesForAllSites() {
 }
 
 // static
-bool SiteIsolationPolicy::UseSubframeNavigationEntries() {
-  // Enable the new navigation history behavior if any manner of site isolation
-  // is active.
-  return AreCrossProcessFramesPossible();
+bool SiteIsolationPolicy::IsTopDocumentIsolationEnabled() {
+  // --site-per-process trumps --top-document-isolation.
+  if (UseDedicatedProcessesForAllSites())
+    return false;
+
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kTopDocumentIsolation);
 }
 
 // static
-bool SiteIsolationPolicy::IsSwappedOutStateForbidden() {
-  return AreCrossProcessFramesPossible();
+bool SiteIsolationPolicy::UseSubframeNavigationEntries() {
+  return true;
 }
 
 }  // namespace content

@@ -5,10 +5,13 @@
 #include "content/browser/renderer_host/pepper/pepper_tcp_socket_message_filter.h"
 
 #include <cstring>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/profiler/scoped_tracker.h"
 #include "build/build_config.h"
@@ -22,8 +25,10 @@
 #include "net/base/address_family.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
-#include "net/dns/single_request_host_resolver.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/ssl_client_socket.h"
@@ -73,7 +78,7 @@ PepperTCPSocketMessageFilter::PepperTCPSocketMessageFilter(
       rcvbuf_size_(0),
       sndbuf_size_(0),
       address_index_(0),
-      socket_(new net::TCPSocket(NULL, net::NetLog::Source())),
+      socket_(new net::TCPSocket(NULL, NULL, net::NetLogSource())),
       ssl_context_helper_(host->ssl_context_helper()),
       pending_accept_(false),
       pending_read_on_unthrottle_(false),
@@ -93,7 +98,7 @@ PepperTCPSocketMessageFilter::PepperTCPSocketMessageFilter(
     BrowserPpapiHostImpl* host,
     PP_Instance instance,
     TCPSocketVersion version,
-    scoped_ptr<net::TCPSocket> socket)
+    std::unique_ptr<net::TCPSocket> socket)
     : version_(version),
       external_plugin_(host->external_plugin()),
       render_process_id_(0),
@@ -108,7 +113,7 @@ PepperTCPSocketMessageFilter::PepperTCPSocketMessageFilter(
       rcvbuf_size_(0),
       sndbuf_size_(0),
       address_index_(0),
-      socket_(socket.Pass()),
+      socket_(std::move(socket)),
       ssl_context_helper_(host->ssl_context_helper()),
       pending_accept_(false),
       pending_read_on_unthrottle_(false),
@@ -149,14 +154,14 @@ PepperTCPSocketMessageFilter::OverrideTaskRunnerForMessage(
     case PpapiHostMsg_TCPSocket_Connect::ID:
     case PpapiHostMsg_TCPSocket_ConnectWithNetAddress::ID:
     case PpapiHostMsg_TCPSocket_Listen::ID:
-      return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI);
+      return BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
     case PpapiHostMsg_TCPSocket_SSLHandshake::ID:
     case PpapiHostMsg_TCPSocket_Read::ID:
     case PpapiHostMsg_TCPSocket_Write::ID:
     case PpapiHostMsg_TCPSocket_Accept::ID:
     case PpapiHostMsg_TCPSocket_Close::ID:
     case PpapiHostMsg_TCPSocket_SetOption::ID:
-      return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
+      return BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
   }
   return NULL;
 }
@@ -319,9 +324,10 @@ int32_t PepperTCPSocketMessageFilter::OnMsgSSLHandshake(
   if (socket_->GetPeerAddress(&peer_address) != net::OK)
     return PP_ERROR_FAILED;
 
-  scoped_ptr<net::ClientSocketHandle> handle(new net::ClientSocketHandle());
-  handle->SetSocket(make_scoped_ptr<net::StreamSocket>(
-      new net::TCPClientSocket(socket_.Pass(), peer_address)));
+  std::unique_ptr<net::ClientSocketHandle> handle(
+      new net::ClientSocketHandle());
+  handle->SetSocket(base::WrapUnique<net::StreamSocket>(
+      new net::TCPClientSocket(std::move(socket_), peer_address)));
   net::ClientSocketFactory* factory =
       net::ClientSocketFactory::GetDefaultFactory();
   net::HostPortPair host_port_pair(server_name, server_port);
@@ -329,11 +335,12 @@ int32_t PepperTCPSocketMessageFilter::OnMsgSSLHandshake(
   ssl_context.cert_verifier = ssl_context_helper_->GetCertVerifier();
   ssl_context.transport_security_state =
       ssl_context_helper_->GetTransportSecurityState();
-  ssl_socket_ =
-      factory->CreateSSLClientSocket(handle.Pass(),
-                                     host_port_pair,
-                                     ssl_context_helper_->ssl_config(),
-                                     ssl_context);
+  ssl_context.cert_transparency_verifier =
+      ssl_context_helper_->GetCertTransparencyVerifier();
+  ssl_context.ct_policy_enforcer = ssl_context_helper_->GetCTPolicyEnforcer();
+  ssl_socket_ = factory->CreateSSLClientSocket(
+      std::move(handle), host_port_pair, ssl_context_helper_->ssl_config(),
+      ssl_context);
   if (!ssl_socket_) {
     LOG(WARNING) << "Failed to create an SSL client socket.";
     state_.CompletePendingTransition(false);
@@ -574,14 +581,14 @@ void PepperTCPSocketMessageFilter::DoBind(
 
   int pp_result = PP_OK;
   do {
-    net::IPAddressNumber address;
-    uint16 port;
+    std::vector<uint8_t> address;
+    uint16_t port;
     if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(
             net_addr, &address, &port)) {
       pp_result = PP_ERROR_ADDRESS_INVALID;
       break;
     }
-    net::IPEndPoint bind_addr(address, port);
+    net::IPEndPoint bind_addr(net::IPAddress(address), port);
 
     DCHECK(!socket_->IsValid());
     pp_result = NetErrorToPepperError(socket_->Open(bind_addr.GetFamily()));
@@ -605,8 +612,7 @@ void PepperTCPSocketMessageFilter::DoBind(
     PP_NetAddress_Private local_addr =
         NetAddressPrivateImpl::kInvalidNetAddress;
     if (!NetAddressPrivateImpl::IPEndPointToNetAddress(
-            ip_end_point_local.address(),
-            ip_end_point_local.port(),
+            ip_end_point_local.address().bytes(), ip_end_point_local.port(),
             &local_addr)) {
       pp_result = PP_ERROR_ADDRESS_INVALID;
       break;
@@ -638,16 +644,12 @@ void PepperTCPSocketMessageFilter::DoConnect(
   address_index_ = 0;
   address_list_.clear();
   net::HostResolver::RequestInfo request_info(net::HostPortPair(host, port));
-  resolver_.reset(
-      new net::SingleRequestHostResolver(resource_context->GetHostResolver()));
-  int net_result = resolver_->Resolve(
-      request_info,
-      net::DEFAULT_PRIORITY,
-      &address_list_,
+  net::HostResolver* resolver = resource_context->GetHostResolver();
+  int net_result = resolver->Resolve(
+      request_info, net::DEFAULT_PRIORITY, &address_list_,
       base::Bind(&PepperTCPSocketMessageFilter::OnResolveCompleted,
-                 base::Unretained(this),
-                 context),
-      net::BoundNetLog());
+                 base::Unretained(this), context),
+      &request_, net::NetLogWithSource());
   if (net_result != net::ERR_IO_PENDING)
     OnResolveCompleted(context, net_result);
 }
@@ -664,8 +666,8 @@ void PepperTCPSocketMessageFilter::DoConnectWithNetAddress(
 
   state_.SetPendingTransition(TCPSocketState::CONNECT);
 
-  net::IPAddressNumber address;
-  uint16 port;
+  std::vector<uint8_t> address;
+  uint16_t port;
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(
           net_addr, &address, &port)) {
     state_.CompletePendingTransition(false);
@@ -676,7 +678,7 @@ void PepperTCPSocketMessageFilter::DoConnectWithNetAddress(
   // Copy the single IPEndPoint to address_list_.
   address_index_ = 0;
   address_list_.clear();
-  address_list_.push_back(net::IPEndPoint(address, port));
+  address_list_.push_back(net::IPEndPoint(net::IPAddress(address), port));
   StartConnect(context);
 }
 
@@ -835,12 +837,10 @@ void PepperTCPSocketMessageFilter::OnConnectCompleted(
     PP_NetAddress_Private remote_addr =
         NetAddressPrivateImpl::kInvalidNetAddress;
     if (!NetAddressPrivateImpl::IPEndPointToNetAddress(
-            ip_end_point_local.address(),
-            ip_end_point_local.port(),
+            ip_end_point_local.address().bytes(), ip_end_point_local.port(),
             &local_addr) ||
         !NetAddressPrivateImpl::IPEndPointToNetAddress(
-            ip_end_point_remote.address(),
-            ip_end_point_remote.port(),
+            ip_end_point_remote.address().bytes(), ip_end_point_remote.port(),
             &remote_addr)) {
       pp_result = PP_ERROR_ADDRESS_INVALID;
       break;
@@ -860,7 +860,7 @@ void PepperTCPSocketMessageFilter::OnConnectCompleted(
     // We have to recreate |socket_| because it doesn't allow a second connect
     // attempt. We won't lose any state such as bound address or set options,
     // because in the private or v1.0 API, connect must be the first operation.
-    socket_.reset(new net::TCPSocket(NULL, net::NetLog::Source()));
+    socket_.reset(new net::TCPSocket(NULL, NULL, net::NetLogSource()));
 
     if (address_index_ + 1 < address_list_.size()) {
       DCHECK_EQ(version_, ppapi::TCP_SOCKET_VERSION_PRIVATE);
@@ -971,7 +971,7 @@ void PepperTCPSocketMessageFilter::OpenFirewallHole(
 void PepperTCPSocketMessageFilter::OnFirewallHoleOpened(
     const ppapi::host::ReplyMessageContext& context,
     int32_t result,
-    scoped_ptr<chromeos::FirewallHole> hole) {
+    std::unique_ptr<chromeos::FirewallHole> hole) {
   LOG_IF(WARNING, !hole.get()) << "Firewall hole could not be opened.";
   firewall_hole_.reset(hole.release());
 
@@ -1008,12 +1008,10 @@ void PepperTCPSocketMessageFilter::OnAcceptCompleted(
     return;
   }
   if (!NetAddressPrivateImpl::IPEndPointToNetAddress(
-          ip_end_point_local.address(),
-          ip_end_point_local.port(),
+          ip_end_point_local.address().bytes(), ip_end_point_local.port(),
           &local_addr) ||
       !NetAddressPrivateImpl::IPEndPointToNetAddress(
-          accepted_address_.address(),
-          accepted_address_.port(),
+          accepted_address_.address().bytes(), accepted_address_.port(),
           &remote_addr)) {
     SendAcceptError(context, PP_ERROR_ADDRESS_INVALID);
     return;
@@ -1022,15 +1020,15 @@ void PepperTCPSocketMessageFilter::OnAcceptCompleted(
   // |factory_| is guaranteed to be non-NULL here. Only those instances created
   // in CONNECTED state have a NULL |factory_|, while getting here requires
   // LISTENING state.
-  scoped_ptr<ppapi::host::ResourceHost> host =
-      factory_->CreateAcceptedTCPSocket(
-          instance_, version_, accepted_socket_.Pass());
+  std::unique_ptr<ppapi::host::ResourceHost> host =
+      factory_->CreateAcceptedTCPSocket(instance_, version_,
+                                        std::move(accepted_socket_));
   if (!host) {
     SendAcceptError(context, PP_ERROR_NOSPACE);
     return;
   }
   int pending_host_id =
-      host_->GetPpapiHost()->AddPendingResourceHost(host.Pass());
+      host_->GetPpapiHost()->AddPendingResourceHost(std::move(host));
   if (pending_host_id)
     SendAcceptReply(context, PP_OK, pending_host_id, local_addr, remote_addr);
   else

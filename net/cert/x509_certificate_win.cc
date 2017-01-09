@@ -4,8 +4,10 @@
 
 #include "net/cert/x509_certificate.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/free_deleter.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/sha1.h"
@@ -15,15 +17,7 @@
 #include "crypto/scoped_capi_types.h"
 #include "crypto/sha2.h"
 #include "net/base/net_errors.h"
-
-// Implement CalculateChainFingerprint() with our native crypto library.
-#if defined(USE_OPENSSL)
-#include <openssl/sha.h>
-#else
-#include <blapi.h>
-#endif
-
-#pragma comment(lib, "crypt32.lib")
+#include "third_party/boringssl/src/include/openssl/sha.h"
 
 using base::Time;
 
@@ -42,7 +36,7 @@ typedef crypto::ScopedCAPIHandle<
 // structure and stores it in *output.
 void GetCertSubjectAltName(
     PCCERT_CONTEXT cert,
-    scoped_ptr<CERT_ALT_NAME_INFO, base::FreeDeleter>* output) {
+    std::unique_ptr<CERT_ALT_NAME_INFO, base::FreeDeleter>* output) {
   PCERT_EXTENSION extension = CertFindExtension(szOID_SUBJECT_ALT_NAME2,
                                                 cert->pCertInfo->cExtension,
                                                 cert->pCertInfo->rgExtension);
@@ -149,11 +143,8 @@ void X509Certificate::Initialize() {
   valid_start_ = Time::FromFileTime(cert_handle_->pCertInfo->NotBefore);
   valid_expiry_ = Time::FromFileTime(cert_handle_->pCertInfo->NotAfter);
 
-  fingerprint_ = CalculateFingerprint(cert_handle_);
-  ca_fingerprint_ = CalculateCAFingerprint(intermediate_ca_certs_);
-
   const CRYPT_INTEGER_BLOB* serial = &cert_handle_->pCertInfo->SerialNumber;
-  scoped_ptr<uint8_t[]> serial_bytes(new uint8_t[serial->cbData]);
+  std::unique_ptr<uint8_t[]> serial_bytes(new uint8_t[serial->cbData]);
   for (unsigned i = 0; i < serial->cbData; i++)
     serial_bytes[i] = serial->pbData[serial->cbData - i - 1];
   serial_number_ = std::string(
@@ -171,7 +162,7 @@ void X509Certificate::GetSubjectAltName(
   if (!cert_handle_)
     return;
 
-  scoped_ptr<CERT_ALT_NAME_INFO, base::FreeDeleter> alt_name_info;
+  std::unique_ptr<CERT_ALT_NAME_INFO, base::FreeDeleter> alt_name_info;
   GetCertSubjectAltName(cert_handle_, &alt_name_info);
   CERT_ALT_NAME_INFO* alt_name = alt_name_info.get();
   if (alt_name) {
@@ -301,23 +292,6 @@ void X509Certificate::FreeOSCertHandle(OSCertHandle cert_handle) {
 }
 
 // static
-SHA1HashValue X509Certificate::CalculateFingerprint(
-    OSCertHandle cert) {
-  DCHECK(NULL != cert->pbCertEncoded);
-  DCHECK_NE(static_cast<DWORD>(0), cert->cbCertEncoded);
-
-  BOOL rv;
-  SHA1HashValue sha1;
-  DWORD sha1_size = sizeof(sha1.data);
-  rv = CryptHashCertificate(NULL, CALG_SHA1, 0, cert->pbCertEncoded,
-                            cert->cbCertEncoded, sha1.data, &sha1_size);
-  DCHECK(rv && sha1_size == sizeof(sha1.data));
-  if (!rv)
-    memset(sha1.data, 0, sizeof(sha1.data));
-  return sha1;
-}
-
-// static
 SHA256HashValue X509Certificate::CalculateFingerprint256(OSCertHandle cert) {
   DCHECK(NULL != cert->pbCertEncoded);
   DCHECK_NE(0u, cert->cbCertEncoded);
@@ -335,36 +309,22 @@ SHA256HashValue X509Certificate::CalculateFingerprint256(OSCertHandle cert) {
   return sha256;
 }
 
-SHA1HashValue X509Certificate::CalculateCAFingerprint(
+SHA256HashValue X509Certificate::CalculateCAFingerprint256(
     const OSCertHandles& intermediates) {
-  SHA1HashValue sha1;
-  memset(sha1.data, 0, sizeof(sha1.data));
+  SHA256HashValue sha256;
+  memset(sha256.data, 0, sizeof(sha256.data));
 
-#if defined(USE_OPENSSL)
-  SHA_CTX ctx;
-  if (!SHA1_Init(&ctx))
-    return sha1;
+  SHA256_CTX ctx;
+  if (!SHA256_Init(&ctx))
+    return sha256;
   for (size_t i = 0; i < intermediates.size(); ++i) {
     PCCERT_CONTEXT ca_cert = intermediates[i];
-    if (!SHA1_Update(&ctx, ca_cert->pbCertEncoded, ca_cert->cbCertEncoded))
-      return sha1;
+    if (!SHA256_Update(&ctx, ca_cert->pbCertEncoded, ca_cert->cbCertEncoded))
+      return sha256;
   }
-  SHA1_Final(sha1.data, &ctx);
-#else  // !USE_OPENSSL
-  SHA1Context* sha1_ctx = SHA1_NewContext();
-  if (!sha1_ctx)
-    return sha1;
-  SHA1_Begin(sha1_ctx);
-  for (size_t i = 0; i < intermediates.size(); ++i) {
-    PCCERT_CONTEXT ca_cert = intermediates[i];
-    SHA1_Update(sha1_ctx, ca_cert->pbCertEncoded, ca_cert->cbCertEncoded);
-  }
-  unsigned int result_len;
-  SHA1_End(sha1_ctx, sha1.data, &result_len, SHA1_LENGTH);
-  SHA1_DestroyContext(sha1_ctx, PR_TRUE);
-#endif  // USE_OPENSSL
+  SHA256_Final(sha256.data, &ctx);
 
-  return sha1;
+  return sha256;
 }
 
 // static
@@ -483,15 +443,16 @@ bool X509Certificate::IsIssuedByEncoded(
 
 // static
 bool X509Certificate::IsSelfSigned(OSCertHandle cert_handle) {
-  return !!CryptVerifyCertificateSignatureEx(
-      NULL,
-      X509_ASN_ENCODING,
-      CRYPT_VERIFY_CERT_SIGN_SUBJECT_CERT,
+  bool valid_signature = !!CryptVerifyCertificateSignatureEx(
+      NULL, X509_ASN_ENCODING, CRYPT_VERIFY_CERT_SIGN_SUBJECT_CERT,
       reinterpret_cast<void*>(const_cast<PCERT_CONTEXT>(cert_handle)),
       CRYPT_VERIFY_CERT_SIGN_ISSUER_CERT,
-      reinterpret_cast<void*>(const_cast<PCERT_CONTEXT>(cert_handle)),
-      0,
-      NULL);
+      reinterpret_cast<void*>(const_cast<PCERT_CONTEXT>(cert_handle)), 0, NULL);
+  if (!valid_signature)
+    return false;
+  return !!CertCompareCertificateName(X509_ASN_ENCODING,
+                                      &cert_handle->pCertInfo->Subject,
+                                      &cert_handle->pCertInfo->Issuer);
 }
 
 }  // namespace net

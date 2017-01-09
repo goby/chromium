@@ -6,6 +6,7 @@
 #ifndef CC_LAYERS_SOLID_COLOR_LAYER_H_
 #define CC_LAYERS_SOLID_COLOR_LAYER_H_
 
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer.h"
 
@@ -15,14 +16,14 @@ namespace cc {
 // SetBackgroundColor() on the base class.
 class CC_EXPORT SolidColorLayer : public Layer {
  public:
-  static scoped_refptr<SolidColorLayer> Create(const LayerSettings& settings);
+  static scoped_refptr<SolidColorLayer> Create();
 
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
 
   void SetBackgroundColor(SkColor color) override;
 
  protected:
-  explicit SolidColorLayer(const LayerSettings& settings);
+  SolidColorLayer();
 
  private:
   ~SolidColorLayer() override;

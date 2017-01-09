@@ -4,11 +4,16 @@
 
 #include "chrome/common/service_process_util.h"
 
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
 #include "base/sha1.h"
@@ -17,6 +22,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -32,8 +38,8 @@
 namespace {
 
 // This should be more than enough to hold a version string assuming each part
-// of the version string is an int64.
-const uint32 kMaxVersionStringLength = 256;
+// of the version string is an int64_t.
+const uint32_t kMaxVersionStringLength = 256;
 
 // The structure that gets written to shared memory.
 struct ServiceProcessSharedData {
@@ -73,13 +79,13 @@ ServiceProcessRunningState GetServiceProcessRunningState(
   if (service_version_out)
     *service_version_out = version;
 
-  Version service_version(version);
+  base::Version service_version(version);
   // If the version string is invalid, treat it like an older version.
   if (!service_version.IsValid())
     return SERVICE_OLDER_VERSION_RUNNING;
 
   // Get the version of the currently *running* instance of Chrome.
-  Version running_version(version_info::GetVersionNumber());
+  base::Version running_version(version_info::GetVersionNumber());
   if (!running_version.IsValid()) {
     NOTREACHED() << "Failed to parse version info";
     // Our own version is invalid. This is an error case. Pretend that we
@@ -111,7 +117,7 @@ std::string GetServiceProcessScopedVersionedName(
 // Reads the named shared memory to get the shared data. Returns false if no
 // matching shared memory was found.
 bool GetServiceProcessData(std::string* version, base::ProcessId* pid) {
-  scoped_ptr<base::SharedMemory> shared_mem_service_data;
+  std::unique_ptr<base::SharedMemory> shared_mem_service_data;
   shared_mem_service_data.reset(new base::SharedMemory());
   ServiceProcessSharedData* service_data = NULL;
   if (shared_mem_service_data.get() &&
@@ -149,13 +155,19 @@ std::string GetServiceProcessScopedName(const std::string& append_str) {
   return hex_hash + "." + append_str;
 }
 
-scoped_ptr<base::CommandLine> CreateServiceProcessCommandLine() {
+std::unique_ptr<base::CommandLine> CreateServiceProcessCommandLine() {
   base::FilePath exe_path;
   PathService::Get(content::CHILD_PROCESS_EXE, &exe_path);
   DCHECK(!exe_path.empty()) << "Unable to get service process binary name.";
-  scoped_ptr<base::CommandLine> command_line(new base::CommandLine(exe_path));
+  std::unique_ptr<base::CommandLine> command_line(
+      new base::CommandLine(exe_path));
   command_line->AppendSwitchASCII(switches::kProcessType,
                                   switches::kServiceProcess);
+
+#if defined(OS_WIN)
+  command_line->AppendArg(switches::kPrefetchArgumentOther);
+#endif  // defined(OS_WIN)
+
   static const char* const kSwitchesToCopy[] = {
     switches::kCloudPrintSetupProxy,
     switches::kCloudPrintURL,
@@ -178,7 +190,7 @@ scoped_ptr<base::CommandLine> CreateServiceProcessCommandLine() {
   command_line->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
                                  kSwitchesToCopy,
                                  arraysize(kSwitchesToCopy));
-  return command_line.Pass();
+  return command_line;
 }
 
 ServiceProcessState::ServiceProcessState() : state_(NULL) {
@@ -242,12 +254,12 @@ bool ServiceProcessState::CreateSharedData() {
     return false;
   }
 
-  scoped_ptr<base::SharedMemory> shared_mem_service_data(
+  std::unique_ptr<base::SharedMemory> shared_mem_service_data(
       new base::SharedMemory());
   if (!shared_mem_service_data.get())
     return false;
 
-  uint32 alloc_size = sizeof(ServiceProcessSharedData);
+  uint32_t alloc_size = sizeof(ServiceProcessSharedData);
   // TODO(viettrungluu): Named shared memory is deprecated (crbug.com/345734).
   if (!shared_mem_service_data->CreateNamedDeprecated
           (GetServiceProcessSharedMemName(), true, alloc_size))
@@ -264,11 +276,11 @@ bool ServiceProcessState::CreateSharedData() {
          version_info::GetVersionNumber().c_str(),
          version_info::GetVersionNumber().length());
   shared_data->service_process_pid = base::GetCurrentProcId();
-  shared_mem_service_data_.reset(shared_mem_service_data.release());
+  shared_mem_service_data_ = std::move(shared_mem_service_data);
   return true;
 }
 
-IPC::ChannelHandle ServiceProcessState::GetServiceProcessChannel() {
+mojo::edk::NamedPlatformHandle ServiceProcessState::GetServiceProcessChannel() {
   return ::GetServiceProcessChannel();
 }
 

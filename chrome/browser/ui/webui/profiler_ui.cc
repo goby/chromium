@@ -14,13 +14,15 @@
 // #define USE_SOURCE_FILES_DIRECTLY
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/debug/debugging_flags.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/tracked_objects.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/task_profiler/task_profiler_data_serializer.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "components/metrics/profiler/tracking_synchronizer.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/url_data_source.h"
@@ -28,7 +30,6 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 
 #ifdef USE_SOURCE_FILES_DIRECTLY
 #include "base/base_paths.h"
@@ -104,6 +105,10 @@ content::WebUIDataSource* CreateProfilerHTMLSource() {
   source->SetJsonPath("strings.js");
   source->AddResourcePath("profiler.js", IDR_PROFILER_JS);
   source->SetDefaultResource(IDR_PROFILER_HTML);
+  source->DisableI18nAndUseGzipForAllPaths();
+  source->AddBoolean("enableMemoryTaskProfiler",
+                     BUILDFLAG(ENABLE_MEMORY_TASK_PROFILER));
+
   return source;
 }
 
@@ -173,5 +178,6 @@ void ProfilerUI::ReceivedProfilerData(
       &json_data);
 
   // Send the data to the renderer.
-  web_ui()->CallJavascriptFunction("g_browserBridge.receivedData", json_data);
+  web_ui()->CallJavascriptFunctionUnsafe("g_browserBridge.receivedData",
+                                         json_data);
 }

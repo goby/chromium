@@ -4,6 +4,11 @@
 
 #include "storage/browser/fileapi/sandbox_file_system_backend.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -106,7 +111,7 @@ FileSystemOperation* SandboxFileSystemBackend::CreateFileSystemOperation(
   DCHECK(error_code);
 
   DCHECK(delegate_);
-  scoped_ptr<FileSystemOperationContext> operation_context =
+  std::unique_ptr<FileSystemOperationContext> operation_context =
       delegate_->CreateFileSystemOperationContext(url, context, error_code);
   if (!operation_context)
     return NULL;
@@ -117,7 +122,8 @@ FileSystemOperation* SandboxFileSystemBackend::CreateFileSystemOperation(
   else
     operation_context->set_quota_limit_type(storage::kQuotaLimitTypeLimited);
 
-  return FileSystemOperation::Create(url, context, operation_context.Pass());
+  return FileSystemOperation::Create(url, context,
+                                     std::move(operation_context));
 }
 
 bool SandboxFileSystemBackend::SupportsStreaming(
@@ -130,11 +136,11 @@ bool SandboxFileSystemBackend::HasInplaceCopyImplementation(
   return false;
 }
 
-scoped_ptr<storage::FileStreamReader>
+std::unique_ptr<storage::FileStreamReader>
 SandboxFileSystemBackend::CreateFileStreamReader(
     const FileSystemURL& url,
-    int64 offset,
-    int64 max_bytes_to_read,
+    int64_t offset,
+    int64_t max_bytes_to_read,
     const base::Time& expected_modification_time,
     FileSystemContext* context) const {
   DCHECK(CanHandleType(url.type()));
@@ -143,10 +149,10 @@ SandboxFileSystemBackend::CreateFileStreamReader(
       url, offset, expected_modification_time, context);
 }
 
-scoped_ptr<storage::FileStreamWriter>
+std::unique_ptr<storage::FileStreamWriter>
 SandboxFileSystemBackend::CreateFileStreamWriter(
     const FileSystemURL& url,
-    int64 offset,
+    int64_t offset,
     FileSystemContext* context) const {
   DCHECK(CanHandleType(url.type()));
   DCHECK(delegate_);

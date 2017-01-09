@@ -4,8 +4,8 @@
 
 #include "storage/browser/fileapi/file_system_url_request_job_factory.h"
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "net/url_request/url_request.h"
 #include "storage/browser/fileapi/file_system_dir_url_request_job.h"
 #include "storage/browser/fileapi/file_system_url_request_job.h"
@@ -52,7 +52,7 @@ net::URLRequestJob* FileSystemProtocolHandler::MaybeCreateJob(
   // If the path ends with a /, we know it's a directory. If the path refers
   // to a directory and gets dispatched to FileSystemURLRequestJob, that class
   // redirects back here, by adding a / to the URL.
-  if (!path.empty() && path[path.size() - 1] == '/') {
+  if (!path.empty() && path.back() == '/') {
     return new FileSystemDirURLRequestJob(
         request, network_delegate, storage_domain_, file_system_context_);
   }

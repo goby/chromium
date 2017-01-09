@@ -4,17 +4,22 @@
 
 #include "content/browser/renderer_host/pepper/pepper_tcp_server_socket_message_filter.h"
 
+#include <utility>
+#include <vector>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 #include "content/browser/renderer_host/pepper/content_browser_pepper_host_factory.h"
 #include "content/browser/renderer_host/pepper/pepper_socket_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/socket_permission_request.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
+#include "net/log/net_log_source.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/private/ppb_net_address_private.h"
 #include "ppapi/host/dispatch_host_message.h"
@@ -77,10 +82,10 @@ PepperTCPServerSocketMessageFilter::OverrideTaskRunnerForMessage(
     const IPC::Message& message) {
   switch (message.type()) {
     case PpapiHostMsg_TCPServerSocket_Listen::ID:
-      return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI);
+      return BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
     case PpapiHostMsg_TCPServerSocket_Accept::ID:
     case PpapiHostMsg_TCPServerSocket_StopListening::ID:
-      return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
+      return BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
   }
   return NULL;
 }
@@ -169,8 +174,8 @@ void PepperTCPServerSocketMessageFilter::DoListen(
     int32_t backlog) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  net::IPAddressNumber address;
-  uint16 port;
+  std::vector<uint8_t> address;
+  uint16_t port;
   if (state_ != STATE_BEFORE_LISTENING ||
       !NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &address, &port)) {
     SendListenError(context, PP_ERROR_FAILED);
@@ -180,10 +185,10 @@ void PepperTCPServerSocketMessageFilter::DoListen(
 
   state_ = STATE_LISTEN_IN_PROGRESS;
 
-  socket_.reset(new net::TCPSocket(NULL, net::NetLog::Source()));
+  socket_.reset(new net::TCPSocket(NULL, NULL, net::NetLogSource()));
   int net_result = net::OK;
   do {
-    net::IPEndPoint ip_end_point(address, port);
+    net::IPEndPoint ip_end_point(net::IPAddress(address), port);
     net_result = socket_->Open(ip_end_point.GetFamily());
     if (net_result != net::OK)
       break;
@@ -232,7 +237,7 @@ void PepperTCPServerSocketMessageFilter::OnListenCompleted(
     return;
   }
   if (!NetAddressPrivateImpl::IPEndPointToNetAddress(
-          end_point.address(), end_point.port(), &addr)) {
+          end_point.address().bytes(), end_point.port(), &addr)) {
     SendListenError(context, PP_ERROR_FAILED);
     state_ = STATE_BEFORE_LISTENING;
     return;
@@ -260,7 +265,7 @@ void PepperTCPServerSocketMessageFilter::OpenFirewallHole(
 void PepperTCPServerSocketMessageFilter::OnFirewallHoleOpened(
     const ppapi::host::ReplyMessageContext& context,
     int32_t net_result,
-    scoped_ptr<chromeos::FirewallHole> hole) {
+    std::unique_ptr<chromeos::FirewallHole> hole) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   LOG_IF(WARNING, !hole.get()) << "Firewall hole could not be opened.";
@@ -298,26 +303,25 @@ void PepperTCPServerSocketMessageFilter::OnAcceptCompleted(
     return;
   }
   if (!NetAddressPrivateImpl::IPEndPointToNetAddress(
-          ip_end_point_local.address(),
-          ip_end_point_local.port(),
+          ip_end_point_local.address().bytes(), ip_end_point_local.port(),
           &local_addr) ||
       !NetAddressPrivateImpl::IPEndPointToNetAddress(
-          accepted_address_.address(),
-          accepted_address_.port(),
+          accepted_address_.address().bytes(), accepted_address_.port(),
           &remote_addr)) {
     SendAcceptError(context, PP_ERROR_FAILED);
     return;
   }
 
-  scoped_ptr<ppapi::host::ResourceHost> host =
+  std::unique_ptr<ppapi::host::ResourceHost> host =
       factory_->CreateAcceptedTCPSocket(instance_,
                                         ppapi::TCP_SOCKET_VERSION_PRIVATE,
-                                        accepted_socket_.Pass());
+                                        std::move(accepted_socket_));
   if (!host) {
     SendAcceptError(context, PP_ERROR_NOSPACE);
     return;
   }
-  int pending_resource_id = ppapi_host_->AddPendingResourceHost(host.Pass());
+  int pending_resource_id =
+      ppapi_host_->AddPendingResourceHost(std::move(host));
   if (pending_resource_id) {
     SendAcceptReply(
         context, PP_OK, pending_resource_id, local_addr, remote_addr);

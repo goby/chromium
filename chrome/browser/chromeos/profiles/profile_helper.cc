@@ -7,23 +7,32 @@
 #include "base/barrier_closure.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
+#include "chrome/browser/browsing_data/browsing_data_remover.h"
+#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
+#include "chrome/browser/chromeos/base/file_flusher.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/signin/oauth2_login_manager_factory.h"
+#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
+#include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
+#include "chromeos/chromeos_constants.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/guest_view/browser/guest_view_manager.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
+#include "extensions/common/constants.h"
 
 namespace chromeos {
 
@@ -73,11 +82,8 @@ ProfileHelper::~ProfileHelper() {
   if (user_manager::UserManager::IsInitialized())
     user_manager::UserManager::Get()->RemoveSessionStateObserver(this);
 
-  if (browsing_data_remover_) {
+  if (browsing_data_remover_)
     browsing_data_remover_->RemoveObserver(this);
-    // BrowsingDataRemover deletes itself.
-    browsing_data_remover_ = nullptr;
-  }
 }
 
 // static
@@ -133,13 +139,12 @@ std::string ProfileHelper::GetUserIdHashFromProfile(const Profile* profile) {
 
   // Check that profile directory starts with the correct prefix.
   std::string prefix(chrome::kProfileDirPrefix);
-  if (profile_dir.find(prefix) != 0) {
+  if (!base::StartsWith(profile_dir, prefix, base::CompareCase::SENSITIVE)) {
     // This happens when creating a TestingProfile in browser tests.
     return std::string();
   }
 
-  return profile_dir.substr(prefix.length(),
-                            profile_dir.length() - prefix.length());
+  return profile_dir.substr(prefix.length());
 }
 
 // static
@@ -158,7 +163,7 @@ bool ProfileHelper::IsSigninProfile(const Profile* profile) {
 }
 
 // static
-bool ProfileHelper::IsOwnerProfile(Profile* profile) {
+bool ProfileHelper::IsOwnerProfile(const Profile* profile) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           chromeos::switches::kStubCrosSettings)) {
     return true;
@@ -183,6 +188,31 @@ bool ProfileHelper::IsPrimaryProfile(const Profile* profile) {
   if (!user)
     return false;
   return user == user_manager::UserManager::Get()->GetPrimaryUser();
+}
+
+// static
+bool ProfileHelper::IsEphemeralUserProfile(const Profile* profile) {
+  if (!profile)
+    return false;
+
+  // Owner profile is always persistent.
+  if (IsOwnerProfile(profile))
+    return false;
+
+  const user_manager::User* user =
+      ProfileHelper::Get()->GetUserByProfile(profile);
+  if (!user)
+    return false;
+
+  // Guest and public account is ephemeral.
+  const user_manager::UserType user_type = user->GetType();
+  if (user_type == user_manager::USER_TYPE_GUEST ||
+      user_type == user_manager::USER_TYPE_PUBLIC_ACCOUNT) {
+    return true;
+  }
+
+  // Otherwise, users are ephemeral when the policy is enabled.
+  return ChromeUserManager::Get()->AreEphemeralUsersEnabled();
 }
 
 void ProfileHelper::ProfileStartup(Profile* profile, bool process_startup) {
@@ -230,10 +260,11 @@ void ProfileHelper::ClearSigninProfile(const base::Closure& on_clear_callback) {
   if (profile_manager->GetProfileByPath(GetSigninProfileDir())) {
     LOG_ASSERT(!browsing_data_remover_);
     browsing_data_remover_ =
-        BrowsingDataRemover::CreateForUnboundedRange(GetSigninProfile());
+        BrowsingDataRemoverFactory::GetForBrowserContext(GetSigninProfile());
     browsing_data_remover_->AddObserver(this);
-    browsing_data_remover_->Remove(BrowsingDataRemover::REMOVE_SITE_DATA,
-                                   BrowsingDataHelper::ALL);
+    browsing_data_remover_->RemoveAndReply(
+        BrowsingDataRemover::Unbounded(), BrowsingDataRemover::REMOVE_SITE_DATA,
+        BrowsingDataHelper::ALL, this);
   } else {
     on_clear_profile_stage_finished_.Run();
   }
@@ -285,8 +316,7 @@ Profile* ProfileHelper::GetProfileByUserUnsafe(const user_manager::User* user) {
     LOG(ERROR) << "ProfileHelper::GetProfileByUserUnsafe is called when "
                   "|user|'s profile is not created. It probably means that "
                   "something is wrong with a calling code. Please report in "
-                  "http://crbug.com/361528 if you see this message. user_id: "
-               << user->email();
+                  "http://crbug.com/361528 if you see this message.";
     profile = ProfileManager::GetActiveUserProfile();
   }
 
@@ -309,7 +339,7 @@ const user_manager::User* ProfileHelper::GetUserByProfile(
              user_list_for_testing_.begin();
          it != user_list_for_testing_.end();
          ++it) {
-      if ((*it)->email() == user_name)
+      if ((*it)->GetAccountId().GetUserEmail() == user_name)
         return *it;
     }
 
@@ -374,7 +404,6 @@ void ProfileHelper::OnSigninProfileCleared() {
 void ProfileHelper::OnBrowsingDataRemoverDone() {
   LOG_ASSERT(browsing_data_remover_);
   browsing_data_remover_->RemoveObserver(this);
-  // BrowsingDataRemover deletes itself.
   browsing_data_remover_ = nullptr;
 
   on_clear_profile_stage_finished_.Run();
@@ -426,10 +455,44 @@ void ProfileHelper::SetUserToProfileMappingForTesting(
   user_to_profile_for_testing_[user] = profile;
 }
 
+void ProfileHelper::RemoveUserFromListForTesting(const AccountId& account_id) {
+  auto it =
+      std::find_if(user_list_for_testing_.begin(), user_list_for_testing_.end(),
+                   [&account_id](const user_manager::User* user) {
+                     return user->GetAccountId() == account_id;
+                   });
+  if (it != user_list_for_testing_.end())
+    user_list_for_testing_.erase(it);
+}
+
 // static
 std::string ProfileHelper::GetUserIdHashByUserIdForTesting(
     const std::string& user_id) {
   return user_id + kUserIdHashSuffix;
+}
+
+void ProfileHelper::FlushProfile(Profile* profile) {
+  if (!profile_flusher_)
+    profile_flusher_.reset(new FileFlusher);
+
+  // Files/directories that do not need to be flushed.
+  std::vector<base::FilePath> excludes;
+
+  // Preferences file is handled by ImportantFileWriter.
+  excludes.push_back(base::FilePath(chrome::kPreferencesFilename));
+  // Do not flush cache files.
+  excludes.push_back(base::FilePath(chrome::kCacheDirname));
+  excludes.push_back(base::FilePath(chrome::kMediaCacheDirname));
+  excludes.push_back(base::FilePath(FILE_PATH_LITERAL("GPUCache")));
+  // Do not flush user Downloads.
+  excludes.push_back(
+      DownloadPrefs::FromBrowserContext(profile)->DownloadPath());
+  // Let extension system handle extension files.
+  excludes.push_back(base::FilePath(extensions::kInstallDirectoryName));
+  // Do not flush Drive cache.
+  excludes.push_back(base::FilePath(chromeos::kDriveCacheDirname));
+
+  profile_flusher_->RequestFlush(profile->GetPath(), excludes, base::Closure());
 }
 
 }  // namespace chromeos

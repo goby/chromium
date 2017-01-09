@@ -5,8 +5,9 @@
 #ifndef COMPONENTS_GCM_DRIVER_GCM_GCM_DESKTOP_UTILS_H_
 #define COMPONENTS_GCM_DRIVER_GCM_GCM_DESKTOP_UTILS_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "components/version_info/version_info.h"
 
@@ -24,12 +25,13 @@ namespace gcm {
 class GCMDriver;
 class GCMClientFactory;
 
-scoped_ptr<GCMDriver> CreateGCMDriverDesktop(
-    scoped_ptr<GCMClientFactory> gcm_client_factory,
+std::unique_ptr<GCMDriver> CreateGCMDriverDesktop(
+    std::unique_ptr<GCMClientFactory> gcm_client_factory,
     PrefService* prefs,
     const base::FilePath& store_path,
     const scoped_refptr<net::URLRequestContextGetter>& request_context,
     version_info::Channel channel,
+    const std::string& product_category_for_subtypes,
     const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& io_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner);

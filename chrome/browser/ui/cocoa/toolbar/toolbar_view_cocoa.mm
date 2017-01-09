@@ -6,6 +6,7 @@
 
 #import "chrome/browser/ui/cocoa/view_id_util.h"
 #import "ui/base/cocoa/nsview_additions.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 @implementation ToolbarView
 
@@ -18,11 +19,6 @@
 
 - (void)drawRect:(NSRect)dirtyRect {
   [self drawBackground:dirtyRect];
-}
-
-// Override of |-[BackgroundGradientView strokeColor]|; make it respect opacity.
-- (NSColor*)strokeColor {
-  return [[super strokeColor] colorWithAlphaComponent:[self dividerOpacity]];
 }
 
 - (BOOL)accessibilityIsIgnored {

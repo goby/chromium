@@ -8,6 +8,7 @@
 // This file is only used to expose some of the internals
 // of network_interfaces_win.cc to tests.
 
+#include <winsock2.h>
 #include <iphlpapi.h>
 #include <wlanapi.h>
 
@@ -83,7 +84,6 @@ struct WlanApiDeleter {
 NET_EXPORT bool GetNetworkListImpl(
     NetworkInterfaceList* networks,
     int policy,
-    bool is_xp,
     const IP_ADAPTER_ADDRESSES* ip_adapter_addresses);
 
 }  // namespace internal

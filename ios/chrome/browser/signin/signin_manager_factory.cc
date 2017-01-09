@@ -4,20 +4,22 @@
 
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 
+#include <utility>
+
 #include "base/memory/singleton.h"
-#include "base/prefs/pref_registry_simple.h"
 #include "base/time/time.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/common/signin_pref_names.h"
 #include "ios/chrome/browser/application_context.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/signin/account_tracker_service_factory.h"
 #include "ios/chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
 #include "ios/chrome/browser/signin/signin_client_factory.h"
 #include "ios/chrome/browser/signin/signin_manager_factory_observer.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 namespace ios {
 
@@ -73,15 +75,15 @@ void SigninManagerFactory::RemoveObserver(
 
 void SigninManagerFactory::NotifyObserversOfSigninManagerCreationForTesting(
     SigninManager* manager) {
-  FOR_EACH_OBSERVER(SigninManagerFactoryObserver, observer_list_,
-                    SigninManagerCreated(manager));
+  for (auto& observer : observer_list_)
+    observer.SigninManagerCreated(manager);
 }
 
-scoped_ptr<KeyedService> SigninManagerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService> SigninManagerFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* chrome_browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  scoped_ptr<SigninManager> service(new SigninManager(
+  std::unique_ptr<SigninManager> service(new SigninManager(
       SigninClientFactory::GetForBrowserState(chrome_browser_state),
       OAuth2TokenServiceFactory::GetForBrowserState(chrome_browser_state),
       ios::AccountTrackerServiceFactory::GetForBrowserState(
@@ -89,17 +91,18 @@ scoped_ptr<KeyedService> SigninManagerFactory::BuildServiceInstanceFor(
       ios::GaiaCookieManagerServiceFactory::GetForBrowserState(
           chrome_browser_state)));
   service->Initialize(GetApplicationContext()->GetLocalState());
-  FOR_EACH_OBSERVER(SigninManagerFactoryObserver, observer_list_,
-                    SigninManagerCreated(service.get()));
-  return service.Pass();
+  for (auto& observer : observer_list_)
+    observer.SigninManagerCreated(service.get());
+  return std::move(service);
 }
 
 void SigninManagerFactory::BrowserStateShutdown(web::BrowserState* context) {
   SigninManager* manager =
       static_cast<SigninManager*>(GetServiceForBrowserState(context, false));
-  if (manager)
-    FOR_EACH_OBSERVER(SigninManagerFactoryObserver, observer_list_,
-                      SigninManagerShutdown(manager));
+  if (manager) {
+    for (auto& observer : observer_list_)
+      observer.SigninManagerShutdown(manager);
+  }
   BrowserStateKeyedServiceFactory::BrowserStateShutdown(context);
 }
 

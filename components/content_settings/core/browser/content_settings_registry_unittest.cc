@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/prefs/pref_registry.h"
 #include "base/values.h"
 #include "components/content_settings/core/browser/content_settings_info.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
@@ -15,6 +14,7 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content_settings {
@@ -32,6 +32,30 @@ class ContentSettingsRegistryTest : public testing::Test {
   ContentSettingsRegistry registry_;
 };
 
+TEST_F(ContentSettingsRegistryTest, GetPlatformDependent) {
+#if defined(OS_IOS)
+  // Javascript shouldn't be registered on iOS.
+  EXPECT_FALSE(registry()->Get(CONTENT_SETTINGS_TYPE_JAVASCRIPT));
+#endif
+
+#if defined(OS_IOS) || defined(OS_ANDROID)
+  // Images shouldn't be registered on mobile.
+  EXPECT_FALSE(registry()->Get(CONTENT_SETTINGS_TYPE_IMAGES));
+#endif
+
+// Protected media identifier only get registered on android and chromeos.
+#if defined(ANDROID) || defined(OS_CHROMEOS)
+  EXPECT_TRUE(
+      registry()->Get(CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER));
+#else
+  EXPECT_FALSE(
+      registry()->Get(CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER));
+#endif
+
+  // Cookies is registered on all platforms.
+  EXPECT_TRUE(registry()->Get(CONTENT_SETTINGS_TYPE_COOKIES));
+}
+
 TEST_F(ContentSettingsRegistryTest, Properties) {
   // The cookies type should be registered.
   const ContentSettingsInfo* info =
@@ -43,6 +67,12 @@ TEST_F(ContentSettingsRegistryTest, Properties) {
   expected_whitelist.push_back("chrome");
   expected_whitelist.push_back("chrome-devtools");
   EXPECT_EQ(expected_whitelist, info->whitelisted_schemes());
+
+  // Check the other properties are populated correctly.
+  EXPECT_TRUE(info->IsSettingValid(CONTENT_SETTING_SESSION_ONLY));
+  EXPECT_FALSE(info->IsSettingValid(CONTENT_SETTING_ASK));
+  EXPECT_EQ(ContentSettingsInfo::INHERIT_IF_LESS_PERMISSIVE,
+            info->incognito_behavior());
 
   // Check the WebsiteSettingsInfo is populated correctly.
   const WebsiteSettingsInfo* website_settings_info =
@@ -56,8 +86,13 @@ TEST_F(ContentSettingsRegistryTest, Properties) {
   ASSERT_TRUE(
       website_settings_info->initial_default_value()->GetAsInteger(&setting));
   EXPECT_EQ(CONTENT_SETTING_ALLOW, setting);
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  EXPECT_EQ(PrefRegistry::NO_REGISTRATION_FLAGS,
+            website_settings_info->GetPrefRegistrationFlags());
+#else
   EXPECT_EQ(user_prefs::PrefRegistrySyncable::SYNCABLE_PREF,
             website_settings_info->GetPrefRegistrationFlags());
+#endif
 
   // Check the WebsiteSettingsInfo is registered correctly.
   EXPECT_EQ(website_settings_registry()->Get(CONTENT_SETTINGS_TYPE_COOKIES),
@@ -80,7 +115,12 @@ TEST_F(ContentSettingsRegistryTest, Iteration) {
     }
   }
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  EXPECT_FALSE(plugins_found);
+#else
   EXPECT_TRUE(plugins_found);
+#endif
+
   EXPECT_TRUE(cookies_found);
 }
 

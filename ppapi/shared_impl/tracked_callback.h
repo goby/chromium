@@ -5,13 +5,15 @@
 #ifndef PPAPI_SHARED_IMPL_TRACKED_CALLBACK_H_
 #define PPAPI_SHARED_IMPL_TRACKED_CALLBACK_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "ppapi/c/pp_completion_callback.h"
@@ -190,7 +192,7 @@ class PPAPI_SHARED_EXPORT TrackedCallback
   // Used for pausing/waking the blocked thread if this is a blocking completion
   // callback. Note that in-process, there is no lock, blocking callbacks are
   // not allowed, and therefore this pointer will be NULL.
-  scoped_ptr<base::ConditionVariable> operation_completed_condvar_;
+  std::unique_ptr<base::ConditionVariable> operation_completed_condvar_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(TrackedCallback);
 };

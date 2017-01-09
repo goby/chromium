@@ -4,11 +4,14 @@
 
 #include "components/omnibox/browser/omnibox_field_trial.h"
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/search/search.h"
 #include "components/variations/entropy_provider.h"
@@ -28,9 +31,8 @@ class OmniboxFieldTrialTest : public testing::Test {
     // a DCHECK.
     field_trial_list_.reset();
     field_trial_list_.reset(new base::FieldTrialList(
-        new metrics::SHA1EntropyProvider("foo")));
+        base::MakeUnique<metrics::SHA1EntropyProvider>("foo")));
     variations::testing::ClearAllVariationParams();
-    OmniboxFieldTrial::ActivateDynamicTrials();
   }
 
   // Creates and activates a field trial.
@@ -77,7 +79,7 @@ class OmniboxFieldTrialTest : public testing::Test {
       int expected_delay_ms);
 
  private:
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxFieldTrialTest);
 };
@@ -136,12 +138,6 @@ void OmniboxFieldTrialTest::VerifySuggestPollingStrategy(
 // group names.
 TEST_F(OmniboxFieldTrialTest, GetDisabledProviderTypes) {
   EXPECT_EQ(0, OmniboxFieldTrial::GetDisabledProviderTypes());
-
-  {
-    SCOPED_TRACE("Outside the bundled field trial.");
-    CreateTestTrial("AutocompleteDynamicTrial_0", "DisabledProviders_123");
-    EXPECT_EQ(0, OmniboxFieldTrial::GetDisabledProviderTypes());
-  }
 
   {
     SCOPED_TRACE("Valid field trial, missing param.");
@@ -368,10 +364,6 @@ TEST_F(OmniboxFieldTrialTest, GetValueForRuleInContext) {
                     OmniboxEventProto::HOME_PAGE);         // exact match
     ExpectRuleValue("rule1-4-*-value",
                     "rule1", OmniboxEventProto::OTHER);    // partial fallback
-    ExpectRuleValue("rule1-*-*-value",
-                    "rule1",
-                    OmniboxEventProto::                    // fallback to global
-                    SEARCH_RESULT_PAGE_DOING_SEARCH_TERM_REPLACEMENT);
     // Tests for rule 2.
     ExpectRuleValue("rule2-*-0-value",
                     "rule2",

@@ -5,56 +5,61 @@
 #ifndef COURGETTE_DISASSEMBLER_ELF_32_X86_H_
 #define COURGETTE_DISASSEMBLER_ELF_32_X86_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <map>
+
+#include "base/macros.h"
 #include "courgette/disassembler_elf_32.h"
-#include "courgette/memory_allocator.h"
 #include "courgette/types_elf.h"
 
 namespace courgette {
 
-class AssemblyProgram;
+class InstructionReceptor;
 
 class DisassemblerElf32X86 : public DisassemblerElf32 {
  public:
+  // Returns true if a valid executable is detected using only quick checks.
+  static bool QuickDetect(const uint8_t* start, size_t length) {
+    return DisassemblerElf32::QuickDetect(start, length, EM_386);
+  }
+
   class TypedRVAX86 : public TypedRVA {
    public:
-    explicit TypedRVAX86(RVA rva) : TypedRVA(rva) {
-    }
+    explicit TypedRVAX86(RVA rva) : TypedRVA(rva) { }
+    ~TypedRVAX86() override { }
 
-    CheckBool ComputeRelativeTarget(const uint8* op_pointer) override {
-      set_relative_target(Read32LittleEndian(op_pointer) + 4);
-      return true;
-    }
-
-    CheckBool EmitInstruction(AssemblyProgram* program,
-                              RVA target_rva) override {
-      return program->EmitRel32(program->FindOrMakeRel32Label(target_rva));
-    }
-
-    uint16 op_size() const override { return 4; }
+    // TypedRVA interfaces.
+    CheckBool ComputeRelativeTarget(const uint8_t* op_pointer) override;
+    CheckBool EmitInstruction(Label* label,
+                              InstructionReceptor* receptor) override;
+    uint16_t op_size() const override;
   };
 
-  explicit DisassemblerElf32X86(const void* start, size_t length);
+  DisassemblerElf32X86(const uint8_t* start, size_t length);
 
-  virtual ExecutableType kind() { return EXE_ELF_32_X86; }
+  ~DisassemblerElf32X86() override { }
 
-  virtual e_machine_values ElfEM() { return EM_386; }
+  // DisassemblerElf32 interfaces.
+  ExecutableType kind() const override { return EXE_ELF_32_X86; }
+  e_machine_values ElfEM() const override { return EM_386; }
 
  protected:
-  virtual CheckBool RelToRVA(Elf32_Rel rel, RVA* result)
-      const WARN_UNUSED_RESULT;
-
-  virtual CheckBool ParseRelocationSection(
-      const Elf32_Shdr *section_header,
-      AssemblyProgram* program) WARN_UNUSED_RESULT;
-
-  virtual CheckBool ParseRel32RelocsFromSection(
-      const Elf32_Shdr* section) WARN_UNUSED_RESULT;
+  // DisassemblerElf32 interfaces.
+  CheckBool RelToRVA(Elf32_Rel rel,
+                     RVA* result) const override WARN_UNUSED_RESULT;
+  CheckBool ParseRelocationSection(const Elf32_Shdr* section_header,
+                                   InstructionReceptor* receptor) const override
+      WARN_UNUSED_RESULT;
+  CheckBool ParseRel32RelocsFromSection(const Elf32_Shdr* section)
+      override WARN_UNUSED_RESULT;
 
 #if COURGETTE_HISTOGRAM_TARGETS
   std::map<RVA, int> rel32_target_rvas_;
 #endif
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(DisassemblerElf32X86);
 };
 

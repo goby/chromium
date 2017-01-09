@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chromecast/public/graphics_types.h"
 #include "chromecast/public/osd_plane.h"
 #include "chromecast/public/osd_plane_shlib.h"
@@ -46,7 +48,9 @@ class OsdPlaneDefault : public OsdPlane {
   OsdSurface* CreateSurface(const Size& size) override {
     return new OsdSurfaceDefault(size);
   }
-  void SetClipRectangle(const Rect& rect) override {
+  void SetClipRectangle(const Rect& rect,
+                        const Size& screen_res,
+                        float output_scale) override {
     size_ = Size(rect.width, rect.height);
   }
   OsdSurface* GetBackBuffer() override {
@@ -58,7 +62,7 @@ class OsdPlaneDefault : public OsdPlane {
   void Flip() override {}
 
  private:
-  scoped_ptr<OsdSurface> back_buffer_;
+  std::unique_ptr<OsdSurface> back_buffer_;
   Size size_;
 
   DISALLOW_COPY_AND_ASSIGN(OsdPlaneDefault);

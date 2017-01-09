@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
-#include "device/core/mock_device_client.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
+#include "device/base/mock_device_client.h"
 #include "device/hid/hid_collection_info.h"
 #include "device/hid/hid_connection.h"
 #include "device/hid/hid_device_info.h"
@@ -29,18 +34,18 @@ using testing::_;
 #if defined(OS_MACOSX)
 const uint64_t kTestDeviceIds[] = {1, 2, 3, 4, 5};
 #else
-const char* kTestDeviceIds[] = {"A", "B", "C", "D", "E"};
+const char* const kTestDeviceIds[] = {"A", "B", "C", "D", "E"};
 #endif
 
 // These report descriptors define two devices with 8-byte input, output and
 // feature reports. The first implements usage page 0xFF00 and has a single
 // report without and ID. The second implements usage page 0xFF01 and has a
 // single report with ID 1.
-const uint8 kReportDescriptor[] = {0x06, 0x00, 0xFF, 0x08, 0xA1, 0x01, 0x15,
-                                   0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95,
-                                   0x08, 0x08, 0x81, 0x02, 0x08, 0x91, 0x02,
-                                   0x08, 0xB1, 0x02, 0xC0};
-const uint8 kReportDescriptorWithIDs[] = {
+const uint8_t kReportDescriptor[] = {0x06, 0x00, 0xFF, 0x08, 0xA1, 0x01, 0x15,
+                                     0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95,
+                                     0x08, 0x08, 0x81, 0x02, 0x08, 0x91, 0x02,
+                                     0x08, 0xB1, 0x02, 0xC0};
+const uint8_t kReportDescriptorWithIDs[] = {
     0x06, 0x01, 0xFF, 0x08, 0xA1, 0x01, 0x15, 0x00, 0x26,
     0xFF, 0x00, 0x85, 0x01, 0x75, 0x08, 0x95, 0x08, 0x08,
     0x81, 0x02, 0x08, 0x91, 0x02, 0x08, 0xB1, 0x02, 0xC0};
@@ -128,7 +133,17 @@ class TestDevicePermissionsPrompt
 
   void ShowDialog() override { prompt()->SetObserver(this); }
 
-  void OnDevicesChanged() override {
+  void OnDeviceAdded(size_t index, const base::string16& device_name) override {
+    OnDevicesChanged();
+  }
+
+  void OnDeviceRemoved(size_t index,
+                       const base::string16& device_name) override {
+    OnDevicesChanged();
+  }
+
+ private:
+  void OnDevicesChanged() {
     for (size_t i = 0; i < prompt()->GetDeviceCount(); ++i) {
       prompt()->GrantDevicePermission(i);
       if (!prompt()->multiple()) {
@@ -143,9 +158,9 @@ class TestExtensionsAPIClient : public ShellExtensionsAPIClient {
  public:
   TestExtensionsAPIClient() : ShellExtensionsAPIClient() {}
 
-  scoped_ptr<DevicePermissionsPrompt> CreateDevicePermissionsPrompt(
+  std::unique_ptr<DevicePermissionsPrompt> CreateDevicePermissionsPrompt(
       content::WebContents* web_contents) const override {
-    return make_scoped_ptr(new TestDevicePermissionsPrompt(web_contents));
+    return base::MakeUnique<TestDevicePermissionsPrompt>(web_contents);
   }
 };
 
@@ -188,7 +203,7 @@ class HidApiTest : public ShellApiTest {
                  int vendor_id,
                  int product_id,
                  bool report_id) {
-    std::vector<uint8> report_descriptor;
+    std::vector<uint8_t> report_descriptor;
     if (report_id) {
       report_descriptor.insert(
           report_descriptor.begin(), kReportDescriptorWithIDs,
@@ -203,7 +218,7 @@ class HidApiTest : public ShellApiTest {
   }
 
  protected:
-  scoped_ptr<MockDeviceClient> device_client_;
+  std::unique_ptr<MockDeviceClient> device_client_;
 };
 
 IN_PROC_BROWSER_TEST_F(HidApiTest, HidApp) {

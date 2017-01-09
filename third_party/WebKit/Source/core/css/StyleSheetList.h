@@ -21,12 +21,11 @@
 #ifndef StyleSheetList_h
 #define StyleSheetList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/css/CSSStyleSheet.h"
 #include "core/dom/TreeScope.h"
+#include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
 #include "wtf/Vector.h"
 
 namespace blink {
@@ -34,37 +33,36 @@ namespace blink {
 class HTMLStyleElement;
 class StyleSheet;
 
-class StyleSheetList final : public RefCountedWillBeGarbageCollected<StyleSheetList>, public ScriptWrappable {
-    DECLARE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(StyleSheetList);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<StyleSheetList> create(TreeScope* treeScope) { return adoptRefWillBeNoop(new StyleSheetList(treeScope)); }
+class CORE_EXPORT StyleSheetList final
+    : public GarbageCollected<StyleSheetList>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    unsigned length();
-    StyleSheet* item(unsigned index);
+ public:
+  static StyleSheetList* create(TreeScope* treeScope) {
+    return new StyleSheetList(treeScope);
+  }
 
-    HTMLStyleElement* getNamedItem(const AtomicString&) const;
+  unsigned length();
+  StyleSheet* item(unsigned index);
 
-    Document* document() { return m_treeScope ? &m_treeScope->document() : nullptr; }
+  HTMLStyleElement* getNamedItem(const AtomicString&) const;
 
-#if !ENABLE(OILPAN)
-    void detachFromDocument();
-#endif
+  Document* document() const {
+    return m_treeScope ? &m_treeScope->document() : nullptr;
+  }
 
-    CSSStyleSheet* anonymousNamedGetter(const AtomicString&);
+  CSSStyleSheet* anonymousNamedGetter(const AtomicString&);
 
-    DECLARE_TRACE();
+  DECLARE_TRACE();
 
-private:
-    explicit StyleSheetList(TreeScope*);
-    const WillBeHeapVector<RefPtrWillBeMember<StyleSheet>>& styleSheets();
+ private:
+  explicit StyleSheetList(TreeScope*);
+  const HeapVector<TraceWrapperMember<StyleSheet>>& styleSheets() const;
 
-    RawPtrWillBeMember<TreeScope> m_treeScope;
-#if !ENABLE(OILPAN)
-    Vector<RefPtr<StyleSheet>> m_detachedStyleSheets;
-#endif
+  Member<TreeScope> m_treeScope;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // StyleSheetList_h
+#endif  // StyleSheetList_h

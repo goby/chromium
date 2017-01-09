@@ -5,15 +5,19 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_STATUS_UPLOADER_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_STATUS_UPLOADER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/cancelable_callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
-#include "policy/proto/device_management_backend.pb.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 
 namespace base {
 class SequencedTaskRunner;
@@ -29,15 +33,14 @@ class DeviceStatusCollector;
 class StatusUploader : public MediaCaptureDevicesDispatcher::Observer {
  public:
   // Refresh constants.
-  static const int64 kDefaultUploadDelayMs;
+  static const int64_t kDefaultUploadDelayMs;
 
   // Constructor. |client| must be registered and must stay
   // valid and registered through the lifetime of this StatusUploader
   // object.
-  StatusUploader(
-      CloudPolicyClient* client,
-      scoped_ptr<DeviceStatusCollector> collector,
-      const scoped_refptr<base::SequencedTaskRunner>& task_runner);
+  StatusUploader(CloudPolicyClient* client,
+                 std::unique_ptr<DeviceStatusCollector> collector,
+                 const scoped_refptr<base::SequencedTaskRunner>& task_runner);
 
   ~StatusUploader() override;
 
@@ -61,6 +64,13 @@ class StatusUploader : public MediaCaptureDevicesDispatcher::Observer {
   // DeviceStatusCollector.
   void UploadStatus();
 
+  // Called asynchronously by DeviceStatusCollector when status arrives
+  void OnStatusReceived(
+      std::unique_ptr<enterprise_management::DeviceStatusReportRequest>
+          device_status,
+      std::unique_ptr<enterprise_management::SessionStatusReportRequest>
+          session_status);
+
   // Invoked once a status upload has completed.
   void OnUploadCompleted(bool success);
 
@@ -76,7 +86,7 @@ class StatusUploader : public MediaCaptureDevicesDispatcher::Observer {
   CloudPolicyClient* client_;
 
   // DeviceStatusCollector that provides status for uploading.
-  scoped_ptr<DeviceStatusCollector> collector_;
+  std::unique_ptr<DeviceStatusCollector> collector_;
 
   // TaskRunner used for scheduling upload tasks.
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
@@ -85,7 +95,7 @@ class StatusUploader : public MediaCaptureDevicesDispatcher::Observer {
   base::TimeDelta upload_frequency_;
 
   // Observer to changes in the upload frequency.
-  scoped_ptr<chromeos::CrosSettings::ObserverSubscription>
+  std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
       upload_frequency_observer_;
 
   // The time the last upload was performed.

@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/memory_pressure/direct_memory_pressure_calculator.h"
+#include "components/memory_pressure/direct_memory_pressure_calculator_win.h"
+
+#include "base/logging.h"
+#include "base/process/process_metrics.h"
 
 namespace memory_pressure {
 
+#if defined(MEMORY_PRESSURE_IS_POLLING)
+
 namespace {
 
-static const int kKBperMB = 1024;
+const int kKBperMB = 1024;
 
 }  // namespace
 
@@ -82,6 +87,11 @@ DirectMemoryPressureCalculator::CalculateCurrentPressureLevel() {
   return MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE;
 }
 
+bool DirectMemoryPressureCalculator::GetSystemMemoryInfo(
+    base::SystemMemoryInfoKB* mem_info) const {
+  return base::GetSystemMemoryInfo(mem_info);
+}
+
 void DirectMemoryPressureCalculator::InferThresholds() {
   // Determine if the memory installed is 'large' or 'small'. Default to 'large'
   // on failure, which uses more conservative thresholds.
@@ -100,5 +110,7 @@ void DirectMemoryPressureCalculator::InferThresholds() {
     critical_threshold_mb_ = kSmallMemoryDefaultCriticalThresholdMb;
   }
 }
+
+#endif  // defined(MEMORY_PRESSURE_IS_POLLING)
 
 }  // namespace memory_pressure

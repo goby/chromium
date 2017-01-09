@@ -4,10 +4,13 @@
 
 #include "ui/events/ozone/evdev/touch_noise/touch_noise_finder.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/ozone/evdev/touch_evdev_types.h"
@@ -45,8 +48,8 @@ class TouchNoiseFinderTest : public testing::Test {
       touches.push_back(touch);
 
       if (i == count - 1 || entry.time_ms != entries[i + 1].time_ms) {
-        touch_noise_finder_->HandleTouches(
-            touches, base::TimeDelta::FromMilliseconds(entry.time_ms));
+        touch_noise_finder_->HandleTouches(touches, base::TimeTicks() +
+            base::TimeDelta::FromMilliseconds(entry.time_ms));
 
         for (size_t j = 0; j < touches.size(); ++j) {
           bool expect_noise = entries[j + start_index].expect_noise;
@@ -75,7 +78,7 @@ class TouchNoiseFinderTest : public testing::Test {
     touch_noise_finder_.reset(new TouchNoiseFinder);
   }
 
-  scoped_ptr<TouchNoiseFinder> touch_noise_finder_;
+  std::unique_ptr<TouchNoiseFinder> touch_noise_finder_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchNoiseFinderTest);
 };

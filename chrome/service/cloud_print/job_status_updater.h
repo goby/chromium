@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread.h"
 #include "chrome/service/cloud_print/cloud_print_url_fetcher.h"
@@ -22,7 +23,7 @@ namespace cloud_print {
 // object releases the reference to itself which should cause it to
 // self-destruct.
 class JobStatusUpdater : public base::RefCountedThreadSafe<JobStatusUpdater>,
-                         public CloudPrintURLFetcherDelegate {
+                         public CloudPrintURLFetcher::Delegate {
  public:
   class Delegate {
    public:
@@ -35,7 +36,7 @@ class JobStatusUpdater : public base::RefCountedThreadSafe<JobStatusUpdater>,
 
   JobStatusUpdater(const std::string& printer_name,
                    const std::string& job_id,
-                   PlatformJobId& local_job_id,
+                   PlatformJobId local_job_id,
                    const GURL& cloud_print_server_url,
                    PrintSystem* print_system,
                    Delegate* delegate);
@@ -48,7 +49,7 @@ class JobStatusUpdater : public base::RefCountedThreadSafe<JobStatusUpdater>,
   CloudPrintURLFetcher::ResponseAction HandleJSONData(
       const net::URLFetcher* source,
       const GURL& url,
-      base::DictionaryValue* json_data,
+      const base::DictionaryValue* json_data,
       bool succeeded) override;
   CloudPrintURLFetcher::ResponseAction OnRequestAuthError() override;
   std::string GetAuthHeader() override;
@@ -75,12 +76,6 @@ class JobStatusUpdater : public base::RefCountedThreadSafe<JobStatusUpdater>,
   bool stopped_;
   DISALLOW_COPY_AND_ASSIGN(JobStatusUpdater);
 };
-
-// This typedef is to workaround the issue with certain versions of
-// Visual Studio where it gets confused between multiple Delegate
-// classes and gives a C2500 error. (I saw this error on the try bots -
-// the workaround was not needed for my machine).
-typedef JobStatusUpdater::Delegate JobStatusUpdaterDelegate;
 
 }  // namespace cloud_print
 

@@ -4,31 +4,43 @@
 
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <set>
 #include <utility>
 
 #include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "chrome/browser/supervised_user/experimental/supervised_user_async_url_checker.h"
 #include "chrome/browser/supervised_user/experimental/supervised_user_blacklist.h"
-#include "chrome/grit/generated_resources.h"
+#include "components/google/core/browser/google_util.h"
 #include "components/policy/core/browser/url_blacklist_manager.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/url_matcher/url_matcher.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/features/features.h"
+#include "net/base/escape.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/url_util.h"
 #include "url/gurl.h"
+#include "url/url_constants.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "extensions/common/extension_urls.h"
+#endif
 
 using content::BrowserThread;
 using net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES;
 using net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES;
-using net::registry_controlled_domains::GetRegistryLength;
+using net::registry_controlled_domains::GetCanonicalHostRegistryLength;
 using policy::URLBlacklist;
 using url_matcher::URLMatcher;
 using url_matcher::URLMatcherConditionSet;
@@ -43,13 +55,29 @@ struct HashHostnameHash {
   }
 };
 
+SupervisedUserURLFilter::FilteringBehavior
+GetBehaviorFromSafeSearchClassification(
+    SafeSearchURLChecker::Classification classification) {
+  switch (classification) {
+    case SafeSearchURLChecker::Classification::SAFE:
+      return SupervisedUserURLFilter::ALLOW;
+    case SafeSearchURLChecker::Classification::UNSAFE:
+      return SupervisedUserURLFilter::BLOCK;
+  }
+  NOTREACHED();
+  return SupervisedUserURLFilter::BLOCK;
+}
+
 }  // namespace
 
 struct SupervisedUserURLFilter::Contents {
   URLMatcher url_matcher;
-  base::hash_set<HostnameHash, HashHostnameHash> hostname_hashes;
-  // TODO(treib,bauerb): Add infrastructure to track from which whitelist each
-  // pattern/hash came. crbug.com/557651
+  base::hash_multimap<HostnameHash,
+                      scoped_refptr<SupervisedUserSiteList>,
+                      HashHostnameHash> hostname_hashes;
+  // This only tracks pattern lists.
+  std::map<URLMatcherConditionSet::ID, scoped_refptr<SupervisedUserSiteList>>
+      site_lists_by_matcher_id;
 };
 
 namespace {
@@ -65,6 +93,13 @@ const char* kFilteredSchemes[] = {
   "wss"
 };
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+const char* kCrxDownloadUrls[] = {
+    "https://clients2.googleusercontent.com/crx/blobs/",
+    "https://chrome.google.com/webstore/download/"
+};
+#endif
+
 // This class encapsulates all the state that is required during construction of
 // a new SupervisedUserURLFilter::Contents.
 class FilterBuilder {
@@ -72,23 +107,22 @@ class FilterBuilder {
   FilterBuilder();
   ~FilterBuilder();
 
-  // Adds a single URL pattern.
-  bool AddPattern(const std::string& pattern);
-
-  // Adds a single hostname SHA1 hash.
-  void AddHostnameHash(const HostnameHash& hash);
+  // Adds a single URL pattern and returns the id of its matcher.
+  URLMatcherConditionSet::ID AddPattern(const std::string& pattern);
 
   // Adds all the sites in |site_list|, with URL patterns and hostname hashes.
   void AddSiteList(const scoped_refptr<SupervisedUserSiteList>& site_list);
 
   // Finalizes construction of the SupervisedUserURLFilter::Contents and returns
   // them. This method should be called before this object is destroyed.
-  scoped_ptr<SupervisedUserURLFilter::Contents> Build();
+  std::unique_ptr<SupervisedUserURLFilter::Contents> Build();
 
  private:
-  scoped_ptr<SupervisedUserURLFilter::Contents> contents_;
+  std::unique_ptr<SupervisedUserURLFilter::Contents> contents_;
   URLMatcherConditionSet::Vector all_conditions_;
   URLMatcherConditionSet::ID matcher_id_;
+  std::map<URLMatcherConditionSet::ID, scoped_refptr<SupervisedUserSiteList>>
+      site_lists_by_matcher_id_;
 };
 
 FilterBuilder::FilterBuilder()
@@ -99,20 +133,19 @@ FilterBuilder::~FilterBuilder() {
   DCHECK(!contents_.get());
 }
 
-bool FilterBuilder::AddPattern(const std::string& pattern) {
+URLMatcherConditionSet::ID FilterBuilder::AddPattern(
+    const std::string& pattern) {
   std::string scheme;
   std::string host;
-  uint16 port = 0;
+  uint16_t port = 0;
   std::string path;
   std::string query;
   bool match_subdomains = true;
-  URLBlacklist::SegmentURLCallback callback =
-      static_cast<URLBlacklist::SegmentURLCallback>(url_formatter::SegmentURL);
-  if (!URLBlacklist::FilterToComponents(
-          callback, pattern,
-          &scheme, &host, &match_subdomains, &port, &path, &query)) {
+  if (!URLBlacklist::FilterToComponents(pattern, &scheme, &host,
+                                        &match_subdomains, &port, &path,
+                                        &query)) {
     LOG(ERROR) << "Invalid pattern " << pattern;
-    return false;
+    return -1;
   }
 
   scoped_refptr<URLMatcherConditionSet> condition_set =
@@ -120,28 +153,30 @@ bool FilterBuilder::AddPattern(const std::string& pattern) {
           &contents_->url_matcher, ++matcher_id_,
           scheme, host, match_subdomains, port, path, query, true);
   all_conditions_.push_back(std::move(condition_set));
-  return true;
-}
-
-void FilterBuilder::AddHostnameHash(const HostnameHash& hash) {
-  contents_->hostname_hashes.insert(hash);
+  return matcher_id_;
 }
 
 void FilterBuilder::AddSiteList(
     const scoped_refptr<SupervisedUserSiteList>& site_list) {
-  for (const std::string& pattern : site_list->patterns())
-    AddPattern(pattern);
+  for (const std::string& pattern : site_list->patterns()) {
+    URLMatcherConditionSet::ID id = AddPattern(pattern);
+    if (id >= 0) {
+      site_lists_by_matcher_id_[id] = site_list;
+    }
+  }
 
   for (const HostnameHash& hash : site_list->hostname_hashes())
-    AddHostnameHash(hash);
+    contents_->hostname_hashes.insert(std::make_pair(hash, site_list));
 }
 
-scoped_ptr<SupervisedUserURLFilter::Contents> FilterBuilder::Build() {
+std::unique_ptr<SupervisedUserURLFilter::Contents> FilterBuilder::Build() {
   contents_->url_matcher.AddConditionSets(all_conditions_);
-  return contents_.Pass();
+  contents_->site_lists_by_matcher_id.insert(site_lists_by_matcher_id_.begin(),
+                                             site_lists_by_matcher_id_.end());
+  return std::move(contents_);
 }
 
-scoped_ptr<SupervisedUserURLFilter::Contents>
+std::unique_ptr<SupervisedUserURLFilter::Contents>
 CreateWhitelistFromPatternsForTesting(
     const std::vector<std::string>& patterns) {
   FilterBuilder builder;
@@ -151,7 +186,16 @@ CreateWhitelistFromPatternsForTesting(
   return builder.Build();
 }
 
-scoped_ptr<SupervisedUserURLFilter::Contents>
+std::unique_ptr<SupervisedUserURLFilter::Contents>
+CreateWhitelistsFromSiteListsForTesting(
+    const std::vector<scoped_refptr<SupervisedUserSiteList>>& site_lists) {
+  FilterBuilder builder;
+  for (const scoped_refptr<SupervisedUserSiteList>& site_list : site_lists)
+    builder.AddSiteList(site_list);
+  return builder.Build();
+}
+
+std::unique_ptr<SupervisedUserURLFilter::Contents>
 LoadWhitelistsOnBlockingPoolThread(
     const std::vector<scoped_refptr<SupervisedUserSiteList>>& site_lists) {
   FilterBuilder builder;
@@ -161,16 +205,47 @@ LoadWhitelistsOnBlockingPoolThread(
   return builder.Build();
 }
 
+// Host/regex pattern for AMP Cache URLs.
+// See https://developers.google.com/amp/cache/overview#amp-cache-url-format
+// for a definition of the format of AMP Cache URLs.
+const char kAmpCacheHost[] = "cdn.ampproject.org";
+const char kAmpCachePathPattern[] = "/[a-z]/(s/)?(.*)";
+
+// Regex pattern for the path of Google AMP Viewer URLs.
+const char kGoogleAmpViewerPathPattern[] = "/amp/(s/)?(.*)";
+
+// Host, path prefix, and query regex pattern for Google web cache URLs
+const char kGoogleWebCacheHost[] = "webcache.googleusercontent.com";
+const char kGoogleWebCachePathPrefix[] = "/search";
+const char kGoogleWebCacheQueryPattern[] =
+    "cache:(.{12}:)?(https?://)?([^ :]*)( [^:]*)?";
+
+const char kGoogleTranslateSubdomain[] = "translate.";
+const char kAlternateGoogleTranslateHost[] = "translate.googleusercontent.com";
+
+GURL BuildURL(bool is_https, const std::string& host_and_path) {
+  std::string scheme = is_https ? url::kHttpsScheme : url::kHttpScheme;
+  return GURL(scheme + "://" + host_and_path);
+}
+
 }  // namespace
 
 SupervisedUserURLFilter::SupervisedUserURLFilter()
-    : default_behavior_(ALLOW),
+    : enabled_(false),
+      default_behavior_(ALLOW),
       contents_(new Contents()),
       blacklist_(nullptr),
+      amp_cache_path_regex_(kAmpCachePathPattern),
+      google_amp_viewer_path_regex_(kGoogleAmpViewerPathPattern),
+      google_web_cache_query_regex_(kGoogleWebCacheQueryPattern),
       blocking_task_runner_(
           BrowserThread::GetBlockingPool()
               ->GetTaskRunnerWithShutdownBehavior(
-                  base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN).get()) {
+                  base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN)
+              .get()) {
+  DCHECK(amp_cache_path_regex_.ok());
+  DCHECK(google_amp_viewer_path_regex_.ok());
+  DCHECK(google_web_cache_query_regex_.ok());
   // Detach from the current thread so we can be constructed on a different
   // thread than the one where we're used.
   DetachFromThread();
@@ -189,28 +264,6 @@ SupervisedUserURLFilter::BehaviorFromInt(int behavior_value) {
 }
 
 // static
-int SupervisedUserURLFilter::GetBlockMessageID(FilteringBehaviorReason reason) {
-  switch (reason) {
-    case DEFAULT:
-      return IDS_SUPERVISED_USER_BLOCK_MESSAGE_DEFAULT;
-    case ASYNC_CHECKER:
-      return IDS_SUPERVISED_USER_BLOCK_MESSAGE_ASYNC_CHECKER;
-    case BLACKLIST:
-      return IDS_SUPERVISED_USER_BLOCK_MESSAGE_BLACKLIST;
-    case MANUAL:
-      return IDS_SUPERVISED_USER_BLOCK_MESSAGE_MANUAL;
-  }
-  NOTREACHED();
-  return 0;
-}
-
-// static
-bool SupervisedUserURLFilter::ReasonIsAutomatic(
-    FilteringBehaviorReason reason) {
-  return reason == ASYNC_CHECKER || reason == BLACKLIST;
-}
-
-// static
 GURL SupervisedUserURLFilter::Normalize(const GURL& url) {
   GURL normalized_url = url;
   GURL::Replacements replacements;
@@ -224,20 +277,21 @@ GURL SupervisedUserURLFilter::Normalize(const GURL& url) {
 
 // static
 bool SupervisedUserURLFilter::HasFilteredScheme(const GURL& url) {
-  for (size_t i = 0; i < arraysize(kFilteredSchemes); ++i) {
-    if (url.scheme() == kFilteredSchemes[i])
+  for (const char* scheme : kFilteredSchemes) {
+    if (url.scheme() == scheme)
       return true;
   }
   return false;
 }
 
 // static
-bool SupervisedUserURLFilter::HostMatchesPattern(const std::string& host,
-                                                 const std::string& pattern) {
+bool SupervisedUserURLFilter::HostMatchesPattern(
+    const std::string& canonical_host,
+    const std::string& pattern) {
   std::string trimmed_pattern = pattern;
-  std::string trimmed_host = host;
+  std::string trimmed_host = canonical_host;
   if (base::EndsWith(pattern, ".*", base::CompareCase::SENSITIVE)) {
-    size_t registry_length = GetRegistryLength(
+    size_t registry_length = GetCanonicalHostRegistryLength(
         trimmed_host, EXCLUDE_UNKNOWN_REGISTRIES, EXCLUDE_PRIVATE_REGISTRIES);
     // A host without a known registry part does not match.
     if (registry_length == 0)
@@ -270,40 +324,78 @@ bool SupervisedUserURLFilter::HostMatchesPattern(const std::string& host,
   return trimmed_host == trimmed_pattern;
 }
 
+void SupervisedUserURLFilter::SetEnabled(bool enabled) {
+  if (enabled_ == enabled)
+    return;
+
+  enabled_ = enabled;
+
+  for (Observer& observer : observers_)
+    observer.OnSiteListUpdated();
+}
+
 SupervisedUserURLFilter::FilteringBehavior
 SupervisedUserURLFilter::GetFilteringBehaviorForURL(const GURL& url) const {
-  FilteringBehaviorReason reason;
+  supervised_user_error_page::FilteringBehaviorReason reason;
   return GetFilteringBehaviorForURL(url, false, &reason);
 }
 
 bool SupervisedUserURLFilter::GetManualFilteringBehaviorForURL(
     const GURL& url, FilteringBehavior* behavior) const {
-  FilteringBehaviorReason reason;
+  supervised_user_error_page::FilteringBehaviorReason reason;
   *behavior = GetFilteringBehaviorForURL(url, true, &reason);
-  return reason == MANUAL;
+  return reason == supervised_user_error_page::MANUAL;
 }
 
 SupervisedUserURLFilter::FilteringBehavior
 SupervisedUserURLFilter::GetFilteringBehaviorForURL(
     const GURL& url,
     bool manual_only,
-    FilteringBehaviorReason* reason) const {
+    supervised_user_error_page::FilteringBehaviorReason* reason) const {
   DCHECK(CalledOnValidThread());
 
-  *reason = MANUAL;
+  if (!enabled_) {
+    *reason = supervised_user_error_page::DEFAULT;
+    return ALLOW;
+  }
+
+  GURL effective_url = GetEmbeddedURL(url);
+  if (!effective_url.is_valid())
+    effective_url = url;
+
+  *reason = supervised_user_error_page::MANUAL;
 
   // URLs with a non-standard scheme (e.g. chrome://) are always allowed.
-  if (!HasFilteredScheme(url))
+  if (!HasFilteredScheme(effective_url))
     return ALLOW;
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // Allow webstore crx downloads. This applies to both extension installation
+  // and updates.
+  if (extension_urls::GetWebstoreUpdateUrl() == Normalize(effective_url))
+    return ALLOW;
+
+  // The actual CRX files are downloaded from other URLs. Allow them too.
+  for (const char* crx_download_url_str : kCrxDownloadUrls) {
+    GURL crx_download_url(crx_download_url_str);
+    if (effective_url.SchemeIs(url::kHttpsScheme) &&
+        crx_download_url.host_piece() == effective_url.host_piece() &&
+        base::StartsWith(effective_url.path_piece(),
+                         crx_download_url.path_piece(),
+                         base::CompareCase::SENSITIVE)) {
+      return ALLOW;
+    }
+  }
+#endif
+
   // Check manual overrides for the exact URL.
-  std::map<GURL, bool>::const_iterator url_it = url_map_.find(Normalize(url));
+  auto url_it = url_map_.find(Normalize(effective_url));
   if (url_it != url_map_.end())
     return url_it->second ? ALLOW : BLOCK;
 
   // Check manual overrides for the hostname.
-  std::string host = url.host();
-  std::map<std::string, bool>::const_iterator host_it = host_map_.find(host);
+  const std::string host = effective_url.host();
+  auto host_it = host_map_.find(host);
   if (host_it != host_map_.end())
     return host_it->second ? ALLOW : BLOCK;
 
@@ -318,37 +410,44 @@ SupervisedUserURLFilter::GetFilteringBehaviorForURL(
 
   // Check the list of URL patterns.
   std::set<URLMatcherConditionSet::ID> matching_ids =
-      contents_->url_matcher.MatchURL(url);
-  if (!matching_ids.empty())
+      contents_->url_matcher.MatchURL(effective_url);
+
+  if (!matching_ids.empty()) {
+    *reason = supervised_user_error_page::WHITELIST;
     return ALLOW;
+  }
 
   // Check the list of hostname hashes.
-  if (contents_->hostname_hashes.count(HostnameHash(url.host())))
+  if (contents_->hostname_hashes.count(HostnameHash(host))) {
+    *reason = supervised_user_error_page::WHITELIST;
     return ALLOW;
+  }
 
   // Check the static blacklist, unless the default is to block anyway.
-  if (!manual_only && default_behavior_ != BLOCK &&
-      blacklist_ && blacklist_->HasURL(url)) {
-    *reason = BLACKLIST;
+  if (!manual_only && default_behavior_ != BLOCK && blacklist_ &&
+      blacklist_->HasURL(effective_url)) {
+    *reason = supervised_user_error_page::BLACKLIST;
     return BLOCK;
   }
 
   // Fall back to the default behavior.
-  *reason = DEFAULT;
+  *reason = supervised_user_error_page::DEFAULT;
   return default_behavior_;
 }
 
 bool SupervisedUserURLFilter::GetFilteringBehaviorForURLWithAsyncChecks(
     const GURL& url,
     const FilteringBehaviorCallback& callback) const {
-  FilteringBehaviorReason reason = DEFAULT;
+  supervised_user_error_page::FilteringBehaviorReason reason =
+      supervised_user_error_page::DEFAULT;
   FilteringBehavior behavior = GetFilteringBehaviorForURL(url, false, &reason);
   // Any non-default reason trumps the async checker.
   // Also, if we're blocking anyway, then there's no need to check it.
-  if (reason != DEFAULT || behavior == BLOCK || !async_url_checker_) {
+  if (reason != supervised_user_error_page::DEFAULT || behavior == BLOCK ||
+      !async_url_checker_) {
     callback.Run(behavior, reason, false);
-    FOR_EACH_OBSERVER(Observer, observers_,
-                      OnURLChecked(url, behavior, reason, false));
+    for (Observer& observer : observers_)
+      observer.OnURLChecked(url, behavior, reason, false);
     return true;
   }
 
@@ -357,6 +456,29 @@ bool SupervisedUserURLFilter::GetFilteringBehaviorForURLWithAsyncChecks(
       base::Bind(&SupervisedUserURLFilter::CheckCallback,
                  base::Unretained(this),
                  callback));
+}
+
+std::map<std::string, base::string16>
+SupervisedUserURLFilter::GetMatchingWhitelistTitles(const GURL& url) const {
+  std::map<std::string, base::string16> whitelists;
+
+  std::set<URLMatcherConditionSet::ID> matching_ids =
+      contents_->url_matcher.MatchURL(url);
+
+  for (const auto& matching_id : matching_ids) {
+    const scoped_refptr<SupervisedUserSiteList>& site_list =
+        contents_->site_lists_by_matcher_id[matching_id];
+    whitelists[site_list->id()] = site_list->title();
+  }
+
+  // Add the site lists that match the URL hostname hash to the map of
+  // whitelists (IDs -> titles).
+  const auto& range =
+      contents_->hostname_hashes.equal_range(HostnameHash(url.host()));
+  for (auto it = range.first; it != range.second; ++it)
+    whitelists[it->second->id()] = it->second->title();
+
+  return whitelists;
 }
 
 void SupervisedUserURLFilter::SetDefaultFilteringBehavior(
@@ -381,7 +503,8 @@ void SupervisedUserURLFilter::LoadWhitelists(
       base::Bind(&SupervisedUserURLFilter::SetContents, this));
 }
 
-void SupervisedUserURLFilter::SetBlacklist(SupervisedUserBlacklist* blacklist) {
+void SupervisedUserURLFilter::SetBlacklist(
+    const SupervisedUserBlacklist* blacklist) {
   blacklist_ = blacklist;
 }
 
@@ -400,6 +523,16 @@ void SupervisedUserURLFilter::SetFromPatternsForTesting(
       base::Bind(&SupervisedUserURLFilter::SetContents, this));
 }
 
+void SupervisedUserURLFilter::SetFromSiteListsForTesting(
+    const std::vector<scoped_refptr<SupervisedUserSiteList>>& site_lists) {
+  DCHECK(CalledOnValidThread());
+
+  base::PostTaskAndReplyWithResult(
+      blocking_task_runner_.get(), FROM_HERE,
+      base::Bind(&CreateWhitelistsFromSiteListsForTesting, site_lists),
+      base::Bind(&SupervisedUserURLFilter::SetContents, this));
+}
+
 void SupervisedUserURLFilter::SetManualHosts(
     const std::map<std::string, bool>* host_map) {
   DCHECK(CalledOnValidThread());
@@ -414,7 +547,11 @@ void SupervisedUserURLFilter::SetManualURLs(
 
 void SupervisedUserURLFilter::InitAsyncURLChecker(
     net::URLRequestContextGetter* context) {
-  async_url_checker_.reset(new SupervisedUserAsyncURLChecker(context));
+  async_url_checker_.reset(new SafeSearchURLChecker(context));
+}
+
+void SupervisedUserURLFilter::ClearAsyncURLChecker() {
+  async_url_checker_.reset();
 }
 
 bool SupervisedUserURLFilter::HasAsyncURLChecker() const {
@@ -423,7 +560,7 @@ bool SupervisedUserURLFilter::HasAsyncURLChecker() const {
 
 void SupervisedUserURLFilter::Clear() {
   default_behavior_ = ALLOW;
-  SetContents(make_scoped_ptr(new Contents()));
+  SetContents(base::MakeUnique<Contents>());
   url_map_.clear();
   host_map_.clear();
   blacklist_ = nullptr;
@@ -443,20 +580,106 @@ void SupervisedUserURLFilter::SetBlockingTaskRunnerForTesting(
   blocking_task_runner_ = task_runner;
 }
 
-void SupervisedUserURLFilter::SetContents(scoped_ptr<Contents> contents) {
+GURL SupervisedUserURLFilter::GetEmbeddedURL(const GURL& url) const {
+  // Check for "*.cdn.ampproject.org" URLs.
+  if (url.DomainIs(kAmpCacheHost)) {
+    std::string s;
+    std::string embedded;
+    if (re2::RE2::FullMatch(url.path(), amp_cache_path_regex_, &s, &embedded)) {
+      if (url.has_query())
+        embedded += "?" + url.query();
+      return BuildURL(!s.empty(), embedded);
+    }
+  }
+
+  // Check for "www.google.TLD/amp/" URLs.
+  if (google_util::IsGoogleDomainUrl(
+          url, google_util::DISALLOW_SUBDOMAIN,
+          google_util::DISALLOW_NON_STANDARD_PORTS)) {
+    std::string s;
+    std::string embedded;
+    if (re2::RE2::FullMatch(url.path(), google_amp_viewer_path_regex_, &s,
+                            &embedded)) {
+      // The embedded URL may be percent-encoded. Undo that.
+      embedded = net::UnescapeURLComponent(
+          embedded,
+          net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+              net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+      return BuildURL(!s.empty(), embedded);
+    }
+  }
+
+  // Check for Google web cache URLs
+  // ("webcache.googleusercontent.com/search?q=cache:...").
+  std::string query;
+  if (url.host_piece() == kGoogleWebCacheHost &&
+      url.path_piece().starts_with(kGoogleWebCachePathPrefix) &&
+      net::GetValueForKeyInQuery(url, "q", &query)) {
+    std::string fingerprint;
+    std::string scheme;
+    std::string embedded;
+    if (re2::RE2::FullMatch(query, google_web_cache_query_regex_, &fingerprint,
+                            &scheme, &embedded)) {
+      return BuildURL(scheme == "https://", embedded);
+    }
+  }
+
+  // Check for Google translate URLs ("translate.google.TLD/...?...&u=URL" or
+  // "translate.googleusercontent.com/...?...&u=URL").
+  bool is_translate = false;
+  if (base::StartsWith(url.host_piece(), kGoogleTranslateSubdomain,
+                       base::CompareCase::SENSITIVE)) {
+    // Remove the "translate." prefix.
+    GURL::Replacements replace;
+    replace.SetHostStr(
+        url.host_piece().substr(strlen(kGoogleTranslateSubdomain)));
+    GURL trimmed = url.ReplaceComponents(replace);
+    // Check that the remainder is a Google URL. Note: IsGoogleDomainUrl checks
+    // for [www.]google.TLD, but we don't want the "www.", so explicitly exclude
+    // that.
+    // TODO(treib,pam): Instead of excluding "www." manually, teach
+    // IsGoogleDomainUrl a mode that doesn't allow it.
+    is_translate = google_util::IsGoogleDomainUrl(
+                       trimmed, google_util::DISALLOW_SUBDOMAIN,
+                       google_util::DISALLOW_NON_STANDARD_PORTS) &&
+                   !base::StartsWith(trimmed.host_piece(), "www.",
+                                     base::CompareCase::SENSITIVE);
+  }
+  bool is_alternate_translate =
+      url.host_piece() == kAlternateGoogleTranslateHost;
+  if (is_translate || is_alternate_translate) {
+    std::string embedded;
+    if (net::GetValueForKeyInQuery(url, "u", &embedded)) {
+      // The embedded URL may or may not include a scheme. Fix it if necessary.
+      return url_formatter::FixupURL(embedded, /*desired_tld=*/std::string());
+    }
+  }
+
+  return GURL();
+}
+
+void SupervisedUserURLFilter::SetContents(std::unique_ptr<Contents> contents) {
   DCHECK(CalledOnValidThread());
-  contents_ = contents.Pass();
-  FOR_EACH_OBSERVER(Observer, observers_, OnSiteListUpdated());
+  contents_ = std::move(contents);
+  if (enabled_) {
+    for (Observer& observer : observers_)
+      observer.OnSiteListUpdated();
+  }
 }
 
 void SupervisedUserURLFilter::CheckCallback(
     const FilteringBehaviorCallback& callback,
     const GURL& url,
-    FilteringBehavior behavior,
+    SafeSearchURLChecker::Classification classification,
     bool uncertain) const {
   DCHECK(default_behavior_ != BLOCK);
 
-  callback.Run(behavior, ASYNC_CHECKER, uncertain);
-  FOR_EACH_OBSERVER(Observer, observers_,
-                    OnURLChecked(url, behavior, ASYNC_CHECKER, uncertain));
+  FilteringBehavior behavior =
+      GetBehaviorFromSafeSearchClassification(classification);
+
+  callback.Run(behavior, supervised_user_error_page::ASYNC_CHECKER, uncertain);
+  for (Observer& observer : observers_) {
+    observer.OnURLChecked(url, behavior,
+                          supervised_user_error_page::ASYNC_CHECKER, uncertain);
+  }
 }

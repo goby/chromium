@@ -4,9 +4,13 @@
 
 #include "components/bookmarks/browser/bookmark_codec.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <utility>
 
 #include "base/json/json_string_value_serializer.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -19,24 +23,25 @@ using base::Time;
 
 namespace bookmarks {
 
-const char* BookmarkCodec::kRootsKey = "roots";
-const char* BookmarkCodec::kRootFolderNameKey = "bookmark_bar";
-const char* BookmarkCodec::kOtherBookmarkFolderNameKey = "other";
+const char BookmarkCodec::kRootsKey[] = "roots";
+const char BookmarkCodec::kRootFolderNameKey[] = "bookmark_bar";
+const char BookmarkCodec::kOtherBookmarkFolderNameKey[] = "other";
 // The value is left as 'synced' for historical reasons.
-const char* BookmarkCodec::kMobileBookmarkFolderNameKey = "synced";
-const char* BookmarkCodec::kVersionKey = "version";
-const char* BookmarkCodec::kChecksumKey = "checksum";
-const char* BookmarkCodec::kIdKey = "id";
-const char* BookmarkCodec::kTypeKey = "type";
-const char* BookmarkCodec::kNameKey = "name";
-const char* BookmarkCodec::kDateAddedKey = "date_added";
-const char* BookmarkCodec::kURLKey = "url";
-const char* BookmarkCodec::kDateModifiedKey = "date_modified";
-const char* BookmarkCodec::kChildrenKey = "children";
-const char* BookmarkCodec::kMetaInfo = "meta_info";
-const char* BookmarkCodec::kSyncTransactionVersion = "sync_transaction_version";
-const char* BookmarkCodec::kTypeURL = "url";
-const char* BookmarkCodec::kTypeFolder = "folder";
+const char BookmarkCodec::kMobileBookmarkFolderNameKey[] = "synced";
+const char BookmarkCodec::kVersionKey[] = "version";
+const char BookmarkCodec::kChecksumKey[] = "checksum";
+const char BookmarkCodec::kIdKey[] = "id";
+const char BookmarkCodec::kTypeKey[] = "type";
+const char BookmarkCodec::kNameKey[] = "name";
+const char BookmarkCodec::kDateAddedKey[] = "date_added";
+const char BookmarkCodec::kURLKey[] = "url";
+const char BookmarkCodec::kDateModifiedKey[] = "date_modified";
+const char BookmarkCodec::kChildrenKey[] = "children";
+const char BookmarkCodec::kMetaInfo[] = "meta_info";
+const char BookmarkCodec::kSyncTransactionVersion[] =
+    "sync_transaction_version";
+const char BookmarkCodec::kTypeURL[] = "url";
+const char BookmarkCodec::kTypeFolder[] = "folder";
 
 // Current version of the file.
 static const int kCurrentVersion = 1;
@@ -111,8 +116,9 @@ bool BookmarkCodec::Decode(BookmarkNode* bb_node,
   return success;
 }
 
-base::Value* BookmarkCodec::EncodeNode(const BookmarkNode* node) {
-  base::DictionaryValue* value = new base::DictionaryValue();
+std::unique_ptr<base::Value> BookmarkCodec::EncodeNode(
+    const BookmarkNode* node) {
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   std::string id = base::Int64ToString(node->id());
   value->SetString(kIdKey, id);
   const base::string16& title = node->GetTitle();
@@ -144,7 +150,7 @@ base::Value* BookmarkCodec::EncodeNode(const BookmarkNode* node) {
     value->SetString(kSyncTransactionVersion,
                      base::Int64ToString(node->sync_transaction_version()));
   }
-  return value;
+  return std::move(value);
 }
 
 base::Value* BookmarkCodec::EncodeMetaInfo(
@@ -171,7 +177,7 @@ bool BookmarkCodec::DecodeHelper(BookmarkNode* bb_node,
 
   const base::Value* checksum_value;
   if (d_value->Get(kChecksumKey, &checksum_value)) {
-    if (checksum_value->GetType() != base::Value::TYPE_STRING)
+    if (checksum_value->GetType() != base::Value::Type::STRING)
       return false;
     if (!checksum_value->GetAsString(&stored_checksum_))
       return false;
@@ -267,6 +273,12 @@ bool BookmarkCodec::DecodeNode(const base::DictionaryValue& value,
     return false;
   }
 
+  // It's not valid to have both a node and a specified parent.
+  if (node && parent) {
+    NOTREACHED();
+    return false;
+  }
+
   std::string id_string;
   int64_t id = 0;
   if (ids_valid_) {
@@ -309,7 +321,7 @@ bool BookmarkCodec::DecodeNode(const base::DictionaryValue& value,
       return false;  // Node invalid.
 
     if (parent)
-      parent->Add(node, parent->child_count());
+      parent->Add(base::WrapUnique(node), parent->child_count());
     node->set_type(BookmarkNode::URL);
     UpdateChecksumWithUrlNode(id_string, title, url_string);
   } else {
@@ -321,7 +333,7 @@ bool BookmarkCodec::DecodeNode(const base::DictionaryValue& value,
     if (!value.Get(kChildrenKey, &child_values))
       return false;
 
-    if (child_values->GetType() != base::Value::TYPE_LIST)
+    if (child_values->GetType() != base::Value::Type::LIST)
       return false;
 
     if (!node) {
@@ -337,7 +349,7 @@ bool BookmarkCodec::DecodeNode(const base::DictionaryValue& value,
     node->set_date_folder_modified(Time::FromInternalValue(internal_time));
 
     if (parent)
-      parent->Add(node, parent->child_count());
+      parent->Add(base::WrapUnique(node), parent->child_count());
 
     UpdateChecksumWithFolderNode(id_string, title);
 
@@ -379,11 +391,11 @@ bool BookmarkCodec::DecodeMetaInfo(const base::DictionaryValue& value,
   if (!value.Get(kMetaInfo, &meta_info))
     return true;
 
-  scoped_ptr<base::Value> deserialized_holder;
+  std::unique_ptr<base::Value> deserialized_holder;
 
   // Meta info used to be stored as a serialized dictionary, so attempt to
   // parse the value as one.
-  if (meta_info->IsType(base::Value::TYPE_STRING)) {
+  if (meta_info->IsType(base::Value::Type::STRING)) {
     std::string meta_info_str;
     meta_info->GetAsString(&meta_info_str);
     JSONStringValueDeserializer deserializer(meta_info_str);
@@ -421,11 +433,11 @@ void BookmarkCodec::DecodeMetaInfoHelper(
     const std::string& prefix,
     BookmarkNode::MetaInfoMap* meta_info_map) {
   for (base::DictionaryValue::Iterator it(dict); !it.IsAtEnd(); it.Advance()) {
-    if (it.value().IsType(base::Value::TYPE_DICTIONARY)) {
+    if (it.value().IsType(base::Value::Type::DICTIONARY)) {
       const base::DictionaryValue* subdict;
       it.value().GetAsDictionary(&subdict);
       DecodeMetaInfoHelper(*subdict, prefix + it.key() + ".", meta_info_map);
-    } else if (it.value().IsType(base::Value::TYPE_STRING)) {
+    } else if (it.value().IsType(base::Value::Type::STRING)) {
       it.value().GetAsString(&(*meta_info_map)[prefix + it.key()]);
     }
   }

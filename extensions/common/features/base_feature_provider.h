@@ -6,25 +6,27 @@
 #define EXTENSIONS_COMMON_FEATURES_BASE_FEATURE_PROVIDER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/linked_ptr.h"
-#include "base/values.h"
+#include "base/macros.h"
+#include "base/strings/string_piece.h"
 #include "extensions/common/features/feature_provider.h"
-#include "extensions/common/features/simple_feature.h"
 
 namespace extensions {
+class Feature;
 
-// Reads Features out of a simple JSON file description.
+// A FeatureProvider contains the mapping of all feature names specified in the
+// _*_features.json files to the Feature classes. Look up a Feature by its name
+// to determine whether or not it is available in a certain context.
+// Subclasses implement the specific logic for how the features are populated;
+// this class handles vending the features given the query.
+// TODO(devlin): We could probably combine this and FeatureProvider, since both
+// contain common functionality and neither are designed to be full
+// implementations.
 class BaseFeatureProvider : public FeatureProvider {
  public:
-  typedef SimpleFeature*(*FeatureFactory)();
-
-  // Creates a new BaseFeatureProvider. Pass null to |factory| to have the
-  // provider create plain old Feature instances.
-  BaseFeatureProvider(const base::DictionaryValue& root,
-                      FeatureFactory factory);
   ~BaseFeatureProvider() override;
 
   // Gets the feature |feature_name|, if it exists.
@@ -32,16 +34,21 @@ class BaseFeatureProvider : public FeatureProvider {
   Feature* GetParent(Feature* feature) const override;
   std::vector<Feature*> GetChildren(const Feature& parent) const override;
 
-  const std::vector<std::string>& GetAllFeatureNames() const override;
+  const FeatureMap& GetAllFeatures() const override;
+
+ protected:
+  BaseFeatureProvider();
+
+  void AddFeature(base::StringPiece name, std::unique_ptr<Feature> feature);
+
+  // Takes ownership. Used in preference to unique_ptr variant to reduce size
+  // of generated code.
+  void AddFeature(base::StringPiece name, Feature* feature);
 
  private:
-  typedef std::map<std::string, linked_ptr<Feature> > FeatureMap;
-  FeatureMap features_;
+  std::map<std::string, std::unique_ptr<Feature>> features_;
 
-  // Populated on first use.
-  mutable std::vector<std::string> feature_names_;
-
-  FeatureFactory factory_;
+  DISALLOW_COPY_AND_ASSIGN(BaseFeatureProvider);
 };
 
 }  // namespace extensions

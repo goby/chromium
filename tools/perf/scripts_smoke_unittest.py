@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 
+from telemetry import benchmark
+
 
 class ScriptsSmokeTest(unittest.TestCase):
 
@@ -24,8 +26,8 @@ class ScriptsSmokeTest(unittest.TestCase):
 
   def testRunBenchmarkHelp(self):
     return_code, stdout = self.RunPerfScript('run_benchmark help')
+    self.assertEquals(return_code, 0, stdout)
     self.assertIn('Available commands are', stdout)
-    self.assertEquals(return_code, 0)
 
   def testRunBenchmarkRunListsOutBenchmarks(self):
     return_code, stdout = self.RunPerfScript('run_benchmark run')
@@ -37,17 +39,45 @@ class ScriptsSmokeTest(unittest.TestCase):
     self.assertIn('No benchmark named "foo"', stdout)
     self.assertNotEquals(return_code, 0)
 
+  @benchmark.Disabled('chromeos')  # crbug.com/483212
+  @benchmark.Disabled('android')   # crbug.com/641934
   def testRunBenchmarkListListsOutBenchmarks(self):
     return_code, stdout = self.RunPerfScript('run_benchmark list')
+    self.assertEquals(return_code, 0, stdout)
     self.assertIn('Pass --browser to list benchmarks', stdout)
     self.assertIn('dummy_benchmark.stable_benchmark_1', stdout)
-    self.assertEquals(return_code, 0)
+
+  @benchmark.Disabled('all')  # crbug.com/641934
+  def testRunBenchmarkListListsOutBenchmarksOnAndroid(self):
+    return_code, stdout = self.RunPerfScript(
+        'run_benchmark list --device=android --browser=android-chromium')
+    self.assertEquals(return_code, 0, stdout)
+    self.assertIn('Pass --browser to list benchmarks', stdout)
+    self.assertIn('dummy_benchmark.stable_benchmark_1', stdout)
+
+  def testRunTrybotWithTypo(self):
+    return_code, stdout = self.RunPerfScript('run_benchmark try linux octaenz')
+    self.assertIn('No benchmark named "octaenz"', stdout)
+    self.assertIn('octane', stdout)
+    self.assertNotEqual(return_code, 0)
 
   def testRunRecordWprHelp(self):
     return_code, stdout = self.RunPerfScript('record_wpr')
+    self.assertEquals(return_code, 0, stdout)
     self.assertIn('optional arguments:', stdout)
-    self.assertEquals(return_code, 0)
 
+  def testRunRecordWprList(self):
+    return_code, stdout = self.RunPerfScript('record_wpr --list-benchmarks')
+    # TODO(nednguyen): Remove this once we figure out why importing
+    # small_profile_extender fails on Android dbg.
+    # crbug.com/561668
+    if 'ImportError: cannot import name small_profile_extender' in stdout:
+      self.skipTest('small_profile_extender is missing')
+    self.assertEquals(return_code, 0, stdout)
+    self.assertIn('kraken', stdout)
+
+  # crbug.com/483212
+  @benchmark.Disabled('chromeos')
   def testRunBenchmarkListJSONListsOutBenchmarks(self):
     tmp_file = tempfile.NamedTemporaryFile(delete=False)
     tmp_file_name = tmp_file.name

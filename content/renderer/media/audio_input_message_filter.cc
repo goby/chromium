@@ -39,7 +39,7 @@ class AudioInputMessageFilter::AudioInputIPCImpl
                     int session_id,
                     const media::AudioParameters& params,
                     bool automatic_gain_control,
-                    uint32 total_segments) override;
+                    uint32_t total_segments) override;
   void RecordStream() override;
   void SetVolume(double volume) override;
   void CloseStream() override;
@@ -92,11 +92,11 @@ bool AudioInputMessageFilter::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void AudioInputMessageFilter::OnFilterAdded(IPC::Sender* sender) {
+void AudioInputMessageFilter::OnFilterAdded(IPC::Channel* channel) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
 
   // Captures the sender for IPC.
-  sender_ = sender;
+  sender_ = channel;
 }
 
 void AudioInputMessageFilter::OnFilterRemoved() {
@@ -114,7 +114,7 @@ void AudioInputMessageFilter::OnChannelClosing() {
   DLOG_IF(WARNING, !delegates_.IsEmpty())
       << "Not all audio devices have been closed.";
 
-  IDMap<media::AudioInputIPCDelegate>::iterator it(&delegates_);
+  IDMap<media::AudioInputIPCDelegate*>::iterator it(&delegates_);
   while (!it.IsAtEnd()) {
     it.GetCurrentValue()->OnIPCClosed();
     delegates_.Remove(it.GetCurrentKey());
@@ -126,8 +126,8 @@ void AudioInputMessageFilter::OnStreamCreated(
     int stream_id,
     base::SharedMemoryHandle handle,
     base::SyncSocket::TransitDescriptor socket_descriptor,
-    uint32 length,
-    uint32 total_segments) {
+    uint32_t length,
+    uint32_t total_segments) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   LogMessage(stream_id, "OnStreamCreated");
 
@@ -178,10 +178,10 @@ AudioInputMessageFilter::AudioInputIPCImpl::AudioInputIPCImpl(
 
 AudioInputMessageFilter::AudioInputIPCImpl::~AudioInputIPCImpl() {}
 
-scoped_ptr<media::AudioInputIPC> AudioInputMessageFilter::CreateAudioInputIPC(
-    int render_frame_id) {
+std::unique_ptr<media::AudioInputIPC>
+AudioInputMessageFilter::CreateAudioInputIPC(int render_frame_id) {
   DCHECK_GT(render_frame_id, 0);
-  return scoped_ptr<media::AudioInputIPC>(
+  return std::unique_ptr<media::AudioInputIPC>(
       new AudioInputIPCImpl(this, render_frame_id));
 }
 
@@ -190,7 +190,7 @@ void AudioInputMessageFilter::AudioInputIPCImpl::CreateStream(
     int session_id,
     const media::AudioParameters& params,
     bool automatic_gain_control,
-    uint32 total_segments) {
+    uint32_t total_segments) {
   DCHECK(filter_->io_task_runner_->BelongsToCurrentThread());
   DCHECK(delegate);
 

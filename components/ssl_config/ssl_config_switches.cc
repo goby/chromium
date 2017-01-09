@@ -6,20 +6,19 @@
 
 namespace switches {
 
-// Specifies the maximum SSL/TLS version ("tls1", "tls1.1", or "tls1.2").
+// Specifies the maximum SSL/TLS version ("tls1", "tls1.1", "tls1.2", or
+// "tls1.3").
 const char kSSLVersionMax[] = "ssl-version-max";
 
-// Specifies the minimum SSL/TLS version ("tls1", "tls1.1", or "tls1.2").
+// Specifies the minimum SSL/TLS version ("tls1", "tls1.1", "tls1.2", or
+// "tls1.3").
 const char kSSLVersionMin[] = "ssl-version-min";
 
-// Specifies the minimum SSL/TLS version ("tls1", "tls1.1", or "tls1.2") that
-// TLS fallback will accept.
-const char kSSLVersionFallbackMin[] = "ssl-version-fallback-min";
-
-// These values aren't switches, but rather the values that kSSLVersionMax,
-// kSSLVersionMin and kSSLVersionFallbackMin can have.
+// These values aren't switches, but rather the values that kSSLVersionMax and
+// kSSLVersionMin can have.
 const char kSSLVersionTLSv1[] = "tls1";
 const char kSSLVersionTLSv11[] = "tls1.1";
 const char kSSLVersionTLSv12[] = "tls1.2";
+const char kSSLVersionTLSv13[] = "tls1.3";
 
 }  // namespace switches

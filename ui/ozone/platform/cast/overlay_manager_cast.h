@@ -5,19 +5,33 @@
 #ifndef UI_OZONE_PLATFORM_CAST_OVERLAY_MANAGER_CAST_H_
 #define UI_OZONE_PLATFORM_CAST_OVERLAY_MANAGER_CAST_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/callback.h"
+#include "base/macros.h"
+#include "chromecast/public/graphics_types.h"
+#include "chromecast/public/video_plane.h"
+#include "ui/ozone/ozone_export.h"
 #include "ui/ozone/public/overlay_manager_ozone.h"
 
 namespace ui {
 
-class OverlayManagerCast : public OverlayManagerOzone {
+class OZONE_EXPORT OverlayManagerCast : public OverlayManagerOzone {
  public:
   OverlayManagerCast();
   ~OverlayManagerCast() override;
 
   // OverlayManagerOzone:
-  scoped_ptr<OverlayCandidatesOzone> CreateOverlayCandidates(
+  std::unique_ptr<OverlayCandidatesOzone> CreateOverlayCandidates(
       gfx::AcceleratedWidget w) override;
+
+  // Callback that's made whenever an overlay quad is processed
+  // in the compositor.  Used to allow hardware video plane to
+  // be positioned to match compositor hole.
+  using OverlayCompositedCallback =
+      base::Callback<void(const chromecast::RectF&,
+                          chromecast::media::VideoPlane::Transform)>;
+  static void SetOverlayCompositedCallback(const OverlayCompositedCallback& cb);
 
  private:
 

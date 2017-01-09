@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "cc/layers/picture_image_layer.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/test/layer_tree_pixel_resource_test.h"
@@ -14,15 +16,15 @@
 namespace cc {
 namespace {
 
-SkXfermode::Mode const kBlendModes[] = {
-    SkXfermode::kSrcOver_Mode,   SkXfermode::kScreen_Mode,
-    SkXfermode::kOverlay_Mode,   SkXfermode::kDarken_Mode,
-    SkXfermode::kLighten_Mode,   SkXfermode::kColorDodge_Mode,
-    SkXfermode::kColorBurn_Mode, SkXfermode::kHardLight_Mode,
-    SkXfermode::kSoftLight_Mode, SkXfermode::kDifference_Mode,
-    SkXfermode::kExclusion_Mode, SkXfermode::kMultiply_Mode,
-    SkXfermode::kHue_Mode,       SkXfermode::kSaturation_Mode,
-    SkXfermode::kColor_Mode,     SkXfermode::kLuminosity_Mode};
+SkBlendMode const kBlendModes[] = {
+    SkBlendMode::kSrcOver,   SkBlendMode::kScreen,
+    SkBlendMode::kOverlay,   SkBlendMode::kDarken,
+    SkBlendMode::kLighten,   SkBlendMode::kColorDodge,
+    SkBlendMode::kColorBurn, SkBlendMode::kHardLight,
+    SkBlendMode::kSoftLight, SkBlendMode::kDifference,
+    SkBlendMode::kExclusion, SkBlendMode::kMultiply,
+    SkBlendMode::kHue,       SkBlendMode::kSaturation,
+    SkBlendMode::kColor,     SkBlendMode::kLuminosity};
 
 SkColor kCSSTestColors[] = {
     0xffff0000,  // red
@@ -50,11 +52,11 @@ SkColor kCSSTestColors[] = {
 const int kBlendModesCount = arraysize(kBlendModes);
 const int kCSSTestColorsCount = arraysize(kCSSTestColors);
 
-using RenderPassOptions = uint32;
-const uint32 kUseMasks = 1 << 0;
-const uint32 kUseAntialiasing = 1 << 1;
-const uint32 kUseColorMatrix = 1 << 2;
-const uint32 kForceShaders = 1 << 3;
+using RenderPassOptions = uint32_t;
+const uint32_t kUseMasks = 1 << 0;
+const uint32_t kUseAntialiasing = 1 << 1;
+const uint32_t kUseColorMatrix = 1 << 2;
+const uint32_t kForceShaders = 1 << 3;
 
 class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
  public:
@@ -129,8 +131,8 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
     // Draw the backdrop with horizontal lanes.
     const int kLaneWidth = width;
     const int kLaneHeight = height / kCSSTestColorsCount;
-    skia::RefPtr<SkSurface> backing_store =
-        skia::AdoptRef(SkSurface::NewRasterN32Premul(width, height));
+    sk_sp<SkSurface> backing_store =
+        SkSurface::MakeRasterN32Premul(width, height);
     SkCanvas* canvas = backing_store->getCanvas();
     canvas->clear(SK_ColorTRANSPARENT);
     for (int i = 0; i < kCSSTestColorsCount; ++i) {
@@ -139,27 +141,23 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
       canvas->drawRect(
           SkRect::MakeXYWH(0, i * kLaneHeight, kLaneWidth, kLaneHeight), paint);
     }
-    scoped_refptr<PictureImageLayer> layer =
-        PictureImageLayer::Create(layer_settings());
+    scoped_refptr<PictureImageLayer> layer = PictureImageLayer::Create();
     layer->SetIsDrawable(true);
     layer->SetBounds(gfx::Size(width, height));
-    skia::RefPtr<const SkImage> image =
-        skia::AdoptRef(backing_store->newImageSnapshot());
-    layer->SetImage(std::move(image));
+    layer->SetImage(backing_store->makeImageSnapshot());
     return layer;
   }
 
   void SetupMaskLayer(scoped_refptr<Layer> layer) {
     const int kMaskOffset = 2;
     gfx::Size bounds = layer->bounds();
-    scoped_refptr<PictureImageLayer> mask =
-        PictureImageLayer::Create(layer_settings());
+    scoped_refptr<PictureImageLayer> mask = PictureImageLayer::Create();
     mask->SetIsDrawable(true);
     mask->SetIsMask(true);
     mask->SetBounds(bounds);
 
-    skia::RefPtr<SkSurface> surface = skia::AdoptRef(
-        SkSurface::NewRasterN32Premul(bounds.width(), bounds.height()));
+    sk_sp<SkSurface> surface =
+        SkSurface::MakeRasterN32Premul(bounds.width(), bounds.height());
     SkCanvas* canvas = surface->getCanvas();
     SkPaint paint;
     paint.setColor(SK_ColorWHITE);
@@ -168,9 +166,7 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
                                       bounds.width() - kMaskOffset * 2,
                                       bounds.height() - kMaskOffset * 2),
                      paint);
-    skia::RefPtr<const SkImage> image =
-        skia::AdoptRef(surface->newImageSnapshot());
-    mask->SetImage(std::move(image));
+    mask->SetImage(surface->makeImageSnapshot());
     layer->SetMaskLayer(mask.get());
   }
 
@@ -187,12 +183,12 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
     const int kLanesCount = kBlendModesCount + 4;
     const SkColor kMiscOpaqueColor = 0xffc86464;
     const SkColor kMiscTransparentColor = 0x80c86464;
-    const SkXfermode::Mode kCoeffBlendMode = SkXfermode::kScreen_Mode;
-    const SkXfermode::Mode kShaderBlendMode = SkXfermode::kColorBurn_Mode;
+    const SkBlendMode kCoeffBlendMode = SkBlendMode::kScreen;
+    const SkBlendMode kShaderBlendMode = SkBlendMode::kColorBurn;
     // add vertical lanes with each of the blend modes
     for (int i = 0; i < kLanesCount; ++i) {
       gfx::Rect child_rect(i * lane_width, 0, lane_width, lane_height);
-      SkXfermode::Mode blend_mode = SkXfermode::kSrcOver_Mode;
+      SkBlendMode blend_mode = SkBlendMode::kSrcOver;
       float opacity = 1.f;
       SkColor color = kMiscOpaqueColor;
 
@@ -216,7 +212,7 @@ class LayerTreeHostBlendingPixelTest : public LayerTreeHostPixelResourceTest {
           CreateSolidColorLayer(child_rect, color);
       lane->SetBlendMode(blend_mode);
       lane->SetOpacity(opacity);
-      lane->SetForceRenderSurface(true);
+      lane->SetForceRenderSurfaceForTesting(true);
       if (flags & kUseMasks)
         SetupMaskLayer(lane);
       if (flags & kUseColorMatrix) {

@@ -4,6 +4,8 @@
 
 #include "ui/gl/gl_image_ref_counted_memory.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/trace_event/memory_allocator_dump.h"
@@ -17,9 +19,7 @@ GLImageRefCountedMemory::GLImageRefCountedMemory(const gfx::Size& size,
                                                  unsigned internalformat)
     : GLImageMemory(size, internalformat) {}
 
-GLImageRefCountedMemory::~GLImageRefCountedMemory() {
-  DCHECK(!ref_counted_memory_.get());
-}
+GLImageRefCountedMemory::~GLImageRefCountedMemory() {}
 
 bool GLImageRefCountedMemory::Initialize(
     base::RefCountedMemory* ref_counted_memory,
@@ -33,11 +33,6 @@ bool GLImageRefCountedMemory::Initialize(
   DCHECK(!ref_counted_memory_.get());
   ref_counted_memory_ = ref_counted_memory;
   return true;
-}
-
-void GLImageRefCountedMemory::Destroy(bool have_context) {
-  GLImageMemory::Destroy(have_context);
-  ref_counted_memory_ = nullptr;
 }
 
 void GLImageRefCountedMemory::OnMemoryDump(

@@ -4,6 +4,7 @@
 
 #include "ios/web/public/referrer_util.h"
 
+#include "base/macros.h"
 #include "ios/web/public/referrer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -162,6 +163,15 @@ TEST(ReferrerUtilTest, PolicyForNavigation) {
         // which is also how Default works on iOS.
         EXPECT_TRUE(policy == ReferrerPolicyDefault ||
                     policy == ReferrerPolicyNoReferrerWhenDowngrade);
+        break;
+      case net::URLRequest::ORIGIN:
+        EXPECT_TRUE(policy == ReferrerPolicyOrigin);
+        break;
+      case net::URLRequest::NO_REFERRER:
+        EXPECT_TRUE(policy == ReferrerPolicyNever);
+        break;
+      case net::URLRequest::MAX_REFERRER_POLICY:
+        FAIL();
         break;
     }
   }

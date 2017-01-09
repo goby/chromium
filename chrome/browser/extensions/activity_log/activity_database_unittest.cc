@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/activity_log/activity_action_constants.h"
 #include "chrome/browser/extensions/activity_log/activity_database.h"
 #include "chrome/browser/extensions/activity_log/fullstream_ui_policy.h"
@@ -82,7 +86,7 @@ bool ActivityDatabaseTestPolicy::FlushDatabase(sql::Connection* db) {
 
   std::vector<scoped_refptr<Action> >::size_type i;
   for (i = 0; i < queue_.size(); i++) {
-    const Action& action = *queue_[i].get();
+    const Action& action = *queue_[i];
     sql::Statement statement(db->GetCachedStatement(
         sql::StatementID(SQL_FROM_HERE), sql_str.c_str()));
     statement.BindString(0, action.extension_id());
@@ -162,7 +166,7 @@ class ActivityDatabaseTest : public ChromeRenderViewHostTestHarness {
 #if defined OS_CHROMEOS
   chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
   chromeos::ScopedTestCrosSettings test_cros_settings_;
-  scoped_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
+  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
 #endif
 
   ActivityDatabaseTestPolicy* db_delegate_;
@@ -173,7 +177,7 @@ TEST_F(ActivityDatabaseTest, Init) {
   base::ScopedTempDir temp_dir;
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  db_file = temp_dir.path().AppendASCII("ActivityInit.db");
+  db_file = temp_dir.GetPath().AppendASCII("ActivityInit.db");
   sql::Connection::Delete(db_file);
 
   ActivityDatabase* activity_db = OpenDatabase(db_file);
@@ -190,7 +194,7 @@ TEST_F(ActivityDatabaseTest, RecordAction) {
   base::ScopedTempDir temp_dir;
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  db_file = temp_dir.path().AppendASCII("ActivityRecord.db");
+  db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
   sql::Connection::Delete(db_file);
 
   ActivityDatabase* activity_db = OpenDatabase(db_file);
@@ -209,7 +213,7 @@ TEST_F(ActivityDatabaseTest, BatchModeOff) {
   base::ScopedTempDir temp_dir;
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  db_file = temp_dir.path().AppendASCII("ActivityRecord.db");
+  db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
   sql::Connection::Delete(db_file);
 
   // Record some actions
@@ -227,7 +231,7 @@ TEST_F(ActivityDatabaseTest, BatchModeOn) {
   base::ScopedTempDir temp_dir;
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  db_file = temp_dir.path().AppendASCII("ActivityRecord.db");
+  db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
   sql::Connection::Delete(db_file);
 
   // Record some actions
@@ -239,7 +243,7 @@ TEST_F(ActivityDatabaseTest, BatchModeOn) {
 
   // Artificially trigger and then stop the timer.
   activity_db->SetTimerForTesting(0);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1, CountActions(&activity_db->db_, "brewster"));
 
   activity_db->Close();
@@ -249,7 +253,7 @@ TEST_F(ActivityDatabaseTest, BatchModeFlush) {
   base::ScopedTempDir temp_dir;
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  db_file = temp_dir.path().AppendASCII("ActivityFlush.db");
+  db_file = temp_dir.GetPath().AppendASCII("ActivityFlush.db");
   sql::Connection::Delete(db_file);
 
   // Record some actions
@@ -271,7 +275,7 @@ TEST_F(ActivityDatabaseTest, InitFailure) {
   base::ScopedTempDir temp_dir;
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  db_file = temp_dir.path().AppendASCII("ActivityRecord.db");
+  db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
   sql::Connection::Delete(db_file);
 
   ActivityDatabaseTestPolicy* delegate = new ActivityDatabaseTestPolicy();

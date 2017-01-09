@@ -18,33 +18,45 @@ class Page;
 class WebCredential;
 class WebURL;
 
-// CredentialManagerClient lives as a supplement to Page, and wraps the embedder-provided
-// WebCredentialManagerClient's methods to make them visible to the bindings code.
-class MODULES_EXPORT CredentialManagerClient final : public NoBaseWillBeGarbageCollectedFinalized<CredentialManagerClient>, public WillBeHeapSupplement<Page> {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(CredentialManagerClient);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(CredentialManagerClient);
-public:
-    explicit CredentialManagerClient(WebCredentialManagerClient*);
-    virtual ~CredentialManagerClient();
-    DECLARE_VIRTUAL_TRACE();
+// CredentialManagerClient lives as a supplement to Page, and wraps the
+// embedder-provided WebCredentialManagerClient's methods to make them visible
+// to the bindings code.
+class MODULES_EXPORT CredentialManagerClient final
+    : public GarbageCollectedFinalized<CredentialManagerClient>,
+      public Supplement<Page> {
+  USING_GARBAGE_COLLECTED_MIXIN(CredentialManagerClient);
 
-    static const char* supplementName();
-    static CredentialManagerClient* from(Page*);
-    static CredentialManagerClient* from(ExecutionContext*);
+ public:
+  explicit CredentialManagerClient(WebCredentialManagerClient*);
+  virtual ~CredentialManagerClient();
+  DECLARE_VIRTUAL_TRACE();
 
-    // Ownership of the callback is transferred to the callee for each of
-    // the following methods.
-    virtual void dispatchFailedSignIn(const WebCredential&, WebCredentialManagerClient::NotificationCallbacks*);
-    virtual void dispatchStore(const WebCredential&, WebCredentialManagerClient::NotificationCallbacks*);
-    virtual void dispatchRequireUserMediation(WebCredentialManagerClient::NotificationCallbacks*);
-    virtual void dispatchGet(bool zeroClickOnly, const WebVector<WebURL>& federations, WebCredentialManagerClient::RequestCallbacks*);
+  static const char* supplementName();
+  static CredentialManagerClient* from(Page*);
+  static CredentialManagerClient* from(ExecutionContext*);
 
-private:
-    WebCredentialManagerClient* m_client;
+  // Ownership of the callback is transferred to the callee for each of
+  // the following methods.
+  virtual void dispatchFailedSignIn(
+      const WebCredential&,
+      WebCredentialManagerClient::NotificationCallbacks*);
+  virtual void dispatchStore(
+      const WebCredential&,
+      WebCredentialManagerClient::NotificationCallbacks*);
+  virtual void dispatchRequireUserMediation(
+      WebCredentialManagerClient::NotificationCallbacks*);
+  virtual void dispatchGet(bool zeroClickOnly,
+                           bool includePasswords,
+                           const WebVector<WebURL>& federations,
+                           WebCredentialManagerClient::RequestCallbacks*);
+
+ private:
+  WebCredentialManagerClient* m_client;
 };
 
-MODULES_EXPORT void provideCredentialManagerClientTo(Page&, CredentialManagerClient*);
+MODULES_EXPORT void provideCredentialManagerClientTo(Page&,
+                                                     CredentialManagerClient*);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CredentialManagerClient_h
+#endif  // CredentialManagerClient_h

@@ -70,7 +70,7 @@ bool ReadString(XmlReader* reader, std::string* result) {
   return ReadSimpleValue(reader, "string", result);
 }
 
-bool ReadInteger(XmlReader* reader, uint64* result) {
+bool ReadInteger(XmlReader* reader, uint64_t* result) {
   std::string value;
   if (!ReadSimpleValue(reader, "integer", &value))
     return false;
@@ -84,13 +84,13 @@ std::string ReadFileAsString(base::File file) {
 
   // A "reasonable" artificial limit.
   // TODO(vandebo): Add a UMA to figure out what common values are.
-  const int64 kMaxLibraryFileSize = 150 * 1024 * 1024;
+  const int64_t kMaxLibraryFileSize = 150 * 1024 * 1024;
   base::File::Info file_info;
   if (!file.GetInfo(&file_info) || file_info.size > kMaxLibraryFileSize)
     return result;
 
   result.resize(file_info.size);
-  int bytes_read = file.Read(0, string_as_array(&result), file_info.size);
+  int bytes_read = file.Read(0, base::string_as_array(&result), file_info.size);
   if (bytes_read != file_info.size)
     result.clear();
 
@@ -154,7 +154,7 @@ bool XmlDictReader::SkipToNext() {
 }
 
 bool XmlDictReader::Found(const std::string& key) const {
-  return ContainsKey(found_, key);
+  return base::ContainsKey(found_, key);
 }
 
 }  // namespace iapps

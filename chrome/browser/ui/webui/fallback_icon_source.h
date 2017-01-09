@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_FALLBACK_ICON_SOURCE_H_
 #define CHROME_BROWSER_UI_WEBUI_FALLBACK_ICON_SOURCE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/public/browser/url_data_source.h"
 
 class GURL;
@@ -62,8 +63,7 @@ class FallbackIconSource : public content::URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string&) const override;
   bool ShouldReplaceExistingSource() const override;

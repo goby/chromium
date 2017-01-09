@@ -4,6 +4,8 @@
 
 #include "content/public/common/user_agent.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -28,14 +30,6 @@ std::string GetWebKitVersion() {
                             WEBKIT_SVN_REVISION);
 }
 
-int GetWebKitMajorVersion() {
-  return WEBKIT_VERSION_MAJOR;
-}
-
-int GetWebKitMinorVersion() {
-  return WEBKIT_VERSION_MINOR;
-}
-
 std::string GetWebKitRevision() {
   return WEBKIT_SVN_REVISION;
 }
@@ -45,9 +39,9 @@ std::string BuildOSCpuInfo() {
 
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS) ||\
     defined(OS_ANDROID)
-  int32 os_major_version = 0;
-  int32 os_minor_version = 0;
-  int32 os_bugfix_version = 0;
+  int32_t os_major_version = 0;
+  int32_t os_minor_version = 0;
+  int32_t os_bugfix_version = 0;
   base::SysInfo::OperatingSystemVersionNumbers(&os_major_version,
                                                &os_minor_version,
                                                &os_bugfix_version);
@@ -61,7 +55,7 @@ std::string BuildOSCpuInfo() {
   std::string cputype;
   // special case for biarch systems
   if (strcmp(unixinfo.machine, "x86_64") == 0 &&
-      sizeof(void*) == sizeof(int32)) {  // NOLINT
+      sizeof(void*) == sizeof(int32_t)) {  // NOLINT
     cputype.assign("i686 (x86_64)");
   } else {
     cputype.assign(unixinfo.machine);
@@ -69,6 +63,15 @@ std::string BuildOSCpuInfo() {
 #endif
 
 #if defined(OS_WIN)
+  std::string windows_version_str;
+  if (os_major_version >= 10) {
+    base::StringAppendF(&windows_version_str, "%d.%d.%d",
+      os_major_version, os_minor_version, os_bugfix_version);
+  } else {
+    base::StringAppendF(
+      &windows_version_str, "%d.%d", os_major_version, os_minor_version);
+  }
+
   std::string architecture_token;
   base::win::OSInfo* os_info = base::win::OSInfo::GetInstance();
   if (os_info->wow64_status() == base::win::OSInfo::WOW64_ENABLED) {
@@ -114,9 +117,8 @@ std::string BuildOSCpuInfo() {
   base::StringAppendF(
       &os_cpu,
 #if defined(OS_WIN)
-      "Windows NT %d.%d%s",
-      os_major_version,
-      os_minor_version,
+      "Windows NT %s%s",
+      windows_version_str.c_str(),
       architecture_token.c_str()
 #elif defined(OS_MACOSX)
       "Intel Mac OS X %d_%d_%d",

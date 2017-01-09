@@ -4,22 +4,22 @@
 
 #include "chrome/browser/extensions/api/language_settings_private/language_settings_private_delegate.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
-#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "components/spellcheck/browser/pref_names.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_source.h"
 
@@ -69,25 +69,24 @@ LanguageSettingsPrivateDelegate* LanguageSettingsPrivateDelegate::Create(
   return new LanguageSettingsPrivateDelegate(context);
 }
 
-ScopedVector<language_settings_private::SpellcheckDictionaryStatus>
+std::vector<language_settings_private::SpellcheckDictionaryStatus>
 LanguageSettingsPrivateDelegate::GetHunspellDictionaryStatuses() {
-  ScopedVector<language_settings_private::SpellcheckDictionaryStatus> statuses;
+  std::vector<language_settings_private::SpellcheckDictionaryStatus> statuses;
   for (const auto& dictionary : GetHunspellDictionaries()) {
     if (!dictionary)
       continue;
-    scoped_ptr<language_settings_private::SpellcheckDictionaryStatus> status(
-        new language_settings_private::SpellcheckDictionaryStatus());
-    status->language_code = dictionary->GetLanguage();
-    status->is_ready = dictionary->IsReady();
-    if (!status->is_ready) {
+    language_settings_private::SpellcheckDictionaryStatus status;
+    status.language_code = dictionary->GetLanguage();
+    status.is_ready = dictionary->IsReady();
+    if (!status.is_ready) {
       if (dictionary->IsDownloadInProgress())
-        status->is_downloading.reset(new bool(true));
+        status.is_downloading.reset(new bool(true));
       if (dictionary->IsDownloadFailure())
-        status->download_failed.reset(new bool(true));
+        status.download_failed.reset(new bool(true));
     }
-    statuses.push_back(status.Pass());
+    statuses.push_back(std::move(status));
   }
-  return statuses.Pass();
+  return statuses;
 }
 
 void LanguageSettingsPrivateDelegate::Shutdown() {
@@ -158,14 +157,14 @@ void LanguageSettingsPrivateDelegate::OnCustomDictionaryChanged(
                                   change.to_add().end());
   std::vector<std::string> to_remove(change.to_remove().begin(),
                                      change.to_remove().end());
-  scoped_ptr<base::ListValue> args(
-      language_settings_private::OnCustomDictionaryChanged::Create(
-          to_add, to_remove));
-  scoped_ptr<Event> extension_event(new Event(
+  std::unique_ptr<base::ListValue> args(
+      language_settings_private::OnCustomDictionaryChanged::Create(to_add,
+                                                                   to_remove));
+  std::unique_ptr<Event> extension_event(new Event(
       events::LANGUAGE_SETTINGS_PRIVATE_ON_CUSTOM_DICTIONARY_CHANGED,
       language_settings_private::OnCustomDictionaryChanged::kEventName,
-      args.Pass()));
-  EventRouter::Get(context_)->BroadcastEvent(extension_event.Pass());
+      std::move(args)));
+  EventRouter::Get(context_)->BroadcastEvent(std::move(extension_event));
 }
 
 void LanguageSettingsPrivateDelegate::RefreshDictionaries(
@@ -182,7 +181,7 @@ void LanguageSettingsPrivateDelegate::RefreshDictionaries(
 
   const ScopedVector<SpellcheckHunspellDictionary>& dictionaries(
       service->GetHunspellDictionaries());
-  for (const auto& dictionary: dictionaries) {
+  for (auto* dictionary : dictionaries) {
     hunspell_dictionaries_.push_back(dictionary->AsWeakPtr());
     if (should_listen)
       dictionary->AddObserver(this);
@@ -192,7 +191,7 @@ void LanguageSettingsPrivateDelegate::RefreshDictionaries(
 const LanguageSettingsPrivateDelegate::WeakDictionaries&
 LanguageSettingsPrivateDelegate::GetHunspellDictionaries() {
   // If there are no hunspell dictionaries, or the first is invalid, refresh.
-  if (!hunspell_dictionaries_.size() || !hunspell_dictionaries_.front())
+  if (hunspell_dictionaries_.empty() || !hunspell_dictionaries_.front())
     RefreshDictionaries(listening_spellcheck_, listening_spellcheck_);
   return hunspell_dictionaries_;
 }
@@ -210,9 +209,11 @@ void LanguageSettingsPrivateDelegate::
     // Update and observe the hunspell dictionaries.
     RefreshDictionaries(listening_spellcheck_, should_listen);
     // Observe the dictionaries preference.
-    pref_change_registrar_.Add(prefs::kSpellCheckDictionaries, base::Bind(
-        &LanguageSettingsPrivateDelegate::OnSpellcheckDictionariesChanged,
-        base::Unretained(this)));
+    pref_change_registrar_.Add(
+        spellcheck::prefs::kSpellCheckDictionaries,
+        base::Bind(
+            &LanguageSettingsPrivateDelegate::OnSpellcheckDictionariesChanged,
+            base::Unretained(this)));
     // Observe the dictionary of custom words.
     if (custom_dictionary_)
       custom_dictionary_->AddObserver(this);
@@ -220,7 +221,7 @@ void LanguageSettingsPrivateDelegate::
     // Stop observing any dictionaries that still exist.
     RemoveDictionaryObservers();
     hunspell_dictionaries_.clear();
-    pref_change_registrar_.Remove(prefs::kSpellCheckDictionaries);
+    pref_change_registrar_.Remove(spellcheck::prefs::kSpellCheckDictionaries);
     if (custom_dictionary_)
       custom_dictionary_->RemoveObserver(this);
   }
@@ -234,23 +235,17 @@ void LanguageSettingsPrivateDelegate::OnSpellcheckDictionariesChanged() {
 }
 
 void LanguageSettingsPrivateDelegate::BroadcastDictionariesChangedEvent() {
-  std::vector<linked_ptr<language_settings_private::SpellcheckDictionaryStatus>>
-      broadcast_statuses;
-  ScopedVector<language_settings_private::SpellcheckDictionaryStatus> statuses =
+  std::vector<language_settings_private::SpellcheckDictionaryStatus> statuses =
       GetHunspellDictionaryStatuses();
 
-  for (language_settings_private::SpellcheckDictionaryStatus* status : statuses)
-    broadcast_statuses.push_back(make_linked_ptr(status));
-  statuses.weak_clear();
-
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       language_settings_private::OnSpellcheckDictionariesChanged::Create(
-          broadcast_statuses));
-  scoped_ptr<extensions::Event> extension_event(new extensions::Event(
+          statuses));
+  std::unique_ptr<extensions::Event> extension_event(new extensions::Event(
       events::LANGUAGE_SETTINGS_PRIVATE_ON_SPELLCHECK_DICTIONARIES_CHANGED,
       language_settings_private::OnSpellcheckDictionariesChanged::kEventName,
-      args.Pass()));
-  EventRouter::Get(context_)->BroadcastEvent(extension_event.Pass());
+      std::move(args)));
+  EventRouter::Get(context_)->BroadcastEvent(std::move(extension_event));
 }
 
 void LanguageSettingsPrivateDelegate::RemoveDictionaryObservers() {

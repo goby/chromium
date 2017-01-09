@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
@@ -17,7 +21,7 @@ extern "C" {
 #if defined(GLES2_CONFORM_SUPPORT_ONLY)
 #include "gpu/gles2_conform_support/gtf/gtf_stubs.h"
 #else
-#include "third_party/gles2_conform/GTF_ES/glsl/GTF/Source/GTFMain.h"
+#include "third_party/gles2_conform/GTF_ES/glsl/GTF/Source/GTFMain.h"  // nogncheck
 #endif
 }
 
@@ -33,7 +37,7 @@ int main(int argc, char *argv[]) {
   base::mac::ScopedNSAutoreleasePool pool;
 #endif
 
-  scoped_ptr<const char*[]> argsArray(new const char*[args.size()+1]);
+  std::unique_ptr<const char* []> argsArray(new const char*[args.size() + 1]);
   argsArray[0] = argv[0];
 
 #if defined(OS_WIN)

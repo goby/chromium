@@ -5,11 +5,11 @@
 #ifndef NET_HTTP_HTTP_PROXY_CLIENT_SOCKET_POOL_H_
 #define NET_HTTP_HTTP_PROXY_CLIENT_SOCKET_POOL_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "net/base/host_port_pair.h"
@@ -27,11 +27,11 @@ namespace net {
 class HttpAuthCache;
 class HttpAuthHandlerFactory;
 class HttpProxyClientSocketWrapper;
+class NetLog;
 class ProxyDelegate;
 class SSLClientSocketPool;
 class SSLSocketParams;
 class SpdySessionPool;
-class SpdyStream;
 class TransportClientSocketPool;
 class TransportSocketParams;
 
@@ -70,7 +70,6 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
   }
   const HostResolver::RequestInfo& destination() const;
   bool tunnel() const { return tunnel_; }
-  bool ignore_limits() const { return ignore_limits_; }
 
   ProxyDelegate* proxy_delegate() const {
     return proxy_delegate_;
@@ -88,7 +87,6 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
   HttpAuthCache* const http_auth_cache_;
   HttpAuthHandlerFactory* const http_auth_handler_factory_;
   const bool tunnel_;
-  bool ignore_limits_;
   ProxyDelegate* proxy_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpProxySocketParams);
@@ -100,6 +98,7 @@ class HttpProxyConnectJob : public ConnectJob {
  public:
   HttpProxyConnectJob(const std::string& group_name,
                       RequestPriority priority,
+                      ClientSocketPool::RespectLimits respect_limits,
                       const scoped_refptr<HttpProxySocketParams>& params,
                       const base::TimeDelta& timeout_duration,
                       TransportClientSocketPool* transport_pool,
@@ -127,9 +126,9 @@ class HttpProxyConnectJob : public ConnectJob {
 
   int HandleConnectResult(int result);
 
-  scoped_ptr<HttpProxyClientSocketWrapper> client_socket_;
+  std::unique_ptr<HttpProxyClientSocketWrapper> client_socket_;
 
-  scoped_ptr<HttpResponseInfo> error_response_info_;
+  std::unique_ptr<HttpResponseInfo> error_response_info_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpProxyConnectJob);
 };
@@ -152,20 +151,21 @@ class NET_EXPORT_PRIVATE HttpProxyClientSocketPool
   int RequestSocket(const std::string& group_name,
                     const void* connect_params,
                     RequestPriority priority,
+                    RespectLimits respect_limits,
                     ClientSocketHandle* handle,
                     const CompletionCallback& callback,
-                    const BoundNetLog& net_log) override;
+                    const NetLogWithSource& net_log) override;
 
   void RequestSockets(const std::string& group_name,
                       const void* params,
                       int num_sockets,
-                      const BoundNetLog& net_log) override;
+                      const NetLogWithSource& net_log) override;
 
   void CancelRequest(const std::string& group_name,
                      ClientSocketHandle* handle) override;
 
   void ReleaseSocket(const std::string& group_name,
-                     scoped_ptr<StreamSocket> socket,
+                     std::unique_ptr<StreamSocket> socket,
                      int id) override;
 
   void FlushWithError(int error) override;
@@ -179,7 +179,7 @@ class NET_EXPORT_PRIVATE HttpProxyClientSocketPool
   LoadState GetLoadState(const std::string& group_name,
                          const ClientSocketHandle* handle) const override;
 
-  scoped_ptr<base::DictionaryValue> GetInfoAsValue(
+  std::unique_ptr<base::DictionaryValue> GetInfoAsValue(
       const std::string& name,
       const std::string& type,
       bool include_nested_pools) const override;
@@ -206,7 +206,7 @@ class NET_EXPORT_PRIVATE HttpProxyClientSocketPool
                                NetLog* net_log);
 
     // ClientSocketPoolBase::ConnectJobFactory methods.
-    scoped_ptr<ConnectJob> NewConnectJob(
+    std::unique_ptr<ConnectJob> NewConnectJob(
         const std::string& group_name,
         const PoolBase::Request& request,
         ConnectJob::Delegate* delegate) const override;

@@ -28,9 +28,6 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import atexit
-import os
-import shutil
 import unittest
 
 from webkitpy.common.system.executive import Executive, ScriptError
@@ -38,11 +35,11 @@ from webkitpy.common.system.executive_mock import MockExecutive
 from webkitpy.common.system.filesystem import FileSystem
 from webkitpy.common.system.filesystem_mock import MockFileSystem
 from webkitpy.common.checkout.scm.detection import detect_scm_system
-from webkitpy.common.checkout.scm.git import Git, AmbiguousCommitError
-from webkitpy.common.checkout.scm.scm import SCM
+from webkitpy.common.checkout.scm.git import Git
 
 
 class SCMTestBase(unittest.TestCase):
+
     def __init__(self, *args, **kwargs):
         super(SCMTestBase, self).__init__(*args, **kwargs)
         self.scm = None
@@ -91,7 +88,7 @@ class SCMTestBase(unittest.TestCase):
 
     def _make_diff(self, command, *args):
         # We use this wrapper to disable output decoding. diffs should be treated as
-        # binary files since they may include text files of multiple differnet encodings.
+        # binary files since they may include text files of multiple different encodings.
         return self._run([command, "diff"] + list(args), decode_output=False)
 
     def _git_diff(self, *args):
@@ -151,6 +148,7 @@ class SCMTestBase(unittest.TestCase):
 
 
 class GitTest(SCMTestBase):
+
     def setUp(self):
         super(GitTest, self).setUp()
         self._set_up_git_checkouts()
@@ -194,6 +192,17 @@ class GitTest(SCMTestBase):
         patch = scm.create_patch()
         self.assertNotRegexpMatches(patch, r'Subversion Revision:')
 
+    def test_patches_have_filenames_with_prefixes(self):
+        self._write_text_file('test_file_commit1', 'contents')
+        self._run(['git', 'add', 'test_file_commit1'])
+        scm = self.tracking_scm
+        scm.commit_locally_with_message('message')
+
+        # Even if diff.noprefix is enabled, create_patch() produces diffs with prefixes.
+        self._run(['git', 'config', 'diff.noprefix', 'true'])
+        patch = scm.create_patch()
+        self.assertRegexpMatches(patch, r'^diff --git a/test_file_commit1 b/test_file_commit1')
+
     def test_exists(self):
         scm = self.untracking_scm
         self._shared_test_exists(scm, scm.commit_locally_with_message)
@@ -224,7 +233,9 @@ Date:   Mon Sep 28 19:10:30 2015 -0700
         scm = self.tracking_scm
         scm.most_recent_log_matching(scm._commit_position_regex_for_timestamp(), scm.checkout_root)
 
+
 class GitTestWithMock(SCMTestBase):
+
     def make_scm(self):
         scm = Git(cwd=".", executive=MockExecutive(), filesystem=MockFileSystem())
         scm.read_git_config = lambda *args, **kw: "MOCKKEY:MOCKVALUE"

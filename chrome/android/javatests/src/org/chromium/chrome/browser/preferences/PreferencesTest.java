@@ -4,9 +4,7 @@
 
 package org.chromium.chrome.browser.preferences;
 
-import android.accounts.Account;
 import android.app.Activity;
-import android.app.DialogFragment;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
@@ -16,8 +14,11 @@ import android.preference.PreferenceScreen;
 import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.accessibility.FontSizePrefs;
 import org.chromium.chrome.browser.preferences.website.ContentSetting;
 import org.chromium.chrome.browser.preferences.website.GeolocationInfo;
@@ -25,14 +26,8 @@ import org.chromium.chrome.browser.preferences.website.WebsitePreferenceBridge;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.LoadListener;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrl;
-import org.chromium.chrome.browser.signin.SigninManager;
-import org.chromium.chrome.browser.sync.ui.ChooseAccountFragment;
 import org.chromium.content.browser.test.NativeLibraryTestBase;
-import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.UiUtils;
-import org.chromium.sync.signin.AccountManagerHelper;
-import org.chromium.sync.test.util.MockAccountManager;
-import org.chromium.sync.test.util.SimpleFuture;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -82,61 +77,70 @@ public class PreferencesTest extends NativeLibraryTestBase {
     /**
      * Change search engine and make sure it works correctly.
      */
-    @DisabledTest // Fails on android-one: crbug.com/540720
     @SmallTest
     @Feature({"Preferences"})
+    @DisableIf.Build(hardware_is = "sprout", message = "crashes on android-one: crbug.com/540720")
+    @RetryOnFailure
     public void testSearchEnginePreference() throws Exception {
         ensureTemplateUrlServiceLoaded();
+
+        final Preferences prefActivity =
+                startPreferences(getInstrumentation(), SearchEnginePreference.class.getName());
 
         // Set the second search engine as the default using TemplateUrlService.
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                TemplateUrlService.getInstance().setSearchEngine(1);
+                SearchEnginePreference pref =
+                        (SearchEnginePreference) prefActivity.getFragmentForTest();
+                pref.setValueForTesting("1");
             }
         });
 
-        final Preferences prefActivity = startPreferences(getInstrumentation(),
-                MainPreferences.class.getName());
 
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
                 // Ensure that the second search engine in the list is selected.
-                PreferenceFragment fragment = (PreferenceFragment)
-                        prefActivity.getFragmentForTest();
-                SearchEnginePreference pref = (SearchEnginePreference)
-                        fragment.findPreference(SearchEnginePreference.PREF_SEARCH_ENGINE);
+                SearchEnginePreference pref =
+                        (SearchEnginePreference) prefActivity.getFragmentForTest();
                 assertNotNull(pref);
                 assertEquals("1", pref.getValueForTesting());
 
                 // Simulate selecting the third search engine, ensure that TemplateUrlService is
                 // updated, but location permission not granted for the new engine.
-                pref.setValueForTesting("2");
+                String keyword2 = pref.setValueForTesting("2");
                 TemplateUrlService templateUrlService = TemplateUrlService.getInstance();
-                assertEquals(2, templateUrlService.getDefaultSearchEngineIndex());
-                assertEquals(ContentSetting.ASK, locationPermissionForSearchEngine(2));
+                assertEquals(keyword2,
+                        templateUrlService.getDefaultSearchEngineTemplateUrl().getKeyword());
+                assertEquals(ContentSetting.ASK, locationPermissionForSearchEngine(keyword2));
 
                 // Simulate selecting the fourth search engine and but set a blocked permission
                 // first and ensure that location permission is NOT granted.
-                String url = templateUrlService.getSearchEngineUrlFromTemplateUrl(3);
+                String keyword3 = pref.getKeywordFromIndexForTesting(3);
+                String url = templateUrlService.getSearchEngineUrlFromTemplateUrl(keyword3);
                 WebsitePreferenceBridge.nativeSetGeolocationSettingForOrigin(
                         url, url, ContentSetting.BLOCK.toInt(), false);
-                pref.setValueForTesting("3");
-                assertEquals(3, TemplateUrlService.getInstance().getDefaultSearchEngineIndex());
-                assertEquals(ContentSetting.BLOCK, locationPermissionForSearchEngine(3));
-                assertEquals(ContentSetting.ASK, locationPermissionForSearchEngine(2));
+                keyword3 = pref.setValueForTesting("3");
+                assertEquals(keyword3, TemplateUrlService.getInstance()
+                                               .getDefaultSearchEngineTemplateUrl()
+                                               .getKeyword());
+                assertEquals(ContentSetting.BLOCK, locationPermissionForSearchEngine(keyword3));
+                assertEquals(ContentSetting.ASK, locationPermissionForSearchEngine(keyword2));
 
                 // Make sure a pre-existing ALLOW value does not get deleted when switching away
                 // from a search engine.
-                url = templateUrlService.getSearchEngineUrlFromTemplateUrl(4);
+                String keyword4 = pref.getKeywordFromIndexForTesting(4);
+                url = templateUrlService.getSearchEngineUrlFromTemplateUrl(keyword4);
                 WebsitePreferenceBridge.nativeSetGeolocationSettingForOrigin(
                         url, url, ContentSetting.ALLOW.toInt(), false);
-                pref.setValueForTesting("4");
-                assertEquals(4, TemplateUrlService.getInstance().getDefaultSearchEngineIndex());
-                assertEquals(ContentSetting.ALLOW, locationPermissionForSearchEngine(4));
+                keyword4 = pref.setValueForTesting("4");
+                assertEquals(keyword4, TemplateUrlService.getInstance()
+                                               .getDefaultSearchEngineTemplateUrl()
+                                               .getKeyword());
+                assertEquals(ContentSetting.ALLOW, locationPermissionForSearchEngine(keyword4));
                 pref.setValueForTesting("3");
-                assertEquals(ContentSetting.ALLOW, locationPermissionForSearchEngine(4));
+                assertEquals(ContentSetting.ALLOW, locationPermissionForSearchEngine(keyword4));
             }
         });
     }
@@ -145,43 +149,57 @@ public class PreferencesTest extends NativeLibraryTestBase {
      * Make sure that when a user switches to a search engine that uses HTTP, the location
      * permission is not added.
      */
-    @DisabledTest // Fails on android-one: crbug.com/540706
-    @SmallTest
-    @Feature({"Preferences"})
+    /*
+     * @SmallTest
+     * @Feature({"Preferences"})
+     * BUG=crbug.com/540706
+     */
+    @FlakyTest
+    @DisableIf.Build(hardware_is = "sprout", message = "fails on android-one: crbug.com/540706")
     public void testSearchEnginePreferenceHttp() throws Exception {
         ensureTemplateUrlServiceLoaded();
 
-        final Preferences prefActivity = startPreferences(getInstrumentation(),
-                MainPreferences.class.getName());
+        final Preferences prefActivity =
+                startPreferences(getInstrumentation(), SearchEnginePreference.class.getName());
+
+        // Set the first search engine as the default using TemplateUrlService.
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                SearchEnginePreference pref =
+                        (SearchEnginePreference) prefActivity.getFragmentForTest();
+                pref.setValueForTesting("0");
+            }
+        });
 
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                // Ensure that the second search engine in the list is selected.
-                PreferenceFragment fragment = (PreferenceFragment)
-                        prefActivity.getFragmentForTest();
-                SearchEnginePreference pref = (SearchEnginePreference)
-                        fragment.findPreference(SearchEnginePreference.PREF_SEARCH_ENGINE);
+                // Ensure that the first search engine in the list is selected.
+                SearchEnginePreference pref =
+                        (SearchEnginePreference) prefActivity.getFragmentForTest();
                 assertNotNull(pref);
                 assertEquals("0", pref.getValueForTesting());
 
                 // Simulate selecting a search engine that uses HTTP.
-                int index = indexOfFirstHttpSearchEngine();
-                pref.setValueForTesting(Integer.toString(index));
+                int index = indexOfFirstHttpSearchEngine(pref);
+                String keyword = pref.setValueForTesting(Integer.toString(index));
 
                 TemplateUrlService templateUrlService = TemplateUrlService.getInstance();
-                assertEquals(index, templateUrlService.getDefaultSearchEngineIndex());
-                assertEquals(ContentSetting.ASK, locationPermissionForSearchEngine(index));
+                assertEquals(keyword,
+                        templateUrlService.getDefaultSearchEngineTemplateUrl().getKeyword());
+                assertEquals(ContentSetting.ASK, locationPermissionForSearchEngine(keyword));
             }
         });
     }
 
-    private int indexOfFirstHttpSearchEngine() {
+    private int indexOfFirstHttpSearchEngine(SearchEnginePreference pref) {
         TemplateUrlService templateUrlService = TemplateUrlService.getInstance();
-        List<TemplateUrl> urls = templateUrlService.getLocalizedSearchEngines();
+        List<TemplateUrl> urls = templateUrlService.getSearchEngines();
         int index;
         for (index = 0; index < urls.size(); ++index) {
-            String url = templateUrlService.getSearchEngineUrlFromTemplateUrl(index);
+            String keyword = pref.getKeywordFromIndexForTesting(index);
+            String url = templateUrlService.getSearchEngineUrlFromTemplateUrl(keyword);
             if (url.startsWith("http:")) {
                 return index;
             }
@@ -212,59 +230,12 @@ public class PreferencesTest extends NativeLibraryTestBase {
         onTemplateUrlServiceLoadedHelper.waitForCallback(0);
     }
 
-    private ContentSetting locationPermissionForSearchEngine(int index) {
-        String url = TemplateUrlService.getInstance().getSearchEngineUrlFromTemplateUrl(index);
+    private ContentSetting locationPermissionForSearchEngine(String keyword) {
+        String url = TemplateUrlService.getInstance().getSearchEngineUrlFromTemplateUrl(keyword);
         GeolocationInfo locationSettings = new GeolocationInfo(url, null, false);
         ContentSetting locationPermission = locationSettings.getContentSetting();
         return locationPermission;
     }
-
-    /**
-     * Tests that double-clicking on sign-in doesn't show two sign-in prompts.
-     *
-     * This is a regression test for http://crbug.com/515055.
-     */
-    @SmallTest
-    @Feature({"Preferences"})
-    public void testDoubleSignin() throws Exception {
-        // Sets up state so that displayAccountPicker() shows a ChooseAccountFragment.
-        setUpTestAccount();
-        final Preferences prefActivity = startPreferences(getInstrumentation(),
-                MainPreferences.class.getName());
-        final MainPreferences mainPrefs = (MainPreferences) prefActivity.getFragmentForTest();
-
-        DialogFragment fragment1 = displayAccountPicker(mainPrefs);
-        DialogFragment fragment2 = displayAccountPicker(mainPrefs);
-        assertTrue(fragment1 instanceof ChooseAccountFragment);
-        assertNull(fragment2);
-    }
-
-    private DialogFragment displayAccountPicker(final MainPreferences mainPrefs)
-            throws InterruptedException {
-        final SimpleFuture<DialogFragment> result = new SimpleFuture<DialogFragment>();
-        ThreadUtils.runOnUiThread(new Runnable() {
-            public void run() {
-                mainPrefs.displayAccountPicker(result.createCallback());
-            }
-        });
-        return result.get();
-    }
-
-    private void setUpTestAccount() {
-        final Context context = getInstrumentation().getTargetContext();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                SigninManager.get(context).onFirstRunCheckDone();
-            }
-        });
-        Account account = AccountManagerHelper.createAccountFromName("test@chromium.org");
-        MockAccountManager accountManager = new MockAccountManager(context, context, account);
-        AccountManagerHelper.overrideAccountManagerHelperForTests(context, accountManager);
-    }
-
-    // TODO(mvanouwerkerk): Write new preference intent tests for notification settings.
-    // https://crbug.com/461885
 
     /**
      * Tests setting FontScaleFactor and ForceEnableZoom in AccessibilityPreferences and ensures
@@ -285,9 +256,9 @@ public class PreferencesTest extends NativeLibraryTestBase {
         NumberFormat percentFormat = NumberFormat.getPercentInstance();
         // Arbitrary value 0.4f to be larger and smaller than threshold.
         float fontSmallerThanThreshold =
-                AccessibilityPreferences.FORCE_ENABLE_ZOOM_THRESHOLD_MULTIPLIER - 0.4f;
+                FontSizePrefs.FORCE_ENABLE_ZOOM_THRESHOLD_MULTIPLIER - 0.4f;
         float fontBiggerThanThreshold =
-                AccessibilityPreferences.FORCE_ENABLE_ZOOM_THRESHOLD_MULTIPLIER + 0.4f;
+                FontSizePrefs.FORCE_ENABLE_ZOOM_THRESHOLD_MULTIPLIER + 0.4f;
 
         // Set the textScaleFactor above the threshold.
         userSetTextScale(accessibilityPref, textScalePref, fontBiggerThanThreshold);

@@ -2,17 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/mock_pref_change_callback.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/content_settings/content_settings_service.h"
 #include "chrome/browser/extensions/api/preference/preference_api.h"
 #include "chrome/browser/extensions/extension_prefs_unittest.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/mock_pref_change_callback.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -210,7 +213,8 @@ class ControlledPrefsInstallIncognitoPersistent
         extension1(), kPref1, new base::StringValue("val1"));
     InstallExtensionControlledPrefIncognito(
         extension1(), kPref1, new base::StringValue("val2"));
-    scoped_ptr<PrefService> incog_prefs(prefs_.CreateIncognitoPrefService());
+    std::unique_ptr<PrefService> incog_prefs(
+        prefs_.CreateIncognitoPrefService());
     std::string actual = incog_prefs->GetString(kPref1);
     EXPECT_EQ("val2", actual);
   }
@@ -220,7 +224,8 @@ class ControlledPrefsInstallIncognitoPersistent
     std::string actual = prefs()->pref_service()->GetString(kPref1);
     EXPECT_EQ("val1", actual);
     // Incognito pref service shall see incognito values.
-    scoped_ptr<PrefService> incog_prefs(prefs_.CreateIncognitoPrefService());
+    std::unique_ptr<PrefService> incog_prefs(
+        prefs_.CreateIncognitoPrefService());
     actual = incog_prefs->GetString(kPref1);
     EXPECT_EQ("val2", actual);
   }
@@ -239,7 +244,8 @@ class ControlledPrefsInstallIncognitoSessionOnly
         extension1(), kPref1, new base::StringValue("val1"));
     InstallExtensionControlledPrefIncognitoSessionOnly(
         extension1(), kPref1, new base::StringValue("val2"));
-    scoped_ptr<PrefService> incog_prefs(prefs_.CreateIncognitoPrefService());
+    std::unique_ptr<PrefService> incog_prefs(
+        prefs_.CreateIncognitoPrefService());
     std::string actual = incog_prefs->GetString(kPref1);
     EXPECT_EQ("val2", actual);
   }
@@ -250,7 +256,8 @@ class ControlledPrefsInstallIncognitoSessionOnly
     // Incognito pref service shall see session-only incognito values only
     // during first run. Once the pref service was reloaded, all values shall be
     // discarded.
-    scoped_ptr<PrefService> incog_prefs(prefs_.CreateIncognitoPrefService());
+    std::unique_ptr<PrefService> incog_prefs(
+        prefs_.CreateIncognitoPrefService());
     actual = incog_prefs->GetString(kPref1);
     if (iteration_ == 0) {
       EXPECT_EQ("val2", actual);
@@ -308,7 +315,8 @@ class ControlledPrefsNotifyWhenNeeded : public ExtensionControlledPrefsTest {
     registrar.Add(kPref1, observer.GetCallback());
 
     MockPrefChangeCallback incognito_observer(prefs()->pref_service());
-    scoped_ptr<PrefService> incog_prefs(prefs_.CreateIncognitoPrefService());
+    std::unique_ptr<PrefService> incog_prefs(
+        prefs_.CreateIncognitoPrefService());
     PrefChangeRegistrar incognito_registrar;
     incognito_registrar.Init(incog_prefs.get());
     incognito_registrar.Add(kPref1, incognito_observer.GetCallback());

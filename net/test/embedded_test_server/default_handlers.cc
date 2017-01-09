@@ -9,6 +9,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include "base/base64.h"
 #include "base/files/file_path.h"
@@ -16,11 +17,12 @@
 #include "base/format_macros.h"
 #include "base/macros.h"
 #include "base/md5.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/escape.h"
 #include "net/base/url_util.h"
@@ -33,7 +35,8 @@ namespace test_server {
 namespace {
 
 const UnescapeRule::Type kUnescapeAll =
-    UnescapeRule::SPACES | UnescapeRule::URL_SPECIAL_CHARS |
+    UnescapeRule::SPACES | UnescapeRule::PATH_SEPARATORS |
+    UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
     UnescapeRule::SPOOFING_AND_CONTROL_CHARS |
     UnescapeRule::REPLACE_PLUS_WITH_SPACE;
 
@@ -44,39 +47,39 @@ const char kLogoPath[] = "chrome/test/data/google/logo.gif";
 
 // method: CONNECT
 // Responses with a BAD_REQUEST to any CONNECT requests.
-scoped_ptr<HttpResponse> HandleDefaultConnect(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleDefaultConnect(const HttpRequest& request) {
   if (request.method != METHOD_CONNECT)
     return nullptr;
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_code(HTTP_BAD_REQUEST);
   http_response->set_content(
       "Your client has issued a malformed or illegal request.");
   http_response->set_content_type("text/html");
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /cachetime
 // Returns a cacheable response.
-scoped_ptr<HttpResponse> HandleCacheTime(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+std::unique_ptr<HttpResponse> HandleCacheTime(const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content(
       "<html><head><title>Cache: max-age=60</title></head></html>");
   http_response->set_content_type("text/html");
   http_response->AddCustomHeader("Cache-Control", "max-age=60");
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /echoheader | /echoheadercache
 // Responds with the headers echoed in the message body.
 // echoheader does not cache the results, while echoheadercache does.
-scoped_ptr<HttpResponse> HandleEchoHeader(const std::string& url,
-                                          const std::string& cache_control,
-                                          const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleEchoHeader(const std::string& url,
+                                               const std::string& cache_control,
+                                               const HttpRequest& request) {
   if (!ShouldHandle(request, url))
     return nullptr;
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
 
   GURL request_url = request.GetURL();
   if (request_url.has_query()) {
@@ -90,14 +93,14 @@ scoped_ptr<HttpResponse> HandleEchoHeader(const std::string& url,
 
   http_response->set_content_type("text/plain");
   http_response->AddCustomHeader("Cache-Control", cache_control);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /echo?status=STATUS
 // Responds with the request body as the response body and
 // a status code of STATUS.
-scoped_ptr<HttpResponse> HandleEcho(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+std::unique_ptr<HttpResponse> HandleEcho(const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
 
   GURL request_url = request.GetURL();
   if (request_url.has_query()) {
@@ -112,23 +115,23 @@ scoped_ptr<HttpResponse> HandleEcho(const HttpRequest& request) {
     http_response->set_content("Echo");
   else
     http_response->set_content(request.content);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /echotitle
 // Responds with the request body as the title.
-scoped_ptr<HttpResponse> HandleEchoTitle(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+std::unique_ptr<HttpResponse> HandleEchoTitle(const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content_type("text/html");
   http_response->set_content("<html><head><title>" + request.content +
                              "</title></head></html>");
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /echoall?QUERY
 // Responds with the list of QUERY and the request headers.
-scoped_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
 
   std::string body =
       "<html><head><style>"
@@ -154,13 +157,19 @@ scoped_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
 
   http_response->set_content_type("text/html");
   http_response->set_content(body);
-  return http_response.Pass();
+  return std::move(http_response);
+}
+
+// /echo-raw
+// Returns the query string as the raw response (no HTTP headers).
+std::unique_ptr<HttpResponse> HandleEchoRaw(const HttpRequest& request) {
+  return base::MakeUnique<RawHttpResponse>("", request.GetURL().query());
 }
 
 // /set-cookie?COOKIES
 // Sets response cookies to be COOKIES.
-scoped_ptr<HttpResponse> HandleSetCookie(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+std::unique_ptr<HttpResponse> HandleSetCookie(const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content_type("text/html");
   std::string content;
   GURL request_url = request.GetURL();
@@ -174,12 +183,12 @@ scoped_ptr<HttpResponse> HandleSetCookie(const HttpRequest& request) {
   }
 
   http_response->set_content(content);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /set-many-cookies?N
 // Sets N cookies in the response.
-scoped_ptr<HttpResponse> HandleSetManyCookies(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleSetManyCookies(const HttpRequest& request) {
   std::string content;
 
   GURL request_url = request.GetURL();
@@ -187,7 +196,7 @@ scoped_ptr<HttpResponse> HandleSetManyCookies(const HttpRequest& request) {
   if (request_url.has_query())
     num = std::atoi(request_url.query().c_str());
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content_type("text/html");
   for (size_t i = 0; i < num; ++i) {
     http_response->AddCustomHeader("Set-Cookie", "a=");
@@ -195,13 +204,14 @@ scoped_ptr<HttpResponse> HandleSetManyCookies(const HttpRequest& request) {
 
   http_response->set_content(
       base::StringPrintf("%" PRIuS " cookies were sent", num));
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /expect-and-set-cookie?expect=EXPECTED&set=SET&data=DATA
 // Verifies that the request cookies match EXPECTED and then returns cookies
 // that match SET and a content that matches DATA.
-scoped_ptr<HttpResponse> HandleExpectAndSetCookie(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleExpectAndSetCookie(
+    const HttpRequest& request) {
   std::vector<std::string> received_cookies;
   if (request.headers.find("Cookie") != request.headers.end()) {
     received_cookies =
@@ -223,7 +233,7 @@ scoped_ptr<HttpResponse> HandleExpectAndSetCookie(const HttpRequest& request) {
     }
   }
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content_type("text/html");
   if (got_all_expected) {
     for (const auto& cookie : query_list.at("set")) {
@@ -239,17 +249,17 @@ scoped_ptr<HttpResponse> HandleExpectAndSetCookie(const HttpRequest& request) {
   }
 
   http_response->set_content(content);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /set-header?HEADERS
 // Returns a response with HEADERS set as the response headers.
-scoped_ptr<HttpResponse> HandleSetHeader(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleSetHeader(const HttpRequest& request) {
   std::string content;
 
   GURL request_url = request.GetURL();
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content_type("text/html");
   if (request_url.has_query()) {
     RequestQuery headers = ParseQuery(request_url);
@@ -265,28 +275,28 @@ scoped_ptr<HttpResponse> HandleSetHeader(const HttpRequest& request) {
   }
 
   http_response->set_content(content);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /nocontent
 // Returns a NO_CONTENT response.
-scoped_ptr<HttpResponse> HandleNoContent(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+std::unique_ptr<HttpResponse> HandleNoContent(const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_code(HTTP_NO_CONTENT);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /close-socket
 // Immediately closes the connection.
-scoped_ptr<HttpResponse> HandleCloseSocket(const HttpRequest& request) {
-  scoped_ptr<RawHttpResponse> http_response(new RawHttpResponse("", ""));
-  return http_response.Pass();
+std::unique_ptr<HttpResponse> HandleCloseSocket(const HttpRequest& request) {
+  std::unique_ptr<RawHttpResponse> http_response(new RawHttpResponse("", ""));
+  return std::move(http_response);
 }
 
 // /auth-basic?password=PASS&realm=REALM
 // Performs "Basic" HTTP authentication using expected password PASS and
 // realm REALM.
-scoped_ptr<HttpResponse> HandleAuthBasic(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleAuthBasic(const HttpRequest& request) {
   GURL request_url = request.GetURL();
   RequestQuery query = ParseQuery(request_url);
 
@@ -327,7 +337,7 @@ scoped_ptr<HttpResponse> HandleAuthBasic(const HttpRequest& request) {
     }
   }
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   if (!authed) {
     http_response->set_code(HTTP_UNAUTHORIZED);
     http_response->set_content_type("text/html");
@@ -341,13 +351,13 @@ scoped_ptr<HttpResponse> HandleAuthBasic(const HttpRequest& request) {
         "password: %s<p>You sent:<br>%s<p></body></html>",
         error.c_str(), auth.c_str(), b64str.c_str(), username.c_str(),
         userpass.c_str(), password.c_str(), request.all_headers.c_str()));
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   if (request.headers.find("If-None-Match") != request.headers.end() &&
       request.headers.at("If-None-Match") == kEtag) {
     http_response->set_code(HTTP_NOT_MODIFIED);
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   base::FilePath file_path =
@@ -371,12 +381,12 @@ scoped_ptr<HttpResponse> HandleAuthBasic(const HttpRequest& request) {
 
   http_response->AddCustomHeader("Cache-Control", "max-age=60000");
   http_response->AddCustomHeader("Etag", kEtag);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /auth-digest
 // Performs "Digest" HTTP authentication.
-scoped_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
   std::string nonce = base::MD5String(
       base::StringPrintf("privatekey%s", request.relative_url.c_str()));
   std::string opaque = base::MD5String("opaque");
@@ -444,7 +454,7 @@ scoped_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
     }
   }
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   if (!authed) {
     http_response->set_code(HTTP_UNAUTHORIZED);
     http_response->set_content_type("text/html");
@@ -460,7 +470,7 @@ scoped_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
         "You sent:<br>%s<p>We are replying:<br>%s<p></body></html>",
         error.c_str(), auth.c_str(), request.all_headers.c_str(),
         auth_header.c_str()));
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   http_response->set_content_type("text/html");
@@ -469,30 +479,31 @@ scoped_ptr<HttpResponse> HandleAuthDigest(const HttpRequest& request) {
                          "<body>auth=%s<p></body></html>",
                          username.c_str(), password.c_str(), auth.c_str()));
 
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /server-redirect?URL
 // Returns a server-redirect (301) to URL.
-scoped_ptr<HttpResponse> HandleServerRedirect(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleServerRedirect(const HttpRequest& request) {
   GURL request_url = request.GetURL();
   std::string dest =
       net::UnescapeURLComponent(request_url.query(), kUnescapeAll);
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_code(HTTP_MOVED_PERMANENTLY);
   http_response->AddCustomHeader("Location", dest);
   http_response->set_content_type("text/html");
   http_response->set_content(base::StringPrintf(
       "<html><head></head><body>Redirecting to %s</body></html>",
       dest.c_str()));
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /cross-site?URL
 // Returns a cross-site redirect to URL.
-scoped_ptr<HttpResponse> HandleCrossSiteRedirect(EmbeddedTestServer* server,
-                                                 const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleCrossSiteRedirect(
+    EmbeddedTestServer* server,
+    const HttpRequest& request) {
   if (!ShouldHandle(request, "/cross-site"))
     return nullptr;
 
@@ -508,40 +519,41 @@ scoped_ptr<HttpResponse> HandleCrossSiteRedirect(EmbeddedTestServer* server,
         dest_all.substr(delimiter + 1).c_str());
   }
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_code(HTTP_MOVED_PERMANENTLY);
   http_response->AddCustomHeader("Location", dest);
   http_response->set_content_type("text/html");
   http_response->set_content(base::StringPrintf(
       "<html><head></head><body>Redirecting to %s</body></html>",
       dest.c_str()));
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /client-redirect?URL
 // Returns a meta redirect to URL.
-scoped_ptr<HttpResponse> HandleClientRedirect(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleClientRedirect(const HttpRequest& request) {
   GURL request_url = request.GetURL();
   std::string dest =
       net::UnescapeURLComponent(request_url.query(), kUnescapeAll);
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content_type("text/html");
   http_response->set_content(base::StringPrintf(
       "<html><head><meta http-equiv=\"refresh\" content=\"0;url=%s\"></head>"
       "<body>Redirecting to %s</body></html>",
       dest.c_str(), dest.c_str()));
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // /defaultresponse
 // Returns a valid 200 response.
-scoped_ptr<HttpResponse> HandleDefaultResponse(const HttpRequest& request) {
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+std::unique_ptr<HttpResponse> HandleDefaultResponse(
+    const HttpRequest& request) {
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_content_type("text/html");
   http_response->set_content("Default response given for path: " +
                              request.relative_url);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // Delays |delay| seconds before sending a response to the client.
@@ -564,17 +576,18 @@ class DelayedHttpResponse : public BasicHttpResponse {
 
 // /slow?N
 // Returns a response to the server delayed by N seconds.
-scoped_ptr<HttpResponse> HandleSlowServer(const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleSlowServer(const HttpRequest& request) {
   double delay = 1.0f;
 
   GURL request_url = request.GetURL();
   if (request_url.has_query())
     delay = std::atof(request_url.query().c_str());
 
-  scoped_ptr<BasicHttpResponse> http_response(new DelayedHttpResponse(delay));
+  std::unique_ptr<BasicHttpResponse> http_response(
+      new DelayedHttpResponse(delay));
   http_response->set_content_type("text/plain");
   http_response->set_content(base::StringPrintf("waited %.1f seconds", delay));
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 }  // namespace anonymous
@@ -595,6 +608,7 @@ void RegisterDefaultHandlers(EmbeddedTestServer* server) {
   server->RegisterDefaultHandler(
       PREFIXED_HANDLER("/echotitle", &HandleEchoTitle));
   server->RegisterDefaultHandler(PREFIXED_HANDLER("/echoall", &HandleEchoAll));
+  server->RegisterDefaultHandler(PREFIXED_HANDLER("/echo-raw", &HandleEchoRaw));
   server->RegisterDefaultHandler(
       PREFIXED_HANDLER("/set-cookie", &HandleSetCookie));
   server->RegisterDefaultHandler(

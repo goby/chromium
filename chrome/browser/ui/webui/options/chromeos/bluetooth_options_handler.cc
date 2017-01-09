@@ -8,6 +8,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -91,6 +92,20 @@ void BluetoothOptionsHandler::GetLocalizedValues(
         IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_AUTH_TIMEOUT },
     { "bluetoothConnectUnsupportedDevice",
         IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_UNSUPPORTED_DEVICE },
+    { "bluetoothConnectAttributeLengthInvalid",
+        IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_ATTRIBUTE_LENGTH_INVALID },
+    { "bluetoothConnectConnectionCongested",
+        IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_CONNECTION_CONGESTED },
+    { "bluetoothConnectInsufficientEncryption",
+        IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_INSUFFICIENT_ENCRYPTION },
+    { "bluetoothConnectOffsetInvalid",
+        IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_OFFSET_INVALID },
+    { "bluetoothConnectReadNotPermitted",
+        IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_READ_NOT_PERMITTED },
+    { "bluetoothConnectRequestNotSupported",
+        IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_REQUEST_NOT_SUPPORTED },
+    { "bluetoothConnectWriteNotPermitted",
+        IDS_OPTIONS_SETTINGS_BLUETOOTH_CONNECT_WRITE_NOT_PERMITTED },
     { "bluetoothDisconnectFailed",
         IDS_OPTIONS_SETTINGS_BLUETOOTH_DISCONNECT_FAILED },
     { "bluetoothForgetFailed",

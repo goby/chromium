@@ -4,14 +4,17 @@
 
 #include "content/browser/web_contents/aura/overscroll_navigation_overlay.h"
 
+#include <string.h>
+#include <utility>
 #include <vector>
-#include "base/command_line.h"
+
+#include "base/macros.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/frame_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/overscroll_configuration.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/test/test_render_frame_host.h"
 #include "content/test/test_render_view_host.h"
@@ -28,6 +31,28 @@
 
 namespace content {
 
+// Forces web contents to complete web page load as soon as navigation starts.
+class ImmediateLoadObserver : WebContentsObserver {
+ public:
+  explicit ImmediateLoadObserver(TestWebContents* contents)
+      : contents_(contents) {
+    Observe(contents);
+  }
+  ~ImmediateLoadObserver() override {}
+
+  void DidStartNavigationToPendingEntry(const GURL& url,
+                                        ReloadType reload_type) override {
+    // Simulate immediate web page load.
+    contents_->TestSetIsLoading(false);
+    Observe(nullptr);
+  }
+
+ private:
+  TestWebContents* contents_;
+
+  DISALLOW_COPY_AND_ASSIGN(ImmediateLoadObserver);
+};
+
 // A subclass of TestWebContents that offers a fake content window.
 class OverscrollTestWebContents : public TestWebContents {
  public:
@@ -35,12 +60,14 @@ class OverscrollTestWebContents : public TestWebContents {
 
   static OverscrollTestWebContents* Create(
       BrowserContext* browser_context,
-      SiteInstance* instance,
-      scoped_ptr<aura::Window> fake_native_view,
-      scoped_ptr<aura::Window> fake_contents_window) {
+      scoped_refptr<SiteInstance> instance,
+      std::unique_ptr<aura::Window> fake_native_view,
+      std::unique_ptr<aura::Window> fake_contents_window) {
     OverscrollTestWebContents* web_contents = new OverscrollTestWebContents(
-        browser_context, fake_native_view.Pass(), fake_contents_window.Pass());
-    web_contents->Init(WebContents::CreateParams(browser_context, instance));
+        browser_context, std::move(fake_native_view),
+        std::move(fake_contents_window));
+    web_contents->Init(
+        WebContents::CreateParams(browser_context, std::move(instance)));
     return web_contents;
   }
 
@@ -61,16 +88,16 @@ class OverscrollTestWebContents : public TestWebContents {
  protected:
   explicit OverscrollTestWebContents(
       BrowserContext* browser_context,
-      scoped_ptr<aura::Window> fake_native_view,
-      scoped_ptr<aura::Window> fake_contents_window)
+      std::unique_ptr<aura::Window> fake_native_view,
+      std::unique_ptr<aura::Window> fake_contents_window)
       : TestWebContents(browser_context),
-        fake_native_view_(fake_native_view.Pass()),
-        fake_contents_window_(fake_contents_window.Pass()),
+        fake_native_view_(std::move(fake_native_view)),
+        fake_contents_window_(std::move(fake_contents_window)),
         is_being_destroyed_(false) {}
 
  private:
-  scoped_ptr<aura::Window> fake_native_view_;
-  scoped_ptr<aura::Window> fake_contents_window_;
+  std::unique_ptr<aura::Window> fake_native_view_;
+  std::unique_ptr<aura::Window> fake_contents_window_;
   bool is_being_destroyed_;
 };
 
@@ -106,9 +133,9 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
   void PerformBackNavigationViaSliderCallbacks() {
     // Sets slide direction to BACK, sets screenshot from NavEntry at
     // offset -1 on layer_delegate_.
-    scoped_ptr<aura::Window> window(
+    std::unique_ptr<aura::Window> window(
         GetOverlay()->CreateBackWindow(GetBackSlideWindowBounds()));
-    bool window_created = window;
+    bool window_created = !!window;
     // Performs BACK navigation, sets image from layer_delegate_ on
     // image_delegate_.
     GetOverlay()->OnOverscrollCompleting();
@@ -117,13 +144,11 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
     else
       EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::NONE);
     window->SetBounds(gfx::Rect(root_window()->bounds().size()));
-    GetOverlay()->OnOverscrollCompleted(window.Pass());
-    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kEnableBrowserSideNavigation)) {
+    GetOverlay()->OnOverscrollCompleted(std::move(window));
+    if (IsBrowserSideNavigationEnabled())
       main_test_rfh()->PrepareForCommit();
-    } else {
+    else
       contents()->GetPendingMainFrame()->PrepareForCommit();
-    }
     if (window_created)
       EXPECT_TRUE(contents()->CrossProcessNavigationPending());
     else
@@ -152,23 +177,22 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
     RenderViewHostImplTestHarness::SetUp();
 
     // Set up the fake web contents native view.
-    scoped_ptr<aura::Window> fake_native_view(new aura::Window(nullptr));
+    std::unique_ptr<aura::Window> fake_native_view(new aura::Window(nullptr));
     fake_native_view->Init(ui::LAYER_SOLID_COLOR);
     root_window()->AddChild(fake_native_view.get());
     fake_native_view->SetBounds(gfx::Rect(root_window()->bounds().size()));
 
     // Set up the fake contents window.
-    scoped_ptr<aura::Window> fake_contents_window(new aura::Window(nullptr));
+    std::unique_ptr<aura::Window> fake_contents_window(
+        new aura::Window(nullptr));
     fake_contents_window->Init(ui::LAYER_SOLID_COLOR);
     root_window()->AddChild(fake_contents_window.get());
     fake_contents_window->SetBounds(gfx::Rect(root_window()->bounds().size()));
 
     // Replace the default test web contents with our custom class.
     SetContents(OverscrollTestWebContents::Create(
-        browser_context(),
-        SiteInstance::Create(browser_context()),
-        fake_native_view.Pass(),
-        fake_contents_window.Pass()));
+        browser_context(), SiteInstance::Create(browser_context()),
+        std::move(fake_native_view), std::move(fake_contents_window)));
 
     contents()->NavigateAndCommit(first());
     EXPECT_TRUE(controller().GetVisibleEntry());
@@ -215,7 +239,7 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
   const GURL third_;
   const GURL fourth_;
 
-  scoped_ptr<OverscrollNavigationOverlay> overlay_;
+  std::unique_ptr<OverscrollNavigationOverlay> overlay_;
 
   DISALLOW_COPY_AND_ASSIGN(OverscrollNavigationOverlayTest);
 };
@@ -249,7 +273,7 @@ TEST_F(OverscrollNavigationOverlayTest, CannotNavigate) {
 // Tests that if a navigation is cancelled, no navigation is performed and the
 // state is restored.
 TEST_F(OverscrollNavigationOverlayTest, CancelNavigation) {
-  scoped_ptr<aura::Window> window =
+  std::unique_ptr<aura::Window> window =
       GetOverlay()->CreateBackWindow(GetBackSlideWindowBounds());
   EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::BACK);
 
@@ -262,7 +286,7 @@ TEST_F(OverscrollNavigationOverlayTest, CancelNavigation) {
 // first one worked correctly.
 TEST_F(OverscrollNavigationOverlayTest, CancelAfterSuccessfulNavigation) {
   PerformBackNavigationViaSliderCallbacks();
-  scoped_ptr<aura::Window> wrapper =
+  std::unique_ptr<aura::Window> wrapper =
       GetOverlay()->CreateBackWindow(GetBackSlideWindowBounds());
   EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::BACK);
 
@@ -272,7 +296,7 @@ TEST_F(OverscrollNavigationOverlayTest, CancelAfterSuccessfulNavigation) {
   EXPECT_TRUE(contents()->CrossProcessNavigationPending());
   NavigationEntry* pending = contents()->GetController().GetPendingEntry();
   contents()->GetPendingMainFrame()->SendNavigate(
-      pending->GetPageID(), pending->GetUniqueID(), false, pending->GetURL());
+      pending->GetUniqueID(), false, pending->GetURL());
   EXPECT_EQ(contents()->GetURL(), third());
 }
 
@@ -288,7 +312,7 @@ TEST_F(OverscrollNavigationOverlayTest, Navigation_PaintUpdate) {
 
   NavigationEntry* pending = contents()->GetController().GetPendingEntry();
   contents()->GetPendingMainFrame()->SendNavigate(
-      pending->GetPageID(), pending->GetUniqueID(), false, pending->GetURL());
+      pending->GetUniqueID(), false, pending->GetURL());
   ReceivePaintUpdate();
 
   // Navigation was committed and the paint update was received - we should no
@@ -307,12 +331,11 @@ TEST_F(OverscrollNavigationOverlayTest, Navigation_LoadingUpdate) {
   // this is a "safety net" in case we mis-identify the destination webpage
   // (which can happen if a new navigation is performed while while a GestureNav
   // navigation is in progress).
-  contents()->TestSetIsLoading(true);
   contents()->TestSetIsLoading(false);
   EXPECT_FALSE(GetOverlay()->web_contents());
   NavigationEntry* pending = contents()->GetController().GetPendingEntry();
   contents()->GetPendingMainFrame()->SendNavigate(
-      pending->GetPageID(), pending->GetUniqueID(), false, pending->GetURL());
+      pending->GetUniqueID(), false, pending->GetURL());
   EXPECT_EQ(contents()->GetURL(), third());
 }
 
@@ -330,6 +353,18 @@ TEST_F(OverscrollNavigationOverlayTest, CloseDuringAnimation) {
   // Ensure a clean close.
 }
 
+// Tests that we can handle the case when the load completes as soon as the
+// navigation is started.
+TEST_F(OverscrollNavigationOverlayTest, ImmediateLoadOnNavigate) {
+  PerformBackNavigationViaSliderCallbacks();
+  // This observer will force the page load to complete as soon as the
+  // navigation starts.
+  ImmediateLoadObserver immediate_nav(contents());
+  GetOverlay()->owa_->OnOverscrollModeChange(OVERSCROLL_NONE, OVERSCROLL_EAST);
+  // This will start and immediately complete the navigation.
+  GetOverlay()->owa_->OnOverscrollComplete(OVERSCROLL_EAST);
+  EXPECT_FALSE(GetOverlay()->window_.get());
+}
 
 // Tests that swapping the overlay window at the end of a gesture caused by the
 // start of a new overscroll does not crash and the events still reach the new

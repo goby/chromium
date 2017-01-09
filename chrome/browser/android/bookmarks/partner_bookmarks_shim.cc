@@ -7,12 +7,12 @@
 #include <tuple>
 
 #include "base/lazy_instance.h"
-#include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -28,7 +28,7 @@ namespace {
 // PartnerBookmarksShim is responsible to applying and storing the user changes
 // (deletions/renames) in the user profile, thus keeping the hierarchy intact.
 struct PartnerModelKeeper {
-  scoped_ptr<BookmarkNode> partner_bookmarks_root;
+  std::unique_ptr<BookmarkNode> partner_bookmarks_root;
   bool loaded;
 
   PartnerModelKeeper()
@@ -123,8 +123,8 @@ void PartnerBookmarksShim::RenameBookmark(const BookmarkNode* node,
   const NodeRenamingMapKey key(node->url(), node->GetTitle());
   node_rename_remove_map_[key] = title;
   SaveNodeMapping();
-  FOR_EACH_OBSERVER(PartnerBookmarksShim::Observer, observers_,
-                    PartnerShimChanged(this));
+  for (PartnerBookmarksShim::Observer& observer : observers_)
+    observer.PartnerShimChanged(this);
 }
 
 void PartnerBookmarksShim::AddObserver(
@@ -137,7 +137,7 @@ void PartnerBookmarksShim::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
-const BookmarkNode* PartnerBookmarksShim::GetNodeByID(int64 id) const {
+const BookmarkNode* PartnerBookmarksShim::GetNodeByID(int64_t id) const {
   DCHECK(IsLoaded());
   if (!HasPartnerBookmarks())
     return NULL;
@@ -175,12 +175,13 @@ const BookmarkNode* PartnerBookmarksShim::GetPartnerBookmarksRoot() const {
   return g_partner_model_keeper.Get().partner_bookmarks_root.get();
 }
 
-void PartnerBookmarksShim::SetPartnerBookmarksRoot(BookmarkNode* root_node) {
+void PartnerBookmarksShim::SetPartnerBookmarksRoot(
+    std::unique_ptr<bookmarks::BookmarkNode> root_node) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  g_partner_model_keeper.Get().partner_bookmarks_root.reset(root_node);
+  g_partner_model_keeper.Get().partner_bookmarks_root = std::move(root_node);
   g_partner_model_keeper.Get().loaded = true;
-  FOR_EACH_OBSERVER(PartnerBookmarksShim::Observer, observers_,
-                    PartnerShimLoaded(this));
+  for (PartnerBookmarksShim::Observer& observer : observers_)
+    observer.PartnerShimLoaded(this);
 }
 
 PartnerBookmarksShim::NodeRenamingMapKey::NodeRenamingMapKey(
@@ -220,12 +221,13 @@ PartnerBookmarksShim::PartnerBookmarksShim(PrefService* prefs)
 }
 
 PartnerBookmarksShim::~PartnerBookmarksShim() {
-  FOR_EACH_OBSERVER(PartnerBookmarksShim::Observer, observers_,
-                    ShimBeingDeleted(this));
+  for (PartnerBookmarksShim::Observer& observer : observers_)
+    observer.ShimBeingDeleted(this);
 }
 
 const BookmarkNode* PartnerBookmarksShim::GetNodeByID(
-    const BookmarkNode* parent, int64 id) const {
+    const BookmarkNode* parent,
+    int64_t id) const {
   if (parent->id() == id)
     return parent;
   for (int i = 0, child_count = parent->child_count(); i < child_count; ++i) {

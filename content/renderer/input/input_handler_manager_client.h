@@ -5,61 +5,71 @@
 #ifndef CONTENT_RENDERER_INPUT_INPUT_HANDLER_MANAGER_CLIENT_H_
 #define CONTENT_RENDERER_INPUT_INPUT_HANDLER_MANAGER_CLIENT_H_
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/common/input/input_event_ack_state.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "ui/events/blink/scoped_web_input_event.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
 namespace ui {
 class LatencyInfo;
-}
-
-namespace cc {
-class InputHandler;
-}
-
-namespace blink {
-class WebInputEvent;
-}
-
-namespace ui {
 class SynchronousInputHandlerProxy;
+struct DidOverscrollParams;
 }
 
 namespace content {
-struct DidOverscrollParams;
+class InputHandlerManager;
 
 class CONTENT_EXPORT InputHandlerManagerClient {
  public:
   virtual ~InputHandlerManagerClient() {}
 
-  // The Manager will supply a |handler| when bound to the client. This is valid
-  // until the manager shuts down, at which point it supplies a null |handler|.
-  // The client should only makes calls to |handler| on the compositor thread.
-  typedef base::Callback<
-      InputEventAckState(int /*routing_id*/,
-                         const blink::WebInputEvent*,
-                         ui::LatencyInfo* latency_info)> Handler;
-
   // Called from the main thread.
-  virtual void SetBoundHandler(const Handler& handler) = 0;
+  virtual void SetInputHandlerManager(InputHandlerManager*) = 0;
+  virtual void NotifyInputEventHandled(int routing_id,
+                                       blink::WebInputEvent::Type type,
+                                       InputEventAckState ack_result) = 0;
+  virtual void ProcessRafAlignedInput(int routing_id) = 0;
 
   // Called from the compositor thread.
-  virtual void DidAddInputHandler(
-      int routing_id,
-      ui::SynchronousInputHandlerProxy* synchronous_handler) = 0;
-  virtual void DidRemoveInputHandler(int routing_id) = 0;
+  virtual void RegisterRoutingID(int routing_id) = 0;
+  virtual void UnregisterRoutingID(int routing_id) = 0;
+
+  // |HandleInputEvent| will respond to overscroll by calling the passed in
+  // callback.
+  // Otherwise |DidOverscroll| will be fired.
   virtual void DidOverscroll(int routing_id,
-                             const DidOverscrollParams& params) = 0;
+                             const ui::DidOverscrollParams& params) = 0;
   virtual void DidStopFlinging(int routing_id) = 0;
+  virtual void DispatchNonBlockingEventToMainThread(
+      int routing_id,
+      ui::ScopedWebInputEvent event,
+      const ui::LatencyInfo& latency_info) = 0;
 
  protected:
   InputHandlerManagerClient() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(InputHandlerManagerClient);
+};
+
+class CONTENT_EXPORT SynchronousInputHandlerProxyClient {
+ public:
+  virtual ~SynchronousInputHandlerProxyClient() {}
+
+  virtual void DidAddSynchronousHandlerProxy(
+      int routing_id,
+      ui::SynchronousInputHandlerProxy* synchronous_handler) = 0;
+  virtual void DidRemoveSynchronousHandlerProxy(int routing_id) = 0;
+
+ protected:
+  SynchronousInputHandlerProxyClient() {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(SynchronousInputHandlerProxyClient);
 };
 
 }  // namespace content

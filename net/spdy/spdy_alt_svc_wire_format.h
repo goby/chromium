@@ -10,9 +10,10 @@
 #ifndef NET_SPDY_SPDY_ALT_SVC_WIRE_FORMAT_H_
 #define NET_SPDY_SPDY_ALT_SVC_WIRE_FORMAT_H_
 
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 
@@ -24,34 +25,32 @@ class SpdyAltSvcWireFormatPeer;
 
 class NET_EXPORT_PRIVATE SpdyAltSvcWireFormat {
  public:
-  using VersionVector = std::vector<uint16>;
+  using VersionVector = std::vector<uint16_t>;
 
   struct NET_EXPORT_PRIVATE AlternativeService {
     std::string protocol_id;
     std::string host;
 
     // Default is 0: invalid port.
-    uint16 port = 0;
+    uint16_t port = 0;
     // Default is one day.
-    uint32 max_age = 86400;
-    // Default is always use.
-    double probability = 1.0;
+    uint32_t max_age = 86400;
     // Default is empty: unspecified version.
     VersionVector version;
 
     AlternativeService();
     AlternativeService(const std::string& protocol_id,
                        const std::string& host,
-                       uint16 port,
-                       uint32 max_age,
-                       double probability,
+                       uint16_t port,
+                       uint32_t max_age,
                        VersionVector version);
+    AlternativeService(const AlternativeService& other);
     ~AlternativeService();
 
     bool operator==(const AlternativeService& other) const {
       return protocol_id == other.protocol_id && host == other.host &&
              port == other.port && version == other.version &&
-             max_age == other.max_age && probability == other.probability;
+             max_age == other.max_age;
     }
   };
   // An empty vector means alternative services should be cleared for given
@@ -74,16 +73,13 @@ class NET_EXPORT_PRIVATE SpdyAltSvcWireFormat {
   static bool ParseAltAuthority(base::StringPiece::const_iterator c,
                                 base::StringPiece::const_iterator end,
                                 std::string* host,
-                                uint16* port);
+                                uint16_t* port);
   static bool ParsePositiveInteger16(base::StringPiece::const_iterator c,
                                      base::StringPiece::const_iterator end,
-                                     uint16* value);
+                                     uint16_t* value);
   static bool ParsePositiveInteger32(base::StringPiece::const_iterator c,
                                      base::StringPiece::const_iterator end,
-                                     uint32* value);
-  static bool ParseProbability(base::StringPiece::const_iterator c,
-                               base::StringPiece::const_iterator end,
-                               double* probability);
+                                     uint32_t* value);
 };
 
 }  // namespace net

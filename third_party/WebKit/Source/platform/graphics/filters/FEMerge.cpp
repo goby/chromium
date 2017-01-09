@@ -20,50 +20,43 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "platform/graphics/filters/FEMerge.h"
 
 #include "SkMergeImageFilter.h"
 #include "platform/graphics/filters/SkiaImageFilterBuilder.h"
 #include "platform/text/TextStream.h"
-#include "wtf/OwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-FEMerge::FEMerge(Filter* filter)
-    : FilterEffect(filter)
-{
+FEMerge::FEMerge(Filter* filter) : FilterEffect(filter) {}
+
+FEMerge* FEMerge::create(Filter* filter) {
+  return new FEMerge(filter);
 }
 
-PassRefPtrWillBeRawPtr<FEMerge> FEMerge::create(Filter* filter)
-{
-    return adoptRefWillBeNoop(new FEMerge(filter));
+sk_sp<SkImageFilter> FEMerge::createImageFilter() {
+  unsigned size = numberOfEffectInputs();
+
+  std::unique_ptr<sk_sp<SkImageFilter>[]> inputRefs =
+      wrapArrayUnique(new sk_sp<SkImageFilter>[ size ]);
+  for (unsigned i = 0; i < size; ++i)
+    inputRefs[i] =
+        SkiaImageFilterBuilder::build(inputEffect(i), operatingColorSpace());
+  SkImageFilter::CropRect rect = getCropRect();
+  return SkMergeImageFilter::MakeN(inputRefs.get(), size, nullptr, &rect);
 }
 
-PassRefPtr<SkImageFilter> FEMerge::createImageFilter(SkiaImageFilterBuilder& builder)
-{
-    unsigned size = numberOfEffectInputs();
-
-    OwnPtr<RefPtr<SkImageFilter>[]> inputRefs = adoptArrayPtr(new RefPtr<SkImageFilter>[size]);
-    OwnPtr<SkImageFilter*[]> inputs = adoptArrayPtr(new SkImageFilter*[size]);
-    for (unsigned i = 0; i < size; ++i) {
-        inputRefs[i] = builder.build(inputEffect(i), operatingColorSpace());
-        inputs[i] = inputRefs[i].get();
-    }
-    SkImageFilter::CropRect rect = getCropRect(builder.cropOffset());
-    return adoptRef(SkMergeImageFilter::Create(inputs.get(), size, 0, &rect));
+TextStream& FEMerge::externalRepresentation(TextStream& ts, int indent) const {
+  writeIndent(ts, indent);
+  ts << "[feMerge";
+  FilterEffect::externalRepresentation(ts);
+  unsigned size = numberOfEffectInputs();
+  ts << " mergeNodes=\"" << size << "\"]\n";
+  for (unsigned i = 0; i < size; ++i)
+    inputEffect(i)->externalRepresentation(ts, indent + 1);
+  return ts;
 }
 
-TextStream& FEMerge::externalRepresentation(TextStream& ts, int indent) const
-{
-    writeIndent(ts, indent);
-    ts << "[feMerge";
-    FilterEffect::externalRepresentation(ts);
-    unsigned size = numberOfEffectInputs();
-    ts << " mergeNodes=\"" << size << "\"]\n";
-    for (unsigned i = 0; i < size; ++i)
-        inputEffect(i)->externalRepresentation(ts, indent + 1);
-    return ts;
-}
-
-} // namespace blink
+}  // namespace blink

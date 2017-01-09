@@ -5,8 +5,8 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_AW_FORM_DATABASE_SERVICE_H_
 #define ANDROID_WEBVIEW_BROWSER_AW_FORM_DATABASE_SERVICE_H_
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/webdata/common/web_data_service_consumer.h"
 #include "components/webdata/common/web_database_service.h"
@@ -40,8 +40,9 @@ class AwFormDatabaseService : public WebDataServiceConsumer {
       get_autofill_webdata_service();
 
   // WebDataServiceConsumer implementation.
-  void OnWebDataServiceRequestDone(WebDataServiceBase::Handle h,
-                                   const WDTypedResult* result) override;
+  void OnWebDataServiceRequestDone(
+      WebDataServiceBase::Handle h,
+      std::unique_ptr<WDTypedResult> result) override;
 
  private:
   struct PendingQuery {

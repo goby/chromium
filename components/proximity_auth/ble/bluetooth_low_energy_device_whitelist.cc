@@ -7,11 +7,10 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/values.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/proximity_auth/ble/pref_names.h"
 #include "components/proximity_auth/logging/logging.h"
 
@@ -56,7 +55,7 @@ std::string BluetoothLowEnergyDeviceWhitelist::GetDeviceAddress(
   for (base::DictionaryValue::Iterator it(*device_whitelist); !it.IsAtEnd();
        it.Advance()) {
     std::string value_string;
-    DCHECK(it.value().IsType(base::Value::TYPE_STRING));
+    DCHECK(it.value().IsType(base::Value::Type::STRING));
     if (it.value().GetAsString(&value_string) && value_string == public_key)
       return it.key();
   }
@@ -70,7 +69,7 @@ std::vector<std::string> BluetoothLowEnergyDeviceWhitelist::GetPublicKeys()
   for (base::DictionaryValue::Iterator it(*device_whitelist); !it.IsAtEnd();
        it.Advance()) {
     std::string value_string;
-    DCHECK(it.value().IsType(base::Value::TYPE_STRING));
+    DCHECK(it.value().IsType(base::Value::Type::STRING));
     it.value().GetAsString(&value_string);
     public_keys.push_back(value_string);
   }

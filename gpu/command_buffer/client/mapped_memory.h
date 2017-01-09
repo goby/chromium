@@ -5,11 +5,13 @@
 #ifndef GPU_COMMAND_BUFFER_CLIENT_MAPPED_MEMORY_H_
 #define GPU_COMMAND_BUFFER_CLIENT_MAPPED_MEMORY_H_
 
+#include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "gpu/command_buffer/client/fenced_allocator.h"
 #include "gpu/command_buffer/common/buffer.h"
@@ -200,7 +202,7 @@ class GPU_EXPORT MappedMemoryManager
   }
 
  private:
-  typedef std::vector<scoped_ptr<MemoryChunk>> MemoryChunkVector;
+  typedef std::vector<std::unique_ptr<MemoryChunk>> MemoryChunkVector;
 
   // size a chunk is rounded up to.
   unsigned int chunk_size_multiple_;

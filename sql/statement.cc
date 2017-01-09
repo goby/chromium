@@ -4,6 +4,9 @@
 
 #include "sql/statement.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -291,7 +294,7 @@ const void* Statement::ColumnBlob(int col) const {
   return sqlite3_column_blob(ref_->stmt(), col);
 }
 
-bool Statement::ColumnBlobAsString(int col, std::string* blob) {
+bool Statement::ColumnBlobAsString(int col, std::string* blob) const {
   if (!CheckValid())
     return false;
 

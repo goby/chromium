@@ -5,18 +5,21 @@
 #ifndef EXTENSIONS_RENDERER_SCRIPT_CONTEXT_H_
 #define EXTENSIONS_RENDERER_SCRIPT_CONTEXT_H_
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/permissions/api_permission_set.h"
 #include "extensions/renderer/module_system.h"
 #include "extensions/renderer/request_sender.h"
 #include "extensions/renderer/safe_builtins.h"
+#include "extensions/renderer/script_injection_callback.h"
 #include "gin/runner.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
@@ -31,6 +34,7 @@ class RenderFrame;
 }
 
 namespace extensions {
+enum class CheckAliasStatus;
 class Extension;
 
 // Extensions wrapper for a v8::Context.
@@ -88,8 +92,8 @@ class ScriptContext : public RequestSender::Source {
     return effective_context_type_;
   }
 
-  void set_module_system(scoped_ptr<ModuleSystem> module_system) {
-    module_system_ = module_system.Pass();
+  void set_module_system(std::unique_ptr<ModuleSystem> module_system) {
+    module_system_ = std::move(module_system);
   }
 
   ModuleSystem* module_system() { return module_system_.get(); }
@@ -106,20 +110,34 @@ class ScriptContext : public RequestSender::Source {
   // the context is in the process of being destroyed.
   content::RenderFrame* GetRenderFrame() const;
 
-  // Runs |function| with appropriate scopes. Doesn't catch exceptions, callers
-  // must do that if they want.
-  //
-  // USE THIS METHOD RATHER THAN v8::Function::Call WHEREVER POSSIBLE.
+  // DEPRECATED.
   v8::Local<v8::Value> CallFunction(const v8::Local<v8::Function>& function,
                                     int argc,
                                     v8::Local<v8::Value> argv[]) const;
-  v8::Local<v8::Value> CallFunction(
-      const v8::Local<v8::Function>& function) const;
+
+  // Safely calls the v8::Function, respecting the page load deferrer and
+  // possibly executing asynchronously.
+  // Doesn't catch exceptions; callers must do that if they want.
+  // USE THESE METHODS RATHER THAN v8::Function::Call WHEREVER POSSIBLE.
+  // TODO(devlin): Remove the above variants in favor of this.
+  void SafeCallFunction(const v8::Local<v8::Function>& function,
+                        int argc,
+                        v8::Local<v8::Value> argv[]);
+  void SafeCallFunction(
+      const v8::Local<v8::Function>& function,
+      int argc,
+      v8::Local<v8::Value> argv[],
+      const ScriptInjectionCallback::CompleteCallback& callback);
 
   void DispatchEvent(const char* event_name, v8::Local<v8::Array> args) const;
 
   // Returns the availability of the API |api_name|.
   Feature::Availability GetAvailability(const std::string& api_name);
+  // Returns the availability of the API |api_name|.
+  // |check_alias| Whether API that has an alias that is available should be
+  // considered available (even if the API itself is not available).
+  Feature::Availability GetAvailability(const std::string& api_name,
+                                        CheckAliasStatus check_alias);
 
   // Returns a string description of the type of context this is.
   std::string GetContextTypeDescription() const;
@@ -132,7 +150,7 @@ class ScriptContext : public RequestSender::Source {
   // Get the URL of this context's web frame.
   //
   // TODO(kalman): Remove this and replace with a GetOrigin() call which reads
-  // of WebDocument::securityOrigin():
+  // of WebDocument::getSecurityOrigin():
   //  - The URL can change (e.g. pushState) but the origin cannot. Luckily it
   //    appears as though callers don't make security decisions based on the
   //    result of url() so it's not a problem... yet.
@@ -146,15 +164,24 @@ class ScriptContext : public RequestSender::Source {
   // TODO(kalman): Make this a constructor parameter (as an origin).
   void set_url(const GURL& url) { url_ = url; }
 
-  // Returns whether the API |api| or any part of the API could be
-  // available in this context without taking into account the context's
-  // extension.
-  bool IsAnyFeatureAvailableToContext(const extensions::Feature& api);
+  // Returns whether the API |api| or any part of the API could be available in
+  // this context without taking into account the context's extension.
+  // |check_alias| Whether the API should be considered available if it has an
+  // alias that is available.
+  bool IsAnyFeatureAvailableToContext(const extensions::Feature& api,
+                                      CheckAliasStatus check_alias);
 
   // Utility to get the URL we will match against for a frame. If the frame has
   // committed, this is the commited URL. Otherwise it is the provisional URL.
   // The returned URL may be invalid.
   static GURL GetDataSourceURLForFrame(const blink::WebFrame* frame);
+
+  // Similar to GetDataSourceURLForFrame, but only returns the data source URL
+  // if the frame's document url is empty and the frame has a security origin
+  // that allows access to the data source url.
+  // TODO(asargent/devlin) - there may be places that should switch to using
+  // this instead of GetDataSourceURLForFrame.
+  static GURL GetAccessCheckedFrameURL(const blink::WebFrame* frame);
 
   // Returns the first non-about:-URL in the document hierarchy above and
   // including |frame|. The document hierarchy is only traversed if
@@ -230,7 +257,7 @@ class ScriptContext : public RequestSender::Source {
   Feature::Context effective_context_type_;
 
   // Owns and structures the JS that is injected to set up extension bindings.
-  scoped_ptr<ModuleSystem> module_system_;
+  std::unique_ptr<ModuleSystem> module_system_;
 
   // Contains safe copies of builtin objects like Function.prototype.
   SafeBuiltins safe_builtins_;
@@ -246,7 +273,7 @@ class ScriptContext : public RequestSender::Source {
 
   GURL url_;
 
-  scoped_ptr<Runner> runner_;
+  std::unique_ptr<Runner> runner_;
 
   base::ThreadChecker thread_checker_;
 

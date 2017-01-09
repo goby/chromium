@@ -4,19 +4,20 @@
 
 #include "chrome/browser/chromeos/net/network_portal_notification_controller.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "ash/shell.h"
-#include "ash/system/system_notifier.h"
-#include "ash/system/tray/system_tray_notifier.h"
-#include "base/basictypes.h"
+#include "ash/common/system/system_notifier.h"
+#include "ash/common/system/tray/system_tray_notifier.h"
+#include "ash/common/wm_shell.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -25,7 +26,6 @@
 #include "chrome/browser/chromeos/mobile/mobile_activator.h"
 #include "chrome/browser/chromeos/net/network_portal_web_dialog.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
-#include "chrome/browser/chromeos/policy/consumer_management_service.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_dialogs.h"
@@ -39,6 +39,7 @@
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_type_pattern.h"
 #include "components/captive_portal/captive_portal_detector.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
 #include "extensions/browser/api/networking_config/networking_config_service.h"
 #include "extensions/browser/api/networking_config/networking_config_service_factory.h"
@@ -180,8 +181,7 @@ void NetworkPortalNotificationControllerDelegate::Click() {
   } else {
     if (!profile)
       return;
-    chrome::ScopedTabbedBrowserDisplayer displayer(
-        profile, chrome::HOST_DESKTOP_TYPE_ASH);
+    chrome::ScopedTabbedBrowserDisplayer displayer(profile);
     GURL url(captive_portal::CaptivePortalDetector::kDefaultURL);
     chrome::ShowSingletonTab(displayer.browser(), url);
   }
@@ -300,10 +300,9 @@ void NetworkPortalNotificationController::OnPortalDetectionCompleted(
     return;
   last_network_path_ = network->path();
 
-  if (ash::Shell::HasInstance()) {
-    ash::Shell::GetInstance()
-        ->system_tray_notifier()
-        ->NotifyOnCaptivePortalDetected(network->path());
+  if (ash::WmShell::HasInstance()) {
+    ash::WmShell::Get()->system_tray_notifier()->NotifyOnCaptivePortalDetected(
+        network->path());
   }
 
   message_center::MessageCenter::Get()->AddNotification(
@@ -328,7 +327,7 @@ void NetworkPortalNotificationController::OnDialogDestroyed(
   }
 }
 
-scoped_ptr<message_center::Notification>
+std::unique_ptr<message_center::Notification>
 NetworkPortalNotificationController::CreateDefaultCaptivePortalNotification(
     const NetworkState* network) {
   message_center::RichNotificationData data;
@@ -341,7 +340,7 @@ NetworkPortalNotificationController::CreateDefaultCaptivePortalNotification(
       ash::system_notifier::kNotifierNetworkPortalDetector);
   base::string16 notificationText;
   bool is_wifi = NetworkTypePattern::WiFi().MatchesType(network->type());
-  scoped_ptr<Notification> notification(new Notification(
+  std::unique_ptr<Notification> notification(new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
       l10n_util::GetStringUTF16(
           is_wifi ? IDS_PORTAL_DETECTION_NOTIFICATION_TITLE_WIFI
@@ -352,10 +351,11 @@ NetworkPortalNotificationController::CreateDefaultCaptivePortalNotification(
           base::UTF8ToUTF16(network->name())),
       icon, base::string16(), GURL(), notifier_id, data, delegate.get()));
   notification->SetSystemPriority();
-  return notification.Pass();
+  return notification;
 }
 
-scoped_ptr<message_center::Notification> NetworkPortalNotificationController::
+std::unique_ptr<message_center::Notification>
+NetworkPortalNotificationController::
     CreateCaptivePortalNotificationForExtension(
         const NetworkState* network,
         extensions::NetworkingConfigService* networking_config_service,
@@ -396,16 +396,17 @@ scoped_ptr<message_center::Notification> NetworkPortalNotificationController::
     data.buttons.push_back(message_center::ButtonInfo(l10n_util::GetStringUTF16(
         IDS_PORTAL_DETECTION_NOTIFICATION_BUTTON_PORTAL)));
   }
-  scoped_ptr<Notification> notification(new Notification(
+  std::unique_ptr<Notification> notification(new Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
       l10n_util::GetStringUTF16(IDS_PORTAL_DETECTION_NOTIFICATION_TITLE_WIFI),
       notificationText, icon, base::string16() /* display_source */, GURL(),
       notifier_id, data, delegate.get()));
   notification->SetSystemPriority();
-  return notification.Pass();
+  return notification;
 }
 
-scoped_ptr<Notification> NetworkPortalNotificationController::GetNotification(
+std::unique_ptr<Notification>
+NetworkPortalNotificationController::GetNotification(
     const NetworkState* network,
     const NetworkPortalDetector::CaptivePortalState& state) {
   base::string16 notificationText;

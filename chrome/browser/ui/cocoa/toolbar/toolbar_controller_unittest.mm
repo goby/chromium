@@ -5,7 +5,7 @@
 #import <Cocoa/Cocoa.h>
 
 #import "base/mac/scoped_nsobject.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/command_updater.h"
@@ -14,12 +14,15 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/image_button_cell.h"
+#import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#import "chrome/browser/ui/cocoa/location_bar/translate_decoration.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #import "chrome/browser/ui/cocoa/view_resizer_pong.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -72,7 +75,7 @@ class ToolbarControllerTest : public CocoaProfileTest {
   // |-toolbarViews| method.
   enum SubviewIndex {
     kBackIndex, kForwardIndex, kReloadIndex, kHomeIndex,
-    kWrenchIndex, kLocationIndex, kBrowserActionContainerViewIndex
+    kAppMenuIndex, kLocationIndex, kBrowserActionContainerViewIndex
   };
 
   void SetUp() override {
@@ -172,7 +175,7 @@ TEST_F(ToolbarControllerTest, UpdateVisibility) {
   EXPECT_FALSE([GetSubviewAt(kBackIndex) isHidden]);
   EXPECT_FALSE([GetSubviewAt(kForwardIndex) isHidden]);
   EXPECT_FALSE([GetSubviewAt(kReloadIndex) isHidden]);
-  EXPECT_FALSE([GetSubviewAt(kWrenchIndex) isHidden]);
+  EXPECT_FALSE([GetSubviewAt(kAppMenuIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kHomeIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kBrowserActionContainerViewIndex) isHidden]);
 
@@ -183,7 +186,7 @@ TEST_F(ToolbarControllerTest, UpdateVisibility) {
   EXPECT_FALSE([GetSubviewAt(kBackIndex) isHidden]);
   EXPECT_FALSE([GetSubviewAt(kForwardIndex) isHidden]);
   EXPECT_FALSE([GetSubviewAt(kReloadIndex) isHidden]);
-  EXPECT_FALSE([GetSubviewAt(kWrenchIndex) isHidden]);
+  EXPECT_FALSE([GetSubviewAt(kAppMenuIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kHomeIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kBrowserActionContainerViewIndex) isHidden]);
 
@@ -199,7 +202,7 @@ TEST_F(ToolbarControllerTest, UpdateVisibility) {
   EXPECT_TRUE([GetSubviewAt(kBackIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kForwardIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kReloadIndex) isHidden]);
-  EXPECT_TRUE([GetSubviewAt(kWrenchIndex) isHidden]);
+  EXPECT_TRUE([GetSubviewAt(kAppMenuIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kHomeIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kBrowserActionContainerViewIndex) isHidden]);
 
@@ -215,7 +218,7 @@ TEST_F(ToolbarControllerTest, UpdateVisibility) {
   EXPECT_TRUE([GetSubviewAt(kBackIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kForwardIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kReloadIndex) isHidden]);
-  EXPECT_TRUE([GetSubviewAt(kWrenchIndex) isHidden]);
+  EXPECT_TRUE([GetSubviewAt(kAppMenuIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kHomeIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kBrowserActionContainerViewIndex) isHidden]);
 
@@ -241,7 +244,7 @@ TEST_F(ToolbarControllerTest, UpdateVisibility) {
   EXPECT_TRUE([GetSubviewAt(kBackIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kForwardIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kReloadIndex) isHidden]);
-  EXPECT_TRUE([GetSubviewAt(kWrenchIndex) isHidden]);
+  EXPECT_TRUE([GetSubviewAt(kAppMenuIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kHomeIndex) isHidden]);
   EXPECT_TRUE([GetSubviewAt(kBrowserActionContainerViewIndex) isHidden]);
 }
@@ -344,7 +347,10 @@ TEST_F(ToolbarControllerTest, BookmarkBubblePoint) {
 }
 
 TEST_F(ToolbarControllerTest, TranslateBubblePoint) {
-  const NSPoint translatePoint = [bar_ translateBubblePoint];
+  LocationBarViewMac* locationBarBridge = [bar_ locationBarBridge];
+  LocationBarDecoration* decoration = locationBarBridge->translate_decoration();
+  const NSPoint translatePoint =
+      locationBarBridge->GetBubblePointForDecoration(decoration);
   const NSRect barFrame =
       [[bar_ view] convertRect:[[bar_ view] bounds] toView:nil];
   EXPECT_TRUE(NSPointInRect(translatePoint, barFrame));

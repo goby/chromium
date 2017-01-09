@@ -5,16 +5,17 @@
 #ifndef ASH_HOST_ASH_WINDOW_TREE_HOST_X11_H_
 #define ASH_HOST_ASH_WINDOW_TREE_HOST_X11_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "ash/host/ash_window_tree_host.h"
 #include "ash/host/transformer_helper.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/window_tree_host_x11.h"
 
 namespace ash {
 class RootWindowTransformer;
-class MouseCursorEventFilter;
 
 class ASH_EXPORT AshWindowTreeHostX11 : public AshWindowTreeHost,
                                         public aura::WindowTreeHostX11,
@@ -29,17 +30,18 @@ class ASH_EXPORT AshWindowTreeHostX11 : public AshWindowTreeHost,
   bool ConfineCursorToRootWindow() override;
   void UnConfineCursor() override;
   void SetRootWindowTransformer(
-      scoped_ptr<RootWindowTransformer> transformer) override;
+      std::unique_ptr<RootWindowTransformer> transformer) override;
   gfx::Insets GetHostInsets() const override;
   aura::WindowTreeHost* AsWindowTreeHost() override;
   void PrepareForShutdown() override;
 
   // aura::WindowTreehost:
-  void SetBounds(const gfx::Rect& bounds) override;
+  void SetBoundsInPixels(const gfx::Rect& bounds) override;
   gfx::Transform GetRootTransform() const override;
   void SetRootTransform(const gfx::Transform& transform) override;
   gfx::Transform GetInverseRootTransform() const override;
-  void UpdateRootWindowSize(const gfx::Size& host_size) override;
+  void UpdateRootWindowSizeInPixels(
+      const gfx::Size& host_size_in_pixels) override;
   void OnCursorVisibilityChangedNative(bool show) override;
 
   // aura::WindowTreeHostX11:
@@ -61,7 +63,7 @@ class ASH_EXPORT AshWindowTreeHostX11 : public AshWindowTreeHost,
   void SetCrOSTapPaused(bool state);
 #endif
 
-  scoped_ptr<XID[]> pointer_barriers_;
+  std::unique_ptr<XID[]> pointer_barriers_;
 
   TransformerHelper transformer_helper_;
 

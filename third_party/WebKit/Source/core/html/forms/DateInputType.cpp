@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/forms/DateInputType.h"
 
 #include "core/HTMLNames.h"
@@ -36,11 +35,8 @@
 #include "core/dom/Document.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/forms/DateTimeFieldsState.h"
-#include "core/inspector/ConsoleMessage.h"
 #include "platform/DateComponents.h"
-#include "platform/JSONValues.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -52,79 +48,93 @@ static const int dateDefaultStepBase = 0;
 static const int dateStepScaleFactor = 86400000;
 
 inline DateInputType::DateInputType(HTMLInputElement& element)
-    : BaseDateInputType(element)
-{
+    : BaseTemporalInputType(element) {}
+
+InputType* DateInputType::create(HTMLInputElement& element) {
+  return new DateInputType(element);
 }
 
-PassRefPtrWillBeRawPtr<InputType> DateInputType::create(HTMLInputElement& element)
-{
-    return adoptRefWillBeNoop(new DateInputType(element));
+void DateInputType::countUsage() {
+  countUsageIfVisible(UseCounter::InputTypeDate);
 }
 
-void DateInputType::countUsage()
-{
-    countUsageIfVisible(UseCounter::InputTypeDate);
+const AtomicString& DateInputType::formControlType() const {
+  return InputTypeNames::date;
 }
 
-const AtomicString& DateInputType::formControlType() const
-{
-    return InputTypeNames::date;
+StepRange DateInputType::createStepRange(
+    AnyStepHandling anyStepHandling) const {
+  DEFINE_STATIC_LOCAL(
+      const StepRange::StepDescription, stepDescription,
+      (dateDefaultStep, dateDefaultStepBase, dateStepScaleFactor,
+       StepRange::ParsedStepValueShouldBeInteger));
+
+  return InputType::createStepRange(
+      anyStepHandling, dateDefaultStepBase,
+      Decimal::fromDouble(DateComponents::minimumDate()),
+      Decimal::fromDouble(DateComponents::maximumDate()), stepDescription);
 }
 
-StepRange DateInputType::createStepRange(AnyStepHandling anyStepHandling) const
-{
-    DEFINE_STATIC_LOCAL(const StepRange::StepDescription, stepDescription, (dateDefaultStep, dateDefaultStepBase, dateStepScaleFactor, StepRange::ParsedStepValueShouldBeInteger));
-
-    return InputType::createStepRange(anyStepHandling, dateDefaultStepBase, Decimal::fromDouble(DateComponents::minimumDate()), Decimal::fromDouble(DateComponents::maximumDate()), stepDescription);
+bool DateInputType::parseToDateComponentsInternal(const String& string,
+                                                  DateComponents* out) const {
+  DCHECK(out);
+  unsigned end;
+  return out->parseDate(string, 0, end) && end == string.length();
 }
 
-bool DateInputType::parseToDateComponentsInternal(const String& string, DateComponents* out) const
-{
-    ASSERT(out);
-    unsigned end;
-    return out->parseDate(string, 0, end) && end == string.length();
+bool DateInputType::setMillisecondToDateComponents(double value,
+                                                   DateComponents* date) const {
+  DCHECK(date);
+  return date->setMillisecondsSinceEpochForDate(value);
 }
 
-bool DateInputType::setMillisecondToDateComponents(double value, DateComponents* date) const
-{
-    ASSERT(date);
-    return date->setMillisecondsSinceEpochForDate(value);
+void DateInputType::warnIfValueIsInvalid(const String& value) const {
+  if (value != element().sanitizeValue(value))
+    addWarningToConsole(
+        "The specified value %s does not conform to the required format, "
+        "\"yyyy-MM-dd\".",
+        value);
 }
 
-void DateInputType::warnIfValueIsInvalid(const String& value) const
-{
-    if (value != element().sanitizeValue(value)) {
-        element().document().addConsoleMessage(ConsoleMessage::create(RenderingMessageSource, WarningMessageLevel,
-            String::format("The specified value %s does not conform to the required format, \"yyyy-MM-dd\".", JSONValue::quoteString(value).utf8().data())));
-    }
+String DateInputType::formatDateTimeFieldsState(
+    const DateTimeFieldsState& dateTimeFieldsState) const {
+  if (!dateTimeFieldsState.hasDayOfMonth() || !dateTimeFieldsState.hasMonth() ||
+      !dateTimeFieldsState.hasYear())
+    return emptyString();
+
+  return String::format("%04u-%02u-%02u", dateTimeFieldsState.year(),
+                        dateTimeFieldsState.month(),
+                        dateTimeFieldsState.dayOfMonth());
 }
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
-String DateInputType::formatDateTimeFieldsState(const DateTimeFieldsState& dateTimeFieldsState) const
-{
-    if (!dateTimeFieldsState.hasDayOfMonth() || !dateTimeFieldsState.hasMonth() || !dateTimeFieldsState.hasYear())
-        return emptyString();
-
-    return String::format("%04u-%02u-%02u", dateTimeFieldsState.year(), dateTimeFieldsState.month(), dateTimeFieldsState.dayOfMonth());
+void DateInputType::setupLayoutParameters(
+    DateTimeEditElement::LayoutParameters& layoutParameters,
+    const DateComponents& date) const {
+  layoutParameters.dateTimeFormat = layoutParameters.locale.dateFormat();
+  layoutParameters.fallbackDateTimeFormat = "yyyy-MM-dd";
+  if (!parseToDateComponents(element().fastGetAttribute(minAttr),
+                             &layoutParameters.minimum))
+    layoutParameters.minimum = DateComponents();
+  if (!parseToDateComponents(element().fastGetAttribute(maxAttr),
+                             &layoutParameters.maximum))
+    layoutParameters.maximum = DateComponents();
+  layoutParameters.placeholderForDay =
+      locale().queryString(WebLocalizedString::PlaceholderForDayOfMonthField);
+  layoutParameters.placeholderForMonth =
+      locale().queryString(WebLocalizedString::PlaceholderForMonthField);
+  layoutParameters.placeholderForYear =
+      locale().queryString(WebLocalizedString::PlaceholderForYearField);
 }
 
-void DateInputType::setupLayoutParameters(DateTimeEditElement::LayoutParameters& layoutParameters, const DateComponents& date) const
-{
-    layoutParameters.dateTimeFormat = layoutParameters.locale.dateFormat();
-    layoutParameters.fallbackDateTimeFormat = "yyyy-MM-dd";
-    if (!parseToDateComponents(element().fastGetAttribute(minAttr), &layoutParameters.minimum))
-        layoutParameters.minimum = DateComponents();
-    if (!parseToDateComponents(element().fastGetAttribute(maxAttr), &layoutParameters.maximum))
-        layoutParameters.maximum = DateComponents();
-    layoutParameters.placeholderForDay = locale().queryString(WebLocalizedString::PlaceholderForDayOfMonthField);
-    layoutParameters.placeholderForMonth = locale().queryString(WebLocalizedString::PlaceholderForMonthField);
-    layoutParameters.placeholderForYear = locale().queryString(WebLocalizedString::PlaceholderForYearField);
+bool DateInputType::isValidFormat(bool hasYear,
+                                  bool hasMonth,
+                                  bool hasWeek,
+                                  bool hasDay,
+                                  bool hasAMPM,
+                                  bool hasHour,
+                                  bool hasMinute,
+                                  bool hasSecond) const {
+  return hasYear && hasMonth && hasDay;
 }
 
-bool DateInputType::isValidFormat(bool hasYear, bool hasMonth, bool hasWeek, bool hasDay, bool hasAMPM, bool hasHour, bool hasMinute, bool hasSecond) const
-{
-    return hasYear && hasMonth && hasDay;
-}
-#endif
-
-} // namespace blink
+}  // namespace blink

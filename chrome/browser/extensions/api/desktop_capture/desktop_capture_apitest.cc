@@ -2,20 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <queue>
+#include <array>
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/desktop_capture/desktop_capture_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/media/fake_desktop_media_list.h"
+#include "chrome/browser/media/webrtc/fake_desktop_media_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/common/switches.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_types.h"
@@ -27,6 +30,8 @@ namespace {
 struct TestFlags {
   bool expect_screens;
   bool expect_windows;
+  bool expect_tabs;
+  bool expect_audio;
   content::DesktopMediaID selected_source;
   bool cancelled;
 
@@ -51,7 +56,10 @@ class FakeDesktopMediaPicker : public DesktopMediaPicker {
             gfx::NativeWindow parent,
             const base::string16& app_name,
             const base::string16& target_name,
-            scoped_ptr<DesktopMediaList> model,
+            std::unique_ptr<DesktopMediaList> screen_list,
+            std::unique_ptr<DesktopMediaList> window_list,
+            std::unique_ptr<DesktopMediaList> tab_list,
+            bool request_audio,
             const DoneCallback& done_callback) override {
     if (!expectation_->cancelled) {
       // Post a task to call the callback asynchronously.
@@ -92,22 +100,36 @@ class FakeDesktopMediaPickerFactory :
   }
 
   // DesktopCaptureChooseDesktopMediaFunction::PickerFactory interface.
-  scoped_ptr<DesktopMediaList> CreateModel(bool show_screens,
-                                           bool show_windows) override {
+  MediaListArray CreateModel(
+      bool show_screens,
+      bool show_windows,
+      bool show_tabs,
+      bool show_audio) override {
     EXPECT_LE(current_test_, tests_count_);
-    if (current_test_ >= tests_count_)
-      return scoped_ptr<DesktopMediaList>();
+    MediaListArray media_lists;
+    if (current_test_ >= tests_count_) {
+      return media_lists;
+    }
     EXPECT_EQ(test_flags_[current_test_].expect_screens, show_screens);
     EXPECT_EQ(test_flags_[current_test_].expect_windows, show_windows);
-    return scoped_ptr<DesktopMediaList>(new FakeDesktopMediaList());
+    EXPECT_EQ(test_flags_[current_test_].expect_tabs, show_tabs);
+    EXPECT_EQ(test_flags_[current_test_].expect_audio, show_audio);
+
+    media_lists[0] = std::unique_ptr<DesktopMediaList>(
+        show_screens ? new FakeDesktopMediaList() : nullptr);
+    media_lists[1] = std::unique_ptr<DesktopMediaList>(
+        show_windows ? new FakeDesktopMediaList() : nullptr);
+    media_lists[2] = std::unique_ptr<DesktopMediaList>(
+        show_tabs ? new FakeDesktopMediaList() : nullptr);
+    return media_lists;
   }
 
-  scoped_ptr<DesktopMediaPicker> CreatePicker() override {
+  std::unique_ptr<DesktopMediaPicker> CreatePicker() override {
     EXPECT_LE(current_test_, tests_count_);
     if (current_test_ >= tests_count_)
-      return scoped_ptr<DesktopMediaPicker>();
+      return std::unique_ptr<DesktopMediaPicker>();
     ++current_test_;
-    return scoped_ptr<DesktopMediaPicker>(
+    return std::unique_ptr<DesktopMediaPicker>(
         new FakeDesktopMediaPicker(test_flags_ + current_test_ - 1));
   }
 
@@ -154,30 +176,51 @@ IN_PROC_BROWSER_TEST_F(DesktopCaptureApiTest, MAYBE_ChooseDesktopMedia) {
   // Each element in the following array corresponds to one test in
   // chrome/test/data/extensions/api_test/desktop_capture/test.js .
   TestFlags test_flags[] = {
-    // pickerUiCanceled()
-    { true, true,
-      content::DesktopMediaID() },
-    // chooseMedia()
-    { true, true,
-      content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
-                              content::DesktopMediaID::kNullId) },
-    // screensOnly()
-    { true, false,
-      content::DesktopMediaID() },
-    // WindowsOnly()
-    { false, true,
-      content::DesktopMediaID() },
-    // chooseMediaAndGetStream()
-    { true, true,
-      content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
-                              webrtc::kFullDesktopScreenId) },
-    // chooseMediaAndTryGetStreamWithInvalidId()
-    { true, true,
-      content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
-                              webrtc::kFullDesktopScreenId) },
-    // cancelDialog()
-    { true, true,
-      content::DesktopMediaID(), true },
+      // pickerUiCanceled()
+      {true, true, false, false, content::DesktopMediaID()},
+      // chooseMedia()
+      {true, true, false, false,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               content::DesktopMediaID::kNullId)},
+      // screensOnly()
+      {true, false, false, false, content::DesktopMediaID()},
+      // WindowsOnly()
+      {false, true, false, false, content::DesktopMediaID()},
+      // tabOnly()
+      {false, false, true, false, content::DesktopMediaID()},
+      // audioShare()
+      {true, true, true, true, content::DesktopMediaID()},
+      // chooseMediaAndGetStream()
+      {true, true, false, false,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               webrtc::kFullDesktopScreenId)},
+      // chooseMediaAndTryGetStreamWithInvalidId()
+      {true, true, false, false,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               webrtc::kFullDesktopScreenId)},
+      // cancelDialog()
+      {true, true, false, false, content::DesktopMediaID(), true},
+      // tabShareWithAudioGetStream()
+      {false, false, true, true,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_WEB_CONTENTS, 0,
+                               true)},
+      // windowShareWithAudioGetStream()
+      {false, true, false, true,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_WINDOW, 0, true)},
+      // screenShareWithAudioGetStream()
+      {true, false, false, true,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               webrtc::kFullDesktopScreenId, true)},
+      // tabShareWithoutAudioGetStream()
+      {false, false, true, true,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_WEB_CONTENTS, 0)},
+      // windowShareWithoutAudioGetStream()
+      {false, true, false, true,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_WINDOW, 0)},
+      // screenShareWithoutAudioGetStream()
+      {true, false, false, true,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               webrtc::kFullDesktopScreenId)},
   };
   picker_factory_.SetTestFlags(test_flags, arraysize(test_flags));
   ASSERT_TRUE(RunExtensionTest("desktop_capture")) << message_;
@@ -204,15 +247,16 @@ IN_PROC_BROWSER_TEST_F(DesktopCaptureApiTest, DISABLED_Delegation) {
       browser(), GetURLForPath("example.com", "/example.com.html"));
 
   TestFlags test_flags[] = {
-    { true, true,
-      content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
-                              content::DesktopMediaID::kNullId) },
-    { true, true,
-      content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
-                              content::DesktopMediaID::kNullId) },
-    { true, true,
-      content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
-                              content::DesktopMediaID::kNullId), true },
+      {true, true, false, false,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               content::DesktopMediaID::kNullId)},
+      {true, true, false, false,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               content::DesktopMediaID::kNullId)},
+      {true, true, false, false,
+       content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
+                               content::DesktopMediaID::kNullId),
+       true},
   };
   picker_factory_.SetTestFlags(test_flags, arraysize(test_flags));
 

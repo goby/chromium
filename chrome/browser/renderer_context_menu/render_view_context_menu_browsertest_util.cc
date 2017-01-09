@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
@@ -29,20 +29,13 @@ void ContextMenuNotificationObserver::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_RENDER_VIEW_CONTEXT_MENU_SHOWN: {
-      RenderViewContextMenu* context_menu =
-          content::Source<RenderViewContextMenu>(source).ptr();
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE,
-          base::Bind(&ContextMenuNotificationObserver::ExecuteCommand,
-                     base::Unretained(this), context_menu));
-      break;
-    }
+  DCHECK_EQ(chrome::NOTIFICATION_RENDER_VIEW_CONTEXT_MENU_SHOWN, type);
 
-    default:
-      NOTREACHED();
-  }
+  RenderViewContextMenu* context_menu =
+      content::Source<RenderViewContextMenu>(source).ptr();
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&ContextMenuNotificationObserver::ExecuteCommand,
+                            base::Unretained(this), context_menu));
 }
 
 void ContextMenuNotificationObserver::ExecuteCommand(

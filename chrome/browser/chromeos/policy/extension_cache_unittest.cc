@@ -4,10 +4,12 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
@@ -68,7 +70,7 @@ TEST_F(ExtensionCacheTest, SizePolicy) {
   const base::Time now = base::Time::Now();
   base::ScopedTempDir cache_dir;
   ASSERT_TRUE(cache_dir.CreateUniqueTempDir());
-  const base::FilePath cache_path = cache_dir.path();
+  const base::FilePath cache_path = cache_dir.GetPath();
   CreateFile(cache_path.Append(LocalExtensionCache::kCacheReadyFlagFileName), 0,
              now);
 
@@ -84,9 +86,9 @@ TEST_F(ExtensionCacheTest, SizePolicy) {
                           now - base::TimeDelta::FromSeconds(3));
 
   ExtensionCacheImpl cache_impl(
-      make_scoped_ptr(new ChromeOSExtensionCacheDelegate(cache_path)));
+      base::MakeUnique<ChromeOSExtensionCacheDelegate>(cache_path));
 
-  scoped_ptr<base::RunLoop> run_loop(new base::RunLoop);
+  std::unique_ptr<base::RunLoop> run_loop(new base::RunLoop);
   cache_impl.Start(run_loop->QuitClosure());
   run_loop->Run();
 

@@ -9,7 +9,7 @@
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/platform_thread.h"
@@ -20,8 +20,8 @@
 
 namespace net {
 
-class BoundNetLog;
 class NetLog;
+class NetLogWithSource;
 
 // Class that registers URL request throttler entries for URLs being accessed
 // in order to supervise traffic. URL requests for HTTP contents should
@@ -141,7 +141,7 @@ class NET_EXPORT URLRequestThrottlerManager
   bool logged_for_localhost_disabled_;
 
   // NetLog to use, if configured.
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   // Valid once we've registered for network notifications.
   base::PlatformThreadId registered_from_thread_;

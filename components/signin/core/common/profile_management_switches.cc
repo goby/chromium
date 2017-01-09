@@ -4,7 +4,10 @@
 
 #include "components/signin/core/common/profile_management_switches.h"
 
+#include <string>
+
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/metrics/field_trial.h"
 #include "build/build_config.h"
 #include "components/signin/core/common/signin_switches.h"
@@ -110,16 +113,6 @@ bool IsEnableAccountConsistency() {
   return GetProcessState() >= STATE_ACCOUNT_CONSISTENCY;
 }
 
-bool IsEnableWebviewBasedSignin() {
-  // For now, the webview is enabled only for desktop.
-#if defined(OS_CHROMEOS)
-  return false;
-#else
-  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableIframeBasedSignin);
-#endif
-}
-
 bool IsExtensionsMultiAccount() {
   return CheckFlag(switches::kExtensionsMultiAccount,
                    STATE_ACCOUNT_CONSISTENCY);
@@ -139,8 +132,12 @@ bool IsNewProfileManagementPreviewEnabled() {
 }
 
 bool UsePasswordSeparatedSigninFlow() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnablePasswordSeparatedSigninFlow);
+  return base::FeatureList::IsEnabled(
+      switches::kUsePasswordSeparatedSigninFlow);
+}
+
+bool IsMaterialDesignUserMenu() {
+  return base::FeatureList::IsEnabled(switches::kMaterialDesignUserMenu);
 }
 
 void EnableNewProfileManagementForTesting(base::CommandLine* command_line) {

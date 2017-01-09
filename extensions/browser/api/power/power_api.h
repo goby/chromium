@@ -6,11 +6,12 @@
 #define EXTENSIONS_BROWSER_API_POWER_POWER_API_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
-#include "content/public/browser/power_save_blocker.h"
+#include "base/macros.h"
+#include "device/power_save_blocker/power_save_blocker.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_registry_observer.h"
@@ -23,7 +24,7 @@ class BrowserContext;
 namespace extensions {
 
 // Implementation of the chrome.power.requestKeepAwake API.
-class PowerRequestKeepAwakeFunction : public SyncExtensionFunction {
+class PowerRequestKeepAwakeFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("power.requestKeepAwake", POWER_REQUESTKEEPAWAKE)
 
@@ -31,11 +32,11 @@ class PowerRequestKeepAwakeFunction : public SyncExtensionFunction {
   ~PowerRequestKeepAwakeFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 // Implementation of the chrome.power.releaseKeepAwake API.
-class PowerReleaseKeepAwakeFunction : public SyncExtensionFunction {
+class PowerReleaseKeepAwakeFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("power.releaseKeepAwake", POWER_RELEASEKEEPAWAKE)
 
@@ -43,7 +44,7 @@ class PowerReleaseKeepAwakeFunction : public SyncExtensionFunction {
   ~PowerReleaseKeepAwakeFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 // Handles calls made via the chrome.power API. There is a separate instance of
@@ -52,10 +53,13 @@ class PowerReleaseKeepAwakeFunction : public SyncExtensionFunction {
 class PowerAPI : public BrowserContextKeyedAPI,
                  public extensions::ExtensionRegistryObserver {
  public:
-  typedef base::Callback<scoped_ptr<content::PowerSaveBlocker>(
-      content::PowerSaveBlocker::PowerSaveBlockerType,
-      content::PowerSaveBlocker::Reason,
-      const std::string&)> CreateBlockerFunction;
+  typedef base::Callback<std::unique_ptr<device::PowerSaveBlocker>(
+      device::PowerSaveBlocker::PowerSaveBlockerType,
+      device::PowerSaveBlocker::Reason,
+      const std::string&,
+      scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner)>
+      CreateBlockerFunction;
 
   static PowerAPI* Get(content::BrowserContext* context);
 
@@ -72,7 +76,8 @@ class PowerAPI : public BrowserContextKeyedAPI,
 
   // Replaces the function that will be called to create PowerSaveBlocker
   // objects.  Passing an empty callback will revert to the default.
-  void SetCreateBlockerFunctionForTesting(CreateBlockerFunction function);
+  void SetCreateBlockerFunctionForTesting(
+      const CreateBlockerFunction& function);
 
   // Overridden from extensions::ExtensionRegistryObserver.
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
@@ -102,7 +107,7 @@ class PowerAPI : public BrowserContextKeyedAPI,
   // actually changing the system power-saving settings.
   CreateBlockerFunction create_blocker_function_;
 
-  scoped_ptr<content::PowerSaveBlocker> power_save_blocker_;
+  std::unique_ptr<device::PowerSaveBlocker> power_save_blocker_;
 
   // Current level used by |power_save_blocker_|.  Meaningless if
   // |power_save_blocker_| is NULL.

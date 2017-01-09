@@ -5,12 +5,8 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_EMULATOR_DEVICE_EMULATOR_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_EMULATOR_DEVICE_EMULATOR_UI_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "content/public/browser/web_ui_controller.h"
-
-namespace power_manager {
-class PowerSupplyProperties;
-}
 
 // The WebUI handler for chrome://device-emulator
 class DeviceEmulatorUI : public content::WebUIController {

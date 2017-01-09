@@ -5,15 +5,23 @@
 #ifndef CHROME_BROWSER_UI_ASH_APP_LIST_APP_LIST_SERVICE_ASH_H_
 #define CHROME_BROWSER_UI_ASH_APP_LIST_APP_LIST_SERVICE_ASH_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/ui/app_list/app_list_service_impl.h"
 #include "ui/app_list/app_list_model.h"
 
-class AppListControllerDelegateAsh;
+namespace app_list {
+class AppListPresenter;
+class AppListPresenterImpl;
+class AppListPresenterDelegateFactory;
+}
 
 namespace base {
 template <typename T> struct DefaultSingletonTraits;
 }
+
+class AppListControllerDelegateAsh;
 
 // AppListServiceAsh wraps functionality in ChromeLauncherController and the Ash
 // Shell for showing and hiding the app list on the Ash desktop.
@@ -21,17 +29,20 @@ class AppListServiceAsh : public AppListServiceImpl {
  public:
   static AppListServiceAsh* GetInstance();
 
+  app_list::AppListPresenter* GetAppListPresenter();
+
   // AppListService overrides:
   void Init(Profile* initial_profile) override;
 
-  // ProfileInfoCacheObserver overrides:
+  // ProfileAttributesStorage::Observer overrides:
   // On ChromeOS this should never happen. On other platforms, there is always a
   // Non-ash AppListService that is responsible for handling this.
-  // TODO(calamity): Ash shouldn't observe the ProfileInfoCache at all.
+  // TODO(calamity): Ash shouldn't observe the ProfileAttributesStorage at all.
   void OnProfileWillBeRemoved(const base::FilePath& profile_path) override;
 
  private:
   friend struct base::DefaultSingletonTraits<AppListServiceAsh>;
+  friend class AppListServiceAshTestApi;
 
   AppListServiceAsh();
   ~AppListServiceAsh() override;
@@ -60,7 +71,10 @@ class AppListServiceAsh : public AppListServiceImpl {
   void CreateForProfile(Profile* default_profile) override;
   void DestroyAppList() override;
 
-  scoped_ptr<AppListControllerDelegateAsh> controller_delegate_;
+  std::unique_ptr<app_list::AppListPresenterDelegateFactory>
+      presenter_delegate_factory_;
+  std::unique_ptr<app_list::AppListPresenterImpl> app_list_presenter_;
+  std::unique_ptr<AppListControllerDelegateAsh> controller_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListServiceAsh);
 };

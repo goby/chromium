@@ -4,10 +4,13 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/network_screen_handler.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_runner_util.h"
@@ -32,10 +35,11 @@
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
 #include "components/login/localized_values_builder.h"
+#include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/widget/widget.h"
@@ -64,9 +68,6 @@ NetworkScreenHandler::~NetworkScreenHandler() {
 }
 
 // NetworkScreenHandler, NetworkScreenActor implementation: --------------------
-
-void NetworkScreenHandler::PrepareToShow() {
-}
 
 void NetworkScreenHandler::Show() {
   if (!page_is_ready()) {
@@ -98,7 +99,7 @@ void NetworkScreenHandler::Show() {
   network_screen_params.SetBoolean("isDeveloperMode",
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           chromeos::switches::kSystemDevMode));
-  ShowScreen(OobeUI::kScreenOobeNetwork, &network_screen_params);
+  ShowScreenWithData(OobeScreen::SCREEN_OOBE_NETWORK, &network_screen_params);
   core_oobe_actor_->InitDemoModeDetection();
 }
 
@@ -135,8 +136,7 @@ void NetworkScreenHandler::ShowConnectingStatus(
 
 void NetworkScreenHandler::ReloadLocalizedContent() {
   base::DictionaryValue localized_strings;
-  static_cast<OobeUI*>(web_ui()->GetController())
-      ->GetLocalizedStrings(&localized_strings);
+  GetOobeUI()->GetLocalizedStrings(&localized_strings);
   core_oobe_actor_->ReloadContent(localized_strings);
 }
 
@@ -159,6 +159,36 @@ void NetworkScreenHandler::DeclareLocalizedValues(
   builder->Add("proxySettings", IDS_OPTIONS_PROXIES_CONFIGURE_BUTTON);
   builder->Add("continueButton", IDS_NETWORK_SELECTION_CONTINUE_BUTTON);
   builder->Add("debuggingFeaturesLink", IDS_NETWORK_ENABLE_DEV_FEATURES_LINK);
+
+  // MD-OOBE
+  builder->Add("oobeOKButtonText", IDS_OOBE_OK_BUTTON_TEXT);
+  builder->Add("welcomeNextButtonText", IDS_OOBE_WELCOME_NEXT_BUTTON_TEXT);
+  builder->Add("languageSectionTitle", IDS_LANGUAGE_SECTION_TITLE);
+  builder->Add("accessibilitySectionTitle", IDS_ACCESSIBILITY_SECTION_TITLE);
+  builder->Add("accessibilitySectionHint", IDS_ACCESSIBILITY_SECTION_HINT);
+  builder->Add("timezoneSectionTitle", IDS_TIMEZONE_SECTION_TITLE);
+  builder->Add("networkSectionTitle", IDS_NETWORK_SECTION_TITLE);
+  builder->Add("networkSectionHint", IDS_NETWORK_SECTION_HINT);
+
+  builder->Add("languageDropdownTitle", IDS_LANGUAGE_DROPDOWN_TITLE);
+  builder->Add("keyboardDropdownTitle", IDS_KEYBOARD_DROPDOWN_TITLE);
+  builder->Add("proxySettingsMenuName", IDS_PROXY_SETTINGS_MENU_NAME);
+  builder->Add("addWiFiNetworkMenuName", IDS_ADD_WI_FI_NETWORK_MENU_NAME);
+  builder->Add("addMobileNetworkMenuName", IDS_ADD_MOBILE_NETWORK_MENU_NAME);
+
+  builder->Add("highContrastOptionOff", IDS_HIGH_CONTRAST_OPTION_OFF);
+  builder->Add("highContrastOptionOn", IDS_HIGH_CONTRAST_OPTION_ON);
+  builder->Add("largeCursorOptionOff", IDS_LARGE_CURSOR_OPTION_OFF);
+  builder->Add("largeCursorOptionOn", IDS_LARGE_CURSOR_OPTION_ON);
+  builder->Add("screenMagnifierOptionOff", IDS_SCREEN_MAGNIFIER_OPTION_OFF);
+  builder->Add("screenMagnifierOptionOn", IDS_SCREEN_MAGNIFIER_OPTION_ON);
+  builder->Add("spokenFeedbackOptionOff", IDS_SPOKEN_FEEDBACK_OPTION_OFF);
+  builder->Add("spokenFeedbackOptionOn", IDS_SPOKEN_FEEDBACK_OPTION_ON);
+  builder->Add("virtualKeyboardOptionOff", IDS_VIRTUAL_KEYBOARD_OPTION_OFF);
+  builder->Add("virtualKeyboardOptionOn", IDS_VIRTUAL_KEYBOARD_OPTION_ON);
+
+  builder->Add("timezoneDropdownTitle", IDS_TIMEZONE_DROPDOWN_TITLE);
+  builder->Add("timezoneButtonText", IDS_TIMEZONE_BUTTON_TEXT);
 }
 
 void NetworkScreenHandler::GetAdditionalParameters(
@@ -171,7 +201,7 @@ void NetworkScreenHandler::GetAdditionalParameters(
           ->GetCurrentInputMethod()
           .id();
 
-  scoped_ptr<base::ListValue> language_list;
+  std::unique_ptr<base::ListValue> language_list;
   if (model_) {
     if (model_->GetLanguageList() &&
         model_->GetLanguageListLocale() == application_locale) {
@@ -181,8 +211,8 @@ void NetworkScreenHandler::GetAdditionalParameters(
     }
   }
 
-  if (!language_list.get())
-    language_list.reset(GetMinimalUILanguageList().release());
+  if (!language_list)
+    language_list = GetMinimalUILanguageList();
 
   // GetAdditionalParameters() is called when OOBE language is updated.
   // This happens in three different cases:
@@ -204,17 +234,15 @@ void NetworkScreenHandler::GetAdditionalParameters(
   // So we need to disable activation of login layouts if we are already in
   // active user session.
   //
-  // 3) This is the bootstrapping process for the remora device. The locale &
-  // input of the remora device is set up by a shark device. In this case we
+  // 3) This is the bootstrapping process for a "Slave" device. The locale &
+  // input of the "Slave" device is set up by a "Master" device. In this case we
   // don't want EnableLoginLayout() to reset the input method to the hardware
   // default method.
-  const bool is_remora = g_browser_process->platform_part()
-                             ->browser_policy_connector_chromeos()
-                             ->GetDeviceCloudPolicyManager()
-                             ->IsRemoraRequisition();
+  const bool is_slave = g_browser_process->local_state()->GetBoolean(
+      prefs::kOobeControllerDetected);
 
   const bool enable_layouts =
-      !user_manager::UserManager::Get()->IsUserLoggedIn() && !is_remora;
+      !user_manager::UserManager::Get()->IsUserLoggedIn() && !is_slave;
 
   dict->Set("languageList", language_list.release());
   dict->Set(
@@ -242,8 +270,8 @@ base::ListValue* NetworkScreenHandler::GetTimezoneList() {
   std::string current_timezone_id;
   CrosSettings::Get()->GetString(kSystemTimezone, &current_timezone_id);
 
-  scoped_ptr<base::ListValue> timezone_list(new base::ListValue);
-  scoped_ptr<base::ListValue> timezones = system::GetTimezoneList().Pass();
+  std::unique_ptr<base::ListValue> timezone_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> timezones = system::GetTimezoneList();
   for (size_t i = 0; i < timezones->GetSize(); ++i) {
     const base::ListValue* timezone = NULL;
     CHECK(timezones->GetList(i, &timezone));
@@ -254,12 +282,12 @@ base::ListValue* NetworkScreenHandler::GetTimezoneList() {
     std::string timezone_name;
     CHECK(timezone->GetString(1, &timezone_name));
 
-    scoped_ptr<base::DictionaryValue> timezone_option(
+    std::unique_ptr<base::DictionaryValue> timezone_option(
         new base::DictionaryValue);
     timezone_option->SetString("value", timezone_id);
     timezone_option->SetString("title", timezone_name);
     timezone_option->SetBoolean("selected", timezone_id == current_timezone_id);
-    timezone_list->Append(timezone_option.release());
+    timezone_list->Append(std::move(timezone_option));
   }
 
   return timezone_list.release();

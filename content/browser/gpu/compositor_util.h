@@ -13,10 +13,6 @@ namespace content {
 // Note: When adding a function here, please make sure the logic is not
 // duplicated in the renderer.
 
-// Returns true if property tree verification is enabled (via flags or platform
-// default).
-CONTENT_EXPORT bool IsPropertyTreeVerificationEnabled();
-
 // Returns true if zero-copy uploads is on (via flags, or platform default).
 // Only one of one-copy and zero-copy can be enabled at a time.
 CONTENT_EXPORT bool IsZeroCopyUploadEnabled();
@@ -30,6 +26,9 @@ CONTENT_EXPORT bool IsGpuMemoryBufferCompositorResourcesEnabled();
 // Returns true if gpu rasterization is on (via flags) for the renderer.
 CONTENT_EXPORT bool IsGpuRasterizationEnabled();
 
+// returns true if async worker context is on (via flags).
+CONTENT_EXPORT bool IsAsyncWorkerContextEnabled();
+
 // Returns the number of multisample antialiasing samples (via flags) for
 // GPU rasterization.
 CONTENT_EXPORT int GpuRasterizationMSAASampleCount();
@@ -40,8 +39,8 @@ CONTENT_EXPORT bool IsForceGpuRasterizationEnabled();
 // Returns the number of raster threads to use for compositing.
 CONTENT_EXPORT int NumberOfRendererRasterThreads();
 
-// Returns true if using cc Surfaces is allowed.
-CONTENT_EXPORT bool UseSurfacesEnabled();
+// Returns true if main thread can be pipelined with activation.
+CONTENT_EXPORT bool IsMainFrameBeforeActivationEnabled();
 
 CONTENT_EXPORT base::DictionaryValue* GetFeatureStatus();
 CONTENT_EXPORT base::Value* GetProblems();

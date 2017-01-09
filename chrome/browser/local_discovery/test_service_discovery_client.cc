@@ -4,7 +4,7 @@
 
 #include "chrome/browser/local_discovery/test_service_discovery_client.h"
 
-#include "chrome/common/local_discovery/service_discovery_client_impl.h"
+#include "chrome/browser/local_discovery/service_discovery_client_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/dns/mdns_client_impl.h"
 
@@ -30,30 +30,32 @@ void TestServiceDiscoveryClient::Start() {
                                       &TestServiceDiscoveryClient::OnSendTo));
 }
 
-scoped_ptr<ServiceWatcher> TestServiceDiscoveryClient::CreateServiceWatcher(
-      const std::string& service_type,
-      const ServiceWatcher::UpdatedCallback& callback) {
+std::unique_ptr<ServiceWatcher>
+TestServiceDiscoveryClient::CreateServiceWatcher(
+    const std::string& service_type,
+    const ServiceWatcher::UpdatedCallback& callback) {
   return service_discovery_client_impl_->CreateServiceWatcher(service_type,
                                                               callback);
 }
 
-scoped_ptr<ServiceResolver> TestServiceDiscoveryClient::CreateServiceResolver(
-      const std::string& service_name,
-      const ServiceResolver::ResolveCompleteCallback& callback) {
+std::unique_ptr<ServiceResolver>
+TestServiceDiscoveryClient::CreateServiceResolver(
+    const std::string& service_name,
+    const ServiceResolver::ResolveCompleteCallback& callback) {
   return service_discovery_client_impl_->CreateServiceResolver(service_name,
                                                               callback);
 }
 
-scoped_ptr<LocalDomainResolver>
+std::unique_ptr<LocalDomainResolver>
 TestServiceDiscoveryClient::CreateLocalDomainResolver(
-      const std::string& domain,
-      net::AddressFamily address_family,
-      const LocalDomainResolver::IPAddressCallback& callback) {
+    const std::string& domain,
+    net::AddressFamily address_family,
+    const LocalDomainResolver::IPAddressCallback& callback) {
   return service_discovery_client_impl_->CreateLocalDomainResolver(
       domain, address_family, callback);
 }
 
-void TestServiceDiscoveryClient::SimulateReceive(const uint8* packet,
+void TestServiceDiscoveryClient::SimulateReceive(const uint8_t* packet,
                                                  int size) {
   mock_socket_factory_.SimulateReceive(packet, size);
 }

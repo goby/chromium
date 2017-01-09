@@ -12,6 +12,8 @@
 
 #include <windows.h>
 
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/values.h"
@@ -21,14 +23,12 @@
 GoogleChromeDistribution::GoogleChromeDistribution()
     : BrowserDistribution(
           CHROME_BROWSER,
-          scoped_ptr<AppRegistrationData>(
-              new NonUpdatingAppRegistrationData(base::string16()))) {
-}
+          std::unique_ptr<AppRegistrationData>(
+              new NonUpdatingAppRegistrationData(base::string16()))) {}
 
 GoogleChromeDistribution::GoogleChromeDistribution(
-    scoped_ptr<AppRegistrationData> app_reg_data)
-    : BrowserDistribution(CHROME_BROWSER, app_reg_data.Pass()) {
-}
+    std::unique_ptr<AppRegistrationData> app_reg_data)
+    : BrowserDistribution(CHROME_BROWSER, std::move(app_reg_data)) {}
 
 void GoogleChromeDistribution::DoPostUninstallOperations(
     const Version& version,
@@ -44,12 +44,11 @@ base::string16 GoogleChromeDistribution::GetBaseAppName() {
   return base::string16();
 }
 
-base::string16 GoogleChromeDistribution::GetShortcutName(
-    ShortcutType shortcut_type) {
+base::string16 GoogleChromeDistribution::GetShortcutName() {
   return base::string16();
 }
 
-int GoogleChromeDistribution::GetIconIndex(ShortcutType shortcut_type) {
+int GoogleChromeDistribution::GetIconIndex() {
   return 0;
 }
 
@@ -82,6 +81,10 @@ std::string GoogleChromeDistribution::GetSafeBrowsingName() {
 }
 
 base::string16 GoogleChromeDistribution::GetDistributionData(HKEY root_key) {
+  return base::string16();
+}
+
+base::string16 GetRegistryPath() {
   return base::string16();
 }
 

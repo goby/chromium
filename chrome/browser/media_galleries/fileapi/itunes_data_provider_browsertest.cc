@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media_galleries/fileapi/itunes_data_provider.h"
+
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -11,11 +16,11 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/media_galleries/fileapi/itunes_data_provider.h"
+#include "build/build_config.h"
 #include "chrome/browser/media_galleries/fileapi/media_file_system_backend.h"
 #include "chrome/browser/media_galleries/imported_media_gallery_registry.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -109,12 +114,10 @@ class ITunesDataProviderTest : public InProcessBrowserTest {
     return ImportedMediaGalleryRegistry::ITunesDataProvider();
   }
 
-  const base::FilePath& library_dir() const {
-    return library_dir_.path();
-  }
+  const base::FilePath& library_dir() const { return library_dir_.GetPath(); }
 
   base::FilePath XmlFile() const {
-    return library_dir_.path().AppendASCII("library.xml");
+    return library_dir_.GetPath().AppendASCII("library.xml");
   }
 
   void ExpectTrackLocation(const std::string& artist, const std::string& album,
@@ -144,7 +147,7 @@ class ITunesDataProviderTest : public InProcessBrowserTest {
   virtual void StartTest(bool parse_success) = 0;
 
   void TestDone() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
     ImportedMediaGalleryRegistry* imported_registry =
         ImportedMediaGalleryRegistry::GetInstance();
     imported_registry->itunes_data_provider_.reset();
@@ -154,7 +157,7 @@ class ITunesDataProviderTest : public InProcessBrowserTest {
 
  private:
   void StartTestOnMediaTaskRunner() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
     ImportedMediaGalleryRegistry* imported_registry =
         ImportedMediaGalleryRegistry::GetInstance();
     imported_registry->itunes_data_provider_.reset(
@@ -164,10 +167,10 @@ class ITunesDataProviderTest : public InProcessBrowserTest {
                        base::Unretained(this))));
     data_provider()->RefreshData(base::Bind(&ITunesDataProviderTest::StartTest,
                                             base::Unretained(this)));
-  };
+  }
 
   void OnLibraryChanged() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
     if (!library_changed_callback_.is_null()) {
       library_changed_callback_.Run();
       library_changed_callback_.Reset();
@@ -175,7 +178,7 @@ class ITunesDataProviderTest : public InProcessBrowserTest {
   }
 
   void WriteLibraryInternal(const std::vector<LibraryEntry>& entries) {
-    if (!entries.size())
+    if (entries.empty())
       return;
     std::string xml = "<plist><dict><key>Tracks</key><dict>\n";
     for (size_t i = 0; i < entries.size(); ++i) {
@@ -397,10 +400,10 @@ class ITunesDataProviderUniqueNameTest : public ITunesDataProviderTest {
   DISALLOW_COPY_AND_ASSIGN(ITunesDataProviderUniqueNameTest);
 };
 
+// Albums and tracks that aren't the same, but become the same after
+// replacing bad characters are not handled properly, but that case should
+// never happen in practice.
 class ITunesDataProviderEscapeTest : public ITunesDataProviderTest {
- // Albums and tracks that aren't the same, but become the same after
- // replacing bad characters are not handled properly, but that case should
- // never happen in practice.
  public:
   ITunesDataProviderEscapeTest() {}
 

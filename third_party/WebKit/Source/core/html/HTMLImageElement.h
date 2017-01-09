@@ -24,158 +24,205 @@
 #ifndef HTMLImageElement_h
 #define HTMLImageElement_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/fetch/FetchRequest.h"
+#include "core/html/FormAssociated.h"
 #include "core/html/HTMLElement.h"
 #include "core/html/HTMLImageLoader.h"
 #include "core/html/canvas/CanvasImageSource.h"
 #include "core/imagebitmap/ImageBitmapSource.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/network/ResourceResponse.h"
-#include "wtf/WeakPtr.h"
 
 namespace blink {
 
 class HTMLFormElement;
 class ImageCandidate;
 class ShadowRoot;
+class ImageBitmapOptions;
 
-class CORE_EXPORT HTMLImageElement final : public HTMLElement, public CanvasImageSource, public ImageBitmapSource {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    class ViewportChangeListener;
+class CORE_EXPORT HTMLImageElement final : public HTMLElement,
+                                           public CanvasImageSource,
+                                           public ImageBitmapSource,
+                                           public ActiveScriptWrappable,
+                                           public FormAssociated {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(HTMLImageElement);
 
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> create(Document&);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> create(Document&, HTMLFormElement*, bool createdByParser);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> createForJSConstructor(Document&);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> createForJSConstructor(Document&, int width);
-    static PassRefPtrWillBeRawPtr<HTMLImageElement> createForJSConstructor(Document&, int width, int height);
+ public:
+  class ViewportChangeListener;
 
-    ~HTMLImageElement() override;
-    DECLARE_VIRTUAL_TRACE();
+  static HTMLImageElement* create(Document&);
+  static HTMLImageElement* create(Document&,
+                                  bool createdByParser);
+  static HTMLImageElement* createForJSConstructor(Document&);
+  static HTMLImageElement* createForJSConstructor(Document&, unsigned width);
+  static HTMLImageElement* createForJSConstructor(Document&,
+                                                  unsigned width,
+                                                  unsigned height);
 
-    int width();
-    int height();
+  ~HTMLImageElement() override;
+  DECLARE_VIRTUAL_TRACE();
 
-    int naturalWidth() const;
-    int naturalHeight() const;
-    const String& currentSrc() const;
+  unsigned width();
+  unsigned height();
 
-    bool isServerMap() const;
+  unsigned naturalWidth() const;
+  unsigned naturalHeight() const;
+  const String& currentSrc() const;
 
-    String altText() const final;
+  bool isServerMap() const;
 
-    ImageResource* cachedImage() const { return imageLoader().image(); }
-    void setImageResource(ImageResource* i) { imageLoader().setImage(i); }
+  String altText() const final;
 
-    void setLoadingImageDocument() { imageLoader().setLoadingImageDocument(); }
+  ImageResourceContent* cachedImage() const { return imageLoader().image(); }
+  ImageResource* cachedImageResourceForImageDocument() const {
+    return imageLoader().imageResourceForImageDocument();
+  }
+  void setImageResource(ImageResourceContent* i) { imageLoader().setImage(i); }
 
-    void setHeight(int);
+  void setLoadingImageDocument() { imageLoader().setLoadingImageDocument(); }
 
-    KURL src() const;
-    void setSrc(const String&);
+  void setHeight(unsigned);
 
-    void setWidth(int);
+  KURL src() const;
+  void setSrc(const String&);
 
-    int x() const;
-    int y() const;
+  void setWidth(unsigned);
 
-    bool complete() const;
+  int x() const;
+  int y() const;
 
-    bool hasPendingActivity() const { return imageLoader().hasPendingActivity(); }
+  bool complete() const;
 
-    bool canContainRangeEndPoint() const override { return false; }
+  bool hasPendingActivity() const final {
+    return imageLoader().hasPendingActivity();
+  }
 
-    void addClient(ImageLoaderClient* client) { imageLoader().addClient(client); }
-    void removeClient(ImageLoaderClient* client) { imageLoader().removeClient(client); }
+  bool canContainRangeEndPoint() const override { return false; }
 
-    const AtomicString imageSourceURL() const override;
+  const AtomicString imageSourceURL() const override;
 
-    HTMLFormElement* formOwner() const override;
-    void formRemovedFromTree(const Node& formRoot);
-    virtual void ensureFallbackContent();
-    virtual void ensureFallbackForGeneratedContent();
-    virtual void ensurePrimaryContent();
+  HTMLFormElement* formOwner() const override;
+  void formRemovedFromTree(const Node& formRoot);
+  virtual void ensureCollapsedOrFallbackContent();
+  virtual void ensureFallbackForGeneratedContent();
+  virtual void ensurePrimaryContent();
 
-    // CanvasImageSource implementation
-    PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*, AccelerationHint) const override;
-    bool wouldTaintOrigin(SecurityOrigin*) const override;
-    FloatSize elementSize() const override;
-    FloatSize defaultDestinationSize() const override;
-    const KURL& sourceURL() const override;
-    bool isOpaque() const override;
+  // CanvasImageSource implementation
+  PassRefPtr<Image> getSourceImageForCanvas(SourceImageStatus*,
+                                            AccelerationHint,
+                                            SnapshotReason,
+                                            const FloatSize&) const override;
+  bool isSVGSource() const override;
+  bool wouldTaintOrigin(SecurityOrigin*) const override;
+  FloatSize elementSize(const FloatSize&) const override;
+  FloatSize defaultDestinationSize(const FloatSize&) const override;
+  const KURL& sourceURL() const override;
+  bool isAccelerated() const override { return false; }
+  bool isOpaque() const override;
+  int sourceWidth() override;
+  int sourceHeight() override;
 
-    // public so that HTMLPictureElement can call this as well.
-    void selectSourceURL(ImageLoader::UpdateFromElementBehavior);
-    void reattachFallbackContent();
-    void setUseFallbackContent();
-    void setIsFallbackImage() { m_isFallbackImage = true; }
+  // public so that HTMLPictureElement can call this as well.
+  void selectSourceURL(ImageLoader::UpdateFromElementBehavior);
 
-    FetchRequest::ResourceWidth resourceWidth();
-    float sourceSize(Element&);
+  void setIsFallbackImage() { m_isFallbackImage = true; }
 
-    void forceReload() const;
+  FetchRequest::ResourceWidth getResourceWidth();
+  float sourceSize(Element&);
 
-    // ImageBitmapSource implementation
-    IntSize bitmapSourceSize() const override;
-    ScriptPromise createImageBitmap(ScriptState*, EventTarget&, int sx, int sy, int sw, int sh, ExceptionState&) override;
+  void forceReload() const;
 
-protected:
-    explicit HTMLImageElement(Document&, HTMLFormElement* = 0, bool createdByParser = false);
+  // ImageBitmapSource implementation
+  IntSize bitmapSourceSize() const override;
+  ScriptPromise createImageBitmap(ScriptState*,
+                                  EventTarget&,
+                                  Optional<IntRect> cropRect,
+                                  const ImageBitmapOptions&,
+                                  ExceptionState&) override;
 
-    void didMoveToNewDocument(Document& oldDocument) override;
-    virtual bool useFallbackContent() const { return m_useFallbackContent; }
+  FormAssociated* toFormAssociatedOrNull() override { return this; };
+  void associateWith(HTMLFormElement*) override;
 
-    void didAddUserAgentShadowRoot(ShadowRoot&) override;
-    PassRefPtr<ComputedStyle> customStyleForLayoutObject() override;
-private:
-    bool areAuthorShadowsAllowed() const override { return false; }
+ protected:
+  // Controls how an image element appears in the layout. See:
+  // https://html.spec.whatwg.org/multipage/embedded-content.html#image-request
+  enum class LayoutDisposition : uint8_t {
+    // Displayed as a partially or completely loaded image. Corresponds to the
+    // `current request` state being: `unavailable`, `partially available`, or
+    // `completely available`.
+    PrimaryContent,
+    // Showing a broken image icon and 'alt' text, if any. Corresponds to the
+    // `current request` being in the `broken` state.
+    FallbackContent,
+    // No layout object. Corresponds to the `current request` being in the
+    // `broken` state when the resource load failed with an error that has the
+    // |shouldCollapseInitiator| flag set.
+    Collapsed
+  };
 
-    void parseAttribute(const QualifiedName&, const AtomicString&, const AtomicString&) override;
-    bool isPresentationAttribute(const QualifiedName&) const override;
-    void collectStyleForPresentationAttribute(const QualifiedName&, const AtomicString&, MutableStylePropertySet*) override;
+  explicit HTMLImageElement(Document&,
+                            bool createdByParser = false);
 
-    void attach(const AttachContext& = AttachContext()) override;
-    LayoutObject* createLayoutObject(const ComputedStyle&) override;
+  void didMoveToNewDocument(Document& oldDocument) override;
 
-    bool canStartSelection() const override { return false; }
+  void didAddUserAgentShadowRoot(ShadowRoot&) override;
+  PassRefPtr<ComputedStyle> customStyleForLayoutObject() override;
 
-    bool isURLAttribute(const Attribute&) const override;
-    bool hasLegalLinkAttribute(const QualifiedName&) const override;
-    const QualifiedName& subResourceAttributeName() const override;
+ private:
+  bool areAuthorShadowsAllowed() const override { return false; }
 
-    bool draggable() const override;
+  void parseAttribute(const QualifiedName&,
+                      const AtomicString&,
+                      const AtomicString&) override;
+  bool isPresentationAttribute(const QualifiedName&) const override;
+  void collectStyleForPresentationAttribute(const QualifiedName&,
+                                            const AtomicString&,
+                                            MutableStylePropertySet*) override;
+  void setLayoutDisposition(LayoutDisposition, bool forceReattach = false);
 
-    InsertionNotificationRequest insertedInto(ContainerNode*) override;
-    void removedFrom(ContainerNode*) override;
-    bool shouldRegisterAsNamedItem() const override { return true; }
-    bool shouldRegisterAsExtraNamedItem() const override { return true; }
-    bool isInteractiveContent() const override;
-    Image* imageContents() override;
+  void attachLayoutTree(const AttachContext& = AttachContext()) override;
+  bool layoutObjectIsNeeded(const ComputedStyle&) override;
+  LayoutObject* createLayoutObject(const ComputedStyle&) override;
 
-    void resetFormOwner();
-    ImageCandidate findBestFitImageFromPictureParent();
-    void setBestFitURLAndDPRFromImageCandidate(const ImageCandidate&);
-    HTMLImageLoader& imageLoader() const { return *m_imageLoader; }
-    void notifyViewportChanged();
-    void createMediaQueryListIfDoesNotExist();
+  bool canStartSelection() const override { return false; }
 
-    OwnPtrWillBeMember<HTMLImageLoader> m_imageLoader;
-    RefPtrWillBeMember<ViewportChangeListener> m_listener;
-    WeakPtrWillBeMember<HTMLFormElement> m_form;
-    AtomicString m_bestFitImageURL;
-    float m_imageDevicePixelRatio;
-    RefPtrWillBeMember<HTMLSourceElement> m_source;
-    unsigned m_formWasSetByParser : 1;
-    unsigned m_elementCreatedByParser : 1;
-    // Intrinsic sizing is viewport dependant if the 'w' descriptor was used for the picked resource.
-    unsigned m_intrinsicSizingViewportDependant : 1;
-    unsigned m_useFallbackContent : 1;
-    unsigned m_isFallbackImage : 1;
+  bool isURLAttribute(const Attribute&) const override;
+  bool hasLegalLinkAttribute(const QualifiedName&) const override;
+  const QualifiedName& subResourceAttributeName() const override;
 
-    ReferrerPolicy m_referrerPolicy;
+  bool draggable() const override;
+
+  InsertionNotificationRequest insertedInto(ContainerNode*) override;
+  void removedFrom(ContainerNode*) override;
+  bool shouldRegisterAsNamedItem() const override { return true; }
+  bool shouldRegisterAsExtraNamedItem() const override { return true; }
+  bool isInteractiveContent() const override;
+  Image* imageContents() override;
+
+  void resetFormOwner();
+  ImageCandidate findBestFitImageFromPictureParent();
+  void setBestFitURLAndDPRFromImageCandidate(const ImageCandidate&);
+  HTMLImageLoader& imageLoader() const { return *m_imageLoader; }
+  void notifyViewportChanged();
+  void createMediaQueryListIfDoesNotExist();
+
+  Member<HTMLImageLoader> m_imageLoader;
+  Member<ViewportChangeListener> m_listener;
+  Member<HTMLFormElement> m_form;
+  AtomicString m_bestFitImageURL;
+  float m_imageDevicePixelRatio;
+  Member<HTMLSourceElement> m_source;
+  LayoutDisposition m_layoutDisposition;
+  unsigned m_formWasSetByParser : 1;
+  unsigned m_elementCreatedByParser : 1;
+  unsigned m_isFallbackImage : 1;
+
+  ReferrerPolicy m_referrerPolicy;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLImageElement_h
+#endif  // HTMLImageElement_h

@@ -6,8 +6,8 @@
 
 #include <windows.h>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/time/time.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
@@ -17,11 +17,13 @@ namespace base {
 // static
 const Time CurrentProcessInfo::CreationTime() {
   FILETIME creation_time = {};
-  FILETIME ignore = {};
-  if (::GetProcessTimes(::GetCurrentProcess(), &creation_time, &ignore,
-      &ignore, &ignore) == false)
+  FILETIME ignore1 = {};
+  FILETIME ignore2 = {};
+  FILETIME ignore3 = {};
+  if (!::GetProcessTimes(::GetCurrentProcess(), &creation_time, &ignore1,
+                         &ignore2, &ignore3)) {
     return Time();
-
+  }
   return Time::FromFileTime(creation_time);
 }
 
@@ -37,13 +39,13 @@ IntegrityLevel GetCurrentProcessIntegrityLevel() {
   win::ScopedHandle scoped_process_token(process_token);
 
   DWORD token_info_length = 0;
-  if (::GetTokenInformation(process_token, TokenIntegrityLevel, NULL, 0,
+  if (::GetTokenInformation(process_token, TokenIntegrityLevel, nullptr, 0,
                             &token_info_length) ||
       ::GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
     return INTEGRITY_UNKNOWN;
   }
 
-  scoped_ptr<char[]> token_label_bytes(new char[token_info_length]);
+  std::unique_ptr<char[]> token_label_bytes(new char[token_info_length]);
   if (!token_label_bytes.get())
     return INTEGRITY_UNKNOWN;
 
@@ -59,7 +61,8 @@ IntegrityLevel GetCurrentProcessIntegrityLevel() {
 
   DWORD integrity_level = *::GetSidSubAuthority(
       token_label->Label.Sid,
-      static_cast<DWORD>(*::GetSidSubAuthorityCount(token_label->Label.Sid)-1));
+      static_cast<DWORD>(*::GetSidSubAuthorityCount(token_label->Label.Sid) -
+                         1));
 
   if (integrity_level < SECURITY_MANDATORY_MEDIUM_RID)
     return LOW_INTEGRITY;

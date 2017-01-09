@@ -5,6 +5,8 @@
 #ifndef CONTENT_PUBLIC_TEST_MOCK_DOWNLOAD_ITEM_H_
 #define CONTENT_PUBLIC_TEST_MOCK_DOWNLOAD_ITEM_H_
 
+#include <stdint.h>
+
 #include "base/callback.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
@@ -36,14 +38,15 @@ class MockDownloadItem : public DownloadItem {
 
   MOCK_METHOD0(UpdateObservers, void());
   MOCK_METHOD0(ValidateDangerousDownload, void());
-  MOCK_METHOD1(StealDangerousDownload, void(const AcquireFileCallback&));
+  MOCK_METHOD2(StealDangerousDownload, void(bool, const AcquireFileCallback&));
   MOCK_METHOD0(Pause, void());
   MOCK_METHOD0(Resume, void());
   MOCK_METHOD1(Cancel, void(bool));
   MOCK_METHOD0(Remove, void());
   MOCK_METHOD0(OpenDownload, void());
   MOCK_METHOD0(ShowDownloadInShell, void());
-  MOCK_CONST_METHOD0(GetId, uint32());
+  MOCK_CONST_METHOD0(GetId, uint32_t());
+  MOCK_CONST_METHOD0(GetGuid, const std::string&());
   MOCK_CONST_METHOD0(GetState, DownloadState());
   MOCK_CONST_METHOD0(GetLastReason, DownloadInterruptReason());
   MOCK_CONST_METHOD0(IsPaused, bool());
@@ -54,6 +57,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetUrlChain, const std::vector<GURL>&());
   MOCK_CONST_METHOD0(GetOriginalUrl, const GURL&());
   MOCK_CONST_METHOD0(GetReferrerUrl, const GURL&());
+  MOCK_CONST_METHOD0(GetSiteUrl, const GURL&());
   MOCK_CONST_METHOD0(GetTabUrl, const GURL&());
   MOCK_CONST_METHOD0(GetTabReferrerUrl, const GURL&());
   MOCK_CONST_METHOD0(GetSuggestedFilename, std::string());
@@ -79,11 +83,11 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(IsDangerous, bool());
   MOCK_CONST_METHOD0(GetDangerType, DownloadDangerType());
   MOCK_CONST_METHOD1(TimeRemaining, bool(base::TimeDelta*));
-  MOCK_CONST_METHOD0(CurrentSpeed, int64());
+  MOCK_CONST_METHOD0(CurrentSpeed, int64_t());
   MOCK_CONST_METHOD0(PercentComplete, int());
   MOCK_CONST_METHOD0(AllDataSaved, bool());
-  MOCK_CONST_METHOD0(GetTotalBytes, int64());
-  MOCK_CONST_METHOD0(GetReceivedBytes, int64());
+  MOCK_CONST_METHOD0(GetTotalBytes, int64_t());
+  MOCK_CONST_METHOD0(GetReceivedBytes, int64_t());
   MOCK_CONST_METHOD0(GetStartTime, base::Time());
   MOCK_CONST_METHOD0(GetEndTime, base::Time());
   MOCK_METHOD0(CanShowInFolder, bool());
@@ -96,7 +100,6 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetWebContents, WebContents*());
   MOCK_METHOD1(OnContentCheckCompleted, void(DownloadDangerType));
   MOCK_METHOD1(SetOpenWhenComplete, void(bool));
-  MOCK_METHOD1(SetIsTemporary, void(bool));
   MOCK_METHOD1(SetOpened, void(bool));
   MOCK_METHOD1(SetDisplayName, void(const base::FilePath&));
   MOCK_CONST_METHOD1(DebugString, std::string(bool));

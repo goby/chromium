@@ -66,6 +66,7 @@ bool HardwareDisplayPlane::Initialize(DrmDevice* drm,
   if (is_dummy) {
     type_ = kDummy;
     supported_formats_.push_back(DRM_FORMAT_XRGB8888);
+    supported_formats_.push_back(DRM_FORMAT_XBGR8888);
     return true;
   }
 
@@ -105,6 +106,10 @@ bool HardwareDisplayPlane::IsSupportedFormat(uint32_t format) {
 
   last_used_format_ = 0;
   return false;
+}
+
+const std::vector<uint32_t>& HardwareDisplayPlane::supported_formats() const {
+  return supported_formats_;
 }
 
 bool HardwareDisplayPlane::InitializeProperties(

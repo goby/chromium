@@ -120,7 +120,7 @@ enum MetricPolicy {
 enum MetricEnrollment {
   // User pressed 'Cancel' during the enrollment process.
   kMetricEnrollmentCancelled = 0,
-  // User started enrollment process by submitting valid GAIA credentials.
+  // User started enrollment process by submitting valid credentials.
   kMetricEnrollmentStarted = 1,
   // OAuth token fetch failed: network error.
   kMetricEnrollmentNetworkFailed = 2,
@@ -164,11 +164,10 @@ enum MetricEnrollment {
   kMetricEnrollmentRegisterPolicyDomainMismatch = 23,
   // Enrollment has been triggered, the webui login screen has been shown.
   kMetricEnrollmentTriggered = 24,
-  // The user submitted valid GAIA credentials to start the enrollment process
+  // The user submitted valid credentials to start the enrollment process
   // for the second (or further) time.
   kMetricEnrollmentRestarted = 25,
-  // Failed to store DM token and device ID.
-  kMetricEnrollmentStoreTokenAndIdFailed = 26,
+  /* kMetricEnrollmentStoreTokenAndIdFailed = 26 REMOVED */
   // Failed to obtain FRE state keys.
   kMetricEnrollmentNoStateKeys = 27,
   // Failed to validate policy.
@@ -220,6 +219,14 @@ enum MetricEnrollment {
   kMetricEnrollmentAttributeUpdateFailed = 50,
   // Enrollment mode does not match already locked install attributes.
   kMetricEnrollmentLockModeMismatch = 51,
+  // A registration certificate could not be fetched from the PCA.
+  kMetricEnrollmentRegistrationCertificateFetchFailed = 52,
+  // The request to enroll could not be signed.
+  kMetricEnrollmentRegisterCannotSignRequest = 53,
+  // Device model or serial number missing from VPD.
+  kMetricEnrollmentNoDeviceIdentification = 54,
+  // Active Directory policy fetch failed.
+  kMetricEnrollmentActiveDirectoryPolicyFetchFailed = 55,
 };
 
 // Events related to policy refresh.
@@ -265,24 +272,6 @@ enum PolicyInvalidationType {
   POLICY_INVALIDATION_TYPE_SIZE  // Must be the last.
 };
 
-// Types of sensitive data that is removed from system logs to upload.
-// This enum is used to define the buckets for an enumerated UMA histogram.
-// Hence,
-// (a) existing enumerated constants should never be deleted or reordered, and
-// (b) new constants should only be appended at the end of the enumeration.
-enum SystemLogPIIType {
-  // Found email address in system logs to  upload.
-  SYSTEM_LOG_PII_TYPE_EMAIL_ADDRESS = 0,
-  // Found IP address in system logs to upload.
-  SYSTEM_LOG_PII_TYPE_IP_ADDRESS = 1,
-  // Found Web URL in system logs to upload.
-  SYSTEM_LOG_PII_TYPE_WEB_URL = 2,
-  // Found SSID in system logs to upload.
-  SYSTEM_LOG_PII_TYPE_SSID = 3,
-
-  SYSTEM_LOG_PII_TYPE_SIZE  // Must be the last.
-};
-
 // Names for the UMA counters. They are shared from here since the events
 // from the same enum above can be triggered in different files, and must use
 // the same UMA histogram name.
@@ -292,7 +281,6 @@ POLICY_EXPORT extern const char kMetricUserPolicyRefresh[];
 POLICY_EXPORT extern const char kMetricUserPolicyInvalidations[];
 POLICY_EXPORT extern const char kMetricDevicePolicyRefresh[];
 POLICY_EXPORT extern const char kMetricDevicePolicyInvalidations[];
-POLICY_EXPORT extern const char kMetricSystemLogPII[];
 
 }  // namespace policy
 

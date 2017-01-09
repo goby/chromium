@@ -26,12 +26,9 @@ DevToolsClient::DevToolsClient(
     RenderFrame* main_render_frame,
     const std::string& compatibility_script)
     : RenderFrameObserver(main_render_frame),
-      compatibility_script_(compatibility_script) {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  web_tools_frontend_.reset(WebDevToolsFrontend::create(
-      main_render_frame->GetRenderView()->GetWebView(), this,
-      base::ASCIIToUTF16(command_line.GetSwitchValueASCII(switches::kLang))));
+      compatibility_script_(compatibility_script),
+      web_tools_frontend_(
+          WebDevToolsFrontend::create(main_render_frame->GetWebFrame(), this)) {
 }
 
 DevToolsClient::~DevToolsClient() {
@@ -40,6 +37,10 @@ DevToolsClient::~DevToolsClient() {
 void DevToolsClient::DidClearWindowObject() {
   if (!compatibility_script_.empty())
     render_frame()->ExecuteJavaScript(base::UTF8ToUTF16(compatibility_script_));
+}
+
+void DevToolsClient::OnDestruct() {
+  delete this;
 }
 
 void DevToolsClient::sendMessageToEmbedder(const WebString& message) {

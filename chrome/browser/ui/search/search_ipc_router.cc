@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/search/search_ipc_router.h"
 
+#include <utility>
+
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/common/render_messages.h"
@@ -11,29 +13,12 @@
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/web_contents.h"
 
-namespace {
-
-bool IsProviderValid(const base::string16& provider) {
-  // Only allow string of 8 alphanumeric characters or less as providers.
-  // The empty string is considered valid and should be treated as if no
-  // provider were specified.
-  if (provider.length() > 8)
-    return false;
-  for (base::string16::const_iterator it = provider.begin();
-       it != provider.end(); ++it) {
-    if (!base::IsAsciiAlpha(*it) && !base::IsAsciiDigit(*it))
-      return false;
-  }
-  return true;
-}
-
-}  // namespace
-
 SearchIPCRouter::SearchIPCRouter(content::WebContents* web_contents,
-                                 Delegate* delegate, scoped_ptr<Policy> policy)
+                                 Delegate* delegate,
+                                 std::unique_ptr<Policy> policy)
     : WebContentsObserver(web_contents),
       delegate_(delegate),
-      policy_(policy.Pass()),
+      policy_(std::move(policy)),
       commit_counter_(0),
       is_active_tab_(false) {
   DCHECK(web_contents);
@@ -69,26 +54,6 @@ void SearchIPCRouter::SendHistorySyncCheckResult(bool sync_history) {
   Send(new ChromeViewMsg_HistorySyncCheckResult(routing_id(), sync_history));
 }
 
-void SearchIPCRouter::SetPromoInformation(bool is_app_launcher_enabled) {
-  if (!policy_->ShouldSendSetPromoInformation())
-    return;
-
-  Send(new ChromeViewMsg_SearchBoxPromoInformation(routing_id(),
-                                                   is_app_launcher_enabled));
-}
-
-void SearchIPCRouter::SetDisplayInstantResults() {
-  if (!policy_->ShouldSendSetDisplayInstantResults())
-    return;
-
-  bool is_search_results_page = !search::GetSearchTerms(web_contents()).empty();
-  bool display_instant_results =
-      is_search_results_page ? search::ShouldPrefetchSearchResultsOnSRP()
-                             : search::ShouldPrefetchSearchResults();
-  Send(new ChromeViewMsg_SearchBoxSetDisplayInstantResults(
-       routing_id(), display_instant_results));
-}
-
 void SearchIPCRouter::SetSuggestionToPrefetch(
     const InstantSuggestion& suggestion) {
   if (!policy_->ShouldSendSetSuggestionToPrefetch())
@@ -96,13 +61,6 @@ void SearchIPCRouter::SetSuggestionToPrefetch(
 
   Send(new ChromeViewMsg_SearchBoxSetSuggestionToPrefetch(routing_id(),
                                                           suggestion));
-}
-
-void SearchIPCRouter::SetOmniboxStartMargin(int start_margin) {
-  if (!policy_->ShouldSendSetOmniboxStartMargin())
-    return;
-
-  Send(new ChromeViewMsg_SearchBoxMarginChange(routing_id(), start_margin));
 }
 
 void SearchIPCRouter::SetInputInProgress(bool input_in_progress) {
@@ -167,8 +125,6 @@ bool SearchIPCRouter::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_InstantSupportDetermined,
                         OnInstantSupportDetermined)
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_FocusOmnibox, OnFocusOmnibox);
-    IPC_MESSAGE_HANDLER(ChromeViewHostMsg_SearchBoxNavigate,
-                        OnSearchBoxNavigate);
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_SearchBoxDeleteMostVisitedItem,
                         OnDeleteMostVisitedItem);
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_SearchBoxUndoMostVisitedDeletion,
@@ -209,21 +165,6 @@ void SearchIPCRouter::OnFocusOmnibox(int page_seq_no,
     return;
 
   delegate_->FocusOmnibox(state);
-}
-
-void SearchIPCRouter::OnSearchBoxNavigate(
-    int page_seq_no,
-    const GURL& url,
-    WindowOpenDisposition disposition,
-    bool is_most_visited_item_url) const {
-  if (page_seq_no != commit_counter_)
-    return;
-
-  delegate_->OnInstantSupportDetermined(true);
-  if (!policy_->ShouldProcessNavigateToURL(is_active_tab_))
-    return;
-
-  delegate_->NavigateToURL(url, disposition, is_most_visited_item_url);
 }
 
 void SearchIPCRouter::OnDeleteMostVisitedItem(int page_seq_no,
@@ -275,8 +216,10 @@ void SearchIPCRouter::OnLogEvent(int page_seq_no,
 }
 
 void SearchIPCRouter::OnLogMostVisitedImpression(
-    int page_seq_no, int position, const base::string16& provider) const {
-  if (page_seq_no != commit_counter_ || !IsProviderValid(provider))
+    int page_seq_no,
+    int position,
+    ntp_tiles::NTPTileSource tile_source) const {
+  if (page_seq_no != commit_counter_)
     return;
 
   delegate_->OnInstantSupportDetermined(true);
@@ -284,12 +227,14 @@ void SearchIPCRouter::OnLogMostVisitedImpression(
   if (!policy_->ShouldProcessLogEvent())
     return;
 
-  delegate_->OnLogMostVisitedImpression(position, provider);
+  delegate_->OnLogMostVisitedImpression(position, tile_source);
 }
 
 void SearchIPCRouter::OnLogMostVisitedNavigation(
-    int page_seq_no, int position, const base::string16& provider) const {
-  if (page_seq_no != commit_counter_ || !IsProviderValid(provider))
+    int page_seq_no,
+    int position,
+    ntp_tiles::NTPTileSource tile_source) const {
+  if (page_seq_no != commit_counter_)
     return;
 
   delegate_->OnInstantSupportDetermined(true);
@@ -297,7 +242,7 @@ void SearchIPCRouter::OnLogMostVisitedNavigation(
   if (!policy_->ShouldProcessLogEvent())
     return;
 
-  delegate_->OnLogMostVisitedNavigation(position, provider);
+  delegate_->OnLogMostVisitedNavigation(position, tile_source);
 }
 
 void SearchIPCRouter::OnPasteAndOpenDropDown(int page_seq_no,
@@ -341,7 +286,7 @@ void SearchIPCRouter::set_delegate_for_testing(Delegate* delegate) {
   delegate_ = delegate;
 }
 
-void SearchIPCRouter::set_policy_for_testing(scoped_ptr<Policy> policy) {
-  DCHECK(policy.get());
-  policy_.reset(policy.release());
+void SearchIPCRouter::set_policy_for_testing(std::unique_ptr<Policy> policy) {
+  DCHECK(policy);
+  policy_ = std::move(policy);
 }

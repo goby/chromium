@@ -5,12 +5,14 @@
 #ifndef CHROME_RENDERER_EXTENSIONS_RESOURCE_REQUEST_POLICY_H_
 #define CHROME_RENDERER_EXTENSIONS_RESOURCE_REQUEST_POLICY_H_
 
+#include "base/macros.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
 
 namespace blink {
 class WebFrame;
+class WebURL;
 }
 
 namespace extensions {
@@ -33,7 +35,7 @@ class ResourceRequestPolicy {
 
   // Returns true if the chrome-extension-resource:// |resource_url| can be
   // requested from |frame_url|.
-  bool CanRequestExtensionResourceScheme(const GURL& resource_url,
+  bool CanRequestExtensionResourceScheme(const blink::WebURL& resource_url,
                                          blink::WebFrame* frame);
 
  private:

@@ -5,11 +5,13 @@
 #ifndef EXTENSIONS_BROWSER_API_SOCKET_UDP_SOCKET_H_
 #define EXTENSIONS_BROWSER_API_SOCKET_UDP_SOCKET_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "extensions/browser/api/socket/socket.h"
-#include "net/udp/udp_socket.h"
+#include "net/socket/udp_socket.h"
 
 namespace extensions {
 
@@ -20,8 +22,8 @@ class UDPSocket : public Socket {
 
   void Connect(const net::AddressList& address,
                const CompletionCallback& callback) override;
-  void Disconnect() override;
-  int Bind(const std::string& address, uint16 port) override;
+  void Disconnect(bool socket_destroying) override;
+  int Bind(const std::string& address, uint16_t port) override;
   void Read(int count, const ReadCompletionCallback& callback) override;
   void RecvFrom(int count, const RecvFromCompletionCallback& callback) override;
   void SendTo(scoped_refptr<net::IOBuffer> io_buffer,

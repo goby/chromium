@@ -16,13 +16,18 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/task_runner_util.h"
 #include "base/threading/worker_pool.h"
+#include "base/time/default_tick_clock.h"
 #include "net/base/address_list.h"
-#include "net/base/connection_type_histograms.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_activity_monitor.h"
 #include "net/base/network_change_notifier.h"
+#include "net/base/sockaddr_storage.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_source_type.h"
 #include "net/socket/socket_net_log_params.h"
 #include "net/socket/socket_posix.h"
 
@@ -42,16 +47,6 @@ bool g_tcp_fastopen_supported = false;
 bool g_tcp_fastopen_user_enabled = false;
 // True if TCP FastOpen connect-with-write has failed at least once.
 bool g_tcp_fastopen_has_failed = false;
-
-// SetTCPNoDelay turns on/off buffering in the kernel. By default, TCP sockets
-// will wait up to 200ms for more data to complete a packet before transmitting.
-// After calling this function, the kernel will not wait. See TCP_NODELAY in
-// `man 7 tcp`.
-bool SetTCPNoDelay(int fd, bool no_delay) {
-  int on = no_delay ? 1 : 0;
-  int error = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
-  return error == 0;
-}
 
 // SetTCPKeepAlive sets SO_KEEPALIVE.
 bool SetTCPKeepAlive(int fd, bool enable, int delay) {
@@ -145,19 +140,25 @@ void CheckSupportAndMaybeEnableTCPFastOpen(bool user_enabled) {
 #endif
 }
 
-TCPSocketPosix::TCPSocketPosix(NetLog* net_log, const NetLog::Source& source)
-    : use_tcp_fastopen_(false),
+TCPSocketPosix::TCPSocketPosix(
+    std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+    NetLog* net_log,
+    const NetLogSource& source)
+    : socket_performance_watcher_(std::move(socket_performance_watcher)),
+      tick_clock_(new base::DefaultTickClock()),
+      rtt_notifications_minimum_interval_(base::TimeDelta::FromSeconds(1)),
+      use_tcp_fastopen_(false),
       tcp_fastopen_write_attempted_(false),
       tcp_fastopen_connected_(false),
       tcp_fastopen_status_(TCP_FASTOPEN_STATUS_UNKNOWN),
       logging_multiple_connect_attempts_(false),
-      net_log_(BoundNetLog::Make(net_log, NetLog::SOURCE_SOCKET)) {
-  net_log_.BeginEvent(NetLog::TYPE_SOCKET_ALIVE,
+      net_log_(NetLogWithSource::Make(net_log, NetLogSourceType::SOCKET)) {
+  net_log_.BeginEvent(NetLogEventType::SOCKET_ALIVE,
                       source.ToEventParametersCallback());
 }
 
 TCPSocketPosix::~TCPSocketPosix() {
-  net_log_.EndEvent(NetLog::TYPE_SOCKET_ALIVE);
+  net_log_.EndEvent(NetLogEventType::SOCKET_ALIVE);
   Close();
 }
 
@@ -203,7 +204,7 @@ int TCPSocketPosix::Listen(int backlog) {
   return socket_->Listen(backlog);
 }
 
-int TCPSocketPosix::Accept(scoped_ptr<TCPSocketPosix>* tcp_socket,
+int TCPSocketPosix::Accept(std::unique_ptr<TCPSocketPosix>* tcp_socket,
                            IPEndPoint* address,
                            const CompletionCallback& callback) {
   DCHECK(tcp_socket);
@@ -211,7 +212,7 @@ int TCPSocketPosix::Accept(scoped_ptr<TCPSocketPosix>* tcp_socket,
   DCHECK(socket_);
   DCHECK(!accept_socket_);
 
-  net_log_.BeginEvent(NetLog::TYPE_TCP_ACCEPT);
+  net_log_.BeginEvent(NetLogEventType::TCP_ACCEPT);
 
   int rv = socket_->Accept(
       &accept_socket_,
@@ -229,7 +230,7 @@ int TCPSocketPosix::Connect(const IPEndPoint& address,
   if (!logging_multiple_connect_attempts_)
     LogConnectBegin(AddressList(address));
 
-  net_log_.BeginEvent(NetLog::TYPE_TCP_CONNECT_ATTEMPT,
+  net_log_.BeginEvent(NetLogEventType::TCP_CONNECT_ATTEMPT,
                       CreateNetLogIPEndPointCallback(&address));
 
   SockaddrStorage storage;
@@ -403,14 +404,14 @@ int TCPSocketPosix::SetAddressReuse(bool allow) {
   return OK;
 }
 
-int TCPSocketPosix::SetReceiveBufferSize(int32 size) {
+int TCPSocketPosix::SetReceiveBufferSize(int32_t size) {
   DCHECK(socket_);
   int rv = setsockopt(socket_->socket_fd(), SOL_SOCKET, SO_RCVBUF,
                       reinterpret_cast<const char*>(&size), sizeof(size));
   return (rv == 0) ? OK : MapSystemError(errno);
 }
 
-int TCPSocketPosix::SetSendBufferSize(int32 size) {
+int TCPSocketPosix::SetSendBufferSize(int32_t size) {
   DCHECK(socket_);
   int rv = setsockopt(socket_->socket_fd(), SOL_SOCKET, SO_SNDBUF,
                       reinterpret_cast<const char*>(&size), sizeof(size));
@@ -442,10 +443,6 @@ void TCPSocketPosix::Close() {
   tcp_fastopen_status_ = TCP_FASTOPEN_STATUS_UNKNOWN;
 }
 
-bool TCPSocketPosix::UsingTCPFastOpen() const {
-  return use_tcp_fastopen_;
-}
-
 void TCPSocketPosix::EnableTCPFastOpenIfSupported() {
   if (!IsTCPFastOpenSupported())
     return;
@@ -454,7 +451,7 @@ void TCPSocketPosix::EnableTCPFastOpenIfSupported() {
   // This check conservatively avoids middleboxes that may blackhole
   // TCP FastOpen SYN+Data packets; on such a failure, subsequent sockets
   // should not use TCP FastOpen.
-  if(!g_tcp_fastopen_has_failed)
+  if (!g_tcp_fastopen_has_failed)
     use_tcp_fastopen_ = true;
   else
     tcp_fastopen_status_ = TCP_FASTOPEN_PREVIOUSLY_FAILED;
@@ -487,33 +484,40 @@ void TCPSocketPosix::EndLoggingMultipleConnectAttempts(int net_error) {
   }
 }
 
-void TCPSocketPosix::AcceptCompleted(scoped_ptr<TCPSocketPosix>* tcp_socket,
-                                     IPEndPoint* address,
-                                     const CompletionCallback& callback,
-                                     int rv) {
+void TCPSocketPosix::SetTickClockForTesting(
+    std::unique_ptr<base::TickClock> tick_clock) {
+  tick_clock_ = std::move(tick_clock);
+}
+
+void TCPSocketPosix::AcceptCompleted(
+    std::unique_ptr<TCPSocketPosix>* tcp_socket,
+    IPEndPoint* address,
+    const CompletionCallback& callback,
+    int rv) {
   DCHECK_NE(ERR_IO_PENDING, rv);
   callback.Run(HandleAcceptCompleted(tcp_socket, address, rv));
 }
 
 int TCPSocketPosix::HandleAcceptCompleted(
-    scoped_ptr<TCPSocketPosix>* tcp_socket,
+    std::unique_ptr<TCPSocketPosix>* tcp_socket,
     IPEndPoint* address,
     int rv) {
   if (rv == OK)
     rv = BuildTcpSocketPosix(tcp_socket, address);
 
   if (rv == OK) {
-    net_log_.EndEvent(NetLog::TYPE_TCP_ACCEPT,
+    net_log_.EndEvent(NetLogEventType::TCP_ACCEPT,
                       CreateNetLogIPEndPointCallback(address));
   } else {
-    net_log_.EndEventWithNetErrorCode(NetLog::TYPE_TCP_ACCEPT, rv);
+    net_log_.EndEventWithNetErrorCode(NetLogEventType::TCP_ACCEPT, rv);
   }
 
   return rv;
 }
 
-int TCPSocketPosix::BuildTcpSocketPosix(scoped_ptr<TCPSocketPosix>* tcp_socket,
-                                        IPEndPoint* address) {
+int TCPSocketPosix::BuildTcpSocketPosix(
+    std::unique_ptr<TCPSocketPosix>* tcp_socket,
+    IPEndPoint* address) {
   DCHECK(accept_socket_);
 
   SockaddrStorage storage;
@@ -523,24 +527,26 @@ int TCPSocketPosix::BuildTcpSocketPosix(scoped_ptr<TCPSocketPosix>* tcp_socket,
     return ERR_ADDRESS_INVALID;
   }
 
-  tcp_socket->reset(new TCPSocketPosix(net_log_.net_log(), net_log_.source()));
-  (*tcp_socket)->socket_.reset(accept_socket_.release());
+  tcp_socket->reset(
+      new TCPSocketPosix(nullptr, net_log_.net_log(), net_log_.source()));
+  (*tcp_socket)->socket_ = std::move(accept_socket_);
   return OK;
 }
 
 void TCPSocketPosix::ConnectCompleted(const CompletionCallback& callback,
-                                      int rv) const {
+                                      int rv) {
   DCHECK_NE(ERR_IO_PENDING, rv);
   callback.Run(HandleConnectCompleted(rv));
 }
 
-int TCPSocketPosix::HandleConnectCompleted(int rv) const {
+int TCPSocketPosix::HandleConnectCompleted(int rv) {
   // Log the end of this attempt (and any OS error it threw).
   if (rv != OK) {
-    net_log_.EndEvent(NetLog::TYPE_TCP_CONNECT_ATTEMPT,
+    net_log_.EndEvent(NetLogEventType::TCP_CONNECT_ATTEMPT,
                       NetLog::IntCallback("os_error", errno));
   } else {
-    net_log_.EndEvent(NetLog::TYPE_TCP_CONNECT_ATTEMPT);
+    net_log_.EndEvent(NetLogEventType::TCP_CONNECT_ATTEMPT);
+    NotifySocketPerformanceWatcher();
   }
 
   // Give a more specific error when the user is offline.
@@ -554,30 +560,28 @@ int TCPSocketPosix::HandleConnectCompleted(int rv) const {
 }
 
 void TCPSocketPosix::LogConnectBegin(const AddressList& addresses) const {
-  net_log_.BeginEvent(NetLog::TYPE_TCP_CONNECT,
+  net_log_.BeginEvent(NetLogEventType::TCP_CONNECT,
                       addresses.CreateNetLogCallback());
 }
 
 void TCPSocketPosix::LogConnectEnd(int net_error) const {
   if (net_error != OK) {
-    net_log_.EndEventWithNetErrorCode(NetLog::TYPE_TCP_CONNECT, net_error);
+    net_log_.EndEventWithNetErrorCode(NetLogEventType::TCP_CONNECT, net_error);
     return;
   }
-
-  UpdateConnectionTypeHistograms(CONNECTION_ANY);
 
   SockaddrStorage storage;
   int rv = socket_->GetLocalAddress(&storage);
   if (rv != OK) {
     PLOG(ERROR) << "GetLocalAddress() [rv: " << rv << "] error: ";
     NOTREACHED();
-    net_log_.EndEventWithNetErrorCode(NetLog::TYPE_TCP_CONNECT, rv);
+    net_log_.EndEventWithNetErrorCode(NetLogEventType::TCP_CONNECT, rv);
     return;
   }
 
-  net_log_.EndEvent(NetLog::TYPE_TCP_CONNECT,
-                    CreateNetLogSourceAddressCallback(storage.addr,
-                                                      storage.addr_len));
+  net_log_.EndEvent(
+      NetLogEventType::TCP_CONNECT,
+      CreateNetLogSourceAddressCallback(storage.addr, storage.addr_len));
 }
 
 void TCPSocketPosix::ReadCompleted(const scoped_refptr<IOBuffer>& buf,
@@ -606,11 +610,16 @@ int TCPSocketPosix::HandleReadCompleted(IOBuffer* buf, int rv) {
   }
 
   if (rv < 0) {
-    net_log_.AddEvent(NetLog::TYPE_SOCKET_READ_ERROR,
+    net_log_.AddEvent(NetLogEventType::SOCKET_READ_ERROR,
                       CreateNetLogSocketErrorCallback(rv, errno));
     return rv;
   }
-  net_log_.AddByteTransferEvent(NetLog::TYPE_SOCKET_BYTES_RECEIVED, rv,
+
+  // Notify the watcher only if at least 1 byte was read.
+  if (rv > 0)
+    NotifySocketPerformanceWatcher();
+
+  net_log_.AddByteTransferEvent(NetLogEventType::SOCKET_BYTES_RECEIVED, rv,
                                 buf->data());
   NetworkActivityMonitor::GetInstance()->IncrementBytesReceived(rv);
 
@@ -637,11 +646,16 @@ int TCPSocketPosix::HandleWriteCompleted(IOBuffer* buf, int rv) {
       tcp_fastopen_status_ = TCP_FASTOPEN_ERROR;
       g_tcp_fastopen_has_failed = true;
     }
-    net_log_.AddEvent(NetLog::TYPE_SOCKET_WRITE_ERROR,
+    net_log_.AddEvent(NetLogEventType::SOCKET_WRITE_ERROR,
                       CreateNetLogSocketErrorCallback(rv, errno));
     return rv;
   }
-  net_log_.AddByteTransferEvent(NetLog::TYPE_SOCKET_BYTES_SENT, rv,
+
+  // Notify the watcher only if at least 1 byte was written.
+  if (rv > 0)
+    NotifySocketPerformanceWatcher();
+
+  net_log_.AddByteTransferEvent(NetLogEventType::SOCKET_BYTES_SENT, rv,
                                 buf->data());
   NetworkActivityMonitor::GetInstance()->IncrementBytesSent(rv);
   return rv;
@@ -706,6 +720,40 @@ int TCPSocketPosix::TcpFastOpenWrite(IOBuffer* buf,
 
   tcp_fastopen_status_ = TCP_FASTOPEN_SLOW_CONNECT_RETURN;
   return socket_->WaitForWrite(buf, buf_len, callback);
+}
+
+void TCPSocketPosix::NotifySocketPerformanceWatcher() {
+#if defined(TCP_INFO)
+  const base::TimeTicks now_ticks = tick_clock_->NowTicks();
+  // Do not notify |socket_performance_watcher_| if the last notification was
+  // recent than |rtt_notifications_minimum_interval_| ago. This helps in
+  // reducing the overall overhead of the tcp_info syscalls.
+  if (now_ticks - last_rtt_notification_ < rtt_notifications_minimum_interval_)
+    return;
+
+  // Check if |socket_performance_watcher_| is interested in receiving a RTT
+  // update notification.
+  if (!socket_performance_watcher_ ||
+      !socket_performance_watcher_->ShouldNotifyUpdatedRTT()) {
+    return;
+  }
+
+  tcp_info info;
+  if (!GetTcpInfo(socket_->socket_fd(), &info))
+    return;
+
+  // Only notify the |socket_performance_watcher_| if the RTT in |tcp_info|
+  // struct was populated. A value of 0 may be valid in certain cases
+  // (on very fast networks), but it is discarded. This means that
+  // some of the RTT values may be missed, but the values that are kept are
+  // guaranteed to be correct.
+  if (info.tcpi_rtt == 0 && info.tcpi_rttvar == 0)
+    return;
+
+  socket_performance_watcher_->OnUpdatedRTTAvailable(
+      base::TimeDelta::FromMicroseconds(info.tcpi_rtt));
+  last_rtt_notification_ = now_ticks;
+#endif  // defined(TCP_INFO)
 }
 
 void TCPSocketPosix::UpdateTCPFastOpenStatusAfterRead() {

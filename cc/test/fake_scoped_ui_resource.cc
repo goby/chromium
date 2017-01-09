@@ -4,6 +4,8 @@
 
 #include "cc/test/fake_scoped_ui_resource.h"
 
+#include "base/memory/ptr_util.h"
+#include "cc/resources/ui_resource_manager.h"
 #include "cc/trees/layer_tree_host.h"
 
 namespace cc {
@@ -17,18 +19,24 @@ UIResourceBitmap CreateMockUIResourceBitmap() {
 
 }  // anonymous namespace
 
-scoped_ptr<FakeScopedUIResource> FakeScopedUIResource::Create(
-    LayerTreeHost* host) {
-  return make_scoped_ptr(new FakeScopedUIResource(host));
+std::unique_ptr<FakeScopedUIResource> FakeScopedUIResource::Create(
+    UIResourceManager* ui_resource_manager) {
+  return base::WrapUnique(new FakeScopedUIResource(ui_resource_manager));
 }
 
-FakeScopedUIResource::FakeScopedUIResource(LayerTreeHost* host)
-    : ScopedUIResource(host, CreateMockUIResourceBitmap()) {
+FakeScopedUIResource::FakeScopedUIResource(
+    UIResourceManager* ui_resource_manager)
+    : ScopedUIResource(ui_resource_manager, CreateMockUIResourceBitmap()) {
   // The constructor of ScopedUIResource already created a resource so we need
   // to delete the created resource to wipe the state clean.
-  host_->DeleteUIResource(id_);
+  ui_resource_manager_->DeleteUIResource(id_);
   ResetCounters();
-  id_ = host_->CreateUIResource(this);
+  id_ = ui_resource_manager_->CreateUIResource(this);
+}
+
+void FakeScopedUIResource::DeleteResource() {
+  ui_resource_manager_->DeleteUIResource(id_);
+  id_ = 0;
 }
 
 UIResourceBitmap FakeScopedUIResource::GetBitmap(UIResourceId uid,

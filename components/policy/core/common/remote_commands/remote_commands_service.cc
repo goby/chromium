@@ -6,9 +6,10 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
-#include "base/logging.h"
+#include "base/syslog_logging.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
@@ -19,9 +20,9 @@ namespace policy {
 namespace em = enterprise_management;
 
 RemoteCommandsService::RemoteCommandsService(
-    scoped_ptr<RemoteCommandsFactory> factory,
+    std::unique_ptr<RemoteCommandsFactory> factory,
     CloudPolicyClient* client)
-    : factory_(factory.Pass()), client_(client), weak_factory_(this) {
+    : factory_(std::move(factory)), client_(client), weak_factory_(this) {
   DCHECK(client_);
   queue_.AddObserver(this);
 }
@@ -31,10 +32,16 @@ RemoteCommandsService::~RemoteCommandsService() {
 }
 
 bool RemoteCommandsService::FetchRemoteCommands() {
-  if (!client_->is_registered())
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Fetching remote commands.";
+  if (!client_->is_registered()) {
+    SYSLOG(WARNING) << "Client is not registered.";
     return false;
+  }
 
   if (command_fetch_in_progress_) {
+    // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+    SYSLOG(WARNING) << "Command fetch is already in progress.";
     has_enqueued_fetch_request_ = true;
     return false;
   }
@@ -45,7 +52,7 @@ bool RemoteCommandsService::FetchRemoteCommands() {
   std::vector<em::RemoteCommandResult> previous_results;
   unsent_results_.swap(previous_results);
 
-  scoped_ptr<RemoteCommandJob::UniqueIDType> id_to_acknowledge;
+  std::unique_ptr<RemoteCommandJob::UniqueIDType> id_to_acknowledge;
 
   if (has_finished_command_) {
     // Acknowledges |lastest_finished_command_id_|, and removes it and every
@@ -62,7 +69,7 @@ bool RemoteCommandsService::FetchRemoteCommands() {
   }
 
   client_->FetchRemoteCommands(
-      id_to_acknowledge.Pass(), previous_results,
+      std::move(id_to_acknowledge), previous_results,
       base::Bind(&RemoteCommandsService::OnRemoteCommandsFetched,
                  weak_factory_.GetWeakPtr()));
 
@@ -70,37 +77,39 @@ bool RemoteCommandsService::FetchRemoteCommands() {
 }
 
 void RemoteCommandsService::SetClockForTesting(
-    scoped_ptr<base::TickClock> clock) {
-  queue_.SetClockForTesting(clock.Pass());
+    std::unique_ptr<base::TickClock> clock) {
+  queue_.SetClockForTesting(std::move(clock));
 }
 
 void RemoteCommandsService::EnqueueCommand(
     const enterprise_management::RemoteCommand& command) {
-  if (!command.has_type() || !command.has_unique_id()) {
-    LOG(WARNING) << "Invalid remote command from server.";
+  if (!command.has_type() || !command.has_command_id()) {
+    SYSLOG(ERROR) << "Invalid remote command from server.";
     return;
   }
 
   // If the command is already fetched, ignore it.
   if (std::find(fetched_command_ids_.begin(), fetched_command_ids_.end(),
-                command.unique_id()) != fetched_command_ids_.end()) {
+                command.command_id()) != fetched_command_ids_.end()) {
     return;
   }
 
-  fetched_command_ids_.push_back(command.unique_id());
+  fetched_command_ids_.push_back(command.command_id());
 
-  scoped_ptr<RemoteCommandJob> job = factory_->BuildJobForType(command.type());
+  std::unique_ptr<RemoteCommandJob> job =
+      factory_->BuildJobForType(command.type());
 
   if (!job || !job->Init(queue_.GetNowTicks(), command)) {
+    SYSLOG(ERROR) << "Initialization of remote command failed.";
     em::RemoteCommandResult ignored_result;
     ignored_result.set_result(
         em::RemoteCommandResult_ResultType_RESULT_IGNORED);
-    ignored_result.set_unique_id(command.unique_id());
+    ignored_result.set_command_id(command.command_id());
     unsent_results_.push_back(ignored_result);
     return;
   }
 
-  queue_.AddJob(job.Pass());
+  queue_.AddJob(std::move(job));
 }
 
 void RemoteCommandsService::OnJobStarted(RemoteCommandJob* command) {
@@ -115,7 +124,7 @@ void RemoteCommandsService::OnJobFinished(RemoteCommandJob* command) {
   // See http://crbug.com/466572.
 
   em::RemoteCommandResult result;
-  result.set_unique_id(command->unique_id());
+  result.set_command_id(command->unique_id());
   result.set_timestamp((command->execution_started_time() -
                         base::TimeTicks::UnixEpoch()).InMilliseconds());
 
@@ -125,7 +134,8 @@ void RemoteCommandsService::OnJobFinished(RemoteCommandJob* command) {
       result.set_result(em::RemoteCommandResult_ResultType_RESULT_SUCCESS);
     else
       result.set_result(em::RemoteCommandResult_ResultType_RESULT_FAILURE);
-    const scoped_ptr<std::string> result_payload = command->GetResultPayload();
+    const std::unique_ptr<std::string> result_payload =
+        command->GetResultPayload();
     if (result_payload)
       result.set_payload(*result_payload);
   } else if (command->status() == RemoteCommandJob::EXPIRED ||
@@ -134,6 +144,9 @@ void RemoteCommandsService::OnJobFinished(RemoteCommandJob* command) {
   } else {
     NOTREACHED();
   }
+
+  SYSLOG(INFO) << "Remote command " << command->unique_id()
+               << " finished with result " << result.result();
 
   unsent_results_.push_back(result);
 
@@ -144,6 +157,8 @@ void RemoteCommandsService::OnRemoteCommandsFetched(
     DeviceManagementStatus status,
     const std::vector<enterprise_management::RemoteCommand>& commands) {
   DCHECK(command_fetch_in_progress_);
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Remote commands fetched.";
   command_fetch_in_progress_ = false;
 
   // TODO(binjin): Add retrying on errors. See http://crbug.com/466572.

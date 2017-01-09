@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/der/parse_values.h"
+
 #include <tuple>
 
 #include "base/logging.h"
-#include "base/numerics/safe_math.h"
-#include "net/der/parse_values.h"
 
 namespace net {
 
@@ -282,6 +282,18 @@ bool operator<(const GeneralizedTime& lhs, const GeneralizedTime& rhs) {
   return std::tie(lhs.year, lhs.month, lhs.day, lhs.hours, lhs.minutes,
                   lhs.seconds) < std::tie(rhs.year, rhs.month, rhs.day,
                                           rhs.hours, rhs.minutes, rhs.seconds);
+}
+
+bool operator>(const GeneralizedTime& lhs, const GeneralizedTime& rhs) {
+  return rhs < lhs;
+}
+
+bool operator<=(const GeneralizedTime& lhs, const GeneralizedTime& rhs) {
+  return !(lhs > rhs);
+}
+
+bool operator>=(const GeneralizedTime& lhs, const GeneralizedTime& rhs) {
+  return !(lhs < rhs);
 }
 
 // A UTC Time in DER encoding should be YYMMDDHHMMSSZ, but some CAs encode

@@ -4,10 +4,17 @@
 
 #include "media/audio/audio_output_resampler.h"
 
+#include <stdint.h>
+
+#include <algorithm>
+#include <string>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/metrics/sparse_histogram.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
@@ -15,6 +22,7 @@
 #include "media/audio/audio_output_proxy.h"
 #include "media/audio/sample_rates.h"
 #include "media/base/audio_converter.h"
+#include "media/base/audio_timestamp_helper.h"
 #include "media/base/limits.h"
 
 namespace media {
@@ -28,7 +36,10 @@ class OnMoreDataConverter
   ~OnMoreDataConverter() override;
 
   // AudioSourceCallback interface.
-  int OnMoreData(AudioBus* dest, uint32 total_bytes_delay) override;
+  int OnMoreData(base::TimeDelta delay,
+                 base::TimeTicks delay_timestamp,
+                 int prior_frames_skipped,
+                 AudioBus* dest) override;
   void OnError(AudioOutputStream* stream) override;
 
   // Sets |source_callback_|.  If this is not a new object, then Stop() must be
@@ -44,8 +55,7 @@ class OnMoreDataConverter
 
  private:
   // AudioConverter::InputCallback implementation.
-  double ProvideInput(AudioBus* audio_bus,
-                      base::TimeDelta buffer_delay) override;
+  double ProvideInput(AudioBus* audio_bus, uint32_t frames_delayed) override;
 
   // Ratio of input bytes to output bytes used to correct playback delay with
   // regard to buffering and resampling.
@@ -54,11 +64,12 @@ class OnMoreDataConverter
   // Source callback.
   AudioOutputStream::AudioSourceCallback* source_callback_;
 
-  // Last |total_bytes_delay| received via OnMoreData(), used to correct
-  // playback delay by ProvideInput() and passed on to |source_callback_|.
-  uint32 current_total_bytes_delay_;
+  // Last |delay| and |delay_timestamp| received via OnMoreData(). Used to
+  // correct playback delay in ProvideInput() before calling |source_callback_|.
+  base::TimeDelta current_delay_;
+  base::TimeTicks current_delay_timestamp_;
 
-  const int input_bytes_per_second_;
+  const int input_samples_per_second_;
 
   // Handles resampling, buffering, and channel mixing between input and output
   // parameters.
@@ -67,6 +78,10 @@ class OnMoreDataConverter
   // True if OnError() was ever called.  Should only be read if the underlying
   // stream has been stopped.
   bool error_occurred_;
+
+  // Information about input and output buffer sizes to be traced.
+  const int input_buffer_size_;
+  const int output_buffer_size_;
 
   DISALLOW_COPY_AND_ASSIGN(OnMoreDataConverter);
 };
@@ -124,6 +139,56 @@ static void RecordFallbackStats(const AudioParameters& output_params) {
     UMA_HISTOGRAM_COUNTS(
         "Media.FallbackHardwareAudioSamplesPerSecondUnexpected",
         output_params.sample_rate());
+  }
+}
+
+// Record UMA statistics for input/output rebuffering.
+static void RecordRebufferingStats(const AudioParameters& input_params,
+                                   const AudioParameters& output_params) {
+  const int input_buffer_size = input_params.frames_per_buffer();
+  const int output_buffer_size = output_params.frames_per_buffer();
+  DCHECK_NE(0, input_buffer_size);
+  DCHECK_NE(0, output_buffer_size);
+
+  // Buffer size mismatch; see Media.Audio.Render.BrowserCallbackRegularity
+  // histogram for explanation.
+  int value = 0;
+  if (input_buffer_size >= output_buffer_size) {
+    // 0 if input size is a multiple of output size; otherwise -1.
+    value = (input_buffer_size % output_buffer_size) ? -1 : 0;
+  } else {
+    value = (output_buffer_size / input_buffer_size - 1) * 2;
+    if (output_buffer_size % input_buffer_size) {
+      // One more callback is issued periodically.
+      value += 1;
+    }
+  }
+
+  const int value_cap = (4096 / 128 - 1) * 2 + 1;
+  if (value > value_cap)
+    value = value_cap;
+
+  switch (input_params.latency_tag()) {
+    case AudioLatency::LATENCY_EXACT_MS:
+      UMA_HISTOGRAM_SPARSE_SLOWLY(
+          "Media.Audio.Render.BrowserCallbackRegularity.LatencyExactMs", value);
+      return;
+    case AudioLatency::LATENCY_INTERACTIVE:
+      UMA_HISTOGRAM_SPARSE_SLOWLY(
+          "Media.Audio.Render.BrowserCallbackRegularity.LatencyInteractive",
+          value);
+      return;
+    case AudioLatency::LATENCY_RTC:
+      UMA_HISTOGRAM_SPARSE_SLOWLY(
+          "Media.Audio.Render.BrowserCallbackRegularity.LatencyRtc", value);
+      return;
+    case AudioLatency::LATENCY_PLAYBACK:
+      UMA_HISTOGRAM_SPARSE_SLOWLY(
+          "Media.Audio.Render.BrowserCallbackRegularity.LatencyPlayback",
+          value);
+      return;
+    default:
+      DVLOG(1) << "Latency tag is not set";
   }
 }
 
@@ -342,9 +407,13 @@ OnMoreDataConverter::OnMoreDataConverter(const AudioParameters& input_params,
     : io_ratio_(static_cast<double>(input_params.GetBytesPerSecond()) /
                 output_params.GetBytesPerSecond()),
       source_callback_(nullptr),
-      input_bytes_per_second_(input_params.GetBytesPerSecond()),
+      input_samples_per_second_(input_params.sample_rate()),
       audio_converter_(input_params, output_params, false),
-      error_occurred_(false) {}
+      error_occurred_(false),
+      input_buffer_size_(input_params.frames_per_buffer()),
+      output_buffer_size_(output_params.frames_per_buffer()) {
+  RecordRebufferingStats(input_params, output_params);
+}
 
 OnMoreDataConverter::~OnMoreDataConverter() {
   // Ensure Stop() has been called so we don't end up with an AudioOutputStream
@@ -369,9 +438,14 @@ void OnMoreDataConverter::Stop() {
   audio_converter_.RemoveInput(this);
 }
 
-int OnMoreDataConverter::OnMoreData(AudioBus* dest,
-                                    uint32 total_bytes_delay) {
-  current_total_bytes_delay_ = total_bytes_delay;
+int OnMoreDataConverter::OnMoreData(base::TimeDelta delay,
+                                    base::TimeTicks delay_timestamp,
+                                    int /* prior_frames_skipped */,
+                                    AudioBus* dest) {
+  TRACE_EVENT2("audio", "OnMoreDataConverter::OnMoreData", "input buffer size",
+               input_buffer_size_, "output buffer size", output_buffer_size_);
+  current_delay_ = delay;
+  current_delay_timestamp_ = delay_timestamp;
   audio_converter_.Convert(dest);
 
   // Always return the full number of frames requested, ProvideInput()
@@ -380,16 +454,13 @@ int OnMoreDataConverter::OnMoreData(AudioBus* dest,
 }
 
 double OnMoreDataConverter::ProvideInput(AudioBus* dest,
-                                         base::TimeDelta buffer_delay) {
-  // Adjust playback delay to include |buffer_delay|.
-  // TODO(dalecurtis): Stop passing bytes around, it doesn't make sense since
-  // AudioBus is just float data.  Use TimeDelta instead.
-  uint32 new_total_bytes_delay = base::saturated_cast<uint32>(
-      io_ratio_ * (current_total_bytes_delay_ +
-                   buffer_delay.InSecondsF() * input_bytes_per_second_));
-
+                                         uint32_t frames_delayed) {
+  base::TimeDelta new_delay =
+      current_delay_ + AudioTimestampHelper::FramesToTime(
+                           frames_delayed, input_samples_per_second_);
   // Retrieve data from the original callback.
-  const int frames = source_callback_->OnMoreData(dest, new_total_bytes_delay);
+  const int frames = source_callback_->OnMoreData(
+      new_delay, current_delay_timestamp_, 0, dest);
 
   // Zero any unfilled frames if anything was filled, otherwise we'll just
   // return a volume of zero and let AudioConverter drop the output.

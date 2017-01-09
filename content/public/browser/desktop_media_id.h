@@ -8,8 +8,8 @@
 #include <string>
 #include <tuple>
 
-#include "base/basictypes.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/web_contents_media_capture_id.h"
 
 #if defined(USE_AURA)
 namespace aura {
@@ -23,11 +23,7 @@ namespace content {
 // stored in MediaStreamRequest::requested_video_device_id.
 struct CONTENT_EXPORT DesktopMediaID {
  public:
-  enum Type {
-    TYPE_NONE,
-    TYPE_SCREEN,
-    TYPE_WINDOW,
-  };
+  enum Type { TYPE_NONE, TYPE_SCREEN, TYPE_WINDOW, TYPE_WEB_CONTENTS };
 
   typedef intptr_t Id;
 
@@ -43,35 +39,23 @@ struct CONTENT_EXPORT DesktopMediaID {
   static aura::Window* GetAuraWindowById(const DesktopMediaID& id);
 #endif  // defined(USE_AURA)
 
-  static DesktopMediaID Parse(const std::string& str);
-
   DesktopMediaID() = default;
 
-  DesktopMediaID(Type type, Id id)
-      : type(type),
-        id(id) {
-  }
+  DesktopMediaID(Type type, Id id) : type(type), id(id) {}
+
+  DesktopMediaID(Type type, Id id, WebContentsMediaCaptureId web_contents_id)
+      : type(type), id(id), web_contents_id(web_contents_id) {}
+
+  DesktopMediaID(Type type, Id id, bool audio_share)
+      : type(type), id(id), audio_share(audio_share) {}
 
   // Operators so that DesktopMediaID can be used with STL containers.
-  bool operator<(const DesktopMediaID& other) const {
-#if defined(USE_AURA)
-    return std::tie(type, id, aura_id) <
-           std::tie(other.type, other.id, other.aura_id);
-#else
-    return std::tie(type, id) < std::tie(other.type, other.id);
-#endif
-  }
-  bool operator==(const DesktopMediaID& other) const {
-#if defined(USE_AURA)
-    return type == other.type && id == other.id && aura_id == other.aura_id;
-#else
-    return type == other.type && id == other.id;
-#endif
-  }
+  bool operator<(const DesktopMediaID& other) const;
+  bool operator==(const DesktopMediaID& other) const;
 
-  bool is_null() { return type == TYPE_NONE; }
-
-  std::string ToString();
+  bool is_null() const { return type == TYPE_NONE; }
+  std::string ToString() const;
+  static DesktopMediaID Parse(const std::string& str);
 
   Type type = TYPE_NONE;
 
@@ -85,6 +69,12 @@ struct CONTENT_EXPORT DesktopMediaID {
   // TODO(miu): Make this an int, after clean-up for http://crbug.com/513490.
   Id aura_id = kNullId;
 #endif
+
+  // This records whether the desktop share has sound or not.
+  bool audio_share = false;
+
+  // This id contains information for WebContents capture.
+  WebContentsMediaCaptureId web_contents_id;
 };
 
 }  // namespace content

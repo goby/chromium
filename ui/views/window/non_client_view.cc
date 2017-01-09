@@ -4,7 +4,7 @@
 
 #include "ui/views/window/non_client_view.h"
 
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/hit_test.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/views/rect_based_targeting_utils.h"
@@ -31,13 +31,22 @@ static const int kClientViewIndex = 1;
 // The overlay view is always on top (index == child_count() - 1).
 
 ////////////////////////////////////////////////////////////////////////////////
+// NonClientFrameView, default implementations:
+
+bool NonClientFrameView::GetClientMask(const gfx::Size& size,
+                                       gfx::Path* mask) const {
+  return false;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // NonClientView, public:
 
 NonClientView::NonClientView()
-    : client_view_(NULL),
-      overlay_view_(NULL) {
+    : client_view_(nullptr),
+      mirror_client_in_rtl_(true),
+      overlay_view_(nullptr) {
   SetEventTargeter(
-      scoped_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
+      std::unique_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
 }
 
 NonClientView::~NonClientView() {
@@ -82,10 +91,6 @@ void NonClientView::UpdateFrame() {
   widget->ThemeChanged();
   Layout();
   SchedulePaint();
-}
-
-void NonClientView::SetInactiveRenderingDisabled(bool disable) {
-  frame_view_->SetInactiveRenderingDisabled(disable);
 }
 
 gfx::Rect NonClientView::GetWindowBoundsForClientBounds(
@@ -161,7 +166,18 @@ void NonClientView::Layout() {
   LayoutFrameView();
 
   // Then layout the ClientView, using those bounds.
-  client_view_->SetBoundsRect(frame_view_->GetBoundsForClientView());
+  gfx::Rect client_bounds = frame_view_->GetBoundsForClientView();
+
+  // RTL code will mirror the ClientView in the frame by default.  If this isn't
+  // desired, do a second mirror here to get the standard LTR position.
+  if (base::i18n::IsRTL() && !mirror_client_in_rtl_)
+    client_bounds.set_x(GetMirroredXForRect(client_bounds));
+
+  client_view_->SetBoundsRect(client_bounds);
+
+  gfx::Path client_clip;
+  if (frame_view_->GetClientMask(client_view_->size(), &client_clip))
+    client_view_->set_clip_path(client_clip);
 
   // We need to manually call Layout on the ClientView as well for the same
   // reason as above.
@@ -184,9 +200,9 @@ void NonClientView::ViewHierarchyChanged(
   }
 }
 
-void NonClientView::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_CLIENT;
-  state->name = accessible_name_;
+void NonClientView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_CLIENT;
+  node_data->SetName(accessible_name_);
 }
 
 const char* NonClientView::GetClassName() const {
@@ -244,20 +260,10 @@ View* NonClientView::TargetForRect(View* root, const gfx::Rect& rect) {
 NonClientFrameView::~NonClientFrameView() {
 }
 
-void NonClientFrameView::SetInactiveRenderingDisabled(bool disable) {
-  if (inactive_rendering_disabled_ == disable)
-    return;
-
-  bool should_paint_as_active_old = ShouldPaintAsActive();
-  inactive_rendering_disabled_ = disable;
-
-  // The widget schedules a paint when the activation changes.
-  if (should_paint_as_active_old != ShouldPaintAsActive())
-    SchedulePaint();
-}
-
 bool NonClientFrameView::ShouldPaintAsActive() const {
-  return inactive_rendering_disabled_ || GetWidget()->IsActive();
+  return  GetWidget()->IsAlwaysRenderAsActive() ||
+         (active_state_override_ ? *active_state_override_
+                                 : GetWidget()->IsActive());
 }
 
 int NonClientFrameView::GetHTComponentForFrame(const gfx::Point& point,
@@ -309,8 +315,11 @@ int NonClientFrameView::GetHTComponentForFrame(const gfx::Point& point,
   return can_resize ? component : HTBORDER;
 }
 
-void NonClientFrameView::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_CLIENT;
+void NonClientFrameView::ActivationChanged(bool active) {
+}
+
+void NonClientFrameView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_CLIENT;
 }
 
 const char* NonClientFrameView::GetClassName() const {
@@ -320,9 +329,10 @@ const char* NonClientFrameView::GetClassName() const {
 ////////////////////////////////////////////////////////////////////////////////
 // NonClientFrameView, protected:
 
-NonClientFrameView::NonClientFrameView() : inactive_rendering_disabled_(false) {
+NonClientFrameView::NonClientFrameView()
+    : active_state_override_(nullptr) {
   SetEventTargeter(
-      scoped_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
+      std::unique_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
 }
 
 // ViewTargeterDelegate:

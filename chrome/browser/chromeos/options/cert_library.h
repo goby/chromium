@@ -7,13 +7,12 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "chromeos/cert_loader.h"
 #include "net/cert/x509_certificate.h"
 
 namespace chromeos {
-
-class CertNameComparator;
 
 // This class is responsible for keeping track of certificates in a UI
 // friendly manner. It observes CertLoader to receive certificate list

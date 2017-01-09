@@ -4,6 +4,9 @@
 
 #include "cc/test/ordered_simple_task_runner.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
 #include <set>
 #include <sstream>
@@ -61,12 +64,12 @@ bool TestOrderablePendingTask::operator<(
   return ShouldRunBefore(other);
 }
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 TestOrderablePendingTask::AsValue() const {
-  scoped_refptr<base::trace_event::TracedValue> state =
-      new base::trace_event::TracedValue();
+  std::unique_ptr<base::trace_event::TracedValue> state(
+      new base::trace_event::TracedValue());
   AsValueInto(state.get());
-  return state;
+  return std::move(state);
 }
 
 void TestOrderablePendingTask::AsValueInto(
@@ -244,9 +247,11 @@ bool OrderedSimpleTaskRunner::RunUntilTime(base::TimeTicks time) {
   // Run tasks
   bool result = RunTasksWhile(NowBefore(time));
 
+  bool has_reached_task_limit = HasPendingTasks() && NextTaskTime() <= time;
+
   // If the next task is after the stopping time and auto-advancing now, then
   // force time to be the stopping time.
-  if (!result && advance_now_ && now_src_->NowTicks() < time) {
+  if (!has_reached_task_limit && advance_now_ && now_src_->NowTicks() < time) {
     now_src_->Advance(time - now_src_->NowTicks());
   }
 
@@ -258,12 +263,12 @@ bool OrderedSimpleTaskRunner::RunForPeriod(base::TimeDelta period) {
 }
 
 // base::trace_event tracing functionality
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 OrderedSimpleTaskRunner::AsValue() const {
-  scoped_refptr<base::trace_event::TracedValue> state =
-      new base::trace_event::TracedValue();
+  std::unique_ptr<base::trace_event::TracedValue> state(
+      new base::trace_event::TracedValue());
   AsValueInto(state.get());
-  return state;
+  return std::move(state);
 }
 
 void OrderedSimpleTaskRunner::AsValueInto(

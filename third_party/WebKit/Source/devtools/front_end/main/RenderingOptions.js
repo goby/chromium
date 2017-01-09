@@ -27,134 +27,130 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 /**
- * @constructor
- * @extends {WebInspector.VBox}
- * @implements {WebInspector.TargetManager.Observer}
+ * @implements {SDK.TargetManager.Observer}
+ * @unrestricted
  */
-WebInspector.RenderingOptionsView = function()
-{
-    WebInspector.VBox.call(this, true);
-    this.registerRequiredCSS("main/renderingOptions.css");
+Main.RenderingOptionsView = class extends UI.VBox {
+  constructor() {
+    super(true);
+    this.registerRequiredCSS('main/renderingOptions.css');
 
     /** @type {!Map.<string, !Element>} */
     this._settings = new Map();
 
-    this._appendCheckbox(WebInspector.UIString("Enable paint flashing"), "setShowPaintRects");
-    this._appendCheckbox(WebInspector.UIString("Show layer borders"), "setShowDebugBorders");
-    this._appendCheckbox(WebInspector.UIString("Show FPS meter"), "setShowFPSCounter");
-    var scrollingTitle = WebInspector.UIString("Shows areas of the page that slow down scrolling:\nTouch and mousewheel event listeners can delay scrolling.\nSome areas need to repaint their content when scrolled.");
-    this._appendCheckbox(WebInspector.UIString("Show scrolling perf issues"), "setShowScrollBottleneckRects", scrollingTitle);
+    var options = [
+      {
+        label: Common.UIString('Paint Flashing'),
+        subtitle: Common.UIString('Highlights areas of the page that need to be repainted'),
+        setterName: 'setShowPaintRects'
+      },
+      {
+        label: Common.UIString('Layer Borders'),
+        subtitle: Common.UIString('Shows layer borders (orange/olive) and tiles (cyan)'),
+        setterName: 'setShowDebugBorders'
+      },
+      {
+        label: Common.UIString('FPS Meter'),
+        subtitle: Common.UIString('Plots frames per second, frame rate distribution, and GPU memory'),
+        setterName: 'setShowFPSCounter'
+      },
+      {
+        label: Common.UIString('Scrolling Performance Issues'),
+        subtitle: Common.UIString('Shows areas of the page that slow down scrolling'),
+        setterName: 'setShowScrollBottleneckRects',
+        tooltip:
+            'Touch and mousewheel event listeners can delay scrolling.\nSome areas need to repaint their content when scrolled.'
+      }
+    ];
+    for (var i = 0; i < options.length; i++)
+      this._appendCheckbox(options[i].label, options[i].setterName, options[i].subtitle, options[i].tooltip);
 
-    // Print media.
-    var checkboxLabel = createCheckboxLabel(WebInspector.UIString("Emulate print media"), false);
-    this._printCheckbox = checkboxLabel.checkboxElement;
-    this._printCheckbox.addEventListener("click", this._printToggled.bind(this));
+    this.contentElement.createChild('div').classList.add('panel-section-separator');
+
+    var cssMediaSubtitle = Common.UIString('Forces media type for testing print and screen styles');
+    var checkboxLabel = createCheckboxLabel(Common.UIString('Emulate CSS Media'), false, cssMediaSubtitle);
+    this._mediaCheckbox = checkboxLabel.checkboxElement;
+    this._mediaCheckbox.addEventListener('click', this._mediaToggled.bind(this), false);
     this.contentElement.appendChild(checkboxLabel);
 
-    WebInspector.targetManager.observeTargets(this, WebInspector.Target.Type.Page);
-}
+    var mediaRow = this.contentElement.createChild('div', 'media-row');
+    this._mediaSelect = mediaRow.createChild('select', 'chrome-select');
+    this._mediaSelect.appendChild(new Option(Common.UIString('print'), 'print'));
+    this._mediaSelect.appendChild(new Option(Common.UIString('screen'), 'screen'));
+    this._mediaSelect.addEventListener('change', this._mediaToggled.bind(this), false);
+    this._mediaSelect.disabled = true;
 
-WebInspector.RenderingOptionsView.prototype = {
-    /**
-     * @param {string} label
-     * @param {string} setterName
-     * @param {string=} title
-     */
-    _appendCheckbox: function(label, setterName, title)
-    {
-        var checkboxLabel = createCheckboxLabel(label, false);
-        this._settings.set(setterName, checkboxLabel.checkboxElement);
-        checkboxLabel.checkboxElement.addEventListener("click", this._settingToggled.bind(this, setterName));
-        if (title)
-            checkboxLabel.title = title;
-        this.contentElement.appendChild(checkboxLabel);
-    },
+    SDK.targetManager.observeTargets(this, SDK.Target.Capability.Browser);
+  }
 
-    /**
-     * @param {string} setterName
-     */
-    _settingToggled: function(setterName)
-    {
-        var enabled = this._settings.get(setterName).checked;
-        var targets = WebInspector.targetManager.targets(WebInspector.Target.Type.Page);
-        for (var i = 0; i < targets.length; ++i)
-            targets[i].renderingAgent()[setterName](enabled);
-    },
+  /**
+   * @return {!Main.RenderingOptionsView}
+   */
+  static instance() {
+    if (!Main.RenderingOptionsView._instanceObject)
+      Main.RenderingOptionsView._instanceObject = new Main.RenderingOptionsView();
+    return Main.RenderingOptionsView._instanceObject;
+  }
 
-    /**
-     * @override
-     * @param {!WebInspector.Target} target
-     */
-    targetAdded: function(target)
-    {
-        for (var setterName of this._settings.keysArray()) {
-            if (this._settings.get(setterName).checked)
-                target.renderingAgent()[setterName](true);
-        }
-        if (this._printCheckbox.checked)
-            this._applyPrintMediaOverride(target);
-    },
+  /**
+   * @param {string} label
+   * @param {string} setterName
+   * @param {string=} subtitle
+   * @param {string=} tooltip
+   */
+  _appendCheckbox(label, setterName, subtitle, tooltip) {
+    var checkboxLabel = createCheckboxLabel(label, false, subtitle);
+    this._settings.set(setterName, checkboxLabel.checkboxElement);
+    checkboxLabel.checkboxElement.addEventListener('click', this._settingToggled.bind(this, setterName));
+    if (tooltip)
+      checkboxLabel.title = tooltip;
+    this.contentElement.appendChild(checkboxLabel);
+  }
 
-    _printToggled: function()
-    {
-        var targets = WebInspector.targetManager.targets(WebInspector.Target.Type.Page);
-        for (var target of targets)
-            this._applyPrintMediaOverride(target);
-    },
+  /**
+   * @param {string} setterName
+   */
+  _settingToggled(setterName) {
+    var enabled = this._settings.get(setterName).checked;
+    for (var target of SDK.targetManager.targets(SDK.Target.Capability.Browser))
+      target.renderingAgent()[setterName](enabled);
+  }
 
-    /**
-     * @param {!WebInspector.Target} target
-     */
-    _applyPrintMediaOverride: function(target)
-    {
-        var enabled = this._printCheckbox.checked;
-        target.emulationAgent().setEmulatedMedia(enabled ? "print" : "");
-        var cssModel = WebInspector.CSSStyleModel.fromTarget(target);
-        if (cssModel)
-            cssModel.mediaQueryResultChanged();
-    },
-
-    /**
-     * @override
-     * @param {!WebInspector.Target} target
-     */
-    targetRemoved: function(target)
-    {
-    },
-
-    __proto__: WebInspector.VBox.prototype
-}
-
-/**
- * @return {!WebInspector.RenderingOptionsView}
- */
-WebInspector.RenderingOptionsView.instance = function()
-{
-    if (!WebInspector.RenderingOptionsView._instanceObject)
-        WebInspector.RenderingOptionsView._instanceObject = new WebInspector.RenderingOptionsView();
-    return WebInspector.RenderingOptionsView._instanceObject;
-}
-
-/**
- * @constructor
- * @implements {WebInspector.ActionDelegate}
- */
-WebInspector.RenderingOptionsView.ShowActionDelegate = function()
-{
-}
-
-WebInspector.RenderingOptionsView.ShowActionDelegate.prototype = {
-    /**
-     * @override
-     * @param {!WebInspector.Context} context
-     * @param {string} actionId
-     * @return {boolean}
-     */
-    handleAction: function(context, actionId)
-    {
-        WebInspector.inspectorView.showViewInDrawer("rendering");
-        return true;
+  /**
+   * @override
+   * @param {!SDK.Target} target
+   */
+  targetAdded(target) {
+    for (var setterName of this._settings.keysArray()) {
+      if (this._settings.get(setterName).checked)
+        target.renderingAgent()[setterName](true);
     }
-}
+    if (this._mediaCheckbox.checked)
+      this._applyPrintMediaOverride(target);
+  }
+
+  _mediaToggled() {
+    this._mediaSelect.disabled = !this._mediaCheckbox.checked;
+    var targets = SDK.targetManager.targets(SDK.Target.Capability.Browser);
+    for (var target of targets)
+      this._applyPrintMediaOverride(target);
+  }
+
+  /**
+   * @param {!SDK.Target} target
+   */
+  _applyPrintMediaOverride(target) {
+    target.emulationAgent().setEmulatedMedia(this._mediaCheckbox.checked ? this._mediaSelect.value : '');
+    var cssModel = SDK.CSSModel.fromTarget(target);
+    if (cssModel)
+      cssModel.mediaQueryResultChanged();
+  }
+
+  /**
+   * @override
+   * @param {!SDK.Target} target
+   */
+  targetRemoved(target) {
+  }
+};

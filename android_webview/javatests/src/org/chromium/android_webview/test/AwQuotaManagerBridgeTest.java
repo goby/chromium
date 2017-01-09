@@ -4,7 +4,6 @@
 
 package org.chromium.android_webview.test;
 
-import android.test.suitebuilder.annotation.LargeTest;
 import android.util.Pair;
 import android.webkit.ValueCallback;
 
@@ -12,8 +11,8 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwQuotaManagerBridge;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.util.AwQuotaManagerBridgeTestUtil;
-import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.test.util.CallbackHelper;
+import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.util.ArrayList;
@@ -158,13 +157,16 @@ public class AwQuotaManagerBridgeTest extends AwTestBase {
                 "window.applicationCache.update();");
     }
 
+    /*
     @LargeTest
     @Feature({"AndroidWebView", "WebStore"})
+    */
+    @DisabledTest(message = "crbug.com/609977")
     public void testDeleteAllWithAppCache() throws Exception {
         final long initialUsage = getUsageForOrigin(mOrigin);
 
         useAppCache();
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return getUsageForOrigin(mOrigin) > initialUsage;
@@ -172,7 +174,7 @@ public class AwQuotaManagerBridgeTest extends AwTestBase {
         });
 
         deleteAllData();
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return getUsageForOrigin(mOrigin) == 0;
@@ -180,13 +182,16 @@ public class AwQuotaManagerBridgeTest extends AwTestBase {
         });
     }
 
+    /*
     @LargeTest
     @Feature({"AndroidWebView", "WebStore"})
+    */
+    @DisabledTest(message = "crbug.com/609977")
     public void testDeleteOriginWithAppCache() throws Exception {
         final long initialUsage = getUsageForOrigin(mOrigin);
 
         useAppCache();
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return getUsageForOrigin(mOrigin) > initialUsage;
@@ -194,7 +199,7 @@ public class AwQuotaManagerBridgeTest extends AwTestBase {
         });
 
         deleteOrigin(mOrigin);
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return getUsageForOrigin(mOrigin) == 0;
@@ -202,12 +207,15 @@ public class AwQuotaManagerBridgeTest extends AwTestBase {
         });
     }
 
+    /*
     @LargeTest
     @Feature({"AndroidWebView", "WebStore"})
+    */
+    @DisabledTest(message = "crbug.com/609977")
     public void testGetResultsMatch() throws Exception {
         useAppCache();
 
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return AwQuotaManagerBridgeTestUtil.getOrigins(

@@ -4,17 +4,23 @@
 
 #include "chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h"
 
+#include <stddef.h>
+
 #include <utility>
 
 #include "base/files/file_util.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
-#include "chrome/browser/spellchecker/spellcheck_platform.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/spellcheck_common.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/spellcheck/browser/spellcheck_platform.h"
+#include "components/spellcheck/common/spellcheck_common.h"
+#include "components/spellcheck/spellcheck_build_features.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "net/base/load_flags.h"
@@ -39,7 +45,7 @@ void CloseDictionary(base::File file) {
 
 // Saves |data| to file at |path|. Returns true on successful save, otherwise
 // returns false.
-bool SaveDictionaryData(scoped_ptr<std::string> data,
+bool SaveDictionaryData(std::unique_ptr<std::string> data,
                         const base::FilePath& path) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
@@ -111,12 +117,13 @@ SpellcheckHunspellDictionary::~SpellcheckHunspellDictionary() {
 void SpellcheckHunspellDictionary::Load() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-#if defined(USE_BROWSER_SPELLCHECKER)
+#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
   if (spellcheck_platform::SpellCheckerAvailable() &&
       spellcheck_platform::PlatformSupportsLanguage(language_)) {
     use_browser_spellchecker_ = true;
     spellcheck_platform::SetLanguage(language_);
-    base::MessageLoop::current()->PostTask(FROM_HERE,
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
         base::Bind(
             &SpellcheckHunspellDictionary::InformListenersOfInitialization,
             weak_ptr_factory_.GetWeakPtr()));
@@ -186,7 +193,7 @@ void SpellcheckHunspellDictionary::OnURLFetchComplete(
     const net::URLFetcher* source) {
   DCHECK(source);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  scoped_ptr<net::URLFetcher> fetcher_destructor(fetcher_.release());
+  std::unique_ptr<net::URLFetcher> fetcher_destructor(fetcher_.release());
 
   if ((source->GetResponseCode() / 100) != 2) {
     // Initialize will not try to download the file a second time.
@@ -196,7 +203,7 @@ void SpellcheckHunspellDictionary::OnURLFetchComplete(
 
   // Basic sanity check on the dictionary. There's a small chance of 200 status
   // code for a body that represents some form of failure.
-  scoped_ptr<std::string> data(new std::string);
+  std::unique_ptr<std::string> data(new std::string);
   source->GetResponseAsString(data.get());
   if (data->size() < 4 || data->compare(0, 4, "BDic") != 0) {
     InformListenersOfDownloadFailure();
@@ -241,8 +248,8 @@ void SpellcheckHunspellDictionary::DownloadDictionary(GURL url) {
   DCHECK(request_context_getter_);
 
   download_status_ = DOWNLOAD_IN_PROGRESS;
-  FOR_EACH_OBSERVER(Observer, observers_,
-                    OnHunspellDictionaryDownloadBegin(language_));
+  for (Observer& observer : observers_)
+    observer.OnHunspellDictionaryDownloadBegin(language_);
 
   fetcher_ = net::URLFetcher::Create(url, net::URLFetcher::GET, this);
   data_use_measurement::DataUseUserData::AttachToFetcher(
@@ -303,7 +310,7 @@ SpellcheckHunspellDictionary::OpenDictionaryFile(const base::FilePath& path) {
     base::DeleteFile(dictionary.path, false);
   }
 
-  return dictionary.Pass();
+  return dictionary;
 }
 
 // The default place where the spellcheck dictionary resides is
@@ -318,7 +325,7 @@ SpellcheckHunspellDictionary::InitializeDictionaryLocation(
   base::FilePath dict_dir;
   PathService::Get(chrome::DIR_APP_DICTIONARIES, &dict_dir);
   base::FilePath dict_path =
-      chrome::spellcheck_common::GetVersionedFileName(language, dict_dir);
+      spellcheck::GetVersionedFileName(language, dict_dir);
 
   return OpenDictionaryFile(dict_path);
 }
@@ -326,7 +333,7 @@ SpellcheckHunspellDictionary::InitializeDictionaryLocation(
 void SpellcheckHunspellDictionary::InitializeDictionaryLocationComplete(
     DictionaryFile file) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  dictionary_file_ = file.Pass();
+  dictionary_file_ = std::move(file);
 
   if (!dictionary_file_.file.IsValid()) {
     // Notify browser tests that this dictionary is corrupted. Skip downloading
@@ -354,9 +361,8 @@ void SpellcheckHunspellDictionary::SaveDictionaryDataComplete(
 
   if (dictionary_saved) {
     download_status_ = DOWNLOAD_NONE;
-    FOR_EACH_OBSERVER(Observer,
-                      observers_,
-                      OnHunspellDictionaryDownloadSuccess(language_));
+    for (Observer& observer : observers_)
+      observer.OnHunspellDictionaryDownloadSuccess(language_);
     Load();
   } else {
     InformListenersOfDownloadFailure();
@@ -365,13 +371,12 @@ void SpellcheckHunspellDictionary::SaveDictionaryDataComplete(
 }
 
 void SpellcheckHunspellDictionary::InformListenersOfInitialization() {
-  FOR_EACH_OBSERVER(Observer, observers_,
-                    OnHunspellDictionaryInitialized(language_));
+  for (Observer& observer : observers_)
+    observer.OnHunspellDictionaryInitialized(language_);
 }
 
 void SpellcheckHunspellDictionary::InformListenersOfDownloadFailure() {
   download_status_ = DOWNLOAD_FAILED;
-  FOR_EACH_OBSERVER(Observer,
-                    observers_,
-                    OnHunspellDictionaryDownloadFailure(language_));
+  for (Observer& observer : observers_)
+    observer.OnHunspellDictionaryDownloadFailure(language_);
 }

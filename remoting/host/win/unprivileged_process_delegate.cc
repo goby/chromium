@@ -10,6 +10,8 @@
 
 #include <sddl.h>
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/logging.h"
@@ -20,12 +22,12 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/win/scoped_handle.h"
-#include "base/win/windows_version.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_message.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/platform_channel_pair.h"
 #include "remoting/base/typed_buffer.h"
-#include "remoting/host/ipc_util.h"
 #include "remoting/host/switches.h"
 #include "remoting/host/win/launch_process_with_token.h"
 #include "remoting/host/win/security_descriptor.h"
@@ -62,8 +64,10 @@ const char kWindowStationSdFormat[] = "O:SYG:SYD:(A;CIOIIO;GA;;;SY)"
 
 // Security descriptor of the worker process. It gives access SYSTEM full access
 // to the process. It gives READ_CONTROL, SYNCHRONIZE, PROCESS_QUERY_INFORMATION
-// and PROCESS_TERMINATE rights to the built-in administrators group.
-const char kWorkerProcessSd[] = "O:SYG:SYD:(A;;GA;;;SY)(A;;0x120401;;;BA)";
+// and PROCESS_TERMINATE rights to the built-in administrators group.  It also
+// gives PROCESS_QUERY_LIMITED_INFORMATION to the authenticated users group.
+const char kWorkerProcessSd[] =
+    "O:SYG:SYD:(A;;GA;;;SY)(A;;0x120401;;;BA)(A;;0x1000;;;AU)";
 
 // Security descriptor of the worker process threads. It gives access SYSTEM
 // full access to the threads. It gives READ_CONTROL, SYNCHRONIZE,
@@ -87,34 +91,23 @@ bool CreateRestrictedToken(ScopedHandle* token_out) {
   if (restricted_token.Init(token.Get()) != ERROR_SUCCESS)
     return false;
 
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-    // "SeChangeNotifyPrivilege" is needed to access the machine certificate
-    // (including its private key) in the "Local Machine" cert store. This is
-    // needed for HTTPS client third-party authentication . But the presence of
-    // "SeChangeNotifyPrivilege" also allows it to open and manipulate objects
-    // owned by the same user. This risk is only mitigated by setting the
-    // process integrity level to Low, which is why it is unsafe to enable
-    // "SeChangeNotifyPrivilege" on Windows XP where we don't have process
-    // integrity to protect us.
-    std::vector<base::string16> exceptions;
-    exceptions.push_back(base::string16(L"SeChangeNotifyPrivilege"));
+  // "SeChangeNotifyPrivilege" is needed to access the machine certificate
+  // (including its private key) in the "Local Machine" cert store. This is
+  // needed for HTTPS client third-party authentication . But the presence of
+  // "SeChangeNotifyPrivilege" also allows it to open and manipulate objects
+  // owned by the same user. This risk is only mitigated by setting the
+  // process integrity level to Low.
+  std::vector<base::string16> exceptions;
+  exceptions.push_back(base::string16(L"SeChangeNotifyPrivilege"));
 
-    // Remove privileges in the token.
-    if (restricted_token.DeleteAllPrivileges(&exceptions) != ERROR_SUCCESS)
-      return false;
+  // Remove privileges in the token.
+  if (restricted_token.DeleteAllPrivileges(&exceptions) != ERROR_SUCCESS)
+    return false;
 
-    // Set low integrity level if supported by the OS.
-    if (restricted_token.SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW)
-        != ERROR_SUCCESS) {
-      return false;
-    }
-  } else {
-    // Remove all privileges in the token.
-    // Since "SeChangeNotifyPrivilege" is among the privileges being removed,
-    // the network process won't be able to acquire certificates from the local
-    // machine store. This means third-party authentication won't work.
-    if (restricted_token.DeleteAllPrivileges(nullptr) != ERROR_SUCCESS)
-      return false;
+  // Set low integrity level.
+  if (restricted_token.SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW) !=
+      ERROR_SUCCESS) {
+    return false;
   }
 
   // Return the resulting token.
@@ -140,17 +133,12 @@ bool CreateWindowStationAndDesktop(ScopedSid logon_sid,
 
   // Format the security descriptors in SDDL form.
   std::string desktop_sddl =
-      base::StringPrintf(kDesktopSdFormat, logon_sid_string.c_str());
+      base::StringPrintf(kDesktopSdFormat, logon_sid_string.c_str()) +
+      kLowIntegrityMandatoryLabel;
   std::string window_station_sddl =
       base::StringPrintf(kWindowStationSdFormat, logon_sid_string.c_str(),
-                         logon_sid_string.c_str());
-
-  // The worker runs at low integrity level. Make sure it will be able to attach
-  // to the window station and desktop.
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-    desktop_sddl += kLowIntegrityMandatoryLabel;
-    window_station_sddl += kLowIntegrityMandatoryLabel;
-  }
+                         logon_sid_string.c_str()) +
+      kLowIntegrityMandatoryLabel;
 
   // Create the desktop and window station security descriptors.
   ScopedSd desktop_sd = ConvertSddlToSd(desktop_sddl);
@@ -172,9 +160,7 @@ bool CreateWindowStationAndDesktop(ScopedSid logon_sid,
 
   // Make sure that a new window station will be created instead of opening
   // an existing one.
-  DWORD window_station_flags = 0;
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA)
-    window_station_flags = CWF_CREATE_ONLY;
+  DWORD window_station_flags = CWF_CREATE_ONLY;
 
   // Request full access because this handle will be inherited by the worker
   // process which needs full access in order to attach to the window station.
@@ -235,11 +221,10 @@ bool CreateWindowStationAndDesktop(ScopedSid logon_sid,
 
 UnprivilegedProcessDelegate::UnprivilegedProcessDelegate(
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-    scoped_ptr<base::CommandLine> target_command)
+    std::unique_ptr<base::CommandLine> target_command)
     : io_task_runner_(io_task_runner),
-      target_command_(target_command.Pass()),
-      event_handler_(nullptr) {
-}
+      target_command_(std::move(target_command)),
+      event_handler_(nullptr) {}
 
 UnprivilegedProcessDelegate::~UnprivilegedProcessDelegate() {
   DCHECK(CalledOnValidThread());
@@ -253,8 +238,6 @@ void UnprivilegedProcessDelegate::LaunchProcess(
   DCHECK(!event_handler_);
 
   event_handler_ = event_handler;
-
-  scoped_ptr<IPC::ChannelProxy> server;
 
   // Create a restricted token that will be used to run the worker process.
   ScopedHandle token;
@@ -292,56 +275,51 @@ void UnprivilegedProcessDelegate::LaunchProcess(
   thread_attributes.lpSecurityDescriptor = thread_sd.get();
   thread_attributes.bInheritHandle = FALSE;
 
-  ScopedHandle worker_process;
-  {
-    // Take a lock why any inheritable handles are open to make sure that only
-    // one process inherits them.
-    base::AutoLock lock(g_inherit_handles_lock.Get());
-
-    // Create a connected IPC channel.
-    base::File client;
-    if (!CreateConnectedIpcChannel(io_task_runner_, this, &client, &server)) {
-      ReportFatalError();
-      return;
-    }
-
-    // Convert the handle value into a decimal integer. Handle values are 32bit
-    // even on 64bit platforms.
-    std::string pipe_handle = base::StringPrintf(
-        "%d", reinterpret_cast<ULONG_PTR>(client.GetPlatformFile()));
-
-    // Pass the IPC channel via the command line.
-    base::CommandLine command_line(target_command_->argv());
-    command_line.AppendSwitchASCII(kDaemonPipeSwitchName, pipe_handle);
-
-    // Create our own window station and desktop accessible by |logon_sid|.
-    WindowStationAndDesktop handles;
-    if (!CreateWindowStationAndDesktop(logon_sid.Pass(), &handles)) {
-      PLOG(ERROR) << "Failed to create a window station and desktop";
-      ReportFatalError();
-      return;
-    }
-
-    // Try to launch the worker process. The launched process inherits
-    // the window station, desktop and pipe handles, created above.
-    ScopedHandle worker_thread;
-    if (!LaunchProcessWithToken(command_line.GetProgram(),
-                                command_line.GetCommandLineString(),
-                                token.Get(),
-                                &process_attributes,
-                                &thread_attributes,
-                                true,
-                                0,
-                                nullptr,
-                                &worker_process,
-                                &worker_thread)) {
-      ReportFatalError();
-      return;
-    }
+  // Create our own window station and desktop accessible by |logon_sid|.
+  WindowStationAndDesktop handles;
+  if (!CreateWindowStationAndDesktop(std::move(logon_sid), &handles)) {
+    PLOG(ERROR) << "Failed to create a window station and desktop";
+    ReportFatalError();
+    return;
   }
 
-  channel_ = server.Pass();
-  ReportProcessLaunched(worker_process.Pass());
+  const std::string mojo_child_token = mojo::edk::GenerateRandomToken();
+  const std::string mojo_message_pipe_token = mojo::edk::GenerateRandomToken();
+
+  std::unique_ptr<IPC::ChannelProxy> server = IPC::ChannelProxy::Create(
+      mojo::edk::CreateParentMessagePipe(mojo_message_pipe_token,
+                                         mojo_child_token)
+          .release(),
+      IPC::Channel::MODE_SERVER, this, io_task_runner_);
+  base::CommandLine command_line(target_command_->argv());
+  command_line.AppendSwitchASCII(kMojoPipeToken, mojo_message_pipe_token);
+
+  base::HandlesToInheritVector handles_to_inherit = {
+      handles.desktop(), handles.window_station(),
+  };
+  mojo::edk::PlatformChannelPair mojo_channel;
+  mojo_channel.PrepareToPassClientHandleToChildProcess(&command_line,
+                                                       &handles_to_inherit);
+
+  // Try to launch the worker process. The launched process inherits
+  // the window station, desktop and pipe handles, created above.
+  ScopedHandle worker_process;
+  ScopedHandle worker_thread;
+  if (!LaunchProcessWithToken(
+          command_line.GetProgram(), command_line.GetCommandLineString(),
+          token.Get(), &process_attributes, &thread_attributes,
+          handles_to_inherit, /* creation_flags= */ 0,
+          /* thread_attributes= */ nullptr, &worker_process, &worker_thread)) {
+    mojo::edk::ChildProcessLaunchFailed(mojo_child_token);
+    ReportFatalError();
+    return;
+  }
+  mojo::edk::ChildProcessLaunched(
+      worker_process.Get(), mojo_channel.PassServerHandle(), mojo_child_token);
+
+  channel_ = std::move(server);
+
+  ReportProcessLaunched(std::move(worker_process));
 }
 
 void UnprivilegedProcessDelegate::Send(IPC::Message* message) {
@@ -356,14 +334,13 @@ void UnprivilegedProcessDelegate::Send(IPC::Message* message) {
 
 void UnprivilegedProcessDelegate::CloseChannel() {
   DCHECK(CalledOnValidThread());
-
   channel_.reset();
 }
 
 void UnprivilegedProcessDelegate::KillProcess() {
   DCHECK(CalledOnValidThread());
 
-  channel_.reset();
+  CloseChannel();
   event_handler_ = nullptr;
 
   if (worker_process_.IsValid()) {
@@ -379,7 +356,7 @@ bool UnprivilegedProcessDelegate::OnMessageReceived(
   return event_handler_->OnMessageReceived(message);
 }
 
-void UnprivilegedProcessDelegate::OnChannelConnected(int32 peer_pid) {
+void UnprivilegedProcessDelegate::OnChannelConnected(int32_t peer_pid) {
   DCHECK(CalledOnValidThread());
 
   DWORD pid = GetProcessId(worker_process_.Get());
@@ -403,7 +380,7 @@ void UnprivilegedProcessDelegate::OnChannelError() {
 void UnprivilegedProcessDelegate::ReportFatalError() {
   DCHECK(CalledOnValidThread());
 
-  channel_.reset();
+  CloseChannel();
 
   WorkerProcessLauncher* event_handler = event_handler_;
   event_handler_ = nullptr;
@@ -415,19 +392,15 @@ void UnprivilegedProcessDelegate::ReportProcessLaunched(
   DCHECK(CalledOnValidThread());
   DCHECK(!worker_process_.IsValid());
 
-  worker_process_ = worker_process.Pass();
+  worker_process_ = std::move(worker_process);
 
   // Report a handle that can be used to wait for the worker process completion,
   // query information about the process and duplicate handles.
   DWORD desired_access =
       SYNCHRONIZE | PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION;
   HANDLE temp_handle;
-  if (!DuplicateHandle(GetCurrentProcess(),
-                       worker_process_.Get(),
-                       GetCurrentProcess(),
-                       &temp_handle,
-                       desired_access,
-                       FALSE,
+  if (!DuplicateHandle(GetCurrentProcess(), worker_process_.Get(),
+                       GetCurrentProcess(), &temp_handle, desired_access, FALSE,
                        0)) {
     PLOG(ERROR) << "Failed to duplicate a handle";
     ReportFatalError();
@@ -435,7 +408,7 @@ void UnprivilegedProcessDelegate::ReportProcessLaunched(
   }
   ScopedHandle limited_handle(temp_handle);
 
-  event_handler_->OnProcessLaunched(limited_handle.Pass());
+  event_handler_->OnProcessLaunched(std::move(limited_handle));
 }
 
 }  // namespace remoting

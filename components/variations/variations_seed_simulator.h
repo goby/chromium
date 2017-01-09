@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/version.h"
 #include "components/variations/proto/study.pb.h"
@@ -43,9 +44,14 @@ class VariationsSeedSimulator {
     ~Result();
   };
 
-  // Creates the simulator with the given entropy |provider|.
-  explicit VariationsSeedSimulator(
-      const base::FieldTrial::EntropyProvider& provider);
+  // Creates the simulator with the given default and low entropy providers. The
+  // |low_entropy_provider| will be used for studies that should only use a low
+  // entropy source. This is defined by
+  // VariationsSeedProcessor::ShouldStudyUseLowEntropy, in
+  // variations_seed_processor.h.
+  VariationsSeedSimulator(
+      const base::FieldTrial::EntropyProvider& default_entropy_provider,
+      const base::FieldTrial::EntropyProvider& low_entropy_provider);
   virtual ~VariationsSeedSimulator();
 
   // Computes differences between the current process' field trial state and
@@ -96,7 +102,8 @@ class VariationsSeedSimulator {
   ChangeType SessionStudyGroupChanged(const ProcessedStudy& filtered_study,
                                       const std::string& selected_group);
 
-  const base::FieldTrial::EntropyProvider& entropy_provider_;
+  const base::FieldTrial::EntropyProvider& default_entropy_provider_;
+  const base::FieldTrial::EntropyProvider& low_entropy_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(VariationsSeedSimulator);
 };

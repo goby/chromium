@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "ui/base/ime/dummy_input_method.h"
+#include "ui/events/event.h"
 
 namespace ui {
 
@@ -51,8 +52,8 @@ void DummyInputMethod::CancelComposition(const TextInputClient* client) {
 void DummyInputMethod::OnInputLocaleChanged() {
 }
 
-std::string DummyInputMethod::GetInputLocale() {
-  return std::string();
+bool DummyInputMethod::IsInputLocaleCJK() const {
+  return false;
 }
 
 TextInputType DummyInputMethod::GetTextInputType() const {
@@ -82,6 +83,11 @@ void DummyInputMethod::AddObserver(InputMethodObserver* observer) {
 }
 
 void DummyInputMethod::RemoveObserver(InputMethodObserver* observer) {
+}
+
+const std::vector<std::unique_ptr<KeyEvent>>&
+DummyInputMethod::GetKeyEventsForTesting() {
+  return key_events_for_testing_;
 }
 
 }  // namespace ui

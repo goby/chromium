@@ -5,17 +5,21 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_EASY_UNLOCK_EASY_UNLOCK_KEY_MANAGER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_EASY_UNLOCK_EASY_UNLOCK_KEY_MANAGER_H_
 
+#include <stddef.h>
+
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/stl_util.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_get_keys_operation.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_refresh_keys_operation.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_types.h"
+
+class AccountId;
 
 namespace base {
 class DictionaryValue;
@@ -54,7 +58,7 @@ class EasyUnlockKeyManager {
   // conversion fails (missing required propery). Note that
   // EasyUnlockDeviceKeyData contains a sub set of the remote device dictionary.
   static void DeviceDataToRemoteDeviceDictionary(
-      const std::string& user_id,
+      const AccountId& account_id,
       const EasyUnlockDeviceKeyData& data,
       base::DictionaryValue* dict);
   static bool RemoteDeviceDictionaryToDeviceData(
@@ -64,7 +68,7 @@ class EasyUnlockKeyManager {
   // Helpers to convert between EasyUnlockDeviceKeyDataList and remote devices
   // ListValue.
   static void DeviceDataListToRemoteDeviceList(
-      const std::string& user_id,
+      const AccountId& account_id,
       const EasyUnlockDeviceKeyDataList& data_list,
       base::ListValue* device_list);
   static bool RemoteDeviceListToDeviceDataList(
@@ -98,21 +102,14 @@ class EasyUnlockKeyManager {
                      bool fetch_success,
                      const EasyUnlockDeviceKeyDataList& fetched_data);
 
-  // Queued operations are stored as raw pointers, as scoped_ptrs may not behave
-  // nicely with std::deque.
-  using WriteOperationQueue = std::deque<EasyUnlockRefreshKeysOperation*>;
-  using ReadOperationQueue = std::deque<EasyUnlockGetKeysOperation*>;
-  WriteOperationQueue write_operation_queue_;
-  ReadOperationQueue read_operation_queue_;
-
-  // Scopes the raw operation pointers to the lifetime of this object.
-  STLElementDeleter<WriteOperationQueue> write_queue_deleter_;
-  STLElementDeleter<ReadOperationQueue> read_queue_deleter_;
+  std::deque<std::unique_ptr<EasyUnlockRefreshKeysOperation>>
+      write_operation_queue_;
+  std::deque<std::unique_ptr<EasyUnlockGetKeysOperation>> read_operation_queue_;
 
   // Stores the current operation in progress. At most one of these variables
   // can be non-null at any time.
-  scoped_ptr<EasyUnlockRefreshKeysOperation> pending_write_operation_;
-  scoped_ptr<EasyUnlockGetKeysOperation> pending_read_operation_;
+  std::unique_ptr<EasyUnlockRefreshKeysOperation> pending_write_operation_;
+  std::unique_ptr<EasyUnlockGetKeysOperation> pending_read_operation_;
 
   base::WeakPtrFactory<EasyUnlockKeyManager> weak_ptr_factory_;
 

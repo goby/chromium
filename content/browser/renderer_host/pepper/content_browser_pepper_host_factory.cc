@@ -4,6 +4,10 @@
 
 #include "content/browser/renderer_host/pepper/content_browser_pepper_host_factory.h"
 
+#include <stddef.h>
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 #include "content/browser/renderer_host/pepper/pepper_browser_font_singleton_host.h"
 #include "content/browser/renderer_host/pepper/pepper_file_io_host.h"
@@ -26,6 +30,10 @@
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/shared_impl/ppapi_permissions.h"
+
+#if defined(OS_CHROMEOS)
+#include "content/browser/renderer_host/pepper/pepper_vpn_provider_message_filter_chromeos.h"
+#endif
 
 using ppapi::host::MessageFilterHost;
 using ppapi::host::ResourceHost;
@@ -54,7 +62,8 @@ ContentBrowserPepperHostFactory::ContentBrowserPepperHostFactory(
 
 ContentBrowserPepperHostFactory::~ContentBrowserPepperHostFactory() {}
 
-scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
+std::unique_ptr<ResourceHost>
+ContentBrowserPepperHostFactory::CreateResourceHost(
     ppapi::host::PpapiHost* host,
     PP_Resource resource,
     PP_Instance instance,
@@ -63,12 +72,12 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
 
   // Make sure the plugin is giving us a valid instance for this resource.
   if (!host_->IsValidInstance(instance))
-    return scoped_ptr<ResourceHost>();
+    return std::unique_ptr<ResourceHost>();
 
   // Public interfaces.
   switch (message.type()) {
     case PpapiHostMsg_FileIO_Create::ID: {
-      return scoped_ptr<ResourceHost>(
+      return std::unique_ptr<ResourceHost>(
           new PepperFileIOHost(host_, instance, resource));
     }
     case PpapiHostMsg_FileSystem_Create::ID: {
@@ -76,23 +85,23 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
       if (!ppapi::UnpackMessage<PpapiHostMsg_FileSystem_Create>(
               message, &file_system_type)) {
         NOTREACHED();
-        return scoped_ptr<ResourceHost>();
+        return std::unique_ptr<ResourceHost>();
       }
-      return scoped_ptr<ResourceHost>(new PepperFileSystemBrowserHost(
+      return std::unique_ptr<ResourceHost>(new PepperFileSystemBrowserHost(
           host_, instance, resource, file_system_type));
     }
     case PpapiHostMsg_Gamepad_Create::ID: {
-      return scoped_ptr<ResourceHost>(
+      return std::unique_ptr<ResourceHost>(
           new PepperGamepadHost(host_, instance, resource));
     }
     case PpapiHostMsg_NetworkProxy_Create::ID: {
-      return scoped_ptr<ResourceHost>(
+      return std::unique_ptr<ResourceHost>(
           new PepperNetworkProxyHost(host_, instance, resource));
     }
     case PpapiHostMsg_HostResolver_Create::ID: {
       scoped_refptr<ResourceMessageFilter> host_resolver(
           new PepperHostResolverMessageFilter(host_, instance, false));
-      return scoped_ptr<ResourceHost>(new MessageFilterHost(
+      return std::unique_ptr<ResourceHost>(new MessageFilterHost(
           host_->GetPpapiHost(), instance, resource, host_resolver));
     }
     case PpapiHostMsg_FileRef_CreateForFileAPI::ID: {
@@ -101,16 +110,16 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
       if (!UnpackMessage<PpapiHostMsg_FileRef_CreateForFileAPI>(
               message, &file_system, &internal_path)) {
         NOTREACHED();
-        return scoped_ptr<ResourceHost>();
+        return std::unique_ptr<ResourceHost>();
       }
-      return scoped_ptr<ResourceHost>(new PepperFileRefHost(
+      return std::unique_ptr<ResourceHost>(new PepperFileRefHost(
           host_, instance, resource, file_system, internal_path));
     }
     case PpapiHostMsg_TCPSocket_Create::ID: {
       ppapi::TCPSocketVersion version;
       if (!UnpackMessage<PpapiHostMsg_TCPSocket_Create>(message, &version) ||
           version == ppapi::TCP_SOCKET_VERSION_PRIVATE) {
-        return scoped_ptr<ResourceHost>();
+        return std::unique_ptr<ResourceHost>();
       }
 
       return CreateNewTCPSocket(instance, resource, version);
@@ -119,10 +128,10 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
       if (CanCreateSocket()) {
         scoped_refptr<ResourceMessageFilter> udp_socket(
             new PepperUDPSocketMessageFilter(host_, instance, false));
-        return scoped_ptr<ResourceHost>(new MessageFilterHost(
+        return std::unique_ptr<ResourceHost>(new MessageFilterHost(
             host_->GetPpapiHost(), instance, resource, udp_socket));
       } else {
-        return scoped_ptr<ResourceHost>();
+        return std::unique_ptr<ResourceHost>();
       }
     }
   }
@@ -131,29 +140,37 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
   if (GetPermissions().HasPermission(ppapi::PERMISSION_DEV)) {
     switch (message.type()) {
       case PpapiHostMsg_Printing_Create::ID: {
-        scoped_ptr<PepperPrintSettingsManager> manager(
+        std::unique_ptr<PepperPrintSettingsManager> manager(
             new PepperPrintSettingsManagerImpl());
-        return scoped_ptr<ResourceHost>(new PepperPrintingHost(
-            host_->GetPpapiHost(), instance, resource, manager.Pass()));
+        return std::unique_ptr<ResourceHost>(new PepperPrintingHost(
+            host_->GetPpapiHost(), instance, resource, std::move(manager)));
       }
       case PpapiHostMsg_TrueTypeFont_Create::ID: {
         SerializedTrueTypeFontDesc desc;
         if (!UnpackMessage<PpapiHostMsg_TrueTypeFont_Create>(message, &desc)) {
           NOTREACHED();
-          return scoped_ptr<ResourceHost>();
+          return std::unique_ptr<ResourceHost>();
         }
         // Check that the family name is valid UTF-8 before passing it to the
         // host OS.
         if (!base::IsStringUTF8(desc.family))
-          return scoped_ptr<ResourceHost>();
+          return std::unique_ptr<ResourceHost>();
 
-        return scoped_ptr<ResourceHost>(
+        return std::unique_ptr<ResourceHost>(
             new PepperTrueTypeFontHost(host_, instance, resource, desc));
       }
       case PpapiHostMsg_TrueTypeFontSingleton_Create::ID: {
-        return scoped_ptr<ResourceHost>(
+        return std::unique_ptr<ResourceHost>(
             new PepperTrueTypeFontListHost(host_, instance, resource));
       }
+#if defined(OS_CHROMEOS)
+      case PpapiHostMsg_VpnProvider_Create::ID: {
+        scoped_refptr<PepperVpnProviderMessageFilter> vpn_provider(
+            new PepperVpnProviderMessageFilter(host_, instance));
+        return base::MakeUnique<MessageFilterHost>(
+            host_->GetPpapiHost(), instance, resource, std::move(vpn_provider));
+      }
+#endif
     }
   }
 
@@ -161,7 +178,7 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
   if (GetPermissions().HasPermission(ppapi::PERMISSION_PRIVATE)) {
     switch (message.type()) {
       case PpapiHostMsg_BrowserFontSingleton_Create::ID:
-        return scoped_ptr<ResourceHost>(
+        return std::unique_ptr<ResourceHost>(
             new PepperBrowserFontSingletonHost(host_, instance, resource));
     }
   }
@@ -175,17 +192,17 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
   if (message.type() == PpapiHostMsg_HostResolver_CreatePrivate::ID) {
     scoped_refptr<ResourceMessageFilter> host_resolver(
         new PepperHostResolverMessageFilter(host_, instance, true));
-    return scoped_ptr<ResourceHost>(new MessageFilterHost(
+    return std::unique_ptr<ResourceHost>(new MessageFilterHost(
         host_->GetPpapiHost(), instance, resource, host_resolver));
   }
   if (message.type() == PpapiHostMsg_TCPServerSocket_CreatePrivate::ID) {
     if (CanCreateSocket()) {
       scoped_refptr<ResourceMessageFilter> tcp_server_socket(
           new PepperTCPServerSocketMessageFilter(this, host_, instance, true));
-      return scoped_ptr<ResourceHost>(new MessageFilterHost(
+      return std::unique_ptr<ResourceHost>(new MessageFilterHost(
           host_->GetPpapiHost(), instance, resource, tcp_server_socket));
     } else {
-      return scoped_ptr<ResourceHost>();
+      return std::unique_ptr<ResourceHost>();
     }
   }
   if (message.type() == PpapiHostMsg_TCPSocket_CreatePrivate::ID) {
@@ -196,14 +213,14 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
     if (CanCreateSocket()) {
       scoped_refptr<ResourceMessageFilter> udp_socket(
           new PepperUDPSocketMessageFilter(host_, instance, true));
-      return scoped_ptr<ResourceHost>(new MessageFilterHost(
+      return std::unique_ptr<ResourceHost>(new MessageFilterHost(
           host_->GetPpapiHost(), instance, resource, udp_socket));
     } else {
-      return scoped_ptr<ResourceHost>();
+      return std::unique_ptr<ResourceHost>();
     }
   }
   if (message.type() == PpapiHostMsg_NetworkMonitor_Create::ID) {
-    return scoped_ptr<ResourceHost>(
+    return std::unique_ptr<ResourceHost>(
         new PepperNetworkMonitorHost(host_, instance, resource));
   }
 
@@ -213,43 +230,43 @@ scoped_ptr<ResourceHost> ContentBrowserPepperHostFactory::CreateResourceHost(
       case PpapiHostMsg_FlashFile_Create::ID: {
         scoped_refptr<ResourceMessageFilter> file_filter(
             new PepperFlashFileMessageFilter(instance, host_));
-        return scoped_ptr<ResourceHost>(new MessageFilterHost(
+        return std::unique_ptr<ResourceHost>(new MessageFilterHost(
             host_->GetPpapiHost(), instance, resource, file_filter));
       }
     }
   }
 
-  return scoped_ptr<ResourceHost>();
+  return std::unique_ptr<ResourceHost>();
 }
 
-scoped_ptr<ppapi::host::ResourceHost>
+std::unique_ptr<ppapi::host::ResourceHost>
 ContentBrowserPepperHostFactory::CreateAcceptedTCPSocket(
     PP_Instance instance,
     ppapi::TCPSocketVersion version,
-    scoped_ptr<net::TCPSocket> socket) {
+    std::unique_ptr<net::TCPSocket> socket) {
   if (!CanCreateSocket())
-    return scoped_ptr<ResourceHost>();
+    return std::unique_ptr<ResourceHost>();
   scoped_refptr<ResourceMessageFilter> tcp_socket(
-      new PepperTCPSocketMessageFilter(
-          host_, instance, version, socket.Pass()));
-  return scoped_ptr<ResourceHost>(
+      new PepperTCPSocketMessageFilter(host_, instance, version,
+                                       std::move(socket)));
+  return std::unique_ptr<ResourceHost>(
       new MessageFilterHost(host_->GetPpapiHost(), instance, 0, tcp_socket));
 }
 
-scoped_ptr<ppapi::host::ResourceHost>
+std::unique_ptr<ppapi::host::ResourceHost>
 ContentBrowserPepperHostFactory::CreateNewTCPSocket(
     PP_Instance instance,
     PP_Resource resource,
     ppapi::TCPSocketVersion version) {
   if (!CanCreateSocket())
-    return scoped_ptr<ResourceHost>();
+    return std::unique_ptr<ResourceHost>();
 
   scoped_refptr<ResourceMessageFilter> tcp_socket(
       new PepperTCPSocketMessageFilter(this, host_, instance, version));
   if (!tcp_socket.get())
-    return scoped_ptr<ResourceHost>();
+    return std::unique_ptr<ResourceHost>();
 
-  return scoped_ptr<ResourceHost>(new MessageFilterHost(
+  return std::unique_ptr<ResourceHost>(new MessageFilterHost(
       host_->GetPpapiHost(), instance, resource, tcp_socket));
 }
 

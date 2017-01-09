@@ -4,10 +4,13 @@
 
 package org.chromium.content.browser;
 
+import android.test.suitebuilder.annotation.MediumTest;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
-import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
@@ -16,6 +19,10 @@ import org.chromium.content_shell_apk.ContentShellTestBase;
 
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Class which provides test coverage for Popup Zoomer.
+ */
+@RetryOnFailure
 public class ContentViewPopupZoomerTest extends ContentShellTestBase {
     private static PopupZoomer findPopupZoomer(ViewGroup view) {
         assert view != null;
@@ -78,10 +85,8 @@ public class ContentViewPopupZoomerTest extends ContentShellTestBase {
     /**
      * Tests that shows a zoomer popup and makes sure it has valid dimensions.
      */
-    //@MediumTest
-    //@Feature({"Browser"})
-    //@RerunWithUpdatedContainerView -> this test should pass with this new annotation.
-    @DisabledTest // crbug.com/167045
+    @MediumTest
+    @Feature({"Browser"})
     public void testPopupZoomerShowsUp() throws InterruptedException, TimeoutException {
         launchContentShellWithUrl(generateTestUrl(100, 15, "clickme"));
         waitForActiveShellToBeDoneLoading();
@@ -90,13 +95,34 @@ public class ContentViewPopupZoomerTest extends ContentShellTestBase {
         final ViewGroup view = viewCore.getContainerView();
 
         // The popup should be hidden before the click.
-        CriteriaHelper.pollForCriteria(new PopupShowingCriteria(view, false));
+        CriteriaHelper.pollInstrumentationThread(new PopupShowingCriteria(view, false));
 
         // Once clicked, the popup should show up.
         DOMUtils.clickNode(this, viewCore, "clickme");
-        CriteriaHelper.pollForCriteria(new PopupShowingCriteria(view, true));
+        CriteriaHelper.pollInstrumentationThread(new PopupShowingCriteria(view, true));
 
         // The shown popup should have valid dimensions eventually.
-        CriteriaHelper.pollForCriteria(new PopupHasNonZeroDimensionsCriteria(view));
+        CriteriaHelper.pollInstrumentationThread(new PopupHasNonZeroDimensionsCriteria(view));
+    }
+
+    /**
+     * Tests Popup zoomer hides when device back key is pressed.
+     */
+    @MediumTest
+    @Feature({"Browser"})
+    @RetryOnFailure
+    public void testBackKeyDismissesPopupZoomer() throws InterruptedException, TimeoutException {
+        launchContentShellWithUrl(generateTestUrl(100, 15, "clickme"));
+        waitForActiveShellToBeDoneLoading();
+
+        final ContentViewCore viewCore = getContentViewCore();
+        final ViewGroup view = viewCore.getContainerView();
+
+        CriteriaHelper.pollInstrumentationThread(new PopupShowingCriteria(view, false));
+        DOMUtils.clickNode(this, viewCore, "clickme");
+        CriteriaHelper.pollInstrumentationThread(new PopupShowingCriteria(view, true));
+        sendKeys(KeyEvent.KEYCODE_BACK);
+        // When device key is pressed, popup zoomer should hide if already showing.
+        CriteriaHelper.pollInstrumentationThread(new PopupShowingCriteria(view, false));
     }
 }

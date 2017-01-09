@@ -21,8 +21,9 @@
 #ifndef CSSImageValue_h
 #define CSSImageValue_h
 
+#include "core/CoreExport.h"
 #include "core/css/CSSValue.h"
-#include "core/fetch/ResourceFetcher.h"
+#include "platform/CrossOriginAttributeValue.h"
 #include "platform/weborigin/Referrer.h"
 #include "wtf/RefPtr.h"
 
@@ -30,69 +31,77 @@ namespace blink {
 
 class Document;
 class KURL;
-class StyleFetchedImage;
 class StyleImage;
 class LayoutObject;
 
-class CSSImageValue : public CSSValue {
-public:
-    static PassRefPtrWillBeRawPtr<CSSImageValue> create(const KURL& url, StyleFetchedImage* image = 0)
-    {
-        return create(url.string(), url, image);
-    }
-    static PassRefPtrWillBeRawPtr<CSSImageValue> create(const String& rawValue, const KURL& url, StyleFetchedImage* image = 0)
-    {
-        return create(AtomicString(rawValue), url, image);
-    }
-    static PassRefPtrWillBeRawPtr<CSSImageValue> create(const AtomicString& rawValue, const KURL& url, StyleFetchedImage* image = 0)
-    {
-        return adoptRefWillBeNoop(new CSSImageValue(rawValue, url, image));
-    }
-    ~CSSImageValue();
+class CORE_EXPORT CSSImageValue : public CSSValue {
+ public:
+  static CSSImageValue* create(const KURL& url, StyleImage* image = 0) {
+    return create(url.getString(), url, image);
+  }
+  static CSSImageValue* create(const String& rawValue,
+                               const KURL& url,
+                               StyleImage* image = 0) {
+    return create(AtomicString(rawValue), url, image);
+  }
+  static CSSImageValue* create(const AtomicString& rawValue,
+                               const KURL& url,
+                               StyleImage* image = 0) {
+    return new CSSImageValue(rawValue, url, image);
+  }
+  static CSSImageValue* create(const AtomicString& absoluteURL) {
+    return new CSSImageValue(absoluteURL);
+  }
+  ~CSSImageValue();
 
-    bool isCachePending() const { return m_isCachePending; }
-    StyleFetchedImage* cachedImage() const { ASSERT(!isCachePending()); return m_cachedImage.get(); }
-    StyleFetchedImage* cacheImage(Document*, const ResourceLoaderOptions&);
-    StyleFetchedImage* cacheImage(Document* document) { return cacheImage(document, ResourceFetcher::defaultResourceOptions()); }
+  bool isCachePending() const { return !m_cachedImage; }
+  StyleImage* cachedImage() const {
+    ASSERT(!isCachePending());
+    return m_cachedImage.get();
+  }
+  StyleImage* cacheImage(
+      const Document&,
+      CrossOriginAttributeValue = CrossOriginAttributeNotSet);
 
-    const String& url() { return m_absoluteURL; }
+  const String& url() const { return m_absoluteURL; }
 
-    void setReferrer(const Referrer& referrer) { m_referrer = referrer; }
-    const Referrer& referrer() const { return m_referrer; }
+  void setReferrer(const Referrer& referrer) { m_referrer = referrer; }
+  const Referrer& referrer() const { return m_referrer; }
 
-    void reResolveURL(const Document&);
+  void reResolveURL(const Document&) const;
 
-    String customCSSText() const;
+  String customCSSText() const;
 
-    bool hasFailedOrCanceledSubresources() const;
+  bool hasFailedOrCanceledSubresources() const;
 
-    bool equals(const CSSImageValue&) const;
+  bool equals(const CSSImageValue&) const;
 
-    bool knownToBeOpaque(const LayoutObject*) const;
+  bool knownToBeOpaque(const LayoutObject&) const;
 
-    PassRefPtrWillBeRawPtr<CSSImageValue> valueWithURLMadeAbsolute()
-    {
-        return create(KURL(ParsedURLString, m_absoluteURL), m_cachedImage.get());
-    }
+  CSSImageValue* valueWithURLMadeAbsolute() const {
+    return create(KURL(ParsedURLString, m_absoluteURL), m_cachedImage.get());
+  }
 
-    void setInitiator(const AtomicString& name) { m_initiatorName = name; }
+  void setInitiator(const AtomicString& name) { m_initiatorName = name; }
 
-    DECLARE_TRACE_AFTER_DISPATCH();
-    void restoreCachedResourceIfNeeded(Document&) const;
+  DECLARE_TRACE_AFTER_DISPATCH();
+  void restoreCachedResourceIfNeeded(const Document&) const;
 
-private:
-    CSSImageValue(const AtomicString& rawValue, const KURL&, StyleFetchedImage*);
+ private:
+  CSSImageValue(const AtomicString& rawValue, const KURL&, StyleImage*);
+  CSSImageValue(const AtomicString& absoluteURL);
 
-    AtomicString m_relativeURL;
-    AtomicString m_absoluteURL;
-    Referrer m_referrer;
-    bool m_isCachePending;
-    RefPtrWillBeMember<StyleFetchedImage> m_cachedImage;
-    AtomicString m_initiatorName;
+  AtomicString m_relativeURL;
+  Referrer m_referrer;
+  AtomicString m_initiatorName;
+
+  // Cached image data.
+  mutable AtomicString m_absoluteURL;
+  mutable Member<StyleImage> m_cachedImage;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSImageValue, isImageValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSImageValue_h
+#endif  // CSSImageValue_h

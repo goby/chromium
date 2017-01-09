@@ -4,8 +4,12 @@
 
 #include "device/usb/usb_service_impl.h"
 
+#include <stdint.h>
+
 #include <list>
+#include <memory>
 #include <set>
+#include <utility>
 
 #include "base/barrier_closure.h"
 #include "base/bind.h"
@@ -15,11 +19,13 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/usb/usb_device_handle.h"
 #include "device/usb/usb_error.h"
 #include "device/usb/webusb_descriptors.h"
+#include "net/base/io_buffer.h"
 #include "third_party/libusb/src/libusb/libusb.h"
 
 #if defined(OS_WIN)
@@ -27,12 +33,8 @@
 #include <usbiodef.h>
 
 #include "base/strings/string_util.h"
-#include "device/core/device_info_query_win.h"
+#include "device/base/device_info_query_win.h"
 #endif  // OS_WIN
-
-#if defined(USE_UDEV)
-#include "device/udev_linux/scoped_udev.h"
-#endif  // USE_UDEV
 
 using net::IOBufferWithSize;
 
@@ -42,15 +44,6 @@ namespace {
 
 // Standard USB requests and descriptor types:
 const uint16_t kUsbVersion2_1 = 0x0210;
-const uint8_t kGetDescriptorRequest = 0x06;
-const uint8_t kStringDescriptorType = 0x03;
-const uint8_t kBosDescriptorType = 0x0F;
-
-// WebUSB requests:
-const uint8_t kGetAllowedOriginsRequest = 0x01;
-const uint8_t kGetLandingPageRequest = 0x02;
-
-const int kControlTransferTimeout = 60000;  // 1 minute
 
 #if defined(OS_WIN)
 
@@ -87,11 +80,28 @@ bool IsWinUsbInterface(const std::string& device_path) {
 
 #endif  // OS_WIN
 
+void InitializeUsbContextOnBlockingThread(
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
+    const base::Callback<void(scoped_refptr<UsbContext>)>& callback) {
+  scoped_refptr<UsbContext> context;
+  PlatformUsbContext platform_context = nullptr;
+  int rv = libusb_init(&platform_context);
+  if (rv == LIBUSB_SUCCESS && platform_context) {
+    context = new UsbContext(platform_context);
+  } else {
+    USB_LOG(DEBUG) << "Failed to initialize libusb: "
+                   << ConvertPlatformUsbErrorToString(rv);
+  }
+
+  task_runner->PostTask(FROM_HERE,
+                        base::Bind(callback, base::Passed(&context)));
+}
+
 void GetDeviceListOnBlockingThread(
     const std::string& new_device_path,
     scoped_refptr<UsbContext> usb_context,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
-    base::Callback<void(libusb_device**, size_t)> callback) {
+    const base::Callback<void(libusb_device**, size_t)>& callback) {
 #if defined(OS_WIN)
   if (!new_device_path.empty()) {
     if (!IsWinUsbInterface(new_device_path)) {
@@ -117,232 +127,41 @@ void GetDeviceListOnBlockingThread(
                         base::Bind(callback, platform_devices, device_count));
 }
 
-void OnReadStringDescriptor(
-    const base::Callback<void(const base::string16&)>& callback,
-    UsbTransferStatus status,
-    scoped_refptr<net::IOBuffer> buffer,
-    size_t length) {
-  base::string16 string;
-  if (status == USB_TRANSFER_COMPLETED &&
-      ParseUsbStringDescriptor(
-          std::vector<uint8>(buffer->data(), buffer->data() + length),
-          &string)) {
-    callback.Run(string);
-  } else {
-    callback.Run(base::string16());
-  }
-}
-
-void ReadStringDescriptor(
-    scoped_refptr<UsbDeviceHandle> device_handle,
-    uint8_t index,
-    uint16_t language_id,
-    const base::Callback<void(const base::string16&)>& callback) {
-  scoped_refptr<IOBufferWithSize> buffer = new IOBufferWithSize(255);
-  device_handle->ControlTransfer(
-      USB_DIRECTION_INBOUND, UsbDeviceHandle::STANDARD, UsbDeviceHandle::DEVICE,
-      kGetDescriptorRequest, kStringDescriptorType << 8 | index, language_id,
-      buffer, buffer->size(), kControlTransferTimeout,
-      base::Bind(&OnReadStringDescriptor, callback));
-}
-
-void OnReadWebUsbLandingPage(scoped_refptr<UsbDevice> device,
-                             const base::Closure& callback,
-                             UsbTransferStatus status,
-                             scoped_refptr<net::IOBuffer> buffer,
-                             size_t length) {
-  if (status != USB_TRANSFER_COMPLETED) {
-    USB_LOG(EVENT) << "Failed to read WebUSB landing page.";
-    callback.Run();
-    return;
-  }
-
-  GURL landing_page;
-  if (ParseWebUsbUrlDescriptor(
-          std::vector<uint8_t>(buffer->data(), buffer->data() + length),
-          &landing_page)) {
-    UsbDeviceImpl* device_impl = static_cast<UsbDeviceImpl*>(device.get());
-    device_impl->set_webusb_landing_page(landing_page);
-  }
-  callback.Run();
-}
-
-void ReadWebUsbLandingPage(scoped_refptr<UsbDeviceHandle> device_handle,
-                           const base::Closure& callback,
-                           uint8_t vendor_code) {
-  scoped_refptr<IOBufferWithSize> buffer = new IOBufferWithSize(255);
-  device_handle->ControlTransfer(
-      USB_DIRECTION_INBOUND, UsbDeviceHandle::VENDOR, UsbDeviceHandle::DEVICE,
-      vendor_code, 0, kGetLandingPageRequest, buffer, buffer->size(),
-      kControlTransferTimeout,
-      base::Bind(&OnReadWebUsbLandingPage, device_handle->GetDevice(),
-                 callback));
-}
-
-void OnReadWebUsbAllowedOrigins(scoped_refptr<UsbDevice> device,
-                                const base::Closure& callback,
-                                UsbTransferStatus status,
-                                scoped_refptr<net::IOBuffer> buffer,
-                                size_t length) {
-  if (status != USB_TRANSFER_COMPLETED) {
-    USB_LOG(EVENT) << "Failed to read WebUSB allowed origins.";
-    callback.Run();
-    return;
-  }
-
-  scoped_ptr<WebUsbDescriptorSet> descriptors(new WebUsbDescriptorSet());
-  if (descriptors->Parse(
-          std::vector<uint8>(buffer->data(), buffer->data() + length))) {
-    UsbDeviceImpl* device_impl = static_cast<UsbDeviceImpl*>(device.get());
-    device_impl->set_webusb_allowed_origins(descriptors.Pass());
-  }
-  callback.Run();
-}
-
-void OnReadWebUsbAllowedOriginsHeader(
-    scoped_refptr<UsbDeviceHandle> device_handle,
-    const base::Closure& callback,
-    uint8_t vendor_code,
-    UsbTransferStatus status,
-    scoped_refptr<net::IOBuffer> buffer,
-    size_t length) {
-  if (status != USB_TRANSFER_COMPLETED || length != 4) {
-    USB_LOG(EVENT) << "Failed to read WebUSB allowed origins header.";
-    callback.Run();
-    return;
-  }
-
-  uint16_t new_length = buffer->data()[2] | (buffer->data()[3] << 8);
-  scoped_refptr<IOBufferWithSize> new_buffer = new IOBufferWithSize(new_length);
-  device_handle->ControlTransfer(
-      USB_DIRECTION_INBOUND, UsbDeviceHandle::VENDOR, UsbDeviceHandle::DEVICE,
-      vendor_code, 0, kGetAllowedOriginsRequest, new_buffer, new_buffer->size(),
-      kControlTransferTimeout,
-      base::Bind(&OnReadWebUsbAllowedOrigins, device_handle->GetDevice(),
-                 callback));
-}
-
-void ReadWebUsbAllowedOrigins(scoped_refptr<UsbDeviceHandle> device_handle,
-                              const base::Closure& callback,
-                              uint8_t vendor_code) {
-  scoped_refptr<IOBufferWithSize> buffer = new IOBufferWithSize(4);
-  device_handle->ControlTransfer(
-      USB_DIRECTION_INBOUND, UsbDeviceHandle::VENDOR, UsbDeviceHandle::DEVICE,
-      vendor_code, 0, kGetAllowedOriginsRequest, buffer, buffer->size(),
-      kControlTransferTimeout,
-      base::Bind(&OnReadWebUsbAllowedOriginsHeader, device_handle, callback,
-                 vendor_code));
-}
-
-void OnReadBosDescriptor(scoped_refptr<UsbDeviceHandle> device_handle,
-                         const base::Closure& callback,
-                         UsbTransferStatus status,
-                         scoped_refptr<net::IOBuffer> buffer,
-                         size_t length) {
-  if (status != USB_TRANSFER_COMPLETED) {
-    USB_LOG(EVENT) << "Failed to read BOS descriptor.";
-    callback.Run();
-    return;
-  }
-
-  WebUsbPlatformCapabilityDescriptor descriptor;
-  if (!descriptor.ParseFromBosDescriptor(
-          std::vector<uint8>(buffer->data(), buffer->data() + length))) {
-    callback.Run();
-    return;
-  }
-
-  base::Closure barrier = base::BarrierClosure(2, callback);
-  ReadWebUsbLandingPage(device_handle, barrier, descriptor.vendor_code);
-  ReadWebUsbAllowedOrigins(device_handle, barrier, descriptor.vendor_code);
-}
-
-void OnReadBosDescriptorHeader(scoped_refptr<UsbDeviceHandle> device_handle,
-                               const base::Closure& callback,
-                               UsbTransferStatus status,
-                               scoped_refptr<net::IOBuffer> buffer,
-                               size_t length) {
-  if (status != USB_TRANSFER_COMPLETED || length != 5) {
-    USB_LOG(EVENT) << "Failed to read BOS descriptor header.";
-    callback.Run();
-    return;
-  }
-
-  uint16_t new_length = buffer->data()[2] | (buffer->data()[3] << 8);
-  scoped_refptr<IOBufferWithSize> new_buffer = new IOBufferWithSize(new_length);
-  device_handle->ControlTransfer(
-      USB_DIRECTION_INBOUND, UsbDeviceHandle::STANDARD, UsbDeviceHandle::DEVICE,
-      kGetDescriptorRequest, kBosDescriptorType << 8, 0, new_buffer,
-      new_buffer->size(), kControlTransferTimeout,
-      base::Bind(&OnReadBosDescriptor, device_handle, callback));
-}
-
-void ReadBosDescriptor(scoped_refptr<UsbDeviceHandle> device_handle,
-                       const base::Closure& callback) {
-  scoped_refptr<IOBufferWithSize> buffer = new IOBufferWithSize(5);
-  device_handle->ControlTransfer(
-      USB_DIRECTION_INBOUND, UsbDeviceHandle::STANDARD, UsbDeviceHandle::DEVICE,
-      kGetDescriptorRequest, kBosDescriptorType << 8, 0, buffer, buffer->size(),
-      kControlTransferTimeout,
-      base::Bind(&OnReadBosDescriptorHeader, device_handle, callback));
-}
-
 void CloseHandleAndRunContinuation(scoped_refptr<UsbDeviceHandle> device_handle,
                                    const base::Closure& continuation) {
   device_handle->Close();
   continuation.Run();
 }
 
-void SaveStringAndRunContinuation(
-    const base::Callback<void(const base::string16&)>& save_callback,
+void SaveStringsAndRunContinuation(
+    scoped_refptr<UsbDeviceImpl> device,
+    uint8_t manufacturer,
+    uint8_t product,
+    uint8_t serial_number,
     const base::Closure& continuation,
-    const base::string16& value) {
-  if (!value.empty()) {
-    save_callback.Run(value);
-  }
+    std::unique_ptr<std::map<uint8_t, base::string16>> string_map) {
+  if (manufacturer != 0)
+    device->set_manufacturer_string((*string_map)[manufacturer]);
+  if (product != 0)
+    device->set_product_string((*string_map)[product]);
+  if (serial_number != 0)
+    device->set_serial_number((*string_map)[serial_number]);
   continuation.Run();
 }
 
-// This function runs |barrier| once for every string it tries to read.
-void OnReadLanguageIds(scoped_refptr<UsbDeviceHandle> device_handle,
-                       uint8_t manufacturer,
-                       uint8_t product,
-                       uint8_t serial_number,
-                       const base::Closure& barrier,
-                       const base::string16& languages) {
-  // Default to English unless the device provides a language and then just pick
-  // the first one.
-  uint16_t language_id = 0x0409;
-  if (!languages.empty()) {
-    language_id = languages[0];
-  }
-
+void OnReadBosDescriptor(scoped_refptr<UsbDeviceHandle> device_handle,
+                         const base::Closure& barrier,
+                         std::unique_ptr<WebUsbAllowedOrigins> allowed_origins,
+                         const GURL& landing_page) {
   scoped_refptr<UsbDeviceImpl> device =
       static_cast<UsbDeviceImpl*>(device_handle->GetDevice().get());
 
-  if (manufacturer != 0) {
-    ReadStringDescriptor(
-        device_handle, manufacturer, language_id,
-        base::Bind(&SaveStringAndRunContinuation,
-                   base::Bind(&UsbDeviceImpl::set_manufacturer_string, device),
-                   barrier));
-  }
+  if (allowed_origins)
+    device->set_webusb_allowed_origins(std::move(allowed_origins));
+  if (landing_page.is_valid())
+    device->set_webusb_landing_page(landing_page);
 
-  if (product != 0) {
-    ReadStringDescriptor(
-        device_handle, product, language_id,
-        base::Bind(&SaveStringAndRunContinuation,
-                   base::Bind(&UsbDeviceImpl::set_product_string, device),
-                   barrier));
-  }
-
-  if (serial_number != 0) {
-    ReadStringDescriptor(
-        device_handle, serial_number, language_id,
-        base::Bind(&SaveStringAndRunContinuation,
-                   base::Bind(&UsbDeviceImpl::set_serial_number, device),
-                   barrier));
-  }
+  barrier.Run();
 }
 
 void OnDeviceOpenedReadDescriptors(
@@ -354,12 +173,17 @@ void OnDeviceOpenedReadDescriptors(
     const base::Closure& failure_closure,
     scoped_refptr<UsbDeviceHandle> device_handle) {
   if (device_handle) {
-    int count = 0;
+    std::unique_ptr<std::map<uint8_t, base::string16>> string_map(
+        new std::map<uint8_t, base::string16>());
     if (manufacturer != 0)
-      count++;
+      (*string_map)[manufacturer] = base::string16();
     if (product != 0)
-      count++;
+      (*string_map)[product] = base::string16();
     if (serial_number != 0)
+      (*string_map)[serial_number] = base::string16();
+
+    int count = 0;
+    if (!string_map->empty())
       count++;
     if (read_bos_descriptors)
       count++;
@@ -369,159 +193,53 @@ void OnDeviceOpenedReadDescriptors(
         base::BarrierClosure(count, base::Bind(&CloseHandleAndRunContinuation,
                                                device_handle, success_closure));
 
-    if (manufacturer != 0 || product != 0 || serial_number != 0) {
-      ReadStringDescriptor(
-          device_handle, 0, 0,
-          base::Bind(&OnReadLanguageIds, device_handle, manufacturer, product,
-                     serial_number, barrier));
+    if (!string_map->empty()) {
+      scoped_refptr<UsbDeviceImpl> device =
+          static_cast<UsbDeviceImpl*>(device_handle->GetDevice().get());
+
+      ReadUsbStringDescriptors(
+          device_handle, std::move(string_map),
+          base::Bind(&SaveStringsAndRunContinuation, device, manufacturer,
+                     product, serial_number, barrier));
     }
 
     if (read_bos_descriptors) {
-      ReadBosDescriptor(device_handle, barrier);
+      ReadWebUsbDescriptors(device_handle, base::Bind(&OnReadBosDescriptor,
+                                                      device_handle, barrier));
     }
   } else {
     failure_closure.Run();
   }
 }
 
-#if defined(USE_UDEV)
-
-void EnumerateUdevDevice(scoped_refptr<UsbDeviceImpl> device,
-                         bool read_bos_descriptors,
-                         scoped_refptr<base::SequencedTaskRunner> task_runner,
-                         const base::Closure& success_closure,
-                         const base::Closure& failure_closure) {
-  ScopedUdevPtr udev(udev_new());
-  ScopedUdevEnumeratePtr udev_enumerate(udev_enumerate_new(udev.get()));
-
-  udev_enumerate_add_match_subsystem(udev_enumerate.get(), "usb");
-  if (udev_enumerate_scan_devices(udev_enumerate.get()) != 0) {
-    task_runner->PostTask(FROM_HERE, failure_closure);
-    return;
-  }
-
-  std::string bus_number =
-      base::UintToString(libusb_get_bus_number(device->platform_device()));
-  std::string device_address =
-      base::UintToString(libusb_get_device_address(device->platform_device()));
-  udev_list_entry* devices =
-      udev_enumerate_get_list_entry(udev_enumerate.get());
-  for (udev_list_entry* i = devices; i != NULL;
-       i = udev_list_entry_get_next(i)) {
-    ScopedUdevDevicePtr udev_device(
-        udev_device_new_from_syspath(udev.get(), udev_list_entry_get_name(i)));
-    if (udev_device) {
-      const char* value =
-          udev_device_get_sysattr_value(udev_device.get(), "busnum");
-      if (!value || bus_number != value) {
-        continue;
-      }
-      value = udev_device_get_sysattr_value(udev_device.get(), "devnum");
-      if (!value || device_address != value) {
-        continue;
-      }
-
-      value = udev_device_get_sysattr_value(udev_device.get(), "manufacturer");
-      if (value) {
-        device->set_manufacturer_string(base::UTF8ToUTF16(value));
-      }
-      value = udev_device_get_sysattr_value(udev_device.get(), "product");
-      if (value) {
-        device->set_product_string(base::UTF8ToUTF16(value));
-      }
-      value = udev_device_get_sysattr_value(udev_device.get(), "serial");
-      if (value) {
-        device->set_serial_number(base::UTF8ToUTF16(value));
-      }
-
-      value = udev_device_get_devnode(udev_device.get());
-      if (value) {
-        device->set_device_path(value);
-
-        if (read_bos_descriptors) {
-          task_runner->PostTask(
-              FROM_HERE,
-              base::Bind(&UsbDevice::Open, device,
-                         base::Bind(&OnDeviceOpenedReadDescriptors, 0, 0, 0,
-                                    true, success_closure, failure_closure)));
-        } else {
-          task_runner->PostTask(FROM_HERE, success_closure);
-        }
-        return;
-      }
-
-      break;
-    }
-  }
-
-  task_runner->PostTask(FROM_HERE, failure_closure);
-}
-
-#endif  // USE_UDEV
-
 }  // namespace
 
 UsbServiceImpl::UsbServiceImpl(
     scoped_refptr<base::SequencedTaskRunner> blocking_task_runner)
-    : task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      blocking_task_runner_(blocking_task_runner),
+    : UsbService(base::ThreadTaskRunnerHandle::Get(), blocking_task_runner),
 #if defined(OS_WIN)
       device_observer_(this),
 #endif
       weak_factory_(this) {
-
-  PlatformUsbContext platform_context = nullptr;
-  int rv = libusb_init(&platform_context);
-  if (rv != LIBUSB_SUCCESS || !platform_context) {
-    USB_LOG(DEBUG) << "Failed to initialize libusb: "
-                   << ConvertPlatformUsbErrorToString(rv);
-    return;
-  }
-  context_ = new UsbContext(platform_context);
-
-  rv = libusb_hotplug_register_callback(
-      context_->context(),
-      static_cast<libusb_hotplug_event>(LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED |
-                                        LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT),
-      static_cast<libusb_hotplug_flag>(0), LIBUSB_HOTPLUG_MATCH_ANY,
-      LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY,
-      &UsbServiceImpl::HotplugCallback, this, &hotplug_handle_);
-  if (rv == LIBUSB_SUCCESS) {
-    hotplug_enabled_ = true;
-  }
-
-  RefreshDevices();
-#if defined(OS_WIN)
-  DeviceMonitorWin* device_monitor = DeviceMonitorWin::GetForAllInterfaces();
-  if (device_monitor) {
-    device_observer_.Add(device_monitor);
-  }
-#endif  // OS_WIN
+  blocking_task_runner->PostTask(
+      FROM_HERE, base::Bind(&InitializeUsbContextOnBlockingThread,
+                            base::ThreadTaskRunnerHandle::Get(),
+                            base::Bind(&UsbServiceImpl::OnUsbContext,
+                                       weak_factory_.GetWeakPtr())));
 }
 
 UsbServiceImpl::~UsbServiceImpl() {
-  if (hotplug_enabled_) {
+  if (hotplug_enabled_)
     libusb_hotplug_deregister_callback(context_->context(), hotplug_handle_);
-  }
-  for (const auto& map_entry : devices_) {
-    map_entry.second->OnDisconnect();
-  }
-}
-
-scoped_refptr<UsbDevice> UsbServiceImpl::GetDevice(const std::string& guid) {
-  DCHECK(CalledOnValidThread());
-  DeviceMap::iterator it = devices_.find(guid);
-  if (it != devices_.end()) {
-    return it->second;
-  }
-  return NULL;
+  for (auto* platform_device : ignored_devices_)
+    libusb_unref_device(platform_device);
 }
 
 void UsbServiceImpl::GetDevices(const GetDevicesCallback& callback) {
   DCHECK(CalledOnValidThread());
 
-  if (!context_) {
-    task_runner_->PostTask(
+  if (usb_unavailable_) {
+    task_runner()->PostTask(
         FROM_HERE,
         base::Bind(callback, std::vector<scoped_refptr<UsbDevice>>()));
     return;
@@ -529,11 +247,7 @@ void UsbServiceImpl::GetDevices(const GetDevicesCallback& callback) {
 
   if (hotplug_enabled_ && !enumeration_in_progress_) {
     // The device list is updated live when hotplug events are supported.
-    std::vector<scoped_refptr<UsbDevice>> devices;
-    for (const auto& map_entry : devices_) {
-      devices.push_back(map_entry.second);
-    }
-    task_runner_->PostTask(FROM_HERE, base::Bind(callback, devices));
+    UsbService::GetDevices(callback);
   } else {
     pending_enumeration_callbacks_.push_back(callback);
     RefreshDevices();
@@ -565,13 +279,39 @@ void UsbServiceImpl::OnDeviceRemoved(const GUID& class_guid,
 
 #endif  // OS_WIN
 
-void UsbServiceImpl::RefreshDevices() {
-  DCHECK(CalledOnValidThread());
-  DCHECK(context_);
-
-  if (enumeration_in_progress_) {
+void UsbServiceImpl::OnUsbContext(scoped_refptr<UsbContext> context) {
+  if (!context) {
+    usb_unavailable_ = true;
     return;
   }
+
+  context_ = std::move(context);
+
+  int rv = libusb_hotplug_register_callback(
+      context_->context(),
+      static_cast<libusb_hotplug_event>(LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED |
+                                        LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT),
+      static_cast<libusb_hotplug_flag>(0), LIBUSB_HOTPLUG_MATCH_ANY,
+      LIBUSB_HOTPLUG_MATCH_ANY, LIBUSB_HOTPLUG_MATCH_ANY,
+      &UsbServiceImpl::HotplugCallback, this, &hotplug_handle_);
+  if (rv == LIBUSB_SUCCESS)
+    hotplug_enabled_ = true;
+
+  // This will call any enumeration callbacks queued while initializing.
+  RefreshDevices();
+
+#if defined(OS_WIN)
+  DeviceMonitorWin* device_monitor = DeviceMonitorWin::GetForAllInterfaces();
+  if (device_monitor)
+    device_observer_.Add(device_monitor);
+#endif  // OS_WIN
+}
+
+void UsbServiceImpl::RefreshDevices() {
+  DCHECK(CalledOnValidThread());
+
+  if (!context_ || enumeration_in_progress_)
+    return;
 
   enumeration_in_progress_ = true;
   DCHECK(devices_being_enumerated_.empty());
@@ -582,11 +322,11 @@ void UsbServiceImpl::RefreshDevices() {
     pending_path_enumerations_.pop();
   }
 
-  blocking_task_runner_->PostTask(
+  blocking_task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&GetDeviceListOnBlockingThread, device_path, context_,
-                 task_runner_, base::Bind(&UsbServiceImpl::OnDeviceList,
-                                          weak_factory_.GetWeakPtr())));
+                 task_runner(), base::Bind(&UsbServiceImpl::OnDeviceList,
+                                           weak_factory_.GetWeakPtr())));
 }
 
 void UsbServiceImpl::OnDeviceList(libusb_device** platform_devices,
@@ -602,14 +342,21 @@ void UsbServiceImpl::OnDeviceList(libusb_device** platform_devices,
                            base::Bind(&UsbServiceImpl::RefreshDevicesComplete,
                                       weak_factory_.GetWeakPtr()));
   std::list<PlatformUsbDevice> new_devices;
+  std::set<PlatformUsbDevice> existing_ignored_devices;
 
   // Look for new and existing devices.
   for (size_t i = 0; i < device_count; ++i) {
     PlatformUsbDevice platform_device = platform_devices[i];
+    // Ignore some devices.
+    if (base::ContainsValue(ignored_devices_, platform_device)) {
+      existing_ignored_devices.insert(platform_device);
+      refresh_complete.Run();
+      continue;
+    }
+
     auto it = platform_devices_.find(platform_device);
 
     if (it == platform_devices_.end()) {
-      libusb_ref_device(platform_device);
       new_devices.push_back(platform_device);
     } else {
       it->second->set_visited(true);
@@ -630,6 +377,16 @@ void UsbServiceImpl::OnDeviceList(libusb_device** platform_devices,
     }
   }
 
+  // Remove devices not seen in this enumeration from |ignored_devices_|.
+  for (auto it = ignored_devices_.begin(); it != ignored_devices_.end();
+       /* incremented internally */) {
+    auto current = it++;
+    if (!base::ContainsValue(existing_ignored_devices, *current)) {
+      libusb_unref_device(*current);
+      ignored_devices_.erase(current);
+    }
+  }
+
   for (PlatformUsbDevice platform_device : new_devices) {
     EnumerateDevice(platform_device, refresh_complete);
   }
@@ -646,16 +403,15 @@ void UsbServiceImpl::RefreshDevicesComplete() {
   devices_being_enumerated_.clear();
 
   if (!pending_enumeration_callbacks_.empty()) {
-    std::vector<scoped_refptr<UsbDevice>> devices;
-    for (const auto& map_entry : devices_) {
-      devices.push_back(map_entry.second);
-    }
+    std::vector<scoped_refptr<UsbDevice>> result;
+    result.reserve(devices().size());
+    for (const auto& map_entry : devices())
+      result.push_back(map_entry.second);
 
     std::vector<GetDevicesCallback> callbacks;
     callbacks.swap(pending_enumeration_callbacks_);
-    for (const GetDevicesCallback& callback : callbacks) {
-      callback.Run(devices);
-    }
+    for (const GetDevicesCallback& callback : callbacks)
+      callback.Run(result);
   }
 
   if (!pending_path_enumerations_.empty()) {
@@ -671,21 +427,24 @@ void UsbServiceImpl::EnumerateDevice(PlatformUsbDevice platform_device,
   libusb_device_descriptor descriptor;
   int rv = libusb_get_device_descriptor(platform_device, &descriptor);
   if (rv == LIBUSB_SUCCESS) {
-    scoped_refptr<UsbDeviceImpl> device(
-        new UsbDeviceImpl(context_, platform_device, descriptor.idVendor,
-                          descriptor.idProduct, blocking_task_runner_));
+    if (descriptor.bDeviceClass == LIBUSB_CLASS_HUB) {
+      // Don't try to enumerate hubs. We never want to connect to a hub.
+      libusb_ref_device(platform_device);
+      ignored_devices_.insert(platform_device);
+      refresh_complete.Run();
+      return;
+    }
 
+    scoped_refptr<UsbDeviceImpl> device(new UsbDeviceImpl(
+        context_, platform_device, descriptor, blocking_task_runner()));
     base::Closure add_device =
         base::Bind(&UsbServiceImpl::AddDevice, weak_factory_.GetWeakPtr(),
                    refresh_complete, device);
+    base::Closure enumeration_failed = base::Bind(
+        &UsbServiceImpl::EnumerationFailed, weak_factory_.GetWeakPtr(),
+        platform_device, refresh_complete);
     bool read_bos_descriptors = descriptor.bcdUSB >= kUsbVersion2_1;
 
-#if defined(USE_UDEV)
-    blocking_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&EnumerateUdevDevice, device, read_bos_descriptors,
-                   task_runner_, add_device, refresh_complete));
-#else
     if (descriptor.iManufacturer == 0 && descriptor.iProduct == 0 &&
         descriptor.iSerialNumber == 0 && !read_bos_descriptors) {
       // Don't bother disturbing the device if it has no descriptors to offer.
@@ -694,9 +453,8 @@ void UsbServiceImpl::EnumerateDevice(PlatformUsbDevice platform_device,
       device->Open(base::Bind(&OnDeviceOpenedReadDescriptors,
                               descriptor.iManufacturer, descriptor.iProduct,
                               descriptor.iSerialNumber, read_bos_descriptors,
-                              add_device, refresh_complete));
+                              add_device, enumeration_failed));
     }
-#endif
   } else {
     USB_LOG(EVENT) << "Failed to get device descriptor: "
                    << ConvertPlatformUsbErrorToString(rv);
@@ -714,8 +472,8 @@ void UsbServiceImpl::AddDevice(const base::Closure& refresh_complete,
   }
 
   platform_devices_[device->platform_device()] = device;
-  DCHECK(!ContainsKey(devices_, device->guid()));
-  devices_[device->guid()] = device;
+  DCHECK(!base::ContainsKey(devices(), device->guid()));
+  devices()[device->guid()] = device;
 
   USB_LOG(USER) << "USB device added: vendor=" << device->vendor_id() << " \""
                 << device->manufacturer_string()
@@ -732,7 +490,7 @@ void UsbServiceImpl::AddDevice(const base::Closure& refresh_complete,
 
 void UsbServiceImpl::RemoveDevice(scoped_refptr<UsbDeviceImpl> device) {
   platform_devices_.erase(device->platform_device());
-  devices_.erase(device->guid());
+  devices().erase(device->guid());
 
   USB_LOG(USER) << "USB device removed: guid=" << device->guid();
 
@@ -750,26 +508,19 @@ int LIBUSB_CALL UsbServiceImpl::HotplugCallback(libusb_context* context,
   // and so guarantees that this function will not be called by the event
   // processing thread after it has been deregistered.
   UsbServiceImpl* self = reinterpret_cast<UsbServiceImpl*>(user_data);
+  DCHECK(!self->task_runner()->BelongsToCurrentThread());
   switch (event) {
     case LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED:
       libusb_ref_device(device);  // Released in OnPlatformDeviceAdded.
-      if (self->task_runner_->BelongsToCurrentThread()) {
-        self->OnPlatformDeviceAdded(device);
-      } else {
-        self->task_runner_->PostTask(
-            FROM_HERE, base::Bind(&UsbServiceImpl::OnPlatformDeviceAdded,
-                                  base::Unretained(self), device));
-      }
+      self->task_runner()->PostTask(
+          FROM_HERE, base::Bind(&UsbServiceImpl::OnPlatformDeviceAdded,
+                                base::Unretained(self), device));
       break;
     case LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT:
       libusb_ref_device(device);  // Released in OnPlatformDeviceRemoved.
-      if (self->task_runner_->BelongsToCurrentThread()) {
-        self->OnPlatformDeviceRemoved(device);
-      } else {
-        self->task_runner_->PostTask(
-            FROM_HERE, base::Bind(&UsbServiceImpl::OnPlatformDeviceRemoved,
-                                  base::Unretained(self), device));
-      }
+      self->task_runner()->PostTask(
+          FROM_HERE, base::Bind(&UsbServiceImpl::OnPlatformDeviceRemoved,
+                                base::Unretained(self), device));
       break;
     default:
       NOTREACHED();
@@ -780,7 +531,7 @@ int LIBUSB_CALL UsbServiceImpl::HotplugCallback(libusb_context* context,
 
 void UsbServiceImpl::OnPlatformDeviceAdded(PlatformUsbDevice platform_device) {
   DCHECK(CalledOnValidThread());
-  DCHECK(!ContainsKey(platform_devices_, platform_device));
+  DCHECK(!base::ContainsKey(platform_devices_, platform_device));
   EnumerateDevice(platform_device, base::Bind(&base::DoNothing));
   libusb_unref_device(platform_device);
 }
@@ -795,6 +546,13 @@ void UsbServiceImpl::OnPlatformDeviceRemoved(
     devices_being_enumerated_.erase(platform_device);
   }
   libusb_unref_device(platform_device);
+}
+
+void UsbServiceImpl::EnumerationFailed(PlatformUsbDevice platform_device,
+                                       const base::Closure& refresh_complete) {
+  libusb_ref_device(platform_device);
+  ignored_devices_.insert(platform_device);
+  refresh_complete.Run();
 }
 
 }  // namespace device

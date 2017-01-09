@@ -8,6 +8,7 @@
 
 namespace mojo {
 namespace edk {
+namespace js {
 
 gin::WrapperInfo HandleWrapper::kWrapperInfo = { gin::kEmbedderNativeGin };
 
@@ -36,9 +37,11 @@ void HandleWrapper::NotifyCloseObservers() {
   if (!handle_.is_valid())
     return;
 
-  FOR_EACH_OBSERVER(HandleCloseObserver, close_observers_, OnWillCloseHandle());
+  for (auto& observer : close_observers_)
+    observer.OnWillCloseHandle();
 }
 
+}  // namespace js
 }  // namespace edk
 }  // namespace mojo
 
@@ -48,7 +51,7 @@ v8::Handle<v8::Value> Converter<mojo::Handle>::ToV8(v8::Isolate* isolate,
                                                     const mojo::Handle& val) {
   if (!val.is_valid())
     return v8::Null(isolate);
-  return mojo::edk::HandleWrapper::Create(isolate, val.value()).ToV8();
+  return mojo::edk::js::HandleWrapper::Create(isolate, val.value()).ToV8();
 }
 
 bool Converter<mojo::Handle>::FromV8(v8::Isolate* isolate,
@@ -59,9 +62,9 @@ bool Converter<mojo::Handle>::FromV8(v8::Isolate* isolate,
     return true;
   }
 
-  gin::Handle<mojo::edk::HandleWrapper> handle;
-  if (!Converter<gin::Handle<mojo::edk::HandleWrapper> >::FromV8(
-      isolate, val, &handle))
+  gin::Handle<mojo::edk::js::HandleWrapper> handle;
+  if (!Converter<gin::Handle<mojo::edk::js::HandleWrapper>>::FromV8(
+          isolate, val, &handle))
     return false;
 
   *out = handle->get();
@@ -78,6 +81,5 @@ bool Converter<mojo::MessagePipeHandle>::FromV8(v8::Isolate* isolate,
                                                 mojo::MessagePipeHandle* out) {
   return Converter<mojo::Handle>::FromV8(isolate, val, out);
 }
-
 
 }  // namespace gin

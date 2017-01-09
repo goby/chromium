@@ -4,10 +4,15 @@
 
 #include "content/browser/download/drag_download_file.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/browser/download/download_stats.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
@@ -33,13 +38,14 @@ typedef base::Callback<void(bool)> OnCompleted;
 // anyway.
 class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
  public:
-  DragDownloadFileUI(const GURL& url,
-                     const Referrer& referrer,
-                     const std::string& referrer_encoding,
-                     WebContents* web_contents,
-                     base::MessageLoop* on_completed_loop,
-                     const OnCompleted& on_completed)
-      : on_completed_loop_(on_completed_loop),
+  DragDownloadFileUI(
+      const GURL& url,
+      const Referrer& referrer,
+      const std::string& referrer_encoding,
+      WebContents* web_contents,
+      scoped_refptr<base::SingleThreadTaskRunner> on_completed_task_runner,
+      const OnCompleted& on_completed)
+      : on_completed_task_runner_(on_completed_task_runner),
         on_completed_(on_completed),
         url_(url),
         referrer_(referrer),
@@ -47,7 +53,7 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
         web_contents_(web_contents),
         download_item_(NULL),
         weak_ptr_factory_(this) {
-    DCHECK(on_completed_loop_);
+    DCHECK(on_completed_task_runner_);
     DCHECK(!on_completed_.is_null());
     DCHECK(web_contents_);
     // May be called on any thread.
@@ -61,15 +67,18 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
         BrowserContext::GetDownloadManager(web_contents_->GetBrowserContext());
 
     RecordDownloadSource(INITIATED_BY_DRAG_N_DROP);
-    scoped_ptr<content::DownloadUrlParameters> params(
-        DownloadUrlParameters::FromWebContents(web_contents_, url_));
+    // TODO(https://crbug.com/614134) This should use the frame actually
+    // containing the link being dragged rather than the main frame of the tab.
+    std::unique_ptr<content::DownloadUrlParameters> params(
+        DownloadUrlParameters::CreateForWebContentsMainFrame(
+            web_contents_, url_));
     params->set_referrer(referrer_);
     params->set_referrer_encoding(referrer_encoding_);
     params->set_callback(base::Bind(&DragDownloadFileUI::OnDownloadStarted,
                                     weak_ptr_factory_.GetWeakPtr()));
     params->set_file_path(file_path);
-    params->set_file(file.Pass());  // Nulls file.
-    download_manager->DownloadUrl(params.Pass());
+    params->set_file(std::move(file));  // Nulls file.
+    download_manager->DownloadUrl(std::move(params));
   }
 
   void Cancel() {
@@ -93,10 +102,10 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
   void OnDownloadStarted(DownloadItem* item,
                          DownloadInterruptReason interrupt_reason) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    if (!item) {
-      DCHECK_NE(DOWNLOAD_INTERRUPT_REASON_NONE, interrupt_reason);
-      on_completed_loop_->task_runner()->PostTask(
-          FROM_HERE, base::Bind(on_completed_, false));
+    if (!item || item->GetState() != DownloadItem::IN_PROGRESS) {
+      DCHECK(!item || item->GetLastReason() != DOWNLOAD_INTERRUPT_REASON_NONE);
+      on_completed_task_runner_->PostTask(FROM_HERE,
+                                          base::Bind(on_completed_, false));
       return;
     }
     DCHECK_EQ(DOWNLOAD_INTERRUPT_REASON_NONE, interrupt_reason);
@@ -113,7 +122,7 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
         state == DownloadItem::CANCELLED ||
         state == DownloadItem::INTERRUPTED) {
       if (!on_completed_.is_null()) {
-        on_completed_loop_->task_runner()->PostTask(
+        on_completed_task_runner_->PostTask(
             FROM_HERE,
             base::Bind(on_completed_, state == DownloadItem::COMPLETE));
         on_completed_.Reset();
@@ -130,7 +139,7 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
     if (!on_completed_.is_null()) {
       const bool is_complete =
           download_item_->GetState() == DownloadItem::COMPLETE;
-      on_completed_loop_->task_runner()->PostTask(
+      on_completed_task_runner_->PostTask(
           FROM_HERE, base::Bind(on_completed_, is_complete));
       on_completed_.Reset();
     }
@@ -138,7 +147,7 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
     download_item_ = NULL;
   }
 
-  base::MessageLoop* on_completed_loop_;
+  scoped_refptr<base::SingleThreadTaskRunner> const on_completed_task_runner_;
   OnCompleted on_completed_;
   GURL url_;
   Referrer referrer_;
@@ -159,17 +168,13 @@ DragDownloadFile::DragDownloadFile(const base::FilePath& file_path,
                                    const std::string& referrer_encoding,
                                    WebContents* web_contents)
     : file_path_(file_path),
-      file_(file.Pass()),
-      drag_message_loop_(base::MessageLoop::current()),
+      file_(std::move(file)),
+      drag_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       state_(INITIALIZED),
       drag_ui_(NULL),
       weak_ptr_factory_(this) {
   drag_ui_ = new DragDownloadFileUI(
-      url,
-      referrer,
-      referrer_encoding,
-      web_contents,
-      drag_message_loop_,
+      url, referrer, referrer_encoding, web_contents, drag_task_runner_,
       base::Bind(&DragDownloadFile::DownloadCompleted,
                  weak_ptr_factory_.GetWeakPtr()));
   DCHECK(!file_path_.empty());
@@ -237,7 +242,7 @@ void DragDownloadFile::DownloadCompleted(bool is_successful) {
 
 void DragDownloadFile::CheckThread() {
 #if defined(OS_WIN)
-  DCHECK(drag_message_loop_ == base::MessageLoop::current());
+  DCHECK(drag_task_runner_->BelongsToCurrentThread());
 #else
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 #endif

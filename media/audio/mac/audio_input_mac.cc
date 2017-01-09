@@ -6,9 +6,9 @@
 
 #include <CoreServices/CoreServices.h>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/mac/mac_logging.h"
+#include "base/trace_event/trace_event.h"
 #include "media/audio/mac/audio_manager_mac.h"
 #include "media/base/audio_bus.h"
 
@@ -203,6 +203,7 @@ void PCMQueueInAudioInputStream::HandleInputBuffer(
     const AudioStreamPacketDescription* packet_desc) {
   DCHECK_EQ(audio_queue_, audio_queue);
   DCHECK(audio_buffer->mAudioData);
+  TRACE_EVENT0("audio", "PCMQueueInAudioInputStream::HandleInputBuffer");
   if (!callback_) {
     // This can happen if Stop() was called without start.
     DCHECK_EQ(0U, audio_buffer->mAudioDataByteSize);
@@ -221,10 +222,13 @@ void PCMQueueInAudioInputStream::HandleInputBuffer(
     // http://crbug.com/161383.
     base::TimeDelta elapsed = base::TimeTicks::Now() - last_fill_;
     const base::TimeDelta kMinDelay = base::TimeDelta::FromMilliseconds(5);
-    if (elapsed < kMinDelay)
+    if (elapsed < kMinDelay) {
+      TRACE_EVENT0("audio",
+                   "PCMQueueInAudioInputStream::HandleInputBuffer sleep");
       base::PlatformThread::Sleep(kMinDelay - elapsed);
+    }
 
-    uint8* audio_data = reinterpret_cast<uint8*>(audio_buffer->mAudioData);
+    uint8_t* audio_data = reinterpret_cast<uint8_t*>(audio_buffer->mAudioData);
     audio_bus_->FromInterleaved(
         audio_data, audio_bus_->frames(), format_.mBitsPerChannel / 8);
     callback_->OnData(

@@ -68,6 +68,9 @@ void DOMStorageDatabase::ReadAllValues(DOMStorageValuesMap* result) {
     (*result)[key] = base::NullableString16(value, false);
   }
   known_to_be_empty_ = result->empty();
+
+  // Reduce the size of sqlite caches.
+  db_->TrimMemory(false /* aggressively */);
 }
 
 bool DOMStorageDatabase::CommitChanges(bool clear_all_first,
@@ -125,7 +128,18 @@ bool DOMStorageDatabase::CommitChanges(bool clear_all_first,
   bool success = transaction.Commit();
   if (!success)
     known_to_be_empty_ = old_known_to_be_empty;
+
+  // Reduce the size of sqlite caches.
+  db_->TrimMemory(false /* aggressively */);
+
   return success;
+}
+
+void DOMStorageDatabase::ReportMemoryUsage(
+    base::trace_event::ProcessMemoryDump* pmd,
+    const std::string& name) {
+  if (IsOpen())
+    db_->ReportMemoryUsage(pmd, name);
 }
 
 bool DOMStorageDatabase::LazyOpen(bool create_if_needed) {
@@ -150,6 +164,9 @@ bool DOMStorageDatabase::LazyOpen(bool create_if_needed) {
 
   db_.reset(new sql::Connection());
   db_->set_histogram_tag("DOMStorageDatabase");
+
+  // This db does not use [meta] table, store mmap status data elsewhere.
+  db_->set_mmap_alt_status();
 
   if (file_path_.empty()) {
     // This code path should only be triggered by unit tests.

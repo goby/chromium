@@ -4,44 +4,32 @@
 
 #include "chrome/browser/media/midi_permission_infobar_delegate_android.h"
 
-#include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/infobars/core/infobar.h"
-#include "components/url_formatter/elide_url.h"
-#include "grit/theme_resources.h"
-#include "ui/base/l10n/l10n_util.h"
-
-// static
-infobars::InfoBar* MidiPermissionInfoBarDelegateAndroid::Create(
-    InfoBarService* infobar_service,
-    const GURL& requesting_frame,
-    const std::string& display_languages,
-    ContentSettingsType type,
-    const PermissionSetCallback& callback) {
-  return infobar_service->AddInfoBar(
-      infobar_service->CreateConfirmInfoBar(scoped_ptr<ConfirmInfoBarDelegate>(
-          new MidiPermissionInfoBarDelegateAndroid(
-              requesting_frame, display_languages, type, callback))));
-}
 
 MidiPermissionInfoBarDelegateAndroid::MidiPermissionInfoBarDelegateAndroid(
     const GURL& requesting_frame,
-    const std::string& display_languages,
-    ContentSettingsType type,
+    bool user_gesture,
+    Profile* profile,
     const PermissionSetCallback& callback)
-    : PermissionInfobarDelegate(requesting_frame, type, callback),
-      requesting_frame_(requesting_frame),
-      display_languages_(display_languages) {}
+    : PermissionInfoBarDelegate(requesting_frame,
+                                content::PermissionType::MIDI_SYSEX,
+                                CONTENT_SETTINGS_TYPE_MIDI_SYSEX,
+                                user_gesture,
+                                profile,
+                                callback) {}
 
 MidiPermissionInfoBarDelegateAndroid::~MidiPermissionInfoBarDelegateAndroid() {}
 
-int MidiPermissionInfoBarDelegateAndroid::GetIconId() const {
-  return IDR_INFOBAR_MIDI;
+infobars::InfoBarDelegate::InfoBarIdentifier
+MidiPermissionInfoBarDelegateAndroid::GetIdentifier() const {
+  return MIDI_PERMISSION_INFOBAR_DELEGATE_ANDROID;
 }
 
-base::string16 MidiPermissionInfoBarDelegateAndroid::GetMessageText() const {
-  return l10n_util::GetStringFUTF16(
-      IDS_MIDI_SYSEX_INFOBAR_QUESTION,
-      url_formatter::FormatUrlForSecurityDisplay(requesting_frame_.GetOrigin(),
-                                                 display_languages_));
+int MidiPermissionInfoBarDelegateAndroid::GetIconId() const {
+  return IDR_ANDROID_INFOBAR_MIDI;
+}
+
+int MidiPermissionInfoBarDelegateAndroid::GetMessageResourceId() const {
+  return IDS_MIDI_SYSEX_INFOBAR_QUESTION;
 }

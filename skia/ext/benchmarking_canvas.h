@@ -5,22 +5,17 @@
 #ifndef SKIA_EXT_BENCHMARKING_CANVAS_H_
 #define SKIA_EXT_BENCHMARKING_CANVAS_H_
 
-#include "base/values.h"
-#include "skia/ext/refptr.h"
-#include "third_party/skia/include/utils/SkNWayCanvas.h"
+#include <stddef.h>
 
-class SkXfermode;
+#include "base/values.h"
+#include "third_party/skia/include/utils/SkNWayCanvas.h"
 
 namespace skia {
 
 class SK_API BenchmarkingCanvas : public SkNWayCanvas {
 public:
-  BenchmarkingCanvas(SkCanvas* canvas, unsigned flags = 0);
+  BenchmarkingCanvas(SkCanvas* canvas);
   ~BenchmarkingCanvas() override;
-
-  enum Flags {
-      kOverdrawVisualization_Flag = 0x01,
-  };
 
   // Returns the number of draw commands executed on this canvas.
   size_t CommandCount() const;
@@ -34,18 +29,16 @@ public:
 protected:
   // SkCanvas overrides
   void willSave() override;
-  SaveLayerStrategy willSaveLayer(const SkRect*,
-                                  const SkPaint*,
-                                  SaveFlags) override;
+  SaveLayerStrategy getSaveLayerStrategy(const SaveLayerRec&) override;
   void willRestore() override;
 
   void didConcat(const SkMatrix&) override;
   void didSetMatrix(const SkMatrix&) override;
 
-  void onClipRect(const SkRect&, SkRegion::Op, ClipEdgeStyle) override;
-  void onClipRRect(const SkRRect&, SkRegion::Op, ClipEdgeStyle) override;
-  void onClipPath(const SkPath&, SkRegion::Op, ClipEdgeStyle) override;
-  void onClipRegion(const SkRegion&, SkRegion::Op) override;
+  void onClipRect(const SkRect&, SkClipOp, ClipEdgeStyle) override;
+  void onClipRRect(const SkRRect&, SkClipOp, ClipEdgeStyle) override;
+  void onClipPath(const SkPath&, SkClipOp, ClipEdgeStyle) override;
+  void onClipRegion(const SkRegion&, SkClipOp) override;
 
   void onDrawPaint(const SkPaint&) override;
   void onDrawPoints(PointMode, size_t count, const SkPoint pts[],
@@ -66,7 +59,6 @@ protected:
                        const SkPaint*, SrcRectConstraint) override;
   void onDrawBitmapNine(const SkBitmap&, const SkIRect& center, const SkRect& dst,
                         const SkPaint*) override;
-  void onDrawSprite(const SkBitmap&, int left, int top, const SkPaint*) override;
 
   void onDrawText(const void* text, size_t byteLength, SkScalar x, SkScalar y,
                   const SkPaint&) override;
@@ -85,8 +77,6 @@ private:
   class AutoOp;
 
   base::ListValue op_records_;
-  unsigned flags_;
-  RefPtr<SkXfermode> overdraw_xfermode_;
 };
 
 }

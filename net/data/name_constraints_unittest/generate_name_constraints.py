@@ -47,7 +47,7 @@ class SubjectAltNameGenerator:
     self.names.append(general_name)
 
   def __str__(self):
-    s = "asn1 = OCTWRAP,SEQUENCE:subjectAltNameSequence\n"
+    s = "asn1 = SEQUENCE:subjectAltNameSequence\n"
     s += "[subjectAltNameSequence]\n"
     s_suffix = ""
     for n, name in enumerate(self.names):
@@ -137,7 +137,7 @@ def x400_address():
 
 def directory_name(name):
   return str(name).replace(
-      'asn1 = SEQUENCE', 'directoryName = IMPLICIT:4,SEQUENCE')
+      'asn1 = SEQUENCE', 'directoryName = EXPLICIT:4,SEQUENCE')
 
 
 def edi_party_name():
@@ -210,6 +210,14 @@ def main():
   dnsname_constraints3 = NameConstraintsGenerator()
   dnsname_constraints3.add_permitted(dns_name(".bar.com"))
   generate(dnsname_constraints3, "dnsname-permitted_with_leading_dot.pem")
+
+  dnsname_constraints4 = NameConstraintsGenerator()
+  dnsname_constraints4.add_excluded(dns_name(".bar.com"))
+  generate(dnsname_constraints4, "dnsname-excluded_with_leading_dot.pem")
+
+  dnsname_constraints5 = NameConstraintsGenerator()
+  dnsname_constraints5.add_permitted(dns_name(".."))
+  generate(dnsname_constraints5, "dnsname-permitted_two_dot.pem")
 
   c = NameConstraintsGenerator()
   c.add_excluded(dns_name("excluded.permitted.example.com"))

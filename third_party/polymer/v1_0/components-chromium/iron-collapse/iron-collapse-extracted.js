@@ -2,6 +2,10 @@ Polymer({
 
     is: 'iron-collapse',
 
+    behaviors: [
+      Polymer.IronResizableBehavior
+    ],
+
     properties: {
 
       /**
@@ -25,12 +29,50 @@ Polymer({
         value: false,
         notify: true,
         observer: '_openedChanged'
-      }
+      },
 
+      /**
+       * Set noAnimation to true to disable animations.
+       *
+       * @attribute noAnimation
+       */
+      noAnimation: {
+        type: Boolean
+      },
+
+      /**
+       * Stores the desired size of the collapse body.
+       * @private
+       */
+      _desiredSize: {
+        type: String,
+        value: ''
+      }
+    },
+
+    get dimension() {
+      return this.horizontal ? 'width' : 'height';
+    },
+
+    /**
+     * `maxWidth` or `maxHeight`.
+     * @private
+     */
+    get _dimensionMax() {
+      return this.horizontal ? 'maxWidth' : 'maxHeight';
+    },
+
+    /**
+     * `max-width` or `max-height`.
+     * @private
+     */
+    get _dimensionMaxCss() {
+      return this.horizontal ? 'max-width' : 'max-height';
     },
 
     hostAttributes: {
       role: 'group',
+      'aria-hidden': 'true',
       'aria-expanded': 'false'
     },
 
@@ -38,10 +80,9 @@ Polymer({
       transitionend: '_transitionEnd'
     },
 
-    ready: function() {
-      // Avoid transition at the beginning e.g. page loads and enable
-      // transitions only after the element is rendered and ready.
-      this._enableTransition = true;
+    attached: function() {
+      // It will take care of setting correct classes and styles.
+      this._transitionEnd();
     },
 
     /**
@@ -54,70 +95,118 @@ Polymer({
     },
 
     show: function() {
-      this.opened = true;    
+      this.opened = true;
     },
 
     hide: function() {
-      this.opened = false;    
+      this.opened = false;
     },
 
+    /**
+     * Updates the size of the element.
+     * @param {string} size The new value for `maxWidth`/`maxHeight` as css property value, usually `auto` or `0px`.
+     * @param {boolean=} animated if `true` updates the size with an animation, otherwise without.
+     */
     updateSize: function(size, animated) {
-      this.enableTransition(animated);
-      var s = this.style;
-      var nochange = s[this.dimension] === size;
-      s[this.dimension] = size;
-      if (animated && nochange) {
+      // Consider 'auto' as '', to take full size.
+      size = size === 'auto' ? '' : size;
+      // No change!
+      if (this._desiredSize === size) {
+        return;
+      }
+
+      this._desiredSize = size;
+
+      this._updateTransition(false);
+      var willAnimate = animated && !this.noAnimation && this._isDisplayed;
+      // If we can animate, must do some prep work.
+      if (willAnimate) {
+        // Animation will start at the current size.
+        var startSize = this._calcSize();
+        // For `auto` we must calculate what is the final size for the animation.
+        // After the transition is done, _transitionEnd will set the size back to `auto`.
+        if (size === '') {
+          this.style[this._dimensionMax] = '';
+          size = this._calcSize();
+        }
+        // Go to startSize without animation.
+        this.style[this._dimensionMax] = startSize;
+        // Force layout to ensure transition will go. Set scrollTop to itself
+        // so that compilers won't remove it.
+        this.scrollTop = this.scrollTop;
+        // Enable animation.
+        this._updateTransition(true);
+        // If final size is the same as startSize it will not animate.
+        willAnimate = (size !== startSize);
+      }
+      // Set the final size.
+      this.style[this._dimensionMax] = size;
+      // If it won't animate, call transitionEnd to set correct classes.
+      if (!willAnimate) {
         this._transitionEnd();
       }
     },
 
+    /**
+     * enableTransition() is deprecated, but left over so it doesn't break existing code.
+     * Please use `noAnimation` property instead.
+     *
+     * @method enableTransition
+     * @deprecated since version 1.0.4
+     */
     enableTransition: function(enabled) {
-      this.style.transitionDuration = (enabled && this._enableTransition) ? '' : '0s';
+      Polymer.Base._warn('`enableTransition()` is deprecated, use `noAnimation` instead.');
+      this.noAnimation = !enabled;
+    },
+
+    _updateTransition: function(enabled) {
+      this.style.transitionDuration = (enabled && !this.noAnimation) ? '' : '0s';
     },
 
     _horizontalChanged: function() {
-      this.dimension = this.horizontal ? 'width' : 'height';
-      this.style.transitionProperty = this.dimension;
+      this.style.transitionProperty = this._dimensionMaxCss;
+      var otherDimension = this._dimensionMax === 'maxWidth' ? 'maxHeight' : 'maxWidth';
+      this.style[otherDimension] = '';
+      this.updateSize(this.opened ? 'auto' : '0px', false);
     },
 
     _openedChanged: function() {
+      this.setAttribute('aria-expanded', this.opened);
+      this.setAttribute('aria-hidden', !this.opened);
+
+      this.toggleClass('iron-collapse-closed', false);
+      this.toggleClass('iron-collapse-opened', false);
+      this.updateSize(this.opened ? 'auto' : '0px', true);
+
+      // Focus the current collapse.
       if (this.opened) {
-        this.setAttribute('aria-expanded', 'true');
-        this.setAttribute('aria-hidden', 'false');
-
-        this.toggleClass('iron-collapse-closed', false);
-        this.updateSize('auto', false);
-        var s = this._calcSize();
-        this.updateSize('0px', false);
-        // force layout to ensure transition will go
-        /** @suppress {suspiciousCode} */ this.offsetHeight;
-        this.updateSize(s, true);
-        // focus the current collapse
         this.focus();
-      } else {
-        this.setAttribute('aria-expanded', 'false');
-        this.setAttribute('aria-hidden', 'true');
-
-        this.toggleClass('iron-collapse-opened', false);
-        this.updateSize(this._calcSize(), false);
-        // force layout to ensure transition will go
-        /** @suppress {suspiciousCode} */ this.offsetHeight;
-        this.updateSize('0px', true);
       }
     },
 
     _transitionEnd: function() {
-      if (this.opened) {
-        this.updateSize('auto', false);
-      }
+      this.style[this._dimensionMax] = this._desiredSize;
       this.toggleClass('iron-collapse-closed', !this.opened);
       this.toggleClass('iron-collapse-opened', this.opened);
-      this.enableTransition(false);
+      this._updateTransition(false);
+      this.notifyResize();
+    },
+
+    /**
+     * Simplistic heuristic to detect if element has a parent with display: none
+     *
+     * @private
+     */
+    get _isDisplayed() {
+      var rect = this.getBoundingClientRect();
+      for (var prop in rect) {
+        if (rect[prop] !== 0) return true;
+      }
+      return false;
     },
 
     _calcSize: function() {
       return this.getBoundingClientRect()[this.dimension] + 'px';
-    },
-
+    }
 
   });

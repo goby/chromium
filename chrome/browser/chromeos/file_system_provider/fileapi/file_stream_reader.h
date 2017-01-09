@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_FILEAPI_FILE_STREAM_READER_H_
 #define CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_FILEAPI_FILE_STREAM_READER_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "storage/browser/fileapi/file_stream_reader.h"
 #include "storage/browser/fileapi/file_system_url.h"
@@ -31,7 +34,7 @@ class FileStreamReader : public storage::FileStreamReader {
 
   FileStreamReader(storage::FileSystemContext* context,
                    const storage::FileSystemURL& url,
-                   int64 initial_offset,
+                   int64_t initial_offset,
                    const base::Time& expected_modification_time);
 
   ~FileStreamReader() override;
@@ -40,7 +43,7 @@ class FileStreamReader : public storage::FileStreamReader {
   int Read(net::IOBuffer* buf,
            int buf_len,
            const net::CompletionCallback& callback) override;
-  int64 GetLength(const net::Int64CompletionCallback& callback) override;
+  int64_t GetLength(const net::Int64CompletionCallback& callback) override;
 
  private:
   // Helper class for executing operations on the provided file system. All
@@ -69,7 +72,7 @@ class FileStreamReader : public storage::FileStreamReader {
   // Called when initialization is completed with either a success or an error.
   void OnInitializeCompleted(const base::Closure& pending_closure,
                              const net::Int64CompletionCallback& error_callback,
-                             scoped_ptr<EntryMetadata> metadata,
+                             std::unique_ptr<EntryMetadata> metadata,
                              base::File::Error result);
 
   // Called when a file system provider returns chunk of read data. Note, that
@@ -85,7 +88,7 @@ class FileStreamReader : public storage::FileStreamReader {
   // or an error.
   void OnGetMetadataForGetLengthReceived(
       const net::Int64CompletionCallback& callback,
-      scoped_ptr<EntryMetadata> metadata,
+      std::unique_ptr<EntryMetadata> metadata,
       base::File::Error result);
 
   // Same as Read(), but called after initializing is completed.
@@ -97,8 +100,8 @@ class FileStreamReader : public storage::FileStreamReader {
   void GetLengthAfterInitialized(const net::Int64CompletionCallback& callback);
 
   storage::FileSystemURL url_;
-  int64 current_offset_;
-  int64 current_length_;
+  int64_t current_offset_;
+  int64_t current_length_;
   base::Time expected_modification_time_;
   scoped_refptr<OperationRunner> runner_;
   State state_;

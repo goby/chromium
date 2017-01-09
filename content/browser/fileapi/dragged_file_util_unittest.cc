@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
@@ -12,8 +15,11 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "content/public/test/async_file_test_helper.h"
 #include "content/public/test/test_file_system_context.h"
 #include "content/test/fileapi_test_file_set.h"
@@ -106,8 +112,7 @@ class DraggedFileUtilTest : public testing::Test {
     SimulateDropFiles();
 
     file_system_context_ = CreateFileSystemContextForTesting(
-        NULL /* quota_manager */,
-        partition_dir_.path());
+        NULL /* quota_manager */, partition_dir_.GetPath());
 
     isolated_context()->AddReference(filesystem_id_);
   }
@@ -120,9 +125,7 @@ class DraggedFileUtilTest : public testing::Test {
   storage::IsolatedContext* isolated_context() const {
     return storage::IsolatedContext::GetInstance();
   }
-  const base::FilePath& root_path() const {
-    return data_dir_.path();
-  }
+  const base::FilePath& root_path() const { return data_dir_.GetPath(); }
   FileSystemContext* file_system_context() const {
     return file_system_context_.get();
   }
@@ -137,7 +140,7 @@ class DraggedFileUtilTest : public testing::Test {
 
   base::FilePath GetTestCaseLocalPath(const base::FilePath& path) {
     base::FilePath relative;
-    if (data_dir_.path().AppendRelativePath(path, &relative))
+    if (data_dir_.GetPath().AppendRelativePath(path, &relative))
       return relative;
     return path;
   }
@@ -246,9 +249,9 @@ class DraggedFileUtilTest : public testing::Test {
     }
   }
 
-  scoped_ptr<storage::FileSystemOperationContext> GetOperationContext() {
-    return make_scoped_ptr(new storage::FileSystemOperationContext(
-                               file_system_context())).Pass();
+  std::unique_ptr<storage::FileSystemOperationContext> GetOperationContext() {
+    return base::MakeUnique<storage::FileSystemOperationContext>(
+        file_system_context());
   }
 
 
@@ -285,7 +288,7 @@ class DraggedFileUtilTest : public testing::Test {
   std::string filesystem_id_;
   scoped_refptr<FileSystemContext> file_system_context_;
   std::map<base::FilePath, base::FilePath> toplevel_root_map_;
-  scoped_ptr<storage::DraggedFileUtil> file_util_;
+  std::unique_ptr<storage::DraggedFileUtil> file_util_;
   DISALLOW_COPY_AND_ASSIGN(DraggedFileUtilTest);
 };
 

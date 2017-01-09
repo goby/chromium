@@ -4,11 +4,14 @@
 
 #include "components/metrics/profiler/tracking_synchronizer.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/metrics/histogram.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/tracked_objects.h"
 #include "components/metrics/profiler/tracking_synchronizer_observer.h"
 #include "components/variations/variations_associated_data.h"
@@ -177,10 +180,10 @@ base::LazyInstance
 // TrackingSynchronizer methods and members.
 
 TrackingSynchronizer::TrackingSynchronizer(
-    scoped_ptr<base::TickClock> clock,
+    std::unique_ptr<base::TickClock> clock,
     const TrackingSynchronizerDelegateFactory& delegate_factory)
     : last_used_sequence_number_(kNeverUsableSequenceNumber),
-      clock_(clock.Pass()) {
+      clock_(std::move(clock)) {
   DCHECK(!g_tracking_synchronizer);
   g_tracking_synchronizer = this;
   phase_start_times_.push_back(clock_->NowTicks());

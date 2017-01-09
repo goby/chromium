@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
@@ -16,7 +15,8 @@
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
+#include "components/prefs/pref_service.h"
 
 class SingleClientSupervisedUserSettingsSyncTest : public SyncTest {
  public:
@@ -42,8 +42,6 @@ IN_PROC_BROWSER_TEST_F(SingleClientSupervisedUserSettingsSyncTest, Sanity) {
   SupervisedUserService* supervised_user_service =
       SupervisedUserServiceFactory::GetForProfile(profile);
 
-  supervised_user_service->Init();
-
   // This call triggers a separate, supervised user-specific codepath
   // that does not normally execute for sync.
   supervised_user_service->OnSupervisedUserRegistered(
@@ -53,7 +51,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSupervisedUserSettingsSyncTest, Sanity) {
       GoogleServiceAuthError(GoogleServiceAuthError::NONE),
       std::string("token value doesn't matter in tests"));
 
-  ASSERT_TRUE(GetClient(0)->AwaitBackendInitialization());
+  ASSERT_TRUE(GetClient(0)->AwaitEngineInitialization());
   ASSERT_TRUE(GetClient(0)->AwaitSyncSetupCompletion());
 
   // TODO(pvalenzuela): Add additional tests and some verification of sync-

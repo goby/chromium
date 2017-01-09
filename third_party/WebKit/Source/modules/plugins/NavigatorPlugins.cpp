@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/plugins/NavigatorPlugins.h"
 
 #include "core/frame/LocalFrame.h"
@@ -14,75 +13,61 @@
 namespace blink {
 
 NavigatorPlugins::NavigatorPlugins(Navigator& navigator)
-    : DOMWindowProperty(navigator.frame())
-{
-}
+    : DOMWindowProperty(navigator.frame()) {}
 
-NavigatorPlugins::~NavigatorPlugins()
-{
+// static
+NavigatorPlugins& NavigatorPlugins::from(Navigator& navigator) {
+  NavigatorPlugins* supplement = toNavigatorPlugins(navigator);
+  if (!supplement) {
+    supplement = new NavigatorPlugins(navigator);
+    provideTo(navigator, supplementName(), supplement);
+  }
+  return *supplement;
 }
 
 // static
-NavigatorPlugins& NavigatorPlugins::from(Navigator& navigator)
-{
-    NavigatorPlugins* supplement = toNavigatorPlugins(navigator);
-    if (!supplement) {
-        supplement = new NavigatorPlugins(navigator);
-        provideTo(navigator, supplementName(), supplement);
-    }
-    return *supplement;
+NavigatorPlugins* NavigatorPlugins::toNavigatorPlugins(Navigator& navigator) {
+  return static_cast<NavigatorPlugins*>(
+      Supplement<Navigator>::from(navigator, supplementName()));
 }
 
 // static
-NavigatorPlugins* NavigatorPlugins::toNavigatorPlugins(Navigator& navigator)
-{
-    return static_cast<NavigatorPlugins*>(HeapSupplement<Navigator>::from(navigator, supplementName()));
+const char* NavigatorPlugins::supplementName() {
+  return "NavigatorPlugins";
 }
 
 // static
-const char* NavigatorPlugins::supplementName()
-{
-    return "NavigatorPlugins";
+DOMPluginArray* NavigatorPlugins::plugins(Navigator& navigator) {
+  return NavigatorPlugins::from(navigator).plugins(navigator.frame());
 }
 
 // static
-DOMPluginArray* NavigatorPlugins::plugins(Navigator& navigator)
-{
-    return NavigatorPlugins::from(navigator).plugins(navigator.frame());
+DOMMimeTypeArray* NavigatorPlugins::mimeTypes(Navigator& navigator) {
+  return NavigatorPlugins::from(navigator).mimeTypes(navigator.frame());
 }
 
 // static
-DOMMimeTypeArray* NavigatorPlugins::mimeTypes(Navigator& navigator)
-{
-    return NavigatorPlugins::from(navigator).mimeTypes(navigator.frame());
+bool NavigatorPlugins::javaEnabled(Navigator& navigator) {
+  return false;
 }
 
-// static
-bool NavigatorPlugins::javaEnabled(Navigator& navigator)
-{
-    return false;
+DOMPluginArray* NavigatorPlugins::plugins(LocalFrame* frame) const {
+  if (!m_plugins)
+    m_plugins = DOMPluginArray::create(frame);
+  return m_plugins.get();
 }
 
-DOMPluginArray* NavigatorPlugins::plugins(LocalFrame* frame) const
-{
-    if (!m_plugins)
-        m_plugins = DOMPluginArray::create(frame);
-    return m_plugins.get();
+DOMMimeTypeArray* NavigatorPlugins::mimeTypes(LocalFrame* frame) const {
+  if (!m_mimeTypes)
+    m_mimeTypes = DOMMimeTypeArray::create(frame);
+  return m_mimeTypes.get();
 }
 
-DOMMimeTypeArray* NavigatorPlugins::mimeTypes(LocalFrame* frame) const
-{
-    if (!m_mimeTypes)
-        m_mimeTypes = DOMMimeTypeArray::create(frame);
-    return m_mimeTypes.get();
+DEFINE_TRACE(NavigatorPlugins) {
+  visitor->trace(m_plugins);
+  visitor->trace(m_mimeTypes);
+  Supplement<Navigator>::trace(visitor);
+  DOMWindowProperty::trace(visitor);
 }
 
-DEFINE_TRACE(NavigatorPlugins)
-{
-    visitor->trace(m_plugins);
-    visitor->trace(m_mimeTypes);
-    HeapSupplement<Navigator>::trace(visitor);
-    DOMWindowProperty::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

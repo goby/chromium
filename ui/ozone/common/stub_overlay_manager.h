@@ -5,6 +5,7 @@
 #ifndef UI_OZONE_COMMON_STUB_OVERLAY_MANAGER_H_
 #define UI_OZONE_COMMON_STUB_OVERLAY_MANAGER_H_
 
+#include "base/macros.h"
 #include "ui/ozone/public/overlay_manager_ozone.h"
 
 namespace ui {
@@ -15,7 +16,7 @@ class StubOverlayManager : public OverlayManagerOzone {
   ~StubOverlayManager() override;
 
   // OverlayManagerOzone:
-  scoped_ptr<OverlayCandidatesOzone> CreateOverlayCandidates(
+  std::unique_ptr<OverlayCandidatesOzone> CreateOverlayCandidates(
       gfx::AcceleratedWidget w) override;
 
  private:

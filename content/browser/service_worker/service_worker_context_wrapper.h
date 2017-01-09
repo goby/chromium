@@ -5,19 +5,26 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_CONTEXT_WRAPPER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_CONTEXT_WRAPPER_H_
 
+#include <stdint.h>
+
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/service_worker_context.h"
 
 namespace base {
 class FilePath;
-class SequencedTaskRunner;
 class SingleThreadTaskRunner;
+}
+
+namespace blink {
+enum class WebNavigationHintType;
 }
 
 namespace storage {
@@ -60,6 +67,9 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
             storage::SpecialStoragePolicy* special_storage_policy);
   void Shutdown();
 
+  // Must be called on the IO thread.
+  void InitializeResourceContext(ResourceContext* resource_context);
+
   // Deletes all files on disk and restarts the system asynchronously. This
   // leaves the system in a disabled state until it's done. This should be
   // called on the IO thread.
@@ -75,8 +85,6 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   // be accessed on the IO thread, and can be null during initialization and
   // shutdown.
   ResourceContext* resource_context();
-
-  void set_resource_context(ResourceContext* resource_context);
 
   // The process manager can be used on either UI or IO.
   ServiceWorkerProcessManager* process_manager() {
@@ -96,21 +104,60 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       const GURL& url,
       const GURL& other_url,
       const CheckHasServiceWorkerCallback& callback) override;
+  void CountExternalRequestsForTest(
+      const GURL& url,
+      const CountExternalRequestsCallback& callback) override;
   void StopAllServiceWorkersForOrigin(const GURL& origin) override;
   void ClearAllServiceWorkersForTest(const base::Closure& callback) override;
+  void StartServiceWorkerForNavigationHint(
+      const GURL& document_url,
+      blink::WebNavigationHintType type,
+      int render_process_id,
+      const ResultCallback& callback) override;
+  bool StartingExternalRequest(int64_t service_worker_version_id,
+                               const std::string& request_uuid) override;
+  bool FinishedExternalRequest(int64_t service_worker_version_id,
+                               const std::string& request_uuid) override;
 
+  // These methods must only be called from the IO thread.
   ServiceWorkerRegistration* GetLiveRegistration(int64_t registration_id);
   ServiceWorkerVersion* GetLiveVersion(int64_t version_id);
   std::vector<ServiceWorkerRegistrationInfo> GetAllLiveRegistrationInfo();
   std::vector<ServiceWorkerVersionInfo> GetAllLiveVersionInfo();
 
+  // Must be called from the IO thread.
   void HasMainFrameProviderHost(const GURL& origin,
                                 const BoolCallback& callback) const;
 
-  // Returns the registration whose scope longest matches |document_url|.
-  // Returns ERROR_NOT_FOUND if it is not found.
-  void FindRegistrationForDocument(const GURL& document_url,
-                                   const FindRegistrationCallback& callback);
+  // Returns the registration whose scope longest matches |document_url|. It is
+  // guaranteed that the returned registration has the activated worker.
+  //
+  //  - If the registration is not found, returns ERROR_NOT_FOUND.
+  //  - If the registration has neither the waiting version nor the active
+  //    version, returns ERROR_NOT_FOUND.
+  //  - If the registration does not have the active version but has the waiting
+  //    version, activates the waiting version and runs |callback| when it is
+  //    activated.
+  //
+  // Must be called from the IO thread.
+  void FindReadyRegistrationForDocument(
+      const GURL& document_url,
+      const FindRegistrationCallback& callback);
+
+  // Returns the registration for |scope|. It is guaranteed that the returned
+  // registration has the activated worker.
+  //
+  //  - If the registration is not found, returns ERROR_NOT_FOUND.
+  //  - If the registration has neither the waiting version nor the active
+  //    version, returns ERROR_NOT_FOUND.
+  //  - If the registration does not have the active version but has the waiting
+  //    version, activates the waiting version and runs |callback| when it is
+  //    activated.
+  //
+  // Must be called from the IO thread.
+  void FindReadyRegistrationForPattern(
+      const GURL& scope,
+      const FindRegistrationCallback& callback);
 
   // Returns the registration for |registration_id|. It is guaranteed that the
   // returned registration has the activated worker.
@@ -121,40 +168,56 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   //  - If the registration does not have the active version but has the waiting
   //    version, activates the waiting version and runs |callback| when it is
   //    activated.
+  //
+  // Must be called from the IO thread.
   void FindReadyRegistrationForId(int64_t registration_id,
                                   const GURL& origin,
                                   const FindRegistrationCallback& callback);
 
+  // All these methods must be called from the IO thread.
   void GetAllRegistrations(const GetRegistrationsInfosCallback& callback);
   void GetRegistrationUserData(int64_t registration_id,
-                               const std::string& key,
+                               const std::vector<std::string>& keys,
                                const GetUserDataCallback& callback);
-  void StoreRegistrationUserData(int64_t registration_id,
-                                 const GURL& origin,
-                                 const std::string& key,
-                                 const std::string& data,
-                                 const StatusCallback& callback);
+  void StoreRegistrationUserData(
+      int64_t registration_id,
+      const GURL& origin,
+      const std::vector<std::pair<std::string, std::string>>& key_value_pairs,
+      const StatusCallback& callback);
   void ClearRegistrationUserData(int64_t registration_id,
-                                 const std::string& key,
+                                 const std::vector<std::string>& keys,
                                  const StatusCallback& callback);
   void GetUserDataForAllRegistrations(
       const std::string& key,
       const GetUserDataForAllRegistrationsCallback& callback);
 
+  // This function can be called from any thread, but the callback will always
+  // be called on the UI thread.
   void StartServiceWorker(const GURL& pattern, const StatusCallback& callback);
+
+  // This function can be called from any thread.
+  void SkipWaitingWorker(const GURL& pattern);
+
+  // These methods can be called from any thread.
   void UpdateRegistration(const GURL& pattern);
-  void SetForceUpdateOnPageLoad(int64_t registration_id,
-                                bool force_update_on_page_load);
+  void SetForceUpdateOnPageLoad(bool force_update_on_page_load);
   void AddObserver(ServiceWorkerContextObserver* observer);
   void RemoveObserver(ServiceWorkerContextObserver* observer);
 
   bool is_incognito() const { return is_incognito_; }
+
+  // Must be called from the IO thread.
+  bool OriginHasForeignFetchRegistrations(const GURL& origin);
+
+  // Must be called from the UI thread.
+  bool IsRunningNavigationHintTask(int render_process_id) const;
 
  private:
   friend class BackgroundSyncManagerTest;
   friend class base::RefCountedThreadSafe<ServiceWorkerContextWrapper>;
   friend class EmbeddedWorkerTestHelper;
   friend class EmbeddedWorkerBrowserTest;
+  friend class ForeignFetchRequestHandler;
   friend class ServiceWorkerDispatcherHost;
   friend class ServiceWorkerInternalsUI;
   friend class ServiceWorkerNavigationHandleCore;
@@ -167,7 +230,7 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
 
   void InitInternal(
       const base::FilePath& user_data_directory,
-      scoped_ptr<ServiceWorkerDatabaseTaskManager> database_task_manager,
+      std::unique_ptr<ServiceWorkerDatabaseTaskManager> database_task_manager,
       const scoped_refptr<base::SingleThreadTaskRunner>& disk_cache_thread,
       storage::QuotaManagerProxy* quota_manager_proxy,
       storage::SpecialStoragePolicy* special_storage_policy);
@@ -176,15 +239,16 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   void DidFindRegistrationForFindReady(
       const FindRegistrationCallback& callback,
       ServiceWorkerStatusCode status,
-      const scoped_refptr<ServiceWorkerRegistration>& registration);
+      scoped_refptr<ServiceWorkerRegistration> registration);
   void OnStatusChangedForFindReadyRegistration(
       const FindRegistrationCallback& callback,
-      const scoped_refptr<ServiceWorkerRegistration>& registration);
+      scoped_refptr<ServiceWorkerRegistration> registration);
 
   void DidDeleteAndStartOver(ServiceWorkerStatusCode status);
 
   void DidGetAllRegistrationsForGetAllOrigins(
       const GetUsageInfoCallback& callback,
+      ServiceWorkerStatusCode status,
       const std::vector<ServiceWorkerRegistrationInfo>& registrations);
 
   void DidCheckHasServiceWorker(const CheckHasServiceWorkerCallback& callback,
@@ -192,7 +256,27 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
 
   void DidFindRegistrationForUpdate(
       ServiceWorkerStatusCode status,
-      const scoped_refptr<content::ServiceWorkerRegistration>& registration);
+      scoped_refptr<content::ServiceWorkerRegistration> registration);
+
+  void DidCheckRenderProcessForNavigationHint(const GURL& document_url,
+                                              blink::WebNavigationHintType type,
+                                              int render_process_id,
+                                              const ResultCallback& callback);
+
+  void DidFindRegistrationForNavigationHint(
+      blink::WebNavigationHintType type,
+      int render_process_id,
+      const ResultCallback& callback,
+      ServiceWorkerStatusCode status,
+      scoped_refptr<ServiceWorkerRegistration> registration);
+
+  void DidStartServiceWorkerForNavigationHint(const GURL& pattern,
+                                              int render_process_id,
+                                              const ResultCallback& callback,
+                                              ServiceWorkerStatusCode code);
+  void DidFinishNavigationHintTaskOnUI(int render_process_id,
+                                       const ResultCallback& callback,
+                                       bool result);
 
   // The core context is only for use on the IO thread.
   // Can be null before/during init, during/after shutdown, and after
@@ -201,9 +285,9 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
 
   const scoped_refptr<base::ObserverListThreadSafe<
       ServiceWorkerContextObserver>> observer_list_;
-  const scoped_ptr<ServiceWorkerProcessManager> process_manager_;
-  // Cleared in Shutdown():
-  scoped_ptr<ServiceWorkerContextCore> context_core_;
+  const std::unique_ptr<ServiceWorkerProcessManager> process_manager_;
+  // Cleared in ShutdownOnIO():
+  std::unique_ptr<ServiceWorkerContextCore> context_core_;
 
   // Initialized in Init(); true if the user data directory is empty.
   bool is_incognito_;
@@ -213,6 +297,9 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
 
   // The ResourceContext associated with this context.
   ResourceContext* resource_context_;
+
+  // Must be touched on the UI thread.
+  std::map<int, int> navigation_hint_task_count_per_process_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerContextWrapper);
 };

@@ -4,7 +4,11 @@
 
 #include "components/domain_reliability/google_configs.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "components/domain_reliability/config.h"
 
 namespace domain_reliability {
@@ -27,7 +31,9 @@ struct GoogleConfigParams {
 };
 
 const GoogleConfigParams kGoogleConfigs[] = {
-  // Origins with subdomains and same-origin collectors.
+  // Origins with subdomains and same-origin collectors. Currently, all
+  // origins with same-origin collectors also run collectors on their www
+  // subdomain. (e.g., both foo.com and www.foo.com.)
   { "google.ac", true, true, true },
   { "google.ad", true, true, true },
   { "google.ae", true, true, true },
@@ -84,7 +90,6 @@ const GoogleConfigParams kGoogleConfigs[] = {
   { "google.co.za", true, true, true },
   { "google.co.zm", true, true, true },
   { "google.co.zw", true, true, true },
-  { "google.com", true, true, false },
   { "google.com.af", true, true, true },
   { "google.com.ag", true, true, true },
   { "google.com.ai", true, true, true },
@@ -250,6 +255,10 @@ const GoogleConfigParams kGoogleConfigs[] = {
   { "google.ws", true, true, true },
   { "l.google.com", true, true, true },
 
+  // google.com is a special case. We have a custom config for www.google.com,
+  // so set generate_config_for_www_subdomain = false.
+  { "google.com", true, true, false },
+
   // Origins with subdomains and without same-origin collectors.
   { "2mdn.net", true, false, false },
   { "adgoogle.net", true, false, false },
@@ -288,6 +297,9 @@ const GoogleConfigParams kGoogleConfigs[] = {
   { "admob.vn", true, false, false },
   { "adwhirl.com", true, false, false },
   { "android.com", true, false, false },
+  { "anycast-edge.metric.gstatic.com", true, false, false },
+  { "anycast-stb.metric.gstatic.com", true, false, false },
+  { "anycast.metric.gstatic.com", true, false, false },
   { "chromecast.com", true, false, false },
   { "chromeexperiments.com", true, false, false },
   { "chromestatus.com", true, false, false },
@@ -311,6 +323,7 @@ const GoogleConfigParams kGoogleConfigs[] = {
   { "google.jobs", true, false, false },
   { "google.net", true, false, false },
   { "google.org", true, false, false },
+  { "google.stackdriver.com", true, false, false },
   { "googleadapis.com", true, false, false },
   { "googleadservices.com", true, false, false },
   { "googleadsserving.cn", true, false, false },
@@ -335,8 +348,24 @@ const GoogleConfigParams kGoogleConfigs[] = {
   { "googleusercontent.com", true, false, false },
   { "gstatic.cn", true, false, false },
   { "gstatic.com", true, false, false },
+  { "gvt3.com", true, false, false },
+  { "gvt9.com", true, false, false },
   { "picasa.com", true, false, false },
   { "recaptcha.net", true, false, false },
+  { "stackdriver.com", true, false, false },
+  { "stbcast-stb.metric.gstatic.com", true, false, false },
+  { "stbcast.metric.gstatic.com", true, false, false },
+  { "stbcast2-stb.metric.gstatic.com", true, false, false },
+  { "stbcast2.metric.gstatic.com", true, false, false },
+  { "stbcast3-stb.metric.gstatic.com", true, false, false },
+  { "stbcast3.metric.gstatic.com", true, false, false },
+  { "stbcast4-stb.metric.gstatic.com", true, false, false },
+  { "stbcast4.metric.gstatic.com", true, false, false },
+  { "unicast-edge.metric.gstatic.com", true, false, false },
+  { "unicast-stb.metric.gstatic.com", true, false, false },
+  { "unicast.metric.gstatic.com", true, false, false },
+  { "unicast2-stb.metric.gstatic.com", true, false, false },
+  { "unicast2.metric.gstatic.com", true, false, false },
   { "waze.com", true, false, false },
   { "withgoogle.com", true, false, false },
   { "youtu.be", true, false, false },
@@ -476,7 +505,14 @@ const GoogleConfigParams kGoogleConfigs[] = {
   // Origins without subdomains and with same-origin collectors.
   { "accounts.google.com", false, true, false },
   { "apis.google.com", false, true, false },
+  { "b.mail.google.com", false, true, false },
+  { "chatenabled.mail.google.com", false, true, false },
   { "ddm.google.com", false, true, false },
+  { "gmail.com", false, true, false },
+  { "gmail.google.com", false, true, false },
+  { "mail-attachment.googleusercontent.com", false, true, false },
+  { "mail.google.com", false, true, false },
+  { "www.gmail.com", false, true, false },
 
   // Origins without subdomains or same-origin collectors.
   { "ad.doubleclick.net", false, false, false },
@@ -487,23 +523,27 @@ const GoogleConfigParams kGoogleConfigs[] = {
 const char* kGoogleStandardCollectors[] = {
   "https://beacons.gvt2.com/domainreliability/upload",
   "https://beacons2.gvt2.com/domainreliability/upload",
-  "https://clients2.google.com/domainreliability/upload",
   "https://beacons3.gvt2.com/domainreliability/upload",
-  "https://beacons4.gvt2.com/domainreliability/upload"
+  "https://beacons4.gvt2.com/domainreliability/upload",
+  "https://beacons5.gvt2.com/domainreliability/upload",
+  "https://beacons5.gvt3.com/domainreliability/upload",
+  "https://clients2.google.com/domainreliability/upload",
 };
 
 const char* kGoogleOriginSpecificCollectorPathString =
   "/domainreliability/upload";
 
-static scoped_ptr<DomainReliabilityConfig>
-CreateGoogleConfig(const GoogleConfigParams& params, bool is_www) {
+static std::unique_ptr<DomainReliabilityConfig> CreateGoogleConfig(
+    const GoogleConfigParams& params,
+    bool is_www) {
   if (is_www)
     DCHECK(params.duplicate_for_www);
 
   std::string hostname = (is_www ? "www." : "") + std::string(params.hostname);
   bool include_subdomains = params.include_subdomains && !is_www;
 
-  scoped_ptr<DomainReliabilityConfig> config(new DomainReliabilityConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(
+      new DomainReliabilityConfig());
   config->origin = GURL("https://" + hostname + "/");
   config->include_subdomains = include_subdomains;
   config->collectors.clear();
@@ -518,20 +558,20 @@ CreateGoogleConfig(const GoogleConfigParams& params, bool is_www) {
   config->success_sample_rate = 0.05;
   config->failure_sample_rate = 1.00;
   config->path_prefixes.clear();
-  return config.Pass();
+  return config;
 }
 
 }  // namespace
 
 // static
 void GetAllGoogleConfigs(
-    std::vector<DomainReliabilityConfig*>* configs_out) {
+    std::vector<std::unique_ptr<DomainReliabilityConfig>>* configs_out) {
   configs_out->clear();
 
   for (auto& params : kGoogleConfigs) {
-    configs_out->push_back(CreateGoogleConfig(params, false).release());
+    configs_out->push_back(CreateGoogleConfig(params, false));
     if (params.duplicate_for_www)
-      configs_out->push_back(CreateGoogleConfig(params, true).release());
+      configs_out->push_back(CreateGoogleConfig(params, true));
   }
 }
 

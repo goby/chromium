@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
@@ -60,7 +64,7 @@ class EndToEndAsyncTest : public testing::Test {
     bus_options.dbus_task_runner = dbus_thread_->task_runner();
     bus_ = new Bus(bus_options);
     object_proxy_ = bus_->GetObjectProxy(
-        "org.chromium.TestService",
+        test_service_->service_name(),
         ObjectPath("/org/chromium/TestObject"));
     ASSERT_TRUE(bus_->HasDBusThread());
 
@@ -94,7 +98,7 @@ class EndToEndAsyncTest : public testing::Test {
     run_loop_->Run();
 
     // Create a second object proxy for the root object.
-    root_object_proxy_ = bus_->GetObjectProxy("org.chromium.TestService",
+    root_object_proxy_ = bus_->GetObjectProxy(test_service_->service_name(),
                                               ObjectPath("/"));
     ASSERT_TRUE(bus_->HasDBusThread());
 
@@ -144,7 +148,7 @@ class EndToEndAsyncTest : public testing::Test {
 
     // Create new object proxy.
     object_proxy_ = bus_->GetObjectProxy(
-        "org.chromium.TestService",
+        test_service_->service_name(),
         ObjectPath("/org/chromium/TestObject"));
   }
 
@@ -252,14 +256,14 @@ class EndToEndAsyncTest : public testing::Test {
   }
 
   base::MessageLoop message_loop_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   std::vector<std::string> response_strings_;
   std::vector<std::string> error_names_;
-  scoped_ptr<base::Thread> dbus_thread_;
+  std::unique_ptr<base::Thread> dbus_thread_;
   scoped_refptr<Bus> bus_;
   ObjectProxy* object_proxy_;
   ObjectProxy* root_object_proxy_;
-  scoped_ptr<TestService> test_service_;
+  std::unique_ptr<TestService> test_service_;
   // Text message from "Test" signal.
   std::string test_signal_string_;
   // Text message from "Test" signal delivered to root.
@@ -432,15 +436,14 @@ TEST_F(EndToEndAsyncTest, CancelPendingCalls) {
 
   // Remove the object proxy before receiving the result.
   // This results in cancelling the pending method call.
-  bus_->RemoveObjectProxy("org.chromium.TestService",
+  bus_->RemoveObjectProxy(test_service_->service_name(),
                           ObjectPath("/org/chromium/TestObject"),
                           base::Bind(&base::DoNothing));
 
   // We shouldn't receive any responses. Wait for a while just to make sure.
   run_loop_.reset(new base::RunLoop);
-  message_loop_.PostDelayedTask(FROM_HERE,
-                                run_loop_->QuitClosure(),
-                                TestTimeouts::tiny_timeout());
+  message_loop_.task_runner()->PostDelayedTask(
+      FROM_HERE, run_loop_->QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop_->Run();
   EXPECT_TRUE(response_strings_.empty());
 }
@@ -514,7 +517,7 @@ TEST_F(EndToEndAsyncTest, InvalidObjectPath) {
   const ObjectPath invalid_object_path("/org/chromium/TestObject/");
 
   // Replace object proxy with new one.
-  object_proxy_ = bus_->GetObjectProxy("org.chromium.TestService",
+  object_proxy_ = bus_->GetObjectProxy(test_service_->service_name(),
                                        invalid_object_path);
 
   MethodCall method_call("org.chromium.TestInterface", "Echo");
@@ -562,9 +565,8 @@ TEST_F(EndToEndAsyncTest, EmptyResponseCallback) {
                             ObjectProxy::EmptyResponseCallback());
   // Post a delayed task to quit the message loop.
   run_loop_.reset(new base::RunLoop);
-  message_loop_.PostDelayedTask(FROM_HERE,
-                                run_loop_->QuitClosure(),
-                                TestTimeouts::tiny_timeout());
+  message_loop_.task_runner()->PostDelayedTask(
+      FROM_HERE, run_loop_->QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop_->Run();
   // We cannot tell if the empty callback is called, but at least we can
   // check if the test does not crash.

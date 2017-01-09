@@ -4,17 +4,18 @@
 
 #include "chrome/browser/extensions/webstore_installer.h"
 
+#include <stddef.h>
 #include <stdint.h>
-
 #include <limits>
 #include <set>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
@@ -23,6 +24,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/download/download_crx_util.h"
 #include "chrome/browser/download/download_prefs.h"
@@ -50,6 +52,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -242,44 +245,42 @@ WebstoreInstaller::Approval::Approval()
       use_app_installed_bubble(false),
       skip_post_install_ui(false),
       skip_install_dialog(false),
-      enable_launcher(false),
       manifest_check_level(MANIFEST_CHECK_LEVEL_STRICT) {
 }
 
-scoped_ptr<WebstoreInstaller::Approval>
+std::unique_ptr<WebstoreInstaller::Approval>
 WebstoreInstaller::Approval::CreateWithInstallPrompt(Profile* profile) {
-  scoped_ptr<Approval> result(new Approval());
+  std::unique_ptr<Approval> result(new Approval());
   result->profile = profile;
-  return result.Pass();
+  return result;
 }
 
-scoped_ptr<WebstoreInstaller::Approval>
+std::unique_ptr<WebstoreInstaller::Approval>
 WebstoreInstaller::Approval::CreateForSharedModule(Profile* profile) {
-  scoped_ptr<Approval> result(new Approval());
+  std::unique_ptr<Approval> result(new Approval());
   result->profile = profile;
   result->skip_install_dialog = true;
   result->skip_post_install_ui = true;
   result->manifest_check_level = MANIFEST_CHECK_LEVEL_NONE;
-  return result.Pass();
+  return result;
 }
 
-scoped_ptr<WebstoreInstaller::Approval>
+std::unique_ptr<WebstoreInstaller::Approval>
 WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
     Profile* profile,
     const std::string& extension_id,
-    scoped_ptr<base::DictionaryValue> parsed_manifest,
+    std::unique_ptr<base::DictionaryValue> parsed_manifest,
     bool strict_manifest_check) {
-  scoped_ptr<Approval> result(new Approval());
+  std::unique_ptr<Approval> result(new Approval());
   result->extension_id = extension_id;
   result->profile = profile;
-  result->manifest = scoped_ptr<Manifest>(
-      new Manifest(Manifest::INVALID_LOCATION,
-                   scoped_ptr<base::DictionaryValue>(
-                       parsed_manifest->DeepCopy())));
+  result->manifest = std::unique_ptr<Manifest>(new Manifest(
+      Manifest::INVALID_LOCATION,
+      std::unique_ptr<base::DictionaryValue>(parsed_manifest->DeepCopy())));
   result->skip_install_dialog = true;
   result->manifest_check_level = strict_manifest_check ?
     MANIFEST_CHECK_LEVEL_STRICT : MANIFEST_CHECK_LEVEL_LOOSE;
-  return result.Pass();
+  return result;
 }
 
 WebstoreInstaller::Approval::~Approval() {}
@@ -293,7 +294,7 @@ WebstoreInstaller::WebstoreInstaller(Profile* profile,
                                      Delegate* delegate,
                                      content::WebContents* web_contents,
                                      const std::string& id,
-                                     scoped_ptr<Approval> approval,
+                                     std::unique_ptr<Approval> approval,
                                      InstallSource source)
     : content::WebContentsObserver(web_contents),
       extension_registry_observer_(this),
@@ -371,28 +372,22 @@ void WebstoreInstaller::Start() {
 void WebstoreInstaller::Observe(int type,
                                 const content::NotificationSource& source,
                                 const content::NotificationDetails& details) {
-  switch (type) {
-    case extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR: {
-      CrxInstaller* crx_installer = content::Source<CrxInstaller>(source).ptr();
-      CHECK(crx_installer);
-      if (crx_installer != crx_installer_.get())
-        return;
+  DCHECK_EQ(extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR, type);
 
-      // TODO(rdevlin.cronin): Continue removing std::string errors and
-      // replacing with base::string16. See crbug.com/71980.
-      const extensions::CrxInstallError* error =
-          content::Details<const extensions::CrxInstallError>(details).ptr();
-      const std::string utf8_error = base::UTF16ToUTF8(error->message());
-      crx_installer_ = NULL;
-      // ReportFailure releases a reference to this object so it must be the
-      // last operation in this method.
-      ReportFailure(utf8_error, FAILURE_REASON_OTHER);
-      break;
-    }
+  CrxInstaller* crx_installer = content::Source<CrxInstaller>(source).ptr();
+  CHECK(crx_installer);
+  if (crx_installer != crx_installer_.get())
+    return;
 
-    default:
-      NOTREACHED();
-  }
+  // TODO(rdevlin.cronin): Continue removing std::string errors and
+  // replacing with base::string16. See crbug.com/71980.
+  const extensions::CrxInstallError* error =
+      content::Details<const extensions::CrxInstallError>(details).ptr();
+  const std::string utf8_error = base::UTF16ToUTF8(error->message());
+  crx_installer_ = nullptr;
+  // ReportFailure releases a reference to this object so it must be the
+  // last operation in this method.
+  ReportFailure(utf8_error, FAILURE_REASON_OTHER);
 }
 
 void WebstoreInstaller::OnExtensionInstalled(
@@ -419,7 +414,7 @@ void WebstoreInstaller::OnExtensionInstalled(
     CHECK_EQ(extension->id(), id_);
     ReportSuccess();
   } else {
-    const Version version_required(info.minimum_version);
+    const base::Version version_required(info.minimum_version);
     if (version_required.IsValid() &&
         extension->version()->CompareTo(version_required) < 0) {
       // It should not happen, CrxInstaller will make sure the version is
@@ -457,8 +452,9 @@ void WebstoreInstaller::OnDownloadStarted(
     const std::string& extension_id,
     DownloadItem* item,
     content::DownloadInterruptReason interrupt_reason) {
-  if (!item) {
-    DCHECK_NE(content::DOWNLOAD_INTERRUPT_REASON_NONE, interrupt_reason);
+  if (!item || interrupt_reason != content::DOWNLOAD_INTERRUPT_REASON_NONE) {
+    if (item)
+      item->Remove();
     ReportFailure(content::DownloadInterruptReasonToString(interrupt_reason),
                   FAILURE_REASON_OTHER);
     return;
@@ -488,14 +484,14 @@ void WebstoreInstaller::OnDownloadStarted(
   download_item_->AddObserver(this);
   if (pending_modules_.size() > 1) {
     // We are downloading a shared module. We need create an approval for it.
-    scoped_ptr<Approval> approval = Approval::CreateForSharedModule(profile_);
+    std::unique_ptr<Approval> approval =
+        Approval::CreateForSharedModule(profile_);
     const SharedModuleInfo::ImportInfo& info = pending_modules_.front();
     approval->extension_id = info.extension_id;
-    const Version version_required(info.minimum_version);
+    const base::Version version_required(info.minimum_version);
 
     if (version_required.IsValid()) {
-      approval->minimum_version.reset(
-          new Version(version_required));
+      approval->minimum_version.reset(new base::Version(version_required));
     }
     download_item_->SetUserData(kApprovalKey, approval.release());
   } else {
@@ -526,25 +522,29 @@ void WebstoreInstaller::OnDownloadUpdated(DownloadItem* download) {
           FAILURE_REASON_OTHER);
       break;
     case DownloadItem::COMPLETE:
-      // Wait for other notifications if the download is really an extension.
-      if (!download_crx_util::IsExtensionDownload(*download)) {
-        ReportFailure(kInvalidDownloadError, FAILURE_REASON_OTHER);
-      } else {
-        if (crx_installer_.get())
-          return;  // DownloadItemImpl calls the observer twice, ignore it.
-        StartCrxInstaller(*download);
-
-        if (pending_modules_.size() == 1) {
-          // The download is the last module - the extension main module.
-          if (delegate_)
-            delegate_->OnExtensionDownloadProgress(id_, download);
-          extensions::InstallTracker* tracker =
-              extensions::InstallTrackerFactory::GetForBrowserContext(profile_);
-          tracker->OnDownloadProgress(id_, 100);
-        }
-      }
       // Stop the progress timer if it's running.
       download_progress_timer_.Stop();
+
+      // Only wait for other notifications if the download is really
+      // an extension.
+      if (!download_crx_util::IsExtensionDownload(*download)) {
+        ReportFailure(kInvalidDownloadError, FAILURE_REASON_OTHER);
+        return;
+      }
+
+      if (crx_installer_.get())
+        return;  // DownloadItemImpl calls the observer twice, ignore it.
+
+      StartCrxInstaller(*download);
+
+      if (pending_modules_.size() == 1) {
+        // The download is the last module - the extension main module.
+        if (delegate_)
+          delegate_->OnExtensionDownloadProgress(id_, download);
+        extensions::InstallTracker* tracker =
+            extensions::InstallTrackerFactory::GetForBrowserContext(profile_);
+        tracker->OnDownloadProgress(id_, 100);
+      }
       break;
     case DownloadItem::IN_PROGRESS: {
       if (delegate_ && pending_modules_.size() == 1) {
@@ -658,14 +658,15 @@ void WebstoreInstaller::StartDownload(const std::string& extension_id,
   int render_process_host_id = contents->GetRenderProcessHost()->GetID();
   int render_view_host_routing_id =
       contents->GetRenderViewHost()->GetRoutingID();
-  content::ResourceContext* resource_context =
-      controller.GetBrowserContext()->GetResourceContext();
-  scoped_ptr<DownloadUrlParameters> params(new DownloadUrlParameters(
-      download_url_,
-      render_process_host_id,
-      render_view_host_routing_id,
-      contents->GetMainFrame()->GetRoutingID(),
-      resource_context));
+
+  content::RenderFrameHost* render_frame_host = contents->GetMainFrame();
+  content::StoragePartition* storage_partition =
+      BrowserContext::GetStoragePartition(profile_,
+                                          render_frame_host->GetSiteInstance());
+  std::unique_ptr<DownloadUrlParameters> params(new DownloadUrlParameters(
+      download_url_, render_process_host_id, render_view_host_routing_id,
+      render_frame_host->GetRoutingID(),
+      storage_partition->GetURLRequestContext()));
   params->set_file_path(file);
   if (controller.GetVisibleEntry())
     params->set_referrer(content::Referrer::SanitizeForRequest(
@@ -674,7 +675,7 @@ void WebstoreInstaller::StartDownload(const std::string& extension_id,
   params->set_callback(base::Bind(&WebstoreInstaller::OnDownloadStarted,
                                   this,
                                   extension_id));
-  download_manager->DownloadUrl(params.Pass());
+  download_manager->DownloadUrl(std::move(params));
 }
 
 void WebstoreInstaller::UpdateDownloadProgress() {

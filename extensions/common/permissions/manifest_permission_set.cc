@@ -4,6 +4,8 @@
 
 #include "extensions/common/permissions/manifest_permission_set.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
@@ -26,8 +28,7 @@ bool CreateManifestPermission(
     ManifestPermissionSet* manifest_permissions,
     base::string16* error,
     std::vector<std::string>* unhandled_permissions) {
-
-  scoped_ptr<ManifestPermission> permission(
+  std::unique_ptr<ManifestPermission> permission(
       ManifestHandler::CreatePermission(permission_name));
 
   if (!permission) {

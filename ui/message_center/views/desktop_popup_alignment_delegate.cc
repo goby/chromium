@@ -4,9 +4,9 @@
 
 #include "ui/message_center/views/desktop_popup_alignment_delegate.h"
 
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
 #include "ui/message_center/message_center_style.h"
 #include "ui/message_center/views/message_popup_collection.h"
 
@@ -14,23 +14,22 @@ namespace message_center {
 
 DesktopPopupAlignmentDelegate::DesktopPopupAlignmentDelegate()
     : alignment_(POPUP_ALIGNMENT_BOTTOM | POPUP_ALIGNMENT_RIGHT),
-      display_id_(gfx::Display::kInvalidDisplayID),
-      screen_(NULL) {
-}
+      primary_display_id_(display::kInvalidDisplayId),
+      screen_(NULL) {}
 
 DesktopPopupAlignmentDelegate::~DesktopPopupAlignmentDelegate() {
   if (screen_)
     screen_->RemoveObserver(this);
 }
 
-void DesktopPopupAlignmentDelegate::StartObserving(gfx::Screen* screen) {
+void DesktopPopupAlignmentDelegate::StartObserving(display::Screen* screen) {
   if (screen_ || !screen)
     return;
 
   screen_ = screen;
   screen_->AddObserver(this);
-  gfx::Display display = screen_->GetPrimaryDisplay();
-  display_id_ = display.id();
+  display::Display display = screen_->GetPrimaryDisplay();
+  primary_display_id_ = display.id();
   RecomputeAlignment(display);
 }
 
@@ -47,8 +46,8 @@ int DesktopPopupAlignmentDelegate::GetBaseLine() const {
       : work_area_.bottom() - kMarginBetweenItems;
 }
 
-int DesktopPopupAlignmentDelegate::GetWorkAreaBottom() const {
-  return work_area_.bottom();
+gfx::Rect DesktopPopupAlignmentDelegate::GetWorkArea() const {
+  return work_area_;
 }
 
 bool DesktopPopupAlignmentDelegate::IsTopDown() const {
@@ -60,7 +59,7 @@ bool DesktopPopupAlignmentDelegate::IsFromLeft() const {
 }
 
 void DesktopPopupAlignmentDelegate::RecomputeAlignment(
-    const gfx::Display& display) {
+    const display::Display& display) {
   if (work_area_ == display.work_area())
     return;
 
@@ -84,21 +83,46 @@ void DesktopPopupAlignmentDelegate::RecomputeAlignment(
       : POPUP_ALIGNMENT_RIGHT;
 }
 
+void DesktopPopupAlignmentDelegate::ConfigureWidgetInitParamsForContainer(
+    views::Widget* widget,
+    views::Widget::InitParams* init_params) {
+  // Do nothing, which will use the default container.
+}
+
+// Anytime the display configuration changes, we need to recompute the alignment
+// on the primary display. But, we get different events on different platforms.
+// On Windows, for example, when switching from a laptop display to an external
+// monitor, we get a OnDisplayMetricsChanged() event. On Linux, we get a
+// OnDisplayRemoved() and a OnDisplayAdded() instead. In order to account for
+// these slightly different abstractions, we update on every event.
+void DesktopPopupAlignmentDelegate::UpdatePrimaryDisplay() {
+  display::Display primary_display = screen_->GetPrimaryDisplay();
+  if (primary_display.id() != primary_display_id_) {
+    primary_display_id_ = primary_display.id();
+    RecomputeAlignment(primary_display);
+    DoUpdateIfPossible();
+  }
+}
+
 void DesktopPopupAlignmentDelegate::OnDisplayAdded(
-    const gfx::Display& new_display) {
+    const display::Display& added_display) {
+  // The added display could be the new primary display.
+  UpdatePrimaryDisplay();
 }
 
 void DesktopPopupAlignmentDelegate::OnDisplayRemoved(
-    const gfx::Display& old_display) {
+    const display::Display& removed_display) {
+  // The removed display may have been the primary display.
+  UpdatePrimaryDisplay();
 }
 
 void DesktopPopupAlignmentDelegate::OnDisplayMetricsChanged(
-    const gfx::Display& display,
+    const display::Display& display,
     uint32_t metrics) {
-  if (display.id() == display_id_) {
-    RecomputeAlignment(display);
-    DoUpdateIfPossible();
-  }
+  // Set to kInvalidDisplayId so the alignment is updated regardless of whether
+  // the primary display actually changed.
+  primary_display_id_ = display::kInvalidDisplayId;
+  UpdatePrimaryDisplay();
 }
 
 }  // namespace message_center

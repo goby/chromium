@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "storage/browser/fileapi/file_system_dir_url_request_job.h"
-
+#include <stdint.h>
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -14,14 +14,15 @@
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/public/test/mock_special_storage_policy.h"
 #include "content/public/test/test_file_system_backend.h"
 #include "content/public/test/test_file_system_context.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_request_headers.h"
 #include "net/url_request/url_request.h"
@@ -29,6 +30,7 @@
 #include "net/url_request/url_request_test_util.h"
 #include "storage/browser/fileapi/external_mount_points.h"
 #include "storage/browser/fileapi/file_system_context.h"
+#include "storage/browser/fileapi/file_system_dir_url_request_job.h"
 #include "storage/browser/fileapi/file_system_file_util.h"
 #include "storage/browser/fileapi/file_system_operation_context.h"
 #include "storage/browser/fileapi/file_system_url.h"
@@ -131,8 +133,8 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
     special_storage_policy_ = new MockSpecialStoragePolicy;
-    file_system_context_ = CreateFileSystemContextForTesting(
-        NULL, temp_dir_.path());
+    file_system_context_ =
+        CreateFileSystemContextForTesting(NULL, temp_dir_.GetPath());
 
     file_system_context_->OpenFileSystem(
         GURL("http://remote/"),
@@ -150,7 +152,7 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
   }
 
   void SetUpAutoMountContext(base::FilePath* mnt_point) {
-    *mnt_point = temp_dir_.path().AppendASCII("auto_mount_dir");
+    *mnt_point = temp_dir_.GetPath().AppendASCII("auto_mount_dir");
     ASSERT_TRUE(base::CreateDirectory(*mnt_point));
 
     ScopedVector<storage::FileSystemBackend> additional_providers;
@@ -161,7 +163,7 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
     handlers.push_back(base::Bind(&TestAutoMountForURLRequest));
 
     file_system_context_ = CreateFileSystemContextWithAutoMountersForTesting(
-        NULL, additional_providers.Pass(), handlers, temp_dir_.path());
+        NULL, std::move(additional_providers), handlers, temp_dir_.GetPath());
   }
 
   void OnOpenFileSystem(const GURL& root_url,
@@ -183,7 +185,7 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
     request_->Start();
     ASSERT_TRUE(request_->is_pending());  // verify that we're starting async
     if (run_to_completion)
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
   }
 
   void TestRequest(const GURL& url) {
@@ -213,7 +215,7 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
 
   void CreateDirectory(const base::StringPiece& dir_name) {
     base::FilePath path = base::FilePath().AppendASCII(dir_name);
-    scoped_ptr<FileSystemOperationContext> context(NewOperationContext());
+    std::unique_ptr<FileSystemOperationContext> context(NewOperationContext());
     ASSERT_EQ(base::File::FILE_OK, file_util()->CreateDirectory(
         context.get(),
         CreateURL(path),
@@ -223,14 +225,14 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
 
   void EnsureFileExists(const base::StringPiece file_name) {
     base::FilePath path = base::FilePath().AppendASCII(file_name);
-    scoped_ptr<FileSystemOperationContext> context(NewOperationContext());
+    std::unique_ptr<FileSystemOperationContext> context(NewOperationContext());
     ASSERT_EQ(base::File::FILE_OK, file_util()->EnsureFileExists(
         context.get(), CreateURL(path), NULL));
   }
 
-  void TruncateFile(const base::StringPiece file_name, int64 length) {
+  void TruncateFile(const base::StringPiece file_name, int64_t length) {
     base::FilePath path = base::FilePath().AppendASCII(file_name);
-    scoped_ptr<FileSystemOperationContext> context(NewOperationContext());
+    std::unique_ptr<FileSystemOperationContext> context(NewOperationContext());
     ASSERT_EQ(base::File::FILE_OK, file_util()->Truncate(
         context.get(), CreateURL(path), length));
   }
@@ -238,7 +240,7 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
   base::File::Error GetFileInfo(const base::FilePath& path,
                                 base::File::Info* file_info,
                                 base::FilePath* platform_file_path) {
-    scoped_ptr<FileSystemOperationContext> context(NewOperationContext());
+    std::unique_ptr<FileSystemOperationContext> context(NewOperationContext());
     return file_util()->GetFileInfo(context.get(),
                                     CreateURL(path),
                                     file_info, platform_file_path);
@@ -249,10 +251,12 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
                           const std::string& name,
                           const std::string& url,
                           bool is_directory,
-                          int64 size) {
+                          int64_t size) {
+#define NUMBER "([0-9-]*)"
 #define STR "([^\"]*)"
     icu::UnicodeString pattern("^<script>addRow\\(\"" STR "\",\"" STR
-                               "\",(0|1),\"" STR "\",\"" STR "\"\\);</script>");
+        "\",(0|1)," NUMBER ",\"" STR "\"," NUMBER ",\"" STR "\"\\);</script>");
+#undef NUMBER
 #undef STR
     icu::UnicodeString input(entry_line.c_str());
 
@@ -260,7 +264,7 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
     icu::RegexMatcher match(pattern, input, 0, status);
 
     EXPECT_TRUE(match.find());
-    EXPECT_EQ(5, match.groupCount());
+    EXPECT_EQ(7, match.groupCount());
     EXPECT_EQ(icu::UnicodeString(name.c_str()), match.group(1, status));
     EXPECT_EQ(icu::UnicodeString(url.c_str()), match.group(2, status));
     EXPECT_EQ(icu::UnicodeString(is_directory ? "1" : "0"),
@@ -268,11 +272,11 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
     if (size >= 0) {
       icu::UnicodeString size_string(
           base::FormatBytesUnlocalized(size).c_str());
-      EXPECT_EQ(size_string, match.group(4, status));
+      EXPECT_EQ(size_string, match.group(5, status));
     }
 
-    icu::UnicodeString date_ustr(match.group(5, status));
-    scoped_ptr<icu::DateFormat> formatter(
+    icu::UnicodeString date_ustr(match.group(7, status));
+    std::unique_ptr<icu::DateFormat> formatter(
         icu::DateFormat::createDateTimeInstance(icu::DateFormat::kShort));
     UErrorCode parse_status = U_ZERO_ERROR;
     UDate udate = formatter->parse(date_ustr, parse_status);
@@ -296,9 +300,9 @@ class FileSystemDirURLRequestJobTest : public testing::Test {
 
   base::ScopedTempDir temp_dir_;
   net::URLRequestContext empty_context_;
-  scoped_ptr<net::TestDelegate> delegate_;
-  scoped_ptr<net::URLRequest> request_;
-  scoped_ptr<FileSystemDirURLRequestJobFactory> job_factory_;
+  std::unique_ptr<net::TestDelegate> delegate_;
+  std::unique_ptr<net::URLRequest> request_;
+  std::unique_ptr<FileSystemDirURLRequestJobFactory> job_factory_;
   scoped_refptr<MockSpecialStoragePolicy> special_storage_policy_;
   scoped_refptr<FileSystemContext> file_system_context_;
   base::WeakPtrFactory<FileSystemDirURLRequestJobTest> weak_factory_;
@@ -343,29 +347,27 @@ TEST_F(FileSystemDirURLRequestJobTest, InvalidURL) {
   TestRequest(GURL("filesystem:/foo/bar/baz"));
   ASSERT_FALSE(request_->is_pending());
   EXPECT_TRUE(delegate_->request_failed());
-  ASSERT_FALSE(request_->status().is_success());
-  EXPECT_EQ(net::ERR_INVALID_URL, request_->status().error());
+  EXPECT_EQ(net::ERR_INVALID_URL, delegate_->request_status());
 }
 
 TEST_F(FileSystemDirURLRequestJobTest, NoSuchRoot) {
   TestRequest(GURL("filesystem:http://remote/persistent/somedir/"));
   ASSERT_FALSE(request_->is_pending());
-  ASSERT_FALSE(request_->status().is_success());
-  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, request_->status().error());
+  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, delegate_->request_status());
 }
 
 TEST_F(FileSystemDirURLRequestJobTest, NoSuchDirectory) {
   TestRequest(CreateFileSystemURL("somedir/"));
   ASSERT_FALSE(request_->is_pending());
-  ASSERT_FALSE(request_->status().is_success());
-  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, request_->status().error());
+  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, delegate_->request_status());
 }
 
 TEST_F(FileSystemDirURLRequestJobTest, Cancel) {
   CreateDirectory("foo");
   TestRequestNoRun(CreateFileSystemURL("foo/"));
   // Run StartAsync() and only StartAsync().
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, request_.release());
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE,
+                                                  request_.release());
   base::RunLoop().RunUntilIdle();
   // If we get here, success! we didn't crash!
 }
@@ -374,12 +376,11 @@ TEST_F(FileSystemDirURLRequestJobTest, Incognito) {
   CreateDirectory("foo");
 
   scoped_refptr<FileSystemContext> file_system_context =
-      CreateIncognitoFileSystemContextForTesting(NULL, temp_dir_.path());
+      CreateIncognitoFileSystemContextForTesting(NULL, temp_dir_.GetPath());
 
   TestRequestWithContext(CreateFileSystemURL("/"),
                          file_system_context.get());
   ASSERT_FALSE(request_->is_pending());
-  ASSERT_TRUE(request_->status().is_success());
 
   std::istringstream in(delegate_->data_received());
   std::string line;
@@ -389,8 +390,7 @@ TEST_F(FileSystemDirURLRequestJobTest, Incognito) {
   TestRequestWithContext(CreateFileSystemURL("foo"),
                          file_system_context.get());
   ASSERT_FALSE(request_->is_pending());
-  ASSERT_FALSE(request_->status().is_success());
-  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, request_->status().error());
+  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, delegate_->request_status());
 }
 
 TEST_F(FileSystemDirURLRequestJobTest, AutoMountDirectoryListing) {
@@ -433,8 +433,7 @@ TEST_F(FileSystemDirURLRequestJobTest, AutoMountInvalidRoot) {
   TestRequest(GURL("filesystem:http://automount/external/invalid"));
 
   ASSERT_FALSE(request_->is_pending());
-  ASSERT_FALSE(request_->status().is_success());
-  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, request_->status().error());
+  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, delegate_->request_status());
 
   ASSERT_FALSE(
       storage::ExternalMountPoints::GetSystemInstance()->RevokeFileSystem(
@@ -447,8 +446,7 @@ TEST_F(FileSystemDirURLRequestJobTest, AutoMountNoHandler) {
   TestRequest(GURL("filesystem:http://noauto/external/mnt_name"));
 
   ASSERT_FALSE(request_->is_pending());
-  ASSERT_FALSE(request_->status().is_success());
-  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, request_->status().error());
+  EXPECT_EQ(net::ERR_FILE_NOT_FOUND, delegate_->request_status());
 
   ASSERT_FALSE(
       storage::ExternalMountPoints::GetSystemInstance()->RevokeFileSystem(

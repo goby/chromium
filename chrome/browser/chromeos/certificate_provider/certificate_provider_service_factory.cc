@@ -4,18 +4,19 @@
 
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider_service_factory.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider_service.h"
-#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/certificate_provider.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "extensions/browser/event_listener_map.h"
@@ -92,12 +93,12 @@ std::vector<std::string> DefaultDelegate::CertificateProviderExtensions() {
 
 void DefaultDelegate::BroadcastCertificateRequest(int request_id) {
   const std::string event_name(api_cp::OnCertificatesRequested::kEventName);
-  scoped_ptr<base::ListValue> internal_args(new base::ListValue);
+  std::unique_ptr<base::ListValue> internal_args(new base::ListValue);
   internal_args->AppendInteger(request_id);
-  scoped_ptr<extensions::Event> event(new extensions::Event(
+  std::unique_ptr<extensions::Event> event(new extensions::Event(
       extensions::events::CERTIFICATEPROVIDER_ON_CERTIFICATES_REQUESTED,
-      event_name, internal_args.Pass()));
-  event_router_->BroadcastEvent(event.Pass());
+      event_name, std::move(internal_args)));
+  event_router_->BroadcastEvent(std::move(event));
 }
 
 bool DefaultDelegate::DispatchSignRequestToExtension(
@@ -111,6 +112,8 @@ bool DefaultDelegate::DispatchSignRequestToExtension(
     return false;
 
   api_cp::SignRequest request;
+  service_->pin_dialog_manager()->AddSignRequestId(extension_id, request_id);
+  request.sign_request_id = request_id;
   switch (hash) {
     case net::SSLPrivateKey::Hash::MD5_SHA1:
       request.hash = api_cp::HASH_MD5_SHA1;
@@ -137,15 +140,15 @@ bool DefaultDelegate::DispatchSignRequestToExtension(
   }
   request.certificate.assign(cert_der.begin(), cert_der.end());
 
-  scoped_ptr<base::ListValue> internal_args(new base::ListValue);
+  std::unique_ptr<base::ListValue> internal_args(new base::ListValue);
   internal_args->AppendInteger(request_id);
-  internal_args->Append(request.ToValue().Pass());
+  internal_args->Append(request.ToValue());
 
   event_router_->DispatchEventToExtension(
       extension_id,
-      make_scoped_ptr(new extensions::Event(
+      base::MakeUnique<extensions::Event>(
           extensions::events::CERTIFICATEPROVIDER_ON_SIGN_DIGEST_REQUESTED,
-          event_name, internal_args.Pass())));
+          event_name, std::move(internal_args)));
   return true;
 }
 
@@ -192,15 +195,11 @@ bool CertificateProviderServiceFactory::ServiceIsNULLWhileTesting() const {
 
 KeyedService* CertificateProviderServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
-  if (chromeos::ProfileHelper::IsSigninProfile(
-          Profile::FromBrowserContext(context))) {
-    return nullptr;
-  }
   CertificateProviderService* const service = new CertificateProviderService();
-  service->SetDelegate(make_scoped_ptr(new DefaultDelegate(
+  service->SetDelegate(base::MakeUnique<DefaultDelegate>(
       service,
       extensions::ExtensionRegistryFactory::GetForBrowserContext(context),
-      extensions::EventRouterFactory::GetForBrowserContext(context))));
+      extensions::EventRouterFactory::GetForBrowserContext(context)));
   return service;
 }
 

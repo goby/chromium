@@ -7,9 +7,10 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,13 +33,13 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
                          GURL* new_url) override {
     return OK;
   }
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) override {
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) override {
     return OK;
   }
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) override {}
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) override {}
   int OnHeadersReceived(
       URLRequest* request,
       const CompletionCallback& callback,
@@ -49,8 +50,8 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   }
   void OnBeforeRedirect(URLRequest* request,
                         const GURL& new_location) override {}
-  void OnResponseStarted(URLRequest* request) override {}
-  void OnCompleted(URLRequest* request, bool started) override {}
+  void OnResponseStarted(URLRequest* request, int net_error) override {}
+  void OnCompleted(URLRequest* request, bool started, int net_error) override {}
   void OnURLRequestDestroyed(URLRequest* request) override {}
 
   void OnPACScriptError(int line_number, const base::string16& error) override {
@@ -91,7 +92,7 @@ TEST(NetworkDelegateErrorObserverTest, CallOnThread) {
       FROM_HERE, base::Bind(&NetworkDelegateErrorObserver::OnPACScriptError,
                             base::Unretained(&observer), 42, base::string16()));
   thread.Stop();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(network_delegate.got_pac_error());
 }
 
@@ -105,7 +106,7 @@ TEST(NetworkDelegateErrorObserverTest, NoDelegate) {
       FROM_HERE, base::Bind(&NetworkDelegateErrorObserver::OnPACScriptError,
                             base::Unretained(&observer), 42, base::string16()));
   thread.Stop();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Shouldn't have crashed until here...
 }
 

@@ -2,27 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -39,9 +42,10 @@
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
-#include "policy/policy_constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -82,7 +86,7 @@ class IndicatorTestCase {
   bool readonly() const { return readonly_; }
 
  private:
-  scoped_ptr<base::DictionaryValue> policy_;
+  std::unique_ptr<base::DictionaryValue> policy_;
   std::string value_;
   bool readonly_;
 
@@ -233,7 +237,7 @@ class PolicyTestCases {
     int error_code = -1;
     std::string error_string;
     base::DictionaryValue* dict = NULL;
-    scoped_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
+    std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
         json, base::JSON_PARSE_RFC, &error_code, &error_string);
     if (!value.get() || !value->GetAsDictionary(&dict)) {
       ADD_FAILURE() << "Error parsing policy_test_cases.json: " << error_string;
@@ -428,7 +432,7 @@ void VerifyControlledSettingIndicators(Browser* browser,
   // |selector| as JSON.
   ASSERT_TRUE(content::ExecuteScriptAndExtractString(contents, javascript.str(),
                                                      &json));
-  scoped_ptr<base::Value> value_ptr = base::JSONReader::Read(json);
+  std::unique_ptr<base::Value> value_ptr = base::JSONReader::Read(json);
   const base::ListValue* indicators = NULL;
   ASSERT_TRUE(value_ptr.get());
   ASSERT_TRUE(value_ptr->GetAsList(&indicators));
@@ -484,7 +488,7 @@ IN_PROC_BROWSER_TEST_F(PolicyPrefsTestCoverageTest, AllPoliciesHaveATestCase) {
   PolicyTestCases policy_test_cases;
   for (Schema::Iterator it = chrome_schema.GetPropertiesIterator();
        !it.IsAtEnd(); it.Advance()) {
-    EXPECT_TRUE(ContainsKey(policy_test_cases.map(), it.key()))
+    EXPECT_TRUE(base::ContainsKey(policy_test_cases.map(), it.key()))
         << "Missing policy test case for: " << it.key();
   }
 }
@@ -518,15 +522,11 @@ class PolicyPrefsTest : public InProcessBrowserTest {
       const PolicyDetails* policy_details = GetChromePolicyDetails(it.key());
       ASSERT_TRUE(policy_details);
       policy_map.Set(
-          it.key(),
-          level,
-          POLICY_SCOPE_USER,
-          POLICY_SOURCE_CLOUD,
-          it.value().DeepCopy(),
-          policy_details->max_external_data_size ?
-              new ExternalDataFetcher(base::WeakPtr<ExternalDataManager>(),
-                                      it.key()) :
-              NULL);
+          it.key(), level, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+          it.value().CreateDeepCopy(),
+          base::WrapUnique(policy_details->max_external_data_size
+                               ? new ExternalDataFetcher(nullptr, it.key())
+                               : nullptr));
     }
     provider_.UpdateChromePolicy(policy_map);
     base::RunLoop().RunUntilIdle();
@@ -632,6 +632,10 @@ IN_PROC_BROWSER_TEST_P(PolicyPrefIndicatorTest, CheckPolicyIndicators) {
                  pref_mappings.begin();
              pref_mapping != pref_mappings.end();
              ++pref_mapping) {
+          PrefService* prefs =
+              (*pref_mapping)->is_local_state() ? local_state : user_prefs;
+          if (prefs->FindPreference((*pref_mapping)->pref()))
+            prefs->ClearPref((*pref_mapping)->pref());
           if (!(*pref_mapping)->indicator_test_cases().empty()) {
             has_pref_indicator_tests = true;
             break;

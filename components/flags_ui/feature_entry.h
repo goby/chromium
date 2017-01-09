@@ -22,12 +22,16 @@ namespace flags_ui {
 // for a few milestones, until their full launch.
 struct FeatureEntry {
   enum Type {
-    // A feature with a single flag value. This is typically what you want.
+    // A feature with a single flag value.
+    //
+    // For new entries, it is recommended to instead use FEATURE_VALUE macro
+    // that is backed by a base::Feature struct. See base/feature_list.h.
     SINGLE_VALUE,
 
-    // A default enabled feature with a single flag value to disable it. Please
-    // consider whether you really need a flag to disable the feature, and even
-    // if so remove the disable flag as soon as it is no longer needed.
+    // A default enabled feature with a single flag value to disable it.
+    //
+    // For new entries, it is recommended to instead use FEATURE_VALUE macro
+    // that is backed by a base::Feature struct. See base/feature_list.h.
     SINGLE_DISABLE_VALUE,
 
     // The feature has multiple values only one of which is ever enabled.
@@ -38,15 +42,41 @@ struct FeatureEntry {
     MULTI_VALUE,
 
     // The feature has three possible values: Default, Enabled and Disabled.
-    // This should be used for features that may have their own logic to decide
-    // if the feature should be on when not explicitly specified via about
-    // flags - for example via FieldTrials.
+    // This allows the Default group to have its own logic to determine if the
+    // feature is on.
+    //
+    // For new entries, it is recommended to instead use FEATURE_VALUE macro
+    // that is backed by a base::Feature struct. See base/feature_list.h.
     ENABLE_DISABLE_VALUE,
 
     // Corresponds to a base::Feature, per base/feature_list.h. The entry will
     // have three states: Default, Enabled, Disabled. When not specified or set
     // to Default, the normal default value of the feature is used.
+    //
+    // This is recommended for all new entries, since it provides a uniform way
+    // to specify features in the codebase along with their default state, as
+    // well as the ability enable/disable via run server-side experiments.
     FEATURE_VALUE,
+
+    // Corresponds to a base::Feature and additional options [O_1, ..., O_n]
+    // that specify variation parameters. Each of the options can specify a set
+    // of variation parameters. The entry will have n+3 states: Default,
+    // Enabled, Enabled V_1, ..., Enabled: V_n, Disabled. When set to Default,
+    // the normal default values of the feature and of the parameters are used
+    // (possibly passed from the server in a trial config). When set to Enabled,
+    // the feature is overriden to be enabled and empty set of parameters is
+    // used boiling down to the default behavior in the code.
+    FEATURE_WITH_VARIATIONS_VALUE,
+  };
+
+  // Describes state of a feature.
+  enum FeatureState {
+    // The state of the feature is not overridden by the user.
+    DEFAULT,
+    // The feature is enabled by the user.
+    ENABLED,
+    // The feature is disabled by the user.
+    DISABLED,
   };
 
   // Used for MULTI_VALUE types to describe one of the possible values the user
@@ -59,6 +89,30 @@ struct FeatureEntry {
     const char* command_line_switch;
     // Simple switches that have no value should use "" for command_line_value.
     const char* command_line_value;
+  };
+
+  // Configures one parameter for FEATURE_WITH_VARIATIONS_VALUE.
+  struct FeatureParam {
+    const char* param_name;
+    const char* param_value;
+  };
+
+  // Specified one variation (list of parameter values) for
+  // FEATURE_WITH_VARIATIONS_VALUE.
+  struct FeatureVariation {
+    // Text that denotes the variation in chrome://flags. For each variation,
+    // the user is shown an option labeled "Enabled <description_text>" (with
+    // the exception of the first option labeled "Enabled" to make clear it is
+    // the default one). No need for description_id, chrome://flags should not
+    // get translated. The other parts here use ids for historical reasons and
+    // can realistically also be moved to direct description_texts.
+    const char* description_text;
+    const FeatureParam* params;
+    int num_params;
+    // A variation id number in the format of
+    // VariationsHttpHeaderProvider::SetDefaultVariationIds or nullptr
+    // if you do not need to set any variation_id for this feature variation.
+    const char* variation_id;
   };
 
   // The internal name of the feature entry. This is never shown to the user.
@@ -96,18 +150,43 @@ struct FeatureEntry {
   // For FEATURE_VALUE, the base::Feature this entry corresponds to.
   const base::Feature* feature;
 
-  // This is used if type is MULTI_VALUE.
+  // Number of options to choose from. This is used if type is MULTI_VALUE,
+  // ENABLE_DISABLE_VALUE, FEATURE_VALUE, or FEATURE_WITH_VARIATIONS_VALUE.
+  int num_options;
+
+  // This describes the options if type is MULTI_VALUE.
   const Choice* choices;
 
-  // Number of |choices|.
-  // This is used if type is MULTI_VALUE.
-  int num_choices;
+  // This describes the options if type is FEATURE_WITH_VARIATIONS_VALUE.
+  // The first variation is the default "Enabled" variation, its description_id
+  // is disregarded.
+  const FeatureVariation* feature_variations;
 
-  // Returns the name used in prefs for the choice at the specified |index|.
-  std::string NameForChoice(int index) const;
+  // The name of the FieldTrial in which the selected variation parameters
+  // should be registered. This is used if type is
+  // FEATURE_WITH_VARIATIONS_VALUE.
+  const char* feature_trial_name;
 
-  // Returns the human readable description for the choice at |index|.
-  base::string16 DescriptionForChoice(int index) const;
+  // Returns the name used in prefs for the option at the specified |index|.
+  // Only used for types that use |num_options|.
+  std::string NameForOption(int index) const;
+
+  // Returns the human readable description for the option at |index|.
+  // Only used for types that use |num_options|.
+  base::string16 DescriptionForOption(int index) const;
+
+  // Returns the choice for the option at |index|. Only applicable for type
+  // FEATURE_MULTI.
+  const FeatureEntry::Choice& ChoiceForOption(int index) const;
+
+  // Returns the state of the feature at |index|. Only applicable for types
+  // FEATURE_VALUE and FEATURE_WITH_VARIATIONS_VALUE.
+  FeatureEntry::FeatureState StateForOption(int index) const;
+
+  // Returns the variation for the option at |index| or nullptr if there is no
+  // variation associated at |index|. Only applicable for types FEATURE_VALUE
+  // and FEATURE_WITH_VARIATIONS_VALUE.
+  const FeatureEntry::FeatureVariation* VariationForOption(int index) const;
 };
 
 namespace testing {

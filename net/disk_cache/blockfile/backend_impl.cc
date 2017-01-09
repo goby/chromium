@@ -5,6 +5,7 @@
 #include "net/disk_cache/blockfile/backend_impl.h"
 
 #include <limits>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -21,8 +22,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/net_errors.h"
@@ -135,9 +136,9 @@ BackendImpl::BackendImpl(
       first_timer_(true),
       user_load_(false),
       net_log_(net_log),
-      done_(true, false),
-      ptr_factory_(this) {
-}
+      done_(base::WaitableEvent::ResetPolicy::MANUAL,
+            base::WaitableEvent::InitialState::NOT_SIGNALED),
+      ptr_factory_(this) {}
 
 BackendImpl::BackendImpl(
     const base::FilePath& path,
@@ -162,7 +163,8 @@ BackendImpl::BackendImpl(
       first_timer_(true),
       user_load_(false),
       net_log_(net_log),
-      done_(true, false),
+      done_(base::WaitableEvent::ResetPolicy::MANUAL,
+            base::WaitableEvent::InitialState::NOT_SIGNALED),
       ptr_factory_(this) {}
 
 BackendImpl::~BackendImpl() {
@@ -386,7 +388,7 @@ int BackendImpl::SyncDoomEntriesBetween(const base::Time initial_time,
     return net::ERR_FAILED;
 
   EntryImpl* node;
-  scoped_ptr<Rankings::Iterator> iterator(new Rankings::Iterator());
+  std::unique_ptr<Rankings::Iterator> iterator(new Rankings::Iterator());
   EntryImpl* next = OpenNextEntryImpl(iterator.get());
   if (!next)
     return net::OK;
@@ -402,7 +404,7 @@ int BackendImpl::SyncDoomEntriesBetween(const base::Time initial_time,
       if (next)
         next->Release();
       next = NULL;
-      SyncEndEnumeration(iterator.Pass());
+      SyncEndEnumeration(std::move(iterator));
     }
 
     node->Release();
@@ -428,20 +430,21 @@ int BackendImpl::SyncDoomEntriesSince(const base::Time initial_time) {
 
   stats_.OnEvent(Stats::DOOM_RECENT);
   for (;;) {
-    scoped_ptr<Rankings::Iterator> iterator(new Rankings::Iterator());
+    std::unique_ptr<Rankings::Iterator> iterator(new Rankings::Iterator());
     EntryImpl* entry = OpenNextEntryImpl(iterator.get());
     if (!entry)
       return net::OK;
 
     if (initial_time > entry->GetLastUsed()) {
       entry->Release();
-      SyncEndEnumeration(iterator.Pass());
+      SyncEndEnumeration(std::move(iterator));
       return net::OK;
     }
 
     entry->DoomImpl();
     entry->Release();
-    SyncEndEnumeration(iterator.Pass());  // The doom invalidated the iterator.
+    SyncEndEnumeration(
+        std::move(iterator));  // The doom invalidated the iterator.
   }
 }
 
@@ -451,7 +454,8 @@ int BackendImpl::SyncOpenNextEntry(Rankings::Iterator* iterator,
   return (*next_entry) ? net::OK : net::ERR_FAILED;
 }
 
-void BackendImpl::SyncEndEnumeration(scoped_ptr<Rankings::Iterator> iterator) {
+void BackendImpl::SyncEndEnumeration(
+    std::unique_ptr<Rankings::Iterator> iterator) {
   iterator->Reset();
 }
 
@@ -495,12 +499,6 @@ EntryImpl* BackendImpl::OpenEntryImpl(const std::string& key) {
   int64_t use_hours = total_hours - no_use_hours;
 
   if (!cache_entry) {
-    CACHE_UMA(AGE_MS, "OpenTime.Miss", 0, start);
-    CACHE_UMA(COUNTS_10000, "AllOpenBySize.Miss", 0, current_size);
-    CACHE_UMA(HOURS, "AllOpenByTotalHours.Miss", 0,
-              static_cast<base::HistogramBase::Sample>(total_hours));
-    CACHE_UMA(HOURS, "AllOpenByUseHours.Miss", 0,
-              static_cast<base::HistogramBase::Sample>(use_hours));
     stats_.OnEvent(Stats::OPEN_MISS);
     return NULL;
   }
@@ -1281,7 +1279,7 @@ class BackendImpl::IteratorImpl : public Backend::Iterator {
 
   ~IteratorImpl() override {
     if (background_queue_)
-      background_queue_->EndEnumeration(iterator_.Pass());
+      background_queue_->EndEnumeration(std::move(iterator_));
   }
 
   int OpenNextEntry(Entry** next_entry,
@@ -1294,11 +1292,12 @@ class BackendImpl::IteratorImpl : public Backend::Iterator {
 
  private:
   const base::WeakPtr<InFlightBackendIO> background_queue_;
-  scoped_ptr<Rankings::Iterator> iterator_;
+  std::unique_ptr<Rankings::Iterator> iterator_;
 };
 
-scoped_ptr<Backend::Iterator> BackendImpl::CreateIterator() {
-  return scoped_ptr<Backend::Iterator>(new IteratorImpl(GetBackgroundQueue()));
+std::unique_ptr<Backend::Iterator> BackendImpl::CreateIterator() {
+  return std::unique_ptr<Backend::Iterator>(
+      new IteratorImpl(GetBackgroundQueue()));
 }
 
 void BackendImpl::GetStats(StatsItems* stats) {
@@ -1371,7 +1370,8 @@ bool BackendImpl::InitBackingStore(bool* file_created) {
   bool ret = true;
   *file_created = base_file.created();
 
-  scoped_refptr<disk_cache::File> file(new disk_cache::File(base_file.Pass()));
+  scoped_refptr<disk_cache::File> file(
+      new disk_cache::File(std::move(base_file)));
   if (*file_created)
     ret = CreateBackingStore(file.get());
 
@@ -1421,9 +1421,7 @@ void BackendImpl::AdjustMaxCacheSize(int table_len) {
     return;
 
   // If we already have a table, adjust the size to it.
-  int current_max_size = MaxStorageSizeForTable(table_len);
-  if (max_size_ > current_max_size)
-    max_size_= current_max_size;
+  max_size_ = std::min(max_size_, MaxStorageSizeForTable(table_len));
 }
 
 bool BackendImpl::InitStats() {
@@ -1453,7 +1451,7 @@ bool BackendImpl::InitStats() {
   if (!file)
     return false;
 
-  scoped_ptr<char[]> data(new char[size]);
+  std::unique_ptr<char[]> data(new char[size]);
   size_t offset = address.start_block() * address.BlockSize() +
                   kBlockHeaderSize;
   if (!file->Read(data.get(), size, offset))
@@ -1468,7 +1466,7 @@ bool BackendImpl::InitStats() {
 
 void BackendImpl::StoreStats() {
   int size = stats_.StorageSize();
-  scoped_ptr<char[]> data(new char[size]);
+  std::unique_ptr<char[]> data(new char[size]);
   Addr address;
   size = stats_.SerializeStats(data.get(), size, &address);
   DCHECK(size);
@@ -1493,7 +1491,7 @@ void BackendImpl::RestartCache(bool failure) {
   PrepareForRestart();
   if (failure) {
     DCHECK(!num_refs_);
-    DCHECK(!open_entries_.size());
+    DCHECK(open_entries_.empty());
     DelayedCacheCleanup(path_);
   } else {
     DeleteCache(path_, false);
@@ -1501,9 +1499,9 @@ void BackendImpl::RestartCache(bool failure) {
 
   // Don't call Init() if directed by the unit test: we are simulating a failure
   // trying to re-enable the cache.
-  if (unit_test_)
+  if (unit_test_) {
     init_ = true;  // Let the destructor do proper cleanup.
-  else if (SyncInit() == net::OK) {
+  } else if (SyncInit() == net::OK) {
     stats_.SetCounter(Stats::FATAL_ERROR, errors);
     stats_.SetCounter(Stats::DOOM_CACHE, full_dooms);
     stats_.SetCounter(Stats::DOOM_RECENT, partial_dooms);
@@ -1542,7 +1540,7 @@ int BackendImpl::NewEntry(Addr address, EntryImpl** entry) {
 
   STRESS_DCHECK(block_files_.IsValid(address));
 
-  if (!address.SanityCheckForEntryV2()) {
+  if (!address.SanityCheckForEntry()) {
     LOG(WARNING) << "Wrong entry address.";
     STRESS_NOTREACHED();
     return ERR_INVALID_ADDRESS;

@@ -4,9 +4,12 @@
 
 #include "chrome/browser/plugins/plugin_metadata.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "content/public/common/webplugininfo.h"
@@ -16,6 +19,7 @@ const char PluginMetadata::kAdobeReaderGroupName[] = "Adobe Reader";
 const char PluginMetadata::kJavaGroupName[] = "Java(TM)";
 const char PluginMetadata::kQuickTimeGroupName[] = "QuickTime Player";
 const char PluginMetadata::kShockwaveGroupName[] = "Adobe Shockwave Player";
+const char PluginMetadata::kAdobeFlashPlayerGroupName[] = "Adobe Flash Player";
 const char PluginMetadata::kRealPlayerGroupName[] = "RealPlayer";
 const char PluginMetadata::kSilverlightGroupName[] = "Silverlight";
 const char PluginMetadata::kWindowsMediaPlayerGroupName[] =
@@ -42,7 +46,7 @@ PluginMetadata::PluginMetadata(const std::string& identifier,
 PluginMetadata::~PluginMetadata() {
 }
 
-void PluginMetadata::AddVersion(const Version& version,
+void PluginMetadata::AddVersion(const base::Version& version,
                                 SecurityStatus status) {
   DCHECK(versions_.find(version) == versions_.end());
   versions_[version] = status;
@@ -87,6 +91,8 @@ bool PluginMetadata::ParseSecurityStatus(
     *status = SECURITY_STATUS_OUT_OF_DATE;
   else if (status_str == "requires_authorization")
     *status = SECURITY_STATUS_REQUIRES_AUTHORIZATION;
+  else if (status_str == "fully_trusted")
+    *status = SECURITY_STATUS_FULLY_TRUSTED;
   else
     return false;
 
@@ -100,14 +106,14 @@ PluginMetadata::SecurityStatus PluginMetadata::GetSecurityStatus(
     return SECURITY_STATUS_REQUIRES_AUTHORIZATION;
   }
 
-  Version version;
+  base::Version version;
   content::WebPluginInfo::CreateVersionFromString(plugin.version, &version);
   if (!version.IsValid())
-    version = Version("0");
+    version = base::Version("0");
 
   // |lower_bound| returns the latest version that is not newer than |version|.
-  std::map<Version, SecurityStatus, VersionComparator>::const_iterator it =
-      versions_.lower_bound(version);
+  std::map<base::Version, SecurityStatus, VersionComparator>::const_iterator
+      it = versions_.lower_bound(version);
   // If there is at least one version defined, everything older than the oldest
   // defined version is considered out-of-date.
   if (it == versions_.end())
@@ -116,13 +122,13 @@ PluginMetadata::SecurityStatus PluginMetadata::GetSecurityStatus(
   return it->second;
 }
 
-bool PluginMetadata::VersionComparator::operator() (const Version& lhs,
-                                                    const Version& rhs) const {
+bool PluginMetadata::VersionComparator::operator() (
+    const base::Version& lhs, const base::Version& rhs) const {
   // Keep versions ordered by newest (biggest) first.
   return lhs.CompareTo(rhs) > 0;
 }
 
-scoped_ptr<PluginMetadata> PluginMetadata::Clone() const {
+std::unique_ptr<PluginMetadata> PluginMetadata::Clone() const {
   PluginMetadata* copy = new PluginMetadata(identifier_,
                                             name_,
                                             url_for_display_,
@@ -131,5 +137,5 @@ scoped_ptr<PluginMetadata> PluginMetadata::Clone() const {
                                             group_name_matcher_,
                                             language_);
   copy->versions_ = versions_;
-  return make_scoped_ptr(copy);
+  return base::WrapUnique(copy);
 }

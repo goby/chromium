@@ -4,17 +4,22 @@
 
 #include "components/storage_monitor/storage_monitor_chromeos.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/disks/mock_disk_mount_manager.h"
 #include "components/storage_monitor/mock_removable_storage_observer.h"
 #include "components/storage_monitor/removable_device_constants.h"
 #include "components/storage_monitor/storage_info.h"
-#include "components/storage_monitor/test_media_transfer_protocol_manager_linux.h"
+#include "components/storage_monitor/test_media_transfer_protocol_manager_chromeos.h"
 #include "components/storage_monitor/test_storage_monitor.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -44,9 +49,9 @@ const char kUniqueId1[] = "FFFF-FFFF";
 const char kUniqueId2[] = "FFFF-FF0F";
 const char kVendorName[] = "CompanyA";
 
-uint64 kDevice1SizeInBytes = 113048;
-uint64 kDevice2SizeInBytes = 212312;
-uint64 kSDCardSizeInBytes = 9000000;
+uint64_t kDevice1SizeInBytes = 113048;
+uint64_t kDevice2SizeInBytes = 212312;
+uint64_t kSDCardSizeInBytes = 9000000;
 
 std::string GetDCIMDeviceId(const std::string& unique_id) {
   return StorageInfo::MakeDeviceId(
@@ -63,7 +68,7 @@ class TestStorageMonitorCros : public StorageMonitorCros {
 
   void Init() override {
     SetMediaTransferProtocolManagerForTest(
-        new TestMediaTransferProtocolManagerLinux());
+        new TestMediaTransferProtocolManagerChromeOS());
     StorageMonitorCros::Init();
   }
 
@@ -107,12 +112,12 @@ class StorageMonitorCrosTest : public testing::Test {
                    const std::string& vendor_name,
                    const std::string& product_name,
                    chromeos::DeviceType device_type,
-                   uint64 device_size_in_bytes);
+                   uint64_t device_size_in_bytes);
 
   void UnmountDevice(chromeos::MountError error_code,
                      const DiskMountManager::MountPointInfo& mount_info);
 
-  uint64 GetDeviceStorageSize(const std::string& device_location);
+  uint64_t GetDeviceStorageSize(const std::string& device_location);
 
   // Create a directory named |dir| relative to the test directory.
   // Set |with_dcim_dir| to true if the created directory will have a "DCIM"
@@ -142,7 +147,7 @@ class StorageMonitorCrosTest : public testing::Test {
   base::ScopedTempDir scoped_temp_dir_;
 
   // Objects that talks with StorageMonitorCros.
-  scoped_ptr<MockRemovableStorageObserver> mock_storage_observer_;
+  std::unique_ptr<MockRemovableStorageObserver> mock_storage_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(StorageMonitorCrosTest);
 };
@@ -169,8 +174,8 @@ void StorageMonitorCrosTest::SetUp() {
   // Initialize the test subject.
   TestStorageMonitor::Destroy();
   monitor_ = new TestStorageMonitorCros();
-  scoped_ptr<StorageMonitor> pass_monitor(monitor_);
-  StorageMonitor::SetStorageMonitorForTesting(pass_monitor.Pass());
+  std::unique_ptr<StorageMonitor> pass_monitor(monitor_);
+  StorageMonitor::SetStorageMonitorForTesting(std::move(pass_monitor));
 
   monitor_->Init();
   monitor_->AddObserver(mock_storage_observer_.get());
@@ -193,7 +198,7 @@ void StorageMonitorCrosTest::MountDevice(
     const std::string& vendor_name,
     const std::string& product_name,
     chromeos::DeviceType device_type,
-    uint64 device_size_in_bytes) {
+    uint64_t device_size_in_bytes) {
   if (error_code == chromeos::MOUNT_ERROR_NONE) {
     disk_mount_manager_mock_->CreateDiskEntryForMountDevice(
         mount_info,
@@ -221,7 +226,7 @@ void StorageMonitorCrosTest::UnmountDevice(
   WaitForFileThread();
 }
 
-uint64 StorageMonitorCrosTest::GetDeviceStorageSize(
+uint64_t StorageMonitorCrosTest::GetDeviceStorageSize(
     const std::string& device_location) {
   StorageInfo info;
   if (!monitor_->GetStorageInfoForPath(base::FilePath(device_location), &info))
@@ -232,7 +237,7 @@ uint64 StorageMonitorCrosTest::GetDeviceStorageSize(
 
 base::FilePath StorageMonitorCrosTest::CreateMountPoint(
     const std::string& dir, bool with_dcim_dir) {
-  base::FilePath return_path(scoped_temp_dir_.path());
+  base::FilePath return_path(scoped_temp_dir_.GetPath());
   return_path = return_path.AppendASCII(dir);
   base::FilePath path(return_path);
   if (with_dcim_dir)
@@ -252,7 +257,7 @@ void StorageMonitorCrosTest::PostQuitToUIThread() {
 void StorageMonitorCrosTest::WaitForFileThread() {
   BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
                           base::Bind(&PostQuitToUIThread));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 void StorageMonitorCrosTest::EjectNotify(StorageMonitor::EjectStatus status) {

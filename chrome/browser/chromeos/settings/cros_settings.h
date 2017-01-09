@@ -5,13 +5,14 @@
 #ifndef CHROME_BROWSER_CHROMEOS_SETTINGS_CROS_SETTINGS_H_
 #define CHROME_BROWSER_CHROMEOS_SETTINGS_CROS_SETTINGS_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/callback_list.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/settings/cros_settings_provider.h"
@@ -106,12 +107,13 @@ class CrosSettings : public base::NonThreadSafe {
                        bool* wildcard_match) const;
 
   // Adding/removing of providers.
-  bool AddSettingsProvider(CrosSettingsProvider* provider);
-  bool RemoveSettingsProvider(CrosSettingsProvider* provider);
+  bool AddSettingsProvider(std::unique_ptr<CrosSettingsProvider> provider);
+  std::unique_ptr<CrosSettingsProvider> RemoveSettingsProvider(
+      CrosSettingsProvider* provider);
 
   // Add an observer Callback for changes for the given |path|.
   typedef base::CallbackList<void(void)>::Subscription ObserverSubscription;
-  scoped_ptr<ObserverSubscription> AddSettingsObserver(
+  std::unique_ptr<ObserverSubscription> AddSettingsObserver(
       const std::string& path,
       const base::Closure& callback);
 
@@ -125,13 +127,12 @@ class CrosSettings : public base::NonThreadSafe {
   void FireObservers(const std::string& path);
 
   // List of ChromeOS system settings providers.
-  std::vector<CrosSettingsProvider*> providers_;
+  std::vector<std::unique_ptr<CrosSettingsProvider>> providers_;
 
   // A map from settings names to a list of observers. Observers get fired in
   // the order they are added.
-  typedef base::hash_map<std::string, base::CallbackList<void(void)>*>
-      SettingsObserverMap;
-  SettingsObserverMap settings_observers_;
+  base::hash_map<std::string, std::unique_ptr<base::CallbackList<void(void)>>>
+      settings_observers_;
 
   DISALLOW_COPY_AND_ASSIGN(CrosSettings);
 };

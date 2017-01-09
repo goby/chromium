@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//mojo/public/tools/bindings/mojom.gni")
 import("//testing/test.gni")
 import("//third_party/google_input_tools/closure.gni")
 import("//third_party/google_input_tools/inputview.gni")
@@ -13,6 +14,7 @@ component("keyboard") {
     "keyboard_controller.h",
     "keyboard_controller_observer.h",
     "keyboard_export.h",
+    "keyboard_layout_delegate.h",
     "keyboard_layout_manager.cc",
     "keyboard_layout_manager.h",
     "keyboard_switches.cc",
@@ -21,6 +23,8 @@ component("keyboard") {
     "keyboard_ui.h",
     "keyboard_util.cc",
     "keyboard_util.h",
+    "scoped_keyboard_disabler.cc",
+    "scoped_keyboard_disabler.h",
   ]
 
   defines = [ "KEYBOARD_IMPLEMENTATION" ]
@@ -34,6 +38,7 @@ component("keyboard") {
     "//ui/base",
     "//ui/base/ime",
     "//ui/compositor",
+    "//ui/display/types:types",
     "//ui/events",
     "//ui/events:dom_keycode_converter",
     "//ui/events:events_base",
@@ -81,6 +86,10 @@ component("keyboard_with_content") {
     "//ui/wm",
     "//url",
   ]
+
+  data_deps = [
+    ":resources",
+  ]
 }
 
 grit("resources_grit") {
@@ -126,6 +135,15 @@ build_closure("inputview") {
   path = rebase_path("//third_party/google_input_tools")
 }
 
+mojom("mojom") {
+  sources = [
+    "keyboard.mojom",
+  ]
+  deps = [
+    "//ui/gfx/geometry/mojo",
+  ]
+}
+
 test("keyboard_unittests") {
   sources = [
     "keyboard_controller_unittest.cc",
@@ -136,7 +154,6 @@ test("keyboard_unittests") {
   deps = [
     ":keyboard",
     "//base",
-    "//base/allocator",
     "//base/test:test_support",
     "//skia",
     "//testing/gtest",
@@ -148,7 +165,7 @@ test("keyboard_unittests") {
     "//ui/events:test_support",
     "//ui/gfx",
     "//ui/gfx/geometry",
-    "//ui/gl",
+    "//ui/gl:test_support",
     "//ui/wm",
   ]
 }

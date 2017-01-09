@@ -5,11 +5,14 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_COMMON_DECODER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_COMMON_DECODER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
-#include <stack>
+#include <memory>
 #include <string>
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+
+#include "base/macros.h"
 #include "gpu/command_buffer/common/buffer.h"
 #include "gpu/command_buffer/service/cmd_parser.h"
 #include "gpu/gpu_export.h"
@@ -75,7 +78,7 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
 
     // Sets a part of the bucket.
     // Returns false if offset or size is out of range.
-    bool SetData(const void* src, size_t offset, size_t size);
+    bool SetData(const volatile void* src, size_t offset, size_t size);
 
     // Sets the bucket data from a string. Strings are passed NULL terminated to
     // distinguish between empty string and no string.
@@ -100,7 +103,7 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
     }
 
     size_t size_;
-    ::scoped_ptr<int8[]> data_;
+    ::std::unique_ptr<int8_t[]> data_;
 
     DISALLOW_COPY_AND_ASSIGN(Bucket);
   };
@@ -115,11 +118,16 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
   }
   CommandBufferEngine* engine() const { return engine_; }
 
+  // Sets the maximum size for buckets.
+  void set_max_bucket_size(size_t max_bucket_size) {
+    max_bucket_size_ = max_bucket_size;
+  }
+
   // Creates a bucket. If the bucket already exists returns that bucket.
-  Bucket* CreateBucket(uint32 bucket_id);
+  Bucket* CreateBucket(uint32_t bucket_id);
 
   // Gets a bucket. Returns NULL if the bucket does not exist.
-  Bucket* GetBucket(uint32 bucket_id) const;
+  Bucket* GetBucket(uint32_t bucket_id) const;
 
   // Gets the address of shared memory data, given a shared memory ID and an
   // offset. Also checks that the size is consistent with the shared memory
@@ -142,6 +150,19 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
     return static_cast<T>(GetAddressAndCheckSize(shm_id, offset, size));
   }
 
+  void* GetAddressAndSize(unsigned int shm_id,
+                          unsigned int offset,
+                          unsigned int* size);
+
+  template <typename T>
+  T GetSharedMemoryAndSizeAs(unsigned int shm_id,
+                             unsigned int offset,
+                             unsigned int* size) {
+    return static_cast<T>(GetAddressAndSize(shm_id, offset, size));
+  }
+
+  unsigned int GetSharedMemorySize(unsigned int shm_id, unsigned int offset);
+
   // Get the actual shared memory buffer.
   scoped_refptr<gpu::Buffer> GetSharedMemoryBuffer(unsigned int shm_id);
 
@@ -154,10 +175,9 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
   // Returns:
   //   error::kNoError if no error was found, one of
   //   error::Error otherwise.
-  error::Error DoCommonCommand(
-      unsigned int command,
-      unsigned int arg_count,
-      const void* cmd_data);
+  error::Error DoCommonCommand(unsigned int command,
+                               unsigned int arg_count,
+                               const volatile void* cmd_data);
 
   // Gets an name for a common command.
   const char* GetCommonCommandName(cmd::CommandId command_id) const;
@@ -165,33 +185,35 @@ class GPU_EXPORT CommonDecoder : NON_EXPORTED_BASE(public AsyncAPIInterface) {
  private:
   // Generate a member function prototype for each command in an automated and
   // typesafe way.
-  #define COMMON_COMMAND_BUFFER_CMD_OP(name)             \
-     error::Error Handle##name(uint32 immediate_data_size, const void* data);
+#define COMMON_COMMAND_BUFFER_CMD_OP(name)                \
+  error::Error Handle##name(uint32_t immediate_data_size, \
+                            const volatile void* data);
 
   COMMON_COMMAND_BUFFER_CMDS(COMMON_COMMAND_BUFFER_CMD_OP)
 
   #undef COMMON_COMMAND_BUFFER_CMD_OP
 
   CommandBufferEngine* engine_;
+  size_t max_bucket_size_;
 
-  typedef std::map<uint32, linked_ptr<Bucket> > BucketMap;
+  typedef std::map<uint32_t, std::unique_ptr<Bucket>> BucketMap;
   BucketMap buckets_;
 
-  typedef Error (CommonDecoder::*CmdHandler)(
-      uint32 immediate_data_size,
-      const void* data);
+  typedef Error (CommonDecoder::*CmdHandler)(uint32_t immediate_data_size,
+                                             const volatile void* data);
 
   // A struct to hold info about each command.
   struct CommandInfo {
     CmdHandler cmd_handler;
-    uint8 arg_flags;   // How to handle the arguments for this command
-    uint8 cmd_flags;   // How to handle this command
-    uint16 arg_count;  // How many arguments are expected for this command.
+    uint8_t arg_flags;   // How to handle the arguments for this command
+    uint8_t cmd_flags;   // How to handle this command
+    uint16_t arg_count;  // How many arguments are expected for this command.
   };
 
   // A table of CommandInfo for all the commands.
   static const CommandInfo command_info[];
 
+  DISALLOW_COPY_AND_ASSIGN(CommonDecoder);
 };
 
 }  // namespace gpu

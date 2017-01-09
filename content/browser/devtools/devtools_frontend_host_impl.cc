@@ -4,6 +4,8 @@
 
 #include "content/browser/devtools/devtools_frontend_host_impl.h"
 
+#include <stddef.h>
+
 #include "content/browser/bad_message.h"
 #include "content/common/devtools_messages.h"
 #include "content/public/browser/navigation_entry.h"
@@ -15,7 +17,10 @@
 namespace content {
 
 namespace {
-const char kCompatibilityScript[] = "devtools.js";
+const char kCompatibilityScript[] = "devtools_compatibility.js";
+const char kCompatibilityScriptSourceURL[] =
+    "\n//# "
+    "sourceURL=chrome-devtools://devtools/bundled/devtools_compatibility.js";
 }
 
 // static
@@ -46,8 +51,9 @@ DevToolsFrontendHostImpl::DevToolsFrontendHostImpl(
       handle_message_callback_(handle_message_callback) {
   frontend_main_frame->Send(new DevToolsMsg_SetupDevToolsClient(
       frontend_main_frame->GetRoutingID(),
-      DevToolsFrontendHost::GetFrontendResource(
-          kCompatibilityScript).as_string()));
+      DevToolsFrontendHost::GetFrontendResource(kCompatibilityScript)
+              .as_string() +
+          kCompatibilityScriptSourceURL));
 }
 
 DevToolsFrontendHostImpl::~DevToolsFrontendHostImpl() {

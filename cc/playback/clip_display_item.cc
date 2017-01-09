@@ -4,6 +4,8 @@
 
 #include "cc/playback/clip_display_item.h"
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/logging.h"
@@ -16,24 +18,39 @@
 #include "ui/gfx/skia_util.h"
 
 namespace cc {
+class ImageSerializationProcessor;
 
-ClipDisplayItem::ClipDisplayItem() {
+ClipDisplayItem::ClipDisplayItem(const gfx::Rect& clip_rect,
+                                 const std::vector<SkRRect>& rounded_clip_rects,
+                                 bool antialias)
+    : DisplayItem(CLIP) {
+  SetNew(clip_rect, rounded_clip_rects, antialias);
 }
 
-ClipDisplayItem::~ClipDisplayItem() {
+ClipDisplayItem::ClipDisplayItem(const proto::DisplayItem& proto)
+    : DisplayItem(CLIP) {
+  DCHECK_EQ(proto::DisplayItem::Type_Clip, proto.type());
+
+  const proto::ClipDisplayItem& details = proto.clip_item();
+  gfx::Rect clip_rect = ProtoToRect(details.clip_rect());
+  std::vector<SkRRect> rounded_clip_rects;
+  rounded_clip_rects.reserve(details.rounded_rects_size());
+  for (int i = 0; i < details.rounded_rects_size(); i++) {
+    rounded_clip_rects.push_back(ProtoToSkRRect(details.rounded_rects(i)));
+  }
+  bool antialias = details.antialias();
+  SetNew(clip_rect, rounded_clip_rects, antialias);
 }
 
-void ClipDisplayItem::SetNew(gfx::Rect clip_rect,
-                             const std::vector<SkRRect>& rounded_clip_rects) {
+void ClipDisplayItem::SetNew(const gfx::Rect& clip_rect,
+                             const std::vector<SkRRect>& rounded_clip_rects,
+                             bool antialias) {
   clip_rect_ = clip_rect;
   rounded_clip_rects_ = rounded_clip_rects;
-
-  size_t external_memory_usage =
-      rounded_clip_rects_.capacity() * sizeof(rounded_clip_rects_[0]);
-
-  DisplayItem::SetNew(true /* suitable_for_gpu_raster */, 1 /* op_count */,
-                      external_memory_usage);
+  antialias_ = antialias;
 }
+
+ClipDisplayItem::~ClipDisplayItem() {}
 
 void ClipDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
   proto->set_type(proto::DisplayItem::Type_Clip);
@@ -44,34 +61,18 @@ void ClipDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
   for (const auto& rrect : rounded_clip_rects_) {
     SkRRectToProto(rrect, details->add_rounded_rects());
   }
-}
-
-void ClipDisplayItem::FromProtobuf(const proto::DisplayItem& proto) {
-  DCHECK_EQ(proto::DisplayItem::Type_Clip, proto.type());
-
-  const proto::ClipDisplayItem& details = proto.clip_item();
-  gfx::Rect clip_rect = ProtoToRect(details.clip_rect());
-  std::vector<SkRRect> rounded_clip_rects;
-  rounded_clip_rects.reserve(details.rounded_rects_size());
-  for (int i = 0; i < details.rounded_rects_size(); i++) {
-    rounded_clip_rects.push_back(ProtoToSkRRect(details.rounded_rects(i)));
-  }
-  SetNew(clip_rect, rounded_clip_rects);
+  details->set_antialias(antialias_);
 }
 
 void ClipDisplayItem::Raster(SkCanvas* canvas,
-                             const gfx::Rect& canvas_target_playback_rect,
                              SkPicture::AbortCallback* callback) const {
   canvas->save();
-  canvas->clipRect(SkRect::MakeXYWH(clip_rect_.x(), clip_rect_.y(),
-                                    clip_rect_.width(), clip_rect_.height()));
+  canvas->clipRect(gfx::RectToSkRect(clip_rect_), antialias_);
   for (size_t i = 0; i < rounded_clip_rects_.size(); ++i) {
     if (rounded_clip_rects_[i].isRect()) {
-      canvas->clipRect(rounded_clip_rects_[i].rect());
+      canvas->clipRect(rounded_clip_rects_[i].rect(), antialias_);
     } else {
-      bool antialiased = true;
-      canvas->clipRRect(rounded_clip_rects_[i], SkRegion::kIntersect_Op,
-                        antialiased);
+      canvas->clipRRect(rounded_clip_rects_[i], antialias_);
     }
   }
 }
@@ -104,9 +105,11 @@ void ClipDisplayItem::AsValueInto(const gfx::Rect& visual_rect,
   array->AppendString(value);
 }
 
-EndClipDisplayItem::EndClipDisplayItem() {
-  DisplayItem::SetNew(true /* suitable_for_gpu_raster */, 0 /* op_count */,
-                      0 /* external_memory_usage */);
+EndClipDisplayItem::EndClipDisplayItem() : DisplayItem(END_CLIP) {}
+
+EndClipDisplayItem::EndClipDisplayItem(const proto::DisplayItem& proto)
+    : DisplayItem(END_CLIP) {
+  DCHECK_EQ(proto::DisplayItem::Type_EndClip, proto.type());
 }
 
 EndClipDisplayItem::~EndClipDisplayItem() {
@@ -116,12 +119,7 @@ void EndClipDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
   proto->set_type(proto::DisplayItem::Type_EndClip);
 }
 
-void EndClipDisplayItem::FromProtobuf(const proto::DisplayItem& proto) {
-  DCHECK_EQ(proto::DisplayItem::Type_EndClip, proto.type());
-}
-
 void EndClipDisplayItem::Raster(SkCanvas* canvas,
-                                const gfx::Rect& canvas_target_playback_rect,
                                 SkPicture::AbortCallback* callback) const {
   canvas->restore();
 }

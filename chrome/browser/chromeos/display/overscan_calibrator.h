@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DISPLAY_OVERSCAN_CALIBRATOR_H_
 #define CHROME_BROWSER_CHROMEOS_DISPLAY_OVERSCAN_CALIBRATOR_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/compositor/layer_delegate.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -22,7 +23,7 @@ namespace chromeos {
 // calibrating display overscan settings.
 class OverscanCalibrator : public ui::LayerDelegate {
  public:
-  OverscanCalibrator(const gfx::Display& target_display,
+  OverscanCalibrator(const display::Display& target_display,
                      const gfx::Insets& initial_insets);
   ~OverscanCalibrator() override;
 
@@ -44,10 +45,9 @@ class OverscanCalibrator : public ui::LayerDelegate {
   void OnPaintLayer(const ui::PaintContext& context) override;
   void OnDelegatedFrameDamage(const gfx::Rect& damage_rect_in_dip) override;
   void OnDeviceScaleFactorChanged(float device_scale_factor) override;
-  base::Closure PrepareForLayerBoundsChange() override;
 
   // The target display.
-  const gfx::Display display_;
+  const display::Display display_;
 
   // The current insets.
   gfx::Insets insets_;
@@ -59,7 +59,7 @@ class OverscanCalibrator : public ui::LayerDelegate {
   bool committed_;
 
   // The visualization layer for the current calibration region.
-  scoped_ptr<ui::Layer> calibration_layer_;
+  std::unique_ptr<ui::Layer> calibration_layer_;
 
   DISALLOW_COPY_AND_ASSIGN(OverscanCalibrator);
 };

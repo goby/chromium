@@ -4,16 +4,19 @@
 
 #include "ui/wm/core/cursor_manager.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/aura/test/aura_test_base.h"
 #include "ui/wm/core/native_cursor_manager.h"
+#include "ui/wm/test/testing_cursor_client_observer.h"
 
 namespace {
 
 class TestingCursorManager : public wm::NativeCursorManager {
  public:
   // Overridden from wm::NativeCursorManager:
-  void SetDisplay(const gfx::Display& display,
+  void SetDisplay(const display::Display& display,
                   wm::NativeCursorManagerDelegate* delegate) override {}
 
   void SetCursor(gfx::NativeCursor cursor,
@@ -44,34 +47,10 @@ class CursorManagerTest : public aura::test::AuraTestBase {
  protected:
   CursorManagerTest()
       : delegate_(new TestingCursorManager),
-        cursor_manager_(scoped_ptr<wm::NativeCursorManager>(
-            delegate_)) {
-  }
+        cursor_manager_(base::WrapUnique(delegate_)) {}
 
   TestingCursorManager* delegate_;
   wm::CursorManager cursor_manager_;
-};
-
-class TestingCursorClientObserver : public aura::client::CursorClientObserver {
- public:
-  TestingCursorClientObserver()
-      : cursor_visibility_(false),
-        did_visibility_change_(false) {}
-  void reset() { cursor_visibility_ = did_visibility_change_ = false; }
-  bool is_cursor_visible() const { return cursor_visibility_; }
-  bool did_visibility_change() const { return did_visibility_change_; }
-
-  // Overridden from aura::client::CursorClientObserver:
-  void OnCursorVisibilityChanged(bool is_visible) override {
-    cursor_visibility_ = is_visible;
-    did_visibility_change_ = true;
-  }
-
- private:
-  bool cursor_visibility_;
-  bool did_visibility_change_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestingCursorClientObserver);
 };
 
 TEST_F(CursorManagerTest, ShowHideCursor) {
@@ -175,16 +154,23 @@ TEST_F(CursorManagerTest, EnableDisableMouseEvents) {
 }
 
 TEST_F(CursorManagerTest, SetCursorSet) {
+  wm::TestingCursorClientObserver observer;
+  cursor_manager_.AddObserver(&observer);
+
   EXPECT_EQ(ui::CURSOR_SET_NORMAL, cursor_manager_.GetCursorSet());
+  EXPECT_EQ(ui::CURSOR_SET_NORMAL, observer.cursor_set());
 
   cursor_manager_.SetCursorSet(ui::CURSOR_SET_NORMAL);
   EXPECT_EQ(ui::CURSOR_SET_NORMAL, cursor_manager_.GetCursorSet());
+  EXPECT_EQ(ui::CURSOR_SET_NORMAL, observer.cursor_set());
 
   cursor_manager_.SetCursorSet(ui::CURSOR_SET_LARGE);
   EXPECT_EQ(ui::CURSOR_SET_LARGE, cursor_manager_.GetCursorSet());
+  EXPECT_EQ(ui::CURSOR_SET_LARGE, observer.cursor_set());
 
   cursor_manager_.SetCursorSet(ui::CURSOR_SET_NORMAL);
   EXPECT_EQ(ui::CURSOR_SET_NORMAL, cursor_manager_.GetCursorSet());
+  EXPECT_EQ(ui::CURSOR_SET_NORMAL, observer.cursor_set());
 }
 
 TEST_F(CursorManagerTest, IsMouseEventsEnabled) {
@@ -275,8 +261,8 @@ TEST_F(CursorManagerTest, MultipleEnableMouseEvents) {
 TEST_F(CursorManagerTest, TestCursorClientObserver) {
   // Add two observers. Both should have OnCursorVisibilityChanged()
   // invoked when the visibility of the cursor changes.
-  TestingCursorClientObserver observer_a;
-  TestingCursorClientObserver observer_b;
+  wm::TestingCursorClientObserver observer_a;
+  wm::TestingCursorClientObserver observer_b;
   cursor_manager_.AddObserver(&observer_a);
   cursor_manager_.AddObserver(&observer_b);
 
@@ -287,6 +273,8 @@ TEST_F(CursorManagerTest, TestCursorClientObserver) {
   EXPECT_FALSE(observer_b.did_visibility_change());
   EXPECT_FALSE(observer_a.is_cursor_visible());
   EXPECT_FALSE(observer_b.is_cursor_visible());
+  EXPECT_FALSE(observer_a.did_cursor_set_change());
+  EXPECT_FALSE(observer_b.did_cursor_set_change());
 
   // Hide the cursor using HideCursor().
   cursor_manager_.HideCursor();
@@ -294,6 +282,13 @@ TEST_F(CursorManagerTest, TestCursorClientObserver) {
   EXPECT_TRUE(observer_b.did_visibility_change());
   EXPECT_FALSE(observer_a.is_cursor_visible());
   EXPECT_FALSE(observer_b.is_cursor_visible());
+
+  // Set the cursor set.
+  cursor_manager_.SetCursorSet(ui::CURSOR_SET_LARGE);
+  EXPECT_TRUE(observer_a.did_cursor_set_change());
+  EXPECT_EQ(ui::CURSOR_SET_LARGE, observer_a.cursor_set());
+  EXPECT_TRUE(observer_b.did_cursor_set_change());
+  EXPECT_EQ(ui::CURSOR_SET_LARGE, observer_b.cursor_set());
 
   // Show the cursor using ShowCursor().
   observer_a.reset();
@@ -316,6 +311,12 @@ TEST_F(CursorManagerTest, TestCursorClientObserver) {
   EXPECT_FALSE(observer_b.did_visibility_change());
   EXPECT_FALSE(observer_a.is_cursor_visible());
 
+  // Set back the cursor set to normal.
+  cursor_manager_.SetCursorSet(ui::CURSOR_SET_NORMAL);
+  EXPECT_TRUE(observer_a.did_cursor_set_change());
+  EXPECT_EQ(ui::CURSOR_SET_NORMAL, observer_a.cursor_set());
+  EXPECT_FALSE(observer_b.did_cursor_set_change());
+
   // Show the cursor using ShowCursor().
   observer_a.reset();
   observer_b.reset();
@@ -323,4 +324,39 @@ TEST_F(CursorManagerTest, TestCursorClientObserver) {
   EXPECT_TRUE(observer_a.did_visibility_change());
   EXPECT_FALSE(observer_b.did_visibility_change());
   EXPECT_TRUE(observer_a.is_cursor_visible());
+}
+
+// This test validates that the cursor visiblity state is restored when a
+// CursorManager instance is destroyed and recreated.
+TEST(CursorManagerCreateDestroyTest, VisibilityTest) {
+  // This block ensures that the cursor is hidden when the CursorManager
+  // instance is destroyed.
+  {
+    wm::CursorManager cursor_manager1(
+        base::WrapUnique(new TestingCursorManager));
+    cursor_manager1.ShowCursor();
+    EXPECT_TRUE(cursor_manager1.IsCursorVisible());
+    cursor_manager1.HideCursor();
+    EXPECT_FALSE(cursor_manager1.IsCursorVisible());
+  }
+
+  // This block validates that the cursor is hidden initially. It ensures that
+  // the cursor is visible when the CursorManager instance is destroyed.
+  {
+    wm::CursorManager cursor_manager2(
+        base::WrapUnique(new TestingCursorManager));
+    EXPECT_FALSE(cursor_manager2.IsCursorVisible());
+    cursor_manager2.ShowCursor();
+    EXPECT_TRUE(cursor_manager2.IsCursorVisible());
+  }
+
+  // This block validates that the cursor is visible initially. It then
+  // performs normal cursor visibility operations.
+  {
+    wm::CursorManager cursor_manager3(
+        base::WrapUnique(new TestingCursorManager));
+    EXPECT_TRUE(cursor_manager3.IsCursorVisible());
+    cursor_manager3.HideCursor();
+    EXPECT_FALSE(cursor_manager3.IsCursorVisible());
+  }
 }

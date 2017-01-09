@@ -3,17 +3,17 @@
 # found in the LICENSE file.
 
 import("//tools/grit/grit_rule.gni")
+import("//third_party/inspector_protocol/inspector_protocol.gni")
 
-# In GYP: devtools_resources target.
 group("resources") {
   public_deps = [
     ":devtools_resources",
   ]
 }
 
-# In GYP: devtools_resources action in the devtools_resources target.
 grit("devtools_resources") {
   source = "$root_gen_dir/devtools/devtools_resources.grd"
+  source_is_generated = true
 
   # TOOD(brettw) remove this so the output file goes into the target_gen_dir,
   # but keep this for not for GYP compat.
@@ -34,17 +34,54 @@ grit("devtools_resources") {
   ]
 }
 
+inspector_protocol_generate("protocol_sources") {
+  visibility = [ "//content/browser" ]
+  deps = [
+    "//third_party/WebKit/Source/core/inspector:protocol_version",
+  ]
+  _blink_protocol_path =
+      rebase_path("$root_gen_dir/blink/core/inspector/protocol.json",
+                  root_build_dir)
+
+  inspector_protocol_dir = "//third_party/inspector_protocol"
+  out_dir = target_gen_dir
+  config_file = "protocol_config.json"
+  config_values = [ "protocol.path=$_blink_protocol_path" ]
+
+  inputs = [
+    "$root_gen_dir/blink/core/inspector/protocol.json",
+    config_file,
+  ]
+
+  # These are relative to $target_gen_dir.
+  outputs = [
+    "protocol/forward.h",
+    "protocol/io.cc",
+    "protocol/io.h",
+    "protocol/memory.cc",
+    "protocol/memory.h",
+    "protocol/protocol.cc",
+    "protocol/protocol.h",
+    "protocol/system_info.cc",
+    "protocol/system_info.h",
+    "protocol/tethering.cc",
+    "protocol/tethering.h",
+    "protocol/tracing.cc",
+    "protocol/tracing.h",
+  ]
+}
+
 action("gen_devtools_protocol_handler") {
   visibility = [ "//content/browser" ]
-
+  deps = [
+    "//third_party/WebKit/Source/core/inspector:protocol_version",
+  ]
   script = "//content/browser/devtools/protocol/" +
            "devtools_protocol_handler_generator.py"
 
-  blink_protocol = "//third_party/WebKit/Source/devtools/protocol.json"
-  browser_protocol = "browser_protocol.json"
+  blink_protocol = "$root_gen_dir/blink/core/inspector/protocol.json"
   inputs = [
     blink_protocol,
-    browser_protocol,
   ]
 
   outputs = [

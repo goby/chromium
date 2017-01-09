@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "base/strings/stringprintf.h"
+#include "chrome/browser/media/router/presentation_media_sinks_observer.h"
+
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/media/router/media_source_helper.h"
 #include "chrome/browser/media/router/mock_media_router.h"
 #include "chrome/browser/media/router/mock_screen_availability_listener.h"
-#include "chrome/browser/media/router/presentation_media_sinks_observer.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/browser/presentation_screen_availability_listener.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -21,14 +23,15 @@ namespace media_router {
 class PresentationMediaSinksObserverTest : public ::testing::Test {
  public:
   PresentationMediaSinksObserverTest()
-      : listener_("http://example.com/presentation.html") {}
+      : listener_(GURL("http://example.com/presentation.html")) {}
   ~PresentationMediaSinksObserverTest() override {}
 
   void SetUp() override {
     EXPECT_CALL(router_, RegisterMediaSinksObserver(_)).WillOnce(Return(true));
     observer_.reset(new PresentationMediaSinksObserver(
-        &router_, &listener_,
-        MediaSourceForPresentationUrl("http://example.com/presentation.html")));
+        &router_, &listener_, MediaSourceForPresentationUrl(
+                                  GURL("http://example.com/presentation.html")),
+        GURL("https://google.com")));
     EXPECT_TRUE(observer_->Init());
   }
 
@@ -39,7 +42,7 @@ class PresentationMediaSinksObserverTest : public ::testing::Test {
 
   MockMediaRouter router_;
   MockScreenAvailabilityListener listener_;
-  scoped_ptr<PresentationMediaSinksObserver> observer_;
+  std::unique_ptr<PresentationMediaSinksObserver> observer_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PresentationMediaSinksObserverTest);

@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <list>
-#include <string>
-
-#include "base/memory/scoped_ptr.h"
-#include "base/values.h"
 #include "chrome/test/chromedriver/chrome/heap_snapshot_taker.h"
+
+#include <stddef.h>
+
+#include <list>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "base/macros.h"
+#include "base/values.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome/stub_devtools_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -16,11 +21,11 @@ namespace {
 
 const char* const chunks[] = {"{\"a\": 1,", "\"b\": 2}"};
 
-scoped_ptr<base::Value> GetSnapshotAsValue() {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+std::unique_ptr<base::Value> GetSnapshotAsValue() {
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetInteger("a", 1);
   dict->SetInteger("b", 2);
-  return dict.Pass();
+  return std::move(dict);
 }
 
 class DummyDevToolsClient : public StubDevToolsClient {
@@ -78,7 +83,7 @@ class DummyDevToolsClient : public StubDevToolsClient {
 TEST(HeapSnapshotTaker, SuccessfulCase) {
   DummyDevToolsClient client("", false);
   HeapSnapshotTaker taker(&client);
-  scoped_ptr<base::Value> snapshot;
+  std::unique_ptr<base::Value> snapshot;
   Status status = taker.TakeSnapshot(&snapshot);
   ASSERT_EQ(kOk, status.code());
   ASSERT_TRUE(GetSnapshotAsValue()->Equals(snapshot.get()));
@@ -88,7 +93,7 @@ TEST(HeapSnapshotTaker, SuccessfulCase) {
 TEST(HeapSnapshotTaker, FailIfErrorOnDebuggerEnable) {
   DummyDevToolsClient client("Debugger.enable", false);
   HeapSnapshotTaker taker(&client);
-  scoped_ptr<base::Value> snapshot;
+  std::unique_ptr<base::Value> snapshot;
   Status status = taker.TakeSnapshot(&snapshot);
   ASSERT_TRUE(status.IsError());
   ASSERT_FALSE(snapshot.get());
@@ -98,7 +103,7 @@ TEST(HeapSnapshotTaker, FailIfErrorOnDebuggerEnable) {
 TEST(HeapSnapshotTaker, FailIfErrorOnCollectGarbage) {
   DummyDevToolsClient client("HeapProfiler.collectGarbage", false);
   HeapSnapshotTaker taker(&client);
-  scoped_ptr<base::Value> snapshot;
+  std::unique_ptr<base::Value> snapshot;
   Status status = taker.TakeSnapshot(&snapshot);
   ASSERT_TRUE(status.IsError());
   ASSERT_FALSE(snapshot.get());
@@ -108,7 +113,7 @@ TEST(HeapSnapshotTaker, FailIfErrorOnCollectGarbage) {
 TEST(HeapSnapshotTaker, ErrorBeforeWhenReceivingSnapshot) {
   DummyDevToolsClient client("HeapProfiler.takeHeapSnapshot", false);
   HeapSnapshotTaker taker(&client);
-  scoped_ptr<base::Value> snapshot;
+  std::unique_ptr<base::Value> snapshot;
   Status status = taker.TakeSnapshot(&snapshot);
   ASSERT_TRUE(status.IsError());
   ASSERT_FALSE(snapshot.get());

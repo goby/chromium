@@ -5,8 +5,8 @@
 #ifndef UI_AURA_TEST_TEST_CURSOR_CLIENT_H_
 #define UI_AURA_TEST_TEST_CURSOR_CLIENT_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "ui/aura/client/cursor_client.h"
 
@@ -42,7 +42,7 @@ class TestCursorClient : public aura::client::CursorClient {
   void EnableMouseEvents() override;
   void DisableMouseEvents() override;
   bool IsMouseEventsEnabled() const override;
-  void SetDisplay(const gfx::Display& display) override;
+  void SetDisplay(const display::Display& display) override;
   void LockCursor() override;
   void UnlockCursor() override;
   bool IsCursorLocked() const override;

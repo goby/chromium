@@ -5,34 +5,32 @@
 #ifndef CONTENT_PUBLIC_BROWSER_RESOURCE_DISPATCHER_HOST_DELEGATE_H_
 #define CONTENT_PUBLIC_BROWSER_RESOURCE_DISPATCHER_HOST_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/resource_request_info.h"
 #include "content/public/common/resource_type.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
 template <class T> class ScopedVector;
 
-namespace IPC {
-class Sender;
-}
-
 namespace net {
 class AuthChallengeInfo;
+class ClientCertStore;
 class URLRequest;
 }
 
 namespace content {
 
 class AppCacheService;
+class NavigationData;
 class ResourceContext;
 class ResourceDispatcherHostLoginDelegate;
 class ResourceThrottle;
-struct Referrer;
 struct ResourceResponse;
 struct StreamInfo;
 
@@ -56,13 +54,14 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
 
   // Allows an embedder to add additional resource handlers for a download.
   // |must_download| is set if the request must be handled as a download.
+  // |is_new_request| is true if this is a call for a new, unstarted request
+  // which also means that RequestBeginning has not been and will not be
+  // called for this request.
   virtual void DownloadStarting(net::URLRequest* request,
                                 ResourceContext* resource_context,
-                                int child_id,
-                                int route_id,
-                                int request_id,
                                 bool is_content_initiated,
                                 bool must_download,
+                                bool is_new_request,
                                 ScopedVector<ResourceThrottle>* throttles);
 
   // Creates a ResourceDispatcherHostLoginDelegate that asks the user for a
@@ -75,11 +74,7 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
   // the url was made, e.g. by launching an app. Note that this does not
   // guarantee that the app successfully handled it.
   virtual bool HandleExternalProtocol(const GURL& url,
-                                      int child_id,
-                                      int route_id,
-                                      bool is_main_frame,
-                                      ui::PageTransition page_transition,
-                                      bool has_user_gesture);
+                                      ResourceRequestInfo* info);
 
   // Returns true if we should force the given resource to be downloaded.
   // Otherwise, the content layer decides.
@@ -107,13 +102,12 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
   // Informs the delegate that a Stream was created. The Stream can be read from
   // the blob URL of the Stream, but can only be read once.
   virtual void OnStreamCreated(net::URLRequest* request,
-                               scoped_ptr<content::StreamInfo> stream);
+                               std::unique_ptr<content::StreamInfo> stream);
 
   // Informs the delegate that a response has started.
   virtual void OnResponseStarted(net::URLRequest* request,
                                  ResourceContext* resource_context,
-                                 ResourceResponse* response,
-                                 IPC::Sender* sender);
+                                 ResourceResponse* response);
 
   // Informs the delegate that a request has been redirected.
   virtual void OnRequestRedirected(const GURL& redirect_url,
@@ -122,6 +116,9 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
                                    ResourceResponse* response);
 
   // Notification that a request has completed.
+  virtual void RequestComplete(net::URLRequest* url_request, int net_error);
+  // Deprecated.
+  // TODO(maksims): Remove this once all the callers are modified.
   virtual void RequestComplete(net::URLRequest* url_request);
 
   // Asks the embedder if Lo-Fi mode should be enabled for the given request. It
@@ -129,8 +126,21 @@ class CONTENT_EXPORT ResourceDispatcherHostDelegate {
   virtual bool ShouldEnableLoFiMode(const net::URLRequest& url_request,
                                     content::ResourceContext* resource_context);
 
+  // Asks the embedder for NavigationData related to this request. It is only
+  // called for navigation requests.
+  virtual NavigationData* GetNavigationData(net::URLRequest* request) const;
+
+  // Get platform ClientCertStore. May return nullptr.
+  virtual std::unique_ptr<net::ClientCertStore> CreateClientCertStore(
+      ResourceContext* resource_context);
+
+  // Notification that a main frame load was aborted. The |request_loading_time|
+  // parameter contains the time between the load request start and abort.
+  // Called on the IO thread.
+  virtual void OnAbortedFrameLoad(const GURL& url,
+                                  base::TimeDelta request_loading_time);
+
  protected:
-  ResourceDispatcherHostDelegate();
   virtual ~ResourceDispatcherHostDelegate();
 };
 

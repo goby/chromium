@@ -4,10 +4,14 @@
 
 #include "extensions/common/manifest_handlers/background_info.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "extensions/common/constants.h"
@@ -122,7 +126,7 @@ bool BackgroundInfo::LoadBackgroundScripts(const Extension* extension,
     return true;
 
   CHECK(background_scripts_value);
-  if (background_scripts_value->GetType() != base::Value::TYPE_LIST) {
+  if (background_scripts_value->GetType() != base::Value::Type::LIST) {
     *error = ASCIIToUTF16(errors::kInvalidBackgroundScripts);
     return false;
   }
@@ -229,7 +233,7 @@ bool BackgroundInfo::LoadAllowJSAccess(const Extension* extension,
                                   &allow_js_access))
     return true;
 
-  if (!allow_js_access->IsType(base::Value::TYPE_BOOLEAN) ||
+  if (!allow_js_access->IsType(base::Value::Type::BOOLEAN) ||
       !allow_js_access->GetAsBoolean(&allow_js_access_)) {
     *error = ASCIIToUTF16(errors::kInvalidBackgroundAllowJsAccess);
     return false;
@@ -246,7 +250,7 @@ BackgroundManifestHandler::~BackgroundManifestHandler() {
 
 bool BackgroundManifestHandler::Parse(Extension* extension,
                                       base::string16* error) {
-  scoped_ptr<BackgroundInfo> info(new BackgroundInfo);
+  std::unique_ptr<BackgroundInfo> info(new BackgroundInfo);
   if (!info->Parse(extension, error))
     return false;
 
@@ -294,12 +298,32 @@ bool BackgroundManifestHandler::Validate(
     const base::FilePath path = extension->GetResource(page_path).GetFilePath();
     if (path.empty() || !base::PathExists(path)) {
       *error =
-          l10n_util::GetStringFUTF8(
-              IDS_EXTENSION_LOAD_BACKGROUND_PAGE_FAILED,
-              page_path.LossyDisplayName());
+          l10n_util::GetStringFUTF8(IDS_EXTENSION_LOAD_BACKGROUND_PAGE_FAILED,
+                                    page_path.LossyDisplayName());
       return false;
     }
   }
+
+  if (extension->is_platform_app()) {
+    const std::string manifest_key =
+        std::string(keys::kPlatformAppBackground) + ".persistent";
+    bool is_persistent = false;
+    // Validate that packaged apps do not use a persistent background page.
+    if (extension->manifest()->GetBoolean(manifest_key, &is_persistent) &&
+        is_persistent) {
+      warnings->push_back(
+          InstallWarning(errors::kInvalidBackgroundPersistentInPlatformApp));
+    }
+    // Validate that packaged apps do not use the key 'background.persistent'.
+    // Use the dictionary directly to prevent an access check as
+    // 'background.persistent' is not available for packaged apps.
+    if (extension->manifest()->value()->Get(keys::kBackgroundPersistent,
+                                            NULL)) {
+      warnings->push_back(
+          InstallWarning(errors::kBackgroundPersistentInvalidForPlatformApps));
+    }
+  }
+
   return true;
 }
 

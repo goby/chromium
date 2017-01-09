@@ -4,33 +4,29 @@
 
 #include "chrome/browser/ui/search/search_tab_helper.h"
 
-#include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/field_trial.h"
+#include <stdint.h>
+
+#include <memory>
+#include <string>
+#include <tuple>
+
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "chrome/browser/prerender/prerender_manager.h"
-#include "chrome/browser/prerender/prerender_manager_factory.h"
-#include "chrome/browser/search/instant_unittest_base.h"
-#include "chrome/browser/search/search.h"
-#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/fake_signin_manager_builder.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/profile_sync_service_mock.h"
+#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/ui/search/search_ipc_router.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_switches.h"
-#include "chrome/common/ntp_logging_events.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/omnibox/common/omnibox_focus_state.h"
-#include "components/search_engines/template_url_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -55,16 +51,16 @@ class MockSearchIPCRouterDelegate : public SearchIPCRouter::Delegate {
 
   MOCK_METHOD1(OnInstantSupportDetermined, void(bool supports_instant));
   MOCK_METHOD1(FocusOmnibox, void(OmniboxFocusState state));
-  MOCK_METHOD3(NavigateToURL, void(const GURL&, WindowOpenDisposition, bool));
+  MOCK_METHOD2(NavigateToURL, void(const GURL&, WindowOpenDisposition));
   MOCK_METHOD1(OnDeleteMostVisitedItem, void(const GURL& url));
   MOCK_METHOD1(OnUndoMostVisitedDeletion, void(const GURL& url));
   MOCK_METHOD0(OnUndoAllMostVisitedDeletions, void());
   MOCK_METHOD2(OnLogEvent, void(NTPLoggingEventType event,
                                 base::TimeDelta time));
   MOCK_METHOD2(OnLogMostVisitedImpression,
-               void(int position, const base::string16& provider));
+               void(int position, ntp_tiles::NTPTileSource tile_source));
   MOCK_METHOD2(OnLogMostVisitedNavigation,
-               void(int position, const base::string16& provider));
+               void(int position, ntp_tiles::NTPTileSource tile_source));
   MOCK_METHOD1(PasteIntoOmnibox, void(const base::string16&));
   MOCK_METHOD1(OnChromeIdentityCheck, void(const base::string16& identity));
   MOCK_METHOD0(OnHistorySyncCheck, void());
@@ -83,9 +79,8 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
     TestingProfile::Builder builder;
     builder.AddTestingFactory(SigninManagerFactory::GetInstance(),
                               BuildFakeSigninManagerBase);
-    builder.AddTestingFactory(
-        ProfileSyncServiceFactory::GetInstance(),
-        ProfileSyncServiceMock::BuildMockProfileSyncService);
+    builder.AddTestingFactory(ProfileSyncServiceFactory::GetInstance(),
+                              BuildMockProfileSyncService);
     return builder.Build().release();
   }
 
@@ -103,8 +98,9 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
 
   // Configure the account to |sync_history| or not.
   void SetHistorySync(bool sync_history) {
-    ProfileSyncServiceMock* sync_service = static_cast<ProfileSyncServiceMock*>(
-        ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile()));
+    browser_sync::ProfileSyncServiceMock* sync_service =
+        static_cast<browser_sync::ProfileSyncServiceMock*>(
+            ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile()));
 
     syncer::ModelTypeSet result;
     if (sync_history) {
@@ -114,7 +110,7 @@ class SearchTabHelperTest : public ChromeRenderViewHostTestHarness {
         .WillRepeatedly(Return(result));
   }
 
-  bool MessageWasSent(uint32 id) {
+  bool MessageWasSent(uint32_t id) {
     return process()->sink().GetFirstMessageMatching(id) != NULL;
   }
 
@@ -147,11 +143,10 @@ TEST_F(SearchTabHelperTest, DetermineIfPageSupportsInstant_NonLocal) {
   search_tab_helper->DetermineIfPageSupportsInstant();
   ASSERT_TRUE(MessageWasSent(ChromeViewMsg_DetermineIfPageSupportsInstant::ID));
 
-  scoped_ptr<IPC::Message> response(
+  std::unique_ptr<IPC::Message> response(
       new ChromeViewHostMsg_InstantSupportDetermined(
-          web_contents()->GetRoutingID(),
-          search_tab_helper->ipc_router().page_seq_no_for_testing(),
-          true));
+          web_contents()->GetRenderViewHost()->GetRoutingID(),
+          search_tab_helper->ipc_router().page_seq_no_for_testing(), true));
   search_tab_helper->ipc_router().OnMessageReceived(*response);
 }
 
@@ -188,8 +183,8 @@ TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMatch) {
 
   ChromeViewMsg_ChromeIdentityCheckResult::Param params;
   ChromeViewMsg_ChromeIdentityCheckResult::Read(message, &params);
-  EXPECT_EQ(test_identity, base::get<0>(params));
-  ASSERT_TRUE(base::get<1>(params));
+  EXPECT_EQ(test_identity, std::get<0>(params));
+  ASSERT_TRUE(std::get<1>(params));
 }
 
 TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMatchSlightlyDifferentGmail) {
@@ -211,14 +206,14 @@ TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMatchSlightlyDifferentGmail) {
 
   ChromeViewMsg_ChromeIdentityCheckResult::Param params;
   ChromeViewMsg_ChromeIdentityCheckResult::Read(message, &params);
-  EXPECT_EQ(test_identity, base::get<0>(params));
-  ASSERT_TRUE(base::get<1>(params));
+  EXPECT_EQ(test_identity, std::get<0>(params));
+  ASSERT_TRUE(std::get<1>(params));
 }
 
 TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMatchSlightlyDifferentGmail2) {
   NavigateAndCommit(GURL(chrome::kChromeSearchLocalNtpUrl));
   //
-  CreateSigninManager(std::string("chrome.guy.7FOREVER"));
+  CreateSigninManager(std::string("chrome.user.7FOREVER"));
   SearchTabHelper* search_tab_helper =
       SearchTabHelper::FromWebContents(web_contents());
   ASSERT_NE(static_cast<SearchTabHelper*>(NULL), search_tab_helper);
@@ -226,7 +221,7 @@ TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMatchSlightlyDifferentGmail2) {
   // For gmail/googlemail, canonicalization is done so that email addresses have
   // a standard form.
   const base::string16 test_identity =
-      base::ASCIIToUTF16("chromeguy7forever@googlemail.com");
+      base::ASCIIToUTF16("chromeuser7forever@googlemail.com");
   search_tab_helper->OnChromeIdentityCheck(test_identity);
 
   const IPC::Message* message = process()->sink().GetUniqueMessageMatching(
@@ -235,8 +230,8 @@ TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMatchSlightlyDifferentGmail2) {
 
   ChromeViewMsg_ChromeIdentityCheckResult::Param params;
   ChromeViewMsg_ChromeIdentityCheckResult::Read(message, &params);
-  EXPECT_EQ(test_identity, base::get<0>(params));
-  ASSERT_TRUE(base::get<1>(params));
+  EXPECT_EQ(test_identity, std::get<0>(params));
+  ASSERT_TRUE(std::get<1>(params));
 }
 
 TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMismatch) {
@@ -255,8 +250,8 @@ TEST_F(SearchTabHelperTest, OnChromeIdentityCheckMismatch) {
 
   ChromeViewMsg_ChromeIdentityCheckResult::Param params;
   ChromeViewMsg_ChromeIdentityCheckResult::Read(message, &params);
-  EXPECT_EQ(test_identity, base::get<0>(params));
-  ASSERT_FALSE(base::get<1>(params));
+  EXPECT_EQ(test_identity, std::get<0>(params));
+  ASSERT_FALSE(std::get<1>(params));
 }
 
 TEST_F(SearchTabHelperTest, OnChromeIdentityCheckSignedOutMismatch) {
@@ -275,8 +270,8 @@ TEST_F(SearchTabHelperTest, OnChromeIdentityCheckSignedOutMismatch) {
 
   ChromeViewMsg_ChromeIdentityCheckResult::Param params;
   ChromeViewMsg_ChromeIdentityCheckResult::Read(message, &params);
-  EXPECT_EQ(test_identity, base::get<0>(params));
-  ASSERT_FALSE(base::get<1>(params));
+  EXPECT_EQ(test_identity, std::get<0>(params));
+  ASSERT_FALSE(std::get<1>(params));
 }
 
 TEST_F(SearchTabHelperTest, OnHistorySyncCheckSyncing) {
@@ -294,7 +289,7 @@ TEST_F(SearchTabHelperTest, OnHistorySyncCheckSyncing) {
 
   ChromeViewMsg_HistorySyncCheckResult::Param params;
   ChromeViewMsg_HistorySyncCheckResult::Read(message, &params);
-  ASSERT_TRUE(base::get<0>(params));
+  ASSERT_TRUE(std::get<0>(params));
 }
 
 TEST_F(SearchTabHelperTest, OnHistorySyncCheckNotSyncing) {
@@ -312,7 +307,7 @@ TEST_F(SearchTabHelperTest, OnHistorySyncCheckNotSyncing) {
 
   ChromeViewMsg_HistorySyncCheckResult::Param params;
   ChromeViewMsg_HistorySyncCheckResult::Read(message, &params);
-  ASSERT_FALSE(base::get<0>(params));
+  ASSERT_FALSE(std::get<0>(params));
 }
 
 class TabTitleObserver : public content::WebContentsObserver {
@@ -327,8 +322,7 @@ class TabTitleObserver : public content::WebContentsObserver {
   void DidStartProvisionalLoadForFrame(
       content::RenderFrameHost* /* render_frame_host */,
       const GURL& /* validated_url */,
-      bool /* is_error_page */,
-      bool /* is_iframe_srcdoc */) override {
+      bool /* is_error_page */) override {
     title_on_start_ = web_contents()->GetTitle();
   }
 
@@ -349,69 +343,4 @@ TEST_F(SearchTabHelperTest, TitleIsSetForNTP) {
   EXPECT_EQ(title, title_observer.title_on_start());
   EXPECT_EQ(title, title_observer.title_on_commit());
   EXPECT_EQ(title, web_contents()->GetTitle());
-}
-
-class SearchTabHelperPrerenderTest : public InstantUnitTestBase {
- public:
-  ~SearchTabHelperPrerenderTest() override {}
-
- protected:
-  void SetUp() override {
-    ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-        "EmbeddedSearch",
-        "Group1 espv:89 prefetch_results:1 "
-        "prerender_instant_url_on_omnibox_focus:1"));
-    InstantUnitTestBase::SetUp();
-
-    AddTab(browser(), GURL(chrome::kChromeUINewTabURL));
-    SearchTabHelper::FromWebContents(web_contents())->set_omnibox_has_focus_fn(
-        omnibox_has_focus);
-    SearchTabHelperPrerenderTest::omnibox_has_focus_ = true;
-  }
-
-  content::WebContents* web_contents() {
-    return browser()->tab_strip_model()->GetActiveWebContents();
-  }
-
-  bool IsInstantURLMarkedForPrerendering() {
-    GURL instant_url(search::GetSearchResultPrefetchBaseURL(profile()));
-    prerender::PrerenderManager* prerender_manager =
-        prerender::PrerenderManagerFactory::GetForProfile(profile());
-    return prerender_manager->HasPrerenderedUrl(instant_url, web_contents());
-  }
-
-  static bool omnibox_has_focus(OmniboxView* omnibox) {
-    return omnibox_has_focus_;
-  }
-
-  static bool omnibox_has_focus_;
-};
-
-bool SearchTabHelperPrerenderTest::omnibox_has_focus_ = true;
-
-TEST_F(SearchTabHelperPrerenderTest, OnOmniboxFocusPrerenderInstantURL) {
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  search_tab_helper->OmniboxFocusChanged(OMNIBOX_FOCUS_VISIBLE,
-                                         OMNIBOX_FOCUS_CHANGE_EXPLICIT);
-  ASSERT_TRUE(IsInstantURLMarkedForPrerendering());
-  search_tab_helper->OmniboxFocusChanged(OMNIBOX_FOCUS_NONE,
-                                         OMNIBOX_FOCUS_CHANGE_EXPLICIT);
-  ASSERT_FALSE(IsInstantURLMarkedForPrerendering());
-}
-
-TEST_F(SearchTabHelperPrerenderTest, OnTabActivatedPrerenderInstantURL) {
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  search_tab_helper->OnTabActivated();
-  ASSERT_TRUE(IsInstantURLMarkedForPrerendering());
-}
-
-TEST_F(SearchTabHelperPrerenderTest,
-    OnTabActivatedNoPrerenderIfOmniboxBlurred) {
-  SearchTabHelperPrerenderTest::omnibox_has_focus_ = false;
-  SearchTabHelper* search_tab_helper =
-      SearchTabHelper::FromWebContents(web_contents());
-  search_tab_helper->OnTabActivated();
-  ASSERT_FALSE(IsInstantURLMarkedForPrerendering());
 }

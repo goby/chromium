@@ -6,8 +6,8 @@ package org.chromium.content.browser;
 
 import android.content.Context;
 import android.os.Handler;
+import android.os.StrictMode;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ResourceExtractor;
 import org.chromium.base.ThreadUtils;
@@ -62,9 +62,14 @@ public class BrowserStartupController {
     private static BrowserStartupController sInstance;
 
     private static boolean sBrowserMayStartAsynchronously = false;
+    private static boolean sShouldStartGpuProcessOnBrowserStartup = true;
 
     private static void setAsynchronousStartup(boolean enable) {
         sBrowserMayStartAsynchronously = enable;
+    }
+
+    private static void setShouldStartGpuProcessOnBrowserStartup(boolean enable) {
+        sShouldStartGpuProcessOnBrowserStartup = enable;
     }
 
     @VisibleForTesting
@@ -79,6 +84,11 @@ public class BrowserStartupController {
         if (sInstance != null) {
             sInstance.executeEnqueuedCallbacks(result, NOT_ALREADY_STARTED);
         }
+    }
+
+    @CalledByNative
+    static boolean shouldStartGpuProcessOnBrowserStartup() {
+        return sShouldStartGpuProcessOnBrowserStartup;
     }
 
     // A list of callbacks that should be called when the async startup of the browser process is
@@ -108,7 +118,7 @@ public class BrowserStartupController {
 
     BrowserStartupController(Context context, int libraryProcessType) {
         mContext = context.getApplicationContext();
-        mAsyncStartupCallbacks = new ArrayList<StartupCallback>();
+        mAsyncStartupCallbacks = new ArrayList<>();
         mLibraryProcessType = libraryProcessType;
     }
 
@@ -147,9 +157,10 @@ public class BrowserStartupController {
      * <p/>
      * Note that this can only be called on the UI thread.
      *
+     * @param startGpuProcess Whether to start the GPU process if it is not started.
      * @param callback the callback to be called when browser startup is complete.
      */
-    public void startBrowserProcessesAsync(final StartupCallback callback)
+    public void startBrowserProcessesAsync(boolean startGpuProcess, final StartupCallback callback)
             throws ProcessInitException {
         assert ThreadUtils.runningOnUiThread() : "Tried to start the browser on the wrong thread.";
         if (mStartupDone) {
@@ -168,6 +179,7 @@ public class BrowserStartupController {
             mHasStartedInitializingBrowserProcess = true;
 
             setAsynchronousStartup(true);
+            setShouldStartGpuProcessOnBrowserStartup(startGpuProcess);
             prepareToStartBrowserProcess(false, new Runnable() {
                 @Override
                 public void run() {
@@ -278,12 +290,22 @@ public class BrowserStartupController {
         // Normally Main.java will have kicked this off asynchronously for Chrome. But other
         // ContentView apps like tests also need them so we make sure we've extracted resources
         // here. We can still make it a little async (wait until the library is loaded).
-        ResourceExtractor resourceExtractor = ResourceExtractor.get(mContext);
+        ResourceExtractor resourceExtractor = ResourceExtractor.get();
         resourceExtractor.startExtractingResources();
 
-        // Normally Main.java will have already loaded the library asynchronously, we only need
-        // to load it here if we arrived via another flow, e.g. bookmark access & sync setup.
-        LibraryLoader.get(mLibraryProcessType).ensureInitialized(mContext);
+        // This strictmode exception is to cover the case where the browser process is being started
+        // asynchronously but not in the main browser flow.  The main browser flow will trigger
+        // library loading earlier and this will be a no-op, but in the other cases this will need
+        // to block on loading libraries.
+        // This applies to tests and ManageSpaceActivity, which can be launched from Settings.
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
+        try {
+            // Normally Main.java will have already loaded the library asynchronously, we only need
+            // to load it here if we arrived via another flow, e.g. bookmark access & sync setup.
+            LibraryLoader.get(mLibraryProcessType).ensureInitialized();
+        } finally {
+            StrictMode.setThreadPolicy(oldPolicy);
+        }
 
         Runnable postResourceExtraction = new Runnable() {
             @Override
@@ -291,8 +313,6 @@ public class BrowserStartupController {
                 if (!mPostResourceExtractionTasksCompleted) {
                     // TODO(yfriedman): Remove dependency on a command line flag for this.
                     DeviceUtils.addDeviceSpecificUserAgentSwitch(mContext);
-
-                    ContextUtils.initApplicationContext(mContext);
                     nativeSetCommandLineFlags(
                             singleProcess, nativeIsPluginEnabled() ? getPlugins() : null);
                     mPostResourceExtractionTasksCompleted = true;
@@ -316,11 +336,9 @@ public class BrowserStartupController {
      * Initialization needed for tests. Mainly used by content browsertests.
      */
     public void initChromiumBrowserProcessForTests() {
-        ResourceExtractor resourceExtractor = ResourceExtractor.get(mContext);
+        ResourceExtractor resourceExtractor = ResourceExtractor.get();
         resourceExtractor.startExtractingResources();
         resourceExtractor.waitForCompletion();
-
-        ContextUtils.initApplicationContext(mContext.getApplicationContext());
         nativeSetCommandLineFlags(false, null);
     }
 

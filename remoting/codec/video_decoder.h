@@ -5,8 +5,6 @@
 #ifndef REMOTING_CODEC_VIDEO_DECODER_H_
 #define REMOTING_CODEC_VIDEO_DECODER_H_
 
-#include "base/basictypes.h"
-
 namespace webrtc {
 class DesktopFrame;
 }  // namespace webrtc
@@ -18,8 +16,13 @@ class VideoPacket;
 // Interface for a decoder that decodes video packets.
 class VideoDecoder {
  public:
+  // List of supported pixel formats needed by various platforms.
+  enum class PixelFormat { BGRA, RGBA };
+
   VideoDecoder() {}
   virtual ~VideoDecoder() {}
+
+  virtual void SetPixelFormat(PixelFormat pixel_format) = 0;
 
   // Decodes a video frame. Returns false in case of a failure. The caller must
   // pre-allocate a |frame| with the size specified in the |packet|.

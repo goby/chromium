@@ -23,16 +23,20 @@ class ToughVideoCasesPage(page_module.Page):
     action_runner.PlayMedia(playing_event_timeout_in_seconds=60,
                             ended_event_timeout_in_seconds=60)
 
-  def SeekBeforeAndAfterPlayhead(self, action_runner):
-    action_runner.PlayMedia(playing_event_timeout_in_seconds=60,
-                            ended_event_timeout_in_seconds=60)
-    # Wait for 1 second so that we know the play-head is at ~1s.
+  def SeekBeforeAndAfterPlayhead(self, action_runner,
+                                 action_timeout_in_seconds=60):
+    timeout = action_timeout_in_seconds
+    # Because an ended timeout is passed, this won't return until the media has
+    # played through.
+    action_runner.PlayMedia(playing_event_timeout_in_seconds=timeout,
+                            ended_event_timeout_in_seconds=timeout)
+    # Wait 1 second for no reason in particular.
     action_runner.Wait(1)
     # Seek to before the play-head location.
-    action_runner.SeekMedia(seconds=0.5, timeout_in_seconds=60,
+    action_runner.SeekMedia(seconds=0.5, timeout_in_seconds=timeout,
                             label='seek_warm')
     # Seek to after the play-head location.
-    action_runner.SeekMedia(seconds=9, timeout_in_seconds=60,
+    action_runner.SeekMedia(seconds=9, timeout_in_seconds=timeout,
                             label='seek_cold')
 
 
@@ -496,7 +500,8 @@ class Page36(ToughVideoCasesPage):
     self.add_browser_metrics = True
 
   def RunPageInteractions(self, action_runner):
-    self.SeekBeforeAndAfterPlayhead(action_runner)
+    self.SeekBeforeAndAfterPlayhead(action_runner,
+                                    action_timeout_in_seconds=120)
 
 class Page37(ToughVideoCasesPage):
 
@@ -549,7 +554,7 @@ class Page40(ToughVideoCasesPage):
 
 class ToughVideoCasesPageSet(story.StorySet):
   """
-  Description: Video Stack Perf benchmark
+  Description: Video Stack Perf benchmark that report time_to_play.
   """
   def __init__(self):
     super(ToughVideoCasesPageSet, self).__init__(
@@ -573,6 +578,24 @@ class ToughVideoCasesPageSet(story.StorySet):
     self.AddStory(Page16(self))
     self.AddStory(Page17(self))
     self.AddStory(Page18(self))
+    self.AddStory(Page30(self))
+    self.AddStory(Page32(self))
+    self.AddStory(Page34(self))
+    self.AddStory(Page36(self))
+    self.AddStory(Page37(self))
+    self.AddStory(Page38(self))
+    self.AddStory(Page39(self))
+    self.AddStory(Page40(self))
+
+
+class ToughVideoCasesExtraPageSet(story.StorySet):
+  """
+  Description: Video Stack Perf benchmark that don't report time_to_play.
+  """
+  def __init__(self):
+    super(ToughVideoCasesExtraPageSet, self).__init__(
+            cloud_storage_bucket=story.PARTNER_BUCKET)
+
     self.AddStory(Page19(self))
     self.AddStory(Page20(self))
     self.AddStory(Page21(self))
@@ -584,14 +607,6 @@ class ToughVideoCasesPageSet(story.StorySet):
     self.AddStory(Page27(self))
     self.AddStory(Page28(self))
     self.AddStory(Page29(self))
-    self.AddStory(Page30(self))
     self.AddStory(Page31(self))
-    self.AddStory(Page32(self))
     self.AddStory(Page33(self))
-    self.AddStory(Page34(self))
     self.AddStory(Page35(self))
-    self.AddStory(Page36(self))
-    self.AddStory(Page37(self))
-    self.AddStory(Page38(self))
-    self.AddStory(Page39(self))
-    self.AddStory(Page40(self))

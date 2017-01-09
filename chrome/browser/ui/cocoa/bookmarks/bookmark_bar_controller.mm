@@ -4,10 +4,13 @@
 
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_controller.h"
 
-#include "base/mac/bundle_locations.h"
-#include "base/mac/sdk_forward_declarations.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include <stddef.h>
+
+#import "base/mac/bundle_locations.h"
+#import "base/mac/foundation_util.h"
+#include "base/mac/mac_util.h"
+#import "base/mac/sdk_forward_declarations.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_stats.h"
@@ -39,7 +42,6 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_name_folder_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/menu_button.h"
-#import "chrome/browser/ui/cocoa/presentation_mode_controller.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #import "chrome/browser/ui/cocoa/view_id_util.h"
@@ -49,21 +51,29 @@
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
-#include "grit/theme_resources.h"
+#include "ui/base/clipboard/clipboard_util_mac.h"
 #import "ui/base/cocoa/cocoa_base_utils.h"
+#import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/image/image_skia_util_mac.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/vector_icons_public.h"
 #include "ui/resources/grit/ui_resources.h"
 
 using base::UserMetricsAction;
@@ -155,6 +165,9 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
 @interface BookmarkBarController ()
 
+// Updates the sizes and positions of the subviews.
+- (void)layoutSubviews;
+
 // Moves to the given next state (from the current state), possibly animating.
 // If |animate| is NO, it will stop any running animation and jump to the given
 // state. If YES, it may either (depending on implementation) jump to the end of
@@ -162,10 +175,6 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 // mid-flight and animate to the next state.
 - (void)moveToState:(BookmarkBar::State)nextState
       withAnimation:(BOOL)animate;
-
-// Return the backdrop to the bookmark bar as various types.
-- (BackgroundGradientView*)backgroundGradientView;
-- (AnimatableView*)animatableView;
 
 // Create buttons for all items in the given bookmark node tree.
 // Modifies self->buttons_.  Do not add more buttons than will fit on the view.
@@ -254,8 +263,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
 - (id)initWithBrowser:(Browser*)browser
          initialWidth:(CGFloat)initialWidth
-             delegate:(id<BookmarkBarControllerDelegate>)delegate
-       resizeDelegate:(id<ViewResizer>)resizeDelegate {
+             delegate:(id<BookmarkBarControllerDelegate>)delegate {
   if ((self = [super initWithNibName:@"BookmarkBar"
                               bundle:base::mac::FrameworkBundle()])) {
     currentState_ = BookmarkBar::HIDDEN;
@@ -263,12 +271,12 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
     browser_ = browser;
     initialWidth_ = initialWidth;
-    bookmarkModel_ = BookmarkModelFactory::GetForProfile(browser_->profile());
+    bookmarkModel_ =
+        BookmarkModelFactory::GetForBrowserContext(browser_->profile());
     managedBookmarkService_ =
         ManagedBookmarkServiceFactory::GetForProfile(browser_->profile());
     buttons_.reset([[NSMutableArray alloc] init]);
     delegate_ = delegate;
-    resizeDelegate_ = resizeDelegate;
     folderTarget_.reset(
         [[BookmarkFolderTarget alloc] initWithController:self
                                                  profile:browser_->profile()]);
@@ -276,8 +284,18 @@ void RecordAppLaunch(Profile* profile, GURL url) {
     ResourceBundle& rb = ResourceBundle::GetSharedInstance();
     folderImage_.reset(
         rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER).CopyNSImage());
-    defaultImage_.reset(
-        rb.GetNativeImageNamed(IDR_DEFAULT_FAVICON).CopyNSImage());
+    folderImageWhite_.reset(
+        rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER_WHITE).CopyNSImage());
+
+    const int kIconSize = 16;
+    defaultImage_.reset([NSImageFromImageSkia(
+        gfx::CreateVectorIcon(gfx::VectorIconId::OMNIBOX_HTTP,
+                              kIconSize,
+                              gfx::kChromeIconGrey)) retain]);
+    defaultImageIncognito_.reset([NSImageFromImageSkia(
+        gfx::CreateVectorIcon(gfx::VectorIconId::OMNIBOX_HTTP,
+                              kIconSize,
+                              SkColorSetA(SK_ColorWHITE, 0xCC))) retain]);
 
     innerContentAnimationsEnabled_ = YES;
     stateAnimationsEnabled_ = YES;
@@ -292,17 +310,16 @@ void RecordAppLaunch(Profile* profile, GURL url) {
     contextMenuController_.reset(
         [[BookmarkContextMenuCocoaController alloc]
             initWithBookmarkBarController:self]);
-
-    // This call triggers an -awakeFromNib, which builds the bar, which might
-    // use |folderImage_| and |contextMenuController_|. Ensure it happens after
-    // |folderImage_| is loaded and |contextMenuController_| is created.
-    [[self animatableView] setResizeDelegate:resizeDelegate];
   }
   return self;
 }
 
 - (Browser*)browser {
   return browser_;
+}
+
+- (BookmarkBarToolbarView*)controlledView {
+  return base::mac::ObjCCastStrict<BookmarkBarToolbarView>([self view]);
 }
 
 - (BookmarkContextMenuCocoaController*)menuController {
@@ -329,7 +346,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
     if (node->parent() == bookmarkModel_->bookmark_bar_node()) {
       for (BookmarkButton* button in [self buttons]) {
         if ([button bookmarkNode] == node) {
-          [button setIsContinuousPulsing:YES];
+          [button setPulseIsStuckOn:YES];
           return button;
         }
       }
@@ -348,7 +365,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   if (!pulsingButton_)
     return;
 
-  [pulsingButton_ setIsContinuousPulsing:YES];
+  [pulsingButton_ setPulseIsStuckOn:YES];
   pulsingBookmarkObserver_.reset(
       new BookmarkModelObserverForCocoa(bookmarkModel_, ^() {
         // Stop pulsing if anything happened to the node.
@@ -361,7 +378,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   if (!pulsingButton_)
     return;
 
-  [pulsingButton_ setIsContinuousPulsing:NO];
+  [pulsingButton_ setPulseIsStuckOn:NO];
   pulsingButton_ = nil;
   pulsingBookmarkObserver_.reset();
 }
@@ -372,20 +389,28 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 }
 
 - (void)browserWillBeDestroyed {
+  // If |bridge_| is null it means -viewDidLoad has not yet been called, which
+  // can only happen if the nib wasn't loaded. Retrieving it via -[self view]
+  // would load it now, but it's too late for that, so let it be nil. Note this
+  // should only happen in tests.
+  BookmarkBarToolbarView* view = nil;
+  if (bridge_)
+    view = [self controlledView];
+
   // Clear delegate so it doesn't get called during stopAnimation.
-  [[self animatableView] setResizeDelegate:nil];
+  [view setResizeDelegate:nil];
 
   // We better stop any in-flight animation if we're being killed.
-  [[self animatableView] stopAnimation];
+  [view stopAnimation];
 
   // Remove our view from its superview so it doesn't attempt to reference
   // it when the controller is gone.
   //TODO(dmaclach): Remove -- http://crbug.com/25845
-  [[self view] removeFromSuperview];
+  [view removeFromSuperview];
 
   // Be sure there is no dangling pointer.
-  if ([[self view] respondsToSelector:@selector(setController:)])
-    [[self view] performSelector:@selector(setController:) withObject:nil];
+  if ([view respondsToSelector:@selector(setController:)])
+    [view performSelector:@selector(setController:) withObject:nil];
 
   // For safety, make sure the buttons can no longer call us.
   for (BookmarkButton* button in buttons_.get()) {
@@ -408,7 +433,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   if (bridge_) {
     // When running on 10.10, expect both -awakeFromNib and -viewDidLoad to be
     // called, but only initialize once.
-    DCHECK(base::mac::IsOSYosemiteOrLater());
+    DCHECK(base::mac::IsAtLeastOS10_10());
     return;
   }
 
@@ -420,9 +445,13 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   [[self view] setFrame:NSMakeRect(0, 0, initialWidth_, 0)];
 
   // Complete init of the "off the side" button, as much as we can.
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-  [offTheSideButton_ setImage:
-        rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_CHEVRONS).ToNSImage()];
+  [offTheSideButton_ setImage:[self offTheSideButtonImage:NO]];
+  BookmarkButtonCell* offTheSideCell = [offTheSideButton_ cell];
+  [offTheSideCell setTag:kMaterialStandardButtonTypeWithLimitedClickFeedback];
+  [offTheSideCell setImagePosition:NSImageOnly];
+
+  // The cell is configured in the nib to draw a white highlight when clicked.
+  [offTheSideCell setHighlightsBy:NSNoCellMask];
   [offTheSideButton_.draggableButton setDraggable:NO];
   [offTheSideButton_.draggableButton setActsOnMouseDown:YES];
 
@@ -433,6 +462,20 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   // fields to aid in resizing when the window frame changes.
   originalNoItemsRect_ = [[buttonView_ noItemTextfield] frame];
   originalImportBookmarksRect_ = [[buttonView_ importBookmarksButton] frame];
+
+  // Bookmark buttons start farther from the bookmark bar's left edge so
+  // adjust the positions of the noItems and importBookmarks textfields.
+  const CGFloat kBookmarksTextfieldOffsetX = 14;
+  originalNoItemsRect_.origin.x += kBookmarksTextfieldOffsetX;
+  [[buttonView_ noItemTextfield] setFrame:originalNoItemsRect_];
+
+  originalImportBookmarksRect_.origin.x += kBookmarksTextfieldOffsetX;
+  [[buttonView_ importBookmarksButton] setFrame:originalImportBookmarksRect_];
+
+  // Move the chevron button up 2pts from its position in the xib.
+  NSRect chevronButtonFrame = [offTheSideButton_ frame];
+  chevronButtonFrame.origin.y -= 2;
+  [offTheSideButton_ setFrame:chevronButtonFrame];
 
   // To make life happier when the bookmark bar is floating, the chevron is a
   // child of the button view.
@@ -450,15 +493,15 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
   // Watch for things going to or from fullscreen.
   [[NSNotificationCenter defaultCenter]
-    addObserver:self
-       selector:@selector(willEnterOrLeaveFullscreen:)
-           name:kWillEnterFullscreenNotification
-         object:nil];
+      addObserver:self
+         selector:@selector(willEnterOrLeaveFullscreen:)
+             name:NSWindowWillEnterFullScreenNotification
+           object:nil];
   [[NSNotificationCenter defaultCenter]
-    addObserver:self
-       selector:@selector(willEnterOrLeaveFullscreen:)
-           name:kWillLeaveFullscreenNotification
-         object:nil];
+      addObserver:self
+         selector:@selector(willEnterOrLeaveFullscreen:)
+             name:NSWindowWillExitFullScreenNotification
+           object:nil];
 
   // Don't pass ourself along (as 'self') until our init is completely
   // done.  Thus, this call is (almost) last.
@@ -518,6 +561,14 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   [self closeFolderAndStopTrackingMenus];
 }
 
+- (void)layoutToFrame:(NSRect)frame {
+  // The view should be pinned to the top of the window with a flexible width.
+  DCHECK_EQ(NSViewWidthSizable | NSViewMinYMargin,
+            [[self view] autoresizingMask]);
+  [[self view] setFrame:frame];
+  [self layoutSubviews];
+}
+
 // Change the layout of the bookmark bar's subviews in response to a visibility
 // change (e.g., show or hide the bar) or style change (attached or floating).
 - (void)layoutSubviews {
@@ -527,7 +578,8 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   // Add padding to the detached bookmark bar.
   // The state of our morph (if any); 1 is total bubble, 0 is the regular bar.
   CGFloat morph = [self detachedMorphProgress];
-  CGFloat padding = bookmarks::kNTPBookmarkBarPadding;
+  CGFloat padding = 0;
+  padding = bookmarks::kNTPBookmarkBarPadding;
   buttonViewFrame =
       NSInsetRect(buttonViewFrame, morph * padding, morph * padding);
 
@@ -624,31 +676,50 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   return [self isInState:BookmarkBar::SHOW] ? 0 : 1;
 }
 
-- (NSImage*)faviconForNode:(const BookmarkNode*)node {
+- (NSImage*)faviconForNode:(const BookmarkNode*)node
+             forADarkTheme:(BOOL)forADarkTheme {
   if (!node)
-    return defaultImage_;
+    return forADarkTheme ? defaultImageIncognito_ : defaultImage_;
 
-  if (node == managedBookmarkService_->managed_node()) {
-    // Most users never see this node, so the image is only loaded if needed.
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-    return rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER_MANAGED).ToNSImage();
+  if (forADarkTheme) {
+    if (node == managedBookmarkService_->managed_node()) {
+      ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+      return rb.GetNativeImageNamed(
+          IDR_BOOKMARK_BAR_FOLDER_MANAGED_WHITE).ToNSImage();
+    }
+
+    if (node == managedBookmarkService_->supervised_node()) {
+      ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+      return rb.GetNativeImageNamed(
+          IDR_BOOKMARK_BAR_FOLDER_SUPERVISED_WHITE).ToNSImage();
+    }
+
+    if (node->is_folder())
+      return folderImageWhite_;
+  } else {
+    if (node == managedBookmarkService_->managed_node()) {
+      // Most users never see this node, so the image is only loaded if needed.
+      ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+      return rb.GetNativeImageNamed(
+          IDR_BOOKMARK_BAR_FOLDER_MANAGED).ToNSImage();
+    }
+
+    if (node == managedBookmarkService_->supervised_node()) {
+      // Most users never see this node, so the image is only loaded if needed.
+      ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+      return rb.GetNativeImageNamed(
+          IDR_BOOKMARK_BAR_FOLDER_SUPERVISED).ToNSImage();
+    }
+
+    if (node->is_folder())
+      return folderImage_;
   }
-
-  if (node == managedBookmarkService_->supervised_node()) {
-    // Most users never see this node, so the image is only loaded if needed.
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-    return rb.GetNativeImageNamed(
-        IDR_BOOKMARK_BAR_FOLDER_SUPERVISED).ToNSImage();
-  }
-
-  if (node->is_folder())
-    return folderImage_;
 
   const gfx::Image& favicon = bookmarkModel_->GetFavicon(node);
   if (!favicon.IsEmpty())
     return favicon.ToNSImage();
 
-  return defaultImage_;
+  return forADarkTheme ? defaultImageIncognito_ : defaultImage_;
 }
 
 - (void)closeFolderAndStopTrackingMenus {
@@ -805,23 +876,29 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   chrome::ShowImportDialog(browser_);
 }
 
+- (NSButton*)appsPageShortcutButton {
+  return appsPageShortcutButton_;
+}
+
+- (NSButton*)offTheSideButton {
+  return offTheSideButton_;
+}
+
+- (NSImage*)offTheSideButtonImage:(BOOL)forDarkMode {
+  const int kIconSize = 8;
+  SkColor vectorIconColor = forDarkMode ? SkColorSetA(SK_ColorWHITE, 0xCC)
+                                        : gfx::kChromeIconGrey;
+  return NSImageFromImageSkia(
+      gfx::CreateVectorIcon(gfx::VectorIconId::OVERFLOW_CHEVRON,
+                            kIconSize,
+                            vectorIconColor));
+}
+
 #pragma mark Private Methods
 
 // Called after a theme change took place, possibly for a different profile.
 - (void)themeDidChangeNotification:(NSNotification*)notification {
   [self updateTheme:[[[self view] window] themeProvider]];
-}
-
-// (Private) Method is the same as [self view], but is provided to be explicit.
-- (BackgroundGradientView*)backgroundGradientView {
-  DCHECK([[self view] isKindOfClass:[BackgroundGradientView class]]);
-  return (BackgroundGradientView*)[self view];
-}
-
-// (Private) Method is the same as [self view], but is provided to be explicit.
-- (AnimatableView*)animatableView {
-  DCHECK([[self view] isKindOfClass:[AnimatableView class]]);
-  return (AnimatableView*)[self view];
 }
 
 - (BookmarkLaunchLocation)bookmarkLaunchLocation {
@@ -863,6 +940,11 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   int bookmarkChildren = bookmarkModel_->bookmark_bar_node()->child_count();
   if (bookmarkChildren > displayedButtonCount_) {
     [offTheSideButton_ setHidden:NO];
+    // Set the off the side button as needing re-display. This is needed to
+    // avoid the button being shown with a black background the first time
+    // it's displayed. See https://codereview.chromium.org/1630453002/ for
+    // more context.
+    [offTheSideButton_ setNeedsDisplay:YES];
   } else {
     // If we just deleted the last item in an off-the-side menu so the
     // button will be going away, make sure the menu goes away.
@@ -952,16 +1034,17 @@ void RecordAppLaunch(Profile* profile, GURL url) {
     // Else fall through and do the change instantly.
   }
 
-  // Set our height.
-  [resizeDelegate_ resizeView:[self view]
-                    newHeight:[self preferredHeight]];
+  BookmarkBarToolbarView* view = [self controlledView];
+
+  // Set our height immediately via -[AnimatableView setHeight:].
+  [view setHeight:[self preferredHeight]];
 
   // Only show the divider if showing the normal bookmark bar.
   BOOL showsDivider = [self isInState:BookmarkBar::SHOW];
-  [[self backgroundGradientView] setShowsDivider:showsDivider];
+  [view setShowsDivider:showsDivider];
 
   // Make sure we're shown.
-  [[self view] setHidden:![self isVisible]];
+  [view setHidden:![self isVisible]];
 
   // Update everything else.
   [self layoutSubviews];
@@ -970,38 +1053,35 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
 // (Private)
 - (BOOL)doBookmarkBarAnimation {
+  BookmarkBarToolbarView* view = [self controlledView];
   if ([self isAnimatingFromState:BookmarkBar::HIDDEN
                          toState:BookmarkBar::SHOW]) {
-    [[self backgroundGradientView] setShowsDivider:YES];
-    [[self view] setHidden:NO];
-    AnimatableView* view = [self animatableView];
+    [view setShowsDivider:YES];
+    [view setHidden:NO];
     // Height takes into account the extra height we have since the toolbar
     // only compresses when we're done.
-    [view animateToNewHeight:(chrome::kBookmarkBarHeight -
+    [view animateToNewHeight:(chrome::kMinimumBookmarkBarHeight -
                               bookmarks::kBookmarkBarOverlap)
                     duration:kBookmarkBarAnimationDuration];
   } else if ([self isAnimatingFromState:BookmarkBar::SHOW
                                 toState:BookmarkBar::HIDDEN]) {
-    [[self backgroundGradientView] setShowsDivider:YES];
-    [[self view] setHidden:NO];
-    AnimatableView* view = [self animatableView];
+    [view setShowsDivider:YES];
+    [view setHidden:NO];
     [view animateToNewHeight:0
                     duration:kBookmarkBarAnimationDuration];
   } else if ([self isAnimatingFromState:BookmarkBar::SHOW
                                 toState:BookmarkBar::DETACHED]) {
-    [[self backgroundGradientView] setShowsDivider:YES];
-    [[self view] setHidden:NO];
-    AnimatableView* view = [self animatableView];
+    [view setShowsDivider:YES];
+    [view setHidden:NO];
     [view animateToNewHeight:chrome::kNTPBookmarkBarHeight
                     duration:kBookmarkBarAnimationDuration];
   } else if ([self isAnimatingFromState:BookmarkBar::DETACHED
                                 toState:BookmarkBar::SHOW]) {
-    [[self backgroundGradientView] setShowsDivider:YES];
-    [[self view] setHidden:NO];
-    AnimatableView* view = [self animatableView];
+    [view setShowsDivider:YES];
+    [view setHidden:NO];
     // Height takes into account the extra height we have since the toolbar
     // only compresses when we're done.
-    [view animateToNewHeight:(chrome::kBookmarkBarHeight -
+    [view animateToNewHeight:(chrome::kMinimumBookmarkBarHeight -
                               bookmarks::kBookmarkBarOverlap)
                     duration:kBookmarkBarAnimationDuration];
   } else {
@@ -1034,7 +1114,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
   switch (currentState_) {
     case BookmarkBar::SHOW:
-      return chrome::kBookmarkBarHeight;
+      return chrome::kMinimumBookmarkBarHeight;
     case BookmarkBar::DETACHED:
       return chrome::kNTPBookmarkBarHeight;
     case BookmarkBar::HIDDEN:
@@ -1050,7 +1130,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
                                                  action:nil
                                           keyEquivalent:@""] autorelease];
   [menu addItem:item];
-  [item setImage:[self faviconForNode:child]];
+  [item setImage:[self faviconForNode:child forADarkTheme:NO]];
   if (child->is_folder()) {
     NSMenu* submenu = [[[NSMenu alloc] initWithTitle:title] autorelease];
     [menu setSubmenu:submenu forItem:item];
@@ -1102,17 +1182,12 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 }
 
 // Return an appropriate width for the given bookmark button cell.
-// The "+2" is needed because, sometimes, Cocoa is off by a tad.
-// Example: for a bookmark named "Moma" or "SFGate", it is one pixel
-// too small.  For "FBL" it is 2 pixels too small.
-// For a bookmark named "SFGateFooWoo", it is just fine.
 - (CGFloat)widthForBookmarkButtonCell:(NSCell*)cell {
-  CGFloat desired = [cell cellSize].width + 2;
-  return std::min(desired, bookmarks::kDefaultBookmarkWidth);
+  return std::min([cell cellSize].width, bookmarks::kDefaultBookmarkWidth);
 }
 
 - (IBAction)openBookmarkMenuItem:(id)sender {
-  int64 tag = [self nodeIdFromMenuTag:[sender tag]];
+  int64_t tag = [self nodeIdFromMenuTag:[sender tag]];
   const BookmarkNode* node =
       bookmarks::GetBookmarkNodeByID(bookmarkModel_, tag);
   WindowOpenDisposition disposition =
@@ -1198,7 +1273,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   // the hierarchy.  If that second part is now true, set the color.
   // (If not we'll set the color on the 1st themeChanged:
   // notification.)
-  ui::ThemeProvider* themeProvider = [[[self view] window] themeProvider];
+  const ui::ThemeProvider* themeProvider = [[[self view] window] themeProvider];
   if (themeProvider) {
     NSColor* color =
         themeProvider->GetNSColor(ThemeProperties::COLOR_BOOKMARK_TEXT);
@@ -1298,9 +1373,9 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   if (!appsPageShortcutButton_.get())
     return NO;
 
-  BOOL visible = bookmarkModel_->loaded() &&
-      chrome::ShouldShowAppsShortcutInBookmarkBar(
-          browser_->profile(), browser_->host_desktop_type());
+  BOOL visible =
+      bookmarkModel_->loaded() &&
+      chrome::ShouldShowAppsShortcutInBookmarkBar(browser_->profile());
   [appsPageShortcutButton_ setHidden:!visible];
   return visible;
 }
@@ -1512,7 +1587,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
 // (Private)
 - (void)stopCurrentAnimation {
-  [[self animatableView] stopAnimation];
+  [[self controlledView] stopAnimation];
 }
 
 // Delegate method for |AnimatableView| (a superclass of
@@ -1709,8 +1784,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
   // for more buttons.
   int xOffset;
   if (displayedButtonCount_ > 0) {
-    xOffset = NSMaxX([self finalRectOfLastButton]) +
-        bookmarks::kBookmarkHorizontalPadding;
+    xOffset = NSMaxX([self finalRectOfLastButton]);
   } else if (![managedBookmarksButton_ isHidden]) {
     xOffset = NSMaxX([managedBookmarksButton_ frame]) +
         bookmarks::kBookmarkHorizontalPadding;
@@ -1754,14 +1828,6 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 
 - (NSMutableArray*)buttons {
   return buttons_.get();
-}
-
-- (NSButton*)offTheSideButton {
-  return offTheSideButton_;
-}
-
-- (NSButton*)appsPageShortcutButton {
-  return appsPageShortcutButton_;
 }
 
 - (BOOL)offTheSideButtonIsHidden {
@@ -1811,13 +1877,15 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 // Return an autoreleased NSCell suitable for a bookmark button.
 // TODO(jrg): move much of the cell config into the BookmarkButtonCell class.
 - (BookmarkButtonCell*)cellForBookmarkNode:(const BookmarkNode*)node {
-  NSImage* image = node ? [self faviconForNode:node] : nil;
+  BOOL darkTheme = [[[self view] window] hasDarkTheme];
+  NSImage* image = node ? [self faviconForNode:node forADarkTheme:darkTheme]
+                        : nil;
   BookmarkButtonCell* cell =
       [BookmarkButtonCell buttonCellForNode:node
                                        text:nil
                                       image:image
                              menuController:contextMenuController_];
-  [cell setTag:kStandardButtonTypeWithLimitedClickFeedback];
+  [cell setTag:kMaterialStandardButtonTypeWithLimitedClickFeedback];
 
   // Note: a quirk of setting a cell's text color is that it won't work
   // until the cell is associated with a button, so we can't theme the cell yet.
@@ -1834,7 +1902,8 @@ void RecordAppLaunch(Profile* profile, GURL url) {
       [BookmarkButtonCell buttonCellWithText:text
                                        image:image
                               menuController:contextMenuController_];
-  [cell setTag:kStandardButtonTypeWithLimitedClickFeedback];
+  [cell setTag:kMaterialStandardButtonTypeWithLimitedClickFeedback];
+  [cell setHighlightsBy:NSNoCellMask];
 
   // Note: a quirk of setting a cell's text color is that it won't work
   // until the cell is associated with a button, so we can't theme the cell yet.
@@ -1898,12 +1967,12 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 }
 
 // Given a NSMenuItem tag, return the appropriate bookmark node id.
-- (int64)nodeIdFromMenuTag:(int32)tag {
+- (int64_t)nodeIdFromMenuTag:(int32_t)tag {
   return menuTagMap_[tag];
 }
 
 // Create and return a new tag for the given node id.
-- (int32)menuTagFromNodeId:(int64)menuid {
+- (int32_t)menuTagFromNodeId:(int64_t)menuid {
   int tag = seedId_++;
   menuTagMap_[tag] = menuid;
   return tag;
@@ -1915,7 +1984,7 @@ void RecordAppLaunch(Profile* profile, GURL url) {
 // because our trigger is an [NSView viewWillMoveToWindow:], which the
 // controller doesn't normally know about.  Otherwise we don't have
 // access to the theme before we know what window we will be on.
-- (void)updateTheme:(ui::ThemeProvider*)themeProvider {
+- (void)updateTheme:(const ui::ThemeProvider*)themeProvider {
   if (!themeProvider)
     return;
   NSColor* color =
@@ -1968,10 +2037,9 @@ void RecordAppLaunch(Profile* profile, GURL url) {
       NSTimeInterval thisTime = [event timestamp];
       if (lastKeyDownEventTime != thisTime) {
         lastKeyDownEventTime = thisTime;
-        if ([event modifierFlags] & NSCommandKeyMask)
-          return YES;
-        else if (folderController_)
-          return [folderController_ handleInputText:[event characters]];
+        // Ignore all modifiers like Cmd - keyboard shortcuts should not work
+        // while a bookmark folder window (essentially a menu) is open.
+        return [folderController_ handleInputText:[event characters]];
       }
       return NO;
     }
@@ -2206,8 +2274,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   // Position the apps bookmark if needed.
   CGFloat left = bookmarks::kBookmarkLeftMargin;
   if (![appsPageShortcutButton_ isHidden]) {
-    int xOffset =
-        bookmarks::kBookmarkLeftMargin - bookmarks::kBookmarkHorizontalPadding;
+    int xOffset = bookmarks::kBookmarkLeftMargin -
+            bookmarks::kBookmarkHorizontalPadding;
     NSRect frame =
         [self frameForBookmarkButtonFromCell:[appsPageShortcutButton_ cell]
                                      xOffset:&xOffset];
@@ -2372,8 +2440,10 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   for (BookmarkButton* button in buttons_.get()) {
     const BookmarkNode* cellnode = [button bookmarkNode];
     if (cellnode == node) {
+      BOOL darkTheme = [[[self view] window] hasDarkTheme];
+      NSImage* theImage = [self faviconForNode:node forADarkTheme:darkTheme];
       [[button cell] setBookmarkCellText:[button title]
-                                   image:[self faviconForNode:node]];
+                                   image:theImage];
       // Adding an image means we might need more room for the
       // bookmark.  Test for it by growing the button (if needed)
       // and shifting everything else over.
@@ -2439,11 +2509,11 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   }
   if ([self isAnimatingToState:BookmarkBar::DETACHED]) {
     return static_cast<CGFloat>(
-        [[self animatableView] currentAnimationProgress]);
+        [[self controlledView] currentAnimationProgress]);
   }
   if ([self isAnimatingFromState:BookmarkBar::DETACHED]) {
     return static_cast<CGFloat>(
-        1 - [[self animatableView] currentAnimationProgress]);
+        1 - [[self controlledView] currentAnimationProgress]);
   }
   return 0;
 }
@@ -2456,15 +2526,14 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   return NSHeight([[browserController tabContentArea] frame]);
 }
 
-- (ThemeService*)themeService {
-  return ThemeServiceFactory::GetForProfile(browser_->profile());
+- (Profile*)profile {
+  return browser_->profile();
 }
 
 #pragma mark BookmarkButtonDelegate Protocol
 
-- (void)fillPasteboard:(NSPasteboard*)pboard
-       forDragOfButton:(BookmarkButton*)button {
-  [[self folderTarget] fillPasteboard:pboard forDragOfButton:button];
+- (NSPasteboardItem*)pasteboardItemForDragOfButton:(BookmarkButton*)button {
+  return [[self folderTarget] pasteboardItemForDragOfButton:button];
 }
 
 // BookmarkButtonDelegate protocol implementation.  When menus are
@@ -2537,7 +2606,12 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
 // bookmark folders, not a button context menu.
 - (void)closeAllBookmarkFolders {
   [self watchForExitEvent:NO];
+
+  // Grab the parent button under to make sure that the highlighting that was
+  // applied while revealing the menu is turned off.
+  BookmarkButton* parentButton = [folderController_ parentButton];
   [folderController_ close];
+  [parentButton setNeedsDisplay:YES];
   folderController_ = nil;
 }
 
@@ -2564,7 +2638,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   // Don't allow drops that would result in cycles.
   if (button) {
     NSData* data = [[info draggingPasteboard]
-                    dataForType:kBookmarkButtonDragType];
+        dataForType:ui::ClipboardUtil::UTIForPasteboardType(
+                        kBookmarkButtonDragType)];
     if (data && [info draggingSource]) {
       BookmarkButton* sourceButton = nil;
       [data getBytes:&sourceButton length:sizeof(sourceButton)];
@@ -2734,9 +2809,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
       ![self isAnimatingToState:BookmarkBar::DETACHED]) {
     BrowserWindowController* browserController =
         [BrowserWindowController browserWindowControllerForView:[self view]];
-    [browserController lockBarVisibilityForOwner:child
-                                   withAnimation:NO
-                                           delay:NO];
+    [browserController lockToolbarVisibilityForOwner:child withAnimation:NO];
   }
 }
 
@@ -2745,9 +2818,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   // mode.
   BrowserWindowController* browserController =
       [BrowserWindowController browserWindowControllerForView:[self view]];
-  [browserController releaseBarVisibilityForOwner:child
-                                    withAnimation:NO
-                                            delay:NO];
+  [browserController releaseToolbarVisibilityForOwner:child withAnimation:NO];
 }
 
 // Add a new folder controller as triggered by the given folder button.
@@ -2758,10 +2829,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   BrowserWindowController* browserController =
       [BrowserWindowController browserWindowControllerForView:[self view]];
   // Confirm we're not re-locking with ourself as an owner before locking.
-  DCHECK([browserController isBarVisibilityLockedForOwner:self] == NO);
-  [browserController lockBarVisibilityForOwner:self
-                                 withAnimation:NO
-                                         delay:NO];
+  DCHECK([browserController isToolbarVisibilityLockedForOwner:self] == NO);
+  [browserController lockToolbarVisibilityForOwner:self withAnimation:NO];
 
   if (folderController_)
     [self closeAllBookmarkFolders];
@@ -2780,9 +2849,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   [self watchForExitEvent:YES];
 
   // No longer need to hold the lock; the folderController_ now owns it.
-  [browserController releaseBarVisibilityForOwner:self
-                                    withAnimation:NO
-                                            delay:NO];
+  [browserController releaseToolbarVisibilityForOwner:self withAnimation:NO];
 }
 
 - (void)openAll:(const BookmarkNode*)node

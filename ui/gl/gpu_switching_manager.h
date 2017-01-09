@@ -5,10 +5,15 @@
 #ifndef UI_GL_GPU_SWITCHING_MANAGER_H_
 #define UI_GL_GPU_SWITCHING_MANAGER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
+#include "build/build_config.h"
 #include "ui/gl/gl_export.h"
 #include "ui/gl/gpu_preference.h"
 #include "ui/gl/gpu_switching_observer.h"
@@ -28,7 +33,7 @@ class GL_EXPORT GpuSwitchingManager {
 
   // If no GPU is forced, return the original GpuPreference; otherwise, return
   // the forced GPU.
-  gfx::GpuPreference AdjustGpuPreference(gfx::GpuPreference gpu_preference);
+  gl::GpuPreference AdjustGpuPreference(gl::GpuPreference gpu_preference);
 
   // In the browser process, the value for this flag is computed the first time
   // this function is called.
@@ -38,7 +43,7 @@ class GL_EXPORT GpuSwitchingManager {
 
   // Sets the vendor IDs of the GPUs on the system. The length of this
   // vector defines the count of GPUs.
-  void SetGpuVendorIds(const std::vector<uint32>& vendor_ids);
+  void SetGpuVendorIds(const std::vector<uint32_t>& vendor_ids);
 
   void AddObserver(GpuSwitchingObserver* observer);
   void RemoveObserver(GpuSwitchingObserver* observer);
@@ -60,16 +65,16 @@ class GL_EXPORT GpuSwitchingManager {
   void SwitchToDiscreteGpuMac();
 #endif  // OS_MACOSX
 
-  gfx::GpuPreference gpu_switching_option_;
+  gl::GpuPreference gpu_switching_option_;
   bool gpu_switching_option_set_;
 
-  std::vector<uint32> vendor_ids_;
+  std::vector<uint32_t> vendor_ids_;
 
   bool supports_dual_gpus_;
   bool supports_dual_gpus_set_;
 
   struct PlatformSpecific;
-  scoped_ptr<PlatformSpecific> platform_specific_;
+  std::unique_ptr<PlatformSpecific> platform_specific_;
 
   base::ObserverList<GpuSwitchingObserver> observer_list_;
 

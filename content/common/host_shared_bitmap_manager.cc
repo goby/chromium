@@ -4,10 +4,17 @@
 
 #include "content/common/host_shared_bitmap_manager.h"
 
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/lazy_instance.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/process_memory_dump.h"
+#include "build/build_config.h"
 #include "content/common/view_messages.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -15,13 +22,9 @@ namespace content {
 
 class BitmapData : public base::RefCountedThreadSafe<BitmapData> {
  public:
-  BitmapData(base::ProcessHandle process_handle,
-             size_t buffer_size)
-      : process_handle(process_handle),
-        buffer_size(buffer_size) {}
-  base::ProcessHandle process_handle;
-  scoped_ptr<base::SharedMemory> memory;
-  scoped_ptr<uint8[]> pixels;
+  explicit BitmapData(size_t buffer_size) : buffer_size(buffer_size) {}
+  std::unique_ptr<base::SharedMemory> memory;
+  std::unique_ptr<uint8_t[]> pixels;
   size_t buffer_size;
 
  private:
@@ -34,7 +37,7 @@ namespace {
 
 class HostSharedBitmap : public cc::SharedBitmap {
  public:
-  HostSharedBitmap(uint8* pixels,
+  HostSharedBitmap(uint8_t* pixels,
                    scoped_refptr<BitmapData> bitmap_data,
                    const cc::SharedBitmapId& id,
                    HostSharedBitmapManager* manager)
@@ -83,10 +86,8 @@ void HostSharedBitmapManagerClient::AllocateSharedBitmapForChild(
 void HostSharedBitmapManagerClient::ChildAllocatedSharedBitmap(
     size_t buffer_size,
     const base::SharedMemoryHandle& handle,
-    base::ProcessHandle process_handle,
     const cc::SharedBitmapId& id) {
-  if (manager_->ChildAllocatedSharedBitmap(buffer_size, handle, process_handle,
-                                           id)) {
+  if (manager_->ChildAllocatedSharedBitmap(buffer_size, handle, id)) {
     base::AutoLock lock(lock_);
     owned_bitmaps_.insert(id);
   }
@@ -110,51 +111,48 @@ HostSharedBitmapManager* HostSharedBitmapManager::current() {
   return g_shared_memory_manager.Pointer();
 }
 
-scoped_ptr<cc::SharedBitmap> HostSharedBitmapManager::AllocateSharedBitmap(
+std::unique_ptr<cc::SharedBitmap> HostSharedBitmapManager::AllocateSharedBitmap(
     const gfx::Size& size) {
   base::AutoLock lock(lock_);
   size_t bitmap_size;
   if (!cc::SharedBitmap::SizeInBytes(size, &bitmap_size))
-    return scoped_ptr<cc::SharedBitmap>();
+    return std::unique_ptr<cc::SharedBitmap>();
 
-  scoped_refptr<BitmapData> data(
-      new BitmapData(base::GetCurrentProcessHandle(),
-                     bitmap_size));
+  scoped_refptr<BitmapData> data(new BitmapData(bitmap_size));
   // Bitmaps allocated in host don't need to be shared to other processes, so
   // allocate them with new instead.
-  data->pixels = scoped_ptr<uint8[]>(new uint8[bitmap_size]);
+  data->pixels = std::unique_ptr<uint8_t[]>(new uint8_t[bitmap_size]);
 
   cc::SharedBitmapId id = cc::SharedBitmap::GenerateId();
   handle_map_[id] = data;
-  return make_scoped_ptr(
-      new HostSharedBitmap(data->pixels.get(), data, id, this));
+  return base::MakeUnique<HostSharedBitmap>(data->pixels.get(), data, id, this);
 }
 
-scoped_ptr<cc::SharedBitmap> HostSharedBitmapManager::GetSharedBitmapFromId(
-    const gfx::Size& size,
-    const cc::SharedBitmapId& id) {
+std::unique_ptr<cc::SharedBitmap>
+HostSharedBitmapManager::GetSharedBitmapFromId(const gfx::Size& size,
+                                               const cc::SharedBitmapId& id) {
   base::AutoLock lock(lock_);
   BitmapMap::iterator it = handle_map_.find(id);
   if (it == handle_map_.end())
-    return scoped_ptr<cc::SharedBitmap>();
+    return std::unique_ptr<cc::SharedBitmap>();
 
   BitmapData* data = it->second.get();
 
   size_t bitmap_size;
   if (!cc::SharedBitmap::SizeInBytes(size, &bitmap_size) ||
       bitmap_size > data->buffer_size)
-    return scoped_ptr<cc::SharedBitmap>();
+    return std::unique_ptr<cc::SharedBitmap>();
 
   if (data->pixels) {
-    return make_scoped_ptr(
-        new HostSharedBitmap(data->pixels.get(), data, id, nullptr));
+    return base::MakeUnique<HostSharedBitmap>(data->pixels.get(), data, id,
+                                              nullptr);
   }
   if (!data->memory->memory()) {
-    return scoped_ptr<cc::SharedBitmap>();
+    return std::unique_ptr<cc::SharedBitmap>();
   }
 
-  return make_scoped_ptr(new HostSharedBitmap(
-      static_cast<uint8*>(data->memory->memory()), data, id, nullptr));
+  return base::MakeUnique<HostSharedBitmap>(
+      static_cast<uint8_t*>(data->memory->memory()), data, id, nullptr);
 }
 
 bool HostSharedBitmapManager::OnMemoryDump(
@@ -188,22 +186,14 @@ bool HostSharedBitmapManager::OnMemoryDump(
 bool HostSharedBitmapManager::ChildAllocatedSharedBitmap(
     size_t buffer_size,
     const base::SharedMemoryHandle& handle,
-    base::ProcessHandle process_handle,
     const cc::SharedBitmapId& id) {
   base::AutoLock lock(lock_);
   if (handle_map_.find(id) != handle_map_.end())
     return false;
-  scoped_refptr<BitmapData> data(
-      new BitmapData(process_handle, buffer_size));
+  scoped_refptr<BitmapData> data(new BitmapData(buffer_size));
 
   handle_map_[id] = data;
-#if defined(OS_WIN)
-  data->memory = make_scoped_ptr(
-      new base::SharedMemory(handle, false, data->process_handle));
-#else
-  data->memory =
-      make_scoped_ptr(new base::SharedMemory(handle, false));
-#endif
+  data->memory = base::MakeUnique<base::SharedMemory>(handle, false);
   data->memory->Map(data->buffer_size);
   data->memory->Close();
   return true;
@@ -219,16 +209,15 @@ void HostSharedBitmapManager::AllocateSharedBitmapForChild(
     *shared_memory_handle = base::SharedMemory::NULLHandle();
     return;
   }
-  scoped_ptr<base::SharedMemory> shared_memory(new base::SharedMemory);
+  std::unique_ptr<base::SharedMemory> shared_memory(new base::SharedMemory);
   if (!shared_memory->CreateAndMapAnonymous(buffer_size)) {
     LOG(ERROR) << "Cannot create shared memory buffer";
     *shared_memory_handle = base::SharedMemory::NULLHandle();
     return;
   }
 
-  scoped_refptr<BitmapData> data(
-      new BitmapData(process_handle, buffer_size));
-  data->memory = shared_memory.Pass();
+  scoped_refptr<BitmapData> data(new BitmapData(buffer_size));
+  data->memory = std::move(shared_memory);
 
   handle_map_[id] = data;
   if (!data->memory->ShareToProcess(process_handle, shared_memory_handle)) {

@@ -5,15 +5,12 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_THEME_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_THEME_HANDLER_H_
 
+#include "base/macros.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 class Profile;
-
-namespace content {
-class WebUI;
-}
 
 // A class to keep the ThemeSource up to date when theme changes.
 class ThemeHandler : public content::WebUIMessageHandler,

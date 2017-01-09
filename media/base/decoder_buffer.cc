@@ -4,75 +4,68 @@
 
 #include "media/base/decoder_buffer.h"
 
-
 namespace media {
 
 // Allocates a block of memory which is padded for use with the SIMD
 // optimizations used by FFmpeg.
-static uint8* AllocateFFmpegSafeBlock(int size) {
-  uint8* const block = reinterpret_cast<uint8*>(base::AlignedAlloc(
+static uint8_t* AllocateFFmpegSafeBlock(size_t size) {
+  uint8_t* const block = reinterpret_cast<uint8_t*>(base::AlignedAlloc(
       size + DecoderBuffer::kPaddingSize, DecoderBuffer::kAlignmentSize));
   memset(block + size, 0, DecoderBuffer::kPaddingSize);
   return block;
 }
 
-DecoderBuffer::DecoderBuffer(int size)
-    : size_(size),
-      side_data_size_(0),
-      is_key_frame_(false) {
+DecoderBuffer::DecoderBuffer(size_t size)
+    : size_(size), side_data_size_(0), is_key_frame_(false) {
   Initialize();
 }
 
-DecoderBuffer::DecoderBuffer(const uint8* data,
-                             int size,
-                             const uint8* side_data,
-                             int side_data_size)
-    : size_(size),
-      side_data_size_(side_data_size),
-      is_key_frame_(false) {
+DecoderBuffer::DecoderBuffer(const uint8_t* data,
+                             size_t size,
+                             const uint8_t* side_data,
+                             size_t side_data_size)
+    : size_(size), side_data_size_(side_data_size), is_key_frame_(false) {
   if (!data) {
-    CHECK_EQ(size_, 0);
+    CHECK_EQ(size_, 0u);
     CHECK(!side_data);
     return;
   }
 
   Initialize();
 
-  DCHECK_GE(size_, 0);
   memcpy(data_.get(), data, size_);
 
   if (!side_data) {
-    CHECK_EQ(side_data_size, 0);
+    CHECK_EQ(side_data_size, 0u);
     return;
   }
 
-  DCHECK_GT(side_data_size_, 0);
+  DCHECK_GT(side_data_size_, 0u);
   memcpy(side_data_.get(), side_data, side_data_size_);
 }
 
 DecoderBuffer::~DecoderBuffer() {}
 
 void DecoderBuffer::Initialize() {
-  CHECK_GE(size_, 0);
   data_.reset(AllocateFFmpegSafeBlock(size_));
   if (side_data_size_ > 0)
     side_data_.reset(AllocateFFmpegSafeBlock(side_data_size_));
-  splice_timestamp_ = kNoTimestamp();
+  splice_timestamp_ = kNoTimestamp;
 }
 
 // static
-scoped_refptr<DecoderBuffer> DecoderBuffer::CopyFrom(const uint8* data,
-                                                     int data_size) {
+scoped_refptr<DecoderBuffer> DecoderBuffer::CopyFrom(const uint8_t* data,
+                                                     size_t data_size) {
   // If you hit this CHECK you likely have a bug in a demuxer. Go fix it.
   CHECK(data);
   return make_scoped_refptr(new DecoderBuffer(data, data_size, NULL, 0));
 }
 
 // static
-scoped_refptr<DecoderBuffer> DecoderBuffer::CopyFrom(const uint8* data,
-                                                     int data_size,
-                                                     const uint8* side_data,
-                                                     int side_data_size) {
+scoped_refptr<DecoderBuffer> DecoderBuffer::CopyFrom(const uint8_t* data,
+                                                     size_t data_size,
+                                                     const uint8_t* side_data,
+                                                     size_t side_data_size) {
   // If you hit this CHECK you likely have a bug in a demuxer. Go fix it.
   CHECK(data);
   CHECK(side_data);
@@ -85,7 +78,36 @@ scoped_refptr<DecoderBuffer> DecoderBuffer::CreateEOSBuffer() {
   return make_scoped_refptr(new DecoderBuffer(NULL, 0, NULL, 0));
 }
 
-std::string DecoderBuffer::AsHumanReadableString() {
+bool DecoderBuffer::MatchesForTesting(const DecoderBuffer& buffer) const {
+  if (end_of_stream() != buffer.end_of_stream())
+    return false;
+
+  // It is illegal to call any member function if eos is true.
+  if (end_of_stream())
+    return true;
+
+  if (timestamp() != buffer.timestamp() || duration() != buffer.duration() ||
+      is_key_frame() != buffer.is_key_frame() ||
+      splice_timestamp() != buffer.splice_timestamp() ||
+      discard_padding() != buffer.discard_padding() ||
+      data_size() != buffer.data_size() ||
+      side_data_size() != buffer.side_data_size()) {
+    return false;
+  }
+
+  if (memcmp(data(), buffer.data(), data_size()) != 0 ||
+      memcmp(side_data(), buffer.side_data(), side_data_size()) != 0) {
+    return false;
+  }
+
+  if ((decrypt_config() == nullptr) != (buffer.decrypt_config() == nullptr))
+    return false;
+
+  return decrypt_config() ? decrypt_config()->Matches(*buffer.decrypt_config())
+                          : true;
+}
+
+std::string DecoderBuffer::AsHumanReadableString() const {
   if (end_of_stream()) {
     return "end of stream";
   }
@@ -111,8 +133,8 @@ void DecoderBuffer::set_timestamp(base::TimeDelta timestamp) {
   timestamp_ = timestamp;
 }
 
-void DecoderBuffer::CopySideDataFrom(const uint8* side_data,
-                                     int side_data_size) {
+void DecoderBuffer::CopySideDataFrom(const uint8_t* side_data,
+                                     size_t side_data_size) {
   if (side_data_size > 0) {
     side_data_size_ = side_data_size;
     side_data_.reset(AllocateFFmpegSafeBlock(side_data_size_));

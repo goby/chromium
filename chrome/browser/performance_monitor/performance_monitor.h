@@ -6,22 +6,18 @@
 #define CHROME_BROWSER_PERFORMANCE_MONITOR_PERFORMANCE_MONITOR_H_
 
 #include <map>
+#include <memory>
 #include <vector>
 
+#include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/process/process_handle.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/performance_monitor/process_metrics_history.h"
 
-namespace base {
-template <typename Type>
-struct DefaultSingletonTraits;
-}  // namespace base
-
-namespace content {
-struct ChildProcessData;
-}
-
 namespace performance_monitor {
+
+class ProcessMetricsHistory;
 
 // PerformanceMonitor is a tool which periodically monitors performance metrics
 // for histogram logging and possibly taking action upon noticing serious
@@ -36,12 +32,13 @@ class PerformanceMonitor {
   void StartGatherCycle();
 
  private:
-  typedef std::map<base::ProcessHandle, ProcessMetricsHistory> MetricsMap;
+  friend struct base::DefaultLazyInstanceTraits<PerformanceMonitor>;
 
-  friend struct base::DefaultSingletonTraits<PerformanceMonitor>;
+  using MetricsMap =
+      std::map<base::ProcessHandle, std::unique_ptr<ProcessMetricsHistory>>;
 
   PerformanceMonitor();
-  virtual ~PerformanceMonitor();
+  ~PerformanceMonitor();
 
   // Perform any collections that are done on a timed basis.
   void DoTimedCollections();
@@ -52,7 +49,7 @@ class PerformanceMonitor {
   void MarkProcessAsAlive(const ProcessMetricsMetadata& process_data,
                           int current_update_sequence);
   void MarkProcessesAsAliveOnUIThread(
-      scoped_ptr<std::vector<ProcessMetricsMetadata>> process_data_list,
+      std::unique_ptr<std::vector<ProcessMetricsMetadata>> process_data_list,
       int current_update_sequence);
 
   // Updates the ProcessMetrics map with the current list of processes and

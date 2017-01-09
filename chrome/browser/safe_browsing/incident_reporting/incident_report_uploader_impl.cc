@@ -4,8 +4,11 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/incident_report_uploader_impl.h"
 
-#include "base/metrics/histogram.h"
+#include <utility>
+
+#include "base/metrics/histogram_macros.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "google_apis/google_api_keys.h"
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
@@ -30,14 +33,15 @@ IncidentReportUploaderImpl::~IncidentReportUploaderImpl() {
 }
 
 // static
-scoped_ptr<IncidentReportUploader> IncidentReportUploaderImpl::UploadReport(
+std::unique_ptr<IncidentReportUploader>
+IncidentReportUploaderImpl::UploadReport(
     const OnResultCallback& callback,
     const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
     const ClientIncidentReport& report) {
   std::string post_data;
   if (!report.SerializeToString(&post_data))
-    return scoped_ptr<IncidentReportUploader>();
-  return scoped_ptr<IncidentReportUploader>(new IncidentReportUploaderImpl(
+    return std::unique_ptr<IncidentReportUploader>();
+  return std::unique_ptr<IncidentReportUploader>(new IncidentReportUploaderImpl(
       callback, request_context_getter, post_data));
 }
 
@@ -51,6 +55,8 @@ IncidentReportUploaderImpl::IncidentReportUploaderImpl(
                                            net::URLFetcher::POST,
                                            this)),
       time_begin_(base::TimeTicks::Now()) {
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      url_fetcher_.get(), data_use_measurement::DataUseUserData::SAFE_BROWSING);
   UMA_HISTOGRAM_COUNTS("SBIRS.ReportPayloadSize", post_data.size());
   url_fetcher_->SetLoadFlags(net::LOAD_DISABLE_CACHE);
   url_fetcher_->SetAutomaticallyRetryOn5xx(false);
@@ -71,13 +77,13 @@ GURL IncidentReportUploaderImpl::GetIncidentReportUrl() {
 void IncidentReportUploaderImpl::OnURLFetchComplete(
     const net::URLFetcher* source) {
   // Take ownership of the fetcher in this scope (source == url_fetcher_).
-  scoped_ptr<net::URLFetcher> url_fetcher(url_fetcher_.Pass());
+  std::unique_ptr<net::URLFetcher> url_fetcher(std::move(url_fetcher_));
 
   UMA_HISTOGRAM_TIMES("SBIRS.ReportUploadTime",
                       base::TimeTicks::Now() - time_begin_);
 
   Result result = UPLOAD_REQUEST_FAILED;
-  scoped_ptr<ClientIncidentResponse> response;
+  std::unique_ptr<ClientIncidentResponse> response;
 
   if (source->GetStatus().is_success() &&
       source->GetResponseCode() == net::HTTP_OK) {
@@ -93,7 +99,7 @@ void IncidentReportUploaderImpl::OnURLFetchComplete(
   }
   // Callbacks have a tendency to delete the uploader, so no touching anything
   // after this.
-  callback_.Run(result, response.Pass());
+  callback_.Run(result, std::move(response));
 }
 
 }  // namespace safe_browsing

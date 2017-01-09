@@ -12,7 +12,13 @@
 namespace IPC {
 
 // static
-void ParamTraits<MachPortMac>::Write(Message* m, const param_type& p) {
+void ParamTraits<MachPortMac>::GetSize(base::PickleSizer* s,
+                                       const param_type& p) {
+  s->AddAttachment();
+}
+
+// static
+void ParamTraits<MachPortMac>::Write(base::Pickle* m, const param_type& p) {
   if (!m->WriteAttachment(
           new IPC::internal::MachPortAttachmentMac(p.get_mach_port()))) {
     NOTREACHED();
@@ -20,23 +26,20 @@ void ParamTraits<MachPortMac>::Write(Message* m, const param_type& p) {
 }
 
 // static
-bool ParamTraits<MachPortMac>::Read(const Message* m,
+bool ParamTraits<MachPortMac>::Read(const base::Pickle* m,
                                     base::PickleIterator* iter,
                                     param_type* r) {
-  scoped_refptr<MessageAttachment> attachment;
-  if (!m->ReadAttachment(iter, &attachment))
+  scoped_refptr<base::Pickle::Attachment> base_attachment;
+  if (!m->ReadAttachment(iter, &base_attachment))
     return false;
-  if (attachment->GetType() != MessageAttachment::TYPE_BROKERABLE_ATTACHMENT)
+  MessageAttachment* attachment =
+      static_cast<MessageAttachment*>(base_attachment.get());
+  if (attachment->GetType() != MessageAttachment::Type::MACH_PORT)
     return false;
-  BrokerableAttachment* brokerable_attachment =
-      static_cast<BrokerableAttachment*>(attachment.get());
-  if (brokerable_attachment->GetBrokerableType() !=
-      BrokerableAttachment::MACH_PORT) {
-    return false;
-  }
   IPC::internal::MachPortAttachmentMac* mach_port_attachment =
-      static_cast<IPC::internal::MachPortAttachmentMac*>(brokerable_attachment);
+      static_cast<IPC::internal::MachPortAttachmentMac*>(attachment);
   r->set_mach_port(mach_port_attachment->get_mach_port());
+  mach_port_attachment->reset_mach_port_ownership();
   return true;
 }
 

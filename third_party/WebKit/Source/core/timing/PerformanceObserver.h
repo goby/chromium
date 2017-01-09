@@ -5,56 +5,60 @@
 #ifndef PerformanceObserver_h
 #define PerformanceObserver_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "bindings/core/v8/TraceWrapperMember.h"
+#include "core/CoreExport.h"
 #include "core/timing/PerformanceEntry.h"
 #include "platform/heap/Handle.h"
-#include "wtf/HashSet.h"
-#include "wtf/PassOwnPtr.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
-#include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
 
 namespace blink {
 
+class ExecutionContext;
 class ExceptionState;
 class PerformanceBase;
-class PerformanceObserverCallback;
 class PerformanceObserver;
+class PerformanceObserverCallback;
 class PerformanceObserverInit;
 
 using PerformanceEntryVector = HeapVector<Member<PerformanceEntry>>;
 
-class PerformanceObserver final : public GarbageCollectedFinalized<PerformanceObserver>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-    friend class PerformanceBase;
-public:
-    static PerformanceObserver* create(PerformanceBase*, PerformanceObserverCallback*);
-    static void resumeSuspendedObservers();
+class CORE_EXPORT PerformanceObserver final
+    : public GarbageCollectedFinalized<PerformanceObserver>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
+  friend class PerformanceBase;
+  friend class PerformanceBaseTest;
+  friend class PerformanceObserverTest;
 
-    ~PerformanceObserver();
+ public:
+  static PerformanceObserver* create(ExecutionContext*,
+                                     PerformanceBase*,
+                                     PerformanceObserverCallback*);
+  static void resumeSuspendedObservers();
 
-    void observe(const PerformanceObserverInit&, ExceptionState&);
-    void disconnect();
-    void enqueuePerformanceEntry(PerformanceEntry&);
-    PerformanceEntryTypeMask filterOptions() const { return m_filterOptions; }
+  void observe(const PerformanceObserverInit&, ExceptionState&);
+  void disconnect();
+  void enqueuePerformanceEntry(PerformanceEntry&);
+  PerformanceEntryTypeMask filterOptions() const { return m_filterOptions; }
 
-    // Eagerly finalized as destructor accesses heap object members.
-    EAGERLY_FINALIZE();
-    DECLARE_TRACE();
+  DECLARE_TRACE();
+  DECLARE_TRACE_WRAPPERS();
 
-private:
-    explicit PerformanceObserver(PerformanceBase*, PerformanceObserverCallback*);
-    void deliver();
-    bool shouldBeSuspended() const;
+ private:
+  PerformanceObserver(ExecutionContext*,
+                      PerformanceBase*,
+                      PerformanceObserverCallback*);
+  void deliver();
+  bool shouldBeSuspended() const;
 
-    Member<PerformanceObserverCallback> m_callback;
-    WeakMember<PerformanceBase> m_performance;
-    PerformanceEntryVector m_performanceEntries;
-    PerformanceEntryTypeMask m_filterOptions;
-    bool m_isRegistered;
+  Member<ExecutionContext> m_executionContext;
+  TraceWrapperMember<PerformanceObserverCallback> m_callback;
+  WeakMember<PerformanceBase> m_performance;
+  PerformanceEntryVector m_performanceEntries;
+  PerformanceEntryTypeMask m_filterOptions;
+  bool m_isRegistered;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PerformanceObserver_h
+#endif  // PerformanceObserver_h

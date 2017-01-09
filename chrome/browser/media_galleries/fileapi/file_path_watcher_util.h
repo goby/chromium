@@ -5,13 +5,18 @@
 #ifndef CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_FILE_PATH_WATCHER_UTIL_H_
 #define CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_FILE_PATH_WATCHER_UTIL_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
+#include "content/public/browser/browser_thread.h"
 
-typedef base::Callback<void(scoped_ptr<base::FilePathWatcher> watcher)>
-    FileWatchStartedCallback;
+using MediaFilePathWatcherUniquePtr =
+    std::unique_ptr<base::FilePathWatcher,
+                    content::BrowserThread::DeleteOnFileThread>;
+using FileWatchStartedCallback =
+    base::Callback<void(MediaFilePathWatcherUniquePtr watcher)>;
 
 // Called on the MediaTaskRunner to begin a file watch.
 // |watch_started_callback| is responsible for taking ownership of the

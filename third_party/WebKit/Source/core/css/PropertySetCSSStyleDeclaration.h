@@ -28,7 +28,6 @@
 
 #include "core/css/CSSStyleDeclaration.h"
 #include "wtf/HashMap.h"
-#include "wtf/OwnPtr.h"
 
 namespace blink {
 
@@ -40,114 +39,110 @@ class MutableStylePropertySet;
 class StyleSheetContents;
 
 class AbstractPropertySetCSSStyleDeclaration : public CSSStyleDeclaration {
-public:
-    virtual Element* parentElement() const { return 0; }
-    StyleSheetContents* contextStyleSheet() const;
+ public:
+  virtual Element* parentElement() const { return 0; }
+  StyleSheetContents* contextStyleSheet() const;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    CSSRule* parentRule() const override { return 0; }
-    unsigned length() const final;
-    String item(unsigned index) const final;
-    String getPropertyValue(const String& propertyName) final;
-    String getPropertyPriority(const String& propertyName) final;
-    String getPropertyShorthand(const String& propertyName) final;
-    bool isPropertyImplicit(const String& propertyName) final;
-    void setProperty(const String& propertyName, const String& value, const String& priority, ExceptionState&) final;
-    String removeProperty(const String& propertyName, ExceptionState&) final;
-    String cssFloat() const;
-    void setCSSFloat(const String&, ExceptionState&);
-    String cssText() const final;
-    void setCSSText(const String&, ExceptionState&) final;
-    PassRefPtrWillBeRawPtr<CSSValue> getPropertyCSSValueInternal(CSSPropertyID) final;
-    String getPropertyValueInternal(CSSPropertyID) final;
-    void setPropertyInternal(CSSPropertyID, const String& customPropertyName, const String& value, bool important, ExceptionState&) final;
+ private:
+  CSSRule* parentRule() const override { return 0; }
+  unsigned length() const final;
+  String item(unsigned index) const final;
+  String getPropertyValue(const String& propertyName) final;
+  String getPropertyPriority(const String& propertyName) final;
+  String getPropertyShorthand(const String& propertyName) final;
+  bool isPropertyImplicit(const String& propertyName) final;
+  void setProperty(const String& propertyName,
+                   const String& value,
+                   const String& priority,
+                   ExceptionState&) final;
+  String removeProperty(const String& propertyName, ExceptionState&) final;
+  String cssFloat() const;
+  void setCSSFloat(const String&, ExceptionState&);
+  String cssText() const final;
+  void setCSSText(const String&, ExceptionState&) final;
+  const CSSValue* getPropertyCSSValueInternal(CSSPropertyID) final;
+  const CSSValue* getPropertyCSSValueInternal(
+      AtomicString customPropertyName) final;
+  String getPropertyValueInternal(CSSPropertyID) final;
+  void setPropertyInternal(CSSPropertyID,
+                           const String& customPropertyName,
+                           const String& value,
+                           bool important,
+                           ExceptionState&) final;
 
-    bool cssPropertyMatches(CSSPropertyID, const CSSValue*) const final;
+  bool cssPropertyMatches(CSSPropertyID, const CSSValue*) const final;
 
-protected:
-    enum MutationType { NoChanges, PropertyChanged };
-    virtual void willMutate() { }
-    virtual void didMutate(MutationType) { }
-    virtual MutableStylePropertySet& propertySet() const = 0;
+ protected:
+  enum MutationType { NoChanges, PropertyChanged };
+  virtual void willMutate() {}
+  virtual void didMutate(MutationType) {}
+  virtual MutableStylePropertySet& propertySet() const = 0;
+  virtual bool isKeyframeStyle() const { return false; }
 };
 
-class PropertySetCSSStyleDeclaration : public AbstractPropertySetCSSStyleDeclaration {
-public:
-    PropertySetCSSStyleDeclaration(MutableStylePropertySet& propertySet) : m_propertySet(&propertySet) { }
+class PropertySetCSSStyleDeclaration
+    : public AbstractPropertySetCSSStyleDeclaration {
+ public:
+  PropertySetCSSStyleDeclaration(MutableStylePropertySet& propertySet)
+      : m_propertySet(&propertySet) {}
 
-#if !ENABLE(OILPAN)
-    void ref() override;
-    void deref() override;
-#endif
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+ protected:
+  MutableStylePropertySet& propertySet() const final {
+    ASSERT(m_propertySet);
+    return *m_propertySet;
+  }
 
-protected:
-    MutableStylePropertySet& propertySet() const final { ASSERT(m_propertySet); return *m_propertySet; }
-
-    RawPtrWillBeMember<MutableStylePropertySet> m_propertySet; // Cannot be null
+  Member<MutableStylePropertySet> m_propertySet;  // Cannot be null
 };
 
 class StyleRuleCSSStyleDeclaration : public PropertySetCSSStyleDeclaration {
-public:
-    static PassRefPtrWillBeRawPtr<StyleRuleCSSStyleDeclaration> create(MutableStylePropertySet& propertySet, CSSRule* parentRule)
-    {
-        return adoptRefWillBeNoop(new StyleRuleCSSStyleDeclaration(propertySet, parentRule));
-    }
+ public:
+  static StyleRuleCSSStyleDeclaration* create(
+      MutableStylePropertySet& propertySet,
+      CSSRule* parentRule) {
+    return new StyleRuleCSSStyleDeclaration(propertySet, parentRule);
+  }
 
-#if !ENABLE(OILPAN)
-    void clearParentRule() { m_parentRule = nullptr; }
+  void reattach(MutableStylePropertySet&);
 
-    void ref() override;
-    void deref() override;
-#endif
+  DECLARE_VIRTUAL_TRACE();
 
-    void reattach(MutableStylePropertySet&);
+ protected:
+  StyleRuleCSSStyleDeclaration(MutableStylePropertySet&, CSSRule*);
+  ~StyleRuleCSSStyleDeclaration() override;
 
-    DECLARE_VIRTUAL_TRACE();
+  CSSStyleSheet* parentStyleSheet() const override;
 
-protected:
-    StyleRuleCSSStyleDeclaration(MutableStylePropertySet&, CSSRule*);
-    ~StyleRuleCSSStyleDeclaration() override;
+  CSSRule* parentRule() const override { return m_parentRule; }
 
-    CSSStyleSheet* parentStyleSheet() const override;
+  void willMutate() override;
+  void didMutate(MutationType) override;
 
-    CSSRule* parentRule() const override { return m_parentRule;  }
-
-    void willMutate() override;
-    void didMutate(MutationType) override;
-
-#if !ENABLE(OILPAN)
-    unsigned m_refCount;
-#endif
-    RawPtrWillBeMember<CSSRule> m_parentRule;
+  Member<CSSRule> m_parentRule;
 };
 
-class InlineCSSStyleDeclaration final : public AbstractPropertySetCSSStyleDeclaration {
-public:
-    explicit InlineCSSStyleDeclaration(Element* parentElement)
-        : m_parentElement(parentElement)
-    {
-    }
+class InlineCSSStyleDeclaration final
+    : public AbstractPropertySetCSSStyleDeclaration {
+ public:
+  explicit InlineCSSStyleDeclaration(Element* parentElement)
+      : m_parentElement(parentElement) {}
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    MutableStylePropertySet& propertySet() const override;
-#if !ENABLE(OILPAN)
-    void ref() override;
-    void deref() override;
-#endif
-    CSSStyleSheet* parentStyleSheet() const override;
-    Element* parentElement() const override { return m_parentElement; }
+ private:
+  MutableStylePropertySet& propertySet() const override;
+  CSSStyleSheet* parentStyleSheet() const override;
+  Element* parentElement() const override { return m_parentElement; }
 
-    void didMutate(MutationType) override;
+  void didMutate(MutationType) override;
 
-    RawPtrWillBeMember<Element> m_parentElement;
+  Member<Element> m_parentElement;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

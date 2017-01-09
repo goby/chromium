@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "device/serial/serial.mojom.h"
 #include "device/serial/serial_service_impl.h"
 #include "device/serial/test_serial_io_handler.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace device {
@@ -20,7 +26,7 @@ class FakeSerialDeviceEnumerator : public SerialDeviceEnumerator {
     mojo::Array<serial::DeviceInfoPtr> devices(1);
     devices[0] = serial::DeviceInfo::New();
     devices[0]->path = "device";
-    return devices.Pass();
+    return devices;
   }
 };
 
@@ -43,7 +49,7 @@ class SerialServiceTest : public testing::Test {
   SerialServiceTest() : connected_(false), expecting_error_(false) {}
 
   void StoreDevices(mojo::Array<serial::DeviceInfoPtr> devices) {
-    devices_ = devices.Pass();
+    devices_ = std::move(devices);
     StopMessageLoop();
   }
 
@@ -59,7 +65,7 @@ class SerialServiceTest : public testing::Test {
 
   void StopMessageLoop() {
     ASSERT_TRUE(run_loop_);
-    message_loop_.PostTask(FROM_HERE, run_loop_->QuitClosure());
+    message_loop_.task_runner()->PostTask(FROM_HERE, run_loop_->QuitClosure());
   }
 
   void OnGotInfo(serial::ConnectionInfoPtr options) {
@@ -73,12 +79,13 @@ class SerialServiceTest : public testing::Test {
     if (!io_handler_.get())
       io_handler_ = new TestSerialIoHandler;
     mojo::InterfacePtr<serial::SerialService> service;
-    new SerialServiceImpl(
-        new SerialConnectionFactory(
-            base::Bind(&SerialServiceTest::ReturnIoHandler,
-                       base::Unretained(this)),
-            base::ThreadTaskRunnerHandle::Get()),
-        scoped_ptr<SerialDeviceEnumerator>(new FakeSerialDeviceEnumerator),
+    mojo::MakeStrongBinding(
+        base::MakeUnique<SerialServiceImpl>(
+            new SerialConnectionFactory(
+                base::Bind(&SerialServiceTest::ReturnIoHandler,
+                           base::Unretained(this)),
+                base::ThreadTaskRunnerHandle::Get()),
+            base::MakeUnique<FakeSerialDeviceEnumerator>()),
         mojo::GetProxy(&service));
     mojo::InterfacePtr<serial::Connection> connection;
     mojo::InterfacePtr<serial::DataSink> sink;
@@ -87,7 +94,7 @@ class SerialServiceTest : public testing::Test {
     mojo::GetProxy(&source_client);
     service->Connect(path, serial::ConnectionOptions::New(),
                      mojo::GetProxy(&connection), mojo::GetProxy(&sink),
-                     mojo::GetProxy(&source), source_client.Pass());
+                     mojo::GetProxy(&source), std::move(source_client));
     connection.set_connection_error_handler(base::Bind(
         &SerialServiceTest::OnConnectionError, base::Unretained(this)));
     expecting_error_ = !expecting_success;
@@ -100,7 +107,7 @@ class SerialServiceTest : public testing::Test {
   }
 
   base::MessageLoop message_loop_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   mojo::Array<serial::DeviceInfoPtr> devices_;
   scoped_refptr<TestSerialIoHandler> io_handler_;
   bool connected_;

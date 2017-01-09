@@ -68,7 +68,7 @@
     visibility: hidden;
 }
 
-@media (-webkit-min-device-pixel-ratio: 1.5) {
+@media (-webkit-min-device-pixel-ratio: 1.1) {
 .remove-button,
 .edit-button {
     background-image: url(Images/toolbarButtonGlyphs_2x.png);
@@ -90,7 +90,7 @@
 }
 
 .edit-button {
-    background-position: -224px -72px;
+    background-position: -160px 0px;
 }
 
 .editor-container {
@@ -128,6 +128,5 @@
 }
 
 .editor-content input.error-input {
-    outline: auto 2px red;
     background-color: white;
 }

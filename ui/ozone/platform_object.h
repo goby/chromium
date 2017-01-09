@@ -5,7 +5,7 @@
 #ifndef UI_OZONE_PLATFORM_OBJECT_H_
 #define UI_OZONE_PLATFORM_OBJECT_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
 
 namespace ui {
 
@@ -26,7 +26,7 @@ namespace ui {
 template <class T>
 class PlatformObject {
  public:
-  static scoped_ptr<T> Create();
+  static std::unique_ptr<T> Create();
 };
 
 }  // namespace ui

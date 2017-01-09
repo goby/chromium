@@ -7,10 +7,10 @@
 #include "chrome/browser/domain_reliability/service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "components/domain_reliability/service.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "grit/browser_resources.h"
 
 using domain_reliability::DomainReliabilityService;
 using domain_reliability::DomainReliabilityServiceFactory;
@@ -26,6 +26,7 @@ DomainReliabilityInternalsUI::DomainReliabilityInternalsUI(
   html_source->AddResourcePath("domain_reliability_internals.js",
       IDR_DOMAIN_RELIABILITY_INTERNALS_JS);
   html_source->SetDefaultResource(IDR_DOMAIN_RELIABILITY_INTERNALS_HTML);
+  html_source->DisableI18nAndUseGzipForAllPaths();
 
   web_ui->RegisterMessageCallback("updateData",
       base::Bind(&DomainReliabilityInternalsUI::UpdateData,
@@ -49,7 +50,7 @@ void DomainReliabilityInternalsUI::UpdateData(
   if (!service) {
     base::DictionaryValue* data = new base::DictionaryValue();
     data->SetString("error", "no_service");
-    OnDataUpdated(scoped_ptr<base::Value>(data));
+    OnDataUpdated(std::unique_ptr<base::Value>(data));
     return;
   }
 
@@ -59,7 +60,7 @@ void DomainReliabilityInternalsUI::UpdateData(
 }
 
 void DomainReliabilityInternalsUI::OnDataUpdated(
-    scoped_ptr<base::Value> data) const {
-  web_ui()->CallJavascriptFunction(
+    std::unique_ptr<base::Value> data) const {
+  web_ui()->CallJavascriptFunctionUnsafe(
       "DomainReliabilityInternals.onDataUpdated", *data);
 }

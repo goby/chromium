@@ -4,8 +4,12 @@
 
 #include "chrome/browser/extensions/api/automation_internal/automation_internal_api.h"
 
+#include <stdint.h>
+
 #include <vector>
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -16,6 +20,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/extensions/api/automation_api_constants.h"
 #include "chrome/common/extensions/api/automation_internal.h"
 #include "chrome/common/extensions/chrome_extension_messages.h"
 #include "chrome/common/extensions/manifest_handlers/automation.h"
@@ -24,7 +29,6 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_plugin_guest_manager.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -33,6 +37,7 @@
 #include "content/public/browser/web_contents_user_data.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "ui/accessibility/ax_action_data.h"
 
 #if defined(USE_AURA)
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
@@ -48,7 +53,6 @@ namespace extensions {
 
 namespace {
 
-const int kDesktopTreeID = 0;
 const char kCannotRequestAutomationOnPage[] =
     "Cannot request automation tree on url \"*\". "
     "Extension manifest must request permission to access this host.";
@@ -145,11 +149,9 @@ bool CanRequestAutomation(const Extension* extension,
     return true;
 
   int tab_id = ExtensionTabUtil::GetTabId(contents);
-  content::RenderProcessHost* process = contents->GetRenderProcessHost();
-  int process_id = process ? process->GetID() : -1;
   std::string unused_error;
-  return extension->permissions_data()->CanAccessPage(
-      extension, url, tab_id, process_id, &unused_error);
+  return extension->permissions_data()->CanAccessPage(extension, url, tab_id,
+                                                      &unused_error);
 }
 
 // Helper class that implements an action adapter for a |RenderFrameHost|.
@@ -161,24 +163,8 @@ class RenderFrameHostActionAdapter : public AutomationActionAdapter {
   virtual ~RenderFrameHostActionAdapter() {}
 
   // AutomationActionAdapter implementation.
-  void DoDefault(int32 id) override { rfh_->AccessibilityDoDefaultAction(id); }
-
-  void Focus(int32 id) override { rfh_->AccessibilitySetFocus(id); }
-
-  void MakeVisible(int32 id) override {
-    rfh_->AccessibilityScrollToMakeVisible(id, gfx::Rect());
-  }
-
-  void SetSelection(int32 anchor_id,
-                    int32 anchor_offset,
-                    int32 focus_id,
-                    int32 focus_offset) override {
-    rfh_->AccessibilitySetSelection(anchor_id, anchor_offset, focus_id,
-                                    focus_offset);
-  }
-
-  void ShowContextMenu(int32 id) override {
-    rfh_->AccessibilityShowContextMenu(id);
+  void PerformAction(const ui::AXActionData& data) override {
+    rfh_->AccessibilityPerformAction(data);
   }
 
  private:
@@ -200,10 +186,7 @@ class AutomationWebContentsObserver
   void AccessibilityEventReceived(
       const std::vector<content::AXEventNotificationDetails>& details)
       override {
-    std::vector<content::AXEventNotificationDetails>::const_iterator iter =
-        details.begin();
-    for (; iter != details.end(); ++iter) {
-      const content::AXEventNotificationDetails& event = *iter;
+    for (const auto& event : details) {
       ExtensionMsg_AccessibilityEventParams params;
       params.tree_id = event.ax_tree_id;
       params.id = event.id;
@@ -211,9 +194,23 @@ class AutomationWebContentsObserver
       params.update = event.update;
       params.location_offset =
           web_contents()->GetContainerBounds().OffsetFromOrigin();
+      params.event_from = event.event_from;
 
       AutomationEventRouter* router = AutomationEventRouter::GetInstance();
       router->DispatchAccessibilityEvent(params);
+    }
+  }
+
+  void AccessibilityLocationChangesReceived(
+      const std::vector<content::AXLocationChangeNotificationDetails>& details)
+      override {
+    for (const auto& src : details) {
+      ExtensionMsg_AccessibilityLocationChangeParams dst;
+      dst.id = src.id;
+      dst.tree_id = src.ax_tree_id;
+      dst.new_location = src.new_location;
+      AutomationEventRouter* router = AutomationEventRouter::GetInstance();
+      router->DispatchAccessibilityLocationChange(dst);
     }
   }
 
@@ -243,7 +240,7 @@ AutomationInternalEnableTabFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(automation_info);
 
   using api::automation_internal::EnableTab::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   content::WebContents* contents = NULL;
   if (params->args.tab_id.get()) {
@@ -293,7 +290,7 @@ ExtensionFunction::ResponseAction AutomationInternalEnableFrameFunction::Run() {
   // TODO(dtseng): Limited to desktop tree for now pending out of proc iframes.
   using api::automation_internal::EnableFrame::Params;
 
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   content::RenderFrameHost* rfh =
@@ -304,7 +301,11 @@ ExtensionFunction::ResponseAction AutomationInternalEnableFrameFunction::Run() {
   content::WebContents* contents =
       content::WebContents::FromRenderFrameHost(rfh);
   AutomationWebContentsObserver::CreateForWebContents(contents);
-  contents->EnableTreeOnlyAccessibilityMode();
+
+  // Only call this if this is the root of a frame tree, to avoid resetting
+  // the accessibility state multiple times.
+  if (!rfh->GetParent())
+    contents->EnableTreeOnlyAccessibilityMode();
 
   return RespondNow(NoArguments());
 }
@@ -315,10 +316,10 @@ AutomationInternalPerformActionFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(automation_info && automation_info->interact);
 
   using api::automation_internal::PerformAction::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  if (params->args.tree_id == kDesktopTreeID) {
+  if (params->args.tree_id == api::automation::kDesktopTreeID) {
 #if defined(USE_AURA)
     return RouteActionToAdapter(params.get(),
                                 AutomationManagerAura::GetInstance());
@@ -348,29 +349,61 @@ ExtensionFunction::ResponseAction
 AutomationInternalPerformActionFunction::RouteActionToAdapter(
     api::automation_internal::PerformAction::Params* params,
     AutomationActionAdapter* adapter) {
-  int32 automation_id = params->args.automation_node_id;
+  ui::AXActionData action;
+  action.target_node_id = params->args.automation_node_id;
   switch (params->args.action_type) {
     case api::automation_internal::ACTION_TYPE_DODEFAULT:
-      adapter->DoDefault(automation_id);
+      action.action = ui::AX_ACTION_DO_DEFAULT;
+      adapter->PerformAction(action);
       break;
     case api::automation_internal::ACTION_TYPE_FOCUS:
-      adapter->Focus(automation_id);
+      action.action = ui::AX_ACTION_FOCUS;
+      adapter->PerformAction(action);
       break;
+    case api::automation_internal::ACTION_TYPE_GETIMAGEDATA: {
+      api::automation_internal::GetImageDataParams get_image_data_params;
+      EXTENSION_FUNCTION_VALIDATE(
+          api::automation_internal::GetImageDataParams::Populate(
+              params->opt_args.additional_properties, &get_image_data_params));
+      action.action = ui::AX_ACTION_GET_IMAGE_DATA;
+      action.target_rect = gfx::Rect(
+          0, 0, get_image_data_params.max_width,
+          get_image_data_params.max_height);
+      adapter->PerformAction(action);
+      break;
+    }
     case api::automation_internal::ACTION_TYPE_MAKEVISIBLE:
-      adapter->MakeVisible(automation_id);
+      action.action = ui::AX_ACTION_SCROLL_TO_MAKE_VISIBLE;
+      adapter->PerformAction(action);
       break;
     case api::automation_internal::ACTION_TYPE_SETSELECTION: {
       api::automation_internal::SetSelectionParams selection_params;
       EXTENSION_FUNCTION_VALIDATE(
           api::automation_internal::SetSelectionParams::Populate(
               params->opt_args.additional_properties, &selection_params));
-      adapter->SetSelection(automation_id, selection_params.anchor_offset,
-                            selection_params.focus_node_id,
-                            selection_params.focus_offset);
+      action.anchor_node_id = params->args.automation_node_id;
+      action.anchor_offset = selection_params.anchor_offset;
+      action.focus_node_id = selection_params.focus_node_id;
+      action.focus_offset = selection_params.focus_offset;
+      action.action = ui::AX_ACTION_SET_SELECTION;
+      adapter->PerformAction(action);
       break;
     }
     case api::automation_internal::ACTION_TYPE_SHOWCONTEXTMENU: {
-      adapter->ShowContextMenu(automation_id);
+      action.action = ui::AX_ACTION_SHOW_CONTEXT_MENU;
+      adapter->PerformAction(action);
+      break;
+    }
+    case api::automation_internal::ACTION_TYPE_SETACCESSIBILITYFOCUS: {
+      action.action = ui::AX_ACTION_SET_ACCESSIBILITY_FOCUS;
+      adapter->PerformAction(action);
+      break;
+    }
+    case api::automation_internal::
+        ACTION_TYPE_SETSEQUENTIALFOCUSNAVIGATIONSTARTINGPOINT: {
+      action.action =
+          ui::AX_ACTION_SET_SEQUENTIAL_FOCUS_NAVIGATION_STARTING_POINT;
+      adapter->PerformAction(action);
       break;
     }
     default:
@@ -387,7 +420,7 @@ AutomationInternalEnableDesktopFunction::Run() {
     return RespondNow(Error("desktop permission must be requested"));
 
   using api::automation_internal::EnableDesktop::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   // This gets removed when the extension process dies.
@@ -412,10 +445,10 @@ AutomationInternalQuerySelectorFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(automation_info);
 
   using api::automation_internal::QuerySelector::Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  if (params->args.tree_id == kDesktopTreeID) {
+  if (params->args.tree_id == api::automation::kDesktopTreeID) {
     return RespondNow(
         Error("domQuerySelector queries may not be used on the desktop."));
   }
@@ -446,7 +479,8 @@ void AutomationInternalQuerySelectorFunction::OnResponse(
     return;
   }
 
-  Respond(OneArgument(new base::FundamentalValue(result_acc_obj_id)));
+  Respond(
+      OneArgument(base::MakeUnique<base::FundamentalValue>(result_acc_obj_id)));
 }
 
 }  // namespace extensions

@@ -5,9 +5,9 @@
 #include "ui/wm/core/default_screen_position_client.h"
 
 #include "ui/aura/window_tree_host.h"
-#include "ui/gfx/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/point_conversions.h"
-#include "ui/gfx/screen.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace wm {
 
@@ -19,11 +19,11 @@ DefaultScreenPositionClient::~DefaultScreenPositionClient() {
 
 gfx::Point DefaultScreenPositionClient::GetOriginInScreen(
     const aura::Window* root_window) {
-  gfx::Point origin_in_pixels = root_window->GetHost()->GetBounds().origin();
   aura::Window* window = const_cast<aura::Window*>(root_window);
-  float scale = gfx::Screen::GetScreenFor(window)->
-       GetDisplayNearestWindow(window).device_scale_factor();
-  return gfx::ScaleToFlooredPoint(origin_in_pixels, 1.0f / scale);
+  display::Screen* screen = display::Screen::GetScreen();
+  gfx::Rect screen_bounds = root_window->GetHost()->GetBoundsInPixels();
+  gfx::Rect dip_bounds = screen->ScreenToDIPRectInWindow(window, screen_bounds);
+  return dip_bounds.origin();
 }
 
 void DefaultScreenPositionClient::ConvertPointToScreen(
@@ -52,7 +52,7 @@ void DefaultScreenPositionClient::ConvertHostPointToScreen(aura::Window* window,
 
 void DefaultScreenPositionClient::SetBounds(aura::Window* window,
                                             const gfx::Rect& bounds,
-                                            const gfx::Display& display) {
+                                            const display::Display& display) {
   window->SetBounds(bounds);
 }
 

@@ -16,7 +16,9 @@ class WebContents;
 // Provides embedder-specific logic for the security error page controller.
 class ChromeControllerClient : public security_interstitials::ControllerClient {
  public:
-  explicit ChromeControllerClient(content::WebContents* web_contents);
+  ChromeControllerClient(
+      content::WebContents* web_contents,
+      std::unique_ptr<security_interstitials::MetricsHelper> metrics_helper);
   ~ChromeControllerClient() override;
 
   void set_interstitial_page(content::InterstitialPage* interstitial_page);
@@ -25,10 +27,12 @@ class ChromeControllerClient : public security_interstitials::ControllerClient {
   bool CanLaunchDateAndTimeSettings() override;
   void LaunchDateAndTimeSettings() override;
   void GoBack() override;
+  void Proceed() override;
+  void Reload() override;
+  void OpenUrlInCurrentTab(const GURL& url) override;
 
  protected:
   // security_interstitials::ControllerClient overrides
-  void OpenUrlInCurrentTab(const GURL& url) override;
   const std::string& GetApplicationLocale() override;
   PrefService* GetPrefService() override;
   const std::string GetExtendedReportingPrefName() override;

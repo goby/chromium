@@ -5,9 +5,13 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_CHROMEOS_DISPLAY_OVERSCAN_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_CHROMEOS_DISPLAY_OVERSCAN_HANDLER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
-#include "ui/gfx/display_observer.h"
+#include "ui/display/display_observer.h"
 
 namespace base {
 class DictionaryValue;
@@ -21,7 +25,7 @@ namespace options {
 
 // Display options overlay page UI handler.
 class DisplayOverscanHandler : public ::options::OptionsPageUIHandler,
-                               public gfx::DisplayObserver {
+                               public display::DisplayObserver {
  public:
   DisplayOverscanHandler();
   ~DisplayOverscanHandler() override;
@@ -32,10 +36,10 @@ class DisplayOverscanHandler : public ::options::OptionsPageUIHandler,
   // WebUIMessageHandler implementation.
   void RegisterMessages() override;
 
-  // gfx::DisplayObserver implementation.
-  void OnDisplayAdded(const gfx::Display& new_display) override;
-  void OnDisplayRemoved(const gfx::Display& old_display) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  // display::DisplayObserver implementation.
+  void OnDisplayAdded(const display::Display& new_display) override;
+  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
 
  private:
@@ -47,7 +51,7 @@ class DisplayOverscanHandler : public ::options::OptionsPageUIHandler,
   void HandleMove(const base::ListValue* args);
   void HandleResize(const base::ListValue* args);
 
-  scoped_ptr<OverscanCalibrator> overscan_calibrator_;
+  std::unique_ptr<OverscanCalibrator> overscan_calibrator_;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayOverscanHandler);
 };

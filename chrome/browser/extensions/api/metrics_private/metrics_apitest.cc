@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <map>
 
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/test/user_action_tester.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -104,7 +107,7 @@ void ValidateHistograms(const RecordedHistogram* recorded,
     for (j = 0; j < histograms.size(); ++j) {
       base::HistogramBase* histogram(histograms[j]);
       if (r.name == histogram->histogram_name()) {
-        scoped_ptr<base::HistogramSamples> snapshot =
+        std::unique_ptr<base::HistogramSamples> snapshot =
             histogram->SnapshotSamples();
         base::HistogramBase::Count sample_count = snapshot->TotalCount();
         EXPECT_EQ(r.count, sample_count);

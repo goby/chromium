@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/prefs/testing_pref_service.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/web_resource/eula_accepted_notifier.h"
 #include "components/web_resource/resource_request_allowed_notifier_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -25,7 +28,7 @@ class TestNetworkChangeNotifier : public net::NetworkChangeNotifier {
     connection_type_to_return_ = type;
     net::NetworkChangeNotifier::NotifyObserversOfConnectionTypeChangeForTests(
         connection_type_to_return_);
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
@@ -78,7 +81,7 @@ class ResourceRequestAllowedNotifierTest
         eula_notifier_(new TestEulaAcceptedNotifier),
         was_notified_(false) {
     resource_request_allowed_notifier_.InitWithEulaAcceptNotifier(
-        this, scoped_ptr<EulaAcceptedNotifier>(eula_notifier_));
+        this, base::WrapUnique(eula_notifier_));
   }
   ~ResourceRequestAllowedNotifierTest() override {}
 

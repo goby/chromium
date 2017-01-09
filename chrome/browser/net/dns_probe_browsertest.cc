@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <set>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/browser_process.h"
@@ -26,6 +25,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/error_page/common/net_error_info.h"
 #include "components/google/core/browser/google_util.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
@@ -362,7 +362,8 @@ void DnsProbeBrowserTestIOThreadHelper::SetUpOnIOThread(IOThread* io_thread) {
   interceptor_ =
       new BreakableCorrectionInterceptor(mock_corrections_file_path_);
   URLRequestFilter::GetInstance()->AddUrlInterceptor(
-      LinkDoctorBaseURL(), scoped_ptr<URLRequestInterceptor>(interceptor_));
+      LinkDoctorBaseURL(),
+      std::unique_ptr<URLRequestInterceptor>(interceptor_));
 }
 
 void DnsProbeBrowserTestIOThreadHelper::CleanUpOnIOThreadAndDeleteHelper() {
@@ -371,7 +372,7 @@ void DnsProbeBrowserTestIOThreadHelper::CleanUpOnIOThreadAndDeleteHelper() {
   URLRequestFilter::GetInstance()->ClearHandlers();
 
   IOThread::Globals* globals = io_thread_->globals();
-  scoped_ptr<DnsProbeService> delaying_dns_probe_service(
+  std::unique_ptr<DnsProbeService> delaying_dns_probe_service(
       globals->dns_probe_service.release());
   globals->dns_probe_service.reset(original_dns_probe_service_);
 
@@ -605,7 +606,7 @@ DnsProbeStatus DnsProbeBrowserTest::WaitForSentStatus() {
   CHECK(!awaiting_dns_probe_status_);
   while (dns_probe_status_queue_.empty()) {
     awaiting_dns_probe_status_ = true;
-    MessageLoop::current()->Run();
+    base::RunLoop().Run();
     awaiting_dns_probe_status_ = false;
   }
 
@@ -650,15 +651,13 @@ bool DnsProbeBrowserTest::PageContains(const std::string& expected) {
 
 void DnsProbeBrowserTest::ExpectDisplayingLocalErrorPage(
     const std::string& status_text) {
-  EXPECT_FALSE(PageContains("http://correction1/"));
-  EXPECT_FALSE(PageContains("http://correction2/"));
+  EXPECT_FALSE(PageContains("http://mock.http/title2.html"));
   EXPECT_TRUE(PageContains(status_text));
 }
 
 void DnsProbeBrowserTest::ExpectDisplayingCorrections(
     const std::string& status_text) {
-  EXPECT_TRUE(PageContains("http://correction1/"));
-  EXPECT_TRUE(PageContains("http://correction2/"));
+  EXPECT_TRUE(PageContains("http://mock.http/title2.html"));
   EXPECT_TRUE(PageContains(status_text));
 }
 

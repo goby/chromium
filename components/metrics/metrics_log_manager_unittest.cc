@@ -4,15 +4,18 @@
 
 #include "components/metrics/metrics_log_manager.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "components/metrics/metrics_log.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/test_metrics_service_client.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace metrics {
@@ -34,7 +37,7 @@ class TestLogPrefService : public TestingPrefServiceSimple {
       list_length = GetList(prefs::kMetricsInitialLogs)->GetSize();
     else
       list_length = GetList(prefs::kMetricsOngoingLogs)->GetSize();
-    return list_length / 2;
+    return list_length;
   }
 };
 
@@ -53,7 +56,7 @@ TEST(MetricsLogManagerTest, StandardFlow) {
   // Check that the normal flow works.
   MetricsLog* initial_log = new MetricsLog(
       "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service);
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(initial_log));
+  log_manager.BeginLoggingWithLog(base::WrapUnique(initial_log));
   EXPECT_EQ(initial_log, log_manager.current_log());
   EXPECT_FALSE(log_manager.has_staged_log());
 
@@ -64,7 +67,7 @@ TEST(MetricsLogManagerTest, StandardFlow) {
 
   MetricsLog* second_log =
       new MetricsLog("id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service);
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(second_log));
+  log_manager.BeginLoggingWithLog(base::WrapUnique(second_log));
   EXPECT_EQ(second_log, log_manager.current_log());
 
   log_manager.StageNextLogForUpload();
@@ -86,7 +89,7 @@ TEST(MetricsLogManagerTest, AbandonedLog) {
 
   MetricsLog* dummy_log = new MetricsLog(
       "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service);
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(dummy_log));
+  log_manager.BeginLoggingWithLog(base::WrapUnique(dummy_log));
   EXPECT_EQ(dummy_log, log_manager.current_log());
 
   log_manager.DiscardCurrentLog();
@@ -104,13 +107,13 @@ TEST(MetricsLogManagerTest, InterjectedLog) {
   MetricsLog* temp_log = new MetricsLog(
       "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service);
 
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(ongoing_log));
+  log_manager.BeginLoggingWithLog(base::WrapUnique(ongoing_log));
   EXPECT_EQ(ongoing_log, log_manager.current_log());
 
   log_manager.PauseCurrentLog();
   EXPECT_EQ(NULL, log_manager.current_log());
 
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(temp_log));
+  log_manager.BeginLoggingWithLog(base::WrapUnique(temp_log));
   EXPECT_EQ(temp_log, log_manager.current_log());
   log_manager.FinishCurrentLog();
   EXPECT_EQ(NULL, log_manager.current_log());
@@ -130,11 +133,11 @@ TEST(MetricsLogManagerTest, InterjectedLogPreservesType) {
   MetricsLogManager log_manager(&pref_service, 0);
   log_manager.LoadPersistedUnsentLogs();
 
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-      "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service)));
+  log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+      "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service));
   log_manager.PauseCurrentLog();
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-      "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service)));
+  log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+      "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service));
   log_manager.FinishCurrentLog();
   log_manager.ResumePausedLog();
   log_manager.StageNextLogForUpload();
@@ -160,8 +163,8 @@ TEST(MetricsLogManagerTest, StoreAndLoad) {
     // Simulate a log having already been unsent from a previous session.
     {
       std::string log("proto");
-      PersistedLogs ongoing_logs(&pref_service, prefs::kMetricsOngoingLogs, 1,
-                                 1, 0);
+      PersistedLogs ongoing_logs(&pref_service, prefs::kMetricsOngoingLogs,
+                                 prefs::kDeprecatedMetricsOngoingLogs, 1, 1, 0);
       ongoing_logs.StoreLog(log);
       ongoing_logs.SerializeLogs();
     }
@@ -170,11 +173,11 @@ TEST(MetricsLogManagerTest, StoreAndLoad) {
     log_manager.LoadPersistedUnsentLogs();
     EXPECT_TRUE(log_manager.has_unsent_logs());
 
-    log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-        "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service)));
+    log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+        "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service));
     log_manager.FinishCurrentLog();
-    log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-        "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service)));
+    log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+        "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service));
     log_manager.StageNextLogForUpload();
     log_manager.FinishCurrentLog();
 
@@ -231,8 +234,8 @@ TEST(MetricsLogManagerTest, StoreStagedLogTypes) {
     MetricsLogManager log_manager(&pref_service, 0);
     log_manager.LoadPersistedUnsentLogs();
 
-    log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-        "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service)));
+    log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+        "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service));
     log_manager.FinishCurrentLog();
     log_manager.StageNextLogForUpload();
     log_manager.PersistUnsentLogs();
@@ -246,8 +249,8 @@ TEST(MetricsLogManagerTest, StoreStagedLogTypes) {
     MetricsLogManager log_manager(&pref_service, 0);
     log_manager.LoadPersistedUnsentLogs();
 
-    log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-        "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service)));
+    log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+        "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service));
     log_manager.FinishCurrentLog();
     log_manager.StageNextLogForUpload();
     log_manager.PersistUnsentLogs();
@@ -264,11 +267,11 @@ TEST(MetricsLogManagerTest, LargeLogDiscarding) {
   MetricsLogManager log_manager(&pref_service, 1);
   log_manager.LoadPersistedUnsentLogs();
 
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-      "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service)));
+  log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+      "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service));
   log_manager.FinishCurrentLog();
-  log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-      "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service)));
+  log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+      "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service));
   log_manager.FinishCurrentLog();
 
   // Only the ongoing log should be written out, due to the threshold.
@@ -286,11 +289,11 @@ TEST(MetricsLogManagerTest, DiscardOrder) {
     MetricsLogManager log_manager(&pref_service, 0);
     log_manager.LoadPersistedUnsentLogs();
 
-    log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-        "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service)));
+    log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+        "id", 0, MetricsLog::INITIAL_STABILITY_LOG, &client, &pref_service));
     log_manager.FinishCurrentLog();
-    log_manager.BeginLoggingWithLog(make_scoped_ptr(new MetricsLog(
-        "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service)));
+    log_manager.BeginLoggingWithLog(base::MakeUnique<MetricsLog>(
+        "id", 0, MetricsLog::ONGOING_LOG, &client, &pref_service));
     log_manager.StageNextLogForUpload();
     log_manager.FinishCurrentLog();
     log_manager.DiscardStagedLog();

@@ -4,6 +4,9 @@
 
 #include "chrome/installer/util/beacons.h"
 
+#include <stdint.h>
+
+#include "base/memory/ptr_util.h"
 #include "base/win/registry.h"
 #include "base/win/win_util.h"
 #include "chrome/installer/util/app_registration_data.h"
@@ -48,28 +51,28 @@ void UpdateOsUpgradeBeacon(bool system_install,
 
 namespace installer_util {
 
-scoped_ptr<Beacon> MakeLastOsUpgradeBeacon(
+std::unique_ptr<Beacon> MakeLastOsUpgradeBeacon(
     bool system_install,
     const AppRegistrationData& registration_data) {
-  return make_scoped_ptr(new Beacon(L"LastOsUpgrade", Beacon::BeaconType::LAST,
-                                    Beacon::BeaconScope::PER_INSTALL,
-                                    system_install, registration_data));
+  return base::MakeUnique<Beacon>(L"LastOsUpgrade", Beacon::BeaconType::LAST,
+                                  Beacon::BeaconScope::PER_INSTALL,
+                                  system_install, registration_data);
 }
 
-scoped_ptr<Beacon> MakeLastWasDefaultBeacon(
+std::unique_ptr<Beacon> MakeLastWasDefaultBeacon(
     bool system_install,
     const AppRegistrationData& registration_data) {
-  return make_scoped_ptr(new Beacon(L"LastWasDefault", Beacon::BeaconType::LAST,
-                                    Beacon::BeaconScope::PER_USER,
-                                    system_install, registration_data));
+  return base::MakeUnique<Beacon>(L"LastWasDefault", Beacon::BeaconType::LAST,
+                                  Beacon::BeaconScope::PER_USER, system_install,
+                                  registration_data);
 }
 
-scoped_ptr<Beacon> MakeFirstNotDefaultBeacon(
+std::unique_ptr<Beacon> MakeFirstNotDefaultBeacon(
     bool system_install,
     const AppRegistrationData& registration_data) {
-  return make_scoped_ptr(new Beacon(
-      L"FirstNotDefault", Beacon::BeaconType::FIRST,
-      Beacon::BeaconScope::PER_USER, system_install, registration_data));
+  return base::MakeUnique<Beacon>(L"FirstNotDefault", Beacon::BeaconType::FIRST,
+                                  Beacon::BeaconScope::PER_USER, system_install,
+                                  registration_data);
 }
 
 // Beacon ----------------------------------------------------------------------

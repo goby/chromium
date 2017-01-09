@@ -10,6 +10,7 @@
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_local.h"
@@ -19,8 +20,7 @@ namespace remoting {
 
 namespace {
 
-// RDP connection disconnect reasons codes that should not be interpreted as
-// errors.
+// RDP session disconnect reason codes that should not be interpreted as errors.
 const long kDisconnectReasonNoInfo = 0;
 const long kDisconnectReasonLocalNotError = 1;
 const long kDisconnectReasonRemoteByUser = 2;
@@ -150,7 +150,7 @@ void RdpClientWindow::InjectSas() {
   if (!m_hWnd)
     return;
 
-  // Fins the window handling the keyboard input.
+  // Find the window handling the keyboard input.
   HWND input_window = FindWindowRecursively(m_hWnd, kRdpInputWindowClass);
   if (!input_window) {
     LOG(ERROR) << "Failed to find the window handling the keyboard input.";
@@ -338,12 +338,10 @@ LRESULT RdpClientWindow::OnCreate(CREATESTRUCT* create_struct) {
   if (FAILED(result))
     return LogOnCreateError(result);
 
-  // Disable audio in the session.
-  // TODO(alexeypa): re-enable audio redirection when http://crbug.com/242312 is
-  // fixed.
   result = client_->get_SecuredSettings2(secured_settings2.Receive());
   if (SUCCEEDED(result)) {
-    result = secured_settings2->put_AudioRedirectionMode(kRdpAudioModeNone);
+    result =
+        secured_settings2->put_AudioRedirectionMode(kRdpAudioModeRedirect);
     if (FAILED(result))
       return LogOnCreateError(result);
   }

@@ -7,38 +7,38 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "chrome/browser/android/resource_mapper.h"
-#include "chrome/browser/ui/android/window_android_helper.h"
+#include "chrome/browser/ui/android/view_android_helper.h"
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
+#include "chrome/browser/ui/autofill/autofill_popup_layout_model.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/browser/suggestion.h"
-#include "grit/components_strings.h"
 #include "jni/AutofillKeyboardAccessoryBridge_jni.h"
 #include "ui/android/view_android.h"
 #include "ui/android/window_android.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/geometry/rect.h"
+
+using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace autofill {
 
 namespace {
 
 void AddToJavaArray(const Suggestion& suggestion,
-                    const AutofillPopupController& controller,
+                    int icon_id,
                     JNIEnv* env,
                     jobjectArray data_array,
                     size_t position,
                     bool deletable) {
   int android_icon_id = 0;
-  if (!suggestion.icon.empty()) {
-    android_icon_id = ResourceMapper::MapFromChromiumId(
-        controller.GetIconResourceID(suggestion.icon));
-  }
+  if (!suggestion.icon.empty())
+    android_icon_id = ResourceMapper::MapFromChromiumId(icon_id);
 
   Java_AutofillKeyboardAccessoryBridge_addToAutofillSuggestionArray(
       env, data_array, position,
-      base::android::ConvertUTF16ToJavaString(env, suggestion.value).obj(),
-      base::android::ConvertUTF16ToJavaString(env, suggestion.label).obj(),
+      base::android::ConvertUTF16ToJavaString(env, suggestion.value),
+      base::android::ConvertUTF16ToJavaString(env, suggestion.label),
       android_icon_id, suggestion.frontend_id, deletable);
 }
 
@@ -46,16 +46,15 @@ void AddToJavaArray(const Suggestion& suggestion,
 
 AutofillKeyboardAccessoryView::AutofillKeyboardAccessoryView(
     AutofillPopupController* controller)
-    : controller_(controller),
-      deleting_index_(-1) {
+    : controller_(controller), deleting_index_(-1) {
   JNIEnv* env = base::android::AttachCurrentThread();
   java_object_.Reset(Java_AutofillKeyboardAccessoryBridge_create(env));
 }
 
 AutofillKeyboardAccessoryView::~AutofillKeyboardAccessoryView() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_AutofillKeyboardAccessoryBridge_resetNativeViewPointer(
-      env, java_object_.obj());
+  Java_AutofillKeyboardAccessoryBridge_resetNativeViewPointer(env,
+                                                              java_object_);
 }
 
 void AutofillKeyboardAccessoryView::Show() {
@@ -63,9 +62,8 @@ void AutofillKeyboardAccessoryView::Show() {
   ui::ViewAndroid* view_android = controller_->container_view();
   DCHECK(view_android);
   Java_AutofillKeyboardAccessoryBridge_init(
-      env, java_object_.obj(),
-      reinterpret_cast<intptr_t>(this),
-      view_android->GetWindowAndroid()->GetJavaObject().obj());
+      env, java_object_, reinterpret_cast<intptr_t>(this),
+      view_android->GetWindowAndroid()->GetJavaObject());
 
   UpdateBoundsAndRedrawPopup();
 }
@@ -73,7 +71,7 @@ void AutofillKeyboardAccessoryView::Show() {
 void AutofillKeyboardAccessoryView::Hide() {
   controller_ = nullptr;
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_AutofillKeyboardAccessoryBridge_dismiss(env, java_object_.obj());
+  Java_AutofillKeyboardAccessoryBridge_dismiss(env, java_object_);
 }
 
 void AutofillKeyboardAccessoryView::UpdateBoundsAndRedrawPopup() {
@@ -89,8 +87,9 @@ void AutofillKeyboardAccessoryView::UpdateBoundsAndRedrawPopup() {
   for (size_t i = 0; i < count; ++i) {
     const Suggestion& suggestion = controller_->GetSuggestionAt(i);
     if (suggestion.frontend_id == POPUP_ITEM_ID_CLEAR_FORM) {
-      AddToJavaArray(suggestion, *controller_, env, data_array.obj(), position,
-                     false);
+      AddToJavaArray(suggestion, controller_->layout_model().GetIconResourceID(
+                                     suggestion.icon),
+                     env, data_array.obj(), position, false);
       positions_[position++] = i;
     }
   }
@@ -100,14 +99,15 @@ void AutofillKeyboardAccessoryView::UpdateBoundsAndRedrawPopup() {
     if (suggestion.frontend_id != POPUP_ITEM_ID_CLEAR_FORM) {
       bool deletable =
           controller_->GetRemovalConfirmationText(i, nullptr, nullptr);
-      AddToJavaArray(suggestion, *controller_, env, data_array.obj(), position,
-                     deletable);
+      AddToJavaArray(suggestion, controller_->layout_model().GetIconResourceID(
+                                     suggestion.icon),
+                     env, data_array.obj(), position, deletable);
       positions_[position++] = i;
     }
   }
 
-  Java_AutofillKeyboardAccessoryBridge_show(
-      env, java_object_.obj(), data_array.obj(), controller_->IsRTL());
+  Java_AutofillKeyboardAccessoryBridge_show(env, java_object_, data_array,
+                                            controller_->IsRTL());
 }
 
 void AutofillKeyboardAccessoryView::SuggestionSelected(
@@ -134,9 +134,9 @@ void AutofillKeyboardAccessoryView::DeletionRequested(
 
   deleting_index_ = positions_[list_index];
   Java_AutofillKeyboardAccessoryBridge_confirmDeletion(
-      env, java_object_.obj(),
-      base::android::ConvertUTF16ToJavaString(env, confirmation_title).obj(),
-      base::android::ConvertUTF16ToJavaString(env, confirmation_body).obj());
+      env, java_object_,
+      base::android::ConvertUTF16ToJavaString(env, confirmation_title),
+      base::android::ConvertUTF16ToJavaString(env, confirmation_body));
 }
 
 void AutofillKeyboardAccessoryView::DeletionConfirmed(

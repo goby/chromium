@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/timing/WorkerPerformance.h"
 
 #include "core/timing/MemoryInfo.h"
@@ -39,25 +38,15 @@
 namespace blink {
 
 WorkerPerformance::WorkerPerformance(WorkerGlobalScope* context)
-    : PerformanceBase(context->timeOrigin())
-    , ContextLifecycleObserver(context)
-{
+    : PerformanceBase(context->timeOrigin()), m_executionContext(context) {}
+
+DEFINE_TRACE(WorkerPerformance) {
+  visitor->trace(m_executionContext);
+  PerformanceBase::trace(visitor);
 }
 
-ExecutionContext* WorkerPerformance::executionContext() const
-{
-    return ContextLifecycleObserver::executionContext();
+MemoryInfo* WorkerPerformance::memory() {
+  return MemoryInfo::create();
 }
 
-DEFINE_TRACE(WorkerPerformance)
-{
-    PerformanceBase::trace(visitor);
-    ContextLifecycleObserver::trace(visitor);
-}
-
-MemoryInfo* WorkerPerformance::memory()
-{
-    return MemoryInfo::create();
-}
-
-} // namespace blink
+}  // namespace blink

@@ -4,6 +4,7 @@
 
 #include "content/public/test/test_content_client_initializer.h"
 
+#include "build/build_config.h"
 #include "content/browser/notification_service_impl.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/mock_render_process_host.h"
@@ -35,11 +36,9 @@ TestContentClientInitializer::~TestContentClientInitializer() {
 }
 
 void TestContentClientInitializer::CreateTestRenderViewHosts() {
-#if !defined(OS_IOS)
   rph_factory_.reset(new MockRenderProcessHostFactory());
   test_render_view_host_factory_.reset(
       new TestRenderViewHostFactory(rph_factory_.get()));
-#endif  // OS_IOS
 }
 
 }  // namespace content

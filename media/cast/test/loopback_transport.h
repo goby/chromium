@@ -5,8 +5,12 @@
 #ifndef MEDIA_CAST_TEST_LOOPBACK_TRANSPORT_H_
 #define MEDIA_CAST_TEST_LOOPBACK_TRANSPORT_H_
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/net/cast_transport_config.h"
 
@@ -23,7 +27,7 @@ class PacketPipe;
 }  // namespace test
 
 // Class that sends the packet to a receiver through a stack of PacketPipes.
-class LoopBackTransport : public PacketSender {
+class LoopBackTransport : public PacketTransport {
  public:
   explicit LoopBackTransport(
       scoped_refptr<CastEnvironment> cast_environment);
@@ -31,7 +35,12 @@ class LoopBackTransport : public PacketSender {
 
   bool SendPacket(PacketRef packet, const base::Closure& cb) final;
 
-  int64 GetBytesSent() final;
+  int64_t GetBytesSent() final;
+
+  void StartReceiving(
+      const PacketReceiverCallbackWithStatus& packet_receiver) final {}
+
+  void StopReceiving() final {}
 
   // Initiailize this loopback transport.
   // Establish a flow of packets from |pipe| to |packet_receiver|.
@@ -42,15 +51,15 @@ class LoopBackTransport : public PacketSender {
   // If |pipe| is NULL then the data flow looks like:
   // SendPacket() -> Fake loopback pipe -> |packet_receiver|.
   void Initialize(
-      scoped_ptr<test::PacketPipe> pipe,
+      std::unique_ptr<test::PacketPipe> pipe,
       const PacketReceiverCallback& packet_receiver,
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       base::TickClock* clock);
 
  private:
   const scoped_refptr<CastEnvironment> cast_environment_;
-  scoped_ptr<test::PacketPipe> packet_pipe_;
-  int64 bytes_sent_;
+  std::unique_ptr<test::PacketPipe> packet_pipe_;
+  int64_t bytes_sent_;
 
   DISALLOW_COPY_AND_ASSIGN(LoopBackTransport);
 };

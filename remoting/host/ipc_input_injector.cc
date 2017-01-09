@@ -4,6 +4,8 @@
 
 #include "remoting/host/ipc_input_injector.h"
 
+#include <utility>
+
 #include "remoting/host/desktop_session_proxy.h"
 
 namespace remoting {
@@ -38,8 +40,8 @@ void IpcInputInjector::InjectTouchEvent(const protocol::TouchEvent& event) {
 }
 
 void IpcInputInjector::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
-  desktop_session_proxy_->StartInputInjector(client_clipboard.Pass());
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
+  desktop_session_proxy_->StartInputInjector(std::move(client_clipboard));
 }
 
 }  // namespace remoting

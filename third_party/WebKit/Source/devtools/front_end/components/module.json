@@ -9,27 +9,51 @@
             "defaultValue": false
         },
         {
-            "type": "@WebInspector.DOMPresentationUtils.MarkerDecorator",
-            "className": "WebInspector.DOMPresentationUtils.GenericDecorator",
+            "type": "@Components.DOMPresentationUtils.MarkerDecorator",
+            "factoryName": "Components.DOMPresentationUtils.GenericDecorator",
             "marker": "breakpoint-marker",
             "title": "DOM Breakpoint",
             "color": "rgb(105, 140, 254)"
         },
         {
             "type": "setting",
-            "settingName": "networkConditionsCustomProfiles",
+            "settingName": "customNetworkConditions",
             "settingType": "array",
             "defaultValue": []
         },
         {
-            "type": "settings-view",
-            "name": "network-conditions",
+            "type": "@UI.ActionDelegate",
+            "actionId": "components.network-offline",
+            "category": "Network",
+            "title": "Go offline",
+            "className": "Components.NetworkConditionsActionDelegate",
+            "tags": "device"
+        },
+        {
+            "type": "@UI.ActionDelegate",
+            "actionId": "components.network-online",
+            "category": "Network",
+            "title": "Go online",
+            "className": "Components.NetworkConditionsActionDelegate",
+            "tags": "device"
+        },
+        {
+            "type": "view",
+            "location": "settings-view",
+            "id": "network-conditions",
             "title": "Throttling",
             "order": "35",
-            "className": "WebInspector.NetworkConditionsSettingsTab",
+            "className": "Components.NetworkConditionsSettingsTab",
             "settings": [
-                "networkConditionsCustomProfiles"
+                "customNetworkConditions"
             ]
+        },
+        {
+            "type": "@UI.ActionDelegate",
+            "category": "Mobile",
+            "actionId": "components.request-app-banner",
+            "className": "Components.RequestAppBannerActionDelegate",
+            "title": "Add to homescreen"
         }
     ],
     "dependencies": [
@@ -41,21 +65,19 @@
         "BreakpointsSidebarPaneBase.js",
         "CustomPreviewSection.js",
         "DataSaverInfobar.js",
-        "DebuggerPresentationUtils.js",
         "DOMBreakpointsSidebarPane.js",
         "DOMPresentationUtils.js",
         "DockController.js",
-        "Drawer.js",
         "ExecutionContextSelector.js",
-        "ExecutionContextModel.js",
-        "HandlerRegistry.js",
-        "InspectorView.js",
+        "JavaScriptAutocomplete.js",
         "Linkifier.js",
         "NetworkConditionsSelector.js",
         "ObjectPopoverHelper.js",
         "ObjectPropertiesSection.js",
         "RemoteObjectPreviewFormatter.js",
+        "RequestAppBannerActionDelegate.js",
         "ShortcutsScreen.js",
+        "Spectrum.js",
         "EventListenersUtils.js",
         "EventListenersView.js",
         "Reload.js"
@@ -65,9 +87,9 @@
         "customPreviewSection.css",
         "eventListenersView.css",
         "domUtils.css",
-        "inspectorViewTabbedPane.css",
         "networkConditionsSettingsTab.css",
         "objectPropertiesSection.css",
-        "objectValue.css"
+        "objectValue.css",
+        "spectrum.css"
     ]
 }

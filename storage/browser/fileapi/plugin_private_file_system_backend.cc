@@ -4,13 +4,19 @@
 
 #include "storage/browser/fileapi/plugin_private_file_system_backend.h"
 
-#include <map>
+#include <stdint.h>
 
+#include <map>
+#include <memory>
+#include <utility>
+
+#include "base/files/file_enumerator.h"
+#include "base/files/file_path.h"
 #include "base/stl_util.h"
 #include "base/synchronization/lock.h"
 #include "base/task_runner_util.h"
-#include "base/thread_task_runner_handle.h"
-#include "net/base/net_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "net/base/url_util.h"
 #include "storage/browser/fileapi/async_file_util_adapter.h"
 #include "storage/browser/fileapi/file_stream_reader.h"
 #include "storage/browser/fileapi/file_stream_writer.h"
@@ -44,7 +50,7 @@ class PluginPrivateFileSystemBackend::FileSystemIDToPluginMap {
                           const std::string& plugin_id) {
     DCHECK(task_runner_->RunsTasksOnCurrentThread());
     DCHECK(!filesystem_id.empty());
-    DCHECK(!ContainsKey(map_, filesystem_id)) << filesystem_id;
+    DCHECK(!base::ContainsKey(map_, filesystem_id)) << filesystem_id;
     map_[filesystem_id] = plugin_id;
   }
 
@@ -178,9 +184,10 @@ FileSystemOperation* PluginPrivateFileSystemBackend::CreateFileSystemOperation(
     const FileSystemURL& url,
     FileSystemContext* context,
     base::File::Error* error_code) const {
-  scoped_ptr<FileSystemOperationContext> operation_context(
+  std::unique_ptr<FileSystemOperationContext> operation_context(
       new FileSystemOperationContext(context));
-  return FileSystemOperation::Create(url, context, operation_context.Pass());
+  return FileSystemOperation::Create(url, context,
+                                     std::move(operation_context));
 }
 
 bool PluginPrivateFileSystemBackend::SupportsStreaming(
@@ -193,22 +200,22 @@ bool PluginPrivateFileSystemBackend::HasInplaceCopyImplementation(
   return false;
 }
 
-scoped_ptr<storage::FileStreamReader>
+std::unique_ptr<storage::FileStreamReader>
 PluginPrivateFileSystemBackend::CreateFileStreamReader(
     const FileSystemURL& url,
-    int64 offset,
-    int64 max_bytes_to_read,
+    int64_t offset,
+    int64_t max_bytes_to_read,
     const base::Time& expected_modification_time,
     FileSystemContext* context) const {
-  return scoped_ptr<storage::FileStreamReader>();
+  return std::unique_ptr<storage::FileStreamReader>();
 }
 
-scoped_ptr<FileStreamWriter>
+std::unique_ptr<FileStreamWriter>
 PluginPrivateFileSystemBackend::CreateFileStreamWriter(
     const FileSystemURL& url,
-    int64 offset,
+    int64_t offset,
     FileSystemContext* context) const {
-  return scoped_ptr<FileStreamWriter>();
+  return std::unique_ptr<FileStreamWriter>();
 }
 
 FileSystemQuotaUtil* PluginPrivateFileSystemBackend::GetQuotaUtil() {
@@ -235,7 +242,7 @@ void PluginPrivateFileSystemBackend::GetOriginsForTypeOnFileTaskRunner(
     std::set<GURL>* origins) {
   if (!CanHandleType(type))
     return;
-  scoped_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enumerator(
+  std::unique_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enumerator(
       obfuscated_file_util()->CreateOriginEnumerator());
   GURL origin;
   while (!(origin = enumerator->Next()).is_empty())
@@ -248,7 +255,7 @@ void PluginPrivateFileSystemBackend::GetOriginsForHostOnFileTaskRunner(
     std::set<GURL>* origins) {
   if (!CanHandleType(type))
     return;
-  scoped_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enumerator(
+  std::unique_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enumerator(
       obfuscated_file_util()->CreateOriginEnumerator());
   GURL origin;
   while (!(origin = enumerator->Next()).is_empty()) {
@@ -257,12 +264,79 @@ void PluginPrivateFileSystemBackend::GetOriginsForHostOnFileTaskRunner(
   }
 }
 
-int64 PluginPrivateFileSystemBackend::GetOriginUsageOnFileTaskRunner(
+int64_t PluginPrivateFileSystemBackend::GetOriginUsageOnFileTaskRunner(
     FileSystemContext* context,
     const GURL& origin_url,
     FileSystemType type) {
-  // We don't track usage on this filesystem.
-  return 0;
+  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+
+  if (!CanHandleType(type))
+    return 0;
+
+  int64_t total_size;
+  base::Time last_modified_time;
+  GetOriginDetailsOnFileTaskRunner(context, origin_url, &total_size,
+                                   &last_modified_time);
+  return total_size;
+}
+
+void PluginPrivateFileSystemBackend::GetOriginDetailsOnFileTaskRunner(
+    FileSystemContext* context,
+    const GURL& origin_url,
+    int64_t* total_size,
+    base::Time* last_modified_time) {
+  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+
+  *total_size = 0;
+  *last_modified_time = base::Time::UnixEpoch();
+  std::string fsid =
+      storage::IsolatedContext::GetInstance()->RegisterFileSystemForVirtualPath(
+          storage::kFileSystemTypePluginPrivate, "pluginprivate",
+          base::FilePath());
+  DCHECK(storage::ValidateIsolatedFileSystemId(fsid));
+
+  std::string root = storage::GetIsolatedFileSystemRootURIString(
+      origin_url, fsid, "pluginprivate");
+
+  std::unique_ptr<FileSystemOperationContext> operation_context(
+      new FileSystemOperationContext(context));
+
+  // Determine the available plugin private filesystem directories for this
+  // origin. Currently the plugin private filesystem is only used by Encrypted
+  // Media Content Decryption Modules. Each CDM gets a directory based on the
+  // mimetype (e.g. plugin application/x-ppapi-widevine-cdm uses directory
+  // application_x-ppapi-widevine-cdm). Enumerate through the set of
+  // directories so that data from any CDM used by this origin is counted.
+  base::File::Error error;
+  base::FilePath path = obfuscated_file_util()->GetDirectoryForOriginAndType(
+      origin_url, "", false, &error);
+  if (error != base::File::FILE_OK) {
+    DLOG(ERROR) << "Unable to read directory for " << origin_url;
+    return;
+  }
+
+  base::FileEnumerator directory_enumerator(path, false,
+                                            base::FileEnumerator::DIRECTORIES);
+  base::FilePath plugin_path;
+  while (!(plugin_path = directory_enumerator.Next()).empty()) {
+    std::string plugin_name = plugin_path.BaseName().MaybeAsASCII();
+    if (OpenFileSystemOnFileTaskRunner(
+            obfuscated_file_util(), plugin_map_, origin_url, fsid, plugin_name,
+            storage::OPEN_FILE_SYSTEM_FAIL_IF_NONEXISTENT) !=
+        base::File::FILE_OK) {
+      continue;
+    }
+
+    std::unique_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator(
+        obfuscated_file_util()->CreateFileEnumerator(
+            operation_context.get(), context->CrackURL(GURL(root)), true));
+
+    while (!enumerator->Next().empty()) {
+      *total_size += enumerator->Size();
+      if (enumerator->LastModifiedTime() > *last_modified_time)
+        *last_modified_time = enumerator->LastModifiedTime();
+    }
+  }
 }
 
 scoped_refptr<QuotaReservation>

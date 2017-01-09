@@ -7,10 +7,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/base/cc_export.h"
 #include "ui/gfx/geometry/box_f.h"
 #include "ui/gfx/geometry/point3_f.h"
@@ -254,10 +254,10 @@ class CC_EXPORT MathUtil {
                                       const gfx::Vector2dF& destination);
 
   // Conversion to value.
-  static scoped_ptr<base::Value> AsValue(const gfx::Size& s);
-  static scoped_ptr<base::Value> AsValue(const gfx::Rect& r);
+  static std::unique_ptr<base::Value> AsValue(const gfx::Size& s);
+  static std::unique_ptr<base::Value> AsValue(const gfx::Rect& r);
   static bool FromValue(const base::Value*, gfx::Rect* out_rect);
-  static scoped_ptr<base::Value> AsValue(const gfx::PointF& q);
+  static std::unique_ptr<base::Value> AsValue(const gfx::PointF& q);
 
   static void AddToTracedValue(const char* name,
                                const gfx::Size& s,
@@ -321,6 +321,18 @@ class CC_EXPORT MathUtil {
     return (n > 0) ? (n / mul) * mul : (n == 0) ? 0
                                                 : ((n - mul + 1) / mul) * mul;
   }
+};
+
+class ScopedSubnormalFloatDisabler {
+ public:
+  ScopedSubnormalFloatDisabler();
+  ~ScopedSubnormalFloatDisabler();
+
+ private:
+#ifdef __SSE__
+  unsigned int orig_state_;
+#endif
+  DISALLOW_COPY_AND_ASSIGN(ScopedSubnormalFloatDisabler);
 };
 
 }  // namespace cc

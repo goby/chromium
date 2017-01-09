@@ -23,65 +23,60 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/HTMLAllCollection.h"
 
-#include "bindings/core/v8/UnionTypesCore.h"
+#include "bindings/core/v8/NodeListOrElement.h"
 #include "core/dom/Element.h"
 #include "core/dom/StaticNodeList.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<HTMLAllCollection> HTMLAllCollection::create(ContainerNode& node, CollectionType type)
-{
-    ASSERT_UNUSED(type, type == DocAll);
-    return adoptRefWillBeNoop(new HTMLAllCollection(node));
+HTMLAllCollection* HTMLAllCollection::create(ContainerNode& node,
+                                             CollectionType type) {
+  DCHECK_EQ(type, DocAll);
+  return new HTMLAllCollection(node);
 }
 
 HTMLAllCollection::HTMLAllCollection(ContainerNode& node)
-    : HTMLCollection(node, DocAll, DoesNotOverrideItemAfter)
-{
+    : HTMLCollection(node, DocAll, DoesNotOverrideItemAfter) {}
+
+HTMLAllCollection::~HTMLAllCollection() {}
+
+Element* HTMLAllCollection::namedItemWithIndex(const AtomicString& name,
+                                               unsigned index) const {
+  updateIdNameCache();
+
+  const NamedItemCache& cache = namedItemCache();
+  if (HeapVector<Member<Element>>* elements = cache.getElementsById(name)) {
+    if (index < elements->size())
+      return elements->at(index);
+    index -= elements->size();
+  }
+
+  if (HeapVector<Member<Element>>* elements = cache.getElementsByName(name)) {
+    if (index < elements->size())
+      return elements->at(index);
+  }
+
+  return 0;
 }
 
-HTMLAllCollection::~HTMLAllCollection()
-{
+void HTMLAllCollection::namedGetter(const AtomicString& name,
+                                    NodeListOrElement& returnValue) {
+  HeapVector<Member<Element>> namedItems;
+  this->namedItems(name, namedItems);
+
+  if (!namedItems.size())
+    return;
+
+  if (namedItems.size() == 1) {
+    returnValue.setElement(namedItems.at(0));
+    return;
+  }
+
+  // FIXME: HTML5 specification says this should be a HTMLCollection.
+  // http://www.whatwg.org/specs/web-apps/current-work/multipage/common-dom-interfaces.html#htmlallcollection
+  returnValue.setNodeList(StaticElementList::adopt(namedItems));
 }
 
-Element* HTMLAllCollection::namedItemWithIndex(const AtomicString& name, unsigned index) const
-{
-    updateIdNameCache();
-
-    const NamedItemCache& cache = namedItemCache();
-    if (WillBeHeapVector<RawPtrWillBeMember<Element>>* elements = cache.getElementsById(name)) {
-        if (index < elements->size())
-            return elements->at(index);
-        index -= elements->size();
-    }
-
-    if (WillBeHeapVector<RawPtrWillBeMember<Element>>* elements = cache.getElementsByName(name)) {
-        if (index < elements->size())
-            return elements->at(index);
-    }
-
-    return 0;
-}
-
-void HTMLAllCollection::namedGetter(const AtomicString& name, NodeListOrElement& returnValue)
-{
-    WillBeHeapVector<RefPtrWillBeMember<Element>> namedItems;
-    this->namedItems(name, namedItems);
-
-    if (!namedItems.size())
-        return;
-
-    if (namedItems.size() == 1) {
-        returnValue.setElement(namedItems.at(0));
-        return;
-    }
-
-    // FIXME: HTML5 specification says this should be a HTMLCollection.
-    // http://www.whatwg.org/specs/web-apps/current-work/multipage/common-dom-interfaces.html#htmlallcollection
-    returnValue.setNodeList(StaticElementList::adopt(namedItems));
-}
-
-} // namespace blink
+}  // namespace blink

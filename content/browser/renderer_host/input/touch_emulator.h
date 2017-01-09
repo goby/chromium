@@ -5,10 +5,13 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCH_EMULATOR_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCH_EMULATOR_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "content/browser/renderer_host/input/touch_emulator_client.h"
 #include "content/common/cursors/webcursor.h"
 #include "content/common/input/input_event_ack_state.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/events/gesture_detection/filtered_gesture_provider.h"
 #include "ui/events/gesture_detection/gesture_provider_config_helper.h"
 #include "ui/gfx/geometry/size_f.h"
@@ -24,12 +27,15 @@ class CONTENT_EXPORT TouchEmulator : public ui::GestureProviderClient {
   void Enable(ui::GestureProviderConfigType config_type);
   void Disable();
 
+  // Call when device scale factor changes.
+  void SetDeviceScaleFactor(float device_scale_factor);
+
   // See GestureProvider::SetDoubleTapSupportForPageEnabled.
   void SetDoubleTapSupportForPageEnabled(bool enabled);
 
   // Note that TouchEmulator should always listen to touch events and their acks
   // (even in disabled state) to track native stream presence.
-  bool enabled() const { return gesture_provider_; }
+  bool enabled() const { return !!gesture_provider_; }
 
   // Returns |true| if the event was consumed. Consumed event should not
   // propagate any further.
@@ -54,6 +60,7 @@ class CONTENT_EXPORT TouchEmulator : public ui::GestureProviderClient {
   // Returns cursor size in DIP.
   gfx::SizeF InitCursorFromResource(
       WebCursor* cursor, float scale, int resource_id);
+  bool InitCursors(float device_scale_factor, bool force);
   void ResetState();
   void UpdateCursor();
   bool UpdateShiftPressed(bool shift_pressed);
@@ -79,10 +86,11 @@ class CONTENT_EXPORT TouchEmulator : public ui::GestureProviderClient {
   // Emulator is enabled iff gesture provider is created.
   // Disabled emulator does only process touch acks left from previous
   // emulation. It does not intercept any events.
-  scoped_ptr<ui::FilteredGestureProvider> gesture_provider_;
+  std::unique_ptr<ui::FilteredGestureProvider> gesture_provider_;
   ui::GestureProviderConfigType gesture_provider_config_type_;
   bool double_tap_enabled_;
 
+  bool use_2x_cursors_;
   // While emulation is on, default cursor is touch. Pressing shift changes
   // cursor to the pinch one.
   WebCursor pointer_cursor_;

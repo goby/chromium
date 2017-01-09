@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
 #include <windows.h>
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/process/memory.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/win/current_module.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/scoped_hdc.h"
 #include "base/win/scoped_select_object.h"
@@ -212,7 +215,7 @@ BOOL DisconnectWindowWin::OnDialogMessage(HWND hwnd,
       RECT rect;
       GetClientRect(hwnd_, &rect);
       {
-        base::win::ScopedSelectObject border(hdc, border_pen_);
+        base::win::ScopedSelectObject border(hdc, border_pen_.get());
         base::win::ScopedSelectObject brush(hdc, GetStockObject(NULL_BRUSH));
         RoundRect(hdc, rect.left, rect.top, rect.right - 1, rect.bottom - 1,
                   kWindowBorderRadius, kWindowBorderRadius);
@@ -228,9 +231,9 @@ bool DisconnectWindowWin::BeginDialog() {
   DCHECK(CalledOnValidThread());
   DCHECK(!hwnd_);
 
-  HMODULE module = base::GetModuleFromAddress(&DialogProc);
-  hwnd_ = CreateDialogParam(module, MAKEINTRESOURCE(IDD_DISCONNECT), nullptr,
-                            DialogProc, reinterpret_cast<LPARAM>(this));
+  hwnd_ =
+      CreateDialogParam(CURRENT_MODULE(), MAKEINTRESOURCE(IDD_DISCONNECT),
+                        nullptr, DialogProc, reinterpret_cast<LPARAM>(this));
   if (!hwnd_)
     return false;
 
@@ -393,8 +396,8 @@ bool DisconnectWindowWin::SetStrings() {
 } // namespace
 
 // static
-scoped_ptr<HostWindow> HostWindow::CreateDisconnectWindow() {
-  return make_scoped_ptr(new DisconnectWindowWin());
+std::unique_ptr<HostWindow> HostWindow::CreateDisconnectWindow() {
+  return base::MakeUnique<DisconnectWindowWin>();
 }
 
 }  // namespace remoting

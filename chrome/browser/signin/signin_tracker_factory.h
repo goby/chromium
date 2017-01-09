@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_SIGNIN_SIGNIN_TRACKER_FACTORY_H_
 #define CHROME_BROWSER_SIGNIN_SIGNIN_TRACKER_FACTORY_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "components/signin/core/browser/signin_tracker.h"
 
 class Profile;
@@ -16,7 +18,7 @@ class SigninTrackerFactory {
 
   // Creates a SigninTracker instance that tracks signin for |profile| on
   // behalf of |observer|.
-  static scoped_ptr<SigninTracker> CreateForProfile(
+  static std::unique_ptr<SigninTracker> CreateForProfile(
       Profile* profile,
       SigninTracker::Observer* observer);
 

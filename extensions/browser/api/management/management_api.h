@@ -6,6 +6,7 @@
 #define EXTENSIONS_BROWSER_API_MANAGEMENT_MANAGEMENT_API_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -16,25 +17,18 @@
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_registry_observer.h"
 
-class ExtensionRegistry;
-class ExtensionUninstallDialog;
 struct WebApplicationInfo;
 
 namespace extensions {
 class ExtensionRegistry;
 class RequirementsChecker;
 
-class ManagementFunction : public SyncExtensionFunction {
- protected:
-  ~ManagementFunction() override {}
-};
-
 class AsyncManagementFunction : public AsyncExtensionFunction {
  protected:
   ~AsyncManagementFunction() override {}
 };
 
-class ManagementGetAllFunction : public ManagementFunction {
+class ManagementGetAllFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.getAll", MANAGEMENT_GETALL)
 
@@ -42,10 +36,10 @@ class ManagementGetAllFunction : public ManagementFunction {
   ~ManagementGetAllFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
-class ManagementGetFunction : public ManagementFunction {
+class ManagementGetFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.get", MANAGEMENT_GET)
 
@@ -53,10 +47,10 @@ class ManagementGetFunction : public ManagementFunction {
   ~ManagementGetFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
-class ManagementGetSelfFunction : public ManagementFunction {
+class ManagementGetSelfFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.getSelf", MANAGEMENT_GETSELF)
 
@@ -64,10 +58,11 @@ class ManagementGetSelfFunction : public ManagementFunction {
   ~ManagementGetSelfFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
-class ManagementGetPermissionWarningsByIdFunction : public ManagementFunction {
+class ManagementGetPermissionWarningsByIdFunction
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.getPermissionWarningsById",
                              MANAGEMENT_GETPERMISSIONWARNINGSBYID)
@@ -76,7 +71,7 @@ class ManagementGetPermissionWarningsByIdFunction : public ManagementFunction {
   ~ManagementGetPermissionWarningsByIdFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class ManagementGetPermissionWarningsByManifestFunction
@@ -86,7 +81,7 @@ class ManagementGetPermissionWarningsByManifestFunction
                              MANAGEMENT_GETPERMISSIONWARNINGSBYMANIFEST);
 
   // Called when utility process finishes.
-  void OnParseSuccess(scoped_ptr<base::Value> value);
+  void OnParseSuccess(std::unique_ptr<base::Value> value);
   void OnParseFailure(const std::string& error);
 
  protected:
@@ -96,7 +91,7 @@ class ManagementGetPermissionWarningsByManifestFunction
   bool RunAsync() override;
 };
 
-class ManagementLaunchAppFunction : public ManagementFunction {
+class ManagementLaunchAppFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.launchApp", MANAGEMENT_LAUNCHAPP)
 
@@ -104,7 +99,7 @@ class ManagementLaunchAppFunction : public ManagementFunction {
   ~ManagementLaunchAppFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class ManagementSetEnabledFunction : public UIThreadExtensionFunction {
@@ -113,9 +108,6 @@ class ManagementSetEnabledFunction : public UIThreadExtensionFunction {
 
   ManagementSetEnabledFunction();
 
-  void InstallUIProceed();
-  void InstallUIAbort(bool user_initiated);
-
  protected:
   ~ManagementSetEnabledFunction() override;
 
@@ -123,13 +115,15 @@ class ManagementSetEnabledFunction : public UIThreadExtensionFunction {
   ResponseAction Run() override;
 
  private:
+  void OnInstallPromptDone(bool did_accept);
+
   void OnRequirementsChecked(const std::vector<std::string>& requirements);
 
   std::string extension_id_;
 
-  scoped_ptr<InstallPromptDelegate> install_prompt_;
+  std::unique_ptr<InstallPromptDelegate> install_prompt_;
 
-  scoped_ptr<RequirementsChecker> requirements_checker_;
+  std::unique_ptr<RequirementsChecker> requirements_checker_;
 };
 
 class ManagementUninstallFunctionBase : public UIThreadExtensionFunction {
@@ -153,7 +147,7 @@ class ManagementUninstallFunctionBase : public UIThreadExtensionFunction {
 
   std::string target_extension_id_;
 
-  scoped_ptr<UninstallDialogDelegate> uninstall_dialog_;
+  std::unique_ptr<UninstallDialogDelegate> uninstall_dialog_;
 };
 
 class ManagementUninstallFunction : public ManagementUninstallFunctionBase {
@@ -194,7 +188,7 @@ class ManagementCreateAppShortcutFunction : public AsyncManagementFunction {
   bool RunAsync() override;
 };
 
-class ManagementSetLaunchTypeFunction : public ManagementFunction {
+class ManagementSetLaunchTypeFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.setLaunchType",
                              MANAGEMENT_SETLAUNCHTYPE);
@@ -202,7 +196,7 @@ class ManagementSetLaunchTypeFunction : public ManagementFunction {
  protected:
   ~ManagementSetLaunchTypeFunction() override {}
 
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class ManagementGenerateAppForLinkFunction : public AsyncManagementFunction {
@@ -221,7 +215,7 @@ class ManagementGenerateAppForLinkFunction : public AsyncManagementFunction {
   bool RunAsync() override;
 
  private:
-  scoped_ptr<AppForLinkDelegate> app_for_link_delegate_;
+  std::unique_ptr<AppForLinkDelegate> app_for_link_delegate_;
 };
 
 class ManagementEventRouter : public ExtensionRegistryObserver {
@@ -285,9 +279,9 @@ class ManagementAPI : public BrowserContextKeyedAPI,
   static const bool kServiceRedirectedInIncognito = true;
 
   // Created lazily upon OnListenerAdded.
-  scoped_ptr<ManagementEventRouter> management_event_router_;
+  std::unique_ptr<ManagementEventRouter> management_event_router_;
 
-  scoped_ptr<ManagementAPIDelegate> delegate_;
+  std::unique_ptr<ManagementAPIDelegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagementAPI);
 };

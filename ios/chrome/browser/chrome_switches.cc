@@ -12,6 +12,9 @@ namespace switches {
 // all work out.
 // -----------------------------------------------------------------------------
 
+// Disables all bookmarks view in bookmark manager.
+const char kDisableAllBookmarksView[] = "disable-all-bookmarks-view";
+
 // Disables Contextual Search.
 const char kDisableContextualSearch[] = "disable-contextual-search";
 
@@ -31,26 +34,32 @@ const char kDisableIOSPasswordGeneration[] = "disable-ios-password-generation";
 const char kDisableIOSPasswordSuggestions[] =
     "disable-ios-password-suggestions";
 
-// Disables the backend service for web resources.
-const char kDisableIOSWebResources[] = "disable-web-resources";
-
-// Disables the use of WKWebView instead of UIWebView.
-const char kDisableIOSWKWebView[] = "disable-wkwebview";
-
-// Disables support for keyboard commands.
-const char kDisableKeyboardCommands[] = "disable-keyboard-commands";
-
-// Disables NTP favicons.
-const char kDisableNTPFavicons[] = "disable-ntp-favicons";
+// Disable the snapshots lru cache.
+const char kDisableLRUSnapshotCache[] = "disable-lru-snapshot-cache";
 
 // Disable auto-reload of error pages if offline.
 const char kDisableOfflineAutoReload[] = "disable-offline-auto-reload";
 
+// Disable the Payment Request API.
+const char kDisablePaymentRequest[] = "disable-payment-request";
+
+// Disables the QR Code scanner.
+const char kDisableQRScanner[] = "disable-qr-scanner";
+
+// Disables the Spotlight actions.
+const char kDisableSpotlightActions[] = "disable-spotlight-actions";
+
 // Disables the tab switcher.
 const char kDisableTabSwitcher[] = "disable-tab-switcher";
 
-// Disable the snapshots lru cache.
-const char kDisableLRUSnapshotCache[] = "disable-lru-snapshot-cache";
+// Disables Physical Web scanning for nearby URLs.
+const char kDisableIOSPhysicalWeb[] = "disable-ios-physical-web";
+
+// Enables the string change from "Save Image" to "Download Image".
+const char kDisableDownloadImageRenaming[] = "disable-download-image-renaming";
+
+// Enables all bookmarks view in bookmark manager.
+const char kEnableAllBookmarksView[] = "enable-all-bookmarks-view";
 
 // Enables Contextual Search.
 const char kEnableContextualSearch[] = "enable-contextual-search";
@@ -74,23 +83,37 @@ const char kEnableIOSHandoffToOtherDevices[] =
 // Enable password generation for iOS.
 const char kEnableIOSPasswordGeneration[] = "enable-ios-password-generation";
 
-// Enables the use of WKWebView instead of UIWebView.
-const char kEnableIOSWKWebView[] = "enable-wkwebview";
-
-// Enables NTP favicons.
-const char kEnableNTPFavicons[] = "enable-ntp-favicons";
+// Enables the snapshot lru cache.
+const char kEnableLRUSnapshotCache[] = "enable-lru-snapshot-cache";
 
 // Enable auto-reload of error pages if offline.
 const char kEnableOfflineAutoReload[] = "enable-offline-auto-reload";
 
+// Enable the Payment Request API.
+const char kEnablePaymentRequest[] = "enable-payment-request";
+
+// Enables the QR Code scanner.
+const char kEnableQRScanner[] = "enable-qr-scanner";
+
 // Enables context-sensitive reader mode button in the toolbar.
 const char kEnableReaderModeToolbarIcon[] = "enable-reader-mode-toolbar-icon";
+
+// Enables the Spotlight actions.
+const char kEnableSpotlightActions[] = "enable-spotlight-actions";
 
 // Enables the tab switcher.
 const char kEnableTabSwitcher[] = "enable-tab-switcher";
 
-// Enables the snapshot lru cache.
-const char kEnableLRUSnapshotCache[] = "enable-lru-snapshot-cache";
+// Enables Physical Web scanning for nearby URLs.
+const char kEnableIOSPhysicalWeb[] = "enable-ios-physical-web";
+
+// Enables the string change from "Save Image" to "Download Image".
+const char kEnableDownloadImageRenaming[] = "enable-download-image-renaming";
+
+// Forces additional Chrome Variation Ids that will be sent in X-Client-Data
+// header, specified as a 64-bit encoded list of numeric experiment ids. Ids
+// prefixed with the character "t" will be treated as Trigger Variation Ids.
+const char kIOSForceVariationIds[] = "force-variation-ids";
 
 // Enables the recording of metrics reports but disables reporting. In contrast
 // to kDisableMetrics, this executes all the code that a normal client would
@@ -111,5 +134,8 @@ const char kIOSIgnoreCertificateErrors[] = "ignore-certificate-errors";
 // Allows for forcing socket connections to http/https to use fixed ports.
 const char kIOSTestingFixedHttpPort[] = "testing-fixed-http-port";
 const char kIOSTestingFixedHttpsPort[] = "testing-fixed-https-port";
+
+// Enables grouping websites by domain and filtering them by period.
+const char kHistoryEnableGroupByDomain[] = "enable-grouped-history";
 
 }  // namespace switches

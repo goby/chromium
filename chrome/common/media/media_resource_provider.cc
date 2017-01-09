@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "chrome/common/media/media_resource_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -22,6 +23,12 @@ int MediaMessageIdToGrdId(media::MessageId message_id) {
       return IDS_BEAMFORMING_ON_DEFAULT_AUDIO_INPUT_DEVICE_NAME;
     case media::BEAMFORMING_OFF_DEFAULT_AUDIO_INPUT_DEVICE_NAME:
       return IDS_BEAMFORMING_OFF_DEFAULT_AUDIO_INPUT_DEVICE_NAME;
+#endif
+#if BUILDFLAG(ENABLE_MEDIA_REMOTING)
+    case media::MEDIA_REMOTING_CAST_ERROR_TEXT:
+      return IDS_MEDIA_REMOTING_CAST_ERROR_TEXT;
+    case media::MEDIA_REMOTING_CASTING_VIDEO_TEXT:
+      return IDS_MEDIA_REMOTING_CASTING_VIDEO_TEXT;
 #endif
     default:
       NOTREACHED();

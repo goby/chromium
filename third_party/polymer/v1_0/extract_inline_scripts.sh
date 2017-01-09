@@ -10,7 +10,7 @@ if [ "$#" -ne 2 ]
 then
   echo "Usage: $0 <src_dir> <dst_dir>"
   echo
-  echo "Copies <src_dir> to <dst_dir> and extracts all inline scripts from" \
+  echo "Extracts inlined scripts from <src_dir> to <dst_dir>" \
        "Polymer HTML files found in the destination directory to separate JS" \
        "files. A JS file extracted from the file with name 'foo.html' will" \
        "have a name 'foo-extracted.js'. Inclusion of the script file will be" \
@@ -18,24 +18,13 @@ then
   exit 1
 fi
 
-src="$1"
-dst="$2"
+src="${1%/}"
+dst="${2%/}"
 
-if [ -e "$dst" ]
-then
-  echo "ERROR: '$dst' already exists. Please remove it before running the" \
-      "script." 1>&2
-  exit 1
-fi
+rsync -c --delete -r -v --exclude-from="rsync_exclude.txt" \
+    --prune-empty-dirs "$src/" "$dst/"
 
-cp -r "$src" "$dst"
-find "$dst" -name "*.html" \
-            -not -path "*/demos/*" \
-            -not -path "*/test/*" \
-            -not -path "*/tests/*" \
-            -not -name "demo*.html" \
-            -not -name "index.html" \
-            -not -name "metadata.html" | \
+find "$dst" -name "*.html" | \
 xargs grep -l "<script>" | \
 while read original_html_name
 do
@@ -44,6 +33,8 @@ do
 
   html_without_js="$dir/$name-extracted.html"
   extracted_js="$dir/$name-extracted.js"
-  crisper --source "$original_html_name" --html "$html_without_js" --js "$extracted_js" 
+  echo "Crisping $original_html_name"
+  crisper --script-in-head=false --source "$original_html_name" \
+      --html "$html_without_js" --js "$extracted_js"
   mv "$html_without_js" "$original_html_name"
 done

@@ -4,8 +4,14 @@
 
 #include "remoting/protocol/chromium_socket_factory.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/webrtc/base/asyncpacketsocket.h"
@@ -48,8 +54,8 @@ class ChromiumSocketFactoryTest : public testing::Test,
     while (last_packet_.empty() && attempts++ < kMaxAttempts) {
       sender->SendTo(test_packet.data(), test_packet.size(),
                      socket_->GetLocalAddress(), options);
-      message_loop_.PostDelayedTask(FROM_HERE, run_loop_.QuitClosure(),
-                                    kAttemptPeriod);
+      message_loop_.task_runner()->PostDelayedTask(
+          FROM_HERE, run_loop_.QuitClosure(), kAttemptPeriod);
       run_loop_.Run();
     }
     EXPECT_EQ(test_packet, last_packet_);
@@ -60,17 +66,17 @@ class ChromiumSocketFactoryTest : public testing::Test,
   base::MessageLoopForIO message_loop_;
   base::RunLoop run_loop_;
 
-  scoped_ptr<rtc::PacketSocketFactory> socket_factory_;
-  scoped_ptr<rtc::AsyncPacketSocket> socket_;
+  std::unique_ptr<rtc::PacketSocketFactory> socket_factory_;
+  std::unique_ptr<rtc::AsyncPacketSocket> socket_;
 
   std::string last_packet_;
   rtc::SocketAddress last_address_;
 };
 
 TEST_F(ChromiumSocketFactoryTest, SendAndReceive) {
-  scoped_ptr<rtc::AsyncPacketSocket> sending_socket(
-      socket_factory_->CreateUdpSocket(
-          rtc::SocketAddress("127.0.0.1", 0), 0, 0));
+  std::unique_ptr<rtc::AsyncPacketSocket> sending_socket(
+      socket_factory_->CreateUdpSocket(rtc::SocketAddress("127.0.0.1", 0), 0,
+                                       0));
   ASSERT_TRUE(sending_socket.get() != nullptr);
   EXPECT_EQ(sending_socket->GetState(),
             rtc::AsyncPacketSocket::STATE_BOUND);
@@ -84,8 +90,8 @@ TEST_F(ChromiumSocketFactoryTest, SetOptions) {
 }
 
 TEST_F(ChromiumSocketFactoryTest, PortRange) {
-  const uint16 kMinPort = 12400;
-  const uint16 kMaxPort = 12410;
+  const uint16_t kMinPort = 12400;
+  const uint16_t kMaxPort = 12410;
   socket_.reset(socket_factory_->CreateUdpSocket(
       rtc::SocketAddress("127.0.0.1", 0), kMaxPort, kMaxPort));
   ASSERT_TRUE(socket_.get() != nullptr);
@@ -95,9 +101,9 @@ TEST_F(ChromiumSocketFactoryTest, PortRange) {
 }
 
 TEST_F(ChromiumSocketFactoryTest, TransientError) {
-  scoped_ptr<rtc::AsyncPacketSocket> sending_socket(
-      socket_factory_->CreateUdpSocket(
-          rtc::SocketAddress("127.0.0.1", 0), 0, 0));
+  std::unique_ptr<rtc::AsyncPacketSocket> sending_socket(
+      socket_factory_->CreateUdpSocket(rtc::SocketAddress("127.0.0.1", 0), 0,
+                                       0));
   std::string test_packet("TEST");
 
   // Try sending a packet to an IPv6 address from a socket that's bound to an

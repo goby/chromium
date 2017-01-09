@@ -14,40 +14,50 @@ namespace blink {
 class RemoteFrame;
 
 class RemoteFrameView final : public Widget {
-public:
-    static PassRefPtrWillBeRawPtr<RemoteFrameView> create(RemoteFrame*);
+ public:
+  static RemoteFrameView* create(RemoteFrame*);
 
-    ~RemoteFrameView() override;
+  ~RemoteFrameView() override;
 
-    bool isRemoteFrameView() const override { return true; }
+  bool isRemoteFrameView() const override { return true; }
+  void setParent(Widget*) override;
 
-    RemoteFrame& frame() const
-    {
-        ASSERT(m_remoteFrame);
-        return *m_remoteFrame;
-    }
+  RemoteFrame& frame() const {
+    ASSERT(m_remoteFrame);
+    return *m_remoteFrame;
+  }
 
-    // Override to notify remote frame that its viewport size has changed.
-    void frameRectsChanged() override;
+  void dispose() override;
 
-    void invalidateRect(const IntRect&) override;
+  // Override to notify remote frame that its viewport size has changed.
+  void frameRectsChanged() override;
 
-    void setFrameRect(const IntRect&) override;
+  void invalidateRect(const IntRect&) override;
 
-    DECLARE_VIRTUAL_TRACE();
+  void setFrameRect(const IntRect&) override;
 
-private:
-    explicit RemoteFrameView(RemoteFrame*);
+  void hide() override;
+  void show() override;
+  void setParentVisible(bool) override;
 
-    // The properties and handling of the cycle between RemoteFrame
-    // and its RemoteFrameView corresponds to that between LocalFrame
-    // and FrameView. Please see the FrameView::m_frame comment for
-    // details.
-    RefPtrWillBeMember<RemoteFrame> m_remoteFrame;
+  DECLARE_VIRTUAL_TRACE();
+
+ private:
+  explicit RemoteFrameView(RemoteFrame*);
+
+  // The properties and handling of the cycle between RemoteFrame
+  // and its RemoteFrameView corresponds to that between LocalFrame
+  // and FrameView. Please see the FrameView::m_frame comment for
+  // details.
+  Member<RemoteFrame> m_remoteFrame;
 };
 
-DEFINE_TYPE_CASTS(RemoteFrameView, Widget, widget, widget->isRemoteFrameView(), widget.isRemoteFrameView());
+DEFINE_TYPE_CASTS(RemoteFrameView,
+                  Widget,
+                  widget,
+                  widget->isRemoteFrameView(),
+                  widget.isRemoteFrameView());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // RemoteFrameView_h
+#endif  // RemoteFrameView_h

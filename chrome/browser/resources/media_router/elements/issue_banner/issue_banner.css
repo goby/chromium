@@ -22,16 +22,16 @@
 }
 
 #blocking-icon {
-  color: rgb(219, 68, 55);
+  color: var(--google-red-500);
   height: 75px;
   padding-top: 24px;
   width: 75px;
 }
 
 .non-blocking {
-  background-color: rgb(66, 66, 66);
-  overflow: hidden;
+  background-color: var(--paper-grey-800);
   padding: 16px;
+  width: inherit;
 }
 
 .non-blocking > #buttons {
@@ -41,8 +41,19 @@
   width: 100%;
 }
 
+.non-blocking > #buttons > .button {
+  color: var(--paper-blue-300);
+}
+
+.non-blocking > #buttons > #default-button {
+  -webkit-margin-end: 24px;
+}
+
 .non-blocking > div > #title {
+  -webkit-margin-end: 12px;
+  -webkit-padding-end: 12px;
   color: rgba(255, 255, 255, 0.87);
+  overflow: hidden;
 }
 
 paper-button {

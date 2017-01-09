@@ -4,7 +4,10 @@
 
 #include "extensions/common/event_filtering_info.h"
 
+#include <utility>
+
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 
 namespace extensions {
@@ -15,6 +18,9 @@ EventFilteringInfo::EventFilteringInfo()
       instance_id_(0),
       has_window_type_(false),
       has_window_exposed_by_default_(false) {}
+
+EventFilteringInfo::EventFilteringInfo(const EventFilteringInfo& other) =
+    default;
 
 EventFilteringInfo::~EventFilteringInfo() {
 }
@@ -39,11 +45,8 @@ void EventFilteringInfo::SetInstanceID(int instance_id) {
   has_instance_id_ = true;
 }
 
-scoped_ptr<base::Value> EventFilteringInfo::AsValue() const {
-  if (IsEmpty())
-    return base::Value::CreateNullValue();
-
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue);
+std::unique_ptr<base::DictionaryValue> EventFilteringInfo::AsValue() const {
+  auto result = base::MakeUnique<base::DictionaryValue>();
   if (has_url_)
     result->SetString("url", url_.spec());
 
@@ -59,12 +62,7 @@ scoped_ptr<base::Value> EventFilteringInfo::AsValue() const {
   if (has_window_exposed_by_default_)
     result->SetBoolean("windowExposedByDefault", window_exposed_by_default_);
 
-  return result.Pass();
-}
-
-bool EventFilteringInfo::IsEmpty() const {
-  return !has_window_type_ && !has_url_ && service_type_.empty() &&
-         !has_instance_id_ && !has_window_exposed_by_default_;
+  return result;
 }
 
 }  // namespace extensions

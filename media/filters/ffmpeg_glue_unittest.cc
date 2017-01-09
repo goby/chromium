@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/filters/ffmpeg_glue.h"
+
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_data_util.h"
 #include "media/ffmpeg/ffmpeg_common.h"
-#include "media/filters/ffmpeg_glue.h"
+#include "media/ffmpeg/ffmpeg_deleters.h"
 #include "media/filters/in_memory_url_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -24,10 +30,10 @@ class MockProtocol : public FFmpegURLProtocol {
  public:
   MockProtocol() {}
 
-  MOCK_METHOD2(Read, int(int size, uint8* data));
-  MOCK_METHOD1(GetPosition, bool(int64* position_out));
-  MOCK_METHOD1(SetPosition, bool(int64 position));
-  MOCK_METHOD1(GetSize, bool(int64* size_out));
+  MOCK_METHOD2(Read, int(int size, uint8_t* data));
+  MOCK_METHOD1(GetPosition, bool(int64_t* position_out));
+  MOCK_METHOD1(SetPosition, bool(int64_t position));
+  MOCK_METHOD1(GetSize, bool(int64_t* size_out));
   MOCK_METHOD0(IsStreaming, bool());
 
  private:
@@ -54,18 +60,18 @@ class FFmpegGlueTest : public ::testing::Test {
     glue_.reset();
   }
 
-  int ReadPacket(int size, uint8* data) {
+  int ReadPacket(int size, uint8_t* data) {
     return glue_->format_context()->pb->read_packet(
         protocol_.get(), data, size);
   }
 
-  int64 Seek(int64 offset, int whence) {
+  int64_t Seek(int64_t offset, int whence) {
     return glue_->format_context()->pb->seek(protocol_.get(), offset, whence);
   }
 
  protected:
-  scoped_ptr<FFmpegGlue> glue_;
-  scoped_ptr< StrictMock<MockProtocol> > protocol_;
+  std::unique_ptr<FFmpegGlue> glue_;
+  std::unique_ptr<StrictMock<MockProtocol>> protocol_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FFmpegGlueTest);
@@ -98,10 +104,10 @@ class FFmpegGlueDestructionTest : public ::testing::Test {
   }
 
  protected:
-  scoped_ptr<FFmpegGlue> glue_;
+  std::unique_ptr<FFmpegGlue> glue_;
 
  private:
-  scoped_ptr<InMemoryUrlProtocol> protocol_;
+  std::unique_ptr<InMemoryUrlProtocol> protocol_;
   scoped_refptr<DecoderBuffer> data_;
 
   DISALLOW_COPY_AND_ASSIGN(FFmpegGlueDestructionTest);
@@ -116,7 +122,7 @@ TEST_F(FFmpegGlueTest, Write) {
 // Test both successful and unsuccessful reads pass through correctly.
 TEST_F(FFmpegGlueTest, Read) {
   const int kBufferSize = 16;
-  uint8 buffer[kBufferSize];
+  uint8_t buffer[kBufferSize];
 
   // Reads are for the most part straight-through calls to Read().
   InSequence s;
@@ -229,17 +235,22 @@ TEST_F(FFmpegGlueDestructionTest, WithOpenWithStreams) {
 }
 
 // Ensure destruction release the appropriate resources when OpenContext() is
-// called and streams have been opened.
+// called and streams have been opened. This now requires user of FFmpegGlue to
+// ensure any allocated AVCodecContext is closed prior to ~FFmpegGlue().
 TEST_F(FFmpegGlueDestructionTest, WithOpenWithOpenStreams) {
   Initialize("bear-320x240.webm");
   ASSERT_TRUE(glue_->OpenContext());
   ASSERT_GT(glue_->format_context()->nb_streams, 0u);
 
+  // Use ScopedPtrAVFreeContext to ensure |context| is closed, and use scoping
+  // and ordering to ensure |context| is destructed before |glue_|.
   // Pick the audio stream (1) so this works when the ffmpeg video decoders are
   // disabled.
-  AVCodecContext* context = glue_->format_context()->streams[1]->codec;
-  ASSERT_EQ(0, avcodec_open2(
-      context, avcodec_find_decoder(context->codec_id), NULL));
+  std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext> context(
+      AVStreamToAVCodecContext(glue_->format_context()->streams[1]));
+  ASSERT_NE(nullptr, context.get());
+  ASSERT_EQ(0, avcodec_open2(context.get(),
+                             avcodec_find_decoder(context->codec_id), nullptr));
 }
 
 }  // namespace media

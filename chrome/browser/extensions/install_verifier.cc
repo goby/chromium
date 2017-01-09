@@ -6,22 +6,25 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 
 #include "base/base_switches.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/install_signer.h"
 #include "chrome/browser/extensions/install_verifier_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
@@ -36,6 +39,9 @@
 namespace extensions {
 
 namespace {
+
+// This should only be set during tests.
+bool g_bypass_for_test = false;
 
 enum VerifyStatus {
   NONE = 0,   // Do not request install signatures, and do not enforce them.
@@ -108,7 +114,10 @@ VerifyStatus GetCommandLineStatus() {
 }
 
 VerifyStatus GetStatus() {
-  return std::max(GetExperimentStatus(), GetCommandLineStatus());
+  if (g_bypass_for_test)
+    return NONE;
+  else
+    return std::max(GetExperimentStatus(), GetCommandLineStatus());
 }
 
 bool ShouldFetchSignature() {
@@ -226,15 +235,15 @@ void InstallVerifier::Init() {
 
   const base::DictionaryValue* pref = prefs_->GetInstallSignature();
   if (pref) {
-    scoped_ptr<InstallSignature> signature_from_prefs =
+    std::unique_ptr<InstallSignature> signature_from_prefs =
         InstallSignature::FromValue(*pref);
     if (!signature_from_prefs.get()) {
       LogInitResultHistogram(INIT_UNPARSEABLE_PREF);
-    } else if (!InstallSigner::VerifySignature(*signature_from_prefs.get())) {
+    } else if (!InstallSigner::VerifySignature(*signature_from_prefs)) {
       LogInitResultHistogram(INIT_INVALID_SIGNATURE);
       DVLOG(1) << "Init - ignoring invalid signature";
     } else {
-      signature_ = signature_from_prefs.Pass();
+      signature_ = std::move(signature_from_prefs);
       LogInitResultHistogram(INIT_VALID_SIGNATURE);
       UMA_HISTOGRAM_COUNTS_100("ExtensionInstallVerifier.InitSignatureCount",
                                signature_->ids.size());
@@ -262,12 +271,12 @@ base::Time InstallVerifier::SignatureTimestamp() {
 }
 
 bool InstallVerifier::IsKnownId(const std::string& id) const {
-  return signature_.get() && (ContainsKey(signature_->ids, id) ||
-                              ContainsKey(signature_->invalid_ids, id));
+  return signature_.get() && (base::ContainsKey(signature_->ids, id) ||
+                              base::ContainsKey(signature_->invalid_ids, id));
 }
 
 bool InstallVerifier::IsInvalid(const std::string& id) const {
-  return ((signature_.get() && ContainsKey(signature_->invalid_ids, id)));
+  return ((signature_.get() && base::ContainsKey(signature_->invalid_ids, id)));
 }
 
 void InstallVerifier::VerifyExtension(const std::string& extension_id) {
@@ -291,11 +300,11 @@ void InstallVerifier::AddMany(const ExtensionIdSet& ids, OperationType type) {
     }
   }
 
-  InstallVerifier::PendingOperation* operation =
-      new InstallVerifier::PendingOperation(type);
+  std::unique_ptr<InstallVerifier::PendingOperation> operation(
+      new InstallVerifier::PendingOperation(type));
   operation->ids.insert(ids.begin(), ids.end());
 
-  operation_queue_.push(linked_ptr<PendingOperation>(operation));
+  operation_queue_.push(std::move(operation));
 
   // If there are no ongoing pending requests, we need to kick one off.
   if (operation_queue_.size() == 1)
@@ -319,8 +328,8 @@ void InstallVerifier::RemoveMany(const ExtensionIdSet& ids) {
 
   bool found_any = false;
   for (ExtensionIdSet::const_iterator i = ids.begin(); i != ids.end(); ++i) {
-    if (ContainsKey(signature_->ids, *i) ||
-        ContainsKey(signature_->invalid_ids, *i)) {
+    if (base::ContainsKey(signature_->ids, *i) ||
+        base::ContainsKey(signature_->invalid_ids, *i)) {
       found_any = true;
       break;
     }
@@ -328,11 +337,11 @@ void InstallVerifier::RemoveMany(const ExtensionIdSet& ids) {
   if (!found_any)
     return;
 
-  InstallVerifier::PendingOperation* operation =
-      new InstallVerifier::PendingOperation(InstallVerifier::REMOVE);
+  std::unique_ptr<InstallVerifier::PendingOperation> operation(
+      new InstallVerifier::PendingOperation(InstallVerifier::REMOVE));
   operation->ids = ids;
 
-  operation_queue_.push(linked_ptr<PendingOperation>(operation));
+  operation_queue_.push(std::move(operation));
   if (operation_queue_.size() == 1)
     BeginFetch();
 }
@@ -397,7 +406,8 @@ bool InstallVerifier::MustRemainDisabled(const Extension* extension,
 
   bool verified = true;
   MustRemainDisabledOutcome outcome = VERIFIED;
-  if (ContainsKey(InstallSigner::GetForcedNotFromWebstore(), extension->id())) {
+  if (base::ContainsKey(InstallSigner::GetForcedNotFromWebstore(),
+                        extension->id())) {
     verified = false;
     outcome = FORCED_NOT_VERIFIED;
   } else if (!IsFromStore(*extension)) {
@@ -412,7 +422,7 @@ bool InstallVerifier::MustRemainDisabled(const Extension* extension,
     outcome = NO_SIGNATURE;
   } else if (!IsVerified(extension->id())) {
     if (signature_.get() &&
-        !ContainsKey(signature_->invalid_ids, extension->id())) {
+        !base::ContainsKey(signature_->invalid_ids, extension->id())) {
       outcome = NOT_VERIFIED_BUT_UNKNOWN_ID;
     } else {
       verified = false;
@@ -444,12 +454,12 @@ InstallVerifier::PendingOperation::~PendingOperation() {
 
 ExtensionIdSet InstallVerifier::GetExtensionsToVerify() const {
   ExtensionIdSet result;
-  scoped_ptr<ExtensionSet> extensions =
+  std::unique_ptr<ExtensionSet> extensions =
       ExtensionRegistry::Get(context_)->GenerateInstalledExtensionsSet();
   for (ExtensionSet::const_iterator iter = extensions->begin();
        iter != extensions->end();
        ++iter) {
-    if (NeedsVerification(*iter->get()))
+    if (NeedsVerification(**iter))
       result.insert((*iter)->id());
   }
   return result;
@@ -539,8 +549,8 @@ void InstallVerifier::GarbageCollect() {
 }
 
 bool InstallVerifier::IsVerified(const std::string& id) const {
-  return ((signature_.get() && ContainsKey(signature_->ids, id)) ||
-          ContainsKey(provisional_, id));
+  return ((signature_.get() && base::ContainsKey(signature_->ids, id)) ||
+          base::ContainsKey(provisional_, id));
 }
 
 void InstallVerifier::BeginFetch() {
@@ -559,14 +569,17 @@ void InstallVerifier::BeginFetch() {
   if (operation.type == InstallVerifier::REMOVE) {
     for (ExtensionIdSet::const_iterator i = operation.ids.begin();
          i != operation.ids.end(); ++i) {
-      if (ContainsKey(ids_to_sign, *i))
+      if (base::ContainsKey(ids_to_sign, *i))
         ids_to_sign.erase(*i);
     }
   } else {  // All other operation types are some form of "ADD".
     ids_to_sign.insert(operation.ids.begin(), operation.ids.end());
   }
 
-  signer_.reset(new InstallSigner(context_->GetRequestContext(), ids_to_sign));
+  signer_.reset(new InstallSigner(
+      content::BrowserContext::GetDefaultStoragePartition(context_)->
+          GetURLRequestContext(),
+      ids_to_sign));
   signer_->GetSignature(base::Bind(&InstallVerifier::SignatureCallback,
                                    weak_factory_.GetWeakPtr()));
 }
@@ -584,10 +597,10 @@ void InstallVerifier::SaveToPrefs() {
     if (VLOG_IS_ON(1)) {
       DVLOG(1) << "SaveToPrefs - saving";
 
-      DCHECK(InstallSigner::VerifySignature(*signature_.get()));
-      scoped_ptr<InstallSignature> rehydrated =
+      DCHECK(InstallSigner::VerifySignature(*signature_));
+      std::unique_ptr<InstallSignature> rehydrated =
           InstallSignature::FromValue(pref);
-      DCHECK(InstallSigner::VerifySignature(*rehydrated.get()));
+      DCHECK(InstallSigner::VerifySignature(*rehydrated));
     }
     prefs_->SetInstallSignature(&pref);
   }
@@ -614,9 +627,9 @@ void GetSignatureResultHistogram(CallbackResult result) {
 }  // namespace
 
 void InstallVerifier::SignatureCallback(
-    scoped_ptr<InstallSignature> signature) {
-
-  linked_ptr<PendingOperation> operation = operation_queue_.front();
+    std::unique_ptr<InstallSignature> signature) {
+  std::unique_ptr<PendingOperation> operation =
+      std::move(operation_queue_.front());
   operation_queue_.pop();
 
   bool success = false;
@@ -635,7 +648,7 @@ void InstallVerifier::SignatureCallback(
     // TODO(asargent) - if this was something like a network error, we need to
     // do retries with exponential back off.
   } else {
-    signature_ = signature.Pass();
+    signature_ = std::move(signature);
     SaveToPrefs();
 
     if (!provisional_.empty()) {
@@ -649,6 +662,20 @@ void InstallVerifier::SignatureCallback(
 
   if (!operation_queue_.empty())
     BeginFetch();
+}
+
+ScopedInstallVerifierBypassForTest::ScopedInstallVerifierBypassForTest()
+    : old_value_(ShouldBypass()) {
+  g_bypass_for_test = true;
+}
+
+ScopedInstallVerifierBypassForTest::~ScopedInstallVerifierBypassForTest() {
+  g_bypass_for_test = old_value_;
+}
+
+// static
+bool ScopedInstallVerifierBypassForTest::ShouldBypass() {
+  return g_bypass_for_test;
 }
 
 }  // namespace extensions

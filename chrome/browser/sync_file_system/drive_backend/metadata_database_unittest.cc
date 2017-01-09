@@ -4,11 +4,18 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
 
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_test_util.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
@@ -34,8 +41,8 @@ namespace {
 
 typedef MetadataDatabase::FileIDList FileIDList;
 
-const int64 kInitialChangeID = 1234;
-const int64 kSyncRootTrackerID = 100;
+const int64_t kInitialChangeID = 1234;
+const int64_t kSyncRootTrackerID = 100;
 const char kSyncRootFolderID[] = "sync_root_folder_id";
 
 // This struct is used to setup initial state of the database in the test and
@@ -82,7 +89,7 @@ void ExpectEquivalent(const FileTracker* left, const FileTracker* right) {
   test_util::ExpectEquivalentTrackers(*left, *right);
 }
 
-void ExpectEquivalent(int64 left, int64 right) {
+void ExpectEquivalent(int64_t left, int64_t right) {
   EXPECT_EQ(left, right);
 }
 
@@ -104,8 +111,8 @@ void ExpectEquivalent(const base::hash_map<Key, Value>& left,
 
 template <typename Key, typename Value>
 void ExpectEquivalent(
-    const base::ScopedPtrHashMap<Key, scoped_ptr<Value>>& left,
-    const base::ScopedPtrHashMap<Key, scoped_ptr<Value>>& right) {
+    const base::ScopedPtrHashMap<Key, std::unique_ptr<Value>>& left,
+    const base::ScopedPtrHashMap<Key, std::unique_ptr<Value>>& right) {
   ExpectEquivalentMaps(std::map<Key, Value*>(left.begin(), left.end()),
                        std::map<Key, Value*>(right.begin(), right.end()));
 }
@@ -192,7 +199,7 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
     return "file_id_" + base::Int64ToString(next_file_id_number_++);
   }
 
-  int64 GetTrackerIDByFileID(const std::string& file_id) {
+  int64_t GetTrackerIDByFileID(const std::string& file_id) {
     TrackerIDSet trackers;
     if (metadata_database_->FindTrackersByFileID(file_id, &trackers)) {
       EXPECT_FALSE(trackers.empty());
@@ -204,19 +211,18 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
   SyncStatusCode InitializeMetadataDatabase() {
     SyncStatusCode status = SYNC_STATUS_UNKNOWN;
     metadata_database_ = MetadataDatabase::CreateInternal(
-        database_dir_.path(), in_memory_env_.get(),
-        GetParam(), &status);
+        database_dir_.GetPath(), in_memory_env_.get(), GetParam(), &status);
     return status;
   }
 
   void DropDatabase() {
     metadata_database_.reset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SetUpDatabaseByTrackedFiles(const TrackedFile** tracked_files,
                                    int size) {
-    scoped_ptr<LevelDBWrapper> db = InitializeLevelDB();
+    std::unique_ptr<LevelDBWrapper> db = InitializeLevelDB();
     ASSERT_TRUE(db);
 
     for (int i = 0; i < size; ++i) {
@@ -254,22 +260,23 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
 
   MetadataDatabase* metadata_database() { return metadata_database_.get(); }
 
-  scoped_ptr<LevelDBWrapper> InitializeLevelDB() {
+  std::unique_ptr<LevelDBWrapper> InitializeLevelDB() {
     leveldb::DB* db = nullptr;
     leveldb::Options options;
     options.create_if_missing = true;
     options.max_open_files = 0;  // Use minimum.
     options.env = in_memory_env_.get();
     leveldb::Status status =
-        leveldb::DB::Open(options, database_dir_.path().AsUTF8Unsafe(), &db);
+        leveldb::DB::Open(options, database_dir_.GetPath().AsUTF8Unsafe(), &db);
     EXPECT_TRUE(status.ok());
 
-    scoped_ptr<LevelDBWrapper> wrapper(new LevelDBWrapper(make_scoped_ptr(db)));
+    std::unique_ptr<LevelDBWrapper> wrapper(
+        new LevelDBWrapper(base::WrapUnique(db)));
 
     wrapper->Put(kDatabaseVersionKey, base::Int64ToString(3));
     SetUpServiceMetadata(wrapper.get());
 
-    return wrapper.Pass();
+    return wrapper;
   }
 
   void SetUpServiceMetadata(LevelDBWrapper* db) {
@@ -375,9 +382,9 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
     return folder;
   }
 
-  scoped_ptr<google_apis::FileResource> CreateFileResourceFromMetadata(
+  std::unique_ptr<google_apis::FileResource> CreateFileResourceFromMetadata(
       const FileMetadata& file) {
-    scoped_ptr<google_apis::FileResource> file_resource(
+    std::unique_ptr<google_apis::FileResource> file_resource(
         new google_apis::FileResource);
     for (int i = 0; i < file.details().parent_folder_ids_size(); ++i) {
       google_apis::ParentReference parent;
@@ -402,21 +409,21 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
     file_resource->set_modified_date(base::Time::FromInternalValue(
         file.details().modification_time()));
 
-    return file_resource.Pass();
+    return file_resource;
   }
 
-  scoped_ptr<google_apis::ChangeResource> CreateChangeResourceFromMetadata(
+  std::unique_ptr<google_apis::ChangeResource> CreateChangeResourceFromMetadata(
       const FileMetadata& file) {
-    scoped_ptr<google_apis::ChangeResource> change(
+    std::unique_ptr<google_apis::ChangeResource> change(
         new google_apis::ChangeResource);
     change->set_change_id(file.details().change_id());
     change->set_file_id(file.file_id());
     change->set_deleted(file.details().missing());
     if (change->is_deleted())
-      return change.Pass();
+      return change;
 
     change->set_file(CreateFileResourceFromMetadata(file));
-    return change.Pass();
+    return change;
   }
 
   void ApplyRenameChangeToMetadata(const std::string& new_title,
@@ -445,7 +452,7 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
     file->mutable_details()->set_change_id(++current_change_id_);
   }
 
-  void PushToChangeList(scoped_ptr<google_apis::ChangeResource> change,
+  void PushToChangeList(std::unique_ptr<google_apis::ChangeResource> change,
                         ScopedVector<google_apis::ChangeResource>* changes) {
     changes->push_back(change.release());
   }
@@ -497,9 +504,9 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
       MetadataDatabaseIndexOnDisk* index1,
       MetadataDatabaseIndexOnDisk* index2) {
     ExpectEquivalentServiceMetadata(index1, index2);
-    scoped_ptr<LevelDBWrapper::Iterator> itr1 =
+    std::unique_ptr<LevelDBWrapper::Iterator> itr1 =
         index1->GetDBForTesting()->NewIterator();
-    scoped_ptr<LevelDBWrapper::Iterator> itr2 =
+    std::unique_ptr<LevelDBWrapper::Iterator> itr2 =
         index2->GetDBForTesting()->NewIterator();
     for (itr1->SeekToFirst(), itr2->SeekToFirst();
          itr1->Valid() && itr2->Valid();
@@ -512,13 +519,12 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
   }
 
   void VerifyReloadConsistency() {
-    scoped_ptr<MetadataDatabase> metadata_database_2;
-    ASSERT_EQ(SYNC_STATUS_OK,
-              MetadataDatabase::CreateForTesting(
-                  metadata_database_->db_.Pass(),
-                  metadata_database_->enable_on_disk_index_,
-                  &metadata_database_2));
-    metadata_database_->db_ = metadata_database_2->db_.Pass();
+    std::unique_ptr<MetadataDatabase> metadata_database_2;
+    ASSERT_EQ(SYNC_STATUS_OK, MetadataDatabase::CreateForTesting(
+                                  std::move(metadata_database_->db_),
+                                  metadata_database_->enable_on_disk_index_,
+                                  &metadata_database_2));
+    metadata_database_->db_ = std::move(metadata_database_2->db_);
 
     MetadataDatabaseIndexInterface* index1 = metadata_database_->index_.get();
     MetadataDatabaseIndexInterface* index2 = metadata_database_2->index_.get();
@@ -571,8 +577,8 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
 
   SyncStatusCode UpdateByChangeList(
       ScopedVector<google_apis::ChangeResource> changes) {
-    return metadata_database_->UpdateByChangeList(
-        current_change_id_, changes.Pass());
+    return metadata_database_->UpdateByChangeList(current_change_id_,
+                                                  std::move(changes));
   }
 
   SyncStatusCode PopulateFolder(const std::string& folder_id,
@@ -587,7 +593,7 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
   }
 
   SyncStatusCode PopulateInitialData(
-      int64 largest_change_id,
+      int64_t largest_change_id,
       const google_apis::FileResource& sync_root_folder,
       const ScopedVector<google_apis::FileResource>& app_root_folders) {
     return metadata_database_->PopulateInitialData(
@@ -598,21 +604,19 @@ class MetadataDatabaseTest : public testing::TestWithParam<bool> {
     tracker->set_tracker_id(GetTrackerIDByFileID(tracker->file_id()));
   }
 
-  int64 current_change_id() const {
-    return current_change_id_;
-  }
+  int64_t current_change_id() const { return current_change_id_; }
 
  private:
   base::ScopedTempDir database_dir_;
   base::MessageLoop message_loop_;
 
-  scoped_ptr<leveldb::Env> in_memory_env_;
-  scoped_ptr<MetadataDatabase> metadata_database_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<MetadataDatabase> metadata_database_;
 
-  int64 current_change_id_;
-  int64 next_tracker_id_;
-  int64 next_file_id_number_;
-  int64 next_md5_sequence_number_;
+  int64_t current_change_id_;
+  int64_t next_tracker_id_;
+  int64_t next_file_id_number_;
+  int64_t next_md5_sequence_number_;
 
   DISALLOW_COPY_AND_ASSIGN(MetadataDatabaseTest);
 };
@@ -628,7 +632,7 @@ TEST_P(MetadataDatabaseTest, InitializationTest_Empty) {
 
   DropDatabase();
 
-  scoped_ptr<LevelDBWrapper> db = InitializeLevelDB();
+  std::unique_ptr<LevelDBWrapper> db = InitializeLevelDB();
   db->Put(kServiceMetadataKey, "Unparsable string");
   EXPECT_TRUE(db->Commit().ok());
   db.reset();
@@ -737,7 +741,7 @@ TEST_P(MetadataDatabaseTest, BuildPathTest) {
   inactive_folder_tracker.set_active(false);
 
   {
-    scoped_ptr<LevelDBWrapper> db = InitializeLevelDB();
+    std::unique_ptr<LevelDBWrapper> db = InitializeLevelDB();
     ASSERT_TRUE(db);
 
     EXPECT_TRUE(PutFileToDB(db.get(), sync_root).ok());
@@ -790,7 +794,7 @@ TEST_P(MetadataDatabaseTest, FindNearestActiveAncestorTest) {
   inactive_folder_tracker.set_active(false);
 
   {
-    scoped_ptr<LevelDBWrapper> db = InitializeLevelDB();
+    std::unique_ptr<LevelDBWrapper> db = InitializeLevelDB();
     ASSERT_TRUE(db);
 
     EXPECT_TRUE(PutFileToDB(db.get(), sync_root).ok());
@@ -912,7 +916,7 @@ TEST_P(MetadataDatabaseTest, UpdateByChangeListTest) {
       CreateChangeResourceFromMetadata(noop_file.metadata), &changes);
   PushToChangeList(
       CreateChangeResourceFromMetadata(new_file.metadata), &changes);
-  EXPECT_EQ(SYNC_STATUS_OK, UpdateByChangeList(changes.Pass()));
+  EXPECT_EQ(SYNC_STATUS_OK, UpdateByChangeList(std::move(changes)));
 
   renamed_file.tracker.set_dirty(true);
   reorganized_file.tracker.set_dirty(true);
@@ -1100,9 +1104,9 @@ TEST_P(MetadataDatabaseTest, PopulateInitialDataTest) {
     &sync_root, &app_root
   };
 
-  scoped_ptr<google_apis::FileResource> sync_root_folder(
+  std::unique_ptr<google_apis::FileResource> sync_root_folder(
       CreateFileResourceFromMetadata(sync_root.metadata));
-  scoped_ptr<google_apis::FileResource> app_root_folder(
+  std::unique_ptr<google_apis::FileResource> app_root_folder(
       CreateFileResourceFromMetadata(app_root.metadata));
 
   ScopedVector<google_apis::FileResource> app_root_folders;
@@ -1138,7 +1142,7 @@ TEST_P(MetadataDatabaseTest, DumpFiles) {
   EXPECT_EQ(SYNC_STATUS_OK, InitializeMetadataDatabase());
   VerifyTrackedFiles(tracked_files, arraysize(tracked_files));
 
-  scoped_ptr<base::ListValue> files =
+  std::unique_ptr<base::ListValue> files =
       metadata_database()->DumpFiles(app_root.tracker.app_id());
   ASSERT_EQ(2u, files->GetSize());
 

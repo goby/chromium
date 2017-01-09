@@ -4,10 +4,13 @@
 
 #include "content/child/appcache/web_application_cache_host_impl.h"
 
+#include <stddef.h>
+
 #include "base/compiler_specific.h"
 #include "base/id_map.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
@@ -27,12 +30,12 @@ namespace {
 
 // Note: the order of the elements in this array must match those
 // of the EventID enum in appcache_interfaces.h.
-const char* kEventNames[] = {
+const char* const kEventNames[] = {
   "Checking", "Error", "NoUpdate", "Downloading", "Progress",
   "UpdateReady", "Cached", "Obsolete"
 };
 
-typedef IDMap<WebApplicationCacheHostImpl> HostsMap;
+using HostsMap = IDMap<WebApplicationCacheHostImpl*>;
 
 HostsMap* all_hosts() {
   static HostsMap* map = new HostsMap;
@@ -55,16 +58,25 @@ WebApplicationCacheHostImpl* WebApplicationCacheHostImpl::FromId(int id) {
 
 WebApplicationCacheHostImpl::WebApplicationCacheHostImpl(
     WebApplicationCacheHostClient* client,
-    AppCacheBackend* backend)
+    AppCacheBackend* backend,
+    int appcache_host_id)
     : client_(client),
       backend_(backend),
-      host_id_(all_hosts()->Add(this)),
       status_(APPCACHE_STATUS_UNCACHED),
       is_scheme_supported_(false),
       is_get_method_(false),
       is_new_master_entry_(MAYBE),
       was_select_cache_called_(false) {
-  DCHECK(client && backend && (host_id_ != kAppCacheNoHostId));
+  DCHECK(client && backend);
+  // PlzNavigate: The browser passes the ID to be used.
+  if (appcache_host_id != kAppCacheNoHostId) {
+    DCHECK(IsBrowserSideNavigationEnabled());
+    all_hosts()->AddWithID(this, appcache_host_id);
+    host_id_ = appcache_host_id;
+  } else {
+    host_id_ = all_hosts()->Add(this);
+  }
+  DCHECK(host_id_ != kAppCacheNoHostId);
 
   backend_->RegisterHost(host_id_);
 }
@@ -93,7 +105,7 @@ void WebApplicationCacheHostImpl::OnEventRaised(
 
   // Emit logging output prior to calling out to script as we can get
   // deleted within the script event handler.
-  const char* kFormatString = "Application Cache %s event";
+  const char kFormatString[] = "Application Cache %s event";
   std::string message = base::StringPrintf(kFormatString,
                                            kEventNames[event_id]);
   OnLogMessage(APPCACHE_LOG_INFO, message);
@@ -127,7 +139,7 @@ void WebApplicationCacheHostImpl::OnProgressEventRaised(
     const GURL& url, int num_total, int num_complete) {
   // Emit logging output prior to calling out to script as we can get
   // deleted within the script event handler.
-  const char* kFormatString = "Application Cache Progress event (%d of %d) %s";
+  const char kFormatString[] = "Application Cache Progress event (%d of %d) %s";
   std::string message = base::StringPrintf(kFormatString, num_complete,
                                            num_total, url.spec().c_str());
   OnLogMessage(APPCACHE_LOG_INFO, message);
@@ -139,7 +151,7 @@ void WebApplicationCacheHostImpl::OnErrorEventRaised(
     const AppCacheErrorDetails& details) {
   // Emit logging output prior to calling out to script as we can get
   // deleted within the script event handler.
-  const char* kFormatString = "Application Cache Error event: %s";
+  const char kFormatString[] = "Application Cache Error event: %s";
   std::string full_message =
       base::StringPrintf(kFormatString, details.message.c_str());
   OnLogMessage(APPCACHE_LOG_ERROR, full_message);
@@ -268,7 +280,7 @@ void WebApplicationCacheHostImpl::didFinishLoadingMainResource(bool success) {
   // TODO(michaeln): write me
 }
 
-WebApplicationCacheHost::Status WebApplicationCacheHostImpl::status() {
+WebApplicationCacheHost::Status WebApplicationCacheHostImpl::getStatus() {
   return static_cast<WebApplicationCacheHost::Status>(status_);
 }
 

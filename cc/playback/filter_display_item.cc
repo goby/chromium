@@ -4,36 +4,49 @@
 
 #include "cc/playback/filter_display_item.h"
 
+#include <stddef.h>
+
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/output/render_surface_filters.h"
 #include "cc/proto/display_item.pb.h"
 #include "cc/proto/gfx_conversions.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
 #include "third_party/skia/include/core/SkPaint.h"
-#include "third_party/skia/include/core/SkXfermode.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/skia_util.h"
 
 namespace cc {
 
-FilterDisplayItem::FilterDisplayItem() {
+FilterDisplayItem::FilterDisplayItem(const FilterOperations& filters,
+                                     const gfx::RectF& bounds,
+                                     const gfx::PointF& origin)
+    : DisplayItem(FILTER) {
+  SetNew(filters, bounds, origin);
 }
 
-FilterDisplayItem::~FilterDisplayItem() {
+FilterDisplayItem::FilterDisplayItem(const proto::DisplayItem& proto)
+    : DisplayItem(FILTER) {
+  DCHECK_EQ(proto::DisplayItem::Type_Filter, proto.type());
+
+  const proto::FilterDisplayItem& details = proto.filter_item();
+  gfx::RectF bounds = ProtoToRectF(details.bounds());
+
+  // TODO(dtrainor): Support deserializing FilterOperations (crbug.com/541321).
+  FilterOperations filters;
+  gfx::PointF origin(.0f, .0f);  // TODO(senorblanco): Support origin.
+  SetNew(filters, bounds, origin);
 }
+
+FilterDisplayItem::~FilterDisplayItem() {}
 
 void FilterDisplayItem::SetNew(const FilterOperations& filters,
-                               const gfx::RectF& bounds) {
+                               const gfx::RectF& bounds,
+                               const gfx::PointF& origin) {
   filters_ = filters;
   bounds_ = bounds;
-
-  // FilterOperations doesn't expose its capacity, but size is probably good
-  // enough.
-  size_t external_memory_usage = filters_.size() * sizeof(filters_.at(0));
-  DisplayItem::SetNew(true /* suitable_for_gpu_raster */, 1 /* op_count */,
-                      external_memory_usage);
+  origin_ = origin;
 }
 
 void FilterDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
@@ -45,35 +58,22 @@ void FilterDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
   // TODO(dtrainor): Support serializing FilterOperations (crbug.com/541321).
 }
 
-void FilterDisplayItem::FromProtobuf(const proto::DisplayItem& proto) {
-  DCHECK_EQ(proto::DisplayItem::Type_Filter, proto.type());
-
-  const proto::FilterDisplayItem& details = proto.filter_item();
-  gfx::RectF bounds = ProtoToRectF(details.bounds());
-
-  // TODO(dtrainor): Support deserializing FilterOperations (crbug.com/541321).
-  FilterOperations filters;
-
-  SetNew(filters, bounds);
-}
-
 void FilterDisplayItem::Raster(SkCanvas* canvas,
-                               const gfx::Rect& canvas_target_playback_rect,
                                SkPicture::AbortCallback* callback) const {
   canvas->save();
-  canvas->translate(bounds_.x(), bounds_.y());
+  canvas->translate(origin_.x(), origin_.y());
 
-  skia::RefPtr<SkImageFilter> image_filter =
-      RenderSurfaceFilters::BuildImageFilter(
-          filters_, gfx::SizeF(bounds_.width(), bounds_.height()));
-  SkRect boundaries = SkRect::MakeWH(bounds_.width(), bounds_.height());
+  sk_sp<SkImageFilter> image_filter = RenderSurfaceFilters::BuildImageFilter(
+      filters_, gfx::SizeF(bounds_.width(), bounds_.height()));
+  SkRect boundaries = RectFToSkRect(bounds_);
+  boundaries.offset(-origin_.x(), -origin_.y());
 
   SkPaint paint;
-  paint.setXfermodeMode(SkXfermode::kSrcOver_Mode);
-  paint.setImageFilter(image_filter.get());
+  paint.setBlendMode(SkBlendMode::kSrcOver);
+  paint.setImageFilter(std::move(image_filter));
   canvas->saveLayer(&boundaries, &paint);
 
-  canvas->translate(-bounds_.x(), -bounds_.y());
+  canvas->translate(-origin_.x(), -origin_.y());
 }
 
 void FilterDisplayItem::AsValueInto(
@@ -84,24 +84,20 @@ void FilterDisplayItem::AsValueInto(
       bounds_.ToString().c_str(), visual_rect.ToString().c_str()));
 }
 
-EndFilterDisplayItem::EndFilterDisplayItem() {
-  DisplayItem::SetNew(true /* suitable_for_gpu_raster */, 0 /* op_count */,
-                      0 /* external_memory_usage */);
+EndFilterDisplayItem::EndFilterDisplayItem() : DisplayItem(END_FILTER) {}
+
+EndFilterDisplayItem::EndFilterDisplayItem(const proto::DisplayItem& proto)
+    : DisplayItem(END_FILTER) {
+  DCHECK_EQ(proto::DisplayItem::Type_EndFilter, proto.type());
 }
 
-EndFilterDisplayItem::~EndFilterDisplayItem() {
-}
+EndFilterDisplayItem::~EndFilterDisplayItem() {}
 
 void EndFilterDisplayItem::ToProtobuf(proto::DisplayItem* proto) const {
   proto->set_type(proto::DisplayItem::Type_EndFilter);
 }
 
-void EndFilterDisplayItem::FromProtobuf(const proto::DisplayItem& proto) {
-  DCHECK_EQ(proto::DisplayItem::Type_EndFilter, proto.type());
-}
-
 void EndFilterDisplayItem::Raster(SkCanvas* canvas,
-                                  const gfx::Rect& canvas_target_playback_rect,
                                   SkPicture::AbortCallback* callback) const {
   canvas->restore();
   canvas->restore();

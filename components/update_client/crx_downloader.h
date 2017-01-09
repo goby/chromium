@@ -6,19 +6,19 @@
 #define COMPONENTS_UPDATE_CLIENT_CRX_DOWNLOADER_H_
 
 #include <stdint.h>
+
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "url/gurl.h"
 
-namespace base {
-class SequencedTaskRunner;
-}
 
 namespace net {
 class URLRequestContextGetter;
@@ -86,7 +86,7 @@ class CrxDownloader {
   // bytes is not guaranteed to monotonically increment over time.
   using ProgressCallback = base::Callback<void(const Result& result)>;
 
-  using Factory = scoped_ptr<CrxDownloader> (*)(
+  using Factory = std::unique_ptr<CrxDownloader> (*)(
       bool,
       net::URLRequestContextGetter*,
       const scoped_refptr<base::SequencedTaskRunner>&);
@@ -94,13 +94,12 @@ class CrxDownloader {
   // Factory method to create an instance of this class and build the
   // chain of responsibility. |is_background_download| specifies that a
   // background downloader be used, if the platform supports it.
-  // |url_fetcher_task_runner| should be an IO capable task runner able to
-  // support UrlFetcherDownloader. |background_task_runner| should be an
-  // IO capable thread able to support BackgroundDownloader.
-  static scoped_ptr<CrxDownloader> Create(
+  // |task_runner| should be a task runner able to run blocking
+  // code such as file IO operations.
+  static std::unique_ptr<CrxDownloader> Create(
       bool is_background_download,
       net::URLRequestContextGetter* context_getter,
-      const scoped_refptr<base::SequencedTaskRunner>& url_fetcher_task_runner);
+      const scoped_refptr<base::SequencedTaskRunner>& task_runner);
   virtual ~CrxDownloader();
 
   void set_progress_callback(const ProgressCallback& progress_callback);
@@ -108,16 +107,20 @@ class CrxDownloader {
   // Starts the download. One instance of the class handles one download only.
   // One instance of CrxDownloader can only be started once, otherwise the
   // behavior is undefined. The callback gets invoked if the download can't
-  // be started.
+  // be started. |expected_hash| represents the SHA256 cryptographic hash of
+  // the download payload, represented as a hexadecimal string.
   void StartDownloadFromUrl(const GURL& url,
+                            const std::string& expected_hash,
                             const DownloadCallback& download_callback);
   void StartDownload(const std::vector<GURL>& urls,
+                     const std::string& expected_hash,
                      const DownloadCallback& download_callback);
 
   const std::vector<DownloadMetrics> download_metrics() const;
 
  protected:
-  explicit CrxDownloader(scoped_ptr<CrxDownloader> successor);
+  CrxDownloader(const scoped_refptr<base::SequencedTaskRunner>& task_runner,
+                std::unique_ptr<CrxDownloader> successor);
 
   // Handles the fallback in the case of multiple urls and routing of the
   // download to the following successor in the chain. Derived classes must call
@@ -137,13 +140,38 @@ class CrxDownloader {
   // Returns the url which is currently being downloaded from.
   GURL url() const;
 
+  scoped_refptr<base::SequencedTaskRunner> task_runner() const {
+    return task_runner_;
+  }
+
+  scoped_refptr<base::SequencedTaskRunner> main_task_runner() const {
+    return main_task_runner_;
+  }
+
  private:
   virtual void DoStartDownload(const GURL& url) = 0;
 
+  void VerifyResponse(bool is_handled,
+                      Result result,
+                      DownloadMetrics download_metrics);
+
+  void HandleDownloadError(bool is_handled,
+                           const Result& result,
+                           const DownloadMetrics& download_metrics);
+
   base::ThreadChecker thread_checker_;
 
+  // Executes blocking operations such as file I/O.
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+
+  // Used to post callbacks to the main thread.
+  scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
+
   std::vector<GURL> urls_;
-  scoped_ptr<CrxDownloader> successor_;
+
+  // The SHA256 hash of the download payload in hexadecimal format.
+  std::string expected_hash_;
+  std::unique_ptr<CrxDownloader> successor_;
   DownloadCallback download_callback_;
   ProgressCallback progress_callback_;
 

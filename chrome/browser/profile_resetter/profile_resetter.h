@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_PROFILE_RESETTER_PROFILE_RESETTER_H_
 #define CHROME_BROWSER_PROFILE_RESETTER_PROFILE_RESETTER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/threading/non_thread_safe.h"
@@ -50,7 +52,7 @@ class ProfileResetter : public base::NonThreadSafe,
   };
 
   // Bit vector for Resettable enum.
-  typedef uint32 ResettableFlags;
+  typedef uint32_t ResettableFlags;
 
   static_assert(sizeof(ResettableFlags) == sizeof(Resettable),
                 "ResettableFlags should be the same size as Resettable");
@@ -62,7 +64,7 @@ class ProfileResetter : public base::NonThreadSafe,
   // completion. |default_settings| allows the caller to specify some default
   // settings. |default_settings| shouldn't be NULL.
   virtual void Reset(ResettableFlags resettable_flags,
-                     scoped_ptr<BrandcodedDefaultSettings> master_settings,
+                     std::unique_ptr<BrandcodedDefaultSettings> master_settings,
                      const base::Closure& callback);
 
   virtual bool IsActive() const;
@@ -88,7 +90,7 @@ class ProfileResetter : public base::NonThreadSafe,
   void OnTemplateURLServiceLoaded();
 
   Profile* const profile_;
-  scoped_ptr<BrandcodedDefaultSettings> master_settings_;
+  std::unique_ptr<BrandcodedDefaultSettings> master_settings_;
   TemplateURLService* template_url_service_;
 
   // Flags of a Resetable indicating which reset operations we are still waiting
@@ -102,7 +104,7 @@ class ProfileResetter : public base::NonThreadSafe,
   // of deleting itself when done.
   BrowsingDataRemover* cookies_remover_;
 
-  scoped_ptr<TemplateURLService::Subscription> template_url_service_sub_;
+  std::unique_ptr<TemplateURLService::Subscription> template_url_service_sub_;
 
   base::WeakPtrFactory<ProfileResetter> weak_ptr_factory_;
 

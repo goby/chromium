@@ -4,7 +4,10 @@
 
 #include "chrome/browser/chromeos/profiles/multiprofiles_session_aborted_dialog.h"
 
+#include "ash/aura/wm_shelf_aura.h"
+#include "ash/root_window_controller.h"
 #include "ash/shell.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/grit/generated_resources.h"
@@ -32,7 +35,7 @@ const int kTopInset = 10;
 // Dialog for an aborted multi-profile session due to a user policy change .
 class MultiprofilesSessionAbortedView : public views::DialogDelegateView {
  public:
-  explicit MultiprofilesSessionAbortedView();
+  MultiprofilesSessionAbortedView();
   ~MultiprofilesSessionAbortedView() override;
 
   static void ShowDialog(const std::string& user_email);
@@ -77,11 +80,11 @@ void MultiprofilesSessionAbortedView::ShowDialog(
 
   // Since this is the last thing the user ever sees, we also hide all system
   // tray's from the screen.
-  aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
-  for (aura::Window::Windows::const_iterator iter = root_windows.begin();
-       iter != root_windows.end(); ++iter) {
-    ash::Shell::GetInstance()->SetShelfAutoHideBehavior(
-        ash::SHELF_AUTO_HIDE_ALWAYS_HIDDEN, *iter);
+  std::vector<ash::RootWindowController*> controllers =
+      ash::Shell::GetAllRootWindowControllers();
+  for (ash::RootWindowController* controller : controllers) {
+    controller->wm_shelf_aura()->SetAutoHideBehavior(
+        ash::SHELF_AUTO_HIDE_ALWAYS_HIDDEN);
   }
 }
 

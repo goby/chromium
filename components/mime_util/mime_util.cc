@@ -4,10 +4,14 @@
 
 #include "components/mime_util/mime_util.h"
 
+#include <stddef.h>
+
 #include "base/containers/hash_tables.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "net/base/mime_util.h"
 
 #if !defined(OS_IOS)
 // iOS doesn't use and must not depend on //media
@@ -17,20 +21,6 @@
 namespace mime_util {
 
 namespace {
-
-// Dictionary of cryptographic file mime types.
-struct CertificateMimeTypeInfo {
-  const char* const mime_type;
-  net::CertificateMimeType cert_type;
-};
-
-const CertificateMimeTypeInfo kSupportedCertificateTypes[] = {
-    {"application/x-x509-user-cert", net::CERTIFICATE_MIME_TYPE_X509_USER_CERT},
-#if defined(OS_ANDROID)
-    {"application/x-x509-ca-cert", net::CERTIFICATE_MIME_TYPE_X509_CA_CERT},
-    {"application/x-pkcs12", net::CERTIFICATE_MIME_TYPE_PKCS12_ARCHIVE},
-#endif
-};
 
 // From WebKit's WebCore/platform/MIMETypeRegistry.cpp:
 
@@ -46,26 +36,27 @@ const char* const kSupportedImageTypes[] = {"image/jpeg",
                                             "image/x-xbitmap",           // xbm
                                             "image/x-png"};
 
-//  Mozilla 1.8 and WinIE 7 both accept text/javascript and text/ecmascript.
-//  Mozilla 1.8 accepts application/javascript, application/ecmascript, and
-// application/x-javascript, but WinIE 7 doesn't.
-//  WinIE 7 accepts text/javascript1.1 - text/javascript1.3, text/jscript, and
-// text/livescript, but Mozilla 1.8 doesn't.
-//  Mozilla 1.8 allows leading and trailing whitespace, but WinIE 7 doesn't.
-//  Mozilla 1.8 and WinIE 7 both accept the empty string, but neither accept a
-// whitespace-only string.
-//  We want to accept all the values that either of these browsers accept, but
-// not other values.
-const char* const kSupportedJavascriptTypes[] = {"text/javascript",
-                                                 "text/ecmascript",
-                                                 "application/javascript",
-                                                 "application/ecmascript",
-                                                 "application/x-javascript",
-                                                 "text/javascript1.1",
-                                                 "text/javascript1.2",
-                                                 "text/javascript1.3",
-                                                 "text/jscript",
-                                                 "text/livescript"};
+//  Support every script type mentioned in the spec, as it notes that "User
+//  agents must recognize all JavaScript MIME types." See
+//  https://html.spec.whatwg.org/#javascript-mime-type.
+const char* const kSupportedJavascriptTypes[] = {
+    "application/ecmascript",
+    "application/javascript",
+    "application/x-ecmascript",
+    "application/x-javascript",
+    "text/ecmascript",
+    "text/javascript",
+    "text/javascript1.0",
+    "text/javascript1.1",
+    "text/javascript1.2",
+    "text/javascript1.3",
+    "text/javascript1.4",
+    "text/javascript1.5",
+    "text/jscript",
+    "text/livescript",
+    "text/x-ecmascript",
+    "text/x-javascript",
+};
 
 // These types are excluded from the logic that allows all text/ types because
 // while they are technically text, it's very unlikely that a user expects to
@@ -146,8 +137,6 @@ MimeUtil::MimeUtil() {
     javascript_types_.insert(kSupportedJavascriptTypes[i]);
     non_image_types_.insert(kSupportedJavascriptTypes[i]);
   }
-  for (size_t i = 0; i < arraysize(kSupportedCertificateTypes); ++i)
-    non_image_types_.insert(kSupportedCertificateTypes[i].mime_type);
 }
 
 bool MimeUtil::IsSupportedImageMimeType(const std::string& mime_type) const {
@@ -207,28 +196,8 @@ bool IsSupportedJavascriptMimeType(const std::string& mime_type) {
   return g_mime_util.Get().IsSupportedJavascriptMimeType(mime_type);
 }
 
-bool IsSupportedCertificateMimeType(const std::string& mime_type) {
-  net::CertificateMimeType file_type =
-      GetCertificateMimeTypeForMimeType(mime_type);
-  return file_type != net::CERTIFICATE_MIME_TYPE_UNKNOWN;
-}
-
 bool IsSupportedMimeType(const std::string& mime_type) {
   return g_mime_util.Get().IsSupportedMimeType(mime_type);
-}
-
-net::CertificateMimeType GetCertificateMimeTypeForMimeType(
-    const std::string& mime_type) {
-  // Don't create a map, there is only one entry in the table,
-  // except on Android.
-  for (size_t i = 0; i < arraysize(kSupportedCertificateTypes); ++i) {
-    if (base::EqualsCaseInsensitiveASCII(
-            mime_type, kSupportedCertificateTypes[i].mime_type)) {
-      return kSupportedCertificateTypes[i].cert_type;
-    }
-  }
-
-  return net::CERTIFICATE_MIME_TYPE_UNKNOWN;
 }
 
 }  // namespace mime_util

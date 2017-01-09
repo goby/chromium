@@ -4,6 +4,9 @@
 
 #include "chrome/browser/chromeos/settings/token_encryptor.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/logging.h"
@@ -28,7 +31,7 @@ CryptohomeTokenEncryptor::CryptohomeTokenEncryptor(
   DCHECK(!system_salt.empty());
   // TODO(davidroche): should this use the system salt for both the password
   // and the salt value, or should this use a separate salt value?
-  system_salt_key_.reset(PassphraseToKey(system_salt_, system_salt_));
+  system_salt_key_ = PassphraseToKey(system_salt_, system_salt_);
 }
 
 CryptohomeTokenEncryptor::~CryptohomeTokenEncryptor() {
@@ -64,7 +67,7 @@ std::string CryptohomeTokenEncryptor::DecryptWithSystemSalt(
                              encrypted_token_hex);
 }
 
-crypto::SymmetricKey* CryptohomeTokenEncryptor::PassphraseToKey(
+std::unique_ptr<crypto::SymmetricKey> CryptohomeTokenEncryptor::PassphraseToKey(
     const std::string& passphrase,
     const std::string& salt) {
   return crypto::SymmetricKey::DeriveKeyFromPassword(
@@ -97,7 +100,7 @@ std::string CryptohomeTokenEncryptor::DecryptTokenWithKey(
     crypto::SymmetricKey* key,
     const std::string& salt,
     const std::string& encrypted_token_hex) {
-  std::vector<uint8> encrypted_token_bytes;
+  std::vector<uint8_t> encrypted_token_bytes;
   if (!base::HexStringToBytes(encrypted_token_hex, &encrypted_token_bytes)) {
     LOG(WARNING) << "Corrupt encrypted token found.";
     return std::string();

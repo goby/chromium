@@ -4,15 +4,19 @@
 
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_tamper_detection.h"
 
+#include <stddef.h>
+
 #include <algorithm>
-#include <cstring>
+#include <utility>
 
 #include "base/base64.h"
+#include "base/macros.h"
 #include "base/md5.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "net/base/mime_util.h"
 #include "net/http/http_response_headers.h"
@@ -81,7 +85,7 @@ namespace data_reduction_proxy {
 bool DataReductionProxyTamperDetection::DetectAndReport(
     const net::HttpResponseHeaders* headers,
     bool scheme_is_https,
-    int64 content_length) {
+    int64_t content_length) {
   if (headers == nullptr) {
     return false;
   }
@@ -111,7 +115,7 @@ bool DataReductionProxyTamperDetection::DetectAndReport(
   // Chrome-Proxy header has not been tampered with, and thus other
   // fingerprints are valid.
   bool tampered = false;
-  int64 original_content_length = -1;
+  int64_t original_content_length = -1;
   std::string fingerprint;
 
   if (GetDataReductionProxyActionFingerprintVia(headers, &fingerprint)) {
@@ -172,7 +176,7 @@ DataReductionProxyTamperDetection::DataReductionProxyTamperDetection(
 DataReductionProxyTamperDetection::~DataReductionProxyTamperDetection() {};
 
 void DataReductionProxyTamperDetection::ReportUMAForTamperDetectionCount(
-    int64 original_content_length) const {
+    int64_t original_content_length) const {
   REPORT_TAMPER_DETECTION_UMA(
       scheme_is_https_, "DataReductionProxy.HeaderTamperDetectionHTTPS",
       "DataReductionProxy.HeaderTamperDetectionHTTP", carrier_id_);
@@ -250,6 +254,10 @@ void DataReductionProxyTamperDetection::ReportUMAForTamperDetectionCount(
           "DataReductionProxy.HeaderTamperDetectionHTTP_Image_500KB",
           carrier_id_);
     }
+  } else if (net::MatchesMimeType("video/*", mime_type)) {
+    REPORT_TAMPER_DETECTION_UMA(
+        scheme_is_https_, "DataReductionProxy.HeaderTamperDetectionHTTPS_Video",
+        "DataReductionProxy.HeaderTamperDetectionHTTP_Video", carrier_id_);
   }
 }
 
@@ -257,7 +265,7 @@ void DataReductionProxyTamperDetection::ReportUMAForTamperDetectionCount(
 // fingerprint of received Chrome-Proxy header, and compares the two to see
 // whether they are equal or not.
 bool DataReductionProxyTamperDetection::ValidateChromeProxyHeader(
-    const std::string& fingerprint) const {
+    base::StringPiece fingerprint) const {
   std::string received_fingerprint;
   if (!base::Base64Decode(fingerprint, &received_fingerprint))
     return true;
@@ -288,7 +296,7 @@ void DataReductionProxyTamperDetection::
 // Reduction Proxy's name in Via header. |has_chrome_proxy_via_header| marks
 // that whether the Data Reduction Proxy's Via header occurs or not.
 bool DataReductionProxyTamperDetection::ValidateViaHeader(
-    const std::string& fingerprint,
+    base::StringPiece fingerprint,
     bool* has_chrome_proxy_via_header) const {
   bool has_intermediary;
   *has_chrome_proxy_via_header = HasDataReductionProxyViaHeader(
@@ -347,7 +355,8 @@ bool DataReductionProxyTamperDetection::ValidateOtherHeaders(
   // The first value is the base64 encoded fingerprint.
   std::string received_fingerprint;
   if (!it.GetNext() ||
-      !base::Base64Decode(it.value(), &received_fingerprint)) {
+      !base::Base64Decode(base::StringPiece(it.value_begin(), it.value_end()),
+                          &received_fingerprint)) {
     NOTREACHED();
     return true;
   }
@@ -357,8 +366,8 @@ bool DataReductionProxyTamperDetection::ValidateOtherHeaders(
   // calculation.
   while (it.GetNext()) {
     // Gets values of one header.
-    std::vector<std::string> response_header_values =
-        GetHeaderValues(response_headers_, it.value());
+    std::vector<std::string> response_header_values = GetHeaderValues(
+        response_headers_, base::StringPiece(it.value_begin(), it.value_end()));
     // Sorts the values and concatenate them, with delimiter ";". ";" can occur
     // in a header value and thus two different sets of header values could map
     // to the same string representation. This should be very rare.
@@ -383,9 +392,9 @@ void DataReductionProxyTamperDetection::
 }
 
 bool DataReductionProxyTamperDetection::ValidateContentLength(
-    const std::string& fingerprint,
-    int64 content_length,
-    int64* original_content_length) const {
+    base::StringPiece fingerprint,
+    int64_t content_length,
+    int64_t* original_content_length) const {
   DCHECK(original_content_length);
   // Abort, if Content-Length value from the Data Reduction Proxy does not
   // exist or it cannot be converted to an integer.
@@ -396,8 +405,8 @@ bool DataReductionProxyTamperDetection::ValidateContentLength(
 }
 
 void DataReductionProxyTamperDetection::ReportUMAForContentLength(
-    int64 content_length,
-    int64 original_content_length) const {
+    int64_t content_length,
+    int64_t original_content_length) const {
   // Gets MIME type of the response and reports to UMA histograms separately.
   // Divides MIME types into 4 groups: JavaScript, CSS, Images, and others.
   REPORT_TAMPER_DETECTION_UMA(
@@ -490,6 +499,12 @@ void DataReductionProxyTamperDetection::ReportUMAForContentLength(
       REPORT_TAMPER_DETECTION_UMA_COMPRESSION_RATIO(
           scheme_is_https_, "_Image_500KB", compression_ratio);
     }
+  } else if (net::MatchesMimeType("video/*", mime_type)) {
+    REPORT_TAMPER_DETECTION_UMA_AND_COMPRESSION_RATIO(
+        scheme_is_https_,
+        "DataReductionProxy.HeaderTamperedHTTPS_ContentLength_Video",
+        "DataReductionProxy.HeaderTamperedHTTP_ContentLength_Video",
+        carrier_id_, "_Video", compression_ratio);
   } else {
     REPORT_TAMPER_DETECTION_UMA(
         scheme_is_https_,
@@ -506,33 +521,40 @@ void DataReductionProxyTamperDetection::ReportUMAForContentLength(
 // 2) concatenate sorted values with a "," delimiter.
 std::string DataReductionProxyTamperDetection::ValuesToSortedString(
     std::vector<std::string>* values) {
-  std::string concatenated_values;
   DCHECK(values);
   if (!values) return "";
 
   std::sort(values->begin(), values->end());
-  for (size_t i = 0; i < values->size(); ++i) {
-    // Concatenates with delimiter ",".
-    concatenated_values += (*values)[i] + ",";
+
+  size_t expected_size = 0;
+  for (const auto& value : *values)
+    expected_size += value.size() + 1;
+
+  std::string joined;
+  joined.reserve(expected_size);
+  // Join all the header values together, including a trailing ','.
+  for (const auto& value : *values) {
+    joined.append(value);
+    joined.append(1, ',');
   }
-  return concatenated_values;
+  return joined;
 }
 
-void DataReductionProxyTamperDetection::GetMD5(
-    const std::string& input, std::string* output) {
+void DataReductionProxyTamperDetection::GetMD5(base::StringPiece input,
+                                               std::string* output) {
   base::MD5Digest digest;
-  base::MD5Sum(input.c_str(), input.size(), &digest);
+  base::MD5Sum(input.data(), input.size(), &digest);
   *output = std::string(reinterpret_cast<char*>(digest.a), arraysize(digest.a));
 }
 
 std::vector<std::string> DataReductionProxyTamperDetection::GetHeaderValues(
     const net::HttpResponseHeaders* headers,
-    const std::string& header_name) {
+    base::StringPiece header_name) {
   std::vector<std::string> values;
   std::string value;
-  void* iter = NULL;
+  size_t iter = 0;
   while (headers->EnumerateHeader(&iter, header_name, &value)) {
-    values.push_back(value);
+    values.push_back(std::move(value));
   }
   return values;
 }

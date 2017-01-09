@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/memory/singleton.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/services/gcm/gcm_profile_service_factory.h"
@@ -15,11 +16,11 @@
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/grit/browser_resources.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "grit/browser_resources.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_tpm_key_manager_factory.h"

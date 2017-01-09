@@ -4,13 +4,15 @@
 
 #include "components/dom_distiller/core/page_features.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -36,10 +38,10 @@ TEST(DomDistillerPageFeaturesTest, TestCalculateDerivedFeatures) {
           "components/test/data/dom_distiller/derived_features.json"),
       &expected_output_data));
 
-  scoped_ptr<base::Value> input_json = base::JSONReader::Read(input_data);
+  std::unique_ptr<base::Value> input_json = base::JSONReader::Read(input_data);
   ASSERT_TRUE(input_json);
 
-  scoped_ptr<base::Value> expected_output_json =
+  std::unique_ptr<base::Value> expected_output_json =
       base::JSONReader::Read(expected_output_data);
   ASSERT_TRUE(expected_output_json);
 
@@ -72,7 +74,7 @@ TEST(DomDistillerPageFeaturesTest, TestCalculateDerivedFeatures) {
     // JSON (and not a base::Value of the JSON itself)
     std::string stringified_json;
     ASSERT_TRUE(base::JSONWriter::Write(*core_features, &stringified_json));
-    scoped_ptr<base::Value> stringified_value(
+    std::unique_ptr<base::Value> stringified_value(
         new base::StringValue(stringified_json));
     std::vector<double> derived(
         CalculateDerivedFeaturesFromJSON(stringified_value.get()));
@@ -167,6 +169,26 @@ TEST(DomDistillerPageFeaturesTest, TestPath3) {
   EXPECT_EQ(0, lround(derived[11]));
   EXPECT_EQ(0, lround(derived[12]));
   EXPECT_EQ(0, lround(derived[13]));
-  EXPECT_EQ(0, lround(derived[14]));
+  EXPECT_EQ(1, lround(derived[14]));
+}
+
+TEST(DomDistillerPageFeaturesTest, TestPath4) {
+  GURL url("https://example.com/trailing/");
+
+  std::vector<double> derived(DeriveFromPath(url));
+  EXPECT_EQ(0, lround(derived[1]));
+  EXPECT_EQ(0, lround(derived[2]));
+  EXPECT_EQ(0, lround(derived[3]));
+  EXPECT_EQ(0, lround(derived[4]));
+  EXPECT_EQ(0, lround(derived[5]));
+  EXPECT_EQ(0, lround(derived[6]));
+  EXPECT_EQ(0, lround(derived[7]));
+  EXPECT_EQ(0, lround(derived[8]));
+  EXPECT_EQ(10, lround(derived[9]));
+  EXPECT_EQ(0, lround(derived[10]));
+  EXPECT_EQ(1, lround(derived[11]));
+  EXPECT_EQ(0, lround(derived[12]));
+  EXPECT_EQ(0, lround(derived[13]));
+  EXPECT_EQ(9, lround(derived[14]));
 }
 }

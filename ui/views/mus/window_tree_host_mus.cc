@@ -4,44 +4,64 @@
 
 #include "ui/views/mus/window_tree_host_mus.h"
 
-#include "components/bitmap_uploader/bitmap_uploader.h"
-#include "mojo/application/public/interfaces/shell.mojom.h"
+#include "base/memory/ptr_util.h"
+#include "services/ui/public/cpp/window.h"
+#include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
-#include "ui/base/view_prop.h"
 #include "ui/events/event.h"
+#include "ui/gfx/geometry/dip_util.h"
+#include "ui/platform_window/stub/stub_window.h"
 #include "ui/views/mus/input_method_mus.h"
 #include "ui/views/mus/native_widget_mus.h"
-#include "ui/views/mus/platform_window_mus.h"
 
 namespace views {
+
+namespace {
+static uint32_t accelerated_widget_count = 1;
+
+bool IsUsingTestContext() {
+  return aura::Env::GetInstance()->context_factory()->DoesCreateTestContexts();
+}
+
+}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // WindowTreeHostMus, public:
 
-WindowTreeHostMus::WindowTreeHostMus(mojo::Shell* shell,
-                                     NativeWidgetMus* native_widget,
-                                     mus::Window* window,
-                                     mus::mojom::SurfaceType surface_type)
-    : native_widget_(native_widget),
-      show_state_(ui::PLATFORM_WINDOW_STATE_UNKNOWN) {
-  SetPlatformWindow(make_scoped_ptr(new PlatformWindowMus(this, window)));
-  // The location of events is already transformed, and there is no way to
-  // correctly determine the reverse transform. So, don't attempt to transform
-  // event locations, else the root location is wrong.
-  // TODO(sky): we need to transform for device scale though.
-  dispatcher()->set_transform_events(false);
+WindowTreeHostMus::WindowTreeHostMus(NativeWidgetMus* native_widget,
+                                     ui::Window* window)
+    : native_widget_(native_widget) {
+  CreateCompositor();
+  gfx::AcceleratedWidget accelerated_widget;
+  if (IsUsingTestContext()) {
+    accelerated_widget = gfx::kNullAcceleratedWidget;
+  } else {
+    // We need accelerated widget numbers to be different for each
+    // window and fit in the smallest sizeof(AcceleratedWidget) uint32_t
+    // has this property.
+#if defined(OS_WIN) || defined(OS_ANDROID)
+    accelerated_widget =
+        reinterpret_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
+#else
+    accelerated_widget =
+        static_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
+#endif
+  }
+  // TODO(markdittmer): Use correct device-scale-factor from |window|.
+  OnAcceleratedWidgetAvailable(accelerated_widget, 1.f);
+
+  SetPlatformWindow(base::MakeUnique<ui::StubWindow>(
+      this,
+      false));  // Do not advertise accelerated widget; already set manually.
+
+  compositor()->SetWindow(window);
+
+  // Initialize the stub platform window bounds to those of the ui::Window.
+  platform_window()->SetBounds(gfx::ConvertRectToPixel(
+      compositor()->device_scale_factor(), window->bounds()));
+
   compositor()->SetHostHasTransparentBackground(true);
-
-  bitmap_uploader_.reset(new bitmap_uploader::BitmapUploader(window));
-  bitmap_uploader_->Init(shell);
-  prop_.reset(
-      new ui::ViewProp(GetAcceleratedWidget(),
-                       bitmap_uploader::kBitmapUploaderForAcceleratedWidget,
-                       bitmap_uploader_.get()));
-
-  input_method_.reset(new InputMethodMUS(this, window));
-  SetSharedInputMethod(input_method_.get());
 }
 
 WindowTreeHostMus::~WindowTreeHostMus() {
@@ -49,27 +69,15 @@ WindowTreeHostMus::~WindowTreeHostMus() {
   DestroyDispatcher();
 }
 
-PlatformWindowMus* WindowTreeHostMus::platform_window() {
-  return static_cast<PlatformWindowMus*>(
-      WindowTreeHostPlatform::platform_window());
-}
-
 void WindowTreeHostMus::DispatchEvent(ui::Event* event) {
-  if (event->IsKeyEvent() && GetInputMethod()) {
-    GetInputMethod()->DispatchKeyEvent(static_cast<ui::KeyEvent*>(event));
-    event->StopPropagation();
-    return;
-  }
+  // Key events are sent to InputMethodMus directly from NativeWidgetMus.
+  DCHECK(!event->IsKeyEvent());
   WindowTreeHostPlatform::DispatchEvent(event);
 }
 
 void WindowTreeHostMus::OnClosed() {
   if (native_widget_)
     native_widget_->OnPlatformWindowClosed();
-}
-
-void WindowTreeHostMus::OnWindowStateChanged(ui::PlatformWindowState state) {
-  show_state_ = state;
 }
 
 void WindowTreeHostMus::OnActivationChanged(bool active) {
@@ -80,6 +88,15 @@ void WindowTreeHostMus::OnActivationChanged(bool active) {
   if (native_widget_)
     native_widget_->OnActivationChanged(active);
   WindowTreeHostPlatform::OnActivationChanged(active);
+}
+
+void WindowTreeHostMus::OnCloseRequest() {
+  OnHostCloseRequested();
+}
+
+gfx::ICCProfile WindowTreeHostMus::GetICCProfileForCurrentDisplay() {
+  // TODO: This should read the profile from mus. crbug.com/647510
+  return gfx::ICCProfile();
 }
 
 }  // namespace views

@@ -5,9 +5,16 @@
 #include "base/at_exit.h"
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/i18n/icu_util.h"
+#include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "gin/array_buffer.h"
 #include "gin/modules/console.h"
 #include "gin/modules/module_runner_delegate.h"
@@ -67,7 +74,11 @@ int main(int argc, char** argv) {
 
   base::MessageLoop message_loop;
 
+  // Initialize the base::FeatureList since IsolateHolder can depend on it.
+  base::FeatureList::SetInstance(base::WrapUnique(new base::FeatureList));
+
   gin::IsolateHolder::Initialize(gin::IsolateHolder::kStrictMode,
+                                 gin::IsolateHolder::kStableV8Extras,
                                  gin::ArrayBufferAllocator::SharedInstance());
   gin::IsolateHolder instance;
 
@@ -86,10 +97,11 @@ int main(int argc, char** argv) {
       base::CommandLine::ForCurrentProcess()->GetArgs();
   for (base::CommandLine::StringVector::const_iterator it = args.begin();
        it != args.end(); ++it) {
-    base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
-        gin::Run, runner.GetWeakPtr(), base::FilePath(*it)));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::Bind(gin::Run, runner.GetWeakPtr(), base::FilePath(*it)));
   }
 
-  message_loop.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   return 0;
 }

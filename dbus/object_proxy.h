@@ -8,11 +8,13 @@
 #include <dbus/dbus.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
@@ -96,7 +98,7 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // in the |error| object.
   //
   // BLOCKING CALL.
-  virtual scoped_ptr<Response> CallMethodAndBlockWithErrorDetails(
+  virtual std::unique_ptr<Response> CallMethodAndBlockWithErrorDetails(
       MethodCall* method_call,
       int timeout_ms,
       ScopedDBusError* error);
@@ -105,8 +107,8 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // is returned. Returns NULL on error.
   //
   // BLOCKING CALL.
-  virtual scoped_ptr<Response> CallMethodAndBlock(MethodCall* method_call,
-                                                  int timeout_ms);
+  virtual std::unique_ptr<Response> CallMethodAndBlock(MethodCall* method_call,
+                                                       int timeout_ms);
 
   // Requests to call the method of the remote object.
   //
@@ -135,10 +137,10 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // from the method (i.e. calling a method that does not return a value),
   // EmptyResponseCallback() can be passed to the |callback| parameter.
   //
-  // If the method call is successful, a pointer to Response object will
-  // be passed to the callback. If unsuccessful, the error callback will be
-  // called and a pointer to ErrorResponse object will be passed to the error
-  // callback if available, otherwise NULL will be passed.
+  // If the method call is successful, |callback| will be invoked with a
+  // Response object. If unsuccessful, |error_callback| will be invoked with an
+  // ErrorResponse object (if the remote object returned an error) or nullptr
+  // (if a response was not received at all).
   //
   // Must be called in the origin thread.
   virtual void CallMethodWithErrorCallback(MethodCall* method_call,
@@ -172,7 +174,11 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // represented by |service_name_|.
   virtual void SetNameOwnerChangedCallback(NameOwnerChangedCallback callback);
 
-  // Runs the callback as soon as the service becomes available.
+  // Registers |callback| to run when the service becomes available. If the
+  // service is already available, or if connecting to the name-owner-changed
+  // signal fails, |callback| will be run once asynchronously. Otherwise,
+  // |callback| will be run once in the future after the service becomes
+  // available.
   virtual void WaitForServiceToBeAvailable(
       WaitForServiceToBeAvailableCallback callback);
 
@@ -288,7 +294,8 @@ class CHROME_DBUS_EXPORT ObjectProxy
   void UpdateNameOwnerAndBlock();
 
   // Handles NameOwnerChanged signal from D-Bus's special message bus.
-  DBusHandlerResult HandleNameOwnerChanged(scoped_ptr<dbus::Signal> signal);
+  DBusHandlerResult HandleNameOwnerChanged(
+      std::unique_ptr<dbus::Signal> signal);
 
   // Runs |name_owner_changed_callback_|.
   void RunNameOwnerChangedCallback(const std::string& old_owner,

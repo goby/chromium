@@ -8,6 +8,7 @@
 #include <set>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "components/bookmarks/browser/base_bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
 #include "ui/views/controls/menu/menu_delegate.h"
@@ -122,9 +123,9 @@ class BookmarkMenuController : public bookmarks::BaseBookmarkModelObserver,
   // BookmarkMenuController deletes itself as necessary.
   ~BookmarkMenuController() override;
 
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
-  scoped_ptr<BookmarkMenuDelegate> menu_delegate_;
+  std::unique_ptr<BookmarkMenuDelegate> menu_delegate_;
 
   // The node we're showing the contents of.
   const bookmarks::BookmarkNode* node_;

@@ -5,11 +5,13 @@
 #import "ios/chrome/browser/installation_notifier.h"
 
 #import <UIKit/UIKit.h>
+#include <stdint.h>
+
+#include <memory>
 
 #include "base/ios/weak_nsobject.h"
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "ios/web/public/web_thread.h"
 #include "net/base/backoff_entry.h"
@@ -61,7 +63,7 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
 @end
 
 @implementation InstallationNotifier {
-  scoped_ptr<net::BackoffEntry> _backoffEntry;
+  std::unique_ptr<net::BackoffEntry> _backoffEntry;
   base::scoped_nsprotocol<id<DispatcherProtocol>> _dispatcher;
   // Dictionary mapping URL schemes to mutable sets of observers.
   base::scoped_nsobject<NSMutableDictionary> _installedAppObservers;
@@ -130,7 +132,7 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
 }
 
 - (void)unregisterForNotifications:(id)observer {
-  DCHECK_CURRENTLY_ON_WEB_THREAD(web::WebThread::UI);
+  DCHECK_CURRENTLY_ON(web::WebThread::UI);
   NSValue* weakReferenceToObserver =
       [NSValue valueWithNonretainedObject:observer];
   [_notificationCenter removeObserver:observer];
@@ -154,7 +156,7 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
 }
 
 - (void)dispatchInstallationNotifierBlock {
-  DCHECK_CURRENTLY_ON_WEB_THREAD(web::WebThread::UI);
+  DCHECK_CURRENTLY_ON(web::WebThread::UI);
   int blockId = ++lastCreatedBlockId_;
   _backoffEntry->InformOfRequest(false);
   int64_t delayInNSec =
@@ -162,7 +164,7 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
   base::WeakNSObject<InstallationNotifier> weakSelf(self);
   [_dispatcher dispatchAfter:delayInNSec
                    withBlock:^{
-                     DCHECK_CURRENTLY_ON_WEB_THREAD(web::WebThread::UI);
+                     DCHECK_CURRENTLY_ON(web::WebThread::UI);
                      base::scoped_nsobject<InstallationNotifier> strongSelf(
                          [weakSelf retain]);
                      if (blockId == [strongSelf lastCreatedBlockId]) {
@@ -172,7 +174,7 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
 }
 
 - (void)pollForTheInstallationOfApps {
-  DCHECK_CURRENTLY_ON_WEB_THREAD(web::WebThread::UI);
+  DCHECK_CURRENTLY_ON(web::WebThread::UI);
   __block BOOL keepPolling = NO;
   NSMutableSet* keysToDelete = [NSMutableSet set];
   [_installedAppObservers enumerateKeysAndObjectsUsingBlock:^(id scheme,

@@ -42,39 +42,36 @@ namespace blink {
 
 class SQLTransactionBackend;
 
-class SQLTransactionCoordinator : public GarbageCollected<SQLTransactionCoordinator> {
-    WTF_MAKE_NONCOPYABLE(SQLTransactionCoordinator);
-public:
-    SQLTransactionCoordinator();
-    DECLARE_TRACE();
-    void acquireLock(SQLTransactionBackend*);
-    void releaseLock(SQLTransactionBackend*);
-    void shutdown();
+class SQLTransactionCoordinator
+    : public GarbageCollectedFinalized<SQLTransactionCoordinator> {
+  WTF_MAKE_NONCOPYABLE(SQLTransactionCoordinator);
 
-private:
-    typedef HeapDeque<Member<SQLTransactionBackend>> TransactionsQueue;
-    struct CoordinationInfo {
-        DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
-    public:
-        TransactionsQueue pendingTransactions;
-        HeapHashSet<Member<SQLTransactionBackend>> activeReadTransactions;
-        Member<SQLTransactionBackend> activeWriteTransaction;
+ public:
+  SQLTransactionCoordinator();
+  DECLARE_TRACE();
+  void acquireLock(SQLTransactionBackend*);
+  void releaseLock(SQLTransactionBackend*);
+  void shutdown();
 
-        DEFINE_INLINE_TRACE()
-        {
-            visitor->trace(pendingTransactions);
-            visitor->trace(activeReadTransactions);
-            visitor->trace(activeWriteTransaction);
-        }
-    };
-    // Maps database names to information about pending transactions
-    typedef HeapHashMap<String, CoordinationInfo> CoordinationInfoHeapMap;
-    CoordinationInfoHeapMap m_coordinationInfoMap;
-    bool m_isShuttingDown;
+ private:
+  typedef Deque<CrossThreadPersistent<SQLTransactionBackend>> TransactionsQueue;
+  struct CoordinationInfo {
+    DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
 
-    void processPendingTransactions(CoordinationInfo&);
+   public:
+    TransactionsQueue pendingTransactions;
+    HashSet<CrossThreadPersistent<SQLTransactionBackend>>
+        activeReadTransactions;
+    CrossThreadPersistent<SQLTransactionBackend> activeWriteTransaction;
+  };
+  // Maps database names to information about pending transactions
+  typedef HashMap<String, CoordinationInfo> CoordinationInfoHeapMap;
+  CoordinationInfoHeapMap m_coordinationInfoMap;
+  bool m_isShuttingDown;
+
+  void processPendingTransactions(CoordinationInfo&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SQLTransactionCoordinator_h
+#endif  // SQLTransactionCoordinator_h

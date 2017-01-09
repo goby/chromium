@@ -2,17 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "extensions/browser/api/socket/udp_socket.h"
+#include <stddef.h>
+#include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
+#include "extensions/browser/api/socket/udp_socket.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -28,8 +33,9 @@ static void OnConnected(int result) {
 
 static void OnCompleted(int bytes_read,
                         scoped_refptr<net::IOBuffer> io_buffer,
+                        bool socket_destroying,
                         const std::string& address,
-                        uint16 port) {
+                        uint16_t port) {
   // Do nothing; don't care.
 }
 
@@ -37,8 +43,8 @@ static const char test_message[] = "$$TESTMESSAGETESTMESSAGETESTMESSAGETEST$$";
 static const int test_message_length = arraysize(test_message);
 
 net::AddressList CreateAddressList(const char* address_string, int port) {
-  net::IPAddressNumber ip;
-  EXPECT_TRUE(net::ParseIPLiteralToNumber(address_string, &ip));
+  net::IPAddress ip;
+  EXPECT_TRUE(ip.AssignFromIPLiteral(address_string));
   return net::AddressList::CreateFromIPAddress(ip, port);
 }
 
@@ -89,32 +95,32 @@ TEST(UDPSocketUnitTest, TestUDPMulticastLoopbackMode) {
   socket.Connect(CreateAddressList(kGroup, 13333), base::Bind(&OnConnected));
 }
 
-static void QuitMessageLoop() {
-  base::MessageLoopForIO::current()->QuitNow();
-}
-
 // Send a test multicast packet every second.
 // Once the target socket received the packet, the message loop will exit.
-static void SendMulticastPacket(UDPSocket* src, int result) {
+static void SendMulticastPacket(const base::Closure& quit_run_loop,
+                                UDPSocket* src,
+                                int result) {
   if (result == 0) {
     scoped_refptr<net::IOBuffer> data = new net::WrappedIOBuffer(test_message);
     src->Write(data, test_message_length, base::Bind(&OnSendCompleted));
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&SendMulticastPacket, src, result),
+        FROM_HERE, base::Bind(&SendMulticastPacket, quit_run_loop, src, result),
         base::TimeDelta::FromSeconds(1));
   } else {
-    QuitMessageLoop();
+    quit_run_loop.Run();
     FAIL() << "Failed to connect to multicast address. Error code: " << result;
   }
 }
 
-static void OnMulticastReadCompleted(bool *packet_received,
+static void OnMulticastReadCompleted(const base::Closure& quit_run_loop,
+                                     bool* packet_received,
                                      int count,
-                                     scoped_refptr<net::IOBuffer> io_buffer) {
+                                     scoped_refptr<net::IOBuffer> io_buffer,
+                                     bool socket_destroying) {
   EXPECT_EQ(test_message_length, count);
   EXPECT_EQ(0, strncmp(io_buffer->data(), test_message, test_message_length));
   *packet_received = true;
-  QuitMessageLoop();
+  quit_run_loop.Run();
 }
 
 TEST(UDPSocketUnitTest, TestUDPMulticastRecv) {
@@ -125,21 +131,24 @@ TEST(UDPSocketUnitTest, TestUDPMulticastRecv) {
   UDPSocket dest("abcdefghijklmnopqrst");
   UDPSocket src("abcdefghijklmnopqrst");
 
+  base::RunLoop run_loop;
+
   // Receiver
   EXPECT_EQ(0, dest.Bind("0.0.0.0", kPort));
   EXPECT_EQ(0, dest.JoinGroup(kGroup));
-  dest.Read(1024, base::Bind(&OnMulticastReadCompleted, &packet_received));
+  dest.Read(1024, base::Bind(&OnMulticastReadCompleted, run_loop.QuitClosure(),
+                             &packet_received));
 
   // Sender
   EXPECT_EQ(0, src.SetMulticastTimeToLive(0));
   src.Connect(CreateAddressList(kGroup, kPort),
-              base::Bind(&SendMulticastPacket, &src));
+              base::Bind(&SendMulticastPacket, run_loop.QuitClosure(), &src));
 
   // If not received within the test action timeout, quit the message loop.
-  io_loop.task_runner()->PostDelayedTask(
-      FROM_HERE, base::Bind(&QuitMessageLoop), TestTimeouts::action_timeout());
+  io_loop.task_runner()->PostDelayedTask(FROM_HERE, run_loop.QuitClosure(),
+                                         TestTimeouts::action_timeout());
 
-  io_loop.Run();
+  run_loop.Run();
 
   EXPECT_TRUE(packet_received) << "Failed to receive from multicast address";
 }

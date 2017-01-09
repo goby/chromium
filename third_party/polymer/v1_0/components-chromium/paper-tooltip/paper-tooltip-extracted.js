@@ -17,7 +17,17 @@ Polymer({
          */
         for: {
           type: String,
-          observer: '_forChanged'
+          observer: '_findTarget'
+        },
+
+        /**
+         * Set this to true if you want to manually control when the tooltip
+         * is shown or hidden.
+         */
+        manualMode: {
+          type: Boolean,
+          value: false,
+          observer: '_manualModeChanged'
         },
 
         /**
@@ -95,7 +105,6 @@ Polymer({
 
       listeners: {
         'neon-animation-finish': '_onAnimationFinish',
-        'mouseenter': 'hide'
       },
 
       /**
@@ -120,23 +129,12 @@ Polymer({
       },
 
       attached: function() {
-        this._target = this.target;
-
-        this.listen(this._target, 'mouseenter', 'show');
-        this.listen(this._target, 'focus', 'show');
-        this.listen(this._target, 'mouseleave', 'hide');
-        this.listen(this._target, 'blur', 'hide');
-        this.listen(this._target, 'tap', 'hide');
+        this._findTarget();
       },
 
       detached: function() {
-        if (this._target) {
-          this.unlisten(this._target, 'mouseenter', 'show');
-          this.unlisten(this._target, 'focus', 'show');
-          this.unlisten(this._target, 'mouseleave', 'hide');
-          this.unlisten(this._target, 'blur', 'hide');
-          this.unlisten(this._target, 'tap', 'hide');
-        }
+        if (!this.manualMode)
+          this._removeListeners();
       },
 
       show: function() {
@@ -153,6 +151,7 @@ Polymer({
         this.toggleClass('hidden', false, this.$.tooltip);
         this.updatePosition();
 
+        this.animationConfig.entry[0].timing = this.animationConfig.entry[0].timing || {};
         this.animationConfig.entry[0].timing.delay = this.animationDelay;
         this._animationPlaying = true;
         this.playAnimation('entry');
@@ -178,12 +177,8 @@ Polymer({
         this.playAnimation('exit');
       },
 
-      _forChanged: function() {
-        this._target = this.target;
-      },
-
       updatePosition: function() {
-        if (!this._target)
+        if (!this._target || !this.offsetParent)
           return;
 
         var offset = this.offset;
@@ -248,10 +243,49 @@ Polymer({
 
       },
 
+      _addListeners: function() {
+        if (this._target) {
+          this.listen(this._target, 'mouseenter', 'show');
+          this.listen(this._target, 'focus', 'show');
+          this.listen(this._target, 'mouseleave', 'hide');
+          this.listen(this._target, 'blur', 'hide');
+          this.listen(this._target, 'tap', 'hide');
+        }
+        this.listen(this, 'mouseenter', 'hide');
+      },
+
+      _findTarget: function() {
+        if (!this.manualMode)
+          this._removeListeners();
+
+        this._target = this.target;
+
+        if (!this.manualMode)
+          this._addListeners();
+      },
+
+      _manualModeChanged: function() {
+        if (this.manualMode)
+          this._removeListeners();
+        else
+          this._addListeners();
+      },
+
       _onAnimationFinish: function() {
         this._animationPlaying = false;
         if (!this._showing) {
           this.toggleClass('hidden', true, this.$.tooltip);
         }
       },
+
+      _removeListeners: function() {
+        if (this._target) {
+          this.unlisten(this._target, 'mouseenter', 'show');
+          this.unlisten(this._target, 'focus', 'show');
+          this.unlisten(this._target, 'mouseleave', 'hide');
+          this.unlisten(this._target, 'blur', 'hide');
+          this.unlisten(this._target, 'tap', 'hide');
+        }
+        this.unlisten(this, 'mouseenter', 'hide');
+      }
     });

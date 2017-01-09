@@ -8,75 +8,76 @@
 namespace {
 
 TEST(EGLInitializationDisplaysTest, DisableD3D11) {
-  scoped_ptr<base::CommandLine> command_line(
+  std::unique_ptr<base::CommandLine> command_line(
       new base::CommandLine(base::CommandLine::NO_PROGRAM));
 
-  std::vector<gfx::DisplayType> displays;
+  std::vector<gl::DisplayType> displays;
 
   // using --disable-d3d11 with the default --use-angle should never return
   // D3D11.
   command_line->AppendSwitch(switches::kDisableD3D11);
-  GetEGLInitDisplays(true, true, command_line.get(), &displays);
-  EXPECT_EQ(std::find(displays.begin(), displays.end(), gfx::ANGLE_D3D11),
+  GetEGLInitDisplays(true, true, true, command_line.get(), &displays);
+  EXPECT_EQ(std::find(displays.begin(), displays.end(), gl::ANGLE_D3D11),
             displays.end());
 
   // Specifically requesting D3D11 should always return it if the extension is
   // available
   command_line->AppendSwitchASCII(switches::kUseANGLE,
-                                  gfx::kANGLEImplementationD3D11Name);
+                                  gl::kANGLEImplementationD3D11Name);
   displays.clear();
-  GetEGLInitDisplays(true, true, command_line.get(), &displays);
-  EXPECT_NE(std::find(displays.begin(), displays.end(), gfx::ANGLE_D3D11),
+  GetEGLInitDisplays(true, true, true, command_line.get(), &displays);
+  EXPECT_NE(std::find(displays.begin(), displays.end(), gl::ANGLE_D3D11),
             displays.end());
   EXPECT_EQ(displays.size(), 1u);
 
   // Specifically requesting D3D11 should not return D3D11 if the extension is
   // not available
   displays.clear();
-  GetEGLInitDisplays(false, true, command_line.get(), &displays);
-  EXPECT_EQ(std::find(displays.begin(), displays.end(), gfx::ANGLE_D3D11),
+  GetEGLInitDisplays(false, true, true, command_line.get(), &displays);
+  EXPECT_EQ(std::find(displays.begin(), displays.end(), gl::ANGLE_D3D11),
             displays.end());
 }
 
 TEST(EGLInitializationDisplaysTest, SwiftShader) {
-  scoped_ptr<base::CommandLine> command_line(
+  std::unique_ptr<base::CommandLine> command_line(
       new base::CommandLine(base::CommandLine::NO_PROGRAM));
 
-  std::vector<gfx::DisplayType> displays;
+  std::vector<gl::DisplayType> displays;
 
   // If swiftshader is requested, only SWIFT_SHADER should be returned
   command_line->AppendSwitchASCII(switches::kUseGL,
-                                  gfx::kGLImplementationSwiftShaderName);
+                                  gl::kGLImplementationSwiftShaderName);
   displays.clear();
-  GetEGLInitDisplays(true, true, command_line.get(), &displays);
-  EXPECT_NE(std::find(displays.begin(), displays.end(), gfx::SWIFT_SHADER),
+  GetEGLInitDisplays(true, true, true, command_line.get(), &displays);
+  EXPECT_NE(std::find(displays.begin(), displays.end(), gl::SWIFT_SHADER),
             displays.end());
   EXPECT_EQ(displays.size(), 1u);
 
   // Even if there are other flags, swiftshader should take prescedence
   command_line->AppendSwitchASCII(switches::kUseANGLE,
-                                  gfx::kANGLEImplementationD3D11Name);
+                                  gl::kANGLEImplementationD3D11Name);
   displays.clear();
-  GetEGLInitDisplays(true, true, command_line.get(), &displays);
-  EXPECT_NE(std::find(displays.begin(), displays.end(), gfx::SWIFT_SHADER),
+  GetEGLInitDisplays(true, true, true, command_line.get(), &displays);
+  EXPECT_NE(std::find(displays.begin(), displays.end(), gl::SWIFT_SHADER),
             displays.end());
   EXPECT_EQ(displays.size(), 1u);
 }
 
 TEST(EGLInitializationDisplaysTest, DefaultRenderers) {
-  scoped_ptr<base::CommandLine> command_line(
+  std::unique_ptr<base::CommandLine> command_line(
       new base::CommandLine(base::CommandLine::NO_PROGRAM));
 
   // Default without --use-angle flag
-  std::vector<gfx::DisplayType> default_no_flag_displays;
-  GetEGLInitDisplays(true, true, command_line.get(), &default_no_flag_displays);
+  std::vector<gl::DisplayType> default_no_flag_displays;
+  GetEGLInitDisplays(true, true, true, command_line.get(),
+                     &default_no_flag_displays);
   EXPECT_FALSE(default_no_flag_displays.empty());
 
   // Default with --use-angle flag
   command_line->AppendSwitchASCII(switches::kUseANGLE,
-                                  gfx::kANGLEImplementationDefaultName);
-  std::vector<gfx::DisplayType> default_with_flag_displays;
-  GetEGLInitDisplays(true, true, command_line.get(),
+                                  gl::kANGLEImplementationDefaultName);
+  std::vector<gl::DisplayType> default_with_flag_displays;
+  GetEGLInitDisplays(true, true, true, command_line.get(),
                      &default_with_flag_displays);
   EXPECT_FALSE(default_with_flag_displays.empty());
 
@@ -85,47 +86,47 @@ TEST(EGLInitializationDisplaysTest, DefaultRenderers) {
 }
 
 TEST(EGLInitializationDisplaysTest, NonDefaultRenderers) {
-  scoped_ptr<base::CommandLine> command_line(
+  std::unique_ptr<base::CommandLine> command_line(
       new base::CommandLine(base::CommandLine::NO_PROGRAM));
 
-  std::vector<gfx::DisplayType> displays;
-
-  // WARP
-  command_line->AppendSwitchASCII(switches::kUseANGLE,
-                                  gfx::kANGLEImplementationWARPName);
-  displays.clear();
-  GetEGLInitDisplays(true, true, command_line.get(), &displays);
-  EXPECT_NE(std::find(displays.begin(), displays.end(), gfx::ANGLE_WARP),
-            displays.end());
-  EXPECT_EQ(displays.size(), 1u);
+  std::vector<gl::DisplayType> displays;
 
   // OpenGL
   command_line->AppendSwitchASCII(switches::kUseANGLE,
-                                  gfx::kANGLEImplementationOpenGLName);
+                                  gl::kANGLEImplementationOpenGLName);
   displays.clear();
-  GetEGLInitDisplays(true, true, command_line.get(), &displays);
-  EXPECT_NE(std::find(displays.begin(), displays.end(), gfx::ANGLE_OPENGL),
+  GetEGLInitDisplays(true, true, true, command_line.get(), &displays);
+  EXPECT_NE(std::find(displays.begin(), displays.end(), gl::ANGLE_OPENGL),
             displays.end());
   EXPECT_EQ(displays.size(), 1u);
 
   // OpenGLES
   command_line->AppendSwitchASCII(switches::kUseANGLE,
-                                  gfx::kANGLEImplementationOpenGLESName);
+                                  gl::kANGLEImplementationOpenGLESName);
   displays.clear();
-  GetEGLInitDisplays(true, true, command_line.get(), &displays);
-  EXPECT_NE(std::find(displays.begin(), displays.end(), gfx::ANGLE_OPENGLES),
+  GetEGLInitDisplays(true, true, true, command_line.get(), &displays);
+  EXPECT_NE(std::find(displays.begin(), displays.end(), gl::ANGLE_OPENGLES),
+            displays.end());
+  EXPECT_EQ(displays.size(), 1u);
+
+  // Null
+  command_line->AppendSwitchASCII(switches::kUseANGLE,
+                                  gl::kANGLEImplementationNullName);
+  displays.clear();
+  GetEGLInitDisplays(true, true, true, command_line.get(), &displays);
+  EXPECT_NE(std::find(displays.begin(), displays.end(), gl::ANGLE_NULL),
             displays.end());
   EXPECT_EQ(displays.size(), 1u);
 }
 
 TEST(EGLInitializationDisplaysTest, NoExtensions) {
-  scoped_ptr<base::CommandLine> command_line(
+  std::unique_ptr<base::CommandLine> command_line(
       new base::CommandLine(base::CommandLine::NO_PROGRAM));
 
   // With no angle platform extensions, only DEFAULT should be available
-  std::vector<gfx::DisplayType> displays;
-  GetEGLInitDisplays(false, false, command_line.get(), &displays);
-  EXPECT_NE(std::find(displays.begin(), displays.end(), gfx::DEFAULT),
+  std::vector<gl::DisplayType> displays;
+  GetEGLInitDisplays(false, false, false, command_line.get(), &displays);
+  EXPECT_NE(std::find(displays.begin(), displays.end(), gl::DEFAULT),
             displays.end());
   EXPECT_EQ(displays.size(), 1u);
 }

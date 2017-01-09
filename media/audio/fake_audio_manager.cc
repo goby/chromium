@@ -4,6 +4,9 @@
 
 #include "media/audio/fake_audio_manager.h"
 
+#include <algorithm>
+#include <utility>
+
 namespace media {
 
 namespace {
@@ -13,8 +16,14 @@ const int kDefaultSampleRate = 48000;
 
 }  // namespace
 
-FakeAudioManager::FakeAudioManager(AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(audio_log_factory) {}
+FakeAudioManager::FakeAudioManager(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+    AudioLogFactory* audio_log_factory)
+    : AudioManagerBase(std::move(task_runner),
+                       std::move(worker_task_runner),
+                       audio_log_factory) {
+}
 
 FakeAudioManager::~FakeAudioManager() {
   Shutdown();
@@ -25,27 +34,35 @@ bool FakeAudioManager::HasAudioOutputDevices() { return false; }
 
 bool FakeAudioManager::HasAudioInputDevices() { return false; }
 
+const char* FakeAudioManager::GetName() {
+  return "Fake";
+}
+
 // Implementation of AudioManagerBase.
 AudioOutputStream* FakeAudioManager::MakeLinearOutputStream(
-    const AudioParameters& params) {
+    const AudioParameters& params,
+    const LogCallback& log_callback) {
   return FakeAudioOutputStream::MakeFakeStream(this, params);
 }
 
 AudioOutputStream* FakeAudioManager::MakeLowLatencyOutputStream(
     const AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   return FakeAudioOutputStream::MakeFakeStream(this, params);
 }
 
 AudioInputStream* FakeAudioManager::MakeLinearInputStream(
     const AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   return FakeAudioInputStream::MakeFakeStream(this, params);
 }
 
 AudioInputStream* FakeAudioManager::MakeLowLatencyInputStream(
     const AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   return FakeAudioInputStream::MakeFakeStream(this, params);
 }
 

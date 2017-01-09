@@ -32,47 +32,58 @@
 #define SVGNumberOptionalNumber_h
 
 #include "core/svg/SVGNumber.h"
+#include "core/svg/SVGParsingError.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class SVGNumberOptionalNumber : public SVGPropertyBase {
-public:
-    // Tearoff of SVGNumberOptionalNumber is never created.
-    typedef void TearOffType;
-    typedef void PrimitiveType;
+class SVGNumberOptionalNumber final : public SVGPropertyBase {
+ public:
+  // Tearoff of SVGNumberOptionalNumber is never created.
+  typedef void TearOffType;
+  typedef void PrimitiveType;
 
-    static PassRefPtrWillBeRawPtr<SVGNumberOptionalNumber> create(PassRefPtrWillBeRawPtr<SVGNumber> firstNumber, PassRefPtrWillBeRawPtr<SVGNumber> secondNumber)
-    {
-        return adoptRefWillBeNoop(new SVGNumberOptionalNumber(firstNumber, secondNumber));
-    }
+  static SVGNumberOptionalNumber* create(SVGNumber* firstNumber,
+                                         SVGNumber* secondNumber) {
+    return new SVGNumberOptionalNumber(firstNumber, secondNumber);
+  }
 
-    PassRefPtrWillBeRawPtr<SVGNumberOptionalNumber> clone() const;
-    PassRefPtrWillBeRawPtr<SVGPropertyBase> cloneForAnimation(const String&) const override;
+  SVGNumberOptionalNumber* clone() const;
+  SVGPropertyBase* cloneForAnimation(const String&) const override;
 
-    String valueAsString() const override;
-    void setValueAsString(const String&, ExceptionState&);
+  String valueAsString() const override;
+  SVGParsingError setValueAsString(const String&);
 
-    void add(PassRefPtrWillBeRawPtr<SVGPropertyBase>, SVGElement*) override;
-    void calculateAnimatedValue(SVGAnimationElement*, float percentage, unsigned repeatCount, PassRefPtrWillBeRawPtr<SVGPropertyBase> from, PassRefPtrWillBeRawPtr<SVGPropertyBase> to, PassRefPtrWillBeRawPtr<SVGPropertyBase> toAtEndOfDurationValue, SVGElement* contextElement) override;
-    float calculateDistance(PassRefPtrWillBeRawPtr<SVGPropertyBase> to, SVGElement* contextElement) override;
+  void add(SVGPropertyBase*, SVGElement*) override;
+  void calculateAnimatedValue(SVGAnimationElement*,
+                              float percentage,
+                              unsigned repeatCount,
+                              SVGPropertyBase* from,
+                              SVGPropertyBase* to,
+                              SVGPropertyBase* toAtEndOfDurationValue,
+                              SVGElement* contextElement) override;
+  float calculateDistance(SVGPropertyBase* to,
+                          SVGElement* contextElement) override;
 
-    static AnimatedPropertyType classType() { return AnimatedNumberOptionalNumber; }
+  static AnimatedPropertyType classType() {
+    return AnimatedNumberOptionalNumber;
+  }
+  AnimatedPropertyType type() const override { return classType(); }
 
-    PassRefPtrWillBeRawPtr<SVGNumber> firstNumber() const { return m_firstNumber; }
-    PassRefPtrWillBeRawPtr<SVGNumber> secondNumber() const { return m_secondNumber; }
+  SVGNumber* firstNumber() const { return m_firstNumber; }
+  SVGNumber* secondNumber() const { return m_secondNumber; }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-protected:
-    SVGNumberOptionalNumber(PassRefPtrWillBeRawPtr<SVGNumber> firstNumber, PassRefPtrWillBeRawPtr<SVGNumber> secondNumber);
+ protected:
+  SVGNumberOptionalNumber(SVGNumber* firstNumber, SVGNumber* secondNumber);
 
-    RefPtrWillBeMember<SVGNumber> m_firstNumber;
-    RefPtrWillBeMember<SVGNumber> m_secondNumber;
+  Member<SVGNumber> m_firstNumber;
+  Member<SVGNumber> m_secondNumber;
 };
 
 DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGNumberOptionalNumber);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGNumberOptionalNumber_h
+#endif  // SVGNumberOptionalNumber_h

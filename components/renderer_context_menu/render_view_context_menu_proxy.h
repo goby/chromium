@@ -13,6 +13,14 @@ class RenderViewHost;
 class WebContents;
 }
 
+namespace gfx {
+class Image;
+}
+
+namespace ui {
+class MenuModel;
+}
+
 // An interface that controls a RenderViewContextMenu instance from observers.
 // This interface is designed mainly for controlling the instance while showing
 // so we can add a context-menu item that takes long time to create its text,
@@ -85,6 +93,12 @@ class RenderViewContextMenuProxy {
                               bool enabled,
                               bool hidden,
                               const base::string16& title) = 0;
+
+  // Update the icon of the specified context-menu item.
+  virtual void UpdateMenuIcon(int command_id, const gfx::Image& image) = 0;
+
+  // Add spell check service item to the context menu.
+  virtual void AddSpellCheckServiceItem(bool is_checked) = 0;
 
   // Retrieve the given associated objects with a context menu.
   virtual content::RenderViewHost* GetRenderViewHost() const = 0;

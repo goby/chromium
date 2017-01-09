@@ -5,18 +5,19 @@
 #ifndef CHROME_BROWSER_SUPERVISED_USER_SUPERVISED_USER_SETTINGS_SERVICE_H_
 #define CHROME_BROWSER_SUPERVISED_USER_SUPERVISED_USER_SETTINGS_SERVICE_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/callback_list.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_store.h"
 #include "base/values.h"
 #include "chrome/browser/supervised_user/supervised_users.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "sync/api/syncable_service.h"
+#include "components/prefs/pref_store.h"
+#include "components/sync/model/syncable_service.h"
 
 class PersistentPrefStore;
 class Profile;
@@ -79,7 +80,7 @@ class SupervisedUserSettingsService : public KeyedService,
 
   // Adds a callback to be called when supervised user settings are initially
   // available, or when they change.
-  scoped_ptr<SettingsCallbackList::Subscription> Subscribe(
+  std::unique_ptr<SettingsCallbackList::Subscription> Subscribe(
       const SettingsCallback& callback) WARN_UNUSED_RESULT;
 
   // Gets the associated profile
@@ -94,7 +95,7 @@ class SupervisedUserSettingsService : public KeyedService,
   void SetActive(bool active);
 
   // Whether supervised user settings are available.
-  bool IsReady();
+  bool IsReady() const;
 
   // Clears all supervised user settings and items.
   void Clear();
@@ -109,10 +110,17 @@ class SupervisedUserSettingsService : public KeyedService,
   // the file), but they are only uploaded (whereas supervised user settings are
   // only downloaded), and never passed to the preference system.
   // An example of an uploaded item is an access request to a blocked URL.
-  void UploadItem(const std::string& key, scoped_ptr<base::Value> value);
+  void UploadItem(const std::string& key, std::unique_ptr<base::Value> value);
+
+  // Updates supervised user setting and uploads it to the Sync server.
+  // An example is when an extension updates without permission
+  // increase, the approved version information should be updated accordingly.
+  void UpdateSetting(const std::string& key,
+                     std::unique_ptr<base::Value> value);
 
   // Sets the setting with the given |key| to a copy of the given |value|.
-  void SetLocalSetting(const std::string& key, scoped_ptr<base::Value> value);
+  void SetLocalSetting(const std::string& key,
+                       std::unique_ptr<base::Value> value);
 
   // Public for testing.
   static syncer::SyncData CreateSyncDataForSetting(const std::string& name,
@@ -125,8 +133,8 @@ class SupervisedUserSettingsService : public KeyedService,
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -151,29 +159,32 @@ class SupervisedUserSettingsService : public KeyedService,
 
   // Returns a dictionary with all supervised user settings if the service is
   // active, or NULL otherwise.
-  scoped_ptr<base::DictionaryValue> GetSettings();
+  std::unique_ptr<base::DictionaryValue> GetSettings();
 
   // Sends the settings to all subscribers. This method should be called by the
   // subclass whenever the settings change.
   void InformSubscribers();
 
+  void PushItemToSync(const std::string& key,
+                      std::unique_ptr<base::Value> value);
+
   // Used for persisting the settings. Unlike other PrefStores, this one is not
   // directly hooked up to the PrefService.
   scoped_refptr<PersistentPrefStore> store_;
 
-  Profile* profile_;
+  Profile* const profile_;
 
   bool active_;
 
   bool initialization_failed_;
 
   // A set of local settings that are fixed and not configured remotely.
-  scoped_ptr<base::DictionaryValue> local_settings_;
+  std::unique_ptr<base::DictionaryValue> local_settings_;
 
   SettingsCallbackList callback_list_;
 
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
-  scoped_ptr<syncer::SyncErrorFactory> error_handler_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncErrorFactory> error_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(SupervisedUserSettingsService);
 };

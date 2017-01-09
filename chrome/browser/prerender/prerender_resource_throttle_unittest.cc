@@ -7,6 +7,7 @@
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -15,8 +16,8 @@
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_resource_throttle.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_request_info.h"
+#include "content/public/browser/resource_throttle.h"
 #include "content/public/test/test_browser_thread.h"
 #include "ipc/ipc_message.h"
 #include "net/base/request_priority.h"
@@ -27,7 +28,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using content::BrowserThread;
-using content::ResourceType;
 
 namespace prerender {
 
@@ -91,7 +91,7 @@ class TestPrerenderManager : public PrerenderManager {
 };
 
 class DeferredRedirectDelegate : public net::URLRequest::Delegate,
-                                 public content::ResourceController {
+                                 public content::ResourceThrottle::Delegate {
  public:
   DeferredRedirectDelegate()
       : throttle_(NULL),
@@ -102,7 +102,7 @@ class DeferredRedirectDelegate : public net::URLRequest::Delegate,
 
   void SetThrottle(PrerenderResourceThrottle* throttle) {
     throttle_ = throttle;
-    throttle_->set_controller_for_testing(this);
+    throttle_->set_delegate_for_testing(this);
   }
 
   void Run() {
@@ -125,10 +125,10 @@ class DeferredRedirectDelegate : public net::URLRequest::Delegate,
     throttle_->WillRedirectRequest(redirect_info, &was_deferred_);
     run_loop_->Quit();
   }
-  void OnResponseStarted(net::URLRequest* request) override {}
+  void OnResponseStarted(net::URLRequest* request, int net_error) override {}
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override {}
 
-  // content::ResourceController implementation:
+  // content::ResourceThrottle::Delegate implementation:
   void Cancel() override {
     EXPECT_FALSE(cancel_called_);
     EXPECT_FALSE(resume_called_);
@@ -148,7 +148,7 @@ class DeferredRedirectDelegate : public net::URLRequest::Delegate,
   }
 
  private:
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   PrerenderResourceThrottle* throttle_;
   bool was_deferred_;
   bool cancel_called_;
@@ -189,9 +189,7 @@ class PrerenderResourceThrottleTest : public testing::Test {
   }
 
   // Runs any tasks queued on either thread.
-  void RunEvents() {
-    message_loop_.RunUntilIdle();
-  }
+  void RunEvents() { base::RunLoop().RunUntilIdle(); }
 
  private:
   base::MessageLoopForIO message_loop_;
@@ -210,10 +208,9 @@ TEST_F(PrerenderResourceThrottleTest, RedirectResume) {
   // Fake a request.
   net::TestURLRequestContext url_request_context;
   DeferredRedirectDelegate delegate;
-  scoped_ptr<net::URLRequest> request(url_request_context.CreateRequest(
+  std::unique_ptr<net::URLRequest> request(url_request_context.CreateRequest(
       net::URLRequestMockHTTPJob::GetMockUrl("prerender/image-deferred.png"),
-      net::DEFAULT_PRIORITY,
-      &delegate));
+      net::DEFAULT_PRIORITY, &delegate));
   content::ResourceRequestInfo::AllocateForTesting(
       request.get(),
       content::RESOURCE_TYPE_IMAGE,
@@ -254,10 +251,9 @@ TEST_F(PrerenderResourceThrottleTest, RedirectMainFrame) {
   // Fake a request.
   net::TestURLRequestContext url_request_context;
   DeferredRedirectDelegate delegate;
-  scoped_ptr<net::URLRequest> request(url_request_context.CreateRequest(
+  std::unique_ptr<net::URLRequest> request(url_request_context.CreateRequest(
       net::URLRequestMockHTTPJob::GetMockUrl("prerender/image-deferred.png"),
-      net::DEFAULT_PRIORITY,
-      &delegate));
+      net::DEFAULT_PRIORITY, &delegate));
   content::ResourceRequestInfo::AllocateForTesting(
       request.get(),
       content::RESOURCE_TYPE_MAIN_FRAME,
@@ -296,10 +292,9 @@ TEST_F(PrerenderResourceThrottleTest, RedirectSyncXHR) {
   // Fake a request.
   net::TestURLRequestContext url_request_context;
   DeferredRedirectDelegate delegate;
-  scoped_ptr<net::URLRequest> request(url_request_context.CreateRequest(
+  std::unique_ptr<net::URLRequest> request(url_request_context.CreateRequest(
       net::URLRequestMockHTTPJob::GetMockUrl("prerender/image-deferred.png"),
-      net::DEFAULT_PRIORITY,
-      &delegate));
+      net::DEFAULT_PRIORITY, &delegate));
   content::ResourceRequestInfo::AllocateForTesting(
       request.get(),
       content::RESOURCE_TYPE_XHR,

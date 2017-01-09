@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_RESET_SCREEN_HANDLER_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/screens/reset_view.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "content/public/browser/web_ui.h"
@@ -24,7 +25,6 @@ class ResetScreenHandler : public ResetView,
   // ResetView implementation:
   void Bind(ResetModel& model) override;
   void Unbind() override;
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
 

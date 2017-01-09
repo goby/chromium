@@ -1,5 +1,5 @@
 {
-  "x-version": 15,
+  "x-version": 24,
   "google-talk": {
     "mime_types": [
     ],
@@ -115,9 +115,9 @@
     ],
     "versions": [
       {
-        "version": "19.0.0.245",
+        "version": "23.0.0.207",
         "status": "requires_authorization",
-        "reference": "https://helpx.adobe.com/security/products/flash-player/apsb15-28.html"
+        "reference": "https://helpx.adobe.com/security/products/flash-player/apsb16-37.html"
       }
     ],
     "lang": "en-US",
@@ -277,8 +277,8 @@
     "versions": [
       {
         "version": "0",
-        "status": "up_to_date",
-        "comment": "Chrome PDF Viewer has no version information."
+        "status": "fully_trusted",
+        "comment": "Google Chrome PDF Viewer has no version information."
       }
     ],
     "name": "Chrome PDF Viewer",
@@ -290,8 +290,8 @@
     "versions": [
       {
         "version": "0",
-        "status": "up_to_date",
-        "comment": "Chrome PDF Viewer has no version information."
+        "status": "fully_trusted",
+        "comment": "Chromium PDF Viewer has no version information."
       }
     ],
     "name": "Chromium PDF Viewer",

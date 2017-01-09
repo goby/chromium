@@ -5,10 +5,12 @@
 #ifndef CHROME_TEST_BASE_IN_PROCESS_BROWSER_TEST_H_
 #define CHROME_TEST_BASE_IN_PROCESS_BROWSER_TEST_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_base.h"
@@ -38,10 +40,6 @@ class Profile;
 class ScopedBundleSwizzlerMac;
 #endif  // defined(OS_MACOSX)
 
-namespace content {
-class ContentRendererClient;
-}
-
 // Base class for tests wanting to bring up a browser in the unit test process.
 // Writing tests with InProcessBrowserTest is slightly different than that of
 // other tests. This is necessitated by InProcessBrowserTest running a message
@@ -58,12 +56,21 @@ class ContentRendererClient;
 //   SetUpInProcessBrowserTestFixture and other related hook methods for a
 //   cleaner alternative).
 //
-// Following three hook methods are called in sequence before calling
+// The following four hook methods are called in sequence before calling
 // BrowserMain(), thus no browser has been created yet. They are mainly for
 // setting up the environment for running the browser.
 // . SetUpUserDataDirectory()
 // . SetUpCommandLine()
+// . SetUpDefaultCommandLine()
 // . SetUpInProcessBrowserTestFixture()
+//
+// Default command line switches are added in the default implementation of
+// SetUpDefaultCommandLine(). Addtional command line switches can be simply
+// appended in SetUpCommandLine() without the need to invoke
+// InProcessBrowserTest::SetUpCommandLine(). If a test needs to change the
+// default command line, it can override SetUpDefaultCommandLine(), where it
+// should invoke InProcessBrowserTest::SetUpDefaultCommandLine() to get the
+// default swtiches, and modify them as needed.
 //
 // SetUpOnMainThread() is called just after creating the default browser object
 // and before executing the real test code. It's mainly for setting up things
@@ -107,6 +114,17 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   // Restores state configured in SetUp.
   void TearDown() override;
 
+  using SetUpBrowserFunction = bool(const Browser*);
+
+  // Sets a function that is called from InProcessBrowserTest::SetUp() with the
+  // first browser. This is intended to set up state applicable to all tests
+  // in the suite. For example, interactive_ui_tests installs a function that
+  // ensures the first browser is in the foreground, active and has focus.
+  static void set_global_browser_set_up_function(
+      SetUpBrowserFunction* set_up_function) {
+    global_browser_set_up_function_ = set_up_function;
+  }
+
  protected:
   // Returns the browser created by CreateBrowser.
   Browser* browser() const { return browser_; }
@@ -132,6 +150,13 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   void AddTabAtIndex(int index,
                      const GURL& url,
                      ui::PageTransition transition);
+
+  // Setups default command line that will be used to launch the child browser
+  // process with an in-process test. Called by SetUp() after SetupCommandLine()
+  // to add default commandline switches. A default implementation is provided
+  // in this class. If a test does not want to use the default implementation,
+  // it should override this method.
+  virtual void SetUpDefaultCommandLine(base::CommandLine* command_line);
 
   // Initializes the contents of the user data directory. Called by SetUp()
   // after creating the user data directory, but before any browser is launched.
@@ -205,11 +230,6 @@ class InProcessBrowserTest : public content::BrowserTestBase {
     open_about_blank_on_browser_launch_ = value;
   }
 
-  // This must be called before RunTestOnMainThreadLoop() to have any effect.
-  void set_multi_desktop_test(bool multi_desktop_test) {
-    multi_desktop_test_ = multi_desktop_test;
-  }
-
   // Runs accessibility checks and sets |error_message| if it fails.
   bool RunAccessibilityChecks(std::string* error_message);
 
@@ -221,9 +241,7 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   // Quits all open browsers and waits until there are no more browsers.
   void QuitBrowsers();
 
-  // Prepare command line that will be used to launch the child browser process
-  // with an in-process test.
-  void PrepareTestCommandLine(base::CommandLine* command_line);
+  static SetUpBrowserFunction* global_browser_set_up_function_;
 
   // Browser created from CreateBrowser.
   Browser* browser_;
@@ -238,21 +256,17 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   // True if the about:blank tab should be opened when the browser is launched.
   bool open_about_blank_on_browser_launch_;
 
-  // True if this is a multi-desktop test (in which case this browser test will
-  // not ensure that Browsers are only created on the tested desktop).
-  bool multi_desktop_test_;
-
   // True if the accessibility test should run for a particular test case.
   // This is reset for every test case.
   bool run_accessibility_checks_for_test_case_;
 
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool* autorelease_pool_;
-  scoped_ptr<ScopedBundleSwizzlerMac> bundle_swizzler_;
+  std::unique_ptr<ScopedBundleSwizzlerMac> bundle_swizzler_;
 #endif  // OS_MACOSX
 
 #if defined(OS_WIN)
-  scoped_ptr<base::win::ScopedCOMInitializer> com_initializer_;
+  std::unique_ptr<base::win::ScopedCOMInitializer> com_initializer_;
 #endif
 };
 

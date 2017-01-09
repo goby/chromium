@@ -5,11 +5,11 @@
 #ifndef SharedContextRateLimiter_h
 #define SharedContextRateLimiter_h
 
-#include "public/platform/WebGraphicsContext3D.h"
+#include "gpu/command_buffer/client/gles2_interface.h"
 #include "wtf/Allocator.h"
 #include "wtf/Deque.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -36,21 +36,24 @@ class WebGraphicsContext3DProvider;
 //   a new one created.
 
 class SharedContextRateLimiter final {
-    USING_FAST_MALLOC(SharedContextRateLimiter);
-    WTF_MAKE_NONCOPYABLE(SharedContextRateLimiter);
-public:
-    static PassOwnPtr<SharedContextRateLimiter> create(unsigned maxPendingTicks);
-    void tick();
-    void reset();
-private:
-    SharedContextRateLimiter(unsigned maxPendingTicks);
+  USING_FAST_MALLOC(SharedContextRateLimiter);
+  WTF_MAKE_NONCOPYABLE(SharedContextRateLimiter);
 
-    OwnPtr<WebGraphicsContext3DProvider> m_contextProvider;
-    Deque<WebGLId> m_queries;
-    unsigned m_maxPendingTicks;
-    bool m_canUseSyncQueries;
+ public:
+  static std::unique_ptr<SharedContextRateLimiter> create(
+      unsigned maxPendingTicks);
+  void tick();
+  void reset();
+
+ private:
+  SharedContextRateLimiter(unsigned maxPendingTicks);
+
+  std::unique_ptr<WebGraphicsContext3DProvider> m_contextProvider;
+  Deque<GLuint> m_queries;
+  unsigned m_maxPendingTicks;
+  bool m_canUseSyncQueries;
 };
 
-} // blink
+}  // namespace blink
 
 #endif

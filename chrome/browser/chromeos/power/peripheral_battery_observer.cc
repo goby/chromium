@@ -6,13 +6,13 @@
 
 #include <vector>
 
+#include "ash/common/strings/grit/ash_strings.h"
 #include "ash/shell.h"
-#include "ash/strings/grit/ash_strings.h"
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/notification.h"

@@ -5,18 +5,20 @@
 #ifndef MEDIA_AUDIO_WIN_WAVEIN_INPUT_WIN_H_
 #define MEDIA_AUDIO_WIN_WAVEIN_INPUT_WIN_H_
 
-#include <string>
-
 #include <windows.h>
 #include <mmsystem.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <memory>
+#include <string>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "base/win/scoped_handle.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
@@ -100,13 +102,13 @@ class PCMWaveInAudioInputStream : public AudioInputStream {
   const int num_buffers_;
 
   // The size in bytes of each audio buffer.
-  uint32 buffer_size_;
+  uint32_t buffer_size_;
 
   // Channels, 1 or 2.
   const int channels_;
 
   // Contains the unique name of the selected endpoint device.
-  // Note that AudioManagerBase::kDefaultDeviceId represents the default
+  // Note that AudioDeviceDescription::kDefaultDeviceId represents the default
   // device role and is not a valid ID as such.
   std::string device_id_;
 
@@ -127,7 +129,7 @@ class PCMWaveInAudioInputStream : public AudioInputStream {
 
   // Extra audio bus used for storage of deinterleaved data for the OnData
   // callback.
-  scoped_ptr<media::AudioBus> audio_bus_;
+  std::unique_ptr<media::AudioBus> audio_bus_;
 
   DISALLOW_COPY_AND_ASSIGN(PCMWaveInAudioInputStream);
 };

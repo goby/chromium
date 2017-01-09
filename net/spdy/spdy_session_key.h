@@ -5,6 +5,7 @@
 #ifndef NET_SPDY_SPDY_SESSION_KEY_H_
 #define NET_SPDY_SPDY_SESSION_KEY_H_
 
+#include "net/base/net_export.h"
 #include "net/base/privacy_mode.h"
 #include "net/proxy/proxy_server.h"
 
@@ -21,6 +22,8 @@ class NET_EXPORT_PRIVATE SpdySessionKey {
   // Temporary hack for implicit copy constructor
   SpdySessionKey(const HostPortProxyPair& host_port_proxy_pair,
                  PrivacyMode privacy_mode);
+
+  SpdySessionKey(const SpdySessionKey& other);
 
   ~SpdySessionKey();
 
@@ -55,4 +58,3 @@ class NET_EXPORT_PRIVATE SpdySessionKey {
 }  // namespace net
 
 #endif  // NET_SPDY_SPDY_SESSION_KEY_H_
-

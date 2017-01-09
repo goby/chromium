@@ -8,11 +8,11 @@
 #include <list>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
 #include "chrome/browser/extensions/window_controller.h"
 
-class Profile;
 class UIThreadExtensionFunction;
 
 namespace extensions {

@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_SHARED_WORKER_DEVTOOLS_AGENT_HOST_H_
 #define CONTENT_BROWSER_DEVTOOLS_SHARED_WORKER_DEVTOOLS_AGENT_HOST_H_
 
+#include "base/macros.h"
 #include "content/browser/devtools/worker_devtools_agent_host.h"
 
 namespace content {
@@ -19,10 +20,11 @@ class SharedWorkerDevToolsAgentHost : public WorkerDevToolsAgentHost {
                                 const SharedWorkerInstance& shared_worker);
 
   // DevToolsAgentHost override.
-  Type GetType() override;
+  std::string GetType() override;
   std::string GetTitle() override;
   GURL GetURL() override;
   bool Activate() override;
+  void Reload() override;
   bool Close() override;
 
   bool Matches(const SharedWorkerInstance& other);
@@ -31,7 +33,7 @@ class SharedWorkerDevToolsAgentHost : public WorkerDevToolsAgentHost {
   friend class SharedWorkerDevToolsManagerTest;
 
   ~SharedWorkerDevToolsAgentHost() override;
-  scoped_ptr<SharedWorkerInstance> shared_worker_;
+  std::unique_ptr<SharedWorkerInstance> shared_worker_;
 
   DISALLOW_COPY_AND_ASSIGN(SharedWorkerDevToolsAgentHost);
 };

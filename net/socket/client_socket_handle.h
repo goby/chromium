@@ -5,11 +5,12 @@
 #ifndef NET_SOCKET_CLIENT_SOCKET_HANDLE_H_
 #define NET_SOCKET_CLIENT_SOCKET_HANDLE_H_
 
+#include <memory>
 #include <string>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "net/base/completion_callback.h"
 #include "net/base/ip_endpoint.h"
@@ -19,11 +20,17 @@
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_info.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_pool.h"
 #include "net/socket/connection_attempts.h"
 #include "net/socket/stream_socket.h"
-#include "net/ssl/ssl_failure_state.h"
+
+namespace base {
+namespace trace_event {
+class ProcessMemoryDump;
+}
+}
 
 namespace net {
 
@@ -49,6 +56,8 @@ class NET_EXPORT ClientSocketHandle {
   // ClientSocketPool to obtain a connected socket, possibly reusing one.  This
   // method returns either OK or ERR_IO_PENDING.  On ERR_IO_PENDING, |priority|
   // is used to determine the placement in ClientSocketPool's wait list.
+  // If |respect_limits| is DISABLED, will bypass the wait list, but |priority|
+  // must also be HIGHEST, if set.
   //
   // If this method succeeds, then the socket member will be set to an existing
   // connected socket if an existing connected socket was available to reuse,
@@ -77,9 +86,10 @@ class NET_EXPORT ClientSocketHandle {
   int Init(const std::string& group_name,
            const scoped_refptr<typename PoolType::SocketParams>& socket_params,
            RequestPriority priority,
+           ClientSocketPool::RespectLimits respect_limits,
            const CompletionCallback& callback,
            PoolType* pool,
-           const BoundNetLog& net_log);
+           const NetLogWithSource& net_log);
 
   // An initialized handle can be reset, which causes it to return to the
   // un-initialized state.  This releases the underlying socket, which in the
@@ -110,12 +120,6 @@ class NET_EXPORT ClientSocketHandle {
   // Returns true when Init() has completed successfully.
   bool is_initialized() const { return is_initialized_; }
 
-  // Returns the time tick when Init() was called.
-  base::TimeTicks init_time() const { return init_time_; }
-
-  // Returns the time between Init() and when is_initialized() becomes true.
-  base::TimeDelta setup_time() const { return setup_time_; }
-
   // Sets the portion of LoadTimingInfo related to connection establishment, and
   // the socket id.  |is_reused| is needed because the handle may not have full
   // reuse information.  |load_timing_info| must have all default values when
@@ -124,20 +128,22 @@ class NET_EXPORT ClientSocketHandle {
   bool GetLoadTimingInfo(bool is_reused,
                          LoadTimingInfo* load_timing_info) const;
 
+  // Dumps memory allocation stats. |parent_dump_absolute_name| is the name
+  // used by the parent MemoryAllocatorDump in the memory dump hierarchy.
+  void DumpMemoryStats(base::trace_event::ProcessMemoryDump* pmd,
+                       const std::string& parent_dump_absolute_name) const;
+
   // Used by ClientSocketPool to initialize the ClientSocketHandle.
   //
   // SetSocket() may also be used if this handle is used as simply for
   // socket storage (e.g., http://crbug.com/37810).
-  void SetSocket(scoped_ptr<StreamSocket> s);
+  void SetSocket(std::unique_ptr<StreamSocket> s);
   void set_reuse_type(SocketReuseType reuse_type) { reuse_type_ = reuse_type; }
   void set_idle_time(base::TimeDelta idle_time) { idle_time_ = idle_time; }
   void set_pool_id(int id) { pool_id_ = id; }
   void set_is_ssl_error(bool is_ssl_error) { is_ssl_error_ = is_ssl_error; }
   void set_ssl_error_response_info(const HttpResponseInfo& ssl_error_state) {
     ssl_error_response_info_ = ssl_error_state;
-  }
-  void set_ssl_failure_state(SSLFailureState ssl_failure_state) {
-    ssl_failure_state_ = ssl_failure_state;
   }
   void set_pending_http_proxy_connection(ClientSocketHandle* connection) {
     pending_http_proxy_connection_.reset(connection);
@@ -148,7 +154,7 @@ class NET_EXPORT ClientSocketHandle {
 
   // Only valid if there is no |socket_|.
   bool is_ssl_error() const {
-    DCHECK(socket_.get() == NULL);
+    DCHECK(!socket_);
     return is_ssl_error_;
   }
   // On an ERR_PROXY_AUTH_REQUESTED error, the |headers| and |auth_challenge|
@@ -157,7 +163,6 @@ class NET_EXPORT ClientSocketHandle {
   const HttpResponseInfo& ssl_error_response_info() const {
     return ssl_error_response_info_;
   }
-  SSLFailureState ssl_failure_state() const { return ssl_failure_state_; }
   ClientSocketHandle* release_pending_http_proxy_connection() {
     return pending_http_proxy_connection_.release();
   }
@@ -172,7 +177,7 @@ class NET_EXPORT ClientSocketHandle {
 
   // SetSocket() must be called with a new socket before this handle
   // is destroyed if is_initialized() is true.
-  scoped_ptr<StreamSocket> PassSocket();
+  std::unique_ptr<StreamSocket> PassSocket();
 
   // These may only be used if is_initialized() is true.
   const std::string& group_name() const { return group_name_; }
@@ -206,7 +211,7 @@ class NET_EXPORT ClientSocketHandle {
   bool is_initialized_;
   ClientSocketPool* pool_;
   HigherLayeredPool* higher_pool_;
-  scoped_ptr<StreamSocket> socket_;
+  std::unique_ptr<StreamSocket> socket_;
   std::string group_name_;
   SocketReuseType reuse_type_;
   CompletionCallback callback_;
@@ -215,13 +220,10 @@ class NET_EXPORT ClientSocketHandle {
   int pool_id_;  // See ClientSocketPool::ReleaseSocket() for an explanation.
   bool is_ssl_error_;
   HttpResponseInfo ssl_error_response_info_;
-  SSLFailureState ssl_failure_state_;
-  scoped_ptr<ClientSocketHandle> pending_http_proxy_connection_;
+  std::unique_ptr<ClientSocketHandle> pending_http_proxy_connection_;
   std::vector<ConnectionAttempt> connection_attempts_;
-  base::TimeTicks init_time_;
-  base::TimeDelta setup_time_;
 
-  NetLog::Source requesting_source_;
+  NetLogSource requesting_source_;
 
   // Timing information is set when a connection is successfully established.
   LoadTimingInfo::ConnectTiming connect_timing_;
@@ -235,9 +237,10 @@ int ClientSocketHandle::Init(
     const std::string& group_name,
     const scoped_refptr<typename PoolType::SocketParams>& socket_params,
     RequestPriority priority,
+    ClientSocketPool::RespectLimits respect_limits,
     const CompletionCallback& callback,
     PoolType* pool,
-    const BoundNetLog& net_log) {
+    const NetLogWithSource& net_log) {
   requesting_source_ = net_log.source();
 
   CHECK(!group_name.empty());
@@ -245,9 +248,8 @@ int ClientSocketHandle::Init(
   ResetErrorState();
   pool_ = pool;
   group_name_ = group_name;
-  init_time_ = base::TimeTicks::Now();
-  int rv = pool_->RequestSocket(
-      group_name, &socket_params, priority, this, callback_, net_log);
+  int rv = pool_->RequestSocket(group_name, &socket_params, priority,
+                                respect_limits, this, callback_, net_log);
   if (rv == ERR_IO_PENDING) {
     user_callback_ = callback;
   } else {

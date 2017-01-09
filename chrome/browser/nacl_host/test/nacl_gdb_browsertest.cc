@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/win/windows_version.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/ppapi/ppapi_test.h"
 #include "components/nacl/common/nacl_switches.h"
@@ -36,7 +39,7 @@ class NaClGdbTest : public PPAPINaClNewlibTest {
 
   void RunWithNaClGdb(const std::string& test_name) {
     base::FilePath mock_nacl_gdb_file;
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     std::string content;
     // TODO(halyavin): Make this test work on Windows 32-bit. Currently this
     // is not possible because NaCl doesn't work without sandbox since 1Gb of

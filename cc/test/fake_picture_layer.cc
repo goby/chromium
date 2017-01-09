@@ -4,39 +4,37 @@
 
 #include "cc/test/fake_picture_layer.h"
 
+#include "cc/proto/layer.pb.h"
 #include "cc/test/fake_picture_layer_impl.h"
 
 namespace cc {
 
-FakePictureLayer::FakePictureLayer(const LayerSettings& settings,
-                                   ContentLayerClient* client)
-    : PictureLayer(settings, client),
+FakePictureLayer::FakePictureLayer(ContentLayerClient* client)
+    : PictureLayer(client),
       update_count_(0),
-      push_properties_count_(0),
-      always_update_resources_(false) {
+      always_update_resources_(false),
+      force_unsuitable_for_gpu_rasterization_(false) {
   SetBounds(gfx::Size(1, 1));
   SetIsDrawable(true);
 }
 
-FakePictureLayer::FakePictureLayer(
-    const LayerSettings& settings,
-    ContentLayerClient* client,
-    scoped_ptr<DisplayListRecordingSource> source)
-    : PictureLayer(settings, client, std::move(source)),
+FakePictureLayer::FakePictureLayer(ContentLayerClient* client,
+                                   std::unique_ptr<RecordingSource> source)
+    : PictureLayer(client, std::move(source)),
       update_count_(0),
-      push_properties_count_(0),
-      always_update_resources_(false) {
+      always_update_resources_(false),
+      force_unsuitable_for_gpu_rasterization_(false) {
   SetBounds(gfx::Size(1, 1));
   SetIsDrawable(true);
 }
 
 FakePictureLayer::~FakePictureLayer() {}
 
-scoped_ptr<LayerImpl> FakePictureLayer::CreateLayerImpl(
+std::unique_ptr<LayerImpl> FakePictureLayer::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   if (is_mask())
-    return FakePictureLayerImpl::CreateMask(tree_impl, layer_id_);
-  return FakePictureLayerImpl::Create(tree_impl, layer_id_);
+    return FakePictureLayerImpl::CreateMask(tree_impl, id());
+  return FakePictureLayerImpl::Create(tree_impl, id());
 }
 
 bool FakePictureLayer::Update() {
@@ -45,9 +43,15 @@ bool FakePictureLayer::Update() {
   return updated || always_update_resources_;
 }
 
-void FakePictureLayer::PushPropertiesTo(LayerImpl* layer) {
-  PictureLayer::PushPropertiesTo(layer);
-  push_properties_count_++;
+bool FakePictureLayer::IsSuitableForGpuRasterization() const {
+  if (force_unsuitable_for_gpu_rasterization_)
+    return false;
+  return PictureLayer::IsSuitableForGpuRasterization();
+}
+
+void FakePictureLayer::SetTypeForProtoSerialization(
+    proto::LayerNode* proto) const {
+  proto->set_type(proto::LayerNode::FAKE_PICTURE_LAYER);
 }
 
 }  // namespace cc

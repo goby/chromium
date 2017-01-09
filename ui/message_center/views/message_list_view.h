@@ -8,6 +8,7 @@
 #include <list>
 #include <set>
 
+#include "base/macros.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -17,27 +18,27 @@
 #include "ui/views/animation/bounds_animator_observer.h"
 #include "ui/views/view.h"
 
-namespace gfx {
-class Canvas;
-}
-
 namespace ui {
 class Layer;
 }
 
 namespace message_center {
 
-class MessageCenterView;
 class MessageView;
 
 // Displays a list of messages for rich notifications. Functions as an array of
 // MessageViews and animates them on transitions. It also supports
 // repositioning.
-class MessageListView : public views::View,
-                        public views::BoundsAnimatorObserver {
+class MESSAGE_CENTER_EXPORT MessageListView
+    : public views::View,
+      public views::BoundsAnimatorObserver {
  public:
-  explicit MessageListView(MessageCenterView* message_center_view,
-                           bool top_down);
+  class Observer {
+   public:
+    virtual void OnAllNotificationsCleared() = 0;
+  };
+
+  MessageListView();
   ~MessageListView() override;
 
   void AddNotificationAt(MessageView* view, int i);
@@ -45,9 +46,12 @@ class MessageListView : public views::View,
   void UpdateNotification(MessageView* view, const Notification& notification);
   void SetRepositionTarget(const gfx::Rect& target_rect);
   void ResetRepositionSession();
-  void ClearAllNotifications(const gfx::Rect& visible_scroll_rect);
+  void ClearAllClosableNotifications(const gfx::Rect& visible_scroll_rect);
 
-  MESSAGE_CENTER_EXPORT void SetRepositionTargetForTest(
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
+
+  void SetRepositionTargetForTest(
       const gfx::Rect& target_rect);
 
  protected:
@@ -64,6 +68,7 @@ class MessageListView : public views::View,
 
  private:
   friend class MessageCenterViewTest;
+  friend class MessageListViewTest;
 
   bool IsValidChild(const views::View* child) const;
   void DoUpdateIfPossible();
@@ -84,17 +89,15 @@ class MessageListView : public views::View,
 
   // Animate clearing one notification.
   void AnimateClearingOneNotification();
-  MessageCenterView* message_center_view() const {
-    return message_center_view_;
-  }
 
-  MessageCenterView* message_center_view_;  // Weak reference.
+  // List of MessageListView::Observer
+  base::ObserverList<Observer> observers_;
+
   // The top position of the reposition target rectangle.
   int reposition_top_;
   int fixed_height_;
   bool has_deferred_task_;
   bool clear_all_started_;
-  bool top_down_;
   std::set<views::View*> adding_views_;
   std::set<views::View*> deleting_views_;
   std::set<views::View*> deleted_when_done_;
@@ -110,4 +113,5 @@ class MessageListView : public views::View,
 };
 
 }  // namespace message_center
+
 #endif  // UI_MESSAGE_CENTER_VIEWS_MESSAGE_LIST_VIEW_H_

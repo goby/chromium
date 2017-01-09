@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_CHROMEOS_UPGRADE_DETECTOR_CHROMEOS_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/upgrade_detector.h"
@@ -55,7 +56,7 @@ class UpgradeDetectorChromeos : public UpgradeDetector,
   bool initialized_;
   base::Time upgrade_detected_time_;
 
-  scoped_ptr<ChannelsRequester> channels_requester_;
+  std::unique_ptr<ChannelsRequester> channels_requester_;
 
   base::WeakPtrFactory<UpgradeDetectorChromeos> weak_factory_;
 

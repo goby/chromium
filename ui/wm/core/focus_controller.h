@@ -5,8 +5,10 @@
 #ifndef UI_WM_CORE_FOCUS_CONTROLLER_H_
 #define UI_WM_CORE_FOCUS_CONTROLLER_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/scoped_observer.h"
 #include "ui/aura/client/focus_client.h"
@@ -47,7 +49,7 @@ class WM_EXPORT FocusController : public aura::client::ActivationClient,
   explicit FocusController(FocusRules* rules);
   ~FocusController() override;
 
- private:
+ protected:
   // Overridden from aura::client::ActivationClient:
   void AddObserver(aura::client::ActivationChangeObserver* observer) override;
   void RemoveObserver(
@@ -79,6 +81,7 @@ class WM_EXPORT FocusController : public aura::client::ActivationClient,
   void OnWindowHierarchyChanging(const HierarchyChangeParams& params) override;
   void OnWindowHierarchyChanged(const HierarchyChangeParams& params) override;
 
+ private:
   // Internal implementation that coordinates window focus and activation
   // changes.
   void FocusAndActivateWindow(
@@ -121,7 +124,7 @@ class WM_EXPORT FocusController : public aura::client::ActivationClient,
   bool updating_focus_;
   bool updating_activation_;
 
-  scoped_ptr<FocusRules> rules_;
+  std::unique_ptr<FocusRules> rules_;
 
   base::ObserverList<aura::client::ActivationChangeObserver>
       activation_observers_;

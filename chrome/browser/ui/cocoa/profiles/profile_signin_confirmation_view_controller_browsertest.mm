@@ -7,6 +7,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
@@ -40,7 +41,8 @@ class ProfileSigninConfirmationViewControllerTest
                                       backing:NSBackingStoreBuffered
                                         defer:NO]);
     base::Closure close = base::Bind(
-        &ProfileSigninConfirmationViewControllerTest::OnClose, this);
+        &ProfileSigninConfirmationViewControllerTest::OnClose,
+        base::Unretained(this));
     controller_.reset([[ProfileSigninConfirmationViewController alloc]
                         initWithBrowser:browser()
                                username:username()

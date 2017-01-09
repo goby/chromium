@@ -16,8 +16,10 @@ namespace braille_display_private {
 class StubBrailleController : public BrailleController {
  public:
   StubBrailleController();
-  scoped_ptr<DisplayState> GetDisplayState() override;
-  void WriteDots(const std::vector<char>& cells) override;
+  std::unique_ptr<DisplayState> GetDisplayState() override;
+  void WriteDots(const std::vector<char>& cells,
+                 unsigned int cols,
+                 unsigned int rows) override;
   void AddObserver(BrailleObserver* observer) override;
   void RemoveObserver(BrailleObserver* observer) override;
 

@@ -6,8 +6,9 @@
 #define CONTENT_PUBLIC_RENDERER_PLATFORM_EVENT_OBSERVER_H_
 
 #include "base/logging.h"
-#include "content/public/renderer/render_process_observer.h"
+#include "base/macros.h"
 #include "content/public/renderer/render_thread.h"
+#include "content/public/renderer/render_thread_observer.h"
 
 namespace blink {
 class WebPlatformEventListener;
@@ -40,7 +41,7 @@ class PlatformEventObserverBase {
 // registered as an observer via the constructor taking a RenderThread.
 template <typename ListenerType>
 class PlatformEventObserver : public PlatformEventObserverBase,
-                              public RenderProcessObserver {
+                              public RenderThreadObserver {
  public:
   // Creates a PlatformEventObserver that doesn't listen to responses from the
   // browser process. Can be used for testing purposes or for observers that

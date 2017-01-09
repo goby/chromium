@@ -6,6 +6,7 @@
 #define MEDIA_BASE_RENDERER_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "media/base/buffering_state.h"
@@ -16,7 +17,7 @@
 namespace media {
 
 class DemuxerStreamProvider;
-class VideoFrame;
+class RendererClient;
 
 class MEDIA_EXPORT Renderer {
  public:
@@ -26,27 +27,13 @@ class MEDIA_EXPORT Renderer {
   virtual ~Renderer();
 
   // Initializes the Renderer with |demuxer_stream_provider|, executing
-  // |init_cb| upon completion.  If initialization fails, only |init_cb| (not
-  // |error_cb|) should be called.  |demuxer_stream_provider| must be valid for
+  // |init_cb| upon completion. |demuxer_stream_provider| must be valid for
   // the lifetime of the Renderer object.  |init_cb| must only be run after this
   // method has returned.  Firing |init_cb| may result in the immediate
   // destruction of the caller, so it must be run only prior to returning.
-  //
-  // Permanent callbacks:
-  // - |statistics_cb|: Executed periodically with rendering statistics.
-  // - |buffering_state_cb|: Executed when buffering state is changed.
-  // - |ended_cb|: Executed when rendering has reached the end of stream.
-  // - |error_cb|: Executed if any error was encountered after initialization.
-  // - |waiting_for_decryption_key_cb|: Executed whenever the key needed to
-  //                                    decrypt the stream is not available.
-  virtual void Initialize(
-      DemuxerStreamProvider* demuxer_stream_provider,
-      const PipelineStatusCB& init_cb,
-      const StatisticsCB& statistics_cb,
-      const BufferingStateCB& buffering_state_cb,
-      const base::Closure& ended_cb,
-      const PipelineStatusCB& error_cb,
-      const base::Closure& waiting_for_decryption_key_cb) = 0;
+  virtual void Initialize(DemuxerStreamProvider* demuxer_stream_provider,
+                          RendererClient* client,
+                          const PipelineStatusCB& init_cb) = 0;
 
   // Associates the |cdm_context| with this Renderer for decryption (and
   // decoding) of media data, then fires |cdm_attached_cb| with the result.
@@ -61,7 +48,7 @@ class MEDIA_EXPORT Renderer {
   // Starts rendering from |time|.
   virtual void StartPlayingFrom(base::TimeDelta time) = 0;
 
-  // Updates the current playback rate. The default playback rate should be 1.
+  // Updates the current playback rate. The default playback rate should be 0.
   virtual void SetPlaybackRate(double playback_rate) = 0;
 
   // Sets the output volume. The default volume should be 1.
@@ -69,12 +56,6 @@ class MEDIA_EXPORT Renderer {
 
   // Returns the current media time.
   virtual base::TimeDelta GetMediaTime() = 0;
-
-  // Returns whether |this| renders audio.
-  virtual bool HasAudio() = 0;
-
-  // Returns whether |this| renders video.
-  virtual bool HasVideo() = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(Renderer);

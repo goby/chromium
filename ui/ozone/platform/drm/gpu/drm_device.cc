@@ -9,11 +9,15 @@
 #include <unistd.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
+#include <utility>
 
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/free_deleter.h"
 #include "base/message_loop/message_loop.h"
+#include "base/posix/safe_strerror.h"
 #include "base/task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
@@ -111,6 +115,176 @@ bool CanQueryForResources(int fd) {
   return !drmIoctl(fd, DRM_IOCTL_MODE_GETRESOURCES, &resources);
 }
 
+// TODO(robert.bradford): Replace with libdrm structures after libdrm roll.
+// https://crbug.com/586475
+struct DrmColorLut {
+  uint16_t red;
+  uint16_t green;
+  uint16_t blue;
+  uint16_t reserved;
+};
+
+struct DrmColorCtm {
+  int64_t ctm_coeff[9];
+};
+
+struct DrmModeCreateBlob {
+  uint64_t data;
+  uint32_t length;
+  uint32_t blob_id;
+};
+
+struct DrmModeDestroyBlob {
+  uint32_t blob_id;
+};
+
+#ifndef DRM_IOCTL_MODE_CREATEPROPBLOB
+#define DRM_IOCTL_MODE_CREATEPROPBLOB DRM_IOWR(0xBD, struct DrmModeCreateBlob)
+#endif
+
+#ifndef DRM_IOCTL_MODE_DESTROYPROPBLOB
+#define DRM_IOCTL_MODE_DESTROYPROPBLOB DRM_IOWR(0xBE, struct DrmModeDestroyBlob)
+#endif
+
+int CreatePropertyBlob(int fd, const void* data, size_t length, uint32_t* id) {
+  DrmModeCreateBlob create;
+  int ret;
+
+  if (length >= 0xffffffff)
+    return -ERANGE;
+
+  memset(&create, 0, sizeof(create));
+
+  create.length = length;
+  create.data = (uintptr_t)data;
+  create.blob_id = 0;
+  *id = 0;
+
+  ret = drmIoctl(fd, DRM_IOCTL_MODE_CREATEPROPBLOB, &create);
+  ret = ret < 0 ? -errno : ret;
+  if (ret != 0)
+    return ret;
+
+  *id = create.blob_id;
+  return 0;
+}
+
+int DestroyPropertyBlob(int fd, uint32_t id) {
+  DrmModeDestroyBlob destroy;
+  int ret;
+
+  memset(&destroy, 0, sizeof(destroy));
+  destroy.blob_id = id;
+  ret = drmIoctl(fd, DRM_IOCTL_MODE_DESTROYPROPBLOB, &destroy);
+  return ret < 0 ? -errno : ret;
+}
+
+using ScopedDrmColorLutPtr = std::unique_ptr<DrmColorLut, base::FreeDeleter>;
+using ScopedDrmColorCtmPtr = std::unique_ptr<DrmColorCtm, base::FreeDeleter>;
+
+ScopedDrmColorLutPtr CreateLutBlob(
+    const std::vector<GammaRampRGBEntry>& source) {
+  TRACE_EVENT0("drm", "CreateLutBlob");
+  if (source.empty())
+    return nullptr;
+
+  ScopedDrmColorLutPtr lut(
+      static_cast<DrmColorLut*>(malloc(sizeof(DrmColorLut) * source.size())));
+  DrmColorLut* p = lut.get();
+  for (size_t i = 0; i < source.size(); ++i) {
+    p[i].red = source[i].r;
+    p[i].green = source[i].g;
+    p[i].blue = source[i].b;
+  }
+  return lut;
+}
+
+ScopedDrmColorCtmPtr CreateCTMBlob(
+    const std::vector<float>& correction_matrix) {
+  if (correction_matrix.empty())
+    return nullptr;
+
+  ScopedDrmColorCtmPtr ctm(
+      static_cast<DrmColorCtm*>(malloc(sizeof(DrmColorCtm))));
+  for (size_t i = 0; i < arraysize(ctm->ctm_coeff); ++i) {
+    if (correction_matrix[i] < 0) {
+      ctm->ctm_coeff[i] = static_cast<uint64_t>(
+          -correction_matrix[i] * (static_cast<uint64_t>(1) << 32));
+      ctm->ctm_coeff[i] |= static_cast<uint64_t>(1) << 63;
+    } else {
+      ctm->ctm_coeff[i] = static_cast<uint64_t>(
+          correction_matrix[i] * (static_cast<uint64_t>(1) << 32));
+    }
+  }
+  return ctm;
+}
+
+bool SetBlobProperty(int fd,
+                     uint32_t object_id,
+                     uint32_t object_type,
+                     uint32_t prop_id,
+                     const char* property_name,
+                     unsigned char* data,
+                     size_t length) {
+  uint32_t blob_id = 0;
+  int res;
+
+  if (data) {
+    res = CreatePropertyBlob(fd, data, length, &blob_id);
+    if (res != 0) {
+      LOG(ERROR) << "Error creating property blob: " << base::safe_strerror(res)
+                 << " for property " << property_name;
+      return false;
+    }
+  }
+
+  bool success = false;
+  res = drmModeObjectSetProperty(fd, object_id, object_type, prop_id, blob_id);
+  if (res != 0) {
+    LOG(ERROR) << "Error updating property: " << base::safe_strerror(res)
+               << " for property " << property_name;
+  } else {
+    success = true;
+  }
+  if (blob_id != 0)
+    DestroyPropertyBlob(fd, blob_id);
+  return success;
+}
+
+std::vector<GammaRampRGBEntry> ResampleLut(
+    const std::vector<GammaRampRGBEntry>& lut_in,
+    size_t desired_size) {
+  TRACE_EVENT1("drm", "ResampleLut", "desired_size", desired_size);
+  if (lut_in.empty())
+    return std::vector<GammaRampRGBEntry>();
+
+  if (lut_in.size() == desired_size)
+    return lut_in;
+
+  std::vector<GammaRampRGBEntry> result;
+  result.resize(desired_size);
+
+  for (size_t i = 0; i < desired_size; ++i) {
+    size_t base_index = lut_in.size() * i / desired_size;
+    size_t remaining = lut_in.size() * i % desired_size;
+    if (base_index < lut_in.size() - 1) {
+      result[i].r = lut_in[base_index].r +
+                    (lut_in[base_index + 1].r - lut_in[base_index].r) *
+                        remaining / desired_size;
+      result[i].g = lut_in[base_index].g +
+                    (lut_in[base_index + 1].g - lut_in[base_index].g) *
+                        remaining / desired_size;
+      result[i].b = lut_in[base_index].b +
+                    (lut_in[base_index + 1].b - lut_in[base_index].b) *
+                        remaining / desired_size;
+    } else {
+      result[i] = lut_in.back();
+    }
+  }
+
+  return result;
+}
+
 }  // namespace
 
 class DrmDevice::PageFlipManager {
@@ -130,8 +304,7 @@ class DrmDevice::PageFlipManager {
     }
 
     DrmDevice::PageFlipCallback callback = it->callback;
-    it->pending_calls -= 1;
-
+    it->pending_calls--;
     if (it->pending_calls)
       return;
 
@@ -155,11 +328,11 @@ class DrmDevice::PageFlipManager {
   };
 
   struct FindCallback {
-    FindCallback(uint64_t id) : id(id) {}
+    explicit FindCallback(uint64_t id) : id(id) {}
 
     bool operator()(const PageFlip& flip) const { return flip.id == id; }
 
-    uint64_t id;
+    const uint64_t id;
   };
 
   uint64_t next_id_;
@@ -215,7 +388,7 @@ DrmDevice::DrmDevice(const base::FilePath& device_path,
                      base::File file,
                      bool is_primary_device)
     : device_path_(device_path),
-      file_(file.Pass()),
+      file_(std::move(file)),
       page_flip_manager_(new PageFlipManager()),
       is_primary_device_(is_primary_device) {}
 
@@ -370,7 +543,7 @@ ScopedDrmPropertyPtr DrmDevice::GetProperty(drmModeConnector* connector,
       continue;
 
     if (strcmp(property->name, name) == 0)
-      return property.Pass();
+      return property;
   }
 
   return ScopedDrmPropertyPtr();
@@ -497,7 +670,21 @@ bool DrmDevice::CommitProperties(drmModeAtomicReq* properties,
 
 bool DrmDevice::SetCapability(uint64_t capability, uint64_t value) {
   DCHECK(file_.IsValid());
-  return !drmSetClientCap(file_.GetPlatformFile(), capability, value);
+
+#ifndef DRM_IOCTL_SET_CLIENT_CAP
+// drmSetClientCap was introduced in a later version of libdrm than the wheezy
+// sysroot supplies.
+// TODO(thomasanderson): Remove this when support for the wheezy sysroot is
+// dropped in favor of jessie.
+#define DRM_IOCTL_SET_CLIENT_CAP DRM_IOW(0x0d, struct drm_set_client_cap)
+  struct drm_set_client_cap {
+    __u64 capability;
+    __u64 value;
+  };
+#endif
+
+  struct drm_set_client_cap cap = {capability, value};
+  return !drmIoctl(file_.GetPlatformFile(), DRM_IOCTL_SET_CLIENT_CAP, &cap);
 }
 
 bool DrmDevice::SetMaster() {
@@ -515,29 +702,120 @@ bool DrmDevice::DropMaster() {
 bool DrmDevice::SetGammaRamp(uint32_t crtc_id,
                              const std::vector<GammaRampRGBEntry>& lut) {
   ScopedDrmCrtcPtr crtc = GetCrtc(crtc_id);
+  size_t gamma_size = static_cast<size_t>(crtc->gamma_size);
+
+  if (gamma_size == 0 && lut.empty())
+    return true;
+
+  if (gamma_size == 0) {
+    LOG(ERROR) << "Gamma table not supported";
+    return false;
+  }
 
   // TODO(robert.bradford) resample the incoming ramp to match what the kernel
   // expects.
-  if (static_cast<size_t>(crtc->gamma_size) != lut.size()) {
+  if (!lut.empty() && gamma_size != lut.size()) {
     LOG(ERROR) << "Gamma table size mismatch: supplied " << lut.size()
-               << " expected " << crtc->gamma_size;
+               << " expected " << gamma_size;
+    return false;
   }
 
   std::vector<uint16_t> r, g, b;
-  r.reserve(lut.size());
-  g.reserve(lut.size());
-  b.reserve(lut.size());
+  r.reserve(gamma_size);
+  g.reserve(gamma_size);
+  b.reserve(gamma_size);
 
-  for (size_t i = 0; i < lut.size(); ++i) {
-    r.push_back(lut[i].r);
-    g.push_back(lut[i].g);
-    b.push_back(lut[i].b);
+  if (lut.empty()) {
+    // Create a linear gamma ramp table to deactivate the feature.
+    for (size_t i = 0; i < gamma_size; ++i) {
+      uint16_t value = (i * ((1 << 16) - 1)) / (gamma_size - 1);
+      r.push_back(value);
+      g.push_back(value);
+      b.push_back(value);
+    }
+  } else {
+    for (size_t i = 0; i < gamma_size; ++i) {
+      r.push_back(lut[i].r);
+      g.push_back(lut[i].g);
+      b.push_back(lut[i].b);
+    }
   }
 
   DCHECK(file_.IsValid());
   TRACE_EVENT0("drm", "DrmDevice::SetGamma");
   return (drmModeCrtcSetGamma(file_.GetPlatformFile(), crtc_id, r.size(), &r[0],
                               &g[0], &b[0]) == 0);
+}
+
+bool DrmDevice::SetColorCorrection(
+    uint32_t crtc_id,
+    const std::vector<GammaRampRGBEntry>& degamma_lut,
+    const std::vector<GammaRampRGBEntry>& gamma_lut,
+    const std::vector<float>& correction_matrix) {
+  ScopedDrmObjectPropertyPtr crtc_props(drmModeObjectGetProperties(
+      file_.GetPlatformFile(), crtc_id, DRM_MODE_OBJECT_CRTC));
+  uint64_t degamma_lut_size = 0;
+  uint64_t gamma_lut_size = 0;
+
+  for (uint32_t i = 0; i < crtc_props->count_props; ++i) {
+    ScopedDrmPropertyPtr property(
+        drmModeGetProperty(file_.GetPlatformFile(), crtc_props->props[i]));
+    if (property && !strcmp(property->name, "DEGAMMA_LUT_SIZE")) {
+      degamma_lut_size = crtc_props->prop_values[i];
+    }
+    if (property && !strcmp(property->name, "GAMMA_LUT_SIZE")) {
+      gamma_lut_size = crtc_props->prop_values[i];
+    }
+
+    if (degamma_lut_size && gamma_lut_size)
+      break;
+  }
+
+  // If we can't find the degamma & gamma lut size, it means the properties
+  // aren't available. We should then use the legacy gamma ramp ioctl.
+  if (degamma_lut_size == 0 || gamma_lut_size == 0) {
+    return SetGammaRamp(crtc_id, gamma_lut);
+  }
+
+  ScopedDrmColorLutPtr degamma_blob_data =
+      CreateLutBlob(ResampleLut(degamma_lut, degamma_lut_size));
+  ScopedDrmColorLutPtr gamma_blob_data =
+      CreateLutBlob(ResampleLut(gamma_lut, gamma_lut_size));
+  ScopedDrmColorCtmPtr ctm_blob_data = CreateCTMBlob(correction_matrix);
+
+  for (uint32_t i = 0; i < crtc_props->count_props; ++i) {
+    ScopedDrmPropertyPtr property(
+        drmModeGetProperty(file_.GetPlatformFile(), crtc_props->props[i]));
+    if (!property)
+      continue;
+
+    if (!strcmp(property->name, "DEGAMMA_LUT")) {
+      if (!SetBlobProperty(
+              file_.GetPlatformFile(), crtc_id, DRM_MODE_OBJECT_CRTC,
+              crtc_props->props[i], property->name,
+              reinterpret_cast<unsigned char*>(degamma_blob_data.get()),
+              sizeof(DrmColorLut) * degamma_lut_size))
+        return false;
+    }
+    if (!strcmp(property->name, "GAMMA_LUT")) {
+      if (!SetBlobProperty(
+              file_.GetPlatformFile(), crtc_id, DRM_MODE_OBJECT_CRTC,
+              crtc_props->props[i], property->name,
+              reinterpret_cast<unsigned char*>(gamma_blob_data.get()),
+              sizeof(DrmColorLut) * gamma_lut_size))
+        return false;
+    }
+    if (!strcmp(property->name, "CTM")) {
+      if (!SetBlobProperty(
+              file_.GetPlatformFile(), crtc_id, DRM_MODE_OBJECT_CRTC,
+              crtc_props->props[i], property->name,
+              reinterpret_cast<unsigned char*>(ctm_blob_data.get()),
+              sizeof(DrmColorCtm)))
+        return false;
+    }
+  }
+
+  return true;
 }
 
 }  // namespace ui

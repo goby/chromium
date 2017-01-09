@@ -26,6 +26,8 @@ const char kGcmClientCreated[] = "gcmClientCreated";
 const char kGcmClientState[] = "gcmClientState";
 const char kGcmEnabled[] = "gcmEnabled";
 const char kIsRecording[] = "isRecording";
+const char kLastCheckin[] = "lastCheckin";
+const char kNextCheckin[] = "nextCheckin";
 const char kProfileServiceCreated[] = "profileServiceCreated";
 const char kReceiveInfo[] = "receiveInfo";
 const char kRegisteredAppIds[] = "registeredAppIds";
@@ -33,5 +35,6 @@ const char kRegistrationInfo[] = "registrationInfo";
 const char kResendQueueSize[] = "resendQueueSize";
 const char kSendInfo[] = "sendInfo";
 const char kSendQueueSize[] = "sendQueueSize";
+const char kDecryptionFailureInfo[] = "decryptionFailureInfo";
 
 }  // namespace gcm_driver

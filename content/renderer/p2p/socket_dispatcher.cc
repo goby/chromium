@@ -27,7 +27,7 @@ P2PSocketDispatcher::P2PSocketDispatcher(
 
 P2PSocketDispatcher::~P2PSocketDispatcher() {
   network_list_observers_->AssertEmpty();
-  for (IDMap<P2PSocketClientImpl>::iterator i(&clients_); !i.IsAtEnd();
+  for (IDMap<P2PSocketClientImpl*>::iterator i(&clients_); !i.IsAtEnd();
        i.Advance()) {
     i.GetCurrentValue()->Detach();
   }
@@ -71,16 +71,16 @@ bool P2PSocketDispatcher::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void P2PSocketDispatcher::OnFilterAdded(IPC::Sender* sender) {
+void P2PSocketDispatcher::OnFilterAdded(IPC::Channel* channel) {
   DVLOG(1) << "P2PSocketDispatcher::OnFilterAdded()";
-  sender_ = sender;
+  sender_ = channel;
 }
 
 void P2PSocketDispatcher::OnFilterRemoved() {
   sender_ = NULL;
 }
 
-void P2PSocketDispatcher::OnChannelConnected(int32 peer_id) {
+void P2PSocketDispatcher::OnChannelConnected(int32_t peer_id) {
   connected_ = true;
 }
 
@@ -125,15 +125,15 @@ void P2PSocketDispatcher::UnregisterHostAddressRequest(int id) {
 
 void P2PSocketDispatcher::OnNetworkListChanged(
     const net::NetworkInterfaceList& networks,
-    const net::IPAddressNumber& default_ipv4_local_address,
-    const net::IPAddressNumber& default_ipv6_local_address) {
+    const net::IPAddress& default_ipv4_local_address,
+    const net::IPAddress& default_ipv6_local_address) {
   network_list_observers_->Notify(
       FROM_HERE, &NetworkListObserver::OnNetworkListChanged, networks,
       default_ipv4_local_address, default_ipv6_local_address);
 }
 
 void P2PSocketDispatcher::OnGetHostAddressResult(
-    int32 request_id,
+    int32_t request_id,
     const net::IPAddressList& addresses) {
   P2PAsyncAddressResolver* request = host_address_requests_.Lookup(request_id);
   if (!request) {

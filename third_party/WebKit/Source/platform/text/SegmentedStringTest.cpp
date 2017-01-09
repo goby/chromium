@@ -28,55 +28,53 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/text/SegmentedString.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-TEST(SegmentedStringTest, CurrentChar)
-{
-    SegmentedString original(String("cde"));
-    {
-        SegmentedString copied(original);
-        SegmentedString assigned;
-        assigned = original;
-        EXPECT_EQ("cde", original.toString());
-        EXPECT_EQ('c', original.currentChar());
-        EXPECT_EQ('c', copied.currentChar());
-        EXPECT_EQ('c', assigned.currentChar());
-    }
-    original.push('b');
-    {
-        SegmentedString copied(original);
-        SegmentedString assigned;
-        assigned = original;
-        EXPECT_EQ("bcde", original.toString());
-        EXPECT_EQ('b', original.currentChar());
-        EXPECT_EQ('b', copied.currentChar());
-        EXPECT_EQ('b', assigned.currentChar());
-    }
-    original.push('a');
-    {
-        SegmentedString copied(original);
-        SegmentedString assigned;
-        assigned = original;
-        EXPECT_EQ("abcde", original.toString());
-        EXPECT_EQ('a', original.currentChar());
-        EXPECT_EQ('a', copied.currentChar());
-        EXPECT_EQ('a', assigned.currentChar());
-    }
-    original.advance();
-    {
-        SegmentedString copied(original);
-        SegmentedString assigned;
-        assigned = original;
-        EXPECT_EQ("bcde", original.toString());
-        EXPECT_EQ('b', original.currentChar());
-        EXPECT_EQ('b', copied.currentChar());
-        EXPECT_EQ('b', assigned.currentChar());
-    }
+TEST(SegmentedStringTest, CurrentChar) {
+  SegmentedString original(String("cde"));
+  {
+    SegmentedString copied(original);
+    SegmentedString assigned;
+    assigned = original;
+    EXPECT_EQ("cde", original.toString());
+    EXPECT_EQ('c', original.currentChar());
+    EXPECT_EQ('c', copied.currentChar());
+    EXPECT_EQ('c', assigned.currentChar());
+  }
+  original.push('b');
+  {
+    SegmentedString copied(original);
+    SegmentedString assigned;
+    assigned = original;
+    EXPECT_EQ("bcde", original.toString());
+    EXPECT_EQ('b', original.currentChar());
+    EXPECT_EQ('b', copied.currentChar());
+    EXPECT_EQ('b', assigned.currentChar());
+  }
+  original.push('a');
+  {
+    SegmentedString copied(original);
+    SegmentedString assigned;
+    assigned = original;
+    EXPECT_EQ("abcde", original.toString());
+    EXPECT_EQ('a', original.currentChar());
+    EXPECT_EQ('a', copied.currentChar());
+    EXPECT_EQ('a', assigned.currentChar());
+  }
+  original.advance();
+  {
+    SegmentedString copied(original);
+    SegmentedString assigned;
+    assigned = original;
+    EXPECT_EQ("bcde", original.toString());
+    EXPECT_EQ('b', original.currentChar());
+    EXPECT_EQ('b', copied.currentChar());
+    EXPECT_EQ('b', assigned.currentChar());
+  }
 }
 
-} // namespace blink
+}  // namespace blink

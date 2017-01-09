@@ -7,8 +7,8 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/history/core/browser/history_types.h"
@@ -21,14 +21,11 @@
 class GURL;
 
 namespace base {
-class FilePath;
-class RefCountedBytes;
 class RefCountedMemory;
 }
 
 namespace history {
 
-class TopSitesCache;
 class TopSitesObserver;
 
 // PrepopulatedPage stores information for prepopulated page for the

@@ -10,6 +10,7 @@
 #include "base/android/application_status_listener.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/process/kill.h"
 #include "base/process/process.h"
 #include "base/synchronization/lock.h"
@@ -17,10 +18,6 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/common/process_type.h"
-
-namespace content {
-class RenderProcessHost;
-}
 
 namespace breakpad {
 

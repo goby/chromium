@@ -5,11 +5,15 @@
 #ifndef UI_EVENTS_OZONE_EVDEV_TOUCH_EVENT_CONVERTER_EVDEV_H_
 #define UI_EVENTS_OZONE_EVDEV_TOUCH_EVENT_CONVERTER_EVDEV_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <bitset>
+#include <memory>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_pump_libevent.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/ozone/evdev/event_converter_evdev.h"
@@ -20,7 +24,6 @@
 namespace ui {
 
 class DeviceEventDispatcherEvdev;
-class TouchEvent;
 class TouchNoiseFinder;
 struct InProgressTouchEvdev;
 
@@ -36,6 +39,7 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
 
   // EventConverterEvdev:
   bool HasTouchscreen() const override;
+  bool HasPen() const override;
   gfx::Size GetTouchscreenSize() const override;
   int GetTouchPoints() const override;
   void OnEnabled() override;
@@ -45,6 +49,10 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
 
   // Update touch event logging state
   void SetTouchEventLoggingEnabled(bool enabled) override;
+
+  // Sets callback to enable/disable palm suppression.
+  void SetPalmSuppressionCallback(
+      const base::Callback<void(bool)>& callback) override;
 
   // Unsafe part of initialization.
   virtual void Initialize(const EventDeviceInfo& info);
@@ -67,14 +75,14 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
   // event should not be dispatched.
   EventType GetEventTypeForTouch(const InProgressTouchEvdev& touch);
 
-  void ReportEvent(const InProgressTouchEvdev& event,
-                   EventType event_type,
-                   const base::TimeDelta& delta);
-  void ReportEvents(base::TimeDelta delta);
+  void ReportTouchEvent(const InProgressTouchEvdev& event,
+                        EventType event_type,
+                        base::TimeTicks timestamp);
+  void ReportEvents(base::TimeTicks timestamp);
 
   void UpdateTrackingId(int slot, int tracking_id);
   void ReleaseTouches();
-
+  void ReleaseButtons();
   // Normalize pressure value to [0, 1].
   float ScalePressure(int32_t value);
 
@@ -88,6 +96,9 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
 
   // Device has multitouch capability.
   bool has_mt_ = false;
+
+  // Device supports pen input.
+  bool has_pen_ = false;
 
   // Use BTN_LEFT instead of BT_TOUCH.
   bool quirk_left_mouse_button_ = false;
@@ -107,6 +118,9 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
   // Number of touch points reported by driver
   int touch_points_ = 0;
 
+  // Maximum value of touch major axis
+  int major_max_ = 0;
+
   // Tracking id counter.
   int next_tracking_id_ = 0;
 
@@ -120,10 +134,13 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
   std::vector<InProgressTouchEvdev> events_;
 
   // Finds touch noise.
-  scoped_ptr<TouchNoiseFinder> touch_noise_finder_;
+  std::unique_ptr<TouchNoiseFinder> touch_noise_finder_;
 
   // Records the recent touch events. It is used to fill the feedback reports
   TouchEventLogEvdev touch_evdev_debug_buffer_;
+
+  // Callback to enable/disable palm suppression.
+  base::Callback<void(bool)> enable_palm_suppression_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchEventConverterEvdev);
 };

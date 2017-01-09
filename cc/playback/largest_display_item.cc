@@ -4,6 +4,8 @@
 
 #include "cc/playback/largest_display_item.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "cc/playback/clip_display_item.h"
@@ -17,7 +19,12 @@
 #include "third_party/skia/include/core/SkPicture.h"
 
 namespace {
-const size_t kLargestDisplayItemSize = sizeof(cc::TransformDisplayItem);
+// Either FilterDisplayItem or TransformDisplayItem is largest. It depends on
+// the platform.
+constexpr size_t kLargestDisplayItemSize =
+    sizeof(cc::FilterDisplayItem) > sizeof(cc::TransformDisplayItem)
+        ? sizeof(cc::FilterDisplayItem)
+        : sizeof(cc::TransformDisplayItem);
 }  // namespace
 
 namespace cc {

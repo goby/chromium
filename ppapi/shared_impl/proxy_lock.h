@@ -5,12 +5,13 @@
 #ifndef PPAPI_SHARED_IMPL_PROXY_LOCK_H_
 #define PPAPI_SHARED_IMPL_PROXY_LOCK_H_
 
-#include "base/basictypes.h"
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
-
 #include "ppapi/shared_impl/ppapi_shared_export.h"
 
 namespace base {
@@ -184,7 +185,7 @@ class RunWhileLockedHelper<void()> {
     // creation.
     thread_checker_.DetachFromThread();
   }
-  static void CallWhileLocked(scoped_ptr<RunWhileLockedHelper> ptr) {
+  static void CallWhileLocked(std::unique_ptr<RunWhileLockedHelper> ptr) {
     // Bind thread_checker_ to this thread so we can check in the destructor.
     // *If* the callback gets invoked, it's important that RunWhileLockedHelper
     // is destroyed on the same thread (see the comments in the destructor).
@@ -194,7 +195,7 @@ class RunWhileLockedHelper<void()> {
       // Use a scope and local Callback to ensure that the callback is cleared
       // before the lock is released, even in the unlikely event that Run()
       // throws an exception.
-      scoped_ptr<CallbackType> temp_callback(ptr->callback_.Pass());
+      std::unique_ptr<CallbackType> temp_callback(std::move(ptr->callback_));
       temp_callback->Run();
     }
   }
@@ -227,7 +228,7 @@ class RunWhileLockedHelper<void()> {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RunWhileLockedHelper);
-  scoped_ptr<CallbackType> callback_;
+  std::unique_ptr<CallbackType> callback_;
 
   // Used to ensure that the Callback is run and deleted on the same thread.
   base::ThreadChecker thread_checker_;
@@ -241,11 +242,12 @@ class RunWhileLockedHelper<void(P1)> {
       : callback_(new CallbackType(callback)) {
     thread_checker_.DetachFromThread();
   }
-  static void CallWhileLocked(scoped_ptr<RunWhileLockedHelper> ptr, P1 p1) {
+  static void CallWhileLocked(std::unique_ptr<RunWhileLockedHelper> ptr,
+                              P1 p1) {
     DCHECK(ptr->thread_checker_.CalledOnValidThread());
     ProxyAutoLock lock;
     {
-      scoped_ptr<CallbackType> temp_callback(ptr->callback_.Pass());
+      std::unique_ptr<CallbackType> temp_callback(std::move(ptr->callback_));
       temp_callback->Run(p1);
     }
   }
@@ -259,7 +261,7 @@ class RunWhileLockedHelper<void(P1)> {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RunWhileLockedHelper);
-  scoped_ptr<CallbackType> callback_;
+  std::unique_ptr<CallbackType> callback_;
   base::ThreadChecker thread_checker_;
 };
 
@@ -271,12 +273,13 @@ class RunWhileLockedHelper<void(P1, P2)> {
       : callback_(new CallbackType(callback)) {
     thread_checker_.DetachFromThread();
   }
-  static void CallWhileLocked(
-      scoped_ptr<RunWhileLockedHelper> ptr, P1 p1, P2 p2) {
+  static void CallWhileLocked(std::unique_ptr<RunWhileLockedHelper> ptr,
+                              P1 p1,
+                              P2 p2) {
     DCHECK(ptr->thread_checker_.CalledOnValidThread());
     ProxyAutoLock lock;
     {
-      scoped_ptr<CallbackType> temp_callback(ptr->callback_.Pass());
+      std::unique_ptr<CallbackType> temp_callback(std::move(ptr->callback_));
       temp_callback->Run(p1, p2);
     }
   }
@@ -290,7 +293,7 @@ class RunWhileLockedHelper<void(P1, P2)> {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RunWhileLockedHelper);
-  scoped_ptr<CallbackType> callback_;
+  std::unique_ptr<CallbackType> callback_;
   base::ThreadChecker thread_checker_;
 };
 
@@ -302,12 +305,14 @@ class RunWhileLockedHelper<void(P1, P2, P3)> {
       : callback_(new CallbackType(callback)) {
     thread_checker_.DetachFromThread();
   }
-  static void CallWhileLocked(
-      scoped_ptr<RunWhileLockedHelper> ptr, P1 p1, P2 p2, P3 p3) {
+  static void CallWhileLocked(std::unique_ptr<RunWhileLockedHelper> ptr,
+                              P1 p1,
+                              P2 p2,
+                              P3 p3) {
     DCHECK(ptr->thread_checker_.CalledOnValidThread());
     ProxyAutoLock lock;
     {
-      scoped_ptr<CallbackType> temp_callback(ptr->callback_.Pass());
+      std::unique_ptr<CallbackType> temp_callback(std::move(ptr->callback_));
       temp_callback->Run(p1, p2, p3);
     }
   }
@@ -321,7 +326,7 @@ class RunWhileLockedHelper<void(P1, P2, P3)> {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RunWhileLockedHelper);
-  scoped_ptr<CallbackType> callback_;
+  std::unique_ptr<CallbackType> callback_;
   base::ThreadChecker thread_checker_;
 };
 
@@ -373,11 +378,11 @@ inline base::Callback<FunctionType> RunWhileLocked(
   // in that case, if we used base::Owned, we might delete RunWhileLockedHelper
   // on this thread, which will violate the RunWhileLockedHelper's assumption
   // that it is destroyed on the same thread where it is run.
-  scoped_ptr<internal::RunWhileLockedHelper<FunctionType>> helper(
+  std::unique_ptr<internal::RunWhileLockedHelper<FunctionType>> helper(
       new internal::RunWhileLockedHelper<FunctionType>(callback));
   return base::Bind(
       &internal::RunWhileLockedHelper<FunctionType>::CallWhileLocked,
-      base::Passed(helper.Pass()));
+      base::Passed(std::move(helper)));
 }
 
 }  // namespace ppapi

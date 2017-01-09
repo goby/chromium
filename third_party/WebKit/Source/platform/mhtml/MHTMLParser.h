@@ -44,42 +44,36 @@ class String;
 namespace blink {
 
 class ArchiveResource;
-class MHTMLArchive;
 class MIMEHeader;
 class SharedBuffer;
 
 class PLATFORM_EXPORT MHTMLParser final {
-    STACK_ALLOCATED();
-public:
-    explicit MHTMLParser(SharedBuffer*);
+  STACK_ALLOCATED();
 
-    PassRefPtrWillBeRawPtr<MHTMLArchive> parseArchive();
+ public:
+  explicit MHTMLParser(PassRefPtr<const SharedBuffer>);
 
-    size_t frameCount() const;
-    MHTMLArchive* frameAt(size_t) const;
+  HeapVector<Member<ArchiveResource>> parseArchive();
 
-    size_t subResourceCount() const;
-    ArchiveResource* subResourceAt(size_t) const;
+  // Translates |contentIDFromMimeHeader| (of the form "<foo@bar.com>")
+  // into a cid-scheme URI (of the form "cid:foo@bar.com").
+  //
+  // Returns KURL() - an invalid URL - if contentID is invalid.
+  //
+  // See rfc2557 - section 8.3 - "Use of the Content-ID header and CID URLs".
+  static KURL convertContentIDToURI(const String& contentID);
 
-    // Translates |contentIDFromMimeHeader| (of the form "<foo@bar.com>")
-    // into a cid-scheme URI (of the form "cid:foo@bar.com").
-    //
-    // Returns KURL() - an invalid URL - if contentID is invalid.
-    //
-    // See rfc2557 - section 8.3 - "Use of the Content-ID header and CID URLs".
-    static KURL convertContentIDToURI(const String& contentID);
+ private:
+  bool parseArchiveWithHeader(MIMEHeader*,
+                              HeapVector<Member<ArchiveResource>>&);
+  ArchiveResource* parseNextPart(const MIMEHeader&,
+                                 const String& endOfPartBoundary,
+                                 const String& endOfDocumentBoundary,
+                                 bool& endOfArchiveReached);
 
-private:
-    PassRefPtrWillBeRawPtr<MHTMLArchive> parseArchiveWithHeader(MIMEHeader*);
-    PassRefPtrWillBeRawPtr<ArchiveResource> parseNextPart(const MIMEHeader&, const String& endOfPartBoundary, const String& endOfDocumentBoundary, bool& endOfArchiveReached);
-
-    void addResourceToArchive(ArchiveResource*, MHTMLArchive*);
-
-    SharedBufferChunkReader m_lineReader;
-    WillBeHeapVector<RefPtrWillBeMember<ArchiveResource>> m_resources;
-    WillBeHeapVector<RefPtrWillBeMember<MHTMLArchive>> m_frames;
+  SharedBufferChunkReader m_lineReader;
 };
 
-}
+}  // namespace blink
 
 #endif

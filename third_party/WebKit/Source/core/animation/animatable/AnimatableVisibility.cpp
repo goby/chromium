@@ -28,34 +28,33 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/animation/animatable/AnimatableVisibility.h"
 
 namespace blink {
 
-bool AnimatableVisibility::usesDefaultInterpolationWith(const AnimatableValue* value) const
-{
-    EVisibility from = m_visibility;
-    EVisibility to = toAnimatableVisibility(value)->m_visibility;
-    return from != VISIBLE && to != VISIBLE;
+bool AnimatableVisibility::usesDefaultInterpolationWith(
+    const AnimatableValue* value) const {
+  EVisibility from = m_visibility;
+  EVisibility to = toAnimatableVisibility(value)->m_visibility;
+  return from != EVisibility::Visible && to != EVisibility::Visible;
 }
 
-PassRefPtr<AnimatableValue> AnimatableVisibility::interpolateTo(const AnimatableValue* value, double fraction) const
-{
-    EVisibility from = m_visibility;
-    EVisibility to = toAnimatableVisibility(value)->m_visibility;
-    if (from != VISIBLE && to != VISIBLE)
-        return defaultInterpolateTo(this, value, fraction);
-    if (fraction <= 0)
-        return takeConstRef(this);
-    if (fraction >= 1)
-        return takeConstRef(value);
-    return takeConstRef(from == VISIBLE ? this : value);
+PassRefPtr<AnimatableValue> AnimatableVisibility::interpolateTo(
+    const AnimatableValue* value,
+    double fraction) const {
+  EVisibility from = m_visibility;
+  EVisibility to = toAnimatableVisibility(value)->m_visibility;
+  if (from != EVisibility::Visible && to != EVisibility::Visible)
+    return defaultInterpolateTo(this, value, fraction);
+  if (fraction <= 0)
+    return takeConstRef(this);
+  if (fraction >= 1)
+    return takeConstRef(value);
+  return takeConstRef(from == EVisibility::Visible ? this : value);
 }
 
-bool AnimatableVisibility::equalTo(const AnimatableValue* value) const
-{
-    return m_visibility == toAnimatableVisibility(value)->m_visibility;
+bool AnimatableVisibility::equalTo(const AnimatableValue* value) const {
+  return m_visibility == toAnimatableVisibility(value)->m_visibility;
 }
 
-} // namespace blink
+}  // namespace blink

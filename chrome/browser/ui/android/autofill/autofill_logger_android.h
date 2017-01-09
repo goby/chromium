@@ -7,6 +7,7 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 
 namespace autofill {
@@ -19,8 +20,6 @@ class AutofillLoggerAndroid {
   // with data from |profile_full_name|.
   static void DidFillOrPreviewField(const base::string16& autofilled_value,
                                     const base::string16& profile_full_name);
-
-  static bool Register(JNIEnv* env);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AutofillLoggerAndroid);

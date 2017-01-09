@@ -5,10 +5,12 @@
 #ifndef EXTENSIONS_COMMON_URL_PATTERN_SET_H_
 #define EXTENSIONS_COMMON_URL_PATTERN_SET_H_
 
+#include <stddef.h>
+
 #include <iosfwd>
+#include <memory>
 #include <set>
 
-#include "base/memory/scoped_ptr.h"
 #include "extensions/common/url_pattern.h"
 
 class GURL;
@@ -97,14 +99,14 @@ class URLPatternSet {
   bool OverlapsWith(const URLPatternSet& other) const;
 
   // Converts to and from Value for serialization to preferences.
-  scoped_ptr<base::ListValue> ToValue() const;
+  std::unique_ptr<base::ListValue> ToValue() const;
   bool Populate(const base::ListValue& value,
                 int valid_schemes,
                 bool allow_file_access,
                 std::string* error);
 
   // Converts to and from a vector of strings.
-  scoped_ptr<std::vector<std::string> > ToStringVector() const;
+  std::unique_ptr<std::vector<std::string>> ToStringVector() const;
   bool Populate(const std::vector<std::string>& patterns,
                 int valid_schemes,
                 bool allow_file_access,

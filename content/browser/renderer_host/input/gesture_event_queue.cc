@@ -7,6 +7,7 @@
 #include "base/trace_event/trace_event.h"
 #include "content/browser/renderer_host/input/touchpad_tap_suppression_controller.h"
 #include "content/browser/renderer_host/input/touchscreen_tap_suppression_controller.h"
+#include "ui/events/blink/web_input_event_traits.h"
 
 using blink::WebGestureEvent;
 using blink::WebInputEvent;
@@ -23,7 +24,7 @@ bool IsCompatibleScrollorPinch(
   DCHECK(new_event.event.type == WebInputEvent::GestureScrollUpdate ||
          new_event.event.type == WebInputEvent::GesturePinchUpdate)
       << "Invalid event type for pinch/scroll coalescing: "
-      << WebInputEventTraits::GetName(new_event.event.type);
+      << WebInputEvent::GetName(new_event.event.type);
   DLOG_IF(WARNING, new_event.event.timeStampSeconds <
                        event_in_queue.event.timeStampSeconds)
       << "Event time not monotonic?\n";
@@ -47,7 +48,7 @@ gfx::Transform GetTransformForEvent(
     gesture_transform.Translate(gesture_event.event.x, gesture_event.event.y);
   } else {
     NOTREACHED() << "Invalid event type for transform retrieval: "
-                 << WebInputEventTraits::GetName(gesture_event.event.type);
+                 << WebInputEvent::GetName(gesture_event.event.type);
   }
   return gesture_transform;
 }
@@ -186,6 +187,9 @@ void GestureEventQueue::QueueAndForwardIfNecessary(
     case WebInputEvent::GestureScrollUpdate:
       QueueScrollOrPinchAndForwardIfNecessary(gesture_event);
       return;
+    case WebInputEvent::GestureScrollBegin:
+      if (OnScrollBegin(gesture_event))
+        return;
     default:
       break;
   }
@@ -193,6 +197,25 @@ void GestureEventQueue::QueueAndForwardIfNecessary(
   coalesced_gesture_events_.push_back(gesture_event);
   if (coalesced_gesture_events_.size() == 1)
     client_->SendGestureEventImmediately(gesture_event);
+}
+
+bool GestureEventQueue::OnScrollBegin(
+    const GestureEventWithLatencyInfo& gesture_event) {
+  // If a synthetic scroll begin is encountered, it can cancel out a previous
+  // synthetic scroll end. This allows a later gesture scroll update to coalesce
+  // with the previous one. crbug.com/607340.
+  bool synthetic = gesture_event.event.data.scrollBegin.synthetic;
+  bool have_unsent_events =
+      EventsInFlightCount() < coalesced_gesture_events_.size();
+  if (synthetic && have_unsent_events) {
+    GestureEventWithLatencyInfo* last_event = &coalesced_gesture_events_.back();
+    if (last_event->event.type == WebInputEvent::GestureScrollEnd &&
+        last_event->event.data.scrollEnd.synthetic) {
+      coalesced_gesture_events_.pop_back();
+      return true;
+    }
+  }
+  return false;
 }
 
 void GestureEventQueue::ProcessGestureAck(InputEventAckState ack_result,

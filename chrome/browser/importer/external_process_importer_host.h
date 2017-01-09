@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_IMPORTER_EXTERNAL_PROCESS_IMPORTER_HOST_H_
 #define CHROME_BROWSER_IMPORTER_EXTERNAL_PROCESS_IMPORTER_HOST_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/importer/importer_progress_observer.h"
 #include "chrome/browser/importer/profile_writer.h"
@@ -19,7 +22,6 @@
 
 class ExternalProcessImporterClient;
 class FirefoxProfileLock;
-class Importer;
 class Profile;
 
 namespace importer {
@@ -44,7 +46,7 @@ class ExternalProcessImporterHost
   virtual void StartImportSettings(
       const importer::SourceProfile& source_profile,
       Profile* target_profile,
-      uint16 items,
+      uint16_t items,
       ProfileWriter* writer);
 
   // When in headless mode, the importer will not show any warning dialog if
@@ -109,7 +111,7 @@ class ExternalProcessImporterHost
   // Make sure BookmarkModel and TemplateURLService are loaded before import
   // process starts, if bookmarks and/or search engines are among the items
   // which are to be imported.
-  void CheckForLoadedModels(uint16 items);
+  void CheckForLoadedModels(uint16_t items);
 
   // True if UI is not to be shown.
   bool headless_;
@@ -122,7 +124,7 @@ class ExternalProcessImporterHost
   importer::ImporterProgressObserver* observer_;
 
   // Firefox profile lock.
-  scoped_ptr<FirefoxProfileLock> firefox_lock_;
+  std::unique_ptr<FirefoxProfileLock> firefox_lock_;
 
   // Profile we're importing from.
   Profile* profile_;
@@ -132,7 +134,8 @@ class ExternalProcessImporterHost
 
   // May contain a Subscription waiting for the TemplateURLService to finish
   // loading.
-  scoped_ptr<TemplateURLService::Subscription> template_service_subscription_;
+  std::unique_ptr<TemplateURLService::Subscription>
+      template_service_subscription_;
 
   // Have we installed a listener on the bookmark model?
   bool installed_bookmark_observer_;
@@ -150,7 +153,7 @@ class ExternalProcessImporterHost
   importer::SourceProfile source_profile_;
 
   // Bitmask of items to be imported (see importer::ImportItem enum).
-  uint16 items_;
+  uint16_t items_;
 
   // True if the import process has been cancelled.
   bool cancelled_;

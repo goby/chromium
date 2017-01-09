@@ -5,6 +5,7 @@
 #include "sandbox/linux/seccomp-bpf/sandbox_bpf.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -13,7 +14,6 @@
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/third_party/valgrind/valgrind.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"

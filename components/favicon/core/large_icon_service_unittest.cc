@@ -5,12 +5,15 @@
 #include "components/favicon/core/large_icon_service.h"
 
 #include <deque>
+#include <memory>
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/favicon/core/favicon_client.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon_base/fallback_icon_style.h"
@@ -69,9 +72,8 @@ class MockFaviconService : public FaviconService {
     favicon_base::FaviconRawBitmapResult mock_result =
         mock_result_queue_.front();
     mock_result_queue_.pop_front();
-    return tracker->PostTask(
-        base::MessageLoop::current()->task_runner().get(), FROM_HERE,
-        base::Bind(callback, mock_result));
+    return tracker->PostTask(base::ThreadTaskRunnerHandle::Get().get(),
+                             FROM_HERE, base::Bind(callback, mock_result));
   }
 
   void InjectResult(const favicon_base::FaviconRawBitmapResult& mock_result) {
@@ -94,7 +96,7 @@ class TestLargeIconService : public LargeIconService {
  public:
   explicit TestLargeIconService(MockFaviconService* mock_favicon_service)
       : LargeIconService(mock_favicon_service,
-                         base::MessageLoop::current()->task_runner()) {}
+                         base::ThreadTaskRunnerHandle::Get()) {}
   ~TestLargeIconService() override {
   }
 
@@ -140,12 +142,13 @@ class LargeIconServiceTest : public testing::Test {
  protected:
   base::MessageLoopForIO loop_;
 
-  scoped_ptr<MockFaviconService> mock_favicon_service_;
-  scoped_ptr<TestLargeIconService> large_icon_service_;
+  std::unique_ptr<MockFaviconService> mock_favicon_service_;
+  std::unique_ptr<TestLargeIconService> large_icon_service_;
   base::CancelableTaskTracker cancelable_task_tracker_;
 
   favicon_base::FaviconRawBitmapResult expected_bitmap_;
-  scoped_ptr<favicon_base::FallbackIconStyle> expected_fallback_icon_style_;
+  std::unique_ptr<favicon_base::FallbackIconStyle>
+      expected_fallback_icon_style_;
 
   bool is_callback_invoked_;
 
@@ -162,7 +165,7 @@ TEST_F(LargeIconServiceTest, SameSize) {
       24,  // |desired_size_in_pixel|
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -175,7 +178,7 @@ TEST_F(LargeIconServiceTest, ScaleDown) {
       24,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -188,7 +191,7 @@ TEST_F(LargeIconServiceTest, ScaleUp) {
       24,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -202,7 +205,7 @@ TEST_F(LargeIconServiceTest, NoScale) {
       0,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -210,13 +213,14 @@ TEST_F(LargeIconServiceTest, FallbackSinceIconTooSmall) {
   mock_favicon_service_->InjectResult(CreateTestBitmap(16, 16, kTestColor));
   expected_fallback_icon_style_.reset(new favicon_base::FallbackIconStyle);
   expected_fallback_icon_style_->background_color = kTestColor;
+  expected_fallback_icon_style_->is_default_background_color = false;
   large_icon_service_->GetLargeIconOrFallbackStyle(
       GURL(kDummyUrl),
       24,
       24,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -224,13 +228,14 @@ TEST_F(LargeIconServiceTest, FallbackSinceIconNotSquare) {
   mock_favicon_service_->InjectResult(CreateTestBitmap(24, 32, kTestColor));
   expected_fallback_icon_style_.reset(new favicon_base::FallbackIconStyle);
   expected_fallback_icon_style_->background_color = kTestColor;
+  expected_fallback_icon_style_->is_default_background_color = false;
   large_icon_service_->GetLargeIconOrFallbackStyle(
       GURL(kDummyUrl),
       24,
       24,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -244,7 +249,7 @@ TEST_F(LargeIconServiceTest, FallbackSinceIconMissing) {
       24,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -258,7 +263,7 @@ TEST_F(LargeIconServiceTest, FallbackSinceIconMissingNoScale) {
       0,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 
@@ -268,13 +273,14 @@ TEST_F(LargeIconServiceTest, FallbackSinceTooPicky) {
   mock_favicon_service_->InjectResult(CreateTestBitmap(24, 24, kTestColor));
   expected_fallback_icon_style_.reset(new favicon_base::FallbackIconStyle);
   expected_fallback_icon_style_->background_color = kTestColor;
+  expected_fallback_icon_style_->is_default_background_color = false;
   large_icon_service_->GetLargeIconOrFallbackStyle(
       GURL(kDummyUrl),
       32,
       24,
       base::Bind(&LargeIconServiceTest::ResultCallback, base::Unretained(this)),
       &cancelable_task_tracker_);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(is_callback_invoked_);
 }
 

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/app_list/search/launcher_search/launcher_search_icon_image_loader.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/launcher_search_provider/error_reporter.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -95,8 +97,8 @@ class FakeErrorReporter : public ErrorReporter {
 
   const std::string& GetLastWarningMessage() { return *last_message_.get(); }
 
-  scoped_ptr<ErrorReporter> Duplicate() override {
-    return make_scoped_ptr(new FakeErrorReporter(last_message_));
+  std::unique_ptr<ErrorReporter> Duplicate() override {
+    return base::MakeUnique<FakeErrorReporter>(last_message_);
   }
 
  private:
@@ -133,8 +135,8 @@ class LauncherSearchIconImageLoaderTest : public testing::Test {
  protected:
   void SetUp() override { extension_ = CreateTestExtension(kTestExtensionId); }
 
-  scoped_ptr<FakeErrorReporter> GetFakeErrorReporter() {
-    return make_scoped_ptr(new FakeErrorReporter());
+  std::unique_ptr<FakeErrorReporter> GetFakeErrorReporter() {
+    return base::MakeUnique<FakeErrorReporter>();
   }
 
   scoped_refptr<extensions::Extension> extension_;
@@ -213,7 +215,8 @@ TEST_F(LauncherSearchIconImageLoaderTest, InvalidCustomIconUrl) {
       "1";
   ASSERT_EQ(101U, invalid_url.size());
 
-  scoped_ptr<FakeErrorReporter> fake_error_reporter = GetFakeErrorReporter();
+  std::unique_ptr<FakeErrorReporter> fake_error_reporter =
+      GetFakeErrorReporter();
   GURL icon_url(invalid_url);
   LauncherSearchIconImageLoaderTestImpl impl(icon_url, nullptr,
                                              extension_.get(), 32,
@@ -233,7 +236,8 @@ TEST_F(LauncherSearchIconImageLoaderTest, InvalidCustomIconUrl) {
 }
 
 TEST_F(LauncherSearchIconImageLoaderTest, FailedToLoadCustomIcon) {
-  scoped_ptr<FakeErrorReporter> fake_error_reporter = GetFakeErrorReporter();
+  std::unique_ptr<FakeErrorReporter> fake_error_reporter =
+      GetFakeErrorReporter();
   GURL icon_url(kTestCustomIconURL);
   LauncherSearchIconImageLoaderTestImpl impl(icon_url, nullptr,
                                              extension_.get(), 32,

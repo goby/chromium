@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_INSTALL_PROMPT_SHOW_PARAMS_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_INSTALL_PROMPT_SHOW_PARAMS_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/gfx/native_widget_types.h"
 
 class NativeWindowTracker;
@@ -54,9 +56,10 @@ class ExtensionInstallPromptShowParams {
   gfx::NativeWindow parent_window_;
 
   class WebContentsDestructionObserver;
-  scoped_ptr<WebContentsDestructionObserver> web_contents_destruction_observer_;
+  std::unique_ptr<WebContentsDestructionObserver>
+      web_contents_destruction_observer_;
 
-  scoped_ptr<NativeWindowTracker> native_window_tracker_;
+  std::unique_ptr<NativeWindowTracker> native_window_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionInstallPromptShowParams);
 };

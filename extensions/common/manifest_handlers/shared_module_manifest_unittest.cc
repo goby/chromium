@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "base/version.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/shared_module_info.h"
@@ -10,14 +11,14 @@
 
 namespace {
 
-const char* kValidImportPath =
+const char kValidImportPath[] =
     "_modules/abcdefghijklmnopabcdefghijklmnop/foo/bar.html";
-const char* kValidImportPathID = "abcdefghijklmnopabcdefghijklmnop";
-const char* kValidImportPathRelative = "foo/bar.html";
-const char* kInvalidImportPath = "_modules/abc/foo.html";
-const char* kImportId1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const char* kImportId2 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const char* kNoImport = "cccccccccccccccccccccccccccccccc";
+const char kValidImportPathID[] = "abcdefghijklmnopabcdefghijklmnop";
+const char kValidImportPathRelative[] = "foo/bar.html";
+const char kInvalidImportPath[] = "_modules/abc/foo.html";
+const char kImportId1[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const char kImportId2[] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const char kNoImport[] = "cccccccccccccccccccccccccccccccc";
 
 }  // namespace
 

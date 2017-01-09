@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/events/PointerEvent.h"
 
 #include "core/dom/Element.h"
@@ -10,95 +9,86 @@
 
 namespace blink {
 
-PointerEvent::PointerEvent()
-    : m_pointerId(0)
-    , m_width(0)
-    , m_height(0)
-    , m_pressure(0)
-    , m_tiltX(0)
-    , m_tiltY(0)
-    , m_isPrimary(false)
-{
+PointerEvent::PointerEvent(const AtomicString& type,
+                           const PointerEventInit& initializer)
+    : MouseEvent(type, initializer),
+      m_pointerId(0),
+      m_width(0),
+      m_height(0),
+      m_pressure(0),
+      m_tiltX(0),
+      m_tiltY(0),
+      m_isPrimary(false) {
+  if (initializer.hasPointerId())
+    m_pointerId = initializer.pointerId();
+  if (initializer.hasWidth())
+    m_width = initializer.width();
+  if (initializer.hasHeight())
+    m_height = initializer.height();
+  if (initializer.hasPressure())
+    m_pressure = initializer.pressure();
+  if (initializer.hasTiltX())
+    m_tiltX = initializer.tiltX();
+  if (initializer.hasTiltY())
+    m_tiltY = initializer.tiltY();
+  if (initializer.hasPointerType())
+    m_pointerType = initializer.pointerType();
+  if (initializer.hasIsPrimary())
+    m_isPrimary = initializer.isPrimary();
+  if (initializer.hasCoalescedEvents()) {
+    for (auto coalescedEvent : initializer.coalescedEvents())
+      m_coalescedEvents.append(coalescedEvent);
+  }
 }
 
-PointerEvent::PointerEvent(const AtomicString& type, const PointerEventInit& initializer)
-    : MouseEvent(type, initializer)
-    , m_pointerId(0)
-    , m_width(0)
-    , m_height(0)
-    , m_pressure(0)
-    , m_tiltX(0)
-    , m_tiltY(0)
-    , m_isPrimary(false)
-{
-    if (initializer.hasPointerId())
-        m_pointerId = initializer.pointerId();
-    if (initializer.hasWidth())
-        m_width = initializer.width();
-    if (initializer.hasHeight())
-        m_height = initializer.height();
-    if (initializer.hasPressure())
-        m_pressure = initializer.pressure();
-    if (initializer.hasTiltX())
-        m_tiltX = initializer.tiltX();
-    if (initializer.hasTiltY())
-        m_tiltY = initializer.tiltY();
-    if (initializer.hasPointerType())
-        m_pointerType = initializer.pointerType();
-    if (initializer.hasIsPrimary())
-        m_isPrimary = initializer.isPrimary();
+bool PointerEvent::isMouseEvent() const {
+  return false;
 }
 
-bool PointerEvent::isMouseEvent() const
-{
-    return false;
+bool PointerEvent::isPointerEvent() const {
+  return true;
 }
 
-bool PointerEvent::isPointerEvent() const
-{
-    return true;
+EventDispatchMediator* PointerEvent::createMediator() {
+  return PointerEventDispatchMediator::create(this);
 }
 
-PassRefPtrWillBeRawPtr<EventDispatchMediator> PointerEvent::createMediator()
-{
-    return PointerEventDispatchMediator::create(this);
+HeapVector<Member<PointerEvent>> PointerEvent::getCoalescedEvents() const {
+  return m_coalescedEvents;
 }
 
-DEFINE_TRACE(PointerEvent)
-{
-    MouseEvent::trace(visitor);
+DEFINE_TRACE(PointerEvent) {
+  visitor->trace(m_coalescedEvents);
+  MouseEvent::trace(visitor);
 }
 
-PassRefPtrWillBeRawPtr<PointerEventDispatchMediator> PointerEventDispatchMediator::create(PassRefPtrWillBeRawPtr<PointerEvent> pointerEvent)
-{
-    return adoptRefWillBeNoop(new PointerEventDispatchMediator(pointerEvent));
+PointerEventDispatchMediator* PointerEventDispatchMediator::create(
+    PointerEvent* pointerEvent) {
+  return new PointerEventDispatchMediator(pointerEvent);
 }
 
-PointerEventDispatchMediator::PointerEventDispatchMediator(PassRefPtrWillBeRawPtr<PointerEvent> pointerEvent)
-    : EventDispatchMediator(pointerEvent)
-{
+PointerEventDispatchMediator::PointerEventDispatchMediator(
+    PointerEvent* pointerEvent)
+    : EventDispatchMediator(pointerEvent) {}
+
+PointerEvent& PointerEventDispatchMediator::event() const {
+  return toPointerEvent(EventDispatchMediator::event());
 }
 
-PointerEvent& PointerEventDispatchMediator::event() const
-{
-    return toPointerEvent(EventDispatchMediator::event());
+DispatchEventResult PointerEventDispatchMediator::dispatchEvent(
+    EventDispatcher& dispatcher) const {
+  if (isDisabledFormControl(&dispatcher.node()))
+    return DispatchEventResult::CanceledBeforeDispatch;
+
+  if (event().type().isEmpty())
+    return DispatchEventResult::NotCanceled;  // Shouldn't happen.
+
+  DCHECK(!event().target() || event().target() != event().relatedTarget());
+
+  event().eventPath().adjustForRelatedTarget(dispatcher.node(),
+                                             event().relatedTarget());
+
+  return dispatcher.dispatch();
 }
 
-bool PointerEventDispatchMediator::dispatchEvent(EventDispatcher& dispatcher) const
-{
-    if (isDisabledFormControl(&dispatcher.node()))
-        return false;
-
-    if (event().type().isEmpty())
-        return true; // Shouldn't happen.
-
-    ASSERT(!event().target() || event().target() != event().relatedTarget());
-
-    EventTarget* relatedTarget = event().relatedTarget();
-    event().eventPath().adjustForRelatedTarget(dispatcher.node(), relatedTarget);
-
-    dispatcher.dispatch();
-    return !event().defaultHandled() && !event().defaultPrevented();
-}
-
-} // namespace blink
+}  // namespace blink

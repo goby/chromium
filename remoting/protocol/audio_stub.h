@@ -5,8 +5,10 @@
 #ifndef REMOTING_PROTOCOL_AUDIO_STUB_H_
 #define REMOTING_PROTOCOL_AUDIO_STUB_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace remoting {
 
@@ -18,7 +20,7 @@ class AudioStub {
  public:
   virtual ~AudioStub() { }
 
-  virtual void ProcessAudioPacket(scoped_ptr<AudioPacket> audio_packet,
+  virtual void ProcessAudioPacket(std::unique_ptr<AudioPacket> audio_packet,
                                   const base::Closure& done) = 0;
 
  protected:

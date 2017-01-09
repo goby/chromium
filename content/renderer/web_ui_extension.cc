@@ -4,7 +4,10 @@
 
 #include "content/renderer/web_ui_extension.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <utility>
+
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "content/common/view_messages.h"
 #include "content/public/child/v8_value_converter.h"
@@ -19,6 +22,7 @@
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
@@ -94,9 +98,16 @@ void WebUIExtension::Send(gin::Arguments* args) {
     return;
   }
 
+  if (base::EndsWith(message, "RequiringGesture",
+                     base::CompareCase::SENSITIVE) &&
+      !blink::WebUserGestureIndicator::isProcessingUserGesture()) {
+    NOTREACHED();
+    return;
+  }
+
   // If they've provided an optional message parameter, convert that into a
   // Value to send to the browser process.
-  scoped_ptr<base::ListValue> content;
+  std::unique_ptr<base::ListValue> content;
   if (args->PeekNext().IsEmpty() || args->PeekNext()->IsUndefined()) {
     content.reset(new base::ListValue());
   } else {
@@ -106,14 +117,10 @@ void WebUIExtension::Send(gin::Arguments* args) {
       return;
     }
 
-    scoped_ptr<V8ValueConverter> converter(V8ValueConverter::create());
-
-    base::Value* value =
-        converter->FromV8Value(obj, frame->mainWorldScriptContext());
-    base::ListValue* list = NULL;
-    value->GetAsList(&list);
-    DCHECK(list);
-    content.reset(list);
+    std::unique_ptr<V8ValueConverter> converter(V8ValueConverter::create());
+    content = base::ListValue::From(
+        converter->FromV8Value(obj, frame->mainWorldScriptContext()));
+    DCHECK(content);
   }
 
   // Send the message up to the browser.

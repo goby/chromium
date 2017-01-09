@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/prefs/pref_value_map.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/policy/file_selection_dialogs_policy_handler.h"
 #include "chrome/common/pref_names.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace policy {
@@ -28,12 +29,9 @@ TEST_F(FileSelectionDialogsPolicyTest, Default) {
 }
 
 TEST_F(FileSelectionDialogsPolicyTest, EnableFileSelectionDialogs) {
-  policy_.Set(key::kAllowFileSelectionDialogs,
-              POLICY_LEVEL_MANDATORY,
-              POLICY_SCOPE_USER,
-              POLICY_SOURCE_CLOUD,
-              new base::FundamentalValue(true),
-              NULL);
+  policy_.Set(key::kAllowFileSelectionDialogs, POLICY_LEVEL_MANDATORY,
+              POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+              base::MakeUnique<base::FundamentalValue>(true), nullptr);
   handler_.ApplyPolicySettings(policy_, &prefs_);
 
   // Allowing file-selection dialogs should not influence the PromptForDownload
@@ -42,12 +40,9 @@ TEST_F(FileSelectionDialogsPolicyTest, EnableFileSelectionDialogs) {
 }
 
 TEST_F(FileSelectionDialogsPolicyTest, DisableFileSelectionDialogs) {
-  policy_.Set(key::kAllowFileSelectionDialogs,
-              POLICY_LEVEL_MANDATORY,
-              POLICY_SCOPE_USER,
-              POLICY_SOURCE_CLOUD,
-              new base::FundamentalValue(false),
-              NULL);
+  policy_.Set(key::kAllowFileSelectionDialogs, POLICY_LEVEL_MANDATORY,
+              POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+              base::MakeUnique<base::FundamentalValue>(false), nullptr);
   handler_.ApplyPolicySettings(policy_, &prefs_);
 
   // Disabling file-selection dialogs should disable the PromptForDownload pref.

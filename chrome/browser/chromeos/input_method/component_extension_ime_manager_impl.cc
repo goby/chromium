@@ -4,11 +4,14 @@
 
 #include "chrome/browser/chromeos/input_method/component_extension_ime_manager_impl.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/files/file_util.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
@@ -21,9 +24,10 @@
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/extension_pref_value_map.h"
+#include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_l10n_util.h"
 #include "extensions/common/manifest_constants.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -102,6 +106,12 @@ void DoLoadExtension(Profile* profile,
     return;
   const std::string loaded_extension_id =
       GetComponentLoader(profile)->Add(manifest, file_path);
+  // Register IME extension with ExtensionPrefValueMap.
+  ExtensionPrefValueMapFactory::GetForBrowserContext(profile)
+      ->RegisterExtension(extension_id,
+                          base::Time(),  // install_time.
+                          true,          // is_enabled.
+                          true);         // is_incognito_enabled.
   DCHECK_EQ(loaded_extension_id, extension_id);
 }
 
@@ -163,16 +173,18 @@ void ComponentExtensionIMEManagerImpl::Unload(Profile* profile,
   GetComponentLoader(profile)->Remove(extension_id);
 }
 
-scoped_ptr<base::DictionaryValue> ComponentExtensionIMEManagerImpl::GetManifest(
+std::unique_ptr<base::DictionaryValue>
+ComponentExtensionIMEManagerImpl::GetManifest(
     const std::string& manifest_string) {
   std::string error;
   JSONStringValueDeserializer deserializer(manifest_string);
-  scoped_ptr<base::Value> manifest = deserializer.Deserialize(NULL, &error);
+  std::unique_ptr<base::Value> manifest =
+      deserializer.Deserialize(NULL, &error);
   if (!manifest.get())
     LOG(ERROR) << "Failed at getting manifest";
 
-  return scoped_ptr<base::DictionaryValue>(
-             static_cast<base::DictionaryValue*>(manifest.release())).Pass();
+  return std::unique_ptr<base::DictionaryValue>(
+      static_cast<base::DictionaryValue*>(manifest.release()));
 }
 
 // static
@@ -205,11 +217,11 @@ bool ComponentExtensionIMEManagerImpl::ReadEngineComponent(
   std::set<std::string> languages;
   const base::Value* language_value = NULL;
   if (dict.Get(extensions::manifest_keys::kLanguage, &language_value)) {
-    if (language_value->GetType() == base::Value::TYPE_STRING) {
+    if (language_value->GetType() == base::Value::Type::STRING) {
       std::string language_str;
       language_value->GetAsString(&language_str);
       languages.insert(language_str);
-    } else if (language_value->GetType() == base::Value::TYPE_LIST) {
+    } else if (language_value->GetType() == base::Value::Type::LIST) {
       const base::ListValue* language_list = NULL;
       language_value->GetAsList(&language_list);
       for (size_t j = 0; j < language_list->GetSize(); ++j) {
@@ -300,7 +312,7 @@ void ComponentExtensionIMEManagerImpl::ReadComponentExtensionsInfo(
     if (component_ime.manifest.empty())
       continue;
 
-    scoped_ptr<base::DictionaryValue> manifest =
+    std::unique_ptr<base::DictionaryValue> manifest =
         GetManifest(component_ime.manifest);
     if (!manifest.get())
       continue;

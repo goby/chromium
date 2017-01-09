@@ -5,17 +5,21 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_ARRAY_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_ARRAY_H_
 
+#include <stddef.h>
 #include <string.h>
-
 #include <algorithm>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/macros.h"
+#include "base/optional.h"
 #include "mojo/public/cpp/bindings/lib/array_internal.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
+#include "mojo/public/cpp/bindings/lib/clone_equals_util.h"
+#include "mojo/public/cpp/bindings/lib/hash_util.h"
 #include "mojo/public/cpp/bindings/lib/template_util.h"
-#include "mojo/public/cpp/bindings/lib/value_traits.h"
 #include "mojo/public/cpp/bindings/type_converter.h"
 
 namespace mojo {
@@ -24,39 +28,64 @@ namespace mojo {
 // meaning that no value has been assigned to it. Null is distinct from empty.
 template <typename T>
 class Array {
-  MOJO_MOVE_ONLY_TYPE(Array)
  public:
-  typedef internal::ArrayTraits<T, internal::IsMoveOnlyType<T>::value> Traits;
-  typedef typename Traits::ConstRefType ConstRefType;
-  typedef typename Traits::RefType RefType;
-  typedef typename Traits::StorageType StorageType;
-  typedef typename Traits::ForwardType ForwardType;
+  using ConstRefType = typename std::vector<T>::const_reference;
+  using RefType = typename std::vector<T>::reference;
 
-  typedef internal::Array_Data<typename internal::WrapperTraits<T>::DataType>
-      Data_;
+  using Element = T;
 
-  // Constructs a new array that is null.
-  Array() : is_null_(true) {}
+  using iterator = typename std::vector<T>::iterator;
+  using const_iterator = typename std::vector<T>::const_iterator;
+
+  // Constructs an empty array.
+  Array() : is_null_(false) {}
+  // Constructs a null array.
+  Array(std::nullptr_t null_pointer) : is_null_(true) {}
 
   // Constructs a new non-null array of the specified size. The elements will
   // be value-initialized (meaning that they will be initialized by their
   // default constructor, if any, or else zero-initialized).
-  explicit Array(size_t size) : vec_(size), is_null_(false) {
-    Traits::Initialize(&vec_);
-  }
-  ~Array() { Traits::Finalize(&vec_); }
+  explicit Array(size_t size) : vec_(size), is_null_(false) {}
+  ~Array() {}
+
+  // Copies the contents of |other| into this array.
+  Array(const std::vector<T>& other) : vec_(other), is_null_(false) {}
+  Array(const base::Optional<std::vector<T>>& other)
+      : vec_(other.value_or(std::vector<T>())), is_null_(!other) {}
 
   // Moves the contents of |other| into this array.
+  Array(std::vector<T>&& other) : vec_(std::move(other)), is_null_(false) {}
+  Array(base::Optional<std::vector<T>>&& other) : is_null_(!other) {
+    if (!is_null_)
+      vec_ = std::move(other.value());
+  }
   Array(Array&& other) : is_null_(true) { Take(&other); }
+
+  Array& operator=(std::vector<T>&& other) {
+    vec_ = std::move(other);
+    is_null_ = false;
+    return *this;
+  }
+  Array& operator=(base::Optional<std::vector<T>>&& other) {
+    is_null_ = !other;
+    vec_ = std::move(other).value_or(std::vector<T>());
+    return *this;
+  }
   Array& operator=(Array&& other) {
     Take(&other);
+    return *this;
+  }
+
+  Array& operator=(std::nullptr_t null_pointer) {
+    is_null_ = true;
+    vec_.clear();
     return *this;
   }
 
   // Creates a non-null array of the specified size. The elements will be
   // value-initialized (meaning that they will be initialized by their default
   // constructor, if any, or else zero-initialized).
-  static Array New(size_t size) { return Array(size).Pass(); }
+  static Array New(size_t size) { return Array(size); }
 
   // Creates a new array with a copy of the contents of |other|.
   template <typename U>
@@ -70,54 +99,78 @@ class Array {
     return TypeConverter<U, Array>::Convert(*this);
   }
 
-  // Resets the contents of this array back to null.
-  void reset() {
-    if (!vec_.empty()) {
-      Traits::Finalize(&vec_);
-      vec_.clear();
-    }
-    is_null_ = true;
-  }
-
   // Indicates whether the array is null (which is distinct from empty).
   bool is_null() const { return is_null_; }
+
+  // Indicates whether the array is empty (which is distinct from null).
+  bool empty() const { return vec_.empty() && !is_null_; }
 
   // Returns a reference to the first element of the array. Calling this on a
   // null or empty array causes undefined behavior.
   ConstRefType front() const { return vec_.front(); }
   RefType front() { return vec_.front(); }
 
+  iterator begin() { return vec_.begin(); }
+  const_iterator begin() const { return vec_.begin(); }
+  iterator end() { return vec_.end(); }
+  const_iterator end() const { return vec_.end(); }
+
   // Returns the size of the array, which will be zero if the array is null.
   size_t size() const { return vec_.size(); }
 
   // Returns a reference to the element at zero-based |offset|. Calling this on
   // an array with size less than |offset|+1 causes undefined behavior.
-  ConstRefType at(size_t offset) const { return Traits::at(&vec_, offset); }
+  ConstRefType at(size_t offset) const { return vec_.at(offset); }
   ConstRefType operator[](size_t offset) const { return at(offset); }
-  RefType at(size_t offset) { return Traits::at(&vec_, offset); }
+  RefType at(size_t offset) { return vec_.at(offset); }
   RefType operator[](size_t offset) { return at(offset); }
 
   // Pushes |value| onto the back of the array. If this array was null, it will
   // become non-null with a size of 1.
-  void push_back(ForwardType value) {
+  void push_back(const T& value) {
     is_null_ = false;
-    Traits::PushBack(&vec_, value);
+    vec_.push_back(value);
+  }
+  void push_back(T&& value) {
+    is_null_ = false;
+    vec_.push_back(std::move(value));
   }
 
   // Resizes the array to |size| and makes it non-null. Otherwise, works just
   // like the resize method of |std::vector|.
   void resize(size_t size) {
     is_null_ = false;
-    Traits::Resize(&vec_, size);
+    vec_.resize(size);
   }
+
+  // Sets the array to empty (even if previously it was null.)
+  void SetToEmpty() { resize(0); }
+
+  // Ensures the underlying storage can store up to |size| elements without
+  // performing reallocations. This works like the reserve method of
+  // |std::vector|.
+  void reserve(size_t size) { vec_.reserve(size); }
 
   // Returns a const reference to the |std::vector| managed by this class. If
   // the array is null, this will be an empty vector.
-  const std::vector<StorageType>& storage() const { return vec_; }
-  operator const std::vector<StorageType>&() const { return vec_; }
+  const std::vector<T>& storage() const { return vec_; }
 
-  // Swaps the contents of this array with the |other| array, including
-  // nullness.
+  // Passes the underlying storage and resets this array to null.
+  std::vector<T> PassStorage() {
+    is_null_ = true;
+    return std::move(vec_);
+  }
+
+  base::Optional<std::vector<T>> PassStorageAsOptional() {
+    base::Optional<std::vector<T>> result;
+    if (!is_null_)
+      result.emplace(std::move(vec_));
+    is_null_ = true;
+    return result;
+  }
+
+  operator const std::vector<T>&() const { return vec_; }
+
   void Swap(Array* other) {
     std::swap(is_null_, other->is_null_);
     vec_.swap(other->vec_);
@@ -126,46 +179,41 @@ class Array {
   // Swaps the contents of this array with the specified vector, making this
   // array non-null. Since the vector cannot represent null, it will just be
   // made empty if this array is null.
-  void Swap(std::vector<StorageType>* other) {
+  void Swap(std::vector<T>* other) {
     is_null_ = false;
     vec_.swap(*other);
   }
 
   // Returns a copy of the array where each value of the new array has been
-  // "cloned" from the corresponding value of this array. If this array contains
-  // primitive data types, this is equivalent to simply copying the contents.
-  // However, if the array contains objects, then each new element is created by
-  // calling the |Clone| method of the source element, which should make a copy
-  // of the element.
+  // "cloned" from the corresponding value of this array. If the element type
+  // defines a Clone() method, it will be used; otherwise copy
+  // constructor/assignment will be used.
   //
   // Please note that calling this method will fail compilation if the element
   // type cannot be cloned (which usually means that it is a Mojo handle type or
-  // a type contains Mojo handles).
+  // a type containing Mojo handles).
   Array Clone() const {
     Array result;
     result.is_null_ = is_null_;
-    Traits::Clone(vec_, &result.vec_);
-    return result.Pass();
+    result.vec_ = internal::Clone(vec_);
+    return result;
   }
 
   // Indicates whether the contents of this array are equal to |other|. A null
-  // array is only equal to another null array. Elements are compared using the
-  // |ValueTraits::Equals| method, which in most cases calls the |Equals| method
-  // of the element.
+  // array is only equal to another null array. If the element type defines an
+  // Equals() method, it will be used; otherwise == operator will be used.
   bool Equals(const Array& other) const {
     if (is_null() != other.is_null())
       return false;
-    if (size() != other.size())
-      return false;
-    for (size_t i = 0; i < size(); ++i) {
-      if (!internal::ValueTraits<T>::Equals(at(i), other.at(i)))
-        return false;
-    }
-    return true;
+    return internal::Equals(vec_, other.vec_);
+  }
+
+  size_t Hash(size_t seed) const {
+    return is_null() ? seed : internal::Hash(seed, vec_);
   }
 
  private:
-  typedef std::vector<StorageType> Array::*Testable;
+  typedef std::vector<T> Array::*Testable;
 
  public:
   operator Testable() const { return is_null_ ? 0 : &Array::vec_; }
@@ -179,12 +227,14 @@ class Array {
   bool operator!=(const Array<U>& other) const = delete;
 
   void Take(Array* other) {
-    reset();
+    operator=(nullptr);
     Swap(other);
   }
 
-  std::vector<StorageType> vec_;
+  std::vector<T> vec_;
   bool is_null_;
+
+  DISALLOW_COPY_AND_ASSIGN(Array);
 };
 
 // A |TypeConverter| that will create an |Array<T>| containing a copy of the
@@ -196,7 +246,7 @@ struct TypeConverter<Array<T>, std::vector<E>> {
     Array<T> result(input.size());
     for (size_t i = 0; i < input.size(); ++i)
       result[i] = TypeConverter<T, E>::Convert(input[i]);
-    return result.Pass();
+    return std::move(result);
   }
 };
 
@@ -222,10 +272,10 @@ struct TypeConverter<std::vector<E>, Array<T>> {
 template <typename T, typename E>
 struct TypeConverter<Array<T>, std::set<E>> {
   static Array<T> Convert(const std::set<E>& input) {
-    Array<T> result(0u);
+    Array<T> result;
     for (auto i : input)
       result.push_back(TypeConverter<T, E>::Convert(i));
-    return result.Pass();
+    return std::move(result);
   }
 };
 
@@ -243,6 +293,16 @@ struct TypeConverter<std::set<E>, Array<T>> {
     return result;
   }
 };
+
+// Less than operator to allow Arrays as keys in std maps and sets.
+template <typename T>
+inline bool operator<(const Array<T>& a, const Array<T>& b) {
+  if (a.is_null())
+    return !b.is_null();
+  if (b.is_null())
+    return false;
+  return a.storage() < b.storage();
+}
 
 }  // namespace mojo
 

@@ -4,7 +4,10 @@
 
 #include "components/content_settings/core/browser/website_settings_registry.h"
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "components/content_settings/core/common/content_settings.h"
 
 namespace {
@@ -52,14 +55,47 @@ const WebsiteSettingsInfo* WebsiteSettingsRegistry::GetByName(
 const WebsiteSettingsInfo* WebsiteSettingsRegistry::Register(
     ContentSettingsType type,
     const std::string& name,
-    scoped_ptr<base::Value> initial_default_value,
+    std::unique_ptr<base::Value> initial_default_value,
     WebsiteSettingsInfo::SyncStatus sync_status,
     WebsiteSettingsInfo::LossyStatus lossy_status,
-    WebsiteSettingsInfo::ScopingType scoping_type) {
-  WebsiteSettingsInfo* info =
-      new WebsiteSettingsInfo(type, name, initial_default_value.Pass(),
-                              sync_status, lossy_status, scoping_type);
-  website_settings_info_[info->type()] = make_scoped_ptr(info);
+    WebsiteSettingsInfo::ScopingType scoping_type,
+    Platforms platform,
+    WebsiteSettingsInfo::IncognitoBehavior incognito_behavior) {
+
+#if defined(OS_WIN)
+  if (!(platform & PLATFORM_WINDOWS))
+    return nullptr;
+#elif defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  if (!(platform & PLATFORM_LINUX))
+    return nullptr;
+#elif defined(OS_MACOSX) && !defined(OS_IOS)
+  if (!(platform & PLATFORM_MAC))
+    return nullptr;
+#elif defined(OS_CHROMEOS)
+  if (!(platform & PLATFORM_CHROMEOS))
+    return nullptr;
+#elif defined(OS_ANDROID)
+  if (!(platform & PLATFORM_ANDROID))
+    return nullptr;
+  // Don't sync settings to mobile platforms. The UI is different to desktop and
+  // doesn't allow the settings to be managed in the same way. See
+  // crbug.com/642184.
+  sync_status = WebsiteSettingsInfo::UNSYNCABLE;
+#elif defined(OS_IOS)
+  if (!(platform & PLATFORM_IOS))
+    return nullptr;
+  // Don't sync settings to mobile platforms. The UI is different to desktop and
+  // doesn't allow the settings to be managed in the same way. See
+  // crbug.com/642184.
+  sync_status = WebsiteSettingsInfo::UNSYNCABLE;
+#else
+#error "Unsupported platform"
+#endif
+
+  WebsiteSettingsInfo* info = new WebsiteSettingsInfo(
+      type, name, std::move(initial_default_value), sync_status, lossy_status,
+      scoping_type, incognito_behavior);
+  website_settings_info_[info->type()] = base::WrapUnique(info);
   return info;
 }
 
@@ -83,20 +119,40 @@ void WebsiteSettingsRegistry::Init() {
   Register(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE,
            "auto-select-certificate", nullptr, WebsiteSettingsInfo::UNSYNCABLE,
            WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_DOMAIN_ONLY_SCOPE);
-  Register(CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, "ssl-cert-decisions",
-           nullptr, WebsiteSettingsInfo::UNSYNCABLE,
+           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE, ALL_PLATFORMS,
+           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
+  Register(CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+           "ssl-cert-decisions", nullptr, WebsiteSettingsInfo::UNSYNCABLE,
            WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE);
+           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           DESKTOP | PLATFORM_ANDROID,
+           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_APP_BANNER, "app-banner", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
-           WebsiteSettingsInfo::REQUESTING_DOMAIN_ONLY_SCOPE);
+           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           DESKTOP | PLATFORM_ANDROID,
+           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT, "site-engagement", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE);
+           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           DESKTOP | PLATFORM_ANDROID,
+           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   Register(CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA, "usb-chooser-data", nullptr,
            WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::NOT_LOSSY,
-           WebsiteSettingsInfo::REQUESTING_ORIGIN_AND_TOP_LEVEL_ORIGIN_SCOPE);
+           WebsiteSettingsInfo::REQUESTING_ORIGIN_AND_TOP_LEVEL_ORIGIN_SCOPE,
+           DESKTOP | PLATFORM_ANDROID,
+           WebsiteSettingsInfo::DONT_INHERIT_IN_INCOGNITO);
+  Register(CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT,
+           "prompt-no-decision-count", nullptr, WebsiteSettingsInfo::UNSYNCABLE,
+           WebsiteSettingsInfo::NOT_LOSSY,
+           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           DESKTOP | PLATFORM_ANDROID,
+           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
+  Register(CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO, "important-site-info",
+           nullptr, WebsiteSettingsInfo::UNSYNCABLE, WebsiteSettingsInfo::LOSSY,
+           WebsiteSettingsInfo::REQUESTING_ORIGIN_ONLY_SCOPE,
+           DESKTOP | PLATFORM_ANDROID,
+           WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
 }
 
 }  // namespace content_settings

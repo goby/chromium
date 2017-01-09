@@ -20,11 +20,14 @@
 #include "chrome/browser/download/download_stats.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/download_feedback_service.h"
+#include "chrome/common/safe_browsing/download_file_types.pb.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/mime_util/mime_util.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
+#include "net/base/mime_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
 #include "ui/base/text/bytes_formatting.h"
@@ -32,6 +35,7 @@
 
 using base::TimeDelta;
 using content::DownloadItem;
+using safe_browsing::DownloadFileType;
 
 namespace {
 
@@ -59,9 +63,9 @@ class DownloadItemModelData : public base::SupportsUserData::Data {
   // for the file type.
   bool should_prefer_opening_in_browser_;
 
-  // Whether the download should be considered dangerous if SafeBrowsing doesn't
-  // come up with a verdict.
-  bool is_dangerous_file_based_on_type_;
+  // Danger level of the file determined based on the file type and whether
+  // there was a user action associated with the download.
+  DownloadFileType::DangerLevel danger_level_;
 
   // Whether the download is currently being revived.
   bool is_being_revived_;
@@ -98,9 +102,8 @@ DownloadItemModelData::DownloadItemModelData()
     : should_show_in_shelf_(true),
       was_ui_notified_(false),
       should_prefer_opening_in_browser_(false),
-      is_dangerous_file_based_on_type_(false),
-      is_being_revived_(false) {
-}
+      danger_level_(DownloadFileType::NOT_DANGEROUS),
+      is_being_revived_(false) {}
 
 base::string16 InterruptReasonStatusMessage(
     content::DownloadInterruptReason reason) {
@@ -171,11 +174,16 @@ base::string16 InterruptReasonStatusMessage(
     case content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_FORBIDDEN;
       break;
+    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNREACHABLE:
+      string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_UNREACHABLE;
+      break;
+
     case content::DOWNLOAD_INTERRUPT_REASON_NONE:
       NOTREACHED();
       // fallthrough
     case content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE:
     case content::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED:
+    case content::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS;
   }
 
@@ -251,11 +259,15 @@ base::string16 InterruptReasonMessage(content::DownloadInterruptReason reason) {
     case content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN:
       string_id = IDS_DOWNLOAD_INTERRUPTED_DESCRIPTION_FORBIDDEN;
       break;
+    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNREACHABLE:
+      string_id = IDS_DOWNLOAD_INTERRUPTED_DESCRIPTION_UNREACHABLE;
+      break;
     case content::DOWNLOAD_INTERRUPT_REASON_NONE:
       NOTREACHED();
       // fallthrough
     case content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE:
     case content::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED:
+    case content::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS;
   }
 
@@ -319,8 +331,8 @@ base::string16 DownloadItemModel::GetStatusText() const {
 }
 
 base::string16 DownloadItemModel::GetTabProgressStatusText() const {
-  int64 total = GetTotalBytes();
-  int64 size = download_->GetReceivedBytes();
+  int64_t total = GetTotalBytes();
+  int64_t size = download_->GetReceivedBytes();
   base::string16 received_size = ui::FormatBytes(size);
   base::string16 amount = received_size;
 
@@ -338,7 +350,7 @@ base::string16 DownloadItemModel::GetTabProgressStatusText() const {
   } else {
     amount.assign(received_size);
   }
-  int64 current_speed = download_->CurrentSpeed();
+  int64_t current_speed = download_->CurrentSpeed();
   base::string16 speed_text = ui::FormatSpeed(current_speed);
   base::i18n::AdjustStringForLocaleDirection(&speed_text);
 
@@ -431,11 +443,11 @@ base::string16 DownloadItemModel::GetWarningConfirmButtonText() const {
   }
 }
 
-int64 DownloadItemModel::GetCompletedBytes() const {
+int64_t DownloadItemModel::GetCompletedBytes() const {
   return download_->GetReceivedBytes();
 }
 
-int64 DownloadItemModel::GetTotalBytes() const {
+int64_t DownloadItemModel::GetTotalBytes() const {
   return download_->AllDataSaved() ? download_->GetReceivedBytes() :
                                      download_->GetTotalBytes();
 }
@@ -500,6 +512,23 @@ bool DownloadItemModel::IsMalicious() const {
       return false;
   }
   NOTREACHED();
+  return false;
+}
+
+bool DownloadItemModel::HasSupportedImageMimeType() const {
+  if (mime_util::IsSupportedImageMimeType(download_->GetMimeType())) {
+    return true;
+  }
+
+  std::string mime;
+  base::FilePath::StringType extension_with_dot =
+      download_->GetTargetFilePath().FinalExtension();
+  if (!extension_with_dot.empty() && net::GetWellKnownMimeTypeFromExtension(
+                                         extension_with_dot.substr(1), &mime) &&
+      mime_util::IsSupportedImageMimeType(mime)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -609,14 +638,15 @@ void DownloadItemModel::SetShouldPreferOpeningInBrowser(bool preference) {
   data->should_prefer_opening_in_browser_ = preference;
 }
 
-bool DownloadItemModel::IsDangerousFileBasedOnType() const {
+DownloadFileType::DangerLevel DownloadItemModel::GetDangerLevel() const {
   const DownloadItemModelData* data = DownloadItemModelData::Get(download_);
-  return data && data->is_dangerous_file_based_on_type_;
+  return data ? data->danger_level_ : DownloadFileType::NOT_DANGEROUS;
 }
 
-void DownloadItemModel::SetIsDangerousFileBasedOnType(bool dangerous) {
+void DownloadItemModel::SetDangerLevel(
+    DownloadFileType::DangerLevel danger_level) {
   DownloadItemModelData* data = DownloadItemModelData::GetOrCreate(download_);
-  data->is_dangerous_file_based_on_type_ = dangerous;
+  data->danger_level_ = danger_level;
 }
 
 bool DownloadItemModel::IsBeingRevived() const {
@@ -631,8 +661,8 @@ void DownloadItemModel::SetIsBeingRevived(bool is_being_revived) {
 
 base::string16 DownloadItemModel::GetProgressSizesString() const {
   base::string16 size_ratio;
-  int64 size = GetCompletedBytes();
-  int64 total = GetTotalBytes();
+  int64_t size = GetCompletedBytes();
+  int64_t total = GetTotalBytes();
   if (total > 0) {
     ui::DataUnits amount_units = ui::GetByteDisplayUnits(total);
     base::string16 simple_size = ui::FormatBytesWithUnits(size, amount_units, false);

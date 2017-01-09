@@ -5,59 +5,66 @@
 #ifndef CHROME_BROWSER_PASSWORD_MANAGER_ACCOUNT_CHOOSER_DIALOG_ANDROID_H_
 #define CHROME_BROWSER_PASSWORD_MANAGER_ACCOUNT_CHOOSER_DIALOG_ANDROID_H_
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/android/jni_android.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/passwords/manage_passwords_state.h"
+#include "content/public/browser/web_contents_observer.h"
 
 namespace content {
 class WebContents;
 }
 
-namespace password_manager {
-struct CredentialInfo;
-}
-
 // Native counterpart for the android dialog which allows users to select
 // credentials which will be passed to the web site in order to log in the user.
-class AccountChooserDialogAndroid {
+class AccountChooserDialogAndroid : public content::WebContentsObserver {
  public:
   AccountChooserDialogAndroid(
       content::WebContents* web_contents,
-      ScopedVector<autofill::PasswordForm> local_credentials,
-      ScopedVector<autofill::PasswordForm> federated_credentials,
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials,
       const GURL& origin,
       const ManagePasswordsState::CredentialsCallback& callback);
 
-  ~AccountChooserDialogAndroid();
-  void Destroy(JNIEnv* env, jobject obj);
+  ~AccountChooserDialogAndroid() override;
+  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
   void ShowDialog();
 
   // Closes the dialog and propagates that no credentials was chosen.
-  void CancelDialog(JNIEnv* env, jobject obj);
+  void CancelDialog(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& obj);
 
   // Propagates the credentials chosen by the user.
   void OnCredentialClicked(JNIEnv* env,
-                           jobject obj,
+                           const base::android::JavaParamRef<jobject>& obj,
                            jint credential_item,
-                           jint credential_type);
+                           jboolean sign_button_clicked);
 
   // Opens new tab with page which explains the Smart Lock branding.
-  void OnLinkClicked(JNIEnv* env, jobject obj);
+  void OnLinkClicked(JNIEnv* env,
+                     const base::android::JavaParamRef<jobject>& obj);
+
+  // content::WebContentsObserver overrides:
+  void WebContentsDestroyed() override;
+  void WasHidden() override;
 
  private:
-  const std::vector<const autofill::PasswordForm*>& local_credentials_forms()
-      const;
+  void OnDialogCancel();
 
-  const std::vector<const autofill::PasswordForm*>&
-  federated_credentials_forms() const;
+  const std::vector<std::unique_ptr<autofill::PasswordForm>>&
+  local_credentials_forms() const;
 
-  void ChooseCredential(size_t index, password_manager::CredentialType type);
+  void ChooseCredential(size_t index,
+                        password_manager::CredentialType type,
+                        bool sign_button_clicked);
 
   content::WebContents* web_contents_;
   ManagePasswordsState passwords_data_;
+  GURL origin_;
+  base::android::ScopedJavaGlobalRef<jobject> dialog_jobject_;
 
   DISALLOW_COPY_AND_ASSIGN(AccountChooserDialogAndroid);
 };

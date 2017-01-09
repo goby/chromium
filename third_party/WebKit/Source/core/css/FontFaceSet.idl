@@ -28,14 +28,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// http://dev.w3.org/csswg/css-font-loading/#FontFaceSet-interface
+// https://dev.w3.org/csswg/css-font-loading/#FontFaceSet-interface
 
 enum FontFaceSetLoadStatus { "loading", "loaded" };
 
-// TODO(philipj): This interface should be [Exposed=Window,Worker] and should
+// TODO(foolip): This interface should be [Exposed=Window,Worker] and should
 // have a constructor, and thus not have [NoInterfaceObject].
 [
-    ActiveDOMObject,
+    DependentLifetime,
     SetWrapperReferenceFrom=document,
     NoInterfaceObject,
 ] interface FontFaceSet : EventTarget {

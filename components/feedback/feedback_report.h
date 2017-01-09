@@ -7,9 +7,9 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 
@@ -31,17 +31,21 @@ class FeedbackReport : public base::RefCounted<FeedbackReport> {
                  const std::string& data,
                  scoped_refptr<base::SequencedTaskRunner> task_runner);
 
+  // The ID of the product specific data for the crash report IDs as stored by
+  // the feedback server.
+  static const char kCrashReportIdsKey[];
+
+  // Loads the reports still on disk and queues then using the given callback.
+  // This call blocks on the file reads.
+  static void LoadReportsAndQueue(const base::FilePath& user_dir,
+                                  QueueCallback callback);
+
   // Stops the disk write of the report and deletes the report file if already
   // written.
   void DeleteReportOnDisk();
 
   const base::Time& upload_at() const { return upload_at_; }
   const std::string& data() const { return data_; }
-
-  // Loads the reports still on disk and queues then using the given callback.
-  // This call blocks on the file reads.
-  static void LoadReportsAndQueue(const base::FilePath& user_dir,
-                                  QueueCallback callback);
 
  private:
   friend class base::RefCounted<FeedbackReport>;

@@ -5,6 +5,8 @@
 #ifndef PPAPI_CPP_PRIVATE_VAR_PRIVATE_H_
 #define PPAPI_CPP_PRIVATE_VAR_PRIVATE_H_
 
+#include <stdint.h>
+
 #include "ppapi/cpp/var.h"
 
 namespace pp {
@@ -114,7 +116,7 @@ class VarPrivate : public Var {
 
  private:
   // Prevent an arbitrary pointer argument from being implicitly converted to
-  // a bool at Var construction. If somebody makes such a mistake, (s)he will
+  // a bool at Var construction. If somebody makes such a mistake, they will
   // get a compilation error.
   VarPrivate(void* non_scriptable_object_pointer);
 };

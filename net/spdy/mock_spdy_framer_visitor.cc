@@ -8,7 +8,9 @@ namespace net {
 
 namespace test {
 
-MockSpdyFramerVisitor::MockSpdyFramerVisitor() {}
+MockSpdyFramerVisitor::MockSpdyFramerVisitor() {
+  DelegateHeaderHandling();
+}
 
 MockSpdyFramerVisitor::~MockSpdyFramerVisitor() {}
 

@@ -4,10 +4,12 @@
 
 #include "ui/views/controls/image_view.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkPaint.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/painter.h"
@@ -63,7 +65,7 @@ void ImageView::SetImage(const gfx::ImageSkia* image_skia) {
   }
 }
 
-const gfx::ImageSkia& ImageView::GetImage() {
+const gfx::ImageSkia& ImageView::GetImage() const {
   return image_;
 }
 
@@ -82,8 +84,8 @@ void ImageView::ResetImageSize() {
   image_size_set_ = false;
 }
 
-void ImageView::SetFocusPainter(scoped_ptr<Painter> focus_painter) {
-  focus_painter_ = focus_painter.Pass();
+void ImageView::SetFocusPainter(std::unique_ptr<Painter> focus_painter) {
+  focus_painter_ = std::move(focus_painter);
 }
 
 gfx::Size ImageView::GetPreferredSize() const {
@@ -154,9 +156,9 @@ void ImageView::OnPaint(gfx::Canvas* canvas) {
   Painter::PaintFocusPainter(this, canvas, focus_painter_.get());
 }
 
-void ImageView::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_IMAGE;
-  state->name = tooltip_text_;
+void ImageView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_IMAGE;
+  node_data->SetName(tooltip_text_);
 }
 
 const char* ImageView::GetClassName() const {

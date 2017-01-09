@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_PLUGINS_CHROME_CONTENT_BROWSER_CLIENT_PLUGINS_PART_H_
 #define CHROME_BROWSER_PLUGINS_CHROME_CONTENT_BROWSER_CLIENT_PLUGINS_PART_H_
 
+#include "base/macros.h"
 #include "chrome/browser/chrome_content_browser_client_parts.h"
 #include "content/public/browser/browser_ppapi_host.h"
 #include "content/public/common/socket_permission_request.h"
@@ -30,6 +31,10 @@ class ChromeContentBrowserClientPluginsPart
       bool private_api,
       const content::SocketPermissionRequest* params,
       const std::set<std::string>& allowed_socket_origin);
+
+  static bool IsPepperVpnProviderAPIAllowed(
+      content::BrowserContext* browser_context,
+      const GURL& url);
 
   static bool IsPluginAllowedToCallRequestOSFileHandle(
       content::BrowserContext* browser_context,

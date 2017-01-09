@@ -5,16 +5,16 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_PLATFORM_CAMERA_DEVICE_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_PLATFORM_CAMERA_DEVICE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/media/video_capture.h"
-#include "media/base/video_capture_types.h"
+#include "media/capture/video_capture_types.h"
 
 class GURL;
 

@@ -4,15 +4,17 @@
 
 #include "net/url_request/url_request_file_job.h"
 
+#include <memory>
+
+#include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/filename_util.h"
-#include "net/base/net_util.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -21,62 +23,72 @@ namespace net {
 
 namespace {
 
-// A URLRequestFileJob for testing OnSeekComplete / OnReadComplete callbacks.
-class URLRequestFileJobWithCallbacks : public URLRequestFileJob {
+// A URLRequestFileJob for testing values passed to OnSeekComplete and
+// OnReadComplete.
+class TestURLRequestFileJob : public URLRequestFileJob {
  public:
-  URLRequestFileJobWithCallbacks(
-      URLRequest* request,
-      NetworkDelegate* network_delegate,
-      const base::FilePath& file_path,
-      const scoped_refptr<base::TaskRunner>& file_task_runner)
+  // |seek_position| will be set to the value passed in to OnSeekComplete.
+  // |observed_content| will be set to the concatenated data from all calls to
+  // OnReadComplete.
+  TestURLRequestFileJob(URLRequest* request,
+                        NetworkDelegate* network_delegate,
+                        const base::FilePath& file_path,
+                        const scoped_refptr<base::TaskRunner>& file_task_runner,
+                        int64_t* seek_position,
+                        std::string* observed_content)
       : URLRequestFileJob(request,
                           network_delegate,
                           file_path,
                           file_task_runner),
-        seek_position_(0) {
+        seek_position_(seek_position),
+        observed_content_(observed_content) {
+    *seek_position_ = 0;
+    observed_content_->clear();
   }
 
-  int64 seek_position() { return seek_position_; }
-  const std::vector<std::string>& data_chunks() { return data_chunks_; }
+  ~TestURLRequestFileJob() override {}
 
  protected:
-  ~URLRequestFileJobWithCallbacks() override {}
-
-  void OnSeekComplete(int64 result) override {
-    ASSERT_EQ(seek_position_, 0);
-    seek_position_ = result;
+  void OnSeekComplete(int64_t result) override {
+    ASSERT_EQ(*seek_position_, 0);
+    *seek_position_ = result;
   }
 
   void OnReadComplete(IOBuffer* buf, int result) override {
-    data_chunks_.push_back(std::string(buf->data(), result));
+    observed_content_->append(std::string(buf->data(), result));
   }
 
-  int64 seek_position_;
-  std::vector<std::string> data_chunks_;
+  int64_t* const seek_position_;
+  std::string* const observed_content_;
 };
 
-// A URLRequestJobFactory that will return URLRequestFileJobWithCallbacks
-// instances for file:// scheme URLs.
-class CallbacksJobFactory : public URLRequestJobFactory {
+// A URLRequestJobFactory that will return TestURLRequestFileJob instances for
+// file:// scheme URLs.  Can only be used to create a single job.
+class TestJobFactory : public URLRequestJobFactory {
  public:
-  class JobObserver {
-   public:
-    virtual void OnJobCreated(URLRequestFileJobWithCallbacks* job) = 0;
-  };
-
-  CallbacksJobFactory(const base::FilePath& path, JobObserver* observer)
-      : path_(path), observer_(observer) {
+  TestJobFactory(const base::FilePath& path,
+                 int64_t* seek_position,
+                 std::string* observed_content)
+      : path_(path),
+        seek_position_(seek_position),
+        observed_content_(observed_content) {
+    CHECK(seek_position_);
+    CHECK(observed_content_);
   }
 
-  ~CallbacksJobFactory() override {}
+  ~TestJobFactory() override {}
 
   URLRequestJob* MaybeCreateJobWithProtocolHandler(
       const std::string& scheme,
       URLRequest* request,
       NetworkDelegate* network_delegate) const override {
-    URLRequestFileJobWithCallbacks* job = new URLRequestFileJobWithCallbacks(
-        request, network_delegate, path_, base::ThreadTaskRunnerHandle::Get());
-    observer_->OnJobCreated(job);
+    CHECK(seek_position_);
+    CHECK(observed_content_);
+    URLRequestJob* job = new TestURLRequestFileJob(
+        request, network_delegate, path_, base::ThreadTaskRunnerHandle::Get(),
+        seek_position_, observed_content_);
+    seek_position_ = nullptr;
+    observed_content_ = nullptr;
     return job;
   }
 
@@ -105,38 +117,19 @@ class CallbacksJobFactory : public URLRequestJobFactory {
   }
 
  private:
-  base::FilePath path_;
-  JobObserver* observer_;
+  const base::FilePath path_;
+
+  // These are mutable because MaybeCreateJobWithProtocolHandler is const.
+  mutable int64_t* seek_position_;
+  mutable std::string* observed_content_;
 };
 
-// Helper function to create a file in |directory| filled with
-// |content|. Returns true on succes and fills in |path| with the full path to
-// the file.
-bool CreateTempFileWithContent(const std::string& content,
-                               const base::ScopedTempDir& directory,
-                               base::FilePath* path) {
-  if (!directory.IsValid())
-    return false;
-
-  if (!base::CreateTemporaryFileInDir(directory.path(), path))
-    return false;
-
-  return base::WriteFile(*path, content.c_str(), content.length());
+// Helper function to create a file at |path| filled with |content|.
+// Returns true on success.
+bool CreateFileWithContent(const std::string& content,
+                           const base::FilePath& path) {
+  return base::WriteFile(path, content.c_str(), content.length());
 }
-
-class JobObserverImpl : public CallbacksJobFactory::JobObserver {
- public:
-  void OnJobCreated(URLRequestFileJobWithCallbacks* job) override {
-    jobs_.push_back(job);
-  }
-
-  typedef std::vector<scoped_refptr<URLRequestFileJobWithCallbacks> > JobList;
-
-  const JobList& jobs() { return jobs_; }
-
- protected:
-  JobList jobs_;
-};
 
 // A simple holder for start/end used in http range requests.
 struct Range {
@@ -169,7 +162,14 @@ class URLRequestFileJobEventsTest : public testing::Test {
   // observed.
   void RunRequest(const std::string& content, const Range* range);
 
-  JobObserverImpl observer_;
+  // This is the same as the method above it, except that it will make sure
+  // the content matches |expected_content| and allow caller to specify the
+  // extension of the filename in |file_extension|.
+  void RunRequest(const std::string& content,
+                  const std::string& expected_content,
+                  const base::FilePath::StringPieceType& file_extension,
+                  const Range* range);
+
   TestURLRequestContext context_;
   TestDelegate delegate_;
 };
@@ -178,22 +178,35 @@ URLRequestFileJobEventsTest::URLRequestFileJobEventsTest() {}
 
 void URLRequestFileJobEventsTest::RunRequest(const std::string& content,
                                              const Range* range) {
+  RunRequest(content, content, FILE_PATH_LITERAL(""), range);
+}
+
+void URLRequestFileJobEventsTest::RunRequest(
+    const std::string& raw_content,
+    const std::string& expected_content,
+    const base::FilePath::StringPieceType& file_extension,
+    const Range* range) {
   base::ScopedTempDir directory;
   ASSERT_TRUE(directory.CreateUniqueTempDir());
-  base::FilePath path;
-  ASSERT_TRUE(CreateTempFileWithContent(content, directory, &path));
+  base::FilePath path = directory.GetPath().Append(FILE_PATH_LITERAL("test"));
+  if (!file_extension.empty())
+    path = path.AddExtension(file_extension);
+  ASSERT_TRUE(CreateFileWithContent(raw_content, path));
 
   {
-    CallbacksJobFactory factory(path, &observer_);
+    int64_t seek_position;
+    std::string observed_content;
+    TestJobFactory factory(path, &seek_position, &observed_content);
     context_.set_job_factory(&factory);
 
-    scoped_ptr<URLRequest> request(context_.CreateRequest(
+    std::unique_ptr<URLRequest> request(context_.CreateRequest(
         FilePathToFileURL(path), DEFAULT_PRIORITY, &delegate_));
     if (range) {
       ASSERT_GE(range->start, 0);
       ASSERT_GE(range->end, 0);
       ASSERT_LE(range->start, range->end);
-      ASSERT_LT(static_cast<unsigned int>(range->end), content.length());
+      ASSERT_LT(static_cast<unsigned int>(range->end),
+                expected_content.length());
       std::string range_value =
           base::StringPrintf("bytes=%d-%d", range->start, range->end);
       request->SetExtraRequestHeaderByName(HttpRequestHeaders::kRange,
@@ -205,29 +218,21 @@ void URLRequestFileJobEventsTest::RunRequest(const std::string& content,
 
     EXPECT_FALSE(delegate_.request_failed());
     int expected_length =
-        range ? (range->end - range->start + 1) : content.length();
+        range ? (range->end - range->start + 1) : expected_content.length();
     EXPECT_EQ(delegate_.bytes_received(), expected_length);
 
-    std::string expected_content;
+    std::string expected_data_received;
     if (range) {
-      expected_content.insert(0, content, range->start, expected_length);
+      expected_data_received.insert(0, expected_content, range->start,
+                                    expected_length);
+      EXPECT_EQ(expected_data_received, observed_content);
     } else {
-      expected_content = content;
+      expected_data_received = expected_content;
+      EXPECT_EQ(raw_content, observed_content);
     }
-    EXPECT_TRUE(delegate_.data_received() == expected_content);
 
-    ASSERT_EQ(observer_.jobs().size(), 1u);
-    ASSERT_EQ(observer_.jobs().at(0)->seek_position(),
-              range ? range->start : 0);
-
-    std::string observed_content;
-    const std::vector<std::string>& chunks =
-        observer_.jobs().at(0)->data_chunks();
-    for (std::vector<std::string>::const_iterator i = chunks.begin();
-         i != chunks.end(); ++i) {
-      observed_content.append(*i);
-    }
-    EXPECT_EQ(expected_content, observed_content);
+    EXPECT_EQ(expected_data_received, delegate_.data_received());
+    EXPECT_EQ(seek_position, range ? range->start : 0);
   }
 
   base::RunLoop().RunUntilIdle();
@@ -263,6 +268,18 @@ TEST_F(URLRequestFileJobEventsTest, Range) {
   int size = 15 * 1024;
   Range range(1701, (6 * 1024) + 3);
   RunRequest(MakeContentOfSize(size), &range);
+}
+
+TEST_F(URLRequestFileJobEventsTest, DecodeSvgzFile) {
+  std::string expected_content("Hello, World!");
+  unsigned char gzip_data[] = {
+      // From:
+      //   echo -n 'Hello, World!' | gzip | xxd -i | sed -e 's/^/  /'
+      0x1f, 0x8b, 0x08, 0x00, 0x2b, 0x02, 0x84, 0x55, 0x00, 0x03, 0xf3,
+      0x48, 0xcd, 0xc9, 0xc9, 0xd7, 0x51, 0x08, 0xcf, 0x2f, 0xca, 0x49,
+      0x51, 0x04, 0x00, 0xd0, 0xc3, 0x4a, 0xec, 0x0d, 0x00, 0x00, 0x00};
+  RunRequest(std::string(reinterpret_cast<char*>(gzip_data), sizeof(gzip_data)),
+             expected_content, FILE_PATH_LITERAL("svgz"), nullptr);
 }
 
 }  // namespace

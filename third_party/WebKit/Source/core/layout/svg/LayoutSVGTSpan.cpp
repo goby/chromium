@@ -20,25 +20,21 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/layout/svg/LayoutSVGTSpan.h"
 
 #include "core/layout/svg/SVGLayoutSupport.h"
 
 namespace blink {
 
-LayoutSVGTSpan::LayoutSVGTSpan(Element* element)
-    : LayoutSVGInline(element)
-{
+LayoutSVGTSpan::LayoutSVGTSpan(Element* element) : LayoutSVGInline(element) {}
+
+bool LayoutSVGTSpan::isChildAllowed(LayoutObject* child,
+                                    const ComputedStyle&) const {
+  // Always allow text (except empty textnodes and <br>).
+  if (child->isText())
+    return SVGLayoutSupport::isLayoutableTextNode(child);
+
+  return child->isSVGInline() && !child->isSVGTextPath();
 }
 
-bool LayoutSVGTSpan::isChildAllowed(LayoutObject* child, const ComputedStyle&) const
-{
-    // Always allow text (except empty textnodes and <br>).
-    if (child->isText())
-        return SVGLayoutSupport::isLayoutableTextNode(child);
-
-    return child->isSVGInline() && !child->isSVGTextPath();
-}
-
-}
+}  // namespace blink

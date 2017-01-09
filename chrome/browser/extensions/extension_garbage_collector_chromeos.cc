@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/extension_assets_manager_chromeos.h"
 #include "chrome/browser/extensions/extension_garbage_collector_chromeos.h"
@@ -57,6 +59,10 @@ bool ExtensionGarbageCollectorChromeOS::CanGarbageCollectSharedExtensions() {
 
   const user_manager::UserList& active_users = user_manager->GetLoggedInUsers();
   for (size_t i = 0; i < active_users.size(); i++) {
+    // If the profile for one of the active users is still initializing, we
+    // can't garbage collect.
+    if (!active_users[i]->is_profile_created())
+      return false;
     Profile* profile =
         chromeos::ProfileHelper::Get()->GetProfileByUserUnsafe(active_users[i]);
     ExtensionGarbageCollectorChromeOS* gc =

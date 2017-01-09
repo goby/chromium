@@ -2,9 +2,10 @@
 <html>
   <head>
     <title>Validate Reduction Value of DynamicsComporessor after Disabling</title>
-    <script src="resources/compatibility.js"></script>
-    <script src="resources/audio-testing.js"></script>
     <script src="../resources/js-test.js"></script>
+    <script src="resources/compatibility.js"></script>
+    <script src="resources/audit-util.js"></script>
+    <script src="resources/audio-testing.js"></script>
   </head>
 
   <body>
@@ -25,8 +26,8 @@
           renderedData = event.renderedBuffer.getChannelData(0);
 
           // Check that the reduction value is 0.0.
-          if (compressor.reduction.value !== 0.0) {
-              testFailed("Expected reduction of 0.0, but the value is " + compressor.reduction.value);
+          if (compressor.reduction !== 0.0) {
+              testFailed("Expected reduction of 0.0, but the value is " + compressor.reduction);
           }
           else {
               testPassed("Reduction is 0.0");

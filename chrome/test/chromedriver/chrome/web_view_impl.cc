@@ -4,6 +4,9 @@
 
 #include "chrome/test/chromedriver/chrome/web_view_impl.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/json/json_writer.h"
@@ -25,10 +28,17 @@
 #include "chrome/test/chromedriver/chrome/mobile_emulation_override_manager.h"
 #include "chrome/test/chromedriver/chrome/navigation_tracker.h"
 #include "chrome/test/chromedriver/chrome/network_conditions_override_manager.h"
+#include "chrome/test/chromedriver/chrome/non_blocking_navigation_tracker.h"
+#include "chrome/test/chromedriver/chrome/page_load_strategy.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome/ui_events.h"
+#include "chrome/test/chromedriver/net/timeout.h"
+#include "ui/events/keycodes/dom/keycode_converter.h"
+#include "ui/events/keycodes/keyboard_code_conversion.h"
 
 namespace {
+
+const int kWaitForNavigationStopSeconds = 10;
 
 Status GetContextIdForFrame(FrameTracker* tracker,
                             const std::string& frame,
@@ -115,15 +125,20 @@ const char* GetAsString(KeyEventType type) {
 }  // namespace
 
 WebViewImpl::WebViewImpl(const std::string& id,
+                         const bool w3c_compliant,
                          const BrowserInfo* browser_info,
-                         scoped_ptr<DevToolsClient> client,
-                         const DeviceMetrics* device_metrics)
+                         std::unique_ptr<DevToolsClient> client,
+                         const DeviceMetrics* device_metrics,
+                         std::string page_load_strategy)
     : id_(id),
+      w3c_compliant_(w3c_compliant),
       browser_info_(browser_info),
       dom_tracker_(new DomTracker(client.get())),
       frame_tracker_(new FrameTracker(client.get())),
-      navigation_tracker_(new NavigationTracker(client.get(), browser_info)),
       dialog_manager_(new JavaScriptDialogManager(client.get())),
+      navigation_tracker_(PageLoadStrategy::Create(
+          page_load_strategy, client.get(),
+          browser_info, dialog_manager_.get())),
       mobile_emulation_override_manager_(
           new MobileEmulationOverrideManager(client.get(), device_metrics)),
       geolocation_override_manager_(
@@ -152,7 +167,28 @@ Status WebViewImpl::HandleReceivedEvents() {
   return client_->HandleReceivedEvents();
 }
 
-Status WebViewImpl::Load(const std::string& url) {
+Status WebViewImpl::GetUrl(std::string* url) {
+  base::DictionaryValue params;
+  std::unique_ptr<base::DictionaryValue> result;
+  Status status = client_->SendCommandAndGetResult(
+      "Page.getNavigationHistory", params, &result);
+  if (status.IsError())
+    return status;
+  int current_index = 0;
+  if (!result->GetInteger("currentIndex", &current_index))
+    return Status(kUnknownError, "navigation history missing currentIndex");
+  base::ListValue* entries = nullptr;
+  if (!result->GetList("entries", &entries))
+    return Status(kUnknownError, "navigation history missing entries");
+  base::DictionaryValue* entry = nullptr;
+  if (!entries->GetDictionary(current_index, &entry))
+    return Status(kUnknownError, "navigation history missing entry");
+  if (!entry->GetString("url", url))
+    return Status(kUnknownError, "navigation history entry is missing url");
+  return Status(kOk);
+}
+
+Status WebViewImpl::Load(const std::string& url, const Timeout* timeout) {
   // Javascript URLs will cause a hang while waiting for the page to stop
   // loading, so just disallow.
   if (base::StartsWith(url, "javascript:",
@@ -160,18 +196,18 @@ Status WebViewImpl::Load(const std::string& url) {
     return Status(kUnknownError, "unsupported protocol");
   base::DictionaryValue params;
   params.SetString("url", url);
-  return client_->SendCommand("Page.navigate", params);
+  return client_->SendCommandWithTimeout("Page.navigate", params, timeout);
 }
 
-Status WebViewImpl::Reload() {
+Status WebViewImpl::Reload(const Timeout* timeout) {
   base::DictionaryValue params;
   params.SetBoolean("ignoreCache", false);
-  return client_->SendCommand("Page.reload", params);
+  return client_->SendCommandWithTimeout("Page.reload", params, timeout);
 }
 
-Status WebViewImpl::TraverseHistory(int delta) {
+Status WebViewImpl::TraverseHistory(int delta, const Timeout* timeout) {
   base::DictionaryValue params;
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
   Status status = client_->SendCommandAndGetResult(
       "Page.getNavigationHistory", params, &result);
   if (status.IsError()) {
@@ -208,11 +244,12 @@ Status WebViewImpl::TraverseHistory(int delta) {
     return Status(kUnknownError, "history entry does not have an id");
   params.SetInteger("entryId", entry_id);
 
-  return client_->SendCommand("Page.navigateToHistoryEntry", params);
+  return client_->SendCommandWithTimeout("Page.navigateToHistoryEntry", params,
+                                         timeout);
 }
 
 Status WebViewImpl::TraverseHistoryWithJavaScript(int delta) {
-  scoped_ptr<base::Value> value;
+  std::unique_ptr<base::Value> value;
   if (delta == -1)
     return EvaluateScript(std::string(), "window.history.back();", &value);
   else if (delta == 1)
@@ -223,7 +260,7 @@ Status WebViewImpl::TraverseHistoryWithJavaScript(int delta) {
 
 Status WebViewImpl::EvaluateScript(const std::string& frame,
                                    const std::string& expression,
-                                   scoped_ptr<base::Value>* result) {
+                                   std::unique_ptr<base::Value>* result) {
   int context_id;
   Status status = GetContextIdForFrame(frame_tracker_.get(), frame,
                                        &context_id);
@@ -236,20 +273,21 @@ Status WebViewImpl::EvaluateScript(const std::string& frame,
 Status WebViewImpl::CallFunction(const std::string& frame,
                                  const std::string& function,
                                  const base::ListValue& args,
-                                 scoped_ptr<base::Value>* result) {
+                                 std::unique_ptr<base::Value>* result) {
   std::string json;
   base::JSONWriter::Write(args, &json);
+  std::string w3c = w3c_compliant_ ? "true" : "false";
   // TODO(zachconrad): Second null should be array of shadow host ids.
   std::string expression = base::StringPrintf(
-      "(%s).apply(null, [null, %s, %s])",
+      "(%s).apply(null, [null, %s, %s, %s])",
       kCallFunctionScript,
       function.c_str(),
-      json.c_str());
-  scoped_ptr<base::Value> temp_result;
+      json.c_str(),
+      w3c.c_str());
+  std::unique_ptr<base::Value> temp_result;
   Status status = EvaluateScript(frame, expression, &temp_result);
   if (status.IsError())
-    return status;
-
+      return status;
   return internal::ParseCallFunctionResult(*temp_result, result);
 }
 
@@ -257,16 +295,17 @@ Status WebViewImpl::CallAsyncFunction(const std::string& frame,
                                       const std::string& function,
                                       const base::ListValue& args,
                                       const base::TimeDelta& timeout,
-                                      scoped_ptr<base::Value>* result) {
+                                      std::unique_ptr<base::Value>* result) {
   return CallAsyncFunctionInternal(
       frame, function, args, false, timeout, result);
 }
 
-Status WebViewImpl::CallUserAsyncFunction(const std::string& frame,
-                                          const std::string& function,
-                                          const base::ListValue& args,
-                                          const base::TimeDelta& timeout,
-                                          scoped_ptr<base::Value>* result) {
+Status WebViewImpl::CallUserAsyncFunction(
+    const std::string& frame,
+    const std::string& function,
+    const base::ListValue& args,
+    const base::TimeDelta& timeout,
+    std::unique_ptr<base::Value>* result) {
   return CallAsyncFunctionInternal(
       frame, function, args, true, timeout, result);
 }
@@ -283,7 +322,8 @@ Status WebViewImpl::GetFrameByFunction(const std::string& frame,
   bool found_node;
   int node_id;
   status = internal::GetNodeIdFromFunction(
-      client_.get(), context_id, function, args, &found_node, &node_id);
+      client_.get(), context_id, function, args,
+      &found_node, &node_id, w3c_compliant_);
   if (status.IsError())
     return status;
   if (!found_node)
@@ -303,7 +343,7 @@ Status WebViewImpl::DispatchMouseEvents(const std::list<MouseEvent>& events,
     // the wrong location on the page. This was fixed on the browser side in
     // crrev.com/333979.
     // TODO(samuong): remove once we stop supporting M45.
-    scoped_ptr<base::Value> value;
+    std::unique_ptr<base::Value> value;
     Status status = EvaluateScript(
         std::string(), "window.screen.width / window.innerWidth;", &value);
     if (status.IsError())
@@ -330,8 +370,8 @@ Status WebViewImpl::DispatchMouseEvents(const std::list<MouseEvent>& events,
 Status WebViewImpl::DispatchTouchEvent(const TouchEvent& event) {
   base::DictionaryValue params;
   params.SetString("type", GetAsString(event.type));
-  scoped_ptr<base::ListValue> point_list(new base::ListValue);
-  scoped_ptr<base::DictionaryValue> point(new base::DictionaryValue);
+  std::unique_ptr<base::ListValue> point_list(new base::ListValue);
+  std::unique_ptr<base::DictionaryValue> point(new base::DictionaryValue);
   point->SetString("state", GetPointStateString(event.type));
   point->SetInteger("x", event.x);
   point->SetInteger("y", event.y);
@@ -366,6 +406,12 @@ Status WebViewImpl::DispatchKeyEvents(const std::list<KeyEvent>& events) {
     params.SetString("unmodifiedText", it->unmodified_text);
     params.SetInteger("nativeVirtualKeyCode", it->key_code);
     params.SetInteger("windowsVirtualKeyCode", it->key_code);
+    ui::DomCode dom_code = ui::UsLayoutKeyboardCodeToDomCode(it->key_code);
+    std::string code = ui::KeycodeConverter::DomCodeToCodeString(dom_code);
+    if (!code.empty())
+      params.SetString("code", code);
+    if (!it->key.empty())
+      params.SetString("key", it->key);
     Status status = client_->SendCommand("Input.dispatchKeyEvent", params);
     if (status.IsError())
       return status;
@@ -373,9 +419,9 @@ Status WebViewImpl::DispatchKeyEvents(const std::list<KeyEvent>& events) {
   return Status(kOk);
 }
 
-Status WebViewImpl::GetCookies(scoped_ptr<base::ListValue>* cookies) {
+Status WebViewImpl::GetCookies(std::unique_ptr<base::ListValue>* cookies) {
   base::DictionaryValue params;
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
   Status status = client_->SendCommandAndGetResult(
       "Page.getCookies", params, &result);
   if (status.IsError())
@@ -396,34 +442,39 @@ Status WebViewImpl::DeleteCookie(const std::string& name,
 }
 
 Status WebViewImpl::WaitForPendingNavigations(const std::string& frame_id,
-                                              const base::TimeDelta& timeout,
+                                              const Timeout& timeout,
                                               bool stop_load_on_timeout) {
   VLOG(0) << "Waiting for pending navigations...";
-  Status status = client_->HandleEventsUntil(
-      base::Bind(&WebViewImpl::IsNotPendingNavigation,
-                 base::Unretained(this),
-                 frame_id),
-      timeout);
+  const auto not_pending_navigation =
+      base::Bind(&WebViewImpl::IsNotPendingNavigation, base::Unretained(this),
+                 frame_id, base::Unretained(&timeout));
+  Status status = client_->HandleEventsUntil(not_pending_navigation, timeout);
   if (status.code() == kTimeout && stop_load_on_timeout) {
     VLOG(0) << "Timed out. Stopping navigation...";
-    scoped_ptr<base::Value> unused_value;
+    std::unique_ptr<base::Value> unused_value;
     navigation_tracker_->set_timed_out(true);
     EvaluateScript(std::string(), "window.stop();", &unused_value);
+    // We don't consider |timeout| here to make sure the navigation actually
+    // stops and we cleanup properly after a command that caused a navigation
+    // that timed out.  Otherwise we might have to wait for that before
+    // executing the next command, and it will be counted towards its timeout.
     Status new_status = client_->HandleEventsUntil(
-        base::Bind(&WebViewImpl::IsNotPendingNavigation, base::Unretained(this),
-                   frame_id),
-        base::TimeDelta::FromSeconds(10));
+        not_pending_navigation,
+        Timeout(base::TimeDelta::FromSeconds(kWaitForNavigationStopSeconds)));
     navigation_tracker_->set_timed_out(false);
     if (new_status.IsError())
       status = new_status;
   }
-  VLOG(0) << "Done waiting for pending navigations";
+  VLOG(0) << "Done waiting for pending navigations. Status: "
+          << status.message();
   return status;
 }
 
 Status WebViewImpl::IsPendingNavigation(const std::string& frame_id,
+                                        const Timeout* timeout,
                                         bool* is_pending) {
-  return navigation_tracker_->IsPendingNavigation(frame_id, is_pending);
+  return
+      navigation_tracker_->IsPendingNavigation(frame_id, timeout, is_pending);
 }
 
 JavaScriptDialogManager* WebViewImpl::GetJavaScriptDialogManager() {
@@ -442,7 +493,7 @@ Status WebViewImpl::OverrideNetworkConditions(
 
 Status WebViewImpl::CaptureScreenshot(std::string* screenshot) {
   base::DictionaryValue params;
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
   Status status = client_->SendCommandAndGetResult(
       "Page.captureScreenshot", params, &result);
   if (status.IsError())
@@ -475,12 +526,12 @@ Status WebViewImpl::SetFileInputFiles(
   if (status.IsError())
     return status;
   base::ListValue args;
-  args.Append(element.DeepCopy());
+  args.Append(element.CreateDeepCopy());
   bool found_node;
   int node_id;
   status = internal::GetNodeIdFromFunction(
       client_.get(), context_id, "function(element) { return element; }",
-      args, &found_node, &node_id);
+      args, &found_node, &node_id, w3c_compliant_);
   if (status.IsError())
     return status;
   if (!found_node)
@@ -491,7 +542,7 @@ Status WebViewImpl::SetFileInputFiles(
   return client_->SendCommand("DOM.setFileInputFiles", params);
 }
 
-Status WebViewImpl::TakeHeapSnapshot(scoped_ptr<base::Value>* snapshot) {
+Status WebViewImpl::TakeHeapSnapshot(std::unique_ptr<base::Value>* snapshot) {
   return heap_snapshot_taker_->TakeSnapshot(snapshot);
 }
 
@@ -541,9 +592,9 @@ Status WebViewImpl::StartProfile() {
   return client_->SendCommand("Profiler.start", params);
 }
 
-Status WebViewImpl::EndProfile(scoped_ptr<base::Value>* profile_data) {
+Status WebViewImpl::EndProfile(std::unique_ptr<base::Value>* profile_data) {
   base::DictionaryValue params;
-  scoped_ptr<base::DictionaryValue> profile_result;
+  std::unique_ptr<base::DictionaryValue> profile_result;
 
   Status status = client_->SendCommandAndGetResult(
       "Profiler.stop", params, &profile_result);
@@ -557,7 +608,7 @@ Status WebViewImpl::EndProfile(scoped_ptr<base::Value>* profile_data) {
     }
   }
 
-  *profile_data = profile_result.Pass();
+  *profile_data = std::move(profile_result);
   return status;
 }
 
@@ -597,18 +648,50 @@ Status WebViewImpl::SynthesizePinchGesture(int x, int y, double scale_factor) {
   return client_->SendCommand("Input.synthesizePinchGesture", params);
 }
 
-Status WebViewImpl::CallAsyncFunctionInternal(const std::string& frame,
-                                              const std::string& function,
-                                              const base::ListValue& args,
-                                              bool is_user_supplied,
-                                              const base::TimeDelta& timeout,
-                                              scoped_ptr<base::Value>* result) {
+Status WebViewImpl::GetScreenOrientation(std::string* orientation) {
+  base::DictionaryValue empty_params;
+  std::unique_ptr<base::DictionaryValue> result;
+  Status status =
+    client_->SendCommandAndGetResult("Emulation.getScreenOrientation",
+                                      empty_params,
+                                      &result);
+  if (status.IsError() || !result->GetString("orientation", orientation))
+    return status;
+  return Status(kOk);
+}
+
+Status WebViewImpl::SetScreenOrientation(std::string orientation) {
+  base::DictionaryValue params;
+  params.SetString("screenOrientation", orientation);
+  Status status =
+    client_->SendCommand("Emulation.lockScreenOrientation", params);
+  if (status.IsError())
+    return status;
+  return Status(kOk);
+}
+
+Status WebViewImpl::DeleteScreenOrientation() {
+  base::DictionaryValue params;
+  Status status =
+    client_->SendCommand("Emulation.unlockScreenOrientation", params);
+  if (status.IsError())
+    return status;
+  return Status(kOk);
+}
+
+Status WebViewImpl::CallAsyncFunctionInternal(
+    const std::string& frame,
+    const std::string& function,
+    const base::ListValue& args,
+    bool is_user_supplied,
+    const base::TimeDelta& timeout,
+    std::unique_ptr<base::Value>* result) {
   base::ListValue async_args;
   async_args.AppendString("return (" + function + ").apply(null, arguments);");
-  async_args.Append(args.DeepCopy());
+  async_args.Append(args.CreateDeepCopy());
   async_args.AppendBoolean(is_user_supplied);
   async_args.AppendInteger(timeout.InMilliseconds());
-  scoped_ptr<base::Value> tmp;
+  std::unique_ptr<base::Value> tmp;
   Status status = CallFunction(
       frame, kExecuteAsyncScriptScript, async_args, &tmp);
   if (status.IsError())
@@ -631,7 +714,7 @@ Status WebViewImpl::CallAsyncFunctionInternal(const std::string& frame,
 
   while (true) {
     base::ListValue no_args;
-    scoped_ptr<base::Value> query_value;
+    std::unique_ptr<base::Value> query_value;
     Status status = CallFunction(frame, kQueryResult, no_args, &query_value);
     if (status.IsError()) {
       if (status.code() == kNoSuchFrame)
@@ -662,10 +745,11 @@ Status WebViewImpl::CallAsyncFunctionInternal(const std::string& frame,
 }
 
 Status WebViewImpl::IsNotPendingNavigation(const std::string& frame_id,
+                                           const Timeout* timeout,
                                            bool* is_not_pending) {
   bool is_pending;
   Status status =
-      navigation_tracker_->IsPendingNavigation(frame_id, &is_pending);
+      navigation_tracker_->IsPendingNavigation(frame_id, timeout, &is_pending);
   if (status.IsError())
     return status;
   // An alert may block the pending navigation.
@@ -682,21 +766,25 @@ Status EvaluateScript(DevToolsClient* client,
                       int context_id,
                       const std::string& expression,
                       EvaluateScriptReturnType return_type,
-                      scoped_ptr<base::DictionaryValue>* result) {
+                      std::unique_ptr<base::DictionaryValue>* result) {
   base::DictionaryValue params;
   params.SetString("expression", expression);
   if (context_id)
     params.SetInteger("contextId", context_id);
   params.SetBoolean("returnByValue", return_type == ReturnByValue);
-  scoped_ptr<base::DictionaryValue> cmd_result;
+  std::unique_ptr<base::DictionaryValue> cmd_result;
   Status status = client->SendCommandAndGetResult(
       "Runtime.evaluate", params, &cmd_result);
   if (status.IsError())
     return status;
 
   bool was_thrown;
-  if (!cmd_result->GetBoolean("wasThrown", &was_thrown))
-    return Status(kUnknownError, "Runtime.evaluate missing 'wasThrown'");
+  if (!cmd_result->GetBoolean("wasThrown", &was_thrown)) {
+    // As of crrev.com/411814, Runtime.evaluate no longer returns a 'wasThrown'
+    // property in the response, so check 'exceptionDetails' instead.
+    // TODO(samuong): Ignore 'wasThrown' when we stop supporting Chrome 54.
+    was_thrown = cmd_result->HasKey("exceptionDetails");
+  }
   if (was_thrown) {
     std::string description = "unknown";
     cmd_result->GetString("result.description", &description);
@@ -716,7 +804,7 @@ Status EvaluateScriptAndGetObject(DevToolsClient* client,
                                   const std::string& expression,
                                   bool* got_object,
                                   std::string* object_id) {
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
   Status status = EvaluateScript(client, context_id, expression, ReturnByObject,
                                  &result);
   if (status.IsError())
@@ -734,8 +822,8 @@ Status EvaluateScriptAndGetObject(DevToolsClient* client,
 Status EvaluateScriptAndGetValue(DevToolsClient* client,
                                  int context_id,
                                  const std::string& expression,
-                                 scoped_ptr<base::Value>* result) {
-  scoped_ptr<base::DictionaryValue> temp_result;
+                                 std::unique_ptr<base::Value>* result) {
+  std::unique_ptr<base::DictionaryValue> temp_result;
   Status status = EvaluateScript(client, context_id, expression, ReturnByValue,
                                  &temp_result);
   if (status.IsError())
@@ -757,7 +845,7 @@ Status EvaluateScriptAndGetValue(DevToolsClient* client,
 }
 
 Status ParseCallFunctionResult(const base::Value& temp_result,
-                               scoped_ptr<base::Value>* result) {
+                               std::unique_ptr<base::Value>* result) {
   const base::DictionaryValue* dict;
   if (!temp_result.GetAsDictionary(&dict))
     return Status(kUnknownError, "call function result must be a dictionary");
@@ -785,15 +873,18 @@ Status GetNodeIdFromFunction(DevToolsClient* client,
                              const std::string& function,
                              const base::ListValue& args,
                              bool* found_node,
-                             int* node_id) {
+                             int* node_id,
+                             bool w3c_compliant) {
   std::string json;
   base::JSONWriter::Write(args, &json);
+  std::string w3c = w3c_compliant ? "true" : "false";
   // TODO(zachconrad): Second null should be array of shadow host ids.
   std::string expression = base::StringPrintf(
-      "(%s).apply(null, [null, %s, %s, true])",
+      "(%s).apply(null, [null, %s, %s, %s, true])",
       kCallFunctionScript,
       function.c_str(),
-      json.c_str());
+      json.c_str(),
+      w3c.c_str());
 
   bool got_object;
   std::string element_id;
@@ -806,7 +897,7 @@ Status GetNodeIdFromFunction(DevToolsClient* client,
     return Status(kOk);
   }
 
-  scoped_ptr<base::DictionaryValue> cmd_result;
+  std::unique_ptr<base::DictionaryValue> cmd_result;
   {
     base::DictionaryValue params;
     params.SetString("objectId", element_id);
@@ -832,5 +923,7 @@ Status GetNodeIdFromFunction(DevToolsClient* client,
   *found_node = true;
   return Status(kOk);
 }
+
+
 
 }  // namespace internal

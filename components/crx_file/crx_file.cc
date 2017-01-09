@@ -8,11 +8,11 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "components/crx_file/constants.h"
 #include "components/crx_file/id_util.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
@@ -23,16 +23,16 @@ namespace crx_file {
 namespace {
 
 // The current version of the crx format.
-static const uint32 kCurrentVersion = 2;
+static const uint32_t kCurrentVersion = 2;
 
 // The current version of the crx diff format.
-static const uint32 kCurrentDiffVersion = 0;
+static const uint32_t kCurrentDiffVersion = 0;
 
 // The maximum size the crx parser will tolerate for a public key.
-static const uint32 kMaxPublicKeySize = 1 << 16;
+static const uint32_t kMaxPublicKeySize = 1 << 16;
 
 // The maximum size the crx parser will tolerate for a signature.
-static const uint32 kMaxSignatureSize = 1 << 16;
+static const uint32_t kMaxSignatureSize = 1 << 16;
 
 // Helper function to read bytes into a buffer while also updating a hash with
 // those bytes. Returns the number of bytes read.
@@ -58,7 +58,7 @@ CrxFile::ValidateError FinalizeHash(const std::string& extension_id,
                                     crypto::SecureHash* hash,
                                     const std::string& expected_hash) {
   CHECK(hash != nullptr);
-  uint8 output[crypto::kSHA256Length] = {};
+  uint8_t output[crypto::kSHA256Length] = {};
   hash->Finish(output, sizeof(output));
   std::string hash_base64 =
       base::ToLowerASCII(base::HexEncode(output, sizeof(output)));
@@ -77,24 +77,24 @@ CrxFile::ValidateError FinalizeHash(const std::string& extension_id,
 const char kCrxFileHeaderMagic[] = "Cr24";
 const char kCrxDiffFileHeaderMagic[] = "CrOD";
 
-scoped_ptr<CrxFile> CrxFile::Parse(const CrxFile::Header& header,
-                                   CrxFile::Error* error) {
+std::unique_ptr<CrxFile> CrxFile::Parse(const CrxFile::Header& header,
+                                        CrxFile::Error* error) {
   if (HeaderIsValid(header, error))
-    return scoped_ptr<CrxFile>(new CrxFile(header));
-  return scoped_ptr<CrxFile>();
+    return base::WrapUnique(new CrxFile(header));
+  return nullptr;
 }
 
-scoped_ptr<CrxFile> CrxFile::Create(const uint32 key_size,
-                                    const uint32 signature_size,
-                                    CrxFile::Error* error) {
+std::unique_ptr<CrxFile> CrxFile::Create(const uint32_t key_size,
+                                         const uint32_t signature_size,
+                                         CrxFile::Error* error) {
   CrxFile::Header header;
   memcpy(&header.magic, kCrxFileHeaderMagic, kCrxFileHeaderMagicSize);
   header.version = kCurrentVersion;
   header.key_size = key_size;
   header.signature_size = signature_size;
   if (HeaderIsValid(header, error))
-    return scoped_ptr<CrxFile>(new CrxFile(header));
-  return scoped_ptr<CrxFile>();
+    return base::WrapUnique(new CrxFile(header));
+  return nullptr;
 }
 
 bool CrxFile::HeaderIsDelta(const CrxFile::Header& header) {
@@ -109,9 +109,9 @@ CrxFile::ValidateError CrxFile::ValidateSignature(
     std::string* extension_id,
     CrxFile::Header* header_out) {
   base::ScopedFILE file(base::OpenFile(crx_path, "rb"));
-  scoped_ptr<crypto::SecureHash> hash;
+  std::unique_ptr<crypto::SecureHash> hash;
   if (!expected_hash.empty())
-    hash.reset(crypto::SecureHash::Create(crypto::SecureHash::SHA256));
+    hash = crypto::SecureHash::Create(crypto::SecureHash::SHA256);
 
   if (!file.get())
     return ValidateError::CRX_FILE_NOT_READABLE;
@@ -124,7 +124,7 @@ CrxFile::ValidateError CrxFile::ValidateSignature(
     *header_out = header;
 
   CrxFile::Error error;
-  scoped_ptr<CrxFile> crx(CrxFile::Parse(header, &error));
+  std::unique_ptr<CrxFile> crx(CrxFile::Parse(header, &error));
   if (!crx) {
     switch (error) {
       case CrxFile::kWrongMagic:
@@ -146,29 +146,28 @@ CrxFile::ValidateError CrxFile::ValidateSignature(
     }
   }
 
-  std::vector<uint8> key(header.key_size);
-  len = ReadAndHash(&key.front(), sizeof(uint8), header.key_size, file.get(),
+  std::vector<uint8_t> key(header.key_size);
+  len = ReadAndHash(&key.front(), sizeof(uint8_t), header.key_size, file.get(),
                     hash.get());
   if (len != header.key_size)
     return ValidateError::CRX_PUBLIC_KEY_INVALID;
 
-  std::vector<uint8> signature(header.signature_size);
-  len = ReadAndHash(&signature.front(), sizeof(uint8), header.signature_size,
+  std::vector<uint8_t> signature(header.signature_size);
+  len = ReadAndHash(&signature.front(), sizeof(uint8_t), header.signature_size,
                     file.get(), hash.get());
   if (len < header.signature_size)
     return ValidateError::CRX_SIGNATURE_INVALID;
 
   crypto::SignatureVerifier verifier;
-  if (!verifier.VerifyInit(
-          crx_file::kSignatureAlgorithm, sizeof(crx_file::kSignatureAlgorithm),
-          &signature.front(), static_cast<int>(signature.size()), &key.front(),
-          static_cast<int>(key.size()))) {
+  if (!verifier.VerifyInit(crypto::SignatureVerifier::RSA_PKCS1_SHA1,
+                           signature.data(), static_cast<int>(signature.size()),
+                           key.data(), static_cast<int>(key.size()))) {
     // Signature verification initialization failed. This is most likely
     // caused by a public key in the wrong format (should encode algorithm).
     return ValidateError::CRX_SIGNATURE_VERIFICATION_INITIALIZATION_FAILED;
   }
 
-  uint8 buf[1 << 12] = {};
+  uint8_t buf[1 << 12] = {};
   while ((len = ReadAndHash(buf, sizeof(buf[0]), arraysize(buf), file.get(),
                             hash.get())) > 0)
     verifier.VerifyUpdate(buf, static_cast<int>(len));

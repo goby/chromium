@@ -6,15 +6,16 @@ package org.chromium.content.browser;
 
 import android.content.Context;
 import android.content.res.Configuration;
-import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.view.DragEvent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.View.MeasureSpec;
 import android.view.ViewStructure;
 import android.view.accessibility.AccessibilityNodeProvider;
 import android.view.inputmethod.EditorInfo;
@@ -33,7 +34,18 @@ public class ContentView extends FrameLayout
 
     private static final String TAG = "cr.ContentView";
 
+    // Default value to signal that the ContentView's size need not be overridden.
+    public static final int DEFAULT_MEASURE_SPEC =
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+
     protected final ContentViewCore mContentViewCore;
+
+    /**
+     * The desired size of this view in {@link MeasureSpec}. Set by the host
+     * when it should be different from that of the parent.
+     */
+    private int mDesiredWidthMeasureSpec = DEFAULT_MEASURE_SPEC;
+    private int mDesiredHeightMeasureSpec = DEFAULT_MEASURE_SPEC;
 
     /**
      * Constructs a new ContentView for the appropriate Android version.
@@ -78,6 +90,27 @@ public class ContentView extends FrameLayout
         return super.performAccessibilityAction(action, arguments);
     }
 
+    /**
+     * Set the desired size of the view. The values are in {@link MeasureSpec}.
+     * @param width The width of the content view.
+     * @param height The height of the content view.
+     */
+    public void setDesiredMeasureSpec(int width, int height) {
+        mDesiredWidthMeasureSpec = width;
+        mDesiredHeightMeasureSpec = height;
+    }
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        if (mDesiredWidthMeasureSpec != DEFAULT_MEASURE_SPEC) {
+            widthMeasureSpec = mDesiredWidthMeasureSpec;
+        }
+        if (mDesiredHeightMeasureSpec != DEFAULT_MEASURE_SPEC) {
+            heightMeasureSpec = mDesiredHeightMeasureSpec;
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
     @Override
     public AccessibilityNodeProvider getAccessibilityNodeProvider() {
         AccessibilityNodeProvider provider = mContentViewCore.getAccessibilityNodeProvider();
@@ -86,12 +119,6 @@ public class ContentView extends FrameLayout
         } else {
             return super.getAccessibilityNodeProvider();
         }
-    }
-
-    // Needed by ContentViewCore.InternalAccessDelegate
-    @Override
-    public boolean drawChild(Canvas canvas, View child, long drawingTime) {
-        return super.drawChild(canvas, child, drawingTime);
     }
 
     // Needed by ContentViewCore.InternalAccessDelegate
@@ -144,17 +171,17 @@ public class ContentView extends FrameLayout
     }
 
     @Override
-    public boolean dispatchKeyEventPreIme(KeyEvent event) {
-        return mContentViewCore.dispatchKeyEventPreIme(event);
-    }
-
-    @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (isFocused()) {
             return mContentViewCore.dispatchKeyEvent(event);
         } else {
             return super.dispatchKeyEvent(event);
         }
+    }
+
+    @Override
+    public boolean onDragEvent(DragEvent event) {
+        return mContentViewCore.onDragEvent(event);
     }
 
     @Override
@@ -197,7 +224,7 @@ public class ContentView extends FrameLayout
      */
     @Override
     public void scrollBy(int x, int y) {
-        mContentViewCore.scrollBy(x, y, false);
+        mContentViewCore.scrollBy(x, y);
     }
 
     @Override
@@ -235,25 +262,6 @@ public class ContentView extends FrameLayout
     @Override
     protected int computeVerticalScrollRange() {
         return mContentViewCore.computeVerticalScrollRange();
-    }
-
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        ContentViewClient client = mContentViewCore.getContentViewClient();
-
-        // Allow the ContentViewClient to override the ContentView's width.
-        int desiredWidthMeasureSpec = client.getDesiredWidthMeasureSpec();
-        if (MeasureSpec.getMode(desiredWidthMeasureSpec) != MeasureSpec.UNSPECIFIED) {
-            widthMeasureSpec = desiredWidthMeasureSpec;
-        }
-
-        // Allow the ContentViewClient to override the ContentView's height.
-        int desiredHeightMeasureSpec = client.getDesiredHeightMeasureSpec();
-        if (MeasureSpec.getMode(desiredHeightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
-            heightMeasureSpec = desiredHeightMeasureSpec;
-        }
-
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
     }
 
     // End FrameLayout overrides.
@@ -329,11 +337,6 @@ public class ContentView extends FrameLayout
     }
 
     @Override
-    public boolean super_dispatchKeyEventPreIme(KeyEvent event) {
-        return super.dispatchKeyEventPreIme(event);
-    }
-
-    @Override
     public boolean super_dispatchKeyEvent(KeyEvent event) {
         return super.dispatchKeyEvent(event);
     }
@@ -364,7 +367,7 @@ public class ContentView extends FrameLayout
 
         @Override
         public void onProvideVirtualStructure(final ViewStructure structure) {
-            mContentViewCore.onProvideVirtualStructure(structure);
+            mContentViewCore.onProvideVirtualStructure(structure, false);
         }
     }
 }

@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include "device/bluetooth/bluetooth_device_win.h"
+
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "device/bluetooth/bluetooth_device_win.h"
 #include "device/bluetooth/bluetooth_service_record_win.h"
 #include "device/bluetooth/bluetooth_socket_thread.h"
 #include "device/bluetooth/bluetooth_task_manager_win.h"
@@ -48,7 +49,7 @@ class BluetoothDeviceWinTest : public testing::Test {
 
     // Add device with audio/video services.
     device_state_.reset(new BluetoothTaskManagerWin::DeviceState());
-    device_state_->name = kDeviceName;
+    device_state_->name = std::string(kDeviceName);
     device_state_->address = kDeviceAddress;
 
     BluetoothTaskManagerWin::ServiceRecordState* audio_state =
@@ -65,33 +66,33 @@ class BluetoothDeviceWinTest : public testing::Test {
 
     device_.reset(new BluetoothDeviceWin(NULL, *device_state_, ui_task_runner,
                                          socket_thread, NULL,
-                                         net::NetLog::Source()));
+                                         net::NetLogSource()));
 
     // Add empty device.
     empty_device_state_.reset(new BluetoothTaskManagerWin::DeviceState());
-    empty_device_state_->name = kDeviceName;
+    empty_device_state_->name = std::string(kDeviceName);
     empty_device_state_->address = kDeviceAddress;
     empty_device_.reset(new BluetoothDeviceWin(NULL, *empty_device_state_,
                                                ui_task_runner, socket_thread,
-                                               NULL, net::NetLog::Source()));
+                                               NULL, net::NetLogSource()));
   }
 
  protected:
-  scoped_ptr<BluetoothDeviceWin> device_;
-  scoped_ptr<BluetoothTaskManagerWin::DeviceState> device_state_;
-  scoped_ptr<BluetoothDeviceWin> empty_device_;
-  scoped_ptr<BluetoothTaskManagerWin::DeviceState> empty_device_state_;
+  std::unique_ptr<BluetoothDeviceWin> device_;
+  std::unique_ptr<BluetoothTaskManagerWin::DeviceState> device_state_;
+  std::unique_ptr<BluetoothDeviceWin> empty_device_;
+  std::unique_ptr<BluetoothTaskManagerWin::DeviceState> empty_device_state_;
 };
 
 TEST_F(BluetoothDeviceWinTest, GetUUIDs) {
-  BluetoothDevice::UUIDList uuids = device_->GetUUIDs();
+  BluetoothDevice::UUIDSet uuids = device_->GetUUIDs();
 
-  EXPECT_EQ(2, uuids.size());
-  EXPECT_EQ(kTestAudioSdpUuid, uuids[0]);
-  EXPECT_EQ(kTestVideoSdpUuid, uuids[1]);
+  EXPECT_EQ(2u, uuids.size());
+  EXPECT_TRUE(base::ContainsKey(uuids, kTestAudioSdpUuid));
+  EXPECT_TRUE(base::ContainsKey(uuids, kTestVideoSdpUuid));
 
   uuids = empty_device_->GetUUIDs();
-  EXPECT_EQ(0, uuids.size());
+  EXPECT_EQ(0u, uuids.size());
 }
 
 TEST_F(BluetoothDeviceWinTest, IsEqual) {

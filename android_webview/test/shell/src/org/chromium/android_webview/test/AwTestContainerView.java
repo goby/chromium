@@ -35,7 +35,6 @@ import javax.microedition.khronos.opengles.GL10;
  */
 public class AwTestContainerView extends FrameLayout {
     private AwContents mAwContents;
-    private AwContents.NativeGLDelegate mNativeGLDelegate;
     private AwContents.InternalAccessDelegate mInternalAccessDelegate;
 
     private HardwareView mHardwareView = null;
@@ -58,11 +57,14 @@ public class AwTestContainerView extends FrameLayout {
         private int mLastScrollX = 0;
         private int mLastScrollY = 0;
 
+        // Only used by drawGL on render thread to store the value of scroll offsets at most recent
+        // sync for subsequent draws.
         private int mCommittedScrollX = 0;
         private int mCommittedScrollY = 0;
 
         private boolean mHaveSurface = false;
         private Runnable mReadyToRenderCallback = null;
+        private Runnable mReadyToDetachCallback = null;
 
         private long mDrawGL = 0;
         private long mViewContext = 0;
@@ -97,9 +99,9 @@ public class AwTestContainerView extends FrameLayout {
             setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
         }
 
-        public void initialize(long drawGL, long viewContext) {
+        public void initialize(long drawGL) {
             mDrawGL = drawGL;
-            mViewContext = viewContext;
+            mViewContext = 0;
         }
 
         public boolean isReadyToRender() {
@@ -111,11 +113,14 @@ public class AwTestContainerView extends FrameLayout {
             mReadyToRenderCallback = runner;
         }
 
+        public void setReadyToDetachCallback(Runnable runner) {
+            mReadyToDetachCallback = runner;
+        }
+
         @Override
         public void surfaceCreated(SurfaceHolder holder) {
-            boolean didHaveSurface = mHaveSurface;
             mHaveSurface = true;
-            if (!didHaveSurface && mReadyToRenderCallback != null) {
+            if (mReadyToRenderCallback != null) {
                 mReadyToRenderCallback.run();
                 mReadyToRenderCallback = null;
             }
@@ -125,6 +130,10 @@ public class AwTestContainerView extends FrameLayout {
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
             mHaveSurface = false;
+            if (mReadyToDetachCallback != null) {
+                mReadyToDetachCallback.run();
+                mReadyToDetachCallback = null;
+            }
             super.surfaceDestroyed(holder);
         }
 
@@ -144,8 +153,10 @@ public class AwTestContainerView extends FrameLayout {
             }
         }
 
-        public void requestRender(Canvas canvas, boolean waitForCompletion) {
+        public void requestRender(long viewContext, Canvas canvas, boolean waitForCompletion) {
             synchronized (mSyncLock) {
+                assert viewContext != 0;
+                mViewContext = viewContext;
                 super.requestRender();
                 mFunctorAttached = true;
                 mWaitForCompletion = waitForCompletion;
@@ -181,6 +192,7 @@ public class AwTestContainerView extends FrameLayout {
             final boolean draw;
             final boolean process;
             final boolean waitForCompletion;
+            final long viewContext;
 
             synchronized (mSyncLock) {
                 if (!mFunctorAttached) {
@@ -191,9 +203,9 @@ public class AwTestContainerView extends FrameLayout {
                 draw = mNeedsDrawGL;
                 process = mNeedsProcessGL;
                 waitForCompletion = mWaitForCompletion;
-
+                viewContext = mViewContext;
                 if (draw) {
-                    DrawGL.drawGL(mDrawGL, mViewContext, width, height, 0, 0, MODE_SYNC);
+                    DrawGL.drawGL(mDrawGL, viewContext, width, height, 0, 0, MODE_SYNC);
                     mCommittedScrollX = mLastScrollX;
                     mCommittedScrollY = mLastScrollY;
                 }
@@ -204,11 +216,11 @@ public class AwTestContainerView extends FrameLayout {
                 }
             }
             if (process) {
-                DrawGL.drawGL(mDrawGL, mViewContext, width, height, 0, 0, MODE_PROCESS);
+                DrawGL.drawGL(mDrawGL, viewContext, width, height, 0, 0, MODE_PROCESS);
             }
             if (process || draw) {
-                DrawGL.drawGL(mDrawGL, mViewContext, width, height,
-                        mCommittedScrollX, mCommittedScrollY, MODE_DRAW);
+                DrawGL.drawGL(mDrawGL, viewContext, width, height, mCommittedScrollX,
+                        mCommittedScrollY, MODE_DRAW);
             }
 
             if (waitForCompletion) {
@@ -240,7 +252,6 @@ public class AwTestContainerView extends FrameLayout {
         } else {
             setLayerType(LAYER_TYPE_SOFTWARE, null);
         }
-        mNativeGLDelegate = new NativeGLDelegate();
         mInternalAccessDelegate = new InternalAccessAdapter();
         setOverScrollMode(View.OVER_SCROLL_ALWAYS);
         setFocusable(true);
@@ -250,8 +261,7 @@ public class AwTestContainerView extends FrameLayout {
     public void initialize(AwContents awContents) {
         mAwContents = awContents;
         if (isBackedByHardwareView()) {
-            mHardwareView.initialize(
-                    AwContents.getAwDrawGLFunction(), mAwContents.getAwDrawGLViewContext());
+            mHardwareView.initialize(AwContents.getAwDrawGLFunction());
         }
     }
 
@@ -267,8 +277,8 @@ public class AwTestContainerView extends FrameLayout {
         return mAwContents;
     }
 
-    public AwContents.NativeGLDelegate getNativeGLDelegate() {
-        return mNativeGLDelegate;
+    public AwContents.NativeDrawGLFunctorFactory getNativeDrawGLFunctorFactory() {
+        return new NativeDrawGLFunctorFactory();
     }
 
     public AwContents.InternalAccessDelegate getInternalAccessDelegate() {
@@ -285,19 +295,37 @@ public class AwTestContainerView extends FrameLayout {
         mAwContents.onConfigurationChanged(newConfig);
     }
 
+    private void attachedContentsInternal() {
+        assert !mAttachedContents;
+        mAwContents.onAttachedToWindow();
+        mAttachedContents = true;
+    }
+
+    private void detachedContentsInternal() {
+        assert mAttachedContents;
+        mAwContents.onDetachedFromWindow();
+        mAttachedContents = false;
+    }
+
     @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
         if (mHardwareView == null || mHardwareView.isReadyToRender()) {
-            mAwContents.onAttachedToWindow();
-            mAttachedContents = true;
+            attachedContentsInternal();
         } else {
             mHardwareView.setReadyToRenderCallback(new Runnable() {
                 @Override
                 public void run() {
-                    assert !mAttachedContents;
-                    mAwContents.onAttachedToWindow();
-                    mAttachedContents = true;
+                    attachedContentsInternal();
+                }
+            });
+        }
+
+        if (mHardwareView != null) {
+            mHardwareView.setReadyToDetachCallback(new Runnable() {
+                @Override
+                public void run() {
+                    detachedContentsInternal();
                 }
             });
         }
@@ -306,11 +334,14 @@ public class AwTestContainerView extends FrameLayout {
     @Override
     public void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        mAwContents.onDetachedFromWindow();
-        if (mHardwareView != null) {
-            mHardwareView.setReadyToRenderCallback(null);
+        if (mHardwareView == null || mHardwareView.isReadyToRender()) {
+            detachedContentsInternal();
+
+            if (mHardwareView != null) {
+                mHardwareView.setReadyToRenderCallback(null);
+                mHardwareView.setReadyToDetachCallback(null);
+            }
         }
-        mAttachedContents = false;
     }
 
     @Override
@@ -415,18 +446,58 @@ public class AwTestContainerView extends FrameLayout {
         return mAwContents.performAccessibilityAction(action, arguments);
     }
 
-    private class NativeGLDelegate implements AwContents.NativeGLDelegate {
+    private class NativeDrawGLFunctorFactory implements AwContents.NativeDrawGLFunctorFactory {
+        public NativeDrawGLFunctor createFunctor(long context) {
+            return new NativeDrawGLFunctor(context);
+        }
+    }
+
+    private static final class NativeDrawGLFunctorDestroyRunnable implements Runnable {
+        public long mContext;
+        NativeDrawGLFunctorDestroyRunnable(long context) {
+            mContext = context;
+        }
         @Override
-        public boolean requestDrawGL(Canvas canvas, boolean waitForCompletion,
-                View containerview) {
+        public void run() {
+            mContext = 0;
+        }
+    }
+
+    private class NativeDrawGLFunctor implements AwContents.NativeDrawGLFunctor {
+        private NativeDrawGLFunctorDestroyRunnable mDestroyRunnable;
+
+        NativeDrawGLFunctor(long context) {
+            mDestroyRunnable = new NativeDrawGLFunctorDestroyRunnable(context);
+        }
+
+        @Override
+        public boolean supportsDrawGLFunctorReleasedCallback() {
+            return false;
+        }
+
+        @Override
+        public boolean requestDrawGL(Canvas canvas, Runnable releasedRunnable) {
+            assert releasedRunnable == null;
             if (!isBackedByHardwareView()) return false;
-            mHardwareView.requestRender(canvas, waitForCompletion);
+            mHardwareView.requestRender(mDestroyRunnable.mContext, canvas, false);
             return true;
         }
 
         @Override
-        public void detachGLFunctor() {
+        public boolean requestInvokeGL(View containerView, boolean waitForCompletion) {
+            if (!isBackedByHardwareView()) return false;
+            mHardwareView.requestRender(mDestroyRunnable.mContext, null, waitForCompletion);
+            return true;
+        }
+
+        @Override
+        public void detach(View containerView) {
             if (isBackedByHardwareView()) mHardwareView.detachGLFunctor();
+        }
+
+        @Override
+        public Runnable getDestroyRunnable() {
+            return mDestroyRunnable;
         }
     }
 
@@ -435,18 +506,8 @@ public class AwTestContainerView extends FrameLayout {
     private class InternalAccessAdapter implements AwContents.InternalAccessDelegate {
 
         @Override
-        public boolean drawChild(Canvas canvas, View child, long drawingTime) {
-            return AwTestContainerView.super.drawChild(canvas, child, drawingTime);
-        }
-
-        @Override
         public boolean super_onKeyUp(int keyCode, KeyEvent event) {
             return AwTestContainerView.super.onKeyUp(keyCode, event);
-        }
-
-        @Override
-        public boolean super_dispatchKeyEventPreIme(KeyEvent event) {
-            return AwTestContainerView.super.dispatchKeyEventPreIme(event);
         }
 
         @Override

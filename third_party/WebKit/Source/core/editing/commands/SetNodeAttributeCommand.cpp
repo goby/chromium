@@ -23,7 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/editing/commands/SetNodeAttributeCommand.h"
 
 #include "core/dom/Element.h"
@@ -31,32 +30,29 @@
 
 namespace blink {
 
-SetNodeAttributeCommand::SetNodeAttributeCommand(PassRefPtrWillBeRawPtr<Element> element,
-    const QualifiedName& attribute, const AtomicString& value)
-    : SimpleEditCommand(element->document())
-    , m_element(element)
-    , m_attribute(attribute)
-    , m_value(value)
-{
-    ASSERT(m_element);
+SetNodeAttributeCommand::SetNodeAttributeCommand(Element* element,
+                                                 const QualifiedName& attribute,
+                                                 const AtomicString& value)
+    : SimpleEditCommand(element->document()),
+      m_element(element),
+      m_attribute(attribute),
+      m_value(value) {
+  DCHECK(m_element);
 }
 
-void SetNodeAttributeCommand::doApply()
-{
-    m_oldValue = m_element->getAttribute(m_attribute);
-    m_element->setAttribute(m_attribute, m_value);
+void SetNodeAttributeCommand::doApply(EditingState*) {
+  m_oldValue = m_element->getAttribute(m_attribute);
+  m_element->setAttribute(m_attribute, m_value);
 }
 
-void SetNodeAttributeCommand::doUnapply()
-{
-    m_element->setAttribute(m_attribute, m_oldValue);
-    m_oldValue = nullAtom;
+void SetNodeAttributeCommand::doUnapply() {
+  m_element->setAttribute(m_attribute, m_oldValue);
+  m_oldValue = nullAtom;
 }
 
-DEFINE_TRACE(SetNodeAttributeCommand)
-{
-    visitor->trace(m_element);
-    SimpleEditCommand::trace(visitor);
+DEFINE_TRACE(SetNodeAttributeCommand) {
+  visitor->trace(m_element);
+  SimpleEditCommand::trace(visitor);
 }
 
-} // namespace blink
+}  // namespace blink

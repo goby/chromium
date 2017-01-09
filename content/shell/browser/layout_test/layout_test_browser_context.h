@@ -6,6 +6,7 @@
 #define CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_BROWSER_CONTEXT_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/shell/browser/shell_browser_context.h"
 
 namespace net {
@@ -40,8 +41,9 @@ class LayoutTestBrowserContext : public ShellBrowserContext {
       URLRequestInterceptorScopedVector request_interceptors) override;
 
  private:
-  scoped_ptr<LayoutTestPushMessagingService> push_messaging_service_;
-  scoped_ptr<PermissionManager> permission_manager_;
+  std::unique_ptr<LayoutTestPushMessagingService> push_messaging_service_;
+  std::unique_ptr<PermissionManager> permission_manager_;
+  std::unique_ptr<BackgroundSyncController> background_sync_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(LayoutTestBrowserContext);
 };

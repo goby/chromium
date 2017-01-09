@@ -4,18 +4,25 @@
 
 import("//build/config/android/rules.gni")
 
-# GYP: //components/precache.gypi:precache_java
 android_library("precache_java") {
   deps = [
     "//base:base_java",
   ]
-  DEPRECATED_java_in_dir = "java/src"
+  java_files = [
+    "java/src/org/chromium/components/precache/DeviceState.java",
+    "java/src/org/chromium/components/precache/NetworkInfoDelegate.java",
+    "java/src/org/chromium/components/precache/NetworkInfoDelegateFactory.java",
+  ]
 }
 
 android_library("precache_javatests") {
+  testonly = true
   deps = [
     ":precache_java",
     "//base:base_java_test_support",
   ]
-  DEPRECATED_java_in_dir = "javatests/src"
+  java_files = [
+    "javatests/src/org/chromium/components/precache/DeviceStateTest.java",
+    "javatests/src/org/chromium/components/precache/MockDeviceState.java",
+  ]
 }

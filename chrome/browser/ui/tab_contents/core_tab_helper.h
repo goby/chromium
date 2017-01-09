@@ -9,6 +9,7 @@
 
 #include "base/callback.h"
 #include "base/id_map.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -53,8 +54,10 @@ class CoreTabHelper : public content::WebContentsObserver,
   // Perform an image search for the image that triggered the context menu.  The
   // |src_url| is passed to the search request and is not used directly to fetch
   // the image resources.
-  void SearchByImageInNewTab(const GURL& src_url);
+  void SearchByImageInNewTab(content::RenderFrameHost* render_frame_host,
+                             const GURL& src_url);
   void RequestThumbnailForContextNode(
+      content::RenderFrameHost* render_frame_host,
       int minimum_size,
       gfx::Size maximum_size,
       const ContextNodeThumbnailCallback& callback);
@@ -112,7 +115,7 @@ class CoreTabHelper : public content::WebContentsObserver,
   // (full-page plugins for now only) permissions.
   int content_restrictions_;
 
-  IDMap<ContextNodeThumbnailCallback, IDMapOwnPointer> thumbnail_callbacks_;
+  IDMap<std::unique_ptr<ContextNodeThumbnailCallback>> thumbnail_callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(CoreTabHelper);
 };

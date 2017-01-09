@@ -4,6 +4,13 @@
 
 package org.chromium.content.browser;
 
+import android.content.Context;
+import android.util.TypedValue;
+
+import org.chromium.base.VisibleForTesting;
+
+import java.lang.ref.WeakReference;
+
 /**
  * Cached copy of all positions and scales (CSS-to-DIP-to-physical pixels)
  * reported from the renderer.
@@ -32,9 +39,14 @@ public class RenderCoordinates {
     private float mMaxPageScaleFactor = 1.0f;
 
     // Cached device density.
-    private float mDeviceScaleFactor;
+    private float mDeviceScaleFactor = 1.0f;
 
-    private float mContentOffsetYPix;
+    // Multiplier that determines how many (device) pixels to scroll per mouse
+    // wheel tick. Defaults to the preferred list item height.
+    private float mWheelScrollFactor;
+
+    private float mTopContentOffsetYPix;
+    private float mBottomContentOffsetYPix;
 
     private boolean mHasFrameInfo;
 
@@ -50,8 +62,24 @@ public class RenderCoordinates {
         mContentHeightCss = contentHeightCss;
     }
 
-    void setDeviceScaleFactor(float deviceScaleFactor) {
-        mDeviceScaleFactor = deviceScaleFactor;
+    void setDeviceScaleFactor(float dipScale, WeakReference<Context> displayContext) {
+        mDeviceScaleFactor = dipScale;
+
+        // The wheel scroll factor depends on the theme in the context.
+        // This code assumes that the theme won't change between this call and
+        // getWheelScrollFactor().
+
+        Context context = displayContext.get();
+        TypedValue outValue = new TypedValue();
+        // This is the same attribute used by Android Views to scale wheel
+        // event motion into scroll deltas.
+        if (context != null && context.getTheme().resolveAttribute(
+                android.R.attr.listPreferredItemHeight, outValue, true)) {
+            mWheelScrollFactor = outValue.getDimension(context.getResources().getDisplayMetrics());
+        } else {
+            // If attribute retrieval fails, just use a sensible default.
+            mWheelScrollFactor = 64 * mDeviceScaleFactor;
+        }
     }
 
     void updateFrameInfo(
@@ -59,19 +87,32 @@ public class RenderCoordinates {
             float contentWidthCss, float contentHeightCss,
             float viewportWidthCss, float viewportHeightCss,
             float pageScaleFactor, float minPageScaleFactor, float maxPageScaleFactor,
-            float contentOffsetYPix) {
+            float contentOffsetYPix, float contentOffsetYPixBottom) {
         mScrollXCss = scrollXCss;
         mScrollYCss = scrollYCss;
         mPageScaleFactor = pageScaleFactor;
         mMinPageScaleFactor = minPageScaleFactor;
         mMaxPageScaleFactor = maxPageScaleFactor;
-        mContentOffsetYPix = contentOffsetYPix;
+        mTopContentOffsetYPix = contentOffsetYPix;
+        mBottomContentOffsetYPix = contentOffsetYPixBottom;
 
         updateContentSizeCss(contentWidthCss, contentHeightCss);
         mLastFrameViewportWidthCss = viewportWidthCss;
         mLastFrameViewportHeightCss = viewportHeightCss;
 
         mHasFrameInfo = true;
+    }
+
+    /**
+     * Sets several fields for unit test. (used by {@link CursorAnchorInfoControllerTest}).
+     * @param deviceScaleFactor Device scale factor (maps DIP pixels to physical pixels).
+     * @param contentOffsetYPix Physical on-screen Y offset amount below the browser controls.
+     */
+    @VisibleForTesting
+    public void setFrameInfoForTest(float deviceScaleFactor, float contentOffsetYPix) {
+        reset();
+        mDeviceScaleFactor = deviceScaleFactor;
+        mTopContentOffsetYPix = contentOffsetYPix;
     }
 
     /**
@@ -123,7 +164,7 @@ public class RenderCoordinates {
          * @return Physical (screen) Y coordinate of the point.
          */
         public float getYPix() {
-            return getYLocalDip() * mDeviceScaleFactor + mContentOffsetYPix;
+            return getYLocalDip() * mDeviceScaleFactor + mTopContentOffsetYPix;
         }
 
         /**
@@ -285,10 +326,17 @@ public class RenderCoordinates {
     }
 
     /**
-     * @return The Physical on-screen Y offset amount below the top controls.
+     * @return The Physical on-screen Y offset amount below the browser controls.
      */
     public float getContentOffsetYPix() {
-        return mContentOffsetYPix;
+        return mTopContentOffsetYPix;
+    }
+
+    /**
+     * @return The Physical on-screen Y offset amount below the bottom controls.
+     */
+    public float getContentOffsetYPixBottom() {
+        return mBottomContentOffsetYPix;
     }
 
     /**
@@ -317,6 +365,13 @@ public class RenderCoordinates {
      */
     public float getDeviceScaleFactor() {
         return mDeviceScaleFactor;
+    }
+
+    /**
+     * @return Current wheel scroll factor (physical pixels per mouse scroll click).
+     */
+    public float getWheelScrollFactor() {
+        return mWheelScrollFactor;
     }
 
     /**

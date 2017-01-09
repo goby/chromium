@@ -5,9 +5,10 @@
 #include "chrome/browser/ui/views/autofill/autofill_popup_view_views.h"
 
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
+#include "chrome/browser/ui/autofill/autofill_popup_layout_model.h"
+#include "chrome/browser/ui/autofill/popup_constants.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/browser/suggestion.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/point.h"
@@ -51,11 +52,11 @@ void AutofillPopupViewViews::OnPaint(gfx::Canvas* canvas) {
   OnPaintBorder(canvas);
 
   for (size_t i = 0; i < controller_->GetLineCount(); ++i) {
-    gfx::Rect line_rect = controller_->GetRowBounds(i);
+    gfx::Rect line_rect = controller_->layout_model().GetRowBounds(i);
 
     if (controller_->GetSuggestionAt(i).frontend_id ==
         POPUP_ITEM_ID_SEPARATOR) {
-      canvas->FillRect(line_rect, kItemTextColor);
+      canvas->FillRect(line_rect, kLabelTextColor);
     } else {
       DrawAutofillEntry(canvas, i, line_rect);
     }
@@ -63,58 +64,118 @@ void AutofillPopupViewViews::OnPaint(gfx::Canvas* canvas) {
 }
 
 void AutofillPopupViewViews::InvalidateRow(size_t row) {
-  SchedulePaintInRect(controller_->GetRowBounds(row));
+  SchedulePaintInRect(controller_->layout_model().GetRowBounds(row));
 }
 
+/**
+* Autofill entries in ltr.
+*
+* ............................................................................
+* . ICON | HTTP WARNING MESSAGE VALUE                                | LABEL .
+* ............................................................................
+* . OTHER AUTOFILL ENTRY VALUE |                                LABEL | ICON .
+* ............................................................................
+*
+* Autofill entries in rtl.
+*
+* ............................................................................
+* . LABEL |                                HTTP WARNING MESSAGE VALUE | ICON .
+* ............................................................................
+* . ICON | LABEL                                | OTHER AUTOFILL ENTRY VALUE .
+* ............................................................................
+*
+* Anyone who wants to modify the code below, remember to make sure that HTTP
+* warning entry displays right. To trigger the warning message entry, enable
+* #mark-non-secure-as flag as "display form warning", go to goo.gl/CEIjc6 with
+* stored autofill info and check for credit card or password forms.
+*/
 void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
                                                int index,
                                                const gfx::Rect& entry_rect) {
-  if (controller_->selected_line() == index)
-    canvas->FillRect(entry_rect, kHoveredBackgroundColor);
+  canvas->FillRect(entry_rect, controller_->GetBackgroundColorForRow(index));
 
+  const bool is_http_warning =
+      (controller_->GetSuggestionAt(index).frontend_id ==
+       POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE);
   const bool is_rtl = controller_->IsRTL();
   const int text_align =
       is_rtl ? gfx::Canvas::TEXT_ALIGN_RIGHT : gfx::Canvas::TEXT_ALIGN_LEFT;
   gfx::Rect value_rect = entry_rect;
-  value_rect.Inset(kEndPadding, 0);
-  canvas->DrawStringRectWithFlags(
-      controller_->GetElidedValueAt(index),
-      controller_->GetValueFontListForRow(index),
-      controller_->IsWarning(index) ? kWarningTextColor : kValueTextColor,
-      value_rect, text_align);
+  value_rect.Inset(AutofillPopupLayoutModel::kEndPadding, 0);
 
-  // Use this to figure out where all the other Autofill items should be placed.
-  int x_align_left = is_rtl ? kEndPadding : entry_rect.right() - kEndPadding;
+  // If the icon is on the right of the rect, no matter in RTL or LTR mode.
+  bool icon_on_the_right = is_http_warning == is_rtl;
+  int x_align_left = icon_on_the_right ? value_rect.right() : value_rect.x();
 
   // Draw the Autofill icon, if one exists
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  int row_height = controller_->GetRowBounds(index).height();
+  int row_height = controller_->layout_model().GetRowBounds(index).height();
   if (!controller_->GetSuggestionAt(index).icon.empty()) {
-    int icon = controller_->GetIconResourceID(
-        controller_->GetSuggestionAt(index).icon);
-    DCHECK_NE(-1, icon);
-    const gfx::ImageSkia* image = rb.GetImageSkiaNamed(icon);
-    int icon_y = entry_rect.y() + (row_height - image->height()) / 2;
+    const gfx::ImageSkia image =
+        controller_->layout_model().GetIconImage(index);
+    int icon_y = entry_rect.y() + (row_height - image.height()) / 2;
 
-    x_align_left += is_rtl ? 0 : -image->width();
+    int icon_x_align_left =
+        icon_on_the_right ? x_align_left - image.width() : x_align_left;
 
-    canvas->DrawImageInt(*image, x_align_left, icon_y);
+    canvas->DrawImageInt(image, icon_x_align_left, icon_y);
 
-    x_align_left += is_rtl ? image->width() + kIconPadding : -kIconPadding;
+    // An icon was drawn; adjust the |x_align_left| value for the next element.
+    if (is_http_warning) {
+      x_align_left =
+          icon_x_align_left +
+          (is_rtl ? -AutofillPopupLayoutModel::kHttpWarningIconPadding
+                  : image.width() +
+                        AutofillPopupLayoutModel::kHttpWarningIconPadding);
+    } else {
+      x_align_left =
+          icon_x_align_left +
+          (is_rtl ? image.width() + AutofillPopupLayoutModel::kIconPadding
+                  : -AutofillPopupLayoutModel::kIconPadding);
+    }
   }
 
-  // Draw the label text.
-  const int label_width =
-      gfx::GetStringWidth(controller_->GetElidedLabelAt(index),
-                          controller_->GetLabelFontList());
-  if (!is_rtl)
-    x_align_left -= label_width;
+  // Draw the value text
+  const int value_width = gfx::GetStringWidth(
+      controller_->GetElidedValueAt(index),
+      controller_->layout_model().GetValueFontListForRow(index));
+  int value_x_align_left = x_align_left;
+
+  if (is_http_warning) {
+    value_x_align_left += is_rtl ? -value_width : 0;
+  } else {
+    value_x_align_left =
+        is_rtl ? value_rect.right() - value_width : value_rect.x();
+  }
 
   canvas->DrawStringRectWithFlags(
-      controller_->GetElidedLabelAt(index), controller_->GetLabelFontList(),
-      kItemTextColor,
-      gfx::Rect(x_align_left, entry_rect.y(), label_width, entry_rect.height()),
+      controller_->GetElidedValueAt(index),
+      controller_->layout_model().GetValueFontListForRow(index),
+      controller_->layout_model().GetValueFontColorForRow(index),
+      gfx::Rect(value_x_align_left, value_rect.y(), value_width,
+                value_rect.height()),
       text_align);
+
+  // Draw the label text, if one exists.
+  if (!controller_->GetSuggestionAt(index).label.empty()) {
+    const int label_width = gfx::GetStringWidth(
+        controller_->GetElidedLabelAt(index),
+        controller_->layout_model().GetLabelFontListForRow(index));
+    int label_x_align_left = x_align_left;
+
+    if (is_http_warning) {
+      label_x_align_left =
+          is_rtl ? value_rect.x() : value_rect.right() - label_width;
+    } else {
+      label_x_align_left += is_rtl ? 0 : -label_width;
+    }
+
+    canvas->DrawStringRectWithFlags(
+        controller_->GetElidedLabelAt(index),
+        controller_->layout_model().GetLabelFontListForRow(index),
+        kLabelTextColor, gfx::Rect(label_x_align_left, entry_rect.y(),
+                                   label_width, entry_rect.height()),
+        text_align);
+  }
 }
 
 AutofillPopupView* AutofillPopupView::Create(

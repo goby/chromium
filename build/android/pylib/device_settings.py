@@ -28,14 +28,13 @@ def ConfigureContentSettings(device, desired_settings):
     desired_settings: A list of (table, [(key: value), ...]) for all
         settings to configure.
   """
-  if device.build_type in _COMPATIBLE_BUILD_TYPES:
-    for table, key_value in desired_settings:
-      settings = content_settings.ContentSettings(table, device)
-      for key, value in key_value:
-        settings[key] = value
-      logging.info('\n%s %s', table, (80 - len(table)) * '-')
-      for key, value in sorted(settings.iteritems()):
-        logging.info('\t%s: %s', key, value)
+  for table, key_value in desired_settings:
+    settings = content_settings.ContentSettings(table, device)
+    for key, value in key_value:
+      settings[key] = value
+    logging.info('\n%s %s', table, (80 - len(table)) * '-')
+    for key, value in sorted(settings.iteritems()):
+      logging.info('\t%s: %s', key, value)
 
 
 def SetLockScreenSettings(device):
@@ -174,6 +173,8 @@ DETERMINISTIC_DEVICE_SETTINGS = [
     ('lockscreen.disabled', 1),
 
     ('screensaver_enabled', 0),
+
+    ('skip_first_use_hints', 1),
   ]),
   ('settings/system', [
     # Don't want devices to accidentally rotate the screen as that could

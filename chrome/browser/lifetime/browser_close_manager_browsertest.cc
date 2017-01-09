@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/lifetime/browser_close_manager.h"
+
+#include <utility>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/background/background_mode_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_shutdown.h"
@@ -16,14 +21,15 @@
 #include "chrome/browser/download/download_service.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/lifetime/browser_close_manager.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/net/url_request_mock_util.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_iterator.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
@@ -36,6 +42,8 @@
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -58,10 +66,14 @@ app_modal::NativeAppModalDialog* GetNextDialog() {
   return js_dialog->native_dialog();
 }
 
+// Note: call |DisableHangMonitor| on the relevant WebContents or Browser before
+// trying to close it, to avoid flakiness. https://crbug.com/519646
 void AcceptClose() {
   GetNextDialog()->AcceptAppModalDialog();
 }
 
+// Note: call |DisableHangMonitor| on the relevant WebContents or Browser before
+// trying to close it, to avoid flakiness. https://crbug.com/519646
 void CancelClose() {
   GetNextDialog()->CancelAppModalDialog();
 }
@@ -178,9 +190,9 @@ class TestDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
 class FakeBackgroundModeManager : public BackgroundModeManager {
  public:
   FakeBackgroundModeManager()
-      : BackgroundModeManager(
-            *base::CommandLine::ForCurrentProcess(),
-            &g_browser_process->profile_manager()->GetProfileInfoCache()),
+      : BackgroundModeManager(*base::CommandLine::ForCurrentProcess(),
+                              &g_browser_process->profile_manager()
+                                  ->GetProfileAttributesStorage()),
         suspended_(false) {}
 
   void SuspendBackgroundMode() override {
@@ -233,14 +245,28 @@ class BrowserCloseManagerBrowserTest
     content::DownloadTestObserverInProgress observer(
         content::BrowserContext::GetDownloadManager(browser->profile()), 1);
     ui_test_utils::NavigateToURLWithDisposition(
-        browser,
-        GURL(net::URLRequestSlowDownloadJob::kKnownSizeUrl),
-        NEW_BACKGROUND_TAB,
+        browser, GURL(net::URLRequestSlowDownloadJob::kKnownSizeUrl),
+        WindowOpenDisposition::NEW_BACKGROUND_TAB,
         ui_test_utils::BROWSER_TEST_NONE);
     observer.WaitForFinished();
     EXPECT_EQ(
         1UL,
         observer.NumDownloadsSeenInState(content::DownloadItem::IN_PROGRESS));
+  }
+
+  // Makes sure that hang monitor will not trigger RendererUnresponsive
+  // for that web content or browser. That must be called before close action
+  // when using |AcceptClose| or |CancelClose|, to ensure the timeout does not
+  // prevent the dialog from appearing. https://crbug.com/519646
+  void DisableHangMonitor(content::WebContents* web_contents) {
+    web_contents->GetRenderViewHost()
+        ->GetWidget()
+        ->DisableHangMonitorForTesting();
+  }
+
+  void DisableHangMonitor(Browser* browser) {
+    for (int i = 0; i < browser->tab_strip_model()->count(); i++)
+      DisableHangMonitor(browser->tab_strip_model()->GetWebContentsAt(i));
   }
 
   std::vector<Browser*> browsers_;
@@ -250,6 +276,8 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest, TestSingleTabShutdown) {
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browser());
+
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 1);
   chrome::CloseAllBrowsersAndQuit();
@@ -264,7 +292,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest, TestSingleTabShutdown) {
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
@@ -272,6 +300,8 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browser());
+
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 1);
   chrome::CloseAllBrowsersAndQuit();
@@ -288,23 +318,19 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
-// Test is flaky on Mac. http://crbug.com/517687
-#if defined(OS_MACOSX)
-#define MAYBE_PRE_TestSessionRestore DISABLED_PRE_TestSessionRestore
-#else
-#define MAYBE_PRE_TestSessionRestore DISABLED_PRE_TestSessionRestore
-#endif
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
-                       MAYBE_PRE_TestSessionRestore) {
+                       PRE_TestSessionRestore) {
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/beforeunload.html")));
   AddBlankTabAndShow(browser());
   ASSERT_NO_FATAL_FAILURE(
       ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIAboutURL)));
+  DisableHangMonitor(browser());
+
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 1);
   chrome::CloseAllBrowsersAndQuit();
@@ -316,11 +342,9 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
       ->CloseWebContentsAt(1, TabStripModel::CLOSE_USER_GESTURE);
   content::TestNavigationObserver navigation_observer(
       browser()->tab_strip_model()->GetActiveWebContents(), 1);
-  ASSERT_NO_FATAL_FAILURE(
-      NavigateToURLWithDisposition(browser(),
-                                   GURL(chrome::kChromeUIVersionURL),
-                                   CURRENT_TAB,
-                                   ui_test_utils::BROWSER_TEST_NONE));
+  ASSERT_NO_FATAL_FAILURE(NavigateToURLWithDisposition(
+      browser(), GURL(chrome::kChromeUIVersionURL),
+      WindowOpenDisposition::CURRENT_TAB, ui_test_utils::BROWSER_TEST_NONE));
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   navigation_observer.Wait();
 
@@ -329,19 +353,13 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   chrome::CloseAllBrowsersAndQuit();
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test that the tab closed after the aborted shutdown attempt is not re-opened
 // when restoring the session.
-// Test is flaky on Mac. http://crbug.com/517687
-#if defined(OS_MACOSX)
-#define MAYBE_TestSessionRestore DISABLED_TestSessionRestore
-#else
-#define MAYBE_TestSessionRestore DISABLED_TestSessionRestore
-#endif
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
-                       MAYBE_TestSessionRestore) {
+                       TestSessionRestore) {
   // The testing framework launches Chrome with about:blank as args.
   EXPECT_EQ(2, browser()->tab_strip_model()->count());
   EXPECT_EQ(GURL(chrome::kChromeUIVersionURL),
@@ -359,6 +377,8 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest, TestMultipleWindows) {
       browsers_[0], embedded_test_server()->GetURL("/beforeunload.html")));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
+  DisableHangMonitor(browsers_[1]);
 
   // Cancel shutdown on the first beforeunload event.
   {
@@ -393,23 +413,14 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest, TestMultipleWindows) {
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test that tabs in the same window with a beforeunload event that hangs are
 // treated the same as the user accepting the close, but do not close the tab
 // early.
-// Test is flaky on windows, disabled. See http://crbug.com/276366
-// Test is flaky on Mac. See http://crbug.com/517687.
-#if defined(OS_WIN) || defined(OS_MACOSX)
-#define MAYBE_TestHangInBeforeUnloadMultipleTabs \
-    DISABLED_TestHangInBeforeUnloadMultipleTabs
-#else
-#define MAYBE_TestHangInBeforeUnloadMultipleTabs \
-    TestHangInBeforeUnloadMultipleTabs
-#endif
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
-                       MAYBE_TestHangInBeforeUnloadMultipleTabs) {
+                       TestHangInBeforeUnloadMultipleTabs) {
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload_hang.html")));
@@ -419,6 +430,9 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   AddBlankTabAndShow(browsers_[0]);
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload_hang.html")));
+  // Disable the hang monitor in the tab that is not expected to hang, so that
+  // the dialog is guaranteed to show.
+  DisableHangMonitor(browsers_[0]->tab_strip_model()->GetWebContentsAt(1));
 
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 1);
@@ -435,7 +449,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test that tabs in different windows with a beforeunload event that hangs are
@@ -452,6 +466,9 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[2], embedded_test_server()->GetURL("/beforeunload_hang.html")));
+  // Disable the hang monitor in the tab that is not expected to hang, so that
+  // the dialog is guaranteed to show.
+  DisableHangMonitor(browsers_[1]);
 
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 2);
@@ -470,7 +487,102 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
+}
+
+// Test that tabs that are slow to respond are not closed prematurely.
+// Regression for crbug.com/365052 caused some of tabs to be closed even if
+// user chose to cancel browser close.
+IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
+                       TestUnloadMultipleSlowTabs) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  const int kTabCount = 5;
+  const int kResposiveTabIndex = 2;
+  // Create tab strip with all tabs except one responding after
+  // RenderViewHostImpl::kUnloadTimeoutMS.
+  // Minimum configuration is two slow tabs and then responsive tab.
+  // But we also want to check how slow tabs behave in tail.
+  for (int i = 0; i < kTabCount; i++) {
+    if (i)
+      AddBlankTabAndShow(browsers_[0]);
+    ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
+        browsers_[0],
+        embedded_test_server()->GetURL((i == kResposiveTabIndex)
+                                           ? "/beforeunload.html"
+                                           : "/beforeunload_slow.html")));
+  }
+  // Disable the hang monitor in the tab that is not expected to hang, so that
+  // the dialog is guaranteed to show.
+  DisableHangMonitor(
+      browsers_[0]->tab_strip_model()->GetWebContentsAt(kResposiveTabIndex));
+
+  RepeatedNotificationObserver cancel_observer(
+      chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 1);
+  chrome::CloseAllBrowsersAndQuit();
+  ASSERT_NO_FATAL_FAILURE(CancelClose());
+  cancel_observer.Wait();
+  EXPECT_FALSE(browser_shutdown::IsTryingToQuit());
+
+  // All tabs should still be open.
+  EXPECT_EQ(kTabCount, browsers_[0]->tab_strip_model()->count());
+  RepeatedNotificationObserver close_observer(
+      chrome::NOTIFICATION_BROWSER_CLOSED, 1);
+
+  // Quit, this time accepting close confirmation dialog.
+  chrome::CloseAllBrowsersAndQuit();
+  ASSERT_NO_FATAL_FAILURE(AcceptClose());
+  close_observer.Wait();
+  EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
+}
+
+// Test that tabs in different windows with a slow beforeunload event response
+// are treated the same as the user accepting the close, but do not close the
+// tab early.
+// Regression for crbug.com/365052 caused CHECK in tabstrip.
+IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
+                       TestBeforeUnloadMultipleSlowWindows) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  const int kBrowserCount = 5;
+  const int kResposiveBrowserIndex = 2;
+  // Create multiple browsers with all tabs except one responding after
+  // RenderViewHostImpl::kUnloadTimeoutMS .
+  // Minimum configuration is just one browser with slow tab and then
+  // browser with responsive tab.
+  // But we also want to check how slow tabs behave in tail and make test
+  // more robust.
+  for (int i = 0; i < kBrowserCount; i++) {
+    if (i)
+      browsers_.push_back(CreateBrowser(browser()->profile()));
+    ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
+        browsers_[i],
+        embedded_test_server()->GetURL((i == kResposiveBrowserIndex)
+                                           ? "/beforeunload.html"
+                                           : "/beforeunload_slow.html")));
+  }
+  // Disable the hang monitor in the tab that is not expected to hang, so that
+  // the dialog is guaranteed to show.
+  DisableHangMonitor(browsers_[kResposiveBrowserIndex]);
+
+  RepeatedNotificationObserver cancel_observer(
+      chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, kResposiveBrowserIndex + 1);
+  chrome::CloseAllBrowsersAndQuit();
+  ASSERT_NO_FATAL_FAILURE(CancelClose());
+  cancel_observer.Wait();
+  EXPECT_FALSE(browser_shutdown::IsTryingToQuit());
+
+  // All windows should still be open.
+  for (int i = 0; i < kBrowserCount; i++)
+    EXPECT_EQ(1, browsers_[i]->tab_strip_model()->count());
+
+  // Quit, this time accepting close confirmation dialog.
+  RepeatedNotificationObserver close_observer(
+      chrome::NOTIFICATION_BROWSER_CLOSED, kBrowserCount);
+  chrome::CloseAllBrowsersAndQuit();
+  ASSERT_NO_FATAL_FAILURE(AcceptClose());
+  close_observer.Wait();
+  EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test that a window created during shutdown is closed.
@@ -479,6 +591,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
 
   RepeatedNotificationObserver close_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED, 2);
@@ -487,7 +600,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test that a window created during shutdown with a beforeunload handler can
@@ -497,6 +610,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
 
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 2);
@@ -504,6 +618,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   browsers_.push_back(CreateBrowser(browser()->profile()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[1]);
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   ASSERT_NO_FATAL_FAILURE(CancelClose());
   cancel_observer.Wait();
@@ -519,19 +634,20 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test that tabs added during shutdown are closed.
-// Disabled for being flaky tests: crbug.com/519646
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
-                       DISABLED_TestAddTabDuringShutdown) {
+                       TestAddTabDuringShutdown) {
   ASSERT_TRUE(embedded_test_server()->Start());
   browsers_.push_back(CreateBrowser(browser()->profile()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload.html")));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
+  DisableHangMonitor(browsers_[1]);
 
   RepeatedNotificationObserver close_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED, 2);
@@ -542,20 +658,23 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test that tabs created during shutdown with beforeunload handlers can cancel
 // the shutdown.
-// Disabled for being flaky tests: crbug.com/519646
+
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
-                       DISABLED_TestAddTabWithBeforeUnloadDuringShutdown) {
+                       TestAddTabWithBeforeUnloadDuringShutdown) {
   ASSERT_TRUE(embedded_test_server()->Start());
   browsers_.push_back(CreateBrowser(browser()->profile()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload.html")));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
+  DisableHangMonitor(browsers_[1]);
+
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 2);
   chrome::CloseAllBrowsersAndQuit();
@@ -566,6 +685,8 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   AddBlankTabAndShow(browsers_[1]);
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
+  DisableHangMonitor(browsers_[1]);
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   ASSERT_NO_FATAL_FAILURE(CancelClose());
   cancel_observer.Wait();
@@ -583,7 +704,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
 
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
@@ -591,6 +712,8 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
+
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 1);
   chrome::CloseAllBrowsersAndQuit();
@@ -598,6 +721,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   browsers_.push_back(CreateBrowser(browser()->profile()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[1]);
   browsers_[1]->tab_strip_model()->CloseAllTabs();
   ASSERT_NO_FATAL_FAILURE(CancelClose());
   ASSERT_NO_FATAL_FAILURE(CancelClose());
@@ -615,22 +739,16 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
 
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
-// Test is flaky on Windows and Mac. See http://crbug.com/276366.
-#if defined(OS_WIN) || defined(OS_MACOSX)
-#define MAYBE_TestOpenAndCloseWindowDuringShutdown \
-    DISABLED_TestOpenAndCloseWindowDuringShutdown
-#else
-#define MAYBE_TestOpenAndCloseWindowDuringShutdown \
-    TestOpenAndCloseWindowDuringShutdown
-#endif
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
-                       MAYBE_TestOpenAndCloseWindowDuringShutdown) {
+                       TestOpenAndCloseWindowDuringShutdown) {
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[0], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
+
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 2);
   chrome::CloseAllBrowsersAndQuit();
@@ -638,6 +756,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   browsers_.push_back(CreateBrowser(browser()->profile()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[1]);
   ASSERT_FALSE(browsers_[1]->ShouldCloseWindow());
   ASSERT_NO_FATAL_FAILURE(CancelClose());
   ASSERT_NO_FATAL_FAILURE(CancelClose());
@@ -655,7 +774,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
 
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
@@ -666,6 +785,9 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
   browsers_.push_back(CreateBrowser(browser()->profile()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browsers_[1], embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browsers_[0]);
+  DisableHangMonitor(browsers_[1]);
+
   RepeatedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED, 1);
   chrome::CloseAllBrowsersAndQuit();
@@ -686,7 +808,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerBrowserTest,
 
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 INSTANTIATE_TEST_CASE_P(BrowserCloseManagerBrowserTest,
@@ -704,20 +826,13 @@ class BrowserCloseManagerWithDownloadsBrowserTest :
     ASSERT_TRUE(scoped_download_directory_.CreateUniqueTempDir());
   }
 
-  // Disable new downloads UI as it is very very slow. https://crbug.com/526577
-  // TODO(dbeam): remove this once the downloads UI is not slow.
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    BrowserCloseManagerBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kDisableMaterialDesignDownloads);
-  }
-
   void SetDownloadPathForProfile(Profile* profile) {
     DownloadPrefs* download_prefs = DownloadPrefs::FromBrowserContext(profile);
     download_prefs->SetDownloadPath(download_path());
   }
 
   const base::FilePath& download_path() const {
-    return scoped_download_directory_.path();
+    return scoped_download_directory_.GetPath();
   }
 
  private:
@@ -741,7 +856,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
       TestBrowserCloseManager::NO_USER_CHOICE);
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_EQ(1, DownloadService::NonMaliciousDownloadCountAllProfiles());
 
   // Attempting to close again should not crash.
@@ -757,10 +872,10 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
   SetDownloadPathForProfile(browser()->profile());
 
   // Set up the fake delegate that forces the download to be malicious.
-  scoped_ptr<TestDownloadManagerDelegate> test_delegate(
+  std::unique_ptr<TestDownloadManagerDelegate> test_delegate(
       new TestDownloadManagerDelegate(browser()->profile()));
   DownloadServiceFactory::GetForBrowserContext(browser()->profile())
-      ->SetDownloadManagerDelegateForTesting(test_delegate.Pass());
+      ->SetDownloadManagerDelegateForTesting(std::move(test_delegate));
 
   // Run a dangerous download, but the user doesn't make a decision.
   // This .swf normally would be categorized as DANGEROUS_FILE, but
@@ -772,9 +887,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
       1,
       content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_QUIT);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(),
-      GURL(download_url),
-      NEW_BACKGROUND_TAB,
+      browser(), GURL(download_url), WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_NONE);
   observer.WaitForFinished();
 
@@ -791,7 +904,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
       TestBrowserCloseManager::NO_USER_CHOICE);
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 // Test shutdown with a download in progress.
@@ -816,7 +929,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
       TestBrowserCloseManager::USER_CHOICE_USER_ALLOWS_CLOSE);
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   if (browser_defaults::kBrowserAliveWithNoWindows)
     EXPECT_EQ(1, DownloadService::NonMaliciousDownloadCountAllProfiles());
   else
@@ -853,7 +966,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
       TestBrowserCloseManager::USER_CHOICE_USER_ALLOWS_CLOSE);
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_EQ(0, DownloadService::NonMaliciousDownloadCountAllProfiles());
 }
 
@@ -903,7 +1016,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
       TestBrowserCloseManager::USER_CHOICE_USER_ALLOWS_CLOSE);
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   if (browser_defaults::kBrowserAliveWithNoWindows)
     EXPECT_EQ(1, DownloadService::NonMaliciousDownloadCountAllProfiles());
   else
@@ -911,14 +1024,14 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
 }
 
 // Test shutdown with downloads in progress and beforeunload handlers.
-// Disabled, see http://crbug.com/315754.
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
-                       DISABLED_TestBeforeUnloadAndDownloads) {
+                       TestBeforeUnloadAndDownloads) {
   ASSERT_TRUE(embedded_test_server()->Start());
   SetDownloadPathForProfile(browser()->profile());
   ASSERT_NO_FATAL_FAILURE(CreateStalledDownload(browser()));
   ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/beforeunload.html")));
+  DisableHangMonitor(browser());
 
   content::WindowedNotificationObserver cancel_observer(
       chrome::NOTIFICATION_BROWSER_CLOSE_CANCELLED,
@@ -936,7 +1049,7 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithDownloadsBrowserTest,
   ASSERT_NO_FATAL_FAILURE(AcceptClose());
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
 }
 
 #endif  // defined(OS_MACOSX)
@@ -953,7 +1066,7 @@ class BrowserCloseManagerWithBackgroundModeBrowserTest
   void SetUpOnMainThread() override {
     BrowserCloseManagerBrowserTest::SetUpOnMainThread();
     g_browser_process->set_background_mode_manager_for_test(
-        scoped_ptr<BackgroundModeManager>(new FakeBackgroundModeManager));
+        std::unique_ptr<BackgroundModeManager>(new FakeBackgroundModeManager));
   }
 
   bool IsBackgroundModeSuspended() {
@@ -972,23 +1085,25 @@ class BrowserCloseManagerWithBackgroundModeBrowserTest
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithBackgroundModeBrowserTest,
                        CloseAllBrowsersWithBackgroundMode) {
   EXPECT_FALSE(IsBackgroundModeSuspended());
+  std::unique_ptr<ScopedKeepAlive> tmp_keep_alive;
   Profile* profile = browser()->profile();
   {
     RepeatedNotificationObserver close_observer(
         chrome::NOTIFICATION_BROWSER_CLOSED, 1);
-    chrome::IncrementKeepAliveCount();
+    tmp_keep_alive.reset(new ScopedKeepAlive(KeepAliveOrigin::PANEL_VIEW,
+                                             KeepAliveRestartOption::DISABLED));
     chrome::CloseAllBrowsers();
     close_observer.Wait();
   }
   EXPECT_FALSE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_TRUE(IsBackgroundModeSuspended());
 
   // Background mode should be resumed when a new browser window is opened.
   ui_test_utils::BrowserAddedObserver new_browser_observer;
-  chrome::NewEmptyWindow(profile, chrome::HOST_DESKTOP_TYPE_NATIVE);
+  chrome::NewEmptyWindow(profile);
   new_browser_observer.WaitForSingleNewBrowser();
-  chrome::DecrementKeepAliveCount();
+  tmp_keep_alive.reset();
   EXPECT_FALSE(IsBackgroundModeSuspended());
   RepeatedNotificationObserver close_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED, 1);
@@ -997,42 +1112,42 @@ IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithBackgroundModeBrowserTest,
   chrome::CloseAllBrowsersAndQuit();
   close_observer.Wait();
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_FALSE(IsBackgroundModeSuspended());
-
 }
 
 // Check that closing the last browser window individually does not affect
 // background mode.
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithBackgroundModeBrowserTest,
-                       CloseSingleBrowserWithBackgroundMode) {
+                       DISABLED_CloseSingleBrowserWithBackgroundMode) {
   RepeatedNotificationObserver close_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED, 1);
   EXPECT_FALSE(IsBackgroundModeSuspended());
   browser()->window()->Close();
   close_observer.Wait();
   EXPECT_FALSE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_FALSE(IsBackgroundModeSuspended());
 }
 
 // Check that closing all browsers with no browser windows open suspends
 // background mode but does not cause Chrome to quit.
 IN_PROC_BROWSER_TEST_P(BrowserCloseManagerWithBackgroundModeBrowserTest,
-                       CloseAllBrowsersWithNoOpenBrowsersWithBackgroundMode) {
+                       DISABLED_CloseAllBrowsersWithNoOpenBrowsersWithBackgroundMode) {
   RepeatedNotificationObserver close_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED, 1);
   EXPECT_FALSE(IsBackgroundModeSuspended());
-  chrome::IncrementKeepAliveCount();
+  ScopedKeepAlive tmp_keep_alive(KeepAliveOrigin::PANEL_VIEW,
+                                 KeepAliveRestartOption::DISABLED);
   browser()->window()->Close();
   close_observer.Wait();
   EXPECT_FALSE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_FALSE(IsBackgroundModeSuspended());
 
   chrome::CloseAllBrowsers();
   EXPECT_FALSE(browser_shutdown::IsTryingToQuit());
-  EXPECT_TRUE(chrome::BrowserIterator().done());
+  EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_TRUE(IsBackgroundModeSuspended());
 }
 

@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_DOM_DISTILLER_CONTENT_BROWSER_DISTILLER_JAVASCRIPT_SERVICE_IMPL_H_
 #define COMPONENTS_DOM_DISTILLER_CONTENT_BROWSER_DISTILLER_JAVASCRIPT_SERVICE_IMPL_H_
 
+#include "base/macros.h"
 #include "components/dom_distiller/content/browser/distiller_ui_handle.h"
 #include "components/dom_distiller/content/common/distiller_javascript_service.mojom.h"
 #include "mojo/public/cpp/bindings/string.h"
@@ -13,19 +14,14 @@
 namespace dom_distiller {
 
 // This is the receiving end of "distiller" JavaScript object calls.
-class DistillerJavaScriptServiceImpl : public DistillerJavaScriptService {
+class DistillerJavaScriptServiceImpl
+    : public mojom::DistillerJavaScriptService {
  public:
-  DistillerJavaScriptServiceImpl(
-      content::RenderFrameHost* render_frame_host,
-      DistillerUIHandle* distiller_ui_handle,
-      mojo::InterfaceRequest<DistillerJavaScriptService> request);
+  DistillerJavaScriptServiceImpl(content::RenderFrameHost* render_frame_host,
+                                 DistillerUIHandle* distiller_ui_handle);
   ~DistillerJavaScriptServiceImpl() override;
 
-  // Mojo DistillerJavaScriptService implementation.
-
-  // Echo implementation, this call does not actually return as it would be
-  // blocking.
-  void HandleDistillerEchoCall(const mojo::String& message) override;
+  // Mojo mojom::DistillerJavaScriptService implementation.
 
   // Send UMA feedback and start the external feedback reporter if one exists.
   void HandleDistillerFeedbackCall(bool good) override;
@@ -37,16 +33,17 @@ class DistillerJavaScriptServiceImpl : public DistillerJavaScriptService {
   void HandleDistillerOpenSettingsCall() override;
 
  private:
-  mojo::StrongBinding<DistillerJavaScriptService> binding_;
   content::RenderFrameHost* render_frame_host_;
   DistillerUIHandle* distiller_ui_handle_;
+
+  DISALLOW_COPY_AND_ASSIGN(DistillerJavaScriptServiceImpl);
 };
 
 // static
 void CreateDistillerJavaScriptService(
     content::RenderFrameHost* render_frame_host,
     DistillerUIHandle* distiller_ui_handle,
-    mojo::InterfaceRequest<DistillerJavaScriptService> request);
+    mojo::InterfaceRequest<mojom::DistillerJavaScriptService> request);
 
 }  // namespace dom_distiller
 

@@ -7,16 +7,17 @@
 
 namespace blink {
 
-// FIXME: This is a placeholder list of error conditions. We'll likely expand the
-// list as the API evolves.
+// FIXME: This is a placeholder list of error conditions. We'll likely expand
+// the list as the API evolves.
 enum WebCredentialManagerError {
-    WebCredentialManagerDisabledError = 0,
-    WebCredentialManagerPendingRequestError,
-    WebCredentialManagerPasswordStoreUnavailableError,
-    WebCredentialManagerUnknownError,
-    WebCredentialManagerErrorLastType = WebCredentialManagerUnknownError,
+  WebCredentialManagerNoError = 0,
+  WebCredentialManagerDisabledError,
+  WebCredentialManagerPendingRequestError,
+  WebCredentialManagerPasswordStoreUnavailableError,
+  WebCredentialManagerUnknownError,
+  WebCredentialManagerErrorLastType = WebCredentialManagerUnknownError,
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

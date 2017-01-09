@@ -32,31 +32,32 @@
 #define WebScrollbarTheme_h
 
 #include "public/platform/WebCommon.h"
-#include "public/platform/mac/MacScrollTypes.h"
+#include "public/platform/WebScrollbarButtonsPlacement.h"
 
 namespace blink {
 
 // This enum must match NSScrollerStyle in the 10.7 SDK.
-enum ScrollerStyle {
-    ScrollerStyleLegacy  = 0,
-    ScrollerStyleOverlay = 1
-};
+enum ScrollerStyle { ScrollerStyleLegacy = 0, ScrollerStyleOverlay = 1 };
 
 class WebScrollbarTheme {
-public:
-    // Updates the scrollbar appearance and behavior.
-    // |initialButtonDelay| is the current value of NSScrollerButtonDelay from NSUserDefaults.
-    // |autoscrollButtonDelay| is the current value of NSScrollerButtonPeriod from NSUserDefaults.
-    // |preferredScrollerStyle| is the current value of +[NSScroller preferredScrollerStyle].
-    // |redraw| is true if the update requires a redraw to include the change.
-    // |scrollAnimationEnabled| is the current value of NSScrollAnimationEnabled or AppleScrollAnimationEnabled from NSUserDefaults.
-    // |buttonPlacement| is the current value of AppleScrollBarVariant
-    BLINK_EXPORT static void updateScrollbarsWithNSDefaults(
-        float initialButtonDelay, float autoscrollButtonDelay,
-        ScrollerStyle preferredScrollerStyle, bool redraw,
-        bool scrollAnimationEnabled, ScrollbarButtonsPlacement);
+ public:
+  // Updates the scrollbar appearance and behavior.
+  // |initialButtonDelay| is the current value of NSScrollerButtonDelay from
+  // NSUserDefaults.
+  // |autoscrollButtonDelay| is the current value of NSScrollerButtonPeriod from
+  // NSUserDefaults.
+  // |preferredScrollerStyle| is the current value of +[NSScroller
+  // preferredScrollerStyle].
+  // |redraw| is true if the update requires a redraw to include the change.
+  // |buttonPlacement| is the current value of AppleScrollBarVariant
+  BLINK_EXPORT static void updateScrollbarsWithNSDefaults(
+      float initialButtonDelay,
+      float autoscrollButtonDelay,
+      ScrollerStyle preferredScrollerStyle,
+      bool redraw,
+      WebScrollbarButtonsPlacement);
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

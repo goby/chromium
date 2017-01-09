@@ -5,12 +5,15 @@
 #ifndef IOS_WEB_NAVIGATION_NAVIGATION_MANAGER_IMPL_H_
 #define IOS_WEB_NAVIGATION_NAVIGATION_MANAGER_IMPL_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
-#include "ios/web/public/navigation_manager.h"
+#import "ios/web/public/navigation_manager.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
@@ -69,24 +72,13 @@ class NavigationManagerImpl : public NavigationManager {
   void OnNavigationItemChanged();
   void OnNavigationItemCommitted();
 
-  // Returns the transient item if any. This is an item which is removed and
-  // discarded if any navigation occurs. Note that the returned item is owned
-  // by the navigation manager and may be deleted at any time.
-  NavigationItem* GetTransientItem() const;
-
   // Temporary accessors and content/ class pass-throughs.
   // TODO(stuartmorgan): Re-evaluate this list once the refactorings have
   // settled down.
   CRWSessionController* GetSessionController();
-  int GetLastCommittedEntryIndex() const;
-  bool RemoveEntryAtIndex(int index);
   void LoadURL(const GURL& url,
                const Referrer& referrer,
                ui::PageTransition type);
-  bool CanGoBack() const;
-  bool CanGoForward() const;
-  void GoBack();
-  void GoForward();
 
   // Convenience accessors to get the underlying NavigationItems from the
   // SessionEntries returned from |session_controller_|'s -lastUserEntry and
@@ -106,20 +98,31 @@ class NavigationManagerImpl : public NavigationManager {
   NavigationItem* GetVisibleItem() const override;
   NavigationItem* GetLastCommittedItem() const override;
   NavigationItem* GetPendingItem() const override;
+  NavigationItem* GetTransientItem() const override;
   void DiscardNonCommittedItems() override;
   void LoadIfNecessary() override;
+  void LoadURLWithParams(const NavigationManager::WebLoadParams&) override;
   void AddTransientURLRewriter(
       BrowserURLRewriter::URLRewriter rewriter) override;
-  int GetEntryCount() const override;
+  int GetItemCount() const override;
   NavigationItem* GetItemAtIndex(size_t index) const override;
-  int GetCurrentEntryIndex() const override;
+  int GetCurrentItemIndex() const override;
   int GetPendingItemIndex() const override;
+  int GetLastCommittedItemIndex() const override;
+  bool RemoveItemAtIndex(int index) override;
+  bool CanGoBack() const override;
+  bool CanGoForward() const override;
+  bool CanGoToOffset(int offset) const override;
+  void GoBack() override;
+  void GoForward() override;
+  void GoToIndex(int index) override;
+  void Reload(bool check_for_reposts) override;
 
   // Returns the current list of transient url rewriters, passing ownership to
   // the caller.
   // TODO(crbug.com/546197): remove once NavigationItem creation occurs in this
   // class.
-  scoped_ptr<std::vector<BrowserURLRewriter::URLRewriter>>
+  std::unique_ptr<std::vector<BrowserURLRewriter::URLRewriter>>
   GetTransientURLRewriters();
 
   // Called to reset the transient url rewriter list.
@@ -128,7 +131,19 @@ class NavigationManagerImpl : public NavigationManager {
   // Copy state from |navigation_manager|, including a copy of that object's
   // CRWSessionController.
   void CopyState(NavigationManagerImpl* navigation_manager);
+
+  // Returns the navigation index that differs from the current item (or pending
+  // item if it exists) by the specified |offset|, skipping redirect navigation
+  // items. The index returned is not guaranteed to be valid.
+  // TODO(crbug.com/661316): Make this method private once navigation code is
+  // moved from CRWWebController to NavigationManagerImpl.
+  int GetIndexForOffset(int offset) const;
+
  private:
+  // Returns true if the PageTransition for the underlying navigation item at
+  // |index| has ui::PAGE_TRANSITION_IS_REDIRECT_MASK.
+  bool IsRedirectItemAtIndex(int index) const;
+
   // The primary delegate for this manager.
   NavigationManagerDelegate* delegate_;
 
@@ -143,7 +158,7 @@ class NavigationManagerImpl : public NavigationManager {
   NavigationManagerFacadeDelegate* facade_delegate_;
 
   // List of transient url rewriters added by |AddTransientURLRewriter()|.
-  scoped_ptr<std::vector<BrowserURLRewriter::URLRewriter>>
+  std::unique_ptr<std::vector<BrowserURLRewriter::URLRewriter>>
       transient_url_rewriters_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationManagerImpl);

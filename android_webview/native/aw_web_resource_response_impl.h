@@ -5,10 +5,12 @@
 #ifndef ANDROID_WEBVIEW_NATIVE_INTERCEPTED_REQUEST_DATA_IMPL_H_
 #define ANDROID_WEBVIEW_NATIVE_INTERCEPTED_REQUEST_DATA_IMPL_H_
 
+#include <memory>
+
 #include "android_webview/browser/net/aw_web_resource_response.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace net {
 class HttpResponseHeaders;
@@ -25,7 +27,7 @@ class AwWebResourceResponseImpl : public AwWebResourceResponse {
   AwWebResourceResponseImpl(const base::android::JavaRef<jobject>& obj);
   ~AwWebResourceResponseImpl() override;
 
-  scoped_ptr<InputStream> GetInputStream(JNIEnv* env) const override;
+  std::unique_ptr<InputStream> GetInputStream(JNIEnv* env) const override;
   bool GetMimeType(JNIEnv* env, std::string* mime_type) const override;
   bool GetCharset(JNIEnv* env, std::string* charset) const override;
   bool GetStatusInfo(JNIEnv* env,
@@ -39,8 +41,6 @@ class AwWebResourceResponseImpl : public AwWebResourceResponse {
 
   DISALLOW_COPY_AND_ASSIGN(AwWebResourceResponseImpl);
 };
-
-bool RegisterAwWebResourceResponse(JNIEnv* env);
 
 } // namespace android_webview
 

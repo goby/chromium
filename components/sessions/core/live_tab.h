@@ -5,7 +5,6 @@
 #ifndef COMPONENTS_SESSIONS_CORE_LIVE_TAB_H_
 #define COMPONENTS_SESSIONS_CORE_LIVE_TAB_H_
 
-#include "base/basictypes.h"
 #include "components/sessions/core/serialized_navigation_entry.h"
 #include "components/sessions/core/sessions_export.h"
 #include "components/sessions/core/tab_restore_service.h"
@@ -31,7 +30,7 @@ class SESSIONS_EXPORT LiveTab {
   // Returns any platform-specific data that should be associated with the
   // TabRestoreService::Tab corresponding to this instance. The default
   // implementation returns null.
-  virtual scoped_ptr<PlatformSpecificTabData> GetPlatformSpecificTabData();
+  virtual std::unique_ptr<PlatformSpecificTabData> GetPlatformSpecificTabData();
 
   // Loads the current page if necessary (where "necessary" is defined on a
   // platform-specific basis).

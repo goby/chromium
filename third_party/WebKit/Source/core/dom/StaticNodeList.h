@@ -30,87 +30,72 @@
 #define StaticNodeList_h
 
 #include "core/dom/NodeList.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
-#include <v8.h>
 
 namespace blink {
 
-class Element;
 class Node;
 
 template <typename NodeType>
 class StaticNodeTypeList final : public NodeList {
-public:
-    static PassRefPtrWillBeRawPtr<StaticNodeTypeList> adopt(WillBeHeapVector<RefPtrWillBeMember<NodeType>>& nodes);
+ public:
+  static StaticNodeTypeList* adopt(HeapVector<Member<NodeType>>& nodes);
 
-    static PassRefPtrWillBeRawPtr<StaticNodeTypeList> createEmpty()
-    {
-        return adoptRefWillBeNoop(new StaticNodeTypeList);
-    }
+  static StaticNodeTypeList* createEmpty() { return new StaticNodeTypeList; }
 
-    ~StaticNodeTypeList() override;
+  ~StaticNodeTypeList() override;
 
-    unsigned length() const override;
-    NodeType* item(unsigned index) const override;
+  unsigned length() const override;
+  NodeType* item(unsigned index) const override;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    ptrdiff_t AllocationSize()
-    {
-        return m_nodes.capacity() * sizeof(RefPtrWillBeMember<NodeType>);
-    }
-
-    WillBeHeapVector<RefPtrWillBeMember<NodeType>> m_nodes;
+ private:
+  HeapVector<Member<NodeType>> m_nodes;
 };
 
-typedef StaticNodeTypeList<Node> StaticNodeList;
-typedef StaticNodeTypeList<Element> StaticElementList;
+using StaticNodeList = StaticNodeTypeList<Node>;
 
 template <typename NodeType>
-PassRefPtrWillBeRawPtr<StaticNodeTypeList<NodeType>> StaticNodeTypeList<NodeType>::adopt(WillBeHeapVector<RefPtrWillBeMember<NodeType>>& nodes)
-{
-    RefPtrWillBeRawPtr<StaticNodeTypeList<NodeType>> nodeList = adoptRefWillBeNoop(new StaticNodeTypeList<NodeType>);
-    nodeList->m_nodes.swap(nodes);
-    v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(nodeList->AllocationSize());
-    return nodeList.release();
+StaticNodeTypeList<NodeType>* StaticNodeTypeList<NodeType>::adopt(
+    HeapVector<Member<NodeType>>& nodes) {
+  StaticNodeTypeList<NodeType>* nodeList = new StaticNodeTypeList<NodeType>;
+  nodeList->m_nodes.swap(nodes);
+  return nodeList;
 }
 
 template <typename NodeType>
-StaticNodeTypeList<NodeType>::~StaticNodeTypeList()
-{
-    v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(-AllocationSize());
+StaticNodeTypeList<NodeType>::~StaticNodeTypeList() {}
+
+template <typename NodeType>
+unsigned StaticNodeTypeList<NodeType>::length() const {
+  return m_nodes.size();
 }
 
 template <typename NodeType>
-unsigned StaticNodeTypeList<NodeType>::length() const
-{
-    return m_nodes.size();
+NodeType* StaticNodeTypeList<NodeType>::item(unsigned index) const {
+  if (index < m_nodes.size())
+    return m_nodes[index].get();
+  return 0;
 }
 
 template <typename NodeType>
-NodeType* StaticNodeTypeList<NodeType>::item(unsigned index) const
-{
-    if (index < m_nodes.size())
-        return m_nodes[index].get();
-    return 0;
+void StaticNodeTypeList<NodeType>::trace(Visitor* visitor) {
+  traceImpl(visitor);
 }
-
 template <typename NodeType>
-void StaticNodeTypeList<NodeType>::trace(Visitor* visitor) { traceImpl(visitor); }
-template <typename NodeType>
-void StaticNodeTypeList<NodeType>::trace(InlinedGlobalMarkingVisitor visitor) { traceImpl(visitor); }
+void StaticNodeTypeList<NodeType>::trace(InlinedGlobalMarkingVisitor visitor) {
+  traceImpl(visitor);
+}
 
 template <typename NodeType>
 template <typename VisitorDispatcher>
-ALWAYS_INLINE void StaticNodeTypeList<NodeType>::traceImpl(VisitorDispatcher visitor)
-{
-    visitor->trace(m_nodes);
-    NodeList::trace(visitor);
+ALWAYS_INLINE void StaticNodeTypeList<NodeType>::traceImpl(
+    VisitorDispatcher visitor) {
+  visitor->trace(m_nodes);
+  NodeList::trace(visitor);
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // StaticNodeList_h
+#endif  // StaticNodeList_h

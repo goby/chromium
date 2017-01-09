@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/dom/DocumentEncodingData.h"
 
 #include "core/html/parser/TextResourceDecoder.h"
@@ -36,22 +35,18 @@
 namespace blink {
 
 DocumentEncodingData::DocumentEncodingData()
-    : m_encoding(UTF8Encoding())
-    , m_wasDetectedHeuristically(false)
-    , m_sawDecodingError(false)
-{
+    : m_encoding(UTF8Encoding()),
+      m_wasDetectedHeuristically(false),
+      m_sawDecodingError(false) {}
+
+DocumentEncodingData::DocumentEncodingData(const TextResourceDecoder& decoder) {
+  m_encoding = decoder.encoding();
+  m_wasDetectedHeuristically = decoder.encodingWasDetectedHeuristically();
+  m_sawDecodingError = decoder.sawError();
 }
 
-DocumentEncodingData::DocumentEncodingData(const TextResourceDecoder& decoder)
-{
-    m_encoding = decoder.encoding();
-    m_wasDetectedHeuristically = decoder.encodingWasDetectedHeuristically();
-    m_sawDecodingError = decoder.sawError();
+void DocumentEncodingData::setEncoding(const WTF::TextEncoding& encoding) {
+  m_encoding = encoding;
 }
 
-void DocumentEncodingData::setEncoding(const WTF::TextEncoding& encoding)
-{
-    m_encoding = encoding;
-}
-
-} // namespace blink
+}  // namespace blink

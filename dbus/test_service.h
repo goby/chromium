@@ -40,6 +40,9 @@ class TestService : public base::Thread {
 
     // Flags governing parameters of service ownership request.
     Bus::ServiceOwnershipOptions request_ownership_options;
+
+    // Name of this service (randomly generated name will be used if empty).
+    std::string service_name;
   };
 
   // The number of methods we'll export.
@@ -78,6 +81,9 @@ class TestService : public base::Thread {
   // |callback| will be called when the ownership has been released.
   void ReleaseOwnership(base::Closure callback);
 
+  // Returns the name of this service.
+  const std::string& service_name() const { return service_name_; }
+
   // Returns whether this instance has the name ownership or not.
   bool has_ownership() const { return has_ownership_; }
 
@@ -106,7 +112,7 @@ class TestService : public base::Thread {
                   bool success);
 
   // base::Thread override.
-  void Run(base::MessageLoop* message_loop) override;
+  void Run(base::RunLoop* run_loop) override;
 
   //
   // Exported methods.
@@ -198,6 +204,9 @@ class TestService : public base::Thread {
       MethodCall* method_call,
       dbus::ExportedObject::ResponseSender response_sender,
       bool success);
+
+  // Name of this service.
+  std::string service_name_;
 
   // Options to use when requesting service ownership.
   Bus::ServiceOwnershipOptions request_ownership_options_;

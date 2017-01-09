@@ -20,12 +20,16 @@
     blur,
     checkedStateChanged,
     childrenChanged,
+    clicked,
     documentSelectionChanged,
+    expandedChanged,
     focus,
+    imageFrameUpdated,
     hide,
     hover,
     invalidStatusChanged,
     layoutComplete,
+    liveRegionCreated,
     liveRegionChanged,
     loadComplete,
     locationChanged,
@@ -35,6 +39,11 @@
     menuPopupEnd,
     menuPopupStart,
     menuStart,
+    mouseCanceled,
+    mouseDragged,
+    mouseMoved,
+    mousePressed,
+    mouseReleased,
     rowCollapsed,
     rowCountChanged,
     rowExpanded,
@@ -53,11 +62,13 @@
 
   // Describes the purpose of an $(ref:automation.AutomationNode).
   enum RoleType {
+    abbr,
     alertDialog,
     alert,
     annotation,
     application,
     article,
+    audio,
     banner,
     blockquote,
     busyIndicator,
@@ -175,6 +186,7 @@
     tree,
     unknown,
     tooltip,
+    video,
     webArea,
     webView,
     window
@@ -186,9 +198,8 @@
     checked,
     collapsed,
     default,
-    disabled,  // ui/views only
-    editable,  // ui/views only
-    enabled,   // content only
+    disabled,
+    editable,
     expanded,
     focusable,
     focused,
@@ -204,6 +215,7 @@
     protected,
     readOnly,
     required,
+    richlyEditable,
     selectable,
     selected,
     vertical,
@@ -237,6 +249,11 @@
     nodeChanged,
 
     /**
+     * This node's text (name) changed.
+     */
+    textChanged,
+
+    /**
      * This node was removed.
      */
     nodeRemoved
@@ -251,12 +268,12 @@
 
   // Arguments for the find() and findAll() methods.
   [nocompile, noinline_doc] dictionary FindParams {
-    automation.RoleType? role;
+    RoleType? role;
 
     // A map of $(ref:automation.StateType) to boolean, indicating for each
     // state whether it should be set or not. For example:
-    // <code>{ StateType.enabled: false }</code> would only match if
-    // <code>StateType.enabled</code> was <em>not</em> present in the node's
+    // <code>{ StateType.disabled: false }</code> would only match if
+    // <code>StateType.disabled</code> was <em>not</em> present in the node's
     // <code>state</code> object.
     object? state;
 
@@ -299,6 +316,12 @@
     // The type of the event.
     EventType type;
 
+    // The source of this event.
+    DOMString eventFrom;
+
+    long mouseX;
+    long mouseY;
+
     // Stops this event from further processing except for any remaining
     // listeners on $(ref:AutomationEvent.target).
     static void stopPropagation();
@@ -321,6 +344,7 @@
   enum TreeChangeObserverFilter {
     noTreeChanges,
     liveRegionTreeChanges,
+    textMarkerChanges,
     allTreeChanges
   };
 
@@ -557,11 +581,20 @@
     // Places focus on this node.
     static void focus();
 
+    // Request a data url for the contents of an image, optionally
+    // resized.  Pass zero for maxWidth and/or maxHeight for the
+    // original size.
+    static void getImageData(long maxWidth, long maxHeight);
+
     // Scrolls this node to make it visible.
     static void makeVisible();
 
     // Sets selection within a text field.
     static void setSelection(long startIndex, long endIndex);
+
+    // Clears focus and sets this node as the starting point for the next
+    // time the user presses Tab or Shift+Tab.
+    static void setSequentialFocusNavigationStartingPoint();
 
     // Adds a listener for the given event type and event phase.
     static void addEventListener(
@@ -602,6 +635,9 @@
   // Called when the <code>AutomationNode</code> for the page is available.
   callback RootCallback = void(AutomationNode rootNode);
 
+  // Called with the <code>AutomationNode</code> that currently has focus.
+  callback FocusCallback = void(AutomationNode focusedNode);
+
   interface Functions {
     // Get the automation tree for the tab with the given tabId, or the current
     // tab if no tabID is given, enabling automation if necessary. Returns a
@@ -613,6 +649,10 @@
     // Get the automation tree for the whole desktop which consists of all on
     // screen views. Note this API is currently only supported on Chrome OS.
     [nocompile] static void getDesktop(RootCallback callback);
+
+    // Get the automation node that currently has focus, globally. Will return
+    // null if none of the nodes in any loaded trees have focus.
+    [nocompile] static void getFocus(FocusCallback callback);
 
     // Add a tree change observer. Tree change observers are static/global, they
     // listen to changes across all trees. Pass a filter to determine what

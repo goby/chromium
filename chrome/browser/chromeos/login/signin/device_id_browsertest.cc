@@ -7,18 +7,19 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
-#include "chrome/browser/chromeos/login/ui/oobe_display.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chromeos/chromeos_switches.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/common/signin_pref_names.h"
+#include "components/user_manager/known_user.h"
 #include "components/user_manager/remove_user_delegate.h"
 #include "components/user_manager/user_manager.h"
 
@@ -58,7 +59,7 @@ class DeviceIDTest : public OobeBaseTest,
   }
 
   std::string GetDeviceId(const AccountId& account_id) {
-    return user_manager::UserManager::Get()->GetKnownUserDeviceId(account_id);
+    return user_manager::known_user::GetDeviceId(account_id);
   }
 
   std::string GetDeviceIdFromSigninClient(const AccountId& account_id) {
@@ -116,9 +117,9 @@ class DeviceIDTest : public OobeBaseTest,
   void SignInOffline(const std::string& user_id, const std::string& password) {
     WaitForSigninScreen();
 
-    JS().ExecuteAsync(
-        base::StringPrintf("chrome.send('authenticateUser', ['%s', '%s'])",
-                           user_id.c_str(), password.c_str()));
+    JS().ExecuteAsync(base::StringPrintf(
+        "chrome.send('authenticateUser', ['%s', '%s', false])", user_id.c_str(),
+        password.c_str()));
     WaitForSessionStart();
   }
 
@@ -146,7 +147,7 @@ class DeviceIDTest : public OobeBaseTest,
     if (!base::ReadFileToString(GetRefreshTokenToDeviceIdMapFilePath(),
                                 &file_contents))
       return;
-    scoped_ptr<base::Value> value(base::JSONReader::Read(file_contents));
+    std::unique_ptr<base::Value> value(base::JSONReader::Read(file_contents));
     base::DictionaryValue* dictionary;
     EXPECT_TRUE(value->GetAsDictionary(&dictionary));
     FakeGaia::RefreshTokenToDeviceIdMap map;
@@ -253,7 +254,7 @@ IN_PROC_BROWSER_TEST_F(DeviceIDTest, PRE_Migration) {
 
   // Can't use SetKnownUserDeviceId here, because it forbids changing a device
   // ID.
-  user_manager::UserManager::Get()->SetKnownUserStringPref(
+  user_manager::known_user::SetStringPref(
       AccountId::FromUserEmail(kFakeUserEmail), "device_id", std::string());
 }
 
@@ -280,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(DeviceIDTest, PRE_LegacyUsers) {
 
   // Can't use SetKnownUserDeviceId here, because it forbids changing a device
   // ID.
-  user_manager::UserManager::Get()->SetKnownUserStringPref(
+  user_manager::known_user::SetStringPref(
       AccountId::FromUserEmail(kFakeUserEmail), "device_id", std::string());
 }
 

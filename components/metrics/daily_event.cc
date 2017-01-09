@@ -4,10 +4,11 @@
 
 #include "components/metrics/daily_event.h"
 
-#include "base/i18n/time_formatting.h"
+#include <utility>
+
 #include "base/metrics/histogram.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 
 namespace metrics {
 
@@ -55,10 +56,10 @@ void DailyEvent::RegisterPref(PrefRegistrySimple* registry,
   registry->RegisterInt64Pref(pref_name, base::Time().ToInternalValue());
 }
 
-void DailyEvent::AddObserver(scoped_ptr<DailyEvent::Observer> observer) {
+void DailyEvent::AddObserver(std::unique_ptr<DailyEvent::Observer> observer) {
   DVLOG(2) << "DailyEvent observer added.";
   DCHECK(last_fired_.is_null());
-  observers_.push_back(observer.Pass());
+  observers_.push_back(std::move(observer));
 }
 
 void DailyEvent::CheckInterval() {
@@ -67,8 +68,7 @@ void DailyEvent::CheckInterval() {
     // The first time we call CheckInterval, we read the time stored in prefs.
     last_fired_ = base::Time::FromInternalValue(
         pref_service_->GetInt64(pref_name_));
-    DVLOG(1) << "DailyEvent time loaded: "
-             << base::TimeFormatShortDateAndTime(last_fired_);
+    DVLOG(1) << "DailyEvent time loaded: " << last_fired_;
     if (last_fired_.is_null()) {
       DVLOG(1) << "DailyEvent first run.";
       RecordIntervalTypeHistogram(histogram_name_, FIRST_RUN);

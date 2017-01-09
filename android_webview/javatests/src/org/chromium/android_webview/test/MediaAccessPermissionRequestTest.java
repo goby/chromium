@@ -10,8 +10,10 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.permission.AwPermissionRequest;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.base.annotations.SuppressFBWarnings;
+import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.test.util.CallbackHelper;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.util.concurrent.Callable;
@@ -73,6 +75,8 @@ public class MediaAccessPermissionRequestTest extends AwTestBase {
 
     @Feature({"AndroidWebView"})
     @SmallTest
+    @DisableIf.Build(sdk_is_greater_than = 22, message = "crbug.com/623921")
+    @RetryOnFailure
     public void testGrantAccess() throws Throwable {
         final OnPermissionRequestHelper helper = new OnPermissionRequestHelper();
         TestAwContentsClient contentsClient =
@@ -95,6 +99,8 @@ public class MediaAccessPermissionRequestTest extends AwTestBase {
 
     @Feature({"AndroidWebView"})
     @SmallTest
+    @DisableIf.Build(sdk_is_greater_than = 22, message = "crbug.com/614347")
+    @RetryOnFailure
     public void testDenyAccess() throws Throwable {
         final OnPermissionRequestHelper helper = new OnPermissionRequestHelper();
         TestAwContentsClient contentsClient =
@@ -117,7 +123,7 @@ public class MediaAccessPermissionRequestTest extends AwTestBase {
 
     private void pollTitleAs(final String title, final AwContents awContents)
             throws Exception {
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return title.equals(getTitleOnUiThread(awContents));
@@ -127,6 +133,8 @@ public class MediaAccessPermissionRequestTest extends AwTestBase {
 
     @Feature({"AndroidWebView"})
     @SmallTest
+    @DisableIf.Build(sdk_is_greater_than = 22, message = "crbug.com/614347")
+    @RetryOnFailure
     public void testDenyAccessByDefault() throws Throwable {
         final OnPermissionRequestHelper helper = new OnPermissionRequestHelper();
         TestAwContentsClient contentsClient =
@@ -150,7 +158,7 @@ public class MediaAccessPermissionRequestTest extends AwTestBase {
         Runtime.getRuntime().gc();
 
         // Poll with gc in each iteration to reduce flake.
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @SuppressFBWarnings("DM_GC")
             @Override
             public Boolean call() throws Exception {
@@ -162,6 +170,8 @@ public class MediaAccessPermissionRequestTest extends AwTestBase {
 
     @Feature({"AndroidWebView"})
     @SmallTest
+    @DisableIf.Build(sdk_is_greater_than = 22, message = "crbug.com/614347")
+    @RetryOnFailure
     public void testCancelPermission() throws Throwable {
         final OnPermissionRequestHelper helper = new OnPermissionRequestHelper();
         TestAwContentsClient contentsClient =

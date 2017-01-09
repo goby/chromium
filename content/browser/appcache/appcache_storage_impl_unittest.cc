@@ -2,7 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/appcache/appcache_storage_impl.h"
+
+#include <stdint.h>
+
+#include <memory>
 #include <stack>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -10,11 +16,12 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_backend_impl.h"
 #include "content/browser/appcache/appcache_database.h"
@@ -24,7 +31,6 @@
 #include "content/browser/appcache/appcache_interceptor.h"
 #include "content/browser/appcache/appcache_request_handler.h"
 #include "content/browser/appcache/appcache_service_impl.h"
-#include "content/browser/appcache/appcache_storage_impl.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
@@ -129,9 +135,8 @@ class MockHttpServerJobFactory
     : public net::URLRequestJobFactory::ProtocolHandler {
  public:
   MockHttpServerJobFactory(
-     scoped_ptr<net::URLRequestInterceptor> appcache_start_interceptor)
-     : appcache_start_interceptor_(appcache_start_interceptor.Pass()) {
-  }
+      std::unique_ptr<net::URLRequestInterceptor> appcache_start_interceptor)
+      : appcache_start_interceptor_(std::move(appcache_start_interceptor)) {}
 
   net::URLRequestJob* MaybeCreateJob(
       net::URLRequest* request,
@@ -144,7 +149,7 @@ class MockHttpServerJobFactory
     return MockHttpServer::CreateJob(request, network_delegate);
   }
  private:
-  scoped_ptr<net::URLRequestInterceptor> appcache_start_interceptor_;
+  std::unique_ptr<net::URLRequestInterceptor> appcache_start_interceptor_;
 };
 
 class IOThread : public base::Thread {
@@ -160,12 +165,12 @@ class IOThread : public base::Thread {
   }
 
   void Init() override {
-    scoped_ptr<net::URLRequestJobFactoryImpl> factory(
+    std::unique_ptr<net::URLRequestJobFactoryImpl> factory(
         new net::URLRequestJobFactoryImpl());
-    factory->SetProtocolHandler(
-        "http", make_scoped_ptr(new MockHttpServerJobFactory(
-                    make_scoped_ptr(new AppCacheInterceptor()))));
-    job_factory_ = factory.Pass();
+    factory->SetProtocolHandler("http",
+                                base::MakeUnique<MockHttpServerJobFactory>(
+                                    base::MakeUnique<AppCacheInterceptor>()));
+    job_factory_ = std::move(factory);
     request_context_.reset(new net::TestURLRequestContext());
     request_context_->set_job_factory(job_factory_.get());
   }
@@ -176,12 +181,12 @@ class IOThread : public base::Thread {
   }
 
  private:
-  scoped_ptr<net::URLRequestJobFactory> job_factory_;
-  scoped_ptr<net::URLRequestContext> request_context_;
+  std::unique_ptr<net::URLRequestJobFactory> job_factory_;
+  std::unique_ptr<net::URLRequestContext> request_context_;
 };
 
-scoped_ptr<IOThread> io_thread;
-scoped_ptr<base::Thread> db_thread;
+std::unique_ptr<IOThread> io_thread;
+std::unique_ptr<base::Thread> db_thread;
 
 }  // namespace
 
@@ -195,7 +200,7 @@ class AppCacheStorageImplTest : public testing::Test {
           found_cache_id_(kAppCacheNoCacheId), test_(test) {
     }
 
-    void OnCacheLoaded(AppCache* cache, int64 cache_id) override {
+    void OnCacheLoaded(AppCache* cache, int64_t cache_id) override {
       loaded_cache_ = cache;
       loaded_cache_id_ = cache_id;
       test_->ScheduleNextTask();
@@ -232,8 +237,8 @@ class AppCacheStorageImplTest : public testing::Test {
                              const AppCacheEntry& entry,
                              const GURL& namespace_entry_url,
                              const AppCacheEntry& fallback_entry,
-                             int64 cache_id,
-                             int64 group_id,
+                             int64_t cache_id,
+                             int64_t group_id,
                              const GURL& manifest_url) override {
       found_url_ = url;
       found_entry_ = entry;
@@ -246,7 +251,7 @@ class AppCacheStorageImplTest : public testing::Test {
     }
 
     scoped_refptr<AppCache> loaded_cache_;
-    int64 loaded_cache_id_;
+    int64_t loaded_cache_id_;
     scoped_refptr<AppCacheGroup> loaded_group_;
     GURL loaded_manifest_url_;
     scoped_refptr<AppCache> loaded_groups_newest_cache_;
@@ -259,8 +264,8 @@ class AppCacheStorageImplTest : public testing::Test {
     AppCacheEntry found_entry_;
     GURL found_namespace_entry_url_;
     AppCacheEntry found_fallback_entry_;
-    int64 found_cache_id_;
-    int64 found_group_id_;
+    int64_t found_cache_id_;
+    int64_t found_group_id_;
     GURL found_manifest_url_;
     AppCacheStorageImplTest* test_;
   };
@@ -321,7 +326,7 @@ class AppCacheStorageImplTest : public testing::Test {
     void NotifyStorageModified(storage::QuotaClient::ID client_id,
                                const GURL& origin,
                                storage::StorageType type,
-                               int64 delta) override {
+                               int64_t delta) override {
       EXPECT_EQ(storage::QuotaClient::kAppcache, client_id);
       EXPECT_EQ(storage::kStorageTypeTemporary, type);
       ++notify_storage_modified_count_;
@@ -391,12 +396,13 @@ class AppCacheStorageImplTest : public testing::Test {
 
   // Test harness --------------------------------------------------
 
-  AppCacheStorageImplTest() {
-  }
+  AppCacheStorageImplTest() { request_delegate_.set_quit_on_complete(false); }
 
   template <class Method>
   void RunTestOnIOThread(Method method) {
-    test_finished_event_ .reset(new base::WaitableEvent(false, false));
+    test_finished_event_.reset(new base::WaitableEvent(
+        base::WaitableEvent::ResetPolicy::AUTOMATIC,
+        base::WaitableEvent::InitialState::NOT_SIGNALED));
     io_thread->task_runner()->PostTask(
         FROM_HERE, base::Bind(&AppCacheStorageImplTest::MethodWrapper<Method>,
                               base::Unretained(this), method));
@@ -404,7 +410,7 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void SetUpTest() {
-    DCHECK(base::MessageLoop::current() == io_thread->message_loop());
+    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
     service_.reset(new AppCacheServiceImpl(NULL));
     service_->Initialize(base::FilePath(), db_thread->task_runner(), NULL);
     mock_quota_manager_proxy_ = new MockQuotaManagerProxy();
@@ -413,7 +419,7 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void TearDownTest() {
-    DCHECK(base::MessageLoop::current() == io_thread->message_loop());
+    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
     storage()->CancelDelegateCallbacks(delegate());
     group_ = NULL;
     cache_ = NULL;
@@ -427,7 +433,7 @@ class AppCacheStorageImplTest : public testing::Test {
   void TestFinished() {
     // We unwind the stack prior to finishing up to let stack
     // based objects get deleted.
-    DCHECK(base::MessageLoop::current() == io_thread->message_loop());
+    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&AppCacheStorageImplTest::TestFinishedUnwound,
                               base::Unretained(this)));
@@ -443,7 +449,7 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void ScheduleNextTask() {
-    DCHECK(base::MessageLoop::current() == io_thread->message_loop());
+    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
     if (task_stack_.empty()) {
       return;
     }
@@ -458,7 +464,8 @@ class AppCacheStorageImplTest : public testing::Test {
   void FlushDbThreadTasks() {
     // We pump a task thru the db thread to ensure any tasks previously
     // scheduled on that thread have been performed prior to return.
-    base::WaitableEvent event(false, false);
+    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
     db_thread->task_runner()->PostTask(
         FROM_HERE, base::Bind(&AppCacheStorageImplTest::SignalEvent, &event));
     event.Wait();
@@ -493,7 +500,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Setup some preconditions. Make an 'unstored' cache for
     // us to load. The ctor should put it in the working set.
-    int64 cache_id = storage()->NewCacheId();
+    int64_t cache_id = storage()->NewCacheId();
     scoped_refptr<AppCache> cache(new AppCache(storage(), cache_id));
 
     // Conduct the test.
@@ -764,7 +771,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Setup some preconditions. Create a group and newest cache that
     // appear to be "unstored" and big enough to exceed the 5M limit.
-    const int64 kTooBig = 10 * 1024 * 1024;  // 10M
+    const int64_t kTooBig = 10 * 1024 * 1024;  // 10M
     group_ = new AppCacheGroup(
         storage(), kManifestUrl, storage()->NewGroupId());
     cache_ = new AppCache(storage(), storage()->NewCacheId());
@@ -1668,7 +1675,7 @@ class AppCacheStorageImplTest : public testing::Test {
     // Unlike all of the other tests, this one actually read/write files.
     ASSERT_TRUE(temp_directory_.CreateUniqueTempDir());
 
-    AppCacheDatabase db(temp_directory_.path().AppendASCII("Index"));
+    AppCacheDatabase db(temp_directory_.GetPath().AppendASCII("Index"));
     EXPECT_TRUE(db.LazyOpen(true));
 
     if (test_case == CORRUPT_CACHE_ON_INSTALL ||
@@ -1676,7 +1683,7 @@ class AppCacheStorageImplTest : public testing::Test {
       // Create a corrupt/unopenable disk_cache index file.
       const std::string kCorruptData("deadbeef");
       base::FilePath disk_cache_directory =
-          temp_directory_.path().AppendASCII("Cache");
+          temp_directory_.GetPath().AppendASCII("Cache");
       ASSERT_TRUE(base::CreateDirectory(disk_cache_directory));
       base::FilePath index_file = disk_cache_directory.AppendASCII("index");
       EXPECT_EQ(static_cast<int>(kCorruptData.length()),
@@ -1687,7 +1694,7 @@ class AppCacheStorageImplTest : public testing::Test {
     // Create records for a degenerate cached manifest that only contains
     // one entry for the manifest file resource.
     if (test_case == CORRUPT_CACHE_ON_LOAD_EXISTING) {
-      AppCacheDatabase db(temp_directory_.path().AppendASCII("Index"));
+      AppCacheDatabase db(temp_directory_.GetPath().AppendASCII("Index"));
       GURL manifest_url = MockHttpServer::GetMockUrl("manifest");
 
       AppCacheDatabase::GroupRecord group_record;
@@ -1714,8 +1721,7 @@ class AppCacheStorageImplTest : public testing::Test {
     // Recreate the service to point at the db and corruption on disk.
     service_.reset(new AppCacheServiceImpl(NULL));
     service_->set_request_context(io_thread->request_context());
-    service_->Initialize(temp_directory_.path(),
-                         db_thread->task_runner(),
+    service_->Initialize(temp_directory_.GetPath(), db_thread->task_runner(),
                          db_thread->task_runner());
     mock_quota_manager_proxy_ = new MockQuotaManagerProxy();
     service_->quota_manager_proxy_ = mock_quota_manager_proxy_;
@@ -1742,7 +1748,7 @@ class AppCacheStorageImplTest : public testing::Test {
       // Break the db file
       EXPECT_FALSE(database()->was_corruption_detected());
       ASSERT_TRUE(sql::test::CorruptSizeInHeader(
-          temp_directory_.path().AppendASCII("Index")));
+          temp_directory_.GetPath().AppendASCII("Index")));
     }
 
     if (test_case == CORRUPT_CACHE_ON_INSTALL  ||
@@ -1765,12 +1771,10 @@ class AppCacheStorageImplTest : public testing::Test {
       AppCacheHost* host2 = backend_->GetHost(2);
       GURL manifest_url = MockHttpServer::GetMockUrl("manifest");
       request_ = service()->request_context()->CreateRequest(
-          manifest_url, net::DEFAULT_PRIORITY, NULL);
+          manifest_url, net::DEFAULT_PRIORITY, &request_delegate_);
       AppCacheInterceptor::SetExtraRequestInfo(
-          request_.get(), service_.get(),
-          backend_->process_id(), host2->host_id(),
-          RESOURCE_TYPE_MAIN_FRAME,
-          false);
+          request_.get(), service_.get(), backend_->process_id(),
+          host2->host_id(), RESOURCE_TYPE_MAIN_FRAME, false);
       request_->Start();
     }
 
@@ -1786,9 +1790,8 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(observer_->observed_old_storage_.get());
     EXPECT_TRUE(observer_->observed_old_storage_->storage() != storage());
     EXPECT_FALSE(PathExists(
-        temp_directory_.path().AppendASCII("Cache").AppendASCII("index")));
-    EXPECT_FALSE(PathExists(
-        temp_directory_.path().AppendASCII("Index")));
+        temp_directory_.GetPath().AppendASCII("Cache").AppendASCII("index")));
+    EXPECT_FALSE(PathExists(temp_directory_.GetPath().AppendASCII("Index")));
 
     if (test_case == CORRUPT_SQL_ON_INSTALL) {
       AppCacheStorageImpl* storage = static_cast<AppCacheStorageImpl*>(
@@ -1837,9 +1840,10 @@ class AppCacheStorageImplTest : public testing::Test {
     return delegate_.get();
   }
 
-  void MakeCacheAndGroup(
-      const GURL& manifest_url, int64 group_id, int64 cache_id,
-      bool add_to_database) {
+  void MakeCacheAndGroup(const GURL& manifest_url,
+                         int64_t group_id,
+                         int64_t cache_id,
+                         bool add_to_database) {
     AppCacheEntry default_entry(
         AppCacheEntry::EXPLICIT, cache_id + kDefaultEntryIdOffset,
         kDefaultEntrySize);
@@ -1876,10 +1880,10 @@ class AppCacheStorageImplTest : public testing::Test {
 
   // Data members --------------------------------------------------
 
-  scoped_ptr<base::WaitableEvent> test_finished_event_;
+  std::unique_ptr<base::WaitableEvent> test_finished_event_;
   std::stack<base::Closure> task_stack_;
-  scoped_ptr<AppCacheServiceImpl> service_;
-  scoped_ptr<MockStorageDelegate> delegate_;
+  std::unique_ptr<AppCacheServiceImpl> service_;
+  std::unique_ptr<MockStorageDelegate> delegate_;
   scoped_refptr<MockQuotaManagerProxy> mock_quota_manager_proxy_;
   scoped_refptr<AppCacheGroup> group_;
   scoped_refptr<AppCache> cache_;
@@ -1887,10 +1891,11 @@ class AppCacheStorageImplTest : public testing::Test {
 
   // Specifically for the Reinitalize test.
   base::ScopedTempDir temp_directory_;
-  scoped_ptr<MockServiceObserver> observer_;
+  std::unique_ptr<MockServiceObserver> observer_;
   MockAppCacheFrontend frontend_;
-  scoped_ptr<AppCacheBackendImpl> backend_;
-  scoped_ptr<net::URLRequest> request_;
+  std::unique_ptr<AppCacheBackendImpl> backend_;
+  net::TestDelegate request_delegate_;
+  std::unique_ptr<net::URLRequest> request_;
 };
 
 

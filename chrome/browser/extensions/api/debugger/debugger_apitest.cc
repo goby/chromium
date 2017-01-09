@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/memory/ref_counted.h"
@@ -65,12 +68,15 @@ void DebuggerApiTest::SetUpCommandLine(base::CommandLine* command_line) {
 void DebuggerApiTest::SetUpOnMainThread() {
   ExtensionApiTest::SetUpOnMainThread();
   extension_ =
-      ExtensionBuilder().SetManifest(
-          DictionaryBuilder().Set("name", "debugger")
-                             .Set("version", "0.1")
-                             .Set("manifest_version", 2)
-                             .Set("permissions",
-                                  ListBuilder().Append("debugger"))).Build();
+      ExtensionBuilder()
+          .SetManifest(
+              DictionaryBuilder()
+                  .Set("name", "debugger")
+                  .Set("version", "0.1")
+                  .Set("manifest_version", 2)
+                  .Set("permissions", ListBuilder().Append("debugger").Build())
+                  .Build())
+          .Build();
 }
 
 testing::AssertionResult DebuggerApiTest::RunAttachFunction(
@@ -90,7 +96,7 @@ testing::AssertionResult DebuggerApiTest::RunAttachFunction(
   // Attach by targetId.
   scoped_refptr<DebuggerGetTargetsFunction> get_targets_function =
       new DebuggerGetTargetsFunction();
-  scoped_ptr<base::Value> value(
+  std::unique_ptr<base::Value> value(
       extension_function_test_utils::RunFunctionAndReturnSingleResult(
           get_targets_function.get(), "[]", browser()));
   base::ListValue* targets = nullptr;
@@ -189,8 +195,7 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest, InfoBar) {
   scoped_refptr<DebuggerAttachFunction> attach_function;
   scoped_refptr<DebuggerDetachFunction> detach_function;
 
-  Browser* another_browser =
-      new Browser(Browser::CreateParams(profile(), chrome::GetActiveDesktop()));
+  Browser* another_browser = new Browser(Browser::CreateParams(profile()));
   AddBlankTabAndShow(another_browser);
   AddBlankTabAndShow(another_browser);
   int tab_id2 = SessionTabHelper::IdForTab(

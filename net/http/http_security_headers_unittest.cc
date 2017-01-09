@@ -13,7 +13,6 @@
 #include "net/http/http_security_headers.h"
 #include "net/http/http_util.h"
 #include "net/http/transport_security_state.h"
-#include "net/log/net_log.h"
 #include "net/ssl/ssl_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -21,13 +20,13 @@ namespace net {
 
 namespace {
 
-HashValue GetTestHashValue(uint8 label, HashValueTag tag) {
+HashValue GetTestHashValue(uint8_t label, HashValueTag tag) {
   HashValue hash_value(tag);
   memset(hash_value.data(), label, hash_value.size());
   return hash_value;
 }
 
-std::string GetTestPinImpl(uint8 label, HashValueTag tag, bool quoted) {
+std::string GetTestPinImpl(uint8_t label, HashValueTag tag, bool quoted) {
   HashValue hash_value = GetTestHashValue(label, tag);
   std::string base64;
   base::Base64Encode(base::StringPiece(
@@ -50,11 +49,11 @@ std::string GetTestPinImpl(uint8 label, HashValueTag tag, bool quoted) {
   return ret;
 }
 
-std::string GetTestPin(uint8 label, HashValueTag tag) {
+std::string GetTestPin(uint8_t label, HashValueTag tag) {
   return GetTestPinImpl(label, tag, true);
 }
 
-std::string GetTestPinUnquoted(uint8 label, HashValueTag tag) {
+std::string GetTestPinUnquoted(uint8_t label, HashValueTag tag) {
   return GetTestPinImpl(label, tag, false);
 }
 
@@ -81,14 +80,8 @@ bool ParseAsHPKPHeader(const std::string& value,
   bool result = ParseHPKPHeader(value, chain_hashes, max_age,
                                 include_subdomains, hashes, report_uri);
   if (!result || report_only_include_subdomains != *include_subdomains ||
-      report_only_uri != *report_uri ||
-      report_only_hashes.size() != hashes->size()) {
+      report_only_uri != *report_uri || report_only_hashes != *hashes) {
     return false;
-  }
-
-  for (size_t i = 0; i < report_only_hashes.size(); i++) {
-    if (!(*hashes)[i].Equals(report_only_hashes[i]))
-      return false;
   }
 
   return true;
@@ -138,6 +131,16 @@ TEST_F(HttpSecurityHeadersTest, BogusHeaders) {
                                &include_subdomains));
   EXPECT_FALSE(ParseHSTSHeader("max-age=-3488923", &max_age,
                                &include_subdomains));
+  EXPECT_FALSE(
+      ParseHSTSHeader("max-age=+3488923", &max_age, &include_subdomains));
+  EXPECT_FALSE(
+      ParseHSTSHeader("max-age=13####", &max_age, &include_subdomains));
+  EXPECT_FALSE(ParseHSTSHeader("max-age=9223372036854775807#####", &max_age,
+                               &include_subdomains));
+  EXPECT_FALSE(ParseHSTSHeader("max-age=18446744073709551615####", &max_age,
+                               &include_subdomains));
+  EXPECT_FALSE(ParseHSTSHeader("max-age=999999999999999999999999$.&#!",
+                               &max_age, &include_subdomains));
   EXPECT_FALSE(ParseHSTSHeader("max-age=3488923     e", &max_age,
                                &include_subdomains));
   EXPECT_FALSE(ParseHSTSHeader("max-age=3488923     includesubdomain",
@@ -388,56 +391,56 @@ TEST_F(HttpSecurityHeadersTest, ValidSTSHeaders) {
   EXPECT_TRUE(ParseHSTSHeader(
       "max-age=39408299  ;incLudesUbdOmains", &max_age,
       &include_subdomains));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(39408299))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHSTSAgeSecs, 39408299u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_TRUE(include_subdomains);
 
   EXPECT_TRUE(ParseHSTSHeader(
       "max-age=394082038  ; incLudesUbdOmains", &max_age,
       &include_subdomains));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(394082038))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHSTSAgeSecs, 394082038u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_TRUE(include_subdomains);
 
   EXPECT_TRUE(ParseHSTSHeader(
       "max-age=394082038  ; incLudesUbdOmains;", &max_age,
       &include_subdomains));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(394082038))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHSTSAgeSecs, 394082038u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_TRUE(include_subdomains);
 
   EXPECT_TRUE(ParseHSTSHeader(
       ";; max-age=394082038  ; incLudesUbdOmains; ;", &max_age,
       &include_subdomains));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(394082038))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHSTSAgeSecs, 394082038u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_TRUE(include_subdomains);
 
   EXPECT_TRUE(ParseHSTSHeader(
       ";; max-age=394082038  ;", &max_age,
       &include_subdomains));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(394082038))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHSTSAgeSecs, 394082038u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_FALSE(include_subdomains);
 
   EXPECT_TRUE(ParseHSTSHeader(
       ";;    ; ; max-age=394082038;;; includeSubdomains     ;;  ;", &max_age,
       &include_subdomains));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(394082038))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHSTSAgeSecs, 394082038u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_TRUE(include_subdomains);
 
   EXPECT_TRUE(ParseHSTSHeader(
       "incLudesUbdOmains   ; max-age=394082038 ;;", &max_age,
       &include_subdomains));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(394082038))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHSTSAgeSecs, 394082038u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_TRUE(include_subdomains);
 
@@ -529,8 +532,8 @@ static void TestValidPKPHeaders(HashValueTag tag) {
   EXPECT_TRUE(ParseAsHPKPHeader(
       "max-age=39408299  ;" + backup_pin + ";" + good_pin + ";  ", chain_hashes,
       &max_age, &include_subdomains, &hashes, &report_uri));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(39408299))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHPKPAgeSecs, 39408299u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_FALSE(include_subdomains);
 
@@ -538,8 +541,8 @@ static void TestValidPKPHeaders(HashValueTag tag) {
       "max-age=39408038  ;    cybers=39408038  ;  includeSubdomains; " +
           good_pin + ";" + backup_pin + ";   ",
       chain_hashes, &max_age, &include_subdomains, &hashes, &report_uri));
-  expect_max_age = base::TimeDelta::FromSeconds(
-      std::min(kMaxHSTSAgeSecs, static_cast<int64>(INT64_C(394082038))));
+  expect_max_age =
+      base::TimeDelta::FromSeconds(std::min(kMaxHPKPAgeSecs, 394082038u));
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_TRUE(include_subdomains);
 
@@ -561,7 +564,7 @@ static void TestValidPKPHeaders(HashValueTag tag) {
       "  max-age=999999999999999999999999999999999999999999999  ;  " +
           backup_pin + ";" + good_pin + ";   ",
       chain_hashes, &max_age, &include_subdomains, &hashes, &report_uri));
-  expect_max_age = base::TimeDelta::FromSeconds(kMaxHSTSAgeSecs);
+  expect_max_age = base::TimeDelta::FromSeconds(kMaxHPKPAgeSecs);
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_FALSE(include_subdomains);
 
@@ -570,7 +573,7 @@ static void TestValidPKPHeaders(HashValueTag tag) {
           backup_pin + ";" + good_pin +
           ";   report-uri=\"http://example.test/foo\"",
       chain_hashes, &max_age, &include_subdomains, &hashes, &report_uri));
-  expect_max_age = base::TimeDelta::FromSeconds(kMaxHSTSAgeSecs);
+  expect_max_age = base::TimeDelta::FromSeconds(kMaxHPKPAgeSecs);
   expect_report_uri = GURL("http://example.test/foo");
   EXPECT_EQ(expect_max_age, max_age);
   EXPECT_FALSE(include_subdomains);
@@ -682,10 +685,7 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPOnly) {
   TransportSecurityState::PKPState new_static_pkp_state;
   EXPECT_TRUE(state.GetStaticDomainState(domain, &new_static_sts_state,
                                          &new_static_pkp_state));
-  for (size_t i = 0; i < saved_hashes.size(); ++i) {
-    EXPECT_TRUE(
-        HashValuesEqual(saved_hashes[i])(new_static_pkp_state.spki_hashes[i]));
-  }
+  EXPECT_EQ(saved_hashes, new_static_pkp_state.spki_hashes);
 
   // Expect the dynamic state to reflect the header.
   TransportSecurityState::PKPState dynamic_pkp_state;
@@ -693,14 +693,13 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPOnly) {
   EXPECT_EQ(2UL, dynamic_pkp_state.spki_hashes.size());
   EXPECT_EQ(report_uri, dynamic_pkp_state.report_uri);
 
-  HashValueVector::const_iterator hash = std::find_if(
-      dynamic_pkp_state.spki_hashes.begin(),
-      dynamic_pkp_state.spki_hashes.end(), HashValuesEqual(good_hash));
+  HashValueVector::const_iterator hash =
+      std::find(dynamic_pkp_state.spki_hashes.begin(),
+                dynamic_pkp_state.spki_hashes.end(), good_hash);
   EXPECT_NE(dynamic_pkp_state.spki_hashes.end(), hash);
 
-  hash = std::find_if(dynamic_pkp_state.spki_hashes.begin(),
-                      dynamic_pkp_state.spki_hashes.end(),
-                      HashValuesEqual(backup_hash));
+  hash = std::find(dynamic_pkp_state.spki_hashes.begin(),
+                   dynamic_pkp_state.spki_hashes.end(), backup_hash);
   EXPECT_NE(dynamic_pkp_state.spki_hashes.end(), hash);
 
   // Expect the overall state to reflect the header, too.
@@ -710,23 +709,22 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPOnly) {
   std::string failure_log;
   const bool is_issued_by_known_root = true;
   HostPortPair domain_port(domain, 443);
-  EXPECT_TRUE(state.CheckPublicKeyPins(
-      domain_port, is_issued_by_known_root, hashes, nullptr, nullptr,
-      TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                domain_port, is_issued_by_known_root, hashes, nullptr, nullptr,
+                TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
 
   TransportSecurityState::PKPState new_dynamic_pkp_state;
   EXPECT_TRUE(state.GetDynamicPKPState(domain, &new_dynamic_pkp_state));
   EXPECT_EQ(2UL, new_dynamic_pkp_state.spki_hashes.size());
   EXPECT_EQ(report_uri, new_dynamic_pkp_state.report_uri);
 
-  hash = std::find_if(new_dynamic_pkp_state.spki_hashes.begin(),
-                      new_dynamic_pkp_state.spki_hashes.end(),
-                      HashValuesEqual(good_hash));
+  hash = std::find(new_dynamic_pkp_state.spki_hashes.begin(),
+                   new_dynamic_pkp_state.spki_hashes.end(), good_hash);
   EXPECT_NE(new_dynamic_pkp_state.spki_hashes.end(), hash);
 
-  hash = std::find_if(new_dynamic_pkp_state.spki_hashes.begin(),
-                      new_dynamic_pkp_state.spki_hashes.end(),
-                      HashValuesEqual(backup_hash));
+  hash = std::find(new_dynamic_pkp_state.spki_hashes.begin(),
+                   new_dynamic_pkp_state.spki_hashes.end(), backup_hash);
   EXPECT_NE(new_dynamic_pkp_state.spki_hashes.end(), hash);
 }
 
@@ -760,11 +758,7 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPMaxAge0) {
   TransportSecurityState::PKPState new_static_pkp_state;
   EXPECT_TRUE(state.GetStaticDomainState(domain, &new_static_sts_state,
                                          &new_static_pkp_state));
-  EXPECT_EQ(saved_hashes.size(), new_static_pkp_state.spki_hashes.size());
-  for (size_t i = 0; i < saved_hashes.size(); ++i) {
-    EXPECT_TRUE(
-        HashValuesEqual(saved_hashes[i])(new_static_pkp_state.spki_hashes[i]));
-  }
+  EXPECT_EQ(saved_hashes, new_static_pkp_state.spki_hashes);
 
   // Expect the dynamic state to have pins.
   TransportSecurityState::PKPState new_dynamic_pkp_state;
@@ -781,11 +775,7 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPMaxAge0) {
   TransportSecurityState::PKPState new_static_pkp_state2;
   EXPECT_TRUE(state.GetStaticDomainState(domain, &static_sts_state,
                                          &new_static_pkp_state2));
-  EXPECT_EQ(saved_hashes.size(), new_static_pkp_state2.spki_hashes.size());
-  for (size_t i = 0; i < saved_hashes.size(); ++i) {
-    EXPECT_TRUE(
-        HashValuesEqual(saved_hashes[i])(new_static_pkp_state2.spki_hashes[i]));
-  }
+  EXPECT_EQ(saved_hashes, new_static_pkp_state2.spki_hashes);
 
   // Expect the dynamic pins to be gone.
   TransportSecurityState::PKPState new_dynamic_pkp_state2;
@@ -799,16 +789,17 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPMaxAge0) {
   std::string failure_log;
 
   // Damage the hashes to cause a pin validation failure.
-  new_static_pkp_state2.spki_hashes[0].data()[0] ^= 0x80;
-  new_static_pkp_state2.spki_hashes[1].data()[0] ^= 0x80;
-  new_static_pkp_state2.spki_hashes[2].data()[0] ^= 0x80;
+  for (size_t i = 0; i < new_static_pkp_state2.spki_hashes.size(); i++) {
+    new_static_pkp_state2.spki_hashes[i].data()[0] ^= 0x80;
+  }
 
   const bool is_issued_by_known_root = true;
   HostPortPair domain_port(domain, 443);
-  EXPECT_FALSE(state.CheckPublicKeyPins(
-      domain_port, is_issued_by_known_root, new_static_pkp_state2.spki_hashes,
-      nullptr, nullptr, TransportSecurityState::DISABLE_PIN_REPORTS,
-      &failure_log));
+  EXPECT_EQ(TransportSecurityState::PKPStatus::VIOLATED,
+            state.CheckPublicKeyPins(
+                domain_port, is_issued_by_known_root,
+                new_static_pkp_state2.spki_hashes, nullptr, nullptr,
+                TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
   EXPECT_NE(0UL, failure_log.length());
 }
 
@@ -841,9 +832,11 @@ TEST_F(HttpSecurityHeadersTest, NoClobberPins) {
   std::string failure_log;
   const bool is_issued_by_known_root = true;
   HostPortPair domain_port(domain, 443);
-  EXPECT_TRUE(state.CheckPublicKeyPins(
-      domain_port, is_issued_by_known_root, saved_hashes, nullptr, nullptr,
-      TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
+  EXPECT_EQ(
+      TransportSecurityState::PKPStatus::OK,
+      state.CheckPublicKeyPins(
+          domain_port, is_issued_by_known_root, saved_hashes, nullptr, nullptr,
+          TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
 
   // Add an HPKP header, which should only update the dynamic state.
   HashValue good_hash = GetTestHashValue(1, HASH_VALUE_SHA256);
@@ -863,9 +856,11 @@ TEST_F(HttpSecurityHeadersTest, NoClobberPins) {
   EXPECT_TRUE(state.ShouldUpgradeToSSL(domain));
   // The dynamic pins, which do not match |saved_hashes|, should take
   // precedence over the static pins and cause the check to fail.
-  EXPECT_FALSE(state.CheckPublicKeyPins(
-      domain_port, is_issued_by_known_root, saved_hashes, nullptr, nullptr,
-      TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
+  EXPECT_EQ(
+      TransportSecurityState::PKPStatus::VIOLATED,
+      state.CheckPublicKeyPins(
+          domain_port, is_issued_by_known_root, saved_hashes, nullptr, nullptr,
+          TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
 }
 
 // Tests that seeing an invalid HPKP header leaves the existing one alone.
@@ -890,9 +885,11 @@ TEST_F(HttpSecurityHeadersTest, IgnoreInvalidHeaders) {
   std::string failure_log;
   bool is_issued_by_known_root = true;
   HostPortPair domain_port("example.com", 443);
-  EXPECT_TRUE(state.CheckPublicKeyPins(
-      domain_port, is_issued_by_known_root, ssl_info.public_key_hashes, nullptr,
-      nullptr, TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                domain_port, is_issued_by_known_root,
+                ssl_info.public_key_hashes, nullptr, nullptr,
+                TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
 
   // Now assert an invalid one. This should fail.
   EXPECT_FALSE(state.AddHPKPHeader(
@@ -901,9 +898,11 @@ TEST_F(HttpSecurityHeadersTest, IgnoreInvalidHeaders) {
 
   // The old pins must still exist.
   EXPECT_TRUE(state.HasPublicKeyPins("example.com"));
-  EXPECT_TRUE(state.CheckPublicKeyPins(
-      domain_port, is_issued_by_known_root, ssl_info.public_key_hashes, nullptr,
-      nullptr, TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
+  EXPECT_EQ(TransportSecurityState::PKPStatus::OK,
+            state.CheckPublicKeyPins(
+                domain_port, is_issued_by_known_root,
+                ssl_info.public_key_hashes, nullptr, nullptr,
+                TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
 }
 
 };    // namespace net

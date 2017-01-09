@@ -24,7 +24,7 @@ body.safe-browsing {
 
 button {
   -webkit-user-select: none;
-  background: rgb(76, 142, 250);
+  background: rgb(66, 133, 244);
   border: 0;
   border-radius: 2px;
   box-sizing: border-box;
@@ -61,6 +61,13 @@ button:hover {
   margin-top: 1em;
 }
 
+.debugging-content-fixed-width {
+  display: block;
+  font-family: monospace;
+  font-size: 1.2em;
+  margin-top: 0.5em;
+}
+
 .debugging-title {
   font-weight: bold;
 }
@@ -80,19 +87,20 @@ button:hover {
   float: none;
   margin: 0;
   padding: 10px 0;
-  text-decoration: underline;
+  text-transform: uppercase;
 }
 
 #details-button:hover {
   box-shadow: inherit;
+  text-decoration: underline;
 }
 
 .error-code {
-  color: #696969;
+  color: #646464;
   display: inline;
   font-size: .86667em;
   margin-top: 15px;
-  opacity: .5;
+  opacity: 1;
   text-transform: uppercase;
 }
 
@@ -192,7 +200,13 @@ input[type=checkbox]:focus ~ .checkbox {
   display: none;
 }
 
-.safe-browsing .icon {
+.safe-browsing .new-icons {
+  background-image: -webkit-image-set(
+      url(images/1x/triangle_white.png) 1x,
+      url(images/2x/triangle_white.png) 2x);
+}
+
+.safe-browsing .old-icons {
   background-image: -webkit-image-set(
       url(images/1x/stop_sign.png) 1x,
       url(images/2x/stop_sign.png) 2x);
@@ -203,7 +217,13 @@ input[type=checkbox]:focus ~ .checkbox {
   font-size: .875em;
 }
 
-.ssl .icon {
+.ssl .new-icons {
+  background-image: -webkit-image-set(
+      url(images/1x/triangle_red.png) 1x,
+      url(images/2x/triangle_red.png) 2x);
+}
+
+.ssl .old-icons {
   background-image: -webkit-image-set(
       url(images/1x/brokenssl_red.png) 1x,
       url(images/2x/brokenssl_red.png) 2x);

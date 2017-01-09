@@ -4,10 +4,13 @@
 
 #include "chrome/utility/importer/bookmark_html_reader.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
@@ -338,6 +341,20 @@ TEST_F(BookmarkHTMLReaderTestWithData, FirefoxBookmarkFileWithKeywordImport) {
   ASSERT_EQ(2U, search_engines.size());
   ExpectFirstFirefoxBookmarkWithKeyword(search_engines[0]);
   ExpectSecondFirefoxBookmarkWithKeyword(search_engines[1]);
+}
+
+TEST_F(BookmarkHTMLReaderTestWithData,
+       RedditSaverFileImport) {
+  base::FilePath path = test_data_path_.AppendASCII("redditsaver.html");
+
+  std::vector<ImportedBookmarkEntry> bookmarks;
+  ImportBookmarksFile(base::Callback<bool(void)>(),
+                      base::Callback<bool(const GURL&)>(),
+                      path, &bookmarks, NULL, NULL);
+
+  ASSERT_EQ(2U, bookmarks.size());
+  EXPECT_EQ(ASCIIToUTF16("Google"), bookmarks[0].title);
+  EXPECT_EQ(ASCIIToUTF16("YouTube"), bookmarks[1].title);
 }
 
 // Verifies that importing a bookmarks file without a charset specified succeeds

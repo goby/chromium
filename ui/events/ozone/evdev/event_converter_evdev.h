@@ -5,10 +5,13 @@
 #ifndef UI_EVENTS_OZONE_EVDEV_EVENT_CONVERTER_EVDEV_H_
 #define UI_EVENTS_OZONE_EVDEV_EVENT_CONVERTER_EVDEV_H_
 
+#include <stdint.h>
+
 #include <set>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "ui/events/devices/input_device.h"
 #include "ui/events/ozone/evdev/event_dispatch_callback.h"
@@ -74,6 +77,9 @@ class EVENTS_OZONE_EVDEV_EXPORT EventConverterEvdev
   // Returns true if the converter is used for a touchscreen device.
   virtual bool HasTouchscreen() const;
 
+  // Returns true if the converter is used for a pen device.
+  virtual bool HasPen() const;
+
   // Returns true if the converter is used for a device with a caps lock LED.
   virtual bool HasCapsLockLed() const;
 
@@ -96,8 +102,12 @@ class EVENTS_OZONE_EVDEV_EXPORT EventConverterEvdev
   // Update touch event logging state.
   virtual void SetTouchEventLoggingEnabled(bool enabled);
 
-  // Helper to generate a base::TimeDelta from an input_event's time
-  static base::TimeDelta TimeDeltaFromInputEvent(const input_event& event);
+  // Sets callback to enable/disable palm suppression.
+  virtual void SetPalmSuppressionCallback(
+      const base::Callback<void(bool)>& callback);
+
+  // Helper to generate a base::TimeTicks from an input_event's time
+  static base::TimeTicks TimeTicksFromInputEvent(const input_event& event);
 
  protected:
   // base::MessagePumpLibevent::Watcher:

@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/accelerators/accelerator_controller.h"
+#include "ash/common/accelerators/accelerator_controller.h"
 
+#include "ash/common/shell_observer.h"
+#include "ash/common/system/chromeos/network/network_observer.h"
+#include "ash/common/system/tray/system_tray_delegate.h"
+#include "ash/common/system/tray/system_tray_notifier.h"
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
-#include "ash/shell_observer.h"
-#include "ash/system/chromeos/network/network_observer.h"
-#include "ash/system/tray/system_tray_delegate.h"
-#include "ash/system/tray/system_tray_notifier.h"
 #include "ash/test/ash_interactive_ui_test_base.h"
 #include "ash/test/test_screenshot_delegate.h"
-#include "ash/test/test_volume_control_delegate.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "base/run_loop.h"
+#include "base/test/user_action_tester.cc"
 #include "chromeos/network/network_handler.h"
 #include "ui/base/test/ui_controls.h"
 
@@ -57,7 +59,7 @@ class AcceleratorInteractiveUITest : public AshInteractiveUITestBase,
   void SetUp() override {
     AshInteractiveUITestBase::SetUp();
 
-    Shell::GetInstance()->AddShellObserver(this);
+    WmShell::Get()->AddShellObserver(this);
 
     chromeos::NetworkHandler::Initialize();
   }
@@ -65,7 +67,7 @@ class AcceleratorInteractiveUITest : public AshInteractiveUITestBase,
   void TearDown() override {
     chromeos::NetworkHandler::Shutdown();
 
-    Shell::GetInstance()->RemoveShellObserver(this);
+    WmShell::Get()->RemoveShellObserver(this);
 
     AshInteractiveUITestBase::TearDown();
   }
@@ -77,17 +79,15 @@ class AcceleratorInteractiveUITest : public AshInteractiveUITestBase,
                         bool shift,
                         bool alt) {
     base::RunLoop loop;
-    ui_controls::SendKeyPressNotifyWhenDone(root_window(), key, control, shift,
-                                            alt, false, loop.QuitClosure());
+    ui_controls::SendKeyPressNotifyWhenDone(Shell::GetPrimaryRootWindow(), key,
+                                            control, shift, alt, false,
+                                            loop.QuitClosure());
     loop.Run();
   }
 
   // ash::ShellObserver:
   void OnOverviewModeStarting() override { is_in_overview_mode_ = true; }
   void OnOverviewModeEnded() override { is_in_overview_mode_ = false; }
-
-  Shell* shell() const { return Shell::GetInstance(); }
-  aura::Window* root_window() const { return Shell::GetPrimaryRootWindow(); }
 
  protected:
   bool is_in_overview_mode_;
@@ -165,26 +165,23 @@ TEST_F(AcceleratorInteractiveUITest, MAYBE_ChromeOsAccelerators) {
   // Press ESC to go out of the partial screenshot mode.
   SendKeyPressSync(ui::VKEY_ESCAPE, false, false, false);
 
-  // Test VOLUME_MUTE, VOLUME_DOWN, and VOLUME_UP.
-  TestVolumeControlDelegate* volume_delegate = new TestVolumeControlDelegate;
-  shell()->system_tray_delegate()->SetVolumeControlDelegate(
-      scoped_ptr<VolumeControlDelegate>(volume_delegate).Pass());
-  // VOLUME_MUTE.
-  EXPECT_EQ(0, volume_delegate->handle_volume_mute_count());
+  // Test VOLUME_MUTE.
+  base::UserActionTester user_action_tester;
+  EXPECT_EQ(0, user_action_tester.GetActionCount("Accel_VolumeMute_F8"));
   SendKeyPressSync(ui::VKEY_VOLUME_MUTE, false, false, false);
-  EXPECT_EQ(1, volume_delegate->handle_volume_mute_count());
-  // VOLUME_DOWN.
-  EXPECT_EQ(0, volume_delegate->handle_volume_down_count());
+  EXPECT_EQ(1, user_action_tester.GetActionCount("Accel_VolumeMute_F8"));
+  // Test VOLUME_DOWN.
+  EXPECT_EQ(0, user_action_tester.GetActionCount("Accel_VolumeDown_F9"));
   SendKeyPressSync(ui::VKEY_VOLUME_DOWN, false, false, false);
-  EXPECT_EQ(1, volume_delegate->handle_volume_down_count());
-  // VOLUME_UP.
-  EXPECT_EQ(0, volume_delegate->handle_volume_up_count());
+  EXPECT_EQ(1, user_action_tester.GetActionCount("Accel_VolumeDown_F9"));
+  // Test VOLUME_UP.
+  EXPECT_EQ(0, user_action_tester.GetActionCount("Accel_VolumeUp_F10"));
   SendKeyPressSync(ui::VKEY_VOLUME_UP, false, false, false);
-  EXPECT_EQ(1, volume_delegate->handle_volume_up_count());
+  EXPECT_EQ(1, user_action_tester.GetActionCount("Accel_VolumeUp_F10"));
 
   // Test TOGGLE_WIFI.
   TestNetworkObserver network_observer;
-  shell()->system_tray_notifier()->AddNetworkObserver(&network_observer);
+  WmShell::Get()->system_tray_notifier()->AddNetworkObserver(&network_observer);
 
   EXPECT_FALSE(network_observer.wifi_enabled_status());
   SendKeyPressSync(ui::VKEY_WLAN, false, false, false);
@@ -192,16 +189,17 @@ TEST_F(AcceleratorInteractiveUITest, MAYBE_ChromeOsAccelerators) {
   SendKeyPressSync(ui::VKEY_WLAN, false, false, false);
   EXPECT_FALSE(network_observer.wifi_enabled_status());
 
-  shell()->system_tray_notifier()->RemoveNetworkObserver(&network_observer);
+  WmShell::Get()->system_tray_notifier()->RemoveNetworkObserver(
+      &network_observer);
 }
 
 // Tests the app list accelerator.
 TEST_F(AcceleratorInteractiveUITest, MAYBE_ToggleAppList) {
-  EXPECT_FALSE(shell()->GetAppListTargetVisibility());
+  EXPECT_FALSE(WmShell::Get()->GetAppListTargetVisibility());
   SendKeyPressSync(ui::VKEY_LWIN, false, false, false);
-  EXPECT_TRUE(shell()->GetAppListTargetVisibility());
+  EXPECT_TRUE(WmShell::Get()->GetAppListTargetVisibility());
   SendKeyPressSync(ui::VKEY_LWIN, false, false, false);
-  EXPECT_FALSE(shell()->GetAppListTargetVisibility());
+  EXPECT_FALSE(WmShell::Get()->GetAppListTargetVisibility());
 }
 
 }  // namespace test

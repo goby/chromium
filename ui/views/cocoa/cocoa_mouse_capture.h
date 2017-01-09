@@ -5,9 +5,12 @@
 #ifndef UI_VIEWS_COCOA_COCOA_MOUSE_CAPTURE_H_
 #define UI_VIEWS_COCOA_COCOA_MOUSE_CAPTURE_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/views/views_export.h"
+
+@class NSWindow;
 
 namespace views {
 
@@ -23,8 +26,12 @@ class VIEWS_EXPORT CocoaMouseCapture {
   explicit CocoaMouseCapture(CocoaMouseCaptureDelegate* delegate);
   ~CocoaMouseCapture();
 
+  // Returns the NSWindow with capture or nil if no window has capture
+  // currently.
+  static NSWindow* GetGlobalCaptureWindow();
+
   // True if the event tap is active (i.e. not stolen by a later instance).
-  bool IsActive() const { return active_handle_; }
+  bool IsActive() const { return !!active_handle_; }
 
  private:
   class ActiveEventTap;
@@ -36,7 +43,7 @@ class VIEWS_EXPORT CocoaMouseCapture {
 
   // The active event tap for this capture. Owned by this, but can be cleared
   // out early if another instance of CocoaMouseCapture is created.
-  scoped_ptr<ActiveEventTap> active_handle_;
+  std::unique_ptr<ActiveEventTap> active_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(CocoaMouseCapture);
 };

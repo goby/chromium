@@ -5,22 +5,32 @@
 #ifndef CONTENT_BROWSER_DOM_STORAGE_DOM_STORAGE_AREA_H_
 #define CONTENT_BROWSER_DOM_STORAGE_DOM_STORAGE_AREA_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/nullable_string16.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
+#include "content/common/dom_storage/dom_storage_map.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "url/gurl.h"
+
+namespace base {
+namespace trace_event {
+class ProcessMemoryDump;
+}
+}
 
 namespace content {
 
 class DOMStorageDatabaseAdapter;
-class DOMStorageMap;
 class DOMStorageTaskRunner;
 class SessionStorageDatabase;
 
@@ -47,14 +57,15 @@ class CONTENT_EXPORT DOMStorageArea
                  DOMStorageTaskRunner* task_runner);
 
   // Session storage. Backed on disk if |session_storage_backing| is not NULL.
-  DOMStorageArea(int64 namespace_id,
+  DOMStorageArea(int64_t namespace_id,
                  const std::string& persistent_namespace_id,
                  const GURL& origin,
                  SessionStorageDatabase* session_storage_backing,
                  DOMStorageTaskRunner* task_runner);
 
   const GURL& origin() const { return origin_; }
-  int64 namespace_id() const { return namespace_id_; }
+  int64_t namespace_id() const { return namespace_id_; }
+  size_t map_usage_in_bytes() const { return map_ ? map_->bytes_used() : 0; }
 
   // Writes a copy of the current set of values in the area to the |map|.
   void ExtractValues(DOMStorageValuesMap* map);
@@ -69,7 +80,7 @@ class CONTENT_EXPORT DOMStorageArea
   void FastClear();
 
   DOMStorageArea* ShallowCopy(
-      int64 destination_namespace_id,
+      int64_t destination_namespace_id,
       const std::string& destination_persistent_namespace_id);
 
   bool HasUncommittedChanges() const;
@@ -92,6 +103,9 @@ class CONTENT_EXPORT DOMStorageArea
   // Returns true if the data is loaded in memory.
   bool IsLoadedInMemory() const { return is_initial_import_done_; }
 
+  // Adds memory statistics to |pmd| for chrome://tracing.
+  void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd);
+
  private:
   friend class DOMStorageAreaTest;
   FRIEND_TEST_ALL_PREFIXES(DOMStorageAreaTest, DOMStorageAreaBasics);
@@ -103,6 +117,7 @@ class CONTENT_EXPORT DOMStorageArea
   FRIEND_TEST_ALL_PREFIXES(DOMStorageAreaTest, PurgeMemory);
   FRIEND_TEST_ALL_PREFIXES(DOMStorageAreaTest, RateLimiter);
   FRIEND_TEST_ALL_PREFIXES(DOMStorageContextImplTest, PersistentIds);
+  FRIEND_TEST_ALL_PREFIXES(DOMStorageContextImplTest, PurgeMemory);
   friend class base::RefCountedThreadSafe<DOMStorageArea>;
 
   // Used to rate limit commits.
@@ -130,7 +145,7 @@ class CONTENT_EXPORT DOMStorageArea
     base::TimeDelta time_quantum_;
   };
 
-  struct CommitBatch {
+  struct CONTENT_EXPORT CommitBatch {
     bool clear_all_first;
     DOMStorageValuesMap changed_values;
 
@@ -150,6 +165,7 @@ class CONTENT_EXPORT DOMStorageArea
   // disk on the commit sequence, and to call back on the primary
   // task sequence when complete.
   CommitBatch* CreateCommitBatchIfNeeded();
+  void PopulateCommitBatchValues();
   void StartCommitTimer();
   void OnCommitTimer();
   void PostCommitTask();
@@ -161,17 +177,17 @@ class CONTENT_EXPORT DOMStorageArea
 
   static bool s_aggressive_flushing_enabled_;
 
-  int64 namespace_id_;
+  int64_t namespace_id_;
   std::string persistent_namespace_id_;
   GURL origin_;
   base::FilePath directory_;
   scoped_refptr<DOMStorageTaskRunner> task_runner_;
   scoped_refptr<DOMStorageMap> map_;
-  scoped_ptr<DOMStorageDatabaseAdapter> backing_;
+  std::unique_ptr<DOMStorageDatabaseAdapter> backing_;
   scoped_refptr<SessionStorageDatabase> session_storage_backing_;
   bool is_initial_import_done_;
   bool is_shutdown_;
-  scoped_ptr<CommitBatch> commit_batch_;
+  std::unique_ptr<CommitBatch> commit_batch_;
   int commit_batches_in_flight_;
   base::TimeTicks start_time_;
   RateLimiter data_rate_limiter_;

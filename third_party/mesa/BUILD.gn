@@ -3,6 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/ui.gni")
+import("//build/config/compiler/compiler.gni")
+import("//build/config/sanitizers/sanitizers.gni")
 
 config("mesa_headers_config") {
   include_dirs = [ "src/include" ]
@@ -10,6 +12,8 @@ config("mesa_headers_config") {
     defines = [ "MESA_EGL_NO_X11_HEADERS" ]
   }
 }
+
+assert(!is_ios, "mesa is not used on iOS, don't pull it in accidentally")
 
 # This directory contains checked-in files generated from the Mesa build.
 generated_src_dir = "src/chromium_gensrc"
@@ -28,8 +32,8 @@ config("mesa_internal_config") {
     "PACKAGE_NAME=\"Mesa\"",
     "PACKAGE_TARNAME=\"mesa\"",
     "PACKAGE_VERSION=\"9.0.3\"",
-    "PACKAGE_STRING=\"Mesa\ 9.0.3\"",
-    "PACKAGE_BUGREPORT=\"https://bugs.freedesktop.org/enter_bug.cgi\?product=Mesa\"",
+    "PACKAGE_STRING=\"Mesa 9.0.3\"",
+    "PACKAGE_BUGREPORT=\"https://bugs.freedesktop.org/enter_bug.cgi?product=Mesa\"",
     "PACKAGE_URL=\"\"",
     "PACKAGE=\"mesa\"",
     "VERSION=\"9.0.3\"",
@@ -141,7 +145,13 @@ config("mesa_internal_warnings") {
       "/wd4305",  # Truncation from int to float.
       "/wd4334",  # Result of 32-bit shift implicitly converted to 64 bits.
       "/wd4345",  # POD-type default initializers.
+      "/wd4311",  # Pointer truncation TODO(brucedawson): http://crbug.com/554200
     ]
+    if (is_official_build && full_wpo_on_official) {
+      # TODO(sebmarchand): http://crbug.com/604838 This should be removed if
+      # Mesa is ever rolled and the warning is fixed.
+      cflags += [ "/wd4723" ]  # potential divide by 0.
+    }
   }
 }
 
@@ -271,6 +281,12 @@ static_library("mesa_libglslcommon") {
     # Mesa triggers some of these Clang warnings.
     configs -= [ "//build/config/clang:extra_warnings" ]
   }
+
+  # UBsan's vptr is not compatible with -fno-rtti,
+  # which is used by gallium/auxiliary/Makefile.
+  configs -= [ "//build/config/sanitizers:default_sanitizer_flags" ]
+  configs +=
+      [ "//build/config/sanitizers:default_sanitizer_flags_but_ubsan_vptr" ]
 
   deps = [
     ":mesa_headers",
@@ -655,6 +671,12 @@ static_library("mesa") {
     configs -= [ "//build/config/clang:extra_warnings" ]
   }
 
+  # UBsan's vptr is not compatible with -fno-rtti,
+  # which is used by gallium/auxiliary/Makefile.
+  configs -= [ "//build/config/sanitizers:default_sanitizer_flags" ]
+  configs +=
+      [ "//build/config/sanitizers:default_sanitizer_flags_but_ubsan_vptr" ]
+
   cflags = []
 
   if (is_android && !is_clang) {
@@ -709,9 +731,22 @@ loadable_module("osmesa") {
     configs -= [ "//build/config/clang:extra_warnings" ]
   }
 
+  # UBsan's vptr is not compatible with -fno-rtti,
+  # which is used by gallium/auxiliary/Makefile.
+  configs -= [ "//build/config/sanitizers:default_sanitizer_flags" ]
+  configs +=
+      [ "//build/config/sanitizers:default_sanitizer_flags_but_ubsan_vptr" ]
+
   if (is_win) {
-    ldflags = [ "/DEF:" + rebase_path("src/src/mesa/drivers/osmesa/osmesa.def",
-                                      root_build_dir) ]
+    sources += [ "src/src/mesa/drivers/osmesa/osmesa.def" ]
+
+    # http://crbug.com/512956
+    ldflags = [ "/ignore:4197" ]
+
+    # TODO(brucedawson) : remove when crbug.com/482671 is resolved by
+    # Microsoft.
+    configs -= [ "//build/config/win:default_incremental_linking" ]
+    configs += [ "//build/config/win:no_incremental_linking" ]
   }
 
   deps = [
@@ -720,6 +755,11 @@ loadable_module("osmesa") {
     ":mesa_libglslcommon",
     "//build/config/sanitizers:deps",
   ]
+
+  # Required for the allocator implementation, which is not used on Mac.
+  if (!is_mac) {
+    deps += [ "//base" ]
+  }
 
   if (is_win) {
     defines = [
@@ -735,7 +775,7 @@ if (is_linux) {
     include_dirs = [ "$generated_src_dir/egl/wayland/wayland-drm" ]
   }
 
-  source_set("wayland_drm_protocol") {
+  static_library("wayland_drm_protocol") {
     sources = [
       "$generated_src_dir/egl/wayland/wayland-drm/wayland-drm-client-protocol.h",
       "$generated_src_dir/egl/wayland/wayland-drm/wayland-drm-protocol.c",

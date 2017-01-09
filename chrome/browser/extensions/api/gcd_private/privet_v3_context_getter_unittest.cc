@@ -4,8 +4,13 @@
 
 #include "chrome/browser/extensions/api/gcd_private/privet_v3_context_getter.h"
 
+#include <stddef.h>
+
+#include "base/location.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -28,24 +33,25 @@ class PrivetV3ContextGetterTest : public testing::Test,
 
   void SetUp() override {
     context_getter_ = new extensions::PrivetV3ContextGetter(
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO));
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
   }
 
   void OnURLFetchComplete(const net::URLFetcher* source) override {
     done_ = true;
     status_ = source->GetStatus();
 
-    base::MessageLoop::current()->PostTask(FROM_HERE, quit_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_);
   }
 
   void CreateServer(EmbeddedTestServer::Type type) {
     server_.reset(new EmbeddedTestServer(type));
-    ASSERT_TRUE(server_->Start());
 
     base::FilePath test_data_dir;
     ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
     server_->ServeFilesFromDirectory(
         test_data_dir.Append(FILE_PATH_LITERAL("chrome/test/data")));
+
+    ASSERT_TRUE(server_->Start());
   }
 
   net::URLRequestStatus::Status Run() {
@@ -83,8 +89,8 @@ class PrivetV3ContextGetterTest : public testing::Test,
   net::URLRequestStatus status_ = net::URLRequestStatus();
   content::TestBrowserThreadBundle thread_bundle_;
   scoped_refptr<extensions::PrivetV3ContextGetter> context_getter_;
-  scoped_ptr<EmbeddedTestServer> server_;
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<EmbeddedTestServer> server_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   base::Closure quit_;
 };

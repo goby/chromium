@@ -4,20 +4,20 @@
 
 #include "components/history/core/browser/expire_history_backend.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <utility>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -34,6 +34,8 @@
 #include "components/history/core/test/test_history_database.h"
 #include "components/history/core/test/thumbnail.h"
 #include "components/history/core/test/wait_top_sites_loaded_observer.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 // The test must be in the history namespace for the gtest forward declarations
@@ -89,21 +91,21 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
   static bool IsStringInFile(const base::FilePath& filename, const char* str);
 
   // Returns the path the db files are created in.
-  const base::FilePath& path() const { return tmp_dir_.path(); }
+  const base::FilePath& path() const { return tmp_dir_.GetPath(); }
 
   // This must be destroyed last.
   base::ScopedTempDir tmp_dir_;
 
   HistoryClientFakeBookmarks history_client_;
-  scoped_ptr<HistoryBackendClient> backend_client_;
+  std::unique_ptr<HistoryBackendClient> backend_client_;
 
   base::MessageLoopForUI message_loop_;
 
   ExpireHistoryBackend expirer_;
 
-  scoped_ptr<TestingPrefServiceSimple> pref_service_;
-  scoped_ptr<HistoryDatabase> main_db_;
-  scoped_ptr<ThumbnailDatabase> thumb_db_;
+  std::unique_ptr<TestingPrefServiceSimple> pref_service_;
+  std::unique_ptr<HistoryDatabase> main_db_;
+  std::unique_ptr<ThumbnailDatabase> thumb_db_;
   scoped_refptr<TopSitesImpl> top_sites_;
 
   // base::Time at the beginning of the test, so everybody agrees what "now" is.
@@ -124,7 +126,7 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
     if (main_db_->Init(history_name) != sql::INIT_OK)
       main_db_.reset();
 
-    base::FilePath thumb_name = path().Append(kThumbnailsFilename);
+    base::FilePath thumb_name = path().Append(kFaviconsFilename);
     thumb_db_.reset(new ThumbnailDatabase(nullptr));
     if (thumb_db_->Init(thumb_name) != sql::INIT_OK)
       thumb_db_.reset();
@@ -154,7 +156,7 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
     top_sites_ = nullptr;
 
     if (base::MessageLoop::current())
-      base::MessageLoop::current()->RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
 
     pref_service_.reset();
   }

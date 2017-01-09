@@ -9,11 +9,13 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/location.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_registry_simple.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 
 namespace chromeos {
@@ -113,7 +115,7 @@ void DeviceOAuth2TokenService::FlushPendingRequests(
   for (std::vector<PendingRequest*>::iterator request(requests.begin());
        request != requests.end();
        ++request) {
-    scoped_ptr<PendingRequest> scoped_request(*request);
+    std::unique_ptr<PendingRequest> scoped_request(*request);
     if (!scoped_request->request)
       continue;
 
@@ -133,12 +135,9 @@ void DeviceOAuth2TokenService::FailRequest(
     RequestImpl* request,
     GoogleServiceAuthError::State error) {
   GoogleServiceAuthError auth_error(error);
-  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(
-      &RequestImpl::InformConsumer,
-      request->AsWeakPtr(),
-      auth_error,
-      std::string(),
-      base::Time()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&RequestImpl::InformConsumer, request->AsWeakPtr(),
+                            auth_error, std::string(), base::Time()));
 }
 
 }  // namespace chromeos

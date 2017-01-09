@@ -4,6 +4,8 @@
 
 #include "chrome/browser/download/download_prefs.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -12,14 +14,14 @@
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
-#include "chrome/browser/download/download_extensions.h"
 #include "chrome/browser/download/download_service.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/download/download_target_determiner.h"
@@ -27,7 +29,9 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/safe_browsing/file_type_policies.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/save_page_type.h"
@@ -45,6 +49,7 @@
 using content::BrowserContext;
 using content::BrowserThread;
 using content::DownloadManager;
+using safe_browsing::FileTypePolicies;
 
 namespace {
 
@@ -131,15 +136,16 @@ DownloadPrefs::DownloadPrefs(Profile* profile) : profile_(profile) {
                  GetDefaultDownloadDirectoryForProfile()));
 #endif  // defined(OS_CHROMEOS)
 
-#if defined(OS_WIN) || defined(OS_LINUX) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
   should_open_pdf_in_system_reader_ =
-      prefs->GetBoolean(prefs::kOpenPdfDownloadInSystemReader);
+      prefs->GetBoolean(prefs::kOpenPdfDownloadInSystemReader) ||
+      prefs->GetBoolean(prefs::kPluginsAlwaysOpenPdfExternally);
+  disable_adobe_version_check_for_tests_ = false;
 #endif
 
   // If the download path is dangerous we forcefully reset it. But if we do
   // so we set a flag to make sure we only do it once, to avoid fighting
-  // the user if he really wants it on an unsafe place such as the desktop.
+  // the user if they really want it on an unsafe place such as the desktop.
   if (!prefs->GetBoolean(prefs::kDownloadDirUpgraded)) {
     base::FilePath current_download_dir = prefs->GetFilePath(
         prefs::kDownloadDefaultDirectory);
@@ -184,7 +190,8 @@ DownloadPrefs::DownloadPrefs(Profile* profile) : profile_(profile) {
     // automatically can change in the future. When the list is tightened, it is
     // expected that some entries in the users' auto open list will get dropped
     // permanently as a result.
-    if (download_util::IsAllowedToOpenAutomatically(filename_with_extension))
+    if (FileTypePolicies::GetInstance()->IsAllowedToOpenAutomatically(
+            filename_with_extension))
       auto_open_.insert(extension);
   }
 }
@@ -208,8 +215,7 @@ void DownloadPrefs::RegisterProfilePrefs(
                                  default_download_path);
   registry->RegisterFilePathPref(prefs::kSaveFileDefaultDirectory,
                                  default_download_path);
-#if defined(OS_WIN) || defined(OS_LINUX) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
   registry->RegisterBooleanPref(prefs::kOpenPdfDownloadInSystemReader, false);
 #endif
 }
@@ -286,8 +292,7 @@ bool DownloadPrefs::IsDownloadPathManaged() const {
 }
 
 bool DownloadPrefs::IsAutoOpenUsed() const {
-#if defined(OS_WIN) || defined(OS_LINUX) || \
-      (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
   if (ShouldOpenPdfInSystemReader())
     return true;
 #endif
@@ -301,8 +306,7 @@ bool DownloadPrefs::IsAutoOpenEnabledBasedOnExtension(
     return false;
   DCHECK(extension[0] == base::FilePath::kExtensionSeparator);
   extension.erase(0, 1);
-#if defined(OS_WIN) || defined(OS_LINUX) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
   if (extension == FILE_PATH_LITERAL("pdf") && ShouldOpenPdfInSystemReader())
     return true;
 #endif
@@ -313,7 +317,8 @@ bool DownloadPrefs::IsAutoOpenEnabledBasedOnExtension(
 bool DownloadPrefs::EnableAutoOpenBasedOnExtension(
     const base::FilePath& file_name) {
   base::FilePath::StringType extension = file_name.Extension();
-  if (!download_util::IsAllowedToOpenAutomatically(file_name))
+  if (!FileTypePolicies::GetInstance()->IsAllowedToOpenAutomatically(
+          file_name))
     return false;
 
   DCHECK(extension[0] == base::FilePath::kExtensionSeparator);
@@ -335,30 +340,32 @@ void DownloadPrefs::DisableAutoOpenBasedOnExtension(
   SaveAutoOpenState();
 }
 
-#if defined(OS_WIN) || defined(OS_LINUX) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
 void DownloadPrefs::SetShouldOpenPdfInSystemReader(bool should_open) {
-  if (should_open_pdf_in_system_reader_ == should_open)
-    return;
-  should_open_pdf_in_system_reader_ = should_open;
+  should_open_pdf_in_system_reader_ = should_open ||
+     profile_->GetPrefs()->GetBoolean(prefs::kPluginsAlwaysOpenPdfExternally);
   profile_->GetPrefs()->SetBoolean(prefs::kOpenPdfDownloadInSystemReader,
                                    should_open);
 }
 
 bool DownloadPrefs::ShouldOpenPdfInSystemReader() const {
 #if defined(OS_WIN)
-  if (IsAdobeReaderDefaultPDFViewer() &&
+  if (!disable_adobe_version_check_for_tests_ &&
+      IsAdobeReaderDefaultPDFViewer() &&
       !DownloadTargetDeterminer::IsAdobeReaderUpToDate()) {
       return false;
   }
 #endif
   return should_open_pdf_in_system_reader_;
 }
+
+void DownloadPrefs::DisableAdobeVersionCheckForTests() {
+  disable_adobe_version_check_for_tests_ = true;
+}
 #endif
 
 void DownloadPrefs::ResetAutoOpen() {
-#if defined(OS_WIN) || defined(OS_LINUX) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
   SetShouldOpenPdfInSystemReader(false);
 #endif
   auto_open_.clear();

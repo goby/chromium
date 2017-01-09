@@ -5,17 +5,20 @@
 #ifndef CHROME_BROWSER_CHROMEOS_PROFILES_PROFILE_HELPER_H_
 #define CHROME_BROWSER_CHROMEOS_PROFILES_PROFILE_HELPER_H_
 
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/browsing_data/browsing_data_remover.h"
 #include "chrome/browser/chromeos/login/signin/oauth2_login_manager.h"
 #include "components/user_manager/user_manager.h"
 
+class ArcAppTest;
 class Profile;
 
 namespace base {
@@ -26,13 +29,23 @@ namespace extensions {
 class ExtensionGarbageCollectorChromeOSUnitTest;
 }
 
+namespace arc {
+class SyncArcPackageHelper;
+}
+
 namespace ash {
 namespace test {
 class MultiUserWindowManagerChromeOSTest;
 }  // namespace test
 }  // namespace ash
 
+namespace test {
+class BrowserFinderChromeOSTest;
+}  // namespace test
+
 namespace chromeos {
+
+class FileFlusher;
 
 // This helper class is used on Chrome OS to keep track of currently
 // active user profile.
@@ -84,11 +97,14 @@ class ProfileHelper
   static bool IsSigninProfile(const Profile* profile);
 
   // Returns true when |profile| corresponds to owner's profile.
-  static bool IsOwnerProfile(Profile* profile);
+  static bool IsOwnerProfile(const Profile* profile);
 
   // Returns true when |profile| corresponds to the primary user profile
   // of the current session.
   static bool IsPrimaryProfile(const Profile* profile);
+
+  // Returns true when |profile| is for an ephemeral user.
+  static bool IsEphemeralUserProfile(const Profile* profile);
 
   // Initialize a bunch of services that are tied to a browser profile.
   // TODO(dzhioev): Investigate whether or not this method is needed.
@@ -114,7 +130,7 @@ class ProfileHelper
 
   // DEPRECATED
   // Returns profile of the |user| if user's profile is created and fully
-  // initialized. Otherwise, if some user is active, returns his profile.
+  // initialized. Otherwise, if some user is active, returns their profile.
   // Otherwise, returns signin profile.
   // Behaviour of this function does not correspond to its name and can be
   // very surprising, that's why it should not be used anymore.
@@ -128,6 +144,9 @@ class ProfileHelper
 
   static std::string GetUserIdHashByUserIdForTesting(
       const std::string& user_id);
+
+  // Flushes all files of |profile|.
+  void FlushProfile(Profile* profile);
 
  private:
   // TODO(nkostylev): Create a test API class that will be the only one allowed
@@ -145,7 +164,10 @@ class ProfileHelper
   friend class ProfileListChromeOSTest;
   friend class SessionStateDelegateChromeOSTest;
   friend class SystemTrayDelegateChromeOSTest;
+  friend class arc::SyncArcPackageHelper;
   friend class ash::test::MultiUserWindowManagerChromeOSTest;
+  friend class ::ArcAppTest;
+  friend class ::test::BrowserFinderChromeOSTest;
 
   // Called when signin profile is cleared.
   void OnSigninProfileCleared();
@@ -178,6 +200,9 @@ class ProfileHelper
   void SetUserToProfileMappingForTesting(const user_manager::User* user,
                                          Profile* profile);
 
+  // Removes |account_id| user from |user_to_profile_for_testing_| for testing.
+  void RemoveUserFromListForTesting(const AccountId& account_id);
+
   // Identifies path to active user profile on Chrome OS.
   std::string active_user_id_hash_;
 
@@ -206,11 +231,13 @@ class ProfileHelper
   // always be returned by GetUserByProfile().
   static bool always_return_primary_user_for_testing;
 
+  std::unique_ptr<FileFlusher> profile_flusher_;
+
   base::WeakPtrFactory<ProfileHelper> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileHelper);
 };
 
-} // namespace chromeos
+}  // namespace chromeos
 
 #endif  // CHROME_BROWSER_CHROMEOS_PROFILES_PROFILE_HELPER_H_

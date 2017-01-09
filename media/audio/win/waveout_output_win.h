@@ -8,13 +8,16 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <mmreg.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/win/scoped_handle.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
@@ -96,7 +99,7 @@ class PCMWaveOutAudioOutputStream : public AudioOutputStream {
   const int num_buffers_;
 
   // The size in bytes of each audio buffer, we usually have two of these.
-  uint32 buffer_size_;
+  uint32_t buffer_size_;
 
   // Volume level from 0 to 1.
   float volume_;
@@ -105,7 +108,7 @@ class PCMWaveOutAudioOutputStream : public AudioOutputStream {
   const int channels_;
 
   // Number of bytes yet to be played in the hardware buffer.
-  uint32 pending_bytes_;
+  uint32_t pending_bytes_;
 
   // The id assigned by the operating system to the selected wave output
   // hardware device. Usually this is just -1 which means 'default device'.
@@ -125,13 +128,13 @@ class PCMWaveOutAudioOutputStream : public AudioOutputStream {
 
   // Pointer to the allocated audio buffers, we allocate all buffers in one big
   // chunk. This object owns them.
-  scoped_ptr<char[]> buffers_;
+  std::unique_ptr<char[]> buffers_;
 
   // Lock used to avoid the conflict when callbacks are called simultaneously.
   base::Lock lock_;
 
   // Container for retrieving data from AudioSourceCallback::OnMoreData().
-  scoped_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<AudioBus> audio_bus_;
 
   DISALLOW_COPY_AND_ASSIGN(PCMWaveOutAudioOutputStream);
 };

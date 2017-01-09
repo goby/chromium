@@ -4,7 +4,10 @@
 
 #include "extensions/browser/api/cast_channel/logger.h"
 
+#include <stdint.h>
+
 #include <string>
+#include <utility>
 
 #include "base/strings/string_util.h"
 #include "base/time/clock.h"
@@ -26,7 +29,7 @@ using proto::SocketEvent;
 
 namespace {
 
-const char* kInternalNamespacePrefix = "com.google.cast";
+const char kInternalNamespacePrefix[] = "com.google.cast";
 
 proto::ChallengeReplyErrorType ChallegeReplyErrorToProto(
     AuthResult::ErrorType error_type) {
@@ -55,13 +58,23 @@ proto::ChallengeReplyErrorType ChallegeReplyErrorToProto(
       return proto::CHALLENGE_REPLY_ERROR_CANNOT_EXTRACT_PUBLIC_KEY;
     case AuthResult::ERROR_SIGNED_BLOBS_MISMATCH:
       return proto::CHALLENGE_REPLY_ERROR_SIGNED_BLOBS_MISMATCH;
+    case AuthResult::ERROR_TLS_CERT_VALIDITY_PERIOD_TOO_LONG:
+      return proto::CHALLENGE_REPLY_ERROR_TLS_CERT_VALIDITY_PERIOD_TOO_LONG;
+    case AuthResult::ERROR_TLS_CERT_VALID_START_DATE_IN_FUTURE:
+      return proto::CHALLENGE_REPLY_ERROR_TLS_CERT_VALID_START_DATE_IN_FUTURE;
+    case AuthResult::ERROR_TLS_CERT_EXPIRED:
+      return proto::CHALLENGE_REPLY_ERROR_TLS_CERT_EXPIRED;
+    case AuthResult::ERROR_CRL_INVALID:
+      return proto::CHALLENGE_REPLY_ERROR_CRL_INVALID;
+    case AuthResult::ERROR_CERT_REVOKED:
+      return proto::CHALLENGE_REPLY_ERROR_CERT_REVOKED;
     default:
       NOTREACHED();
       return proto::CHALLENGE_REPLY_ERROR_NONE;
   }
 }
 
-scoped_ptr<char[]> Compress(const std::string& input, size_t* length) {
+std::unique_ptr<char[]> Compress(const std::string& input, size_t* length) {
   *length = 0;
   z_stream stream = {0};
   int result = deflateInit2(&stream,
@@ -74,14 +87,11 @@ scoped_ptr<char[]> Compress(const std::string& input, size_t* length) {
   DCHECK_EQ(Z_OK, result);
 
   size_t out_size = deflateBound(&stream, input.size());
-  scoped_ptr<char[]> out(new char[out_size]);
+  std::unique_ptr<char[]> out(new char[out_size]);
 
-  static_assert(sizeof(uint8) == sizeof(char),
-                "uint8 char should be of different sizes");
-
-  stream.next_in = reinterpret_cast<uint8*>(const_cast<char*>(input.data()));
+  stream.next_in = reinterpret_cast<uint8_t*>(const_cast<char*>(input.data()));
   stream.avail_in = input.size();
-  stream.next_out = reinterpret_cast<uint8*>(out.get());
+  stream.next_out = reinterpret_cast<uint8_t*>(out.get());
   stream.avail_out = out_size;
 
   // Do a one-shot compression. This will return Z_STREAM_END only if |output|
@@ -99,7 +109,7 @@ scoped_ptr<char[]> Compress(const std::string& input, size_t* length) {
   if (success)
     *length = out_size - stream.avail_out;
 
-  return out.Pass();
+  return out;
 }
 
 // Propagate any error fields set in |event| to |last_errors|.  If any error
@@ -125,8 +135,8 @@ Logger::AggregatedSocketEventLog::AggregatedSocketEventLog() {
 Logger::AggregatedSocketEventLog::~AggregatedSocketEventLog() {
 }
 
-Logger::Logger(scoped_ptr<base::Clock> clock, base::Time unix_epoch_time)
-    : clock_(clock.Pass()), unix_epoch_time_(unix_epoch_time) {
+Logger::Logger(std::unique_ptr<base::Clock> clock, base::Time unix_epoch_time)
+    : clock_(std::move(clock)), unix_epoch_time_(unix_epoch_time) {
   DCHECK(clock_);
 
   // Logger may not be necessarily be created on the IO thread, but logging
@@ -144,8 +154,9 @@ void Logger::LogNewSocketEvent(const CastSocket& cast_socket) {
   AggregatedSocketEvent& aggregated_socket_event =
       LogSocketEvent(cast_socket.id(), event);
 
-  const net::IPAddressNumber& ip = cast_socket.ip_endpoint().address();
-  aggregated_socket_event.set_endpoint_id(ip.back());
+  const net::IPAddress& ip = cast_socket.ip_endpoint().address();
+  DCHECK(ip.IsValid());
+  aggregated_socket_event.set_endpoint_id(ip.bytes().back());
   aggregated_socket_event.set_channel_auth_type(cast_socket.channel_auth() ==
                                                         CHANNEL_AUTH_TYPE_SSL
                                                     ? proto::SSL
@@ -293,7 +304,7 @@ AggregatedSocketEvent& Logger::LogSocketEvent(int channel_id,
 
     it = aggregated_socket_events_
              .insert(std::make_pair(
-                 channel_id, make_linked_ptr(new AggregatedSocketEventLog)))
+                 channel_id, base::MakeUnique<AggregatedSocketEventLog>()))
              .first;
     it->second->aggregated_socket_event.set_id(channel_id);
   }
@@ -310,7 +321,7 @@ AggregatedSocketEvent& Logger::LogSocketEvent(int channel_id,
   return it->second->aggregated_socket_event;
 }
 
-scoped_ptr<char[]> Logger::GetLogs(size_t* length) const {
+std::unique_ptr<char[]> Logger::GetLogs(size_t* length) const {
   *length = 0;
 
   Log log;
@@ -340,7 +351,7 @@ scoped_ptr<char[]> Logger::GetLogs(size_t* length) const {
   std::string serialized;
   if (!log.SerializeToString(&serialized)) {
     VLOG(2) << "Failed to serialized proto to string.";
-    return scoped_ptr<char[]>();
+    return std::unique_ptr<char[]>();
   }
 
   return Compress(serialized, length);

@@ -4,13 +4,17 @@
 
 #include "chrome/browser/chromeos/file_system_provider/fileapi/provider_async_file_util.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/file_system_provider/fake_provided_file_system.h"
@@ -79,12 +83,12 @@ class EventLogger {
     result_.reset(new base::File::Error(error));
   }
 
-  void OnCopyFileProgress(int64 size) {}
+  void OnCopyFileProgress(int64_t size) {}
 
   base::File::Error* result() { return result_.get(); }
 
  private:
-  scoped_ptr<base::File::Error> result_;
+  std::unique_ptr<base::File::Error> result_;
   DISALLOW_COPY_AND_ASSIGN(EventLogger);
 };
 
@@ -121,7 +125,7 @@ class FileSystemProviderProviderAsyncFileUtilTest : public testing::Test {
     async_file_util_.reset(new internal::ProviderAsyncFileUtil);
 
     file_system_context_ =
-        content::CreateFileSystemContextForTesting(NULL, data_dir_.path());
+        content::CreateFileSystemContextForTesting(NULL, data_dir_.GetPath());
 
     Service* service = Service::Get(profile_);  // Owned by its factory.
     service->SetFileSystemFactoryForTesting(
@@ -147,16 +151,17 @@ class FileSystemProviderProviderAsyncFileUtilTest : public testing::Test {
     ASSERT_TRUE(root_url_.is_valid());
   }
 
-  scoped_ptr<storage::FileSystemOperationContext> CreateOperationContext() {
-    return make_scoped_ptr(
-        new storage::FileSystemOperationContext(file_system_context_.get()));
+  std::unique_ptr<storage::FileSystemOperationContext>
+  CreateOperationContext() {
+    return base::MakeUnique<storage::FileSystemOperationContext>(
+        file_system_context_.get());
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir data_dir_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   TestingProfile* profile_;  // Owned by TestingProfileManager.
-  scoped_ptr<storage::AsyncFileUtil> async_file_util_;
+  std::unique_ptr<storage::AsyncFileUtil> async_file_util_;
   scoped_refptr<storage::FileSystemContext> file_system_context_;
   storage::FileSystemURL file_url_;
   storage::FileSystemURL directory_url_;

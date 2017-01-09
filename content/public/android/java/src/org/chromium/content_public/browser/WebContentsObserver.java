@@ -30,6 +30,19 @@ public abstract class WebContentsObserver {
     public void renderProcessGone(boolean wasOomProtected) {}
 
     /**
+     * Called when the current navigation finishes.
+     *
+     * @param isMainFrame Whether the navigation is for the main frame.
+     * @param isErrorPage Whether the navigation shows an error page.
+     * @param hasCommitted Whether the navigation has committed. This returns true for either
+     *                     successful commits or error pages that replace the previous page
+     *                     (distinguished by |isErrorPage|), and false for errors that leave the
+     *                     user on the previous page.
+     */
+    public void didFinishNavigation(
+            boolean isMainFrame, boolean isErrorPage, boolean hasCommitted) {}
+
+    /**
      * Called when the a page starts loading.
      * @param url The validated url for the loading page.
      */
@@ -68,6 +81,22 @@ public abstract class WebContentsObserver {
     public void didFirstVisuallyNonEmptyPaint() {}
 
     /**
+     * The web contents was shown.
+     */
+    public void wasShown() {}
+
+    /**
+     * The web contents was hidden.
+     */
+    public void wasHidden() {}
+
+    /**
+     * Title was set.
+     * @param title The updated title.
+     */
+    public void titleWasSet(String title) {}
+
+    /**
      * Similar to didNavigateMainFrame but also called on subframe navigations.
      * @param url The validated url for the page.
      * @param baseUrl The validated base url for the page.
@@ -88,10 +117,9 @@ public abstract class WebContentsObserver {
      * @param isMainFrame Whether the load is happening for the main frame.
      * @param validatedUrl The validated URL that is being navigated to.
      * @param isErrorPage Whether this is navigating to an error page.
-     * @param isIframeSrcdoc Whether this is navigating to about:srcdoc.
      */
     public void didStartProvisionalLoadForFrame(long frameId, long parentFrameId,
-            boolean isMainFrame, String validatedUrl, boolean isErrorPage, boolean isIframeSrcdoc) {
+            boolean isMainFrame, String validatedUrl, boolean isErrorPage) {
     }
 
     /**
@@ -146,13 +174,6 @@ public abstract class WebContentsObserver {
      * @param url        The URL that we are navigating to.
      */
     public void didStartNavigationToPendingEntry(String url) {}
-
-    /**
-     * Called when the media session state changed.
-     * @param isControllable if the session can be resumed or suspended.
-     * @param isSuspended if the session currently suspended or not
-     */
-    public void mediaSessionStateChanged(boolean isControllable, boolean isSuspended) {}
 
     /**
      * Stop observing the web contents and clean up associated references.

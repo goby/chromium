@@ -8,14 +8,14 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/shared_memory.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/perf_log.h"
-#include "base/test/perf_time_logger.h"
 #include "base/test/test_file_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "components/visitedlink/browser/visitedlink_master.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "testing/perf/perf_test.h"
 #include "url/gurl.h"
 
 using base::TimeDelta;
@@ -23,6 +23,39 @@ using base::TimeDelta;
 namespace visitedlink {
 
 namespace {
+
+// Designed like base/test/perf_time_logger but uses testing/perf instead of
+// base/test/perf* to report timings.
+class TimeLogger {
+ public:
+  explicit TimeLogger(std::string test_name);
+  ~TimeLogger();
+  void Done();
+
+ private:
+  bool logged_;
+  std::string test_name_;
+  base::ElapsedTimer timer_;
+
+  DISALLOW_COPY_AND_ASSIGN(TimeLogger);
+};
+
+TimeLogger::TimeLogger(std::string test_name)
+    : logged_(false), test_name_(std::move(test_name)) {}
+
+TimeLogger::~TimeLogger() {
+  if (!logged_)
+    Done();
+}
+
+void TimeLogger::Done() {
+  // We use a floating-point millisecond value because it is more
+  // intuitive than microseconds and we want more precision than
+  // integer milliseconds.
+  perf_test::PrintResult(test_name_, std::string(), std::string(),
+                         timer_.Elapsed().InMillisecondsF(), "ms", true);
+  logged_ = true;
+}
 
 // how we generate URLs, note that the two strings should be the same length
 const int add_count = 10000;
@@ -39,9 +72,9 @@ GURL TestURL(const char* prefix, int i) {
 class DummyVisitedLinkEventListener : public VisitedLinkMaster::Listener {
  public:
   DummyVisitedLinkEventListener() {}
-  void NewTable(base::SharedMemory* table) override {}
+  void NewTable(mojo::SharedBufferHandle) override {}
   void Add(VisitedLinkCommon::Fingerprint) override {}
-  void Reset() override {}
+  void Reset(bool invalidate_hashes) override {}
 };
 
 
@@ -66,6 +99,9 @@ class VisitedLink : public testing::Test {
   base::FilePath db_path_;
   void SetUp() override { ASSERT_TRUE(base::CreateTemporaryFile(&db_path_)); }
   void TearDown() override { base::DeleteFile(db_path_, false); }
+
+ private:
+  content::TestBrowserThreadBundle thread_bundle_;
 };
 
 } // namespace
@@ -80,8 +116,9 @@ TEST_F(VisitedLink, TestAddAndQuery) {
   VisitedLinkMaster master(new DummyVisitedLinkEventListener(),
                            NULL, true, true, db_path_, 0);
   ASSERT_TRUE(master.Init());
+  content::RunAllBlockingPoolTasksUntilIdle();
 
-  base::PerfTimeLogger timer("Visited_link_add_and_query");
+  TimeLogger timer("Visited_link_add_and_query");
 
   // first check without anything in the table
   CheckVisited(master, added_prefix, 0, add_count);
@@ -106,14 +143,15 @@ TEST_F(VisitedLink, TestAddAndQuery) {
 TEST_F(VisitedLink, TestLoad) {
   // create a big DB
   {
-    base::PerfTimeLogger table_initialization_timer("Table_initialization");
+    TimeLogger table_initialization_timer("Table_initialization");
 
     VisitedLinkMaster master(new DummyVisitedLinkEventListener(),
                              NULL, true, true, db_path_, 0);
 
     // time init with empty table
-    base::PerfTimeLogger initTimer("Empty_visited_link_init");
+    TimeLogger initTimer("Empty_visited_link_init");
     bool success = master.Init();
+    content::RunAllBlockingPoolTasksUntilIdle();
     initTimer.Done();
     ASSERT_TRUE(success);
 
@@ -124,7 +162,7 @@ TEST_F(VisitedLink, TestLoad) {
     FillTable(master, added_prefix, 0, load_test_add_count);
 
     // time writing the file out out
-    base::PerfTimeLogger flushTimer("Visited_link_database_flush");
+    TimeLogger flushTimer("Visited_link_database_flush");
     master.RewriteFile();
     // TODO(maruel): Without calling FlushFileBuffers(master.file_); you don't
     // know really how much time it took to write the file.
@@ -153,6 +191,7 @@ TEST_F(VisitedLink, TestLoad) {
                                db_path_,
                                0);
       bool success = master.Init();
+      content::RunAllBlockingPoolTasksUntilIdle();
       TimeDelta elapsed = cold_timer.Elapsed();
       ASSERT_TRUE(success);
 
@@ -170,6 +209,7 @@ TEST_F(VisitedLink, TestLoad) {
                                db_path_,
                                0);
       bool success = master.Init();
+      content::RunAllBlockingPoolTasksUntilIdle();
       TimeDelta elapsed = hot_timer.Elapsed();
       ASSERT_TRUE(success);
 
@@ -188,10 +228,13 @@ TEST_F(VisitedLink, TestLoad) {
     cold_sum += cold_load_times[i];
     hot_sum += hot_load_times[i];
   }
-  base::LogPerfResult(
-      "Visited_link_cold_load_time", cold_sum / cold_load_times.size(), "ms");
-  base::LogPerfResult(
-      "Visited_link_hot_load_time", hot_sum / hot_load_times.size(), "ms");
+
+  perf_test::PrintResult("Visited_link_cold_load_time", std::string(),
+                         std::string(), cold_sum / cold_load_times.size(), "ms",
+                         true);
+  perf_test::PrintResult("Visited_link_hot_load_time", std::string(),
+                         std::string(), hot_sum / hot_load_times.size(), "ms",
+                         true);
 }
 
 }  // namespace visitedlink

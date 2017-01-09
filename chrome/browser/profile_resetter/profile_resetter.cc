@@ -4,12 +4,16 @@
 
 #include "chrome/browser/profile_resetter/profile_resetter.h"
 
+#include <stddef.h>
+
 #include <string>
 
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/macros.h"
 #include "base/synchronization/cancellation_flag.h"
+#include "build/build_config.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
+#include "chrome/browser/browsing_data/browsing_data_remover.h"
+#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/google/google_url_tracker_factory.h"
@@ -17,7 +21,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_iterator.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/installer/util/browser_distribution.h"
@@ -27,6 +31,8 @@
 #include "components/content_settings/core/browser/website_settings_info.h"
 #include "components/content_settings/core/browser/website_settings_registry.h"
 #include "components/google/core/browser/google_url_tracker.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
 #include "components/search_engines/template_url_service.h"
@@ -69,7 +75,7 @@ ProfileResetter::ProfileResetter(Profile* profile)
     : profile_(profile),
       template_url_service_(TemplateURLServiceFactory::GetForProfile(profile_)),
       pending_reset_flags_(0),
-      cookies_remover_(NULL),
+      cookies_remover_(nullptr),
       weak_ptr_factory_(this) {
   DCHECK(CalledOnValidThread());
   DCHECK(profile_);
@@ -82,7 +88,7 @@ ProfileResetter::~ProfileResetter() {
 
 void ProfileResetter::Reset(
     ProfileResetter::ResettableFlags resettable_flags,
-    scoped_ptr<BrandcodedDefaultSettings> master_settings,
+    std::unique_ptr<BrandcodedDefaultSettings> master_settings,
     const base::Closure& callback) {
   DCHECK(CalledOnValidThread());
   DCHECK(master_settings);
@@ -162,7 +168,7 @@ void ProfileResetter::ResetDefaultSearchEngine() {
     DCHECK(prefs);
     TemplateURLPrepopulateData::ClearPrepopulatedEnginesInPrefs(
         profile_->GetPrefs());
-    scoped_ptr<base::ListValue> search_engines(
+    std::unique_ptr<base::ListValue> search_engines(
         master_settings_->GetSearchProviderOverrides());
     if (search_engines) {
       // This Chrome distribution channel provides a custom search engine. We
@@ -241,16 +247,19 @@ void ProfileResetter::ResetCookiesAndSiteData() {
   DCHECK(CalledOnValidThread());
   DCHECK(!cookies_remover_);
 
-  cookies_remover_ = BrowsingDataRemover::CreateForUnboundedRange(profile_);
+  cookies_remover_ = BrowsingDataRemoverFactory::GetForBrowserContext(profile_);
   cookies_remover_->AddObserver(this);
   int remove_mask = BrowsingDataRemover::REMOVE_SITE_DATA |
                     BrowsingDataRemover::REMOVE_CACHE;
   PrefService* prefs = profile_->GetPrefs();
   DCHECK(prefs);
+
   // Don't try to clear LSO data if it's not supported.
   if (!prefs->GetBoolean(prefs::kClearPluginLSODataEnabled))
     remove_mask &= ~BrowsingDataRemover::REMOVE_PLUGIN_DATA;
-  cookies_remover_->Remove(remove_mask, BrowsingDataHelper::UNPROTECTED_WEB);
+  cookies_remover_->RemoveAndReply(BrowsingDataRemover::Unbounded(),
+                                   remove_mask,
+                                   BrowsingDataHelper::UNPROTECTED_WEB, this);
 }
 
 void ProfileResetter::ResetExtensions() {
@@ -271,7 +280,7 @@ void ProfileResetter::ResetStartupPages() {
   DCHECK(CalledOnValidThread());
   PrefService* prefs = profile_->GetPrefs();
   DCHECK(prefs);
-  scoped_ptr<base::ListValue> url_list(
+  std::unique_ptr<base::ListValue> url_list(
       master_settings_->GetUrlsToRestoreOnStartup());
   if (url_list)
     ListPrefUpdate(prefs, prefs::kURLsToRestoreOnStartup)->Swap(url_list.get());
@@ -282,15 +291,14 @@ void ProfileResetter::ResetStartupPages() {
   else
     prefs->ClearPref(prefs::kRestoreOnStartup);
 
-  prefs->SetBoolean(prefs::kRestoreOnStartupMigrated, true);
   MarkAsDone(STARTUP_PAGES);
 }
 
 void ProfileResetter::ResetPinnedTabs() {
   // Unpin all the tabs.
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    if (it->is_type_tabbed() && it->profile() == profile_) {
-      TabStripModel* tab_model = it->tab_strip_model();
+  for (auto* browser : *BrowserList::GetInstance()) {
+    if (browser->is_type_tabbed() && browser->profile() == profile_) {
+      TabStripModel* tab_model = browser->tab_strip_model();
       // Here we assume that indexof(any mini tab) < indexof(any normal tab).
       // If we unpin the tab, it can be moved to the right. Thus traversing in
       // reverse direction is correct.
@@ -327,7 +335,8 @@ void ProfileResetter::OnTemplateURLServiceLoaded() {
 }
 
 void ProfileResetter::OnBrowsingDataRemoverDone() {
-  cookies_remover_ = NULL;
+  cookies_remover_->RemoveObserver(this);
+  cookies_remover_ = nullptr;
   MarkAsDone(COOKIES_AND_SITE_DATA);
 }
 

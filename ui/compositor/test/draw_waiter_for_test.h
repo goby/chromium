@@ -5,6 +5,9 @@
 #ifndef UI_COMPOSITOR_TEST_DRAW_WAITER_H_
 #define UI_COMPOSITOR_TEST_DRAW_WAITER_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "ui/compositor/compositor_observer.h"
 
@@ -44,11 +47,10 @@ class DrawWaiterForTest : public CompositorObserver {
   void OnCompositingStarted(Compositor* compositor,
                             base::TimeTicks start_time) override;
   void OnCompositingEnded(Compositor* compositor) override;
-  void OnCompositingAborted(Compositor* compositor) override;
   void OnCompositingLockStateChanged(Compositor* compositor) override;
   void OnCompositingShuttingDown(Compositor* compositor) override;
 
-  scoped_ptr<base::RunLoop> wait_run_loop_;
+  std::unique_ptr<base::RunLoop> wait_run_loop_;
 
   WaitEvent wait_event_;
 

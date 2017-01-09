@@ -58,7 +58,7 @@ bool CrashUtil::RequestUploadCrashDump(
 
   base::FilePath filename = base::FilePath(existing_minidump_path).BaseName();
 
-  scoped_ptr<MinidumpWriter> writer;
+  std::unique_ptr<MinidumpWriter> writer;
   if (g_dumpstate_cb) {
     writer.reset(new MinidumpWriter(
         &minidump_generator, filename.value(), params, *g_dumpstate_cb));
@@ -67,7 +67,6 @@ bool CrashUtil::RequestUploadCrashDump(
         new MinidumpWriter(&minidump_generator, filename.value(), params));
   }
   bool success = false;
-  writer->set_non_blocking(false);
   success = (0 == writer->Write());  // error already logged.
 
   // In case the file is still in $TEMP, remove it. Note that DeleteFile() will

@@ -5,10 +5,12 @@
 #ifndef UI_ACCESSIBILITY_AX_TEXT_UTILS_H_
 #define UI_ACCESSIBILITY_AX_TEXT_UTILS_H_
 
+#include <stddef.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/strings/string16.h"
+#include "ui/accessibility/ax_enums.h"
 #include "ui/accessibility/ax_export.h"
 
 namespace ui {
@@ -47,7 +49,8 @@ size_t AX_EXPORT
                                const std::vector<int>& line_breaks,
                                TextBoundaryType boundary,
                                size_t start_offset,
-                               TextBoundaryDirection direction);
+                               TextBoundaryDirection direction,
+                               AXTextAffinity affinity);
 
 }  // namespace ui
 

@@ -4,14 +4,16 @@
 
 #include "ipc/ipc_message.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <limits>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "ipc/attachment_broker.h"
+#include "build/build_config.h"
 #include "ipc/ipc_message_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -90,11 +92,11 @@ TEST(IPCMessageTest, DictionaryValue) {
   input.Set("int", new base::FundamentalValue(42));
   input.SetWithoutPathExpansion("int.with.dot", new base::FundamentalValue(43));
 
-  scoped_ptr<base::DictionaryValue> subdict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> subdict(new base::DictionaryValue());
   subdict->Set("str", new base::StringValue("forty two"));
   subdict->Set("bool", new base::FundamentalValue(false));
 
-  scoped_ptr<base::ListValue> sublist(new base::ListValue());
+  std::unique_ptr<base::ListValue> sublist(new base::ListValue());
   sublist->Set(0, new base::FundamentalValue(42.42));
   sublist->Set(1, new base::StringValue("forty"));
   sublist->Set(2, new base::StringValue("two"));
@@ -149,11 +151,7 @@ TEST(IPCMessageTest, FindNext) {
   // (but contains the message header)
   IPC::Message::FindNext(data_start, data_end - 1, &next);
   EXPECT_FALSE(next.message_found);
-#if USE_ATTACHMENT_BROKER
-  EXPECT_EQ(next.message_size, 0u);
-#else
   EXPECT_EQ(next.message_size, message.size());
-#endif
 
   // Data range doesn't contain the message header
   // (but contains the pickle header)
@@ -185,9 +183,6 @@ TEST(IPCMessageTest, FindNextOverflow) {
   message.header()->payload_size = static_cast<uint32_t>(-1);
   IPC::Message::FindNext(data_start, data_end, &next);
   EXPECT_FALSE(next.message_found);
-#if USE_ATTACHMENT_BROKER
-  EXPECT_EQ(next.message_size, 0u);
-#else
   if (sizeof(size_t) > sizeof(uint32_t)) {
     // No overflow, just insane message size
     EXPECT_EQ(next.message_size,
@@ -196,19 +191,14 @@ TEST(IPCMessageTest, FindNextOverflow) {
     // Actual overflow, reported as max size_t
     EXPECT_EQ(next.message_size, std::numeric_limits<size_t>::max());
   }
-#endif
 
   // Payload size is max positive integer (defeats size < 0 check, while
   // still potentially causing overflow down the road).
   message.header()->payload_size = std::numeric_limits<int32_t>::max();
   IPC::Message::FindNext(data_start, data_end, &next);
   EXPECT_FALSE(next.message_found);
-#if USE_ATTACHMENT_BROKER
-  EXPECT_EQ(next.message_size, 0u);
-#else
   EXPECT_EQ(next.message_size,
             message.header()->payload_size + sizeof(IPC::Message::Header));
-#endif
 }
 
 namespace {

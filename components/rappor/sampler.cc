@@ -6,6 +6,7 @@
 
 #include <map>
 #include <string>
+#include <utility>
 
 #include "base/rand_util.h"
 
@@ -18,12 +19,12 @@ Sampler::Sampler() {}
 Sampler::~Sampler() {}
 
 void Sampler::AddSample(const std::string& metric_name,
-                        scoped_ptr<Sample> sample) {
+                        std::unique_ptr<Sample> sample) {
   ++sample_counts_[metric_name];
   // Replace the previous sample with a 1 in sample_count_ chance so that each
   // sample has equal probability of being reported.
   if (base::RandGenerator(sample_counts_[metric_name]) == 0)
-    samples_.set(metric_name, sample.Pass());
+    samples_.set(metric_name, std::move(sample));
 }
 
 void Sampler::ExportMetrics(const std::string& secret, RapporReports* reports) {

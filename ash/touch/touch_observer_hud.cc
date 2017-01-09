@@ -4,15 +4,15 @@
 
 #include "ash/touch/touch_observer_hud.h"
 
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/root_window_settings.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ui/aura/window_event_dispatcher.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -21,7 +21,7 @@ TouchObserverHUD::TouchObserverHUD(aura::Window* initial_root)
     : display_id_(GetRootWindowSettings(initial_root)->display_id),
       root_window_(initial_root),
       widget_(NULL) {
-  const gfx::Display& display =
+  const display::Display& display =
       Shell::GetInstance()->display_manager()->GetDisplayForId(display_id_);
 
   views::View* content = new views::View;
@@ -30,8 +30,8 @@ TouchObserverHUD::TouchObserverHUD(aura::Window* initial_root)
   content->SetSize(display_size);
 
   widget_ = new views::Widget();
-  views::Widget::InitParams
-      params(views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
   params.activatable = views::Widget::InitParams::ACTIVATABLE_NO;
   params.accept_events = false;
@@ -46,7 +46,7 @@ TouchObserverHUD::TouchObserverHUD(aura::Window* initial_root)
   widget_->AddObserver(this);
 
   // Observe changes in display size and mode to update touch HUD.
-  Shell::GetScreen()->AddObserver(this);
+  display::Screen::GetScreen()->AddObserver(this);
 #if defined(OS_CHROMEOS)
   Shell::GetInstance()->display_configurator()->AddObserver(this);
 #endif  // defined(OS_CHROMEOS)
@@ -61,13 +61,12 @@ TouchObserverHUD::~TouchObserverHUD() {
 #if defined(OS_CHROMEOS)
   Shell::GetInstance()->display_configurator()->RemoveObserver(this);
 #endif  // defined(OS_CHROMEOS)
-  Shell::GetScreen()->RemoveObserver(this);
+  display::Screen::GetScreen()->RemoveObserver(this);
 
   widget_->RemoveObserver(this);
 }
 
-void TouchObserverHUD::Clear() {
-}
+void TouchObserverHUD::Clear() {}
 
 void TouchObserverHUD::Remove() {
   root_window_->RemovePreTargetHandler(this);
@@ -78,23 +77,22 @@ void TouchObserverHUD::Remove() {
   widget_->CloseNow();
 }
 
-void TouchObserverHUD::OnTouchEvent(ui::TouchEvent* /*event*/) {
-}
+void TouchObserverHUD::OnTouchEvent(ui::TouchEvent* /*event*/) {}
 
 void TouchObserverHUD::OnWidgetDestroying(views::Widget* widget) {
   DCHECK_EQ(widget, widget_);
   delete this;
 }
 
-void TouchObserverHUD::OnDisplayAdded(const gfx::Display& new_display) {}
+void TouchObserverHUD::OnDisplayAdded(const display::Display& new_display) {}
 
-void TouchObserverHUD::OnDisplayRemoved(const gfx::Display& old_display) {
+void TouchObserverHUD::OnDisplayRemoved(const display::Display& old_display) {
   if (old_display.id() != display_id_)
     return;
   widget_->CloseNow();
 }
 
-void TouchObserverHUD::OnDisplayMetricsChanged(const gfx::Display& display,
+void TouchObserverHUD::OnDisplayMetricsChanged(const display::Display& display,
                                                uint32_t metrics) {
   if (display.id() != display_id_ || !(metrics & DISPLAY_METRIC_BOUNDS))
     return;

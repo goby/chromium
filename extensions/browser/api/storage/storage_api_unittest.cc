@@ -2,17 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/browser/api/storage/storage_api.h"
+
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "content/public/test/test_browser_context.h"
 #include "extensions/browser/api/extensions_api_client.h"
-#include "extensions/browser/api/storage/leveldb_settings_storage_factory.h"
 #include "extensions/browser/api/storage/settings_storage_quota_enforcer.h"
 #include "extensions/browser/api/storage/settings_test_util.h"
-#include "extensions/browser/api/storage/storage_api.h"
 #include "extensions/browser/api/storage/storage_frontend.h"
 #include "extensions/browser/api_unittest.h"
 #include "extensions/browser/event_router.h"
@@ -20,6 +22,7 @@
 #include "extensions/browser/test_extensions_browser_client.h"
 #include "extensions/browser/value_store/leveldb_value_store.h"
 #include "extensions/browser/value_store/value_store.h"
+#include "extensions/browser/value_store/value_store_factory_impl.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/test_util.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
@@ -30,14 +33,16 @@ namespace extensions {
 namespace {
 
 // Caller owns the returned object.
-scoped_ptr<KeyedService> CreateStorageFrontendForTesting(
+std::unique_ptr<KeyedService> CreateStorageFrontendForTesting(
     content::BrowserContext* context) {
-  return StorageFrontend::CreateForTesting(new LeveldbSettingsStorageFactory(),
-                                           context);
+  scoped_refptr<ValueStoreFactory> factory =
+      new ValueStoreFactoryImpl(context->GetPath());
+  return StorageFrontend::CreateForTesting(factory, context);
 }
 
-scoped_ptr<KeyedService> BuildEventRouter(content::BrowserContext* context) {
-  return make_scoped_ptr(new extensions::EventRouter(context, nullptr));
+std::unique_ptr<KeyedService> BuildEventRouter(
+    content::BrowserContext* context) {
+  return base::MakeUnique<extensions::EventRouter>(context, nullptr);
 }
 
 }  // namespace
@@ -60,14 +65,15 @@ class StorageApiUnittest : public ApiUnitTest {
   // |value| with the string result.
   testing::AssertionResult RunGetFunction(const std::string& key,
                                           std::string* value) {
-    scoped_ptr<base::Value> result = RunFunctionAndReturnValue(
+    std::unique_ptr<base::Value> result = RunFunctionAndReturnValue(
         new StorageStorageAreaGetFunction(),
         base::StringPrintf("[\"local\", \"%s\"]", key.c_str()));
     if (!result.get())
       return testing::AssertionFailure() << "No result";
     base::DictionaryValue* dict = NULL;
     if (!result->GetAsDictionary(&dict))
-      return testing::AssertionFailure() << result << " was not a dictionary.";
+      return testing::AssertionFailure() << result.get()
+                                         << " was not a dictionary.";
     if (!dict->GetString(key, value)) {
       return testing::AssertionFailure() << " could not retrieve a string from"
           << dict << " at " << key;
@@ -104,6 +110,8 @@ TEST_F(StorageApiUnittest, RestoreCorruptedStorage) {
                                      settings_namespace::LOCAL,
                                      StorageFrontend::Get(browser_context()));
   ASSERT_TRUE(store);
+  // TODO(cmumford): Modify test as this requires that the factory always
+  //                 creates instances of LeveldbValueStore.
   SettingsStorageQuotaEnforcer* quota_store =
       static_cast<SettingsStorageQuotaEnforcer*>(store);
   LeveldbValueStore* leveldb_store =

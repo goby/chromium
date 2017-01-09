@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_CONTEXT_MENU_CONTROLLER_H_
 #define CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_CONTEXT_MENU_CONTROLLER_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/bookmarks/browser/base_bookmark_model_observer.h"
 #include "ui/base/models/simple_menu_model.h"
@@ -67,8 +67,6 @@ class BookmarkContextMenuController
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   bool IsCommandIdVisible(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
   bool IsItemForCommandIdDynamic(int command_id) const override;
   base::string16 GetLabelForCommandId(int command_id) const override;
@@ -99,7 +97,7 @@ class BookmarkContextMenuController
   const bookmarks::BookmarkNode* parent_;
   std::vector<const bookmarks::BookmarkNode*> selection_;
   bookmarks::BookmarkModel* model_;
-  scoped_ptr<ui::SimpleMenuModel> menu_model_;
+  std::unique_ptr<ui::SimpleMenuModel> menu_model_;
   // Used to detect deletion of |this| executing a command.
   base::WeakPtrFactory<BookmarkContextMenuController> weak_factory_;
 

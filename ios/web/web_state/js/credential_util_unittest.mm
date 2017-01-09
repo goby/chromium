@@ -4,7 +4,9 @@
 
 #include "ios/web/public/web_state/js/credential_util.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "ios/web/public/web_state/credential.h"
@@ -13,6 +15,7 @@
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace web {
 namespace {
@@ -56,32 +59,36 @@ Credential GetTestFederatedCredential() {
   credential.id = base::ASCIIToUTF16(kTestCredentialID);
   credential.name = base::ASCIIToUTF16(kTestCredentialName);
   credential.avatar_url = GURL(kTestCredentialAvatarURL);
-  credential.federation_url = GURL(kTestCredentialFederationURL);
+  credential.federation_origin =
+      url::Origin(GURL(kTestCredentialFederationURL));
   return credential;
 }
 
 // Returns a value representing the credential returned by
 // |GetTestPasswordCredential()|.
-scoped_ptr<base::DictionaryValue> GetTestPasswordCredentialDictionaryValue() {
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue);
+std::unique_ptr<base::DictionaryValue>
+GetTestPasswordCredentialDictionaryValue() {
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue);
   value->SetString("type", kTestCredentialTypePassword);
   value->SetString("id", kTestCredentialID);
   value->SetString("name", kTestCredentialName);
   value->SetString("avatarURL", kTestCredentialAvatarURL);
   value->SetString("password", kTestCredentialPassword);
-  return value.Pass();
+  return value;
 }
 
 // Returns a value representing the credential returned by
 // |GetTestFederatedCredentialDictionaryValue()|.
-scoped_ptr<base::DictionaryValue> GetTestFederatedCredentialDictionaryValue() {
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue);
+std::unique_ptr<base::DictionaryValue>
+GetTestFederatedCredentialDictionaryValue() {
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue);
   value->SetString("type", kTestCredentialTypeFederated);
   value->SetString("id", kTestCredentialID);
   value->SetString("name", kTestCredentialName);
   value->SetString("avatarURL", kTestCredentialAvatarURL);
-  value->SetString("federation", kTestCredentialFederationURL);
-  return value.Pass();
+  value->SetString("federation",
+                   url::Origin(GURL(kTestCredentialFederationURL)).Serialize());
+  return value;
 }
 
 // Tests that parsing an empty value fails.
@@ -93,7 +100,7 @@ TEST(CredentialUtilTest, ParsingEmptyValueFails) {
 
 // Tests that parsing a value with a bad type fails.
 TEST(CredentialUtilTest, ParsingValueWithBadTypeFails) {
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue);
   value->SetString("type", "FooCredential");
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -111,8 +118,8 @@ TEST(CredentialUtilTest, ParsingPasswordCredentialSucceeds) {
 // Tests that parsing a value representing a PasswordCredential but with no ID
 // specified fails.
 TEST(CredentialUtilTest, ParsingPasswordCredentialWithNoIDFails) {
-  scoped_ptr<base::DictionaryValue> value(
-      GetTestPasswordCredentialDictionaryValue().Pass());
+  std::unique_ptr<base::DictionaryValue> value(
+      GetTestPasswordCredentialDictionaryValue());
   value->RemoveWithoutPathExpansion("id", nullptr);
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -121,8 +128,8 @@ TEST(CredentialUtilTest, ParsingPasswordCredentialWithNoIDFails) {
 // Tests that parsing a value representing a PasswordCredential with a badly-
 // formed avatarURL fails.
 TEST(CredentialUtilTest, ParsingPasswordCredentialWithBadAvatarURLFails) {
-  scoped_ptr<base::DictionaryValue> value(
-      GetTestPasswordCredentialDictionaryValue().Pass());
+  std::unique_ptr<base::DictionaryValue> value(
+      GetTestPasswordCredentialDictionaryValue());
   value->SetString("avatarURL", "foo");
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -131,8 +138,8 @@ TEST(CredentialUtilTest, ParsingPasswordCredentialWithBadAvatarURLFails) {
 // Tests that parsing a value representing a PasswordCredential with no password
 // specified fails.
 TEST(CredentialUtilTest, ParsingPasswordCredentialWithNoPasswordFails) {
-  scoped_ptr<base::DictionaryValue> value(
-      GetTestPasswordCredentialDictionaryValue().Pass());
+  std::unique_ptr<base::DictionaryValue> value(
+      GetTestPasswordCredentialDictionaryValue());
   value->Remove("password", nullptr);
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -150,8 +157,8 @@ TEST(CredentialUtilTest, ParsingFederatedCredentialSucceeds) {
 // Tests that parsing a value representing a FederatedCredential with no ID
 // fails.
 TEST(CredentialUtilTest, ParsingFederatedCredentialWithNoIDFails) {
-  scoped_ptr<base::DictionaryValue> value(
-      GetTestFederatedCredentialDictionaryValue().Pass());
+  std::unique_ptr<base::DictionaryValue> value(
+      GetTestFederatedCredentialDictionaryValue());
   value->RemoveWithoutPathExpansion("id", nullptr);
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -160,8 +167,8 @@ TEST(CredentialUtilTest, ParsingFederatedCredentialWithNoIDFails) {
 // Tests that parsing a value representing a FederatedCredential with a badly-
 // formed avatarURL fails.
 TEST(CredentialUtilTest, ParsingFederatedCredentialWithBadAvatarURLFails) {
-  scoped_ptr<base::DictionaryValue> value(
-      GetTestFederatedCredentialDictionaryValue().Pass());
+  std::unique_ptr<base::DictionaryValue> value(
+      GetTestFederatedCredentialDictionaryValue());
   value->SetString("avatarURL", "foo");
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -170,8 +177,8 @@ TEST(CredentialUtilTest, ParsingFederatedCredentialWithBadAvatarURLFails) {
 // Tests that parsing a value representing a FederatedCredential with no
 // federation URL fails.
 TEST(CredentialUtilTest, ParsingFederatedValueWithNoFederationURLFails) {
-  scoped_ptr<base::DictionaryValue> value(
-      GetTestFederatedCredentialDictionaryValue().Pass());
+  std::unique_ptr<base::DictionaryValue> value(
+      GetTestFederatedCredentialDictionaryValue());
   value->Remove("federation", nullptr);
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -180,8 +187,8 @@ TEST(CredentialUtilTest, ParsingFederatedValueWithNoFederationURLFails) {
 // Tests that parsing a value representing a FederatedCredential with a badly-
 // formed federationURL fails.
 TEST(CredentialUtilTest, ParsingFederatedValueWithBadFederationURLFails) {
-  scoped_ptr<base::DictionaryValue> value(
-      GetTestFederatedCredentialDictionaryValue().Pass());
+  std::unique_ptr<base::DictionaryValue> value(
+      GetTestFederatedCredentialDictionaryValue());
   value->SetString("federation", "bar");
   Credential credential;
   EXPECT_FALSE(DictionaryValueToCredential(*value, &credential));
@@ -210,7 +217,7 @@ TEST(CredentialUtilTest, SerializeEmptyCredential) {
   base::DictionaryValue value;
   Credential credential;
   CredentialToDictionaryValue(credential, &value);
-  EXPECT_TRUE(make_scoped_ptr(new base::DictionaryValue)->Equals(&value));
+  EXPECT_TRUE(base::WrapUnique(new base::DictionaryValue)->Equals(&value));
 }
 
 TEST(CredentialUtilTest, SerializeEmptyCredentialIntoNonEmptyDictionary) {
@@ -218,7 +225,7 @@ TEST(CredentialUtilTest, SerializeEmptyCredentialIntoNonEmptyDictionary) {
   value.SetString("foo", "bar");
   Credential credential;
   CredentialToDictionaryValue(credential, &value);
-  EXPECT_TRUE(make_scoped_ptr(new base::DictionaryValue)->Equals(&value));
+  EXPECT_TRUE(base::WrapUnique(new base::DictionaryValue)->Equals(&value));
 }
 
 }  // namespace

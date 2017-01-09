@@ -2,20 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/user_script_listener.h"
+
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
-#include "chrome/browser/extensions/user_script_listener.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_throttle.h"
 #include "extensions/browser/extension_registry.h"
 #include "net/base/request_priority.h"
@@ -26,9 +28,7 @@
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using content::ResourceController;
 using content::ResourceThrottle;
-using content::ResourceType;
 
 namespace extensions {
 
@@ -38,16 +38,15 @@ const char kMatchingUrl[] = "http://google.com/";
 const char kNotMatchingUrl[] = "http://example.com/";
 const char kTestData[] = "Hello, World!";
 
-class ThrottleController : public base::SupportsUserData::Data,
-                           public ResourceController {
+class ThrottleDelegate : public base::SupportsUserData::Data,
+                         public ResourceThrottle::Delegate {
  public:
-  ThrottleController(net::URLRequest* request, ResourceThrottle* throttle)
-      : request_(request),
-        throttle_(throttle) {
-    throttle_->set_controller_for_testing(this);
+  ThrottleDelegate(net::URLRequest* request, ResourceThrottle* throttle)
+      : request_(request), throttle_(throttle) {
+    throttle_->set_delegate_for_testing(this);
   }
 
-  // ResourceController implementation:
+  // ResourceThrottle::Delegate implementation:
   void Resume() override { request_->Start(); }
   void Cancel() override { NOTREACHED(); }
   void CancelAndIgnore() override { NOTREACHED(); }
@@ -55,7 +54,7 @@ class ThrottleController : public base::SupportsUserData::Data,
 
  private:
   net::URLRequest* request_;
-  scoped_ptr<ResourceThrottle> throttle_;
+  std::unique_ptr<ResourceThrottle> throttle_;
 };
 
 // A simple test net::URLRequestJob. We don't care what it does, only that
@@ -74,8 +73,9 @@ class SimpleTestJob : public net::URLRequestTestJob {
 };
 
 // Yoinked from extension_manifest_unittest.cc.
-scoped_ptr<base::DictionaryValue> LoadManifestFile(const base::FilePath path,
-                                                   std::string* error) {
+std::unique_ptr<base::DictionaryValue> LoadManifestFile(
+    const base::FilePath path,
+    std::string* error) {
   EXPECT_TRUE(base::PathExists(path));
   JSONFileValueDeserializer deserializer(path);
   return base::DictionaryValue::From(deserializer.Deserialize(NULL, error));
@@ -89,7 +89,7 @@ scoped_refptr<Extension> LoadExtension(const std::string& filename,
       AppendASCII("extensions").
       AppendASCII("manifest_tests").
       AppendASCII(filename.c_str());
-  scoped_ptr<base::DictionaryValue> value = LoadManifestFile(path, error);
+  std::unique_ptr<base::DictionaryValue> value = LoadManifestFile(path, error);
   if (!value)
     return NULL;
   return Extension::Create(path.DirName(), Manifest::UNPACKED, *value,
@@ -119,13 +119,11 @@ class UserScriptListenerTest : public ExtensionServiceTestBase {
  public:
   UserScriptListenerTest() {
     net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
-        "http", "google.com",
-        scoped_ptr<net::URLRequestInterceptor>(
-            new SimpleTestJobURLRequestInterceptor()));
+        "http", "google.com", std::unique_ptr<net::URLRequestInterceptor>(
+                                  new SimpleTestJobURLRequestInterceptor()));
     net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
-        "http", "example.com",
-        scoped_ptr<net::URLRequestInterceptor>(
-            new SimpleTestJobURLRequestInterceptor()));
+        "http", "example.com", std::unique_ptr<net::URLRequestInterceptor>(
+                                   new SimpleTestJobURLRequestInterceptor()));
   }
 
   ~UserScriptListenerTest() override {
@@ -140,33 +138,33 @@ class UserScriptListenerTest : public ExtensionServiceTestBase {
 
     InitializeEmptyExtensionService();
     service_->Init();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     listener_ = new UserScriptListener();
   }
 
   void TearDown() override {
     listener_ = NULL;
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     ExtensionServiceTestBase::TearDown();
   }
 
  protected:
-  scoped_ptr<net::URLRequest> StartTestRequest(
+  std::unique_ptr<net::URLRequest> StartTestRequest(
       net::URLRequest::Delegate* delegate,
       const std::string& url_string,
       net::TestURLRequestContext* context) {
     GURL url(url_string);
-    scoped_ptr<net::URLRequest> request(context->CreateRequest(
-        url, net::DEFAULT_PRIORITY, delegate));
+    std::unique_ptr<net::URLRequest> request(
+        context->CreateRequest(url, net::DEFAULT_PRIORITY, delegate));
 
     ResourceThrottle* throttle = listener_->CreateResourceThrottle(
         url, content::RESOURCE_TYPE_MAIN_FRAME);
 
     bool defer = false;
     if (throttle) {
-      request->SetUserData(NULL,
-                           new ThrottleController(request.get(), throttle));
+      request->SetUserData(nullptr,
+                           new ThrottleDelegate(request.get(), throttle));
 
       throttle->WillStartRequest(&defer);
     }
@@ -174,7 +172,7 @@ class UserScriptListenerTest : public ExtensionServiceTestBase {
     if (!defer)
       request->Start();
 
-    return request.Pass();
+    return request;
   }
 
   void LoadTestExtension() {
@@ -204,11 +202,11 @@ namespace {
 
 TEST_F(UserScriptListenerTest, DelayAndUpdate) {
   LoadTestExtension();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       StartTestRequest(&delegate, kMatchingUrl, &context));
   ASSERT_FALSE(request->is_pending());
 
@@ -216,22 +214,22 @@ TEST_F(UserScriptListenerTest, DelayAndUpdate) {
       extensions::NOTIFICATION_USER_SCRIPTS_UPDATED,
       content::Source<Profile>(profile_.get()),
       content::NotificationService::NoDetails());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(kTestData, delegate.data_received());
 }
 
 TEST_F(UserScriptListenerTest, DelayAndUnload) {
   LoadTestExtension();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       StartTestRequest(&delegate, kMatchingUrl, &context));
   ASSERT_FALSE(request->is_pending());
 
   UnloadTestExtension();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // This is still not enough to start delayed requests. We have to notify the
   // listener that the user scripts have been updated.
@@ -241,42 +239,42 @@ TEST_F(UserScriptListenerTest, DelayAndUnload) {
       extensions::NOTIFICATION_USER_SCRIPTS_UPDATED,
       content::Source<Profile>(profile_.get()),
       content::NotificationService::NoDetails());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(kTestData, delegate.data_received());
 }
 
 TEST_F(UserScriptListenerTest, NoDelayNoExtension) {
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       StartTestRequest(&delegate, kMatchingUrl, &context));
 
   // The request should be started immediately.
   ASSERT_TRUE(request->is_pending());
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(kTestData, delegate.data_received());
 }
 
 TEST_F(UserScriptListenerTest, NoDelayNotMatching) {
   LoadTestExtension();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       StartTestRequest(&delegate, kNotMatchingUrl, &context));
 
   // The request should be started immediately.
   ASSERT_TRUE(request->is_pending());
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(kTestData, delegate.data_received());
 }
 
 TEST_F(UserScriptListenerTest, MultiProfile) {
   LoadTestExtension();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Fire up a second profile and have it load an extension with a content
   // script.
@@ -295,7 +293,7 @@ TEST_F(UserScriptListenerTest, MultiProfile) {
 
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       StartTestRequest(&delegate, kMatchingUrl, &context));
   ASSERT_FALSE(request->is_pending());
 
@@ -305,7 +303,7 @@ TEST_F(UserScriptListenerTest, MultiProfile) {
       extensions::NOTIFICATION_USER_SCRIPTS_UPDATED,
       content::Source<Profile>(profile_.get()),
       content::NotificationService::NoDetails());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_FALSE(request->is_pending());
   EXPECT_TRUE(delegate.data_received().empty());
 
@@ -314,7 +312,7 @@ TEST_F(UserScriptListenerTest, MultiProfile) {
       extensions::NOTIFICATION_USER_SCRIPTS_UPDATED,
       content::Source<Profile>(&profile2),
       content::NotificationService::NoDetails());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(kTestData, delegate.data_received());
 }
 
@@ -323,17 +321,17 @@ TEST_F(UserScriptListenerTest, MultiProfile) {
 // throttles.
 TEST_F(UserScriptListenerTest, ResumeBeforeStart) {
   LoadTestExtension();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
   GURL url(kMatchingUrl);
-  scoped_ptr<net::URLRequest> request(context.CreateRequest(
-      url, net::DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<net::URLRequest> request(
+      context.CreateRequest(url, net::DEFAULT_PRIORITY, &delegate));
 
   ResourceThrottle* throttle =
       listener_->CreateResourceThrottle(url, content::RESOURCE_TYPE_MAIN_FRAME);
   ASSERT_TRUE(throttle);
-  request->SetUserData(NULL, new ThrottleController(request.get(), throttle));
+  request->SetUserData(nullptr, new ThrottleDelegate(request.get(), throttle));
 
   ASSERT_FALSE(request->is_pending());
 
@@ -341,7 +339,7 @@ TEST_F(UserScriptListenerTest, ResumeBeforeStart) {
       extensions::NOTIFICATION_USER_SCRIPTS_UPDATED,
       content::Source<Profile>(profile_.get()),
       content::NotificationService::NoDetails());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   bool defer = false;
   throttle->WillStartRequest(&defer);

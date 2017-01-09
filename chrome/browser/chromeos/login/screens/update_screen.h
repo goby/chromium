@@ -10,6 +10,7 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -41,7 +42,6 @@ class UpdateScreen : public UpdateModel,
   static UpdateScreen* Get(ScreenManager* manager);
 
   // UpdateModel:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void Initialize(::login::ScreenContext* context) override;
@@ -176,7 +176,7 @@ class UpdateScreen : public UpdateModel,
   // the default network.
   bool is_first_portal_notification_;
 
-  scoped_ptr<ErrorScreensHistogramHelper> histogram_helper_;
+  std::unique_ptr<ErrorScreensHistogramHelper> histogram_helper_;
 
   // Timer for the captive portal detector to show portal login page.
   // If redirect did not happen during this delay, error message is shown

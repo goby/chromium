@@ -58,13 +58,12 @@ void ShowWarningOnOpenOperationResult(Profile* profile,
       break;
   }
 
-  Browser* browser =
-      chrome::FindTabbedBrowser(profile, false, chrome::HOST_DESKTOP_TYPE_ASH);
-  chrome::ShowMessageBox(
+  Browser* browser = chrome::FindTabbedBrowser(profile, false);
+  chrome::ShowWarningMessageBox(
       browser ? browser->window()->GetNativeWindow() : nullptr,
       l10n_util::GetStringFUTF16(IDS_FILE_BROWSER_ERROR_VIEWING_FILE_TITLE,
                                  path.BaseName().AsUTF16Unsafe()),
-      l10n_util::GetStringUTF16(message_id), chrome::MESSAGE_BOX_TYPE_WARNING);
+      l10n_util::GetStringUTF16(message_id));
 }
 
 }  // namespace
@@ -109,8 +108,7 @@ void OpenExternal(Profile* profile, const GURL& url) {
   //     "Browser::EmailPageLocation" (to name only one).
   // As such we should keep this code here.
   chrome::NavigateParams params(profile, url, ui::PAGE_TRANSITION_LINK);
-  params.disposition = NEW_FOREGROUND_TAB;
-  params.host_desktop_type = chrome::HOST_DESKTOP_TYPE_ASH;
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
 
   if (url.SchemeIs("mailto")) {
     std::string string_url = kGmailComposeUrl;

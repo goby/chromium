@@ -11,6 +11,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message_filter.h"
@@ -34,10 +35,6 @@
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/proxy_lock.h"
 #include "ppapi/shared_impl/resource.h"
-
-#if defined(OS_POSIX) && !defined(OS_NACL)
-#include "ipc/ipc_channel_posix.h"
-#endif
 
 namespace ppapi {
 namespace proxy {
@@ -243,7 +240,7 @@ bool PluginDispatcher::OnMessageReceived(const IPC::Message& msg) {
     IPC_BEGIN_MESSAGE_MAP(PluginDispatcher, msg)
       IPC_MESSAGE_HANDLER(PpapiMsg_SupportsInterface, OnMsgSupportsInterface)
       IPC_MESSAGE_HANDLER(PpapiMsg_SetPreferences, OnMsgSetPreferences)
-      IPC_MESSAGE_UNHANDLED(handled = false);
+      IPC_MESSAGE_UNHANDLED(handled = false)
     IPC_END_MESSAGE_MAP()
     if (handled)
       return true;
@@ -265,7 +262,8 @@ void PluginDispatcher::DidCreateInstance(PP_Instance instance) {
   if (!g_instance_to_dispatcher)
     g_instance_to_dispatcher = new InstanceToDispatcherMap;
   (*g_instance_to_dispatcher)[instance] = this;
-  instance_map_.set(instance, scoped_ptr<InstanceData>(new InstanceData()));
+  instance_map_.set(instance,
+                    std::unique_ptr<InstanceData>(new InstanceData()));
 }
 
 void PluginDispatcher::DidDestroyInstance(PP_Instance instance) {

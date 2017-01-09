@@ -5,7 +5,10 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_IMAGE_WRITER_PRIVATE_IMAGE_WRITER_UTILITY_CLIENT_H_
 #define CHROME_BROWSER_EXTENSIONS_API_IMAGE_WRITER_PRIVATE_IMAGE_WRITER_UTILITY_CLIENT_H_
 
+#include <stdint.h>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -17,7 +20,7 @@ class ImageWriterUtilityClient : public content::UtilityProcessHostClient {
  public:
   typedef base::Callback<void()> CancelCallback;
   typedef base::Callback<void()> SuccessCallback;
-  typedef base::Callback<void(int64)> ProgressCallback;
+  typedef base::Callback<void(int64_t)> ProgressCallback;
   typedef base::Callback<void(const std::string&)> ErrorCallback;
 
   ImageWriterUtilityClient();
@@ -63,7 +66,7 @@ class ImageWriterUtilityClient : public content::UtilityProcessHostClient {
 
   // UtilityProcessHostClient implementation.
   void OnProcessCrashed(int exit_code) override;
-  void OnProcessLaunchFailed() override;
+  void OnProcessLaunchFailed(int error_code) override;
   bool OnMessageReceived(const IPC::Message& message) override;
   virtual bool Send(IPC::Message* msg);
 
@@ -71,7 +74,7 @@ class ImageWriterUtilityClient : public content::UtilityProcessHostClient {
   void OnWriteImageSucceeded();
   void OnWriteImageCancelled();
   void OnWriteImageFailed(const std::string& message);
-  void OnWriteImageProgress(int64 progress);
+  void OnWriteImageProgress(int64_t progress);
 
   CancelCallback cancel_callback_;
   ProgressCallback progress_callback_;

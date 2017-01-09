@@ -15,6 +15,7 @@ import junit.framework.TestResult;
 
 import org.chromium.base.Log;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.SkipCheck;
 import org.chromium.base.test.util.parameter.BaseParameter;
 import org.chromium.base.test.util.parameter.Parameter;
 import org.chromium.base.test.util.parameter.Parameterizable;
@@ -50,20 +51,6 @@ public class BaseTestResult extends TestResult {
         mSkipChecks = new ArrayList<>();
         mPreTestHooks = new ArrayList<>();
         mInstrumentation = instrumentation;
-    }
-
-    /**
-     * An interface for classes that check whether a test case should be skipped.
-     */
-    public interface SkipCheck {
-        /**
-         *
-         * Checks whether the given test case should be skipped.
-         *
-         * @param testCase The test case to check.
-         * @return Whether the test case should be skipped.
-         */
-        boolean shouldSkip(TestCase testCase);
     }
 
     /**
@@ -119,6 +106,8 @@ public class BaseTestResult extends TestResult {
 
     @Override
     protected void run(TestCase test) {
+        runPreTestHooks(test);
+
         if (shouldSkip(test)) {
             startTest(test);
 
@@ -130,8 +119,6 @@ public class BaseTestResult extends TestResult {
 
             endTest(test);
         } else {
-            runPreTestHooks(test);
-
             if (test instanceof Parameterizable) {
                 try {
                     runParameterized(test);

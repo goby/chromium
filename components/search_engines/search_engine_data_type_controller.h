@@ -5,13 +5,12 @@
 #ifndef COMPONENTS_SEARCH_ENGINES_SEARCH_ENGINE_DATA_TYPE_CONTROLLER_H__
 #define COMPONENTS_SEARCH_ENGINES_SEARCH_ENGINE_DATA_TYPE_CONTROLLER_H__
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/search_engines/template_url_service.h"
-#include "components/sync_driver/ui_data_type_controller.h"
-
-class Profile;
+#include "components/sync/driver/async_directory_type_controller.h"
 
 namespace browser_sync {
 
@@ -19,33 +18,28 @@ namespace browser_sync {
 // how to load the model for this data type, and the superclasses manage
 // controlling the rest of the state of the datatype with regards to sync.
 class SearchEngineDataTypeController
-    : public sync_driver::UIDataTypeController {
+    : public syncer::AsyncDirectoryTypeController {
  public:
-  SearchEngineDataTypeController(
-      const scoped_refptr<base::SingleThreadTaskRunner>& ui_thread,
-      const base::Closure& error_callback,
-      sync_driver::SyncClient* sync_client,
-      TemplateURLService* template_url_service);
+  // |dump_stack| is called when an unrecoverable error occurs.
+  SearchEngineDataTypeController(const base::Closure& dump_stack,
+                                 syncer::SyncClient* sync_client,
+                                 TemplateURLService* template_url_service);
+  ~SearchEngineDataTypeController() override;
 
   TemplateURLService::Subscription* GetSubscriptionForTesting();
 
  private:
-  ~SearchEngineDataTypeController() override;
-
-  // FrontendDataTypeController:
+  // AsyncDirectoryTypeController:
   bool StartModels() override;
   void StopModels() override;
 
   void OnTemplateURLServiceLoaded();
 
-  // A reference to the UI thread's task runner.
-  const scoped_refptr<base::SingleThreadTaskRunner> ui_thread_;
-
   // A pointer to the template URL service that this data type will use.
   TemplateURLService* template_url_service_;
 
   // A subscription to the OnLoadedCallback so it can be cleared if necessary.
-  scoped_ptr<TemplateURLService::Subscription> template_url_subscription_;
+  std::unique_ptr<TemplateURLService::Subscription> template_url_subscription_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchEngineDataTypeController);
 };

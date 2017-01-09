@@ -10,6 +10,8 @@
 #include "base/i18n/rtl.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "content/child/child_process.h"
@@ -19,7 +21,7 @@
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
-#include "content/public/plugin/content_plugin_client.h"
+#include "ipc/ipc_sender.h"
 #include "ppapi/proxy/plugin_globals.h"
 #include "ppapi/proxy/proxy_module.h"
 #include "ui/base/ui_base_switches.h"
@@ -27,12 +29,12 @@
 #if defined(OS_WIN)
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
-#include "content/common/font_warmup_win.h"
+#include "content/child/dwrite_font_proxy/dwrite_font_proxy_init_win.h"
 #include "sandbox/win/src/sandbox.h"
 #include "third_party/WebKit/public/web/win/WebFontRendering.h"
 #include "third_party/skia/include/ports/SkTypeface_win.h"
+#include "ui/gfx/font_render_params.h"
 #include "ui/gfx/win/direct_write.h"
-#include "ui/gfx/win/dpi.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -41,6 +43,10 @@
 
 #if defined(OS_LINUX)
 #include "content/public/common/sandbox_init.h"
+#endif
+
+#ifdef V8_USE_EXTERNAL_STARTUP_DATA
+#include "gin/v8_initializer.h"
 #endif
 
 #if defined(OS_POSIX) && !defined(OS_ANDROID)
@@ -54,18 +60,6 @@ void* g_target_services = 0;
 #endif
 
 namespace content {
-
-namespace {
-
-#if defined(OS_WIN)
-// Windows-only skia sandbox support
-void SkiaPreCacheFont(const LOGFONT& logfont) {
-  ppapi::proxy::PluginGlobals::Get()->PreCacheFontForFlash(
-      reinterpret_cast<const void*>(&logfont));
-}
-#endif
-
-}  // namespace
 
 // Main function for starting the PPAPI plugin process.
 int PpapiPluginMain(const MainFunctionParams& parameters) {
@@ -121,10 +115,10 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
   base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
       kTraceEventPpapiProcessSortIndex);
 
-  // Allow the embedder to perform any necessary per-process initialization
-  // before the sandbox is initialized.
-  if (GetContentClient()->plugin())
-    GetContentClient()->plugin()->PreSandboxInitialization();
+#ifdef V8_USE_EXTERNAL_STARTUP_DATA
+  gin::V8Initializer::LoadV8Snapshot();
+  gin::V8Initializer::LoadV8Natives();
+#endif
 
 #if defined(OS_LINUX)
   LinuxSandbox::InitializeSandbox();
@@ -137,18 +131,34 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
 #if defined(OS_WIN)
   if (!base::win::IsUser32AndGdi32Available())
     gfx::win::MaybeInitializeDirectWrite();
-  bool use_direct_write = gfx::win::IsDirectWriteEnabled();
-  if (use_direct_write) {
-    WarmupDirectWrite();
-  } else {
-    SkTypeface_SetEnsureLOGFONTAccessibleProc(SkiaPreCacheFont);
-  }
+  InitializeDWriteFontProxy();
 
-  blink::WebFontRendering::setUseDirectWrite(use_direct_write);
-  blink::WebFontRendering::setDeviceScaleFactor(gfx::GetDPIScale());
+  double device_scale_factor = 1.0;
+  base::StringToDouble(
+      command_line.GetSwitchValueASCII(switches::kDeviceScaleFactor),
+      &device_scale_factor);
+  blink::WebFontRendering::setDeviceScaleFactor(device_scale_factor);
+
+  int antialiasing_enabled = 1;
+  base::StringToInt(
+      command_line.GetSwitchValueASCII(switches::kPpapiAntialiasedTextEnabled),
+      &antialiasing_enabled);
+  blink::WebFontRendering::setAntialiasedTextEnabled(
+      antialiasing_enabled ? true : false);
+
+  int subpixel_rendering = 0;
+  base::StringToInt(command_line.GetSwitchValueASCII(
+                        switches::kPpapiSubpixelRenderingSetting),
+                    &subpixel_rendering);
+  blink::WebFontRendering::setLCDTextEnabled(
+      subpixel_rendering != gfx::FontRenderParams::SUBPIXEL_RENDERING_NONE);
 #endif
 
-  main_message_loop.Run();
+  base::RunLoop().Run();
+
+#if defined(OS_WIN)
+  UninitializeDWriteFontProxy();
+#endif
   return 0;
 }
 

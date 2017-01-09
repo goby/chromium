@@ -9,10 +9,10 @@ define([
   ], function(expect, core, gc) {
 
   var HANDLE_SIGNAL_READWRITABLE = core.HANDLE_SIGNAL_WRITABLE |
-                      core.HANDLE_SIGNAL_READABLE;
+                                   core.HANDLE_SIGNAL_READABLE;
   var HANDLE_SIGNAL_ALL = core.HANDLE_SIGNAL_WRITABLE |
-                      core.HANDLE_SIGNAL_READABLE |
-                      core.HANDLE_SIGNAL_PEER_CLOSED;
+                          core.HANDLE_SIGNAL_READABLE |
+                          core.HANDLE_SIGNAL_PEER_CLOSED;
 
   runWithMessagePipe(testNop);
   runWithMessagePipe(testReadAndWriteMessage);
@@ -24,6 +24,7 @@ define([
   runWithDataPipeWithOptions(testReadAndWriteDataPipe);
   runWithMessagePipe(testIsHandleMessagePipe);
   runWithDataPipe(testIsHandleDataPipe);
+  runWithSharedBuffer(testSharedBuffer);
   gc.collectGarbage();  // should not crash
   this.result = "PASS";
 
@@ -73,6 +74,17 @@ define([
     expect(core.close(pipe.consumerHandle)).toBe(core.RESULT_OK);
   }
 
+  function runWithSharedBuffer(test) {
+    let buffer_size = 32;
+    let sharedBuffer = core.createSharedBuffer(buffer_size,
+        core.CREATE_SHARED_BUFFER_OPTIONS_FLAG_NONE);
+
+    expect(sharedBuffer.result).toBe(core.RESULT_OK);
+    expect(core.isHandle(sharedBuffer.handle)).toBeTruthy();
+
+    test(sharedBuffer, buffer_size);
+  }
+
   function testNop(pipe) {
   }
 
@@ -118,21 +130,19 @@ define([
 
     expect(result).toBe(core.RESULT_OK);
 
-    wait = core.waitMany(
-                  [pipe.handle0, pipe.handle1],
-                  [core.HANDLE_SIGNAL_WRITABLE,core.HANDLE_SIGNAL_WRITABLE],
-                  0);
+    wait = core.wait(pipe.handle0, core.HANDLE_SIGNAL_WRITABLE, 0);
     expect(wait.result).toBe(core.RESULT_OK);
-    expect(wait.index).toBe(0);
-    expect(wait.signalsState[0].satisfiedSignals).toBe(
-           core.HANDLE_SIGNAL_WRITABLE);
-    expect(wait.signalsState[0].satisfiableSignals).toBe(HANDLE_SIGNAL_ALL);
-    expect(wait.signalsState[1].satisfiedSignals).toBe(
-           HANDLE_SIGNAL_READWRITABLE);
-    expect(wait.signalsState[1].satisfiableSignals).toBe(HANDLE_SIGNAL_ALL);
+    expect(wait.signalsState.satisfiedSignals).toBe(
+        core.HANDLE_SIGNAL_WRITABLE);
+    expect(wait.signalsState.satisfiableSignals).toBe(HANDLE_SIGNAL_ALL);
 
-    var read = core.readMessage(
-      pipe.handle1, core.READ_MESSAGE_FLAG_NONE);
+    wait = core.wait(pipe.handle1, core.HANDLE_SIGNAL_READABLE,
+                     core.DEADLINE_INDEFINITE);
+    expect(wait.result).toBe(core.RESULT_OK);
+    expect(wait.signalsState.satisfiedSignals).toBe(HANDLE_SIGNAL_READWRITABLE);
+    expect(wait.signalsState.satisfiableSignals).toBe(HANDLE_SIGNAL_ALL);
+
+    var read = core.readMessage(pipe.handle1, core.READ_MESSAGE_FLAG_NONE);
 
     expect(read.result).toBe(core.RESULT_OK);
     expect(read.buffer.byteLength).toBe(42);
@@ -156,6 +166,9 @@ define([
     expect(write.result).toBe(core.RESULT_OK);
     expect(write.numBytes).toBe(42);
 
+    var wait = core.wait(pipe.consumerHandle, core.HANDLE_SIGNAL_READABLE,
+                         core.DEADLINE_INDEFINITE);
+    expect(wait.result).toBe(core.RESULT_OK);
     var peeked = core.readData(
          pipe.consumerHandle,
          core.READ_DATA_FLAG_PEEK | core.READ_DATA_FLAG_ALL_OR_NONE);
@@ -192,6 +205,42 @@ define([
   function testIsHandleDataPipe(pipe) {
     expect(core.isHandle(pipe.consumerHandle)).toBeTruthy();
     expect(core.isHandle(pipe.producerHandle)).toBeTruthy();
+  }
+
+  function testSharedBuffer(sharedBuffer, buffer_size) {
+    let offset = 0;
+    let mappedBuffer0 = core.mapBuffer(sharedBuffer.handle,
+                                       offset,
+                                       buffer_size,
+                                       core.MAP_BUFFER_FLAG_NONE);
+
+    expect(mappedBuffer0.result).toBe(core.RESULT_OK);
+
+    let dupedBufferHandle = core.duplicateBufferHandle(sharedBuffer.handle,
+        core.DUPLICATE_BUFFER_HANDLE_OPTIONS_FLAG_NONE);
+
+    expect(dupedBufferHandle.result).toBe(core.RESULT_OK);
+    expect(core.isHandle(dupedBufferHandle.handle)).toBeTruthy();
+
+    let mappedBuffer1 = core.mapBuffer(dupedBufferHandle.handle,
+                                       offset,
+                                       buffer_size,
+                                       core.MAP_BUFFER_FLAG_NONE);
+
+    expect(mappedBuffer1.result).toBe(core.RESULT_OK);
+
+    let buffer0 = new Uint8Array(mappedBuffer0.buffer);
+    let buffer1 = new Uint8Array(mappedBuffer1.buffer);
+    for(let i = 0; i < buffer0.length; ++i) {
+      buffer0[i] = i;
+      expect(buffer1[i]).toBe(i);
+    }
+
+    expect(core.unmapBuffer(mappedBuffer0.buffer)).toBe(core.RESULT_OK);
+    expect(core.unmapBuffer(mappedBuffer1.buffer)).toBe(core.RESULT_OK);
+
+    expect(core.close(dupedBufferHandle.handle)).toBe(core.RESULT_OK);
+    expect(core.close(sharedBuffer.handle)).toBe(core.RESULT_OK);
   }
 
 });

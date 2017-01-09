@@ -4,11 +4,14 @@
 
 #include "chromeos/network/shill_property_util.h"
 
+#include <stdint.h>
+
 #include <set>
 
-#include "base/i18n/icu_encoding_detection.h"
+#include "base/i18n/encoding_detection.h"
 #include "base/i18n/icu_string_conversions.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -28,15 +31,15 @@ namespace {
 // Replace non UTF8 characters in |str| with a replacement character.
 std::string ValidateUTF8(const std::string& str) {
   std::string result;
-  for (int32 index = 0; index < static_cast<int32>(str.size()); ++index) {
-    uint32 code_point_out;
+  for (int32_t index = 0; index < static_cast<int32_t>(str.size()); ++index) {
+    uint32_t code_point_out;
     bool is_unicode_char = base::ReadUnicodeCharacter(
         str.c_str(), str.size(), &index, &code_point_out);
-    const uint32 kFirstNonControlChar = 0x20;
+    const uint32_t kFirstNonControlChar = 0x20;
     if (is_unicode_char && (code_point_out >= kFirstNonControlChar)) {
       base::WriteUnicodeCharacter(code_point_out, &result);
     } else {
-      const uint32 kReplacementChar = 0xFFFD;
+      const uint32_t kReplacementChar = 0xFFFD;
       // Puts kReplacementChar if character is a control character [0,0x20)
       // or is not readable UTF8.
       base::WriteUnicodeCharacter(kReplacementChar, &result);
@@ -86,7 +89,7 @@ std::string GetSSIDFromProperties(const base::DictionaryValue& properties,
   }
 
   std::string ssid;
-  std::vector<uint8> raw_ssid_bytes;
+  std::vector<uint8_t> raw_ssid_bytes;
   if (base::HexStringToBytes(hex_ssid, &raw_ssid_bytes)) {
     ssid = std::string(raw_ssid_bytes.begin(), raw_ssid_bytes.end());
     VLOG(2) << "GetSSIDFromProperties: " << name << " HexSsid=" << hex_ssid
@@ -188,32 +191,33 @@ std::string GetNameFromProperties(const std::string& service_path,
   return ssid;
 }
 
-scoped_ptr<NetworkUIData> GetUIDataFromValue(const base::Value& ui_data_value) {
+std::unique_ptr<NetworkUIData> GetUIDataFromValue(
+    const base::Value& ui_data_value) {
   std::string ui_data_str;
   if (!ui_data_value.GetAsString(&ui_data_str))
-    return scoped_ptr<NetworkUIData>();
+    return std::unique_ptr<NetworkUIData>();
   if (ui_data_str.empty())
-    return make_scoped_ptr(new NetworkUIData());
-  scoped_ptr<base::DictionaryValue> ui_data_dict(
+    return base::MakeUnique<NetworkUIData>();
+  std::unique_ptr<base::DictionaryValue> ui_data_dict(
       chromeos::onc::ReadDictionaryFromJson(ui_data_str));
   if (!ui_data_dict)
-    return scoped_ptr<NetworkUIData>();
-  return make_scoped_ptr(new NetworkUIData(*ui_data_dict));
+    return std::unique_ptr<NetworkUIData>();
+  return base::MakeUnique<NetworkUIData>(*ui_data_dict);
 }
 
-scoped_ptr<NetworkUIData> GetUIDataFromProperties(
+std::unique_ptr<NetworkUIData> GetUIDataFromProperties(
     const base::DictionaryValue& shill_dictionary) {
   const base::Value* ui_data_value = NULL;
   shill_dictionary.GetWithoutPathExpansion(shill::kUIDataProperty,
                                            &ui_data_value);
   if (!ui_data_value) {
     VLOG(2) << "Dictionary has no UIData entry.";
-    return scoped_ptr<NetworkUIData>();
+    return std::unique_ptr<NetworkUIData>();
   }
-  scoped_ptr<NetworkUIData> ui_data = GetUIDataFromValue(*ui_data_value);
+  std::unique_ptr<NetworkUIData> ui_data = GetUIDataFromValue(*ui_data_value);
   if (!ui_data)
     LOG(ERROR) << "UIData is not a valid JSON dictionary.";
-  return ui_data.Pass();
+  return ui_data;
 }
 
 void SetUIData(const NetworkUIData& ui_data,

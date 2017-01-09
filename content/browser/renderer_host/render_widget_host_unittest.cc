@@ -2,37 +2,48 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <tuple>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
-#include "content/browser/browser_thread_impl.h"
+#include "build/build_config.h"
 #include "content/browser/gpu/compositor_util.h"
-#include "content/browser/gpu/gpu_surface_tracker.h"
 #include "content/browser/renderer_host/input/input_router_impl.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/common/input/synthetic_web_input_event_builders.h"
 #include "content/common/input_messages.h"
+#include "content/common/resize_params.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/test/test_render_view_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/display/screen.h"
+#include "ui/events/blink/web_input_event_traits.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/screen.h"
 
 #if defined(OS_ANDROID)
+#include "content/browser/renderer_host/context_provider_factory_impl_android.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
+#include "content/test/mock_gpu_channel_establish_factory.h"
+#include "ui/android/screen_android.h"
 #endif
 
-#if defined(USE_AURA) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(USE_AURA) || defined(OS_MACOSX)
 #include "content/browser/compositor/test/no_transport_image_transport_factory.h"
 #endif
 
@@ -62,10 +73,10 @@ std::string GetInputMessageTypes(MockRenderProcessHost* process) {
     EXPECT_EQ(InputMsg_HandleInputEvent::ID, message->type());
     InputMsg_HandleInputEvent::Param params;
     EXPECT_TRUE(InputMsg_HandleInputEvent::Read(message, &params));
-    const WebInputEvent* event = base::get<0>(params);
+    const WebInputEvent* event = std::get<0>(params);
     if (i != 0)
       result += " ";
-    result += WebInputEventTraits::GetName(event->type);
+    result += WebInputEvent::GetName(event->type);
   }
   process->sink().ClearMessages();
   return result;
@@ -88,7 +99,7 @@ class MockInputRouter : public InputRouter {
   ~MockInputRouter() override {}
 
   // InputRouter
-  bool SendInput(scoped_ptr<IPC::Message> message) override {
+  bool SendInput(std::unique_ptr<IPC::Message> message) override {
     send_event_called_ = true;
     return true;
   }
@@ -120,6 +131,7 @@ class MockInputRouter : public InputRouter {
   void RequestNotificationWhenFlushed() override {}
   bool HasPendingEvents() const override { return false; }
   void SetDeviceScaleFactor(float device_scale_factor) override {}
+  void SetFrameTreeNodeId(int frameTreeNodeId) override {}
 
   // IPC::Listener
   bool OnMessageReceived(const IPC::Message& message) override {
@@ -267,9 +279,6 @@ class TestView : public TestRenderWidgetHostView {
   void ClearMockPhysicalBackingSize() {
     use_fake_physical_backing_size_ = false;
   }
-  void SetScreenInfo(const blink::WebScreenInfo& screen_info) {
-    screen_info_ = screen_info;
-  }
 
   // RenderWidgetHostView override.
   gfx::Rect GetViewBounds() const override { return bounds_; }
@@ -295,9 +304,6 @@ class TestView : public TestRenderWidgetHostView {
       return mock_physical_backing_size_;
     return TestRenderWidgetHostView::GetPhysicalBackingSize();
   }
-  void GetScreenInfo(blink::WebScreenInfo* screen_info) override {
-    *screen_info = screen_info_;
-  }
 #if defined(USE_AURA)
   ~TestView() override {
     // Simulate the mouse exit event dispatched when an aura window is
@@ -322,7 +328,6 @@ class TestView : public TestRenderWidgetHostView {
   bool use_fake_physical_backing_size_;
   gfx::Size mock_physical_backing_size_;
   InputEventAckState ack_result_;
-  blink::WebScreenInfo screen_info_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestView);
@@ -378,6 +383,15 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
 
   bool unresponsive_timer_fired() const { return unresponsive_timer_fired_; }
 
+  void SetScreenInfo(const ScreenInfo& screen_info) {
+    screen_info_ = screen_info;
+  }
+
+  // RenderWidgetHostDelegate overrides.
+  void GetScreenInfo(ScreenInfo* screen_info) override {
+    *screen_info = screen_info_;
+  }
+
  protected:
   bool PreHandleKeyboardEvent(const NativeWebKeyboardEvent& event,
                               bool* is_keyboard_shortcut) override {
@@ -397,7 +411,8 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
     return handle_wheel_event_;
   }
 
-  void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host) override {
+  void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host,
+                            RendererUnresponsiveType type) override {
     unresponsive_timer_fired_ = true;
   }
 
@@ -419,6 +434,8 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
   bool handle_wheel_event_called_;
 
   bool unresponsive_timer_fired_;
+
+  ScreenInfo screen_info_;
 };
 
 // RenderWidgetHostTest --------------------------------------------------------
@@ -451,14 +468,20 @@ class RenderWidgetHostTest : public testing::Test {
     browser_context_.reset(new TestBrowserContext());
     delegate_.reset(new MockRenderWidgetHostDelegate());
     process_ = new RenderWidgetHostProcess(browser_context_.get());
-#if defined(USE_AURA) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(USE_AURA) || defined(OS_MACOSX)
     ImageTransportFactory::InitializeForUnitTests(
-        scoped_ptr<ImageTransportFactory>(
+        std::unique_ptr<ImageTransportFactory>(
             new NoTransportImageTransportFactory));
+#endif
+#if defined(OS_ANDROID)
+    ContextProviderFactoryImpl::Initialize(&gpu_channel_factory_);
+    ui::ContextProviderFactory::SetInstance(
+        ContextProviderFactoryImpl::GetInstance());
+    ui::SetScreenAndroid();  // calls display::Screen::SetScreenInstance().
 #endif
 #if defined(USE_AURA)
     screen_.reset(aura::TestScreen::Create(gfx::Size()));
-    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, screen_.get());
+    display::Screen::SetScreenInstance(screen_.get());
 #endif
     host_.reset(new MockRenderWidgetHost(delegate_.get(), process_,
                                          process_->GetNextRoutingID()));
@@ -478,19 +501,24 @@ class RenderWidgetHostTest : public testing::Test {
     browser_context_.reset();
 
 #if defined(USE_AURA)
-    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, nullptr);
+    display::Screen::SetScreenInstance(nullptr);
     screen_.reset();
 #endif
-#if defined(USE_AURA) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(USE_AURA) || defined(OS_MACOSX)
     ImageTransportFactory::Terminate();
+#endif
+#if defined(OS_ANDROID)
+    display::Screen::SetScreenInstance(nullptr);
+    ui::ContextProviderFactory::SetInstance(nullptr);
+    ContextProviderFactoryImpl::Terminate();
 #endif
 
     // Process all pending tasks to avoid leaks.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SetInitialRenderSizeParams() {
-    ViewMsg_Resize_Params render_size_params;
+    ResizeParams render_size_params;
     host_->GetResizeParams(&render_size_params);
     host_->SetInitialRenderSizeParams(render_size_params);
   }
@@ -498,14 +526,12 @@ class RenderWidgetHostTest : public testing::Test {
   virtual void ConfigureView(TestView* view) {
   }
 
-  int64 GetLatencyComponentId() {
-    return host_->GetLatencyComponentId();
-  }
+  int64_t GetLatencyComponentId() { return host_->GetLatencyComponentId(); }
 
   void SendInputEventACK(WebInputEvent::Type type,
                          InputEventAckState ack_result) {
     DCHECK(!WebInputEvent::isTouchEventType(type));
-    InputEventAck ack(type, ack_result);
+    InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD, type, ack_result);
     host_->OnMessageReceived(InputHostMsg_HandleInputEvent_ACK(0, ack));
   }
 
@@ -538,8 +564,8 @@ class RenderWidgetHostTest : public testing::Test {
   }
 
   void SimulateWheelEvent(float dX, float dY, int modifiers, bool precise) {
-    host_->ForwardWheelEvent(
-        SyntheticWebMouseWheelEventBuilder::Build(dX, dY, modifiers, precise));
+    host_->ForwardWheelEvent(SyntheticWebMouseWheelEventBuilder::Build(
+        0, 0, dX, dY, modifiers, precise));
   }
 
   void SimulateWheelEventWithLatencyInfo(float dX,
@@ -548,7 +574,8 @@ class RenderWidgetHostTest : public testing::Test {
                                          bool precise,
                                          const ui::LatencyInfo& ui_latency) {
     host_->ForwardWheelEventWithLatencyInfo(
-        SyntheticWebMouseWheelEventBuilder::Build(dX, dY, modifiers, precise),
+        SyntheticWebMouseWheelEventBuilder::Build(0, 0, dX, dY, modifiers,
+                                                  precise),
         ui_latency);
   }
 
@@ -561,7 +588,7 @@ class RenderWidgetHostTest : public testing::Test {
     WebMouseEvent event =
         SyntheticWebMouseEventBuilder::Build(type, x, y, modifiers);
     if (pressed)
-      event.button = WebMouseEvent::ButtonLeft;
+      event.button = WebMouseEvent::Button::Left;
     event.timeStampSeconds = GetNextSimulatedEventTimeSeconds();
     host_->ForwardMouseEvent(event);
   }
@@ -582,14 +609,14 @@ class RenderWidgetHostTest : public testing::Test {
   }
 
   // Set the timestamp for the touch-event.
-  void SetTouchTimestamp(base::TimeDelta timestamp) {
+  void SetTouchTimestamp(base::TimeTicks timestamp) {
     touch_event_.SetTimestamp(timestamp);
   }
 
   // Sends a touch event (irrespective of whether the page has a touch-event
   // handler or not).
-  uint32 SendTouchEvent() {
-    uint32 touch_event_id = touch_event_.uniqueTouchEventId;
+  uint32_t SendTouchEvent() {
+    uint32_t touch_event_id = touch_event_.uniqueTouchEventId;
     host_->ForwardTouchEventWithLatencyInfo(touch_event_, ui::LatencyInfo());
 
     touch_event_.ResetPoints();
@@ -617,21 +644,25 @@ class RenderWidgetHostTest : public testing::Test {
     return reinterpret_cast<const WebInputEvent*>(data);
   }
 
-  base::MessageLoopForUI message_loop_;
-
-  scoped_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
   RenderWidgetHostProcess* process_;  // Deleted automatically by the widget.
-  scoped_ptr<MockRenderWidgetHostDelegate> delegate_;
-  scoped_ptr<MockRenderWidgetHost> host_;
-  scoped_ptr<TestView> view_;
-  scoped_ptr<gfx::Screen> screen_;
+  std::unique_ptr<MockRenderWidgetHostDelegate> delegate_;
+  std::unique_ptr<MockRenderWidgetHost> host_;
+  std::unique_ptr<TestView> view_;
+  std::unique_ptr<display::Screen> screen_;
   bool handle_key_press_event_;
   bool handle_mouse_event_;
   double last_simulated_event_time_seconds_;
   double simulated_event_time_delta_seconds_;
 
+#if defined(OS_ANDROID)
+  MockGpuChannelEstablishFactory gpu_channel_factory_;
+#endif
+
  private:
   SyntheticWebTouchEvent touch_event_;
+
+  TestBrowserThreadBundle thread_bundle_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostTest);
 };
@@ -766,40 +797,43 @@ TEST_F(RenderWidgetHostTest, Resize) {
 }
 
 // Test that a resize event is sent if WasResized() is called after a
-// WebScreenInfo change.
+// ScreenInfo change.
 TEST_F(RenderWidgetHostTest, ResizeScreenInfo) {
-  blink::WebScreenInfo screen_info;
-  screen_info.deviceScaleFactor = 1.f;
+  ScreenInfo screen_info;
+  screen_info.device_scale_factor = 1.f;
   screen_info.rect = blink::WebRect(0, 0, 800, 600);
-  screen_info.availableRect = blink::WebRect(0, 0, 800, 600);
-  screen_info.orientationAngle = 0;
-  screen_info.orientationType = blink::WebScreenOrientationPortraitPrimary;
+  screen_info.available_rect = blink::WebRect(0, 0, 800, 600);
+  screen_info.orientation_angle = 0;
+  screen_info.orientation_type = SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY;
 
-  view_->SetScreenInfo(screen_info);
+  auto host_delegate =
+      static_cast<MockRenderWidgetHostDelegate*>(host_->delegate());
+
+  host_delegate->SetScreenInfo(screen_info);
   host_->WasResized();
   EXPECT_FALSE(host_->resize_ack_pending_);
   EXPECT_TRUE(process_->sink().GetUniqueMessageMatching(ViewMsg_Resize::ID));
   process_->sink().ClearMessages();
 
-  screen_info.orientationAngle = 180;
-  screen_info.orientationType = blink::WebScreenOrientationLandscapePrimary;
+  screen_info.orientation_angle = 180;
+  screen_info.orientation_type = SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY;
 
-  view_->SetScreenInfo(screen_info);
+  host_delegate->SetScreenInfo(screen_info);
   host_->WasResized();
   EXPECT_FALSE(host_->resize_ack_pending_);
   EXPECT_TRUE(process_->sink().GetUniqueMessageMatching(ViewMsg_Resize::ID));
   process_->sink().ClearMessages();
 
-  screen_info.deviceScaleFactor = 2.f;
+  screen_info.device_scale_factor = 2.f;
 
-  view_->SetScreenInfo(screen_info);
+  host_delegate->SetScreenInfo(screen_info);
   host_->WasResized();
   EXPECT_FALSE(host_->resize_ack_pending_);
   EXPECT_TRUE(process_->sink().GetUniqueMessageMatching(ViewMsg_Resize::ID));
   process_->sink().ClearMessages();
 
   // No screen change.
-  view_->SetScreenInfo(screen_info);
+  host_delegate->SetScreenInfo(screen_info);
   host_->WasResized();
   EXPECT_FALSE(host_->resize_ack_pending_);
   EXPECT_FALSE(process_->sink().GetUniqueMessageMatching(ViewMsg_Resize::ID));
@@ -835,7 +869,7 @@ TEST_F(RenderWidgetHostTest, ResizeThenCrash) {
 #if !defined(OS_MACOSX)
 // Tests setting background transparency.
 TEST_F(RenderWidgetHostTest, Background) {
-  scoped_ptr<RenderWidgetHostViewBase> view;
+  std::unique_ptr<RenderWidgetHostViewBase> view;
 #if defined(USE_AURA)
   view.reset(new RenderWidgetHostViewAura(host_.get(), false));
   // TODO(derat): Call this on all platforms: http://crbug.com/102450.
@@ -853,22 +887,18 @@ TEST_F(RenderWidgetHostTest, Background) {
       process_->sink().GetUniqueMessageMatching(
           ViewMsg_SetBackgroundOpaque::ID);
   ASSERT_TRUE(set_background);
-  base::Tuple<bool> sent_background;
+  std::tuple<bool> sent_background;
   ViewMsg_SetBackgroundOpaque::Read(set_background, &sent_background);
-  EXPECT_FALSE(base::get<0>(sent_background));
+  EXPECT_FALSE(std::get<0>(sent_background));
 
-#if defined(USE_AURA)
-  // See the comment above |InitAsChild(NULL)|.
   host_->SetView(NULL);
   static_cast<RenderWidgetHostViewBase*>(view.release())->Destroy();
-#endif
 }
 #endif
 
 // Test that we don't paint when we're hidden, but we still send the ACK. Most
 // of the rest of the painting is tested in the GetBackingStore* ones.
 TEST_F(RenderWidgetHostTest, HiddenPaint) {
-  BrowserThreadImpl ui_thread(BrowserThread::UI, base::MessageLoop::current());
   // Hide the widget, it should have sent out a message to the renderer.
   EXPECT_FALSE(host_->is_hidden_);
   host_->WasHidden();
@@ -890,9 +920,9 @@ TEST_F(RenderWidgetHostTest, HiddenPaint) {
   const IPC::Message* restored = process_->sink().GetUniqueMessageMatching(
       ViewMsg_WasShown::ID);
   ASSERT_TRUE(restored);
-  base::Tuple<bool, ui::LatencyInfo> needs_repaint;
+  std::tuple<bool, ui::LatencyInfo> needs_repaint;
   ViewMsg_WasShown::Read(restored, &needs_repaint);
-  EXPECT_TRUE(base::get<0>(needs_repaint));
+  EXPECT_TRUE(std::get<0>(needs_repaint));
 }
 
 TEST_F(RenderWidgetHostTest, IgnoreKeyEventsHandledByRenderer) {
@@ -938,18 +968,23 @@ TEST_F(RenderWidgetHostTest, PreHandleRawKeyDownEvent) {
   // Forward the KeyUp event.
   SimulateKeyboardEvent(WebInputEvent::KeyUp);
 
-  // Make sure only KeyUp was sent to the renderer.
+  // Make sure the KeyUp event is suppressed.
+  EXPECT_EQ(0U, process_->sink().message_count());
+
+  // Simulate a new RawKeyDown event.
+  SimulateKeyboardEvent(WebInputEvent::RawKeyDown);
   EXPECT_EQ(1U, process_->sink().message_count());
   EXPECT_EQ(InputMsg_HandleInputEvent::ID,
             process_->sink().GetMessageAt(0)->type());
   process_->sink().ClearMessages();
 
   // Send the simulated response from the renderer back.
-  SendInputEventACK(WebInputEvent::KeyUp,
+  SendInputEventACK(WebInputEvent::RawKeyDown,
                     INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
 
   EXPECT_TRUE(delegate_->unhandled_keyboard_event_called());
-  EXPECT_EQ(WebInputEvent::KeyUp, delegate_->unhandled_keyboard_event_type());
+  EXPECT_EQ(WebInputEvent::RawKeyDown,
+            delegate_->unhandled_keyboard_event_type());
 }
 
 TEST_F(RenderWidgetHostTest, RawKeyDownShortcutEvent) {
@@ -1063,17 +1098,21 @@ TEST_F(RenderWidgetHostTest, UnhandledGestureEvent) {
 // while one is in progress (see crbug.com/11007).
 TEST_F(RenderWidgetHostTest, DontPostponeHangMonitorTimeout) {
   // Start with a short timeout.
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(10));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(10), WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Immediately try to add a long 30 second timeout.
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
-  host_->StartHangMonitorTimeout(TimeDelta::FromSeconds(30));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromSeconds(30), WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Wait long enough for first timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMilliseconds(10));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(delegate_->unresponsive_timer_fired());
 }
 
@@ -1081,18 +1120,22 @@ TEST_F(RenderWidgetHostTest, DontPostponeHangMonitorTimeout) {
 // and then started again.
 TEST_F(RenderWidgetHostTest, StopAndStartHangMonitorTimeout) {
   // Start with a short timeout, then stop it.
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(10));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(10), WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
   host_->StopHangMonitorTimeout();
 
   // Start it again to ensure it still works.
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(10));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(10), WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Wait long enough for first timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMilliseconds(40));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(delegate_->unresponsive_timer_fired());
 }
 
@@ -1100,17 +1143,21 @@ TEST_F(RenderWidgetHostTest, StopAndStartHangMonitorTimeout) {
 // updated to a shorter duration.
 TEST_F(RenderWidgetHostTest, ShorterDelayHangMonitorTimeout) {
   // Start with a timeout.
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(100));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(100), WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Start it again with shorter delay.
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
-  host_->StartHangMonitorTimeout(TimeDelta::FromMilliseconds(20));
+  host_->StartHangMonitorTimeout(
+      TimeDelta::FromMilliseconds(20), WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
 
   // Wait long enough for the second timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMilliseconds(25));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(delegate_->unresponsive_timer_fired());
 }
 
@@ -1128,7 +1175,7 @@ TEST_F(RenderWidgetHostTest, HangMonitorTimeoutDisabledForInputWhenHidden) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMicroseconds(2));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
 
   // The timeout should never reactivate while hidden.
@@ -1136,7 +1183,7 @@ TEST_F(RenderWidgetHostTest, HangMonitorTimeoutDisabledForInputWhenHidden) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMicroseconds(2));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_FALSE(delegate_->unresponsive_timer_fired());
 
   // Showing the widget should restore the timeout, as the events have
@@ -1145,7 +1192,7 @@ TEST_F(RenderWidgetHostTest, HangMonitorTimeoutDisabledForInputWhenHidden) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMicroseconds(2));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(delegate_->unresponsive_timer_fired());
 }
 
@@ -1167,7 +1214,7 @@ TEST_F(RenderWidgetHostTest, MultipleInputEvents) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMicroseconds(20));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(delegate_->unresponsive_timer_fired());
 }
 
@@ -1183,7 +1230,7 @@ TEST_F(RenderWidgetHostTest, NewContentRenderingTimeout) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMicroseconds(20));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_FALSE(host_->new_content_rendering_timeout_fired());
 
@@ -1194,7 +1241,7 @@ TEST_F(RenderWidgetHostTest, NewContentRenderingTimeout) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMicroseconds(20));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_FALSE(host_->new_content_rendering_timeout_fired());
 
@@ -1203,7 +1250,7 @@ TEST_F(RenderWidgetHostTest, NewContentRenderingTimeout) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMicroseconds(20));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(host_->new_content_rendering_timeout_fired());
 }
 
@@ -1517,24 +1564,24 @@ TEST_F(RenderWidgetHostTest, InputRouterReceivesHasTouchEventHandlers) {
   EXPECT_TRUE(host_->mock_input_router()->message_received_);
 }
 
-ui::LatencyInfo GetLatencyInfoFromInputEvent(RenderWidgetHostProcess* process) {
-  const IPC::Message* message = process->sink().GetUniqueMessageMatching(
-      InputMsg_HandleInputEvent::ID);
-  EXPECT_TRUE(message);
+void CheckLatencyInfoComponentInMessage(RenderWidgetHostProcess* process,
+                                        int64_t component_id,
+                                        WebInputEvent::Type expected_type) {
+  EXPECT_EQ(process->sink().message_count(), 1U);
+
+  const IPC::Message* message = process->sink().GetMessageAt(0);
+  EXPECT_EQ(InputMsg_HandleInputEvent::ID, message->type());
   InputMsg_HandleInputEvent::Param params;
   EXPECT_TRUE(InputMsg_HandleInputEvent::Read(message, &params));
-  process->sink().ClearMessages();
-  return base::get<1>(params);
-}
 
-void CheckLatencyInfoComponentInMessage(RenderWidgetHostProcess* process,
-                                        int64 component_id,
-                                        WebInputEvent::Type input_type) {
-  ui::LatencyInfo latency_info = GetLatencyInfoFromInputEvent(process);
+  const WebInputEvent* event = std::get<0>(params);
+  ui::LatencyInfo latency_info = std::get<1>(params);
+
+  EXPECT_TRUE(event->type == expected_type);
   EXPECT_TRUE(latency_info.FindLatency(
-      ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
-      component_id,
-      NULL));
+      ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, component_id, NULL));
+
+  process->sink().ClearMessages();
 }
 
 // Tests that after input event passes through RWHI through ForwardXXXEvent()
@@ -1587,8 +1634,9 @@ TEST_F(RenderWidgetHostTest, InputEventRWHLatencyComponent) {
 
   // Tests RWHI::ForwardTouchEventWithLatencyInfo().
   PressTouchPoint(0, 1);
-  uint32 touch_event_id = SendTouchEvent();
-  InputEventAck ack(WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
+  uint32_t touch_event_id = SendTouchEvent();
+  InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD,
+                    WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_event_id);
   host_->OnMessageReceived(InputHostMsg_HandleInputEvent_ACK(0, ack));
   CheckLatencyInfoComponentInMessage(
@@ -1624,7 +1672,7 @@ TEST_F(RenderWidgetHostTest, ResizeParams) {
   view_->set_bounds(bounds);
   view_->SetMockPhysicalBackingSize(physical_backing_size);
 
-  ViewMsg_Resize_Params resize_params;
+  ResizeParams resize_params;
   host_->GetResizeParams(&resize_params);
   EXPECT_EQ(bounds.size(), resize_params.new_size);
   EXPECT_EQ(physical_backing_size, resize_params.physical_backing_size);
@@ -1651,6 +1699,26 @@ TEST_F(RenderWidgetHostInitialSizeTest, InitialSize) {
   EXPECT_FALSE(process_->sink().GetUniqueMessageMatching(ViewMsg_Resize::ID));
   EXPECT_EQ(initial_size_, host_->old_resize_params_->new_size);
   EXPECT_TRUE(host_->resize_ack_pending_);
+}
+
+// Tests that event dispatch after the delegate has been detached doesn't cause
+// a crash. See crbug.com/563237.
+TEST_F(RenderWidgetHostTest, EventDispatchPostDetach) {
+  host_->OnMessageReceived(ViewHostMsg_HasTouchEventHandlers(0, true));
+  process_->sink().ClearMessages();
+
+  host_->DetachDelegate();
+
+  // Tests RWHI::ForwardGestureEventWithLatencyInfo().
+  SimulateGestureEventWithLatencyInfo(WebInputEvent::GestureScrollUpdate,
+                                      blink::WebGestureDeviceTouchscreen,
+                                      ui::LatencyInfo());
+
+
+  // Tests RWHI::ForwardWheelEventWithLatencyInfo().
+  SimulateWheelEventWithLatencyInfo(-5, 0, 0, true, ui::LatencyInfo());
+
+  ASSERT_FALSE(host_->input_router()->HasPendingEvents());
 }
 
 }  // namespace content

@@ -4,7 +4,9 @@
 
 #include "chrome/browser/extensions/extension_action_test_util.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
@@ -77,10 +79,11 @@ size_t GetPageActionCount(content::WebContents* web_contents,
 }
 
 // Creates a new ToolbarActionsModel for the given |context|.
-scoped_ptr<KeyedService> BuildToolbarModel(content::BrowserContext* context) {
-  return make_scoped_ptr(
-      new ToolbarActionsModel(Profile::FromBrowserContext(context),
-                              extensions::ExtensionPrefs::Get(context)));
+std::unique_ptr<KeyedService> BuildToolbarModel(
+    content::BrowserContext* context) {
+  return base::MakeUnique<ToolbarActionsModel>(
+      Profile::FromBrowserContext(context),
+      extensions::ExtensionPrefs::Get(context));
 }
 
 // Creates a new ToolbarActionsModel for the given profile, optionally
@@ -150,12 +153,13 @@ scoped_refptr<const Extension> CreateActionExtension(
   }
 
   if (action_key)
-    manifest.Set(action_key, DictionaryBuilder().Pass());
+    manifest.Set(action_key, DictionaryBuilder().Build());
 
-  return ExtensionBuilder().SetManifest(manifest.Pass()).
-                            SetID(crx_file::id_util::GenerateId(name)).
-                            SetLocation(location).
-                            Build();
+  return ExtensionBuilder()
+      .SetManifest(manifest.Build())
+      .SetID(crx_file::id_util::GenerateId(name))
+      .SetLocation(location)
+      .Build();
 }
 
 ToolbarActionsModel* CreateToolbarModelForProfile(Profile* profile) {

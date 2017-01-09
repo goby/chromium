@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_MEDIA_GALLERIES_MEDIA_GALLERIES_DIALOG_CONTROLLER_H_
 #define CHROME_BROWSER_MEDIA_GALLERIES_MEDIA_GALLERIES_DIALOG_CONTROLLER_H_
 
+#include <stddef.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
 
@@ -65,9 +68,6 @@ class MediaGalleriesDialogController {
   // Initial state of whether the dialog's confirmation button will be enabled.
   virtual bool IsAcceptAllowed() const = 0;
 
-  // Should the dialog present UI for the user to view the entry contents.
-  virtual bool ShouldShowFolderViewer(const Entry& entry) const = 0;
-
   // The titles for different sections of entries. Empty hides the header.
   virtual std::vector<base::string16> GetSectionHeaders() const = 0;
 
@@ -83,9 +83,6 @@ class MediaGalleriesDialogController {
 
   // An entry checkbox was toggled.
   virtual void DidToggleEntry(MediaGalleryPrefId id, bool selected) = 0;
-
-  // A folder viewer button was clicked for one of the entries.
-  virtual void DidClickOpenFolderViewer(MediaGalleryPrefId id) = 0;
 
   // The forget command in the context menu was selected.
   virtual void DidForgetEntry(MediaGalleryPrefId id) = 0;

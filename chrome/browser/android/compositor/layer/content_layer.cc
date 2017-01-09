@@ -6,13 +6,12 @@
 
 #include "base/lazy_instance.h"
 #include "cc/layers/layer.h"
-#include "cc/layers/layer_lists.h"
+#include "cc/layers/layer_collections.h"
 #include "chrome/browser/android/compositor/layer/thumbnail_layer.h"
 #include "chrome/browser/android/compositor/tab_content_manager.h"
 #include "content/public/browser/android/compositor.h"
 #include "ui/gfx/geometry/size.h"
 
-namespace chrome {
 namespace android {
 
 // static
@@ -36,12 +35,15 @@ static bool DoesLeafDrawContents(scoped_refptr<cc::Layer> layer) {
   if (!layer.get())
     return false;
 
+  // If the subtree is hidden, then any layers in this tree will not be drawn.
+  if (layer->hide_layer_and_subtree())
+    return false;
+
   // TODO: Remove the need for this logic. We can't really guess from
   // an opaque layer type whether it has valid live contents, or for example
   // just a background color placeholder. Need to get this from somewhere else
   // like ContentViewCore or RWHV.
-  if (layer->DrawsContent() && !layer->hide_layer_and_subtree() &&
-      !layer->background_color()) {
+  if (layer->DrawsContent() && !layer->background_color()) {
     return true;
   }
 
@@ -145,11 +147,10 @@ scoped_refptr<cc::Layer> ContentLayer::layer() {
 }
 
 ContentLayer::ContentLayer(TabContentManager* tab_content_manager)
-    : layer_(cc::Layer::Create(content::Compositor::LayerSettings())),
+    : layer_(cc::Layer::Create()),
       content_attached_(false),
       static_attached_(false),
-      tab_content_manager_(tab_content_manager) {
-}
+      tab_content_manager_(tab_content_manager) {}
 
 ContentLayer::~ContentLayer() {
 }
@@ -225,4 +226,3 @@ void ContentLayer::ClipStaticLayer(scoped_refptr<ThumbnailLayer> static_layer,
 }
 
 }  //  namespace android
-}  //  namespace chrome

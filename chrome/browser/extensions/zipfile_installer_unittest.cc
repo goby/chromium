@@ -10,8 +10,9 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/extensions/zipfile_installer.h"
@@ -46,7 +47,6 @@ struct MockExtensionRegistryObserver : public ExtensionRegistryObserver {
   void OnExtensionWillBeInstalled(content::BrowserContext* browser_context,
                                   const Extension* extension,
                                   bool is_update,
-                                  bool from_ephemeral,
                                   const std::string& old_name) override {
     last_extension_installed = extension->id();
     quit_closure_.Run();
@@ -100,7 +100,7 @@ class ZipFileInstallerTest : public testing::Test {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&ZipFileInstaller::LoadFromZipFile,
-                   zipfile_installer_.get(),
+                   zipfile_installer_,
                    original_path));
     observer_.WaitForInstall();
   }
@@ -108,11 +108,11 @@ class ZipFileInstallerTest : public testing::Test {
  protected:
   scoped_refptr<ZipFileInstaller> zipfile_installer_;
 
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   ExtensionService* extension_service_;
 
   content::TestBrowserThreadBundle browser_threads_;
-  scoped_ptr<content::InProcessUtilityThreadHelper>
+  std::unique_ptr<content::InProcessUtilityThreadHelper>
       in_process_utility_thread_helper_;
   MockExtensionRegistryObserver observer_;
 

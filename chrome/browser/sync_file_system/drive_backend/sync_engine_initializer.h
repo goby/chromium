@@ -5,20 +5,19 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_SYNC_ENGINE_INITIALIZER_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_SYNC_ENGINE_INITIALIZER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_task.h"
 #include "chrome/browser/sync_file_system/sync_callbacks.h"
 #include "google_apis/drive/drive_api_error_codes.h"
 #include "google_apis/drive/drive_common_callbacks.h"
-
-namespace drive {
-class DriveServiceInterface;
-}
 
 namespace google_apis {
 class AboutResource;
@@ -69,35 +68,34 @@ class SyncEngineInitializer : public SyncTask {
                         const base::FilePath& database_path,
                         leveldb::Env* env_override);
   ~SyncEngineInitializer() override;
-  void RunPreflight(scoped_ptr<SyncTaskToken> token) override;
+  void RunPreflight(std::unique_ptr<SyncTaskToken> token) override;
 
-  scoped_ptr<MetadataDatabase> PassMetadataDatabase();
+  std::unique_ptr<MetadataDatabase> PassMetadataDatabase();
 
  private:
   typedef base::Callback<void(const SyncStatusCallback& callback)> Task;
 
-  void GetAboutResource(scoped_ptr<SyncTaskToken> token);
+  void GetAboutResource(std::unique_ptr<SyncTaskToken> token);
   void DidGetAboutResource(
-      scoped_ptr<SyncTaskToken> token,
+      std::unique_ptr<SyncTaskToken> token,
       google_apis::DriveApiErrorCode error,
-      scoped_ptr<google_apis::AboutResource> about_resource);
-  void FindSyncRoot(scoped_ptr<SyncTaskToken> token);
-  void DidFindSyncRoot(scoped_ptr<SyncTaskToken> token,
+      std::unique_ptr<google_apis::AboutResource> about_resource);
+  void FindSyncRoot(std::unique_ptr<SyncTaskToken> token);
+  void DidFindSyncRoot(std::unique_ptr<SyncTaskToken> token,
                        google_apis::DriveApiErrorCode error,
-                       scoped_ptr<google_apis::FileList> file_list);
-  void CreateSyncRoot(scoped_ptr<SyncTaskToken> token);
-  void DidCreateSyncRoot(scoped_ptr<SyncTaskToken> token,
+                       std::unique_ptr<google_apis::FileList> file_list);
+  void CreateSyncRoot(std::unique_ptr<SyncTaskToken> token);
+  void DidCreateSyncRoot(std::unique_ptr<SyncTaskToken> token,
                          google_apis::DriveApiErrorCode error,
-                         scoped_ptr<google_apis::FileResource> entry);
-  void DetachSyncRoot(scoped_ptr<SyncTaskToken> token);
-  void DidDetachSyncRoot(scoped_ptr<SyncTaskToken> token,
+                         std::unique_ptr<google_apis::FileResource> entry);
+  void DetachSyncRoot(std::unique_ptr<SyncTaskToken> token);
+  void DidDetachSyncRoot(std::unique_ptr<SyncTaskToken> token,
                          google_apis::DriveApiErrorCode error);
-  void ListAppRootFolders(scoped_ptr<SyncTaskToken> token);
-  void DidListAppRootFolders(
-      scoped_ptr<SyncTaskToken> token,
-      google_apis::DriveApiErrorCode error,
-      scoped_ptr<google_apis::FileList> file_list);
-  void PopulateDatabase(scoped_ptr<SyncTaskToken> token);
+  void ListAppRootFolders(std::unique_ptr<SyncTaskToken> token);
+  void DidListAppRootFolders(std::unique_ptr<SyncTaskToken> token,
+                             google_apis::DriveApiErrorCode error,
+                             std::unique_ptr<google_apis::FileList> file_list);
+  void PopulateDatabase(std::unique_ptr<SyncTaskToken> token);
 
   SyncEngineContext* sync_context_;  // Not owned.
   leveldb::Env* env_override_;
@@ -107,13 +105,13 @@ class SyncEngineInitializer : public SyncTask {
 
   int find_sync_root_retry_count_;
 
-  scoped_ptr<MetadataDatabase> metadata_database_;
+  std::unique_ptr<MetadataDatabase> metadata_database_;
   ScopedVector<google_apis::FileResource> app_root_folders_;
 
-  int64 largest_change_id_;
+  int64_t largest_change_id_;
   std::string root_folder_id_;
 
-  scoped_ptr<google_apis::FileResource> sync_root_folder_;
+  std::unique_ptr<google_apis::FileResource> sync_root_folder_;
 
   base::WeakPtrFactory<SyncEngineInitializer> weak_ptr_factory_;
 

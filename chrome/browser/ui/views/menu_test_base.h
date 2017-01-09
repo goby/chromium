@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_MENU_TEST_BASE_H_
 #define CHROME_BROWSER_UI_VIEWS_MENU_TEST_BASE_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/test/base/view_event_test_base.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/controls/button/menu_button_listener.h"
@@ -54,6 +56,8 @@ class MenuTestBase : public ViewEventTestBase,
   }
 
  protected:
+  views::MenuRunner* menu_runner() { return menu_runner_.get(); }
+
   // Called to populate the menu.
   virtual void BuildMenu(views::MenuItemView* menu) = 0;
 
@@ -72,8 +76,9 @@ class MenuTestBase : public ViewEventTestBase,
   gfx::Size GetPreferredSize() const override;
 
   // views::MenuButtonListener implementation
-  void OnMenuButtonClicked(views::View* source,
-                           const gfx::Point& point) override;
+  void OnMenuButtonClicked(views::MenuButton* source,
+                           const gfx::Point& point,
+                           const ui::Event* event) override;
 
   // views::MenuDelegate implementation
   void ExecuteCommand(int id) override;
@@ -81,7 +86,7 @@ class MenuTestBase : public ViewEventTestBase,
  private:
   views::MenuButton* button_;
   views::MenuItemView* menu_;
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
   // The command id of the last pressed menu item since the menu was opened.
   int last_command_;

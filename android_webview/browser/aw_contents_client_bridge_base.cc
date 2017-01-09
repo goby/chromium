@@ -53,6 +53,27 @@ AwContentsClientBridgeBase* AwContentsClientBridgeBase::FromWebContents(
   return UserData::GetContents(web_contents);
 }
 
+// static
+AwContentsClientBridgeBase* AwContentsClientBridgeBase::FromWebContentsGetter(
+    const content::ResourceRequestInfo::WebContentsGetter&
+        web_contents_getter) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  WebContents* web_contents = web_contents_getter.Run();
+  return UserData::GetContents(web_contents);
+}
+
+// static
+AwContentsClientBridgeBase* AwContentsClientBridgeBase::FromID(
+    int render_process_id,
+    int render_frame_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  content::RenderFrameHost* rfh =
+      content::RenderFrameHost::FromID(render_process_id, render_frame_id);
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderFrameHost(rfh);
+  return UserData::GetContents(web_contents);
+}
+
 AwContentsClientBridgeBase::~AwContentsClientBridgeBase() {
 }
 

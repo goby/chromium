@@ -5,9 +5,14 @@
 #ifndef DEVICE_BLUETOOTH_BLUETOOTH_DISCOVERY_FILTER_H_
 #define DEVICE_BLUETOOTH_BLUETOOTH_DISCOVERY_FILTER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
+#include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_uuid.h"
 
@@ -16,15 +21,7 @@ namespace device {
 // Used to keep a discovery filter that can be used to limit reported devices.
 class DEVICE_BLUETOOTH_EXPORT BluetoothDiscoveryFilter {
  public:
-  // Possible transports to use for scan filter.
-  enum Transport {
-    TRANSPORT_CLASSIC = 0x01,
-    TRANSPORT_LE = 0x02,
-    TRANSPORT_DUAL = (TRANSPORT_CLASSIC | TRANSPORT_LE)
-  };
-  using TransportMask = uint8_t;
-
-  BluetoothDiscoveryFilter(TransportMask transport);
+  BluetoothDiscoveryFilter(BluetoothTransport transport);
   ~BluetoothDiscoveryFilter();
 
   // These getters return true when given field is set in filter, and copy this
@@ -36,8 +33,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDiscoveryFilter {
   void SetPathloss(uint16_t pathloss);
 
   // Return and set transport field of this filter.
-  TransportMask GetTransport() const;
-  void SetTransport(TransportMask transport);
+  BluetoothTransport GetTransport() const;
+  void SetTransport(BluetoothTransport transport);
 
   // Make |out_uuids| represent all uuids assigned to this filter.
   void GetUUIDs(std::set<device::BluetoothUUID>& out_uuids) const;
@@ -57,14 +54,14 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDiscoveryFilter {
 
   // Returns result of merging two filters together. If at least one of the
   // filters is NULL this will return an empty filter
-  static scoped_ptr<device::BluetoothDiscoveryFilter> Merge(
+  static std::unique_ptr<device::BluetoothDiscoveryFilter> Merge(
       const device::BluetoothDiscoveryFilter* filter_a,
       const device::BluetoothDiscoveryFilter* filter_b);
 
  private:
-  scoped_ptr<int16_t> rssi_;
-  scoped_ptr<uint16_t> pathloss_;
-  TransportMask transport_;
+  std::unique_ptr<int16_t> rssi_;
+  std::unique_ptr<uint16_t> pathloss_;
+  BluetoothTransport transport_;
   ScopedVector<device::BluetoothUUID> uuids_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothDiscoveryFilter);

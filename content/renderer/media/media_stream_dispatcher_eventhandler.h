@@ -32,11 +32,6 @@ class CONTENT_EXPORT MediaStreamDispatcherEventHandler {
       const std::string& label,
       const StreamDeviceInfo& device_info) = 0;
 
-  // A new list of devices have been enumerated.
-  virtual void OnDevicesEnumerated(
-      int request_id,
-      const StreamDeviceInfoArray& device_array) = 0;
-
   // A device has been opened.
   virtual void OnDeviceOpened(
       int request_id,

@@ -7,7 +7,7 @@ import logging
 
 from common import chrome_proxy_metrics as metrics
 from telemetry.core import exceptions
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 
 
 def WaitForViaHeader(tab, url="http://check.googlezip.net/test.html"):
@@ -29,7 +29,7 @@ def WaitForViaHeader(tab, url="http://check.googlezip.net/test.html"):
       'if (via_header_found) { return true; }'
       'try {'
         'var xmlhttp = new XMLHttpRequest();'
-        'xmlhttp.open("HEAD",url,true);'
+        'xmlhttp.open("GET",url,true);'
         'xmlhttp.onload=function(e) {'
           # Store the last response received for debugging, this will be shown
           # in telemetry dumps if the request fails or times out.
@@ -50,8 +50,8 @@ def WaitForViaHeader(tab, url="http://check.googlezip.net/test.html"):
     'Waiting for Chrome to start using the DRP...'
     '</body></html>'))
 
-  # Ensure the page has started loading before attempting the DRP check.
-  tab.WaitForJavaScriptExpression('performance.timing.loadEventStart', 60)
+  # Ensure the page has finished loading before attempting the DRP check.
+  tab.WaitForJavaScriptExpression('performance.timing.loadEventEnd', 60)
 
   expected_via_header = metrics.CHROME_PROXY_VIA_HEADER
   if ChromeProxyValidation.extra_via_header:
@@ -61,26 +61,39 @@ def WaitForViaHeader(tab, url="http://check.googlezip.net/test.html"):
       'PollDRPCheck("%s", "%s")' % (url, expected_via_header), 60)
 
 
-class ChromeProxyValidation(page_test.PageTest):
+class ChromeProxyValidation(legacy_page_test.LegacyPageTest):
   """Base class for all chrome proxy correctness measurements."""
 
   # Value of the extra via header. |None| if no extra via header is expected.
   extra_via_header = None
 
-  def __init__(self, restart_after_each_page=False, metrics=None):
+  def __init__(self, restart_after_each_page=False, metrics=None,
+               clear_cache_before_each_run=True):
     super(ChromeProxyValidation, self).__init__(
-        needs_browser_restart_after_each_page=restart_after_each_page)
+        needs_browser_restart_after_each_page=restart_after_each_page,
+        clear_cache_before_each_run=clear_cache_before_each_run)
     self._metrics = metrics
     self._page = None
 
   def CustomizeBrowserOptions(self, options):
     # Enable the chrome proxy (data reduction proxy).
     options.AppendExtraBrowserArgs('--enable-spdy-proxy-auth')
+    self._is_chrome_proxy_enabled = True
+
+    # Disable quic option, otherwise request headers won't be visible.
+    options.AppendExtraBrowserArgs('--disable-quic')
+
+  def DisableChromeProxy(self):
+    self.options.browser_options.extra_browser_args.discard(
+                '--enable-spdy-proxy-auth')
+    self._is_chrome_proxy_enabled = False
 
   def WillNavigateToPage(self, page, tab):
-    WaitForViaHeader(tab)
+    if self._is_chrome_proxy_enabled:
+      WaitForViaHeader(tab)
 
-    tab.ClearCache(force=True)
+    if self.clear_cache_before_each_run:
+      tab.ClearCache(force=True)
     assert self._metrics
     self._metrics.Start(page, tab)
 

@@ -4,27 +4,29 @@
 
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 
+#include <stddef.h>
+
 #include <set>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/browser/media_galleries/fileapi/media_file_system_backend.h"
-#include "chrome/browser/media_galleries/fileapi/mtp_device_map_service.h"
 #include "chrome/browser/media_galleries/gallery_watch_manager.h"
 #include "chrome/browser/media_galleries/imported_media_gallery_registry.h"
 #include "chrome/browser/media_galleries/media_file_system_context.h"
 #include "chrome/browser/media_galleries/media_galleries_dialog_controller.h"
 #include "chrome/browser/media_galleries/media_galleries_histograms.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences_factory.h"
-#include "chrome/browser/media_galleries/media_scan_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
+#include "components/prefs/pref_service.h"
 #include "components/storage_monitor/media_storage_util.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "content/public/browser/browser_thread.h"
@@ -40,6 +42,10 @@
 #include "storage/browser/fileapi/external_mount_points.h"
 #include "storage/common/fileapi/file_system_mount_option.h"
 #include "storage/common/fileapi/file_system_types.h"
+
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#include "chrome/browser/media_galleries/fileapi/mtp_device_map_service.h"
+#endif
 
 using content::BrowserThread;
 using content::NavigationController;
@@ -89,9 +95,9 @@ class RPHReferenceManager {
   virtual ~RPHReferenceManager();
 
   // Remove all references, but don't call |no_references_callback|.
-  void Reset() { STLDeleteValues(&observer_map_); }
+  void Reset() { observer_map_.clear(); }
 
-  // Returns true if there are no references;
+  // Returns true if there are no references.
   bool empty() const { return observer_map_.empty(); }
 
   // Adds a reference to the passed |contents|. Calling this multiple times with
@@ -129,10 +135,9 @@ class RPHReferenceManager {
 
     RPHReferenceManager* manager_;
     RenderProcessHost* host_;
-    typedef std::map<WebContents*, RPHWebContentsObserver*> WCObserverMap;
-    WCObserverMap observed_web_contentses_;
+    std::map<WebContents*, std::unique_ptr<RPHWebContentsObserver>>
+        observed_web_contentses_;
   };
-  typedef std::map<const RenderProcessHost*, RPHObserver*> RPHObserverMap;
 
   // Handlers for observed events.
   void OnRenderProcessHostDestroyed(RenderProcessHost* rph);
@@ -143,7 +148,8 @@ class RPHReferenceManager {
 
   // The set of render processes and web contents that may have references to
   // the file system ids this instance manages.
-  RPHObserverMap observer_map_;
+  std::map<const RenderProcessHost*, std::unique_ptr<RPHObserver>>
+      observer_map_;
 };
 
 RPHReferenceManager::RPHReferenceManager(
@@ -158,15 +164,10 @@ RPHReferenceManager::~RPHReferenceManager() {
 void RPHReferenceManager::ReferenceFromWebContents(
     content::WebContents* contents) {
   RenderProcessHost* rph = contents->GetRenderProcessHost();
-  RPHObserver* state = NULL;
-  if (!ContainsKey(observer_map_, rph)) {
-    state = new RPHObserver(this, rph);
-    observer_map_[rph] = state;
-  } else {
-    state = observer_map_[rph];
+  if (!base::ContainsKey(observer_map_, rph)) {
+    observer_map_[rph] = base::MakeUnique<RPHObserver>(this, rph);
   }
-
-  state->AddWebContentsObserver(contents);
+  observer_map_[rph]->AddWebContentsObserver(contents);
 }
 
 RPHReferenceManager::RPHWebContentsObserver::RPHWebContentsObserver(
@@ -196,28 +197,25 @@ RPHReferenceManager::RPHObserver::RPHObserver(
 }
 
 RPHReferenceManager::RPHObserver::~RPHObserver() {
-  STLDeleteValues(&observed_web_contentses_);
+  observed_web_contentses_.clear();
   if (host_)
     host_->RemoveObserver(this);
 }
 
 void RPHReferenceManager::RPHObserver::AddWebContentsObserver(
     WebContents* web_contents) {
-  if (ContainsKey(observed_web_contentses_, web_contents))
+  if (base::ContainsKey(observed_web_contentses_, web_contents))
     return;
 
-  RPHWebContentsObserver* observer =
-    new RPHWebContentsObserver(manager_, web_contents);
-  observed_web_contentses_[web_contents] = observer;
+  observed_web_contentses_[web_contents] =
+      base::MakeUnique<RPHWebContentsObserver>(manager_, web_contents);
 }
 
 void RPHReferenceManager::RPHObserver::RemoveWebContentsObserver(
     WebContents* web_contents) {
-  WCObserverMap::iterator wco_iter =
-      observed_web_contentses_.find(web_contents);
-  DCHECK(wco_iter != observed_web_contentses_.end());
-  delete wco_iter->second;
-  observed_web_contentses_.erase(wco_iter);
+  DCHECK(observed_web_contentses_.find(web_contents) !=
+         observed_web_contentses_.end());
+  observed_web_contentses_.erase(web_contents);
 }
 
 void RPHReferenceManager::RPHObserver::RenderProcessHostDestroyed(
@@ -228,7 +226,7 @@ void RPHReferenceManager::RPHObserver::RenderProcessHostDestroyed(
 
 void RPHReferenceManager::OnRenderProcessHostDestroyed(
     RenderProcessHost* rph) {
-  RPHObserverMap::iterator rph_info = observer_map_.find(rph);
+  auto rph_info = observer_map_.find(rph);
   // This could be a potential problem if the RPH is navigated to a page on the
   // same renderer (triggering OnWebContentsDestroyedOrNavigated()) and then the
   // renderer crashes.
@@ -236,7 +234,6 @@ void RPHReferenceManager::OnRenderProcessHostDestroyed(
     NOTREACHED();
     return;
   }
-  delete rph_info->second;
   observer_map_.erase(rph_info);
   if (observer_map_.empty())
     no_references_callback_.Run();
@@ -245,7 +242,7 @@ void RPHReferenceManager::OnRenderProcessHostDestroyed(
 void RPHReferenceManager::OnWebContentsDestroyedOrNavigated(
     WebContents* contents) {
   RenderProcessHost* rph = contents->GetRenderProcessHost();
-  RPHObserverMap::iterator rph_info = observer_map_.find(rph);
+  auto rph_info = observer_map_.find(rph);
   DCHECK(rph_info != observer_map_.end());
 
   rph_info->second->RemoveWebContentsObserver(contents);
@@ -272,6 +269,8 @@ MediaFileSystemInfo::MediaFileSystemInfo(const base::string16& fs_name,
 }
 
 MediaFileSystemInfo::MediaFileSystemInfo() {}
+MediaFileSystemInfo::MediaFileSystemInfo(const MediaFileSystemInfo& other) =
+    default;
 MediaFileSystemInfo::~MediaFileSystemInfo() {}
 
 // The main owner of this class is
@@ -387,7 +386,7 @@ class ExtensionGalleriesHost
       const MediaGalleryPrefInfo& gallery_info =
           galleries_info.find(pref_id)->second;
       const std::string& device_id = gallery_info.device_id;
-      if (!ContainsKey(*attached_devices, device_id))
+      if (!base::ContainsKey(*attached_devices, device_id))
         continue;
 
       PrefIdFsInfoMap::const_iterator existing_info =
@@ -442,7 +441,7 @@ class ExtensionGalleriesHost
       base::FilePath path = gallery.AbsolutePath();
       const std::string& device_id = gallery.device_id;
 
-      if (ContainsKey(pref_id_map_, gallery.pref_id)) {
+      if (base::ContainsKey(pref_id_map_, gallery.pref_id)) {
         result = base::File::FILE_OK;
       } else if (MediaStorageUtil::CanCreateFileSystem(device_id, path) &&
                  file_system_context_->RegisterFileSystem(device_id, fs_name,
@@ -557,7 +556,7 @@ void MediaFileSystemRegistry::RegisterMediaFileSystemForExtension(
       preferences->GalleriesForExtension(*extension);
 
   if (gallery == preferences->known_galleries().end() ||
-      !ContainsKey(permitted_galleries, pref_id)) {
+      !base::ContainsKey(permitted_galleries, pref_id)) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
         base::Bind(callback, base::File::FILE_ERROR_NOT_FOUND));
@@ -577,9 +576,9 @@ void MediaFileSystemRegistry::RegisterMediaFileSystemForExtension(
 MediaGalleriesPreferences* MediaFileSystemRegistry::GetPreferences(
     Profile* profile) {
   // Create an empty ExtensionHostMap for this profile on first initialization.
-  if (!ContainsKey(extension_hosts_map_, profile)) {
+  if (!base::ContainsKey(extension_hosts_map_, profile)) {
     extension_hosts_map_[profile] = ExtensionHostMap();
-    DCHECK(!ContainsKey(profile_subscription_map_, profile));
+    DCHECK(!base::ContainsKey(profile_subscription_map_, profile));
     profile_subscription_map_[profile] =
         ShutdownNotifierFactory::GetInstance()->Get(profile)->Subscribe(
             base::Bind(&MediaFileSystemRegistry::OnProfileShutdown,
@@ -588,12 +587,6 @@ MediaGalleriesPreferences* MediaFileSystemRegistry::GetPreferences(
   }
 
   return MediaGalleriesPreferencesFactory::GetForProfile(profile);
-}
-
-MediaScanManager* MediaFileSystemRegistry::media_scan_manager() {
-  if (!media_scan_manager_)
-    media_scan_manager_.reset(new MediaScanManager);
-  return media_scan_manager_.get();
 }
 
 GalleryWatchManager* MediaFileSystemRegistry::gallery_watch_manager() {
@@ -665,11 +658,9 @@ class MediaFileSystemRegistry::MediaFileSystemContextImpl
   bool RegisterFileSystem(const std::string& device_id,
                           const std::string& fs_name,
                           const base::FilePath& path) override {
-    if (StorageInfo::IsMassStorageDevice(device_id)) {
+    if (StorageInfo::IsMassStorageDevice(device_id))
       return RegisterFileSystemForMassStorage(device_id, fs_name, path);
-    } else {
-      return RegisterFileSystemForMTPDevice(device_id, fs_name, path);
-    }
+    return RegisterFileSystemForMTPDevice(device_id, fs_name, path);
   }
 
   void RevokeFileSystem(const std::string& fs_name) override {
@@ -680,10 +671,12 @@ class MediaFileSystemRegistry::MediaFileSystemContextImpl
 
     ExternalMountPoints::GetSystemInstance()->RevokeFileSystem(fs_name);
 
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
     BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, base::Bind(
         &MTPDeviceMapService::RevokeMTPFileSystem,
         base::Unretained(MTPDeviceMapService::GetInstance()),
         fs_name));
+#endif
   }
 
   base::FilePath GetRegisteredPath(const std::string& fs_name) const override {
@@ -721,10 +714,6 @@ class MediaFileSystemRegistry::MediaFileSystemContextImpl
       ImportedMediaGalleryRegistry* registry =
           ImportedMediaGalleryRegistry::GetInstance();
       result = registry->RegisterPicasaFilesystemOnUIThread(fs_name, path);
-    } else if (StorageInfo::IsIPhotoDevice(device_id)) {
-      ImportedMediaGalleryRegistry* registry =
-          ImportedMediaGalleryRegistry::GetInstance();
-      result = registry->RegisterIPhotoFilesystemOnUIThread(fs_name, path);
     } else {
       result = ExternalMountPoints::GetSystemInstance()->RegisterFileSystem(
           fs_name,
@@ -738,6 +727,7 @@ class MediaFileSystemRegistry::MediaFileSystemContextImpl
   bool RegisterFileSystemForMTPDevice(const std::string& device_id,
                                       const std::string fs_name,
                                       const base::FilePath& path) {
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     DCHECK(!StorageInfo::IsMassStorageDevice(device_id));
 
@@ -755,6 +745,10 @@ class MediaFileSystemRegistry::MediaFileSystemContextImpl
                    base::Unretained(MTPDeviceMapService::GetInstance()),
                    path.value(), fs_name, true /* read only */));
     return result;
+#else
+    NOTREACHED();
+    return false;
+#endif
   }
 
   DISALLOW_COPY_AND_ASSIGN(MediaFileSystemContextImpl);
@@ -815,7 +809,7 @@ void MediaFileSystemRegistry::OnGalleryRemoved(
         extension_registry->enabled_extensions().GetByID(it->first));
   }
   for (size_t i = 0; i < extensions.size(); ++i) {
-    if (!ContainsKey(extension_hosts_map_, profile))
+    if (!base::ContainsKey(extension_hosts_map_, profile))
       break;
     ExtensionHostMap::const_iterator gallery_host_it =
         extension_host_map.find(extensions[i]->id());

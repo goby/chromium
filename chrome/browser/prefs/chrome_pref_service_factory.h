@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_PREFS_CHROME_PREF_SERVICE_FACTORY_H_
 #define CHROME_BROWSER_PREFS_CHROME_PREF_SERVICE_FACTORY_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace base {
 class DictionaryValue;
@@ -19,7 +20,7 @@ namespace policy {
 class PolicyService;
 }
 
-namespace syncable_prefs {
+namespace sync_preferences {
 class PrefServiceSyncable;
 }
 
@@ -27,9 +28,7 @@ namespace user_prefs {
 class PrefRegistrySyncable;
 }
 
-class PrefHashStore;
 class PrefRegistry;
-class PrefRegistrySimple;
 class PrefService;
 
 class PrefStore;
@@ -64,14 +63,14 @@ extern const char kSettingsEnforcementGroupEnforceAlwaysWithExtensionsAndDSE[];
 // guaranteed that in asynchronous version initialization happens after this
 // function returned.
 
-scoped_ptr<PrefService> CreateLocalState(
+std::unique_ptr<PrefService> CreateLocalState(
     const base::FilePath& pref_filename,
     base::SequencedTaskRunner* pref_io_task_runner,
     policy::PolicyService* policy_service,
     const scoped_refptr<PrefRegistry>& pref_registry,
     bool async);
 
-scoped_ptr<syncable_prefs::PrefServiceSyncable> CreateProfilePrefs(
+std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
     const base::FilePath& pref_filename,
     base::SequencedTaskRunner* pref_io_task_runner,
     TrackedPreferenceValidationDelegate* validation_delegate,
@@ -98,9 +97,6 @@ base::Time GetResetTime(Profile* profile);
 // Clears the time of the last preference reset event, if any, for the provided
 // profile.
 void ClearResetTime(Profile* profile);
-
-// Register local state prefs used by chrome preference system.
-void RegisterPrefs(PrefRegistrySimple* registry);
 
 // Register user prefs used by chrome preference system.
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);

@@ -57,7 +57,8 @@ class SystemMemoryMetric(Metric):
     if not memory_stats['Browser']:
       return
     exclude_metrics = exclude_metrics or {}
-    memory.AddResultsForProcesses(results, memory_stats,
+    memory.AddResultsForProcesses(
+        results, memory_stats,
         metric_trace_name=trace_name, chart_trace_name='delta',
         exclude_metrics=exclude_metrics)
 

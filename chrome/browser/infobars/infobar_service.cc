@@ -6,9 +6,7 @@
 
 #include "base/command_line.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/infobars/insecure_content_infobar_delegate.h"
 #include "chrome/common/render_messages.h"
-#include "components/content_settings/content/common/content_settings_messages.h"
 #include "components/infobars/core/infobar.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
@@ -92,16 +90,15 @@ void InfoBarService::RenderProcessGone(base::TerminationStatus status) {
 
 void InfoBarService::DidStartNavigationToPendingEntry(
     const GURL& url,
-    content::NavigationController::ReloadType reload_type) {
+    content::ReloadType reload_type) {
   ignore_next_reload_ = false;
 }
 
 void InfoBarService::NavigationEntryCommitted(
     const content::LoadCommittedDetails& load_details) {
   const bool ignore = ignore_next_reload_ &&
-      (ui::PageTransitionStripQualifier(
-          load_details.entry->GetTransitionType()) ==
-          ui::PAGE_TRANSITION_RELOAD);
+      ui::PageTransitionCoreTypeIs(load_details.entry->GetTransitionType(),
+                                   ui::PAGE_TRANSITION_RELOAD);
   ignore_next_reload_ = false;
   if (!ignore)
     OnNavigation(NavigationDetailsFromLoadCommittedDetails(load_details));
@@ -116,27 +113,15 @@ void InfoBarService::WebContentsDestroyed() {
   // returning from this function is the only safe thing to do.
 }
 
-bool InfoBarService::OnMessageReceived(const IPC::Message& message) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(InfoBarService, message)
-    IPC_MESSAGE_HANDLER(ChromeViewHostMsg_DidBlockDisplayingInsecureContent,
-                        OnDidBlockDisplayingInsecureContent)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled;
-}
-
-void InfoBarService::OnDidBlockDisplayingInsecureContent() {
-  InsecureContentInfoBarDelegate::Create(this);
-}
-
 void InfoBarService::OpenURL(const GURL& url,
                              WindowOpenDisposition disposition) {
   // A normal user click on an infobar URL will result in a CURRENT_TAB
   // disposition; turn that into a NEW_FOREGROUND_TAB so that we don't end up
   // smashing the page the user is looking at.
-  web_contents()->OpenURL(content::OpenURLParams(
-      url, content::Referrer(),
-      (disposition == CURRENT_TAB) ? NEW_FOREGROUND_TAB : disposition,
-      ui::PAGE_TRANSITION_LINK, false));
+  web_contents()->OpenURL(
+      content::OpenURLParams(url, content::Referrer(),
+                             (disposition == WindowOpenDisposition::CURRENT_TAB)
+                                 ? WindowOpenDisposition::NEW_FOREGROUND_TAB
+                                 : disposition,
+                             ui::PAGE_TRANSITION_LINK, false));
 }

@@ -4,19 +4,19 @@
 
 #include "chrome/browser/extensions/api/signed_in_devices/id_mapping_helper.h"
 
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include <memory>
+
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/signed_in_devices/signed_in_devices_api.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/crx_file/id_util.h"
-#include "components/sync_driver/device_info.h"
+#include "components/sync/device_info/device_info.h"
 
 using base::DictionaryValue;
 using base::Value;
-using sync_driver::DeviceInfo;
+using syncer::DeviceInfo;
 
 namespace extensions {
 
@@ -68,40 +68,36 @@ std::string GetRandomId(
 }
 
 void CreateMappingForUnmappedDevices(
-    std::vector<DeviceInfo*>* device_info,
+    const std::vector<std::unique_ptr<DeviceInfo>>& device_info,
     base::DictionaryValue* value) {
-  for (unsigned int i = 0; i < device_info->size(); ++i) {
-    DeviceInfo* device = (*device_info)[i];
+  for (const std::unique_ptr<DeviceInfo>& device : device_info) {
     std::string local_id = GetPublicIdFromGUID(*value,
                                                device->guid());
 
     // If the device does not have a local id, set one.
     if (local_id.empty()) {
-      local_id = GetRandomId(*value, device_info->size());
+      local_id = GetRandomId(*value, device_info.size());
       value->SetString(local_id, device->guid());
     }
     device->set_public_id(local_id);
   }
 }
 
-scoped_ptr<DeviceInfo> GetDeviceInfoForClientId(
+std::unique_ptr<DeviceInfo> GetDeviceInfoForClientId(
     const std::string& client_id,
     const std::string& extension_id,
     Profile* profile) {
   DCHECK(crx_file::id_util::IdIsValid(extension_id)) << extension_id
                                                      << " is not valid";
-  ScopedVector<DeviceInfo> devices = GetAllSignedInDevices(extension_id,
-                                                           profile);
-  for (ScopedVector<DeviceInfo>::iterator it = devices.begin();
-       it != devices.end();
-       ++it) {
-    if ((*it)->guid() == client_id) {
-      scoped_ptr<DeviceInfo> device(*it);
-      devices.weak_erase(it);
-      return device.Pass();
+  std::vector<std::unique_ptr<DeviceInfo>> devices =
+      GetAllSignedInDevices(extension_id, profile);
+  for (auto& iter : devices) {
+    if (iter->guid() == client_id) {
+      std::unique_ptr<DeviceInfo> device = std::move(iter);
+      return device;
     }
   }
-  return scoped_ptr<DeviceInfo>();
+  return std::unique_ptr<DeviceInfo>();
 }
 
 }  // namespace  extensions

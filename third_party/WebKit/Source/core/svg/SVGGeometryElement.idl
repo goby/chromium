@@ -31,7 +31,11 @@
 // http://www.w3.org/TR/SVG2/types.html#InterfaceSVGGeometryElement
 
 interface SVGGeometryElement : SVGGraphicsElement {
-    // TODO(philipj): SVGPoint should be DOMPoint.
+    [SameObject] readonly attribute SVGAnimatedNumber pathLength;
+
+    // TODO(foolip): SVGPoint should be DOMPoint.
     boolean isPointInFill(SVGPoint point);
     boolean isPointInStroke(SVGPoint point);
+    float getTotalLength();
+    SVGPoint getPointAtLength(float distance);
 };

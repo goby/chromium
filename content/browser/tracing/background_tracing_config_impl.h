@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_CONFIG_IMPL_H_
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/background_tracing_config.h"
@@ -24,11 +25,16 @@ class CONTENT_EXPORT BackgroundTracingConfigImpl
   void IntoDict(base::DictionaryValue* dict) const override;
 
   enum CategoryPreset {
+    CATEGORY_PRESET_UNSET,
     BENCHMARK,
     BENCHMARK_DEEP,
     BENCHMARK_GPU,
     BENCHMARK_IPC,
     BENCHMARK_STARTUP,
+    BENCHMARK_BLINK_GC,
+    BENCHMARK_MEMORY_HEAVY,
+    BENCHMARK_MEMORY_LIGHT,
+    BENCHMARK_EXECUTION_METRIC,
     BLINK_STYLE
   };
 
@@ -51,12 +57,12 @@ class CONTENT_EXPORT BackgroundTracingConfigImpl
       const base::DictionaryValue* dict,
       BackgroundTracingConfigImpl::CategoryPreset category_preset);
 
-  static scoped_ptr<BackgroundTracingConfigImpl> PreemptiveFromDict(
+  static std::unique_ptr<BackgroundTracingConfigImpl> PreemptiveFromDict(
       const base::DictionaryValue* dict);
-  static scoped_ptr<BackgroundTracingConfigImpl> ReactiveFromDict(
+  static std::unique_ptr<BackgroundTracingConfigImpl> ReactiveFromDict(
       const base::DictionaryValue* dict);
 
-  static scoped_ptr<BackgroundTracingConfigImpl> FromDict(
+  static std::unique_ptr<BackgroundTracingConfigImpl> FromDict(
       const base::DictionaryValue* dict);
 
   static std::string CategoryPresetToString(

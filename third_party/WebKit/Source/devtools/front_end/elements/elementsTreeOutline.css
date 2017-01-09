@@ -17,11 +17,28 @@
     margin-left: -2px;
     word-wrap: break-word;
     position: relative;
+    min-height: 14px;
 }
 
 .elements-disclosure li.parent {
     /** Keep it in sync with ElementsTreeElements.updateDecorators **/
     margin-left: -13px;
+}
+
+.elements-disclosure li.selected:after {
+    font-style: italic;
+    content: " == $0";
+    color: black;
+    opacity: 0.6;
+    position: absolute;
+}
+
+.elements-disclosure li.selected.editing-as-html:after {
+    display: none;
+}
+
+.elements-disclosure ol:focus li.selected:after {
+    color: white;
 }
 
 .elements-disclosure li.parent::before {
@@ -42,7 +59,7 @@
     visibility: hidden;
 }
 
-@media (-webkit-min-device-pixel-ratio: 1.5) {
+@media (-webkit-min-device-pixel-ratio: 1.1) {
 .elements-disclosure li.parent::before {
     -webkit-mask-image: url(Images/toolbarButtonGlyphs_2x.png);
 }
@@ -56,7 +73,6 @@
 .elements-disclosure li .selection {
     display: none;
     z-index: -1;
-    margin-left: -10000px;
 }
 
 .elements-disclosure li.hovered:not(.selected) .selection {
@@ -101,7 +117,6 @@
     cursor: default;
     min-width: 100%;
     min-height: 100%;
-    -webkit-transform: translateZ(0);
     padding-left: 2px;
 }
 
@@ -119,12 +134,6 @@
 
 .elements-disclosure ol:focus li.selected .selection {
     background-color: rgb(56, 121, 217);
-}
-
-.elements-tree-outline ol.shadow-root {
-    margin-left: 5px;
-    padding-left: 5px;
-    border-left: 1px solid rgb(190, 190, 190);
 }
 
 .elements-tree-outline ol.shadow-root-depth-4 {
@@ -163,9 +172,9 @@
 }
 
 .CodeMirror {
-    /* Consistent with the .editing class in inspector.css */
-    box-shadow: rgba(0, 0, 0, .5) 3px 3px 4px;
-    outline: 1px solid rgb(66%, 66%, 66%) !important;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2),
+                0 2px 4px rgba(0, 0, 0, 0.2),
+                0 2px 6px rgba(0, 0, 0, 0.1);
     background-color: white;
 }
 
@@ -184,8 +193,9 @@ button, input, select {
 
 .editing {
     -webkit-user-select: text;
-    box-shadow: rgba(0, 0, 0, .5) 3px 3px 4px;
-    outline: 1px solid rgb(66%, 66%, 66%) !important;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2),
+                0 2px 4px rgba(0, 0, 0, 0.2),
+                0 2px 6px rgba(0, 0, 0, 0.1);
     background-color: white;
     -webkit-user-modify: read-write-plaintext-only;
     text-overflow: clip !important;
@@ -228,10 +238,6 @@ button, input, select {
     margin-left: 1px;
     margin-right: 1px;
     white-space: nowrap;
-}
-
-.webkit-html-attribute-value a {
-    cursor: default !important;
 }
 
 .elements-tree-nowrap, .elements-tree-nowrap .li {
@@ -304,8 +310,7 @@ ol:focus li.selected .webkit-html-tag {
 ol:focus li.selected .webkit-html-tag-name,
 ol:focus li.selected .webkit-html-close-tag-name,
 ol:focus li.selected .webkit-html-attribute-value,
-ol:focus li.selected .webkit-html-external-link,
-ol:focus li.selected .webkit-html-resource-link {
+ol:focus li.selected .devtools-link {
     color: white;
 }
 
@@ -331,8 +336,32 @@ ol:focus li.selected .webkit-html-attribute-name {
     cursor: pointer;
 }
 
-@media (-webkit-min-device-pixel-ratio: 1.5) {
+@media (-webkit-min-device-pixel-ratio: 1.1) {
 .elements-disclosure li.selected .gutter-container:not(.has-decorations) {
     -webkit-mask-image: url(Images/toolbarButtonGlyphs_2x.png);
 }
 } /* media */
+
+/** Guide line */
+li.selected {
+    z-index: 0;
+}
+
+li.hovered:not(.always-parent) + ol.children, .elements-tree-outline ol.shadow-root, li.selected:not(.always-parent) + ol.children {
+    margin-left: 5px;
+    -webkit-padding-start: 6px;
+    border-width: 1px;
+    border-left-style: solid;
+}
+
+li.hovered:not(.always-parent) + ol.children:not(.shadow-root) {
+    border-color: hsla(0,0%,0%,0.1);
+}
+
+.elements-tree-outline ol.shadow-root {
+    border-color: hsla(0,0%,80%,1);
+}
+
+li.selected:not(.always-parent) + ol.children {
+    border-color: hsla(216,68%,80%,1) !important;
+}

@@ -4,7 +4,9 @@
 
 #include "chrome/browser/ui/views/location_bar/page_action_image_view.h"
 
+#include "base/macros.h"
 #include "base/run_loop.h"
+#include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -12,7 +14,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/location_bar/page_action_with_badge_view.h"
-#include "chrome/browser/ui/views/tabs/tab_drag_controller_interactive_uitest.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/test/extension_test_message_listener.h"
@@ -35,7 +37,7 @@ class PageActionImageViewInteractiveUITest : public ExtensionBrowserTest {
   }
 
  private:
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> disable_redesign_;
+  std::unique_ptr<extensions::FeatureSwitch::ScopedOverride> disable_redesign_;
 
   DISALLOW_COPY_AND_ASSIGN(PageActionImageViewInteractiveUITest);
 };
@@ -117,8 +119,8 @@ IN_PROC_BROWSER_TEST_F(PageActionImageViewInteractiveUITest,
 
   // We need to resize the expected icon to be the size of the page action
   // button for comparison purposes.
-  const gfx::Size size(extension_misc::EXTENSION_ICON_ACTION,
-                       extension_misc::EXTENSION_ICON_ACTION);
+  const gfx::Size size(ExtensionAction::ActionIconSize(),
+                       ExtensionAction::ActionIconSize());
   gfx::ImageSkia bg(new BlankImageSource(size), size);
   expected_icon =
       gfx::ImageSkiaOperations::CreateSuperimposedImage(bg, expected_icon);
@@ -131,7 +133,7 @@ IN_PROC_BROWSER_TEST_F(PageActionImageViewInteractiveUITest,
   {
     base::RunLoop run_loop;
     gfx::Point page_action_center =
-        test::GetCenterInScreenCoordinates(page_action_view);
+        ui_test_utils::GetCenterInScreenCoordinates(page_action_view);
     ui_controls::SendMouseMoveNotifyWhenDone(page_action_center.x(),
                                              page_action_center.y(),
                                              run_loop.QuitClosure());
@@ -161,7 +163,7 @@ IN_PROC_BROWSER_TEST_F(PageActionImageViewInteractiveUITest,
   {
     base::RunLoop run_loop;
     gfx::Point page_action_center =
-        test::GetCenterInScreenCoordinates(page_action_view);
+        ui_test_utils::GetCenterInScreenCoordinates(page_action_view);
     ui_controls::SendMouseMoveNotifyWhenDone(page_action_center.x(),
                                              page_action_center.y(),
                                              run_loop.QuitClosure());

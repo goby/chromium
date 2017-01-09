@@ -29,8 +29,8 @@ base::string16 GetPrintCommandTemplate();
 BOOL WINAPI Monitor2EnumPorts(HANDLE,
                               wchar_t*,
                               DWORD level,
-                              BYTE*  ports,
-                              DWORD   ports_size,
+                              BYTE* ports,
+                              DWORD ports_size,
                               DWORD* needed_bytes,
                               DWORD* returned);
 
@@ -43,8 +43,8 @@ BOOL WINAPI Monitor2StartDocPort(HANDLE port_handle,
                                  BYTE*);
 
 BOOL WINAPI Monitor2WritePort(HANDLE port,
-                              BYTE*  buffer,
-                              DWORD   buffer_size,
+                              BYTE* buffer,
+                              DWORD buffer_size,
                               DWORD* bytes_written);
 
 BOOL WINAPI Monitor2ReadPort(HANDLE, BYTE*, DWORD, DWORD* bytes_read);
@@ -89,7 +89,6 @@ extern const wchar_t kChromeProfilePathRegValue[];
 extern const wchar_t kPrintCommandRegValue[];
 extern const bool kIsUnittest;
 
-}   // namespace cloud_print
+}  // namespace cloud_print
 
 #endif  // CLOUD_PRINT_VIRTUAL_DRIVER_WIN_PORT_MONITOR_PORT_MONITOR_H_
-

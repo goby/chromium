@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("content") {
+static_library("content") {
   sources = [
     "precache_manager.cc",
     "precache_manager.h",
@@ -12,11 +12,13 @@ source_set("content") {
 
   deps = [
     "//base",
-    "//base:prefs",
+    "//components/data_reduction_proxy/core/browser",
     "//components/history/core/browser",
     "//components/keyed_service/core",
     "//components/precache/core",
-    "//components/sync_driver",
+    "//components/precache/core:proto",
+    "//components/prefs",
+    "//components/sync",
     "//components/variations",
     "//content/public/browser",
     "//net",
@@ -36,6 +38,7 @@ source_set("unit_tests") {
     "//base/test:test_support",
     "//components/history/core/browser",
     "//components/precache/core",
+    "//components/precache/core:proto",
     "//content/public/browser",
     "//content/test:test_support",
     "//net:test_support",

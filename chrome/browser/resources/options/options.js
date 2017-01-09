@@ -10,6 +10,7 @@ var AutofillOptions = options.AutofillOptions;
 var AutomaticSettingsResetBanner = options.AutomaticSettingsResetBanner;
 var BrowserOptions = options.BrowserOptions;
 var ClearBrowserDataOverlay = options.ClearBrowserDataOverlay;
+var ClearBrowserDataHistoryNotice = options.ClearBrowserDataHistoryNotice;
 var ConfirmDialog = options.ConfirmDialog;
 var ContentSettingsExceptionsArea =
     options.contentSettings.ContentSettingsExceptionsArea;
@@ -29,6 +30,7 @@ var HotwordConfirmDialog = options.HotwordConfirmDialog;
 var ImportDataOverlay = options.ImportDataOverlay;
 var LanguageOptions = options.LanguageOptions;
 var ManageProfileOverlay = options.ManageProfileOverlay;
+var DisconnectAccountOverlay = options.DisconnectAccountOverlay;
 var OptionsFocusManager = options.OptionsFocusManager;
 var OptionsPage = options.OptionsPage;
 var PageManager = cr.ui.pageManager.PageManager;
@@ -45,8 +47,6 @@ var SupervisedUserImportOverlay = options.SupervisedUserImportOverlay;
 var SupervisedUserLearnMoreOverlay = options.SupervisedUserLearnMoreOverlay;
 var SyncSetupOverlay = options.SyncSetupOverlay;
 var ThirdPartyImeConfirmOverlay = options.ThirdPartyImeConfirmOverlay;
-var TriggeredResetProfileSettingsOverlay =
-    options.TriggeredResetProfileSettingsOverlay;
 
 /**
  * DOMContentLoaded handler, sets up the page.
@@ -87,6 +87,9 @@ function load() {
                               BrowserOptions.getInstance(),
                               [$('privacyClearDataButton')]);
   PageManager.registerOverlay(
+      ClearBrowserDataHistoryNotice.getInstance(),
+      ClearBrowserDataOverlay.getInstance());
+  PageManager.registerOverlay(
       new ConfirmDialog(
           'doNotTrackConfirm',
           loadTimeData.getString('doNotTrackConfirmOverlayTabTitle'),
@@ -118,6 +121,8 @@ function load() {
                               [$('privacyContentSettingsButton'),
                                $('show-cookies-button')]);
   PageManager.registerOverlay(CreateProfileOverlay.getInstance(),
+                              BrowserOptions.getInstance());
+  PageManager.registerOverlay(DisconnectAccountOverlay.getInstance(),
                               BrowserOptions.getInstance());
   PageManager.registerOverlay(EasyUnlockTurnOffOverlay.getInstance(),
                               BrowserOptions.getInstance(),
@@ -158,9 +163,10 @@ function load() {
   PageManager.registerOverlay(PasswordManager.getInstance(),
                               BrowserOptions.getInstance(),
                               [$('manage-passwords')]);
-  PageManager.registerOverlay(ResetProfileSettingsOverlay.getInstance(),
-                              BrowserOptions.getInstance(),
-                              [$('reset-profile-settings')]);
+  PageManager.registerOverlay(
+      new ResetProfileSettingsOverlay(false /* isTriggered */),
+      BrowserOptions.getInstance(),
+      [$('reset-profile-settings')]);
   PageManager.registerOverlay(SearchEngineManager.getInstance(),
                               BrowserOptions.getInstance(),
                               [$('manage-default-search-engines')]);
@@ -172,7 +178,7 @@ function load() {
 
 <if expr="is_win">
   PageManager.registerOverlay(
-      TriggeredResetProfileSettingsOverlay.getInstance(),
+      new ResetProfileSettingsOverlay(true /* isTriggered */),
       BrowserOptions.getInstance());
 </if>
 
@@ -199,8 +205,8 @@ function load() {
     PageManager.registerOverlay(ChangePictureOptions.getInstance(),
                                 BrowserOptions.getInstance(),
                                 [$('account-picture')]);
-    PageManager.registerOverlay(ConsumerManagementOverlay.getInstance(),
-                                BrowserOptions.getInstance());
+    PageManager.registerOverlay(StorageClearDriveCacheOverlay.getInstance(),
+                                StorageManager.getInstance());
     PageManager.registerOverlay(DetailsInternetPage.getInstance(),
                                 BrowserOptions.getInstance());
     PageManager.registerOverlay(DisplayOptions.getInstance(),
@@ -216,11 +222,32 @@ function load() {
                                 [$('pointer-settings-button')]);
     PageManager.registerOverlay(PreferredNetworks.getInstance(),
                                 BrowserOptions.getInstance());
+    PageManager.registerOverlay(StylusOverlay.getInstance(),
+                                BrowserOptions.getInstance(),
+                                [$('stylus-settings-link')]);
     PageManager.registerOverlay(PowerOverlay.getInstance(),
                                 BrowserOptions.getInstance(),
                                 [$('power-settings-link')]);
+    PageManager.registerOverlay(QuickUnlockConfigureOverlay.getInstance(),
+                                BrowserOptions.getInstance(),
+                                [$('manage-screenlock')]);
+    PageManager.registerOverlay(StorageManager.getInstance(),
+                                BrowserOptions.getInstance(),
+                                [$('storage-manager-button')]);
     PageManager.registerOverlay(ThirdPartyImeConfirmOverlay.getInstance(),
                                 LanguageOptions.getInstance());
+    PageManager.registerOverlay(
+        new ConfirmDialog(
+            'arcOptOutConfirm',
+            loadTimeData.getString('arcOptOutConfirmOverlayTabTitle'),
+            'arc-opt-out-confirm-overlay',
+            /** @type {HTMLButtonElement} */($('arc-opt-out-confirm-ok')),
+            /** @type {HTMLButtonElement} */($('arc-opt-out-confirm-cancel')),
+            $('android-apps-enabled')['pref'],
+            $('android-apps-enabled')['metric'],
+            undefined,
+            false),
+        BrowserOptions.getInstance());
   }
 
   if (!cr.isWindows && !cr.isMac) {

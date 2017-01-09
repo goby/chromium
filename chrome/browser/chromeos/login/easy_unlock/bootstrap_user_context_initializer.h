@@ -5,17 +5,19 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_EASY_UNLOCK_BOOTSTRAP_USER_CONTEXT_INITIALIZER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_EASY_UNLOCK_BOOTSTRAP_USER_CONTEXT_INITIALIZER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_types.h"
 #include "chrome/browser/signin/easy_unlock_auth_attempt.h"
 #include "chrome/browser/signin/easy_unlock_service_observer.h"
 #include "chromeos/login/auth/user_context.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
+
+class AccountId;
 
 namespace chromeos {
 
@@ -52,7 +54,7 @@ class BootstrapUserContextInitializer final
                            const EasyUnlockDeviceKeyDataList& data_list);
   void OnEasyUnlockAuthenticated(EasyUnlockAuthAttempt::Type auth_attempt_type,
                                  bool success,
-                                 const std::string& user_id,
+                                 const AccountId& account_id,
                                  const std::string& key_secret,
                                  const std::string& key_label);
   void CreateRandomKey();
@@ -67,7 +69,7 @@ class BootstrapUserContextInitializer final
   void OnRefreshTokenResponse(const std::string& access_token,
                               int expires_in_seconds) override;
   void OnGetUserInfoResponse(
-      scoped_ptr<base::DictionaryValue> user_info) override;
+      std::unique_ptr<base::DictionaryValue> user_info) override;
   void OnOAuthError() override;
   void OnNetworkError(int response_code) override;
 
@@ -75,7 +77,7 @@ class BootstrapUserContextInitializer final
   void OnScreenlockStateChanged(proximity_auth::ScreenlockState state) override;
 
   CompleteCallback callback_;
-  scoped_ptr<gaia::GaiaOAuthClient> token_fetcher_;
+  std::unique_ptr<gaia::GaiaOAuthClient> token_fetcher_;
 
   UserContext user_context_;
   bool random_key_used_;

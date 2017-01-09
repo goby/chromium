@@ -5,13 +5,15 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_HISTORY_PROVIDER_H_
 #define COMPONENTS_OMNIBOX_BROWSER_HISTORY_PROVIDER_H_
 
+#include <stddef.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "components/omnibox/browser/in_memory_url_index_types.h"
 
 class AutocompleteInput;
-class Profile;
 struct AutocompleteMatch;
 
 // This class is a base class for the history autocomplete providers and

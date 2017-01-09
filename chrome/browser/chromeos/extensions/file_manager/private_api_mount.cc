@@ -8,6 +8,7 @@
 
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/extensions/file_manager/private_api_util.h"
@@ -16,8 +17,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/file_manager_private.h"
 #include "chromeos/disks/disk_mount_manager.h"
+#include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/event_logger.h"
-#include "components/drive/file_system_interface.h"
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/drive/task_util.h"
 #include "ui/shell_dialogs/selected_file_info.h"
@@ -48,7 +49,7 @@ void EnsureReadableFilePermissionOnBlockingPool(
 
 bool FileManagerPrivateAddMountFunction::RunAsync() {
   using file_manager_private::AddMount::Params;
-  const scoped_ptr<Params> params(Params::Create(*args_));
+  const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
   drive::EventLogger* logger = file_manager::util::GetLogger(GetProfile());
@@ -119,7 +120,7 @@ void FileManagerPrivateAddMountFunction::RunAfterGetDriveFile(
     const base::FilePath& drive_path,
     drive::FileError error,
     const base::FilePath& cache_path,
-    scoped_ptr<drive::ResourceEntry> entry) {
+    std::unique_ptr<drive::ResourceEntry> entry) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (error != drive::FILE_ERROR_OK) {
@@ -154,7 +155,7 @@ void FileManagerPrivateAddMountFunction::RunAfterMarkCacheFileAsMounted(
   }
 
   // Pass back the actual source path of the mount point.
-  SetResult(new base::StringValue(file_path.AsUTF8Unsafe()));
+  SetResult(base::MakeUnique<base::StringValue>(file_path.AsUTF8Unsafe()));
   SendResponse(true);
 
   // MountPath() takes a std::string.
@@ -162,13 +163,13 @@ void FileManagerPrivateAddMountFunction::RunAfterMarkCacheFileAsMounted(
   disk_mount_manager->MountPath(
       file_path.AsUTF8Unsafe(),
       base::FilePath(display_name.Extension()).AsUTF8Unsafe(),
-      display_name.AsUTF8Unsafe(),
-      chromeos::MOUNT_TYPE_ARCHIVE);
+      display_name.AsUTF8Unsafe(), chromeos::MOUNT_TYPE_ARCHIVE,
+      chromeos::MOUNT_ACCESS_MODE_READ_WRITE);
 }
 
 bool FileManagerPrivateRemoveMountFunction::RunAsync() {
   using file_manager_private::RemoveMount::Params;
-  const scoped_ptr<Params> params(Params::Create(*args_));
+  const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
   drive::EventLogger* logger = file_manager::util::GetLogger(GetProfile());
@@ -227,13 +228,12 @@ bool FileManagerPrivateGetVolumeMetadataListFunction::RunAsync() {
       file_manager::VolumeManager::Get(GetProfile())->GetVolumeList();
 
   std::string log_string;
-  std::vector<linked_ptr<file_manager_private::VolumeMetadata> > result;
+  std::vector<file_manager_private::VolumeMetadata> result;
   for (const auto& volume : volume_list) {
-    linked_ptr<file_manager_private::VolumeMetadata> volume_metadata(
-        new file_manager_private::VolumeMetadata);
-    file_manager::util::VolumeToVolumeMetadata(GetProfile(), *volume.get(),
-                                               volume_metadata.get());
-    result.push_back(volume_metadata);
+    file_manager_private::VolumeMetadata volume_metadata;
+    file_manager::util::VolumeToVolumeMetadata(GetProfile(), *volume,
+                                               &volume_metadata);
+    result.push_back(std::move(volume_metadata));
     if (!log_string.empty())
       log_string += ", ";
     log_string += volume->mount_path().AsUTF8Unsafe();

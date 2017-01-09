@@ -5,16 +5,19 @@
 #ifndef MEDIA_AUDIO_VIRTUAL_AUDIO_INPUT_STREAM_H_
 #define MEDIA_AUDIO_VIRTUAL_AUDIO_INPUT_STREAM_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
 #include "media/audio/fake_audio_worker.h"
 #include "media/base/audio_converter.h"
+#include "media/base/audio_parameters.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -23,7 +26,6 @@ class SingleThreadTaskRunner;
 namespace media {
 
 class LoopbackAudioConverter;
-class VirtualAudioOutputStream;
 
 // VirtualAudioInputStream converts and mixes audio from attached
 // VirtualAudioOutputStreams into a single stream. It will continuously render
@@ -57,16 +59,16 @@ class MEDIA_EXPORT VirtualAudioInputStream : public AudioInputStream {
   bool GetAutomaticGainControl() override;
   bool IsMuted() override;
 
-  // Attaches a VirtualAudioOutputStream to be used as input. This
+  // Attaches an AudioConverter::InputCallback to be used as input. This
   // VirtualAudioInputStream must outlive all attached streams, so any attached
   // stream must be closed (which causes a detach) before
   // VirtualAudioInputStream is destroyed.
-  virtual void AddOutputStream(VirtualAudioOutputStream* stream,
-                               const AudioParameters& output_params);
+  virtual void AddInputProvider(AudioConverter::InputCallback* input,
+                                const AudioParameters& params);
 
-  // Detaches a VirtualAudioOutputStream and removes it as input.
-  virtual void RemoveOutputStream(VirtualAudioOutputStream* stream,
-                                  const AudioParameters& output_params);
+  // Detaches an AudioConverter::InputCallback and removes it as input.
+  virtual void RemoveInputProvider(AudioConverter::InputCallback* input,
+                                   const AudioParameters& params);
 
  private:
   friend class VirtualAudioInputStreamTest;
@@ -85,7 +87,6 @@ class MEDIA_EXPORT VirtualAudioInputStream : public AudioInputStream {
   AudioInputCallback* callback_;
 
   // Non-const for testing.
-  scoped_ptr<uint8[]> buffer_;
   AudioParameters params_;
 
   // Guards concurrent access to the converter network: converters_, mixer_, and
@@ -106,7 +107,7 @@ class MEDIA_EXPORT VirtualAudioInputStream : public AudioInputStream {
   // Handles callback timing for consumption of audio data.
   FakeAudioWorker fake_worker_;
 
-  scoped_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<AudioBus> audio_bus_;
 
   base::ThreadChecker thread_checker_;
 

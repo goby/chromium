@@ -4,9 +4,12 @@
 
 #include "base/memory/scoped_vector.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -109,7 +112,7 @@ class LifeCycleWatcher : public LifeCycleObject::Observer {
 
  private:
   LifeCycleState life_cycle_state_;
-  scoped_ptr<LifeCycleObject> constructed_life_cycle_object_;
+  std::unique_ptr<LifeCycleObject> constructed_life_cycle_object_;
 
   DISALLOW_COPY_AND_ASSIGN(LifeCycleWatcher);
 };
@@ -225,7 +228,7 @@ TEST(ScopedVectorTest, MoveConstruct) {
     EXPECT_FALSE(scoped_vector.empty());
     EXPECT_TRUE(watcher.IsWatching(scoped_vector.back()));
 
-    ScopedVector<LifeCycleObject> scoped_vector_copy(scoped_vector.Pass());
+    ScopedVector<LifeCycleObject> scoped_vector_copy(std::move(scoped_vector));
     EXPECT_TRUE(scoped_vector.empty());
     EXPECT_FALSE(scoped_vector_copy.empty());
     EXPECT_TRUE(watcher.IsWatching(scoped_vector_copy.back()));
@@ -245,7 +248,7 @@ TEST(ScopedVectorTest, MoveAssign) {
     EXPECT_FALSE(scoped_vector.empty());
     EXPECT_TRUE(watcher.IsWatching(scoped_vector.back()));
 
-    scoped_vector_assign = scoped_vector.Pass();
+    scoped_vector_assign = std::move(scoped_vector);
     EXPECT_TRUE(scoped_vector.empty());
     EXPECT_FALSE(scoped_vector_assign.empty());
     EXPECT_TRUE(watcher.IsWatching(scoped_vector_assign.back()));
@@ -275,7 +278,7 @@ class DeleteCounter {
 
 template <typename T>
 ScopedVector<T> PassThru(ScopedVector<T> scoper) {
-  return scoper.Pass();
+  return scoper;
 }
 
 TEST(ScopedVectorTest, Passed) {
@@ -322,11 +325,11 @@ TEST(ScopedVectorTest, InsertRange) {
 // Assertions for push_back(scoped_ptr).
 TEST(ScopedVectorTest, PushBackScopedPtr) {
   int delete_counter = 0;
-  scoped_ptr<DeleteCounter> elem(new DeleteCounter(&delete_counter));
+  std::unique_ptr<DeleteCounter> elem(new DeleteCounter(&delete_counter));
   EXPECT_EQ(0, delete_counter);
   {
     ScopedVector<DeleteCounter> v;
-    v.push_back(elem.Pass());
+    v.push_back(std::move(elem));
     EXPECT_EQ(0, delete_counter);
   }
   EXPECT_EQ(1, delete_counter);

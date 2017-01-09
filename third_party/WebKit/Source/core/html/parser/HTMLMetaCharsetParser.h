@@ -29,39 +29,45 @@
 #include "core/html/parser/HTMLToken.h"
 #include "platform/text/SegmentedString.h"
 #include "wtf/Noncopyable.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/TextCodec.h"
 #include "wtf/text/TextEncoding.h"
+#include <memory>
 
 namespace blink {
 
 class HTMLTokenizer;
 
 class HTMLMetaCharsetParser {
-    WTF_MAKE_NONCOPYABLE(HTMLMetaCharsetParser); USING_FAST_MALLOC(HTMLMetaCharsetParser);
-public:
-    static PassOwnPtr<HTMLMetaCharsetParser> create() { return adoptPtr(new HTMLMetaCharsetParser()); }
+  WTF_MAKE_NONCOPYABLE(HTMLMetaCharsetParser);
+  USING_FAST_MALLOC(HTMLMetaCharsetParser);
 
-    ~HTMLMetaCharsetParser();
+ public:
+  static std::unique_ptr<HTMLMetaCharsetParser> create() {
+    return WTF::wrapUnique(new HTMLMetaCharsetParser());
+  }
 
-    // Returns true if done checking, regardless whether an encoding is found.
-    bool checkForMetaCharset(const char*, size_t);
+  ~HTMLMetaCharsetParser();
 
-    const WTF::TextEncoding& encoding() { return m_encoding; }
+  // Returns true if done checking, regardless whether an encoding is found.
+  bool checkForMetaCharset(const char*, size_t);
 
-private:
-    HTMLMetaCharsetParser();
+  const WTF::TextEncoding& encoding() { return m_encoding; }
 
-    bool processMeta();
+ private:
+  HTMLMetaCharsetParser();
 
-    OwnPtr<HTMLTokenizer> m_tokenizer;
-    OwnPtr<TextCodec> m_assumedCodec;
-    SegmentedString m_input;
-    HTMLToken m_token;
-    bool m_inHeadSection;
+  bool processMeta();
 
-    bool m_doneChecking;
-    WTF::TextEncoding m_encoding;
+  std::unique_ptr<HTMLTokenizer> m_tokenizer;
+  std::unique_ptr<TextCodec> m_assumedCodec;
+  SegmentedString m_input;
+  HTMLToken m_token;
+  bool m_inHeadSection;
+
+  bool m_doneChecking;
+  WTF::TextEncoding m_encoding;
 };
 
-}
+}  // namespace blink
 #endif

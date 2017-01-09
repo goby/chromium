@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DRIVE_FILEAPI_FILE_SYSTEM_BACKEND_DELEGATE_H_
 #define CHROME_BROWSER_CHROMEOS_DRIVE_FILEAPI_FILE_SYSTEM_BACKEND_DELEGATE_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/chromeos/fileapi/file_system_backend_delegate.h"
 
 namespace storage {
@@ -30,15 +33,15 @@ class FileSystemBackendDelegate : public chromeos::FileSystemBackendDelegate {
   // FileSystemBackend::Delegate overrides.
   storage::AsyncFileUtil* GetAsyncFileUtil(
       storage::FileSystemType type) override;
-  scoped_ptr<storage::FileStreamReader> CreateFileStreamReader(
+  std::unique_ptr<storage::FileStreamReader> CreateFileStreamReader(
       const storage::FileSystemURL& url,
-      int64 offset,
-      int64 max_bytes_to_read,
+      int64_t offset,
+      int64_t max_bytes_to_read,
       const base::Time& expected_modification_time,
       storage::FileSystemContext* context) override;
-  scoped_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
+  std::unique_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
       const storage::FileSystemURL& url,
-      int64 offset,
+      int64_t offset,
       storage::FileSystemContext* context) override;
   storage::WatcherManager* GetWatcherManager(
       storage::FileSystemType type) override;
@@ -46,7 +49,7 @@ class FileSystemBackendDelegate : public chromeos::FileSystemBackendDelegate {
                                  const storage::URLCallback& callback) override;
 
  private:
-  scoped_ptr<storage::AsyncFileUtil> async_file_util_;
+  std::unique_ptr<storage::AsyncFileUtil> async_file_util_;
 
   DISALLOW_COPY_AND_ASSIGN(FileSystemBackendDelegate);
 };

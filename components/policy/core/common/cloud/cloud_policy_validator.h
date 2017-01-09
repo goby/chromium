@@ -5,21 +5,25 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CLOUD_CLOUD_POLICY_VALIDATOR_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CLOUD_CLOUD_POLICY_VALIDATOR_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/policy/policy_export.h"
-#include "policy/proto/cloud_policy.pb.h"
+#include "components/policy/proto/cloud_policy.pb.h"
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-#include "policy/proto/chrome_extension_policy.pb.h"
+#include "components/policy/proto/chrome_extension_policy.pb.h"
 #endif
 
 namespace base {
@@ -65,10 +69,12 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
     VALIDATION_WRONG_POLICY_TYPE,
     // Unexpected settings entity id.
     VALIDATION_WRONG_SETTINGS_ENTITY_ID,
-    // Time stamp from the future.
+    // Time stamp outside expected range.
     VALIDATION_BAD_TIMESTAMP,
-    // Token doesn't match.
-    VALIDATION_WRONG_TOKEN,
+    // DM token is empty or doesn't match.
+    VALIDATION_BAD_DM_TOKEN,
+    // Device id is empty or doesn't match.
+    VALIDATION_BAD_DEVICE_ID,
     // Username doesn't match.
     VALIDATION_BAD_USERNAME,
     // Policy payload protobuf parse error.
@@ -80,27 +86,40 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
   };
 
   enum ValidateDMTokenOption {
-    // The policy must have a non-empty DMToken.
+    // The DM token from policy must match the expected DM token unless the
+    // expected DM token is empty. In addition, the DM token from policy must
+    // not be empty.
     DM_TOKEN_REQUIRED,
 
-    // The policy may have an empty or missing DMToken, if the expected token
-    // is also empty.
+    // The DM token from policy must match the expected DM token unless the
+    // expected DM token is empty.
     DM_TOKEN_NOT_REQUIRED,
   };
 
-  enum ValidateTimestampOption {
-    // The policy must have a timestamp field and it should be checked against
-    // both the start and end times.
-    TIMESTAMP_REQUIRED,
+  enum ValidateDeviceIdOption {
+    // The device id from policy must match the expected device id unless the
+    // expected device id is empty. In addition, the device id from policy must
+    // not be empty.
+    DEVICE_ID_REQUIRED,
 
-    // The timestamp should only be compared vs the |not_before| value (this
-    // is appropriate for platforms with unreliable system times, where we want
-    // to ensure that fresh policy is newer than existing policy, but we can't
-    // do any other validation).
+    // The device id from policy must match the expected device id unless the
+    // expected device id is empty.
+    DEVICE_ID_NOT_REQUIRED,
+  };
+
+  enum ValidateTimestampOption {
+    // The policy must have a timestamp field and the timestamp is checked
+    // against both start and end times.
+    TIMESTAMP_FULLY_VALIDATED,
+
+    // The timestamp is only checked against the |not_before| value. (This is
+    // appropriate for platforms with unreliable system times where we want to
+    // ensure that fresh policy is newer than existing policy, but we can't do
+    // any other validation).
     TIMESTAMP_NOT_BEFORE,
 
-    // No timestamp field is required.
-    TIMESTAMP_NOT_REQUIRED,
+    // The timestamp is not validated.
+    TIMESTAMP_NOT_VALIDATED,
   };
 
   virtual ~CloudPolicyValidatorBase();
@@ -111,82 +130,95 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
 
   // The policy objects owned by the validator. These are scoped_ptr
   // references, so ownership can be passed on once validation is complete.
-  scoped_ptr<enterprise_management::PolicyFetchResponse>& policy() {
+  std::unique_ptr<enterprise_management::PolicyFetchResponse>& policy() {
     return policy_;
   }
-  scoped_ptr<enterprise_management::PolicyData>& policy_data() {
+  std::unique_ptr<enterprise_management::PolicyData>& policy_data() {
     return policy_data_;
   }
 
-  // Instructs the validator to check that the policy timestamp is not before
-  // |not_before| and not after |not_after| + grace interval. If
-  // |timestamp_option| is set to TIMESTAMP_REQUIRED, then the policy will fail
-  // validation if it does not have a timestamp field.
+  // Instruct the validator to check that the policy timestamp is not before
+  // |not_before| and not after |not_after| + grace interval. Depending on
+  // |timestamp_option|, some or all of the checks may be waived.
   void ValidateTimestamp(base::Time not_before,
                          base::Time not_after,
                          ValidateTimestampOption timestamp_option);
 
-  // Validates that the username in the policy blob matches |expected_user|. If
-  // canonicalize is set to true, both values will be canonicalized before
-  // comparison.
+  // Instruct the validator to check that the username in the policy blob
+  // matches |expected_user|. If |canonicalize| is set to true, both values are
+  // canonicalized before comparison.
   void ValidateUsername(const std::string& expected_user, bool canonicalize);
 
-  // Validates the policy blob is addressed to |expected_domain|. This uses the
-  // domain part of the username field in the policy for the check.
+  // Instruct the validator to check that the policy blob is addressed to
+  // |expected_domain|. This uses the domain part of the username field in the
+  // policy for the check.
   void ValidateDomain(const std::string& expected_domain);
 
-  // Makes sure the DM token on the policy matches |expected_token|.
-  // If |dm_token_option| is DM_TOKEN_REQUIRED, then the policy will fail
-  // validation if it does not have a non-empty request_token field.
-  void ValidateDMToken(const std::string& dm_token,
+  // Instruct the validator to check that the DM token from policy matches
+  // |expected_dm_token| unless |expected_dm_token| is empty. In addition, the
+  // DM token from policy must not be empty if |dm_token_option| is
+  // DM_TOKEN_REQUIRED.
+  void ValidateDMToken(const std::string& expected_dm_token,
                        ValidateDMTokenOption dm_token_option);
 
-  // Validates the policy type.
+  // Instruct the validator to check that the device id from policy matches
+  // |expected_device_id| unless |expected_device_id| is empty. In addition, the
+  // device id from policy must not be empty if |device_id_option| is
+  // DEVICE_ID_REQUIRED.
+  void ValidateDeviceId(const std::string& expected_device_id,
+                        ValidateDeviceIdOption device_id_option);
+
+  // Instruct the validator to check the policy type.
   void ValidatePolicyType(const std::string& policy_type);
 
-  // Validates the settings_entity_id value.
+  // Instruct the validator to check the settings_entity_id value.
   void ValidateSettingsEntityId(const std::string& settings_entity_id);
 
-  // Validates that the payload can be decoded successfully.
+  // Instruct the validator to check that the payload can be decoded
+  // successfully.
   void ValidatePayload();
 
-  // Verifies that |cached_key| is valid, by verifying the
-  // |cached_key_signature| using the passed |owning_domain| and
-  // |verification_key|.
+  // Instruct the validator to check that |cached_key| is valid by verifying the
+  // |cached_key_signature| using the passed |owning_domain| and the baked-in
+  // policy verification key.
   void ValidateCachedKey(const std::string& cached_key,
                          const std::string& cached_key_signature,
-                         const std::string& verification_key,
                          const std::string& owning_domain);
 
-  // Verifies that the signature on the policy blob verifies against |key|. If
-  // |allow_key_rotation| is true and there is a key rotation present in the
-  // policy blob, this checks the signature on the new key against |key| and the
-  // policy blob against the new key. New key is also validated using the passed
-  // |verification_key| and |owning_domain|, and the
-  // |new_public_key_verification_signature| field.
-  void ValidateSignature(const std::string& key,
-                         const std::string& verification_key,
-                         const std::string& owning_domain,
-                         bool allow_key_rotation);
+  // Instruct the validator to check that the signature on the policy blob
+  // verifies against |key|.
+  void ValidateSignature(const std::string& key);
 
-  // Similar to ValidateSignature(), this checks the signature on the
-  // policy blob. However, this variant expects a new policy key set in the
-  // policy blob and makes sure the policy is signed using that key. This should
-  // be called at setup time when there is no existing policy key present to
-  // check against. New key is validated using the passed |verification_key| and
-  // the new_public_key_verification_signature field.
-  void ValidateInitialKey(const std::string& verification_key,
-                          const std::string& owning_domain);
+  // Instruct the validator to check that the signature on the policy blob
+  // verifies against |key|. If there is a key rotation present in the policy
+  // blob, this checks the signature on the new key against |key| and the policy
+  // blob against the new key. New key is also validated using the passed
+  // |owning_domain| and the baked-in policy verification key against the
+  // proto's new_public_key_verification_signature_deprecated field.
+  void ValidateSignatureAllowingRotation(const std::string& key,
+                                         const std::string& owning_domain);
 
-  // Convenience helper that configures timestamp and token validation based on
-  // the current policy blob. |policy_data| may be NULL, in which case the
-  // timestamp validation will drop the lower bound. |dm_token_option|
-  // and |timestamp_option| have the same effect as the corresponding
-  // parameters for ValidateTimestamp() and ValidateDMToken().
+  // Similar to ValidateSignature(), this instructs the validator to check the
+  // signature on the policy blob. However, this variant expects a new policy
+  // key set in the policy blob and makes sure the policy is signed using that
+  // key. This should be called at setup time when there is no existing policy
+  // key present to check against. New key is validated using the baked-in
+  // policy verification key against the proto's
+  // new_public_key_verification_signature_deprecated field.
+  void ValidateInitialKey(const std::string& owning_domain);
+
+  // Convenience helper that instructs the validator to check timestamp, DM
+  // token and device id based on the current policy blob. |policy_data| may be
+  // nullptr, in which case the timestamp lower bound check is waived and the DM
+  // token as well as the device id are checked against empty strings.
+  // |timestamp_option|, |dm_token_option| and |device_id_option| have the same
+  // effect as the corresponding parameters for ValidateTimestamp(),
+  // ValidateDMToken() and ValidateDeviceId().
   void ValidateAgainstCurrentPolicy(
       const enterprise_management::PolicyData* policy_data,
       ValidateTimestampOption timestamp_option,
-      ValidateDMTokenOption dm_token_option);
+      ValidateDMTokenOption dm_token_option,
+      ValidateDeviceIdOption device_id_option);
 
   // Immediately performs validation on the current thread.
   void RunValidation();
@@ -196,7 +228,8 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
   // message that the policy payload will be parsed to, and it needs to stay
   // valid for the lifetime of the validator.
   CloudPolicyValidatorBase(
-      scoped_ptr<enterprise_management::PolicyFetchResponse> policy_response,
+      std::unique_ptr<enterprise_management::PolicyFetchResponse>
+          policy_response,
       google::protobuf::MessageLite* payload,
       scoped_refptr<base::SequencedTaskRunner> background_task_runner);
 
@@ -210,13 +243,14 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
     VALIDATE_TIMESTAMP   = 1 << 0,
     VALIDATE_USERNAME    = 1 << 1,
     VALIDATE_DOMAIN      = 1 << 2,
-    VALIDATE_TOKEN       = 1 << 3,
+    VALIDATE_DM_TOKEN    = 1 << 3,
     VALIDATE_POLICY_TYPE = 1 << 4,
     VALIDATE_ENTITY_ID   = 1 << 5,
     VALIDATE_PAYLOAD     = 1 << 6,
     VALIDATE_SIGNATURE   = 1 << 7,
     VALIDATE_INITIAL_KEY = 1 << 8,
     VALIDATE_CACHED_KEY  = 1 << 9,
+    VALIDATE_DEVICE_ID   = 1 << 10,
   };
 
   enum SignatureType {
@@ -226,19 +260,19 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
 
   // Performs validation, called on a background thread.
   static void PerformValidation(
-      scoped_ptr<CloudPolicyValidatorBase> self,
+      std::unique_ptr<CloudPolicyValidatorBase> self,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       const base::Closure& completion_callback);
 
   // Reports completion to the |completion_callback_|.
-  static void ReportCompletion(scoped_ptr<CloudPolicyValidatorBase> self,
+  static void ReportCompletion(std::unique_ptr<CloudPolicyValidatorBase> self,
                                const base::Closure& completion_callback);
 
   // Invokes all the checks and reports the result.
   void RunChecks();
 
   // Helper routine that verifies that the new public key in the policy blob
-  // is properly signed by the |verification_key_|.
+  // is properly signed by the baked-in policy verification key.
   bool CheckNewPublicKeyVerificationSignature();
 
   // Helper routine that performs a verification-key-based signature check,
@@ -252,16 +286,16 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
   // empty string if the policy does not contain a username field.
   std::string ExtractDomainFromPolicy();
 
-  // Sets the key and domain used to verify new public keys, and ensures that
+  // Sets the owning domain used to verify new public keys, and ensures that
   // callers don't try to set conflicting values.
-  void set_verification_key_and_domain(const std::string& verification_key,
-                                       const std::string& owning_domain);
+  void set_owning_domain(const std::string& owning_domain);
 
   // Helper functions implementing individual checks.
   Status CheckTimestamp();
   Status CheckUsername();
   Status CheckDomain();
-  Status CheckToken();
+  Status CheckDMToken();
+  Status CheckDeviceId();
   Status CheckPolicyType();
   Status CheckEntityId();
   Status CheckPayload();
@@ -277,19 +311,21 @@ class POLICY_EXPORT CloudPolicyValidatorBase {
                               SignatureType signature_type);
 
   Status status_;
-  scoped_ptr<enterprise_management::PolicyFetchResponse> policy_;
-  scoped_ptr<enterprise_management::PolicyData> policy_data_;
+  std::unique_ptr<enterprise_management::PolicyFetchResponse> policy_;
+  std::unique_ptr<enterprise_management::PolicyData> policy_data_;
   google::protobuf::MessageLite* payload_;
 
   int validation_flags_;
-  int64 timestamp_not_before_;
-  int64 timestamp_not_after_;
+  int64_t timestamp_not_before_;
+  int64_t timestamp_not_after_;
   ValidateTimestampOption timestamp_option_;
   ValidateDMTokenOption dm_token_option_;
+  ValidateDeviceIdOption device_id_option_;
   std::string user_;
   bool canonicalize_user_;
   std::string domain_;
-  std::string token_;
+  std::string dm_token_;
+  std::string device_id_;
   std::string policy_type_;
   std::string settings_entity_id_;
   std::string key_;
@@ -315,19 +351,18 @@ class POLICY_EXPORT CloudPolicyValidator : public CloudPolicyValidatorBase {
 
   // Creates a new validator.
   // |background_task_runner| is optional; if RunValidation() is used directly
-  // and StartValidation() is not used then it can be NULL.
+  // and StartValidation() is not used then it can be nullptr.
   static CloudPolicyValidator<PayloadProto>* Create(
-      scoped_ptr<enterprise_management::PolicyFetchResponse> policy_response,
+      std::unique_ptr<enterprise_management::PolicyFetchResponse>
+          policy_response,
       scoped_refptr<base::SequencedTaskRunner> background_task_runner) {
     return new CloudPolicyValidator(
-        policy_response.Pass(),
-        scoped_ptr<PayloadProto>(new PayloadProto()),
+        std::move(policy_response),
+        std::unique_ptr<PayloadProto>(new PayloadProto()),
         background_task_runner);
   }
 
-  scoped_ptr<PayloadProto>& payload() {
-    return payload_;
-  }
+  std::unique_ptr<PayloadProto>& payload() { return payload_; }
 
   // Kicks off asynchronous validation. |completion_callback| is invoked when
   // done. From this point on, the validator manages its own lifetime - this
@@ -339,15 +374,16 @@ class POLICY_EXPORT CloudPolicyValidator : public CloudPolicyValidatorBase {
 
  private:
   CloudPolicyValidator(
-      scoped_ptr<enterprise_management::PolicyFetchResponse> policy_response,
-      scoped_ptr<PayloadProto> payload,
+      std::unique_ptr<enterprise_management::PolicyFetchResponse>
+          policy_response,
+      std::unique_ptr<PayloadProto> payload,
       scoped_refptr<base::SequencedTaskRunner> background_task_runner)
-      : CloudPolicyValidatorBase(policy_response.Pass(),
+      : CloudPolicyValidatorBase(std::move(policy_response),
                                  payload.get(),
                                  background_task_runner),
-        payload_(payload.Pass()) {}
+        payload_(std::move(payload)) {}
 
-  scoped_ptr<PayloadProto> payload_;
+  std::unique_ptr<PayloadProto> payload_;
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyValidator);
 };

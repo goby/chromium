@@ -28,182 +28,300 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/imagebitmap/ImageBitmapFactories.h"
 
 #include "bindings/core/v8/ExceptionState.h"
+#include "core/dom/DOMException.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/fileapi/Blob.h"
 #include "core/frame/ImageBitmap.h"
 #include "core/frame/LocalDOMWindow.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/HTMLCanvasElement.h"
 #include "core/html/HTMLImageElement.h"
 #include "core/html/HTMLVideoElement.h"
 #include "core/html/ImageData.h"
+#include "core/imagebitmap/ImageBitmapOptions.h"
+#include "core/svg/graphics/SVGImage.h"
 #include "core/workers/WorkerGlobalScope.h"
+#include "platform/CrossThreadFunctional.h"
 #include "platform/SharedBuffer.h"
-#include "platform/graphics/ImageSource.h"
+#include "platform/image-decoders/ImageDecoder.h"
+#include "platform/threading/BackgroundTaskRunner.h"
+#include "public/platform/Platform.h"
+#include "public/platform/WebThread.h"
+#include "public/platform/WebTraceLocation.h"
+#include <memory>
 #include <v8.h>
 
 namespace blink {
 
-static inline ImageBitmapSource* toImageBitmapSourceInternal(const ImageBitmapSourceUnion& value)
-{
-    if (value.isHTMLImageElement())
-        return value.getAsHTMLImageElement().get();
-    if (value.isHTMLVideoElement())
-        return value.getAsHTMLVideoElement().get();
-    if (value.isHTMLCanvasElement())
-        return value.getAsHTMLCanvasElement().get();
-    if (value.isBlob())
-        return value.getAsBlob();
-    if (value.isImageData())
-        return value.getAsImageData();
-    if (value.isImageBitmap())
-        return value.getAsImageBitmap().get();
-    ASSERT_NOT_REACHED();
-    return nullptr;
-}
-
-ScriptPromise ImageBitmapFactories::createImageBitmap(ScriptState* scriptState, EventTarget& eventTarget, const ImageBitmapSourceUnion& bitmapSource, ExceptionState& exceptionState)
-{
-    ImageBitmapSource* bitmapSourceInternal = toImageBitmapSourceInternal(bitmapSource);
-    if (bitmapSourceInternal->isBlob()) {
-        Blob* blob = static_cast<Blob*>(bitmapSourceInternal);
-        ImageBitmapLoader* loader = ImageBitmapFactories::ImageBitmapLoader::create(from(eventTarget), IntRect(), scriptState);
-        ScriptPromise promise = loader->promise();
-        from(eventTarget).addLoader(loader);
-        loader->loadBlobAsync(eventTarget.executionContext(), blob);
-        return promise;
+static inline ImageBitmapSource* toImageBitmapSourceInternal(
+    const ImageBitmapSourceUnion& value,
+    ExceptionState& exceptionState,
+    const ImageBitmapOptions& options,
+    bool hasCropRect) {
+  if (value.isHTMLImageElement()) {
+    HTMLImageElement* imageElement = value.getAsHTMLImageElement();
+    if (!imageElement || !imageElement->cachedImage()) {
+      exceptionState.throwDOMException(
+          InvalidStateError,
+          "No image can be retrieved from the provided element.");
+      return nullptr;
     }
-    IntSize srcSize = bitmapSourceInternal->bitmapSourceSize();
-    return createImageBitmap(scriptState, eventTarget, bitmapSourceInternal, 0, 0, srcSize.width(), srcSize.height(), exceptionState);
-}
-
-ScriptPromise ImageBitmapFactories::createImageBitmap(ScriptState* scriptState, EventTarget& eventTarget, const ImageBitmapSourceUnion& bitmapSource, int sx, int sy, int sw, int sh, ExceptionState& exceptionState)
-{
-    ImageBitmapSource* bitmapSourceInternal = toImageBitmapSourceInternal(bitmapSource);
-    return createImageBitmap(scriptState, eventTarget, bitmapSourceInternal, sx, sy, sw, sh, exceptionState);
-}
-
-ScriptPromise ImageBitmapFactories::createImageBitmap(ScriptState* scriptState, EventTarget& eventTarget, ImageBitmapSource* bitmapSource, int sx, int sy, int sw, int sh, ExceptionState& exceptionState)
-{
-    if (bitmapSource->isBlob()) {
-        if (!sw || !sh) {
-            exceptionState.throwDOMException(IndexSizeError, String::format("The source %s provided is 0.", sw ? "height" : "width"));
-            return ScriptPromise();
-        }
-        Blob* blob = static_cast<Blob*>(bitmapSource);
-        ImageBitmapLoader* loader = ImageBitmapFactories::ImageBitmapLoader::create(from(eventTarget), IntRect(sx, sy, sw, sh), scriptState);
-        ScriptPromise promise = loader->promise();
-        from(eventTarget).addLoader(loader);
-        loader->loadBlobAsync(eventTarget.executionContext(), blob);
-        return promise;
+    if (imageElement->cachedImage()->getImage()->isSVGImage()) {
+      SVGImage* image = toSVGImage(imageElement->cachedImage()->getImage());
+      if (!image->hasIntrinsicDimensions() &&
+          (!hasCropRect &&
+           (!options.hasResizeWidth() || !options.hasResizeHeight()))) {
+        exceptionState.throwDOMException(
+            InvalidStateError,
+            "The image element contains an SVG image without intrinsic "
+            "dimensions, and no resize options or crop region are specified.");
+        return nullptr;
+      }
     }
-
-    return bitmapSource->createImageBitmap(scriptState, eventTarget, sx, sy, sw, sh, exceptionState);
+    return imageElement;
+  }
+  if (value.isHTMLVideoElement())
+    return value.getAsHTMLVideoElement();
+  if (value.isHTMLCanvasElement())
+    return value.getAsHTMLCanvasElement();
+  if (value.isBlob())
+    return value.getAsBlob();
+  if (value.isImageData())
+    return value.getAsImageData();
+  if (value.isImageBitmap())
+    return value.getAsImageBitmap();
+  ASSERT_NOT_REACHED();
+  return nullptr;
 }
 
-const char* ImageBitmapFactories::supplementName()
-{
-    return "ImageBitmapFactories";
+ScriptPromise ImageBitmapFactories::createImageBitmapFromBlob(
+    ScriptState* scriptState,
+    EventTarget& eventTarget,
+    ImageBitmapSource* bitmapSource,
+    Optional<IntRect> cropRect,
+    const ImageBitmapOptions& options,
+    ExceptionState& exceptionState) {
+  if (cropRect &&
+      !ImageBitmap::isSourceSizeValid(cropRect->width(), cropRect->height(),
+                                      exceptionState))
+    return ScriptPromise();
+  if (!ImageBitmap::isResizeOptionValid(options, exceptionState))
+    return ScriptPromise();
+  Blob* blob = static_cast<Blob*>(bitmapSource);
+  ImageBitmapLoader* loader = ImageBitmapFactories::ImageBitmapLoader::create(
+      from(eventTarget), cropRect, options, scriptState);
+  ScriptPromise promise = loader->promise();
+  from(eventTarget).addLoader(loader);
+  loader->loadBlobAsync(eventTarget.getExecutionContext(), blob);
+  return promise;
 }
 
-ImageBitmapFactories& ImageBitmapFactories::from(EventTarget& eventTarget)
-{
-    if (LocalDOMWindow* window = eventTarget.toDOMWindow())
-        return fromInternal(*window);
-
-    ASSERT(eventTarget.executionContext()->isWorkerGlobalScope());
-    return ImageBitmapFactories::fromInternal(*toWorkerGlobalScope(eventTarget.executionContext()));
+ScriptPromise ImageBitmapFactories::createImageBitmap(
+    ScriptState* scriptState,
+    EventTarget& eventTarget,
+    const ImageBitmapSourceUnion& bitmapSource,
+    const ImageBitmapOptions& options,
+    ExceptionState& exceptionState) {
+  UseCounter::Feature feature = UseCounter::CreateImageBitmap;
+  UseCounter::count(scriptState->getExecutionContext(), feature);
+  ImageBitmapSource* bitmapSourceInternal =
+      toImageBitmapSourceInternal(bitmapSource, exceptionState, options, false);
+  if (!bitmapSourceInternal)
+    return ScriptPromise();
+  return createImageBitmap(scriptState, eventTarget, bitmapSourceInternal,
+                           Optional<IntRect>(), options, exceptionState);
 }
 
-template<class GlobalObject>
-ImageBitmapFactories& ImageBitmapFactories::fromInternal(GlobalObject& object)
-{
-    ImageBitmapFactories* supplement = static_cast<ImageBitmapFactories*>(WillBeHeapSupplement<GlobalObject>::from(object, supplementName()));
-    if (!supplement) {
-        supplement = new ImageBitmapFactories();
-        WillBeHeapSupplement<GlobalObject>::provideTo(object, supplementName(), adoptPtrWillBeNoop(supplement));
-    }
-    return *supplement;
+ScriptPromise ImageBitmapFactories::createImageBitmap(
+    ScriptState* scriptState,
+    EventTarget& eventTarget,
+    const ImageBitmapSourceUnion& bitmapSource,
+    int sx,
+    int sy,
+    int sw,
+    int sh,
+    const ImageBitmapOptions& options,
+    ExceptionState& exceptionState) {
+  UseCounter::Feature feature = UseCounter::CreateImageBitmap;
+  UseCounter::count(scriptState->getExecutionContext(), feature);
+  ImageBitmapSource* bitmapSourceInternal =
+      toImageBitmapSourceInternal(bitmapSource, exceptionState, options, true);
+  if (!bitmapSourceInternal)
+    return ScriptPromise();
+  Optional<IntRect> cropRect = IntRect(sx, sy, sw, sh);
+  return createImageBitmap(scriptState, eventTarget, bitmapSourceInternal,
+                           cropRect, options, exceptionState);
 }
 
-void ImageBitmapFactories::addLoader(ImageBitmapLoader* loader)
-{
-    m_pendingLoaders.add(loader);
+ScriptPromise ImageBitmapFactories::createImageBitmap(
+    ScriptState* scriptState,
+    EventTarget& eventTarget,
+    ImageBitmapSource* bitmapSource,
+    Optional<IntRect> cropRect,
+    const ImageBitmapOptions& options,
+    ExceptionState& exceptionState) {
+  if (bitmapSource->isBlob())
+    return createImageBitmapFromBlob(scriptState, eventTarget, bitmapSource,
+                                     cropRect, options, exceptionState);
+
+  return bitmapSource->createImageBitmap(scriptState, eventTarget, cropRect,
+                                         options, exceptionState);
 }
 
-void ImageBitmapFactories::didFinishLoading(ImageBitmapLoader* loader)
-{
-    ASSERT(m_pendingLoaders.contains(loader));
-    m_pendingLoaders.remove(loader);
+const char* ImageBitmapFactories::supplementName() {
+  return "ImageBitmapFactories";
 }
 
-ImageBitmapFactories::ImageBitmapLoader::ImageBitmapLoader(ImageBitmapFactories& factory, const IntRect& cropRect, ScriptState* scriptState)
-    : m_loader(FileReaderLoader::ReadAsArrayBuffer, this)
-    , m_factory(&factory)
-    , m_resolver(ScriptPromiseResolver::create(scriptState))
-    , m_cropRect(cropRect)
-{
+ImageBitmapFactories& ImageBitmapFactories::from(EventTarget& eventTarget) {
+  if (LocalDOMWindow* window = eventTarget.toLocalDOMWindow())
+    return fromInternal(*window);
+
+  ASSERT(eventTarget.getExecutionContext()->isWorkerGlobalScope());
+  return ImageBitmapFactories::fromInternal(
+      *toWorkerGlobalScope(eventTarget.getExecutionContext()));
 }
 
-void ImageBitmapFactories::ImageBitmapLoader::loadBlobAsync(ExecutionContext* context, Blob* blob)
-{
-    m_loader.start(context, blob->blobDataHandle());
+template <class GlobalObject>
+ImageBitmapFactories& ImageBitmapFactories::fromInternal(GlobalObject& object) {
+  ImageBitmapFactories* supplement = static_cast<ImageBitmapFactories*>(
+      Supplement<GlobalObject>::from(object, supplementName()));
+  if (!supplement) {
+    supplement = new ImageBitmapFactories;
+    Supplement<GlobalObject>::provideTo(object, supplementName(), supplement);
+  }
+  return *supplement;
 }
 
-DEFINE_TRACE(ImageBitmapFactories)
-{
-    visitor->trace(m_pendingLoaders);
-    WillBeHeapSupplement<LocalDOMWindow>::trace(visitor);
-    WillBeHeapSupplement<WorkerGlobalScope>::trace(visitor);
+void ImageBitmapFactories::addLoader(ImageBitmapLoader* loader) {
+  m_pendingLoaders.add(loader);
 }
 
-void ImageBitmapFactories::ImageBitmapLoader::rejectPromise()
-{
-    m_resolver->reject(ScriptValue(m_resolver->scriptState(), v8::Null(m_resolver->scriptState()->isolate())));
-    m_factory->didFinishLoading(this);
+void ImageBitmapFactories::didFinishLoading(ImageBitmapLoader* loader) {
+  ASSERT(m_pendingLoaders.contains(loader));
+  m_pendingLoaders.remove(loader);
 }
 
-void ImageBitmapFactories::ImageBitmapLoader::didFinishLoading()
-{
-    if (!m_loader.arrayBufferResult()) {
-        rejectPromise();
-        return;
-    }
-    RefPtr<SharedBuffer> sharedBuffer = SharedBuffer::create((char*)m_loader.arrayBufferResult()->data(), m_loader.arrayBufferResult()->byteLength());
+ImageBitmapFactories::ImageBitmapLoader::ImageBitmapLoader(
+    ImageBitmapFactories& factory,
+    Optional<IntRect> cropRect,
+    ScriptState* scriptState,
+    const ImageBitmapOptions& options)
+    : m_loader(
+          FileReaderLoader::create(FileReaderLoader::ReadAsArrayBuffer, this)),
+      m_factory(&factory),
+      m_resolver(ScriptPromiseResolver::create(scriptState)),
+      m_cropRect(cropRect),
+      m_options(options) {}
 
-    OwnPtr<ImageSource> source = adoptPtr(new ImageSource());
-    source->setData(*sharedBuffer, true);
-
-    RefPtr<SkImage> frame = source->createFrameAtIndex(0);
-    ASSERT(!frame || (frame->width() && frame->height()));
-    if (!frame) {
-        rejectPromise();
-        return;
-    }
-
-    RefPtr<Image> image = StaticBitmapImage::create(frame);
-    if (!m_cropRect.width() && !m_cropRect.height()) {
-        // No cropping variant was called.
-        m_cropRect = IntRect(IntPoint(), image->size());
-    }
-
-    RefPtrWillBeRawPtr<ImageBitmap> imageBitmap = ImageBitmap::create(image.get(), m_cropRect);
-    m_resolver->resolve(imageBitmap.release());
-    m_factory->didFinishLoading(this);
+void ImageBitmapFactories::ImageBitmapLoader::loadBlobAsync(
+    ExecutionContext* context,
+    Blob* blob) {
+  m_loader->start(context, blob->blobDataHandle());
 }
 
-void ImageBitmapFactories::ImageBitmapLoader::didFail(FileError::ErrorCode)
-{
+DEFINE_TRACE(ImageBitmapFactories) {
+  visitor->trace(m_pendingLoaders);
+  Supplement<LocalDOMWindow>::trace(visitor);
+  Supplement<WorkerGlobalScope>::trace(visitor);
+}
+
+void ImageBitmapFactories::ImageBitmapLoader::rejectPromise() {
+  m_resolver->reject(DOMException::create(
+      InvalidStateError, "The source image cannot be decoded."));
+  m_factory->didFinishLoading(this);
+}
+
+void ImageBitmapFactories::ImageBitmapLoader::didFinishLoading() {
+  DOMArrayBuffer* arrayBuffer = m_loader->arrayBufferResult();
+  if (!arrayBuffer) {
     rejectPromise();
+    return;
+  }
+  scheduleAsyncImageBitmapDecoding(arrayBuffer);
 }
 
-DEFINE_TRACE(ImageBitmapFactories::ImageBitmapLoader)
-{
-    visitor->trace(m_factory);
-    visitor->trace(m_resolver);
+void ImageBitmapFactories::ImageBitmapLoader::didFail(FileError::ErrorCode) {
+  rejectPromise();
 }
 
-} // namespace blink
+void ImageBitmapFactories::ImageBitmapLoader::scheduleAsyncImageBitmapDecoding(
+    DOMArrayBuffer* arrayBuffer) {
+  // For a 4000*4000 png image where each 10*10 tile is filled in by a random
+  // RGBA value, the byteLength is around 2M, and it typically takes around
+  // 4.5ms to decode on a current model of Linux desktop.
+  const int longTaskByteLengthThreshold = 2000000;
+  BackgroundTaskRunner::TaskSize taskSize =
+      BackgroundTaskRunner::TaskSizeShortRunningTask;
+  if (arrayBuffer->byteLength() >= longTaskByteLengthThreshold)
+    taskSize = BackgroundTaskRunner::TaskSizeLongRunningTask;
+  WebTaskRunner* taskRunner =
+      Platform::current()->currentThread()->getWebTaskRunner();
+  BackgroundTaskRunner::postOnBackgroundThread(
+      BLINK_FROM_HERE,
+      crossThreadBind(
+          &ImageBitmapFactories::ImageBitmapLoader::decodeImageOnDecoderThread,
+          wrapCrossThreadPersistent(this), crossThreadUnretained(taskRunner),
+          wrapCrossThreadPersistent(arrayBuffer), m_options.premultiplyAlpha(),
+          m_options.colorSpaceConversion()),
+      taskSize);
+}
+
+void ImageBitmapFactories::ImageBitmapLoader::decodeImageOnDecoderThread(
+    WebTaskRunner* taskRunner,
+    DOMArrayBuffer* arrayBuffer,
+    const String& premultiplyAlphaOption,
+    const String& colorSpaceConversionOption) {
+  ASSERT(!isMainThread());
+
+  ImageDecoder::AlphaOption alphaOp = ImageDecoder::AlphaPremultiplied;
+  if (premultiplyAlphaOption == "none")
+    alphaOp = ImageDecoder::AlphaNotPremultiplied;
+  bool ignoreColorSpace = false;
+  if (colorSpaceConversionOption == "none")
+    ignoreColorSpace = true;
+  std::unique_ptr<ImageDecoder> decoder(ImageDecoder::create(
+      SegmentReader::createFromSkData(SkData::MakeWithoutCopy(
+          arrayBuffer->data(), arrayBuffer->byteLength())),
+      true, alphaOp,
+      ignoreColorSpace ? ColorBehavior::ignore()
+                       : ColorBehavior::transformToGlobalTarget()));
+  sk_sp<SkImage> frame;
+  if (decoder) {
+    frame = ImageBitmap::getSkImageFromDecoder(std::move(decoder));
+  }
+  taskRunner->postTask(
+      BLINK_FROM_HERE,
+      crossThreadBind(&ImageBitmapFactories::ImageBitmapLoader::
+                          resolvePromiseOnOriginalThread,
+                      wrapCrossThreadPersistent(this), std::move(frame)));
+}
+
+void ImageBitmapFactories::ImageBitmapLoader::resolvePromiseOnOriginalThread(
+    sk_sp<SkImage> frame) {
+  if (!frame) {
+    rejectPromise();
+    return;
+  }
+  ASSERT(frame->width() && frame->height());
+
+  RefPtr<StaticBitmapImage> image = StaticBitmapImage::create(std::move(frame));
+  image->setOriginClean(true);
+  ImageBitmap* imageBitmap = ImageBitmap::create(image, m_cropRect, m_options);
+  if (imageBitmap && imageBitmap->bitmapImage()) {
+    m_resolver->resolve(imageBitmap);
+  } else {
+    rejectPromise();
+    return;
+  }
+  m_factory->didFinishLoading(this);
+}
+
+DEFINE_TRACE(ImageBitmapFactories::ImageBitmapLoader) {
+  visitor->trace(m_factory);
+  visitor->trace(m_resolver);
+}
+
+}  // namespace blink

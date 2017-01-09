@@ -4,11 +4,17 @@
 
 #include "chrome/browser/ui/views/autofill/save_card_bubble_views.h"
 
+#include <stddef.h>
+
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/autofill/autofill_dialog_types.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/autofill/save_card_bubble_controller.h"
-#include "grit/components_strings.h"
+#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/legal_message_line.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/resource/resource_bundle.h"
+#include "ui/views/border.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/button/blue_button.h"
 #include "ui/views/controls/button/label_button.h"
@@ -16,10 +22,7 @@
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/box_layout.h"
-#include "ui/views/layout/grid_layout.h"
 #include "ui/views/layout/layout_constants.h"
-
-using views::GridLayout;
 
 namespace autofill {
 
@@ -28,22 +31,12 @@ namespace {
 // Fixed width of the bubble.
 const int kBubbleWidth = 395;
 
-// TODO(bondd): BubbleManager will eventually move this logic somewhere else,
-// and then kIsOkButtonOnLeftSide can be removed from here and
-// dialog_client_view.cc.
-#if defined(OS_WIN) || defined(OS_CHROMEOS)
-const bool kIsOkButtonOnLeftSide = true;
-#else
-const bool kIsOkButtonOnLeftSide = false;
-#endif
-
-scoped_ptr<views::StyledLabel> CreateLegalMessageLineLabel(
-    const SaveCardBubbleController::LegalMessageLine& line,
+std::unique_ptr<views::StyledLabel> CreateLegalMessageLineLabel(
+    const LegalMessageLine& line,
     views::StyledLabelListener* listener) {
-  scoped_ptr<views::StyledLabel> label(
-      new views::StyledLabel(line.text, listener));
-  for (const SaveCardBubbleController::LegalMessageLine::Link& link :
-       line.links) {
+  std::unique_ptr<views::StyledLabel> label(
+      new views::StyledLabel(line.text(), listener));
+  for (const LegalMessageLine::Link& link : line.links()) {
     label->AddStyleRange(link.range,
                          views::StyledLabel::RangeStyleInfo::CreateForLink());
   }
@@ -57,11 +50,9 @@ SaveCardBubbleViews::SaveCardBubbleViews(views::View* anchor_view,
                                          SaveCardBubbleController* controller)
     : LocationBarBubbleDelegateView(anchor_view, web_contents),
       controller_(controller),
-      save_button_(nullptr),
-      cancel_button_(nullptr),
       learn_more_link_(nullptr) {
   DCHECK(controller);
-  views::BubbleDelegateView::CreateBubble(this);
+  views::BubbleDialogDelegateView::CreateBubble(this);
 }
 
 SaveCardBubbleViews::~SaveCardBubbleViews() {}
@@ -72,19 +63,75 @@ void SaveCardBubbleViews::Show(DisplayReason reason) {
 
 void SaveCardBubbleViews::Hide() {
   controller_ = nullptr;
-  Close();
+  CloseBubble();
 }
 
-views::View* SaveCardBubbleViews::GetInitiallyFocusedView() {
-  return save_button_;
+views::View* SaveCardBubbleViews::CreateExtraView() {
+  DCHECK(!learn_more_link_);
+  learn_more_link_ = new views::Link(l10n_util::GetStringUTF16(IDS_LEARN_MORE));
+  learn_more_link_->SetUnderline(false);
+  learn_more_link_->set_listener(this);
+  return learn_more_link_;
+}
+
+views::View* SaveCardBubbleViews::CreateFootnoteView() {
+  if (controller_->GetLegalMessageLines().empty())
+    return nullptr;
+
+  // Use BoxLayout to provide insets around the label.
+  View* view = new View();
+  view->SetLayoutManager(
+      new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0));
+
+  // Add a StyledLabel for each line of the legal message.
+  for (const LegalMessageLine& line : controller_->GetLegalMessageLines())
+    view->AddChildView(CreateLegalMessageLineLabel(line, this).release());
+
+  return view;
+}
+
+bool SaveCardBubbleViews::Accept() {
+  if (controller_)
+    controller_->OnSaveButton();
+  return true;
+}
+
+bool SaveCardBubbleViews::Cancel() {
+  if (controller_)
+    controller_->OnCancelButton();
+  return true;
+}
+
+bool SaveCardBubbleViews::Close() {
+  // Cancel is logged as a different user action than closing, so override
+  // Close() to prevent the superclass' implementation from calling Cancel().
+  // Return true to indicate that the bubble can be closed.
+  return true;
+}
+
+int SaveCardBubbleViews::GetDialogButtons() const {
+  // This is the default for BubbleDialogDelegateView, but it's not the default
+  // for LocationBarBubbleDelegateView.
+  return ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
+}
+
+base::string16 SaveCardBubbleViews::GetDialogButtonLabel(
+    ui::DialogButton button) const {
+  return l10n_util::GetStringUTF16(button == ui::DIALOG_BUTTON_OK
+                                       ? IDS_AUTOFILL_SAVE_CARD_PROMPT_ACCEPT
+                                       : IDS_NO_THANKS);
+}
+
+bool SaveCardBubbleViews::ShouldDefaultButtonBeBlue() const {
+  return true;
+}
+
+gfx::Size SaveCardBubbleViews::GetPreferredSize() const {
+  return gfx::Size(kBubbleWidth, GetHeightForWidth(kBubbleWidth));
 }
 
 base::string16 SaveCardBubbleViews::GetWindowTitle() const {
-  return controller_->GetWindowTitle();
-}
-
-bool SaveCardBubbleViews::ShouldShowWindowTitle() const {
-  return true;
+  return controller_ ? controller_->GetWindowTitle() : base::string16();
 }
 
 void SaveCardBubbleViews::WindowClosing() {
@@ -92,25 +139,18 @@ void SaveCardBubbleViews::WindowClosing() {
     controller_->OnBubbleClosed();
 }
 
-void SaveCardBubbleViews::ButtonPressed(views::Button* sender,
-                                        const ui::Event& event) {
-  if (sender == save_button_) {
-    controller_->OnSaveButton();
-  } else {
-    DCHECK_EQ(sender, cancel_button_);
-    controller_->OnCancelButton();
-  }
-  Close();
-}
-
 void SaveCardBubbleViews::LinkClicked(views::Link* source, int event_flags) {
   DCHECK_EQ(source, learn_more_link_);
-  controller_->OnLearnMoreClicked();
+  if (controller_)
+    controller_->OnLearnMoreClicked();
 }
 
 void SaveCardBubbleViews::StyledLabelLinkClicked(views::StyledLabel* label,
                                                  const gfx::Range& range,
                                                  int event_flags) {
+  if (!controller_)
+    return;
+
   // Index of |label| within its parent's view hierarchy is the same as the
   // legal message line index. DCHECK this assumption to guard against future
   // layout changes.
@@ -119,8 +159,8 @@ void SaveCardBubbleViews::StyledLabelLinkClicked(views::StyledLabel* label,
 
   const auto& links =
       controller_->GetLegalMessageLines()[label->parent()->GetIndexOf(label)]
-          .links;
-  for (const SaveCardBubbleController::LegalMessageLine::Link& link : links) {
+          .links();
+  for (const LegalMessageLine::Link& link : links) {
     if (link.range == range) {
       controller_->OnLegalMessageLinkClicked(link.url);
       return;
@@ -132,103 +172,41 @@ void SaveCardBubbleViews::StyledLabelLinkClicked(views::StyledLabel* label,
 }
 
 // Create view containing everything except for the footnote.
-scoped_ptr<views::View> SaveCardBubbleViews::CreateMainContentView() {
-  enum {
-    COLUMN_SET_ID_SPACER,
-    COLUMN_SET_ID_EXPLANATION,
-    COLUMN_SET_ID_BUTTONS,
-  };
+std::unique_ptr<views::View> SaveCardBubbleViews::CreateMainContentView() {
+  std::unique_ptr<View> view(new View());
+  view->SetLayoutManager(
+      new views::BoxLayout(views::BoxLayout::kVertical, 0, 0,
+                           views::kUnrelatedControlVerticalSpacing));
 
-  scoped_ptr<View> view(new View());
-  GridLayout* layout = new GridLayout(view.get());
-  view->SetLayoutManager(layout);
+  // Add the card type icon, last four digits and expiration date.
+  views::View* description_view = new views::View();
+  description_view->SetLayoutManager(new views::BoxLayout(
+      views::BoxLayout::kHorizontal, 0, 0, views::kRelatedButtonHSpacing));
+  view->AddChildView(description_view);
 
-  // Add a column set with padding to establish a minimum width.
-  views::ColumnSet* cs = layout->AddColumnSet(COLUMN_SET_ID_SPACER);
-  cs->AddPaddingColumn(0, kBubbleWidth);
-  layout->StartRow(0, COLUMN_SET_ID_SPACER);
+  const CreditCard& card = controller_->GetCard();
+  views::ImageView* card_type_icon = new views::ImageView();
+  card_type_icon->SetImage(
+      ResourceBundle::GetSharedInstance()
+          .GetImageNamed(CreditCard::IconResourceId(card.type()))
+          .AsImageSkia());
+  card_type_icon->SetTooltipText(card.TypeForDisplay());
+  card_type_icon->SetBorder(
+      views::CreateSolidBorder(1, SkColorSetA(SK_ColorBLACK, 10)));
+  description_view->AddChildView(card_type_icon);
 
-  int horizontal_inset = GetBubbleFrameView()->GetTitleInsets().left();
-  // Optionally set up ColumnSet and label that will contain an explanation for
-  // upload.
+  description_view->AddChildView(new views::Label(
+      base::string16(kMidlineEllipsis) + card.LastFourDigits()));
+  description_view->AddChildView(
+      new views::Label(card.AbbreviatedExpirationDateForDisplay()));
+
+  // Optionally add label that will contain an explanation for upload.
   base::string16 explanation = controller_->GetExplanatoryMessage();
   if (!explanation.empty()) {
-    cs = layout->AddColumnSet(COLUMN_SET_ID_EXPLANATION);
-    cs->AddPaddingColumn(0, horizontal_inset);
-    // Fix the width of the label to ensure it breaks within the preferred size
-    // of the bubble.
-    cs->AddColumn(GridLayout::FILL, GridLayout::FILL, 0, GridLayout::FIXED,
-                  kBubbleWidth - (2 * horizontal_inset), 0);
-    cs->AddPaddingColumn(0, horizontal_inset);
-
-    layout->StartRow(0, COLUMN_SET_ID_EXPLANATION);
     views::Label* explanation_label = new views::Label(explanation);
     explanation_label->SetMultiLine(true);
     explanation_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    layout->AddView(explanation_label);
-
-    layout->AddPaddingRow(0, views::kUnrelatedControlLargeHorizontalSpacing);
-  }
-
-  // Set up ColumnSet that will contain the buttons and "learn more" link.
-  cs = layout->AddColumnSet(COLUMN_SET_ID_BUTTONS);
-  cs->AddPaddingColumn(0, horizontal_inset);
-  cs->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
-                GridLayout::USE_PREF, 0, 0);
-  cs->AddPaddingColumn(1, 0);
-  cs->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
-                GridLayout::USE_PREF, 0, 0);
-  cs->AddPaddingColumn(0, views::kRelatedButtonHSpacing);
-  cs->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
-                GridLayout::USE_PREF, 0, 0);
-  cs->AddPaddingColumn(0, horizontal_inset);
-
-  // Create "learn more" link and add it to layout.
-  learn_more_link_ = new views::Link(l10n_util::GetStringUTF16(IDS_LEARN_MORE));
-  learn_more_link_->SetUnderline(false);
-  learn_more_link_->set_listener(this);
-  layout->StartRow(0, COLUMN_SET_ID_BUTTONS);
-  layout->AddView(learn_more_link_);
-
-  // Create accept button.
-  save_button_ = new views::BlueButton(
-      this, l10n_util::GetStringUTF16(IDS_AUTOFILL_SAVE_CARD_BUBBLE_ACCEPT));
-  save_button_->SetIsDefault(true);
-
-  // Create cancel button.
-  cancel_button_ = new views::LabelButton(
-      this, l10n_util::GetStringUTF16(IDS_AUTOFILL_SAVE_CARD_BUBBLE_DENY));
-  cancel_button_->SetStyle(views::Button::STYLE_BUTTON);
-
-  if (kIsOkButtonOnLeftSide) {
-    layout->AddView(save_button_);
-    layout->AddView(cancel_button_);
-  } else {
-    layout->AddView(cancel_button_);
-    layout->AddView(save_button_);
-  }
-  layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
-
-  return view;
-}
-
-// Create view containing the legal message text.
-scoped_ptr<views::View> SaveCardBubbleViews::CreateFootnoteView() {
-  // Use BoxLayout to provide insets around the label.
-  scoped_ptr<View> view(new View());
-  view->SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kVertical,
-                           GetBubbleFrameView()->GetTitleInsets().left(),
-                           views::kRelatedControlVerticalSpacing, 0));
-  view->SetBorder(
-      views::Border::CreateSolidSidedBorder(1, 0, 0, 0, kSubtleBorderColor));
-  view->set_background(
-      views::Background::CreateSolidBackground(kLightShadingColor));
-
-  // Add a StyledLabel for each line of the legal message.
-  for (const SaveCardBubbleController::LegalMessageLine& line :
-       controller_->GetLegalMessageLines()) {
-    view->AddChildView(CreateLegalMessageLineLabel(line, this).release());
+    view->AddChildView(explanation_label);
   }
 
   return view;
@@ -237,10 +215,6 @@ scoped_ptr<views::View> SaveCardBubbleViews::CreateFootnoteView() {
 void SaveCardBubbleViews::Init() {
   SetLayoutManager(new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0));
   AddChildView(CreateMainContentView().release());
-  if (!controller_->GetLegalMessageLines().empty())
-    AddChildView(CreateFootnoteView().release());
-
-  set_margins(gfx::Insets(1, 0, 1, 0));
 }
 
 }  // namespace autofill

@@ -23,36 +23,28 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/encryptedmedia/MediaEncryptedEvent.h"
 
 #include "core/dom/DOMArrayBuffer.h"
 
 namespace blink {
 
-MediaEncryptedEvent::MediaEncryptedEvent()
-{
+MediaEncryptedEvent::MediaEncryptedEvent(
+    const AtomicString& type,
+    const MediaEncryptedEventInit& initializer)
+    : Event(type, initializer),
+      m_initDataType(initializer.initDataType()),
+      m_initData(initializer.initData()) {}
+
+MediaEncryptedEvent::~MediaEncryptedEvent() {}
+
+const AtomicString& MediaEncryptedEvent::interfaceName() const {
+  return EventNames::MediaEncryptedEvent;
 }
 
-MediaEncryptedEvent::MediaEncryptedEvent(const AtomicString& type, const MediaEncryptedEventInit& initializer)
-    : Event(type, initializer)
-    , m_initDataType(initializer.initDataType())
-    , m_initData(initializer.initData())
-{
+DEFINE_TRACE(MediaEncryptedEvent) {
+  visitor->trace(m_initData);
+  Event::trace(visitor);
 }
 
-MediaEncryptedEvent::~MediaEncryptedEvent()
-{
-}
-
-const AtomicString& MediaEncryptedEvent::interfaceName() const
-{
-    return EventNames::MediaEncryptedEvent;
-}
-
-DEFINE_TRACE(MediaEncryptedEvent)
-{
-    Event::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

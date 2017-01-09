@@ -2,32 +2,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/extensions/api/sessions/sessions_api.h"
+#include <stddef.h>
+
+#include <utility>
 
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/pattern.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
+#include "chrome/browser/extensions/api/sessions/sessions_api.h"
 #include "chrome/browser/extensions/api/tabs/tabs_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/chrome_sync_client.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/profile_sync_service_mock.h"
+#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
-#include "components/sync_driver/local_device_info_provider_mock.h"
-#include "components/sync_driver/sync_api_component_factory_mock.h"
+#include "components/browser_sync/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service_mock.h"
+#include "components/sync/device_info/local_device_info_provider_mock.h"
+#include "components/sync/driver/sync_api_component_factory_mock.h"
+#include "components/sync/model/attachments/attachment_id.h"
+#include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
+#include "components/sync/model/fake_sync_change_processor.h"
+#include "components/sync/model/sync_error_factory_mock.h"
+#include "components/sync_sessions/sessions_sync_manager.h"
 #include "extensions/browser/api_test_utils.h"
-#include "sync/api/attachments/attachment_id.h"
-#include "sync/api/fake_sync_change_processor.h"
-#include "sync/api/sync_error_factory_mock.h"
-#include "sync/internal_api/public/attachments/attachment_service_proxy_for_test.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/chromeos_switches.h"
@@ -85,153 +92,6 @@ void BuildTabSpecifics(const std::string& tag,
   navigation->set_page_transition(sync_pb::SyncEnums_PageTransition_TYPED);
 }
 
-class ExtensionSessionsTest : public InProcessBrowserTest {
- public:
-  void SetUpCommandLine(base::CommandLine* command_line) override;
-  void SetUpOnMainThread() override;
-
- protected:
-  static scoped_ptr<KeyedService> BuildProfileSyncService(
-      content::BrowserContext* profile);
-
-  void CreateTestProfileSyncService();
-  void CreateTestExtension();
-  void CreateSessionModels();
-
-  template <class T>
-  scoped_refptr<T> CreateFunction(bool has_callback) {
-    scoped_refptr<T> fn(new T());
-    fn->set_extension(extension_.get());
-    fn->set_has_callback(has_callback);
-    return fn;
-  }
-
-  Browser* browser_;
-  scoped_refptr<Extension> extension_;
-};
-
-void ExtensionSessionsTest::SetUpCommandLine(base::CommandLine* command_line) {
-#if defined(OS_CHROMEOS)
-  command_line->AppendSwitch(
-      chromeos::switches::kIgnoreUserProfileMappingForTests);
-#endif
-}
-
-void ExtensionSessionsTest::SetUpOnMainThread() {
-  CreateTestProfileSyncService();
-  CreateTestExtension();
-}
-
-scoped_ptr<KeyedService> ExtensionSessionsTest::BuildProfileSyncService(
-    content::BrowserContext* context) {
-  scoped_ptr<SyncApiComponentFactoryMock> factory(
-      new SyncApiComponentFactoryMock());
-
-  factory->SetLocalDeviceInfoProvider(
-      scoped_ptr<sync_driver::LocalDeviceInfoProvider>(
-          new sync_driver::LocalDeviceInfoProviderMock(
-              kSessionTags[0],
-              "machine name",
-              "Chromium 10k",
-              "Chrome 10k",
-              sync_pb::SyncEnums_DeviceType_TYPE_LINUX,
-              "device_id")));
-
-  Profile* profile = static_cast<Profile*>(context);
-  ProfileSyncServiceMock* sync_service = new ProfileSyncServiceMock(
-      make_scoped_ptr(new browser_sync::ChromeSyncClient(profile)), profile);
-  static_cast<browser_sync::ChromeSyncClient*>(sync_service->GetSyncClient())
-      ->SetSyncApiComponentFactoryForTesting(factory.Pass());
-  return make_scoped_ptr(sync_service);
-}
-
-void ExtensionSessionsTest::CreateTestProfileSyncService() {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  base::FilePath path;
-  PathService::Get(chrome::DIR_USER_DATA, &path);
-  path = path.AppendASCII("test_profile");
-  if (!base::PathExists(path))
-    CHECK(base::CreateDirectory(path));
-  Profile* profile =
-      Profile::CreateProfile(path, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
-  profile_manager->RegisterTestingProfile(profile, true, false);
-  ProfileSyncServiceMock* service = static_cast<ProfileSyncServiceMock*>(
-      ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-      profile, &ExtensionSessionsTest::BuildProfileSyncService));
-  browser_ = new Browser(Browser::CreateParams(
-      profile, chrome::HOST_DESKTOP_TYPE_NATIVE));
-
-  syncer::ModelTypeSet preferred_types;
-  preferred_types.Put(syncer::SESSIONS);
-  GoogleServiceAuthError no_error(GoogleServiceAuthError::NONE);
-  ON_CALL(*service, IsDataTypeControllerRunning(syncer::SESSIONS))
-      .WillByDefault(testing::Return(true));
-  ON_CALL(*service, GetRegisteredDataTypes())
-      .WillByDefault(testing::Return(syncer::UserTypes()));
-  ON_CALL(*service, GetPreferredDataTypes()).WillByDefault(
-      testing::Return(preferred_types));
-  EXPECT_CALL(*service, GetAuthError()).WillRepeatedly(
-      testing::ReturnRef(no_error));
-  ON_CALL(*service, GetActiveDataTypes()).WillByDefault(
-      testing::Return(preferred_types));
-
-  EXPECT_CALL(*service, AddObserver(testing::_)).Times(testing::AnyNumber());
-  EXPECT_CALL(*service, RemoveObserver(testing::_)).Times(testing::AnyNumber());
-
-  service->Initialize();
-}
-
-void ExtensionSessionsTest::CreateTestExtension() {
-  scoped_ptr<base::DictionaryValue> test_extension_value(
-      api_test_utils::ParseDictionary(
-          "{\"name\": \"Test\", \"version\": \"1.0\", "
-          "\"permissions\": [\"sessions\", \"tabs\"]}"));
-  extension_ = api_test_utils::CreateExtension(test_extension_value.get());
-}
-
-void ExtensionSessionsTest::CreateSessionModels() {
-  syncer::SyncDataList initial_data;
-  for (size_t index = 0; index < arraysize(kSessionTags); ++index) {
-    // Fill an instance of session specifics with a foreign session's data.
-    sync_pb::SessionSpecifics meta;
-    BuildSessionSpecifics(kSessionTags[index], &meta);
-    std::vector<SessionID::id_type> tab_list(kTabIDs,
-                                             kTabIDs + arraysize(kTabIDs));
-    BuildWindowSpecifics(index, tab_list, &meta);
-    std::vector<sync_pb::SessionSpecifics> tabs(tab_list.size());
-    for (size_t i = 0; i < tab_list.size(); ++i) {
-      BuildTabSpecifics(kSessionTags[index], tab_list[i], &tabs[i]);
-    }
-
-    sync_pb::EntitySpecifics entity;
-    entity.mutable_session()->CopyFrom(meta);
-    initial_data.push_back(syncer::SyncData::CreateRemoteData(
-        1,
-        entity,
-        base::Time(),
-        syncer::AttachmentIdList(),
-        syncer::AttachmentServiceProxyForTest::Create()));
-    for (size_t i = 0; i < tabs.size(); i++) {
-      sync_pb::EntitySpecifics entity;
-      entity.mutable_session()->CopyFrom(tabs[i]);
-      initial_data.push_back(syncer::SyncData::CreateRemoteData(
-          i + 2,
-          entity,
-          base::Time(),
-          syncer::AttachmentIdList(),
-          syncer::AttachmentServiceProxyForTest::Create()));
-    }
-  }
-
-  ProfileSyncServiceFactory::GetForProfile(browser_->profile())->
-      GetSessionsSyncableService()->
-          MergeDataAndStartSyncing(syncer::SESSIONS, initial_data,
-      scoped_ptr<syncer::SyncChangeProcessor>(
-          new syncer::FakeSyncChangeProcessor()),
-      scoped_ptr<syncer::SyncErrorFactory>(
-          new syncer::SyncErrorFactoryMock()));
-}
-
 testing::AssertionResult CheckSessionModels(const base::ListValue& devices,
                                             size_t num_sessions) {
   EXPECT_EQ(5u, devices.GetSize());
@@ -281,33 +141,178 @@ testing::AssertionResult CheckSessionModels(const base::ListValue& devices,
   return testing::AssertionSuccess();
 }
 
+}  // namespace
+
+class ExtensionSessionsTest : public InProcessBrowserTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override;
+  void SetUpOnMainThread() override;
+
+ protected:
+  static std::unique_ptr<KeyedService> BuildProfileSyncService(
+      content::BrowserContext* profile);
+
+  void CreateTestProfileSyncService();
+  void CreateTestExtension();
+  void CreateSessionModels();
+
+  template <class T>
+  scoped_refptr<T> CreateFunction(bool has_callback) {
+    scoped_refptr<T> fn(new T());
+    fn->set_extension(extension_.get());
+    fn->set_has_callback(has_callback);
+    return fn;
+  }
+
+  Browser* browser_;
+  scoped_refptr<Extension> extension_;
+};
+
+void ExtensionSessionsTest::SetUpCommandLine(base::CommandLine* command_line) {
+#if defined(OS_CHROMEOS)
+  command_line->AppendSwitch(
+      chromeos::switches::kIgnoreUserProfileMappingForTests);
+#endif
+}
+
+void ExtensionSessionsTest::SetUpOnMainThread() {
+  CreateTestProfileSyncService();
+  CreateTestExtension();
+}
+
+std::unique_ptr<KeyedService> ExtensionSessionsTest::BuildProfileSyncService(
+    content::BrowserContext* context) {
+  std::unique_ptr<syncer::SyncApiComponentFactoryMock> factory(
+      new syncer::SyncApiComponentFactoryMock());
+
+  factory->SetLocalDeviceInfoProvider(
+      std::unique_ptr<syncer::LocalDeviceInfoProvider>(
+          new syncer::LocalDeviceInfoProviderMock(
+              kSessionTags[0], "machine name", "Chromium 10k", "Chrome 10k",
+              sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id")));
+
+  Profile* profile = static_cast<Profile*>(context);
+  browser_sync::ProfileSyncServiceMock* sync_service =
+      new browser_sync::ProfileSyncServiceMock(
+          CreateProfileSyncServiceParamsForTest(
+              base::MakeUnique<browser_sync::ChromeSyncClient>(profile),
+              profile));
+  static_cast<browser_sync::ChromeSyncClient*>(sync_service->GetSyncClient())
+      ->SetSyncApiComponentFactoryForTesting(std::move(factory));
+  return base::WrapUnique(sync_service);
+}
+
+void ExtensionSessionsTest::CreateTestProfileSyncService() {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  base::FilePath path;
+  PathService::Get(chrome::DIR_USER_DATA, &path);
+  path = path.AppendASCII("test_profile");
+  if (!base::PathExists(path))
+    CHECK(base::CreateDirectory(path));
+  Profile* profile =
+      Profile::CreateProfile(path, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
+  profile_manager->RegisterTestingProfile(profile, true, false);
+  browser_sync::ProfileSyncServiceMock* service =
+      static_cast<browser_sync::ProfileSyncServiceMock*>(
+          ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+              profile, &ExtensionSessionsTest::BuildProfileSyncService));
+
+  syncer::ModelTypeSet preferred_types(syncer::SESSIONS, syncer::PROXY_TABS);
+  GoogleServiceAuthError no_error(GoogleServiceAuthError::NONE);
+  ON_CALL(*service, IsDataTypeControllerRunning(syncer::SESSIONS))
+      .WillByDefault(testing::Return(true));
+  ON_CALL(*service, IsDataTypeControllerRunning(syncer::PROXY_TABS))
+      .WillByDefault(testing::Return(true));
+  ON_CALL(*service, GetRegisteredDataTypes())
+      .WillByDefault(testing::Return(syncer::UserTypes()));
+  ON_CALL(*service, GetPreferredDataTypes()).WillByDefault(
+      testing::Return(preferred_types));
+  EXPECT_CALL(*service, GetAuthError()).WillRepeatedly(
+      testing::ReturnRef(no_error));
+  ON_CALL(*service, GetActiveDataTypes()).WillByDefault(
+      testing::Return(preferred_types));
+
+  EXPECT_CALL(*service, AddObserver(testing::_)).Times(testing::AnyNumber());
+  EXPECT_CALL(*service, RemoveObserver(testing::_)).Times(testing::AnyNumber());
+
+  browser_ = new Browser(Browser::CreateParams(profile));
+
+  service->Initialize();
+}
+
+void ExtensionSessionsTest::CreateTestExtension() {
+  std::unique_ptr<base::DictionaryValue> test_extension_value(
+      api_test_utils::ParseDictionary(
+          "{\"name\": \"Test\", \"version\": \"1.0\", "
+          "\"permissions\": [\"sessions\", \"tabs\"]}"));
+  extension_ = api_test_utils::CreateExtension(test_extension_value.get());
+}
+
+void ExtensionSessionsTest::CreateSessionModels() {
+  syncer::SyncDataList initial_data;
+  for (size_t index = 0; index < arraysize(kSessionTags); ++index) {
+    // Fill an instance of session specifics with a foreign session's data.
+    sync_pb::SessionSpecifics meta;
+    BuildSessionSpecifics(kSessionTags[index], &meta);
+    std::vector<SessionID::id_type> tab_list(kTabIDs,
+                                             kTabIDs + arraysize(kTabIDs));
+    BuildWindowSpecifics(index, tab_list, &meta);
+    std::vector<sync_pb::SessionSpecifics> tabs(tab_list.size());
+    for (size_t i = 0; i < tab_list.size(); ++i) {
+      BuildTabSpecifics(kSessionTags[index], tab_list[i], &tabs[i]);
+    }
+
+    sync_pb::EntitySpecifics entity;
+    entity.mutable_session()->CopyFrom(meta);
+    initial_data.push_back(syncer::SyncData::CreateRemoteData(
+        1, entity, base::Time(), syncer::AttachmentIdList(),
+        syncer::AttachmentServiceProxyForTest::Create(),
+        sync_sessions::SessionsSyncManager::TagHashFromSpecifics(
+            entity.session())));
+    for (size_t i = 0; i < tabs.size(); i++) {
+      sync_pb::EntitySpecifics entity;
+      entity.mutable_session()->CopyFrom(tabs[i]);
+      initial_data.push_back(syncer::SyncData::CreateRemoteData(
+          i + 2, entity, base::Time(), syncer::AttachmentIdList(),
+          syncer::AttachmentServiceProxyForTest::Create(),
+          sync_sessions::SessionsSyncManager::TagHashFromSpecifics(
+              entity.session())));
+    }
+  }
+
+  ProfileSyncServiceFactory::GetForProfile(browser_->profile())
+      ->GetSessionsSyncableService()
+      ->MergeDataAndStartSyncing(syncer::SESSIONS, initial_data,
+                                 std::unique_ptr<syncer::SyncChangeProcessor>(
+                                     new syncer::FakeSyncChangeProcessor()),
+                                 std::unique_ptr<syncer::SyncErrorFactory>(
+                                     new syncer::SyncErrorFactoryMock()));
+}
+
 IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetDevices) {
   CreateSessionModels();
-  scoped_ptr<base::ListValue> result(utils::ToList(
-      utils::RunFunctionAndReturnSingleResult(
+  std::unique_ptr<base::ListValue> result(
+      utils::ToList(utils::RunFunctionAndReturnSingleResult(
           CreateFunction<SessionsGetDevicesFunction>(true).get(),
-          "[{\"maxResults\": 0}]",
-          browser_)));
+          "[{\"maxResults\": 0}]", browser_)));
   ASSERT_TRUE(result);
   EXPECT_TRUE(CheckSessionModels(*result, 0u));
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetDevicesMaxResults) {
   CreateSessionModels();
-  scoped_ptr<base::ListValue> result(utils::ToList(
-      utils::RunFunctionAndReturnSingleResult(
-          CreateFunction<SessionsGetDevicesFunction>(true).get(),
-          "[]",
+  std::unique_ptr<base::ListValue> result(
+      utils::ToList(utils::RunFunctionAndReturnSingleResult(
+          CreateFunction<SessionsGetDevicesFunction>(true).get(), "[]",
           browser_)));
   ASSERT_TRUE(result);
   EXPECT_TRUE(CheckSessionModels(*result, 1u));
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetDevicesListEmpty) {
-  scoped_ptr<base::ListValue> result(utils::ToList(
-      utils::RunFunctionAndReturnSingleResult(
-          CreateFunction<SessionsGetDevicesFunction>(true).get(),
-          "[]",
+  std::unique_ptr<base::ListValue> result(
+      utils::ToList(utils::RunFunctionAndReturnSingleResult(
+          CreateFunction<SessionsGetDevicesFunction>(true).get(), "[]",
           browser_)));
 
   ASSERT_TRUE(result);
@@ -320,19 +325,15 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest,
                        DISABLED_RestoreForeignSessionWindow) {
   CreateSessionModels();
 
-  scoped_ptr<base::DictionaryValue> restored_window_session(utils::ToDictionary(
-      utils::RunFunctionAndReturnSingleResult(
-          CreateFunction<SessionsRestoreFunction>(true).get(),
-          "[\"tag3.3\"]",
-          browser_,
-          utils::INCLUDE_INCOGNITO)));
+  std::unique_ptr<base::DictionaryValue> restored_window_session(
+      utils::ToDictionary(utils::RunFunctionAndReturnSingleResult(
+          CreateFunction<SessionsRestoreFunction>(true).get(), "[\"tag3.3\"]",
+          browser_, utils::INCLUDE_INCOGNITO)));
   ASSERT_TRUE(restored_window_session);
 
-  scoped_ptr<base::ListValue> result(utils::ToList(
-      utils::RunFunctionAndReturnSingleResult(
-          CreateFunction<WindowsGetAllFunction>(true).get(),
-          "[]",
-          browser_)));
+  std::unique_ptr<base::ListValue> result(
+      utils::ToList(utils::RunFunctionAndReturnSingleResult(
+          CreateFunction<WindowsGetAllFunction>(true).get(), "[]", browser_)));
   ASSERT_TRUE(result);
 
   base::ListValue* windows = result.get();
@@ -370,10 +371,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, RestoreInIncognito) {
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetRecentlyClosedIncognito) {
-  scoped_ptr<base::ListValue> result(utils::ToList(
-      utils::RunFunctionAndReturnSingleResult(
-          CreateFunction<SessionsGetRecentlyClosedFunction>(true).get(),
-          "[]",
+  std::unique_ptr<base::ListValue> result(
+      utils::ToList(utils::RunFunctionAndReturnSingleResult(
+          CreateFunction<SessionsGetRecentlyClosedFunction>(true).get(), "[]",
           CreateIncognitoBrowser())));
   ASSERT_TRUE(result);
   base::ListValue* sessions = result.get();
@@ -382,17 +382,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionSessionsTest, GetRecentlyClosedIncognito) {
 
 // http://crbug.com/251199
 IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_SessionsApis) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   ASSERT_TRUE(RunExtensionSubtest("sessions",
                                   "sessions.html")) << message_;
 }
-
-}  // namespace
 
 }  // namespace extensions

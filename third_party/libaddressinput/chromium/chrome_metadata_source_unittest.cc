@@ -4,7 +4,8 @@
 
 #include "third_party/libaddressinput/chromium/chrome_metadata_source.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -36,11 +37,11 @@ class ChromeMetadataSourceTest : public testing::Test {
         new net::TestURLRequestContextGetter(
             base::ThreadTaskRunnerHandle::Get()));
     ChromeMetadataSource impl(std::string(), getter.get());
-    scoped_ptr< ::i18n::addressinput::Source::Callback> callback(
+    std::unique_ptr<::i18n::addressinput::Source::Callback> callback(
         ::i18n::addressinput::BuildCallback(
-             this, &ChromeMetadataSourceTest::OnDownloaded));
+            this, &ChromeMetadataSourceTest::OnDownloaded));
     impl.Get(url_.spec(), *callback);
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void set_url(const GURL& url) { url_ = url; }
@@ -66,7 +67,7 @@ class ChromeMetadataSourceTest : public testing::Test {
   net::URLFetcherImplFactory factory_;
   net::FakeURLFetcherFactory fake_factory_;
   GURL url_;
-  scoped_ptr<std::string> data_;
+  std::unique_ptr<std::string> data_;
   bool success_;
 };
 

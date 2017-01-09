@@ -8,15 +8,18 @@
 #include "base/lazy_instance.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "extensions/common/switches.h"
 
 namespace extensions {
 
 namespace {
 
-const char kEnableMediaRouterExperiment[] = "EnableMediaRouter";
-const char kEnableMediaRouterWithCastExtensionExperiment[] =
-    "EnableMediaRouterWithCastExtension";
+// The switch load-media-router-component-extension is defined in
+// chrome/common/chrome_switches.cc, but we can't depend on chrome here.
+const char kLoadMediaRouterComponentExtensionFlag[] =
+    "load-media-router-component-extension";
+
 const char kExtensionActionRedesignExperiment[] = "ExtensionActionRedesign";
 
 class CommonSwitches {
@@ -41,24 +44,22 @@ class CommonSwitches {
                                      FeatureSwitch::DEFAULT_DISABLED),
         extension_action_redesign(switches::kExtensionActionRedesign,
                                   kExtensionActionRedesignExperiment,
-                                  FeatureSwitch::DEFAULT_DISABLED),
-        extension_action_redesign_override(switches::kExtensionActionRedesign,
-                                           FeatureSwitch::DEFAULT_ENABLED),
+                                  FeatureSwitch::DEFAULT_ENABLED),
         scripts_require_action(switches::kScriptsRequireAction,
                                FeatureSwitch::DEFAULT_DISABLED),
         embedded_extension_options(switches::kEmbeddedExtensionOptions,
                                    FeatureSwitch::DEFAULT_DISABLED),
         trace_app_source(switches::kTraceAppSource,
                          FeatureSwitch::DEFAULT_ENABLED),
-        // The switch media-router is defined in
-        // chrome/common/chrome_switches.cc, but we can't depend on chrome here.
-        media_router("media-router",
-                     kEnableMediaRouterExperiment,
-                     FeatureSwitch::DEFAULT_DISABLED),
-        media_router_with_cast_extension(
-            "media-router",
-            kEnableMediaRouterWithCastExtensionExperiment,
-            FeatureSwitch::DEFAULT_DISABLED) {
+        load_media_router_component_extension(
+            kLoadMediaRouterComponentExtensionFlag,
+#if defined(GOOGLE_CHROME_BUILD)
+            FeatureSwitch::DEFAULT_ENABLED),
+#else
+            FeatureSwitch::DEFAULT_DISABLED),
+#endif  // defined(GOOGLE_CHROME_BUILD)
+        native_crx_bindings(switches::kNativeCrxBindings,
+                            FeatureSwitch::DEFAULT_DISABLED) {
   }
 
   // Enables extensions to be easily installed from sites other than the web
@@ -74,12 +75,11 @@ class CommonSwitches {
   FeatureSwitch error_console;
   FeatureSwitch enable_override_bookmarks_ui;
   FeatureSwitch extension_action_redesign;
-  FeatureSwitch extension_action_redesign_override;
   FeatureSwitch scripts_require_action;
   FeatureSwitch embedded_extension_options;
   FeatureSwitch trace_app_source;
-  FeatureSwitch media_router;
-  FeatureSwitch media_router_with_cast_extension;
+  FeatureSwitch load_media_router_component_extension;
+  FeatureSwitch native_crx_bindings;
 };
 
 base::LazyInstance<CommonSwitches> g_common_switches =
@@ -103,13 +103,6 @@ FeatureSwitch* FeatureSwitch::enable_override_bookmarks_ui() {
   return &g_common_switches.Get().enable_override_bookmarks_ui;
 }
 FeatureSwitch* FeatureSwitch::extension_action_redesign() {
-  // Force-enable the redesigned extension action toolbar when the Media Router
-  // is enabled. Should be removed when the toolbar redesign is used by default.
-  // See crbug.com/514694
-  // TODO(kmarshall): Remove this override.
-  if (media_router()->IsEnabled())
-    return &g_common_switches.Get().extension_action_redesign_override;
-
   return &g_common_switches.Get().extension_action_redesign;
 }
 FeatureSwitch* FeatureSwitch::scripts_require_action() {
@@ -121,11 +114,11 @@ FeatureSwitch* FeatureSwitch::embedded_extension_options() {
 FeatureSwitch* FeatureSwitch::trace_app_source() {
   return &g_common_switches.Get().trace_app_source;
 }
-FeatureSwitch* FeatureSwitch::media_router() {
-  return &g_common_switches.Get().media_router;
+FeatureSwitch* FeatureSwitch::load_media_router_component_extension() {
+  return &g_common_switches.Get().load_media_router_component_extension;
 }
-FeatureSwitch* FeatureSwitch::media_router_with_cast_extension() {
-  return &g_common_switches.Get().media_router_with_cast_extension;
+FeatureSwitch* FeatureSwitch::native_crx_bindings() {
+  return &g_common_switches.Get().native_crx_bindings;
 }
 
 FeatureSwitch::ScopedOverride::ScopedOverride(FeatureSwitch* feature,
@@ -186,6 +179,9 @@ bool FeatureSwitch::IsEnabled() const {
   if (switch_value == "0")
     return false;
 
+  // TODO(imcheng): Don't check |default_value_|. Otherwise, we could improperly
+  // ignore an enable/disable switch if there is a field trial active.
+  // crbug.com/585569
   if (!default_value_ && command_line_->HasSwitch(GetLegacyEnableFlag()))
     return true;
 
@@ -195,9 +191,9 @@ bool FeatureSwitch::IsEnabled() const {
   if (field_trial_name_) {
     std::string group_name =
         base::FieldTrialList::FindFullName(field_trial_name_);
-    if (group_name == "Enabled")
+    if (base::StartsWith(group_name, "Enabled", base::CompareCase::SENSITIVE))
       return true;
-    if (group_name == "Disabled")
+    if (base::StartsWith(group_name, "Disabled", base::CompareCase::SENSITIVE))
       return false;
   }
 

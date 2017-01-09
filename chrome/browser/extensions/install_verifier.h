@@ -5,14 +5,13 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_INSTALL_VERIFIER_H_
 #define CHROME_BROWSER_EXTENSIONS_INSTALL_VERIFIER_H_
 
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/management_policy.h"
@@ -20,10 +19,6 @@
 
 namespace content {
 class BrowserContext;
-}
-
-namespace net {
-class URLRequestContextGetter;
 }
 
 namespace extensions {
@@ -152,7 +147,7 @@ class InstallVerifier : public KeyedService,
   void SaveToPrefs();
 
   // Called with the result of a signature request, or NULL on failure.
-  void SignatureCallback(scoped_ptr<InstallSignature> signature);
+  void SignatureCallback(std::unique_ptr<InstallSignature> signature);
 
   ExtensionPrefs* prefs_;
 
@@ -164,13 +159,13 @@ class InstallVerifier : public KeyedService,
 
   // This is the most up-to-date signature, read out of |prefs_| during
   // initialization and updated anytime we get new id's added.
-  scoped_ptr<InstallSignature> signature_;
+  std::unique_ptr<InstallSignature> signature_;
 
   // The current InstallSigner, if we have a signature request running.
-  scoped_ptr<InstallSigner> signer_;
+  std::unique_ptr<InstallSigner> signer_;
 
   // A queue of operations to apply to the current set of allowed ids.
-  std::queue<linked_ptr<PendingOperation> > operation_queue_;
+  std::queue<std::unique_ptr<PendingOperation>> operation_queue_;
 
   // A set of ids that have been provisionally added, which we're willing to
   // consider allowed until we hear back from the server signature request.
@@ -179,6 +174,21 @@ class InstallVerifier : public KeyedService,
   base::WeakPtrFactory<InstallVerifier> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(InstallVerifier);
+};
+
+// Instances of this class can be constructed to disable install verification
+// during tests.
+class ScopedInstallVerifierBypassForTest {
+ public:
+  ScopedInstallVerifierBypassForTest();
+  ~ScopedInstallVerifierBypassForTest();
+
+  // Should install verification be bypassed?
+  static bool ShouldBypass();
+
+ private:
+  bool old_value_;
+  DISALLOW_COPY_AND_ASSIGN(ScopedInstallVerifierBypassForTest);
 };
 
 }  // namespace extensions

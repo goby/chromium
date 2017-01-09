@@ -5,16 +5,18 @@
 #ifndef NET_BASE_PRIORITY_QUEUE_H_
 #define NET_BASE_PRIORITY_QUEUE_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <list>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
-#include "net/base/net_export.h"
 
 #if !defined(NDEBUG)
-#include "base/containers/hash_tables.h"
+#include <unordered_set>
 #endif
 
 namespace net {
@@ -297,7 +299,7 @@ class PriorityQueue : public base::NonThreadSafe {
 
 #if !defined(NDEBUG)
   unsigned next_id_;
-  base::hash_set<unsigned> valid_ids_;
+  std::unordered_set<unsigned> valid_ids_;
 #endif
 
   ListVector lists_;

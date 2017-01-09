@@ -4,12 +4,9 @@
 
 #include "content/renderer/pepper/pepper_proxy_channel_delegate_impl.h"
 
+#include "build/build_config.h"
 #include "content/child/child_process.h"
-#include "content/common/sandbox_util.h"
-
-#if defined(OS_WIN) || defined(OS_MACOSX)
-#include "content/public/common/sandbox_init.h"
-#endif  // defined(OS_WIN) || defined(OS_MACOSX)
+#include "ipc/ipc_platform_file.h"
 
 namespace content {
 
@@ -32,23 +29,14 @@ PepperProxyChannelDelegateImpl::ShareHandleWithRemote(
     base::PlatformFile handle,
     base::ProcessId remote_pid,
     bool should_close_source) {
-  return BrokerGetFileHandleForProcess(handle, remote_pid, should_close_source);
+  return IPC::GetPlatformFileForTransit(handle, should_close_source);
 }
 
 base::SharedMemoryHandle
 PepperProxyChannelDelegateImpl::ShareSharedMemoryHandleWithRemote(
     const base::SharedMemoryHandle& handle,
     base::ProcessId remote_pid) {
-#if defined(OS_WIN) || defined(OS_MACOSX)
-  base::SharedMemoryHandle duped_handle;
-  bool success =
-      BrokerDuplicateSharedMemoryHandle(handle, remote_pid, &duped_handle);
-  if (success)
-    return duped_handle;
-  return base::SharedMemory::NULLHandle();
-#else
   return base::SharedMemory::DuplicateHandle(handle);
-#endif  // defined(OS_WIN) || defined(OS_MACOSX)
 }
 
 }  // namespace content

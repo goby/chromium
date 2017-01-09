@@ -7,9 +7,9 @@
 
 #include <map>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/base/models/combobox_model.h"
 #include "ui/views/controls/button/button.h"
@@ -57,7 +57,7 @@ class UninstallView : public views::ButtonListener,
   views::Checkbox* delete_profile_;
   views::Checkbox* change_default_browser_;
   views::Combobox* browsers_combo_;
-  scoped_ptr<BrowsersMap> browsers_;
+  std::unique_ptr<BrowsersMap> browsers_;
   int& user_selection_;
   base::Closure quit_closure_;
 

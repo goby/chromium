@@ -4,36 +4,39 @@
 
 #include "chrome/browser/ui/webui/app_launcher_login_handler.h"
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/signin/signin_promo.h"
+#include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
 #include "chrome/browser/ui/webui/profile_info_watcher.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/web_resource/promo_resource_service.h"
 #include "content/public/browser/host_zoom_map.h"
+#include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/page_zoom.h"
@@ -126,11 +129,11 @@ void AppLauncherLoginHandler::HandleShowSyncLoginUI(
     return;
 
   // The user isn't signed in, show the sign in promo.
-  signin_metrics::Source source =
-      web_contents->GetURL().spec() == chrome::kChromeUIAppsURL ?
-          signin_metrics::SOURCE_APPS_PAGE_LINK :
-          signin_metrics::SOURCE_NTP_LINK;
-  chrome::ShowBrowserSignin(browser, source);
+  signin_metrics::AccessPoint access_point =
+      web_contents->GetURL().spec() == chrome::kChromeUIAppsURL
+          ? signin_metrics::AccessPoint::ACCESS_POINT_APPS_PAGE_LINK
+          : signin_metrics::AccessPoint::ACCESS_POINT_NTP_LINK;
+  chrome::ShowBrowserSignin(browser, access_point);
   RecordInHistogram(NTP_SIGN_IN_PROMO_CLICKED);
 }
 
@@ -149,18 +152,19 @@ void AppLauncherLoginHandler::HandleLoginMessageSeen(
     const base::ListValue* args) {
   Profile::FromWebUI(web_ui())->GetPrefs()->SetBoolean(
       prefs::kSignInPromoShowNTPBubble, false);
-  NewTabUI* ntp_ui = NewTabUI::FromWebUIController(web_ui()->GetController());
-  // When instant extended is enabled, there may not be a NewTabUI object.
-  if (ntp_ui)
-    ntp_ui->set_showing_sync_bubble(true);
 }
 
 void AppLauncherLoginHandler::HandleShowAdvancedLoginUI(
     const base::ListValue* args) {
-  Browser* browser =
-      chrome::FindBrowserWithWebContents(web_ui()->GetWebContents());
-  if (browser)
-    chrome::ShowBrowserSignin(browser, signin_metrics::SOURCE_NTP_LINK);
+  content::WebContents* web_contents = web_ui()->GetWebContents();
+  Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
+  if (!browser)
+    return;
+  signin_metrics::AccessPoint access_point =
+      web_contents->GetURL().spec() == chrome::kChromeUIAppsURL
+          ? signin_metrics::AccessPoint::ACCESS_POINT_APPS_PAGE_LINK
+          : signin_metrics::AccessPoint::ACCESS_POINT_NTP_LINK;
+  chrome::ShowBrowserSignin(browser, access_point);
 }
 
 void AppLauncherLoginHandler::UpdateLogin() {
@@ -169,19 +173,18 @@ void AppLauncherLoginHandler::UpdateLogin() {
   std::string icon_url;
   Profile* profile = Profile::FromWebUI(web_ui());
   if (!username.empty()) {
-    ProfileInfoCache& cache =
-        g_browser_process->profile_manager()->GetProfileInfoCache();
-    size_t profile_index = cache.GetIndexOfProfileWithPath(profile->GetPath());
-    if (profile_index != std::string::npos) {
+    ProfileAttributesStorage& storage =
+        g_browser_process->profile_manager()->GetProfileAttributesStorage();
+    ProfileAttributesEntry* entry;
+    if (storage.GetProfileAttributesWithPath(profile->GetPath(), &entry)) {
       // Only show the profile picture and full name for the single profile
       // case. In the multi-profile case the profile picture is visible in the
       // title bar and the full name can be ambiguous.
-      if (cache.GetNumberOfProfiles() == 1) {
-        base::string16 name = cache.GetGAIANameOfProfileAtIndex(profile_index);
+      if (storage.GetNumberOfProfiles() == 1) {
+        base::string16 name = entry->GetGAIAName();
         if (!name.empty())
           header = CreateElementWithClass(name, "span", "profile-name", "");
-        const gfx::Image* image =
-            cache.GetGAIAPictureOfProfileAtIndex(profile_index);
+        const gfx::Image* image = entry->GetGAIAPicture();
         if (image)
           icon_url = webui::GetBitmapDataUrl(GetGAIAPictureForNTP(*image));
       }
@@ -205,6 +208,12 @@ void AppLauncherLoginHandler::UpdateLogin() {
           l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME));
       sub_header = l10n_util::GetStringFUTF16(
           IDS_SYNC_PROMO_NOT_SIGNED_IN_STATUS_SUB_HEADER, signed_in_link);
+
+      content::RecordAction(
+          web_ui()->GetWebContents()->GetURL().spec() ==
+                  chrome::kChromeUIAppsURL
+              ? base::UserMetricsAction("Signin_Impression_FromAppsPageLink")
+              : base::UserMetricsAction("Signin_Impression_FromNTP"));
       // Record that the user was shown the promo.
       RecordInHistogram(NTP_SIGN_IN_PROMO_VIEWED);
     }
@@ -215,8 +224,9 @@ void AppLauncherLoginHandler::UpdateLogin() {
   base::StringValue sub_header_value(sub_header);
   base::StringValue icon_url_value(icon_url);
   base::FundamentalValue is_user_signed_in(!username.empty());
-  web_ui()->CallJavascriptFunction("ntp.updateLogin",
-      header_value, sub_header_value, icon_url_value, is_user_signed_in);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.updateLogin", header_value,
+                                         sub_header_value, icon_url_value,
+                                         is_user_signed_in);
 }
 
 // static

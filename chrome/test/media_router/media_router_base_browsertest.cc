@@ -6,7 +6,10 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/location.h"
 #include "base/path_service.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/elapsed_timer.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/common/chrome_switches.h"
@@ -28,11 +31,9 @@ const char kExtensionUnpacked[] = "extension-unpacked";
 namespace media_router {
 
 MediaRouterBaseBrowserTest::MediaRouterBaseBrowserTest()
-    : extension_load_event_(false, false),
-      extension_host_created_(false),
-      feature_override_(extensions::FeatureSwitch::media_router(), true) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      switches::kEnableExperimentalWebPlatformFeatures, "Presentation");
+    : extension_load_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED),
+      extension_host_created_(false) {
 }
 
 MediaRouterBaseBrowserTest::~MediaRouterBaseBrowserTest() {
@@ -91,7 +92,7 @@ bool MediaRouterBaseBrowserTest::ConditionalWait(
       return true;
 
     base::RunLoop run_loop;
-    base::MessageLoop::current()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(), interval);
     run_loop.Run();
   } while (timer.Elapsed() < timeout);
@@ -101,7 +102,7 @@ bool MediaRouterBaseBrowserTest::ConditionalWait(
 
 void MediaRouterBaseBrowserTest::Wait(base::TimeDelta timeout) {
   base::RunLoop run_loop;
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), timeout);
   run_loop.Run();
 }

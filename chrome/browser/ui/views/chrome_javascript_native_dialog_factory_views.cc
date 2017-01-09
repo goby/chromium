@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/app_modal/chrome_javascript_native_dialog_factory.h"
+#include "chrome/browser/ui/javascript_dialogs/chrome_javascript_native_dialog_factory.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "components/app_modal/javascript_dialog_manager.h"
 #include "components/app_modal/javascript_native_dialog_factory.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -35,7 +38,7 @@ class ChromeJavaScriptAppModalDialogViews
   ~ChromeJavaScriptAppModalDialogViews() override {}
 
  private:
-  scoped_ptr<AppModalDialogHelper> helper_;
+  std::unique_ptr<AppModalDialogHelper> helper_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeJavaScriptAppModalDialogViews);
 };
@@ -78,7 +81,6 @@ class ChromeJavaScriptNativeDialogViewsFactory
 }  // namespace
 
 void InstallChromeJavaScriptNativeDialogFactory() {
-  app_modal::JavaScriptDialogManager::GetInstance()->
-      SetNativeDialogFactory(
-          make_scoped_ptr(new ChromeJavaScriptNativeDialogViewsFactory));
+  app_modal::JavaScriptDialogManager::GetInstance()->SetNativeDialogFactory(
+      base::WrapUnique(new ChromeJavaScriptNativeDialogViewsFactory));
 }

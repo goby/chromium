@@ -25,10 +25,11 @@ function test()
 
     function step1()
     {
-        InspectorTest.runTestFunctionAndWaitUntilPaused(step2);
+        InspectorTest.addSniffer(Sources.ScopeChainSidebarPane.prototype, "_sidebarPaneUpdatedForTest", onSidebarRendered, true);
+        InspectorTest.runTestFunctionAndWaitUntilPaused(() => {});
     }
 
-    function step2(callFrames)
+    function onSidebarRendered()
     {
         var localScope = InspectorTest.scopeChainSections()[0].objectTreeElement();
         var properties = [

@@ -7,6 +7,7 @@ The complete set of contributors may be found at http://polymer.github.io/CONTRI
 Code distributed by Google as part of the polymer project is also
 subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 --><html><head><link rel="import" href="../polymer/polymer.html">
+<link rel="import" href="../iron-resizable-behavior/iron-resizable-behavior.html">
 
 <!--
 `iron-collapse` creates a collapsible block of content.  By default, the content
@@ -24,7 +25,7 @@ will be collapsed.  Use `opened` or `toggle()` to show/hide the content.
       this.$.collapse.toggle();
     }
 
-`iron-collapse` adjusts the height/width of the collapsible element to show/hide
+`iron-collapse` adjusts the max-height/max-width of the collapsible element to show/hide
 the content.  So avoid putting padding/margin/border on the collapsible directly,
 and instead put a div inside and style that.
 
@@ -41,6 +42,14 @@ and instead put a div inside and style that.
       </div>
     </iron-collapse>
 
+### Styling
+
+The following custom properties and mixins are available for styling:
+
+Custom property | Description | Default
+----------------|-------------|----------
+`--iron-collapse-transition-duration` | Animation transition duration | `300ms`
+
 @group Iron Elements
 @hero hero.svg
 @demo demo/index.html
@@ -49,24 +58,23 @@ and instead put a div inside and style that.
 
 </head><body><dom-module id="iron-collapse">
 
-  <style>
-
-    :host {
-      display: block;
-      transition-duration: 300ms;
-    }
-
-    :host(.iron-collapse-closed) {
-      display: none;
-    }
-
-    :host(:not(.iron-collapse-opened)) {
-      overflow: hidden;
-    }
-
-  </style>
-
   <template>
+
+    <style>
+      :host {
+        display: block;
+        transition-duration: var(--iron-collapse-transition-duration, 300ms);
+        overflow: visible;
+      }
+
+      :host(.iron-collapse-closed) {
+        display: none;
+      }
+
+      :host(:not(.iron-collapse-opened)) {
+        overflow: hidden;
+      }
+    </style>
 
     <content></content>
 

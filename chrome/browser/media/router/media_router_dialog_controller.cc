@@ -4,6 +4,8 @@
 
 #include "chrome/browser/media/router/media_router_dialog_controller.h"
 
+#include <utility>
+
 #include "chrome/browser/media/router/media_router_metrics.h"
 #include "chrome/common/features.h"
 #include "content/public/browser/browser_thread.h"
@@ -69,58 +71,50 @@ MediaRouterDialogController::MediaRouterDialogController(
 }
 
 MediaRouterDialogController::~MediaRouterDialogController() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
 
 bool MediaRouterDialogController::ShowMediaRouterDialogForPresentation(
-    scoped_ptr<CreatePresentationConnectionRequest> request) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+    std::unique_ptr<CreatePresentationConnectionRequest> request) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // Check if the media router dialog exists for |initiator| and return if so.
-  if (IsShowingMediaRouterDialog())
-    return false;
-
-  create_connection_request_ = request.Pass();
-  initiator_observer_.reset(new InitiatorWebContentsObserver(initiator_, this));
-  CreateMediaRouterDialog();
-
-  // Show the initiator holding the existing media router dialog.
-  ActivateInitiatorWebContents();
-
-  media_router::MediaRouterMetrics::RecordMediaRouterDialogOrigin(
-      MediaRouterDialogOpenOrigin::PAGE);
-
-  return true;
+  bool dialog_needs_creation = !IsShowingMediaRouterDialog();
+  if (dialog_needs_creation) {
+    create_connection_request_ = std::move(request);
+    MediaRouterMetrics::RecordMediaRouterDialogOrigin(
+        MediaRouterDialogOpenOrigin::PAGE);
+  }
+  FocusOnMediaRouterDialog(dialog_needs_creation);
+  return dialog_needs_creation;
 }
 
 bool MediaRouterDialogController::ShowMediaRouterDialog() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // Don't create dialog if it already exists.
   bool dialog_needs_creation = !IsShowingMediaRouterDialog();
+  FocusOnMediaRouterDialog(dialog_needs_creation);
+  return dialog_needs_creation;
+}
+
+void MediaRouterDialogController::HideMediaRouterDialog() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  CloseMediaRouterDialog();
+  Reset();
+}
+
+void MediaRouterDialogController::FocusOnMediaRouterDialog(
+    bool dialog_needs_creation) {
   if (dialog_needs_creation) {
     initiator_observer_.reset(
         new InitiatorWebContentsObserver(initiator_, this));
     CreateMediaRouterDialog();
   }
-
-  ActivateInitiatorWebContents();
-  return dialog_needs_creation;
-}
-
-void MediaRouterDialogController::HideMediaRouterDialog() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  CloseMediaRouterDialog();
-  Reset();
-}
-
-void MediaRouterDialogController::ActivateInitiatorWebContents() {
   initiator_->GetDelegate()->ActivateContents(initiator_);
 }
 
-scoped_ptr<CreatePresentationConnectionRequest>
+std::unique_ptr<CreatePresentationConnectionRequest>
 MediaRouterDialogController::TakeCreateConnectionRequest() {
-  return create_connection_request_.Pass();
+  return std::move(create_connection_request_);
 }
 
 void MediaRouterDialogController::Reset() {

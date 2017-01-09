@@ -4,7 +4,7 @@
 
 import json
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.value import histogram_util
 from telemetry.value import scalar
 from telemetry.value import skip
@@ -26,7 +26,8 @@ def _GetMaxDetachedContextAge(tab, data_start):
     return max(x.get('high', x['low']) for x in buckets)
 
 
-class V8DetachedContextAgeInGC(page_test.PageTest):
+class V8DetachedContextAgeInGC(legacy_page_test.LegacyPageTest):
+
   def __init__(self):
     super(V8DetachedContextAgeInGC, self).__init__()
     self._data_start = None
@@ -35,9 +36,11 @@ class V8DetachedContextAgeInGC(page_test.PageTest):
     options.AppendExtraBrowserArgs(['--enable-stats-collection-bindings'])
 
   def DidNavigateToPage(self, page, tab):
+    del page  # unused
     self._data_start = histogram_util.GetHistogram(_TYPE, _NAME, tab)
 
   def ValidateAndMeasurePage(self, page, tab, results):
+    del page  # unused
     # Trigger GC to get histogram data.
     # Seven GCs should be enough to collect any detached context.
     # If a detached context survives more GCs then there is a leak.

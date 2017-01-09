@@ -9,6 +9,7 @@
 #include "base/callback_forward.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 
 namespace base {
 
@@ -33,14 +34,6 @@ class BASE_EXPORT FileUtilProxy {
       TaskRunner* task_runner,
       const FilePath& file_path,
       const GetFileInfoCallback& callback);
-
-  // Deletes a file or a directory.
-  // It is an error to delete a non-empty directory with recursive=false.
-  // This returns false if task posting to |task_runner| has failed.
-  static bool DeleteFile(TaskRunner* task_runner,
-                         const FilePath& file_path,
-                         bool recursive,
-                         const StatusCallback& callback);
 
   // Touches a file. The callback can be null.
   // This returns false if task posting to |task_runner| has failed.

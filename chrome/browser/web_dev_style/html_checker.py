@@ -44,6 +44,17 @@ class HtmlChecker(object):
     return regex_check.RegexCheck(self.input_api.re, line_number, line, regex,
         'Use the button element instead of <input type="button">')
 
+  def DoNotUseSingleQuotesCheck(self, line_number, line):
+    regex = self.input_api.re.compile("""
+        <\S+                           # The tag name.
+        (?:\s+\S+\$?="[^"]*"|\s+\S+)*  # Correctly quoted or non-value props.
+        \s+(\S+\$?='[^']*')            # Find incorrectly quoted (foo='bar').
+        [^>]*>                         # To the end of the tag.
+        """,
+        self.input_api.re.MULTILINE | self.input_api.re.VERBOSE)
+    return regex_check.RegexCheck(self.input_api.re, line_number, line, regex,
+        'Use double quotes rather than single quotes in HTML properties')
+
   def I18nContentJavaScriptCaseCheck(self, line_number, line):
     regex = self.input_api.re.compile("""
         (?:^|\s)                      # start of line or whitespace
@@ -56,13 +67,19 @@ class HtmlChecker(object):
 
   def LabelCheck(self, line_number, line):
     regex = self.input_api.re.compile("""
-        (?:^|\s) # start of line or whitespace
-        (for=)   # for=
+        (?:^|\s)     # start of line or whitespace
+        <label[^>]+? # <label tag
+        (for=)       # for=
         """,
         self.input_api.re.VERBOSE)
     return regex_check.RegexCheck(self.input_api.re, line_number, line, regex,
         "Avoid 'for' attribute on <label>. Place the input within the <label>, "
         "or use aria-labelledby for <select>.")
+
+  def QuotePolymerBindings(self, line_number, line):
+    regex = self.input_api.re.compile(r"=(\[\[|\{\{)")
+    return regex_check.RegexCheck(self.input_api.re, line_number, line, regex,
+        'Please use quotes around Polymer bindings (i.e. attr="[[prop]]")')
 
   def RunChecks(self):
     """Check for violations of the Chromium web development style guide. See
@@ -84,6 +101,7 @@ class HtmlChecker(object):
             self.DoNotUseInputTypeButtonCheck(line_number, line),
             self.I18nContentJavaScriptCaseCheck(line_number, line),
             self.LabelCheck(line_number, line),
+            self.QuotePolymerBindings(line_number, line),
         ]))
 
       if errors:

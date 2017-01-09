@@ -5,7 +5,10 @@
 #ifndef CONTENT_RENDERER_ANDROID_CONTENT_DETECTOR_H_
 #define CONTENT_RENDERER_ANDROID_CONTENT_DETECTOR_H_
 
-#include "third_party/WebKit/public/web/WebRange.h"
+#include <stddef.h>
+
+#include "base/macros.h"
+#include "third_party/WebKit/public/platform/WebURL.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -17,25 +20,11 @@ namespace content {
 // Base class for text-based content detectors.
 class ContentDetector {
  public:
-  // Holds the content detection results.
-  struct Result {
-    Result();
-    Result(const blink::WebRange& content_boundaries,
-           const std::string& text,
-           const GURL& intent_url);
-    ~Result();
-
-    bool valid;
-    blink::WebRange content_boundaries;
-    std::string text; // Processed text of the content.
-    GURL intent_url; // URL of the intent that should process this content.
-  };
-
   virtual ~ContentDetector() {}
 
-  // Returns a WebKit range delimiting the contents found around the tapped
-  // position. If no content is found a null range will be returned.
-  Result FindTappedContent(const blink::WebHitTestResult& hit_test);
+  // Returns an intent URL for the content around the hit_test.
+  // If no content is found, an empty URL will be returned.
+  blink::WebURL FindTappedContent(const blink::WebHitTestResult& hit_test);
 
  protected:
   ContentDetector() {}
@@ -57,8 +46,8 @@ class ContentDetector {
   // position in order to search for content.
   virtual size_t GetMaximumContentLength() = 0;
 
-  blink::WebRange FindContentRange(const blink::WebHitTestResult& hit_test,
-                                    std::string* content_text);
+  bool FindContentRange(const blink::WebHitTestResult& hit_test,
+                        std::string* content_text);
 
   DISALLOW_COPY_AND_ASSIGN(ContentDetector);
 };

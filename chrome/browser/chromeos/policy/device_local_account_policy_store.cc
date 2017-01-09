@@ -4,18 +4,19 @@
 
 #include "chrome/browser/chromeos/policy/device_local_account_policy_store.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "base/memory/ptr_util.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/external_data_fetcher.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/proto/cloud_policy.pb.h"
-#include "policy/proto/device_management_backend.pb.h"
+#include "components/policy/proto/cloud_policy.pb.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 
 namespace em = enterprise_management;
 
@@ -46,8 +47,7 @@ void DeviceLocalAccountPolicyStore::Store(
     const em::PolicyFetchResponse& policy) {
   weak_factory_.InvalidateWeakPtrs();
   CheckKeyAndValidate(
-      true,
-      make_scoped_ptr(new em::PolicyFetchResponse(policy)),
+      true, base::MakeUnique<em::PolicyFetchResponse>(policy),
       base::Bind(&DeviceLocalAccountPolicyStore::StoreValidatedPolicy,
                  weak_factory_.GetWeakPtr()));
 }
@@ -58,11 +58,11 @@ void DeviceLocalAccountPolicyStore::ValidateLoadedPolicyBlob(
     status_ = CloudPolicyStore::STATUS_LOAD_ERROR;
     NotifyStoreError();
   } else {
-    scoped_ptr<em::PolicyFetchResponse> policy(new em::PolicyFetchResponse());
+    std::unique_ptr<em::PolicyFetchResponse> policy(
+        new em::PolicyFetchResponse());
     if (policy->ParseFromString(policy_blob)) {
       CheckKeyAndValidate(
-          false,
-          policy.Pass(),
+          false, std::move(policy),
           base::Bind(&DeviceLocalAccountPolicyStore::UpdatePolicy,
                      weak_factory_.GetWeakPtr()));
     } else {
@@ -73,7 +73,10 @@ void DeviceLocalAccountPolicyStore::ValidateLoadedPolicyBlob(
 }
 
 void DeviceLocalAccountPolicyStore::UpdatePolicy(
+    const std::string& signature_validation_public_key,
     UserCloudPolicyValidator* validator) {
+  DCHECK(!signature_validation_public_key.empty());
+
   validation_status_ = validator->status();
   if (!validator->success()) {
     status_ = STATUS_VALIDATION_ERROR;
@@ -81,12 +84,15 @@ void DeviceLocalAccountPolicyStore::UpdatePolicy(
     return;
   }
 
-  InstallPolicy(validator->policy_data().Pass(), validator->payload().Pass());
+  InstallPolicy(std::move(validator->policy_data()),
+                std::move(validator->payload()),
+                signature_validation_public_key);
   status_ = STATUS_OK;
   NotifyStoreLoaded();
 }
 
 void DeviceLocalAccountPolicyStore::StoreValidatedPolicy(
+    const std::string& signature_validation_public_key_unused,
     UserCloudPolicyValidator* validator) {
   if (!validator->success()) {
     status_ = CloudPolicyStore::STATUS_VALIDATION_ERROR;
@@ -120,8 +126,8 @@ void DeviceLocalAccountPolicyStore::HandleStoreResult(bool success) {
 
 void DeviceLocalAccountPolicyStore::CheckKeyAndValidate(
     bool valid_timestamp_required,
-    scoped_ptr<em::PolicyFetchResponse> policy,
-    const UserCloudPolicyValidator::CompletionCallback& callback) {
+    std::unique_ptr<em::PolicyFetchResponse> policy,
+    const ValidateCompletionCallback& callback) {
   device_settings_service_->GetOwnershipStatusAsync(
       base::Bind(&DeviceLocalAccountPolicyStore::Validate,
                  weak_factory_.GetWeakPtr(),
@@ -132,13 +138,16 @@ void DeviceLocalAccountPolicyStore::CheckKeyAndValidate(
 
 void DeviceLocalAccountPolicyStore::Validate(
     bool valid_timestamp_required,
-    scoped_ptr<em::PolicyFetchResponse> policy_response,
-    const UserCloudPolicyValidator::CompletionCallback& callback,
+    std::unique_ptr<em::PolicyFetchResponse> policy_response,
+    const ValidateCompletionCallback& callback,
     chromeos::DeviceSettingsService::OwnershipStatus ownership_status) {
   DCHECK_NE(chromeos::DeviceSettingsService::OWNERSHIP_UNKNOWN,
             ownership_status);
   const em::PolicyData* device_policy_data =
       device_settings_service_->policy_data();
+  // Note that the key is obtained through the device settings service instead
+  // of using |policy_signature_public_key_| member, as the latter one is
+  // updated only after the successful installation of the policy.
   scoped_refptr<ownership::PublicKey> key =
       device_settings_service_->GetPublicKey();
   if (!key.get() || !key->is_loaded() || !device_policy_data) {
@@ -147,8 +156,8 @@ void DeviceLocalAccountPolicyStore::Validate(
     return;
   }
 
-  scoped_ptr<UserCloudPolicyValidator> validator(
-      UserCloudPolicyValidator::Create(policy_response.Pass(),
+  std::unique_ptr<UserCloudPolicyValidator> validator(
+      UserCloudPolicyValidator::Create(std::move(policy_response),
                                        background_task_runner()));
   validator->ValidateUsername(account_id_, false);
   validator->ValidatePolicyType(dm_protocol::kChromePublicAccountPolicyType);
@@ -158,22 +167,22 @@ void DeviceLocalAccountPolicyStore::Validate(
   validator->ValidateAgainstCurrentPolicy(
       policy(),
       valid_timestamp_required
-          ? CloudPolicyValidatorBase::TIMESTAMP_REQUIRED
-          : CloudPolicyValidatorBase::TIMESTAMP_NOT_REQUIRED,
-      CloudPolicyValidatorBase::DM_TOKEN_NOT_REQUIRED);
+          ? CloudPolicyValidatorBase::TIMESTAMP_FULLY_VALIDATED
+          : CloudPolicyValidatorBase::TIMESTAMP_NOT_VALIDATED,
+      CloudPolicyValidatorBase::DM_TOKEN_NOT_REQUIRED,
+      CloudPolicyValidatorBase::DEVICE_ID_NOT_REQUIRED);
 
   // Validate the DMToken to match what device policy has.
   validator->ValidateDMToken(device_policy_data->request_token(),
                              CloudPolicyValidatorBase::DM_TOKEN_REQUIRED);
 
+  // Validate the device id to match what device policy has.
+  validator->ValidateDeviceId(device_policy_data->device_id(),
+                              CloudPolicyValidatorBase::DEVICE_ID_REQUIRED);
+
   validator->ValidatePayload();
-  policy::BrowserPolicyConnectorChromeOS* connector =
-      g_browser_process->platform_part()->browser_policy_connector_chromeos();
-  validator->ValidateSignature(key->as_string(),
-                               GetPolicyVerificationKey(),
-                               connector->GetEnterpriseDomain(),
-                               false);
-  validator.release()->StartValidation(callback);
+  validator->ValidateSignature(key->as_string());
+  validator.release()->StartValidation(base::Bind(callback, key->as_string()));
 }
 
 }  // namespace policy

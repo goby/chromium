@@ -5,11 +5,13 @@
 #include "remoting/host/desktop_resizer.h"
 
 #include <Carbon/Carbon.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "remoting/base/logging.h"
 
 namespace {
@@ -46,7 +48,7 @@ DesktopResizerMac::DesktopResizerMac() {}
 
 ScreenResolution DesktopResizerMac::GetCurrentResolution() {
   CGDirectDisplayID display;
-  if (!base::mac::IsOSSnowLeopard() && GetSoleDisplayId(&display)) {
+  if (GetSoleDisplayId(&display)) {
     CGRect rect = CGDisplayBounds(display);
     return ScreenResolution(
         webrtc::DesktopSize(rect.size.width, rect.size.height),
@@ -65,7 +67,7 @@ std::list<ScreenResolution> DesktopResizerMac::GetSupportedResolutions(
 
 void DesktopResizerMac::SetResolution(const ScreenResolution& resolution) {
   CGDirectDisplayID display;
-  if (base::mac::IsOSSnowLeopard() || !GetSoleDisplayId(&display)) {
+  if (!GetSoleDisplayId(&display)) {
     return;
   }
 
@@ -166,8 +168,8 @@ bool DesktopResizerMac::GetSoleDisplayId(CGDirectDisplayID* display) {
   return true;
 }
 
-scoped_ptr<DesktopResizer> DesktopResizer::Create() {
-  return make_scoped_ptr(new DesktopResizerMac);
+std::unique_ptr<DesktopResizer> DesktopResizer::Create() {
+  return base::WrapUnique(new DesktopResizerMac);
 }
 
 }  // namespace remoting

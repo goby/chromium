@@ -7,8 +7,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/basictypes.h"
 #include "base/mac/mac_util.h"
+#include "base/macros.h"
 
 namespace gfx {
 
@@ -20,7 +20,7 @@ namespace gfx {
 class ScopedCocoaDisableScreenUpdates {
  public:
   ScopedCocoaDisableScreenUpdates() {
-    if (base::mac::IsOSElCapitanOrLater()) {
+    if (base::mac::IsAtLeastOS10_11()) {
       // Beginning with OS X 10.11, [NSAnimationContext beginGrouping] is the
       // preferred way of disabling screen updates. Use of
       // NSDisableScreenUpdates() is discouraged.
@@ -30,7 +30,7 @@ class ScopedCocoaDisableScreenUpdates {
     }
   }
   ~ScopedCocoaDisableScreenUpdates() {
-    if (base::mac::IsOSElCapitanOrLater()) {
+    if (base::mac::IsAtLeastOS10_11()) {
       [NSAnimationContext endGrouping];
     } else {
       NSEnableScreenUpdates();

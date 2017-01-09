@@ -4,10 +4,13 @@
 
 #include "chrome/browser/ui/views/profiles/user_manager_view.h"
 
-#include "base/memory/scoped_ptr.h"
+#include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
@@ -19,135 +22,117 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/user_manager.h"
-#include "chrome/browser/ui/views/auto_keep_alive.h"
-#include "chrome/browser/ui/views/browser_dialogs.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/guest_view/browser/guest_view_manager.h"
+#include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_client_view.h"
-#include "ui/views/window/dialog_delegate.h"
 
 #if defined(OS_WIN)
-#include "chrome/browser/shell_integration.h"
+#include "chrome/browser/shell_integration_win.h"
 #include "ui/base/win/shell.h"
 #include "ui/views/win/hwnd_util.h"
-#endif
-
-#if defined(USE_ASH)
-#include "ash/shelf/shelf_util.h"
-#include "ash/wm/window_util.h"
-#include "grit/ash_resources.h"
 #endif
 
 namespace {
 
 // An open User Manager window. There can only be one open at a time. This
 // is reset to NULL when the window is closed.
-UserManagerView* instance_ = NULL;
+UserManagerView* instance_ = nullptr;
+base::Closure* user_manager_shown_callback_for_testing_ = nullptr;
 bool instance_under_construction_ = false;
+}  // namespace
 
-class ReauthDelegate : public views::DialogDelegateView,
-                       public UserManager::ReauthDialogObserver {
- public:
-  ReauthDelegate(views::WebView* web_view,
-                 const std::string& email_address);
-  ~ReauthDelegate() override {}
+// Delegate---------------------------------------------------------------
 
- private:
-  ReauthDelegate();
-  // views::DialogDelegate:
-  gfx::Size GetPreferredSize() const override;
-  bool CanResize() const override;
-  bool CanMaximize() const override;
-  bool CanMinimize() const override;
-  bool UseNewStyleForThisDialog() const override;
-  ui::ModalType GetModalType() const override;
-  void DeleteDelegate() override;
-  base::string16 GetWindowTitle() const override;
-  int GetDialogButtons() const override;
-  views::View* GetInitiallyFocusedView() override;
-
-  // UserManager::ReauthObserver:
-  void CloseReauthDialog() override;
-
-  views::WebView* web_view_;
-  const std::string email_address_;
-
-  DISALLOW_COPY_AND_ASSIGN(ReauthDelegate);
-};
-
-ReauthDelegate::ReauthDelegate(views::WebView* web_view,
-                               const std::string& email_address)
-    : UserManager::ReauthDialogObserver(
-          web_view->GetWebContents(), email_address),
-      web_view_(web_view),
-      email_address_(email_address) {
+UserManagerProfileDialogDelegate::UserManagerProfileDialogDelegate(
+    UserManagerView* parent,
+    views::WebView* web_view,
+    const std::string& email_address,
+    const GURL& url)
+    : parent_(parent), web_view_(web_view), email_address_(email_address) {
   AddChildView(web_view_);
   SetLayoutManager(new views::FillLayout());
 
-  // Load the re-auth URL, prepopulated with the user's email address.
-  // Add the index of the profile to the URL so that the inline login page
-  // knows which profile to load and update the credentials.
-  GURL url = signin::GetReauthURLWithEmail(email_address_);
+  web_view_->GetWebContents()->SetDelegate(this);
   web_view_->LoadInitialURL(url);
 }
 
-gfx::Size ReauthDelegate::GetPreferredSize() const {
-  return gfx::Size(UserManager::kReauthDialogWidth,
-                   UserManager::kReauthDialogHeight);
+UserManagerProfileDialogDelegate::~UserManagerProfileDialogDelegate() {}
+
+gfx::Size UserManagerProfileDialogDelegate::GetPreferredSize() const {
+  return switches::UsePasswordSeparatedSigninFlow()
+             ? gfx::Size(UserManagerProfileDialog::kDialogWidth,
+                         UserManagerProfileDialog::kDialogHeight)
+             : gfx::Size(
+                   UserManagerProfileDialog::kPasswordCombinedDialogWidth,
+                   UserManagerProfileDialog::kPasswordCombinedDialogHeight);
 }
 
-bool ReauthDelegate::CanResize() const {
+void UserManagerProfileDialogDelegate::DisplayErrorMessage() {
+  web_view_->LoadInitialURL(GURL(chrome::kChromeUISigninErrorURL));
+}
+
+bool UserManagerProfileDialogDelegate::CanResize() const {
   return true;
 }
 
-bool ReauthDelegate::CanMaximize() const  {
+bool UserManagerProfileDialogDelegate::CanMaximize() const {
   return true;
 }
 
-bool ReauthDelegate::CanMinimize() const  {
+bool UserManagerProfileDialogDelegate::CanMinimize() const {
   return true;
 }
 
-bool ReauthDelegate::UseNewStyleForThisDialog() const {
+bool UserManagerProfileDialogDelegate::ShouldUseCustomFrame() const {
   return false;
 }
 
-ui::ModalType ReauthDelegate::GetModalType() const {
+ui::ModalType UserManagerProfileDialogDelegate::GetModalType() const {
   return ui::MODAL_TYPE_WINDOW;
 }
 
-void ReauthDelegate::DeleteDelegate() {
+void UserManagerProfileDialogDelegate::DeleteDelegate() {
+  OnDialogDestroyed();
   delete this;
 }
 
-base::string16 ReauthDelegate::GetWindowTitle() const {
+base::string16 UserManagerProfileDialogDelegate::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_PROFILES_GAIA_SIGNIN_TITLE);
 }
 
-int ReauthDelegate::GetDialogButtons() const {
+int UserManagerProfileDialogDelegate::GetDialogButtons() const {
   return ui::DIALOG_BUTTON_NONE;
 }
 
-views::View* ReauthDelegate::GetInitiallyFocusedView() {
+views::View* UserManagerProfileDialogDelegate::GetInitiallyFocusedView() {
   return static_cast<views::View*>(web_view_);
 }
 
-void ReauthDelegate::CloseReauthDialog() {
+void UserManagerProfileDialogDelegate::CloseDialog() {
+  OnDialogDestroyed();
   GetWidget()->Close();
 }
 
-} // namespace
+void UserManagerProfileDialogDelegate::OnDialogDestroyed() {
+  if (parent_) {
+    parent_->OnDialogDestroyed();
+    parent_ = nullptr;
+  }
+}
 
 // UserManager -----------------------------------------------------------------
 
@@ -155,7 +140,7 @@ void ReauthDelegate::CloseReauthDialog() {
 void UserManager::Show(
     const base::FilePath& profile_path_to_focus,
     profiles::UserManagerTutorialMode tutorial_mode,
-    profiles::UserManagerProfileSelected profile_open_action) {
+    profiles::UserManagerAction user_manager_action) {
   DCHECK(profile_path_to_focus != ProfileManager::GetGuestProfilePath());
 
   ProfileMetrics::LogProfileOpenMethod(ProfileMetrics::OPEN_USER_MANAGER);
@@ -177,18 +162,16 @@ void UserManager::Show(
   // there to then be multiple pending operations and eventually multiple
   // User Managers.
   if (instance_under_construction_)
-      return;
+    return;
 
   // Create the system profile, if necessary, and open the user manager
   // from the system profile.
   UserManagerView* user_manager = new UserManagerView();
   user_manager->set_user_manager_started_showing(base::Time::Now());
   profiles::CreateSystemProfileForUserManager(
-      profile_path_to_focus,
-      tutorial_mode,
-      profile_open_action,
+      profile_path_to_focus, tutorial_mode, user_manager_action,
       base::Bind(&UserManagerView::OnSystemProfileCreated,
-                 base::Passed(make_scoped_ptr(user_manager)),
+                 base::Passed(base::WrapUnique(user_manager)),
                  base::Owned(new base::AutoReset<bool>(
                      &instance_under_construction_, true))));
 }
@@ -206,40 +189,100 @@ bool UserManager::IsShowing() {
 
 // static
 void UserManager::OnUserManagerShown() {
-  if (instance_)
+  if (instance_) {
     instance_->LogTimeToOpen();
+    if (user_manager_shown_callback_for_testing_) {
+      if (!user_manager_shown_callback_for_testing_->is_null())
+        user_manager_shown_callback_for_testing_->Run();
+
+      delete user_manager_shown_callback_for_testing_;
+      user_manager_shown_callback_for_testing_ = nullptr;
+    }
+  }
 }
 
 // static
-void UserManager::ShowReauthDialog(content::BrowserContext* browser_context,
-                                   const std::string& email) {
-  // This method should only be called if the user manager is already showing.
-  if (!IsShowing())
-    return;
+void UserManager::AddOnUserManagerShownCallbackForTesting(
+    const base::Closure& callback) {
+  DCHECK(!user_manager_shown_callback_for_testing_);
+  user_manager_shown_callback_for_testing_ = new base::Closure(callback);
+}
 
-  // The dialog delegate will be deleted when the dialog closes and the created
-  // WebView's lifetime is managed by the delegate.
-  views::DialogDelegate* delegate =
-      new ReauthDelegate(new views::WebView(browser_context), email);
-  gfx::NativeView parent = instance_->GetWidget()->GetNativeView();
-  views::DialogDelegate::CreateDialogWidget(delegate, nullptr, parent);
-  delegate->GetWidget()->Show();
+// static
+base::FilePath UserManager::GetSigninProfilePath() {
+  return instance_->GetSigninProfilePath();
+}
+
+// UserManagerProfileDialog
+// -------------------------------------------------------------
+
+// static
+void UserManagerProfileDialog::ShowReauthDialog(
+    content::BrowserContext* browser_context,
+    const std::string& email,
+    signin_metrics::Reason reason) {
+  // This method should only be called if the user manager is already showing.
+  if (!UserManager::IsShowing())
+    return;
+  // Load the re-auth URL, prepopulated with the user's email address.
+  // Add the index of the profile to the URL so that the inline login page
+  // knows which profile to load and update the credentials.
+  GURL url = signin::GetReauthURLWithEmail(
+      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER, reason, email);
+  instance_->ShowDialog(browser_context, email, url);
+}
+
+// static
+void UserManagerProfileDialog::ShowSigninDialog(
+    content::BrowserContext* browser_context,
+    const base::FilePath& profile_path) {
+  if (!UserManager::IsShowing())
+    return;
+  instance_->SetSigninProfilePath(profile_path);
+  GURL url = signin::GetPromoURL(
+      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER,
+      signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, true, true);
+  instance_->ShowDialog(browser_context, std::string(), url);
+}
+
+void UserManagerProfileDialog::ShowDialogAndDisplayErrorMessage(
+    content::BrowserContext* browser_context) {
+  if (!UserManager::IsShowing())
+    return;
+  instance_->ShowDialog(browser_context, std::string(),
+                        GURL(chrome::kChromeUISigninErrorURL));
+}
+
+// static
+void UserManagerProfileDialog::DisplayErrorMessage() {
+  // This method should only be called if the user manager is already showing.
+  DCHECK(instance_);
+  instance_->DisplayErrorMessage();
+}
+
+// static
+void UserManagerProfileDialog::HideDialog() {
+  if (instance_ && instance_->GetWidget()->IsVisible())
+    instance_->HideDialog();
 }
 
 // UserManagerView -------------------------------------------------------------
 
 UserManagerView::UserManagerView()
-    : web_view_(NULL),
-      keep_alive_(new AutoKeepAlive(NULL)),
+    : web_view_(nullptr),
+      delegate_(nullptr),
       user_manager_started_showing_(base::Time()) {
+  keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::USER_MANAGER_VIEW,
+                                        KeepAliveRestartOption::DISABLED));
 }
 
 UserManagerView::~UserManagerView() {
+  HideDialog();
 }
 
 // static
 void UserManagerView::OnSystemProfileCreated(
-    scoped_ptr<UserManagerView> instance,
+    std::unique_ptr<UserManagerView> instance,
     base::AutoReset<bool>* pending,
     Profile* system_profile,
     const std::string& url) {
@@ -250,6 +293,30 @@ void UserManagerView::OnSystemProfileCreated(
   DCHECK(!instance_);
   instance_ = instance.release();  // |instance_| takes over ownership.
   instance_->Init(system_profile, GURL(url));
+}
+
+void UserManagerView::ShowDialog(content::BrowserContext* browser_context,
+                                 const std::string& email,
+                                 const GURL& url) {
+  HideDialog();
+  // The dialog delegate will be deleted when the widget closes. The created
+  // WebView's lifetime is managed by the delegate.
+  delegate_ = new UserManagerProfileDialogDelegate(
+      this, new views::WebView(browser_context), email, url);
+  gfx::NativeView parent = instance_->GetWidget()->GetNativeView();
+  views::DialogDelegate::CreateDialogWidget(delegate_, nullptr, parent);
+  delegate_->GetWidget()->Show();
+}
+
+void UserManagerView::HideDialog() {
+  if (delegate_) {
+    delegate_->CloseDialog();
+    DCHECK(!delegate_);
+  }
+}
+
+void UserManagerView::OnDialogDestroyed() {
+  delegate_ = nullptr;
 }
 
 void UserManagerView::Init(Profile* system_profile, const GURL& url) {
@@ -281,20 +348,22 @@ void UserManagerView::Init(Profile* system_profile, const GURL& url) {
       profile_manager->GetLastUsedProfileDir(profile_manager->user_data_dir());
   Profile* profile = profile_manager->GetProfileByPath(last_used_profile_path);
   if (profile) {
-    Browser* browser = chrome::FindLastActiveWithProfile(profile,
-        chrome::GetActiveDesktop());
+    Browser* browser = chrome::FindLastActiveWithProfile(profile);
     if (browser) {
       gfx::NativeView native_view =
           views::Widget::GetWidgetForNativeWindow(
               browser->window()->GetNativeWindow())->GetNativeView();
-      bounds = gfx::Screen::GetScreenFor(native_view)->
-          GetDisplayNearestWindow(native_view).work_area();
+      bounds = display::Screen::GetScreen()
+                   ->GetDisplayNearestWindow(native_view)
+                   .work_area();
       bounds.ClampToCenteredSize(gfx::Size(UserManager::kWindowWidth,
                                            UserManager::kWindowHeight));
     }
   }
 
-  DialogDelegate::CreateDialogWidgetWithBounds(this, NULL, NULL, bounds);
+  views::Widget::InitParams params =
+      GetDialogWidgetInitParams(this, nullptr, nullptr, bounds);
+  (new views::Widget)->Init(params);
 
   // Since the User Manager can be the only top level window, we don't
   // want to accidentally quit all of Chrome if the user is just trying to
@@ -305,15 +374,9 @@ void UserManagerView::Init(Profile* system_profile, const GURL& url) {
 #if defined(OS_WIN)
   // Set the app id for the task manager to the app id of its parent
   ui::win::SetAppIdForWindow(
-      ShellIntegration::GetChromiumModelIdForProfile(
+      shell_integration::win::GetChromiumModelIdForProfile(
           system_profile->GetPath()),
       views::HWNDForWidget(GetWidget()));
-#endif
-
-#if defined(USE_ASH)
-  gfx::NativeWindow native_window = GetWidget()->GetNativeWindow();
-  ash::SetShelfItemDetailsForDialogWindow(
-      native_window, IDR_ASH_SHELF_LIST_BROWSER, native_window->title());
 #endif
 
   web_view_->LoadInitialURL(url);
@@ -376,6 +439,19 @@ void UserManagerView::WindowClosing() {
     instance_ = NULL;
 }
 
-bool UserManagerView::UseNewStyleForThisDialog() const {
+bool UserManagerView::ShouldUseCustomFrame() const {
   return false;
+}
+
+void UserManagerView::DisplayErrorMessage() {
+  if (delegate_)
+    delegate_->DisplayErrorMessage();
+}
+
+void UserManagerView::SetSigninProfilePath(const base::FilePath& profile_path) {
+  signin_profile_path_ = profile_path;
+}
+
+base::FilePath UserManagerView::GetSigninProfilePath() {
+  return signin_profile_path_;
 }

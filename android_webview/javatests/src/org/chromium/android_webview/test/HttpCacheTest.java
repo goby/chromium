@@ -4,12 +4,12 @@
 
 package org.chromium.android_webview.test;
 
-import android.content.Context;
 import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsStatics;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.PathUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.test.util.TestWebServer;
@@ -69,11 +69,10 @@ public class HttpCacheTest extends AwTestBase {
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testLegacyHttpCacheDirIsRemovedOnStartup() throws Exception {
-        Context targetContext = getInstrumentation().getTargetContext();
-        PathUtils.setPrivateDataDirectorySuffix(
-                AwBrowserProcess.PRIVATE_DATA_DIRECTORY_SUFFIX, targetContext);
-        File webViewLegacyCacheDir = new File(
-                PathUtils.getDataDirectory(targetContext), "Cache");
+        ContextUtils.initApplicationContext(
+                getInstrumentation().getTargetContext().getApplicationContext());
+        PathUtils.setPrivateDataDirectorySuffix(AwBrowserProcess.PRIVATE_DATA_DIRECTORY_SUFFIX);
+        File webViewLegacyCacheDir = new File(PathUtils.getDataDirectory(), "Cache");
         if (!webViewLegacyCacheDir.isDirectory()) {
             assertTrue(webViewLegacyCacheDir.mkdir());
             assertTrue(webViewLegacyCacheDir.isDirectory());
@@ -82,7 +81,7 @@ public class HttpCacheTest extends AwTestBase {
         assertTrue(dummyCacheFile.exists());
 
         // Set up JNI bindings.
-        AwBrowserProcess.loadLibrary(targetContext);
+        AwBrowserProcess.loadLibrary();
         // No delay before removing the legacy cache files.
         AwContentsStatics.setLegacyCacheRemovalDelayForTest(0);
 

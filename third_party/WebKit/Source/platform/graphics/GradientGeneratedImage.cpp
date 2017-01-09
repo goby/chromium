@@ -23,31 +23,57 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/GradientGeneratedImage.h"
 
 #include "platform/geometry/FloatRect.h"
+#include "platform/geometry/IntSize.h"
 #include "platform/graphics/GraphicsContext.h"
 
 namespace blink {
 
-void GradientGeneratedImage::draw(SkCanvas* canvas, const SkPaint& paint, const FloatRect& destRect, const FloatRect& srcRect, RespectImageOrientationEnum, ImageClampingMode)
-{
-    SkAutoCanvasRestore ar(canvas, true);
-    canvas->clipRect(destRect);
-    canvas->translate(destRect.x(), destRect.y());
-    if (destRect.size() != srcRect.size())
-        canvas->scale(destRect.width() / srcRect.width(), destRect.height() / srcRect.height());
-    canvas->translate(-srcRect.x(), -srcRect.y());
-    SkPaint gradientPaint(paint);
-    m_gradient->applyToPaint(gradientPaint);
-    canvas->drawRect(SkRect::MakeWH(m_size.width(), m_size.height()), gradientPaint);
+void GradientGeneratedImage::draw(SkCanvas* canvas,
+                                  const SkPaint& paint,
+                                  const FloatRect& destRect,
+                                  const FloatRect& srcRect,
+                                  RespectImageOrientationEnum,
+                                  ImageClampingMode,
+                                  const ColorBehavior& colorBehavior) {
+  // TODO(ccameron): This function should not ignore |colorBehavior|.
+  // https://crbug.com/672306
+  SkRect visibleSrcRect = srcRect;
+  if (!visibleSrcRect.intersect(
+          SkRect::MakeIWH(m_size.width(), m_size.height())))
+    return;
+
+  const SkMatrix transform =
+      SkMatrix::MakeRectToRect(srcRect, destRect, SkMatrix::kFill_ScaleToFit);
+  SkRect visibleDestRect;
+  transform.mapRect(&visibleDestRect, visibleSrcRect);
+
+  SkPaint gradientPaint(paint);
+  m_gradient->applyToPaint(gradientPaint, transform);
+  canvas->drawRect(visibleDestRect, gradientPaint);
 }
 
-void GradientGeneratedImage::drawTile(GraphicsContext* context, const FloatRect& srcRect)
-{
-    context->setFillGradient(m_gradient);
-    context->fillRect(srcRect);
+void GradientGeneratedImage::drawTile(GraphicsContext& context,
+                                      const FloatRect& srcRect) {
+  // TODO(ccameron): This function should not ignore |context|'s color behavior.
+  // https://crbug.com/672306
+  SkPaint gradientPaint(context.fillPaint());
+  m_gradient->applyToPaint(gradientPaint, SkMatrix::I());
+
+  context.drawRect(srcRect, gradientPaint);
 }
 
-} // namespace blink
+bool GradientGeneratedImage::applyShader(SkPaint& paint,
+                                         const SkMatrix& localMatrix,
+                                         const ColorBehavior& colorBehavior) {
+  // TODO(ccameron): This function should not ignore |colorBehavior|.
+  // https://crbug.com/672306
+  DCHECK(m_gradient);
+  m_gradient->applyToPaint(paint, localMatrix);
+
+  return true;
+}
+
+}  // namespace blink

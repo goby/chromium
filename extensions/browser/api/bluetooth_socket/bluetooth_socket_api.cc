@@ -5,6 +5,7 @@
 #include "extensions/browser/api/bluetooth_socket/bluetooth_socket_api.h"
 
 #include <stdint.h>
+#include <utility>
 
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -35,26 +36,25 @@ const char kInvalidUuidError[] = "Invalid UUID";
 const char kPermissionDeniedError[] = "Permission denied";
 const char kSocketNotFoundError[] = "Socket not found";
 
-linked_ptr<SocketInfo> CreateSocketInfo(int socket_id,
-                                        BluetoothApiSocket* socket) {
+SocketInfo CreateSocketInfo(int socket_id, BluetoothApiSocket* socket) {
   DCHECK_CURRENTLY_ON(BluetoothApiSocket::kThreadId);
-  linked_ptr<SocketInfo> socket_info(new SocketInfo());
+  SocketInfo socket_info;
   // This represents what we know about the socket, and does not call through
   // to the system.
-  socket_info->socket_id = socket_id;
+  socket_info.socket_id = socket_id;
   if (socket->name()) {
-    socket_info->name.reset(new std::string(*socket->name()));
+    socket_info.name.reset(new std::string(*socket->name()));
   }
-  socket_info->persistent = socket->persistent();
+  socket_info.persistent = socket->persistent();
   if (socket->buffer_size() > 0) {
-    socket_info->buffer_size.reset(new int(socket->buffer_size()));
+    socket_info.buffer_size.reset(new int(socket->buffer_size()));
   }
-  socket_info->paused = socket->paused();
-  socket_info->connected = socket->IsConnected();
+  socket_info.paused = socket->paused();
+  socket_info.connected = socket->IsConnected();
 
   if (socket->IsConnected())
-    socket_info->address.reset(new std::string(socket->device_address()));
-  socket_info->uuid.reset(new std::string(socket->uuid().canonical_value()));
+    socket_info.address.reset(new std::string(socket->device_address()));
+  socket_info.uuid.reset(new std::string(socket->uuid().canonical_value()));
 
   return socket_info;
 }
@@ -62,15 +62,15 @@ linked_ptr<SocketInfo> CreateSocketInfo(int socket_id,
 void SetSocketProperties(BluetoothApiSocket* socket,
                          SocketProperties* properties) {
   if (properties->name.get()) {
-    socket->set_name(*properties->name.get());
+    socket->set_name(*properties->name);
   }
   if (properties->persistent.get()) {
-    socket->set_persistent(*properties->persistent.get());
+    socket->set_persistent(*properties->persistent);
   }
   if (properties->buffer_size.get()) {
     // buffer size is validated when issuing the actual Recv operation
     // on the socket.
-    socket->set_buffer_size(*properties->buffer_size.get());
+    socket->set_buffer_size(*properties->buffer_size);
   }
 }
 
@@ -195,8 +195,7 @@ void BluetoothSocketCreateFunction::Work() {
 
   BluetoothApiSocket* socket = new BluetoothApiSocket(extension_id());
 
-  bluetooth_socket::SocketProperties* properties =
-      params_.get()->properties.get();
+  bluetooth_socket::SocketProperties* properties = params_->properties.get();
   if (properties) {
     SetSocketProperties(socket, properties);
   }
@@ -204,7 +203,7 @@ void BluetoothSocketCreateFunction::Work() {
   bluetooth_socket::CreateInfo create_info;
   create_info.socket_id = AddSocket(socket);
   results_ = bluetooth_socket::Create::Results::Create(create_info);
-  AsyncWorkCompleted();
+  // AsyncWorkCompleted is called by AsyncWorkStart().
 }
 
 BluetoothSocketUpdateFunction::BluetoothSocketUpdateFunction() {}
@@ -224,7 +223,7 @@ void BluetoothSocketUpdateFunction::Work() {
     return;
   }
 
-  SetSocketProperties(socket, &params_.get()->properties);
+  SetSocketProperties(socket, &params_->properties);
   results_ = bluetooth_socket::Update::Results::Create();
 }
 
@@ -301,14 +300,12 @@ void BluetoothSocketListenFunction::OnGetAdapter(
     return;
   }
 
-  scoped_ptr<std::string> name;
+  std::unique_ptr<std::string> name;
   if (socket->name())
     name.reset(new std::string(*socket->name()));
 
   CreateService(
-      adapter,
-      bluetooth_uuid,
-      name.Pass(),
+      adapter, bluetooth_uuid, std::move(name),
       base::Bind(&BluetoothSocketListenFunction::OnCreateService, this),
       base::Bind(&BluetoothSocketListenFunction::OnCreateServiceError, this));
 }
@@ -366,12 +363,12 @@ bool BluetoothSocketListenUsingRfcommFunction::CreateParams() {
 void BluetoothSocketListenUsingRfcommFunction::CreateService(
     scoped_refptr<device::BluetoothAdapter> adapter,
     const device::BluetoothUUID& uuid,
-    scoped_ptr<std::string> name,
+    std::unique_ptr<std::string> name,
     const device::BluetoothAdapter::CreateServiceCallback& callback,
     const device::BluetoothAdapter::CreateServiceErrorCallback&
         error_callback) {
   device::BluetoothAdapter::ServiceOptions service_options;
-  service_options.name = name.Pass();
+  service_options.name = std::move(name);
 
   ListenOptions* options = params_->options.get();
   if (options) {
@@ -409,12 +406,12 @@ bool BluetoothSocketListenUsingL2capFunction::CreateParams() {
 void BluetoothSocketListenUsingL2capFunction::CreateService(
     scoped_refptr<device::BluetoothAdapter> adapter,
     const device::BluetoothUUID& uuid,
-    scoped_ptr<std::string> name,
+    std::unique_ptr<std::string> name,
     const device::BluetoothAdapter::CreateServiceCallback& callback,
     const device::BluetoothAdapter::CreateServiceErrorCallback&
         error_callback) {
   device::BluetoothAdapter::ServiceOptions service_options;
-  service_options.name = name.Pass();
+  service_options.name = std::move(name);
 
   ListenOptions* options = params_->options.get();
   if (options) {
@@ -646,9 +643,8 @@ void BluetoothSocketGetInfoFunction::Work() {
     return;
   }
 
-  linked_ptr<bluetooth_socket::SocketInfo> socket_info =
-      CreateSocketInfo(params_->socket_id, socket);
-  results_ = bluetooth_socket::GetInfo::Results::Create(*socket_info);
+  results_ = bluetooth_socket::GetInfo::Results::Create(
+      CreateSocketInfo(params_->socket_id, socket));
 }
 
 BluetoothSocketGetSocketsFunction::BluetoothSocketGetSocketsFunction() {}
@@ -658,13 +654,10 @@ BluetoothSocketGetSocketsFunction::~BluetoothSocketGetSocketsFunction() {}
 bool BluetoothSocketGetSocketsFunction::Prepare() { return true; }
 
 void BluetoothSocketGetSocketsFunction::Work() {
-  std::vector<linked_ptr<bluetooth_socket::SocketInfo> > socket_infos;
+  std::vector<bluetooth_socket::SocketInfo> socket_infos;
   base::hash_set<int>* resource_ids = GetSocketIds();
-  if (resource_ids != NULL) {
-    for (base::hash_set<int>::iterator it = resource_ids->begin();
-         it != resource_ids->end();
-         ++it) {
-      int socket_id = *it;
+  if (resource_ids) {
+    for (int socket_id : *resource_ids) {
       BluetoothApiSocket* socket = GetSocket(socket_id);
       if (socket) {
         socket_infos.push_back(CreateSocketInfo(socket_id, socket));

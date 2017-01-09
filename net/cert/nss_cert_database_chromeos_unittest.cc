@@ -4,16 +4,18 @@
 
 #include "net/cert/nss_cert_database_chromeos.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_test_nss_chromeos_user.h"
 #include "crypto/scoped_test_nss_db.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/cert_database.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -33,7 +35,7 @@ bool IsCertInCertificateList(const X509Certificate* cert,
 }
 
 void SwapCertLists(CertificateList* destination,
-                   scoped_ptr<CertificateList> source) {
+                   std::unique_ptr<CertificateList> source) {
   ASSERT_TRUE(destination);
   ASSERT_TRUE(source);
 
@@ -83,13 +85,7 @@ class NSSCertDatabaseChromeOSTest : public testing::Test,
   }
 
   // CertDatabase::Observer:
-  void OnCertAdded(const X509Certificate* cert) override {
-    added_.push_back(cert ? cert->os_cert_handle() : NULL);
-  }
-
-  void OnCertRemoved(const X509Certificate* cert) override {}
-
-  void OnCACertChanged(const X509Certificate* cert) override {
+  void OnCertDBChanged(const X509Certificate* cert) override {
     added_ca_.push_back(cert ? cert->os_cert_handle() : NULL);
   }
 
@@ -97,13 +93,12 @@ class NSSCertDatabaseChromeOSTest : public testing::Test,
   bool observer_added_;
   // Certificates that were passed to the CertDatabase observers.
   std::vector<CERTCertificate*> added_ca_;
-  std::vector<CERTCertificate*> added_;
 
   crypto::ScopedTestNSSChromeOSUser user_1_;
   crypto::ScopedTestNSSChromeOSUser user_2_;
   crypto::ScopedTestNSSDB system_db_;
-  scoped_ptr<NSSCertDatabaseChromeOS> db_1_;
-  scoped_ptr<NSSCertDatabaseChromeOS> db_2_;
+  std::unique_ptr<NSSCertDatabaseChromeOS> db_1_;
+  std::unique_ptr<NSSCertDatabaseChromeOS> db_2_;
 };
 
 // Test that ListModules() on each user includes that user's NSS software slot,
@@ -178,13 +173,12 @@ TEST_F(NSSCertDatabaseChromeOSTest, ImportCACerts) {
 
   // Run the message loop so the observer notifications get processed.
   base::RunLoop().RunUntilIdle();
-  // Should have gotten two OnCACertChanged notifications.
+  // Should have gotten two OnCertDBChanged notifications.
   ASSERT_EQ(2U, added_ca_.size());
   // TODO(mattm): make NSSCertDatabase actually pass the cert to the callback,
   // and enable these checks:
   // EXPECT_EQ(certs_1[0]->os_cert_handle(), added_ca_[0]);
   // EXPECT_EQ(certs_2[0]->os_cert_handle(), added_ca_[1]);
-  EXPECT_EQ(0U, added_.size());
 
   // Tests that the new certs are loaded by async ListCerts method.
   CertificateList user_1_certlist_async;
@@ -249,7 +243,6 @@ TEST_F(NSSCertDatabaseChromeOSTest, ImportServerCert) {
   // TODO(mattm): ImportServerCert doesn't actually cause any observers to
   // fire. Is that correct?
   EXPECT_EQ(0U, added_ca_.size());
-  EXPECT_EQ(0U, added_.size());
 
   // Tests that the new certs are loaded by async ListCerts method.
   CertificateList user_1_certlist_async;

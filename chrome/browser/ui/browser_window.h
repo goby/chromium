@@ -6,15 +6,15 @@
 #define CHROME_BROWSER_UI_BROWSER_WINDOW_H_
 
 #include "base/callback_forward.h"
+#include "build/build_config.h"
 #include "chrome/browser/lifetime/browser_close_manager.h"
 #include "chrome/browser/signin/chrome_signin_helper.h"
-#include "chrome/browser/ssl/security_state_model.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/sync/one_click_signin_sync_starter.h"
+#include "chrome/common/features.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "components/translate/core/common/translate_errors.h"
@@ -26,13 +26,10 @@ class Browser;
 class DownloadShelf;
 class ExclusiveAccessContext;
 class FindBar;
-class GlobalErrorBubbleViewBase;
 class GURL;
 class LocationBar;
 class Profile;
-class ProfileResetGlobalError;
 class StatusBubble;
-class TemplateURL;
 class ToolbarActionsBar;
 
 struct WebApplicationInfo;
@@ -57,9 +54,31 @@ class Rect;
 class Size;
 }
 
+namespace security_state {
+struct SecurityInfo;
+}  // namespace security_state
+
+namespace signin_metrics {
+enum class AccessPoint;
+}
+
 namespace web_modal {
 class WebContentsModalDialogHost;
 }
+
+enum class ImeWarningBubblePermissionStatus;
+
+enum class ShowTranslateBubbleResult {
+  // The translate bubble was successfully shown.
+  SUCCESS,
+
+  // The various reasons for which the translate bubble could fail to be shown.
+  BROWSER_WINDOW_NOT_VALID,
+  BROWSER_WINDOW_MINIMIZED,
+  BROWSER_WINDOW_NOT_ACTIVE,
+  WEB_CONTENTS_NOT_ACTIVE,
+  EDITABLE_FIELD_IS_ACTIVE,
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserWindow interface
@@ -129,32 +148,27 @@ class BrowserWindow : public ui::BaseWindow {
   // Called to force the zoom state to for the active tab to be recalculated.
   // |can_show_bubble| is true when a user presses the zoom up or down keyboard
   // shortcuts and will be false in other cases (e.g. switching tabs, "clicking"
-  // + or - in the wrench menu to change zoom).
+  // + or - in the app menu to change zoom).
   virtual void ZoomChangedForActiveTab(bool can_show_bubble) = 0;
 
-  // Windows and GTK remove the top controls in fullscreen, but Mac and Ash
+  // Windows and GTK remove the browser controls in fullscreen, but Mac and Ash
   // keep the controls in a slide-down panel.
   virtual bool ShouldHideUIForFullscreen() const = 0;
 
   // Returns true if the fullscreen bubble is visible.
   virtual bool IsFullscreenBubbleVisible() const = 0;
 
-  // Show or hide the tab strip, toolbar and bookmark bar when in browser
-  // fullscreen.
-  // Currently only supported on Mac.
-  virtual bool SupportsFullscreenWithToolbar() const = 0;
-  virtual void UpdateFullscreenWithToolbar(bool with_toolbar) = 0;
-  virtual void ToggleFullscreenToolbar() = 0;
-  virtual bool IsFullscreenWithToolbar() const = 0;
-  virtual bool ShouldHideFullscreenToolbar() const = 0;
+  // Shows a notice teaching the user the new shortcut for going back or forward
+  // if the user has pressed the old shortcut more than once in three seconds
+  // and the bubble has been shown less than five times.
+  virtual void MaybeShowNewBackShortcutBubble(bool forward) = 0;
 
-#if defined(OS_WIN)
-  // Sets state for entering or exiting Win8 Metro snap mode.
-  virtual void SetMetroSnapMode(bool enable) = 0;
+  // Hides the new back shortcut bubble, if showing, by fading it out.
+  virtual void HideNewBackShortcutBubble() = 0;
 
-  // Returns whether the window is currently in Win8 Metro snap mode.
-  virtual bool IsInMetroSnapMode() const = 0;
-#endif
+  // Returns the size of WebContents in the browser. This may be called before
+  // the TabStripModel has an active tab.
+  virtual gfx::Size GetContentsSize() const = 0;
 
   // Returns the location bar.
   virtual LocationBar* GetLocationBar() const = 0;
@@ -208,17 +222,6 @@ class BrowserWindow : public ui::BaseWindow {
   // Returns whether the tool bar is visible or not.
   virtual bool IsToolbarVisible() const = 0;
 
-  // Returns the rect where the resize corner should be drawn by the render
-  // widget host view (on top of what the renderer returns). We return an empty
-  // rect to identify that there shouldn't be a resize corner (in the cases
-  // where we take care of it ourselves at the browser level).
-  virtual gfx::Rect GetRootWindowResizerRect() const = 0;
-
-  // Shows a confirmation dialog box for adding a search engine described by
-  // |template_url|. Takes ownership of |template_url|.
-  virtual void ConfirmAddSearchProvider(TemplateURL* template_url,
-                                        Profile* profile) = 0;
-
   // Shows the Update Recommended dialog box.
   virtual void ShowUpdateChromeDialog() = 0;
 
@@ -251,31 +254,23 @@ class BrowserWindow : public ui::BaseWindow {
   //
   // |is_user_gesture| is true when the bubble is shown on the user's deliberate
   // action.
-  virtual void ShowTranslateBubble(
+  virtual ShowTranslateBubbleResult ShowTranslateBubble(
       content::WebContents* contents,
       translate::TranslateStep step,
       translate::TranslateErrors::Type error_type,
       bool is_user_gesture) = 0;
 
-#if defined(ENABLE_ONE_CLICK_SIGNIN)
-  enum OneClickSigninBubbleType {
-    ONE_CLICK_SIGNIN_BUBBLE_TYPE_BUBBLE,
-    ONE_CLICK_SIGNIN_BUBBLE_TYPE_MODAL_DIALOG,
-    ONE_CLICK_SIGNIN_BUBBLE_TYPE_SAML_MODAL_DIALOG
-  };
-
-  // Callback type used with the ShowOneClickSigninBubble() method.  If the
+#if BUILDFLAG(ENABLE_ONE_CLICK_SIGNIN)
+  // Callback type used with the ShowOneClickSigninConfirmation() method. If the
   // user chooses to accept the sign in, the callback is called to start the
   // sync process.
   typedef base::Callback<void(OneClickSigninSyncStarter::StartSyncMode)>
       StartSyncCallback;
 
-  // Shows the one-click sign in bubble.  |email| holds the full email address
-  // of the account that has signed in.
-  virtual void ShowOneClickSigninBubble(
-      OneClickSigninBubbleType type,
+  // Shows the one-click sign in confirmation UI. |email| holds the full email
+  // address of the account that has signed in.
+  virtual void ShowOneClickSigninConfirmation(
       const base::string16& email,
-      const base::string16& error_message,
       const StartSyncCallback& start_sync_callback) = 0;
 #endif
 
@@ -294,19 +289,19 @@ class BrowserWindow : public ui::BaseWindow {
       bool app_modal,
       const base::Callback<void(bool)>& callback) = 0;
 
-  // ThemeService calls this when a user has changed his or her theme,
-  // indicating that it's time to redraw everything.
+  // ThemeService calls this when a user has changed their theme, indicating
+  // that it's time to redraw everything.
   virtual void UserChangedTheme() = 0;
 
-  // Shows the website settings using the specified information. |url| is the
-  // url of the page/frame the info applies to, |ssl| is the SSL information for
-  // that page/frame.  If |show_history| is true, a section showing how many
-  // times that URL has been visited is added to the page info.
+  // Shows the website settings using the specified information. |virtual_url|
+  // is the virtual url of the page/frame the info applies to, |ssl| is the SSL
+  // information for that page/frame. If |show_history| is true, a section
+  // showing how many times that URL has been visited is added to the page info.
   virtual void ShowWebsiteSettings(
       Profile* profile,
       content::WebContents* web_contents,
-      const GURL& url,
-      const SecurityStateModel::SecurityInfo& security_info) = 0;
+      const GURL& virtual_url,
+      const security_state::SecurityInfo& security_info) = 0;
 
   // Shows the app menu (for accessibility).
   virtual void ShowAppMenu() = 0;
@@ -355,14 +350,10 @@ class BrowserWindow : public ui::BaseWindow {
   // Construct a BrowserWindow implementation for the specified |browser|.
   static BrowserWindow* CreateBrowserWindow(Browser* browser);
 
-  // Returns a HostDesktopType that is compatible with the current Chrome window
-  // configuration. On Windows with Ash, this is always HOST_DESKTOP_TYPE_ASH
-  // while Chrome is running in Metro mode. Otherwise returns |desktop_type|.
-  static chrome::HostDesktopType AdjustHostDesktopType(
-      chrome::HostDesktopType desktop_type);
-
   // Shows the avatar bubble on the window frame off of the avatar button with
   // the given mode. The Service Type specified by GAIA is provided as well.
+  // |access_point| indicates the access point used to open the Gaia sign in
+  // page.
   enum AvatarBubbleMode {
     AVATAR_BUBBLE_MODE_DEFAULT,
     AVATAR_BUBBLE_MODE_ACCOUNT_MANAGEMENT,
@@ -373,15 +364,10 @@ class BrowserWindow : public ui::BaseWindow {
     AVATAR_BUBBLE_MODE_SHOW_ERROR,
     AVATAR_BUBBLE_MODE_FAST_USER_SWITCH,
   };
-  virtual void ShowAvatarBubbleFromAvatarButton(AvatarBubbleMode mode,
-      const signin::ManageAccountsParams& manage_accounts_params) = 0;
-
-  // Shows the signin flow for |mode| in a tab-modal dialog.
-  virtual void ShowModalSigninWindow(AvatarBubbleMode mode) = 0;
-
-  // Closes the tab-modal signin flow opened with ShowModalSigninWindow, if it's
-  // open. Does nothing otherwise.
-  virtual void CloseModalSigninWindow() = 0;
+  virtual void ShowAvatarBubbleFromAvatarButton(
+      AvatarBubbleMode mode,
+      const signin::ManageAccountsParams& manage_accounts_params,
+      signin_metrics::AccessPoint access_point) = 0;
 
   // Returns the height inset for RenderView when detached bookmark bar is
   // shown.  Invoked when a new RenderHostView is created for a non-NTP
@@ -394,6 +380,17 @@ class BrowserWindow : public ui::BaseWindow {
 
   // Returns object implementing ExclusiveAccessContext interface.
   virtual ExclusiveAccessContext* GetExclusiveAccessContext() = 0;
+
+  // Shows the IME warning bubble.
+  virtual void ShowImeWarningBubble(
+      const extensions::Extension* extension,
+      const base::Callback<void(ImeWarningBubblePermissionStatus status)>&
+          callback) = 0;
+
+  // Returns the platform-specific ID of the workspace the browser window
+  // currently resides in.
+  virtual std::string GetWorkspace() const = 0;
+  virtual bool IsVisibleOnAllWorkspaces() const = 0;
 
  protected:
   friend class BrowserCloseManager;

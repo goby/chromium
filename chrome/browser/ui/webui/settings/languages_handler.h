@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_SETTINGS_LANGUAGES_HANDLER_H_
 
 #include "base/macros.h"
-#include "chrome/browser/ui/webui/settings/md_settings_ui.h"
+#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 
 namespace base {
 class ListValue;
@@ -28,13 +28,12 @@ class LanguagesHandler : public SettingsPageUIHandler {
 
   // SettingsPageUIHandler implementation.
   void RegisterMessages() override;
+  void OnJavascriptAllowed() override {}
+  void OnJavascriptDisallowed() override {}
 
  private:
   // Changes the UI language, provided the user is allowed to do so.
   void HandleSetUILanguage(const base::ListValue* args);
-
-  // Restarts Chrome to apply a UI language change.
-  void HandleRestart(const base::ListValue* args);
 
   Profile* profile_;  // Weak pointer.
 

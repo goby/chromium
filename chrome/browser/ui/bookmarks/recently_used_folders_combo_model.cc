@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/bookmarks/recently_used_folders_combo_model.h"
 
+#include <stddef.h>
+
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
@@ -174,8 +176,8 @@ void RecentlyUsedFoldersComboModel::OnWillRemoveBookmarks(
     }
   }
   if (changed) {
-    FOR_EACH_OBSERVER(ui::ComboboxModelObserver, observers_,
-                      OnComboboxModelChanged(this));
+    for (ui::ComboboxModelObserver& observer : observers_)
+      observer.OnComboboxModelChanged(this);
   }
 }
 
@@ -218,8 +220,8 @@ void RecentlyUsedFoldersComboModel::BookmarkAllUserNodesRemoved(
     }
   }
   if (changed) {
-    FOR_EACH_OBSERVER(ui::ComboboxModelObserver, observers_,
-                      OnComboboxModelChanged(this));
+    for (ui::ComboboxModelObserver& observer : observers_)
+      observer.OnComboboxModelChanged(this);
   }
 }
 

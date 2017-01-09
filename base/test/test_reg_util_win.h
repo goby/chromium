@@ -6,9 +6,10 @@
 #define BASE_TEST_TEST_REG_UTIL_WIN_H_
 
 // Registry utility functions used only by tests.
+#include <memory>
+#include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "base/win/registry.h"
@@ -37,7 +38,9 @@ class RegistryOverrideManager {
   // Override the given registry hive using a randomly generated temporary key.
   // Multiple overrides to the same hive are not supported and lead to undefined
   // behavior.
+  // Optional return of the registry override path.
   void OverrideRegistry(HKEY override);
+  void OverrideRegistry(HKEY override, base::string16* override_path);
 
  private:
   friend class RegistryOverrideManagerTest;
@@ -63,7 +66,7 @@ class RegistryOverrideManager {
   base::string16 guid_;
 
   base::string16 test_key_root_;
-  ScopedVector<ScopedRegistryKeyOverride> overrides_;
+  std::vector<std::unique_ptr<ScopedRegistryKeyOverride>> overrides_;
 
   DISALLOW_COPY_AND_ASSIGN(RegistryOverrideManager);
 };

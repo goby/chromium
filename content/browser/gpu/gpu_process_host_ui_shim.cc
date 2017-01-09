@@ -12,22 +12,19 @@
 #include "base/lazy_instance.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "content/browser/compositor/gpu_process_transport_factory.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/gpu/gpu_process_host.h"
-#include "content/browser/gpu/gpu_surface_tracker.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_helper.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
-#include "content/common/gpu/gpu_messages.h"
+#include "content/common/gpu_host_messages.h"
 #include "content/public/browser/browser_thread.h"
-
-#if defined(OS_MACOSX)
-#include "content/browser/browser_io_surface_manager_mac.h"
-#include "ui/accelerated_widget_mac/accelerated_widget_mac.h"
-#endif
+#include "gpu/ipc/common/memory_stats.h"
+#include "ui/gfx/swap_result.h"
 
 #if defined(USE_OZONE)
 #include "ui/ozone/public/gpu_platform_support_host.h"
@@ -43,7 +40,7 @@ namespace {
 #undef DestroyAll
 #endif
 
-base::LazyInstance<IDMap<GpuProcessHostUIShim> > g_hosts_by_id =
+base::LazyInstance<IDMap<GpuProcessHostUIShim*>> g_hosts_by_id =
     LAZY_INSTANCE_INITIALIZER;
 
 void SendOnIOThreadTask(int host_id, IPC::Message* msg) {
@@ -74,10 +71,7 @@ GpuProcessHostUIShim::GpuProcessHostUIShim(int host_id)
 #if defined(USE_OZONE)
   ui::OzonePlatform::GetInstance()
       ->GetGpuPlatformSupportHost()
-      ->OnChannelEstablished(
-          host_id,
-          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO),
-          base::Bind(&SendOnIOThreadTask, host_id_));
+      ->OnChannelEstablished();
 #endif
 }
 
@@ -108,7 +102,7 @@ void GpuProcessHostUIShim::Destroy(int host_id, const std::string& message) {
 void GpuProcessHostUIShim::DestroyAll() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   while (!g_hosts_by_id.Pointer()->IsEmpty()) {
-    IDMap<GpuProcessHostUIShim>::iterator it(g_hosts_by_id.Pointer());
+    IDMap<GpuProcessHostUIShim*>::iterator it(g_hosts_by_id.Pointer());
     delete it.GetCurrentValue();
   }
 }
@@ -124,7 +118,7 @@ GpuProcessHostUIShim* GpuProcessHostUIShim::GetOneInstance() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (g_hosts_by_id.Pointer()->IsEmpty())
     return NULL;
-  IDMap<GpuProcessHostUIShim>::iterator it(g_hosts_by_id.Pointer());
+  IDMap<GpuProcessHostUIShim*>::iterator it(g_hosts_by_id.Pointer());
   return it.GetCurrentValue();
 }
 
@@ -184,18 +178,11 @@ bool GpuProcessHostUIShim::OnControlMessageReceived(
   DCHECK(CalledOnValidThread());
 
   IPC_BEGIN_MESSAGE_MAP(GpuProcessHostUIShim, message)
-    IPC_MESSAGE_HANDLER(GpuHostMsg_OnLogMessage,
-                        OnLogMessage)
-#if defined(OS_MACOSX)
-    IPC_MESSAGE_HANDLER(GpuHostMsg_AcceleratedSurfaceBuffersSwapped,
-                        OnAcceleratedSurfaceBuffersSwapped)
-#endif
+    IPC_MESSAGE_HANDLER(GpuHostMsg_OnLogMessage, OnLogMessage)
     IPC_MESSAGE_HANDLER(GpuHostMsg_GraphicsInfoCollected,
                         OnGraphicsInfoCollected)
     IPC_MESSAGE_HANDLER(GpuHostMsg_VideoMemoryUsageStats,
                         OnVideoMemoryUsageStatsReceived);
-    IPC_MESSAGE_HANDLER(GpuHostMsg_AddSubscription, OnAddSubscription);
-    IPC_MESSAGE_HANDLER(GpuHostMsg_RemoveSubscription, OnRemoveSubscription);
 
     IPC_MESSAGE_UNHANDLED_ERROR()
   IPC_END_MESSAGE_MAP()
@@ -220,84 +207,10 @@ void GpuProcessHostUIShim::OnGraphicsInfoCollected(
   GpuDataManagerImpl::GetInstance()->UpdateGpuInfo(gpu_info);
 }
 
-#if defined(OS_MACOSX)
-void GpuProcessHostUIShim::OnAcceleratedSurfaceBuffersSwapped(
-    const GpuHostMsg_AcceleratedSurfaceBuffersSwapped_Params& params) {
-  TRACE_EVENT0("renderer",
-      "GpuProcessHostUIShim::OnAcceleratedSurfaceBuffersSwapped");
-  if (!ui::LatencyInfo::Verify(params.latency_info,
-                               "GpuHostMsg_AcceleratedSurfaceBuffersSwapped")) {
-    return;
-  }
-
-  // On Mac with delegated rendering, accelerated surfaces are not necessarily
-  // associated with a RenderWidgetHostViewBase.
-  AcceleratedSurfaceMsg_BufferPresented_Params ack_params;
-
-  // If the frame was intended for an NSView that the gfx::AcceleratedWidget is
-  // no longer attached to, do not pass the frame along to the widget. Just ack
-  // it to the GPU process immediately, so we can proceed to the next frame.
-  bool should_not_show_frame =
-      content::ImageTransportFactory::GetInstance()
-          ->SurfaceShouldNotShowFramesAfterSuspendForRecycle(params.surface_id);
-  if (!should_not_show_frame) {
-    gfx::AcceleratedWidget native_widget =
-        content::GpuSurfaceTracker::Get()->AcquireNativeWidget(
-            params.surface_id);
-    base::ScopedCFTypeRef<IOSurfaceRef> io_surface;
-    CAContextID ca_context_id = 0;
-
-    switch (ui::GetSurfaceHandleType(params.surface_handle)) {
-      case ui::kSurfaceHandleTypeIOSurface: {
-        IOSurfaceID io_surface_id =
-            ui::IOSurfaceIDFromSurfaceHandle(params.surface_handle);
-        io_surface.reset(
-            BrowserIOSurfaceManager::GetInstance()->AcquireIOSurface(
-                gfx::GenericSharedMemoryId(io_surface_id)));
-        break;
-      }
-      case ui::kSurfaceHandleTypeCAContext: {
-        ca_context_id = ui::CAContextIDFromSurfaceHandle(params.surface_handle);
-        break;
-      }
-      default:
-        DLOG(ERROR) << "Unrecognized accelerated frame type.";
-        return;
-    }
-
-    ui::AcceleratedWidgetMacGotFrame(native_widget, ca_context_id, io_surface,
-                                     params.size, params.scale_factor,
-                                     &ack_params.vsync_timebase,
-                                     &ack_params.vsync_interval);
-  }
-
-  content::ImageTransportFactory::GetInstance()->OnGpuSwapBuffersCompleted(
-      params.surface_id, params.latency_info, gfx::SwapResult::SWAP_ACK);
-
-  Send(new AcceleratedSurfaceMsg_BufferPresented(params.route_id, ack_params));
-}
-#endif
-
 void GpuProcessHostUIShim::OnVideoMemoryUsageStatsReceived(
-    const GPUVideoMemoryUsageStats& video_memory_usage_stats) {
+    const gpu::VideoMemoryUsageStats& video_memory_usage_stats) {
   GpuDataManagerImpl::GetInstance()->UpdateVideoMemoryUsageStats(
       video_memory_usage_stats);
-}
-
-void GpuProcessHostUIShim::OnAddSubscription(
-    int32 process_id, unsigned int target) {
-  RenderProcessHost* rph = RenderProcessHost::FromID(process_id);
-  if (rph) {
-    rph->OnAddSubscription(target);
-  }
-}
-
-void GpuProcessHostUIShim::OnRemoveSubscription(
-    int32 process_id, unsigned int target) {
-  RenderProcessHost* rph = RenderProcessHost::FromID(process_id);
-  if (rph) {
-    rph->OnRemoveSubscription(target);
-  }
 }
 
 }  // namespace content

@@ -4,12 +4,18 @@
 
 #include "gpu/command_buffer/service/common_decoder.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/numerics/safe_math.h"
 #include "gpu/command_buffer/service/cmd_buffer_engine.h"
 
 namespace gpu {
+namespace {
+static const size_t kDefaultMaxBucketSize = 1u << 30;  // 1 GB
+}
 
 const CommonDecoder::CommandInfo CommonDecoder::command_info[] = {
 #define COMMON_COMMAND_BUFFER_CMD_OP(name)                       \
@@ -37,16 +43,16 @@ void* CommonDecoder::Bucket::GetData(size_t offset, size_t size) const {
 
 void CommonDecoder::Bucket::SetSize(size_t size) {
   if (size != size_) {
-    data_.reset(size ? new int8[size] : NULL);
+    data_.reset(size ? new int8_t[size] : NULL);
     size_ = size;
     memset(data_.get(), 0, size);
   }
 }
 
 bool CommonDecoder::Bucket::SetData(
-    const void* src, size_t offset, size_t size) {
+    const volatile void* src, size_t offset, size_t size) {
   if (OffsetSizeValid(offset, size)) {
-    memcpy(data_.get() + offset, src, size);
+    memcpy(data_.get() + offset, const_cast<const void*>(src), size);
     return true;
   }
   return false;
@@ -120,7 +126,8 @@ bool CommonDecoder::Bucket::GetAsStrings(
   return true;
 }
 
-CommonDecoder::CommonDecoder() : engine_(NULL) {}
+CommonDecoder::CommonDecoder()
+    : engine_(NULL), max_bucket_size_(kDefaultMaxBucketSize) {}
 
 CommonDecoder::~CommonDecoder() {}
 
@@ -134,6 +141,25 @@ void* CommonDecoder::GetAddressAndCheckSize(unsigned int shm_id,
   return buffer->GetDataAddress(data_offset, data_size);
 }
 
+void* CommonDecoder::GetAddressAndSize(unsigned int shm_id,
+                                       unsigned int data_offset,
+                                       unsigned int* data_size) {
+  CHECK(engine_);
+  scoped_refptr<gpu::Buffer> buffer = engine_->GetSharedMemoryBuffer(shm_id);
+  if (!buffer.get())
+    return NULL;
+  return buffer->GetDataAddressAndSize(data_offset, data_size);
+}
+
+unsigned int CommonDecoder::GetSharedMemorySize(unsigned int shm_id,
+                                                unsigned int offset) {
+  CHECK(engine_);
+  scoped_refptr<gpu::Buffer> buffer = engine_->GetSharedMemoryBuffer(shm_id);
+  if (!buffer.get())
+    return 0;
+  return buffer->GetRemainingSize(offset);
+}
+
 scoped_refptr<gpu::Buffer> CommonDecoder::GetSharedMemoryBuffer(
     unsigned int shm_id) {
   return engine_->GetSharedMemoryBuffer(shm_id);
@@ -144,16 +170,16 @@ const char* CommonDecoder::GetCommonCommandName(
   return cmd::GetCommandName(command_id);
 }
 
-CommonDecoder::Bucket* CommonDecoder::GetBucket(uint32 bucket_id) const {
+CommonDecoder::Bucket* CommonDecoder::GetBucket(uint32_t bucket_id) const {
   BucketMap::const_iterator iter(buckets_.find(bucket_id));
   return iter != buckets_.end() ? &(*iter->second) : NULL;
 }
 
-CommonDecoder::Bucket* CommonDecoder::CreateBucket(uint32 bucket_id) {
+CommonDecoder::Bucket* CommonDecoder::CreateBucket(uint32_t bucket_id) {
   Bucket* bucket = GetBucket(bucket_id);
   if (!bucket) {
     bucket = new Bucket();
-    buckets_[bucket_id] = linked_ptr<Bucket>(bucket);
+    buckets_[bucket_id] = std::unique_ptr<Bucket>(bucket);
   }
   return bucket;
 }
@@ -162,14 +188,15 @@ namespace {
 
 // Returns the address of the first byte after a struct.
 template <typename T>
-const void* AddressAfterStruct(const T& pod) {
-  return reinterpret_cast<const uint8*>(&pod) + sizeof(pod);
+const volatile void* AddressAfterStruct(const volatile T& pod) {
+  return reinterpret_cast<const volatile uint8_t*>(&pod) + sizeof(pod);
 }
 
 // Returns the address of the frst byte after the struct.
 template <typename RETURN_TYPE, typename COMMAND_TYPE>
-RETURN_TYPE GetImmediateDataAs(const COMMAND_TYPE& pod) {
-  return static_cast<RETURN_TYPE>(const_cast<void*>(AddressAfterStruct(pod)));
+RETURN_TYPE GetImmediateDataAs(const volatile COMMAND_TYPE& pod) {
+  return static_cast<RETURN_TYPE>(
+      const_cast<volatile void*>(AddressAfterStruct(pod)));
 }
 
 }  // anonymous namespace.
@@ -178,16 +205,15 @@ RETURN_TYPE GetImmediateDataAs(const COMMAND_TYPE& pod) {
 // Note: args is a pointer to the command buffer. As such, it could be changed
 // by a (malicious) client at any time, so if validation has to happen, it
 // should operate on a copy of them.
-error::Error CommonDecoder::DoCommonCommand(
-    unsigned int command,
-    unsigned int arg_count,
-    const void* cmd_data) {
+error::Error CommonDecoder::DoCommonCommand(unsigned int command,
+                                            unsigned int arg_count,
+                                            const volatile void* cmd_data) {
   if (command < arraysize(command_info)) {
     const CommandInfo& info = command_info[command];
     unsigned int info_arg_count = static_cast<unsigned int>(info.arg_count);
     if ((info.arg_flags == cmd::kFixed && arg_count == info_arg_count) ||
         (info.arg_flags == cmd::kAtLeastN && arg_count >= info_arg_count)) {
-      uint32 immediate_data_size =
+      uint32_t immediate_data_size =
           (arg_count - info_arg_count) * sizeof(CommandBufferEntry);  // NOLINT
       return (this->*info.cmd_handler)(immediate_data_size, cmd_data);
     } else {
@@ -197,41 +223,40 @@ error::Error CommonDecoder::DoCommonCommand(
   return error::kUnknownCommand;
 }
 
-error::Error CommonDecoder::HandleNoop(
-    uint32 immediate_data_size,
-    const void* cmd_data) {
+error::Error CommonDecoder::HandleNoop(uint32_t immediate_data_size,
+                                       const volatile void* cmd_data) {
   return error::kNoError;
 }
 
-error::Error CommonDecoder::HandleSetToken(
-    uint32 immediate_data_size,
-    const void* cmd_data) {
-  const cmd::SetToken& args = *static_cast<const cmd::SetToken*>(cmd_data);
+error::Error CommonDecoder::HandleSetToken(uint32_t immediate_data_size,
+                                           const volatile void* cmd_data) {
+  const volatile cmd::SetToken& args =
+      *static_cast<const volatile cmd::SetToken*>(cmd_data);
   engine_->set_token(args.token);
   return error::kNoError;
 }
 
-error::Error CommonDecoder::HandleSetBucketSize(
-    uint32 immediate_data_size,
-    const void* cmd_data) {
-  const cmd::SetBucketSize& args =
-      *static_cast<const cmd::SetBucketSize*>(cmd_data);
-  uint32 bucket_id = args.bucket_id;
-  uint32 size = args.size;
+error::Error CommonDecoder::HandleSetBucketSize(uint32_t immediate_data_size,
+                                                const volatile void* cmd_data) {
+  const volatile cmd::SetBucketSize& args =
+      *static_cast<const volatile cmd::SetBucketSize*>(cmd_data);
+  uint32_t bucket_id = args.bucket_id;
+  uint32_t size = args.size;
+  if (size > max_bucket_size_)
+    return error::kOutOfBounds;
 
   Bucket* bucket = CreateBucket(bucket_id);
   bucket->SetSize(size);
   return error::kNoError;
 }
 
-error::Error CommonDecoder::HandleSetBucketData(
-    uint32 immediate_data_size,
-    const void* cmd_data) {
-  const cmd::SetBucketData& args =
-      *static_cast<const cmd::SetBucketData*>(cmd_data);
-  uint32 bucket_id = args.bucket_id;
-  uint32 offset = args.offset;
-  uint32 size = args.size;
+error::Error CommonDecoder::HandleSetBucketData(uint32_t immediate_data_size,
+                                                const volatile void* cmd_data) {
+  const volatile cmd::SetBucketData& args =
+      *static_cast<const volatile cmd::SetBucketData*>(cmd_data);
+  uint32_t bucket_id = args.bucket_id;
+  uint32_t offset = args.offset;
+  uint32_t size = args.size;
   const void* data = GetSharedMemoryAs<const void*>(
       args.shared_memory_id, args.shared_memory_offset, size);
   if (!data) {
@@ -249,14 +274,14 @@ error::Error CommonDecoder::HandleSetBucketData(
 }
 
 error::Error CommonDecoder::HandleSetBucketDataImmediate(
-    uint32 immediate_data_size,
-    const void* cmd_data) {
-  const cmd::SetBucketDataImmediate& args =
-      *static_cast<const cmd::SetBucketDataImmediate*>(cmd_data);
-  const void* data = GetImmediateDataAs<const void*>(args);
-  uint32 bucket_id = args.bucket_id;
-  uint32 offset = args.offset;
-  uint32 size = args.size;
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile cmd::SetBucketDataImmediate& args =
+      *static_cast<const volatile cmd::SetBucketDataImmediate*>(cmd_data);
+  const volatile void* data = GetImmediateDataAs<const volatile void*>(args);
+  uint32_t bucket_id = args.bucket_id;
+  uint32_t offset = args.offset;
+  uint32_t size = args.size;
   if (size > immediate_data_size) {
     return error::kInvalidArguments;
   }
@@ -271,20 +296,20 @@ error::Error CommonDecoder::HandleSetBucketDataImmediate(
 }
 
 error::Error CommonDecoder::HandleGetBucketStart(
-    uint32 immediate_data_size,
-    const void* cmd_data) {
-  const cmd::GetBucketStart& args =
-      *static_cast<const cmd::GetBucketStart*>(cmd_data);
-  uint32 bucket_id = args.bucket_id;
-  uint32* result = GetSharedMemoryAs<uint32*>(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile cmd::GetBucketStart& args =
+      *static_cast<const volatile cmd::GetBucketStart*>(cmd_data);
+  uint32_t bucket_id = args.bucket_id;
+  uint32_t* result = GetSharedMemoryAs<uint32_t*>(
       args.result_memory_id, args.result_memory_offset, sizeof(*result));
-  int32 data_memory_id = args.data_memory_id;
-  uint32 data_memory_offset = args.data_memory_offset;
-  uint32 data_memory_size = args.data_memory_size;
-  uint8* data = NULL;
+  int32_t data_memory_id = args.data_memory_id;
+  uint32_t data_memory_offset = args.data_memory_offset;
+  uint32_t data_memory_size = args.data_memory_size;
+  uint8_t* data = NULL;
   if (data_memory_size != 0 || data_memory_id != 0 || data_memory_offset != 0) {
-    data = GetSharedMemoryAs<uint8*>(
-        args.data_memory_id, args.data_memory_offset, args.data_memory_size);
+    data = GetSharedMemoryAs<uint8_t*>(data_memory_id, data_memory_offset,
+                                       data_memory_size);
     if (!data) {
       return error::kInvalidArguments;
     }
@@ -300,23 +325,22 @@ error::Error CommonDecoder::HandleGetBucketStart(
   if (!bucket) {
     return error::kInvalidArguments;
   }
-  uint32 bucket_size = bucket->size();
+  uint32_t bucket_size = bucket->size();
   *result = bucket_size;
   if (data) {
-    uint32 size = std::min(data_memory_size, bucket_size);
+    uint32_t size = std::min(data_memory_size, bucket_size);
     memcpy(data, bucket->GetData(0, size), size);
   }
   return error::kNoError;
 }
 
-error::Error CommonDecoder::HandleGetBucketData(
-    uint32 immediate_data_size,
-    const void* cmd_data) {
-  const cmd::GetBucketData& args =
-      *static_cast<const cmd::GetBucketData*>(cmd_data);
-  uint32 bucket_id = args.bucket_id;
-  uint32 offset = args.offset;
-  uint32 size = args.size;
+error::Error CommonDecoder::HandleGetBucketData(uint32_t immediate_data_size,
+                                                const volatile void* cmd_data) {
+  const volatile cmd::GetBucketData& args =
+      *static_cast<const volatile cmd::GetBucketData*>(cmd_data);
+  uint32_t bucket_id = args.bucket_id;
+  uint32_t offset = args.offset;
+  uint32_t size = args.size;
   void* data = GetSharedMemoryAs<void*>(
       args.shared_memory_id, args.shared_memory_offset, size);
   if (!data) {

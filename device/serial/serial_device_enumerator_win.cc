@@ -4,19 +4,20 @@
 
 #include "device/serial/serial_device_enumerator_win.h"
 
-#include <windows.h>
-
 #include <devguid.h>
 #include <setupapi.h>
+#include <stdint.h>
+#include <windows.h>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/sparse_histogram.h"
+#include <memory>
+
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
-#include "third_party/re2/re2/re2.h"
+#include "third_party/re2/src/re2/re2.h"
 
 namespace device {
 
@@ -38,7 +39,7 @@ bool GetProperty(HDEVINFO dev_info,
   if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
     return false;
 
-  scoped_ptr<wchar_t[]> buffer(new wchar_t[buffer_size]);
+  std::unique_ptr<wchar_t[]> buffer(new wchar_t[buffer_size]);
   if (!SetupDiGetDeviceRegistryProperty(dev_info, &dev_info_data, key, nullptr,
                                         reinterpret_cast<PBYTE>(buffer.get()),
                                         buffer_size, nullptr))
@@ -65,7 +66,7 @@ bool GetDisplayName(const std::string friendly_name,
 // vendor_id, and returns whether the operation was successful.
 bool GetVendorID(const std::string hardware_id, uint32_t* vendor_id) {
   std::string vendor_id_str;
-  return RE2::PartialMatch(hardware_id, "VID_([0-9]+)", &vendor_id_str) &&
+  return RE2::PartialMatch(hardware_id, "VID_([0-9a-fA-F]+)", &vendor_id_str) &&
          base::HexStringToUInt(vendor_id_str, vendor_id);
 }
 
@@ -73,7 +74,8 @@ bool GetVendorID(const std::string hardware_id, uint32_t* vendor_id) {
 // product_id, and returns whether the operation was successful.
 bool GetProductID(const std::string hardware_id, uint32_t* product_id) {
   std::string product_id_str;
-  return RE2::PartialMatch(hardware_id, "PID_([0-9]+)", &product_id_str) &&
+  return RE2::PartialMatch(hardware_id, "PID_([0-9a-fA-F]+)",
+                           &product_id_str) &&
          base::HexStringToUInt(product_id_str, product_id);
 }
 
@@ -86,13 +88,13 @@ int Clamp(int value, int min, int max) {
 // enumerating serial devices (SetupDi).  This new method gives more information
 // about the devices than the old method.
 mojo::Array<serial::DeviceInfoPtr> GetDevicesNew() {
-  mojo::Array<serial::DeviceInfoPtr> devices(0);
+  mojo::Array<serial::DeviceInfoPtr> devices;
 
   // Make a device interface query to find all serial devices.
   HDEVINFO dev_info =
       SetupDiGetClassDevs(&GUID_DEVCLASS_PORTS, 0, 0, DIGCF_PRESENT);
   if (dev_info == INVALID_HANDLE_VALUE)
-    return devices.Pass();
+    return devices;
 
   SP_DEVINFO_DATA dev_info_data;
   dev_info_data.cbSize = sizeof(SP_DEVINFO_DATA);
@@ -111,7 +113,7 @@ mojo::Array<serial::DeviceInfoPtr> GetDevicesNew() {
 
     std::string display_name;
     if (GetDisplayName(friendly_name, &display_name))
-      info->display_name = display_name;
+      info->display_name = std::move(display_name);
 
     std::string hardware_id;
     // SPDRP_HARDWAREID looks like "FTDIBUS\COMPORT&VID_0403&PID_6001".
@@ -127,11 +129,11 @@ mojo::Array<serial::DeviceInfoPtr> GetDevicesNew() {
       }
     }
 
-    devices.push_back(info.Pass());
+    devices.push_back(std::move(info));
   }
 
   SetupDiDestroyDeviceInfoList(dev_info);
-  return devices.Pass();
+  return devices;
 }
 
 // Returns an array of devices as retrieved through the old method of
@@ -140,20 +142,21 @@ mojo::Array<serial::DeviceInfoPtr> GetDevicesNew() {
 mojo::Array<serial::DeviceInfoPtr> GetDevicesOld() {
   base::win::RegistryValueIterator iter_key(
       HKEY_LOCAL_MACHINE, L"HARDWARE\\DEVICEMAP\\SERIALCOMM\\");
-  mojo::Array<serial::DeviceInfoPtr> devices(0);
+  mojo::Array<serial::DeviceInfoPtr> devices;
   for (; iter_key.Valid(); ++iter_key) {
     serial::DeviceInfoPtr info(serial::DeviceInfo::New());
     info->path = base::UTF16ToASCII(iter_key.Value());
-    devices.push_back(info.Pass());
+    devices.push_back(std::move(info));
   }
-  return devices.Pass();
+  return devices;
 }
 
 }  // namespace
 
 // static
-scoped_ptr<SerialDeviceEnumerator> SerialDeviceEnumerator::Create() {
-  return scoped_ptr<SerialDeviceEnumerator>(new SerialDeviceEnumeratorWin());
+std::unique_ptr<SerialDeviceEnumerator> SerialDeviceEnumerator::Create() {
+  return std::unique_ptr<SerialDeviceEnumerator>(
+      new SerialDeviceEnumeratorWin());
 }
 
 SerialDeviceEnumeratorWin::SerialDeviceEnumeratorWin() {}
@@ -185,7 +188,7 @@ mojo::Array<serial::DeviceInfoPtr> SerialDeviceEnumeratorWin::GetDevices() {
   mojo::Array<serial::DeviceInfoPtr> devices;
   deviceMap.DecomposeMapTo(&paths, &devices);
 
-  return devices.Pass();
+  return devices;
 }
 
 }  // namespace device

@@ -4,6 +4,8 @@
 
 #include "media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "media/base/decrypt_config.h"
 #include "media/ffmpeg/ffmpeg_common.h"
@@ -14,37 +16,36 @@
 namespace media {
 
 FFmpegH265ToAnnexBBitstreamConverter::FFmpegH265ToAnnexBBitstreamConverter(
-    AVCodecContext* stream_codec_context)
-    : stream_codec_context_(stream_codec_context) {
-  CHECK(stream_codec_context_);
+    AVCodecParameters* stream_codec_parameters)
+    : stream_codec_parameters_(stream_codec_parameters) {
+  CHECK(stream_codec_parameters_);
 }
 
 FFmpegH265ToAnnexBBitstreamConverter::~FFmpegH265ToAnnexBBitstreamConverter() {}
 
 bool FFmpegH265ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
-  DVLOG(3) << __FUNCTION__;
+  DVLOG(3) << __func__;
   if (packet == NULL || !packet->data)
     return false;
 
   // Calculate the needed output buffer size.
   if (!hevc_config_) {
-    if (!stream_codec_context_->extradata ||
-        stream_codec_context_->extradata_size <= 0) {
+    if (!stream_codec_parameters_->extradata ||
+        stream_codec_parameters_->extradata_size <= 0) {
       DVLOG(1) << "HEVCDecoderConfiguration not found, no extra codec data";
       return false;
     }
 
     hevc_config_.reset(new mp4::HEVCDecoderConfigurationRecord());
 
-    if (!hevc_config_->Parse(
-            stream_codec_context_->extradata,
-            stream_codec_context_->extradata_size)) {
+    if (!hevc_config_->Parse(stream_codec_parameters_->extradata,
+                             stream_codec_parameters_->extradata_size)) {
       DVLOG(1) << "Parsing HEVCDecoderConfiguration failed";
       return false;
     }
   }
 
-  std::vector<uint8> input_frame;
+  std::vector<uint8_t> input_frame;
   std::vector<SubsampleEntry> subsamples;
   // TODO(servolk): Performance could be improved here, by reducing unnecessary
   // data copying, but first annex b conversion code needs to be refactored to
@@ -64,7 +65,7 @@ bool FFmpegH265ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
     DVLOG(4) << "Inserted HEVC decoder params";
   }
 
-  uint32 output_packet_size = input_frame.size();
+  uint32_t output_packet_size = input_frame.size();
 
   if (output_packet_size == 0)
     return false;  // Invalid input packet.

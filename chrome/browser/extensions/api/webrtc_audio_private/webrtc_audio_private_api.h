@@ -5,18 +5,19 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_WEBRTC_AUDIO_PRIVATE_WEBRTC_AUDIO_PRIVATE_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_WEBRTC_AUDIO_PRIVATE_WEBRTC_AUDIO_PRIVATE_API_H_
 
+#include <stddef.h>
+
+#include <string>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/system_monitor/system_monitor.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/webrtc_audio_private.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/resource_context.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "media/audio/audio_device_name.h"
-#include "url/gurl.h"
-
-namespace content {
-class ResourceContext;
-}
 
 namespace extensions {
 
@@ -59,7 +60,7 @@ class WebrtcAudioPrivateFunction : public ChromeAsyncExtensionFunction {
 
   // Must override this if you call GetOutputDeviceNames. Called on IO thread.
   virtual void OnOutputDeviceNames(
-      scoped_ptr<media::AudioDeviceNames> device_names);
+      std::unique_ptr<media::AudioDeviceNames> device_names);
 
   // Retrieve the list of AudioOutputController objects. Calls back
   // via OnControllerList.
@@ -91,16 +92,16 @@ class WebrtcAudioPrivateFunction : public ChromeAsyncExtensionFunction {
   // Call only on IO thread.
   std::string CalculateHMACImpl(const std::string& raw_id);
 
-  // Initializes |resource_context_|. Must be called on the UI thread,
-  // before any calls to |resource_context()|.
-  void InitResourceContext();
+  // Initializes |device_id_salt_|. Must be called on the UI thread,
+  // before any calls to |device_id_salt()|.
+  void InitDeviceIDSalt();
 
   // Callable from any thread. Must previously have called
-  // |InitResourceContext()|.
-  content::ResourceContext* resource_context() const;
+  // |InitDeviceIDSalt()|.
+  std::string device_id_salt() const;
 
  private:
-  content::ResourceContext* resource_context_;
+  std::string device_id_salt_;
 
   DISALLOW_COPY_AND_ASSIGN(WebrtcAudioPrivateFunction);
 };
@@ -119,7 +120,7 @@ class WebrtcAudioPrivateGetSinksFunction : public WebrtcAudioPrivateFunction {
   bool RunAsync() override;
   void DoQuery();
   void OnOutputDeviceNames(
-      scoped_ptr<media::AudioDeviceNames> raw_ids) override;
+      std::unique_ptr<media::AudioDeviceNames> raw_ids) override;
   void DoneOnUIThread();
 };
 
@@ -156,7 +157,7 @@ class WebrtcAudioPrivateSetActiveSinkFunction
       const content::RenderProcessHost::AudioOutputControllerList& controllers)
       override;
   void OnOutputDeviceNames(
-      scoped_ptr<media::AudioDeviceNames> device_names) override;
+      std::unique_ptr<media::AudioDeviceNames> device_names) override;
   void SwitchDone();
   void DoneOnUIThread();
 
@@ -218,7 +219,7 @@ class WebrtcAudioPrivateGetAssociatedSinkFunction
 
   // Accessed from UI thread and device thread, but only on one at a
   // time, no locking needed.
-  scoped_ptr<api::webrtc_audio_private::GetAssociatedSink::Params> params_;
+  std::unique_ptr<api::webrtc_audio_private::GetAssociatedSink::Params> params_;
 
   // Audio sources (input devices). Filled in by DoWorkOnDeviceThread.
   media::AudioDeviceNames source_devices_;

@@ -4,7 +4,10 @@
 
 #include "media/capture/video/mac/video_capture_device_decklink_mac.h"
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -44,8 +47,9 @@ class DeckLinkCaptureDelegate
     : public IDeckLinkInputCallback,
       public base::RefCountedThreadSafe<DeckLinkCaptureDelegate> {
  public:
-  DeckLinkCaptureDelegate(const media::VideoCaptureDevice::Name& device_name,
-                          media::VideoCaptureDeviceDeckLinkMac* frame_receiver);
+  DeckLinkCaptureDelegate(
+      const media::VideoCaptureDeviceDescriptor& device_descriptor,
+      media::VideoCaptureDeviceDeckLinkMac* frame_receiver);
 
   void AllocateAndStart(const media::VideoCaptureParams& params);
   void StopAndDeAllocate();
@@ -75,7 +79,7 @@ class DeckLinkCaptureDelegate
   // Forwarder to VideoCaptureDeviceDeckLinkMac::SendLogString().
   void SendLogString(const std::string& message);
 
-  const media::VideoCaptureDevice::Name device_name_;
+  const media::VideoCaptureDeviceDescriptor device_descriptor_;
 
   // Protects concurrent setting and using of |frame_receiver_|.
   base::Lock lock_;
@@ -88,6 +92,8 @@ class DeckLinkCaptureDelegate
   ScopedDeckLinkPtr<IDeckLinkInput> decklink_input_;
   // |decklink_| represents a physical device attached to the host.
   ScopedDeckLinkPtr<IDeckLink> decklink_;
+
+  base::TimeTicks first_ref_time_;
 
   // Checks for Device (a.k.a. Audio) thread.
   base::ThreadChecker thread_checker_;
@@ -118,10 +124,9 @@ static float GetDisplayModeFrameRate(
 }
 
 DeckLinkCaptureDelegate::DeckLinkCaptureDelegate(
-    const media::VideoCaptureDevice::Name& device_name,
+    const media::VideoCaptureDeviceDescriptor& device_descriptor,
     media::VideoCaptureDeviceDeckLinkMac* frame_receiver)
-    : device_name_(device_name), frame_receiver_(frame_receiver) {
-}
+    : device_descriptor_(device_descriptor), frame_receiver_(frame_receiver) {}
 
 DeckLinkCaptureDelegate::~DeckLinkCaptureDelegate() {
 }
@@ -139,7 +144,8 @@ void DeckLinkCaptureDelegate::AllocateAndStart(
   while (decklink_iter->Next(decklink_local.Receive()) == S_OK) {
     CFStringRef device_model_name = NULL;
     if ((decklink_local->GetModelName(&device_model_name) == S_OK) ||
-        (device_name_.id() == base::SysCFStringRefToUTF8(device_model_name))) {
+        (device_descriptor_.device_id ==
+         base::SysCFStringRefToUTF8(device_model_name))) {
       break;
     }
   }
@@ -232,7 +238,7 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(
     IDeckLinkVideoInputFrame* video_frame,
     IDeckLinkAudioInputPacket* /* audio_packet */) {
   // Capture frames are manipulated as an IDeckLinkVideoFrame.
-  uint8* video_data = NULL;
+  uint8_t* video_data = NULL;
   video_frame->GetBytes(reinterpret_cast<void**>(&video_data));
 
   media::VideoPixelFormat pixel_format =
@@ -253,13 +259,26 @@ HRESULT DeckLinkCaptureDelegate::VideoInputFrameArrived(
       gfx::Size(video_frame->GetWidth(), video_frame->GetHeight()),
       0.0f,  // Frame rate is not needed for captured data callback.
       pixel_format);
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (first_ref_time_.is_null())
+    first_ref_time_ = now;
   base::AutoLock lock(lock_);
   if (frame_receiver_) {
+    const BMDTimeScale micros_time_scale = base::Time::kMicrosecondsPerSecond;
+    BMDTimeValue frame_time;
+    BMDTimeValue frame_duration;
+    base::TimeDelta timestamp;
+    if (SUCCEEDED(video_frame->GetStreamTime(&frame_time, &frame_duration,
+                                             micros_time_scale))) {
+      timestamp = base::TimeDelta::FromMicroseconds(frame_time);
+    } else {
+      timestamp = now - first_ref_time_;
+    }
     frame_receiver_->OnIncomingCapturedData(
         video_data, video_frame->GetRowBytes() * video_frame->GetHeight(),
         capture_format,
         0,  // Rotation.
-        base::TimeTicks::Now());
+        now, timestamp);
   }
   return S_OK;
 }
@@ -321,7 +340,7 @@ static std::string JoinDeviceNameAndFormat(CFStringRef name,
 
 // static
 void VideoCaptureDeviceDeckLinkMac::EnumerateDevices(
-    VideoCaptureDevice::Names* device_names) {
+    VideoCaptureDeviceDescriptors* device_descriptors) {
   scoped_refptr<IDeckLinkIterator> decklink_iter(
       CreateDeckLinkIteratorInstance());
   // At this point, not being able to create a DeckLink iterator means that
@@ -364,13 +383,15 @@ void VideoCaptureDeviceDeckLinkMac::EnumerateDevices(
     while (display_mode_iter->Next(display_mode.Receive()) == S_OK) {
       CFStringRef format_name = NULL;
       if (display_mode->GetName(&format_name) == S_OK) {
-        VideoCaptureDevice::Name name(
-            JoinDeviceNameAndFormat(device_display_name, format_name),
-            JoinDeviceNameAndFormat(device_model_name, format_name),
-            VideoCaptureDevice::Name::DECKLINK,
-            VideoCaptureDevice::Name::OTHER_TRANSPORT);
-        device_names->push_back(name);
-        DVLOG(1) << "Blackmagic camera enumerated: " << name.name();
+        VideoCaptureDeviceDescriptor descriptor;
+        descriptor.display_name =
+            JoinDeviceNameAndFormat(device_display_name, format_name);
+        descriptor.device_id =
+            JoinDeviceNameAndFormat(device_model_name, format_name);
+        descriptor.capture_api = VideoCaptureApi::MACOSX_DECKLINK;
+        descriptor.transport_type = VideoCaptureTransportType::OTHER_TRANSPORT;
+        device_descriptors->push_back(descriptor);
+        DVLOG(1) << "Blackmagic camera enumerated: " << descriptor.display_name;
       }
       display_mode.Release();
     }
@@ -379,7 +400,7 @@ void VideoCaptureDeviceDeckLinkMac::EnumerateDevices(
 
 // static
 void VideoCaptureDeviceDeckLinkMac::EnumerateDeviceCapabilities(
-    const VideoCaptureDevice::Name& device,
+    const VideoCaptureDeviceDescriptor& device,
     VideoCaptureFormats* supported_formats) {
   scoped_refptr<IDeckLinkIterator> decklink_iter(
       CreateDeckLinkIteratorInstance());
@@ -413,7 +434,7 @@ void VideoCaptureDeviceDeckLinkMac::EnumerateDeviceCapabilities(
     while (display_mode_iter->Next(display_mode.Receive()) == S_OK) {
       CFStringRef format_name = NULL;
       if (display_mode->GetName(&format_name) == S_OK &&
-          device.id() !=
+          device.device_id !=
               JoinDeviceNameAndFormat(device_model_name, format_name)) {
         display_mode.Release();
         continue;
@@ -426,7 +447,8 @@ void VideoCaptureDeviceDeckLinkMac::EnumerateDeviceCapabilities(
           GetDisplayModeFrameRate(display_mode),
           PIXEL_FORMAT_UNKNOWN);
       supported_formats->push_back(format);
-      DVLOG(2) << device.name() << " " << VideoCaptureFormat::ToString(format);
+      DVLOG(2) << device.display_name << " "
+               << VideoCaptureFormat::ToString(format);
       display_mode.Release();
     }
     return;
@@ -434,25 +456,25 @@ void VideoCaptureDeviceDeckLinkMac::EnumerateDeviceCapabilities(
 }
 
 VideoCaptureDeviceDeckLinkMac::VideoCaptureDeviceDeckLinkMac(
-    const Name& device_name)
+    const VideoCaptureDeviceDescriptor& device_descriptor)
     : decklink_capture_delegate_(
-          new DeckLinkCaptureDelegate(device_name, this)) {
-}
+          new DeckLinkCaptureDelegate(device_descriptor, this)) {}
 
 VideoCaptureDeviceDeckLinkMac::~VideoCaptureDeviceDeckLinkMac() {
   decklink_capture_delegate_->ResetVideoCaptureDeviceReference();
 }
 
 void VideoCaptureDeviceDeckLinkMac::OnIncomingCapturedData(
-    const uint8* data,
+    const uint8_t* data,
     size_t length,
     const VideoCaptureFormat& frame_format,
     int rotation,  // Clockwise.
-    base::TimeTicks timestamp) {
+    base::TimeTicks reference_time,
+    base::TimeDelta timestamp) {
   base::AutoLock lock(lock_);
   if (client_) {
     client_->OnIncomingCapturedData(data, length, frame_format, rotation,
-                                    timestamp);
+                                    reference_time, timestamp);
   }
 }
 
@@ -474,9 +496,9 @@ void VideoCaptureDeviceDeckLinkMac::SendLogString(const std::string& message) {
 
 void VideoCaptureDeviceDeckLinkMac::AllocateAndStart(
     const VideoCaptureParams& params,
-    scoped_ptr<VideoCaptureDevice::Client> client) {
+    std::unique_ptr<VideoCaptureDevice::Client> client) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  client_ = client.Pass();
+  client_ = std::move(client);
   if (decklink_capture_delegate_.get())
     decklink_capture_delegate_->AllocateAndStart(params);
 }

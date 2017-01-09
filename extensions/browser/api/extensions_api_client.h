@@ -6,13 +6,11 @@
 #define EXTENSIONS_BROWSER_API_EXTENSIONS_API_CLIENT_H_
 
 #include <map>
+#include <memory>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "extensions/browser/api/declarative_content/content_rules_registry.h"
 #include "extensions/browser/api/storage/settings_namespace.h"
-
-class GURL;
 
 namespace base {
 template <class T>
@@ -36,18 +34,19 @@ class DevicePermissionsPrompt;
 class ExtensionOptionsGuest;
 class ExtensionOptionsGuestDelegate;
 class ManagementAPIDelegate;
+class MetricsPrivateDelegate;
 class MimeHandlerViewGuest;
 class MimeHandlerViewGuestDelegate;
+class RulesCacheDelegate;
+class SettingsObserver;
+class ValueStoreCache;
+class ValueStoreFactory;
+class VirtualKeyboardDelegate;
+class WebRequestEventRouterDelegate;
 class WebViewGuest;
 class WebViewGuestDelegate;
 class WebViewPermissionHelper;
 class WebViewPermissionHelperDelegate;
-class WebRequestEventRouterDelegate;
-class RulesCacheDelegate;
-class SettingsObserver;
-class SettingsStorageFactory;
-class ValueStoreCache;
-class VirtualKeyboardDelegate;
 
 // Allows the embedder of the extensions module to customize its support for
 // API features. The embedder must create a single instance in the browser
@@ -69,7 +68,7 @@ class ExtensionsAPIClient {
   // to |caches|. By default adds nothing.
   virtual void AddAdditionalValueStoreCaches(
       content::BrowserContext* context,
-      const scoped_refptr<SettingsStorageFactory>& factory,
+      const scoped_refptr<ValueStoreFactory>& factory,
       const scoped_refptr<base::ObserverListThreadSafe<SettingsObserver>>&
           observers,
       std::map<settings_namespace::Namespace, ValueStoreCache*>* caches);
@@ -88,27 +87,27 @@ class ExtensionsAPIClient {
       ExtensionOptionsGuest* guest) const;
 
   // Returns a delegate for GuestViewManagerDelegate.
-  virtual scoped_ptr<guest_view::GuestViewManagerDelegate>
+  virtual std::unique_ptr<guest_view::GuestViewManagerDelegate>
   CreateGuestViewManagerDelegate(content::BrowserContext* context) const;
 
   // Creates a delegate for MimeHandlerViewGuest.
-  virtual scoped_ptr<MimeHandlerViewGuestDelegate>
-      CreateMimeHandlerViewGuestDelegate(MimeHandlerViewGuest* guest) const;
+  virtual std::unique_ptr<MimeHandlerViewGuestDelegate>
+  CreateMimeHandlerViewGuestDelegate(MimeHandlerViewGuest* guest) const;
 
   // Returns a delegate for some of WebViewGuest's behavior. The caller owns the
   // returned WebViewGuestDelegate.
-  virtual WebViewGuestDelegate* CreateWebViewGuestDelegate (
+  virtual WebViewGuestDelegate* CreateWebViewGuestDelegate(
       WebViewGuest* web_view_guest) const;
 
   // Returns a delegate for some of WebViewPermissionHelper's behavior. The
   // caller owns the returned WebViewPermissionHelperDelegate.
   virtual WebViewPermissionHelperDelegate*
-      CreateWebViewPermissionHelperDelegate (
-          WebViewPermissionHelper* web_view_permission_helper) const;
+  CreateWebViewPermissionHelperDelegate(
+      WebViewPermissionHelper* web_view_permission_helper) const;
 
   // Creates a delegate for WebRequestEventRouter.
-  virtual WebRequestEventRouterDelegate* CreateWebRequestEventRouterDelegate()
-      const;
+  virtual std::unique_ptr<WebRequestEventRouterDelegate>
+  CreateWebRequestEventRouterDelegate() const;
 
   // TODO(wjmaclean): Remove this when (if) ContentRulesRegistry code moves
   // to extensions/browser/api.
@@ -117,15 +116,19 @@ class ExtensionsAPIClient {
       RulesCacheDelegate* cache_delegate) const;
 
   // Creates a DevicePermissionsPrompt appropriate for the embedder.
-  virtual scoped_ptr<DevicePermissionsPrompt> CreateDevicePermissionsPrompt(
-      content::WebContents* web_contents) const;
+  virtual std::unique_ptr<DevicePermissionsPrompt>
+  CreateDevicePermissionsPrompt(content::WebContents* web_contents) const;
 
   // Returns a delegate for some of VirtualKeyboardAPI's behavior.
-  virtual scoped_ptr<VirtualKeyboardDelegate> CreateVirtualKeyboardDelegate()
-      const;
+  virtual std::unique_ptr<VirtualKeyboardDelegate>
+  CreateVirtualKeyboardDelegate() const;
 
   // Creates a delegate for handling the management extension api.
   virtual ManagementAPIDelegate* CreateManagementAPIDelegate() const;
+
+  // If supported by the embedder, returns a delegate for embedder-dependent
+  // MetricsPrivateAPI behavior.
+  virtual MetricsPrivateDelegate* GetMetricsPrivateDelegate();
 
   // NOTE: If this interface gains too many methods (perhaps more than 20) it
   // should be split into one interface per API.

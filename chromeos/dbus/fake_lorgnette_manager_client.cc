@@ -6,13 +6,12 @@
 
 #include <map>
 #include <string>
-#include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace chromeos {
 
@@ -27,15 +26,6 @@ void FakeLorgnetteManagerClient::ListScanners(
   std::map<std::string, ScannerTableEntry> scanners;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(callback, false, scanners));
-}
-
-void FakeLorgnetteManagerClient::ScanImageToFile(
-    std::string device_name,
-    const ScanProperties& properties,
-    const ScanImageToFileCallback& callback,
-    base::File* file) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                base::Bind(callback, false));
 }
 
 void FakeLorgnetteManagerClient::ScanImageToString(

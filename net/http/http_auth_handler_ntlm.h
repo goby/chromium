@@ -5,6 +5,9 @@
 #ifndef NET_HTTP_HTTP_AUTH_HANDLER_NTLM_H_
 #define NET_HTTP_HTTP_AUTH_HANDLER_NTLM_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "build/build_config.h"
 
 // This contains the portable and the SSPI implementations for NTLM.
@@ -24,8 +27,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/strings/string16.h"
+#include "net/base/net_export.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
 
@@ -43,11 +46,12 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNTLM : public HttpAuthHandler {
 
     int CreateAuthHandler(HttpAuthChallengeTokenizer* challenge,
                           HttpAuth::Target target,
+                          const SSLInfo& ssl_info,
                           const GURL& origin,
                           CreateReason reason,
                           int digest_nonce_count,
-                          const BoundNetLog& net_log,
-                          scoped_ptr<HttpAuthHandler>* handler) override;
+                          const NetLogWithSource& net_log,
+                          std::unique_ptr<HttpAuthHandler>* handler) override;
 #if defined(NTLM_SSPI)
     // Set the SSPILibrary to use. Typically the only callers which need to use
     // this are unit tests which pass in a mocked-out version of the SSPI
@@ -61,13 +65,13 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNTLM : public HttpAuthHandler {
 #if defined(NTLM_SSPI)
     ULONG max_token_length_;
     bool is_unsupported_;
-    scoped_ptr<SSPILibrary> sspi_library_;
+    std::unique_ptr<SSPILibrary> sspi_library_;
 #endif  // defined(NTLM_SSPI)
   };
 
 #if defined(NTLM_PORTABLE)
   // A function that generates n random bytes in the output buffer.
-  typedef void (*GenerateRandomProc)(uint8* output, size_t n);
+  typedef void (*GenerateRandomProc)(uint8_t* output, size_t n);
 
   // A function that returns the local host name. Returns an empty string if
   // the local host name is not available.
@@ -115,7 +119,7 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNTLM : public HttpAuthHandler {
   // It does nothing in the portable implementation.
   int InitializeBeforeFirstChallenge();
 
-  bool Init(HttpAuthChallengeTokenizer* tok) override;
+  bool Init(HttpAuthChallengeTokenizer* tok, const SSLInfo& ssl_info) override;
 
   int GenerateAuthTokenImpl(const AuthCredentials* credentials,
                             const HttpRequestInfo* request,
@@ -139,9 +143,9 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNTLM : public HttpAuthHandler {
   // Given an input token received from the server, generate the next output
   // token to be sent to the server.
   int GetNextToken(const void* in_token,
-                   uint32 in_token_len,
+                   uint32_t in_token_len,
                    void** out_token,
-                   uint32* out_token_len);
+                   uint32_t* out_token_len);
 
   // Create an NTLM SPN to identify the |origin| server.
   static std::string CreateSPN(const GURL& origin);
@@ -157,6 +161,7 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNTLM : public HttpAuthHandler {
 
   base::string16 domain_;
   AuthCredentials credentials_;
+  std::string channel_bindings_;
 
   // The base64-encoded string following "NTLM" in the "WWW-Authenticate" or
   // "Proxy-Authenticate" response header.

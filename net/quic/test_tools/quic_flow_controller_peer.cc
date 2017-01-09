@@ -6,8 +6,8 @@
 
 #include <list>
 
-#include "net/quic/quic_flow_controller.h"
-#include "net/quic/quic_protocol.h"
+#include "net/quic/core/quic_flow_controller.h"
+#include "net/quic/core/quic_packets.h"
 
 namespace net {
 namespace test {
@@ -28,8 +28,8 @@ void QuicFlowControllerPeer::SetReceiveWindowOffset(
 
 // static
 void QuicFlowControllerPeer::SetMaxReceiveWindow(
-  QuicFlowController* flow_controller,
-  QuicByteCount window_size) {
+    QuicFlowController* flow_controller,
+    QuicByteCount window_size) {
   flow_controller->receive_window_size_ = window_size;
 }
 

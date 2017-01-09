@@ -2,28 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/build_config.h"
+#include <stddef.h>
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
-#include <cstdlib>
-#endif
+#include <memory>
 
-#include "base/basictypes.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_path_override.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 #include "third_party/icu/source/common/unicode/locid.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_collator.h"
 #include "ui/base/ui_base_paths.h"
+
+#if defined(OS_POSIX) && !defined(OS_MACOSX)
+#include <cstdlib>
+#endif
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -102,7 +105,7 @@ void SetDefaultLocaleForTest(const std::string& tag, base::Environment* env) {
 }
 
 TEST_F(L10nUtilTest, GetAppLocale) {
-  scoped_ptr<base::Environment> env;
+  std::unique_ptr<base::Environment> env;
   // Use a temporary locale dir so we don't have to actually build the locale
   // pak files for this test.
   base::ScopedPathOverride locale_dir_override(ui::DIR_LOCALES);
@@ -135,7 +138,7 @@ TEST_F(L10nUtilTest, GetAppLocale) {
   const std::string original_locale = base::i18n::GetConfiguredLocale();
 
   if (kPlatformHasDefaultLocale && kUseLocaleFromEnvironment) {
-    env.reset(base::Environment::Create());
+    env = base::Environment::Create();
 
     // Test the support of LANGUAGE environment variable.
     base::i18n::SetICUDefaultLocale("en-US");
@@ -386,11 +389,11 @@ TEST_F(L10nUtilTest, GetAppLocale) {
 #endif  // !defined(OS_MACOSX)
 
 TEST_F(L10nUtilTest, SortStringsUsingFunction) {
-  std::vector<StringWrapper*> strings;
-  strings.push_back(new StringWrapper(UTF8ToUTF16("C")));
-  strings.push_back(new StringWrapper(UTF8ToUTF16("d")));
-  strings.push_back(new StringWrapper(UTF8ToUTF16("b")));
-  strings.push_back(new StringWrapper(UTF8ToUTF16("a")));
+  std::vector<std::unique_ptr<StringWrapper>> strings;
+  strings.push_back(base::MakeUnique<StringWrapper>(UTF8ToUTF16("C")));
+  strings.push_back(base::MakeUnique<StringWrapper>(UTF8ToUTF16("d")));
+  strings.push_back(base::MakeUnique<StringWrapper>(UTF8ToUTF16("b")));
+  strings.push_back(base::MakeUnique<StringWrapper>(UTF8ToUTF16("a")));
   l10n_util::SortStringsUsingMethod("en-US",
                                     &strings,
                                     &StringWrapper::string);
@@ -398,7 +401,6 @@ TEST_F(L10nUtilTest, SortStringsUsingFunction) {
   ASSERT_TRUE(UTF8ToUTF16("b") == strings[1]->string());
   ASSERT_TRUE(UTF8ToUTF16("C") == strings[2]->string());
   ASSERT_TRUE(UTF8ToUTF16("d") == strings[3]->string());
-  STLDeleteElements(&strings);
 }
 
 /**

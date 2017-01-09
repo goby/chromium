@@ -32,6 +32,9 @@ class ScanoutBuffer : public base::RefCountedThreadSafe<ScanoutBuffer> {
   // Size of the buffer.
   virtual gfx::Size GetSize() const = 0;
 
+  // Device on which the buffer was created.
+  virtual const DrmDevice* GetDrmDevice() const = 0;
+
   virtual bool RequiresGlFinish() const = 0;
 
  protected:
@@ -46,7 +49,7 @@ class ScanoutBufferGenerator {
 
   virtual scoped_refptr<ScanoutBuffer> Create(
       const scoped_refptr<DrmDevice>& drm,
-      gfx::BufferFormat format,
+      uint32_t format,
       const gfx::Size& size) = 0;
 };
 

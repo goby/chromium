@@ -5,9 +5,10 @@
 #include "base/files/file.h"
 
 #include <io.h>
+#include <stdint.h>
 
 #include "base/logging.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/threading/thread_restrictions.h"
 
 namespace base {
@@ -39,7 +40,7 @@ void File::Close() {
   file_.Close();
 }
 
-int64 File::Seek(Whence whence, int64 offset) {
+int64_t File::Seek(Whence whence, int64_t offset) {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(IsValid());
 
@@ -53,7 +54,7 @@ int64 File::Seek(Whence whence, int64 offset) {
   return res.QuadPart;
 }
 
-int File::Read(int64 offset, char* data, int size) {
+int File::Read(int64_t offset, char* data, int size) {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(IsValid());
   DCHECK(!async_);
@@ -96,7 +97,7 @@ int File::ReadAtCurrentPos(char* data, int size) {
   return -1;
 }
 
-int File::ReadNoBestEffort(int64 offset, char* data, int size) {
+int File::ReadNoBestEffort(int64_t offset, char* data, int size) {
   // TODO(dbeam): trace this separately?
   return Read(offset, data, size);
 }
@@ -106,7 +107,7 @@ int File::ReadAtCurrentPosNoBestEffort(char* data, int size) {
   return ReadAtCurrentPos(data, size);
 }
 
-int File::Write(int64 offset, const char* data, int size) {
+int File::Write(int64_t offset, const char* data, int size) {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(IsValid());
   DCHECK(!async_);
@@ -147,7 +148,7 @@ int File::WriteAtCurrentPosNoBestEffort(const char* data, int size) {
   return WriteAtCurrentPos(data, size);
 }
 
-int64 File::GetLength() {
+int64_t File::GetLength() {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(IsValid());
 
@@ -157,10 +158,10 @@ int64 File::GetLength() {
   if (!::GetFileSizeEx(file_.Get(), &size))
     return -1;
 
-  return static_cast<int64>(size.QuadPart);
+  return static_cast<int64_t>(size.QuadPart);
 }
 
-bool File::SetLength(int64 length) {
+bool File::SetLength(int64_t length) {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(IsValid());
 
@@ -248,7 +249,7 @@ File::Error File::Unlock() {
   return FILE_OK;
 }
 
-File File::Duplicate() {
+File File::Duplicate() const {
   if (!IsValid())
     return File();
 
@@ -269,7 +270,7 @@ File File::Duplicate() {
   File other(other_handle);
   if (async())
     other.async_ = true;
-  return other.Pass();
+  return other;
 }
 
 // Static.
@@ -309,7 +310,7 @@ File::Error File::OSErrorToFileError(DWORD last_error) {
   }
 }
 
-void File::DoInitialize(const FilePath& path, uint32 flags) {
+void File::DoInitialize(const FilePath& path, uint32_t flags) {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(!IsValid());
 
@@ -395,9 +396,10 @@ void File::DoInitialize(const FilePath& path, uint32 flags) {
   }
 }
 
-bool File::DoFlush() {
+bool File::Flush() {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(IsValid());
+  SCOPED_FILE_TRACE("Flush");
   return ::FlushFileBuffers(file_.Get()) != FALSE;
 }
 

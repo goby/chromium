@@ -5,9 +5,12 @@
 #ifndef PPAPI_PROXY_RESOURCE_CREATION_PROXY_H_
 #define PPAPI_PROXY_RESOURCE_CREATION_PROXY_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "ipc/ipc_channel.h"
 #include "ppapi/c/pp_bool.h"
 #include "ppapi/c/pp_instance.h"
@@ -18,8 +21,6 @@
 struct PP_Size;
 
 namespace ppapi {
-
-class HostResource;
 
 namespace proxy {
 
@@ -120,10 +121,10 @@ class ResourceCreationProxy : public InterfaceProxy,
   PP_Resource CreateGraphics3DRaw(
       PP_Instance instance,
       PP_Resource share_context,
-      const int32_t* attrib_list,
+      const gpu::gles2::ContextCreationAttribHelper& attrib_helper,
       gpu::Capabilities* capabilities,
       base::SharedMemoryHandle* shared_state,
-      uint64_t* command_buffer_id) override;
+      gpu::CommandBufferId* command_buffer_id) override;
   PP_Resource CreateHostResolver(PP_Instance instance) override;
   PP_Resource CreateHostResolverPrivate(PP_Instance instance) override;
   PP_Resource CreateImageData(PP_Instance instance,
@@ -157,6 +158,7 @@ class ResourceCreationProxy : public InterfaceProxy,
   PP_Resource CreateVideoDestination(PP_Instance instance) override;
   PP_Resource CreateVideoEncoder(PP_Instance instance) override;
   PP_Resource CreateVideoSource(PP_Instance instance) override;
+  PP_Resource CreateVpnProvider(PP_Instance instance) override;
   PP_Resource CreateWebSocket(PP_Instance instance) override;
   PP_Resource CreateX509CertificatePrivate(PP_Instance instance) override;
 #if !defined(OS_NACL)

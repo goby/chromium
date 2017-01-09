@@ -4,8 +4,12 @@
 
 #include "chrome/browser/extensions/chrome_extensions_browser_client.h"
 
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
@@ -16,8 +20,10 @@
 #include "chrome/browser/extensions/api/preference/preference_api.h"
 #include "chrome/browser/extensions/api/runtime/chrome_runtime_api_delegate.h"
 #include "chrome/browser/extensions/chrome_component_extension_resource_manager.h"
+#include "chrome/browser/extensions/chrome_extension_api_frame_id_map_helper.h"
 #include "chrome/browser/extensions/chrome_extension_host_delegate.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
+#include "chrome/browser/extensions/chrome_kiosk_delegate.h"
 #include "chrome/browser/extensions/chrome_mojo_service_registration.h"
 #include "chrome/browser/extensions/chrome_process_manager_delegate.h"
 #include "chrome/browser/extensions/chrome_url_request_util.h"
@@ -30,16 +36,19 @@
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/task_management/web_contents_tags.h"
+#include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
+#include "chrome/browser/sessions/session_tab_helper.h"
+#include "chrome/browser/task_manager/web_contents_tags.h"
+#include "chrome/browser/ui/bluetooth/chrome_extension_bluetooth_chooser.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/pref_names.h"
 #include "components/net_log/chrome_net_log.h"
 #include "components/update_client/update_client.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/resource_request_info.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/browser/api/generated_api_registration.h"
 #include "extensions/browser/extension_function_registry.h"
@@ -47,6 +56,7 @@
 #include "extensions/browser/mojo/service_registration.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/browser/url_request_util.h"
+#include "extensions/common/features/feature_channel.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -79,8 +89,8 @@ bool ChromeExtensionsBrowserClient::AreExtensionsDisabled(
     const base::CommandLine& command_line,
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
-  return command_line.HasSwitch(switches::kDisableExtensions) ||
-      profile->GetPrefs()->GetBoolean(prefs::kDisableExtensions);
+  return switches::ExtensionsDisabled(command_line) ||
+         profile->GetPrefs()->GetBoolean(prefs::kDisableExtensions);
 }
 
 bool ChromeExtensionsBrowserClient::IsValidContext(
@@ -184,21 +194,22 @@ ChromeExtensionsBrowserClient::GetProcessManagerDelegate() const {
   return process_manager_delegate_.get();
 }
 
-scoped_ptr<ExtensionHostDelegate>
+std::unique_ptr<ExtensionHostDelegate>
 ChromeExtensionsBrowserClient::CreateExtensionHostDelegate() {
-  return scoped_ptr<ExtensionHostDelegate>(new ChromeExtensionHostDelegate);
+  return std::unique_ptr<ExtensionHostDelegate>(
+      new ChromeExtensionHostDelegate);
 }
 
 bool ChromeExtensionsBrowserClient::DidVersionUpdate(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
 
-  // Unit tests may not provide prefs; assume everything is up-to-date.
+  // Unit tests may not provide prefs; assume everything is up to date.
   ExtensionPrefs* extension_prefs = ExtensionPrefs::Get(profile);
   if (!extension_prefs)
     return false;
 
-  // If we're inside a browser test, then assume prefs are all up-to-date.
+  // If we're inside a browser test, then assume prefs are all up to date.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType))
     return false;
 
@@ -210,15 +221,18 @@ bool ChromeExtensionsBrowserClient::DidVersionUpdate(
     last_version = base::Version(last_version_str);
   }
 
-  std::string current_version = version_info::GetVersionNumber();
-  pref_service->SetString(pref_names::kLastChromeVersion,
-                          current_version);
+  std::string current_version_str = version_info::GetVersionNumber();
+  base::Version current_version(current_version_str);
+  pref_service->SetString(pref_names::kLastChromeVersion, current_version_str);
 
   // If there was no version string in prefs, assume we're out of date.
   if (!last_version.IsValid())
     return true;
+  // If the current version string is invalid, assume we didn't update.
+  if (!current_version.IsValid())
+    return false;
 
-  return last_version.IsOlderThan(current_version);
+  return last_version < current_version;
 }
 
 void ChromeExtensionsBrowserClient::PermitExternalProtocolHandler() {
@@ -235,12 +249,6 @@ bool ChromeExtensionsBrowserClient::IsLoggedInAsPublicAccount() {
 #else
   return false;
 #endif
-}
-
-ApiActivityMonitor* ChromeExtensionsBrowserClient::GetApiActivityMonitor(
-    content::BrowserContext* context) {
-  // The ActivityLog monitors and records function calls and events.
-  return ActivityLog::GetInstance(context);
 }
 
 ExtensionSystemProvider*
@@ -274,10 +282,11 @@ void ChromeExtensionsBrowserClient::RegisterMojoServices(
   RegisterChromeServicesForFrame(render_frame_host, extension);
 }
 
-scoped_ptr<RuntimeAPIDelegate>
+std::unique_ptr<RuntimeAPIDelegate>
 ChromeExtensionsBrowserClient::CreateRuntimeAPIDelegate(
     content::BrowserContext* context) const {
-  return scoped_ptr<RuntimeAPIDelegate>(new ChromeRuntimeAPIDelegate(context));
+  return std::unique_ptr<RuntimeAPIDelegate>(
+      new ChromeRuntimeAPIDelegate(context));
 }
 
 const ComponentExtensionResourceManager*
@@ -288,9 +297,9 @@ ChromeExtensionsBrowserClient::GetComponentExtensionResourceManager() {
 void ChromeExtensionsBrowserClient::BroadcastEventToRenderers(
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    scoped_ptr<base::ListValue> args) {
+    std::unique_ptr<base::ListValue> args) {
   g_browser_process->extension_event_router_forwarder()
-      ->BroadcastEventToRenderers(histogram_value, event_name, args.Pass(),
+      ->BroadcastEventToRenderers(histogram_value, event_name, std::move(args),
                                   GURL());
 }
 
@@ -302,7 +311,7 @@ ExtensionCache* ChromeExtensionsBrowserClient::GetExtensionCache() {
   if (!extension_cache_.get()) {
 #if defined(OS_CHROMEOS)
     extension_cache_.reset(new ExtensionCacheImpl(
-        make_scoped_ptr(new ChromeOSExtensionCacheDelegate())));
+        base::MakeUnique<ChromeOSExtensionCacheDelegate>()));
 #else
     extension_cache_.reset(new NullExtensionCache());
 #endif
@@ -319,7 +328,7 @@ bool ChromeExtensionsBrowserClient::IsMinBrowserVersionSupported(
     const std::string& min_version) {
   base::Version browser_version =
       base::Version(version_info::GetVersionNumber());
-  Version browser_min_version(min_version);
+  base::Version browser_min_version(min_version);
   if (browser_version.IsValid() && browser_min_version.IsValid() &&
       browser_min_version.CompareTo(browser_version) > 0) {
     return false;
@@ -335,8 +344,8 @@ ChromeExtensionsBrowserClient::GetExtensionWebContentsObserver(
 
 void ChromeExtensionsBrowserClient::ReportError(
     content::BrowserContext* context,
-    scoped_ptr<ExtensionError> error) {
-  ErrorConsole::Get(context)->ReportError(error.Pass());
+    std::unique_ptr<ExtensionError> error) {
+  ErrorConsole::Get(context)->ReportError(std::move(error));
 }
 
 void ChromeExtensionsBrowserClient::CleanUpWebView(
@@ -344,7 +353,7 @@ void ChromeExtensionsBrowserClient::CleanUpWebView(
     int embedder_process_id,
     int view_instance_id) {
   // Clean up context menus for the WebView.
-  auto menu_manager =
+  auto* menu_manager =
       MenuManager::Get(Profile::FromBrowserContext(browser_context));
   menu_manager->RemoveAllContextItems(
       MenuItem::ExtensionKey("", embedder_process_id, view_instance_id));
@@ -355,23 +364,25 @@ void ChromeExtensionsBrowserClient::AttachExtensionTaskManagerTag(
     ViewType view_type) {
   switch (view_type) {
     case VIEW_TYPE_APP_WINDOW:
+    case VIEW_TYPE_COMPONENT:
     case VIEW_TYPE_EXTENSION_BACKGROUND_PAGE:
     case VIEW_TYPE_EXTENSION_DIALOG:
     case VIEW_TYPE_EXTENSION_POPUP:
     case VIEW_TYPE_LAUNCHER_PAGE:
-    case VIEW_TYPE_VIRTUAL_KEYBOARD:
       // These are the only types that are tracked by the ExtensionTag.
-      task_management::WebContentsTags::CreateForExtension(web_contents,
-                                                           view_type);
+      task_manager::WebContentsTags::CreateForExtension(web_contents,
+                                                        view_type);
       return;
 
     case VIEW_TYPE_BACKGROUND_CONTENTS:
+    case VIEW_TYPE_EXTENSION_GUEST:
     case VIEW_TYPE_PANEL:
     case VIEW_TYPE_TAB_CONTENTS:
       // Those types are tracked by other tags:
-      // BACKGROUND_CONTENTS --> task_management::BackgroundContentsTag.
-      // PANEL --> task_management::PanelTag.
-      // TAB_CONTENTS --> task_management::TabContentsTag.
+      // BACKGROUND_CONTENTS --> task_manager::BackgroundContentsTag.
+      // GUEST --> extensions::ChromeGuestViewManagerDelegate.
+      // PANEL --> task_manager::PanelTag.
+      // TAB_CONTENTS --> task_manager::TabContentsTag.
       // These tags are created and attached to the web_contents in other
       // locations, and they must be ignored here.
       return;
@@ -387,6 +398,46 @@ ChromeExtensionsBrowserClient::CreateUpdateClient(
     content::BrowserContext* context) {
   return update_client::UpdateClientFactory(
       make_scoped_refptr(new ChromeUpdateClientConfig(context)));
+}
+
+std::unique_ptr<ExtensionApiFrameIdMapHelper>
+ChromeExtensionsBrowserClient::CreateExtensionApiFrameIdMapHelper(
+    ExtensionApiFrameIdMap* map) {
+  return base::MakeUnique<ChromeExtensionApiFrameIdMapHelper>(map);
+}
+
+std::unique_ptr<content::BluetoothChooser>
+ChromeExtensionsBrowserClient::CreateBluetoothChooser(
+    content::RenderFrameHost* frame,
+    const content::BluetoothChooser::EventHandler& event_handler) {
+  return base::MakeUnique<ChromeExtensionBluetoothChooser>(frame,
+                                                           event_handler);
+}
+
+bool ChromeExtensionsBrowserClient::IsActivityLoggingEnabled(
+    content::BrowserContext* context) {
+  ActivityLog* activity_log = ActivityLog::GetInstance(context);
+  return activity_log && activity_log->is_active();
+}
+
+ExtensionNavigationUIData*
+ChromeExtensionsBrowserClient::GetExtensionNavigationUIData(
+    net::URLRequest* request) {
+  const content::ResourceRequestInfo* info =
+      content::ResourceRequestInfo::ForRequest(request);
+  if (!info)
+    return nullptr;
+  ChromeNavigationUIData* navigation_data =
+      static_cast<ChromeNavigationUIData*>(info->GetNavigationUIData());
+  if (!navigation_data)
+    return nullptr;
+  return navigation_data->GetExtensionNavigationUIData();
+}
+
+KioskDelegate* ChromeExtensionsBrowserClient::GetKioskDelegate() {
+  if (!kiosk_delegate_)
+    kiosk_delegate_.reset(new ChromeKioskDelegate());
+  return kiosk_delegate_.get();
 }
 
 }  // namespace extensions

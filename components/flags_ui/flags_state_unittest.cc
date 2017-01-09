@@ -4,23 +4,31 @@
 
 #include "components/flags_ui/flags_state.h"
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/format_macros.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/macros.h"
+#include "base/metrics/field_trial.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/flags_ui/feature_entry.h"
 #include "components/flags_ui/flags_ui_pref_names.h"
 #include "components/flags_ui/flags_ui_switches.h"
 #include "components/flags_ui/pref_service_flags_storage.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
+#include "components/variations/variations_associated_data.h"
 #include "grit/components_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -35,6 +43,7 @@ const char kFlags4[] = "flag4";
 const char kFlags5[] = "flag5";
 const char kFlags6[] = "flag6";
 const char kFlags7[] = "flag7";
+const char kFlags8[] = "flag8";
 
 const char kSwitch1[] = "switch";
 const char kSwitch2[] = "switch2";
@@ -51,6 +60,21 @@ const char kEnableDisableValue2[] = "value2";
 
 const char kEnableFeatures[] = "dummy-enable-features";
 const char kDisableFeatures[] = "dummy-disable-features";
+
+const char kTestTrial[] = "TestTrial";
+const char kTestParam[] = "param";
+const char kTestParamValue[] = "value";
+
+const base::Feature kTestFeature1{"FeatureName1",
+                                  base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kTestFeature2{"FeatureName2",
+                                  base::FEATURE_ENABLED_BY_DEFAULT};
+
+const FeatureEntry::FeatureParam kTestVariationOther[] = {
+    {kTestParam, kTestParamValue}};
+
+const FeatureEntry::FeatureVariation kTestVariations[] = {
+    {"dummy description", kTestVariationOther, 1, nullptr}};
 
 // Those have to be valid ids for the translation system but the value are
 // never used, so pick one at random from the current component.
@@ -69,44 +93,45 @@ const FeatureEntry::Choice kMultiChoices[] = {
     {kDummyDescriptionId, kMultiSwitch2, kValueForMultiSwitch2},
 };
 
-const base::Feature kTestFeature{"FeatureName",
-                                 base::FEATURE_ENABLED_BY_DEFAULT};
-
 // The entries that are set for these tests. The 3rd entry is not supported on
 // the current platform, all others are.
 static FeatureEntry kEntries[] = {
     {kFlags1, kDummyNameId, kDummyDescriptionId,
      0,  // Ends up being mapped to the current platform.
-     FeatureEntry::SINGLE_VALUE, kSwitch1, "", nullptr, nullptr, nullptr,
-     nullptr, 0},
+     FeatureEntry::SINGLE_VALUE, kSwitch1, "", nullptr, nullptr, nullptr, 0,
+     nullptr, nullptr, nullptr},
     {kFlags2, kDummyNameId, kDummyDescriptionId,
      0,  // Ends up being mapped to the current platform.
      FeatureEntry::SINGLE_VALUE, kSwitch2, kValueForSwitch2, nullptr, nullptr,
-     nullptr, nullptr, 0},
+     nullptr, 0, nullptr, nullptr, nullptr},
     {kFlags3, kDummyNameId, kDummyDescriptionId,
      0,  // This ends up enabling for an OS other than the current.
-     FeatureEntry::SINGLE_VALUE, kSwitch3, "", nullptr, nullptr, nullptr,
-     nullptr, 0},
+     FeatureEntry::SINGLE_VALUE, kSwitch3, "", nullptr, nullptr, nullptr, 0,
+     nullptr, nullptr, nullptr},
     {kFlags4, kDummyNameId, kDummyDescriptionId,
      0,  // Ends up being mapped to the current platform.
-     FeatureEntry::MULTI_VALUE, "", "", "", "", nullptr, kMultiChoices,
-     arraysize(kMultiChoices)},
+     FeatureEntry::MULTI_VALUE, "", "", "", "", nullptr,
+     arraysize(kMultiChoices), kMultiChoices, nullptr, nullptr},
     {kFlags5, kDummyNameId, kDummyDescriptionId,
      0,  // Ends up being mapped to the current platform.
      FeatureEntry::ENABLE_DISABLE_VALUE, kSwitch1, kEnableDisableValue1,
-     kSwitch2, kEnableDisableValue2, nullptr, nullptr, 3},
+     kSwitch2, kEnableDisableValue2, nullptr, 3, nullptr, nullptr, nullptr},
     {kFlags6, kDummyNameId, kDummyDescriptionId, 0,
      FeatureEntry::SINGLE_DISABLE_VALUE, kSwitch6, "", nullptr, nullptr,
-     nullptr, nullptr, 0},
+     nullptr, 0, nullptr, nullptr, nullptr},
     {kFlags7, kDummyNameId, kDummyDescriptionId,
      0,  // Ends up being mapped to the current platform.
      FeatureEntry::FEATURE_VALUE, nullptr, nullptr, nullptr, nullptr,
-     &kTestFeature, nullptr, 3},
+     &kTestFeature1, 3, nullptr, nullptr, nullptr},
+    {kFlags8, kDummyNameId, kDummyDescriptionId,
+     0,  // Ends up being mapped to the current platform.
+     FeatureEntry::FEATURE_WITH_VARIATIONS_VALUE, nullptr, nullptr, nullptr,
+     nullptr, &kTestFeature2, 4, nullptr, kTestVariations, kTestTrial},
 };
 
 class FlagsStateTest : public ::testing::Test {
  protected:
-  FlagsStateTest() : flags_storage_(&prefs_) {
+  FlagsStateTest() : flags_storage_(&prefs_), trial_list_(nullptr) {
     prefs_.registry()->RegisterListPref(prefs::kEnabledLabsExperiments);
 
     for (size_t i = 0; i < arraysize(kEntries); ++i)
@@ -119,9 +144,14 @@ class FlagsStateTest : public ::testing::Test {
     flags_state_.reset(new FlagsState(kEntries, arraysize(kEntries)));
   }
 
+  ~FlagsStateTest() override {
+    variations::testing::ClearAllVariationParams();
+  }
+
   TestingPrefServiceSimple prefs_;
   PrefServiceFlagsStorage flags_storage_;
-  scoped_ptr<FlagsState> flags_state_;
+  std::unique_ptr<FlagsState> flags_state_;
+  base::FieldTrialList trial_list_;
 };
 
 TEST_F(FlagsStateTest, NoChangeNoRestart) {
@@ -152,13 +182,13 @@ TEST_F(FlagsStateTest, MultiFlagChangeNeedsRestart) {
   ASSERT_EQ(kFlags4, entry.internal_name);
   EXPECT_FALSE(flags_state_->IsRestartNeededToCommitChanges());
   // Enable the 2nd choice of the multi-value.
-  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForChoice(2),
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(2),
                                        true);
   EXPECT_TRUE(flags_state_->IsRestartNeededToCommitChanges());
   flags_state_->Reset();
   EXPECT_FALSE(flags_state_->IsRestartNeededToCommitChanges());
   // Enable the default choice now.
-  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForChoice(0),
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(0),
                                        true);
   EXPECT_TRUE(flags_state_->IsRestartNeededToCommitChanges());
 }
@@ -234,6 +264,71 @@ TEST_F(FlagsStateTest, ConvertFlagsToSwitches) {
   EXPECT_TRUE(command_line2.HasSwitch(kSwitch1));
   EXPECT_FALSE(command_line2.HasSwitch(switches::kFlagSwitchesBegin));
   EXPECT_FALSE(command_line2.HasSwitch(switches::kFlagSwitchesEnd));
+}
+
+TEST_F(FlagsStateTest, RegisterAllFeatureVariationParameters) {
+  const FeatureEntry& entry = kEntries[7];
+  std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
+
+  // Select the "Default" variation.
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(0),
+                                       true);
+  flags_state_->RegisterAllFeatureVariationParameters(&flags_storage_,
+                                                      feature_list.get());
+  // No value should be associated.
+  EXPECT_EQ("", variations::GetVariationParamValue(kTestTrial, kTestParam));
+  // The trial should not be created.
+  base::FieldTrial* trial = base::FieldTrialList::Find(kTestTrial);
+  EXPECT_EQ(nullptr, trial);
+
+  // Select the default "Enabled" variation.
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(1),
+                                       true);
+
+  flags_state_->RegisterAllFeatureVariationParameters(&flags_storage_,
+                                                      feature_list.get());
+  // No value should be associated as this is the default option.
+  EXPECT_EQ("",
+            variations::GetVariationParamValue(kTestTrial, kTestParam));
+
+  // The trial should be created.
+  trial = base::FieldTrialList::Find(kTestTrial);
+  EXPECT_NE(nullptr, trial);
+  // The about:flags group should be selected for the trial.
+  EXPECT_EQ(internal::kTrialGroupAboutFlags, trial->group_name());
+
+  // Select the only one variation.
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(2),
+                                       true);
+  flags_state_->RegisterAllFeatureVariationParameters(&flags_storage_,
+                                                      feature_list.get());
+  // Associating for the second time should not change the value.
+  EXPECT_EQ("",
+            variations::GetVariationParamValue(kTestTrial, kTestParam));
+}
+
+TEST_F(FlagsStateTest, RegisterAllFeatureVariationParametersNonDefault) {
+  const FeatureEntry& entry = kEntries[7];
+  std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
+
+  // Select the only one variation.
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(2),
+                                       true);
+  flags_state_->RegisterAllFeatureVariationParameters(&flags_storage_,
+                                                      feature_list.get());
+
+  // Set the feature_list as the main instance so that
+  // variations::GetVariationParamValueByFeature below works.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatureList(std::move(feature_list));
+
+  // The param should have the value predefined in this variation.
+  EXPECT_EQ(kTestParamValue,
+            variations::GetVariationParamValue(kTestTrial, kTestParam));
+
+  // The value should be associated also via the name of the feature.
+  EXPECT_EQ(kTestParamValue, variations::GetVariationParamValueByFeature(
+                                  kTestFeature2, kTestParam));
 }
 
 base::CommandLine::StringType CreateSwitch(const std::string& value) {
@@ -314,10 +409,10 @@ TEST_F(FlagsStateTest, RemoveFlagSwitches) {
   // This shouldn't do anything before ConvertFlagsToSwitches() wasn't called.
   flags_state_->RemoveFlagsSwitches(&switch_list);
   ASSERT_EQ(4u, switch_list.size());
-  EXPECT_TRUE(ContainsKey(switch_list, kSwitch1));
-  EXPECT_TRUE(ContainsKey(switch_list, switches::kFlagSwitchesBegin));
-  EXPECT_TRUE(ContainsKey(switch_list, switches::kFlagSwitchesEnd));
-  EXPECT_TRUE(ContainsKey(switch_list, "foo"));
+  EXPECT_TRUE(base::ContainsKey(switch_list, kSwitch1));
+  EXPECT_TRUE(base::ContainsKey(switch_list, switches::kFlagSwitchesBegin));
+  EXPECT_TRUE(base::ContainsKey(switch_list, switches::kFlagSwitchesEnd));
+  EXPECT_TRUE(base::ContainsKey(switch_list, "foo"));
 
   // Call ConvertFlagsToSwitches(), then RemoveFlagsSwitches() again.
   base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
@@ -329,7 +424,7 @@ TEST_F(FlagsStateTest, RemoveFlagSwitches) {
 
   // Now the about:flags-related switch should have been removed.
   ASSERT_EQ(1u, switch_list.size());
-  EXPECT_TRUE(ContainsKey(switch_list, "foo"));
+  EXPECT_TRUE(base::ContainsKey(switch_list, "foo"));
 }
 
 TEST_F(FlagsStateTest, RemoveFlagSwitches_Features) {
@@ -344,11 +439,11 @@ TEST_F(FlagsStateTest, RemoveFlagSwitches_Features) {
       {0, nullptr, nullptr, nullptr, nullptr},
       {0, "A,B", "C", "A,B", "C"},
       // "Enable" option: should only affect enabled list.
-      {1, nullptr, nullptr, "FeatureName", nullptr},
-      {1, "A,B", "C", "A,B,FeatureName", "C"},
+      {1, nullptr, nullptr, "FeatureName1", nullptr},
+      {1, "A,B", "C", "A,B,FeatureName1", "C"},
       // "Disable" option: should only affect disabled list.
-      {2, nullptr, nullptr, nullptr, "FeatureName"},
-      {2, "A,B", "C", "A,B", "C,FeatureName"},
+      {2, nullptr, nullptr, nullptr, "FeatureName1"},
+      {2, "A,B", "C", "A,B", "C,FeatureName1"},
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
@@ -380,13 +475,13 @@ TEST_F(FlagsStateTest, RemoveFlagSwitches_Features) {
                                          kDisableFeatures);
     auto switch_list = command_line.GetSwitches();
     EXPECT_EQ(cases[i].expected_enable_features != nullptr,
-              ContainsKey(switch_list, kEnableFeatures));
+              base::ContainsKey(switch_list, kEnableFeatures));
     if (cases[i].expected_enable_features)
       EXPECT_EQ(CreateSwitch(cases[i].expected_enable_features),
                 switch_list[kEnableFeatures]);
 
     EXPECT_EQ(cases[i].expected_disable_features != nullptr,
-              ContainsKey(switch_list, kDisableFeatures));
+              base::ContainsKey(switch_list, kDisableFeatures));
     if (cases[i].expected_disable_features)
       EXPECT_EQ(CreateSwitch(cases[i].expected_disable_features),
                 switch_list[kDisableFeatures]);
@@ -396,12 +491,12 @@ TEST_F(FlagsStateTest, RemoveFlagSwitches_Features) {
     switch_list = command_line.GetSwitches();
     flags_state_->RemoveFlagsSwitches(&switch_list);
     EXPECT_EQ(cases[i].existing_enable_features != nullptr,
-              ContainsKey(switch_list, kEnableFeatures));
+              base::ContainsKey(switch_list, kEnableFeatures));
     if (cases[i].existing_enable_features)
       EXPECT_EQ(CreateSwitch(cases[i].existing_enable_features),
                 switch_list[kEnableFeatures]);
     EXPECT_EQ(cases[i].existing_disable_features != nullptr,
-              ContainsKey(switch_list, kEnableFeatures));
+              base::ContainsKey(switch_list, kEnableFeatures));
     if (cases[i].existing_disable_features)
       EXPECT_EQ(CreateSwitch(cases[i].existing_disable_features),
                 switch_list[kDisableFeatures]);
@@ -510,7 +605,7 @@ TEST_F(FlagsStateTest, MultiValues) {
   }
 
   // Enable the 2nd choice of the multi-value.
-  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForChoice(2),
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(2),
                                        true);
   {
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
@@ -524,7 +619,7 @@ TEST_F(FlagsStateTest, MultiValues) {
   }
 
   // Disable the multi-value entry.
-  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForChoice(0),
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(0),
                                        true);
   {
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
@@ -583,7 +678,7 @@ TEST_F(FlagsStateTest, EnableDisableValues) {
   }
 
   // "Enable" option selected.
-  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForChoice(1),
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(1),
                                        true);
   {
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
@@ -596,7 +691,7 @@ TEST_F(FlagsStateTest, EnableDisableValues) {
   }
 
   // "Disable" option selected.
-  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForChoice(2),
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(2),
                                        true);
   {
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
@@ -609,7 +704,7 @@ TEST_F(FlagsStateTest, EnableDisableValues) {
   }
 
   // "Default" option selected, same as nothing selected.
-  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForChoice(0),
+  flags_state_->SetFeatureEntryEnabled(&flags_storage_, entry.NameForOption(0),
                                        true);
   {
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
@@ -637,13 +732,13 @@ TEST_F(FlagsStateTest, FeatureValues) {
       // "Default" option selected, same as nothing selected.
       {0, nullptr, nullptr, "", ""},
       // "Enable" option selected.
-      {1, nullptr, nullptr, "FeatureName", ""},
+      {1, nullptr, nullptr, "FeatureName1", ""},
       // "Disable" option selected.
-      {2, nullptr, nullptr, "", "FeatureName"},
+      {2, nullptr, nullptr, "", "FeatureName1"},
       // "Enable" option should get added to the existing list.
-      {1, "Foo,Bar", nullptr, "Foo,Bar,FeatureName", ""},
+      {1, "Foo,Bar", nullptr, "Foo,Bar,FeatureName1", ""},
       // "Disable" option should get added to the existing list.
-      {2, nullptr, "Foo,Bar", "", "Foo,Bar,FeatureName"},
+      {2, nullptr, "Foo,Bar", "", "Foo,Bar,FeatureName1"},
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
@@ -656,7 +751,7 @@ TEST_F(FlagsStateTest, FeatureValues) {
 
     if (cases[i].enabled_choice != -1) {
       flags_state_->SetFeatureEntryEnabled(
-          &flags_storage_, entry.NameForChoice(cases[i].enabled_choice), true);
+          &flags_storage_, entry.NameForOption(cases[i].enabled_choice), true);
     }
 
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
@@ -686,7 +781,7 @@ TEST_F(FlagsStateTest, GetFlagFeatureEntries) {
                                       &supported_entries, &unsupported_entries,
                                       base::Bind(&SkipFeatureEntry));
   // All |kEntries| except for |kFlags3| should be supported.
-  EXPECT_EQ(6u, supported_entries.GetSize());
+  EXPECT_EQ(7u, supported_entries.GetSize());
   EXPECT_EQ(1u, unsupported_entries.GetSize());
   EXPECT_EQ(arraysize(kEntries),
             supported_entries.GetSize() + unsupported_entries.GetSize());

@@ -5,10 +5,11 @@
 #ifndef CHROMEOS_CRYPTOHOME_HOMEDIR_METHODS_H_
 #define CHROMEOS_CRYPTOHOME_HOMEDIR_METHODS_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
@@ -31,6 +32,8 @@ class CHROMEOS_EXPORT HomedirMethods {
   typedef base::Callback<
       void(bool success, MountError return_code, const std::string& mount_hash)>
       MountCallback;
+  typedef base::Callback<void(bool success, int64_t size)>
+      GetAccountDiskUsageCallback;
 
   virtual ~HomedirMethods() {}
 
@@ -89,6 +92,18 @@ class CHROMEOS_EXPORT HomedirMethods {
                            const Authorization& auth,
                            const std::string& label,
                            const Callback& callback) = 0;
+
+  // Asks cryptohomed to change cryptohome identification |id_from| to |id_to|,
+  // which results in cryptohome directory renaming.
+  virtual void RenameCryptohome(const Identification& id_from,
+                                const Identification& id_to,
+                                const Callback& callback) = 0;
+
+  // Asks cryptohomed to compute the size of cryptohome for user identified by
+  // |id|.
+  virtual void GetAccountDiskUsage(
+      const Identification& id,
+      const GetAccountDiskUsageCallback& callback) = 0;
 
   // Creates the global HomedirMethods instance.
   static void Initialize();

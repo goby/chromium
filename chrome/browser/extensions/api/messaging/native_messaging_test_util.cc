@@ -4,13 +4,15 @@
 
 #include "chrome/browser/extensions/api/messaging/native_messaging_test_util.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -26,13 +28,13 @@ void WriteTestNativeHostManifest(const base::FilePath& target_dir,
                                  const std::string& host_name,
                                  const base::FilePath& host_path,
                                  bool user_level) {
-  scoped_ptr<base::DictionaryValue> manifest(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> manifest(new base::DictionaryValue());
   manifest->SetString("name", host_name);
   manifest->SetString("description", "Native Messaging Echo Test");
   manifest->SetString("type", "stdio");
   manifest->SetString("path", host_path.AsUTF8Unsafe());
 
-  scoped_ptr<base::ListValue> origins(new base::ListValue());
+  std::unique_ptr<base::ListValue> origins(new base::ListValue());
   origins->AppendString(base::StringPrintf(
       "chrome-extension://%s/", ScopedTestNativeMessagingHost::kExtensionId));
   manifest->Set("allowed_origins", origins.release());
@@ -80,7 +82,7 @@ void ScopedTestNativeMessagingHost::RegisterTestHost(bool user_level) {
   path_override_.reset(new base::ScopedPathOverride(
       user_level ? chrome::DIR_USER_NATIVE_MESSAGING
                  : chrome::DIR_NATIVE_MESSAGING,
-      temp_dir_.path()));
+      temp_dir_.GetPath()));
 #endif
 
 #if defined(OS_POSIX)
@@ -89,10 +91,10 @@ void ScopedTestNativeMessagingHost::RegisterTestHost(bool user_level) {
   base::FilePath host_path = test_user_data_dir.AppendASCII("echo.bat");
 #endif
   ASSERT_NO_FATAL_FAILURE(WriteTestNativeHostManifest(
-      temp_dir_.path(), kHostName, host_path, user_level));
+      temp_dir_.GetPath(), kHostName, host_path, user_level));
 
   ASSERT_NO_FATAL_FAILURE(WriteTestNativeHostManifest(
-      temp_dir_.path(), kBinaryMissingHostName,
+      temp_dir_.GetPath(), kBinaryMissingHostName,
       test_user_data_dir.AppendASCII("missing_nm_binary.exe"), user_level));
 }
 

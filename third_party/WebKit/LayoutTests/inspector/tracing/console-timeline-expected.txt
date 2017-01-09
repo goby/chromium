@@ -1,5 +1,3 @@
-CONSOLE WARNING: 'console.timeline' is deprecated. Please use 'console.time' instead.
-CONSOLE WARNING: 'console.timelineEnd' is deprecated. Please use 'console.timeEnd' instead.
 Tests console.timeline and timelineEnd commands.
 
 
@@ -58,20 +56,6 @@ Timeline 'one'
 timestamp 2
 
 Running: testStopFromPanel
-timestamp 0
-Timeline 'one'
-timestamp 1
-Timeline 'two'
-timestamp 2
-
-Running: testRacyStart
-timestamp 0
-Timeline 'one'
-timestamp 1
-Timeline 'two'
-timestamp 2
-
-Running: testRacyStart2
 timestamp 0
 Timeline 'one'
 timestamp 1

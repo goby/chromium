@@ -5,23 +5,27 @@
 #ifndef NET_DISK_CACHE_SIMPLE_SIMPLE_BACKEND_IMPL_H_
 #define NET_DISK_CACHE_SIMPLE_SIMPLE_BACKEND_IMPL_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_split.h"
 #include "base/task_runner.h"
 #include "base/time/time.h"
 #include "net/base/cache_type.h"
+#include "net/base/net_export.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/disk_cache/simple/simple_entry_impl.h"
+#include "net/disk_cache/simple/simple_experiment.h"
 #include "net/disk_cache/simple/simple_index_delegate.h"
 
 namespace base {
@@ -77,20 +81,20 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
 
   // The entry for |entry_hash| is being doomed; the backend will not attempt
   // run new operations for this |entry_hash| until the Doom is completed.
-  void OnDoomStart(uint64 entry_hash);
+  void OnDoomStart(uint64_t entry_hash);
 
   // The entry for |entry_hash| has been successfully doomed, we can now allow
   // operations on this entry, and we can run any operations enqueued while the
   // doom completed.
-  void OnDoomComplete(uint64 entry_hash);
+  void OnDoomComplete(uint64_t entry_hash);
 
   // SimpleIndexDelegate:
-  void DoomEntries(std::vector<uint64>* entry_hashes,
+  void DoomEntries(std::vector<uint64_t>* entry_hashes,
                    const CompletionCallback& callback) override;
 
   // Backend:
   net::CacheType GetCacheType() const override;
-  int32 GetEntryCount() const override;
+  int32_t GetEntryCount() const override;
   int OpenEntry(const std::string& key,
                 Entry** entry,
                 const CompletionCallback& callback) override;
@@ -106,7 +110,7 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   int DoomEntriesSince(base::Time initial_time,
                        const CompletionCallback& callback) override;
   int CalculateSizeOfAllEntries(const CompletionCallback& callback) override;
-  scoped_ptr<Iterator> CreateIterator() override;
+  std::unique_ptr<Iterator> CreateIterator() override;
   void GetStats(base::StringPairs* stats) override;
   void OnExternalCacheHit(const std::string& key) override;
 
@@ -114,10 +118,10 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   class SimpleIterator;
   friend class SimpleIterator;
 
-  typedef base::hash_map<uint64, SimpleEntryImpl*> EntryMap;
+  using EntryMap = std::unordered_map<uint64_t, SimpleEntryImpl*>;
 
-  typedef base::Callback<void(base::Time mtime, uint64 max_size, int result)>
-      InitializeIndexCallback;
+  using InitializeIndexCallback =
+      base::Callback<void(base::Time mtime, uint64_t max_size, int result)>;
 
   class ActiveEntryProxy;
   friend class ActiveEntryProxy;
@@ -125,7 +129,7 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   // Return value of InitCacheStructureOnDisk().
   struct DiskStatResult {
     base::Time cache_dir_mtime;
-    uint64 max_size;
+    uint64_t max_size;
     bool detected_magic_number_mismatch;
     int net_error;
   };
@@ -146,33 +150,36 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
 
   // Try to create the directory if it doesn't exist. This must run on the IO
   // thread.
-  static DiskStatResult InitCacheStructureOnDisk(const base::FilePath& path,
-                                                 uint64 suggested_max_size);
+  static DiskStatResult InitCacheStructureOnDisk(
+      const base::FilePath& path,
+      uint64_t suggested_max_size,
+      const SimpleExperiment& experiment);
 
   // Searches |active_entries_| for the entry corresponding to |key|. If found,
   // returns the found entry. Otherwise, creates a new entry and returns that.
   scoped_refptr<SimpleEntryImpl> CreateOrFindActiveEntry(
-      uint64 entry_hash,
+      uint64_t entry_hash,
       const std::string& key);
 
   // Given a hash, will try to open the corresponding Entry. If we have an Entry
   // corresponding to |hash| in the map of active entries, opens it. Otherwise,
   // a new empty Entry will be created, opened and filled with information from
   // the disk.
-  int OpenEntryFromHash(uint64 entry_hash,
+  int OpenEntryFromHash(uint64_t entry_hash,
                         Entry** entry,
                         const CompletionCallback& callback);
 
   // Doom the entry corresponding to |entry_hash|, if it's active or currently
   // pending doom. This function does not block if there is an active entry,
   // which is very important to prevent races in DoomEntries() above.
-  int DoomEntryFromHash(uint64 entry_hash, const CompletionCallback & callback);
+  int DoomEntryFromHash(uint64_t entry_hash,
+                        const CompletionCallback& callback);
 
   // Called when we tried to open an entry with hash alone. When a blank entry
   // has been created and filled in with information from the disk - based on a
   // hash alone - this checks that a duplicate active entry was not created
   // using a key in the meantime.
-  void OnEntryOpenedFromHash(uint64 hash,
+  void OnEntryOpenedFromHash(uint64_t hash,
                              Entry** entry,
                              const scoped_refptr<SimpleEntryImpl>& simple_entry,
                              const CompletionCallback& callback,
@@ -188,13 +195,13 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
 
   // A callback thunk used by DoomEntries to clear the |entries_pending_doom_|
   // after a mass doom.
-  void DoomEntriesComplete(scoped_ptr<std::vector<uint64> > entry_hashes,
+  void DoomEntriesComplete(std::unique_ptr<std::vector<uint64_t>> entry_hashes,
                            const CompletionCallback& callback,
                            int result);
 
   const base::FilePath path_;
   const net::CacheType cache_type_;
-  scoped_ptr<SimpleIndex> index_;
+  std::unique_ptr<SimpleIndex> index_;
   const scoped_refptr<base::SingleThreadTaskRunner> cache_thread_;
   scoped_refptr<base::TaskRunner> worker_pool_;
 
@@ -207,7 +214,8 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   // these entries cannot have Doom/Create/Open operations run until the doom
   // is complete. The base::Closure map target is used to store deferred
   // operations to be run at the completion of the Doom.
-  base::hash_map<uint64, std::vector<base::Closure> > entries_pending_doom_;
+  std::unordered_map<uint64_t, std::vector<base::Closure>>
+      entries_pending_doom_;
 
   net::NetLog* const net_log_;
 };

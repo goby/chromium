@@ -4,26 +4,53 @@
 
 #include "chrome/browser/android/password_ui_view_android.h"
 
+#include <algorithm>
+
 #include "base/android/jni_string.h"
 #include "base/android/jni_weak_ref.h"
-#include "base/command_line.h"
 #include "base/metrics/field_trial.h"
-#include "base/prefs/pref_service.h"
+#include "base/strings/string_piece.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/common/pref_names.h"
+#include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/common/password_form.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/password_manager/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
+#include "components/password_manager/core/browser/password_ui_utils.h"
 #include "components/password_manager/core/common/experiments.h"
-#include "components/password_manager/core/common/password_manager_switches.h"
 #include "jni/PasswordUIView_jni.h"
+#include "ui/base/l10n/l10n_util.h"
 
 using base::android::ConvertUTF16ToJavaString;
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
+
+namespace {
+
+// Returns the human readable version of the origin string displayed in
+// Chrome settings for |form|.
+std::string GetDisplayOriginForSettings(const autofill::PasswordForm& form) {
+  bool is_android_uri = false;
+  bool is_clickable = false;
+  GURL link_url;  // TODO(crbug.com/617094) Also display link_url.
+  std::string human_readable_origin =
+      password_manager::GetShownOriginAndLinkUrl(form, &is_android_uri,
+                                                 &link_url,
+                                                 &is_clickable);
+  if (!is_clickable) {
+    DCHECK(is_android_uri);
+    human_readable_origin = password_manager::StripAndroidAndReverse(
+        human_readable_origin);
+    human_readable_origin = human_readable_origin +
+        l10n_util::GetStringUTF8(IDS_PASSWORDS_ANDROID_URI_SUFFIX);
+  }
+  return human_readable_origin;
+}
+
+}  // namespace
 
 PasswordUIViewAndroid::PasswordUIViewAndroid(JNIEnv* env, jobject obj)
     : password_manager_presenter_(this), weak_java_ui_controller_(env, obj) {}
@@ -47,27 +74,23 @@ void PasswordUIViewAndroid::ShowPassword(
 }
 
 void PasswordUIViewAndroid::SetPasswordList(
-    const std::vector<scoped_ptr<autofill::PasswordForm>>& password_list,
-    bool show_passwords) {
-  // Android just ignores the |show_passwords| argument.
+    const std::vector<std::unique_ptr<autofill::PasswordForm>>& password_list) {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> ui_controller = weak_java_ui_controller_.get(env);
   if (!ui_controller.is_null()) {
     Java_PasswordUIView_passwordListAvailable(
-        env, ui_controller.obj(), static_cast<int>(password_list.size()));
+        env, ui_controller, static_cast<int>(password_list.size()));
   }
 }
 
 void PasswordUIViewAndroid::SetPasswordExceptionList(
-    const std::vector<scoped_ptr<autofill::PasswordForm>>&
+    const std::vector<std::unique_ptr<autofill::PasswordForm>>&
         password_exception_list) {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> ui_controller = weak_java_ui_controller_.get(env);
   if (!ui_controller.is_null()) {
     Java_PasswordUIView_passwordExceptionListAvailable(
-        env,
-        ui_controller.obj(),
-        static_cast<int>(password_exception_list.size()));
+        env, ui_controller, static_cast<int>(password_exception_list.size()));
   }
 }
 
@@ -84,15 +107,13 @@ ScopedJavaLocalRef<jobject> PasswordUIViewAndroid::GetSavedPasswordEntry(
       password_manager_presenter_.GetPassword(index);
   if (!form) {
     return Java_PasswordUIView_createSavedPasswordEntry(
-        env,
-        ConvertUTF8ToJavaString(env, std::string()).obj(),
-        ConvertUTF16ToJavaString(env, base::string16()).obj());
+        env, ConvertUTF8ToJavaString(env, std::string()),
+        ConvertUTF16ToJavaString(env, base::string16()));
   }
-  std::string human_readable_origin = password_manager::GetHumanReadableOrigin(
-      *form, GetProfile()->GetPrefs()->GetString(prefs::kAcceptLanguages));
+  std::string human_readable_origin = GetDisplayOriginForSettings(*form);
   return Java_PasswordUIView_createSavedPasswordEntry(
-      env, ConvertUTF8ToJavaString(env, human_readable_origin).obj(),
-      ConvertUTF16ToJavaString(env, form->username_value).obj());
+      env, ConvertUTF8ToJavaString(env, human_readable_origin),
+      ConvertUTF16ToJavaString(env, form->username_value));
 }
 
 ScopedJavaLocalRef<jstring> PasswordUIViewAndroid::GetSavedPasswordException(
@@ -103,8 +124,7 @@ ScopedJavaLocalRef<jstring> PasswordUIViewAndroid::GetSavedPasswordException(
       password_manager_presenter_.GetPasswordException(index);
   if (!form)
     return ConvertUTF8ToJavaString(env, std::string());
-  std::string human_readable_origin = password_manager::GetHumanReadableOrigin(
-      *form, GetProfile()->GetPrefs()->GetString(prefs::kAcceptLanguages));
+  std::string human_readable_origin = GetDisplayOriginForSettings(*form);
   return ConvertUTF8ToJavaString(env, human_readable_origin);
 }
 
@@ -131,7 +151,7 @@ ScopedJavaLocalRef<jstring> GetAccountDashboardURL(
 
 static jboolean ShouldUseSmartLockBranding(JNIEnv* env,
                                            const JavaParamRef<jclass>&) {
-  const ProfileSyncService* sync_service =
+  const browser_sync::ProfileSyncService* sync_service =
       ProfileSyncServiceFactory::GetForProfile(
           ProfileManager::GetLastUsedProfile());
   return password_bubble_experiment::IsSmartLockBrandingEnabled(sync_service);

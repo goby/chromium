@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_OMNIBOX_OMNIBOX_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_OMNIBOX_OMNIBOX_API_H_
 
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
@@ -23,10 +24,6 @@
 class Profile;
 class TemplateURL;
 class TemplateURLService;
-
-namespace base {
-class ListValue;
-}
 
 namespace content {
 class BrowserContext;
@@ -72,7 +69,7 @@ class ExtensionOmniboxEventRouter {
   DISALLOW_COPY_AND_ASSIGN(ExtensionOmniboxEventRouter);
 };
 
-class OmniboxSendSuggestionsFunction : public ChromeSyncExtensionFunction {
+class OmniboxSendSuggestionsFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("omnibox.sendSuggestions", OMNIBOX_SENDSUGGESTIONS)
 
@@ -80,7 +77,7 @@ class OmniboxSendSuggestionsFunction : public ChromeSyncExtensionFunction {
   ~OmniboxSendSuggestionsFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class OmniboxAPI : public BrowserContextKeyedAPI,
@@ -141,7 +138,7 @@ class OmniboxAPI : public BrowserContextKeyedAPI,
   ExtensionIconManager omnibox_icon_manager_;
   ExtensionIconManager omnibox_popup_icon_manager_;
 
-  scoped_ptr<TemplateURLService::Subscription> template_url_sub_;
+  std::unique_ptr<TemplateURLService::Subscription> template_url_sub_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxAPI);
 };
@@ -149,7 +146,7 @@ class OmniboxAPI : public BrowserContextKeyedAPI,
 template <>
 void BrowserContextKeyedAPIFactory<OmniboxAPI>::DeclareFactoryDependencies();
 
-class OmniboxSetDefaultSuggestionFunction : public ChromeSyncExtensionFunction {
+class OmniboxSetDefaultSuggestionFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("omnibox.setDefaultSuggestion",
                              OMNIBOX_SETDEFAULTSUGGESTION)
@@ -158,7 +155,7 @@ class OmniboxSetDefaultSuggestionFunction : public ChromeSyncExtensionFunction {
   ~OmniboxSetDefaultSuggestionFunction() override {}
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 // If the extension has set a custom default suggestion via

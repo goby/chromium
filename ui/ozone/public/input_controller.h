@@ -5,6 +5,7 @@
 #ifndef UI_OZONE_PUBLIC_INPUT_CONTROLLER_H_
 #define UI_OZONE_PUBLIC_INPUT_CONTROLLER_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -12,8 +13,7 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "ui/ozone/ozone_export.h"
+#include "ui/ozone/ozone_base_export.h"
 
 namespace base {
 class TimeDelta;
@@ -28,11 +28,11 @@ enum class DomCode;
 // The object provides methods for the preference page to configure input
 // devices w.r.t. the user setting. On ChromeOS, this replaces the inputcontrol
 // script that is originally located at /opt/google/chrome/.
-class OZONE_EXPORT InputController {
+class OZONE_BASE_EXPORT InputController {
  public:
-  typedef base::Callback<void(scoped_ptr<std::string>)>
+  typedef base::Callback<void(std::unique_ptr<std::string>)>
       GetTouchDeviceStatusReply;
-  typedef base::Callback<void(scoped_ptr<std::vector<base::FilePath>>)>
+  typedef base::Callback<void(std::unique_ptr<std::vector<base::FilePath>>)>
       GetTouchEventLogReply;
 
   InputController() {}
@@ -91,7 +91,7 @@ class OZONE_EXPORT InputController {
 };
 
 // Create an input controller that does nothing.
-OZONE_EXPORT scoped_ptr<InputController> CreateStubInputController();
+OZONE_BASE_EXPORT std::unique_ptr<InputController> CreateStubInputController();
 
 }  // namespace ui
 

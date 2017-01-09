@@ -11,22 +11,13 @@
  *      <settings-radio-group pref="{{prefs.settings.foo}}"
  *          label="Foo Options." buttons="{{fooOptionsList}}">
  *      </settings-radio-group>
- *
- * @element settings-radio-group
  */
 Polymer({
   is: 'settings-radio-group',
 
-  properties: {
-    /**
-     * The preference object to control.
-     * @type {!chrome.settingsPrivate.PrefObject|undefined}
-     */
-    pref: {
-      type: Object,
-      notify: true,
-    },
+  behaviors: [PrefControlBehavior],
 
+  properties: {
     /**
      * IronSelectableBehavior selected attribute.
      */
@@ -43,8 +34,8 @@ Polymer({
 
   /** @private */
   prefChanged_: function() {
-    this.selected = Settings.PrefUtil.prefToString(
-        /** @type {!chrome.settingsPrivate.PrefObject} */(this.pref));
+    var pref = /** @type {!chrome.settingsPrivate.PrefObject} */(this.pref);
+    this.selected = Settings.PrefUtil.prefToString(pref);
   },
 
   /** @private */

@@ -6,10 +6,12 @@
 #define NET_HTTP_HTTP_AUTH_HANDLER_NEGOTIATE_H_
 
 #include <string>
+#include <utility>
 
 #include "build/build_config.h"
 #include "net/base/address_list.h"
 #include "net/base/net_export.h"
+#include "net/dns/host_resolver.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
 
@@ -24,8 +26,6 @@
 namespace net {
 
 class HttpAuthPreferences;
-class HostResolver;
-class SingleRequestHostResolver;
 
 // Handler for WWW-Authenticate: Negotiate protocol.
 //
@@ -54,19 +54,20 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNegotiate : public HttpAuthHandler {
 #if !defined(OS_ANDROID)
     // Sets the system library to use, thereby assuming ownership of
     // |auth_library|.
-    void set_library(scoped_ptr<AuthLibrary> auth_provider) {
-      auth_library_ = auth_provider.Pass();
+    void set_library(std::unique_ptr<AuthLibrary> auth_provider) {
+      auth_library_ = std::move(auth_provider);
     }
 #endif
 
     // HttpAuthHandlerFactory overrides
     int CreateAuthHandler(HttpAuthChallengeTokenizer* challenge,
                           HttpAuth::Target target,
+                          const SSLInfo& ssl_info,
                           const GURL& origin,
                           CreateReason reason,
                           int digest_nonce_count,
-                          const BoundNetLog& net_log,
-                          scoped_ptr<HttpAuthHandler>* handler) override;
+                          const NetLogWithSource& net_log,
+                          std::unique_ptr<HttpAuthHandler>* handler) override;
 
    private:
     HostResolver* resolver_;
@@ -75,7 +76,7 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNegotiate : public HttpAuthHandler {
 #endif
     bool is_unsupported_;
 #if !defined(OS_ANDROID)
-    scoped_ptr<AuthLibrary> auth_library_;
+    std::unique_ptr<AuthLibrary> auth_library_;
 #endif
   };
 
@@ -103,7 +104,8 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNegotiate : public HttpAuthHandler {
   bool AllowsExplicitCredentials() override;
 
  protected:
-  bool Init(HttpAuthChallengeTokenizer* challenge) override;
+  bool Init(HttpAuthChallengeTokenizer* challenge,
+            const SSLInfo& ssl_info) override;
 
   int GenerateAuthTokenImpl(const AuthCredentials* credentials,
                             const HttpRequestInfo* request,
@@ -134,13 +136,14 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerNegotiate : public HttpAuthHandler {
 
   // Members which are needed for DNS lookup + SPN.
   AddressList address_list_;
-  scoped_ptr<SingleRequestHostResolver> single_resolve_;
+  std::unique_ptr<net::HostResolver::Request> request_;
 
   // Things which should be consistent after first call to GenerateAuthToken.
   bool already_called_;
   bool has_credentials_;
   AuthCredentials credentials_;
   std::string spn_;
+  std::string channel_bindings_;
 
   // Things which vary each round.
   CompletionCallback callback_;

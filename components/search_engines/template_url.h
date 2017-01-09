@@ -5,15 +5,19 @@
 #ifndef COMPONENTS_SEARCH_ENGINES_TEMPLATE_URL_H_
 #define COMPONENTS_SEARCH_ENGINES_TEMPLATE_URL_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/metrics/proto/omnibox_input_type.pb.h"
+#include "components/search_engines/search_engine_type.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_id.h"
 #include "ui/gfx/geometry/size.h"
@@ -70,27 +74,30 @@ class TemplateURLRef {
   // is required and is passed in the constructor.
   struct SearchTermsArgs {
     explicit SearchTermsArgs(const base::string16& search_terms);
+    SearchTermsArgs(const SearchTermsArgs& other);
     ~SearchTermsArgs();
 
     struct ContextualSearchParams {
       ContextualSearchParams();
       // Used when the content is sent in the HTTP header instead of as CGI
       // parameters.
-      // TODO(jeremycho): Remove base_page_url and selection parameters once
+      // TODO(donnd): Remove base_page_url and selection parameters once
       // they are logged from the HTTP header.
-      ContextualSearchParams(const int version,
+      ContextualSearchParams(int version,
                              const std::string& selection,
                              const std::string& base_page_url,
-                             const bool resolve);
-      // TODO(jeremycho): Delete constructor once Clank no longer depends on it.
-      ContextualSearchParams(const int version,
-                             const size_t start,
-                             const size_t end,
+                             int contextual_cards_version);
+      // TODO(donnd): Delete constructor once Clank, iOS, and tests no
+      // longer depend on it.
+      ContextualSearchParams(int version,
+                             size_t start,
+                             size_t end,
                              const std::string& selection,
                              const std::string& content,
                              const std::string& base_page_url,
                              const std::string& encoding,
-                             const bool resolve);
+                             int contextual_cards_version);
+      ContextualSearchParams(const ContextualSearchParams& other);
       ~ContextualSearchParams();
 
       // The version of contextual search.
@@ -114,10 +121,9 @@ class TemplateURLRef {
       // The encoding of content.
       std::string encoding;
 
-      // If true, the server will generate a search term based on the user
-      // selection and context.  Otherwise the user selection will be used as-is
-      // as the search term.
-      bool resolve;
+      // The version of Contextual Cards data to request.
+      // A value of 0 indicates no data needed.
+      int contextual_cards_version;
     };
 
     // The search terms (query).
@@ -144,19 +150,12 @@ class TemplateURLRef {
     // the request was issued.  Set to base::string16::npos if not used.
     size_t cursor_position;
 
-    // True to enable the start-edge margin of the omnibox, used in extended
-    // Instant to align the preview contents with the omnibox.
-    bool enable_omnibox_start_margin;
-
     // The URL of the current webpage to be used for experimental zero-prefix
     // suggestions.
     std::string current_page_url;
 
     // Which omnibox the user used to type the prefix.
     metrics::OmniboxEventProto::PageClassification page_classification;
-
-    // True for searches issued with the bookmark bar pref set to shown.
-    bool bookmark_bar_pinned;
 
     // Optional session token.
     std::string session_token;
@@ -204,6 +203,9 @@ class TemplateURLRef {
   TemplateURLRef(const TemplateURL* owner, Type type);
   TemplateURLRef(const TemplateURL* owner, size_t index_in_owner);
   ~TemplateURLRef();
+
+  TemplateURLRef(const TemplateURLRef& source);
+  TemplateURLRef& operator=(const TemplateURLRef& source);
 
   // Returns the raw URL. None of the parameters will have been replaced.
   std::string GetURL() const;
@@ -308,7 +310,6 @@ class TemplateURLRef {
   FRIEND_TEST_ALL_PREFIXES(TemplateURLTest, ParseURLTwoParameters);
   FRIEND_TEST_ALL_PREFIXES(TemplateURLTest, ParseURLNestedParameter);
   FRIEND_TEST_ALL_PREFIXES(TemplateURLTest, URLRefTestImageURLWithPOST);
-  FRIEND_TEST_ALL_PREFIXES(TemplateURLTest, ReflectsBookmarkBarPinned);
 
   // Enumeration of the known types.
   enum ReplacementType {
@@ -316,7 +317,6 @@ class TemplateURLRef {
     GOOGLE_ASSISTED_QUERY_STATS,
     GOOGLE_BASE_URL,
     GOOGLE_BASE_SUGGEST_URL,
-    GOOGLE_BOOKMARK_BAR_PINNED,
     GOOGLE_CURRENT_PAGE_URL,
     GOOGLE_CURSOR_POSITION,
     GOOGLE_FORCE_INSTANT_RESULTS,
@@ -327,8 +327,8 @@ class TemplateURLRef {
     GOOGLE_IMAGE_URL,
     GOOGLE_INPUT_TYPE,
     GOOGLE_INSTANT_EXTENDED_ENABLED,
+    GOOGLE_IOS_SEARCH_LANGUAGE,
     GOOGLE_NTP_IS_THEMED,
-    GOOGLE_OMNIBOX_START_MARGIN,
     GOOGLE_CONTEXTUAL_SEARCH_VERSION,
     GOOGLE_CONTEXTUAL_SEARCH_CONTEXT_DATA,
     GOOGLE_ORIGINAL_QUERY_FOR_SUGGESTION,
@@ -433,14 +433,14 @@ class TemplateURLRef {
       PostContent* post_content) const;
 
   // The TemplateURL that contains us.  This should outlive us.
-  const TemplateURL* const owner_;
+  const TemplateURL* owner_;
 
   // What kind of URL we are.
-  const Type type_;
+  Type type_;
 
   // If |type_| is |INDEXED|, this |index_in_owner_| is used instead to refer to
   // a url within our owner.
-  const size_t index_in_owner_;
+  size_t index_in_owner_;
 
   // Whether the URL has been parsed.
   mutable bool parsed_;
@@ -459,20 +459,21 @@ class TemplateURLRef {
   // into the string, and may be empty.
   mutable Replacements replacements_;
 
-  // Host, path, key and location of the search term. These are only set if the
-  // url contains one search term.
+  // Host, port, path, key and location of the search term. These are only set
+  // if the url contains one search term.
   mutable std::string host_;
+  mutable std::string port_;
   mutable std::string path_;
   mutable std::string search_term_key_;
   mutable size_t search_term_position_in_path_;
   mutable url::Parsed::ComponentType search_term_key_location_;
+  mutable std::string search_term_value_prefix_;
+  mutable std::string search_term_value_suffix_;
 
   mutable PostParams post_params_;
 
   // Whether the contained URL is a pre-populated URL.
   bool prepopulated_;
-
-  DISALLOW_COPY_AND_ASSIGN(TemplateURLRef);
 };
 
 
@@ -497,15 +498,15 @@ class TemplateURL {
     NORMAL_CONTROLLED_BY_EXTENSION,
     // The keyword associated with an extension that uses the Omnibox API.
     OMNIBOX_API_EXTENSION,
+    // Installed only on this device. Should not be synced.
+    LOCAL,
   };
 
   // An AssociatedExtensionInfo represents information about the extension that
   // added the search engine.
   struct AssociatedExtensionInfo {
-    AssociatedExtensionInfo(Type type, const std::string& extension_id);
+    explicit AssociatedExtensionInfo(const std::string& extension_id);
     ~AssociatedExtensionInfo();
-
-    Type type;
 
     std::string extension_id;
 
@@ -517,16 +518,13 @@ class TemplateURL {
     base::Time install_time;
   };
 
-  explicit TemplateURL(const TemplateURLData& data);
+  explicit TemplateURL(const TemplateURLData& data, Type type = NORMAL);
   ~TemplateURL();
 
   // Generates a suitable keyword for the specified url, which must be valid.
   // This is guaranteed not to return an empty string, since TemplateURLs should
   // never have an empty keyword.
-  // |accept_languages| is a list of languages, which will be used in
-  // IDN-decoding of |url|'s hostname.
-  static base::string16 GenerateKeyword(const GURL& url,
-                                        const std::string& accept_languages);
+  static base::string16 GenerateKeyword(const GURL& url);
 
   // Generates a favicon URL from the specified url.
   static GURL GenerateFaviconURL(const GURL& url);
@@ -573,11 +571,6 @@ class TemplateURL {
 
   const GURL& originating_url() const { return data_.originating_url; }
 
-  bool show_in_default_list() const { return data_.show_in_default_list; }
-  // Returns true if show_in_default_list() is true and this TemplateURL has a
-  // TemplateURLRef that supports replacement.
-  bool ShowInDefaultList(const SearchTermsData& search_terms_data) const;
-
   bool safe_for_autoreplace() const { return data_.safe_for_autoreplace; }
 
   const std::vector<std::string>& input_encodings() const {
@@ -588,6 +581,7 @@ class TemplateURL {
 
   base::Time date_created() const { return data_.date_created; }
   base::Time last_modified() const { return data_.last_modified; }
+  base::Time last_visited() const { return data_.last_visited; }
 
   bool created_by_policy() const { return data_.created_by_policy; }
 
@@ -602,7 +596,8 @@ class TemplateURL {
     return data_.search_terms_replacement_key;
   }
 
-  const TemplateURLRef& url_ref() const { return url_ref_; }
+  const std::vector<TemplateURLRef>& url_refs() const { return url_refs_; }
+  const TemplateURLRef& url_ref() const { return *url_ref_; }
   const TemplateURLRef& suggestions_url_ref() const {
     return suggestions_url_ref_;
   }
@@ -613,10 +608,13 @@ class TemplateURL {
     return contextual_search_url_ref_;
   }
 
+  Type type() const { return type_; }
+
   // This setter shouldn't be used except by TemplateURLService and
   // TemplateURLServiceClient implementations.
-  void set_extension_info(scoped_ptr<AssociatedExtensionInfo> extension_info) {
-    extension_info_ = extension_info.Pass();
+  void set_extension_info(
+      std::unique_ptr<AssociatedExtensionInfo> extension_info) {
+    extension_info_ = std::move(extension_info);
   }
 
   // Returns true if |url| supports replacement.
@@ -637,33 +635,25 @@ class TemplateURL {
   bool HasSameKeywordAs(const TemplateURLData& other,
                         const SearchTermsData& search_terms_data) const;
 
-  Type GetType() const;
-
   // Returns the id of the extension that added this search engine. Only call
   // this for TemplateURLs of type NORMAL_CONTROLLED_BY_EXTENSION or
   // OMNIBOX_API_EXTENSION.
   std::string GetExtensionId() const;
 
-  // Returns the total number of URLs comprised in this template, including
-  // search and alternate URLs.
-  size_t URLCount() const;
-
-  // Gets the search URL at the given index. The alternate URLs, if any, are
-  // numbered starting at 0, and the primary search URL follows. This is used
-  // to decode the search term given a search URL (see
-  // ExtractSearchTermsFromURL()).
-  const std::string& GetURL(size_t index) const;
+  // Returns the type of this search engine, or SEARCH_ENGINE_OTHER if no
+  // engines match.
+  SearchEngineType GetEngineType(
+      const SearchTermsData& search_terms_data) const;
 
   // Use the alternate URLs and the search URL to match the provided |url|
   // and extract |search_terms| from it. Returns false and an empty
   // |search_terms| if no search terms can be matched. The order in which the
   // alternate URLs are listed dictates their priority, the URL at index 0 is
   // treated as the highest priority and the primary search URL is treated as
-  // the lowest priority (see GetURL()).  For example, if a TemplateURL has
-  // alternate URL "http://foo/#q={searchTerms}" and search URL
-  // "http://foo/?q={searchTerms}", and the URL to be decoded is
-  // "http://foo/?q=a#q=b", the alternate URL will match first and the decoded
-  // search term will be "b".
+  // the lowest priority. For example, if a TemplateURL has alternate URL
+  // "http://foo/#q={searchTerms}" and search URL "http://foo/?q={searchTerms}",
+  // and the URL to be decoded is "http://foo/?q=a#q=b", the alternate URL will
+  // match first and the decoded search term will be "b".
   bool ExtractSearchTermsFromURL(const GURL& url,
                                  const SearchTermsData& search_terms_data,
                                  base::string16* search_terms) const;
@@ -709,9 +699,13 @@ class TemplateURL {
   // Returns an empty GURL if this template URL has no url().
   GURL GenerateSearchURL(const SearchTermsData& search_terms_data) const;
 
+  // TemplateURL internally caches values derived from a passed SearchTermsData
+  // to make its functions quick. This method invalidates any cached values and
+  // it should be called after SearchTermsData has been changed.
+  void InvalidateCachedValues() const;
+
  private:
   friend class TemplateURLService;
-  FRIEND_TEST_ALL_PREFIXES(TemplateURLTest, ReflectsBookmarkBarPinned);
 
   void CopyFrom(const TemplateURL& other);
 
@@ -725,6 +719,9 @@ class TemplateURL {
   void ResetKeywordIfNecessary(const SearchTermsData& search_terms_data,
                                bool force);
 
+  // Resizes the |url_refs_| vector and sets |url_ref_| according to |data_|.
+  void ResizeURLRefVector();
+
   // Uses the alternate URLs and the search URL to match the provided |url|
   // and extract |search_terms| from it as well as the |search_terms_component|
   // (either REF or QUERY) and |search_terms_component| at which the
@@ -736,13 +733,27 @@ class TemplateURL {
                             url::Component* search_terms_position) const;
 
   TemplateURLData data_;
-  TemplateURLRef url_ref_;
+
+  // Contains TemplateURLRefs corresponding to the alternate URLs and the search
+  // URL. This vector must not be resized except by ResizeURLRefVector() to keep
+  // the |url_ref_| pointer correct.
+  std::vector<TemplateURLRef> url_refs_;
+
+  // Points to the TemplateURLRef in |url_refs_| which corresponds to the search
+  // URL.
+  TemplateURLRef* url_ref_;
+
   TemplateURLRef suggestions_url_ref_;
   TemplateURLRef instant_url_ref_;
   TemplateURLRef image_url_ref_;
   TemplateURLRef new_tab_url_ref_;
   TemplateURLRef contextual_search_url_ref_;
-  scoped_ptr<AssociatedExtensionInfo> extension_info_;
+  std::unique_ptr<AssociatedExtensionInfo> extension_info_;
+
+  const Type type_;
+
+  // Caches the computed engine type across successive calls to GetEngineType().
+  mutable SearchEngineType engine_type_;
 
   // TODO(sky): Add date last parsed OSD file.
 

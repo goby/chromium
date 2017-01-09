@@ -5,14 +5,17 @@
 #include "base/process/process.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 
+#include "base/debug/activity_tracker.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/kill.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
+#include "build/build_config.h"
 
 #if defined(OS_MACOSX)
 #include <sys/event.h>
@@ -54,9 +57,9 @@ bool WaitpidWithTimeout(base::ProcessHandle handle,
   }
 
   pid_t ret_pid = HANDLE_EINTR(waitpid(handle, status, WNOHANG));
-  static const int64 kMaxSleepInMicroseconds = 1 << 18;  // ~256 milliseconds.
-  int64 max_sleep_time_usecs = 1 << 10;  // ~1 milliseconds.
-  int64 double_sleep_time = 0;
+  static const int64_t kMaxSleepInMicroseconds = 1 << 18;  // ~256 milliseconds.
+  int64_t max_sleep_time_usecs = 1 << 10;                  // ~1 milliseconds.
+  int64_t double_sleep_time = 0;
 
   // If the process hasn't exited yet, then sleep and try again.
   base::TimeTicks wakeup_time = base::TimeTicks::Now() + wait;
@@ -65,7 +68,7 @@ bool WaitpidWithTimeout(base::ProcessHandle handle,
     if (now > wakeup_time)
       break;
     // Guaranteed to be non-negative!
-    int64 sleep_time_usecs = (wakeup_time - now).InMicroseconds();
+    int64_t sleep_time_usecs = (wakeup_time - now).InMicroseconds();
     // Sleep for a bit while we wait for the process to finish.
     if (sleep_time_usecs > max_sleep_time_usecs)
       sleep_time_usecs = max_sleep_time_usecs;
@@ -254,12 +257,12 @@ Process Process::DeprecatedGetProcessFromHandle(ProcessHandle handle) {
   return Process(handle);
 }
 
-#if !defined(OS_LINUX)
+#if !defined(OS_LINUX) && !defined(OS_MACOSX)
 // static
 bool Process::CanBackgroundProcesses() {
   return false;
 }
-#endif  // !defined(OS_LINUX)
+#endif  // !defined(OS_LINUX) && !defined(OS_MACOSX)
 
 bool Process::IsValid() const {
   return process_ != kNullProcessHandle;
@@ -352,10 +355,13 @@ bool Process::WaitForExit(int* exit_code) {
 }
 
 bool Process::WaitForExitWithTimeout(TimeDelta timeout, int* exit_code) {
+  // Record the event that this thread is blocking upon (for hang diagnosis).
+  base::debug::ScopedProcessWaitActivity process_activity(this);
+
   return WaitForExitWithTimeoutImpl(Handle(), exit_code, timeout);
 }
 
-#if !defined(OS_LINUX)
+#if !defined(OS_LINUX) && !defined(OS_MACOSX)
 bool Process::IsProcessBackgrounded() const {
   // See SetProcessBackgrounded().
   DCHECK(IsValid());
@@ -363,13 +369,13 @@ bool Process::IsProcessBackgrounded() const {
 }
 
 bool Process::SetProcessBackgrounded(bool value) {
-  // Not implemented for POSIX systems other than Linux. With POSIX, if we were
-  // to lower the process priority we wouldn't be able to raise it back to its
-  // initial priority.
+  // Not implemented for POSIX systems other than Linux and Mac. With POSIX, if
+  // we were to lower the process priority we wouldn't be able to raise it back
+  // to its initial priority.
   NOTIMPLEMENTED();
   return false;
 }
-#endif  // !defined(OS_LINUX)
+#endif  // !defined(OS_LINUX) && !defined(OS_MACOSX)
 
 int Process::GetPriority() const {
   DCHECK(IsValid());

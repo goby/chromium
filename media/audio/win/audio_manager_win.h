@@ -5,8 +5,10 @@
 #ifndef MEDIA_AUDIO_WIN_AUDIO_MANAGER_WIN_H_
 #define MEDIA_AUDIO_WIN_AUDIO_MANAGER_WIN_H_
 
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "media/audio/audio_manager_base.h"
 
 namespace media {
@@ -18,7 +20,10 @@ class AudioDeviceListenerWin;
 // the AudioManager class.
 class MEDIA_EXPORT AudioManagerWin : public AudioManagerBase {
  public:
-  AudioManagerWin(AudioLogFactory* audio_log_factory);
+  AudioManagerWin(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+      AudioLogFactory* audio_log_factory);
 
   // Implementation of AudioManager.
   bool HasAudioOutputDevices() override;
@@ -31,19 +36,24 @@ class MEDIA_EXPORT AudioManagerWin : public AudioManagerBase {
       const std::string& device_id) override;
   std::string GetAssociatedOutputDeviceID(
       const std::string& input_device_id) override;
+  const char* GetName() override;
 
   // Implementation of AudioManagerBase.
   AudioOutputStream* MakeLinearOutputStream(
-      const AudioParameters& params) override;
+      const AudioParameters& params,
+      const LogCallback& log_callback) override;
   AudioOutputStream* MakeLowLatencyOutputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLinearInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLowLatencyInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   std::string GetDefaultOutputDeviceID() override;
 
  protected:
@@ -84,12 +94,11 @@ class MEDIA_EXPORT AudioManagerWin : public AudioManagerBase {
   // Helper methods for performing expensive initialization tasks on the audio
   // thread instead of on the UI thread which AudioManager is constructed on.
   void InitializeOnAudioThread();
-  void ShutdownOnAudioThread();
 
   void GetAudioDeviceNamesImpl(bool input, AudioDeviceNames* device_names);
 
   // Listen for output device changes.
-  scoped_ptr<AudioDeviceListenerWin> output_device_listener_;
+  std::unique_ptr<AudioDeviceListenerWin> output_device_listener_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioManagerWin);
 };

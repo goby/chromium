@@ -5,16 +5,19 @@
 #ifndef GOOGLE_APIS_GCM_ENGINE_CHECKIN_REQUEST_H_
 #define GOOGLE_APIS_GCM_ENGINE_CHECKIN_REQUEST_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "google_apis/gcm/base/gcm_export.h"
 #include "google_apis/gcm/protocol/android_checkin.pb.h"
 #include "google_apis/gcm/protocol/checkin.pb.h"
 #include "net/base/backoff_entry.h"
+#include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
@@ -34,22 +37,25 @@ class GCM_EXPORT CheckinRequest : public net::URLFetcherDelegate {
  public:
   // A callback function for the checkin request, accepting |checkin_response|
   // protobuf.
-  typedef base::Callback<void(const checkin_proto::AndroidCheckinResponse&
-                                  checkin_response)> CheckinRequestCallback;
+  typedef base::Callback<void(
+      net::HttpStatusCode response_code,
+      const checkin_proto::AndroidCheckinResponse& checkin_response)>
+      CheckinRequestCallback;
 
   // Checkin request details.
   struct GCM_EXPORT RequestInfo {
-    RequestInfo(uint64 android_id,
-                uint64 security_token,
+    RequestInfo(uint64_t android_id,
+                uint64_t security_token,
                 const std::map<std::string, std::string>& account_tokens,
                 const std::string& settings_digest,
                 const checkin_proto::ChromeBuildProto& chrome_build_proto);
+    RequestInfo(const RequestInfo& other);
     ~RequestInfo();
 
     // Android ID of the device.
-    uint64 android_id;
+    uint64_t android_id;
     // Security token of the device.
-    uint64 security_token;
+    uint64_t security_token;
     // Map of account OAuth2 tokens keyed by emails.
     std::map<std::string, std::string> account_tokens;
     // Digest of GServices settings on the device.
@@ -80,7 +86,7 @@ class GCM_EXPORT CheckinRequest : public net::URLFetcherDelegate {
 
   net::BackoffEntry backoff_entry_;
   GURL checkin_url_;
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   const RequestInfo request_info_;
   base::TimeTicks request_start_time_;
 

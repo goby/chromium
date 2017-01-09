@@ -2,25 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/common/wm/maximize_mode/maximize_mode_controller.h"
+
 #include <math.h>
+#include <utility>
 #include <vector>
 
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
-
-#include "ash/ash_switches.h"
-#include "ash/display/display_manager.h"
+#include "ash/common/ash_switches.h"
+#include "ash/common/system/tray/system_tray_delegate.h"
+#include "ash/common/test/test_system_tray_delegate.h"
+#include "ash/common/wm/overview/window_selector_controller.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/display_manager_test_api.h"
-#include "ash/test/test_system_tray_delegate.h"
-#include "ash/test/test_volume_control_delegate.h"
-#include "ash/wm/overview/window_selector_controller.h"
 #include "base/command_line.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/user_action_tester.h"
 #include "chromeos/accelerometer/accelerometer_reader.h"
 #include "chromeos/accelerometer/accelerometer_types.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/events/event_handler.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/geometry/vector3d_f.h"
@@ -63,6 +64,8 @@ extern const size_t kAccelerometerFullyOpenTestDataLength;
 // readings from the base and lid accelerometers in this order.
 extern const float kAccelerometerVerticalHingeTestData[];
 extern const size_t kAccelerometerVerticalHingeTestDataLength;
+extern const float kAccelerometerVerticalHingeUnstableAnglesTestData[];
+extern const size_t kAccelerometerVerticalHingeUnstableAnglesTestDataLength;
 
 class MaximizeModeControllerTest : public test::AshTestBase {
  public:
@@ -78,7 +81,9 @@ class MaximizeModeControllerTest : public test::AshTestBase {
 
     // Set the first display to be the internal display for the accelerometer
     // screen rotation tests.
-    test::DisplayManagerTestApi().SetFirstDisplayAsInternalDisplay();
+    display::test::DisplayManagerTestApi(
+        Shell::GetInstance()->display_manager())
+        .SetFirstDisplayAsInternalDisplay();
   }
 
   void TearDown() override {
@@ -88,7 +93,7 @@ class MaximizeModeControllerTest : public test::AshTestBase {
   }
 
   MaximizeModeController* maximize_mode_controller() {
-    return Shell::GetInstance()->maximize_mode_controller();
+    return WmShell::Get()->maximize_mode_controller();
   }
 
   void TriggerLidUpdate(const gfx::Vector3dF& lid) {
@@ -117,10 +122,10 @@ class MaximizeModeControllerTest : public test::AshTestBase {
   // Attaches a SimpleTestTickClock to the MaximizeModeController with a non
   // null value initial value.
   void AttachTickClockForTest() {
-    scoped_ptr<base::TickClock> tick_clock(
+    std::unique_ptr<base::TickClock> tick_clock(
         test_tick_clock_ = new base::SimpleTestTickClock());
     test_tick_clock_->Advance(base::TimeDelta::FromSeconds(1));
-    maximize_mode_controller()->SetTickClockForTest(tick_clock.Pass());
+    maximize_mode_controller()->SetTickClockForTest(std::move(tick_clock));
   }
 
   void AdvanceTickClock(const base::TimeDelta& delta) {
@@ -134,24 +139,38 @@ class MaximizeModeControllerTest : public test::AshTestBase {
 
     float radians = degrees * kDegreesToRadians;
     gfx::Vector3dF base_vector(0.0f, -kMeanGravity, 0.0f);
-    gfx::Vector3dF lid_vector(0.0f,
-                              kMeanGravity * cos(radians),
+    gfx::Vector3dF lid_vector(0.0f, kMeanGravity * cos(radians),
                               kMeanGravity * sin(radians));
     TriggerBaseAndLidUpdate(base_vector, lid_vector);
   }
 
+  void HoldDeviceVertical() {
+    gfx::Vector3dF base_vector(9.8f, 0.0f, 0.0f);
+    gfx::Vector3dF lid_vector(9.8f, 0.0f, 0.0f);
+    TriggerBaseAndLidUpdate(base_vector, lid_vector);
+  }
+
   void OpenLid() {
-    maximize_mode_controller()->LidEventReceived(true /* open */,
-        maximize_mode_controller()->tick_clock_->NowTicks());
+    maximize_mode_controller()->LidEventReceived(
+        true /* open */, maximize_mode_controller()->tick_clock_->NowTicks());
   }
 
   void CloseLid() {
-    maximize_mode_controller()->LidEventReceived(false /* open */,
-        maximize_mode_controller()->tick_clock_->NowTicks());
+    maximize_mode_controller()->LidEventReceived(
+        false /* open */, maximize_mode_controller()->tick_clock_->NowTicks());
   }
 
   bool WasLidOpenedRecently() {
     return maximize_mode_controller()->WasLidOpenedRecently();
+  }
+
+  void SetTabletMode(bool on) {
+    maximize_mode_controller()->TabletModeEventReceived(
+        on, maximize_mode_controller()->tick_clock_->NowTicks());
+  }
+
+  bool AreEventsBlocked() {
+    return !!maximize_mode_controller()->event_blocker_.get();
   }
 
   base::UserActionTester* user_action_tester() { return &user_action_tester_; }
@@ -199,8 +218,7 @@ TEST_F(MaximizeModeControllerTest, CloseLidWhileInMaximizeMode) {
 }
 
 // Verify that maximize mode will not be entered when the lid is closed.
-TEST_F(MaximizeModeControllerTest,
-    HingeAnglesWithLidClosed) {
+TEST_F(MaximizeModeControllerTest, HingeAnglesWithLidClosed) {
   AttachTickClockForTest();
 
   CloseLid();
@@ -217,8 +235,7 @@ TEST_F(MaximizeModeControllerTest,
 
 // Verify the maximize mode state for unstable hinge angles when the lid was
 // recently open.
-TEST_F(MaximizeModeControllerTest,
-    UnstableHingeAnglesWhenLidRecentlyOpened) {
+TEST_F(MaximizeModeControllerTest, UnstableHingeAnglesWhenLidRecentlyOpened) {
   AttachTickClockForTest();
 
   OpenLid();
@@ -259,6 +276,32 @@ TEST_F(MaximizeModeControllerTest, WasLidOpenedRecentlyOverTime) {
   // 3 seconds after lid open.
   AdvanceTickClock(base::TimeDelta::FromSeconds(2));
   EXPECT_FALSE(WasLidOpenedRecently());
+}
+
+TEST_F(MaximizeModeControllerTest, TabletModeTransition) {
+  OpenLidToAngle(90.0f);
+  EXPECT_FALSE(IsMaximizeModeStarted());
+
+  // Unstable reading. This should not trigger maximize mode.
+  HoldDeviceVertical();
+  EXPECT_FALSE(IsMaximizeModeStarted());
+
+  // When tablet mode switch is on it should force maximize mode even if the
+  // reading is not stable.
+  SetTabletMode(true);
+  EXPECT_TRUE(IsMaximizeModeStarted());
+
+  // After tablet mode switch is off it should stay in maximize mode if the
+  // reading is not stable.
+  SetTabletMode(false);
+  EXPECT_TRUE(IsMaximizeModeStarted());
+
+  // Should leave maximize mode when the lid angle is small enough.
+  OpenLidToAngle(90.0f);
+  EXPECT_FALSE(IsMaximizeModeStarted());
+
+  OpenLidToAngle(300.0f);
+  EXPECT_TRUE(IsMaximizeModeStarted());
 }
 
 // Verify the maximize mode enter/exit thresholds for stable angles.
@@ -427,43 +470,75 @@ TEST_F(MaximizeModeControllerTest, DisplayDisconnectionDuringOverview) {
     return;
 
   UpdateDisplay("800x600,800x600");
-  scoped_ptr<aura::Window> w1(
+  std::unique_ptr<aura::Window> w1(
       CreateTestWindowInShellWithBounds(gfx::Rect(0, 0, 100, 100)));
-  scoped_ptr<aura::Window> w2(
+  std::unique_ptr<aura::Window> w2(
       CreateTestWindowInShellWithBounds(gfx::Rect(800, 0, 100, 100)));
   ASSERT_NE(w1->GetRootWindow(), w2->GetRootWindow());
 
   maximize_mode_controller()->EnableMaximizeModeWindowManager(true);
-  Shell::GetInstance()->window_selector_controller()->ToggleOverview();
+  EXPECT_TRUE(WmShell::Get()->window_selector_controller()->ToggleOverview());
 
   UpdateDisplay("800x600");
-  EXPECT_FALSE(
-      Shell::GetInstance()->window_selector_controller()->IsSelecting());
+  EXPECT_FALSE(WmShell::Get()->window_selector_controller()->IsSelecting());
   EXPECT_EQ(w1->GetRootWindow(), w2->GetRootWindow());
 }
 
 // Test that the disabling of the internal display exits maximize mode, and that
 // while disabled we do not re-enter maximize mode.
 TEST_F(MaximizeModeControllerTest, NoMaximizeModeWithDisabledInternalDisplay) {
-  DisplayManager* display_manager = Shell::GetInstance()->display_manager();
   UpdateDisplay("200x200, 200x200");
-  const int64 internal_display_id =
-      test::DisplayManagerTestApi().SetFirstDisplayAsInternalDisplay();
+  const int64_t internal_display_id =
+      display::test::DisplayManagerTestApi(display_manager())
+          .SetFirstDisplayAsInternalDisplay();
   ASSERT_FALSE(IsMaximizeModeStarted());
 
   OpenLidToAngle(270.0f);
   EXPECT_TRUE(IsMaximizeModeStarted());
+  EXPECT_TRUE(AreEventsBlocked());
 
   // Deactivate internal display to simulate Docked Mode.
-  std::vector<DisplayInfo> secondary_only;
-  secondary_only.push_back(
-      display_manager->GetDisplayInfo(display_manager->GetDisplayAt(1).id()));
-  display_manager->OnNativeDisplaysChanged(secondary_only);
-  ASSERT_FALSE(display_manager->IsActiveDisplayId(internal_display_id));
+  std::vector<display::ManagedDisplayInfo> secondary_only;
+  secondary_only.push_back(display_manager()->GetDisplayInfo(
+      display_manager()->GetDisplayAt(1).id()));
+  display_manager()->OnNativeDisplaysChanged(secondary_only);
+  ASSERT_FALSE(display_manager()->IsActiveDisplayId(internal_display_id));
   EXPECT_FALSE(IsMaximizeModeStarted());
+  EXPECT_FALSE(AreEventsBlocked());
 
   OpenLidToAngle(270.0f);
   EXPECT_FALSE(IsMaximizeModeStarted());
+  EXPECT_FALSE(AreEventsBlocked());
+}
+
+// Verify that the device won't exit touchview / maximize mode for unstable
+// angles when hinge is nearly vertical
+TEST_F(MaximizeModeControllerTest, VerticalHingeUnstableAnglesTest) {
+  // Trigger maximize mode by opening to 270 to begin the test in maximize mode.
+  TriggerBaseAndLidUpdate(gfx::Vector3dF(0.0f, 0.0f, kMeanGravity),
+                          gfx::Vector3dF(0.0f, -kMeanGravity, 0.0f));
+  ASSERT_TRUE(IsMaximizeModeStarted());
+
+  // Feeds in sample accelerometer data and verifies that there are no
+  // transitions out of touchview / maximize mode while shaking the device
+  // around, while the hinge is nearly vertical. The data was captured
+  // from maxmimize_mode_controller.cc and does not require conversion.
+  ASSERT_EQ(0u, kAccelerometerVerticalHingeUnstableAnglesTestDataLength % 6);
+  for (size_t i = 0;
+       i < kAccelerometerVerticalHingeUnstableAnglesTestDataLength / 6; ++i) {
+    gfx::Vector3dF base(
+        kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6],
+        kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6 + 1],
+        kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6 + 2]);
+    gfx::Vector3dF lid(
+        kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6 + 3],
+        kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6 + 4],
+        kAccelerometerVerticalHingeUnstableAnglesTestData[i * 6 + 5]);
+    TriggerBaseAndLidUpdate(base, lid);
+    // There are a lot of samples, so ASSERT rather than EXPECT to only generate
+    // one failure rather than potentially hundreds.
+    ASSERT_TRUE(IsMaximizeModeStarted());
+  }
 }
 
 class MaximizeModeControllerSwitchesTest : public MaximizeModeControllerTest {
@@ -476,6 +551,7 @@ class MaximizeModeControllerSwitchesTest : public MaximizeModeControllerTest {
         switches::kAshEnableTouchViewTesting);
     MaximizeModeControllerTest::SetUp();
   }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(MaximizeModeControllerSwitchesTest);
 };

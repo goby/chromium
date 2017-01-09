@@ -7,35 +7,32 @@
 #include <algorithm>
 
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 
 namespace policy {
 
 PolicyMap::Entry::Entry()
-    : level(POLICY_LEVEL_RECOMMENDED),
-      scope(POLICY_SCOPE_USER),
-      value(NULL),
-      external_data_fetcher(NULL) {}
+    : level(POLICY_LEVEL_RECOMMENDED), scope(POLICY_SCOPE_USER) {}
 
-void PolicyMap::Entry::DeleteOwnedMembers() {
-  delete value;
-  value = NULL;
-  delete external_data_fetcher;
-  external_data_fetcher = NULL;
-}
+PolicyMap::Entry::~Entry() = default;
 
-scoped_ptr<PolicyMap::Entry> PolicyMap::Entry::DeepCopy() const {
-  scoped_ptr<Entry> copy(new Entry);
-  copy->level = level;
-  copy->scope = scope;
-  copy->source = source;
+PolicyMap::Entry::Entry(Entry&&) = default;
+
+PolicyMap::Entry& PolicyMap::Entry::operator=(Entry&&) = default;
+
+PolicyMap::Entry PolicyMap::Entry::DeepCopy() const {
+  Entry copy;
+  copy.level = level;
+  copy.scope = scope;
+  copy.source = source;
   if (value)
-    copy->value = value->DeepCopy();
+    copy.value = value->CreateDeepCopy();
   if (external_data_fetcher) {
-    copy->external_data_fetcher =
-        new ExternalDataFetcher(*external_data_fetcher);
+    copy.external_data_fetcher.reset(
+        new ExternalDataFetcher(*external_data_fetcher));
   }
-  return copy.Pass();
+  return copy;
 }
 
 bool PolicyMap::Entry::has_higher_priority_than(
@@ -47,13 +44,12 @@ bool PolicyMap::Entry::has_higher_priority_than(
 }
 
 bool PolicyMap::Entry::Equals(const PolicyMap::Entry& other) const {
-  return level == other.level &&
-         scope == other.scope &&
+  return level == other.level && scope == other.scope &&
          source == other.source &&  // Necessary for PolicyUIHandler observers.
                                     // They have to update when sources change.
-         base::Value::Equals(value, other.value) &&
-         ExternalDataFetcher::Equals(external_data_fetcher,
-                                     other.external_data_fetcher);
+         base::Value::Equals(value.get(), other.value.get()) &&
+         ExternalDataFetcher::Equals(external_data_fetcher.get(),
+                                     other.external_data_fetcher.get());
 }
 
 PolicyMap::PolicyMap() {
@@ -65,35 +61,52 @@ PolicyMap::~PolicyMap() {
 
 const PolicyMap::Entry* PolicyMap::Get(const std::string& policy) const {
   PolicyMapType::const_iterator entry = map_.find(policy);
-  return entry == map_.end() ? NULL : &entry->second;
+  return entry == map_.end() ? nullptr : &entry->second;
 }
 
 const base::Value* PolicyMap::GetValue(const std::string& policy) const {
   PolicyMapType::const_iterator entry = map_.find(policy);
-  return entry == map_.end() ? NULL : entry->second.value;
+  return entry == map_.end() ? nullptr : entry->second.value.get();
 }
 
-void PolicyMap::Set(const std::string& policy,
-                    PolicyLevel level,
-                    PolicyScope scope,
-                    PolicySource source,
-                    base::Value* value,
-                    ExternalDataFetcher* external_data_fetcher) {
-  Entry& entry = map_[policy];
-  entry.DeleteOwnedMembers();
+void PolicyMap::Set(
+    const std::string& policy,
+    PolicyLevel level,
+    PolicyScope scope,
+    PolicySource source,
+    std::unique_ptr<base::Value> value,
+    std::unique_ptr<ExternalDataFetcher> external_data_fetcher) {
+  Entry entry;
   entry.level = level;
   entry.scope = scope;
   entry.source = source;
-  entry.value = value;
-  entry.external_data_fetcher = external_data_fetcher;
+  entry.value = std::move(value);
+  entry.external_data_fetcher = std::move(external_data_fetcher);
+  Set(policy, std::move(entry));
+}
+
+void PolicyMap::Set(const std::string& policy, Entry entry) {
+  map_[policy] = std::move(entry);
+}
+
+void PolicyMap::SetSourceForAll(PolicySource source) {
+  for (auto& it : map_) {
+    it.second.source = source;
+  }
 }
 
 void PolicyMap::Erase(const std::string& policy) {
-  PolicyMapType::iterator it = map_.find(policy);
-  if (it != map_.end()) {
-    it->second.DeleteOwnedMembers();
-    map_.erase(it);
-  }
+  map_.erase(policy);
+}
+
+void PolicyMap::EraseMatching(
+    const base::Callback<bool(const const_iterator)>& filter) {
+  FilterErase(filter, true);
+}
+
+void PolicyMap::EraseNonmatching(
+    const base::Callback<bool(const const_iterator)>& filter) {
+  FilterErase(filter, false);
 }
 
 void PolicyMap::Swap(PolicyMap* other) {
@@ -102,33 +115,21 @@ void PolicyMap::Swap(PolicyMap* other) {
 
 void PolicyMap::CopyFrom(const PolicyMap& other) {
   Clear();
-  for (const_iterator it = other.begin(); it != other.end(); ++it) {
-    const Entry& entry = it->second;
-    Set(it->first, entry.level, entry.scope, entry.source,
-        entry.value->DeepCopy(),
-        entry.external_data_fetcher
-            ? new ExternalDataFetcher(*entry.external_data_fetcher)
-            : nullptr);
-  }
+  for (const auto& it : other)
+    Set(it.first, it.second.DeepCopy());
 }
 
-scoped_ptr<PolicyMap> PolicyMap::DeepCopy() const {
-  PolicyMap* copy = new PolicyMap();
+std::unique_ptr<PolicyMap> PolicyMap::DeepCopy() const {
+  std::unique_ptr<PolicyMap> copy(new PolicyMap());
   copy->CopyFrom(*this);
-  return make_scoped_ptr(copy);
+  return copy;
 }
 
 void PolicyMap::MergeFrom(const PolicyMap& other) {
-  for (const_iterator it = other.begin(); it != other.end(); ++it) {
-    const Entry* entry = Get(it->first);
-    if (!entry || it->second.has_higher_priority_than(*entry)) {
-      Set(it->first, it->second.level, it->second.scope, it->second.source,
-          it->second.value->DeepCopy(),
-          it->second.external_data_fetcher
-              ? new ExternalDataFetcher(
-                    *it->second.external_data_fetcher)
-              : nullptr);
-    }
+  for (const auto& it : other) {
+    const Entry* entry = Get(it.first);
+    if (!entry || it.second.has_higher_priority_than(*entry))
+      Set(it.first, it.second.DeepCopy());
   }
 }
 
@@ -139,7 +140,7 @@ void PolicyMap::LoadFrom(
     PolicySource source) {
   for (base::DictionaryValue::Iterator it(*policies);
        !it.IsAtEnd(); it.Advance()) {
-    Set(it.key(), level, scope, source, it.value().DeepCopy(), nullptr);
+    Set(it.key(), level, scope, source, it.value().CreateDeepCopy(), nullptr);
   }
 }
 
@@ -171,18 +172,6 @@ void PolicyMap::GetDifferingKeys(const PolicyMap& other,
       differing_keys->insert(iter_other->first);
 }
 
-void PolicyMap::FilterLevel(PolicyLevel level) {
-  PolicyMapType::iterator iter(map_.begin());
-  while (iter != map_.end()) {
-    if (iter->second.level != level) {
-      iter->second.DeleteOwnedMembers();
-      map_.erase(iter++);
-    } else {
-      ++iter;
-    }
-  }
-}
-
 bool PolicyMap::Equals(const PolicyMap& other) const {
   return other.size() == size() &&
       std::equal(begin(), end(), other.begin(), MapEntryEquals);
@@ -205,8 +194,6 @@ PolicyMap::const_iterator PolicyMap::end() const {
 }
 
 void PolicyMap::Clear() {
-  for (PolicyMapType::iterator it = map_.begin(); it != map_.end(); ++it)
-    it->second.DeleteOwnedMembers();
   map_.clear();
 }
 
@@ -214,6 +201,19 @@ void PolicyMap::Clear() {
 bool PolicyMap::MapEntryEquals(const PolicyMap::PolicyMapType::value_type& a,
                                const PolicyMap::PolicyMapType::value_type& b) {
   return a.first == b.first && a.second.Equals(b.second);
+}
+
+void PolicyMap::FilterErase(
+    const base::Callback<bool(const const_iterator)>& filter,
+    bool deletion_value) {
+  PolicyMapType::iterator iter(map_.begin());
+  while (iter != map_.end()) {
+    if (filter.Run(iter) == deletion_value) {
+      map_.erase(iter++);
+    } else {
+      ++iter;
+    }
+  }
 }
 
 }  // namespace policy

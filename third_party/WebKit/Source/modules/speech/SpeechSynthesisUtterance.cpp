@@ -23,58 +23,54 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/speech/SpeechSynthesisUtterance.h"
+
+#include "core/dom/ExecutionContext.h"
 
 namespace blink {
 
-SpeechSynthesisUtterance* SpeechSynthesisUtterance::create(ExecutionContext* context, const String& text)
-{
-    return new SpeechSynthesisUtterance(context, text);
+SpeechSynthesisUtterance* SpeechSynthesisUtterance::create(
+    ExecutionContext* context,
+    const String& text) {
+  return new SpeechSynthesisUtterance(context, text);
 }
 
-SpeechSynthesisUtterance::SpeechSynthesisUtterance(ExecutionContext* context, const String& text)
-    : ContextLifecycleObserver(context)
-    , m_platformUtterance(PlatformSpeechSynthesisUtterance::create(this))
-{
-    m_platformUtterance->setText(text);
+SpeechSynthesisUtterance::SpeechSynthesisUtterance(ExecutionContext* context,
+                                                   const String& text)
+    : m_executionContext(context),
+      m_platformUtterance(PlatformSpeechSynthesisUtterance::create(this)) {
+  m_platformUtterance->setText(text);
 }
 
-SpeechSynthesisUtterance::~SpeechSynthesisUtterance()
-{
+SpeechSynthesisUtterance::~SpeechSynthesisUtterance() {}
+
+ExecutionContext* SpeechSynthesisUtterance::getExecutionContext() const {
+  return m_executionContext;
 }
 
-ExecutionContext* SpeechSynthesisUtterance::executionContext() const
-{
-    return ContextLifecycleObserver::executionContext();
+const AtomicString& SpeechSynthesisUtterance::interfaceName() const {
+  return EventTargetNames::SpeechSynthesisUtterance;
 }
 
-const AtomicString& SpeechSynthesisUtterance::interfaceName() const
-{
-    return EventTargetNames::SpeechSynthesisUtterance;
+SpeechSynthesisVoice* SpeechSynthesisUtterance::voice() const {
+  return m_voice;
 }
 
-SpeechSynthesisVoice* SpeechSynthesisUtterance::voice() const
-{
-    return m_voice;
+void SpeechSynthesisUtterance::setVoice(SpeechSynthesisVoice* voice) {
+  // Cache our own version of the SpeechSynthesisVoice so that we don't have to
+  // do some lookup to go from the platform voice back to the speech synthesis
+  // voice in the read property.
+  m_voice = voice;
+
+  if (voice)
+    m_platformUtterance->setVoice(voice->platformVoice());
 }
 
-void SpeechSynthesisUtterance::setVoice(SpeechSynthesisVoice* voice)
-{
-    // Cache our own version of the SpeechSynthesisVoice so that we don't have to do some lookup
-    // to go from the platform voice back to the speech synthesis voice in the read property.
-    m_voice = voice;
-
-    if (voice)
-        m_platformUtterance->setVoice(voice->platformVoice());
+DEFINE_TRACE(SpeechSynthesisUtterance) {
+  visitor->trace(m_executionContext);
+  visitor->trace(m_platformUtterance);
+  visitor->trace(m_voice);
+  EventTargetWithInlineData::trace(visitor);
 }
 
-DEFINE_TRACE(SpeechSynthesisUtterance)
-{
-    visitor->trace(m_platformUtterance);
-    visitor->trace(m_voice);
-    RefCountedGarbageCollectedEventTargetWithInlineData<SpeechSynthesisUtterance>::trace(visitor);
-    ContextLifecycleObserver::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

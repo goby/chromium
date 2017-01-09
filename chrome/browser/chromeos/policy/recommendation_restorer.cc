@@ -8,13 +8,13 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -77,14 +77,12 @@ void RecommendationRestorer::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type == chrome::NOTIFICATION_LOGIN_USER_CHANGED) {
-    logged_in_ = true;
-    notification_registrar_.RemoveAll();
-    StopTimer();
-    RestoreAll();
-  } else {
-    NOTREACHED();
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_LOGIN_USER_CHANGED, type);
+
+  logged_in_ = true;
+  notification_registrar_.RemoveAll();
+  StopTimer();
+  RestoreAll();
 }
 
 void RecommendationRestorer::OnUserActivity(const ui::Event* event) {

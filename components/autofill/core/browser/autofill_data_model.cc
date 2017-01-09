@@ -13,14 +13,18 @@ namespace autofill {
 
 AutofillDataModel::AutofillDataModel(const std::string& guid,
                                      const std::string& origin)
-    : guid_(guid), origin_(origin), use_count_(0) {
-}
+    : guid_(guid),
+      origin_(origin),
+      use_count_(1),
+      use_date_(base::Time::Now()),
+      modification_date_(base::Time::Now()) {}
 AutofillDataModel::~AutofillDataModel() {}
 
 bool AutofillDataModel::IsVerified() const {
   return !origin_.empty() && !GURL(origin_).is_valid();
 }
 
+// TODO(crbug.com/629507): Add support for injected mock clock for testing.
 void AutofillDataModel::RecordUse() {
   ++use_count_;
   use_date_ = base::Time::Now();

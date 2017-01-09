@@ -23,7 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/events/CustomEvent.h"
 
 #include "bindings/core/v8/SerializedScriptValue.h"
@@ -31,42 +30,40 @@
 
 namespace blink {
 
-CustomEvent::CustomEvent()
-{
+CustomEvent::CustomEvent() {}
+
+CustomEvent::CustomEvent(const AtomicString& type,
+                         const CustomEventInit& initializer)
+    : Event(type, initializer) {}
+
+CustomEvent::~CustomEvent() {}
+
+void CustomEvent::initCustomEvent(const AtomicString& type,
+                                  bool canBubble,
+                                  bool cancelable,
+                                  const ScriptValue&) {
+  initEvent(type, canBubble, cancelable);
 }
 
-CustomEvent::CustomEvent(const AtomicString& type, const CustomEventInit& initializer)
-    : Event(type, initializer)
-{
+void CustomEvent::initCustomEvent(
+    const AtomicString& type,
+    bool canBubble,
+    bool cancelable,
+    PassRefPtr<SerializedScriptValue> serializedDetail) {
+  if (isBeingDispatched())
+    return;
+
+  initEvent(type, canBubble, cancelable);
+
+  m_serializedDetail = serializedDetail;
 }
 
-CustomEvent::~CustomEvent()
-{
+const AtomicString& CustomEvent::interfaceName() const {
+  return EventNames::CustomEvent;
 }
 
-void CustomEvent::initCustomEvent(const AtomicString& type, bool canBubble, bool cancelable, const ScriptValue&)
-{
-    initEvent(type, canBubble, cancelable);
+DEFINE_TRACE(CustomEvent) {
+  Event::trace(visitor);
 }
 
-void CustomEvent::initCustomEvent(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtr<SerializedScriptValue> serializedDetail)
-{
-    if (dispatched())
-        return;
-
-    initEvent(type, canBubble, cancelable);
-
-    m_serializedDetail = serializedDetail;
-}
-
-const AtomicString& CustomEvent::interfaceName() const
-{
-    return EventNames::CustomEvent;
-}
-
-DEFINE_TRACE(CustomEvent)
-{
-    Event::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

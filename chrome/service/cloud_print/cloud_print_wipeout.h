@@ -8,14 +8,14 @@
 #include <list>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "chrome/service/cloud_print/cloud_print_url_fetcher.h"
 #include "url/gurl.h"
 
 namespace cloud_print {
 
 // CloudPrintWipeout unregisters list of printers from the cloudprint service.
-class CloudPrintWipeout : public CloudPrintURLFetcherDelegate {
+class CloudPrintWipeout : public CloudPrintURLFetcher::Delegate {
  public:
   class Client {
    public:
@@ -34,7 +34,7 @@ class CloudPrintWipeout : public CloudPrintURLFetcherDelegate {
   CloudPrintURLFetcher::ResponseAction HandleJSONData(
       const net::URLFetcher* source,
       const GURL& url,
-      base::DictionaryValue* json_data,
+      const base::DictionaryValue* json_data,
       bool succeeded) override;
   void OnRequestGiveUp() override;
   CloudPrintURLFetcher::ResponseAction OnRequestAuthError() override;

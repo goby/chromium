@@ -22,11 +22,10 @@ typedef std::pair<net::SSLCertRequestInfo*, net::X509Certificate*> CertDetails;
 SSLClientAuthObserver::SSLClientAuthObserver(
     const content::BrowserContext* browser_context,
     const scoped_refptr<net::SSLCertRequestInfo>& cert_request_info,
-    scoped_ptr<content::ClientCertificateDelegate> delegate)
+    std::unique_ptr<content::ClientCertificateDelegate> delegate)
     : browser_context_(browser_context),
       cert_request_info_(cert_request_info),
-      delegate_(delegate.Pass()) {
-}
+      delegate_(std::move(delegate)) {}
 
 SSLClientAuthObserver::~SSLClientAuthObserver() {
 }
@@ -68,7 +67,7 @@ void SSLClientAuthObserver::Observe(
     const content::NotificationDetails& details) {
   DVLOG(1) << "SSLClientAuthObserver::Observe " << this;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(type == chrome::NOTIFICATION_SSL_CLIENT_AUTH_CERT_SELECTED);
+  DCHECK_EQ(chrome::NOTIFICATION_SSL_CLIENT_AUTH_CERT_SELECTED, type);
 
   CertDetails* cert_details = content::Details<CertDetails>(details).ptr();
   if (!cert_details->first->host_and_port.Equals(

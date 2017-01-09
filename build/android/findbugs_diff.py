@@ -20,15 +20,17 @@ import argparse
 import os
 import sys
 
+import devil_chromium
 from devil.utils import run_tests_helper
-from pylib import constants
+
+from pylib.constants import host_paths
 from pylib.utils import findbugs
 
 _DEFAULT_BASE_DIR = os.path.join(
-    constants.DIR_SOURCE_ROOT, 'build', 'android', 'findbugs_filter')
+    host_paths.DIR_SOURCE_ROOT, 'build', 'android', 'findbugs_filter')
 
 sys.path.append(
-    os.path.join(constants.DIR_SOURCE_ROOT, 'build', 'android', 'gyp'))
+    os.path.join(host_paths.DIR_SOURCE_ROOT, 'build', 'android', 'gyp'))
 from util import build_utils # pylint: disable=import-error
 
 
@@ -75,10 +77,12 @@ def main():
 
   run_tests_helper.SetLogLevel(args.verbose)
 
+  devil_chromium.Initialize()
+
   if args.auxclasspath:
     args.auxclasspath = args.auxclasspath.split(':')
   elif args.auxclasspath_gyp:
-    args.auxclasspath = build_utils.ParseGypList(args.auxclasspath_gyp)
+    args.auxclasspath = build_utils.ParseGnList(args.auxclasspath_gyp)
 
   if args.base_dir:
     if not args.exclude:
@@ -101,10 +105,8 @@ def main():
     print
   else:
     if args.depfile:
-      build_utils.WriteDepfile(
-          args.depfile,
-          build_utils.GetPythonDependencies() + args.auxclasspath
-              + args.jar_paths)
+      deps = args.auxclasspath + args.jar_paths
+      build_utils.WriteDepfile(args.depfile, args.output_file, deps)
     if args.stamp:
       build_utils.Touch(args.stamp)
 

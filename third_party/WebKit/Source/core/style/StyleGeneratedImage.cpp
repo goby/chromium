@@ -21,88 +21,66 @@
  *
  */
 
-#include "config.h"
 #include "core/style/StyleGeneratedImage.h"
 
 #include "core/css/CSSImageGeneratorValue.h"
 #include "core/css/resolver/StyleResolver.h"
-#include "core/layout/LayoutObject.h"
 
 namespace blink {
 
 StyleGeneratedImage::StyleGeneratedImage(const CSSImageGeneratorValue& value)
-    : m_imageGeneratorValue(const_cast<CSSImageGeneratorValue*>(&value))
-    , m_fixedSize(m_imageGeneratorValue->isFixedSize())
-{
-    m_isGeneratedImage = true;
+    : m_imageGeneratorValue(const_cast<CSSImageGeneratorValue*>(&value)),
+      m_fixedSize(m_imageGeneratorValue->isFixedSize()) {
+  m_isGeneratedImage = true;
+  if (value.isPaintValue())
+    m_isPaintImage = true;
 }
 
-PassRefPtrWillBeRawPtr<CSSValue> StyleGeneratedImage::cssValue() const
-{
-    return m_imageGeneratorValue.get();
+CSSValue* StyleGeneratedImage::cssValue() const {
+  return m_imageGeneratorValue.get();
 }
 
-PassRefPtrWillBeRawPtr<CSSValue> StyleGeneratedImage::computedCSSValue() const
-{
-    return m_imageGeneratorValue->valueWithURLsMadeAbsolute();
+CSSValue* StyleGeneratedImage::computedCSSValue() const {
+  return m_imageGeneratorValue->valueWithURLsMadeAbsolute();
 }
 
-LayoutSize StyleGeneratedImage::imageSize(const LayoutObject* layoutObject, float multiplier) const
-{
-    if (m_fixedSize) {
-        LayoutSize fixedSize(m_imageGeneratorValue->fixedSize(layoutObject));
-        if (multiplier == 1.0f)
-            return fixedSize;
+LayoutSize StyleGeneratedImage::imageSize(
+    const LayoutObject& layoutObject,
+    float multiplier,
+    const LayoutSize& defaultObjectSize) const {
+  if (m_fixedSize) {
+    FloatSize unzoomedDefaultObjectSize(defaultObjectSize);
+    unzoomedDefaultObjectSize.scale(1 / multiplier);
+    return applyZoom(LayoutSize(m_imageGeneratorValue->fixedSize(
+                         layoutObject, unzoomedDefaultObjectSize)),
+                     multiplier);
+  }
 
-        LayoutUnit width = fixedSize.width() * multiplier;
-        LayoutUnit height = fixedSize.height() * multiplier;
-
-        // Don't let images that have a width/height >= 1 shrink below 1 when zoomed.
-        if (fixedSize.width() > 0)
-            width = max<LayoutUnit>(1, width);
-
-        if (fixedSize.height() > 0)
-            height = max<LayoutUnit>(1, height);
-
-        return LayoutSize(width, height);
-    }
-
-    return LayoutSize();
+  return defaultObjectSize;
 }
 
-void StyleGeneratedImage::computeIntrinsicDimensions(const LayoutObject* layoutObject, Length& intrinsicWidth, Length& intrinsicHeight, FloatSize& intrinsicRatio)
-{
-    // At a zoom level of 1 the image is guaranteed to have an integer size.
-    IntSize size = flooredIntSize(imageSize(layoutObject, 1));
-    intrinsicWidth = Length(size.width(), Fixed);
-    intrinsicHeight = Length(size.height(), Fixed);
-    intrinsicRatio = FloatSize(size);
+void StyleGeneratedImage::addClient(LayoutObject* layoutObject) {
+  m_imageGeneratorValue->addClient(layoutObject, IntSize());
 }
 
-void StyleGeneratedImage::addClient(LayoutObject* layoutObject)
-{
-    m_imageGeneratorValue->addClient(layoutObject, IntSize());
+void StyleGeneratedImage::removeClient(LayoutObject* layoutObject) {
+  m_imageGeneratorValue->removeClient(layoutObject);
 }
 
-void StyleGeneratedImage::removeClient(LayoutObject* layoutObject)
-{
-    m_imageGeneratorValue->removeClient(layoutObject);
+PassRefPtr<Image> StyleGeneratedImage::image(const LayoutObject& layoutObject,
+                                             const IntSize& size,
+                                             float zoom) const {
+  return m_imageGeneratorValue->image(layoutObject, size, zoom);
 }
 
-PassRefPtr<Image> StyleGeneratedImage::image(const LayoutObject* layoutObject, const IntSize& size, float) const
-{
-    return m_imageGeneratorValue->image(layoutObject, size);
+bool StyleGeneratedImage::knownToBeOpaque(
+    const LayoutObject& layoutObject) const {
+  return m_imageGeneratorValue->knownToBeOpaque(layoutObject);
 }
 
-bool StyleGeneratedImage::knownToBeOpaque(const LayoutObject* layoutObject) const
-{
-    return m_imageGeneratorValue->knownToBeOpaque(layoutObject);
+DEFINE_TRACE(StyleGeneratedImage) {
+  visitor->trace(m_imageGeneratorValue);
+  StyleImage::trace(visitor);
 }
 
-DEFINE_TRACE(StyleGeneratedImage)
-{
-    visitor->trace(m_imageGeneratorValue);
-    StyleImage::trace(visitor);
-}
-
-}
+}  // namespace blink

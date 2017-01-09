@@ -5,17 +5,13 @@
 #ifndef CHROME_BROWSER_ANDROID_BACKGROUND_SYNC_LAUNCHER_ANDROID_H_
 #define CHROME_BROWSER_ANDROID_BACKGROUND_SYNC_LAUNCHER_ANDROID_H_
 
+#include <stdint.h>
+
 #include <set>
 
 #include "base/android/jni_android.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-
-namespace content {
-
-class BackgroundSyncManager;
-
-}
 
 // The BackgroundSyncLauncherAndroid singleton owns the Java
 // BackgroundSyncLauncher object and is used to register interest in starting
@@ -28,7 +24,11 @@ class BackgroundSyncLauncherAndroid {
   static void LaunchBrowserIfStopped(bool launch_when_next_online,
                                      int64_t min_delay_ms);
 
-  static bool RegisterLauncher(JNIEnv* env);
+  static bool ShouldDisableBackgroundSync();
+
+  // TODO(iclelland): Remove this once the bots have their play services package
+  // updated before every test run. (https://crbug.com/514449)
+  static void SetPlayServicesVersionCheckDisabledForTests(bool disabled);
 
  private:
   friend struct base::DefaultLazyInstanceTraits<BackgroundSyncLauncherAndroid>;

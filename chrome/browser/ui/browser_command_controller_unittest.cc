@@ -5,6 +5,8 @@
 #include "chrome/browser/ui/browser_command_controller.h"
 
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/command_updater.h"
@@ -49,13 +51,13 @@ TEST_F(BrowserCommandControllerTest, IsReservedCommandOrKey) {
 
   // When there are modifier keys pressed, don't reserve.
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
-      IDC_RELOAD_IGNORING_CACHE, content::NativeWebKeyboardEvent(ui::KeyEvent(
-                                     ui::ET_KEY_PRESSED, ui::VKEY_F3,
-                                     ui::DomCode::F3, ui::EF_SHIFT_DOWN))));
+      IDC_RELOAD_BYPASSING_CACHE, content::NativeWebKeyboardEvent(ui::KeyEvent(
+                                      ui::ET_KEY_PRESSED, ui::VKEY_F3,
+                                      ui::DomCode::F3, ui::EF_SHIFT_DOWN))));
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
-      IDC_RELOAD_IGNORING_CACHE, content::NativeWebKeyboardEvent(ui::KeyEvent(
-                                     ui::ET_KEY_PRESSED, ui::VKEY_F3,
-                                     ui::DomCode::F3, ui::EF_CONTROL_DOWN))));
+      IDC_RELOAD_BYPASSING_CACHE, content::NativeWebKeyboardEvent(ui::KeyEvent(
+                                      ui::ET_KEY_PRESSED, ui::VKEY_F3,
+                                      ui::DomCode::F3, ui::EF_CONTROL_DOWN))));
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_FULLSCREEN, content::NativeWebKeyboardEvent(
                           ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_F4,
@@ -98,16 +100,16 @@ TEST_F(BrowserCommandControllerTest, IsReservedCommandOrKey) {
   // USE_AURA is #defined.
   EXPECT_TRUE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_NEW_WINDOW, content::NativeWebKeyboardEvent(ui::KeyEvent(
-                          ui::ET_KEY_PRESSED, ui::VKEY_N, ui::DomCode::KEY_N,
+                          ui::ET_KEY_PRESSED, ui::VKEY_N, ui::DomCode::US_N,
                           ui::EF_CONTROL_DOWN))));
   EXPECT_TRUE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_CLOSE_TAB, content::NativeWebKeyboardEvent(ui::KeyEvent(
-                         ui::ET_KEY_PRESSED, ui::VKEY_W, ui::DomCode::KEY_W,
+                         ui::ET_KEY_PRESSED, ui::VKEY_W, ui::DomCode::US_W,
                          ui::EF_CONTROL_DOWN))));
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_FIND, content::NativeWebKeyboardEvent(
                     ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_F,
-                                 ui::DomCode::KEY_F, ui::EF_CONTROL_DOWN))));
+                                 ui::DomCode::US_F, ui::EF_CONTROL_DOWN))));
 #endif  // USE_AURA
 }
 
@@ -136,16 +138,16 @@ TEST_F(BrowserCommandControllerTest, IsReservedCommandOrKeyIsApp) {
   // USE_AURA is #defined.
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_NEW_WINDOW, content::NativeWebKeyboardEvent(ui::KeyEvent(
-                          ui::ET_KEY_PRESSED, ui::VKEY_N, ui::DomCode::KEY_N,
+                          ui::ET_KEY_PRESSED, ui::VKEY_N, ui::DomCode::US_N,
                           ui::EF_CONTROL_DOWN))));
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_CLOSE_TAB, content::NativeWebKeyboardEvent(ui::KeyEvent(
-                         ui::ET_KEY_PRESSED, ui::VKEY_W, ui::DomCode::KEY_W,
+                         ui::ET_KEY_PRESSED, ui::VKEY_W, ui::DomCode::US_W,
                          ui::EF_CONTROL_DOWN))));
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_FIND, content::NativeWebKeyboardEvent(
                     ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_F,
-                                 ui::DomCode::KEY_F, ui::EF_CONTROL_DOWN))));
+                                 ui::DomCode::US_F, ui::EF_CONTROL_DOWN))));
 #endif  // USE_AURA
 }
 
@@ -225,12 +227,12 @@ TEST_F(BrowserCommandControllerTest, AvatarMenuAlwaysDisabledInIncognitoMode) {
 
   // Set up a profile with an off the record profile.
   TestingProfile::Builder normal_builder;
-  scoped_ptr<TestingProfile> original_profile = normal_builder.Build();
+  std::unique_ptr<TestingProfile> original_profile = normal_builder.Build();
 
   // Create a new browser based on the off the record profile.
   Browser::CreateParams profile_params(
-      original_profile->GetOffTheRecordProfile(), chrome::GetActiveDesktop());
-  scoped_ptr<Browser> otr_browser(
+      original_profile->GetOffTheRecordProfile());
+  std::unique_ptr<Browser> otr_browser(
       chrome::CreateBrowserWithTestWindowForParams(&profile_params));
 
   chrome::BrowserCommandController command_controller(otr_browser.get());
@@ -258,8 +260,7 @@ class FullscreenTestBrowserWindow : public TestBrowserWindow,
   bool ShouldHideUIForFullscreen() const override { return fullscreen_; }
   bool IsFullscreen() const override { return fullscreen_; }
   void EnterFullscreen(const GURL& url,
-                       ExclusiveAccessBubbleType type,
-                       bool with_toolbar) override {
+                       ExclusiveAccessBubbleType type) override {
     fullscreen_ = true;
   }
   void ExitFullscreen() override { fullscreen_ = false; }
@@ -274,7 +275,7 @@ class FullscreenTestBrowserWindow : public TestBrowserWindow,
   void UpdateExclusiveAccessExitBubbleContent(
       const GURL& url,
       ExclusiveAccessBubbleType bubble_type) override {}
-  bool IsFullscreenWithToolbar() const override { return IsFullscreen(); }
+  void OnExclusiveAccessUserInput() override {}
 
  private:
   bool fullscreen_;
@@ -397,15 +398,14 @@ TEST_F(BrowserCommandControllerFullscreenTest,
 
 TEST_F(BrowserCommandControllerTest, IncognitoModeOnSigninAllowedPrefChange) {
   // Set up a profile with an off the record profile.
-  scoped_ptr<TestingProfile> profile1 = TestingProfile::Builder().Build();
+  std::unique_ptr<TestingProfile> profile1 = TestingProfile::Builder().Build();
   Profile* profile2 = profile1->GetOffTheRecordProfile();
 
   EXPECT_EQ(profile2->GetOriginalProfile(), profile1.get());
 
   // Create a new browser based on the off the record profile.
-  Browser::CreateParams profile_params(profile1->GetOffTheRecordProfile(),
-                                       chrome::GetActiveDesktop());
-  scoped_ptr<Browser> browser2(
+  Browser::CreateParams profile_params(profile1->GetOffTheRecordProfile());
+  std::unique_ptr<Browser> browser2(
       chrome::CreateBrowserWithTestWindowForParams(&profile_params));
 
   chrome::BrowserCommandController command_controller(browser2.get());

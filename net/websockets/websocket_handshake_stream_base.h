@@ -9,12 +9,13 @@
 // Since net/http can be built without linking net/websockets code,
 // this file must not introduce any link-time dependencies on websockets.
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
+#include "net/base/net_export.h"
 #include "net/http/http_stream.h"
 #include "net/url_request/websocket_handshake_userdata_key.h"
 #include "net/websockets/websocket_stream.h"
@@ -47,7 +48,7 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
     // has been transferred. This can be called more than once in the case that
     // HTTP authentication is needed.
     virtual WebSocketHandshakeStreamBase* CreateBasicStream(
-        scoped_ptr<ClientSocketHandle> connection,
+        std::unique_ptr<ClientSocketHandle> connection,
         bool using_proxy) = 0;
 
     // Create a WebSocketSpdyHandshakeStream (unimplemented as of October 2013)
@@ -64,7 +65,7 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
   // (of the appropriate type) from the WebSocketHandshakeStreamBase object.
   // The WebSocketHandshakeStreamBase object is unusable after Upgrade() has
   // been called.
-  virtual scoped_ptr<WebSocketStream> Upgrade() = 0;
+  virtual std::unique_ptr<WebSocketStream> Upgrade() = 0;
 
  protected:
   // As with the destructor, this must be inline.

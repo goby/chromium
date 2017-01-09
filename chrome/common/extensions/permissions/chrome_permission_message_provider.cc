@@ -9,7 +9,7 @@
 #include "base/metrics/field_trial.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/permissions/chrome_permission_message_rules.h"
 #include "chrome/grit/generated_resources.h"
 #include "extensions/common/extensions_client.h"
@@ -17,8 +17,7 @@
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
-#include "grit/extensions_strings.h"
-#include "ui/base/l10n/l10n_util.h"
+#include "extensions/strings/grit/extensions_strings.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -167,9 +166,9 @@ void ChromePermissionMessageProvider::AddHostPermissions(
 
     std::set<std::string> hosts =
         permission_message_util::GetDistinctHosts(regular_hosts, true, true);
-    if (!hosts.empty()) {
-      permission_message_util::AddHostPermissions(
-          permission_ids, hosts, permission_message_util::kReadWrite);
+    for (const auto& host : hosts) {
+      permission_ids->insert(APIPermission::kHostReadWrite,
+                             base::UTF8ToUTF16(host));
     }
   }
 }
@@ -187,8 +186,8 @@ bool ChromePermissionMessageProvider::IsAPIOrManifestPrivilegeIncrease(
   // Ugly hack: Before M46 beta, we didn't store the parameter for settings
   // override permissions in prefs (which is where |old_permissions| is coming
   // from). To avoid a spurious permission increase warning, drop the parameter.
-  // See crbug.com/533086.
-  // TODO(treib,devlin): Remove this for M48, when hopefully all users will have
+  // See crbug.com/533086 and crbug.com/619759.
+  // TODO(treib,devlin): Remove this for M56, when hopefully all users will have
   // updated prefs.
   const APIPermission::ID kSettingsOverrideIDs[] = {
       APIPermission::kHomepage, APIPermission::kSearchProvider,

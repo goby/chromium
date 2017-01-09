@@ -6,10 +6,11 @@
 
 namespace base {
 
-scoped_ptr<NativeStackSampler> NativeStackSampler::Create(
+std::unique_ptr<NativeStackSampler> NativeStackSampler::Create(
     PlatformThreadId thread_id,
+    AnnotateCallback annotator,
     NativeStackSamplerTestDelegate* test_delegate) {
-  return scoped_ptr<NativeStackSampler>();
+  return std::unique_ptr<NativeStackSampler>();
 }
 
 }  // namespace base

@@ -4,7 +4,8 @@
 
 #include "chrome/browser/rlz/chrome_rlz_tracker_delegate.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "chrome/browser/chrome_notification_types.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
@@ -28,16 +29,15 @@ class ChromeRLZTrackerDelegateTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<ChromeRLZTrackerDelegate> delegate_;
+  std::unique_ptr<ChromeRLZTrackerDelegate> delegate_;
 };
 
 TEST_F(ChromeRLZTrackerDelegateTest, ObserveHandlesBadArgs) {
-  scoped_ptr<content::LoadCommittedDetails> details(
+  std::unique_ptr<content::LoadCommittedDetails> details(
       new content::LoadCommittedDetails());
-  scoped_ptr<content::NavigationEntry> entry(
+  std::unique_ptr<content::NavigationEntry> entry(
       content::NavigationEntry::Create());
   details->entry = entry.get();
-  details->entry->SetPageID(0);
   details->entry->SetTransitionType(ui::PAGE_TRANSITION_LINK);
   SendNotification(content::NOTIFICATION_NAV_ENTRY_COMMITTED,
                    content::NotificationService::AllSources(),

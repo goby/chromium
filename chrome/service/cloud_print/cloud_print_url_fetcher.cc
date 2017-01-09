@@ -4,7 +4,9 @@
 
 #include "chrome/service/cloud_print/cloud_print_url_fetcher.h"
 
-#include "base/metrics/histogram.h"
+#include <stddef.h>
+
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/common/cloud_print/cloud_print_constants.h"
@@ -13,6 +15,7 @@
 #include "chrome/service/cloud_print/cloud_print_token_store.h"
 #include "chrome/service/net/service_url_request_context_getter.h"
 #include "chrome/service/service_process.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
@@ -79,7 +82,7 @@ void ReportUploadSize(CloudPrintURLFetcher::RequestType type, size_t size) {
   }
 }
 
-CloudPrintURLFetcherFactory* g_factory = NULL;
+CloudPrintURLFetcherFactory* g_test_factory = nullptr;
 
 }  // namespace
 
@@ -88,19 +91,14 @@ CloudPrintURLFetcherFactory::~CloudPrintURLFetcherFactory() {}
 
 // static
 CloudPrintURLFetcher* CloudPrintURLFetcher::Create() {
-  CloudPrintURLFetcherFactory* factory = CloudPrintURLFetcher::factory();
-  return factory ? factory->CreateCloudPrintURLFetcher() :
-      new CloudPrintURLFetcher;
+  return g_test_factory ? g_test_factory->CreateCloudPrintURLFetcher()
+                        : new CloudPrintURLFetcher;
 }
 
 // static
-CloudPrintURLFetcherFactory* CloudPrintURLFetcher::factory() {
-  return g_factory;
-}
-
-// static
-void CloudPrintURLFetcher::set_factory(CloudPrintURLFetcherFactory* factory) {
-  g_factory = factory;
+void CloudPrintURLFetcher::set_test_factory(
+    CloudPrintURLFetcherFactory* factory) {
+  g_test_factory = factory;
 }
 
 CloudPrintURLFetcher::ResponseAction
@@ -109,7 +107,6 @@ CloudPrintURLFetcher::Delegate::HandleRawResponse(
     const GURL& url,
     const net::URLRequestStatus& status,
     int response_code,
-    const net::ResponseCookies& cookies,
     const std::string& data) {
   return CONTINUE_PROCESSING;
 }
@@ -126,7 +123,7 @@ CloudPrintURLFetcher::ResponseAction
 CloudPrintURLFetcher::Delegate::HandleJSONData(
     const net::URLFetcher* source,
     const GURL& url,
-    base::DictionaryValue* json_data,
+    const base::DictionaryValue* json_data,
     bool succeeded) {
   return CONTINUE_PROCESSING;
 }
@@ -178,7 +175,6 @@ void CloudPrintURLFetcher::OnURLFetchComplete(
       source->GetURL(),
       source->GetStatus(),
       source->GetResponseCode(),
-      source->GetCookies(),
       data);
 
   // If we get auth error, notify delegate and check if it wants to proceed.
@@ -200,7 +196,7 @@ void CloudPrintURLFetcher::OnURLFetchComplete(
       // response, we will retry (to handle the case where we got redirected
       // to a non-cloudprint-server URL eg. for authentication).
       bool succeeded = false;
-      scoped_ptr<base::DictionaryValue> response_dict =
+      std::unique_ptr<base::DictionaryValue> response_dict =
           ParseResponseJSON(data, &succeeded);
 
       if (response_dict) {
@@ -228,8 +224,8 @@ void CloudPrintURLFetcher::OnURLFetchComplete(
       num_retries_ = source->GetMaxRetriesOn5xx();
 
     ++num_retries_;
-    if ((-1 != source->GetMaxRetriesOn5xx()) &&
-        (num_retries_ > source->GetMaxRetriesOn5xx())) {
+    if (source->GetMaxRetriesOn5xx() != -1 &&
+        num_retries_ > source->GetMaxRetriesOn5xx()) {
       // Retry limit reached. Give up.
       delegate_->OnRequestGiveUp();
       action = STOP_PROCESSING;
@@ -264,6 +260,8 @@ void CloudPrintURLFetcher::StartRequestHelper(
   // Persist the additional headers in case we need to retry the request.
   additional_headers_ = additional_headers;
   request_ = net::URLFetcher::Create(0, url, request_type, this);
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      request_.get(), data_use_measurement::DataUseUserData::CLOUD_PRINT);
   request_->SetRequestContext(GetRequestContextGetter());
   // Since we implement our own retry logic, disable the retry in URLFetcher.
   request_->SetAutomaticallyRetryOn5xx(false);

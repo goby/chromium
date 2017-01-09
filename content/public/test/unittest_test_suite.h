@@ -5,8 +5,16 @@
 #ifndef CONTENT_PUBLIC_TEST_UNITTEST_TEST_SUITE_H_
 #define CONTENT_PUBLIC_TEST_UNITTEST_TEST_SUITE_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "build/build_config.h"
+
+#if defined(USE_AURA)
+namespace aura {
+class Env;
+}
+#endif
 
 namespace base {
 class TestSuite;
@@ -29,10 +37,11 @@ class UnitTestTestSuite {
   int Run();
 
  private:
-  scoped_ptr<base::TestSuite> test_suite_;
+  std::unique_ptr<base::TestSuite> test_suite_;
 
-#if !defined(OS_IOS)
-  scoped_ptr<TestBlinkWebUnitTestSupport> blink_test_support_;
+  std::unique_ptr<TestBlinkWebUnitTestSupport> blink_test_support_;
+#if defined(USE_AURA)
+  std::unique_ptr<aura::Env> env_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(UnitTestTestSuite);

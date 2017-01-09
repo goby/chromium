@@ -4,21 +4,40 @@
 
 #include "content/browser/devtools/protocol/emulation_handler.h"
 
+#include <utility>
+
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
-#include "content/browser/geolocation/geolocation_service_context.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/url_constants.h"
+#include "device/geolocation/geolocation_service_context.h"
+#include "device/geolocation/geoposition.h"
 
 namespace content {
 namespace devtools {
 namespace emulation {
 
 using Response = DevToolsProtocolClient::Response;
+using GeolocationServiceContext = device::GeolocationServiceContext;
+using Geoposition = device::Geoposition;
 
 namespace {
+
+blink::WebScreenOrientationType WebScreenOrientationTypeFromString(
+    const std::string& type) {
+  if (type == screen_orientation::kTypePortraitPrimary)
+    return blink::WebScreenOrientationPortraitPrimary;
+  if (type == screen_orientation::kTypePortraitSecondary)
+    return blink::WebScreenOrientationPortraitSecondary;
+  if (type == screen_orientation::kTypeLandscapePrimary)
+    return blink::WebScreenOrientationLandscapePrimary;
+  if (type == screen_orientation::kTypeLandscapeSecondary)
+    return blink::WebScreenOrientationLandscapeSecondary;
+  return blink::WebScreenOrientationUndefined;
+}
 
 ui::GestureProviderConfigType TouchEmulationConfigurationToType(
     const std::string& protocol_value) {
@@ -69,7 +88,7 @@ Response EmulationHandler::SetGeolocationOverride(
 
   GeolocationServiceContext* geolocation_context =
       GetWebContents()->GetGeolocationServiceContext();
-  scoped_ptr<Geoposition> geoposition(new Geoposition());
+  std::unique_ptr<Geoposition> geoposition(new Geoposition());
   if (latitude && longitude && accuracy) {
     geoposition->latitude = *latitude;
     geoposition->longitude = *longitude;
@@ -81,7 +100,7 @@ Response EmulationHandler::SetGeolocationOverride(
   } else {
     geoposition->error_code = Geoposition::ERROR_CODE_POSITION_UNAVAILABLE;
   }
-  geolocation_context->SetOverride(geoposition.Pass());
+  geolocation_context->SetOverride(std::move(geoposition));
   return Response::OK();
 }
 
@@ -129,9 +148,11 @@ Response EmulationHandler::SetDeviceMetricsOverride(
     const int* screen_width,
     const int* screen_height,
     const int* position_x,
-    const int* position_y) {
+    const int* position_y,
+    const std::unique_ptr<base::DictionaryValue>& screen_orientation) {
   const static int max_size = 10000000;
   const static double max_scale = 10;
+  const static int max_orientation_angle = 360;
 
   if (!host_)
     return Response::InternalError("Could not connect to view");
@@ -165,6 +186,30 @@ Response EmulationHandler::SetDeviceMetricsOverride(
         base::DoubleToString(max_scale));
   }
 
+  blink::WebScreenOrientationType orientationType =
+      blink::WebScreenOrientationUndefined;
+  int orientationAngle = 0;
+  if (screen_orientation) {
+    std::string orientationTypeString;
+    if (!screen_orientation->GetString("type", &orientationTypeString)) {
+      return Response::InvalidParams(
+          "Screen orientation type must be a string");
+    }
+    orientationType = WebScreenOrientationTypeFromString(orientationTypeString);
+    if (orientationType == blink::WebScreenOrientationUndefined)
+      return Response::InvalidParams("Invalid screen orientation type value");
+
+    if (!screen_orientation->GetInteger("angle", &orientationAngle)) {
+      return Response::InvalidParams(
+          "Screen orientation angle must be a number");
+    }
+    if (orientationAngle < 0 || orientationAngle >= max_orientation_angle) {
+      return Response::InvalidParams(
+          "Screen orientation angle must be non-negative, less than " +
+          base::IntToString(max_orientation_angle));
+    }
+  }
+
   blink::WebDeviceEmulationParams params;
   params.screenPosition = mobile ? blink::WebDeviceEmulationParams::Mobile :
       blink::WebDeviceEmulationParams::Desktop;
@@ -176,9 +221,8 @@ Response EmulationHandler::SetDeviceMetricsOverride(
   params.viewSize = blink::WebSize(width, height);
   params.fitToView = fit_window;
   params.scale = optional_scale ? *optional_scale : 1;
-  params.offset = blink::WebFloatPoint(
-      optional_offset_x ? *optional_offset_x : 0.f,
-      optional_offset_y ? *optional_offset_y : 0.f);
+  params.screenOrientationType = orientationType;
+  params.screenOrientationAngle = orientationAngle;
 
   if (device_emulation_enabled_ && params == device_emulation_params_)
     return Response::OK();
@@ -196,6 +240,54 @@ Response EmulationHandler::ClearDeviceMetricsOverride() {
   device_emulation_enabled_ = false;
   UpdateDeviceEmulationState();
   return Response::OK();
+}
+
+Response EmulationHandler::SetVisibleSize(int width, int height) {
+  if (width < 0 || height < 0)
+    return Response::InvalidParams("Width and height must be non-negative");
+
+  // Set size of frame by resizing RWHV if available.
+  RenderWidgetHostImpl* widget_host =
+      host_ ? host_->GetRenderWidgetHost() : nullptr;
+  if (!widget_host)
+    return Response::ServerError("Target does not support setVisibleSize");
+
+  widget_host->GetView()->SetSize(gfx::Size(width, height));
+  return Response::OK();
+}
+
+Response EmulationHandler::ForceViewport(double x, double y, double scale) {
+  return Response::FallThrough();
+}
+
+Response EmulationHandler::ResetViewport() {
+  return Response::FallThrough();
+}
+
+Response EmulationHandler::ResetPageScaleFactor() {
+  return Response::FallThrough();
+}
+
+Response EmulationHandler::SetPageScaleFactor(double page_scale_factor) {
+  return Response::FallThrough();
+}
+
+Response EmulationHandler::SetScriptExecutionDisabled(bool disabled) {
+  return Response::FallThrough();
+}
+
+Response EmulationHandler::SetEmulatedMedia(const std::string& media) {
+  return Response::FallThrough();
+}
+
+Response EmulationHandler::SetCPUThrottlingRate(double rate) {
+  return Response::FallThrough();
+}
+
+Response EmulationHandler::SetVirtualTimePolicy(
+    const std::string& policy,
+    const int* budget) {
+  return Response::FallThrough();
 }
 
 WebContentsImpl* EmulationHandler::GetWebContents() {

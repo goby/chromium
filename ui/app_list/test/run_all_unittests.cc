@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_discardable_memory_allocator.h"
 #include "base/test/test_suite.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
@@ -23,17 +25,24 @@
 
 namespace {
 
+// Use the pattern established in content_switches.h, but don't add a content
+// dependency -- app list shouldn't have one.
+const char kTestType[] = "test-type";
+
 class AppListTestSuite : public base::TestSuite {
  public:
   AppListTestSuite(int argc, char** argv) : base::TestSuite(argc, argv) {}
 
  protected:
   void Initialize() override {
+    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+    command_line->AppendSwitchASCII(kTestType, "applist");
+
 #if defined(OS_MACOSX)
     mock_cr_app::RegisterMockCrApp();
 #endif
 #if defined(TOOLKIT_VIEWS)
-    gfx::GLSurfaceTestSupport::InitializeOneOff();
+    gl::GLSurfaceTestSupport::InitializeOneOff();
 #endif
     base::TestSuite::Initialize();
     ui::RegisterPathProvider();

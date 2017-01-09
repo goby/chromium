@@ -14,12 +14,13 @@ import android.widget.PopupMenu;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.test.partnercustomizations.TestPartnerBrowserCustomizationsProvider;
-import org.chromium.chrome.test.util.TestHttpServerClient;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -29,12 +30,6 @@ import java.util.concurrent.ExecutionException;
  */
 public class PartnerDisableIncognitoModeIntegrationTest extends
         BasePartnerBrowserCustomizationIntegrationTest {
-
-    private static final String TEST_URLS[] = {
-            TestHttpServerClient.getUrl("chrome/test/data/android/about.html"),
-            TestHttpServerClient.getUrl("chrome/test/data/android/ok.txt"),
-            TestHttpServerClient.getUrl("chrome/test/data/android/test.html")
-    };
 
     @Override
     public void startMainActivity() throws InterruptedException {
@@ -75,7 +70,7 @@ public class PartnerDisableIncognitoModeIntegrationTest extends
 
     private void waitForParentalControlsEnabledState(final boolean parentalControlsEnabled)
             throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 // areParentalControlsEnabled is updated on a background thread, so we
@@ -119,6 +114,7 @@ public class PartnerDisableIncognitoModeIntegrationTest extends
 
     @MediumTest
     @Feature({"DisableIncognitoMode"})
+    @RetryOnFailure
     public void testIncognitoEnabledIfNoParentalControls() throws InterruptedException {
         setParentalControlsEnabled(false);
         startMainActivityOnBlankPage();
@@ -144,24 +140,37 @@ public class PartnerDisableIncognitoModeIntegrationTest extends
     @MediumTest
     @Feature({"DisableIncognitoMode"})
     public void testEnabledParentalControlsClosesIncognitoTabs() throws InterruptedException {
-        setParentalControlsEnabled(false);
-        startMainActivityOnBlankPage();
-        waitForParentalControlsEnabledState(false);
+        EmbeddedTestServer testServer = EmbeddedTestServer.createAndStartServer(
+                getInstrumentation().getContext());
 
-        loadUrlInNewTab(TEST_URLS[0], true);
-        loadUrlInNewTab(TEST_URLS[1], true);
-        loadUrlInNewTab(TEST_URLS[2], true);
-        loadUrlInNewTab(TEST_URLS[0], false);
+        try {
+            String[] testUrls = {
+                testServer.getURL("/chrome/test/data/android/about.html"),
+                testServer.getURL("/chrome/test/data/android/ok.txt"),
+                testServer.getURL("/chrome/test/data/android/test.html")
+            };
 
-        setParentalControlsEnabled(true);
-        toggleActivityForegroundState();
-        waitForParentalControlsEnabledState(true);
+            setParentalControlsEnabled(false);
+            startMainActivityOnBlankPage();
+            waitForParentalControlsEnabledState(false);
 
-        CriteriaHelper.pollForCriteria(new Criteria("Incognito tabs did not close as expected") {
-            @Override
-            public boolean isSatisfied() {
-                return incognitoTabsCount() == 0;
-            }
-        });
+            loadUrlInNewTab(testUrls[0], true);
+            loadUrlInNewTab(testUrls[1], true);
+            loadUrlInNewTab(testUrls[2], true);
+            loadUrlInNewTab(testUrls[0], false);
+
+            setParentalControlsEnabled(true);
+            toggleActivityForegroundState();
+            waitForParentalControlsEnabledState(true);
+
+            CriteriaHelper.pollInstrumentationThread(Criteria.equals(0, new Callable<Integer>() {
+                @Override
+                public Integer call() {
+                    return incognitoTabsCount();
+                }
+            }));
+        } finally {
+            testServer.stopAndDestroyServer();
+        }
     }
 }

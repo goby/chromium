@@ -4,8 +4,12 @@
 
 #include "content/browser/net/network_errors_listing_ui.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/values.h"
 #include "content/grit/content_resources.h"
 #include "content/public/browser/web_contents.h"
@@ -23,8 +27,8 @@ namespace content {
 
 namespace {
 
-scoped_ptr<base::ListValue> GetNetworkErrorData() {
-  scoped_ptr<base::DictionaryValue> error_codes = net::GetNetConstants();
+std::unique_ptr<base::ListValue> GetNetworkErrorData() {
+  std::unique_ptr<base::DictionaryValue> error_codes = net::GetNetConstants();
   const base::DictionaryValue* net_error_codes_dict = nullptr;
 
   for (base::DictionaryValue::Iterator itr(*error_codes); !itr.IsAtEnd();
@@ -35,7 +39,7 @@ scoped_ptr<base::ListValue> GetNetworkErrorData() {
     }
   }
 
-  scoped_ptr<base::ListValue> error_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> error_list(new base::ListValue());
 
   for (base::DictionaryValue::Iterator itr(*net_error_codes_dict);
             !itr.IsAtEnd(); itr.Advance()) {
@@ -44,10 +48,10 @@ scoped_ptr<base::ListValue> GetNetworkErrorData() {
     // Exclude the aborted and pending codes as these don't return a page.
     if (error_code != net::Error::ERR_IO_PENDING &&
         error_code != net::Error::ERR_ABORTED) {
-      base::DictionaryValue* error = new base::DictionaryValue();
+      std::unique_ptr<base::DictionaryValue> error(new base::DictionaryValue());
       error->SetInteger(kErrorIdField, error_code);
       error->SetString(kErrorCodeField, itr.key());
-      error_list->Append(error);
+      error_list->Append(std::move(error));
     }
   }
   return error_list;

@@ -7,7 +7,8 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/blockfile/backend_impl.h"
 #include "net/disk_cache/blockfile/file.h"
@@ -58,9 +59,10 @@ bool DeleteCache(const base::FilePath& path) {
   return true;
 }
 
-bool CheckCacheIntegrity(const base::FilePath& path, bool new_eviction,
-                         uint32 mask) {
-  scoped_ptr<disk_cache::BackendImpl> cache(new disk_cache::BackendImpl(
+bool CheckCacheIntegrity(const base::FilePath& path,
+                         bool new_eviction,
+                         uint32_t mask) {
+  std::unique_ptr<disk_cache::BackendImpl> cache(new disk_cache::BackendImpl(
       path, mask, base::ThreadTaskRunnerHandle::Get(), NULL));
   if (!cache.get())
     return false;
@@ -95,7 +97,7 @@ bool MessageLoopHelper::WaitUntilCacheIoFinished(int num_callbacks) {
   if (!timer_.IsRunning())
     timer_.Start(FROM_HERE, TimeDelta::FromMilliseconds(50), this,
                  &MessageLoopHelper::TimerExpired);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   return completed_;
 }
 

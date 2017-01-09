@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/bind.h"
+#include "base/run_loop.h"
 #include "base/values.h"
 #include "chromeos/dbus/shill_client_unittest_base.h"
 #include "chromeos/dbus/shill_ipconfig_client.h"
@@ -36,13 +39,13 @@ class ShillIPConfigClientTest : public ShillClientUnittestBase {
     client_.reset(ShillIPConfigClient::Create());
     client_->Init(mock_bus_.get());
     // Run the message loop to run the signal connection result callback.
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void TearDown() override { ShillClientUnittestBase::TearDown(); }
 
  protected:
-  scoped_ptr<ShillIPConfigClient> client_;
+  std::unique_ptr<ShillIPConfigClient> client_;
 };
 
 TEST_F(ShillIPConfigClientTest, PropertyChanged) {
@@ -80,10 +83,10 @@ TEST_F(ShillIPConfigClientTest, PropertyChanged) {
 
 TEST_F(ShillIPConfigClientTest, GetProperties) {
   const char kAddress[] = "address";
-  const int32 kMtu = 68;
+  const int32_t kMtu = 68;
 
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
   dbus::MessageWriter array_writer(NULL);
   writer.OpenArray("{sv}", &array_writer);
@@ -115,14 +118,14 @@ TEST_F(ShillIPConfigClientTest, GetProperties) {
   client_->GetProperties(dbus::ObjectPath(kExampleIPConfigPath),
                          base::Bind(&ExpectDictionaryValueResult, &value));
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillIPConfigClientTest, SetProperty) {
   const char kAddress[] = "address";
 
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
 
   // Set expectations.
   base::StringValue value(kAddress);
@@ -137,12 +140,12 @@ TEST_F(ShillIPConfigClientTest, SetProperty) {
                        value,
                        base::Bind(&ExpectNoResultValue));
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillIPConfigClientTest, ClearProperty) {
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
 
   // Set expectations.
   PrepareForMethodCall(shill::kClearPropertyFunction,
@@ -154,12 +157,12 @@ TEST_F(ShillIPConfigClientTest, ClearProperty) {
                        shill::kAddressProperty,
                        base::Bind(&ExpectNoResultValue));
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillIPConfigClientTest, Remove) {
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
 
   // Set expectations.
   PrepareForMethodCall(shill::kRemoveConfigFunction,
@@ -170,7 +173,7 @@ TEST_F(ShillIPConfigClientTest, Remove) {
                   base::Bind(&ExpectNoResultValue));
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace chromeos

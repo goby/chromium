@@ -3,7 +3,12 @@
 // found in the LICENSE file.
 
 #include "gpu/command_buffer/service/framebuffer_manager.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/framebuffer_completeness_cache.h"
@@ -53,8 +58,14 @@ class RenderbufferAttachment
   void SetCleared(RenderbufferManager* renderbuffer_manager,
                   TextureManager* /* texture_manager */,
                   bool cleared) override {
+    DCHECK(renderbuffer_manager);
     renderbuffer_manager->SetCleared(renderbuffer_.get(), cleared);
   }
+
+  bool IsPartiallyCleared() const override { return false; }
+
+  bool IsTextureAttachment() const override { return false; }
+  bool IsRenderbufferAttachment() const override { return true; }
 
   bool IsTexture(TextureRef* /* texture */) const override { return false; }
 
@@ -62,17 +73,31 @@ class RenderbufferAttachment
     return renderbuffer_.get() == renderbuffer;
   }
 
-  bool CanRenderTo() const override { return true; }
+  bool IsSameAttachment(const Attachment* attachment) const override {
+    if (attachment->IsRenderbufferAttachment()) {
+      const RenderbufferAttachment* other =
+          reinterpret_cast<const RenderbufferAttachment*>(attachment);
+      return IsRenderbuffer(other->renderbuffer());
+    }
+    return false;
+  }
+
+  bool Is3D() const override { return false; }
+
+  bool CanRenderTo(const FeatureInfo*) const override { return true; }
 
   void DetachFromFramebuffer(Framebuffer* framebuffer) const override {
     // Nothing to do for renderbuffers.
   }
 
+  bool IsLayerValid() const override { return true; }
+
   bool ValidForAttachmentType(GLenum attachment_type,
-                              uint32 max_color_attachments) override {
-    uint32 need = GLES2Util::GetChannelsNeededForAttachmentType(
+                              uint32_t max_color_attachments) override {
+    uint32_t need = GLES2Util::GetChannelsNeededForAttachmentType(
         attachment_type, max_color_attachments);
-    uint32 have = GLES2Util::GetChannelsForFormat(internal_format());
+    DCHECK_NE(0u, need);
+    uint32_t have = GLES2Util::GetChannelsForFormat(internal_format());
     return (need & have) != 0;
   }
 
@@ -91,9 +116,12 @@ class RenderbufferAttachment
   }
 
   bool FormsFeedbackLoop(TextureRef* /* texture */,
-                         GLint /*level */) const override {
+                         GLint /* level */,
+                         GLint /* layer */) const override {
     return false;
   }
+
+  bool EmulatingRGB() const override { return false; }
 
  protected:
   ~RenderbufferAttachment() override {}
@@ -153,6 +181,10 @@ class TextureAttachment
 
   GLint layer() const { return layer_; }
 
+  GLenum target() const { return target_; }
+
+  GLint level() const { return level_; }
+
   GLuint object_name() const override { return texture_ref_->client_id(); }
 
   bool cleared() const override {
@@ -162,41 +194,74 @@ class TextureAttachment
   void SetCleared(RenderbufferManager* /* renderbuffer_manager */,
                   TextureManager* texture_manager,
                   bool cleared) override {
+    DCHECK(texture_manager);
     texture_manager->SetLevelCleared(
         texture_ref_.get(), target_, level_, cleared);
   }
 
+  bool IsPartiallyCleared() const override {
+    return texture_ref_->texture()->IsLevelPartiallyCleared(target_, level_);
+  }
+
+  bool IsTextureAttachment() const override { return true; }
+  bool IsRenderbufferAttachment() const override { return false; }
+
   bool IsTexture(TextureRef* texture) const override {
     return texture == texture_ref_.get();
+  }
+
+  bool IsSameAttachment(const Attachment* attachment) const override {
+    if (attachment->IsTextureAttachment()) {
+      const TextureAttachment* other =
+          reinterpret_cast<const TextureAttachment*>(attachment);
+      return IsTexture(other->texture()) &&
+          layer_ == other->layer() &&
+          target_ == other->target() &&
+          level_ == other->level();
+    }
+    return false;
   }
 
   bool IsRenderbuffer(Renderbuffer* /* renderbuffer */) const override {
     return false;
   }
 
+  bool Is3D() const override {
+    return (target_ == GL_TEXTURE_3D || target_ == GL_TEXTURE_2D_ARRAY);
+  }
+
   TextureRef* texture() const {
     return texture_ref_.get();
   }
 
-  bool CanRenderTo() const override {
-    return texture_ref_->texture()->CanRenderTo();
+  bool CanRenderTo(const FeatureInfo* feature_info) const override {
+    return texture_ref_->texture()->CanRenderTo(feature_info, level_);
   }
 
   void DetachFromFramebuffer(Framebuffer* framebuffer) const override {
     texture_ref_->texture()->DetachFromFramebuffer();
   }
 
+  bool IsLayerValid() const override {
+    Texture* texture = texture_ref_->texture();
+    DCHECK(texture);
+    GLsizei width, height, depth;
+    return (texture->GetLevelSize(target_, level_, &width, &height, &depth) &&
+            layer_ < depth);
+  }
+
   bool ValidForAttachmentType(GLenum attachment_type,
-                              uint32 max_color_attachments) override {
+                              uint32_t max_color_attachments) override {
     GLenum type = 0;
     GLenum internal_format = 0;
     if (!texture_ref_->texture()->GetLevelType(
         target_, level_, &type, &internal_format)) {
       return false;
     }
-    uint32 need = GLES2Util::GetChannelsNeededForAttachmentType(
+    uint32_t need = GLES2Util::GetChannelsNeededForAttachmentType(
         attachment_type, max_color_attachments);
-    uint32 have = GLES2Util::GetChannelsForFormat(internal_format);
+    DCHECK_NE(0u, need);
+    uint32_t have = GLES2Util::GetChannelsForFormat(internal_format);
 
     // Workaround for NVIDIA drivers that incorrectly expose these formats as
     // renderable:
@@ -218,8 +283,14 @@ class TextureAttachment
         texture_ref_.get(), target_, level_, signature);
   }
 
-  bool FormsFeedbackLoop(TextureRef* texture, GLint level) const override {
-    return texture == texture_ref_.get() && level == level_;
+  bool FormsFeedbackLoop(TextureRef* texture,
+                         GLint level, GLint layer) const override {
+    return texture == texture_ref_.get() &&
+        level == level_ && layer == layer_;
+  }
+
+  bool EmulatingRGB() const override {
+    return texture_ref_->texture()->EmulatingRGB();
   }
 
  protected:
@@ -236,9 +307,8 @@ class TextureAttachment
 };
 
 FramebufferManager::FramebufferManager(
-    uint32 max_draw_buffers,
-    uint32 max_color_attachments,
-    ContextType context_type,
+    uint32_t max_draw_buffers,
+    uint32_t max_color_attachments,
     const scoped_refptr<FramebufferCompletenessCache>&
         framebuffer_combo_complete_cache)
     : framebuffer_state_change_count_(1),
@@ -246,7 +316,6 @@ FramebufferManager::FramebufferManager(
       have_context_(true),
       max_draw_buffers_(max_draw_buffers),
       max_color_attachments_(max_color_attachments),
-      context_type_(context_type),
       framebuffer_combo_complete_cache_(framebuffer_combo_complete_cache) {
   DCHECK_GT(max_draw_buffers_, 0u);
   DCHECK_GT(max_color_attachments_, 0u);
@@ -301,13 +370,20 @@ Framebuffer::Framebuffer(
       service_id_(service_id),
       has_been_bound_(false),
       framebuffer_complete_state_count_id_(0),
+      draw_buffer_type_mask_(0u),
+      draw_buffer_bound_mask_(0u),
+      adjusted_draw_buffer_bound_mask_(0u),
       read_buffer_(GL_COLOR_ATTACHMENT0) {
   manager->StartTracking(this);
   DCHECK_GT(manager->max_draw_buffers_, 0u);
   draw_buffers_.reset(new GLenum[manager->max_draw_buffers_]);
+  adjusted_draw_buffers_.reset(new GLenum[manager->max_draw_buffers_]);
   draw_buffers_[0] = GL_COLOR_ATTACHMENT0;
-  for (uint32 i = 1; i < manager->max_draw_buffers_; ++i)
-    draw_buffers_[i] = GL_NONE;
+  adjusted_draw_buffers_[0] = GL_COLOR_ATTACHMENT0;
+  for (uint32_t ii = 1; ii < manager->max_draw_buffers_; ++ii) {
+    draw_buffers_[ii] = GL_NONE;
+    adjusted_draw_buffers_[ii] = GL_NONE;
+  }
 }
 
 Framebuffer::~Framebuffer() {
@@ -322,12 +398,22 @@ Framebuffer::~Framebuffer() {
 }
 
 bool Framebuffer::HasUnclearedAttachment(
-    GLenum attachment) const {
-  AttachmentMap::const_iterator it =
-      attachments_.find(attachment);
-  if (it != attachments_.end()) {
-    const Attachment* attachment = it->second.get();
-    return !attachment->cleared();
+    GLenum attachment_type) const {
+  const Attachment* attachment = GetAttachment(attachment_type);
+  return attachment && !attachment->cleared();
+}
+
+bool Framebuffer::HasDepthStencilFormatAttachment() const {
+  const Attachment* depth_attachment = GetAttachment(GL_DEPTH_ATTACHMENT);
+  const Attachment* stencil_attachment = GetAttachment(GL_STENCIL_ATTACHMENT);
+  if (depth_attachment && stencil_attachment) {
+    GLenum depth_format = depth_attachment->internal_format();
+    depth_format = TextureManager::ExtractFormatFromStorageFormat(depth_format);
+    GLenum stencil_format = stencil_attachment->internal_format();
+    stencil_format = TextureManager::ExtractFormatFromStorageFormat(
+        stencil_format);
+    return depth_format == GL_DEPTH_STENCIL &&
+           stencil_format == GL_DEPTH_STENCIL;
   }
   return false;
 }
@@ -345,68 +431,150 @@ bool Framebuffer::HasUnclearedColorAttachments() const {
   return false;
 }
 
-void Framebuffer::ChangeDrawBuffersHelper(bool recover) const {
-  scoped_ptr<GLenum[]> buffers(new GLenum[manager_->max_draw_buffers_]);
-  for (uint32 i = 0; i < manager_->max_draw_buffers_; ++i)
-    buffers[i] = GL_NONE;
+bool Framebuffer::HasUnclearedIntRenderbufferAttachments() const {
   for (AttachmentMap::const_iterator it = attachments_.begin();
        it != attachments_.end(); ++it) {
-    if (it->first >= GL_COLOR_ATTACHMENT0 &&
-        it->first < GL_COLOR_ATTACHMENT0 + manager_->max_draw_buffers_ &&
-        !GLES2Util::IsIntegerFormat(it->second->internal_format())) {
-      buffers[it->first - GL_COLOR_ATTACHMENT0] = it->first;
+    if (!it->second->IsRenderbufferAttachment() || it->second->cleared())
+      continue;
+    if (GLES2Util::IsIntegerFormat(it->second->internal_format()))
+      return true;
+  }
+  return false;
+}
+
+void Framebuffer::ClearUnclearedIntRenderbufferAttachments(
+    RenderbufferManager* renderbuffer_manager) {
+  for (AttachmentMap::const_iterator it = attachments_.begin();
+       it != attachments_.end(); ++it) {
+    if (!it->second->IsRenderbufferAttachment() || it->second->cleared())
+      continue;
+    GLenum internal_format = it->second->internal_format();
+    if (GLES2Util::IsIntegerFormat(internal_format)) {
+      GLenum attaching_point = it->first;
+      DCHECK_LE(static_cast<GLenum>(GL_COLOR_ATTACHMENT0), attaching_point);
+      DCHECK_GT(GL_COLOR_ATTACHMENT0 + manager_->max_draw_buffers_,
+                attaching_point);
+      GLint drawbuffer = it->first - GL_COLOR_ATTACHMENT0;
+      if (GLES2Util::IsUnsignedIntegerFormat(internal_format)) {
+        const GLuint kZero[] = { 0u, 0u, 0u, 0u };
+        glClearBufferuiv(GL_COLOR, drawbuffer, kZero);
+      } else {
+        DCHECK(GLES2Util::IsSignedIntegerFormat(internal_format));
+        const static GLint kZero[] = { 0, 0, 0, 0 };
+        glClearBufferiv(GL_COLOR, drawbuffer, kZero);
+      }
+      it->second->SetCleared(renderbuffer_manager, nullptr, true);
+    }
+  }
+}
+
+bool Framebuffer::HasSRGBAttachments() const {
+  for (AttachmentMap::const_iterator it = attachments_.begin();
+       it != attachments_.end(); ++it) {
+    GLenum internal_format = it->second->internal_format();
+    switch (internal_format) {
+      case GL_SRGB8:
+      case GL_SRGB8_ALPHA8:
+      case GL_SRGB_EXT:
+      case GL_SRGB_ALPHA_EXT:
+        return true;
+      default:
+        break;
+    }
+  }
+  return false;
+}
+
+bool Framebuffer::PrepareDrawBuffersForClearingUninitializedAttachments(
+    ) const {
+  std::unique_ptr<GLenum[]> buffers(new GLenum[manager_->max_draw_buffers_]);
+  for (uint32_t i = 0; i < manager_->max_draw_buffers_; ++i)
+    buffers[i] = GL_NONE;
+  for (auto const& it : attachments_) {
+    if (it.first >= GL_COLOR_ATTACHMENT0 &&
+        it.first < GL_COLOR_ATTACHMENT0 + manager_->max_draw_buffers_ &&
+        !it.second->cleared()) {
+      // There should be no partially cleared images, uncleared int/3d images.
+      // This is because ClearUnclearedIntOr3DImagesOrPartiallyClearedImages()
+      // is called before this.
+      DCHECK(!GLES2Util::IsIntegerFormat(it.second->internal_format()));
+      DCHECK(!it.second->IsPartiallyCleared());
+      DCHECK(!it.second->Is3D());
+      buffers[it.first - GL_COLOR_ATTACHMENT0] = it.first;
     }
   }
   bool different = false;
-  for (uint32 i = 0; i < manager_->max_draw_buffers_; ++i) {
-    if (buffers[i] != draw_buffers_[i]) {
+  for (uint32_t i = 0; i < manager_->max_draw_buffers_; ++i) {
+    if (buffers[i] != adjusted_draw_buffers_[i]) {
       different = true;
       break;
     }
   }
-  if (different) {
-    if (recover)
-      glDrawBuffersARB(manager_->max_draw_buffers_, draw_buffers_.get());
-    else
-      glDrawBuffersARB(manager_->max_draw_buffers_, buffers.get());
+  if (different)
+    glDrawBuffersARB(manager_->max_draw_buffers_, buffers.get());
+  return different;
+}
+
+void Framebuffer::RestoreDrawBuffers() const {
+  glDrawBuffersARB(manager_->max_draw_buffers_, adjusted_draw_buffers_.get());
+}
+
+bool Framebuffer::ValidateAndAdjustDrawBuffers(
+    uint32_t fragment_output_type_mask, uint32_t fragment_output_written_mask) {
+  uint32_t mask = draw_buffer_bound_mask_ & fragment_output_written_mask;
+  if ((mask & fragment_output_type_mask) != (mask & draw_buffer_type_mask_))
+    return false;
+
+  if (mask != adjusted_draw_buffer_bound_mask_) {
+    // This won't be reached in every draw/clear call - only when framebuffer
+    // or program has changed.
+    for (uint32_t ii = 0; ii < manager_->max_draw_buffers_; ++ii) {
+      adjusted_draw_buffers_[ii] = draw_buffers_[ii];
+      uint32_t shift_bits = ii * 2;
+      uint32_t buffer_mask = 0x3 << shift_bits;
+      if ((buffer_mask & mask) == 0u) {
+        adjusted_draw_buffers_[ii] = GL_NONE;
+      }
+    }
+    adjusted_draw_buffer_bound_mask_ = mask;
+    glDrawBuffersARB(manager_->max_draw_buffers_, adjusted_draw_buffers_.get());
   }
+  return true;
 }
 
-void Framebuffer::PrepareDrawBuffersForClear() const {
-  bool recover = false;
-  ChangeDrawBuffersHelper(recover);
+bool Framebuffer::ContainsActiveIntegerAttachments() const {
+  // 0x55555555 broadcasts SHADER_VARIABLE_FLOAT to all slots.
+  uint32_t mask = 0x55555555u * SHADER_VARIABLE_FLOAT;
+  mask &= draw_buffer_bound_mask_;
+  return draw_buffer_type_mask_ != mask;
 }
 
-void Framebuffer::RestoreDrawBuffersAfterClear() const {
-  bool recover = true;
-  ChangeDrawBuffersHelper(recover);
-}
-
-void Framebuffer::ClearIntegerBuffers() {
+void Framebuffer::ClearUnclearedIntOr3DTexturesOrPartiallyClearedTextures(
+    GLES2Decoder* decoder, TextureManager* texture_manager) {
   for (AttachmentMap::const_iterator it = attachments_.begin();
        it != attachments_.end(); ++it) {
-    GLenum internal_format = it->second->internal_format();
-    if (it->first >= GL_COLOR_ATTACHMENT0 &&
-        it->first < GL_COLOR_ATTACHMENT0 + manager_->max_draw_buffers_ &&
-        !it->second->cleared() &&
-        GLES2Util::IsIntegerFormat(internal_format)) {
-      GLint drawbuffer = it->first - GL_COLOR_ATTACHMENT0;
-      if (GLES2Util::IsUnsignedIntegerFormat(internal_format)) {
-        const static GLuint kZero[] = { 0u, 0u, 0u, 0u };
-        glClearBufferuiv(GL_COLOR, drawbuffer, kZero);
-      } else {  // IsUnsignedIntegerFormat(internal_format)
-        const static GLint kZero[] = { 0, 0, 0, 0 };
-        glClearBufferiv(GL_COLOR, drawbuffer, kZero);
-      }
+    if (!it->second->IsTextureAttachment() || it->second->cleared())
+      continue;
+    TextureAttachment* attachment =
+        reinterpret_cast<TextureAttachment*>(it->second.get());
+    if (attachment->IsPartiallyCleared() || attachment->Is3D() ||
+        GLES2Util::IsIntegerFormat(attachment->internal_format())) {
+      texture_manager->ClearTextureLevel(decoder,
+                                         attachment->texture(),
+                                         attachment->target(),
+                                         attachment->level());
     }
   }
 }
 
+// TODO(jiawei.shao@intel.com): when the texture or the renderbuffer in
+// format DEPTH_STENCIL, mark the specific part (depth or stencil) of it as
+// cleared or uncleared instead of the whole one.
 void Framebuffer::MarkAttachmentAsCleared(
-      RenderbufferManager* renderbuffer_manager,
-      TextureManager* texture_manager,
-      GLenum attachment,
-      bool cleared) {
+    RenderbufferManager* renderbuffer_manager,
+    TextureManager* texture_manager,
+    GLenum attachment,
+    bool cleared) {
   AttachmentMap::iterator it = attachments_.find(attachment);
   if (it != attachments_.end()) {
     Attachment* a = it->second.get();
@@ -419,9 +587,9 @@ void Framebuffer::MarkAttachmentAsCleared(
 }
 
 void Framebuffer::MarkAttachmentsAsCleared(
-      RenderbufferManager* renderbuffer_manager,
-      TextureManager* texture_manager,
-      bool cleared) {
+    RenderbufferManager* renderbuffer_manager,
+    TextureManager* texture_manager,
+    bool cleared) {
   for (AttachmentMap::iterator it = attachments_.begin();
        it != attachments_.end(); ++it) {
     Attachment* attachment = it->second.get();
@@ -431,14 +599,16 @@ void Framebuffer::MarkAttachmentsAsCleared(
   }
 }
 
+bool Framebuffer::HasColorAttachment(int index) const {
+  return attachments_.find(GL_COLOR_ATTACHMENT0 + index) != attachments_.end();
+}
+
 bool Framebuffer::HasDepthAttachment() const {
-  return attachments_.find(GL_DEPTH_STENCIL_ATTACHMENT) != attachments_.end() ||
-         attachments_.find(GL_DEPTH_ATTACHMENT) != attachments_.end();
+  return attachments_.find(GL_DEPTH_ATTACHMENT) != attachments_.end();
 }
 
 bool Framebuffer::HasStencilAttachment() const {
-  return attachments_.find(GL_DEPTH_STENCIL_ATTACHMENT) != attachments_.end() ||
-         attachments_.find(GL_STENCIL_ATTACHMENT) != attachments_.end();
+  return attachments_.find(GL_STENCIL_ATTACHMENT) != attachments_.end();
 }
 
 GLenum Framebuffer::GetReadBufferInternalFormat() const {
@@ -449,6 +619,10 @@ GLenum Framebuffer::GetReadBufferInternalFormat() const {
     return 0;
   }
   const Attachment* attachment = it->second.get();
+  if (attachment->EmulatingRGB()) {
+    DCHECK_EQ(static_cast<GLenum>(GL_RGBA), attachment->internal_format());
+    return GL_RGB;
+  }
   return attachment->internal_format();
 }
 
@@ -463,13 +637,45 @@ GLenum Framebuffer::GetReadBufferTextureType() const {
   return attachment->texture_type();
 }
 
-GLenum Framebuffer::IsPossiblyComplete() const {
+GLsizei Framebuffer::GetSamples() const {
+  // Assume the framebuffer is complete, so return any attachment's samples.
+  auto iter = attachments_.begin();
+  if (iter == attachments_.end())
+    return -1;
+  Attachment* attachment = iter->second.get();
+  DCHECK(attachment);
+  return attachment->samples();
+}
+
+GLenum Framebuffer::GetDepthFormat() const {
+  auto iter = attachments_.find(GL_DEPTH_ATTACHMENT);
+  if (iter == attachments_.end())
+    return 0;
+  Attachment* attachment = iter->second.get();
+  DCHECK(attachment);
+  return attachment->internal_format();
+}
+
+GLenum Framebuffer::GetStencilFormat() const {
+  auto iter = attachments_.find(GL_STENCIL_ATTACHMENT);
+  if (iter == attachments_.end())
+    return 0;
+  Attachment* attachment = iter->second.get();
+  DCHECK(attachment);
+  return attachment->internal_format();
+}
+
+GLenum Framebuffer::IsPossiblyComplete(const FeatureInfo* feature_info) const {
   if (attachments_.empty()) {
     return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
   }
 
   GLsizei width = -1;
   GLsizei height = -1;
+  GLsizei samples = -1;
+  const bool kSamplesMustMatch = feature_info->IsWebGLContext() ||
+      !feature_info->feature_flags().chromium_framebuffer_mixed_samples;
+
   for (AttachmentMap::const_iterator it = attachments_.begin();
        it != attachments_.end(); ++it) {
     GLenum attachment_type = it->first;
@@ -478,23 +684,82 @@ GLenum Framebuffer::IsPossiblyComplete() const {
                                             manager_->max_color_attachments_)) {
       return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
     }
+    if (!attachment->IsLayerValid()) {
+      return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
+    }
     if (width < 0) {
       width = attachment->width();
       height = attachment->height();
       if (width == 0 || height == 0) {
         return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
       }
-    } else if (manager_->context_type() != CONTEXT_TYPE_WEBGL2) {
-      // TODO(zmo): revisit this if we create ES3 contexts for clients other
-      // than WebGL 2.
-      if (attachment->width() != width || attachment->height() != height) {
-        return GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT;
-      }
+    } else if (attachment->width() != width || attachment->height() != height) {
+      // Since DirectX doesn't allow attachments to be of different sizes,
+      // even though ES3 allows it, it is still forbidden to ensure consistent
+      // behaviors across platforms.
+      return GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT;
     }
 
-    if (!attachment->CanRenderTo()) {
+    if (kSamplesMustMatch) {
+      if (samples < 0) {
+        samples = attachment->samples();
+      } else if (attachment->samples() != samples) {
+        // It's possible that the specified samples isn't the actual samples a
+        // GL implementation uses, but we always return INCOMPLETE_MULTISAMPLE
+        // here to ensure consistent behaviors across platforms.
+        return GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE;
+      }
+    }
+    if (!attachment->CanRenderTo(feature_info)) {
+      return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
+    }
+
+    // Attaching an image to more than one color attachment point should return
+    // FRAMEBUFFER_UNSUPPORTED.
+    if (it->first >= GL_COLOR_ATTACHMENT0 &&
+        it->first < GL_COLOR_ATTACHMENT0 + manager_->max_color_attachments_) {
+      for (GLenum i = it->first + 1;
+           i < GL_COLOR_ATTACHMENT0 + manager_->max_color_attachments_; i++) {
+        const Attachment* other = GetAttachment(i);
+        if (other && attachment->IsSameAttachment(other)) {
+          return GL_FRAMEBUFFER_UNSUPPORTED;
+        }
+      }
+    }
+  }
+
+  // Binding different images to depth and stencil attachment points should
+  // return FRAMEBUFFER_UNSUPPORTED.
+  const Attachment* depth_attachment = GetAttachment(GL_DEPTH_ATTACHMENT);
+  const Attachment* stencil_attachment = GetAttachment(GL_STENCIL_ATTACHMENT);
+  if (depth_attachment && stencil_attachment) {
+    if (!depth_attachment->IsSameAttachment(stencil_attachment)) {
       return GL_FRAMEBUFFER_UNSUPPORTED;
     }
+    DCHECK_EQ(depth_attachment->internal_format(),
+              stencil_attachment->internal_format());
+  }
+  if (feature_info->context_type() == CONTEXT_TYPE_WEBGL1) {
+    // WebGL1 has specific additional restrictions on depth and stencil
+    // attachments (e.g. it is forbidden to bind a DEPTH_STENCIL attachement to
+    // a (pure) GL_DEPTH_ATTACHMENT. Note that in WebGL1,
+    // GL_DEPTH_STENCIL_ATTACHMENT is a separate bind point, but that logic is
+    // handled in Blink and translated to
+    // GL_DEPTH_ATTACHMENT+GL_STENCIL_ATTACHMENT.
+    uint32_t need_channels = 0;
+    uint32_t have_channels = 0;
+    if (depth_attachment) {
+      need_channels |= GLES2Util::kDepth;
+      have_channels |=
+          GLES2Util::GetChannelsForFormat(depth_attachment->internal_format());
+    }
+    if (stencil_attachment) {
+      need_channels |= GLES2Util::kStencil;
+      have_channels |= GLES2Util::GetChannelsForFormat(
+          stencil_attachment->internal_format());
+    }
+    if (need_channels != have_channels)
+      return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
   }
 
   // This does not mean the framebuffer is actually complete. It just means our
@@ -544,7 +809,7 @@ GLenum Framebuffer::GetStatus(
 }
 
 bool Framebuffer::IsCleared() const {
-  // are all the attachments cleaared?
+  // are all the attachments cleared?
   for (AttachmentMap::const_iterator it = attachments_.begin();
        it != attachments_.end(); ++it) {
     Attachment* attachment = it->second.get();
@@ -565,12 +830,20 @@ GLenum Framebuffer::GetDrawBuffer(GLenum draw_buffer) const {
 
 void Framebuffer::SetDrawBuffers(GLsizei n, const GLenum* bufs) {
   DCHECK(n <= static_cast<GLsizei>(manager_->max_draw_buffers_));
-  for (GLsizei i = 0; i < n; ++i)
-    draw_buffers_[i] = bufs[i];
+  for (GLsizei ii = 0; ii < n; ++ii) {
+    draw_buffers_[ii] = bufs[ii];
+    adjusted_draw_buffers_[ii] = bufs[ii];
+  }
+  for (uint32_t ii = n; ii < manager_->max_draw_buffers_; ++ii) {
+    draw_buffers_[ii] = GL_NONE;
+    adjusted_draw_buffers_[ii] = GL_NONE;
+  }
+  UpdateDrawBufferMasks();
+  adjusted_draw_buffer_bound_mask_ = draw_buffer_bound_mask_;
 }
 
 bool Framebuffer::HasAlphaMRT() const {
-  for (uint32 i = 0; i < manager_->max_draw_buffers_; ++i) {
+  for (uint32_t i = 0; i < manager_->max_draw_buffers_; ++i) {
     if (draw_buffers_[i] != GL_NONE) {
       const Attachment* attachment = GetAttachment(draw_buffers_[i]);
       if (!attachment)
@@ -585,7 +858,7 @@ bool Framebuffer::HasAlphaMRT() const {
 
 bool Framebuffer::HasSameInternalFormatsMRT() const {
   GLenum internal_format = 0;
-  for (uint32 i = 0; i < manager_->max_draw_buffers_; ++i) {
+  for (uint32_t i = 0; i < manager_->max_draw_buffers_; ++i) {
     if (draw_buffers_[i] != GL_NONE) {
       const Attachment* attachment = GetAttachment(draw_buffers_[i]);
       if (!attachment)
@@ -638,6 +911,32 @@ void Framebuffer::UnbindTexture(
   } while (!done);
 }
 
+void Framebuffer::UpdateDrawBufferMasks() {
+  draw_buffer_type_mask_ = 0u;
+  draw_buffer_bound_mask_ = 0u;
+  for (uint32_t index = 0; index < manager_->max_color_attachments_; ++index) {
+    GLenum draw_buffer = draw_buffers_[index];
+    if (draw_buffer == GL_NONE)
+      continue;
+    auto iter = attachments_.find(draw_buffer);
+    if (iter == attachments_.end())
+      continue;
+    scoped_refptr<Attachment> attachment = iter->second;
+    GLenum internal_format = attachment->internal_format();
+    ShaderVariableBaseType base_type = SHADER_VARIABLE_UNDEFINED_TYPE;
+    if (GLES2Util::IsSignedIntegerFormat(internal_format)) {
+      base_type = SHADER_VARIABLE_INT;
+    } else if (GLES2Util::IsUnsignedIntegerFormat(internal_format)) {
+      base_type = SHADER_VARIABLE_UINT;
+    } else {
+      base_type = SHADER_VARIABLE_FLOAT;
+    }
+    size_t shift_bits = index * 2;
+    draw_buffer_type_mask_ |= base_type << shift_bits;
+    draw_buffer_bound_mask_ |= 0x3 << shift_bits;
+  }
+}
+
 Framebuffer* FramebufferManager::GetFramebuffer(
     GLuint client_id) {
   FramebufferMap::iterator it = framebuffers_.find(client_id);
@@ -662,6 +961,7 @@ void Framebuffer::DoUnbindGLAttachmentsForWorkaround(GLenum target) {
 
 void Framebuffer::AttachRenderbuffer(
     GLenum attachment, Renderbuffer* renderbuffer) {
+  DCHECK(attachment != GL_DEPTH_STENCIL_ATTACHMENT);
   const Attachment* a = GetAttachment(attachment);
   if (a)
     a->DetachFromFramebuffer(this);
@@ -677,6 +977,7 @@ void Framebuffer::AttachRenderbuffer(
 void Framebuffer::AttachTexture(
     GLenum attachment, TextureRef* texture_ref, GLenum target,
     GLint level, GLsizei samples) {
+  DCHECK(attachment != GL_DEPTH_STENCIL_ATTACHMENT);
   const Attachment* a = GetAttachment(attachment);
   if (a)
     a->DetachFromFramebuffer(this);
@@ -693,6 +994,7 @@ void Framebuffer::AttachTexture(
 void Framebuffer::AttachTextureLayer(
     GLenum attachment, TextureRef* texture_ref, GLenum target,
     GLint level, GLint layer) {
+  DCHECK(attachment != GL_DEPTH_STENCIL_ATTACHMENT);
   const Attachment* a = GetAttachment(attachment);
   if (a)
     a->DetachFromFramebuffer(this);

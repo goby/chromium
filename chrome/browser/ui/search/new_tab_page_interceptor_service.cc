@@ -4,9 +4,12 @@
 
 #include "chrome/browser/ui/search/new_tab_page_interceptor_service.h"
 
+#include <utility>
+
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -58,10 +61,12 @@ class NewTabPageInterceptor : public net::URLRequestInterceptor {
       net::NetworkDelegate* network_delegate) const override {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
     if ((request->url() != new_tab_url_) ||
-        (new_tab_url_ == GURL(chrome::kChromeSearchLocalNtpUrl))) {
+        (new_tab_url_ == chrome::kChromeSearchLocalNtpUrl)) {
       return nullptr;
     }
     // User has canceled this navigation so it shouldn't be redirected.
+    // TODO(maksims): Remove request->status() and use int net_error
+    // once MaybeInterceptResponse() starts to pass that.
     if (request->status().status() == net::URLRequestStatus::CANCELED ||
         (request->status().status() == net::URLRequestStatus::FAILED &&
          request->status().error() == net::ERR_ABORTED)) {
@@ -69,6 +74,8 @@ class NewTabPageInterceptor : public net::URLRequestInterceptor {
     }
 
     // Request to NTP was successful.
+    // TODO(maksims): Remove request->status() and use int net_error
+    // once MaybeInterceptResponse() starts to pass that.
     if (request->status().is_success() &&
         request->GetResponseCode() != net::HTTP_NO_CONTENT &&
         request->GetResponseCode() < 400) {
@@ -113,11 +120,11 @@ void NewTabPageInterceptorService::OnTemplateURLServiceChanged() {
                  new_tab_page_url));
 }
 
-scoped_ptr<net::URLRequestInterceptor>
+std::unique_ptr<net::URLRequestInterceptor>
 NewTabPageInterceptorService::CreateInterceptor() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  scoped_ptr<NewTabPageInterceptor> interceptor(
+  std::unique_ptr<NewTabPageInterceptor> interceptor(
       new NewTabPageInterceptor(search::GetNewTabPageURL(profile_)));
   interceptor_ = interceptor->GetWeakPtr();
-  return interceptor.Pass();
+  return std::move(interceptor);
 }

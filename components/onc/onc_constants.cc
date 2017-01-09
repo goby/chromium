@@ -16,6 +16,8 @@ const char kAugmentationSharedSetting[] = "SharedSetting";
 const char kAugmentationUserEditable[] = "UserEditable";
 const char kAugmentationDeviceEditable[] = "DeviceEditable";
 
+const char kAugmentationActiveExtension[] = "ActiveExtension";
+
 // Common keys/values.
 const char kRecommended[] = "Recommended";
 const char kRemove[] = "Remove";
@@ -411,6 +413,8 @@ const char kWPAD[] = "WPAD";
 namespace substitutes {
 const char kLoginIDField[] = "${LOGIN_ID}";
 const char kEmailField[] = "${LOGIN_EMAIL}";
+const char kCertSANEmail[] = "${CERT_SAN_EMAIL}";
+const char kCertSANUPN[] = "${CERT_SAN_UPN}";
 }  // namespace substitutes
 
 namespace global_network_config {

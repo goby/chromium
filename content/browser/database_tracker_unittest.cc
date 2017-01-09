@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/public/test/mock_special_storage_policy.h"
 #include "net/base/net_errors.h"
@@ -46,7 +50,7 @@ class TestObserver : public storage::DatabaseTracker::Observer {
   ~TestObserver() override {}
   void OnDatabaseSizeChanged(const std::string& origin_identifier,
                              const base::string16& database_name,
-                             int64 database_size) override {
+                             int64_t database_size) override {
     if (!observe_size_changes_)
       return;
     new_notification_received_ = true;
@@ -72,7 +76,7 @@ class TestObserver : public storage::DatabaseTracker::Observer {
     return origin_identifier_;
   }
   base::string16 GetNotificationDatabaseName() { return database_name_; }
-  int64 GetNotificationDatabaseSize() { return database_size_; }
+  int64_t GetNotificationDatabaseSize() { return database_size_; }
 
  private:
   bool new_notification_received_;
@@ -80,13 +84,13 @@ class TestObserver : public storage::DatabaseTracker::Observer {
   bool observe_scheduled_deletions_;
   std::string origin_identifier_;
   base::string16 database_name_;
-  int64 database_size_;
+  int64_t database_size_;
 };
 
 void CheckNotificationReceived(TestObserver* observer,
                                const std::string& expected_origin_identifier,
                                const base::string16& expected_database_name,
-                               int64 expected_database_size) {
+                               int64_t expected_database_size) {
   EXPECT_TRUE(observer->DidReceiveNewNotification());
   EXPECT_EQ(expected_origin_identifier,
             observer->GetNotificationOriginIdentifier());
@@ -119,7 +123,7 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
   void NotifyStorageModified(storage::QuotaClient::ID client_id,
                              const GURL& origin,
                              storage::StorageType type,
-                             int64 delta) override {
+                             int64_t delta) override {
     EXPECT_EQ(storage::QuotaClient::kDatabase, client_id);
     EXPECT_EQ(storage::kStorageTypeTemporary, type);
     modifications_[origin].first += 1;
@@ -149,7 +153,7 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
     return accesses_[origin] != 0;
   }
 
-  bool WasModificationNotified(const GURL& origin, int64 amount) {
+  bool WasModificationNotified(const GURL& origin, int64_t amount) {
     return modifications_[origin].first != 0 &&
            modifications_[origin].second == amount;
   }
@@ -165,14 +169,13 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
   std::map<GURL, int> accesses_;
 
   // Map from origin to <count, sum of deltas>
-  std::map<GURL, std::pair<int, int64> > modifications_;
+  std::map<GURL, std::pair<int, int64_t>> modifications_;
 
  protected:
   ~TestQuotaManagerProxy() override { EXPECT_FALSE(registered_client_); }
 };
 
-
-bool EnsureFileOfSize(const base::FilePath& file_path, int64 length) {
+bool EnsureFileOfSize(const base::FilePath& file_path, int64_t length) {
   base::File file(file_path,
                   base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_WRITE);
   if (!file.IsValid())
@@ -199,14 +202,11 @@ class DatabaseTracker_TestHelper_Test {
         new MockSpecialStoragePolicy;
     special_storage_policy->AddProtected(GURL(kOrigin2Url));
     scoped_refptr<DatabaseTracker> tracker(
-        new DatabaseTracker(temp_dir.path(),
-                            incognito_mode,
-                            special_storage_policy.get(),
-                            NULL,
-                            NULL));
+        new DatabaseTracker(temp_dir.GetPath(), incognito_mode,
+                            special_storage_policy.get(), NULL, NULL));
 
     // Create and open three databases.
-    int64 database_size = 0;
+    int64_t database_size = 0;
     const std::string kOrigin1 =
         storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
     const std::string kOrigin2 =
@@ -307,11 +307,8 @@ class DatabaseTracker_TestHelper_Test {
         new MockSpecialStoragePolicy;
     special_storage_policy->AddProtected(GURL(kOrigin2Url));
     scoped_refptr<DatabaseTracker> tracker(
-        new DatabaseTracker(temp_dir.path(),
-                            incognito_mode,
-                            special_storage_policy.get(),
-                            NULL,
-                            NULL));
+        new DatabaseTracker(temp_dir.GetPath(), incognito_mode,
+                            special_storage_policy.get(), NULL, NULL));
 
     // Add two observers.
     TestObserver observer1;
@@ -320,7 +317,7 @@ class DatabaseTracker_TestHelper_Test {
     tracker->AddObserver(&observer2);
 
     // Open three new databases.
-    int64 database_size = 0;
+    int64_t database_size = 0;
     const std::string kOrigin1 =
         storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
     const std::string kOrigin2 =
@@ -460,17 +457,14 @@ class DatabaseTracker_TestHelper_Test {
     scoped_refptr<TestQuotaManagerProxy> test_quota_proxy(
         new TestQuotaManagerProxy);
     scoped_refptr<DatabaseTracker> tracker(
-        new DatabaseTracker(temp_dir.path(),
-                            false /* incognito */,
-                            NULL,
-                            test_quota_proxy.get(),
-                            NULL));
+        new DatabaseTracker(temp_dir.GetPath(), false /* incognito */, NULL,
+                            test_quota_proxy.get(), NULL));
     EXPECT_TRUE(test_quota_proxy->registered_client_);
 
     // Create a database and modify it a couple of times, close it,
     // then delete it. Observe the tracker notifies accordingly.
 
-    int64 database_size = 0;
+    int64_t database_size = 0;
     tracker->DatabaseOpened(kOriginId, kName, kDescription, 0,
                             &database_size);
     EXPECT_TRUE(test_quota_proxy->WasAccessNotified(kOrigin));
@@ -545,7 +539,7 @@ class DatabaseTracker_TestHelper_Test {
   }
 
   static void DatabaseTrackerClearSessionOnlyDatabasesOnExit() {
-    int64 database_size = 0;
+    int64_t database_size = 0;
     const std::string kOrigin1 =
         storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
     const std::string kOrigin2 =
@@ -565,7 +559,7 @@ class DatabaseTracker_TestHelper_Test {
           new MockSpecialStoragePolicy;
       special_storage_policy->AddSessionOnly(GURL(kOrigin2Url));
       scoped_refptr<DatabaseTracker> tracker(new DatabaseTracker(
-          temp_dir.path(), false, special_storage_policy.get(), NULL,
+          temp_dir.GetPath(), false, special_storage_policy.get(), NULL,
           base::ThreadTaskRunnerHandle::Get().get()));
 
       // Open two new databases.
@@ -602,7 +596,7 @@ class DatabaseTracker_TestHelper_Test {
 
     // At this point, the database tracker should be gone. Create a new one.
     scoped_refptr<DatabaseTracker> tracker(
-        new DatabaseTracker(temp_dir.path(), false, NULL, NULL, NULL));
+        new DatabaseTracker(temp_dir.GetPath(), false, NULL, NULL, NULL));
 
     // Get all data for all origins.
     std::vector<OriginInfo> origins_info;
@@ -622,7 +616,7 @@ class DatabaseTracker_TestHelper_Test {
   }
 
   static void DatabaseTrackerSetForceKeepSessionState() {
-    int64 database_size = 0;
+    int64_t database_size = 0;
     const std::string kOrigin1 =
         storage::GetIdentifierFromOrigin(GURL(kOrigin1Url));
     const std::string kOrigin2 =
@@ -642,7 +636,7 @@ class DatabaseTracker_TestHelper_Test {
           new MockSpecialStoragePolicy;
       special_storage_policy->AddSessionOnly(GURL(kOrigin2Url));
       scoped_refptr<DatabaseTracker> tracker(new DatabaseTracker(
-          temp_dir.path(), false, special_storage_policy.get(), NULL,
+          temp_dir.GetPath(), false, special_storage_policy.get(), NULL,
           base::ThreadTaskRunnerHandle::Get().get()));
       tracker->SetForceKeepSessionState();
 
@@ -680,7 +674,7 @@ class DatabaseTracker_TestHelper_Test {
 
     // At this point, the database tracker should be gone. Create a new one.
     scoped_refptr<DatabaseTracker> tracker(
-        new DatabaseTracker(temp_dir.path(), false, NULL, NULL, NULL));
+        new DatabaseTracker(temp_dir.GetPath(), false, NULL, NULL, NULL));
 
     // Get all data for all origins.
     std::vector<OriginInfo> origins_info;
@@ -708,9 +702,8 @@ class DatabaseTracker_TestHelper_Test {
     const bool kUseInMemoryTrackerDatabase = true;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-    scoped_refptr<DatabaseTracker> tracker(
-        new DatabaseTracker(temp_dir.path(), kUseInMemoryTrackerDatabase,
-                            NULL, NULL, NULL));
+    scoped_refptr<DatabaseTracker> tracker(new DatabaseTracker(
+        temp_dir.GetPath(), kUseInMemoryTrackerDatabase, NULL, NULL, NULL));
 
     // Starts off with no databases.
     std::vector<OriginInfo> infos;
@@ -718,7 +711,7 @@ class DatabaseTracker_TestHelper_Test {
     EXPECT_TRUE(infos.empty());
 
     // Create a db with an empty name.
-    int64 database_size = -1;
+    int64_t database_size = -1;
     tracker->DatabaseOpened(kOriginId, kEmptyName, kDescription, 0,
                             &database_size);
     EXPECT_EQ(0, database_size);
@@ -754,9 +747,8 @@ class DatabaseTracker_TestHelper_Test {
     const bool kUseInMemoryTrackerDatabase = true;
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-    scoped_refptr<DatabaseTracker> tracker(
-        new DatabaseTracker(temp_dir.path(), kUseInMemoryTrackerDatabase,
-                            NULL, NULL, NULL));
+    scoped_refptr<DatabaseTracker> tracker(new DatabaseTracker(
+        temp_dir.GetPath(), kUseInMemoryTrackerDatabase, NULL, NULL, NULL));
 
     // Setup to observe OnScheduledForDelete notifications.
     TestObserver observer(false, true);
@@ -770,7 +762,7 @@ class DatabaseTracker_TestHelper_Test {
     // --------------------------------------------------------
     // Create a record of a database in the tracker db and create
     // a spoof_db_file on disk in the expected location.
-    int64 database_size = 0;
+    int64_t database_size = 0;
     tracker->DatabaseOpened(kOriginId, kName, kDescription, 0,
                             &database_size);
     base::FilePath spoof_db_file = tracker->GetFullDBFilePath(kOriginId, kName);

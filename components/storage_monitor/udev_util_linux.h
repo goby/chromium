@@ -7,10 +7,6 @@
 
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
-
-struct udev_device;
-
 namespace base {
 class FilePath;
 }

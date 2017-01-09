@@ -10,12 +10,15 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_MOCKS_H_
 #define GPU_COMMAND_BUFFER_SERVICE_MOCKS_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/logging.h"
-#include "gpu/command_buffer/service/cmd_parser.h"
 #include "gpu/command_buffer/service/cmd_buffer_engine.h"
+#include "gpu/command_buffer/service/cmd_parser.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/program_cache.h"
 #include "gpu/command_buffer/service/shader_translator.h"
@@ -30,21 +33,21 @@ class AsyncAPIMock : public AsyncAPIInterface {
   virtual ~AsyncAPIMock();
 
   error::Error FakeDoCommands(unsigned int num_commands,
-                              const void* buffer,
+                              const volatile void* buffer,
                               int num_entries,
                               int* entries_processed);
 
   // Predicate that matches args passed to DoCommand, by looking at the values.
   class IsArgs {
    public:
-    IsArgs(unsigned int arg_count, const void* args)
+    IsArgs(unsigned int arg_count, const volatile void* args)
         : arg_count_(arg_count),
-          args_(static_cast<CommandBufferEntry*>(const_cast<void*>(args))) {
-    }
+          args_(static_cast<volatile CommandBufferEntry*>(
+              const_cast<volatile void*>(args))) {}
 
-    bool operator() (const void* _args) const {
-      const CommandBufferEntry* args =
-          static_cast<const CommandBufferEntry*>(_args) + 1;
+    bool operator()(const volatile void* _args) const {
+      const volatile CommandBufferEntry* args =
+          static_cast<const volatile CommandBufferEntry*>(_args) + 1;
       for (unsigned int i = 0; i < arg_count_; ++i) {
         if (args[i].value_uint32 != args_[i].value_uint32) return false;
       }
@@ -53,17 +56,17 @@ class AsyncAPIMock : public AsyncAPIInterface {
 
    private:
     unsigned int arg_count_;
-    CommandBufferEntry *args_;
+    volatile CommandBufferEntry* args_;
   };
 
-  MOCK_METHOD3(DoCommand, error::Error(
-      unsigned int command,
-      unsigned int arg_count,
-      const void* cmd_data));
+  MOCK_METHOD3(DoCommand,
+               error::Error(unsigned int command,
+                            unsigned int arg_count,
+                            const volatile void* cmd_data));
 
   MOCK_METHOD4(DoCommands,
                error::Error(unsigned int num_commands,
-                            const void* buffer,
+                            const volatile void* buffer,
                             int num_entries,
                             int* entries_processed));
 
@@ -77,7 +80,7 @@ class AsyncAPIMock : public AsyncAPIInterface {
   // Forwards the SetToken commands to the engine.
   void SetToken(unsigned int command,
                 unsigned int arg_count,
-                const void* _args);
+                const volatile void* _args);
 
  private:
   CommandBufferEngine *engine_;
@@ -89,12 +92,13 @@ class MockShaderTranslator : public ShaderTranslatorInterface {
  public:
   MockShaderTranslator();
 
-  MOCK_METHOD5(Init,
+  MOCK_METHOD6(Init,
                bool(sh::GLenum shader_type,
                     ShShaderSpec shader_spec,
                     const ShBuiltInResources* resources,
                     ShShaderOutput shader_output_language,
-                    ShCompileOptions driver_bug_workarounds));
+                    ShCompileOptions driver_bug_workarounds,
+                    bool gl_shader_interm_output));
   MOCK_CONST_METHOD10(Translate,
                       bool(const std::string& shader_source,
                            std::string* info_log,

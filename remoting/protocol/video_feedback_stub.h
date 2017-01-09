@@ -5,8 +5,10 @@
 #ifndef REMOTING_PROTOCOL_VIDEO_FEEDBACK_STUB_H_
 #define REMOTING_PROTOCOL_VIDEO_FEEDBACK_STUB_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace remoting {
 
@@ -16,7 +18,7 @@ namespace protocol {
 
 class VideoFeedbackStub {
  public:
-  virtual void ProcessVideoAck(scoped_ptr<VideoAck> video_ack) = 0;
+  virtual void ProcessVideoAck(std::unique_ptr<VideoAck> video_ack) = 0;
 
  protected:
   VideoFeedbackStub() {}

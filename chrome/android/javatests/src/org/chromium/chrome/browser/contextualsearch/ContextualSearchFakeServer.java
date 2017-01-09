@@ -44,6 +44,7 @@ class ContextualSearchFakeServer
 
     private final Map<String, FakeTapSearch> mFakeTapSearches = new HashMap<>();
     private final Map<String, FakeLongPressSearch> mFakeLongPressSearches = new HashMap<>();
+    private final Map<String, FakeSlowResolveSearch> mFakeSlowResolveSearches = new HashMap<>();
 
     private FakeTapSearch mActiveFakeTapSearch;
 
@@ -52,6 +53,7 @@ class ContextualSearchFakeServer
 
     private String mSearchTermRequested;
     private boolean mShouldUseHttps;
+    private boolean mIsOnline = true;
 
     private boolean mDidEverCallContentViewCoreOnShow;
 
@@ -135,14 +137,18 @@ class ContextualSearchFakeServer
     public class FakeTapSearch extends FakeSearch {
         private final boolean mIsNetworkUnavailable;
         private final int mResponseCode;
-        private final String mSearchTerm;
+        protected final String mSearchTerm;
         private final String mDisplayText;
         private final String mAlternateTerm;
+        private final String mMid;
         private final boolean mDoPreventPreload;
         private final int mStartAdjust;
         private final int mEndAdjust;
         private final String mContextLanguage;
-
+        private final String mThumbnailUrl;
+        private final String mCaption;
+        private final String mQuickActionUri;
+        private final int mQuickActionCategory;
 
         boolean mDidStartResolution;
         boolean mDidFinishResolution;
@@ -154,15 +160,21 @@ class ContextualSearchFakeServer
          * @param searchTerm            The resolved search term.
          * @param displayText           The display text.
          * @param alternateTerm         The alternate text.
+         * @param mid                   The MID to specify a KP, or an empty string.
          * @param doPreventPreload      Whether search preload should be prevented.
          * @param startAdjust           The start adjustment of the selection.
          * @param endAdjust             The end adjustment of the selection.
          * @param contextLanguage       The language of the context determined by the server.
+         * @param thumbnailUrl          The URL of a thumbnail to display.
+         * @param caption               The caption to display.
+         * @param quickActionUri        The URI for the intent associated with the quick action.
+         * @param quickActionCategory   The category for the quick action.
          */
         FakeTapSearch(String nodeId, boolean isNetworkUnavailable, int responseCode,
-                      String searchTerm, String displayText, String alternateTerm,
-                      boolean doPreventPreload, int startAdjust, int endAdjust,
-                      String contextLanguage) {
+                String searchTerm, String displayText, String alternateTerm, String mid,
+                boolean doPreventPreload, int startAdjust, int endAdjust, String contextLanguage,
+                String thumbnailUrl, String caption, String quickActionUri,
+                int quickActionCategory) {
             super(nodeId);
 
             mIsNetworkUnavailable = isNetworkUnavailable;
@@ -170,10 +182,15 @@ class ContextualSearchFakeServer
             mSearchTerm = searchTerm;
             mDisplayText = displayText;
             mAlternateTerm = alternateTerm;
+            mMid = mid;
             mDoPreventPreload = doPreventPreload;
             mStartAdjust = startAdjust;
             mEndAdjust = endAdjust;
             mContextLanguage = contextLanguage;
+            mThumbnailUrl = thumbnailUrl;
+            mCaption = caption;
+            mQuickActionUri = quickActionUri;
+            mQuickActionCategory = quickActionCategory;
         }
 
         @Override
@@ -188,7 +205,7 @@ class ContextualSearchFakeServer
             mManagerTest.clickNode(getNodeId());
             mManagerTest.waitForSelectionToBe(mSearchTerm);
 
-            if (mPolicy.shouldPreviousTapResolve(getBasePageUrl())) {
+            if (mPolicy.shouldPreviousTapResolve()) {
                 // Now wait for the Search Term Resolution to start.
                 mManagerTest.waitForSearchTermResolutionToStart(this);
 
@@ -231,7 +248,7 @@ class ContextualSearchFakeServer
         /**
          * Simulates a Search Term Resolution.
          */
-        private void simulateSearchTermResolution() {
+        protected void simulateSearchTermResolution() {
             mManagerTest.runOnMainSync(getRunnable());
         }
 
@@ -243,16 +260,86 @@ class ContextualSearchFakeServer
                 @Override
                 public void run() {
                     if (!mDidFinishResolution) {
-                        handleSearchTermResolutionResponse(
-                                mIsNetworkUnavailable, mResponseCode, mSearchTerm, mDisplayText,
-                                mAlternateTerm, mDoPreventPreload, mStartAdjust, mEndAdjust,
-                                mContextLanguage);
+                        handleSearchTermResolutionResponse(mIsNetworkUnavailable, mResponseCode,
+                                mSearchTerm, mDisplayText, mAlternateTerm, mMid, mDoPreventPreload,
+                                mStartAdjust, mEndAdjust, mContextLanguage, mThumbnailUrl,
+                                mCaption, mQuickActionUri, mQuickActionCategory);
 
                         mActiveFakeTapSearch = null;
                         mDidFinishResolution = true;
                     }
                 }
             };
+        }
+    }
+
+    //============================================================================================
+    // FakeTapSearch
+    //============================================================================================
+
+    /**
+     * Class that represents a fake tap triggered contextual search that is slow to resolve.
+     */
+    public class FakeSlowResolveSearch extends FakeTapSearch {
+        /**
+         * @param nodeId
+         * @param isNetworkUnavailable
+         * @param responseCode
+         * @param searchTerm
+         * @param displayText
+         * @param alternateTerm
+         * @param mid
+         * @param doPreventPreload
+         * @param startAdjust
+         * @param endAdjust
+         * @param contextLanguage
+         * @param thumbnailUrl
+         * @param caption
+         * @param quickActionUri
+         * @param quickActionCategory
+         */
+        FakeSlowResolveSearch(String nodeId, boolean isNetworkUnavailable, int responseCode,
+                String searchTerm, String displayText, String alternateTerm, String mid,
+                boolean doPreventPreload, int startAdjust, int endAdjust, String contextLanguage,
+                String thumbnailUrl, String caption, String quickActionUri,
+                int quickActionCategory) {
+            super(nodeId, isNetworkUnavailable, responseCode, searchTerm, displayText,
+                    alternateTerm, mid, doPreventPreload, startAdjust, endAdjust, contextLanguage,
+                    thumbnailUrl, caption, quickActionUri, quickActionCategory);
+        }
+
+        @Override
+        public void simulate() throws InterruptedException, TimeoutException {
+            mActiveFakeTapSearch = this;
+
+            // When a resolution is needed, the simulation does not start until the system
+            // requests one, and it does not finish until the simulated resolution happens.
+            mDidStartResolution = false;
+            mDidFinishResolution = false;
+
+            mManagerTest.clickNode(getNodeId());
+            mManagerTest.waitForSelectionToBe(mSearchTerm);
+
+            if (mPolicy.shouldPreviousTapResolve()) {
+                // Now wait for the Search Term Resolution to start.
+                mManagerTest.waitForSearchTermResolutionToStart(this);
+            } else {
+                throw new RuntimeException("Tried to simulate a slow resolving search when "
+                        + "not resolving!");
+            }
+        }
+
+        /**
+         * Finishes the resolving of a slow-resolving Tap search.
+         * @throws InterruptedException
+         * @throws TimeoutException
+         */
+        void finishResolve() throws InterruptedException, TimeoutException {
+            // Simulate a Search Term Resolution.
+            simulateSearchTermResolution();
+
+            // Now wait for the simulated Search Term Resolution to finish.
+            mManagerTest.waitForSearchTermResolutionToFinish(this);
         }
     }
 
@@ -299,7 +386,7 @@ class ContextualSearchFakeServer
         private boolean mIsVisible;
 
         ContentViewCoreWrapper(ChromeActivity activity) {
-            super(activity);
+            super(activity, "");
         }
 
         @Override
@@ -400,6 +487,14 @@ class ContextualSearchFakeServer
     }
 
     /**
+     * Sets whether the device is currently online or not.
+     */
+    @VisibleForTesting
+    void setIsOnline(boolean isOnline) {
+        mIsOnline = isOnline;
+    }
+
+    /**
      * Resets the fake server's member data.
      */
     @VisibleForTesting
@@ -407,6 +502,7 @@ class ContextualSearchFakeServer
         mLoadedUrl = null;
         mSearchTermRequested = null;
         mShouldUseHttps = false;
+        mIsOnline = true;
         mLoadedUrlCount = 0;
     }
 
@@ -438,15 +534,24 @@ class ContextualSearchFakeServer
 
     @Override
     public void handleSearchTermResolutionResponse(boolean isNetworkUnavailable, int responseCode,
-            String searchTerm, String displayText, String alternateTerm, boolean doPreventPreload,
-            int selectionStartAdjust, int selectionEndAdjust, String contextLanguage) {
+            String searchTerm, String displayText, String alternateTerm, String mid,
+            boolean doPreventPreload, int selectionStartAdjust, int selectionEndAdjust,
+            String contextLanguage, String thumbnailUrl, String caption, String quickActionUri,
+            int quickActionCategory) {
         mBaseManager.handleSearchTermResolutionResponse(isNetworkUnavailable, responseCode,
-                searchTerm, displayText, alternateTerm, doPreventPreload, selectionStartAdjust,
-                selectionEndAdjust, contextLanguage);
+                searchTerm, displayText, alternateTerm, mid, doPreventPreload, selectionStartAdjust,
+                selectionEndAdjust, contextLanguage, thumbnailUrl, caption, quickActionUri,
+                quickActionCategory);
     }
 
     @Override
-    @Nullable public URL getBasePageUrl() {
+    public boolean isOnline() {
+        return mIsOnline;
+    }
+
+    @Override
+    @Nullable
+    public URL getBasePageUrl() {
         URL baseUrl = mBaseManager.getBasePageUrl();
         if (mShouldUseHttps && baseUrl != null) {
             try {
@@ -474,14 +579,21 @@ class ContextualSearchFakeServer
         registerFakeLongPressSearch(new FakeLongPressSearch("term", "Term"));
         registerFakeLongPressSearch(new FakeLongPressSearch("resolution", "Resolution"));
 
-        registerFakeTapSearch(new FakeTapSearch("search", false, 200,
-                "Search", "Search", "alternate-term", false, 0, 0, ""));
-        registerFakeTapSearch(new FakeTapSearch("term", false, 200,
-                "Term", "Term", "alternate-term", false, 0, 0, ""));
-        registerFakeTapSearch(new FakeTapSearch("resolution", false, 200,
-                "Resolution", "Resolution", "alternate-term", false, 0, 0, ""));
-        registerFakeTapSearch(new FakeTapSearch("german", false, 200,
-                "Deutsche", "Deutsche", "alternate-term", false, 0, 0, "de"));
+        registerFakeTapSearch(new FakeTapSearch(
+                "search", false, 200, "Search", "Search", "alternate-term", "", false, 0, 0, "",
+                "", "", "", QuickActionCategory.NONE));
+        registerFakeTapSearch(new FakeTapSearch(
+                "term", false, 200, "Term", "Term", "alternate-term", "", false, 0, 0, "",
+                "", "", "", QuickActionCategory.NONE));
+        registerFakeTapSearch(new FakeTapSearch("resolution", false, 200, "Resolution",
+                "Resolution", "alternate-term", "", false, 0, 0, "", "", "", "",
+                QuickActionCategory.NONE));
+        registerFakeTapSearch(new FakeTapSearch("german", false, 200, "Deutsche", "Deutsche",
+                "alternate-term", "", false, 0, 0, "de", "", "", "", QuickActionCategory.NONE));
+
+        registerFakeSlowResolveSearch(new FakeSlowResolveSearch(
+                "search", false, 200, "Search", "Search", "alternate-term", "", false, 0, 0, "",
+                "", "", "", QuickActionCategory.NONE));
     }
 
     /**
@@ -501,6 +613,14 @@ class ContextualSearchFakeServer
     }
 
     /**
+     * @param id The ID of the FakeSlowResolveSearch.
+     * @return The {@code FakeSlowResolveSearch} with the given ID.
+     */
+    public FakeSlowResolveSearch getFakeSlowResolveSearch(String id) {
+        return mFakeSlowResolveSearches.get(id);
+    }
+
+    /**
      * Register the FakeLongPressSearch.
      * @param fakeSearch The FakeLongPressSearch to be registered.
      */
@@ -514,5 +634,13 @@ class ContextualSearchFakeServer
      */
     private void registerFakeTapSearch(FakeTapSearch fakeSearch) {
         mFakeTapSearches.put(fakeSearch.getNodeId(), fakeSearch);
+    }
+
+    /**
+     * Register the FakeSlowResolveSearch.
+     * @param fakeSlowResolveSearch The {@code FakeSlowResolveSearch} to be registered.
+     */
+    private void registerFakeSlowResolveSearch(FakeSlowResolveSearch fakeSlowResolveSearch) {
+        mFakeSlowResolveSearches.put(fakeSlowResolveSearch.getNodeId(), fakeSlowResolveSearch);
     }
 }

@@ -7,6 +7,7 @@
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/web_contents.h"
 
@@ -27,6 +28,8 @@ const char kInlineInstallSupportedError[] =
     "redirected to the Chrome Web Store.";
 const char kInitiatedFromPopupError[] =
     "Inline installs can not be initiated from pop-up windows.";
+const char kInitiatedFromFullscreenError[] =
+    "Inline installs can not be initiated from fullscreen.";
 
 WebstoreInlineInstaller::WebstoreInlineInstaller(
     content::WebContents* web_contents,
@@ -101,9 +104,9 @@ const GURL& WebstoreInlineInstaller::GetRequestorURL() const {
   return requestor_url_;
 }
 
-scoped_refptr<ExtensionInstallPrompt::Prompt>
+std::unique_ptr<ExtensionInstallPrompt::Prompt>
 WebstoreInlineInstaller::CreateInstallPrompt() const {
-  scoped_refptr<ExtensionInstallPrompt::Prompt> prompt(
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt(
       new ExtensionInstallPrompt::Prompt(
           ExtensionInstallPrompt::INLINE_INSTALL_PROMPT));
 
@@ -138,6 +141,12 @@ bool WebstoreInlineInstaller::CheckInlineInstallPermitted(
     *error = kInitiatedFromPopupError;
     return false;
   }
+  FullscreenController* controller =
+      browser->exclusive_access_manager()->fullscreen_controller();
+  if (controller->IsFullscreenForBrowser() || controller->IsTabFullscreen()) {
+    *error = kInitiatedFromFullscreenError;
+    return false;
+  }
   // The store may not support inline installs for this item, in which case
   // we open the store-provided redirect URL in a new tab and abort the
   // installation process.
@@ -160,7 +169,8 @@ bool WebstoreInlineInstaller::CheckInlineInstallPermitted(
             GURL(redirect_url),
             content::Referrer(web_contents()->GetURL(),
                               blink::WebReferrerPolicyDefault)),
-        NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_AUTO_BOOKMARK, false));
+        WindowOpenDisposition::NEW_FOREGROUND_TAB,
+        ui::PAGE_TRANSITION_AUTO_BOOKMARK, false));
     *error = kInlineInstallSupportedError;
     return false;
   }

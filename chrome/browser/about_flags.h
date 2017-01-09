@@ -5,11 +5,13 @@
 #ifndef CHROME_BROWSER_ABOUT_FLAGS_H_
 #define CHROME_BROWSER_ABOUT_FLAGS_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/metrics/histogram_base.h"
@@ -18,6 +20,7 @@
 #include "components/flags_ui/flags_state.h"
 
 namespace base {
+class FeatureList;
 class ListValue;
 }
 
@@ -32,6 +35,16 @@ namespace about_flags {
 void ConvertFlagsToSwitches(flags_ui::FlagsStorage* flags_storage,
                             base::CommandLine* command_line,
                             flags_ui::SentinelsMode sentinels);
+
+// Registers variations parameter values selected for features in about:flags.
+// The selected flags are retrieved from |flags_storage|, the registered
+// variation parameters are connected to their corresponding features in
+// |feature_list|. Returns the (possibly empty) list of additional variation ids
+// to register in the MetricsService that come from variations selected using
+// chrome://flags.
+std::vector<std::string> RegisterAllFeatureVariationParameters(
+    flags_ui::FlagsStorage* flags_storage,
+    base::FeatureList* feature_list);
 
 // Compares a set of switches of the two provided command line objects and
 // returns true if they are the same and false otherwise.
@@ -74,12 +87,12 @@ void RecordUMAStatistics(flags_ui::FlagsStorage* flags_storage);
 // Returns the UMA id for the specified switch name.
 base::HistogramBase::Sample GetSwitchUMAId(const std::string& switch_name);
 
-// Sends stats (as UMA histogram) about command_line_difference.
-// This is used on ChromeOS to report flags that lead to browser restart.
-// |command_line_difference| is the result of
-// AreSwitchesIdenticalToCurrentCommandLine().
-void ReportCustomFlags(const std::string& uma_histogram_hame,
-                       const std::set<std::string>& command_line_difference);
+// Sends stats (as UMA histogram) about a set of command line |flags| in
+// a histogram, with an enum value for each flag in |switches| and |features|,
+// based on the hash of the flag name.
+void ReportAboutFlagsHistogram(const std::string& uma_histogram_name,
+                               const std::set<std::string>& switches,
+                               const std::set<std::string>& features);
 
 namespace testing {
 

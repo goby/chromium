@@ -5,6 +5,7 @@
 #ifndef UI_BASE_DRAGDROP_OS_EXCHANGE_DATA_PROVIDER_AURAX11_H_
 #define UI_BASE_DRAGDROP_OS_EXCHANGE_DATA_PROVIDER_AURAX11_H_
 
+#include <stdint.h>
 #include <X11/Xlib.h>
 
 // Get rid of a macro from Xlib.h that conflicts with Aura's RootWindow class.
@@ -13,6 +14,7 @@
 #include <map>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/pickle.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/x/selection_owner.h"
@@ -61,7 +63,7 @@ class UI_BASE_EXPORT OSExchangeDataProviderAuraX11
   }
 
   // Overridden from OSExchangeData::Provider:
-  Provider* Clone() const override;
+  std::unique_ptr<Provider> Clone() const override;
   void MarkOriginatedFromRenderer() override;
   bool DidOriginateFromRenderer() const override;
   void SetString(const base::string16& data) override;

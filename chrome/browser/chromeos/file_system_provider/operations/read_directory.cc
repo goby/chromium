@@ -4,9 +4,11 @@
 
 #include "chrome/browser/chromeos/file_system_provider/operations/read_directory.h"
 
-#include <string>
+#include <stddef.h>
 
-#include "base/memory/linked_ptr.h"
+#include <string>
+#include <utility>
+
 #include "chrome/browser/chromeos/file_system_provider/operations/get_metadata.h"
 #include "chrome/common/extensions/api/file_system_provider.h"
 #include "chrome/common/extensions/api/file_system_provider_internal.h"
@@ -17,7 +19,7 @@ namespace operations {
 namespace {
 
 // Convert |input| into |output|. If parsing fails, then returns false.
-bool ConvertRequestValueToEntryList(scoped_ptr<RequestValue> value,
+bool ConvertRequestValueToEntryList(std::unique_ptr<RequestValue> value,
                                     storage::AsyncFileUtil::EntryList* output) {
   using extensions::api::file_system_provider::EntryMetadata;
   using extensions::api::file_system_provider_internal::
@@ -27,10 +29,9 @@ bool ConvertRequestValueToEntryList(scoped_ptr<RequestValue> value,
   if (!params)
     return false;
 
-  for (size_t i = 0; i < params->entries.size(); ++i) {
-    const linked_ptr<EntryMetadata> entry_metadata = params->entries[i];
+  for (const EntryMetadata& entry_metadata : params->entries) {
     if (!ValidateIDLEntryMetadata(
-            *entry_metadata,
+            entry_metadata,
             ProvidedFileSystemInterface::METADATA_FIELD_IS_DIRECTORY |
                 ProvidedFileSystemInterface::METADATA_FIELD_NAME,
             false /* root_entry */)) {
@@ -38,8 +39,8 @@ bool ConvertRequestValueToEntryList(scoped_ptr<RequestValue> value,
     }
 
     storage::DirectoryEntry output_entry;
-    output_entry.is_directory = *entry_metadata->is_directory;
-    output_entry.name = *entry_metadata->name;
+    output_entry.is_directory = *entry_metadata.is_directory;
+    output_entry.name = *entry_metadata.name;
 
     output->push_back(output_entry);
   }
@@ -84,11 +85,11 @@ bool ReadDirectory::Execute(int request_id) {
 }
 
 void ReadDirectory::OnSuccess(int /* request_id */,
-                              scoped_ptr<RequestValue> result,
+                              std::unique_ptr<RequestValue> result,
                               bool has_more) {
   storage::AsyncFileUtil::EntryList entry_list;
   const bool convert_result =
-      ConvertRequestValueToEntryList(result.Pass(), &entry_list);
+      ConvertRequestValueToEntryList(std::move(result), &entry_list);
 
   if (!convert_result) {
     LOG(ERROR)
@@ -103,7 +104,7 @@ void ReadDirectory::OnSuccess(int /* request_id */,
 }
 
 void ReadDirectory::OnError(int /* request_id */,
-                            scoped_ptr<RequestValue> /* result */,
+                            std::unique_ptr<RequestValue> /* result */,
                             base::File::Error error) {
   callback_.Run(
       error, storage::AsyncFileUtil::EntryList(), false /* has_more */);

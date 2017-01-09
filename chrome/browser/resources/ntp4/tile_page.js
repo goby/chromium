@@ -359,6 +359,7 @@ cr.define('ntp', function() {
    *     of the tile grid.
    * @constructor
    * @extends {HTMLDivElement}
+   * @implements {cr.ui.DragWrapperDelegate}
    */
   function TilePage(gridValues) {
     var el = cr.doc.createElement('div');
@@ -500,25 +501,6 @@ cr.define('ntp', function() {
     },
 
     /**
-     * The notification content of this tile (if any, otherwise null).
-     * @type {!HTMLElement}
-     */
-    get notification() {
-      return this.topMargin_.nextElementSibling.id == 'notification-container' ?
-          this.topMargin_.nextElementSibling : null;
-    },
-    /**
-     * The notification content of this tile (if any, otherwise null).
-     * @type {!HTMLElement}
-     */
-    set notification(node) {
-      assert(node instanceof HTMLElement, '|node| isn\'t an HTMLElement!');
-      // NOTE: Implicitly removes from DOM if |node| is inside it.
-      this.content_.insertBefore(node, this.topMargin_.nextElementSibling);
-      this.positionNotification_();
-    },
-
-    /**
      * Fetches the size, in pixels, of the padding-top of the tile contents.
      * @type {number}
      */
@@ -532,6 +514,8 @@ cr.define('ntp', function() {
 
     /**
      * Removes the tilePage from the DOM and cleans up event handlers.
+     *
+     * TODO(dbeam): this method now conflicts with HTMLElement#remove(). Rename.
      */
     remove: function() {
       // This checks arguments.length as most remove functions have a boolean
@@ -722,17 +706,17 @@ cr.define('ntp', function() {
             this.focusableElements_.length;
       }.bind(this);
 
-      switch (e.keyIdentifier) {
-        case 'Right':
-        case 'Left':
-          var direction = e.keyIdentifier == 'Right' ? 1 : -1;
+      switch (e.key) {
+        case 'ArrowRight':
+        case 'ArrowLeft':
+          var direction = e.key == 'ArrowRight' ? 1 : -1;
           this.focusElementIndex_ = wrap(this.focusElementIndex_ + direction);
           break;
-        case 'Up':
-        case 'Down':
+        case 'ArrowUp':
+        case 'ArrowDown':
           // Look through all focusable elements. Find the first one that is
           // in the same column.
-          var direction = e.keyIdentifier == 'Up' ? -1 : 1;
+          var direction = e.key == 'ArrowUp' ? -1 : 1;
           var currentIndex =
               Array.prototype.indexOf.call(this.focusableElements_,
                                            this.currentFocusElement_);
@@ -968,7 +952,6 @@ cr.define('ntp', function() {
       this.classList.add('animating-tile-page');
       this.heightChanged_();
 
-      this.positionNotification_();
       this.repositionTiles_();
     },
 
@@ -1041,35 +1024,6 @@ cr.define('ntp', function() {
       this.topMarginPx_ = newMargin;
       this.topMargin_.style.marginTop =
           toCssPx(this.topMarginPx_ - this.animatedTopMarginPx_);
-    },
-
-    /**
-     * Position the notification if there's one showing.
-     */
-    positionNotification_: function() {
-      var notification = this.notification;
-      if (!notification || notification.hidden)
-        return;
-
-      // Update the horizontal position.
-      var animatedLeftMargin = this.getAnimatedLeftMargin_();
-      notification.style.WebkitMarginStart = animatedLeftMargin + 'px';
-      var leftOffset = (this.layoutValues_.leftMargin - animatedLeftMargin) *
-                       (isRTL() ? -1 : 1);
-      notification.style.WebkitTransform = 'translateX(' + leftOffset + 'px)';
-
-      // Update the allowable widths of the text.
-      var buttonWidth = notification.querySelector('button').offsetWidth + 8;
-      notification.querySelector('span').style.maxWidth =
-          this.layoutValues_.gridWidth - buttonWidth + 'px';
-
-      // This makes sure the text doesn't condense smaller than the narrow size
-      // of the grid (e.g. when a user makes the window really small).
-      notification.style.minWidth =
-          this.gridValues_.narrowWidth - buttonWidth + 'px';
-
-      // Update the top position.
-      notification.style.marginTop = -notification.offsetHeight + 'px';
     },
 
     /**
@@ -1192,18 +1146,12 @@ cr.define('ntp', function() {
       return this.dragWrapper_.isCurrentDragTarget;
     },
 
-    /**
-     * Thunk for dragleave events fired on |tileGrid_|.
-     * @param {Event} e A MouseEvent for the drag.
-     */
+    /** @override */
     doDragLeave: function(e) {
       this.cleanupDrag();
     },
 
-    /**
-     * Performs all actions necessary when a drag enters the tile page.
-     * @param {Event} e A mouseover event for the drag enter.
-     */
+    /** @override */
     doDragEnter: function(e) {
       // Applies the mask so doppleganger tiles disappear into the fog.
       this.updateMask_();
@@ -1222,11 +1170,7 @@ cr.define('ntp', function() {
       this.doDragOver(e);
     },
 
-    /**
-     * Performs all actions necessary when the user moves the cursor during
-     * a drag over the tile page.
-     * @param {Event} e A mouseover event for the drag over.
-     */
+    /** @override */
     doDragOver: function(e) {
       e.preventDefault();
 
@@ -1237,10 +1181,7 @@ cr.define('ntp', function() {
       this.updateDropIndicator_(newDragIndex);
     },
 
-    /**
-     * Performs all actions necessary when the user completes a drop.
-     * @param {Event} e A mouseover event for the drag drop.
-     */
+    /** @override */
     doDrop: function(e) {
       e.stopPropagation();
       e.preventDefault();

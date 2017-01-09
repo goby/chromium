@@ -4,8 +4,8 @@
 
 // Implementation of a fake VideoCaptureDeviceFactory class.
 
-#ifndef MEDIA_VIDEO_CAPTURE_FAKE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
-#define MEDIA_VIDEO_CAPTURE_FAKE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
+#ifndef MEDIA_CAPTURE_VIDEO_FAKE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
+#define MEDIA_CAPTURE_VIDEO_FAKE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
 
 #include "media/capture/video/fake_video_capture_device.h"
 #include "media/capture/video/video_capture_device_factory.h"
@@ -14,17 +14,18 @@ namespace media {
 
 // Extension of VideoCaptureDeviceFactory to create and manipulate fake devices,
 // not including file-based ones.
-class MEDIA_EXPORT FakeVideoCaptureDeviceFactory
+class CAPTURE_EXPORT FakeVideoCaptureDeviceFactory
     : public VideoCaptureDeviceFactory {
  public:
   FakeVideoCaptureDeviceFactory();
   ~FakeVideoCaptureDeviceFactory() override {}
 
-  scoped_ptr<VideoCaptureDevice> Create(
-      const VideoCaptureDevice::Name& device_name) override;
-  void GetDeviceNames(VideoCaptureDevice::Names* device_names) override;
-  void GetDeviceSupportedFormats(
-      const VideoCaptureDevice::Name& device,
+  std::unique_ptr<VideoCaptureDevice> CreateDevice(
+      const VideoCaptureDeviceDescriptor& device_descriptor) override;
+  void GetDeviceDescriptors(
+      VideoCaptureDeviceDescriptors* device_descriptors) override;
+  void GetSupportedFormats(
+      const VideoCaptureDeviceDescriptor& device_descriptor,
       VideoCaptureFormats* supported_formats) override;
 
   void set_number_of_devices(int number_of_devices) {
@@ -37,14 +38,14 @@ class MEDIA_EXPORT FakeVideoCaptureDeviceFactory
   }
 
  private:
-  void parse_command_line();
+  void ParseCommandLine();
 
   int number_of_devices_;
   FakeVideoCaptureDevice::BufferOwnership fake_vcd_ownership_;
-  FakeVideoCaptureDevice::BufferPlanarity fake_vcd_planarity_;
   float frame_rate_;
+  bool command_line_parsed_ = false;
 };
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_FAKE_VIDEO_CAPTURE_DEVICE_FACTORY_H_
+#endif  // MEDIA_CAPTURE_VIDEO_FAKE_VIDEO_CAPTURE_DEVICE_FACTORY_H_

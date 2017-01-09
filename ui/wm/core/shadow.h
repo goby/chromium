@@ -5,8 +5,9 @@
 #ifndef UI_WM_CORE_SHADOW_H_
 #define UI_WM_CORE_SHADOW_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/wm/wm_export.h"
@@ -44,6 +45,10 @@ class WM_EXPORT Shadow : public ui::ImplicitAnimationObserver {
   // transformations to this layer).
   ui::Layer* layer() const { return layer_.get(); }
 
+  // Exposed to allow setting animation parameters for bounds and opacity
+  // animations.
+  ui::Layer* shadow_layer() const { return shadow_layer_.get(); }
+
   const gfx::Rect& content_bounds() const { return content_bounds_; }
   Style style() const { return style_; }
 
@@ -64,25 +69,23 @@ class WM_EXPORT Shadow : public ui::ImplicitAnimationObserver {
   // |content_bounds_|.
   void UpdateLayerBounds();
 
+  // Returns the "elevation" for |style_|, which dictates the shadow's display
+  // characteristics. The elevation is proportional to the size of the blur and
+  // its offset.
+  int ElevationForStyle();
+
   // The current style, set when the transition animation starts.
-  Style style_;
+  Style style_ = STYLE_ACTIVE;
 
   // The parent layer of the shadow layer. It serves as a container accessible
   // from the outside to control the visibility of the shadow.
-  scoped_ptr<ui::Layer> layer_;
+  std::unique_ptr<ui::Layer> layer_;
 
   // The actual shadow layer corresponding to a cc::NinePatchLayer.
-  scoped_ptr<ui::Layer> shadow_layer_;
-
-  // Size of the current shadow image.
-  gfx::Size image_size_;
+  std::unique_ptr<ui::Layer> shadow_layer_;
 
   // Bounds of the content that the shadow encloses.
   gfx::Rect content_bounds_;
-
-  // The interior inset of the shadow images. The content bounds of the image
-  // grid should be set to |content_bounds_| inset by this amount.
-  int interior_inset_;
 
   DISALLOW_COPY_AND_ASSIGN(Shadow);
 };

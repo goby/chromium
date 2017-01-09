@@ -6,6 +6,8 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "content/browser/android/java/gin_java_bound_object_delegate.h"
 #include "content/browser/android/java/gin_java_bridge_message_filter.h"
 #include "content/browser/android/java/java_bridge_thread.h"
@@ -26,13 +28,13 @@ namespace content {
 
 GinJavaBridgeDispatcherHost::GinJavaBridgeDispatcherHost(
     WebContents* web_contents,
-    jobject retained_object_set)
+    const base::android::JavaRef<jobject>& retained_object_set)
     : WebContentsObserver(web_contents),
       next_object_id_(1),
       retained_object_set_(base::android::AttachCurrentThread(),
                            retained_object_set),
       allow_object_contents_inspection_(true) {
-  DCHECK(retained_object_set);
+  DCHECK(!retained_object_set.is_null());
 }
 
 GinJavaBridgeDispatcherHost::~GinJavaBridgeDispatcherHost() {
@@ -79,11 +81,25 @@ void GinJavaBridgeDispatcherHost::WebContentsDestroyed() {
     filter->RemoveHost(this);
 }
 
+void GinJavaBridgeDispatcherHost::RenderProcessGone(
+    base::TerminationStatus status) {
+  GinJavaBridgeMessageFilter::RemoveFilter(this);
+}
+
+void GinJavaBridgeDispatcherHost::RenderViewHostChanged(
+    RenderViewHost* old_host,
+    RenderViewHost* new_host) {
+  scoped_refptr<GinJavaBridgeMessageFilter> filter =
+      GinJavaBridgeMessageFilter::FromHost(this, false);
+  if (!filter)
+    InstallFilterAndRegisterAllRoutingIds();
+}
+
 GinJavaBoundObject::ObjectID GinJavaBridgeDispatcherHost::AddObject(
     const base::android::JavaRef<jobject>& object,
     const base::android::JavaRef<jclass>& safe_annotation_clazz,
     bool is_named,
-    int32 holder) {
+    int32_t holder) {
   // Can be called on any thread. Calls come from the UI thread via
   // AddNamedObject, and from the background thread, when injected Java
   // object's method returns a Java object.
@@ -143,7 +159,7 @@ JavaObjectWeakGlobalRef GinJavaBridgeDispatcherHost::GetObjectWeakRef(
 
 JavaObjectWeakGlobalRef
 GinJavaBridgeDispatcherHost::RemoveHolderAndAdvanceLocked(
-    int32 holder,
+    int32_t holder,
     ObjectMap::iterator* iter_ptr) {
   objects_lock_.AssertAcquired();
   JavaObjectWeakGlobalRef result;
@@ -319,14 +335,13 @@ void GinJavaBridgeDispatcherHost::OnInvokeMethod(
   }
   scoped_refptr<GinJavaMethodInvocationHelper> result =
       new GinJavaMethodInvocationHelper(
-          make_scoped_ptr(new GinJavaBoundObjectDelegate(object)),
-          method_name,
+          base::MakeUnique<GinJavaBoundObjectDelegate>(object), method_name,
           arguments);
   result->Init(this);
   result->Invoke();
   *error_code = result->GetInvocationError();
   if (result->HoldsPrimitiveResult()) {
-    scoped_ptr<base::ListValue> result_copy(
+    std::unique_ptr<base::ListValue> result_copy(
         result->GetPrimitiveResult().DeepCopy());
     wrapped_result->Swap(result_copy.get());
   } else if (!result->GetObjectResult().is_null()) {
@@ -359,7 +374,7 @@ void GinJavaBridgeDispatcherHost::OnObjectWrapperDeleted(
     return;
   JavaObjectWeakGlobalRef ref =
       RemoveHolderAndAdvanceLocked(routing_id, &iter);
-  if (!ref.is_empty()) {
+  if (!ref.is_uninitialized()) {
     RemoveFromRetainedObjectSetLocked(ref);
   }
 }

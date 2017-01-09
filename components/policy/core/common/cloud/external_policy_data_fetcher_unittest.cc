@@ -4,9 +4,12 @@
 
 #include "components/policy/core/common/cloud/external_policy_data_fetcher.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/test/test_simple_task_runner.h"
 #include "net/base/net_errors.h"
@@ -26,7 +29,7 @@ const char* kExternalPolicyDataURLs[] = {
     "http://localhost/data_2"
 };
 
-const int64 kExternalPolicyDataMaxSize = 5 * 1024 * 1024;  // 5 MB.
+const int64_t kExternalPolicyDataMaxSize = 5 * 1024 * 1024;  // 5 MB.
 
 const char* kExternalPolicyDataPayload = "External policy data";
 
@@ -45,21 +48,21 @@ class ExternalPolicyDataFetcherTest : public testing::Test {
 
   void OnJobFinished(int job_index,
                      ExternalPolicyDataFetcher::Result result,
-                     scoped_ptr<std::string> data);
+                     std::unique_ptr<std::string> data);
   int GetAndResetCallbackCount();
 
   net::TestURLFetcherFactory fetcher_factory_;
   scoped_refptr<base::TestSimpleTaskRunner> owner_task_runner_;
   scoped_refptr<base::TestSimpleTaskRunner> io_task_runner_;
-  scoped_ptr<ExternalPolicyDataFetcherBackend> fetcher_backend_;
-  scoped_ptr<ExternalPolicyDataFetcher> fetcher_;
+  std::unique_ptr<ExternalPolicyDataFetcherBackend> fetcher_backend_;
+  std::unique_ptr<ExternalPolicyDataFetcher> fetcher_;
 
   std::map<int, ExternalPolicyDataFetcher::Job*> jobs_;  // Not owned.
 
   int callback_count_;
   int callback_job_index_;
   ExternalPolicyDataFetcher::Result callback_result_;
-  scoped_ptr<std::string> callback_data_;
+  std::unique_ptr<std::string> callback_data_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ExternalPolicyDataFetcherTest);
@@ -104,7 +107,7 @@ void ExternalPolicyDataFetcherTest::CancelJob(int index) {
 void ExternalPolicyDataFetcherTest::OnJobFinished(
     int job_index,
     ExternalPolicyDataFetcher::Result result,
-    scoped_ptr<std::string> data) {
+    std::unique_ptr<std::string> data) {
   ++callback_count_;
   callback_job_index_ = job_index;
   callback_result_ = result;
@@ -155,9 +158,8 @@ TEST_F(ExternalPolicyDataFetcherTest, MaxSizeExceeded) {
 
   // Indicate that the data size will exceed maximum allowed.
   fetcher->delegate()->OnURLFetchDownloadProgress(
-      fetcher,
-      kExternalPolicyDataMaxSize + 1,
-      -1);
+      fetcher, kExternalPolicyDataMaxSize + 1, -1,
+      kExternalPolicyDataMaxSize + 1);
 
   // Verify that the fetch is no longer running.
   EXPECT_FALSE(fetcher_factory_.GetFetcherByID(0));

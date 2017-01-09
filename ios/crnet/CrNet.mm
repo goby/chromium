@@ -11,18 +11,18 @@
 
 static CrNetEnvironment* g_chrome_net = NULL;
 
-static BOOL g_spdy_enabled = YES;
+static BOOL g_http2_enabled = YES;
 static BOOL g_quic_enabled = NO;
 static BOOL g_sdch_enabled = NO;
+static BOOL g_user_agent_partial = NO;
 static NSString* g_user_agent = nil;
 static NSString* g_sdch_pref_store_filename = nil;
-static double g_alternate_protocol_threshold = 1.0;
 static RequestFilterBlock g_request_filter_block = nil;
 
 @implementation CrNet
 
-+ (void)setSpdyEnabled:(BOOL)spdyEnabled {
-  g_spdy_enabled = spdyEnabled;
++ (void)setHttp2Enabled:(BOOL)http2Enabled {
+  g_http2_enabled = http2Enabled;
 }
 
 + (void)setQuicEnabled:(BOOL)quicEnabled {
@@ -36,27 +36,26 @@ static RequestFilterBlock g_request_filter_block = nil;
 }
 
 + (void)setPartialUserAgent:(NSString *)userAgent {
-  g_user_agent = userAgent;
+  [self setUserAgent:userAgent partial:YES];
 }
 
-+ (void)setAlternateProtocolThreshold:(double)alternateProtocolThreshold {
-  g_alternate_protocol_threshold = alternateProtocolThreshold;
++ (void)setUserAgent:(NSString*)userAgent partial:(bool)partial {
+  g_user_agent = userAgent;
+  g_user_agent_partial = partial;
 }
 
 + (void)installInternal {
   CrNetEnvironment::Initialize();
-  std::string partial_user_agent = base::SysNSStringToUTF8(g_user_agent);
-  g_chrome_net = new CrNetEnvironment(partial_user_agent);
+  std::string user_agent = base::SysNSStringToUTF8(g_user_agent);
+  g_chrome_net = new CrNetEnvironment(user_agent, g_user_agent_partial == YES);
 
-  g_chrome_net->set_spdy_enabled(g_spdy_enabled);
+  g_chrome_net->set_spdy_enabled(g_http2_enabled);
   g_chrome_net->set_quic_enabled(g_quic_enabled);
   g_chrome_net->set_sdch_enabled(g_sdch_enabled);
   if (g_sdch_pref_store_filename) {
     std::string filename = base::SysNSStringToUTF8(g_sdch_pref_store_filename);
     g_chrome_net->set_sdch_pref_store_filename(filename);
   }
-  g_chrome_net->set_alternate_protocol_threshold(
-      g_alternate_protocol_threshold);
 
   g_chrome_net->Install();
   g_chrome_net->SetHTTPProtocolHandlerRegistered(true);
@@ -66,7 +65,13 @@ static RequestFilterBlock g_request_filter_block = nil;
 + (void)install {
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
+    if (![NSThread isMainThread]) {
+      dispatch_sync(dispatch_get_main_queue(), ^(void) {
+        [self installInternal];
+      });
+    } else {
       [self installInternal];
+    }
   });
 }
 

@@ -4,16 +4,19 @@
 
 #include "content/browser/download/drag_download_util.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "url/gurl.h"
 
@@ -79,7 +82,7 @@ base::File CreateFileForDrop(base::FilePath* file_path) {
         new_file_path, base::File::FLAG_CREATE | base::File::FLAG_WRITE);
     if (file.IsValid()) {
       *file_path = new_file_path;
-      return file.Pass();
+      return file;
     }
   }
 

@@ -42,7 +42,7 @@ binding.registerCustomHook(function(bindingsAPI) {
     var relativePath = $String.slice(fileEntry.fullPath, 1);
 
     sendRequest.sendRequest(this.name, [id, fileSystemName, relativePath],
-      this.definition.parameters, {});
+      this.definition.parameters);
     return id;
   });
 
@@ -57,7 +57,7 @@ binding.registerCustomHook(function(bindingsAPI) {
           [true]);
     } else {
       sendRequest.sendRequest(
-          this.name, [id, callback], this.definition.parameters, {});
+          this.name, [id, callback], this.definition.parameters);
     }
   });
 
@@ -114,5 +114,5 @@ binding.registerCustomHook(function(bindingsAPI) {
   };
 });
 
-exports.bindFileEntryCallback = bindFileEntryCallback;
-exports.binding = binding.generate();
+exports.$set('bindFileEntryCallback', bindFileEntryCallback);
+exports.$set('binding', binding.generate());

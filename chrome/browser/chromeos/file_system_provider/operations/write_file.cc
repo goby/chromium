@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/file_system_provider/operations/write_file.h"
 
+#include <utility>
+
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "chrome/common/extensions/api/file_system_provider.h"
@@ -17,7 +19,7 @@ WriteFile::WriteFile(extensions::EventRouter* event_router,
                      const ProvidedFileSystemInfo& file_system_info,
                      int file_handle,
                      scoped_refptr<net::IOBuffer> buffer,
-                     int64 offset,
+                     int64_t offset,
                      int length,
                      const storage::AsyncFileUtil::StatusCallback& callback)
     : Operation(event_router, file_system_info),
@@ -25,8 +27,7 @@ WriteFile::WriteFile(extensions::EventRouter* event_router,
       buffer_(buffer),
       offset_(offset),
       length_(length),
-      callback_(callback) {
-}
+      callback_(callback) {}
 
 WriteFile::~WriteFile() {
 }
@@ -47,30 +48,30 @@ bool WriteFile::Execute(int request_id) {
 
   // Set the data directly on base::Value() to avoid an extra string copy.
   DCHECK(buffer_.get());
-  scoped_ptr<base::DictionaryValue> options_as_value = options.ToValue();
+  std::unique_ptr<base::DictionaryValue> options_as_value = options.ToValue();
   options_as_value->Set(
       "data",
       base::BinaryValue::CreateWithCopiedBuffer(buffer_->data(), length_));
 
-  scoped_ptr<base::ListValue> event_args(new base::ListValue);
-  event_args->Append(options_as_value.release());
+  std::unique_ptr<base::ListValue> event_args(new base::ListValue);
+  event_args->Append(std::move(options_as_value));
 
   return SendEvent(
       request_id,
       extensions::events::FILE_SYSTEM_PROVIDER_ON_WRITE_FILE_REQUESTED,
       extensions::api::file_system_provider::OnWriteFileRequested::kEventName,
-      event_args.Pass());
+      std::move(event_args));
 }
 
 void WriteFile::OnSuccess(int /* request_id */,
-                          scoped_ptr<RequestValue> /* result */,
+                          std::unique_ptr<RequestValue> /* result */,
                           bool /* has_more */) {
   TRACE_EVENT0("file_system_provider", "WriteFile::OnSuccess");
   callback_.Run(base::File::FILE_OK);
 }
 
 void WriteFile::OnError(int /* request_id */,
-                        scoped_ptr<RequestValue> /* result */,
+                        std::unique_ptr<RequestValue> /* result */,
                         base::File::Error error) {
   TRACE_EVENT0("file_system_provider", "WriteFile::OnError");
   callback_.Run(error);

@@ -40,20 +40,20 @@ namespace blink {
 
 class Element;
 
-class ColorChooserClient : public WillBeGarbageCollectedMixin {
-public:
-    virtual ~ColorChooserClient();
-    DEFINE_INLINE_VIRTUAL_TRACE() { }
+class ColorChooserClient : public GarbageCollectedMixin {
+ public:
+  virtual ~ColorChooserClient();
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 
-    virtual void didChooseColor(const Color&) = 0;
-    virtual void didEndChooser() = 0;
-    virtual Element& ownerElement() const = 0;
-    virtual IntRect elementRectRelativeToViewport() const = 0;
-    virtual Color currentColor() = 0;
-    virtual bool shouldShowSuggestions() const = 0;
-    virtual Vector<ColorSuggestion> suggestions() const = 0;
+  virtual void didChooseColor(const Color&) = 0;
+  virtual void didEndChooser() = 0;
+  virtual Element& ownerElement() const = 0;
+  virtual IntRect elementRectRelativeToViewport() const = 0;
+  virtual Color currentColor() = 0;
+  virtual bool shouldShowSuggestions() const = 0;
+  virtual Vector<ColorSuggestion> suggestions() const = 0;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ColorChooserClient_h
+#endif  // ColorChooserClient_h

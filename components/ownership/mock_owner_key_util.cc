@@ -20,13 +20,13 @@ MockOwnerKeyUtil::MockOwnerKeyUtil() {
 MockOwnerKeyUtil::~MockOwnerKeyUtil() {
 }
 
-bool MockOwnerKeyUtil::ImportPublicKey(std::vector<uint8>* output) {
+bool MockOwnerKeyUtil::ImportPublicKey(std::vector<uint8_t>* output) {
   *output = public_key_;
   return !public_key_.empty();
 }
 
 crypto::ScopedSECKEYPrivateKey MockOwnerKeyUtil::FindPrivateKeyInSlot(
-    const std::vector<uint8>& key,
+    const std::vector<uint8_t>& key,
     PK11SlotInfo* slot) {
   if (!private_key_)
     return nullptr;
@@ -43,7 +43,7 @@ void MockOwnerKeyUtil::Clear() {
   private_key_.reset();
 }
 
-void MockOwnerKeyUtil::SetPublicKey(const std::vector<uint8>& key) {
+void MockOwnerKeyUtil::SetPublicKey(const std::vector<uint8_t>& key) {
   public_key_ = key;
 }
 
@@ -52,7 +52,8 @@ void MockOwnerKeyUtil::SetPublicKeyFromPrivateKey(
   CHECK(key.ExportPublicKey(&public_key_));
 }
 
-void MockOwnerKeyUtil::SetPrivateKey(scoped_ptr<crypto::RSAPrivateKey> key) {
+void MockOwnerKeyUtil::SetPrivateKey(
+    std::unique_ptr<crypto::RSAPrivateKey> key) {
   crypto::EnsureNSSInit();
 
   CHECK(key->ExportPublicKey(&public_key_));

@@ -4,6 +4,9 @@
 
 #include "net/disk_cache/blockfile/file.h"
 
+#include <limits.h>
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
@@ -59,8 +62,6 @@ void CompletionHandler::OnIOCompleted(
 
 MyOverlapped::MyOverlapped(disk_cache::File* file, size_t offset,
                            disk_cache::FileIOCallback* callback) {
-  memset(this, 0, sizeof(*this));
-  context_.handler = g_completion_handler.Pointer();
   context_.overlapped.Offset = static_cast<DWORD>(offset);
   file_ = file;
   callback_ = callback;
@@ -71,10 +72,7 @@ MyOverlapped::MyOverlapped(disk_cache::File* file, size_t offset,
 namespace disk_cache {
 
 File::File(base::File file)
-    : init_(true),
-      mixed_(true),
-      sync_base_file_(file.Pass()) {
-}
+    : init_(true), mixed_(true), sync_base_file_(std::move(file)) {}
 
 bool File::Init(const base::FilePath& name) {
   DCHECK(!init_);

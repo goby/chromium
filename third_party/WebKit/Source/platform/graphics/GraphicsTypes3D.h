@@ -34,8 +34,6 @@
 #include "wtf/Forward.h"
 #include <stdint.h>
 
-typedef unsigned Platform3DObject;
-
 // WebGL-specific enums
 const unsigned GC3D_UNPACK_FLIP_Y_WEBGL = 0x9240;
 const unsigned GC3D_UNPACK_PREMULTIPLY_ALPHA_WEBGL = 0x9241;
@@ -43,6 +41,9 @@ const unsigned GC3D_CONTEXT_LOST_WEBGL = 0x9242;
 const unsigned GC3D_UNPACK_COLORSPACE_CONVERSION_WEBGL = 0x9243;
 const unsigned GC3D_BROWSER_DEFAULT_WEBGL = 0x9244;
 const unsigned GC3D_MAX_CLIENT_WAIT_TIMEOUT_WEBGL = 0x9247;
+
+// GL_ARB_texture_rectangle
+const unsigned GC3D_TEXTURE_RECTANGLE_ARB = 0x84F5;
 
 // GL_AMD_compressed_ATC_texture
 const unsigned GC3D_COMPRESSED_ATC_RGB_AMD = 0x8C92;
@@ -57,6 +58,6 @@ namespace blink {
 
 enum SourceDrawingBuffer { FrontBuffer, BackBuffer };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // GraphicsTypes3D_h
+#endif  // GraphicsTypes3D_h

@@ -24,41 +24,39 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/geometry/FloatSize.h"
 
-#include "platform/FloatConversion.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/geometry/LayoutSize.h"
+#include "wtf/MathExtras.h"
+#include "wtf/text/WTFString.h"
 #include <limits>
 #include <math.h>
 
 namespace blink {
 
 FloatSize::FloatSize(const LayoutSize& size)
-    : m_width(size.width().toFloat())
-    , m_height(size.height().toFloat())
-{
+    : m_width(size.width().toFloat()), m_height(size.height().toFloat()) {}
+
+float FloatSize::diagonalLength() const {
+  return hypotf(m_width, m_height);
 }
 
-float FloatSize::diagonalLength() const
-{
-    return hypotf(m_width, m_height);
+bool FloatSize::isZero() const {
+  return fabs(m_width) < std::numeric_limits<float>::epsilon() &&
+         fabs(m_height) < std::numeric_limits<float>::epsilon();
 }
 
-bool FloatSize::isZero() const
-{
-    return fabs(m_width) < std::numeric_limits<float>::epsilon() && fabs(m_height) < std::numeric_limits<float>::epsilon();
+bool FloatSize::isExpressibleAsIntSize() const {
+  return isWithinIntRange(m_width) && isWithinIntRange(m_height);
 }
 
-bool FloatSize::isExpressibleAsIntSize() const
-{
-    return isWithinIntRange(m_width) && isWithinIntRange(m_height);
+FloatSize FloatSize::narrowPrecision(double width, double height) {
+  return FloatSize(clampTo<float>(width), clampTo<float>(height));
 }
 
-FloatSize FloatSize::narrowPrecision(double width, double height)
-{
-    return FloatSize(narrowPrecisionToFloat(width), narrowPrecisionToFloat(height));
+String FloatSize::toString() const {
+  return String::format("%lgx%lg", width(), height());
 }
 
-}
+}  // namespace blink

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/context_menu_matcher.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -113,13 +114,10 @@ void ContextMenuMatcher::AppendExtensionItems(
       menu_model_->AddItem(menu_id, title);
     } else {
       ui::SimpleMenuModel* submenu = new ui::SimpleMenuModel(delegate_);
-      extension_menu_models_.push_back(submenu);
+      extension_menu_models_.push_back(base::WrapUnique(submenu));
       menu_model_->AddSubMenu(menu_id, title, submenu);
-      RecursivelyAppendExtensionItems(submenu_items,
-                                      can_cross_incognito,
-                                      selection_text,
-                                      submenu,
-                                      index,
+      RecursivelyAppendExtensionItems(submenu_items, can_cross_incognito,
+                                      selection_text, submenu, index,
                                       false);  // is_action_menu_top_level
     }
     if (!is_action_menu)
@@ -169,15 +167,18 @@ bool ContextMenuMatcher::IsCommandIdEnabled(int command_id) const {
   return item->enabled();
 }
 
-void ContextMenuMatcher::ExecuteCommand(int command_id,
+void ContextMenuMatcher::ExecuteCommand(
+    int command_id,
     content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const content::ContextMenuParams& params) {
   MenuItem* item = GetExtensionMenuItem(command_id);
   if (!item)
     return;
 
   MenuManager* manager = MenuManager::Get(browser_context_);
-  manager->ExecuteCommand(browser_context_, web_contents, params, item->id());
+  manager->ExecuteCommand(browser_context_, web_contents, render_frame_host,
+                          params, item->id());
 }
 
 bool ContextMenuMatcher::GetRelevantExtensionTopLevelItems(
@@ -193,7 +194,7 @@ bool ContextMenuMatcher::GetRelevantExtensionTopLevelItems(
 
   // Find matching items.
   MenuManager* manager = MenuManager::Get(browser_context_);
-  const MenuItem::List* all_items = manager->MenuItems(extension_key);
+  const MenuItem::OwnedList* all_items = manager->MenuItems(extension_key);
   if (!all_items || all_items->empty())
     return false;
 
@@ -204,19 +205,18 @@ bool ContextMenuMatcher::GetRelevantExtensionTopLevelItems(
 }
 
 MenuItem::List ContextMenuMatcher::GetRelevantExtensionItems(
-    const MenuItem::List& items,
+    const MenuItem::OwnedList& items,
     bool can_cross_incognito) {
   MenuItem::List result;
-  for (MenuItem::List::const_iterator i = items.begin();
-       i != items.end(); ++i) {
-    const MenuItem* item = *i;
+  for (auto i = items.begin(); i != items.end(); ++i) {
+    MenuItem* item = i->get();
 
     if (!filter_.Run(item))
       continue;
 
     if (item->id().incognito == browser_context_->IsOffTheRecord() ||
         can_cross_incognito)
-      result.push_back(*i);
+      result.push_back(item);
   }
   return result;
 }
@@ -232,8 +232,7 @@ void ContextMenuMatcher::RecursivelyAppendExtensionItems(
   int radio_group_id = 1;
   int num_items = 0;
 
-  for (MenuItem::List::const_iterator i = items.begin();
-       i != items.end(); ++i) {
+  for (auto i = items.begin(); i != items.end(); ++i) {
     MenuItem* item = *i;
 
     // If last item was of type radio but the current one isn't, auto-insert
@@ -266,13 +265,10 @@ void ContextMenuMatcher::RecursivelyAppendExtensionItems(
         menu_model->AddItem(menu_id, title);
       } else {
         ui::SimpleMenuModel* submenu = new ui::SimpleMenuModel(delegate_);
-        extension_menu_models_.push_back(submenu);
+        extension_menu_models_.push_back(base::WrapUnique(submenu));
         menu_model->AddSubMenu(menu_id, title, submenu);
-        RecursivelyAppendExtensionItems(children,
-                                        can_cross_incognito,
-                                        selection_text,
-                                        submenu,
-                                        index,
+        RecursivelyAppendExtensionItems(children, can_cross_incognito,
+                                        selection_text, submenu, index,
                                         false);  // is_action_menu_top_level
       }
     } else if (item->type() == MenuItem::CHECKBOX) {

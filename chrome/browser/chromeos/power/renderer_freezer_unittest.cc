@@ -4,11 +4,13 @@
 
 #include "chrome/browser/chromeos/power/renderer_freezer.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
@@ -133,7 +135,7 @@ class RendererFreezerTest : public testing::Test {
       : power_manager_client_(new FakePowerManagerClient()),
         test_delegate_(new TestDelegate()) {
     DBusThreadManager::GetSetterForTesting()->SetPowerManagerClient(
-        scoped_ptr<PowerManagerClient>(power_manager_client_));
+        std::unique_ptr<PowerManagerClient>(power_manager_client_));
   }
 
   ~RendererFreezerTest() override {
@@ -145,7 +147,7 @@ class RendererFreezerTest : public testing::Test {
  protected:
   void Init() {
     renderer_freezer_.reset(new RendererFreezer(
-        scoped_ptr<RendererFreezer::Delegate>(test_delegate_)));
+        std::unique_ptr<RendererFreezer::Delegate>(test_delegate_)));
   }
 
   // Owned by DBusThreadManager.
@@ -153,7 +155,7 @@ class RendererFreezerTest : public testing::Test {
 
   // Owned by |renderer_freezer_|.
   TestDelegate* test_delegate_;
-  scoped_ptr<RendererFreezer> renderer_freezer_;
+  std::unique_ptr<RendererFreezer> renderer_freezer_;
 
  private:
   content::TestBrowserThreadBundle browser_thread_bundle_;
@@ -248,12 +250,12 @@ class RendererFreezerTestWithExtensions : public RendererFreezerTest {
 
  protected:
   void CreateRenderProcessForExtension(extensions::Extension* extension) {
-    scoped_ptr<content::MockRenderProcessHostFactory> rph_factory(
+    std::unique_ptr<content::MockRenderProcessHostFactory> rph_factory(
         new content::MockRenderProcessHostFactory());
     scoped_refptr<content::SiteInstance> site_instance(
         extensions::ProcessManager::Get(profile_)->GetSiteInstanceForURL(
             extensions::BackgroundInfo::GetBackgroundURL(extension)));
-    scoped_ptr<content::RenderProcessHost> rph(
+    std::unique_ptr<content::RenderProcessHost> rph(
         rph_factory->CreateRenderProcessHost(profile_, site_instance.get()));
 
     // Fake that the RenderProcessHost is hosting the gcm app.
@@ -269,7 +271,7 @@ class RendererFreezerTestWithExtensions : public RendererFreezerTest {
 
   // Owned by |profile_manager_|.
   TestingProfile* profile_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
 
  private:
   // Chrome OS needs extra services to run in the following order.
@@ -286,11 +288,11 @@ TEST_F(RendererFreezerTestWithExtensions, FreezesNonExtensionRenderers) {
   Init();
 
   // Create the mock RenderProcessHost.
-  scoped_ptr<content::MockRenderProcessHostFactory> rph_factory(
+  std::unique_ptr<content::MockRenderProcessHostFactory> rph_factory(
       new content::MockRenderProcessHostFactory());
   scoped_refptr<content::SiteInstance> site_instance(
       content::SiteInstance::Create(profile_));
-  scoped_ptr<content::RenderProcessHost> rph(
+  std::unique_ptr<content::RenderProcessHost> rph(
       rph_factory->CreateRenderProcessHost(profile_, site_instance.get()));
 
   // Send the notification that the RenderProcessHost has been created.
@@ -310,20 +312,23 @@ TEST_F(RendererFreezerTestWithExtensions, DoesNotFreezeGcmExtensionRenderers) {
   // First build the GCM extension.
   scoped_refptr<extensions::Extension> gcm_app =
       extensions::ExtensionBuilder()
-          .SetManifest(extensions::DictionaryBuilder()
-                       .Set("name", "GCM App")
-                       .Set("version", "1.0.0")
-                       .Set("manifest_version", 2)
-                       .Set("app",
-                            extensions::DictionaryBuilder()
-                            .Set("background",
-                                 extensions::DictionaryBuilder()
-                                 .Set("scripts",
-                                      extensions::ListBuilder()
-                                      .Append("background.js"))))
-                       .Set("permissions",
-                            extensions::ListBuilder()
-                            .Append("gcm")))
+          .SetManifest(
+              extensions::DictionaryBuilder()
+                  .Set("name", "GCM App")
+                  .Set("version", "1.0.0")
+                  .Set("manifest_version", 2)
+                  .Set("app",
+                       extensions::DictionaryBuilder()
+                           .Set("background",
+                                extensions::DictionaryBuilder()
+                                    .Set("scripts", extensions::ListBuilder()
+                                                        .Append("background.js")
+                                                        .Build())
+                                    .Build())
+                           .Build())
+                  .Set("permissions",
+                       extensions::ListBuilder().Append("gcm").Build())
+                  .Build())
           .Build();
 
   // Now install it and give it a renderer.
@@ -343,17 +348,21 @@ TEST_F(RendererFreezerTestWithExtensions, FreezesNonGcmExtensionRenderers) {
   // First build the extension.
   scoped_refptr<extensions::Extension> background_app =
       extensions::ExtensionBuilder()
-          .SetManifest(extensions::DictionaryBuilder()
-                       .Set("name", "Background App")
-                       .Set("version", "1.0.0")
-                       .Set("manifest_version", 2)
-                       .Set("app",
-                            extensions::DictionaryBuilder()
-                            .Set("background",
-                                 extensions::DictionaryBuilder()
-                                 .Set("scripts",
-                                      extensions::ListBuilder()
-                                      .Append("background.js")))))
+          .SetManifest(
+              extensions::DictionaryBuilder()
+                  .Set("name", "Background App")
+                  .Set("version", "1.0.0")
+                  .Set("manifest_version", 2)
+                  .Set("app",
+                       extensions::DictionaryBuilder()
+                           .Set("background",
+                                extensions::DictionaryBuilder()
+                                    .Set("scripts", extensions::ListBuilder()
+                                                        .Append("background.js")
+                                                        .Build())
+                                    .Build())
+                           .Build())
+                  .Build())
           .Build();
 
   // Now install it and give it a renderer.

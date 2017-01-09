@@ -3,30 +3,12 @@
 // found in the LICENSE file.
 
 cr.define('downloads', function() {
-  var InkyTextButton = Polymer({
-    is: 'inky-text-button',
-
-    behaviors: [
-      Polymer.PaperInkyFocusBehavior
-    ],
-
-    hostAttributes: {
-      role: 'button',
-      tabindex: 0,
-    },
-  });
-
   var Item = Polymer({
     is: 'downloads-item',
 
     properties: {
       data: {
         type: Object,
-      },
-
-      hideDate: {
-        type: Boolean,
-        value: true,
       },
 
       completelyOnDisk_: {
@@ -42,23 +24,6 @@ cr.define('downloads', function() {
         value: '',
       },
 
-      i18n_: {
-        readOnly: true,
-        type: Object,
-        value: function() {
-          return {
-            cancel: loadTimeData.getString('controlCancel'),
-            discard: loadTimeData.getString('dangerDiscard'),
-            pause: loadTimeData.getString('controlPause'),
-            remove: loadTimeData.getString('controlRemoveFromList'),
-            resume: loadTimeData.getString('controlResume'),
-            restore: loadTimeData.getString('dangerRestore'),
-            retry: loadTimeData.getString('controlRetry'),
-            save: loadTimeData.getString('dangerSave'),
-          };
-        },
-      },
-
       isActive_: {
         computed: 'computeIsActive_(' +
             'data.state, data.file_externally_removed)',
@@ -72,10 +37,21 @@ cr.define('downloads', function() {
         value: false,
       },
 
+      isMalware_: {
+        computed: 'computeIsMalware_(isDangerous_, data.danger_type)',
+        type: Boolean,
+        value: false,
+      },
+
       isInProgress_: {
         computed: 'computeIsInProgress_(data.state)',
         type: Boolean,
         value: false,
+      },
+
+      pauseOrResumeText_: {
+        computed: 'computePauseOrResumeText_(isInProgress_, data.resume)',
+        type: String,
       },
 
       showCancel_: {
@@ -89,23 +65,26 @@ cr.define('downloads', function() {
         type: Boolean,
         value: false,
       },
-
-      isMalware_: {
-        computed: 'computeIsMalware_(isDangerous_, data.danger_type)',
-        type: Boolean,
-        value: false,
-      },
     },
 
     observers: [
       // TODO(dbeam): this gets called way more when I observe data.by_ext_id
       // and data.by_ext_name directly. Why?
       'observeControlledBy_(controlledBy_)',
-      'observeIsDangerous_(isDangerous_, data.file_path)',
+      'observeIsDangerous_(isDangerous_, data)',
     ],
 
     ready: function() {
       this.content = this.$.content;
+    },
+
+    /**
+     * @param {string} url
+     * @return {string} A reasonably long URL.
+     * @private
+     */
+    chopUrl_: function(url) {
+      return url.slice(0, 300);
     },
 
     /** @private */
@@ -137,29 +116,18 @@ cr.define('downloads', function() {
 
       var url = 'chrome://extensions#' + this.data.by_ext_id;
       var name = this.data.by_ext_name;
-      return loadTimeData.getStringF('controlledByUrl', url, name);
+      return loadTimeData.getStringF('controlledByUrl', url, HTMLEscape(name));
     },
 
     /** @private */
     computeDangerIcon_: function() {
-      if (!this.isDangerous_)
-        return '';
-
-      switch (this.data.danger_type) {
-        case downloads.DangerType.DANGEROUS_CONTENT:
-        case downloads.DangerType.DANGEROUS_HOST:
-        case downloads.DangerType.DANGEROUS_URL:
-        case downloads.DangerType.POTENTIALLY_UNWANTED:
-        case downloads.DangerType.UNCOMMON_CONTENT:
-          return 'remove-circle';
-        default:
-          return 'warning';
-      }
+      return this.isDangerous_ ? 'cr:warning' : '';
     },
 
     /** @private */
     computeDate_: function() {
-      if (this.hideDate)
+      assert(typeof this.data.hideDate == 'boolean');
+      if (this.data.hideDate)
         return '';
       return assert(this.data.since_string || this.data.date_string);
     },
@@ -173,16 +141,18 @@ cr.define('downloads', function() {
           var fileName = data.file_name;
           switch (data.danger_type) {
             case downloads.DangerType.DANGEROUS_FILE:
-              return loadTimeData.getStringF('dangerFileDesc', fileName);
+             return loadTimeData.getString('dangerFileDesc');
+
             case downloads.DangerType.DANGEROUS_URL:
-              return loadTimeData.getString('dangerUrlDesc');
-            case downloads.DangerType.DANGEROUS_CONTENT:  // Fall through.
+            case downloads.DangerType.DANGEROUS_CONTENT:
             case downloads.DangerType.DANGEROUS_HOST:
-              return loadTimeData.getStringF('dangerContentDesc', fileName);
+             return loadTimeData.getString('dangerDownloadDesc');
+
             case downloads.DangerType.UNCOMMON_CONTENT:
-              return loadTimeData.getStringF('dangerUncommonDesc', fileName);
+             return loadTimeData.getString('dangerUncommonDesc');
+
             case downloads.DangerType.POTENTIALLY_UNWANTED:
-              return loadTimeData.getStringF('dangerSettingsDesc', fileName);
+             return loadTimeData.getString('dangerSettingsDesc');
           }
           break;
 
@@ -218,6 +188,15 @@ cr.define('downloads', function() {
            this.data.danger_type == downloads.DangerType.DANGEROUS_HOST ||
            this.data.danger_type == downloads.DangerType.DANGEROUS_URL ||
            this.data.danger_type == downloads.DangerType.POTENTIALLY_UNWANTED);
+    },
+
+    /** @private */
+    computePauseOrResumeText_: function() {
+      if (this.isInProgress_)
+        return loadTimeData.getString('controlPause');
+      if (this.data.resume)
+        return loadTimeData.getString('controlResume');
+      return '';
     },
 
     /** @private */
@@ -267,9 +246,16 @@ cr.define('downloads', function() {
 
     /** @private */
     observeIsDangerous_: function() {
-      if (this.data && !this.isDangerous_) {
+      if (!this.data)
+        return;
+
+      if (this.isDangerous_) {
+        this.$.url.removeAttribute('href');
+      } else {
+        this.$.url.href = assert(this.data.url);
         var filePath = encodeURIComponent(this.data.file_path);
-        this.$['file-icon'].src = 'chrome://fileicon/' + filePath;
+        var scaleFactor = '?scale=' + window.devicePixelRatio + 'x';
+        this.$['file-icon'].src = 'chrome://fileicon/' + filePath + scaleFactor;
       }
     },
 
@@ -302,18 +288,16 @@ cr.define('downloads', function() {
     },
 
     /** @private */
-    onPauseTap_: function() {
-      downloads.ActionService.getInstance().pause(this.data.id);
+    onPauseOrResumeTap_: function() {
+      if (this.isInProgress_)
+        downloads.ActionService.getInstance().pause(this.data.id);
+      else
+        downloads.ActionService.getInstance().resume(this.data.id);
     },
 
     /** @private */
     onRemoveTap_: function() {
       downloads.ActionService.getInstance().remove(this.data.id);
-    },
-
-    /** @private */
-    onResumeTap_: function() {
-      downloads.ActionService.getInstance().resume(this.data.id);
     },
 
     /** @private */
@@ -332,8 +316,5 @@ cr.define('downloads', function() {
     },
   });
 
-  return {
-    InkyTextButton: InkyTextButton,
-    Item: Item,
-  };
+  return {Item: Item};
 });

@@ -7,7 +7,6 @@
 
 #include <map>
 
-#include "base/memory/scoped_ptr.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/password_form.h"
 
@@ -77,6 +76,7 @@ struct PasswordFormFillData {
   bool is_possible_change_password_form;
 
   PasswordFormFillData();
+  PasswordFormFillData(const PasswordFormFillData& other);
   ~PasswordFormFillData();
 };
 
@@ -90,7 +90,7 @@ struct PasswordFormFillData {
 // in |result|.
 void InitPasswordFormFillData(
     const PasswordForm& form_on_page,
-    const PasswordFormMap& matches,
+    const std::map<base::string16, const PasswordForm*>& matches,
     const PasswordForm* const preferred_match,
     bool wait_for_username_before_autofill,
     bool enable_other_possible_usernames,

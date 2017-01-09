@@ -17,14 +17,12 @@ class FakeProxy : public Proxy {
 
   void SetLayerTreeHost(LayerTreeHost* host);
 
-  void FinishAllRendering() override {}
   bool IsStarted() const override;
   bool CommitToActiveTree() const override;
-  void SetOutputSurface(OutputSurface* output_surface) override {}
-  void ReleaseOutputSurface() override;
+  void SetCompositorFrameSink(
+      CompositorFrameSink* compositor_frame_sink) override {}
+  void ReleaseCompositorFrameSink() override;
   void SetVisible(bool visible) override {}
-  void SetThrottleFrameProduction(bool throttle) override {}
-  const RendererCapabilities& GetRendererCapabilities() const override;
   void SetNeedsAnimate() override {}
   void SetNeedsUpdateLayers() override {}
   void SetNeedsCommit() override {}
@@ -37,19 +35,14 @@ class FakeProxy : public Proxy {
   bool CommitRequested() const override;
   void Start() override {}
   void Stop() override {}
+  void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   bool SupportsImplScrolling() const override;
   bool MainFrameWillHappenForTesting() override;
-  void SetChildrenNeedBeginFrames(bool children_need_begin_frames) override {}
-  void SetAuthoritativeVSyncInterval(const base::TimeDelta& interval) override {
-  }
-  void UpdateTopControlsState(TopControlsState constraints,
-                              TopControlsState current,
-                              bool animate) override {}
-
-  virtual RendererCapabilities& GetRendererCapabilities();
+  void UpdateBrowserControlsState(BrowserControlsState constraints,
+                                  BrowserControlsState current,
+                                  bool animate) override {}
 
  private:
-  RendererCapabilities capabilities_;
   LayerTreeHost* layer_tree_host_;
 };
 

@@ -49,7 +49,7 @@ TEST_P(FtpDirectoryListingParserTest, Parse) {
   mock_current_time_exploded.hour = 12;
   mock_current_time_exploded.minute = 45;
   base::Time mock_current_time(
-      base::Time::FromLocalExploded(mock_current_time_exploded));
+      base::Time::FromUTCExploded(mock_current_time_exploded));
 
   SCOPED_TRACE(base::StringPrintf("Test case: %s", param.name));
 
@@ -69,8 +69,8 @@ TEST_P(FtpDirectoryListingParserTest, Parse) {
       test_dir.AppendASCII(std::string(param.name) + ".expected"),
       &expected_listing));
 
-  std::vector<std::string> lines;
-  base::SplitStringUsingSubstr(expected_listing, "\r\n", &lines);
+  std::vector<std::string> lines = base::SplitStringUsingSubstr(
+      expected_listing, "\r\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   // Special case for empty listings.
   if (lines.size() == 1 && lines[0].empty())
@@ -81,7 +81,7 @@ TEST_P(FtpDirectoryListingParserTest, Parse) {
   for (size_t i = 0; i < lines.size() / 9; i++) {
     std::string type(lines[9 * i]);
     std::string name(lines[9 * i + 1]);
-    int64 size;
+    int64_t size;
     base::StringToInt64(lines[9 * i + 2], &size);
 
     SCOPED_TRACE(base::StringPrintf("Filename: %s", name.c_str()));
@@ -109,7 +109,7 @@ TEST_P(FtpDirectoryListingParserTest, Parse) {
     EXPECT_EQ(size, entry.size);
 
     base::Time::Exploded time_exploded;
-    entry.last_modified.LocalExplode(&time_exploded);
+    entry.last_modified.UTCExplode(&time_exploded);
     EXPECT_EQ(year, time_exploded.year);
     EXPECT_EQ(month, time_exploded.month);
     EXPECT_EQ(day_of_month, time_exploded.day_of_month);

@@ -5,8 +5,12 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_INFOBARS_INFOBAR_CONTAINER_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_INFOBARS_INFOBAR_CONTAINER_VIEW_H_
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "components/infobars/core/infobar_container.h"
 #include "ui/views/accessible_pane_view.h"
+#include "ui/views/view_targeter_delegate.h"
 
 // The views-specific implementation of InfoBarContainer.
 class InfoBarContainerView : public views::AccessiblePaneView,
@@ -17,17 +21,22 @@ class InfoBarContainerView : public views::AccessiblePaneView,
   explicit InfoBarContainerView(Delegate* delegate);
   ~InfoBarContainerView() override;
 
- private:
   // AccessiblePaneView:
   gfx::Size GetPreferredSize() const override;
   const char* GetClassName() const override;
   void Layout() override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // InfobarContainer:
   void PlatformSpecificAddInfoBar(infobars::InfoBar* infobar,
                                   size_t position) override;
   void PlatformSpecificRemoveInfoBar(infobars::InfoBar* infobar) override;
+
+ private:
+  // This view draws the shadow over the web contents below the
+  // lowest infobar. A separate view with a layer is used so it can
+  // draw outside the bounds of |this|.
+  views::View* content_shadow_;
 
   DISALLOW_COPY_AND_ASSIGN(InfoBarContainerView);
 };

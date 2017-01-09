@@ -4,10 +4,13 @@
 
 #include "content/shell/app/shell_crash_reporter_client.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "content/shell/common/shell_switches.h"
 
@@ -22,7 +25,7 @@ ShellCrashReporterClient::~ShellCrashReporterClient() {}
 
 #if defined(OS_WIN)
 void ShellCrashReporterClient::GetProductNameAndVersion(
-    const base::FilePath& exe_path,
+    const base::string16& exe_path,
     base::string16* product_name,
     base::string16* version,
     base::string16* special_build,
@@ -34,7 +37,7 @@ void ShellCrashReporterClient::GetProductNameAndVersion(
 }
 #endif
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_POSIX) && !defined(OS_MACOSX)
 void ShellCrashReporterClient::GetProductNameAndVersion(
     const char** product_name,
     const char** version) {
@@ -47,12 +50,22 @@ base::FilePath ShellCrashReporterClient::GetReporterLogFilename() {
 }
 #endif
 
+#if defined(OS_WIN)
+bool ShellCrashReporterClient::GetCrashDumpLocation(base::string16* crash_dir) {
+#else
 bool ShellCrashReporterClient::GetCrashDumpLocation(base::FilePath* crash_dir) {
+#endif
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kCrashDumpsDir))
     return false;
-  *crash_dir = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
-      switches::kCrashDumpsDir);
+  base::FilePath crash_directory =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
+          switches::kCrashDumpsDir);
+#if defined(OS_WIN)
+  *crash_dir = crash_directory.value();
+#else
+  *crash_dir = std::move(crash_directory);
+#endif
   return true;
 }
 
@@ -65,7 +78,6 @@ int ShellCrashReporterClient::GetAndroidMinidumpDescriptor() {
 bool ShellCrashReporterClient::EnableBreakpadForProcess(
     const std::string& process_type) {
   return process_type == switches::kRendererProcess ||
-         process_type == switches::kPluginProcess ||
          process_type == switches::kPpapiPluginProcess ||
          process_type == switches::kZygoteProcess ||
          process_type == switches::kGpuProcess;

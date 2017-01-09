@@ -1,5 +1,9 @@
 # Linux `SUID` Sandbox
 
+*IMPORTANT NOTE: The Linux SUID sandbox is almost but not completely removed.
+See https://bugs.chromium.org/p/chromium/issues/detail?id=598454
+This page is mostly out-of-date.*
+
 With [r20110](https://crrev.com/20110), Chromium on Linux can now sandbox its
 renderers using a `SUID` helper binary. This is one of
 [our layer-1 sandboxing solutions](linux_sandboxing.md).
@@ -9,7 +13,7 @@ renderers using a `SUID` helper binary. This is one of
 The `SUID` helper binary is called `chrome_sandbox` and you must build it
 separately from the main 'chrome' target. To use this sandbox, you have to
 specify its path in the `linux_sandbox_path` GYP variable. When spawning the
-[zygote process](linux_zygote/md), if the `SUID` sandbox is enabled, Chromium
+[zygote process](linux_zygote.md), if the `SUID` sandbox is enabled, Chromium
 will check for the sandbox binary at the location specified by
 `linux_sandbox_path`. For Google Chrome, this is set to
 `/opt/google/chrome/chrome-sandbox`, and early version had this value hard coded
@@ -127,4 +131,4 @@ Chromium binary somewhere else you need to modify this string.
 *   [LinuxSUIDSandboxDevelopment](linux_suid_sandbox_development.md)
 *   [LinuxSandboxing](linux_sandboxing.md)
 *   General information on Chromium sandboxing:
-    http://dev.chromium.org/developers/design-documents/sandbox
+    https://dev.chromium.org/developers/design-documents/sandbox

@@ -4,12 +4,13 @@
 
 #include "chromeos/network/network_sms_handler.h"
 
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_device_client.h"
@@ -77,18 +78,19 @@ class NetworkSmsHandlerTest : public testing::Test {
     test_observer_.reset(new TestObserver());
     network_sms_handler_->AddObserver(test_observer_.get());
     network_sms_handler_->RequestUpdate(true);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void TearDown() override {
+    network_sms_handler_->RemoveObserver(test_observer_.get());
     network_sms_handler_.reset();
     DBusThreadManager::Shutdown();
   }
 
  protected:
   base::MessageLoopForUI message_loop_;
-  scoped_ptr<NetworkSmsHandler> network_sms_handler_;
-  scoped_ptr<TestObserver> test_observer_;
+  std::unique_ptr<NetworkSmsHandler> network_sms_handler_;
+  std::unique_ptr<TestObserver> test_observer_;
 };
 
 TEST_F(NetworkSmsHandlerTest, SmsHandlerDbusStub) {
@@ -105,7 +107,7 @@ TEST_F(NetworkSmsHandlerTest, SmsHandlerDbusStub) {
   // Test for messages delivered by signals.
   test_observer_->ClearMessages();
   network_sms_handler_->RequestUpdate(false);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_GE(test_observer_->message_count(), 1);
   EXPECT_NE(messages.find(kMessage1), messages.end());
 }

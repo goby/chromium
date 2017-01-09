@@ -4,7 +4,10 @@
 
 #include "components/autofill/core/browser/name_field.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_regex_constants.h"
@@ -19,11 +22,10 @@ namespace {
 // A form field that can parse a full name field.
 class FullNameField : public NameField {
  public:
-  static scoped_ptr<FullNameField> Parse(AutofillScanner* scanner);
+  static std::unique_ptr<FullNameField> Parse(AutofillScanner* scanner);
 
  protected:
-  // FormField:
-  bool ClassifyField(ServerFieldTypeMap* map) const override;
+  void AddClassifications(FieldCandidatesMap* field_candidates) const override;
 
  private:
   explicit FullNameField(AutofillField* field);
@@ -36,15 +38,14 @@ class FullNameField : public NameField {
 // A form field that can parse a first and last name field.
 class FirstLastNameField : public NameField {
  public:
-  static scoped_ptr<FirstLastNameField> ParseSpecificName(
+  static std::unique_ptr<FirstLastNameField> ParseSpecificName(
       AutofillScanner* scanner);
-  static scoped_ptr<FirstLastNameField> ParseComponentNames(
+  static std::unique_ptr<FirstLastNameField> ParseComponentNames(
       AutofillScanner* scanner);
-  static scoped_ptr<FirstLastNameField> Parse(AutofillScanner* scanner);
+  static std::unique_ptr<FirstLastNameField> Parse(AutofillScanner* scanner);
 
  protected:
-  // FormField:
-  bool ClassifyField(ServerFieldTypeMap* map) const override;
+  void AddClassifications(FieldCandidatesMap* field_candidates) const override;
 
  private:
   FirstLastNameField();
@@ -60,24 +61,23 @@ class FirstLastNameField : public NameField {
 }  // namespace
 
 // static
-scoped_ptr<FormField> NameField::Parse(AutofillScanner* scanner) {
+std::unique_ptr<FormField> NameField::Parse(AutofillScanner* scanner) {
   if (scanner->IsEnd())
     return NULL;
 
   // Try FirstLastNameField first since it's more specific.
-  scoped_ptr<FormField> field = FirstLastNameField::Parse(scanner);
+  std::unique_ptr<FormField> field = FirstLastNameField::Parse(scanner);
   if (!field)
     field = FullNameField::Parse(scanner);
   return field;
 }
 
 // This is overriden in concrete subclasses.
-bool NameField::ClassifyField(ServerFieldTypeMap* map) const {
-  return false;
+void NameField::AddClassifications(FieldCandidatesMap* field_candidates) const {
 }
 
 // static
-scoped_ptr<FullNameField> FullNameField::Parse(AutofillScanner* scanner) {
+std::unique_ptr<FullNameField> FullNameField::Parse(AutofillScanner* scanner) {
   // Exclude e.g. "username" or "nickname" fields.
   scanner->SaveCursor();
   bool should_ignore = ParseField(scanner, UTF8ToUTF16(kNameIgnoredRe), NULL);
@@ -90,23 +90,24 @@ scoped_ptr<FullNameField> FullNameField::Parse(AutofillScanner* scanner) {
   // "Travel Profile Name".
   AutofillField* field = NULL;
   if (ParseField(scanner, UTF8ToUTF16(kNameRe), &field))
-    return make_scoped_ptr(new FullNameField(field));
+    return base::WrapUnique(new FullNameField(field));
 
   return NULL;
 }
 
-bool FullNameField::ClassifyField(ServerFieldTypeMap* map) const {
-  return AddClassification(field_, NAME_FULL, map);
+void FullNameField::AddClassifications(
+    FieldCandidatesMap* field_candidates) const {
+  AddClassification(field_, NAME_FULL, kBaseNameParserScore, field_candidates);
 }
 
 FullNameField::FullNameField(AutofillField* field) : field_(field) {
 }
 
-scoped_ptr<FirstLastNameField> FirstLastNameField::ParseSpecificName(
+std::unique_ptr<FirstLastNameField> FirstLastNameField::ParseSpecificName(
     AutofillScanner* scanner) {
   // Some pages (e.g. Overstock_comBilling.html, SmithsonianCheckout.html)
   // have the label "Name" followed by two or three text fields.
-  scoped_ptr<FirstLastNameField> v(new FirstLastNameField);
+  std::unique_ptr<FirstLastNameField> v(new FirstLastNameField);
   scanner->SaveCursor();
 
   AutofillField* next = NULL;
@@ -121,7 +122,7 @@ scoped_ptr<FirstLastNameField> FirstLastNameField::ParseSpecificName(
       v->last_name_ = next;
     }
 
-    return v.Pass();
+    return v;
   }
 
   scanner->Rewind();
@@ -129,9 +130,9 @@ scoped_ptr<FirstLastNameField> FirstLastNameField::ParseSpecificName(
 }
 
 // static
-scoped_ptr<FirstLastNameField> FirstLastNameField::ParseComponentNames(
+std::unique_ptr<FirstLastNameField> FirstLastNameField::ParseComponentNames(
     AutofillScanner* scanner) {
-  scoped_ptr<FirstLastNameField> v(new FirstLastNameField);
+  std::unique_ptr<FirstLastNameField> v(new FirstLastNameField);
   scanner->SaveCursor();
 
   // A fair number of pages use the names "fname" and "lname" for naming
@@ -184,16 +185,16 @@ scoped_ptr<FirstLastNameField> FirstLastNameField::ParseComponentNames(
   // Consider the match to be successful if we detected both first and last name
   // fields.
   if (v->first_name_ && v->last_name_)
-    return v.Pass();
+    return v;
 
   scanner->Rewind();
   return NULL;
 }
 
 // static
-scoped_ptr<FirstLastNameField> FirstLastNameField::Parse(
+std::unique_ptr<FirstLastNameField> FirstLastNameField::Parse(
     AutofillScanner* scanner) {
-  scoped_ptr<FirstLastNameField> field = ParseSpecificName(scanner);
+  std::unique_ptr<FirstLastNameField> field = ParseSpecificName(scanner);
   if (!field)
     field = ParseComponentNames(scanner);
   return field;
@@ -206,12 +207,15 @@ FirstLastNameField::FirstLastNameField()
       middle_initial_(false) {
 }
 
-bool FirstLastNameField::ClassifyField(ServerFieldTypeMap* map) const {
-  bool ok = AddClassification(first_name_, NAME_FIRST, map);
-  ok = ok && AddClassification(last_name_, NAME_LAST, map);
-  ServerFieldType type = middle_initial_ ? NAME_MIDDLE_INITIAL : NAME_MIDDLE;
-  ok = ok && AddClassification(middle_name_, type, map);
-  return ok;
+void FirstLastNameField::AddClassifications(
+    FieldCandidatesMap* field_candidates) const {
+  AddClassification(first_name_, NAME_FIRST, kBaseNameParserScore,
+                    field_candidates);
+  AddClassification(last_name_, NAME_LAST, kBaseNameParserScore,
+                    field_candidates);
+  const ServerFieldType type =
+      middle_initial_ ? NAME_MIDDLE_INITIAL : NAME_MIDDLE;
+  AddClassification(middle_name_, type, kBaseNameParserScore, field_candidates);
 }
 
 }  // namespace autofill

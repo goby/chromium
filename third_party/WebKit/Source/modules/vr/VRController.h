@@ -5,44 +5,60 @@
 #ifndef VRController_h
 #define VRController_h
 
-#include "core/frame/LocalFrameLifecycleObserver.h"
-#include "modules/ModulesExport.h"
-#include "platform/Supplementable.h"
-#include "public/platform/modules/vr/WebVR.h"
-#include "public/platform/modules/vr/WebVRClient.h"
+#include "core/dom/ContextLifecycleObserver.h"
+#include "core/dom/Document.h"
+#include "device/vr/vr_service.mojom-blink.h"
+#include "modules/vr/VRDisplay.h"
+#include "mojo/public/cpp/bindings/binding.h"
+#include "platform/heap/Handle.h"
+#include "wtf/Deque.h"
+
+#include <memory>
 
 namespace blink {
 
-class MODULES_EXPORT VRController final
-    : public NoBaseWillBeGarbageCollectedFinalized<VRController>
-    , public WillBeHeapSupplement<LocalFrame>
-    , public LocalFrameLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(VRController);
-    WTF_MAKE_NONCOPYABLE(VRController);
-public:
-    virtual ~VRController();
+class NavigatorVR;
+class VRGetDevicesCallback;
 
-    void getDevices(WebVRGetDevicesCallback*);
+class VRController final : public GarbageCollectedFinalized<VRController>,
+                           public device::mojom::blink::VRServiceClient,
+                           public ContextLifecycleObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(VRController);
+  WTF_MAKE_NONCOPYABLE(VRController);
+  USING_PRE_FINALIZER(VRController, dispose);
 
-    void getSensorState(unsigned index, WebHMDSensorState& into);
+ public:
+  VRController(NavigatorVR*);
+  virtual ~VRController();
 
-    void resetSensor(unsigned index);
+  void getDisplays(ScriptPromiseResolver*);
+  void setListeningForActivate(bool);
 
-    static void provideTo(LocalFrame&, WebVRClient*);
-    static VRController* from(LocalFrame&);
-    static const char* supplementName();
+  void OnDisplayConnected(device::mojom::blink::VRDisplayPtr,
+                          device::mojom::blink::VRDisplayClientRequest,
+                          device::mojom::blink::VRDisplayInfoPtr) override;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    VRController(LocalFrame&, WebVRClient*);
+ private:
+  void onDisplaysSynced(unsigned);
+  void onGetDisplays();
 
-    // Inherited from LocalFrameLifecycleObserver.
-    void willDetachFrameHost() override;
+  // ContextLifecycleObserver.
+  void contextDestroyed() override;
+  void dispose();
 
-    WebVRClient* m_client;
+  Member<NavigatorVR> m_navigatorVR;
+  VRDisplayVector m_displays;
+
+  bool m_displaySynced;
+  unsigned m_numberOfSyncedDisplays;
+
+  Deque<std::unique_ptr<VRGetDevicesCallback>> m_pendingGetDevicesCallbacks;
+  device::mojom::blink::VRServicePtr m_service;
+  mojo::Binding<device::mojom::blink::VRServiceClient> m_binding;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // VRController_h
+#endif  // VRController_h

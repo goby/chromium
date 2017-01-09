@@ -8,20 +8,22 @@
 #include <string>
 
 #include "base/command_line.h"
-
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/test/scoped_path_override.h"
-#include "chrome/browser/extensions/extension_test_notification_observer.h"
+#include "build/build_config.h"
+#include "chrome/browser/extensions/chrome_extension_test_notification_observer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_protocols.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/feature_switch.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest.h"
 
 class ExtensionService;
@@ -151,6 +153,18 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
                                     install_source);
   }
 
+  // Installs an extension and grants it the permissions it requests.
+  // TODO(devlin): It seems like this is probably the desired outcome most of
+  // the time - otherwise the extension installs in a disabled state.
+  const extensions::Extension* InstallExtensionWithPermissionsGranted(
+      const base::FilePath& file_path,
+      int expected_change) {
+    return InstallOrUpdateExtension(
+        std::string(), file_path, INSTALL_UI_TYPE_NONE, expected_change,
+        extensions::Manifest::INTERNAL, browser(),
+        extensions::Extension::NO_FLAGS, false, true);
+  }
+
   // Installs extension as if it came from the Chrome Webstore.
   const extensions::Extension* InstallExtensionFromWebstore(
       const base::FilePath& path, int expected_change);
@@ -194,31 +208,9 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
       int expected_change,
       extensions::Manifest::Location install_source,
       extensions::Extension::InitFromValueFlags creation_flags) {
-    return InstallOrUpdateExtension(std::string(),
-                                    path,
-                                    INSTALL_UI_TYPE_NONE,
-                                    expected_change,
-                                    install_source,
-                                    browser(),
-                                    creation_flags,
-                                    false,
-                                    false);
-  }
-
-  const extensions::Extension* InstallEphemeralAppWithSourceAndFlags(
-      const base::FilePath& path,
-      int expected_change,
-      extensions::Manifest::Location install_source,
-      extensions::Extension::InitFromValueFlags creation_flags) {
-    return InstallOrUpdateExtension(std::string(),
-                                    path,
-                                    INSTALL_UI_TYPE_NONE,
-                                    expected_change,
-                                    install_source,
-                                    browser(),
-                                    creation_flags,
-                                    false,
-                                    true);
+    return InstallOrUpdateExtension(std::string(), path, INSTALL_UI_TYPE_NONE,
+                                    expected_change, install_source, browser(),
+                                    creation_flags, false, false);
   }
 
   // Begins install process but simulates a user cancel.
@@ -334,7 +326,8 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
   // test_data/extensions.
   base::FilePath test_data_dir_;
 
-  scoped_ptr<ExtensionTestNotificationObserver> observer_;
+  std::unique_ptr<extensions::ChromeExtensionTestNotificationObserver>
+      observer_;
 
  private:
   // Temporary directory for testing.
@@ -376,7 +369,7 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
       Browser* browser,
       extensions::Extension::InitFromValueFlags creation_flags,
       bool wait_for_idle,
-      bool is_ephemeral);
+      bool grant_permissions);
 
   // Make the current channel "dev" for the duration of the test.
   extensions::ScopedCurrentChannel current_channel_;
@@ -398,7 +391,13 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
   Profile* profile_;
 
   // Cache cache implementation.
-  scoped_ptr<extensions::ExtensionCacheFake> test_extension_cache_;
+  std::unique_ptr<extensions::ExtensionCacheFake> test_extension_cache_;
+
+  // An override so that chrome-extensions://<extension_id>/_test_resources/foo
+  // maps to chrome/test/data/extensions/foo.
+  extensions::ExtensionProtocolTestHandler test_protocol_handler_;
+
+  DISALLOW_COPY_AND_ASSIGN(ExtensionBrowserTest);
 };
 
 #endif  // CHROME_BROWSER_EXTENSIONS_EXTENSION_BROWSERTEST_H_

@@ -5,13 +5,15 @@
 #ifndef REMOTING_PROTOCOL_CAPTURE_SCHEDULER_H_
 #define REMOTING_PROTOCOL_CAPTURE_SCHEDULER_H_
 
+#include <stdint.h>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "remoting/base/running_average.h"
+#include "remoting/base/running_samples.h"
 #include "remoting/protocol/video_feedback_stub.h"
 
 namespace remoting {
@@ -52,7 +54,7 @@ class CaptureScheduler : public VideoFeedbackStub {
   void OnFrameSent();
 
   // VideoFeedbackStub interface.
-  void ProcessVideoAck(scoped_ptr<VideoAck> video_ack) override;
+  void ProcessVideoAck(std::unique_ptr<VideoAck> video_ack) override;
 
   // Sets minimum interval between frames.
   void set_minimum_interval(base::TimeDelta minimum_interval) {
@@ -60,8 +62,8 @@ class CaptureScheduler : public VideoFeedbackStub {
   }
 
   // Helper functions for tests.
-  void SetTickClockForTest(scoped_ptr<base::TickClock> tick_clock);
-  void SetTimerForTest(scoped_ptr<base::Timer> timer);
+  void SetTickClockForTest(std::unique_ptr<base::TickClock> tick_clock);
+  void SetTimerForTest(std::unique_ptr<base::Timer> timer);
   void SetNumOfProcessorsForTest(int num_of_processors);
 
  private:
@@ -76,18 +78,18 @@ class CaptureScheduler : public VideoFeedbackStub {
 
   base::Closure capture_closure_;
 
-  scoped_ptr<base::TickClock> tick_clock_;
+  std::unique_ptr<base::TickClock> tick_clock_;
 
   // Timer used to schedule CaptureNextFrame().
-  scoped_ptr<base::Timer> capture_timer_;
+  std::unique_ptr<base::Timer> capture_timer_;
 
   // Minimum interval between frames that determines maximum possible framerate.
   base::TimeDelta minimum_interval_;
 
   int num_of_processors_;
 
-  RunningAverage capture_time_;
-  RunningAverage encode_time_;
+  RunningSamples capture_time_;
+  RunningSamples encode_time_;
 
   // Number of frames pending encoding.
   int num_encoding_frames_;

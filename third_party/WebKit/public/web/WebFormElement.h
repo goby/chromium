@@ -42,49 +42,35 @@ class WebFormControlElement;
 // A container for passing around a reference to a form element. Provides some
 // information about the form.
 class WebFormElement final : public WebElement {
-public:
-    ~WebFormElement() { reset(); }
+ public:
+  ~WebFormElement() { reset(); }
 
-    WebFormElement() : WebElement() { }
-    WebFormElement(const WebFormElement& element) : WebElement(element) { }
+  WebFormElement() : WebElement() {}
+  WebFormElement(const WebFormElement& element) : WebElement(element) {}
 
-    WebFormElement& operator=(const WebFormElement& element)
-    {
-        WebElement::assign(element);
-        return *this;
-    }
-    void assign(const WebFormElement& element) { WebElement::assign(element); }
+  WebFormElement& operator=(const WebFormElement& element) {
+    WebElement::assign(element);
+    return *this;
+  }
+  void assign(const WebFormElement& element) { WebElement::assign(element); }
 
-    BLINK_EXPORT bool autoComplete() const;
-    BLINK_EXPORT WebString action() const;
-    BLINK_EXPORT WebString name() const;
-    BLINK_EXPORT WebString method() const;
-    BLINK_EXPORT bool wasUserSubmitted() const;
-    // FIXME: Deprecate and replace with WebVector<WebElement>.
-    BLINK_EXPORT void getNamedElements(const WebString&, WebVector<WebNode>&);
-    BLINK_EXPORT void getFormControlElements(WebVector<WebFormControlElement>&) const;
+  BLINK_EXPORT bool autoComplete() const;
+  BLINK_EXPORT WebString action() const;
+  BLINK_EXPORT WebString name() const;
+  BLINK_EXPORT WebString method() const;
 
-    // NOTE: This function dispatches "invalid" events. Only call this if
-    // required by a specification (e.g. requestAutocomplete()).
-    BLINK_EXPORT bool checkValidity();
-
-    enum AutocompleteResult {
-        AutocompleteResultSuccess,
-        AutocompleteResultErrorDisabled,
-        AutocompleteResultErrorCancel,
-        AutocompleteResultErrorInvalid,
-    };
-    BLINK_EXPORT void finishRequestAutocomplete(WebFormElement::AutocompleteResult);
+  BLINK_EXPORT void getFormControlElements(
+      WebVector<WebFormControlElement>&) const;
 
 #if BLINK_IMPLEMENTATION
-    WebFormElement(const PassRefPtrWillBeRawPtr<HTMLFormElement>&);
-    WebFormElement& operator=(const PassRefPtrWillBeRawPtr<HTMLFormElement>&);
-    operator PassRefPtrWillBeRawPtr<HTMLFormElement>() const;
+  WebFormElement(HTMLFormElement*);
+  WebFormElement& operator=(HTMLFormElement*);
+  operator HTMLFormElement*() const;
 #endif
 };
 
 DECLARE_WEB_NODE_TYPE_CASTS(WebFormElement);
 
-} // namespace blink
+}  // namespace blink
 
 #endif

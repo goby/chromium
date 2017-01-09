@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_CAST_SENDER_CODECS_VP8_VP8_ENCODER_H_
-#define MEDIA_CAST_SENDER_CODECS_VP8_VP8_ENCODER_H_
+#ifndef MEDIA_CAST_SENDER_VP8_ENCODER_H_
+#define MEDIA_CAST_SENDER_VP8_ENCODER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
+#include "media/base/feedback_signal_accumulator.h"
 #include "media/cast/cast_config.h"
 #include "media/cast/sender/software_video_encoder.h"
-#include "third_party/libvpx_new/source/libvpx/vpx/vpx_encoder.h"
+#include "third_party/libvpx/source/libvpx/vpx/vpx_encoder.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
@@ -22,7 +26,7 @@ namespace cast {
 
 class Vp8Encoder : public SoftwareVideoEncoder {
  public:
-  explicit Vp8Encoder(const VideoSenderConfig& video_config);
+  explicit Vp8Encoder(const FrameSenderConfig& video_config);
 
   ~Vp8Encoder() final;
 
@@ -31,7 +35,7 @@ class Vp8Encoder : public SoftwareVideoEncoder {
   void Encode(const scoped_refptr<media::VideoFrame>& video_frame,
               const base::TimeTicks& reference_time,
               SenderEncodedFrame* encoded_frame) final;
-  void UpdateRates(uint32 new_bitrate) final;
+  void UpdateRates(uint32_t new_bitrate) final;
   void GenerateKeyFrame() final;
 
  private:
@@ -47,7 +51,9 @@ class Vp8Encoder : public SoftwareVideoEncoder {
   // |encoder_| instance.
   void ConfigureForNewFrameSize(const gfx::Size& frame_size);
 
-  const VideoSenderConfig cast_config_;
+  const FrameSenderConfig cast_config_;
+
+  const double target_encoder_utilization_;
 
   // VP8 internal objects.  These are valid for use only while is_initialized()
   // returns true.
@@ -65,8 +71,8 @@ class Vp8Encoder : public SoftwareVideoEncoder {
   // predict the duration of the next frame.
   base::TimeDelta last_frame_timestamp_;
 
-  // The last encoded frame's ID.
-  uint32 last_encoded_frame_id_;
+  // The ID for the next frame to be emitted.
+  FrameId next_frame_id_;
 
   // This is bound to the thread where Initialize() is called.
   base::ThreadChecker thread_checker_;
@@ -76,10 +82,16 @@ class Vp8Encoder : public SoftwareVideoEncoder {
   // TODO(miu): Remove after discovering cause.  http://crbug.com/519022
   bool has_seen_zero_length_encoded_frame_;
 
+  // The accumulator (time averaging) of the encoding speed.
+  FeedbackSignalAccumulator<base::TimeDelta> encoding_speed_acc_;
+
+  // The higher the speed, the less CPU usage, and the lower quality.
+  int encoding_speed_;
+
   DISALLOW_COPY_AND_ASSIGN(Vp8Encoder);
 };
 
 }  // namespace cast
 }  // namespace media
 
-#endif  // MEDIA_CAST_SENDER_CODECS_VP8_VP8_ENCODER_H_
+#endif  // MEDIA_CAST_SENDER_VP8_ENCODER_H_

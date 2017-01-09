@@ -9,6 +9,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
+#include "base/metrics/user_metrics.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/form_structure.h"
@@ -18,6 +19,8 @@ namespace autofill {
 
 namespace {
 
+// Note: if adding an enum value here, update the corresponding description for
+// AutofillTypeQualityByFieldType in histograms.xml.
 enum FieldTypeGroupForMetrics {
   GROUP_AMBIGUOUS = 0,
   GROUP_NAME,
@@ -38,6 +41,8 @@ enum FieldTypeGroupForMetrics {
   GROUP_PASSWORD,
   GROUP_ADDRESS_LINE_3,
   GROUP_USERNAME,
+  GROUP_STREET_ADDRESS,
+  GROUP_CREDIT_CARD_VERIFICATION,
   NUM_FIELD_TYPE_GROUPS_FOR_METRICS
 };
 
@@ -99,6 +104,8 @@ int GetFieldTypeGroupMetric(ServerFieldType field_type,
         case ADDRESS_HOME_LINE3:
           group = GROUP_ADDRESS_LINE_3;
           break;
+        case ADDRESS_HOME_STREET_ADDRESS:
+          group = GROUP_STREET_ADDRESS;
         case ADDRESS_HOME_CITY:
           group = GROUP_ADDRESS_CITY;
           break;
@@ -112,7 +119,7 @@ int GetFieldTypeGroupMetric(ServerFieldType field_type,
           group = GROUP_ADDRESS_COUNTRY;
           break;
         default:
-          NOTREACHED();
+          NOTREACHED() << field_type << " has no group assigned (ambiguous)";
           group = GROUP_AMBIGUOUS;
           break;
       }
@@ -129,7 +136,9 @@ int GetFieldTypeGroupMetric(ServerFieldType field_type,
 
     case CREDIT_CARD:
       switch (field_type) {
-        case CREDIT_CARD_NAME:
+        case CREDIT_CARD_NAME_FULL:
+        case CREDIT_CARD_NAME_FIRST:
+        case CREDIT_CARD_NAME_LAST:
           group = GROUP_CREDIT_CARD_NAME;
           break;
         case CREDIT_CARD_NUMBER:
@@ -145,8 +154,11 @@ int GetFieldTypeGroupMetric(ServerFieldType field_type,
         case CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR:
           group = GROUP_CREDIT_CARD_DATE;
           break;
+        case CREDIT_CARD_VERIFICATION_CODE:
+          group = GROUP_CREDIT_CARD_VERIFICATION;
+          break;
         default:
-          NOTREACHED();
+          NOTREACHED() << field_type << " has no group assigned (ambiguous)";
           group = GROUP_AMBIGUOUS;
           break;
       }
@@ -172,29 +184,6 @@ int GetFieldTypeGroupMetric(ServerFieldType field_type,
 
 namespace {
 
-std::string WalletApiMetricToString(
-    AutofillMetrics::WalletApiCallMetric metric) {
-  switch (metric) {
-    case AutofillMetrics::ACCEPT_LEGAL_DOCUMENTS:
-      return "AcceptLegalDocuments";
-    case AutofillMetrics::AUTHENTICATE_INSTRUMENT:
-      return "AuthenticateInstrument";
-    case AutofillMetrics::GET_FULL_WALLET:
-      return "GetFullWallet";
-    case AutofillMetrics::GET_WALLET_ITEMS:
-      return "GetWalletItems";
-    case AutofillMetrics::SAVE_TO_WALLET:
-      return "SaveToWallet";
-    case AutofillMetrics::UNKNOWN_API_CALL:
-    case AutofillMetrics::NUM_WALLET_API_CALLS:
-      NOTREACHED();
-      return "UnknownApiCall";
-  }
-
-  NOTREACHED();
-  return "UnknownApiCall";
-}
-
 // A version of the UMA_HISTOGRAM_ENUMERATION macro that allows the |name|
 // to vary over the program's runtime.
 void LogUMAHistogramEnumeration(const std::string& name,
@@ -211,21 +200,6 @@ void LogUMAHistogramEnumeration(const std::string& name,
           boundary_value + 1,
           base::HistogramBase::kUmaTargetedHistogramFlag);
   histogram->Add(sample);
-}
-
-// A version of the UMA_HISTOGRAM_TIMES macro that allows the |name|
-// to vary over the program's runtime.
-void LogUMAHistogramTimes(const std::string& name,
-                          const base::TimeDelta& duration) {
-  // Note: This leaks memory, which is expected behavior.
-  base::HistogramBase* histogram =
-      base::Histogram::FactoryTimeGet(
-          name,
-          base::TimeDelta::FromMilliseconds(1),
-          base::TimeDelta::FromSeconds(10),
-          50,
-          base::HistogramBase::kUmaTargetedHistogramFlag);
-  histogram->AddTime(duration);
 }
 
 // A version of the UMA_HISTOGRAM_LONG_TIMES macro that allows the |name|
@@ -246,20 +220,35 @@ void LogUMAHistogramLongTimes(const std::string& name,
 // Logs a type quality metric.  The primary histogram name is constructed based
 // on |base_name|.  The field-specific histogram name also factors in the
 // |field_type|.  Logs a sample of |metric|, which should be in the range
-// [0, |num_possible_metrics|).
+// [0, |num_possible_metrics|). May log a suffixed version of the metric
+// depending on |metric_type|.
 void LogTypeQualityMetric(const std::string& base_name,
                           AutofillMetrics::FieldTypeQualityMetric metric,
-                          ServerFieldType field_type) {
+                          ServerFieldType field_type,
+                          AutofillMetrics::QualityMetricType metric_type) {
   DCHECK_LT(metric, AutofillMetrics::NUM_FIELD_TYPE_QUALITY_METRICS);
 
-  LogUMAHistogramEnumeration(base_name, metric,
+  std::string suffix;
+  switch (metric_type) {
+    case AutofillMetrics::TYPE_SUBMISSION:
+      break;
+    case AutofillMetrics::TYPE_NO_SUBMISSION:
+      suffix = ".NoSubmission";
+      break;
+    case AutofillMetrics::TYPE_AUTOCOMPLETE_BASED:
+      suffix = ".BasedOnAutocomplete";
+      break;
+    default:
+      NOTREACHED();
+  }
+  LogUMAHistogramEnumeration(base_name + suffix, metric,
                              AutofillMetrics::NUM_FIELD_TYPE_QUALITY_METRICS);
 
   int field_type_group_metric = GetFieldTypeGroupMetric(field_type, metric);
   int num_field_type_group_metrics =
       AutofillMetrics::NUM_FIELD_TYPE_QUALITY_METRICS *
       NUM_FIELD_TYPE_GROUPS_FOR_METRICS;
-  LogUMAHistogramEnumeration(base_name + ".ByFieldType",
+  LogUMAHistogramEnumeration(base_name + ".ByFieldType" + suffix,
                              field_type_group_metric,
                              num_field_type_group_metrics);
 }
@@ -267,10 +256,43 @@ void LogTypeQualityMetric(const std::string& base_name,
 }  // namespace
 
 // static
-void AutofillMetrics::LogCreditCardInfoBarMetric(InfoBarMetric metric) {
+void AutofillMetrics::LogCardUploadDecisionMetric(
+    CardUploadDecisionMetric metric) {
+  DCHECK_LT(metric, NUM_CARD_UPLOAD_DECISION_METRICS);
+  UMA_HISTOGRAM_ENUMERATION("Autofill.CardUploadDecisionExpanded", metric,
+                            NUM_CARD_UPLOAD_DECISION_METRICS);
+}
+
+// static
+void AutofillMetrics::LogCreditCardInfoBarMetric(InfoBarMetric metric,
+                                                 bool is_uploading) {
   DCHECK_LT(metric, NUM_INFO_BAR_METRICS);
-  UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardInfoBar", metric,
+  if (is_uploading) {
+    UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardInfoBar.Server", metric,
+                              NUM_INFO_BAR_METRICS);
+  } else {
+    UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardInfoBar.Local", metric,
+                              NUM_INFO_BAR_METRICS);
+  }
+}
+
+// static
+void AutofillMetrics::LogCreditCardFillingInfoBarMetric(InfoBarMetric metric) {
+  DCHECK_LT(metric, NUM_INFO_BAR_METRICS);
+  UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardFillingInfoBar", metric,
                             NUM_INFO_BAR_METRICS);
+}
+
+// static
+void AutofillMetrics::LogSaveCardPromptMetric(SaveCardPromptMetric metric,
+                                              bool is_uploading,
+                                              bool is_reshow) {
+  DCHECK_LT(metric, NUM_SAVE_CARD_PROMPT_METRICS);
+  std::string destination = is_uploading ? ".Upload" : ".Local";
+  std::string show = is_reshow ? ".Reshows" : ".FirstShow";
+  LogUMAHistogramEnumeration(
+      "Autofill.SaveCreditCardPrompt" + destination + show, metric,
+      NUM_SAVE_CARD_PROMPT_METRICS);
 }
 
 // static
@@ -289,62 +311,6 @@ void AutofillMetrics::LogScanCreditCardCompleted(
   LogUMAHistogramLongTimes("Autofill.ScanCreditCard.Duration_" + suffix,
                            duration);
   UMA_HISTOGRAM_BOOLEAN("Autofill.ScanCreditCard.Completed", completed);
-}
-
-// static
-void AutofillMetrics::LogDialogDismissalState(DialogDismissalState state) {
-  UMA_HISTOGRAM_ENUMERATION("RequestAutocomplete.DismissalState",
-                            state, NUM_DIALOG_DISMISSAL_STATES);
-}
-
-// static
-void AutofillMetrics::LogDialogInitialUserState(
-    DialogInitialUserStateMetric user_type) {
-  UMA_HISTOGRAM_ENUMERATION("RequestAutocomplete.InitialUserState",
-                            user_type, NUM_DIALOG_INITIAL_USER_STATE_METRICS);
-}
-
-// static
-void AutofillMetrics::LogDialogLatencyToShow(const base::TimeDelta& duration) {
-  LogUMAHistogramTimes("RequestAutocomplete.UiLatencyToShow", duration);
-}
-
-// static
-void AutofillMetrics::LogDialogPopupEvent(DialogPopupEvent event) {
-  UMA_HISTOGRAM_ENUMERATION("RequestAutocomplete.PopupInDialog",
-                            event, NUM_DIALOG_POPUP_EVENTS);
-}
-
-// static
-void AutofillMetrics::LogDialogSecurityMetric(DialogSecurityMetric metric) {
-  UMA_HISTOGRAM_ENUMERATION("RequestAutocomplete.Security",
-                            metric, NUM_DIALOG_SECURITY_METRICS);
-}
-
-// static
-void AutofillMetrics::LogDialogUiDuration(
-    const base::TimeDelta& duration,
-    DialogDismissalAction dismissal_action) {
-  std::string suffix;
-  switch (dismissal_action) {
-    case DIALOG_ACCEPTED:
-      suffix = "Submit";
-      break;
-
-    case DIALOG_CANCELED:
-      suffix = "Cancel";
-      break;
-  }
-
-  LogUMAHistogramLongTimes("RequestAutocomplete.UiDuration", duration);
-  LogUMAHistogramLongTimes("RequestAutocomplete.UiDuration." + suffix,
-                           duration);
-}
-
-// static
-void AutofillMetrics::LogDialogUiEvent(DialogUiEvent event) {
-  UMA_HISTOGRAM_ENUMERATION("RequestAutocomplete.UiEvents", event,
-                            NUM_DIALOG_UI_EVENTS);
 }
 
 // static
@@ -466,39 +432,6 @@ void AutofillMetrics::LogUnmaskingDuration(
 }
 
 // static
-void AutofillMetrics::LogWalletErrorMetric(WalletErrorMetric metric) {
-  UMA_HISTOGRAM_ENUMERATION("RequestAutocomplete.WalletErrors", metric,
-                            NUM_WALLET_ERROR_METRICS);
-}
-
-// static
-void AutofillMetrics::LogWalletApiCallDuration(
-    WalletApiCallMetric metric,
-    const base::TimeDelta& duration) {
-  LogUMAHistogramTimes("Wallet.ApiCallDuration." +
-                       WalletApiMetricToString(metric), duration);
-}
-
-// static
-void AutofillMetrics::LogWalletMalformedResponseMetric(
-    WalletApiCallMetric metric) {
-  UMA_HISTOGRAM_ENUMERATION("Wallet.MalformedResponse", metric,
-                            NUM_WALLET_API_CALLS);
-}
-
-// static
-void AutofillMetrics::LogWalletRequiredActionMetric(
-    WalletRequiredActionMetric required_action) {
-  UMA_HISTOGRAM_ENUMERATION("RequestAutocomplete.WalletRequiredActions",
-                            required_action, NUM_WALLET_REQUIRED_ACTIONS);
-}
-
-// static
-void AutofillMetrics::LogWalletResponseCode(int response_code) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Wallet.ResponseCode", response_code);
-}
-
-// static
 void AutofillMetrics::LogDeveloperEngagementMetric(
     DeveloperEngagementMetric metric) {
   DCHECK_LT(metric, NUM_DEVELOPER_ENGAGEMENT_METRICS);
@@ -507,21 +440,28 @@ void AutofillMetrics::LogDeveloperEngagementMetric(
 }
 
 // static
-void AutofillMetrics::LogHeuristicTypePrediction(FieldTypeQualityMetric metric,
-                                                 ServerFieldType field_type) {
-  LogTypeQualityMetric("Autofill.Quality.HeuristicType", metric, field_type);
+void AutofillMetrics::LogHeuristicTypePrediction(
+    FieldTypeQualityMetric metric,
+    ServerFieldType field_type,
+    QualityMetricType metric_type) {
+  LogTypeQualityMetric("Autofill.Quality.HeuristicType", metric, field_type,
+                       metric_type);
 }
 
 // static
 void AutofillMetrics::LogOverallTypePrediction(FieldTypeQualityMetric metric,
-                                               ServerFieldType field_type) {
-  LogTypeQualityMetric("Autofill.Quality.PredictedType", metric, field_type);
+                                               ServerFieldType field_type,
+                                               QualityMetricType metric_type) {
+  LogTypeQualityMetric("Autofill.Quality.PredictedType", metric, field_type,
+                       metric_type);
 }
 
 // static
 void AutofillMetrics::LogServerTypePrediction(FieldTypeQualityMetric metric,
-                                              ServerFieldType field_type) {
-  LogTypeQualityMetric("Autofill.Quality.ServerType", metric, field_type);
+                                              ServerFieldType field_type,
+                                              QualityMetricType metric_type) {
+  LogTypeQualityMetric("Autofill.Quality.ServerType", metric, field_type,
+                       metric_type);
 }
 
 // static
@@ -596,6 +536,21 @@ void AutofillMetrics::LogStoredProfileCount(size_t num_profiles) {
 }
 
 // static
+void AutofillMetrics::LogStoredLocalCreditCardCount(size_t num_local_cards) {
+  UMA_HISTOGRAM_COUNTS("Autofill.StoredLocalCreditCardCount", num_local_cards);
+}
+
+// static
+void AutofillMetrics::LogStoredServerCreditCardCounts(
+    size_t num_masked_cards,
+    size_t num_unmasked_cards) {
+  UMA_HISTOGRAM_COUNTS_1000("Autofill.StoredServerCreditCardCount.Masked",
+                            num_masked_cards);
+  UMA_HISTOGRAM_COUNTS_1000("Autofill.StoredServerCreditCardCount.Unmasked",
+                            num_unmasked_cards);
+}
+
+// static
 void AutofillMetrics::LogNumberOfProfilesAtAutofillableFormSubmission(
     size_t num_profiles) {
   UMA_HISTOGRAM_COUNTS(
@@ -612,6 +567,8 @@ void AutofillMetrics::LogAutofillSuggestionAcceptedIndex(int index) {
   // A maximum of 50 is enforced to minimize the number of buckets generated.
   UMA_HISTOGRAM_SPARSE_SLOWLY("Autofill.SuggestionAcceptedIndex",
                               std::min(index, 50));
+
+  base::RecordAction(base::UserMetricsAction("Autofill_SelectedSuggestion"));
 }
 
 // static
@@ -622,11 +579,18 @@ void AutofillMetrics::LogAutocompleteSuggestionAcceptedIndex(int index) {
 }
 
 // static
-void AutofillMetrics::LogNumberOfEditedAutofilledFieldsAtSubmission(
-    size_t num_edited_autofilled_fields) {
-  UMA_HISTOGRAM_COUNTS_1000(
-      "Autofill.NumberOfEditedAutofilledFieldsAtSubmission",
-      num_edited_autofilled_fields);
+void AutofillMetrics::LogNumberOfEditedAutofilledFields(
+    size_t num_edited_autofilled_fields,
+    bool observed_submission) {
+  if (observed_submission) {
+    UMA_HISTOGRAM_COUNTS_1000(
+        "Autofill.NumberOfEditedAutofilledFieldsAtSubmission",
+        num_edited_autofilled_fields);
+  } else {
+    UMA_HISTOGRAM_COUNTS_1000(
+        "Autofill.NumberOfEditedAutofilledFieldsAtSubmission.NoSubmission",
+        num_edited_autofilled_fields);
+  }
 }
 
 // static
@@ -646,22 +610,69 @@ void AutofillMetrics::LogAutofillFormSubmittedState(
     AutofillFormSubmittedState state) {
   UMA_HISTOGRAM_ENUMERATION("Autofill.FormSubmittedState", state,
                             AUTOFILL_FORM_SUBMITTED_STATE_ENUM_SIZE);
+
+  switch (state) {
+    case NON_FILLABLE_FORM_OR_NEW_DATA:
+      base::RecordAction(
+          base::UserMetricsAction("Autofill_FormSubmitted_NonFillable"));
+      break;
+
+    case FILLABLE_FORM_AUTOFILLED_ALL:
+      base::RecordAction(
+          base::UserMetricsAction("Autofill_FormSubmitted_FilledAll"));
+      break;
+
+    case FILLABLE_FORM_AUTOFILLED_SOME:
+      base::RecordAction(
+          base::UserMetricsAction("Autofill_FormSubmitted_FilledSome"));
+      break;
+
+    case FILLABLE_FORM_AUTOFILLED_NONE_DID_SHOW_SUGGESTIONS:
+      base::RecordAction(base::UserMetricsAction(
+          "Autofill_FormSubmitted_FilledNone_SuggestionsShown"));
+      break;
+
+    case FILLABLE_FORM_AUTOFILLED_NONE_DID_NOT_SHOW_SUGGESTIONS:
+      base::RecordAction(base::UserMetricsAction(
+          "Autofill_FormSubmitted_FilledNone_SuggestionsNotShown"));
+      break;
+
+    default:
+      NOTREACHED();
+      break;
+  }
 }
 
 // static
-void AutofillMetrics::LogPayloadCompressionRatio(
-    int compression_ratio,
-    AutofillDownloadManager::RequestType type) {
-  switch (type) {
-    case AutofillDownloadManager::REQUEST_QUERY:
-      UMA_HISTOGRAM_PERCENTAGE("Autofill.PayloadCompressionRatio.Query",
-                               compression_ratio);
-      break;
-    case AutofillDownloadManager::REQUEST_UPLOAD:
-      UMA_HISTOGRAM_PERCENTAGE("Autofill.PayloadCompressionRatio.Upload",
-                               compression_ratio);
-      break;
-  }
+void AutofillMetrics::LogDetermineHeuristicTypesTiming(
+    const base::TimeDelta& duration) {
+  UMA_HISTOGRAM_TIMES("Autofill.Timing.DetermineHeuristicTypes", duration);
+}
+
+// static
+void AutofillMetrics::LogParseFormTiming(const base::TimeDelta& duration) {
+  UMA_HISTOGRAM_TIMES("Autofill.Timing.ParseForm", duration);
+}
+
+// static
+void AutofillMetrics::LogNumberOfProfilesConsideredForDedupe(
+    size_t num_considered) {
+  // A maximum of 50 is enforced to reduce the number of generated buckets.
+  UMA_HISTOGRAM_COUNTS_1000("Autofill.NumberOfProfilesConsideredForDedupe",
+                            std::min(int(num_considered), 50));
+}
+
+// static
+void AutofillMetrics::LogNumberOfProfilesRemovedDuringDedupe(
+    size_t num_removed) {
+  // A maximum of 50 is enforced to reduce the number of generated buckets.
+  UMA_HISTOGRAM_COUNTS_1000("Autofill.NumberOfProfilesRemovedDuringDedupe",
+                            std::min(int(num_removed), 50));
+}
+
+// static
+void AutofillMetrics::LogIsQueriedCreditCardFormSecure(bool is_secure) {
+  UMA_HISTOGRAM_BOOLEAN("Autofill.QueriedCreditCardFormIsSecure", is_secure);
 }
 
 AutofillMetrics::FormEventLogger::FormEventLogger(bool is_for_credit_card)
@@ -685,11 +696,38 @@ void AutofillMetrics::FormEventLogger::OnDidInteractWithAutofillableForm() {
   }
 }
 
+void AutofillMetrics::FormEventLogger::OnDidPollSuggestions(
+    const FormFieldData& field) {
+  // Record only one poll user action for consecutive polls of the same field.
+  // This is to avoid recording too many poll actions (for example when a user
+  // types in a field, triggering multiple queries) to make the analysis more
+  // simple.
+  if (!field.SameFieldAs(last_polled_field_)) {
+    if (is_for_credit_card_) {
+      base::RecordAction(
+          base::UserMetricsAction("Autofill_PolledCreditCardSuggestions"));
+    } else {
+      base::RecordAction(
+          base::UserMetricsAction("Autofill_PolledProfileSuggestions"));
+    }
+
+    last_polled_field_ = field;
+  }
+}
+
 void AutofillMetrics::FormEventLogger::OnDidShowSuggestions() {
   Log(AutofillMetrics::FORM_EVENT_SUGGESTIONS_SHOWN);
   if (!has_logged_suggestions_shown_) {
     has_logged_suggestions_shown_ = true;
     Log(AutofillMetrics::FORM_EVENT_SUGGESTIONS_SHOWN_ONCE);
+  }
+
+  if (is_for_credit_card_) {
+    base::RecordAction(
+        base::UserMetricsAction("Autofill_ShowedCreditCardSuggestions"));
+  } else {
+    base::RecordAction(
+        base::UserMetricsAction("Autofill_ShowedProfileSuggestions"));
   }
 }
 
@@ -729,6 +767,9 @@ void AutofillMetrics::FormEventLogger::OnDidFillSuggestion(
       Log(AutofillMetrics::FORM_EVENT_LOCAL_SUGGESTION_FILLED_ONCE);
     }
   }
+
+  base::RecordAction(
+      base::UserMetricsAction("Autofill_FilledCreditCardSuggestion"));
 }
 
 void AutofillMetrics::FormEventLogger::OnDidFillSuggestion(
@@ -747,6 +788,9 @@ void AutofillMetrics::FormEventLogger::OnDidFillSuggestion(
         ? AutofillMetrics::FORM_EVENT_SERVER_SUGGESTION_FILLED_ONCE
         : AutofillMetrics::FORM_EVENT_LOCAL_SUGGESTION_FILLED_ONCE);
   }
+
+  base::RecordAction(
+      base::UserMetricsAction("Autofill_FilledProfileSuggestion"));
 }
 
 void AutofillMetrics::FormEventLogger::OnWillSubmitForm() {
@@ -769,6 +813,8 @@ void AutofillMetrics::FormEventLogger::OnWillSubmitForm() {
   } else {
     Log(AutofillMetrics::FORM_EVENT_LOCAL_SUGGESTION_WILL_SUBMIT_ONCE);
   }
+
+  base::RecordAction(base::UserMetricsAction("Autofill_OnWillSubmitForm"));
 }
 
 void AutofillMetrics::FormEventLogger::OnFormSubmitted() {

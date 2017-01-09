@@ -5,8 +5,10 @@
 #ifndef UI_AURA_WINDOW_TREE_HOST_PLATFORM_H_
 #define UI_AURA_WINDOW_TREE_HOST_PLATFORM_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/aura/aura_export.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/gfx/native_widget_types.h"
@@ -14,6 +16,8 @@
 #include "ui/platform_window/platform_window_delegate.h"
 
 namespace aura {
+
+class WindowPort;
 
 // The unified WindowTreeHost implementation for platforms
 // that implement PlatformWindow.
@@ -29,18 +33,23 @@ class AURA_EXPORT WindowTreeHostPlatform
   gfx::AcceleratedWidget GetAcceleratedWidget() override;
   void ShowImpl() override;
   void HideImpl() override;
-  gfx::Rect GetBounds() const override;
-  void SetBounds(const gfx::Rect& bounds) override;
-  gfx::Point GetLocationOnNativeScreen() const override;
+  gfx::Rect GetBoundsInPixels() const override;
+  void SetBoundsInPixels(const gfx::Rect& bounds) override;
+  gfx::Point GetLocationOnScreenInPixels() const override;
   void SetCapture() override;
   void ReleaseCapture() override;
   void SetCursorNative(gfx::NativeCursor cursor) override;
-  void MoveCursorToNative(const gfx::Point& location) override;
+  void MoveCursorToScreenLocationInPixels(
+      const gfx::Point& location_in_pixels) override;
   void OnCursorVisibilityChangedNative(bool show) override;
 
  protected:
+  // NOTE: neither of these calls CreateCompositor(); subclasses must call
+  // CreateCompositor() at the appropriate time.
   WindowTreeHostPlatform();
-  void SetPlatformWindow(scoped_ptr<ui::PlatformWindow> window);
+  explicit WindowTreeHostPlatform(std::unique_ptr<WindowPort> window_port);
+
+  void SetPlatformWindow(std::unique_ptr<ui::PlatformWindow> window);
   ui::PlatformWindow* platform_window() { return window_.get(); }
 
   // ui::PlatformWindowDelegate:
@@ -58,7 +67,7 @@ class AURA_EXPORT WindowTreeHostPlatform
 
  private:
   gfx::AcceleratedWidget widget_;
-  scoped_ptr<ui::PlatformWindow> window_;
+  std::unique_ptr<ui::PlatformWindow> window_;
   gfx::NativeCursor current_cursor_;
   gfx::Rect bounds_;
 

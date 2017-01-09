@@ -62,8 +62,8 @@ PASS 'function setTimeout() { [native code] }' is 'function setTimeout() { [nati
 PASS 'function setTimeout() { [native code] }' is 'function setTimeout() { [native code] }'
 PASS 'function stop() { [native code] }' is 'function stop() { [native code] }'
 PASS 'function stop() { [native code] }' is 'function stop() { [native code] }'
-PASS 'function () { [native code] }' is 'function () { [native code] }'
-PASS 'function () { [native code] }' is 'function () { [native code] }'
+PASS 'function toString() { [native code] }' is 'function toString() { [native code] }'
+PASS 'function toString() { [native code] }' is 'function toString() { [native code] }'
 PASS 'function Attr() { [native code] }' is 'function Attr() { [native code] }'
 PASS 'function Attr() { [native code] }' is 'function Attr() { [native code] }'
 PASS 'function CDATASection() { [native code] }' is 'function CDATASection() { [native code] }'
@@ -304,7 +304,7 @@ PASS win['statusbar'] == '[object BarProp]' is true
 PASS win['statusbar'] == '[object BarProp]' is true
 PASS win['toolbar'] == '[object BarProp]' is true
 PASS win['toolbar'] == '[object BarProp]' is true
-PASS win['console'] == '[object Console]' is true
+PASS win['console'] == '[object Object]' is true
 PASS win['history'] == '[object History]' is true
 PASS win['navigator'] == '[object Navigator]' is true
 PASS win['navigator'] == '[object Navigator]' is true

@@ -31,31 +31,6 @@
     padding: 12px;
 }
 
-.help-window-main .help-container-wrapper::-webkit-scrollbar {
-    width: 11px;
-}
-
-.help-window-main .help-container-wrapper::-webkit-scrollbar-corner,
-.help-window-main .help-container-wrapper::-webkit-resizer {
-    display: none;
-}
-
-.help-window-main .help-container-wrapper::-webkit-scrollbar-thumb:vertical {
-    background: linear-gradient(to right, rgb(128, 128, 128), rgb(96, 96, 96) 40%, rgb(128, 128, 128));
-    border-radius: 5px;
-    min-height: 20px;
-}
-
-.help-window-main .help-container-wrapper::-webkit-scrollbar-thumb:vertical:hover,
-.help-window-main .help-container-wrapper::-webkit-scrollbar-thumb:vertical:active {
-    background: linear-gradient(to right, rgb(176, 176, 176), rgb(144, 144, 144) 40%, rgb(176, 176, 176));
-}
-
-.help-window-main .help-container-wrapper::-webkit-scrollbar-track:vertical {
-    background: linear-gradient(to right, rgb(10, 10, 10), rgb(32, 32, 32) 25%, rgb(32, 32, 32));
-    border-radius: 5px;
-}
-
 .help-container {
     width: 100%;
     -webkit-user-select: auto;
@@ -124,7 +99,6 @@
     text-shadow: 0 1px 0 #fff;
     line-height: 1.5;
     white-space: nowrap;
-    font-family: Lucida Grande, sans-serif;
 }
 
 .help-combine-keys,
@@ -176,25 +150,20 @@ fieldset {
     margin: 1px 7px 1px 2px;
 }
 
-.help-content option {
-    background-color: #EEEEEE;
-    color: #222;
-}
-
-.help-window-label {
+.settings-window-title {
     font-size: 18px;
-    color: inherit;
-    padding: 1px 0 15px 17px;
-    flex: none;
+    color: rgb(48, 57, 66);
+    padding: 0 0 5px 13px;
 }
 
 .help-container-wrapper {
     position: absolute;
-    top: 40px;
+    top: 31px;
     left: 0px;
     right: 0;
     bottom: 0;
     overflow: auto;
+    padding-top: 9px;
 }
 
 .settings-tab.help-content {

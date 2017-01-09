@@ -23,6 +23,7 @@ enum TextKind {
 class MEDIA_EXPORT TextTrackConfig {
  public:
   TextTrackConfig();
+  TextTrackConfig(const TextTrackConfig& other);
   TextTrackConfig(TextKind kind,
                   const std::string& label,
                   const std::string& language,
@@ -45,4 +46,4 @@ class MEDIA_EXPORT TextTrackConfig {
 
 }  // namespace media
 
-#endif  // MEDIA_BASE_TEXT_TRACK_H_
+#endif  // MEDIA_BASE_TEXT_TRACK_CONFIG_H_

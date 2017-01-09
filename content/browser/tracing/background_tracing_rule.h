@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_RULE_H_
 #define CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_RULE_H_
 
+#include "base/macros.h"
 #include "content/browser/tracing/background_tracing_config_impl.h"
 #include "content/common/content_export.h"
 
@@ -17,32 +18,44 @@ namespace content {
 class CONTENT_EXPORT BackgroundTracingRule {
  public:
   BackgroundTracingRule();
+  explicit BackgroundTracingRule(int trigger_delay);
+
   virtual ~BackgroundTracingRule();
+
+  void Setup(const base::DictionaryValue* dict);
+  BackgroundTracingConfigImpl::CategoryPreset category_preset() const {
+    return category_preset_;
+  }
+  void set_category_preset(
+      BackgroundTracingConfigImpl::CategoryPreset category_preset) {
+    category_preset_ = category_preset;
+  }
 
   virtual void Install() {}
   virtual void IntoDict(base::DictionaryValue* dict) const;
-  void Setup(const base::DictionaryValue* dict);
   virtual bool ShouldTriggerNamedEvent(const std::string& named_event) const;
-  virtual BackgroundTracingConfigImpl::CategoryPreset GetCategoryPreset() const;
   virtual void OnHistogramTrigger(const std::string& histogram_name) const {}
 
   // Seconds from the rule is triggered to finalization should start.
-  virtual int GetTraceTimeout() const;
+  virtual int GetTraceDelay() const;
 
   // Probability that we should allow a tigger to  happen.
   double trigger_chance() const { return trigger_chance_; }
 
-  static scoped_ptr<BackgroundTracingRule> PreemptiveRuleFromDict(
-      const base::DictionaryValue* dict);
+  bool stop_tracing_on_repeated_reactive() const {
+    return stop_tracing_on_repeated_reactive_;
+  }
 
-  static scoped_ptr<BackgroundTracingRule> ReactiveRuleFromDict(
-      const base::DictionaryValue* dict,
-      BackgroundTracingConfigImpl::CategoryPreset category_preset);
+  static std::unique_ptr<BackgroundTracingRule> CreateRuleFromDict(
+      const base::DictionaryValue* dict);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BackgroundTracingRule);
 
   double trigger_chance_;
+  int trigger_delay_;
+  bool stop_tracing_on_repeated_reactive_;
+  BackgroundTracingConfigImpl::CategoryPreset category_preset_;
 };
 
 }  // namespace content

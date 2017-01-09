@@ -4,25 +4,27 @@
 
 #include "components/gcm_driver/registration_info.h"
 
+#include <stddef.h>
+
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 
 namespace gcm {
 
 namespace {
-const char kInsanceIDSerializationPrefix[] = "iid-";
-const int kInsanceIDSerializationPrefixLength =
-    sizeof(kInsanceIDSerializationPrefix) / sizeof(char) - 1;
+const char kInstanceIDSerializationPrefix[] = "iid-";
+const int kInstanceIDSerializationPrefixLength =
+    sizeof(kInstanceIDSerializationPrefix) / sizeof(char) - 1;
 }  // namespace
 
 // static
-scoped_ptr<RegistrationInfo> RegistrationInfo::BuildFromString(
+std::unique_ptr<RegistrationInfo> RegistrationInfo::BuildFromString(
     const std::string& serialized_key,
     const std::string& serialized_value,
     std::string* registration_id) {
-  scoped_ptr<RegistrationInfo> registration;
+  std::unique_ptr<RegistrationInfo> registration;
 
-  if (base::StartsWith(serialized_key, kInsanceIDSerializationPrefix,
+  if (base::StartsWith(serialized_key, kInstanceIDSerializationPrefix,
                        base::CompareCase::SENSITIVE))
     registration.reset(new InstanceIDTokenInfo);
   else
@@ -33,7 +35,7 @@ scoped_ptr<RegistrationInfo> RegistrationInfo::BuildFromString(
                                  registration_id)) {
     registration.reset();
   }
-  return registration.Pass();
+  return registration;
 }
 
 RegistrationInfo::RegistrationInfo() {
@@ -156,14 +158,15 @@ RegistrationInfo::RegistrationType InstanceIDTokenInfo::GetType() const {
 }
 
 std::string InstanceIDTokenInfo::GetSerializedKey() const {
-  DCHECK(authorized_entity.find(',') == std::string::npos &&
+  DCHECK(app_id.find(',') == std::string::npos &&
+         authorized_entity.find(',') == std::string::npos &&
          scope.find(',') == std::string::npos);
 
   // Multiple registrations are supported for Instance ID. So the key is based
   // on the combination of (app_id, authorized_entity, scope).
 
   // Adds a prefix to differentiate easily with GCM registration key.
-  std::string key(kInsanceIDSerializationPrefix);
+  std::string key(kInstanceIDSerializationPrefix);
   key += app_id;
   key += ",";
   key += authorized_entity;
@@ -184,13 +187,13 @@ bool InstanceIDTokenInfo::Deserialize(
   if (serialized_key.empty() || serialized_value.empty())
     return false;
 
-  if (!base::StartsWith(serialized_key, kInsanceIDSerializationPrefix,
+  if (!base::StartsWith(serialized_key, kInstanceIDSerializationPrefix,
                         base::CompareCase::SENSITIVE))
     return false;
 
   std::vector<std::string> fields = base::SplitString(
-      serialized_key.substr(kInsanceIDSerializationPrefixLength),
-      ",", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+      serialized_key.substr(kInstanceIDSerializationPrefixLength), ",",
+      base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
   if (fields.size() != 3 || fields[0].empty() ||
       fields[1].empty() || fields[2].empty()) {
     return false;
@@ -212,7 +215,7 @@ bool RegistrationInfoComparer::operator()(
   DCHECK(a.get() && b.get());
 
   // For GCMRegistrationInfo, the comparison is based on app_id only.
-  // For InstanceIDTokenInfo, the comparison is bsaed on
+  // For InstanceIDTokenInfo, the comparison is based on
   // <app_id, authorized_entity, scope>.
   if (a->app_id < b->app_id)
     return true;
@@ -244,7 +247,8 @@ bool RegistrationInfoComparer::operator()(
 
 bool ExistsGCMRegistrationInMap(const RegistrationInfoMap& map,
                                 const std::string& app_id) {
-  scoped_ptr<GCMRegistrationInfo> gcm_registration(new GCMRegistrationInfo);
+  std::unique_ptr<GCMRegistrationInfo> gcm_registration(
+      new GCMRegistrationInfo);
   gcm_registration->app_id = app_id;
   return map.count(
       make_linked_ptr<RegistrationInfo>(gcm_registration.release())) > 0;

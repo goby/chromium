@@ -5,27 +5,34 @@
 #ifndef CC_OUTPUT_COMPOSITOR_FRAME_H_
 #define CC_OUTPUT_COMPOSITOR_FRAME_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/output/compositor_frame_metadata.h"
-#include "cc/output/delegated_frame_data.h"
-#include "cc/output/gl_frame_data.h"
+#include "cc/quads/render_pass.h"
+#include "cc/resources/transferable_resource.h"
 
 namespace cc {
 
 // A CompositorFrame struct contains the complete output of a compositor meant
-// for display.
-// TODO(fsamuel): Write more here.
+// for display. A CompositorFrame consists of a series of DrawQuads that
+// describe placement of textures, solid colors, overlays and other
+// CompositorFrames within an area specified by the parent compositor. DrawQuads
+// may share common data referred to as SharedQuadState. A CompositorFrame also
+// has |metadata| that refers to global graphical state associated with this
+// frame.
 class CC_EXPORT CompositorFrame {
  public:
   CompositorFrame();
+  CompositorFrame(CompositorFrame&& other);
   ~CompositorFrame();
 
-  CompositorFrameMetadata metadata;
-  scoped_ptr<DelegatedFrameData> delegated_frame_data;
-  scoped_ptr<GLFrameData> gl_frame_data;
+  CompositorFrame& operator=(CompositorFrame&& other);
 
-  void AssignTo(CompositorFrame* target);
+  CompositorFrameMetadata metadata;
+  TransferableResourceArray resource_list;
+  RenderPassList render_pass_list;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CompositorFrame);

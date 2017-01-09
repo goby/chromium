@@ -6,22 +6,24 @@
 
 #include <certt.h>
 #include <certdb.h>
-#include <ocsp.h>
 #include <nspr.h>
 #include <nss.h>
+#include <ocsp.h>
 #include <pthread.h>
 #include <secerr.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -60,6 +62,10 @@ class OCSPRequestSession;
 
 class OCSPIOLoop {
  public:
+  // This class is only instantiated as a leaky LazyInstance, so its destructor
+  // is never called.
+  ~OCSPIOLoop() = delete;
+
   void StartUsing() {
     base::AutoLock autolock(lock_);
     used_ = true;
@@ -78,8 +84,6 @@ class OCSPIOLoop {
   // Called from worker thread.
   void PostTaskToIOLoop(const tracked_objects::Location& from_here,
                         const base::Closure& task);
-
-  void EnsureIOLoop();
 
   void AddRequest(OCSPRequestSession* request);
   void RemoveRequest(OCSPRequestSession* request);
@@ -105,7 +109,6 @@ class OCSPIOLoop {
   friend struct base::DefaultLazyInstanceTraits<OCSPIOLoop>;
 
   OCSPIOLoop();
-  ~OCSPIOLoop();
 
   void CancelAllRequests();
 
@@ -164,14 +167,16 @@ class OCSPNSSInitialization {
   friend struct base::DefaultLazyInstanceTraits<OCSPNSSInitialization>;
 
   OCSPNSSInitialization();
-  ~OCSPNSSInitialization();
+  // This class is only instantiated as a leaky LazyInstance, so its destructor
+  // is never called.
+  ~OCSPNSSInitialization() = delete;
 
   SEC_HttpClientFcn client_fcn_;
 
   DISALLOW_COPY_AND_ASSIGN(OCSPNSSInitialization);
 };
 
-base::LazyInstance<OCSPNSSInitialization> g_ocsp_nss_initialization =
+base::LazyInstance<OCSPNSSInitialization>::Leaky g_ocsp_nss_initialization =
     LAZY_INSTANCE_INITIALIZER;
 
 // Concrete class for SEC_HTTP_REQUEST_SESSION.
@@ -297,16 +302,17 @@ class OCSPRequestSession
     }
   }
 
-  void OnResponseStarted(URLRequest* request) override {
+  void OnResponseStarted(URLRequest* request, int net_error) override {
     DCHECK_EQ(request_.get(), request);
     DCHECK_EQ(base::MessageLoopForIO::current(), io_loop_);
+    DCHECK_NE(ERR_IO_PENDING, net_error);
 
     int bytes_read = 0;
-    if (request->status().is_success()) {
+    if (net_error == OK) {
       response_code_ = request_->GetResponseCode();
       response_headers_ = request_->response_headers();
       response_headers_->GetMimeType(&response_content_type_);
-      request_->Read(buffer_.get(), kRecvBufferSize, &bytes_read);
+      bytes_read = request_->Read(buffer_.get(), kRecvBufferSize);
     }
     OnReadCompleted(request_.get(), bytes_read);
   }
@@ -315,13 +321,12 @@ class OCSPRequestSession
     DCHECK_EQ(request_.get(), request);
     DCHECK_EQ(base::MessageLoopForIO::current(), io_loop_);
 
-    do {
-      if (!request_->status().is_success() || bytes_read <= 0)
-        break;
+    while (bytes_read > 0) {
       data_.append(buffer_->data(), bytes_read);
-    } while (request_->Read(buffer_.get(), kRecvBufferSize, &bytes_read));
+      bytes_read = request_->Read(buffer_.get(), kRecvBufferSize);
+    }
 
-    if (!request_->status().is_io_pending()) {
+    if (bytes_read != ERR_IO_PENDING) {
       request_.reset();
       g_ocsp_io_loop.Get().RemoveRequest(this);
       {
@@ -407,10 +412,10 @@ class OCSPRequestSession
       extra_request_headers_.SetHeader(
           HttpRequestHeaders::kContentType, upload_content_type_);
 
-      scoped_ptr<UploadElementReader> reader(new UploadBytesElementReader(
+      std::unique_ptr<UploadElementReader> reader(new UploadBytesElementReader(
           upload_content_.data(), upload_content_.size()));
       request_->set_upload(
-          ElementsUploadDataStream::CreateWithReader(reader.Pass(), 0));
+          ElementsUploadDataStream::CreateWithReader(std::move(reader), 0));
     }
     if (!extra_request_headers_.IsEmpty())
       request_->SetExtraRequestHeaders(extra_request_headers_);
@@ -422,7 +427,7 @@ class OCSPRequestSession
   GURL url_;                        // The URL we eventually wound up at
   std::string http_request_method_;
   base::TimeDelta timeout_;         // The timeout for OCSP
-  scoped_ptr<URLRequest> request_;  // The actual request this wraps
+  std::unique_ptr<URLRequest> request_;  // The actual request this wraps
   scoped_refptr<IOBuffer> buffer_;  // Read buffer
   HttpRequestHeaders extra_request_headers_;
 
@@ -494,21 +499,6 @@ OCSPIOLoop::OCSPIOLoop()
       io_loop_(NULL) {
 }
 
-OCSPIOLoop::~OCSPIOLoop() {
-  // IO thread was already deleted before the singleton is deleted
-  // in AtExitManager.
-  {
-    base::AutoLock autolock(lock_);
-    DCHECK(!io_loop_);
-    DCHECK(!used_);
-    DCHECK(shutdown_);
-  }
-
-  pthread_mutex_lock(&g_request_context_lock);
-  DCHECK(!g_request_context);
-  pthread_mutex_unlock(&g_request_context_lock);
-}
-
 void OCSPIOLoop::Shutdown() {
   // Safe to read outside lock since we only write on IO thread anyway.
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -535,18 +525,13 @@ void OCSPIOLoop::PostTaskToIOLoop(
     io_loop_->task_runner()->PostTask(from_here, task);
 }
 
-void OCSPIOLoop::EnsureIOLoop() {
-  base::AutoLock autolock(lock_);
-  DCHECK_EQ(base::MessageLoopForIO::current(), io_loop_);
-}
-
 void OCSPIOLoop::AddRequest(OCSPRequestSession* request) {
-  DCHECK(!ContainsKey(requests_, request));
+  DCHECK(!base::ContainsKey(requests_, request));
   requests_.insert(request);
 }
 
 void OCSPIOLoop::RemoveRequest(OCSPRequestSession* request) {
-  DCHECK(ContainsKey(requests_, request));
+  DCHECK(base::ContainsKey(requests_, request));
   requests_.erase(request);
 }
 
@@ -590,13 +575,6 @@ OCSPNSSInitialization::OCSPNSSInitialization() {
     DCHECK(!old_callback);
   } else {
     NOTREACHED() << "Error initializing OCSP: " << PR_GetError();
-  }
-}
-
-OCSPNSSInitialization::~OCSPNSSInitialization() {
-  SECStatus status = CERT_RegisterAlternateOCSPAIAInfoCallBack(NULL, NULL);
-  if (status != SECSuccess) {
-    LOG(ERROR) << "Error unregistering OCSP: " << PR_GetError();
   }
 }
 

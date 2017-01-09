@@ -7,17 +7,22 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "content/common/media/media_stream_options.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/renderer/media/media_stream_dispatcher_eventhandler.h"
+
+namespace url {
+class Origin;
+}
 
 namespace content {
 
@@ -39,8 +44,8 @@ class CONTENT_EXPORT MediaStreamDispatcher
   virtual void GenerateStream(
       int request_id,
       const base::WeakPtr<MediaStreamDispatcherEventHandler>& event_handler,
-      const StreamOptions& components,
-      const GURL& security_origin);
+      const StreamControls& controls,
+      const url::Origin& security_origin);
 
   // Cancel the request for a new media stream to be created.
   virtual void CancelGenerateStream(
@@ -50,25 +55,13 @@ class CONTENT_EXPORT MediaStreamDispatcher
   // Stop a started device that has been requested by calling GenerateStream.
   virtual void StopStreamDevice(const StreamDeviceInfo& device_info);
 
-  // Request to enumerate devices.
-  virtual void EnumerateDevices(
-      int request_id,
-      const base::WeakPtr<MediaStreamDispatcherEventHandler>& event_handler,
-      MediaStreamType type,
-      const GURL& security_origin);
-
-  // Request to stop enumerating devices.
-  void StopEnumerateDevices(
-      int request_id,
-      const base::WeakPtr<MediaStreamDispatcherEventHandler>& event_handler);
-
   // Request to open a device.
   void OpenDevice(
       int request_id,
       const base::WeakPtr<MediaStreamDispatcherEventHandler>& event_handler,
       const std::string& device_id,
       MediaStreamType type,
-      const GURL& security_origin);
+      const url::Origin& security_origin);
 
   // Cancel the request to open a device.
   virtual void CancelOpenDevice(
@@ -116,9 +109,6 @@ class CONTENT_EXPORT MediaStreamDispatcher
       content::MediaStreamRequestResult result);
   void OnDeviceStopped(const std::string& label,
                        const StreamDeviceInfo& device_info);
-  void OnDevicesEnumerated(
-      int request_id,
-      const StreamDeviceInfoArray& device_array);
   void OnDeviceOpened(
       int request_id,
       const std::string& label,

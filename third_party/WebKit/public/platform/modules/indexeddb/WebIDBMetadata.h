@@ -34,50 +34,41 @@
 namespace blink {
 
 struct WebIDBMetadata {
-    enum {
-        NoIntVersion = -1
-    };
-    struct Index;
-    struct ObjectStore;
+  enum { NoVersion = -1 };
+  struct Index;
+  struct ObjectStore;
 
+  WebString name;
+  long long version;
+  long long id;
+  long long maxObjectStoreId;
+  WebVector<ObjectStore> objectStores;
+  WebIDBMetadata() : version(NoVersion) {}
+
+  struct ObjectStore {
     WebString name;
-    // FIXME: Both version members need to be present while we support both the
-    // old setVersion and new upgradeneeded API. Once we no longer support
-    // setVersion, WebString version can be removed.
-    WebString version;
-    long long intVersion;
+    WebIDBKeyPath keyPath;
+    bool autoIncrement;
     long long id;
-    long long maxObjectStoreId;
-    WebVector<ObjectStore> objectStores;
-    WebIDBMetadata()
-        : intVersion(NoIntVersion) { }
+    long long maxIndexId;
+    WebVector<Index> indexes;
+    ObjectStore()
+        : keyPath(WebIDBKeyPath::createNull()), autoIncrement(false) {}
+  };
 
-    struct ObjectStore {
-        WebString name;
-        WebIDBKeyPath keyPath;
-        bool autoIncrement;
-        long long id;
-        long long maxIndexId;
-        WebVector<Index> indexes;
-        ObjectStore()
-            : keyPath(WebIDBKeyPath::createNull())
-            , autoIncrement(false) { }
-    };
-
-    struct Index {
-        WebString name;
-        WebIDBKeyPath keyPath;
-        bool unique;
-        bool multiEntry;
-        long long id;
-        Index()
-            : keyPath(WebIDBKeyPath::createNull())
-            , unique(false)
-            , multiEntry(false) { }
-    };
-
+  struct Index {
+    WebString name;
+    WebIDBKeyPath keyPath;
+    bool unique;
+    bool multiEntry;
+    long long id;
+    Index()
+        : keyPath(WebIDBKeyPath::createNull()),
+          unique(false),
+          multiEntry(false) {}
+  };
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebIDBMetadata_h
+#endif  // WebIDBMetadata_h

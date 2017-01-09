@@ -5,12 +5,15 @@
 #ifndef CHROME_BROWSER_MEDIA_GALLERIES_WIN_MTP_DEVICE_DELEGATE_IMPL_WIN_H_
 #define CHROME_BROWSER_MEDIA_GALLERIES_WIN_MTP_DEVICE_DELEGATE_IMPL_WIN_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/win/scoped_comptr.h"
@@ -23,7 +26,6 @@ class SequencedTaskRunner;
 }
 
 class SnapshotFileDetails;
-struct SnapshotRequestInfo;
 
 // MTPDeviceDelegateImplWin is used to communicate with the media transfer
 // protocol (MTP) device to complete file system operations. These operations
@@ -74,6 +76,7 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
     PendingTaskInfo(const tracked_objects::Location& location,
                     const base::Callback<base::File::Error(void)>& task,
                     const base::Callback<void(base::File::Error)>& reply);
+    PendingTaskInfo(const PendingTaskInfo& other);
     ~PendingTaskInfo();
 
     const tracked_objects::Location location;
@@ -112,7 +115,7 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   bool IsStreaming() override;
   void ReadBytes(const base::FilePath& device_file_path,
                  const scoped_refptr<net::IOBuffer>& buf,
-                 int64 offset,
+                 int64_t offset,
                  int buf_len,
                  const ReadBytesSuccessCallback& success_callback,
                  const ErrorCallback& error_callback) override;
@@ -214,7 +217,7 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   // of the snapshot file.
   //
   // If the get file stream request fails, |error| is set accordingly.
-  void OnGetFileStream(scoped_ptr<SnapshotFileDetails> file_details,
+  void OnGetFileStream(std::unique_ptr<SnapshotFileDetails> file_details,
                        base::File::Error error);
 
   // Called when WriteDataChunkIntoSnapshotFile() completes.
@@ -247,7 +250,7 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   // and writes the snapshot file data in chunks. In order to retain the order
   // of the snapshot file requests, make sure there is only one active snapshot
   // file request at any time.
-  scoped_ptr<SnapshotFileDetails> current_snapshot_details_;
+  std::unique_ptr<SnapshotFileDetails> current_snapshot_details_;
 
   // A list of pending tasks that needs to be run when the device is
   // initialized or when the current task in progress is complete.

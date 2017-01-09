@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <linux/input.h>
+#include <stddef.h>
 
 #include "ui/events/ozone/evdev/event_converter_evdev.h"
 
@@ -11,7 +12,10 @@
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/events/base_event_utils.h"
+#include "ui/events/devices/device_util_linux.h"
 #include "ui/events/devices/input_device.h"
+#include "ui/events/event_utils.h"
 
 namespace ui {
 
@@ -24,8 +28,8 @@ EventConverterEvdev::EventConverterEvdev(int fd,
                                          uint16_t product_id)
     : fd_(fd),
       path_(path),
-      input_device_(id, type, name, vendor_id, product_id) {
-}
+      input_device_(id, type, name, GetInputPathInSys(path), vendor_id,
+                    product_id) {}
 
 EventConverterEvdev::~EventConverterEvdev() {
   DCHECK(!enabled_);
@@ -92,6 +96,10 @@ bool EventConverterEvdev::HasTouchscreen() const {
   return false;
 }
 
+bool EventConverterEvdev::HasPen() const {
+  return false;
+}
+
 bool EventConverterEvdev::HasCapsLockLed() const {
   return false;
 }
@@ -141,9 +149,15 @@ void EventConverterEvdev::SetCapsLockLed(bool enabled) {
 void EventConverterEvdev::SetTouchEventLoggingEnabled(bool enabled) {
 }
 
-base::TimeDelta EventConverterEvdev::TimeDeltaFromInputEvent(
+void EventConverterEvdev::SetPalmSuppressionCallback(
+    const base::Callback<void(bool)>& callback) {}
+
+base::TimeTicks EventConverterEvdev::TimeTicksFromInputEvent(
     const input_event& event) {
-  return base::TimeDelta::FromMicroseconds(event.time.tv_sec * 1000000 +
-                                           event.time.tv_usec);
+  base::TimeTicks timestamp =
+      ui::EventTimeStampFromSeconds(event.time.tv_sec) +
+      base::TimeDelta::FromMicroseconds(event.time.tv_usec);
+  ValidateEventTimeClock(&timestamp);
+  return timestamp;
 }
 }  // namespace ui

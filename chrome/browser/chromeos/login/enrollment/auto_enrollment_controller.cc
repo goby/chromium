@@ -11,7 +11,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
-#include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/policy/server_backed_state_keys_broker.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/system/statistics_provider.h"
@@ -53,16 +52,23 @@ int GetSanitizedArg(const std::string& switch_name) {
   return int_value;
 }
 
-// Checks whether the device is yet to be set up by the first user in its
-// lifetime. After first setup, the activation date gets stored in the R/W VPD,
-// the absence of this key signals the device is factory-fresh. The requirement
-// for the machine serial number to be present as well is a sanity-check to
-// ensure that the VPD has actually been read successfully.
-bool IsFirstDeviceSetup() {
-  std::string activate_date;
-  return !system::StatisticsProvider::GetInstance()->HasMachineStatistic(
-             system::kActivateDateKey) &&
-         !policy::DeviceCloudPolicyManagerChromeOS::GetMachineID().empty();
+// Determine whether the auto-enrollment check can be skipped. This is true when
+// kCheckEnrollmentKey VPD entry doesn't indicate the device as being enrolled
+// in the past. For backward compatibility with devices upgrading from an older
+// version of Chrome OS, the kActivateDateKey VPD entry should be missing too.
+// The requirement for the machine serial number to be present as well is a
+// sanity-check to ensure that the VPD has actually been read successfully.
+bool CanSkipFRE() {
+  system::StatisticsProvider* provider =
+      system::StatisticsProvider::GetInstance();
+  std::string check_enrollment_value;
+  bool is_enrolled =
+      provider->GetMachineStatistic(
+          system::kCheckEnrollmentKey, &check_enrollment_value) &&
+      check_enrollment_value == "1";
+  return !provider->GetMachineStatistic(system::kActivateDateKey, nullptr) &&
+         !is_enrolled &&
+         !provider->GetEnterpriseMachineID().empty();
 }
 
 }  // namespace
@@ -87,16 +93,7 @@ AutoEnrollmentController::Mode AutoEnrollmentController::GetMode() {
         system::StatisticsProvider::GetInstance()->GetMachineStatistic(
             system::kFirmwareTypeKey, &firmware_type) &&
         firmware_type == system::kFirmwareTypeValueNonchrome;
-
-    std::string write_protect_switch_boot;
-    const bool write_protect_switch_off =
-        system::StatisticsProvider::GetInstance()->GetMachineStatistic(
-            system::kWriteProtectSwitchBootKey, &write_protect_switch_boot) &&
-        write_protect_switch_boot == system::kWriteProtectSwitchBootValueOff;
-
-    return (non_chrome_firmware || write_protect_switch_off)
-               ? MODE_NONE
-               : MODE_FORCED_RE_ENROLLMENT;
+    return non_chrome_firmware ? MODE_NONE : MODE_FORCED_RE_ENROLLMENT;
 #else
     return MODE_NONE;
 #endif
@@ -120,23 +117,29 @@ void AutoEnrollmentController::Start() {
   // auto-enrollment check can start. This happens either after the EULA is
   // accepted, or right after a reboot if the EULA has already been accepted.
 
-  // Do not communicate auto-enrollment data to the server if
-  // 1. we are running telemetry tests.
-  // 2. modulus configuration is not present.
-  // 3. Auto-enrollment is disabled via the command line.
-  // 4. This is the first boot ever, so re-enrollment checks are pointless. This
-  //    also enables factories to start full guest sessions for testing, see
-  //    http://crbug.com/397354 for more context.
-
+  // Skip if GAIA is disabled or modulus configuration is not present.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(chromeos::switches::kDisableGaiaServices) ||
       (!command_line->HasSwitch(
            chromeos::switches::kEnterpriseEnrollmentInitialModulus) &&
        !command_line->HasSwitch(
-           chromeos::switches::kEnterpriseEnrollmentModulusLimit)) ||
-      GetMode() == MODE_NONE ||
-      IsFirstDeviceSetup()) {
-    LOG(WARNING) << "Auto-enrollment disabled.";
+           chromeos::switches::kEnterpriseEnrollmentModulusLimit))) {
+    VLOG(1) << "Auto-enrollment disabled: command line.";
+    UpdateState(policy::AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
+    return;
+  }
+
+  // Skip if mode comes up as none.
+  if (GetMode() == MODE_NONE) {
+    VLOG(1) << "Auto-enrollment disabled: no mode.";
+    UpdateState(policy::AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
+    return;
+  }
+
+  // This enables factories to start full guest sessions for testing, see
+  // http://crbug.com/397354 for more context.
+  if (CanSkipFRE()) {
+    VLOG(1) << "Auto-enrollment disabled: first setup.";
     UpdateState(policy::AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
     return;
   }
@@ -179,7 +182,7 @@ void AutoEnrollmentController::Retry() {
     Start();
 }
 
-scoped_ptr<AutoEnrollmentController::ProgressCallbackList::Subscription>
+std::unique_ptr<AutoEnrollmentController::ProgressCallbackList::Subscription>
 AutoEnrollmentController::RegisterProgressCallback(
     const ProgressCallbackList::CallbackType& callback) {
   return progress_callbacks_.Add(callback);
@@ -198,9 +201,7 @@ void AutoEnrollmentController::OnOwnershipStatusCheckDone(
       break;
     }
     case DeviceSettingsService::OWNERSHIP_TAKEN: {
-      // This is part of normal operation.  Logging as "WARNING" nevertheless to
-      // make sure it's preserved in the logs.
-      LOG(WARNING) << "Device already owned, skipping auto-enrollment check.";
+      VLOG(1) << "Device already owned, skipping auto-enrollment check.";
       UpdateState(policy::AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
       break;
     }
@@ -252,9 +253,7 @@ void AutoEnrollmentController::StartClient(
 
 void AutoEnrollmentController::UpdateState(
     policy::AutoEnrollmentState new_state) {
-  // This is part of normal operation.  Logging as "WARNING" nevertheless to
-  // make sure it's preserved in the logs.
-  LOG(WARNING) << "New auto-enrollment state: " << new_state;
+  VLOG(1) << "New auto-enrollment state: " << new_state;
   state_ = new_state;
 
   // Stop the safeguard timer once a result comes in.

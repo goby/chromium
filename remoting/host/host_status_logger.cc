@@ -31,15 +31,14 @@ void HostStatusLogger::LogSessionStateChange(const std::string& jid,
                                              bool connected) {
   DCHECK(CalledOnValidThread());
 
-  scoped_ptr<ServerLogEntry> entry(
+  std::unique_ptr<ServerLogEntry> entry(
       MakeLogEntryForSessionStateChange(connected));
   AddHostFieldsToLogEntry(entry.get());
   entry->AddModeField(log_to_server_.mode());
 
-  if (connected) {
-    DCHECK_EQ(connection_route_type_.count(jid), 1u);
+  if (connected && connection_route_type_.count(jid) > 0)
     AddConnectionTypeToLogEntry(entry.get(), connection_route_type_[jid]);
-  }
+
   log_to_server_.Log(*entry.get());
 }
 

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/i18n/case_conversion.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/history/core/browser/keyword_search_term.h"
 #include "components/url_formatter/url_formatter.h"
@@ -354,9 +354,16 @@ bool URLDatabase::FindShortestURLFromBase(const std::string& base,
 
 bool URLDatabase::GetTextMatches(const base::string16& query,
                                  URLRows* results) {
-  ScopedVector<query_parser::QueryNode> query_nodes;
-  query_parser_.ParseQueryNodes(
-      query, query_parser::MatchingAlgorithm::DEFAULT, &query_nodes.get());
+  return GetTextMatchesWithAlgorithm(
+      query, query_parser::MatchingAlgorithm::DEFAULT, results);
+}
+
+bool URLDatabase::GetTextMatchesWithAlgorithm(
+    const base::string16& query,
+    query_parser::MatchingAlgorithm algorithm,
+    URLRows* results) {
+  query_parser::QueryNodeVector query_nodes;
+  query_parser_.ParseQueryNodes(query, algorithm, &query_nodes);
 
   results->clear();
   sql::Statement statement(GetDB().GetCachedStatement(SQL_FROM_HERE,
@@ -369,18 +376,15 @@ bool URLDatabase::GetTextMatches(const base::string16& query,
     GURL gurl(url);
     if (gurl.is_valid()) {
       // Decode punycode to match IDN.
-      // |query_words| won't be shown to user - therefore we can use empty
-      // |languages| to reduce dependency (no need to call PrefService).
       base::string16 ascii = base::ASCIIToUTF16(gurl.host());
-      base::string16 utf =
-          url_formatter::IDNToUnicode(gurl.host(), std::string());
+      base::string16 utf = url_formatter::IDNToUnicode(gurl.host());
       if (ascii != utf)
         query_parser_.ExtractQueryWords(utf, &query_words);
     }
     base::string16 title = base::i18n::ToLower(statement.ColumnString16(2));
     query_parser_.ExtractQueryWords(title, &query_words);
 
-    if (query_parser_.DoesQueryMatch(query_words, query_nodes.get())) {
+    if (query_parser_.DoesQueryMatch(query_words, query_nodes)) {
       URLResult info;
       FillURLRow(statement, &info);
       if (info.url().is_valid())
@@ -530,8 +534,7 @@ void URLDatabase::GetMostRecentKeywordSearchTerms(
   base::string16 lower_prefix = base::i18n::ToLower(prefix);
   // This magic gives us a prefix search.
   base::string16 next_prefix = lower_prefix;
-  next_prefix[next_prefix.size() - 1] =
-      next_prefix[next_prefix.size() - 1] + 1;
+  next_prefix.back() = next_prefix.back() + 1;
   statement.BindInt64(0, keyword_id);
   statement.BindString16(1, lower_prefix);
   statement.BindString16(2, next_prefix);

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -13,8 +15,10 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -25,21 +29,21 @@ namespace content {
 namespace {
 
 // Handles |request| by serving a response with title set to request contents.
-scoped_ptr<net::test_server::HttpResponse> HandleEchoTitleRequest(
+std::unique_ptr<net::test_server::HttpResponse> HandleEchoTitleRequest(
     const std::string& echotitle_path,
     const net::test_server::HttpRequest& request) {
   if (!base::StartsWith(request.relative_url, echotitle_path,
                         base::CompareCase::SENSITIVE))
-    return scoped_ptr<net::test_server::HttpResponse>();
+    return std::unique_ptr<net::test_server::HttpResponse>();
 
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse);
   http_response->set_code(net::HTTP_OK);
   http_response->set_content(
       base::StringPrintf(
           "<html><head><title>%s</title></head></html>",
           request.content.c_str()));
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 }  // namespace
@@ -49,10 +53,13 @@ class SessionHistoryTest : public ContentBrowserTest {
   SessionHistoryTest() {}
 
   void SetUpOnMainThread() override {
-    ASSERT_TRUE(embedded_test_server()->Start());
+    host_resolver()->AddRule("*", "127.0.0.1");
+
+    SetupCrossSiteRedirector(embedded_test_server());
     embedded_test_server()->RegisterRequestHandler(
         base::Bind(&HandleEchoTitleRequest, "/echotitle"));
 
+    ASSERT_TRUE(embedded_test_server()->Start());
     NavigateToURL(shell(), GURL(url::kAboutBlankURL));
   }
 
@@ -326,9 +333,6 @@ IN_PROC_BROWSER_TEST_F(SessionHistoryTest, CrossFrameFormBackForward) {
 // navigations. Bug 730379.
 // If this flakes use http://crbug.com/61619.
 IN_PROC_BROWSER_TEST_F(SessionHistoryTest, FragmentBackForward) {
-  embedded_test_server()->RegisterRequestHandler(
-      base::Bind(&HandleEchoTitleRequest, "/echotitle"));
-
   ASSERT_FALSE(CanGoBack());
 
   GURL fragment(GetURL("fragment.html"));
@@ -462,26 +466,20 @@ IN_PROC_BROWSER_TEST_F(SessionHistoryTest, LocationChangeInSubframe) {
 IN_PROC_BROWSER_TEST_F(SessionHistoryTest, HistoryLength) {
   int length;
   ASSERT_TRUE(ExecuteScriptAndExtractInt(
-      shell()->web_contents(),
-      "domAutomationController.send(history.length)",
-      &length));
+      shell(), "domAutomationController.send(history.length)", &length));
   EXPECT_EQ(1, length);
 
   NavigateToURL(shell(), GetURL("title1.html"));
 
   ASSERT_TRUE(ExecuteScriptAndExtractInt(
-      shell()->web_contents(),
-      "domAutomationController.send(history.length)",
-      &length));
+      shell(), "domAutomationController.send(history.length)", &length));
   EXPECT_EQ(2, length);
 
   // Now test that history.length is updated when the navigation is committed.
   NavigateToURL(shell(), GetURL("record_length.html"));
 
   ASSERT_TRUE(ExecuteScriptAndExtractInt(
-      shell()->web_contents(),
-      "domAutomationController.send(history.length)",
-      &length));
+      shell(), "domAutomationController.send(history.length)", &length));
   EXPECT_EQ(3, length);
 
   GoBack();
@@ -491,10 +489,69 @@ IN_PROC_BROWSER_TEST_F(SessionHistoryTest, HistoryLength) {
   NavigateToURL(shell(), GetURL("title2.html"));
 
   ASSERT_TRUE(ExecuteScriptAndExtractInt(
-      shell()->web_contents(),
-      "domAutomationController.send(history.length)",
-      &length));
+      shell(), "domAutomationController.send(history.length)", &length));
   EXPECT_EQ(2, length);
+}
+
+// Test that verifies that a cross-process transfer doesn't lose session
+// history state - https://crbug.com/613004.
+//
+// Trigerring a cross-process transfer via embedded_test_server requires use of
+// a HTTP redirect response (to preserve port number).  Therefore the test ends
+// up accidentally testing redirection logic as well - in particular, the test
+// uses 307 (rather than 302) redirect to preserve the body of HTTP POST across
+// redirects (as mandated by https://tools.ietf.org/html/rfc7231#section-6.4.7).
+IN_PROC_BROWSER_TEST_F(SessionHistoryTest, GoBackToCrossSitePostWithRedirect) {
+  GURL form_url(embedded_test_server()->GetURL(
+      "a.com", "/form_that_posts_cross_site.html"));
+  GURL redirect_target_url(embedded_test_server()->GetURL("x.com", "/echoall"));
+  GURL page_to_go_back_from(
+      embedded_test_server()->GetURL("c.com", "/title1.html"));
+
+  // Navigate to the page with form that posts via 307 redirection to
+  // |redirect_target_url| (cross-site from |form_url|).
+  EXPECT_TRUE(NavigateToURL(shell(), form_url));
+
+  // Submit the form.
+  TestNavigationObserver form_post_observer(shell()->web_contents(), 1);
+  EXPECT_TRUE(
+      ExecuteScript(shell(), "document.getElementById('text-form').submit();"));
+  form_post_observer.Wait();
+
+  // Verify that we arrived at the expected, redirected location.
+  EXPECT_EQ(redirect_target_url,
+            shell()->web_contents()->GetLastCommittedURL());
+
+  // Verify that POST body got preserved by 307 redirect.  This expectation
+  // comes from: https://tools.ietf.org/html/rfc7231#section-6.4.7
+  std::string body;
+  EXPECT_TRUE(ExecuteScriptAndExtractString(
+      shell(),
+      "window.domAutomationController.send("
+      "document.getElementsByTagName('pre')[0].innerText);",
+      &body));
+  EXPECT_EQ("text=value\n", body);
+
+  // Navigate to a page from yet another site.
+  EXPECT_TRUE(NavigateToURL(shell(), page_to_go_back_from));
+
+  // Go back - this should resubmit form's post data.
+  TestNavigationObserver back_nav_observer(shell()->web_contents(), 1);
+  shell()->web_contents()->GetController().GoBack();
+  back_nav_observer.Wait();
+
+  // Again verify that we arrived at the expected, redirected location.
+  EXPECT_EQ(redirect_target_url,
+            shell()->web_contents()->GetLastCommittedURL());
+
+  // Again verify that POST body got preserved by 307 redirect.
+  std::string body_after_back_navigation;
+  EXPECT_TRUE(ExecuteScriptAndExtractString(
+      shell(),
+      "window.domAutomationController.send("
+      "document.getElementsByTagName('pre')[0].innerText);",
+      &body_after_back_navigation));
+  EXPECT_EQ("text=value\n", body_after_back_navigation);
 }
 
 }  // namespace content

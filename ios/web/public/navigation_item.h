@@ -5,7 +5,8 @@
 #ifndef IOS_WEB_PUBLIC_NAVIGATION_ITEM_H_
 #define IOS_WEB_PUBLIC_NAVIGATION_ITEM_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/string16.h"
 #include "base/supports_user_data.h"
 #include "base/time/time.h"
@@ -14,11 +15,7 @@
 
 class GURL;
 
-#if defined(__OBJC__)
 @class NSDictionary;
-#else
-class NSDictionary;
-#endif  // __OBJC__
 
 namespace web {
 struct FaviconStatus;
@@ -31,7 +28,7 @@ struct SSLStatus;
 class NavigationItem : public base::SupportsUserData {
  public:
   // Creates a new NavigationItem.
-  static scoped_ptr<NavigationItem> Create();
+  static std::unique_ptr<NavigationItem> Create();
 
   // Page-related stuff --------------------------------------------------------
 
@@ -75,11 +72,8 @@ class NavigationItem : public base::SupportsUserData {
   // Page-related helpers ------------------------------------------------------
 
   // Returns the title to be displayed on the tab. This could be the title of
-  // the page if it is available or the URL. |languages| is the list of
-  // accepted languages (e.g., prefs::kAcceptLanguages) or empty if proper
-  // URL formatting isn't needed (e.g., unit tests).
-  virtual const base::string16& GetTitleForDisplay(
-      const std::string& languages) const = 0;
+  // the page if it is available or the URL.
+  virtual const base::string16& GetTitleForDisplay() const = 0;
 
   // Tracking stuff ------------------------------------------------------------
 
@@ -108,11 +102,6 @@ class NavigationItem : public base::SupportsUserData {
   //   - or this navigation was copied from a foreign session.
   virtual void SetTimestamp(base::Time timestamp) = 0;
   virtual base::Time GetTimestamp() const = 0;
-
-  // |true| if this item contains unsafe resources and will be removed. This
-  // property doesn't get serialized.
-  virtual void SetUnsafe(bool is_unsafe) = 0;
-  virtual bool IsUnsafe() const = 0;
 
   // |true| if this item uses a desktop user agent in HTTP requests and
   // UIWebView.

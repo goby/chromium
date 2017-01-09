@@ -4,6 +4,10 @@
 
 #include "net/base/sdch_manager.h"
 
+#include <limits.h>
+
+#include <utility>
+
 #include "base/base64url.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -12,6 +16,8 @@
 #include "base/time/default_clock.h"
 #include "base/values.h"
 #include "crypto/sha2.h"
+#include "net/base/parse_number.h"
+#include "net/base/sdch_net_log_params.h"
 #include "net/base/sdch_observer.h"
 #include "net/url_request/url_request_http_job.h"
 
@@ -91,7 +97,8 @@ void SdchManager::ClearData() {
   blacklisted_domains_.clear();
   allow_latency_experiment_.clear();
   dictionaries_.clear();
-  FOR_EACH_OBSERVER(SdchObserver, observers_, OnClearDictionaries());
+  for (auto& observer : observers_)
+    observer.OnClearDictionaries();
 }
 
 // static
@@ -187,16 +194,15 @@ SdchProblemCode SdchManager::OnGetDictionary(const GURL& request_url,
   if (rv != SDCH_OK)
     return rv;
 
-  FOR_EACH_OBSERVER(SdchObserver,
-                    observers_,
-                    OnGetDictionary(request_url, dictionary_url));
+  for (auto& observer : observers_)
+    observer.OnGetDictionary(request_url, dictionary_url);
 
   return SDCH_OK;
 }
 
 void SdchManager::OnDictionaryUsed(const std::string& server_hash) {
-  FOR_EACH_OBSERVER(SdchObserver, observers_,
-                    OnDictionaryUsed(server_hash));
+  for (auto& observer : observers_)
+    observer.OnDictionaryUsed(server_hash);
 }
 
 SdchProblemCode SdchManager::CanFetchDictionary(
@@ -226,13 +232,13 @@ SdchProblemCode SdchManager::CanFetchDictionary(
   return SDCH_OK;
 }
 
-scoped_ptr<SdchManager::DictionarySet>
-SdchManager::GetDictionarySet(const GURL& target_url) {
+std::unique_ptr<SdchManager::DictionarySet> SdchManager::GetDictionarySet(
+    const GURL& target_url) {
   if (IsInSupportedDomain(target_url) != SDCH_OK)
     return NULL;
 
   int count = 0;
-  scoped_ptr<SdchManager::DictionarySet> result(new DictionarySet);
+  std::unique_ptr<SdchManager::DictionarySet> result(new DictionarySet);
   for (const auto& entry: dictionaries_) {
     if (entry.second->data.CanUse(target_url) != SDCH_OK)
       continue;
@@ -247,28 +253,27 @@ SdchManager::GetDictionarySet(const GURL& target_url) {
 
   UMA_HISTOGRAM_COUNTS("Sdch3.Advertisement_Count", count);
 
-  return result.Pass();
+  return result;
 }
 
-scoped_ptr<SdchManager::DictionarySet>
-SdchManager::GetDictionarySetByHash(
+std::unique_ptr<SdchManager::DictionarySet> SdchManager::GetDictionarySetByHash(
     const GURL& target_url,
     const std::string& server_hash,
     SdchProblemCode* problem_code) {
-  scoped_ptr<SdchManager::DictionarySet> result;
+  std::unique_ptr<SdchManager::DictionarySet> result;
 
   *problem_code = SDCH_DICTIONARY_HASH_NOT_FOUND;
   const auto& it = dictionaries_.find(server_hash);
   if (it == dictionaries_.end())
-    return result.Pass();
+    return result;
 
   *problem_code = it->second->data.CanUse(target_url);
   if (*problem_code != SDCH_OK)
-    return result.Pass();
+    return result;
 
   result.reset(new DictionarySet);
   result->AddDictionary(it->first, it->second);
-  return result.Pass();
+  return result;
 }
 
 // static
@@ -371,13 +376,22 @@ SdchProblemCode SdchManager::AddSdchDictionary(
         if (value != "1.0")
           return SDCH_DICTIONARY_UNSUPPORTED_VERSION;
       } else if (name == "max-age") {
-        int64_t seconds;
-        base::StringToInt64(value, &seconds);
-        expiration = base::Time::Now() + base::TimeDelta::FromSeconds(seconds);
+        // max-age must be a non-negative number. If it is very large saturate
+        // to 2^32 - 1. If it is invalid then treat it as expired.
+        // TODO(eroman): crbug.com/602691 be stricter on failure.
+        uint32_t seconds = std::numeric_limits<uint32_t>::max();
+        ParseIntError parse_int_error;
+        if (ParseUint32(value, &seconds, &parse_int_error) ||
+            parse_int_error == ParseIntError::FAILED_OVERFLOW) {
+          expiration =
+              base::Time::Now() + base::TimeDelta::FromSeconds(seconds);
+        } else {
+          expiration = base::Time();
+        }
       } else if (name == "port") {
+        // TODO(eroman): crbug.com/602691 be stricter on failure.
         int port;
-        base::StringToInt(value, &port);
-        if (port >= 0)
+        if (ParseInt32(value, ParseIntFormat::NON_NEGATIVE, &port))
           ports.insert(port);
       }
     }
@@ -410,8 +424,8 @@ SdchProblemCode SdchManager::AddSdchDictionary(
   if (server_hash_p)
     *server_hash_p = server_hash;
 
-  FOR_EACH_OBSERVER(SdchObserver, observers_,
-                    OnDictionaryAdded(dictionary_url, server_hash));
+  for (auto& observer : observers_)
+    observer.OnDictionaryAdded(dictionary_url, server_hash);
 
   return SDCH_OK;
 }
@@ -423,56 +437,67 @@ SdchProblemCode SdchManager::RemoveSdchDictionary(
 
   dictionaries_.erase(server_hash);
 
-  FOR_EACH_OBSERVER(SdchObserver, observers_, OnDictionaryRemoved(server_hash));
+  for (auto& observer : observers_)
+    observer.OnDictionaryRemoved(server_hash);
 
   return SDCH_OK;
 }
 
 // static
-scoped_ptr<SdchManager::DictionarySet>
-SdchManager::CreateEmptyDictionarySetForTesting() {
-  return scoped_ptr<DictionarySet>(new DictionarySet).Pass();
+void SdchManager::LogSdchProblem(NetLogWithSource netlog,
+                                 SdchProblemCode problem) {
+  SdchManager::SdchErrorRecovery(problem);
+  netlog.AddEvent(NetLogEventType::SDCH_DECODING_ERROR,
+                  base::Bind(&NetLogSdchResourceProblemCallback, problem));
 }
 
-scoped_ptr<base::Value> SdchManager::SdchInfoToValue() const {
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+// static
+std::unique_ptr<SdchManager::DictionarySet>
+SdchManager::CreateEmptyDictionarySetForTesting() {
+  return std::unique_ptr<DictionarySet>(new DictionarySet);
+}
+
+std::unique_ptr<base::Value> SdchManager::SdchInfoToValue() const {
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
 
   value->SetBoolean("sdch_enabled", true);
 
-  scoped_ptr<base::ListValue> entry_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> entry_list(new base::ListValue());
   for (const auto& entry: dictionaries_) {
-    scoped_ptr<base::DictionaryValue> entry_dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> entry_dict(
+        new base::DictionaryValue());
     entry_dict->SetString("url", entry.second->data.url().spec());
     entry_dict->SetString("client_hash", entry.second->data.client_hash());
     entry_dict->SetString("domain", entry.second->data.domain());
     entry_dict->SetString("path", entry.second->data.path());
-    scoped_ptr<base::ListValue> port_list(new base::ListValue());
+    std::unique_ptr<base::ListValue> port_list(new base::ListValue());
     for (std::set<int>::const_iterator port_it =
              entry.second->data.ports().begin();
          port_it != entry.second->data.ports().end(); ++port_it) {
       port_list->AppendInteger(*port_it);
     }
-    entry_dict->Set("ports", port_list.Pass());
+    entry_dict->Set("ports", std::move(port_list));
     entry_dict->SetString("server_hash", entry.first);
-    entry_list->Append(entry_dict.Pass());
+    entry_list->Append(std::move(entry_dict));
   }
-  value->Set("dictionaries", entry_list.Pass());
+  value->Set("dictionaries", std::move(entry_list));
 
   entry_list.reset(new base::ListValue());
   for (DomainBlacklistInfo::const_iterator it = blacklisted_domains_.begin();
        it != blacklisted_domains_.end(); ++it) {
     if (it->second.count == 0)
       continue;
-    scoped_ptr<base::DictionaryValue> entry_dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> entry_dict(
+        new base::DictionaryValue());
     entry_dict->SetString("domain", it->first);
     if (it->second.count != INT_MAX)
       entry_dict->SetInteger("tries", it->second.count);
     entry_dict->SetInteger("reason", it->second.reason);
-    entry_list->Append(entry_dict.Pass());
+    entry_list->Append(std::move(entry_dict));
   }
-  value->Set("blacklisted", entry_list.Pass());
+  value->Set("blacklisted", std::move(entry_list));
 
-  return value.Pass();
+  return std::move(value);
 }
 
 }  // namespace net

@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_SIGNIN_CORE_ACCOUNT_ID_ACCOUNT_ID_H_
 #define COMPONENTS_SIGNIN_CORE_ACCOUNT_ID_ACCOUNT_ID_H_
 
+#include <stddef.h>
+
 #include <string>
 #include "base/containers/hash_tables.h"
 
 // Type that contains enough information to identify user.
 //
-// TODO (alemate): we are in the process of moving away from std::string as a
+// TODO(alemate): we are in the process of moving away from std::string as a
 // type for storing user identifier to AccountId. At this time GaiaId is mostly
 // empty, so this type is used as a replacement for e-mail string.
 // But in near future AccountId will become full feature user identifier.
@@ -31,7 +33,14 @@ class AccountId {
 
   const std::string& GetAccountType() const;
   const std::string& GetGaiaId() const;
+  // Users of AccountId should make no assumptions on the format of email.
+  // I.e. it cannot be used as account identifier, because it is (in general)
+  // non-comparable.
   const std::string& GetUserEmail() const;
+
+  // This returns prefixed some string that can be used as a storage key.
+  // You should make no assumptions on the format of this string.
+  const std::string GetAccountIdKey() const;
 
   void SetGaiaId(const std::string& gaia_id);
   void SetUserEmail(const std::string& email);

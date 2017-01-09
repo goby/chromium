@@ -4,14 +4,20 @@
 
 #include "components/metrics/net/network_metrics_provider.h"
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/metrics/sparse_histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
+#include "build/build_config.h"
+#include "net/base/net_errors.h"
 
 #if defined(OS_CHROMEOS)
 #include "components/metrics/net/wifi_access_point_info_provider_chromeos.h"
@@ -19,12 +25,13 @@
 
 namespace metrics {
 
-NetworkMetricsProvider::NetworkMetricsProvider(
-    base::TaskRunner* io_task_runner)
+NetworkMetricsProvider::NetworkMetricsProvider(base::TaskRunner* io_task_runner)
     : io_task_runner_(io_task_runner),
       connection_type_is_ambiguous_(false),
       wifi_phy_layer_protocol_is_ambiguous_(false),
       wifi_phy_layer_protocol_(net::WIFI_PHY_LAYER_PROTOCOL_UNKNOWN),
+      total_aborts_(0),
+      total_codes_(0),
       weak_ptr_factory_(this) {
   net::NetworkChangeNotifier::AddConnectionTypeObserver(this);
   connection_type_ = net::NetworkChangeNotifier::GetConnectionType();
@@ -35,11 +42,12 @@ NetworkMetricsProvider::~NetworkMetricsProvider() {
   net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
 }
 
-void NetworkMetricsProvider::OnDidCreateMetricsLog() {
-#if defined(OS_ANDROID)
-  net::NetworkChangeNotifier::LogOperatorCodeHistogram(
-      net::NetworkChangeNotifier::GetConnectionType());
-#endif  // OS_ANDROID
+void NetworkMetricsProvider::ProvideGeneralMetrics(
+    ChromeUserMetricsExtension*) {
+  // ProvideGeneralMetrics is called on the main thread, at the time a metrics
+  // record is being finalized.
+  net::NetworkChangeNotifier::FinalizingMetricsLogRecord();
+  LogAggregatedMetrics();
 }
 
 void NetworkMetricsProvider::ProvideSystemProfileMetrics(
@@ -100,6 +108,7 @@ SystemProfileProto::Network::ConnectionType
 NetworkMetricsProvider::GetConnectionType() const {
   switch (connection_type_) {
     case net::NetworkChangeNotifier::CONNECTION_NONE:
+      return SystemProfileProto::Network::CONNECTION_NONE;
     case net::NetworkChangeNotifier::CONNECTION_UNKNOWN:
       return SystemProfileProto::Network::CONNECTION_UNKNOWN;
     case net::NetworkChangeNotifier::CONNECTION_ETHERNET:
@@ -192,12 +201,12 @@ void NetworkMetricsProvider::WriteWifiAccessPointProto(
   access_point_info->set_security_mode(security);
 
   // |bssid| is xx:xx:xx:xx:xx:xx, extract the first three components and
-  // pack into a uint32.
+  // pack into a uint32_t.
   std::string bssid = info.bssid;
   if (bssid.size() == 17 && bssid[2] == ':' && bssid[5] == ':' &&
       bssid[8] == ':' && bssid[11] == ':' && bssid[14] == ':') {
     std::string vendor_prefix_str;
-    uint32 vendor_prefix;
+    uint32_t vendor_prefix;
 
     base::RemoveChars(bssid.substr(0, 9), ":", &vendor_prefix_str);
     DCHECK_EQ(6U, vendor_prefix_str.size());
@@ -228,11 +237,29 @@ void NetworkMetricsProvider::WriteWifiAccessPointProto(
   // Parse OUI list.
   for (const base::StringPiece& oui_str : base::SplitStringPiece(
            info.oui_list, " ", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
-    uint32 oui;
+    uint32_t oui;
     if (base::HexStringToUInt(oui_str, &oui))
       vendor->add_element_identifier(oui);
     else
       NOTREACHED();
+  }
+}
+
+void NetworkMetricsProvider::LogAggregatedMetrics() {
+  base::HistogramBase* error_codes = base::SparseHistogram::FactoryGet(
+      "Net.ErrorCodesForMainFrame3",
+      base::HistogramBase::kUmaTargetedHistogramFlag);
+  std::unique_ptr<base::HistogramSamples> samples =
+      error_codes->SnapshotSamples();
+  base::HistogramBase::Count new_aborts =
+      samples->GetCount(-net::ERR_ABORTED) - total_aborts_;
+  base::HistogramBase::Count new_codes = samples->TotalCount() - total_codes_;
+  if (new_codes > 0) {
+    UMA_HISTOGRAM_COUNTS("Net.ErrAborted.CountPerUpload", new_aborts);
+    UMA_HISTOGRAM_PERCENTAGE("Net.ErrAborted.ProportionPerUpload",
+                             (100 * new_aborts) / new_codes);
+    total_codes_ += new_codes;
+    total_aborts_ += new_aborts;
   }
 }
 

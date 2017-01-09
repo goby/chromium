@@ -4,26 +4,44 @@
 
 #include "content/browser/bluetooth/bluetooth_metrics.h"
 
+#include <stdint.h>
+
 #include <map>
 #include <set>
+#include <unordered_set>
+
 #include "base/hash.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
-#include "content/common/bluetooth/bluetooth_scan_filter.h"
 #include "device/bluetooth/bluetooth_uuid.h"
 
 using device::BluetoothUUID;
 
 namespace {
-// TODO(ortuno): Remove once we have a macro to histogram strings.
-// http://crbug.com/520284
-int HashUUID(const std::string& uuid) {
-  uint32 data = base::SuperFastHash(uuid.data(), uuid.size());
 
-  // Strip off the signed bit because UMA doesn't support negative values,
+// Generates a hash from a canonical UUID string suitable for
+// UMA_HISTOGRAM_SPARSE_SLOWLY (positive int).
+//
+// Hash values can be produced manually using tool: bluetooth_metrics_hash.
+int HashUUID(const std::string& canonical_uuid) {
+  DCHECK(canonical_uuid.size() == 36) << "HashUUID requires 128 bit UUID "
+                                         "strings in canonical format to "
+                                         "ensure consistent hash results.";
+
+  // TODO(520284): Other than verifying that |uuid| contains a value, this logic
+  // should be migrated to a dedicated histogram macro for hashed strings.
+  uint32_t data =
+      base::SuperFastHash(canonical_uuid.data(), canonical_uuid.size());
+
+  // Strip off the sign bit because UMA doesn't support negative values,
   // but takes a signed int as input.
   return static_cast<int>(data & 0x7fffffff);
 }
+
+int HashUUID(const base::Optional<BluetoothUUID>& uuid) {
+  return uuid ? HashUUID(uuid->canonical_value()) : 0;
+}
+
 }  // namespace
 
 namespace content {
@@ -45,18 +63,20 @@ void RecordRequestDeviceOutcome(UMARequestDeviceOutcome outcome) {
 }
 
 static void RecordRequestDeviceFilters(
-    const std::vector<content::BluetoothScanFilter>& filters) {
+    const std::vector<blink::mojom::WebBluetoothScanFilterPtr>& filters) {
   UMA_HISTOGRAM_COUNTS_100("Bluetooth.Web.RequestDevice.Filters.Count",
                            filters.size());
-  for (const content::BluetoothScanFilter& filter : filters) {
+  for (const auto& filter : filters) {
+    if (!filter->services) {
+      continue;
+    }
     UMA_HISTOGRAM_COUNTS_100("Bluetooth.Web.RequestDevice.FilterSize",
-                             filter.services.size());
-    for (const BluetoothUUID& service : filter.services) {
+                             filter->services->size());
+    for (const BluetoothUUID& service : filter->services.value()) {
       // TODO(ortuno): Use a macro to histogram strings.
       // http://crbug.com/520284
       UMA_HISTOGRAM_SPARSE_SLOWLY(
-          "Bluetooth.Web.RequestDevice.Filters.Services",
-          HashUUID(service.canonical_value()));
+          "Bluetooth.Web.RequestDevice.Filters.Services", HashUUID(service));
     }
   }
 }
@@ -70,32 +90,54 @@ static void RecordRequestDeviceOptionalServices(
     // http://crbug.com/520284
     UMA_HISTOGRAM_SPARSE_SLOWLY(
         "Bluetooth.Web.RequestDevice.OptionalServices.Services",
-        HashUUID(service.canonical_value()));
+        HashUUID(service));
   }
 }
 
 static void RecordUnionOfServices(
-    const std::vector<content::BluetoothScanFilter>& filters,
-    const std::vector<BluetoothUUID>& optional_services) {
-  std::set<BluetoothUUID> union_of_services(optional_services.begin(),
-                                            optional_services.end());
+    const blink::mojom::WebBluetoothRequestDeviceOptionsPtr& options) {
+  std::unordered_set<std::string> union_of_services;
+  for (const BluetoothUUID& service : options->optional_services) {
+    union_of_services.insert(service.canonical_value());
+  }
 
-  for (const content::BluetoothScanFilter& filter : filters)
-    union_of_services.insert(filter.services.begin(), filter.services.end());
+  if (options->filters) {
+    for (const auto& filter : options->filters.value()) {
+      if (!filter->services) {
+        continue;
+      }
+      for (const BluetoothUUID& service : filter->services.value()) {
+        union_of_services.insert(service.canonical_value());
+      }
+    }
+  }
 
   UMA_HISTOGRAM_COUNTS_100("Bluetooth.Web.RequestDevice.UnionOfServices.Count",
                            union_of_services.size());
+
+  for (const std::string& service : union_of_services) {
+    // TODO(ortuno): Use a macro to histogram strings.
+    // http://crbug.com/520284
+    UMA_HISTOGRAM_SPARSE_SLOWLY(
+        "Bluetooth.Web.RequestDevice.UnionOfServices.Services",
+        HashUUID(service));
+  }
 }
 
-void RecordRequestDeviceArguments(
-    const std::vector<content::BluetoothScanFilter>& filters,
-    const std::vector<device::BluetoothUUID>& optional_services) {
-  RecordRequestDeviceFilters(filters);
-  RecordRequestDeviceOptionalServices(optional_services);
-  RecordUnionOfServices(filters, optional_services);
+void RecordRequestDeviceOptions(
+    const blink::mojom::WebBluetoothRequestDeviceOptionsPtr& options) {
+  UMA_HISTOGRAM_BOOLEAN("Bluetooth.Web.RequestDevice.Options.AcceptAllDevices",
+                        options->accept_all_devices);
+
+  if (options->filters) {
+    RecordRequestDeviceFilters(options->filters.value());
+  }
+
+  RecordRequestDeviceOptionalServices(options->optional_services);
+  RecordUnionOfServices(options);
 }
 
-// connectGATT
+// GATTServer.Connect
 
 void RecordConnectGATTOutcome(UMAConnectGATTOutcome outcome) {
   UMA_HISTOGRAM_ENUMERATION("Bluetooth.Web.ConnectGATT.Outcome",
@@ -116,45 +158,85 @@ void RecordConnectGATTTimeFailed(const base::TimeDelta& duration) {
   UMA_HISTOGRAM_MEDIUM_TIMES("Bluetooth.Web.ConnectGATT.TimeFailed", duration);
 }
 
-// getPrimaryService
+// getPrimaryService & getPrimaryServices
 
-void RecordGetPrimaryServiceService(const BluetoothUUID& service) {
+void RecordGetPrimaryServicesOutcome(
+    blink::mojom::WebBluetoothGATTQueryQuantity quantity,
+    UMAGetPrimaryServiceOutcome outcome) {
+  switch (quantity) {
+    case blink::mojom::WebBluetoothGATTQueryQuantity::SINGLE:
+      UMA_HISTOGRAM_ENUMERATION(
+          "Bluetooth.Web.GetPrimaryService.Outcome", static_cast<int>(outcome),
+          static_cast<int>(UMAGetPrimaryServiceOutcome::COUNT));
+      return;
+    case blink::mojom::WebBluetoothGATTQueryQuantity::MULTIPLE:
+      UMA_HISTOGRAM_ENUMERATION(
+          "Bluetooth.Web.GetPrimaryServices.Outcome", static_cast<int>(outcome),
+          static_cast<int>(UMAGetPrimaryServiceOutcome::COUNT));
+      return;
+  }
+}
+
+void RecordGetPrimaryServicesOutcome(
+    blink::mojom::WebBluetoothGATTQueryQuantity quantity,
+    CacheQueryOutcome outcome) {
+  DCHECK(outcome == CacheQueryOutcome::NO_DEVICE);
+  RecordGetPrimaryServicesOutcome(quantity,
+                                  UMAGetPrimaryServiceOutcome::NO_DEVICE);
+}
+
+void RecordGetPrimaryServicesServices(
+    blink::mojom::WebBluetoothGATTQueryQuantity quantity,
+    const base::Optional<BluetoothUUID>& service) {
   // TODO(ortuno): Use a macro to histogram strings.
   // http://crbug.com/520284
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Bluetooth.Web.GetPrimaryService.Services",
-                              HashUUID(service.canonical_value()));
+  switch (quantity) {
+    case blink::mojom::WebBluetoothGATTQueryQuantity::SINGLE:
+      UMA_HISTOGRAM_SPARSE_SLOWLY("Bluetooth.Web.GetPrimaryService.Services",
+                                  HashUUID(service));
+      return;
+    case blink::mojom::WebBluetoothGATTQueryQuantity::MULTIPLE:
+      UMA_HISTOGRAM_SPARSE_SLOWLY("Bluetooth.Web.GetPrimaryServices.Services",
+                                  HashUUID(service));
+      return;
+  }
 }
 
-void RecordGetPrimaryServiceOutcome(UMAGetPrimaryServiceOutcome outcome) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Bluetooth.Web.GetPrimaryService.Outcome", static_cast<int>(outcome),
-      static_cast<int>(UMAGetPrimaryServiceOutcome::COUNT));
+// getCharacteristic & getCharacteristics
+
+void RecordGetCharacteristicsOutcome(
+    blink::mojom::WebBluetoothGATTQueryQuantity quantity,
+    UMAGetCharacteristicOutcome outcome) {
+  switch (quantity) {
+    case blink::mojom::WebBluetoothGATTQueryQuantity::SINGLE:
+      UMA_HISTOGRAM_ENUMERATION(
+          "Bluetooth.Web.GetCharacteristic.Outcome", static_cast<int>(outcome),
+          static_cast<int>(UMAGetCharacteristicOutcome::COUNT));
+      return;
+    case blink::mojom::WebBluetoothGATTQueryQuantity::MULTIPLE:
+      UMA_HISTOGRAM_ENUMERATION(
+          "Bluetooth.Web.GetCharacteristics.Outcome", static_cast<int>(outcome),
+          static_cast<int>(UMAGetCharacteristicOutcome::COUNT));
+      return;
+  }
 }
 
-void RecordGetPrimaryServiceOutcome(CacheQueryOutcome outcome) {
-  DCHECK(outcome == CacheQueryOutcome::NO_DEVICE);
-  RecordGetPrimaryServiceOutcome(UMAGetPrimaryServiceOutcome::NO_DEVICE);
-}
-
-// getCharacteristic
-
-void RecordGetCharacteristicOutcome(UMAGetCharacteristicOutcome outcome) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Bluetooth.Web.GetCharacteristic.Outcome", static_cast<int>(outcome),
-      static_cast<int>(UMAGetCharacteristicOutcome::COUNT));
-}
-
-void RecordGetCharacteristicOutcome(CacheQueryOutcome outcome) {
+void RecordGetCharacteristicsOutcome(
+    blink::mojom::WebBluetoothGATTQueryQuantity quantity,
+    CacheQueryOutcome outcome) {
   switch (outcome) {
     case CacheQueryOutcome::SUCCESS:
     case CacheQueryOutcome::BAD_RENDERER:
-      NOTREACHED() << "No need to record a success or renderer crash";
+      // No need to record a success or renderer crash.
+      NOTREACHED();
       return;
     case CacheQueryOutcome::NO_DEVICE:
-      RecordGetCharacteristicOutcome(UMAGetCharacteristicOutcome::NO_DEVICE);
+      RecordGetCharacteristicsOutcome(quantity,
+                                      UMAGetCharacteristicOutcome::NO_DEVICE);
       return;
     case CacheQueryOutcome::NO_SERVICE:
-      RecordGetCharacteristicOutcome(UMAGetCharacteristicOutcome::NO_SERVICE);
+      RecordGetCharacteristicsOutcome(quantity,
+                                      UMAGetCharacteristicOutcome::NO_SERVICE);
       return;
     case CacheQueryOutcome::NO_CHARACTERISTIC:
       NOTREACHED();
@@ -162,9 +244,21 @@ void RecordGetCharacteristicOutcome(CacheQueryOutcome outcome) {
   }
 }
 
-void RecordGetCharacteristicCharacteristic(const std::string& characteristic) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Bluetooth.Web.GetCharacteristic.Characteristic",
-                              HashUUID(characteristic));
+void RecordGetCharacteristicsCharacteristic(
+    blink::mojom::WebBluetoothGATTQueryQuantity quantity,
+    const base::Optional<BluetoothUUID>& characteristic) {
+  switch (quantity) {
+    case blink::mojom::WebBluetoothGATTQueryQuantity::SINGLE:
+      UMA_HISTOGRAM_SPARSE_SLOWLY(
+          "Bluetooth.Web.GetCharacteristic.Characteristic",
+          HashUUID(characteristic));
+      return;
+    case blink::mojom::WebBluetoothGATTQueryQuantity::MULTIPLE:
+      UMA_HISTOGRAM_SPARSE_SLOWLY(
+          "Bluetooth.Web.GetCharacteristics.Characteristic",
+          HashUUID(characteristic));
+      return;
+  }
 }
 
 // GATT Operations
@@ -193,7 +287,8 @@ static UMAGATTOperationOutcome TranslateCacheQueryOutcomeToGATTOperationOutcome(
   switch (outcome) {
     case CacheQueryOutcome::SUCCESS:
     case CacheQueryOutcome::BAD_RENDERER:
-      NOTREACHED() << "No need to record success or renderer crash";
+      // No need to record a success or renderer crash.
+      NOTREACHED();
       return UMAGATTOperationOutcome::NOT_SUPPORTED;
     case CacheQueryOutcome::NO_DEVICE:
       return UMAGATTOperationOutcome::NO_DEVICE;
@@ -244,6 +339,18 @@ void RecordStartNotificationsOutcome(UMAGATTOperationOutcome outcome) {
 void RecordStartNotificationsOutcome(CacheQueryOutcome outcome) {
   RecordStartNotificationsOutcome(
       TranslateCacheQueryOutcomeToGATTOperationOutcome(outcome));
+}
+
+void RecordRSSISignalStrength(int rssi) {
+  UMA_HISTOGRAM_SPARSE_SLOWLY("Bluetooth.Web.RequestDevice.RSSISignalStrength",
+                              rssi);
+}
+
+void RecordRSSISignalStrengthLevel(UMARSSISignalStrengthLevel level) {
+  UMA_HISTOGRAM_ENUMERATION(
+      "Bluetooth.Web.RequestDevice.RSSISignalStrengthLevel",
+      static_cast<int>(level),
+      static_cast<int>(UMARSSISignalStrengthLevel::COUNT));
 }
 
 }  // namespace content

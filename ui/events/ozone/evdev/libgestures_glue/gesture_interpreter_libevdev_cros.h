@@ -5,12 +5,14 @@
 #ifndef UI_EVENTS_OZONE_EVDEV_LIBGESTURES_GLUE_GESTURE_INTERPRETER_LIBEVDEV_CROS_H_
 #define UI_EVENTS_OZONE_EVDEV_LIBGESTURES_GLUE_GESTURE_INTERPRETER_LIBEVDEV_CROS_H_
 
-#include <bitset>
 #include <gestures/gestures.h>
 #include <libevdev/libevdev.h>
 
+#include <bitset>
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/events/ozone/evdev/cursor_delegate_evdev.h"
 #include "ui/events/ozone/evdev/event_device_util.h"
 #include "ui/events/ozone/evdev/event_dispatch_callback.h"
@@ -20,7 +22,6 @@
 namespace ui {
 
 class DeviceEventDispatcherEvdev;
-class EventDeviceInfo;
 class CursorDelegateEvdev;
 struct GestureDeviceProperties;
 class GesturePropertyProvider;
@@ -116,7 +117,7 @@ class EVENTS_OZONE_EVDEV_EXPORT GestureInterpreterLibevdevCros
   Evdev* evdev_ = nullptr;
 
   // Gesture lib device properties.
-  scoped_ptr<GestureDeviceProperties> device_properties_;
+  std::unique_ptr<GestureDeviceProperties> device_properties_;
 
   DISALLOW_COPY_AND_ASSIGN(GestureInterpreterLibevdevCros);
 };

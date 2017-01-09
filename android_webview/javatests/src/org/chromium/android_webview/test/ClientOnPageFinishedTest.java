@@ -10,7 +10,7 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.parameter.ParameterizedTest;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.net.test.util.TestWebServer;
 
@@ -53,6 +53,7 @@ public class ClientOnPageFinishedTest extends AwTestBase {
 
     @MediumTest
     @Feature({"AndroidWebView"})
+    @FlakyTest(message = "crbug.com/652577")
     public void testCalledAfterError() throws Throwable {
         class LocalTestClient extends TestAwContentsClient {
             private boolean mIsOnReceivedErrorCalled = false;
@@ -149,8 +150,6 @@ public class ClientOnPageFinishedTest extends AwTestBase {
 
     @MediumTest
     @Feature({"AndroidWebView"})
-    // Run in single-process mode only. Blocked by multiple RVHs crbug.com/533516.
-    @ParameterizedTest.Set
     public void testNotCalledForValidSubresources() throws Throwable {
         TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
                 mContentsClient.getOnPageFinishedHelper();
@@ -374,8 +373,6 @@ public class ClientOnPageFinishedTest extends AwTestBase {
 
     @MediumTest
     @Feature({"AndroidWebView"})
-    // Run in single-process mode only. Blocked by multiple RVHs crbug.com/533516.
-    @ParameterizedTest.Set
     public void testNotCalledOnDomModificationAfterLoadData()
             throws Throwable {
         TestWebServer webServer = TestWebServer.start();

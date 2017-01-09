@@ -9,6 +9,7 @@
 
 #include "base/cpu.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "extensions/browser/api/system_info/system_info_provider.h"
 #include "extensions/common/api/system_cpu.h"
 
@@ -32,7 +33,7 @@ class CpuInfoProvider : public SystemInfoProvider {
   // Platform specific implementation for querying the CPU time information
   // for each processor.
   virtual bool QueryCpuTimePerProcessor(
-      std::vector<linked_ptr<api::system_cpu::ProcessorInfo>>* infos);
+      std::vector<api::system_cpu::ProcessorInfo>* infos);
 
   // Overriden from SystemInfoProvider.
   bool QueryInfo() override;

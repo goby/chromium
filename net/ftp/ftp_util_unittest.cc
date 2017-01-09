@@ -4,7 +4,6 @@
 
 #include "net/ftp/ftp_util.h"
 
-#include "base/basictypes.h"
 #include "base/format_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -176,7 +175,7 @@ TEST(FtpUtilTest, LsDateListingToTime) {
         UTF8ToUTF16(kTestCases[i].rest), mock_current_time, &time));
 
     base::Time::Exploded time_exploded;
-    time.LocalExplode(&time_exploded);
+    time.UTCExplode(&time_exploded);
     EXPECT_EQ(kTestCases[i].expected_year, time_exploded.year);
     EXPECT_EQ(kTestCases[i].expected_month, time_exploded.month);
     EXPECT_EQ(kTestCases[i].expected_day_of_month, time_exploded.day_of_month);
@@ -216,7 +215,7 @@ TEST(FtpUtilTest, WindowsDateListingToTime) {
         &time));
 
     base::Time::Exploded time_exploded;
-    time.LocalExplode(&time_exploded);
+    time.UTCExplode(&time_exploded);
     EXPECT_EQ(kTestCases[i].expected_year, time_exploded.year);
     EXPECT_EQ(kTestCases[i].expected_month, time_exploded.month);
     EXPECT_EQ(kTestCases[i].expected_day_of_month, time_exploded.day_of_month);

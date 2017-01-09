@@ -6,7 +6,7 @@
 
 // Renewal message header. External Clear Key implementation returns this as
 // part of renewal messages.
-var PREFIXED_EME_RENEWAL_MESSAGE_HEADER = 'RENEWAL';
+var EME_RENEWAL_MESSAGE_HEADER = 'RENEWAL';
 
 // Default key used to encrypt many media files used in browser tests.
 var KEY = new Uint8Array([0xeb, 0xdd, 0x62, 0xf1, 0x68, 0x14, 0xd2, 0x7b,
@@ -20,7 +20,7 @@ var DEFAULT_MEDIA_FILE = 'http://shadi.kir/alcatraz/Chrome_44-enc_av.webm';
 var KEY_ID = '0123456789012345';
 
 // Unique strings to identify test result expectations.
-var FILE_IO_TEST_SUCCESS = 'FILE_IO_TEST_SUCCESS';
+var UNIT_TEST_SUCCESS = 'UNIT_TEST_SUCCESS';
 var NOTSUPPORTEDERROR = 'NOTSUPPORTEDERROR';
 var EME_GENERATEREQUEST_FAILED = 'EME_GENERATEREQUEST_FAILED';
 var EME_SESSION_NOT_FOUND = 'EME_SESSION_NOT_FOUND';
@@ -28,21 +28,23 @@ var EME_LOAD_FAILED = 'EME_LOAD_FAILED';
 var EME_UPDATE_FAILED = 'EME_UPDATE_FAILED';
 var EME_ERROR_EVENT = 'EME_ERROR_EVENT';
 var EME_MESSAGE_UNEXPECTED_TYPE = 'EME_MESSAGE_UNEXPECTED_TYPE';
-var PREFIXED_EME_RENEWAL_MISSING_HEADER = 'PREFIXED_EME_RENEWAL_MISSING_HEADER';
-var PREFIXED_EME_ERROR_EVENT = 'PREFIXED_EME_ERROR_EVENT';
+var EME_RENEWAL_MISSING_HEADER = 'EME_RENEWAL_MISSING_HEADER';
+var EME_SESSION_CLOSED_AND_ERROR = 'EME_SESSION_CLOSED_AND_ERROR';
 
-// Headers used when testing file I/O.
-var FILE_IO_TEST_RESULT_HEADER = 'FILEIOTESTRESULT';
-var PREFIXED_EME_API_LOAD_SESSION_HEADER = 'LOAD_SESSION|';
+// Headers used when running some specific unittests in the external CDM.
+var UNIT_TEST_RESULT_HEADER = 'UNIT_TEST_RESULT';
 
 // Available EME key systems to use.
-var PREFIXED_CLEARKEY = 'webkit-org.w3.clearkey';
+var WIDEVINE_KEYSYSTEM = 'com.widevine.alpha';
 var CLEARKEY = 'org.w3.clearkey';
 var EXTERNAL_CLEARKEY = 'org.chromium.externalclearkey';
-var WIDEVINE_KEYSYSTEM = 'com.widevine.alpha';
+var EXTERNAL_CLEARKEY_RENEWAL = 'org.chromium.externalclearkey.renewal';
 var FILE_IO_TEST_KEYSYSTEM = 'org.chromium.externalclearkey.fileiotest';
-var EME_PREFIXED_VERSION = 'Prefixed EME (v 0.1b)';
-var EME_UNPREFIXED_VERSION = 'Unprefixed EME (Working draft)';
+var OUTPUT_PROTECTION_TEST_KEYSYSTEM =
+    'org.chromium.externalclearkey.outputprotectiontest';
+var PLATFORM_VERIFICATION_TEST_KEYSYSTEM =
+    'org.chromium.externalclearkey.platformverificationtest';
+var CRASH_TEST_KEYSYSTEM = 'org.chromium.externalclearkey.crash';
 
 // Key system name:value map to show on the document page.
 var KEY_SYSTEMS = {
@@ -56,20 +58,9 @@ var MEDIA_TYPES = {
   'WebM - Audio Video': 'video/webm; codecs="vorbis, vp8"',
   'WebM - Video Only': 'video/webm; codecs="vp8"',
   'WebM - Audio Only': 'video/webm; codecs="vorbis"',
-  'MP4 - Video Only': 'video/mp4; codecs="avc1.4D4041"',
+  'MP4 - Video Only': 'video/mp4; codecs="avc1.4D000C"',
   'MP4 - Audio Only': 'audio/mp4; codecs="mp4a.40.2"'
 };
-
-// Update the EME versions list by checking runtime support by the browser.
-var EME_VERSIONS_OPTIONS = {};
-EME_VERSIONS_OPTIONS[EME_UNPREFIXED_VERSION] = EME_UNPREFIXED_VERSION;
-EME_VERSIONS_OPTIONS[EME_PREFIXED_VERSION] = EME_PREFIXED_VERSION;
-
-var EME_DISABLED_OPTIONS = [];
-if (!document.createElement('video').webkitAddKey)
-  EME_DISABLED_OPTIONS.push(EME_PREFIXED_VERSION);
-if (!document.createElement('video').setMediaKeys)
-  EME_DISABLED_OPTIONS.push(EME_UNPREFIXED_VERSION);
 
 // Global document elements ID's.
 var VIDEO_ELEMENT_ID = 'video';
@@ -78,7 +69,6 @@ var LICENSE_SERVER_ELEMENT_ID = 'licenseServer';
 var KEYSYSTEM_ELEMENT_ID = 'keySystemList';
 var MEDIA_TYPE_ELEMENT_ID = 'mediaTypeList';
 var USE_MSE_ELEMENT_ID = 'useMSE';
-var USE_PREFIXED_EME_ID = 'usePrefixedEME';
 var USE_PLAY_TWICE_ELEMENT_ID = 'playTwice';
 
 // These variables get updated every second, so better to have global pointers.

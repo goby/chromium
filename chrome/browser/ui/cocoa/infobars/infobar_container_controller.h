@@ -7,22 +7,18 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #import "chrome/browser/ui/cocoa/view_resizer.h"
 
 @class BrowserWindowController;
 @class InfoBarController;
 class InfoBarCocoa;
 class InfoBarContainerCocoa;
-class TabStripModel;
 
 namespace content {
 class WebContents;
-}
-
-namespace infobars {
-class InfoBarDelegate;
 }
 
 // Protocol for basic container methods, as needed by an InfoBarController.
@@ -50,7 +46,7 @@ class InfoBarDelegate;
   base::scoped_nsobject<NSMutableArray> infobarControllers_;
 
   // The C++ instance that bridges to the cross platform code.
-  scoped_ptr<InfoBarContainerCocoa> containerCocoa_;
+  std::unique_ptr<InfoBarContainerCocoa> containerCocoa_;
 
   // If YES then the first info bar doesn't draw a tip.
   BOOL shouldSuppressTopInfoBarTip_;

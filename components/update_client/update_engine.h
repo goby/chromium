@@ -6,6 +6,8 @@
 #define COMPONENTS_UPDATE_CLIENT_UPDATE_ENGINE_H_
 
 #include <list>
+#include <map>
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
@@ -14,7 +16,6 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "components/update_client/action.h"
 #include "components/update_client/component_patcher_operation.h"
@@ -25,6 +26,7 @@
 #include "components/update_client/update_client.h"
 
 namespace base {
+class TimeTicks;
 class SequencedTaskRunner;
 class SingleThreadTaskRunner;
 }  // namespace base
@@ -32,7 +34,6 @@ class SingleThreadTaskRunner;
 namespace update_client {
 
 class Configurator;
-struct CrxUpdateItem;
 struct UpdateContext;
 
 // Handles updates for a group of components. Updates for different groups
@@ -40,7 +41,7 @@ struct UpdateContext;
 // applied one at a time.
 class UpdateEngine {
  public:
-  using CompletionCallback = base::Callback<void(int error)>;
+  using Callback = base::Callback<void(Error error)>;
   using NotifyObserversCallback =
       base::Callback<void(UpdateClient::Observer::Events event,
                           const std::string& id)>;
@@ -58,10 +59,14 @@ class UpdateEngine {
   void Update(bool is_foreground,
               const std::vector<std::string>& ids,
               const UpdateClient::CrxDataCallback& crx_data_callback,
-              const CompletionCallback& update_callback);
+              const Callback& update_callback);
 
  private:
-  void UpdateComplete(UpdateContext* update_context, int error);
+  void UpdateComplete(UpdateContext* update_context, Error error);
+
+  // Returns true if the update engine rejects this update call because it
+  // occurs too soon.
+  bool IsThrottled(bool is_foreground) const;
 
   base::ThreadChecker thread_checker_;
 
@@ -73,11 +78,19 @@ class UpdateEngine {
   // TODO(sorin): refactor as a ref counted class.
   PingManager* ping_manager_;  // Not owned by this class.
 
+  std::unique_ptr<PersistedData> metadata_;
+
   // Called when CRX state changes occur.
   const NotifyObserversCallback notify_observers_callback_;
 
   // Contains the contexts associated with each update in progress.
   std::set<UpdateContext*> update_contexts_;
+
+  // Implements a rate limiting mechanism for background update checks. Has the
+  // effect of rejecting the update call if the update call occurs before
+  // a certain time, which is negotiated with the server as part of the
+  // update protocol. See the comments for X-Retry-After header.
+  base::TimeTicks throttle_updates_until_;
 
   DISALLOW_COPY_AND_ASSIGN(UpdateEngine);
 };
@@ -90,7 +103,7 @@ struct UpdateContext {
       const std::vector<std::string>& ids,
       const UpdateClient::CrxDataCallback& crx_data_callback,
       const UpdateEngine::NotifyObserversCallback& notify_observers_callback,
-      const UpdateEngine::CompletionCallback& callback,
+      const UpdateEngine::Callback& callback,
       UpdateChecker::Factory update_checker_factory,
       CrxDownloader::Factory crx_downloader_factory,
       PingManager* ping_manager);
@@ -102,6 +115,9 @@ struct UpdateContext {
   // True if this update has been initiated by the user.
   bool is_foreground;
 
+  // True if the component updates are enabled in this context.
+  const bool enabled_component_updates;
+
   // Contains the ids of all CRXs in this context.
   const std::vector<std::string> ids;
 
@@ -112,7 +128,7 @@ struct UpdateContext {
   const UpdateEngine::NotifyObserversCallback notify_observers_callback;
 
   // Called when the all updates associated with this context have completed.
-  const UpdateEngine::CompletionCallback callback;
+  const UpdateEngine::Callback callback;
 
   // Posts replies back to the main thread.
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner;
@@ -128,13 +144,16 @@ struct UpdateContext {
 
   PingManager* ping_manager;  // Not owned by this class.
 
-  scoped_ptr<Action> current_action;
+  std::unique_ptr<Action> current_action;
 
-  // TODO(sorin): use a map instead of vector.
-  std::vector<CrxUpdateItem*> update_items;
+  // Contains the CrxUpdateItem instances of the items to update.
+  IdToCrxUpdateItemMap update_items;
 
   // Contains the ids of the items to update.
   std::queue<std::string> queue;
+
+  // The time in seconds to wait until doing further update checks.
+  int retry_after_sec_;
 };
 
 }  // namespace update_client

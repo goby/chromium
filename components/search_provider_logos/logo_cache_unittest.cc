@@ -4,6 +4,9 @@
 
 #include "components/search_provider_logos/logo_cache.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "base/bind.h"
@@ -90,8 +93,8 @@ void ExpectLogosEqual(const EncodedLogo& expected_logo,
 // Removes 1 byte from the end of the file at |path|.
 void ShortenFile(base::FilePath path) {
   base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_WRITE);
-  int64 file_length = file.GetLength();
-  ASSERT_NE(file_length, 0);
+  int64_t file_length = file.GetLength();
+  ASSERT_GT(file_length, 0);
   file.SetLength(file_length - 1);
 }
 
@@ -104,7 +107,7 @@ class LogoCacheTest : public ::testing::Test {
 
   void InitCache() {
     cache_.reset(new LogoCache(
-        cache_parent_dir_.path().Append(FILE_PATH_LITERAL("cache"))));
+        cache_parent_dir_.GetPath().Append(FILE_PATH_LITERAL("cache"))));
   }
 
   void ExpectMetadata(const LogoMetadata* expected_metadata) {
@@ -118,7 +121,7 @@ class LogoCacheTest : public ::testing::Test {
   }
 
   void ExpectLogo(const EncodedLogo* expected_logo) {
-    scoped_ptr<EncodedLogo> retrieved_logo(cache_->GetCachedLogo());
+    std::unique_ptr<EncodedLogo> retrieved_logo(cache_->GetCachedLogo());
     if (expected_logo) {
       ASSERT_TRUE(retrieved_logo.get() != NULL);
       ExpectLogosEqual(*expected_logo, *retrieved_logo);
@@ -133,7 +136,7 @@ class LogoCacheTest : public ::testing::Test {
     InitCache();
   }
 
-  scoped_ptr<LogoCache> cache_;
+  std::unique_ptr<LogoCache> cache_;
   base::ScopedTempDir cache_parent_dir_;
 };
 
@@ -144,7 +147,7 @@ TEST(LogoCacheSerializationTest, SerializeMetadata) {
   std::string metadata_str;
   int logo_num_bytes = 33;
   LogoCache::LogoMetadataToString(metadata, logo_num_bytes, &metadata_str);
-  scoped_ptr<LogoMetadata> metadata2 =
+  std::unique_ptr<LogoMetadata> metadata2 =
       LogoCache::LogoMetadataFromString(metadata_str, &logo_num_bytes);
   ASSERT_TRUE(metadata2);
   ExpectMetadataEqual(metadata, *metadata2);
@@ -152,7 +155,7 @@ TEST(LogoCacheSerializationTest, SerializeMetadata) {
 
 TEST(LogoCacheSerializationTest, DeserializeCorruptMetadata) {
   int logo_num_bytes = 33;
-  scoped_ptr<LogoMetadata> metadata =
+  std::unique_ptr<LogoMetadata> metadata =
       LogoCache::LogoMetadataFromString("", &logo_num_bytes);
   ASSERT_TRUE(metadata.get() == NULL);
 

@@ -22,12 +22,10 @@ enum ExclusiveAccessBubbleType {
   // For tab fullscreen mode.
   // More comments about tab and browser fullscreen mode can be found in
   // chrome/browser/ui/exclusive_access/fullscreen_controller.h.
-  EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_BUTTONS,
-  EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_MOUSELOCK_BUTTONS,
-  EXCLUSIVE_ACCESS_BUBBLE_TYPE_MOUSELOCK_BUTTONS,
   EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION,
   EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_MOUSELOCK_EXIT_INSTRUCTION,
   EXCLUSIVE_ACCESS_BUBBLE_TYPE_MOUSELOCK_EXIT_INSTRUCTION,
+  EXCLUSIVE_ACCESS_BUBBLE_TYPE_KEYBOARD_LOCK_EXIT_INSTRUCTION,
 
   // For browser fullscreen mode.
   EXCLUSIVE_ACCESS_BUBBLE_TYPE_BROWSER_FULLSCREEN_EXIT_INSTRUCTION,
@@ -36,16 +34,22 @@ enum ExclusiveAccessBubbleType {
 
 namespace exclusive_access_bubble {
 
+// Gets the text informing the user what state they have entered.
+// DEPRECATED: This is used only by the "classic" exclusive access bubble. The
+// new bubble only shows the instruction text.
 base::string16 GetLabelTextForType(ExclusiveAccessBubbleType type,
                                    const GURL& url,
                                    extensions::ExtensionRegistry* registry);
+// Gets the text for the deny and allow buttons.
+// DEPRECATED: This is used only by the "classic" exclusive access bubble. The
+// new bubble only shows the instruction text.
 base::string16 GetDenyButtonTextForType(ExclusiveAccessBubbleType type);
 base::string16 GetAllowButtonTextForType(ExclusiveAccessBubbleType type,
                                          const GURL& url);
-bool ShowButtonsForType(ExclusiveAccessBubbleType type);
-void PermissionRequestedByType(ExclusiveAccessBubbleType type,
-                               bool* tab_fullscreen,
-                               bool* mouse_lock);
+// Gets the text instructing the user how to exit an exclusive access mode.
+// |accelerator| is the name of the key to exit fullscreen mode.
+base::string16 GetInstructionTextForType(ExclusiveAccessBubbleType type,
+                                         const base::string16& accelerator);
 
 }  // namespace exclusive_access_bubble
 

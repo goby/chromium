@@ -4,12 +4,12 @@
 
 #include "components/font_service/public/cpp/font_service_thread.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/synchronization/waitable_event.h"
 #include "components/font_service/public/cpp/mapped_font_file.h"
-#include "mojo/message_pump/message_pump_mojo.h"
-#include "mojo/platform_handle/platform_handle_functions.h"
 
 namespace font_service {
 namespace internal {
@@ -18,27 +18,27 @@ namespace {
 const char kFontThreadName[] = "Font_Proxy_Thread";
 }  // namespace
 
-FontServiceThread::FontServiceThread(FontServicePtr font_service)
+FontServiceThread::FontServiceThread(mojom::FontServicePtr font_service)
     : base::Thread(kFontThreadName),
-      font_service_info_(font_service.PassInterface().Pass()) {
-  base::Thread::Options options;
-  options.message_pump_factory =
-      base::Bind(&mojo::common::MessagePumpMojo::Create);
-  StartWithOptions(options);
+      font_service_info_(font_service.PassInterface()),
+      weak_factory_(this) {
+  Start();
 }
 
 bool FontServiceThread::MatchFamilyName(
     const char family_name[],
-    SkTypeface::Style requested_style,
+    SkFontStyle requested_style,
     SkFontConfigInterface::FontIdentity* out_font_identity,
     SkString* out_family_name,
-    SkTypeface::Style* out_style) {
+    SkFontStyle* out_style) {
   DCHECK_NE(GetThreadId(), base::PlatformThread::CurrentId());
 
   bool out_valid = false;
   // This proxies to the other thread, which proxies to mojo. Only on the reply
   // from mojo do we return from this.
-  base::WaitableEvent done_event(false, false);
+  base::WaitableEvent done_event(
+      base::WaitableEvent::ResetPolicy::AUTOMATIC,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&FontServiceThread::MatchFamilyNameImpl, this, &done_event,
@@ -56,21 +56,23 @@ scoped_refptr<MappedFontFile> FontServiceThread::OpenStream(
   base::File stream_file;
   // This proxies to the other thread, which proxies to mojo. Only on the reply
   // from mojo do we return from this.
-  base::WaitableEvent done_event(false, false);
+  base::WaitableEvent done_event(
+      base::WaitableEvent::ResetPolicy::AUTOMATIC,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   task_runner()->PostTask(FROM_HERE,
                           base::Bind(&FontServiceThread::OpenStreamImpl, this,
                                      &done_event, &stream_file, identity.fID));
   done_event.Wait();
 
   if (!stream_file.IsValid()) {
-    NOTREACHED();
+    // The font-service may have been killed.
     return nullptr;
   }
 
   // Converts the file to out internal type.
   scoped_refptr<MappedFontFile> mapped_font_file =
       new MappedFontFile(identity.fID);
-  if (!mapped_font_file->Initialize(stream_file.Pass()))
+  if (!mapped_font_file->Initialize(std::move(stream_file)))
     return nullptr;
 
   return mapped_font_file;
@@ -83,15 +85,27 @@ FontServiceThread::~FontServiceThread() {
 void FontServiceThread::MatchFamilyNameImpl(
     base::WaitableEvent* done_event,
     const char family_name[],
-    SkTypeface::Style requested_style,
+    SkFontStyle requested_style,
     bool* out_valid,
     SkFontConfigInterface::FontIdentity* out_font_identity,
     SkString* out_family_name,
-    SkTypeface::Style* out_style) {
+    SkFontStyle* out_style) {
   DCHECK_EQ(GetThreadId(), base::PlatformThread::CurrentId());
 
+  if (font_service_.encountered_error()) {
+    *out_valid = false;
+    done_event->Signal();
+    return;
+  }
+
+  mojom::TypefaceStylePtr style(mojom::TypefaceStyle::New());
+  style->weight = requested_style.weight();
+  style->width = requested_style.width();
+  style->slant = static_cast<mojom::TypefaceSlant>(requested_style.slant());
+
+  pending_waitable_events_.insert(done_event);
   font_service_->MatchFamilyName(
-      mojo::String(family_name), static_cast<TypefaceStyle>(requested_style),
+      family_name, std::move(style),
       base::Bind(&FontServiceThread::OnMatchFamilyNameComplete, this,
                  done_event, out_valid, out_font_identity, out_family_name,
                  out_style));
@@ -102,13 +116,14 @@ void FontServiceThread::OnMatchFamilyNameComplete(
     bool* out_valid,
     SkFontConfigInterface::FontIdentity* out_font_identity,
     SkString* out_family_name,
-    SkTypeface::Style* out_style,
-    FontIdentityPtr font_identity,
-    mojo::String family_name,
-    TypefaceStyle style) {
+    SkFontStyle* out_style,
+    mojom::FontIdentityPtr font_identity,
+    const std::string& family_name,
+    mojom::TypefaceStylePtr style) {
   DCHECK_EQ(GetThreadId(), base::PlatformThread::CurrentId());
+  pending_waitable_events_.erase(done_event);
 
-  *out_valid = font_identity;
+  *out_valid = !font_identity.is_null();
   if (font_identity) {
     out_font_identity->fID = font_identity->id;
     out_font_identity->fTTCIndex = font_identity->ttc_index;
@@ -117,7 +132,9 @@ void FontServiceThread::OnMatchFamilyNameComplete(
     // behaviour of the current Linux IPC version.
 
     *out_family_name = family_name.data();
-    *out_style = static_cast<SkTypeface::Style>(style);
+    *out_style = SkFontStyle(style->weight,
+                             style->width,
+                             static_cast<SkFontStyle::Slant>(style->slant));
   }
 
   done_event->Signal();
@@ -127,7 +144,12 @@ void FontServiceThread::OpenStreamImpl(base::WaitableEvent* done_event,
                                        base::File* output_file,
                                        const uint32_t id_number) {
   DCHECK_EQ(GetThreadId(), base::PlatformThread::CurrentId());
+  if (font_service_.encountered_error()) {
+    done_event->Signal();
+    return;
+  }
 
+  pending_waitable_events_.insert(done_event);
   font_service_->OpenStream(
       id_number, base::Bind(&FontServiceThread::OnOpenStreamComplete, this,
                             done_event, output_file));
@@ -135,19 +157,24 @@ void FontServiceThread::OpenStreamImpl(base::WaitableEvent* done_event,
 
 void FontServiceThread::OnOpenStreamComplete(base::WaitableEvent* done_event,
                                              base::File* output_file,
-                                             mojo::ScopedHandle handle) {
-  if (handle.is_valid()) {
-    MojoPlatformHandle platform_handle;
-    CHECK(MojoExtractPlatformHandle(handle.release().value(),
-                                    &platform_handle) == MOJO_RESULT_OK);
-    *output_file = base::File(platform_handle).Pass();
-  }
-
+                                             base::File file) {
+  pending_waitable_events_.erase(done_event);
+  *output_file = std::move(file);
   done_event->Signal();
 }
 
+void FontServiceThread::OnFontServiceConnectionError() {
+  std::set<base::WaitableEvent*> events;
+  events.swap(pending_waitable_events_);
+  for (base::WaitableEvent* event : events)
+    event->Signal();
+}
+
 void FontServiceThread::Init() {
-  font_service_.Bind(font_service_info_.Pass());
+  font_service_.Bind(std::move(font_service_info_));
+  font_service_.set_connection_error_handler(
+      base::Bind(&FontServiceThread::OnFontServiceConnectionError,
+                 weak_factory_.GetWeakPtr()));
 }
 
 void FontServiceThread::CleanUp() {

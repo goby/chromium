@@ -4,6 +4,12 @@
 
 #include "remoting/protocol/capture_scheduler.h"
 
+#include <stddef.h>
+
+#include <utility>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/timer/mock_timer.h"
@@ -26,9 +32,9 @@ class CaptureSchedulerTest : public testing::Test {
     scheduler_->set_minimum_interval(
         base::TimeDelta::FromMilliseconds(kMinumumFrameIntervalMs));
     tick_clock_ = new base::SimpleTestTickClock();
-    scheduler_->SetTickClockForTest(make_scoped_ptr(tick_clock_));
+    scheduler_->SetTickClockForTest(base::WrapUnique(tick_clock_));
     capture_timer_ = new base::MockTimer(false, false);
-    scheduler_->SetTimerForTest(make_scoped_ptr(capture_timer_));
+    scheduler_->SetTimerForTest(base::WrapUnique(capture_timer_));
     scheduler_->Start();
   }
 
@@ -56,9 +62,9 @@ class CaptureSchedulerTest : public testing::Test {
 
     scheduler_->OnFrameSent();
 
-    scoped_ptr<VideoAck> ack(new VideoAck());
+    std::unique_ptr<VideoAck> ack(new VideoAck());
     ack->set_frame_id(packet.frame_id());
-    scheduler_->ProcessVideoAck(ack.Pass());
+    scheduler_->ProcessVideoAck(std::move(ack));
 
     EXPECT_TRUE(capture_timer_->IsRunning());
     EXPECT_EQ(std::max(base::TimeDelta(),
@@ -69,7 +75,7 @@ class CaptureSchedulerTest : public testing::Test {
  protected:
   base::MessageLoop message_loop_;
 
-  scoped_ptr<CaptureScheduler> scheduler_;
+  std::unique_ptr<CaptureScheduler> scheduler_;
 
   // Owned by |scheduler_|.
   base::SimpleTestTickClock* tick_clock_;
@@ -189,7 +195,7 @@ TEST_F(CaptureSchedulerTest, MaximumPendingFrames) {
   // Next frame should be scheduled, once one of the queued frames is
   // acknowledged.
   EXPECT_FALSE(capture_timer_->IsRunning());
-  scheduler_->ProcessVideoAck(make_scoped_ptr(new VideoAck()));
+  scheduler_->ProcessVideoAck(base::WrapUnique(new VideoAck()));
   EXPECT_TRUE(capture_timer_->IsRunning());
 }
 

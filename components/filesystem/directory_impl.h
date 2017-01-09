@@ -5,59 +5,71 @@
 #ifndef COMPONENTS_FILESYSTEM_DIRECTORY_IMPL_H_
 #define COMPONENTS_FILESYSTEM_DIRECTORY_IMPL_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/filesystem/public/interfaces/directory.mojom.h"
+#include "components/filesystem/shared_temp_dir.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
-
-namespace base {
-class ScopedTempDir;
-}  // namespace base
 
 namespace filesystem {
 
-class DirectoryImpl : public Directory {
+class LockTable;
+
+class DirectoryImpl : public mojom::Directory {
  public:
   // Set |temp_dir| only if there's a temporary directory that should be deleted
   // when this object is destroyed.
-  DirectoryImpl(mojo::InterfaceRequest<Directory> request,
-                base::FilePath directory_path,
-                scoped_ptr<base::ScopedTempDir> temp_dir);
+  DirectoryImpl(base::FilePath directory_path,
+                scoped_refptr<SharedTempDir> temp_dir,
+                scoped_refptr<LockTable> lock_table);
   ~DirectoryImpl() override;
-
-  void set_connection_error_handler(const mojo::Closure& error_handler) {
-    binding_.set_connection_error_handler(error_handler);
-  }
 
   // |Directory| implementation:
   void Read(const ReadCallback& callback) override;
-  void OpenFile(const mojo::String& path,
-                mojo::InterfaceRequest<File> file,
+  void OpenFile(const std::string& path,
+                mojom::FileRequest file,
                 uint32_t open_flags,
                 const OpenFileCallback& callback) override;
-  void OpenDirectory(const mojo::String& path,
-                     mojo::InterfaceRequest<Directory> directory,
+  void OpenFileHandle(const std::string& path,
+                      uint32_t open_flags,
+                      const OpenFileHandleCallback& callback) override;
+  void OpenFileHandles(std::vector<mojom::FileOpenDetailsPtr> details,
+                       const OpenFileHandlesCallback& callback) override;
+  void OpenDirectory(const std::string& path,
+                     mojom::DirectoryRequest directory,
                      uint32_t open_flags,
                      const OpenDirectoryCallback& callback) override;
-  void Rename(const mojo::String& path,
-              const mojo::String& new_path,
+  void Rename(const std::string& path,
+              const std::string& new_path,
               const RenameCallback& callback) override;
-  void Delete(const mojo::String& path,
+  void Delete(const std::string& path,
               uint32_t delete_flags,
               const DeleteCallback& callback) override;
-  void Exists(const mojo::String& path,
-              const ExistsCallback& callback) override;
-  void IsWritable(const mojo::String& path,
+  void Exists(const std::string& path, const ExistsCallback& callback) override;
+  void IsWritable(const std::string& path,
                   const IsWritableCallback& callback) override;
   void Flush(const FlushCallback& callback) override;
+  void StatFile(const std::string& path,
+                const StatFileCallback& callback) override;
+  void Clone(mojom::DirectoryRequest directory) override;
+  void ReadEntireFile(const std::string& path,
+                      const ReadEntireFileCallback& callback) override;
+  void WriteFile(const std::string& path,
+                 const std::vector<uint8_t>& data,
+                 const WriteFileCallback& callback) override;
 
  private:
-  mojo::StrongBinding<Directory> binding_;
+  base::File OpenFileHandleImpl(const std::string& raw_path,
+                                uint32_t open_flags);
+
   base::FilePath directory_path_;
-  scoped_ptr<base::ScopedTempDir> temp_dir_;
+  scoped_refptr<SharedTempDir> temp_dir_;
+  scoped_refptr<LockTable> lock_table_;
 
   DISALLOW_COPY_AND_ASSIGN(DirectoryImpl);
 };

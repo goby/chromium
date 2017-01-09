@@ -25,50 +25,43 @@
 #define ValidityState_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
-#include "core/html/FormAssociatedElement.h"
-#include "wtf/PassOwnPtr.h"
+#include "core/html/ListedElement.h"
 
 namespace blink {
 
-class ValidityState : public NoBaseWillBeGarbageCollectedFinalized<ValidityState>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ValidityState);
-    WTF_MAKE_NONCOPYABLE(ValidityState);
-public:
-    static PassOwnPtrWillBeRawPtr<ValidityState> create(FormAssociatedElement* control)
-    {
-        return adoptPtrWillBeNoop(new ValidityState(control));
-    }
-    DEFINE_INLINE_TRACE() { visitor->trace(m_control); }
+class ValidityState final : public GarbageCollected<ValidityState>,
+                            public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
+  WTF_MAKE_NONCOPYABLE(ValidityState);
 
-#if !ENABLE(OILPAN)
-    void ref() { m_control->ref(); }
-    void deref() { m_control->deref(); }
-#endif
+ public:
+  static ValidityState* create(ListedElement* control) {
+    return new ValidityState(control);
+  }
+  DEFINE_INLINE_TRACE() { visitor->trace(m_control); }
 
-    String validationMessage() const;
+  String validationMessage() const;
 
-    void setCustomErrorMessage(const String&);
+  void setCustomErrorMessage(const String&);
 
-    bool valueMissing() const;
-    bool typeMismatch() const;
-    bool patternMismatch() const;
-    bool tooLong() const;
-    bool tooShort() const;
-    bool rangeUnderflow() const;
-    bool rangeOverflow() const;
-    bool stepMismatch() const;
-    bool badInput() const;
-    bool customError() const;
-    bool valid() const;
+  bool valueMissing() const;
+  bool typeMismatch() const;
+  bool patternMismatch() const;
+  bool tooLong() const;
+  bool tooShort() const;
+  bool rangeUnderflow() const;
+  bool rangeOverflow() const;
+  bool stepMismatch() const;
+  bool badInput() const;
+  bool customError() const;
+  bool valid() const;
 
-private:
-    explicit ValidityState(FormAssociatedElement* control)
-        : m_control(control) { }
+ private:
+  explicit ValidityState(ListedElement* control) : m_control(control) {}
 
-    RawPtrWillBeMember<FormAssociatedElement> m_control;
+  Member<ListedElement> m_control;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ValidityState_h
+#endif  // ValidityState_h

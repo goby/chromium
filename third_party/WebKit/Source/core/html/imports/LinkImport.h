@@ -34,7 +34,6 @@
 #include "core/html/LinkResource.h"
 #include "core/html/imports/HTMLImportChildClient.h"
 #include "wtf/Allocator.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
@@ -46,34 +45,34 @@ class HTMLImportChild;
 // A LinkResource subclasss used for @rel=import.
 //
 class LinkImport final : public LinkResource, public HTMLImportChildClient {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(LinkImport);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(LinkImport);
-public:
+  USING_GARBAGE_COLLECTED_MIXIN(LinkImport);
 
-    static PassOwnPtrWillBeRawPtr<LinkImport> create(HTMLLinkElement* owner);
+ public:
+  static LinkImport* create(HTMLLinkElement* owner);
 
-    explicit LinkImport(HTMLLinkElement* owner);
-    ~LinkImport() override;
+  explicit LinkImport(HTMLLinkElement* owner);
+  ~LinkImport() override;
 
-    // LinkResource
-    void process() override;
-    Type type() const override { return Import; }
-    bool hasLoaded() const override;
-    DECLARE_VIRTUAL_TRACE();
-    void ownerInserted() override;
+  // LinkResource
+  void process() override;
+  LinkResourceType type() const override { return Import; }
+  bool hasLoaded() const override;
+  DECLARE_VIRTUAL_TRACE();
+  void ownerInserted() override;
+  void ownerRemoved() override;
 
-    // HTMLImportChildClient
-    void didFinish() override;
-    void importChildWasDisposed(HTMLImportChild*) override;
-    bool isSync() const override;
-    HTMLLinkElement* link() override;
+  // HTMLImportChildClient
+  void didFinish() override;
+  void importChildWasDisposed(HTMLImportChild*) override;
+  bool isSync() const override;
+  HTMLLinkElement* link() override;
 
-    Document* importedDocument() const;
+  Document* importedDocument() const;
 
-private:
-    RawPtrWillBeMember<HTMLImportChild> m_child;
+ private:
+  Member<HTMLImportChild> m_child;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // LinkImport_h
+#endif  // LinkImport_h

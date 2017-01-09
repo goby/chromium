@@ -2,20 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/search/instant_service.h"
+
+#include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search/instant_service_observer.h"
 #include "chrome/browser/search/instant_unittest_base.h"
 #include "chrome/browser/search/search.h"
+#include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/search/instant_search_prerenderer.h"
 #include "chrome/common/render_messages.h"
 #include "components/variations/entropy_provider.h"
@@ -30,7 +33,6 @@
 class MockInstantServiceObserver : public InstantServiceObserver {
  public:
   MOCK_METHOD1(DefaultSearchProviderChanged, void(bool));
-  MOCK_METHOD1(OmniboxStartMarginChanged, void(int));
 };
 
 class InstantServiceTest : public InstantUnitTestBase {
@@ -48,14 +50,14 @@ class InstantServiceTest : public InstantUnitTestBase {
   }
 
   InstantSearchPrerenderer* GetInstantSearchPrerenderer() {
-    return instant_service_->instant_search_prerenderer();
+    return instant_service_->GetInstantSearchPrerenderer();
   }
 
-  void UpdateOmniboxStartMargin(int start_margin) {
-    instant_service_->OnOmniboxStartMarginChanged(start_margin);
+  std::vector<InstantMostVisitedItem>& most_visited_items() {
+    return instant_service_->most_visited_items_;
   }
 
-  scoped_ptr<MockInstantServiceObserver> instant_service_observer_;
+  std::unique_ptr<MockInstantServiceObserver> instant_service_observer_;
 };
 
 class InstantServiceEnabledTest : public InstantServiceTest {
@@ -97,7 +99,7 @@ TEST_F(InstantServiceTest, DispatchGoogleURLUpdated) {
 }
 
 TEST_F(InstantServiceEnabledTest, SendsSearchURLsToRenderer) {
-  scoped_ptr<content::MockRenderProcessHost> rph(
+  std::unique_ptr<content::MockRenderProcessHost> rph(
       new content::MockRenderProcessHost(profile()));
   rph->sink().ClearMessages();
   instant_service_->Observe(
@@ -109,17 +111,16 @@ TEST_F(InstantServiceEnabledTest, SendsSearchURLsToRenderer) {
   ASSERT_TRUE(msg);
   ChromeViewMsg_SetSearchURLs::Param params;
   ChromeViewMsg_SetSearchURLs::Read(msg, &params);
-  std::vector<GURL> search_urls = base::get<0>(params);
-  GURL new_tab_page_url = base::get<1>(params);
-  EXPECT_EQ(2U, search_urls.size());
+  std::vector<GURL> search_urls = std::get<0>(params);
+  GURL new_tab_page_url = std::get<1>(params);
+  ASSERT_EQ(2U, search_urls.size());
   EXPECT_EQ("https://www.google.com/alt#quux=", search_urls[0].spec());
   EXPECT_EQ("https://www.google.com/url?bar=", search_urls[1].spec());
   EXPECT_EQ("https://www.google.com/newtab", new_tab_page_url.spec());
 }
 
 TEST_F(InstantServiceTest, InstantSearchEnabled) {
-  EXPECT_NE(static_cast<InstantSearchPrerenderer*>(NULL),
-            GetInstantSearchPrerenderer());
+  EXPECT_NE(nullptr, GetInstantSearchPrerenderer());
 }
 
 TEST_F(InstantServiceEnabledTest,
@@ -131,19 +132,16 @@ TEST_F(InstantServiceEnabledTest,
   TemplateURLData data;
   data.SetShortName(base::ASCIIToUTF16("foobar.com"));
   data.SetURL("https://foobar.com/url?bar={searchTerms}");
-  TemplateURL* template_url = new TemplateURL(data);
-  // Takes ownership of |template_url|.
-  template_url_service_->Add(template_url);
+  TemplateURL* template_url =
+      template_url_service_->Add(base::MakeUnique<TemplateURL>(data));
   template_url_service_->SetUserSelectedDefaultSearchProvider(template_url);
 
-  EXPECT_EQ(static_cast<InstantSearchPrerenderer*>(NULL),
-            GetInstantSearchPrerenderer());
+  EXPECT_EQ(nullptr, GetInstantSearchPrerenderer());
 
   // Set a default search provider that supports Instant and make sure
   // InstantSearchPrerenderer is valid.
   SetUserSelectedDefaultSearchProvider("https://google.com/");
-  EXPECT_NE(static_cast<InstantSearchPrerenderer*>(NULL),
-            GetInstantSearchPrerenderer());
+  EXPECT_NE(nullptr, GetInstantSearchPrerenderer());
 }
 
 TEST_F(InstantServiceEnabledTest,
@@ -152,16 +150,38 @@ TEST_F(InstantServiceEnabledTest,
               DefaultSearchProviderChanged(true)).Times(1);
 
   InstantSearchPrerenderer* old_prerenderer = GetInstantSearchPrerenderer();
-  EXPECT_TRUE(old_prerenderer != NULL);
+  ASSERT_NE(nullptr, old_prerenderer);
 
   const std::string new_base_url = "https://www.google.es/";
   NotifyGoogleBaseURLUpdate(new_base_url);
   EXPECT_NE(old_prerenderer, GetInstantSearchPrerenderer());
 }
 
-TEST_F(InstantServiceTest, OmniboxStartMarginChanged) {
-  int new_start_margin = 92;
-  EXPECT_CALL(*instant_service_observer_.get(),
-              OmniboxStartMarginChanged(new_start_margin)).Times(1);
-  UpdateOmniboxStartMargin(new_start_margin);
+TEST_F(InstantServiceEnabledTest,
+       ResetInstantSearchPrerenderer_InstantURLUpdated) {
+  InstantSearchPrerenderer* old_prerenderer = GetInstantSearchPrerenderer();
+  ASSERT_NE(nullptr, old_prerenderer);
+
+  // Change the Instant URL *without* notifying the InstantService. That can
+  // happen when some parameter (from UIThreadSearchTermsData) that goes into
+  // the Instant URL is changed, e.g. the RLZ value (see crbug.com/660923). The
+  // prerenderer should automatically get reset on the next access.
+  const std::string new_base_url = "https://www.google.es/";
+  UIThreadSearchTermsData::SetGoogleBaseURL(new_base_url);
+  InstantSearchPrerenderer* new_prerenderer = GetInstantSearchPrerenderer();
+  EXPECT_NE(old_prerenderer, new_prerenderer);
+
+  // Make sure the next access does *not* reset the prerenderer again.
+  EXPECT_EQ(new_prerenderer, GetInstantSearchPrerenderer());
+}
+
+TEST_F(InstantServiceTest, GetSuggestionFromClientSide) {
+  history::MostVisitedURLList url_list;
+  url_list.push_back(history::MostVisitedURL());
+
+  instant_service_->OnTopSitesReceived(url_list);
+
+  auto items = instant_service_->most_visited_items_;
+  ASSERT_EQ(1, (int)items.size());
+  ASSERT_EQ(ntp_tiles::NTPTileSource::TOP_SITES, items[0].source);
 }

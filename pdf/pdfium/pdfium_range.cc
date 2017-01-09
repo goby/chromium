@@ -17,8 +17,9 @@ PDFiumRange::PDFiumRange(PDFiumPage* page, int char_index, int char_count)
       cached_screen_rects_zoom_(0) {
 }
 
-PDFiumRange::~PDFiumRange() {
-}
+PDFiumRange::PDFiumRange(const PDFiumRange& that) = default;
+
+PDFiumRange::~PDFiumRange() = default;
 
 void PDFiumRange::SetCharCount(int char_count) {
   char_count_ = char_count;
@@ -57,7 +58,7 @@ std::vector<pp::Rect> PDFiumRange::GetScreenRects(const pp::Point& offset,
   return cached_screen_rects_;
 }
 
-base::string16 PDFiumRange::GetText() {
+base::string16 PDFiumRange::GetText() const {
   int index = char_index_;
   int count = char_count_;
   base::string16 rv;

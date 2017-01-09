@@ -2,15 +2,14 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.timeline.model import TimelineModel
-from telemetry.timeline import tracing_category_filter
-from telemetry.timeline import tracing_options
+from telemetry.timeline import tracing_config
 from telemetry.util import statistics
 from telemetry.value import scalar
 
 
-class TaskExecutionTime(page_test.PageTest):
+class TaskExecutionTime(legacy_page_test.LegacyPageTest):
 
   IDLE_SECTION_TRIGGER = 'SingleThreadIdleTaskRunner::RunTask'
   IDLE_SECTION = 'IDLE'
@@ -42,19 +41,19 @@ class TaskExecutionTime(page_test.PageTest):
     self._results = None
 
   def WillNavigateToPage(self, page, tab):
-    category_filter = tracing_category_filter.TracingCategoryFilter()
-
+    del page  # unused
+    config = tracing_config.TracingConfig()
     for category in self._CATEGORIES:
-      category_filter.AddIncludedCategory(category)
+      config.chrome_trace_config.category_filter.AddIncludedCategory(
+          category)
+    config.enable_chrome_trace = True
 
-    options = tracing_options.TracingOptions()
-    options.enable_chrome_trace = True
-
-    tab.browser.platform.tracing_controller.Start(
-        options, category_filter, self._TIME_OUT_IN_SECONDS)
+    tab.browser.platform.tracing_controller.StartTracing(
+        config, self._TIME_OUT_IN_SECONDS)
 
   def ValidateAndMeasurePage(self, page, tab, results):
-    trace_data = tab.browser.platform.tracing_controller.Stop()
+    del page  # unused
+    trace_data = tab.browser.platform.tracing_controller.StopTracing()
     timeline_model = TimelineModel(trace_data)
 
     self._renderer_process = timeline_model.GetRendererProcessFromTabId(tab.id)
@@ -172,7 +171,7 @@ def _ProcessTasksForThread(
     reported_name += 'IPC_Class_' + str(task_slice.args['class'])
     reported_name += ':Line_' + str(task_slice.args['line'])
   else:
-    # Fallback to use the name of the task slice.
+    # Fall back to use the name of the task slice.
     reported_name += task_slice.name.lower()
 
   # Replace any '.'s with '_'s as V8 uses them and it confuses the dashboard.

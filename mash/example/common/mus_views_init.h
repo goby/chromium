@@ -5,15 +5,16 @@
 #ifndef MASH_EXAMPLE_COMMON_MUS_VIEWS_INIT_H_
 #define MASH_EXAMPLE_COMMON_MUS_VIEWS_INIT_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "components/mus/public/cpp/window_tree_delegate.h"
-#include "components/mus/public/interfaces/window_manager.mojom.h"
+#include "services/ui/public/cpp/window_tree_client_delegate.h"
+#include "services/ui/public/interfaces/window_manager.mojom.h"
 #include "ui/views/mus/aura_init.h"
 #include "ui/views/views_delegate.h"
 
-namespace mojo {
-class ApplicationImpl;
+namespace service_manager {
+class ServiceContext;
 }
 
 namespace views {
@@ -22,13 +23,13 @@ class AuraInit;
 
 // Does the necessary setup to use mus, views and the example wm.
 class MUSViewsInit : public views::ViewsDelegate,
-                     public mus::WindowTreeDelegate {
+                     public ui::WindowTreeClientDelegate {
  public:
-  explicit MUSViewsInit(mojo::ApplicationImpl* app);
+  explicit MUSViewsInit(service_manager::ServiceContext* app);
   ~MUSViewsInit() override;
 
  private:
-  mus::Window* NewWindow();
+  ui::Window* NewWindow();
 
   // views::ViewsDelegate:
   views::NativeWidget* CreateNativeWidget(
@@ -37,16 +38,16 @@ class MUSViewsInit : public views::ViewsDelegate,
       views::Widget::InitParams* params,
       views::internal::NativeWidgetDelegate* delegate) override;
 
-  // mus::WindowTreeDelegate:
-  void OnEmbed(mus::Window* root) override;
-  void OnConnectionLost(mus::WindowTreeConnection* connection) override;
+  // ui::WindowTreeClientDelegate:
+  void OnEmbed(ui::Window* root) override;
+  void OnDidDestroyClient(ui::WindowTreeClient* client) override;
 #if defined(OS_WIN)
   HICON GetSmallWindowIcon() const override;
 #endif
 
-  mojo::ApplicationImpl* app_;
-  scoped_ptr<views::AuraInit> aura_init_;
-  mus::mojom::WindowManagerPtr window_manager_;
+  service_manager::ServiceContext* app_;
+  std::unique_ptr<views::AuraInit> aura_init_;
+  ui::mojom::WindowManagerPtr window_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(MUSViewsInit);
 };

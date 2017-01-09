@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_TRACING_CHROME_TRACING_DELEGATE_H_
 #define CHROME_BROWSER_TRACING_CHROME_TRACING_DELEGATE_H_
 
+#include <memory>
+
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "content/public/browser/tracing_delegate.h"
 
@@ -18,7 +20,7 @@ class ChromeTracingDelegate : public content::TracingDelegate,
 
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  scoped_ptr<content::TraceUploader> GetTraceUploader(
+  std::unique_ptr<content::TraceUploader> GetTraceUploader(
       net::URLRequestContextGetter* request_context) override;
 
   bool IsAllowedToBeginBackgroundScenario(
@@ -30,6 +32,8 @@ class ChromeTracingDelegate : public content::TracingDelegate,
       bool requires_anonymized_data) override;
 
   void GenerateMetadataDict(base::DictionaryValue* metadata_dict) override;
+
+  content::MetadataFilterPredicate GetMetadataFilterPredicate() override;
 
  private:
   // chrome::BrowserListObserver implementation.

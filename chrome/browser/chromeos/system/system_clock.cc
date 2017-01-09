@@ -4,10 +4,9 @@
 
 #include "chrome/browser/chromeos/system/system_clock.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
@@ -19,6 +18,8 @@
 #include "chrome/common/pref_names.h"
 #include "chromeos/login/login_state.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_service.h"
@@ -211,8 +212,8 @@ void SystemClock::UpdateClockType() {
   // a local owner.
   if (user_manager::UserManager::Get()->IsCurrentUserOwner())
     SetShouldUse24HourClock(ShouldUse24HourClock());
-  FOR_EACH_OBSERVER(SystemClockObserver, observer_list_,
-                    OnSystemClockChanged(this));
+  for (auto& observer : observer_list_)
+    observer.OnSystemClockChanged(this);
 }
 
 }  // namespace system

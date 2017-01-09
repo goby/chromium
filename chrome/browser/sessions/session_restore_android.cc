@@ -14,8 +14,8 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "components/sessions/content/content_serialized_navigation_builder.h"
 #include "components/sessions/core/session_types.h"
-#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/restore_type.h"
 #include "content/public/browser/web_contents.h"
 
 // The android implementation does not do anything "foreign session" specific.
@@ -30,26 +30,26 @@ content::WebContents* SessionRestore::RestoreForeignSessionTab(
   Profile* profile = Profile::FromBrowserContext(context);
   TabModel* tab_model = TabModelList::GetTabModelForWebContents(web_contents);
   DCHECK(tab_model);
-  std::vector<scoped_ptr<content::NavigationEntry>> entries =
+  std::vector<std::unique_ptr<content::NavigationEntry>> entries =
       sessions::ContentSerializedNavigationBuilder::ToNavigationEntries(
           session_tab.navigations, profile);
   content::WebContents* new_web_contents = content::WebContents::Create(
       content::WebContents::CreateParams(context));
   int selected_index = session_tab.normalized_navigation_index();
   new_web_contents->GetController().Restore(
-      selected_index,
-      content::NavigationController::RESTORE_LAST_SESSION_EXITED_CLEANLY,
+      selected_index, content::RestoreType::LAST_SESSION_EXITED_CLEANLY,
       &entries);
 
   TabAndroid* current_tab = TabAndroid::FromWebContents(web_contents);
   DCHECK(current_tab);
-  if (disposition == CURRENT_TAB) {
+  if (disposition == WindowOpenDisposition::CURRENT_TAB) {
     current_tab->SwapTabContents(web_contents, new_web_contents, false, false);
     delete web_contents;
   } else {
-    DCHECK(disposition == NEW_FOREGROUND_TAB ||
-        disposition == NEW_BACKGROUND_TAB);
-    tab_model->CreateTab(new_web_contents, current_tab->GetAndroidId());
+    DCHECK(disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB ||
+           disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB);
+    tab_model->CreateTab(current_tab, new_web_contents,
+                         current_tab->GetAndroidId());
   }
   return new_web_contents;
 }
@@ -57,7 +57,6 @@ content::WebContents* SessionRestore::RestoreForeignSessionTab(
 // static
 std::vector<Browser*> SessionRestore::RestoreForeignSessionWindows(
     Profile* profile,
-    chrome::HostDesktopType host_desktop_type,
     std::vector<const sessions::SessionWindow*>::const_iterator begin,
     std::vector<const sessions::SessionWindow*>::const_iterator end) {
   NOTREACHED();

@@ -7,11 +7,10 @@
 
 #include "ash/display/mouse_warp_controller.h"
 
-#include "ui/gfx/geometry/rect.h"
+#include <stdint.h>
 
-namespace aura {
-class Window;
-}
+#include "base/macros.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace gfx {
 class Point;
@@ -19,6 +18,7 @@ class Point;
 
 namespace ash {
 namespace test {
+class AshTestBase;
 class DisplayManagerTestApi;
 }
 
@@ -33,6 +33,7 @@ class ASH_EXPORT UnifiedMouseWarpController : public MouseWarpController {
   void SetEnabled(bool enabled) override;
 
  private:
+  friend class test::AshTestBase;
   friend class test::DisplayManagerTestApi;
   friend class UnifiedMouseWarpControllerTest;
 
@@ -52,7 +53,7 @@ class ASH_EXPORT UnifiedMouseWarpController : public MouseWarpController {
   gfx::Rect first_edge_bounds_in_native_;
   gfx::Rect second_edge_bounds_in_native_;
 
-  int64 current_cursor_display_id_;
+  int64_t current_cursor_display_id_;
 
   bool update_location_for_test_;
 

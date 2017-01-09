@@ -5,26 +5,32 @@
 #ifndef CONTENT_BROWSER_ANDROID_CONTENT_VIEW_CORE_IMPL_H_
 #define CONTENT_BROWSER_ANDROID_CONTENT_VIEW_CORE_IMPL_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
+#include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
 #include "base/i18n/rtl.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/process/process.h"
+#include "content/browser/android/content_view_core_impl_observer.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/android/overscroll_refresh.h"
+#include "ui/android/view_android.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/selection_bound.h"
 #include "url/gurl.h"
 
 namespace ui {
-class ViewAndroid;
 class WindowAndroid;
 }
 
@@ -40,32 +46,21 @@ class ContentViewCoreImpl : public ContentViewCore,
                             public WebContentsObserver {
  public:
   static ContentViewCoreImpl* FromWebContents(WebContents* web_contents);
-  ContentViewCoreImpl(JNIEnv* env,
-                      jobject obj,
-                      WebContents* web_contents,
-                      jobject view_android,
-                      ui::WindowAndroid* window_android,
-                      jobject java_bridge_retained_object_set);
+  ContentViewCoreImpl(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& obj,
+      WebContents* web_contents,
+      float dpi_scale,
+      const base::android::JavaRef<jobject>& java_bridge_retained_object_set);
 
   // ContentViewCore implementation.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject() override;
   WebContents* GetWebContents() const override;
-  ui::ViewAndroid* GetViewAndroid() const override;
   ui::WindowAndroid* GetWindowAndroid() const override;
-  const scoped_refptr<cc::Layer>& GetLayer() const override;
   void ShowPastePopup(int x, int y) override;
-  void GetScaledContentBitmap(
-      float scale,
-      SkColorType preferred_color_type,
-      const gfx::Rect& src_subrect,
-      const ReadbackRequestCallback& result_callback) override;
-  float GetDpiScale() const override;
-  void PauseOrResumeGeolocation(bool should_pause) override;
-  void RequestTextSurroundingSelection(
-      int max_length,
-      const base::Callback<void(const base::string16& content,
-                                int start_offset,
-                                int end_offset)>& callback) override;
+
+  void AddObserver(ContentViewCoreImplObserver* observer);
+  void RemoveObserver(ContentViewCoreImplObserver* observer);
 
   // --------------------------------------------------------------------------
   // Methods called from Java via JNI
@@ -78,6 +73,9 @@ class ContentViewCoreImpl : public ContentViewCore,
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
+  void UpdateWindowAndroid(JNIEnv* env,
+                           const base::android::JavaParamRef<jobject>& obj,
+                           jlong window_android);
   void OnJavaContentViewCoreDestroyed(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
@@ -124,11 +122,20 @@ class ContentViewCoreImpl : public ContentViewCore,
       jint android_button_state,
       jint android_meta_state,
       jboolean is_touch_handle_event);
-  jboolean SendMouseMoveEvent(JNIEnv* env,
-                              const base::android::JavaParamRef<jobject>& obj,
-                              jlong time_ms,
-                              jfloat x,
-                              jfloat y);
+  jboolean SendMouseEvent(JNIEnv* env,
+                          const base::android::JavaParamRef<jobject>& obj,
+                          jlong time_ms,
+                          jint android_action,
+                          jfloat x,
+                          jfloat y,
+                          jint pointer_id,
+                          jfloat pressure,
+                          jfloat orientation,
+                          jfloat tilt,
+                          jint android_changed_button,
+                          jint android_button_state,
+                          jint android_meta_state,
+                          jint tool_type);
   jboolean SendMouseWheelEvent(JNIEnv* env,
                                const base::android::JavaParamRef<jobject>& obj,
                                jlong time_ms,
@@ -195,18 +202,6 @@ class ContentViewCoreImpl : public ContentViewCore,
                jfloat x,
                jfloat y,
                jfloat delta);
-  void SelectBetweenCoordinates(JNIEnv* env,
-                                const base::android::JavaParamRef<jobject>& obj,
-                                jfloat x1,
-                                jfloat y1,
-                                jfloat x2,
-                                jfloat y2);
-  void MoveCaret(JNIEnv* env,
-                 const base::android::JavaParamRef<jobject>& obj,
-                 jfloat x,
-                 jfloat y);
-  void DismissTextHandles(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& obj);
   void SetTextHandlesTemporarilyHidden(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -229,8 +224,11 @@ class ContentViewCoreImpl : public ContentViewCore,
                 const base::android::JavaParamRef<jobject>& obj,
                 jboolean focused);
 
+  void SetDIPScale(JNIEnv* env,
+                   const base::android::JavaParamRef<jobject>& obj,
+                   jfloat dipScale);
+
   jint GetBackgroundColor(JNIEnv* env, jobject obj);
-  void SetBackgroundColor(JNIEnv* env, jobject obj, jint color);
   void SetAllowJavascriptInterfacesInspection(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -274,6 +272,19 @@ class ContentViewCoreImpl : public ContentViewCore,
                            const base::android::JavaParamRef<jobject>& jobj,
                            jboolean opaque);
 
+  bool IsTouchDragDropEnabled(JNIEnv* env,
+                              const base::android::JavaParamRef<jobject>& jobj);
+
+  void OnDragEvent(JNIEnv* env,
+                   const base::android::JavaParamRef<jobject>& jobj,
+                   jint action,
+                   jint x,
+                   jint y,
+                   jint screen_x,
+                   jint screen_y,
+                   const base::android::JavaParamRef<jobjectArray>& j_mimeTypes,
+                   const base::android::JavaParamRef<jstring>& j_content);
+
   jint GetCurrentRenderProcessId(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
@@ -281,6 +292,8 @@ class ContentViewCoreImpl : public ContentViewCore,
   // --------------------------------------------------------------------------
   // Public methods that call to Java via JNI
   // --------------------------------------------------------------------------
+
+  void HidePopupsAndPreserveSelection();
 
   void OnSmartClipDataExtracted(const base::string16& text,
                                 const base::string16& html,
@@ -305,14 +318,18 @@ class ContentViewCoreImpl : public ContentViewCore,
                        const gfx::Vector2dF& page_scale_factor_limits,
                        const gfx::SizeF& content_size,
                        const gfx::SizeF& viewport_size,
-                       const gfx::Vector2dF& controls_offset,
-                       const gfx::Vector2dF& content_offset,
-                       bool is_mobile_optimized_hint);
+                       const float top_controls_height,
+                       const float top_controls_shown_ratio,
+                       const float bottom_controls_height,
+                       const float bottom_controls_shown_ratio,
+                       bool is_mobile_optimized_hint,
+                       const gfx::SelectionBound& selection_start);
 
   void ForceUpdateImeAdapter(long native_ime_adapter);
   void UpdateImeAdapter(long native_ime_adapter,
                         int text_input_type,
                         int text_input_flags,
+                        int text_input_mode,
                         const std::string& text,
                         int selection_start,
                         int selection_end,
@@ -320,7 +337,6 @@ class ContentViewCoreImpl : public ContentViewCore,
                         int composition_end,
                         bool show_ime_if_needed,
                         bool is_non_ime_change);
-  void SetTitle(const base::string16& title);
   void OnBackgroundColorChanged(SkColor color);
 
   bool HasFocus();
@@ -345,9 +361,6 @@ class ContentViewCoreImpl : public ContentViewCore,
   // testing/benchmarking purposes.
   base::android::ScopedJavaLocalRef<jobject> CreateMotionEventSynthesizer();
 
-  // Returns True if the given media should be blocked to load.
-  bool ShouldBlockMediaRequest(const GURL& url);
-
   void DidStopFlinging();
 
   // Returns the context with which the ContentViewCore was created, typically
@@ -356,6 +369,8 @@ class ContentViewCoreImpl : public ContentViewCore,
 
   // Returns the viewport size after accounting for the viewport offset.
   gfx::Size GetViewSize() const;
+
+  gfx::Size GetViewSizeWithOSKHidden() const;
 
   void SetAccessibilityEnabledInternal(bool enabled);
 
@@ -367,11 +382,9 @@ class ContentViewCoreImpl : public ContentViewCore,
 
   gfx::Size GetPhysicalBackingSize() const;
   gfx::Size GetViewportSizeDip() const;
-  bool DoTopControlsShrinkBlinkSize() const;
+  bool DoBrowserControlsShrinkBlinkSize() const;
   float GetTopControlsHeightDip() const;
-
-  void AttachLayer(scoped_refptr<cc::Layer> layer);
-  void RemoveLayer(scoped_refptr<cc::Layer> layer);
+  float GetBottomControlsHeightDip() const;
 
   void MoveRangeSelectionExtent(const gfx::PointF& extent);
 
@@ -380,8 +393,8 @@ class ContentViewCoreImpl : public ContentViewCore,
 
   void OnShowUnhandledTapUIIfNeeded(int x_dip, int y_dip);
 
-  // returns page density (dpi) X page scale
-  float GetScaleFactor() const;
+  ui::ViewAndroid* GetViewAndroid() const;
+
  private:
   class ContentViewUserData;
 
@@ -405,14 +418,18 @@ class ContentViewCoreImpl : public ContentViewCore,
   // --------------------------------------------------------------------------
 
   void InitWebContents();
+  void SendScreenRectsAndResizeWidget();
 
   RenderWidgetHostViewAndroid* GetRenderWidgetHostViewAndroid() const;
 
-  blink::WebGestureEvent MakeGestureEvent(
-      blink::WebInputEvent::Type type, int64 time_ms, float x, float y) const;
+  blink::WebGestureEvent MakeGestureEvent(blink::WebInputEvent::Type type,
+                                          int64_t time_ms,
+                                          float x,
+                                          float y) const;
 
   gfx::Size GetViewportSizePix() const;
   int GetTopControlsHeightPix() const;
+  int GetBottomControlsHeightPix() const;
 
   void SendGestureEvent(const blink::WebGestureEvent& event);
 
@@ -427,25 +444,21 @@ class ContentViewCoreImpl : public ContentViewCore,
   // A weak reference to the Java ContentViewCore object.
   JavaObjectWeakGlobalRef java_ref_;
 
+  // Select popup view
+  ui::ViewAndroid::ScopedAnchorView select_popup_;
+
   // Reference to the current WebContents used to determine how and what to
   // display in the ContentViewCore.
   WebContentsImpl* web_contents_;
 
-  // A compositor layer containing any layer that should be shown.
-  scoped_refptr<cc::Layer> root_layer_;
-
   // Page scale factor.
   float page_scale_;
 
-  // The Android view that can be used to add and remove decoration layers
-  // like AutofillPopup.
-  scoped_ptr<ui::ViewAndroid> view_android_;
-
   // Device scale factor.
-  const float dpi_scale_;
+  float dpi_scale_;
 
-  // The owning window that has a hold of main application activity.
-  ui::WindowAndroid* window_android_;
+  // Observer to notify of lifecyle changes.
+  base::ObserverList<ContentViewCoreImplObserver> observer_list_;
 
   // The cache of device's current orientation set from Java side, this value
   // will be sent to Renderer once it is ready.

@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_PRINTING_PRINT_PREVIEW_DATA_SERVICE_H_
 #define CHROME_BROWSER_PRINTING_PRINT_PREVIEW_DATA_SERVICE_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 
 class PrintPreviewDataStore;
@@ -36,8 +39,9 @@ class PrintPreviewDataService {
   // preview data. Use |index| to set/update a specific preview page data.
   // NOTE: PrintPreviewDataStore owns the data. Do not refcount |data| before
   // calling this function. It will be refcounted in PrintPreviewDataStore.
-  void SetDataEntry(int32_t preview_ui_id, int index,
-                    const base::RefCountedBytes* data);
+  void SetDataEntry(int32_t preview_ui_id,
+                    int index,
+                    scoped_refptr<base::RefCountedBytes> data);
 
   // Remove the corresponding PrintPreviewUI entry from the map.
   void RemoveEntry(int32_t preview_ui_id);

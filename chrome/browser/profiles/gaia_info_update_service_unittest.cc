@@ -4,9 +4,15 @@
 
 #include "chrome/browser/profiles/gaia_info_update_service.h"
 
-#include "base/prefs/pref_service.h"
+#include <stddef.h>
+
+#include <string>
+
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_downloader.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_info_cache_unittest.h"
@@ -19,9 +25,10 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/common/signin_pref_names.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_unittest_util.h"
@@ -61,6 +68,7 @@ class GAIAInfoUpdateServiceMock : public GAIAInfoUpdateService {
   MOCK_METHOD0(Update, void());
 };
 
+// TODO(anthonyvd) : remove ProfileInfoCacheTest from the test fixture.
 class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
  protected:
   GAIAInfoUpdateServiceTest() : profile_(NULL) {
@@ -72,6 +80,10 @@ class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
     return profile_;
   }
 
+  ProfileAttributesStorage* storage() {
+    return testing_profile_manager_.profile_attributes_storage();
+  }
+
   NiceMock<GAIAInfoUpdateServiceMock>* service() { return service_.get(); }
   NiceMock<ProfileDownloaderMock>* downloader() { return downloader_.get(); }
 
@@ -81,13 +93,17 @@ class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
         ChromeSigninClientFactory::GetInstance(),
         signin::BuildTestSigninClient));
     Profile* profile = testing_profile_manager_.CreateTestingProfile(
-        name, scoped_ptr<syncable_prefs::PrefServiceSyncable>(),
+        name, std::unique_ptr<sync_preferences::PrefServiceSyncable>(),
         base::UTF8ToUTF16(name), 0, std::string(), testing_factories);
     // The testing manager sets the profile name manually, which counts as
     // a user-customized profile name. Reset this to match the default name
     // we are actually using.
-    size_t index = GetCache()->GetIndexOfProfileWithPath(profile->GetPath());
-    GetCache()->SetProfileIsUsingDefaultNameAtIndex(index, true);
+    ProfileAttributesEntry* entry = nullptr;
+    // TODO(anthonyvd) : refactor the function so the following assertion can be
+    // changed to ASSERT_TRUE.
+    EXPECT_TRUE(storage()->GetProfileAttributesWithPath(profile->GetPath(),
+                                                        &entry));
+    entry->SetIsUsingDefaultName(true);
     return profile;
   }
 
@@ -127,7 +143,7 @@ class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
 
   void RenameProfile(const base::string16& full_name,
                      const base::string16& given_name) {
-    gfx::Image image = gfx::test::CreateImage(256,256);
+    gfx::Image image = gfx::test::CreateImage(256, 256);
     std::string url("foo.com");
     ProfileDownloadSuccess(full_name, given_name, image, url, base::string16());
 
@@ -142,8 +158,8 @@ class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
   void TearDown() override;
 
   Profile* profile_;
-  scoped_ptr<NiceMock<GAIAInfoUpdateServiceMock> > service_;
-  scoped_ptr<NiceMock<ProfileDownloaderMock> > downloader_;
+  std::unique_ptr<NiceMock<GAIAInfoUpdateServiceMock>> service_;
+  std::unique_ptr<NiceMock<ProfileDownloaderMock>> downloader_;
 };
 
 void GAIAInfoUpdateServiceTest::SetUp() {
@@ -159,7 +175,7 @@ void GAIAInfoUpdateServiceTest::TearDown() {
   ProfileInfoCacheTest::TearDown();
 }
 
-} // namespace
+}  // namespace
 
 TEST_F(GAIAInfoUpdateServiceTest, DownloadSuccess) {
   // No URL should be cached yet.
@@ -175,20 +191,23 @@ TEST_F(GAIAInfoUpdateServiceTest, DownloadSuccess) {
   ProfileDownloadSuccess(name, given_name, image, url, hosted_domain);
 
   // On success the GAIA info should be updated.
-  size_t index = GetCache()->GetIndexOfProfileWithPath(profile()->GetPath());
-  EXPECT_EQ(name, GetCache()->GetGAIANameOfProfileAtIndex(index));
-  EXPECT_EQ(given_name, GetCache()->GetGAIAGivenNameOfProfileAtIndex(index));
-  EXPECT_TRUE(gfx::test::AreImagesEqual(
-      image, *GetCache()->GetGAIAPictureOfProfileAtIndex(index)));
+  ProfileAttributesEntry* entry;
+  ASSERT_TRUE(storage()->GetProfileAttributesWithPath(profile()->GetPath(),
+                                                      &entry));
+  EXPECT_EQ(name, entry->GetGAIAName());
+  EXPECT_EQ(given_name, entry->GetGAIAGivenName());
+  EXPECT_TRUE(gfx::test::AreImagesEqual(image, *entry->GetGAIAPicture()));
   EXPECT_EQ(url, service()->GetCachedPictureURL());
   EXPECT_EQ(Profile::kNoHostedDomainFound, profile()->GetPrefs()->
       GetString(prefs::kGoogleServicesHostedDomain));
 }
 
 TEST_F(GAIAInfoUpdateServiceTest, DownloadFailure) {
-  size_t index = GetCache()->GetIndexOfProfileWithPath(profile()->GetPath());
-  base::string16 old_name = GetCache()->GetNameOfProfileAtIndex(index);
-  gfx::Image old_image = GetCache()->GetAvatarIconOfProfileAtIndex(index);
+  ProfileAttributesEntry* entry;
+  ASSERT_TRUE(storage()->GetProfileAttributesWithPath(profile()->GetPath(),
+                                                      &entry));
+  base::string16 old_name = entry->GetName();
+  gfx::Image old_image = entry->GetAvatarIcon();
 
   EXPECT_EQ(std::string(), service()->GetCachedPictureURL());
 
@@ -196,13 +215,11 @@ TEST_F(GAIAInfoUpdateServiceTest, DownloadFailure) {
                                       ProfileDownloaderDelegate::SERVICE_ERROR);
 
   // On failure nothing should be updated.
-  EXPECT_EQ(old_name, GetCache()->GetNameOfProfileAtIndex(index));
-  EXPECT_EQ(base::string16(), GetCache()->GetGAIANameOfProfileAtIndex(index));
-  EXPECT_EQ(base::string16(),
-            GetCache()->GetGAIAGivenNameOfProfileAtIndex(index));
-  EXPECT_TRUE(gfx::test::AreImagesEqual(
-      old_image, GetCache()->GetAvatarIconOfProfileAtIndex(index)));
-  EXPECT_EQ(NULL, GetCache()->GetGAIAPictureOfProfileAtIndex(index));
+  EXPECT_EQ(old_name, entry->GetName());
+  EXPECT_EQ(base::string16(), entry->GetGAIAName());
+  EXPECT_EQ(base::string16(), entry->GetGAIAGivenName());
+  EXPECT_TRUE(gfx::test::AreImagesEqual(old_image, entry->GetAvatarIcon()));
+  EXPECT_EQ(nullptr, entry->GetGAIAPicture());
   EXPECT_EQ(std::string(), service()->GetCachedPictureURL());
   EXPECT_EQ(std::string(),
       profile()->GetPrefs()->GetString(prefs::kGoogleServicesHostedDomain));
@@ -223,6 +240,8 @@ TEST_F(GAIAInfoUpdateServiceTest, ProfileLockEnabledForWhitelist) {
       GetString(prefs::kGoogleServicesHostedDomain));
 }
 
+// TODO(anthonyvd) : remove or update test once the refactoring of the internals
+// of ProfileInfoCache is complete.
 TEST_F(GAIAInfoUpdateServiceTest, HandlesProfileReordering) {
   size_t index = GetCache()->GetIndexOfProfileWithPath(profile()->GetPath());
   GetCache()->SetNameOfProfileAtIndex(index, FullName16("B"));
@@ -285,9 +304,12 @@ TEST_F(GAIAInfoUpdateServiceTest, LogOut) {
       SigninManagerFactory::GetForProfile(profile());
   signin_manager->SetAuthenticatedAccountInfo("gaia_id", "pat@example.com");
   base::string16 gaia_name = base::UTF8ToUTF16("Pat Foo");
-  GetCache()->SetGAIANameOfProfileAtIndex(0, gaia_name);
-  gfx::Image gaia_picture = gfx::test::CreateImage(256,256);
-  GetCache()->SetGAIAPictureOfProfileAtIndex(0, &gaia_picture);
+
+  ASSERT_EQ(1u, storage()->GetNumberOfProfiles());
+  ProfileAttributesEntry* entry = storage()->GetAllProfilesAttributes().front();
+  entry->SetGAIAName(gaia_name);
+  gfx::Image gaia_picture = gfx::test::CreateImage(256, 256);
+  entry->SetGAIAPicture(&gaia_picture);
 
   // Set a fake picture URL.
   profile()->GetPrefs()->SetString(prefs::kProfileGAIAInfoPictureURL,
@@ -296,10 +318,11 @@ TEST_F(GAIAInfoUpdateServiceTest, LogOut) {
   EXPECT_FALSE(service()->GetCachedPictureURL().empty());
 
   // Log out.
-  signin_manager->SignOut(signin_metrics::SIGNOUT_TEST);
+  signin_manager->SignOut(signin_metrics::SIGNOUT_TEST,
+                          signin_metrics::SignoutDelete::IGNORE_METRIC);
   // Verify that the GAIA name and picture, and picture URL are unset.
-  EXPECT_TRUE(GetCache()->GetGAIANameOfProfileAtIndex(0).empty());
-  EXPECT_EQ(NULL, GetCache()->GetGAIAPictureOfProfileAtIndex(0));
+  EXPECT_TRUE(entry->GetGAIAName().empty());
+  EXPECT_EQ(nullptr, entry->GetGAIAPicture());
   EXPECT_TRUE(service()->GetCachedPictureURL().empty());
 }
 

@@ -4,13 +4,17 @@
 
 #include "chrome/browser/chromeos/file_manager/file_browser_handlers.h"
 
+#include <stddef.h>
 #include <algorithm>
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/i18n/case_conversion.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
@@ -120,9 +124,6 @@ FileBrowserHandlerList FindFileBrowserHandlersForURL(
     if (profile->IsOffTheRecord() &&
         !extensions::util::IsIncognitoEnabled(extension->id(), profile))
       continue;
-    if (extensions::util::IsEphemeralApp(extension->id(), profile))
-      continue;
-
     FileBrowserHandler::List* handler_list =
         FileBrowserHandler::GetHandlers(extension.get());
     if (!handler_list)
@@ -179,19 +180,20 @@ class FileBrowserHandlerExecutor {
 
   // Checks legitimacy of file url and grants file RO access permissions from
   // handler (target) extension and its renderer process.
-  static scoped_ptr<FileDefinitionList> SetupFileAccessPermissions(
+  static std::unique_ptr<FileDefinitionList> SetupFileAccessPermissions(
       scoped_refptr<storage::FileSystemContext> file_system_context_handler,
       const scoped_refptr<const Extension>& handler_extension,
       const std::vector<FileSystemURL>& file_urls);
 
   void ExecuteDoneOnUIThread(bool success);
-  void ExecuteAfterSetupFileAccess(scoped_ptr<FileDefinitionList> file_list);
+  void ExecuteAfterSetupFileAccess(
+      std::unique_ptr<FileDefinitionList> file_list);
   void ExecuteFileActionsOnUIThread(
-      scoped_ptr<FileDefinitionList> file_definition_list,
-      scoped_ptr<EntryDefinitionList> entry_definition_list);
+      std::unique_ptr<FileDefinitionList> file_definition_list,
+      std::unique_ptr<EntryDefinitionList> entry_definition_list);
   void SetupPermissionsAndDispatchEvent(
-      scoped_ptr<FileDefinitionList> file_definition_list,
-      scoped_ptr<EntryDefinitionList> entry_definition_list,
+      std::unique_ptr<FileDefinitionList> file_definition_list,
+      std::unique_ptr<EntryDefinitionList> entry_definition_list,
       int handler_pid_in,
       extensions::ExtensionHost* host);
 
@@ -212,7 +214,7 @@ class FileBrowserHandlerExecutor {
 };
 
 // static
-scoped_ptr<FileDefinitionList>
+std::unique_ptr<FileDefinitionList>
 FileBrowserHandlerExecutor::SetupFileAccessPermissions(
     scoped_refptr<storage::FileSystemContext> file_system_context_handler,
     const scoped_refptr<const Extension>& handler_extension,
@@ -223,7 +225,8 @@ FileBrowserHandlerExecutor::SetupFileAccessPermissions(
   storage::ExternalFileSystemBackend* backend =
       file_system_context_handler->external_backend();
 
-  scoped_ptr<FileDefinitionList> file_definition_list(new FileDefinitionList);
+  std::unique_ptr<FileDefinitionList> file_definition_list(
+      new FileDefinitionList);
   for (size_t i = 0; i < file_urls.size(); ++i) {
     const FileSystemURL& url = file_urls[i];
 
@@ -262,7 +265,7 @@ FileBrowserHandlerExecutor::SetupFileAccessPermissions(
     file_definition_list->push_back(file_definition);
   }
 
-  return file_definition_list.Pass();
+  return file_definition_list;
 }
 
 FileBrowserHandlerExecutor::FileBrowserHandlerExecutor(
@@ -300,7 +303,7 @@ void FileBrowserHandlerExecutor::Execute(
 }
 
 void FileBrowserHandlerExecutor::ExecuteAfterSetupFileAccess(
-    scoped_ptr<FileDefinitionList> file_definition_list) {
+    std::unique_ptr<FileDefinitionList> file_definition_list) {
   // Outlives the conversion process, since bound to the callback.
   const FileDefinitionList& file_definition_list_ref =
       *file_definition_list.get();
@@ -324,8 +327,8 @@ void FileBrowserHandlerExecutor::ExecuteDoneOnUIThread(bool success) {
 }
 
 void FileBrowserHandlerExecutor::ExecuteFileActionsOnUIThread(
-    scoped_ptr<FileDefinitionList> file_definition_list,
-    scoped_ptr<EntryDefinitionList> entry_definition_list) {
+    std::unique_ptr<FileDefinitionList> file_definition_list,
+    std::unique_ptr<EntryDefinitionList> entry_definition_list) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (file_definition_list->empty() || entry_definition_list->empty()) {
@@ -341,10 +344,9 @@ void FileBrowserHandlerExecutor::ExecuteFileActionsOnUIThread(
   }
 
   if (handler_pid > 0) {
-    SetupPermissionsAndDispatchEvent(file_definition_list.Pass(),
-                                     entry_definition_list.Pass(),
-                                     handler_pid,
-                                     NULL);
+    SetupPermissionsAndDispatchEvent(std::move(file_definition_list),
+                                     std::move(entry_definition_list),
+                                     handler_pid, NULL);
   } else {
     // We have to wake the handler background page before we proceed.
     extensions::LazyBackgroundTaskQueue* queue =
@@ -354,20 +356,18 @@ void FileBrowserHandlerExecutor::ExecuteFileActionsOnUIThread(
       return;
     }
     queue->AddPendingTask(
-        profile_,
-        extension_->id(),
+        profile_, extension_->id(),
         base::Bind(
             &FileBrowserHandlerExecutor::SetupPermissionsAndDispatchEvent,
             weak_ptr_factory_.GetWeakPtr(),
-            base::Passed(file_definition_list.Pass()),
-            base::Passed(entry_definition_list.Pass()),
-            handler_pid));
+            base::Passed(std::move(file_definition_list)),
+            base::Passed(std::move(entry_definition_list)), handler_pid));
   }
 }
 
 void FileBrowserHandlerExecutor::SetupPermissionsAndDispatchEvent(
-    scoped_ptr<FileDefinitionList> file_definition_list,
-    scoped_ptr<EntryDefinitionList> entry_definition_list,
+    std::unique_ptr<FileDefinitionList> file_definition_list,
+    std::unique_ptr<EntryDefinitionList> entry_definition_list,
     int handler_pid_in,
     extensions::ExtensionHost* host) {
   int handler_pid = host ? host->render_process_host()->GetID() :
@@ -387,33 +387,33 @@ void FileBrowserHandlerExecutor::SetupPermissionsAndDispatchEvent(
   SetupHandlerHostFileAccessPermissions(
       file_definition_list.get(), extension_.get(), handler_pid);
 
-  scoped_ptr<base::ListValue> event_args(new base::ListValue());
-  event_args->Append(new base::StringValue(action_id_));
-  base::DictionaryValue* details = new base::DictionaryValue();
-  event_args->Append(details);
+  std::unique_ptr<base::ListValue> event_args(new base::ListValue());
+  event_args->AppendString(action_id_);
+  auto details = base::MakeUnique<base::DictionaryValue>();
   // Get file definitions. These will be replaced with Entry instances by
   // dispatchEvent() method from event_binding.js.
   base::ListValue* file_entries = new base::ListValue();
   details->Set("entries", file_entries);
+  event_args->Append(std::move(details));
 
   for (EntryDefinitionList::const_iterator iter =
            entry_definition_list->begin();
        iter != entry_definition_list->end();
        ++iter) {
-    base::DictionaryValue* file_def = new base::DictionaryValue();
-    file_entries->Append(file_def);
+    auto file_def = base::MakeUnique<base::DictionaryValue>();
     file_def->SetString("fileSystemName", iter->file_system_name);
     file_def->SetString("fileSystemRoot", iter->file_system_root_url);
     file_def->SetString("fileFullPath",
                         "/" + iter->full_path.AsUTF8Unsafe());
     file_def->SetBoolean("fileIsDirectory", iter->is_directory);
+    file_entries->Append(std::move(file_def));
   }
 
-  scoped_ptr<extensions::Event> event(
-      new extensions::Event(extensions::events::FILE_BROWSER_HANDLER_ON_EXECUTE,
-                            "fileBrowserHandler.onExecute", event_args.Pass()));
+  std::unique_ptr<extensions::Event> event(new extensions::Event(
+      extensions::events::FILE_BROWSER_HANDLER_ON_EXECUTE,
+      "fileBrowserHandler.onExecute", std::move(event_args)));
   event->restrict_to_browser_context = profile_;
-  router->DispatchEventToExtension(extension_->id(), event.Pass());
+  router->DispatchEventToExtension(extension_->id(), std::move(event));
 
   ExecuteDoneOnUIThread(true);
 }
@@ -521,7 +521,7 @@ FileBrowserHandlerList FindFileBrowserHandlers(
 
       for (FileBrowserHandlerList::const_iterator itr = handlers.begin();
            itr != handlers.end(); ++itr) {
-        if (ContainsKey(common_handler_set, *itr))
+        if (base::ContainsKey(common_handler_set, *itr))
           intersection.push_back(*itr);
       }
 

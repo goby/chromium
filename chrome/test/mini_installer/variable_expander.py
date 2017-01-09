@@ -56,7 +56,7 @@ def _GetUserSpecificRegistrySuffix():
 class VariableExpander:
   """Expands variables in strings."""
 
-  def __init__(self, mini_installer_path):
+  def __init__(self, mini_installer_path, next_version_mini_installer_path):
     """Constructor.
 
     The constructor initializes a variable dictionary that maps variables to
@@ -77,7 +77,11 @@ class VariableExpander:
         * $LOCAL_APPDATA: the unquoted path to the Local Application Data
             folder.
         * $MINI_INSTALLER: the unquoted path to the mini_installer.
-        * $MINI_INSTALLER_FILE_VERSION: the file version of the mini_installer.
+        * $MINI_INSTALLER_FILE_VERSION: the file version of $MINI_INSTALLER.
+        * $NEXT_VERSION_MINI_INSTALLER: the unquoted path to a mini_installer
+            whose version is higher than $MINI_INSTALLER.
+        * $NEXT_VERSION_MINI_INSTALLER_FILE_VERSION: the file version of
+            $NEXT_VERSION_MINI_INSTALLER.
         * $PROGRAM_FILES: the unquoted path to the Program Files folder.
         * $SUPPORTS_SXS: a boolean indicating whether or not SxS installs
             are supported by the mini_installer under test.
@@ -88,15 +92,22 @@ class VariableExpander:
         * $WINDOWS_VERSION: a 2-tuple representing the current Windows version.
 
     Args:
-      mini_installer_path: The path to mini_installer.exe.
+      mini_installer_path: The path to a mini_installer.
+      next_version_mini_installer_path: The path to a mini_installer whose
+          version is higher than |mini_installer_path|.
     """
     mini_installer_abspath = os.path.abspath(mini_installer_path)
+    next_version_mini_installer_abspath = os.path.abspath(
+        next_version_mini_installer_path)
     windows_major_ver, windows_minor_ver, _, _, _ = win32api.GetVersionEx()
     self._variable_mapping = {
         'LOCAL_APPDATA': shell.SHGetFolderPath(0, shellcon.CSIDL_LOCAL_APPDATA,
                                                None, 0),
         'MINI_INSTALLER': mini_installer_abspath,
         'MINI_INSTALLER_FILE_VERSION': _GetFileVersion(mini_installer_abspath),
+        'NEXT_VERSION_MINI_INSTALLER': next_version_mini_installer_abspath,
+        'NEXT_VERSION_MINI_INSTALLER_FILE_VERSION': _GetFileVersion(
+            next_version_mini_installer_abspath),
         'PROGRAM_FILES': shell.SHGetFolderPath(0, shellcon.CSIDL_PROGRAM_FILES,
                                                None, 0),
         'USER_SPECIFIC_REGISTRY_SUFFIX': _GetUserSpecificRegistrySuffix(),
@@ -123,6 +134,9 @@ class VariableExpander:
           'CHROME_UPDATE_REGISTRY_SUBKEY': (
             'Software\\Google\\Update\\Clients\\'
             '{8A69D345-D564-463c-AFF1-A69D9E530F96}'),
+          'CHROME_CLIENT_STATE_KEY': (
+            'Software\\Google\\Update\\ClientState\\'
+            '{8A69D345-D564-463c-AFF1-A69D9E530F96}'),
           'SUPPORTS_SXS': True,
           'CHROME_DIR_SXS': 'Google\\Chrome SxS',
           'CHROME_LONG_NAME_SXS': 'Google Chrome SxS',
@@ -142,6 +156,7 @@ class VariableExpander:
           'CHROME_LONG_NAME': 'Chromium',
           'CHROME_SHORT_NAME': 'Chromium',
           'CHROME_UPDATE_REGISTRY_SUBKEY': 'Software\\Chromium',
+          'CHROME_CLIENT_STATE_KEY': 'Software\\Chromium',
           'SUPPORTS_SXS': False
       })
     else:

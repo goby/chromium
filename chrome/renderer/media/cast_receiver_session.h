@@ -5,14 +5,13 @@
 #ifndef CHROME_RENDERER_MEDIA_CAST_RECEIVER_SESSION_H_
 #define CHROME_RENDERER_MEDIA_CAST_RECEIVER_SESSION_H_
 
+#include <memory>
+
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "chrome/renderer/media/cast_receiver_session_delegate.h"
-
-namespace blink {
-class WebMediaStream;
-}
 
 namespace media {
 class AudioCapturerSource;
@@ -35,7 +34,8 @@ class CastReceiverSession : public base::RefCounted<CastReceiverSession> {
   CastReceiverSession();
 
   typedef base::Callback<void(scoped_refptr<media::AudioCapturerSource>,
-                              scoped_ptr<media::VideoCapturerSource>)> StartCB;
+                              std::unique_ptr<media::VideoCapturerSource>)>
+      StartCB;
 
   // Note that the cast receiver will start responding to
   // incoming network streams immediately, buffering input until
@@ -48,7 +48,7 @@ class CastReceiverSession : public base::RefCounted<CastReceiverSession> {
              const media::cast::FrameReceiverConfig& video_config,
              const net::IPEndPoint& local_endpoint,
              const net::IPEndPoint& remote_endpoint,
-             scoped_ptr<base::DictionaryValue> options,
+             std::unique_ptr<base::DictionaryValue> options,
              const media::VideoCaptureFormat& capture_format,
              const StartCB& start_callback,
              const CastReceiverSessionDelegate::ErrorCallback& error_callback);
@@ -67,7 +67,7 @@ class CastReceiverSession : public base::RefCounted<CastReceiverSession> {
 
   media::cast::FrameReceiverConfig audio_config_;
   media::cast::FrameReceiverConfig video_config_;
-  scoped_ptr<CastReceiverSessionDelegate> delegate_;
+  std::unique_ptr<CastReceiverSessionDelegate> delegate_;
   const scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
   media::VideoCaptureFormat format_;
 

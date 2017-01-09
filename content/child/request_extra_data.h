@@ -5,7 +5,10 @@
 #ifndef CONTENT_CHILD_REQUEST_EXTRA_DATA_H_
 #define CONTENT_CHILD_REQUEST_EXTRA_DATA_H_
 
+#include <utility>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/child/web_url_loader_impl.h"
 #include "content/common/content_export.h"
 #include "content/common/navigation_params.h"
@@ -13,11 +16,14 @@
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "ui/base/page_transition_types.h"
+#include "url/origin.h"
 
 namespace content {
 
+struct ResourceRequest;
+
 // Can be used by callers to store extra data on every ResourceRequest
-// which will be incorporated into the ResourceHostMsg_Request message
+// which will be incorporated into the ResourceHostMsg_RequestResource message
 // sent by ResourceDispatcher.
 class CONTENT_EXPORT RequestExtraData
     : public NON_EXPORTED_BASE(blink::WebURLRequest::ExtraData) {
@@ -39,8 +45,8 @@ class CONTENT_EXPORT RequestExtraData
   void set_is_main_frame(bool is_main_frame) {
     is_main_frame_ = is_main_frame;
   }
-  GURL frame_origin() const { return frame_origin_; }
-  void set_frame_origin(const GURL& frame_origin) {
+  url::Origin frame_origin() const { return frame_origin_; }
+  void set_frame_origin(const url::Origin& frame_origin) {
     frame_origin_ = frame_origin;
   }
   bool parent_is_main_frame() const { return parent_is_main_frame_; }
@@ -87,11 +93,13 @@ class CONTENT_EXPORT RequestExtraData
       int service_worker_provider_id) {
     service_worker_provider_id_ = service_worker_provider_id;
   }
-  LoFiState lofi_state() const {
-    return lofi_state_;
+  // true if the request originated from within a service worker e.g. due to
+  // a fetch() in the service worker script.
+  bool originated_from_service_worker() const {
+    return originated_from_service_worker_;
   }
-  void set_lofi_state(LoFiState lofi_state) {
-    lofi_state_ = lofi_state;
+  void set_originated_from_service_worker(bool originated_from_service_worker) {
+    originated_from_service_worker_ = originated_from_service_worker;
   }
   // |custom_user_agent| is used to communicate an overriding custom user agent
   // to |RenderViewImpl::willSendRequest()|; set to a null string to indicate no
@@ -112,20 +120,42 @@ class CONTENT_EXPORT RequestExtraData
 
   // PlzNavigate: |stream_override| is used to override certain parameters of
   // navigation requests.
-  scoped_ptr<StreamOverrideParameters> TakeStreamOverrideOwnership() {
-    return stream_override_.Pass();
+  std::unique_ptr<StreamOverrideParameters> TakeStreamOverrideOwnership() {
+    return std::move(stream_override_);
   }
 
   void set_stream_override(
-      scoped_ptr<StreamOverrideParameters> stream_override) {
-    stream_override_ = stream_override.Pass();
+      std::unique_ptr<StreamOverrideParameters> stream_override) {
+    stream_override_ = std::move(stream_override);
   }
+
+  bool initiated_in_secure_context() const {
+    return initiated_in_secure_context_;
+  }
+  void set_initiated_in_secure_context(bool secure) {
+    initiated_in_secure_context_ = secure;
+  }
+
+  // The request is a prefetch and should use LOAD_PREFETCH network flags.
+  bool is_prefetch() const { return is_prefetch_; }
+  void set_is_prefetch(bool prefetch) { is_prefetch_ = prefetch; }
+
+  // The request is downloaded to the network cache, but not rendered or
+  // executed. The renderer will see this as an aborted request.
+  bool download_to_network_cache_only() const {
+    return download_to_network_cache_only_;
+  }
+  void set_download_to_network_cache_only(bool download_to_cache) {
+    download_to_network_cache_only_ = download_to_cache;
+  }
+
+  void CopyToResourceRequest(ResourceRequest* request) const;
 
  private:
   blink::WebPageVisibilityState visibility_state_;
   int render_frame_id_;
   bool is_main_frame_;
-  GURL frame_origin_;
+  url::Origin frame_origin_;
   bool parent_is_main_frame_;
   int parent_render_frame_id_;
   bool allow_download_;
@@ -134,10 +164,13 @@ class CONTENT_EXPORT RequestExtraData
   int transferred_request_child_id_;
   int transferred_request_request_id_;
   int service_worker_provider_id_;
+  bool originated_from_service_worker_;
   blink::WebString custom_user_agent_;
   blink::WebString requested_with_;
-  scoped_ptr<StreamOverrideParameters> stream_override_;
-  LoFiState lofi_state_;
+  std::unique_ptr<StreamOverrideParameters> stream_override_;
+  bool initiated_in_secure_context_;
+  bool is_prefetch_;
+  bool download_to_network_cache_only_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestExtraData);
 };

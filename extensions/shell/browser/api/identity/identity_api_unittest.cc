@@ -4,9 +4,10 @@
 
 #include "extensions/shell/browser/api/identity/identity_api.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/api_unittest.h"
@@ -25,9 +26,9 @@ class MockShellOAuth2TokenService : public ShellOAuth2TokenService {
   ~MockShellOAuth2TokenService() override {}
 
   // OAuth2TokenService:
-  scoped_ptr<Request> StartRequest(const std::string& account_id,
-                                   const ScopeSet& scopes,
-                                   Consumer* consumer) override {
+  std::unique_ptr<Request> StartRequest(const std::string& account_id,
+                                        const ScopeSet& scopes,
+                                        Consumer* consumer) override {
     // Immediately return success.
     consumer->OnGetTokenSuccess(nullptr, "logged-in-user-token", base::Time());
     return nullptr;
@@ -65,18 +66,20 @@ class IdentityApiTest : public ApiUnitTest {
     set_extension(
         ExtensionBuilder()
             .SetManifest(
-                 DictionaryBuilder()
-                     .Set("name", "Test")
-                     .Set("version", "1.0")
-                     .Set(
-                         "oauth2",
+                DictionaryBuilder()
+                    .Set("name", "Test")
+                    .Set("version", "1.0")
+                    .Set("oauth2",
                          DictionaryBuilder()
                              .Set("client_id",
                                   "123456.apps.googleusercontent.com")
-                             .Set(
-                                 "scopes",
-                                 ListBuilder().Append(
-                                     "https://www.googleapis.com/auth/drive"))))
+                             .Set("scopes",
+                                  ListBuilder()
+                                      .Append("https://www.googleapis.com/"
+                                              "auth/drive")
+                                      .Build())
+                             .Build())
+                    .Build())
             .SetLocation(Manifest::UNPACKED)
             .Build());
   }
@@ -105,7 +108,8 @@ TEST_F(IdentityApiTest, GetAuthToken) {
   function->SetMintTokenFlowForTesting(new MockOAuth2MintTokenFlow(function));
 
   // Function succeeds and returns a token (for its callback).
-  scoped_ptr<base::Value> result = RunFunctionAndReturnValue(function, "[{}]");
+  std::unique_ptr<base::Value> result =
+      RunFunctionAndReturnValue(function, "[{}]");
   ASSERT_TRUE(result.get());
   std::string value;
   result->GetAsString(&value);
@@ -119,7 +123,7 @@ TEST_F(IdentityApiTest, RemoveCachedAuthToken) {
   MockShellOAuth2TokenService token_service;
 
   // Function succeeds and returns nothing (for its callback).
-  scoped_ptr<base::Value> result = RunFunctionAndReturnValue(
+  std::unique_ptr<base::Value> result = RunFunctionAndReturnValue(
       new IdentityRemoveCachedAuthTokenFunction, "[{}]");
   EXPECT_FALSE(result.get());
 }

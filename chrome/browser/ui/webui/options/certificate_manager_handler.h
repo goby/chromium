@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_CERTIFICATE_MANAGER_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_CERTIFICATE_MANAGER_HANDLER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/certificate_manager_model.h"
@@ -80,14 +81,15 @@ class CertificateManagerHandler
   void ExportPersonalFileWritten(const int* write_errno,
                                  const int* bytes_written);
 
-  // Import from PKCS #12 file.  The sequence goes like:
+  // Import from PKCS #12 or cert file.  The sequence goes like:
   //  1. user click on import button -> StartImportPersonal -> launches file
   //  selector
-  //  2. user selects file -> ImportPersonalFileSelected -> launches password
-  //  dialog
-  //  3. user enters password -> ImportPersonalPasswordSelected -> starts async
+  //  2. user selects file -> ImportPersonalFileSelected -> starts async
   //  read operation
-  //  4. read operation completes -> ImportPersonalFileRead -> unlock slot
+  //  3. read operation completes -> ImportPersonalFileRead ->
+  //    If file is PFX -> launches password dialog, goto step 4
+  //    Else -> import as certificate, goto step 6
+  //  4. user enters password -> ImportPersonalPasswordSelected -> unlock slot
   //  5. slot unlocked -> ImportPersonalSlotUnlocked attempts to
   //  import with previously entered password
   //  6a. if import succeeds -> ImportExportCleanup
@@ -95,8 +97,8 @@ class CertificateManagerHandler
   //  TODO(mattm): allow retrying with different password
   void StartImportPersonal(const base::ListValue* args);
   void ImportPersonalFileSelected(const base::FilePath& path);
-  void ImportPersonalPasswordSelected(const base::ListValue* args);
   void ImportPersonalFileRead(const int* read_errno, const std::string* data);
+  void ImportPersonalPasswordSelected(const base::ListValue* args);
   void ImportPersonalSlotUnlocked();
 
   // Import Server certificates from file.  Sequence goes like:
@@ -130,7 +132,7 @@ class CertificateManagerHandler
 
   // Model initialization methods.
   void OnCertificateManagerModelCreated(
-      scoped_ptr<CertificateManagerModel> model);
+      std::unique_ptr<CertificateManagerModel> model);
   void CertificateManagerModelReady();
 
   // Populate the trees in all the tabs.
@@ -163,7 +165,7 @@ class CertificateManagerHandler
   bool show_certs_in_modal_dialog_;
   // The Certificates Manager model
   bool requested_certificate_manager_model_;
-  scoped_ptr<CertificateManagerModel> certificate_manager_model_;
+  std::unique_ptr<CertificateManagerModel> certificate_manager_model_;
 
   // For multi-step import or export processes, we need to store the path,
   // password, etc the user chose while we wait for them to enter a password,
@@ -180,7 +182,7 @@ class CertificateManagerHandler
   base::CancelableTaskTracker tracker_;
   scoped_refptr<FileAccessProvider> file_access_provider_;
 
-  scoped_ptr<CertIdMap> cert_id_map_;
+  std::unique_ptr<CertIdMap> cert_id_map_;
 
   base::WeakPtrFactory<CertificateManagerHandler> weak_ptr_factory_;
 

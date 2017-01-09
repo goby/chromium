@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/global_error/global_error_service.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -70,7 +72,7 @@ class MenuError : public BaseError {
 
 // Test adding errors to the global error service.
 TEST(GlobalErrorServiceTest, AddError) {
-  scoped_ptr<GlobalErrorService> service(new GlobalErrorService(NULL));
+  std::unique_ptr<GlobalErrorService> service(new GlobalErrorService(NULL));
   EXPECT_EQ(0u, service->errors().size());
 
   BaseError* error1 = new BaseError;
@@ -92,7 +94,7 @@ TEST(GlobalErrorServiceTest, AddError) {
 
 // Test removing errors from the global error service.
 TEST(GlobalErrorServiceTest, RemoveError) {
-  scoped_ptr<GlobalErrorService> service(new GlobalErrorService(NULL));
+  std::unique_ptr<GlobalErrorService> service(new GlobalErrorService(NULL));
   BaseError error1;
   service->AddGlobalError(&error1);
   BaseError error2;

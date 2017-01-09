@@ -4,16 +4,17 @@
 
 #include "chrome/browser/ui/webui/options/language_options_handler.h"
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -21,6 +22,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -102,12 +104,13 @@ base::ListValue* LanguageOptionsHandler::GetLanguageList() {
     bool has_rtl_chars = base::i18n::StringContainsStrongRTLChars(display_name);
     std::string directionality = has_rtl_chars ? "rtl" : "ltr";
 
-    base::DictionaryValue* dictionary = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> dictionary(
+        new base::DictionaryValue());
     dictionary->SetString("code",  pair.first);
     dictionary->SetString("displayName", adjusted_display_name);
     dictionary->SetString("textDirection", directionality);
     dictionary->SetString("nativeDisplayName", adjusted_native_display_name);
-    language_list->Append(dictionary);
+    language_list->Append(std::move(dictionary));
   }
 
   return language_list;

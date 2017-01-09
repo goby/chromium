@@ -6,13 +6,13 @@
 #define CHROME_BROWSER_COMPONENT_UPDATER_PNACL_COMPONENT_INSTALLER_H_
 
 #include <list>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/version.h"
 #include "components/update_client/update_client.h"
 
@@ -43,8 +43,9 @@ class PnaclComponentInstaller : public update_client::CrxInstaller {
 
   // ComponentInstaller implementation:
   void OnUpdateError(int error) override;
-  bool Install(const base::DictionaryValue& manifest,
-               const base::FilePath& unpack_path) override;
+  update_client::CrxInstaller::Result Install(
+      const base::DictionaryValue& manifest,
+      const base::FilePath& unpack_path) override;
   bool GetInstalledFile(const std::string& file,
                         base::FilePath* installed_file) override;
   bool Uninstall() override;
@@ -73,6 +74,9 @@ class PnaclComponentInstaller : public update_client::CrxInstaller {
 
  private:
   ~PnaclComponentInstaller() override;
+
+  bool DoInstall(const base::DictionaryValue& manifest,
+                 const base::FilePath& unpack_path);
 
   base::Version current_version_;
   std::string current_fingerprint_;

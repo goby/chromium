@@ -7,12 +7,15 @@
 #import <UIKit/UIKit.h>
 #include <limits>
 
-#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 bool UseRTLLayout() {
-  return base::i18n::IsRTL() && base::ios::IsRunningOnIOS9OrLater();
+  return base::i18n::IsRTL();
 }
 
 base::i18n::TextDirection LayoutDirection() {
@@ -121,7 +124,7 @@ LayoutRect LayoutRectGetLeadingLayout(LayoutRect layout) {
   LayoutRect leadingLayout;
   leadingLayout.position.leading = 0;
   leadingLayout.boundingWidth = layout.boundingWidth;
-  leadingLayout.position.originY = leadingLayout.position.originY;
+  leadingLayout.position.originY = layout.position.originY;
   leadingLayout.size = CGSizeMake(layout.position.leading, layout.size.height);
   return leadingLayout;
 }
@@ -131,7 +134,7 @@ LayoutRect LayoutRectGetTrailingLayout(LayoutRect layout) {
   CGFloat trailing = LayoutRectGetTrailingEdge(layout);
   leadingLayout.position.leading = trailing;
   leadingLayout.boundingWidth = layout.boundingWidth;
-  leadingLayout.position.originY = leadingLayout.position.originY;
+  leadingLayout.position.originY = layout.position.originY;
   leadingLayout.size =
       CGSizeMake((layout.boundingWidth - trailing), layout.size.height);
   return leadingLayout;
@@ -231,15 +234,13 @@ CGFloat CGRectGetTrailingEdge(CGRect rect) {
 }
 
 UIViewAutoresizing UIViewAutoresizingFlexibleLeadingMargin() {
-  return base::i18n::IsRTL() && base::ios::IsRunningOnIOS9OrLater()
-             ? UIViewAutoresizingFlexibleRightMargin
-             : UIViewAutoresizingFlexibleLeftMargin;
+  return base::i18n::IsRTL() ? UIViewAutoresizingFlexibleRightMargin
+                             : UIViewAutoresizingFlexibleLeftMargin;
 }
 
 UIViewAutoresizing UIViewAutoresizingFlexibleTrailingMargin() {
-  return base::i18n::IsRTL() && base::ios::IsRunningOnIOS9OrLater()
-             ? UIViewAutoresizingFlexibleLeftMargin
-             : UIViewAutoresizingFlexibleRightMargin;
+  return base::i18n::IsRTL() ? UIViewAutoresizingFlexibleLeftMargin
+                             : UIViewAutoresizingFlexibleRightMargin;
 }
 
 UIEdgeInsets UIEdgeInsetsMakeUsingDirection(

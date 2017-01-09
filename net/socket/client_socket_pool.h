@@ -6,12 +6,11 @@
 #define NET_SOCKET_CLIENT_SOCKET_POOL_H_
 
 #include <deque>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/template_util.h"
 #include "base/time/time.h"
 #include "net/base/completion_callback.h"
 #include "net/base/load_states.h"
@@ -26,6 +25,7 @@ class DictionaryValue;
 namespace net {
 
 class ClientSocketHandle;
+class NetLogWithSource;
 class StreamSocket;
 
 // ClientSocketPools are layered. This defines an interface for lower level
@@ -61,11 +61,14 @@ class NET_EXPORT LowerLayeredPool {
 // A ClientSocketPool is used to restrict the number of sockets open at a time.
 // It also maintains a list of idle persistent sockets.
 //
+// Subclasses must also have an inner class SocketParams which is
+// the type for the |params| argument in RequestSocket() and
+// RequestSockets() below.
 class NET_EXPORT ClientSocketPool : public LowerLayeredPool {
  public:
-  // Subclasses must also have an inner class SocketParams which is
-  // the type for the |params| argument in RequestSocket() and
-  // RequestSockets() below.
+  // Indicates whether or not a request for a socket should respect the
+  // SocketPool's global and per-group socket limits.
+  enum class RespectLimits { DISABLED, ENABLED };
 
   // Requests a connected socket for a group_name.
   //
@@ -96,12 +99,15 @@ class NET_EXPORT ClientSocketPool : public LowerLayeredPool {
   // client of completion.
   //
   // Profiling information for the request is saved to |net_log| if non-NULL.
+  //
+  // If |respect_limits| is DISABLED, priority must be HIGHEST.
   virtual int RequestSocket(const std::string& group_name,
                             const void* params,
                             RequestPriority priority,
+                            RespectLimits respect_limits,
                             ClientSocketHandle* handle,
                             const CompletionCallback& callback,
-                            const BoundNetLog& net_log) = 0;
+                            const NetLogWithSource& net_log) = 0;
 
   // RequestSockets is used to request that |num_sockets| be connected in the
   // connection group for |group_name|.  If the connection group already has
@@ -116,7 +122,7 @@ class NET_EXPORT ClientSocketPool : public LowerLayeredPool {
   virtual void RequestSockets(const std::string& group_name,
                               const void* params,
                               int num_sockets,
-                              const BoundNetLog& net_log) = 0;
+                              const NetLogWithSource& net_log) = 0;
 
   // Called to cancel a RequestSocket call that returned ERR_IO_PENDING.  The
   // same handle parameter must be passed to this method as was passed to the
@@ -134,7 +140,7 @@ class NET_EXPORT ClientSocketPool : public LowerLayeredPool {
   // change when it flushes, so it can use this |id| to discard sockets with
   // mismatched ids.
   virtual void ReleaseSocket(const std::string& group_name,
-                             scoped_ptr<StreamSocket> socket,
+                             std::unique_ptr<StreamSocket> socket,
                              int id) = 0;
 
   // This flushes all state from the ClientSocketPool.  This means that all
@@ -161,7 +167,7 @@ class NET_EXPORT ClientSocketPool : public LowerLayeredPool {
   // DictionaryValue.
   // If |include_nested_pools| is true, the states of any nested
   // ClientSocketPools will be included.
-  virtual scoped_ptr<base::DictionaryValue> GetInfoAsValue(
+  virtual std::unique_ptr<base::DictionaryValue> GetInfoAsValue(
       const std::string& name,
       const std::string& type,
       bool include_nested_pools) const = 0;
@@ -192,7 +198,7 @@ void RequestSocketsForPool(
     const std::string& group_name,
     const scoped_refptr<typename PoolType::SocketParams>& params,
     int num_sockets,
-    const BoundNetLog& net_log) {
+    const NetLogWithSource& net_log) {
   pool->RequestSockets(group_name, &params, num_sockets, net_log);
 }
 

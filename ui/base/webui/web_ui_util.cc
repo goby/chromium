@@ -13,6 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -36,9 +37,11 @@ std::string GetBitmapDataUrl(const SkBitmap& bitmap) {
                "width", bitmap.width(), "height", bitmap.height());
   std::vector<unsigned char> output;
   gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false, &output);
-  std::string str_url;
-  str_url.insert(str_url.end(), output.begin(), output.end());
+  return GetPngDataUrl(output.data(), output.size());
+}
 
+std::string GetPngDataUrl(const unsigned char* data, size_t size) {
+  std::string str_url(reinterpret_cast<const char*>(data), size);
   base::Base64Encode(str_url, &str_url);
   str_url.insert(0, "data:image/png;base64,");
   return str_url;
@@ -88,9 +91,10 @@ bool ParseScaleFactor(const base::StringPiece& identifier,
 void ParsePathAndScale(const GURL& url,
                        std::string* path,
                        float* scale_factor) {
-  *path = net::UnescapeURLComponent(url.path().substr(1),
-                                    (net::UnescapeRule::URL_SPECIAL_CHARS |
-                                     net::UnescapeRule::SPACES));
+  *path = net::UnescapeURLComponent(
+      url.path().substr(1),
+      net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+          net::UnescapeRule::SPACES);
   if (scale_factor)
     *scale_factor = 1.0f;
 
@@ -119,19 +123,26 @@ void SetLoadTimeDataDefaults(const std::string& app_locale,
   localized_strings->SetString("textdirection", GetTextDirection());
 }
 
-std::string GetWebUiCssTextDefaults() {
-  std::map<base::StringPiece, std::string> placeholders;
+std::string GetWebUiCssTextDefaults(base::StringPiece css_template) {
+  ui::TemplateReplacements placeholders;
   placeholders["textDirection"] = GetTextDirection();
   placeholders["fontFamily"] = GetFontFamily();
   placeholders["fontSize"] = GetFontSize();
+  return ui::ReplaceTemplateExpressions(css_template, placeholders);
+}
 
+std::string GetWebUiCssTextDefaults() {
   const ui::ResourceBundle& resource_bundle =
       ui::ResourceBundle::GetSharedInstance();
-  const std::string& css_template =
-      resource_bundle.GetRawDataResource(IDR_WEBUI_CSS_TEXT_DEFAULTS)
-          .as_string();
+  return GetWebUiCssTextDefaults(
+      resource_bundle.GetRawDataResource(IDR_WEBUI_CSS_TEXT_DEFAULTS));
+}
 
-  return ui::ReplaceTemplateExpressions(css_template, placeholders);
+std::string GetWebUiCssTextDefaultsMd() {
+  const ui::ResourceBundle& resource_bundle =
+      ui::ResourceBundle::GetSharedInstance();
+  return GetWebUiCssTextDefaults(
+      resource_bundle.GetRawDataResource(IDR_WEBUI_CSS_TEXT_DEFAULTS_MD));
 }
 
 void AppendWebUiCssTextDefaults(std::string* html) {

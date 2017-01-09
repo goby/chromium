@@ -4,13 +4,13 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/core/browser/autocomplete_history_manager.h"
 #include "components/autofill/core/browser/autofill_external_delegate.h"
 #include "components/autofill/core/browser/autofill_manager.h"
@@ -19,6 +19,7 @@
 #include "components/autofill/core/browser/test_autofill_driver.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/common/form_data.h"
+#include "components/prefs/pref_service.h"
 #include "components/webdata_services/web_data_service_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -56,7 +57,7 @@ class MockAutofillClient : public TestAutofillClient {
 
  private:
   scoped_refptr<MockWebDataService> web_data_service_;
-  scoped_ptr<PrefService> prefs_;
+  std::unique_ptr<PrefService> prefs_;
 
   DISALLOW_COPY_AND_ASSIGN(MockAutofillClient);
 };
@@ -79,9 +80,9 @@ class AutocompleteHistoryManagerTest : public testing::Test {
 
   base::MessageLoop message_loop_;
   scoped_refptr<MockWebDataService> web_data_service_;
-  scoped_ptr<AutocompleteHistoryManager> autocomplete_manager_;
-  scoped_ptr<AutofillDriver> autofill_driver_;
-  scoped_ptr<MockAutofillClient> autofill_client_;
+  std::unique_ptr<AutocompleteHistoryManager> autocomplete_manager_;
+  std::unique_ptr<AutofillDriver> autofill_driver_;
+  std::unique_ptr<MockAutofillClient> autofill_client_;
 };
 
 // Tests that credit card numbers are not sent to the WebDatabase to be saved.
@@ -221,11 +222,9 @@ TEST_F(AutocompleteHistoryManagerTest, ExternalDelegate) {
   TestAutocompleteHistoryManager autocomplete_history_manager(
       autofill_driver_.get(), autofill_client_.get());
 
-  scoped_ptr<AutofillManager> autofill_manager(
-      new AutofillManager(autofill_driver_.get(),
-                          autofill_client_.get(),
-                          "en-US",
-                          AutofillManager::ENABLE_AUTOFILL_DOWNLOAD_MANAGER));
+  std::unique_ptr<AutofillManager> autofill_manager(new AutofillManager(
+      autofill_driver_.get(), autofill_client_.get(), "en-US",
+      AutofillManager::ENABLE_AUTOFILL_DOWNLOAD_MANAGER));
 
   MockAutofillExternalDelegate external_delegate(autofill_manager.get(),
                                                  autofill_driver_.get());
@@ -241,11 +240,9 @@ TEST_F(AutocompleteHistoryManagerTest, NoAutocompleteSuggestionsForTextarea) {
   TestAutocompleteHistoryManager autocomplete_history_manager(
       autofill_driver_.get(), autofill_client_.get());
 
-  scoped_ptr<AutofillManager> autofill_manager(
-      new AutofillManager(autofill_driver_.get(),
-                          autofill_client_.get(),
-                          "en-US",
-                          AutofillManager::ENABLE_AUTOFILL_DOWNLOAD_MANAGER));
+  std::unique_ptr<AutofillManager> autofill_manager(new AutofillManager(
+      autofill_driver_.get(), autofill_client_.get(), "en-US",
+      AutofillManager::ENABLE_AUTOFILL_DOWNLOAD_MANAGER));
 
   MockAutofillExternalDelegate external_delegate(autofill_manager.get(),
                                                  autofill_driver_.get());

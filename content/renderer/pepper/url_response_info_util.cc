@@ -4,18 +4,20 @@
 
 #include "content/renderer/pepper/url_response_info_util.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/pepper_file_ref_renderer_host.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
 #include "ipc/ipc_message.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/shared_impl/url_response_info_data.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
+#include "third_party/WebKit/public/platform/FilePathConversion.h"
 #include "third_party/WebKit/public/platform/WebHTTPHeaderVisitor.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
@@ -31,6 +33,9 @@ namespace {
 
 class HeaderFlattener : public WebHTTPHeaderVisitor {
  public:
+  HeaderFlattener() {}
+  ~HeaderFlattener() override {}
+
   const std::string& buffer() const { return buffer_; }
 
   void visitHeader(const WebString& name, const WebString& value) override {
@@ -75,7 +80,7 @@ void DataFromWebURLResponse(RendererPpapiHostImpl* host_impl,
                             const WebURLResponse& response,
                             const DataFromWebURLResponseCallback& callback) {
   ppapi::URLResponseInfoData data;
-  data.url = response.url().spec();
+  data.url = response.url().string().utf8();
   data.status_code = response.httpStatusCode();
   data.status_text = response.httpStatusText().utf8();
   if (IsRedirect(data.status_code)) {
@@ -89,14 +94,14 @@ void DataFromWebURLResponse(RendererPpapiHostImpl* host_impl,
 
   WebString file_path = response.downloadFilePath();
   if (!file_path.isEmpty()) {
-    base::FilePath external_path = base::FilePath::FromUTF16Unsafe(file_path);
+    base::FilePath external_path = blink::WebStringToFilePath(file_path);
     // TODO(teravest): Write a utility function to create resource hosts in the
     // renderer and browser.
     PepperFileRefRendererHost* renderer_host =
         new PepperFileRefRendererHost(host_impl, pp_instance, 0, external_path);
     int renderer_pending_host_id =
         host_impl->GetPpapiHost()->AddPendingResourceHost(
-            scoped_ptr<ppapi::host::ResourceHost>(renderer_host));
+            std::unique_ptr<ppapi::host::ResourceHost>(renderer_host));
 
     std::vector<IPC::Message> create_msgs;
     create_msgs.push_back(PpapiHostMsg_FileRef_CreateForRawFS(external_path));

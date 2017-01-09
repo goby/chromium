@@ -2,17 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "ui/gfx/switches.h"
 
 namespace switches {
 
-// Overrides the device scale factor for the browser UI and the contents.
-const char kForceDeviceScaleFactor[] = "force-device-scale-factor";
-
 #if defined(OS_WIN)
-// Disables the DirectWrite font rendering system on windows.
-const char kDisableDirectWrite[] = "disable-direct-write";
-
 // Disables DirectWrite font rendering for general UI elements.
 const char kDisableDirectWriteForUI[] = "disable-directwrite-for-ui";
 #endif

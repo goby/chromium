@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("minidump") {
+static_library("minidump") {
   deps = [
     "../compat",
     "../snapshot",
@@ -57,6 +57,10 @@ source_set("minidump") {
     "minidump_thread_id_map.h",
     "minidump_thread_writer.cc",
     "minidump_thread_writer.h",
+    "minidump_unloaded_module_writer.cc",
+    "minidump_unloaded_module_writer.h",
+    "minidump_user_stream_writer.cc",
+    "minidump_user_stream_writer.h",
     "minidump_writable.cc",
     "minidump_writable.h",
     "minidump_writer_util.cc",

@@ -4,10 +4,15 @@
 
 #include "chrome/browser/sync/test/integration/sync_extension_helper.h"
 
+#include <list>
+#include <memory>
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -20,6 +25,7 @@
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "components/crx_file/id_util.h"
+#include "components/sync/model/string_ordinal.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -28,7 +34,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_constants.h"
-#include "sync/api/string_ordinal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using extensions::Extension;
@@ -103,7 +108,7 @@ std::vector<std::string> SyncExtensionHelper::GetInstalledExtensionNames(
     Profile* profile) const {
   std::vector<std::string> names;
 
-  scoped_ptr<const extensions::ExtensionSet> extensions(
+  std::unique_ptr<const extensions::ExtensionSet> extensions(
       extensions::ExtensionRegistry::Get(profile)
           ->GenerateInstalledExtensionsSet());
   for (extensions::ExtensionSet::const_iterator it = extensions->begin();
@@ -184,9 +189,9 @@ void SyncExtensionHelper::InstallExtensionsPendingForSync(Profile* profile) {
   pending_extension_manager->GetPendingIdsForUpdateCheck(&pending_crx_ids);
 
   std::list<std::string>::const_iterator iter;
-  const extensions::PendingExtensionInfo* info = NULL;
+  const extensions::PendingExtensionInfo* info = nullptr;
   for (iter = pending_crx_ids.begin(); iter != pending_crx_ids.end(); ++iter) {
-    ASSERT_TRUE((info = pending_extension_manager->GetById(*iter)));
+    ASSERT_TRUE(info = pending_extension_manager->GetById(*iter));
     if (!info->is_from_sync())
       continue;
 
@@ -211,7 +216,7 @@ SyncExtensionHelper::ExtensionStateMap
 
   ExtensionStateMap extension_state_map;
 
-  scoped_ptr<const extensions::ExtensionSet> extensions(
+  std::unique_ptr<const extensions::ExtensionSet> extensions(
       extensions::ExtensionRegistry::Get(profile)
           ->GenerateInstalledExtensionsSet());
 
@@ -276,11 +281,7 @@ bool SyncExtensionHelper::ExtensionStatesMatch(
       DVLOG(1) << "Extensions for profile " << profile1->GetDebugName()
                << " do not match profile " << profile2->GetDebugName();
       return false;
-    } else if (!sync_datatype_helper::test()->UsingExternalServers() &&
-               !it1->second.Equals(it2->second)) {
-      // If this test is run against real backend servers then we do not expect
-      // to install pending extensions. So, we don't check equality of
-      // ExtensionState of each extension per profile.
+    } else if (!it1->second.Equals(it2->second)) {
       DVLOG(1) << "Extension states for profile " << profile1->GetDebugName()
                << " do not match profile " << profile2->GetDebugName();
       return false;
@@ -339,39 +340,41 @@ scoped_refptr<Extension> CreateExtension(const base::FilePath& base_dir,
       break;
     case Manifest::TYPE_THEME:
       source.Set(extensions::manifest_keys::kTheme,
-                 new base::DictionaryValue());
+                 base::MakeUnique<base::DictionaryValue>());
       break;
     case Manifest::TYPE_HOSTED_APP:
     case Manifest::TYPE_LEGACY_PACKAGED_APP:
-      source.Set(extensions::manifest_keys::kApp, new base::DictionaryValue());
+      source.Set(extensions::manifest_keys::kApp,
+                 base::MakeUnique<base::DictionaryValue>());
       source.SetString(extensions::manifest_keys::kLaunchWebURL,
                        "http://www.example.com");
       break;
     case Manifest::TYPE_PLATFORM_APP: {
-      source.Set(extensions::manifest_keys::kApp, new base::DictionaryValue());
+      source.Set(extensions::manifest_keys::kApp,
+                 base::MakeUnique<base::DictionaryValue>());
       source.Set(extensions::manifest_keys::kPlatformAppBackground,
-                 new base::DictionaryValue());
-      base::ListValue* scripts = new base::ListValue();
+                 base::MakeUnique<base::DictionaryValue>());
+      auto scripts = base::MakeUnique<base::ListValue>();
       scripts->AppendString("main.js");
       source.Set(extensions::manifest_keys::kPlatformAppBackgroundScripts,
-                 scripts);
+                 std::move(scripts));
       break;
     }
     default:
       ADD_FAILURE();
-      return NULL;
+      return nullptr;
   }
   const base::FilePath sub_dir = base::FilePath().AppendASCII(name);
   base::FilePath extension_dir;
   if (!base::PathExists(base_dir) &&
       !base::CreateDirectory(base_dir)) {
     ADD_FAILURE();
-    return NULL;
+    return nullptr;
   }
   if (!base::CreateTemporaryDirInDir(base_dir, sub_dir.value(),
                                      &extension_dir)) {
     ADD_FAILURE();
-    return NULL;
+    return nullptr;
   }
   std::string error;
   scoped_refptr<Extension> extension =
@@ -379,19 +382,19 @@ scoped_refptr<Extension> CreateExtension(const base::FilePath& base_dir,
                         Extension::NO_FLAGS, &error);
   if (!error.empty()) {
     ADD_FAILURE() << error;
-    return NULL;
+    return nullptr;
   }
   if (!extension.get()) {
     ADD_FAILURE();
-    return NULL;
+    return nullptr;
   }
   if (extension->name() != name) {
     EXPECT_EQ(name, extension->name());
-    return NULL;
+    return nullptr;
   }
   if (extension->GetType() != type) {
     EXPECT_EQ(type, extension->GetType());
-    return NULL;
+    return nullptr;
   }
   return extension;
 }
@@ -402,12 +405,12 @@ scoped_refptr<Extension> SyncExtensionHelper::GetExtension(
     Profile* profile, const std::string& name, Manifest::Type type) {
   if (name.empty()) {
     ADD_FAILURE();
-    return NULL;
+    return nullptr;
   }
   ProfileExtensionNameMap::iterator it = profile_extensions_.find(profile);
   if (it == profile_extensions_.end()) {
     ADD_FAILURE();
-    return NULL;
+    return nullptr;
   }
   ExtensionNameMap::const_iterator it2 = it->second.find(name);
   if (it2 != it->second.end()) {
@@ -422,12 +425,12 @@ scoped_refptr<Extension> SyncExtensionHelper::GetExtension(
                       type);
   if (!extension.get()) {
     ADD_FAILURE();
-    return NULL;
+    return nullptr;
   }
   const std::string& expected_id = crx_file::id_util::GenerateId(name);
   if (extension->id() != expected_id) {
     EXPECT_EQ(expected_id, extension->id());
-    return NULL;
+    return nullptr;
   }
   DVLOG(2) << "created extension with name = "
            << name << ", id = " << expected_id;

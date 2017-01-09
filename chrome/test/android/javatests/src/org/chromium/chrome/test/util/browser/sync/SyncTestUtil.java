@@ -6,11 +6,14 @@ package org.chromium.chrome.test.util.browser.sync;
 
 import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 
-import android.accounts.Account;
 import android.content.Context;
 import android.util.Pair;
 
 import junit.framework.Assert;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.invalidation.InvalidationServiceFactory;
@@ -18,10 +21,6 @@ import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.sync.signin.ChromeSigninController;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -42,16 +41,59 @@ public final class SyncTestUtil {
     private SyncTestUtil() {}
 
     /**
-     * Verifies that sync is signed out.
+     * Returns whether sync is requested.
      */
-    public static void verifySyncIsSignedOut(Context context) {
-        Assert.assertTrue(isSyncOff());
+    public static boolean isSyncRequested() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return ProfileSyncService.get().isSyncRequested();
+            }
+        });
+    }
+
+    /**
+     * Returns whether sync is active.
+     */
+    public static boolean isSyncActive() {
+        return ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return ProfileSyncService.get().isSyncActive();
+            }
+        });
+    }
+
+    /**
+     * Waits for sync to become active.
+     */
+    public static void waitForSyncActive() throws InterruptedException {
+        CriteriaHelper.pollUiThread(new Criteria("Timed out waiting for sync to become active.") {
+            @Override
+            public boolean isSatisfied() {
+                return ProfileSyncService.get().isSyncActive();
+            }
+        }, TIMEOUT_MS, INTERVAL_MS);
+    }
+
+    /**
+     * Waits for sync's engine to be initialized.
+     */
+    public static void waitForEngineInitialized() throws InterruptedException {
+        CriteriaHelper.pollUiThread(
+                new Criteria("Timed out waiting for sync's engine to initialize.") {
+                    @Override
+                    public boolean isSatisfied() {
+                        return ProfileSyncService.get().isEngineInitialized();
+                    }
+                },
+                TIMEOUT_MS, INTERVAL_MS);
     }
 
     /**
      * Triggers a sync cycle.
      */
-    public static void triggerSync() throws InterruptedException {
+    public static void triggerSync() {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
@@ -62,12 +104,16 @@ public final class SyncTestUtil {
     }
 
     /**
-     * Triggers a sync and waits till it is complete.
+     * Triggers a sync and tries to wait until it is complete.
+     *
+     * This method polls until *a* sync cycle completes, but there is no guarantee it is the same
+     * one that it triggered. Therefore this method should only be used where it can result in
+     * false positives (e.g. checking that something doesn't sync), not false negatives.
      */
     public static void triggerSyncAndWaitForCompletion() throws InterruptedException {
         final long oldSyncTime = getCurrentSyncTime();
         triggerSync();
-        CriteriaHelper.pollForCriteria(new Criteria(
+        CriteriaHelper.pollInstrumentationThread(new Criteria(
                 "Timed out waiting for sync cycle to complete.") {
             @Override
             public boolean isSatisfied() {
@@ -86,59 +132,11 @@ public final class SyncTestUtil {
     }
 
     /**
-     * Waits for sync to become active.
-     */
-    public static void waitForSyncActive() throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria(
-                "Timed out waiting for sync to become active.") {
-            @Override
-            public boolean isSatisfied() {
-                return ProfileSyncService.get().isSyncActive();
-            }
-        }, TIMEOUT_MS, INTERVAL_MS);
-    }
-
-    /**
-     * Verifies that the sync is active and signed in with the given account.
-     */
-    public static void verifySyncIsActiveForAccount(Context context, Account account)
-            throws InterruptedException {
-        waitForSyncActive();
-        triggerSyncAndWaitForCompletion();
-        verifySignedInWithAccount(context, account);
-    }
-
-    /**
-     * Makes sure that sync is enabled with the correct account.
-     */
-    public static void verifySignedInWithAccount(Context context, Account account) {
-        Assert.assertEquals(account, ChromeSigninController.get(context).getSignedInUser());
-    }
-
-    /**
-     * Verifies that the sync is off but signed in with the account.
-     */
-    public static void verifySyncIsDisabled(Context context, Account account) {
-        Assert.assertTrue("Expected sync to be disabled.", isSyncOff());
-        verifySignedInWithAccount(context, account);
-    }
-
-    private static boolean isSyncOff() {
-        return ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Boolean>() {
-            @Override
-            public Boolean call() {
-                ProfileSyncService syncService = ProfileSyncService.get();
-                return !syncService.isBackendInitialized() && !syncService.isSyncRequested();
-            }
-        });
-    }
-
-    /**
      * Retrieves the local Sync data as a JSONArray via ProfileSyncService.
      *
      * This method blocks until the data is available or until it times out.
      */
-    private static JSONArray getAllNodesAsJsonArray(final Context context) throws JSONException {
+    private static JSONArray getAllNodesAsJsonArray() throws JSONException {
         final Semaphore semaphore = new Semaphore(0);
         final ProfileSyncService.GetAllNodesCallback callback =
                 new ProfileSyncService.GetAllNodesCallback() {
@@ -235,7 +233,7 @@ public final class SyncTestUtil {
      */
     public static List<Pair<String, JSONObject>> getLocalData(
             Context context, String typeString) throws JSONException {
-        JSONArray localData = getAllNodesAsJsonArray(context);
+        JSONArray localData = getAllNodesAsJsonArray();
         JSONArray datatypeNodes = new JSONArray();
         for (int i = 0; i < localData.length(); i++) {
             JSONObject datatypeObject = localData.getJSONObject(i);

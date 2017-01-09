@@ -5,11 +5,13 @@
 #include "chrome/browser/chromeos/policy/cloud_external_data_policy_observer.h"
 
 #include <set>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -113,8 +115,7 @@ void CloudExternalDataPolicyObserver::Delegate::OnExternalDataCleared(
 void CloudExternalDataPolicyObserver::Delegate::OnExternalDataFetched(
     const std::string& policy,
     const std::string& user_id,
-    scoped_ptr<std::string> data) {
-}
+    std::unique_ptr<std::string> data) {}
 
 CloudExternalDataPolicyObserver::Delegate::~Delegate() {
 }
@@ -146,11 +147,6 @@ CloudExternalDataPolicyObserver::CloudExternalDataPolicyObserver(
 CloudExternalDataPolicyObserver::~CloudExternalDataPolicyObserver() {
   if (device_local_account_policy_service_)
     device_local_account_policy_service_->RemoveObserver(this);
-  for (DeviceLocalAccountEntryMap::iterator it =
-           device_local_account_entries_.begin();
-       it != device_local_account_entries_.end(); ++it) {
-    it->second.DeleteOwnedMembers();
-  }
   device_local_account_entries_.clear();
 }
 
@@ -162,12 +158,9 @@ void CloudExternalDataPolicyObserver::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type != chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED) {
-    NOTREACHED();
-    return;
-  }
-  Profile* profile = content::Details<Profile>(details).ptr();
+  DCHECK_EQ(chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED, type);
 
+  Profile* profile = content::Details<Profile>(details).ptr();
   const user_manager::User* user =
       chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
   if (!user) {
@@ -175,8 +168,8 @@ void CloudExternalDataPolicyObserver::Observe(
     return;
   }
 
-  const std::string& user_id = user->email();
-  if (ContainsKey(logged_in_user_observers_, user_id)) {
+  const std::string& user_id = user->GetAccountId().GetUserEmail();
+  if (base::ContainsKey(logged_in_user_observers_, user_id)) {
     NOTREACHED();
     return;
   }
@@ -191,7 +184,7 @@ void CloudExternalDataPolicyObserver::Observe(
 
 void CloudExternalDataPolicyObserver::OnPolicyUpdated(
     const std::string& user_id) {
-  if (ContainsKey(logged_in_user_observers_, user_id)) {
+  if (base::ContainsKey(logged_in_user_observers_, user_id)) {
     // When a device-local account is logged in, a policy change triggers both
     // OnPolicyUpdated() and PolicyServiceObserver::OnPolicyUpdated(). Ignore
     // the former so that the policy change is handled only once.
@@ -220,7 +213,6 @@ void CloudExternalDataPolicyObserver::OnPolicyUpdated(
     DeviceLocalAccountEntryMap::iterator it =
         device_local_account_entries_.find(user_id);
     if (it != device_local_account_entries_.end()) {
-      it->second.DeleteOwnedMembers();
       device_local_account_entries_.erase(it);
       HandleExternalDataPolicyUpdate(user_id, NULL);
     }
@@ -231,8 +223,7 @@ void CloudExternalDataPolicyObserver::OnPolicyUpdated(
   if (map_entry.Equals(*entry))
     return;
 
-  map_entry.DeleteOwnedMembers();
-  map_entry = *entry->DeepCopy();
+  map_entry = entry->DeepCopy();
   HandleExternalDataPolicyUpdate(user_id, entry);
 }
 
@@ -262,9 +253,8 @@ void CloudExternalDataPolicyObserver::RetrieveDeviceLocalAccounts() {
   for (DeviceLocalAccountEntryMap::iterator it =
            device_local_account_entries_.begin();
        it != device_local_account_entries_.end(); ) {
-    if (!ContainsKey(device_local_accounts, it->first)) {
+    if (!base::ContainsKey(device_local_accounts, it->first)) {
       const std::string user_id = it->first;
-      it->second.DeleteOwnedMembers();
       device_local_account_entries_.erase(it++);
       // When a device-local account whose external data reference was set is
       // removed, emit a notification that the external data reference has been
@@ -306,11 +296,11 @@ void CloudExternalDataPolicyObserver::HandleExternalDataPolicyUpdate(
 
 void CloudExternalDataPolicyObserver::OnExternalDataFetched(
     const std::string& user_id,
-    scoped_ptr<std::string> data) {
+    std::unique_ptr<std::string> data) {
   FetchWeakPtrMap::iterator it = fetch_weak_ptrs_.find(user_id);
   DCHECK(it != fetch_weak_ptrs_.end());
   fetch_weak_ptrs_.erase(it);
-  delegate_->OnExternalDataFetched(policy_, user_id, data.Pass());
+  delegate_->OnExternalDataFetched(policy_, user_id, std::move(data));
 }
 
 }  // namespace policy

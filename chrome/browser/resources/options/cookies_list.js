@@ -47,6 +47,9 @@ cr.define('options', function() {
                        ['size', 'label_cache_storage_size'],
                        ['modified', 'label_cache_storage_last_modified']],
     'flash_lso': [['domain', 'label_cookie_domain']],
+    'media_license': [['origin', 'label_media_license_origin'],
+                      ['size', 'label_media_license_size'],
+                      ['modified', 'label_media_license_last_modified']],
   };
 
   /**
@@ -256,6 +259,7 @@ cr.define('options', function() {
         channelIDs: 0,
         serviceWorker: false,
         cacheStorage: false,
+        mediaLicense: false,
       };
       if (this.origin)
         this.origin.collectSummaryInfo(info);
@@ -281,6 +285,8 @@ cr.define('options', function() {
         list.push(loadTimeData.getString('cookie_cache_storage'));
       if (info.flashLSO)
         list.push(loadTimeData.getString('cookie_flash_lso'));
+      if (info.mediaLicense)
+        list.push(loadTimeData.getString('cookie_media_license'));
 
       var text = '';
       for (var i = 0; i < list.length; ++i) {
@@ -415,7 +421,11 @@ cr.define('options', function() {
     /**
      * Remove a cookie tree node from the given index.
      * Both CookiesList and CookieTreeNode implement this API.
-     * @param {number} index The index of the tree node to remove.
+     *
+     * TODO(dbeam): this method now conflicts with HTMLElement#remove(), which
+     * is why the param is optional. Rename.
+     *
+     * @param {number=} index The index of the tree node to remove.
      */
     remove: function(index) {
       if (index < this.children.length) {
@@ -501,6 +511,8 @@ cr.define('options', function() {
           info.cacheStorage = true;
         } else if (this.data.type == 'flash_lso') {
           info.flashLSO = true;
+        } else if (this.data.type == 'media_license') {
+          info.mediaLicense = true;
         }
 
         var apps = this.data.appsProtectingThis;
@@ -741,13 +753,13 @@ cr.define('options', function() {
      * @private
      */
     handleKeyLeftRight_: function(e) {
-      var id = e.keyIdentifier;
+      var id = e.key;
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)
         return;
-      if ((id == 'Left' || id == 'Right') && this.expandedItem) {
+      if ((id == 'ArrowLeft' || id == 'ArrowRight') && this.expandedItem) {
         var cs = this.ownerDocument.defaultView.getComputedStyle(this);
         var rtl = cs.direction == 'rtl';
-        if ((!rtl && id == 'Left') || (rtl && id == 'Right'))
+        if ((!rtl && id == 'ArrowLeft') || (rtl && id == 'ArrowRight'))
           this.expandedItem.selectedIndex--;
         else
           this.expandedItem.selectedIndex++;
@@ -849,7 +861,11 @@ cr.define('options', function() {
     /**
      * Remove a cookie tree node from the given index.
      * Both CookiesList and CookieTreeNode implement this API.
-     * @param {number} index The index of the tree node to remove.
+     *
+     * TODO(dbeam): this method now conflicts with HTMLElement#remove(), which
+     * is why the param is optional. Rename.
+     *
+     * @param {number=} index The index of the tree node to remove.
      */
     remove: function(index) {
       if (index < this.dataModel.length)

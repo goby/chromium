@@ -5,12 +5,13 @@
 #ifndef NET_LOG_TEST_NET_LOG_ENTRY_H_
 #define NET_LOG_TEST_NET_LOG_ENTRY_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source.h"
 
 namespace base {
 class DictionaryValue;
@@ -19,7 +20,7 @@ class ListValue;
 
 namespace net {
 
-// TestNetLogEntry is much like NetLog::Entry, except it has its own copy of all
+// TestNetLogEntry is much like NetLogEntry, except it has its own copy of all
 // log data, so a list of entries can be gathered over the course of a test, and
 // then inspected at the end.  It is intended for testing only, and is part of
 // the net_test_support project.
@@ -27,11 +28,11 @@ struct TestNetLogEntry {
   // Ordered set of logged entries.
   typedef std::vector<TestNetLogEntry> List;
 
-  TestNetLogEntry(NetLog::EventType type,
+  TestNetLogEntry(NetLogEventType type,
                   const base::TimeTicks& time,
-                  NetLog::Source source,
-                  NetLog::EventPhase phase,
-                  scoped_ptr<base::DictionaryValue> params);
+                  NetLogSource source,
+                  NetLogEventPhase phase,
+                  std::unique_ptr<base::DictionaryValue> params);
   // Copy constructor needed to store in a std::vector because of the
   // scoped_ptr.
   TestNetLogEntry(const TestNetLogEntry& entry);
@@ -58,11 +59,11 @@ struct TestNetLogEntry {
   // parameters.
   std::string GetParamsJson() const;
 
-  NetLog::EventType type;
+  NetLogEventType type;
   base::TimeTicks time;
-  NetLog::Source source;
-  NetLog::EventPhase phase;
-  scoped_ptr<base::DictionaryValue> params;
+  NetLogSource source;
+  NetLogEventPhase phase;
+  std::unique_ptr<base::DictionaryValue> params;
 };
 
 }  // namespace net

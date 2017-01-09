@@ -5,14 +5,18 @@
 #ifndef MEDIA_FILTERS_DECODER_STREAM_TRAITS_H_
 #define MEDIA_FILTERS_DECODER_STREAM_TRAITS_H_
 
+#include "base/time/time.h"
 #include "media/base/cdm_context.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/pipeline_status.h"
+#include "media/base/video_decoder_config.h"
+#include "media/filters/audio_timestamp_validator.h"
 
 namespace media {
 
 class AudioBuffer;
 class AudioDecoder;
+class CdmContext;
 class DecryptingAudioDecoder;
 class DecryptingVideoDecoder;
 class DemuxerStream;
@@ -20,10 +24,11 @@ class VideoDecoder;
 class VideoFrame;
 
 template <DemuxerStream::Type StreamType>
-struct DecoderStreamTraits {};
+class DecoderStreamTraits {};
 
 template <>
-struct DecoderStreamTraits<DemuxerStream::AUDIO> {
+class MEDIA_EXPORT DecoderStreamTraits<DemuxerStream::AUDIO> {
+ public:
   typedef AudioBuffer OutputType;
   typedef AudioDecoder DecoderType;
   typedef DecryptingAudioDecoder DecryptingDecoderType;
@@ -31,19 +36,34 @@ struct DecoderStreamTraits<DemuxerStream::AUDIO> {
   typedef base::Callback<void(const scoped_refptr<OutputType>&)> OutputCB;
 
   static std::string ToString();
-  static void InitializeDecoder(DecoderType* decoder,
-                                DemuxerStream* stream,
-                                const SetCdmReadyCB& set_cdm_ready_cb,
-                                const InitCB& init_cb,
-                                const OutputCB& output_cb);
-  static bool NeedsBitstreamConversion(DecoderType* decoder) { return false; }
+  static bool NeedsBitstreamConversion(DecoderType* decoder);
   static void ReportStatistics(const StatisticsCB& statistics_cb,
                                int bytes_decoded);
   static scoped_refptr<OutputType> CreateEOSOutput();
+
+  explicit DecoderStreamTraits(const scoped_refptr<MediaLog>& media_log);
+
+  void InitializeDecoder(DecoderType* decoder,
+                         DemuxerStream* stream,
+                         CdmContext* cdm_context,
+                         const InitCB& init_cb,
+                         const OutputCB& output_cb);
+  void OnDecode(const scoped_refptr<DecoderBuffer>& buffer);
+  void OnDecodeDone(const scoped_refptr<OutputType>& buffer);
+  void OnStreamReset(DemuxerStream* stream);
+
+ private:
+  // Validates encoded timestamps match decoded output duration. MEDIA_LOG warns
+  // if timestamp gaps are detected. Sufficiently large gaps can lead to AV sync
+  // drift.
+  std::unique_ptr<AudioTimestampValidator> audio_ts_validator_;
+
+  scoped_refptr<MediaLog> media_log_;
 };
 
 template <>
-struct DecoderStreamTraits<DemuxerStream::VIDEO> {
+class MEDIA_EXPORT DecoderStreamTraits<DemuxerStream::VIDEO> {
+ public:
   typedef VideoFrame OutputType;
   typedef VideoDecoder DecoderType;
   typedef DecryptingVideoDecoder DecryptingDecoderType;
@@ -51,15 +71,24 @@ struct DecoderStreamTraits<DemuxerStream::VIDEO> {
   typedef base::Callback<void(const scoped_refptr<OutputType>&)> OutputCB;
 
   static std::string ToString();
-  static void InitializeDecoder(DecoderType* decoder,
-                                DemuxerStream* stream,
-                                const SetCdmReadyCB& set_cdm_ready_cb,
-                                const InitCB& init_cb,
-                                const OutputCB& output_cb);
   static bool NeedsBitstreamConversion(DecoderType* decoder);
   static void ReportStatistics(const StatisticsCB& statistics_cb,
                                int bytes_decoded);
   static scoped_refptr<OutputType> CreateEOSOutput();
+
+  explicit DecoderStreamTraits(const scoped_refptr<MediaLog>& media_log) {}
+
+  void InitializeDecoder(DecoderType* decoder,
+                         DemuxerStream* stream,
+                         CdmContext* cdm_context,
+                         const InitCB& init_cb,
+                         const OutputCB& output_cb);
+  void OnDecode(const scoped_refptr<DecoderBuffer>& buffer);
+  void OnDecodeDone(const scoped_refptr<OutputType>& buffer) {}
+  void OnStreamReset(DemuxerStream* stream);
+
+ private:
+  base::TimeDelta last_keyframe_timestamp_;
 };
 
 }  // namespace media

@@ -1,9 +1,10 @@
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 <html>
 <head>
-<script src="resources/compatibility.js"></script>
-<script src="resources/audio-testing.js"></script>
 <script src="../resources/js-test.js"></script>
+<script src="resources/compatibility.js"></script>
+<script src="resources/audit-util.js"></script>
+<script src="resources/audio-testing.js"></script>
 <script src="resources/biquad-testing.js"></script>
 </head>
 
@@ -42,16 +43,17 @@ function runTest() {
     shouldThrow("context.createBuffer(0, 1, context.sampleRate)");
     // Invalid sample rate: NotSupportedError
     shouldThrow("context.createBuffer(1, 1, 1)");
+    shouldThrow("context.createBuffer(1, 1, 2999)");
+    shouldThrow("context.createBuffer(1, 1, 384001)");
     shouldThrow("context.createBuffer(1, 1, 1e6)");
     // Check valid values from crbug.com/344375
     shouldNotThrow("context.createBuffer(1, 1, 3000)");
     shouldNotThrow("context.createBuffer(1, 1, 192000)");
+    shouldNotThrow("context.createBuffer(1, 1, 384000)");
     // Invalid number of frames: NotSupportedError
     shouldThrow("context.createBuffer(1, 0, context.sampleRate)");
     // 2-arg createBuffer not allowed.
     shouldThrow("context.createBuffer(new ArrayBuffer(100), true)");
-    // Invalid ArrayBuffer (unspecified error)
-    shouldThrow("context.decodeAudioData(null, function() {}, function () {})");
     // Invalid sources (unspecified error)
     shouldThrow("context.createMediaElementSource(null)");
     shouldThrow("context.createMediaStreamSource(null)");
@@ -265,11 +267,13 @@ function runTest() {
 
     shouldThrow("osc.setPeriodicWave(null)");
 
-    // exponentialRampToValue should throw on non-positive target values.
+    // exponentialRampToValue should throw only for "zero" target values.
     node = context.createGain();
     node.connect(context.destination);
-    shouldThrow("node.gain.exponentialRampToValueAtTime(-1, 0.1)");
+    shouldNotThrow("node.gain.exponentialRampToValueAtTime(-1, 0.1)");
     shouldThrow("node.gain.exponentialRampToValueAtTime(0, 0.1)");
+    // 1e-100 is 0 when converted to a single precision float.
+    shouldThrow("node.gain.exponentialRampToValueAtTime(1e-100, 0.1)");
     // See crbug.com/459391.
     // Math.pow(2, -149) = 1.401298464324817e-45 is the double-float value of the
     // least positive single float number. We do it this way to make sure no round-off or conversion

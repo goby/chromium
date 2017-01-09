@@ -4,6 +4,9 @@
 
 #include "net/cert/nss_profile_filter_chromeos.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "net/cert/x509_certificate.h"
@@ -66,16 +69,17 @@ void NSSProfileFilterChromeOS::Init(crypto::ScopedPK11Slot public_slot,
                                     crypto::ScopedPK11Slot private_slot,
                                     crypto::ScopedPK11Slot system_slot) {
   // crypto::ScopedPK11Slot actually holds a reference counted object.
-  // Because scoped_ptr<T> assignment is a no-op if it already points to
-  // the same pointer, a reference would be leaked because .Pass() does
+  // Because std::unique_ptr<T> assignment is a no-op if it already points to
+  // the same pointer, a reference would be leaked because std::move() does
   // not release its reference, and the receiving object won't free
   // its copy.
+  // TODO(dcheng): This comment doesn't seem quite right.
   if (public_slot_.get() != public_slot.get())
-    public_slot_ = public_slot.Pass();
+    public_slot_ = std::move(public_slot);
   if (private_slot_.get() != private_slot.get())
-    private_slot_ = private_slot.Pass();
+    private_slot_ = std::move(private_slot);
   if (system_slot_.get() != system_slot.get())
-    system_slot_ = system_slot.Pass();
+    system_slot_ = std::move(system_slot);
 }
 
 bool NSSProfileFilterChromeOS::IsModuleAllowed(PK11SlotInfo* slot) const {
@@ -154,4 +158,3 @@ bool NSSProfileFilterChromeOS::ModuleNotAllowedForProfilePredicate::operator()(
 }
 
 }  // namespace net
-

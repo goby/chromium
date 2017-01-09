@@ -75,7 +75,8 @@ class PlatformInfo(object):
 
     def is_highdpi(self):
         if self.is_mac():
-            output = self._executive.run_command(['system_profiler', 'SPDisplaysDataType'], error_handler=self._executive.ignore_error)
+            output = self._executive.run_command(['system_profiler', 'SPDisplaysDataType'],
+                                                 error_handler=self._executive.ignore_error)
             if output and 'Retina: Yes' in output:
                 return True
         return False
@@ -109,7 +110,7 @@ class PlatformInfo(object):
                     # Note that we return 1 less than the width since writing into the rightmost column
                     # automatically performs a line feed.
                     return right - left
-                return sys.maxint
+                return sys.maxsize
             else:
                 import fcntl
                 import struct
@@ -118,7 +119,7 @@ class PlatformInfo(object):
                 _, columns, _, _ = struct.unpack('HHHH', packed)
                 return columns
         except:
-            return sys.maxint
+            return sys.maxsize
 
     def linux_distribution(self):
         if not self.is_linux():
@@ -145,22 +146,15 @@ class PlatformInfo(object):
         raise AssertionError('unrecognized platform string "%s"' % sys_platform)
 
     def _determine_mac_version(self, mac_version_string):
-        release_version = int(mac_version_string.split('.')[1])
-        version_strings = {
-            6: 'snowleopard',
-            7: 'lion',
-            8: 'mountainlion',
-            9: 'mavericks',
-            10: 'mac10.10',
-        }
-        assert release_version >= min(version_strings.keys())
-        return version_strings.get(release_version, 'future')
+        minor_release = int(mac_version_string.split('.')[1])
+        # FIXME: This should really be >= 9, and we should get rid of 'future'.
+        assert minor_release >= 6, 'Unsupported mac os version: %s' % mac_version_string
+        if minor_release in (9, 10, 11):
+            return 'mac10.%d' % minor_release
+        return 'future'
 
-    def _determine_linux_version(self, platform_module):
-        # Default to trusty if version is not recognized, this supports third party integrations.
-        version = platform_module.linux_distribution()[2]
-        officially_supported_versions = ['precise', 'trusty']
-        return 'trusty' if version not in officially_supported_versions else version
+    def _determine_linux_version(self, _):
+        return 'trusty'
 
     def _determine_win_version(self, win_version_tuple):
         if win_version_tuple[:2] == (10, 0):

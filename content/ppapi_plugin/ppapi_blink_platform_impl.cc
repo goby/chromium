@@ -4,13 +4,14 @@
 
 #include "content/ppapi_plugin/ppapi_blink_platform_impl.h"
 
+#include <stdint.h>
+
 #include <map>
 
 #include "base/logging.h"
 #include "base/strings/string16.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
-#include "components/scheduler/ppapi/webthread_impl_for_ppapi.h"
 #include "content/child/child_thread_impl.h"
 #include "content/common/child_process_messages.h"
 #include "ppapi/proxy/plugin_globals.h"
@@ -45,12 +46,13 @@ class PpapiBlinkPlatformImpl::SandboxSupport : public WebSandboxSupport {
   bool loadFont(NSFont* srcFont, CGFontRef* out, uint32_t* fontID) override;
 #elif defined(OS_POSIX)
   SandboxSupport();
-  void getFallbackFontForCharacter(WebUChar32 character,
-                                   const char* preferred_locale,
-                                   blink::WebFallbackFont* fallbackFont);
-  void getRenderStyleForStrike(const char* family,
-                               int sizeAndStyle,
-                               blink::WebFontRenderStyle* out) override;
+  void getFallbackFontForCharacter(
+      WebUChar32 character,
+      const char* preferred_locale,
+      blink::WebFallbackFont* fallbackFont) override;
+  void getWebFontRenderStyleForStrike(const char* family,
+                                      int sizeAndStyle,
+                                      blink::WebFontRenderStyle* out) override;
 
  private:
   // WebKit likes to ask us for the correct font family to use for a set of
@@ -103,7 +105,7 @@ void PpapiBlinkPlatformImpl::SandboxSupport::getFallbackFontForCharacter(
   unicode_font_families_.insert(std::make_pair(character, *fallbackFont));
 }
 
-void PpapiBlinkPlatformImpl::SandboxSupport::getRenderStyleForStrike(
+void PpapiBlinkPlatformImpl::SandboxSupport::getWebFontRenderStyleForStrike(
     const char* family,
     int sizeAndStyle,
     blink::WebFontRenderStyle* out) {
@@ -114,8 +116,7 @@ void PpapiBlinkPlatformImpl::SandboxSupport::getRenderStyleForStrike(
 
 #endif  // !defined(OS_ANDROID) && !defined(OS_WIN)
 
-PpapiBlinkPlatformImpl::PpapiBlinkPlatformImpl()
-    : main_thread_(new scheduler::WebThreadImplForPPAPI()) {
+PpapiBlinkPlatformImpl::PpapiBlinkPlatformImpl() {
 #if !defined(OS_ANDROID) && !defined(OS_WIN)
   sandbox_support_.reset(new PpapiBlinkPlatformImpl::SandboxSupport);
 #endif
@@ -134,17 +135,10 @@ void PpapiBlinkPlatformImpl::Shutdown() {
 }
 
 blink::WebThread* PpapiBlinkPlatformImpl::currentThread() {
-  if (main_thread_->isCurrentThread())
-    return main_thread_.get();
   return BlinkPlatformImpl::currentThread();
 }
 
 blink::WebClipboard* PpapiBlinkPlatformImpl::clipboard() {
-  NOTREACHED();
-  return NULL;
-}
-
-blink::WebMimeRegistry* PpapiBlinkPlatformImpl::mimeRegistry() {
   NOTREACHED();
   return NULL;
 }
@@ -201,8 +195,7 @@ blink::WebString PpapiBlinkPlatformImpl::cookies(
 }
 
 blink::WebString PpapiBlinkPlatformImpl::defaultLocale() {
-  NOTREACHED();
-  return blink::WebString();
+  return blink::WebString::fromUTF8("en");
 }
 
 blink::WebThemeEngine* PpapiBlinkPlatformImpl::themeEngine() {
@@ -217,6 +210,7 @@ blink::WebURLLoader* PpapiBlinkPlatformImpl::createURLLoader() {
 
 void PpapiBlinkPlatformImpl::getPluginList(
     bool refresh,
+    const blink::WebSecurityOrigin& mainFrameOrigin,
     blink::WebPluginListBuilder* builder) {
   NOTREACHED();
 }

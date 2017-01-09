@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/system_indicator/system_indicator_manager.h"
 
+#include <utility>
+
 #include "base/memory/linked_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_action.h"
@@ -59,7 +61,7 @@ ExtensionIndicatorIcon* ExtensionIndicatorIcon::Create(
     ExtensionAction* action,
     Profile* profile,
     StatusTray* status_tray) {
-  scoped_ptr<ExtensionIndicatorIcon> extension_icon(
+  std::unique_ptr<ExtensionIndicatorIcon> extension_icon(
       new ExtensionIndicatorIcon(extension, action, profile, status_tray));
 
   // Check if a status icon was successfully created.
@@ -78,15 +80,14 @@ ExtensionIndicatorIcon::~ExtensionIndicatorIcon() {
 }
 
 void ExtensionIndicatorIcon::OnStatusIconClicked() {
-  scoped_ptr<base::ListValue> params(
+  std::unique_ptr<base::ListValue> params(
       api::system_indicator::OnClicked::Create());
 
   EventRouter* event_router = EventRouter::Get(profile_);
-  scoped_ptr<Event> event(new Event(events::SYSTEM_INDICATOR_ON_CLICKED,
-                                    system_indicator::OnClicked::kEventName,
-                                    params.Pass(), profile_));
-  event_router->DispatchEventToExtension(
-      extension_->id(), event.Pass());
+  std::unique_ptr<Event> event(new Event(
+      events::SYSTEM_INDICATOR_ON_CLICKED,
+      system_indicator::OnClicked::kEventName, std::move(params), profile_));
+  event_router->DispatchEventToExtension(extension_->id(), std::move(event));
 }
 
 void ExtensionIndicatorIcon::OnIconUpdated() {

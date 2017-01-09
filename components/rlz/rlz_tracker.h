@@ -6,19 +6,16 @@
 #define COMPONENTS_RLZ_RLZ_TRACKER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string16.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "rlz/lib/rlz_lib.h"
-
-namespace net {
-class URLRequestContextGetter;
-}
 
 namespace rlz {
 
@@ -38,7 +35,7 @@ class RLZTracker {
  public:
   // Sets the RLZTrackerDelegate that should be used by the global RLZTracker
   // instance. Must be called before calling any other method of RLZTracker.
-  static void SetRlzDelegate(scoped_ptr<RLZTrackerDelegate> delegate);
+  static void SetRlzDelegate(std::unique_ptr<RLZTrackerDelegate> delegate);
 
   // Initializes the RLZ library services for use in chrome. Schedules a delayed
   // task that performs the ping and registers some events when 'first-run' is
@@ -127,7 +124,7 @@ class RLZTracker {
   friend class base::RefCountedThreadSafe<RLZTracker>;
 
   // Implementation called from SetRlzDelegate() static method.
-  void SetDelegate(scoped_ptr<RLZTrackerDelegate> delegate);
+  void SetDelegate(std::unique_ptr<RLZTrackerDelegate> delegate);
 
   // Implementation called from InitRlzDelayed() static method.
   bool Init(bool first_run,
@@ -199,7 +196,7 @@ class RLZTracker {
   static RLZTracker* tracker_;
 
   // Delegate abstracting embedder specific knowledge. Must not be null.
-  scoped_ptr<RLZTrackerDelegate> delegate_;
+  std::unique_ptr<RLZTrackerDelegate> delegate_;
 
   // Configuation data for RLZ tracker. Set by call to Init().
   bool first_run_;

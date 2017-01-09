@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/site_instance_impl.h"
+
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/browsing_instance.h"
@@ -12,7 +18,6 @@
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
-#include "content/browser/site_instance_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/webui/content_web_ui_controller_factory.h"
 #include "content/browser/webui/web_ui_controller_factory_registry.h"
@@ -32,14 +37,15 @@
 #include "url/url_util.h"
 
 namespace content {
-namespace {
 
 const char kPrivilegedScheme[] = "privileged";
 
 class SiteInstanceTestBrowserClient : public TestContentBrowserClient {
  public:
-  SiteInstanceTestBrowserClient()
-      : privileged_process_id_(-1) {
+  explicit SiteInstanceTestBrowserClient()
+      : privileged_process_id_(-1),
+        site_instance_delete_count_(0),
+        browsing_instance_delete_count_(0) {
     WebUIControllerFactory::RegisterFactory(
         ContentWebUIControllerFactory::GetInstance());
   }
@@ -59,8 +65,32 @@ class SiteInstanceTestBrowserClient : public TestContentBrowserClient {
     privileged_process_id_ = process_id;
   }
 
+  void SiteInstanceDeleting(content::SiteInstance* site_instance) override {
+    site_instance_delete_count_++;
+    // Infer deletion of the browsing instance.
+    if (static_cast<SiteInstanceImpl*>(site_instance)
+            ->browsing_instance_->HasOneRef()) {
+      browsing_instance_delete_count_++;
+    }
+  }
+
+  int GetAndClearSiteInstanceDeleteCount() {
+    int result = site_instance_delete_count_;
+    site_instance_delete_count_ = 0;
+    return result;
+  }
+
+  int GetAndClearBrowsingInstanceDeleteCount() {
+    int result = browsing_instance_delete_count_;
+    browsing_instance_delete_count_ = 0;
+    return result;
+  }
+
  private:
   int privileged_process_id_;
+
+  int site_instance_delete_count_;
+  int browsing_instance_delete_count_;
 };
 
 class SiteInstanceTest : public testing::Test {
@@ -70,8 +100,7 @@ class SiteInstanceTest : public testing::Test {
         file_user_blocking_thread_(BrowserThread::FILE_USER_BLOCKING,
                                    &message_loop_),
         io_thread_(BrowserThread::IO, &message_loop_),
-        old_browser_client_(NULL) {
-  }
+        old_browser_client_(nullptr) {}
 
   void SetUp() override {
     old_browser_client_ = SetBrowserClientForTesting(&browser_client_);
@@ -86,31 +115,32 @@ class SiteInstanceTest : public testing::Test {
     EXPECT_TRUE(RenderProcessHost::AllHostsIterator().IsAtEnd());
 
     SetBrowserClientForTesting(old_browser_client_);
-    SiteInstanceImpl::set_render_process_host_factory(NULL);
+    SiteInstanceImpl::set_render_process_host_factory(nullptr);
 
     // http://crbug.com/143565 found SiteInstanceTest leaking an
     // AppCacheDatabase. This happens because some part of the test indirectly
     // calls StoragePartitionImplMap::PostCreateInitialization(), which posts
     // a task to the IO thread to create the AppCacheDatabase. Since the
     // message loop is not running, the AppCacheDatabase ends up getting
-    // created when DrainMessageLoops() gets called at the end of a test case.
+    // created when DrainMessageLoop() gets called at the end of a test case.
     // Immediately after, the test case ends and the AppCacheDatabase gets
-    // scheduled for deletion. Here, call DrainMessageLoops() again so the
+    // scheduled for deletion. Here, call DrainMessageLoop() again so the
     // AppCacheDatabase actually gets deleted.
-    DrainMessageLoops();
+    DrainMessageLoop();
   }
 
   void set_privileged_process_id(int process_id) {
     browser_client_.set_privileged_process_id(process_id);
   }
 
-  void DrainMessageLoops() {
+  void DrainMessageLoop() {
     // We don't just do this in TearDown() because we create TestBrowserContext
     // objects in each test, which will be destructed before
     // TearDown() is called.
-    base::MessageLoop::current()->RunUntilIdle();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
+
+  SiteInstanceTestBrowserClient* browser_client() { return &browser_client_; }
 
  private:
   base::MessageLoopForUI message_loop_;
@@ -123,108 +153,62 @@ class SiteInstanceTest : public testing::Test {
   MockRenderProcessHostFactory rph_factory_;
 };
 
-// Subclass of BrowsingInstance that updates a counter when deleted and
-// returns TestSiteInstances from GetSiteInstanceForURL.
-class TestBrowsingInstance : public BrowsingInstance {
- public:
-  TestBrowsingInstance(BrowserContext* browser_context, int* delete_counter)
-      : BrowsingInstance(browser_context),
-        delete_counter_(delete_counter) {
-  }
-
-  // Make a few methods public for tests.
-  using BrowsingInstance::browser_context;
-  using BrowsingInstance::HasSiteInstance;
-  using BrowsingInstance::GetSiteInstanceForURL;
-  using BrowsingInstance::RegisterSiteInstance;
-  using BrowsingInstance::UnregisterSiteInstance;
-
- private:
-  ~TestBrowsingInstance() override { (*delete_counter_)++; }
-
-  int* delete_counter_;
-};
-
-// Subclass of SiteInstanceImpl that updates a counter when deleted.
-class TestSiteInstance : public SiteInstanceImpl {
- public:
-  static TestSiteInstance* CreateTestSiteInstance(
-      BrowserContext* browser_context,
-      int* site_delete_counter,
-      int* browsing_delete_counter) {
-    TestBrowsingInstance* browsing_instance =
-        new TestBrowsingInstance(browser_context, browsing_delete_counter);
-    return new TestSiteInstance(browsing_instance, site_delete_counter);
-  }
-
- private:
-  TestSiteInstance(BrowsingInstance* browsing_instance, int* delete_counter)
-    : SiteInstanceImpl(browsing_instance), delete_counter_(delete_counter) {}
-  ~TestSiteInstance() override { (*delete_counter_)++; }
-
-  int* delete_counter_;
-};
-
-}  // namespace
-
 // Test to ensure no memory leaks for SiteInstance objects.
 TEST_F(SiteInstanceTest, SiteInstanceDestructor) {
   // The existence of this object will cause WebContentsImpl to create our
   // test one instead of the real one.
   RenderViewHostTestEnabler rvh_test_enabler;
-  int site_delete_counter = 0;
-  int browsing_delete_counter = 0;
   const GURL url("test:foo");
 
   // Ensure that instances are deleted when their NavigationEntries are gone.
-  TestSiteInstance* instance =
-      TestSiteInstance::CreateTestSiteInstance(NULL, &site_delete_counter,
-                                               &browsing_delete_counter);
-  EXPECT_EQ(0, site_delete_counter);
+  scoped_refptr<SiteInstanceImpl> instance = SiteInstanceImpl::Create(nullptr);
+  EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
 
   NavigationEntryImpl* e1 = new NavigationEntryImpl(
-      instance, 0, url, Referrer(), base::string16(), ui::PAGE_TRANSITION_LINK,
+      instance, url, Referrer(), base::string16(), ui::PAGE_TRANSITION_LINK,
       false);
 
   // Redundantly setting e1's SiteInstance shouldn't affect the ref count.
   e1->set_site_instance(instance);
-  EXPECT_EQ(0, site_delete_counter);
+  EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
 
   // Add a second reference
   NavigationEntryImpl* e2 = new NavigationEntryImpl(
-      instance, 0, url, Referrer(), base::string16(), ui::PAGE_TRANSITION_LINK,
+      instance, url, Referrer(), base::string16(), ui::PAGE_TRANSITION_LINK,
       false);
+
+  instance = nullptr;
+  EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
 
   // Now delete both entries and be sure the SiteInstance goes away.
   delete e1;
-  EXPECT_EQ(0, site_delete_counter);
-  EXPECT_EQ(0, browsing_delete_counter);
+  EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
   delete e2;
-  EXPECT_EQ(1, site_delete_counter);
   // instance is now deleted
-  EXPECT_EQ(1, browsing_delete_counter);
+  EXPECT_EQ(1, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(1, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
   // browsing_instance is now deleted
 
   // Ensure that instances are deleted when their RenderViewHosts are gone.
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  instance =
-      TestSiteInstance::CreateTestSiteInstance(browser_context.get(),
-                                               &site_delete_counter,
-                                               &browsing_delete_counter);
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
   {
-    scoped_ptr<WebContentsImpl> web_contents(static_cast<WebContentsImpl*>(
+    std::unique_ptr<WebContentsImpl> web_contents(static_cast<WebContentsImpl*>(
         WebContents::Create(WebContents::CreateParams(
-            browser_context.get(), instance))));
-    EXPECT_EQ(1, site_delete_counter);
-    EXPECT_EQ(1, browsing_delete_counter);
+            browser_context.get(),
+            SiteInstance::Create(browser_context.get())))));
+    EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
+    EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
   }
 
   // Make sure that we flush any messages related to the above WebContentsImpl
   // destruction.
-  DrainMessageLoops();
+  DrainMessageLoop();
 
-  EXPECT_EQ(2, site_delete_counter);
-  EXPECT_EQ(2, browsing_delete_counter);
+  EXPECT_EQ(1, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(1, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
   // contents is now deleted, along with instance and browsing_instance
 }
 
@@ -232,68 +216,59 @@ TEST_F(SiteInstanceTest, SiteInstanceDestructor) {
 // SiteInstances can be changed afterwards.  Also tests that the ref counts are
 // updated properly after the change.
 TEST_F(SiteInstanceTest, CloneNavigationEntry) {
-  int site_delete_counter1 = 0;
-  int site_delete_counter2 = 0;
-  int browsing_delete_counter = 0;
   const GURL url("test:foo");
 
-  SiteInstanceImpl* instance1 =
-      TestSiteInstance::CreateTestSiteInstance(NULL, &site_delete_counter1,
-                                               &browsing_delete_counter);
-  SiteInstanceImpl* instance2 =
-      TestSiteInstance::CreateTestSiteInstance(NULL, &site_delete_counter2,
-                                               &browsing_delete_counter);
+  std::unique_ptr<NavigationEntryImpl> e1 =
+      base::WrapUnique(new NavigationEntryImpl(
+          SiteInstanceImpl::Create(nullptr), url, Referrer(),
+          base::string16(), ui::PAGE_TRANSITION_LINK, false));
 
-  scoped_ptr<NavigationEntryImpl> e1 = make_scoped_ptr(new NavigationEntryImpl(
-      instance1, 0, url, Referrer(), base::string16(), ui::PAGE_TRANSITION_LINK,
-      false));
   // Clone the entry.
-  scoped_ptr<NavigationEntryImpl> e2 = e1->Clone();
+  std::unique_ptr<NavigationEntryImpl> e2 = e1->Clone();
 
   // Should be able to change the SiteInstance of the cloned entry.
-  e2->set_site_instance(instance2);
+  e2->set_site_instance(SiteInstanceImpl::Create(nullptr));
 
-  // The first SiteInstance should go away after resetting e1, since e2 should
-  // no longer be referencing it.
+  EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
+
+  // The first SiteInstance and BrowsingInstance should go away after resetting
+  // e1, since e2 should no longer be referencing it.
   e1.reset();
-  EXPECT_EQ(1, site_delete_counter1);
-  EXPECT_EQ(0, site_delete_counter2);
+  EXPECT_EQ(1, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(1, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
 
   // The second SiteInstance should go away after resetting e2.
   e2.reset();
-  EXPECT_EQ(1, site_delete_counter1);
-  EXPECT_EQ(1, site_delete_counter2);
+  EXPECT_EQ(1, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(1, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
 
-  // Both BrowsingInstances are also now deleted.
-  EXPECT_EQ(2, browsing_delete_counter);
-
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test to ensure GetProcess returns and creates processes correctly.
 TEST_F(SiteInstanceTest, GetProcess) {
   // Ensure that GetProcess returns a process.
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  scoped_ptr<RenderProcessHost> host1;
-  scoped_refptr<SiteInstanceImpl> instance(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(browser_context.get())));
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  std::unique_ptr<RenderProcessHost> host1;
+  scoped_refptr<SiteInstanceImpl> instance(
+      SiteInstanceImpl::Create(browser_context.get()));
   host1.reset(instance->GetProcess());
-  EXPECT_TRUE(host1.get() != NULL);
+  EXPECT_TRUE(host1.get() != nullptr);
 
   // Ensure that GetProcess creates a new process.
-  scoped_refptr<SiteInstanceImpl> instance2(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(browser_context.get())));
-  scoped_ptr<RenderProcessHost> host2(instance2->GetProcess());
-  EXPECT_TRUE(host2.get() != NULL);
+  scoped_refptr<SiteInstanceImpl> instance2(
+      SiteInstanceImpl::Create(browser_context.get()));
+  std::unique_ptr<RenderProcessHost> host2(instance2->GetProcess());
+  EXPECT_TRUE(host2.get() != nullptr);
   EXPECT_NE(host1.get(), host2.get());
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test to ensure SetSite and site() work properly.
 TEST_F(SiteInstanceTest, SetSite) {
-  scoped_refptr<SiteInstanceImpl> instance(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(NULL)));
+  scoped_refptr<SiteInstanceImpl> instance(SiteInstanceImpl::Create(nullptr));
   EXPECT_FALSE(instance->HasSite());
   EXPECT_TRUE(instance->GetSiteURL().is_empty());
 
@@ -302,65 +277,110 @@ TEST_F(SiteInstanceTest, SetSite) {
 
   EXPECT_TRUE(instance->HasSite());
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test to ensure GetSiteForURL properly returns sites for URLs.
 TEST_F(SiteInstanceTest, GetSiteForURL) {
   // Pages are irrelevant.
   GURL test_url = GURL("http://www.google.com/index.html");
-  GURL site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  GURL site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(GURL("http://google.com"), site_url);
   EXPECT_EQ("http", site_url.scheme());
   EXPECT_EQ("google.com", site_url.host());
 
-  // Ports are irrlevant.
+  // Ports are irrelevant.
   test_url = GURL("https://www.google.com:8080");
-  site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(GURL("https://google.com"), site_url);
 
-  // Hostnames without TLDs are ok.
+  // Punycode is canonicalized.
+  test_url = GURL("http://☃snowperson☃.net:333/");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("http://xn--snowperson-di0gka.net"), site_url);
+
+  // Username and password are stripped out.
+  test_url = GURL("ftp://username:password@ftp.chromium.org/files/README");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("ftp://chromium.org"), site_url);
+
+  // Literal IP addresses of any flavor are okay.
+  test_url = GURL("http://127.0.0.1/a.html");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("http://127.0.0.1"), site_url);
+  EXPECT_EQ("127.0.0.1", site_url.host());
+
+  test_url = GURL("http://2130706433/a.html");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("http://127.0.0.1"), site_url);
+  EXPECT_EQ("127.0.0.1", site_url.host());
+
+  test_url = GURL("http://[::1]:2/page.html");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("http://[::1]"), site_url);
+  EXPECT_EQ("[::1]", site_url.host());
+
+  // Hostnames without TLDs are okay.
   test_url = GURL("http://foo/a.html");
-  site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(GURL("http://foo"), site_url);
   EXPECT_EQ("foo", site_url.host());
 
   // File URLs should include the scheme.
   test_url = GURL("file:///C:/Downloads/");
-  site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(GURL("file:"), site_url);
   EXPECT_EQ("file", site_url.scheme());
   EXPECT_FALSE(site_url.has_host());
 
   // Some file URLs have hosts in the path.
   test_url = GURL("file://server/path");
-  site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(GURL("file://server"), site_url);
   EXPECT_EQ("server", site_url.host());
 
   // Data URLs should include the scheme.
   test_url = GURL("data:text/html,foo");
-  site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(GURL("data:"), site_url);
   EXPECT_EQ("data", site_url.scheme());
   EXPECT_FALSE(site_url.has_host());
 
   // Javascript URLs should include the scheme.
   test_url = GURL("javascript:foo();");
-  site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(GURL("javascript:"), site_url);
   EXPECT_EQ("javascript", site_url.scheme());
   EXPECT_FALSE(site_url.has_host());
+
+  // Blob URLs extract the site from the origin.
+  test_url = GURL(
+      "blob:gopher://www.ftp.chromium.org/"
+      "4d4ff040-6d61-4446-86d3-13ca07ec9ab9");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("gopher://chromium.org"), site_url);
+
+  // Private domains are preserved, appspot being such a site.
+  test_url = GURL(
+      "blob:http://www.example.appspot.com:44/"
+      "4d4ff040-6d61-4446-86d3-13ca07ec9ab9");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("http://example.appspot.com"), site_url);
+
+  // The site of filesystem URLs is determined by the inner URL.
+  test_url = GURL("filesystem:http://www.google.com/foo/bar.html?foo#bar");
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
+  EXPECT_EQ(GURL("http://google.com"), site_url);
 
   // Guest URLs are special and need to have the path in the site as well,
   // since it affects the StoragePartition configuration.
   std::string guest_url(kGuestScheme);
   guest_url.append("://abc123/path");
   test_url = GURL(guest_url);
-  site_url = SiteInstanceImpl::GetSiteForURL(NULL, test_url);
+  site_url = SiteInstanceImpl::GetSiteForURL(nullptr, test_url);
   EXPECT_EQ(test_url, site_url);
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test of distinguishing URLs from different sites.  Most of this logic is
@@ -375,31 +395,33 @@ TEST_F(SiteInstanceTest, IsSameWebSite) {
   GURL url_blank = GURL(url::kAboutBlankURL);
 
   // Same scheme and port -> same site.
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_foo, url_foo2));
+  EXPECT_TRUE(SiteInstance::IsSameWebSite(nullptr, url_foo, url_foo2));
 
   // Different scheme -> different site.
-  EXPECT_FALSE(SiteInstance::IsSameWebSite(NULL, url_foo, url_foo_https));
+  EXPECT_FALSE(SiteInstance::IsSameWebSite(nullptr, url_foo, url_foo_https));
 
   // Different port -> same site.
   // (Changes to document.domain make renderer ignore the port.)
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_foo, url_foo_port));
+  EXPECT_TRUE(SiteInstance::IsSameWebSite(nullptr, url_foo, url_foo_port));
 
   // JavaScript links should be considered same site for anything.
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_javascript, url_foo));
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_javascript, url_foo_https));
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_javascript, url_foo_port));
+  EXPECT_TRUE(SiteInstance::IsSameWebSite(nullptr, url_javascript, url_foo));
+  EXPECT_TRUE(
+      SiteInstance::IsSameWebSite(nullptr, url_javascript, url_foo_https));
+  EXPECT_TRUE(
+      SiteInstance::IsSameWebSite(nullptr, url_javascript, url_foo_port));
 
   // Navigating to a blank page is considered the same site.
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_foo, url_blank));
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_foo_https, url_blank));
-  EXPECT_TRUE(SiteInstance::IsSameWebSite(NULL, url_foo_port, url_blank));
+  EXPECT_TRUE(SiteInstance::IsSameWebSite(nullptr, url_foo, url_blank));
+  EXPECT_TRUE(SiteInstance::IsSameWebSite(nullptr, url_foo_https, url_blank));
+  EXPECT_TRUE(SiteInstance::IsSameWebSite(nullptr, url_foo_port, url_blank));
 
   // Navigating from a blank site is not considered to be the same site.
-  EXPECT_FALSE(SiteInstance::IsSameWebSite(NULL, url_blank, url_foo));
-  EXPECT_FALSE(SiteInstance::IsSameWebSite(NULL, url_blank, url_foo_https));
-  EXPECT_FALSE(SiteInstance::IsSameWebSite(NULL, url_blank, url_foo_port));
+  EXPECT_FALSE(SiteInstance::IsSameWebSite(nullptr, url_blank, url_foo));
+  EXPECT_FALSE(SiteInstance::IsSameWebSite(nullptr, url_blank, url_foo_https));
+  EXPECT_FALSE(SiteInstance::IsSameWebSite(nullptr, url_blank, url_foo_port));
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test to ensure that there is only one SiteInstance per site in a given
@@ -407,22 +429,20 @@ TEST_F(SiteInstanceTest, IsSameWebSite) {
 TEST_F(SiteInstanceTest, OneSiteInstancePerSite) {
   ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kProcessPerSite));
-  int delete_counter = 0;
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  TestBrowsingInstance* browsing_instance =
-      new TestBrowsingInstance(browser_context.get(), &delete_counter);
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  BrowsingInstance* browsing_instance =
+      new BrowsingInstance(browser_context.get());
 
   const GURL url_a1("http://www.google.com/1.html");
   scoped_refptr<SiteInstanceImpl> site_instance_a1(
-      static_cast<SiteInstanceImpl*>(
-          browsing_instance->GetSiteInstanceForURL(url_a1)));
-  EXPECT_TRUE(site_instance_a1.get() != NULL);
+      browsing_instance->GetSiteInstanceForURL(url_a1));
+  EXPECT_TRUE(site_instance_a1.get() != nullptr);
 
   // A separate site should create a separate SiteInstance.
   const GURL url_b1("http://www.yahoo.com/");
   scoped_refptr<SiteInstanceImpl> site_instance_b1(
-      static_cast<SiteInstanceImpl*>(
-          browsing_instance->GetSiteInstanceForURL(url_b1)));
+
+      browsing_instance->GetSiteInstanceForURL(url_b1));
   EXPECT_NE(site_instance_a1.get(), site_instance_b1.get());
   EXPECT_TRUE(site_instance_a1->IsRelatedSiteInstance(site_instance_b1.get()));
 
@@ -440,20 +460,20 @@ TEST_F(SiteInstanceTest, OneSiteInstancePerSite) {
 
   // A visit to the original site in a new BrowsingInstance (same or different
   // browser context) should return a different SiteInstance.
-  TestBrowsingInstance* browsing_instance2 =
-      new TestBrowsingInstance(browser_context.get(), &delete_counter);
+  BrowsingInstance* browsing_instance2 =
+      new BrowsingInstance(browser_context.get());
   // Ensure the new SiteInstance is ref counted so that it gets deleted.
   scoped_refptr<SiteInstanceImpl> site_instance_a2_2(
-      static_cast<SiteInstanceImpl*>(
-          browsing_instance2->GetSiteInstanceForURL(url_a2)));
+      browsing_instance2->GetSiteInstanceForURL(url_a2));
   EXPECT_NE(site_instance_a1.get(), site_instance_a2_2.get());
   EXPECT_FALSE(
       site_instance_a1->IsRelatedSiteInstance(site_instance_a2_2.get()));
 
   // The two SiteInstances for http://google.com should not use the same process
   // if process-per-site is not enabled.
-  scoped_ptr<RenderProcessHost> process_a1(site_instance_a1->GetProcess());
-  scoped_ptr<RenderProcessHost> process_a2_2(site_instance_a2_2->GetProcess());
+  std::unique_ptr<RenderProcessHost> process_a1(site_instance_a1->GetProcess());
+  std::unique_ptr<RenderProcessHost> process_a2_2(
+      site_instance_a2_2->GetProcess());
   EXPECT_NE(process_a1.get(), process_a2_2.get());
 
   // Should be able to see that we do have SiteInstances.
@@ -473,7 +493,7 @@ TEST_F(SiteInstanceTest, OneSiteInstancePerSite) {
   // browsing_instances will be deleted when their SiteInstances are deleted.
   // The processes will be unregistered when the RPH scoped_ptrs go away.
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test to ensure that there is only one RenderProcessHost per site for an
@@ -481,23 +501,20 @@ TEST_F(SiteInstanceTest, OneSiteInstancePerSite) {
 TEST_F(SiteInstanceTest, OneSiteInstancePerSiteInBrowserContext) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kProcessPerSite);
-  int delete_counter = 0;
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  TestBrowsingInstance* browsing_instance =
-      new TestBrowsingInstance(browser_context.get(), &delete_counter);
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  scoped_refptr<BrowsingInstance> browsing_instance =
+      new BrowsingInstance(browser_context.get());
 
   const GURL url_a1("http://www.google.com/1.html");
   scoped_refptr<SiteInstanceImpl> site_instance_a1(
-      static_cast<SiteInstanceImpl*>(
-          browsing_instance->GetSiteInstanceForURL(url_a1)));
-  EXPECT_TRUE(site_instance_a1.get() != NULL);
-  scoped_ptr<RenderProcessHost> process_a1(site_instance_a1->GetProcess());
+      browsing_instance->GetSiteInstanceForURL(url_a1));
+  EXPECT_TRUE(site_instance_a1.get() != nullptr);
+  std::unique_ptr<RenderProcessHost> process_a1(site_instance_a1->GetProcess());
 
   // A separate site should create a separate SiteInstance.
   const GURL url_b1("http://www.yahoo.com/");
   scoped_refptr<SiteInstanceImpl> site_instance_b1(
-      static_cast<SiteInstanceImpl*>(
-          browsing_instance->GetSiteInstanceForURL(url_b1)));
+      browsing_instance->GetSiteInstanceForURL(url_b1));
   EXPECT_NE(site_instance_a1.get(), site_instance_b1.get());
   EXPECT_TRUE(site_instance_a1->IsRelatedSiteInstance(site_instance_b1.get()));
 
@@ -515,25 +532,25 @@ TEST_F(SiteInstanceTest, OneSiteInstancePerSiteInBrowserContext) {
 
   // A visit to the original site in a new BrowsingInstance (same browser
   // context) should return a different SiteInstance with the same process.
-  TestBrowsingInstance* browsing_instance2 =
-      new TestBrowsingInstance(browser_context.get(), &delete_counter);
+  BrowsingInstance* browsing_instance2 =
+      new BrowsingInstance(browser_context.get());
   scoped_refptr<SiteInstanceImpl> site_instance_a1_2(
-      static_cast<SiteInstanceImpl*>(
-          browsing_instance2->GetSiteInstanceForURL(url_a1)));
-  EXPECT_TRUE(site_instance_a1.get() != NULL);
+      browsing_instance2->GetSiteInstanceForURL(url_a1));
+  EXPECT_TRUE(site_instance_a1.get() != nullptr);
   EXPECT_NE(site_instance_a1.get(), site_instance_a1_2.get());
   EXPECT_EQ(process_a1.get(), site_instance_a1_2->GetProcess());
 
   // A visit to the original site in a new BrowsingInstance (different browser
   // context) should return a different SiteInstance with a different process.
-  scoped_ptr<TestBrowserContext> browser_context2(new TestBrowserContext());
-  TestBrowsingInstance* browsing_instance3 =
-      new TestBrowsingInstance(browser_context2.get(), &delete_counter);
+  std::unique_ptr<TestBrowserContext> browser_context2(
+      new TestBrowserContext());
+  BrowsingInstance* browsing_instance3 =
+      new BrowsingInstance(browser_context2.get());
   scoped_refptr<SiteInstanceImpl> site_instance_a2_3(
-      static_cast<SiteInstanceImpl*>(
-          browsing_instance3->GetSiteInstanceForURL(url_a2)));
-  EXPECT_TRUE(site_instance_a2_3.get() != NULL);
-  scoped_ptr<RenderProcessHost> process_a2_3(site_instance_a2_3->GetProcess());
+      browsing_instance3->GetSiteInstanceForURL(url_a2));
+  EXPECT_TRUE(site_instance_a2_3.get() != nullptr);
+  std::unique_ptr<RenderProcessHost> process_a2_3(
+      site_instance_a2_3->GetProcess());
   EXPECT_NE(site_instance_a1.get(), site_instance_a2_3.get());
   EXPECT_NE(process_a1.get(), process_a2_3.get());
 
@@ -556,13 +573,13 @@ TEST_F(SiteInstanceTest, OneSiteInstancePerSiteInBrowserContext) {
   // browsing_instances will be deleted when their SiteInstances are deleted.
   // The processes will be unregistered when the RPH scoped_ptrs go away.
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
-static SiteInstanceImpl* CreateSiteInstance(BrowserContext* browser_context,
-                                            const GURL& url) {
-  return static_cast<SiteInstanceImpl*>(
-      SiteInstance::CreateForURL(browser_context, url));
+static scoped_refptr<SiteInstanceImpl> CreateSiteInstance(
+    BrowserContext* browser_context,
+    const GURL& url) {
+  return SiteInstanceImpl::CreateForURL(browser_context, url);
 }
 
 // Test to ensure that pages that require certain privileges are grouped
@@ -582,7 +599,7 @@ TEST_F(SiteInstanceTest, ProcessSharingByType) {
       ChildProcessSecurityPolicyImpl::GetInstance();
 
   // Make a bunch of mock renderers so that we hit the limit.
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
   ScopedVector<MockRenderProcessHost> hosts;
   for (size_t i = 0; i < kMaxRendererProcessCount; ++i)
     hosts.push_back(new MockRenderProcessHost(browser_context.get()));
@@ -597,7 +614,7 @@ TEST_F(SiteInstanceTest, ProcessSharingByType) {
       CreateSiteInstance(browser_context.get(),
           GURL(kPrivilegedScheme + std::string("://baz/bar"))));
 
-  scoped_ptr<RenderProcessHost> extension_host(
+  std::unique_ptr<RenderProcessHost> extension_host(
       extension1_instance->GetProcess());
   EXPECT_EQ(extension1_instance->GetProcess(),
             extension2_instance->GetProcess());
@@ -611,7 +628,7 @@ TEST_F(SiteInstanceTest, ProcessSharingByType) {
       browser_context.get(),
       GURL(kChromeUIScheme + std::string("://media-internals"))));
 
-  scoped_ptr<RenderProcessHost> dom_host(webui1_instance->GetProcess());
+  std::unique_ptr<RenderProcessHost> dom_host(webui1_instance->GetProcess());
   EXPECT_EQ(webui1_instance->GetProcess(), webui2_instance->GetProcess());
 
   // Make sure none of differing privilege processes are mixed.
@@ -622,7 +639,7 @@ TEST_F(SiteInstanceTest, ProcessSharingByType) {
     EXPECT_NE(webui1_instance->GetProcess(), hosts[i]);
   }
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 
   // Disable the process limit override.
   RenderProcessHost::SetMaxRendererProcessCount(0u);
@@ -631,10 +648,10 @@ TEST_F(SiteInstanceTest, ProcessSharingByType) {
 // Test to ensure that HasWrongProcessForURL behaves properly for different
 // types of URLs.
 TEST_F(SiteInstanceTest, HasWrongProcessForURL) {
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  scoped_ptr<RenderProcessHost> host;
-  scoped_refptr<SiteInstanceImpl> instance(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(browser_context.get())));
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  std::unique_ptr<RenderProcessHost> host;
+  scoped_refptr<SiteInstanceImpl> instance(
+      SiteInstanceImpl::Create(browser_context.get()));
 
   EXPECT_FALSE(instance->HasSite());
   EXPECT_TRUE(instance->GetSiteURL().is_empty());
@@ -649,7 +666,7 @@ TEST_F(SiteInstanceTest, HasWrongProcessForURL) {
   // The call to GetProcess actually creates a new real process, which works
   // fine, but might be a cause for problems in different contexts.
   host.reset(instance->GetProcess());
-  EXPECT_TRUE(host.get() != NULL);
+  EXPECT_TRUE(host.get() != nullptr);
   EXPECT_TRUE(instance->HasProcess());
 
   EXPECT_FALSE(instance->HasWrongProcessForURL(GURL("http://evernote.com")));
@@ -660,10 +677,10 @@ TEST_F(SiteInstanceTest, HasWrongProcessForURL) {
 
   // Test that WebUI SiteInstances reject normal web URLs.
   const GURL webui_url("chrome://gpu");
-  scoped_refptr<SiteInstanceImpl> webui_instance(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(browser_context.get())));
+  scoped_refptr<SiteInstanceImpl> webui_instance(
+      SiteInstanceImpl::Create(browser_context.get()));
   webui_instance->SetSite(webui_url);
-  scoped_ptr<RenderProcessHost> webui_host(webui_instance->GetProcess());
+  std::unique_ptr<RenderProcessHost> webui_host(webui_instance->GetProcess());
 
   // Simulate granting WebUI bindings for the process.
   ChildProcessSecurityPolicyImpl::GetInstance()->GrantWebUIBindings(
@@ -678,14 +695,13 @@ TEST_F(SiteInstanceTest, HasWrongProcessForURL) {
   // even if we haven't called GetProcess yet.  Make sure HasWrongProcessForURL
   // doesn't crash (http://crbug.com/137070).
   scoped_refptr<SiteInstanceImpl> webui_instance2(
-      static_cast<SiteInstanceImpl*>(
-          SiteInstance::Create(browser_context.get())));
+      SiteInstanceImpl::Create(browser_context.get()));
   webui_instance2->SetSite(webui_url);
   EXPECT_FALSE(webui_instance2->HasWrongProcessForURL(webui_url));
   EXPECT_TRUE(
       webui_instance2->HasWrongProcessForURL(GURL("http://google.com")));
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test to ensure that HasWrongProcessForURL behaves properly even when
@@ -693,10 +709,10 @@ TEST_F(SiteInstanceTest, HasWrongProcessForURL) {
 TEST_F(SiteInstanceTest, HasWrongProcessForURLInSitePerProcess) {
   IsolateAllSitesForTesting(base::CommandLine::ForCurrentProcess());
 
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  scoped_ptr<RenderProcessHost> host;
-  scoped_refptr<SiteInstanceImpl> instance(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(browser_context.get())));
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  std::unique_ptr<RenderProcessHost> host;
+  scoped_refptr<SiteInstanceImpl> instance(
+      SiteInstanceImpl::Create(browser_context.get()));
 
   instance->SetSite(GURL("http://evernote.com/"));
   EXPECT_TRUE(instance->HasSite());
@@ -708,7 +724,7 @@ TEST_F(SiteInstanceTest, HasWrongProcessForURLInSitePerProcess) {
   // The call to GetProcess actually creates a new real process, which works
   // fine, but might be a cause for problems in different contexts.
   host.reset(instance->GetProcess());
-  EXPECT_TRUE(host.get() != NULL);
+  EXPECT_TRUE(host.get() != nullptr);
   EXPECT_TRUE(instance->HasProcess());
 
   EXPECT_FALSE(instance->HasWrongProcessForURL(GURL("http://evernote.com")));
@@ -717,17 +733,17 @@ TEST_F(SiteInstanceTest, HasWrongProcessForURLInSitePerProcess) {
 
   EXPECT_TRUE(instance->HasWrongProcessForURL(GURL("chrome://gpu")));
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test that we do not reuse a process in process-per-site mode if it has the
 // wrong bindings for its URL.  http://crbug.com/174059.
 TEST_F(SiteInstanceTest, ProcessPerSiteWithWrongBindings) {
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  scoped_ptr<RenderProcessHost> host;
-  scoped_ptr<RenderProcessHost> host2;
-  scoped_refptr<SiteInstanceImpl> instance(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(browser_context.get())));
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  std::unique_ptr<RenderProcessHost> host;
+  std::unique_ptr<RenderProcessHost> host2;
+  scoped_refptr<SiteInstanceImpl> instance(
+      SiteInstanceImpl::Create(browser_context.get()));
 
   EXPECT_FALSE(instance->HasSite());
   EXPECT_TRUE(instance->GetSiteURL().is_empty());
@@ -740,7 +756,7 @@ TEST_F(SiteInstanceTest, ProcessPerSiteWithWrongBindings) {
 
   // The call to GetProcess actually creates a new real process.
   host.reset(instance->GetProcess());
-  EXPECT_TRUE(host.get() != NULL);
+  EXPECT_TRUE(host.get() != nullptr);
   EXPECT_TRUE(instance->HasProcess());
 
   // Without bindings, this should look like the wrong process.
@@ -750,15 +766,14 @@ TEST_F(SiteInstanceTest, ProcessPerSiteWithWrongBindings) {
   // same process.  Make sure it doesn't use the same process if the bindings
   // are missing.
   scoped_refptr<SiteInstanceImpl> instance2(
-      static_cast<SiteInstanceImpl*>(
-          SiteInstance::Create(browser_context.get())));
+      SiteInstanceImpl::Create(browser_context.get()));
   instance2->SetSite(webui_url);
   host2.reset(instance2->GetProcess());
-  EXPECT_TRUE(host2.get() != NULL);
+  EXPECT_TRUE(host2.get() != nullptr);
   EXPECT_TRUE(instance2->HasProcess());
   EXPECT_NE(host.get(), host2.get());
 
-  DrainMessageLoops();
+  DrainMessageLoop();
 }
 
 // Test that we do not register processes with empty sites for process-per-site
@@ -766,10 +781,10 @@ TEST_F(SiteInstanceTest, ProcessPerSiteWithWrongBindings) {
 TEST_F(SiteInstanceTest, NoProcessPerSiteForEmptySite) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kProcessPerSite);
-  scoped_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
-  scoped_ptr<RenderProcessHost> host;
-  scoped_refptr<SiteInstanceImpl> instance(static_cast<SiteInstanceImpl*>(
-      SiteInstance::Create(browser_context.get())));
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  std::unique_ptr<RenderProcessHost> host;
+  scoped_refptr<SiteInstanceImpl> instance(
+      SiteInstanceImpl::Create(browser_context.get()));
 
   instance->SetSite(GURL());
   EXPECT_TRUE(instance->HasSite());
@@ -779,7 +794,56 @@ TEST_F(SiteInstanceTest, NoProcessPerSiteForEmptySite) {
   EXPECT_FALSE(RenderProcessHostImpl::GetProcessHostForSite(
       browser_context.get(), GURL()));
 
-  DrainMessageLoops();
+  DrainMessageLoop();
+}
+
+TEST_F(SiteInstanceTest, DefaultSubframeSiteInstance) {
+  if (AreAllSitesIsolatedForTesting())
+    return;  // --top-document-isolation is not possible.
+
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kTopDocumentIsolation);
+
+  std::unique_ptr<TestBrowserContext> browser_context(new TestBrowserContext());
+  scoped_refptr<SiteInstanceImpl> main_instance =
+      SiteInstanceImpl::Create(browser_context.get());
+  scoped_refptr<SiteInstanceImpl> subframe_instance =
+      main_instance->GetDefaultSubframeSiteInstance();
+  int subframe_instance_id = subframe_instance->GetId();
+
+  EXPECT_NE(main_instance, subframe_instance);
+  EXPECT_EQ(subframe_instance, main_instance->GetDefaultSubframeSiteInstance());
+  EXPECT_FALSE(main_instance->IsDefaultSubframeSiteInstance());
+  EXPECT_TRUE(subframe_instance->IsDefaultSubframeSiteInstance());
+
+  EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
+
+  // Free the subframe instance.
+  subframe_instance = nullptr;
+  EXPECT_EQ(1, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
+
+  // Calling GetDefaultSubframeSiteInstance again should return a new
+  // SiteInstance with a different ID from the original.
+  subframe_instance = main_instance->GetDefaultSubframeSiteInstance();
+  EXPECT_NE(subframe_instance->GetId(), subframe_instance_id);
+  EXPECT_FALSE(main_instance->IsDefaultSubframeSiteInstance());
+  EXPECT_TRUE(subframe_instance->IsDefaultSubframeSiteInstance());
+  EXPECT_EQ(subframe_instance->GetDefaultSubframeSiteInstance(),
+            subframe_instance);
+  EXPECT_EQ(0, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
+
+  // Free the main instance.
+  main_instance = nullptr;
+  EXPECT_EQ(1, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(0, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
+
+  // Free the subframe instance, which should free the browsing instance.
+  subframe_instance = nullptr;
+  EXPECT_EQ(1, browser_client()->GetAndClearSiteInstanceDeleteCount());
+  EXPECT_EQ(1, browser_client()->GetAndClearBrowsingInstanceDeleteCount());
 }
 
 }  // namespace content

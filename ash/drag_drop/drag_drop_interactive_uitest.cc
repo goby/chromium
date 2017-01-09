@@ -8,6 +8,7 @@
 #include "ash/test/ash_interactive_ui_test_base.h"
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
@@ -86,23 +87,20 @@ void QuitLoop() {
 }
 
 void DragDropAcrossMultiDisplay_Step4() {
-  ui_controls::SendMouseEventsNotifyWhenDone(
-      ui_controls::LEFT, ui_controls::UP,
-      base::Bind(&QuitLoop));
+  ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, ui_controls::UP,
+                                             base::Bind(&QuitLoop));
 }
 
 void DragDropAcrossMultiDisplay_Step3() {
   // Move to the edge of the 1st display so that the mouse
   // is moved to 2nd display by ash.
   ui_controls::SendMouseMoveNotifyWhenDone(
-      399, 10,
-      base::Bind(&DragDropAcrossMultiDisplay_Step4));
+      399, 10, base::Bind(&DragDropAcrossMultiDisplay_Step4));
 }
 
 void DragDropAcrossMultiDisplay_Step2() {
   ui_controls::SendMouseMoveNotifyWhenDone(
-      20, 10,
-      base::Bind(&DragDropAcrossMultiDisplay_Step3));
+      20, 10, base::Bind(&DragDropAcrossMultiDisplay_Step3));
 }
 
 void DragDropAcrossMultiDisplay_Step1() {
@@ -148,7 +146,7 @@ TEST_F(DragDropTest, MAYBE_DragDropAcrossMultiDisplay) {
   ui_controls::SendMouseMoveNotifyWhenDone(
       10, 10, base::Bind(&DragDropAcrossMultiDisplay_Step1));
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_TRUE(target_view->dropped());
 

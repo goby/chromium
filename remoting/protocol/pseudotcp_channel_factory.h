@@ -7,7 +7,7 @@
 
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "remoting/protocol/stream_channel_factory.h"
 
 namespace remoting {
@@ -35,7 +35,7 @@ class PseudoTcpChannelFactory : public StreamChannelFactory {
 
   void OnDatagramChannelCreated(const std::string& name,
                                 const ChannelCreatedCallback& callback,
-                                scoped_ptr<P2PDatagramSocket> socket);
+                                std::unique_ptr<P2PDatagramSocket> socket);
   void OnPseudoTcpConnected(const std::string& name,
                             const ChannelCreatedCallback& callback,
                             int result);

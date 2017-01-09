@@ -5,6 +5,7 @@
 #include "chrome/browser/media_galleries/fileapi/native_media_file_util.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -56,10 +57,10 @@ void DidOpenSnapshot(
     base::File file) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   if (!file.IsValid()) {
-    callback.Run(file.Pass(), base::Closure());
+    callback.Run(std::move(file), base::Closure());
     return;
   }
-  callback.Run(file.Pass(), base::Bind(&HoldFileRef, file_ref));
+  callback.Run(std::move(file), base::Bind(&HoldFileRef, file_ref));
 }
 
 }  // namespace
@@ -82,7 +83,7 @@ base::File::Error NativeMediaFileUtil::IsMediaFile(
   char buffer[net::kMaxBytesToSniff];
 
   // Read as much as net::SniffMimeTypeFromLocalData() will bother looking at.
-  int64 len = file.Read(0, buffer, net::kMaxBytesToSniff);
+  int64_t len = file.Read(0, buffer, net::kMaxBytesToSniff);
   if (len < 0)
     return base::File::FILE_ERROR_FAILED;
 
@@ -118,7 +119,7 @@ void NativeMediaFileUtil::CreatedSnapshotFileForCreateOrOpen(
 }
 
 void NativeMediaFileUtil::CreateOrOpen(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     int file_flags,
     const CreateOrOpenCallback& callback) {
@@ -132,16 +133,13 @@ void NativeMediaFileUtil::CreateOrOpen(
   }
   scoped_refptr<base::SequencedTaskRunner> task_runner = context->task_runner();
   CreateSnapshotFile(
-      context.Pass(),
-      url,
+      std::move(context), url,
       base::Bind(&NativeMediaFileUtil::CreatedSnapshotFileForCreateOrOpen,
-                 task_runner,
-                 file_flags,
-                 callback));
+                 base::RetainedRef(task_runner), file_flags, callback));
 }
 
 void NativeMediaFileUtil::EnsureFileExists(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const EnsureFileExistsCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -149,7 +147,7 @@ void NativeMediaFileUtil::EnsureFileExists(
 }
 
 void NativeMediaFileUtil::CreateDirectory(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     bool exclusive,
     bool recursive,
@@ -165,7 +163,7 @@ void NativeMediaFileUtil::CreateDirectory(
 }
 
 void NativeMediaFileUtil::GetFileInfo(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     int /* fields */,
     const GetFileInfoCallback& callback) {
@@ -180,7 +178,7 @@ void NativeMediaFileUtil::GetFileInfo(
 }
 
 void NativeMediaFileUtil::ReadDirectory(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const ReadDirectoryCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -194,7 +192,7 @@ void NativeMediaFileUtil::ReadDirectory(
 }
 
 void NativeMediaFileUtil::Touch(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const base::Time& last_access_time,
     const base::Time& last_modified_time,
@@ -204,16 +202,16 @@ void NativeMediaFileUtil::Touch(
 }
 
 void NativeMediaFileUtil::Truncate(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
-    int64 length,
+    int64_t length,
     const StatusCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   callback.Run(base::File::FILE_ERROR_SECURITY);
 }
 
 void NativeMediaFileUtil::CopyFileLocal(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& src_url,
     const storage::FileSystemURL& dest_url,
     CopyOrMoveOption option,
@@ -230,7 +228,7 @@ void NativeMediaFileUtil::CopyFileLocal(
 }
 
 void NativeMediaFileUtil::MoveFileLocal(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& src_url,
     const storage::FileSystemURL& dest_url,
     CopyOrMoveOption option,
@@ -246,7 +244,7 @@ void NativeMediaFileUtil::MoveFileLocal(
 }
 
 void NativeMediaFileUtil::CopyInForeignFile(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const base::FilePath& src_file_path,
     const storage::FileSystemURL& dest_url,
     const StatusCallback& callback) {
@@ -261,7 +259,7 @@ void NativeMediaFileUtil::CopyInForeignFile(
 }
 
 void NativeMediaFileUtil::DeleteFile(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const StatusCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -276,7 +274,7 @@ void NativeMediaFileUtil::DeleteFile(
 
 // This is needed to support Copy and Move.
 void NativeMediaFileUtil::DeleteDirectory(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const StatusCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -290,7 +288,7 @@ void NativeMediaFileUtil::DeleteDirectory(
 }
 
 void NativeMediaFileUtil::DeleteRecursively(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const StatusCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -298,7 +296,7 @@ void NativeMediaFileUtil::DeleteRecursively(
 }
 
 void NativeMediaFileUtil::CreateSnapshotFile(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const CreateSnapshotFileCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -312,7 +310,7 @@ void NativeMediaFileUtil::CreateSnapshotFile(
 }
 
 void NativeMediaFileUtil::CreateDirectoryOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     bool exclusive,
     bool recursive,
@@ -327,7 +325,7 @@ void NativeMediaFileUtil::CreateDirectoryOnTaskRunnerThread(
 }
 
 void NativeMediaFileUtil::GetFileInfoOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const GetFileInfoCallback& callback) {
   DCHECK(IsOnTaskRunnerThread(context.get()));
@@ -341,7 +339,7 @@ void NativeMediaFileUtil::GetFileInfoOnTaskRunnerThread(
 }
 
 void NativeMediaFileUtil::ReadDirectoryOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const ReadDirectoryCallback& callback) {
   DCHECK(IsOnTaskRunnerThread(context.get()));
@@ -355,7 +353,7 @@ void NativeMediaFileUtil::ReadDirectoryOnTaskRunnerThread(
 }
 
 void NativeMediaFileUtil::CopyOrMoveFileLocalOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& src_url,
     const storage::FileSystemURL& dest_url,
     CopyOrMoveOption option,
@@ -371,7 +369,7 @@ void NativeMediaFileUtil::CopyOrMoveFileLocalOnTaskRunnerThread(
 }
 
 void NativeMediaFileUtil::CopyInForeignFileOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const base::FilePath& src_file_path,
     const storage::FileSystemURL& dest_url,
     const StatusCallback& callback) {
@@ -385,7 +383,7 @@ void NativeMediaFileUtil::CopyInForeignFileOnTaskRunnerThread(
 }
 
 void NativeMediaFileUtil::DeleteFileOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const StatusCallback& callback) {
   DCHECK(IsOnTaskRunnerThread(context.get()));
@@ -397,7 +395,7 @@ void NativeMediaFileUtil::DeleteFileOnTaskRunnerThread(
 }
 
 void NativeMediaFileUtil::DeleteDirectoryOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const StatusCallback& callback) {
   DCHECK(IsOnTaskRunnerThread(context.get()));
@@ -409,7 +407,7 @@ void NativeMediaFileUtil::DeleteDirectoryOnTaskRunnerThread(
 }
 
 void NativeMediaFileUtil::CreateSnapshotFileOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const CreateSnapshotFileCallback& callback) {
   DCHECK(IsOnTaskRunnerThread(context.get()));

@@ -25,9 +25,9 @@ KeyboardLayoutEngineManager::~KeyboardLayoutEngineManager() {
 }
 
 void KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(
-    scoped_ptr<KeyboardLayoutEngine> engine) {
+    std::unique_ptr<KeyboardLayoutEngine> engine) {
   if (instance_)
-    instance_->keyboard_layout_engine_.reset(engine.release());
+    instance_->keyboard_layout_engine_ = std::move(engine);
   else
     new KeyboardLayoutEngineManager(engine.release());
 }

@@ -7,10 +7,10 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/platform/WebCursorInfo.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
@@ -48,30 +48,20 @@ class CONTENT_EXPORT WebCursor {
     explicit CursorInfo(blink::WebCursorInfo::Type cursor_type)
         : type(cursor_type),
           image_scale_factor(1) {
-#if defined(OS_WIN)
-      external_handle = NULL;
-#endif
     }
 
     CursorInfo()
         : type(blink::WebCursorInfo::TypePointer),
           image_scale_factor(1) {
-#if defined(OS_WIN)
-      external_handle = NULL;
-#endif
     }
 
     blink::WebCursorInfo::Type type;
     gfx::Point hotspot;
     float image_scale_factor;
     SkBitmap custom_image;
-#if defined(OS_WIN)
-    HCURSOR external_handle;
-#endif
   };
 
   WebCursor();
-  explicit WebCursor(const CursorInfo& cursor_info);
   ~WebCursor();
 
   // Copy constructor/assignment operator combine.
@@ -98,23 +88,21 @@ class CONTENT_EXPORT WebCursor {
   // Returns a native cursor representing the current WebCursor instance.
   gfx::NativeCursor GetNativeCursor();
 
-#if defined(OS_WIN)
-  // Initialize this from the given Windows cursor. The caller must ensure that
-  // the HCURSOR remains valid by not invoking the DestroyCursor/DestroyIcon
-  // APIs on it.
-  void InitFromExternalCursor(HCURSOR handle);
-#endif
-
 #if defined(USE_AURA)
   ui::PlatformCursor GetPlatformCursor();
 
   // Updates |device_scale_factor_| and |rotation_| based on |display|.
-  void SetDisplayInfo(const gfx::Display& display);
+  void SetDisplayInfo(const display::Display& display);
+
+  float GetCursorScaleFactor();
+
+  void CreateScaledBitmapAndHotspotFromCustomData(
+      SkBitmap* bitmap,
+      gfx::Point* hotspot);
 
 #elif defined(OS_WIN)
   // Returns a HCURSOR representing the current WebCursor instance.
-  // The ownership of the HCURSOR (does not apply to external cursors) remains
-  // with the WebCursor instance.
+  // The ownership of the HCURSOR remains with the WebCursor instance.
   HCURSOR GetCursor(HINSTANCE module_handle);
 
 #elif defined(OS_MACOSX)
@@ -147,6 +135,13 @@ class CONTENT_EXPORT WebCursor {
   void CleanupPlatformData();
 
   void SetCustomData(const SkBitmap& image);
+
+  // Fills the custom_data vector and custom_size object with the image data
+  // taken from the bitmap.
+  void CreateCustomData(const SkBitmap& bitmap,
+                        std::vector<char>* custom_data,
+                        gfx::Size* custom_size);
+
   void ImageFromCustomData(SkBitmap* image) const;
 
   // Clamp the hotspot to the custom image's bounds, if this is a custom cursor.
@@ -164,23 +159,20 @@ class CONTENT_EXPORT WebCursor {
   float custom_scale_;
   std::vector<char> custom_data_;
 
-#if defined(OS_WIN)
-  // An externally generated HCURSOR. We assume that it remains valid, i.e we
-  // don't attempt to copy the HCURSOR.
-  HCURSOR external_cursor_;
-#endif
-
 #if defined(USE_AURA) && (defined(USE_X11) || defined(USE_OZONE))
   // Only used for custom cursors.
   ui::PlatformCursor platform_cursor_;
-  float device_scale_factor_;
 #elif defined(OS_WIN)
   // A custom cursor created from custom bitmap data by Webkit.
   HCURSOR custom_cursor_;
 #endif
+#if defined(USE_AURA)
+  float device_scale_factor_;
+#endif
 
 #if defined(USE_OZONE)
-  gfx::Display::Rotation rotation_;
+  display::Display::Rotation rotation_;
+  gfx::Size maximum_cursor_size_;
 #endif
 };
 

@@ -4,12 +4,17 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/at_exit.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/customization/customization_document.h"
@@ -37,7 +42,7 @@ MachineStatisticsInitializer::MachineStatisticsInitializer() {
   base::MessageLoop loop;
   chromeos::system::StatisticsProvider::GetInstance()
       ->StartLoadingMachineStatistics(loop.task_runner(), false);
-  loop.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // static
@@ -98,7 +103,7 @@ L10nUtilTest::~L10nUtilTest() {
 void L10nUtilTest::SetUp() {
   chromeos::input_method::InitializeForTesting(input_manager_);
   input_manager_->SetComponentExtensionIMEManager(
-      make_scoped_ptr(new ComponentExtensionIMEManager));
+      base::WrapUnique(new ComponentExtensionIMEManager));
   MachineStatisticsInitializer::GetInstance();  // Ignore result.
 }
 
@@ -125,22 +130,22 @@ TEST_F(L10nUtilTest, GetUILanguageList) {
   SetInputMethods1();
 
   // This requires initialized StatisticsProvider (see L10nUtilTest()).
-  scoped_ptr<base::ListValue> list(GetUILanguageList(NULL, std::string()));
+  std::unique_ptr<base::ListValue> list(GetUILanguageList(NULL, std::string()));
 
   VerifyOnlyUILanguages(*list);
 }
 
 TEST_F(L10nUtilTest, FindMostRelevantLocale) {
   base::ListValue available_locales;
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   dict->SetString("value", "de");
-  available_locales.Append(dict.release());
+  available_locales.Append(std::move(dict));
   dict.reset(new base::DictionaryValue);
   dict->SetString("value", "fr");
-  available_locales.Append(dict.release());
+  available_locales.Append(std::move(dict));
   dict.reset(new base::DictionaryValue);
   dict->SetString("value", "en-GB");
-  available_locales.Append(dict.release());
+  available_locales.Append(std::move(dict));
 
   std::vector<std::string> most_relevant_language_codes;
   EXPECT_EQ("en-US", FindMostRelevantLocale(most_relevant_language_codes,
@@ -189,7 +194,7 @@ TEST_F(L10nUtilTest, GetUILanguageListMulti) {
   SetInputMethods2();
 
   // This requires initialized StatisticsProvider (see L10nUtilTest()).
-  scoped_ptr<base::ListValue> list(GetUILanguageList(NULL, std::string()));
+  std::unique_ptr<base::ListValue> list(GetUILanguageList(NULL, std::string()));
 
   VerifyOnlyUILanguages(*list);
 
@@ -210,8 +215,8 @@ TEST_F(L10nUtilTest, GetUILanguageListWithMostRelevant) {
   most_relevant_language_codes.push_back("nonexistent");
 
   // This requires initialized StatisticsProvider (see L10nUtilTest()).
-  scoped_ptr<base::ListValue>
-      list(GetUILanguageList(&most_relevant_language_codes, std::string()));
+  std::unique_ptr<base::ListValue> list(
+      GetUILanguageList(&most_relevant_language_codes, std::string()));
 
   VerifyOnlyUILanguages(*list);
 

@@ -4,12 +4,12 @@
 
 #include "chrome/renderer/tts_dispatcher.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/tts_messages.h"
 #include "chrome/common/tts_utterance_request.h"
 #include "content/public/renderer/render_thread.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebSpeechSynthesisUtterance.h"
 #include "third_party/WebKit/public/platform/WebSpeechSynthesisVoice.h"
 #include "third_party/WebKit/public/platform/WebString.h"

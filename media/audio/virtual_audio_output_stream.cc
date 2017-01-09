@@ -4,8 +4,12 @@
 
 #include "media/audio/virtual_audio_output_stream.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
+#include "base/time/time.h"
 #include "media/audio/virtual_audio_input_stream.h"
+#include "media/base/audio_timestamp_helper.h"
 
 namespace media {
 
@@ -35,13 +39,13 @@ void VirtualAudioOutputStream::Start(AudioSourceCallback* callback)  {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback_);
   callback_ = callback;
-  target_input_stream_->AddOutputStream(this, params_);
+  target_input_stream_->AddInputProvider(this, params_);
 }
 
 void VirtualAudioOutputStream::Stop() {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (callback_) {
-    target_input_stream_->RemoveOutputStream(this, params_);
+    target_input_stream_->RemoveInputProvider(this, params_);
     callback_ = NULL;
   }
 }
@@ -72,17 +76,15 @@ void VirtualAudioOutputStream::GetVolume(double* volume) {
 }
 
 double VirtualAudioOutputStream::ProvideInput(AudioBus* audio_bus,
-                                              base::TimeDelta buffer_delay) {
+                                              uint32_t frames_delayed) {
   // Note: This method may be invoked on any one thread, depending on the
   // platform.
   DCHECK(callback_);
 
-  DCHECK_GE(buffer_delay, base::TimeDelta());
-  const int64 upstream_delay_in_bytes =
-      params_.GetBytesPerSecond() * buffer_delay /
-          base::TimeDelta::FromSeconds(1);
-  const int frames = callback_->OnMoreData(
-      audio_bus, static_cast<uint32>(upstream_delay_in_bytes));
+  const base::TimeDelta delay =
+      AudioTimestampHelper::FramesToTime(frames_delayed, params_.sample_rate());
+  const int frames =
+      callback_->OnMoreData(delay, base::TimeTicks::Now(), 0, audio_bus);
   if (frames < audio_bus->frames())
     audio_bus->ZeroFramesPartial(frames, audio_bus->frames() - frames);
 

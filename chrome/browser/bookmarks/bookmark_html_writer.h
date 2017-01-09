@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -87,7 +88,7 @@ class BookmarkFaviconFetcher: public content::NotificationObserver {
   base::CancelableTaskTracker cancelable_task_tracker_;
 
   // Map that stores favicon per URL.
-  scoped_ptr<URLFaviconMap> favicons_map_;
+  std::unique_ptr<URLFaviconMap> favicons_map_;
 
   // Path where html output is stored.
   base::FilePath path_;

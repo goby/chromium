@@ -1,22 +1,16 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-static_library("common") {
+import("//mojo/public/tools/bindings/mojom.gni")
+
+mojom("mojo_interfaces") {
   sources = [
-    "credential_manager_content_utils.cc",
-    "credential_manager_content_utils.h",
-    "credential_manager_message_generator.cc",
-    "credential_manager_message_generator.h",
-    "credential_manager_messages.h",
+    "credential_manager.mojom",
   ]
 
-  deps = [
-    "//base",
-    "//components/password_manager/core/common",
-    "//content/public/common",
-    "//ipc",
-    "//third_party/WebKit/public:blink",
-    "//url",
+  public_deps = [
+    "//url/mojo:url_mojom_gurl",
+    "//url/mojo:url_mojom_origin",
   ]
 }

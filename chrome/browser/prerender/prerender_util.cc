@@ -5,7 +5,7 @@
 #include "chrome/browser/prerender/prerender_util.h"
 
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/strings/string_util.h"
 #include "content/public/browser/resource_request_info.h"
@@ -15,8 +15,6 @@
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
 #include "url/url_util.h"
-
-using content::ResourceType;
 
 namespace prerender {
 
@@ -72,18 +70,19 @@ bool MaybeGetQueryStringBasedAliasURL(
 }
 
 bool IsGoogleDomain(const GURL& url) {
-  return base::StartsWith(url.host(), "www.google.",
+  return base::StartsWith(url.host_piece(), "www.google.",
                           base::CompareCase::SENSITIVE);
 }
 
 bool IsGoogleSearchResultURL(const GURL& url) {
   if (!IsGoogleDomain(url))
     return false;
-  return (url.path().empty() ||
-          base::StartsWith(url.path(), "/search",
+  return (url.path_piece().empty() ||
+          base::StartsWith(url.path_piece(), "/search",
                            base::CompareCase::SENSITIVE) ||
-          (url.path() == "/") ||
-          base::StartsWith(url.path(), "/webhp", base::CompareCase::SENSITIVE));
+          (url.path_piece() == "/") ||
+          base::StartsWith(url.path_piece(), "/webhp",
+                           base::CompareCase::SENSITIVE));
 }
 
 void ReportPrerenderExternalURL() {

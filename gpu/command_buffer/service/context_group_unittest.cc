@@ -4,14 +4,15 @@
 
 #include "gpu/command_buffer/service/context_group.h"
 
-#include "base/memory/scoped_ptr.h"
-#include "gpu/command_buffer/common/value_state.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/test_helper.h"
 #include "gpu/command_buffer/service/texture_manager.h"
-#include "gpu/command_buffer/service/valuebuffer_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_mock.h"
 
@@ -40,11 +41,14 @@ class ContextGroupTest : public GpuServiceTest {
   void SetUp() override {
     GpuServiceTest::SetUp();
     decoder_.reset(new MockGLES2Decoder());
-    group_ = scoped_refptr<ContextGroup>(new ContextGroup(
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, kBindGeneratesResource));
+    scoped_refptr<FeatureInfo> feature_info = new FeatureInfo;
+    group_ = scoped_refptr<ContextGroup>(
+        new ContextGroup(gpu_preferences_, NULL, NULL, NULL, NULL, feature_info,
+                         kBindGeneratesResource, nullptr, nullptr));
   }
 
-  scoped_ptr<MockGLES2Decoder> decoder_;
+  GpuPreferences gpu_preferences_;
+  std::unique_ptr<MockGLES2Decoder> decoder_;
   scoped_refptr<ContextGroup> group_;
 };
 
@@ -67,22 +71,23 @@ TEST_F(ContextGroupTest, Basic) {
 
 TEST_F(ContextGroupTest, InitializeNoExtensions) {
   TestHelper::SetupContextGroupInitExpectations(
-      gl_.get(), DisallowedFeatures(), "", "", kBindGeneratesResource);
+      gl_.get(), DisallowedFeatures(), "", "",
+      CONTEXT_TYPE_OPENGLES2, kBindGeneratesResource);
   group_->Initialize(decoder_.get(), CONTEXT_TYPE_OPENGLES2,
                      DisallowedFeatures());
-  EXPECT_EQ(static_cast<uint32>(TestHelper::kNumVertexAttribs),
+  EXPECT_EQ(static_cast<uint32_t>(TestHelper::kNumVertexAttribs),
             group_->max_vertex_attribs());
-  EXPECT_EQ(static_cast<uint32>(TestHelper::kNumTextureUnits),
+  EXPECT_EQ(static_cast<uint32_t>(TestHelper::kNumTextureUnits),
             group_->max_texture_units());
-  EXPECT_EQ(static_cast<uint32>(TestHelper::kMaxTextureImageUnits),
+  EXPECT_EQ(static_cast<uint32_t>(TestHelper::kMaxTextureImageUnits),
             group_->max_texture_image_units());
-  EXPECT_EQ(static_cast<uint32>(TestHelper::kMaxVertexTextureImageUnits),
-             group_->max_vertex_texture_image_units());
-  EXPECT_EQ(static_cast<uint32>(TestHelper::kMaxFragmentUniformVectors),
+  EXPECT_EQ(static_cast<uint32_t>(TestHelper::kMaxVertexTextureImageUnits),
+            group_->max_vertex_texture_image_units());
+  EXPECT_EQ(static_cast<uint32_t>(TestHelper::kMaxFragmentUniformVectors),
             group_->max_fragment_uniform_vectors());
-  EXPECT_EQ(static_cast<uint32>(TestHelper::kMaxVaryingVectors),
+  EXPECT_EQ(static_cast<uint32_t>(TestHelper::kMaxVaryingVectors),
             group_->max_varying_vectors());
-  EXPECT_EQ(static_cast<uint32>(TestHelper::kMaxVertexUniformVectors),
+  EXPECT_EQ(static_cast<uint32_t>(TestHelper::kMaxVertexUniformVectors),
             group_->max_vertex_uniform_vectors());
   EXPECT_TRUE(group_->buffer_manager() != NULL);
   EXPECT_TRUE(group_->framebuffer_manager() != NULL);
@@ -101,9 +106,10 @@ TEST_F(ContextGroupTest, InitializeNoExtensions) {
 }
 
 TEST_F(ContextGroupTest, MultipleContexts) {
-  scoped_ptr<MockGLES2Decoder> decoder2_(new MockGLES2Decoder());
+  std::unique_ptr<MockGLES2Decoder> decoder2_(new MockGLES2Decoder());
   TestHelper::SetupContextGroupInitExpectations(
-      gl_.get(), DisallowedFeatures(), "", "", kBindGeneratesResource);
+      gl_.get(), DisallowedFeatures(), "", "",
+      CONTEXT_TYPE_OPENGLES2, kBindGeneratesResource);
   EXPECT_TRUE(group_->Initialize(decoder_.get(), CONTEXT_TYPE_OPENGLES2,
                                  DisallowedFeatures()));
   EXPECT_FALSE(group_->Initialize(decoder2_.get(), CONTEXT_TYPE_WEBGL1,

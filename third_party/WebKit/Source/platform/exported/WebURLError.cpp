@@ -28,46 +28,43 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/platform/WebURLError.h"
 
 #include "platform/network/ResourceError.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/text/CString.h"
 
 namespace blink {
 
-WebURLError::WebURLError(const ResourceError& error)
-{
-    *this = error;
+WebURLError::WebURLError(const ResourceError& error) {
+  *this = error;
 }
 
-WebURLError& WebURLError::operator=(const ResourceError& error)
-{
-    if (error.isNull()) {
-        *this = WebURLError();
-    } else {
-        domain = error.domain();
-        reason = error.errorCode();
-        unreachableURL = KURL(ParsedURLString, error.failingURL());
-        isCancellation = error.isCancellation();
-        staleCopyInCache = error.staleCopyInCache();
-        localizedDescription = error.localizedDescription();
-        wasIgnoredByHandler = error.wasIgnoredByHandler();
-    }
-    return *this;
+WebURLError& WebURLError::operator=(const ResourceError& error) {
+  if (error.isNull()) {
+    *this = WebURLError();
+  } else {
+    domain = error.domain();
+    reason = error.errorCode();
+    unreachableURL = KURL(ParsedURLString, error.failingURL());
+    isCancellation = error.isCancellation();
+    staleCopyInCache = error.staleCopyInCache();
+    localizedDescription = error.localizedDescription();
+    wasIgnoredByHandler = error.wasIgnoredByHandler();
+    isCacheMiss = error.isCacheMiss();
+  }
+  return *this;
 }
 
-WebURLError::operator ResourceError() const
-{
-    if (!reason)
-        return ResourceError();
-    CString spec = unreachableURL.spec();
-    ResourceError resourceError = ResourceError(domain, reason, String::fromUTF8(spec.data(), spec.length()), localizedDescription);
-    resourceError.setIsCancellation(isCancellation);
-    resourceError.setStaleCopyInCache(staleCopyInCache);
-    resourceError.setWasIgnoredByHandler(wasIgnoredByHandler);
-    return resourceError;
+WebURLError::operator ResourceError() const {
+  if (!reason)
+    return ResourceError();
+  ResourceError resourceError = ResourceError(
+      domain, reason, unreachableURL.string(), localizedDescription);
+  resourceError.setIsCancellation(isCancellation);
+  resourceError.setStaleCopyInCache(staleCopyInCache);
+  resourceError.setWasIgnoredByHandler(wasIgnoredByHandler);
+  resourceError.setIsCacheMiss(isCacheMiss);
+  return resourceError;
 }
 
-} // namespace blink
+}  // namespace blink

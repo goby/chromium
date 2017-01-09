@@ -4,7 +4,9 @@
 
 #include "components/autofill/core/browser/autofill_ie_toolbar_import_win.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/win/registry.h"
 #include "components/autofill/core/browser/autofill_profile.h"
@@ -59,14 +61,15 @@ ValueDescription profile2[] = {
 };
 
 ValueDescription credit_card[] = {
-  { L"credit_card_name", L"Tommy Gun" },
-  // "4111111111111111" encrypted:
-  { L"credit_card_number", L"\xE53F\x19AB\xC1BF\xC9EB\xECCC\x9BDA\x8515"
-                           L"\xE14D\x6852\x80A8\x50A3\x4375\xFD9F\x1E07"
-                           L"\x790E\x7336\xB773\xAF33\x93EA\xB846\xEC89"
-                           L"\x265C\xD0E6\x4E23\xB75F\x7983" },
-  { L"credit_card_exp_month", L"11" },
-  { L"credit_card_exp_4_digit_year", L"2011" },
+    {L"credit_card_name_full", L"Tommy Gun"},
+    // "4111111111111111" encrypted:
+    {L"credit_card_number",
+     L"\xE53F\x19AB\xC1BF\xC9EB\xECCC\x9BDA\x8515"
+     L"\xE14D\x6852\x80A8\x50A3\x4375\xFD9F\x1E07"
+     L"\x790E\x7336\xB773\xAF33\x93EA\xB846\xEC89"
+     L"\x265C\xD0E6\x4E23\xB75F\x7983"},
+    {L"credit_card_exp_month", L"11"},
+    {L"credit_card_exp_4_digit_year", L"2011"},
 };
 
 ValueDescription empty_salt = {
@@ -184,7 +187,8 @@ TEST_F(AutofillIeToolbarImportTest, TestAutofillImport) {
   EXPECT_EQ(profile2[3].value, profiles[0].GetRawInfo(COMPANY_NAME));
 
   ASSERT_EQ(1U, credit_cards.size());
-  EXPECT_EQ(credit_card[0].value, credit_cards[0].GetRawInfo(CREDIT_CARD_NAME));
+  EXPECT_EQ(credit_card[0].value,
+            credit_cards[0].GetRawInfo(CREDIT_CARD_NAME_FULL));
   EXPECT_EQ(L"4111111111111111",
             credit_cards[0].GetRawInfo(CREDIT_CARD_NUMBER));
   EXPECT_EQ(credit_card[2].value,

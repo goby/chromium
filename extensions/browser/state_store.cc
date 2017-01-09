@@ -4,12 +4,19 @@
 
 #include "extensions/browser/state_store.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/value_store/value_store_factory.h"
 #include "extensions/common/extension.h"
 
 namespace {
@@ -35,7 +42,7 @@ class StateStore::DelayedTaskQueue {
 
   // Queues up a task for invoking once we're ready. Invokes immediately if
   // we're already ready.
-  void InvokeWhenReady(base::Closure task);
+  void InvokeWhenReady(const base::Closure& task);
 
   // Marks us ready, and invokes all pending tasks.
   void SetReady();
@@ -48,7 +55,7 @@ class StateStore::DelayedTaskQueue {
   std::vector<base::Closure> pending_tasks_;
 };
 
-void StateStore::DelayedTaskQueue::InvokeWhenReady(base::Closure task) {
+void StateStore::DelayedTaskQueue::InvokeWhenReady(const base::Closure& task) {
   if (ready_) {
     task.Run();
   } else {
@@ -65,11 +72,10 @@ void StateStore::DelayedTaskQueue::SetReady() {
 }
 
 StateStore::StateStore(content::BrowserContext* context,
-                       const std::string& uma_client_name,
-                       const base::FilePath& db_path,
+                       const scoped_refptr<ValueStoreFactory>& store_factory,
+                       ValueStoreFrontend::BackendType backend_type,
                        bool deferred_load)
-    : db_path_(db_path),
-      uma_client_name_(uma_client_name),
+    : store_(new ValueStoreFrontend(store_factory, backend_type)),
       task_queue_(new DelayedTaskQueue()),
       extension_registry_observer_(this) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(context));
@@ -86,17 +92,6 @@ StateStore::StateStore(content::BrowserContext* context,
   }
 }
 
-StateStore::StateStore(content::BrowserContext* context,
-                       scoped_ptr<ValueStore> value_store)
-    : store_(value_store.Pass()),
-      task_queue_(new DelayedTaskQueue()),
-      extension_registry_observer_(this) {
-  extension_registry_observer_.Add(ExtensionRegistry::Get(context));
-
-  // This constructor is for testing. No need to delay Init.
-  Init();
-}
-
 StateStore::~StateStore() {
 }
 
@@ -111,25 +106,23 @@ void StateStore::RegisterKey(const std::string& key) {
 void StateStore::GetExtensionValue(const std::string& extension_id,
                                    const std::string& key,
                                    ReadCallback callback) {
-  task_queue_->InvokeWhenReady(base::Bind(&ValueStoreFrontend::Get,
-                                          base::Unretained(&store_),
-                                          GetFullKey(extension_id, key),
-                                          callback));
+  task_queue_->InvokeWhenReady(
+      base::Bind(&ValueStoreFrontend::Get, base::Unretained(store_.get()),
+                 GetFullKey(extension_id, key), callback));
 }
 
 void StateStore::SetExtensionValue(const std::string& extension_id,
                                    const std::string& key,
-                                   scoped_ptr<base::Value> value) {
-  task_queue_->InvokeWhenReady(base::Bind(&ValueStoreFrontend::Set,
-                                          base::Unretained(&store_),
-                                          GetFullKey(extension_id, key),
-                                          base::Passed(&value)));
+                                   std::unique_ptr<base::Value> value) {
+  task_queue_->InvokeWhenReady(
+      base::Bind(&ValueStoreFrontend::Set, base::Unretained(store_.get()),
+                 GetFullKey(extension_id, key), base::Passed(&value)));
 }
 
 void StateStore::RemoveExtensionValue(const std::string& extension_id,
                                       const std::string& key) {
   task_queue_->InvokeWhenReady(base::Bind(&ValueStoreFrontend::Remove,
-                                          base::Unretained(&store_),
+                                          base::Unretained(store_.get()),
                                           GetFullKey(extension_id, key)));
 }
 
@@ -149,7 +142,6 @@ void StateStore::OnExtensionWillBeInstalled(
     content::BrowserContext* browser_context,
     const Extension* extension,
     bool is_update,
-    bool from_ephemeral,
     const std::string& old_name) {
   RemoveKeysForExtension(extension->id());
 }
@@ -167,8 +159,9 @@ void StateStore::Init() {
   if (IsInitialized())
     return;
 
-  if (!db_path_.empty())
-    store_.Init(uma_client_name_, db_path_);
+  // TODO(cmumford): The store now always lazily initializes upon first access.
+  // A follow-on CL will remove this deferred initialization implementation
+  // which is now vestigial.
   task_queue_->SetReady();
 }
 
@@ -176,9 +169,8 @@ void StateStore::InitAfterDelay() {
   if (IsInitialized())
     return;
 
-  base::MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&StateStore::Init, AsWeakPtr()),
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&StateStore::Init, AsWeakPtr()),
       base::TimeDelta::FromSeconds(kInitDelaySeconds));
 }
 
@@ -187,7 +179,7 @@ void StateStore::RemoveKeysForExtension(const std::string& extension_id) {
        key != registered_keys_.end();
        ++key) {
     task_queue_->InvokeWhenReady(base::Bind(&ValueStoreFrontend::Remove,
-                                            base::Unretained(&store_),
+                                            base::Unretained(store_.get()),
                                             GetFullKey(extension_id, *key)));
   }
 }

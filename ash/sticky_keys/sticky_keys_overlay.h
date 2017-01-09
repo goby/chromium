@@ -5,9 +5,10 @@
 #ifndef ASH_STICKY_KEYS_STICKY_KEYS_OVERLAY_H_
 #define ASH_STICKY_KEYS_STICKY_KEYS_OVERLAY_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "ash/sticky_keys/sticky_keys_state.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/geometry/size.h"
@@ -41,8 +42,7 @@ class ASH_EXPORT StickyKeysOverlay : public ui::LayerAnimationObserver {
   bool GetModifierVisible(ui::EventFlags modifier);
 
   // Updates the overlay with the current state of a sticky key modifier.
-  void SetModifierKeyState(ui::EventFlags modifier,
-                           StickyKeyState state);
+  void SetModifierKeyState(ui::EventFlags modifier, StickyKeyState state);
 
   // Get the current state of the sticky key modifier in the overlay.
   StickyKeyState GetModifierKeyState(ui::EventFlags modifier);
@@ -65,8 +65,8 @@ class ASH_EXPORT StickyKeysOverlay : public ui::LayerAnimationObserver {
   void OnLayerAnimationScheduled(ui::LayerAnimationSequence* sequence) override;
 
   bool is_visible_;
-  scoped_ptr<views::Widget> overlay_widget_;
-  scoped_ptr<StickyKeysOverlayView> overlay_view_;
+  std::unique_ptr<views::Widget> overlay_widget_;
+  std::unique_ptr<StickyKeysOverlayView> overlay_view_;
   gfx::Size widget_size_;
 };
 

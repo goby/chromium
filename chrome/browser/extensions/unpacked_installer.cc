@@ -18,8 +18,8 @@
 #include "chrome/browser/ui/extensions/extension_install_ui_factory.h"
 #include "chrome/common/extensions/api/plugins/plugins_handler.h"
 #include "components/crx_file/id_util.h"
+#include "components/sync/model/string_ordinal.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/install/extension_install_ui.h"
@@ -30,7 +30,6 @@
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_handlers/shared_module_info.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "sync/api/string_ordinal.h"
 
 using content::BrowserThread;
 using extensions::Extension;
@@ -47,23 +46,24 @@ const char kImportMissing[] = "'import' extension is not installed.";
 const char kImportNotSharedModule[] = "'import' is not a shared module.";
 
 // Manages an ExtensionInstallPrompt for a particular extension.
-class SimpleExtensionLoadPrompt : public ExtensionInstallPrompt::Delegate {
+class SimpleExtensionLoadPrompt {
  public:
   SimpleExtensionLoadPrompt(const Extension* extension,
                             Profile* profile,
                             const base::Closure& callback);
-  ~SimpleExtensionLoadPrompt() override;
 
   void ShowPrompt();
 
-  // ExtensionInstallUI::Delegate
-  void InstallUIProceed() override;
-  void InstallUIAbort(bool user_initiated) override;
-
  private:
-  scoped_ptr<ExtensionInstallPrompt> install_ui_;
+  ~SimpleExtensionLoadPrompt();  // Manages its own lifetime.
+
+  void OnInstallPromptDone(ExtensionInstallPrompt::Result result);
+
+  std::unique_ptr<ExtensionInstallPrompt> install_ui_;
   scoped_refptr<const Extension> extension_;
   base::Closure callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(SimpleExtensionLoadPrompt);
 };
 
 SimpleExtensionLoadPrompt::SimpleExtensionLoadPrompt(
@@ -71,7 +71,7 @@ SimpleExtensionLoadPrompt::SimpleExtensionLoadPrompt(
     Profile* profile,
     const base::Closure& callback)
     : extension_(extension), callback_(callback) {
-  scoped_ptr<extensions::ExtensionInstallUI> ui(
+  std::unique_ptr<extensions::ExtensionInstallUI> ui(
       extensions::CreateExtensionInstallUI(profile));
   install_ui_.reset(new ExtensionInstallPrompt(
       profile, ui->GetDefaultInstallDialogParent()));
@@ -81,28 +81,18 @@ SimpleExtensionLoadPrompt::~SimpleExtensionLoadPrompt() {
 }
 
 void SimpleExtensionLoadPrompt::ShowPrompt() {
-  switch (extensions::ScopedTestDialogAutoConfirm::GetAutoConfirmValue()) {
-    case extensions::ScopedTestDialogAutoConfirm::NONE:
-      install_ui_->ConfirmInstall(
-          this,
-          extension_.get(),
-          ExtensionInstallPrompt::GetDefaultShowDialogCallback());
-      break;
-    case extensions::ScopedTestDialogAutoConfirm::ACCEPT:
-      InstallUIProceed();
-      break;
-    case extensions::ScopedTestDialogAutoConfirm::CANCEL:
-      InstallUIAbort(false);
-      break;
-  }
+  // Unretained() is safe because this object manages its own lifetime.
+  install_ui_->ShowDialog(
+      base::Bind(&SimpleExtensionLoadPrompt::OnInstallPromptDone,
+                 base::Unretained(this)),
+      extension_.get(), nullptr,
+      ExtensionInstallPrompt::GetDefaultShowDialogCallback());
 }
 
-void SimpleExtensionLoadPrompt::InstallUIProceed() {
-  callback_.Run();
-  delete this;
-}
-
-void SimpleExtensionLoadPrompt::InstallUIAbort(bool user_initiated) {
+void SimpleExtensionLoadPrompt::OnInstallPromptDone(
+    ExtensionInstallPrompt::Result result) {
+  if (result == ExtensionInstallPrompt::Result::ACCEPTED)
+    callback_.Run();
   delete this;
 }
 
@@ -140,7 +130,8 @@ void UnpackedInstaller::Load(const base::FilePath& path_in) {
 }
 
 bool UnpackedInstaller::LoadFromCommandLine(const base::FilePath& path_in,
-                                            std::string* extension_id) {
+                                            std::string* extension_id,
+                                            bool only_allow_apps) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(extension_path_.empty());
 
@@ -167,6 +158,20 @@ bool UnpackedInstaller::LoadFromCommandLine(const base::FilePath& path_in,
           extension_path_, extension()->manifest()->value(), &error)) {
     ReportExtensionLoadError(error);
     return false;
+  }
+
+  if (only_allow_apps && !extension()->is_platform_app()) {
+#if defined(GOOGLE_CHROME_BUILD)
+    // Avoid crashing for users with hijacked shortcuts.
+    return true;
+#else
+    // Defined here to avoid unused variable errors in official builds.
+    const char extension_instead_of_app_error[] =
+        "App loading flags cannot be used to load extensions. Please use "
+        "--load-extension instead.";
+    ReportExtensionLoadError(extension_instead_of_app_error);
+    return false;
+#endif
   }
 
   extension()->permissions_data()->BindToCurrentThread();
@@ -216,7 +221,7 @@ void UnpackedInstaller::StartInstallChecks() {
           SharedModuleInfo::GetImports(extension());
       std::vector<SharedModuleInfo::ImportInfo>::const_iterator i;
       for (i = imports.begin(); i != imports.end(); ++i) {
-        Version version_required(i->minimum_version);
+        base::Version version_required(i->minimum_version);
         const Extension* imported_module =
             service->GetExtensionById(i->extension_id, true);
         if (!imported_module) {
@@ -363,6 +368,11 @@ void UnpackedInstaller::ReportExtensionLoadError(const std::string &error) {
 
 void UnpackedInstaller::InstallExtension() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (!service_weak_.get()) {
+    callback_.Reset();
+    return;
+  }
 
   PermissionsUpdater perms_updater(service_weak_->profile());
   perms_updater.InitializePermissions(extension());

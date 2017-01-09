@@ -8,6 +8,8 @@
 #ifndef BASE_PROCESS_INTERNAL_LINUX_H_
 #define BASE_PROCESS_INTERNAL_LINUX_H_
 
+#include <stddef.h>
+#include <stdint.h>
 #include <unistd.h>
 
 #include "base/files/file_path.h"
@@ -63,8 +65,8 @@ enum ProcStatsFields {
 // Reads the |field_num|th field from |proc_stats|. Returns 0 on failure.
 // This version does not handle the first 3 values, since the first value is
 // simply |pid|, and the next two values are strings.
-int64 GetProcStatsFieldAsInt64(const std::vector<std::string>& proc_stats,
-                               ProcStatsFields field_num);
+int64_t GetProcStatsFieldAsInt64(const std::vector<std::string>& proc_stats,
+                                 ProcStatsFields field_num);
 
 // Same as GetProcStatsFieldAsInt64(), but for size_t values.
 size_t GetProcStatsFieldAsSizeT(const std::vector<std::string>& proc_stats,
@@ -72,7 +74,7 @@ size_t GetProcStatsFieldAsSizeT(const std::vector<std::string>& proc_stats,
 
 // Convenience wrapper around GetProcStatsFieldAsInt64(), ParseProcStats() and
 // ReadProcStats(). See GetProcStatsFieldAsInt64() for details.
-int64 ReadProcStatsAndGetFieldAsInt64(pid_t pid, ProcStatsFields field_num);
+int64_t ReadProcStatsAndGetFieldAsInt64(pid_t pid, ProcStatsFields field_num);
 
 // Same as ReadProcStatsAndGetFieldAsInt64() but for size_t values.
 size_t ReadProcStatsAndGetFieldAsSizeT(pid_t pid,
@@ -80,6 +82,9 @@ size_t ReadProcStatsAndGetFieldAsSizeT(pid_t pid,
 
 // Returns the time that the OS started. Clock ticks are relative to this.
 Time GetBootTime();
+
+// Returns the amount of time spent in user space since boot across all CPUs.
+TimeDelta GetUserCpuTimeSinceBoot();
 
 // Converts Linux clock ticks to a wall time delta.
 TimeDelta ClockTicksToTimeDelta(int clock_ticks);

@@ -6,23 +6,34 @@
 #define COMPONENTS_TRANSLATE_CORE_BROWSER_TRANSLATE_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_list.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/feature_list.h"
+#include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/translate/core/browser/language_state.h"
 #include "components/translate/core/common/translate_errors.h"
 
-class GURL;
-class PrefService;
+namespace metrics {
+class TranslateEventProto;
+}
 
 namespace translate {
+
+extern const base::Feature kTranslateLanguageByULP;
 
 class TranslateClient;
 class TranslateDriver;
 class TranslatePrefs;
+
+namespace testing {
+class TranslateManagerTest;
+}  // namespace testing
+
 struct TranslateErrorDetails;
 
 // The TranslateManager class is responsible for showing an info-bar when a page
@@ -48,14 +59,18 @@ class TranslateManager {
   // messages to the renderer.
   void set_current_seq_no(int page_seq_no) { page_seq_no_ = page_seq_no; }
 
+  metrics::TranslateEventProto* mutable_translate_event() {
+    return translate_event_.get();
+  }
+
   // Returns the language to translate to. The language returned is the
   // first language found in the following list that is supported by the
   // translation service:
+  //     High confidence and high probability reading language in ULP
   //     the UI language
   //     the accept-language list
   // If no language is found then an empty string is returned.
-  static std::string GetTargetLanguage(
-      const std::vector<std::string>& accept_languages_list);
+  static std::string GetTargetLanguage(const TranslatePrefs* prefs);
 
   // Returns the language to automatically translate to. |original_language| is
   // the webpage's original language.
@@ -92,21 +107,39 @@ class TranslateManager {
       TranslateErrorCallbackList;
 
   // Registers a callback for translate errors.
-  static scoped_ptr<TranslateErrorCallbackList::Subscription>
-      RegisterTranslateErrorCallback(const TranslateErrorCallback& callback);
+  static std::unique_ptr<TranslateErrorCallbackList::Subscription>
+  RegisterTranslateErrorCallback(const TranslateErrorCallback& callback);
 
   // Gets the LanguageState associated with the TranslateManager
   LanguageState& GetLanguageState();
+
+  // Record an event of the given |event_type| using the currently saved
+  // |translate_event_| as context. |event_type| must be one of the values
+  // defined by metrics::TranslateEventProto::EventType.
+  void RecordTranslateEvent(int event_type);
 
   // By default, don't offer to translate in builds lacking an API key. For
   // testing, set to true to offer anyway.
   static void SetIgnoreMissingKeyForTesting(bool ignore);
 
  private:
+  friend class translate::testing::TranslateManagerTest;
+
   // Sends a translation request to the TranslateDriver.
   void DoTranslatePage(const std::string& translate_script,
                        const std::string& source_lang,
                        const std::string& target_lang);
+
+  // Returns the language to translate to by looking at ULP. Return empty string
+  // If it cannot conclude from ULP.
+  static std::string GetTargetLanguageFromULP(const TranslatePrefs* prefs);
+
+  // Return true if the language is in the ULP with high confidence and high
+  // probability.
+  bool LanguageInULP(const std::string& language) const;
+
+  // Notifies all registered callbacks of translate errors.
+  void NotifyTranslateError(TranslateErrors::Type error_type);
 
   // Called when the Translate script has been fetched.
   // Initiates the translation.
@@ -114,6 +147,11 @@ class TranslateManager {
                                       const std::string& target_lang,
                                       bool success,
                                       const std::string& data);
+
+  // Helper function to initialize a translate event metric proto.
+  void InitTranslateEvent(const std::string& src_lang,
+                          const std::string& dst_lang,
+                          const TranslatePrefs& translate_prefs);
 
   // Sequence number of the current page.
   int page_seq_no_;
@@ -125,6 +163,8 @@ class TranslateManager {
   TranslateDriver* translate_driver_;  // Weak.
 
   LanguageState language_state_;
+
+  std::unique_ptr<metrics::TranslateEventProto> translate_event_;
 
   base::WeakPtrFactory<TranslateManager> weak_method_factory_;
 

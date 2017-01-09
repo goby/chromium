@@ -4,11 +4,16 @@
 
 #include "media/audio/audio_input_device.h"
 
+#include <stdint.h>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "media/audio/audio_manager_base.h"
 #include "media/base/audio_bus.h"
 
@@ -36,11 +41,12 @@ class AudioInputDevice::AudioThreadCallback
   void MapSharedMemory() override;
 
   // Called whenever we receive notifications about pending data.
-  void Process(uint32 pending_data) override;
+  void Process(uint32_t pending_data) override;
 
  private:
+  const double bytes_per_ms_;
   int current_segment_id_;
-  uint32 last_buffer_id_;
+  uint32_t last_buffer_id_;
   ScopedVector<media::AudioBus> audio_buses_;
   CaptureCallback* capture_callback_;
 
@@ -48,11 +54,11 @@ class AudioInputDevice::AudioThreadCallback
 };
 
 AudioInputDevice::AudioInputDevice(
-    scoped_ptr<AudioInputIPC> ipc,
+    std::unique_ptr<AudioInputIPC> ipc,
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner)
     : ScopedTaskRunnerObserver(io_task_runner),
       callback_(NULL),
-      ipc_(ipc.Pass()),
+      ipc_(std::move(ipc)),
       state_(IDLE),
       session_id_(0),
       agc_is_enabled_(false),
@@ -89,7 +95,7 @@ void AudioInputDevice::Stop() {
 
   {
     base::AutoLock auto_lock(audio_thread_lock_);
-    audio_thread_.Stop(base::MessageLoop::current());
+    audio_thread_.reset();
     stopping_hack_ = true;
   }
 
@@ -138,11 +144,12 @@ void AudioInputDevice::OnStreamCreated(
   if (stopping_hack_)
     return;
 
-  DCHECK(audio_thread_.IsStopped());
+  DCHECK(!audio_callback_);
+  DCHECK(!audio_thread_);
   audio_callback_.reset(new AudioInputDevice::AudioThreadCallback(
       audio_parameters_, handle, length, total_segments, callback_));
-  audio_thread_.Start(
-      audio_callback_.get(), socket_handle, "AudioInputDevice", true);
+  audio_thread_.reset(new AudioDeviceThread(audio_callback_.get(),
+                                            socket_handle, "AudioInputDevice"));
 
   state_ = RECORDING;
   ipc_->RecordStream();
@@ -177,9 +184,13 @@ void AudioInputDevice::OnStateChanged(
       // TODO(tommi): Add an explicit contract for clearing the callback
       // object.  Possibly require calling Initialize again or provide
       // a callback object via Start() and clear it in Stop().
-      if (!audio_thread_.IsStopped())
-        callback_->OnCaptureError(
-            "AudioInputDevice::OnStateChanged - audio thread still running");
+      {
+        base::AutoLock auto_lock_(audio_thread_lock_);
+        if (audio_thread_) {
+          callback_->OnCaptureError(
+              "AudioInputDevice::OnStateChanged - audio thread still running");
+        }
+      }
       break;
     default:
       NOTREACHED();
@@ -193,11 +204,7 @@ void AudioInputDevice::OnIPCClosed() {
   ipc_.reset();
 }
 
-AudioInputDevice::~AudioInputDevice() {
-  // TODO(henrika): The current design requires that the user calls
-  // Stop before deleting this class.
-  DCHECK(audio_thread_.IsStopped());
-}
+AudioInputDevice::~AudioInputDevice() {}
 
 void AudioInputDevice::StartUpOnIOThread() {
   DCHECK(task_runner()->BelongsToCurrentThread());
@@ -236,7 +243,7 @@ void AudioInputDevice::ShutDownOnIOThread() {
   // and can't not rely on the main thread existing either.
   base::AutoLock auto_lock_(audio_thread_lock_);
   base::ThreadRestrictions::ScopedAllowIO allow_io;
-  audio_thread_.Stop(NULL);
+  audio_thread_.reset();
   audio_callback_.reset();
   stopping_hack_ = false;
 }
@@ -272,12 +279,15 @@ AudioInputDevice::AudioThreadCallback::AudioThreadCallback(
     int memory_length,
     int total_segments,
     CaptureCallback* capture_callback)
-    : AudioDeviceThread::Callback(audio_parameters, memory, memory_length,
+    : AudioDeviceThread::Callback(audio_parameters,
+                                  memory,
+                                  memory_length,
                                   total_segments),
+      bytes_per_ms_(static_cast<double>(audio_parameters.GetBytesPerSecond()) /
+                    base::Time::kMillisecondsPerSecond),
       current_segment_id_(0),
       last_buffer_id_(UINT32_MAX),
-      capture_callback_(capture_callback) {
-}
+      capture_callback_(capture_callback) {}
 
 AudioInputDevice::AudioThreadCallback::~AudioThreadCallback() {
 }
@@ -286,22 +296,22 @@ void AudioInputDevice::AudioThreadCallback::MapSharedMemory() {
   shared_memory_.Map(memory_length_);
 
   // Create vector of audio buses by wrapping existing blocks of memory.
-  uint8* ptr = static_cast<uint8*>(shared_memory_.memory());
+  uint8_t* ptr = static_cast<uint8_t*>(shared_memory_.memory());
   for (int i = 0; i < total_segments_; ++i) {
     media::AudioInputBuffer* buffer =
         reinterpret_cast<media::AudioInputBuffer*>(ptr);
-    scoped_ptr<media::AudioBus> audio_bus =
+    std::unique_ptr<media::AudioBus> audio_bus =
         media::AudioBus::WrapMemory(audio_parameters_, buffer->audio);
-    audio_buses_.push_back(audio_bus.Pass());
+    audio_buses_.push_back(std::move(audio_bus));
     ptr += segment_length_;
   }
 }
 
-void AudioInputDevice::AudioThreadCallback::Process(uint32 pending_data) {
+void AudioInputDevice::AudioThreadCallback::Process(uint32_t pending_data) {
   // The shared memory represents parameters, size of the data buffer and the
   // actual data buffer containing audio data. Map the memory into this
   // structure and parse out parameters and the data area.
-  uint8* ptr = static_cast<uint8*>(shared_memory_.memory());
+  uint8_t* ptr = static_cast<uint8_t*>(shared_memory_.memory());
   ptr += current_segment_id_ * segment_length_;
   AudioInputBuffer* buffer = reinterpret_cast<AudioInputBuffer*>(ptr);
 
@@ -335,8 +345,7 @@ void AudioInputDevice::AudioThreadCallback::Process(uint32 pending_data) {
   capture_callback_->Capture(
       audio_bus,
       buffer->params.hardware_delay_bytes / bytes_per_ms_,  // Delay in ms
-      buffer->params.volume,
-      buffer->params.key_pressed);
+      buffer->params.volume, buffer->params.key_pressed);
 
   if (++current_segment_id_ >= total_segments_)
     current_segment_id_ = 0;

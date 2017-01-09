@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/common/sandbox_linux/sandbox_linux.h"
+
 #include <dirent.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -11,6 +14,7 @@
 #include <unistd.h>
 
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,15 +25,13 @@
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "content/common/sandbox_linux/sandbox_debug_handling_linux.h"
-#include "content/common/sandbox_linux/sandbox_linux.h"
 #include "content/common/sandbox_linux/sandbox_seccomp_bpf_linux.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/sandbox_linux.h"
@@ -113,7 +115,7 @@ LinuxSandbox::LinuxSandbox()
     LOG(FATAL) << "Failed to instantiate the setuid sandbox client.";
   }
 #if defined(ANY_OF_AMTLU_SANITIZER)
-  sanitizer_args_ = make_scoped_ptr(new __sanitizer_sandbox_arguments);
+  sanitizer_args_ = base::WrapUnique(new __sanitizer_sandbox_arguments);
   *sanitizer_args_ = {0};
 #endif
 }
@@ -185,10 +187,6 @@ void LinuxSandbox::EngageNamespaceSandbox() {
   std::vector<sandbox::Credentials::Capability> caps;
   caps.push_back(sandbox::Credentials::Capability::SYS_ADMIN);
   CHECK(sandbox::Credentials::SetCapabilities(proc_fd_, caps));
-
-  // This needs to happen after moving to a new user NS, since doing so involves
-  // writing the UID/GID map.
-  CHECK(SandboxDebugHandling::SetDumpableStatusAndHandlers());
 }
 
 std::vector<int> LinuxSandbox::GetFileDescriptorsToClose() {
@@ -314,11 +312,18 @@ bool LinuxSandbox::InitializeSandboxImpl() {
   // threads have been created.
   if (!IsSingleThreaded()) {
     std::string error_message = "InitializeSandbox() called with multiple "
-                                "threads in process " + process_type;
+                                "threads in process " + process_type + ". ";
     // TSAN starts a helper thread, so we don't start the sandbox and don't
     // even report an error about it.
     if (IsRunningTSAN())
       return false;
+
+#if defined(OS_CHROMEOS)
+    if (base::SysInfo::IsRunningOnChromeOS() &&
+        process_type == switches::kGpuProcess) {
+      error_message += "This error can be safely ignored in VMTests.";
+    }
+#endif
 
     // The GPU process is allowed to call InitializeSandbox() with threads.
     bool sandbox_failure_fatal = process_type != switches::kGpuProcess;

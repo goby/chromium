@@ -5,10 +5,13 @@
 #ifndef COMPONENTS_NACL_RENDERER_MANIFEST_SERVICE_CHANNEL_H_
 #define COMPONENTS_NACL_RENDERER_MANIFEST_SERVICE_CHANNEL_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "base/synchronization/lock.h"
@@ -48,7 +51,7 @@ class ManifestServiceChannel : public IPC::Listener {
   ManifestServiceChannel(
       const IPC::ChannelHandle& handle,
       const base::Callback<void(int32_t)>& connected_callback,
-      scoped_ptr<Delegate> delegate,
+      std::unique_ptr<Delegate> delegate,
       base::WaitableEvent* waitable_event);
   ~ManifestServiceChannel() override;
 
@@ -56,7 +59,7 @@ class ManifestServiceChannel : public IPC::Listener {
 
   // Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
  private:
@@ -67,8 +70,8 @@ class ManifestServiceChannel : public IPC::Listener {
                        uint64_t token_lo,
                        uint64_t token_hi);
   base::Callback<void(int32_t)> connected_callback_;
-  scoped_ptr<Delegate> delegate_;
-  scoped_ptr<IPC::SyncChannel> channel_;
+  std::unique_ptr<Delegate> delegate_;
+  std::unique_ptr<IPC::SyncChannel> channel_;
 
   base::ProcessId peer_pid_;
 

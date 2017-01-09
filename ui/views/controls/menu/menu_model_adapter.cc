@@ -13,9 +13,14 @@
 namespace views {
 
 MenuModelAdapter::MenuModelAdapter(ui::MenuModel* menu_model)
+    : MenuModelAdapter(menu_model, base::Closure() /*null callback*/) {}
+
+MenuModelAdapter::MenuModelAdapter(ui::MenuModel* menu_model,
+                                   const base::Closure& on_menu_closed_callback)
     : menu_model_(menu_model),
       triggerable_event_flags_(ui::EF_LEFT_MOUSE_BUTTON |
-                               ui::EF_RIGHT_MOUSE_BUTTON) {
+                               ui::EF_RIGHT_MOUSE_BUTTON),
+      on_menu_closed_callback_(on_menu_closed_callback) {
   DCHECK(menu_model);
 }
 
@@ -257,11 +262,17 @@ void MenuModelAdapter::WillHideMenu(MenuItemView* menu) {
   const std::map<MenuItemView*, ui::MenuModel*>::const_iterator map_iterator =
       menu_map_.find(menu);
   if (map_iterator != menu_map_.end()) {
-    map_iterator->second->MenuClosed();
+    map_iterator->second->MenuWillClose();
     return;
   }
 
   NOTREACHED();
+}
+
+void MenuModelAdapter::OnMenuClosed(MenuItemView* menu,
+                                    MenuRunner::RunResult result) {
+  if (!on_menu_closed_callback_.is_null())
+    on_menu_closed_callback_.Run();
 }
 
 // MenuModelAdapter, private:

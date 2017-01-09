@@ -5,15 +5,17 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_IN_MEMORY_URL_INDEX_H_
 #define COMPONENTS_OMNIBOX_BROWSER_IN_MEMORY_URL_INDEX_H_
 
+#include <stddef.h>
+
 #include <functional>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
@@ -38,13 +40,10 @@ namespace bookmarks {
 class BookmarkModel;
 }
 
-namespace in_memory_url_index {
-class InMemoryURLIndexCacheItem;
-}
-
 namespace history {
 class HistoryDatabase;
 class HistoryService;
+class HQPPerfTestOnePopularURL;
 }
 
 class URLIndexPrivateData;
@@ -101,15 +100,12 @@ class InMemoryURLIndex : public KeyedService,
   // |history_service| which may be null during unit testing is used to register
   // |as an HistoryServiceObserver. |history_dir| is a path to the directory
   // containing the history database within the profile wherein the cache and
-  // transaction journals will be stored. |languages| gives a list of language
-  // encodings by which URLs and omnibox searches are broken down into words and
-  // characters.
+  // transaction journals will be stored.
   InMemoryURLIndex(bookmarks::BookmarkModel* bookmark_model,
                    history::HistoryService* history_service,
                    TemplateURLService* template_url_service,
                    base::SequencedWorkerPool* worker_pool,
                    const base::FilePath& history_dir,
-                   const std::string& languages,
                    const SchemeSet& client_schemes_to_whitelist);
   ~InMemoryURLIndex() override;
 
@@ -149,6 +145,7 @@ class InMemoryURLIndex : public KeyedService,
 
  private:
   friend class ::HistoryQuickProviderTest;
+  friend class history::HQPPerfTestOnePopularURL;
   friend class InMemoryURLIndexTest;
   friend class InMemoryURLIndexCacheTest;
   FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, ExpireRow);
@@ -158,9 +155,7 @@ class InMemoryURLIndex : public KeyedService,
   class RebuildPrivateDataFromHistoryDBTask : public history::HistoryDBTask {
    public:
     explicit RebuildPrivateDataFromHistoryDBTask(
-        InMemoryURLIndex* index,
-        const std::string& languages,
-        const SchemeSet& scheme_whitelist);
+        InMemoryURLIndex* index, const SchemeSet& scheme_whitelist);
 
     bool RunOnDBThread(history::HistoryBackend* backend,
                        history::HistoryDatabase* db) override;
@@ -170,7 +165,6 @@ class InMemoryURLIndex : public KeyedService,
     ~RebuildPrivateDataFromHistoryDBTask() override;
 
     InMemoryURLIndex* index_;  // Call back to this index at completion.
-    std::string languages_;    // Languages for word-breaking.
     SchemeSet scheme_whitelist_;  // Schemes to be indexed.
     bool succeeded_;  // Indicates if the rebuild was successful.
     scoped_refptr<URLIndexPrivateData> data_;  // The rebuilt private data.
@@ -286,9 +280,6 @@ class InMemoryURLIndex : public KeyedService,
   // the same directory in which the history database is found. It should never
   // be empty.
   base::FilePath history_dir_;
-
-  // Languages used during the word-breaking process during indexing.
-  std::string languages_;
 
   // Only URLs with a whitelisted scheme are indexed.
   SchemeSet scheme_whitelist_;

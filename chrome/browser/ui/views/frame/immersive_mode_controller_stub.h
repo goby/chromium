@@ -7,8 +7,8 @@
 
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 
 // Stub implementation of ImmersiveModeController for platforms which do not
 // support immersive mode yet.
@@ -30,7 +30,6 @@ class ImmersiveModeControllerStub : public ImmersiveModeController {
       WARN_UNUSED_RESULT;
   void OnFindBarVisibleBoundsChanged(
       const gfx::Rect& new_visible_bounds_in_screen) override;
-  void SetupForTest() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ImmersiveModeControllerStub);

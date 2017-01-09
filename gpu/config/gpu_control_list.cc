@@ -4,6 +4,11 @@
 
 #include "gpu/config/gpu_control_list.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/cpu.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
@@ -14,7 +19,7 @@
 #include "base/sys_info.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_util.h"
-#include "third_party/re2/re2/re2.h"
+#include "third_party/re2/src/re2/re2.h"
 
 namespace gpu {
 namespace {
@@ -33,7 +38,7 @@ bool ProcessVersionString(const std::string& version_string,
   // If the splitter is '-', we assume it's a date with format "mm-dd-yyyy";
   // we split it into the order of "yyyy", "mm", "dd".
   if (splitter == '-') {
-    std::string year = (*version)[version->size() - 1];
+    std::string year = version->back();
     for (int i = version->size() - 1; i > 0; --i) {
       (*version)[i] = (*version)[i - 1];
     }
@@ -120,7 +125,7 @@ const char kVersionStyleStringLexical[] = "lexical";
 
 const char kOp[] = "op";
 
-}  // namespace anonymous
+}  // namespace
 
 GpuControlList::VersionInfo::VersionInfo(
     const std::string& version_op,
@@ -379,7 +384,7 @@ GpuControlList::GpuControlListEntry::GetEntryFromValue(
   size_t dictionary_entry_count = 0;
 
   if (top_level) {
-    uint32 id;
+    uint32_t id;
     if (!value->GetInteger("id", reinterpret_cast<int*>(&id)) ||
         !entry->SetId(id)) {
       LOG(WARNING) << "Malformed id entry " << entry->id();
@@ -575,6 +580,15 @@ GpuControlList::GpuControlListEntry::GetEntryFromValue(
     dictionary_entry_count++;
   }
 
+  std::string gl_version_string_value;
+  if (value->GetString("gl_version_string", &gl_version_string_value)) {
+    if (!entry->SetGLVersionStringInfo(gl_version_string_value)) {
+      LOG(WARNING) << "Malformed gl_version_string entry " << entry->id();
+      return NULL;
+    }
+    dictionary_entry_count++;
+  }
+
   std::string gl_vendor_value;
   if (value->GetString("gl_vendor", &gl_vendor_value)) {
     if (!entry->SetGLVendorInfo(gl_vendor_value)) {
@@ -735,17 +749,40 @@ GpuControlList::GpuControlListEntry::GetEntryFromValue(
     const base::ListValue* feature_value = NULL;
     if (value->GetList("features", &feature_value)) {
       std::vector<std::string> feature_list;
+      std::vector<std::string> feature_exception_list;
       for (size_t i = 0; i < feature_value->GetSize(); ++i) {
         std::string feature;
+        const base::DictionaryValue* features_info_value = NULL;
         if (feature_value->GetString(i, &feature)) {
           feature_list.push_back(feature);
+        } else if (feature_value->GetDictionary(i, &features_info_value)) {
+          const base::ListValue* exception_list_value = NULL;
+          if (features_info_value->size() > 1) {
+            LOG(WARNING) << "Malformed feature entry " << entry->id();
+            return NULL;
+          }
+          if (features_info_value->GetList("exceptions",
+                                           &exception_list_value)) {
+            for (size_t i = 0; i < exception_list_value->GetSize(); ++i) {
+              std::string exception_feature;
+              if (exception_list_value->GetString(i, &exception_feature)) {
+                feature_exception_list.push_back(exception_feature);
+              } else {
+                LOG(WARNING) << "Malformed feature entry " << entry->id();
+                return NULL;
+              }
+            }
+          } else {
+            LOG(WARNING) << "Malformed feature entry " << entry->id();
+            return NULL;
+          }
         } else {
           LOG(WARNING) << "Malformed feature entry " << entry->id();
           return NULL;
         }
       }
-      if (!entry->SetFeatures(
-              feature_list, feature_map, supports_feature_type_all)) {
+      if (!entry->SetFeatures(feature_list, feature_exception_list, feature_map,
+                              supports_feature_type_all)) {
         LOG(WARNING) << "Malformed feature entry " << entry->id();
         return NULL;
       }
@@ -796,13 +833,13 @@ GpuControlList::GpuControlListEntry::GpuControlListEntry()
       disabled_(false),
       vendor_id_(0),
       multi_gpu_style_(kMultiGpuStyleNone),
-      multi_gpu_category_(kMultiGpuCategoryPrimary),
+      multi_gpu_category_(kMultiGpuCategoryActive),
       gl_type_(kGLTypeNone) {
 }
 
 GpuControlList::GpuControlListEntry::~GpuControlListEntry() { }
 
-bool GpuControlList::GpuControlListEntry::SetId(uint32 id) {
+bool GpuControlList::GpuControlListEntry::SetId(uint32_t id) {
   if (id != 0) {
     id_ = id;
     return true;
@@ -832,7 +869,7 @@ bool GpuControlList::GpuControlListEntry::SetVendorId(
 
 bool GpuControlList::GpuControlListEntry::AddDeviceId(
     const std::string& device_id_string) {
-  uint32 device_id = 0;
+  uint32_t device_id = 0;
   if (base::HexStringToUInt(device_id_string, &device_id) && device_id != 0) {
     device_id_list_.push_back(device_id);
     return true;
@@ -900,6 +937,12 @@ bool GpuControlList::GpuControlListEntry::SetGLVersionInfo(
   gl_version_info_.reset(new VersionInfo(
       version_op, std::string(), version_string, version_string2));
   return gl_version_info_->IsValid();
+}
+
+bool GpuControlList::GpuControlListEntry::SetGLVersionStringInfo(
+    const std::string& version_string_value) {
+  gl_version_string_info_ = version_string_value;
+  return !gl_version_string_info_.empty();
 }
 
 bool GpuControlList::GpuControlListEntry::SetGLVendorInfo(
@@ -994,6 +1037,7 @@ void GpuControlList::GpuControlListEntry::SetInProcessGPUInfo(bool value) {
 
 bool GpuControlList::GpuControlListEntry::SetFeatures(
     const std::vector<std::string>& feature_strings,
+    const std::vector<std::string>& exception_strings,
     const FeatureMap& feature_map,
     bool supports_feature_type_all) {
   size_t size = feature_strings.size();
@@ -1004,15 +1048,20 @@ bool GpuControlList::GpuControlListEntry::SetFeatures(
     int feature = 0;
     if (supports_feature_type_all && feature_strings[i] == "all") {
       for (FeatureMap::const_iterator iter = feature_map.begin();
-           iter != feature_map.end(); ++iter)
-        features_.insert(iter->second);
+           iter != feature_map.end(); ++iter) {
+        if (std::find(exception_strings.begin(), exception_strings.end(),
+                      iter->first) == exception_strings.end())
+          features_.insert(iter->second);
+      }
       continue;
     }
     if (!StringToFeature(feature_strings[i], &feature, feature_map)) {
       features_.clear();
       return false;
     }
-    features_.insert(feature);
+    if (std::find(exception_strings.begin(), exception_strings.end(),
+                  feature_strings[i]) == exception_strings.end())
+      features_.insert(feature);
   }
   return true;
 }
@@ -1146,12 +1195,14 @@ bool GpuControlList::GpuControlListEntry::Contains(
         candidates.push_back(gpu_info.gpu);
         break;
       case kMultiGpuCategoryActive:
-        if (gpu_info.gpu.active)
+        if (gpu_info.gpu.active || gpu_info.secondary_gpus.empty())
           candidates.push_back(gpu_info.gpu);
         for (size_t ii = 0; ii < gpu_info.secondary_gpus.size(); ++ii) {
           if (gpu_info.secondary_gpus[ii].active)
             candidates.push_back(gpu_info.secondary_gpus[ii]);
         }
+        if (candidates.empty())
+          candidates.push_back(gpu_info.gpu);
       default:
         break;
     }
@@ -1221,6 +1272,8 @@ bool GpuControlList::GpuControlListEntry::Contains(
   }
   if (GLVersionInfoMismatch(gpu_info.gl_version))
     return false;
+  if (StringMismatch(gpu_info.gl_version, gl_version_string_info_))
+    return false;
   if (StringMismatch(gpu_info.gl_vendor, gl_vendor_info_))
     return false;
   if (StringMismatch(gpu_info.gl_renderer, gl_renderer_info_))
@@ -1283,6 +1336,10 @@ bool GpuControlList::GpuControlListEntry::NeedsMoreInfo(
     return true;
   if (driver_version_info_.get() && gpu_info.driver_version.empty())
     return true;
+  if ((gl_version_info_.get() || !gl_version_string_info_.empty()) &&
+      gpu_info.gl_version.empty()) {
+    return true;
+  }
   if (!gl_vendor_info_.empty() && gpu_info.gl_vendor.empty())
     return true;
   if (!gl_renderer_info_.empty() && gpu_info.gl_renderer.empty())
@@ -1304,7 +1361,7 @@ GpuControlList::OsType GpuControlList::GpuControlListEntry::GetOsType() const {
   return os_info_->type();
 }
 
-uint32 GpuControlList::GpuControlListEntry::id() const {
+uint32_t GpuControlList::GpuControlListEntry::id() const {
   return id_;
 }
 
@@ -1358,14 +1415,11 @@ GpuControlList::~GpuControlList() {
 bool GpuControlList::LoadList(
     const std::string& json_context,
     GpuControlList::OsFilter os_filter) {
-  scoped_ptr<base::Value> root = base::JSONReader::Read(json_context);
-  if (root.get() == NULL || !root->IsType(base::Value::TYPE_DICTIONARY))
+  std::unique_ptr<base::DictionaryValue> root =
+      base::DictionaryValue::From(base::JSONReader::Read(json_context));
+  if (!root)
     return false;
-
-  base::DictionaryValue* root_dictionary =
-      static_cast<base::DictionaryValue*>(root.get());
-  DCHECK(root_dictionary);
-  return LoadList(*root_dictionary, os_filter);
+  return LoadList(*root, os_filter);
 }
 
 bool GpuControlList::LoadList(const base::DictionaryValue& parsed_json,
@@ -1381,7 +1435,7 @@ bool GpuControlList::LoadList(const base::DictionaryValue& parsed_json,
   if (!parsed_json.GetList("entries", &list))
     return false;
 
-  uint32 max_entry_id = 0;
+  uint32_t max_entry_id = 0;
   for (size_t i = 0; i < list->GetSize(); ++i) {
     const base::DictionaryValue* list_item = NULL;
     bool valid = list->GetDictionary(i, &list_item);
@@ -1464,8 +1518,8 @@ std::set<int> GpuControlList::MakeDecision(
   return features;
 }
 
-void GpuControlList::GetDecisionEntries(
-    std::vector<uint32>* entry_ids, bool disabled) const {
+void GpuControlList::GetDecisionEntries(std::vector<uint32_t>* entry_ids,
+                                        bool disabled) const {
   DCHECK(entry_ids);
   entry_ids->clear();
   for (size_t i = 0; i < active_entries_.size(); ++i) {
@@ -1496,18 +1550,18 @@ void GpuControlList::GetReasons(base::ListValue* problem_list,
     GpuControlListEntry* entry = active_entries_[i].get();
     if (entry->disabled())
       continue;
-    base::DictionaryValue* problem = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> problem(new base::DictionaryValue());
 
     problem->SetString("description", entry->description());
 
     base::ListValue* cr_bugs = new base::ListValue();
     for (size_t j = 0; j < entry->cr_bugs().size(); ++j)
-      cr_bugs->Append(new base::FundamentalValue(entry->cr_bugs()[j]));
+      cr_bugs->AppendInteger(entry->cr_bugs()[j]);
     problem->Set("crBugs", cr_bugs);
 
     base::ListValue* webkit_bugs = new base::ListValue();
     for (size_t j = 0; j < entry->webkit_bugs().size(); ++j) {
-      webkit_bugs->Append(new base::FundamentalValue(entry->webkit_bugs()[j]));
+      webkit_bugs->AppendInteger(entry->webkit_bugs()[j]);
     }
     problem->Set("webkitBugs", webkit_bugs);
 
@@ -1518,7 +1572,7 @@ void GpuControlList::GetReasons(base::ListValue* problem_list,
     DCHECK(tag == "workarounds" || tag == "disabledFeatures");
     problem->SetString("tag", tag);
 
-    problem_list->Append(problem);
+    problem_list->Append(std::move(problem));
   }
 }
 
@@ -1526,7 +1580,18 @@ size_t GpuControlList::num_entries() const {
   return entries_.size();
 }
 
-uint32 GpuControlList::max_entry_id() const {
+bool GpuControlList::has_duplicated_entry_id() const {
+  std::set<int> ids;
+  for (size_t i = 0; i < entries_.size(); ++i) {
+    if (ids.count(entries_[i]->id()) == 0)
+      ids.insert(entries_[i]->id());
+    else
+      return true;
+  }
+  return false;
+}
+
+uint32_t GpuControlList::max_entry_id() const {
   return max_entry_id_;
 }
 

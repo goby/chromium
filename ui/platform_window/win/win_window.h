@@ -6,11 +6,14 @@
 #define UI_PLATFORM_WINDOW_WIN_WIN_WINDOW_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/gfx/win/window_impl.h"
 #include "ui/platform_window/platform_window.h"
 #include "ui/platform_window/win/win_window_export.h"
 
 namespace ui {
+
+class PlatformWindowDelegate;
 
 class WIN_WINDOW_EXPORT WinWindow : public NON_EXPORTED_BASE(PlatformWindow),
                                     public gfx::WindowImpl {

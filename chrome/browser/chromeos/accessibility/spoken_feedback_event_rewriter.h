@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "ui/events/event_rewriter.h"
 
@@ -25,7 +26,8 @@ class SpokenFeedbackEventRewriterDelegate
   virtual bool IsSpokenFeedbackEnabled() const;
 
   // Returns true when |key_event| is dispatched to ChromeVox.
-  virtual bool DispatchKeyEventToChromeVox(const ui::KeyEvent& key_event);
+  virtual bool DispatchKeyEventToChromeVox(const ui::KeyEvent& key_event,
+                                           bool capture);
 
   // WebContentsDelegate:
   void HandleKeyboardEvent(
@@ -46,19 +48,19 @@ class SpokenFeedbackEventRewriter : public ui::EventRewriter {
   ~SpokenFeedbackEventRewriter() override;
 
   void SetDelegateForTest(
-      scoped_ptr<SpokenFeedbackEventRewriterDelegate> delegate);
+      std::unique_ptr<SpokenFeedbackEventRewriterDelegate> delegate);
 
  private:
   // EventRewriter:
   ui::EventRewriteStatus RewriteEvent(
       const ui::Event& event,
-      scoped_ptr<ui::Event>* new_event) override;
+      std::unique_ptr<ui::Event>* new_event) override;
   ui::EventRewriteStatus NextDispatchEvent(
       const ui::Event& last_event,
-      scoped_ptr<ui::Event>* new_event) override;
+      std::unique_ptr<ui::Event>* new_event) override;
 
   // Active delegate (used for testing).
-  scoped_ptr<SpokenFeedbackEventRewriterDelegate> delegate_;
+  std::unique_ptr<SpokenFeedbackEventRewriterDelegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(SpokenFeedbackEventRewriter);
 };

@@ -4,8 +4,11 @@
 
 #include "chrome/common/importer/firefox_importer_utils.h"
 
+#include <stddef.h>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/grit/generated_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -105,12 +108,13 @@ TEST(FirefoxImporterUtilsTest, GetFirefoxImporterName) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   const base::FilePath app_ini_file(
-      temp_dir.path().AppendASCII("application.ini"));
+      temp_dir.GetPath().AppendASCII("application.ini"));
   for (size_t i = 0; i < arraysize(GetFirefoxImporterNameCases); ++i) {
     base::WriteFile(app_ini_file,
                     GetFirefoxImporterNameCases[i].app_ini_content.c_str(),
                     GetFirefoxImporterNameCases[i].app_ini_content.size());
-    EXPECT_EQ(GetFirefoxImporterName(temp_dir.path()),
+    EXPECT_EQ(
+        GetFirefoxImporterName(temp_dir.GetPath()),
         l10n_util::GetStringUTF16(GetFirefoxImporterNameCases[i].resource_id));
   }
   EXPECT_EQ(l10n_util::GetStringUTF16(

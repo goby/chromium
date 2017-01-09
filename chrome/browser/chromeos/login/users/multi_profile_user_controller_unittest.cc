@@ -4,7 +4,11 @@
 
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
@@ -20,10 +24,12 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/cert/x509_certificate.h"
+#include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -100,7 +106,7 @@ const BehaviorTestCase kBehaviorTestCases[] = {
 // we've ensured the profile has been shut down.
 policy::PolicyCertVerifier* g_policy_cert_verifier_for_factory = NULL;
 
-scoped_ptr<KeyedService> TestPolicyCertServiceFactory(
+std::unique_ptr<KeyedService> TestPolicyCertServiceFactory(
     content::BrowserContext* context) {
   return policy::PolicyCertService::CreateForTesting(
       kUsers[0], g_policy_cert_verifier_for_factory,
@@ -208,12 +214,12 @@ class MultiProfileUserControllerTest
   }
 
   content::TestBrowserThreadBundle threads_;
-  scoped_ptr<policy::PolicyCertVerifier> cert_verifier_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<policy::PolicyCertVerifier> cert_verifier_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   FakeChromeUserManager* fake_user_manager_;  // Not owned
   ScopedUserManagerEnabler user_manager_enabler_;
 
-  scoped_ptr<MultiProfileUserController> controller_;
+  std::unique_ptr<MultiProfileUserController> controller_;
 
   std::vector<TestingProfile*> user_profiles_;
 
@@ -435,8 +441,8 @@ TEST_F(MultiProfileUserControllerTest,
             MultiProfileUserController::GetPrimaryUserPolicy());
 
   net::CertificateList certificates;
-  certificates.push_back(new net::X509Certificate(
-      "subject", "issuer", base::Time(), base::Time()));
+  certificates.push_back(
+      net::ImportCertFromFile(net::GetTestCertsDirectory(), "ok_cert.pem"));
   service->OnTrustAnchorsChanged(certificates);
   EXPECT_TRUE(service->has_policy_certificates());
   EXPECT_FALSE(controller()->IsUserAllowedInSession(

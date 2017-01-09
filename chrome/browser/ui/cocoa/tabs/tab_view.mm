@@ -8,24 +8,31 @@
 #include "base/logging.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/strings/sys_string_conversions.h"
+#include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
-#import "chrome/browser/ui/cocoa/tabs/media_indicator_button_cocoa.h"
+#import "chrome/browser/ui/cocoa/tabs/alert_indicator_button_cocoa.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_controller.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_window_controller.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
 #import "chrome/browser/ui/cocoa/view_id_util.h"
 #include "chrome/grit/generated_resources.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
+#include "skia/ext/skia_utils_mac.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMFadeTruncatingTextFieldCell.h"
 #import "ui/base/cocoa/nsgraphics_context_additions.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/cocoa/three_part_image.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 
+namespace {
 
-const int kFillHeight = 25;  // Height of the "mask on" part of the mask bitmap.
+// The color of the icons in dark mode theme.
+const SkColor kDarkModeIconColor = SkColorSetARGB(0xFF, 0xC4, 0xC4, 0xC4);
+
+}  // namespace
 
 // The amount of time in seconds during which each type of glow increases, holds
 // steady, and decreases, respectively.
@@ -40,27 +47,120 @@ const NSTimeInterval kAlertHideDuration = 0.4;
 // increasing/decreasing).
 const NSTimeInterval kGlowUpdateInterval = 0.025;
 
+// The intensity of the white overlay when hovering the mouse over a tab.
+const CGFloat kMouseHoverWhiteValue = 1.0;
+const CGFloat kMouseHoverWhiteValueIncongito = 0.3;
+
 // This is used to judge whether the mouse has moved during rapid closure; if it
 // has moved less than the threshold, we want to close the tab.
 const CGFloat kRapidCloseDist = 2.5;
 
+@interface NSView (PrivateAPI)
+// Called by AppKit to check if dragging this view should move the window.
+// NSButton overrides this method in the same way so dragging window buttons
+// has no effect. NSView implementation returns NSZeroRect so the whole view
+// area can be dragged.
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar;
+@end
+
+// This class contains the logic for drawing Material Design tab images. The
+// |setTabEdgeStrokeColor| method is overridden by |TabHeavyImageMaker| to draw
+// high-contrast tabs.
+@interface TabImageMaker : NSObject
++ (void)drawTabLeftMaskImage;
++ (void)drawTabRightMaskImage;
++ (void)drawTabLeftEdgeImage;
++ (void)drawTabMiddleEdgeImage;
++ (void)drawTabRightEdgeImage;
++ (void)setTabEdgeStrokeColor;
+@end
+
+@interface TabHeavyImageMaker : TabImageMaker
++ (void)setTabEdgeStrokeColor;
+@end
+
+@interface TabController(Private)
+// The TabView's close button.
+- (HoverCloseButton*)closeButton;
+@end
+
+extern NSString* const _Nonnull NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification;
+
 namespace {
 
+enum StrokeType {
+  STROKE_NORMAL,
+  STROKE_HEAVY,
+};
+
+NSImage* imageForResourceID(int resource_id, StrokeType stroke_type) {
+  CGFloat imageWidth = resource_id == IDR_TAB_ACTIVE_CENTER ? 1 : 18;
+  SEL theSelector = 0;
+  switch (resource_id) {
+    case IDR_TAB_ACTIVE_LEFT:
+      theSelector = @selector(drawTabLeftEdgeImage);
+      break;
+
+    case IDR_TAB_ACTIVE_CENTER:
+      theSelector = @selector(drawTabMiddleEdgeImage);
+      break;
+
+    case IDR_TAB_ACTIVE_RIGHT:
+      theSelector = @selector(drawTabRightEdgeImage);
+      break;
+
+    case IDR_TAB_ALPHA_LEFT:
+      theSelector = @selector(drawTabLeftMaskImage);
+      break;
+
+    case IDR_TAB_ALPHA_RIGHT:
+      theSelector = @selector(drawTabRightMaskImage);
+      break;
+  }
+  DCHECK(theSelector);
+
+  Class makerClass = stroke_type == STROKE_HEAVY ? [TabHeavyImageMaker class]
+                                                 : [TabImageMaker class];
+  base::scoped_nsobject<NSCustomImageRep> imageRep([[NSCustomImageRep alloc]
+      initWithDrawSelector:theSelector
+                  delegate:makerClass]);
+
+  NSImage* newTabButtonImage =
+      [[[NSImage alloc] initWithSize:NSMakeSize(imageWidth, 29)] autorelease];
+  [newTabButtonImage setCacheMode:NSImageCacheAlways];
+  [newTabButtonImage addRepresentation:imageRep];
+
+  return newTabButtonImage;
+}
+
 ui::ThreePartImage& GetMaskImage() {
-  CR_DEFINE_STATIC_LOCAL(ui::ThreePartImage, mask,
-                         (IDR_TAB_ALPHA_LEFT, 0, IDR_TAB_ALPHA_RIGHT));
+  CR_DEFINE_STATIC_LOCAL(
+      ui::ThreePartImage, mask,
+      (imageForResourceID(IDR_TAB_ALPHA_LEFT, STROKE_NORMAL), nullptr,
+       imageForResourceID(IDR_TAB_ALPHA_RIGHT, STROKE_NORMAL)));
+
   return mask;
 }
 
-ui::ThreePartImage& GetStrokeImage(bool active) {
+ui::ThreePartImage& GetStrokeImage(bool active, StrokeType stroke_type) {
   CR_DEFINE_STATIC_LOCAL(
-      ui::ThreePartImage, activeStroke,
-      (IDR_TAB_ACTIVE_LEFT, IDR_TAB_ACTIVE_CENTER, IDR_TAB_ACTIVE_RIGHT));
+      ui::ThreePartImage, stroke,
+      (imageForResourceID(IDR_TAB_ACTIVE_LEFT, STROKE_NORMAL),
+       imageForResourceID(IDR_TAB_ACTIVE_CENTER, STROKE_NORMAL),
+       imageForResourceID(IDR_TAB_ACTIVE_RIGHT, STROKE_NORMAL)));
   CR_DEFINE_STATIC_LOCAL(
-      ui::ThreePartImage, inactiveStroke,
-      (IDR_TAB_INACTIVE_LEFT, IDR_TAB_INACTIVE_CENTER, IDR_TAB_INACTIVE_RIGHT));
+      ui::ThreePartImage, heavyStroke,
+      (imageForResourceID(IDR_TAB_ACTIVE_LEFT, STROKE_HEAVY),
+       imageForResourceID(IDR_TAB_ACTIVE_CENTER, STROKE_HEAVY),
+       imageForResourceID(IDR_TAB_ACTIVE_RIGHT, STROKE_HEAVY)));
 
-  return active ? activeStroke : inactiveStroke;
+  return stroke_type == STROKE_HEAVY ? heavyStroke : stroke;
+}
+
+CGFloat LineWidthFromContext(CGContextRef context) {
+  CGRect unitRect = CGRectMake(0.0, 0.0, 1.0, 1.0);
+  CGRect deviceRect = CGContextConvertRectToDeviceSpace(context, unitRect);
+  return 1.0 / deviceRect.size.height;
 }
 
 }  // namespace
@@ -80,6 +180,11 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 @synthesize alertAlpha = alertAlpha_;
 @synthesize closing = closing_;
 
++ (CGFloat)maskImageFillHeight {
+  // Return the height of the "mask on" part of the mask bitmap.
+  return [TabController defaultTabHeight] - 1;
+}
+
 - (id)initWithFrame:(NSRect)frame
          controller:(TabController*)controller
         closeButton:(HoverCloseButton*)closeButton {
@@ -96,12 +201,21 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
     base::scoped_nsobject<GTMFadeTruncatingTextFieldCell> labelCell(
         [[GTMFadeTruncatingTextFieldCell alloc] initTextCell:@"Label"]);
     [labelCell setControlSize:NSSmallControlSize];
-    CGFloat fontSize = [NSFont systemFontSizeForControlSize:NSSmallControlSize];
-    [labelCell setFont:[NSFont systemFontOfSize:fontSize]];
     [titleView_ setCell:labelCell];
     titleViewCell_ = labelCell;
 
     [self setWantsLayer:YES];  // -drawFill: needs a layer.
+
+    if (&NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification) {
+      NSNotificationCenter* center =
+          [[NSWorkspace sharedWorkspace] notificationCenter];
+      [center
+          addObserver:self
+             selector:@selector(accessibilityOptionsDidChange:)
+                 name:
+                     NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+               object:nil];
+    }
   }
   return self;
 }
@@ -109,7 +223,19 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 - (void)dealloc {
   // Cancel any delayed requests that may still be pending (drags or hover).
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
+  if (&NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification) {
+    NSNotificationCenter* center =
+        [[NSWorkspace sharedWorkspace] notificationCenter];
+    [center removeObserver:self];
+  }
   [super dealloc];
+}
+
+// Called by AppKit to check if dragging this view should move the window.
+// NSButton overrides this method in the same way so dragging window buttons
+// has no effect.
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+  return [self bounds];
 }
 
 // Called to obtain the context menu for when the user hits the right mouse
@@ -117,11 +243,6 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 // control-click.)
 - (NSMenu*)menu {
   if ([self isClosing])
-    return nil;
-
-  // Sheets, being window-modal, should block contextual menus. For some reason
-  // they do not. Disallow them ourselves.
-  if ([[self window] attachedSheet])
     return nil;
 
   return [controller_ menu];
@@ -178,7 +299,7 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 
   NSPoint viewPoint = [self convertPoint:aPoint fromView:[self superview]];
   NSRect maskRect = [self bounds];
-  maskRect.size.height = kFillHeight;
+  maskRect.size.height = [TabView maskImageFillHeight];
   return GetMaskImage().HitTest(viewPoint, maskRect) ? self : nil;
 }
 
@@ -246,15 +367,11 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
     }
   }
 
-  // Fire the action to select the tab.
-  [controller_ selectTab:self];
-
-  // Messaging the drag controller with |-endDrag:| would seem like the right
-  // thing to do here. But, when a tab has been detached, the controller's
-  // target is nil until the drag is finalized. Since |-mouseUp:| gets called
-  // via the manual event loop inside -[TabStripDragController
-  // maybeStartDrag:forTab:], the drag controller can end the dragging session
-  // itself directly after calling this.
+  // Except in the rapid tab closure case, mouseDown: triggers a nested run loop
+  // that swallows the mouseUp: event. There's a bug in AppKit that sends
+  // mouseUp: callbacks to inappropriate views, so it's doubly important that
+  // this method doesn't do anything. https://crbug.com/511095.
+  [super mouseUp:theEvent];
 }
 
 - (void)otherMouseUp:(NSEvent*)theEvent {
@@ -277,8 +394,7 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 // Returns the color used to draw the background of a tab. |selected| selects
 // between the foreground and background tabs.
 - (NSColor*)backgroundColorForSelected:(bool)selected {
-  ThemeService* themeProvider =
-      static_cast<ThemeService*>([[self window] themeProvider]);
+  const ui::ThemeProvider* themeProvider = [[self window] themeProvider];
   if (!themeProvider)
     return [[self window] backgroundColor];
 
@@ -298,7 +414,7 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
   // Themes don't have an inactive image so only look for one if there's no
   // theme.
   bool active =
-      [[self window] isMainWindow] || !themeProvider->UsingDefaultTheme();
+      [[self window] isMainWindow] || !themeProvider->UsingSystemTheme();
   return themeProvider->GetNSImageColorNamed(bitmapResources[active][selected]);
 }
 
@@ -308,12 +424,13 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
   NSRect bounds = [self bounds];
 
   NSRect clippingRect = bounds;
-  clippingRect.size.height = kFillHeight;
+  clippingRect.size.height = [TabView maskImageFillHeight];
   if (state_ != NSOnState) {
     // Background tabs should not paint over the tab strip separator, which is
-    // two pixels high in both lodpi and hidpi.
-    clippingRect.origin.y = 2 * [self cr_lineWidth];
-    clippingRect.size.height -= clippingRect.origin.y;
+    // two pixels high in both lodpi and hidpi, and one pixel high in MD.
+    CGFloat tabStripSeparatorLineWidth = [self cr_lineWidth];
+    clippingRect.origin.y = tabStripSeparatorLineWidth;
+    clippingRect.size.height -= tabStripSeparatorLineWidth;
   }
   NSRectClip(clippingRect);
 
@@ -346,7 +463,7 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
   if (hoverAlpha > 0 || alertAlpha > 0) {
     CGContextBeginTransparencyLayer(cgContext, 0);
 
-    // The alert glow overlay is like the selected state but at most at most 80%
+    // The alert glow overlay is like the selected state but at most 80%
     // opaque. The hover glow brings up the overlay's opacity at most 50%.
     CGFloat backgroundAlpha = 0.8 * alertAlpha;
     backgroundAlpha += (1 - backgroundAlpha) * 0.5 * hoverAlpha;
@@ -359,17 +476,21 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
     // image. However, even if the theme doesn't provide a tab background, the
     // theme machinery will make one if given a frame image. See
     // BrowserThemePack::GenerateTabBackgroundImages for details.
-    ui::ThemeProvider* themeProvider = [[self window] themeProvider];
+    const ui::ThemeProvider* themeProvider = [[self window] themeProvider];
     BOOL hasCustomTheme = themeProvider &&
         (themeProvider->HasCustomImage(IDR_THEME_TAB_BACKGROUND) ||
          themeProvider->HasCustomImage(IDR_THEME_FRAME));
     // Draw a mouse hover gradient for the default themes.
     if (hoverAlpha > 0) {
       if (themeProvider && !hasCustomTheme) {
+        CGFloat whiteValue = kMouseHoverWhiteValue;
+        if (themeProvider && themeProvider->InIncognitoMode()) {
+          whiteValue = kMouseHoverWhiteValueIncongito;
+        }
         base::scoped_nsobject<NSGradient> glow([NSGradient alloc]);
-        [glow initWithStartingColor:[NSColor colorWithCalibratedWhite:1.0
+        [glow initWithStartingColor:[NSColor colorWithCalibratedWhite:whiteValue
                                         alpha:1.0 * hoverAlpha]
-                        endingColor:[NSColor colorWithCalibratedWhite:1.0
+                        endingColor:[NSColor colorWithCalibratedWhite:whiteValue
                                                                 alpha:0.0]];
         NSRect rect = [self bounds];
         NSPoint point = hoverPoint_;
@@ -388,9 +509,20 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 
 // Draws the tab outline.
 - (void)drawStroke:(NSRect)dirtyRect {
-  CGFloat alpha = [[self window] isMainWindow] ? 1.0 : tabs::kImageNoFocusAlpha;
-  GetStrokeImage(state_ == NSOnState)
-      .DrawInRect([self bounds], NSCompositeSourceOver, alpha);
+  // In MD, the tab stroke is always opaque.
+  CGFloat alpha = 1;
+  NSRect bounds = [self bounds];
+  // In Material Design the tab strip separator is always 1 pixel high -
+  // add a clip rect to avoid drawing the tab edge over it.
+  NSRect clipRect = bounds;
+  clipRect.origin.y += [self cr_lineWidth];
+  NSRectClip(clipRect);
+  const ui::ThemeProvider* provider = [[self window] themeProvider];
+  GetStrokeImage(state_ == NSOnState,
+                 provider && provider->ShouldIncreaseContrast()
+                     ? STROKE_HEAVY
+                     : STROKE_NORMAL)
+      .DrawInRect(bounds, NSCompositeSourceOver, alpha);
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
@@ -434,6 +566,10 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
     // tab dragging.
     [self windowDidChangeActive];
   }
+}
+
+- (BOOL)isActiveTab {
+  return [controller_ active];
 }
 
 - (NSString*)title {
@@ -490,11 +626,47 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
   [self setNeedsDisplayInRect:[titleView_ frame]];
 }
 
+- (SkColor)iconColor {
+  if ([[self window] hasDarkTheme])
+    return kDarkModeIconColor;
+
+  const ui::ThemeProvider* themeProvider = [[self window] themeProvider];
+  if (themeProvider) {
+    bool useActiveTabTextColor = [self isActiveTab];
+
+    const SkColor titleColor =
+        useActiveTabTextColor
+            ? themeProvider->GetColor(ThemeProperties::COLOR_TAB_TEXT)
+            : themeProvider->GetColor(
+                  ThemeProperties::COLOR_BACKGROUND_TAB_TEXT);
+    return SkColorSetA(titleColor, 0xA0);
+  }
+
+  return tabs::kDefaultTabTextColor;
+}
+
+- (void)accessibilityOptionsDidChange:(id)ignored {
+  [self updateLabelFont];
+  [self setNeedsDisplay:YES];
+}
+
+- (void)updateLabelFont {
+  CGFloat fontSize = [titleViewCell_ font].pointSize;
+  const ui::ThemeProvider* provider = [[self window] themeProvider];
+  if (provider && provider->ShouldIncreaseContrast() && state_ == NSOnState) {
+    [titleViewCell_ setFont:[NSFont boldSystemFontOfSize:fontSize]];
+  } else {
+    [titleViewCell_ setFont:[NSFont systemFontOfSize:fontSize]];
+  }
+}
+
 - (void)setState:(NSCellStateValue)state {
   if (state_ == state)
     return;
   state_ = state;
+  [self updateLabelFont];
   [self setNeedsDisplay:YES];
+  [closeButton_ setNeedsDisplay:YES];
 }
 
 - (void)setClosing:(BOOL)closing {
@@ -526,10 +698,10 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 }
 
 - (int)widthOfLargestSelectableRegion {
-  // Assume the entire region to the left of the media indicator and/or close
+  // Assume the entire region to the left of the alert indicator and/or close
   // buttons is available for click-to-select.  If neither are visible, the
   // entire tab region is available.
-  MediaIndicatorButton* const indicator = [controller_ mediaIndicatorButton];
+  AlertIndicatorButton* const indicator = [controller_ alertIndicatorButton];
   const int indicatorLeft = (!indicator || [indicator isHidden]) ?
       NSWidth([self frame]) : NSMinX([indicator frame]);
   HoverCloseButton* const closeButton = [controller_ closeButton];
@@ -712,3 +884,146 @@ ui::ThreePartImage& GetStrokeImage(bool active) {
 }
 
 @end  // @implementation TabView(Private)
+
+@implementation TabImageMaker
+
++ (NSBezierPath*)tabLeftEdgeBezierPathForContext:(CGContextRef)context {
+  NSBezierPath* bezierPath = [NSBezierPath bezierPath];
+
+  [bezierPath moveToPoint:NSMakePoint(-2, 0)];
+  [bezierPath curveToPoint:NSMakePoint(2.5, 2)
+             controlPoint1:NSMakePoint(1.805, -0.38)
+             controlPoint2:NSMakePoint(2.17, 1.415)];
+
+  [bezierPath lineToPoint:NSMakePoint(14, 27)];
+  [bezierPath curveToPoint:NSMakePoint(16, 29)
+             controlPoint1:NSMakePoint(14.25, 27.25)
+             controlPoint2:NSMakePoint(14.747467, 29.118899)];
+
+  [bezierPath lineToPoint:NSMakePoint(18, 29)];
+
+  if (!context) {
+    return bezierPath;
+  }
+
+  // The line width is always 1px.
+  CGFloat lineWidth = LineWidthFromContext(context);
+  [bezierPath setLineWidth:lineWidth];
+
+  // Screen pixels lay between integral coordinates in user space. If you draw
+  // a line from (16, 29) to (18, 29), Core Graphics maps that line to the
+  // pixels that lay along y=28.5. In order to achieve a line that appears to
+  // along y=29, CG will perform dithering. To get a crisp line, you have to
+  // specify y=28.5. Translating the bezier path by the 1-pixel line width
+  // creates the crisp line we want.
+  // On a Retina display, there are pixels at y=28.25 and y=28.75, so
+  // translating the path down by one line width lights up the pixels at 28.75
+  // and leaves a gap along y=28.25. To fix this for the general case we'll
+  // translate up from 28 by one line width.
+  NSAffineTransform* translationTransform = [NSAffineTransform transform];
+  [translationTransform translateXBy:0 yBy:-1 + lineWidth / 2.];
+  [bezierPath transformUsingAffineTransform:translationTransform];
+
+  return bezierPath;
+}
+
++ (void)setTabEdgeStrokeColor {
+  static NSColor* strokeColor =
+      [skia::SkColorToSRGBNSColor(SkColorSetARGB(76, 0, 0, 0)) retain];
+  [strokeColor set];
+}
+
++ (void)drawTabLeftEdgeImage {
+  CGContextRef context = static_cast<CGContextRef>(
+      [[NSGraphicsContext currentContext] graphicsPort]);
+
+  [self setTabEdgeStrokeColor];
+  [[self tabLeftEdgeBezierPathForContext:context] stroke];
+}
+
++ (void)drawTabMiddleEdgeImage {
+  NSBezierPath* middleEdgePath = [NSBezierPath bezierPath];
+  [middleEdgePath moveToPoint:NSMakePoint(0, 29)];
+  [middleEdgePath lineToPoint:NSMakePoint(1, 29)];
+  [middleEdgePath setLineCapStyle:NSSquareLineCapStyle];
+
+  CGContextRef context = static_cast<CGContextRef>(
+      [[NSGraphicsContext currentContext] graphicsPort]);
+  CGFloat lineWidth = LineWidthFromContext(context);
+
+  // Line width is always 1px.
+  [middleEdgePath setLineWidth:lineWidth];
+
+  // Align to device pixels.
+  NSAffineTransform* translationTransform = [NSAffineTransform transform];
+  [translationTransform translateXBy:0 yBy:-1 + lineWidth / 2.];
+  [middleEdgePath transformUsingAffineTransform:translationTransform];
+
+  [self setTabEdgeStrokeColor];
+  [middleEdgePath stroke];
+}
+
++ (void)drawTabRightEdgeImage {
+  CGContextRef context = static_cast<CGContextRef>(
+      [[NSGraphicsContext currentContext] graphicsPort]);
+
+  NSBezierPath* leftEdgePath = [self tabLeftEdgeBezierPathForContext:context];
+
+  // Draw the right edge path by flipping the left edge path vertically.
+  NSAffineTransform* transform = [NSAffineTransform transform];
+  [transform scaleXBy:-1 yBy:1];
+  [transform translateXBy:-18 yBy:0];
+  [leftEdgePath transformUsingAffineTransform:transform];
+
+  [self setTabEdgeStrokeColor];
+  [leftEdgePath stroke];
+}
+
++ (NSBezierPath*)tabLeftMaskBezierPath {
+  NSBezierPath* bezierPath = [self tabLeftEdgeBezierPathForContext:nullptr];
+
+  // Box in the open edges.
+  [bezierPath lineToPoint:NSMakePoint(18, 0)];
+  [bezierPath lineToPoint:NSMakePoint(0, 0)];
+
+  [bezierPath closePath];
+
+  return bezierPath;
+}
+
++ (void)drawTabLeftMaskImage {
+  NSBezierPath* bezierPath = [self tabLeftMaskBezierPath];
+  NSAffineTransform* translationTransform = [NSAffineTransform transform];
+  [translationTransform translateXBy:0.5 yBy:-0.25];
+  [bezierPath transformUsingAffineTransform:translationTransform];
+
+  [[NSColor whiteColor] set];
+  [bezierPath fill];
+}
+
++ (void)drawTabRightMaskImage {
+  // Create the right mask image by flipping the left mask path along the
+  // vettical axis.
+  NSBezierPath* bezierPath = [self tabLeftMaskBezierPath];
+  NSAffineTransform* transform = [NSAffineTransform transform];
+  [transform scaleXBy:-1 yBy:1];
+  [transform translateXBy:-17.5 yBy:-0.25];
+  [bezierPath transformUsingAffineTransform:transform];
+
+  [[NSColor whiteColor] set];
+  [bezierPath fill];
+}
+
+@end
+
+@implementation TabHeavyImageMaker
+
+// For "Increase Contrast" mode, use flat black instead of semitransparent black
+// for the tab edge stroke.
++ (void)setTabEdgeStrokeColor {
+  static NSColor* heavyStrokeColor =
+      [skia::SkColorToSRGBNSColor(SK_ColorBLACK) retain];
+  [heavyStrokeColor set];
+}
+
+@end

@@ -9,12 +9,11 @@
 
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "cc/layers/layer.h"
 #include "third_party/skia/include/core/SkColor.h"
 
-namespace chrome {
 namespace android {
 
 // A native-side, cc::Layer based representation of how a scene should be drawn.
@@ -59,6 +58,5 @@ class SceneLayer {
 bool RegisterSceneLayer(JNIEnv* env);
 
 }  // namespace android
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_COMPOSITOR_SCENE_LAYER_SCENE_LAYER_H_

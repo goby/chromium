@@ -4,10 +4,12 @@
 
 #include "media/base/fake_text_track_stream.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/base/decoder_buffer.h"
 #include "media/filters/webvtt_util.h"
 
@@ -44,6 +46,19 @@ VideoRotation FakeTextTrackStream::video_rotation() {
   return VIDEO_ROTATION_0;
 }
 
+bool FakeTextTrackStream::enabled() const {
+  return true;
+}
+
+void FakeTextTrackStream::set_enabled(bool enabled, base::TimeDelta timestamp) {
+  NOTIMPLEMENTED();
+}
+
+void FakeTextTrackStream::SetStreamStatusChangeCB(
+    const StreamStatusChangeCB& cb) {
+  NOTIMPLEMENTED();
+}
+
 void FakeTextTrackStream::SatisfyPendingRead(
     const base::TimeDelta& start,
     const base::TimeDelta& duration,
@@ -52,15 +67,16 @@ void FakeTextTrackStream::SatisfyPendingRead(
     const std::string& settings) {
   DCHECK(!read_cb_.is_null());
 
-  const uint8* const data_buf = reinterpret_cast<const uint8*>(content.data());
+  const uint8_t* const data_buf =
+      reinterpret_cast<const uint8_t*>(content.data());
   const int data_len = static_cast<int>(content.size());
 
-  std::vector<uint8> side_data;
+  std::vector<uint8_t> side_data;
   MakeSideData(id.begin(), id.end(),
                 settings.begin(), settings.end(),
                 &side_data);
 
-  const uint8* const sd_buf = &side_data[0];
+  const uint8_t* const sd_buf = &side_data[0];
   const int sd_len = static_cast<int>(side_data.size());
 
   scoped_refptr<DecoderBuffer> buffer;

@@ -4,6 +4,8 @@
 
 #include "components/search_engines/default_search_pref_migration.h"
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -14,12 +16,12 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/pref_registry/testing_pref_service_syncable.h"
 #include "components/search_engines/default_search_manager.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -29,9 +31,9 @@ class DefaultSearchPrefMigrationTest : public testing::Test {
 
   void SaveDefaultSearchProviderToLegacyPrefs(const TemplateURL* t_url);
 
-  scoped_ptr<TemplateURL> CreateKeyword(const std::string& short_name,
-                                        const std::string& keyword,
-                                        const std::string& url);
+  std::unique_ptr<TemplateURL> CreateKeyword(const std::string& short_name,
+                                             const std::string& keyword,
+                                             const std::string& url);
 
   DefaultSearchManager* default_search_manager() {
     return default_search_manager_.get();
@@ -40,8 +42,8 @@ class DefaultSearchPrefMigrationTest : public testing::Test {
   PrefService* pref_service() { return &prefs_; }
 
  private:
-  user_prefs::TestingPrefServiceSyncable prefs_;
-  scoped_ptr<DefaultSearchManager> default_search_manager_;
+  sync_preferences::TestingPrefServiceSyncable prefs_;
+  std::unique_ptr<DefaultSearchManager> default_search_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultSearchPrefMigrationTest);
 };
@@ -77,7 +79,7 @@ void DefaultSearchPrefMigrationTest::SaveDefaultSearchProviderToLegacyPrefs(
   base::ListValue alternate_urls;
   std::string search_terms_replacement_key;
   if (t_url) {
-    DCHECK_EQ(TemplateURL::NORMAL, t_url->GetType());
+    DCHECK_EQ(TemplateURL::NORMAL, t_url->type());
     enabled = true;
     search_url = t_url->url();
     suggest_url = t_url->suggestions_url();
@@ -125,7 +127,7 @@ void DefaultSearchPrefMigrationTest::SaveDefaultSearchProviderToLegacyPrefs(
       search_terms_replacement_key);
 }
 
-scoped_ptr<TemplateURL> DefaultSearchPrefMigrationTest::CreateKeyword(
+std::unique_ptr<TemplateURL> DefaultSearchPrefMigrationTest::CreateKeyword(
     const std::string& short_name,
     const std::string& keyword,
     const std::string& url) {
@@ -133,12 +135,12 @@ scoped_ptr<TemplateURL> DefaultSearchPrefMigrationTest::CreateKeyword(
   data.SetShortName(base::ASCIIToUTF16(short_name));
   data.SetKeyword(base::ASCIIToUTF16(keyword));
   data.SetURL(url);
-  scoped_ptr<TemplateURL> t_url(new TemplateURL(data));
-  return t_url.Pass();
+  std::unique_ptr<TemplateURL> t_url(new TemplateURL(data));
+  return t_url;
 }
 
 TEST_F(DefaultSearchPrefMigrationTest, MigrateUserSelectedValue) {
-  scoped_ptr<TemplateURL> t_url(
+  std::unique_ptr<TemplateURL> t_url(
       CreateKeyword("name1", "key1", "http://foo1/{searchTerms}"));
   // Store a value in the legacy location.
   SaveDefaultSearchProviderToLegacyPrefs(t_url.get());
@@ -158,7 +160,7 @@ TEST_F(DefaultSearchPrefMigrationTest, MigrateUserSelectedValue) {
 }
 
 TEST_F(DefaultSearchPrefMigrationTest, MigrateOnlyOnce) {
-  scoped_ptr<TemplateURL> t_url(
+  std::unique_ptr<TemplateURL> t_url(
       CreateKeyword("name1", "key1", "http://foo1/{searchTerms}"));
   // Store a value in the legacy location.
   SaveDefaultSearchProviderToLegacyPrefs(t_url.get());
@@ -187,9 +189,9 @@ TEST_F(DefaultSearchPrefMigrationTest, MigrateOnlyOnce) {
 }
 
 TEST_F(DefaultSearchPrefMigrationTest, ModernValuePresent) {
-  scoped_ptr<TemplateURL> t_url(
+  std::unique_ptr<TemplateURL> t_url(
       CreateKeyword("name1", "key1", "http://foo1/{searchTerms}"));
-  scoped_ptr<TemplateURL> t_url2(
+  std::unique_ptr<TemplateURL> t_url2(
       CreateKeyword("name2", "key2", "http://foo2/{searchTerms}"));
   // Store a value in the legacy location.
   SaveDefaultSearchProviderToLegacyPrefs(t_url.get());

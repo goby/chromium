@@ -5,13 +5,14 @@
 #include "remoting/host/heartbeat_sender.h"
 
 #include <math.h>
+#include <stdint.h>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringize_macros.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "remoting/base/constants.h"
 #include "remoting/base/logging.h"
@@ -47,9 +48,9 @@ const char kHeartbeatResultTag[] = "heartbeat-result";
 const char kSetIntervalTag[] = "set-interval";
 const char kExpectedSequenceIdTag[] = "expected-sequence-id";
 
-const int64 kDefaultHeartbeatIntervalMs = 5 * 60 * 1000;  // 5 minutes.
-const int64 kResendDelayMs = 10 * 1000;  // 10 seconds.
-const int64 kResendDelayOnHostNotFoundMs = 10 * 1000; // 10 seconds.
+const int64_t kDefaultHeartbeatIntervalMs = 5 * 60 * 1000;  // 5 minutes.
+const int64_t kResendDelayMs = 10 * 1000;                   // 10 seconds.
+const int64_t kResendDelayOnHostNotFoundMs = 10 * 1000;     // 10 seconds.
 const int kMaxResendOnHostNotFoundCount = 12;  // 2 minutes (12 x 10 seconds).
 
 }  // namespace
@@ -304,10 +305,10 @@ void HeartbeatSender::SetSequenceId(int sequence_id) {
   sequence_id_was_set_ = true;
 }
 
-scoped_ptr<XmlElement> HeartbeatSender::CreateHeartbeatMessage() {
+std::unique_ptr<XmlElement> HeartbeatSender::CreateHeartbeatMessage() {
   // Create heartbeat stanza.
-  scoped_ptr<XmlElement> heartbeat(new XmlElement(
-      QName(kChromotingXmlNamespace, kHeartbeatQueryTag)));
+  std::unique_ptr<XmlElement> heartbeat(
+      new XmlElement(QName(kChromotingXmlNamespace, kHeartbeatQueryTag)));
   heartbeat->AddAttr(QName(kChromotingXmlNamespace, kHostIdAttr), host_id_);
   heartbeat->AddAttr(QName(kChromotingXmlNamespace, kSequenceIdAttr),
                  base::IntToString(sequence_id_));
@@ -318,42 +319,42 @@ scoped_ptr<XmlElement> HeartbeatSender::CreateHeartbeatMessage() {
   }
   heartbeat->AddElement(CreateSignature().release());
   // Append host version.
-  scoped_ptr<XmlElement> version_tag(new XmlElement(
-      QName(kChromotingXmlNamespace, kHostVersionTag)));
+  std::unique_ptr<XmlElement> version_tag(
+      new XmlElement(QName(kChromotingXmlNamespace, kHostVersionTag)));
   version_tag->AddText(STRINGIZE(VERSION));
   heartbeat->AddElement(version_tag.release());
   // If we have not recorded a heartbeat success, continue sending host OS info.
   if (!heartbeat_succeeded_) {
     // Append host OS name.
-    scoped_ptr<XmlElement> os_name_tag(new XmlElement(
+    std::unique_ptr<XmlElement> os_name_tag(new XmlElement(
         QName(kChromotingXmlNamespace, kHostOperatingSystemNameTag)));
     os_name_tag->AddText(GetHostOperatingSystemName());
     heartbeat->AddElement(os_name_tag.release());
     // Append host OS version.
-    scoped_ptr<XmlElement> os_version_tag(new XmlElement(
+    std::unique_ptr<XmlElement> os_version_tag(new XmlElement(
         QName(kChromotingXmlNamespace, kHostOperatingSystemVersionTag)));
     os_version_tag->AddText(GetHostOperatingSystemVersion());
     heartbeat->AddElement(os_version_tag.release());
   }
   // Append log message (which isn't signed).
-  scoped_ptr<XmlElement> log(ServerLogEntry::MakeStanza());
-  scoped_ptr<ServerLogEntry> log_entry(MakeLogEntryForHeartbeat());
+  std::unique_ptr<XmlElement> log(ServerLogEntry::MakeStanza());
+  std::unique_ptr<ServerLogEntry> log_entry(MakeLogEntryForHeartbeat());
   AddHostFieldsToLogEntry(log_entry.get());
   log->AddElement(log_entry->ToStanza().release());
   heartbeat->AddElement(log.release());
-  return heartbeat.Pass();
+  return heartbeat;
 }
 
-scoped_ptr<XmlElement> HeartbeatSender::CreateSignature() {
-  scoped_ptr<XmlElement> signature_tag(new XmlElement(
-      QName(kChromotingXmlNamespace, kHeartbeatSignatureTag)));
+std::unique_ptr<XmlElement> HeartbeatSender::CreateSignature() {
+  std::unique_ptr<XmlElement> signature_tag(
+      new XmlElement(QName(kChromotingXmlNamespace, kHeartbeatSignatureTag)));
 
   std::string message = NormalizeJid(signal_strategy_->GetLocalJid()) + ' ' +
                         base::IntToString(sequence_id_);
   std::string signature(host_key_pair_->SignMessage(message));
   signature_tag->AddText(signature);
 
-  return signature_tag.Pass();
+  return signature_tag;
 }
 
 }  // namespace remoting

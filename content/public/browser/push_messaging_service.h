@@ -18,7 +18,7 @@
 namespace content {
 
 class BrowserContext;
-class ServiceWorkerContext;
+struct PushSubscriptionOptions;
 
 // A push service-agnostic interface that the Push API uses for talking to
 // push messaging services like GCM. Must only be used on the UI thread.
@@ -31,7 +31,7 @@ class CONTENT_EXPORT PushMessagingService {
                           PushRegistrationStatus status)>;
   using UnregisterCallback = base::Callback<void(PushUnregistrationStatus)>;
 
-  using PublicKeyCallback = base::Callback<void(
+  using EncryptionInfoCallback = base::Callback<void(
       bool success,
       const std::vector<uint8_t>& p256dh,
       const std::vector<uint8_t>& auth)>;
@@ -40,41 +40,39 @@ class CONTENT_EXPORT PushMessagingService {
                                              bool success,
                                              bool not_found)>;
 
-  using ResultCallback = base::Callback<void(bool success)>;
-
   virtual ~PushMessagingService() {}
 
-  // Returns the absolute URL exposed by the push server where the webapp server
-  // can send push messages. This is currently assumed to be the same for all
-  // origins and push registrations.
-  virtual GURL GetPushEndpoint() = 0;
+  // Returns the absolute URL to the endpoint of the push service where messages
+  // should be posted to. Should return an endpoint compatible with the Web Push
+  // Protocol when |standard_protocol| is true.
+  virtual GURL GetEndpoint(bool standard_protocol) const = 0;
 
-  // Subscribe the given |sender_id| with the push messaging service in a
-  // document context. The frame is known and a permission UI may be displayed
-  // to the user.
+  // Subscribe the given |options.sender_info| with the push messaging service
+  // in a document context. The frame is known and a permission UI may be
+  // displayed to the user.
   virtual void SubscribeFromDocument(const GURL& requesting_origin,
                                      int64_t service_worker_registration_id,
-                                     const std::string& sender_id,
                                      int renderer_id,
                                      int render_frame_id,
-                                     bool user_visible,
+                                     const PushSubscriptionOptions& options,
                                      const RegisterCallback& callback) = 0;
 
-  // Subscribe the given |sender_id| with the push messaging service. The frame
-  // is not known so if permission was not previously granted by the user this
-  // request should fail.
+  // Subscribe the given |options.sender_info| with the push messaging service.
+  // The frame is not known so if permission was not previously granted by the
+  // user this request should fail.
   virtual void SubscribeFromWorker(const GURL& requesting_origin,
                                    int64_t service_worker_registration_id,
-                                   const std::string& sender_id,
-                                   bool user_visible,
+                                   const PushSubscriptionOptions& options,
                                    const RegisterCallback& callback) = 0;
 
-  // Retrieves the public encryption key associated with |origin| and
-  // |service_worker_registration_id|, and invokes |callback| with the result
-  // when it is available.
-  virtual void GetPublicEncryptionKey(const GURL& origin,
-                                      int64_t service_worker_registration_id,
-                                      const PublicKeyCallback& callback) = 0;
+  // Retrieves the encryption information associated with the subscription
+  // associated to |origin| and |service_worker_registration_id|. |sender_id| is
+  // also required since an InstanceID might have multiple tokens associated
+  // with different senders, though in practice Push doesn't yet use that.
+  virtual void GetEncryptionInfo(const GURL& origin,
+                                 int64_t service_worker_registration_id,
+                                 const std::string& sender_id,
+                                 const EncryptionInfoCallback& callback) = 0;
 
   // Unsubscribe the given |sender_id| from the push messaging service. The
   // subscription will be synchronously deactivated locally, and asynchronously
@@ -84,34 +82,17 @@ class CONTENT_EXPORT PushMessagingService {
                            const std::string& sender_id,
                            const UnregisterCallback& callback) = 0;
 
-  // Checks the permission status for the requesting origin. Permission is only
-  // ever granted when the requesting origin matches the top level embedding
-  // origin. The |user_visible| boolean indicates whether the permission status
-  // only has to cover push messages resulting in visible effects to the user.
+  // Checks the permission status for the |origin|. The |user_visible| boolean
+  // indicates whether the permission status only has to cover push messages
+  // resulting in visible effects to the user.
   virtual blink::WebPushPermissionStatus GetPermissionStatus(
-      const GURL& requesting_origin,
-      const GURL& embedding_origin,
+      const GURL& origin,
       bool user_visible) = 0;
 
   // Returns whether subscriptions that do not mandate user visible UI upon
   // receiving a push message are supported. Influences permission request and
   // permission check behaviour.
   virtual bool SupportNonVisibleMessages() = 0;
-
-  // Provide a storage mechanism to read/write an opaque
-  // "notifications_shown_by_last_few_pushes" string associated with a Service
-  // Worker registration. Stored data is deleted when the associated
-  // registration is deleted.
-  static void GetNotificationsShownByLastFewPushes(
-      ServiceWorkerContext* service_worker_context,
-      int64_t service_worker_registration_id,
-      const StringCallback& callback);
-  static void SetNotificationsShownByLastFewPushes(
-      ServiceWorkerContext* service_worker_context,
-      int64_t service_worker_registration_id,
-      const GURL& origin,
-      const std::string& notifications_shown,
-      const ResultCallback& callback);
 
  protected:
   static void GetSenderId(BrowserContext* browser_context,
@@ -121,10 +102,20 @@ class CONTENT_EXPORT PushMessagingService {
 
   // Clear the push subscription id stored in the service worker with the given
   // |service_worker_registration_id| for the given |origin|.
-  static void ClearPushSubscriptionID(BrowserContext* browser_context,
+  static void ClearPushSubscriptionId(BrowserContext* browser_context,
                                       const GURL& origin,
                                       int64_t service_worker_registration_id,
                                       const base::Closure& callback);
+
+  // Stores a push subscription in the service worker for the given |origin|.
+  // Must only be used by tests.
+  static void StorePushSubscriptionForTesting(
+      BrowserContext* browser_context,
+      const GURL& origin,
+      int64_t service_worker_registration_id,
+      const std::string& subscription_id,
+      const std::string& sender_id,
+      const base::Closure& callback);
 };
 
 }  // namespace content

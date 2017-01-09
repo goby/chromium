@@ -6,8 +6,9 @@
 
 #include <vector>
 
-#include "ui/gfx/display.h"
-#include "ui/gfx/screen.h"
+#include "base/metrics/histogram_macros.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 
 namespace ui {
 
@@ -15,8 +16,8 @@ namespace {
 int g_custom_event_types = ET_LAST;
 }  // namespace
 
-scoped_ptr<Event> EventFromNative(const base::NativeEvent& native_event) {
-  scoped_ptr<Event> event;
+std::unique_ptr<Event> EventFromNative(const base::NativeEvent& native_event) {
+  std::unique_ptr<Event> event;
   EventType type = EventTypeFromNative(native_event);
   switch(type) {
     case ET_KEY_PRESSED:
@@ -53,35 +54,80 @@ scoped_ptr<Event> EventFromNative(const base::NativeEvent& native_event) {
     default:
       break;
   }
-  return event.Pass();
+  return event;
 }
 
 int RegisterCustomEventType() {
   return ++g_custom_event_types;
 }
 
-base::TimeDelta EventTimeForNow() {
-  return base::TimeDelta::FromInternalValue(
-      base::TimeTicks::Now().ToInternalValue());
+void ValidateEventTimeClock(base::TimeTicks* timestamp) {
+  if (base::debug::BeingDebugged())
+    return;
+
+  base::TimeTicks now = EventTimeForNow();
+  int64_t delta = (now - *timestamp).InMilliseconds();
+  bool has_valid_timebase = delta >= 0 && delta <= 60 * 1000;
+  UMA_HISTOGRAM_BOOLEAN("Event.TimestampHasValidTimebase.Browser",
+                        has_valid_timebase);
+
+#if defined(USE_X11)
+  // Restrict this correction to X11 which is known to provide bogus timestamps
+  // that require correction (crbug.com/611950).
+  if (!has_valid_timebase)
+    *timestamp = now;
+#endif
 }
 
 bool ShouldDefaultToNaturalScroll() {
   return GetInternalDisplayTouchSupport() ==
-      gfx::Display::TOUCH_SUPPORT_AVAILABLE;
+         display::Display::TOUCH_SUPPORT_AVAILABLE;
 }
 
-gfx::Display::TouchSupport GetInternalDisplayTouchSupport() {
-  gfx::Screen* screen = gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_NATIVE);
+display::Display::TouchSupport GetInternalDisplayTouchSupport() {
+  display::Screen* screen = display::Screen::GetScreen();
   // No screen in some unit tests.
   if (!screen)
-    return gfx::Display::TOUCH_SUPPORT_UNKNOWN;
-  const std::vector<gfx::Display>& displays = screen->GetAllDisplays();
-  for (std::vector<gfx::Display>::const_iterator it = displays.begin();
+    return display::Display::TOUCH_SUPPORT_UNKNOWN;
+  const std::vector<display::Display>& displays = screen->GetAllDisplays();
+  for (std::vector<display::Display>::const_iterator it = displays.begin();
        it != displays.end(); ++it) {
     if (it->IsInternal())
       return it->touch_support();
   }
-  return gfx::Display::TOUCH_SUPPORT_UNAVAILABLE;
+  return display::Display::TOUCH_SUPPORT_UNAVAILABLE;
+}
+
+void ComputeEventLatencyOS(const base::NativeEvent& native_event) {
+  base::TimeTicks current_time = EventTimeForNow();
+  base::TimeTicks time_stamp = EventTimeFromNative(native_event);
+  base::TimeDelta delta = current_time - time_stamp;
+
+  EventType type = EventTypeFromNative(native_event);
+  switch (type) {
+#if defined(OS_MACOSX)
+    // On Mac, ET_SCROLL and ET_MOUSEWHEEL represent the same class of events.
+    case ET_SCROLL:
+#endif
+    case ET_MOUSEWHEEL:
+      UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.OS.MOUSE_WHEEL",
+                                  delta.InMicroseconds(), 1, 1000000, 50);
+      return;
+    case ET_TOUCH_MOVED:
+      UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.OS.TOUCH_MOVED",
+                                  delta.InMicroseconds(), 1, 1000000, 50);
+      return;
+    case ET_TOUCH_PRESSED:
+      UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.OS.TOUCH_PRESSED",
+                                  delta.InMicroseconds(), 1, 1000000, 50);
+      return;
+    case ET_TOUCH_RELEASED:
+      UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.OS.TOUCH_RELEASED",
+                                  delta.InMicroseconds(), 1, 1000000, 50);
+      return;
+    default:
+      return;
+  }
 }
 
 }  // namespace ui

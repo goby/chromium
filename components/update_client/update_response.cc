@@ -4,9 +4,12 @@
 
 #include "components/update_client/update_response.h"
 
-#include <algorithm>
+#include <stddef.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <algorithm>
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -18,6 +21,9 @@
 namespace update_client {
 
 static const char* kExpectedResponseProtocol = "3.0";
+const char UpdateResponse::Result::kCohort[] = "cohort";
+const char UpdateResponse::Result::kCohortHint[] = "cohorthint";
+const char UpdateResponse::Result::kCohortName[] = "cohortname";
 
 UpdateResponse::UpdateResponse() {
 }
@@ -26,22 +32,25 @@ UpdateResponse::~UpdateResponse() {
 
 UpdateResponse::Results::Results() : daystart_elapsed_seconds(kNoDaystart) {
 }
+UpdateResponse::Results::Results(const Results& other) = default;
 UpdateResponse::Results::~Results() {
 }
 
-UpdateResponse::Result::Result() {
-}
-
+UpdateResponse::Result::Result() {}
+UpdateResponse::Result::Result(const Result& other) = default;
 UpdateResponse::Result::~Result() {
 }
 
 UpdateResponse::Result::Manifest::Manifest() {
 }
+UpdateResponse::Result::Manifest::Manifest(const Manifest& other) = default;
 UpdateResponse::Result::Manifest::~Manifest() {
 }
 
 UpdateResponse::Result::Manifest::Package::Package() : size(0), sizediff(0) {
 }
+UpdateResponse::Result::Manifest::Package::Package(const Package& other) =
+    default;
 UpdateResponse::Result::Manifest::Package::~Package() {
 }
 
@@ -85,6 +94,21 @@ static std::string GetAttribute(xmlNode* node, const char* attribute_name) {
     }
   }
   return std::string();
+}
+
+// Returns the value of a named attribute, or nullptr .
+static std::unique_ptr<std::string> GetAttributePtr(
+    xmlNode* node,
+    const char* attribute_name) {
+  const xmlChar* name = reinterpret_cast<const xmlChar*>(attribute_name);
+  for (xmlAttr* attr = node->properties; attr != NULL; attr = attr->next) {
+    if (!xmlStrcmp(attr->name, name) && attr->children &&
+        attr->children->content) {
+      return base::MakeUnique<std::string>(
+          reinterpret_cast<const char*>(attr->children->content));
+    }
+  }
+  return nullptr;
 }
 
 // This is used for the xml parser to report errors. This assumes the context
@@ -156,7 +180,7 @@ bool ParseManifestTag(xmlNode* manifest,
     *error = "Missing version for manifest.";
     return false;
   }
-  Version version(result->manifest.version);
+  base::Version version(result->manifest.version);
   if (!version.IsValid()) {
     *error = "Invalid version: '";
     *error += result->manifest.version;
@@ -168,7 +192,7 @@ bool ParseManifestTag(xmlNode* manifest,
   result->manifest.browser_min_version =
       GetAttribute(manifest, "prodversionmin");
   if (result->manifest.browser_min_version.length()) {
-    Version browser_min_version(result->manifest.browser_min_version);
+    base::Version browser_min_version(result->manifest.browser_min_version);
     if (!browser_min_version.IsValid()) {
       *error = "Invalid prodversionmin: '";
       *error += result->manifest.browser_min_version;
@@ -262,6 +286,17 @@ bool ParseUpdateCheckTag(xmlNode* updatecheck,
 bool ParseAppTag(xmlNode* app,
                  UpdateResponse::Result* result,
                  std::string* error) {
+  // Read cohort information.
+  auto cohort = GetAttributePtr(app, "cohort");
+  static const char* attrs[] = {UpdateResponse::Result::kCohort,
+                                UpdateResponse::Result::kCohortHint,
+                                UpdateResponse::Result::kCohortName};
+  for (const auto& attr : attrs) {
+    auto value = GetAttributePtr(app, attr);
+    if (value)
+      result->cohort_attrs.insert({attr, *value});
+  }
+
   // Read the crx id.
   result->extension_id = GetAttribute(app, "appid");
   if (result->extension_id.empty()) {
@@ -281,6 +316,7 @@ bool ParseAppTag(xmlNode* app,
 
 bool UpdateResponse::Parse(const std::string& response_xml) {
   results_.daystart_elapsed_seconds = kNoDaystart;
+  results_.daystart_elapsed_days = kNoDaystart;
   results_.list.clear();
   errors_.clear();
 
@@ -328,6 +364,11 @@ bool UpdateResponse::Parse(const std::string& response_xml) {
     int parsed_elapsed = kNoDaystart;
     if (base::StringToInt(elapsed_seconds, &parsed_elapsed)) {
       results_.daystart_elapsed_seconds = parsed_elapsed;
+    }
+    std::string elapsed_days = GetAttribute(first, "elapsed_days");
+    parsed_elapsed = kNoDaystart;
+    if (base::StringToInt(elapsed_days, &parsed_elapsed)) {
+      results_.daystart_elapsed_days = parsed_elapsed;
     }
   }
 

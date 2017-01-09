@@ -28,53 +28,49 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/mediasource/MediaSourceRegistry.h"
 
 #include "modules/mediasource/MediaSource.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/MainThread.h"
 
 namespace blink {
 
-MediaSourceRegistry& MediaSourceRegistry::registry()
-{
-    ASSERT(isMainThread());
-    DEFINE_STATIC_LOCAL(MediaSourceRegistry, instance, ());
-    return instance;
+MediaSourceRegistry& MediaSourceRegistry::registry() {
+  DCHECK(isMainThread());
+  DEFINE_STATIC_LOCAL(MediaSourceRegistry, instance, ());
+  return instance;
 }
 
-void MediaSourceRegistry::registerURL(SecurityOrigin*, const KURL& url, URLRegistrable* registrable)
-{
-    ASSERT(&registrable->registry() == this);
-    ASSERT(isMainThread());
+void MediaSourceRegistry::registerURL(SecurityOrigin*,
+                                      const KURL& url,
+                                      URLRegistrable* registrable) {
+  DCHECK_EQ(&registrable->registry(), this);
+  DCHECK(isMainThread());
 
-    MediaSource* source = static_cast<MediaSource*>(registrable);
-    source->addedToRegistry();
-    m_mediaSources.set(url.string(), source);
+  MediaSource* source = static_cast<MediaSource*>(registrable);
+  source->addedToRegistry();
+  m_mediaSources.set(url.getString(), source);
 }
 
-void MediaSourceRegistry::unregisterURL(const KURL& url)
-{
-    ASSERT(isMainThread());
-    PersistentHeapHashMap<String, Member<MediaSource>>::iterator iter = m_mediaSources.find(url.string());
-    if (iter == m_mediaSources.end())
-        return;
+void MediaSourceRegistry::unregisterURL(const KURL& url) {
+  DCHECK(isMainThread());
+  PersistentHeapHashMap<String, Member<MediaSource>>::iterator iter =
+      m_mediaSources.find(url.getString());
+  if (iter == m_mediaSources.end())
+    return;
 
-    MediaSource* source = iter->value;
-    m_mediaSources.remove(iter);
-    source->removedFromRegistry();
+  MediaSource* source = iter->value;
+  m_mediaSources.remove(iter);
+  source->removedFromRegistry();
 }
 
-URLRegistrable* MediaSourceRegistry::lookup(const String& url)
-{
-    ASSERT(isMainThread());
-    return m_mediaSources.get(url);
+URLRegistrable* MediaSourceRegistry::lookup(const String& url) {
+  DCHECK(isMainThread());
+  return url.isNull() ? nullptr : m_mediaSources.get(url);
 }
 
-MediaSourceRegistry::MediaSourceRegistry()
-{
-    HTMLMediaSource::setRegistry(this);
+MediaSourceRegistry::MediaSourceRegistry() {
+  HTMLMediaSource::setRegistry(this);
 }
 
-} // namespace blink
+}  // namespace blink

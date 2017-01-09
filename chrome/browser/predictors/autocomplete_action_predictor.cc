@@ -5,15 +5,17 @@
 #include "chrome/browser/predictors/autocomplete_action_predictor.h"
 
 #include <math.h>
+#include <stddef.h>
 
 #include <vector>
 
 #include "base/bind.h"
 #include "base/guid.h"
 #include "base/i18n/case_conversion.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -126,10 +128,8 @@ void AutocompleteActionPredictor::RegisterTransitionalMatches(
   }
 
   for (const auto& i : result) {
-    if (std::find(match_it->urls.begin(), match_it->urls.end(),
-                  i.destination_url) == match_it->urls.end()) {
+    if (!base::ContainsValue(match_it->urls, i.destination_url))
       match_it->urls.push_back(i.destination_url);
-    }
   }
 }
 
@@ -152,18 +152,18 @@ void AutocompleteActionPredictor::StartPrerendering(
     const gfx::Size& size) {
   // Only cancel the old prerender after starting the new one, so if the URLs
   // are the same, the underlying prerender will be reused.
-  scoped_ptr<prerender::PrerenderHandle> old_prerender_handle(
-      prerender_handle_.release());
-  if (prerender::PrerenderManager* prerender_manager =
-          prerender::PrerenderManagerFactory::GetForProfile(profile_)) {
-    prerender_handle_.reset(prerender_manager->AddPrerenderFromOmnibox(
-        url, session_storage_namespace, size));
+  std::unique_ptr<prerender::PrerenderHandle> old_prerender_handle =
+      std::move(prerender_handle_);
+  prerender::PrerenderManager* prerender_manager =
+      prerender::PrerenderManagerFactory::GetForBrowserContext(profile_);
+  if (prerender_manager) {
+    prerender_handle_ = prerender_manager->AddPrerenderFromOmnibox(
+        url, session_storage_namespace, size);
   }
   if (old_prerender_handle)
     old_prerender_handle->OnCancel();
 }
 
-// Given a match, return a recommended action.
 AutocompleteActionPredictor::Action
     AutocompleteActionPredictor::RecommendAction(
         const base::string16& user_text,
@@ -206,8 +206,6 @@ AutocompleteActionPredictor::Action
   return action;
 }
 
-// Return true if the suggestion type warrants a TCP/IP preconnection.
-// i.e., it is now quite likely that the user will select the related domain.
 // static
 bool AutocompleteActionPredictor::IsPreconnectable(
     const AutocompleteMatch& match) {
@@ -247,8 +245,7 @@ void AutocompleteActionPredictor::OnOmniboxOpenedUrl(const OmniboxLog& log) {
   }
 
   UMA_HISTOGRAM_BOOLEAN(
-      base::StringPrintf("Prerender.OmniboxNavigationsCouldPrerender%s",
-                         prerender::PrerenderManager::GetModeString()).c_str(),
+      "Prerender.OmniboxNavigationsCouldPrerender",
       prerender::IsOmniboxEnabled(profile_));
 
   const AutocompleteMatch& match = log.result.match_at(log.selected_index);
@@ -589,6 +586,9 @@ void AutocompleteActionPredictor::OnHistoryServiceLoaded(
 
 AutocompleteActionPredictor::TransitionalMatch::TransitionalMatch() {
 }
+
+AutocompleteActionPredictor::TransitionalMatch::TransitionalMatch(
+    const TransitionalMatch& other) = default;
 
 AutocompleteActionPredictor::TransitionalMatch::~TransitionalMatch() {
 }

@@ -4,13 +4,16 @@
 
 #include "chrome/browser/ui/views/bookmarks/bookmark_bubble_view.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/signin/fake_signin_manager_builder.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/ui/bookmarks/bookmark_bubble_delegate.h"
+#include "chrome/browser/ui/sync/bubble_sync_promo_delegate.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
@@ -32,7 +35,7 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
 
     profile()->CreateBookmarkModel(true);
     BookmarkModel* bookmark_model =
-        BookmarkModelFactory::GetForProfile(profile());
+        BookmarkModelFactory::GetForBrowserContext(profile());
     bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
 
     bookmarks::AddIfNotBookmarked(
@@ -57,12 +60,9 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
  protected:
   // Creates a bookmark bubble view.
   void CreateBubbleView() {
-    scoped_ptr<BookmarkBubbleDelegate> delegate;
-    bubble_.reset(new BookmarkBubbleView(NULL,
-                                         NULL,
-                                         delegate.Pass(),
-                                         profile(),
-                                         GURL(kTestBookmarkURL),
+    std::unique_ptr<BubbleSyncPromoDelegate> delegate;
+    bubble_.reset(new BookmarkBubbleView(NULL, NULL, std::move(delegate),
+                                         profile(), GURL(kTestBookmarkURL),
                                          true));
   }
 
@@ -76,7 +76,7 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
     signin_manager->SetAuthenticatedAccountInfo(username, username);
   }
 
-  scoped_ptr<BookmarkBubbleView> bubble_;
+  std::unique_ptr<BookmarkBubbleView> bubble_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BookmarkBubbleViewTest);
@@ -87,16 +87,18 @@ TEST_F(BookmarkBubbleViewTest, SyncPromoSignedIn) {
   SetUpSigninManager("fake_username");
   CreateBubbleView();
   bubble_->Init();
-  EXPECT_FALSE(bubble_->sync_promo_view_);
+  std::unique_ptr<views::View> footnote(bubble_->CreateFootnoteView());
+  EXPECT_FALSE(footnote);
 }
 
 // Verifies that the sync promo is displayed for a user that is not signed in.
 TEST_F(BookmarkBubbleViewTest, SyncPromoNotSignedIn) {
   CreateBubbleView();
   bubble_->Init();
+  std::unique_ptr<views::View> footnote(bubble_->CreateFootnoteView());
 #if defined(OS_CHROMEOS)
-  EXPECT_FALSE(bubble_->sync_promo_view_);
+  EXPECT_FALSE(footnote);
 #else  // !defined(OS_CHROMEOS)
-  EXPECT_TRUE(bubble_->sync_promo_view_);
+  EXPECT_TRUE(footnote);
 #endif
 }

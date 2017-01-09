@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <set>
 #include <string>
 #include <vector>
@@ -10,6 +12,8 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "content/browser/accessibility/accessibility_event_recorder.h"
 #include "content/browser/accessibility/accessibility_tree_formatter.h"
 #include "content/browser/accessibility/browser_accessibility.h"
@@ -17,6 +21,7 @@
 #include "content/browser/accessibility/dump_accessibility_browsertest_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/common/content_paths.h"
+#include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/test/accessibility_browser_test_utils.h"
 
@@ -72,7 +77,7 @@ class DumpAccessibilityEventsTest : public DumpAccessibilityTestBase {
 std::vector<std::string> DumpAccessibilityEventsTest::Dump() {
   WebContentsImpl* web_contents = static_cast<WebContentsImpl*>(
       shell()->web_contents());
-  scoped_ptr<AccessibilityEventRecorder> event_recorder(
+  std::unique_ptr<AccessibilityEventRecorder> event_recorder(
       AccessibilityEventRecorder::Create(
           web_contents->GetRootBrowserAccessibilityManager()));
 
@@ -84,10 +89,9 @@ std::vector<std::string> DumpAccessibilityEventsTest::Dump() {
   // This will ensure that after calling the go() function, we
   // block until we've received an accessibility event generated as
   // a result of this function.
-  scoped_ptr<AccessibilityNotificationWaiter> waiter;
+  std::unique_ptr<AccessibilityNotificationWaiter> waiter;
   waiter.reset(new AccessibilityNotificationWaiter(
-      shell(), AccessibilityModeComplete, ui::AX_EVENT_NONE));
-
+      shell()->web_contents(), AccessibilityModeComplete, ui::AX_EVENT_NONE));
 
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
       base::ASCIIToUTF16("go()"));
@@ -101,10 +105,10 @@ std::vector<std::string> DumpAccessibilityEventsTest::Dump() {
   // sentinel by calling AccessibilityHitTest and waiting for a HOVER
   // event in response.
   waiter.reset(new AccessibilityNotificationWaiter(
-      shell(), AccessibilityModeComplete, ui::AX_EVENT_HOVER));
+      shell()->web_contents(), AccessibilityModeComplete, ui::AX_EVENT_HOVER));
   BrowserAccessibilityManager* manager =
       web_contents->GetRootBrowserAccessibilityManager();
-  manager->delegate()->AccessibilityHitTest(gfx::Point(0, 0));
+  manager->HitTest(gfx::Point(0, 0));
   waiter->WaitForNotification();
 
   // Save a copy of the final accessibility tree (as a text dump); we'll
@@ -136,21 +140,60 @@ void DumpAccessibilityEventsTest::OnDiffFailed() {
 
 void DumpAccessibilityEventsTest::RunEventTest(
     const base::FilePath::CharType* file_path) {
-  base::FilePath dir_test_data;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &dir_test_data));
-  base::FilePath test_path(dir_test_data.AppendASCII("accessibility")
-      .AppendASCII("event"));
-  ASSERT_TRUE(base::PathExists(test_path)) << test_path.LossyDisplayName();
+  base::FilePath test_path = GetTestFilePath("accessibility", "event");
+
+  {
+    base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_verification;
+    ASSERT_TRUE(base::PathExists(test_path)) << test_path.LossyDisplayName();
+  }
 
   base::FilePath event_file = test_path.Append(base::FilePath(file_path));
   RunTest(event_file, "accessibility/event");
 }
 
 // TODO(dmazzoni): port these tests to run on all platforms.
+// TODO(crbug.com/617146): All tests flaky on Windows 8.
 #if defined(OS_WIN) || defined(OS_MACOSX)
 
+// This is tasteless, but then so's the snippet it's replacing.
+#if defined(OS_WIN)
+#define DISABLED_ON_WIN(name) DISABLED_ ## name
+#else
+#define DISABLED_ON_WIN(name) name
+#endif
+
+#if defined(OS_WIN) || defined(OS_MACOSX)
+#define DISABLED_ON_WIN_AND_MAC(name) DISABLED_ ## name
+#else
+#define DISABLED_ON_WIN_AND_MAC(name) name
+#endif
+
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
-                       AccessibilityEventsAddAlert) {
+                       AccessibilityEventsAriaComboBoxCollapse) {
+  RunEventTest(FILE_PATH_LITERAL("aria-combo-box-collapse.html"));
+}
+
+// https://crbug.com/652706
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+    DISABLED_ON_WIN(AccessibilityEventsAriaComboBoxExpand)) {
+  RunEventTest(FILE_PATH_LITERAL("aria-combo-box-expand.html"));
+}
+
+// Mac: https://crbug.com/615411, Win: https://crbug.com/652706
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+    DISABLED_ON_WIN_AND_MAC(AccessibilityEventsAriaComboBoxFocus)) {
+  RunEventTest(FILE_PATH_LITERAL("aria-combo-box-focus.html"));
+}
+
+// https://crbug.com/652706
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+    DISABLED_ON_WIN(AccessibilityEventsAriaComboBoxNext)) {
+  RunEventTest(FILE_PATH_LITERAL("aria-combo-box-next.html"));
+}
+
+// https://crbug.com/652706
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+    DISABLED_ON_WIN(AccessibilityEventsAddAlert)) {
   RunEventTest(FILE_PATH_LITERAL("add-alert.html"));
 }
 
@@ -195,12 +238,25 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+                       AccessibilityEventsExpandedChange) {
+  RunEventTest(FILE_PATH_LITERAL("expanded-change.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
                        AccessibilityEventsInnerHtmlChange) {
   RunEventTest(FILE_PATH_LITERAL("inner-html-change.html"));
 }
 
+#if defined(OS_MACOSX)
+// Mac failures: http://crbug.com/598527.
+#define MAYBE_AccessibilityEventsInputTypeTextValueChanged \
+    DISABLED_AccessibilityEventsInputTypeTextValueChanged
+#else
+#define MAYBE_AccessibilityEventsInputTypeTextValueChanged \
+    AccessibilityEventsInputTypeTextValueChanged
+#endif
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
-                       AccessibilityEventsInputTypeTextValueChanged) {
+                       MAYBE_AccessibilityEventsInputTypeTextValueChanged) {
   RunEventTest(FILE_PATH_LITERAL("input-type-text-value-changed.html"));
 }
 
@@ -210,19 +266,21 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
 }
 
 // Flaky on Windows: http://crbug.com/486861
-#if defined(OS_WIN)
-#define MAYBE_AccessibilityEventsListboxNext \
-  DISABLED_AccessibilityEventsListboxNext
-#define MAYBE_AccessibilityEventsMenuListPopup \
-  DISABLED_AccessibilityEventsMenuListPopup
-#else
-#define MAYBE_AccessibilityEventsListboxNext AccessibilityEventsListboxNext
-#define MAYBE_AccessibilityEventsMenuListPopup AccessibilityEventsMenuListPopup
-#endif
+// Flaky on Mac: http://crbug.com/588271
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+                       AccessibilityEventsListboxNext) {
+  RunEventTest(FILE_PATH_LITERAL("listbox-next.html"));
+}
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
-                       MAYBE_AccessibilityEventsListboxNext) {
-  RunEventTest(FILE_PATH_LITERAL("listbox-next.html"));
+                       AccessibilityEventsMenuListCollapse) {
+  RunEventTest(FILE_PATH_LITERAL("menulist-collapse.html"));
+}
+
+// Mac: https://crbug.com/615411, Win: https://crbug.com/652706
+IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
+    DISABLED_ON_WIN_AND_MAC(AccessibilityEventsMenuListExpand)) {
+  RunEventTest(FILE_PATH_LITERAL("menulist-expand.html"));
 }
 
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
@@ -230,13 +288,15 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
   RunEventTest(FILE_PATH_LITERAL("menulist-focus.html"));
 }
 
+// Mac: https://crbug.com/615411, Win: https://crbug.com/652706
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
-                       AccessibilityEventsMenuListNext) {
+    DISABLED_ON_WIN_AND_MAC(AccessibilityEventsMenuListNext)) {
   RunEventTest(FILE_PATH_LITERAL("menulist-next.html"));
 }
 
+// Flaky on Windows: http://crbug.com/486861
 IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
-                       MAYBE_AccessibilityEventsMenuListPopup) {
+                       DISABLED_AccessibilityEventsMenuListPopup) {
   RunEventTest(FILE_PATH_LITERAL("menulist-popup.html"));
 }
 
@@ -271,6 +331,6 @@ IN_PROC_BROWSER_TEST_F(DumpAccessibilityEventsTest,
   RunEventTest(FILE_PATH_LITERAL("text-changed.html"));
 }
 
-#endif  // defined(OS_WIN)
+#endif  // defined(OS_WIN) || defined(OS_MACOSX)
 
 }  // namespace content

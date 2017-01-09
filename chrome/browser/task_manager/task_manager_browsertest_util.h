@@ -1,18 +1,33 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// These "task_manager::browsertest_util" functions allow you to wait for a
+// task manager to show a particular state, enabling tests of the form "do
+// something that ought to create a process, then wait for that process to show
+// up in the Task Manager." They are intended to abstract away the details of
+// the platform's TaskManager UI.
+
 #ifndef CHROME_BROWSER_TASK_MANAGER_TASK_MANAGER_BROWSERTEST_UTIL_H_
 #define CHROME_BROWSER_TASK_MANAGER_TASK_MANAGER_BROWSERTEST_UTIL_H_
+
+#include <stddef.h>
 
 #include "base/strings/string16.h"
 
 namespace task_manager {
 namespace browsertest_util {
 
-// For the old task manager browser tests, we must call this to disable the
-// use of the new implementation and revert back to the old one.
-void EnableOldTaskManager();
+// Specifies some integer-valued column of numeric data reported by the task
+// manager model. Please add more here as needed by tests.
+enum class ColumnSpecifier {
+  V8_MEMORY,
+  V8_MEMORY_USED,
+  SQLITE_MEMORY_USED,
+  IDLE_WAKEUPS,
+
+  COLUMN_NONE,  // Default value.
+};
 
 // Runs the message loop, observing the task manager, until there are exactly
 // |resource_count| many resources whose titles match the pattern
@@ -25,15 +40,8 @@ void EnableOldTaskManager();
 void WaitForTaskManagerRows(int resource_count,
                             const base::string16& title_pattern);
 
-// Specifies some integer-valued column of numeric data reported by the task
-// manager model. Please add more here as needed by tests.
-enum ColumnSpecifier {
-  V8_MEMORY,
-  V8_MEMORY_USED,
-  SQLITE_MEMORY_USED,
-
-  COLUMN_NONE,  // Default value.
-};
+// Make the indicated TaskManager column be visible.
+void ShowColumn(ColumnSpecifier column_specifier);
 
 // Waits for the row identified by |title_pattern| to be showing a numeric data
 // value of at least |min_column_value| in the task manager column identified by

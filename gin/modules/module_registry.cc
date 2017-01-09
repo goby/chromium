@@ -4,7 +4,10 @@
 
 #include "gin/modules/module_registry.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/logging.h"
@@ -53,7 +56,7 @@ namespace {
 const char kModuleRegistryKey[] = "ModuleRegistry";
 
 struct ModuleRegistryData : public base::SupportsUserData::Data {
-  scoped_ptr<ModuleRegistry> registry;
+  std::unique_ptr<ModuleRegistry> registry;
 };
 
 void Define(const v8::FunctionCallbackInfo<Value>& info) {
@@ -73,14 +76,14 @@ void Define(const v8::FunctionCallbackInfo<Value>& info) {
   if (!args.GetNext(&factory))
     return args.ThrowError();
 
-  scoped_ptr<PendingModule> pending(new PendingModule);
+  std::unique_ptr<PendingModule> pending(new PendingModule);
   pending->id = id;
   pending->dependencies = dependencies;
   pending->factory.Reset(args.isolate(), factory);
 
   ModuleRegistry* registry =
       ModuleRegistry::From(args.isolate()->GetCurrentContext());
-  registry->AddPendingModule(args.isolate(), pending.Pass());
+  registry->AddPendingModule(args.isolate(), std::move(pending));
 }
 
 WrapperInfo g_wrapper_info = { kEmbedderNativeGin };
@@ -91,6 +94,7 @@ Local<FunctionTemplate> GetDefineTemplate(Isolate* isolate) {
       &g_wrapper_info);
   if (templ.IsEmpty()) {
     templ = FunctionTemplate::New(isolate, Define);
+    templ->RemovePrototype();
     data->SetFunctionTemplate(&g_wrapper_info, templ);
   }
   return templ;
@@ -155,12 +159,12 @@ void ModuleRegistry::AddBuiltinModule(Isolate* isolate, const std::string& id,
 }
 
 void ModuleRegistry::AddPendingModule(Isolate* isolate,
-                                      scoped_ptr<PendingModule> pending) {
+                                      std::unique_ptr<PendingModule> pending) {
   const std::string pending_id = pending->id;
   const std::vector<std::string> pending_dependencies = pending->dependencies;
-  AttemptToLoad(isolate, pending.Pass());
-  FOR_EACH_OBSERVER(ModuleRegistryObserver, observer_list_,
-                    OnDidAddPendingModule(pending_id, pending_dependencies));
+  AttemptToLoad(isolate, std::move(pending));
+  for (auto& observer : observer_list_)
+    observer.OnDidAddPendingModule(pending_id, pending_dependencies);
 }
 
 void ModuleRegistry::LoadModule(Isolate* isolate,
@@ -224,7 +228,8 @@ bool ModuleRegistry::CheckDependencies(PendingModule* pending) {
   return num_missing_dependencies == 0;
 }
 
-bool ModuleRegistry::Load(Isolate* isolate, scoped_ptr<PendingModule> pending) {
+bool ModuleRegistry::Load(Isolate* isolate,
+                          std::unique_ptr<PendingModule> pending) {
   if (!pending->id.empty() && available_modules_.count(pending->id))
     return true;  // We've already loaded this module.
 
@@ -250,12 +255,12 @@ bool ModuleRegistry::Load(Isolate* isolate, scoped_ptr<PendingModule> pending) {
 }
 
 bool ModuleRegistry::AttemptToLoad(Isolate* isolate,
-                                   scoped_ptr<PendingModule> pending) {
+                                   std::unique_ptr<PendingModule> pending) {
   if (!CheckDependencies(pending.get())) {
     pending_modules_.push_back(pending.release());
     return false;
   }
-  return Load(isolate, pending.Pass());
+  return Load(isolate, std::move(pending));
 }
 
 v8::Local<v8::Value> ModuleRegistry::GetModule(v8::Isolate* isolate,
@@ -273,9 +278,9 @@ void ModuleRegistry::AttemptToLoadMoreModules(Isolate* isolate) {
     PendingModuleVector pending_modules;
     pending_modules.swap(pending_modules_);
     for (size_t i = 0; i < pending_modules.size(); ++i) {
-      scoped_ptr<PendingModule> pending(pending_modules[i]);
+      std::unique_ptr<PendingModule> pending(pending_modules[i]);
       pending_modules[i] = NULL;
-      if (AttemptToLoad(isolate, pending.Pass()))
+      if (AttemptToLoad(isolate, std::move(pending)))
         keep_trying = true;
     }
   }

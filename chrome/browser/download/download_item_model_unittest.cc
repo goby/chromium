@@ -4,10 +4,14 @@
 
 #include "chrome/browser/download/download_item_model.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
@@ -22,9 +26,11 @@
 #include "ui/gfx/text_utils.h"
 
 using content::DownloadItem;
+using safe_browsing::DownloadFileType;
 using ::testing::Mock;
 using ::testing::NiceMock;
 using ::testing::Return;
+using ::testing::ReturnRef;
 using ::testing::ReturnRefOfCopy;
 using ::testing::SetArgPointee;
 using ::testing::_;
@@ -120,56 +126,54 @@ TEST_F(DownloadItemModelTest, InterruptedStatus) {
     // Expected status string. This will include the progress as well.
     const char* expected_status;
   } kTestCases[] = {
-    { content::DOWNLOAD_INTERRUPT_REASON_NONE,
-      "1/2 B" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED,
-      "Failed - Download error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED,
-      "Failed - Insufficient permissions" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE,
-      "Failed - Disk full" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG,
-      "Failed - Path too long" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_LARGE,
-      "Failed - File too large" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_VIRUS_INFECTED,
-      "Failed - Virus detected" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED,
-      "Failed - Blocked" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED,
-      "Failed - Virus scan failed" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT,
-      "Failed - File truncated" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR,
-      "Failed - System busy" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED,
-      "Failed - Network error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT,
-      "Failed - Network timeout" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED,
-      "Failed - Network disconnected" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN,
-      "Failed - Server unavailable" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST,
-      "Failed - Network error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED,
-      "Failed - Server problem" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE,
-      "Failed - Download error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_BAD_CONTENT,
-      "Failed - No file" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED,
-      "Failed - Needs authorization" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM,
-      "Failed - Bad certificate" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN,
-      "Failed - Forbidden" },
-    { content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED,
-      "Canceled" },
-    { content::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN,
-      "Failed - Shutdown" },
-    { content::DOWNLOAD_INTERRUPT_REASON_CRASH,
-      "Failed - Crash" },
+      {content::DOWNLOAD_INTERRUPT_REASON_NONE, "1/2 B"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED,
+       "Failed - Download error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED,
+       "Failed - Insufficient permissions"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE, "Failed - Disk full"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG,
+       "Failed - Path too long"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_LARGE,
+       "Failed - File too large"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_VIRUS_INFECTED,
+       "Failed - Virus detected"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED, "Failed - Blocked"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED,
+       "Failed - Virus scan failed"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT,
+       "Failed - File truncated"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR,
+       "Failed - System busy"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH,
+       "Failed - Download error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED,
+       "Failed - Network error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT,
+       "Failed - Network timeout"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED,
+       "Failed - Network disconnected"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN,
+       "Failed - Server unavailable"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST,
+       "Failed - Network error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED,
+       "Failed - Server problem"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE,
+       "Failed - Download error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_BAD_CONTENT,
+       "Failed - No file"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED,
+       "Failed - Needs authorization"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM,
+       "Failed - Bad certificate"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN,
+       "Failed - Forbidden"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNREACHABLE,
+       "Failed - Server unreachable"},
+      {content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED, "Canceled"},
+      {content::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN, "Failed - Shutdown"},
+      {content::DOWNLOAD_INTERRUPT_REASON_CRASH, "Failed - Crash"},
   };
   static_assert(kInterruptReasonCount == arraysize(kTestCases),
                 "interrupt reason mismatch");
@@ -196,56 +200,54 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
     // interrupt reason. The returned string contains a newline.
     const char* expected_tooltip;
   } kTestCases[] = {
-    { content::DOWNLOAD_INTERRUPT_REASON_NONE,
-      "foo.bar" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED,
-      "foo.bar\nDownload error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED,
-      "foo.bar\nInsufficient permissions" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE,
-      "foo.bar\nDisk full" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG,
-      "foo.bar\nPath too long" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_LARGE,
-      "foo.bar\nFile too large" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_VIRUS_INFECTED,
-      "foo.bar\nVirus detected" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED,
-      "foo.bar\nBlocked" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED,
-      "foo.bar\nVirus scan failed" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT,
-      "foo.bar\nFile truncated" },
-    { content::DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR,
-      "foo.bar\nSystem busy" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED,
-      "foo.bar\nNetwork error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT,
-      "foo.bar\nNetwork timeout" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED,
-      "foo.bar\nNetwork disconnected" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN,
-      "foo.bar\nServer unavailable" },
-    { content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST,
-      "foo.bar\nNetwork error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED,
-      "foo.bar\nServer problem" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE,
-      "foo.bar\nDownload error" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_BAD_CONTENT,
-      "foo.bar\nNo file" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED,
-      "foo.bar\nNeeds authorization" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM,
-      "foo.bar\nBad certificate" },
-    { content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN,
-      "foo.bar\nForbidden" },
-    { content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED,
-      "foo.bar" },
-    { content::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN,
-      "foo.bar\nShutdown" },
-    { content::DOWNLOAD_INTERRUPT_REASON_CRASH,
-      "foo.bar\nCrash" },
+      {content::DOWNLOAD_INTERRUPT_REASON_NONE, "foo.bar"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_FAILED,
+       "foo.bar\nDownload error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED,
+       "foo.bar\nInsufficient permissions"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE, "foo.bar\nDisk full"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG,
+       "foo.bar\nPath too long"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_LARGE,
+       "foo.bar\nFile too large"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_VIRUS_INFECTED,
+       "foo.bar\nVirus detected"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED, "foo.bar\nBlocked"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED,
+       "foo.bar\nVirus scan failed"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT,
+       "foo.bar\nFile truncated"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR,
+       "foo.bar\nSystem busy"},
+      {content::DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH,
+       "foo.bar\nDownload error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED,
+       "foo.bar\nNetwork error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT,
+       "foo.bar\nNetwork timeout"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED,
+       "foo.bar\nNetwork disconnected"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN,
+       "foo.bar\nServer unavailable"},
+      {content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST,
+       "foo.bar\nNetwork error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_FAILED,
+       "foo.bar\nServer problem"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE,
+       "foo.bar\nDownload error"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_BAD_CONTENT,
+       "foo.bar\nNo file"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED,
+       "foo.bar\nNeeds authorization"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM,
+       "foo.bar\nBad certificate"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN,
+       "foo.bar\nForbidden"},
+      {content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNREACHABLE,
+       "foo.bar\nServer unreachable"},
+      {content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED, "foo.bar"},
+      {content::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN, "foo.bar\nShutdown"},
+      {content::DOWNLOAD_INTERRUPT_REASON_CRASH, "foo.bar\nCrash"},
   };
   static_assert(kInterruptReasonCount == arraysize(kTestCases),
                 "interrupt reason mismatch");
@@ -287,8 +289,8 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
 
 TEST_F(DownloadItemModelTest, InProgressStatus) {
   const struct TestCase {
-    int64 received_bytes;               // Return value of GetReceivedBytes().
-    int64 total_bytes;                  // Return value of GetTotalBytes().
+    int64_t received_bytes;             // Return value of GetReceivedBytes().
+    int64_t total_bytes;                // Return value of GetTotalBytes().
     bool  time_remaining_known;         // If TimeRemaining() is known.
     bool  open_when_complete;           // GetOpenWhenComplete().
     bool  is_paused;                    // IsPaused().
@@ -307,9 +309,9 @@ TEST_F(DownloadItemModelTest, InProgressStatus) {
     //         .-- .TimeRemaining() is known.
     //        |       .-- .GetOpenWhenComplete()
     //        |      |      .---- .IsPaused()
-    { 0, 0, false, false, false, "Starting..." },
+    { 0, 0, false, false, false, "Starting\xE2\x80\xA6" },
     { 1, 0, false, false, false, "1 B" },
-    { 0, 2, false, false, false, "Starting..." },
+    { 0, 2, false, false, false, "Starting\xE2\x80\xA6"},
     { 1, 2, false, false, false, "1/2 B" },
     { 0, 2, true,  false, false, "0/2 B, 10 secs left" },
     { 1, 2, true,  false, false, "1/2 B, 10 secs left" },
@@ -317,8 +319,8 @@ TEST_F(DownloadItemModelTest, InProgressStatus) {
     { 1, 0, false, true,  false, "Opening when complete" },
     { 0, 2, false, true,  false, "Opening when complete" },
     { 1, 2, false, true,  false, "Opening when complete" },
-    { 0, 2, true,  true,  false, "Opening in 10 secs..." },
-    { 1, 2, true,  true,  false, "Opening in 10 secs..." },
+    { 0, 2, true,  true,  false, "Opening in 10 secs\xE2\x80\xA6"},
+    { 1, 2, true,  true,  false, "Opening in 10 secs\xE2\x80\xA6"},
     { 0, 0, false, false, true,  "0 B, Paused" },
     { 1, 0, false, false, true,  "1 B, Paused" },
     { 0, 2, false, false, true,  "0/2 B, Paused" },
@@ -369,6 +371,43 @@ TEST_F(DownloadItemModelTest, ShouldShowInShelf) {
 
   model().SetShouldShowInShelf(true);
   EXPECT_TRUE(model().ShouldShowInShelf());
+}
+
+TEST_F(DownloadItemModelTest, DangerLevel) {
+  SetupDownloadItemDefaults();
+
+  // Default danger level is NOT_DANGEROUS.
+  EXPECT_EQ(DownloadFileType::NOT_DANGEROUS, model().GetDangerLevel());
+
+  model().SetDangerLevel(DownloadFileType::ALLOW_ON_USER_GESTURE);
+  EXPECT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE, model().GetDangerLevel());
+}
+
+TEST_F(DownloadItemModelTest, HasSupportedImageMimeType) {
+  SetupDownloadItemDefaults();
+
+  // When the item has a supported image MIME type, true should be returned.
+  ON_CALL(item(), GetMimeType()).WillByDefault(Return("image/png"));
+  EXPECT_TRUE(model().HasSupportedImageMimeType());
+
+  // An unsupported MIME type should result in false being returned...
+  ON_CALL(item(), GetMimeType()).WillByDefault(Return("image/unsupported"));
+  EXPECT_FALSE(model().HasSupportedImageMimeType());
+
+  // ... unless the target path has a well-known image extension.
+  const base::FilePath kImagePath(FILE_PATH_LITERAL("/foo/image.png"));
+  ON_CALL(item(), GetTargetFilePath()).WillByDefault(ReturnRef(kImagePath));
+  EXPECT_TRUE(model().HasSupportedImageMimeType());
+
+  // .txt and missing extensions should also result in false being returned.
+  const base::FilePath kTextPath(FILE_PATH_LITERAL("/foo/image.txt"));
+  ON_CALL(item(), GetTargetFilePath()).WillByDefault(ReturnRef(kTextPath));
+  EXPECT_FALSE(model().HasSupportedImageMimeType());
+
+  const base::FilePath kNoExtensionPath(FILE_PATH_LITERAL("/foo/image."));
+  ON_CALL(item(), GetTargetFilePath())
+      .WillByDefault(ReturnRef(kNoExtensionPath));
+  EXPECT_FALSE(model().HasSupportedImageMimeType());
 }
 
 TEST_F(DownloadItemModelTest, ShouldRemoveFromShelfWhenComplete) {

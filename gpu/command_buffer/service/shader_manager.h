@@ -6,17 +6,26 @@
 #define GPU_COMMAND_BUFFER_SERVICE_SHADER_MANAGER_H_
 
 #include <string>
-#include "base/basictypes.h"
+
 #include "base/containers/hash_tables.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/shader_translator.h"
 #include "gpu/gpu_export.h"
 
 namespace gpu {
 namespace gles2 {
+
+class ProgressReporter;
+
+enum ShaderVariableBaseType {
+  SHADER_VARIABLE_INT = 0x01,
+  SHADER_VARIABLE_UINT = 0x02,
+  SHADER_VARIABLE_FLOAT = 0x03,
+  SHADER_VARIABLE_UNDEFINED_TYPE = 0x00
+};
 
 // This is used to keep the source code for a shader. This is because in order
 // to emluate GLES2 the shaders will have to be re-written before passed to
@@ -48,7 +57,7 @@ class GPU_EXPORT Shader : public base::RefCounted<Shader> {
   }
 
   GLuint service_id() const {
-    return marked_for_deletion_ ? 0 : service_id_;
+    return service_id_;
   }
 
   GLenum shader_type() const {
@@ -183,10 +192,6 @@ class GPU_EXPORT Shader : public base::RefCounted<Shader> {
     interface_block_map_ = InterfaceBlockMap(interface_block_map);
   }
 
-  void AddUniformToUniformMap(sh::Uniform uniform) {
-    uniform_map_[uniform.mappedName] = uniform;
-  }
-
   void set_output_variable_list(
       const OutputVariableList& output_variable_list) {
     // copied because cache might be cleared
@@ -265,7 +270,7 @@ class GPU_EXPORT Shader : public base::RefCounted<Shader> {
 // need to be shared by multiple GLES2Decoders.
 class GPU_EXPORT ShaderManager {
  public:
-  ShaderManager();
+  ShaderManager(ProgressReporter* progress_reporter);
   ~ShaderManager();
 
   // Must call before destruction.
@@ -304,6 +309,11 @@ class GPU_EXPORT ShaderManager {
   ShaderMap shaders_;
 
   void RemoveShader(Shader* shader);
+
+  // Used to notify the watchdog thread of progress during destruction,
+  // preventing time-outs when destruction takes a long time. May be null when
+  // using in-process command buffer.
+  ProgressReporter* progress_reporter_;
 
   DISALLOW_COPY_AND_ASSIGN(ShaderManager);
 };

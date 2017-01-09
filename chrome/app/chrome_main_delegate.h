@@ -5,7 +5,11 @@
 #ifndef CHROME_APP_CHROME_MAIN_DELEGATE_H_
 #define CHROME_APP_CHROME_MAIN_DELEGATE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_content_client.h"
 #include "content/public/app/content_main_delegate.h"
 
@@ -20,6 +24,10 @@ class CommandLine;
 class ChromeMainDelegate : public content::ContentMainDelegate {
  public:
   ChromeMainDelegate();
+
+  // |exe_entry_point_ticks| is the time at which the main function of the
+  // executable was entered, or null if not available.
+  explicit ChromeMainDelegate(base::TimeTicks exe_entry_point_ticks);
   ~ChromeMainDelegate() override;
 
  protected:
@@ -44,13 +52,14 @@ class ChromeMainDelegate : public content::ContentMainDelegate {
   bool ShouldEnableProfilerRecording() override;
 
   content::ContentBrowserClient* CreateContentBrowserClient() override;
-  content::ContentPluginClient* CreateContentPluginClient() override;
+  content::ContentGpuClient* CreateContentGpuClient() override;
   content::ContentRendererClient* CreateContentRendererClient() override;
   content::ContentUtilityClient* CreateContentUtilityClient() override;
 
 #if defined(OS_MACOSX)
   void InitMacCrashReporter(const base::CommandLine& command_line,
                             const std::string& process_type);
+  void SetUpInstallerPreferences(const base::CommandLine& command_line);
 #endif  // defined(OS_MACOSX)
 
   ChromeContentClient chrome_content_client_;

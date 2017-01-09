@@ -4,16 +4,18 @@
 
 #include "chrome/browser/devtools/device/tcp_device_provider.h"
 
-#include <algorithm>
+#include <utility>
 
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/devtools/device/adb/adb_client_socket.h"
 #include "net/base/net_errors.h"
 #include "net/dns/host_resolver.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/tcp_client_socket.h"
 
 namespace {
@@ -23,9 +25,9 @@ const char kBrowserName[] = "Target";
 
 static void RunSocketCallback(
     const AndroidDeviceManager::SocketCallback& callback,
-    scoped_ptr<net::StreamSocket> socket,
+    std::unique_ptr<net::StreamSocket> socket,
     int result) {
-  callback.Run(result, socket.Pass());
+  callback.Run(result, std::move(socket));
 }
 
 class ResolveHostAndOpenSocket final {
@@ -39,7 +41,7 @@ class ResolveHostAndOpenSocket final {
         request_info, net::DEFAULT_PRIORITY, &address_list_,
         base::Bind(&ResolveHostAndOpenSocket::OnResolved,
                    base::Unretained(this)),
-        nullptr, net::BoundNetLog());
+        &request_, net::NetLogWithSource());
     if (result != net::ERR_IO_PENDING)
       OnResolved(result);
   }
@@ -51,14 +53,15 @@ class ResolveHostAndOpenSocket final {
       delete this;
       return;
     }
-    scoped_ptr<net::StreamSocket> socket(
-        new net::TCPClientSocket(address_list_, NULL, net::NetLog::Source()));
+    std::unique_ptr<net::StreamSocket> socket(new net::TCPClientSocket(
+        address_list_, NULL, NULL, net::NetLogSource()));
     socket->Connect(
         base::Bind(&RunSocketCallback, callback_, base::Passed(&socket)));
     delete this;
   }
 
-  scoped_ptr<net::HostResolver> host_resolver_;
+  std::unique_ptr<net::HostResolver> host_resolver_;
+  std::unique_ptr<net::HostResolver::Request> request_;
   net::AddressList address_list_;
   AdbClientSocket::SocketCallback callback_;
 };
@@ -80,7 +83,7 @@ void TCPDeviceProvider::QueryDevices(const SerialsCallback& callback) {
   std::vector<std::string> result;
   for (const net::HostPortPair& target : targets_) {
     const std::string& host = target.host();
-    if (std::find(result.begin(), result.end(), host) != result.end())
+    if (base::ContainsValue(result, host))
       continue;
     result.push_back(host);
   }

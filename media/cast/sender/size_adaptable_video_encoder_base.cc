@@ -4,6 +4,8 @@
 
 #include "media/cast/sender/size_adaptable_video_encoder_base.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "media/base/video_frame.h"
@@ -13,13 +15,13 @@ namespace cast {
 
 SizeAdaptableVideoEncoderBase::SizeAdaptableVideoEncoderBase(
     const scoped_refptr<CastEnvironment>& cast_environment,
-    const VideoSenderConfig& video_config,
+    const FrameSenderConfig& video_config,
     const StatusChangeCallback& status_change_cb)
     : cast_environment_(cast_environment),
       video_config_(video_config),
       status_change_cb_(status_change_cb),
       frames_in_encoder_(0),
-      last_frame_id_(kFirstFrameId - 1),
+      next_frame_id_(FrameId::first()),
       weak_factory_(this) {
   cast_environment_->PostTask(
       CastEnvironment::MAIN,
@@ -77,8 +79,8 @@ void SizeAdaptableVideoEncoderBase::GenerateKeyFrame() {
     encoder_->GenerateKeyFrame();
 }
 
-scoped_ptr<VideoFrameFactory>
-    SizeAdaptableVideoEncoderBase::CreateVideoFrameFactory() {
+std::unique_ptr<VideoFrameFactory>
+SizeAdaptableVideoEncoderBase::CreateVideoFrameFactory() {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   return nullptr;
 }
@@ -132,7 +134,7 @@ void SizeAdaptableVideoEncoderBase::TrySpawningReplacementEncoder(
           << frame_size_.ToString() << " to "
           << size_needed.ToString() << ").";
   frame_size_ = size_needed;
-  encoder_ = CreateEncoder().Pass();
+  encoder_ = CreateEncoder();
   DCHECK(encoder_);
 }
 
@@ -150,12 +152,14 @@ void SizeAdaptableVideoEncoderBase::OnEncoderStatusChange(
 
 void SizeAdaptableVideoEncoderBase::OnEncodedVideoFrame(
     const FrameEncodedCallback& frame_encoded_callback,
-    scoped_ptr<SenderEncodedFrame> encoded_frame) {
+    std::unique_ptr<SenderEncodedFrame> encoded_frame) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   --frames_in_encoder_;
   DCHECK_GE(frames_in_encoder_, 0);
-  last_frame_id_ = encoded_frame->frame_id;
-  frame_encoded_callback.Run(encoded_frame.Pass());
+
+  if (encoded_frame)
+    next_frame_id_ = encoded_frame->frame_id + 1;
+  frame_encoded_callback.Run(std::move(encoded_frame));
 }
 
 }  // namespace cast

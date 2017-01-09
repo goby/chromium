@@ -4,13 +4,16 @@
 
 #include "net/disk_cache/blockfile/file.h"
 
+#include <limits.h>
 #include <stdint.h>
 
 #include <limits>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/threading/worker_pool.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/blockfile/in_flight_io.h"
@@ -171,10 +174,7 @@ void DeleteFileInFlightIO() {
 namespace disk_cache {
 
 File::File(base::File file)
-    : init_(true),
-      mixed_(true),
-      base_file_(file.Pass()) {
-}
+    : init_(true), mixed_(true), base_file_(std::move(file)) {}
 
 bool File::Init(const base::FilePath& name) {
   if (base_file_.IsValid())
@@ -258,6 +258,8 @@ size_t File::GetLength() {
   DCHECK(base_file_.IsValid());
   int64_t len = base_file_.GetLength();
 
+  if (len < 0)
+    return 0;
   if (len > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()))
     return std::numeric_limits<uint32_t>::max();
 

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <pwd.h>
+#include <stddef.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -26,8 +27,8 @@ base::FilePath::StringType ExpandPathVariables(
     return result;
   // Sanitize quotes in case of any around the whole string.
   if (result.length() > 1 &&
-      ((result[0] == '"' && result[result.length() - 1] == '"') ||
-      (result[0] == '\'' && result[result.length() - 1] == '\''))) {
+      ((result.front() == '"' && result.back() == '"') ||
+       (result.front() == '\'' && result.back() == '\''))) {
     // Strip first and last char which should be matching quotes now.
     result = result.substr(1, result.length() - 2);
   }
@@ -54,6 +55,12 @@ base::FilePath::StringType ExpandPathVariables(
 }
 
 void CheckUserDataDirPolicy(base::FilePath* user_data_dir) {
+  // This function is not implemented in Linux because we don't support the
+  // policy on this platform.
+  NOTREACHED();
+}
+
+void CheckDiskCacheDirPolicy(base::FilePath* user_data_dir) {
   // This function is not implemented in Linux because we don't support the
   // policy on this platform.
   NOTREACHED();

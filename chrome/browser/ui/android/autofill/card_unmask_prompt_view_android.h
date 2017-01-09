@@ -9,6 +9,7 @@
 
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "components/autofill/core/browser/ui/card_unmask_prompt_view.h"
 
@@ -17,6 +18,8 @@ class WebContents;
 }
 
 namespace autofill {
+
+class CardUnmaskPromptController;
 
 class CardUnmaskPromptViewAndroid : public CardUnmaskPromptView {
  public:

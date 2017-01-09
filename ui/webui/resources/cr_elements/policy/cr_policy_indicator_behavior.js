@@ -25,32 +25,36 @@ var CrPolicyIndicatorBehavior = {
    * @private
    */
   isIndicatorVisible: function(type) {
-    return type != CrPolicyIndicatorType.NONE;
+    return type != CrPolicyIndicatorType.NONE &&
+           type != CrPolicyIndicatorType.EXTENSION;
   },
 
   /**
    * @param {CrPolicyIndicatorType} type
-   * @return {string} The iron-icons icon name.
+   * @return {string} The iron-icon icon name.
    * @private
    */
   getPolicyIndicatorIcon: function(type) {
+    var icon = '';
     switch (type) {
+      case CrPolicyIndicatorType.EXTENSION:
       case CrPolicyIndicatorType.NONE:
-        return '';
+        return icon;
       case CrPolicyIndicatorType.PRIMARY_USER:
-        return 'social:group';
+        icon = 'group';
+        break;
       case CrPolicyIndicatorType.OWNER:
-        return 'social:person';
+        icon = 'person';
+        break;
       case CrPolicyIndicatorType.USER_POLICY:
       case CrPolicyIndicatorType.DEVICE_POLICY:
-        return 'social:domain';
-      case CrPolicyIndicatorType.EXTENSION:
-        return 'extension';
       case CrPolicyIndicatorType.RECOMMENDED:
-        return 'social:domain';
+        icon = 'domain';
+        break;
+      default:
+        assertNotReached();
     }
-    assertNotReached();
-    return '';
+    return 'cr:' + icon;
   },
 
   /**
@@ -65,7 +69,7 @@ var CrPolicyIndicatorBehavior = {
   /**
    * @param {CrPolicyIndicatorType} type
    * @param {string} name The name associated with the controllable. See
-   *     chrome.settingsPrivate.PrefObject.policySourceName
+   *     chrome.settingsPrivate.PrefObject.controlledByName
    * @return {string} The tooltip text for |type|.
    */
   getPolicyIndicatorTooltip: function(type, name) {
@@ -77,8 +81,6 @@ var CrPolicyIndicatorBehavior = {
       case CrPolicyIndicatorType.USER_POLICY:
       case CrPolicyIndicatorType.DEVICE_POLICY:
         return this.i18n_('controlledSettingPolicy');
-      case CrPolicyIndicatorType.EXTENSION:
-        return this.i18n_('controlledSettingExtension', name);
       case CrPolicyIndicatorType.RECOMMENDED:
         // This case is not handled here since it requires knowledge of the
         // value and recommended value associated with the controllable.

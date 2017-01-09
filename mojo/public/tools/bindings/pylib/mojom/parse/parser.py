@@ -21,7 +21,7 @@ def _GetDirAbove(dirname):
 try:
   imp.find_module("ply")
 except ImportError:
-  sys.path.append(os.path.join(_GetDirAbove("public"), "public/third_party"))
+  sys.path.append(os.path.join(_GetDirAbove("mojo"), "third_party"))
 from ply import lex
 from ply import yacc
 
@@ -145,19 +145,34 @@ class Parser(object):
     p[0] = p[1]
     p[0].Append(p[3])
 
-  def p_attribute(self, p):
+  def p_attribute_1(self, p):
     """attribute : NAME EQUALS evaled_literal
                  | NAME EQUALS NAME"""
     p[0] = ast.Attribute(p[1], p[3], filename=self.filename, lineno=p.lineno(1))
 
+  def p_attribute_2(self, p):
+    """attribute : NAME"""
+    p[0] = ast.Attribute(p[1], True, filename=self.filename, lineno=p.lineno(1))
+
   def p_evaled_literal(self, p):
     """evaled_literal : literal"""
-    # 'eval' the literal to strip the quotes.
-    p[0] = eval(p[1])
+    # 'eval' the literal to strip the quotes. Handle keywords "true" and "false"
+    # specially since they cannot directly be evaluated to python boolean
+    # values.
+    if p[1] == "true":
+      p[0] = True
+    elif p[1] == "false":
+      p[0] = False
+    else:
+      p[0] = eval(p[1])
 
-  def p_struct(self, p):
+  def p_struct_1(self, p):
     """struct : attribute_section STRUCT NAME LBRACE struct_body RBRACE SEMI"""
     p[0] = ast.Struct(p[3], p[1], p[5])
+
+  def p_struct_2(self, p):
+    """struct : attribute_section STRUCT NAME SEMI"""
+    p[0] = ast.Struct(p[3], p[1], None)
 
   def p_struct_body_1(self, p):
     """struct_body : """
@@ -330,12 +345,17 @@ class Parser(object):
                        snippet=self._GetSnippet(p.lineno(1)))
     p[0] = ast.Ordinal(value, filename=self.filename, lineno=p.lineno(1))
 
-  def p_enum(self, p):
+  def p_enum_1(self, p):
     """enum : attribute_section ENUM NAME LBRACE nonempty_enum_value_list \
                   RBRACE SEMI
             | attribute_section ENUM NAME LBRACE nonempty_enum_value_list \
                   COMMA RBRACE SEMI"""
     p[0] = ast.Enum(p[3], p[1], p[5], filename=self.filename,
+                    lineno=p.lineno(2))
+
+  def p_enum_2(self, p):
+    """enum : attribute_section ENUM NAME SEMI"""
+    p[0] = ast.Enum(p[3], p[1], None, filename=self.filename,
                     lineno=p.lineno(2))
 
   def p_nonempty_enum_value_list_1(self, p):
@@ -414,6 +434,15 @@ class Parser(object):
 
 
 def Parse(source, filename):
+  """Parse source file to AST.
+
+  Args:
+    source: The source text as a str.
+    filename: The filename that |source| originates from.
+
+  Returns:
+    The AST as a mojom.parse.ast.Mojom object.
+  """
   lexer = Lexer(filename)
   parser = Parser(lexer, source, filename)
 

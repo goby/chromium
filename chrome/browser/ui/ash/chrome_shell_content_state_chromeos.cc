@@ -4,8 +4,8 @@
 
 #include "chrome/browser/ui/ash/chrome_shell_content_state.h"
 
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
@@ -16,7 +16,7 @@
 content::BrowserContext* ChromeShellContentState::GetBrowserContextByIndex(
     ash::UserIndex index) {
   ash::SessionStateDelegate* session_state_delegate =
-      ash::Shell::GetInstance()->session_state_delegate();
+      ash::WmShell::Get()->GetSessionStateDelegate();
   DCHECK_LT(index, session_state_delegate->NumberOfLoggedInUsers());
   user_manager::User* user =
       user_manager::UserManager::Get()->GetLRULoggedInUsers()[index];
@@ -26,6 +26,11 @@ content::BrowserContext* ChromeShellContentState::GetBrowserContextByIndex(
 
 content::BrowserContext* ChromeShellContentState::GetBrowserContextForWindow(
     aura::Window* window) {
+  DCHECK(window);
+  // Speculative fix for multi-profile crash. crbug.com/661821
+  if (!chrome::MultiUserWindowManager::GetInstance())
+    return nullptr;
+
   const AccountId& account_id =
       chrome::MultiUserWindowManager::GetInstance()->GetWindowOwner(window);
   return account_id.is_valid()
@@ -36,6 +41,11 @@ content::BrowserContext* ChromeShellContentState::GetBrowserContextForWindow(
 content::BrowserContext*
 ChromeShellContentState::GetUserPresentingBrowserContextForWindow(
     aura::Window* window) {
+  DCHECK(window);
+  // Speculative fix for multi-profile crash. crbug.com/661821
+  if (!chrome::MultiUserWindowManager::GetInstance())
+    return nullptr;
+
   const AccountId& account_id =
       chrome::MultiUserWindowManager::GetInstance()->GetUserPresentingWindow(
           window);

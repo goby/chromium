@@ -5,11 +5,10 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_UI_CARD_UNMASK_PROMPT_VIEW_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_UI_CARD_UNMASK_PROMPT_VIEW_H_
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 
 namespace autofill {
-
-class CardUnmaskPromptController;
 
 // The cross-platform UI interface which prompts the user to unlock a masked
 // Wallet instrument (credit card). This object is responsible for its own

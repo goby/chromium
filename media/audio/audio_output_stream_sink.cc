@@ -4,10 +4,14 @@
 
 #include "media/audio/audio_output_stream_sink.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "media/audio/audio_manager.h"
+#include "media/base/audio_timestamp_helper.h"
 
 namespace media {
 
@@ -71,19 +75,26 @@ bool AudioOutputStreamSink::SetVolume(double volume) {
   return true;
 }
 
-OutputDevice* AudioOutputStreamSink::GetOutputDevice() {
-  return nullptr;
+OutputDeviceInfo AudioOutputStreamSink::GetOutputDeviceInfo() {
+  return OutputDeviceInfo();
 }
 
-int AudioOutputStreamSink::OnMoreData(AudioBus* dest,
-                                      uint32 total_bytes_delay) {
+bool AudioOutputStreamSink::CurrentThreadIsRenderingThread() {
+  NOTIMPLEMENTED();
+  return false;
+}
+
+int AudioOutputStreamSink::OnMoreData(base::TimeDelta delay,
+                                      base::TimeTicks delay_timestamp,
+                                      int prior_frames_skipped,
+                                      AudioBus* dest) {
   // Note: Runs on the audio thread created by the OS.
   base::AutoLock al(callback_lock_);
   if (!active_render_callback_)
     return 0;
 
-  return active_render_callback_->Render(
-      dest, total_bytes_delay * 1000.0 / active_params_.GetBytesPerSecond());
+  return active_render_callback_->Render(delay, delay_timestamp,
+                                         prior_frames_skipped, dest);
 }
 
 void AudioOutputStreamSink::OnError(AudioOutputStream* stream) {
@@ -144,4 +155,4 @@ void AudioOutputStreamSink::ClearCallback() {
   active_render_callback_ = NULL;
 }
 
-}  // namepace media
+}  // namespace media

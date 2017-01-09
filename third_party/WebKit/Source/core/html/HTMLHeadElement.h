@@ -24,19 +24,21 @@
 #ifndef HTMLHeadElement_h
 #define HTMLHeadElement_h
 
+#include "core/CoreExport.h"
 #include "core/html/HTMLElement.h"
 
 namespace blink {
 
-class HTMLHeadElement final : public HTMLElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    DECLARE_NODE_FACTORY(HTMLHeadElement);
+class CORE_EXPORT HTMLHeadElement final : public HTMLElement {
+  DEFINE_WRAPPERTYPEINFO();
 
-private:
-    explicit HTMLHeadElement(Document&);
+ public:
+  DECLARE_NODE_FACTORY(HTMLHeadElement);
+
+ private:
+  explicit HTMLHeadElement(Document&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLHeadElement_h
+#endif  // HTMLHeadElement_h

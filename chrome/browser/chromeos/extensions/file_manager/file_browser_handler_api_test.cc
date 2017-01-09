@@ -6,11 +6,14 @@
 
 #include "chrome/browser/chromeos/extensions/file_manager/file_browser_handler_api.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
@@ -167,7 +170,7 @@ class FileBrowserHandlerExtensionTest : public ExtensionApiTest {
     // Mount point will be called "tmp", and it will be located in a tmp
     // directory with an unique name.
     ASSERT_TRUE(scoped_tmp_dir_.CreateUniqueTempDir());
-    tmp_mount_point_ = scoped_tmp_dir_.path().Append("tmp");
+    tmp_mount_point_ = scoped_tmp_dir_.GetPath().Append("tmp");
     base::CreateDirectory(tmp_mount_point_);
 
     ExtensionApiTest::SetUp();
@@ -337,11 +340,10 @@ IN_PROC_BROWSER_TEST_F(FileBrowserHandlerExtensionTest, SelectionFailed) {
   select_file_function->set_has_callback(true);
   select_file_function->set_user_gesture(true);
 
-  scoped_ptr<base::DictionaryValue> result(utils::ToDictionary(
-      utils::RunFunctionAndReturnSingleResult(
+  std::unique_ptr<base::DictionaryValue> result(
+      utils::ToDictionary(utils::RunFunctionAndReturnSingleResult(
           select_file_function.get(),
-          "[{\"suggestedName\": \"some_file_name.txt\"}]",
-          browser())));
+          "[{\"suggestedName\": \"some_file_name.txt\"}]", browser())));
 
   EXPECT_FALSE(extensions::api_test_utils::GetBoolean(result.get(), "success"));
   base::DictionaryValue* entry_info;
@@ -366,8 +368,8 @@ IN_PROC_BROWSER_TEST_F(FileBrowserHandlerExtensionTest, SuggestedFullPath) {
   select_file_function->set_has_callback(true);
   select_file_function->set_user_gesture(true);
 
-  scoped_ptr<base::DictionaryValue> result(utils::ToDictionary(
-      utils::RunFunctionAndReturnSingleResult(
+  std::unique_ptr<base::DictionaryValue> result(
+      utils::ToDictionary(utils::RunFunctionAndReturnSingleResult(
           select_file_function.get(),
           "[{\"suggestedName\": \"/path_to_file/some_file_name.txt\"}]",
           browser())));

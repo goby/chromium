@@ -5,8 +5,11 @@
 #ifndef ANDROID_WEBVIEW_NATIVE_PERMISSION_AW_PERMISSION_REQUEST_H
 #define ANDROID_WEBVIEW_NATIVE_PERMISSION_AW_PERMISSION_REQUEST_H
 
+#include <stdint.h>
+
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "url/gurl.h"
 
@@ -33,7 +36,7 @@ class AwPermissionRequest {
   // Take the ownership of |delegate|. Returns the native pointer in
   // |weak_ptr|, which is owned by the returned java peer.
   static base::android::ScopedJavaLocalRef<jobject> Create(
-      scoped_ptr<AwPermissionRequestDelegate> delegate,
+      std::unique_ptr<AwPermissionRequestDelegate> delegate,
       base::WeakPtr<AwPermissionRequest>* weak_ptr);
 
   // Return the Java peer. Must be null-checked.
@@ -50,7 +53,7 @@ class AwPermissionRequest {
   const GURL& GetOrigin();
 
   // Return the resources origin requested.
-  int64 GetResources();
+  int64_t GetResources();
 
   // Cancel this request. Guarantee that
   // AwPermissionRequestDelegate::NotifyRequestResult will not be called after
@@ -61,14 +64,14 @@ class AwPermissionRequest {
  private:
   friend class TestPermissionRequestHandlerClient;
 
-  AwPermissionRequest(scoped_ptr<AwPermissionRequestDelegate> delegate,
+  AwPermissionRequest(std::unique_ptr<AwPermissionRequestDelegate> delegate,
                       base::android::ScopedJavaLocalRef<jobject>* java_peer);
   ~AwPermissionRequest();
 
   void OnAcceptInternal(bool accept);
   void DeleteThis();
 
-  scoped_ptr<AwPermissionRequestDelegate> delegate_;
+  std::unique_ptr<AwPermissionRequestDelegate> delegate_;
   JavaObjectWeakGlobalRef java_ref_;
 
   bool processed_;

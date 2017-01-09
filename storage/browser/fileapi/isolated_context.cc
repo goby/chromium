@@ -4,9 +4,13 @@
 
 #include "storage/browser/fileapi/isolated_context.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -215,8 +219,8 @@ std::string IsolatedContext::RegisterDraggedFileSystem(
     const FileInfoSet& files) {
   base::AutoLock locker(lock_);
   std::string filesystem_id = GetNewFileSystemId();
-  instance_map_[filesystem_id] = new Instance(
-      kFileSystemTypeDragged, files.fileset());
+  instance_map_[filesystem_id] =
+      base::MakeUnique<Instance>(kFileSystemTypeDragged, files.fileset());
   return filesystem_id;
 }
 
@@ -239,9 +243,8 @@ std::string IsolatedContext::RegisterFileSystemForPath(
 
   base::AutoLock locker(lock_);
   std::string new_id = GetNewFileSystemId();
-  instance_map_[new_id] = new Instance(type, filesystem_id,
-                                       MountPointInfo(name, path),
-                                       Instance::PLATFORM_PATH);
+  instance_map_[new_id] = base::MakeUnique<Instance>(
+      type, filesystem_id, MountPointInfo(name, path), Instance::PLATFORM_PATH);
   path_to_id_map_[path].insert(new_id);
   return new_id;
 }
@@ -255,7 +258,7 @@ std::string IsolatedContext::RegisterFileSystemForVirtualPath(
   if (path.ReferencesParent())
     return std::string();
   std::string filesystem_id = GetNewFileSystemId();
-  instance_map_[filesystem_id] = new Instance(
+  instance_map_[filesystem_id] = base::MakeUnique<Instance>(
       type,
       std::string(),  // filesystem_id
       MountPointInfo(register_name, cracked_path_prefix),
@@ -277,7 +280,7 @@ bool IsolatedContext::GetRegisteredPath(
     const std::string& filesystem_id, base::FilePath* path) const {
   DCHECK(path);
   base::AutoLock locker(lock_);
-  IDToInstance::const_iterator found = instance_map_.find(filesystem_id);
+  auto found = instance_map_.find(filesystem_id);
   if (found == instance_map_.end() || !found->second->IsSinglePathInstance())
     return false;
   *path = found->second->file_info().path;
@@ -315,11 +318,11 @@ bool IsolatedContext::CrackVirtualPath(
   base::FilePath cracked_path;
   {
     base::AutoLock locker(lock_);
-    IDToInstance::const_iterator found_instance = instance_map_.find(fsid);
+    auto found_instance = instance_map_.find(fsid);
     if (found_instance == instance_map_.end())
       return false;
     *id_or_name = fsid;
-    const Instance* instance = found_instance->second;
+    const Instance* instance = found_instance->second.get();
     if (type)
       *type = instance->type();
     if (cracked_id)
@@ -360,18 +363,12 @@ FileSystemURL IsolatedContext::CreateCrackedFileSystemURL(
 void IsolatedContext::RevokeFileSystemByPath(const base::FilePath& path_in) {
   base::AutoLock locker(lock_);
   base::FilePath path(path_in.NormalizePathSeparators());
-  PathToID::iterator ids_iter = path_to_id_map_.find(path);
+  auto ids_iter = path_to_id_map_.find(path);
   if (ids_iter == path_to_id_map_.end())
     return;
   std::set<std::string>& ids = ids_iter->second;
-  for (std::set<std::string>::iterator iter = ids.begin();
-       iter != ids.end(); ++iter) {
-    IDToInstance::iterator found = instance_map_.find(*iter);
-    if (found != instance_map_.end()) {
-      delete found->second;
-      instance_map_.erase(found);
-    }
-  }
+  for (auto iter = ids.begin(); iter != ids.end(); ++iter)
+    instance_map_.erase(*iter);
   path_to_id_map_.erase(ids_iter);
 }
 
@@ -385,10 +382,10 @@ void IsolatedContext::RemoveReference(const std::string& filesystem_id) {
   base::AutoLock locker(lock_);
   // This could get called for non-existent filesystem if it has been
   // already deleted by RevokeFileSystemByPath.
-  IDToInstance::iterator found = instance_map_.find(filesystem_id);
+  auto found = instance_map_.find(filesystem_id);
   if (found == instance_map_.end())
     return;
-  Instance* instance = found->second;
+  Instance* instance = found->second.get();
   DCHECK_GT(instance->ref_counts(), 0);
   instance->RemoveRef();
   if (instance->ref_counts() == 0) {
@@ -402,7 +399,7 @@ bool IsolatedContext::GetDraggedFileInfo(
     std::vector<MountPointInfo>* files) const {
   DCHECK(files);
   base::AutoLock locker(lock_);
-  IDToInstance::const_iterator found = instance_map_.find(filesystem_id);
+  auto found = instance_map_.find(filesystem_id);
   if (found == instance_map_.end() ||
       found->second->type() != kFileSystemTypeDragged)
     return false;
@@ -416,13 +413,9 @@ base::FilePath IsolatedContext::CreateVirtualRootPath(
   return base::FilePath().AppendASCII(filesystem_id);
 }
 
-IsolatedContext::IsolatedContext() {
-}
+IsolatedContext::IsolatedContext() = default;
 
-IsolatedContext::~IsolatedContext() {
-  STLDeleteContainerPairSecondPointers(instance_map_.begin(),
-                                       instance_map_.end());
-}
+IsolatedContext::~IsolatedContext() = default;
 
 FileSystemURL IsolatedContext::CrackFileSystemURL(
     const FileSystemURL& url) const {
@@ -450,19 +443,17 @@ FileSystemURL IsolatedContext::CrackFileSystemURL(
 
 bool IsolatedContext::UnregisterFileSystem(const std::string& filesystem_id) {
   lock_.AssertAcquired();
-  IDToInstance::iterator found = instance_map_.find(filesystem_id);
+  auto found = instance_map_.find(filesystem_id);
   if (found == instance_map_.end())
     return false;
-  Instance* instance = found->second;
+  Instance* instance = found->second.get();
   if (instance->IsSinglePathInstance()) {
-    PathToID::iterator ids_iter = path_to_id_map_.find(
-        instance->file_info().path);
+    auto ids_iter = path_to_id_map_.find(instance->file_info().path);
     DCHECK(ids_iter != path_to_id_map_.end());
     ids_iter->second.erase(filesystem_id);
     if (ids_iter->second.empty())
       path_to_id_map_.erase(ids_iter);
   }
-  delete found->second;
   instance_map_.erase(found);
   return true;
 }
@@ -470,7 +461,7 @@ bool IsolatedContext::UnregisterFileSystem(const std::string& filesystem_id) {
 std::string IsolatedContext::GetNewFileSystemId() const {
   // Returns an arbitrary random string which must be unique in the map.
   lock_.AssertAcquired();
-  uint32 random_data[4];
+  uint32_t random_data[4];
   std::string id;
   do {
     base::RandBytes(random_data, sizeof(random_data));

@@ -4,17 +4,22 @@
 
 #include "chrome/browser/search/thumbnail_source.h"
 
+#include <stddef.h>
+
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/instant_io_context.h"
-#include "chrome/browser/search/suggestions/image_fetcher_impl.h"
+#include "chrome/browser/search/suggestions/image_decoder_impl.h"
 #include "chrome/browser/thumbnails/thumbnail_service.h"
 #include "chrome/browser/thumbnails/thumbnail_service_factory.h"
 #include "chrome/common/url_constants.h"
+#include "components/image_fetcher/image_fetcher_impl.h"
 #include "components/suggestions/image_encoder.h"
 #include "net/url_request/url_request.h"
+#include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 
 // The delimiter between the first url and the fallback url passed to
@@ -27,7 +32,9 @@ ThumbnailSource::ThumbnailSource(Profile* profile, bool capture_thumbnails)
       capture_thumbnails_(capture_thumbnails),
       weak_ptr_factory_(this) {
   image_fetcher_.reset(
-      new suggestions::ImageFetcherImpl(profile->GetRequestContext()));
+      new image_fetcher::ImageFetcherImpl(
+          base::MakeUnique<suggestions::ImageDecoderImpl>(),
+          profile->GetRequestContext()));
 }
 
 ThumbnailSource::~ThumbnailSource() {
@@ -40,8 +47,7 @@ std::string ThumbnailSource::GetSource() const {
 
 void ThumbnailSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
     const content::URLDataSource::GotDataCallback& callback) {
   GURL page_url;
   GURL fallback_thumbnail_url;
@@ -57,7 +63,7 @@ void ThumbnailSource::StartDataRequest(
     // Otherwise, if a fallback thumbnail URL was provided, fetch it and
     // eventually return it.
     image_fetcher_->StartOrQueueNetworkRequest(
-        page_url, fallback_thumbnail_url,
+        page_url.spec(), fallback_thumbnail_url,
         base::Bind(&ThumbnailSource::SendFetchedUrlImage,
                    weak_ptr_factory_.GetWeakPtr(), callback));
   } else {
@@ -73,13 +79,13 @@ std::string ThumbnailSource::GetMimeType(const std::string&) const {
   return "image/png";
 }
 
-base::MessageLoop* ThumbnailSource::MessageLoopForRequestPath(
-    const std::string& path) const {
+scoped_refptr<base::SingleThreadTaskRunner>
+ThumbnailSource::TaskRunnerForRequestPath(const std::string& path) const {
   // TopSites can be accessed from the IO thread. Otherwise, the URLs should be
   // accessed on the UI thread.
   return thumbnail_service_.get()
-             ? NULL
-             : content::URLDataSource::MessageLoopForRequestPath(path);
+             ? nullptr
+             : content::URLDataSource::TaskRunnerForRequestPath(path);
 }
 
 bool ThumbnailSource::ShouldServiceRequest(
@@ -108,13 +114,15 @@ void ThumbnailSource::ExtractPageAndThumbnailUrls(
 
 void ThumbnailSource::SendFetchedUrlImage(
     const content::URLDataSource::GotDataCallback& callback,
-    const GURL& url,
-    const SkBitmap* bitmap) {
-  if (!bitmap) {
+    const std::string& url,
+    const gfx::Image& image) {
+  // In case the image could not be retrieved an empty image is returned.
+  if (image.IsEmpty()) {
     callback.Run(default_thumbnail_.get());
     return;
   }
 
+  const SkBitmap* bitmap = image.ToSkBitmap();
   scoped_refptr<base::RefCountedBytes> encoded_data(
       new base::RefCountedBytes());
   if (!suggestions::EncodeSkBitmapToJPEG(*bitmap, &encoded_data->data())) {

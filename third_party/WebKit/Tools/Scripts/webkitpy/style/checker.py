@@ -92,8 +92,6 @@ _BASE_FILTER_RULES = [
     '-runtime/printf',
     '-runtime/threadsafe_fn',
     '-runtime/rtti',
-    '-whitespace/blank_line',
-    '-whitespace/end_of_line',
     # List Python pep8 categories last.
     #
     # Because much of WebKit's Python code base does not abide by the
@@ -107,7 +105,7 @@ _BASE_FILTER_RULES = [
 
     # FIXME: Move the pylint rules from the pylintrc to here. This will
     # also require us to re-work lint-webkitpy to produce the equivalent output.
-    ]
+]
 
 
 # The path-specific filter rules.
@@ -125,8 +123,8 @@ _PATH_RULES_SPECIFIER = [
     # API and therefore do not follow the same header including
     # discipline as WebCore.
 
-    ([# There is no clean way to avoid "yy_*" names used by flex.
-      "Source/core/css/CSSParser-in.cpp"],
+    ([  # There is no clean way to avoid "yy_*" names used by flex.
+        "Source/core/css/CSSParser-in.cpp"],
      ["-readability/naming"]),
 
     # For third-party Python code, keep only the following checks--
@@ -141,17 +139,17 @@ _PATH_RULES_SPECIFIER = [
       "+pep8/W291",  # Trailing white space
       "+whitespace/carriage_return"]),
 
-    ([# Jinja templates: files have .cpp or .h extensions, but contain
-      # template code, which can't be handled, so disable tests.
-      "Source/bindings/templates",
-      "Source/build/scripts/templates"],
+    ([  # Jinja templates: files have .cpp or .h extensions, but contain
+        # template code, which can't be handled, so disable tests.
+        "Source/bindings/templates",
+        "Source/build/scripts/templates"],
      ["-"]),
 
-    ([# IDL compiler reference output
-      # Conforming to style significantly increases the complexity of the code
-      # generator and decreases *its* readability, which is of more concern
-      # than style of the machine-generated code itself.
-      "Source/bindings/tests/results"],
+    ([  # IDL compiler reference output
+        # Conforming to style significantly increases the complexity of the code
+        # generator and decreases *its* readability, which is of more concern
+        # than style of the machine-generated code itself.
+        "Source/bindings/tests/results"],
      ["-"]),
 ]
 
@@ -160,7 +158,7 @@ _CPP_FILE_EXTENSIONS = [
     'c',
     'cpp',
     'h',
-    ]
+]
 
 _JSON_FILE_EXTENSION = 'json'
 
@@ -185,14 +183,14 @@ _TEXT_FILE_EXTENSIONS = [
     'txt',
     'xhtml',
     'y',
-    ]
+]
 
 _XCODEPROJ_FILE_EXTENSION = 'pbxproj'
 
 _XML_FILE_EXTENSIONS = [
     'vcproj',
     'vsprops',
-    ]
+]
 
 _PNG_FILE_EXTENSION = 'png'
 
@@ -220,14 +218,14 @@ _SKIPPED_FILES_WITHOUT_WARNING = [
     "Source/ThirdParty/leveldb" + os.path.sep,
     # Prevents this being recognized as a text file.
     "Source/WebCore/GNUmakefile.features.am.in",
-    ]
+]
 
 # Extensions of files which are allowed to contain carriage returns.
 _CARRIAGE_RETURN_ALLOWED_FILE_EXTENSIONS = [
     'png',
     'vcproj',
     'vsprops',
-    ]
+]
 
 # The maximum number of errors to report per file, per category.
 # If a category is not a key, then it has no maximum.
@@ -274,18 +272,17 @@ def check_webkit_style_configuration(options):
 
     Args:
       options: A CommandOptionValues instance.
-
     """
     filter_configuration = FilterConfiguration(
-                               base_rules=_BASE_FILTER_RULES,
-                               path_specific=_PATH_RULES_SPECIFIER,
-                               user_rules=options.filter_rules)
+        base_rules=_BASE_FILTER_RULES,
+        path_specific=_PATH_RULES_SPECIFIER,
+        user_rules=options.filter_rules)
 
     return StyleProcessorConfiguration(filter_configuration=filter_configuration,
-               max_reports_per_category=_MAX_REPORTS_PER_CATEGORY,
-               min_confidence=options.min_confidence,
-               output_format=options.output_format,
-               stderr_write=sys.stderr.write)
+                                       max_reports_per_category=_MAX_REPORTS_PER_CATEGORY,
+                                       min_confidence=options.min_confidence,
+                                       output_format=options.output_format,
+                                       stderr_write=sys.stderr.write)
 
 
 def _create_log_handlers(stream):
@@ -296,7 +293,6 @@ def _create_log_handlers(stream):
 
     Args:
       stream: See the configure_logging() docstring.
-
     """
     # Handles logging.WARNING and above.
     error_handler = logging.StreamHandler(stream)
@@ -323,7 +319,6 @@ def _create_debug_log_handlers(stream):
 
     Args:
       stream: See the configure_logging() docstring.
-
     """
     handler = logging.StreamHandler(stream)
     formatter = logging.Formatter("%(name)s: %(levelname)-8s %(message)s")
@@ -350,7 +345,6 @@ def configure_logging(stream, logger=None, is_verbose=False):
               should be used only in unit tests.  Defaults to the
               root logger.
       is_verbose: A boolean value of whether logging should be verbose.
-
     """
     # If the stream does not define an "encoding" data attribute, the
     # logging module can throw an error like the following:
@@ -401,14 +395,14 @@ class CheckerDispatcher(object):
         return os.path.splitext(file_path)[1].lstrip(".")
 
     def _should_skip_file_path(self, file_path, skip_array_entry):
-        match = re.search("\s*png$", file_path)
+        match = re.search(r"\s*png$", file_path)
         if match:
             return False
         if isinstance(skip_array_entry, str):
             if file_path.find(skip_array_entry) >= 0:
                 return True
         elif skip_array_entry.match(file_path):
-                return True
+            return True
         return False
 
     def should_skip_with_warning(self, file_path):
@@ -527,7 +521,6 @@ class StyleProcessorConfiguration(object):
 
       stderr_write: A function that takes a string as a parameter and
                     serves as stderr.write.
-
     """
 
     def __init__(self,
@@ -556,7 +549,6 @@ class StyleProcessorConfiguration(object):
 
           stderr_write: A function that takes a string as a parameter and
                         serves as stderr.write.
-
         """
         self._filter_configuration = filter_configuration
         self._output_format = output_format
@@ -578,7 +570,6 @@ class StyleProcessorConfiguration(object):
                                the application's confidence in the error.
                                A higher number means greater confidence.
           file_path: The path of the file being checked
-
         """
         if confidence_in_error < self.min_confidence:
             return False
@@ -614,7 +605,6 @@ class ProcessorBase(object):
         The TextFileReader class calls this method prior to reading in
         the lines of a file.  Use this method, for example, to prevent
         the style checker from reading binary files into memory.
-
         """
         raise NotImplementedError('Subclasses should implement.')
 
@@ -631,7 +621,6 @@ class ProcessorBase(object):
                     may support a "reportable_lines" parameter that represents
                     the line numbers of the lines for which style errors
                     should be reported.
-
         """
         raise NotImplementedError('Subclasses should implement.')
 
@@ -643,7 +632,6 @@ class StyleProcessor(ProcessorBase):
     Attributes:
       error_count: An integer that is the total number of reported
                    errors for the lifetime of this instance.
-
     """
 
     def __init__(self, configuration, mock_dispatcher=None,
@@ -661,7 +649,6 @@ class StyleProcessor(ProcessorBase):
                                        transforming carriage returns.
                                        This parameter is for unit testing.
                                        Defaults to CarriageReturnChecker.
-
         """
         if mock_dispatcher is None:
             dispatcher = CheckerDispatcher()
@@ -696,8 +683,7 @@ class StyleProcessor(ProcessorBase):
         if self._dispatcher.should_skip_without_warning(file_path):
             return False
         if self._dispatcher.should_skip_with_warning(file_path):
-            _log.warn('File exempt from style guide. Skipping: "%s"'
-                      % file_path)
+            _log.warning('File exempt from style guide. Skipping: "%s"', file_path)
             return False
         return True
 
@@ -714,7 +700,6 @@ class StyleProcessor(ProcessorBase):
                         for all lines should be reported.  When not None, this
                         list normally contains the line numbers corresponding
                         to the modified lines of a patch.
-
         """
         _log.debug("Checking style: " + file_path)
 

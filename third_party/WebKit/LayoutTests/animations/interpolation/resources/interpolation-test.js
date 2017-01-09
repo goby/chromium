@@ -50,6 +50,10 @@
  *        Exactly one of (addTo, replaceTo) must be specified.
  *  - afterTest(callback)
  *        Calls callback after all the tests have executed.
+ *
+ * The following object is exported:
+ *  - neutralKeyframe
+ *        Can be used as the from/to value to use a neutral keyframe.
  */
 'use strict';
 (function() {
@@ -62,6 +66,10 @@
   var webAnimationsEnabled = typeof Element.prototype.animate === 'function';
   var expectNoInterpolation = {};
   var afterTestHook = function() {};
+  var neutralKeyframe = {};
+  function isNeutralKeyframe(keyframe) {
+    return keyframe === neutralKeyframe;
+  }
 
   var cssAnimationsInterpolation = {
     name: 'CSS Animations',
@@ -78,8 +86,8 @@
       }
       cssAnimationsData.sharedStyle.textContent += '' +
         '@keyframes animation' + id + ' {' +
-          'from {' + property + ': ' + from + ';}' +
-          'to {' + property + ': ' + to + ';}' +
+          (isNeutralKeyframe(from) ? '' : `from {${property}: ${from};}`) +
+          (isNeutralKeyframe(to) ? '' : `to {${property}: ${to};}`) +
         '}';
       target.style.animationName = 'animation' + id;
       target.style.animationDuration = '2e10s';
@@ -94,7 +102,7 @@
     supportsProperty: function() {return true;},
     supportsValue: function() {return true;},
     setup: function(property, from, target) {
-      target.style[property] = from;
+      target.style[property] = isNeutralKeyframe(from) ? '' : from;
     },
     nonInterpolationExpectations: function(from, to) {
       return expectFlip(from, to, -Infinity);
@@ -104,7 +112,7 @@
       target.style.transitionDelay = '-1e10s';
       target.style.transitionTimingFunction = createEasing(at);
       target.style.transitionProperty = property;
-      target.style[property] = to;
+      target.style[property] = isNeutralKeyframe(to) ? '' : to;
     },
     rebaseline: false,
   };
@@ -118,19 +126,37 @@
       return expectFlip(from, to, 0.5);
     },
     interpolate: function(property, from, to, at, target) {
-      this.interpolateKeyframes([
-        {offset: 0, [property]: from},
-        {offset: 1, [property]: to},
-      ], at, target);
+      this.interpolateComposite(property, from, 'replace', to, 'replace', at, target);
     },
-    interpolateKeyframes: function(keyframes, at, target) {
-      target.animate(keyframes, {
+    interpolateComposite: function(property, from, fromComposite, to, toComposite, at, target) {
+      // Convert to camelCase
+      for (var i = property.length - 2; i > 0; --i) {
+        if (property[i] === '-') {
+          property = property.substring(0, i) + property[i + 1].toUpperCase() + property.substring(i + 2);
+        }
+      }
+      var keyframes = [];
+      if (!isNeutralKeyframe(from)) {
+        keyframes.push({
+          offset: 0,
+          composite: fromComposite,
+          [property]: from,
+        });
+      }
+      if (!isNeutralKeyframe(to)) {
+        keyframes.push({
+          offset: 1,
+          composite: toComposite,
+          [property]: to,
+        });
+      }
+      var animation = target.animate(keyframes, {
         fill: 'forwards',
         duration: 1,
         easing: createEasing(at),
-        delay: -0.5,
-        iterations: 0.5,
       });
+      animation.pause();
+      animation.currentTime = 0.5;
     },
     rebaseline: false,
   };
@@ -178,6 +204,14 @@
     });
   }
 
+  function toCamelCase(property) {
+    var i = property.length;
+    while ((i = property.lastIndexOf('-', i - 1)) !== -1) {
+      property = property.substring(0, i) + property[i + 1].toUpperCase() + property.substring(i + 2);
+    }
+    return property;
+  }
+
   function createTargetContainer(parent, className) {
     var targetContainer = createElement(parent);
     targetContainer.classList.add('container');
@@ -207,10 +241,10 @@
 
   var anchor = document.createElement('a');
   function sanitizeUrls(value) {
-    var matches = value.match(/url\("([^\)]*)"\)/g);
+    var matches = value.match(/url\("([^#][^\)]*)"\)/g);
     if (matches !== null) {
       for (var i = 0; i < matches.length; ++i) {
-        var url = /url\("([^\)]*)"\)/g.exec(matches[i])[1];
+        var url = /url\("([^#][^\)]*)"\)/g.exec(matches[i])[1];
         anchor.href = url;
         anchor.pathname = '...' + anchor.pathname.substring(anchor.pathname.lastIndexOf('/'));
         value = value.replace(matches[i], 'url(' + anchor.href + ')');
@@ -231,17 +265,19 @@
   }
 
   function assertInterpolation(options, expectations) {
-    if (options.from) {
-      console.assert(CSS.supports(options.property, options.from));
-    }
-    if (options.to) {
-      console.assert(CSS.supports(options.property, options.to));
-    }
     interpolationTests.push({options, expectations});
   }
 
   function assertComposition(options, expectations) {
     compositionTests.push({options, expectations});
+  }
+
+  function keyframeText(keyframe) {
+    return isNeutralKeyframe(keyframe) ? 'neutral' : `[${keyframe}]`;
+  }
+
+  function keyframeCode(keyframe) {
+    return isNeutralKeyframe(keyframe) ? 'neutralKeyframe' : `'${keyframe}'`;
   }
 
   function createInterpolationTestTargets(interpolationMethod, interpolationMethodContainer, interpolationTest, rebaselineContainer) {
@@ -259,14 +295,14 @@
       rebaseline.appendChild(document.createTextNode(`\
 assertInterpolation({
   property: '${property}',
-  from: '${from}',
-  to: '${to}',
+  from: ${keyframeCode(from)},
+  to: ${keyframeCode(to)},
 }, [\n`));
       var rebaselineExpectation;
       rebaseline.appendChild(rebaselineExpectation = document.createTextNode(''));
       rebaseline.appendChild(document.createTextNode(']);\n\n'));
     }
-    var testText = `${interpolationMethod.name}: property <${property}> from [${from}] to [${to}]`;
+    var testText = `${interpolationMethod.name}: property <${property}> from ${keyframeText(from)} to ${keyframeText(to)}`;
     var testContainer = createElement(interpolationMethodContainer, 'div', testText);
     createElement(testContainer, 'br');
     var expectations = interpolationTest.expectations;
@@ -299,14 +335,21 @@ assertInterpolation({
 
   function createCompositionTestTargets(compositionContainer, compositionTest, rebaselineContainer) {
     var options = compositionTest.options;
-    console.assert('addFrom' in options !== 'replaceFrom' in options);
-    console.assert('addTo' in options !== 'replaceTo' in options);
     var property = options.property;
     var underlying = options.underlying;
     var from = options.addFrom || options.replaceFrom;
     var to = options.addTo || options.replaceTo;
     var fromComposite = 'addFrom' in options ? 'add' : 'replace';
     var toComposite = 'addTo' in options ? 'add' : 'replace';
+    if ('addFrom' in options === 'replaceFrom' in options
+      || 'addTo' in options === 'replaceTo' in options) {
+      test(function() {
+        assert_true('addFrom' in options !== 'replaceFrom' in options, 'addFrom xor replaceFrom must be specified');
+        assert_true('addTo' in options !== 'replaceTo' in options, 'addTo xor replaceTo must be specified');
+      }, `Composition tests must use addFrom xor replaceFrom, and addTo xor replaceTo`);
+    }
+    validateTestInputs(property, from, to, underlying);
+
     if (webAnimationsInterpolation.rebaseline) {
       var rebaseline = createElement(rebaselineContainer, 'pre');
       rebaseline.appendChild(document.createTextNode(`\
@@ -330,15 +373,7 @@ assertComposition({
       var target = actualTargetContainer.target;
       target.style[property] = underlying;
       target.interpolate = function() {
-        webAnimationsInterpolation.interpolateKeyframes([{
-          offset: 0,
-          composite: fromComposite,
-          [property]: from,
-        }, {
-          offset: 1,
-          composite: toComposite,
-          [property]: to,
-        }], expectation.at, target);
+        webAnimationsInterpolation.interpolateComposite(property, from, fromComposite, to, toComposite, expectation.at, target);
       };
       target.measure = function() {
         var actualValue = getComputedStyle(target)[property];
@@ -355,8 +390,29 @@ assertComposition({
     });
   }
 
+  function validateTestInputs(property, from, to, underlying) {
+    if (from && from !== neutralKeyframe && !CSS.supports(property, from)) {
+        test(function() {
+          assert_unreached('from value not supported');
+        }, `${property} supports [${from}]`);
+    }
+    if (to && to !== neutralKeyframe && !CSS.supports(property, to)) {
+        test(function() {
+          assert_unreached('to value not supported');
+        }, `${property} supports [${to}]`);
+    }
+    if (typeof underlying !== 'undefined' && !CSS.supports(property, underlying)) {
+        test(function() {
+          assert_unreached('underlying value not supported');
+        }, `${property} supports [${underlying}]`);
+    }
+  }
+
   function createTestTargets(interpolationMethods, interpolationTests, compositionTests, container, rebaselineContainer) {
     var targets = [];
+    for (var interpolationTest of interpolationTests) {
+      validateTestInputs(interpolationTest.options.property, interpolationTest.options.from, interpolationTest.options.to);
+    }
     for (var interpolationMethod of interpolationMethods) {
       var interpolationMethodContainer = createElement(container);
       for (var interpolationTest of interpolationTests) {
@@ -399,11 +455,6 @@ assertComposition({
     afterTestHook = f;
   }
 
-  window.assertInterpolation = assertInterpolation;
-  window.assertNoInterpolation = assertNoInterpolation;
-  window.assertComposition = assertComposition;
-  window.afterTest = afterTest;
-
   loadScript('../../resources/testharness.js').then(function() {
     return loadScript('../../resources/testharnessreport.js');
   }).then(function() {
@@ -413,4 +464,10 @@ assertComposition({
       asyncHandle.done()
     });
   });
+
+  window.assertInterpolation = assertInterpolation;
+  window.assertNoInterpolation = assertNoInterpolation;
+  window.assertComposition = assertComposition;
+  window.afterTest = afterTest;
+  window.neutralKeyframe = neutralKeyframe;
 })();

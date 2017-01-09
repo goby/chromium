@@ -6,19 +6,18 @@
 #define NET_WEBSOCKETS_WEBSOCKET_DEFLATE_STREAM_H_
 
 #include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 #include "net/websockets/websocket_deflater.h"
 #include "net/websockets/websocket_frame.h"
 #include "net/websockets/websocket_inflater.h"
 #include "net/websockets/websocket_stream.h"
-
-class GURL;
 
 namespace net {
 
@@ -41,15 +40,15 @@ class WebSocketDeflatePredictor;
 // [1]: http://tools.ietf.org/html/draft-ietf-hybi-permessage-compression-12
 class NET_EXPORT_PRIVATE WebSocketDeflateStream : public WebSocketStream {
  public:
-  WebSocketDeflateStream(scoped_ptr<WebSocketStream> stream,
+  WebSocketDeflateStream(std::unique_ptr<WebSocketStream> stream,
                          const WebSocketDeflateParameters& params,
-                         scoped_ptr<WebSocketDeflatePredictor> predictor);
+                         std::unique_ptr<WebSocketDeflatePredictor> predictor);
   ~WebSocketDeflateStream() override;
 
   // WebSocketStream functions.
-  int ReadFrames(ScopedVector<WebSocketFrame>* frames,
+  int ReadFrames(std::vector<std::unique_ptr<WebSocketFrame>>* frames,
                  const CompletionCallback& callback) override;
-  int WriteFrames(ScopedVector<WebSocketFrame>* frames,
+  int WriteFrames(std::vector<std::unique_ptr<WebSocketFrame>>* frames,
                   const CompletionCallback& callback) override;
   void Close() override;
   std::string GetSubProtocol() const override;
@@ -70,33 +69,37 @@ class NET_EXPORT_PRIVATE WebSocketDeflateStream : public WebSocketStream {
   };
 
   // Handles asynchronous completion of ReadFrames() call on |stream_|.
-  void OnReadComplete(ScopedVector<WebSocketFrame>* frames,
+  void OnReadComplete(std::vector<std::unique_ptr<WebSocketFrame>>* frames,
                       const CompletionCallback& callback,
                       int result);
 
   // This function deflates |frames| and stores the result to |frames| itself.
-  int Deflate(ScopedVector<WebSocketFrame>* frames);
-  void OnMessageStart(const ScopedVector<WebSocketFrame>& frames, size_t index);
-  int AppendCompressedFrame(const WebSocketFrameHeader& header,
-                            ScopedVector<WebSocketFrame>* frames_to_write);
+  int Deflate(std::vector<std::unique_ptr<WebSocketFrame>>* frames);
+  void OnMessageStart(
+      const std::vector<std::unique_ptr<WebSocketFrame>>& frames,
+      size_t index);
+  int AppendCompressedFrame(
+      const WebSocketFrameHeader& header,
+      std::vector<std::unique_ptr<WebSocketFrame>>* frames_to_write);
   int AppendPossiblyCompressedMessage(
-      ScopedVector<WebSocketFrame>* frames,
-      ScopedVector<WebSocketFrame>* frames_to_write);
+      std::vector<std::unique_ptr<WebSocketFrame>>* frames,
+      std::vector<std::unique_ptr<WebSocketFrame>>* frames_to_write);
 
   // This function inflates |frames| and stores the result to |frames| itself.
-  int Inflate(ScopedVector<WebSocketFrame>* frames);
+  int Inflate(std::vector<std::unique_ptr<WebSocketFrame>>* frames);
 
-  int InflateAndReadIfNecessary(ScopedVector<WebSocketFrame>* frames,
-                                const CompletionCallback& callback);
+  int InflateAndReadIfNecessary(
+      std::vector<std::unique_ptr<WebSocketFrame>>* frames,
+      const CompletionCallback& callback);
 
-  const scoped_ptr<WebSocketStream> stream_;
+  const std::unique_ptr<WebSocketStream> stream_;
   WebSocketDeflater deflater_;
   WebSocketInflater inflater_;
   ReadingState reading_state_;
   WritingState writing_state_;
   WebSocketFrameHeader::OpCode current_reading_opcode_;
   WebSocketFrameHeader::OpCode current_writing_opcode_;
-  scoped_ptr<WebSocketDeflatePredictor> predictor_;
+  std::unique_ptr<WebSocketDeflatePredictor> predictor_;
 
   DISALLOW_COPY_AND_ASSIGN(WebSocketDeflateStream);
 };

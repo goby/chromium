@@ -5,6 +5,7 @@
 #include "ios/net/cookies/system_cookie_util.h"
 
 #import <Foundation/Foundation.h>
+#include <stddef.h>
 
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
@@ -12,6 +13,10 @@
 #include "base/strings/sys_string_conversions.h"
 #include "net/cookies/cookie_constants.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace net {
 
@@ -65,14 +70,16 @@ void ReportUMACookieLoss(CookieLossType loss, CookieEvent event) {
 net::CanonicalCookie CanonicalCookieFromSystemCookie(
     NSHTTPCookie* cookie,
     const base::Time& ceation_time) {
-  return net::CanonicalCookie(
-      GURL(), base::SysNSStringToUTF8([cookie name]),
+  return *net::CanonicalCookie::Create(
+      base::SysNSStringToUTF8([cookie name]),
       base::SysNSStringToUTF8([cookie value]),
       base::SysNSStringToUTF8([cookie domain]),
       base::SysNSStringToUTF8([cookie path]), ceation_time,
       base::Time::FromDoubleT([[cookie expiresDate] timeIntervalSince1970]),
-      base::Time(), [cookie isSecure], [cookie isHTTPOnly], false,
-      net::COOKIE_PRIORITY_DEFAULT);
+      base::Time(), [cookie isSecure], [cookie isHTTPOnly],
+      // TODO(mkwst): When iOS begins to support 'SameSite' and 'Priority'
+      // attributes, pass them through here.
+      net::CookieSameSite::DEFAULT_MODE, net::COOKIE_PRIORITY_DEFAULT);
 }
 
 // Converts net::CanonicalCookie to NSHTTPCookie.

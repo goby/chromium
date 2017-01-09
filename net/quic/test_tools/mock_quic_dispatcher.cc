@@ -12,17 +12,20 @@ namespace test {
 MockQuicDispatcher::MockQuicDispatcher(
     const QuicConfig& config,
     const QuicCryptoServerConfig* crypto_config,
-    QuicDispatcher::PacketWriterFactory* packet_writer_factory,
-    QuicConnectionHelperInterface* helper)
-    : QuicDispatcher(config,
-                     crypto_config,
-                     QuicSupportedVersions(),
-                     packet_writer_factory,
-                     helper) {
-}
+    QuicVersionManager* version_manager,
+    std::unique_ptr<QuicConnectionHelperInterface> helper,
+    std::unique_ptr<QuicCryptoServerStream::Helper> session_helper,
+    std::unique_ptr<QuicAlarmFactory> alarm_factory,
+    QuicHttpResponseCache* response_cache)
+    : QuicSimpleDispatcher(config,
+                           crypto_config,
+                           version_manager,
+                           std::move(helper),
+                           std::move(session_helper),
+                           std::move(alarm_factory),
+                           response_cache) {}
 
-MockQuicDispatcher::~MockQuicDispatcher() {
-}
+MockQuicDispatcher::~MockQuicDispatcher() {}
 
 }  // namespace test
 }  // namespace net

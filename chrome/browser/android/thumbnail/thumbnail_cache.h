@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_ANDROID_THUMBNAIL_THUMBNAIL_CACHE_H_
 #define CHROME_BROWSER_ANDROID_THUMBNAIL_THUMBNAIL_CACHE_H_
 
+#include <stddef.h>
+
 #include <list>
 #include <set>
 #include <string>
@@ -12,12 +14,15 @@
 #include "base/bind.h"
 #include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
+#include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/thumbnail/scoped_ptr_expiring_cache.h"
 #include "chrome/browser/android/thumbnail/thumbnail.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/android/resources/ui_resource_provider.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
@@ -25,12 +30,7 @@
 #include "url/gurl.h"
 
 namespace base {
-class File;
 class Time;
-}
-
-namespace content {
-class ContentViewCore;
 }
 
 typedef std::list<TabId> TabIdList;
@@ -60,7 +60,6 @@ class ThumbnailCache : ThumbnailDelegate {
   void Remove(TabId tab_id);
   Thumbnail* Get(TabId tab_id, bool force_disk_read, bool allow_approximation);
 
-  void RemoveFromDiskAtAndAboveId(TabId min_id);
   void InvalidateThumbnailIfChanged(TabId tab_id, const GURL& url);
   bool CheckAndUpdateThumbnailMetaData(TabId tab_id, const GURL& url);
   void UpdateVisibleIds(const TabIdList& priority);
@@ -96,9 +95,8 @@ class ThumbnailCache : ThumbnailDelegate {
 
   void RemoveFromDisk(TabId tab_id);
   static void RemoveFromDiskTask(TabId tab_id);
-  static void RemoveFromDiskAtAndAboveIdTask(TabId min_id);
   void WriteThumbnailIfNecessary(TabId tab_id,
-                                 skia::RefPtr<SkPixelRef> compressed_data,
+                                 sk_sp<SkPixelRef> compressed_data,
                                  float scale,
                                  const gfx::Size& content_size);
   void CompressThumbnailIfNecessary(TabId tab_id,
@@ -109,7 +107,7 @@ class ThumbnailCache : ThumbnailDelegate {
   void MakeSpaceForNewItemIfNecessary(TabId tab_id);
   void RemoveFromReadQueue(TabId tab_id);
   static void WriteTask(TabId tab_id,
-                        skia::RefPtr<SkPixelRef> compressed_data,
+                        sk_sp<SkPixelRef> compressed_data,
                         float scale,
                         const gfx::Size& content_size,
                         const base::Callback<void()>& post_write_task);
@@ -117,33 +115,36 @@ class ThumbnailCache : ThumbnailDelegate {
   static void CompressionTask(
       SkBitmap raw_data,
       gfx::Size encoded_size,
-      const base::Callback<void(skia::RefPtr<SkPixelRef>, const gfx::Size&)>&
+      const base::Callback<void(sk_sp<SkPixelRef>, const gfx::Size&)>&
           post_compression_task);
   void PostCompressionTask(TabId tab_id,
                            const base::Time& time_stamp,
                            float scale,
-                           skia::RefPtr<SkPixelRef> compressed_data,
+                           sk_sp<SkPixelRef> compressed_data,
                            const gfx::Size& content_size);
   static void DecompressionTask(
       const base::Callback<void(bool, SkBitmap)>&
           post_decompress_callback,
-          skia::RefPtr<SkPixelRef> compressed_data,
+          sk_sp<SkPixelRef> compressed_data,
           float scale,
           const gfx::Size& encoded_size);
   static void ReadTask(
       bool decompress,
       TabId tab_id,
       const base::Callback<
-          void(skia::RefPtr<SkPixelRef>, float, const gfx::Size&)>&
+          void(sk_sp<SkPixelRef>, float, const gfx::Size&)>&
           post_read_task);
   void PostReadTask(TabId tab_id,
-                    skia::RefPtr<SkPixelRef> compressed_data,
+                    sk_sp<SkPixelRef> compressed_data,
                     float scale,
                     const gfx::Size& content_size);
   void NotifyObserversOfThumbnailRead(TabId tab_id);
   void RemoveOnMatchedTimeStamp(TabId tab_id, const base::Time& time_stamp);
   static std::pair<SkBitmap, float> CreateApproximation(const SkBitmap& bitmap,
                                                         float scale);
+
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel level);
 
   const size_t compression_queue_max_size_;
   const size_t write_queue_max_size_;
@@ -162,6 +163,7 @@ class ThumbnailCache : ThumbnailDelegate {
 
   ui::UIResourceProvider* ui_resource_provider_;
 
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_;
   base::WeakPtrFactory<ThumbnailCache> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ThumbnailCache);

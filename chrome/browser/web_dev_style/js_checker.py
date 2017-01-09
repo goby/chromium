@@ -47,13 +47,18 @@ class JSChecker(object):
   def GetElementByIdCheck(self, i, line):
     """Checks for use of 'document.getElementById' instead of '$'."""
     return self.RegexCheck(i, line, r"(document\.getElementById)\('",
-        "Use $('id'), from chrome://resources/js/util.js, instead of "
-        "document.getElementById('id')")
+        "Use $('id') or getSVGElement('id') from chrome://resources/js/util.js "
+        "instead of document.getElementById('id')")
 
   def InheritDocCheck(self, i, line):
     """Checks for use of '@inheritDoc' instead of '@override'."""
     return self.RegexCheck(i, line, r"\* (@inheritDoc)",
         "@inheritDoc is deprecated, use @override instead")
+
+  def PolymerLocalIdCheck(self, i, line):
+    """Checks for use of element.$.localId."""
+    return self.RegexCheck(i, line, r"(?<!this)(\.\$)[\[\.]",
+        "Please only use this.$.localId, not element.$.localId")
 
   def WrapperTypeCheck(self, i, line):
     """Check for wrappers (new String()) instead of builtins (string)."""
@@ -90,7 +95,6 @@ class JSChecker(object):
         path.join(resources, 'file_manager'),
         path.join(resources, 'help'),
         path.join(resources, 'history'),
-        path.join(resources, 'memory_internals'),
         path.join(resources, 'net_export'),
         path.join(resources, 'net_internals'),
         path.join(resources, 'network_action_predictor'),
@@ -186,9 +190,19 @@ class JSChecker(object):
             errors.MISSING_JSDOC_TAG_THIS,
         ]
 
-    # Whitelist Polymer-specific JsDoc tags.
-    gflags.FLAGS.custom_jsdoc_tags = ('group', 'element', 'attribute',
-                                      'default', 'polymerBehavior')
+    # Keep this in sync with third_party/closure_compiler/closure_args.gypi
+    gflags.FLAGS.custom_jsdoc_tags = (
+        'abstract',
+        'attribute',
+        'default',
+        'demo',
+        'element',
+        'group',
+        'hero',
+        'polymerBehavior',
+        'status',
+        'submodule',
+    )
     error_handler = ErrorHandlerImpl(self.input_api.re)
     runner.Run(file_to_lint, error_handler, source=source)
     return error_handler.GetErrors()
@@ -219,6 +233,7 @@ class JSChecker(object):
             self.EndJsDocCommentCheck(i, line),
             self.ExtraDotInGenericCheck(i, line),
             self.InheritDocCheck(i, line),
+            self.PolymerLocalIdCheck(i, line),
             self.WrapperTypeCheck(i, line),
             self.VarNameCheck(i, line),
         ])

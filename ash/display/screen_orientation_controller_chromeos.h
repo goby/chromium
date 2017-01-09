@@ -8,29 +8,25 @@
 #include <map>
 
 #include "ash/ash_export.h"
-#include "ash/display/window_tree_host_manager.h"
-#include "ash/shell_observer.h"
+#include "ash/common/shell_observer.h"
+#include "ash/common/wm_activation_observer.h"
+#include "ash/common/wm_display_observer.h"
+#include "ash/common/wm_window_observer.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "chromeos/accelerometer/accelerometer_reader.h"
 #include "chromeos/accelerometer/accelerometer_types.h"
 #include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
-#include "ui/aura/window_observer.h"
-#include "ui/gfx/display.h"
-#include "ui/wm/public/activation_change_observer.h"
-
-namespace aura {
-class Window;
-}
+#include "ui/display/display.h"
 
 namespace ash {
 
 // Implements ChromeOS specific functionality for ScreenOrientationProvider.
 class ASH_EXPORT ScreenOrientationController
-    : public aura::client::ActivationChangeObserver,
-      public aura::WindowObserver,
+    : public WmActivationObserver,
+      public WmWindowObserver,
       public chromeos::AccelerometerReader::Observer,
-      public WindowTreeHostManager::Observer,
+      public WmDisplayObserver,
       public ShellObserver {
  public:
   // Observer that reports changes to the state of ScreenOrientationProvider's
@@ -53,9 +49,12 @@ class ASH_EXPORT ScreenOrientationController
 
   // Allows/unallows a window to lock the screen orientation.
   void LockOrientationForWindow(
-      aura::Window* requesting_windowwindow,
+      WmWindow* requesting_window,
       blink::WebScreenOrientationLockType lock_orientation);
-  void UnlockOrientationForWindow(aura::Window* window);
+  void UnlockOrientationForWindow(WmWindow* window);
+
+  // Unlock all and set the rotation back to the user specified rotation.
+  void UnlockAll();
 
   bool ScreenOrientationProviderSupported() const;
 
@@ -74,24 +73,22 @@ class ASH_EXPORT ScreenOrientationController
   // Sets the display rotation for the given |source|. The new |rotation| will
   // also become active. Display changed notifications are surpressed for this
   // change.
-  void SetDisplayRotation(gfx::Display::Rotation rotation,
-                          gfx::Display::RotationSource source);
+  void SetDisplayRotation(display::Display::Rotation rotation,
+                          display::Display::RotationSource source);
 
-  // aura::client::ActivationChangeObserver:
-  void OnWindowActivated(
-      aura::client::ActivationChangeObserver::ActivationReason reason,
-      aura::Window* gained_active,
-      aura::Window* lost_active) override;
+  // WmActivationObserver:
+  void OnWindowActivated(WmWindow* gained_active,
+                         WmWindow* lost_active) override;
 
-  // aura::WindowObserver:
-  void OnWindowVisibilityChanged(aura::Window* window, bool visible) override;
-  void OnWindowDestroying(aura::Window* window) override;
+  // WmWindowObserver:
+  void OnWindowDestroying(WmWindow* window) override;
+  void OnWindowVisibilityChanged(WmWindow* window, bool visible) override;
 
   // chromeos::AccelerometerReader::Observer:
   void OnAccelerometerUpdated(
       scoped_refptr<const chromeos::AccelerometerUpdate> update) override;
 
-  // WindowTreeHostManager::Observer:
+  // WmDisplayObserver:
   void OnDisplayConfigurationChanged() override;
 
   // ShellObserver:
@@ -102,8 +99,8 @@ class ASH_EXPORT ScreenOrientationController
   // Sets the display rotation to |rotation|. Future accelerometer updates
   // should not be used to change the rotation. SetRotationLocked(false) removes
   // the rotation lock.
-  void LockRotation(gfx::Display::Rotation rotation,
-                    gfx::Display::RotationSource source);
+  void LockRotation(display::Display::Rotation rotation,
+                    display::Display::RotationSource source);
 
   // Sets the display rotation based on |lock_orientation|. Future accelerometer
   // updates should not be used to change the rotation. SetRotationLocked(false)
@@ -144,7 +141,7 @@ class ASH_EXPORT ScreenOrientationController
   // two angles of the same screen orientation
   // (http://www.w3.org/TR/screen-orientation/). Returns true if |rotation| is
   // supported for the current |rotation_locked_orientation_|.
-  bool IsRotationAllowedInLockedState(gfx::Display::Rotation rotation);
+  bool IsRotationAllowedInLockedState(display::Display::Rotation rotation);
 
   // Certain orientation locks allow for rotation between the two angles of the
   // same screen orientation. Returns true if |rotation_locked_orientation_|
@@ -166,18 +163,18 @@ class ASH_EXPORT ScreenOrientationController
 
   // The rotation of the display set by the user. This rotation will be
   // restored upon exiting maximize mode.
-  gfx::Display::Rotation user_rotation_;
+  display::Display::Rotation user_rotation_;
 
   // The current rotation set by ScreenOrientationController for the internal
   // display.
-  gfx::Display::Rotation current_rotation_;
+  display::Display::Rotation current_rotation_;
 
   // Rotation Lock observers.
   base::ObserverList<Observer> observers_;
 
   // Tracks all windows that have requested a lock, as well as the requested
   // orientation.
-  std::map<aura::Window*, blink::WebScreenOrientationLockType> locking_windows_;
+  std::map<WmWindow*, blink::WebScreenOrientationLockType> locking_windows_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenOrientationController);
 };

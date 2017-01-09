@@ -5,20 +5,28 @@
 #include "android_webview/browser/deferred_gpu_command_service.h"
 
 #include "android_webview/browser/gl_view_renderer_manager.h"
-#include "android_webview/browser/shared_renderer_state.h"
+#include "android_webview/browser/render_thread_manager.h"
+#include "base/command_line.h"
 #include "base/lazy_instance.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/trace_event/trace_event.h"
-#include "content/public/browser/android/synchronous_compositor.h"
+#include "content/public/browser/gpu_utils.h"
+#include "content/public/common/content_switches.h"
 #include "gpu/command_buffer/service/framebuffer_completeness_cache.h"
+#include "gpu/command_buffer/service/gpu_preferences.h"
+#include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/shader_translator_cache.h"
 #include "gpu/command_buffer/service/sync_point_manager.h"
+#include "gpu/config/gpu_switches.h"
+#include "ui/gl/gl_switches.h"
 
 namespace android_webview {
 
 namespace {
 base::LazyInstance<scoped_refptr<DeferredGpuCommandService> >
     g_service = LAZY_INSTANCE_INITIALIZER;
+
 }  // namespace
 
 base::LazyInstance<base::ThreadLocalBoolean> ScopedAllowGL::allow_gl;
@@ -50,10 +58,8 @@ ScopedAllowGL::~ScopedAllowGL() {
 
 // static
 void DeferredGpuCommandService::SetInstance() {
-  if (!g_service.Get().get()) {
+  if (!g_service.Get().get())
     g_service.Get() = new DeferredGpuCommandService;
-    content::SynchronousCompositor::SetGpuService(g_service.Get());
-  }
 }
 
 // static
@@ -63,7 +69,10 @@ DeferredGpuCommandService* DeferredGpuCommandService::GetInstance() {
 }
 
 DeferredGpuCommandService::DeferredGpuCommandService()
-    : sync_point_manager_(new gpu::SyncPointManager(true)) {}
+    : gpu::InProcessCommandBuffer::Service(
+          content::GetGpuPreferencesFromCommandLine()),
+      sync_point_manager_(new gpu::SyncPointManager(true)) {
+}
 
 DeferredGpuCommandService::~DeferredGpuCommandService() {
   base::AutoLock lock(tasks_lock_);
@@ -73,13 +82,13 @@ DeferredGpuCommandService::~DeferredGpuCommandService() {
 // This method can be called on any thread.
 // static
 void DeferredGpuCommandService::RequestProcessGL(bool for_idle) {
-  SharedRendererState* renderer_state =
+  RenderThreadManager* renderer_state =
       GLViewRendererManager::GetInstance()->GetMostRecentlyDrawn();
   if (!renderer_state) {
     LOG(ERROR) << "No hardware renderer. Deadlock likely";
     return;
   }
-  renderer_state->ClientRequestDrawGL(for_idle);
+  renderer_state->ClientRequestInvokeGL(for_idle);
 }
 
 // Called from different threads!
@@ -149,8 +158,10 @@ bool DeferredGpuCommandService::UseVirtualizedGLContexts() { return true; }
 
 scoped_refptr<gpu::gles2::ShaderTranslatorCache>
 DeferredGpuCommandService::shader_translator_cache() {
-  if (!shader_translator_cache_.get())
-    shader_translator_cache_ = new gpu::gles2::ShaderTranslatorCache;
+  if (!shader_translator_cache_.get()) {
+    shader_translator_cache_ =
+        new gpu::gles2::ShaderTranslatorCache(gpu_preferences());
+  }
   return shader_translator_cache_;
 }
 
@@ -196,6 +207,10 @@ void DeferredGpuCommandService::AddRef() const {
 
 void DeferredGpuCommandService::Release() const {
   base::RefCountedThreadSafe<DeferredGpuCommandService>::Release();
+}
+
+bool DeferredGpuCommandService::BlockThreadOnWaitSyncToken() const {
+  return true;
 }
 
 }  // namespace android_webview

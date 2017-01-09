@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_COOKIE_CHANGED_SUBSCRIPTION_H_
 #define COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_COOKIE_CHANGED_SUBSCRIPTION_H_
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "components/signin/core/browser/signin_client.h"
@@ -28,7 +29,7 @@ class SigninCookieChangedSubscription
  private:
   // Holder of a cookie store cookie changed subscription.
   struct SubscriptionHolder {
-    scoped_ptr<net::CookieStore::CookieChangedSubscription> subscription;
+    std::unique_ptr<net::CookieStore::CookieChangedSubscription> subscription;
     SubscriptionHolder();
     ~SubscriptionHolder();
   };
@@ -54,17 +55,18 @@ class SigninCookieChangedSubscription
       scoped_refptr<base::TaskRunner> proxy,
       base::WeakPtr<SigninCookieChangedSubscription> subscription,
       const net::CanonicalCookie& cookie,
-      bool removed);
+      net::CookieStore::ChangeCause cause);
 
   // Handler for cookie changed events.
-  void OnCookieChanged(const net::CanonicalCookie& cookie, bool removed);
+  void OnCookieChanged(const net::CanonicalCookie& cookie,
+                       net::CookieStore::ChangeCause cause);
 
   // The context getter.
   scoped_refptr<net::URLRequestContextGetter> context_getter_;
 
   // The holder of a cookie changed subscription. Must be destroyed on the
   // network thread.
-  scoped_ptr<SubscriptionHolder> subscription_holder_io_;
+  std::unique_ptr<SubscriptionHolder> subscription_holder_io_;
 
   // Callback to be run on cookie changed events.
   net::CookieStore::CookieChangedCallback callback_;

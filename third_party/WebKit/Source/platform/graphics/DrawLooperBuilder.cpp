@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/DrawLooperBuilder.h"
 
 #include "platform/geometry/FloatSize.h"
@@ -38,75 +37,71 @@
 #include "third_party/skia/include/core/SkColorFilter.h"
 #include "third_party/skia/include/core/SkDrawLooper.h"
 #include "third_party/skia/include/core/SkPaint.h"
-#include "third_party/skia/include/core/SkXfermode.h"
 #include "third_party/skia/include/effects/SkBlurMaskFilter.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
-DrawLooperBuilder::DrawLooperBuilder() { }
+DrawLooperBuilder::DrawLooperBuilder() {}
 
-DrawLooperBuilder::~DrawLooperBuilder() { }
+DrawLooperBuilder::~DrawLooperBuilder() {}
 
-PassOwnPtr<DrawLooperBuilder> DrawLooperBuilder::create()
-{
-    return adoptPtr(new DrawLooperBuilder);
+sk_sp<SkDrawLooper> DrawLooperBuilder::detachDrawLooper() {
+  return m_skDrawLooperBuilder.detach();
 }
 
-PassRefPtr<SkDrawLooper> DrawLooperBuilder::detachDrawLooper()
-{
-    return adoptRef(m_skDrawLooperBuilder.detachLooper());
+void DrawLooperBuilder::addUnmodifiedContent() {
+  SkLayerDrawLooper::LayerInfo info;
+  m_skDrawLooperBuilder.addLayerOnTop(info);
 }
 
-void DrawLooperBuilder::addUnmodifiedContent()
-{
-    SkLayerDrawLooper::LayerInfo info;
-    m_skDrawLooperBuilder.addLayerOnTop(info);
-}
+void DrawLooperBuilder::addShadow(const FloatSize& offset,
+                                  float blur,
+                                  const Color& color,
+                                  ShadowTransformMode shadowTransformMode,
+                                  ShadowAlphaMode shadowAlphaMode) {
+  ASSERT(blur >= 0);
 
-void DrawLooperBuilder::addShadow(const FloatSize& offset, float blur, const Color& color,
-    ShadowTransformMode shadowTransformMode, ShadowAlphaMode shadowAlphaMode)
-{
-    ASSERT(blur >= 0);
+  // Detect when there's no effective shadow.
+  if (!color.alpha())
+    return;
 
-    // Detect when there's no effective shadow.
-    if (!color.alpha())
-        return;
+  SkColor skColor = color.rgb();
 
-    SkColor skColor = color.rgb();
+  SkLayerDrawLooper::LayerInfo info;
 
-    SkLayerDrawLooper::LayerInfo info;
-
-    switch (shadowAlphaMode) {
+  switch (shadowAlphaMode) {
     case ShadowRespectsAlpha:
-        info.fColorMode = SkXfermode::kDst_Mode;
-        break;
+      info.fColorMode = SkBlendMode::kDst;
+      break;
     case ShadowIgnoresAlpha:
-        info.fColorMode = SkXfermode::kSrc_Mode;
-        break;
+      info.fColorMode = SkBlendMode::kSrc;
+      break;
     default:
-        ASSERT_NOT_REACHED();
-    }
+      ASSERT_NOT_REACHED();
+  }
 
-    if (blur)
-        info.fPaintBits |= SkLayerDrawLooper::kMaskFilter_Bit; // our blur
-    info.fPaintBits |= SkLayerDrawLooper::kColorFilter_Bit;
-    info.fOffset.set(offset.width(), offset.height());
-    info.fPostTranslate = (shadowTransformMode == ShadowIgnoresTransforms);
+  if (blur)
+    info.fPaintBits |= SkLayerDrawLooper::kMaskFilter_Bit;  // our blur
+  info.fPaintBits |= SkLayerDrawLooper::kColorFilter_Bit;
+  info.fOffset.set(offset.width(), offset.height());
+  info.fPostTranslate = (shadowTransformMode == ShadowIgnoresTransforms);
 
-    SkPaint* paint = m_skDrawLooperBuilder.addLayerOnTop(info);
+  SkPaint* paint = m_skDrawLooperBuilder.addLayerOnTop(info);
 
-    if (blur) {
-        const SkScalar sigma = skBlurRadiusToSigma(blur);
-        uint32_t mfFlags = SkBlurMaskFilter::kHighQuality_BlurFlag;
-        if (shadowTransformMode == ShadowIgnoresTransforms)
-            mfFlags |= SkBlurMaskFilter::kIgnoreTransform_BlurFlag;
-        RefPtr<SkMaskFilter> mf = adoptRef(SkBlurMaskFilter::Create(kNormal_SkBlurStyle, sigma, mfFlags));
-        paint->setMaskFilter(mf.get());
-    }
+  if (blur) {
+    const SkScalar sigma = skBlurRadiusToSigma(blur);
+    uint32_t mfFlags = SkBlurMaskFilter::kHighQuality_BlurFlag;
+    if (shadowTransformMode == ShadowIgnoresTransforms)
+      mfFlags |= SkBlurMaskFilter::kIgnoreTransform_BlurFlag;
+    paint->setMaskFilter(
+        SkBlurMaskFilter::Make(kNormal_SkBlurStyle, sigma, mfFlags));
+  }
 
-    RefPtr<SkColorFilter> cf = adoptRef(SkColorFilter::CreateModeFilter(skColor, SkXfermode::kSrcIn_Mode));
-    paint->setColorFilter(cf.get());
+  paint->setColorFilter(
+      SkColorFilter::MakeModeFilter(skColor, SkBlendMode::kSrcIn));
 }
 
-} // namespace blink
+}  // namespace blink

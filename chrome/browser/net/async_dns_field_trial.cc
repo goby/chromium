@@ -5,7 +5,7 @@
 #include "chrome/browser/net/async_dns_field_trial.h"
 
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 
@@ -61,12 +61,6 @@ void HistogramPrefSource(PrefSource source, bool enabled) {
 }  // namespace
 
 bool ConfigureAsyncDnsFieldTrial() {
-#if defined(OS_ANDROID) || defined(OS_IOS)
-  // There is no DnsConfigService on those platforms so disable the field trial.
-  HistogramPrefDefaultSource(PLATFORM, false);
-  return false;
-#endif
-
 #if defined(OS_CHROMEOS) || defined(OS_MACOSX)
   const bool kDefault = true;
 #else

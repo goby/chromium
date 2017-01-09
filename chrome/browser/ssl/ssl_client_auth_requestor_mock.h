@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_SSL_SSL_CLIENT_AUTH_REQUESTOR_MOCK_H_
 #define CHROME_BROWSER_SSL_SSL_CLIENT_AUTH_REQUESTOR_MOCK_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace content {
@@ -14,7 +15,6 @@ class ClientCertificateDelegate;
 }
 
 namespace net {
-class HttpNetworkSession;
 class SSLCertRequestInfo;
 class URLRequest;
 class X509Certificate;
@@ -27,7 +27,7 @@ class SSLClientAuthRequestorMock
       net::URLRequest* request,
       const scoped_refptr<net::SSLCertRequestInfo>& cert_request_info);
 
-  scoped_ptr<content::ClientCertificateDelegate> CreateDelegate();
+  std::unique_ptr<content::ClientCertificateDelegate> CreateDelegate();
 
   MOCK_METHOD1(CertificateSelected, void(net::X509Certificate* cert));
   MOCK_METHOD0(CancelCertificateSelection, void());

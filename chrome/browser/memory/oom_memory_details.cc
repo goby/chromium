@@ -7,6 +7,7 @@
 #include "base/logging.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/memory/oom_memory_details.h"
 #include "ui/base/text/bytes_formatting.h"
 
@@ -17,7 +18,7 @@ void OomMemoryDetails::Log(const std::string& title,
                            const base::Closure& callback) {
   // Deletes itself upon completion.
   OomMemoryDetails* details = new OomMemoryDetails(title, callback);
-  details->StartFetch(MemoryDetails::FROM_CHROME_ONLY);
+  details->StartFetch();
 }
 
 OomMemoryDetails::OomMemoryDetails(const std::string& title,

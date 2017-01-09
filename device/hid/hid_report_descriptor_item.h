@@ -5,7 +5,8 @@
 #ifndef DEVICE_HID_HID_REPORT_DESCRIPTOR_ITEM_H_
 #define DEVICE_HID_HID_REPORT_DESCRIPTOR_ITEM_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
 
 namespace device {
 
@@ -130,6 +131,7 @@ class HidReportDescriptorItem {
 
  private:
   HidReportDescriptorItem(const uint8_t* bytes,
+                          size_t size,
                           HidReportDescriptorItem* previous);
 
  public:

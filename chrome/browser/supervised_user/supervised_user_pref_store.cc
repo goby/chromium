@@ -4,13 +4,14 @@
 
 #include "chrome/browser/supervised_user/supervised_user_pref_store.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/prefs/pref_value_map.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/net/safe_search_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/supervised_user/supervised_user_bookmarks_handler.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
@@ -19,6 +20,8 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
+#include "components/ntp_snippets/pref_names.h"
+#include "components/prefs/pref_value_map.h"
 #include "components/signin/core/common/signin_pref_names.h"
 #include "content/public/browser/notification_source.h"
 
@@ -30,6 +33,10 @@ struct SupervisedUserSettingsPrefMappingEntry {
 };
 
 SupervisedUserSettingsPrefMappingEntry kSupervisedUserSettingsPrefMapping[] = {
+  {
+    supervised_users::kApprovedExtensions,
+    prefs::kSupervisedUserApprovedExtensions,
+  },
   {
     supervised_users::kContentPackDefaultFilteringBehavior,
     prefs::kDefaultSupervisedUserFilteringBehavior,
@@ -44,12 +51,6 @@ SupervisedUserSettingsPrefMappingEntry kSupervisedUserSettingsPrefMapping[] = {
   },
   {
     supervised_users::kForceSafeSearch, prefs::kForceGoogleSafeSearch,
-  },
-  {
-    supervised_users::kForceSafeSearch, prefs::kForceYouTubeSafetyMode,
-  },
-  {
-    supervised_users::kRecordHistory, prefs::kRecordHistory,
   },
   {
     supervised_users::kSafeSitesEnabled, prefs::kSupervisedUserSafeSites,
@@ -74,7 +75,7 @@ SupervisedUserPrefStore::SupervisedUserPrefStore(
   // TODO(peconn): Remove this once SupervisedUserPrefStore is (partially at
   // least) a KeyedService. The user_settings_subscription_ must be reset or
   // destroyed before the SupervisedUserSettingsService is.
-  if (supervised_user_settings_service->GetProfile() != nullptr){
+  if (supervised_user_settings_service->GetProfile()) {
     unsubscriber_registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
         content::Source<Profile>(
           supervised_user_settings_service->GetProfile()));
@@ -83,10 +84,6 @@ SupervisedUserPrefStore::SupervisedUserPrefStore(
 
 bool SupervisedUserPrefStore::GetValue(const std::string& key,
                                        const base::Value** value) const {
-  // TODO(bauerb): Temporary CHECK to force a clean crash while investigating
-  // https://crbug.com/425785. Remove (or change back to DCHECK) once the bug
-  // is fixed.
-  CHECK(prefs_);
   return prefs_->GetValue(key, value);
 }
 
@@ -111,20 +108,18 @@ SupervisedUserPrefStore::~SupervisedUserPrefStore() {
 
 void SupervisedUserPrefStore::OnNewSettingsAvailable(
     const base::DictionaryValue* settings) {
-  scoped_ptr<PrefValueMap> old_prefs = prefs_.Pass();
+  std::unique_ptr<PrefValueMap> old_prefs = std::move(prefs_);
   prefs_.reset(new PrefValueMap);
   if (settings) {
     // Set hardcoded prefs and defaults.
-    prefs_->SetBoolean(prefs::kAllowDeletingBrowserHistory, false);
     prefs_->SetInteger(prefs::kDefaultSupervisedUserFilteringBehavior,
                        SupervisedUserURLFilter::ALLOW);
     prefs_->SetBoolean(prefs::kForceGoogleSafeSearch, true);
-    prefs_->SetBoolean(prefs::kForceYouTubeSafetyMode, true);
+    prefs_->SetInteger(prefs::kForceYouTubeRestrict,
+                       safe_search_util::YOUTUBE_RESTRICT_MODERATE);
     prefs_->SetBoolean(prefs::kHideWebStoreIcon, true);
-    prefs_->SetInteger(prefs::kIncognitoModeAvailability,
-                       IncognitoModePrefs::DISABLED);
-    prefs_->SetBoolean(prefs::kRecordHistory, true);
     prefs_->SetBoolean(prefs::kSigninAllowed, false);
+    prefs_->SetBoolean(ntp_snippets::prefs::kEnableSnippets, false);
 
     // Copy supervised user settings to prefs.
     for (const auto& entry : kSupervisedUserSettingsPrefMapping) {
@@ -134,13 +129,33 @@ void SupervisedUserPrefStore::OnNewSettingsAvailable(
     }
 
     // Manually set preferences that aren't direct copies of the settings value.
-    bool record_history;
-    if (settings->GetBoolean(supervised_users::kRecordHistory,
-                             &record_history)) {
+    {
+      bool record_history = true;
+      settings->GetBoolean(supervised_users::kRecordHistory, &record_history);
       prefs_->SetBoolean(prefs::kAllowDeletingBrowserHistory, !record_history);
       prefs_->SetInteger(prefs::kIncognitoModeAvailability,
                          record_history ? IncognitoModePrefs::DISABLED
                                         : IncognitoModePrefs::ENABLED);
+
+      bool record_history_includes_session_sync = true;
+      settings->GetBoolean(supervised_users::kRecordHistoryIncludesSessionSync,
+                           &record_history_includes_session_sync);
+      prefs_->SetBoolean(
+          prefs::kForceSessionSync,
+          record_history && record_history_includes_session_sync);
+    }
+
+    {
+      // Note that |prefs::kForceGoogleSafeSearch| is set automatically as part
+      // of |kSupervisedUserSettingsPrefMapping|, but this can't be done for
+      // |prefs::kForceYouTubeRestrict| because it is an int, not a bool.
+      bool force_safe_search = true;
+      settings->GetBoolean(supervised_users::kForceSafeSearch,
+                           &force_safe_search);
+      prefs_->SetInteger(
+          prefs::kForceYouTubeRestrict,
+          force_safe_search ? safe_search_util::YOUTUBE_RESTRICT_MODERATE
+                            : safe_search_util::YOUTUBE_RESTRICT_OFF);
     }
 
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -148,12 +163,13 @@ void SupervisedUserPrefStore::OnNewSettingsAvailable(
       // Reconstruct bookmarks from split settings.
       prefs_->SetValue(
           bookmarks::prefs::kSupervisedBookmarks,
-          SupervisedUserBookmarksHandler::BuildBookmarksTree(*settings).Pass());
+          SupervisedUserBookmarksHandler::BuildBookmarksTree(*settings));
     }
   }
 
   if (!old_prefs) {
-    FOR_EACH_OBSERVER(Observer, observers_, OnInitializationCompleted(true));
+    for (Observer& observer : observers_)
+      observer.OnInitializationCompleted(true);
     return;
   }
 
@@ -162,7 +178,8 @@ void SupervisedUserPrefStore::OnNewSettingsAvailable(
 
   // Send out change notifications.
   for (const std::string& pref : changed_prefs) {
-    FOR_EACH_OBSERVER(Observer, observers_, OnPrefValueChanged(pref));
+    for (Observer& observer : observers_)
+      observer.OnPrefValueChanged(pref);
   }
 }
 

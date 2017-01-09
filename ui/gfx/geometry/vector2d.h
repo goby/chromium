@@ -10,10 +10,11 @@
 #ifndef UI_GFX_GEOMETRY_VECTOR2D_H_
 #define UI_GFX_GEOMETRY_VECTOR2D_H_
 
+#include <stdint.h>
+
 #include <iosfwd>
 #include <string>
 
-#include "base/basictypes.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/gfx_export.h"
 
@@ -21,13 +22,13 @@ namespace gfx {
 
 class GFX_EXPORT Vector2d {
  public:
-  Vector2d() : x_(0), y_(0) {}
-  Vector2d(int x, int y) : x_(x), y_(y) {}
+  constexpr Vector2d() : x_(0), y_(0) {}
+  constexpr Vector2d(int x, int y) : x_(x), y_(y) {}
 
-  int x() const { return x_; }
+  constexpr int x() const { return x_; }
   void set_x(int x) { x_ = x; }
 
-  int y() const { return y_; }
+  constexpr int y() const { return y_; }
   void set_y(int y) { y_ = y; }
 
   // True if both components of the vector are 0.
@@ -54,7 +55,7 @@ class GFX_EXPORT Vector2d {
   // Gives the square of the diagonal length of the vector. Since this is
   // cheaper to compute than Length(), it is useful when you want to compare
   // relative lengths of different vectors without needing the actual lengths.
-  int64 LengthSquared() const;
+  int64_t LengthSquared() const;
   // Gives the diagonal length of the vector.
   float Length() const;
 
@@ -90,8 +91,8 @@ inline Vector2d operator-(const Vector2d& lhs, const Vector2d& rhs) {
 }
 
 // This is declared here for use in gtest-based unit tests but is defined in
-// the gfx_test_support target. Depend on that to use this in your unit test.
-// This should not be used in production code - call ToString() instead.
+// the //ui/gfx:test_support target. Depend on that to use this in your unit
+// test. This should not be used in production code - call ToString() instead.
 void PrintTo(const Vector2d& vector, ::std::ostream* os);
 
 }  // namespace gfx

@@ -30,10 +30,14 @@
 
 #include "chrome/browser/chromeos/extensions/file_manager/file_browser_handler_api.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -207,7 +211,8 @@ bool FileSelectorImpl::StartSelectFile(
   // Convert |allowed_extensions| to ui::SelectFileDialog::FileTypeInfo.
   ui::SelectFileDialog::FileTypeInfo allowed_file_info =
       ConvertExtensionsToFileTypeInfo(allowed_extensions);
-  allowed_file_info.support_drive = true;
+  allowed_file_info.allowed_paths =
+      ui::SelectFileDialog::FileTypeInfo::ANY_PATH;
 
   dialog_->SelectFile(ui::SelectFileDialog::SELECT_SAVEAS_FILE,
                       base::string16() /* dialog title*/,
@@ -286,7 +291,8 @@ FileBrowserHandlerInternalSelectFileFunction::
     ~FileBrowserHandlerInternalSelectFileFunction() {}
 
 bool FileBrowserHandlerInternalSelectFileFunction::RunAsync() {
-  scoped_ptr<SelectFile::Params> params(SelectFile::Params::Create(*args_));
+  std::unique_ptr<SelectFile::Params> params(
+      SelectFile::Params::Create(*args_));
 
   base::FilePath suggested_name(params->selection_params.suggested_name);
   std::vector<std::string> allowed_extensions;
@@ -354,7 +360,7 @@ void FileBrowserHandlerInternalSelectFileFunction::RespondEntryDefinition(
 void FileBrowserHandlerInternalSelectFileFunction::Respond(
     const EntryDefinition& entry_definition,
     bool success) {
-  scoped_ptr<SelectFile::Results::Result> result(
+  std::unique_ptr<SelectFile::Results::Result> result(
       new SelectFile::Results::Result());
   result->success = success;
 

@@ -194,6 +194,8 @@ component("proxy") {
     "video_frame_resource.h",
     "video_source_resource.cc",
     "video_source_resource.h",
+    "vpn_provider_resource.cc",
+    "vpn_provider_resource.h",
     "websocket_resource.cc",
     "websocket_resource.h",
   ]
@@ -209,8 +211,6 @@ component("proxy") {
       "../nacl_irt/irt_start.cc",
       "../nacl_irt/manifest_service.cc",
       "../nacl_irt/manifest_service.h",
-      "../nacl_irt/plugin_main.cc",
-      "../nacl_irt/plugin_main.h",
       "../nacl_irt/plugin_startup.cc",
       "../nacl_irt/plugin_startup.h",
       "../nacl_irt/ppapi_dispatcher.cc",
@@ -281,11 +281,14 @@ component("proxy") {
   deps = [
     "//base",
     "//gpu/command_buffer/client:gles2_implementation",
-    "//gpu/ipc",
+    "//gpu/ipc/common:command_buffer_traits",
     "//ipc",
     "//media:shared_memory_support",
+    "//mojo/edk/system",
     "//ppapi/c",
     "//ppapi/shared_impl",
+    "//ui/gfx/geometry",
+    "//ui/gfx/ipc/geometry",
   ]
 
   if (!is_nacl) {
@@ -345,7 +348,7 @@ source_set("ipc_sources") {
 
   deps = [
     "//base",
-    "//gpu/ipc",
+    "//gpu/ipc/common:command_buffer_traits",
     "//ipc",
     "//ppapi/c",
     "//ppapi/shared_impl",
@@ -355,7 +358,7 @@ source_set("ipc_sources") {
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
 
   sources = [
@@ -365,6 +368,9 @@ source_set("test_support") {
     "resource_message_test_sink.h",
   ]
 
+  public_deps = [
+    ":proxy",
+  ]
   deps = [
     "//base/test:test_support",
     "//ipc",

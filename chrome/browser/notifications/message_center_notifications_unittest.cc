@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/testing_pref_service.h"
+#include <memory>
+
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_timeouts.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/notifications/message_center_notification_manager.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_test_util.h"
@@ -16,6 +17,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/prefs/testing_pref_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/fake_message_center_tray_delegate.h"
@@ -92,7 +94,7 @@ class MessageCenterNotificationManagerTest : public BrowserWithTestWindowTest {
   }
 
  private:
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   MessageCenter* message_center_;
   FakeMessageCenterTrayDelegate* delegate_;
 };
@@ -123,10 +125,9 @@ TEST_F(MessageCenterNotificationManagerTest, MultiUserUpdates) {
   chrome::MultiUserWindowManager::SetInstanceForTest(
       multi_user_window_manager,
       chrome::MultiUserWindowManager::MULTI_PROFILE_MODE_SEPARATED);
-  scoped_ptr<MultiUserNotificationBlockerChromeOS> blocker(
+  std::unique_ptr<MultiUserNotificationBlockerChromeOS> blocker(
       new MultiUserNotificationBlockerChromeOS(
-          message_center::MessageCenter::Get(),
-          active_user_id));
+          message_center::MessageCenter::Get(), active_user_id));
   EXPECT_EQ(0u, message_center()->NotificationCount());
   notification_manager()->Add(GetANotification("test"), &profile);
   EXPECT_EQ(1u, message_center()->NotificationCount());

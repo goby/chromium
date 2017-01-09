@@ -31,11 +31,7 @@
 
 namespace blink {
 
-enum ClientRedirectPolicy {
-    NotClientRedirect,
-    ClientRedirect
-};
-
+enum class ClientRedirectPolicy { NotClientRedirect, ClientRedirect };
 }
 
 #endif

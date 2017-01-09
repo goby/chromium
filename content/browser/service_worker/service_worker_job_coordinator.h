@@ -7,7 +7,9 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 
+#include "base/macros.h"
 #include "content/browser/service_worker/service_worker_register_job.h"
 #include "content/browser/service_worker/service_worker_unregister_job.h"
 #include "content/common/content_export.h"
@@ -15,10 +17,8 @@
 
 namespace content {
 
-class EmbeddedWorkerRegistry;
 class ServiceWorkerProviderHost;
 class ServiceWorkerRegistration;
-class ServiceWorkerStorage;
 
 // This class manages all in-flight registration or unregistration jobs.
 class CONTENT_EXPORT ServiceWorkerJobCoordinator {
@@ -55,13 +55,14 @@ class CONTENT_EXPORT ServiceWorkerJobCoordinator {
   class JobQueue {
    public:
     JobQueue();
+    JobQueue(JobQueue&&);
     ~JobQueue();
 
     // Adds a job to the queue. If an identical job is already at the end of the
     // queue, no new job is added. Returns the job in the queue, regardless of
     // whether it was newly added.
     ServiceWorkerRegisterJobBase* Push(
-        scoped_ptr<ServiceWorkerRegisterJobBase> job);
+        std::unique_ptr<ServiceWorkerRegisterJobBase> job);
 
     // Dooms the installing worker of the running register/update job if a
     // register/update job is scheduled to run after it. This corresponds to
@@ -85,15 +86,15 @@ class CONTENT_EXPORT ServiceWorkerJobCoordinator {
     void ClearForShutdown();
 
    private:
-    std::deque<ServiceWorkerRegisterJobBase*> jobs_;
-  };
+    std::deque<std::unique_ptr<ServiceWorkerRegisterJobBase>> jobs_;
 
-  typedef std::map<GURL, JobQueue> RegistrationJobMap;
+    DISALLOW_COPY_AND_ASSIGN(JobQueue);
+  };
 
   // The ServiceWorkerContextCore object should always outlive the
   // job coordinator, the core owns the coordinator.
   base::WeakPtr<ServiceWorkerContextCore> context_;
-  RegistrationJobMap job_queues_;
+  std::map<GURL, JobQueue> job_queues_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerJobCoordinator);
 };

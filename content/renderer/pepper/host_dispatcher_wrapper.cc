@@ -4,6 +4,7 @@
 
 #include "content/renderer/pepper/host_dispatcher_wrapper.h"
 
+#include "build/build_config.h"
 #include "content/common/frame_messages.h"
 #include "content/public/common/origin_util.h"
 #include "content/renderer/pepper/pepper_hung_plugin_filter.h"
@@ -14,7 +15,6 @@
 #include "content/renderer/pepper/renderer_restrict_dispatch_group.h"
 #include "content/renderer/render_frame_impl.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 
 namespace content {
@@ -37,14 +37,8 @@ bool HostDispatcherWrapper::Init(const IPC::ChannelHandle& channel_handle,
                                  PP_GetInterface_Func local_get_interface,
                                  const ppapi::Preferences& preferences,
                                  scoped_refptr<PepperHungPluginFilter> filter) {
-  if (channel_handle.name.empty())
+  if (!channel_handle.is_mojo_channel_handle())
     return false;
-
-#if defined(OS_POSIX)
-  DCHECK_NE(-1, channel_handle.socket.fd);
-  if (channel_handle.socket.fd == -1)
-    return false;
-#endif
 
   dispatcher_delegate_.reset(new PepperProxyChannelDelegateImpl);
   dispatcher_.reset(new ppapi::proxy::HostDispatcher(
@@ -92,8 +86,7 @@ void HostDispatcherWrapper::AddInstance(PP_Instance instance) {
     blink::WebString unused;
     bool is_privileged_context =
         plugin_instance->GetContainer()
-            ->element()
-            .document()
+            ->document()
             .isSecureContext(unused) &&
         content::IsOriginSecure(plugin_instance->GetPluginURL());
     render_frame->Send(new FrameHostMsg_DidCreateOutOfProcessPepperInstance(

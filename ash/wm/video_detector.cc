@@ -4,9 +4,12 @@
 
 #include "ash/wm/video_detector.h"
 
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm_shell.h"
+#include "ash/common/wm_window.h"
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -18,7 +21,8 @@ namespace ash {
 const int VideoDetector::kMinUpdateWidth = 333;
 const int VideoDetector::kMinUpdateHeight = 250;
 const int VideoDetector::kMinFramesPerSecond = 15;
-const double VideoDetector::kNotifyIntervalSec = 1.0;
+const int VideoDetector::kVideoTimeoutMs = 1000;
+const int VideoDetector::kMinVideoDurationMs = 3000;
 
 // Stores information about updates to a window and determines whether it's
 // likely that a video is playing in it.
@@ -42,14 +46,28 @@ class VideoDetector::WindowInfo {
     update_times_[(buffer_start_ + buffer_size_) % kMinFramesPerSecond] = now;
     buffer_size_++;
 
-    return buffer_size_ == static_cast<size_t>(kMinFramesPerSecond) &&
-        (now - update_times_[buffer_start_]).InSecondsF() <= 1.0;
+    const bool in_video =
+        (buffer_size_ == static_cast<size_t>(kMinFramesPerSecond)) &&
+        ((now - update_times_[buffer_start_]).InSecondsF() <= 1.0);
+
+    if (in_video && video_start_time_.is_null())
+      video_start_time_ = update_times_[buffer_start_];
+    else if (!in_video && !video_start_time_.is_null())
+      video_start_time_ = base::TimeTicks();
+
+    const base::TimeDelta elapsed = now - video_start_time_;
+    return in_video &&
+           elapsed >= base::TimeDelta::FromMilliseconds(kMinVideoDurationMs);
   }
 
  private:
   // Circular buffer containing update times of the last (up to
   // |kMinFramesPerSecond|) video-sized updates to this window.
   base::TimeTicks update_times_[kMinFramesPerSecond];
+
+  // Time at which the current sequence of updates that looks like video
+  // started. Empty if video isn't currently playing.
+  base::TimeTicks video_start_time_;
 
   // Index into |update_times_| of the oldest update.
   size_t buffer_start_;
@@ -61,27 +79,39 @@ class VideoDetector::WindowInfo {
 };
 
 VideoDetector::VideoDetector()
-    : observer_manager_(this),
+    : state_(State::NOT_PLAYING),
+      video_is_playing_(false),
+      window_observer_manager_(this),
+      wm_window_observer_manager_(this),
       is_shutting_down_(false) {
   aura::Env::GetInstance()->AddObserver(this);
-  Shell::GetInstance()->AddShellObserver(this);
+  WmShell::Get()->AddShellObserver(this);
 }
 
 VideoDetector::~VideoDetector() {
-  Shell::GetInstance()->RemoveShellObserver(this);
+  WmShell::Get()->RemoveShellObserver(this);
   aura::Env::GetInstance()->RemoveObserver(this);
 }
 
-void VideoDetector::AddObserver(VideoDetectorObserver* observer) {
+void VideoDetector::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);
 }
 
-void VideoDetector::RemoveObserver(VideoDetectorObserver* observer) {
+void VideoDetector::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
+bool VideoDetector::TriggerTimeoutForTest() {
+  if (!video_inactive_timer_.IsRunning())
+    return false;
+
+  video_inactive_timer_.Stop();
+  HandleVideoInactive();
+  return true;
+}
+
 void VideoDetector::OnWindowInitialized(aura::Window* window) {
-  observer_manager_.Add(window);
+  window_observer_manager_.Add(window);
 }
 
 void VideoDetector::OnDelegatedFrameDamage(
@@ -89,19 +119,19 @@ void VideoDetector::OnDelegatedFrameDamage(
     const gfx::Rect& damage_rect_in_dip) {
   if (is_shutting_down_)
     return;
-  linked_ptr<WindowInfo>& info = window_infos_[window];
+  std::unique_ptr<WindowInfo>& info = window_infos_[window];
   if (!info.get())
     info.reset(new WindowInfo);
 
   base::TimeTicks now =
       !now_for_test_.is_null() ? now_for_test_ : base::TimeTicks::Now();
   if (info->RecordUpdateAndCheckForVideo(damage_rect_in_dip, now))
-    MaybeNotifyObservers(window, now);
+    HandleVideoActivity(window, now);
 }
 
 void VideoDetector::OnWindowDestroyed(aura::Window* window) {
   window_infos_.erase(window);
-  observer_manager_.Remove(window);
+  window_observer_manager_.Remove(window);
 }
 
 void VideoDetector::OnAppTerminating() {
@@ -110,13 +140,29 @@ void VideoDetector::OnAppTerminating() {
   is_shutting_down_ = true;
 }
 
-void VideoDetector::MaybeNotifyObservers(aura::Window* window,
-                                         base::TimeTicks now) {
-  if (!last_observer_notification_time_.is_null() &&
-      (now - last_observer_notification_time_).InSecondsF() <
-      kNotifyIntervalSec)
-    return;
+void VideoDetector::OnFullscreenStateChanged(bool is_fullscreen,
+                                             WmWindow* root_window) {
+  if (is_fullscreen && !fullscreen_root_windows_.count(root_window)) {
+    fullscreen_root_windows_.insert(root_window);
+    wm_window_observer_manager_.Add(root_window);
+    UpdateState();
+  } else if (!is_fullscreen && fullscreen_root_windows_.count(root_window)) {
+    fullscreen_root_windows_.erase(root_window);
+    wm_window_observer_manager_.Remove(root_window);
+    UpdateState();
+  }
+}
 
+void VideoDetector::OnWindowDestroying(WmWindow* window) {
+  if (fullscreen_root_windows_.count(window)) {
+    wm_window_observer_manager_.Remove(window);
+    fullscreen_root_windows_.erase(window);
+    UpdateState();
+  }
+}
+
+void VideoDetector::HandleVideoActivity(aura::Window* window,
+                                        base::TimeTicks now) {
   if (!window->IsVisible())
     return;
 
@@ -124,32 +170,30 @@ void VideoDetector::MaybeNotifyObservers(aura::Window* window,
   if (!window->GetBoundsInRootWindow().Intersects(root_bounds))
     return;
 
-  // As a relatively-cheap way to avoid flipping back and forth between
-  // fullscreen and non-fullscreen notifications when one video is playing in a
-  // fullscreen window and a second video is playing in a non-fullscreen window,
-  // report fullscreen video whenever a fullscreen window exists on any desktop
-  // regardless of whether the video is actually playing in that window:
-  // http://crbug.com/340666
-  bool fullscreen_window_exists = false;
-  std::vector<aura::Window*> containers =
-      Shell::GetContainersFromAllRootWindows(kShellWindowId_DefaultContainer,
-                                             NULL);
-  for (std::vector<aura::Window*>::const_iterator container =
-       containers.begin(); container != containers.end(); ++container) {
-    const aura::Window::Windows& windows = (*container)->children();
-    for (aura::Window::Windows::const_iterator window = windows.begin();
-         window != windows.end(); ++window) {
-      if (wm::GetWindowState(*window)->IsFullscreen()) {
-        fullscreen_window_exists = true;
-        break;
-      }
-    }
+  video_is_playing_ = true;
+  video_inactive_timer_.Start(
+      FROM_HERE, base::TimeDelta::FromMilliseconds(kVideoTimeoutMs), this,
+      &VideoDetector::HandleVideoInactive);
+  UpdateState();
+}
+
+void VideoDetector::HandleVideoInactive() {
+  video_is_playing_ = false;
+  UpdateState();
+}
+
+void VideoDetector::UpdateState() {
+  State new_state = State::NOT_PLAYING;
+  if (video_is_playing_) {
+    new_state = fullscreen_root_windows_.empty() ? State::PLAYING_WINDOWED
+                                                 : State::PLAYING_FULLSCREEN;
   }
 
-  FOR_EACH_OBSERVER(VideoDetectorObserver,
-                    observers_,
-                    OnVideoDetected(fullscreen_window_exists));
-  last_observer_notification_time_ = now;
+  if (state_ != new_state) {
+    state_ = new_state;
+    for (auto& observer : observers_)
+      observer.OnVideoStateChanged(state_);
+  }
 }
 
 }  // namespace ash

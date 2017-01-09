@@ -4,6 +4,8 @@
 
 #include "chrome/browser/android/history_report/delta_file_commons.h"
 
+#include <stddef.h>
+
 #include <iomanip>
 
 #include "base/strings/string_number_conversions.h"
@@ -14,7 +16,7 @@
 using bookmarks::BookmarkModel;
 using net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES;
 using net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES;
-using net::registry_controlled_domains::GetRegistryLength;
+using net::registry_controlled_domains::GetCanonicalHostRegistryLength;
 
 namespace {
 
@@ -24,11 +26,11 @@ const int kSHA256ByteSize = 32;
 const size_t kUrlLengthLimit = 20 * 1024 * 1024; // 20M
 const size_t kUrlLengthWidth = 8;
 
-void StripTopLevelDomain(std::string* host) {
-  size_t registry_length = GetRegistryLength(
-      *host, EXCLUDE_UNKNOWN_REGISTRIES, EXCLUDE_PRIVATE_REGISTRIES);
+void StripTopLevelDomain(std::string* canonical_host) {
+  size_t registry_length = GetCanonicalHostRegistryLength(
+      *canonical_host, EXCLUDE_UNKNOWN_REGISTRIES, EXCLUDE_PRIVATE_REGISTRIES);
   if (registry_length != 0 && registry_length != std::string::npos)
-    host->erase(host->length() - (registry_length + 1));
+    canonical_host->erase(canonical_host->length() - (registry_length + 1));
 }
 
 void StripCommonSubDomains(std::string* host) {
@@ -50,9 +52,12 @@ DeltaFileEntryWithData::DeltaFileEntryWithData(DeltaFileEntry entry)
       data_set_(false),
       is_bookmark_(false) {}
 
+DeltaFileEntryWithData::DeltaFileEntryWithData(
+    const DeltaFileEntryWithData& other) = default;
+
 DeltaFileEntryWithData::~DeltaFileEntryWithData() {}
 
-int64 DeltaFileEntryWithData::SeqNo() const {
+int64_t DeltaFileEntryWithData::SeqNo() const {
   return entry_.seq_no();
 }
 
@@ -86,7 +91,7 @@ std::string DeltaFileEntryWithData::UrlToId(const std::string& url) {
   id << std::setfill('0') << std::setw(kUrlLengthWidth) << url.size();
 
   // 2. SHA-256 of URL.
-  uint8 hash[kSHA256ByteSize];
+  uint8_t hash[kSHA256ByteSize];
   crypto::SHA256HashString(url, hash, sizeof(hash));
   id << base::HexEncode(hash, sizeof(hash));
 
@@ -108,13 +113,13 @@ std::string DeltaFileEntryWithData::Url() const {
 base::string16 DeltaFileEntryWithData::Title() const {
   if (!Valid()) return base::UTF8ToUTF16("");
   if (is_bookmark_ && !bookmark_title_.empty()) return bookmark_title_;
-  if (data_.title().empty()) return base::UTF8ToUTF16(data_.url().host());
+  if (data_.title().empty()) return base::UTF8ToUTF16(data_.url().host_piece());
   return data_.title();
 }
 
-int32 DeltaFileEntryWithData::Score() const {
+int32_t DeltaFileEntryWithData::Score() const {
   if (!Valid()) return 0;
-  int32 score = data_.visit_count() + data_.typed_count();
+  int32_t score = data_.visit_count() + data_.typed_count();
   if (is_bookmark_) score = (score + 1) * kBookmarkScoreBonusMultiplier;
   return score;
 }

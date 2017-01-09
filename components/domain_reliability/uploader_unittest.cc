@@ -4,8 +4,13 @@
 
 #include "components/domain_reliability/uploader.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <string>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
@@ -13,6 +18,7 @@
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/log/net_log_with_source.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_filter.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -48,7 +54,8 @@ class UploadMockURLRequestJob : public net::URLRequestJob {
   void Start() override {
     int rv = upload_stream_->Init(
         base::Bind(&UploadMockURLRequestJob::OnStreamInitialized,
-                   base::Unretained(this)));
+                   base::Unretained(this)),
+        net::NetLogWithSource());
     if (rv == net::ERR_IO_PENDING)
       return;
     OnStreamInitialized(rv);
@@ -187,7 +194,7 @@ class DomainReliabilityUploaderTest : public testing::Test {
         uploader_(DomainReliabilityUploader::Create(
             &time_, url_request_context_getter_)) {
     net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
-        GURL(kUploadURL), make_scoped_ptr(interceptor_));
+        GURL(kUploadURL), base::WrapUnique(interceptor_));
     uploader_->set_discard_uploads(false);
   }
 
@@ -203,7 +210,7 @@ class DomainReliabilityUploaderTest : public testing::Test {
   scoped_refptr<net::TestURLRequestContextGetter> url_request_context_getter_;
   UploadInterceptor* interceptor_;
   MockTime time_;
-  scoped_ptr<DomainReliabilityUploader> uploader_;
+  std::unique_ptr<DomainReliabilityUploader> uploader_;
 };
 
 TEST_F(DomainReliabilityUploaderTest, Null) {

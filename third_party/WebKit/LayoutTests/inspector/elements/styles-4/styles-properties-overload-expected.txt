@@ -5,14 +5,16 @@ Text.
 element.style { ()
 
 [expanded] 
-#inspect { (styles-properti…erload.html:11 -> styles-properties-overload.html:11:1)
+#inspect { (styles-properti…erload.html:11 -> styles-properties-overload.html:11:11)
     margin-top: 1px;
     margin-left: 1px;
     margin-right: 1px;
     margin-bottom: 1px;
     font: 10px Arial;
         font-style: normal;
-        font-variant: normal;
+        font-variant-ligatures: normal;
+        font-variant-caps: normal;
+        font-variant-numeric: normal;
         font-weight: normal;
         font-stretch: normal;
         font-size: 10px;
@@ -20,7 +22,7 @@ element.style { ()
         font-family: Arial;
 
 [expanded] 
-div { (styles-properti…verload.html:6 -> styles-properties-overload.html:6:1)
+div { (styles-properti…verload.html:6 -> styles-properties-overload.html:6:6)
 /-- overloaded --/     margin: 1px;
     /-- overloaded --/     margin-top: 1px;
     /-- overloaded --/     margin-right: 1px;
@@ -51,7 +53,7 @@ div { (user agent stylesheet)
 
 ======== Inherited from div.container ========
 [expanded] 
-.container { (styles-properti…erload.html:19 -> styles-properties-overload.html:19:1)
+.container { (styles-properti…erload.html:19 -> styles-properties-overload.html:19:13)
 /-- overloaded --/     font-size: 10px;
 
 

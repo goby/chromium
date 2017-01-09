@@ -4,11 +4,10 @@
 
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "chrome/browser/extensions/menu_manager.h"
@@ -19,18 +18,19 @@
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings_factory.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_store.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
-
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/common/url_pattern.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -83,10 +83,25 @@ static content::ContextMenuParams CreateParams(int contexts) {
   return rv;
 }
 
+// Returns a test context menu.
+std::unique_ptr<TestRenderViewContextMenu> CreateContextMenu(
+    content::WebContents* web_contents,
+    ProtocolHandlerRegistry* registry) {
+  content::ContextMenuParams params = CreateParams(MenuItem::LINK);
+  params.unfiltered_link_url = params.link_url;
+  std::unique_ptr<TestRenderViewContextMenu> menu(
+      new TestRenderViewContextMenu(web_contents->GetMainFrame(), params));
+  menu->set_protocol_handler_registry(registry);
+  menu->Init();
+  return menu;
+}
+
 }  // namespace
 
 class RenderViewContextMenuTest : public testing::Test {
  protected:
+  RenderViewContextMenuTest() = default;
+
   // Proxy defined here to minimize friend classes in RenderViewContextMenu
   static bool ExtensionContextAndPatternMatch(
       const content::ContextMenuParams& params,
@@ -97,35 +112,22 @@ class RenderViewContextMenuTest : public testing::Test {
   }
 
   // Returns a test item.
-  MenuItem* CreateTestItem(const Extension* extension, int uid) {
+  std::unique_ptr<MenuItem> CreateTestItem(const Extension* extension,
+                                           int uid) {
     MenuItem::Type type = MenuItem::NORMAL;
     MenuItem::ContextList contexts(MenuItem::ALL);
     const MenuItem::ExtensionKey key(extension->id());
     bool incognito = false;
     MenuItem::Id id(incognito, key);
     id.uid = uid;
-    return new MenuItem(id, "Added by an extension", false, true, type,
-                        contexts);
+    return base::MakeUnique<MenuItem>(id, "Added by an extension", false, true,
+                                      type, contexts);
   }
 
-  // Returns a test context menu.
-  TestRenderViewContextMenu* CreateContextMenu(
-      TestingProfile* profile,
-      content::WebContents* web_contents) {
-    content::ContextMenuParams params = CreateParams(MenuItem::LINK);
-    params.unfiltered_link_url = params.link_url;
-    TestRenderViewContextMenu* menu =
-        new TestRenderViewContextMenu(web_contents->GetMainFrame(), params);
-    // TestingProfile (returned by profile()) does not provide a protocol
-    // registry.
-    scoped_ptr<ProtocolHandlerRegistry> registry_(
-        new ProtocolHandlerRegistry(profile, NULL));
-    menu->protocol_handler_registry_ = registry_.get();
-    menu->Init();
-    return menu;
-  }
  private:
   content::RenderViewHostTestEnabler rvh_test_enabler_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderViewContextMenuTest);
 };
 
 // Generates a URLPatternSet with a single pattern
@@ -297,31 +299,56 @@ TEST_F(RenderViewContextMenuTest, TargetIgnoredForSelectionOnImage) {
   EXPECT_TRUE(ExtensionContextAndPatternMatch(params, contexts, patterns));
 }
 
-TEST_F(RenderViewContextMenuTest, ItemWithSameTitleFromTwoExtensions) {
-  extensions::TestExtensionEnvironment env;
+class RenderViewContextMenuExtensionsTest : public RenderViewContextMenuTest {
+ protected:
+  RenderViewContextMenuExtensionsTest() = default;
 
-  MenuManager* menu_manager =  // Owned by env.profile().
+  void SetUp() override {
+    RenderViewContextMenuTest::SetUp();
+    // TestingProfile does not provide a protocol registry.
+    registry_.reset(new ProtocolHandlerRegistry(profile(), nullptr));
+  }
+
+  void TearDown() override {
+    registry_.reset();
+    RenderViewContextMenuTest::TearDown();
+  }
+
+  TestingProfile* profile() const { return environment_.profile(); }
+
+  extensions::TestExtensionEnvironment& environment() {
+    return environment_;
+  }
+
+ protected:
+  extensions::TestExtensionEnvironment environment_;
+  std::unique_ptr<ProtocolHandlerRegistry> registry_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderViewContextMenuExtensionsTest);
+};
+
+TEST_F(RenderViewContextMenuExtensionsTest,
+       ItemWithSameTitleFromTwoExtensions) {
+  MenuManager* menu_manager =  // Owned by profile().
       static_cast<MenuManager*>(
           (MenuManagerFactory::GetInstance()->SetTestingFactoryAndUse(
-              env.profile(),
+              profile(),
               &MenuManagerFactory::BuildServiceInstanceForTesting)));
 
-  const Extension* extension1 =
-      env.MakeExtension(base::DictionaryValue(),
-                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-  const Extension* extension2 =
-      env.MakeExtension(base::DictionaryValue(),
-                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  const Extension* extension1 = environment().MakeExtension(
+      base::DictionaryValue(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  const Extension* extension2 = environment().MakeExtension(
+      base::DictionaryValue(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
   // Create two items in two extensions with same title.
-  MenuItem* item1 = CreateTestItem(extension1, 1);
-  ASSERT_TRUE(menu_manager->AddContextItem(extension1, item1));
-  MenuItem* item2 = CreateTestItem(extension2, 2);
-  ASSERT_TRUE(menu_manager->AddContextItem(extension2, item2));
+  ASSERT_TRUE(
+      menu_manager->AddContextItem(extension1, CreateTestItem(extension1, 1)));
+  ASSERT_TRUE(
+      menu_manager->AddContextItem(extension2, CreateTestItem(extension2, 2)));
 
-  scoped_ptr<content::WebContents> web_contents = env.MakeTab();
-  scoped_ptr<TestRenderViewContextMenu> menu(
-      CreateContextMenu(env.profile(), web_contents.get()));
+  std::unique_ptr<content::WebContents> web_contents = environment().MakeTab();
+  std::unique_ptr<TestRenderViewContextMenu> menu(
+      CreateContextMenu(web_contents.get(), registry_.get()));
 
   const ui::MenuModel& model = menu->menu_model();
   base::string16 expected_title = base::ASCIIToUTF16("Added by an extension");
@@ -337,9 +364,11 @@ TEST_F(RenderViewContextMenuTest, ItemWithSameTitleFromTwoExtensions) {
 
 class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
  public:
+  RenderViewContextMenuPrefsTest() = default;
+
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
-    registry_.reset(new ProtocolHandlerRegistry(profile(), NULL));
+    registry_.reset(new ProtocolHandlerRegistry(profile(), nullptr));
   }
 
   void TearDown() override {
@@ -347,17 +376,8 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
     ChromeRenderViewHostTestHarness::TearDown();
   }
 
-  TestRenderViewContextMenu* CreateContextMenu() {
-    content::ContextMenuParams params = CreateParams(MenuItem::LINK);
-    params.unfiltered_link_url = params.link_url;
-    content::WebContents* wc = web_contents();
-    TestRenderViewContextMenu* menu = new TestRenderViewContextMenu(
-        wc->GetMainFrame(), params);
-    // TestingProfile (returned by profile()) does not provide a protocol
-    // registry.
-    menu->protocol_handler_registry_ = registry_.get();
-    menu->Init();
-    return menu;
+  std::unique_ptr<TestRenderViewContextMenu> CreateContextMenu() {
+    return ::CreateContextMenu(web_contents(), registry_.get());
   }
 
   void AppendImageItems(TestRenderViewContextMenu* menu) {
@@ -385,16 +405,14 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
     PrefRegistrySimple* registry =
         drp_test_context_->pref_service()->registry();
     registry->RegisterDictionaryPref(proxy_config::prefs::kProxy);
-
-    drp_test_context_->pref_service()->SetBoolean(
-        data_reduction_proxy::prefs::kDataReductionProxyEnabled,
+    drp_test_context_->SetDataReductionProxyEnabled(
         enable_data_reduction_proxy);
-    drp_test_context_->InitSettings();
-
+    settings->set_data_reduction_proxy_enabled_pref_name_for_test(
+        drp_test_context_->GetDataReductionProxyEnabledPrefName());
     settings->InitDataReductionProxySettings(
         drp_test_context_->io_data(), drp_test_context_->pref_service(),
         drp_test_context_->request_context_getter(),
-        make_scoped_ptr(new data_reduction_proxy::DataStore()),
+        base::MakeUnique<data_reduction_proxy::DataStore>(),
         base::ThreadTaskRunnerHandle::Get(),
         base::ThreadTaskRunnerHandle::Get());
   }
@@ -410,18 +428,20 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
   }
 
  protected:
-  scoped_ptr<data_reduction_proxy::DataReductionProxyTestContext>
+  std::unique_ptr<data_reduction_proxy::DataReductionProxyTestContext>
       drp_test_context_;
 
  private:
-  scoped_ptr<ProtocolHandlerRegistry> registry_;
+  std::unique_ptr<ProtocolHandlerRegistry> registry_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderViewContextMenuPrefsTest);
 };
 
 // Verifies when Incognito Mode is not available (disabled by policy),
 // Open Link in Incognito Window link in the context menu is disabled.
 TEST_F(RenderViewContextMenuPrefsTest,
        DisableOpenInIncognitoWindowWhenIncognitoIsDisabled) {
-  scoped_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
+  std::unique_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
 
   // Initially the Incognito mode is be enabled. So is the Open Link in
   // Incognito Window link.
@@ -432,7 +452,7 @@ TEST_F(RenderViewContextMenuPrefsTest,
   // Disable Incognito mode.
   IncognitoModePrefs::SetAvailability(profile()->GetPrefs(),
                                       IncognitoModePrefs::DISABLED);
-  menu.reset(CreateContextMenu());
+  menu = CreateContextMenu();
   ASSERT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD));
   EXPECT_FALSE(
       menu->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD));
@@ -442,7 +462,7 @@ TEST_F(RenderViewContextMenuPrefsTest,
 // cause DCHECK failure.
 TEST_F(RenderViewContextMenuPrefsTest,
        IsCustomCommandIdEnabled) {
-  scoped_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
+  std::unique_ptr<TestRenderViewContextMenu> menu(CreateContextMenu());
 
   EXPECT_FALSE(menu->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_CUSTOM_FIRST));
 }
@@ -456,14 +476,15 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverEnabledSaveImageAs) {
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
   params.unfiltered_link_url = params.link_url;
   content::WebContents* wc = web_contents();
-  scoped_ptr<TestRenderViewContextMenu> menu(
+  std::unique_ptr<TestRenderViewContextMenu> menu(
       new TestRenderViewContextMenu(wc->GetMainFrame(), params));
 
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEIMAGEAS, 0);
 
   const std::string& headers =
       content::WebContentsTester::For(web_contents())->GetSaveFrameHeaders();
-  EXPECT_TRUE(headers.find("Chrome-Proxy: pass-through") != std::string::npos);
+  EXPECT_TRUE(headers.find(
+      "Chrome-Proxy-Accept-Transform: identity") != std::string::npos);
   EXPECT_TRUE(headers.find("Cache-Control: no-cache") != std::string::npos);
 
   DestroyDataReductionProxySettings();
@@ -477,14 +498,15 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverDisabledSaveImageAs) {
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
   params.unfiltered_link_url = params.link_url;
   content::WebContents* wc = web_contents();
-  scoped_ptr<TestRenderViewContextMenu> menu(
+  std::unique_ptr<TestRenderViewContextMenu> menu(
       new TestRenderViewContextMenu(wc->GetMainFrame(), params));
 
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEIMAGEAS, 0);
 
   const std::string& headers =
       content::WebContentsTester::For(web_contents())->GetSaveFrameHeaders();
-  EXPECT_TRUE(headers.find("Chrome-Proxy: pass-through") == std::string::npos);
+  EXPECT_TRUE(headers.find(
+      "Chrome-Proxy-Accept-Transform: identity") == std::string::npos);
   EXPECT_TRUE(headers.find("Cache-Control: no-cache") == std::string::npos);
 
   DestroyDataReductionProxySettings();
@@ -495,11 +517,12 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverDisabledSaveImageAs) {
 TEST_F(RenderViewContextMenuPrefsTest, DataSaverLoadImage) {
   SetupDataReductionProxy(true);
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
-  params.properties[data_reduction_proxy::chrome_proxy_header()] =
-      data_reduction_proxy::chrome_proxy_lo_fi_directive();
+  params.properties[
+      data_reduction_proxy::chrome_proxy_content_transform_header()] =
+          data_reduction_proxy::empty_image_directive();
   params.unfiltered_link_url = params.link_url;
   content::WebContents* wc = web_contents();
-  scoped_ptr<TestRenderViewContextMenu> menu(
+  std::unique_ptr<TestRenderViewContextMenu> menu(
       new TestRenderViewContextMenu(wc->GetMainFrame(), params));
   AppendImageItems(menu.get());
 

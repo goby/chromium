@@ -5,12 +5,12 @@
 #ifndef UI_AURA_WINDOW_EVENT_DISPATCHER_H_
 #define UI_AURA_WINDOW_EVENT_DISPATCHER_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/scoped_observer.h"
@@ -27,23 +27,16 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/native_widget_types.h"
 
-namespace gfx {
-class Size;
-class Transform;
-}
-
 namespace ui {
 class GestureEvent;
 class GestureRecognizer;
-class KeyEvent;
 class MouseEvent;
-class ScrollEvent;
 class TouchEvent;
 }
 
 namespace aura {
 class TestScreen;
-class WindowTargeter;
+class EnvInputStateController;
 class WindowTreeHost;
 
 namespace test {
@@ -63,15 +56,13 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   explicit WindowEventDispatcher(WindowTreeHost* host);
   ~WindowEventDispatcher() override;
 
-  void set_transform_events(bool value) { transform_events_ = value; }
-
   Window* mouse_pressed_handler() { return mouse_pressed_handler_; }
   Window* mouse_moved_handler() { return mouse_moved_handler_; }
 
   // Repost event for re-processing. Used when exiting context menus.
-  // We only support the ET_MOUSE_PRESSED and ET_GESTURE_TAP_DOWN event
-  // types (although the latter is currently a no-op).
-  void RepostEvent(const ui::LocatedEvent& event);
+  // We support the ET_MOUSE_PRESSED, ET_TOUCH_PRESSED and ET_GESTURE_TAP_DOWN
+  // event types (although the latter is currently a no-op).
+  void RepostEvent(const ui::LocatedEvent* event);
 
   // Invoked when the mouse events get enabled or disabled.
   void OnMouseEventsEnableStateChanged(bool enabled);
@@ -94,7 +85,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   // event processing, so that gesture events can be properly created and
   // dispatched. |event|'s location should be in the dispatcher's coordinate
   // space, in DIPs.
-  virtual void ProcessedTouchEvent(uint32 unique_event_id,
+  virtual void ProcessedTouchEvent(uint32_t unique_event_id,
                                    Window* window,
                                    ui::EventResult result);
 
@@ -162,6 +153,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
                                                     ui::EventType type)
       WARN_UNUSED_RESULT;
   ui::EventDispatchDetails ProcessGestures(
+      Window* target,
       ui::GestureRecognizer::Gestures* gestures) WARN_UNUSED_RESULT;
 
   // Called when a window becomes invisible, either by being removed
@@ -170,9 +162,6 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   // will cause a window to lose capture and some windows may destroy themselves
   // on capture (like DragDropTracker).
   void OnWindowHidden(Window* invisible, WindowHiddenReason reason);
-
-  // Returns a target window for the given gesture event.
-  Window* GetGestureTarget(ui::GestureEvent* event);
 
   bool is_dispatched_held_event(const ui::Event& event) const;
 
@@ -195,8 +184,9 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   // Overridden from ui::GestureEventHelper.
   bool CanDispatchToConsumer(ui::GestureConsumer* consumer) override;
-  void DispatchGestureEvent(ui::GestureEvent* event) override;
-  void DispatchCancelTouchEvent(ui::TouchEvent* event) override;
+  void DispatchGestureEvent(ui::GestureConsumer* raw_input_consumer,
+                            ui::GestureEvent* event) override;
+  void DispatchSyntheticTouchEvent(ui::TouchEvent* event) override;
 
   // Overridden from WindowObserver:
   void OnWindowDestroying(Window* window) override;
@@ -245,9 +235,6 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   WindowTreeHost* host_;
 
-  // Touch ids that are currently down.
-  uint32 touch_ids_down_;
-
   Window* mouse_pressed_handler_;
   Window* mouse_moved_handler_;
   Window* event_dispatch_target_;
@@ -259,17 +246,17 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   // touch/mouse moves while the count is > 0.
   int move_hold_count_;
   // The location of |held_move_event_| is in |window_|'s coordinate.
-  scoped_ptr<ui::LocatedEvent> held_move_event_;
+  std::unique_ptr<ui::LocatedEvent> held_move_event_;
 
   // Allowing for reposting of events. Used when exiting context menus.
-  scoped_ptr<ui::LocatedEvent> held_repostable_event_;
+  std::unique_ptr<ui::LocatedEvent> held_repostable_event_;
 
   // Set when dispatching a held event.
   ui::LocatedEvent* dispatching_held_event_;
 
   ScopedObserver<aura::Window, aura::WindowObserver> observer_manager_;
 
-  bool transform_events_;
+  std::unique_ptr<EnvInputStateController> env_controller_;
 
   // Used to schedule reposting an event.
   base::WeakPtrFactory<WindowEventDispatcher> repost_event_factory_;

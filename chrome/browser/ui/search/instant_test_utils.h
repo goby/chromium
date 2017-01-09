@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
@@ -17,13 +17,12 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/search/instant_controller.h"
-#include "chrome/common/search_types.h"
+#include "chrome/common/search/search_types.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "url/gurl.h"
 
 class BrowserInstantController;
 class InstantController;
-class InstantModel;
 class OmniboxView;
 
 namespace content {

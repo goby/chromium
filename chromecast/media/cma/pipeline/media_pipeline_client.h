@@ -18,6 +18,7 @@ struct MediaPipelineClient {
       void(base::TimeDelta, base::TimeDelta, base::TimeTicks)> TimeUpdateCB;
 
   MediaPipelineClient();
+  MediaPipelineClient(const MediaPipelineClient& other);
   ~MediaPipelineClient();
 
   // Callback used to report a playback error as a ::media::PipelineStatus.
@@ -29,11 +30,6 @@ struct MediaPipelineClient {
 
   // Callback used to report the buffering status.
   ::media::BufferingStateCB buffering_state_cb;
-
-  // Callback used to report the creation and destruction of
-  // MediaPipelineBackend
-  base::Closure pipeline_backend_created_cb;
-  base::Closure pipeline_backend_destroyed_cb;
 };
 
 }  // namespace media

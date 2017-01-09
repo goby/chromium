@@ -5,9 +5,9 @@
 #include "ui/chromeos/ime/mode_indicator_view.h"
 
 #include "base/logging.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/screen.h"
-#include "ui/views/bubble/bubble_delegate.h"
+#include "base/macros.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/fill_layout.h"
@@ -17,6 +17,7 @@ namespace ui {
 namespace ime {
 
 namespace {
+
 // Minimum size of inner contents in pixel.
 // 43 is the designed size including the default margin (6 * 2).
 const int kMinSize = 31;
@@ -27,14 +28,15 @@ const int kShowingDuration = 500;
 class ModeIndicatorFrameView : public views::BubbleFrameView {
  public:
   explicit ModeIndicatorFrameView(const gfx::Insets& content_margins)
-      : views::BubbleFrameView(content_margins) {}
+      : views::BubbleFrameView(gfx::Insets(), content_margins) {}
   ~ModeIndicatorFrameView() override {}
 
  private:
   // views::BubbleFrameView overrides:
   gfx::Rect GetAvailableScreenBounds(const gfx::Rect& rect) const override {
-    return gfx::Screen::GetNativeScreen()->GetDisplayNearestPoint(
-        rect.CenterPoint()).bounds();
+    return display::Screen::GetScreen()
+        ->GetDisplayNearestPoint(rect.CenterPoint())
+        .bounds();
   }
 
   DISALLOW_COPY_AND_ASSIGN(ModeIndicatorFrameView);
@@ -78,6 +80,10 @@ const char* ModeIndicatorView::GetClassName() const {
   return "ModeIndicatorView";
 }
 
+int ModeIndicatorView::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_NONE;
+}
+
 void ModeIndicatorView::Init() {
   SetLayoutManager(new views::FillLayout());
   AddChildView(label_view_);
@@ -88,9 +94,9 @@ void ModeIndicatorView::Init() {
 views::NonClientFrameView* ModeIndicatorView::CreateNonClientFrameView(
     views::Widget* widget) {
   views::BubbleFrameView* frame = new ModeIndicatorFrameView(margins());
-  // arrow adjustment in BubbleDelegateView is unnecessary because arrow
+  // arrow adjustment in BubbleDialogDelegateView is unnecessary because arrow
   // of this bubble is always center.
-  frame->SetBubbleBorder(scoped_ptr<views::BubbleBorder>(
+  frame->SetBubbleBorder(std::unique_ptr<views::BubbleBorder>(
       new views::BubbleBorder(arrow(), shadow(), color())));
   return frame;
 }

@@ -5,15 +5,18 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_AW_RENDER_THREAD_CONTEXT_PROVIDER_H_
 #define ANDROID_WEBVIEW_BROWSER_AW_RENDER_THREAD_CONTEXT_PROVIDER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "cc/output/context_provider.h"
-#include "gpu/command_buffer/service/in_process_command_buffer.h"
-#include "skia/ext/refptr.h"
+#include "gpu/ipc/in_process_command_buffer.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
+#include "third_party/skia/include/gpu/GrContext.h"
 
-namespace gfx {
+namespace gl {
 class GLSurface;
 }
 
@@ -26,25 +29,28 @@ namespace android_webview {
 class AwRenderThreadContextProvider : public cc::ContextProvider {
  public:
   static scoped_refptr<AwRenderThreadContextProvider> Create(
-      scoped_refptr<gfx::GLSurface> surface,
+      scoped_refptr<gl::GLSurface> surface,
       scoped_refptr<gpu::InProcessCommandBuffer::Service> service);
+
+  // Gives the GL internal format that should be used for calling CopyTexImage2D
+  // on the default framebuffer.
+  uint32_t GetCopyTextureInternalFormat();
 
  private:
   AwRenderThreadContextProvider(
-      scoped_refptr<gfx::GLSurface> surface,
+      scoped_refptr<gl::GLSurface> surface,
       scoped_refptr<gpu::InProcessCommandBuffer::Service> service);
   ~AwRenderThreadContextProvider() override;
 
   // cc::ContextProvider:
   bool BindToCurrentThread() override;
-  Capabilities ContextCapabilities() override;
+  gpu::Capabilities ContextCapabilities() override;
   gpu::gles2::GLES2Interface* ContextGL() override;
   gpu::ContextSupport* ContextSupport() override;
   class GrContext* GrContext() override;
+  cc::ContextCacheController* CacheController() override;
   void InvalidateGrContext(uint32_t state) override;
-  void SetupLock() override;
   base::Lock* GetLock() override;
-  void DeleteCachedResources() override;
   void SetLostContextCallback(
       const LostContextCallback& lost_context_callback) override;
 
@@ -52,14 +58,11 @@ class AwRenderThreadContextProvider : public cc::ContextProvider {
 
   base::ThreadChecker main_thread_checker_;
 
-  scoped_ptr<gpu::GLInProcessContext> context_;
-  skia::RefPtr<class GrContext> gr_context_;
-
-  cc::ContextProvider::Capabilities capabilities_;
+  std::unique_ptr<gpu::GLInProcessContext> context_;
+  sk_sp<class GrContext> gr_context_;
+  std::unique_ptr<cc::ContextCacheController> cache_controller_;
 
   LostContextCallback lost_context_callback_;
-
-  base::Lock context_lock_;
 
   DISALLOW_COPY_AND_ASSIGN(AwRenderThreadContextProvider);
 };

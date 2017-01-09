@@ -5,53 +5,61 @@
 #ifndef UI_VIEWS_MUS_SURFACE_CONTEXT_FACTORY_H_
 #define UI_VIEWS_MUS_SURFACE_CONTEXT_FACTORY_H_
 
-#include "components/mus/gles2/mojo_gpu_memory_buffer_manager.h"
-#include "components/mus/gles2/raster_thread_helper.h"
-#include "components/mus/public/interfaces/window_tree.mojom.h"
+#include <stdint.h>
+
+#include "base/macros.h"
+#include "cc/surfaces/surface_manager.h"
+#include "services/ui/public/cpp/raster_thread_helper.h"
+#include "services/ui/public/interfaces/window_tree.mojom.h"
 #include "ui/compositor/compositor.h"
 #include "ui/views/mus/mus_export.h"
-#include "ui/views/mus/surface_binding.h"
 
-namespace mojo {
-class Shell;
-}
-
-namespace mus {
-class Window;
+namespace ui {
+class Gpu;
 }
 
 namespace views {
 
 class VIEWS_MUS_EXPORT SurfaceContextFactory : public ui::ContextFactory {
  public:
-  SurfaceContextFactory(mojo::Shell* shell,
-                        mus::Window* window,
-                        mus::mojom::SurfaceType surface_type);
+  explicit SurfaceContextFactory(ui::Gpu* gpu);
   ~SurfaceContextFactory() override;
 
  private:
   // ContextFactory:
-  void CreateOutputSurface(base::WeakPtr<ui::Compositor> compositor) override;
-  scoped_ptr<ui::Reflector> CreateReflector(
+  void CreateCompositorFrameSink(
+      base::WeakPtr<ui::Compositor> compositor) override;
+  std::unique_ptr<ui::Reflector> CreateReflector(
       ui::Compositor* mirrored_compositor,
       ui::Layer* mirroring_layer) override;
   void RemoveReflector(ui::Reflector* reflector) override;
   scoped_refptr<cc::ContextProvider> SharedMainThreadContextProvider() override;
   void RemoveCompositor(ui::Compositor* compositor) override;
   bool DoesCreateTestContexts() override;
-  uint32 GetImageTextureTarget(gfx::BufferFormat format,
-                               gfx::BufferUsage usage) override;
-  cc::SharedBitmapManager* GetSharedBitmapManager() override;
+  uint32_t GetImageTextureTarget(gfx::BufferFormat format,
+                                 gfx::BufferUsage usage) override;
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() override;
   cc::TaskGraphRunner* GetTaskGraphRunner() override;
-  scoped_ptr<cc::SurfaceIdAllocator> CreateSurfaceIdAllocator() override;
+  cc::FrameSinkId AllocateFrameSinkId() override;
+  cc::SurfaceManager* GetSurfaceManager() override;
+  void SetDisplayVisible(ui::Compositor* compositor, bool visible) override;
   void ResizeDisplay(ui::Compositor* compositor,
                      const gfx::Size& size) override;
+  void SetDisplayColorSpace(ui::Compositor* compositor,
+                            const gfx::ColorSpace& color_space) override {}
+  void SetAuthoritativeVSyncInterval(ui::Compositor* compositor,
+                                     base::TimeDelta interval) override {}
+  void SetDisplayVSyncParameters(ui::Compositor* compositor,
+                                 base::TimeTicks timebase,
+                                 base::TimeDelta interval) override {}
+  void SetOutputIsSecure(ui::Compositor* compositor, bool secure) override {}
+  void AddObserver(ui::ContextFactoryObserver* observer) override {}
+  void RemoveObserver(ui::ContextFactoryObserver* observer) override {}
 
-  SurfaceBinding surface_binding_;
-  uint32_t next_surface_id_namespace_;
-  gles2::RasterThreadHelper raster_thread_helper_;
-  mus::MojoGpuMemoryBufferManager gpu_memory_buffer_manager_;
+  cc::SurfaceManager surface_manager_;
+  uint32_t next_sink_id_;
+  ui::RasterThreadHelper raster_thread_helper_;
+  ui::Gpu* gpu_;
 
   DISALLOW_COPY_AND_ASSIGN(SurfaceContextFactory);
 };

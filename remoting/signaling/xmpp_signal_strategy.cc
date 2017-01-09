@@ -4,27 +4,32 @@
 
 #include "remoting/signaling/xmpp_signal_strategy.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_checker.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "jingle/glue/proxy_resolving_client_socket.h"
 #include "net/cert/cert_verifier.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/http/transport_security_state.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/base/buffered_socket_writer.h"
+#include "remoting/base/logging.h"
 #include "remoting/signaling/xmpp_login_handler.h"
 #include "remoting/signaling/xmpp_stream_parser.h"
 #include "third_party/webrtc/libjingle/xmllite/xmlelement.h"
@@ -44,6 +49,9 @@ XmppSignalStrategy::XmppServerConfig::XmppServerConfig()
     : port(kDefaultXmppPort), use_tls(true) {
 }
 
+XmppSignalStrategy::XmppServerConfig::XmppServerConfig(
+    const XmppServerConfig& other) = default;
+
 XmppSignalStrategy::XmppServerConfig::~XmppServerConfig() {
 }
 
@@ -62,7 +70,7 @@ class XmppSignalStrategy::Core : public XmppLoginHandler::Delegate {
   std::string GetLocalJid() const;
   void AddListener(Listener* listener);
   void RemoveListener(Listener* listener);
-  bool SendStanza(scoped_ptr<buzz::XmlElement> stanza);
+  bool SendStanza(std::unique_ptr<buzz::XmlElement> stanza);
 
   void SetAuthInfo(const std::string& username,
                    const std::string& auth_token);
@@ -94,14 +102,14 @@ class XmppSignalStrategy::Core : public XmppLoginHandler::Delegate {
   void SendMessage(const std::string& message) override;
   void StartTls() override;
   void OnHandshakeDone(const std::string& jid,
-                       scoped_ptr<XmppStreamParser> parser) override;
+                       std::unique_ptr<XmppStreamParser> parser) override;
   void OnLoginHandlerError(SignalStrategy::Error error) override;
 
   // Callback for BufferedSocketWriter.
   void OnMessageSent();
 
   // Event handlers for XmppStreamParser.
-  void OnStanza(const scoped_ptr<buzz::XmlElement> stanza);
+  void OnStanza(const std::unique_ptr<buzz::XmlElement> stanza);
   void OnParserError();
 
   void OnNetworkError(int error);
@@ -113,26 +121,27 @@ class XmppSignalStrategy::Core : public XmppLoginHandler::Delegate {
   XmppServerConfig xmpp_server_config_;
 
   // Used by the |socket_|.
-  scoped_ptr<net::CertVerifier> cert_verifier_;
-  scoped_ptr<net::TransportSecurityState> transport_security_state_;
+  std::unique_ptr<net::CertVerifier> cert_verifier_;
+  std::unique_ptr<net::TransportSecurityState> transport_security_state_;
+  std::unique_ptr<net::CTVerifier> cert_transparency_verifier_;
+  std::unique_ptr<net::CTPolicyEnforcer> ct_policy_enforcer_;
 
-  scoped_ptr<net::StreamSocket> socket_;
-  scoped_ptr<BufferedSocketWriter> writer_;
-  int pending_writes_ = 0;
+  std::unique_ptr<net::StreamSocket> socket_;
+  std::unique_ptr<BufferedSocketWriter> writer_;
   scoped_refptr<net::IOBuffer> read_buffer_;
   bool read_pending_ = false;
 
   TlsState tls_state_ = TlsState::NOT_REQUESTED;
 
-  scoped_ptr<XmppLoginHandler> login_handler_;
-  scoped_ptr<XmppStreamParser> stream_parser_;
+  std::unique_ptr<XmppLoginHandler> login_handler_;
+  std::unique_ptr<XmppStreamParser> stream_parser_;
   std::string jid_;
 
   Error error_ = OK;
 
   base::ObserverList<Listener, true> listeners_;
 
-  base::Timer keep_alive_timer_;
+  base::RepeatingTimer keep_alive_timer_;
 
   base::ThreadChecker thread_checker_;
 
@@ -145,16 +154,12 @@ XmppSignalStrategy::Core::Core(
     const XmppSignalStrategy::XmppServerConfig& xmpp_server_config)
     : socket_factory_(socket_factory),
       request_context_getter_(request_context_getter),
-      xmpp_server_config_(xmpp_server_config),
-      keep_alive_timer_(
-          FROM_HERE,
-          base::TimeDelta::FromSeconds(kKeepAliveIntervalSeconds),
-          base::Bind(&Core::SendKeepAlive, base::Unretained(this)),
-          true) {
+      xmpp_server_config_(xmpp_server_config) {
 #if defined(NDEBUG)
   // Non-secure connections are allowed only for debugging.
   CHECK(xmpp_server_config_.use_tls);
 #endif
+  thread_checker_.DetachFromThread();
 }
 
 XmppSignalStrategy::Core::~Core() {
@@ -169,8 +174,8 @@ void XmppSignalStrategy::Core::Connect() {
 
   error_ = OK;
 
-  FOR_EACH_OBSERVER(Listener, listeners_,
-                    OnSignalStrategyStateChange(CONNECTING));
+  for (auto& observer : listeners_)
+    observer.OnSignalStrategyStateChange(CONNECTING);
 
   socket_.reset(new jingle_glue::ProxyResolvingClientSocket(
       socket_factory_, request_context_getter_, net::SSLConfig(),
@@ -178,6 +183,11 @@ void XmppSignalStrategy::Core::Connect() {
 
   int result = socket_->Connect(base::Bind(
       &Core::OnSocketConnected, base::Unretained(this)));
+
+  keep_alive_timer_.Start(
+      FROM_HERE, base::TimeDelta::FromSeconds(kKeepAliveIntervalSeconds),
+      base::Bind(&Core::SendKeepAlive, base::Unretained(this)));
+
   if (result != net::ERR_IO_PENDING)
     OnSocketConnected(result);
 }
@@ -193,8 +203,8 @@ void XmppSignalStrategy::Core::Disconnect() {
     tls_state_ = TlsState::NOT_REQUESTED;
     read_pending_ = false;
 
-    FOR_EACH_OBSERVER(Listener, listeners_,
-                      OnSignalStrategyStateChange(DISCONNECTED));
+    for (auto& observer : listeners_)
+      observer.OnSignalStrategyStateChange(DISCONNECTED);
   }
 }
 
@@ -231,7 +241,8 @@ void XmppSignalStrategy::Core::RemoveListener(Listener* listener) {
   listeners_.RemoveObserver(listener);
 }
 
-bool XmppSignalStrategy::Core::SendStanza(scoped_ptr<buzz::XmlElement> stanza) {
+bool XmppSignalStrategy::Core::SendStanza(
+    std::unique_ptr<buzz::XmlElement> stanza) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!stream_parser_) {
@@ -239,6 +250,9 @@ bool XmppSignalStrategy::Core::SendStanza(scoped_ptr<buzz::XmlElement> stanza) {
     return false;
   }
 
+  HOST_DLOG << "Sending outgoing stanza:\n"
+            << stanza->Str()
+            << "\n=========================================================";
   SendMessage(stanza->Str());
 
   // Return false if the SendMessage() call above resulted in the SignalStrategy
@@ -283,18 +297,22 @@ void XmppSignalStrategy::Core::StartTls() {
 
   DCHECK(!read_pending_);
 
-  scoped_ptr<net::ClientSocketHandle> socket_handle(
+  std::unique_ptr<net::ClientSocketHandle> socket_handle(
       new net::ClientSocketHandle());
-  socket_handle->SetSocket(socket_.Pass());
+  socket_handle->SetSocket(std::move(socket_));
 
   cert_verifier_ = net::CertVerifier::CreateDefault();
   transport_security_state_.reset(new net::TransportSecurityState());
+  cert_transparency_verifier_.reset(new net::MultiLogCTVerifier());
+  ct_policy_enforcer_.reset(new net::CTPolicyEnforcer());
   net::SSLClientSocketContext context;
   context.cert_verifier = cert_verifier_.get();
   context.transport_security_state = transport_security_state_.get();
+  context.cert_transparency_verifier = cert_transparency_verifier_.get();
+  context.ct_policy_enforcer = ct_policy_enforcer_.get();
 
   socket_ = socket_factory_->CreateSSLClientSocket(
-      socket_handle.Pass(),
+      std::move(socket_handle),
       net::HostPortPair(xmpp_server_config_.host, kDefaultHttpsPort),
       net::SSLConfig(), context);
 
@@ -306,11 +324,11 @@ void XmppSignalStrategy::Core::StartTls() {
 
 void XmppSignalStrategy::Core::OnHandshakeDone(
     const std::string& jid,
-    scoped_ptr<XmppStreamParser> parser) {
+    std::unique_ptr<XmppStreamParser> parser) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   jid_ = jid;
-  stream_parser_ = parser.Pass();
+  stream_parser_ = std::move(parser);
   stream_parser_->SetCallbacks(
       base::Bind(&Core::OnStanza, base::Unretained(this)),
       base::Bind(&Core::OnParserError, base::Unretained(this)));
@@ -318,8 +336,8 @@ void XmppSignalStrategy::Core::OnHandshakeDone(
   // Don't need |login_handler_| anymore.
   login_handler_.reset();
 
-  FOR_EACH_OBSERVER(Listener, listeners_,
-                    OnSignalStrategyStateChange(CONNECTED));
+  for (auto& observer : listeners_)
+    observer.OnSignalStrategyStateChange(CONNECTED);
 }
 
 void XmppSignalStrategy::Core::OnLoginHandlerError(
@@ -340,12 +358,16 @@ void XmppSignalStrategy::Core::OnMessageSent() {
 }
 
 void XmppSignalStrategy::Core::OnStanza(
-    const scoped_ptr<buzz::XmlElement> stanza) {
+    const std::unique_ptr<buzz::XmlElement> stanza) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  base::ObserverListBase<Listener>::Iterator it(&listeners_);
-  for (Listener* listener = it.GetNext(); listener; listener = it.GetNext()) {
-    if (listener->OnSignalStrategyIncomingStanza(stanza.get()))
+
+  HOST_DLOG << "Received incoming stanza:\n"
+            << stanza->Str()
+            << "\n=========================================================";
+
+  for (auto& listener : listeners_) {
+    if (listener.OnSignalStrategyIncomingStanza(stanza.get()))
       return;
   }
 }
@@ -521,8 +543,8 @@ void XmppSignalStrategy::AddListener(Listener* listener) {
 void XmppSignalStrategy::RemoveListener(Listener* listener) {
   core_->RemoveListener(listener);
 }
-bool XmppSignalStrategy::SendStanza(scoped_ptr<buzz::XmlElement> stanza) {
-  return core_->SendStanza(stanza.Pass());
+bool XmppSignalStrategy::SendStanza(std::unique_ptr<buzz::XmlElement> stanza) {
+  return core_->SendStanza(std::move(stanza));
 }
 
 std::string XmppSignalStrategy::GetNextId() {

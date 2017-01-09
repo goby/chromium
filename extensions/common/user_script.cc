@@ -4,6 +4,9 @@
 
 #include "extensions/common/user_script.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/atomic_sequence_num.h"
 #include "base/command_line.h"
 #include "base/pickle.h"
@@ -13,7 +16,7 @@
 
 namespace {
 
-// This cannot be a plain int or int64 because we need to generate unique IDs
+// This cannot be a plain int or int64_t because we need to generate unique IDs
 // from multiple threads.
 base::StaticAtomicSequenceNumber g_user_script_id_generator;
 
@@ -79,6 +82,12 @@ UserScript::File::File(const base::FilePath& extension_root,
 
 UserScript::File::File() {}
 
+// File content is not copied.
+UserScript::File::File(const File& other)
+    : extension_root_(other.extension_root_),
+      relative_path_(other.relative_path_),
+      url_(other.url_) {}
+
 UserScript::File::~File() {}
 
 UserScript::UserScript()
@@ -91,6 +100,40 @@ UserScript::UserScript()
       incognito_enabled_(false) {}
 
 UserScript::~UserScript() {
+}
+
+// static.
+std::unique_ptr<UserScript> UserScript::CopyMetadataFrom(
+    const UserScript& other) {
+  std::unique_ptr<UserScript> script(new UserScript());
+  script->run_location_ = other.run_location_;
+  script->name_space_ = other.name_space_;
+  script->name_ = other.name_;
+  script->description_ = other.description_;
+  script->version_ = other.version_;
+  script->globs_ = other.globs_;
+  script->exclude_globs_ = other.exclude_globs_;
+  script->url_set_ = other.url_set_;
+  script->exclude_url_set_ = other.exclude_url_set_;
+
+  // Note: File content is not copied.
+  for (const std::unique_ptr<File>& file : other.js_scripts()) {
+    std::unique_ptr<File> file_copy(new File(*file));
+    script->js_scripts_.push_back(std::move(file_copy));
+  }
+  for (const std::unique_ptr<File>& file : other.css_scripts()) {
+    std::unique_ptr<File> file_copy(new File(*file));
+    script->css_scripts_.push_back(std::move(file_copy));
+  }
+  script->host_id_ = other.host_id_;
+  script->consumer_instance_type_ = other.consumer_instance_type_;
+  script->user_script_id_ = other.user_script_id_;
+  script->emulate_greasemonkey_ = other.emulate_greasemonkey_;
+  script->match_all_frames_ = other.match_all_frames_;
+  script->match_about_blank_ = other.match_about_blank_;
+  script->incognito_enabled_ = other.incognito_enabled_;
+
+  return script;
 }
 
 void UserScript::add_url_pattern(const URLPattern& pattern) {
@@ -160,7 +203,7 @@ void UserScript::Pickle(base::Pickle* pickle) const {
 
 void UserScript::PickleGlobs(base::Pickle* pickle,
                              const std::vector<std::string>& globs) const {
-  pickle->WriteSizeT(globs.size());
+  pickle->WriteUInt32(globs.size());
   for (std::vector<std::string>::const_iterator glob = globs.begin();
        glob != globs.end(); ++glob) {
     pickle->WriteString(*glob);
@@ -175,7 +218,7 @@ void UserScript::PickleHostID(base::Pickle* pickle,
 
 void UserScript::PickleURLPatternSet(base::Pickle* pickle,
                                      const URLPatternSet& pattern_list) const {
-  pickle->WriteSizeT(pattern_list.patterns().size());
+  pickle->WriteUInt32(pattern_list.patterns().size());
   for (URLPatternSet::const_iterator pattern = pattern_list.begin();
        pattern != pattern_list.end(); ++pattern) {
     pickle->WriteInt(pattern->valid_schemes());
@@ -185,11 +228,9 @@ void UserScript::PickleURLPatternSet(base::Pickle* pickle,
 
 void UserScript::PickleScripts(base::Pickle* pickle,
                                const FileList& scripts) const {
-  pickle->WriteSizeT(scripts.size());
-  for (FileList::const_iterator file = scripts.begin();
-       file != scripts.end(); ++file) {
+  pickle->WriteUInt32(scripts.size());
+  for (const std::unique_ptr<File>& file : scripts)
     file->Pickle(pickle);
-  }
 }
 
 void UserScript::Unpickle(const base::Pickle& pickle,
@@ -224,10 +265,10 @@ void UserScript::Unpickle(const base::Pickle& pickle,
 void UserScript::UnpickleGlobs(const base::Pickle& pickle,
                                base::PickleIterator* iter,
                                std::vector<std::string>* globs) {
-  size_t num_globs = 0;
-  CHECK(iter->ReadSizeT(&num_globs));
+  uint32_t num_globs = 0;
+  CHECK(iter->ReadUInt32(&num_globs));
   globs->clear();
-  for (size_t i = 0; i < num_globs; ++i) {
+  for (uint32_t i = 0; i < num_globs; ++i) {
     std::string glob;
     CHECK(iter->ReadString(&glob));
     globs->push_back(glob);
@@ -247,11 +288,11 @@ void UserScript::UnpickleHostID(const base::Pickle& pickle,
 void UserScript::UnpickleURLPatternSet(const base::Pickle& pickle,
                                        base::PickleIterator* iter,
                                        URLPatternSet* pattern_list) {
-  size_t num_patterns = 0;
-  CHECK(iter->ReadSizeT(&num_patterns));
+  uint32_t num_patterns = 0;
+  CHECK(iter->ReadUInt32(&num_patterns));
 
   pattern_list->ClearPatterns();
-  for (size_t i = 0; i < num_patterns; ++i) {
+  for (uint32_t i = 0; i < num_patterns; ++i) {
     int valid_schemes;
     CHECK(iter->ReadInt(&valid_schemes));
 
@@ -271,21 +312,23 @@ void UserScript::UnpickleURLPatternSet(const base::Pickle& pickle,
 void UserScript::UnpickleScripts(const base::Pickle& pickle,
                                  base::PickleIterator* iter,
                                  FileList* scripts) {
-  size_t num_files = 0;
-  CHECK(iter->ReadSizeT(&num_files));
+  uint32_t num_files = 0;
+  CHECK(iter->ReadUInt32(&num_files));
   scripts->clear();
-  for (size_t i = 0; i < num_files; ++i) {
-    File file;
-    file.Unpickle(pickle, iter);
-    scripts->push_back(file);
+  for (uint32_t i = 0; i < num_files; ++i) {
+    std::unique_ptr<File> file(new File());
+    file->Unpickle(pickle, iter);
+    scripts->push_back(std::move(file));
   }
 }
 
-bool operator<(const UserScript& script1, const UserScript& script2) {
-  // The only kind of script that should be compared is the kind that has its
-  // IDs initialized to a meaningful value.
-  DCHECK(script1.id() != -1 && script2.id() != -1);
-  return script1.id() < script2.id();
+UserScriptIDPair::UserScriptIDPair(int id, const HostID& host_id)
+    : id(id), host_id(host_id) {}
+
+UserScriptIDPair::UserScriptIDPair(int id) : id(id), host_id(HostID()) {}
+
+bool operator<(const UserScriptIDPair& a, const UserScriptIDPair& b) {
+  return a.id < b.id;
 }
 
 }  // namespace extensions

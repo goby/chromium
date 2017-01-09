@@ -9,7 +9,7 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_manager_client.h"
@@ -37,10 +37,12 @@ AutoConnectHandler::AutoConnectHandler()
 }
 
 AutoConnectHandler::~AutoConnectHandler() {
-  if (client_cert_resolver_)
-    client_cert_resolver_->RemoveObserver(this);
   if (LoginState::IsInitialized())
     LoginState::Get()->RemoveObserver(this);
+  if (client_cert_resolver_)
+    client_cert_resolver_->RemoveObserver(this);
+  if (network_connection_handler_)
+    network_connection_handler_->RemoveObserver(this);
   if (network_state_handler_)
     network_state_handler_->RemoveObserver(this, FROM_HERE);
   if (managed_configuration_handler_)

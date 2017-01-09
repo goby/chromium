@@ -7,14 +7,14 @@
 
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_output_dispatcher_impl.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
@@ -25,8 +25,7 @@ class OnMoreDataConverter;
 // AudioConverter class for details on the conversion process.
 //
 // AOR works by intercepting the AudioSourceCallback provided to StartStream()
-// and redirecting it through an AudioConverter instance.  |total_bytes_delay|
-// is adjusted for buffer delay caused by the conversion process.
+// and redirecting it through an AudioConverter instance.
 //
 // AOR will automatically fall back from AUDIO_PCM_LOW_LATENCY to
 // AUDIO_PCM_LINEAR if the output device fails to open at the requested output

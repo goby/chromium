@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/public/test/async_file_test_helper.h"
 #include "content/public/test/test_file_system_context.h"
@@ -45,14 +49,14 @@ class FileSystemQuotaClientTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(data_dir_.CreateUniqueTempDir());
-    file_system_context_ = CreateFileSystemContextForTesting(
-            NULL, data_dir_.path());
+    file_system_context_ =
+        CreateFileSystemContextForTesting(NULL, data_dir_.GetPath());
   }
 
   struct TestFile {
     bool isDirectory;
     const char* name;
-    int64 size;
+    int64_t size;
     const char* origin_url;
     storage::StorageType type;
   };
@@ -71,9 +75,9 @@ class FileSystemQuotaClientTest : public testing::Test {
                    weak_factory_.GetWeakPtr()));
   }
 
-  int64 GetOriginUsage(FileSystemQuotaClient* quota_client,
-                       const std::string& origin_url,
-                       storage::StorageType type) {
+  int64_t GetOriginUsage(FileSystemQuotaClient* quota_client,
+                         const std::string& origin_url,
+                         storage::StorageType type) {
     GetOriginUsageAsync(quota_client, origin_url, type);
     base::RunLoop().RunUntilIdle();
     return usage_;
@@ -125,7 +129,7 @@ class FileSystemQuotaClientTest : public testing::Test {
   }
 
   bool CreateFileSystemFile(const base::FilePath& file_path,
-                            int64 file_size,
+                            int64_t file_size,
                             const std::string& origin_url,
                             storage::StorageType storage_type) {
     if (file_path.empty())
@@ -174,11 +178,11 @@ class FileSystemQuotaClientTest : public testing::Test {
   // directory before adding a file or directory to it, so that we can just
   // count the basename of each addition.  A recursive creation of a path, which
   // created more than one directory in a single shot, would break this.
-  int64 ComputeFilePathsCostForOriginAndType(const TestFile* files,
-                                             int num_files,
-                                             const std::string& origin_url,
-                                             storage::StorageType type) {
-    int64 file_paths_cost = 0;
+  int64_t ComputeFilePathsCostForOriginAndType(const TestFile* files,
+                                               int num_files,
+                                               const std::string& origin_url,
+                                               storage::StorageType type) {
+    int64_t file_paths_cost = 0;
     for (int i = 0; i < num_files; i++) {
       if (files[i].type == type &&
           GURL(files[i].origin_url) == GURL(origin_url)) {
@@ -202,7 +206,7 @@ class FileSystemQuotaClientTest : public testing::Test {
                    weak_factory_.GetWeakPtr()));
   }
 
-  int64 usage() const { return usage_; }
+  int64_t usage() const { return usage_; }
   storage::QuotaStatusCode status() { return deletion_status_; }
   int additional_callback_count() const { return additional_callback_count_; }
   void set_additional_callback_count(int count) {
@@ -210,15 +214,13 @@ class FileSystemQuotaClientTest : public testing::Test {
   }
 
  private:
-  void OnGetUsage(int64 usage) {
-    usage_ = usage;
-  }
+  void OnGetUsage(int64_t usage) { usage_ = usage; }
 
   void OnGetOrigins(const std::set<GURL>& origins) {
     origins_ = origins;
   }
 
-  void OnGetAdditionalUsage(int64 usage_unused) {
+  void OnGetAdditionalUsage(int64_t usage_unused) {
     ++additional_callback_count_;
   }
 
@@ -229,7 +231,7 @@ class FileSystemQuotaClientTest : public testing::Test {
   base::ScopedTempDir data_dir_;
   base::MessageLoop message_loop_;
   scoped_refptr<storage::FileSystemContext> file_system_context_;
-  int64 usage_;
+  int64_t usage_;
   int additional_callback_count_;
   std::set<GURL> origins_;
   storage::QuotaStatusCode deletion_status_;
@@ -239,13 +241,13 @@ class FileSystemQuotaClientTest : public testing::Test {
 };
 
 TEST_F(FileSystemQuotaClientTest, NoFileSystemTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
 
   EXPECT_EQ(0, GetOriginUsage(quota_client.get(), kDummyURL1, kTemporary));
 }
 
 TEST_F(FileSystemQuotaClientTest, NoFileTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
   };
@@ -257,13 +259,13 @@ TEST_F(FileSystemQuotaClientTest, NoFileTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, OneFileTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {false, "foo", 4921, kDummyURL1, kTemporary},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost = ComputeFilePathsCostForOriginAndType(
+  const int64_t file_paths_cost = ComputeFilePathsCostForOriginAndType(
       kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
 
   for (int i = 0; i < 2; i++) {
@@ -273,14 +275,14 @@ TEST_F(FileSystemQuotaClientTest, OneFileTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, TwoFilesTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {false, "foo", 10310, kDummyURL1, kTemporary},
     {false, "bar", 41, kDummyURL1, kTemporary},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost = ComputeFilePathsCostForOriginAndType(
+  const int64_t file_paths_cost = ComputeFilePathsCostForOriginAndType(
       kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
 
   for (int i = 0; i < 2; i++) {
@@ -290,7 +292,7 @@ TEST_F(FileSystemQuotaClientTest, TwoFilesTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, EmptyFilesTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {false, "foo", 0, kDummyURL1, kTemporary},
@@ -298,7 +300,7 @@ TEST_F(FileSystemQuotaClientTest, EmptyFilesTest) {
     {false, "baz", 0, kDummyURL1, kTemporary},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost = ComputeFilePathsCostForOriginAndType(
+  const int64_t file_paths_cost = ComputeFilePathsCostForOriginAndType(
       kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
 
   for (int i = 0; i < 2; i++) {
@@ -308,7 +310,7 @@ TEST_F(FileSystemQuotaClientTest, EmptyFilesTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, SubDirectoryTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {true, "dirtest", 0, kDummyURL1, kTemporary},
@@ -316,7 +318,7 @@ TEST_F(FileSystemQuotaClientTest, SubDirectoryTest) {
     {false, "bar", 4814, kDummyURL1, kTemporary},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost = ComputeFilePathsCostForOriginAndType(
+  const int64_t file_paths_cost = ComputeFilePathsCostForOriginAndType(
       kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
 
   for (int i = 0; i < 2; i++) {
@@ -326,7 +328,7 @@ TEST_F(FileSystemQuotaClientTest, SubDirectoryTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, MultiTypeTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {true, "dirtest", 0, kDummyURL1, kTemporary},
@@ -338,10 +340,12 @@ TEST_F(FileSystemQuotaClientTest, MultiTypeTest) {
     {false, "bar", 9, kDummyURL1, kPersistent},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost_temporary = ComputeFilePathsCostForOriginAndType(
-      kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
-  const int64 file_paths_cost_persistent = ComputeFilePathsCostForOriginAndType(
-      kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
+  const int64_t file_paths_cost_temporary =
+      ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
+                                           kDummyURL1, kTemporary);
+  const int64_t file_paths_cost_persistent =
+      ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
+                                           kDummyURL1, kTemporary);
 
   for (int i = 0; i < 2; i++) {
     EXPECT_EQ(133 + 14 + file_paths_cost_temporary,
@@ -352,7 +356,7 @@ TEST_F(FileSystemQuotaClientTest, MultiTypeTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, MultiDomainTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {true, "dir1", 0, kDummyURL1, kTemporary},
@@ -372,16 +376,18 @@ TEST_F(FileSystemQuotaClientTest, MultiDomainTest) {
     {false, "baz", 18, kDummyURL2, kPersistent},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost_temporary1 = ComputeFilePathsCostForOriginAndType(
-      kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
-  const int64 file_paths_cost_persistent1 =
+  const int64_t file_paths_cost_temporary1 =
       ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
-          kDummyURL1, kPersistent);
-  const int64 file_paths_cost_temporary2 = ComputeFilePathsCostForOriginAndType(
-      kFiles, arraysize(kFiles), kDummyURL2, kTemporary);
-  const int64 file_paths_cost_persistent2 =
+                                           kDummyURL1, kTemporary);
+  const int64_t file_paths_cost_persistent1 =
       ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
-          kDummyURL2, kPersistent);
+                                           kDummyURL1, kPersistent);
+  const int64_t file_paths_cost_temporary2 =
+      ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
+                                           kDummyURL2, kTemporary);
+  const int64_t file_paths_cost_persistent2 =
+      ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
+                                           kDummyURL2, kPersistent);
 
   for (int i = 0; i < 2; i++) {
     EXPECT_EQ(1331 + 134 + file_paths_cost_temporary1,
@@ -396,14 +402,14 @@ TEST_F(FileSystemQuotaClientTest, MultiDomainTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, GetUsage_MultipleTasks) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {false, "foo",   11, kDummyURL1, kTemporary},
     {false, "bar",   22, kDummyURL1, kTemporary},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost = ComputeFilePathsCostForOriginAndType(
+  const int64_t file_paths_cost = ComputeFilePathsCostForOriginAndType(
       kFiles, arraysize(kFiles), kDummyURL1, kTemporary);
 
   // Dispatching three GetUsage tasks.
@@ -426,7 +432,7 @@ TEST_F(FileSystemQuotaClientTest, GetUsage_MultipleTasks) {
 }
 
 TEST_F(FileSystemQuotaClientTest, GetOriginsForType) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {true, NULL, 0, kDummyURL2, kTemporary},
@@ -442,7 +448,7 @@ TEST_F(FileSystemQuotaClientTest, GetOriginsForType) {
 }
 
 TEST_F(FileSystemQuotaClientTest, GetOriginsForHost) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const char* kURL1 = "http://foo.com/";
   const char* kURL2 = "https://foo.com/";
   const char* kURL3 = "http://foo.com:1/";
@@ -468,7 +474,7 @@ TEST_F(FileSystemQuotaClientTest, GetOriginsForHost) {
 }
 
 TEST_F(FileSystemQuotaClientTest, IncognitoTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(true));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(true));
   const TestFile kFiles[] = {
     {true, NULL, 0, kDummyURL1, kTemporary},
     {false, "foo", 10, kDummyURL1, kTemporary},
@@ -487,7 +493,7 @@ TEST_F(FileSystemQuotaClientTest, IncognitoTest) {
 }
 
 TEST_F(FileSystemQuotaClientTest, DeleteOriginTest) {
-  scoped_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
+  std::unique_ptr<FileSystemQuotaClient> quota_client(NewQuotaClient(false));
   const TestFile kFiles[] = {
     {true, NULL,  0, "http://foo.com/",  kTemporary},
     {false, "a",  1, "http://foo.com/",  kTemporary},
@@ -505,21 +511,21 @@ TEST_F(FileSystemQuotaClientTest, DeleteOriginTest) {
     {false, "g", 64, "https://bar.com/", kTemporary},
   };
   InitializeOriginFiles(quota_client.get(), kFiles, arraysize(kFiles));
-  const int64 file_paths_cost_temporary_foo_https =
+  const int64_t file_paths_cost_temporary_foo_https =
       ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
-          "https://foo.com/", kTemporary);
-  const int64 file_paths_cost_persistent_foo =
+                                           "https://foo.com/", kTemporary);
+  const int64_t file_paths_cost_persistent_foo =
       ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
-          "http://foo.com/", kPersistent);
-  const int64 file_paths_cost_temporary_bar =
+                                           "http://foo.com/", kPersistent);
+  const int64_t file_paths_cost_temporary_bar =
       ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
-          "http://bar.com/", kTemporary);
-  const int64 file_paths_cost_temporary_bar_https =
+                                           "http://bar.com/", kTemporary);
+  const int64_t file_paths_cost_temporary_bar_https =
       ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
-          "https://bar.com/", kTemporary);
-  const int64 file_paths_cost_persistent_bar_https =
+                                           "https://bar.com/", kTemporary);
+  const int64_t file_paths_cost_persistent_bar_https =
       ComputeFilePathsCostForOriginAndType(kFiles, arraysize(kFiles),
-          "https://bar.com/", kPersistent);
+                                           "https://bar.com/", kPersistent);
 
   DeleteOriginData(quota_client.get(), "http://foo.com/", kTemporary);
   base::RunLoop().RunUntilIdle();

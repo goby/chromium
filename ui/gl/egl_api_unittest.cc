@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_egl_api_implementation.h"
+#include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/gl_switches.h"
 
-namespace gfx {
+namespace gl {
 
 class EGLApiTest : public testing::Test {
  public:
@@ -23,6 +25,7 @@ class EGLApiTest : public testing::Test {
     g_driver_egl.fn.eglGetCurrentDisplayFn = &FakeGetCurrentDisplay;
     g_driver_egl.fn.eglGetDisplayFn = &FakeGetDisplay;
     g_driver_egl.fn.eglGetErrorFn = &FakeGetError;
+    g_driver_egl.fn.eglGetProcAddressFn = &FakeGetProcAddress;
   }
 
   void TearDown() override {
@@ -41,6 +44,8 @@ class EGLApiTest : public testing::Test {
       api_->InitializeWithCommandLine(&g_driver_egl, command_line);
     else
       api_->Initialize(&g_driver_egl);
+    g_driver_egl.InitializeClientExtensionBindings();
+    GLSurfaceEGL::InitializeDisplay(EGL_DEFAULT_DISPLAY);
     g_driver_egl.InitializeExtensionBindings();
   }
 
@@ -78,6 +83,11 @@ class EGLApiTest : public testing::Test {
     return EGL_SUCCESS;
   }
 
+  static __eglMustCastToProperFunctionPointerType GL_BINDING_CALL
+  FakeGetProcAddress(const char* procname) {
+    return nullptr;
+  }
+
   std::pair<const char*, const char*> GetExtensions() {
     return std::make_pair(
         api_->eglQueryStringFn(EGL_NO_DISPLAY, EGL_EXTENSIONS),
@@ -88,7 +98,7 @@ class EGLApiTest : public testing::Test {
   static const char* fake_extension_string_;
   static const char* fake_client_extension_string_;
 
-  scoped_ptr<RealEGLApi> api_;
+  std::unique_ptr<RealEGLApi> api_;
 };
 
 const char* EGLApiTest::fake_extension_string_ = "";
@@ -137,4 +147,4 @@ TEST_F(EGLApiTest, DisabledExtensionStringTest) {
   EXPECT_STREQ(kFilteredExtensions, GetExtensions().second);
 }
 
-}  // namespace gfx
+}  // namespace gl

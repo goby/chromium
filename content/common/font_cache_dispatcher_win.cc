@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/string16.h"
 #include "content/common/child_process_messages.h"
@@ -150,8 +151,8 @@ bool FontCacheDispatcher::Send(IPC::Message* message) {
 FontCacheDispatcher::~FontCacheDispatcher() {
 }
 
-void FontCacheDispatcher::OnFilterAdded(IPC::Sender* sender) {
-  sender_ = sender;
+void FontCacheDispatcher::OnFilterAdded(IPC::Channel* channel) {
+  sender_ = channel;
 }
 
 bool FontCacheDispatcher::OnMessageReceived(const IPC::Message& message) {

@@ -4,19 +4,24 @@
 
 #include "net/socket/unix_domain_server_socket_posix.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
 #include "net/socket/unix_domain_client_socket_posix.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 namespace net {
 namespace {
@@ -43,7 +48,7 @@ class UnixDomainServerSocketTest : public testing::Test {
  protected:
   UnixDomainServerSocketTest() {
     EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
-    socket_path_ = temp_dir_.path().Append(kSocketFilename).value();
+    socket_path_ = temp_dir_.GetPath().Append(kSocketFilename).value();
   }
 
   base::ScopedTempDir temp_dir_;
@@ -55,7 +60,7 @@ TEST_F(UnixDomainServerSocketTest, ListenWithInvalidPath) {
   UnixDomainServerSocket server_socket(CreateAuthCallback(true),
                                        kUseAbstractNamespace);
   EXPECT_EQ(ERR_FILE_NOT_FOUND,
-            server_socket.ListenWithAddressAndPort(kInvalidSocketPath, 0, 1));
+            server_socket.BindAndListen(kInvalidSocketPath, /*backlog=*/1));
 }
 
 TEST_F(UnixDomainServerSocketTest, ListenWithInvalidPathWithAbstractNamespace) {
@@ -63,11 +68,11 @@ TEST_F(UnixDomainServerSocketTest, ListenWithInvalidPathWithAbstractNamespace) {
   UnixDomainServerSocket server_socket(CreateAuthCallback(true),
                                        kUseAbstractNamespace);
 #if defined(OS_ANDROID) || defined(OS_LINUX)
-  EXPECT_EQ(OK,
-            server_socket.ListenWithAddressAndPort(kInvalidSocketPath, 0, 1));
+  EXPECT_THAT(server_socket.BindAndListen(kInvalidSocketPath, /*backlog=*/1),
+              IsOk());
 #else
   EXPECT_EQ(ERR_ADDRESS_INVALID,
-            server_socket.ListenWithAddressAndPort(kInvalidSocketPath, 0, 1));
+            server_socket.BindAndListen(kInvalidSocketPath, /*backlog=*/1));
 #endif
 }
 
@@ -76,8 +81,8 @@ TEST_F(UnixDomainServerSocketTest, ListenAgainAfterFailureWithInvalidPath) {
   UnixDomainServerSocket server_socket(CreateAuthCallback(true),
                                        kUseAbstractNamespace);
   EXPECT_EQ(ERR_FILE_NOT_FOUND,
-            server_socket.ListenWithAddressAndPort(kInvalidSocketPath, 0, 1));
-  EXPECT_EQ(OK, server_socket.ListenWithAddressAndPort(socket_path_, 0, 1));
+            server_socket.BindAndListen(kInvalidSocketPath, /*backlog=*/1));
+  EXPECT_THAT(server_socket.BindAndListen(socket_path_, /*backlog=*/1), IsOk());
 }
 
 TEST_F(UnixDomainServerSocketTest, AcceptWithForbiddenUser) {
@@ -85,9 +90,9 @@ TEST_F(UnixDomainServerSocketTest, AcceptWithForbiddenUser) {
 
   UnixDomainServerSocket server_socket(CreateAuthCallback(false),
                                        kUseAbstractNamespace);
-  EXPECT_EQ(OK, server_socket.ListenWithAddressAndPort(socket_path_, 0, 1));
+  EXPECT_THAT(server_socket.BindAndListen(socket_path_, /*backlog=*/1), IsOk());
 
-  scoped_ptr<StreamSocket> accepted_socket;
+  std::unique_ptr<StreamSocket> accepted_socket;
   TestCompletionCallback accept_callback;
   EXPECT_EQ(ERR_IO_PENDING,
             server_socket.Accept(&accepted_socket, accept_callback.callback()));
@@ -100,7 +105,7 @@ TEST_F(UnixDomainServerSocketTest, AcceptWithForbiddenUser) {
   TestCompletionCallback connect_callback;
   int rv = connect_callback.GetResult(
       client_socket.Connect(connect_callback.callback()));
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
   // Try to read from the socket.
   const int read_buffer_size = 10;
@@ -117,6 +122,21 @@ TEST_F(UnixDomainServerSocketTest, AcceptWithForbiddenUser) {
   // |accepted_socket|.
   EXPECT_FALSE(accept_callback.have_result());
   EXPECT_FALSE(accepted_socket);
+}
+
+TEST_F(UnixDomainServerSocketTest, UnimplementedMethodsFail) {
+  const bool kUseAbstractNamespace = false;
+  UnixDomainServerSocket server_socket(CreateAuthCallback(true),
+                                       kUseAbstractNamespace);
+
+  IPEndPoint ep;
+  EXPECT_THAT(server_socket.Listen(ep, 0), IsError(ERR_NOT_IMPLEMENTED));
+  EXPECT_EQ(ERR_NOT_IMPLEMENTED,
+      server_socket.ListenWithAddressAndPort(kInvalidSocketPath,
+                                             0,
+                                             /*backlog=*/1));
+
+  EXPECT_THAT(server_socket.GetLocalAddress(&ep), IsError(ERR_ADDRESS_INVALID));
 }
 
 // Normal cases including read/write are tested by UnixDomainClientSocketTest.

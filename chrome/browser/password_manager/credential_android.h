@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_PASSWORD_MANAGER_CREDENTIAL_ANDROID_H_
 #define CHROME_BROWSER_PASSWORD_MANAGER_CREDENTIAL_ANDROID_H_
 
+#include <stddef.h>
+
 #include "base/android/jni_array.h"
 #include "base/android/scoped_java_ref.h"
 #include "components/autofill/core/common/password_form.h"
@@ -15,15 +17,11 @@
 base::android::ScopedJavaLocalRef<jobject> CreateNativeCredential(
     JNIEnv* env,
     const autofill::PasswordForm& password_form,
-    int position,
-    int type);
+    int position);
 
 // Creates Java Credential[] array of size |size|.
 base::android::ScopedJavaLocalRef<jobjectArray> CreateNativeCredentialArray(
     JNIEnv* env,
     size_t size);
-
-// Registers the Credential native method.
-bool RegisterCredential(JNIEnv* env);
 
 #endif  // CHROME_BROWSER_PASSWORD_MANAGER_CREDENTIAL_ANDROID_H_

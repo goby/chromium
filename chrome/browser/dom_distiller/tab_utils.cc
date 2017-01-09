@@ -4,7 +4,11 @@
 
 #include "chrome/browser/dom_distiller/tab_utils.h"
 
-#include "base/message_loop/message_loop.h"
+#include <utility>
+
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper_delegate.h"
@@ -53,30 +57,30 @@ class SelfDeletingRequestDelegate : public ViewRequestDelegate,
 
   // Takes ownership of the ViewerHandle to keep distillation alive until |this|
   // is deleted.
-  void TakeViewerHandle(scoped_ptr<ViewerHandle> viewer_handle);
+  void TakeViewerHandle(std::unique_ptr<ViewerHandle> viewer_handle);
 
  private:
   // The handle to the view request towards the DomDistillerService. It
   // needs to be kept around to ensure the distillation request finishes.
-  scoped_ptr<ViewerHandle> viewer_handle_;
+  std::unique_ptr<ViewerHandle> viewer_handle_;
 };
 
 void SelfDeletingRequestDelegate::DidNavigateMainFrame(
     const content::LoadCommittedDetails& details,
     const content::FrameNavigateParams& params) {
   Observe(NULL);
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 void SelfDeletingRequestDelegate::RenderProcessGone(
     base::TerminationStatus status) {
   Observe(NULL);
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 void SelfDeletingRequestDelegate::WebContentsDestroyed() {
   Observe(NULL);
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 SelfDeletingRequestDelegate::SelfDeletingRequestDelegate(
@@ -96,22 +100,23 @@ void SelfDeletingRequestDelegate::OnArticleUpdated(
 }
 
 void SelfDeletingRequestDelegate::TakeViewerHandle(
-    scoped_ptr<ViewerHandle> viewer_handle) {
-  viewer_handle_ = viewer_handle.Pass();
+    std::unique_ptr<ViewerHandle> viewer_handle) {
+  viewer_handle_ = std::move(viewer_handle);
 }
 
 // Start loading the viewer URL of the current page in |web_contents|.
 void StartNavigationToDistillerViewer(content::WebContents* web_contents,
                                       const GURL& url) {
   GURL viewer_url = dom_distiller::url_utils::GetDistillerViewUrlFromUrl(
-      dom_distiller::kDomDistillerScheme, url);
+      dom_distiller::kDomDistillerScheme, url,
+      (base::TimeTicks::Now() - base::TimeTicks()).InMilliseconds());
   content::NavigationController::LoadURLParams params(viewer_url);
   params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
   web_contents->GetController().LoadURLWithParams(params);
 }
 
 void MaybeStartDistillation(
-    scoped_ptr<SourcePageHandleWebContents> source_page_handle) {
+    std::unique_ptr<SourcePageHandleWebContents> source_page_handle) {
   const GURL& last_committed_url =
       source_page_handle->web_contents()->GetLastCommittedURL();
   if (!dom_distiller::url_utils::IsUrlDistillable(last_committed_url))
@@ -124,13 +129,13 @@ void MaybeStartDistillation(
   DomDistillerService* dom_distiller_service =
       DomDistillerServiceFactory::GetForBrowserContext(
           source_page_handle->web_contents()->GetBrowserContext());
-  scoped_ptr<DistillerPage> distiller_page =
+  std::unique_ptr<DistillerPage> distiller_page =
       dom_distiller_service->CreateDefaultDistillerPageWithHandle(
-                                 source_page_handle.Pass()).Pass();
+          std::move(source_page_handle));
 
-  scoped_ptr<ViewerHandle> viewer_handle = dom_distiller_service->ViewUrl(
-      view_request_delegate, distiller_page.Pass(), last_committed_url);
-  view_request_delegate->TakeViewerHandle(viewer_handle.Pass());
+  std::unique_ptr<ViewerHandle> viewer_handle = dom_distiller_service->ViewUrl(
+      view_request_delegate, std::move(distiller_page), last_committed_url);
+  view_request_delegate->TakeViewerHandle(std::move(viewer_handle));
 }
 
 }  // namespace
@@ -158,10 +163,10 @@ void DistillCurrentPageAndView(content::WebContents* old_web_contents) {
   CoreTabHelper::FromWebContents(old_web_contents)->delegate()->SwapTabContents(
       old_web_contents, new_web_contents, false, false);
 
-  scoped_ptr<SourcePageHandleWebContents> source_page_handle(
+  std::unique_ptr<SourcePageHandleWebContents> source_page_handle(
       new SourcePageHandleWebContents(old_web_contents, true));
 
-  MaybeStartDistillation(source_page_handle.Pass());
+  MaybeStartDistillation(std::move(source_page_handle));
 }
 
 void DistillAndView(content::WebContents* source_web_contents,
@@ -169,10 +174,10 @@ void DistillAndView(content::WebContents* source_web_contents,
   DCHECK(source_web_contents);
   DCHECK(destination_web_contents);
 
-  scoped_ptr<SourcePageHandleWebContents> source_page_handle(
+  std::unique_ptr<SourcePageHandleWebContents> source_page_handle(
       new SourcePageHandleWebContents(source_web_contents, false));
 
-  MaybeStartDistillation(source_page_handle.Pass());
+  MaybeStartDistillation(std::move(source_page_handle));
   StartNavigationToDistillerViewer(destination_web_contents,
                                    source_web_contents->GetLastCommittedURL());
 }

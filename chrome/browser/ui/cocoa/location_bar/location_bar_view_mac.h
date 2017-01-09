@@ -5,34 +5,38 @@
 #ifndef CHROME_BROWSER_UI_COCOA_LOCATION_BAR_LOCATION_BAR_VIEW_MAC_H_
 #define CHROME_BROWSER_UI_COCOA_LOCATION_BAR_LOCATION_BAR_VIEW_MAC_H_
 
+#import <Cocoa/Cocoa.h>
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
-#import <Cocoa/Cocoa.h>
-
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_member.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_edit_controller.h"
 #include "components/content_settings/core/common/content_settings_types.h"
-#include "components/ui/zoom/zoom_event_manager_observer.h"
+#include "components/prefs/pref_member.h"
+#include "components/security_state/core/security_state.h"
+#include "components/zoom/zoom_event_manager_observer.h"
 
 @class AutocompleteTextField;
 class CommandUpdater;
 class ContentSettingDecoration;
-class EVBubbleDecoration;
 class KeywordHintDecoration;
 class LocationBarDecoration;
 class LocationIconDecoration;
 class ManagePasswordsDecoration;
 class PageActionDecoration;
 class Profile;
+class SaveCreditCardDecoration;
 class SelectedKeywordDecoration;
 class StarDecoration;
 class TranslateDecoration;
+class SecurityStateBubbleDecoration;
 class ZoomDecoration;
 class ZoomDecorationTest;
 
@@ -43,7 +47,7 @@ class ZoomDecorationTest;
 class LocationBarViewMac : public LocationBar,
                            public LocationBarTesting,
                            public ChromeOmniboxEditController,
-                           public ui_zoom::ZoomEventManagerObserver {
+                           public zoom::ZoomEventManagerObserver {
  public:
   LocationBarViewMac(AutocompleteTextField* field,
                      CommandUpdater* command_updater,
@@ -96,23 +100,19 @@ class LocationBarViewMac : public LocationBar,
   // false when the change in zoom for the active tab wasn't an explicit user
   // action (e.g. switching tabs, creating a new tab, creating a new browser).
   // Additionally, |can_show_bubble| will only be true when the bubble wouldn't
-  // be obscured by other UI (wrench menu) or redundant (+/- from wrench).
+  // be obscured by other UI (app menu) or redundant (+/- from app menu).
   void ZoomChangedForActiveTab(bool can_show_bubble);
 
   // Checks if the bookmark star should be enabled or not.
   bool IsStarEnabled() const;
 
-  // Get the point in window coordinates on the star for the bookmark bubble to
-  // aim at. Only works if IsStarEnabled returns YES.
-  NSPoint GetBookmarkBubblePoint() const;
+  // Get the point in window coordinates in the |decoration| at which the
+  // associate bubble aims.
+  NSPoint GetBubblePointForDecoration(LocationBarDecoration* decoration) const;
 
-  // Get the point in window coordinates on the star for the Translate bubble to
-  // aim at.
-  NSPoint GetTranslateBubblePoint() const;
-
-  // Get the point in window coordinates in the lock icon for the Manage
-  // Passwords bubble to aim at.
-  NSPoint GetManagePasswordsBubblePoint() const;
+  // Get the point in window coordinates in the save credit card icon for the
+  //  save credit card bubble to aim at.
+  NSPoint GetSaveCreditCardBubblePoint() const;
 
   // Get the point in window coordinates in the security icon at which the page
   // info bubble aims.
@@ -152,21 +152,56 @@ class LocationBarViewMac : public LocationBar,
   // Clears any location bar state stored for |contents|.
   void ResetTabState(content::WebContents* contents);
 
+  // Set the location bar's icon to the correct image for the current URL.
+  void UpdateLocationIcon();
+
+  // Set the location bar's controls to visibly match the current theme.
+  void UpdateColorsToMatchTheme();
+
+  // Notify the location bar that it was added to the browser window. Provides
+  // an update point for interface objects that need to set their appearance
+  // based on the window's theme.
+  void OnAddedToWindow();
+
+  // Notify the location bar that the browser window theme has changed. Provides
+  // an update point for interface objects that need to set their appearance
+  // based on the window's theme.
+  void OnThemeChanged();
+
   // ChromeOmniboxEditController:
   void UpdateWithoutTabRestore() override;
   void OnChanged() override;
-  void OnSetFocus() override;
-  void ShowURL() override;
   ToolbarModel* GetToolbarModel() override;
   const ToolbarModel* GetToolbarModel() const override;
   content::WebContents* GetWebContents() override;
 
+  bool ShouldShowEVBubble() const;
+
+  // Returns true if the security state decoration should be displayed. The
+  // security state should only be shown for valid and invalid HTTPS states.
+  bool ShouldShowSecurityState() const;
+
   NSImage* GetKeywordImage(const base::string16& keyword);
+
+  // Returns the color for the vector icon in the location bar.
+  SkColor GetLocationBarIconColor() const;
 
   AutocompleteTextField* GetAutocompleteTextField() { return field_; }
 
+  // Returns true if the location bar is dark.
+  bool IsLocationBarDark() const;
+
+  // Returns the decoration for the page info bubble.
+  LocationBarDecoration* GetPageInfoDecoration() const;
+
   ManagePasswordsDecoration* manage_passwords_decoration() {
     return manage_passwords_decoration_.get();
+  }
+
+  StarDecoration* star_decoration() const { return star_decoration_.get(); }
+
+  TranslateDecoration* translate_decoration() const {
+    return translate_decoration_.get();
   }
 
   Browser* browser() const { return browser_; }
@@ -174,6 +209,11 @@ class LocationBarViewMac : public LocationBar,
   // ZoomManagerObserver:
   // Updates the view for the zoom icon when default zoom levels change.
   void OnDefaultZoomLevelChanged() override;
+
+  // Returns the decoration accessibility views for all of this
+  // LocationBarViewMac's decorations. The returned NSViews may not have been
+  // positioned yet.
+  std::vector<NSView*> GetDecorationAccessibilityViews();
 
  private:
   friend ZoomDecorationTest;
@@ -212,29 +252,51 @@ class LocationBarViewMac : public LocationBar,
   // Returns whether any updates were made.
   bool UpdateZoomDecoration(bool default_zoom_changed);
 
-  scoped_ptr<OmniboxViewMac> omnibox_view_;
+  // Updates the security state bubble decoration.
+  void UpdateSecurityState(bool tab_changed);
+
+  // Returns true if the security state can animate for the |level|.
+  bool CanAnimateSecurityLevel(security_state::SecurityLevel level) const;
+
+  // Returns true if |level| is SECURE or EV_SECURE.
+  bool IsSecureConnection(security_state::SecurityLevel level) const;
+
+  // Returns pointers to all of the LocationBarDecorations owned by this
+  // LocationBarViewMac. This helper function is used for positioning and
+  // re-positioning accessibility views.
+  std::vector<LocationBarDecoration*> GetDecorations();
+
+  // Updates |decoration|'s accessibility view's position to match the computed
+  // position the decoration will be drawn at.
+  void UpdateAccessibilityViewPosition(LocationBarDecoration* decoration);
+
+  std::unique_ptr<OmniboxViewMac> omnibox_view_;
 
   AutocompleteTextField* field_;  // owned by tab controller
 
   // A decoration that shows an icon to the left of the address.
-  scoped_ptr<LocationIconDecoration> location_icon_decoration_;
+  std::unique_ptr<LocationIconDecoration> location_icon_decoration_;
 
   // A decoration that shows the keyword-search bubble on the left.
-  scoped_ptr<SelectedKeywordDecoration> selected_keyword_decoration_;
+  std::unique_ptr<SelectedKeywordDecoration> selected_keyword_decoration_;
 
-  // A decoration that shows a lock icon and ev-cert label in a bubble
-  // on the left.
-  scoped_ptr<EVBubbleDecoration> ev_bubble_decoration_;
+  // A decoration that shows a security icon and the security state in a
+  // bubble on the left.
+  std::unique_ptr<SecurityStateBubbleDecoration>
+      security_state_bubble_decoration_;
+
+  // Save credit card icon on the right side of the omnibox.
+  std::unique_ptr<SaveCreditCardDecoration> save_credit_card_decoration_;
 
   // Bookmark star right of page actions.
-  scoped_ptr<StarDecoration> star_decoration_;
+  std::unique_ptr<StarDecoration> star_decoration_;
 
   // Translate icon at the end of the ominibox.
-  scoped_ptr<TranslateDecoration> translate_decoration_;
+  std::unique_ptr<TranslateDecoration> translate_decoration_;
 
   // A zoom icon at the end of the omnibox, which shows at non-standard zoom
   // levels.
-  scoped_ptr<ZoomDecoration> zoom_decoration_;
+  std::unique_ptr<ZoomDecoration> zoom_decoration_;
 
   // Decorations for the installed Page Actions.
   ScopedVector<PageActionDecoration> page_action_decorations_;
@@ -243,10 +305,10 @@ class LocationBarViewMac : public LocationBar,
   ScopedVector<ContentSettingDecoration> content_setting_decorations_;
 
   // Keyword hint decoration displayed on the right-hand side.
-  scoped_ptr<KeywordHintDecoration> keyword_hint_decoration_;
+  std::unique_ptr<KeywordHintDecoration> keyword_hint_decoration_;
 
   // The right-hand-side button to manage passwords associated with a page.
-  scoped_ptr<ManagePasswordsDecoration> manage_passwords_decoration_;
+  std::unique_ptr<ManagePasswordsDecoration> manage_passwords_decoration_;
 
   Browser* browser_;
 
@@ -255,6 +317,29 @@ class LocationBarViewMac : public LocationBar,
 
   // Indicates whether or not the location bar is currently visible.
   bool location_bar_visible_;
+
+  // True if the HTTPS state should be displayed on the security state
+  // decoration. This does not apply to the EV cert.
+  bool should_show_secure_verbose_;
+
+  // True if the non-secure state should be displayed on the security state
+  // decoration.
+  bool should_show_nonsecure_verbose_;
+
+  // True if the security state decoration should be animated for a secure
+  // security level.
+  bool should_animate_secure_verbose_;
+
+  // True if the security state decoration should be animated for a non-secure
+  // security level.
+  bool should_animate_nonsecure_verbose_;
+
+  // True if there's enough room for the omnibox to show the security verbose.
+  // If the verbose is displaying the EV cert, then this should always be true.
+  bool is_width_available_for_security_verbose_;
+
+  // The security level of the location bar icon.
+  security_state::SecurityLevel security_level_;
 
   // Used to schedule a task for the first run info bubble.
   base::WeakPtrFactory<LocationBarViewMac> weak_ptr_factory_;

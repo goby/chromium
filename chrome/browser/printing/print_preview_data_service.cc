@@ -4,6 +4,7 @@
 
 #include "chrome/browser/printing/print_preview_data_service.h"
 
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/singleton.h"
 #include "base/stl_util.h"
@@ -40,17 +41,19 @@ class PrintPreviewDataStore : public base::RefCounted<PrintPreviewDataStore> {
   }
 
   // Set/Update the preview data entry for the specified |index|.
-  void SetPreviewDataForIndex(int index, const base::RefCountedBytes* data) {
+  void SetPreviewDataForIndex(int index,
+                              scoped_refptr<base::RefCountedBytes> data) {
     if (IsInvalidIndex(index))
       return;
 
-    page_data_map_[index] = const_cast<base::RefCountedBytes*>(data);
+    page_data_map_[index] = std::move(data);
   }
 
   // Returns the available draft page count.
   int GetAvailableDraftPageCount() {
     int page_data_map_size = page_data_map_.size();
-    if (ContainsKey(page_data_map_, printing::COMPLETE_PREVIEW_DOCUMENT_INDEX))
+    if (base::ContainsKey(page_data_map_,
+                          printing::COMPLETE_PREVIEW_DOCUMENT_INDEX))
       page_data_map_size--;
     return page_data_map_size;
   }
@@ -102,11 +105,14 @@ void PrintPreviewDataService::GetDataEntry(
 void PrintPreviewDataService::SetDataEntry(
     int32_t preview_ui_id,
     int index,
-    const base::RefCountedBytes* data_bytes) {
-  if (!ContainsKey(data_store_map_, preview_ui_id))
-    data_store_map_[preview_ui_id] = new PrintPreviewDataStore();
+    scoped_refptr<base::RefCountedBytes> data_bytes) {
+  if (!base::ContainsKey(data_store_map_, preview_ui_id)) {
+    data_store_map_[preview_ui_id] =
+        make_scoped_refptr(new PrintPreviewDataStore());
+  }
 
-  data_store_map_[preview_ui_id]->SetPreviewDataForIndex(index, data_bytes);
+  data_store_map_[preview_ui_id]->SetPreviewDataForIndex(index,
+                                                         std::move(data_bytes));
 }
 
 void PrintPreviewDataService::RemoveEntry(int32_t preview_ui_id) {

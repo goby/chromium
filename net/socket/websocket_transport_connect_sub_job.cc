@@ -7,7 +7,7 @@
 #include "base/logging.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/websocket_endpoint_lock_manager.h"
 
@@ -67,10 +67,10 @@ LoadState WebSocketTransportConnectSubJob::GetLoadState() const {
 
 ClientSocketFactory* WebSocketTransportConnectSubJob::client_socket_factory()
     const {
-  return parent_job_->helper_.client_socket_factory();
+  return parent_job_->client_socket_factory_;
 }
 
-const BoundNetLog& WebSocketTransportConnectSubJob::net_log() const {
+const NetLogWithSource& WebSocketTransportConnectSubJob::net_log() const {
   return parent_job_->net_log();
 }
 
@@ -137,7 +137,7 @@ int WebSocketTransportConnectSubJob::DoTransportConnect() {
   next_state_ = STATE_TRANSPORT_CONNECT_COMPLETE;
   AddressList one_address(CurrentAddress());
   transport_socket_ = client_socket_factory()->CreateTransportClientSocket(
-      one_address, net_log().net_log(), net_log().source());
+      one_address, nullptr, net_log().net_log(), net_log().source());
   // This use of base::Unretained() is safe because transport_socket_ is
   // destroyed in the destructor.
   return transport_socket_->Connect(base::Bind(

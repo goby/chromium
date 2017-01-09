@@ -5,11 +5,14 @@
 #ifndef REMOTING_HOST_WIN_WORKER_PROCESS_LAUNCHER_H_
 #define REMOTING_HOST_WIN_WORKER_PROCESS_LAUNCHER_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/timer/timer.h"
 #include "base/win/object_watcher.h"
@@ -17,7 +20,6 @@
 #include "net/base/backoff_entry.h"
 
 namespace base {
-class SingleThreadTaskRunner;
 class TimeDelta;
 } // namespace base
 
@@ -64,7 +66,7 @@ class WorkerProcessLauncher
   // Creates the launcher that will use |launcher_delegate| to manage the worker
   // process and |ipc_handler| to handle IPCs. The caller must ensure that
   // |ipc_handler| must outlive this object.
-  WorkerProcessLauncher(scoped_ptr<Delegate> launcher_delegate,
+  WorkerProcessLauncher(std::unique_ptr<Delegate> launcher_delegate,
                         WorkerProcessIpcDelegate* ipc_handler);
   ~WorkerProcessLauncher() override;
 
@@ -94,7 +96,7 @@ class WorkerProcessLauncher
   // Mirrors methods of IPC::Listener to be invoked by |Delegate|. |Delegate|
   // has to validate |peer_pid| if necessary.
   bool OnMessageReceived(const IPC::Message& message);
-  void OnChannelConnected(int32 peer_pid);
+  void OnChannelConnected(int32_t peer_pid);
   void OnChannelError();
 
  private:
@@ -128,7 +130,7 @@ class WorkerProcessLauncher
   WorkerProcessIpcDelegate* ipc_handler_;
 
   // Implements specifics of launching a worker process.
-  scoped_ptr<WorkerProcessLauncher::Delegate> launcher_delegate_;
+  std::unique_ptr<WorkerProcessLauncher::Delegate> launcher_delegate_;
 
   // Keeps the exit code of the worker process after it was closed. The exit
   // code is used to determine whether the process has to be restarted.

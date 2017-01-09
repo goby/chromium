@@ -9,6 +9,7 @@
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/ppapi/ppapi_test.h"
 #include "components/nacl/browser/nacl_browser.h"
@@ -52,7 +53,7 @@ void NaClGdbDebugStubTest::StartTestScript(base::Process* test_process,
 void NaClGdbDebugStubTest::RunDebugStubTest(const std::string& nacl_module,
                                             const std::string& test_name) {
   base::Process test_script;
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   nacl::NaClBrowser::GetInstance()->SetGdbDebugStubPortListener(
       base::Bind(&NaClGdbDebugStubTest::StartTestScript,
                  base::Unretained(this), &test_script, test_name));

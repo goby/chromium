@@ -28,60 +28,57 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "web/WorkerContentSettingsClient.h"
 
 #include "core/workers/WorkerGlobalScope.h"
 #include "public/platform/WebString.h"
 #include "public/web/WebWorkerContentSettingsClientProxy.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<WorkerContentSettingsClient> WorkerContentSettingsClient::create(PassOwnPtr<WebWorkerContentSettingsClientProxy> proxy)
-{
-    return adoptPtrWillBeNoop(new WorkerContentSettingsClient(proxy));
+WorkerContentSettingsClient* WorkerContentSettingsClient::create(
+    std::unique_ptr<WebWorkerContentSettingsClientProxy> proxy) {
+  return new WorkerContentSettingsClient(std::move(proxy));
 }
 
-WorkerContentSettingsClient::~WorkerContentSettingsClient()
-{
+WorkerContentSettingsClient::~WorkerContentSettingsClient() {}
+
+bool WorkerContentSettingsClient::requestFileSystemAccessSync() {
+  if (!m_proxy)
+    return true;
+  return m_proxy->requestFileSystemAccessSync();
 }
 
-bool WorkerContentSettingsClient::requestFileSystemAccessSync()
-{
-    if (!m_proxy)
-        return true;
-    return m_proxy->requestFileSystemAccessSync();
+bool WorkerContentSettingsClient::allowIndexedDB(const WebString& name) {
+  if (!m_proxy)
+    return true;
+  return m_proxy->allowIndexedDB(name);
 }
 
-bool WorkerContentSettingsClient::allowIndexedDB(const WebString& name)
-{
-    if (!m_proxy)
-        return true;
-    return m_proxy->allowIndexedDB(name);
+const char* WorkerContentSettingsClient::supplementName() {
+  return "WorkerContentSettingsClient";
 }
 
-const char* WorkerContentSettingsClient::supplementName()
-{
-    return "WorkerContentSettingsClient";
+WorkerContentSettingsClient* WorkerContentSettingsClient::from(
+    ExecutionContext& context) {
+  WorkerClients* clients = toWorkerGlobalScope(context).clients();
+  DCHECK(clients);
+  return static_cast<WorkerContentSettingsClient*>(
+      Supplement<WorkerClients>::from(*clients, supplementName()));
 }
 
-WorkerContentSettingsClient* WorkerContentSettingsClient::from(ExecutionContext& context)
-{
-    WorkerClients* clients = toWorkerGlobalScope(context).clients();
-    ASSERT(clients);
-    return static_cast<WorkerContentSettingsClient*>(WillBeHeapSupplement<WorkerClients>::from(*clients, supplementName()));
+WorkerContentSettingsClient::WorkerContentSettingsClient(
+    std::unique_ptr<WebWorkerContentSettingsClientProxy> proxy)
+    : m_proxy(std::move(proxy)) {}
+
+void provideContentSettingsClientToWorker(
+    WorkerClients* clients,
+    std::unique_ptr<WebWorkerContentSettingsClientProxy> proxy) {
+  DCHECK(clients);
+  WorkerContentSettingsClient::provideTo(
+      *clients, WorkerContentSettingsClient::supplementName(),
+      WorkerContentSettingsClient::create(std::move(proxy)));
 }
 
-WorkerContentSettingsClient::WorkerContentSettingsClient(PassOwnPtr<WebWorkerContentSettingsClientProxy> proxy)
-    : m_proxy(proxy)
-{
-}
-
-void provideContentSettingsClientToWorker(WorkerClients* clients, PassOwnPtr<WebWorkerContentSettingsClientProxy> proxy)
-{
-    ASSERT(clients);
-    WorkerContentSettingsClient::provideTo(*clients, WorkerContentSettingsClient::supplementName(), WorkerContentSettingsClient::create(proxy));
-}
-
-} // namespace blink
+}  // namespace blink

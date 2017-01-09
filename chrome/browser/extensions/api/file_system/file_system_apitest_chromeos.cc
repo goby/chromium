@@ -8,8 +8,9 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/path_service.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
@@ -20,7 +21,7 @@
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/api/file_system.h"
-#include "components/drive/file_system_interface.h"
+#include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/service/fake_drive_service.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/event_router.h"
@@ -128,7 +129,7 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
   void SetUpOnMainThread() override {
     PlatformAppBrowserTest::SetUpOnMainThread();
 
-    scoped_ptr<drive::ResourceEntry> entry;
+    std::unique_ptr<drive::ResourceEntry> entry;
     drive::FileError error = drive::FILE_ERROR_FAILED;
     integration_service_->file_system()->GetResourceEntry(
         base::FilePath::FromUTF8Unsafe("drive/root"),  // whatever
@@ -159,7 +160,7 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
 
     integration_service_ = new drive::DriveIntegrationService(
         profile, NULL, fake_drive_service_, std::string(),
-        test_cache_root_.path(), NULL);
+        test_cache_root_.GetPath(), NULL);
     return integration_service_;
   }
 
@@ -177,7 +178,7 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
   bool AddTestFile(const std::string& title,
                    const std::string& data,
                    const std::string& parent_id) {
-    scoped_ptr<google_apis::FileResource> entry;
+    std::unique_ptr<google_apis::FileResource> entry;
     google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
     fake_drive_service_->AddNewFile(
         "text/plain", data, parent_id, title, false,
@@ -188,7 +189,7 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
 
   std::string AddTestDirectory(const std::string& title,
                                const std::string& parent_id) {
-    scoped_ptr<google_apis::FileResource> entry;
+    std::unique_ptr<google_apis::FileResource> entry;
     google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
     fake_drive_service_->AddNewDirectory(
         parent_id, title, drive::AddNewDirectoryOptions(),
@@ -202,7 +203,7 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
   drive::DriveIntegrationService* integration_service_;
   drive::DriveIntegrationServiceFactory::FactoryCallback
       create_drive_integration_service_;
-  scoped_ptr<drive::DriveIntegrationServiceFactory::ScopedFactoryForTest>
+  std::unique_ptr<drive::DriveIntegrationServiceFactory::ScopedFactoryForTest>
       service_factory_for_test_;
 };
 
@@ -237,13 +238,13 @@ class FileSystemApiTestForRequestFileSystem : public PlatformAppBrowserTest {
  protected:
   base::ScopedTempDir temp_dir_;
   chromeos::FakeChromeUserManager* fake_user_manager_;
-  scoped_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
+  std::unique_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
 
   // Creates a testing file system in a testing directory.
   void CreateTestingFileSystem(const std::string& mount_point_name,
                                bool read_only) {
     const base::FilePath mount_point_path =
-        temp_dir_.path().Append(mount_point_name);
+        temp_dir_.GetPath().Append(mount_point_name);
     ASSERT_TRUE(base::CreateDirectory(mount_point_path));
     ASSERT_TRUE(
         base::CreateDirectory(mount_point_path.Append(kChildDirectory)));
@@ -492,7 +493,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemApiTestForRequestFileSystem,
       profile(), extensions::api::file_system::OnVolumeListChanged::kEventName,
       kTestingExtensionId,
       base::Bind(&FileSystemApiTestForRequestFileSystem::MountFakeVolume,
-                 this));
+                 base::Unretained(this)));
 
   ASSERT_TRUE(RunPlatformAppTest("api_test/file_system/on_volume_list_changed"))
       << message_;

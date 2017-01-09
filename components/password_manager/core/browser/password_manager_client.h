@@ -5,8 +5,10 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_CLIENT_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_CLIENT_H_
 
+#include <vector>
+
 #include "base/callback.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/credentials_filter.h"
 #include "components/password_manager/core/browser/password_store.h"
@@ -19,11 +21,9 @@ class AutofillManager;
 
 namespace password_manager {
 
-struct CredentialInfo;
 class LogManager;
 class PasswordFormManager;
 class PasswordManager;
-class PasswordManagerDriver;
 class PasswordStore;
 
 enum PasswordSyncState {
@@ -42,6 +42,9 @@ enum class CredentialSourceType {
 // environment.
 class PasswordManagerClient {
  public:
+  using CredentialsCallback =
+      base::Callback<void(const autofill::PasswordForm*)>;
+
   PasswordManagerClient() {}
   virtual ~PasswordManagerClient() {}
 
@@ -60,6 +63,14 @@ class PasswordManagerClient {
   // password manager is disabled, or in the presence of SSL errors on a page.
   virtual bool IsFillingEnabledForCurrentPage() const;
 
+  // Checks if the Credential Manager API is allowed to run on the page. It's
+  // not allowed while prerendering and the pre-rendered WebContents will be
+  // destroyed in this case.
+  // Even if the method returns true the API may still be disabled or limited
+  // depending on the method called because IsFillingEnabledForCurrentPage() and
+  // IsSavingAndFillingEnabledForCurrentPage are respected.
+  virtual bool OnCredentialManagerUsed();
+
   // Informs the embedder of a password form that can be saved or updated in
   // password store if the user allows it. The embedder is not required to
   // prompt the user if it decides that this form doesn't need to be saved or
@@ -76,8 +87,10 @@ class PasswordManagerClient {
   // the stored one. In this case form_to_save.password_overridden() == true
   // and form_to_save.pending_credentials() should correspond to the credential
   // that was overidden.
+  // TODO(crbug.com/576747): Analyze usefulness of the |type| parameter, make a
+  // decision if it should be kept or removed.
   virtual bool PromptUserToSaveOrUpdatePassword(
-      scoped_ptr<PasswordFormManager> form_to_save,
+      std::unique_ptr<PasswordFormManager> form_to_save,
       CredentialSourceType type,
       bool update_password) = 0;
 
@@ -86,35 +99,58 @@ class PasswordManagerClient {
   // displayed, returns false and does not call |callback|.
   // |callback| should be invoked with the chosen form.
   virtual bool PromptUserToChooseCredentials(
-      ScopedVector<autofill::PasswordForm> local_forms,
-      ScopedVector<autofill::PasswordForm> federated_forms,
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
       const GURL& origin,
-      base::Callback<void(const CredentialInfo&)> callback) = 0;
+      const CredentialsCallback& callback) = 0;
 
   // Informs the embedder that the user has manually requested to save the
   // password in the focused password field.
   virtual void ForceSavePassword();
 
+  // Informs the embedder that the user has manually requested to generate a
+  // password in the focused password field.
+  virtual void GeneratePassword();
+
   // Informs the embedder that automatic signing in just happened. The form
-  // returned to the site is |local_forms[0]|. |local_forms| and
-  // |federated_forms| contain all the local and federated credentials for the
-  // site.
+  // returned to the site is |local_forms[0]|. |local_forms| contains all the
+  // local credentials for the site. |origin| is a URL of the site the user was
+  // auto signed in to.
   virtual void NotifyUserAutoSignin(
-      ScopedVector<autofill::PasswordForm> local_forms) = 0;
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
+      const GURL& origin) = 0;
+
+  // Inform the embedder that automatic signin would have happened if the user
+  // had been through the first-run experience to ensure their opt-in. |form|
+  // contains the PasswordForm that would have been delivered.
+  virtual void NotifyUserCouldBeAutoSignedIn(
+      std::unique_ptr<autofill::PasswordForm> form) = 0;
+
+  // Inform the embedder that the user signed in with a saved credential.
+  // |form| contains the form used.
+  virtual void NotifySuccessfulLoginWithExistingPassword(
+      const autofill::PasswordForm& form) = 0;
+
+  // Inform the embedder that the site called 'store()'.
+  virtual void NotifyStorePasswordCalled() = 0;
 
   // Called when a password is saved in an automated fashion. Embedder may
   // inform the user that this save has occured.
   virtual void AutomaticPasswordSave(
-      scoped_ptr<PasswordFormManager> saved_form_manager) = 0;
+      std::unique_ptr<PasswordFormManager> saved_form_manager) = 0;
 
   // Called when a password is autofilled. |best_matches| contains the
   // PasswordForm into which a password was filled: the client may choose to
   // save this to the PasswordStore, for example. |origin| is the origin of the
-  // form into which a password was filled. Default implementation is a
-  // noop.
+  // form into which a password was filled. |federated_matches| are the stored
+  // federated matches relevant to the filled form, this argument may be null.
+  // They are never filled, but might be needed in the UI, for example. Default
+  // implementation is a noop.
   virtual void PasswordWasAutofilled(
-      const autofill::PasswordFormMap& best_matches,
-      const GURL& origin) const;
+      const std::map<base::string16, const autofill::PasswordForm*>&
+          best_matches,
+      const GURL& origin,
+      const std::vector<const autofill::PasswordForm*>* federated_matches)
+      const;
 
   // Gets prefs associated with this embedder.
   virtual PrefService* GetPrefs() = 0;
@@ -129,11 +165,6 @@ class PasswordManagerClient {
 
   // Returns true if last navigation page had HTTP error i.e 5XX or 4XX
   virtual bool WasLastNavigationHTTPError() const;
-
-  // Returns the authorization prompt policy to be used with the given form.
-  // Only relevant on OSX.
-  virtual PasswordStore::AuthorizationPromptPolicy GetAuthorizationPromptPolicy(
-      const autofill::PasswordForm& form);
 
   // Returns whether any SSL certificate errors were encountered as a result of
   // the last page load.
@@ -153,9 +184,6 @@ class PasswordManagerClient {
   // Returns the main frame URL.
   virtual const GURL& GetMainFrameURL() const;
 
-  // Returns true if the UI for confirmation of update password is enabled.
-  virtual bool IsUpdatePasswordUIEnabled() const;
-
   virtual const GURL& GetLastCommittedEntryURL() const = 0;
 
   // Use this to filter credentials before handling them in password manager.
@@ -163,6 +191,9 @@ class PasswordManagerClient {
 
   // Returns a LogManager instance.
   virtual const LogManager* GetLogManager() const;
+
+  // Record that we saw a password field on this page.
+  virtual void AnnotateNavigationEntry(bool has_password_field);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PasswordManagerClient);

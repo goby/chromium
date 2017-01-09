@@ -5,16 +5,29 @@
 #ifndef UI_VIEWS_CONTROLS_MENU_MENU_HOST_H_
 #define UI_VIEWS_CONTROLS_MENU_MENU_HOST_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/widget/widget.h"
 
 namespace views {
 
-class NativeWidget;
 class SubmenuView;
 class View;
 class Widget;
+
+namespace internal {
+
+// This class is internal to views.
+class PreMenuEventDispatchHandler;
+
+}  // internal
+
+namespace test {
+class MenuControllerTest;
+}  // test
 
 // SubmenuView uses a MenuHost to house the SubmenuView.
 //
@@ -55,6 +68,8 @@ class MenuHost : public Widget {
   void ReleaseMenuHostCapture();
 
  private:
+  friend class test::MenuControllerTest;
+
   // Overridden from Widget:
   internal::RootView* CreateRootView() override;
   void OnMouseCaptureLost() override;
@@ -71,6 +86,11 @@ class MenuHost : public Widget {
 
   // If true and capture is lost we don't notify the delegate.
   bool ignore_capture_lost_;
+
+#if !defined(OS_MACOSX)
+  // Handles raw touch events at the moment.
+  std::unique_ptr<internal::PreMenuEventDispatchHandler> pre_dispatch_handler_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(MenuHost);
 };

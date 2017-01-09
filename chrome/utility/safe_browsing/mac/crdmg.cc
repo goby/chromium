@@ -4,7 +4,10 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sandbox.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,12 +17,22 @@
 
 #include "base/files/file.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/utility/safe_browsing/mac/hfs.h"
 #include "chrome/utility/safe_browsing/mac/read_stream.h"
 #include "chrome/utility/safe_browsing/mac/udif.h"
+#include "sandbox/mac/seatbelt.h"
+
+// This executable only works on 10.10+, so unconditionally use these functions
+// to make sandboxing easier.
+extern "C" {
+int mkdirat(int, const char *, mode_t);
+int openat(int, const char *, int, ...);
+int unlinkat(int, const char *, int);
+}
 
 namespace {
 
@@ -144,14 +157,11 @@ bool SafeDMG::EnableSandbox() {
   }
 
   char* sbox_error;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  if (sandbox_init(sbox_profile.c_str(), 0, &sbox_error) != 0) {
+  if (sandbox::Seatbelt::Init(sbox_profile.c_str(), 0, &sbox_error) != 0) {
     LOG(ERROR) << "Failed to initialize sandbox: " << sbox_error;
-    sandbox_free_error(sbox_error);
+    sandbox::Seatbelt::FreeError(sbox_error);
     return false;
   }
-#pragma clang diagnostic pop
 
   return true;
 }
@@ -173,7 +183,7 @@ bool SafeDMG::ParseDMG() {
     if (partition_type != "Apple_HFS" && partition_type != "Apple_HFSX")
       continue;
 
-    scoped_ptr<safe_browsing::dmg::ReadStream> partition_stream(
+    std::unique_ptr<safe_browsing::dmg::ReadStream> partition_stream(
         udif_parser.GetPartitionReadStream(i));
     safe_browsing::dmg::HFSIterator iterator(partition_stream.get());
     if (!iterator.Open()) {
@@ -217,7 +227,7 @@ bool SafeDMG::ParseDMG() {
           continue;
         }
 
-        scoped_ptr<safe_browsing::dmg::ReadStream> stream(
+        std::unique_ptr<safe_browsing::dmg::ReadStream> stream(
             iterator.GetReadStream());
         size_t read_this_pass = 0;
         do {

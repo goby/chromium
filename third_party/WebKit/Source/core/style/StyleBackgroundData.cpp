@@ -19,7 +19,6 @@
  *
  */
 
-#include "config.h"
 #include "core/style/StyleBackgroundData.h"
 
 #include "core/style/ComputedStyle.h"
@@ -28,27 +27,16 @@
 namespace blink {
 
 StyleBackgroundData::StyleBackgroundData()
-    : m_background(BackgroundFillLayer, true)
-    , m_color(ComputedStyle::initialBackgroundColor())
-{
-}
+    : m_background(BackgroundFillLayer, true),
+      m_color(ComputedStyle::initialBackgroundColor()) {}
 
 StyleBackgroundData::StyleBackgroundData(const StyleBackgroundData& o)
-    : RefCounted<StyleBackgroundData>()
-    , m_background(o.m_background)
-    , m_color(o.m_color)
-    , m_outline(o.m_outline)
-{
+    : RefCounted<StyleBackgroundData>(),
+      m_background(o.m_background),
+      m_color(o.m_color) {}
+
+bool StyleBackgroundData::operator==(const StyleBackgroundData& o) const {
+  return m_background == o.m_background && m_color == o.m_color;
 }
 
-bool StyleBackgroundData::operator==(const StyleBackgroundData& o) const
-{
-    return m_background == o.m_background && m_color == o.m_color && m_outline == o.m_outline;
-}
-
-bool StyleBackgroundData::visuallyEqual(const StyleBackgroundData& o) const
-{
-    return m_background == o.m_background && m_color == o.m_color && m_outline.visuallyEqual(o.m_outline);
-}
-
-} // namespace blink
+}  // namespace blink

@@ -4,12 +4,20 @@
 
 #include "chrome/browser/extensions/chrome_content_verifier_delegate.h"
 
+#include <algorithm>
+#include <memory>
+#include <set>
+#include <vector>
+
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
+#include "base/syslog_logging.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -17,11 +25,13 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/management_policy.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_url_handlers.h"
+#include "net/base/backoff_entry.h"
 #include "net/base/escape.h"
 
 #if defined(OS_CHROMEOS)
@@ -33,6 +43,33 @@ namespace {
 const char kContentVerificationExperimentName[] =
     "ExtensionContentVerification";
 
+const net::BackoffEntry::Policy kPolicyReinstallBackoffPolicy = {
+    // num_errors_to_ignore
+    1,
+
+    // initial_delay_ms (note that we set 'always_use_initial_delay' to false
+    // below)
+    100,
+
+    // multiply_factor
+    2,
+
+    // jitter_factor
+    0.1,
+
+    // maximum_backoff_ms (30 minutes)
+    1000 * 60 * 30,
+
+    // entry_lifetime_ms (6 hours)
+    1000 * 60 * 60 * 6,
+
+    // always_use_initial_delay
+    false,
+};
+
+base::Callback<void(base::TimeDelta delay)>* g_reinstall_action_for_test =
+    nullptr;
+
 }  // namespace
 
 namespace extensions {
@@ -43,7 +80,7 @@ ContentVerifierDelegate::Mode ChromeContentVerifierDelegate::GetDefaultMode() {
 
   Mode experiment_value;
 #if defined(GOOGLE_CHROME_BUILD)
-  experiment_value = ContentVerifierDelegate::ENFORCE;
+  experiment_value = ContentVerifierDelegate::ENFORCE_STRICT;
 #else
   experiment_value = ContentVerifierDelegate::NONE;
 #endif
@@ -96,8 +133,7 @@ ContentVerifierDelegate::Mode ChromeContentVerifierDelegate::GetDefaultMode() {
 
 ChromeContentVerifierDelegate::ChromeContentVerifierDelegate(
     content::BrowserContext* context)
-    : context_(context), default_mode_(GetDefaultMode()) {
-}
+    : context_(context), default_mode_(GetDefaultMode()) {}
 
 ChromeContentVerifierDelegate::~ChromeContentVerifierDelegate() {
 }
@@ -118,17 +154,18 @@ ContentVerifierDelegate::Mode ChromeContentVerifierDelegate::ShouldBeVerified(
     // It's possible that the webstore update url was overridden for testing
     // so also consider extensions with the default (production) update url
     // to be from the store as well.
-    GURL default_webstore_url = extension_urls::GetDefaultWebstoreUpdateUrl();
-    if (ManifestURL::GetUpdateURL(&extension) != default_webstore_url)
+    if (ManifestURL::GetUpdateURL(&extension) !=
+        extension_urls::GetDefaultWebstoreUpdateUrl()) {
       return ContentVerifierDelegate::NONE;
+    }
   }
 
   return default_mode_;
 }
 
 ContentVerifierKey ChromeContentVerifierDelegate::GetPublicKey() {
-  return ContentVerifierKey(extension_misc::kWebstoreSignaturesPublicKey,
-                            extension_misc::kWebstoreSignaturesPublicKeySize);
+  return ContentVerifierKey(kWebstoreSignaturesPublicKey,
+                            kWebstoreSignaturesPublicKeySize);
 }
 
 GURL ChromeContentVerifierDelegate::GetSignatureFetchUrl(
@@ -165,31 +202,63 @@ void ChromeContentVerifierDelegate::VerifyFailed(
   if (!extension)
     return;
   ExtensionSystem* system = ExtensionSystem::Get(context_);
+  ExtensionService* service = system->extension_service();
   Mode mode = ShouldBeVerified(*extension);
   if (mode >= ContentVerifierDelegate::ENFORCE) {
-    if (!system->management_policy()->UserMayModifySettings(extension, NULL)) {
-      LogFailureForPolicyForceInstall(extension_id);
+    if (system->management_policy()->MustRemainEnabled(extension, NULL)) {
+      PendingExtensionManager* pending_manager =
+          service->pending_extension_manager();
+      if (pending_manager->IsPolicyReinstallForCorruptionExpected(extension_id))
+        return;
+      SYSLOG(WARNING) << "Corruption detected in policy extension "
+                      << extension_id << " installed at: "
+                      << extension->path().value();
+      pending_manager->ExpectPolicyReinstallForCorruption(extension_id);
+      service->DisableExtension(extension_id, Extension::DISABLE_CORRUPTED);
+
+      net::BackoffEntry* backoff_entry = nullptr;
+      auto iter = policy_reinstall_backoff_.find(extension_id);
+      if (iter != policy_reinstall_backoff_.end()) {
+        backoff_entry = iter->second.get();
+      } else {
+        auto new_backoff_entry =
+            base::MakeUnique<net::BackoffEntry>(&kPolicyReinstallBackoffPolicy);
+        backoff_entry = new_backoff_entry.get();
+        policy_reinstall_backoff_[extension_id] = std::move(new_backoff_entry);
+      }
+      backoff_entry->InformOfRequest(false);
+
+      base::TimeDelta reinstall_delay = backoff_entry->GetTimeUntilRelease();
+      if (g_reinstall_action_for_test) {
+        g_reinstall_action_for_test->Run(reinstall_delay);
+      } else {
+        base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+            FROM_HERE, base::Bind(&ExtensionService::CheckForExternalUpdates,
+                                  service->AsWeakPtr()),
+            reinstall_delay);
+      }
       return;
     }
-    system->extension_service()->DisableExtension(extension_id,
-                                                  Extension::DISABLE_CORRUPTED);
+    DLOG(WARNING) << "Disabling extension " << extension_id << " ('"
+                  << extension->name()
+                  << "') due to content verification failure. In tests you "
+                  << "might want to use a ScopedIgnoreContentVerifierForTest "
+                  << "instance to prevent this.";
+    service->DisableExtension(extension_id, Extension::DISABLE_CORRUPTED);
     ExtensionPrefs::Get(context_)->IncrementCorruptedDisableCount();
     UMA_HISTOGRAM_BOOLEAN("Extensions.CorruptExtensionBecameDisabled", true);
     UMA_HISTOGRAM_ENUMERATION("Extensions.CorruptExtensionDisabledReason",
                               reason, ContentVerifyJob::FAILURE_REASON_MAX);
-  } else if (!ContainsKey(would_be_disabled_ids_, extension_id)) {
+  } else if (!base::ContainsKey(would_be_disabled_ids_, extension_id)) {
     UMA_HISTOGRAM_BOOLEAN("Extensions.CorruptExtensionWouldBeDisabled", true);
     would_be_disabled_ids_.insert(extension_id);
   }
 }
 
-void ChromeContentVerifierDelegate::LogFailureForPolicyForceInstall(
-    const std::string& extension_id) {
-  if (!ContainsKey(corrupt_policy_extensions_, extension_id)) {
-    corrupt_policy_extensions_.insert(extension_id);
-    UMA_HISTOGRAM_BOOLEAN("Extensions.CorruptPolicyExtensionWouldBeDisabled",
-                          true);
-  }
+// static
+void ChromeContentVerifierDelegate::set_policy_reinstall_action_for_test(
+    base::Callback<void(base::TimeDelta delay)>* action) {
+  g_reinstall_action_for_test = action;
 }
 
 }  // namespace extensions

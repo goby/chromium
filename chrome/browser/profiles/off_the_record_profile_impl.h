@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/off_the_record_profile_io_data.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -18,7 +20,7 @@
 using base::Time;
 using base::TimeDelta;
 
-namespace syncable_prefs {
+namespace sync_preferences {
 class PrefServiceSyncable;
 }
 
@@ -51,6 +53,7 @@ class OffTheRecordProfileImpl : public Profile {
   PrefService* GetPrefs() override;
   const PrefService* GetPrefs() const override;
   PrefService* GetOffTheRecordPrefs() override;
+  net::URLRequestContextGetter* GetRequestContext() override;
   net::URLRequestContextGetter* GetRequestContextForExtensions() override;
   net::URLRequestContextGetter* CreateRequestContext(
       content::ProtocolHandlerMap* protocol_handlers,
@@ -60,6 +63,10 @@ class OffTheRecordProfileImpl : public Profile {
       bool in_memory,
       content::ProtocolHandlerMap* protocol_handlers,
       content::URLRequestInterceptorScopedVector request_interceptors) override;
+  net::URLRequestContextGetter* CreateMediaRequestContext() override;
+  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory) override;
   net::SSLConfigService* GetSSLConfigService() override;
   bool IsSameProfile(Profile* profile) override;
   Time GetStartTime() const override;
@@ -86,20 +93,11 @@ class OffTheRecordProfileImpl : public Profile {
 
   // content::BrowserContext implementation:
   base::FilePath GetPath() const override;
-  scoped_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
+  std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
   scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner() override;
   bool IsOffTheRecord() const override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
-  net::URLRequestContextGetter* GetRequestContext() override;
-  net::URLRequestContextGetter* GetRequestContextForRenderProcess(
-      int renderer_child_id) override;
-  net::URLRequestContextGetter* GetMediaRequestContext() override;
-  net::URLRequestContextGetter* GetMediaRequestContextForRenderProcess(
-      int renderer_child_id) override;
-  net::URLRequestContextGetter* GetMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
   content::ResourceContext* GetResourceContext() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
   storage::SpecialStoragePolicy* GetSpecialStoragePolicy() override;
@@ -114,9 +112,9 @@ class OffTheRecordProfileImpl : public Profile {
   // Allows a profile to track changes in zoom levels in its parent profile.
   void TrackZoomLevelsFromParent();
 
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
   void UseSystemProxy();
-#endif  // defined(OS_ANDROID) || defined(OS_IOS)
+#endif  // defined(OS_ANDROID)
 
   PrefProxyConfigTracker* CreateProxyConfigTracker();
   // Callback function for tracking parent's zoom level changes.
@@ -128,19 +126,19 @@ class OffTheRecordProfileImpl : public Profile {
   Profile* profile_;
 
   // Weak pointer owned by |profile_|.
-  syncable_prefs::PrefServiceSyncable* prefs_;
+  sync_preferences::PrefServiceSyncable* prefs_;
 
-  scoped_ptr<content::HostZoomMap::Subscription> track_zoom_subscription_;
-  scoped_ptr<ChromeZoomLevelPrefs::DefaultZoomLevelSubscription>
+  std::unique_ptr<content::HostZoomMap::Subscription> track_zoom_subscription_;
+  std::unique_ptr<ChromeZoomLevelPrefs::DefaultZoomLevelSubscription>
       parent_default_zoom_level_subscription_;
-  scoped_ptr<OffTheRecordProfileIOData::Handle> io_data_;
+  std::unique_ptr<OffTheRecordProfileIOData::Handle> io_data_;
 
   // Time we were started.
   Time start_time_;
 
   base::FilePath last_selected_directory_;
 
-  scoped_ptr<PrefProxyConfigTracker> pref_proxy_config_tracker_;
+  std::unique_ptr<PrefProxyConfigTracker> pref_proxy_config_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(OffTheRecordProfileImpl);
 };

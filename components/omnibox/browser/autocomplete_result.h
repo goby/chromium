@@ -9,7 +9,8 @@
 
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "url/gurl.h"
@@ -66,7 +67,6 @@ class AutocompleteResult {
   // Copies matches from |old_matches| to provide a consistant result set. See
   // comments in code for specifics.
   void CopyOldMatches(const AutocompleteInput& input,
-                      const std::string& languages,
                       const AutocompleteResult& old_matches,
                       TemplateURLService* template_url_service);
 
@@ -80,7 +80,6 @@ class AutocompleteResult {
   // the best kMaxMatches matches.  Sets the default match to the best match
   // and updates the alternate nav URL.
   void SortAndCull(const AutocompleteInput& input,
-                   const std::string& languages,
                    TemplateURLService* template_url_service);
 
   // Returns true if at least one match was copied from the last result.
@@ -127,12 +126,11 @@ class AutocompleteResult {
 
   // Sort |matches| by destination, taking into account demotions based on
   // |page_classification| when resolving ties about which of several
-  // duplicates to keep.  The matches are also deduplicated.  If
-  // |set_duplicate_matches| is true, the duplicate matches are stored in the
-  // |duplicate_matches| vector of the corresponding AutocompleteMatch.
-  static void DedupMatchesByDestination(
+  // duplicates to keep.  The matches are also deduplicated. Duplicate matches
+  // are stored in the |duplicate_matches| vector of the corresponding
+  // AutocompleteMatch.
+  static void SortAndDedupMatches(
       metrics::OmniboxEventProto::PageClassification page_classification,
-      bool set_duplicate_matches,
       ACMatches* matches);
 
  private:

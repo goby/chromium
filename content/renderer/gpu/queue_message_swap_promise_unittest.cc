@@ -4,8 +4,12 @@
 
 #include "content/renderer/gpu/queue_message_swap_promise.h"
 
+#include <stddef.h>
+
 #include <vector>
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "cc/output/swap_promise.h"
 #include "content/renderer/gpu/frame_swap_message_queue.h"
@@ -31,19 +35,19 @@ class TestRenderWidget : public RenderWidget {
 
 class TestSyncMessageFilter : public IPC::SyncMessageFilter {
  public:
-  TestSyncMessageFilter() : IPC::SyncMessageFilter(NULL, false) {}
+  TestSyncMessageFilter() : IPC::SyncMessageFilter(nullptr) {}
 
   bool Send(IPC::Message* message) override {
-    messages_.push_back(message);
+    messages_.push_back(base::WrapUnique(message));
     return true;
   }
 
-  ScopedVector<IPC::Message>& messages() { return messages_; }
+  std::vector<std::unique_ptr<IPC::Message>>& messages() { return messages_; }
 
  private:
   ~TestSyncMessageFilter() override {}
 
-  ScopedVector<IPC::Message> messages_;
+  std::vector<std::unique_ptr<IPC::Message>> messages_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSyncMessageFilter);
 };
@@ -61,36 +65,35 @@ class QueueMessageSwapPromiseTest : public testing::Test {
 
   ~QueueMessageSwapPromiseTest() override {}
 
-  scoped_ptr<cc::SwapPromise> QueueMessageImpl(IPC::Message* msg,
-                                               MessageDeliveryPolicy policy,
-                                               int source_frame_number) {
-    return TestRenderWidget::QueueMessageImpl(msg,
-                                              policy,
-                                              frame_swap_message_queue_.get(),
-                                              sync_message_filter_,
-                                              source_frame_number).Pass();
+  std::unique_ptr<cc::SwapPromise> QueueMessageImpl(
+      IPC::Message* msg,
+      MessageDeliveryPolicy policy,
+      int source_frame_number) {
+    return TestRenderWidget::QueueMessageImpl(
+        msg, policy, frame_swap_message_queue_.get(), sync_message_filter_,
+        source_frame_number);
   }
 
-  ScopedVector<IPC::Message>& DirectSendMessages() {
+  const std::vector<std::unique_ptr<IPC::Message>>& DirectSendMessages() {
     return sync_message_filter_->messages();
   }
 
-  ScopedVector<IPC::Message>& NextSwapMessages() {
+  std::vector<std::unique_ptr<IPC::Message>>& NextSwapMessages() {
     next_swap_messages_.clear();
-    scoped_ptr<FrameSwapMessageQueue::SendMessageScope> send_message_scope =
-        frame_swap_message_queue_->AcquireSendMessageScope();
+    std::unique_ptr<FrameSwapMessageQueue::SendMessageScope>
+        send_message_scope =
+            frame_swap_message_queue_->AcquireSendMessageScope();
     frame_swap_message_queue_->DrainMessages(&next_swap_messages_);
     return next_swap_messages_;
   }
 
-  bool ContainsMessage(const ScopedVector<IPC::Message>& messages,
-                       const IPC::Message& message) {
+  bool ContainsMessage(
+      const std::vector<std::unique_ptr<IPC::Message>>& messages,
+      const IPC::Message& message) {
     if (messages.empty())
       return false;
-    for (ScopedVector<IPC::Message>::const_iterator i = messages.begin();
-         i != messages.end();
-         ++i) {
-      if ((*i)->type() == message.type())
+    for (const auto& msg : messages) {
+      if (msg->type() == message.type())
         return true;
     }
     return false;
@@ -133,7 +136,7 @@ class QueueMessageSwapPromiseTest : public testing::Test {
   ScopedVector<cc::SwapPromise> promises_;
 
  private:
-  ScopedVector<IPC::Message> next_swap_messages_;
+  std::vector<std::unique_ptr<IPC::Message>> next_swap_messages_;
 
   DISALLOW_COPY_AND_ASSIGN(QueueMessageSwapPromiseTest);
 };
@@ -253,7 +256,7 @@ TEST_F(QueueMessageSwapPromiseTest, VisualStateSwapPromiseDidActivate) {
   promises_[0]->DidActivate();
   promises_[0]->DidSwap(NULL);
   ASSERT_FALSE(promises_[1]);
-  ScopedVector<IPC::Message> messages;
+  std::vector<std::unique_ptr<IPC::Message>> messages;
   messages.swap(NextSwapMessages());
   EXPECT_EQ(2u, messages.size());
   EXPECT_TRUE(ContainsMessage(messages, messages_[0]));
@@ -263,10 +266,11 @@ TEST_F(QueueMessageSwapPromiseTest, VisualStateSwapPromiseDidActivate) {
   promises_[2]->DidActivate();
   promises_[2]->DidNotSwap(cc::SwapPromise::SWAP_FAILS);
   messages.swap(NextSwapMessages());
-  EXPECT_EQ(1u, messages.size());
-  EXPECT_TRUE(ContainsMessage(messages, messages_[2]));
+  EXPECT_TRUE(messages.empty());
 
-  EXPECT_TRUE(DirectSendMessages().empty());
+  EXPECT_EQ(1u, DirectSendMessages().size());
+  EXPECT_TRUE(ContainsMessage(DirectSendMessages(), messages_[2]));
+
   EXPECT_TRUE(NextSwapMessages().empty());
   EXPECT_TRUE(frame_swap_message_queue_->Empty());
 }

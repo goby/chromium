@@ -14,13 +14,15 @@
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/browser/media/router/mock_media_router.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/cast_config_client_media_router.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "components/drive/service/fake_drive_service.h"
-#include "components/user_manager/user_manager.h"
+#include "components/session_manager/core/session_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
@@ -123,7 +125,7 @@ bool InitializeLocalFileSystem(std::string mount_point_name,
   if (!tmp_dir->CreateUniqueTempDir())
     return false;
 
-  *mount_point_dir = tmp_dir->path().AppendASCII(mount_point_name);
+  *mount_point_dir = tmp_dir->GetPath().AppendASCII(mount_point_name);
   // Create the mount point.
   if (!base::CreateDirectory(*mount_point_dir))
     return false;
@@ -163,7 +165,7 @@ bool InitializeLocalFileSystem(std::string mount_point_name,
   return true;
 }
 
-scoped_ptr<google_apis::FileResource> UpdateDriveEntryTime(
+std::unique_ptr<google_apis::FileResource> UpdateDriveEntryTime(
     drive::FakeDriveService* fake_drive_service,
     const std::string& resource_id,
     const std::string& last_modified,
@@ -173,10 +175,10 @@ scoped_ptr<google_apis::FileResource> UpdateDriveEntryTime(
                                             &last_modified_time) ||
       !google_apis::util::GetTimeFromString(last_viewed_by_me,
                                             &last_viewed_by_me_time))
-    return scoped_ptr<google_apis::FileResource>();
+    return std::unique_ptr<google_apis::FileResource>();
 
   google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<google_apis::FileResource> entry;
+  std::unique_ptr<google_apis::FileResource> entry;
   fake_drive_service->UpdateResource(
       resource_id,
       std::string(),  // parent_resource_id
@@ -186,12 +188,12 @@ scoped_ptr<google_apis::FileResource> UpdateDriveEntryTime(
       google_apis::test_util::CreateCopyResultCallback(&error, &entry));
   base::RunLoop().RunUntilIdle();
   if (error != google_apis::HTTP_SUCCESS)
-    return scoped_ptr<google_apis::FileResource>();
+    return std::unique_ptr<google_apis::FileResource>();
 
-  return entry.Pass();
+  return entry;
 }
 
-scoped_ptr<google_apis::FileResource> AddFileToDriveService(
+std::unique_ptr<google_apis::FileResource> AddFileToDriveService(
     drive::FakeDriveService* fake_drive_service,
     const std::string& mime_type,
     const std::string& content,
@@ -200,7 +202,7 @@ scoped_ptr<google_apis::FileResource> AddFileToDriveService(
     const std::string& last_modified,
     const std::string& last_viewed_by_me) {
   google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<google_apis::FileResource> entry;
+  std::unique_ptr<google_apis::FileResource> entry;
   fake_drive_service->AddNewFile(
       mime_type,
       content,
@@ -210,26 +212,26 @@ scoped_ptr<google_apis::FileResource> AddFileToDriveService(
       google_apis::test_util::CreateCopyResultCallback(&error, &entry));
   base::RunLoop().RunUntilIdle();
   if (error != google_apis::HTTP_CREATED)
-    return scoped_ptr<google_apis::FileResource>();
+    return std::unique_ptr<google_apis::FileResource>();
 
   return UpdateDriveEntryTime(fake_drive_service, entry->file_id(),
                               last_modified, last_viewed_by_me);
 }
 
-scoped_ptr<google_apis::FileResource> AddDirectoryToDriveService(
+std::unique_ptr<google_apis::FileResource> AddDirectoryToDriveService(
     drive::FakeDriveService* fake_drive_service,
     const std::string& parent_resource_id,
     const std::string& title,
     const std::string& last_modified,
     const std::string& last_viewed_by_me) {
   google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<google_apis::FileResource> entry;
+  std::unique_ptr<google_apis::FileResource> entry;
   fake_drive_service->AddNewDirectory(
       parent_resource_id, title, drive::AddNewDirectoryOptions(),
       google_apis::test_util::CreateCopyResultCallback(&error, &entry));
   base::RunLoop().RunUntilIdle();
   if (error != google_apis::HTTP_CREATED)
-    return scoped_ptr<google_apis::FileResource>();
+    return std::unique_ptr<google_apis::FileResource>();
 
   return UpdateDriveEntryTime(fake_drive_service, entry->file_id(),
                               last_modified, last_viewed_by_me);
@@ -240,7 +242,7 @@ scoped_ptr<google_apis::FileResource> AddDirectoryToDriveService(
 bool InitializeDriveService(
     drive::FakeDriveService* fake_drive_service,
     std::map<std::string, std::string>* out_resource_ids) {
-  scoped_ptr<google_apis::FileResource> entry;
+  std::unique_ptr<google_apis::FileResource> entry;
 
   entry = AddDirectoryToDriveService(fake_drive_service,
                                      fake_drive_service->GetRootResourceId(),
@@ -368,7 +370,20 @@ class FileSystemExtensionApiTestBase : public ExtensionApiTest {
 
   void SetUpOnMainThread() override {
     AddTestMountPoint();
+
+    // Mock the Media Router in extension api tests. Dispatches to the message
+    // loop now try to handle mojo messages that will call back into Profile
+    // creation through the media router, which then confuse the drive code.
+    ON_CALL(media_router_, RegisterMediaSinksObserver(testing::_))
+        .WillByDefault(testing::Return(true));
+    CastConfigClientMediaRouter::SetMediaRouterForTest(&media_router_);
+
     ExtensionApiTest::SetUpOnMainThread();
+  }
+
+  void TearDownOnMainThread() override {
+    CastConfigClientMediaRouter::SetMediaRouterForTest(nullptr);
+    ExtensionApiTest::TearDownOnMainThread();
   }
 
   // Runs a file system extension API test.
@@ -429,6 +444,11 @@ class FileSystemExtensionApiTestBase : public ExtensionApiTest {
   virtual void InitTestFileSystem() = 0;
   // Registers mount point used in the test.
   virtual void AddTestMountPoint() = 0;
+
+ private:
+  media_router::MockMediaRouter media_router_;
+
+  DISALLOW_COPY_AND_ASSIGN(FileSystemExtensionApiTestBase);
 };
 
 // Tests for a native local file system.
@@ -546,14 +566,15 @@ class DriveFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
     EXPECT_TRUE(InitializeDriveService(fake_drive_service_, &resource_ids));
 
     return new drive::DriveIntegrationService(
-        profile, NULL, fake_drive_service_, "", test_cache_root_.path(), NULL);
+        profile, nullptr, fake_drive_service_, "", test_cache_root_.GetPath(),
+        nullptr);
   }
 
   base::ScopedTempDir test_cache_root_;
   drive::FakeDriveService* fake_drive_service_;
   DriveIntegrationServiceFactory::FactoryCallback
       create_drive_integration_service_;
-  scoped_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
+  std::unique_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
       service_factory_for_test_;
 };
 
@@ -564,13 +585,10 @@ class MultiProfileDriveFileSystemExtensionApiTest :
   MultiProfileDriveFileSystemExtensionApiTest() : second_profile_(NULL) {}
 
   void SetUpOnMainThread() override {
-    ASSERT_TRUE(tmp_dir_.CreateUniqueTempDir());
-
     base::FilePath user_data_directory;
     PathService::Get(chrome::DIR_USER_DATA, &user_data_directory);
-    user_manager::UserManager::Get()->UserLoggedIn(
-        AccountId::FromUserEmail(kSecondProfileAccount), kSecondProfileHash,
-        false);
+    session_manager::SessionManager::Get()->CreateSession(
+        AccountId::FromUserEmail(kSecondProfileAccount), kSecondProfileHash);
     // Set up the secondary profile.
     base::FilePath profile_dir =
         user_data_directory.Append(
@@ -583,6 +601,8 @@ class MultiProfileDriveFileSystemExtensionApiTest :
   }
 
   void InitTestFileSystem() override {
+    ASSERT_TRUE(tmp_dir_.CreateUniqueTempDir());
+
     // This callback will get called during Profile creation.
     create_drive_integration_service_ = base::Bind(
         &MultiProfileDriveFileSystemExtensionApiTest::
@@ -603,8 +623,8 @@ class MultiProfileDriveFileSystemExtensionApiTest :
   drive::DriveIntegrationService* CreateDriveIntegrationService(
       Profile* profile) {
     base::FilePath cache_dir;
-    base::CreateTemporaryDirInDir(tmp_dir_.path(), base::FilePath::StringType(),
-                                  &cache_dir);
+    base::CreateTemporaryDirInDir(tmp_dir_.GetPath(),
+                                  base::FilePath::StringType(), &cache_dir);
 
     drive::FakeDriveService* const fake_drive_service =
         new drive::FakeDriveService;
@@ -625,7 +645,7 @@ class MultiProfileDriveFileSystemExtensionApiTest :
             drive::util::GetDriveServiceByProfile(second_profile_));
 
     google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-    scoped_ptr<google_apis::FileResource> entry;
+    std::unique_ptr<google_apis::FileResource> entry;
 
     // Place a hosted document under root/test_dir of the sub profile.
     sub_service->AddNewFileWithResourceId(
@@ -651,7 +671,7 @@ class MultiProfileDriveFileSystemExtensionApiTest :
   base::ScopedTempDir tmp_dir_;
   DriveIntegrationServiceFactory::FactoryCallback
       create_drive_integration_service_;
-  scoped_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
+  std::unique_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
       service_factory_for_test_;
   Profile* second_profile_;
   std::map<std::string, std::string> resource_ids_;
@@ -707,12 +727,9 @@ class LocalAndDriveFileSystemExtensionApiTest
     std::map<std::string, std::string> resource_ids;
     EXPECT_TRUE(InitializeDriveService(fake_drive_service_, &resource_ids));
 
-    return new drive::DriveIntegrationService(profile,
-                                              NULL,
-                                              fake_drive_service_,
-                                              "drive",
-                                              test_cache_root_.path(),
-                                              NULL);
+    return new drive::DriveIntegrationService(
+        profile, nullptr, fake_drive_service_, "drive",
+        test_cache_root_.GetPath(), nullptr);
   }
 
  private:
@@ -725,7 +742,7 @@ class LocalAndDriveFileSystemExtensionApiTest
   drive::FakeDriveService* fake_drive_service_;
   DriveIntegrationServiceFactory::FactoryCallback
       create_drive_integration_service_;
-  scoped_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
+  std::unique_ptr<DriveIntegrationServiceFactory::ScopedFactoryForTest>
       service_factory_for_test_;
 };
 

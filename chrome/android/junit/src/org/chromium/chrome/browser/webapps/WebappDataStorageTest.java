@@ -8,18 +8,28 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.os.AsyncTask;
 
-import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.ShortcutHelper;
-import org.chromium.testing.local.BackgroundShadowAsyncTask;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.Robolectric;
+
+import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLooper;
+
+import org.chromium.base.ContextUtils;
+import org.chromium.base.test.util.Feature;
+import org.chromium.blink_public.platform.WebDisplayMode;
+import org.chromium.chrome.browser.ShortcutHelper;
+import org.chromium.testing.local.BackgroundShadowAsyncTask;
+import org.chromium.testing.local.LocalRobolectricTestRunner;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Tests the WebappDataStorage class by ensuring that it persists data to
@@ -32,15 +42,52 @@ public class WebappDataStorageTest {
     private SharedPreferences mSharedPreferences;
     private boolean mCallbackCalled;
 
+    private class FetchCallback<T> implements WebappDataStorage.FetchCallback<T> {
+        T mExpected;
+
+        FetchCallback(T expected) {
+            mExpected = expected;
+        }
+
+        @Override
+        public void onDataRetrieved(T readObject) {
+            mCallbackCalled = true;
+            assertEquals(mExpected, readObject);
+        }
+    }
+
+    private static class TestClock extends WebappDataStorage.Clock {
+        private long mCurrentTime;
+
+        public TestClock(long currentTime) {
+            updateTime(currentTime);
+        }
+
+        public void updateTime(long currentTime) {
+            mCurrentTime = currentTime;
+        }
+
+        @Override
+        public long currentTimeMillis() {
+            return mCurrentTime;
+        }
+    }
+
     @Before
     public void setUp() throws Exception {
-        mSharedPreferences = Robolectric.application
-                .getSharedPreferences("webapp_test", Context.MODE_PRIVATE);
+        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
+        mSharedPreferences = ContextUtils.getApplicationContext().getSharedPreferences(
+                WebappDataStorage.SHARED_PREFS_FILE_PREFIX + "test", Context.MODE_PRIVATE);
 
         // Set the last_used as if the web app had been registered by WebappRegistry.
-        mSharedPreferences.edit().putLong("last_used", 0).commit();
+        mSharedPreferences.edit().putLong(WebappDataStorage.KEY_LAST_USED, 0).apply();
 
         mCallbackCalled = false;
+    }
+
+    @After
+    public void tearDown() {
+        mSharedPreferences.edit().clear().apply();
     }
 
     @Test
@@ -49,40 +96,26 @@ public class WebappDataStorageTest {
         assertEquals("webapp_", WebappDataStorage.SHARED_PREFS_FILE_PREFIX);
         assertEquals("splash_icon", WebappDataStorage.KEY_SPLASH_ICON);
         assertEquals("last_used", WebappDataStorage.KEY_LAST_USED);
+        assertEquals("url", WebappDataStorage.KEY_URL);
+        assertEquals("scope", WebappDataStorage.KEY_SCOPE);
+        assertEquals("icon", WebappDataStorage.KEY_ICON);
+        assertEquals("name", WebappDataStorage.KEY_NAME);
+        assertEquals("short_name", WebappDataStorage.KEY_SHORT_NAME);
+        assertEquals("orientation", WebappDataStorage.KEY_ORIENTATION);
+        assertEquals("theme_color", WebappDataStorage.KEY_THEME_COLOR);
+        assertEquals("background_color", WebappDataStorage.KEY_BACKGROUND_COLOR);
+        assertEquals("source", WebappDataStorage.KEY_SOURCE);
+        assertEquals("action", WebappDataStorage.KEY_ACTION);
+        assertEquals("is_icon_generated", WebappDataStorage.KEY_IS_ICON_GENERATED);
+        assertEquals("version", WebappDataStorage.KEY_VERSION);
     }
 
     @Test
     @Feature({"Webapp"})
     public void testLastUsedRetrieval() throws Exception {
-        mSharedPreferences.edit()
-                .putLong(WebappDataStorage.KEY_LAST_USED, 100L)
-                .commit();
-
-        WebappDataStorage.getLastUsedTime(Robolectric.application, "test",
-                new WebappDataStorage.FetchCallback<Long>() {
-                    @Override
-                    public void onDataRetrieved(Long readObject) {
-                        mCallbackCalled = true;
-                        assertEquals(100L, (long) readObject);
-                    }
-                });
-        BackgroundShadowAsyncTask.runBackgroundTasks();
-        Robolectric.runUiThreadTasks();
-
-        assertTrue(mCallbackCalled);
-    }
-
-    @Test
-    @Feature({"Webapp"})
-    public void testOpenUpdatesLastUsed() throws Exception {
-        long before = System.currentTimeMillis();
-
-        WebappDataStorage.open(Robolectric.application, "test");
-        BackgroundShadowAsyncTask.runBackgroundTasks();
-
-        long after = System.currentTimeMillis();
-        long value = mSharedPreferences.getLong(WebappDataStorage.KEY_LAST_USED, -1L);
-        assertTrue("Timestamp is out of range", before <= value && value <= after);
+        long lastUsed = 100;
+        mSharedPreferences.edit().putLong(WebappDataStorage.KEY_LAST_USED, lastUsed).apply();
+        assertEquals(lastUsed, new WebappDataStorage("test").getLastUsedTime());
     }
 
     @Test
@@ -92,9 +125,9 @@ public class WebappDataStorageTest {
         mSharedPreferences.edit()
                 .putString(WebappDataStorage.KEY_SPLASH_ICON,
                         ShortcutHelper.encodeBitmapAsString(expected))
-                .commit();
-        WebappDataStorage.open(Robolectric.application, "test")
-                .getSplashScreenImage(new WebappDataStorage.FetchCallback<Bitmap>() {
+                .apply();
+        WebappDataStorage.open("test").getSplashScreenImage(
+                new WebappDataStorage.FetchCallback<Bitmap>() {
                     @Override
                     public void onDataRetrieved(Bitmap actual) {
                         mCallbackCalled = true;
@@ -106,7 +139,7 @@ public class WebappDataStorageTest {
                     }
                 });
         BackgroundShadowAsyncTask.runBackgroundTasks();
-        Robolectric.runUiThreadTasks();
+        ShadowLooper.runUiThreadTasks();
 
         assertTrue(mCallbackCalled);
     }
@@ -114,13 +147,172 @@ public class WebappDataStorageTest {
     @Test
     @Feature({"Webapp"})
     public void testSplashImageUpdate() throws Exception {
-        final Bitmap expectedImage = createBitmap();
-        WebappDataStorage.open(Robolectric.application, "test")
-                .updateSplashScreenImage(expectedImage);
+        Bitmap expectedImage = createBitmap();
+        String imageAsString = ShortcutHelper.encodeBitmapAsString(expectedImage);
+        WebappDataStorage.open("test").updateSplashScreenImage(imageAsString);
         BackgroundShadowAsyncTask.runBackgroundTasks();
+        ShadowLooper.runUiThreadTasks();
 
-        assertEquals(ShortcutHelper.encodeBitmapAsString(expectedImage),
+        assertEquals(imageAsString,
                 mSharedPreferences.getString(WebappDataStorage.KEY_SPLASH_ICON, null));
+    }
+
+    @Test
+    @Feature({"Webapp"})
+    public void testScopeRetrieval() throws Exception {
+        String scope = "http://drive.google.com";
+        mSharedPreferences.edit().putString(WebappDataStorage.KEY_SCOPE, scope).apply();
+        assertEquals(scope, new WebappDataStorage("test").getScope());
+    }
+
+    @Test
+    @Feature({"Webapp"})
+    public void testUrlRetrieval() throws Exception {
+        String url = "https://www.google.com";
+        mSharedPreferences.edit().putString(WebappDataStorage.KEY_URL, url).apply();
+        assertEquals(url, new WebappDataStorage("test").getUrl());
+    }
+
+    @Test
+    @Feature({"Webapp"})
+    public void testWasLaunchedRecently() throws Exception {
+        final TestClock clock = new TestClock(System.currentTimeMillis());
+        WebappDataStorage.setClockForTests(clock);
+
+        // Opening a data storage doesn't count as a launch.
+        WebappDataStorage storage = WebappDataStorage.open("test");
+        assertTrue(!storage.wasLaunchedRecently());
+
+        // When the last used time is updated, then it is a launch.
+        storage.updateLastUsedTime();
+        assertTrue(storage.wasLaunchedRecently());
+
+        long lastUsedTime = mSharedPreferences.getLong(WebappDataStorage.KEY_LAST_USED,
+                WebappDataStorage.LAST_USED_INVALID);
+
+        assertTrue(lastUsedTime != WebappDataStorage.LAST_USED_UNSET);
+        assertTrue(lastUsedTime != WebappDataStorage.LAST_USED_INVALID);
+
+        // Move the last used time one day in the past.
+        mSharedPreferences.edit()
+                .putLong(WebappDataStorage.KEY_LAST_USED, lastUsedTime - TimeUnit.DAYS.toMillis(1L))
+                .apply();
+        assertTrue(storage.wasLaunchedRecently());
+
+        // Move the last used time three days in the past.
+        mSharedPreferences.edit()
+                .putLong(WebappDataStorage.KEY_LAST_USED, lastUsedTime - TimeUnit.DAYS.toMillis(3L))
+                .apply();
+        assertTrue(storage.wasLaunchedRecently());
+
+        // Move the last used time one week in the past.
+        mSharedPreferences.edit()
+                .putLong(WebappDataStorage.KEY_LAST_USED, lastUsedTime - TimeUnit.DAYS.toMillis(7L))
+                .apply();
+        assertTrue(storage.wasLaunchedRecently());
+
+        // Move the last used time just under ten days in the past.
+        mSharedPreferences.edit().putLong(WebappDataStorage.KEY_LAST_USED,
+                lastUsedTime - TimeUnit.DAYS.toMillis(10L) + 1).apply();
+        assertTrue(storage.wasLaunchedRecently());
+
+        // Move the last used time to exactly ten days in the past.
+        mSharedPreferences.edit().putLong(WebappDataStorage.KEY_LAST_USED,
+                lastUsedTime - TimeUnit.DAYS.toMillis(10L)).apply();
+        assertTrue(!storage.wasLaunchedRecently());
+    }
+
+    @Test
+    @Feature({"Webapp"})
+    public void testIntentUpdate() throws Exception {
+        final String id = "id";
+        final String action = "action";
+        final String url = "url";
+        final String scope = "scope";
+        final String name = "name";
+        final String shortName = "shortName";
+        final Bitmap icon = createBitmap();
+        final int displayMode = WebDisplayMode.Standalone;
+        final int orientation = 1;
+        final long themeColor = 2;
+        final long backgroundColor = 3;
+        final boolean isIconGenerated = false;
+        AsyncTask<Void, Void, Intent> shortcutIntentTask = new AsyncTask<Void, Void, Intent>() {
+            @Override
+            protected Intent doInBackground(Void... nothing) {
+                return ShortcutHelper.createWebappShortcutIntent(id, action, url, scope, name,
+                        shortName, icon, ShortcutHelper.WEBAPP_SHORTCUT_VERSION, displayMode,
+                        orientation, themeColor, backgroundColor, isIconGenerated);
+            }
+        };
+        Intent shortcutIntent = shortcutIntentTask.execute().get();
+
+        WebappDataStorage storage = WebappDataStorage.open("test");
+        storage.updateFromShortcutIntent(shortcutIntent);
+
+        assertEquals(action, mSharedPreferences.getString(WebappDataStorage.KEY_ACTION, null));
+        assertEquals(url, mSharedPreferences.getString(WebappDataStorage.KEY_URL, null));
+        assertEquals(scope, mSharedPreferences.getString(WebappDataStorage.KEY_SCOPE, null));
+        assertEquals(name, mSharedPreferences.getString(WebappDataStorage.KEY_NAME, null));
+        assertEquals(shortName,
+                mSharedPreferences.getString(WebappDataStorage.KEY_SHORT_NAME, null));
+        assertEquals(ShortcutHelper.encodeBitmapAsString(icon),
+                mSharedPreferences.getString(WebappDataStorage.KEY_ICON, null));
+        assertEquals(ShortcutHelper.WEBAPP_SHORTCUT_VERSION,
+                mSharedPreferences.getInt(WebappDataStorage.KEY_VERSION, 0));
+        assertEquals(orientation, mSharedPreferences.getInt(WebappDataStorage.KEY_ORIENTATION, 0));
+        assertEquals(themeColor, mSharedPreferences.getLong(WebappDataStorage.KEY_THEME_COLOR, 0));
+        assertEquals(backgroundColor,
+                mSharedPreferences.getLong(WebappDataStorage.KEY_BACKGROUND_COLOR, 0));
+        assertEquals(isIconGenerated,
+                mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_GENERATED, true));
+
+        // Wipe out the data and ensure that it is all gone.
+        mSharedPreferences.edit().remove(WebappDataStorage.KEY_ACTION)
+                .remove(WebappDataStorage.KEY_URL)
+                .remove(WebappDataStorage.KEY_SCOPE)
+                .remove(WebappDataStorage.KEY_NAME)
+                .remove(WebappDataStorage.KEY_SHORT_NAME)
+                .remove(WebappDataStorage.KEY_ICON)
+                .remove(WebappDataStorage.KEY_VERSION)
+                .remove(WebappDataStorage.KEY_ORIENTATION)
+                .remove(WebappDataStorage.KEY_THEME_COLOR)
+                .remove(WebappDataStorage.KEY_BACKGROUND_COLOR)
+                .remove(WebappDataStorage.KEY_IS_ICON_GENERATED)
+                .apply();
+
+        assertEquals(null, mSharedPreferences.getString(WebappDataStorage.KEY_ACTION, null));
+        assertEquals(null, mSharedPreferences.getString(WebappDataStorage.KEY_URL, null));
+        assertEquals(null, mSharedPreferences.getString(WebappDataStorage.KEY_SCOPE, null));
+        assertEquals(null, mSharedPreferences.getString(WebappDataStorage.KEY_NAME, null));
+        assertEquals(null, mSharedPreferences.getString(WebappDataStorage.KEY_SHORT_NAME, null));
+        assertEquals(null, mSharedPreferences.getString(WebappDataStorage.KEY_ICON, null));
+        assertEquals(0, mSharedPreferences.getInt(WebappDataStorage.KEY_VERSION, 0));
+        assertEquals(0, mSharedPreferences.getInt(WebappDataStorage.KEY_ORIENTATION, 0));
+        assertEquals(0, mSharedPreferences.getLong(WebappDataStorage.KEY_THEME_COLOR, 0));
+        assertEquals(0, mSharedPreferences.getLong(WebappDataStorage.KEY_BACKGROUND_COLOR, 0));
+        assertEquals(true,
+                mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_GENERATED, true));
+
+        // Update again from the intent and ensure that the data is restored.
+        storage.updateFromShortcutIntent(shortcutIntent);
+
+        assertEquals(action, mSharedPreferences.getString(WebappDataStorage.KEY_ACTION, null));
+        assertEquals(url, mSharedPreferences.getString(WebappDataStorage.KEY_URL, null));
+        assertEquals(scope, mSharedPreferences.getString(WebappDataStorage.KEY_SCOPE, null));
+        assertEquals(name, mSharedPreferences.getString(WebappDataStorage.KEY_NAME, null));
+        assertEquals(shortName,
+                mSharedPreferences.getString(WebappDataStorage.KEY_SHORT_NAME, null));
+        assertEquals(ShortcutHelper.encodeBitmapAsString(icon),
+                mSharedPreferences.getString(WebappDataStorage.KEY_ICON, null));
+        assertEquals(ShortcutHelper.WEBAPP_SHORTCUT_VERSION,
+                mSharedPreferences.getInt(WebappDataStorage.KEY_VERSION, 0));
+        assertEquals(orientation, mSharedPreferences.getInt(WebappDataStorage.KEY_ORIENTATION, 0));
+        assertEquals(themeColor, mSharedPreferences.getLong(WebappDataStorage.KEY_THEME_COLOR, 0));
+        assertEquals(backgroundColor,
+                mSharedPreferences.getLong(WebappDataStorage.KEY_BACKGROUND_COLOR, 0));
+        assertEquals(isIconGenerated,
+                mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_GENERATED, true));
     }
 
     // TODO(lalitm) - There seems to be a bug in Robolectric where a Bitmap

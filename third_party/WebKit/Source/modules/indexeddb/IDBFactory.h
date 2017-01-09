@@ -30,7 +30,6 @@
 
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/indexeddb/IDBOpenDBRequest.h"
-#include "modules/indexeddb/IndexedDBClient.h"
 #include "platform/heap/Handle.h"
 #include "wtf/text/WTFString.h"
 
@@ -39,31 +38,39 @@ namespace blink {
 class ExceptionState;
 class ScriptState;
 
-class IDBFactory final : public GarbageCollected<IDBFactory>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static IDBFactory* create(IndexedDBClient* client)
-    {
-        return new IDBFactory(client);
-    }
-    DECLARE_TRACE();
+class IDBFactory final : public GarbageCollected<IDBFactory>,
+                         public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    IDBRequest* getDatabaseNames(ScriptState*, ExceptionState&);
+ public:
+  static IDBFactory* create() { return new IDBFactory(); }
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 
-    IDBOpenDBRequest* open(ScriptState*, const String& name, ExceptionState&);
-    IDBOpenDBRequest* open(ScriptState*, const String& name, unsigned long long version, ExceptionState&);
-    IDBOpenDBRequest* deleteDatabase(ScriptState*, const String& name, ExceptionState&);
+  IDBRequest* getDatabaseNames(ScriptState*, ExceptionState&);
 
-    short cmp(ScriptState*, const ScriptValue& first, const ScriptValue& second, ExceptionState&);
+  IDBOpenDBRequest* open(ScriptState*, const String& name, ExceptionState&);
+  IDBOpenDBRequest* open(ScriptState*,
+                         const String& name,
+                         unsigned long long version,
+                         ExceptionState&);
+  IDBOpenDBRequest* deleteDatabase(ScriptState*,
+                                   const String& name,
+                                   ExceptionState&);
 
-private:
-    explicit IDBFactory(IndexedDBClient*);
+  short cmp(ScriptState*,
+            const ScriptValue& first,
+            const ScriptValue& second,
+            ExceptionState&);
 
-    IDBOpenDBRequest* openInternal(ScriptState*, const String& name, int64_t version, ExceptionState&);
+ private:
+  IDBFactory();
 
-    Member<IndexedDBClient> m_permissionClient;
+  IDBOpenDBRequest* openInternal(ScriptState*,
+                                 const String& name,
+                                 int64_t version,
+                                 ExceptionState&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // IDBFactory_h
+#endif  // IDBFactory_h

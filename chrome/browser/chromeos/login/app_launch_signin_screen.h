@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chromeos/login/auth/auth_status_consumer.h"
@@ -40,7 +41,7 @@ class AppLaunchSigninScreen : public SigninScreenHandlerDelegate,
     virtual ~Delegate() {}
   };
 
-  AppLaunchSigninScreen(OobeUI* oobe_display, Delegate *delegate);
+  AppLaunchSigninScreen(OobeUI* oobe_ui, Delegate* delegate);
   ~AppLaunchSigninScreen() override;
 
   void Show();
@@ -59,9 +60,10 @@ class AppLaunchSigninScreen : public SigninScreenHandlerDelegate,
   void Login(const UserContext& user_context,
              const SigninSpecifics& specifics) override;
   void MigrateUserData(const std::string& old_password) override;
-  void LoadWallpaper(const std::string& username) override;
+  void LoadWallpaper(const AccountId& account_id) override;
   void LoadSigninWallpaper() override;
   void OnSigninScreenReady() override;
+  void OnGaiaScreenReady() override;
   void RemoveUser(const AccountId& account_id) override;
   void ResyncUserData() override;
   void ShowEnterpriseEnrollmentScreen() override;
@@ -74,13 +76,16 @@ class AppLaunchSigninScreen : public SigninScreenHandlerDelegate,
                                         const std::string& password);
   bool IsShowGuest() const override;
   bool IsShowUsers() const override;
+  bool ShowUsersHasChanged() const override;
+  bool IsAllowNewUser() const override;
+  bool AllowNewUserChanged() const override;
   bool IsSigninInProgress() const override;
   bool IsUserSigninCompleted() const override;
   void SetDisplayEmail(const std::string& email) override;
   void Signout() override;
   void HandleGetUsers() override;
   void CheckUserStatus(const AccountId& account_id) override;
-  bool IsUserWhitelisted(const std::string& user_id) override;
+  bool IsUserWhitelisted(const AccountId& account_id) override;
 
   // AuthStatusConsumer implementation:
   void OnAuthFailure(const AuthFailure& error) override;

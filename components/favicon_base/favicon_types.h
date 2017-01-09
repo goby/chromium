@@ -5,8 +5,11 @@
 #ifndef COMPONENTS_FAVICON_BASE_FAVICON_TYPES_H_
 #define COMPONENTS_FAVICON_BASE_FAVICON_TYPES_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "url/gurl.h"
@@ -15,7 +18,7 @@ namespace favicon_base {
 
 struct FallbackIconStyle;
 
-typedef int64 FaviconID;
+typedef int64_t FaviconID;
 
 // Defines the icon types. They are also stored in icon_type field of favicons
 // table.
@@ -50,6 +53,7 @@ struct FaviconImageResult {
 // the desired scale factors.
 struct FaviconRawBitmapResult {
   FaviconRawBitmapResult();
+  FaviconRawBitmapResult(const FaviconRawBitmapResult& other);
   ~FaviconRawBitmapResult();
 
   // Returns true if |bitmap_data| contains a valid bitmap.
@@ -92,7 +96,7 @@ struct LargeIconResult {
 
   // The fallback icon style if a sufficiently large icon isn't available. This
   // uses the dominant color of a smaller icon as the background if available.
-  scoped_ptr<FallbackIconStyle> fallback_icon_style;
+  std::unique_ptr<FallbackIconStyle> fallback_icon_style;
 };
 
 }  // namespace favicon_base

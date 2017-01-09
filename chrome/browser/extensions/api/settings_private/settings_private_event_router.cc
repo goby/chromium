@@ -4,14 +4,16 @@
 
 #include "chrome/browser/extensions/api/settings_private/settings_private_event_router.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/settings_private.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 
 namespace extensions {
@@ -92,15 +94,13 @@ void SettingsPrivateEventRouter::StartOrStopListeningForPrefsChanges() {
       std::string pref_name = it.first;
       if (prefs_util_->IsCrosSetting(pref_name)) {
 #if defined(OS_CHROMEOS)
-        scoped_ptr<chromeos::CrosSettings::ObserverSubscription> observer =
-            chromeos::CrosSettings::Get()->AddSettingsObserver(
+        std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
+            subscription = chromeos::CrosSettings::Get()->AddSettingsObserver(
                 pref_name.c_str(),
                 base::Bind(&SettingsPrivateEventRouter::OnPreferenceChanged,
                            base::Unretained(this), pref_name));
-        linked_ptr<chromeos::CrosSettings::ObserverSubscription> subscription(
-            observer.release());
         cros_settings_subscription_map_.insert(
-            make_pair(pref_name, subscription));
+            make_pair(pref_name, std::move(subscription)));
 #endif
       } else {
         FindRegistrarForPref(it.first)
@@ -129,19 +129,20 @@ void SettingsPrivateEventRouter::OnPreferenceChanged(
     return;
   }
 
-  api::settings_private::PrefObject* pref_object =
-      prefs_util_->GetPref(pref_name).release();
+  std::unique_ptr<api::settings_private::PrefObject> pref_object =
+      prefs_util_->GetPref(pref_name);
 
-  std::vector<linked_ptr<api::settings_private::PrefObject>> prefs;
-  prefs.push_back(linked_ptr<api::settings_private::PrefObject>(pref_object));
+  std::vector<api::settings_private::PrefObject> prefs;
+  if (pref_object)
+    prefs.push_back(std::move(*pref_object));
 
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       api::settings_private::OnPrefsChanged::Create(prefs));
 
-  scoped_ptr<Event> extension_event(new Event(
+  std::unique_ptr<Event> extension_event(new Event(
       events::SETTINGS_PRIVATE_ON_PREFS_CHANGED,
-      api::settings_private::OnPrefsChanged::kEventName, args.Pass()));
-  event_router->BroadcastEvent(extension_event.Pass());
+      api::settings_private::OnPrefsChanged::kEventName, std::move(args)));
+  event_router->BroadcastEvent(std::move(extension_event));
 }
 
 SettingsPrivateEventRouter* SettingsPrivateEventRouter::Create(

@@ -10,7 +10,6 @@
 #include <string>
 
 class AccountId;
-class Browser;
 
 namespace content {
 class BrowserContext;
@@ -21,8 +20,6 @@ class Window;
 }
 
 namespace chrome {
-
-class MultiUserWindowManagerChromeOS;
 
 // The MultiUserWindowManager manages windows from multiple users by presenting
 // only user relevant windows to the current user. The manager is automatically
@@ -52,6 +49,8 @@ class MultiUserWindowManager {
     // Invoked when the window is destroyed and the manager stop to track its
     // owner.
     virtual void OnOwnerEntryRemoved(aura::Window* window) {}
+    // Invoked when the user switch animation is finished.
+    virtual void OnUserSwitchAnimationFinished() {}
 
    protected:
     virtual ~Observer() {}
@@ -61,7 +60,7 @@ class MultiUserWindowManager {
   enum MultiProfileMode {
     MULTI_PROFILE_MODE_UNINITIALIZED,  // Not initialized yet.
     MULTI_PROFILE_MODE_OFF,            // Single user mode.
-    MULTI_PROFILE_MODE_SEPARATED,      // Each user has his own desktop.
+    MULTI_PROFILE_MODE_SEPARATED,      // Each user has their own desktop.
     MULTI_PROFILE_MODE_MIXED           // All users mix windows freely.
   };
 

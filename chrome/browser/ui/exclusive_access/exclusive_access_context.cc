@@ -5,33 +5,16 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 
 #include "base/logging.h"
+#include "build/build_config.h"
 
-bool ExclusiveAccessContext::SupportsFullscreenWithToolbar() const {
-  return false;
-}
+// This file provides default implementations for the ExclusiveAccessContext
+// methods that only some platforms care about.
 
-void ExclusiveAccessContext::UpdateFullscreenWithToolbar(bool with_toolbar) {
+void ExclusiveAccessContext::UpdateUIForTabFullscreen(
+    TabFullscreenState state) {
   NOTIMPLEMENTED();
 }
 
-void ExclusiveAccessContext::ToggleFullscreenToolbar() {
+void ExclusiveAccessContext::UpdateFullscreenToolbar() {
   NOTIMPLEMENTED();
-}
-
-#if defined(OS_WIN)
-void ExclusiveAccessContext::SetMetroSnapMode(bool enable) {
-  NOTIMPLEMENTED();
-}
-
-bool ExclusiveAccessContext::IsInMetroSnapMode() const {
-  return false;
-}
-#endif  // defined(OS_WIN)
-
-void ExclusiveAccessContext::UnhideDownloadShelf() {
-  // NOOP implementation.
-}
-
-void ExclusiveAccessContext::HideDownloadShelf() {
-  // NOOP implementation.
 }

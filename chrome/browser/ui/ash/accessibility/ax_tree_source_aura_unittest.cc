@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "ash/test/ash_test_base.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/aura/accessibility/ax_tree_source_aura.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -52,8 +55,8 @@ class AXTreeSourceAuraTest : public ash::test::AshTestBase {
     AshTestBase::SetUp();
 
     widget_ = new Widget();
-    Widget::InitParams init_params(Widget::InitParams::TYPE_POPUP);
-    init_params.parent = CurrentContext();
+    Widget::InitParams init_params(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+    init_params.context = CurrentContext();
     widget_->Init(init_params);
 
     content_ = new View();
@@ -62,6 +65,7 @@ class AXTreeSourceAuraTest : public ash::test::AshTestBase {
     textfield_ = new Textfield();
     textfield_->SetText(base::ASCIIToUTF16("Value"));
     content_->AddChildView(textfield_);
+    widget_->Show();
   }
 
  protected:
@@ -140,9 +144,9 @@ TEST_F(AXTreeSourceAuraTest, Serialize) {
   // This is the initial serialization.
   ax_serializer.SerializeChanges(ax_tree.GetRoot(), &out_update);
 
-  // The update should just be the desktop node since no events have been fired
-  // on any controls, so no windows have been cached.
-  ASSERT_EQ(1U, out_update.nodes.size());
+  // The update should just be the desktop node and the fake alert window we use
+  // to handle posting text alerts.
+  ASSERT_EQ(2U, out_update.nodes.size());
 
   // Try removing some child views and re-adding which should fire some events.
   content_->RemoveAllChildViews(false /* delete_children */);
@@ -162,6 +166,13 @@ TEST_F(AXTreeSourceAuraTest, Serialize) {
   // We should have far more updates this time around.
   ASSERT_GE(node_count, 10U);
 
-  ASSERT_EQ(textfield_wrapper->GetID(), out_update2.nodes[node_count - 1].id);
-  ASSERT_EQ(ui::AX_ROLE_TEXT_FIELD, out_update2.nodes[node_count - 1].role);
+  int text_field_update_index = -1;
+  for (size_t i = 0; i < node_count; ++i) {
+    if (textfield_wrapper->GetID() == out_update2.nodes[i].id)
+      text_field_update_index = i;
+  }
+
+  ASSERT_NE(-1, text_field_update_index);
+  ASSERT_EQ(ui::AX_ROLE_TEXT_FIELD,
+            out_update2.nodes[text_field_update_index].role);
 }

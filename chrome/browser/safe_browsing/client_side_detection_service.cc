@@ -5,24 +5,27 @@
 #include "chrome/browser/safe_browsing/client_side_detection_service.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
-#include "base/prefs/pref_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/safe_browsing/client_model.pb.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
-#include "chrome/common/safe_browsing/safebrowsing_messages.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/prefs/pref_service.h"
+#include "components/safe_browsing/common/safebrowsing_messages.h"
+#include "components/safe_browsing_db/safe_browsing_prefs.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -30,8 +33,8 @@
 #include "crypto/sha2.h"
 #include "google_apis/google_api_keys.h"
 #include "net/base/escape.h"
+#include "net/base/ip_address.h"
 #include "net/base/load_flags.h"
-#include "net/base/net_util.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
@@ -74,12 +77,14 @@ const char ClientSideDetectionService::kClientReportPhishingUrl[] =
 const char ClientSideDetectionService::kClientReportMalwareUrl[] =
     "https://sb-ssl.google.com/safebrowsing/clientreport/malware-check";
 
-struct ClientSideDetectionService::ClientReportInfo {
+struct ClientSideDetectionService::ClientPhishingReportInfo {
+  std::unique_ptr<net::URLFetcher> fetcher;
   ClientReportPhishingRequestCallback callback;
   GURL phishing_url;
 };
 
 struct ClientSideDetectionService::ClientMalwareReportInfo {
+  std::unique_ptr<net::URLFetcher> fetcher;
   ClientReportMalwareRequestCallback callback;
   // This is the original landing url, may not be the malware url.
   GURL original_url;
@@ -108,12 +113,6 @@ ClientSideDetectionService::ClientSideDetectionService(
 
 ClientSideDetectionService::~ClientSideDetectionService() {
   weak_factory_.InvalidateWeakPtrs();
-  STLDeleteContainerPairPointers(client_phishing_reports_.begin(),
-                                 client_phishing_reports_.end());
-  client_phishing_reports_.clear();
-  STLDeleteContainerPairPointers(client_malware_reports_.begin(),
-                                 client_malware_reports_.end());
-  client_malware_reports_.clear();
 }
 
 // static
@@ -142,25 +141,19 @@ void ClientSideDetectionService::SetEnabledAndRefreshState(bool enabled) {
     model_loader_standard_->CancelFetcher();
     model_loader_extended_->CancelFetcher();
     // Invoke pending callbacks with a false verdict.
-    for (std::map<const net::URLFetcher*, ClientReportInfo*>::iterator it =
-             client_phishing_reports_.begin();
+    for (auto it = client_phishing_reports_.begin();
          it != client_phishing_reports_.end(); ++it) {
-      ClientReportInfo* info = it->second;
+      ClientPhishingReportInfo* info = it->second.get();
       if (!info->callback.is_null())
         info->callback.Run(info->phishing_url, false);
     }
-    STLDeleteContainerPairPointers(client_phishing_reports_.begin(),
-                                   client_phishing_reports_.end());
     client_phishing_reports_.clear();
-    for (std::map<const net::URLFetcher*, ClientMalwareReportInfo*>::iterator it
-             = client_malware_reports_.begin();
+    for (auto it = client_malware_reports_.begin();
          it != client_malware_reports_.end(); ++it) {
-      ClientMalwareReportInfo* info = it->second;
+      ClientMalwareReportInfo* info = it->second.get();
       if (!info->callback.is_null())
         info->callback.Run(info->original_url, info->original_url, false);
     }
-    STLDeleteContainerPairPointers(client_malware_reports_.begin(),
-                                   client_malware_reports_.end());
     client_malware_reports_.clear();
     cache_.clear();
   }
@@ -190,14 +183,14 @@ void ClientSideDetectionService::SendClientReportMalwareRequest(
 
 bool ClientSideDetectionService::IsPrivateIPAddress(
     const std::string& ip_address) const {
-  net::IPAddressNumber ip_number;
-  if (!net::ParseIPLiteralToNumber(ip_address, &ip_number)) {
+  net::IPAddress address;
+  if (!address.AssignFromIPLiteral(ip_address)) {
     DVLOG(2) << "Unable to parse IP address: '" << ip_address << "'";
     // Err on the side of safety and assume this might be private.
     return true;
   }
 
-  return net::IsIPAddressReserved(ip_number);
+  return address.IsReserved();
 }
 
 void ClientSideDetectionService::OnURLFetchComplete(
@@ -205,15 +198,12 @@ void ClientSideDetectionService::OnURLFetchComplete(
   std::string data;
   source->GetResponseAsString(&data);
 
-  if (client_phishing_reports_.find(source) != client_phishing_reports_.end()) {
-    HandlePhishingVerdict(
-        source, source->GetURL(), source->GetStatus(),
-        source->GetResponseCode(), source->GetCookies(), data);
-  } else if (client_malware_reports_.find(source) !=
-             client_malware_reports_.end()) {
-    HandleMalwareVerdict(
-        source, source->GetURL(), source->GetStatus(),
-        source->GetResponseCode(), source->GetCookies(), data);
+  if (base::ContainsKey(client_phishing_reports_, source)) {
+    HandlePhishingVerdict(source, source->GetURL(), source->GetStatus(),
+                          source->GetResponseCode(), data);
+  } else if (base::ContainsKey(client_malware_reports_, source)) {
+    HandleMalwareVerdict(source, source->GetURL(), source->GetStatus(),
+                         source->GetResponseCode(), data);
   } else {
     NOTREACHED();
   }
@@ -224,7 +214,7 @@ void ClientSideDetectionService::Observe(
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(type == content::NOTIFICATION_RENDERER_PROCESS_CREATED);
+  DCHECK_EQ(content::NOTIFICATION_RENDERER_PROCESS_CREATED, type);
   SendModelToProcess(
       content::Source<content::RenderProcessHost>(source).ptr());
 }
@@ -238,8 +228,7 @@ void ClientSideDetectionService::SendModelToProcess(
   Profile* profile = Profile::FromBrowserContext(process->GetBrowserContext());
   std::string model;
   if (profile->GetPrefs()->GetBoolean(prefs::kSafeBrowsingEnabled)) {
-    if (profile->GetPrefs()->GetBoolean(
-            prefs::kSafeBrowsingExtendedReportingEnabled)) {
+    if (IsExtendedReportingEnabled(*profile->GetPrefs())) {
       DVLOG(2) << "Sending phishing model " << model_loader_extended_->name()
                << " to RenderProcessHost @" << process;
       model = model_loader_extended_->model_str();
@@ -268,7 +257,7 @@ void ClientSideDetectionService::StartClientReportPhishingRequest(
     bool is_extended_reporting,
     const ClientReportPhishingRequestCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  scoped_ptr<ClientPhishingRequest> request(verdict);
+  std::unique_ptr<ClientPhishingRequest> request(verdict);
 
   if (!enabled_) {
     if (!callback.is_null())
@@ -297,21 +286,25 @@ void ClientSideDetectionService::StartClientReportPhishingRequest(
     return;
   }
 
-  net::URLFetcher* fetcher =
+  std::unique_ptr<net::URLFetcher> fetcher(
       net::URLFetcher::Create(0 /* ID used for testing */,
                               GetClientReportUrl(kClientReportPhishingUrl),
-                              net::URLFetcher::POST, this).release();
+                              net::URLFetcher::POST, this));
+  net::URLFetcher* fetcher_ptr = fetcher.get();
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      fetcher_ptr, data_use_measurement::DataUseUserData::SAFE_BROWSING);
 
   // Remember which callback and URL correspond to the current fetcher object.
-  ClientReportInfo* info = new ClientReportInfo;
+  std::unique_ptr<ClientPhishingReportInfo> info(new ClientPhishingReportInfo);
+  info->fetcher = std::move(fetcher);
   info->callback = callback;
   info->phishing_url = GURL(request->url());
-  client_phishing_reports_[fetcher] = info;
+  client_phishing_reports_[fetcher_ptr] = std::move(info);
 
-  fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE);
-  fetcher->SetRequestContext(request_context_getter_.get());
-  fetcher->SetUploadData("application/octet-stream", request_data);
-  fetcher->Start();
+  fetcher_ptr->SetLoadFlags(net::LOAD_DISABLE_CACHE);
+  fetcher_ptr->SetRequestContext(request_context_getter_.get());
+  fetcher_ptr->SetUploadData("application/octet-stream", request_data);
+  fetcher_ptr->Start();
 
   // Record that we made a request
   phishing_report_times_.push(base::Time::Now());
@@ -321,7 +314,7 @@ void ClientSideDetectionService::StartClientReportMalwareRequest(
     ClientMalwareRequest* verdict,
     const ClientReportMalwareRequestCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  scoped_ptr<ClientMalwareRequest> request(verdict);
+  std::unique_ptr<ClientMalwareRequest> request(verdict);
 
   if (!enabled_) {
     if (!callback.is_null())
@@ -338,21 +331,25 @@ void ClientSideDetectionService::StartClientReportMalwareRequest(
     return;
   }
 
-  net::URLFetcher* fetcher =
+  std::unique_ptr<net::URLFetcher> fetcher(
       net::URLFetcher::Create(0 /* ID used for testing */,
                               GetClientReportUrl(kClientReportMalwareUrl),
-                              net::URLFetcher::POST, this).release();
+                              net::URLFetcher::POST, this));
+  net::URLFetcher* fetcher_ptr = fetcher.get();
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      fetcher_ptr, data_use_measurement::DataUseUserData::SAFE_BROWSING);
 
   // Remember which callback and URL correspond to the current fetcher object.
-  ClientMalwareReportInfo* info = new ClientMalwareReportInfo;
+  std::unique_ptr<ClientMalwareReportInfo> info(new ClientMalwareReportInfo);
+  info->fetcher = std::move(fetcher);
   info->callback = callback;
   info->original_url = GURL(request->url());
-  client_malware_reports_[fetcher] = info;
+  client_malware_reports_[fetcher_ptr] = std::move(info);
 
-  fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE);
-  fetcher->SetRequestContext(request_context_getter_.get());
-  fetcher->SetUploadData("application/octet-stream", request_data);
-  fetcher->Start();
+  fetcher_ptr->SetLoadFlags(net::LOAD_DISABLE_CACHE);
+  fetcher_ptr->SetRequestContext(request_context_getter_.get());
+  fetcher_ptr->SetUploadData("application/octet-stream", request_data);
+  fetcher_ptr->Start();
 
   UMA_HISTOGRAM_ENUMERATION("SBClientMalware.SentReports",
                             REPORT_SENT, REPORT_RESULT_MAX);
@@ -370,16 +367,18 @@ void ClientSideDetectionService::HandlePhishingVerdict(
     const GURL& url,
     const net::URLRequestStatus& status,
     int response_code,
-    const net::ResponseCookies& cookies,
     const std::string& data) {
   ClientPhishingResponse response;
-  scoped_ptr<ClientReportInfo> info(client_phishing_reports_[source]);
+  std::unique_ptr<ClientPhishingReportInfo> info =
+      std::move(client_phishing_reports_[source]);
+  client_phishing_reports_.erase(source);
+
   bool is_phishing = false;
   if (status.is_success() && net::HTTP_OK == response_code &&
       response.ParseFromString(data)) {
     // Cache response, possibly flushing an old one.
     cache_[info->phishing_url] =
-        make_linked_ptr(new CacheState(response.phishy(), base::Time::Now()));
+        base::WrapUnique(new CacheState(response.phishy(), base::Time::Now()));
     is_phishing = response.phishy();
   } else {
     DLOG(ERROR) << "Unable to get the server verdict for URL: "
@@ -388,8 +387,6 @@ void ClientSideDetectionService::HandlePhishingVerdict(
   }
   if (!info->callback.is_null())
     info->callback.Run(info->phishing_url, is_phishing);
-  client_phishing_reports_.erase(source);
-  delete source;
 }
 
 void ClientSideDetectionService::HandleMalwareVerdict(
@@ -397,7 +394,6 @@ void ClientSideDetectionService::HandleMalwareVerdict(
     const GURL& url,
     const net::URLRequestStatus& status,
     int response_code,
-    const net::ResponseCookies& cookies,
     const std::string& data) {
   if (status.is_success()) {
     UMA_HISTOGRAM_SPARSE_SLOWLY(
@@ -408,7 +404,10 @@ void ClientSideDetectionService::HandleMalwareVerdict(
       "SBClientMalware.IPBlacklistRequestNetError", -status.error());
 
   ClientMalwareResponse response;
-  scoped_ptr<ClientMalwareReportInfo> info(client_malware_reports_[source]);
+  std::unique_ptr<ClientMalwareReportInfo> info =
+      std::move(client_malware_reports_[source]);
+  client_malware_reports_.erase(source);
+
   bool should_blacklist = false;
   if (status.is_success() && net::HTTP_OK == response_code &&
       response.ParseFromString(data)) {
@@ -427,8 +426,6 @@ void ClientSideDetectionService::HandleMalwareVerdict(
       info->callback.Run(info->original_url, info->original_url, false);
   }
 
-  client_malware_reports_.erase(source);
-  delete source;
 }
 
 bool ClientSideDetectionService::IsInCache(const GURL& url) {
@@ -441,7 +438,7 @@ bool ClientSideDetectionService::GetValidCachedResult(const GURL& url,
                                                       bool* is_phishing) {
   UpdateCache();
 
-  PhishingCache::iterator it = cache_.find(url);
+  auto it = cache_.find(url);
   if (it == cache_.end()) {
     return false;
   }
@@ -472,7 +469,7 @@ void ClientSideDetectionService::UpdateCache() {
                base::TimeDelta::FromDays(kReportsIntervalDays));
 
   // Remove elements from the cache that will no longer be used.
-  for (PhishingCache::iterator it = cache_.begin(); it != cache_.end();) {
+  for (auto it = cache_.begin(); it != cache_.end();) {
     const CacheState& cache_state = *it->second;
     if (cache_state.is_phishing ?
         cache_state.timestamp > base::Time::Now() - positive_cache_interval :

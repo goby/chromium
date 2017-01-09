@@ -28,7 +28,7 @@ void TaskGraphRunnerTestBase::RunAllTasks(int namespace_index) {
   for (Task::Vector::const_iterator it = completed_tasks.begin();
        it != completed_tasks.end(); ++it) {
     FakeTaskImpl* task = static_cast<FakeTaskImpl*>(it->get());
-    task->CompleteOnOriginThread();
+    task->OnTaskCompleted();
   }
 }
 
@@ -65,13 +65,13 @@ void TaskGraphRunnerTestBase::ScheduleTasks(
     scoped_refptr<FakeTaskImpl> new_task(
         new FakeTaskImpl(this, it->namespace_index, it->id));
     new_graph.nodes.push_back(
-        TaskGraph::Node(new_task.get(), it->priority, 0u));
+        TaskGraph::Node(new_task.get(), it->category, it->priority, 0u));
     for (unsigned i = 0; i < it->dependent_count; ++i) {
       scoped_refptr<FakeDependentTaskImpl> new_dependent_task(
           new FakeDependentTaskImpl(this, it->namespace_index,
                                     it->dependent_id));
-      new_graph.nodes.push_back(
-          TaskGraph::Node(new_dependent_task.get(), it->priority, 1u));
+      new_graph.nodes.push_back(TaskGraph::Node(
+          new_dependent_task.get(), it->category, it->priority, 1u));
       new_graph.edges.push_back(
           TaskGraph::Edge(new_task.get(), new_dependent_task.get()));
 
@@ -92,7 +92,7 @@ void TaskGraphRunnerTestBase::FakeTaskImpl::RunOnWorkerThread() {
   test_->RunTaskOnWorkerThread(namespace_index_, id_);
 }
 
-void TaskGraphRunnerTestBase::FakeTaskImpl::CompleteOnOriginThread() {
+void TaskGraphRunnerTestBase::FakeTaskImpl::OnTaskCompleted() {
   test_->OnTaskCompleted(namespace_index_, id_);
 }
 

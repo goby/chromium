@@ -7,21 +7,20 @@
 
 #include "third_party/WebKit/public/web/WebPlugin.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
 #include "content/renderer/render_view_impl.h"
 #include "third_party/WebKit/public/web/WebCompositionUnderline.h"
 #include "third_party/WebKit/public/web/WebDragStatus.h"
+#include "third_party/WebKit/public/web/WebInputMethodController.h"
 #include "third_party/WebKit/public/web/WebNode.h"
-#include "third_party/WebKit/public/web/WebWidget.h"
-
-struct BrowserPluginHostMsg_ResizeGuest_Params;
-struct FrameMsg_BuffersSwapped_Params;
 
 namespace cc {
-struct SurfaceId;
+class SurfaceId;
 struct SurfaceSequence;
 }
 
@@ -87,8 +86,8 @@ class CONTENT_EXPORT BrowserPlugin :
   bool supportsEditCommands() const override;
   bool supportsInputMethod() const override;
   bool canProcessDrag() const override;
-  void layoutIfNeeded() override {}
-  void paint(blink::WebCanvas* canvas, const blink::WebRect& rect) override;
+  void updateAllLifecyclePhases() override {}
+  void paint(blink::WebCanvas* canvas, const blink::WebRect& rect) override {}
   void updateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
                       const blink::WebRect& unobscured_rect,
@@ -96,7 +95,6 @@ class CONTENT_EXPORT BrowserPlugin :
                       bool is_visible) override;
   void updateFocus(bool focused, blink::WebFocusType focus_type) override;
   void updateVisibility(bool visible) override;
-  bool acceptsInputEvents() override;
   blink::WebInputEventResult handleInputEvent(
       const blink::WebInputEvent& event,
       blink::WebCursorInfo& cursor_info) override;
@@ -117,9 +115,12 @@ class CONTENT_EXPORT BrowserPlugin :
       const blink::WebVector<blink::WebCompositionUnderline>& underlines,
       int selectionStart,
       int selectionEnd) override;
-  bool confirmComposition(
-      const blink::WebString& text,
-      blink::WebWidget::ConfirmCompositionBehavior selectionBehavior) override;
+  bool commitText(const blink::WebString& text,
+                  int relative_cursor_pos) override;
+  bool finishComposingText(
+      blink::WebInputMethodController::ConfirmCompositionBehavior
+          selection_behavior) override;
+
   void extendSelectionAndDelete(int before, int after) override;
 
   // MouseLockDispatcher::LockTarget implementation.
@@ -145,14 +146,13 @@ class CONTENT_EXPORT BrowserPlugin :
 
   gfx::Rect view_rect() const { return view_rect_; }
 
-  void ShowSadGraphic();
   void UpdateInternalInstanceId();
 
   // IPC message handlers.
   // Please keep in alphabetical order.
   void OnAdvanceFocus(int instance_id, bool reverse);
-  void OnCompositorFrameSwapped(const IPC::Message& message);
   void OnGuestGone(int instance_id);
+  void OnGuestReady(int instance_id);
   void OnSetChildFrameSurface(int instance_id,
                               const cc::SurfaceId& surface_id,
                               const gfx::Size& frame_size,
@@ -173,9 +173,8 @@ class CONTENT_EXPORT BrowserPlugin :
   // then we will attempt to access a nullptr.
   const int render_frame_routing_id_;
   blink::WebPluginContainer* container_;
+  // The plugin's rect in css pixels.
   gfx::Rect view_rect_;
-  // Bitmap for crashed plugin. Lazily initialized, non-owning pointer.
-  SkBitmap* sad_guest_;
   bool guest_crashed_;
   bool plugin_focused_;
   // Tracks the visibility of the browser plugin regardless of the whole
@@ -194,9 +193,6 @@ class CONTENT_EXPORT BrowserPlugin :
 
   // URL for the embedder frame.
   int browser_plugin_instance_id_;
-
-  // Indicates whether the guest content is opaque.
-  bool contents_opaque_;
 
   std::vector<EditCommand> edit_commands_;
 

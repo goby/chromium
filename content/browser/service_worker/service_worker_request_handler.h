@@ -5,7 +5,9 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REQUEST_HANDLER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REQUEST_HANDLER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
 #include "base/time/time.h"
@@ -30,12 +32,11 @@ class BlobStorageContext;
 namespace content {
 
 class ResourceContext;
-class ResourceRequestBody;
+class ResourceRequestBodyImpl;
 class ServiceWorkerContextCore;
 class ServiceWorkerContextWrapper;
 class ServiceWorkerNavigationHandleCore;
 class ServiceWorkerProviderHost;
-struct ResourceResponseInfo;
 
 // Abstract base class for routing network requests to ServiceWorkers.
 // Created one per URLRequest and attached to each request.
@@ -53,7 +54,8 @@ class CONTENT_EXPORT ServiceWorkerRequestHandler
       ResourceType resource_type,
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      bool is_parent_frame_secure,
+      scoped_refptr<ResourceRequestBodyImpl> body);
 
   // Attaches a newly created handler if the given |request| needs to
   // be handled by ServiceWorker.
@@ -74,22 +76,27 @@ class CONTENT_EXPORT ServiceWorkerRequestHandler
       ResourceType resource_type,
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      scoped_refptr<ResourceRequestBodyImpl> body);
 
   // Returns the handler attached to |request|. This may return NULL
   // if no handler is attached.
   static ServiceWorkerRequestHandler* GetHandler(
-      net::URLRequest* request);
+      const net::URLRequest* request);
 
   // Creates a protocol interceptor for ServiceWorker.
-  static scoped_ptr<net::URLRequestInterceptor> CreateInterceptor(
+  static std::unique_ptr<net::URLRequestInterceptor> CreateInterceptor(
       ResourceContext* resource_context);
 
   // Returns true if the request falls into the scope of a ServiceWorker.
   // It's only reliable after the ServiceWorkerRequestHandler MaybeCreateJob
   // method runs to completion for this request. The AppCache handler uses
   // this to avoid colliding with ServiceWorkers.
-  static bool IsControlledByServiceWorker(net::URLRequest* request);
+  static bool IsControlledByServiceWorker(const net::URLRequest* request);
+
+  // Returns the ServiceWorkerProviderHost the request is associated with.
+  // Only valid after InitializeHandler has been called. Can return null.
+  static ServiceWorkerProviderHost* GetProviderHost(
+      const net::URLRequest* request);
 
   ~ServiceWorkerRequestHandler() override;
 
@@ -99,15 +106,16 @@ class CONTENT_EXPORT ServiceWorkerRequestHandler
       net::NetworkDelegate* network_delegate,
       ResourceContext* context) = 0;
 
-  virtual void GetExtraResponseInfo(
-      ResourceResponseInfo* response_info) const = 0;
-
   // Methods to support cross site navigations.
   void PrepareForCrossSiteTransfer(int old_process_id);
   void CompleteCrossSiteTransfer(int new_process_id,
                                  int new_provider_id);
   void MaybeCompleteCrossSiteTransferInOldProcess(
       int old_process_id);
+
+  // Useful for detecting storage partition mismatches in the context of cross
+  // site transfer navigations.
+  bool SanityCheckIsSameContext(ServiceWorkerContextWrapper* wrapper);
 
  protected:
   ServiceWorkerRequestHandler(
@@ -122,7 +130,7 @@ class CONTENT_EXPORT ServiceWorkerRequestHandler
   ResourceType resource_type_;
 
  private:
-  scoped_ptr<ServiceWorkerProviderHost> host_for_cross_site_transfer_;
+  std::unique_ptr<ServiceWorkerProviderHost> host_for_cross_site_transfer_;
   int old_process_id_;
   int old_provider_id_;
 

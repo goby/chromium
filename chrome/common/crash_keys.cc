@@ -8,13 +8,14 @@
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/flags_ui/flags_ui_switches.h"
 #include "content/public/common/content_switches.h"
-#include "ipc/ipc_switches.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/common/chrome_switches.h"
@@ -47,6 +48,22 @@ const char kGPUVendor[] = "gpu-gl-vendor";
 const char kGPURenderer[] = "gpu-gl-renderer";
 #endif
 
+#if defined(OS_WIN)
+const char kHungAudioThreadDetails[] = "hung-audio-thread-details";
+
+const char kHungRendererOutstandingAckCount[] = "hung-outstanding-acks";
+const char kHungRendererOutstandingEventType[] = "hung-outstanding-event-type";
+const char kHungRendererLastEventType[] = "hung-last-event-type";
+const char kHungRendererReason[] = "hung-reason";
+
+const char kThirdPartyModulesLoaded[] = "third-party-modules-loaded";
+const char kThirdPartyModulesNotLoaded[] = "third-party-modules-not-loaded";
+
+const char kEnrolledToDomain[] = "enrolled-to-domain";
+#endif
+
+const char kInputEventFilterSendFailure[] = "input-event-filter-send-failure";
+
 const char kPrinterInfo[] = "prn-info-%" PRIuS;
 
 #if defined(OS_CHROMEOS)
@@ -67,10 +84,12 @@ const char kNSExceptionTrace[] = "nsexception_bt";
 
 const char kSendAction[] = "sendaction";
 
+const char kNSEvent[] = "nsevent";
+
 }  // namespace mac
 #endif
 
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
 const char kKaskoGuid[] = "kasko-guid";
 const char kKaskoEquivalentGuid[] = "kasko-equivalent-guid";
 #endif
@@ -82,6 +101,11 @@ const char kZeroEncodeDetails[] = "zero-encode-details";
 size_t RegisterChromeCrashKeys() {
   // The following keys may be chunked by the underlying crash logging system,
   // but ultimately constitute a single key-value pair.
+  //
+  // If you're adding keys here, please also add them to the following lists:
+  // 1. //blimp/engine/app/blimp_engine_crash_keys.cc and
+  // 2. //chrome/app/chrome_crash_reporter_client_win.cc::
+  //    RegisterCrashKeysHelper().
   base::debug::CrashKey fixed_keys[] = {
 #if defined(OS_MACOSX) || defined(OS_WIN)
     { kMetricsClientId, kSmallSize },
@@ -109,12 +133,24 @@ size_t RegisterChromeCrashKeys() {
 #endif
 
     // content/:
+    { "bad_message_reason", kSmallSize },
     { "discardable-memory-allocated", kSmallSize },
     { "discardable-memory-free", kSmallSize },
     { kFontKeyName, kSmallSize},
+    { "mojo-message-error", kMediumSize },
     { "ppapi_path", kMediumSize },
     { "subresource_url", kLargeSize },
     { "total-discardable-memory-allocated", kSmallSize },
+#if defined(OS_WIN)
+    { kHungRendererOutstandingAckCount, kSmallSize },
+    { kHungRendererOutstandingEventType, kSmallSize },
+    { kHungRendererLastEventType, kSmallSize },
+    { kHungRendererReason, kSmallSize },
+    { kThirdPartyModulesLoaded, kSmallSize },
+    { kThirdPartyModulesNotLoaded, kSmallSize },
+    { kEnrolledToDomain, kSmallSize },
+#endif
+    { kInputEventFilterSendFailure, kSmallSize },
 #if defined(OS_CHROMEOS)
     { kNumberOfUsers, kSmallSize },
 #endif
@@ -126,6 +162,7 @@ size_t RegisterChromeCrashKeys() {
     { mac::kNSException, kMediumSize },
     { mac::kNSExceptionTrace, kMediumSize },
     { mac::kSendAction, kMediumSize },
+    { mac::kNSEvent, kMediumSize },
     { mac::kZombie, kMediumSize },
     { mac::kZombieTrace, kMediumSize },
     // content/:
@@ -133,15 +170,89 @@ size_t RegisterChromeCrashKeys() {
     { "remove_route_bt", kMediumSize },
     { "rwhvm_window", kMediumSize },
     // media/:
-    { "VideoCaptureDeviceQTKit", kSmallSize },
 #endif
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
     { kKaskoGuid, kSmallSize },
     { kKaskoEquivalentGuid, kSmallSize },
 #endif
     { kBug464926CrashKey, kSmallSize },
     { kViewCount, kSmallSize },
+
+    // media/:
+#if defined(OS_WIN)
+    { kHungAudioThreadDetails, kSmallSize },
+#endif
     { kZeroEncodeDetails, kSmallSize },
+
+    // gin/:
+    { "v8-ignition", kSmallSize },
+
+    // Temporary for http://crbug.com/575245.
+    { "swapout_frame_id", kSmallSize },
+    { "swapout_proxy_id", kSmallSize },
+    { "swapout_view_id", kSmallSize },
+    { "commit_frame_id", kSmallSize },
+    { "commit_proxy_id", kSmallSize },
+    { "commit_view_id", kSmallSize },
+    { "commit_main_render_frame_id", kSmallSize },
+    { "newproxy_proxy_id", kSmallSize },
+    { "newproxy_view_id", kSmallSize },
+    { "newproxy_opener_id", kSmallSize },
+    { "newproxy_parent_id", kSmallSize },
+    { "rvinit_view_id", kSmallSize },
+    { "rvinit_proxy_id", kSmallSize },
+    { "rvinit_main_frame_id", kSmallSize },
+    { "initrf_frame_id", kSmallSize },
+    { "initrf_proxy_id", kSmallSize },
+    { "initrf_view_id", kSmallSize },
+    { "initrf_main_frame_id", kSmallSize },
+    { "initrf_view_is_live", kSmallSize },
+
+    // Temporary for https://crbug.com/591478.
+    { "initrf_parent_proxy_exists", kSmallSize },
+    { "initrf_render_view_is_live", kSmallSize },
+    { "initrf_parent_is_in_same_site_instance", kSmallSize},
+    { "initrf_parent_process_is_live", kSmallSize},
+    { "initrf_root_is_in_same_site_instance", kSmallSize},
+    { "initrf_root_is_in_same_site_instance_as_parent", kSmallSize},
+    { "initrf_root_process_is_live", kSmallSize},
+    { "initrf_root_proxy_is_live", kSmallSize},
+
+    // Temporary for https://crbug.com/626802.
+    { "newframe_routing_id", kSmallSize },
+    { "newframe_proxy_id", kSmallSize },
+    { "newframe_opener_id", kSmallSize },
+    { "newframe_parent_id", kSmallSize },
+    { "newframe_widget_id", kSmallSize },
+    { "newframe_widget_hidden", kSmallSize },
+    { "newframe_replicated_origin", kSmallSize },
+    { "newframe_oopifs_possible", kSmallSize },
+
+    // Temporary for https://crbug.com/630103.
+    { "origin_mismatch_url", crash_keys::kLargeSize },
+    { "origin_mismatch_origin", crash_keys::kMediumSize },
+    { "origin_mismatch_transition", crash_keys::kSmallSize },
+    { "origin_mismatch_redirects", crash_keys::kSmallSize },
+    { "origin_mismatch_same_page", crash_keys::kSmallSize },
+
+    // Temporary for https://crbug.com/612711.
+    { "aci_wrong_sp_extension_id", kSmallSize },
+
+    // Temporary for https://crbug.com/616149.
+    { "existing_extension_pref_value_type", crash_keys::kSmallSize },
+
+    // Temporary for https://crbug.com/630495.
+    { "swdh_register_cannot_host_url", crash_keys::kLargeSize },
+    { "swdh_register_cannot_scope_url", crash_keys::kLargeSize },
+    { "swdh_register_cannot_script_url", crash_keys::kLargeSize },
+
+    // Temporary for https://crbug.com/630496.
+    { "swdh_get_registration_cannot_host_url", crash_keys::kLargeSize },
+    { "swdh_get_registration_cannot_document_url", crash_keys::kLargeSize },
+
+    // Temporary for https://crbug.com/668633.
+    { "swdh_set_hosted_version_worker_pid", crash_keys::kSmallSize },
+    { "swdh_set_hosted_version_host_pid", crash_keys::kSmallSize },
   };
 
   // This dynamic set of keys is used for sets of key value pairs when gathering
@@ -189,20 +300,11 @@ static bool IsBoringSwitch(const std::string& flag) {
     switches::kFlagSwitchesBegin,
     switches::kFlagSwitchesEnd,
     switches::kLoggingLevel,
-#if defined(OS_WIN)
-    // This file is linked into both chrome.dll and chrome.exe. However //ipc
-    // is only in the .dll, so this needs to be a literal rather than the
-    // constant.
-    "channel",  // switches::kProcessChannelID
-#else
-    switches::kProcessChannelID,
-#endif
     switches::kProcessType,
     switches::kV,
     switches::kVModule,
 #if defined(OS_WIN)
     switches::kForceFieldTrials,
-    switches::kPluginPath,
 #elif defined(OS_MACOSX)
     switches::kMetricsClientID,
 #elif defined(OS_CHROMEOS)

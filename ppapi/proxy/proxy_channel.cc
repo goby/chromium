@@ -5,6 +5,7 @@
 #include "ppapi/proxy/proxy_channel.h"
 
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "ipc/ipc_platform_file.h"
 #include "ipc/ipc_test_sink.h"
 
@@ -51,13 +52,6 @@ void ProxyChannel::InitWithTestSink(IPC::TestSink* test_sink) {
 void ProxyChannel::OnChannelError() {
   channel_.reset();
 }
-
-#if defined(OS_POSIX) && !defined(OS_NACL)
-base::ScopedFD ProxyChannel::TakeRendererFD() {
-  DCHECK(channel());
-  return channel()->TakeClientFileDescriptor();
-}
-#endif
 
 IPC::PlatformFileForTransit ProxyChannel::ShareHandleWithRemote(
       base::PlatformFile handle,

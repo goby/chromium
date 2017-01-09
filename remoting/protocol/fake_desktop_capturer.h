@@ -5,9 +5,10 @@
 #ifndef REMOTING_PROTOCOL_FAKE_DESKTOP_CAPTURER_H_
 #define REMOTING_PROTOCOL_FAKE_DESKTOP_CAPTURER_H_
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "third_party/webrtc/modules/desktop_capture/screen_capture_frame_queue.h"
@@ -26,8 +27,9 @@ class FakeDesktopCapturer : public webrtc::DesktopCapturer {
   static const int kWidth = 800;
   static const int kHeight = 600;
 
-  typedef base::Callback<scoped_ptr<webrtc::DesktopFrame>(
-      webrtc::DesktopCapturer::Callback* callback)> FrameGenerator;
+  typedef base::Callback<std::unique_ptr<webrtc::DesktopFrame>(
+      webrtc::SharedMemoryFactory* shared_memory_factory)>
+      FrameGenerator;
 
   FakeDesktopCapturer();
   ~FakeDesktopCapturer() override;
@@ -36,12 +38,18 @@ class FakeDesktopCapturer : public webrtc::DesktopCapturer {
 
   // webrtc::DesktopCapturer interface.
   void Start(Callback* callback) override;
-  void Capture(const webrtc::DesktopRegion& rect) override;
+  void SetSharedMemoryFactory(std::unique_ptr<webrtc::SharedMemoryFactory>
+                                  shared_memory_factory) override;
+  void CaptureFrame() override;
+  bool GetSourceList(SourceList* sources) override;
+  bool SelectSource(SourceId id) override;
 
  private:
   FrameGenerator frame_generator_;
 
   Callback* callback_;
+
+  std::unique_ptr<webrtc::SharedMemoryFactory> shared_memory_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeDesktopCapturer);
 };

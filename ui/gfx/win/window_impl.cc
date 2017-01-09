@@ -8,9 +8,11 @@
 
 #include "base/bind.h"
 #include "base/debug/alias.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/win/win_util.h"
 #include "base/win/wrapped_window_proc.h"
 #include "ui/gfx/win/hwnd_util.h"
 
@@ -211,7 +213,6 @@ void WindowImpl::Init(HWND parent, const Rect& bounds) {
                              reinterpret_cast<wchar_t*>(atom), NULL,
                              window_style_, x, y, width, height,
                              parent, NULL, NULL, this);
-
   // First nccalcszie (during CreateWindow) for captioned windows is
   // deliberately ignored so force a second one here to get the right
   // non-client set up.

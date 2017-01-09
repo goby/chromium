@@ -5,8 +5,11 @@
 #ifndef UI_APP_LIST_SEARCH_TERM_BREAK_ITERATOR_H_
 #define UI_APP_LIST_SEARCH_TERM_BREAK_ITERATOR_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/app_list/app_list_export.h"
 
@@ -59,7 +62,7 @@ class APP_LIST_EXPORT TermBreakIterator {
   size_t prev_;
   size_t pos_;
 
-  scoped_ptr<base::i18n::UTF16CharIterator> iter_;
+  std::unique_ptr<base::i18n::UTF16CharIterator> iter_;
   State state_;
 
   DISALLOW_COPY_AND_ASSIGN(TermBreakIterator);

@@ -23,54 +23,61 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/editing/commands/RemoveNodeCommand.h"
 
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "core/dom/Node.h"
+#include "core/editing/EditingUtilities.h"
+#include "core/editing/commands/EditingState.h"
 #include "wtf/Assertions.h"
 
 namespace blink {
 
-RemoveNodeCommand::RemoveNodeCommand(PassRefPtrWillBeRawPtr<Node> node, ShouldAssumeContentIsAlwaysEditable shouldAssumeContentIsAlwaysEditable)
-    : SimpleEditCommand(node->document())
-    , m_node(node)
-    , m_shouldAssumeContentIsAlwaysEditable(shouldAssumeContentIsAlwaysEditable)
-{
-    ASSERT(m_node);
-    ASSERT(m_node->parentNode());
+RemoveNodeCommand::RemoveNodeCommand(
+    Node* node,
+    ShouldAssumeContentIsAlwaysEditable shouldAssumeContentIsAlwaysEditable)
+    : SimpleEditCommand(node->document()),
+      m_node(node),
+      m_shouldAssumeContentIsAlwaysEditable(
+          shouldAssumeContentIsAlwaysEditable) {
+  DCHECK(m_node);
+  DCHECK(m_node->parentNode());
 }
 
-void RemoveNodeCommand::doApply()
-{
-    ContainerNode* parent = m_node->parentNode();
-    if (!parent || (m_shouldAssumeContentIsAlwaysEditable == DoNotAssumeContentIsAlwaysEditable
-        && !parent->isContentEditable(Node::UserSelectAllIsAlwaysNonEditable) && parent->inActiveDocument()))
-        return;
-    ASSERT(parent->isContentEditable(Node::UserSelectAllIsAlwaysNonEditable) || !parent->inActiveDocument());
+void RemoveNodeCommand::doApply(EditingState* editingState) {
+  ContainerNode* parent = m_node->parentNode();
+  document().updateStyleAndLayoutTree();
+  if (!parent || (m_shouldAssumeContentIsAlwaysEditable ==
+                      DoNotAssumeContentIsAlwaysEditable &&
+                  !hasEditableStyle(*parent) && parent->inActiveDocument()))
+    return;
+  DCHECK(hasEditableStyle(*parent) || !parent->inActiveDocument()) << parent;
 
-    m_parent = parent;
-    m_refChild = m_node->nextSibling();
+  m_parent = parent;
+  m_refChild = m_node->nextSibling();
 
-    m_node->remove(IGNORE_EXCEPTION);
+  m_node->remove(IGNORE_EXCEPTION);
+  // Node::remove dispatch synchronous events such as IFRAME unload events,
+  // and event handlers may break the document. We check the document state
+  // here in order to prevent further processing in bad situation.
+  ABORT_EDITING_COMMAND_IF(!m_node->document().frame());
+  ABORT_EDITING_COMMAND_IF(!m_node->document().documentElement());
 }
 
-void RemoveNodeCommand::doUnapply()
-{
-    RefPtrWillBeRawPtr<ContainerNode> parent = m_parent.release();
-    RefPtrWillBeRawPtr<Node> refChild = m_refChild.release();
-    if (!parent || !parent->hasEditableStyle())
-        return;
+void RemoveNodeCommand::doUnapply() {
+  ContainerNode* parent = m_parent.release();
+  Node* refChild = m_refChild.release();
+  if (!parent || !hasEditableStyle(*parent))
+    return;
 
-    parent->insertBefore(m_node.get(), refChild.get(), IGNORE_EXCEPTION);
+  parent->insertBefore(m_node.get(), refChild, IGNORE_EXCEPTION);
 }
 
-DEFINE_TRACE(RemoveNodeCommand)
-{
-    visitor->trace(m_node);
-    visitor->trace(m_parent);
-    visitor->trace(m_refChild);
-    SimpleEditCommand::trace(visitor);
+DEFINE_TRACE(RemoveNodeCommand) {
+  visitor->trace(m_node);
+  visitor->trace(m_parent);
+  visitor->trace(m_refChild);
+  SimpleEditCommand::trace(visitor);
 }
 
-}
+}  // namespace blink

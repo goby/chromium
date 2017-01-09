@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/events/ozone/evdev/input_injector_evdev.h"
+
+#include <utility>
+
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/ozone/evdev/cursor_delegate_evdev.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 #include "ui/events/ozone/evdev/event_modifiers_evdev.h"
-#include "ui/events/ozone/evdev/input_injector_evdev.h"
 #include "ui/events/ozone/evdev/keyboard_evdev.h"
 #include "ui/events/ozone/evdev/keyboard_util_evdev.h"
 
@@ -21,10 +24,9 @@ const int kDeviceIdForInjection = -1;
 }  // namespace
 
 InputInjectorEvdev::InputInjectorEvdev(
-    scoped_ptr<DeviceEventDispatcherEvdev> dispatcher,
+    std::unique_ptr<DeviceEventDispatcherEvdev> dispatcher,
     CursorDelegateEvdev* cursor)
-    : cursor_(cursor), dispatcher_(dispatcher.Pass()) {
-}
+    : cursor_(cursor), dispatcher_(std::move(dispatcher)) {}
 
 InputInjectorEvdev::~InputInjectorEvdev() {
 }
@@ -46,7 +48,7 @@ void InputInjectorEvdev::InjectMouseButton(EventFlags button, bool down) {
   }
 
   dispatcher_->DispatchMouseButtonEvent(MouseButtonEventParams(
-      kDeviceIdForInjection, cursor_->GetLocation(), code, down,
+      kDeviceIdForInjection, EF_NONE, cursor_->GetLocation(), code, down,
       false /* allow_remap */,
       PointerDetails(EventPointerType::POINTER_TYPE_MOUSE), EventTimeForNow()));
 }
@@ -64,7 +66,7 @@ void InputInjectorEvdev::MoveCursorTo(const gfx::PointF& location) {
   cursor_->MoveCursorTo(location);
 
   dispatcher_->DispatchMouseMoveEvent(MouseMoveEventParams(
-      kDeviceIdForInjection, cursor_->GetLocation(),
+      kDeviceIdForInjection, EF_NONE, cursor_->GetLocation(),
       PointerDetails(EventPointerType::POINTER_TYPE_MOUSE), EventTimeForNow()));
 }
 

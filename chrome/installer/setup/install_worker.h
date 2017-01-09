@@ -119,14 +119,13 @@ void AddInstallWorkItems(const InstallationState& original_state,
 // |system_level| specifies whether to call the system or user level DLL
 // registration entry points.
 // |do_register| says whether to register or unregister.
-// |may_fail| states whether this is best effort or not. If |may_fail| is true
-// then |work_item_list| will still succeed if the registration fails and
-// no registration rollback will be performed.
+// If |best_effort| is true, registration or unregistration failure doesn't
+// cause failure of |work_item_list|.
 void AddRegisterComDllWorkItems(const base::FilePath& dll_folder,
                                 const std::vector<base::FilePath>& dll_files,
                                 bool system_level,
                                 bool do_register,
-                                bool ignore_failures,
+                                bool best_effort,
                                 WorkItemList* work_item_list);
 
 void AddSetMsiMarkerWorkItem(const InstallerState& installer_state,
@@ -134,15 +133,9 @@ void AddSetMsiMarkerWorkItem(const InstallerState& installer_state,
                              bool set,
                              WorkItemList* work_item_list);
 
-// Called for either installation or uninstallation. This method adds or
-// removes COM registration for a product's DelegateExecute verb handler.
-// If |new_version| is empty, the registrations will point to
-// delegate_execute.exe directly in |target_path|.
-void AddDelegateExecuteWorkItems(const InstallerState& installer_state,
-                                 const base::FilePath& target_path,
-                                 const base::Version& new_version,
-                                 const Product& product,
-                                 WorkItemList* list);
+// Adds work items to cleanup deprecated per-user registrations.
+void AddCleanupDeprecatedPerUserRegistrationsWorkItems(const Product& product,
+                                                       WorkItemList* list);
 
 // Adds Active Setup registration for sytem-level setup to be called by Windows
 // on user-login post-install/update.

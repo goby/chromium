@@ -4,13 +4,18 @@
 
 #include "media/base/media.h"
 
-#include "base/files/file_path.h"
+#include "base/command_line.h"
 #include "base/lazy_instance.h"
-#include "base/path_service.h"
-#include "base/synchronization/lock.h"
+#include "base/macros.h"
+#include "base/metrics/field_trial.h"
 #include "base/trace_event/trace_event.h"
-#include "build/build_config.h"
+#include "media/base/media_switches.h"
 #include "media/base/yuv_convert.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#include "media/base/android/media_codec_util.h"
+#endif
 
 #if !defined(MEDIA_DISABLE_FFMPEG)
 #include "media/ffmpeg/ffmpeg_common.h"
@@ -20,6 +25,13 @@ namespace media {
 
 // Media must only be initialized once, so use a LazyInstance to ensure this.
 class MediaInitializer {
+ public:
+  void enable_platform_decoder_support() {
+    has_platform_decoder_support_ = true;
+  }
+
+  bool has_platform_decoder_support() { return has_platform_decoder_support_; }
+
  private:
   friend struct base::DefaultLazyInstanceTraits<MediaInitializer>;
 
@@ -50,6 +62,8 @@ class MediaInitializer {
     NOTREACHED() << "MediaInitializer should be leaky!";
   }
 
+  bool has_platform_decoder_support_ = false;
+
   DISALLOW_COPY_AND_ASSIGN(MediaInitializer);
 };
 
@@ -59,5 +73,30 @@ static base::LazyInstance<MediaInitializer>::Leaky g_media_library =
 void InitializeMediaLibrary() {
   g_media_library.Get();
 }
+
+#if defined(OS_ANDROID)
+void EnablePlatformDecoderSupport() {
+  g_media_library.Pointer()->enable_platform_decoder_support();
+}
+
+bool HasPlatformDecoderSupport() {
+  return g_media_library.Pointer()->has_platform_decoder_support();
+}
+
+bool PlatformHasOpusSupport() {
+  return base::android::BuildInfo::GetInstance()->sdk_int() >= 21;
+}
+
+bool IsUnifiedMediaPipelineEnabled() {
+  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableUnifiedMediaPipeline);
+}
+
+bool ArePlatformDecodersAvailable() {
+  return IsUnifiedMediaPipelineEnabled()
+             ? HasPlatformDecoderSupport()
+             : MediaCodecUtil::IsMediaCodecAvailable();
+}
+#endif
 
 }  // namespace media

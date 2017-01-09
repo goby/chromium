@@ -5,19 +5,22 @@
 #ifndef NET_HTTP_HTTP_STREAM_PARSER_H_
 #define NET_HTTP_HTTP_STREAM_PARSER_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
+#include "crypto/ec_private_key.h"
 #include "net/base/completion_callback.h"
+#include "net/base/net_errors.h"
 #include "net/base/net_export.h"
-#include "net/base/upload_progress.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
+#include "net/ssl/token_binding.h"
 
 namespace net {
 
@@ -29,7 +32,6 @@ struct HttpRequestInfo;
 class HttpRequestHeaders;
 class HttpResponseInfo;
 class IOBuffer;
-class IOBufferWithSize;
 class SSLCertRequestInfo;
 class SSLInfo;
 class UploadDataStream;
@@ -44,8 +46,16 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   HttpStreamParser(ClientSocketHandle* connection,
                    const HttpRequestInfo* request,
                    GrowableIOBuffer* read_buffer,
-                   const BoundNetLog& net_log);
+                   const NetLogWithSource& net_log);
   virtual ~HttpStreamParser();
+
+  // Sets whether or not HTTP/0.9 is only allowed on default ports. It's not
+  // allowed, by default.
+  void set_http_09_on_non_default_ports_enabled(
+      bool http_09_on_non_default_ports_enabled) {
+    http_09_on_non_default_ports_enabled_ =
+        http_09_on_non_default_ports_enabled;
+  }
 
   // These functions implement the interface described in HttpStream with
   // some additional functionality
@@ -60,10 +70,6 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
                        const CompletionCallback& callback);
 
   void Close(bool not_reusable);
-
-  // Returns the progress of uploading. When data is chunked, size is set to
-  // zero, but position will not be.
-  UploadProgress GetUploadProgress() const;
 
   bool IsResponseBodyComplete() const;
 
@@ -93,6 +99,10 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   void GetSSLInfo(SSLInfo* ssl_info);
 
   void GetSSLCertRequestInfo(SSLCertRequestInfo* cert_request_info);
+
+  Error GetTokenBindingSignature(crypto::ECPrivateKey* key,
+                                 TokenBindingType tb_type,
+                                 std::vector<uint8_t>* out);
 
   // Encodes the given |payload| in the chunked format to |output|.
   // Returns the number of bytes written to |output|. |output_size| should
@@ -129,6 +139,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
     STATE_SEND_BODY,
     STATE_SEND_BODY_COMPLETE,
     STATE_SEND_REQUEST_READ_BODY_COMPLETE,
+    STATE_SEND_REQUEST_COMPLETE,
     STATE_READ_HEADERS,
     STATE_READ_HEADERS_COMPLETE,
     STATE_READ_BODY,
@@ -161,6 +172,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   int DoSendBody();
   int DoSendBodyComplete(int result);
   int DoSendRequestReadBodyComplete(int result);
+  int DoSendRequestComplete(int result);
   int DoReadHeaders();
   int DoReadHeadersComplete(int result);
   int DoReadBody();
@@ -182,13 +194,13 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // Examine the parsed headers to try to determine the response body size.
   void CalculateResponseBodySize();
 
-  // Uploads statistics about status line compliance with RFC 7230.
-  void ValidateStatusLine(const std::string& status_line);
+  // Check if buffers used to send the request are empty.
+  bool SendRequestBuffersEmpty();
 
   // Next state of the request, when the current one completes.
   State io_state_;
 
-  // The request to send.
+  // Null when read state machine is invoked.
   const HttpRequestInfo* request_;
 
   // The request header data.  May include a merged request body.
@@ -197,6 +209,9 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // Size of just the request headers.  May be less than the length of
   // |request_headers_| if the body was merged with the headers.
   int request_headers_length_;
+
+  // True if HTTP/0.9 should be permitted on non-default ports.
+  bool http_09_on_non_default_ports_enabled_;
 
   // Temporary buffer for reading.
   scoped_refptr<GrowableIOBuffer> read_buf_;
@@ -217,7 +232,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // The amount of sent data.
   int64_t sent_bytes_;
 
-  // The parsed response headers.  Owned by the caller of SendRequest.  This
+  // The parsed response headers.  Owned by the caller of SendRequest.   This
   // cannot be safely accessed after reading the final set of headers, as the
   // caller of SendRequest may have been destroyed - this happens in the case an
   // HttpResponseBodyDrainer is used.
@@ -226,13 +241,16 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // Indicates the content length.  If this value is less than zero
   // (and chunked_decoder_ is null), then we must read until the server
   // closes the connection.
-  int64 response_body_length_;
+  int64_t response_body_length_;
+
+  // True if reading a keep-alive response. False if not, or if don't yet know.
+  bool response_is_keep_alive_;
 
   // Keep track of the number of response body bytes read so far.
-  int64 response_body_read_;
+  int64_t response_body_read_;
 
   // Helper if the data is chunked.
-  scoped_ptr<HttpChunkedDecoder> chunked_decoder_;
+  std::unique_ptr<HttpChunkedDecoder> chunked_decoder_;
 
   // Where the caller wants the body data.
   scoped_refptr<IOBuffer> user_read_buf_;
@@ -251,7 +269,7 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // The underlying socket.
   ClientSocketHandle* const connection_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   // Callback to be used when doing IO.
   CompletionCallback io_callback_;

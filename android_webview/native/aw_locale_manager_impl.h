@@ -6,7 +6,8 @@
 #define ANDROID_WEBVIEW_NATIVE_AW_LOCALE_MANAGER_IMPL_H_
 
 #include "android_webview/browser/aw_locale_manager.h"
-#include "base/basictypes.h"
+
+#include "base/macros.h"
 
 namespace android_webview {
 
@@ -16,6 +17,8 @@ class AwLocaleManagerImpl : public AwLocaleManager {
   ~AwLocaleManagerImpl() override;
 
   std::string GetLocale() override;
+
+  std::string GetLocaleList() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AwLocaleManagerImpl);

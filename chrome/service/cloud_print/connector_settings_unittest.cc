@@ -4,13 +4,16 @@
 
 #include "chrome/service/cloud_print/connector_settings.h"
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/common/cloud_print/cloud_print_constants.h"
 #include "chrome/service/service_process_prefs.h"
@@ -55,7 +58,7 @@ class ConnectorSettingsTest : public testing::Test {
   }
 
   ServiceProcessPrefs* CreateTestFile(const char* json) {
-    base::FilePath file_name = temp_dir_.path().AppendASCII("file.txt");
+    base::FilePath file_name = temp_dir_.GetPath().AppendASCII("file.txt");
     base::DeleteFile(file_name, false);
     if (json) {
       std::string content = json;
@@ -81,7 +84,7 @@ TEST_F(ConnectorSettingsTest, InitFromEmpty) {
     "{'foo',,}",
   };
   for (size_t i = 0; i < arraysize(kEmptyJSons); ++i) {
-    scoped_ptr<ServiceProcessPrefs> prefs(CreateTestFile(kEmptyJSons[i]));
+    std::unique_ptr<ServiceProcessPrefs> prefs(CreateTestFile(kEmptyJSons[i]));
     ConnectorSettings settings;
     settings.InitFrom(prefs.get());
 
@@ -96,7 +99,8 @@ TEST_F(ConnectorSettingsTest, InitFromEmpty) {
 }
 
 TEST_F(ConnectorSettingsTest, InitFromFile) {
-  scoped_ptr<ServiceProcessPrefs> prefs(CreateTestFile(kServiceStateContent));
+  std::unique_ptr<ServiceProcessPrefs> prefs(
+      CreateTestFile(kServiceStateContent));
   ConnectorSettings settings;
   settings.InitFrom(prefs.get());
   EXPECT_EQ("https://www.google.com/cloudprint", settings.server_url().spec());
@@ -112,7 +116,8 @@ TEST_F(ConnectorSettingsTest, InitFromFile) {
 }
 
 TEST_F(ConnectorSettingsTest, CopyFrom) {
-  scoped_ptr<ServiceProcessPrefs> prefs(CreateTestFile(kServiceStateContent));
+  std::unique_ptr<ServiceProcessPrefs> prefs(
+      CreateTestFile(kServiceStateContent));
   ConnectorSettings settings1;
   settings1.InitFrom(prefs.get());
 
@@ -133,7 +138,7 @@ TEST_F(ConnectorSettingsTest, CopyFrom) {
 }
 
 TEST_F(ConnectorSettingsTest, SettersTest) {
-  scoped_ptr<ServiceProcessPrefs> prefs(CreateTestFile("{}"));
+  std::unique_ptr<ServiceProcessPrefs> prefs(CreateTestFile("{}"));
   ConnectorSettings settings;
   settings.InitFrom(prefs.get());
   EXPECT_FALSE(settings.xmpp_ping_enabled());

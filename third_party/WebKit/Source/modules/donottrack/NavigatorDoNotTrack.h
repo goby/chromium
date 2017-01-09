@@ -41,23 +41,24 @@ namespace blink {
 class LocalFrame;
 class Navigator;
 
-class NavigatorDoNotTrack final : public GarbageCollectedFinalized<NavigatorDoNotTrack>, public HeapSupplement<Navigator>, public DOMWindowProperty {
-    USING_GARBAGE_COLLECTED_MIXIN(NavigatorDoNotTrack);
-public:
-    static NavigatorDoNotTrack& from(Navigator&);
-    virtual ~NavigatorDoNotTrack();
+class NavigatorDoNotTrack final : public GarbageCollected<NavigatorDoNotTrack>,
+                                  public Supplement<Navigator>,
+                                  public DOMWindowProperty {
+  USING_GARBAGE_COLLECTED_MIXIN(NavigatorDoNotTrack);
 
-    static String doNotTrack(Navigator&);
+ public:
+  static NavigatorDoNotTrack& from(Navigator&);
+  static String doNotTrack(Navigator&);
 
-    String doNotTrack();
+  String doNotTrack();
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    explicit NavigatorDoNotTrack(LocalFrame*);
-    static const char* supplementName();
+ private:
+  explicit NavigatorDoNotTrack(LocalFrame*);
+  static const char* supplementName();
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NavigatorDoNotTrack_h
+#endif  // NavigatorDoNotTrack_h

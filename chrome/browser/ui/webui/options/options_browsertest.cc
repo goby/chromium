@@ -5,11 +5,11 @@
 #include "chrome/browser/ui/webui/options/options_browsertest.h"
 
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -44,9 +44,9 @@ void OptionsBrowserTest::ReportHistory(const base::ListValue* list_value) {
   const int current = controller.GetCurrentEntryIndex();
   for (int i = 0; i <= current; ++i) {
     GURL url = controller.GetEntryAtIndex(i)->GetVirtualURL();
-    history.Append(new base::StringValue(url.spec()));
+    history.AppendString(url.spec());
   }
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "OptionsWebUIExtendedTest.verifyHistoryCallback", history);
 }
 

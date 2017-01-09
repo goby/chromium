@@ -4,6 +4,10 @@
 
 #include "chrome/browser/chromeos/file_manager/open_util.h"
 
+#include <set>
+#include <string>
+#include <vector>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
@@ -14,9 +18,11 @@
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/chromeos/file_manager/path_util.h"
 #include "chrome/browser/chromeos/file_manager/url_util.h"
+#include "chrome/browser/extensions/api/file_handlers/directory_util.h"
 #include "chrome/browser/extensions/api/file_handlers/mime_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/user_metrics.h"
+#include "extensions/browser/entry_info.h"
 #include "storage/browser/fileapi/file_system_backend.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_operation_runner.h"
@@ -31,6 +37,9 @@ namespace {
 
 bool shell_operations_allowed = true;
 
+void IgnoreFileTaskExecuteResult(
+    extensions::api::file_manager_private::TaskResult result) {}
+
 // Executes the |task| for the file specified by |url|.
 void ExecuteFileTaskForUrl(Profile* profile,
                            const file_tasks::TaskDescriptor& task,
@@ -42,10 +51,9 @@ void ExecuteFileTaskForUrl(Profile* profile,
 
   file_tasks::ExecuteFileTask(
       profile,
-      GetFileManagerMainPageUrl(), // Executing the task on behalf of Files.app.
-      task,
-      std::vector<FileSystemURL>(1, file_system_context->CrackURL(url)),
-      file_tasks::FileTaskFinishedCallback());
+      GetFileManagerMainPageUrl(),  // Executing task on behalf of Files.app.
+      task, std::vector<FileSystemURL>(1, file_system_context->CrackURL(url)),
+      base::Bind(&IgnoreFileTaskExecuteResult));
 }
 
 // Opens the file manager for the specified |url|. Used to implement
@@ -68,34 +76,22 @@ void OpenFileManagerWithInternalActionId(Profile* profile,
   ExecuteFileTaskForUrl(profile, task, url);
 }
 
-// Opens the file with fetched MIME type and calls the callback.
-void OpenFileWithMimeType(Profile* profile,
-                          const base::FilePath& path,
-                          const GURL& url,
-                          const platform_util::OpenOperationCallback& callback,
-                          const std::string& mime_type) {
-  extensions::app_file_handler_util::PathAndMimeTypeSet path_mime_set;
-  path_mime_set.insert(std::make_pair(path, mime_type));
-
-  std::vector<GURL> file_urls;
-  file_urls.push_back(url);
-
-  std::vector<file_tasks::FullTaskDescriptor> tasks;
-  file_tasks::FindAllTypesOfTasks(
-      profile,
-      drive::util::GetDriveAppRegistryByProfile(profile),
-      path_mime_set,
-      file_urls,
-      &tasks);
-
+void OpenFileMimeTypeAfterTasksListed(
+    Profile* profile,
+    const GURL& url,
+    const platform_util::OpenOperationCallback& callback,
+    std::unique_ptr<std::vector<file_tasks::FullTaskDescriptor>> tasks) {
   // Select a default handler. If a default handler is not available, select
-  // a non-generic file handler.
+  // the first non-generic file handler.
   const file_tasks::FullTaskDescriptor* chosen_task = nullptr;
-  for (const auto& task : tasks) {
+  for (const auto& task : *tasks) {
     if (!task.is_generic_file_handler()) {
-      chosen_task = &task;
-      if (task.is_default())
+      if (task.is_default()) {
+        chosen_task = &task;
         break;
+      }
+      if (!chosen_task)
+        chosen_task = &task;
     }
   }
 
@@ -106,6 +102,24 @@ void OpenFileWithMimeType(Profile* profile,
   } else {
     callback.Run(platform_util::OPEN_FAILED_NO_HANLDER_FOR_FILE_TYPE);
   }
+}
+
+// Opens the file with fetched MIME type and calls the callback.
+void OpenFileWithMimeType(Profile* profile,
+                          const base::FilePath& path,
+                          const GURL& url,
+                          const platform_util::OpenOperationCallback& callback,
+                          const std::string& mime_type) {
+  std::vector<extensions::EntryInfo> entries;
+  entries.push_back(extensions::EntryInfo(path, mime_type, false));
+
+  std::vector<GURL> file_urls;
+  file_urls.push_back(url);
+
+  file_tasks::FindAllTypesOfTasks(
+      profile, drive::util::GetDriveAppRegistryByProfile(profile), entries,
+      file_urls,
+      base::Bind(&OpenFileMimeTypeAfterTasksListed, profile, url, callback));
 }
 
 // Opens the file specified by |url| by finding and executing a file task for

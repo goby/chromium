@@ -5,6 +5,7 @@
 #include "ui/gl/gl_fence.h"
 
 #include "base/compiler_specific.h"
+#include "build/build_config.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_fence_arb.h"
@@ -18,7 +19,7 @@
 #include "ui/gl/gl_fence_apple.h"
 #endif
 
-namespace gfx {
+namespace gl {
 
 GLFence::GLFence() {
 }
@@ -29,7 +30,7 @@ GLFence::~GLFence() {
 bool GLFence::IsSupported() {
   DCHECK(GetGLVersionInfo());
   return g_driver_gl.ext.b_GL_ARB_sync || GetGLVersionInfo()->is_es3 ||
-         GetGLImplementation() == kGLImplementationDesktopGLCoreProfile ||
+         GetGLVersionInfo()->is_desktop_core_profile ||
 #if defined(OS_MACOSX)
          g_driver_gl.ext.b_GL_APPLE_fence ||
 #else
@@ -42,11 +43,17 @@ GLFence* GLFence::Create() {
   DCHECK(GLContext::GetCurrent())
       << "Trying to create fence with no context";
 
-  scoped_ptr<GLFence> fence;
-  // Prefer ARB_sync which supports server-side wait.
-  if (g_driver_gl.ext.b_GL_ARB_sync ||
-      GetGLVersionInfo()->is_es3 ||
-      GetGLImplementation() == kGLImplementationDesktopGLCoreProfile) {
+  std::unique_ptr<GLFence> fence;
+#if !defined(OS_MACOSX)
+  if (g_driver_egl.ext.b_EGL_KHR_fence_sync &&
+      g_driver_egl.ext.b_EGL_KHR_wait_sync) {
+    // Prefer GLFenceEGL which doesn't require GL context switching.
+    fence.reset(new GLFenceEGL);
+  } else
+#endif
+      if (g_driver_gl.ext.b_GL_ARB_sync || GetGLVersionInfo()->is_es3 ||
+          GetGLVersionInfo()->is_desktop_core_profile) {
+    // Prefer ARB_sync which supports server-side wait.
     fence.reset(new GLFenceARB);
 #if defined(OS_MACOSX)
   } else if (g_driver_gl.ext.b_GL_APPLE_fence) {
@@ -63,4 +70,17 @@ GLFence* GLFence::Create() {
   return fence.release();
 }
 
-}  // namespace gfx
+bool GLFence::ResetSupported() {
+  // Resetting a fence to its original state isn't supported by default.
+  return false;
+}
+
+void GLFence::ResetState() {
+  NOTIMPLEMENTED();
+}
+
+void GLFence::Invalidate() {
+  NOTIMPLEMENTED();
+}
+
+}  // namespace gl

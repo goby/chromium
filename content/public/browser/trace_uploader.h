@@ -5,8 +5,11 @@
 #ifndef CONTENT_PUBLIC_BROWSER_TRACE_UPLOADER_H_
 #define CONTENT_PUBLIC_BROWSER_TRACE_UPLOADER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 
 namespace content {
@@ -21,7 +24,7 @@ class TraceUploader {
   typedef base::Callback<void(bool, const std::string&)> UploadDoneCallback;
   // Call this to update the progress UI with the current bytes uploaded,
   // as well as the total.
-  typedef base::Callback<void(int64, int64)> UploadProgressCallback;
+  typedef base::Callback<void(int64_t, int64_t)> UploadProgressCallback;
 
   virtual ~TraceUploader() {}
 
@@ -30,7 +33,7 @@ class TraceUploader {
   // Compresses and uploads the given file contents.
   virtual void DoUpload(const std::string& file_contents,
                         UploadMode upload_mode,
-                        scoped_ptr<const base::DictionaryValue> metadata,
+                        std::unique_ptr<const base::DictionaryValue> metadata,
                         const UploadProgressCallback& progress_callback,
                         const UploadDoneCallback& done_callback) = 0;
 };

@@ -9,6 +9,9 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image_png_rep.h"
@@ -134,7 +137,7 @@ ImageSkia* ImageSkiaFromPNG(
     const std::vector<ImagePNGRep>& image_png_reps) {
   if (image_png_reps.empty())
     return GetErrorImageSkia();
-  scoped_ptr<PNGImageSource> image_source(new PNGImageSource);
+  std::unique_ptr<PNGImageSource> image_source(new PNGImageSource);
 
   for (size_t i = 0; i < image_png_reps.size(); ++i) {
     if (!image_source->AddPNGData(image_png_reps[i]))
@@ -249,7 +252,7 @@ class ImageRepPNG : public ImageRep {
   std::vector<ImagePNGRep> image_png_reps_;
 
   // Cached to avoid having to parse the raw data multiple times.
-  mutable scoped_ptr<gfx::Size> size_cache_;
+  mutable std::unique_ptr<gfx::Size> size_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageRepPNG);
 };
@@ -273,7 +276,7 @@ class ImageRepSkia : public ImageRep {
   ImageSkia* image() { return image_.get(); }
 
  private:
-  scoped_ptr<ImageSkia> image_;
+  std::unique_ptr<ImageSkia> image_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageRepSkia);
 };
@@ -405,28 +408,33 @@ Image::Image(const std::vector<ImagePNGRep>& image_reps) {
     return;
 
   storage_ = new internal::ImageStorage(Image::kImageRepPNG);
-  AddRepresentation(make_scoped_ptr(new internal::ImageRepPNG(filtered)));
+  AddRepresentation(base::MakeUnique<internal::ImageRepPNG>(filtered));
 }
 
 Image::Image(const ImageSkia& image) {
   if (!image.isNull()) {
     storage_ = new internal::ImageStorage(Image::kImageRepSkia);
     AddRepresentation(
-        make_scoped_ptr(new internal::ImageRepSkia(new ImageSkia(image))));
+        base::MakeUnique<internal::ImageRepSkia>(new ImageSkia(image)));
   }
 }
 
 #if defined(OS_IOS)
-Image::Image(UIImage* image)
+Image::Image(UIImage* image) : Image(image, base::scoped_policy::ASSUME) {}
+
+Image::Image(UIImage* image, base::scoped_policy::OwnershipPolicy policy)
     : storage_(new internal::ImageStorage(Image::kImageRepCocoaTouch)) {
-  if (image)
-    AddRepresentation(make_scoped_ptr(new internal::ImageRepCocoaTouch(image)));
+  if (image) {
+    if (policy == base::scoped_policy::RETAIN)
+      base::mac::NSObjectRetain(image);
+    AddRepresentation(base::MakeUnique<internal::ImageRepCocoaTouch>(image));
+  }
 }
 #elif defined(OS_MACOSX)
 Image::Image(NSImage* image) {
   if (image) {
     storage_ = new internal::ImageStorage(Image::kImageRepCocoa);
-    AddRepresentation(make_scoped_ptr(new internal::ImageRepCocoa(image)));
+    AddRepresentation(base::MakeUnique<internal::ImageRepCocoa>(image));
   }
 }
 #endif
@@ -477,7 +485,7 @@ const SkBitmap* Image::ToSkBitmap() const {
 const ImageSkia* Image::ToImageSkia() const {
   internal::ImageRep* rep = GetRepresentation(kImageRepSkia, false);
   if (!rep) {
-    scoped_ptr<internal::ImageRep> scoped_rep;
+    std::unique_ptr<internal::ImageRep> scoped_rep;
     switch (DefaultRepresentationType()) {
       case kImageRepPNG: {
         internal::ImageRepPNG* png_rep =
@@ -508,8 +516,7 @@ const ImageSkia* Image::ToImageSkia() const {
         NOTREACHED();
     }
     CHECK(scoped_rep);
-    rep = scoped_rep.get();
-    AddRepresentation(std::move(scoped_rep));
+    rep = AddRepresentation(std::move(scoped_rep));
   }
   return rep->AsImageRepSkia()->image();
 }
@@ -518,7 +525,7 @@ const ImageSkia* Image::ToImageSkia() const {
 UIImage* Image::ToUIImage() const {
   internal::ImageRep* rep = GetRepresentation(kImageRepCocoaTouch, false);
   if (!rep) {
-    scoped_ptr<internal::ImageRep> scoped_rep;
+    std::unique_ptr<internal::ImageRep> scoped_rep;
     switch (DefaultRepresentationType()) {
       case kImageRepPNG: {
         internal::ImageRepPNG* png_rep =
@@ -539,8 +546,7 @@ UIImage* Image::ToUIImage() const {
         NOTREACHED();
     }
     CHECK(scoped_rep);
-    rep = scoped_rep.get();
-    AddRepresentation(std::move(scoped_rep));
+    rep = AddRepresentation(std::move(scoped_rep));
   }
   return rep->AsImageRepCocoaTouch()->image();
 }
@@ -548,7 +554,7 @@ UIImage* Image::ToUIImage() const {
 NSImage* Image::ToNSImage() const {
   internal::ImageRep* rep = GetRepresentation(kImageRepCocoa, false);
   if (!rep) {
-    scoped_ptr<internal::ImageRep> scoped_rep;
+    std::unique_ptr<internal::ImageRep> scoped_rep;
     CGColorSpaceRef default_representation_color_space =
         storage_->default_representation_color_space();
 
@@ -573,8 +579,7 @@ NSImage* Image::ToNSImage() const {
         NOTREACHED();
     }
     CHECK(scoped_rep);
-    rep = scoped_rep.get();
-    AddRepresentation(std::move(scoped_rep));
+    rep = AddRepresentation(std::move(scoped_rep));
   }
   return rep->AsImageRepCocoa()->image();
 }
@@ -627,7 +632,7 @@ scoped_refptr<base::RefCountedMemory> Image::As1xPNGBytes() const {
   if (!png_bytes.get() || !png_bytes->size()) {
     // Add an ImageRepPNG with no data such that the conversion is not
     // attempted each time we want the PNG bytes.
-    AddRepresentation(make_scoped_ptr(new internal::ImageRepPNG()));
+    AddRepresentation(base::WrapUnique(new internal::ImageRepPNG()));
     return new base::RefCountedBytes();
   }
 
@@ -639,7 +644,8 @@ scoped_refptr<base::RefCountedMemory> Image::As1xPNGBytes() const {
   //   ImageRepCocoa).
   std::vector<ImagePNGRep> image_png_reps;
   image_png_reps.push_back(ImagePNGRep(png_bytes, 1.0f));
-  AddRepresentation(make_scoped_ptr(new internal::ImageRepPNG(image_png_reps)));
+  AddRepresentation(
+      base::WrapUnique(new internal::ImageRepPNG(image_png_reps)));
   return png_bytes;
 }
 
@@ -747,10 +753,18 @@ internal::ImageRep* Image::GetRepresentation(
   return it->second.get();
 }
 
-void Image::AddRepresentation(scoped_ptr<internal::ImageRep> rep) const {
+internal::ImageRep* Image::AddRepresentation(
+    std::unique_ptr<internal::ImageRep> rep) const {
   CHECK(storage_.get());
   RepresentationType type = rep->type();
-  storage_->representations().insert(std::make_pair(type, std::move(rep)));
+  auto result =
+      storage_->representations().insert(std::make_pair(type, std::move(rep)));
+
+  // insert should not fail (implies that there was already a representation of
+  // that type in the map).
+  CHECK(result.second) << "type was already in map.";
+
+  return result.first->second.get();
 }
 
 }  // namespace gfx

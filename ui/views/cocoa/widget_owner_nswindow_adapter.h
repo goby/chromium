@@ -6,6 +6,7 @@
 #define UI_VIEWS_COCOA_WIDGET_OWNER_NSWINDOW_ADAPTER_H_
 
 #import "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #import "ui/views/cocoa/bridged_native_widget_owner.h"
 
 @class NSView;
@@ -25,6 +26,9 @@ class WidgetOwnerNSWindowAdapter : public BridgedNativeWidgetOwner {
 
   // Called when the owning window is closing.
   void OnWindowWillClose();
+
+  // Called when the owning window is hidden or shown.
+  void OnWindowDidChangeOcclusionState();
 
   // Overridden from BridgedNativeWidgetOwner:
   NSWindow* GetNSWindow() override;

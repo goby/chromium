@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/data_reduction_proxy/data_reduction_proxy_api.h"
 
+#include <utility>
 #include <vector>
 
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
@@ -39,29 +40,32 @@ DataReductionProxyGetDataUsageFunction::Run() {
 }
 
 void DataReductionProxyGetDataUsageFunction::ReplyWithDataUsage(
-    scoped_ptr<std::vector<data_reduction_proxy::DataUsageBucket>> data_usage) {
+    std::unique_ptr<std::vector<data_reduction_proxy::DataUsageBucket>>
+        data_usage) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  scoped_ptr<base::ListValue> data_usage_buckets(new base::ListValue());
+  std::unique_ptr<base::ListValue> data_usage_buckets(new base::ListValue());
   for (const auto& data_usage_bucket : *data_usage) {
-    scoped_ptr<base::ListValue> connection_usage_list(new base::ListValue());
-    for (auto connection_usage : data_usage_bucket.connection_usage()) {
-      scoped_ptr<base::ListValue> site_usage_list(new base::ListValue());
-      for (auto site_usage : connection_usage.site_usage()) {
-        scoped_ptr<base::DictionaryValue> usage(new base::DictionaryValue());
+    std::unique_ptr<base::ListValue> connection_usage_list(
+        new base::ListValue());
+    for (const auto& connection_usage : data_usage_bucket.connection_usage()) {
+      std::unique_ptr<base::ListValue> site_usage_list(new base::ListValue());
+      for (const auto& site_usage : connection_usage.site_usage()) {
+        std::unique_ptr<base::DictionaryValue> usage(
+            new base::DictionaryValue());
         usage->SetString("hostname", site_usage.hostname());
         usage->SetDouble("data_used", site_usage.data_used());
         usage->SetDouble("original_size", site_usage.original_size());
-        site_usage_list->Append(usage.Pass());
+        site_usage_list->Append(std::move(usage));
       }
-      connection_usage_list->Append(site_usage_list.Pass());
+      connection_usage_list->Append(std::move(site_usage_list));
     }
-    data_usage_buckets->Append(connection_usage_list.Pass());
+    data_usage_buckets->Append(std::move(connection_usage_list));
   }
 
-  base::DictionaryValue* result = new base::DictionaryValue();
-  result->Set("data_usage_buckets", data_usage_buckets.Pass());
-  Respond(OneArgument(result));
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  result->Set("data_usage_buckets", std::move(data_usage_buckets));
+  Respond(OneArgument(std::move(result)));
 }
 
 }  // namespace extensions

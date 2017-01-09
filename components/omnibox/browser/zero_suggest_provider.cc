@@ -4,16 +4,18 @@
 
 #include "components/omnibox/browser/zero_suggest_provider.h"
 
+#include <stddef.h>
+
 #include "base/callback.h"
 #include "base/i18n/case_conversion.h"
 #include "base/json/json_string_value_serializer.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/top_sites.h"
@@ -28,9 +30,10 @@
 #include "components/omnibox/browser/search_provider.h"
 #include "components/omnibox/browser/verbatim_match.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/url_formatter/url_formatter.h"
-#include "components/variations/net/variations_http_header_provider.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_request_headers.h"
@@ -70,8 +73,9 @@ const int kDefaultZeroSuggestRelevance = 100;
 // static
 ZeroSuggestProvider* ZeroSuggestProvider::Create(
     AutocompleteProviderClient* client,
+    HistoryURLProvider* history_url_provider,
     AutocompleteProviderListener* listener) {
-  return new ZeroSuggestProvider(client, listener);
+  return new ZeroSuggestProvider(client, history_url_provider, listener);
 }
 
 // static
@@ -83,6 +87,7 @@ void ZeroSuggestProvider::RegisterProfilePrefs(
 
 void ZeroSuggestProvider::Start(const AutocompleteInput& input,
                                 bool minimal_changes) {
+  TRACE_EVENT0("omnibox", "ZeroSuggestProvider::Start");
   matches_.clear();
   if (!input.from_omnibox_focus() ||
       input.type() == metrics::OmniboxInputType::INVALID)
@@ -180,9 +185,12 @@ void ZeroSuggestProvider::ResetSession() {
   set_field_trial_triggered(false);
 }
 
-ZeroSuggestProvider::ZeroSuggestProvider(AutocompleteProviderClient* client,
-                                         AutocompleteProviderListener* listener)
+ZeroSuggestProvider::ZeroSuggestProvider(
+    AutocompleteProviderClient* client,
+    HistoryURLProvider* history_url_provider,
+    AutocompleteProviderListener* listener)
     : BaseSearchProvider(AutocompleteProvider::TYPE_ZERO_SUGGEST, client),
+      history_url_provider_(history_url_provider),
       listener_(listener),
       results_from_cache_(false),
       waiting_for_most_visited_urls_request_(false),
@@ -232,7 +240,7 @@ void ZeroSuggestProvider::OnURLFetchComplete(const net::URLFetcher* source) {
   bool results_updated = false;
   if (source->GetStatus().is_success() && source->GetResponseCode() == 200) {
     std::string json_data = SearchSuggestionParser::ExtractJsonData(source);
-    scoped_ptr<base::Value> data(
+    std::unique_ptr<base::Value> data(
         SearchSuggestionParser::DeserializeJsonData(json_data));
     if (data) {
       if (StoreSuggestionResponse(json_data, *data))
@@ -286,9 +294,8 @@ AutocompleteMatch ZeroSuggestProvider::NavigationToMatch(
   match.destination_url = navigation.url();
 
   // Zero suggest results should always omit protocols and never appear bold.
-  const std::string languages(client()->GetAcceptLanguages());
   match.contents = url_formatter::FormatUrl(
-      navigation.url(), languages, url_formatter::kFormatUrlOmitAll,
+      navigation.url(), url_formatter::kFormatUrlOmitAll,
       net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
   match.fill_into_edit +=
       AutocompleteInput::FormattedStringWithEquivalentMeaning(
@@ -326,9 +333,9 @@ void ZeroSuggestProvider::Run(const GURL& suggest_url) {
     fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES);
     // Add Chrome experiment state to the request headers.
     net::HttpRequestHeaders headers;
-    variations::VariationsHttpHeaderProvider::GetInstance()->AppendHeaders(
-        fetcher_->GetOriginalURL(), client()->IsOffTheRecord(), false,
-        &headers);
+    variations::AppendVariationHeaders(fetcher_->GetOriginalURL(),
+                                       client()->IsOffTheRecord(), false,
+                                       &headers);
     fetcher_->SetExtraRequestHeaders(headers.ToString());
     fetcher_->Start();
     LogOmniboxZeroSuggestRequest(ZERO_SUGGEST_REQUEST_SENT);
@@ -380,13 +387,12 @@ void ZeroSuggestProvider::ConvertResultsToAutocompleteMatches() {
     }
     const base::string16 current_query_string16(
         base::ASCIIToUTF16(current_query_));
-    const std::string languages(client()->GetAcceptLanguages());
     for (size_t i = 0; i < most_visited_urls_.size(); i++) {
       const history::MostVisitedURL& url = most_visited_urls_[i];
       SearchSuggestionParser::NavigationResult nav(
           client()->GetSchemeClassifier(), url.url,
           AutocompleteMatchType::NAVSUGGEST, url.title, std::string(), false,
-          relevance, true, current_query_string16, languages);
+          relevance, true, current_query_string16);
       matches_.push_back(NavigationToMatch(nav));
       --relevance;
     }
@@ -414,8 +420,10 @@ AutocompleteMatch ZeroSuggestProvider::MatchForCurrentURL() {
   // The placeholder suggestion for the current URL has high relevance so
   // that it is in the first suggestion slot and inline autocompleted. It
   // gets dropped as soon as the user types something.
-  return VerbatimMatchForURL(client(), permanent_text_,
-                             current_page_classification_,
+  AutocompleteInput tmp(GetInput(false));
+  tmp.UpdateText(permanent_text_, base::string16::npos, tmp.parts());
+  return VerbatimMatchForURL(client(), tmp, GURL(current_query_),
+                             history_url_provider_,
                              results_.verbatim_relevance);
 }
 
@@ -461,7 +469,7 @@ void ZeroSuggestProvider::MaybeUseCachedSuggestions() {
   std::string json_data =
       client()->GetPrefs()->GetString(omnibox::kZeroSuggestCachedResults);
   if (!json_data.empty()) {
-    scoped_ptr<base::Value> data(
+    std::unique_ptr<base::Value> data(
         SearchSuggestionParser::DeserializeJsonData(json_data));
     if (data && ParseSuggestResults(
             *data, kDefaultZeroSuggestRelevance, false, &results_)) {

@@ -5,7 +5,12 @@
 #ifndef CONTENT_COMMON_FRAME_REPLICATION_STATE_H_
 #define CONTENT_COMMON_FRAME_REPLICATION_STATE_H_
 
+#include <string>
+#include <vector>
+
 #include "content/common/content_export.h"
+#include "content/common/content_security_policy_header.h"
+#include "third_party/WebKit/public/platform/WebInsecureRequestPolicy.h"
 #include "url/origin.h"
 
 namespace blink {
@@ -15,13 +20,32 @@ enum class WebSandboxFlags;
 
 namespace content {
 
+// This struct holds feature policy whitelist data that needs to be replicated
+// between a RenderFrame and any of its associated RenderFrameProxies. A list of
+// these form part of the FrameReplicationState below (one entry per feature).
+struct CONTENT_EXPORT FeaturePolicyParsedWhitelist {
+  FeaturePolicyParsedWhitelist();
+  FeaturePolicyParsedWhitelist(const FeaturePolicyParsedWhitelist& fppw);
+  ~FeaturePolicyParsedWhitelist();
+
+  std::string feature_name;
+  bool matches_all_origins;
+  std::vector<url::Origin> origins;
+};
+
+using ParsedFeaturePolicy = std::vector<FeaturePolicyParsedWhitelist>;
+
 // This structure holds information that needs to be replicated between a
 // RenderFrame and any of its associated RenderFrameProxies.
 struct CONTENT_EXPORT FrameReplicationState {
   FrameReplicationState();
   FrameReplicationState(blink::WebTreeScopeType scope,
                         const std::string& name,
-                        blink::WebSandboxFlags sandbox_flags);
+                        const std::string& unique_name,
+                        blink::WebSandboxFlags sandbox_flags,
+                        blink::WebInsecureRequestPolicy insecure_request_policy,
+                        bool has_potentially_trustworthy_unique_origin);
+  FrameReplicationState(const FrameReplicationState& other);
   ~FrameReplicationState();
 
   // Current origin of the frame. This field is updated whenever a frame
@@ -36,20 +60,21 @@ struct CONTENT_EXPORT FrameReplicationState {
   // compromized renderer.
   url::Origin origin;
 
-  // Current sandbox flags of the frame.  |sandbox_flags| are initialized for
-  // new child frames using the value of the <iframe> element's "sandbox"
-  // attribute. They are updated dynamically whenever a parent frame updates an
-  // <iframe>'s sandbox attribute via JavaScript.
+  // Sandbox flags currently in effect for the frame.  |sandbox_flags| are
+  // initialized for new child frames using the value of the <iframe> element's
+  // "sandbox" attribute, combined with any sandbox flags in effect for the
+  // parent frame.
   //
-  // Updates to |sandbox_flags| are sent to proxies, but only after a
-  // subsequent navigation of the (sandboxed) frame, since the flags only take
-  // effect on navigation (see also FrameTreeNode::effective_sandbox_flags_).
-  // The proxies need updated flags so that they can be inherited properly if a
-  // proxy ever becomes a parent of a local frame.
+  // When a parent frame updates an <iframe>'s sandbox attribute via
+  // JavaScript, |sandbox_flags| are updated only after the child frame commits
+  // a navigation that makes the updated flags take effect.  This is also the
+  // point at which updates are sent to proxies (see
+  // CommitPendingSandboxFlags()). The proxies need updated flags so that they
+  // can be inherited properly if a proxy ever becomes a parent of a local
+  // frame.
   blink::WebSandboxFlags sandbox_flags;
 
-  // The assigned name of the frame. This name can be empty, unlike the unique
-  // name generated internally in the DOM tree.
+  // The assigned name of the frame (see WebFrame::assignedName()).
   //
   // |name| is set when a new child frame is created using the value of the
   // <iframe> element's "name" attribute (see
@@ -61,6 +86,27 @@ struct CONTENT_EXPORT FrameReplicationState {
   // frame using its updated name (e.g., using window.open(url, frame_name)).
   std::string name;
 
+  // Unique name of the frame (see WebFrame::uniqueName()).
+  //
+  // |unique_name| is used in heuristics that try to identify the same frame
+  // across different, unrelated navigations (i.e. to refer to the frame
+  // when going back/forward in session history OR when refering to the frame
+  // in layout tests results).
+  //
+  // |unique_name| needs to be replicated to ensure that unique name for a given
+  // frame is the same across all renderers - without replication a renderer
+  // might arrive at a different value when recalculating the unique name from
+  // scratch.
+  std::string unique_name;
+
+  // Parsed feature policy header. May be empty if no header was sent with the
+  // document.
+  ParsedFeaturePolicy feature_policy_header;
+
+  // Accumulated CSP headers - gathered from http headers, <meta> elements,
+  // parent frames (in case of about:blank frames).
+  std::vector<ContentSecurityPolicyHeader> accumulated_csp_headers;
+
   // Whether the frame is in a document tree or a shadow tree, per the Shadow
   // DOM spec: https://w3c.github.io/webcomponents/spec/shadow/
   // Note: This should really be const, as it can never change once a frame is
@@ -69,8 +115,14 @@ struct CONTENT_EXPORT FrameReplicationState {
   // operator.
   blink::WebTreeScopeType scope;
 
-  // TODO(alexmos): Eventually, this structure can also hold other state that
-  // needs to be replicated, such as frame sizing info.
+  // The insecure request policy that a frame's current document is enforcing.
+  // Updates are immediately sent to all frame proxies when frames live in
+  // different processes.
+  blink::WebInsecureRequestPolicy insecure_request_policy;
+
+  // True if a frame's origin is unique and should be considered potentially
+  // trustworthy.
+  bool has_potentially_trustworthy_unique_origin;
 };
 
 }  // namespace content

@@ -4,10 +4,13 @@
 
 #include "chrome/test/base/web_ui_browser_test.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
@@ -29,12 +32,14 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_message_handler.h"
+#include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/base/filename_util.h"
+#include "printing/features/features.h"
 #include "ui/base/resource/resource_handle.h"
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/printing/print_preview_dialog_controller.h"
 #endif
 
@@ -217,12 +222,23 @@ void WebUIBrowserTest::BrowsePreload(const GURL& browse_to) {
   content::TestNavigationObserver navigation_observer(web_contents);
   chrome::NavigateParams params(
       browser(), GURL(browse_to), ui::PAGE_TRANSITION_TYPED);
-  params.disposition = CURRENT_TAB;
+  params.disposition = WindowOpenDisposition::CURRENT_TAB;
+
+  // This is needed to make the test
+  // MaterialHistoryBrowserTest.HistoryToolbarFocusTest pass on macOS. The test
+  // is fundamentally flawed, since it expects a particular widget to be
+  // focused. Chrome focus semantics are based on the Windows platform, where a
+  // widget cannot be focused without window activation. browser_tests can be
+  // sharded, so there is no way to enforce that a given window is activated.
+  // Focus tests should be interactive_ui_tests, and they should explicitly
+  // activate the window. https://crbug.com/642467.
+  params.window_action = chrome::NavigateParams::SHOW_WINDOW;
+
   chrome::Navigate(&params);
   navigation_observer.Wait();
 }
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
 // This custom ContentBrowserClient is used to get notified when a WebContents
 // for the print preview dialog gets created.
@@ -256,7 +272,7 @@ class PrintContentBrowserClient : public ChromeContentBrowserClient {
   }
 
   WebUIBrowserTest* browser_test_;
-  scoped_ptr<WebUIJsInjectionReadyObserver> observer_;
+  std::unique_ptr<WebUIJsInjectionReadyObserver> observer_;
   std::string preload_test_fixture_;
   std::string preload_test_name_;
   content::WebContents* preview_dialog_;
@@ -265,7 +281,7 @@ class PrintContentBrowserClient : public ChromeContentBrowserClient {
 #endif
 
 void WebUIBrowserTest::BrowsePrintPreload(const GURL& browse_to) {
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   ui_test_utils::NavigateToURL(browser(), browse_to);
 
   PrintContentBrowserClient new_client(
@@ -325,8 +341,7 @@ class MockWebUIDataSource : public content::URLDataSource {
 
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override {
     std::string dummy_html = "<html><body>Dummy</body></html>";
     scoped_refptr<base::RefCountedString> response =
@@ -380,6 +395,8 @@ void WebUIBrowserTest::SetUpOnMainThread() {
   content::WebUIControllerFactory::RegisterFactory(test_factory_.get());
 
   test_factory_->AddFactoryOverride(GURL(kDummyURL).host(),
+                                    mock_provider_.Pointer());
+  test_factory_->AddFactoryOverride(content::kChromeUIResourcesHost,
                                     mock_provider_.Pointer());
 }
 
@@ -453,7 +470,12 @@ bool WebUIBrowserTest::RunJavascriptUsingHandler(
     test_handler_->RunJavaScript(content);
 
   if (error_messages_.Get().size() > 0) {
-    LOG(ERROR) << "Encountered javascript console error(s)";
+    LOG(ERROR) << "CONDITION FAILURE: encountered javascript console error(s):";
+    for (const auto& msg : error_messages_.Get()) {
+      LOG(ERROR) << "JS ERROR: '" << msg << "'";
+    }
+    LOG(ERROR) << "JS call assumed failed, because JS console error(s) found.";
+
     result = false;
     error_messages_.Get().clear();
   }

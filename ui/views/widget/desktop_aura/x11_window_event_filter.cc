@@ -9,15 +9,16 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 
+#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/hit_test.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/x/x11_types.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host.h"
@@ -85,7 +86,8 @@ void X11WindowEventFilter::OnMouseEvent(ui::MouseEvent* event) {
     if (event->IsLeftMouseButton() && event->native_event()) {
       const gfx::Point x_root_location =
           ui::EventSystemLocationFromNative(event->native_event());
-      if (target->GetProperty(aura::client::kCanResizeKey) &&
+      if ((target->GetProperty(aura::client::kResizeBehaviorKey) &
+           ui::mojom::kResizeBehaviorCanResize) &&
           DispatchHostWindowDragMovement(component, x_root_location)) {
         event->StopPropagation();
       }
@@ -114,7 +116,8 @@ void X11WindowEventFilter::OnClickedCaption(ui::MouseEvent* event,
         window_tree_host_->Minimize();
         break;
       case LinuxUI::MIDDLE_CLICK_ACTION_TOGGLE_MAXIMIZE:
-        if (target->GetProperty(aura::client::kCanMaximizeKey))
+        if (target->GetProperty(aura::client::kResizeBehaviorKey) &
+            ui::mojom::kResizeBehaviorCanMaximize)
           ToggleMaximizedState();
         break;
     }
@@ -125,7 +128,8 @@ void X11WindowEventFilter::OnClickedCaption(ui::MouseEvent* event,
 
   if (event->IsLeftMouseButton() && event->flags() & ui::EF_IS_DOUBLE_CLICK) {
     click_component_ = HTNOWHERE;
-    if (target->GetProperty(aura::client::kCanMaximizeKey) &&
+    if ((target->GetProperty(aura::client::kResizeBehaviorKey) &
+         ui::mojom::kResizeBehaviorCanMaximize) &&
         previous_click_component == HTCAPTION) {
       // Our event is a double click in the caption area in a window that can be
       // maximized. We are responsible for dispatching this as a minimize/
@@ -151,9 +155,8 @@ void X11WindowEventFilter::OnClickedMaximizeButton(ui::MouseEvent* event) {
   if (!widget)
     return;
 
-  gfx::Screen* screen = gfx::Screen::GetNativeScreen();
   gfx::Rect display_work_area =
-      screen->GetDisplayNearestWindow(target).work_area();
+      display::Screen::GetScreen()->GetDisplayNearestWindow(target).work_area();
   gfx::Rect bounds = widget->GetWindowBoundsInScreen();
   if (event->IsMiddleMouseButton()) {
     bounds.set_y(display_work_area.y());

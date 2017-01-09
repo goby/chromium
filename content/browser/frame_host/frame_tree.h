@@ -5,20 +5,23 @@
 #ifndef CONTENT_BROWSER_FRAME_HOST_FRAME_TREE_H_
 #define CONTENT_BROWSER_FRAME_HOST_FRAME_TREE_H_
 
+#include <stdint.h>
+
+#include <iterator>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/common/content_export.h"
 
 namespace content {
 
-class FrameTreeNode;
+struct FrameOwnerProperties;
 class Navigator;
 class RenderFrameHostDelegate;
-class RenderProcessHost;
 class RenderViewHostDelegate;
 class RenderViewHostImpl;
 class RenderFrameHostManager;
@@ -38,6 +41,45 @@ class RenderWidgetHostDelegate;
 // This object is only used on the UI thread.
 class CONTENT_EXPORT FrameTree {
  public:
+  class NodeRange;
+
+  class CONTENT_EXPORT NodeIterator
+      : public std::iterator<std::forward_iterator_tag, FrameTreeNode> {
+   public:
+    NodeIterator(const NodeIterator& other);
+    ~NodeIterator();
+
+    NodeIterator& operator++();
+
+    bool operator==(const NodeIterator& rhs) const;
+    bool operator!=(const NodeIterator& rhs) const { return !(*this == rhs); }
+
+    FrameTreeNode* operator*() { return current_node_; }
+
+   private:
+    friend class NodeRange;
+
+    NodeIterator(FrameTreeNode* starting_node, FrameTreeNode* node_to_skip);
+
+    FrameTreeNode* current_node_;
+    FrameTreeNode* const node_to_skip_;
+    std::queue<FrameTreeNode*> queue_;
+  };
+
+  class CONTENT_EXPORT NodeRange {
+   public:
+    NodeIterator begin();
+    NodeIterator end();
+
+   private:
+    friend class FrameTree;
+
+    NodeRange(FrameTreeNode* root, FrameTreeNode* node_to_skip);
+
+    FrameTreeNode* const root_;
+    FrameTreeNode* const node_to_skip_;
+  };
+
   // Each FrameTreeNode will default to using the given |navigator| for
   // navigation tasks in the frame.
   // A set of delegates are remembered here so that we can create
@@ -66,26 +108,29 @@ class CONTENT_EXPORT FrameTree {
   // nor searching other FrameTrees (unlike blink::WebView::findFrameByName).
   FrameTreeNode* FindByName(const std::string& name);
 
-  // Executes |on_node| on each node in the frame tree.  If |on_node| returns
-  // false, terminates the iteration immediately. Returning false is useful
-  // if |on_node| is just doing a search over the tree.  The iteration proceeds
-  // top-down and visits a node before adding its children to the queue, making
-  // it safe to remove children during the callback.
-  void ForEach(const base::Callback<bool(FrameTreeNode*)>& on_node) const;
+  // Returns a range to iterate over all FrameTreeNodes in the frame tree in
+  // breadth-first traversal order.
+  NodeRange Nodes();
 
-  // Frame tree manipulation routines.
-  // |process_id| is required to disambiguate |new_routing_id|, and it must
-  // match the process of the |parent| node.  Otherwise this method returns
-  // nullptr.  Passing MSG_ROUTING_NONE for |new_routing_id| will allocate a new
-  // routing ID for the new frame.
-  RenderFrameHostImpl* AddFrame(
-      FrameTreeNode* parent,
-      int process_id,
-      int new_routing_id,
-      blink::WebTreeScopeType scope,
-      const std::string& frame_name,
-      blink::WebSandboxFlags sandbox_flags,
-      const blink::WebFrameOwnerProperties& frame_owner_properties);
+  // Returns a range to iterate over all FrameTreeNodes in a subtree of the
+  // frame tree, starting from |subtree_root|.
+  NodeRange SubtreeNodes(FrameTreeNode* subtree_root);
+
+  // Adds a new child frame to the frame tree. |process_id| is required to
+  // disambiguate |new_routing_id|, and it must match the process of the
+  // |parent| node. Otherwise no child is added and this method returns false.
+  bool AddFrame(FrameTreeNode* parent,
+                int process_id,
+                int new_routing_id,
+                blink::WebTreeScopeType scope,
+                const std::string& frame_name,
+                const std::string& frame_unique_name,
+                blink::WebSandboxFlags sandbox_flags,
+                const FrameOwnerProperties& frame_owner_properties);
+
+  // Removes a frame from the frame tree. |child|, its children, and objects
+  // owned by their RenderFrameHostManagers are immediately deleted. The root
+  // node cannot be removed this way.
   void RemoveFrame(FrameTreeNode* child);
 
   // This method walks the entire frame tree and creates a RenderFrameProxyHost
@@ -103,8 +148,12 @@ class CONTENT_EXPORT FrameTree {
   // Returns the focused frame.
   FrameTreeNode* GetFocusedFrame();
 
-  // Sets the focused frame.
-  void SetFocusedFrame(FrameTreeNode* node);
+  // Sets the focused frame to |node|.  |source| identifies the SiteInstance
+  // that initiated this focus change.  If this FrameTree has SiteInstances
+  // other than |source|, those SiteInstances will be notified about the new
+  // focused frame.   Note that |source| may differ from |node|'s current
+  // SiteInstance (e.g., this happens for cross-process window.focus() calls).
+  void SetFocusedFrame(FrameTreeNode* node, SiteInstance* source);
 
   // Allows a client to listen for frame removal.  The listener should expect
   // to receive the RenderViewHostImpl containing the frame and the renderer-
@@ -116,8 +165,8 @@ class CONTENT_EXPORT FrameTree {
   // |site_instance|.  The RenderViewHost will have its Shutdown method called
   // when all of the RenderFrameHosts using it are deleted.
   RenderViewHostImpl* CreateRenderViewHost(SiteInstance* site_instance,
-                                           int32 routing_id,
-                                           int32 main_frame_routing_id,
+                                           int32_t routing_id,
+                                           int32_t main_frame_routing_id,
                                            bool swapped_out,
                                            bool hidden);
 
@@ -146,7 +195,7 @@ class CONTENT_EXPORT FrameTree {
   void ResetLoadProgress();
 
   // Returns true if at least one of the nodes in this FrameTree is loading.
-  bool IsLoading();
+  bool IsLoading() const;
 
   // Set page-level focus in all SiteInstances involved in rendering
   // this FrameTree, not including the current main frame's
@@ -159,14 +208,14 @@ class CONTENT_EXPORT FrameTree {
   void SetPageFocus(SiteInstance* instance, bool is_focused);
 
  private:
+  friend class FrameTreeTest;
   FRIEND_TEST_ALL_PREFIXES(RenderFrameHostImplBrowserTest, RemoveFocusedFrame);
   typedef base::hash_map<int, RenderViewHostImpl*> RenderViewHostMap;
-  typedef std::multimap<int, RenderViewHostImpl*> RenderViewHostMultiMap;
 
-  // A variation to the public ForEach method with a difference that the subtree
-  // starting at |skip_this_subtree| will not be recursed into.
-  void ForEach(const base::Callback<bool(FrameTreeNode*)>& on_node,
-               FrameTreeNode* skip_this_subtree) const;
+  // Returns a range to iterate over all FrameTreeNodes in the frame tree in
+  // breadth-first traversal order, skipping the subtree rooted at
+  // |node_to_skip|.
+  NodeRange NodesExcept(FrameTreeNode* node_to_skip);
 
   // These delegates are installed into all the RenderViewHosts and
   // RenderFrameHosts that we create.
@@ -184,13 +233,6 @@ class CONTENT_EXPORT FrameTree {
   // Must be declared before |root_| so that it is deleted afterward.  Otherwise
   // the map will be cleared before we delete the RenderFrameHosts in the tree.
   RenderViewHostMap render_view_host_map_;
-
-  // Map of SiteInstance ID to RenderViewHosts that are pending shutdown. The
-  // renderers of these RVH are currently executing the unload event in
-  // background. When the SwapOutACK is received, they will be deleted. In the
-  // meantime, they are kept in this map, as they should not be reused (part of
-  // their state is already gone away).
-  RenderViewHostMultiMap render_view_host_pending_shutdown_map_;
 
   // This is an owned ptr to the root FrameTreeNode, which never changes over
   // the lifetime of the FrameTree. It is not a scoped_ptr because we need the

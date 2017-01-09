@@ -6,9 +6,12 @@
 #ifndef BASE_TRACE_EVENT_TRACE_EVENT_ETW_EXPORT_WIN_H_
 #define BASE_TRACE_EVENT_TRACE_EVENT_ETW_EXPORT_WIN_H_
 
+#include <stdint.h>
+
 #include <map>
 
 #include "base/base_export.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "base/trace_event/trace_event_impl.h"
 
@@ -47,7 +50,7 @@ class BASE_EXPORT TraceEventETWExport {
       const char** arg_names,
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
-      const scoped_refptr<ConvertableToTraceFormat>* convertable_values);
+      const std::unique_ptr<ConvertableToTraceFormat>* convertable_values);
 
   // Exports an ETW event that marks the end of a complete event.
   static void AddCompleteEndEvent(const char* name);
@@ -80,11 +83,11 @@ class BASE_EXPORT TraceEventETWExport {
   std::map<StringPiece, bool> categories_status_;
 
   // Local copy of the ETW keyword.
-  uint64 etw_match_any_keyword_;
+  uint64_t etw_match_any_keyword_;
 
   // Background thread that monitors changes to the ETW keyword and updates
   // the enabled categories when a change occurs.
-  scoped_ptr<ETWKeywordUpdateThread> keyword_update_thread_;
+  std::unique_ptr<ETWKeywordUpdateThread> keyword_update_thread_;
   PlatformThreadHandle keyword_update_thread_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(TraceEventETWExport);

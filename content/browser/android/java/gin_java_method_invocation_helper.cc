@@ -5,8 +5,8 @@
 #include "content/browser/android/java/gin_java_method_invocation_helper.h"
 
 #include <unistd.h>
-
 #include <cmath>
+#include <utility>
 
 #include "base/android/event_log.h"
 #include "base/android/jni_android.h"
@@ -30,14 +30,13 @@ const int kObjectGetClassInvocationAttemptLogTag = 70151;
 }  // namespace
 
 GinJavaMethodInvocationHelper::GinJavaMethodInvocationHelper(
-    scoped_ptr<ObjectDelegate> object,
+    std::unique_ptr<ObjectDelegate> object,
     const std::string& method_name,
     const base::ListValue& arguments)
-    : object_(object.Pass()),
+    : object_(std::move(object)),
       method_name_(method_name),
       arguments_(arguments.DeepCopy()),
-      invocation_error_(kGinJavaBridgeNoError) {
-}
+      invocation_error_(kGinJavaBridgeNoError) {}
 
 GinJavaMethodInvocationHelper::~GinJavaMethodInvocationHelper() {}
 
@@ -45,56 +44,54 @@ void GinJavaMethodInvocationHelper::Init(DispatcherDelegate* dispatcher) {
   // Build on the UI thread a map of object_id -> WeakRef for Java objects from
   // |arguments_|.  Then we can use this map on the background thread without
   // accessing |dispatcher|.
-  BuildObjectRefsFromListValue(dispatcher, arguments_.get());
+  BuildObjectRefsFromListValue(dispatcher, *arguments_);
 }
 
 // As V8ValueConverter has finite recursion depth when serializing
 // JavaScript values, we don't bother about having a recursion threshold here.
 void GinJavaMethodInvocationHelper::BuildObjectRefsFromListValue(
     DispatcherDelegate* dispatcher,
-    const base::Value* list_value) {
-  DCHECK(list_value->IsType(base::Value::TYPE_LIST));
+    const base::Value& list_value) {
+  DCHECK(list_value.IsType(base::Value::Type::LIST));
   const base::ListValue* list;
-  list_value->GetAsList(&list);
-  for (base::ListValue::const_iterator iter = list->begin();
-       iter != list->end();
-       ++iter) {
-    if (AppendObjectRef(dispatcher, *iter))
+  list_value.GetAsList(&list);
+  for (const auto& entry : *list) {
+    if (AppendObjectRef(dispatcher, *entry))
       continue;
-    if ((*iter)->IsType(base::Value::TYPE_LIST)) {
-      BuildObjectRefsFromListValue(dispatcher, *iter);
-    } else if ((*iter)->IsType(base::Value::TYPE_DICTIONARY)) {
-      BuildObjectRefsFromDictionaryValue(dispatcher, *iter);
+    if (entry->IsType(base::Value::Type::LIST)) {
+      BuildObjectRefsFromListValue(dispatcher, *entry);
+    } else if (entry->IsType(base::Value::Type::DICTIONARY)) {
+      BuildObjectRefsFromDictionaryValue(dispatcher, *entry);
     }
   }
 }
 
 void GinJavaMethodInvocationHelper::BuildObjectRefsFromDictionaryValue(
     DispatcherDelegate* dispatcher,
-    const base::Value* dict_value) {
-  DCHECK(dict_value->IsType(base::Value::TYPE_DICTIONARY));
+    const base::Value& dict_value) {
+  DCHECK(dict_value.IsType(base::Value::Type::DICTIONARY));
   const base::DictionaryValue* dict;
-  dict_value->GetAsDictionary(&dict);
+  dict_value.GetAsDictionary(&dict);
   for (base::DictionaryValue::Iterator iter(*dict);
        !iter.IsAtEnd();
        iter.Advance()) {
-    if (AppendObjectRef(dispatcher, &iter.value()))
+    if (AppendObjectRef(dispatcher, iter.value()))
       continue;
-    if (iter.value().IsType(base::Value::TYPE_LIST)) {
-      BuildObjectRefsFromListValue(dispatcher, &iter.value());
-    } else if (iter.value().IsType(base::Value::TYPE_DICTIONARY)) {
-      BuildObjectRefsFromDictionaryValue(dispatcher, &iter.value());
+    if (iter.value().IsType(base::Value::Type::LIST)) {
+      BuildObjectRefsFromListValue(dispatcher, iter.value());
+    } else if (iter.value().IsType(base::Value::Type::DICTIONARY)) {
+      BuildObjectRefsFromDictionaryValue(dispatcher, iter.value());
     }
   }
 }
 
 bool GinJavaMethodInvocationHelper::AppendObjectRef(
     DispatcherDelegate* dispatcher,
-    const base::Value* raw_value) {
-  if (!GinJavaBridgeValue::ContainsGinJavaBridgeValue(raw_value))
+    const base::Value& raw_value) {
+  if (!GinJavaBridgeValue::ContainsGinJavaBridgeValue(&raw_value))
     return false;
-  scoped_ptr<const GinJavaBridgeValue> value(
-      GinJavaBridgeValue::FromValue(raw_value));
+  std::unique_ptr<const GinJavaBridgeValue> value(
+      GinJavaBridgeValue::FromValue(&raw_value));
   if (!value->IsType(GinJavaBridgeValue::TYPE_OBJECT_ID))
     return false;
   GinJavaBoundObject::ObjectID object_id;
@@ -103,7 +100,7 @@ bool GinJavaMethodInvocationHelper::AppendObjectRef(
     if (iter == object_refs_.end()) {
       JavaObjectWeakGlobalRef object_ref(
           dispatcher->GetObjectWeakRef(object_id));
-      if (!object_ref.is_empty()) {
+      if (!object_ref.is_uninitialized()) {
         object_refs_.insert(std::make_pair(object_id, object_ref));
       }
     }
@@ -210,7 +207,7 @@ GinJavaMethodInvocationHelper::GetSafeAnnotationClass() {
   return safe_annotation_clazz_;
 }
 
-const GinJavaBridgeError GinJavaMethodInvocationHelper::GetInvocationError() {
+GinJavaBridgeError GinJavaMethodInvocationHelper::GetInvocationError() {
   return invocation_error_;
 }
 

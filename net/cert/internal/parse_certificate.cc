@@ -6,6 +6,8 @@
 
 #include <utility>
 
+#include "base/strings/string_util.h"
+#include "net/cert/internal/cert_errors.h"
 #include "net/der/input.h"
 #include "net/der/parse_values.h"
 #include "net/der/parser.h"
@@ -13,6 +15,23 @@
 namespace net {
 
 namespace {
+
+DEFINE_CERT_ERROR_ID(kCertificateNotSequence,
+                     "Failed parsing Certificate SEQUENCE");
+DEFINE_CERT_ERROR_ID(kUnconsumedDataInsideCertificateSequence,
+                     "Unconsumed data inside Certificate SEQUENCE");
+DEFINE_CERT_ERROR_ID(kUnconsumedDataAfterCertificateSequence,
+                     "Unconsumed data after Certificate SEQUENCE");
+DEFINE_CERT_ERROR_ID(kTbsCertificateNotSequence,
+                     "Couldn't read tbsCertificate as SEQUENCE");
+DEFINE_CERT_ERROR_ID(
+    kSignatureAlgorithmNotSequence,
+    "Couldn't read Certificate.signatureAlgorithm as SEQUENCE");
+DEFINE_CERT_ERROR_ID(kSignatureValueNotBitString,
+                     "Couldn't read Certificate.signatureValue as BIT STRING");
+
+DEFINE_CERT_ERROR_ID(kUnconsumedDataInsideTbsCertificateSequence,
+                     "Unconsumed data inside TBSCertificate");
 
 // Returns true if |input| is a SEQUENCE and nothing else.
 WARN_UNUSED_RESULT bool IsSequenceTLV(const der::Input& input) {
@@ -66,43 +85,6 @@ WARN_UNUSED_RESULT bool ParseVersion(const der::Input& in,
   // By definition the input to this function was a single INTEGER, so there
   // shouldn't be anything else after it.
   return !parser.HasMore();
-}
-
-// Returns true if the given serial number (CertificateSerialNumber in RFC 5280)
-// is valid:
-//
-//    CertificateSerialNumber  ::=  INTEGER
-//
-// The input to this function is the (unverified) value octets of the INTEGER.
-// This function will verify that:
-//
-//   * The octets are a valid DER-encoding of an INTEGER (for instance, minimal
-//     encoding length).
-//
-//   * No more than 20 octets are used.
-//
-// Note that it DOES NOT reject non-positive values (zero or negative).
-//
-// For reference, here is what RFC 5280 section 4.1.2.2 says:
-//
-//     Given the uniqueness requirements above, serial numbers can be
-//     expected to contain long integers.  Certificate users MUST be able to
-//     handle serialNumber values up to 20 octets.  Conforming CAs MUST NOT
-//     use serialNumber values longer than 20 octets.
-//
-//     Note: Non-conforming CAs may issue certificates with serial numbers
-//     that are negative or zero.  Certificate users SHOULD be prepared to
-//     gracefully handle such certificates.
-WARN_UNUSED_RESULT bool VerifySerialNumber(const der::Input& value) {
-  bool unused_negative;
-  if (!der::IsValidInteger(value, &unused_negative))
-    return false;
-
-  // Check if the serial number is too long per RFC 5280.
-  if (value.Length() > 20)
-    return false;
-
-  return true;
 }
 
 // Consumes a "Time" value (as defined by RFC 5280) from |parser|. On success
@@ -191,35 +173,71 @@ ParsedTbsCertificate::ParsedTbsCertificate() {}
 
 ParsedTbsCertificate::~ParsedTbsCertificate() {}
 
+bool VerifySerialNumber(const der::Input& value) {
+  bool unused_negative;
+  if (!der::IsValidInteger(value, &unused_negative))
+    return false;
+
+  // Check if the serial number is too long per RFC 5280.
+  if (value.Length() > 20)
+    return false;
+
+  return true;
+}
+
 bool ParseCertificate(const der::Input& certificate_tlv,
-                      ParsedCertificate* out) {
+                      der::Input* out_tbs_certificate_tlv,
+                      der::Input* out_signature_algorithm_tlv,
+                      der::BitString* out_signature_value,
+                      CertErrors* out_errors) {
+  // |out_errors| is optional. But ensure it is non-null for the remainder of
+  // this function.
+  if (!out_errors) {
+    CertErrors unused_errors;
+    return ParseCertificate(certificate_tlv, out_tbs_certificate_tlv,
+                            out_signature_algorithm_tlv, out_signature_value,
+                            &unused_errors);
+  }
+
   der::Parser parser(certificate_tlv);
 
   //   Certificate  ::=  SEQUENCE  {
   der::Parser certificate_parser;
-  if (!parser.ReadSequence(&certificate_parser))
+  if (!parser.ReadSequence(&certificate_parser)) {
+    out_errors->AddError(kCertificateNotSequence);
     return false;
+  }
 
   //        tbsCertificate       TBSCertificate,
-  if (!ReadSequenceTLV(&certificate_parser, &out->tbs_certificate_tlv))
+  if (!ReadSequenceTLV(&certificate_parser, out_tbs_certificate_tlv)) {
+    out_errors->AddError(kTbsCertificateNotSequence);
     return false;
+  }
 
   //        signatureAlgorithm   AlgorithmIdentifier,
-  if (!ReadSequenceTLV(&certificate_parser, &out->signature_algorithm_tlv))
+  if (!ReadSequenceTLV(&certificate_parser, out_signature_algorithm_tlv)) {
+    out_errors->AddError(kSignatureAlgorithmNotSequence);
     return false;
+  }
 
   //        signatureValue       BIT STRING  }
-  if (!certificate_parser.ReadBitString(&out->signature_value))
+  if (!certificate_parser.ReadBitString(out_signature_value)) {
+    out_errors->AddError(kSignatureValueNotBitString);
     return false;
+  }
 
   // There isn't an extension point at the end of Certificate.
-  if (certificate_parser.HasMore())
+  if (certificate_parser.HasMore()) {
+    out_errors->AddError(kUnconsumedDataInsideCertificateSequence);
     return false;
+  }
 
   // By definition the input was a single Certificate, so there shouldn't be
   // unconsumed data.
-  if (parser.HasMore())
+  if (parser.HasMore()) {
+    out_errors->AddError(kUnconsumedDataAfterCertificateSequence);
     return false;
+  }
 
   return true;
 }
@@ -241,7 +259,18 @@ bool ParseCertificate(const der::Input& certificate_tlv,
 //        extensions      [3]  EXPLICIT Extensions OPTIONAL
 //                             -- If present, version MUST be v3
 //        }
-bool ParseTbsCertificate(const der::Input& tbs_tlv, ParsedTbsCertificate* out) {
+bool ParseTbsCertificate(const der::Input& tbs_tlv,
+                         const ParseCertificateOptions& options,
+                         ParsedTbsCertificate* out,
+                         CertErrors* errors) {
+  // The rest of this function assumes that |errors| is non-null.
+  if (!errors) {
+    CertErrors unused_errors;
+    return ParseTbsCertificate(tbs_tlv, options, out, &unused_errors);
+  }
+
+  // TODO(crbug.com/634443): Add useful error information to |errors|.
+
   der::Parser parser(tbs_tlv);
 
   //   Certificate  ::=  SEQUENCE  {
@@ -271,8 +300,10 @@ bool ParseTbsCertificate(const der::Input& tbs_tlv, ParsedTbsCertificate* out) {
   //        serialNumber         CertificateSerialNumber,
   if (!tbs_parser.ReadTag(der::kInteger, &out->serial_number))
     return false;
-  if (!VerifySerialNumber(out->serial_number))
+  if (!options.allow_invalid_serial_numbers &&
+      !VerifySerialNumber(out->serial_number)) {
     return false;
+  }
 
   //        signature            AlgorithmIdentifier,
   if (!ReadSequenceTLV(&tbs_parser, &out->signature_algorithm_tlv))
@@ -355,8 +386,10 @@ bool ParseTbsCertificate(const der::Input& tbs_tlv, ParsedTbsCertificate* out) {
   // However because only v1, v2, and v3 certificates are supported by the
   // parsing, there shouldn't be any subsequent data in those versions, so
   // reject.
-  if (tbs_parser.HasMore())
+  if (tbs_parser.HasMore()) {
+    errors->AddError(kUnconsumedDataInsideTbsCertificateSequence);
     return false;
+  }
 
   // By definition the input was a single TBSCertificate, so there shouldn't be
   // unconsumed data.
@@ -488,6 +521,36 @@ der::Input ExtKeyUsageOid() {
   return der::Input(oid);
 }
 
+der::Input AuthorityInfoAccessOid() {
+  // From RFC 5280:
+  //
+  //     id-pe-authorityInfoAccess OBJECT IDENTIFIER ::= { id-pe 1 }
+  //
+  // In dotted notation: 1.3.6.1.5.5.7.1.1
+  static const uint8_t oid[] = {0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x01, 0x01};
+  return der::Input(oid);
+}
+
+der::Input AdCaIssuersOid() {
+  // From RFC 5280:
+  //
+  //     id-ad-caIssuers OBJECT IDENTIFIER ::= { id-ad 2 }
+  //
+  // In dotted notation: 1.3.6.1.5.5.7.48.2
+  static const uint8_t oid[] = {0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x02};
+  return der::Input(oid);
+}
+
+der::Input AdOcspOid() {
+  // From RFC 5280:
+  //
+  //     id-ad-ocsp OBJECT IDENTIFIER ::= { id-ad 1 }
+  //
+  // In dotted notation: 1.3.6.1.5.5.7.48.1
+  static const uint8_t oid[] = {0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01};
+  return der::Input(oid);
+}
+
 NET_EXPORT bool ParseExtensions(
     const der::Input& extensions_tlv,
     std::map<der::Input, ParsedExtension>* extensions) {
@@ -528,6 +591,19 @@ NET_EXPORT bool ParseExtensions(
   if (parser.HasMore())
     return false;
 
+  return true;
+}
+
+NET_EXPORT bool ConsumeExtension(
+    const der::Input& oid,
+    std::map<der::Input, ParsedExtension>* unconsumed_extensions,
+    ParsedExtension* extension) {
+  auto it = unconsumed_extensions->find(oid);
+  if (it == unconsumed_extensions->end())
+    return false;
+
+  *extension = it->second;
+  unconsumed_extensions->erase(it);
   return true;
 }
 
@@ -596,6 +672,59 @@ bool ParseKeyUsage(const der::Input& key_usage_tlv, der::BitString* key_usage) {
   //     one of the bits MUST be set to 1.
   if (BitStringIsAllZeros(*key_usage))
     return false;
+
+  return true;
+}
+
+bool ParseAuthorityInfoAccess(
+    const der::Input& authority_info_access_tlv,
+    std::vector<base::StringPiece>* out_ca_issuers_uris,
+    std::vector<base::StringPiece>* out_ocsp_uris) {
+  der::Parser parser(authority_info_access_tlv);
+
+  out_ca_issuers_uris->clear();
+  out_ocsp_uris->clear();
+
+  //    AuthorityInfoAccessSyntax  ::=
+  //            SEQUENCE SIZE (1..MAX) OF AccessDescription
+  der::Parser sequence_parser;
+  if (!parser.ReadSequence(&sequence_parser))
+    return false;
+  if (!sequence_parser.HasMore())
+    return false;
+
+  while (sequence_parser.HasMore()) {
+    //    AccessDescription  ::=  SEQUENCE {
+    der::Parser access_description_sequence_parser;
+    if (!sequence_parser.ReadSequence(&access_description_sequence_parser))
+      return false;
+
+    //            accessMethod          OBJECT IDENTIFIER,
+    der::Input access_method_oid;
+    if (!access_description_sequence_parser.ReadTag(der::kOid,
+                                                    &access_method_oid))
+      return false;
+
+    //            accessLocation        GeneralName  }
+    der::Tag access_location_tag;
+    der::Input access_location_value;
+    if (!access_description_sequence_parser.ReadTagAndValue(
+            &access_location_tag, &access_location_value))
+      return false;
+
+    // GeneralName ::= CHOICE {
+    if (access_location_tag == der::ContextSpecificPrimitive(6)) {
+      // uniformResourceIdentifier       [6]     IA5String,
+      base::StringPiece uri = access_location_value.AsStringPiece();
+      if (!base::IsStringASCII(uri))
+        return false;
+
+      if (access_method_oid == AdCaIssuersOid())
+        out_ca_issuers_uris->push_back(uri);
+      else if (access_method_oid == AdOcspOid())
+        out_ocsp_uris->push_back(uri);
+    }
+  }
 
   return true;
 }

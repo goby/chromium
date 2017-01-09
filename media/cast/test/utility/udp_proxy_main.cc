@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <string>
+#include <utility>
 
 #include "base/at_exit.h"
 #include "base/bind.h"
@@ -13,9 +15,11 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/cast/test/utility/udp_proxy.h"
+#include "net/base/ip_address.h"
 
 class ByteCounter {
  public:
@@ -48,16 +52,16 @@ class ByteCounter {
     return packets / time_range().InSecondsF();
   }
 
-  void Increment(uint64 x) {
+  void Increment(uint64_t x) {
     bytes_ += x;
     packets_ ++;
   }
 
  private:
-  uint64 bytes_;
-  uint64 packets_;
-  std::deque<uint64> byte_data_;
-  std::deque<uint64> packet_data_;
+  uint64_t bytes_;
+  uint64_t packets_;
+  std::deque<uint64_t> byte_data_;
+  std::deque<uint64_t> packet_data_;
   std::deque<base::TimeTicks> time_data_;
 };
 
@@ -77,23 +81,22 @@ base::LazyInstance<GlobalCounter>::Leaky g_counter =
 class ByteCounterPipe : public media::cast::test::PacketPipe {
  public:
   ByteCounterPipe(ByteCounter* counter) : counter_(counter) {}
-  void Send(scoped_ptr<media::cast::Packet> packet) final {
+  void Send(std::unique_ptr<media::cast::Packet> packet) final {
     counter_->Increment(packet->size());
-    pipe_->Send(packet.Pass());
+    pipe_->Send(std::move(packet));
   }
  private:
   ByteCounter* counter_;
 };
 
-void SetupByteCounters(scoped_ptr<media::cast::test::PacketPipe>* pipe,
+void SetupByteCounters(std::unique_ptr<media::cast::test::PacketPipe>* pipe,
                        ByteCounter* pipe_input_counter,
                        ByteCounter* pipe_output_counter) {
   media::cast::test::PacketPipe* new_pipe =
       new ByteCounterPipe(pipe_input_counter);
-  new_pipe->AppendToPipe(pipe->Pass());
-  new_pipe->AppendToPipe(
-      scoped_ptr<media::cast::test::PacketPipe>(
-          new ByteCounterPipe(pipe_output_counter)).Pass());
+  new_pipe->AppendToPipe(std::move(*pipe));
+  new_pipe->AppendToPipe(std::unique_ptr<media::cast::test::PacketPipe>(
+      new ByteCounterPipe(pipe_output_counter)));
   pipe->reset(new_pipe);
 }
 
@@ -139,16 +142,14 @@ int main(int argc, char** argv) {
     exit(1);
   }
 
-  net::IPAddressNumber remote_ip_number;
-  net::IPAddressNumber local_ip_number;
+  net::IPAddress remote_ip_address;
   std::string network_type;
   int local_port = atoi(argv[1]);
   int remote_port = 0;
-  CHECK(net::ParseIPLiteralToNumber("0.0.0.0", &local_ip_number));
 
   if (argc == 5) {
     // V2 proxy
-    CHECK(net::ParseIPLiteralToNumber(argv[2], &remote_ip_number));
+    CHECK(remote_ip_address.AssignFromIPLiteral(argv[2]));
     remote_port = atoi(argv[3]);
     network_type = argv[4];
   } else {
@@ -160,28 +161,28 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Port numbers must be between 0 and 65535\n");
     exit(1);
   }
-  net::IPEndPoint remote_endpoint(remote_ip_number,
-                                  static_cast<uint16>(remote_port));
-  net::IPEndPoint local_endpoint(local_ip_number,
-                                 static_cast<uint16>(local_port));
-  scoped_ptr<media::cast::test::PacketPipe> in_pipe, out_pipe;
-  scoped_ptr<media::cast::test::InterruptedPoissonProcess> ipp(
+  net::IPEndPoint remote_endpoint(remote_ip_address,
+                                  static_cast<uint16_t>(remote_port));
+  net::IPEndPoint local_endpoint(net::IPAddress::IPv4AllZeros(),
+                                 static_cast<uint16_t>(local_port));
+  std::unique_ptr<media::cast::test::PacketPipe> in_pipe, out_pipe;
+  std::unique_ptr<media::cast::test::InterruptedPoissonProcess> ipp(
       media::cast::test::DefaultInterruptedPoissonProcess());
 
   if (network_type == "perfect") {
     // No action needed.
   } else if (network_type == "wifi") {
-    in_pipe = media::cast::test::WifiNetwork().Pass();
-    out_pipe = media::cast::test::WifiNetwork().Pass();
+    in_pipe = media::cast::test::WifiNetwork();
+    out_pipe = media::cast::test::WifiNetwork();
   } else if (network_type == "bad") {
-    in_pipe = media::cast::test::BadNetwork().Pass();
-    out_pipe = media::cast::test::BadNetwork().Pass();
+    in_pipe = media::cast::test::BadNetwork();
+    out_pipe = media::cast::test::BadNetwork();
   } else if (network_type == "evil") {
-    in_pipe = media::cast::test::EvilNetwork().Pass();
-    out_pipe = media::cast::test::EvilNetwork().Pass();
+    in_pipe = media::cast::test::EvilNetwork();
+    out_pipe = media::cast::test::EvilNetwork();
   } else if (network_type == "poisson-wifi") {
-    in_pipe = ipp->NewBuffer(128 * 1024).Pass();
-    out_pipe = ipp->NewBuffer(128 * 1024).Pass();
+    in_pipe = ipp->NewBuffer(128 * 1024);
+    out_pipe = ipp->NewBuffer(128 * 1024);
   } else {
     fprintf(stderr, "Unknown network type.\n");
     exit(1);
@@ -194,15 +195,13 @@ int main(int argc, char** argv) {
       &(g_counter.Get().out_pipe_output_counter));
 
   printf("Press Ctrl-C when done.\n");
-  scoped_ptr<media::cast::test::UDPProxy> proxy(
-      media::cast::test::UDPProxy::Create(local_endpoint,
-                                          remote_endpoint,
-                                          in_pipe.Pass(),
-                                          out_pipe.Pass(),
-                                          NULL));
+  std::unique_ptr<media::cast::test::UDPProxy> proxy(
+      media::cast::test::UDPProxy::Create(local_endpoint, remote_endpoint,
+                                          std::move(in_pipe),
+                                          std::move(out_pipe), NULL));
   base::MessageLoop message_loop;
   g_counter.Get().last_printout = base::TimeTicks::Now();
   CheckByteCounters();
-  message_loop.Run();
+  base::RunLoop().Run();
   return 1;
 }

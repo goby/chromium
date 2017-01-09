@@ -4,17 +4,23 @@
 
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/base_paths_posix.h"
 #include "base/callback.h"
 #include "base/i18n/time_formatting.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/media_galleries/fileapi/iapps_finder.h"
 #include "chrome/browser/media_galleries/fileapi/picasa_finder.h"
@@ -27,6 +33,8 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/crx_file/id_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/storage_monitor/media_storage_util.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "content/public/browser/browser_thread.h"
@@ -80,7 +88,6 @@ const char kMediaGalleriesDefaultGalleryTypeMusicDefaultValue[] = "music";
 const char kMediaGalleriesDefaultGalleryTypePicturesDefaultValue[] = "pictures";
 const char kMediaGalleriesDefaultGalleryTypeVideosDefaultValue[] = "videos";
 
-const char kIPhotoGalleryName[] = "iPhoto";
 const char kITunesGalleryName[] = "iTunes";
 const char kPicasaGalleryName[] = "Picasa";
 
@@ -278,9 +285,9 @@ bool PopulateGalleryPrefInfoFromDictionary(
   return true;
 }
 
-base::DictionaryValue* CreateGalleryPrefInfoDictionary(
+std::unique_ptr<base::DictionaryValue> CreateGalleryPrefInfoDictionary(
     const MediaGalleryPrefInfo& gallery) {
-  base::DictionaryValue* dict = new base::DictionaryValue();
+  auto dict = base::MakeUnique<base::DictionaryValue>();
   dict->SetString(kMediaGalleriesPrefIdKey,
                   base::Uint64ToString(gallery.pref_id));
   dict->SetString(kMediaGalleriesDeviceIdKey, gallery.device_id);
@@ -374,6 +381,9 @@ MediaGalleryPrefInfo::MediaGalleryPrefInfo()
       default_gallery_type(kNotDefault),
       prefs_version(0) {
 }
+
+MediaGalleryPrefInfo::MediaGalleryPrefInfo(const MediaGalleryPrefInfo& other) =
+    default;
 
 MediaGalleryPrefInfo::~MediaGalleryPrefInfo() {}
 
@@ -480,7 +490,7 @@ void MediaGalleriesPreferences::EnsureInitialized(base::Closure callback) {
   // It cannot be incremented inline with each callback, as some may return
   // synchronously, decrement the counter to 0, and prematurely trigger
   // FinishInitialization.
-  pre_initialization_callbacks_waiting_ = 4;
+  pre_initialization_callbacks_waiting_ = 3;
 
   // Check whether we should be initializing -- are there any extensions that
   // are using media galleries?
@@ -503,10 +513,6 @@ void MediaGalleriesPreferences::EnsureInitialized(base::Closure callback) {
                  weak_factory_.GetWeakPtr()));
 
   picasa::FindPicasaDatabase(
-      base::Bind(&MediaGalleriesPreferences::OnFinderDeviceID,
-                 weak_factory_.GetWeakPtr()));
-
-  iapps::FindIPhotoLibrary(
       base::Bind(&MediaGalleriesPreferences::OnFinderDeviceID,
                  weak_factory_.GetWeakPtr()));
 }
@@ -608,8 +614,8 @@ bool MediaGalleriesPreferences::UpdateDeviceIDForSingletonType(
     return false;
 
   PrefService* prefs = profile_->GetPrefs();
-  scoped_ptr<ListPrefUpdate> update(new ListPrefUpdate(
-      prefs, prefs::kMediaGalleriesRememberedGalleries));
+  std::unique_ptr<ListPrefUpdate> update(
+      new ListPrefUpdate(prefs, prefs::kMediaGalleriesRememberedGalleries));
   base::ListValue* list = update->Get();
   for (base::ListValue::iterator iter = list->begin();
        iter != list->end(); ++iter) {
@@ -632,9 +638,8 @@ bool MediaGalleriesPreferences::UpdateDeviceIDForSingletonType(
       InitFromPrefs();
       MediaGalleryPrefId pref_id;
       if (GetPrefId(*dict, &pref_id)) {
-        FOR_EACH_OBSERVER(GalleryChangeObserver,
-                          gallery_change_observers_,
-                          OnGalleryInfoUpdated(this, pref_id));
+        for (auto& observer : gallery_change_observers_)
+          observer.OnGalleryInfoUpdated(this, pref_id);
       }
       return true;
     }
@@ -657,9 +662,7 @@ void MediaGalleriesPreferences::OnStorageMonitorInit(
 void MediaGalleriesPreferences::OnFinderDeviceID(const std::string& device_id) {
   if (!device_id.empty()) {
     std::string gallery_name;
-    if (StorageInfo::IsIPhotoDevice(device_id))
-      gallery_name = kIPhotoGalleryName;
-    else if (StorageInfo::IsITunesDevice(device_id))
+    if (StorageInfo::IsITunesDevice(device_id))
       gallery_name = kITunesGalleryName;
     else if (StorageInfo::IsPicasaDevice(device_id))
       gallery_name = kPicasaGalleryName;
@@ -756,8 +759,7 @@ bool MediaGalleriesPreferences::LookUpGalleryByPath(
   for (MediaGalleriesPrefInfoMap::const_iterator it =
            known_galleries_.begin(); it != known_galleries_.end(); ++it) {
     const std::string& device_id = it->second.device_id;
-    if (iapps::PathIndicatesIPhotoLibrary(device_id, path) ||
-        iapps::PathIndicatesITunesLibrary(device_id, path)) {
+    if (iapps::PathIndicatesITunesLibrary(device_id, path)) {
       *gallery_info = it->second;
       return true;
     }
@@ -824,13 +826,16 @@ base::FilePath MediaGalleriesPreferences::LookUpGalleryPathForExtension(
   DCHECK(IsInitialized());
   DCHECK(extension);
   if (!include_unpermitted_galleries &&
-      !ContainsKey(GalleriesForExtension(*extension), gallery_id))
+      !base::ContainsKey(GalleriesForExtension(*extension), gallery_id))
     return base::FilePath();
 
   MediaGalleriesPrefInfoMap::const_iterator it =
       known_galleries_.find(gallery_id);
   if (it == known_galleries_.end())
     return base::FilePath();
+
+  // This seems wrong: it just returns the absolute path to the device, which
+  // is not necessarily the gallery path.
   return MediaStorageUtil::FindDevicePathById(it->second.device_id);
 }
 
@@ -841,7 +846,7 @@ MediaGalleryPrefId MediaGalleriesPreferences::AddGallery(
     const base::string16& volume_label,
     const base::string16& vendor_name,
     const base::string16& model_name,
-    uint64 total_size_in_bytes,
+    uint64_t total_size_in_bytes,
     base::Time last_attach_time,
     int audio_count,
     int image_count,
@@ -866,12 +871,20 @@ MediaGalleryPrefId MediaGalleriesPreferences::AddGallery(
 }
 
 MediaGalleryPrefId MediaGalleriesPreferences::AddOrUpdateGalleryInternal(
-    const std::string& device_id, const base::string16& display_name,
-    const base::FilePath& relative_path, MediaGalleryPrefInfo::Type type,
-    const base::string16& volume_label, const base::string16& vendor_name,
-    const base::string16& model_name, uint64 total_size_in_bytes,
-    base::Time last_attach_time, bool volume_metadata_valid,
-    int audio_count, int image_count, int video_count, int prefs_version,
+    const std::string& device_id,
+    const base::string16& display_name,
+    const base::FilePath& relative_path,
+    MediaGalleryPrefInfo::Type type,
+    const base::string16& volume_label,
+    const base::string16& vendor_name,
+    const base::string16& model_name,
+    uint64_t total_size_in_bytes,
+    base::Time last_attach_time,
+    bool volume_metadata_valid,
+    int audio_count,
+    int image_count,
+    int video_count,
+    int prefs_version,
     MediaGalleryPrefInfo::DefaultGalleryType default_gallery_type) {
   DCHECK(type == MediaGalleryPrefInfo::kUserAdded ||
          type == MediaGalleryPrefInfo::kAutoDetected ||
@@ -940,7 +953,7 @@ MediaGalleryPrefId MediaGalleriesPreferences::AddOrUpdateGalleryInternal(
       return *pref_id_it;
 
     PrefService* prefs = profile_->GetPrefs();
-    scoped_ptr<ListPrefUpdate> update(
+    std::unique_ptr<ListPrefUpdate> update(
         new ListPrefUpdate(prefs, prefs::kMediaGalleriesRememberedGalleries));
     base::ListValue* list = update->Get();
 
@@ -983,8 +996,8 @@ MediaGalleryPrefId MediaGalleriesPreferences::AddOrUpdateGalleryInternal(
     update.reset();
 
     InitFromPrefs();
-    FOR_EACH_OBSERVER(GalleryChangeObserver, gallery_change_observers_,
-                      OnGalleryInfoUpdated(this, *pref_id_it));
+    for (auto& observer : gallery_change_observers_)
+      observer.OnGalleryInfoUpdated(this, *pref_id_it);
     return *pref_id_it;
   }
 
@@ -1015,9 +1028,8 @@ MediaGalleryPrefId MediaGalleriesPreferences::AddOrUpdateGalleryInternal(
     list->Append(CreateGalleryPrefInfoDictionary(gallery_info));
   }
   InitFromPrefs();
-  FOR_EACH_OBSERVER(GalleryChangeObserver,
-                    gallery_change_observers_,
-                    OnGalleryAdded(this, gallery_info.pref_id));
+  for (auto& observer : gallery_change_observers_)
+    observer.OnGalleryAdded(this, gallery_info.pref_id);
 
   return gallery_info.pref_id;
 }
@@ -1034,8 +1046,8 @@ void MediaGalleriesPreferences::UpdateDefaultGalleriesPaths() {
       PathService::Get(chrome::DIR_USER_VIDEOS, &videos_path);
 
   PrefService* prefs = profile_->GetPrefs();
-  scoped_ptr<ListPrefUpdate> update(new ListPrefUpdate(
-      prefs, prefs::kMediaGalleriesRememberedGalleries));
+  std::unique_ptr<ListPrefUpdate> update(
+      new ListPrefUpdate(prefs, prefs::kMediaGalleriesRememberedGalleries));
   base::ListValue* list = update->Get();
 
   std::vector<MediaGalleryPrefId> pref_ids;
@@ -1091,9 +1103,8 @@ void MediaGalleriesPreferences::UpdateDefaultGalleriesPaths() {
   for (std::vector<MediaGalleryPrefId>::iterator iter = pref_ids.begin();
        iter != pref_ids.end();
        ++iter) {
-    FOR_EACH_OBSERVER(GalleryChangeObserver,
-                      gallery_change_observers_,
-                      OnGalleryInfoUpdated(this, *iter));
+    for (auto& observer : gallery_change_observers_)
+      observer.OnGalleryInfoUpdated(this, *iter);
   }
 }
 
@@ -1133,11 +1144,11 @@ void MediaGalleriesPreferences::EraseOrBlacklistGalleryById(
     MediaGalleryPrefId id, bool erase) {
   DCHECK(IsInitialized());
   PrefService* prefs = profile_->GetPrefs();
-  scoped_ptr<ListPrefUpdate> update(new ListPrefUpdate(
-      prefs, prefs::kMediaGalleriesRememberedGalleries));
+  std::unique_ptr<ListPrefUpdate> update(
+      new ListPrefUpdate(prefs, prefs::kMediaGalleriesRememberedGalleries));
   base::ListValue* list = update->Get();
 
-  if (!ContainsKey(known_galleries_, id))
+  if (!base::ContainsKey(known_galleries_, id))
     return;
 
   for (base::ListValue::iterator iter = list->begin();
@@ -1167,9 +1178,8 @@ void MediaGalleriesPreferences::EraseOrBlacklistGalleryById(
       update.reset(NULL);  // commits the update.
 
       InitFromPrefs();
-      FOR_EACH_OBSERVER(GalleryChangeObserver,
-                        gallery_change_observers_,
-                        OnGalleryRemoved(this, id));
+      for (auto& observer : gallery_change_observers_)
+        observer.OnGalleryRemoved(this, id);
       return;
     }
   }
@@ -1178,7 +1188,7 @@ void MediaGalleriesPreferences::EraseOrBlacklistGalleryById(
 bool MediaGalleriesPreferences::NonAutoGalleryHasPermission(
     MediaGalleryPrefId id) const {
   DCHECK(IsInitialized());
-  DCHECK(!ContainsKey(known_galleries_, id) ||
+  DCHECK(!base::ContainsKey(known_galleries_, id) ||
          known_galleries_.find(id)->second.type !=
              MediaGalleryPrefInfo::kAutoDetected);
   ExtensionPrefs* prefs = GetExtensionPrefs();
@@ -1271,14 +1281,13 @@ bool MediaGalleriesPreferences::SetGalleryPermissionForExtension(
     if (!SetGalleryPermissionInPrefs(extension.id(), pref_id, has_permission))
       return false;
   }
-  if (has_permission)
-    FOR_EACH_OBSERVER(GalleryChangeObserver,
-                      gallery_change_observers_,
-                      OnPermissionAdded(this, extension.id(), pref_id));
-  else
-    FOR_EACH_OBSERVER(GalleryChangeObserver,
-                      gallery_change_observers_,
-                      OnPermissionRemoved(this, extension.id(), pref_id));
+  if (has_permission) {
+    for (auto& observer : gallery_change_observers_)
+      observer.OnPermissionAdded(this, extension.id(), pref_id);
+  } else {
+    for (auto& observer : gallery_change_observers_)
+      observer.OnPermissionRemoved(this, extension.id(), pref_id);
+  }
   return true;
 }
 
@@ -1286,18 +1295,6 @@ const MediaGalleriesPrefInfoMap& MediaGalleriesPreferences::known_galleries()
     const {
   DCHECK(IsInitialized());
   return known_galleries_;
-}
-
-base::Time MediaGalleriesPreferences::GetLastScanCompletionTime() const {
-  int64 last_scan_time_internal =
-      profile_->GetPrefs()->GetInt64(prefs::kMediaGalleriesLastScanTime);
-  return base::Time::FromInternalValue(last_scan_time_internal);
-}
-
-void MediaGalleriesPreferences::SetLastScanCompletionTime(
-    const base::Time& time) {
-  profile_->GetPrefs()->SetInt64(prefs::kMediaGalleriesLastScanTime,
-                                 time.ToInternalValue());
 }
 
 void MediaGalleriesPreferences::Shutdown() {
@@ -1318,8 +1315,6 @@ void MediaGalleriesPreferences::RegisterProfilePrefs(
   registry->RegisterListPref(prefs::kMediaGalleriesRememberedGalleries);
   registry->RegisterUint64Pref(prefs::kMediaGalleriesUniqueId,
                                kInvalidMediaGalleryPrefId + 1);
-  registry->RegisterInt64Pref(prefs::kMediaGalleriesLastScanTime,
-                              base::Time().ToInternalValue());
 }
 
 bool MediaGalleriesPreferences::SetGalleryPermissionInPrefs(
@@ -1354,10 +1349,10 @@ bool MediaGalleriesPreferences::SetGalleryPermissionInPrefs(
     }
   }
   // ...Otherwise, add a new entry for the gallery.
-  base::DictionaryValue* dict = new base::DictionaryValue;
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   dict->SetString(kMediaGalleryIdKey, base::Uint64ToString(gallery_id));
   dict->SetBoolean(kMediaGalleryHasPermissionKey, has_access);
-  permissions->Append(dict);
+  permissions->Append(std::move(dict));
   return true;
 }
 

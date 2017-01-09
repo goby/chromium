@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "cc/base/completion_event.h"
 #include "cc/debug/lap_timer.h"
@@ -28,7 +33,7 @@ class PerfTaskImpl : public Task {
   // Overridden from Task:
   void RunOnWorkerThread() override {}
 
-  void Reset() { did_run_ = false; }
+  void Reset() { state().Reset(); }
 
  private:
   ~PerfTaskImpl() override {}
@@ -45,8 +50,8 @@ class TaskGraphRunnerPerfTest : public testing::Test {
 
   // Overridden from testing::Test:
   void SetUp() override {
-    task_graph_runner_ = make_scoped_ptr(new SynchronousTaskGraphRunner);
-    namespace_token_ = task_graph_runner_->GetNamespaceToken();
+    task_graph_runner_ = base::WrapUnique(new SynchronousTaskGraphRunner);
+    namespace_token_ = task_graph_runner_->GenerateNamespaceToken();
   }
   void TearDown() override { task_graph_runner_ = nullptr; }
 
@@ -70,6 +75,10 @@ class TaskGraphRunnerPerfTest : public testing::Test {
       BuildTaskGraph(top_level_tasks, tasks, leaf_tasks, &graph);
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
+
+    CancelTasks(leaf_tasks);
+    CancelTasks(tasks);
+    CancelTasks(top_level_tasks);
 
     perf_test::PrintResult("build_task_graph",
                            TestModifierString(),
@@ -140,11 +149,15 @@ class TaskGraphRunnerPerfTest : public testing::Test {
     size_t count = 0;
     timer_.Reset();
     do {
+      size_t current_version = count % kNumVersions;
       graph.Reset();
-      BuildTaskGraph(top_level_tasks[count % kNumVersions],
-                     tasks[count % kNumVersions],
-                     leaf_tasks[count % kNumVersions],
-                     &graph);
+      // Reset tasks as we are not letting them execute, they get cancelled
+      // when next ScheduleTasks() happens.
+      ResetTasks(top_level_tasks[current_version]);
+      ResetTasks(tasks[current_version]);
+      ResetTasks(leaf_tasks[current_version]);
+      BuildTaskGraph(top_level_tasks[current_version], tasks[current_version],
+                     leaf_tasks[current_version], &graph);
       task_graph_runner_->ScheduleTasks(namespace_token_, &graph);
       CollectCompletedTasks(&completed_tasks);
       completed_tasks.clear();
@@ -183,14 +196,16 @@ class TaskGraphRunnerPerfTest : public testing::Test {
     timer_.Reset();
     do {
       graph.Reset();
+      // Tasks run have finished state. Reset them to be considered as new for
+      // scheduling again.
+      ResetTasks(top_level_tasks);
+      ResetTasks(tasks);
+      ResetTasks(leaf_tasks);
       BuildTaskGraph(top_level_tasks, tasks, leaf_tasks, &graph);
       task_graph_runner_->ScheduleTasks(namespace_token_, &graph);
       task_graph_runner_->RunUntilIdle();
       CollectCompletedTasks(&completed_tasks);
       completed_tasks.clear();
-      ResetTasks(&top_level_tasks);
-      ResetTasks(&tasks);
-      ResetTasks(&leaf_tasks);
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -212,12 +227,14 @@ class TaskGraphRunnerPerfTest : public testing::Test {
       tasks->push_back(make_scoped_refptr(new PerfTaskImpl));
   }
 
-  void ResetTasks(PerfTaskImpl::Vector* tasks) {
-    for (PerfTaskImpl::Vector::iterator it = tasks->begin(); it != tasks->end();
-         ++it) {
-      PerfTaskImpl* task = it->get();
+  void CancelTasks(const PerfTaskImpl::Vector& tasks) {
+    for (auto& task : tasks)
+      task->state().DidCancel();
+  }
+
+  void ResetTasks(const PerfTaskImpl::Vector& tasks) {
+    for (auto& task : tasks)
       task->Reset();
-    }
   }
 
   void BuildTaskGraph(const PerfTaskImpl::Vector& top_level_tasks,
@@ -227,36 +244,23 @@ class TaskGraphRunnerPerfTest : public testing::Test {
     DCHECK(graph->nodes.empty());
     DCHECK(graph->edges.empty());
 
-    for (PerfTaskImpl::Vector::const_iterator it = leaf_tasks.begin();
-         it != leaf_tasks.end();
-         ++it) {
-      graph->nodes.push_back(TaskGraph::Node(it->get(), 0u, 0u));
+    uint32_t leaf_task_count = static_cast<uint32_t>(leaf_tasks.size());
+    for (auto& task : tasks) {
+      for (const auto& leaf_task : leaf_tasks)
+        graph->edges.emplace_back(leaf_task.get(), task.get());
+
+      for (const auto& top_level_task : top_level_tasks)
+        graph->edges.emplace_back(task.get(), top_level_task.get());
+
+      graph->nodes.emplace_back(task, 0u, 0u, leaf_task_count);
     }
 
-    for (PerfTaskImpl::Vector::const_iterator it = tasks.begin();
-         it != tasks.end();
-         ++it) {
-      graph->nodes.push_back(TaskGraph::Node(it->get(), 0u, leaf_tasks.size()));
+    for (auto& leaf_task : leaf_tasks)
+      graph->nodes.emplace_back(leaf_task, 0u, 0u, 0u);
 
-      for (PerfTaskImpl::Vector::const_iterator leaf_it = leaf_tasks.begin();
-           leaf_it != leaf_tasks.end();
-           ++leaf_it) {
-        graph->edges.push_back(TaskGraph::Edge(leaf_it->get(), it->get()));
-      }
-
-      for (PerfTaskImpl::Vector::const_iterator top_level_it =
-               top_level_tasks.begin();
-           top_level_it != top_level_tasks.end();
-           ++top_level_it) {
-        graph->edges.push_back(TaskGraph::Edge(it->get(), top_level_it->get()));
-      }
-    }
-
-    for (PerfTaskImpl::Vector::const_iterator it = top_level_tasks.begin();
-         it != top_level_tasks.end();
-         ++it) {
-      graph->nodes.push_back(TaskGraph::Node(it->get(), 0u, tasks.size()));
-    }
+    uint32_t task_count = static_cast<uint32_t>(tasks.size());
+    for (auto& top_level_task : top_level_tasks)
+      graph->nodes.emplace_back(top_level_task, 0u, 0u, task_count);
   }
 
   size_t CollectCompletedTasks(Task::Vector* completed_tasks) {
@@ -268,7 +272,7 @@ class TaskGraphRunnerPerfTest : public testing::Test {
 
   // Test uses SynchronousTaskGraphRunner, as this implementation introduces
   // minimal additional complexity over the TaskGraphWorkQueue helpers.
-  scoped_ptr<SynchronousTaskGraphRunner> task_graph_runner_;
+  std::unique_ptr<SynchronousTaskGraphRunner> task_graph_runner_;
   NamespaceToken namespace_token_;
   LapTimer timer_;
 };

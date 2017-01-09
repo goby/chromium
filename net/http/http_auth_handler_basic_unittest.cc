@@ -2,18 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/http/http_auth_handler_basic.h"
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
-#include "net/http/http_auth_handler_basic.h"
 #include "net/http/http_request_info.h"
+#include "net/log/net_log_with_source.h"
+#include "net/ssl/ssl_info.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsOk;
 
 namespace net {
 
@@ -35,9 +41,11 @@ TEST(HttpAuthHandlerBasicTest, GenerateAuthToken) {
   HttpAuthHandlerBasic::Factory factory;
   for (size_t i = 0; i < arraysize(tests); ++i) {
     std::string challenge = "Basic realm=\"Atlantis\"";
-    scoped_ptr<HttpAuthHandler> basic;
+    SSLInfo null_ssl_info;
+    std::unique_ptr<HttpAuthHandler> basic;
     EXPECT_EQ(OK, factory.CreateAuthHandlerFromString(
-        challenge, HttpAuth::AUTH_SERVER, origin, BoundNetLog(), &basic));
+                      challenge, HttpAuth::AUTH_SERVER, null_ssl_info, origin,
+                      NetLogWithSource(), &basic));
     AuthCredentials credentials(base::ASCIIToUTF16(tests[i].username),
                                 base::ASCIIToUTF16(tests[i].password));
     HttpRequestInfo request_info;
@@ -45,7 +53,7 @@ TEST(HttpAuthHandlerBasicTest, GenerateAuthToken) {
     TestCompletionCallback callback;
     int rv = basic->GenerateAuthToken(&credentials, &request_info,
                                       callback.callback(), &auth_token);
-    EXPECT_EQ(OK, rv);
+    EXPECT_THAT(rv, IsOk());
     EXPECT_STREQ(tests[i].expected_credentials, auth_token.c_str());
   }
 }
@@ -87,10 +95,11 @@ TEST(HttpAuthHandlerBasicTest, HandleAnotherChallenge) {
 
   GURL origin("http://www.example.com");
   HttpAuthHandlerBasic::Factory factory;
-  scoped_ptr<HttpAuthHandler> basic;
+  SSLInfo null_ssl_info;
+  std::unique_ptr<HttpAuthHandler> basic;
   EXPECT_EQ(OK, factory.CreateAuthHandlerFromString(
-      tests[0].challenge, HttpAuth::AUTH_SERVER, origin,
-      BoundNetLog(), &basic));
+                    tests[0].challenge, HttpAuth::AUTH_SERVER, null_ssl_info,
+                    origin, NetLogWithSource(), &basic));
 
   for (size_t i = 0; i < arraysize(tests); ++i) {
     std::string challenge(tests[i].challenge);
@@ -187,9 +196,11 @@ TEST(HttpAuthHandlerBasicTest, InitFromChallenge) {
   GURL origin("http://www.example.com");
   for (size_t i = 0; i < arraysize(tests); ++i) {
     std::string challenge = tests[i].challenge;
-    scoped_ptr<HttpAuthHandler> basic;
+    SSLInfo null_ssl_info;
+    std::unique_ptr<HttpAuthHandler> basic;
     int rv = factory.CreateAuthHandlerFromString(
-        challenge, HttpAuth::AUTH_SERVER, origin, BoundNetLog(), &basic);
+        challenge, HttpAuth::AUTH_SERVER, null_ssl_info, origin,
+        NetLogWithSource(), &basic);
     EXPECT_EQ(tests[i].expected_rv, rv);
     if (rv == OK)
       EXPECT_EQ(tests[i].expected_realm, basic->realm());

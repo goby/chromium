@@ -5,15 +5,19 @@
 #ifndef NET_BASE_IP_PATTERN_H_
 #define NET_BASE_IP_PATTERN_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
-#include "net/base/ip_address_number.h"
 #include "net/base/net_export.h"
 
 namespace net {
+
+class IPAddress;
 
 // IPPatterns are used to match IP address resolutions for possible augmentation
 // by a MappedIPResolver, which uses IPMappingRules.
@@ -27,14 +31,14 @@ class NET_EXPORT IPPattern {
   bool ParsePattern(const std::string& ip_pattern);
   // Test to see if the current pattern in |this| matches the given |address|
   // and return true if it matches.
-  bool Match(const IPAddressNumber& address) const;
+  bool Match(const IPAddress& address) const;
 
   bool is_ipv4() const { return is_ipv4_; }
 
  private:
   class ComponentPattern;
-  typedef std::vector<std::string> Strings;
-  typedef std::vector<ComponentPattern*> ComponentPatternList;
+  using Strings = std::vector<std::string>;
+  using ComponentPatternList = std::vector<std::unique_ptr<ComponentPattern>>;
 
   // IPv6 addresses have 8 components, while IPv4 addresses have 4 components.
   // ComponentPattern is used to define patterns to match individual components.

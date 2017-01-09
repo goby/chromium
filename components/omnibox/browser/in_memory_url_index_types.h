@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_IN_MEMORY_URL_INDEX_TYPES_H_
 #define COMPONENTS_OMNIBOX_BROWSER_IN_MEMORY_URL_INDEX_TYPES_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <set>
 #include <vector>
@@ -44,9 +46,12 @@ TermMatches MatchTermInString(const base::string16& term,
                               const base::string16& cleaned_string,
                               int term_num);
 
-// Sorts and removes overlapping substring matches from |matches| and
-// returns the cleaned up matches.
-TermMatches SortAndDeoverlapMatches(const TermMatches& matches);
+// Sorts |matches| by offset and returns the result.
+TermMatches SortMatches(const TermMatches& matches);
+
+// Removes overlapping substring matches from |matches| and returns the
+// cleaned up matches.  Assumes |matches| is already sorted.
+TermMatches DeoverlapMatches(const TermMatches& sorted_matches);
 
 // Extracts and returns the offsets from |matches|.  This includes both
 // the offsets corresponding to the beginning of a match and the offsets
@@ -141,6 +146,7 @@ typedef std::map<HistoryID, WordIDSet> HistoryIDWordMap;
 typedef std::vector<history::VisitInfo> VisitInfoVector;
 struct HistoryInfoMapValue {
   HistoryInfoMapValue();
+  HistoryInfoMapValue(const HistoryInfoMapValue& other);
   ~HistoryInfoMapValue();
 
   // This field is always populated.
@@ -159,6 +165,7 @@ typedef base::hash_map<HistoryID, HistoryInfoMapValue> HistoryInfoMap;
 // A map from history_id to URL and page title word start metrics.
 struct RowWordStarts {
   RowWordStarts();
+  RowWordStarts(const RowWordStarts& other);
   ~RowWordStarts();
 
   // Clears both url_word_starts_ and title_word_starts_.

@@ -7,20 +7,19 @@
 #ifndef MEDIA_AUDIO_FAKE_AUDIO_INPUT_STREAM_H_
 #define MEDIA_AUDIO_FAKE_AUDIO_INPUT_STREAM_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
 #include "media/audio/fake_audio_worker.h"
-
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
 class AudioBus;
 class AudioManagerBase;
-class SimpleSource;
 
 // This class acts as a fake audio input stream. The default is to generate a
 // beeping sound unless --use-file-for-fake-audio-capture=<file> is specified,
@@ -60,7 +59,7 @@ class MEDIA_EXPORT FakeAudioInputStream
                        const AudioParameters& params);
   ~FakeAudioInputStream() override;
 
-  scoped_ptr<AudioOutputStream::AudioSourceCallback> ChooseSource();
+  std::unique_ptr<AudioOutputStream::AudioSourceCallback> ChooseSource();
   void ReadAudioFromSource();
 
   AudioManagerBase* audio_manager_;
@@ -68,8 +67,8 @@ class MEDIA_EXPORT FakeAudioInputStream
   FakeAudioWorker fake_audio_worker_;
   AudioParameters params_;
 
-  scoped_ptr<AudioOutputStream::AudioSourceCallback> audio_source_;
-  scoped_ptr<media::AudioBus> audio_bus_;
+  std::unique_ptr<AudioOutputStream::AudioSourceCallback> audio_source_;
+  std::unique_ptr<media::AudioBus> audio_bus_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeAudioInputStream);
 };

@@ -6,17 +6,20 @@
 #define CHROME_BROWSER_EXTENSIONS_API_TABS_TABS_EVENT_ROUTER_H_
 
 #include <map>
+#include <set>
 #include <string>
 
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/api/tabs/tabs_api.h"
+#include "chrome/browser/memory/tab_manager.h"
+#include "chrome/browser/memory/tab_manager_observer.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "components/favicon/core/favicon_driver_observer.h"
-#include "components/ui/zoom/zoom_observer.h"
+#include "components/zoom/zoom_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/event_router.h"
 
@@ -38,7 +41,8 @@ class TabsEventRouter : public TabStripModelObserver,
                         public BrowserTabStripTrackerDelegate,
                         public chrome::BrowserListObserver,
                         public favicon::FaviconDriverObserver,
-                        public ui_zoom::ZoomObserver {
+                        public zoom::ZoomObserver,
+                        public memory::TabManagerObserver {
  public:
   explicit TabsEventRouter(Profile* profile);
   ~TabsEventRouter() override;
@@ -50,7 +54,8 @@ class TabsEventRouter : public TabStripModelObserver,
   void OnBrowserSetLastActive(Browser* browser) override;
 
   // TabStripModelObserver:
-  void TabInsertedAt(content::WebContents* contents,
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     content::WebContents* contents,
                      int index,
                      bool active) override;
   void TabClosingAt(TabStripModel* tab_strip_model,
@@ -73,12 +78,13 @@ class TabsEventRouter : public TabStripModelObserver,
                      content::WebContents* old_contents,
                      content::WebContents* new_contents,
                      int index) override;
-  void TabPinnedStateChanged(content::WebContents* contents,
+  void TabPinnedStateChanged(TabStripModel* tab_strip_model,
+                             content::WebContents* contents,
                              int index) override;
 
   // ZoomObserver:
   void OnZoomChanged(
-      const ui_zoom::ZoomController::ZoomChangedEventData& data) override;
+      const zoom::ZoomController::ZoomChangedEventData& data) override;
 
   // favicon::FaviconDriverObserver:
   void OnFaviconUpdated(favicon::FaviconDriver* favicon_driver,
@@ -86,6 +92,12 @@ class TabsEventRouter : public TabStripModelObserver,
                         const GURL& icon_url,
                         bool icon_url_changed,
                         const gfx::Image& image) override;
+
+  // memory::TabManagerObserver:
+  void OnDiscardedStateChange(content::WebContents* contents,
+                              bool is_discarded) override;
+  void OnAutoDiscardableStateChange(content::WebContents* contents,
+                                    bool is_auto_discardable) override;
 
  private:
   // "Synthetic" event. Called from TabInsertedAt if new tab is detected.
@@ -95,7 +107,7 @@ class TabsEventRouter : public TabStripModelObserver,
   // there's any changed property.
   class TabEntry;
   void TabUpdated(TabEntry* entry,
-                  scoped_ptr<base::DictionaryValue> changed_properties);
+                  std::set<std::string> changed_property_names);
 
   // Triggers a tab updated event if the favicon URL changes.
   void FaviconUrlUpdated(content::WebContents* contents);
@@ -106,20 +118,20 @@ class TabsEventRouter : public TabStripModelObserver,
   void DispatchEvent(Profile* profile,
                      events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     scoped_ptr<base::ListValue> args,
+                     std::unique_ptr<base::ListValue> args,
                      EventRouter::UserGestureState user_gesture);
 
   void DispatchEventsAcrossIncognito(
       Profile* profile,
       const std::string& event_name,
-      scoped_ptr<base::ListValue> event_args,
-      scoped_ptr<base::ListValue> cross_incognito_args);
+      std::unique_ptr<base::ListValue> event_args,
+      std::unique_ptr<base::ListValue> cross_incognito_args);
 
-  // Packages |changed_properties| as a tab updated event for the tab |contents|
-  // and dispatches the event to the extension.
+  // Packages |changed_property_names| as a tab updated event for the tab
+  // |contents| and dispatches the event to the extension.
   void DispatchTabUpdatedEvent(
       content::WebContents* contents,
-      scoped_ptr<base::DictionaryValue> changed_properties);
+      const std::set<std::string> changed_property_names);
 
   // Register ourselves to receive the various notifications we are interested
   // in for a tab. Also create tab entry to observe web contents notifications.
@@ -142,22 +154,13 @@ class TabsEventRouter : public TabStripModelObserver,
     // |contents|.
     TabEntry(TabsEventRouter* router, content::WebContents* contents);
 
-    // Indicate via a list of key/value pairs if a tab is loading based on its
-    // WebContents. Whether the state has changed or not is used to determine
-    // if events needs to be sent to extensions during processing of
-    // TabChangedAt(). If this method indicates that a tab should "hold" a
-    // state-change to "loading", the DidNavigate() method should eventually
-    // send a similar message to undo it. If false, the returned key/value
-    // pairs list is empty.
-    scoped_ptr<base::DictionaryValue> UpdateLoadState();
-
-    // Indicate via a list of key/value pairs that a tab load has resulted in a
-    // navigation and the destination url is available for inspection. The list
-    // is empty if no updates should be sent.
-    scoped_ptr<base::DictionaryValue> DidNavigate();
-
-    // Indicate via a list of key/value pairs if the title of a tab is changed.
-    scoped_ptr<base::DictionaryValue> TitleChanged();
+    // Indicate via a list of property names if a tab is loading based on its
+    // WebContents. Whether the state has changed or not is used to determine if
+    // events need to be sent to extensions during processing of TabChangedAt()
+    // If this method indicates that a tab should "hold" a state-change to
+    // "loading", the NavigationEntryCommitted() method should eventually send a
+    // similar message to undo it.
+    std::set<std::string> UpdateLoadState();
 
     // Update the audible and muted states and return whether they were changed
     bool SetAudible(bool new_val);
@@ -193,7 +196,7 @@ class TabsEventRouter : public TabStripModelObserver,
   // nullptr if not.
   TabEntry* GetTabEntry(content::WebContents* contents);
 
-  using TabEntryMap = std::map<int, scoped_ptr<TabEntry>>;
+  using TabEntryMap = std::map<int, std::unique_ptr<TabEntry>>;
   TabEntryMap tab_entries_;
 
   // The main profile that owns this event router.
@@ -203,6 +206,9 @@ class TabsEventRouter : public TabStripModelObserver,
       favicon_scoped_observer_;
 
   BrowserTabStripTracker browser_tab_strip_tracker_;
+
+  ScopedObserver<memory::TabManager, TabsEventRouter>
+      tab_manager_scoped_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TabsEventRouter);
 };

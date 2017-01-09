@@ -10,9 +10,8 @@
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/video_frame.h"
-#include "media/cast/cast_defines.h"
 #include "media/cast/constants.h"
-#include "third_party/libvpx_new/source/libvpx/vpx/vp8cx.h"
+#include "third_party/libvpx/source/libvpx/vpx/vp8cx.h"
 
 namespace media {
 namespace cast {
@@ -25,15 +24,65 @@ namespace {
 // pause in the video stream.
 const int kRestartFramePeriods = 3;
 
+// The following constants are used to automactically tune the encoder
+// parameters: |cpu_used| and |min_quantizer|.
+
+// The |half-life| of the encoding speed accumulator.
+// The smaller, the shorter of the time averaging window.
+const int kEncodingSpeedAccHalfLife = 120000;  // 0.12 second.
+
+// The target encoder utilization signal. This is a trade-off between quality
+// and less CPU usage. The range of this value is [0, 1]. Higher the value,
+// better the quality and higher the CPU usage.
+//
+// For machines with more than two encoding threads.
+const double kHiTargetEncoderUtilization = 0.7;
+// For machines with two encoding threads.
+const double kMidTargetEncoderUtilization = 0.6;
+// For machines with single encoding thread.
+const double kLoTargetEncoderUtilization = 0.5;
+
+// This is the equivalent change on encoding speed for the change on each
+// quantizer step.
+const double kEquivalentEncodingSpeedStepPerQpStep = 1 / 20.0;
+
+// Highest/lowest allowed encoding speed set to the encoder. The valid range
+// is [4, 16]. Experiments show that with speed higher than 12, the saving of
+// the encoding time is not worth the dropping of the quality. And with speed
+// lower than 6, the increasing of quality is not worth the increasing of
+// encoding time.
+const int kHighestEncodingSpeed = 12;
+const int kLowestEncodingSpeed = 6;
+
+bool HasSufficientFeedback(
+    const FeedbackSignalAccumulator<base::TimeDelta>& accumulator) {
+  const base::TimeDelta amount_of_history =
+      accumulator.update_time() - accumulator.reset_time();
+  return amount_of_history.InMicroseconds() >= 250000;  // 0.25 second.
+}
+
 }  // namespace
 
-Vp8Encoder::Vp8Encoder(const VideoSenderConfig& video_config)
+Vp8Encoder::Vp8Encoder(const FrameSenderConfig& video_config)
     : cast_config_(video_config),
+      target_encoder_utilization_(
+          video_config.video_codec_params.number_of_encode_threads > 2
+              ? kHiTargetEncoderUtilization
+              : (video_config.video_codec_params.number_of_encode_threads > 1
+                     ? kMidTargetEncoderUtilization
+                     : kLoTargetEncoderUtilization)),
       key_frame_requested_(true),
       bitrate_kbit_(cast_config_.start_bitrate / 1000),
-      last_encoded_frame_id_(kFirstFrameId - 1),
-      has_seen_zero_length_encoded_frame_(false) {
+      next_frame_id_(FrameId::first()),
+      has_seen_zero_length_encoded_frame_(false),
+      encoding_speed_acc_(
+          base::TimeDelta::FromMicroseconds(kEncodingSpeedAccHalfLife)),
+      encoding_speed_(kHighestEncodingSpeed) {
   config_.g_timebase.den = 0;  // Not initialized.
+  DCHECK_LE(cast_config_.video_codec_params.min_qp,
+            cast_config_.video_codec_params.max_cpu_saver_qp);
+  DCHECK_LE(cast_config_.video_codec_params.max_cpu_saver_qp,
+            cast_config_.video_codec_params.max_qp);
 
   thread_checker_.DetachFromThread();
 }
@@ -63,6 +112,7 @@ void Vp8Encoder::ConfigureForNewFrameSize(const gfx::Size& frame_size) {
                << frame_size.ToString();
       config_.g_w = frame_size.width();
       config_.g_h = frame_size.height();
+      config_.rc_min_quantizer = cast_config_.video_codec_params.min_qp;
       if (vpx_codec_enc_config_set(&encoder_, &config_) == VPX_CODEC_OK)
         return;
       DVLOG(1) << "libvpx rejected the attempt to use a smaller frame size in "
@@ -82,7 +132,7 @@ void Vp8Encoder::ConfigureForNewFrameSize(const gfx::Size& frame_size) {
   CHECK_EQ(vpx_codec_enc_config_default(vpx_codec_vp8_cx(), &config_, 0),
            VPX_CODEC_OK);
 
-  config_.g_threads = cast_config_.number_of_encode_threads;
+  config_.g_threads = cast_config_.video_codec_params.number_of_encode_threads;
   config_.g_w = frame_size.width();
   config_.g_h = frame_size.height();
   // Set the timebase to match that of base::TimeDelta.
@@ -99,8 +149,8 @@ void Vp8Encoder::ConfigureForNewFrameSize(const gfx::Size& frame_size) {
   config_.rc_resize_allowed = 0;  // TODO(miu): Why not?  Investigate this.
   config_.rc_end_usage = VPX_CBR;
   config_.rc_target_bitrate = bitrate_kbit_;
-  config_.rc_min_quantizer = cast_config_.min_qp;
-  config_.rc_max_quantizer = cast_config_.max_qp;
+  config_.rc_min_quantizer = cast_config_.video_codec_params.min_qp;
+  config_.rc_max_quantizer = cast_config_.video_codec_params.max_qp;
   // TODO(miu): Revisit these now that the encoder is being successfully
   // micro-managed.
   config_.rc_undershoot_pct = 100;
@@ -125,12 +175,17 @@ void Vp8Encoder::ConfigureForNewFrameSize(const gfx::Size& frame_size) {
   CHECK_EQ(vpx_codec_control(&encoder_, VP8E_SET_STATIC_THRESHOLD, 1),
            VPX_CODEC_OK);
 
-  // Improve quality by enabling sets of codec features that utilize more CPU.
-  // The default is zero, with increasingly more CPU to be used as the value is
-  // more negative.
-  // TODO(miu): Document why this value was chosen and expected behaviors.
-  // Should this be dynamic w.r.t. hardware performance?
-  CHECK_EQ(vpx_codec_control(&encoder_, VP8E_SET_CPUUSED, -6), VPX_CODEC_OK);
+  // This cpu_used setting is a trade-off between cpu usage and encoded video
+  // quality. The default is zero, with increasingly less CPU to be used as the
+  // value is more negative or more positive. The encoder does some automatic
+  // adjust on encoding speed for positive values, however at least at this
+  // stage the experiments show that this automatic behaviour is not reliable on
+  // windows machines. We choose to set negative values instead to directly set
+  // the encoding speed to the encoder. Starting with the highest encoding speed
+  // to avoid large cpu usage from the beginning.
+  encoding_speed_ = kHighestEncodingSpeed;
+  CHECK_EQ(vpx_codec_control(&encoder_, VP8E_SET_CPUUSED, -encoding_speed_),
+           VPX_CODEC_OK);
 }
 
 void Vp8Encoder::Encode(const scoped_refptr<media::VideoFrame>& video_frame,
@@ -139,7 +194,7 @@ void Vp8Encoder::Encode(const scoped_refptr<media::VideoFrame>& video_frame,
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(encoded_frame);
 
-  // Note: This is used to compute the |deadline_utilization| and so it uses the
+  // Note: This is used to compute the |encoder_utilization| and so it uses the
   // real-world clock instead of the CastEnvironment clock, the latter of which
   // might be simulated.
   const base::TimeTicks start_time = base::TimeTicks::Now();
@@ -208,7 +263,7 @@ void Vp8Encoder::Encode(const scoped_refptr<media::VideoFrame>& video_frame,
       << "BUG: Invalid arguments passed to vpx_codec_encode().";
 
   // Pull data from the encoder, populating a new EncodedFrame.
-  encoded_frame->frame_id = ++last_encoded_frame_id_;
+  encoded_frame->frame_id = next_frame_id_++;
   const vpx_codec_cx_pkt_t* pkt = NULL;
   vpx_codec_iter_t iter = NULL;
   while ((pkt = vpx_codec_get_cx_data(&encoder_, &iter)) != NULL) {
@@ -223,14 +278,14 @@ void Vp8Encoder::Encode(const scoped_refptr<media::VideoFrame>& video_frame,
       // Frame dependencies could theoretically be relaxed by looking for the
       // VPX_FRAME_IS_DROPPABLE flag, but in recent testing (Oct 2014), this
       // flag never seems to be set.
-      encoded_frame->referenced_frame_id = last_encoded_frame_id_ - 1;
+      encoded_frame->referenced_frame_id = encoded_frame->frame_id - 1;
     }
     encoded_frame->rtp_timestamp =
-        TimeDeltaToRtpDelta(video_frame->timestamp(), kVideoFrequency);
+        RtpTimeTicks::FromTimeDelta(video_frame->timestamp(), kVideoFrequency);
     encoded_frame->reference_time = reference_time;
     encoded_frame->data.assign(
-        static_cast<const uint8*>(pkt->data.frame.buf),
-        static_cast<const uint8*>(pkt->data.frame.buf) + pkt->data.frame.sz);
+        static_cast<const uint8_t*>(pkt->data.frame.buf),
+        static_cast<const uint8_t*>(pkt->data.frame.buf) + pkt->data.frame.sz);
     break;  // Done, since all data is provided in one CX_FRAME_PKT packet.
   }
   DCHECK(!encoded_frame->data.empty())
@@ -245,7 +300,8 @@ void Vp8Encoder::Encode(const scoped_refptr<media::VideoFrame>& video_frame,
     const std::string details = base::StringPrintf(
         "SV/%c,id=%" PRIu32 ",rtp=%" PRIu32 ",br=%d,kfr=%c",
         encoded_frame->dependency == EncodedFrame::KEY ? 'K' : 'D',
-        encoded_frame->frame_id, encoded_frame->rtp_timestamp,
+        encoded_frame->frame_id.lower_32_bits(),
+        encoded_frame->rtp_timestamp.lower_32_bits(),
         static_cast<int>(config_.rc_target_bitrate),
         key_frame_requested_ ? 'Y' : 'N');
     base::debug::SetCrashKeyValue(kZeroEncodeDetails, details);
@@ -254,10 +310,10 @@ void Vp8Encoder::Encode(const scoped_refptr<media::VideoFrame>& video_frame,
     base::debug::ClearCrashKey(kZeroEncodeDetails);
   }
 
-  // Compute deadline utilization as the real-world time elapsed divided by the
+  // Compute encoder utilization as the real-world time elapsed divided by the
   // frame duration.
   const base::TimeDelta processing_time = base::TimeTicks::Now() - start_time;
-  encoded_frame->deadline_utilization =
+  encoded_frame->encoder_utilization =
       processing_time.InSecondsF() / predicted_frame_duration.InSecondsF();
 
   // Compute lossy utilization.  The VP8 encoder took an estimated guess at what
@@ -282,22 +338,67 @@ void Vp8Encoder::Encode(const scoped_refptr<media::VideoFrame>& video_frame,
 
   DVLOG(2) << "VP8 encoded frame_id " << encoded_frame->frame_id
            << ", sized: " << encoded_frame->data.size()
-           << ", deadline_utilization: " << encoded_frame->deadline_utilization
+           << ", encoder_utilization: " << encoded_frame->encoder_utilization
            << ", lossy_utilization: " << encoded_frame->lossy_utilization
            << " (quantizer chosen by the encoder was " << quantizer << ')';
 
   if (encoded_frame->dependency == EncodedFrame::KEY) {
     key_frame_requested_ = false;
   }
+  if (encoded_frame->dependency == EncodedFrame::KEY) {
+    encoding_speed_acc_.Reset(kHighestEncodingSpeed, video_frame->timestamp());
+  } else {
+    // Equivalent encoding speed considering both cpu_used setting and
+    // quantizer.
+    double actual_encoding_speed =
+        encoding_speed_ +
+        kEquivalentEncodingSpeedStepPerQpStep *
+            std::max(0, quantizer - cast_config_.video_codec_params.min_qp);
+    double adjusted_encoding_speed = actual_encoding_speed *
+                                     encoded_frame->encoder_utilization /
+                                     target_encoder_utilization_;
+    encoding_speed_acc_.Update(adjusted_encoding_speed,
+                               video_frame->timestamp());
+  }
+
+  if (HasSufficientFeedback(encoding_speed_acc_)) {
+    // Predict |encoding_speed_| and |min_quantizer| for next frame.
+    // When CPU is constrained, increase encoding speed and increase
+    // |min_quantizer| if needed.
+    double next_encoding_speed = encoding_speed_acc_.current();
+    int next_min_qp;
+    if (next_encoding_speed > kHighestEncodingSpeed) {
+      double remainder = next_encoding_speed - kHighestEncodingSpeed;
+      next_encoding_speed = kHighestEncodingSpeed;
+      next_min_qp =
+          static_cast<int>(remainder / kEquivalentEncodingSpeedStepPerQpStep +
+                           cast_config_.video_codec_params.min_qp + 0.5);
+      next_min_qp = std::min(next_min_qp,
+                             cast_config_.video_codec_params.max_cpu_saver_qp);
+    } else {
+      next_encoding_speed =
+          std::max<double>(kLowestEncodingSpeed, next_encoding_speed) + 0.5;
+      next_min_qp = cast_config_.video_codec_params.min_qp;
+    }
+    if (encoding_speed_ != static_cast<int>(next_encoding_speed)) {
+      encoding_speed_ = static_cast<int>(next_encoding_speed);
+      CHECK_EQ(vpx_codec_control(&encoder_, VP8E_SET_CPUUSED, -encoding_speed_),
+               VPX_CODEC_OK);
+    }
+    if (config_.rc_min_quantizer != static_cast<unsigned int>(next_min_qp)) {
+      config_.rc_min_quantizer = static_cast<unsigned int>(next_min_qp);
+      CHECK_EQ(vpx_codec_enc_config_set(&encoder_, &config_), VPX_CODEC_OK);
+    }
+  }
 }
 
-void Vp8Encoder::UpdateRates(uint32 new_bitrate) {
+void Vp8Encoder::UpdateRates(uint32_t new_bitrate) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!is_initialized())
     return;
 
-  uint32 new_bitrate_kbit = new_bitrate / 1000;
+  uint32_t new_bitrate_kbit = new_bitrate / 1000;
   if (config_.rc_target_bitrate == new_bitrate_kbit)
     return;
 

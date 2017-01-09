@@ -4,71 +4,69 @@
 
 #include "chrome/browser/chrome_quota_permission_context.h"
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
+#include "chrome/browser/permissions/permission_request.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/ui/website_settings/permission_bubble_request.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/theme_resources.h"
 #include "storage/common/quota/quota_types.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/vector_icons_public.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
+#include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
 #else
-#include "chrome/browser/ui/website_settings/permission_bubble_manager.h"
+#include "chrome/browser/permissions/permission_request_manager.h"
 #endif
 
 namespace {
 
+#if defined(OS_ANDROID)
 // If the site requested larger quota than this threshold, show a different
 // message to the user.
-const int64 kRequestLargeQuotaThreshold = 5 * 1024 * 1024;
+const int64_t kRequestLargeQuotaThreshold = 5 * 1024 * 1024;
+#endif
 
 // QuotaPermissionRequest ---------------------------------------------
 
-class QuotaPermissionRequest : public PermissionBubbleRequest {
+class QuotaPermissionRequest : public PermissionRequest {
  public:
   QuotaPermissionRequest(
       ChromeQuotaPermissionContext* context,
       const GURL& origin_url,
-      int64 requested_quota,
-      bool user_gesture,
-      const std::string& display_languages,
       const content::QuotaPermissionContext::PermissionCallback& callback);
 
   ~QuotaPermissionRequest() override;
 
-  // PermissionBubbleRequest:
-  int GetIconId() const override;
-  base::string16 GetMessageText() const override;
+ private:
+  // PermissionRequest:
+  IconId GetIconId() const override;
   base::string16 GetMessageTextFragment() const override;
-  bool HasUserGesture() const override;
-  GURL GetRequestingHostname() const override;
+  GURL GetOrigin() const override;
   void PermissionGranted() override;
   void PermissionDenied() override;
   void Cancelled() override;
   void RequestFinished() override;
+  PermissionRequestType GetPermissionRequestType() const override;
 
- private:
   scoped_refptr<ChromeQuotaPermissionContext> context_;
   GURL origin_url_;
-  std::string display_languages_;
-  int64 requested_quota_;
-  bool user_gesture_;
   content::QuotaPermissionContext::PermissionCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(QuotaPermissionRequest);
@@ -77,42 +75,27 @@ class QuotaPermissionRequest : public PermissionBubbleRequest {
 QuotaPermissionRequest::QuotaPermissionRequest(
     ChromeQuotaPermissionContext* context,
     const GURL& origin_url,
-    int64 requested_quota,
-    bool user_gesture,
-    const std::string& display_languages,
     const content::QuotaPermissionContext::PermissionCallback& callback)
     : context_(context),
       origin_url_(origin_url),
-      display_languages_(display_languages),
-      requested_quota_(requested_quota),
-      user_gesture_(user_gesture),
       callback_(callback) {}
 
 QuotaPermissionRequest::~QuotaPermissionRequest() {}
 
-int QuotaPermissionRequest::GetIconId() const {
+PermissionRequest::IconId QuotaPermissionRequest::GetIconId() const {
   // TODO(gbillock): get the proper image here
-  return IDR_INFOBAR_WARNING;
-}
-
-base::string16 QuotaPermissionRequest::GetMessageText() const {
-  return l10n_util::GetStringFUTF16(
-      (requested_quota_ > kRequestLargeQuotaThreshold
-           ? IDS_REQUEST_LARGE_QUOTA_INFOBAR_QUESTION
-           : IDS_REQUEST_QUOTA_INFOBAR_QUESTION),
-      url_formatter::FormatUrlForSecurityDisplay(origin_url_,
-                                                 display_languages_));
+#if defined(OS_ANDROID)
+  return IDR_ANDROID_INFOBAR_WARNING;
+#else
+  return gfx::VectorIconId::WARNING;
+#endif
 }
 
 base::string16 QuotaPermissionRequest::GetMessageTextFragment() const {
   return l10n_util::GetStringUTF16(IDS_REQUEST_QUOTA_PERMISSION_FRAGMENT);
 }
 
-bool QuotaPermissionRequest::HasUserGesture() const {
-  return user_gesture_;
-}
-
-GURL QuotaPermissionRequest::GetRequestingHostname() const {
+GURL QuotaPermissionRequest::GetOrigin() const {
   return origin_url_;
 }
 
@@ -143,6 +126,10 @@ void QuotaPermissionRequest::RequestFinished() {
   delete this;
 }
 
+PermissionRequestType QuotaPermissionRequest::GetPermissionRequestType() const {
+  return PermissionRequestType::QUOTA;
+}
+
 #if defined(OS_ANDROID)
 // RequestQuotaInfoBarDelegate ------------------------------------------------
 
@@ -154,28 +141,26 @@ class RequestQuotaInfoBarDelegate : public ConfirmInfoBarDelegate {
       InfoBarService* infobar_service,
       ChromeQuotaPermissionContext* context,
       const GURL& origin_url,
-      int64 requested_quota,
-      const std::string& display_languages,
+      int64_t requested_quota,
       const content::QuotaPermissionContext::PermissionCallback& callback);
 
  private:
   RequestQuotaInfoBarDelegate(
       ChromeQuotaPermissionContext* context,
       const GURL& origin_url,
-      int64 requested_quota,
-      const std::string& display_languages,
+      int64_t requested_quota,
       const content::QuotaPermissionContext::PermissionCallback& callback);
   ~RequestQuotaInfoBarDelegate() override;
 
   // ConfirmInfoBarDelegate:
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   base::string16 GetMessageText() const override;
   bool Accept() override;
   bool Cancel() override;
 
   scoped_refptr<ChromeQuotaPermissionContext> context_;
   GURL origin_url_;
-  std::string display_languages_;
-  int64 requested_quota_;
+  int64_t requested_quota_;
   content::QuotaPermissionContext::PermissionCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestQuotaInfoBarDelegate);
@@ -186,27 +171,23 @@ void RequestQuotaInfoBarDelegate::Create(
     InfoBarService* infobar_service,
     ChromeQuotaPermissionContext* context,
     const GURL& origin_url,
-    int64 requested_quota,
-    const std::string& display_languages,
+    int64_t requested_quota,
     const content::QuotaPermissionContext::PermissionCallback& callback) {
   infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(new RequestQuotaInfoBarDelegate(
-          context, origin_url, requested_quota, display_languages, callback))));
+      std::unique_ptr<ConfirmInfoBarDelegate>(new RequestQuotaInfoBarDelegate(
+          context, origin_url, requested_quota, callback))));
 }
 
 RequestQuotaInfoBarDelegate::RequestQuotaInfoBarDelegate(
     ChromeQuotaPermissionContext* context,
     const GURL& origin_url,
-    int64 requested_quota,
-    const std::string& display_languages,
+    int64_t requested_quota,
     const content::QuotaPermissionContext::PermissionCallback& callback)
     : ConfirmInfoBarDelegate(),
       context_(context),
       origin_url_(origin_url),
-      display_languages_(display_languages),
       requested_quota_(requested_quota),
-      callback_(callback) {
-}
+      callback_(callback) {}
 
 RequestQuotaInfoBarDelegate::~RequestQuotaInfoBarDelegate() {
   if (!callback_.is_null()) {
@@ -216,6 +197,11 @@ RequestQuotaInfoBarDelegate::~RequestQuotaInfoBarDelegate() {
   }
 }
 
+infobars::InfoBarDelegate::InfoBarIdentifier
+RequestQuotaInfoBarDelegate::GetIdentifier() const {
+  return REQUEST_QUOTA_INFOBAR_DELEGATE;
+}
+
 base::string16 RequestQuotaInfoBarDelegate::GetMessageText() const {
   // If the site requested larger quota than this threshold, show a different
   // message to the user.
@@ -223,8 +209,7 @@ base::string16 RequestQuotaInfoBarDelegate::GetMessageText() const {
       (requested_quota_ > kRequestLargeQuotaThreshold
            ? IDS_REQUEST_LARGE_QUOTA_INFOBAR_QUESTION
            : IDS_REQUEST_QUOTA_INFOBAR_QUESTION),
-      url_formatter::FormatUrlForSecurityDisplay(origin_url_,
-                                                 display_languages_));
+      url_formatter::FormatUrlForSecurityDisplay(origin_url_));
 }
 
 bool RequestQuotaInfoBarDelegate::Accept() {
@@ -269,13 +254,12 @@ void ChromeQuotaPermissionContext::RequestQuotaPermission(
     return;
   }
 
-  content::WebContents* web_contents =
-      tab_util::GetWebContentsByID(render_process_id,
-                                   params.render_view_id);
+  content::WebContents* web_contents = tab_util::GetWebContentsByFrameID(
+      render_process_id, params.render_frame_id);
   if (!web_contents) {
     // The tab may have gone away or the request may not be from a tab.
     LOG(WARNING) << "Attempt to request quota tabless renderer: "
-                 << render_process_id << "," << params.render_view_id;
+                 << render_process_id << "," << params.render_frame_id;
     DispatchCallbackOnIOThread(callback, QUOTA_PERMISSION_RESPONSE_CANCELLED);
     return;
   }
@@ -286,28 +270,22 @@ void ChromeQuotaPermissionContext::RequestQuotaPermission(
   if (infobar_service) {
     RequestQuotaInfoBarDelegate::Create(
         infobar_service, this, params.origin_url, params.requested_size,
-        Profile::FromBrowserContext(web_contents->GetBrowserContext())->
-            GetPrefs()->GetString(prefs::kAcceptLanguages),
         callback);
     return;
   }
 #else
-  PermissionBubbleManager* bubble_manager =
-      PermissionBubbleManager::FromWebContents(web_contents);
-  if (bubble_manager) {
-    bubble_manager->AddRequest(new QuotaPermissionRequest(
-        this, params.origin_url, params.requested_size, params.user_gesture,
-        Profile::FromBrowserContext(web_contents->GetBrowserContext())
-            ->GetPrefs()
-            ->GetString(prefs::kAcceptLanguages),
-        callback));
+  PermissionRequestManager* permission_request_manager =
+      PermissionRequestManager::FromWebContents(web_contents);
+  if (permission_request_manager) {
+    permission_request_manager->AddRequest(
+        new QuotaPermissionRequest(this, params.origin_url, callback));
     return;
   }
 #endif
 
   // The tab has no UI service for presenting the permissions request.
   LOG(WARNING) << "Attempt to request quota from a background page: "
-               << render_process_id << "," << params.render_view_id;
+               << render_process_id << "," << params.render_frame_id;
   DispatchCallbackOnIOThread(callback, QUOTA_PERMISSION_RESPONSE_CANCELLED);
 }
 

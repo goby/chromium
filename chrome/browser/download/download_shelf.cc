@@ -13,7 +13,7 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_service.h"
@@ -24,15 +24,12 @@
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/grit/locale_settings.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/theme_resources.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/theme_provider.h"
 #include "ui/gfx/animation/animation.h"
@@ -43,7 +40,7 @@ using content::DownloadItem;
 namespace {
 
 // Delay before we show a transient download.
-const int64 kDownloadShowDelayInSeconds = 2;
+const int64_t kDownloadShowDelayInSeconds = 2;
 
 // Get the opacity based on |animation_progress|, with values in [0.0, 1.0].
 // Range of return value is [0, 255].
@@ -229,7 +226,7 @@ void DownloadShelf::ShowDownload(DownloadItem* download) {
   }
 }
 
-void DownloadShelf::ShowDownloadById(int32 download_id) {
+void DownloadShelf::ShowDownloadById(int32_t download_id) {
   content::DownloadManager* download_manager = GetDownloadManager();
   if (!download_manager)
     return;

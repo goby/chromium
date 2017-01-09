@@ -4,18 +4,20 @@
 
 #include "ui/gfx/icon_util.h"
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/trace_event/trace_event.h"
 #include "base/win/resource_util.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_hdc.h"
 #include "skia/ext/image_operations.h"
+#include "skia/ext/skia_utils_win.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/gfx/gdi_util.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_family.h"
@@ -161,14 +163,15 @@ const int IconUtil::kIconDimensions[] = {
 const size_t IconUtil::kNumIconDimensions = arraysize(kIconDimensions);
 const size_t IconUtil::kNumIconDimensionsUpToMediumSize = 9;
 
-HICON IconUtil::CreateHICONFromSkBitmap(const SkBitmap& bitmap) {
+base::win::ScopedHICON IconUtil::CreateHICONFromSkBitmap(
+    const SkBitmap& bitmap) {
   // Only 32 bit ARGB bitmaps are supported. We also try to perform as many
   // validations as we can on the bitmap.
   SkAutoLockPixels bitmap_lock(bitmap);
   if ((bitmap.colorType() != kN32_SkColorType) ||
       (bitmap.width() <= 0) || (bitmap.height() <= 0) ||
       (bitmap.getPixels() == NULL))
-    return NULL;
+    return base::win::ScopedHICON();
 
   // We start by creating a DIB which we'll use later on in order to create
   // the HICON. We use BITMAPV5HEADER since the bitmap we are about to convert
@@ -186,7 +189,7 @@ HICON IconUtil::CreateHICONFromSkBitmap(const SkBitmap& bitmap) {
                              DIB_RGB_COLORS, &bits, NULL, 0);
   }
   if (!dib || !bits)
-    return NULL;
+    return base::win::ScopedHICON();
 
   memcpy(bits, bitmap.getPixels(), bitmap.width() * bitmap.height() * 4);
 
@@ -198,17 +201,17 @@ HICON IconUtil::CreateHICONFromSkBitmap(const SkBitmap& bitmap) {
   // bitmap has an alpha channel, Windows might not agree when all alpha values
   // are zero. So the monochrome bitmap is created with all pixels transparent
   // for this case. Otherwise, it is created with all pixels opaque.
-  bool bitmap_has_alpha_channel = PixelsHaveAlpha(
-      static_cast<const uint32*>(bitmap.getPixels()),
-      bitmap.width() * bitmap.height());
+  bool bitmap_has_alpha_channel =
+      PixelsHaveAlpha(static_cast<const uint32_t*>(bitmap.getPixels()),
+                      bitmap.width() * bitmap.height());
 
-  scoped_ptr<uint8[]> mask_bits;
+  std::unique_ptr<uint8_t[]> mask_bits;
   if (!bitmap_has_alpha_channel) {
     // Bytes per line with paddings to make it word alignment.
     size_t bytes_per_line = (bitmap.width() + 0xF) / 16 * 2;
     size_t mask_bits_size = bytes_per_line * bitmap.height();
 
-    mask_bits.reset(new uint8[mask_bits_size]);
+    mask_bits.reset(new uint8_t[mask_bits_size]);
     DCHECK(mask_bits.get());
 
     // Make all pixels transparent.
@@ -225,7 +228,7 @@ HICON IconUtil::CreateHICONFromSkBitmap(const SkBitmap& bitmap) {
   icon_info.yHotspot = 0;
   icon_info.hbmMask = mono_bitmap;
   icon_info.hbmColor = dib;
-  HICON icon = ::CreateIconIndirect(&icon_info);
+  base::win::ScopedHICON icon(CreateIconIndirect(&icon_info));
   ::DeleteObject(dib);
   ::DeleteObject(mono_bitmap);
   return icon;
@@ -244,7 +247,7 @@ SkBitmap* IconUtil::CreateSkBitmapFromHICON(HICON icon, const gfx::Size& s) {
 }
 
 // static
-scoped_ptr<gfx::ImageFamily> IconUtil::CreateImageFamilyFromIconResource(
+std::unique_ptr<gfx::ImageFamily> IconUtil::CreateImageFamilyFromIconResource(
     HMODULE module,
     int resource_id) {
   // Read the resource directly so we can get the icon image sizes. This data
@@ -260,7 +263,7 @@ scoped_ptr<gfx::ImageFamily> IconUtil::CreateImageFamilyFromIconResource(
 
   const GRPICONDIR* icon_dir =
       reinterpret_cast<const GRPICONDIR*>(icon_dir_data);
-  scoped_ptr<gfx::ImageFamily> result(new gfx::ImageFamily);
+  std::unique_ptr<gfx::ImageFamily> result(new gfx::ImageFamily);
   for (size_t i = 0; i < icon_dir->idCount; ++i) {
     const GRPICONDIRENTRY* entry = &icon_dir->idEntries[i];
     if (entry->bWidth != 0 || entry->bHeight != 0) {
@@ -269,12 +272,11 @@ scoped_ptr<gfx::ImageFamily> IconUtil::CreateImageFamilyFromIconResource(
         continue;
 
       // For everything except the Vista+ 256x256 icons, use |LoadImage()|.
-      HICON icon_handle = static_cast<HICON>(LoadImage(
+      base::win::ScopedHICON icon_handle(static_cast<HICON>(LoadImage(
           module, MAKEINTRESOURCE(resource_id), IMAGE_ICON, entry->bWidth,
-          entry->bHeight, LR_DEFAULTCOLOR | LR_DEFAULTSIZE));
-      scoped_ptr<SkBitmap> bitmap(
-          IconUtil::CreateSkBitmapFromHICON(icon_handle));
-      DestroyIcon(icon_handle);
+          entry->bHeight, LR_DEFAULTCOLOR | LR_DEFAULTSIZE)));
+      std::unique_ptr<SkBitmap> bitmap(
+          IconUtil::CreateSkBitmapFromHICON(icon_handle.get()));
       result->Add(gfx::Image::CreateFrom1xBitmap(*bitmap));
     } else {
       // 256x256 icons are stored with width and height set to 0.
@@ -309,16 +311,20 @@ SkBitmap* IconUtil::CreateSkBitmapFromHICON(HICON icon) {
   if (!::GetObject(icon_info.hbmMask, sizeof(bitmap_info), &bitmap_info))
     return NULL;
 
-  gfx::Size icon_size(bitmap_info.bmWidth, bitmap_info.bmHeight);
+  // For non-color cursors, the mask contains both an AND and an XOR mask and
+  // the height includes both. Thus, the mask width is the same as image width,
+  // but we need to divide mask height by 2 to get the image height.
+  const int height = bitmap_info.bmHeight / (icon_info.hbmColor ? 1 : 2);
+  gfx::Size icon_size(bitmap_info.bmWidth, height);
   return new SkBitmap(CreateSkBitmapFromHICONHelper(icon, icon_size));
 }
 
-HICON IconUtil::CreateCursorFromDIB(const gfx::Size& icon_size,
-                                    const gfx::Point& hotspot,
-                                    const void* dib_bits,
-                                    size_t dib_size) {
+base::win::ScopedHICON IconUtil::CreateCursorFromDIB(const gfx::Size& icon_size,
+                                                     const gfx::Point& hotspot,
+                                                     const void* dib_bits,
+                                                     size_t dib_size) {
   BITMAPINFO icon_bitmap_info = {};
-  gfx::CreateBitmapHeader(
+  skia::CreateBitmapHeader(
       icon_size.width(),
       icon_size.height(),
       reinterpret_cast<BITMAPINFOHEADER*>(&icon_bitmap_info));
@@ -334,7 +340,7 @@ HICON IconUtil::CreateCursorFromDIB(const gfx::Size& icon_size,
                        0));
   if (dib_size > 0) {
     SetDIBits(0,
-              bitmap_handle,
+              bitmap_handle.get(),
               0,
               icon_size.height(),
               dib_bits,
@@ -343,7 +349,7 @@ HICON IconUtil::CreateCursorFromDIB(const gfx::Size& icon_size,
   }
 
   HBITMAP old_bitmap = reinterpret_cast<HBITMAP>(
-      SelectObject(working_dc.Get(), bitmap_handle));
+      SelectObject(working_dc.Get(), bitmap_handle.get()));
   SetBkMode(working_dc.Get(), TRANSPARENT);
   SelectObject(working_dc.Get(), old_bitmap);
 
@@ -357,10 +363,10 @@ HICON IconUtil::CreateCursorFromDIB(const gfx::Size& icon_size,
   ii.fIcon = FALSE;
   ii.xHotspot = hotspot.x();
   ii.yHotspot = hotspot.y();
-  ii.hbmMask = mask;
-  ii.hbmColor = bitmap_handle;
+  ii.hbmMask = mask.get();
+  ii.hbmColor = bitmap_handle.get();
 
-  return CreateIconIndirect(&ii);
+  return base::win::ScopedHICON(CreateIconIndirect(&ii));
 }
 
 SkBitmap IconUtil::CreateSkBitmapFromHICONHelper(HICON icon,
@@ -380,7 +386,7 @@ SkBitmap IconUtil::CreateSkBitmapFromHICONHelper(HICON icon,
   BITMAPV5HEADER h;
   InitializeBitmapHeader(&h, s.width(), s.height());
   HDC hdc = ::GetDC(NULL);
-  uint32* bits;
+  uint32_t* bits;
   HBITMAP dib = ::CreateDIBSection(hdc, reinterpret_cast<BITMAPINFO*>(&h),
       DIB_RGB_COLORS, reinterpret_cast<void**>(&bits), NULL, 0);
   DCHECK(dib);
@@ -411,7 +417,7 @@ SkBitmap IconUtil::CreateSkBitmapFromHICONHelper(HICON icon,
 
   // Capture boolean opacity. We may not use it if we find out the bitmap has
   // an alpha channel.
-  scoped_ptr<bool[]> opaque(new bool[num_pixels]);
+  std::unique_ptr<bool[]> opaque(new bool[num_pixels]);
   for (size_t i = 0; i < num_pixels; ++i)
     opaque[i] = !bits[i];
 
@@ -422,12 +428,12 @@ SkBitmap IconUtil::CreateSkBitmapFromHICONHelper(HICON icon,
 
   // Finding out whether the bitmap has an alpha channel.
   bool bitmap_has_alpha_channel = PixelsHaveAlpha(
-      static_cast<const uint32*>(bitmap.getPixels()), num_pixels);
+      static_cast<const uint32_t*>(bitmap.getPixels()), num_pixels);
 
   // If the bitmap does not have an alpha channel, we need to build it using
   // the previously captured AND mask. Otherwise, we are done.
   if (!bitmap_has_alpha_channel) {
-    uint32* p = static_cast<uint32*>(bitmap.getPixels());
+    uint32_t* p = static_cast<uint32_t*>(bitmap.getPixels());
     for (size_t i = 0; i < num_pixels; ++p, ++i) {
       DCHECK_EQ((*p & 0xff000000), 0u);
       if (opaque[i])
@@ -479,7 +485,7 @@ bool IconUtil::CreateIconFileFromImageFamily(
   // First, we set the information which doesn't require iterating through the
   // bitmap set and then we set the bitmap specific structures. In the latter
   // step we also copy the actual bits.
-  std::vector<uint8> buffer(buffer_size);
+  std::vector<uint8_t> buffer(buffer_size);
   ICONDIR* icon_dir = reinterpret_cast<ICONDIR*>(&buffer[0]);
   icon_dir->idType = kResourceTypeIcon;
   icon_dir->idCount = static_cast<WORD>(image_count);
@@ -527,8 +533,8 @@ bool IconUtil::CreateIconFileFromImageFamily(
   }
 }
 
-bool IconUtil::PixelsHaveAlpha(const uint32* pixels, size_t num_pixels) {
-  for (const uint32* end = pixels + num_pixels; pixels != end; ++pixels) {
+bool IconUtil::PixelsHaveAlpha(const uint32_t* pixels, size_t num_pixels) {
+  for (const uint32_t* end = pixels + num_pixels; pixels != end; ++pixels) {
     if ((*pixels & 0xff000000) != 0)
       return true;
   }

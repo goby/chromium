@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <set>
 
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -25,7 +25,6 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/extension_util.h"
 #include "extensions/browser/image_loader.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/common/extension.h"
@@ -75,7 +74,7 @@ class BackgroundApplicationListModel::Application
   void RequestIcon(extension_misc::ExtensionIcons size);
 
   const Extension* extension_;
-  scoped_ptr<gfx::ImageSkia> icon_;
+  std::unique_ptr<gfx::ImageSkia> icon_;
   BackgroundApplicationListModel* model_;
 };
 
@@ -148,8 +147,6 @@ void BackgroundApplicationListModel::Application::RequestIcon(
 }
 
 BackgroundApplicationListModel::~BackgroundApplicationListModel() {
-  STLDeleteContainerPairSecondPointers(applications_.begin(),
-                                       applications_.end());
 }
 
 BackgroundApplicationListModel::BackgroundApplicationListModel(Profile* profile)
@@ -195,8 +192,10 @@ void BackgroundApplicationListModel::AssociateApplicationData(
                  << " exceeded.  Ignoring.";
       return;
     }
-    application = new Application(this, extension);
-    applications_[extension->id()] = application;
+    std::unique_ptr<Application> application_ptr =
+        base::MakeUnique<Application>(this, extension);
+    application = application_ptr.get();
+    applications_[extension->id()] = std::move(application_ptr);
     Update();
     application->RequestIcon(extension_misc::EXTENSION_ICON_BITTY);
   }
@@ -204,11 +203,7 @@ void BackgroundApplicationListModel::AssociateApplicationData(
 
 void BackgroundApplicationListModel::DissociateApplicationData(
     const Extension* extension) {
-  ApplicationMap::iterator found = applications_.find(extension->id());
-  if (found != applications_.end()) {
-    delete found->second;
-    applications_.erase(found);
-  }
+  applications_.erase(extension->id());
 }
 
 const Extension* BackgroundApplicationListModel::GetExtension(
@@ -221,16 +216,16 @@ const BackgroundApplicationListModel::Application*
 BackgroundApplicationListModel::FindApplication(
     const Extension* extension) const {
   const std::string& id = extension->id();
-  ApplicationMap::const_iterator found = applications_.find(id);
-  return (found == applications_.end()) ? NULL : found->second;
+  auto found = applications_.find(id);
+  return (found == applications_.end()) ? nullptr : found->second.get();
 }
 
 BackgroundApplicationListModel::Application*
 BackgroundApplicationListModel::FindApplication(
     const Extension* extension) {
   const std::string& id = extension->id();
-  ApplicationMap::iterator found = applications_.find(id);
-  return (found == applications_.end()) ? NULL : found->second;
+  auto found = applications_.find(id);
+  return (found == applications_.end()) ? nullptr : found->second.get();
 }
 
 const gfx::ImageSkia* BackgroundApplicationListModel::GetIcon(
@@ -239,7 +234,7 @@ const gfx::ImageSkia* BackgroundApplicationListModel::GetIcon(
   if (application)
     return application->icon_.get();
   AssociateApplicationData(extension);
-  return NULL;
+  return nullptr;
 }
 
 int BackgroundApplicationListModel::GetPosition(
@@ -263,11 +258,6 @@ bool BackgroundApplicationListModel::IsBackgroundApp(
   // 1) It is an extension (not a hosted app).
   // 2) It is a hosted app, and has a background contents registered or in the
   //    manifest.
-
-  // Ephemeral apps are denied any background activity after their event page
-  // has been destroyed, thus they cannot be background apps.
-  if (extensions::util::IsEphemeralApp(extension.id(), profile))
-    return false;
 
   // Not a background app if we don't have the background permission.
   if (!extension.permissions_data()->HasAPIPermission(
@@ -340,8 +330,8 @@ void BackgroundApplicationListModel::Observe(
 
 void BackgroundApplicationListModel::SendApplicationDataChangedNotifications(
     const Extension* extension) {
-  FOR_EACH_OBSERVER(Observer, observers_, OnApplicationDataChanged(extension,
-                                                                   profile_));
+  for (auto& observer : observers_)
+    observer.OnApplicationDataChanged(extension, profile_);
 }
 
 void BackgroundApplicationListModel::OnExtensionLoaded(
@@ -408,6 +398,7 @@ void BackgroundApplicationListModel::Update() {
   }
   if (old_cursor != extensions_.end() || new_cursor != extensions.end()) {
     extensions_ = extensions;
-    FOR_EACH_OBSERVER(Observer, observers_, OnApplicationListChanged(profile_));
+    for (auto& observer : observers_)
+      observer.OnApplicationListChanged(profile_);
   }
 }

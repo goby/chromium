@@ -4,7 +4,11 @@
 
 #include "extensions/common/manifest_handlers/webview_info.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -82,8 +86,8 @@ bool WebviewInfo::IsResourceWebviewAccessible(
   return false;
 }
 
-void WebviewInfo::AddPartitionItem(scoped_ptr<PartitionItem> item) {
-  partition_items_.push_back(item.Pass());
+void WebviewInfo::AddPartitionItem(std::unique_ptr<PartitionItem> item) {
+  partition_items_.push_back(std::move(item));
 }
 
 WebviewHandler::WebviewHandler() {
@@ -93,7 +97,7 @@ WebviewHandler::~WebviewHandler() {
 }
 
 bool WebviewHandler::Parse(Extension* extension, base::string16* error) {
-  scoped_ptr<WebviewInfo> info(new WebviewInfo(extension->id()));
+  std::unique_ptr<WebviewInfo> info(new WebviewInfo(extension->id()));
 
   const base::DictionaryValue* dict_value = NULL;
   if (!extension->manifest()->GetDictionary(keys::kWebview,
@@ -144,7 +148,7 @@ bool WebviewHandler::Parse(Extension* extension, base::string16* error) {
       return false;
     }
 
-    scoped_ptr<PartitionItem> partition_item(
+    std::unique_ptr<PartitionItem> partition_item(
         new PartitionItem(partition_pattern));
 
     for (size_t i = 0; i < url_list->GetSize(); ++i) {
@@ -159,7 +163,7 @@ bool WebviewHandler::Parse(Extension* extension, base::string16* error) {
                                                    relative_path).spec());
       partition_item->AddPattern(pattern);
     }
-    info->AddPartitionItem(partition_item.Pass());
+    info->AddPartitionItem(std::move(partition_item));
   }
 
   extension->SetManifestData(keys::kWebviewAccessibleResources, info.release());

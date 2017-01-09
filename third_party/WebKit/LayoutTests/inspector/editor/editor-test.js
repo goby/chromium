@@ -3,11 +3,11 @@ function initialize_EditorTests()
 
 InspectorTest.createTestEditor = function(clientHeight, textEditorDelegate)
 {
-    var textEditor = new WebInspector.CodeMirrorTextEditor("", textEditorDelegate || new WebInspector.TextEditorDelegate());
+    var textEditor = new SourceFrame.SourcesTextEditor(textEditorDelegate || new SourceFrame.SourcesTextEditorDelegate());
     clientHeight = clientHeight || 100;
     textEditor.element.style.height = clientHeight + "px";
     textEditor.element.style.flex = "none";
-    textEditor.show(WebInspector.inspectorView.element);
+    textEditor.show(UI.inspectorView.element);
     return textEditor;
 };
 
@@ -22,7 +22,7 @@ function textWithSelection(text, selections)
     }
 
     var lines = text.split("\n");
-    selections.sort(WebInspector.TextRange.comparator);
+    selections.sort(Common.TextRange.comparator);
     for (var i = selections.length - 1; i >= 0; --i) {
         var selection = selections[i];
         selection = selection.normalize();
@@ -52,7 +52,7 @@ InspectorTest.setLineSelections = function(editor, selections)
             selection.from = selection.column;
             selection.to = selection.column;
         }
-        coords.push(new WebInspector.TextRange(selection.line, selection.from, selection.line, selection.to));
+        coords.push(new Common.TextRange(selection.line, selection.from, selection.line, selection.to));
     }
     editor.setSelections(coords);
 }
@@ -66,19 +66,19 @@ InspectorTest.typeIn = function(editor, typeText, callback)
         var iterationCallback = charIndex + 1 === typeText.length ? callback : noop;
         switch (typeText[charIndex]) {
         case "\n":
-            InspectorTest.fakeKeyEvent(editor, "enter", null, iterationCallback);
+            InspectorTest.fakeKeyEvent(editor, "Enter", null, iterationCallback);
             break;
         case "L":
-            InspectorTest.fakeKeyEvent(editor, "leftArrow", null, iterationCallback);
+            InspectorTest.fakeKeyEvent(editor, "ArrowLeft", null, iterationCallback);
             break;
         case "R":
-            InspectorTest.fakeKeyEvent(editor, "rightArrow", null, iterationCallback);
+            InspectorTest.fakeKeyEvent(editor, "ArrowRight", null, iterationCallback);
             break;
         case "U":
-            InspectorTest.fakeKeyEvent(editor, "upArrow", null, iterationCallback);
+            InspectorTest.fakeKeyEvent(editor, "ArrowUp", null, iterationCallback);
             break;
         case "D":
-            InspectorTest.fakeKeyEvent(editor, "downArrow", null, iterationCallback);
+            InspectorTest.fakeKeyEvent(editor, "ArrowDown", null, iterationCallback);
             break;
         default:
             InspectorTest.fakeKeyEvent(editor, typeText[charIndex], null, iterationCallback);
@@ -87,15 +87,15 @@ InspectorTest.typeIn = function(editor, typeText, callback)
 }
 
 var eventCodes = {
-    enter: 13,
-    home: 36,
-    leftArrow: 37,
-    upArrow: 38,
-    rightArrow: 39,
-    downArrow: 40
+    Enter: 13,
+    Home: 36,
+    ArrowLeft: 37,
+    ArrowUp: 38,
+    ArrowRight: 39,
+    ArrowDown: 40
 };
 
-function createCodeMirrorFakeEvent(eventType, code, charCode, modifiers)
+function createCodeMirrorFakeEvent(editor, eventType, code, charCode, modifiers)
 {
     function eventPreventDefault()
     {
@@ -108,6 +108,7 @@ function createCodeMirrorFakeEvent(eventType, code, charCode, modifiers)
         charCode: charCode,
         preventDefault: eventPreventDefault,
         stopPropagation: function(){},
+        target: editor._codeMirror.display.input.textarea
     };
     if (modifiers) {
         for (var i = 0; i < modifiers.length; ++i)
@@ -118,7 +119,7 @@ function createCodeMirrorFakeEvent(eventType, code, charCode, modifiers)
 
 function fakeCodeMirrorKeyEvent(editor, eventType, code, charCode, modifiers)
 {
-    var event = createCodeMirrorFakeEvent(eventType, code, charCode, modifiers);
+    var event = createCodeMirrorFakeEvent(editor, eventType, code, charCode, modifiers);
     switch(eventType) {
     case "keydown":
         editor._codeMirror.triggerOnKeyDown(event);
@@ -138,7 +139,7 @@ function fakeCodeMirrorKeyEvent(editor, eventType, code, charCode, modifiers)
 function fakeCodeMirrorInputEvent(editor, character)
 {
     if (typeof character === "string")
-        editor._codeMirror.display.input.value += character;
+        editor._codeMirror.display.input.textarea.value += character;
 }
 
 InspectorTest.fakeKeyEvent = function(editor, originalCode, modifiers, callback)
@@ -187,7 +188,7 @@ InspectorTest.dumpSelectionStats = function(textEditor)
     var selections = textEditor.selections();
     for (var i = 0; i < selections.length; ++i) {
         var selection = selections[i];
-        var text = textEditor.copyRange(selection);
+        var text = textEditor.text(selection);
         if (!listHashMap[text]) {
             listHashMap[text] = 1;
             sortedKeys.push(text);

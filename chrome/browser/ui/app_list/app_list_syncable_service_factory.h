@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_UI_APP_LIST_APP_LIST_SYNCABLE_SERVICE_FACTORY_H_
 #define CHROME_BROWSER_UI_APP_LIST_APP_LIST_SYNCABLE_SERVICE_FACTORY_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
@@ -25,8 +26,11 @@ class AppListSyncableServiceFactory : public BrowserContextKeyedServiceFactory {
 
   static AppListSyncableServiceFactory* GetInstance();
 
-  static scoped_ptr<KeyedService> BuildInstanceFor(
+  static std::unique_ptr<KeyedService> BuildInstanceFor(
       content::BrowserContext* browser_context);
+
+  // Marks AppListSyncableService to be used in tests.
+  static void SetUseInTesting();
 
  private:
   friend struct base::DefaultSingletonTraits<AppListSyncableServiceFactory>;

@@ -8,11 +8,14 @@
 #ifndef GOOGLE_APIS_DRIVE_BASE_REQUESTS_H_
 #define GOOGLE_APIS_DRIVE_BASE_REQUESTS_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "google_apis/drive/drive_api_error_codes.h"
@@ -47,19 +50,19 @@ typedef base::Callback<void(DriveApiErrorCode)> PrepareCallback;
 // Callback used for requests that the server returns FileResource data
 // formatted into JSON value.
 typedef base::Callback<void(DriveApiErrorCode error,
-                            scoped_ptr<FileResource> entry)>
+                            std::unique_ptr<FileResource> entry)>
     FileResourceCallback;
 
 // Callback used for DownloadFileRequest and ResumeUploadRequestBase.
-typedef base::Callback<void(int64 progress, int64 total)> ProgressCallback;
+typedef base::Callback<void(int64_t progress, int64_t total)> ProgressCallback;
 
 // Callback used to get the content from DownloadFileRequest.
-typedef base::Callback<void(
-    DriveApiErrorCode error,
-    scoped_ptr<std::string> content)> GetContentCallback;
+typedef base::Callback<void(DriveApiErrorCode error,
+                            std::unique_ptr<std::string> content)>
+    GetContentCallback;
 
 // Parses JSON passed in |json|. Returns NULL on failure.
-scoped_ptr<base::Value> ParseJson(const std::string& json);
+std::unique_ptr<base::Value> ParseJson(const std::string& json);
 
 // Generate multipart body. If |predetermined_boundary| is not empty, it uses
 // the string as boundary. Otherwise it generates random boundary that does not
@@ -69,7 +72,7 @@ void GenerateMultipartBody(MultipartType multipart_type,
                            const std::string& predetermined_boundary,
                            const std::vector<ContentTypeAndData>& parts,
                            ContentTypeAndData* output,
-                           std::vector<uint64>* data_offset);
+                           std::vector<uint64_t>* data_offset);
 
 //======================= AuthenticatedRequestInterface ======================
 
@@ -132,7 +135,7 @@ class ResponseWriter : public net::URLFetcherResponseWriter {
   int Write(net::IOBuffer* buffer,
             int num_bytes,
             const net::CompletionCallback& callback) override;
-  int Finish(const net::CompletionCallback& callback) override;
+  int Finish(int net_error, const net::CompletionCallback& callback) override;
 
  private:
   void DidWrite(scoped_refptr<net::IOBuffer> buffer,
@@ -141,7 +144,7 @@ class ResponseWriter : public net::URLFetcherResponseWriter {
 
   const GetContentCallback get_content_callback_;
   std::string data_;
-  scoped_ptr<net::URLFetcherFileWriter> file_writer_;
+  std::unique_ptr<net::URLFetcherFileWriter> file_writer_;
   base::WeakPtrFactory<ResponseWriter> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ResponseWriter);
@@ -192,8 +195,8 @@ class UrlFetchRequestBase : public AuthenticatedRequestInterface,
   // uploaded.
   // Note that this and GetContentData() cannot be used together.
   virtual bool GetContentFile(base::FilePath* local_file_path,
-                              int64* range_offset,
-                              int64* range_length,
+                              int64_t* range_offset,
+                              int64_t* range_length,
                               std::string* upload_content_type);
 
   // Used by a derived class to set an output file path if they want to save
@@ -246,7 +249,7 @@ class UrlFetchRequestBase : public AuthenticatedRequestInterface,
 
   ReAuthenticateCallback re_authenticate_callback_;
   int re_authenticate_count_;
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   ResponseWriter* response_writer_;  // Owned by |url_fetcher_|.
   RequestSender* sender_;
   DriveApiErrorCode error_code_;
@@ -292,8 +295,8 @@ class BatchableDelegate {
 
   // Notifies progress.
   virtual void NotifyUploadProgress(const net::URLFetcher* source,
-                                    int64 current,
-                                    int64 total) = 0;
+                                    int64_t current,
+                                    int64_t total) = 0;
 };
 
 //============================ EntryActionRequest ============================
@@ -348,7 +351,7 @@ class InitiateUploadRequestBase : public UrlFetchRequestBase {
   InitiateUploadRequestBase(RequestSender* sender,
                             const InitiateUploadCallback& callback,
                             const std::string& content_type,
-                            int64 content_length);
+                            int64_t content_length);
   ~InitiateUploadRequestBase() override;
 
   // UrlFetchRequestBase overrides.
@@ -359,7 +362,7 @@ class InitiateUploadRequestBase : public UrlFetchRequestBase {
  private:
   const InitiateUploadCallback callback_;
   const std::string content_type_;
-  const int64 content_length_;
+  const int64_t content_length_;
 
   DISALLOW_COPY_AND_ASSIGN(InitiateUploadRequestBase);
 };
@@ -370,8 +373,8 @@ class InitiateUploadRequestBase : public UrlFetchRequestBase {
 struct UploadRangeResponse {
   UploadRangeResponse();
   UploadRangeResponse(DriveApiErrorCode code,
-                      int64 start_position_received,
-                      int64 end_position_received);
+                      int64_t start_position_received,
+                      int64_t end_position_received);
   ~UploadRangeResponse();
 
   DriveApiErrorCode code;
@@ -381,8 +384,8 @@ struct UploadRangeResponse {
   // |start_position_received| is inclusive and |end_position_received| is
   // exclusive to follow the common C++ manner, although the response from
   // the server has "Range" header in inclusive format at both sides.
-  int64 start_position_received;
-  int64 end_position_received;
+  int64_t start_position_received;
+  int64_t end_position_received;
 };
 
 // Base class for a URL fetch request expecting the response containing the
@@ -416,12 +419,12 @@ class UploadRangeRequestBase : public UrlFetchRequestBase {
   // Note: Subclasses should have responsibility to run some callback
   // in this method to notify the finish status to its clients (or ignore it
   // under its responsibility).
-  virtual void OnRangeRequestComplete(
-      const UploadRangeResponse& response, scoped_ptr<base::Value> value) = 0;
+  virtual void OnRangeRequestComplete(const UploadRangeResponse& response,
+                                      std::unique_ptr<base::Value> value) = 0;
 
  private:
   // Called when ParseJson() is completed.
-  void OnDataParsed(DriveApiErrorCode code, scoped_ptr<base::Value> value);
+  void OnDataParsed(DriveApiErrorCode code, std::unique_ptr<base::Value> value);
 
   const GURL upload_url_;
 
@@ -454,9 +457,9 @@ class ResumeUploadRequestBase : public UploadRangeRequestBase {
   // meaning.
   ResumeUploadRequestBase(RequestSender* sender,
                           const GURL& upload_location,
-                          int64 start_position,
-                          int64 end_position,
-                          int64 content_length,
+                          int64_t start_position,
+                          int64_t end_position,
+                          int64_t content_length,
                           const std::string& content_type,
                           const base::FilePath& local_file_path);
   ~ResumeUploadRequestBase() override;
@@ -464,15 +467,15 @@ class ResumeUploadRequestBase : public UploadRangeRequestBase {
   // UrlFetchRequestBase overrides.
   std::vector<std::string> GetExtraRequestHeaders() const override;
   bool GetContentFile(base::FilePath* local_file_path,
-                      int64* range_offset,
-                      int64* range_length,
+                      int64_t* range_offset,
+                      int64_t* range_length,
                       std::string* upload_content_type) override;
 
  private:
   // The parameters for the request. See ResumeUploadParams for the details.
-  const int64 start_position_;
-  const int64 end_position_;
-  const int64 content_length_;
+  const int64_t start_position_;
+  const int64_t end_position_;
+  const int64_t content_length_;
   const std::string content_type_;
   const base::FilePath local_file_path_;
 
@@ -496,7 +499,7 @@ class GetUploadStatusRequestBase : public UploadRangeRequestBase {
   // parameters.
   GetUploadStatusRequestBase(RequestSender* sender,
                              const GURL& upload_url,
-                             int64 content_length);
+                             int64_t content_length);
   ~GetUploadStatusRequestBase() override;
 
  protected:
@@ -504,7 +507,7 @@ class GetUploadStatusRequestBase : public UploadRangeRequestBase {
   std::vector<std::string> GetExtraRequestHeaders() const override;
 
  private:
-  const int64 content_length_;
+  const int64_t content_length_;
 
   DISALLOW_COPY_AND_ASSIGN(GetUploadStatusRequestBase);
 };
@@ -526,7 +529,7 @@ class MultipartUploadRequestBase : public BatchableDelegate {
   MultipartUploadRequestBase(base::SequencedTaskRunner* blocking_task_runner,
                              const std::string& metadata_json,
                              const std::string& content_type,
-                             int64 content_length,
+                             int64_t content_length,
                              const base::FilePath& local_file_path,
                              const FileResourceCallback& callback,
                              const ProgressCallback& progress_callback);
@@ -542,12 +545,12 @@ class MultipartUploadRequestBase : public BatchableDelegate {
                     const base::Closure& callback) override;
   void NotifyError(DriveApiErrorCode code) override;
   void NotifyUploadProgress(const net::URLFetcher* source,
-                            int64 current,
-                            int64 total) override;
+                            int64_t current,
+                            int64_t total) override;
   // Parses the response value and invokes |callback_| with |FileResource|.
   void OnDataParsed(DriveApiErrorCode code,
                     const base::Closure& callback,
-                    scoped_ptr<base::Value> value);
+                    std::unique_ptr<base::Value> value);
 
  private:
   // Continues to rest part of |Start| method after determining boundary string
@@ -626,8 +629,9 @@ class DownloadFileRequestBase : public UrlFetchRequestBase {
 
   // net::URLFetcherDelegate overrides.
   void OnURLFetchDownloadProgress(const net::URLFetcher* source,
-                                  int64 current,
-                                  int64 total) override;
+                                  int64_t current,
+                                  int64_t total,
+                                  int64_t current_network_bytes) override;
 
  private:
   const DownloadActionCallback download_action_callback_;

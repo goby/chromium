@@ -4,13 +4,16 @@
 
 #include "jingle/glue/utils.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
-#include "net/base/net_util.h"
 #include "third_party/webrtc/base/byteorder.h"
 #include "third_party/webrtc/base/socketaddress.h"
 #include "third_party/webrtc/p2p/base/candidate.h"
@@ -33,17 +36,16 @@ bool SocketAddressToIPEndPoint(const rtc::SocketAddress& address,
       ip_endpoint->FromSockAddr(reinterpret_cast<sockaddr*>(&addr), size);
 }
 
-rtc::IPAddress IPAddressNumberToIPAddress(
-    const net::IPAddressNumber& ip_address_number) {
-  if (ip_address_number.size() == net::kIPv4AddressSize) {
+rtc::IPAddress NetIPAddressToRtcIPAddress(const net::IPAddress& ip_address) {
+  if (ip_address.IsIPv4()) {
     uint32_t address;
-    memcpy(&address, &ip_address_number[0], sizeof(uint32_t));
+    memcpy(&address, ip_address.bytes().data(), sizeof(uint32_t));
     address = rtc::NetworkToHost32(address);
     return rtc::IPAddress(address);
   }
-  if (ip_address_number.size() == net::kIPv6AddressSize) {
+  if (ip_address.IsIPv6()) {
     in6_addr address;
-    memcpy(&address, &ip_address_number[0], sizeof(in6_addr));
+    memcpy(&address, ip_address.bytes().data(), sizeof(in6_addr));
     return rtc::IPAddress(address);
   }
   return rtc::IPAddress();
@@ -68,9 +70,9 @@ std::string SerializeP2PCandidate(const cricket::Candidate& candidate) {
 
 bool DeserializeP2PCandidate(const std::string& candidate_str,
                              cricket::Candidate* candidate) {
-  scoped_ptr<base::Value> value(
+  std::unique_ptr<base::Value> value(
       base::JSONReader::Read(candidate_str, base::JSON_ALLOW_TRAILING_COMMAS));
-  if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY)) {
+  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY)) {
     return false;
   }
 

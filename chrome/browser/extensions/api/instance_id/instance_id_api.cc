@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/api/instance_id/instance_id_api.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/services/gcm/instance_id/instance_id_profile_service.h"
@@ -94,7 +95,7 @@ ExtensionFunction::ResponseAction InstanceIDGetIDFunction::DoWork() {
 }
 
 void InstanceIDGetIDFunction::GetIDCompleted(const std::string& id) {
-  Respond(OneArgument(new base::StringValue(id)));
+  Respond(OneArgument(base::MakeUnique<base::StringValue>(id)));
 }
 
 InstanceIDGetCreationTimeFunction::InstanceIDGetCreationTimeFunction() {}
@@ -110,7 +111,8 @@ ExtensionFunction::ResponseAction InstanceIDGetCreationTimeFunction::DoWork() {
 
 void InstanceIDGetCreationTimeFunction::GetCreationTimeCompleted(
     const base::Time& creation_time) {
-  Respond(OneArgument(new base::FundamentalValue(creation_time.ToDoubleT())));
+  Respond(OneArgument(
+      base::MakeUnique<base::FundamentalValue>(creation_time.ToDoubleT())));
 }
 
 InstanceIDGetTokenFunction::InstanceIDGetTokenFunction() {}
@@ -118,7 +120,7 @@ InstanceIDGetTokenFunction::InstanceIDGetTokenFunction() {}
 InstanceIDGetTokenFunction::~InstanceIDGetTokenFunction() {}
 
 ExtensionFunction::ResponseAction InstanceIDGetTokenFunction::DoWork() {
-  scoped_ptr<api::instance_id::GetToken::Params> params =
+  std::unique_ptr<api::instance_id::GetToken::Params> params =
       api::instance_id::GetToken::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -139,7 +141,7 @@ void InstanceIDGetTokenFunction::GetTokenCompleted(
     const std::string& token,
     instance_id::InstanceID::Result result) {
   if (result == instance_id::InstanceID::SUCCESS)
-    Respond(OneArgument(new base::StringValue(token)));
+    Respond(OneArgument(base::MakeUnique<base::StringValue>(token)));
   else
     Respond(Error(InstanceIDResultToError(result)));
 }
@@ -149,7 +151,7 @@ InstanceIDDeleteTokenFunction::InstanceIDDeleteTokenFunction() {}
 InstanceIDDeleteTokenFunction::~InstanceIDDeleteTokenFunction() {}
 
 ExtensionFunction::ResponseAction InstanceIDDeleteTokenFunction::DoWork() {
-  scoped_ptr<api::instance_id::DeleteToken::Params> params =
+  std::unique_ptr<api::instance_id::DeleteToken::Params> params =
       api::instance_id::DeleteToken::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 

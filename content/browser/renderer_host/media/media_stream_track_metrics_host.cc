@@ -4,7 +4,7 @@
 
 #include "content/browser/renderer_host/media/media_stream_track_metrics_host.h"
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/common/media/media_stream_track_metrics_host_messages.h"
 
 // We use a histogram with a maximum bucket of 16 hours to infinity
@@ -46,7 +46,7 @@ bool MediaStreamTrackMetricsHost::OnMessageReceived(
   return handled;
 }
 
-void MediaStreamTrackMetricsHost::OnAddTrack(uint64 id,
+void MediaStreamTrackMetricsHost::OnAddTrack(uint64_t id,
                                              bool is_audio,
                                              bool is_remote) {
   if (tracks_.find(id) != tracks_.end())
@@ -56,7 +56,7 @@ void MediaStreamTrackMetricsHost::OnAddTrack(uint64 id,
   tracks_[id] = info;
 }
 
-void MediaStreamTrackMetricsHost::OnRemoveTrack(uint64 id) {
+void MediaStreamTrackMetricsHost::OnRemoveTrack(uint64_t id) {
   if (tracks_.find(id) == tracks_.end())
     return;
 

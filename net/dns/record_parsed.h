@@ -5,9 +5,11 @@
 #ifndef NET_DNS_RECORD_PARSED_H_
 #define NET_DNS_RECORD_PARSED_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 
@@ -23,13 +25,14 @@ class NET_EXPORT_PRIVATE RecordParsed {
   virtual ~RecordParsed();
 
   // All records are inherently immutable. Return a const pointer.
-  static scoped_ptr<const RecordParsed> CreateFrom(DnsRecordParser* parser,
-                                                   base::Time time_created);
+  static std::unique_ptr<const RecordParsed> CreateFrom(
+      DnsRecordParser* parser,
+      base::Time time_created);
 
   const std::string& name() const { return name_; }
-  uint16 type() const { return type_; }
-  uint16 klass() const { return klass_; }
-  uint32 ttl() const { return ttl_; }
+  uint16_t type() const { return type_; }
+  uint16_t klass() const { return klass_; }
+  uint32_t ttl() const { return ttl_; }
 
   base::Time time_created() const { return time_created_; }
 
@@ -45,16 +48,19 @@ class NET_EXPORT_PRIVATE RecordParsed {
   bool IsEqual(const RecordParsed* other, bool is_mdns) const;
 
  private:
-  RecordParsed(const std::string& name, uint16 type, uint16 klass,
-               uint32 ttl, scoped_ptr<const RecordRdata> rdata,
+  RecordParsed(const std::string& name,
+               uint16_t type,
+               uint16_t klass,
+               uint32_t ttl,
+               std::unique_ptr<const RecordRdata> rdata,
                base::Time time_created);
 
   std::string name_;  // in dotted form
-  const uint16 type_;
-  const uint16 klass_;
-  const uint32 ttl_;
+  const uint16_t type_;
+  const uint16_t klass_;
+  const uint32_t ttl_;
 
-  const scoped_ptr<const RecordRdata> rdata_;
+  const std::unique_ptr<const RecordRdata> rdata_;
 
   const base::Time time_created_;
 };

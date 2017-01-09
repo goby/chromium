@@ -14,8 +14,10 @@
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/info_bubble_view.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
+#include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_model_observer_bridge.h"
 #include "components/bubble/bubble_controller.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 
 @interface BaseBubbleController (Private)
 - (void)registerForNotifications;
@@ -68,7 +70,7 @@
   NSRect bounds = [view convertRect:[view bounds] toView:nil];
   NSPoint anchor = NSMakePoint(NSMinX(bounds) + offset.x,
                                NSMinY(bounds) + offset.y);
-  anchor = [window convertBaseToScreen:anchor];
+  anchor = ui::ConvertPointFromWindowToScreen(window, anchor);
   return [self initWithWindowNibPath:nibPath
                         parentWindow:window
                           anchoredAt:anchor];
@@ -116,7 +118,7 @@
 }
 
 - (void)dealloc {
-  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [self unregisterFromNotifications];
   [super dealloc];
 }
 
@@ -346,10 +348,6 @@
 // simple, since -[NSWindow attachedSheet] returns nil while the sheet is still
 // closing.
 - (void)registerKeyStateEventTap {
-  // Parent key state sharing is only avaiable on 10.7+.
-  if (!base::mac::IsOSLionOrLater())
-    return;
-
   NSWindow* window = self.window;
   NSNotification* note =
       [NSNotification notificationWithName:NSWindowDidResignKeyNotification
@@ -361,13 +359,21 @@
       addLocalMonitorForEventsMatchingMask:NSLeftMouseDownMask |
                                            NSRightMouseDownMask
       handler:^NSEvent* (NSEvent* event) {
-          if ([event window] != window && ![[event window] isSheet]) {
-            // Do it right now, because if this event is right mouse event,
-            // it may pop up a menu. windowDidResignKey: will not run until
-            // the menu is closed.
-            if ([self respondsToSelector:@selector(windowDidResignKey:)]) {
-              [self windowDidResignKey:note];
-            }
+          NSWindow* eventWindow = [event window];
+          if (eventWindow == window || [eventWindow isSheet])
+            return event;
+          // Do not close the bubble if the event happened on a window with a
+          // higher level.  For example, the content of a browser action bubble
+          // opens a calendar picker window with NSPopUpMenuWindowLevel, and a
+          // date selection closes the picker window, but it should not close
+          // the bubble.
+          if ([eventWindow level] > [window level])
+            return event;
+          // Do it right now, because if this event is right mouse event,
+          // it may pop up a menu. windowDidResignKey: will not run until
+          // the menu is closed.
+          if ([self respondsToSelector:@selector(windowDidResignKey:)]) {
+            [self windowDidResignKey:note];
           }
           return event;
       }];
@@ -398,6 +404,7 @@
   NSWindow* window = [self window];
   NSPoint origin = anchor_;
 
+  BOOL isRTL = cocoa_l10n_util::ShouldDoExperimentalRTLLayout();
   switch ([bubble_ alignment]) {
     case info_bubble::kAlignArrowToAnchor: {
       NSSize offsets = NSMakeSize(info_bubble::kBubbleArrowXOffset +
@@ -429,12 +436,14 @@
       }
       break;
 
-    case info_bubble::kAlignRightEdgeToAnchorEdge:
-      origin.x -= NSWidth([window frame]);
+    case info_bubble::kAlignTrailingEdgeToAnchorEdge:
+      if (!isRTL)
+        origin.x -= NSWidth([window frame]);
       break;
 
-    case info_bubble::kAlignLeftEdgeToAnchorEdge:
-      // Nothing to do.
+    case info_bubble::kAlignLeadingEdgeToAnchorEdge:
+      if (isRTL)
+        origin.x -= NSWidth([window frame]);
       break;
 
     default:

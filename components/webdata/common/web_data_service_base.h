@@ -7,20 +7,18 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_delete_on_message_loop.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/webdata/common/webdata_export.h"
 #include "sql/init_status.h"
 
 class WebDatabase;
 class WebDatabaseService;
-class WebDatabaseTable;
 
 namespace base {
 // TODO(skyostil): Migrate to SingleThreadTaskRunner (crbug.com/465354).
 class SingleThreadTaskRunner;
-class Thread;
 }
 
 // Base for WebDataService class hierarchy.
@@ -36,7 +34,8 @@ class WEBDATA_EXPORT WebDataServiceBase
   // takes a single parameter, the sql::InitStatus value from trying
   // to open the database.
   // TODO(joi): Should we combine this with WebDatabaseService::InitCallback?
-  typedef base::Callback<void(sql::InitStatus)> ProfileErrorCallback;
+  typedef base::Callback<void(sql::InitStatus, const std::string&)>
+      ProfileErrorCallback;
 
   typedef base::Closure DBLoadedCallback;
 

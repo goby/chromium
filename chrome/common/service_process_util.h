@@ -5,14 +5,17 @@
 #ifndef CHROME_COMMON_SERVICE_PROCESS_UTIL_H_
 #define CHROME_COMMON_SERVICE_PROCESS_UTIL_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/shared_memory.h"
 #include "base/process/process.h"
-#include "ipc/ipc_channel_handle.h"
+#include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
+#include "mojo/edk/embedder/named_platform_handle.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 
 class MultiProcessLock;
 
@@ -26,11 +29,10 @@ class NSString;
 
 namespace base {
 class CommandLine;
-class SingleThreadTaskRunner;
 }
 
 // Return the IPC channel to connect to the service process.
-IPC::ChannelHandle GetServiceProcessChannel();
+mojo::edk::NamedPlatformHandle GetServiceProcessChannel();
 
 // Return a name that is scoped to this instance of the service process. We
 // use the user-data-dir as a scoping prefix.
@@ -69,7 +71,7 @@ bool ForceServiceProcessShutdown(const std::string& version,
                                  base::ProcessId process_id);
 
 // Creates command-line to run the service process.
-scoped_ptr<base::CommandLine> CreateServiceProcessCommandLine();
+std::unique_ptr<base::CommandLine> CreateServiceProcessCommandLine();
 
 // This is a class that is used by the service process to signal events and
 // share data with external clients. This class lives in this file because the
@@ -90,7 +92,7 @@ class ServiceProcessState {
   // process (in the same thread that called SignalReady). It can be NULL.
   // |task_runner| must be of type IO and is the loop that POSIX uses
   // to monitor the service process.
-  bool SignalReady(base::SingleThreadTaskRunner* task_runner,
+  bool SignalReady(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                    const base::Closure& terminate_task);
 
   // Signal that the service process is stopped.
@@ -103,7 +105,11 @@ class ServiceProcessState {
   bool RemoveFromAutoRun();
 
   // Return the channel handle used for communicating with the service.
-  IPC::ChannelHandle GetServiceProcessChannel();
+#if defined(OS_MACOSX)
+  mojo::edk::ScopedPlatformHandle GetServiceProcessChannel();
+#else
+  mojo::edk::NamedPlatformHandle GetServiceProcessChannel();
+#endif
 
  private:
 #if !defined(OS_MACOSX)
@@ -129,8 +135,8 @@ class ServiceProcessState {
   // platform dependent.
   struct StateData;
   StateData* state_;
-  scoped_ptr<base::SharedMemory> shared_mem_service_data_;
-  scoped_ptr<base::CommandLine> autorun_command_line_;
+  std::unique_ptr<base::SharedMemory> shared_mem_service_data_;
+  std::unique_ptr<base::CommandLine> autorun_command_line_;
 };
 
 #endif  // CHROME_COMMON_SERVICE_PROCESS_UTIL_H_

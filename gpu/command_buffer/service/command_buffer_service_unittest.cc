@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/threading/thread.h"
 #include "gpu/command_buffer/common/cmd_buffer_common.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
 #include "gpu/command_buffer/service/transfer_buffer_manager.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 using base::SharedMemory;
 using testing::_;
@@ -30,27 +35,19 @@ class CommandBufferServiceTest : public testing::Test {
     }
     command_buffer_.reset(
         new CommandBufferService(transfer_buffer_manager_.get()));
-    EXPECT_TRUE(command_buffer_->Initialize());
   }
 
-  int32 GetGetOffset() {
-    return command_buffer_->GetLastState().get_offset;
-  }
+  int32_t GetGetOffset() { return command_buffer_->GetLastState().get_offset; }
 
-  int32 GetPutOffset() {
-    return command_buffer_->GetPutOffset();
-  }
+  int32_t GetPutOffset() { return command_buffer_->GetPutOffset(); }
 
-  int32 GetToken() {
-    return command_buffer_->GetLastState().token;
-  }
+  int32_t GetToken() { return command_buffer_->GetLastState().token; }
 
-  int32 GetError() {
-    return command_buffer_->GetLastState().error;
-  }
+  int32_t GetError() { return command_buffer_->GetLastState().error; }
 
-  bool Initialize(size_t size) {
-    int32 id;
+  bool Initialize(size_t entries) {
+    size_t size = entries * sizeof(CommandBufferEntry);
+    int32_t id;
     command_buffer_->CreateTransferBuffer(size, &id);
     EXPECT_GT(id, 0);
     command_buffer_->SetGetBuffer(id);
@@ -58,7 +55,7 @@ class CommandBufferServiceTest : public testing::Test {
   }
 
   scoped_refptr<TransferBufferManagerInterface> transfer_buffer_manager_;
-  scoped_ptr<CommandBufferService> command_buffer_;
+  std::unique_ptr<CommandBufferService> command_buffer_;
 };
 
 TEST_F(CommandBufferServiceTest, InitializesCommandBuffer) {
@@ -75,13 +72,13 @@ namespace {
 class CallbackTest {
  public:
   virtual void PutOffsetChanged() = 0;
-  virtual bool GetBufferChanged(int32 id) = 0;
+  virtual bool GetBufferChanged(int32_t id) = 0;
 };
 
 class MockCallbackTest : public CallbackTest {
  public:
    MOCK_METHOD0(PutOffsetChanged, void());
-   MOCK_METHOD1(GetBufferChanged, bool(int32));
+   MOCK_METHOD1(GetBufferChanged, bool(int32_t));
 };
 
 }  // anonymous namespace
@@ -89,7 +86,7 @@ class MockCallbackTest : public CallbackTest {
 TEST_F(CommandBufferServiceTest, CanSyncGetAndPutOffset) {
   Initialize(1024);
 
-  scoped_ptr<StrictMock<MockCallbackTest> > change_callback(
+  std::unique_ptr<StrictMock<MockCallbackTest>> change_callback(
       new StrictMock<MockCallbackTest>);
   command_buffer_->SetPutOffsetChangeCallback(
       base::Bind(
@@ -118,11 +115,11 @@ TEST_F(CommandBufferServiceTest, CanSyncGetAndPutOffset) {
 }
 
 TEST_F(CommandBufferServiceTest, SetGetBuffer) {
-  int32 ring_buffer_id;
+  int32_t ring_buffer_id;
   command_buffer_->CreateTransferBuffer(1024, &ring_buffer_id);
   EXPECT_GT(ring_buffer_id, 0);
 
-  scoped_ptr<StrictMock<MockCallbackTest> > change_callback(
+  std::unique_ptr<StrictMock<MockCallbackTest>> change_callback(
       new StrictMock<MockCallbackTest>);
   command_buffer_->SetGetBufferChangeCallback(
       base::Bind(

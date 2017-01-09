@@ -4,9 +4,13 @@
 
 #include "chrome/browser/ui/app_list/speech_recognizer.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ui/app_list/speech_recognizer_delegate.h"
@@ -124,7 +128,6 @@ void SpeechRecognizer::EventListener::StartOnIOThread(
 
   content::SpeechRecognitionSessionConfig config;
   config.language = locale_;
-  config.is_legacy_api = false;
   config.continuous = true;
   config.interim_results = true;
   config.max_hypotheses = 1;
@@ -139,7 +142,7 @@ void SpeechRecognizer::EventListener::StartOnIOThread(
   config.auth_token = auth_token;
   config.preamble = preamble;
 
-  auto speech_instance = content::SpeechRecognitionManager::GetInstance();
+  auto* speech_instance = content::SpeechRecognitionManager::GetInstance();
   session_ = speech_instance->CreateSession(config);
   speech_instance->StartSession(session_);
 }

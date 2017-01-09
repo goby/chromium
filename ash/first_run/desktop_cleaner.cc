@@ -4,8 +4,8 @@
 
 #include "ash/first_run/desktop_cleaner.h"
 
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_observer.h"
 #include "ui/compositor/layer_animation_observer.h"
@@ -17,12 +17,11 @@ namespace ash {
 namespace {
 
 const int kContainerIdsToHide[] = {
-  kShellWindowId_DefaultContainer,
-  kShellWindowId_AlwaysOnTopContainer,
-  kShellWindowId_PanelContainer,
-  // TODO(dzhioev): uncomment this when issue with BrowserView::CanActivate
-  // will be fixed.
-  // kShellWindowId_SystemModalContainer
+    kShellWindowId_DefaultContainer, kShellWindowId_AlwaysOnTopContainer,
+    kShellWindowId_PanelContainer,
+    // TODO(dzhioev): uncomment this when issue with BrowserView::CanActivate
+    // will be fixed.
+    // kShellWindowId_SystemModalContainer
 };
 
 }  // namespace
@@ -31,8 +30,7 @@ class ContainerHider : public aura::WindowObserver,
                        public ui::ImplicitAnimationObserver {
  public:
   explicit ContainerHider(aura::Window* container)
-      : container_was_hidden_(!container->IsVisible()),
-        container_(container) {
+      : container_was_hidden_(!container->IsVisible()), container_(container) {
     if (container_was_hidden_)
       return;
     ui::Layer* layer = container_->layer();
@@ -84,7 +82,7 @@ class NotificationBlocker : public message_center::NotificationBlocker {
  private:
   // Overriden from message_center::NotificationBlocker.
   bool ShouldShowNotificationAsPopup(
-      const message_center::NotifierId& notifier_id) const override {
+      const message_center::Notification& notification) const override {
     return false;
   }
 
@@ -97,7 +95,7 @@ DesktopCleaner::DesktopCleaner() {
   for (size_t i = 0; i < arraysize(kContainerIdsToHide); ++i) {
     aura::Window* container =
         Shell::GetContainer(root_window, kContainerIdsToHide[i]);
-    container_hiders_.push_back(make_linked_ptr(new ContainerHider(container)));
+    container_hiders_.push_back(base::MakeUnique<ContainerHider>(container));
   }
   notification_blocker_.reset(new NotificationBlocker());
 }
@@ -111,4 +109,3 @@ std::vector<int> DesktopCleaner::GetContainersToHideForTest() {
 }
 
 }  // namespace ash
-

@@ -5,7 +5,9 @@
 #ifndef STORAGE_BROWSER_FILEAPI_DRAGGED_FILE_UTIL_H_
 #define STORAGE_BROWSER_FILEAPI_DRAGGED_FILE_UTIL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "storage/browser/fileapi/local_file_util.h"
 #include "storage/browser/storage_browser_export.h"
 
@@ -26,7 +28,7 @@ class STORAGE_EXPORT DraggedFileUtil : public LocalFileUtil {
                                 const FileSystemURL& url,
                                 base::File::Info* file_info,
                                 base::FilePath* platform_path) override;
-  scoped_ptr<AbstractFileEnumerator> CreateFileEnumerator(
+  std::unique_ptr<AbstractFileEnumerator> CreateFileEnumerator(
       FileSystemOperationContext* context,
       const FileSystemURL& root_url) override;
 

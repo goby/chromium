@@ -5,19 +5,20 @@
 #ifndef UI_EVENTS_PLATFORM_PLATFORM_EVENT_SOURCE_H_
 #define UI_EVENTS_PLATFORM_PLATFORM_EVENT_SOURCE_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/auto_reset.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "ui/events/events_export.h"
 #include "ui/events/platform/platform_event_types.h"
 
 namespace ui {
 
-class Event;
 class PlatformEventDispatcher;
 class PlatformEventObserver;
 class ScopedEventDispatcher;
@@ -52,7 +53,7 @@ class EVENTS_EXPORT PlatformEventSource {
   // dispatcher. When this handler is destroyed, it removes the overridden
   // dispatcher, and restores the previous override-dispatcher (or NULL if there
   // wasn't any).
-  scoped_ptr<ScopedEventDispatcher> OverrideDispatcher(
+  std::unique_ptr<ScopedEventDispatcher> OverrideDispatcher(
       PlatformEventDispatcher* dispatcher);
 
   // Called to indicate that the source should stop dispatching the current
@@ -63,7 +64,7 @@ class EVENTS_EXPORT PlatformEventSource {
   void AddPlatformEventObserver(PlatformEventObserver* observer);
   void RemovePlatformEventObserver(PlatformEventObserver* observer);
 
-  static scoped_ptr<PlatformEventSource> CreateDefault();
+  static std::unique_ptr<PlatformEventSource> CreateDefault();
 
  protected:
   PlatformEventSource();

@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_COCOA_OMNIBOX_OMNIBOX_POPUP_MATRIX_H_
 
 #import <Cocoa/Cocoa.h>
+#include <stddef.h>
 
 #import "ui/base/cocoa/tracking_area.h"
 #include "ui/base/window_open_disposition.h"
@@ -16,7 +17,7 @@ class AutocompleteResult;
 class OmniboxPopupViewMac;
 
 @interface OmniboxPopupTableController
-    : NSViewController<NSTableViewDelegate, NSTableViewDataSource> {
+    : NSObject<NSTableViewDelegate, NSTableViewDataSource> {
  @private
   base::scoped_nsobject<NSArray> array_;
   NSInteger hoveredIndex_;
@@ -67,14 +68,23 @@ class OmniboxPopupMatrixObserver {
   CGFloat maxMatchContentsWidth_;
 
   CGFloat answerLineHeight_;
+
+  // Left margin padding for the content (i.e. icon and text) in a cell.
+  CGFloat contentLeftPadding_;
+
+  // true if the OmniboxPopupMatrix should use the dark theme style.
+  BOOL hasDarkTheme_;
 }
 
 @property(retain, nonatomic) NSAttributedString* separator;
 @property(nonatomic) CGFloat maxMatchContentsWidth;
 @property(nonatomic) CGFloat answerLineHeight;
+@property(nonatomic) CGFloat contentLeftPadding;
+@property(readonly, nonatomic) BOOL hasDarkTheme;
 
 // Create a zero-size matrix.
-- (instancetype)initWithObserver:(OmniboxPopupMatrixObserver*)observer;
+- (instancetype)initWithObserver:(OmniboxPopupMatrixObserver*)observer
+                    forDarkTheme:(BOOL)isDarkTheme;
 
 // Sets the observer.
 - (void)setObserver:(OmniboxPopupMatrixObserver*)observer;

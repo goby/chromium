@@ -4,9 +4,15 @@
 
 #include "components/search_provider_logos/logo_cache.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 
@@ -27,7 +33,7 @@ bool GetTimeValue(const base::DictionaryValue& dict,
                   const std::string& key,
                   base::Time* time) {
   std::string str;
-  int64 internal_time_value;
+  int64_t internal_time_value;
   if (dict.GetString(key, &str) &&
       base::StringToInt64(str, &internal_time_value)) {
     *time = base::Time::FromInternalValue(internal_time_value);
@@ -39,7 +45,7 @@ bool GetTimeValue(const base::DictionaryValue& dict,
 void SetTimeValue(base::DictionaryValue& dict,
                   const std::string& key,
                   const base::Time& time) {
-  int64 internal_time_value = time.ToInternalValue();
+  int64_t internal_time_value = time.ToInternalValue();
   dict.SetString(key, base::Int64ToString(internal_time_value));
 }
 
@@ -64,7 +70,7 @@ void LogoCache::UpdateCachedLogoMetadata(const LogoMetadata& metadata) {
   DCHECK(metadata_);
   DCHECK_EQ(metadata_->fingerprint, metadata.fingerprint);
 
-  UpdateMetadata(make_scoped_ptr(new LogoMetadata(metadata)));
+  UpdateMetadata(base::MakeUnique<LogoMetadata>(metadata));
   WriteMetadata();
 }
 
@@ -76,51 +82,52 @@ const LogoMetadata* LogoCache::GetCachedLogoMetadata() {
 
 void LogoCache::SetCachedLogo(const EncodedLogo* logo) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  scoped_ptr<LogoMetadata> metadata;
+  std::unique_ptr<LogoMetadata> metadata;
   if (logo) {
     metadata.reset(new LogoMetadata(logo->metadata));
     logo_num_bytes_ = static_cast<int>(logo->encoded_image->size());
   }
-  UpdateMetadata(metadata.Pass());
+  UpdateMetadata(std::move(metadata));
   WriteLogo(logo ? logo->encoded_image : NULL);
 }
 
-scoped_ptr<EncodedLogo> LogoCache::GetCachedLogo() {
+std::unique_ptr<EncodedLogo> LogoCache::GetCachedLogo() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   ReadMetadataIfNeeded();
   if (!metadata_)
-    return scoped_ptr<EncodedLogo>();
+    return nullptr;
 
   scoped_refptr<base::RefCountedString> encoded_image =
       new base::RefCountedString();
   if (!base::ReadFileToString(GetLogoPath(), &encoded_image->data())) {
-    UpdateMetadata(scoped_ptr<LogoMetadata>());
-    return scoped_ptr<EncodedLogo>();
+    UpdateMetadata(nullptr);
+    return nullptr;
   }
 
   if (encoded_image->size() != static_cast<size_t>(logo_num_bytes_)) {
     // Delete corrupt metadata and logo.
     DeleteLogoAndMetadata();
-    UpdateMetadata(scoped_ptr<LogoMetadata>());
-    return scoped_ptr<EncodedLogo>();
+    UpdateMetadata(nullptr);
+    return nullptr;
   }
 
-  scoped_ptr<EncodedLogo> logo(new EncodedLogo());
+  std::unique_ptr<EncodedLogo> logo(new EncodedLogo());
   logo->encoded_image = encoded_image;
   logo->metadata = *metadata_;
-  return logo.Pass();
+  return logo;
 }
 
 // static
-scoped_ptr<LogoMetadata> LogoCache::LogoMetadataFromString(
-    const std::string& str, int* logo_num_bytes) {
-  scoped_ptr<base::Value> value = base::JSONReader::Read(str);
+std::unique_ptr<LogoMetadata> LogoCache::LogoMetadataFromString(
+    const std::string& str,
+    int* logo_num_bytes) {
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(str);
   base::DictionaryValue* dict;
   if (!value || !value->GetAsDictionary(&dict))
-    return scoped_ptr<LogoMetadata>();
+    return nullptr;
 
-  scoped_ptr<LogoMetadata> metadata(new LogoMetadata());
+  std::unique_ptr<LogoMetadata> metadata(new LogoMetadata());
   if (!dict->GetString(kSourceUrlKey, &metadata->source_url) ||
       !dict->GetString(kFingerprintKey, &metadata->fingerprint) ||
       !dict->GetString(kOnClickURLKey, &metadata->on_click_url) ||
@@ -131,10 +138,10 @@ scoped_ptr<LogoMetadata> LogoCache::LogoMetadataFromString(
                         &metadata->can_show_after_expiration) ||
       !dict->GetInteger(kNumBytesKey, logo_num_bytes) ||
       !GetTimeValue(*dict, kExpirationTimeKey, &metadata->expiration_time)) {
-    return scoped_ptr<LogoMetadata>();
+    return nullptr;
   }
 
-  return metadata.Pass();
+  return metadata;
 }
 
 // static
@@ -163,8 +170,8 @@ base::FilePath LogoCache::GetMetadataPath() {
   return cache_directory_.Append(FILE_PATH_LITERAL("metadata"));
 }
 
-void LogoCache::UpdateMetadata(scoped_ptr<LogoMetadata> metadata) {
-  metadata_ = metadata.Pass();
+void LogoCache::UpdateMetadata(std::unique_ptr<LogoMetadata> metadata) {
+  metadata_ = std::move(metadata);
   metadata_is_valid_ = true;
 }
 
@@ -172,7 +179,7 @@ void LogoCache::ReadMetadataIfNeeded() {
   if (metadata_is_valid_)
     return;
 
-  scoped_ptr<LogoMetadata> metadata;
+  std::unique_ptr<LogoMetadata> metadata;
   base::FilePath metadata_path = GetMetadataPath();
   std::string str;
   if (base::ReadFileToString(metadata_path, &str)) {
@@ -183,7 +190,7 @@ void LogoCache::ReadMetadataIfNeeded() {
     }
   }
 
-  UpdateMetadata(metadata.Pass());
+  UpdateMetadata(std::move(metadata));
 }
 
 void LogoCache::WriteMetadata() {

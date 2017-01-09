@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_METRICS_STABILITY_METRICS_HELPER_H_
 #define COMPONENTS_METRICS_STABILITY_METRICS_HELPER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/process/kill.h"
 
@@ -36,9 +36,12 @@ class StabilityMetricsHelper {
   void LogLoadStarted();
 
   // Records a renderer process crash.
-  void LogRendererCrash(bool was_exception_process,
+  void LogRendererCrash(bool was_extension_process,
                         base::TerminationStatus status,
                         int exit_code);
+
+  // Records that a new renderer process was successfully launched.
+  void LogRendererLaunched(bool was_extension_process);
 
   // Records a renderer process hang.
   void LogRendererHang();

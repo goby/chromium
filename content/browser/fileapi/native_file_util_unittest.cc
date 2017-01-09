@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "storage/browser/fileapi/native_file_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -24,12 +28,10 @@ class NativeFileUtilTest : public testing::Test {
   void SetUp() override { ASSERT_TRUE(data_dir_.CreateUniqueTempDir()); }
 
  protected:
-  base::FilePath Path() {
-    return data_dir_.path();
-  }
+  base::FilePath Path() { return data_dir_.GetPath(); }
 
   base::FilePath Path(const char* file_name) {
-    return data_dir_.path().AppendASCII(file_name);
+    return data_dir_.GetPath().AppendASCII(file_name);
   }
 
   bool FileExists(const base::FilePath& path) {
@@ -37,7 +39,7 @@ class NativeFileUtilTest : public testing::Test {
            !base::DirectoryExists(path);
   }
 
-  int64 GetSize(const base::FilePath& path) {
+  int64_t GetSize(const base::FilePath& path) {
     base::File::Info info;
     base::GetFileInfo(path, &info);
     return info.size;
@@ -165,7 +167,7 @@ TEST_F(NativeFileUtilTest, CreateFileEnumerator) {
             NativeFileUtil::EnsureFileExists(path_121, &created));
 
   {
-    scoped_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator =
+    std::unique_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator =
         NativeFileUtil::CreateFileEnumerator(Path(), false);
     std::set<base::FilePath> set;
     set.insert(path_1);
@@ -177,9 +179,9 @@ TEST_F(NativeFileUtilTest, CreateFileEnumerator) {
   }
 
   {
-    scoped_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator =
+    std::unique_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator =
         NativeFileUtil::CreateFileEnumerator(Path(), true);
-        std::set<base::FilePath> set;
+    std::set<base::FilePath> set;
     set.insert(path_1);
     set.insert(path_2);
     set.insert(path_11);

@@ -33,17 +33,21 @@ from webkitpy.layout_tests.models import test_expectations
 
 def is_reftest_failure(failure_list):
     failure_types = [type(f) for f in failure_list]
-    return set((FailureReftestMismatch, FailureReftestMismatchDidNotOccur, FailureReftestNoImagesGenerated)).intersection(failure_types)
+    return set((FailureReftestMismatch, FailureReftestMismatchDidNotOccur, FailureReftestNoImagesGenerated)).intersection(
+        failure_types)
 
 # FIXME: This is backwards.  Each TestFailure subclass should know what
 # test_expectation type it corresponds too.  Then this method just
 # collects them all from the failure list and returns the worst one.
+
+
 def determine_result_type(failure_list):
     """Takes a set of test_failures and returns which result type best fits
     the list of failures. "Best fits" means we use the worst type of failure.
 
     Returns:
-      one of the test_expectations result types - PASS, FAIL, CRASH, etc."""
+      one of the test_expectations result types - PASS, FAIL, CRASH, etc.
+    """
 
     if not failure_list or len(failure_list) == 0:
         return test_expectations.PASS
@@ -66,13 +70,14 @@ def determine_result_type(failure_list):
         is_text_failure = (FailureTextMismatch in failure_types or
                            FailureTestHarnessAssertion in failure_types)
         is_image_failure = (FailureImageHashIncorrect in failure_types or
-                            FailureImageHashMismatch in failure_types)
+                            FailureImageHashMismatch in failure_types or
+                            is_reftest_failure(failure_list))
         is_audio_failure = (FailureAudioMismatch in failure_types)
         if is_text_failure and is_image_failure:
             return test_expectations.IMAGE_PLUS_TEXT
         elif is_text_failure:
             return test_expectations.TEXT
-        elif is_image_failure or is_reftest_failure(failure_list):
+        elif is_image_failure:
             return test_expectations.IMAGE
         elif is_audio_failure:
             return test_expectations.AUDIO
@@ -112,6 +117,7 @@ class TestFailure(object):
 
 
 class FailureTimeout(TestFailure):
+
     def __init__(self, is_reftest=False):
         super(FailureTimeout, self).__init__()
         self.is_reftest = is_reftest
@@ -124,6 +130,7 @@ class FailureTimeout(TestFailure):
 
 
 class FailureCrash(TestFailure):
+
     def __init__(self, is_reftest=False, process_name='content_shell', pid=None, has_log=False):
         super(FailureCrash, self).__init__()
         self.process_name = process_name
@@ -141,6 +148,7 @@ class FailureCrash(TestFailure):
 
 
 class FailureLeak(TestFailure):
+
     def __init__(self, is_reftest=False, log=''):
         super(FailureLeak, self).__init__()
         self.is_reftest = is_reftest
@@ -151,41 +159,49 @@ class FailureLeak(TestFailure):
 
 
 class FailureMissingResult(TestFailure):
+
     def message(self):
         return "-expected.txt was missing"
 
 
 class FailureTestHarnessAssertion(TestFailure):
+
     def message(self):
         return "asserts failed"
 
 
 class FailureTextMismatch(TestFailure):
+
     def message(self):
         return "text diff"
 
 
 class FailureMissingImageHash(TestFailure):
+
     def message(self):
         return "-expected.png was missing an embedded checksum"
 
 
 class FailureMissingImage(TestFailure):
+
     def message(self):
         return "-expected.png was missing"
 
 
 class FailureImageHashMismatch(TestFailure):
+
     def message(self):
         return "image diff"
 
 
 class FailureImageHashIncorrect(TestFailure):
+
     def message(self):
         return "-expected.png embedded checksum is incorrect"
 
 
 class FailureReftestMismatch(TestFailure):
+
     def __init__(self, reference_filename=None):
         super(FailureReftestMismatch, self).__init__()
         self.reference_filename = reference_filename
@@ -195,6 +211,7 @@ class FailureReftestMismatch(TestFailure):
 
 
 class FailureReftestMismatchDidNotOccur(TestFailure):
+
     def __init__(self, reference_filename=None):
         super(FailureReftestMismatchDidNotOccur, self).__init__()
         self.reference_filename = reference_filename
@@ -204,6 +221,7 @@ class FailureReftestMismatchDidNotOccur(TestFailure):
 
 
 class FailureReftestNoImagesGenerated(TestFailure):
+
     def __init__(self, reference_filename=None):
         super(FailureReftestNoImagesGenerated, self).__init__()
         self.reference_filename = reference_filename
@@ -213,16 +231,19 @@ class FailureReftestNoImagesGenerated(TestFailure):
 
 
 class FailureMissingAudio(TestFailure):
+
     def message(self):
         return "expected audio result was missing"
 
 
 class FailureAudioMismatch(TestFailure):
+
     def message(self):
         return "audio mismatch"
 
 
 class FailureEarlyExit(TestFailure):
+
     def message(self):
         return "skipped due to early exit"
 

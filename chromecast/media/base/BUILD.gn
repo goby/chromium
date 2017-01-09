@@ -4,25 +4,6 @@
 
 import("//chromecast/chromecast.gni")
 
-source_set("message_loop") {
-  sources = [
-    "media_message_loop.cc",
-    "media_message_loop.h",
-    "video_plane_controller.cc",
-    "video_plane_controller.h",
-  ]
-
-  public_deps = [
-    "//chromecast/public/media",
-  ]
-
-  deps = [
-    "//base",
-    "//chromecast/media/base:libcast_media_1.0",
-    "//chromecast/public",
-  ]
-}
-
 source_set("key_systems") {
   sources = [
     "key_systems_common.cc",
@@ -37,11 +18,10 @@ source_set("key_systems") {
     "//base",
     "//chromecast/public/media",
     "//media",
-    "//third_party/widevine/cdm:version_h",
+    "//third_party/widevine/cdm:headers",
   ]
 }
 
-# TODO(slan): See if the dependency on //media can be broken.
 source_set("base") {
   sources = [
     "decrypt_context_impl.cc",
@@ -52,29 +32,37 @@ source_set("base") {
     "media_caps.h",
     "media_codec_support.cc",
     "media_codec_support.h",
-    "switching_media_renderer.cc",
-    "switching_media_renderer.h",
+    "media_resource_tracker.cc",
+    "media_resource_tracker.h",
+    "video_plane_controller.cc",
+    "video_plane_controller.h",
   ]
+
+  if (!is_android) {
+    sources += [
+      "video_resolution_policy.cc",
+      "video_resolution_policy.h",
+    ]
+  }
 
   public_deps = [
     ":key_systems",
-    ":message_loop",
     "//chromecast/public/media",
   ]
 
   deps = [
-    ":libcast_media_1.0",
     "//base",
+    "//chromecast/base",
     "//crypto",
     "//crypto:platform",
     "//media",
-    "//net",
+    "//ui/gfx/geometry",
   ]
 
-  if (chromecast_branding == "public") {
-    sources += [ "key_systems_common_simple.cc" ]
+  if (is_android) {
+    deps += [ ":libcast_media_1.0_android" ]
   } else {
-    deps += [ "//chromecast/internal/media/base" ]
+    deps += [ ":libcast_media_1.0" ]
   }
 }
 
@@ -84,6 +72,21 @@ source_set("base") {
 shared_library("libcast_media_1.0") {
   sources = [
     "cast_media_dummy.cc",
+  ]
+
+  public_deps = [
+    "//chromecast/public",
+  ]
+}
+
+# Target for Android implementation of libcast_media_1.0.
+shared_library("libcast_media_1.0_android") {
+  sources = [
+    "cast_media_android.cc",
+  ]
+
+  deps = [
+    "//base",
   ]
 
   public_deps = [
@@ -104,7 +107,9 @@ source_set("libcast_media_1.0_default_core") {
   ]
 
   deps = [
+    "//base",
     "//build/config/sanitizers:deps",
+    "//chromecast/base",
     "//chromecast/media/cma/backend",
   ]
 }
@@ -125,7 +130,9 @@ shared_library("libcast_media_1.0_default") {
   ]
 
   deps = [
+    "//base",
     "//build/config/sanitizers:deps",
+    "//chromecast/base",
     "//chromecast/media/cma/backend",
   ]
 }

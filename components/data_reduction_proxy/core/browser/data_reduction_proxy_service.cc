@@ -4,22 +4,27 @@
 
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/prefs/pref_service.h"
 #include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_io_data.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_pingback_client.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service_observer.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
 #include "components/data_reduction_proxy/core/browser/data_store.h"
+#include "components/data_reduction_proxy/core/browser/data_use_group.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_store.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/data_reduction_proxy/proto/data_store.pb.h"
+#include "components/prefs/pref_service.h"
 
 namespace data_reduction_proxy {
 
@@ -27,15 +32,17 @@ DataReductionProxyService::DataReductionProxyService(
     DataReductionProxySettings* settings,
     PrefService* prefs,
     net::URLRequestContextGetter* request_context_getter,
-    scoped_ptr<DataStore> store,
+    std::unique_ptr<DataStore> store,
     const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& db_task_runner,
     const base::TimeDelta& commit_delay)
     : url_request_context_getter_(request_context_getter),
+      pingback_client_(
+          new DataReductionProxyPingbackClient(request_context_getter)),
       settings_(settings),
       prefs_(prefs),
-      db_data_owner_(new DBDataOwner(store.Pass())),
+      db_data_owner_(new DBDataOwner(std::move(store))),
       io_task_runner_(io_task_runner),
       db_task_runner_(db_task_runner),
       initialized_(false),
@@ -62,8 +69,8 @@ void DataReductionProxyService::SetIOData(
   DCHECK(CalledOnValidThread());
   io_data_ = io_data;
   initialized_ = true;
-  FOR_EACH_OBSERVER(DataReductionProxyServiceObserver,
-                    observer_list_, OnServiceInitialized());
+  for (DataReductionProxyServiceObserver& observer : observer_list_)
+    observer.OnServiceInitialized();
 
   // Load the Data Reduction Proxy configuration from |prefs_| and apply it.
   if (prefs_) {
@@ -84,56 +91,45 @@ void DataReductionProxyService::Shutdown() {
   weak_factory_.InvalidateWeakPtrs();
 }
 
-void DataReductionProxyService::EnableCompressionStatisticsLogging(
-    PrefService* prefs,
-    const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
-    const base::TimeDelta& commit_delay) {
-  DCHECK(CalledOnValidThread());
-  DCHECK(!compression_stats_);
-  DCHECK(!prefs_);
-  prefs_ = prefs;
-  compression_stats_.reset(
-      new DataReductionProxyCompressionStats(this, prefs_, commit_delay));
-}
-
 void DataReductionProxyService::UpdateContentLengths(
-    int64 data_used,
-    int64 original_size,
+    int64_t data_used,
+    int64_t original_size,
     bool data_reduction_proxy_enabled,
     DataReductionProxyRequestType request_type,
-    const std::string& data_usage_host,
+    scoped_refptr<DataUseGroup> data_use_group,
     const std::string& mime_type) {
   DCHECK(CalledOnValidThread());
   if (compression_stats_) {
     compression_stats_->UpdateContentLengths(
         data_used, original_size, data_reduction_proxy_enabled, request_type,
-        data_usage_host, mime_type);
+        data_use_group, mime_type);
   }
 }
 
-void DataReductionProxyService::AddEvent(scoped_ptr<base::Value> event) {
+void DataReductionProxyService::AddEvent(std::unique_ptr<base::Value> event) {
   DCHECK(CalledOnValidThread());
-  event_store_->AddEvent(event.Pass());
+  event_store_->AddEvent(std::move(event));
 }
 
-void DataReductionProxyService::AddEnabledEvent(scoped_ptr<base::Value> event,
-                                                bool enabled) {
+void DataReductionProxyService::AddEnabledEvent(
+    std::unique_ptr<base::Value> event,
+    bool enabled) {
   DCHECK(CalledOnValidThread());
-  event_store_->AddEnabledEvent(event.Pass(), enabled);
+  event_store_->AddEnabledEvent(std::move(event), enabled);
 }
 
 void DataReductionProxyService::AddEventAndSecureProxyCheckState(
-    scoped_ptr<base::Value> event,
+    std::unique_ptr<base::Value> event,
     SecureProxyCheckState state) {
   DCHECK(CalledOnValidThread());
-  event_store_->AddEventAndSecureProxyCheckState(event.Pass(), state);
+  event_store_->AddEventAndSecureProxyCheckState(std::move(event), state);
 }
 
 void DataReductionProxyService::AddAndSetLastBypassEvent(
-    scoped_ptr<base::Value> event,
-    int64 expiration_ticks) {
+    std::unique_ptr<base::Value> event,
+    int64_t expiration_ticks) {
   DCHECK(CalledOnValidThread());
-  event_store_->AddAndSetLastBypassEvent(event.Pass(), expiration_ticks);
+  event_store_->AddAndSetLastBypassEvent(std::move(event), expiration_ticks);
 }
 
 void DataReductionProxyService::SetUnreachable(bool unreachable) {
@@ -216,15 +212,16 @@ void DataReductionProxyService::InitializeLoFiPrefs() {
     SetLoFiModeOff();
   } else if (prefs_->GetInteger(prefs::kLoFiLoadImagesPerSession) <
                  lo_fi_user_requests_for_images_per_session &&
-             prefs_->GetInteger(prefs::kLoFiSnackbarsShownPerSession) >=
+             prefs_->GetInteger(prefs::kLoFiUIShownPerSession) >=
                  lo_fi_user_requests_for_images_per_session) {
     // If the last session didn't have
     // |lo_fi_user_requests_for_images_per_session|, but the user saw at least
-    // that many "Load image" snackbars, reset the consecutive sessions count.
+    // that many "Load image" UI notifications, reset the consecutive sessions
+    // count.
     prefs_->SetInteger(prefs::kLoFiConsecutiveSessionDisables, 0);
   }
   prefs_->SetInteger(prefs::kLoFiLoadImagesPerSession, 0);
-  prefs_->SetInteger(prefs::kLoFiSnackbarsShownPerSession, 0);
+  prefs_->SetInteger(prefs::kLoFiUIShownPerSession, 0);
   prefs_->SetBoolean(prefs::kLoFiWasUsedThisSession, false);
 }
 
@@ -234,7 +231,7 @@ void DataReductionProxyService::RecordLoFiSessionState(LoFiSessionState state) {
 }
 
 void DataReductionProxyService::SetInt64Pref(const std::string& pref_path,
-                                             int64 value) {
+                                             int64_t value) {
   if (prefs_)
     prefs_->SetInt64(pref_path, value);
 }
@@ -256,9 +253,15 @@ void DataReductionProxyService::SetProxyPrefs(bool enabled, bool at_startup) {
                             enabled, at_startup));
 }
 
+void DataReductionProxyService::SetPingbackReportingFraction(
+    float pingback_reporting_fraction) {
+  DCHECK(CalledOnValidThread());
+  pingback_client_->SetPingbackReportingFraction(pingback_reporting_fraction);
+}
+
 void DataReductionProxyService::LoadHistoricalDataUsage(
     const HistoricalDataUsageCallback& load_data_usage_callback) {
-  scoped_ptr<std::vector<DataUsageBucket>> data_usage(
+  std::unique_ptr<std::vector<DataUsageBucket>> data_usage(
       new std::vector<DataUsageBucket>());
   std::vector<DataUsageBucket>* data_usage_ptr = data_usage.get();
   db_task_runner_->PostTaskAndReply(
@@ -270,7 +273,7 @@ void DataReductionProxyService::LoadHistoricalDataUsage(
 
 void DataReductionProxyService::LoadCurrentDataUsageBucket(
     const LoadCurrentDataUsageCallback& load_current_data_usage_callback) {
-  scoped_ptr<DataUsageBucket> bucket(new DataUsageBucket());
+  std::unique_ptr<DataUsageBucket> bucket(new DataUsageBucket());
   DataUsageBucket* bucket_ptr = bucket.get();
   db_task_runner_->PostTaskAndReply(
       FROM_HERE,
@@ -280,7 +283,7 @@ void DataReductionProxyService::LoadCurrentDataUsageBucket(
 }
 
 void DataReductionProxyService::StoreCurrentDataUsageBucket(
-    scoped_ptr<DataUsageBucket> current) {
+    std::unique_ptr<DataUsageBucket> current) {
   db_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&DBDataOwner::StoreCurrentDataUsageBucket,

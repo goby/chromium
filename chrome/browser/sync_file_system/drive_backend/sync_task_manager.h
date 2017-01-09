@@ -5,12 +5,16 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_SYNC_TASK_MANAGER_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_SYNC_TASK_MANAGER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/containers/scoped_ptr_hash_map.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -44,7 +48,8 @@ struct TaskBlocker;
 class SyncTaskManager {
  public:
   typedef base::Callback<void(const SyncStatusCallback& callback)> Task;
-  typedef base::Callback<void(scoped_ptr<SyncTaskToken> token)> Continuation;
+  typedef base::Callback<void(std::unique_ptr<SyncTaskToken> token)>
+      Continuation;
 
   enum Priority {
     PRIORITY_LOW,
@@ -64,7 +69,8 @@ class SyncTaskManager {
         SyncStatusCode last_operation_status,
         bool last_operation_used_network) = 0;
 
-    virtual void RecordTaskLog(scoped_ptr<TaskLogger::TaskLog> task_log) = 0;
+    virtual void RecordTaskLog(
+        std::unique_ptr<TaskLogger::TaskLog> task_log) = 0;
   };
 
   // Runs at most |maximum_background_tasks| parallel as background tasks.
@@ -86,7 +92,7 @@ class SyncTaskManager {
                     Priority priority,
                     const SyncStatusCallback& callback);
   void ScheduleSyncTask(const tracked_objects::Location& from_here,
-                        scoped_ptr<SyncTask> task,
+                        std::unique_ptr<SyncTask> task,
                         Priority priority,
                         const SyncStatusCallback& callback);
 
@@ -96,12 +102,12 @@ class SyncTaskManager {
                           const Task& task,
                           const SyncStatusCallback& callback);
   bool ScheduleSyncTaskIfIdle(const tracked_objects::Location& from_here,
-                              scoped_ptr<SyncTask> task,
+                              std::unique_ptr<SyncTask> task,
                               const SyncStatusCallback& callback);
 
   // Notifies SyncTaskManager that the task associated to |token| has finished
   // with |status|.
-  static void NotifyTaskDone(scoped_ptr<SyncTaskToken> token,
+  static void NotifyTaskDone(std::unique_ptr<SyncTaskToken> token,
                              SyncStatusCode status);
 
   // Updates |task_blocker| associated to the current task by specified
@@ -115,11 +121,12 @@ class SyncTaskManager {
   // Note that this function once releases previous |task_blocker| before
   // applying new |task_blocker|.  So, any other task may be run before
   // invocation of |continuation|.
-  static void UpdateTaskBlocker(scoped_ptr<SyncTaskToken> current_task_token,
-                                scoped_ptr<TaskBlocker> task_blocker,
-                                const Continuation& continuation);
+  static void UpdateTaskBlocker(
+      std::unique_ptr<SyncTaskToken> current_task_token,
+      std::unique_ptr<TaskBlocker> task_blocker,
+      const Continuation& continuation);
 
-  bool IsRunningTask(int64 task_token_id) const;
+  bool IsRunningTask(int64_t task_token_id) const;
 
   void DetachFromSequence();
   bool ShouldTrackTaskToken() const;
@@ -128,10 +135,11 @@ class SyncTaskManager {
   struct PendingTask {
     base::Closure task;
     Priority priority;
-    int64 seq;
+    int64_t seq;
 
     PendingTask();
     PendingTask(const base::Closure& task, Priority pri, int seq);
+    PendingTask(const PendingTask& other);
     ~PendingTask();
   };
 
@@ -141,42 +149,45 @@ class SyncTaskManager {
   };
 
   // Non-static version of NotifyTaskDone.
-  void NotifyTaskDoneBody(scoped_ptr<SyncTaskToken> token,
+  void NotifyTaskDoneBody(std::unique_ptr<SyncTaskToken> token,
                           SyncStatusCode status);
 
   // Non-static version of UpdateTaskBlocker.
-  void UpdateTaskBlockerBody(scoped_ptr<SyncTaskToken> foreground_task_token,
-                             scoped_ptr<SyncTaskToken> background_task_token,
-                             scoped_ptr<TaskLogger::TaskLog> task_log,
-                             scoped_ptr<TaskBlocker> task_blocker,
-                             const Continuation& continuation);
+  void UpdateTaskBlockerBody(
+      std::unique_ptr<SyncTaskToken> foreground_task_token,
+      std::unique_ptr<SyncTaskToken> background_task_token,
+      std::unique_ptr<TaskLogger::TaskLog> task_log,
+      std::unique_ptr<TaskBlocker> task_blocker,
+      const Continuation& continuation);
 
   // This should be called when an async task needs to get a task token.
-  scoped_ptr<SyncTaskToken> GetToken(const tracked_objects::Location& from_here,
-                                     const SyncStatusCallback& callback);
+  std::unique_ptr<SyncTaskToken> GetToken(
+      const tracked_objects::Location& from_here,
+      const SyncStatusCallback& callback);
 
-  scoped_ptr<SyncTaskToken> GetTokenForBackgroundTask(
+  std::unique_ptr<SyncTaskToken> GetTokenForBackgroundTask(
       const tracked_objects::Location& from_here,
       const SyncStatusCallback& callback,
-      scoped_ptr<TaskBlocker> task_blocker);
+      std::unique_ptr<TaskBlocker> task_blocker);
 
   void PushPendingTask(const base::Closure& closure, Priority priority);
 
-  void RunTask(scoped_ptr<SyncTaskToken> token,
-               scoped_ptr<SyncTask> task);
+  void RunTask(std::unique_ptr<SyncTaskToken> token,
+               std::unique_ptr<SyncTask> task);
 
   // Runs a pending task as a foreground task if possible.
   // If |token| is non-nullptr, put |token| back to |token_| beforehand.
-  void MaybeStartNextForegroundTask(scoped_ptr<SyncTaskToken> token);
+  void MaybeStartNextForegroundTask(std::unique_ptr<SyncTaskToken> token);
 
   base::WeakPtr<Client> client_;
 
   // Owns running SyncTask to cancel the task on SyncTaskManager deletion.
-  scoped_ptr<SyncTask> running_foreground_task_;
+  std::unique_ptr<SyncTask> running_foreground_task_;
 
   // Owns running backgrounded SyncTask to cancel the task on SyncTaskManager
   // deletion.
-  base::ScopedPtrHashMap<int64, scoped_ptr<SyncTask>> running_background_tasks_;
+  base::ScopedPtrHashMap<int64_t, std::unique_ptr<SyncTask>>
+      running_background_tasks_;
 
   size_t maximum_background_task_;
 
@@ -185,15 +196,15 @@ class SyncTaskManager {
 
   std::priority_queue<PendingTask, std::vector<PendingTask>,
                       PendingTaskComparator> pending_tasks_;
-  int64 pending_task_seq_;
-  int64 task_token_seq_;
+  int64_t pending_task_seq_;
+  int64_t task_token_seq_;
 
   // Absence of |token_| implies a task is running. Incoming tasks should
   // wait for the task to finish in |pending_tasks_| if |token_| is null.
   // Each task must take TaskToken instance from |token_| and must hold it
   // until it finished. And the task must return the instance through
   // NotifyTaskDone when the task finished.
-  scoped_ptr<SyncTaskToken> token_;
+  std::unique_ptr<SyncTaskToken> token_;
 
   TaskDependencyManager dependency_manager_;
 
@@ -201,7 +212,7 @@ class SyncTaskManager {
   scoped_refptr<base::SequencedWorkerPool> worker_pool_;
   base::SequenceChecker sequence_checker_;
 
-  base::WeakPtrFactory<SyncTaskManager> weak_ptr_factory_;;
+  base::WeakPtrFactory<SyncTaskManager> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncTaskManager);
 };

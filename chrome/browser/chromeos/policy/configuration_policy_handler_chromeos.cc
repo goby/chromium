@@ -4,15 +4,19 @@
 
 #include "chrome/browser/chromeos/policy/configuration_policy_handler_chromeos.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "ash/common/accessibility_types.h"
 #include "base/callback.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_value_map.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -23,14 +27,15 @@
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/onc/onc_validator.h"
 #include "components/onc/onc_constants.h"
+#include "components/onc/onc_pref_names.h"
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/external_data_fetcher.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/schema.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
+#include "components/strings/grit/components_strings.h"
 #include "crypto/sha2.h"
-#include "grit/components_strings.h"
-#include "policy/policy_constants.h"
-#include "ui/chromeos/accessibility_types.h"
 #include "url/gurl.h"
 
 namespace policy {
@@ -83,44 +88,43 @@ const char kActionLogout[] = "Logout";
 const char kActionShutdown[]  = "Shutdown";
 const char kActionDoNothing[] = "DoNothing";
 
-scoped_ptr<base::Value> GetValue(const base::DictionaryValue* dict,
-                                 const char* key) {
+std::unique_ptr<base::Value> GetValue(const base::DictionaryValue* dict,
+                                      const char* key) {
   const base::Value* value = NULL;
   if (!dict->Get(key, &value))
-    return scoped_ptr<base::Value>();
+    return std::unique_ptr<base::Value>();
   return value->CreateDeepCopy();
 }
 
-scoped_ptr<base::Value> GetAction(const base::DictionaryValue* dict,
-                                  const char* key) {
-  scoped_ptr<base::Value> value = GetValue(dict, key);
+std::unique_ptr<base::Value> GetAction(const base::DictionaryValue* dict,
+                                       const char* key) {
+  std::unique_ptr<base::Value> value = GetValue(dict, key);
   std::string action;
   if (!value || !value->GetAsString(&action))
-    return scoped_ptr<base::Value>();
+    return std::unique_ptr<base::Value>();
   if (action == kActionSuspend) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_SUSPEND));
   }
   if (action == kActionLogout) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_STOP_SESSION));
   }
   if (action == kActionShutdown) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_SHUT_DOWN));
   }
   if (action == kActionDoNothing) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_DO_NOTHING));
   }
-  return scoped_ptr<base::Value>();
+  return std::unique_ptr<base::Value>();
 }
 
 }  // namespace
 
 ExternalDataPolicyHandler::ExternalDataPolicyHandler(const char* policy_name)
-    : TypeCheckingPolicyHandler(policy_name, base::Value::TYPE_DICTIONARY) {
-}
+    : TypeCheckingPolicyHandler(policy_name, base::Value::Type::DICTIONARY) {}
 
 ExternalDataPolicyHandler::~ExternalDataPolicyHandler() {
 }
@@ -154,7 +158,7 @@ bool ExternalDataPolicyHandler::CheckPolicySettings(const PolicyMap& policies,
     return false;
   }
 
-  std::vector<uint8> hash;
+  std::vector<uint8_t> hash;
   if (!base::HexStringToBytes(hash_string, &hash) ||
       hash.size() != crypto::kSHA256Length) {
     errors->AddError(policy, kSubkeyHash, IDS_POLICY_VALUE_FORMAT_ERROR);
@@ -172,18 +176,16 @@ void ExternalDataPolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
 NetworkConfigurationPolicyHandler*
 NetworkConfigurationPolicyHandler::CreateForUserPolicy() {
   return new NetworkConfigurationPolicyHandler(
-      key::kOpenNetworkConfiguration,
-      onc::ONC_SOURCE_USER_POLICY,
-      prefs::kOpenNetworkConfiguration);
+      key::kOpenNetworkConfiguration, onc::ONC_SOURCE_USER_POLICY,
+      onc::prefs::kOpenNetworkConfiguration);
 }
 
 // static
 NetworkConfigurationPolicyHandler*
 NetworkConfigurationPolicyHandler::CreateForDevicePolicy() {
   return new NetworkConfigurationPolicyHandler(
-      key::kDeviceOpenNetworkConfiguration,
-      onc::ONC_SOURCE_DEVICE_POLICY,
-      prefs::kDeviceOpenNetworkConfiguration);
+      key::kDeviceOpenNetworkConfiguration, onc::ONC_SOURCE_DEVICE_POLICY,
+      onc::prefs::kDeviceOpenNetworkConfiguration);
 }
 
 NetworkConfigurationPolicyHandler::~NetworkConfigurationPolicyHandler() {}
@@ -198,7 +200,7 @@ bool NetworkConfigurationPolicyHandler::CheckPolicySettings(
   if (value) {
     std::string onc_blob;
     value->GetAsString(&onc_blob);
-    scoped_ptr<base::DictionaryValue> root_dict =
+    std::unique_ptr<base::DictionaryValue> root_dict =
         chromeos::onc::ReadDictionaryFromJson(onc_blob);
     if (root_dict.get() == NULL) {
       errors->AddError(policy_name(), IDS_POLICY_NETWORK_CONFIG_PARSE_FAILED);
@@ -241,7 +243,7 @@ void NetworkConfigurationPolicyHandler::ApplyPolicySettings(
   std::string onc_blob;
   value->GetAsString(&onc_blob);
 
-  scoped_ptr<base::ListValue> network_configs(new base::ListValue);
+  std::unique_ptr<base::ListValue> network_configs(new base::ListValue);
   base::ListValue certificates;
   base::DictionaryValue global_network_config;
   chromeos::onc::ParseAndValidateOncForImport(onc_blob,
@@ -253,7 +255,7 @@ void NetworkConfigurationPolicyHandler::ApplyPolicySettings(
 
   // Currently, only the per-network configuration is stored in a pref. Ignore
   // |global_network_config| and |certificates|.
-  prefs->SetValue(pref_path_, network_configs.Pass());
+  prefs->SetValue(pref_path_, std::move(network_configs));
 }
 
 void NetworkConfigurationPolicyHandler::PrepareForDisplaying(
@@ -261,31 +263,32 @@ void NetworkConfigurationPolicyHandler::PrepareForDisplaying(
   const PolicyMap::Entry* entry = policies->Get(policy_name());
   if (!entry)
     return;
-  base::Value* sanitized_config = SanitizeNetworkConfig(entry->value);
+  std::unique_ptr<base::Value> sanitized_config =
+      SanitizeNetworkConfig(entry->value.get());
   if (!sanitized_config)
-    sanitized_config = base::Value::CreateNullValue().release();
+    sanitized_config = base::Value::CreateNullValue();
 
-  policies->Set(policy_name(), entry->level, entry->scope,
-                entry->source, sanitized_config, nullptr);
+  policies->Set(policy_name(), entry->level, entry->scope, entry->source,
+                std::move(sanitized_config), nullptr);
 }
 
 NetworkConfigurationPolicyHandler::NetworkConfigurationPolicyHandler(
     const char* policy_name,
     onc::ONCSource onc_source,
     const char* pref_path)
-    : TypeCheckingPolicyHandler(policy_name, base::Value::TYPE_STRING),
+    : TypeCheckingPolicyHandler(policy_name, base::Value::Type::STRING),
       onc_source_(onc_source),
-      pref_path_(pref_path) {
-}
+      pref_path_(pref_path) {}
 
 // static
-base::Value* NetworkConfigurationPolicyHandler::SanitizeNetworkConfig(
+std::unique_ptr<base::Value>
+NetworkConfigurationPolicyHandler::SanitizeNetworkConfig(
     const base::Value* config) {
   std::string json_string;
   if (!config->GetAsString(&json_string))
     return NULL;
 
-  scoped_ptr<base::DictionaryValue> toplevel_dict =
+  std::unique_ptr<base::DictionaryValue> toplevel_dict =
       chromeos::onc::ReadDictionaryFromJson(json_string);
   if (!toplevel_dict)
     return NULL;
@@ -300,7 +303,7 @@ base::Value* NetworkConfigurationPolicyHandler::SanitizeNetworkConfig(
 
   base::JSONWriter::WriteWithOptions(
       *toplevel_dict, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json_string);
-  return new base::StringValue(json_string);
+  return base::MakeUnique<base::StringValue>(json_string);
 }
 
 PinnedLauncherAppsPolicyHandler::PinnedLauncherAppsPolicyHandler()
@@ -317,24 +320,25 @@ void PinnedLauncherAppsPolicyHandler::ApplyPolicySettings(
   const base::Value* policy_value = policies.GetValue(policy_name());
   const base::ListValue* policy_list = NULL;
   if (policy_value && policy_value->GetAsList(&policy_list) && policy_list) {
-    scoped_ptr<base::ListValue> pinned_apps_list(new base::ListValue());
+    std::unique_ptr<base::ListValue> pinned_apps_list(new base::ListValue());
     for (base::ListValue::const_iterator entry(policy_list->begin());
          entry != policy_list->end(); ++entry) {
       std::string id;
       if ((*entry)->GetAsString(&id)) {
-        base::DictionaryValue* app_dict = new base::DictionaryValue();
-        app_dict->SetString(ash::kPinnedAppsPrefAppIDPath, id);
-        pinned_apps_list->Append(app_dict);
+        auto app_dict = base::MakeUnique<base::DictionaryValue>();
+        app_dict->SetString(ash::launcher::kPinnedAppsPrefAppIDPath, id);
+        pinned_apps_list->Append(std::move(app_dict));
       }
     }
-    prefs->SetValue(pref_path(), pinned_apps_list.Pass());
+    prefs->SetValue(pref_path(), std::move(pinned_apps_list));
   }
 }
 
 ScreenMagnifierPolicyHandler::ScreenMagnifierPolicyHandler()
     : IntRangePolicyHandlerBase(key::kScreenMagnifierType,
-                                0, ui::MAGNIFIER_FULL, false) {
-}
+                                0,
+                                ash::MAGNIFIER_FULL,
+                                false) {}
 
 ScreenMagnifierPolicyHandler::~ScreenMagnifierPolicyHandler() {
 }
@@ -403,7 +407,7 @@ PowerManagementIdleSettingsPolicyHandler::
 void PowerManagementIdleSettingsPolicyHandler::ApplyPolicySettings(
     const PolicyMap& policies,
     PrefValueMap* prefs) {
-  scoped_ptr<base::Value> policy_value;
+  std::unique_ptr<base::Value> policy_value;
   if (!CheckAndGetValue(policies, NULL, &policy_value))
     return;
   const base::DictionaryValue* dict = NULL;
@@ -411,39 +415,39 @@ void PowerManagementIdleSettingsPolicyHandler::ApplyPolicySettings(
     NOTREACHED();
     return;
   }
-  scoped_ptr<base::Value> value;
+  std::unique_ptr<base::Value> value;
 
   value = GetValue(dict, kScreenDimDelayAC);
   if (value)
-    prefs->SetValue(prefs::kPowerAcScreenDimDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerAcScreenDimDelayMs, std::move(value));
   value = GetValue(dict, kScreenOffDelayAC);
   if (value)
-    prefs->SetValue(prefs::kPowerAcScreenOffDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerAcScreenOffDelayMs, std::move(value));
   value = GetValue(dict, kIdleWarningDelayAC);
   if (value)
-    prefs->SetValue(prefs::kPowerAcIdleWarningDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerAcIdleWarningDelayMs, std::move(value));
   value = GetValue(dict, kIdleDelayAC);
   if (value)
-    prefs->SetValue(prefs::kPowerAcIdleDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerAcIdleDelayMs, std::move(value));
   value = GetAction(dict, kIdleActionAC);
   if (value)
-    prefs->SetValue(prefs::kPowerAcIdleAction, value.Pass());
+    prefs->SetValue(prefs::kPowerAcIdleAction, std::move(value));
 
   value = GetValue(dict, kScreenDimDelayBattery);
   if (value)
-    prefs->SetValue(prefs::kPowerBatteryScreenDimDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerBatteryScreenDimDelayMs, std::move(value));
   value = GetValue(dict, kScreenOffDelayBattery);
   if (value)
-    prefs->SetValue(prefs::kPowerBatteryScreenOffDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerBatteryScreenOffDelayMs, std::move(value));
   value = GetValue(dict, kIdleWarningDelayBattery);
   if (value)
-    prefs->SetValue(prefs::kPowerBatteryIdleWarningDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerBatteryIdleWarningDelayMs, std::move(value));
   value = GetValue(dict, kIdleDelayBattery);
   if (value)
-    prefs->SetValue(prefs::kPowerBatteryIdleDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerBatteryIdleDelayMs, std::move(value));
   value = GetAction(dict, kIdleActionBattery);
   if (value)
-    prefs->SetValue(prefs::kPowerBatteryIdleAction, value.Pass());
+    prefs->SetValue(prefs::kPowerBatteryIdleAction, std::move(value));
 }
 
 ScreenLockDelayPolicyHandler::ScreenLockDelayPolicyHandler(
@@ -460,7 +464,7 @@ ScreenLockDelayPolicyHandler::~ScreenLockDelayPolicyHandler() {
 void ScreenLockDelayPolicyHandler::ApplyPolicySettings(
     const PolicyMap& policies,
     PrefValueMap* prefs) {
-  scoped_ptr<base::Value> policy_value;
+  std::unique_ptr<base::Value> policy_value;
   if (!CheckAndGetValue(policies, NULL, &policy_value))
     return;
   const base::DictionaryValue* dict = NULL;
@@ -468,14 +472,14 @@ void ScreenLockDelayPolicyHandler::ApplyPolicySettings(
     NOTREACHED();
     return;
   }
-  scoped_ptr<base::Value> value;
+  std::unique_ptr<base::Value> value;
 
   value = GetValue(dict, kScreenLockDelayAC);
   if (value)
-    prefs->SetValue(prefs::kPowerAcScreenLockDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerAcScreenLockDelayMs, std::move(value));
   value = GetValue(dict, kScreenLockDelayBattery);
   if (value)
-    prefs->SetValue(prefs::kPowerBatteryScreenLockDelayMs, value.Pass());
+    prefs->SetValue(prefs::kPowerBatteryScreenLockDelayMs, std::move(value));
 }
 
 }  // namespace policy

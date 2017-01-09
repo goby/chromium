@@ -11,12 +11,13 @@
 #ifndef NET_URL_REQUEST_SDCH_DICTIONARY_FETCHER_H_
 #define NET_URL_REQUEST_SDCH_DICTIONARY_FETCHER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
+#include "net/base/net_export.h"
 #include "net/base/sdch_manager.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request.h"
@@ -24,9 +25,8 @@
 
 namespace net {
 
-class BoundNetLog;
+class NetLogWithSource;
 class URLRequest;
-class URLRequestThrottlerEntryInterface;
 
 // This class is used by embedder SDCH policy object to fetch
 // dictionaries. It queues requests for dictionaries and dispatches
@@ -38,7 +38,7 @@ class NET_EXPORT SdchDictionaryFetcher : public URLRequest::Delegate,
  public:
   typedef base::Callback<void(const std::string& dictionary_text,
                               const GURL& dictionary_url,
-                              const BoundNetLog& net_log,
+                              const NetLogWithSource& net_log,
                               bool was_from_cache)>
       OnDictionaryFetchedCallback;
 
@@ -62,14 +62,18 @@ class NET_EXPORT SdchDictionaryFetcher : public URLRequest::Delegate,
   virtual void Cancel();
 
   // Implementation of URLRequest::Delegate methods.
-  void OnResponseStarted(URLRequest* request) override;
+  void OnReceivedRedirect(URLRequest* request,
+                          const RedirectInfo& redirect_info,
+                          bool* defer_redirect) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnReadCompleted(URLRequest* request, int bytes_read) override;
 
  private:
   enum State {
     STATE_NONE,
     STATE_SEND_REQUEST,
-    STATE_SEND_REQUEST_COMPLETE,
+    STATE_RECEIVED_REDIRECT,
+    STATE_SEND_REQUEST_PENDING,
     STATE_READ_BODY,
     STATE_READ_BODY_COMPLETE,
     STATE_REQUEST_COMPLETE,
@@ -90,7 +94,8 @@ class NET_EXPORT SdchDictionaryFetcher : public URLRequest::Delegate,
   // State machine implementation.
   int DoLoop(int rv);
   int DoSendRequest(int rv);
-  int DoSendRequestComplete(int rv);
+  int DoReceivedRedirect(int rv);
+  int DoSendRequestPending(int rv);
   int DoReadBody(int rv);
   int DoReadBodyComplete(int rv);
   int DoCompleteRequest(int rv);
@@ -99,16 +104,18 @@ class NET_EXPORT SdchDictionaryFetcher : public URLRequest::Delegate,
   bool in_loop_;
 
   // A queue of URLs that are being used to download dictionaries.
-  scoped_ptr<UniqueFetchQueue> fetch_queue_;
+  std::unique_ptr<UniqueFetchQueue> fetch_queue_;
 
   // The request, buffer, and consumer supplied data used for getting
   // the current dictionary.  All are null when a fetch is not in progress.
-  scoped_ptr<URLRequest> current_request_;
+  std::unique_ptr<URLRequest> current_request_;
   scoped_refptr<IOBuffer> buffer_;
   OnDictionaryFetchedCallback current_callback_;
 
-  // The currently accumulating dictionary.
-  std::string dictionary_;
+  // The currently accumulating dictionary. Stored as a unique_ptr so all memory
+  // it consumes can be easily freed, as it gets quite big, and
+  // std::string::clear() may not free memory.
+  std::unique_ptr<std::string> dictionary_;
 
   // Store the URLRequestContext associated with the owning SdchManager for
   // use while fetching.

@@ -5,25 +5,26 @@
 #ifndef UI_GL_GL_CONTEXT_OSMESA_H_
 #define UI_GL_GL_CONTEXT_OSMESA_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_export.h"
 
 typedef struct osmesa_context* OSMesaContext;
 
-namespace gfx {
+namespace gl {
 
 class GLShareGroup;
 class GLSurface;
 
 // Encapsulates an OSMesa OpenGL context that uses software rendering.
-class GLContextOSMesa : public GLContextReal {
+class GL_EXPORT GLContextOSMesa : public GLContextReal {
  public:
   explicit GLContextOSMesa(GLShareGroup* share_group);
 
   // Implement GLContext.
   bool Initialize(GLSurface* compatible_surface,
-                  GpuPreference gpu_preference) override;
+                  const GLContextAttribs& attribs) override;
   bool MakeCurrent(GLSurface* surface) override;
   void ReleaseCurrent(GLSurface* surface) override;
   bool IsCurrent(GLSurface* surface) override;
@@ -42,6 +43,6 @@ class GLContextOSMesa : public GLContextReal {
   DISALLOW_COPY_AND_ASSIGN(GLContextOSMesa);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_CONTEXT_OSMESA_H_

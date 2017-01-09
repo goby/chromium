@@ -4,11 +4,19 @@
 
 #include "storage/browser/fileapi/file_system_context.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/task_runner_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/url_request/url_request.h"
 #include "storage/browser/fileapi/copy_or_move_file_validator.h"
 #include "storage/browser/fileapi/external_mount_points.h"
@@ -95,11 +103,11 @@ int FileSystemContext::GetPermissionPolicy(FileSystemType type) {
       return FILE_PERMISSION_USE_FILE_PERMISSION;
 
     case kFileSystemTypeRestrictedNativeLocal:
+    case kFileSystemTypeArcContent:
       return FILE_PERMISSION_READ_ONLY |
              FILE_PERMISSION_USE_FILE_PERMISSION;
 
     case kFileSystemTypeDeviceMedia:
-    case kFileSystemTypeIphoto:
     case kFileSystemTypeItunes:
     case kFileSystemTypeNativeMedia:
     case kFileSystemTypePicasa:
@@ -155,7 +163,7 @@ FileSystemContext::FileSystemContext(
                                              partition_path,
                                              special_storage_policy,
                                              options)),
-      additional_backends_(additional_backends.Pass()),
+      additional_backends_(std::move(additional_backends)),
       auto_mount_handlers_(auto_mount_handlers),
       external_mount_points_(external_mount_points),
       partition_path_(partition_path),
@@ -176,8 +184,8 @@ FileSystemContext::FileSystemContext(
   // Chrome OS the additional backend chromeos::FileSystemBackend handles these
   // types.
   isolated_backend_.reset(new IsolatedFileSystemBackend(
-      !ContainsKey(backend_map_, kFileSystemTypeNativeLocal),
-      !ContainsKey(backend_map_, kFileSystemTypeNativeForPlatformApp)));
+      !base::ContainsKey(backend_map_, kFileSystemTypeNativeLocal),
+      !base::ContainsKey(backend_map_, kFileSystemTypeNativeForPlatformApp)));
   RegisterBackend(isolated_backend_.get());
 
   if (quota_manager_proxy) {
@@ -424,46 +432,44 @@ void FileSystemContext::DeleteFileSystem(
   }
 
   base::PostTaskAndReplyWithResult(
-      default_file_task_runner(),
-      FROM_HERE,
+      default_file_task_runner(), FROM_HERE,
       // It is safe to pass Unretained(quota_util) since context owns it.
       base::Bind(&FileSystemQuotaUtil::DeleteOriginDataOnFileTaskRunner,
                  base::Unretained(backend->GetQuotaUtil()),
-                 make_scoped_refptr(this),
-                 base::Unretained(quota_manager_proxy()),
-                 origin_url,
-                 type),
+                 base::RetainedRef(this),
+                 base::Unretained(quota_manager_proxy()), origin_url, type),
       callback);
 }
 
-scoped_ptr<storage::FileStreamReader> FileSystemContext::CreateFileStreamReader(
+std::unique_ptr<storage::FileStreamReader>
+FileSystemContext::CreateFileStreamReader(
     const FileSystemURL& url,
-    int64 offset,
-    int64 max_bytes_to_read,
+    int64_t offset,
+    int64_t max_bytes_to_read,
     const base::Time& expected_modification_time) {
   if (!url.is_valid())
-    return scoped_ptr<storage::FileStreamReader>();
+    return std::unique_ptr<storage::FileStreamReader>();
   FileSystemBackend* backend = GetFileSystemBackend(url.type());
   if (!backend)
-    return scoped_ptr<storage::FileStreamReader>();
+    return std::unique_ptr<storage::FileStreamReader>();
   return backend->CreateFileStreamReader(
       url, offset, max_bytes_to_read, expected_modification_time, this);
 }
 
-scoped_ptr<FileStreamWriter> FileSystemContext::CreateFileStreamWriter(
+std::unique_ptr<FileStreamWriter> FileSystemContext::CreateFileStreamWriter(
     const FileSystemURL& url,
-    int64 offset) {
+    int64_t offset) {
   if (!url.is_valid())
-    return scoped_ptr<FileStreamWriter>();
+    return std::unique_ptr<FileStreamWriter>();
   FileSystemBackend* backend = GetFileSystemBackend(url.type());
   if (!backend)
-    return scoped_ptr<FileStreamWriter>();
+    return std::unique_ptr<FileStreamWriter>();
   return backend->CreateFileStreamWriter(url, offset, this);
 }
 
-scoped_ptr<FileSystemOperationRunner>
+std::unique_ptr<FileSystemOperationRunner>
 FileSystemContext::CreateFileSystemOperationRunner() {
-  return make_scoped_ptr(new FileSystemOperationRunner(this));
+  return base::WrapUnique(new FileSystemOperationRunner(this));
 }
 
 FileSystemURL FileSystemContext::CrackURL(const GURL& url) const {
@@ -477,11 +483,9 @@ FileSystemURL FileSystemContext::CreateCrackedFileSystemURL(
   return CrackFileSystemURL(FileSystemURL(origin, type, path));
 }
 
-#if defined(OS_CHROMEOS)
 void FileSystemContext::EnableTemporaryFileSystemInIncognito() {
   sandbox_backend_->set_enable_temporary_file_system_in_incognito(true);
 }
-#endif
 
 bool FileSystemContext::CanServeURLRequest(const FileSystemURL& url) const {
   // We never support accessing files in isolated filesystems via an URL.

@@ -29,7 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/frame/NavigatorID.h"
 
 #if !OS(MACOSX) && !OS(WIN)
@@ -40,44 +39,43 @@
 
 namespace blink {
 
-String NavigatorID::appCodeName()
-{
-    return "Mozilla";
+String NavigatorID::appCodeName() {
+  return "Mozilla";
 }
 
-String NavigatorID::appName()
-{
-    return "Netscape";
+String NavigatorID::appName() {
+  return "Netscape";
 }
 
-String NavigatorID::appVersion()
-{
-    // Version is everything in the user agent string past the "Mozilla/" prefix.
-    const String& agent = userAgent();
-    return agent.substring(agent.find('/') + 1);
+String NavigatorID::appVersion() {
+  // Version is everything in the user agent string past the "Mozilla/" prefix.
+  const String& agent = userAgent();
+  return agent.substring(agent.find('/') + 1);
 }
 
-String NavigatorID::platform()
-{
+String NavigatorID::platform() {
 #if OS(MACOSX)
-    // Match Safari and Mozilla on Mac x86.
-    return "MacIntel";
+  // Match Safari and Mozilla on Mac x86.
+  return "MacIntel";
 #elif OS(WIN)
-    // Match Safari and Mozilla on Windows.
-    return "Win32";
-#else // Unix-like systems
-    struct utsname osname;
-    AtomicallyInitializedStaticReference(ThreadSpecific<String>, platformName, new ThreadSpecific<String>());
-    if (platformName->isNull()) {
-        *platformName = String(uname(&osname) >= 0 ? String(osname.sysname) + String(" ") + String(osname.machine) : emptyString());
-    }
-    return *platformName;
+  // Match Safari and Mozilla on Windows.
+  return "Win32";
+#else  // Unix-like systems
+  struct utsname osname;
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<String>, platformName,
+                                  new ThreadSpecific<String>());
+  if (platformName->isNull()) {
+    *platformName = String(uname(&osname) >= 0
+                               ? String(osname.sysname) + String(" ") +
+                                     String(osname.machine)
+                               : emptyString());
+  }
+  return *platformName;
 #endif
 }
 
-String NavigatorID::product()
-{
-    return "Gecko";
+String NavigatorID::product() {
+  return "Gecko";
 }
 
-} // namespace blink
+}  // namespace blink

@@ -10,10 +10,9 @@
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
-#include "chrome/browser/ui/login/login_prompt.h"
+#include "chrome/browser/ui/login/login_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_switches.h"
@@ -102,13 +101,12 @@ IN_PROC_BROWSER_TEST_F(ProxyAuthOnUserBoardScreenTest,
 #endif
 IN_PROC_BROWSER_TEST_F(ProxyAuthOnUserBoardScreenTest,
                        MAYBE_ProxyAuthDialogOnUserBoardScreen) {
-  LoginDisplayHost* login_display_host = LoginDisplayHostImpl::default_host();
+  LoginDisplayHost* login_display_host = LoginDisplayHost::default_host();
   WebUILoginView* web_ui_login_view = login_display_host->GetWebUILoginView();
-  OobeUI* oobe_ui =
-      static_cast<OobeUI*>(web_ui_login_view->GetWebUI()->GetController());
+  OobeUI* oobe_ui = web_ui_login_view->GetOobeUI();
 
   {
-    OobeScreenWaiter screen_waiter(OobeDisplay::SCREEN_ACCOUNT_PICKER);
+    OobeScreenWaiter screen_waiter(OobeScreen::SCREEN_ACCOUNT_PICKER);
     ProxyAuthDialogWaiter auth_dialog_waiter;
     screen_waiter.Wait();
     auth_dialog_waiter.Wait();
@@ -118,7 +116,7 @@ IN_PROC_BROWSER_TEST_F(ProxyAuthOnUserBoardScreenTest,
   }
 
   {
-    OobeScreenWaiter screen_waiter(OobeDisplay::SCREEN_GAIA_SIGNIN);
+    OobeScreenWaiter screen_waiter(OobeScreen::SCREEN_GAIA_SIGNIN);
     ProxyAuthDialogWaiter auth_dialog_waiter;
     ASSERT_TRUE(content::ExecuteScript(oobe_ui->web_ui()->GetWebContents(),
                                        "window.domAutomationController.send(!!("

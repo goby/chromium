@@ -5,13 +5,16 @@
 #ifndef COMPONENTS_DOM_DISTILLER_CORE_DISTILLER_H_
 #define COMPONENTS_DOM_DISTILLER_CORE_DISTILLER_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "components/dom_distiller/core/article_distillation_update.h"
@@ -27,7 +30,7 @@ class DistillerImpl;
 
 class Distiller {
  public:
-  typedef base::Callback<void(scoped_ptr<DistilledArticleProto>)>
+  typedef base::Callback<void(std::unique_ptr<DistilledArticleProto>)>
       DistillationFinishedCallback;
   typedef base::Callback<void(const ArticleDistillationUpdate&)>
       DistillationUpdateCallback;
@@ -41,14 +44,14 @@ class Distiller {
   // a distilled page is added and |finished_cb| will be invoked once
   // distillation is completed.
   virtual void DistillPage(const GURL& url,
-                           scoped_ptr<DistillerPage> distiller_page,
+                           std::unique_ptr<DistillerPage> distiller_page,
                            const DistillationFinishedCallback& finished_cb,
                            const DistillationUpdateCallback& update_cb) = 0;
 };
 
 class DistillerFactory {
  public:
-  virtual scoped_ptr<Distiller> CreateDistillerForUrl(const GURL& url) = 0;
+  virtual std::unique_ptr<Distiller> CreateDistillerForUrl(const GURL& url) = 0;
   virtual ~DistillerFactory() {}
 };
 
@@ -56,13 +59,13 @@ class DistillerFactory {
 class DistillerFactoryImpl : public DistillerFactory {
  public:
   DistillerFactoryImpl(
-      scoped_ptr<DistillerURLFetcherFactory> distiller_url_fetcher_factory,
+      std::unique_ptr<DistillerURLFetcherFactory> distiller_url_fetcher_factory,
       const dom_distiller::proto::DomDistillerOptions& dom_distiller_options);
   ~DistillerFactoryImpl() override;
-  scoped_ptr<Distiller> CreateDistillerForUrl(const GURL& url) override;
+  std::unique_ptr<Distiller> CreateDistillerForUrl(const GURL& url) override;
 
  private:
-  scoped_ptr<DistillerURLFetcherFactory> distiller_url_fetcher_factory_;
+  std::unique_ptr<DistillerURLFetcherFactory> distiller_url_fetcher_factory_;
   dom_distiller::proto::DomDistillerOptions dom_distiller_options_;
 };
 
@@ -75,7 +78,7 @@ class DistillerImpl : public Distiller {
   ~DistillerImpl() override;
 
   void DistillPage(const GURL& url,
-                   scoped_ptr<DistillerPage> distiller_page,
+                   std::unique_ptr<DistillerPage> distiller_page,
                    const DistillationFinishedCallback& finished_cb,
                    const DistillationUpdateCallback& update_cb) override;
 
@@ -110,7 +113,7 @@ class DistillerImpl : public Distiller {
   void OnPageDistillationFinished(
       int page_num,
       const GURL& page_url,
-      scoped_ptr<proto::DomDistillerResult> distilled_page,
+      std::unique_ptr<proto::DomDistillerResult> distilled_page,
       bool distillation_successful);
 
   virtual void FetchImage(int page_num,
@@ -150,7 +153,7 @@ class DistillerImpl : public Distiller {
   const ArticleDistillationUpdate CreateDistillationUpdate() const;
 
   const DistillerURLFetcherFactory& distiller_url_fetcher_factory_;
-  scoped_ptr<DistillerPage> distiller_page_;
+  std::unique_ptr<DistillerPage> distiller_page_;
 
   dom_distiller::proto::DomDistillerOptions dom_distiller_options_;
   DistillationFinishedCallback finished_cb_;

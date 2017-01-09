@@ -8,9 +8,11 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.AsyncTask;
 import android.os.StrictMode;
+import android.os.SystemClock;
 import android.util.Log;
 
 import org.chromium.base.SecureRandomInitializer;
+import org.chromium.base.metrics.CachedMetrics.TimesHistogramSample;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -21,6 +23,7 @@ import java.security.SecureRandom;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.Mac;
@@ -46,6 +49,9 @@ public class WebappAuthenticator {
     private static FutureTask<SecretKey> sMacKeyGenerator;
     private static SecretKey sKey = null;
 
+    private static final TimesHistogramSample sWebappValidationTimes = new TimesHistogramSample(
+            "Android.StrictMode.WebappAuthenticatorMac", TimeUnit.MILLISECONDS);
+
     /**
      * @see #getMacForUrl
      *
@@ -59,7 +65,9 @@ public class WebappAuthenticator {
         // Temporarily allowing disk access while fixing. TODO: http://crbug.com/525785
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
         try {
+            long time = SystemClock.elapsedRealtime();
             goodMac = getMacForUrl(context, url);
+            sWebappValidationTimes.record(SystemClock.elapsedRealtime() - time);
         } finally {
             StrictMode.setThreadPolicy(oldPolicy);
         }
@@ -204,7 +212,7 @@ public class WebappAuthenticator {
                 @Override
                 public SecretKey call() throws Exception {
                     KeyGenerator generator = KeyGenerator.getInstance(MAC_ALGORITHM_NAME);
-                    SecureRandom random = SecureRandom.getInstance("SHA1PRNG");
+                    SecureRandom random = new SecureRandom();
                     SecureRandomInitializer.initialize(random);
                     generator.init(MAC_KEY_BYTE_COUNT * 8, random);
                     return generator.generateKey();

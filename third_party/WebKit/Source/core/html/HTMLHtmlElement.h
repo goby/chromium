@@ -30,18 +30,21 @@
 namespace blink {
 
 class CORE_EXPORT HTMLHtmlElement final : public HTMLElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    DECLARE_NODE_FACTORY(HTMLHtmlElement);
+  DEFINE_WRAPPERTYPEINFO();
 
-    void insertedByParser();
+ public:
+  DECLARE_NODE_FACTORY(HTMLHtmlElement);
 
-private:
-    explicit HTMLHtmlElement(Document&);
+  void insertedByParser();
 
-    bool isURLAttribute(const Attribute&) const override;
+ private:
+  explicit HTMLHtmlElement(Document&);
+
+  void maybeSetupApplicationCache();
+
+  bool isURLAttribute(const Attribute&) const override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLHtmlElement_h
+#endif  // HTMLHtmlElement_h

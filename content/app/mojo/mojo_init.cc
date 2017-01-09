@@ -4,12 +4,13 @@
 
 #include "content/app/mojo/mojo_init.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/common/content_switches.h"
 #include "ipc/ipc_channel.h"
-#include "third_party/mojo/src/mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/embedder.h"
 
 namespace content {
 
@@ -18,20 +19,8 @@ namespace {
 class MojoInitializer {
  public:
   MojoInitializer() {
-    const base::CommandLine& command_line =
-        *base::CommandLine::ForCurrentProcess();
-    if (command_line.HasSwitch("use-new-edk")) {
-      std::string process_type =
-          command_line.GetSwitchValueASCII(switches::kProcessType);
-      if (process_type.empty()) {
-        mojo::embedder::PreInitializeParentProcess();
-      } else {
-        mojo::embedder::PreInitializeChildProcess();
-      }
-    }
-
-    mojo::embedder::SetMaxMessageSize(IPC::Channel::kMaximumMessageSize);
-    mojo::embedder::Init();
+    mojo::edk::SetMaxMessageSize(IPC::Channel::kMaximumMessageSize);
+    mojo::edk::Init();
   }
 };
 

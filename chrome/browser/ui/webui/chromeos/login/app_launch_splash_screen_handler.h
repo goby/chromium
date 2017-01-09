@@ -8,14 +8,13 @@
 #include <set>
 #include <string>
 
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/screens/app_launch_splash_screen_actor.h"
 #include "chrome/browser/chromeos/login/screens/network_error_model.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
 
 namespace chromeos {
-
-class ErrorScreenActor;
 
 // A class that handles the WebUI hooks for the app launch splash screen.
 class AppLaunchSplashScreenHandler
@@ -38,7 +37,6 @@ class AppLaunchSplashScreenHandler
 
   // AppLaunchSplashScreenActor implementation:
   void Show(const std::string& app_id) override;
-  void PrepareToShow() override;
   void Hide() override;
   void ToggleNetworkConfig(bool visible) override;
   void UpdateAppLaunchState(AppLaunchState state) override;

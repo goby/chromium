@@ -5,15 +5,19 @@
 #ifndef MEDIA_BLINK_WEBSOURCEBUFFER_IMPL_H_
 #define MEDIA_BLINK_WEBSOURCEBUFFER_IMPL_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "third_party/WebKit/public/platform/WebSourceBuffer.h"
 
 namespace media {
 class ChunkDemuxer;
+class MediaTracks;
 
 class WebSourceBufferImpl : public blink::WebSourceBuffer {
  public:
@@ -24,12 +28,12 @@ class WebSourceBufferImpl : public blink::WebSourceBuffer {
   void setClient(blink::WebSourceBufferClient* client) override;
   bool setMode(AppendMode mode) override;
   blink::WebTimeRanges buffered() override;
+  double highestPresentationTimestamp() override;
   bool evictCodedFrames(double currentPlaybackTime,
                         size_t newDataSize) override;
-  void append(
-      const unsigned char* data,
-      unsigned length,
-      double* timestamp_offset) override;
+  bool append(const unsigned char* data,
+              unsigned length,
+              double* timestamp_offset) override;
   void resetParserState() override;
   void remove(double start, double end) override;
   bool setTimestampOffset(double offset) override;
@@ -40,7 +44,7 @@ class WebSourceBufferImpl : public blink::WebSourceBuffer {
  private:
   // Demuxer callback handler to process an initialization segment received
   // during an append() call.
-  void InitSegmentReceived();
+  void InitSegmentReceived(std::unique_ptr<MediaTracks> tracks);
 
   std::string id_;
   ChunkDemuxer* demuxer_;  // Owned by WebMediaPlayerImpl.

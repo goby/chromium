@@ -7,10 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
-
-class GURL;
 
 namespace net {
 
@@ -34,4 +32,3 @@ class NET_EXPORT HttpUserAgentSettings {
 }  // namespace net
 
 #endif  // NET_URL_REQUEST_HTTP_USER_AGENT_SETTINGS_H_
-

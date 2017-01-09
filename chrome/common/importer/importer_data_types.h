@@ -5,14 +5,16 @@
 #ifndef CHROME_COMMON_IMPORTER_IMPORTER_DATA_TYPES_H_
 #define CHROME_COMMON_IMPORTER_IMPORTER_DATA_TYPES_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/common/importer/importer_type.h"
 #include "url/gurl.h"
 
@@ -35,13 +37,14 @@ enum ImportItem {
 // Information about a profile needed by an importer to do import work.
 struct SourceProfile {
   SourceProfile();
+  SourceProfile(const SourceProfile& other);
   ~SourceProfile();
 
   base::string16 importer_name;
   ImporterType importer_type;
   base::FilePath source_path;
   base::FilePath app_path;
-  uint16 services_supported;  // Bitmask of ImportItem.
+  uint16_t services_supported;  // Bitmask of ImportItem.
   // The application locale. Stored because we can only access it from the UI
   // thread on the browser process. This is only used by the Firefox importer.
   std::string locale;
@@ -56,14 +59,15 @@ struct SearchEngineInfo {
   base::string16 display_name;
 };
 
-#if defined(OS_WIN)
 // Contains the information read from the IE7/IE8 Storage2 key in the registry.
 struct ImporterIE7PasswordInfo {
   ImporterIE7PasswordInfo();
+  ImporterIE7PasswordInfo(const ImporterIE7PasswordInfo& other);
   ~ImporterIE7PasswordInfo();
+  ImporterIE7PasswordInfo& operator=(const ImporterIE7PasswordInfo& other);
 
   // Hash of the url.
-  std::wstring url_hash;
+  base::string16 url_hash;
 
   // Encrypted data containing the username, password and some more
   // undocumented fields.
@@ -72,7 +76,6 @@ struct ImporterIE7PasswordInfo {
   // When the login was imported.
   base::Time date_created;
 };
-#endif
 
 // Mapped to history::VisitSource after import in the browser.
 enum VisitSource {

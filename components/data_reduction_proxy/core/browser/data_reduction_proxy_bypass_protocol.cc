@@ -13,6 +13,7 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_util.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
 #include "net/proxy/proxy_config.h"
@@ -84,6 +85,7 @@ bool DataReductionProxyBypassProtocol::MaybeBypassProxyAndPrepareToRetry(
     net::URLRequest* request,
     DataReductionProxyBypassType* proxy_bypass_type,
     DataReductionProxyInfo* data_reduction_proxy_info) {
+  DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(request);
   const net::HttpResponseHeaders* response_headers =
       request->response_info().headers.get();
@@ -92,7 +94,9 @@ bool DataReductionProxyBypassProtocol::MaybeBypassProxyAndPrepareToRetry(
 
   // Empty implies either that the request was served from cache or that
   // request was served directly from the origin.
-  if (request->proxy_server().IsEmpty()) {
+  if (!request->proxy_server().is_valid() ||
+      request->proxy_server().is_direct() ||
+      request->proxy_server().host_port_pair().IsEmpty()) {
     ReportResponseProxyServerStatusHistogram(
         RESPONSE_PROXY_SERVER_STATUS_EMPTY);
     return false;
@@ -114,20 +118,19 @@ bool DataReductionProxyBypassProtocol::MaybeBypassProxyAndPrepareToRetry(
     // then apply the bypass logic regardless.
     // TODO(sclittle): Remove this workaround once http://crbug.com/476610 is
     // fixed.
-    data_reduction_proxy_type_info.proxy_servers.push_back(net::ProxyServer(
-        net::ProxyServer::SCHEME_HTTPS, request->proxy_server()));
-    data_reduction_proxy_type_info.proxy_servers.push_back(net::ProxyServer(
-        net::ProxyServer::SCHEME_HTTP, request->proxy_server()));
-    data_reduction_proxy_type_info.is_fallback = false;
-    data_reduction_proxy_type_info.is_ssl =
-        request->url().SchemeIsCryptographic();
+    const net::HostPortPair host_port_pair =
+        !request->proxy_server().is_valid() ||
+                request->proxy_server().is_direct()
+            ? net::HostPortPair()
+            : request->proxy_server().host_port_pair();
+    data_reduction_proxy_type_info.proxy_servers.push_back(
+        net::ProxyServer(net::ProxyServer::SCHEME_HTTPS, host_port_pair));
+    data_reduction_proxy_type_info.proxy_servers.push_back(
+        net::ProxyServer(net::ProxyServer::SCHEME_HTTP, host_port_pair));
+    data_reduction_proxy_type_info.proxy_index = 0;
   } else {
     ReportResponseProxyServerStatusHistogram(RESPONSE_PROXY_SERVER_STATUS_DRP);
   }
-
-  // TODO(bengr): Implement bypass for CONNECT tunnel.
-  if (data_reduction_proxy_type_info.is_ssl)
-    return false;
 
   if (data_reduction_proxy_type_info.proxy_servers.empty())
     return false;
@@ -135,7 +138,7 @@ bool DataReductionProxyBypassProtocol::MaybeBypassProxyAndPrepareToRetry(
   // At this point, the response is expected to have the data reduction proxy
   // via header, so detect and report cases where the via header is missing.
   DataReductionProxyBypassStats::DetectAndRecordMissingViaHeaderResponseCode(
-      !data_reduction_proxy_type_info.is_fallback, response_headers);
+      data_reduction_proxy_type_info.proxy_index == 0, response_headers);
 
   // GetDataReductionProxyBypassType will only log a net_log event if a bypass
   // command was sent via the data reduction proxy headers
@@ -157,7 +160,7 @@ bool DataReductionProxyBypassProtocol::MaybeBypassProxyAndPrepareToRetry(
           request->context()->proxy_service()->proxy_retry_info(), proxy_server,
           NULL)) {
     DataReductionProxyBypassStats::RecordDataReductionProxyBypassInfo(
-        !data_reduction_proxy_type_info.is_fallback,
+        data_reduction_proxy_type_info.proxy_index == 0,
         data_reduction_proxy_info->bypass_all, proxy_server, bypass_type);
   }
 
@@ -173,21 +176,7 @@ bool DataReductionProxyBypassProtocol::MaybeBypassProxyAndPrepareToRetry(
 
   // Retry if block-once was specified or if method is idempotent.
   return bypass_type == BYPASS_EVENT_TYPE_CURRENT ||
-         IsRequestIdempotent(request);
-}
-
-// static
-bool DataReductionProxyBypassProtocol::IsRequestIdempotent(
-    const net::URLRequest* request) {
-  DCHECK(request);
-  if (request->method() == "GET" ||
-      request->method() == "OPTIONS" ||
-      request->method() == "HEAD" ||
-      request->method() == "PUT" ||
-      request->method() == "DELETE" ||
-      request->method() == "TRACE")
-    return true;
-  return false;
+         util::IsMethodIdempotent(request->method());
 }
 
 }  // namespace data_reduction_proxy

@@ -11,12 +11,12 @@
 namespace {
 
 jobject NewGlobalRefForKeyEvent(jobject key_event) {
-  if (key_event == NULL) return NULL;
+  if (key_event == nullptr) return nullptr;
   return base::android::AttachCurrentThread()->NewGlobalRef(key_event);
 }
 
 void DeleteGlobalRefForKeyEvent(jobject key_event) {
-  if (key_event != NULL)
+  if (key_event != nullptr)
     base::android::AttachCurrentThread()->DeleteGlobalRef(key_event);
 }
 
@@ -25,30 +25,33 @@ void DeleteGlobalRefForKeyEvent(jobject key_event) {
 namespace content {
 
 NativeWebKeyboardEvent::NativeWebKeyboardEvent()
-    : os_event(NULL),
+    : os_event(nullptr),
       skip_in_browser(false) {
 }
 
 NativeWebKeyboardEvent::NativeWebKeyboardEvent(
+    JNIEnv* env,
+    const base::android::JavaRef<jobject>& android_key_event,
     blink::WebInputEvent::Type type,
-    int modifiers, double time_secs, int keycode, int scancode,
-    int unicode_character, bool is_system_key)
-    : WebKeyboardEvent(WebKeyboardEventBuilder::Build(
-        type, modifiers, time_secs, keycode, scancode, unicode_character,
-        is_system_key)) {
-  os_event = NULL;
-  skip_in_browser = false;
-}
-
-NativeWebKeyboardEvent::NativeWebKeyboardEvent(
-    jobject android_key_event, blink::WebInputEvent::Type type,
-    int modifiers, double time_secs, int keycode, int scancode,
-    int unicode_character, bool is_system_key)
-    : WebKeyboardEvent(WebKeyboardEventBuilder::Build(
-        type, modifiers, time_secs, keycode, scancode, unicode_character,
-        is_system_key)) {
-  os_event = NewGlobalRefForKeyEvent(android_key_event);
-  skip_in_browser = false;
+    int modifiers,
+    double time_secs,
+    int keycode,
+    int scancode,
+    int unicode_character,
+    bool is_system_key)
+    : WebKeyboardEvent(WebKeyboardEventBuilder::Build(env,
+                                                      android_key_event,
+                                                      type,
+                                                      modifiers,
+                                                      time_secs,
+                                                      keycode,
+                                                      scancode,
+                                                      unicode_character,
+                                                      is_system_key)),
+      os_event(nullptr),
+      skip_in_browser(false) {
+  if (!android_key_event.is_null())
+    os_event = NewGlobalRefForKeyEvent(android_key_event.obj());
 }
 
 NativeWebKeyboardEvent::NativeWebKeyboardEvent(

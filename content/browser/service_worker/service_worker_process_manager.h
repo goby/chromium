@@ -11,8 +11,8 @@
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/synchronization/lock.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 
 class GURL;
@@ -20,6 +20,7 @@ class GURL;
 namespace content {
 
 class BrowserContext;
+struct EmbeddedWorkerSettings;
 class SiteInstance;
 
 // Interacts with the UI thread to keep RenderProcessHosts alive while the
@@ -36,8 +37,11 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
   ~ServiceWorkerProcessManager();
 
   // Synchronously prevents new processes from being allocated
-  // and drops references to RenderProcessHosts.
+  // and drops references to RenderProcessHosts. Called on the UI thread.
   void Shutdown();
+
+  // Returns true if Shutdown() has been called. May be called by any thread.
+  bool IsShutdown();
 
   // Returns a reference to a running process suitable for starting the Service
   // Worker at |script_url|. Posts |callback| to the IO thread to indicate
@@ -49,9 +53,11 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
       int embedded_worker_id,
       const GURL& pattern,
       const GURL& script_url,
+      bool can_use_existing_process,
       const base::Callback<void(ServiceWorkerStatusCode,
                                 int process_id,
-                                bool is_new_process)>& callback);
+                                bool is_new_process,
+                                const EmbeddedWorkerSettings&)>& callback);
 
   // Drops a reference to a process that was running a Service Worker, and its
   // SiteInstance.  This must match a call to AllocateWorkerProcess.
@@ -66,6 +72,11 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
     process_id_for_test_ = process_id;
   }
 
+  // Sets the process ID to be used for tests that force creating a new process.
+  void SetNewProcessIdForTest(int process_id) {
+    new_process_id_for_test_ = process_id;
+  }
+
   // Adds/removes process reference for the |pattern|, the process with highest
   // references count will be chosen to start a worker.
   void AddProcessReferenceToPattern(const GURL& pattern, int process_id);
@@ -75,12 +86,19 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
   bool PatternHasProcessToRun(const GURL& pattern) const;
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerProcessManagerTest, SortProcess);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerProcessManagerTestP, SortProcess);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerProcessManagerTestP,
+                           FindAvailableProcess);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerProcessManagerTestP,
+                           AllocateWorkerProcess_FindAvailableProcess);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerProcessManagerTestP,
+                           AllocateWorkerProcess_InShutdown);
 
   // Information about the process for an EmbeddedWorkerInstance.
   struct ProcessInfo {
     explicit ProcessInfo(const scoped_refptr<SiteInstance>& site_instance);
     explicit ProcessInfo(int process_id);
+    ProcessInfo(const ProcessInfo& other);
     ~ProcessInfo();
 
     // Stores the SiteInstance the Worker lives inside. This needs to outlive
@@ -104,8 +122,19 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
   // Returns a process vector sorted by the reference count for the |pattern|.
   std::vector<int> SortProcessesForPattern(const GURL& pattern) const;
 
-  // These fields are only accessed on the UI thread.
+  // Returns the id of an available process for this pattern, or
+  // ChildProcessHost::kInvalidUniqueID if there is none.
+  int FindAvailableProcess(const GURL& pattern);
+
+  // Guarded by |browser_context_lock_|.
+  // Written only on the UI thread, so the UI thread doesn't need to acquire the
+  // lock when reading. Can be read from other threads with the lock.
   BrowserContext* browser_context_;
+
+  // Protects |browser_context_|.
+  base::Lock browser_context_lock_;
+
+  // All fields below are only accessed on the UI thread.
 
   // Maps the ID of a running EmbeddedWorkerInstance to information about the
   // process it's running inside. Since the Instances themselves live on the IO
@@ -119,6 +148,7 @@ class CONTENT_EXPORT ServiceWorkerProcessManager {
   // In unit tests, this will be returned as the process for all
   // EmbeddedWorkerInstances.
   int process_id_for_test_;
+  int new_process_id_for_test_;
 
   // Candidate processes info for each pattern, should be accessed on the
   // UI thread.

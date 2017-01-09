@@ -8,7 +8,8 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_session_plugin_handler_delegate.h"

@@ -6,15 +6,19 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <errno.h>
+#include <stddef.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
@@ -22,10 +26,6 @@
 #include "chrome/common/service_process_util.h"
 #include "components/version_info/version_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-static sockaddr_un* throwaway_sockaddr_un;
-static const size_t kMaxPipeNameLength =
-    sizeof(throwaway_sockaddr_un->sun_path);
 
 // static
 bool MockLaunchd::MakeABundle(const base::FilePath& dst,
@@ -112,7 +112,7 @@ MockLaunchd::~MockLaunchd() {
 
 CFDictionaryRef MockLaunchd::CopyJobDictionary(CFStringRef label) {
   if (!as_service_) {
-    scoped_ptr<MultiProcessLock> running_lock(
+    std::unique_ptr<MultiProcessLock> running_lock(
         TakeNamedLock(pipe_name_, false));
     if (running_lock.get())
       return NULL;
@@ -167,8 +167,8 @@ CFDictionaryRef MockLaunchd::CopyDictionaryByCheckingIn(CFErrorRef* error) {
   // Create unix_addr structure.
   struct sockaddr_un unix_addr = {0};
   unix_addr.sun_family = AF_UNIX;
-  size_t path_len =
-      base::strlcpy(unix_addr.sun_path, pipe_name_.c_str(), kMaxPipeNameLength);
+  size_t path_len = base::strlcpy(unix_addr.sun_path, pipe_name_.c_str(),
+                                  sizeof(unix_addr.sun_path));
   DCHECK_EQ(pipe_name_.length(), path_len);
   unix_addr.sun_len = SUN_LEN(&unix_addr);
 
@@ -227,7 +227,8 @@ CFDictionaryRef MockLaunchd::CopyDictionaryByCheckingIn(CFErrorRef* error) {
 
 bool MockLaunchd::RemoveJob(CFStringRef label, CFErrorRef* error) {
   remove_called_ = true;
-  message_loop_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+  message_loop_->task_runner()->PostTask(
+      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
   return true;
 }
 
@@ -236,7 +237,8 @@ bool MockLaunchd::RestartJob(Domain domain,
                              CFStringRef name,
                              CFStringRef session_type) {
   restart_called_ = true;
-  message_loop_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+  message_loop_->task_runner()->PostTask(
+      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
   return true;
 }
 

@@ -5,8 +5,12 @@
 #ifndef UI_APP_LIST_SEARCH_TOKENIZED_STRING_CHAR_ITERATOR_H_
 #define UI_APP_LIST_SEARCH_TOKENIZED_STRING_CHAR_ITERATOR_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/app_list/app_list_export.h"
 #include "ui/app_list/search/tokenized_string.h"
 
@@ -26,7 +30,7 @@ class APP_LIST_EXPORT TokenizedStringCharIterator {
     State(size_t token_index, int char_index);
 
     size_t token_index;
-    int32 char_index;
+    int32_t char_index;
   };
 
   // Requires |tokenized| out-lives this iterator.
@@ -41,11 +45,11 @@ class APP_LIST_EXPORT TokenizedStringCharIterator {
   bool NextToken();
 
   // Returns the current char if there is one. Otherwise, returns 0.
-  int32 Get() const;
+  int32_t Get() const;
 
   // Returns the array index in original text of the tokenized string that is
   // passed in constructor.
-  int32 GetArrayPos() const;
+  int32_t GetArrayPos() const;
 
   // Returns the number of UTF16 code units for the current char.
   size_t GetCharSize() const;
@@ -67,7 +71,7 @@ class APP_LIST_EXPORT TokenizedStringCharIterator {
   const TokenizedString::Mappings& mappings_;
 
   size_t current_token_;
-  scoped_ptr<base::i18n::UTF16CharIterator> current_token_iter_;
+  std::unique_ptr<base::i18n::UTF16CharIterator> current_token_iter_;
 
   DISALLOW_COPY_AND_ASSIGN(TokenizedStringCharIterator);
 };

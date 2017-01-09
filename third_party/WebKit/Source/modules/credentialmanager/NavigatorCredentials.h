@@ -15,26 +15,28 @@ namespace blink {
 class CredentialsContainer;
 class Navigator;
 
-class NavigatorCredentials final : public GarbageCollectedFinalized<NavigatorCredentials>, public HeapSupplement<Navigator>, public DOMWindowProperty {
-    USING_GARBAGE_COLLECTED_MIXIN(NavigatorCredentials);
-public:
-    static NavigatorCredentials& from(Navigator&);
-    virtual ~NavigatorCredentials();
+class NavigatorCredentials final
+    : public GarbageCollected<NavigatorCredentials>,
+      public Supplement<Navigator>,
+      public DOMWindowProperty {
+  USING_GARBAGE_COLLECTED_MIXIN(NavigatorCredentials);
 
-    // NavigatorCredentials.idl
-    static CredentialsContainer* credentials(Navigator&);
+ public:
+  static NavigatorCredentials& from(Navigator&);
+  // NavigatorCredentials.idl
+  static CredentialsContainer* credentials(Navigator&);
 
-    DECLARE_TRACE();
+  DECLARE_TRACE();
 
-private:
-    explicit NavigatorCredentials(Navigator&);
-    CredentialsContainer* credentials();
+ private:
+  explicit NavigatorCredentials(Navigator&);
+  CredentialsContainer* credentials();
 
-    static const char* supplementName();
+  static const char* supplementName();
 
-    Member<CredentialsContainer> m_credentialsContainer;
+  Member<CredentialsContainer> m_credentialsContainer;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NavigatorCredentials_h
+#endif  // NavigatorCredentials_h

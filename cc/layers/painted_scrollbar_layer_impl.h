@@ -5,6 +5,7 @@
 #ifndef CC_LAYERS_PAINTED_SCROLLBAR_LAYER_IMPL_H_
 #define CC_LAYERS_PAINTED_SCROLLBAR_LAYER_IMPL_H_
 
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/input/scrollbar.h"
 #include "cc/layers/scrollbar_layer_impl_base.h"
@@ -13,18 +14,19 @@
 namespace cc {
 
 class LayerTreeImpl;
-class ScrollView;
 
 class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
  public:
-  static scoped_ptr<PaintedScrollbarLayerImpl> Create(
+  static std::unique_ptr<PaintedScrollbarLayerImpl> Create(
       LayerTreeImpl* tree_impl,
       int id,
-      ScrollbarOrientation orientation);
+      ScrollbarOrientation orientation,
+      bool is_left_side_vertical_scrollbar,
+      bool is_overlay);
   ~PaintedScrollbarLayerImpl() override;
 
   // LayerImpl implementation.
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
   void PushPropertiesTo(LayerImpl* layer) override;
 
   bool WillDraw(DrawMode draw_mode,
@@ -56,7 +58,9 @@ class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
  protected:
   PaintedScrollbarLayerImpl(LayerTreeImpl* tree_impl,
                             int id,
-                            ScrollbarOrientation orientation);
+                            ScrollbarOrientation orientation,
+                            bool is_left_side_vertical_scrollbar,
+                            bool is_overlay);
 
   // ScrollbarLayerImplBase implementation.
   int ThumbThickness() const override;

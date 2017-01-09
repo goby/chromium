@@ -8,6 +8,7 @@
 #include <X11/Xlib.h>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/x/x11_atom_cache.h"
@@ -24,7 +25,6 @@ class Point;
 
 namespace views {
 class DesktopWindowTreeHost;
-class NativeWidgetAura;
 
 // An EventFilter that sets properties on X11 windows.
 class VIEWS_EXPORT X11WindowEventFilter : public ui::EventHandler {

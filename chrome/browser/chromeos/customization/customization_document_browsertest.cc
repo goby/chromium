@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
@@ -211,7 +214,7 @@ class CustomizationVPDTest : public InProcessBrowserTest,
   }
 
  private:
-  scoped_ptr<system::FakeStatisticsProvider> statistics_provider_;
+  std::unique_ptr<system::FakeStatisticsProvider> statistics_provider_;
 };
 
 IN_PROC_BROWSER_TEST_P(CustomizationVPDTest, GetUILanguageList) {
@@ -226,7 +229,8 @@ IN_PROC_BROWSER_TEST_P(CustomizationVPDTest, GetUILanguageList) {
       << "Test failed for initial_locale='" << GetParam()
       << "', locales=" << Print(locales);
 
-  scoped_ptr<base::ListValue> ui_language_list = GetUILanguageList(NULL, "");
+  std::unique_ptr<base::ListValue> ui_language_list =
+      GetUILanguageList(NULL, "");
   EXPECT_GE(ui_language_list->GetSize(), locales.size())
       << "Test failed for initial_locale='" << GetParam() << "'";
 

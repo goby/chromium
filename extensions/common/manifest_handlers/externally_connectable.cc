@@ -4,8 +4,12 @@
 
 #include "extensions/common/manifest_handlers/externally_connectable.h"
 
-#include <algorithm>
+#include <stddef.h>
 
+#include <algorithm>
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/crx_file/id_util.h"
@@ -16,6 +20,7 @@
 #include "extensions/common/permissions/api_permission_set.h"
 #include "extensions/common/url_pattern.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/url_util.h"
 #include "url/gurl.h"
 
 namespace rcd = net::registry_controlled_domains;
@@ -67,7 +72,7 @@ bool ExternallyConnectableHandler::Parse(Extension* extension,
       extension, APIPermission::kExternallyConnectableAllUrls);
 
   std::vector<InstallWarning> install_warnings;
-  scoped_ptr<ExternallyConnectableInfo> info =
+  std::unique_ptr<ExternallyConnectableInfo> info =
       ExternallyConnectableInfo::FromValue(
           *externally_connectable, allow_all_urls, &install_warnings, error);
   if (!info)
@@ -93,15 +98,15 @@ ExternallyConnectableInfo* ExternallyConnectableInfo::Get(
 }
 
 // static
-scoped_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
+std::unique_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
     const base::Value& value,
     bool allow_all_urls,
     std::vector<InstallWarning>* install_warnings,
     base::string16* error) {
-  scoped_ptr<ExternallyConnectable> externally_connectable =
+  std::unique_ptr<ExternallyConnectable> externally_connectable =
       ExternallyConnectable::FromValue(value, error);
   if (!externally_connectable)
-    return scoped_ptr<ExternallyConnectableInfo>();
+    return std::unique_ptr<ExternallyConnectableInfo>();
 
   URLPatternSet matches;
 
@@ -116,7 +121,7 @@ scoped_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
       if (pattern.Parse(*it) != URLPattern::PARSE_SUCCESS) {
         *error = ErrorUtils::FormatErrorMessageUTF16(
             errors::kErrorInvalidMatchPattern, *it);
-        return scoped_ptr<ExternallyConnectableInfo>();
+        return std::unique_ptr<ExternallyConnectableInfo>();
       }
 
       if (allow_all_urls && pattern.match_all_urls()) {
@@ -135,9 +140,20 @@ scoped_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
         continue;
       }
 
+      url::CanonHostInfo host_info;
+      std::string canonical_host =
+          net::CanonicalizeHost(pattern.host(), &host_info);
+      if (canonical_host.empty()) {
+        // CanonicalizeHost returns empty string on error. The URL parsing
+        // combined with host().empty() should have caught this above.
+        *error = ErrorUtils::FormatErrorMessageUTF16(
+            errors::kErrorInvalidMatchPattern, *it);
+        return std::unique_ptr<ExternallyConnectableInfo>();
+      }
+
       // Wildcards on subdomains of a TLD are not allowed.
-      size_t registry_length = rcd::GetRegistryLength(
-          pattern.host(),
+      bool has_registry = rcd::HostHasRegistryControlledDomain(
+          canonical_host,
           // This means that things that look like TLDs - the foobar in
           // http://google.foobar - count as TLDs.
           rcd::INCLUDE_UNKNOWN_REGISTRIES,
@@ -145,17 +161,9 @@ scoped_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
           // codereview.appspot.com and evil.appspot.com are different.
           rcd::INCLUDE_PRIVATE_REGISTRIES);
 
-      if (registry_length == std::string::npos) {
-        // The URL parsing combined with host().empty() should have caught this.
-        NOTREACHED() << *it;
-        *error = ErrorUtils::FormatErrorMessageUTF16(
-            errors::kErrorInvalidMatchPattern, *it);
-        return scoped_ptr<ExternallyConnectableInfo>();
-      }
-
       // Broad match patterns like "*.com", "*.co.uk", and even "*.appspot.com"
       // are not allowed. However just "appspot.com" is ok.
-      if (registry_length == 0 && pattern.match_subdomains()) {
+      if (!has_registry && pattern.match_subdomains()) {
         // Warning not error for forwards compatibility.
         install_warnings->push_back(
             InstallWarning(ErrorUtils::FormatErrorMessage(
@@ -186,7 +194,7 @@ scoped_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
       } else {
         *error =
             ErrorUtils::FormatErrorMessageUTF16(errors::kErrorInvalidId, *it);
-        return scoped_ptr<ExternallyConnectableInfo>();
+        return std::unique_ptr<ExternallyConnectableInfo>();
       }
     }
   }
@@ -199,7 +207,7 @@ scoped_ptr<ExternallyConnectableInfo> ExternallyConnectableInfo::FromValue(
   bool accepts_tls_channel_id =
       externally_connectable->accepts_tls_channel_id.get() &&
       *externally_connectable->accepts_tls_channel_id;
-  return make_scoped_ptr(new ExternallyConnectableInfo(
+  return base::WrapUnique(new ExternallyConnectableInfo(
       matches, ids, all_ids, accepts_tls_channel_id));
 }
 

@@ -5,19 +5,30 @@
 #ifndef COMPONENTS_FLAGS_UI_FLAGS_STATE_H_
 #define COMPONENTS_FLAGS_UI_FLAGS_STATE_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/callback_forward.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 
 namespace base {
+class FeatureList;
 class ListValue;
 }
 
 namespace flags_ui {
+
+// Internal functionality exposed for tests.
+namespace internal {
+// The trial group selected when feature variation parameters are registered via
+// FlagsState::RegisterFeatureVariationParameters().
+extern const char kTrialGroupAboutFlags[];
+}  // namespace internal
 
 struct FeatureEntry;
 class FlagsStorage;
@@ -54,11 +65,25 @@ class FlagsState {
   FlagsState(const FeatureEntry* feature_entries, size_t num_feature_entries);
   ~FlagsState();
 
+  // Reads the state from |flags_storage| and adds the command line flags
+  // belonging to the active feature entries to |command_line|. Features are
+  // appended via |enable_features_flag_name| and |disable_features_flag_name|.
   void ConvertFlagsToSwitches(FlagsStorage* flags_storage,
                               base::CommandLine* command_line,
                               SentinelsMode sentinels,
                               const char* enable_features_flag_name,
                               const char* disable_features_flag_name);
+
+  // Reads the state from |flags_storage| and returns a set of strings
+  // corresponding to enabled entries. Does not populate any information about
+  // entries that enable/disable base::Feature states.
+  std::set<std::string> GetSwitchesFromFlags(FlagsStorage* flags_storage);
+
+  // Reads the state from |flags_storage| and returns a set of strings
+  // corresponding to enabled/disabled base::Feature states. Feature names are
+  // suffixed with ":enabled" or ":disabled" depending on their state.
+  std::set<std::string> GetFeaturesFromFlags(FlagsStorage* flags_storage);
+
   bool IsRestartNeededToCommitChanges();
   void SetFeatureEntryEnabled(FlagsStorage* flags_storage,
                               const std::string& internal_name,
@@ -67,6 +92,16 @@ class FlagsState {
       std::map<std::string, base::CommandLine::StringType>* switch_list);
   void ResetAllFlags(FlagsStorage* flags_storage);
   void Reset();
+
+  // Registers variations parameter values selected for features in about:flags.
+  // The selected flags are retrieved from |flags_storage|, the registered
+  // variation parameters are connected to their corresponding features in
+  // |feature_list|. Returns the (possibly empty) comma separated list of
+  // additional variation ids to register in the MetricsService that come from
+  // variations selected using chrome://flags.
+  std::vector<std::string> RegisterAllFeatureVariationParameters(
+      FlagsStorage* flags_storage,
+      base::FeatureList* feature_list);
 
   // Gets the list of feature entries. Entries that are available for the
   // current platform are appended to |supported_entries|; all other entries are
@@ -98,6 +133,10 @@ class FlagsState {
       const char* extra_flag_sentinel_end_flag_name);
 
  private:
+  // Keeps track of affected switches for each FeatureEntry, based on which
+  // choice is selected for it.
+  struct SwitchEntry;
+
   // Adds mapping to |name_to_switch_map| to set the given switch name/value.
   void AddSwitchMapping(const std::string& key,
                         const std::string& switch_name,
@@ -146,6 +185,15 @@ class FlagsState {
   void GetSanitizedEnabledFlagsForCurrentPlatform(
       FlagsStorage* flags_storage,
       std::set<std::string>* result);
+
+  // Generates a flags to switches mapping based on the set of enabled flags
+  // from |flags_storage|. On output, |enabled_entries| will contain the
+  // internal names of enabled flags and |name_to_switch_map| will contain
+  // information on how they map to command-line flags or features.
+  void GenerateFlagsToSwitchesMapping(
+      FlagsStorage* flags_storage,
+      std::set<std::string>* enabled_entries,
+      std::map<std::string, SwitchEntry>* name_to_switch_map);
 
   const FeatureEntry* feature_entries_;
   size_t num_feature_entries_;

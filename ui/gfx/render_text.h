@@ -5,19 +5,22 @@
 #ifndef UI_GFX_RENDER_TEXT_H_
 #define UI_GFX_RENDER_TEXT_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/gtest_prod_util.h"
 #include "base/i18n/rtl.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPaint.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/break_list.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/font_render_params.h"
@@ -43,6 +46,7 @@ class RenderTextTestApi;
 }
 
 class Canvas;
+struct DecoratedText;
 class Font;
 
 namespace internal {
@@ -53,21 +57,21 @@ class GFX_EXPORT SkiaTextRenderer {
   explicit SkiaTextRenderer(Canvas* canvas);
   virtual ~SkiaTextRenderer();
 
-  void SetDrawLooper(SkDrawLooper* draw_looper);
+  void SetDrawLooper(sk_sp<SkDrawLooper> draw_looper);
   void SetFontRenderParams(const FontRenderParams& params,
                            bool subpixel_rendering_suppressed);
-  void SetTypeface(SkTypeface* typeface);
+  void SetTypeface(sk_sp<SkTypeface> typeface);
   void SetTextSize(SkScalar size);
-  void SetFontFamilyWithStyle(const std::string& family, int font_style);
   void SetForegroundColor(SkColor foreground);
-  void SetShader(SkShader* shader);
+  void SetShader(sk_sp<SkShader> shader);
+  void SetHaloEffect();
   // Sets underline metrics to use if the text will be drawn with an underline.
   // If not set, default values based on the size of the text will be used. The
   // two metrics must be set together.
   void SetUnderlineMetrics(SkScalar thickness, SkScalar position);
   void DrawSelection(const std::vector<Rect>& selection, SkColor color);
   virtual void DrawPosText(const SkPoint* pos,
-                           const uint16* glyphs,
+                           const uint16_t* glyphs,
                            size_t glyph_count);
   // Draw underline and strike-through text decorations.
   // Based on |SkCanvas::DrawTextDecorations()| and constants from:
@@ -109,7 +113,7 @@ class GFX_EXPORT SkiaTextRenderer {
   SkPaint paint_;
   SkScalar underline_thickness_;
   SkScalar underline_position_;
-  scoped_ptr<DiagonalStrike> diagonal_;
+  std::unique_ptr<DiagonalStrike> diagonal_;
 
   DISALLOW_COPY_AND_ASSIGN(SkiaTextRenderer);
 };
@@ -119,6 +123,7 @@ class StyleIterator {
  public:
   StyleIterator(const BreakList<SkColor>& colors,
                 const BreakList<BaselineStyle>& baselines,
+                const BreakList<Font::Weight>& weights,
                 const std::vector<BreakList<bool>>& styles);
   ~StyleIterator();
 
@@ -126,6 +131,7 @@ class StyleIterator {
   SkColor color() const { return color_->second; }
   BaselineStyle baseline() const { return baseline_->second; }
   bool style(TextStyle s) const { return style_[s]->second; }
+  Font::Weight weight() const { return weight_->second; }
 
   // Get the intersecting range of the current iterator set.
   Range GetRange() const;
@@ -136,10 +142,12 @@ class StyleIterator {
  private:
   BreakList<SkColor> colors_;
   BreakList<BaselineStyle> baselines_;
+  BreakList<Font::Weight> weights_;
   std::vector<BreakList<bool> > styles_;
 
   BreakList<SkColor>::const_iterator color_;
   BreakList<BaselineStyle>::const_iterator baseline_;
+  BreakList<Font::Weight>::const_iterator weight_;
   std::vector<BreakList<bool>::const_iterator> style_;
 
   DISALLOW_COPY_AND_ASSIGN(StyleIterator);
@@ -166,6 +174,7 @@ struct LineSegment {
 // A line of display text, comprised of a line segment list and some metrics.
 struct Line {
   Line();
+  Line(const Line& other);
   ~Line();
 
   // Segments that make up this line in visual order.
@@ -181,10 +190,11 @@ struct Line {
   int baseline;
 };
 
-// Creates an SkTypeface from a font |family| name and a |gfx::Font::FontStyle|.
-// May return NULL.
-skia::RefPtr<SkTypeface> CreateSkiaTypeface(const std::string& family,
-                                            int style);
+// Creates an SkTypeface from a font, |italic| and a desired |weight|.
+// May return null.
+sk_sp<SkTypeface> CreateSkiaTypeface(const Font& font,
+                                     bool italic,
+                                     Font::Weight weight);
 
 // Applies the given FontRenderParams to a Skia |paint|.
 void ApplyRenderParams(const FontRenderParams& params,
@@ -199,6 +209,16 @@ void ApplyRenderParams(const FontRenderParams& params,
 // for rendering and translation between logical and visual data.
 class GFX_EXPORT RenderText {
  public:
+// The character used for displaying obscured text.
+// TODO(benrg): GTK uses the first of U+25CF, U+2022, U+2731, U+273A, '*'
+// that's available in the font (find_invisible_char() in gtkentry.c).
+// Use a bullet character on Mac.
+#if defined(OS_MACOSX)
+  static constexpr base::char16 kPasswordReplacementChar = 0x2022;
+#else
+  static constexpr base::char16 kPasswordReplacementChar = '*';
+#endif
+
   virtual ~RenderText();
 
   // Creates a platform-specific or cross-platform RenderText instance.
@@ -206,7 +226,11 @@ class GFX_EXPORT RenderText {
   static RenderText* CreateInstanceForEditing();
 
   // Creates another instance of the same concrete class.
-  virtual scoped_ptr<RenderText> CreateInstanceOfSameType() const = 0;
+  virtual std::unique_ptr<RenderText> CreateInstanceOfSameType() const = 0;
+
+  // Like above but copies all style settings too.
+  std::unique_ptr<RenderText> CreateInstanceOfSameStyle(
+      const base::string16& text) const;
 
   const base::string16& text() const { return text_; }
   void SetText(const base::string16& text);
@@ -225,9 +249,6 @@ class GFX_EXPORT RenderText {
 
   bool cursor_visible() const { return cursor_visible_; }
   void set_cursor_visible(bool visible) { cursor_visible_ = visible; }
-
-  bool insert_mode() const { return insert_mode_; }
-  void ToggleInsertMode();
 
   SkColor cursor_color() const { return cursor_color_; }
   void set_cursor_color(SkColor color) { cursor_color_ = color; }
@@ -263,6 +284,14 @@ class GFX_EXPORT RenderText {
   bool multiline() const { return multiline_; }
   void SetMultiline(bool multiline);
 
+  // If multiline, a non-zero value will cap the number of lines rendered,
+  // and elide the rest (currently only ELIDE_TAIL supported.)
+  void SetMaxLines(size_t max_lines);
+  size_t max_lines() const { return max_lines_; }
+
+  // Returns the actual number of lines, broken by |lines_|.
+  size_t GetNumLines();
+
   // TODO(mukai): ELIDE_LONG_WORDS is not supported.
   WordWrapBehavior word_wrap_behavior() const { return word_wrap_behavior_; }
   void SetWordWrapBehavior(WordWrapBehavior behavior);
@@ -297,6 +326,9 @@ class GFX_EXPORT RenderText {
     subpixel_rendering_suppressed_ = suppressed;
   }
 
+  bool halo_effect() const { return halo_effect_; }
+  void set_halo_effect(bool halo_effect) { halo_effect_ = halo_effect; }
+
   const SelectionModel& selection_model() const { return selection_model_; }
 
   const Range& selection() const { return selection_model_.selection(); }
@@ -306,10 +338,11 @@ class GFX_EXPORT RenderText {
 
   // Moves the cursor left or right. Cursor movement is visual, meaning that
   // left and right are relative to screen, not the directionality of the text.
-  // If |select| is false, the selection start is moved to the same position.
+  // |selection_behavior| determines whether a selection is to be made and it's
+  // behavior.
   void MoveCursor(BreakType break_type,
                   VisualCursorDirection direction,
-                  bool select);
+                  SelectionBehavior selection_behavior);
 
   // Set the selection_model_ to the value of |selection|.
   // The selection range is clamped to text().length() if out of range.
@@ -317,6 +350,12 @@ class GFX_EXPORT RenderText {
   // If any index in |selection_model| is not a cursorable position (not on a
   // grapheme boundary), it is a no-op and returns false.
   bool MoveCursorTo(const SelectionModel& selection_model);
+
+  // Moves the cursor to the text index corresponding to |point|. If |select| is
+  // true, a selection is made with the current selection start index. If the
+  // resultant text indices do not lie on valid grapheme boundaries, it is a no-
+  // op and returns false.
+  bool MoveCursorTo(const gfx::Point& point, bool select);
 
   // Set the selection_model_ based on |range|.
   // If the |range| start or end is greater than text length, it is modified
@@ -358,6 +397,9 @@ class GFX_EXPORT RenderText {
   // The |range| should be valid, non-reversed, and within [0, text().length()].
   void SetStyle(TextStyle style, bool value);
   void ApplyStyle(TextStyle style, bool value, const Range& range);
+
+  void SetWeight(Font::Weight weight);
+  void ApplyWeight(Font::Weight weight, const Range& range);
 
   // Returns whether this style is enabled consistently across the entire
   // RenderText.
@@ -421,6 +463,9 @@ class GFX_EXPORT RenderText {
   // amid multi-character graphemes are allowed here, unlike IsValidCursorIndex.
   virtual bool IsValidLogicalIndex(size_t index) const;
 
+  // Returns true if this instance supports text selection.
+  virtual bool IsSelectionSupported() const = 0;
+
   // Get the visual bounds of a cursor at |caret|. These bounds typically
   // represent a vertical line if |insert_mode| is true. Pass false for
   // |insert_mode| to retrieve the bounds of the associated glyph. These bounds
@@ -471,17 +516,30 @@ class GFX_EXPORT RenderText {
   // and the display offset.
   Vector2d GetLineOffset(size_t line_number);
 
+  // Retrieves the word displayed at the given |point| along with its styling
+  // information. |point| is in the view's coordinates. If no word is displayed
+  // at the point, returns a nearby word. |baseline_point| should correspond to
+  // the baseline point of the leftmost glyph of the |word| in the view's
+  // coordinates. Returns false, if no word can be retrieved.
+  bool GetDecoratedWordAtPoint(const Point& point,
+                               DecoratedText* decorated_word,
+                               Point* baseline_point);
+
+  // Retrieves the text in the given |range|.
+  base::string16 GetTextFromRange(const Range& range) const;
+
  protected:
   RenderText();
 
   // NOTE: The value of these accessors may be stale. Please make sure
-  // that these fields are up-to-date before accessing them.
+  // that these fields are up to date before accessing them.
   const base::string16& layout_text() const { return layout_text_; }
   const base::string16& display_text() const { return display_text_; }
   bool text_elided() const { return text_elided_; }
 
   const BreakList<SkColor>& colors() const { return colors_; }
   const BreakList<BaselineStyle>& baselines() const { return baselines_; }
+  const BreakList<Font::Weight>& weights() const { return weights_; }
   const std::vector<BreakList<bool> >& styles() const { return styles_; }
 
   const std::vector<internal::Line>& lines() const { return lines_; }
@@ -623,40 +681,6 @@ class GFX_EXPORT RenderText {
 
  private:
   friend class test::RenderTextTestApi;
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, DefaultStyles);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, SetStyles);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, ApplyStyles);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, AppendTextKeepsStyles);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, ObscuredText);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, RevealObscuredText);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, ElidedText);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, ElidedObscuredText);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, TruncatedText);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, TruncatedObscuredText);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, GraphemePositions);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, MinLineHeight);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, EdgeSelectionModels);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, GetTextOffset);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, GetTextOffsetHorizontalDefaultInRTL);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_MinWidth);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_NormalWidth);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_SufficientWidth);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_Newline);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_WordWrapBehavior);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_LineBreakerBehavior);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest,
-                           Multiline_SurrogatePairsOrCombiningChars);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Multiline_ZeroWidthChars);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, NewlineWithoutMultilineFlag);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, GlyphBounds);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, HarfBuzz_GlyphBounds);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest,
-                           MoveCursorLeftRight_MeiryoUILigatures);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, Win_LogicalClusters);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, SameFontForParentheses);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, BreakRunsByUnicodeBlocks);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, PangoAttributes);
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, StringFitsOwnWidth);
 
   // Set the cursor to |position|, with the caret trailing the previous
   // grapheme, or if there is no previous grapheme, leading the cursor position.
@@ -686,6 +710,20 @@ class GFX_EXPORT RenderText {
   // Draw the selection.
   void DrawSelection(Canvas* canvas);
 
+  // Returns the nearest word start boundary for |index|. First searches in the
+  // CURSOR_BACKWARD direction, then in the CURSOR_FORWARD direction. Returns
+  // the text length if no valid boundary is found.
+  size_t GetNearestWordStartBoundary(size_t index) const;
+
+  // Expands |range| to its nearest word boundaries and returns the resulting
+  // range. Maintains directionality of |range|.
+  Range ExpandRangeToWordBoundary(const Range& range) const;
+
+  // Returns the decorated text corresponding to |range|. Returns false if the
+  // text cannot be retrieved, e.g. if the text is obscured.
+  virtual bool GetDecoratedTextForRange(const Range& range,
+                                        DecoratedText* decorated_text) = 0;
+
   // Logical UTF-16 string data to be drawn.
   base::string16 text_;
 
@@ -713,9 +751,8 @@ class GFX_EXPORT RenderText {
   // for the cursor when positioning text.
   bool cursor_enabled_;
 
-  // The cursor visibility and insert mode.
+  // The cursor visibility.
   bool cursor_visible_;
-  bool insert_mode_;
 
   // The color used for the cursor.
   SkColor cursor_color_;
@@ -737,6 +774,7 @@ class GFX_EXPORT RenderText {
   // TODO(msw): Expand to support cursor, selection, background, etc. colors.
   BreakList<SkColor> colors_;
   BreakList<BaselineStyle> baselines_;
+  BreakList<Font::Weight> weights_;
   std::vector<BreakList<bool> > styles_;
 
   // Breaks saved without temporary composition and selection styling.
@@ -774,6 +812,9 @@ class GFX_EXPORT RenderText {
   // Whether the text should be broken into multiple lines. Uses the width of
   // |display_rect_| as the width cap.
   bool multiline_;
+
+  // If multiple lines, the maximum number of lines to render, or 0.
+  size_t max_lines_;
 
   // The wrap behavior when the text is broken into lines. Do nothing unless
   // |multiline_| is set. The default value is IGNORE_LONG_WORDS.
@@ -813,6 +854,9 @@ class GFX_EXPORT RenderText {
 
   // A list of valid display text line break positions.
   BreakList<size_t> line_breaks_;
+
+  // Draw text with 1px border.
+  bool halo_effect_ = false;
 
   // Lines computed by EnsureLayout. These should be invalidated upon
   // OnLayoutTextAttributeChanged and OnDisplayTextAttributeChanged calls.

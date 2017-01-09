@@ -4,11 +4,17 @@
 
 #include "content/child/service_worker/web_service_worker_registration_impl.h"
 
+#include <utility>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "content/child/service_worker/service_worker_dispatcher.h"
 #include "content/child/service_worker/service_worker_registration_handle_reference.h"
 #include "content/child/service_worker/web_service_worker_impl.h"
 #include "content/child/service_worker/web_service_worker_provider_impl.h"
 #include "content/common/service_worker/service_worker_types.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/WebNavigationPreloadState.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerError.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerRegistrationProxy.h"
 
 namespace content {
@@ -39,11 +45,14 @@ WebServiceWorkerRegistrationImpl::QueuedTask::QueuedTask(
     const scoped_refptr<WebServiceWorkerImpl>& worker)
     : type(type), worker(worker) {}
 
+WebServiceWorkerRegistrationImpl::QueuedTask::QueuedTask(
+    const QueuedTask& other) = default;
+
 WebServiceWorkerRegistrationImpl::QueuedTask::~QueuedTask() {}
 
 WebServiceWorkerRegistrationImpl::WebServiceWorkerRegistrationImpl(
-    scoped_ptr<ServiceWorkerRegistrationHandleReference> handle_ref)
-    : handle_ref_(handle_ref.Pass()), proxy_(nullptr) {
+    std::unique_ptr<ServiceWorkerRegistrationHandleReference> handle_ref)
+    : handle_ref_(std::move(handle_ref)), proxy_(nullptr) {
   DCHECK(handle_ref_);
   DCHECK_NE(kInvalidServiceWorkerRegistrationHandleId,
             handle_ref_->handle_id());
@@ -116,39 +125,79 @@ blink::WebURL WebServiceWorkerRegistrationImpl::scope() const {
 
 void WebServiceWorkerRegistrationImpl::update(
     blink::WebServiceWorkerProvider* provider,
-    WebServiceWorkerUpdateCallbacks* callbacks) {
+    std::unique_ptr<WebServiceWorkerUpdateCallbacks> callbacks) {
   WebServiceWorkerProviderImpl* provider_impl =
       static_cast<WebServiceWorkerProviderImpl*>(provider);
   ServiceWorkerDispatcher* dispatcher =
       ServiceWorkerDispatcher::GetThreadSpecificInstance();
   DCHECK(dispatcher);
   dispatcher->UpdateServiceWorker(provider_impl->provider_id(),
-                                  registration_id(), callbacks);
+                                  registrationId(), std::move(callbacks));
 }
 
 void WebServiceWorkerRegistrationImpl::unregister(
     blink::WebServiceWorkerProvider* provider,
-    WebServiceWorkerUnregistrationCallbacks* callbacks) {
+    std::unique_ptr<WebServiceWorkerUnregistrationCallbacks> callbacks) {
   WebServiceWorkerProviderImpl* provider_impl =
       static_cast<WebServiceWorkerProviderImpl*>(provider);
   ServiceWorkerDispatcher* dispatcher =
       ServiceWorkerDispatcher::GetThreadSpecificInstance();
   DCHECK(dispatcher);
   dispatcher->UnregisterServiceWorker(provider_impl->provider_id(),
-                                      registration_id(), callbacks);
+                                      registrationId(), std::move(callbacks));
 }
 
-int64 WebServiceWorkerRegistrationImpl::registration_id() const {
+void WebServiceWorkerRegistrationImpl::enableNavigationPreload(
+    bool enable,
+    blink::WebServiceWorkerProvider* provider,
+    std::unique_ptr<WebEnableNavigationPreloadCallbacks> callbacks) {
+  WebServiceWorkerProviderImpl* provider_impl =
+      static_cast<WebServiceWorkerProviderImpl*>(provider);
+  ServiceWorkerDispatcher* dispatcher =
+      ServiceWorkerDispatcher::GetThreadSpecificInstance();
+  DCHECK(dispatcher);
+  dispatcher->EnableNavigationPreload(provider_impl->provider_id(),
+                                      registrationId(), enable,
+                                      std::move(callbacks));
+}
+
+void WebServiceWorkerRegistrationImpl::getNavigationPreloadState(
+    blink::WebServiceWorkerProvider* provider,
+    std::unique_ptr<WebGetNavigationPreloadStateCallbacks> callbacks) {
+  WebServiceWorkerProviderImpl* provider_impl =
+      static_cast<WebServiceWorkerProviderImpl*>(provider);
+  ServiceWorkerDispatcher* dispatcher =
+      ServiceWorkerDispatcher::GetThreadSpecificInstance();
+  DCHECK(dispatcher);
+  dispatcher->GetNavigationPreloadState(provider_impl->provider_id(),
+                                        registrationId(), std::move(callbacks));
+}
+
+void WebServiceWorkerRegistrationImpl::setNavigationPreloadHeader(
+    const blink::WebString& value,
+    blink::WebServiceWorkerProvider* provider,
+    std::unique_ptr<WebSetNavigationPreloadHeaderCallbacks> callbacks) {
+  WebServiceWorkerProviderImpl* provider_impl =
+      static_cast<WebServiceWorkerProviderImpl*>(provider);
+  ServiceWorkerDispatcher* dispatcher =
+      ServiceWorkerDispatcher::GetThreadSpecificInstance();
+  DCHECK(dispatcher);
+  dispatcher->SetNavigationPreloadHeader(provider_impl->provider_id(),
+                                         registrationId(), value.utf8(),
+                                         std::move(callbacks));
+}
+
+int64_t WebServiceWorkerRegistrationImpl::registrationId() const {
   return handle_ref_->registration_id();
 }
 
 // static
-blink::WebPassOwnPtr<blink::WebServiceWorkerRegistration::Handle>
+std::unique_ptr<blink::WebServiceWorkerRegistration::Handle>
 WebServiceWorkerRegistrationImpl::CreateHandle(
     const scoped_refptr<WebServiceWorkerRegistrationImpl>& registration) {
   if (!registration)
     return nullptr;
-  return blink::adoptWebPtr(new HandleImpl(registration));
+  return base::MakeUnique<HandleImpl>(registration);
 }
 
 blink::WebServiceWorkerRegistration::Handle*

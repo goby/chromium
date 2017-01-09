@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_EXTENSIONS_API_FILE_SYSTEM_REQUEST_FILE_SYSTEM_DIALOG_VIEW_H_
 
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
@@ -39,7 +40,7 @@ class RequestFileSystemDialogView : public views::DialogDelegate {
       const base::Callback<void(ui::DialogButton)>& callback);
 
   // views::DialogDelegate overrides:
-  base::string16 GetDialogTitle() const override;
+  base::string16 GetAccessibleWindowTitle() const override;
   int GetDefaultDialogButton() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   ui::ModalType GetModalType() const override;

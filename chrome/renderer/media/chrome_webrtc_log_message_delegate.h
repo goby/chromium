@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "chrome/common/media/webrtc_logging_message_data.h"
 #include "content/public/renderer/webrtc_log_message_delegate.h"
 #include "ipc/ipc_channel_proxy.h"
@@ -15,7 +16,6 @@ namespace base {
 class SingleThreadTaskRunner;
 }
 
-class PartialCircularBuffer;
 class WebRtcLoggingMessageFilter;
 
 // ChromeWebRtcLogMessageDelegate handles WebRTC logging. There is one object

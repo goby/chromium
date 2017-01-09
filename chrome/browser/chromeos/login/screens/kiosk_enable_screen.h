@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/screens/base_screen.h"
 #include "chrome/browser/chromeos/login/screens/kiosk_enable_screen_actor.h"
 
@@ -24,7 +24,6 @@ class KioskEnableScreen : public BaseScreen,
   ~KioskEnableScreen() override;
 
   // BaseScreen implementation:
-  void PrepareToShow() override {}
   void Show() override;
   void Hide() override {}
   std::string GetName() const override;

@@ -11,10 +11,12 @@
 
 #include <string>
 
+#include "base/scoped_observer.h"
 #include "chrome/browser/browsing_data/browsing_data_remover.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 
 class PluginPrefs;
+class PrefService;
 
 namespace extension_browsing_data_api_constants {
 
@@ -49,16 +51,15 @@ extern const char kUnprotectedWebKey[];
 // Errors!
 extern const char kBadDataTypeDetails[];
 extern const char kDeleteProhibitedError[];
-extern const char kOneAtATimeError[];
 
 }  // namespace extension_browsing_data_api_constants
 
-class BrowsingDataSettingsFunction : public ChromeSyncExtensionFunction {
+class BrowsingDataSettingsFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("browsingData.settings", BROWSINGDATA_SETTINGS)
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~BrowsingDataSettingsFunction() override {}
@@ -72,6 +73,8 @@ class BrowsingDataSettingsFunction : public ChromeSyncExtensionFunction {
                   base::DictionaryValue* permitted_dict,
                   const char* data_type,
                   bool is_selected);
+
+  PrefService* prefs_ = nullptr;
 };
 
 // This serves as a base class from which the browsing data API removal
@@ -84,6 +87,8 @@ class BrowsingDataSettingsFunction : public ChromeSyncExtensionFunction {
 class BrowsingDataRemoverFunction : public ChromeAsyncExtensionFunction,
                                     public BrowsingDataRemover::Observer {
  public:
+  BrowsingDataRemoverFunction();
+
   // BrowsingDataRemover::Observer interface method.
   void OnBrowsingDataRemoverDone() override;
 
@@ -91,7 +96,7 @@ class BrowsingDataRemoverFunction : public ChromeAsyncExtensionFunction,
   bool RunAsync() override;
 
  protected:
-  ~BrowsingDataRemoverFunction() override {}
+  ~BrowsingDataRemoverFunction() override;
 
   // Children should override this method to provide the proper removal mask
   // based on the API call they represent.
@@ -113,6 +118,7 @@ class BrowsingDataRemoverFunction : public ChromeAsyncExtensionFunction,
   base::Time remove_since_;
   int removal_mask_;
   int origin_type_mask_;
+  ScopedObserver<BrowsingDataRemover, BrowsingDataRemover::Observer> observer_;
 };
 
 class BrowsingDataRemoveAppcacheFunction : public BrowsingDataRemoverFunction {

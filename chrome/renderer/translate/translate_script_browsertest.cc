@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/test/base/chrome_render_view_test.h"
+#include "components/grit/components_resources.h"
 #include "components/translate/core/common/translate_errors.h"
-#include "grit/components_resources.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebScriptSource.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -37,6 +38,8 @@ const char kTranslate[] = "cr.googleTranslate.translate('auto', 'en')";
 
 // JavaScript code to mimic element.js provided by a translate server.
 const char kElementJs[] =
+    "serverParams = '';"
+    "gtTimeInfo = {};"
     "translateApiKey = '';"
     "google = {};"
     "google.translate = {};"

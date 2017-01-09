@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_PROFILE_RESETTER_BRANDCODE_CONFIG_FETCHER_H_
 #define CHROME_BROWSER_PROFILE_RESETTER_BRANDCODE_CONFIG_FETCHER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+#include <utility>
+
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
@@ -24,10 +27,10 @@ class BrandcodeConfigFetcher : public net::URLFetcherDelegate {
                          const std::string& brandcode);
   ~BrandcodeConfigFetcher() override;
 
-  bool IsActive() const { return config_fetcher_; }
+  bool IsActive() const { return !!config_fetcher_; }
 
-  scoped_ptr<BrandcodedDefaultSettings> GetSettings() {
-    return default_settings_.Pass();
+  std::unique_ptr<BrandcodedDefaultSettings> GetSettings() {
+    return std::move(default_settings_);
   }
 
   // Sets the new callback. The previous one won't be called.
@@ -47,10 +50,10 @@ class BrandcodeConfigFetcher : public net::URLFetcherDelegate {
   FetchCallback fetch_callback_;
 
   // Helper to fetch the online config file.
-  scoped_ptr<net::URLFetcher> config_fetcher_;
+  std::unique_ptr<net::URLFetcher> config_fetcher_;
 
   // Fetched settings.
-  scoped_ptr<BrandcodedDefaultSettings> default_settings_;
+  std::unique_ptr<BrandcodedDefaultSettings> default_settings_;
 
   DISALLOW_COPY_AND_ASSIGN(BrandcodeConfigFetcher);
 };

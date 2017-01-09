@@ -5,28 +5,30 @@
 #ifndef NET_HTTP_HTTP_SERVER_PROPERTIES_MANAGER_H_
 #define NET_HTTP_HTTP_SERVER_PROPERTIES_MANAGER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/net_export.h"
 #include "net/http/http_server_properties.h"
 #include "net/http/http_server_properties_impl.h"
 
-class PrefService;
-
 namespace base {
-class SequencedTaskRunner;
+class SingleThreadTaskRunner;
 }
 
 namespace net {
+
+class IPAddress;
 
 ////////////////////////////////////////////////////////////////////////////////
 // HttpServerPropertiesManager
@@ -52,13 +54,37 @@ namespace net {
 // and grab a WeakPtr.
 class NET_EXPORT HttpServerPropertiesManager : public HttpServerProperties {
  public:
-  // Create an instance of the HttpServerPropertiesManager. The lifetime of the
-  // PrefService objects must be longer than that of the
-  // HttpServerPropertiesManager object. Must be constructed on the Pref thread.
+  // Provides an interface to interface with persistent preferences storage
+  // implemented by the embedder.
+  class NET_EXPORT PrefDelegate {
+   public:
+    virtual ~PrefDelegate();
+
+    // Returns true if the pref system has data for the server properties.
+    virtual bool HasServerProperties() = 0;
+
+    // Returns the branch of the preferences system for the server properties.
+    virtual const base::DictionaryValue& GetServerProperties() const = 0;
+
+    // Sets the server properties to the given value.
+    virtual void SetServerProperties(const base::DictionaryValue& value) = 0;
+
+    // Start and stop listening for external storage changes. There will only
+    // be one callback active at a time.
+    virtual void StartListeningForUpdates(const base::Closure& callback) = 0;
+    virtual void StopListeningForUpdates() = 0;
+  };
+
+  // Create an instance of the HttpServerPropertiesManager.
+  //
+  // Ownership of the PrefDelegate pointer is taken by this class. This is
+  // passed as a raw pointer rather than a scoped_refptr currently because
+  // the test uses gmock and it doesn't forward move semantics properly.
+  //
+  // Must be constructed on the Pref thread.
   HttpServerPropertiesManager(
-      PrefService* pref_service,
-      const char* pref_path,
-      scoped_refptr<base::SequencedTaskRunner> network_task_runner);
+      PrefDelegate* pref_delegate,
+      scoped_refptr<base::SingleThreadTaskRunner> network_task_runner);
   ~HttpServerPropertiesManager() override;
 
   // Initialize on Network thread.
@@ -79,22 +105,21 @@ class NET_EXPORT HttpServerPropertiesManager : public HttpServerProperties {
   // HttpServerProperties methods:
   // ----------------------------------
 
-  base::WeakPtr<HttpServerProperties> GetWeakPtr() override;
   void Clear() override;
-  bool SupportsRequestPriority(const HostPortPair& server) override;
-  bool GetSupportsSpdy(const HostPortPair& server) override;
-  void SetSupportsSpdy(const HostPortPair& server, bool support_spdy) override;
+  bool SupportsRequestPriority(const url::SchemeHostPort& server) override;
+  bool GetSupportsSpdy(const url::SchemeHostPort& server) override;
+  void SetSupportsSpdy(const url::SchemeHostPort& server,
+                       bool support_spdy) override;
   bool RequiresHTTP11(const HostPortPair& server) override;
   void SetHTTP11Required(const HostPortPair& server) override;
   void MaybeForceHTTP11(const HostPortPair& server,
                         SSLConfig* ssl_config) override;
   AlternativeServiceVector GetAlternativeServices(
-      const HostPortPair& origin) override;
-  bool SetAlternativeService(const HostPortPair& origin,
+      const url::SchemeHostPort& origin) override;
+  bool SetAlternativeService(const url::SchemeHostPort& origin,
                              const AlternativeService& alternative_service,
-                             double alternative_probability,
                              base::Time expiration) override;
-  bool SetAlternativeServices(const HostPortPair& origin,
+  bool SetAlternativeServices(const url::SchemeHostPort& origin,
                               const AlternativeServiceInfoVector&
                                   alternative_service_info_vector) override;
   void MarkAlternativeServiceBroken(
@@ -107,31 +132,23 @@ class NET_EXPORT HttpServerPropertiesManager : public HttpServerProperties {
       const AlternativeService& alternative_service) override;
   void ConfirmAlternativeService(
       const AlternativeService& alternative_service) override;
-  void ClearAlternativeServices(const HostPortPair& origin) override;
   const AlternativeServiceMap& alternative_service_map() const override;
-  scoped_ptr<base::Value> GetAlternativeServiceInfoAsValue() const override;
-  void SetAlternativeServiceProbabilityThreshold(double threshold) override;
-  const SettingsMap& GetSpdySettings(
-      const HostPortPair& host_port_pair) override;
-  bool SetSpdySetting(const HostPortPair& host_port_pair,
-                      SpdySettingsIds id,
-                      SpdySettingsFlags flags,
-                      uint32 value) override;
-  void ClearSpdySettings(const HostPortPair& host_port_pair) override;
-  void ClearAllSpdySettings() override;
-  const SpdySettingsMap& spdy_settings_map() const override;
-  bool GetSupportsQuic(IPAddressNumber* last_address) const override;
-  void SetSupportsQuic(bool used_quic,
-                       const IPAddressNumber& last_address) override;
-  void SetServerNetworkStats(const HostPortPair& host_port_pair,
+  std::unique_ptr<base::Value> GetAlternativeServiceInfoAsValue()
+      const override;
+  bool GetSupportsQuic(IPAddress* last_address) const override;
+  void SetSupportsQuic(bool used_quic, const IPAddress& last_address) override;
+  void SetServerNetworkStats(const url::SchemeHostPort& server,
                              ServerNetworkStats stats) override;
   const ServerNetworkStats* GetServerNetworkStats(
-      const HostPortPair& host_port_pair) override;
+      const url::SchemeHostPort& server) override;
   const ServerNetworkStatsMap& server_network_stats_map() const override;
   bool SetQuicServerInfo(const QuicServerId& server_id,
                          const std::string& server_info) override;
   const std::string* GetQuicServerInfo(const QuicServerId& server_id) override;
   const QuicServerInfoMap& quic_server_info_map() const override;
+  size_t max_server_configs_stored_in_properties() const override;
+  void SetMaxServerConfigsStoredInProperties(
+      size_t max_server_configs_stored_in_properties) override;
 
  protected:
   // The location where ScheduleUpdatePrefsOnNetworkThread was called.
@@ -143,9 +160,9 @@ class NET_EXPORT HttpServerPropertiesManager : public HttpServerProperties {
     MARK_ALTERNATIVE_SERVICE_RECENTLY_BROKEN = 4,
     CONFIRM_ALTERNATIVE_SERVICE = 5,
     CLEAR_ALTERNATIVE_SERVICE = 6,
-    SET_SPDY_SETTING = 7,
-    CLEAR_SPDY_SETTINGS = 8,
-    CLEAR_ALL_SPDY_SETTINGS = 9,
+    // deprecated: SET_SPDY_SETTING = 7,
+    // deprecated: CLEAR_SPDY_SETTINGS = 8,
+    // deprecated: CLEAR_ALL_SPDY_SETTINGS = 9,
     SET_SUPPORTS_QUIC = 10,
     SET_SERVER_NETWORK_STATS = 11,
     DETECTED_CORRUPTED_PREFS = 12,
@@ -175,9 +192,8 @@ class NET_EXPORT HttpServerPropertiesManager : public HttpServerProperties {
   // network thread. Protected for testing.
   void UpdateCacheFromPrefsOnNetworkThread(
       std::vector<std::string>* spdy_servers,
-      SpdySettingsMap* spdy_settings_map,
       AlternativeServiceMap* alternative_service_map,
-      IPAddressNumber* last_quic_address,
+      IPAddress* last_quic_address,
       ServerNetworkStatsMap* server_network_stats_map,
       QuicServerInfoMap* quic_server_info_map,
       bool detected_corrupted_prefs);
@@ -206,88 +222,88 @@ class NET_EXPORT HttpServerPropertiesManager : public HttpServerProperties {
   // Update prefs::kHttpServerProperties preferences on pref thread. Executes an
   // optional |completion| callback when finished. Protected for testing.
   void UpdatePrefsOnPrefThread(base::ListValue* spdy_server_list,
-                               SpdySettingsMap* spdy_settings_map,
                                AlternativeServiceMap* alternative_service_map,
-                               IPAddressNumber* last_quic_address,
+                               IPAddress* last_quic_address,
                                ServerNetworkStatsMap* server_network_stats_map,
                                QuicServerInfoMap* quic_server_info_map,
                                const base::Closure& completion);
 
  private:
+  typedef std::vector<std::string> ServerList;
+
   FRIEND_TEST_ALL_PREFIXES(HttpServerPropertiesManagerTest,
                            AddToAlternativeServiceMap);
   FRIEND_TEST_ALL_PREFIXES(HttpServerPropertiesManagerTest,
-                           AlternativeServiceExpirationDouble);
+                           DoNotLoadAltSvcForInsecureOrigins);
+  FRIEND_TEST_ALL_PREFIXES(HttpServerPropertiesManagerTest,
+                           DoNotLoadExpiredAlternativeService);
   void OnHttpServerPropertiesChanged();
 
-  bool ReadSupportsQuic(const base::DictionaryValue& server_dict,
-                        IPAddressNumber* last_quic_address);
-  void AddToSpdySettingsMap(const HostPortPair& server,
-                            const base::DictionaryValue& server_dict,
-                            SpdySettingsMap* spdy_settings_map);
+  bool AddServersData(const base::DictionaryValue& server_dict,
+                      ServerList* spdy_servers,
+                      AlternativeServiceMap* alternative_service_map,
+                      ServerNetworkStatsMap* network_stats_map,
+                      int version);
   bool ParseAlternativeServiceDict(
       const base::DictionaryValue& alternative_service_dict,
       const std::string& server_str,
       AlternativeServiceInfo* alternative_service_info);
   bool AddToAlternativeServiceMap(
-      const HostPortPair& server,
+      const url::SchemeHostPort& server,
       const base::DictionaryValue& server_dict,
       AlternativeServiceMap* alternative_service_map);
-  bool AddToNetworkStatsMap(const HostPortPair& server,
+  bool ReadSupportsQuic(const base::DictionaryValue& server_dict,
+                        IPAddress* last_quic_address);
+  bool AddToNetworkStatsMap(const url::SchemeHostPort& server,
                             const base::DictionaryValue& server_dict,
                             ServerNetworkStatsMap* network_stats_map);
   bool AddToQuicServerInfoMap(const base::DictionaryValue& server_dict,
                               QuicServerInfoMap* quic_server_info_map);
 
-  void SaveSpdySettingsToServerPrefs(const SettingsMap* spdy_settings_map,
-                                     base::DictionaryValue* server_pref_dict);
   void SaveAlternativeServiceToServerPrefs(
       const AlternativeServiceInfoVector* alternative_service_info_vector,
       base::DictionaryValue* server_pref_dict);
+  void SaveSupportsQuicToPrefs(
+      const IPAddress* last_quic_address,
+      base::DictionaryValue* http_server_properties_dict);
   void SaveNetworkStatsToServerPrefs(
       const ServerNetworkStats* server_network_stats,
       base::DictionaryValue* server_pref_dict);
   void SaveQuicServerInfoMapToServerPrefs(
       QuicServerInfoMap* quic_server_info_map,
       base::DictionaryValue* http_server_properties_dict);
-  void SaveSupportsQuicToPrefs(
-      const IPAddressNumber* last_quic_address,
-      base::DictionaryValue* http_server_properties_dict);
 
   // -----------
   // Pref thread
   // -----------
 
-  const scoped_refptr<base::SequencedTaskRunner> pref_task_runner_;
+  const scoped_refptr<base::SingleThreadTaskRunner> pref_task_runner_;
 
   base::WeakPtr<HttpServerPropertiesManager> pref_weak_ptr_;
 
   // Used to post cache update tasks.
-  scoped_ptr<base::OneShotTimer> pref_cache_update_timer_;
+  std::unique_ptr<base::OneShotTimer> pref_cache_update_timer_;
 
-  // Used to track the spdy servers changes.
-  PrefChangeRegistrar pref_change_registrar_;
-  PrefService* pref_service_;  // Weak.
+  std::unique_ptr<PrefDelegate> pref_delegate_;
   bool setting_prefs_;
-  const char* path_;
 
   // --------------
   // Network thread
   // --------------
 
-  const scoped_refptr<base::SequencedTaskRunner> network_task_runner_;
+  const scoped_refptr<base::SingleThreadTaskRunner> network_task_runner_;
 
   // Used to post |prefs::kHttpServerProperties| pref update tasks.
-  scoped_ptr<base::OneShotTimer> network_prefs_update_timer_;
+  std::unique_ptr<base::OneShotTimer> network_prefs_update_timer_;
 
-  scoped_ptr<HttpServerPropertiesImpl> http_server_properties_impl_;
+  std::unique_ptr<HttpServerPropertiesImpl> http_server_properties_impl_;
 
   // Used to get |weak_ptr_| to self on the pref thread.
-  scoped_ptr<base::WeakPtrFactory<HttpServerPropertiesManager> >
+  std::unique_ptr<base::WeakPtrFactory<HttpServerPropertiesManager>>
       pref_weak_ptr_factory_;
 
   // Used to get |weak_ptr_| to self on the network thread.
-  scoped_ptr<base::WeakPtrFactory<HttpServerPropertiesManager> >
+  std::unique_ptr<base::WeakPtrFactory<HttpServerPropertiesManager>>
       network_weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpServerPropertiesManager);

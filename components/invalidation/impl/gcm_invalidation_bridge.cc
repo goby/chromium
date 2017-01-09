@@ -4,8 +4,10 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/invalidation/impl/gcm_invalidation_bridge.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
@@ -41,7 +43,8 @@ class GCMInvalidationBridge::Core : public syncer::GCMNetworkChannelDelegate,
   ~Core() override;
 
   // syncer::GCMNetworkChannelDelegate implementation.
-  void Initialize(ConnectionStateCallback callback) override;
+  void Initialize(ConnectionStateCallback connection_state_callback,
+                  base::Closure store_reset_callback) override;
   void RequestToken(RequestTokenCallback callback) override;
   void InvalidateToken(const std::string& token) override;
   void Register(RegisterCallback callback) override;
@@ -59,6 +62,7 @@ class GCMInvalidationBridge::Core : public syncer::GCMNetworkChannelDelegate,
                          const std::string& echo_token);
 
   void OnConnectionStateChanged(bool online);
+  void OnStoreReset();
 
  private:
   base::WeakPtr<GCMInvalidationBridge> bridge_;
@@ -66,6 +70,7 @@ class GCMInvalidationBridge::Core : public syncer::GCMNetworkChannelDelegate,
 
   MessageCallback message_callback_;
   ConnectionStateCallback connection_state_callback_;
+  base::Closure store_reset_callback_;
 
   base::WeakPtrFactory<Core> weak_factory_;
 
@@ -84,9 +89,12 @@ GCMInvalidationBridge::Core::Core(
 
 GCMInvalidationBridge::Core::~Core() {}
 
-void GCMInvalidationBridge::Core::Initialize(ConnectionStateCallback callback) {
+void GCMInvalidationBridge::Core::Initialize(
+    ConnectionStateCallback connection_state_callback,
+    base::Closure store_reset_callback) {
   DCHECK(CalledOnValidThread());
-  connection_state_callback_ = callback;
+  connection_state_callback_ = connection_state_callback;
+  store_reset_callback_ = store_reset_callback;
   // Pass core WeapPtr and TaskRunner to GCMInvalidationBridge for it to be able
   // to post back.
   ui_thread_task_runner_->PostTask(
@@ -155,6 +163,12 @@ void GCMInvalidationBridge::Core::OnConnectionStateChanged(bool online) {
   }
 }
 
+void GCMInvalidationBridge::Core::OnStoreReset() {
+  if (!store_reset_callback_.is_null()) {
+    store_reset_callback_.Run();
+  }
+}
+
 GCMInvalidationBridge::GCMInvalidationBridge(
     gcm::GCMDriver* gcm_driver,
     IdentityProvider* identity_provider)
@@ -171,12 +185,11 @@ GCMInvalidationBridge::~GCMInvalidationBridge() {
   }
 }
 
-scoped_ptr<syncer::GCMNetworkChannelDelegate>
+std::unique_ptr<syncer::GCMNetworkChannelDelegate>
 GCMInvalidationBridge::CreateDelegate() {
   DCHECK(CalledOnValidThread());
-  scoped_ptr<syncer::GCMNetworkChannelDelegate> core(new Core(
-      weak_factory_.GetWeakPtr(), base::ThreadTaskRunnerHandle::Get()));
-  return core.Pass();
+  return base::MakeUnique<Core>(weak_factory_.GetWeakPtr(),
+                                base::ThreadTaskRunnerHandle::Get());
 }
 
 void GCMInvalidationBridge::CoreInitializationDone(
@@ -316,6 +329,11 @@ void GCMInvalidationBridge::SubscribeForIncomingMessages() {
 
 void GCMInvalidationBridge::ShutdownHandler() {
   // Nothing to do.
+}
+
+void GCMInvalidationBridge::OnStoreReset() {
+  core_thread_task_runner_->PostTask(
+      FROM_HERE, base::Bind(&GCMInvalidationBridge::Core::OnStoreReset, core_));
 }
 
 void GCMInvalidationBridge::OnMessage(const std::string& app_id,

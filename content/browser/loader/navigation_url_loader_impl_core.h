@@ -5,27 +5,27 @@
 #ifndef CONTENT_BROWSER_LOADER_NAVIGATION_URL_LOADER_IMPL_CORE_H_
 #define CONTENT_BROWSER_LOADER_NAVIGATION_URL_LOADER_IMPL_CORE_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/loader/navigation_url_loader_impl.h"
 
 namespace net {
-class URLRequest;
 struct RedirectInfo;
 }
 
 namespace content {
 
-class FrameTreeNode;
+class AppCacheNavigationHandleCore;
 class NavigationResourceHandler;
+class NavigationData;
 class ResourceContext;
-class ResourceHandler;
-class ResourceRequestBody;
 class ServiceWorkerNavigationHandleCore;
 class StreamHandle;
+struct GlobalRequestID;
 struct ResourceResponse;
+struct SSLStatus;
 
 // The IO-thread counterpart to the NavigationURLLoaderImpl. It lives on the IO
 // thread and is owned by the UI-thread NavigationURLLoaderImpl.
@@ -42,10 +42,15 @@ class NavigationURLLoaderImplCore {
   // Starts the request.
   void Start(ResourceContext* resource_context,
              ServiceWorkerNavigationHandleCore* service_worker_handle_core,
-             scoped_ptr<NavigationRequestInfo> request_info);
+             AppCacheNavigationHandleCore* appcache_handle_core,
+             std::unique_ptr<NavigationRequestInfo> request_info,
+             std::unique_ptr<NavigationUIData> navigation_ui_data);
 
   // Follows the current pending redirect.
   void FollowRedirect();
+
+  // Proceeds with processing the response.
+  void ProceedWithResponse();
 
   void set_resource_handler(NavigationResourceHandler* resource_handler) {
     resource_handler_ = resource_handler;
@@ -57,7 +62,12 @@ class NavigationURLLoaderImplCore {
 
   // Notifies |loader_| on the UI thread that the response started.
   void NotifyResponseStarted(ResourceResponse* response,
-                             scoped_ptr<StreamHandle> body);
+                             std::unique_ptr<StreamHandle> body,
+                             const SSLStatus& ssl_status,
+                             std::unique_ptr<NavigationData> navigation_data,
+                             const GlobalRequestID& request_id,
+                             bool is_download,
+                             bool is_stream);
 
   // Notifies |loader_| on the UI thread that the request failed.
   void NotifyRequestFailed(bool in_cache, int net_error);

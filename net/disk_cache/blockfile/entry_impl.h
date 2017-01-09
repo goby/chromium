@@ -5,12 +5,22 @@
 #ifndef NET_DISK_CACHE_BLOCKFILE_ENTRY_IMPL_H_
 #define NET_DISK_CACHE_BLOCKFILE_ENTRY_IMPL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+#include <string>
+
+#include "base/macros.h"
+#include "net/base/net_export.h"
 #include "net/disk_cache/blockfile/disk_format.h"
 #include "net/disk_cache/blockfile/storage_block-inl.h"
 #include "net/disk_cache/blockfile/storage_block.h"
 #include "net/disk_cache/disk_cache.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
+
+namespace net {
+class NetLog;
+}
 
 namespace disk_cache {
 
@@ -46,11 +56,15 @@ class NET_EXPORT_PRIVATE EntryImpl
                    const CompletionCallback& callback);
   int WriteDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
                     const CompletionCallback& callback, bool truncate);
-  int ReadSparseDataImpl(int64 offset, IOBuffer* buf, int buf_len,
+  int ReadSparseDataImpl(int64_t offset,
+                         IOBuffer* buf,
+                         int buf_len,
                          const CompletionCallback& callback);
-  int WriteSparseDataImpl(int64 offset, IOBuffer* buf, int buf_len,
+  int WriteSparseDataImpl(int64_t offset,
+                          IOBuffer* buf,
+                          int buf_len,
                           const CompletionCallback& callback);
-  int GetAvailableRangeImpl(int64 offset, int len, int64* start);
+  int GetAvailableRangeImpl(int64_t offset, int len, int64_t* start);
   void CancelSparseIOImpl();
   int ReadyForSparseIOImpl(const CompletionCallback& callback);
 
@@ -62,14 +76,14 @@ class NET_EXPORT_PRIVATE EntryImpl
     return &node_;
   }
 
-  uint32 GetHash();
+  uint32_t GetHash();
 
   // Performs the initialization of a EntryImpl that will be added to the
   // cache.
-  bool CreateEntry(Addr node_address, const std::string& key, uint32 hash);
+  bool CreateEntry(Addr node_address, const std::string& key, uint32_t hash);
 
   // Returns true if this entry matches the lookup arguments.
-  bool IsSameEntry(const std::string& key, uint32 hash);
+  bool IsSameEntry(const std::string& key, uint32_t hash);
 
   // Permamently destroys this entry.
   void InternalDoom();
@@ -104,10 +118,10 @@ class NET_EXPORT_PRIVATE EntryImpl
 
   // Marks this entry as dirty (in memory) if needed. This is intended only for
   // entries that are being read from disk, to be called during loading.
-  void SetDirtyFlag(int32 current_id);
+  void SetDirtyFlag(int32_t current_id);
 
   // Fixes this entry so it can be treated as valid (to delete it).
-  void SetPointerForInvalidEntry(int32 new_id);
+  void SetPointerForInvalidEntry(int32_t new_id);
 
   // Returns true if this entry is so meesed up that not everything is going to
   // be removed.
@@ -141,7 +155,7 @@ class NET_EXPORT_PRIVATE EntryImpl
   // created rather than opened.
   void BeginLogging(net::NetLog* net_log, bool created);
 
-  const net::BoundNetLog& net_log() const;
+  const net::NetLogWithSource& net_log() const;
 
   // Returns the number of blocks needed to store an EntryStore.
   static int NumBlocksForEntry(int key_size);
@@ -152,7 +166,7 @@ class NET_EXPORT_PRIVATE EntryImpl
   std::string GetKey() const override;
   base::Time GetLastUsed() const override;
   base::Time GetLastModified() const override;
-  int32 GetDataSize(int index) const override;
+  int32_t GetDataSize(int index) const override;
   int ReadData(int index,
                int offset,
                IOBuffer* buf,
@@ -164,17 +178,17 @@ class NET_EXPORT_PRIVATE EntryImpl
                 int buf_len,
                 const CompletionCallback& callback,
                 bool truncate) override;
-  int ReadSparseData(int64 offset,
+  int ReadSparseData(int64_t offset,
                      IOBuffer* buf,
                      int buf_len,
                      const CompletionCallback& callback) override;
-  int WriteSparseData(int64 offset,
+  int WriteSparseData(int64_t offset,
                       IOBuffer* buf,
                       int buf_len,
                       const CompletionCallback& callback) override;
-  int GetAvailableRange(int64 offset,
+  int GetAvailableRange(int64_t offset,
                         int len,
-                        int64* start,
+                        int64_t* start,
                         const CompletionCallback& callback) override;
   bool CouldBeSparse() const override;
   void CancelSparseIO() override;
@@ -248,10 +262,10 @@ class NET_EXPORT_PRIVATE EntryImpl
   int InitSparseData();
 
   // Adds the provided |flags| to the current EntryFlags for this entry.
-  void SetEntryFlags(uint32 flags);
+  void SetEntryFlags(uint32_t flags);
 
   // Returns the current EntryFlags for this entry.
-  uint32 GetEntryFlags();
+  uint32_t GetEntryFlags();
 
   // Gets the data stored at the given index. If the information is in memory,
   // a buffer will be allocated and the data will be copied to it (the caller
@@ -270,7 +284,7 @@ class NET_EXPORT_PRIVATE EntryImpl
   CacheRankingsBlock node_;   // Rankings related information for this entry.
   base::WeakPtr<BackendImpl> backend_;  // Back pointer to the cache.
   base::WeakPtr<InFlightBackendIO> background_queue_;  // In-progress queue.
-  scoped_ptr<UserBuffer> user_buffers_[kNumStreams];  // Stores user data.
+  std::unique_ptr<UserBuffer> user_buffers_[kNumStreams];  // Stores user data.
   // Files to store external user data and key.
   scoped_refptr<File> files_[kNumStreams + 1];
   mutable std::string key_;           // Copy of the key.
@@ -278,9 +292,9 @@ class NET_EXPORT_PRIVATE EntryImpl
   bool doomed_;               // True if this entry was removed from the cache.
   bool read_only_;            // True if not yet writing.
   bool dirty_;                // True if we detected that this is a dirty entry.
-  scoped_ptr<SparseControl> sparse_;  // Support for sparse entries.
+  std::unique_ptr<SparseControl> sparse_;  // Support for sparse entries.
 
-  net::BoundNetLog net_log_;
+  net::NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(EntryImpl);
 };

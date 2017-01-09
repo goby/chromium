@@ -8,16 +8,15 @@
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/strings/string16.h"
 #include "base/values.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service_observer.h"
 #include "chrome/browser/supervised_user/supervised_users.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/pref_change_registrar.h"
 
 class GoogleServiceAuthError;
 class PrefService;
@@ -25,10 +24,6 @@ class Profile;
 class SupervisedUserRefreshTokenFetcher;
 class SupervisedUserRegistrationUtilityTest;
 class SupervisedUserSharedSettingsService;
-
-namespace browser_sync {
-class DeviceInfo;
-}
 
 // Structure to store registration information.
 struct SupervisedUserRegistrationInfo {
@@ -59,16 +54,17 @@ class SupervisedUserRegistrationUtility {
   virtual ~SupervisedUserRegistrationUtility() {}
 
   // Creates SupervisedUserRegistrationUtility for a given |profile|.
-  static scoped_ptr<SupervisedUserRegistrationUtility> Create(Profile* profile);
+  static std::unique_ptr<SupervisedUserRegistrationUtility> Create(
+      Profile* profile);
 
   static std::string GenerateNewSupervisedUserId();
 
   // Registers a new supervised user with the server. |supervised_user_id| is a
   // new unique ID for the new supervised user. If its value is the same as that
   // of one of the existing supervised users, then the same user will be created
-  // on this machine (and if he has no avatar in sync, his avatar will be
+  // on this machine (and if they have no avatar in sync, their avatar will be
   // updated). |info| contains necessary information like the display name of
-  // the user and his avatar. |callback| is called with the result of the
+  // the user and their avatar. |callback| is called with the result of the
   // registration. We use the info here and not the profile, because on Chrome
   // OS the profile of the supervised user does not yet exist.
   virtual void Register(const std::string& supervised_user_id,
@@ -85,7 +81,7 @@ class SupervisedUserRegistrationUtility {
   // Creates implementation with explicit dependencies, can be used for testing.
   static SupervisedUserRegistrationUtility* CreateImpl(
       PrefService* prefs,
-      scoped_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
+      std::unique_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
       SupervisedUserSyncService* service,
       SupervisedUserSharedSettingsService* shared_settings_service);
 

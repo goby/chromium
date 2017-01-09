@@ -5,14 +5,18 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CLOUD_CLOUD_POLICY_STORE_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CLOUD_CLOUD_POLICY_STORE_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+#include <string>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "components/policy/core/common/cloud/cloud_policy_validator.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_export.h"
-#include "policy/proto/device_management_backend.pb.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 
 namespace policy {
 
@@ -80,6 +84,9 @@ class POLICY_EXPORT CloudPolicyStore {
   CloudPolicyValidatorBase::Status validation_status() const {
     return validation_status_;
   }
+  const std::string& policy_signature_public_key() const {
+    return policy_signature_public_key_;
+  }
 
   // Store a new policy blob. Pending load/store operations will be canceled.
   // The store operation may proceed asynchronously and observers are notified
@@ -88,9 +95,8 @@ class POLICY_EXPORT CloudPolicyStore {
   // Errors generate OnStoreError() notifications.
   // |invalidation_version| is the invalidation version of the policy to be
   // stored.
-  void Store(
-      const enterprise_management::PolicyFetchResponse& policy,
-      int64 invalidation_version);
+  void Store(const enterprise_management::PolicyFetchResponse& policy,
+             int64_t invalidation_version);
 
   virtual void Store(
       const enterprise_management::PolicyFetchResponse& policy) = 0;
@@ -109,9 +115,7 @@ class POLICY_EXPORT CloudPolicyStore {
 
   // The invalidation version of the last policy stored. This value can be read
   // by observers to determine which version of the policy is now available.
-  int64 invalidation_version() {
-    return invalidation_version_;
-  }
+  int64_t invalidation_version() { return invalidation_version_; }
 
   // Indicate that external data referenced by policies in this store is managed
   // by |external_data_manager|. The |external_data_manager| will be notified
@@ -139,7 +143,7 @@ class POLICY_EXPORT CloudPolicyStore {
   PolicyMap policy_map_;
 
   // Currently effective policy.
-  scoped_ptr<enterprise_management::PolicyData> policy_;
+  std::unique_ptr<enterprise_management::PolicyData> policy_;
 
   // Latest status code.
   Status status_;
@@ -148,7 +152,14 @@ class POLICY_EXPORT CloudPolicyStore {
   CloudPolicyValidatorBase::Status validation_status_;
 
   // The invalidation version of the last policy stored.
-  int64 invalidation_version_;
+  int64_t invalidation_version_;
+
+  // The public part of signing key that is used by the currently effective
+  // policy. The subclasses should keep its value up to date to correspond to
+  // the currently effective policy. The member should be empty if no policy is
+  // currently effective, or if signature verification was not possible for the
+  // policy.
+  std::string policy_signature_public_key_;
 
  private:
   // Whether the store has completed asynchronous initialization, which is

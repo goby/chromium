@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_HELP_APP_LAUNCHER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_HELP_APP_LAUNCHER_H_
 
-#include "base/compiler_specific.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "chrome/browser/chromeos/login/ui/login_web_dialog.h"
 #include "ui/gfx/native_widget_types.h"
 
+class GURL;
 class Profile;
 
 namespace chromeos {
@@ -22,16 +23,12 @@ class HelpAppLauncher : public base::RefCountedThreadSafe<HelpAppLauncher> {
  public:
   // IDs of help topics available from HelpApp.
   enum HelpTopic {
-    // Showed on basic connectivity issues.
-    HELP_CONNECTIVITY = 188752,
     // Showed at EULA screen as "Learn more" about stats/crash reports.
     HELP_STATS_USAGE = 183078,
     // Showed whenever there're troubles signing in.
     HELP_CANT_ACCESS_ACCOUNT = 188036,
     // Showed in case when account was disabled.
     HELP_ACCOUNT_DISABLED = 188756,
-    // Showed in case when hosted account is used.
-    HELP_HOSTED_ACCOUNT = 1054228,
     // Showed as "Learn more" about enterprise enrolled devices.
     HELP_ENTERPRISE = 2535613,
     // Shown at reset screen as "Learn more" about powerwash/rollback options.
@@ -40,7 +37,9 @@ class HelpAppLauncher : public base::RefCountedThreadSafe<HelpAppLauncher> {
     HELP_DEVICE_ATTRIBUTES = 6218780,
   };
 
-  // Parent window is used to show dialog.
+  // The dialog is shown as a child of |parent_window|. If |parent_window| is
+  // null then the dialog is placed in the modal dialog container on the primary
+  // display.
   explicit HelpAppLauncher(gfx::NativeWindow parent_window);
 
   // Shows specified help topic.

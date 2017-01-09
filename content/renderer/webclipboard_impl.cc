@@ -7,12 +7,12 @@
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "content/common/clipboard_format.h"
 #include "content/public/common/drop_data.h"
 #include "content/renderer/clipboard_utils.h"
 #include "content/renderer/drop_data_builder.h"
 #include "content/renderer/renderer_clipboard_delegate.h"
-#include "third_party/WebKit/public/platform/WebData.h"
 #include "third_party/WebKit/public/platform/WebDragData.h"
 #include "third_party/WebKit/public/platform/WebImage.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
@@ -21,8 +21,8 @@
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "url/gurl.h"
 
+using blink::WebBlobInfo;
 using blink::WebClipboard;
-using blink::WebData;
 using blink::WebDragData;
 using blink::WebImage;
 using blink::WebString;
@@ -39,7 +39,7 @@ WebClipboardImpl::WebClipboardImpl(RendererClipboardDelegate* delegate)
 WebClipboardImpl::~WebClipboardImpl() {
 }
 
-uint64 WebClipboardImpl::sequenceNumber(Buffer buffer) {
+uint64_t WebClipboardImpl::sequenceNumber(Buffer buffer) {
   ui::ClipboardType clipboard_type;
   if (!ConvertBufferType(buffer, &clipboard_type))
     return 0;
@@ -103,20 +103,35 @@ WebString WebClipboardImpl::readHTML(Buffer buffer, WebURL* source_url,
   base::string16 html_stdstr;
   GURL gurl;
   delegate_->ReadHTML(clipboard_type, &html_stdstr, &gurl,
-                      static_cast<uint32*>(fragment_start),
-                      static_cast<uint32*>(fragment_end));
+                      static_cast<uint32_t*>(fragment_start),
+                      static_cast<uint32_t*>(fragment_end));
   *source_url = gurl;
   return html_stdstr;
 }
 
-WebData WebClipboardImpl::readImage(Buffer buffer) {
+WebString WebClipboardImpl::readRTF(Buffer buffer) {
   ui::ClipboardType clipboard_type;
   if (!ConvertBufferType(buffer, &clipboard_type))
-    return WebData();
+    return WebString();
 
-  std::string png_data;
-  delegate_->ReadImage(clipboard_type, &png_data);
-  return WebData(png_data);
+  std::string rtf;
+  delegate_->ReadRTF(clipboard_type, &rtf);
+  return WebString::fromLatin1(rtf);
+}
+
+WebBlobInfo WebClipboardImpl::readImage(Buffer buffer) {
+  ui::ClipboardType clipboard_type;
+  if (!ConvertBufferType(buffer, &clipboard_type))
+    return WebBlobInfo();
+
+  std::string blob_uuid;
+  std::string type;
+  int64_t size;
+  delegate_->ReadImage(clipboard_type, &blob_uuid, &type, &size);
+  if (size < 0)
+    return WebBlobInfo();
+  return WebBlobInfo(WebString::fromASCII(blob_uuid), WebString::fromUTF8(type),
+                     size);
 }
 
 WebString WebClipboardImpl::readCustomData(Buffer buffer,

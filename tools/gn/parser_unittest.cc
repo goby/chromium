@@ -26,7 +26,7 @@ void DoParserPrintTest(const char* input, const char* expected) {
   ASSERT_TRUE(GetTokens(&input_file, &tokens));
 
   Err err;
-  scoped_ptr<ParseNode> result = Parser::Parse(tokens, &err);
+  std::unique_ptr<ParseNode> result = Parser::Parse(tokens, &err);
   if (!result)
     err.PrintToStdout();
   ASSERT_TRUE(result);
@@ -44,7 +44,7 @@ void DoExpressionPrintTest(const char* input, const char* expected) {
   ASSERT_TRUE(GetTokens(&input_file, &tokens));
 
   Err err;
-  scoped_ptr<ParseNode> result = Parser::ParseExpression(tokens, &err);
+  std::unique_ptr<ParseNode> result = Parser::ParseExpression(tokens, &err);
   ASSERT_TRUE(result);
 
   std::ostringstream collector;
@@ -62,13 +62,13 @@ void DoParserErrorTest(const char* input, int err_line, int err_char) {
   Err err;
   std::vector<Token> tokens = Tokenizer::Tokenize(&input_file, &err);
   if (!err.has_error()) {
-    scoped_ptr<ParseNode> result = Parser::Parse(tokens, &err);
+    std::unique_ptr<ParseNode> result = Parser::Parse(tokens, &err);
     ASSERT_FALSE(result);
     ASSERT_TRUE(err.has_error());
   }
 
   EXPECT_EQ(err_line, err.location().line_number());
-  EXPECT_EQ(err_char, err.location().char_offset());
+  EXPECT_EQ(err_char, err.location().column_number());
 }
 
 // Expects the tokenizer or parser to identify an error at the given line and
@@ -80,13 +80,13 @@ void DoExpressionErrorTest(const char* input, int err_line, int err_char) {
   Err err;
   std::vector<Token> tokens = Tokenizer::Tokenize(&input_file, &err);
   if (!err.has_error()) {
-    scoped_ptr<ParseNode> result = Parser::ParseExpression(tokens, &err);
+    std::unique_ptr<ParseNode> result = Parser::ParseExpression(tokens, &err);
     ASSERT_FALSE(result);
     ASSERT_TRUE(err.has_error());
   }
 
   EXPECT_EQ(err_line, err.location().line_number());
-  EXPECT_EQ(err_char, err.location().char_offset());
+  EXPECT_EQ(err_char, err.location().column_number());
 }
 
 }  // namespace
@@ -246,8 +246,14 @@ TEST(Parser, Accessor) {
                     "    b\n"
                     "    IDENTIFIER(c)\n"
                     "   LITERAL(2)\n");
+  DoParserPrintTest("a.b = 5",
+                    "BLOCK\n"
+                    " BINARY(=)\n"
+                    "  ACCESSOR\n"
+                    "   a\n"
+                    "   IDENTIFIER(b)\n"
+                    "  LITERAL(5)\n");
   DoParserErrorTest("a = b.c.d", 1, 6);  // Can't nest accessors (currently).
-  DoParserErrorTest("a.b = 5", 1, 1);  // Can't assign to accessors (currently).
 
   // Error at the bad dot in the RHS, not the + operator (crbug.com/472038).
   DoParserErrorTest("foo(a + b.c.d)", 1, 10);
@@ -701,11 +707,38 @@ TEST(Parser, ConditionNoBracesElseIf) {
 // a function with an associated block, or a standalone function with a
 // freestanding block.
 TEST(Parser, StandaloneBlock) {
+  // The error is reported at the end of the block when nothing is done
+  // with it. If we had said "a = { ..." then it would have been OK.
   DoParserErrorTest(
       "if (true) {\n"
       "}\n"
       "{\n"
       "  assert(false)\n"
       "}\n",
-      3, 1);
+      5, 1);
+}
+
+TEST(Parser, BlockValues) {
+  const char* input =
+    "print({a = 1 b = 2}, 3)\n"
+    "a = { b = \"asd\" }";
+  const char* expected =
+    "BLOCK\n"
+    " FUNCTION(print)\n"
+    "  LIST\n"
+    "   BLOCK\n"
+    "    BINARY(=)\n"
+    "     IDENTIFIER(a)\n"
+    "     LITERAL(1)\n"
+    "    BINARY(=)\n"
+    "     IDENTIFIER(b)\n"
+    "     LITERAL(2)\n"
+    "   LITERAL(3)\n"
+    " BINARY(=)\n"
+    "  IDENTIFIER(a)\n"
+    "  BLOCK\n"
+    "   BINARY(=)\n"
+    "    IDENTIFIER(b)\n"
+    "    LITERAL(\"asd\")\n";
+  DoParserPrintTest(input, expected);
 }

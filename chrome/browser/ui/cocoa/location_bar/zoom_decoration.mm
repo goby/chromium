@@ -4,6 +4,7 @@
 
 #import "chrome/browser/ui/cocoa/location_bar/zoom_decoration.h"
 
+#include "base/i18n/number_formatting.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -12,22 +13,25 @@
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/ui/zoom/zoom_controller.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
+#include "components/zoom/zoom_controller.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 ZoomDecoration::ZoomDecoration(LocationBarViewMac* owner)
     : owner_(owner),
-      bubble_(nil) {
-}
+      bubble_(nil),
+      vector_icon_id_(gfx::VectorIconId::VECTOR_ICON_NONE) {}
 
 ZoomDecoration::~ZoomDecoration() {
   [bubble_ closeWithoutAnimation];
   bubble_.delegate = nil;
 }
 
-bool ZoomDecoration::UpdateIfNecessary(
-    ui_zoom::ZoomController* zoom_controller, bool default_zoom_changed) {
+bool ZoomDecoration::UpdateIfNecessary(zoom::ZoomController* zoom_controller,
+                                       bool default_zoom_changed,
+                                       bool location_bar_is_dark) {
   if (!ShouldShowDecoration()) {
     if (!IsVisible() && !bubble_)
       return false;
@@ -37,16 +41,20 @@ bool ZoomDecoration::UpdateIfNecessary(
   }
 
   base::string16 zoom_percent =
-      base::IntToString16(zoom_controller->GetZoomPercent());
-  NSString* zoom_string =
-      l10n_util::GetNSStringFWithFixup(IDS_TOOLTIP_ZOOM, zoom_percent);
+      base::FormatPercent(zoom_controller->GetZoomPercent());
+  // In Material Design there is no icon at the default zoom factor (100%), so
+  // don't display a tooltip either.
+  NSString* tooltip_string =
+      zoom_controller->IsAtDefaultZoom()
+          ? @""
+          : l10n_util::GetNSStringF(IDS_TOOLTIP_ZOOM, zoom_percent);
 
-  if (IsVisible() && [tooltip_ isEqualToString:zoom_string] &&
+  if (IsVisible() && [tooltip_ isEqualToString:tooltip_string] &&
       !default_zoom_changed) {
     return false;
   }
 
-  ShowAndUpdateUI(zoom_controller, zoom_string);
+  ShowAndUpdateUI(zoom_controller, tooltip_string, location_bar_is_dark);
   return true;
 }
 
@@ -70,7 +78,7 @@ void ZoomDecoration::ShowBubble(BOOL auto_close) {
   // Find point for bubble's arrow in screen coordinates.
   NSPoint anchor = GetBubblePointInFrame(frame);
   anchor = [field convertPoint:anchor toView:nil];
-  anchor = [[field window] convertBaseToScreen:anchor];
+  anchor = ui::ConvertPointFromWindowToScreen([field window], anchor);
 
   bubble_ = [[ZoomBubbleController alloc] initWithParentWindow:[field window]
                                                       delegate:this];
@@ -86,17 +94,20 @@ void ZoomDecoration::HideUI() {
   SetVisible(false);
 }
 
-void ZoomDecoration::ShowAndUpdateUI(ui_zoom::ZoomController* zoom_controller,
-                                     NSString* tooltip_string) {
-  int image_id = IDR_ZOOM_NORMAL;
-  ui_zoom::ZoomController::RelativeZoom relative_zoom =
+void ZoomDecoration::ShowAndUpdateUI(zoom::ZoomController* zoom_controller,
+                                     NSString* tooltip_string,
+                                     bool location_bar_is_dark) {
+  vector_icon_id_ = gfx::VectorIconId::VECTOR_ICON_NONE;
+  zoom::ZoomController::RelativeZoom relative_zoom =
       zoom_controller->GetZoomRelativeToDefault();
-  if (relative_zoom == ui_zoom::ZoomController::ZOOM_BELOW_DEFAULT_ZOOM)
-    image_id = IDR_ZOOM_MINUS;
-  else if (relative_zoom == ui_zoom::ZoomController::ZOOM_ABOVE_DEFAULT_ZOOM)
-    image_id = IDR_ZOOM_PLUS;
+  // In Material Design there is no icon at the default zoom factor.
+  if (relative_zoom == zoom::ZoomController::ZOOM_BELOW_DEFAULT_ZOOM) {
+    vector_icon_id_ = gfx::VectorIconId::ZOOM_MINUS;
+  } else if (relative_zoom == zoom::ZoomController::ZOOM_ABOVE_DEFAULT_ZOOM) {
+    vector_icon_id_ = gfx::VectorIconId::ZOOM_PLUS;
+  }
 
-  SetImage(OmniboxViewMac::ImageForResource(image_id));
+  SetImage(GetMaterialIcon(location_bar_is_dark));
 
   tooltip_.reset([tooltip_string retain]);
 
@@ -113,8 +124,8 @@ bool ZoomDecoration::IsAtDefaultZoom() const {
   if (!web_contents)
     return false;
 
-  ui_zoom::ZoomController* zoomController =
-      ui_zoom::ZoomController::FromWebContents(web_contents);
+  zoom::ZoomController* zoomController =
+      zoom::ZoomController::FromWebContents(web_contents);
   return zoomController && zoomController->IsAtDefaultZoom();
 }
 
@@ -155,4 +166,8 @@ void ZoomDecoration::OnClose() {
     SetVisible(false);
     owner_->OnDecorationsChanged();
   }
+}
+
+gfx::VectorIconId ZoomDecoration::GetMaterialVectorIconId() const {
+  return vector_icon_id_;
 }

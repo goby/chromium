@@ -5,11 +5,13 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_RESOURCE_REQUEST_DETECTOR_H_
 #define CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_RESOURCE_REQUEST_DETECTOR_H_
 
+#include <memory>
+
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_receiver.h"
+#include "components/safe_browsing_db/database_manager.h"
 
 namespace net {
 class URLRequest;
@@ -19,36 +21,40 @@ namespace safe_browsing {
 
 class ClientIncidentReport_IncidentData_ResourceRequestIncident;
 
+struct ResourceRequestInfo {
+  GURL url;
+  content::ResourceType resource_type;
+  int render_process_id;
+  int render_frame_id;
+};
+
 // Observes network requests and reports suspicious activity.
 class ResourceRequestDetector {
  public:
-  explicit ResourceRequestDetector(
-      scoped_ptr<IncidentReceiver> incident_receiver);
+  static ResourceRequestInfo GetRequestInfo(const net::URLRequest* request);
+
+  ResourceRequestDetector(
+      scoped_refptr<SafeBrowsingDatabaseManager> sb_database_manager,
+      std::unique_ptr<IncidentReceiver> incident_receiver);
   ~ResourceRequestDetector();
 
   // Analyzes the |request| and triggers an incident report on suspicious
   // script inclusion.
-  void OnResourceRequest(const net::URLRequest* request);
+  void ProcessResourceRequest(const ResourceRequestInfo* request);
 
  protected:
   // Testing hook.
   void set_allow_null_profile_for_testing(bool allow_null_profile_for_testing);
 
  private:
-  void InitializeHashSets();
-
-  void DetectDomainRequests(const net::URLRequest* request);
-  void DetectScriptRequests(const net::URLRequest* request);
-
   void ReportIncidentOnUIThread(
       int render_process_id,
       int render_frame_id,
-      scoped_ptr<ClientIncidentReport_IncidentData_ResourceRequestIncident>
+      std::unique_ptr<ClientIncidentReport_IncidentData_ResourceRequestIncident>
           incident_data);
 
-  scoped_ptr<IncidentReceiver> incident_receiver_;
-  base::hash_set<std::string> script_set_;
-  base::hash_set<std::string> domain_set_;
+  std::unique_ptr<IncidentReceiver> incident_receiver_;
+  scoped_refptr<SafeBrowsingDatabaseManager> database_manager_;
   bool allow_null_profile_for_testing_;
 
   base::WeakPtrFactory<ResourceRequestDetector> weak_ptr_factory_;

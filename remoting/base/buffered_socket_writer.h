@@ -6,6 +6,7 @@
 #define REMOTING_BASE_BUFFERED_SOCKET_WRITER_H_
 
 #include <list>
+#include <memory>
 
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
@@ -29,20 +30,21 @@ class BufferedSocketWriter {
       WriteCallback;
   typedef base::Callback<void(int)> WriteFailedCallback;
 
-  static scoped_ptr<BufferedSocketWriter> CreateForSocket(
+  static std::unique_ptr<BufferedSocketWriter> CreateForSocket(
       net::Socket* socket,
       const WriteFailedCallback& write_failed_callback);
 
   BufferedSocketWriter();
   virtual ~BufferedSocketWriter();
 
-  // Initializes the writer. |write_callback| is called to write data to the
+  // Starts the writer. |write_callback| is called to write data to the
   // socket. |write_failed_callback| is called when write operation fails.
   // Writing stops after the first failed write.
-  void Init(const WriteCallback& write_callback,
-            const WriteFailedCallback& write_failed_callback);
+  void Start(const WriteCallback& write_callback,
+             const WriteFailedCallback& write_failed_callback);
 
-  // Puts a new data chunk in the buffer.
+  // Puts a new data chunk in the buffer. If called before Start() then all data
+  // is buffered until Start().
   void Write(const scoped_refptr<net::IOBufferWithSize>& buffer,
              const base::Closure& done_task);
 
@@ -51,10 +53,6 @@ class BufferedSocketWriter {
 
  private:
   struct PendingPacket;
-  typedef std::list<PendingPacket*> DataQueue;
-
-  // Returns true if the writer is closed due to an error.
-  bool is_closed();
 
   void DoWrite();
   void HandleWriteResult(int result);
@@ -65,7 +63,9 @@ class BufferedSocketWriter {
   WriteCallback write_callback_;
   WriteFailedCallback write_failed_callback_;
 
-  DataQueue queue_;
+  bool closed_ = false;
+
+  std::list<std::unique_ptr<PendingPacket>> queue_;
 
   bool write_pending_ = false;
 

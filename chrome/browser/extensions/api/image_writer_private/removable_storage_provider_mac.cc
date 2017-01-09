@@ -5,11 +5,12 @@
 #include "chrome/browser/extensions/api/image_writer_private/removable_storage_provider.h"
 
 #include <CoreFoundation/CoreFoundation.h>
-#include <IOKit/storage/IOBlockStorageDevice.h>
 #include <IOKit/IOBSD.h>
 #include <IOKit/IOKitLib.h>
+#include <IOKit/storage/IOBlockStorageDevice.h>
 #include <IOKit/storage/IOMedia.h>
 #include <IOKit/storage/IOStorageProtocolCharacteristics.h>
+#include <stdint.h>
 
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
@@ -55,7 +56,7 @@ bool RemovableStorageProvider::PopulateDeviceList(
 
     CFNumberRef size_number = base::mac::GetValueFromDictionary<CFNumberRef>(
         dict, CFSTR(kIOMediaSizeKey));
-    uint64 size_in_bytes = 0;
+    uint64_t size_in_bytes = 0;
     if (size_number)
       CFNumberGetValue(size_number, kCFNumberLongLongType, &size_in_bytes);
 
@@ -90,14 +91,13 @@ bool RemovableStorageProvider::PopulateDeviceList(
         characteristics, CFSTR(kIOPropertyProductNameKey));
     std::string model = base::SysCFStringRefToUTF8(cf_model);
 
-    linked_ptr<api::image_writer_private::RemovableStorageDevice> device(
-        new api::image_writer_private::RemovableStorageDevice());
-    device->storage_unit_id = bsd_name;
-    device->capacity = size_in_bytes;
-    device->vendor = vendor;
-    device->model = model;
-    device->removable = removable;
-    device_list->data.push_back(device);
+    api::image_writer_private::RemovableStorageDevice device;
+    device.storage_unit_id = bsd_name;
+    device.capacity = size_in_bytes;
+    device.vendor = vendor;
+    device.model = model;
+    device.removable = removable;
+    device_list->data.push_back(std::move(device));
   }
 
   return true;

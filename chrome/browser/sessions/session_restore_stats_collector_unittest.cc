@@ -4,6 +4,10 @@
 
 #include "chrome/browser/sessions/session_restore_stats_collector.h"
 
+#include <stddef.h>
+#include <utility>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "chrome/test/base/testing_profile.h"
@@ -156,11 +160,11 @@ class TestSessionRestoreStatsCollector : public SessionRestoreStatsCollector {
   using SessionRestoreStatsCollector::Observe;
 
   TestSessionRestoreStatsCollector(
-      scoped_ptr<base::TickClock> tick_clock,
-      scoped_ptr<StatsReportingDelegate> reporting_delegate)
+      std::unique_ptr<base::TickClock> tick_clock,
+      std::unique_ptr<StatsReportingDelegate> reporting_delegate)
       : SessionRestoreStatsCollector(tick_clock->NowTicks(),
-                                     reporting_delegate.Pass()) {
-    set_tick_clock(tick_clock.Pass());
+                                     std::move(reporting_delegate)) {
+    set_tick_clock(std::move(tick_clock));
   }
 
  private:
@@ -199,8 +203,8 @@ class SessionRestoreStatsCollectorTest : public testing::Test {
     // its job, and will clean itself up when done.
     scoped_refptr<TestSessionRestoreStatsCollector> stats_collector =
         new TestSessionRestoreStatsCollector(
-            scoped_ptr<base::TickClock>(test_tick_clock_),
-            scoped_ptr<StatsReportingDelegate>(
+            std::unique_ptr<base::TickClock>(test_tick_clock_),
+            std::unique_ptr<StatsReportingDelegate>(
                 passthrough_reporting_delegate_));
     stats_collector_ = stats_collector.get();
     stats_collector = nullptr;
@@ -292,12 +296,13 @@ class SessionRestoreStatsCollectorTest : public testing::Test {
   // Infrastructure needed for using the TestWebContentsFactory. These are
   // initialized once by the fixture and reused across unittests.
   base::MessageLoop message_loop_;
-  TestingProfile testing_profile_;
   content::TestBrowserThread ui_thread_;
+  // |ui_thread_| needs to still be alive when |testing_profile_| is destroyed.
+  TestingProfile testing_profile_;
 
   // A new web contents factory is generated per test. This automatically cleans
   // up any tabs created by previous tests.
-  scoped_ptr<content::TestWebContentsFactory> test_web_contents_factory_;
+  std::unique_ptr<content::TestWebContentsFactory> test_web_contents_factory_;
 
   // These are recreated for each test. The reporting delegate allows the test
   // to observe the behaviour of the SessionRestoreStatsCollector under test.

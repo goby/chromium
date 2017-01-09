@@ -47,44 +47,11 @@ FilesToast.prototype.hide = function() {};
  * @struct
  * @extends {PolymerElement}
  */
-function AudioPlayerElement() {}
+function FilesQuickView() {}
 
-/** @type {boolean} */
-AudioPlayerElement.prototype.playing;
-
-/** @type {number} */
-AudioPlayerElement.prototype.time;
-
-/** @type {boolean} */
-AudioPlayerElement.prototype.shuffule;
-
-/** @type {boolean} */
-AudioPlayerElement.prototype.repeat;
-
-/** @type {number} */
-AudioPlayerElement.prototype.volume;
-
-/** @type {boolean} */
-AudioPlayerElement.prototype.expanded;
-
-/** @type {number} */
-AudioPlayerElement.prototype.currentTrackIndex;
-
-/** @type {string} */
-AudioPlayerElement.prototype.currenttrackurl;
-
-/** @type {number} */
-AudioPlayerElement.prototype.playcount;
-
-/** @type {Array<!Object>} */
-AudioPlayerElement.prototype.tracks;
-
-/** @type {Object} */
-AudioPlayerElement.prototype.model;
-
-/** @type {boolean} */
-AudioPlayerElement.prototype.volumeSliderShown;
-
-AudioPlayerElement.prototype.onPageUnload = function() {};
-
-AudioPlayerElement.prototype.onAudioError = function() {};
+/**
+ * @constructor
+ * @struct
+ * @extends {PolymerElement}
+ */
+function FilesMetadataBox() {}

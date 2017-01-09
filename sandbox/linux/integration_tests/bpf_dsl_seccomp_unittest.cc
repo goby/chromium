@@ -7,14 +7,16 @@
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <unistd.h>
-#include <sys/socket.h>
 
 #if defined(ANDROID)
 // Work-around for buggy headers in Android's NDK
@@ -25,7 +27,6 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/sys_info.h"
@@ -56,6 +57,8 @@
 #define PR_CAPBSET_READ 23
 #define PR_CAPBSET_DROP 24
 #endif
+
+#define CASES SANDBOX_BPF_DSL_CASES
 
 namespace sandbox {
 namespace bpf_dsl {
@@ -775,8 +778,9 @@ ResultExpr SimpleCondTestPolicy::EvaluateSyscall(int sysno) const {
       // Allow prctl(PR_SET_DUMPABLE) and prctl(PR_GET_DUMPABLE), but
       // disallow everything else.
       const Arg<int> option(0);
-      return If(option == PR_SET_DUMPABLE || option == PR_GET_DUMPABLE, Allow())
-          .Else(Error(ENOMEM));
+      return Switch(option)
+          .CASES((PR_SET_DUMPABLE, PR_GET_DUMPABLE), Allow())
+          .Default(Error(ENOMEM));
     }
     default:
       return Allow();
@@ -1725,10 +1729,11 @@ ResultExpr PthreadPolicyEquality::EvaluateSyscall(int sysno) const {
                                            CLONE_SIGHAND | CLONE_THREAD |
                                            CLONE_SYSVSEM;
     const Arg<unsigned long> flags(0);
-    return If(flags == kGlibcCloneMask ||
-                  flags == (kBaseAndroidCloneMask | CLONE_DETACHED) ||
-                  flags == kBaseAndroidCloneMask,
-              Allow()).Else(Trap(PthreadTrapHandler, "Unknown mask"));
+    return Switch(flags)
+        .CASES((kGlibcCloneMask, (kBaseAndroidCloneMask | CLONE_DETACHED),
+                kBaseAndroidCloneMask),
+               Allow())
+        .Default(Trap(PthreadTrapHandler, "Unknown mask"));
   }
 
   return Allow();
@@ -1786,15 +1791,15 @@ ResultExpr PthreadPolicyBitMask::EvaluateSyscall(int sysno) const {
     const Arg<unsigned long> flags(0);
     return If(HasAnyBits(flags, ~kKnownFlags),
               Trap(PthreadTrapHandler, "Unexpected CLONE_XXX flag found"))
-        .ElseIf(!HasAllBits(flags, kMandatoryFlags),
+        .ElseIf(Not(HasAllBits(flags, kMandatoryFlags)),
                 Trap(PthreadTrapHandler,
                      "Missing mandatory CLONE_XXX flags "
                      "when creating new thread"))
-        .ElseIf(
-             !HasAllBits(flags, kFutexFlags) && HasAnyBits(flags, kFutexFlags),
-             Trap(PthreadTrapHandler,
-                  "Must set either all or none of the TLS and futex bits in "
-                  "call to clone()"))
+        .ElseIf(AllOf(Not(HasAllBits(flags, kFutexFlags)),
+                      HasAnyBits(flags, kFutexFlags)),
+                Trap(PthreadTrapHandler,
+                     "Must set either all or none of the TLS and futex bits in "
+                     "call to clone()"))
         .Else(Allow());
   }
 
@@ -1872,15 +1877,23 @@ BPF_TEST_C(SandboxBPF, PthreadBitMask, PthreadPolicyBitMask) {
 
 #if defined(__aarch64__)
 #ifndef PTRACE_GETREGS
+#if defined(__GLIBC__)
+#define PTRACE_GETREGS static_cast<enum __ptrace_request>(12)
+#else
 #define PTRACE_GETREGS 12
-#endif
-#endif
+#endif  // defined(__GLIBC__)
+#endif  // !defined(PTRACE_GETREGS)
+#endif  // defined(__aarch64__)
 
 #if defined(__aarch64__)
 #ifndef PTRACE_SETREGS
+#if defined(__GLIBC__)
+#define PTRACE_SETREGS static_cast<enum __ptrace_request>(13)
+#else
 #define PTRACE_SETREGS 13
-#endif
-#endif
+#endif  // defined(__GLIBC__)
+#endif  // !defined(PTRACE_SETREGS)
+#endif  // defined(__aarch64__)
 
 // Changes the syscall to run for a child being sandboxed using seccomp-bpf with
 // PTRACE_O_TRACESECCOMP.  Should only be called when the child is stopped on
@@ -2130,7 +2143,8 @@ SANDBOX_TEST(SandboxBPF, Tsync) {
     return;
   }
 
-  base::WaitableEvent event(true, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   // Create a thread on which to invoke the blocked syscall.
   pthread_t thread;

@@ -5,8 +5,11 @@
 #ifndef UI_VIEWS_CONTROLS_MESSAGE_BOX_VIEW_H_
 #define UI_VIEWS_CONTROLS_MESSAGE_BOX_VIEW_H_
 
+#include <stdint.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/views/view.h"
 
@@ -43,7 +46,7 @@ class VIEWS_EXPORT MessageBoxView : public View {
     explicit InitParams(const base::string16& message);
     ~InitParams();
 
-    uint16 options;
+    uint16_t options;
     base::string16 message;
     base::string16 default_prompt;
     int message_width;
@@ -59,6 +62,9 @@ class VIEWS_EXPORT MessageBoxView : public View {
 
   // Returns user entered data in the prompt field.
   base::string16 GetInputText();
+
+  // Returns true if this message box has a visible checkbox, false otherwise.
+  bool HasCheckBox() const { return !!checkbox_; }
 
   // Returns true if a checkbox is selected, false otherwise. (And false if
   // the message box has no checkbox.)
@@ -77,7 +83,7 @@ class VIEWS_EXPORT MessageBoxView : public View {
   void SetLink(const base::string16& text, LinkListener* listener);
 
   // View:
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
  protected:
   // View:

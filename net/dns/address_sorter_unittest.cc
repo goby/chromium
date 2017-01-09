@@ -11,7 +11,7 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "net/base/address_list.h"
-#include "net/base/net_util.h"
+#include "net/base/ip_address.h"
 #include "net/base/test_completion_callback.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -23,8 +23,8 @@ namespace net {
 namespace {
 
 IPEndPoint MakeEndPoint(const std::string& str) {
-  IPAddressNumber addr;
-  CHECK(ParseIPLiteralToNumber(str, &addr));
+  IPAddress addr;
+  CHECK(addr.AssignFromIPLiteral(str));
   return IPEndPoint(addr, 0);
 }
 
@@ -48,7 +48,7 @@ TEST(AddressSorterTest, Sort) {
     closesocket(sock);
   }
 #endif
-  scoped_ptr<AddressSorter> sorter(AddressSorter::CreateAddressSorter());
+  std::unique_ptr<AddressSorter> sorter(AddressSorter::CreateAddressSorter());
   AddressList list;
   list.push_back(MakeEndPoint("10.0.0.1"));
   list.push_back(MakeEndPoint("8.8.8.8"));

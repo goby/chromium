@@ -10,32 +10,33 @@
 #include "platform/fonts/UTF16TextIterator.h"
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
+#include <memory>
 
 namespace blink {
 
 class PLATFORM_EXPORT OrientationIterator {
-    USING_FAST_MALLOC(OrientationIterator);
-    WTF_MAKE_NONCOPYABLE(OrientationIterator);
-public:
-    enum RenderOrientation {
-        OrientationKeep,
-        OrientationRotateSideways,
-        OrientationInvalid
-    };
+  USING_FAST_MALLOC(OrientationIterator);
+  WTF_MAKE_NONCOPYABLE(OrientationIterator);
 
-    OrientationIterator(const UChar* buffer, unsigned bufferSize, FontOrientation runOrientation);
+ public:
+  enum RenderOrientation {
+    OrientationKeep,
+    OrientationRotateSideways,
+    OrientationInvalid
+  };
 
-    bool consume(unsigned* orientationLimit, RenderOrientation*);
-private:
-    OwnPtr<UTF16TextIterator> m_utf16Iterator;
-    unsigned m_bufferSize;
-    UChar32 m_nextUChar32;
-    bool m_atEnd;
+  OrientationIterator(const UChar* buffer,
+                      unsigned bufferSize,
+                      FontOrientation runOrientation);
 
-    RenderOrientation m_currentRenderOrientation;
-    RenderOrientation m_previousRenderOrientation;
+  bool consume(unsigned* orientationLimit, RenderOrientation*);
+
+ private:
+  std::unique_ptr<UTF16TextIterator> m_utf16Iterator;
+  unsigned m_bufferSize;
+  bool m_atEnd;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

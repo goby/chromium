@@ -7,7 +7,9 @@
 
 #include <map>
 
+#include "android_webview/browser/render_thread_manager_client.h"
 #include "android_webview/public/browser/draw_gl.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/single_thread_task_runner.h"
@@ -23,7 +25,9 @@ class WaitableEvent;
 namespace android_webview {
 
 class BrowserViewRenderer;
-class SharedRendererState;
+class CompositorFrameConsumer;
+class FakeFunctor;
+class RenderThreadManager;
 
 class WindowHooks {
  public:
@@ -31,29 +35,28 @@ class WindowHooks {
 
   virtual void WillOnDraw() = 0;
   virtual void DidOnDraw(bool success) = 0;
+  virtual FakeFunctor* GetFunctor() = 0;
 
-  virtual void WillSyncOnRT(SharedRendererState* functor) = 0;
-  virtual void DidSyncOnRT(SharedRendererState* functor) = 0;
-  virtual void WillProcessOnRT(SharedRendererState* functor) = 0;
-  virtual void DidProcessOnRT(SharedRendererState* functor) = 0;
-  virtual bool WillDrawOnRT(SharedRendererState* functor,
-                            AwDrawGLInfo* draw_info) = 0;
-  virtual void DidDrawOnRT(SharedRendererState* functor) = 0;
+  virtual void WillSyncOnRT() = 0;
+  virtual void DidSyncOnRT() = 0;
+  virtual void WillProcessOnRT() = 0;
+  virtual void DidProcessOnRT() = 0;
+  virtual bool WillDrawOnRT(AwDrawGLInfo* draw_info) = 0;
+  virtual void DidDrawOnRT() = 0;
 };
 
 class FakeWindow {
  public:
-  FakeWindow(BrowserViewRenderer* view,
-             WindowHooks* hooks,
-             gfx::Rect location);
+  FakeWindow(BrowserViewRenderer* view, WindowHooks* hooks, gfx::Rect location);
   ~FakeWindow();
 
   void Detach();
 
-  // BrowserViewRendererClient methods.
-  void RequestDrawGL(bool wait_for_completion);
+  void RequestInvokeGL(FakeFunctor* functor, bool wait_for_completion);
   void PostInvalidate();
   const gfx::Size& surface_size() { return surface_size_; }
+
+  void RequestDrawGL(FakeFunctor* functor);
 
  private:
   class ScopedMakeCurrent;
@@ -64,8 +67,10 @@ class FakeWindow {
 
   void InitializeOnRT(base::WaitableEvent* sync);
   void DestroyOnRT(base::WaitableEvent* sync);
-  void ProcessFunctorOnRT(base::WaitableEvent* sync);
-  void DrawFunctorOnRT(base::WaitableEvent* sync);
+  void InvokeFunctorOnRT(FakeFunctor* functor, base::WaitableEvent* sync);
+  void ProcessSyncOnRT(FakeFunctor* functor, base::WaitableEvent* sync);
+  void ProcessDrawOnRT(FakeFunctor* functor);
+  void DrawFunctorOnRT(FakeFunctor* functor, base::WaitableEvent* sync);
   void CheckCurrentlyOnRT();
 
   // const so can be used on both threads.
@@ -79,17 +84,42 @@ class FakeWindow {
   base::SequenceChecker ui_checker_;
 
   // Render thread members.
-  scoped_ptr<base::Thread> render_thread_;
+  std::unique_ptr<base::Thread> render_thread_;
   base::SequenceChecker rt_checker_;
-  SharedRendererState* functor_;
   scoped_refptr<base::SingleThreadTaskRunner> render_thread_loop_;
-  scoped_refptr<gfx::GLSurface> surface_;
-  scoped_refptr<gfx::GLContext> context_;
+  scoped_refptr<gl::GLSurface> surface_;
+  scoped_refptr<gl::GLContext> context_;
   bool context_current_;
 
   base::WeakPtrFactory<FakeWindow> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeWindow);
+};
+
+class FakeFunctor : public RenderThreadManagerClient {
+ public:
+  using DrawGLCallback = base::Callback<void(AwDrawGLInfo*)>;
+
+  FakeFunctor();
+  ~FakeFunctor() override;
+
+  void Init(FakeWindow* window,
+            std::unique_ptr<RenderThreadManager> render_thread_manager);
+  void Sync(const gfx::Rect& location, WindowHooks* hooks);
+  void Draw(WindowHooks* hooks);
+  void Invoke(WindowHooks* hooks);
+
+  CompositorFrameConsumer* GetCompositorFrameConsumer();
+
+  // RenderThreadManagerClient overrides
+  bool RequestInvokeGL(bool wait_for_completion) override;
+  void DetachFunctorFromView() override;
+
+ private:
+  FakeWindow* window_;
+  DrawGLCallback callback_;
+  std::unique_ptr<RenderThreadManager> render_thread_manager_;
+  gfx::Rect committed_location_;
 };
 
 }  // namespace android_webview

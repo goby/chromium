@@ -12,11 +12,10 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_checker.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "net/base/external_estimate_provider.h"
-#include "net/base/network_change_notifier.h"
+#include "net/nqe/external_estimate_provider.h"
 
 namespace chrome {
 namespace android {
@@ -25,9 +24,7 @@ namespace android {
 // ExternalEstimateProviderAndroidHelper.java. Provides network quality
 // estimates as provided by Android. Estimates are automatically updated on a
 // network change event.
-class ExternalEstimateProviderAndroid
-    : public net::NetworkChangeNotifier::ConnectionTypeObserver,
-      public net::ExternalEstimateProvider {
+class ExternalEstimateProviderAndroid : public net::ExternalEstimateProvider {
  public:
   // Constructs and initializes the underlying provider.
   ExternalEstimateProviderAndroid();
@@ -47,10 +44,6 @@ class ExternalEstimateProviderAndroid
       override;
   void Update() const override;
 
-  // NetworkChangeNotifier::ConnectionTypeObserver implementation.
-  void OnConnectionTypeChanged(
-      net::NetworkChangeNotifier::ConnectionType type) override;
-
   // Called by Java when the external estimate provider has an updated value.
   // This may be called on a thread different from |task_runner_|.
   void NotifyExternalEstimateProviderAndroidUpdate(
@@ -68,18 +61,15 @@ class ExternalEstimateProviderAndroid
 
   base::android::ScopedJavaGlobalRef<jobject> j_external_estimate_provider_;
 
-  // Task runner that accesses ExternalEstimateProviderAndroid members.
-  scoped_refptr<base::TaskRunner> task_runner_;
+  // Used to post tasks back to this object's origin thread.
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   // Notified every time there is an update available from the network quality
   // provider.
-  // TODO(tbansal): Add the function that is called by Java side when an update
-  // is available.
   net::ExternalEstimateProvider::UpdatedEstimateDelegate* delegate_;
 
   base::ThreadChecker thread_checker_;
 
-  // Used for posting tasks.
   base::WeakPtrFactory<ExternalEstimateProviderAndroid> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ExternalEstimateProviderAndroid);

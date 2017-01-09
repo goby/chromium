@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/signin/ios/browser/account_consistency_service.h"
+
 #import <WebKit/WebKit.h>
 
+#include <memory>
+
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
-#include "components/pref_registry/testing_pref_service_syncable.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/fake_signin_manager.h"
 #include "components/signin/core/browser/gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/test_signin_client.h"
 #include "components/signin/core/common/signin_pref_names.h"
-#include "components/signin/ios/browser/account_consistency_service.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "ios/web/public/test/test_browser_state.h"
 #include "ios/web/public/test/test_web_state.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
-#include "ios/web/public/test/web_test_util.h"
 #include "ios/web/public/web_state/web_state_policy_decider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -27,13 +28,18 @@
 #include "third_party/ocmock/gtest_support.h"
 
 namespace {
-// URL of the Google domain where the X-CHROME-CONNECTED cookie is set/removed.
+// URL of the Google domain where the CHROME_CONNECTED cookie is set/removed.
 NSURL* const kGoogleUrl = [NSURL URLWithString:@"https://google.com/"];
-// URL of the Youtube domain where the X-CHROME-CONNECTED cookie is set/removed.
+// URL of the Youtube domain where the CHROME_CONNECTED cookie is set/removed.
 NSURL* const kYoutubeUrl = [NSURL URLWithString:@"https://youtube.com/"];
-// URL of a country Google domain where the X-CHROME-CONNECTED cookie is
+// URL of a country Google domain where the CHROME_CONNECTED cookie is
 // set/removed.
 NSURL* const kCountryGoogleUrl = [NSURL URLWithString:@"https://google.de/"];
+
+// Google domain.
+const char* kGoogleDomain = "google.com";
+// Youtube domain.
+const char* kYoutubeDomain = "youtube.com";
 
 // AccountConsistencyService specialization that fakes the creation of the
 // WKWebView in order to mock it. This allows tests to intercept the calls to
@@ -52,17 +58,17 @@ class FakeAccountConsistencyService : public AccountConsistencyService {
                                   cookie_settings,
                                   gaia_cookie_manager_service,
                                   signin_client,
-                                  signin_manager),
-        mock_web_view_(nil) {}
+                                  signin_manager) {}
 
  private:
-  WKWebView* CreateWKWebView() override {
+  WKWebView* BuildWKWebView() override {
     if (!mock_web_view_) {
-      mock_web_view_ = [OCMockObject niceMockForClass:[WKWebView class]];
+      mock_web_view_.reset(
+          [[OCMockObject niceMockForClass:[WKWebView class]] retain]);
     }
-    return [mock_web_view_ retain];
+    return mock_web_view_;
   }
-  id mock_web_view_;
+  base::scoped_nsobject<id> mock_web_view_;
 };
 
 // Mock AccountReconcilor to catch call to OnReceivedManageAccountsResponse.
@@ -126,7 +132,8 @@ class AccountConsistencyServiceTest : public PlatformTest {
     signin_manager_.reset(new FakeSigninManager(
         signin_client_.get(), nullptr, &account_tracker_service_, nullptr));
     account_tracker_service_.Initialize(signin_client_.get());
-    settings_map_ = new HostContentSettingsMap(&prefs_, false);
+    settings_map_ = new HostContentSettingsMap(
+        &prefs_, false /* incognito_profile */, false /* guest_profile */);
     cookie_settings_ =
         new content_settings::CookieSettings(settings_map_.get(), &prefs_, "");
     ResetAccountConsistencyService();
@@ -177,20 +184,32 @@ class AccountConsistencyServiceTest : public PlatformTest {
     return account_consistency_service_->navigation_delegate_;
   }
 
+  bool ShouldAddCookieToDomain(const std::string& domain,
+                               bool should_check_last_update_time) {
+    return account_consistency_service_->ShouldAddChromeConnectedCookieToDomain(
+        domain, should_check_last_update_time);
+  }
+
+  void CheckDomainHasCookie(const std::string& domain) {
+    EXPECT_GE(
+        account_consistency_service_->last_cookie_update_map_.count(domain),
+        1u);
+  }
+
   // Creates test threads, necessary for ActiveStateManager that needs a UI
   // thread.
   web::TestWebThreadBundle thread_bundle_;
   MockAccountReconcilor account_reconcilor_;
   AccountTrackerService account_tracker_service_;
   web::TestBrowserState browser_state_;
-  user_prefs::TestingPrefServiceSyncable prefs_;
+  sync_preferences::TestingPrefServiceSyncable prefs_;
   TestWebState web_state_;
   // AccountConsistencyService being tested. Actually a
   // FakeAccountConsistencyService to be able to use a mock web view.
-  scoped_ptr<AccountConsistencyService> account_consistency_service_;
-  scoped_ptr<TestSigninClient> signin_client_;
-  scoped_ptr<FakeSigninManager> signin_manager_;
-  scoped_ptr<MockGaiaCookieManagerService> gaia_cookie_manager_service_;
+  std::unique_ptr<AccountConsistencyService> account_consistency_service_;
+  std::unique_ptr<TestSigninClient> signin_client_;
+  std::unique_ptr<FakeSigninManager> signin_manager_;
+  std::unique_ptr<MockGaiaCookieManagerService> gaia_cookie_manager_service_;
   scoped_refptr<HostContentSettingsMap> settings_map_;
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;
 };
@@ -198,7 +217,6 @@ class AccountConsistencyServiceTest : public PlatformTest {
 // Tests whether the WKWebView is actually stopped when the browser state is
 // inactive.
 TEST_F(AccountConsistencyServiceTest, OnInactive) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
   [[GetMockWKWebView() expect] stopLoading];
   web::BrowserState::GetActiveStateManager(&browser_state_)->SetActive(false);
   EXPECT_OCMOCK_VERIFY(GetMockWKWebView());
@@ -207,8 +225,6 @@ TEST_F(AccountConsistencyServiceTest, OnInactive) {
 // Tests that cookies that are added during SignIn and subsequent navigations
 // are correctly removed during the SignOut.
 TEST_F(AccountConsistencyServiceTest, SignInSignOut) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
-
   // Check that main Google domains are added.
   AddPageLoadedExpectation(kGoogleUrl, true /* continue_navigation */);
   AddPageLoadedExpectation(kYoutubeUrl, true /* continue_navigation */);
@@ -239,8 +255,6 @@ TEST_F(AccountConsistencyServiceTest, SignInSignOut) {
 // Tests that pending cookie requests are correctly applied when the browser
 // state becomes active.
 TEST_F(AccountConsistencyServiceTest, ApplyOnActive) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
-
   // No request is made until the browser state is active, then a WKWebView and
   // its navigation delegate are created, and the requests are processed.
   [[GetMockWKWebView() expect] setNavigationDelegate:[OCMArg isNotNil]];
@@ -256,8 +270,6 @@ TEST_F(AccountConsistencyServiceTest, ApplyOnActive) {
 // browser state becomes inactives and correctly re-started later when the
 // browser state becomes active.
 TEST_F(AccountConsistencyServiceTest, CancelOnInactiveReApplyOnActive) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
-
   // The first request starts to get applied and get cancelled as the browser
   // state becomes inactive. It is resumed after the browser state becomes
   // active again.
@@ -340,8 +352,6 @@ TEST_F(AccountConsistencyServiceTest, ChromeManageAccountsDefault) {
 // Tests that domains with cookie are added to the prefs only after the request
 // has been applied.
 TEST_F(AccountConsistencyServiceTest, DomainsWithCookiePrefsOnApplied) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
-
   // Second request is not completely applied. Ensure prefs reflect that.
   AddPageLoadedExpectation(kGoogleUrl, true /* continue_navigation */);
   AddPageLoadedExpectation(kYoutubeUrl, false /* continue_navigation */);
@@ -358,8 +368,6 @@ TEST_F(AccountConsistencyServiceTest, DomainsWithCookiePrefsOnApplied) {
 // Tests that domains with cookie are correctly loaded from the prefs on service
 // startup.
 TEST_F(AccountConsistencyServiceTest, DomainsWithCookieLoadedFromPrefs) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
-
   AddPageLoadedExpectation(kGoogleUrl, true /* continue_navigation */);
   AddPageLoadedExpectation(kYoutubeUrl, true /* continue_navigation */);
   SignIn();
@@ -374,8 +382,6 @@ TEST_F(AccountConsistencyServiceTest, DomainsWithCookieLoadedFromPrefs) {
 
 // Tests that domains with cookie are cleared when browsing data is removed.
 TEST_F(AccountConsistencyServiceTest, DomainsClearedOnBrowsingDataRemoved) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
-
   AddPageLoadedExpectation(kGoogleUrl, true /* continue_navigation */);
   AddPageLoadedExpectation(kYoutubeUrl, true /* continue_navigation */);
   SignIn();
@@ -390,4 +396,53 @@ TEST_F(AccountConsistencyServiceTest, DomainsClearedOnBrowsingDataRemoved) {
   dict =
       prefs_.GetDictionary(AccountConsistencyService::kDomainsWithCookiePref);
   EXPECT_EQ(0u, dict->size());
+}
+
+// Tests that cookie requests are correctly processed or ignored when the update
+// time isn't checked.
+TEST_F(AccountConsistencyServiceTest, ShouldAddCookieDontCheckUpdateTime) {
+  EXPECT_TRUE(ShouldAddCookieToDomain(kGoogleDomain, false));
+  EXPECT_TRUE(ShouldAddCookieToDomain(kYoutubeDomain, false));
+
+  AddPageLoadedExpectation(kGoogleUrl, true /* continue_navigation */);
+  AddPageLoadedExpectation(kYoutubeUrl, true /* continue_navigation */);
+  SignIn();
+
+  EXPECT_FALSE(ShouldAddCookieToDomain(kGoogleDomain, false));
+  EXPECT_FALSE(ShouldAddCookieToDomain(kYoutubeDomain, false));
+
+  ResetAccountConsistencyService();
+
+  EXPECT_FALSE(ShouldAddCookieToDomain(kGoogleDomain, false));
+  EXPECT_FALSE(ShouldAddCookieToDomain(kYoutubeDomain, false));
+}
+
+// Tests that cookie requests are correctly processed or ignored when the update
+// time is checked.
+TEST_F(AccountConsistencyServiceTest, ShouldAddCookieCheckUpdateTime) {
+  EXPECT_TRUE(ShouldAddCookieToDomain(kGoogleDomain, true));
+  EXPECT_TRUE(ShouldAddCookieToDomain(kYoutubeDomain, true));
+
+  AddPageLoadedExpectation(kGoogleUrl, true /* continue_navigation */);
+  AddPageLoadedExpectation(kYoutubeUrl, true /* continue_navigation */);
+  SignIn();
+
+  EXPECT_FALSE(ShouldAddCookieToDomain(kGoogleDomain, true));
+  EXPECT_FALSE(ShouldAddCookieToDomain(kYoutubeDomain, true));
+
+  ResetAccountConsistencyService();
+
+  EXPECT_TRUE(ShouldAddCookieToDomain(kGoogleDomain, true));
+  EXPECT_TRUE(ShouldAddCookieToDomain(kYoutubeDomain, true));
+}
+
+// Tests that main domains are added to the internal map when cookies are set in
+// reaction to signin.
+TEST_F(AccountConsistencyServiceTest, SigninAddCookieOnMainDomains) {
+  AddPageLoadedExpectation(kGoogleUrl, true /* continue_navigation */);
+  AddPageLoadedExpectation(kYoutubeUrl, true /* continue_navigation */);
+  SignIn();
+
+  CheckDomainHasCookie(kGoogleDomain);
+  CheckDomainHasCookie(kYoutubeDomain);
 }

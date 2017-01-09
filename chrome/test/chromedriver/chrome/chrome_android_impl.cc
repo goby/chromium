@@ -4,6 +4,8 @@
 
 #include "chrome/test/chromedriver/chrome/chrome_android_impl.h"
 
+#include <utility>
+
 #include "base/strings/string_split.h"
 #include "chrome/test/chromedriver/chrome/device_manager.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
@@ -12,16 +14,18 @@
 #include "chrome/test/chromedriver/net/port_server.h"
 
 ChromeAndroidImpl::ChromeAndroidImpl(
-    scoped_ptr<DevToolsHttpClient> http_client,
-    scoped_ptr<DevToolsClient> websocket_client,
+    std::unique_ptr<DevToolsHttpClient> http_client,
+    std::unique_ptr<DevToolsClient> websocket_client,
     ScopedVector<DevToolsEventListener>& devtools_event_listeners,
-    scoped_ptr<PortReservation> port_reservation,
-    scoped_ptr<Device> device)
-    : ChromeImpl(http_client.Pass(),
-                 websocket_client.Pass(),
+    std::unique_ptr<PortReservation> port_reservation,
+    std::string page_load_strategy,
+    std::unique_ptr<Device> device)
+    : ChromeImpl(std::move(http_client),
+                 std::move(websocket_client),
                  devtools_event_listeners,
-                 port_reservation.Pass()),
-      device_(device.Pass()) {}
+                 std::move(port_reservation),
+                 page_load_strategy),
+      device_(std::move(device)) {}
 
 ChromeAndroidImpl::~ChromeAndroidImpl() {}
 

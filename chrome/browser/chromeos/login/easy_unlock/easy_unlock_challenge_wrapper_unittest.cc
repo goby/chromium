@@ -5,7 +5,8 @@
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_challenge_wrapper.h"
 
 #include "base/bind.h"
-#include "components/proximity_auth/cryptauth/proto/securemessage.pb.h"
+#include "base/macros.h"
+#include "components/cryptauth/proto/securemessage.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -29,7 +30,7 @@ class TestableEasyUnlockChallengeWrapper : public EasyUnlockChallengeWrapper {
   TestableEasyUnlockChallengeWrapper()
       : EasyUnlockChallengeWrapper(kChallenge,
                                    kChannelBindingData,
-                                   kUserId,
+                                   AccountId::FromUserEmail(kUserId),
                                    nullptr) {}
   ~TestableEasyUnlockChallengeWrapper() override {}
 

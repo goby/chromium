@@ -60,8 +60,8 @@ class LayerTreeHostReadbackPixelTest
     RunPixelTestWithReadbackTarget(type, content_root, target, file_name);
   }
 
-  scoped_ptr<CopyOutputRequest> CreateCopyOutputRequest() override {
-    scoped_ptr<CopyOutputRequest> request;
+  std::unique_ptr<CopyOutputRequest> CreateCopyOutputRequest() override {
+    std::unique_ptr<CopyOutputRequest> request;
 
     if (readback_type_ == READBACK_BITMAP) {
       request = CopyOutputRequest::CreateBitmapRequest(
@@ -89,7 +89,7 @@ class LayerTreeHostReadbackPixelTest
   void BeginTest() override {
     if (insert_copy_request_after_frame_count_ == 0) {
       Layer* const target =
-          readback_target_ ? readback_target_ : layer_tree_host()->root_layer();
+          readback_target_ ? readback_target_ : layer_tree()->root_layer();
       target->RequestCopyOfOutput(CreateCopyOutputRequest());
     }
     PostSetNeedsCommitToMainThread();
@@ -97,31 +97,31 @@ class LayerTreeHostReadbackPixelTest
 
   void DidCommitAndDrawFrame() override {
     if (insert_copy_request_after_frame_count_ ==
-        layer_tree_host()->source_frame_number()) {
+        layer_tree_host()->SourceFrameNumber()) {
       Layer* const target =
-          readback_target_ ? readback_target_ : layer_tree_host()->root_layer();
+          readback_target_ ? readback_target_ : layer_tree()->root_layer();
       target->RequestCopyOfOutput(CreateCopyOutputRequest());
     }
   }
 
-  void ReadbackResultAsBitmap(scoped_ptr<CopyOutputResult> result) {
+  void ReadbackResultAsBitmap(std::unique_ptr<CopyOutputResult> result) {
     EXPECT_TRUE(task_runner_provider()->IsMainThread());
     EXPECT_TRUE(result->HasBitmap());
     result_bitmap_ = result->TakeBitmap();
     EndTest();
   }
 
-  void ReadbackResultAsTexture(scoped_ptr<CopyOutputResult> result) {
+  void ReadbackResultAsTexture(std::unique_ptr<CopyOutputResult> result) {
     EXPECT_TRUE(task_runner_provider()->IsMainThread());
     EXPECT_TRUE(result->HasTexture());
 
     TextureMailbox texture_mailbox;
-    scoped_ptr<SingleReleaseCallback> release_callback;
+    std::unique_ptr<SingleReleaseCallback> release_callback;
     result->TakeTexture(&texture_mailbox, &release_callback);
     EXPECT_TRUE(texture_mailbox.IsValid());
     EXPECT_TRUE(texture_mailbox.IsTexture());
 
-    scoped_ptr<SkBitmap> bitmap =
+    std::unique_ptr<SkBitmap> bitmap =
         CopyTextureMailboxToBitmap(result->size(), texture_mailbox);
     release_callback->Run(gpu::SyncToken(), false);
 
@@ -134,8 +134,7 @@ class LayerTreeHostReadbackPixelTest
   int insert_copy_request_after_frame_count_;
 };
 
-void IgnoreReadbackResult(scoped_ptr<CopyOutputResult> result) {
-}
+void IgnoreReadbackResult(std::unique_ptr<CopyOutputResult> result) {}
 
 TEST_P(LayerTreeHostReadbackPixelTest, ReadbackRootLayer) {
   scoped_refptr<SolidColorLayer> background =
@@ -469,7 +468,7 @@ class LayerTreeHostReadbackDeviceScalePixelTest
   }
 
   void SetupTree() override {
-    layer_tree_host()->SetDeviceScaleFactor(device_scale_factor_);
+    layer_tree()->SetDeviceScaleFactor(device_scale_factor_);
     LayerTreePixelTest::SetupTree();
   }
 
@@ -486,18 +485,18 @@ class LayerTreeHostReadbackDeviceScalePixelTest
 
 TEST_P(LayerTreeHostReadbackDeviceScalePixelTest, ReadbackSubrect) {
   scoped_refptr<FakePictureLayer> background =
-      FakePictureLayer::Create(layer_settings(), &white_client_);
+      FakePictureLayer::Create(&white_client_);
   background->SetBounds(gfx::Size(100, 100));
   background->SetIsDrawable(true);
 
   scoped_refptr<FakePictureLayer> green =
-      FakePictureLayer::Create(layer_settings(), &green_client_);
+      FakePictureLayer::Create(&green_client_);
   green->SetBounds(gfx::Size(100, 100));
   green->SetIsDrawable(true);
   background->AddChild(green);
 
   scoped_refptr<FakePictureLayer> blue =
-      FakePictureLayer::Create(layer_settings(), &blue_client_);
+      FakePictureLayer::Create(&blue_client_);
   blue->SetPosition(gfx::PointF(50.f, 50.f));
   blue->SetBounds(gfx::Size(25, 25));
   blue->SetIsDrawable(true);
@@ -513,19 +512,19 @@ TEST_P(LayerTreeHostReadbackDeviceScalePixelTest, ReadbackSubrect) {
 
 TEST_P(LayerTreeHostReadbackDeviceScalePixelTest, ReadbackNonRootLayerSubrect) {
   scoped_refptr<FakePictureLayer> background =
-      FakePictureLayer::Create(layer_settings(), &white_client_);
+      FakePictureLayer::Create(&white_client_);
   background->SetBounds(gfx::Size(100, 100));
   background->SetIsDrawable(true);
 
   scoped_refptr<FakePictureLayer> green =
-      FakePictureLayer::Create(layer_settings(), &green_client_);
+      FakePictureLayer::Create(&green_client_);
   green->SetPosition(gfx::PointF(10.f, 20.f));
   green->SetBounds(gfx::Size(90, 80));
   green->SetIsDrawable(true);
   background->AddChild(green);
 
   scoped_refptr<FakePictureLayer> blue =
-      FakePictureLayer::Create(layer_settings(), &blue_client_);
+      FakePictureLayer::Create(&blue_client_);
   blue->SetPosition(gfx::PointF(50.f, 50.f));
   blue->SetBounds(gfx::Size(25, 25));
   blue->SetIsDrawable(true);

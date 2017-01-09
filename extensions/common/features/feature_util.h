@@ -7,6 +7,7 @@
 
 #include "base/debug/alias.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 
 // Writes |message| to the stack so that it shows up in the minidump, then
@@ -26,5 +27,16 @@
                    __LINE__, message_copy.c_str());                            \
     LOG(FATAL) << message_copy;                                                \
   }
+
+namespace extensions {
+namespace feature_util {
+
+// Returns true if service workers are enabled for extension schemes.
+// TODO(lazyboy): Remove this function once extension Service Workers
+// are enabled by default for a while.
+bool ExtensionServiceWorkersEnabled();
+
+}  // namespace feature_util
+}  // namespace extensions
 
 #endif  // EXTENSIONS_COMMON_FEATURES_FEATURE_UTIL_H_

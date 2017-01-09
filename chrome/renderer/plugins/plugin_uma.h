@@ -5,9 +5,12 @@
 #ifndef CHROME_RENDERER_PLUGINS_PLUGIN_UMA_H_
 #define CHROME_RENDERER_PLUGINS_PLUGIN_UMA_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "url/gurl.h"
 
@@ -80,7 +83,7 @@ class PluginUMAReporter {
   // Converts plugin's mime type to plugin type.
   PluginType MimeTypeToPluginType(const std::string& mime_type);
 
-  scoped_ptr<UMASender> report_sender_;
+  std::unique_ptr<UMASender> report_sender_;
 
   DISALLOW_COPY_AND_ASSIGN(PluginUMAReporter);
 };

@@ -6,11 +6,12 @@
 #define EXTENSIONS_BROWSER_EVENT_LISTENER_MAP_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "extensions/common/event_filter.h"
 #include "url/gurl.h"
 
@@ -22,8 +23,6 @@ namespace content {
 class BrowserContext;
 class RenderProcessHost;
 }
-
-class ListenerRemovalListener;
 
 namespace extensions {
 struct Event;
@@ -49,22 +48,22 @@ class EventListener {
   //   url: [{hostSuffix: 'google.com'}],
   //   tabId: 5
   // }
-  static scoped_ptr<EventListener> ForExtension(
+  static std::unique_ptr<EventListener> ForExtension(
       const std::string& event_name,
       const std::string& extension_id,
       content::RenderProcessHost* process,
-      scoped_ptr<base::DictionaryValue> filter);
-  static scoped_ptr<EventListener> ForURL(
+      std::unique_ptr<base::DictionaryValue> filter);
+  static std::unique_ptr<EventListener> ForURL(
       const std::string& event_name,
       const GURL& listener_url,
       content::RenderProcessHost* process,
-      scoped_ptr<base::DictionaryValue> filter);
+      std::unique_ptr<base::DictionaryValue> filter);
 
   ~EventListener();
 
   bool Equals(const EventListener* other) const;
 
-  scoped_ptr<EventListener> Copy() const;
+  std::unique_ptr<EventListener> Copy() const;
 
   // Returns true in the case of a lazy background page, and thus no process.
   bool IsLazy() const;
@@ -89,13 +88,13 @@ class EventListener {
                 const std::string& extension_id,
                 const GURL& listener_url,
                 content::RenderProcessHost* process,
-                scoped_ptr<base::DictionaryValue> filter);
+                std::unique_ptr<base::DictionaryValue> filter);
 
   const std::string event_name_;
   const std::string extension_id_;
   const GURL listener_url_;
   content::RenderProcessHost* process_;
-  scoped_ptr<base::DictionaryValue> filter_;
+  std::unique_ptr<base::DictionaryValue> filter_;
   EventFilter::MatcherID matcher_id_;  // -1 if unset.
 
   DISALLOW_COPY_AND_ASSIGN(EventListener);
@@ -105,7 +104,7 @@ class EventListener {
 // listeners are interested in what events.
 class EventListenerMap {
  public:
-  typedef std::vector<linked_ptr<EventListener> > ListenerList;
+  using ListenerList = std::vector<std::unique_ptr<EventListener>>;
 
   class Delegate {
    public:
@@ -122,7 +121,7 @@ class EventListenerMap {
   // extensions::Event.
   // Returns true if the listener was added (in the case that it has never been
   // seen before).
-  bool AddListener(scoped_ptr<EventListener> listener);
+  bool AddListener(std::unique_ptr<EventListener> listener);
 
   // Remove a listener that .Equals() |listener|.
   // Returns true if the listener was removed .
@@ -177,7 +176,7 @@ class EventListenerMap {
 
   void CleanupListener(EventListener* listener);
   bool IsFilteredEvent(const Event& event) const;
-  scoped_ptr<EventMatcher> ParseEventMatcher(
+  std::unique_ptr<EventMatcher> ParseEventMatcher(
       base::DictionaryValue* filter_dict);
 
   // Listens for removals from this map.

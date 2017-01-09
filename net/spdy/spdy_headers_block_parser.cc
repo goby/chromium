@@ -5,6 +5,8 @@
 #include "net/spdy/spdy_headers_block_parser.h"
 
 #include "base/sys_byteorder.h"
+#include "net/spdy/spdy_bug_tracker.h"
+#include "net/spdy/spdy_flags.h"
 
 namespace net {
 namespace {
@@ -14,20 +16,21 @@ const SpdyStreamId kInvalidStreamId = 0;
 
 }  // anonymous namespace
 
+namespace {
+const size_t kLengthFieldSize = sizeof(uint32_t);
+}  // anonymous namespace
+
 const size_t SpdyHeadersBlockParser::kMaximumFieldLength = 16 * 1024;
 
 SpdyHeadersBlockParser::SpdyHeadersBlockParser(
-    SpdyMajorVersion spdy_version,
     SpdyHeadersHandlerInterface* handler)
     : state_(READING_HEADER_BLOCK_LEN),
-      length_field_size_(LengthFieldSizeForVersion(spdy_version)),
-      max_headers_in_block_(MaxNumberOfHeadersForVersion(spdy_version)),
+      max_headers_in_block_(MaxNumberOfHeaders()),
       total_bytes_received_(0),
       remaining_key_value_pairs_for_frame_(0),
       handler_(handler),
       stream_id_(kInvalidStreamId),
-      error_(NO_PARSER_ERROR),
-      spdy_version_(spdy_version) {
+      error_(NO_PARSER_ERROR) {
   // The handler that we set must not be NULL.
   DCHECK(handler_ != NULL);
 }
@@ -42,7 +45,7 @@ bool SpdyHeadersBlockParser::HandleControlFrameHeadersData(
     error_ = NO_PARSER_ERROR;
   }
   if (error_ != NO_PARSER_ERROR) {
-    LOG(DFATAL) << "Unexpected error: " << error_;
+    SPDY_BUG << "Unexpected error: " << error_;
     return false;
   }
 
@@ -52,13 +55,13 @@ bool SpdyHeadersBlockParser::HandleControlFrameHeadersData(
     stream_id_ = stream_id;
   }
   if (stream_id != stream_id_) {
-    LOG(DFATAL) << "Unexpected stream id: " << stream_id << " (expected "
-                << stream_id_ << ")";
+    SPDY_BUG << "Unexpected stream id: " << stream_id << " (expected "
+             << stream_id_ << ")";
     error_ = UNEXPECTED_STREAM_ID;
     return false;
   }
   if (stream_id_ == kInvalidStreamId) {
-    LOG(DFATAL) << "Expected nonzero stream id, saw: " << stream_id_;
+    SPDY_BUG << "Expected nonzero stream id, saw: " << stream_id_;
     error_ = UNEXPECTED_STREAM_ID;
     return false;
   }
@@ -109,7 +112,16 @@ bool SpdyHeadersBlockParser::HandleControlFrameHeadersData(
           next_state = READING_KEY_LEN;
         } else {
           next_state = READING_HEADER_BLOCK_LEN;
-          handler_->OnHeaderBlockEnd(total_bytes_received_);
+          if (FLAGS_chromium_http2_flag_log_compressed_size) {
+            // We reach here in two cases: 1) Spdy3 or 2) HTTP/2 without hpack
+            // encoding. For the first case, we just log the uncompressed size
+            // since we are going to deprecate Spdy3 soon. For the second case,
+            // the compressed size is the same as the uncompressed size.
+            handler_->OnHeaderBlockEnd(total_bytes_received_,
+                                       total_bytes_received_);
+          } else {
+            handler_->OnHeaderBlockEnd(total_bytes_received_);
+          }
           stream_id_ = kInvalidStreamId;
           // Expect to have consumed all buffer.
           if (reader.Available() != 0) {
@@ -162,37 +174,22 @@ void SpdyHeadersBlockParser::ParseFieldLength(Reader* reader) {
 void SpdyHeadersBlockParser::ParseLength(Reader* reader,
                                          uint32_t* parsed_length) {
   char buffer[] = {0, 0, 0, 0};
-  if (!reader->ReadN(length_field_size_, buffer)) {
+  if (!reader->ReadN(kLengthFieldSize, buffer)) {
     error_ = NEED_MORE_DATA;
     return;
   }
   // Convert from network to host order and return the parsed out integer.
-  if (length_field_size_ == sizeof(uint32_t)) {
-    *parsed_length =
-        base::NetToHost32(*reinterpret_cast<const uint32_t *>(buffer));
-  } else {
-    *parsed_length =
-        base::NetToHost16(*reinterpret_cast<const uint16_t *>(buffer));
-  }
+  *parsed_length =
+      base::NetToHost32(*reinterpret_cast<const uint32_t*>(buffer));
 }
 
-size_t SpdyHeadersBlockParser::LengthFieldSizeForVersion(
-    SpdyMajorVersion spdy_version) {
-  if (spdy_version < SPDY3) {
-    return sizeof(uint16_t);
-  }
-  return sizeof(uint32_t);
-}
-
-size_t SpdyHeadersBlockParser::MaxNumberOfHeadersForVersion(
-    SpdyMajorVersion spdy_version) {
+size_t SpdyHeadersBlockParser::MaxNumberOfHeaders() {
   // Account for the length of the header block field.
-  size_t max_bytes_for_headers =
-      kMaximumFieldLength - LengthFieldSizeForVersion(spdy_version);
+  size_t max_bytes_for_headers = kMaximumFieldLength - kLengthFieldSize;
 
   // A minimal size header is twice the length field size (and has a
   // zero-lengthed key and a zero-lengthed value).
-  return max_bytes_for_headers / (2 * LengthFieldSizeForVersion(spdy_version));
+  return max_bytes_for_headers / (2 * kLengthFieldSize);
 }
 
 }  // namespace net

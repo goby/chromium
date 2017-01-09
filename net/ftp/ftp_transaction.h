@@ -5,6 +5,8 @@
 #ifndef NET_FTP_FTP_TRANSACTION_H_
 #define NET_FTP_FTP_TRANSACTION_H_
 
+#include <stdint.h>
+
 #include "net/base/completion_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_states.h"
@@ -15,7 +17,7 @@ namespace net {
 class AuthCredentials;
 class FtpResponseInfo;
 class FtpRequestInfo;
-class BoundNetLog;
+class NetLogWithSource;
 
 // Represents a single FTP transaction.
 class NET_EXPORT_PRIVATE FtpTransaction {
@@ -40,7 +42,7 @@ class NET_EXPORT_PRIVATE FtpTransaction {
   // Profiling information for the request is saved to |net_log| if non-NULL.
   virtual int Start(const FtpRequestInfo* request_info,
                     const CompletionCallback& callback,
-                    const BoundNetLog& net_log) = 0;
+                    const NetLogWithSource& net_log) = 0;
 
   // Restarts the FTP transaction with authentication credentials.
   virtual int RestartWithAuth(const AuthCredentials& credentials,
@@ -72,7 +74,7 @@ class NET_EXPORT_PRIVATE FtpTransaction {
 
   // Returns the upload progress in bytes.  If there is no upload data,
   // zero will be returned.
-  virtual uint64 GetUploadProgress() const = 0;
+  virtual uint64_t GetUploadProgress() const = 0;
 };
 
 }  // namespace net

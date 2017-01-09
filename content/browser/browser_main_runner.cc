@@ -6,18 +6,22 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/debug/debugger.h"
 #include "base/debug/leak_annotations.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/profiler/scoped_profile.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/time/time.h"
+#include "base/trace_event/heap_profiler_allocation_context_tracker.h"
 #include "base/trace_event/trace_event.h"
 #include "base/tracked_objects.h"
-#include "components/tracing/trace_config_file.h"
-#include "components/tracing/tracing_switches.h"
+#include "build/build_config.h"
+#include "components/tracing/browser/trace_config_file.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/browser_shutdown_profile_dumper.h"
 #include "content/browser/notification_service_impl.h"
@@ -32,12 +36,8 @@
 #endif
 
 #if defined(OS_WIN)
-#include "base/win/win_util.h"
 #include "base/win/windows_version.h"
-#include "net/cert/sha256_legacy_support_win.h"
-#include "sandbox/win/src/sidestep/preamble_patcher.h"
 #include "ui/base/win/scoped_ole_initializer.h"
-#include "ui/gfx/switches.h"
 #include "ui/gfx/win/direct_write.h"
 #endif
 
@@ -46,86 +46,7 @@ namespace content {
 namespace {
 
 bool g_exited_main_message_loop = false;
-
-#if defined(OS_WIN)
-#if !defined(_WIN64)
-// Pointer to the original CryptVerifyCertificateSignatureEx function.
-net::sha256_interception::CryptVerifyCertificateSignatureExFunc
-    g_real_crypt_verify_signature_stub = NULL;
-
-// Stub function that is called whenever the Crypt32 function
-// CryptVerifyCertificateSignatureEx is called. It just defers to net to perform
-// the actual verification.
-BOOL WINAPI CryptVerifyCertificateSignatureExStub(
-    HCRYPTPROV_LEGACY provider,
-    DWORD encoding_type,
-    DWORD subject_type,
-    void* subject_data,
-    DWORD issuer_type,
-    void* issuer_data,
-    DWORD flags,
-    void* extra) {
-  return net::sha256_interception::CryptVerifyCertificateSignatureExHook(
-      g_real_crypt_verify_signature_stub, provider, encoding_type, subject_type,
-      subject_data, issuer_type, issuer_data, flags, extra);
-}
-#endif  // !defined(_WIN64)
-
-// If necessary, install an interception
-void InstallSha256LegacyHooks() {
-#if defined(_WIN64)
-  // Interception on x64 is not supported.
-  return;
-#else
-  if (base::win::MaybeHasSHA256Support())
-    return;
-
-  net::sha256_interception::CryptVerifyCertificateSignatureExFunc
-      cert_verify_signature_ptr = reinterpret_cast<
-          net::sha256_interception::CryptVerifyCertificateSignatureExFunc>(
-              ::GetProcAddress(::GetModuleHandle(L"crypt32.dll"),
-                               "CryptVerifyCertificateSignatureEx"));
-  CHECK(cert_verify_signature_ptr);
-
-  DWORD old_protect = 0;
-  if (!::VirtualProtect(cert_verify_signature_ptr, 5, PAGE_EXECUTE_READWRITE,
-                        &old_protect)) {
-    return;
-  }
-
-  g_real_crypt_verify_signature_stub =
-      reinterpret_cast<
-          net::sha256_interception::CryptVerifyCertificateSignatureExFunc>(
-              VirtualAllocEx(::GetCurrentProcess(), NULL,
-                             sidestep::kMaxPreambleStubSize, MEM_COMMIT,
-                             PAGE_EXECUTE_READWRITE));
-  if (g_real_crypt_verify_signature_stub == NULL) {
-    CHECK(::VirtualProtect(cert_verify_signature_ptr, 5, old_protect,
-                           &old_protect));
-    return;
-  }
-
-  sidestep::SideStepError patch_result =
-      sidestep::PreamblePatcher::Patch(
-          cert_verify_signature_ptr, CryptVerifyCertificateSignatureExStub,
-          g_real_crypt_verify_signature_stub, sidestep::kMaxPreambleStubSize);
-  if (patch_result != sidestep::SIDESTEP_SUCCESS) {
-    CHECK(::VirtualFreeEx(::GetCurrentProcess(),
-                          g_real_crypt_verify_signature_stub, 0,
-                          MEM_RELEASE));
-    CHECK(::VirtualProtect(cert_verify_signature_ptr, 5, old_protect,
-                           &old_protect));
-    return;
-  }
-
-  DWORD dummy = 0;
-  CHECK(::VirtualProtect(cert_verify_signature_ptr, 5, old_protect, &dummy));
-  CHECK(::VirtualProtect(g_real_crypt_verify_signature_stub,
-                         sidestep::kMaxPreambleStubSize, old_protect,
-                         &old_protect));
-#endif  // _WIN64
-}
-#endif  // OS_WIN
+const char kMainThreadName[] = "CrBrowserMain";
 
 }  // namespace
 
@@ -145,7 +66,9 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 
     // TODO(vadimt, yiyaoliu): Remove all tracked_objects references below once
     // crbug.com/453640 is fixed.
-    tracked_objects::ThreadData::InitializeThreadContext("CrBrowserMain");
+    tracked_objects::ThreadData::InitializeThreadContext(kMainThreadName);
+    base::trace_event::AllocationContextTracker::SetCurrentThreadName(
+        kMainThreadName);
     TRACK_SCOPED_REGION(
         "Startup", "BrowserMainRunnerImpl::Initialize");
     TRACE_EVENT0("startup", "BrowserMainRunnerImpl::Initialize");
@@ -161,25 +84,8 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 
       SkGraphics::Init();
 
-#if !defined(OS_IOS)
       if (parameters.command_line.HasSwitch(switches::kWaitForDebugger))
         base::debug::WaitForDebugger(60, true);
-#endif
-
-#if defined(OS_WIN)
-      if (base::win::GetVersion() < base::win::VERSION_VISTA) {
-        // When "Extend support of advanced text services to all programs"
-        // (a.k.a. Cicero Unaware Application Support; CUAS) is enabled on
-        // Windows XP and handwriting modules shipped with Office 2003 are
-        // installed, "penjpn.dll" and "skchui.dll" will be loaded and then
-        // crash unless a user installs Office 2003 SP3. To prevent these
-        // modules from being loaded, disable TSF entirely. crbug.com/160914.
-        // TODO(yukawa): Add a high-level wrapper for this instead of calling
-        // Win32 API here directly.
-        ImmDisableTextFrameService(static_cast<DWORD>(-1));
-      }
-      InstallSha256LegacyHooks();
-#endif  // OS_WIN
 
       base::StatisticsRecorder::Initialize();
 
@@ -253,7 +159,7 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
     // There are two cases:
     // 1. Startup duration is not reached.
     // 2. Or startup duration is not specified for --trace-config-file flag.
-    scoped_ptr<BrowserShutdownProfileDumper> startup_profiler;
+    std::unique_ptr<BrowserShutdownProfileDumper> startup_profiler;
     if (main_loop_->is_tracing_startup_for_duration()) {
       main_loop_->StopStartupTracingTimer();
       if (main_loop_->startup_trace_file() !=
@@ -264,7 +170,7 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
     } else if (tracing::TraceConfigFile::GetInstance()->IsEnabled() &&
                TracingController::GetInstance()->IsTracing()) {
       base::FilePath result_file;
-#if defined(OS_ANDROID) && !defined(USE_AURA)
+#if defined(OS_ANDROID)
       TracingControllerAndroid::GenerateTracingFilePath(&result_file);
 #else
       result_file = tracing::TraceConfigFile::GetInstance()->GetResultFile();
@@ -277,7 +183,7 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
     // which will dump the traces to disc when it gets destroyed.
     const base::CommandLine& command_line =
         *base::CommandLine::ForCurrentProcess();
-    scoped_ptr<BrowserShutdownProfileDumper> shutdown_profiler;
+    std::unique_ptr<BrowserShutdownProfileDumper> shutdown_profiler;
     if (command_line.HasSwitch(switches::kTraceShutdown)) {
       shutdown_profiler.reset(new BrowserShutdownProfileDumper(
           BrowserShutdownProfileDumper::GetShutdownProfileFileName()));
@@ -316,10 +222,10 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
   // True if the runner has been shut down.
   bool is_shutdown_;
 
-  scoped_ptr<NotificationServiceImpl> notification_service_;
-  scoped_ptr<BrowserMainLoop> main_loop_;
+  std::unique_ptr<NotificationServiceImpl> notification_service_;
+  std::unique_ptr<BrowserMainLoop> main_loop_;
 #if defined(OS_WIN)
-  scoped_ptr<ui::ScopedOleInitializer> ole_initializer_;
+  std::unique_ptr<ui::ScopedOleInitializer> ole_initializer_;
 #endif
 
  private:

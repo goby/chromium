@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/common/system/system_notifier.h"
 #include "ash/shell.h"
-#include "ash/system/system_notifier.h"
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
@@ -12,12 +14,45 @@
 #include "content/public/test/test_utils.h"
 #include "ui/message_center/message_center.h"
 
+using base::UTF8ToUTF16;
 using namespace testing;
 
 namespace {
 
 const char* kTestUsers[] = {"test-user@gmail.com",
                             "test-user1@gmail.com"};
+
+class UserAddingFinishObserver : public chromeos::UserAddingScreen::Observer {
+ public:
+  UserAddingFinishObserver() {
+    chromeos::UserAddingScreen::Get()->AddObserver(this);
+  }
+
+  ~UserAddingFinishObserver() override {
+    chromeos::UserAddingScreen::Get()->RemoveObserver(this);
+  }
+
+  void WaitUntilUserAddingFinishedOrCancelled() {
+    if (finished_)
+      return;
+    run_loop_.reset(new base::RunLoop());
+    run_loop_->Run();
+  }
+
+  void OnUserAddingFinished() override {
+    finished_ = true;
+    if (run_loop_)
+      run_loop_->Quit();
+  }
+
+  void OnUserAddingStarted() override { finished_ = false; }
+
+ private:
+  std::unique_ptr<base::RunLoop> run_loop_;
+  bool finished_ = false;  // True if OnUserAddingFinished() has been called
+                           // before WaitUntilUserAddingFinishedOrCancelled().
+  DISALLOW_COPY_AND_ASSIGN(UserAddingFinishObserver);
+};
 
 }  // anonymous namespace
 
@@ -63,12 +98,17 @@ class LoginStateNotificationBlockerChromeOSBrowserTest
 
   bool ShouldShowNotificationAsPopup(
       const message_center::NotifierId& notifier_id) {
-    return blocker_->ShouldShowNotificationAsPopup(notifier_id);
+    message_center::Notification notification(
+        message_center::NOTIFICATION_TYPE_SIMPLE, "browser-id",
+        UTF8ToUTF16("browser-title"), UTF8ToUTF16("browser-message"),
+        gfx::Image(), UTF8ToUTF16("browser-source"), GURL(),
+        notifier_id, message_center::RichNotificationData(), NULL);
+    return blocker_->ShouldShowNotificationAsPopup(notification);
   }
 
  private:
   int state_changed_count_;
-  scoped_ptr<message_center::NotificationBlocker> blocker_;
+  std::unique_ptr<message_center::NotificationBlocker> blocker_;
 
   DISALLOW_COPY_AND_ASSIGN(LoginStateNotificationBlockerChromeOSBrowserTest);
 };
@@ -92,6 +132,7 @@ IN_PROC_BROWSER_TEST_F(LoginStateNotificationBlockerChromeOSBrowserTest,
   EXPECT_TRUE(ShouldShowNotificationAsPopup(notifier_id));
 
   // Multi-login user switch.
+  UserAddingFinishObserver observer;
   chromeos::UserAddingScreen::Get()->Start();
   content::RunAllPendingInMessageLoop();
   EXPECT_EQ(1, GetStateChangedCountAndReset());
@@ -99,6 +140,7 @@ IN_PROC_BROWSER_TEST_F(LoginStateNotificationBlockerChromeOSBrowserTest,
 
   // Multi-login user switch off.
   chromeos::UserAddingScreen::Get()->Cancel();
+  observer.WaitUntilUserAddingFinishedOrCancelled();
   content::RunAllPendingInMessageLoop();
   EXPECT_EQ(1, GetStateChangedCountAndReset());
   EXPECT_TRUE(ShouldShowNotificationAsPopup(notifier_id));
@@ -126,6 +168,7 @@ IN_PROC_BROWSER_TEST_F(LoginStateNotificationBlockerChromeOSBrowserTest,
   EXPECT_TRUE(ShouldShowNotificationAsPopup(notifier_id));
 
   // Multi-login user switch.
+  UserAddingFinishObserver observer;
   chromeos::UserAddingScreen::Get()->Start();
   content::RunAllPendingInMessageLoop();
   EXPECT_EQ(1, GetStateChangedCountAndReset());
@@ -133,6 +176,7 @@ IN_PROC_BROWSER_TEST_F(LoginStateNotificationBlockerChromeOSBrowserTest,
 
   // Multi-login user switch off.
   chromeos::UserAddingScreen::Get()->Cancel();
+  observer.WaitUntilUserAddingFinishedOrCancelled();
   content::RunAllPendingInMessageLoop();
   EXPECT_EQ(1, GetStateChangedCountAndReset());
   EXPECT_TRUE(ShouldShowNotificationAsPopup(notifier_id));

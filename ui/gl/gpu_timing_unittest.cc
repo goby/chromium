@@ -2,18 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/gl/gpu_timing.h"
+
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_context_stub_with_extensions.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_mock.h"
+#include "ui/gl/gl_surface_stub.h"
 #include "ui/gl/gpu_preference.h"
-#include "ui/gl/gpu_timing.h"
 #include "ui/gl/gpu_timing_fake.h"
+#include "ui/gl/init/gl_factory.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
-namespace gfx {
+namespace gl {
+
+using ::testing::Exactly;
+using ::testing::NotNull;
+using ::testing::DoAll;
+using ::testing::Return;
+using ::testing::SetArgPointee;
 
 class GPUTimingTest : public testing::Test {
  public:
@@ -23,13 +35,14 @@ class GPUTimingTest : public testing::Test {
   }
 
   void TearDown() override {
+    context_ = nullptr;
+    surface_ = nullptr;
     if (setup_) {
       MockGLInterface::SetGLInterface(NULL);
-      gfx::ClearGLBindings();
+      init::ShutdownGL();
     }
     setup_ = false;
     cpu_time_bounded_ = false;
-    context_ = nullptr;
     gl_.reset();
     gpu_timing_fake_queries_.Reset();
   }
@@ -44,8 +57,9 @@ class GPUTimingTest : public testing::Test {
     context_ = new GLContextStubWithExtensions;
     context_->AddExtensionsString(gl_extensions);
     context_->SetGLVersionString(gl_version);
+    surface_ = new GLSurfaceStub;
+    context_->MakeCurrent(surface_.get());
     gpu_timing_fake_queries_.Reset();
-    GLSurfaceTestSupport::InitializeDynamicMockBindings(context_.get());
 
     setup_ = true;
   }
@@ -66,8 +80,9 @@ class GPUTimingTest : public testing::Test {
  protected:
   bool setup_ = false;
   bool cpu_time_bounded_ = false;
-  scoped_ptr< ::testing::StrictMock<MockGLInterface> > gl_;
+  std::unique_ptr<::testing::StrictMock<MockGLInterface>> gl_;
   scoped_refptr<GLContextStubWithExtensions> context_;
+  scoped_refptr<GLSurfaceStub> surface_;
   GPUTimingFake gpu_timing_fake_queries_;
 };
 
@@ -85,6 +100,7 @@ TEST_F(GPUTimingTest, FakeTimerTest) {
 
 TEST_F(GPUTimingTest, ForceTimeElapsedQuery) {
   // Test that forcing time elapsed query affects all clients.
+  SetupGLContext("3.2", "GL_ARB_timer_query");
   scoped_refptr<GPUTimingClient> client1 = CreateGPUTimingClient();
   EXPECT_FALSE(client1->IsForceTimeElapsedQuery());
 
@@ -102,9 +118,9 @@ TEST_F(GPUTimingTest, ForceTimeElapsedQuery) {
 TEST_F(GPUTimingTest, QueryTimeStampTest) {
   SetupGLContext("3.2", "GL_ARB_timer_query");
   scoped_refptr<GPUTimingClient> client = CreateGPUTimingClient();
-  scoped_ptr<GPUTimer> gpu_timer = client->CreateGPUTimer(false);
+  std::unique_ptr<GPUTimer> gpu_timer = client->CreateGPUTimer(false);
 
-  const int64_t begin_cpu_time = 123;
+  const int64_t begin_cpu_time = 1230;
   const int64_t begin_gl_time = 10 * base::Time::kNanosecondsPerMicrosecond;
   const int64_t cpu_gl_offset =
       begin_gl_time / base::Time::kNanosecondsPerMicrosecond - begin_cpu_time;
@@ -125,7 +141,7 @@ TEST_F(GPUTimingTest, QueryTimeStampTest) {
 
   EXPECT_EQ(0, gpu_timer->GetDeltaElapsed());
 
-  int64 start, end;
+  int64_t start, end;
   gpu_timer->GetStartEndTimestamps(&start, &end);
   EXPECT_EQ(begin_cpu_time, start);
   EXPECT_EQ(begin_cpu_time, end);
@@ -136,7 +152,7 @@ TEST_F(GPUTimingTest, QueryTimeStampUsingElapsedTest) {
   // timestamp queries. Internally we fall back to time elapsed queries.
   SetupGLContext("3.2", "GL_EXT_timer_query");
   scoped_refptr<GPUTimingClient> client = CreateGPUTimingClient();
-  scoped_ptr<GPUTimer> gpu_timer = client->CreateGPUTimer(false);
+  std::unique_ptr<GPUTimer> gpu_timer = client->CreateGPUTimer(false);
   ASSERT_TRUE(client->IsForceTimeElapsedQuery());
 
   const int64_t begin_cpu_time = 123;
@@ -155,10 +171,47 @@ TEST_F(GPUTimingTest, QueryTimeStampUsingElapsedTest) {
   EXPECT_TRUE(gpu_timer->IsAvailable());
   EXPECT_EQ(0, gpu_timer->GetDeltaElapsed());
 
-  int64 start, end;
+  int64_t start, end;
   gpu_timer->GetStartEndTimestamps(&start, &end);
   EXPECT_EQ(begin_cpu_time, start);
   EXPECT_EQ(begin_cpu_time, end);
 }
 
-}  // namespace gpu
+TEST_F(GPUTimingTest, QueryTimestampUsingElapsedARBTest) {
+  // Test timestamp queries on platforms with GL_ARB_timer_query but still lack
+  // support for timestamp queries
+  SetupGLContext("3.2", "GL_ARB_timer_query");
+  scoped_refptr<GPUTimingClient> client = CreateGPUTimingClient();
+  std::unique_ptr<GPUTimer> gpu_timer = client->CreateGPUTimer(false);
+
+  const int64_t begin_cpu_time = 123;
+  const int64_t begin_gl_time = 10 * base::Time::kNanosecondsPerMicrosecond;
+  const int64_t cpu_gl_offset = begin_gl_time - begin_cpu_time;
+  gpu_timing_fake_queries_.SetCPUGLOffset(cpu_gl_offset);
+  gpu_timing_fake_queries_.SetCurrentCPUTime(begin_cpu_time);
+
+  gpu_timing_fake_queries_.ExpectGPUTimeStampQuery(*gl_, true);
+
+  // Custom mock override to ensure the timestamp bits are 0
+  EXPECT_CALL(*gl_, GetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, NotNull()))
+      .Times(Exactly(1))
+      .WillRepeatedly(DoAll(SetArgPointee<2>(0), Return()));
+
+  gpu_timer->QueryTimeStamp();
+
+  gpu_timing_fake_queries_.SetCurrentCPUTime(begin_cpu_time - 1);
+  EXPECT_FALSE(gpu_timer->IsAvailable());
+
+  gpu_timing_fake_queries_.SetCurrentCPUTime(begin_cpu_time + 1);
+  EXPECT_TRUE(gpu_timer->IsAvailable());
+  EXPECT_EQ(0, gpu_timer->GetDeltaElapsed());
+
+  int64_t start, end;
+  gpu_timer->GetStartEndTimestamps(&start, &end);
+  // Force time elapsed won't be set until a query is actually attempted
+  ASSERT_TRUE(client->IsForceTimeElapsedQuery());
+  EXPECT_EQ(begin_cpu_time, start);
+  EXPECT_EQ(begin_cpu_time, end);
+}
+
+}  // namespace gl

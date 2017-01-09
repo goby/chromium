@@ -5,8 +5,12 @@
 #ifndef CONTENT_BROWSER_DOM_STORAGE_DOM_STORAGE_MESSAGE_FILTER_H_
 #define CONTENT_BROWSER_DOM_STORAGE_DOM_STORAGE_MESSAGE_FILTER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/dom_storage/dom_storage_context_impl.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "content/public/browser/browser_message_filter.h"
@@ -39,14 +43,15 @@ class DOMStorageMessageFilter
   void UninitializeInSequence();
 
   // BrowserMessageFilter implementation
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   base::TaskRunner* OverrideTaskRunnerForMessage(
       const IPC::Message& message) override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
   // Message Handlers.
-  void OnOpenStorageArea(int connection_id, int64 namespace_id,
+  void OnOpenStorageArea(int connection_id,
+                         int64_t namespace_id,
                          const GURL& origin);
   void OnCloseStorageArea(int connection_id);
   void OnLoadStorageArea(int connection_id, DOMStorageValuesMap* map);
@@ -79,7 +84,7 @@ class DOMStorageMessageFilter
       const base::NullableString16& old_value);
 
   scoped_refptr<DOMStorageContextImpl> context_;
-  scoped_ptr<DOMStorageHost> host_;
+  std::unique_ptr<DOMStorageHost> host_;
   int connection_dispatching_message_for_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(DOMStorageMessageFilter);

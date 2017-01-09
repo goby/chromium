@@ -24,11 +24,11 @@ void AddTabAt(Browser* browser, const GURL& url, int idx, bool foreground) {
   // WebContents, but we want to include the time it takes to create the
   // WebContents object too.
   base::TimeTicks new_tab_start_time = base::TimeTicks::Now();
-  bool show_ntp = url.is_empty();
   chrome::NavigateParams params(browser,
-      show_ntp ? GURL(chrome::kChromeUINewTabURL) : url,
-      show_ntp ? ui::PAGE_TRANSITION_AUTO_TOPLEVEL : ui::PAGE_TRANSITION_TYPED);
-  params.disposition = foreground ? NEW_FOREGROUND_TAB : NEW_BACKGROUND_TAB;
+      url.is_empty() ? GURL(chrome::kChromeUINewTabURL) : url,
+      ui::PAGE_TRANSITION_TYPED);
+  params.disposition = foreground ? WindowOpenDisposition::NEW_FOREGROUND_TAB
+                                  : WindowOpenDisposition::NEW_BACKGROUND_TAB;
   params.tabstrip_index = idx;
   chrome::Navigate(&params);
   CoreTabHelper* core_tab_helper =
@@ -41,7 +41,7 @@ content::WebContents* AddSelectedTabWithURL(
     const GURL& url,
     ui::PageTransition transition) {
   NavigateParams params(browser, url, transition);
-  params.disposition = NEW_FOREGROUND_TAB;
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   Navigate(&params);
   return params.target_contents;
 }
@@ -54,9 +54,9 @@ void AddWebContents(Browser* browser,
                     bool user_gesture,
                     bool* was_blocked) {
   // No code for this yet.
-  DCHECK(disposition != SAVE_TO_DISK);
+  DCHECK(disposition != WindowOpenDisposition::SAVE_TO_DISK);
   // Can't create a new contents for the current tab - invalid case.
-  DCHECK(disposition != CURRENT_TAB);
+  DCHECK(disposition != WindowOpenDisposition::CURRENT_TAB);
 
   NavigateParams params(browser, new_contents);
   params.source_contents = source_contents;

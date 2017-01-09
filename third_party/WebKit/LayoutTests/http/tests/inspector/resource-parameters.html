@@ -12,14 +12,13 @@ function submit()
 function test()
 {
     InspectorTest.evaluateInPage("submit()");
-    InspectorTest.networkManager.addEventListener(WebInspector.NetworkManager.EventTypes.RequestFinished, onRequestFinished);
+    InspectorTest.networkManager.addEventListener(SDK.NetworkManager.Events.RequestFinished, onRequestFinished);
 
     function onRequestFinished(event)
     {
         var request = event.data;
-        if (request.url !== "http://localhost:8000/inspector/resources/post-target.cgi?queryParam1=queryValue1&queryParam2=")
-            return;
-        InspectorTest.addObject(new WebInspector.HAREntry(request).build(), InspectorTest.HARPropertyFormatters);
+        InspectorTest.addResult(request.url);
+        InspectorTest.addObject(new SDK.HAREntry(request).build(), InspectorTest.HARPropertyFormatters);
         InspectorTest.completeTest();
     }
 }
@@ -30,7 +29,7 @@ function test()
 <p>
 Tests that resources panel shows form data parameters.
 </p>
-<form target="target-iframe" method="POST" action="http://localhost:8000/inspector/resources/post-target.cgi?queryParam1=queryValue1&queryParam2=#fragmentParam1=fragmentValue1&fragmentParam2=">
+<form target="target-iframe" method="POST" action="http://127.0.0.1:8000/inspector/resources/post-target.cgi?queryParam1=queryValue1&queryParam2=#fragmentParam1=fragmentValue1&fragmentParam2=">
 <input name="formParam1" value="formValue1">
 <input name="formParam2">
 <input id="submit" type="submit">

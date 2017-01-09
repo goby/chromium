@@ -2,21 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
 #include <string.h>
 
 #include <vector>
 
+#include "chrome/test/data/nacl/ppapi_test_lib/get_browser_interface.h"
+#include "chrome/test/data/nacl/ppapi_test_lib/test_interface.h"
 #include "native_client/src/include/nacl_macros.h"
 #include "native_client/src/shared/platform/nacl_check.h"
-
 #include "ppapi/c/pp_bool.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/pp_input_event.h"
 #include "ppapi/c/ppb_view.h"
 #include "ppapi/c/ppp_instance.h"
-
-#include "ppapi/native_client/tests/ppapi_test_lib/get_browser_interface.h"
-#include "ppapi/native_client/tests/ppapi_test_lib/test_interface.h"
 
 namespace {
 
@@ -45,14 +44,13 @@ void DidChangeView(PP_Instance instance, PP_Resource view) {
 
   PP_Rect clip;
   PPBView()->GetClipRect(view, &clip);
-  EXPECT(clip.point.x == 0 && clip.point.y == -1);
+  EXPECT(clip.point.x == 0 && clip.point.y == 0);
 
   // These are based on embed dimensions.
   PP_Rect position;
   PPBView()->GetRect(view, &position);
-  fprintf(stderr, "clip.size.height: %d\n", clip.size.height);
   EXPECT(position.size.width == 15 && clip.size.width == 15);
-  EXPECT(position.size.height == 20 && clip.size.height == 23);
+  EXPECT(position.size.height == 20 && clip.size.height == 20);
 
   TEST_PASSED;
 }

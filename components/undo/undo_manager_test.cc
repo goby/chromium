@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/auto_reset.h"
 #include "components/undo/undo_manager.h"
+
+#include "base/auto_reset.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "components/undo/undo_manager_observer.h"
 #include "components/undo/undo_operation.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -85,7 +88,7 @@ void TestUndoService::Redo() {
 }
 
 void TestUndoService::TriggerOperation() {
-  undo_manager_.AddUndoOperation(make_scoped_ptr(new TestUndoOperation(this)));
+  undo_manager_.AddUndoOperation(base::MakeUnique<TestUndoOperation>(this));
 }
 
 void TestUndoService::RecordUndoCall() {

@@ -2,22 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <set>
 #include <sstream>
 
 #include "base/command_line.h"
+#include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
+#include "base/strings/string_util.h"
 #include "tools/gn/commands.h"
 #include "tools/gn/config.h"
-#include "tools/gn/config_values_extractors.h"
-#include "tools/gn/deps_iterator.h"
-#include "tools/gn/filesystem_utils.h"
-#include "tools/gn/item.h"
-#include "tools/gn/label.h"
-#include "tools/gn/runtime_deps.h"
+#include "tools/gn/desc_builder.h"
 #include "tools/gn/setup.h"
 #include "tools/gn/standard_out.h"
-#include "tools/gn/substitution_writer.h"
+#include "tools/gn/switches.h"
 #include "tools/gn/target.h"
 #include "tools/gn/variables.h"
 
@@ -28,430 +28,259 @@ namespace {
 // Desc-specific command line switches.
 const char kBlame[] = "blame";
 const char kTree[] = "tree";
+const char kAll[] = "all";
 
-// Prints the given directory in a nice way for the user to view.
-std::string FormatSourceDir(const SourceDir& dir) {
-#if defined(OS_WIN)
-  // On Windows we fix up system absolute paths to look like native ones.
-  // Internally, they'll look like "/C:\foo\bar/"
-  if (dir.is_system_absolute()) {
-    std::string buf = dir.value();
-    if (buf.size() > 3 && buf[2] == ':') {
-      buf.erase(buf.begin());  // Erase beginning slash.
-      return buf;
+// Prints value with specified indentation level
+void PrintValue(const base::Value* value, int indentLevel) {
+  std::string indent(indentLevel * 2, ' ');
+  const base::ListValue* list_value = nullptr;
+  const base::DictionaryValue* dict_value = nullptr;
+  std::string string_value;
+  bool bool_value = false;
+  if (value->GetAsList(&list_value)) {
+    for (const auto& v : *list_value) {
+      PrintValue(v.get(), indentLevel);
     }
-  }
-#endif
-  return dir.value();
-}
-
-void RecursiveCollectChildDeps(const Target* target,
-                               std::set<const Target*>* result);
-
-void RecursiveCollectDeps(const Target* target,
-                          std::set<const Target*>* result) {
-  if (result->find(target) != result->end())
-    return;  // Already did this target.
-  result->insert(target);
-
-  RecursiveCollectChildDeps(target, result);
-}
-
-void RecursiveCollectChildDeps(const Target* target,
-                               std::set<const Target*>* result) {
-  for (const auto& pair : target->GetDeps(Target::DEPS_ALL))
-    RecursiveCollectDeps(pair.ptr, result);
-}
-
-// Prints dependencies of the given target (not the target itself). If the
-// set is non-null, new targets encountered will be added to the set, and if
-// a dependency is in the set already, it will not be recused into. When the
-// set is null, all dependencies will be printed.
-void RecursivePrintDeps(const Target* target,
-                        const Label& default_toolchain,
-                        std::set<const Target*>* seen_targets,
-                        int indent_level) {
-  // Combine all deps into one sorted list.
-  std::vector<LabelTargetPair> sorted_deps;
-  for (const auto& pair : target->GetDeps(Target::DEPS_ALL))
-    sorted_deps.push_back(pair);
-  std::sort(sorted_deps.begin(), sorted_deps.end(),
-            LabelPtrLabelLess<Target>());
-
-  std::string indent(indent_level * 2, ' ');
-  for (const auto& pair : sorted_deps) {
-    const Target* cur_dep = pair.ptr;
-
-    OutputString(indent +
-        cur_dep->label().GetUserVisibleName(default_toolchain));
-    bool print_children = true;
-    if (seen_targets) {
-      if (seen_targets->find(cur_dep) == seen_targets->end()) {
-        // New target, mark it visited.
-        seen_targets->insert(cur_dep);
-      } else {
-        // Already seen.
-        print_children = false;
-        // Only print "..." if something is actually elided, which means that
-        // the current target has children.
-        if (!cur_dep->public_deps().empty() ||
-            !cur_dep->private_deps().empty() ||
-            !cur_dep->data_deps().empty())
-          OutputString("...");
-      }
-    }
-
+  } else if (value->GetAsString(&string_value)) {
+    OutputString(indent);
+    OutputString(string_value);
     OutputString("\n");
-    if (print_children) {
-      RecursivePrintDeps(cur_dep, default_toolchain, seen_targets,
-                         indent_level + 1);
+  } else if (value->GetAsBoolean(&bool_value)) {
+    OutputString(indent);
+    OutputString(bool_value ? "true" : "false");
+    OutputString("\n");
+  } else if (value->GetAsDictionary(&dict_value)) {
+    base::DictionaryValue::Iterator iter(*dict_value);
+    while (!iter.IsAtEnd()) {
+      OutputString(indent + iter.key() + "\n");
+      PrintValue(&iter.value(), indentLevel + 1);
+      iter.Advance();
     }
+  } else if (value->IsType(base::Value::Type::NONE)) {
+    OutputString(indent + "<null>\n");
   }
 }
 
-void PrintDeps(const Target* target, bool display_header) {
-  const base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
-  Label toolchain_label = target->label().GetToolchainLabel();
+// Default handler for property
+void DefaultHandler(const std::string& name, const base::Value* value) {
+  OutputString("\n");
+  OutputString(name);
+  OutputString("\n");
+  PrintValue(value, 1);
+}
 
-  // Tree mode is separate.
-  if (cmdline->HasSwitch(kTree)) {
-    if (display_header)
-      OutputString("\nDependency tree:\n");
+// Specific handler for properties that need different treatment
 
-    if (cmdline->HasSwitch("all")) {
-      // Show all tree deps with no eliding.
-      RecursivePrintDeps(target, toolchain_label, nullptr, 1);
+// Prints label and property value on one line, capitalizing the label.
+void LabelHandler(std::string name, const base::Value* value) {
+  name[0] = base::ToUpperASCII(name[0]);
+  std::string string_value;
+  if (value->GetAsString(&string_value)) {
+    OutputString(name + ": ", DECORATION_YELLOW);
+    OutputString(string_value + "\n");
+  }
+}
+
+void VisibilityHandler(const std::string& name, const base::Value* value) {
+  const base::ListValue* list;
+  if (value->GetAsList(&list)) {
+    if (list->empty()) {
+      base::StringValue str("(no visibility)");
+      DefaultHandler(name, &str);
     } else {
-      // Don't recurse into duplicates.
-      std::set<const Target*> seen_targets;
-      RecursivePrintDeps(target, toolchain_label, &seen_targets, 1);
+      DefaultHandler(name, value);
     }
-    return;
   }
+}
 
-  // Collect the deps to display.
-  if (cmdline->HasSwitch("all")) {
-    // Show all dependencies.
-    if (display_header)
-      OutputString("\nAll recursive dependencies:\n");
-
-    std::set<const Target*> all_deps;
-    RecursiveCollectChildDeps(target, &all_deps);
-    FilterAndPrintTargetSet(display_header, all_deps);
-  } else {
-    std::vector<const Target*> deps;
-    // Show direct dependencies only.
-    if (display_header) {
-      OutputString(
-          "\nDirect dependencies "
-          "(try also \"--all\", \"--tree\", or even \"--all --tree\"):\n");
+void PublicHandler(const std::string& name, const base::Value* value) {
+  std::string p;
+  if (value->GetAsString(&p)) {
+    if (p == "*") {
+      base::StringValue str("[All headers listed in the sources are public.]");
+      DefaultHandler(name, &str);
+      return;
     }
-    for (const auto& pair : target->GetDeps(Target::DEPS_ALL))
-      deps.push_back(pair.ptr);
-    std::sort(deps.begin(), deps.end());
-    FilterAndPrintTargets(display_header, &deps);
   }
+  DefaultHandler(name, value);
 }
 
-// libs and lib_dirs are special in that they're inherited. We don't currently
-// implement a blame feature for this since the bottom-up inheritance makes
-// this difficult.
-void PrintLibDirs(const Target* target, bool display_header) {
-  const OrderedSet<SourceDir>& lib_dirs = target->all_lib_dirs();
-  if (lib_dirs.empty())
-    return;
-
-  if (display_header)
-    OutputString("\nlib_dirs\n");
-
-  for (size_t i = 0; i < lib_dirs.size(); i++)
-    OutputString("    " + FormatSourceDir(lib_dirs[i]) + "\n");
-}
-
-void PrintLibs(const Target* target, bool display_header) {
-  const OrderedSet<std::string>& libs = target->all_libs();
-  if (libs.empty())
-    return;
-
-  if (display_header)
-    OutputString("\nlibs\n");
-
-  for (size_t i = 0; i < libs.size(); i++)
-    OutputString("    " + libs[i] + "\n");
-}
-
-void PrintPublic(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\npublic:\n");
-
-  if (target->all_headers_public()) {
-    OutputString("  [All headers listed in the sources are public.]\n");
-    return;
-  }
-
-  Target::FileList public_headers = target->public_headers();
-  std::sort(public_headers.begin(), public_headers.end());
-  for (const auto& hdr : public_headers)
-    OutputString("  " + hdr.value() + "\n");
-}
-
-void PrintCheckIncludes(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\ncheck_includes:\n");
-
-  if (target->check_includes())
-    OutputString("  true\n");
-  else
-    OutputString("  false\n");
-}
-
-void PrintAllowCircularIncludesFrom(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\nallow_circular_includes_from:\n");
-
-  Label toolchain_label = target->label().GetToolchainLabel();
-  for (const auto& cur : target->allow_circular_includes_from())
-    OutputString("  " + cur.GetUserVisibleName(toolchain_label) + "\n");
-}
-
-void PrintVisibility(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\nvisibility:\n");
-
-  OutputString(target->visibility().Describe(2, false));
-}
-
-void PrintTestonly(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\ntestonly:\n");
-
-  if (target->testonly())
-    OutputString("  true\n");
-  else
-    OutputString("  false\n");
-}
-
-// Recursively prints subconfigs of a config.
-void PrintSubConfigs(const Config* config, int indent_level) {
-  if (config->configs().empty())
-    return;
-
-  std::string indent(indent_level * 2, ' ');
-  Label toolchain_label = config->label().GetToolchainLabel();
-  for (const auto& pair : config->configs()) {
-    OutputString(
-        indent + pair.label.GetUserVisibleName(toolchain_label) + "\n");
-    PrintSubConfigs(pair.ptr, indent_level + 1);
-  }
-}
-
-// This allows configs stored as either std::vector<LabelConfigPair> or
-// UniqueVector<LabelConfigPair> to be printed.
-template <class VectorType>
-void PrintConfigsVector(const Target* target,
-                        const VectorType& configs,
-                        const std::string& heading,
-                        bool display_header) {
-  if (configs.empty())
-    return;
-
+void ConfigsHandler(const std::string& name, const base::Value* value) {
   bool tree = base::CommandLine::ForCurrentProcess()->HasSwitch(kTree);
-
-  // Don't sort since the order determines how things are processed.
-  if (display_header) {
-    if (tree)
-      OutputString("\n" + heading + " tree (in order applying):\n");
-    else
-      OutputString("\n" + heading + " (in order applying, try also --tree):\n");
-  }
-
-  Label toolchain_label = target->label().GetToolchainLabel();
-  for (const auto& config : configs) {
-    OutputString("  " + config.label.GetUserVisibleName(toolchain_label) +
-                 "\n");
-    if (tree)
-      PrintSubConfigs(config.ptr, 2);  // 2 = start with double-indent.
-  }
+  if (tree)
+    DefaultHandler(name + " tree (in order applying)", value);
+  else
+    DefaultHandler(name + " (in order applying, try also --tree)", value);
 }
 
-void PrintConfigs(const Target* target, bool display_header) {
-  PrintConfigsVector(target, target->configs().vector(), "configs",
-                     display_header);
-}
-
-void PrintPublicConfigs(const Target* target, bool display_header) {
-  PrintConfigsVector(target, target->public_configs(),
-                     "public_configs", display_header);
-}
-
-void PrintAllDependentConfigs(const Target* target, bool display_header) {
-  PrintConfigsVector(target, target->all_dependent_configs(),
-                     "all_dependent_configs", display_header);
-}
-
-void PrintFileList(const Target::FileList& files,
-                   const std::string& header,
-                   bool indent_extra,
-                   bool display_header) {
-  if (files.empty())
-    return;
-
-  if (display_header)
-    OutputString("\n" + header + ":\n");
-
-  std::string indent = indent_extra ? "    " : "  ";
-
-  Target::FileList sorted = files;
-  std::sort(sorted.begin(), sorted.end());
-  for (const auto& elem : sorted)
-    OutputString(indent + elem.value() + "\n");
-}
-
-void PrintSources(const Target* target, bool display_header) {
-  PrintFileList(target->sources(), "sources", false, display_header);
-}
-
-void PrintInputs(const Target* target, bool display_header) {
-  PrintFileList(target->inputs(), "inputs", false, display_header);
-}
-
-void PrintOutputs(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\noutputs:\n");
-
-  if (target->output_type() == Target::ACTION) {
-    // Action, print out outputs, don't apply sources to it.
-    for (const auto& elem : target->action_values().outputs().list()) {
-      OutputString("  " + elem.AsString() + "\n");
-    }
+void DepsHandler(const std::string& name, const base::Value* value) {
+  bool tree = base::CommandLine::ForCurrentProcess()->HasSwitch(kTree);
+  bool all = base::CommandLine::ForCurrentProcess()->HasSwitch(kTree);
+  if (tree) {
+    DefaultHandler("Dependency tree", value);
   } else {
-    const SubstitutionList& outputs = target->action_values().outputs();
-    if (!outputs.required_types().empty()) {
-      // Display the pattern and resolved pattern separately, since there are
-      // subtitutions used.
-      OutputString("  Output pattern:\n");
-      for (const auto& elem : outputs.list())
-        OutputString("    " + elem.AsString() + "\n");
-
-      // Now display what that resolves to given the sources.
-      OutputString("\n  Resolved output file list:\n");
+    if (!all) {
+      DefaultHandler(
+          "Direct dependencies "
+          "(try also \"--all\", \"--tree\", or even \"--all --tree\")",
+          value);
+    } else {
+      DefaultHandler("All recursive dependencies", value);
     }
-
-    // Resolved output list.
-    std::vector<SourceFile> output_files;
-    SubstitutionWriter::ApplyListToSources(target->settings(), outputs,
-                                           target->sources(), &output_files);
-    PrintFileList(output_files, "", true, false);
   }
 }
 
-void PrintScript(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\nscript:\n");
-  OutputString("  " + target->action_values().script().value() + "\n");
-}
+// Outputs need special processing when output patterns are present.
+void ProcessOutputs(base::DictionaryValue* target) {
+  base::ListValue* patterns = nullptr;
+  base::ListValue* outputs = nullptr;
+  target->GetList("output_patterns", &patterns);
+  target->GetList(variables::kOutputs, &outputs);
 
-void PrintArgs(const Target* target, bool display_header) {
-  if (display_header)
-    OutputString("\nargs:\n");
-  for (const auto& elem : target->action_values().args().list()) {
-    OutputString("  " + elem.AsString() + "\n");
-  }
-}
-
-void PrintDepfile(const Target* target, bool display_header) {
-  if (target->action_values().depfile().empty())
-    return;
-  if (display_header)
-    OutputString("\ndepfile:\n");
-  OutputString("  " + target->action_values().depfile().AsString() + "\n");
-}
-
-// Attribute the origin for attributing from where a target came from. Does
-// nothing if the input is null or it does not have a location.
-void OutputSourceOfDep(const ParseNode* origin, std::ostream& out) {
-  if (!origin)
-    return;
-  Location location = origin->GetRange().begin();
-  out << "       (Added by " + location.file()->name().value() << ":"
-      << location.line_number() << ")\n";
-}
-
-// Templatized writer for writing out different config value types.
-template<typename T> struct DescValueWriter {};
-template<> struct DescValueWriter<std::string> {
-  void operator()(const std::string& str, std::ostream& out) const {
-    out << "    " << str << "\n";
-  }
-};
-template<> struct DescValueWriter<SourceDir> {
-  void operator()(const SourceDir& dir, std::ostream& out) const {
-    out << "    " << FormatSourceDir(dir) << "\n";
-  }
-};
-
-// Writes a given config value type to the string, optionally with attribution.
-// This should match RecursiveTargetConfigToStream in the order it traverses.
-template<typename T> void OutputRecursiveTargetConfig(
-    const Target* target,
-    const char* header_name,
-    const std::vector<T>& (ConfigValues::* getter)() const) {
-  bool display_blame =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(kBlame);
-
-  DescValueWriter<T> writer;
-  std::ostringstream out;
-
-  for (ConfigValuesIterator iter(target); !iter.done(); iter.Next()) {
-    if ((iter.cur().*getter)().empty())
-      continue;
-
-    // Optional blame sub-head.
-    if (display_blame) {
-      const Config* config = iter.GetCurrentConfig();
-      if (config) {
-        // Source of this value is a config.
-        out << "  From " << config->label().GetUserVisibleName(false) << "\n";
-        OutputSourceOfDep(iter.origin(), out);
-      } else {
-        // Source of this value is the target itself.
-        out << "  From " << target->label().GetUserVisibleName(false) << "\n";
-      }
+  if (outputs || patterns) {
+    OutputString("\noutputs\n");
+    int indent = 1;
+    if (patterns) {
+      OutputString("  Output patterns\n");
+      indent = 2;
+      PrintValue(patterns, indent);
+      OutputString("\n  Resolved output file list\n");
     }
+    if (outputs)
+      PrintValue(outputs, indent);
 
-    // Actual values.
-    ConfigValuesToStream(iter.cur(), getter, writer, out);
-  }
-
-  std::string out_str = out.str();
-  if (!out_str.empty()) {
-    OutputString("\n" + std::string(header_name) + "\n");
-    OutputString(out_str);
+    target->Remove("output_patterns", nullptr);
+    target->Remove(variables::kOutputs, nullptr);
   }
 }
 
-void PrintRuntimeDeps(const Target* target) {
-  bool display_blame =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(kBlame);
-  Label toolchain = target->label().GetToolchainLabel();
-
-  const Target* previous_from = NULL;
-  for (const auto& pair : ComputeRuntimeDeps(target)) {
-    if (display_blame) {
-      // Generally a target's runtime deps will be listed sequentially, so
-      // group them and don't duplicate the "from" label for two in a row.
-      if (previous_from == pair.second) {
-        OutputString("  ");  // Just indent.
-      } else {
-        previous_from = pair.second;
-        OutputString("From ");
-        OutputString(pair.second->label().GetUserVisibleName(toolchain));
-        OutputString("\n  ");  // Make the file name indented.
-      }
-    }
-    OutputString(pair.first.value());
-    OutputString("\n");
+bool PrintTarget(const Target* target,
+                 const std::string& what,
+                 bool single_target,
+                 bool all,
+                 bool tree,
+                 bool blame) {
+  std::unique_ptr<base::DictionaryValue> dict =
+      DescBuilder::DescriptionForTarget(target, what, all, tree, blame);
+  if (!what.empty() && dict->empty()) {
+    OutputString("Don't know how to display \"" + what + "\" for \"" +
+                 Target::GetStringForOutputType(target->output_type()) +
+                 "\".\n");
+    return false;
   }
+  // Print single value, without any headers
+  if (!what.empty() && dict->size() == 1 && single_target) {
+    base::DictionaryValue::Iterator iter(*dict);
+    PrintValue(&iter.value(), 0);
+    return true;
+  }
+
+  OutputString("Target ", DECORATION_YELLOW);
+  OutputString(target->label().GetUserVisibleName(false));
+  OutputString("\n");
+
+  std::unique_ptr<base::Value> v;
+#define HANDLER(property, handler_name) \
+  if (dict->Remove(property, &v)) {     \
+    handler_name(property, v.get());    \
+  }
+
+  // Entries with DefaultHandler are present to enforce order
+  HANDLER("type", LabelHandler);
+  HANDLER("toolchain", LabelHandler);
+  HANDLER(variables::kVisibility, VisibilityHandler);
+  HANDLER(variables::kTestonly, DefaultHandler);
+  HANDLER(variables::kCheckIncludes, DefaultHandler);
+  HANDLER(variables::kAllowCircularIncludesFrom, DefaultHandler);
+  HANDLER(variables::kSources, DefaultHandler);
+  HANDLER(variables::kPublic, PublicHandler);
+  HANDLER(variables::kInputs, DefaultHandler);
+  HANDLER(variables::kConfigs, ConfigsHandler);
+  HANDLER(variables::kPublicConfigs, ConfigsHandler);
+  HANDLER(variables::kAllDependentConfigs, ConfigsHandler);
+  HANDLER(variables::kScript, DefaultHandler);
+  HANDLER(variables::kArgs, DefaultHandler);
+  HANDLER(variables::kDepfile, DefaultHandler);
+  ProcessOutputs(dict.get());
+  HANDLER("bundle_data", DefaultHandler);
+  HANDLER(variables::kArflags, DefaultHandler);
+  HANDLER(variables::kAsmflags, DefaultHandler);
+  HANDLER(variables::kCflags, DefaultHandler);
+  HANDLER(variables::kCflagsC, DefaultHandler);
+  HANDLER(variables::kCflagsCC, DefaultHandler);
+  HANDLER(variables::kCflagsObjC, DefaultHandler);
+  HANDLER(variables::kCflagsObjCC, DefaultHandler);
+  HANDLER(variables::kDefines, DefaultHandler);
+  HANDLER(variables::kIncludeDirs, DefaultHandler);
+  HANDLER(variables::kLdflags, DefaultHandler);
+  HANDLER(variables::kPrecompiledHeader, DefaultHandler);
+  HANDLER(variables::kPrecompiledSource, DefaultHandler);
+  HANDLER(variables::kDeps, DepsHandler);
+  HANDLER(variables::kLibs, DefaultHandler);
+  HANDLER(variables::kLibDirs, DefaultHandler);
+
+#undef HANDLER
+
+  // Process the rest (if any)
+  base::DictionaryValue::Iterator iter(*dict);
+  while (!iter.IsAtEnd()) {
+    DefaultHandler(iter.key(), &iter.value());
+    iter.Advance();
+  }
+
+  return true;
+}
+
+bool PrintConfig(const Config* config,
+                 const std::string& what,
+                 bool single_config) {
+  std::unique_ptr<base::DictionaryValue> dict =
+      DescBuilder::DescriptionForConfig(config, what);
+  if (!what.empty() && dict->empty()) {
+    OutputString("Don't know how to display \"" + what + "\" for a config.\n");
+    return false;
+  }
+  // Print single value, without any headers
+  if (!what.empty() && dict->size() == 1 && single_config) {
+    base::DictionaryValue::Iterator iter(*dict);
+    PrintValue(&iter.value(), 0);
+    return true;
+  }
+
+  OutputString("Config: ", DECORATION_YELLOW);
+  OutputString(config->label().GetUserVisibleName(false));
+  OutputString("\n");
+
+  std::unique_ptr<base::Value> v;
+#define HANDLER(property, handler_name) \
+  if (dict->Remove(property, &v)) {     \
+    handler_name(property, v.get());    \
+  }
+
+  HANDLER("toolchain", LabelHandler);
+  if (!config->configs().empty()) {
+    OutputString(
+        "(This is a composite config, the values below are after the\n"
+        "expansion of the child configs.)\n");
+  }
+  HANDLER(variables::kArflags, DefaultHandler);
+  HANDLER(variables::kAsmflags, DefaultHandler);
+  HANDLER(variables::kCflags, DefaultHandler);
+  HANDLER(variables::kCflagsC, DefaultHandler);
+  HANDLER(variables::kCflagsCC, DefaultHandler);
+  HANDLER(variables::kCflagsObjC, DefaultHandler);
+  HANDLER(variables::kCflagsObjCC, DefaultHandler);
+  HANDLER(variables::kDefines, DefaultHandler);
+  HANDLER(variables::kIncludeDirs, DefaultHandler);
+  HANDLER(variables::kLdflags, DefaultHandler);
+  HANDLER(variables::kLibs, DefaultHandler);
+  HANDLER(variables::kLibDirs, DefaultHandler);
+  HANDLER(variables::kPrecompiledHeader, DefaultHandler);
+  HANDLER(variables::kPrecompiledSource, DefaultHandler);
+
+#undef HANDLER
+
+  return true;
 }
 
 }  // namespace
@@ -460,137 +289,135 @@ void PrintRuntimeDeps(const Target* target) {
 
 const char kDesc[] = "desc";
 const char kDesc_HelpShort[] =
-    "desc: Show lots of insightful information about a target.";
+    "desc: Show lots of insightful information about a target or config.";
 const char kDesc_Help[] =
-    "gn desc <out_dir> <target label> [<what to show>] [--blame]\n"
-    "\n"
-    "  Displays information about a given labeled target for the given build.\n"
-    "  The build parameters will be taken for the build in the given\n"
-    "  <out_dir>.\n"
-    "\n"
-    "Possibilities for <what to show>\n"
-    "  (If unspecified an overall summary will be displayed.)\n"
-    "\n"
-    "  sources\n"
-    "      Source files.\n"
-    "\n"
-    "  inputs\n"
-    "      Additional input dependencies.\n"
-    "\n"
-    "  public\n"
-    "      Public header files.\n"
-    "\n"
-    "  check_includes\n"
-    "      Whether \"gn check\" checks this target for include usage.\n"
-    "\n"
-    "  allow_circular_includes_from\n"
-    "      Permit includes from these targets.\n"
-    "\n"
-    "  visibility\n"
-    "      Prints which targets can depend on this one.\n"
-    "\n"
-    "  testonly\n"
-    "      Whether this target may only be used in tests.\n"
-    "\n"
-    "  configs\n"
-    "      Shows configs applied to the given target, sorted in the order\n"
-    "      they're specified. This includes both configs specified in the\n"
-    "      \"configs\" variable, as well as configs pushed onto this target\n"
-    "      via dependencies specifying \"all\" or \"direct\" dependent\n"
-    "      configs.\n"
-    "\n"
-    "  deps\n"
-    "      Show immediate or recursive dependencies. See below for flags that\n"
-    "      control deps printing.\n"
-    "\n"
-    "  public_configs\n"
-    "  all_dependent_configs\n"
-    "      Shows the labels of configs applied to targets that depend on this\n"
-    "      one (either directly or all of them).\n"
-    "\n"
-    "  script\n"
-    "  args\n"
-    "  depfile\n"
-    "      Actions only. The script and related values.\n"
-    "\n"
-    "  outputs\n"
-    "      Outputs for script and copy target types.\n"
-    "\n"
-    "  defines       [--blame]\n"
-    "  include_dirs  [--blame]\n"
-    "  cflags        [--blame]\n"
-    "  cflags_cc     [--blame]\n"
-    "  cflags_cxx    [--blame]\n"
-    "  ldflags       [--blame]\n"
-    "  lib_dirs\n"
-    "  libs\n"
-    "      Shows the given values taken from the target and all configs\n"
-    "      applying. See \"--blame\" below.\n"
-    "\n"
-    "  runtime_deps\n"
-    "      Compute all runtime deps for the given target. This is a\n"
-    "      computed list and does not correspond to any GN variable, unlike\n"
-    "      most other values here.\n"
-    "\n"
-    "      The output is a list of file names relative to the build\n"
-    "      directory. See \"gn help runtime_deps\" for how this is computed.\n"
-    "      This also works with \"--blame\" to see the source of the\n"
-    "      dependency.\n"
-    "\n"
-    "Shared flags\n"
-    "\n"
-    "  --blame\n"
-    "      Used with any value specified by a config, this will name\n"
-    "      the config that specified the value. This doesn't currently work\n"
-    "      for libs and lib_dirs because those are inherited and are more\n"
-    "      complicated to figure out the blame (patches welcome).\n"
-    "\n"
-    "Flags that control how deps are printed\n"
-    "\n"
-    "  --all\n"
-    "      Collects all recursive dependencies and prints a sorted flat list.\n"
-    "      Also usable with --tree (see below).\n"
-    "\n"
-    TARGET_PRINTING_MODE_COMMAND_LINE_HELP
-    "\n"
-    TARGET_TESTONLY_FILTER_COMMAND_LINE_HELP
-    "\n"
-    "  --tree\n"
-    "      Print a dependency tree. By default, duplicates will be elided\n"
-    "      with \"...\" but when --all and -tree are used together, no\n"
-    "      eliding will be performed.\n"
-    "\n"
-    "      The \"deps\", \"public_deps\", and \"data_deps\" will all be\n"
-    "      included in the tree.\n"
-    "\n"
-    "      Tree output can not be used with the filtering or output flags:\n"
-    "      --as, --type, --testonly.\n"
-    "\n"
-    TARGET_TYPE_FILTER_COMMAND_LINE_HELP
-    "\n"
-    "Note\n"
-    "\n"
-    "  This command will show the full name of directories and source files,\n"
-    "  but when directories and source paths are written to the build file,\n"
-    "  they will be adjusted to be relative to the build directory. So the\n"
-    "  values for paths displayed by this command won't match (but should\n"
-    "  mean the same thing).\n"
-    "\n"
-    "Examples\n"
-    "\n"
-    "  gn desc out/Debug //base:base\n"
-    "      Summarizes the given target.\n"
-    "\n"
-    "  gn desc out/Foo :base_unittests deps --tree\n"
-    "      Shows a dependency tree of the \"base_unittests\" project in\n"
-    "      the current directory.\n"
-    "\n"
-    "  gn desc out/Debug //base defines --blame\n"
-    "      Shows defines set for the //base:base target, annotated by where\n"
-    "      each one was set from.\n";
+    R"(gn desc <out_dir> <label or pattern> [<what to show>] [--blame] "
+[--format=json]
 
-#define OUTPUT_CONFIG_VALUE(name, type) \
-    OutputRecursiveTargetConfig<type>(target, #name, &ConfigValues::name);
+  Displays information about a given target or config. The build build
+  parameters will be taken for the build in the given <out_dir>.
+
+  The <label or pattern> can be a target label, a config label, or a label
+  pattern (see "gn help label_pattern"). A label pattern will only match
+  targets.
+
+Possibilities for <what to show>
+
+  (If unspecified an overall summary will be displayed.)
+
+  all_dependent_configs
+  allow_circular_includes_from
+  arflags [--blame]
+  args
+  cflags [--blame]
+  cflags_cc [--blame]
+  cflags_cxx [--blame]
+  check_includes
+  configs [--tree] (see below)
+  defines [--blame]
+  depfile
+  deps [--all] [--tree] (see below)
+  include_dirs [--blame]
+  inputs
+  ldflags [--blame]
+  lib_dirs
+  libs
+  outputs
+  public_configs
+  public
+  script
+  sources
+  testonly
+  visibility
+
+  runtime_deps
+      Compute all runtime deps for the given target. This is a computed list
+      and does not correspond to any GN variable, unlike most other values
+      here.
+
+      The output is a list of file names relative to the build directory. See
+      "gn help runtime_deps" for how this is computed. This also works with
+      "--blame" to see the source of the dependency.
+
+Shared flags
+)"
+
+ALL_TOOLCHAINS_SWITCH_HELP
+
+R"(
+  --format=json
+      Format the output as JSON instead of text.
+
+Target flags
+
+  --blame
+      Used with any value specified on a config, this will name the config that
+      cause that target to get the flag. This doesn't currently work for libs
+      and lib_dirs because those are inherited and are more complicated to
+      figure out the blame (patches welcome).
+
+Configs
+
+  The "configs" section will list all configs that apply. For targets this will
+  include configs specified in the "configs" variable of the target, and also
+  configs pushed onto this target via public or "all dependent" configs.
+
+  Configs can have child configs. Specifying --tree will show the hierarchy.
+
+Printing outputs
+
+  The "outputs" section will list all outputs that apply, including the outputs
+  computed from the tool definition (eg for "executable", "static_library", ...
+  targets).
+
+Printing deps
+
+  Deps will include all public, private, and data deps (TODO this could be
+  clarified and enhanced) sorted in order applying. The following may be used:
+
+  --all
+      Collects all recursive dependencies and prints a sorted flat list. Also
+      usable with --tree (see below).
+)"
+
+    TARGET_PRINTING_MODE_COMMAND_LINE_HELP
+"\n"
+    TARGET_TESTONLY_FILTER_COMMAND_LINE_HELP
+
+R"(
+  --tree
+      Print a dependency tree. By default, duplicates will be elided with "..."
+      but when --all and -tree are used together, no eliding will be performed.
+
+      The "deps", "public_deps", and "data_deps" will all be included in the
+      tree.
+
+      Tree output can not be used with the filtering or output flags: --as,
+      --type, --testonly.
+)"
+
+TARGET_TYPE_FILTER_COMMAND_LINE_HELP
+
+R"(Note
+
+  This command will show the full name of directories and source files, but
+  when directories and source paths are written to the build file, they will be
+  adjusted to be relative to the build directory. So the values for paths
+  displayed by this command won't match (but should mean the same thing).
+
+Examples
+
+  gn desc out/Debug //base:base
+      Summarizes the given target.
+
+  gn desc out/Foo :base_unittests deps --tree
+      Shows a dependency tree of the "base_unittests" project in
+      the current directory.
+
+  gn desc out/Debug //base defines --blame
+      Shows defines set for the //base:base target, annotated by where
+      each one was set from.
+)";
 
 int RunDesc(const std::vector<std::string>& args) {
   if (args.size() != 2 && args.size() != 3) {
@@ -599,152 +426,82 @@ int RunDesc(const std::vector<std::string>& args) {
         .PrintToStdout();
     return 1;
   }
+  const base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
 
   // Deliberately leaked to avoid expensive process teardown.
   Setup* setup = new Setup;
-  setup->build_settings().set_check_for_bad_items(false);
   if (!setup->DoSetup(args[0], false))
     return 1;
   if (!setup->Run())
     return 1;
 
-  const Target* target = ResolveTargetFromCommandLineString(setup, args[1]);
-  if (!target)
+  // Resolve target(s) and config from inputs.
+  UniqueVector<const Target*> target_matches;
+  UniqueVector<const Config*> config_matches;
+  UniqueVector<const Toolchain*> toolchain_matches;
+  UniqueVector<SourceFile> file_matches;
+
+  std::vector<std::string> target_list;
+  target_list.push_back(args[1]);
+
+  if (!ResolveFromCommandLineInput(
+          setup, target_list, cmdline->HasSwitch(switches::kAllToolchains),
+          &target_matches, &config_matches, &toolchain_matches, &file_matches))
     return 1;
 
-#define CONFIG_VALUE_HANDLER(name, type) \
-    } else if (what == #name) { OUTPUT_CONFIG_VALUE(name, type)
+  std::string what_to_print;
+  if (args.size() == 3)
+    what_to_print = args[2];
 
-  if (args.size() == 3) {
-    // User specified one thing to display.
-    const std::string& what = args[2];
-    if (what == variables::kConfigs) {
-      PrintConfigs(target, false);
-    } else if (what == variables::kPublicConfigs) {
-      PrintPublicConfigs(target, false);
-    } else if (what == variables::kAllDependentConfigs) {
-      PrintAllDependentConfigs(target, false);
-    } else if (what == variables::kSources) {
-      PrintSources(target, false);
-    } else if (what == variables::kPublic) {
-      PrintPublic(target, false);
-    } else if (what == variables::kCheckIncludes) {
-      PrintCheckIncludes(target, false);
-    } else if (what == variables::kAllowCircularIncludesFrom) {
-      PrintAllowCircularIncludesFrom(target, false);
-    } else if (what == variables::kVisibility) {
-      PrintVisibility(target, false);
-    } else if (what == variables::kTestonly) {
-      PrintTestonly(target, false);
-    } else if (what == variables::kInputs) {
-      PrintInputs(target, false);
-    } else if (what == variables::kScript) {
-      PrintScript(target, false);
-    } else if (what == variables::kArgs) {
-      PrintArgs(target, false);
-    } else if (what == variables::kDepfile) {
-      PrintDepfile(target, false);
-    } else if (what == variables::kOutputs) {
-      PrintOutputs(target, false);
-    } else if (what == variables::kDeps) {
-      PrintDeps(target, false);
-    } else if (what == variables::kLibDirs) {
-      PrintLibDirs(target, false);
-    } else if (what == variables::kLibs) {
-      PrintLibs(target, false);
-    } else if (what == "runtime_deps") {
-      PrintRuntimeDeps(target);
+  bool json = cmdline->GetSwitchValueASCII("format") == "json";
 
-    CONFIG_VALUE_HANDLER(defines, std::string)
-    CONFIG_VALUE_HANDLER(include_dirs, SourceDir)
-    CONFIG_VALUE_HANDLER(asmflags, std::string)
-    CONFIG_VALUE_HANDLER(cflags, std::string)
-    CONFIG_VALUE_HANDLER(cflags_c, std::string)
-    CONFIG_VALUE_HANDLER(cflags_cc, std::string)
-    CONFIG_VALUE_HANDLER(cflags_objc, std::string)
-    CONFIG_VALUE_HANDLER(cflags_objcc, std::string)
-    CONFIG_VALUE_HANDLER(ldflags, std::string)
-
-    } else {
-      OutputString("Don't know how to display \"" + what + "\".\n");
-      return 1;
+  if (json) {
+    // Convert all targets/configs to JSON, serialize and print them
+    auto res = base::MakeUnique<base::DictionaryValue>();
+    if (!target_matches.empty()) {
+      for (const auto* target : target_matches) {
+        res->SetWithoutPathExpansion(
+            target->label().GetUserVisibleName(
+                target->settings()->default_toolchain_label()),
+            DescBuilder::DescriptionForTarget(
+                target, what_to_print, cmdline->HasSwitch(kAll),
+                cmdline->HasSwitch(kTree), cmdline->HasSwitch(kBlame)));
+      }
+    } else if (!config_matches.empty()) {
+      for (const auto* config : config_matches) {
+        res->SetWithoutPathExpansion(
+            config->label().GetUserVisibleName(false),
+            DescBuilder::DescriptionForConfig(config, what_to_print));
+      }
     }
+    std::string s;
+    base::JSONWriter::WriteWithOptions(
+        *res.get(), base::JSONWriter::OPTIONS_PRETTY_PRINT, &s);
+    OutputString(s);
+  } else {
+    // Regular (non-json) formatted output
+    bool multiple_outputs = (target_matches.size() + config_matches.size()) > 1;
 
-#undef CONFIG_VALUE_HANDLER
-    return 0;
+    bool printed_output = false;
+    for (const Target* target : target_matches) {
+      if (printed_output)
+        OutputString("\n\n");
+      printed_output = true;
+
+      if (!PrintTarget(target, what_to_print, !multiple_outputs,
+                       cmdline->HasSwitch(kAll), cmdline->HasSwitch(kTree),
+                       cmdline->HasSwitch(kBlame)))
+        return 1;
+    }
+    for (const Config* config : config_matches) {
+      if (printed_output)
+        OutputString("\n\n");
+      printed_output = true;
+
+      if (!PrintConfig(config, what_to_print, !multiple_outputs))
+        return 1;
+    }
   }
-
-  // Display summary.
-
-  // Display this only applicable to binary targets.
-  bool is_binary_output =
-    target->output_type() != Target::GROUP &&
-    target->output_type() != Target::COPY_FILES &&
-    target->output_type() != Target::ACTION &&
-    target->output_type() != Target::ACTION_FOREACH;
-
-  // Generally we only want to display toolchains on labels when the toolchain
-  // is different than the default one for this target (which we always print
-  // in the header).
-  Label target_toolchain = target->label().GetToolchainLabel();
-
-  // Header.
-  OutputString("Target: ", DECORATION_YELLOW);
-  OutputString(target->label().GetUserVisibleName(false) + "\n");
-  OutputString("Type: ", DECORATION_YELLOW);
-  OutputString(std::string(
-      Target::GetStringForOutputType(target->output_type())) + "\n");
-  OutputString("Toolchain: ", DECORATION_YELLOW);
-  OutputString(target_toolchain.GetUserVisibleName(false) + "\n");
-
-  PrintSources(target, true);
-  if (is_binary_output) {
-    PrintPublic(target, true);
-    PrintCheckIncludes(target, true);
-    PrintAllowCircularIncludesFrom(target, true);
-  }
-  PrintVisibility(target, true);
-  if (is_binary_output) {
-    PrintTestonly(target, true);
-    PrintConfigs(target, true);
-  }
-
-  PrintPublicConfigs(target, true);
-  PrintAllDependentConfigs(target, true);
-
-  PrintInputs(target, true);
-
-  if (is_binary_output) {
-    OUTPUT_CONFIG_VALUE(defines, std::string)
-    OUTPUT_CONFIG_VALUE(include_dirs, SourceDir)
-    OUTPUT_CONFIG_VALUE(asmflags, std::string)
-    OUTPUT_CONFIG_VALUE(cflags, std::string)
-    OUTPUT_CONFIG_VALUE(cflags_c, std::string)
-    OUTPUT_CONFIG_VALUE(cflags_cc, std::string)
-    OUTPUT_CONFIG_VALUE(cflags_objc, std::string)
-    OUTPUT_CONFIG_VALUE(cflags_objcc, std::string)
-    OUTPUT_CONFIG_VALUE(ldflags, std::string)
-  }
-
-  if (target->output_type() == Target::ACTION ||
-      target->output_type() == Target::ACTION_FOREACH) {
-    PrintScript(target, true);
-    PrintArgs(target, true);
-    PrintDepfile(target, true);
-  }
-
-  if (target->output_type() == Target::ACTION ||
-      target->output_type() == Target::ACTION_FOREACH ||
-      target->output_type() == Target::COPY_FILES) {
-    PrintOutputs(target, true);
-  }
-
-  // Libs can be part of any target and get recursively pushed up the chain,
-  // so always display them, even for groups and such.
-  PrintLibs(target, true);
-  PrintLibDirs(target, true);
-
-  PrintDeps(target, true);
 
   return 0;
 }

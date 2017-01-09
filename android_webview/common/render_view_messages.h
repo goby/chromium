@@ -11,7 +11,8 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/size_f.h"
-#include "ui/gfx/ipc/gfx_param_traits.h"
+#include "ui/gfx/ipc/geometry/gfx_param_traits.h"
+#include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
 
 // Singly-included section for enums and custom IPC traits.
 #ifndef ANDROID_WEBVIEW_COMMON_RENDER_VIEW_MESSAGES_H_
@@ -46,7 +47,7 @@ IPC_MESSAGE_CONTROL0(AwViewMsg_ClearCache)
 // elements.  The id should be passed in the response message so the response
 // can be associated with the request.
 IPC_MESSAGE_ROUTED1(AwViewMsg_DocumentHasImages,
-                    int /* id */)
+                    uint32_t /* id */)
 
 // Do hit test at the given webview coordinate. "Webview" coordinates are
 // physical pixel values with the 0,0 at the top left of the current displayed
@@ -81,7 +82,7 @@ IPC_MESSAGE_CONTROL1(AwViewMsg_SetJsOnlineProperty,
 IPC_MESSAGE_ROUTED3(AwViewMsg_SmoothScroll,
                     int /* target_x */,
                     int /* target_y */,
-                    long /* duration_ms */)
+                    int /* duration_ms */)
 
 //-----------------------------------------------------------------------------
 // RenderView messages
@@ -99,6 +100,20 @@ IPC_MESSAGE_ROUTED1(AwViewHostMsg_UpdateHitTestData,
 // Sent whenever the contents size (as seen by RenderView) is changed.
 IPC_MESSAGE_ROUTED1(AwViewHostMsg_OnContentsSizeChanged,
                     gfx::Size /* contents_size */)
+
+// Sent immediately before a top level navigation is initiated within Blink.
+// There are some exlusions, the most important ones are it is not sent
+// when creating a popup window, and not sent for application initiated
+// navigations. See AwContentRendererClient::HandleNavigation for all
+// cornercases. This is sent before updating the NavigationController state
+// or creating a URLRequest for the main frame resource.
+IPC_SYNC_MESSAGE_CONTROL5_1(AwViewHostMsg_ShouldOverrideUrlLoading,
+                            int /* render_frame_id id */,
+                            base::string16 /* in - url */,
+                            bool /* in - has_user_gesture */,
+                            bool /* in - is_redirect */,
+                            bool /* in - is_main_frame */,
+                            bool /* out - result */)
 
 // Sent when a subframe is created.
 IPC_MESSAGE_CONTROL2(AwViewHostMsg_SubFrameCreated,

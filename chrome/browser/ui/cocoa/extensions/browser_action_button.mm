@@ -8,6 +8,8 @@
 #include <cmath>
 
 #include "base/logging.h"
+#include "base/mac/foundation_util.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
@@ -21,10 +23,11 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_delegate.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 #import "ui/base/cocoa/menu_controller.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/canvas_skia_paint.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
@@ -108,10 +111,15 @@ ToolbarActionViewDelegateBridge::~ToolbarActionViewDelegateBridge() {
 }
 
 void ToolbarActionViewDelegateBridge::ShowContextMenu() {
-  // We should only be showing the context menu in this way if we're doing so
-  // for an overflowed action.
-  DCHECK(![owner_ superview]);
+  DCHECK(![controller_ toolbarActionsBar]->in_overflow_mode());
+  if ([owner_ superview]) {
+    // If the button is already visible on the toolbar, we can skip ahead to
+    // just showing the menu.
+    DoShowContextMenu();
+    return;
+  }
 
+  // Otherwise, we have to slide the button out.
   contextMenuRunning_ = true;
   AppMenuController* appMenuController =
       [[[BrowserWindowController browserWindowControllerForWindow:
@@ -124,6 +132,7 @@ void ToolbarActionViewDelegateBridge::ShowContextMenu() {
 
   [controller_ toolbarActionsBar]->PopOutAction(
       viewController_,
+      false,
       base::Bind(&ToolbarActionViewDelegateBridge::DoShowContextMenu,
                  weakFactory_.GetWeakPtr()));
 }
@@ -160,14 +169,18 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
   // to avoid the magic '5' here, but since it's built into Cocoa, it's not too
   // hopeful.
   NSPoint menuPoint = NSMakePoint(0, NSHeight([owner_ bounds]) + 5);
+  base::WeakPtr<ToolbarActionViewDelegateBridge> weakThis =
+      weakFactory_.GetWeakPtr();
   [[owner_ cell] setHighlighted:YES];
   [[owner_ menu] popUpMenuPositioningItem:nil
                                atLocation:menuPoint
                                    inView:owner_];
+  // Since menus run in a blocking way, it's possible that the extension was
+  // unloaded since this point.
+  if (!weakThis)
+    return;
   [[owner_ cell] setHighlighted:NO];
   contextMenuRunning_ = false;
-  // When the menu closed, the ViewController should have popped itself back in.
-  DCHECK(![controller_ toolbarActionsBar]->popped_out_action());
 }
 
 @implementation BrowserActionButton
@@ -200,15 +213,6 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
         accessibilitySetOverrideValue:base::SysUTF16ToNSString(
             viewController_->GetAccessibleName([controller currentWebContents]))
         forAttribute:NSAccessibilityDescriptionAttribute];
-    [cell setImageID:IDR_BROWSER_ACTION
-      forButtonState:image_button_cell::kDefaultState];
-    [cell setImageID:IDR_BROWSER_ACTION_H
-      forButtonState:image_button_cell::kHoverState];
-    [cell setImageID:IDR_BROWSER_ACTION_P
-      forButtonState:image_button_cell::kPressedState];
-    [cell setImageID:IDR_BROWSER_ACTION
-      forButtonState:image_button_cell::kDisabledState];
-
     [self setTitle:@""];
     [self setButtonType:NSMomentaryChangeButton];
     [self setShowsBorderOnlyWhileMouseInside:YES];
@@ -327,21 +331,7 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
                                fromView:nil];
   // Only perform the click if we didn't drag the button.
   if (NSPointInRect(location, [self bounds]) && !isBeingDragged_) {
-    // There's also a chance that the action is disabled, and the left click
-    // should show the context menu.
-    if (!viewController_->IsEnabled(
-            [browserActionsController_ currentWebContents]) &&
-        viewController_->DisabledClickOpensMenu()) {
-      // No menus-in-menus; see comment in -rightMouseDown:.
-      if ([browserActionsController_ isOverflow]) {
-        [browserActionsController_ mainButtonForId:viewController_->GetId()]->
-            viewControllerDelegate_->ShowContextMenu();
-      } else {
-        [NSMenu popUpContextMenu:[self menu] withEvent:theEvent forView:self];
-      }
-    } else {
-      [self performClick:self];
-    }
+    [self performClick:self];
   } else {
     // Make sure an ESC to end a drag doesn't trigger 2 endDrags.
     if (isBeingDragged_) {
@@ -428,6 +418,8 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
   // Also reset the context menu, since it has a dependency on the backing
   // controller (which owns its model).
   contextMenuController_.reset();
+  // Remove any lingering observations.
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (BOOL)isAnimating {
@@ -483,6 +475,10 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
   return image;
 }
 
+- (void)showContextMenu {
+  viewControllerDelegate_->ShowContextMenu();
+}
+
 - (NSMenu*)menu {
   // Hack: Since Cocoa doesn't support menus-running-in-menus (see also comment
   // in -rightMouseDown:), it doesn't launch the menu for an overflowed action
@@ -535,6 +531,10 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
       [browserActionsController_ currentWebContents]);
 }
 
+- (BOOL)isHighlighted {
+  return [[self cell] isHighlighted];
+}
+
 @end
 
 @implementation BrowserActionCell
@@ -566,8 +566,8 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
                                    yRadius:2] fill];
 }
 
-- (ui::ThemeProvider*)themeProviderForWindow:(NSWindow*)window {
-  ui::ThemeProvider* themeProvider = [window themeProvider];
+- (const ui::ThemeProvider*)themeProviderForWindow:(NSWindow*)window {
+  const ui::ThemeProvider* themeProvider = [window themeProvider];
   if (!themeProvider)
     themeProvider =
         [[browserActionsController_ browser]->window()->GetNativeWindow()

@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_BACKGROUND_BACKGROUND_APPLICATION_LIST_MODEL_H_
 #define CHROME_BROWSER_BACKGROUND_BACKGROUND_APPLICATION_LIST_MODEL_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -99,9 +101,6 @@ class BackgroundApplicationListModel : public content::NotificationObserver {
   // represented by the Extension class.
   class Application;
 
-  // Associates extension id strings with Application objects.
-  typedef std::map<std::string, Application*> ApplicationMap;
-
   // Identifies and caches data related to the extension.
   void AssociateApplicationData(const extensions::Extension* extension);
 
@@ -144,7 +143,9 @@ class BackgroundApplicationListModel : public content::NotificationObserver {
   // Refresh the list of background applications and generate notifications.
   void Update();
 
-  ApplicationMap applications_;
+  // Associates extension id strings with Application objects.
+  std::map<std::string, std::unique_ptr<Application>> applications_;
+
   extensions::ExtensionList extensions_;
   base::ObserverList<Observer, true> observers_;
   Profile* profile_;

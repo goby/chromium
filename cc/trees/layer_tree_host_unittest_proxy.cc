@@ -2,354 +2,422 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_picture_layer.h"
 #include "cc/test/layer_tree_test.h"
-#include "cc/trees/thread_proxy.h"
-
-#define THREAD_PROXY_TEST_F(TEST_FIXTURE_NAME) \
-  TEST_F(TEST_FIXTURE_NAME, MultiThread) { Run(true); }
-
-// Do common tests for single thread proxy and thread proxy.
-// TODO(simonhong): Add SINGLE_THREAD_PROXY_TEST_F
-#define PROXY_TEST_SCHEDULED_ACTION(TEST_FIXTURE_NAME) \
-  THREAD_PROXY_TEST_F(TEST_FIXTURE_NAME);
+#include "cc/trees/proxy_impl.h"
+#include "cc/trees/proxy_main.h"
 
 namespace cc {
 
-class ProxyTest : public LayerTreeTest {
+class LayerTreeHostProxyTest : public LayerTreeTest {
  protected:
-  ProxyTest() {}
-  ~ProxyTest() override {}
-
-  void Run(bool threaded) {
-    // We don't need to care about delegating mode.
-    bool delegating_renderer = true;
-
-    RunTest(threaded, delegating_renderer);
-  }
-
-  void BeginTest() override {}
-  void AfterTest() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ProxyTest);
-};
-
-class ProxyTestScheduledActionsBasic : public ProxyTest {
- protected:
-  void BeginTest() override { proxy()->SetNeedsCommit(); }
-
-  void ScheduledActionBeginOutputSurfaceCreation() override {
-    EXPECT_EQ(0, action_phase_++);
-  }
-
-  void ScheduledActionSendBeginMainFrame() override {
-    EXPECT_EQ(1, action_phase_++);
-  }
-
-  void ScheduledActionCommit() override { EXPECT_EQ(2, action_phase_++); }
-
-  void ScheduledActionDrawAndSwapIfPossible() override {
-    EXPECT_EQ(3, action_phase_++);
-    EndTest();
-  }
-
-  void AfterTest() override { EXPECT_EQ(4, action_phase_); }
-
-  ProxyTestScheduledActionsBasic() : action_phase_(0) {
-  }
-  ~ProxyTestScheduledActionsBasic() override {}
-
- private:
-  int action_phase_;
-
-  DISALLOW_COPY_AND_ASSIGN(ProxyTestScheduledActionsBasic);
-};
-
-PROXY_TEST_SCHEDULED_ACTION(ProxyTestScheduledActionsBasic);
-
-class ThreadProxyTest : public ProxyTest {
- protected:
-  ThreadProxyTest()
-      : update_check_layer_(
-            FakePictureLayer::Create(layer_settings(), &client_)) {}
-  ~ThreadProxyTest() override {}
-
   void SetupTree() override {
-    layer_tree_host()->SetRootLayer(update_check_layer_);
-    ProxyTest::SetupTree();
+    update_check_layer_ = FakePictureLayer::Create(&client_);
+    layer_tree()->SetRootLayer(update_check_layer_);
+    LayerTreeTest::SetupTree();
     client_.set_bounds(update_check_layer_->bounds());
   }
 
-  const ThreadProxy::MainThreadOnly& ThreadProxyMainOnly() const {
-    DCHECK(task_runner_provider());
-    DCHECK(task_runner_provider()->HasImplThread());
-    DCHECK(proxy());
-    return static_cast<const ThreadProxy*>(proxy())->main();
+  FakePictureLayer* update_check_layer() const {
+    return update_check_layer_.get();
   }
 
-  const ThreadProxy::CompositorThreadOnly& ThreadProxyImplOnly() const {
-    DCHECK(task_runner_provider());
-    DCHECK(task_runner_provider()->HasImplThread());
-    DCHECK(proxy());
-    return static_cast<const ThreadProxy*>(proxy())->impl();
+  ProxyMain* GetProxyMain() {
+    DCHECK(HasImplThread());
+    return static_cast<ProxyMain*>(proxy());
   }
-
- protected:
-  FakeContentLayerClient client_;
-  scoped_refptr<FakePictureLayer> update_check_layer_;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(ThreadProxyTest);
+  FakeContentLayerClient client_;
+  scoped_refptr<FakePictureLayer> update_check_layer_;
 };
 
-class ThreadProxyTestSetNeedsCommit : public ThreadProxyTest {
+class LayerTreeHostProxyTestSetNeedsCommit : public LayerTreeHostProxyTest {
  protected:
-  ThreadProxyTestSetNeedsCommit() {}
-  ~ThreadProxyTestSetNeedsCommit() override {}
+  LayerTreeHostProxyTestSetNeedsCommit() {}
+  ~LayerTreeHostProxyTestSetNeedsCommit() override {}
 
   void BeginTest() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
 
     proxy()->SetNeedsCommit();
 
-    EXPECT_EQ(ThreadProxy::COMMIT_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
+    EXPECT_EQ(ProxyMain::COMMIT_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
   }
 
   void DidBeginMainFrame() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
   }
 
   void DidCommit() override {
-    EXPECT_EQ(1, update_check_layer_->update_count());
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
+    EXPECT_EQ(1, update_check_layer()->update_count());
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
     EndTest();
   }
 
+  void AfterTest() override {}
+
  private:
-  DISALLOW_COPY_AND_ASSIGN(ThreadProxyTestSetNeedsCommit);
+  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsCommit);
 };
 
-THREAD_PROXY_TEST_F(ThreadProxyTestSetNeedsCommit);
+MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsCommit);
 
-class ThreadProxyTestSetNeedsAnimate : public ThreadProxyTest {
+class LayerTreeHostProxyTestSetNeedsAnimate : public LayerTreeHostProxyTest {
  protected:
-  ThreadProxyTestSetNeedsAnimate() {}
-  ~ThreadProxyTestSetNeedsAnimate() override {}
+  LayerTreeHostProxyTestSetNeedsAnimate() {}
+  ~LayerTreeHostProxyTestSetNeedsAnimate() override {}
 
   void BeginTest() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
 
     proxy()->SetNeedsAnimate();
 
-    EXPECT_EQ(ThreadProxy::ANIMATE_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
+    EXPECT_EQ(ProxyMain::ANIMATE_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
   }
 
   void DidBeginMainFrame() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
   }
 
   void DidCommit() override {
-    EXPECT_EQ(0, update_check_layer_->update_count());
+    EXPECT_EQ(0, update_check_layer()->update_count());
     EndTest();
   }
 
+  void AfterTest() override {}
+
  private:
-  DISALLOW_COPY_AND_ASSIGN(ThreadProxyTestSetNeedsAnimate);
+  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsAnimate);
 };
 
-THREAD_PROXY_TEST_F(ThreadProxyTestSetNeedsAnimate);
+MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsAnimate);
 
-class ThreadProxyTestSetNeedsUpdateLayers : public ThreadProxyTest {
+class LayerTreeHostProxyTestSetNeedsUpdateLayers
+    : public LayerTreeHostProxyTest {
  protected:
-  ThreadProxyTestSetNeedsUpdateLayers() {}
-  ~ThreadProxyTestSetNeedsUpdateLayers() override {}
+  LayerTreeHostProxyTestSetNeedsUpdateLayers() {}
+  ~LayerTreeHostProxyTestSetNeedsUpdateLayers() override {}
 
   void BeginTest() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
 
     proxy()->SetNeedsUpdateLayers();
 
-    EXPECT_EQ(ThreadProxy::UPDATE_LAYERS_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
+    EXPECT_EQ(ProxyMain::UPDATE_LAYERS_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
   }
 
   void DidBeginMainFrame() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
   }
 
   void DidCommit() override {
-    EXPECT_EQ(1, update_check_layer_->update_count());
+    EXPECT_EQ(1, update_check_layer()->update_count());
     EndTest();
   }
 
+  void AfterTest() override {}
+
  private:
-  DISALLOW_COPY_AND_ASSIGN(ThreadProxyTestSetNeedsUpdateLayers);
+  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsUpdateLayers);
 };
 
-THREAD_PROXY_TEST_F(ThreadProxyTestSetNeedsUpdateLayers);
+MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsUpdateLayers);
 
-class ThreadProxyTestSetNeedsUpdateLayersWhileAnimating
-    : public ThreadProxyTest {
+class LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating
+    : public LayerTreeHostProxyTest {
  protected:
-  ThreadProxyTestSetNeedsUpdateLayersWhileAnimating() {}
-  ~ThreadProxyTestSetNeedsUpdateLayersWhileAnimating() override {}
+  LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating() {}
+  ~LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating() override {}
 
   void BeginTest() override { proxy()->SetNeedsAnimate(); }
 
   void WillBeginMainFrame() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::ANIMATE_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::ANIMATE_PIPELINE_STAGE,
-              ThreadProxyMainOnly().final_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::ANIMATE_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
+    EXPECT_EQ(ProxyMain::ANIMATE_PIPELINE_STAGE,
+              GetProxyMain()->final_pipeline_stage());
 
     proxy()->SetNeedsUpdateLayers();
 
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::UPDATE_LAYERS_PIPELINE_STAGE,
-              ThreadProxyMainOnly().final_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::UPDATE_LAYERS_PIPELINE_STAGE,
+              GetProxyMain()->final_pipeline_stage());
   }
 
   void DidBeginMainFrame() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
   }
 
   void DidCommit() override {
-    EXPECT_EQ(1, update_check_layer_->update_count());
+    EXPECT_EQ(1, update_check_layer()->update_count());
     EndTest();
   }
 
+  void AfterTest() override {}
+
  private:
-  DISALLOW_COPY_AND_ASSIGN(ThreadProxyTestSetNeedsUpdateLayersWhileAnimating);
+  DISALLOW_COPY_AND_ASSIGN(
+      LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating);
 };
 
-THREAD_PROXY_TEST_F(ThreadProxyTestSetNeedsUpdateLayersWhileAnimating);
+MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating);
 
-class ThreadProxyTestSetNeedsCommitWhileAnimating : public ThreadProxyTest {
+class LayerTreeHostProxyTestSetNeedsCommitWhileAnimating
+    : public LayerTreeHostProxyTest {
  protected:
-  ThreadProxyTestSetNeedsCommitWhileAnimating() {}
-  ~ThreadProxyTestSetNeedsCommitWhileAnimating() override {}
+  LayerTreeHostProxyTestSetNeedsCommitWhileAnimating() {}
+  ~LayerTreeHostProxyTestSetNeedsCommitWhileAnimating() override {}
 
   void BeginTest() override { proxy()->SetNeedsAnimate(); }
 
   void WillBeginMainFrame() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::ANIMATE_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::ANIMATE_PIPELINE_STAGE,
-              ThreadProxyMainOnly().final_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::ANIMATE_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
+    EXPECT_EQ(ProxyMain::ANIMATE_PIPELINE_STAGE,
+              GetProxyMain()->final_pipeline_stage());
 
     proxy()->SetNeedsCommit();
 
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::COMMIT_PIPELINE_STAGE,
-              ThreadProxyMainOnly().final_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::COMMIT_PIPELINE_STAGE,
+              GetProxyMain()->final_pipeline_stage());
   }
 
   void DidBeginMainFrame() override {
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().max_requested_pipeline_stage);
-    EXPECT_EQ(ThreadProxy::NO_PIPELINE_STAGE,
-              ThreadProxyMainOnly().current_pipeline_stage);
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->max_requested_pipeline_stage());
+    EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
+              GetProxyMain()->current_pipeline_stage());
   }
 
   void DidCommit() override {
-    EXPECT_EQ(1, update_check_layer_->update_count());
+    EXPECT_EQ(1, update_check_layer()->update_count());
     EndTest();
   }
 
+  void AfterTest() override {}
+
  private:
-  DISALLOW_COPY_AND_ASSIGN(ThreadProxyTestSetNeedsCommitWhileAnimating);
+  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsCommitWhileAnimating);
 };
 
-THREAD_PROXY_TEST_F(ThreadProxyTestSetNeedsCommitWhileAnimating);
+MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsCommitWhileAnimating);
 
-class ThreadProxyTestCommitWaitsForActivation : public ThreadProxyTest {
+class LayerTreeHostProxyTestCommitWaitsForActivation
+    : public LayerTreeHostProxyTest {
  protected:
-  ThreadProxyTestCommitWaitsForActivation() : commits_completed_(0) {}
-  ~ThreadProxyTestCommitWaitsForActivation() override {}
+  LayerTreeHostProxyTestCommitWaitsForActivation() = default;
 
-  void BeginTest() override { proxy()->SetNeedsCommit(); }
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
-  void ScheduledActionCommit() override {
-    switch (commits_completed_) {
-      case 0:
-        // The first commit does not wait for activation. Verify that the
-        // completion event is cleared.
-        EXPECT_FALSE(ThreadProxyImplOnly().commit_completion_event);
-        EXPECT_FALSE(ThreadProxyImplOnly().next_commit_waits_for_activation);
-        break;
-      case 1:
-        // The second commit should be held until activation.
-        EXPECT_TRUE(ThreadProxyImplOnly().commit_completion_event);
-        EXPECT_TRUE(ThreadProxyImplOnly().next_commit_waits_for_activation);
-        break;
-      case 2:
-        // The third commit should not wait for activation.
-        EXPECT_FALSE(ThreadProxyImplOnly().commit_completion_event);
-        EXPECT_FALSE(ThreadProxyImplOnly().next_commit_waits_for_activation);
+  void BeginCommitOnThread(LayerTreeHostImpl* impl) override {
+    if (impl->sync_tree()->source_frame_number() < 0)
+      return;  // The initial commit, don't do anything here.
+
+    // The main thread will request a commit, and may request that it does
+    // not complete before activating. So make activation take a long time, to
+    // verify that we waited.
+    impl->BlockNotifyReadyToActivateForTesting(true);
+    {
+      base::AutoLock hold(activate_blocked_lock_);
+      activate_blocked_ = true;
     }
-  }
-
-  void DidActivateSyncTree() override {
-    // The next_commit_waits_for_activation should have been cleared after the
-    // sync tree is activated.
-    EXPECT_FALSE(ThreadProxyImplOnly().next_commit_waits_for_activation);
+    switch (impl->sync_tree()->source_frame_number()) {
+      case 0: {
+        // This is for case 1 in DidCommit.
+        auto unblock = base::Bind(
+            &LayerTreeHostProxyTestCommitWaitsForActivation::UnblockActivation,
+            base::Unretained(this), impl);
+        ImplThreadTaskRunner()->PostDelayedTask(
+            FROM_HERE, unblock,
+            // Use a delay to allow the main frame to start if it would. This
+            // should cause failures (or flakiness) if we fail to wait for the
+            // activation before starting the main frame.
+            base::TimeDelta::FromMilliseconds(16 * 4));
+        break;
+      }
+      case 1:
+        // This is for case 2 in DidCommit.
+        // Here we don't ever unblock activation. Since the commit hasn't
+        // requested to wait, we can verify that activation is blocked when the
+        // commit completes (case 3 in DidCommit).
+        break;
+    }
   }
 
   void DidCommit() override {
-    switch (commits_completed_) {
-      case 0:
-        // The first commit has been completed. Set next commit waits for
-        // activation and start another commit.
-        commits_completed_++;
-        proxy()->SetNextCommitWaitsForActivation();
-        proxy()->SetNeedsCommit();
+    switch (layer_tree_host()->SourceFrameNumber()) {
       case 1:
-        // Start another commit to verify that this is not held until
-        // activation.
-        commits_completed_++;
-        proxy()->SetNeedsCommit();
-      case 2:
-        commits_completed_++;
+        // Request a new commit, but DidCommit will be delayed until activation
+        // completes.
+        layer_tree_host()->SetNextCommitWaitsForActivation();
+        layer_tree_host()->SetNeedsCommit();
+        break;
+      case 2: {
+        base::AutoLock hold(activate_blocked_lock_);
+        EXPECT_FALSE(activate_blocked_);
+      }
+        // Request a new commit, but DidCommit will not be delayed.
+        layer_tree_host()->SetNeedsCommit();
+        break;
+      case 3: {
+        base::AutoLock hold(activate_blocked_lock_);
+        EXPECT_TRUE(activate_blocked_);
+      }
+        // This commit completed before unblocking activation.
         EndTest();
+        break;
     }
   }
 
-  void AfterTest() override { EXPECT_EQ(3, commits_completed_); }
+  void UnblockActivation(LayerTreeHostImpl* impl) {
+    {
+      base::AutoLock hold(activate_blocked_lock_);
+      activate_blocked_ = false;
+    }
+    impl->BlockNotifyReadyToActivateForTesting(false);
+  }
+
+  void AfterTest() override {}
 
  private:
-  int commits_completed_;
+  base::Lock activate_blocked_lock_;
+  bool activate_blocked_ = false;
 
-  DISALLOW_COPY_AND_ASSIGN(ThreadProxyTestCommitWaitsForActivation);
+  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestCommitWaitsForActivation);
 };
 
-THREAD_PROXY_TEST_F(ThreadProxyTestCommitWaitsForActivation);
+MULTI_THREAD_TEST_F(LayerTreeHostProxyTestCommitWaitsForActivation);
+
+// Test for a corner case of main frame before activation (MFBA) and commit
+// waits for activation. If a commit (with wait for activation flag set)
+// is ready before the activation for a previous commit then the activation
+// should not signal the completion event of the second commit.
+class LayerTreeHostProxyTestCommitWaitsForActivationMFBA
+    : public LayerTreeHostProxyTest {
+ protected:
+  LayerTreeHostProxyTestCommitWaitsForActivationMFBA() = default;
+
+  void InitializeSettings(LayerTreeSettings* settings) override {
+    settings->main_frame_before_activation_enabled = true;
+    LayerTreeHostProxyTest::InitializeSettings(settings);
+  }
+
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+
+  void ReadyToCommitOnThread(LayerTreeHostImpl* impl) override {
+    switch (impl->sync_tree()->source_frame_number()) {
+      case -1:
+        // Block the activation of the initial commit until the second main
+        // frame is ready.
+        impl->BlockNotifyReadyToActivateForTesting(true);
+        break;
+      case 0: {
+        // This is the main frame with SetNextCommitWaitsForActivation().
+        // Activation is currently blocked for the previous main frame (from the
+        // case above). We unblock activate to allow this main frame to commit.
+        auto unblock =
+            base::Bind(&LayerTreeHostImpl::BlockNotifyReadyToActivateForTesting,
+                       base::Unretained(impl), false);
+        // Post the unblock instead of doing it immediately so that the main
+        // frame is fully processed by the compositor thread, and it has a full
+        // opportunity to wrongly unblock the main thread.
+        ImplThreadTaskRunner()->PostTask(FROM_HERE, unblock);
+        // Once activation completes, we'll begin the commit for frame 1.
+        break;
+      }
+    }
+  }
+
+  void DidActivateTreeOnThread(LayerTreeHostImpl* impl) override {
+    if (impl->active_tree()->source_frame_number() == 0) {
+      // The main thread requests a commit does not complete before activating.
+      // So make activation take a long time, to verify that we waited.
+      impl->BlockNotifyReadyToActivateForTesting(true);
+      {
+        base::AutoLock hold(activate_blocked_lock_);
+        // Record that we've blocked activation for this frame of interest.
+        activate_blocked_ = true;
+      }
+      // Then unblock activation eventually to complete the test. We use a
+      // delay to allow the main frame to start if it would. This should cause
+      // failures (or flakiness) if we fail to wait for the activation before
+      // starting the main frame.
+      auto unblock =
+          base::Bind(&LayerTreeHostProxyTestCommitWaitsForActivationMFBA::
+                         UnblockActivation,
+                     base::Unretained(this), impl);
+      ImplThreadTaskRunner()->PostDelayedTask(
+          FROM_HERE, unblock, base::TimeDelta::FromMilliseconds(16 * 4));
+    }
+  }
+
+  void DidCommit() override {
+    switch (layer_tree_host()->SourceFrameNumber()) {
+      case 1:
+        // Request a new commit, but DidCommit will be delayed until activation
+        // completes.
+        layer_tree_host()->SetNextCommitWaitsForActivation();
+        layer_tree_host()->SetNeedsCommit();
+        break;
+      case 2:
+        // This DidCommit should not happen until activation is done for the
+        // frame.
+        {
+          base::AutoLock hold(activate_blocked_lock_);
+          EXPECT_FALSE(activate_blocked_);
+        }
+        EndTest();
+        break;
+    }
+  }
+
+  void UnblockActivation(LayerTreeHostImpl* impl) {
+    {
+      base::AutoLock hold(activate_blocked_lock_);
+      activate_blocked_ = false;
+    }
+    impl->BlockNotifyReadyToActivateForTesting(false);
+  }
+
+  void AfterTest() override {}
+
+ private:
+  base::Lock activate_blocked_lock_;
+  bool activate_blocked_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestCommitWaitsForActivationMFBA);
+};
+
+MULTI_THREAD_TEST_F(LayerTreeHostProxyTestCommitWaitsForActivationMFBA);
 
 }  // namespace cc

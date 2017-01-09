@@ -5,18 +5,19 @@
 #ifndef GOOGLE_APIS_GCM_ENGINE_GCM_STORE_H_
 #define GOOGLE_APIS_GCM_ENGINE_GCM_STORE_H_
 
+#include <google/protobuf/message_lite.h>
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include <google/protobuf/message_lite.h>
-
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "google_apis/gcm/base/gcm_export.h"
 #include "google_apis/gcm/engine/account_mapping.h"
@@ -50,8 +51,8 @@ class GCM_EXPORT GCMStore {
 
     bool success;
     bool store_does_not_exist;
-    uint64 device_android_id;
-    uint64 device_security_token;
+    uint64_t device_android_id;
+    uint64_t device_security_token;
     std::map<std::string, std::string> registrations;
     std::vector<std::string> incoming_messages;
     OutgoingMessageMap outgoing_messages;
@@ -66,7 +67,7 @@ class GCM_EXPORT GCMStore {
   };
 
   typedef std::vector<std::string> PersistentIdList;
-  typedef base::Callback<void(scoped_ptr<LoadResult> result)> LoadCallback;
+  typedef base::Callback<void(std::unique_ptr<LoadResult> result)> LoadCallback;
   typedef base::Callback<void(bool success)> UpdateCallback;
 
   GCMStore();
@@ -83,8 +84,8 @@ class GCM_EXPORT GCMStore {
   virtual void Destroy(const UpdateCallback& callback) = 0;
 
   // Sets this device's messaging credentials.
-  virtual void SetDeviceCredentials(uint64 device_android_id,
-                                    uint64 device_security_token,
+  virtual void SetDeviceCredentials(uint64_t device_android_id,
+                                    uint64_t device_security_token,
                                     const UpdateCallback& callback) = 0;
 
   // Registration info for both GCM registrations and InstanceID tokens.

@@ -4,6 +4,8 @@
 
 #include "net/spdy/spdy_buffer_producer.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "net/spdy/spdy_buffer.h"
 #include "net/spdy/spdy_protocol.h"
@@ -14,14 +16,14 @@ SpdyBufferProducer::SpdyBufferProducer() {}
 
 SpdyBufferProducer::~SpdyBufferProducer() {}
 
-SimpleBufferProducer::SimpleBufferProducer(scoped_ptr<SpdyBuffer> buffer)
-    : buffer_(buffer.Pass()) {}
+SimpleBufferProducer::SimpleBufferProducer(std::unique_ptr<SpdyBuffer> buffer)
+    : buffer_(std::move(buffer)) {}
 
 SimpleBufferProducer::~SimpleBufferProducer() {}
 
-scoped_ptr<SpdyBuffer> SimpleBufferProducer::ProduceBuffer() {
+std::unique_ptr<SpdyBuffer> SimpleBufferProducer::ProduceBuffer() {
   DCHECK(buffer_);
-  return buffer_.Pass();
+  return std::move(buffer_);
 }
 
 }  // namespace net

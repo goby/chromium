@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "extensions/browser/api/storage/settings_storage_quota_enforcer.h"
 #include "extensions/browser/value_store/testing_value_store.h"
@@ -52,7 +56,8 @@ class ExtensionSettingsQuotaTest : public testing::Test {
     ASSERT_TRUE(storage_.get() == NULL);
     SettingsStorageQuotaEnforcer::Limits limits =
         { quota_bytes, quota_bytes_per_item, max_items };
-    storage_.reset(new SettingsStorageQuotaEnforcer(limits, delegate_));
+    storage_.reset(
+        new SettingsStorageQuotaEnforcer(limits, base::WrapUnique(delegate_)));
   }
 
   // Returns whether the settings in |storage_| and |delegate_| are the same as
@@ -68,7 +73,7 @@ class ExtensionSettingsQuotaTest : public testing::Test {
   base::ListValue byte_value_256_;
 
   // Quota enforcing storage area being tested.
-  scoped_ptr<SettingsStorageQuotaEnforcer> storage_;
+  std::unique_ptr<SettingsStorageQuotaEnforcer> storage_;
 
   // In-memory storage area being delegated to.  Always owned by |storage_|.
   TestingValueStore* delegate_;

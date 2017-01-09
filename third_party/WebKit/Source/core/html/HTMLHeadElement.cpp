@@ -21,7 +21,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/html/HTMLHeadElement.h"
 
 #include "core/HTMLNames.h"
@@ -31,10 +30,8 @@ namespace blink {
 using namespace HTMLNames;
 
 inline HTMLHeadElement::HTMLHeadElement(Document& document)
-    : HTMLElement(headTag, document)
-{
-}
+    : HTMLElement(headTag, document) {}
 
 DEFINE_NODE_FACTORY(HTMLHeadElement)
 
-}
+}  // namespace blink

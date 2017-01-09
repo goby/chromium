@@ -17,7 +17,6 @@
     Boston, MA 02110-1301, USA.
 */
 
-#include "config.h"
 #include "core/layout/PointerEventsHitRules.h"
 
 #include "wtf/Assertions.h"
@@ -25,100 +24,105 @@
 namespace blink {
 
 struct SameSizeAsPointerEventsHitRules {
-    unsigned bitfields;
+  unsigned bitfields;
 };
 
-static_assert(sizeof(PointerEventsHitRules) <= sizeof(SameSizeAsPointerEventsHitRules), "PointerEventsHitRules should stay small");
+static_assert(sizeof(PointerEventsHitRules) <=
+                  sizeof(SameSizeAsPointerEventsHitRules),
+              "PointerEventsHitRules should stay small");
 
-PointerEventsHitRules::PointerEventsHitRules(EHitTesting hitTesting, const HitTestRequest& request, EPointerEvents pointerEvents)
-    : requireVisible(false)
-    , requireFill(false)
-    , requireStroke(false)
-    , canHitStroke(false)
-    , canHitFill(false)
-    , canHitBoundingBox(false)
-{
-    if (request.svgClipContent())
-        pointerEvents = PE_FILL;
+PointerEventsHitRules::PointerEventsHitRules(EHitTesting hitTesting,
+                                             const HitTestRequest& request,
+                                             EPointerEvents pointerEvents)
+    : requireVisible(false),
+      requireFill(false),
+      requireStroke(false),
+      canHitStroke(false),
+      canHitFill(false),
+      canHitBoundingBox(false) {
+  if (request.svgClipContent())
+    pointerEvents = EPointerEvents::Fill;
 
-    if (hitTesting == SVG_GEOMETRY_HITTESTING) {
-        switch (pointerEvents) {
-        case PE_BOUNDINGBOX:
-            canHitBoundingBox = true;
-            break;
-        case PE_VISIBLE_PAINTED:
-        case PE_AUTO: // "auto" is like "visiblePainted" when in SVG content
-            requireFill = true;
-            requireStroke = true;
-        case PE_VISIBLE:
-            requireVisible = true;
-            canHitFill = true;
-            canHitStroke = true;
-            break;
-        case PE_VISIBLE_FILL:
-            requireVisible = true;
-            canHitFill = true;
-            break;
-        case PE_VISIBLE_STROKE:
-            requireVisible = true;
-            canHitStroke = true;
-            break;
-        case PE_PAINTED:
-            requireFill = true;
-            requireStroke = true;
-        case PE_ALL:
-            canHitFill = true;
-            canHitStroke = true;
-            break;
-        case PE_FILL:
-            canHitFill = true;
-            break;
-        case PE_STROKE:
-            canHitStroke = true;
-            break;
-        case PE_NONE:
-            // nothing to do here, defaults are all false.
-            break;
-        }
-    } else {
-        switch (pointerEvents) {
-        case PE_BOUNDINGBOX:
-            canHitBoundingBox = true;
-            break;
-        case PE_VISIBLE_PAINTED:
-        case PE_AUTO: // "auto" is like "visiblePainted" when in SVG content
-            requireVisible = true;
-            requireFill = true;
-            requireStroke = true;
-            canHitFill = true;
-            canHitStroke = true;
-            break;
-        case PE_VISIBLE_FILL:
-        case PE_VISIBLE_STROKE:
-        case PE_VISIBLE:
-            requireVisible = true;
-            canHitFill = true;
-            canHitStroke = true;
-            break;
-        case PE_PAINTED:
-            requireFill = true;
-            requireStroke = true;
-            canHitFill = true;
-            canHitStroke = true;
-            break;
-        case PE_FILL:
-        case PE_STROKE:
-        case PE_ALL:
-            canHitFill = true;
-            canHitStroke = true;
-            break;
-        case PE_NONE:
-            // nothing to do here, defaults are all false.
-            break;
-        }
+  if (hitTesting == SVG_GEOMETRY_HITTESTING) {
+    switch (pointerEvents) {
+      case EPointerEvents::BoundingBox:
+        canHitBoundingBox = true;
+        break;
+      case EPointerEvents::VisiblePainted:
+      case EPointerEvents::Auto:  // "auto" is like "visiblePainted" when in
+                                  // SVG content
+        requireFill = true;
+        requireStroke = true;
+      case EPointerEvents::Visible:
+        requireVisible = true;
+        canHitFill = true;
+        canHitStroke = true;
+        break;
+      case EPointerEvents::VisibleFill:
+        requireVisible = true;
+        canHitFill = true;
+        break;
+      case EPointerEvents::VisibleStroke:
+        requireVisible = true;
+        canHitStroke = true;
+        break;
+      case EPointerEvents::Painted:
+        requireFill = true;
+        requireStroke = true;
+      case EPointerEvents::All:
+        canHitFill = true;
+        canHitStroke = true;
+        break;
+      case EPointerEvents::Fill:
+        canHitFill = true;
+        break;
+      case EPointerEvents::Stroke:
+        canHitStroke = true;
+        break;
+      case EPointerEvents::None:
+        // nothing to do here, defaults are all false.
+        break;
     }
+  } else {
+    switch (pointerEvents) {
+      case EPointerEvents::BoundingBox:
+        canHitBoundingBox = true;
+        break;
+      case EPointerEvents::VisiblePainted:
+      case EPointerEvents::Auto:  // "auto" is like "visiblePainted" when in
+                                  // SVG content
+        requireVisible = true;
+        requireFill = true;
+        requireStroke = true;
+        canHitFill = true;
+        canHitStroke = true;
+        break;
+      case EPointerEvents::VisibleFill:
+      case EPointerEvents::VisibleStroke:
+      case EPointerEvents::Visible:
+        requireVisible = true;
+        canHitFill = true;
+        canHitStroke = true;
+        break;
+      case EPointerEvents::Painted:
+        requireFill = true;
+        requireStroke = true;
+        canHitFill = true;
+        canHitStroke = true;
+        break;
+      case EPointerEvents::Fill:
+      case EPointerEvents::Stroke:
+      case EPointerEvents::All:
+        canHitFill = true;
+        canHitStroke = true;
+        break;
+      case EPointerEvents::None:
+        // nothing to do here, defaults are all false.
+        break;
+    }
+  }
 }
 
-}
+}  // namespace blink
 
 // vim:ts=4:noet

@@ -5,10 +5,12 @@
 #ifndef CHROME_UTILITY_IMPORTER_FIREFOX_IMPORTER_UNITTEST_UTILS_H_
 #define CHROME_UTILITY_IMPORTER_FIREFOX_IMPORTER_UNITTEST_UTILS_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/process/process.h"
+#include "build/build_config.h"
 #include "chrome/utility/importer/nss_decryptor.h"
 #include "components/autofill/core/common/password_form.h"
 
@@ -53,14 +55,12 @@ class FFUnitTestDecryptorProxy {
 #if defined(OS_MACOSX)
   // Blocks until either a timeout is reached, or until the client process
   // responds to an IPC message.
-  // Returns true if a reply was received successfully and false if the
-  // the operation timed out.
-  bool WaitForClientResponse();
+  void WaitForClientResponse();
 
   base::Process child_process_;
-  scoped_ptr<IPC::Channel> channel_;
-  scoped_ptr<FFDecryptorServerChannelListener> listener_;
-  scoped_ptr<base::MessageLoopForIO> message_loop_;
+  std::unique_ptr<IPC::Channel> channel_;
+  std::unique_ptr<FFDecryptorServerChannelListener> listener_;
+  std::unique_ptr<base::MessageLoopForIO> message_loop_;
 #else
   NSSDecryptor decryptor_;
 #endif  // !OS_MACOSX

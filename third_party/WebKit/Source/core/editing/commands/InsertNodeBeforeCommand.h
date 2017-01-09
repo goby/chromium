@@ -31,26 +31,30 @@
 namespace blink {
 
 class InsertNodeBeforeCommand final : public SimpleEditCommand {
-public:
-    static PassRefPtrWillBeRawPtr<InsertNodeBeforeCommand> create(PassRefPtrWillBeRawPtr<Node> childToInsert, PassRefPtrWillBeRawPtr<Node> childToInsertBefore,
-        ShouldAssumeContentIsAlwaysEditable shouldAssumeContentIsAlwaysEditable)
-    {
-        return adoptRefWillBeNoop(new InsertNodeBeforeCommand(childToInsert, childToInsertBefore, shouldAssumeContentIsAlwaysEditable));
-    }
+ public:
+  static InsertNodeBeforeCommand* create(
+      Node* childToInsert,
+      Node* childToInsertBefore,
+      ShouldAssumeContentIsAlwaysEditable shouldAssumeContentIsAlwaysEditable) {
+    return new InsertNodeBeforeCommand(childToInsert, childToInsertBefore,
+                                       shouldAssumeContentIsAlwaysEditable);
+  }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    InsertNodeBeforeCommand(PassRefPtrWillBeRawPtr<Node> childToInsert, PassRefPtrWillBeRawPtr<Node> childToInsertBefore, ShouldAssumeContentIsAlwaysEditable);
+ private:
+  InsertNodeBeforeCommand(Node* childToInsert,
+                          Node* childToInsertBefore,
+                          ShouldAssumeContentIsAlwaysEditable);
 
-    void doApply() override;
-    void doUnapply() override;
+  void doApply(EditingState*) override;
+  void doUnapply() override;
 
-    RefPtrWillBeMember<Node> m_insertChild;
-    RefPtrWillBeMember<Node> m_refChild;
-    ShouldAssumeContentIsAlwaysEditable m_shouldAssumeContentIsAlwaysEditable;
+  Member<Node> m_insertChild;
+  Member<Node> m_refChild;
+  ShouldAssumeContentIsAlwaysEditable m_shouldAssumeContentIsAlwaysEditable;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InsertNodeBeforeCommand_h
+#endif  // InsertNodeBeforeCommand_h

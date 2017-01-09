@@ -4,10 +4,12 @@
 
 #include "ui/message_center/views/notification_view.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
-#include "base/stl_util.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
-#include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/url_formatter/elide_url.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -26,7 +28,6 @@
 #include "ui/message_center/views/constants.h"
 #include "ui/message_center/views/message_center_controller.h"
 #include "ui/message_center/views/notification_button.h"
-#include "ui/message_center/views/notification_progress_bar.h"
 #include "ui/message_center/views/padded_button.h"
 #include "ui/message_center/views/proportional_image_view.h"
 #include "ui/native_theme/native_theme.h"
@@ -51,16 +52,21 @@ namespace {
 // Dimensions.
 const int kProgressBarBottomPadding = 0;
 
+constexpr int kCloseIconTopPadding = 5;
+constexpr int kCloseIconRightPadding = 5;
+
 // static
-scoped_ptr<views::Border> MakeEmptyBorder(int top,
-                                          int left,
-                                          int bottom,
-                                          int right) {
-  return views::Border::CreateEmptyBorder(top, left, bottom, right);
+std::unique_ptr<views::Border> MakeEmptyBorder(int top,
+                                               int left,
+                                               int bottom,
+                                               int right) {
+  return views::CreateEmptyBorder(top, left, bottom, right);
 }
 
 // static
-scoped_ptr<views::Border> MakeTextBorder(int padding, int top, int bottom) {
+std::unique_ptr<views::Border> MakeTextBorder(int padding,
+                                              int top,
+                                              int bottom) {
   // Split the padding between the top and the bottom, then add the extra space.
   return MakeEmptyBorder(padding / 2 + top,
                          message_center::kTextLeftPadding,
@@ -69,7 +75,7 @@ scoped_ptr<views::Border> MakeTextBorder(int padding, int top, int bottom) {
 }
 
 // static
-scoped_ptr<views::Border> MakeProgressBarBorder(int top, int bottom) {
+std::unique_ptr<views::Border> MakeProgressBarBorder(int top, int bottom) {
   return MakeEmptyBorder(top,
                          message_center::kTextLeftPadding,
                          bottom,
@@ -77,36 +83,10 @@ scoped_ptr<views::Border> MakeProgressBarBorder(int top, int bottom) {
 }
 
 // static
-scoped_ptr<views::Border> MakeSeparatorBorder(int top,
-                                              int left,
-                                              SkColor color) {
-  return views::Border::CreateSolidSidedBorder(top, left, 0, 0, color);
-}
-
-// static
-// Return true if and only if the image is null or has alpha.
-bool HasAlpha(gfx::ImageSkia& image, views::Widget* widget) {
-  // Determine which bitmap to use.
-  float factor = 1.0f;
-  if (widget)
-    factor = ui::GetScaleFactorForNativeView(widget->GetNativeView());
-
-  // Extract that bitmap's alpha and look for a non-opaque pixel there.
-  SkBitmap bitmap = image.GetRepresentation(factor).sk_bitmap();
-  if (!bitmap.isNull()) {
-    SkBitmap alpha;
-    bitmap.extractAlpha(&alpha);
-    for (int y = 0; y < bitmap.height(); ++y) {
-      for (int x = 0; x < bitmap.width(); ++x) {
-        if (alpha.getColor(x, y) != SK_ColorBLACK) {
-          return true;
-        }
-      }
-    }
-  }
-
-  // If no opaque pixel was found, return false unless the bitmap is empty.
-  return bitmap.isNull();
+std::unique_ptr<views::Border> MakeSeparatorBorder(int top,
+                                                   int left,
+                                                   SkColor color) {
+  return views::CreateSolidSidedBorder(top, left, 0, 0, color);
 }
 
 // ItemView ////////////////////////////////////////////////////////////////////
@@ -115,7 +95,7 @@ bool HasAlpha(gfx::ImageSkia& image, views::Widget* widget) {
 // message next to each other within a single column.
 class ItemView : public views::View {
  public:
-  ItemView(const message_center::NotificationItem& item);
+  explicit ItemView(const message_center::NotificationItem& item);
   ~ItemView() override;
 
   // Overridden from views::View:
@@ -162,42 +142,6 @@ namespace message_center {
 
 // NotificationView ////////////////////////////////////////////////////////////
 
-// static
-NotificationView* NotificationView::Create(MessageCenterController* controller,
-                                           const Notification& notification,
-                                           bool top_level) {
-  switch (notification.type()) {
-    case NOTIFICATION_TYPE_BASE_FORMAT:
-    case NOTIFICATION_TYPE_IMAGE:
-    case NOTIFICATION_TYPE_MULTIPLE:
-    case NOTIFICATION_TYPE_SIMPLE:
-    case NOTIFICATION_TYPE_PROGRESS:
-      break;
-    default:
-      // If the caller asks for an unrecognized kind of view (entirely possible
-      // if an application is running on an older version of this code that
-      // doesn't have the requested kind of notification template), we'll fall
-      // back to a notification instance that will provide at least basic
-      // functionality.
-      LOG(WARNING) << "Unable to fulfill request for unrecognized "
-                   << "notification type " << notification.type() << ". "
-                   << "Falling back to simple notification type.";
-  }
-
-  // Currently all roads lead to the generic NotificationView.
-  NotificationView* notification_view =
-      new NotificationView(controller, notification);
-
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-  // Don't create shadows for notification toasts on linux wih aura.
-  if (top_level)
-    return notification_view;
-#endif
-
-  notification_view->CreateShadowBorder();
-  return notification_view;
-}
-
 views::View* NotificationView::TargetForRect(views::View* root,
                                              const gfx::Rect& rect) {
   CHECK_EQ(root, this);
@@ -213,7 +157,8 @@ views::View* NotificationView::TargetForRect(views::View* root,
                                     action_buttons_.end());
   if (settings_button_view_)
     buttons.push_back(settings_button_view_);
-  buttons.push_back(close_button());
+  if (close_button())
+    buttons.push_back(close_button());
 
   for (size_t i = 0; i < buttons.size(); ++i) {
     gfx::Point point_in_child = point;
@@ -237,39 +182,10 @@ void NotificationView::CreateOrUpdateViews(const Notification& notification) {
   CreateOrUpdateActionButtonViews(notification);
 }
 
-void NotificationView::SetAccessibleName(const Notification& notification) {
-  std::vector<base::string16> accessible_lines;
-  accessible_lines.push_back(notification.title());
-  accessible_lines.push_back(notification.message());
-  accessible_lines.push_back(notification.context_message());
-  std::vector<NotificationItem> items = notification.items();
-  for (size_t i = 0; i < items.size() && i < kNotificationMaximumItems; ++i) {
-    accessible_lines.push_back(items[i].title + base::ASCIIToUTF16(" ") +
-                               items[i].message);
-  }
-  set_accessible_name(
-      base::JoinString(accessible_lines, base::ASCIIToUTF16("\n")));
-}
-
 NotificationView::NotificationView(MessageCenterController* controller,
                                    const Notification& notification)
-    : MessageView(this,
-                  notification.id(),
-                  notification.notifier_id(),
-                  notification.small_image().AsImageSkia(),
-                  notification.display_source()),
-      controller_(controller),
-      clickable_(notification.clickable()),
-      top_view_(NULL),
-      title_view_(NULL),
-      message_view_(NULL),
-      context_message_view_(NULL),
-      settings_button_view_(NULL),
-      icon_view_(NULL),
-      bottom_view_(NULL),
-      image_container_(NULL),
-      image_view_(NULL),
-      progress_bar_view_(NULL) {
+    : MessageView(controller, notification),
+      clickable_(notification.clickable()) {
   // Create the top_view_, which collects into a vertical box all content
   // at the top of the notification (to the right of the icon) except for the
   // close button.
@@ -293,11 +209,10 @@ NotificationView::NotificationView(MessageCenterController* controller,
   // image to overlap the content as needed to provide large enough click and
   // touch areas (<http://crbug.com/168822> and <http://crbug.com/168856>).
   AddChildView(small_image());
-  AddChildView(close_button());
-  SetAccessibleName(notification);
+  CreateOrUpdateCloseButtonView(notification);
 
   SetEventTargeter(
-      scoped_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
+      std::unique_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
 }
 
 NotificationView::~NotificationView() {
@@ -334,13 +249,16 @@ int NotificationView::GetHeightForWidth(int width) const {
     }
   }
 
-  int content_height = std::max(top_height, kIconSize) + bottom_height;
+  int content_height =
+      std::max(top_height, kNotificationIconSize) + bottom_height;
 
   // Adjust the height to make sure there is at least 16px of space below the
   // icon if there is any space there (<http://crbug.com/232966>).
-  if (content_height > kIconSize)
-    content_height = std::max(content_height,
-                              kIconSize + message_center::kIconBottomPadding);
+  if (content_height > kNotificationIconSize) {
+    content_height =
+        std::max(content_height,
+                 kNotificationIconSize + message_center::kIconBottomPadding);
+  }
 
   return content_height + GetInsets().height();
 }
@@ -364,10 +282,11 @@ void NotificationView::Layout() {
   top_view_->SetBounds(insets.left(), insets.top(), content_width, top_height);
 
   // Icon.
-  icon_view_->SetBounds(insets.left(), insets.top(), kIconSize, kIconSize);
+  icon_view_->SetBounds(insets.left(), insets.top(), kNotificationIconSize,
+                        kNotificationIconSize);
 
   // Settings & Bottom views.
-  int bottom_y = insets.top() + std::max(top_height, kIconSize);
+  int bottom_y = insets.top() + std::max(top_height, kNotificationIconSize);
   int bottom_height = bottom_view_->GetHeightForWidth(content_width);
 
   if (settings_button_view_) {
@@ -376,6 +295,16 @@ void NotificationView::Layout() {
                                      bottom_y - settings_size.height(),
                                      settings_size.width(),
                                      settings_size.height());
+  }
+
+  // Close button.
+  if (close_button_) {
+    gfx::Rect content_bounds = GetContentsBounds();
+    gfx::Size close_size(close_button_->GetPreferredSize());
+    gfx::Rect close_rect(content_bounds.right() - close_size.width(),
+                         content_bounds.y(), close_size.width(),
+                         close_size.height());
+    close_button_->SetBoundsRect(close_rect);
   }
 
   bottom_view_->SetBounds(insets.left(), bottom_y,
@@ -394,7 +323,7 @@ void NotificationView::ScrollRectToVisible(const gfx::Rect& rect) {
 }
 
 gfx::NativeCursor NotificationView::GetCursor(const ui::MouseEvent& event) {
-  if (!clickable_ || !controller_->HasClickedListener(notification_id()))
+  if (!clickable_ || !controller()->HasClickedListener(notification_id()))
     return views::View::GetCursor(event);
 
   return views::GetNativeHandCursor();
@@ -405,7 +334,7 @@ void NotificationView::UpdateWithNotification(
   MessageView::UpdateWithNotification(notification);
 
   CreateOrUpdateViews(notification);
-  SetAccessibleName(notification);
+  CreateOrUpdateCloseButtonView(notification);
   Layout();
   SchedulePaint();
 }
@@ -417,46 +346,55 @@ void NotificationView::ButtonPressed(views::Button* sender,
   // TODO(dewittj): Remove this hack.
   std::string id(notification_id());
 
+  if (close_button_ && sender == close_button_.get()) {
+    // Warning: This causes the NotificationView itself to be deleted, so don't
+    // do anything afterwards.
+    controller()->RemoveNotification(id, true /* by_user */);
+    return;
+  }
+
   if (sender == settings_button_view_) {
-    controller_->ClickOnSettingsButton(id);
+    controller()->ClickOnSettingsButton(id);
     return;
   }
 
   // See if the button pressed was an action button.
   for (size_t i = 0; i < action_buttons_.size(); ++i) {
     if (sender == action_buttons_[i]) {
-      controller_->ClickOnNotificationButton(id, i);
+      controller()->ClickOnNotificationButton(id, i);
       return;
     }
   }
-
-  // Let the superclass handle everything else.
-  // Warning: This may cause the NotificationView itself to be deleted,
-  // so don't do anything afterwards.
-  MessageView::ButtonPressed(sender, event);
 }
 
-void NotificationView::ClickOnNotification(const std::string& notification_id) {
-  controller_->ClickOnNotification(notification_id);
+bool NotificationView::IsCloseButtonFocused() const {
+  if (!close_button_)
+    return false;
+
+  const views::FocusManager* focus_manager = GetFocusManager();
+  return focus_manager &&
+         focus_manager->GetFocusedView() == close_button_.get();
 }
 
-void NotificationView::RemoveNotification(const std::string& notification_id,
-                                          bool by_user) {
-  controller_->RemoveNotification(notification_id, by_user);
+void NotificationView::RequestFocusOnCloseButton() {
+  if (close_button_)
+    close_button_->RequestFocus();
+}
+
+bool NotificationView::IsPinned() const {
+  return !close_button_;
 }
 
 void NotificationView::CreateOrUpdateTitleView(
     const Notification& notification) {
   if (notification.title().empty()) {
-    if (title_view_) {
-      // Deletion will also remove |title_view_| from its parent.
-      delete title_view_;
-      title_view_ = NULL;
-    }
+    // Deletion will also remove |title_view_| from its parent.
+    delete title_view_;
+    title_view_ = nullptr;
     return;
   }
 
-  DCHECK(top_view_ != NULL);
+  DCHECK(top_view_);
 
   const gfx::FontList& font_list =
       views::Label().font_list().DeriveWithSizeDelta(2);
@@ -485,11 +423,9 @@ void NotificationView::CreateOrUpdateTitleView(
 void NotificationView::CreateOrUpdateMessageView(
     const Notification& notification) {
   if (notification.message().empty()) {
-    if (message_view_) {
-      // Deletion will also remove |message_view_| from its parent.
-      delete message_view_;
-      message_view_ = NULL;
-    }
+    // Deletion will also remove |message_view_| from its parent.
+    delete message_view_;
+    message_view_ = nullptr;
     return;
   }
 
@@ -510,7 +446,7 @@ void NotificationView::CreateOrUpdateMessageView(
     message_view_->SetText(text);
   }
 
-  message_view_->SetVisible(!notification.items().size());
+  message_view_->SetVisible(notification.items().empty());
 }
 
 base::string16 NotificationView::FormatContextMessage(
@@ -518,12 +454,10 @@ base::string16 NotificationView::FormatContextMessage(
   if (notification.UseOriginAsContextMessage()) {
     const GURL url = notification.origin_url();
     DCHECK(url.is_valid());
-    // TODO(palmer): Find a way to get the Profile's real languages.
-    // crbug.com/496965.
-    return gfx::ElideText(url_formatter::FormatUrlForSecurityDisplayOmitScheme(
-                              url, std::string()),
-                          views::Label().font_list(), kContextMessageViewWidth,
-                          gfx::ELIDE_HEAD);
+    return gfx::ElideText(
+        url_formatter::FormatUrlForSecurityDisplay(
+            url, url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS),
+        views::Label().font_list(), kContextMessageViewWidth, gfx::ELIDE_HEAD);
   }
 
   return gfx::TruncateString(notification.context_message(),
@@ -534,11 +468,9 @@ void NotificationView::CreateOrUpdateContextMessageView(
     const Notification& notification) {
   if (notification.context_message().empty() &&
       !notification.UseOriginAsContextMessage()) {
-    if (context_message_view_) {
-      // Deletion will also remove |context_message_view_| from its parent.
-      delete context_message_view_;
-      context_message_view_ = NULL;
-    }
+    // Deletion will also remove |context_message_view_| from its parent.
+    delete context_message_view_;
+    context_message_view_ = nullptr;
     return;
   }
 
@@ -563,10 +495,8 @@ void NotificationView::CreateOrUpdateContextMessageView(
 
 void NotificationView::CreateOrUpdateSettingsButtonView(
     const Notification& notification) {
-  if (settings_button_view_) {
-    delete settings_button_view_;
-    settings_button_view_ = NULL;
-  }
+  delete settings_button_view_;
+  settings_button_view_ = nullptr;
 
   if (!settings_button_view_ && notification.delegate() &&
       notification.delegate()->ShouldDisplaySettingsButton()) {
@@ -591,44 +521,29 @@ void NotificationView::CreateOrUpdateSettingsButtonView(
 void NotificationView::CreateOrUpdateProgressBarView(
     const Notification& notification) {
   if (notification.type() != NOTIFICATION_TYPE_PROGRESS) {
-    if (progress_bar_view_) {
-      // Deletion will also remove |progress_bar_view_| from its parent.
-      delete progress_bar_view_;
-      progress_bar_view_ = NULL;
-    }
+    // Deletion will also remove |progress_bar_view_| from its parent.
+    delete progress_bar_view_;
+    progress_bar_view_ = nullptr;
     return;
   }
 
-  DCHECK(top_view_ != NULL);
-
-  bool is_indeterminate = (notification.progress() < 0);
-  if (progress_bar_view_ &&
-      progress_bar_view_->is_indeterminate() != is_indeterminate) {
-    delete progress_bar_view_;
-    progress_bar_view_ = NULL;
-  }
+  DCHECK(top_view_);
 
   if (!progress_bar_view_) {
-    if (!is_indeterminate)
-      progress_bar_view_ = new NotificationProgressBar();
-    else
-      progress_bar_view_ = new NotificationIndeterminateProgressBar();
-
+    progress_bar_view_ = new views::ProgressBar();
     progress_bar_view_->SetBorder(MakeProgressBarBorder(
         message_center::kProgressBarTopPadding, kProgressBarBottomPadding));
     top_view_->AddChildView(progress_bar_view_);
   }
 
-  if (!is_indeterminate)
-    progress_bar_view_->SetValue(notification.progress() / 100.0);
-
-  progress_bar_view_->SetVisible(!notification.items().size());
+  progress_bar_view_->SetValue(notification.progress() / 100.0);
+  progress_bar_view_->SetVisible(notification.items().empty());
 }
 
 void NotificationView::CreateOrUpdateListItemViews(
     const Notification& notification) {
-  for (size_t i = 0; i < item_views_.size(); ++i)
-    delete item_views_[i];
+  for (auto item_view : item_views_)
+    delete item_view;
   item_views_.clear();
 
   int padding = kMessageLineHeight - views::Label().font_list().GetHeight();
@@ -648,26 +563,15 @@ void NotificationView::CreateOrUpdateListItemViews(
 
 void NotificationView::CreateOrUpdateIconView(
     const Notification& notification) {
+  gfx::Size image_view_size(kNotificationIconSize, kNotificationIconSize);
+
   if (!icon_view_) {
-    icon_view_ = new ProportionalImageView(gfx::Size(kIconSize, kIconSize));
+    icon_view_ = new ProportionalImageView(image_view_size);
     AddChildView(icon_view_);
   }
 
   gfx::ImageSkia icon = notification.icon().AsImageSkia();
-  if (notification.adjust_icon()) {
-    icon_view_->set_background(
-        views::Background::CreateSolidBackground(kIconBackgroundColor));
-    gfx::Size max_image_size =
-        notification.type() == NOTIFICATION_TYPE_SIMPLE &&
-                (icon.width() < kIconSize || icon.height() < kIconSize ||
-                 HasAlpha(icon, GetWidget()))
-            ? gfx::Size(kLegacyIconSize, kLegacyIconSize)
-            : gfx::Size(kIconSize, kIconSize);
-    icon_view_->SetImage(icon, max_image_size);
-  } else {
-    icon_view_->SetImage(icon, icon.size());
-    icon_view_->set_background(nullptr);
-  }
+  icon_view_->SetImage(icon, icon.size());
 }
 
 void NotificationView::CreateOrUpdateImageView(
@@ -707,7 +611,7 @@ void NotificationView::CreateOrUpdateImageView(
   gfx::Size scaled_size = message_center::GetImageSizeForContainerSize(
       ideal_size, notification.image().Size());
   image_view_->SetBorder(ideal_size != scaled_size
-                             ? views::Border::CreateSolidBorder(
+                             ? views::CreateSolidBorder(
                                    message_center::kNotificationImageBorderSize,
                                    SK_ColorTRANSPARENT)
                              : NULL);
@@ -719,9 +623,12 @@ void NotificationView::CreateOrUpdateActionButtonViews(
   bool new_buttons = action_buttons_.size() != buttons.size();
 
   if (new_buttons || buttons.size() == 0) {
-    // STLDeleteElements also clears the container.
-    STLDeleteElements(&separators_);
-    STLDeleteElements(&action_buttons_);
+    for (auto item : separators_)
+      delete item;
+    separators_.clear();
+    for (auto item : action_buttons_)
+      delete item;
+    action_buttons_.clear();
   }
 
   DCHECK(bottom_view_);
@@ -754,6 +661,29 @@ void NotificationView::CreateOrUpdateActionButtonViews(
       widget->SetSize(widget->GetContentsView()->GetPreferredSize());
       GetWidget()->SynthesizeMouseMoveEvent();
     }
+  }
+}
+
+void NotificationView::CreateOrUpdateCloseButtonView(
+    const Notification& notification) {
+  set_slide_out_enabled(!notification.pinned());
+
+  if (!notification.pinned() && !close_button_) {
+    PaddedButton* close = new PaddedButton(this);
+    close->SetPadding(-kCloseIconRightPadding, kCloseIconTopPadding);
+    close->SetNormalImage(IDR_NOTIFICATION_CLOSE);
+    close->SetHoveredImage(IDR_NOTIFICATION_CLOSE_HOVER);
+    close->SetPressedImage(IDR_NOTIFICATION_CLOSE_PRESSED);
+    close->set_animate_on_state_change(false);
+    close->SetAccessibleName(l10n_util::GetStringUTF16(
+        IDS_MESSAGE_CENTER_CLOSE_NOTIFICATION_BUTTON_ACCESSIBLE_NAME));
+    close->SetTooltipText(l10n_util::GetStringUTF16(
+        IDS_MESSAGE_CENTER_CLOSE_NOTIFICATION_BUTTON_TOOLTIP));
+    close->set_owned_by_client();
+    AddChildView(close);
+    close_button_.reset(close);
+  } else if (notification.pinned() && close_button_) {
+    close_button_.reset();
   }
 }
 

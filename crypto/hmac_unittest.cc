@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "crypto/hmac.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -284,7 +287,7 @@ TEST(HMACTest, EmptyKey) {
   base::StringPiece data("");
 
   crypto::HMAC hmac(crypto::HMAC::SHA1);
-  ASSERT_TRUE(hmac.Init(NULL, 0));
+  ASSERT_TRUE(hmac.Init(nullptr, 0));
 
   unsigned char digest[kSHA1DigestSize];
   EXPECT_TRUE(hmac.Sign(data, digest, kSHA1DigestSize));

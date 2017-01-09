@@ -5,11 +5,15 @@
 #ifndef PPAPI_PROXY_PPB_MESSAGE_LOOP_PROXY_H_
 #define PPAPI_PROXY_PPB_MESSAGE_LOOP_PROXY_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "ppapi/proxy/interface_proxy.h"
 #include "ppapi/proxy/ppapi_proxy_export.h"
@@ -56,7 +60,7 @@ class PPAPI_PROXY_EXPORT MessageLoopResource : public MessageLoopShared {
   struct TaskInfo {
     tracked_objects::Location from_here;
     base::Closure closure;
-    int64 delay_ms;
+    int64_t delay_ms;
   };
 
   // Returns true if the object is associated with the current thread.
@@ -71,9 +75,12 @@ class PPAPI_PROXY_EXPORT MessageLoopResource : public MessageLoopShared {
   //       proxy operations (e.g., MessageLoop::QuitClosure).
   void PostClosure(const tracked_objects::Location& from_here,
                    const base::Closure& closure,
-                   int64 delay_ms) override;
+                   int64_t delay_ms) override;
   base::SingleThreadTaskRunner* GetTaskRunner() override;
   bool CurrentlyHandlingBlockingMessage() override;
+
+  // Quits |run_loop_|. Must be called from the thread that runs the RunLoop.
+  void QuitRunLoopWhenIdle();
 
   // TLS destructor function.
   static void ReleaseMessageLoop(void* value);
@@ -82,8 +89,11 @@ class PPAPI_PROXY_EXPORT MessageLoopResource : public MessageLoopShared {
   // that it's created on the thread it will run on. NULL for the main thread
   // loop, since that's owned by somebody else. This is needed for Run and Quit.
   // Any time we post tasks, we should post them using task_runner_.
-  scoped_ptr<base::MessageLoop> loop_;
+  std::unique_ptr<base::MessageLoop> loop_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
+  // RunLoop currently on the stack.
+  base::RunLoop* run_loop_ = nullptr;
 
   // Number of invocations of Run currently on the stack.
   int nested_invocations_;

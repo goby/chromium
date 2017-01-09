@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
@@ -16,6 +18,8 @@ using base::FundamentalValue;
 using base::ListValue;
 using base::StringValue;
 using base::Value;
+using base::android::JavaRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace policy {
 namespace android {
@@ -49,8 +53,9 @@ class PolicyConverterTest : public testing::Test {
   // Converts the passed in value to the passed in schema, and serializes the
   // result to JSON, to make it easier to compare with EXPECT_EQ.
   std::string Convert(Value* value, const Schema& value_schema) {
-    scoped_ptr<Value> converted_value(PolicyConverter::ConvertValueToSchema(
-        scoped_ptr<Value>(value), value_schema));
+    std::unique_ptr<Value> converted_value(
+        PolicyConverter::ConvertValueToSchema(std::unique_ptr<Value>(value),
+                                              value_schema));
 
     std::string json_string;
     EXPECT_TRUE(
@@ -61,9 +66,10 @@ class PolicyConverterTest : public testing::Test {
   // Uses|PolicyConverter::ConvertJavaStringArrayToListValue| to convert the
   // passed in java array and serializes the result to JSON, to make it easier
   // to compare with EXPECT_EQ.
-  std::string ConvertJavaStringArrayToListValue(JNIEnv* env,
-                                                jobjectArray java_array) {
-    scoped_ptr<ListValue> list =
+  std::string ConvertJavaStringArrayToListValue(
+      JNIEnv* env,
+      const JavaRef<jobjectArray>& java_array) {
+    std::unique_ptr<ListValue> list =
         PolicyConverter::ConvertJavaStringArrayToListValue(env, java_array);
 
     std::string json_string;
@@ -73,8 +79,9 @@ class PolicyConverterTest : public testing::Test {
   }
 
   // Converts the passed in values to a java string array
-  jobjectArray MakeJavaStringArray(JNIEnv* env,
-                                   std::vector<std::string> values) {
+  ScopedJavaLocalRef<jobjectArray> MakeJavaStringArray(
+      JNIEnv* env,
+      std::vector<std::string> values) {
     jobjectArray java_array = (jobjectArray)env->NewObjectArray(
         values.size(), env->FindClass("java/lang/String"), nullptr);
     for (size_t i = 0; i < values.size(); i++) {
@@ -83,7 +90,7 @@ class PolicyConverterTest : public testing::Test {
           base::android::ConvertUTF8ToJavaString(env, values[i]).obj());
     }
 
-    return java_array;
+    return ScopedJavaLocalRef<jobjectArray>(env, java_array);
   }
 
   Schema schema_;

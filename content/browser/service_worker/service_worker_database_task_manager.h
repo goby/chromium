@@ -5,7 +5,11 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_DATABASE_TASK_MANAGER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_DATABASE_TASK_MANAGER_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "content/common/content_export.h"
 
 namespace base {
@@ -21,8 +25,8 @@ namespace content {
 // behaviors.
 class ServiceWorkerDatabaseTaskManager {
  public:
-  virtual ~ServiceWorkerDatabaseTaskManager(){};
-  virtual scoped_ptr<ServiceWorkerDatabaseTaskManager> Clone() = 0;
+  virtual ~ServiceWorkerDatabaseTaskManager() {}
+  virtual std::unique_ptr<ServiceWorkerDatabaseTaskManager> Clone() = 0;
   virtual base::SequencedTaskRunner* GetTaskRunner() = 0;
   virtual base::SequencedTaskRunner* GetShutdownBlockingTaskRunner() = 0;
 };
@@ -35,7 +39,7 @@ class ServiceWorkerDatabaseTaskManagerImpl
   ~ServiceWorkerDatabaseTaskManagerImpl() override;
 
  protected:
-  scoped_ptr<ServiceWorkerDatabaseTaskManager> Clone() override;
+  std::unique_ptr<ServiceWorkerDatabaseTaskManager> Clone() override;
   base::SequencedTaskRunner* GetTaskRunner() override;
   base::SequencedTaskRunner* GetShutdownBlockingTaskRunner() override;
 
@@ -60,7 +64,7 @@ class CONTENT_EXPORT MockServiceWorkerDatabaseTaskManager
   ~MockServiceWorkerDatabaseTaskManager() override;
 
  protected:
-  scoped_ptr<ServiceWorkerDatabaseTaskManager> Clone() override;
+  std::unique_ptr<ServiceWorkerDatabaseTaskManager> Clone() override;
   base::SequencedTaskRunner* GetTaskRunner() override;
   base::SequencedTaskRunner* GetShutdownBlockingTaskRunner() override;
 

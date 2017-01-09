@@ -4,14 +4,13 @@
 
 #include "components/search/search.h"
 
-#include "base/command_line.h"
+#include <stddef.h>
+
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/google/core/browser/google_util.h"
-#include "components/search/search_switches.h"
 #include "components/search_engines/template_url.h"
 #include "url/gurl.h"
 
@@ -28,14 +27,10 @@ namespace {
 // space-delimited list of key:value pairs which correspond to these flags:
 const char kEmbeddedPageVersionFlagName[] = "espv";
 
-#if defined(OS_IOS)
-const uint64 kEmbeddedPageVersionDefault = 1;
-#elif defined(OS_ANDROID)
-const uint64 kEmbeddedPageVersionDefault = 1;
-// Use this variant to enable EmbeddedSearch SearchBox API in the results page.
-const uint64 kEmbeddedSearchEnabledVersion = 2;
+#if defined(OS_IOS) || defined(OS_ANDROID)
+const uint64_t kEmbeddedPageVersionDefault = 1;
 #else
-const uint64 kEmbeddedPageVersionDefault = 2;
+const uint64_t kEmbeddedPageVersionDefault = 2;
 #endif
 
 // Constants for the field trial name and group prefix.
@@ -52,45 +47,19 @@ const char kEmbeddedSearchFieldTrialName[] = "EmbeddedSearch";
 // be ignored and Instant Extended will not be enabled by default.
 const char kDisablingSuffix[] = "DISABLED";
 
-#if !defined(OS_IOS) && !defined(OS_ANDROID)
-const char kEnableQueryExtractionFlagName[] = "query_extraction";
-#endif
-
-const char kAllowPrefetchNonDefaultMatch[] = "allow_prefetch_non_default_match";
-
-#if defined(OS_ANDROID)
-const char kPrefetchSearchResultsFlagName[] = "prefetch_results";
-
-// Controls whether to reuse prerendered Instant Search base page to commit any
-// search query.
-const char kReuseInstantSearchBasePage[] = "reuse_instant_search_base_page";
-#endif
-
 }  // namespace
 
-// Negative start-margin values prevent the "es_sm" parameter from being used.
-const int kDisableStartMargin = -1;
-
 bool IsInstantExtendedAPIEnabled() {
-#if defined(OS_IOS)
+#if defined(OS_IOS) || defined(OS_ANDROID)
   return false;
-#elif defined(OS_ANDROID)
-  return EmbeddedSearchPageVersion() == kEmbeddedSearchEnabledVersion;
 #else
   return true;
-#endif  // defined(OS_IOS)
+#endif
 }
 
 // Determine what embedded search page version to request from the user's
 // default search provider. If 0, the embedded search UI should not be enabled.
-uint64 EmbeddedSearchPageVersion() {
-#if defined(OS_ANDROID)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableEmbeddedSearchAPI)) {
-    return kEmbeddedSearchEnabledVersion;
-  }
-#endif
-
+uint64_t EmbeddedSearchPageVersion() {
   FieldTrialFlags flags;
   if (GetFieldTrialInfo(&flags)) {
     return GetUInt64ValueForFlagWithDefault(kEmbeddedPageVersionFlagName,
@@ -143,12 +112,12 @@ std::string GetStringValueForFlagWithDefault(const std::string& flag,
   return default_value;
 }
 
-// Given a FieldTrialFlags object, returns the uint64 value of the provided
+// Given a FieldTrialFlags object, returns the uint64_t value of the provided
 // flag.
-uint64 GetUInt64ValueForFlagWithDefault(const std::string& flag,
-                                        uint64 default_value,
-                                        const FieldTrialFlags& flags) {
-  uint64 value;
+uint64_t GetUInt64ValueForFlagWithDefault(const std::string& flag,
+                                          uint64_t default_value,
+                                          const FieldTrialFlags& flags) {
+  uint64_t value;
   std::string str_value =
       GetStringValueForFlagWithDefault(flag, std::string(), flags);
   if (base::StringToUint64(str_value, &value))
@@ -164,9 +133,7 @@ bool GetBoolValueForFlagWithDefault(const std::string& flag,
   return !!GetUInt64ValueForFlagWithDefault(flag, default_value ? 1 : 0, flags);
 }
 
-std::string InstantExtendedEnabledParam(bool for_search) {
-  if (for_search && !IsQueryExtractionEnabled())
-    return std::string();
+std::string InstantExtendedEnabledParam() {
   return std::string(google_util::kInstantExtendedAPIParam) + "=" +
          base::Uint64ToString(EmbeddedSearchPageVersion()) + "&";
 }
@@ -176,66 +143,12 @@ std::string ForceInstantResultsParam(bool for_prerender) {
                                                            : std::string();
 }
 
-bool IsQueryExtractionEnabled() {
-#if defined(OS_IOS) || defined(OS_ANDROID)
-  return false;
-#else
-  if (!IsInstantExtendedAPIEnabled())
-    return false;
-
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kEnableQueryExtraction))
-    return true;
-
-  FieldTrialFlags flags;
-  return GetFieldTrialInfo(&flags) &&
-         GetBoolValueForFlagWithDefault(kEnableQueryExtractionFlagName, false,
-                                        flags);
-#endif  // defined(OS_IOS) || defined(OS_ANDROID)
-}
-
 bool ShouldPrefetchSearchResults() {
-  if (!IsInstantExtendedAPIEnabled())
-    return false;
-
-#if defined(OS_ANDROID)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kPrefetchSearchResults)) {
-    return true;
-  }
-
-  FieldTrialFlags flags;
-  return GetFieldTrialInfo(&flags) &&
-         GetBoolValueForFlagWithDefault(kPrefetchSearchResultsFlagName, false,
-                                        flags);
-#else
-  return true;
-#endif
+  return IsInstantExtendedAPIEnabled();
 }
 
 bool ShouldReuseInstantSearchBasePage() {
-  if (!ShouldPrefetchSearchResults())
-    return false;
-
-#if defined(OS_ANDROID)
-  FieldTrialFlags flags;
-  return GetFieldTrialInfo(&flags) &&
-         GetBoolValueForFlagWithDefault(kReuseInstantSearchBasePage, false,
-                                        flags);
-#else
-  return true;
-#endif
-}
-
-bool ShouldAllowPrefetchNonDefaultMatch() {
-  if (!ShouldPrefetchSearchResults())
-    return false;
-
-  FieldTrialFlags flags;
-  return GetFieldTrialInfo(&flags) &&
-         GetBoolValueForFlagWithDefault(kAllowPrefetchNonDefaultMatch, false,
-                                        flags);
+  return IsInstantExtendedAPIEnabled();
 }
 
 // |url| should either have a secure scheme or have a non-HTTPS base URL that
@@ -245,13 +158,6 @@ bool IsSuitableURLForInstant(const GURL& url, const TemplateURL* template_url) {
   return template_url->HasSearchTermsReplacementKey(url) &&
          (url.SchemeIsCryptographic() ||
           google_util::StartsWithCommandLineGoogleBaseURL(url));
-}
-
-void EnableQueryExtractionForTesting() {
-#if !defined(OS_IOS) && !defined(OS_ANDROID)
-  base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
-  cl->AppendSwitch(switches::kEnableQueryExtraction);
-#endif
 }
 
 }  // namespace search

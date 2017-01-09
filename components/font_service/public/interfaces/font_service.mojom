@@ -2,13 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-module font_service;
+module font_service.mojom;
 
-enum TypefaceStyle {
-  NORMAL = 0,
-  BOLD = 0x01,
-  ITALIC = 0x02,
-  BOLD_ITALIC = 0x03
+import "mojo/common/file.mojom";
+
+enum TypefaceSlant {
+  ROMAN = 0,
+  ITALIC = 1,
+  OBLIQUE = 2,
+};
+
+struct TypefaceStyle {
+  uint16 weight;
+  uint8 width;
+  TypefaceSlant slant;
 };
 
 // A reference to specific font on the font service.
@@ -34,5 +41,5 @@ interface FontService {
       (FontIdentity? identity, string family_name, TypefaceStyle style);
 
   // Returns a handle to the raw font specified by |id_number|.
-  OpenStream(uint32 id_number) => (handle font_handle);
+  OpenStream(uint32 id_number) => (mojo.common.mojom.File? font_handle);
 };

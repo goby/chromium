@@ -12,6 +12,9 @@ namespace message_center {
 FakeNotifierSettingsProvider::NotifierGroupItem::NotifierGroupItem() {
 }
 
+FakeNotifierSettingsProvider::NotifierGroupItem::NotifierGroupItem(
+    const NotifierGroupItem& other) = default;
+
 FakeNotifierSettingsProvider::NotifierGroupItem::~NotifierGroupItem() {
 }
 
@@ -26,10 +29,8 @@ FakeNotifierSettingsProvider::FakeNotifierSettingsProvider(
       active_item_index_(0),
       notifier_settings_requested_count_(0u) {
   NotifierGroupItem item;
-  item.group = new NotifierGroup(gfx::Image(),
-                                 base::UTF8ToUTF16("Fake name"),
-                                 base::UTF8ToUTF16("fake@email.com"),
-                                 true);
+  item.group = new NotifierGroup(base::UTF8ToUTF16("Fake name"),
+                                 base::UTF8ToUTF16("fake@email.com"));
   item.notifiers = notifiers;
   items_.push_back(item);
 }

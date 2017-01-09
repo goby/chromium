@@ -4,17 +4,21 @@
 
 #include "chrome/browser/supervised_user/legacy/permission_request_creator_sync.h"
 
+#include <utility>
+
 #include "base/callback.h"
 #include "base/values.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_shared_settings_service.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/escape.h"
 #include "url/gurl.h"
 
 const char kSupervisedUserAccessRequestKeyPrefix[] =
     "X-ManagedUser-AccessRequests";
+const char kSupervisedUserInstallRequestKeyPrefix[] =
+    "X-ManagedUser-InstallRequests";
 const char kSupervisedUserUpdateRequestKeyPrefix[] =
     "X-ManagedUser-UpdateRequests";
 const char kSupervisedUserAccessRequestTime[] = "timestamp";
@@ -28,15 +32,14 @@ const char kNotificationSetting[] = "custodian-notification-setting";
 PermissionRequestCreatorSync::PermissionRequestCreatorSync(
     SupervisedUserSettingsService* settings_service,
     SupervisedUserSharedSettingsService* shared_settings_service,
-    ProfileSyncService* sync_service,
+    browser_sync::ProfileSyncService* sync_service,
     const std::string& name,
     const std::string& supervised_user_id)
     : settings_service_(settings_service),
       shared_settings_service_(shared_settings_service),
       sync_service_(sync_service),
       name_(name),
-      supervised_user_id_(supervised_user_id) {
-}
+      supervised_user_id_(supervised_user_id) {}
 
 PermissionRequestCreatorSync::~PermissionRequestCreatorSync() {}
 
@@ -56,6 +59,12 @@ void PermissionRequestCreatorSync::CreateURLAccessRequest(
                 callback);
 }
 
+void PermissionRequestCreatorSync::CreateExtensionInstallRequest(
+    const std::string& id,
+    const SuccessCallback& callback) {
+  CreateRequest(kSupervisedUserInstallRequestKeyPrefix, id, callback);
+}
+
 void PermissionRequestCreatorSync::CreateExtensionUpdateRequest(
     const std::string& id,
     const SuccessCallback& callback) {
@@ -70,7 +79,7 @@ void PermissionRequestCreatorSync::CreateRequest(
   std::string key =
       SupervisedUserSettingsService::MakeSplitSettingKey(prefix, data);
 
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   // TODO(sergiu): Use sane time here when it's ready.
   dict->SetDouble(kSupervisedUserAccessRequestTime,
                   base::Time::Now().ToJsTime());
@@ -86,7 +95,7 @@ void PermissionRequestCreatorSync::CreateRequest(
   }
   dict->SetBoolean(kNotificationSetting, notifications_enabled);
 
-  settings_service_->UploadItem(key, dict.Pass());
+  settings_service_->UploadItem(key, std::move(dict));
 
   callback.Run(true);
 }

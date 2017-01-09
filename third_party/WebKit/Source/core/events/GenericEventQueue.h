@@ -30,38 +30,36 @@
 #include "core/events/EventQueue.h"
 #include "core/events/EventTarget.h"
 #include "platform/Timer.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
 
 namespace blink {
 
 class CORE_EXPORT GenericEventQueue final : public EventQueue {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(GenericEventQueue);
-public:
-    static PassOwnPtrWillBeRawPtr<GenericEventQueue> create(EventTarget*);
-    ~GenericEventQueue() override;
+ public:
+  static GenericEventQueue* create(EventTarget*);
+  ~GenericEventQueue() override;
 
-    // EventQueue
-    DECLARE_VIRTUAL_TRACE();
-    bool enqueueEvent(PassRefPtrWillBeRawPtr<Event>) override;
-    bool cancelEvent(Event*) override;
-    void close() override;
+  // EventQueue
+  DECLARE_VIRTUAL_TRACE();
+  bool enqueueEvent(Event*) override;
+  bool cancelEvent(Event*) override;
+  void close() override;
 
-    void cancelAllEvents();
-    bool hasPendingEvents() const;
+  void cancelAllEvents();
+  bool hasPendingEvents() const;
 
-private:
-    explicit GenericEventQueue(EventTarget*);
-    void timerFired(Timer<GenericEventQueue>*);
+ private:
+  explicit GenericEventQueue(EventTarget*);
+  void timerFired(TimerBase*);
 
-    RawPtrWillBeMember<EventTarget> m_owner;
-    WillBeHeapVector<RefPtrWillBeMember<Event>> m_pendingEvents;
-    Timer<GenericEventQueue> m_timer;
+  Member<EventTarget> m_owner;
+  HeapVector<Member<Event>> m_pendingEvents;
+  Timer<GenericEventQueue> m_timer;
 
-    bool m_isClosed;
+  bool m_isClosed;
 };
 
-}
+}  // namespace blink
 
 #endif

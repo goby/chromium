@@ -4,6 +4,7 @@
 
 #include "content/renderer/pepper/resource_creation_impl.h"
 
+#include "build/build_config.h"
 #include "content/common/content_switches_internal.h"
 #include "content/renderer/pepper/ppb_audio_impl.h"
 #include "content/renderer/pepper/ppb_broker_impl.h"
@@ -114,17 +115,17 @@ PP_Resource ResourceCreationImpl::CreateFlashMessageLoop(PP_Instance instance) {
 PP_Resource ResourceCreationImpl::CreateGraphics3D(PP_Instance instance,
                                                    PP_Resource share_context,
                                                    const int32_t* attrib_list) {
-  return PPB_Graphics3D_Impl::Create(instance, share_context, attrib_list);
+  return 0;  // Not supported in-process.
 }
 
 PP_Resource ResourceCreationImpl::CreateGraphics3DRaw(
     PP_Instance instance,
     PP_Resource share_context,
-    const int32_t* attrib_list,
+    const gpu::gles2::ContextCreationAttribHelper& attrib_helper,
     gpu::Capabilities* capabilities,
     base::SharedMemoryHandle* shared_state,
-    uint64_t* command_buffer_id) {
-  return PPB_Graphics3D_Impl::CreateRaw(instance, share_context, attrib_list,
+    gpu::CommandBufferId* command_buffer_id) {
+  return PPB_Graphics3D_Impl::CreateRaw(instance, share_context, attrib_helper,
                                         capabilities, shared_state,
                                         command_buffer_id);
 }
@@ -150,7 +151,7 @@ PP_Resource ResourceCreationImpl::CreateImageData(PP_Instance instance,
   // TODO(ananta)
   // Look into whether this causes a loss of functionality. From cursory
   // testing things seem to work well.
-  if (IsWin32kRendererLockdownEnabled())
+  if (IsWin32kLockdownEnabled())
     return CreateImageDataSimple(instance, format, size, init_to_zero);
 #endif
   return PPB_ImageData_Impl::Create(instance,
@@ -344,6 +345,10 @@ PP_Resource ResourceCreationImpl::CreateVideoEncoder(PP_Instance instance) {
 }
 
 PP_Resource ResourceCreationImpl::CreateVideoSource(PP_Instance instance) {
+  return 0;  // Not supported in-process.
+}
+
+PP_Resource ResourceCreationImpl::CreateVpnProvider(PP_Instance instance) {
   return 0;  // Not supported in-process.
 }
 

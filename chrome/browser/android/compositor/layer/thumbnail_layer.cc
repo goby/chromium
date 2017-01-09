@@ -9,7 +9,6 @@
 #include "content/public/browser/android/compositor.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
-namespace chrome {
 namespace android {
 
 // static
@@ -49,9 +48,7 @@ scoped_refptr<cc::Layer> ThumbnailLayer::layer() {
   return layer_;
 }
 
-ThumbnailLayer::ThumbnailLayer()
-    : layer_(
-          cc::UIResourceLayer::Create(content::Compositor::LayerSettings())) {
+ThumbnailLayer::ThumbnailLayer() : layer_(cc::UIResourceLayer::Create()) {
   layer_->SetIsDrawable(true);
 }
 
@@ -68,4 +65,3 @@ void ThumbnailLayer::UpdateSizes(const gfx::SizeF& content_size,
 }
 
 }  // namespace android
-}  // namespace chrome

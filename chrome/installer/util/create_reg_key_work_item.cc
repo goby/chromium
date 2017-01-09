@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <shlwapi.h>
+#include <stddef.h>
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
@@ -45,7 +46,7 @@ CreateRegKeyWorkItem::CreateRegKeyWorkItem(HKEY predefined_root,
          wow64_access == KEY_WOW64_64KEY);
 }
 
-bool CreateRegKeyWorkItem::Do() {
+bool CreateRegKeyWorkItem::DoImpl() {
   if (!InitKeyList()) {
     // Nothing needs to be done here.
     VLOG(1) << "no key to create";
@@ -89,7 +90,7 @@ bool CreateRegKeyWorkItem::Do() {
   return true;
 }
 
-void CreateRegKeyWorkItem::Rollback() {
+void CreateRegKeyWorkItem::RollbackImpl() {
   if (!key_created_)
     return;
 

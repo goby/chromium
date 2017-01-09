@@ -5,10 +5,11 @@
 #ifndef CONTENT_PUBLIC_BROWSER_INDEXED_DB_CONTEXT_H_
 #define CONTENT_PUBLIC_BROWSER_INDEXED_DB_CONTEXT_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
@@ -29,7 +30,7 @@ class IndexedDBContext : public base::RefCountedThreadSafe<IndexedDBContext> {
 
   // Methods used in response to QuotaManager requests.
   virtual std::vector<IndexedDBInfo> GetAllOriginsInfo() = 0;
-  virtual int64 GetOriginDiskUsage(const GURL& origin_url) = 0;
+  virtual int64_t GetOriginDiskUsage(const GURL& origin_url) = 0;
 
   // Deletes all indexed db files for the given origin.
   virtual void DeleteForOrigin(const GURL& origin_url) = 0;
@@ -41,7 +42,8 @@ class IndexedDBContext : public base::RefCountedThreadSafe<IndexedDBContext> {
 
   // Get the file name of the local storage file for the given origin.
   virtual base::FilePath GetFilePathForTesting(
-      const std::string& origin_id) const = 0;
+      const GURL& origin_url) const = 0;
+
   // Set the task runner for tests if browser main loop is not initialized.
   virtual void SetTaskRunnerForTesting(
       base::SequencedTaskRunner* task_runner) = 0;

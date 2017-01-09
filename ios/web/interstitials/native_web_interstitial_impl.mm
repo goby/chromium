@@ -4,11 +4,17 @@
 
 #include "ios/web/interstitials/native_web_interstitial_impl.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "ios/web/public/interstitials/web_interstitial_delegate.h"
 #import "ios/web/public/web_state/ui/crw_generic_content_view.h"
 #include "ios/web/web_state/web_state_impl.h"
 #include "ui/gfx/geometry/size.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 
@@ -17,19 +23,19 @@ WebInterstitial* WebInterstitial::CreateNativeInterstitial(
     WebState* web_state,
     bool new_navigation,
     const GURL& url,
-    scoped_ptr<NativeWebInterstitialDelegate> delegate) {
+    std::unique_ptr<NativeWebInterstitialDelegate> delegate) {
   WebStateImpl* web_state_impl = static_cast<WebStateImpl*>(web_state);
   return new NativeWebInterstitialImpl(web_state_impl, new_navigation, url,
-                                       delegate.Pass());
+                                       std::move(delegate));
 }
 
 NativeWebInterstitialImpl::NativeWebInterstitialImpl(
     WebStateImpl* web_state,
     bool new_navigation,
     const GURL& url,
-    scoped_ptr<NativeWebInterstitialDelegate> delegate)
+    std::unique_ptr<NativeWebInterstitialDelegate> delegate)
     : web::WebInterstitialImpl(web_state, new_navigation, url),
-      delegate_(delegate.Pass()) {
+      delegate_(std::move(delegate)) {
   DCHECK(delegate_);
 }
 
@@ -51,10 +57,10 @@ WebInterstitialDelegate* NativeWebInterstitialImpl::GetDelegate() const {
   return delegate_.get();
 }
 
-void NativeWebInterstitialImpl::EvaluateJavaScript(
+void NativeWebInterstitialImpl::ExecuteJavaScript(
     NSString* script,
-    JavaScriptCompletion completionHandler) {
-  NOTREACHED() << "JavaScript cannot be evaluated on native interstitials.";
+    JavaScriptResultBlock completion_handler) {
+  NOTREACHED() << "JavaScript cannot be executed on native interstitials.";
 }
 
 }  // namespace web

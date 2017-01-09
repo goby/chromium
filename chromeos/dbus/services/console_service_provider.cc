@@ -4,6 +4,8 @@
 
 #include "chromeos/dbus/services/console_service_provider.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "dbus/message.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -13,19 +15,18 @@ namespace {
 
 void OnDisplayOwnershipChanged(
     const dbus::ExportedObject::ResponseSender& response_sender,
-    scoped_ptr<dbus::Response> response,
+    std::unique_ptr<dbus::Response> response,
     bool status) {
   dbus::MessageWriter writer(response.get());
   writer.AppendBool(status);
-  response_sender.Run(response.Pass());
+  response_sender.Run(std::move(response));
 }
 
 }  // namespace
 
-ConsoleServiceProvider::ConsoleServiceProvider(scoped_ptr<Delegate> delegate)
-    : delegate_(delegate.Pass()),
-      weak_ptr_factory_(this) {
-}
+ConsoleServiceProvider::ConsoleServiceProvider(
+    std::unique_ptr<Delegate> delegate)
+    : delegate_(std::move(delegate)), weak_ptr_factory_(this) {}
 
 ConsoleServiceProvider::~ConsoleServiceProvider() {
 }

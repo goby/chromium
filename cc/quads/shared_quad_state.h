@@ -5,9 +5,10 @@
 #ifndef CC_QUADS_SHARED_QUAD_STATE_H_
 #define CC_QUADS_SHARED_QUAD_STATE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "cc/base/cc_export.h"
-#include "third_party/skia/include/core/SkXfermode.h"
+#include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/transform.h"
 
@@ -15,7 +16,6 @@ namespace base {
 namespace trace_event {
 class TracedValue;
 }
-class Value;
 }
 
 namespace cc {
@@ -28,9 +28,8 @@ namespace cc {
 class CC_EXPORT SharedQuadState {
  public:
   SharedQuadState();
+  SharedQuadState(const SharedQuadState& other);
   ~SharedQuadState();
-
-  void CopyFrom(const SharedQuadState* other);
 
   void SetAll(const gfx::Transform& quad_to_target_transform,
               const gfx::Size& layer_bounds,
@@ -38,7 +37,7 @@ class CC_EXPORT SharedQuadState {
               const gfx::Rect& clip_rect,
               bool is_clipped,
               float opacity,
-              SkXfermode::Mode blend_mode,
+              SkBlendMode blend_mode,
               int sorting_context_id);
   void AsValueInto(base::trace_event::TracedValue* dict) const;
 
@@ -53,7 +52,7 @@ class CC_EXPORT SharedQuadState {
   gfx::Rect clip_rect;
   bool is_clipped;
   float opacity;
-  SkXfermode::Mode blend_mode;
+  SkBlendMode blend_mode;
   int sorting_context_id;
 };
 

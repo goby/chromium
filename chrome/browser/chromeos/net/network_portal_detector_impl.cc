@@ -8,10 +8,12 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/net/network_portal_notification_controller.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -319,7 +321,7 @@ void NetworkPortalDetectorImpl::SetStrategy(
     PortalDetectorStrategy::StrategyId id) {
   if (id == strategy_->Id())
     return;
-  strategy_ = PortalDetectorStrategy::CreateById(id, this).Pass();
+  strategy_ = PortalDetectorStrategy::CreateById(id, this);
   StopDetection();
   StartDetectionIfIdle();
 }
@@ -430,7 +432,7 @@ void NetworkPortalDetectorImpl::ScheduleAttempt(const base::TimeDelta& delay) {
   next_attempt_delay_ = std::max(delay, strategy_->GetDelayTillNextAttempt());
   attempt_task_.Reset(base::Bind(&NetworkPortalDetectorImpl::StartAttempt,
                                  weak_factory_.GetWeakPtr()));
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, attempt_task_.callback(), next_attempt_delay_);
 }
 
@@ -449,9 +451,8 @@ void NetworkPortalDetectorImpl::StartAttempt() {
       base::Bind(&NetworkPortalDetectorImpl::OnAttemptTimeout,
                  weak_factory_.GetWeakPtr()));
 
-  base::MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      attempt_timeout_.callback(),
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, attempt_timeout_.callback(),
       strategy_->GetNextAttemptTimeout());
 }
 
@@ -548,7 +549,10 @@ void NetworkPortalDetectorImpl::OnAttemptCompleted(
       same_detection_result_count_ >= kMaxOfflineResultsBeforeReport) {
     OnDetectionCompleted(network, state);
   }
-  ScheduleAttempt(results.retry_after_delta);
+
+  // Observers (via OnDetectionCompleted) may already schedule new attempt.
+  if (is_idle())
+    ScheduleAttempt(results.retry_after_delta);
 }
 
 void NetworkPortalDetectorImpl::Observe(
@@ -595,8 +599,8 @@ void NetworkPortalDetectorImpl::OnDetectionCompleted(
 void NetworkPortalDetectorImpl::NotifyDetectionCompleted(
     const NetworkState* network,
     const CaptivePortalState& state) {
-  FOR_EACH_OBSERVER(
-      Observer, observers_, OnPortalDetectionCompleted(network, state));
+  for (auto& observer : observers_)
+    observer.OnPortalDetectionCompleted(network, state);
 }
 
 bool NetworkPortalDetectorImpl::AttemptTimeoutIsCancelledForTesting() const {

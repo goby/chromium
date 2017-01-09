@@ -5,15 +5,19 @@
 #ifndef STORAGE_BROWSER_BLOB_BLOB_READER_H_
 #define STORAGE_BROWSER_BLOB_BLOB_READER_H_
 
+#include <stddef.h>
 #include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <vector>
 
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/completion_callback.h"
 #include "storage/browser/storage_browser_export.h"
+#include "storage/common/blob_storage/blob_storage_constants.h"
 
 class GURL;
 
@@ -27,6 +31,7 @@ class Time;
 namespace net {
 class DrainableIOBuffer;
 class IOBuffer;
+class IOBufferWithSize;
 }
 
 namespace storage {
@@ -34,7 +39,6 @@ class BlobDataItem;
 class BlobDataHandle;
 class BlobDataSnapshot;
 class FileStreamReader;
-class FileSystemContext;
 
 // The blob reader is used to read a blob.  This can only be used in the browser
 // process, and we need to be on the IO thread.
@@ -48,19 +52,20 @@ class STORAGE_EXPORT BlobReader {
    public:
     virtual ~FileStreamReaderProvider();
 
-    virtual scoped_ptr<FileStreamReader> CreateForLocalFile(
+    virtual std::unique_ptr<FileStreamReader> CreateForLocalFile(
         base::TaskRunner* task_runner,
         const base::FilePath& file_path,
         int64_t initial_offset,
         const base::Time& expected_modification_time) = 0;
 
-    virtual scoped_ptr<FileStreamReader> CreateFileStreamReader(
+    virtual std::unique_ptr<FileStreamReader> CreateFileStreamReader(
         const GURL& filesystem_url,
         int64_t offset,
         int64_t max_bytes_to_read,
         const base::Time& expected_modification_time) = 0;
   };
   enum class Status { NET_ERROR, IO_PENDING, DONE };
+  typedef base::Callback<void(Status)> StatusCallback;
   virtual ~BlobReader();
 
   // This calculates the total size of the blob, and initializes the reading
@@ -72,6 +77,25 @@ class STORAGE_EXPORT BlobReader {
   //    The callback value contains the error code or net::OK. Please use the
   //    total_size() value to query the blob size, as it's uint64_t.
   Status CalculateSize(const net::CompletionCallback& done);
+
+  // Returns true when the blob has side data. CalculateSize must be called
+  // beforehand. Currently side data is supported only for single DiskCache
+  // entry blob. So it returns false when the blob has more than single data
+  // item. This side data is used to pass the V8 code cache which is stored
+  // as a side stream in the CacheStorage to the renderer. (crbug.com/581613)
+  bool has_side_data() const;
+
+  // Reads the side data of the blob. CalculateSize must be called beforehand.
+  // * If the side data is read immediately, returns Status::DONE.
+  // * If an error happens or the blob doesn't have side data, returns
+  //   Status::NET_ERROR and the net error code is set.
+  // * If this function returns Status::IO_PENDING, the done callback will be
+  //   called with Status::DONE or Status::NET_ERROR.
+  // Currently side data is supported only for single DiskCache entry blob.
+  Status ReadSideData(const StatusCallback& done);
+
+  // Returns the side data which has been already read with ReadSideData().
+  net::IOBufferWithSize* side_data() const { return side_data_.get(); }
 
   // Used to set the read position.
   // * This should be called after CalculateSize and before Read.
@@ -95,7 +119,8 @@ class STORAGE_EXPORT BlobReader {
   // after this call.
   void Kill();
 
-  // Returns if all of the blob's items are in memory.
+  // Returns if all of the blob's items are in memory. Should only be called
+  // after CalculateSize.
   bool IsInMemory() const;
 
   // Returns the remaining bytes to be read in the blob. This is populated
@@ -107,14 +132,19 @@ class STORAGE_EXPORT BlobReader {
 
   // Returns the total size of the blob. This is populated after CalculateSize
   // is called.
-  uint64_t total_size() const { return total_size_; }
+  uint64_t total_size() const {
+    DCHECK(total_size_calculated_);
+    return total_size_;
+  }
 
  protected:
   friend class BlobDataHandle;
   friend class BlobReaderTest;
+  FRIEND_TEST_ALL_PREFIXES(BlobReaderTest, HandleBeforeAsyncCancel);
+  FRIEND_TEST_ALL_PREFIXES(BlobReaderTest, ReadFromIncompleteBlob);
 
   BlobReader(const BlobDataHandle* blob_handle,
-             scoped_ptr<FileStreamReaderProvider> file_stream_provider,
+             std::unique_ptr<FileStreamReaderProvider> file_stream_provider,
              base::SequencedTaskRunner* file_task_runner);
 
   bool total_size_calculated() const { return total_size_calculated_; }
@@ -123,6 +153,9 @@ class STORAGE_EXPORT BlobReader {
   Status ReportError(int net_error);
   void InvalidateCallbacksAndDone(int net_error, net::CompletionCallback done);
 
+  void AsyncCalculateSize(const net::CompletionCallback& done,
+                          BlobStatus status);
+  Status CalculateSizeImpl(const net::CompletionCallback& done);
   bool AddItemLength(size_t index, uint64_t length);
   bool ResolveFileItemLength(const BlobDataItem& item,
                              int64_t total_length,
@@ -146,6 +179,9 @@ class STORAGE_EXPORT BlobReader {
   Status ReadDiskCacheEntryItem(const BlobDataItem& item, int bytes_to_read);
   void DidReadDiskCacheEntry(int result);
   void DidReadItem(int result);
+  void DidReadDiskCacheEntrySideData(const StatusCallback& done,
+                                     int expected_size,
+                                     int result);
   int ComputeBytesToRead() const;
   int BytesReadCompleted();
 
@@ -153,15 +189,18 @@ class STORAGE_EXPORT BlobReader {
   // If the item at |index| is not of file this returns NULL.
   FileStreamReader* GetOrCreateFileReaderAtIndex(size_t index);
   // If the reader is null, then this basically performs a delete operation.
-  void SetFileReaderAtIndex(size_t index, scoped_ptr<FileStreamReader> reader);
+  void SetFileReaderAtIndex(size_t index,
+                            std::unique_ptr<FileStreamReader> reader);
   // Creates a FileStreamReader for the item with additional_offset.
-  scoped_ptr<FileStreamReader> CreateFileStreamReader(
+  std::unique_ptr<FileStreamReader> CreateFileStreamReader(
       const BlobDataItem& item,
       uint64_t additional_offset);
 
-  scoped_ptr<BlobDataSnapshot> blob_data_;
-  scoped_ptr<FileStreamReaderProvider> file_stream_provider_;
+  std::unique_ptr<BlobDataHandle> blob_handle_;
+  std::unique_ptr<BlobDataSnapshot> blob_data_;
+  std::unique_ptr<FileStreamReaderProvider> file_stream_provider_;
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
+  scoped_refptr<net::IOBufferWithSize> side_data_;
 
   int net_error_;
   bool item_list_populated_ = false;
@@ -173,7 +212,7 @@ class STORAGE_EXPORT BlobReader {
   uint64_t total_size_ = 0;
   uint64_t remaining_bytes_ = 0;
   size_t pending_get_file_info_count_ = 0;
-  std::map<size_t, FileStreamReader*> index_to_reader_;
+  std::map<size_t, std::unique_ptr<FileStreamReader>> index_to_reader_;
   size_t current_item_index_ = 0;
   uint64_t current_item_offset_ = 0;
 

@@ -23,12 +23,11 @@ NotificationButton::NotificationButton(views::ButtonListener* listener)
       focus_painter_(views::Painter::CreateSolidFocusPainter(
           message_center::kFocusBorderColor,
           gfx::Insets(1, 2, 2, 2))) {
-  SetFocusable(true);
+  SetFocusForPlatform();
   // Create a background so that it does not change when the MessageView
   // background changes to show touch feedback
   set_background(views::Background::CreateSolidBackground(
       kNotificationBackgroundColor));
-  set_request_focus_on_press(false);
   set_notify_enter_exit_on_child(true);
   SetLayoutManager(
       new views::BoxLayout(views::BoxLayout::kHorizontal,
@@ -52,7 +51,7 @@ void NotificationButton::SetIcon(const gfx::ImageSkia& image) {
     icon_->SetImage(image);
     icon_->SetHorizontalAlignment(views::ImageView::LEADING);
     icon_->SetVerticalAlignment(views::ImageView::LEADING);
-    icon_->SetBorder(views::Border::CreateEmptyBorder(
+    icon_->SetBorder(views::CreateEmptyBorder(
         message_center::kButtonIconTopPadding, 0, 0, 0));
     AddChildViewAt(icon_, 0);
   }
@@ -69,7 +68,7 @@ void NotificationButton::SetTitle(const base::string16& title) {
     title_->SetEnabledColor(message_center::kRegularTextColor);
     title_->SetBackgroundColor(kRegularTextBackgroundColor);
     title_->SetBorder(
-        views::Border::CreateEmptyBorder(kButtonTitleTopPadding, 0, 0, 0));
+        views::CreateEmptyBorder(kButtonTitleTopPadding, 0, 0, 0));
     AddChildView(title_);
   }
   SetAccessibleName(title);

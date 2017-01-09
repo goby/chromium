@@ -5,15 +5,16 @@
 #ifndef BASE_JSON_JSON_VALUE_CONVERTER_H_
 #define BASE_JSON_JSON_VALUE_CONVERTER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
-#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 #include "base/values.h"
@@ -129,7 +130,7 @@ class FieldConverter : public FieldConverterBase<StructType> {
 
  private:
   FieldType StructType::* field_pointer_;
-  scoped_ptr<ValueConverter<FieldType> > value_converter_;
+  std::unique_ptr<ValueConverter<FieldType>> value_converter_;
   DISALLOW_COPY_AND_ASSIGN(FieldConverter);
 };
 
@@ -198,7 +199,7 @@ class ValueFieldConverter : public ValueConverter<FieldType> {
  public:
   typedef bool(*ConvertFunc)(const base::Value* value, FieldType* field);
 
-  ValueFieldConverter(ConvertFunc convert_func)
+  explicit ValueFieldConverter(ConvertFunc convert_func)
       : convert_func_(convert_func) {}
 
   bool Convert(const base::Value& value, FieldType* field) const override {
@@ -216,7 +217,7 @@ class CustomFieldConverter : public ValueConverter<FieldType> {
  public:
   typedef bool(*ConvertFunc)(const StringPiece& value, FieldType* field);
 
-  CustomFieldConverter(ConvertFunc convert_func)
+  explicit CustomFieldConverter(ConvertFunc convert_func)
       : convert_func_(convert_func) {}
 
   bool Convert(const base::Value& value, FieldType* field) const override {
@@ -264,7 +265,7 @@ class RepeatedValueConverter : public ValueConverter<ScopedVector<Element> > {
       if (!list->Get(i, &element))
         continue;
 
-      scoped_ptr<Element> e(new Element);
+      std::unique_ptr<Element> e(new Element);
       if (basic_converter_.Convert(*element, e.get())) {
         field->push_back(e.release());
       } else {
@@ -298,7 +299,7 @@ class RepeatedMessageConverter
       if (!list->Get(i, &element))
         continue;
 
-      scoped_ptr<NestedType> nested(new NestedType);
+      std::unique_ptr<NestedType> nested(new NestedType);
       if (converter_.Convert(*element, nested.get())) {
         field->push_back(nested.release());
       } else {
@@ -320,7 +321,7 @@ class RepeatedCustomValueConverter
  public:
   typedef bool(*ConvertFunc)(const base::Value* value, NestedType* field);
 
-  RepeatedCustomValueConverter(ConvertFunc convert_func)
+  explicit RepeatedCustomValueConverter(ConvertFunc convert_func)
       : convert_func_(convert_func) {}
 
   bool Convert(const base::Value& value,
@@ -335,7 +336,7 @@ class RepeatedCustomValueConverter
       if (!list->Get(i, &element))
         continue;
 
-      scoped_ptr<NestedType> nested(new NestedType);
+      std::unique_ptr<NestedType> nested(new NestedType);
       if ((*convert_func_)(element, nested.get())) {
         field->push_back(nested.release());
       } else {
@@ -489,7 +490,7 @@ class JSONValueConverter {
     if (!value.GetAsDictionary(&dictionary_value))
       return false;
 
-    for(size_t i = 0; i < fields_.size(); ++i) {
+    for (size_t i = 0; i < fields_.size(); ++i) {
       const internal::FieldConverterBase<StructType>* field_converter =
           fields_[i];
       const base::Value* field = NULL;

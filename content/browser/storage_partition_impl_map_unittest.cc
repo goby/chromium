@@ -4,6 +4,8 @@
 
 #include "content/browser/storage_partition_impl_map.h"
 
+#include <utility>
+
 #include "base/files/file_util.h"
 #include "base/run_loop.h"
 #include "content/public/browser/browser_thread.h"
@@ -67,7 +69,7 @@ TEST(StoragePartitionImplMapTest, GarbageCollect) {
   base::MessageLoop message_loop;
   StoragePartitionImplMap storage_partition_impl_map(&browser_context);
 
-  scoped_ptr<base::hash_set<base::FilePath> > active_paths(
+  std::unique_ptr<base::hash_set<base::FilePath>> active_paths(
       new base::hash_set<base::FilePath>);
 
   base::FilePath active_path = browser_context.GetPath().Append(
@@ -82,8 +84,8 @@ TEST(StoragePartitionImplMapTest, GarbageCollect) {
   ASSERT_TRUE(base::CreateDirectory(inactive_path));
 
   base::RunLoop run_loop;
-  storage_partition_impl_map.GarbageCollect(
-      active_paths.Pass(), run_loop.QuitClosure());
+  storage_partition_impl_map.GarbageCollect(std::move(active_paths),
+                                            run_loop.QuitClosure());
   run_loop.Run();
   BrowserThread::GetBlockingPool()->FlushForTesting();
 

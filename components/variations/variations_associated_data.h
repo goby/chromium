@@ -6,9 +6,10 @@
 #define COMPONENTS_VARIATIONS_VARIATIONS_ASSOCIATED_DATA_H_
 
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
-#include "base/metrics/field_trial.h"
 #include "components/variations/active_field_trials.h"
 
 // This file provides various helpers that extend the functionality around
@@ -41,6 +42,10 @@
 //   // use |id|
 // }
 
+namespace base {
+struct Feature;
+}  // namespace base
+
 namespace variations {
 
 typedef int VariationID;
@@ -57,9 +62,6 @@ enum IDCollectionKey {
   // server side experimental behavior, transmitted through the
   // X-Client-Data header.
   GOOGLE_WEB_PROPERTIES_TRIGGER,
-  // This collection is used by Google update services, transmitted through the
-  // Google Update experiment labels.
-  GOOGLE_UPDATE_SERVICE,
   // This collection is used by Chrome Sync services, transmitted through the
   // Chrome Sync experiment labels.
   CHROME_SYNC_SERVICE,
@@ -123,6 +125,18 @@ bool AssociateVariationParams(const std::string& trial_name,
 bool GetVariationParams(const std::string& trial_name,
                         std::map<std::string, std::string>* params);
 
+// Retrieves the set of key-value |params| for the variation associated with the
+// specified |feature|. A feature is associated with at most one variation,
+// through the variation's associated field trial, and selected group. See
+// base/feature_list.h for more information on features. If the feature is not
+// enabled, or if there's no associated variation params, returns false and does
+// not modify |params|. Calling this function will result in the associated
+// field trial being marked as active if found (i.e. group() will be called on
+// it), if it wasn't already. Currently, this information is only available from
+// the browser process. Thread safe.
+bool GetVariationParamsByFeature(const base::Feature& feature,
+                                 std::map<std::string, std::string>* params);
+
 // Retrieves a specific parameter value corresponding to |param_name| for the
 // variation associated with the specified field trial, based on its selected
 // group. If the field trial does not exist or the specified parameter does not
@@ -133,13 +147,54 @@ bool GetVariationParams(const std::string& trial_name,
 std::string GetVariationParamValue(const std::string& trial_name,
                                    const std::string& param_name);
 
+// Retrieves a specific parameter value corresponding to |param_name| for the
+// variation associated with the specified |feature|. A feature is associated
+// with at most one variation, through the variation's associated field trial,
+// and selected group. See base/feature_list.h for more information on
+// features. If the feature is not enabled, or the specified parameter does not
+// exist, returns an empty string. Calling this function will result in the
+// associated field trial being marked as active if found (i.e. group() will be
+// called on it), if it wasn't already. Currently, this information is only
+// available from the browser process. Thread safe.
+std::string GetVariationParamValueByFeature(const base::Feature& feature,
+                                            const std::string& param_name);
+
+// Same as GetVariationParamValueByFeature(). On top of that, it converts the
+// string value into an int using base::StringToInt() and returns it, if
+// successful. Otherwise, it returns |default_value|. If the string value is not
+// empty and the conversion does not succeed, it produces a warning to LOG.
+int GetVariationParamByFeatureAsInt(const base::Feature& feature,
+                                    const std::string& param_name,
+                                    int default_value);
+
+// Same as GetVariationParamValueByFeature(). On top of that, it converts the
+// string value into a double using base::StringToDouble() and returns it, if
+// successful. Otherwise, it returns |default_value|. If the string value is not
+// empty and the conversion does not succeed, it produces a warning to LOG.
+double GetVariationParamByFeatureAsDouble(const base::Feature& feature,
+                                          const std::string& param_name,
+                                          double default_value);
+
+// Same as GetVariationParamValueByFeature(). On top of that, it converts the
+// string value into a boolean and returns it, if successful. Otherwise, it
+// returns |default_value|. The only string representations accepted here are
+// "true" and "false". If the string value is not empty and the conversion does
+// not succeed, it produces a warning to LOG.
+bool GetVariationParamByFeatureAsBool(const base::Feature& feature,
+                                      const std::string& param_name,
+                                      bool default_value);
+
 // Expose some functions for testing.
 namespace testing {
 
-// Clears all of the mapped associations.
+// Clears all of the mapped associations. Deprecated, try to use
+// VariationParamsManager instead as it does a lot of work for you
+// automatically.
 void ClearAllVariationIDs();
 
-// Clears all of the associated params.
+// Clears all of the associated params. Deprecated, try to use
+// VariationParamsManager instead as it does a lot of work for you
+// automatically.
 void ClearAllVariationParams();
 
 }  // namespace testing

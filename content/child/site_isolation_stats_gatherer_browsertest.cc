@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -81,7 +82,7 @@ class SiteIsolationStatsGathererBrowserTest : public ContentBrowserTest {
     std::string base = "SiteIsolation.XSD." + bucket;
     if (should_be_blocked) {
       expected_metrics[base + ".Blocked"] = 1;
-      expected_metrics[base + ".Blocked.RenderableStatusCode"] = 1;
+      expected_metrics[base + ".Blocked.RenderableStatusCode2"] = 1;
     } else {
       expected_metrics[base + ".NotBlocked"] = 1;
       if (base::MatchPattern(resource_name, "*js.*")) {
@@ -102,9 +103,9 @@ class SiteIsolationStatsGathererBrowserTest : public ContentBrowserTest {
     if (should_be_blocked) {
       static_assert(13 == RESOURCE_TYPE_XHR, "Histogram enums mustn't change.");
       EXPECT_THAT(
-          histograms.GetAllSamples(base + ".Blocked.RenderableStatusCode"),
+          histograms.GetAllSamples(base + ".Blocked.RenderableStatusCode2"),
           testing::ElementsAre(base::Bucket(RESOURCE_TYPE_XHR, 1)))
-          << "The wrong RenderableStatusCode bucket was incremented.";
+          << "The wrong RenderableStatusCode2 bucket was incremented.";
     }
   }
 
@@ -149,8 +150,8 @@ IN_PROC_BROWSER_TEST_F(SiteIsolationStatsGathererBrowserTest,
 
     bool was_blocked;
     ASSERT_TRUE(ExecuteScriptAndExtractBool(
-        shell()->web_contents(),
-        base::StringPrintf("sendRequest(\"%s\");", resource), &was_blocked));
+        shell(), base::StringPrintf("sendRequest(\"%s\");", resource),
+        &was_blocked));
     ASSERT_FALSE(was_blocked);
 
     InspectHistograms(histograms, true, resource);
@@ -173,8 +174,8 @@ IN_PROC_BROWSER_TEST_F(SiteIsolationStatsGathererBrowserTest,
 
     bool was_blocked;
     ASSERT_TRUE(ExecuteScriptAndExtractBool(
-        shell()->web_contents(),
-        base::StringPrintf("sendRequest(\"%s\");", resource), &was_blocked));
+        shell(), base::StringPrintf("sendRequest(\"%s\");", resource),
+        &was_blocked));
     ASSERT_FALSE(was_blocked);
 
     InspectHistograms(histograms, false, resource);

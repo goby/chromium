@@ -1,4 +1,0 @@
-This is a testharness.js-based test.
-FAIL FileAPI Test: Creating Blob URL via XMLHttpRequest Failed to execute 'createObjectURL' on 'URL': No function was found that matched the signature provided.
-Harness: the test ran to completion.
-

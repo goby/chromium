@@ -23,6 +23,8 @@ GoogleServiceAuthError::Captcha::Captcha(
       image_width(width), image_height(height) {
 }
 
+GoogleServiceAuthError::Captcha::Captcha(const Captcha& other) = default;
+
 GoogleServiceAuthError::Captcha::~Captcha() {
 }
 
@@ -44,6 +46,9 @@ GoogleServiceAuthError::SecondFactor::SecondFactor(
     : token(token), prompt_text(prompt), alternate_text(alternate),
       field_length(length) {
 }
+
+GoogleServiceAuthError::SecondFactor::SecondFactor(const SecondFactor& other) =
+    default;
 
 GoogleServiceAuthError::SecondFactor::~SecondFactor() {
 }
@@ -86,6 +91,9 @@ GoogleServiceAuthError::GoogleServiceAuthError(
       error_message_(error_message) {
 }
 
+GoogleServiceAuthError::GoogleServiceAuthError(
+    const GoogleServiceAuthError& other) = default;
+
 // static
 GoogleServiceAuthError
     GoogleServiceAuthError::FromConnectionError(int error) {
@@ -116,6 +124,11 @@ GoogleServiceAuthError GoogleServiceAuthError::FromUnexpectedServiceResponse(
 // static
 GoogleServiceAuthError GoogleServiceAuthError::AuthErrorNone() {
   return GoogleServiceAuthError(NONE);
+}
+
+// static
+bool GoogleServiceAuthError::IsDeprecated(State state) {
+  return state == HOSTED_NOT_ALLOWED_DEPRECATED;
 }
 
 GoogleServiceAuthError::State GoogleServiceAuthError::state() const {
@@ -168,7 +181,6 @@ base::DictionaryValue* GoogleServiceAuthError::ToValue() const {
     STATE_CASE(SERVICE_UNAVAILABLE);
     STATE_CASE(TWO_FACTOR);
     STATE_CASE(REQUEST_CANCELED);
-    STATE_CASE(HOSTED_NOT_ALLOWED);
     STATE_CASE(UNEXPECTED_SERVICE_RESPONSE);
     STATE_CASE(SERVICE_ERROR);
     STATE_CASE(WEB_LOGIN_REQUIRED);
@@ -227,8 +239,6 @@ std::string GoogleServiceAuthError::ToString() const {
                                 second_factor_.token.c_str());
     case REQUEST_CANCELED:
       return "Request canceled.";
-    case HOSTED_NOT_ALLOWED:
-      return "Google account required.";
     case UNEXPECTED_SERVICE_RESPONSE:
       return base::StringPrintf("Unexpected service response (%s)",
                                 error_message_.c_str());

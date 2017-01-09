@@ -5,11 +5,13 @@
 #include "content/shell/browser/shell_net_log.h"
 
 #include <stdio.h>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "net/log/net_log_util.h"
 #include "net/log/write_to_file_net_log_observer.h"
@@ -19,7 +21,8 @@ namespace content {
 namespace {
 
 base::DictionaryValue* GetShellConstants(const std::string& app_name) {
-  scoped_ptr<base::DictionaryValue> constants_dict = net::GetNetConstants();
+  std::unique_ptr<base::DictionaryValue> constants_dict =
+      net::GetNetConstants();
 
   // Add a dictionary with client information
   base::DictionaryValue* dict = new base::DictionaryValue();
@@ -62,10 +65,10 @@ ShellNetLog::ShellNetLog(const std::string& app_name) {
       LOG(ERROR) << "Could not open file " << log_path.value()
                  << " for net logging";
     } else {
-      scoped_ptr<base::Value> constants(GetShellConstants(app_name));
+      std::unique_ptr<base::Value> constants(GetShellConstants(app_name));
       write_to_file_observer_.reset(new net::WriteToFileNetLogObserver());
-      write_to_file_observer_->StartObserving(this, file.Pass(),
-                                      constants.get(), nullptr);
+      write_to_file_observer_->StartObserving(this, std::move(file),
+                                              constants.get(), nullptr);
     }
   }
 }

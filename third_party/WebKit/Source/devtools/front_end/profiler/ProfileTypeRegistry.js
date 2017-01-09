@@ -1,38 +1,37 @@
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
 /**
- * @constructor
+ * @unrestricted
  */
-WebInspector.ProfileTypeRegistry = function()
-{
+Profiler.ProfileTypeRegistry = class {
+  constructor() {
     this._profileTypes = [];
 
-    this.cpuProfileType = new WebInspector.CPUProfileType();
-    this._addProfileType(this.cpuProfileType);
-    this.heapSnapshotProfileType = new WebInspector.HeapSnapshotProfileType();
+    this.cpuProfileType = new Profiler.CPUProfileType();
+    if (Runtime.queryParam('v8only') || InspectorFrontendHost.isUnderTest())
+      this._addProfileType(this.cpuProfileType);
+    this.heapSnapshotProfileType = new Profiler.HeapSnapshotProfileType();
     this._addProfileType(this.heapSnapshotProfileType);
-    this.trackingHeapSnapshotProfileType = new WebInspector.TrackingHeapSnapshotProfileType();
+    this.samplingHeapProfileType = new Profiler.SamplingHeapProfileType();
+    this._addProfileType(this.samplingHeapProfileType);
+    this.trackingHeapSnapshotProfileType = new Profiler.TrackingHeapSnapshotProfileType();
     this._addProfileType(this.trackingHeapSnapshotProfileType);
-}
+  }
 
-WebInspector.ProfileTypeRegistry.prototype = {
-    /**
-     * @param {!WebInspector.ProfileType} profileType
-     */
-    _addProfileType: function(profileType)
-    {
-        this._profileTypes.push(profileType);
-    },
+  /**
+   * @param {!Profiler.ProfileType} profileType
+   */
+  _addProfileType(profileType) {
+    this._profileTypes.push(profileType);
+  }
 
-    /**
-     * @return {!Array.<!WebInspector.ProfileType>}
-     */
-    profileTypes: function()
-    {
-        return this._profileTypes;
-    }
-}
+  /**
+   * @return {!Array.<!Profiler.ProfileType>}
+   */
+  profileTypes() {
+    return this._profileTypes;
+  }
+};
 
-WebInspector.ProfileTypeRegistry.instance = new WebInspector.ProfileTypeRegistry();
+Profiler.ProfileTypeRegistry.instance = new Profiler.ProfileTypeRegistry();

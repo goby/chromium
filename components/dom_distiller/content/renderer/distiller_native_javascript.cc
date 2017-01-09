@@ -9,10 +9,10 @@
 #include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/dom_distiller/content/common/distiller_javascript_service.mojom.h"
-#include "content/public/common/service_registry.h"
 #include "content/public/renderer/render_frame.h"
 #include "gin/arguments.h"
 #include "gin/function_template.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "v8/include/v8.h"
@@ -41,36 +41,25 @@ void DistillerNativeJavaScript::AddJavaScriptObjectToFrame(
 
   EnsureServiceConnected();
 
-  // Some of the JavaScript functions require extra work to be done when it is
-  // called, so they have wrapper functions maintained in this class.
-  BindFunctionToObject(
-      distiller_obj,
-      "echo",
-      base::Bind(
-          &DistillerNativeJavaScript::DistillerEcho, base::Unretained(this)));
-
   // Many functions can simply call the Mojo interface directly and have no
   // wrapper function for binding. Note that calling distiller_js_service.get()
   // does not transfer ownership of the interface.
   BindFunctionToObject(
-      distiller_obj,
-      "sendFeedback",
+      distiller_obj, "sendFeedback",
       base::Bind(
-          &DistillerJavaScriptService::HandleDistillerFeedbackCall,
+          &mojom::DistillerJavaScriptService::HandleDistillerFeedbackCall,
           base::Unretained(distiller_js_service_.get())));
 
   BindFunctionToObject(
-      distiller_obj,
-      "closePanel",
+      distiller_obj, "closePanel",
       base::Bind(
-          &DistillerJavaScriptService::HandleDistillerClosePanelCall,
+          &mojom::DistillerJavaScriptService::HandleDistillerClosePanelCall,
           base::Unretained(distiller_js_service_.get())));
 
   BindFunctionToObject(
-      distiller_obj,
-      "openSettings",
+      distiller_obj, "openSettings",
       base::Bind(
-          &DistillerJavaScriptService::HandleDistillerOpenSettingsCall,
+          &mojom::DistillerJavaScriptService::HandleDistillerOpenSettingsCall,
           base::Unretained(distiller_js_service_.get())));
 }
 
@@ -88,20 +77,9 @@ void DistillerNativeJavaScript::BindFunctionToObject(
 
 void DistillerNativeJavaScript::EnsureServiceConnected() {
   if (!distiller_js_service_ || !distiller_js_service_.is_bound()) {
-    render_frame_->GetServiceRegistry()->ConnectToRemoteService(
-        mojo::GetProxy(&distiller_js_service_));
+    render_frame_->GetRemoteInterfaces()->GetInterface(
+        &distiller_js_service_);
   }
-}
-
-std::string DistillerNativeJavaScript::DistillerEcho(
-    const std::string& message) {
-  EnsureServiceConnected();
-  // TODO(mdjones): It is possible and beneficial to have information
-  // returned from the browser process with these calls. The problem
-  // is waiting blocks this process.
-  distiller_js_service_->HandleDistillerEchoCall(message);
-
-  return message;
 }
 
 v8::Local<v8::Object> GetOrCreateDistillerObject(v8::Isolate* isolate,

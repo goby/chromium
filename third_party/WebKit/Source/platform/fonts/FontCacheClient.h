@@ -33,18 +33,18 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/heap/Handle.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
-class PLATFORM_EXPORT FontCacheClient : public RefCountedWillBeGarbageCollectedFinalized<FontCacheClient> {
-public:
-    virtual ~FontCacheClient() { }
+class PLATFORM_EXPORT FontCacheClient
+    : public GarbageCollectedFinalized<FontCacheClient> {
+ public:
+  virtual ~FontCacheClient() {}
 
-    virtual void fontCacheInvalidated() = 0;
-    DEFINE_INLINE_VIRTUAL_TRACE() { }
+  virtual void fontCacheInvalidated() = 0;
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // FontCacheClient_h
+#endif  // FontCacheClient_h

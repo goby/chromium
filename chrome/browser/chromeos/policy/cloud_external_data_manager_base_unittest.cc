@@ -10,12 +10,13 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/policy/cloud_external_data_store.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
@@ -70,7 +71,7 @@ class FakeURLFetcherFactory : public net::FakeURLFetcherFactory {
   ~FakeURLFetcherFactory() override;
 
   // net::FakeURLFetcherFactory:
-  scoped_ptr<net::URLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::URLFetcher> CreateURLFetcher(
       int id,
       const GURL& url,
       net::URLFetcher::RequestType request_type,
@@ -87,16 +88,16 @@ FakeURLFetcherFactory::FakeURLFetcherFactory()
 FakeURLFetcherFactory::~FakeURLFetcherFactory() {
 }
 
-scoped_ptr<net::URLFetcher> FakeURLFetcherFactory::CreateURLFetcher(
+std::unique_ptr<net::URLFetcher> FakeURLFetcherFactory::CreateURLFetcher(
     int id,
     const GURL& url,
     net::URLFetcher::RequestType request_type,
     net::URLFetcherDelegate* delegate) {
-  scoped_ptr<net::URLFetcher> fetcher =
+  std::unique_ptr<net::URLFetcher> fetcher =
       net::FakeURLFetcherFactory::CreateURLFetcher(id, url, request_type,
                                                    delegate);
   EXPECT_TRUE(fetcher);
-  return fetcher.Pass();
+  return fetcher;
 }
 
 }  // namespace
@@ -110,15 +111,17 @@ class CloudExternalDataManagerBaseTest : public testing::Test {
 
   void SetUpExternalDataManager();
 
-  scoped_ptr<base::DictionaryValue> ConstructMetadata(const std::string& url,
-                                                      const std::string& hash);
-  void SetExternalDataReference(const std::string& policy,
-                                scoped_ptr<base::DictionaryValue> metadata);
+  std::unique_ptr<base::DictionaryValue> ConstructMetadata(
+      const std::string& url,
+      const std::string& hash);
+  void SetExternalDataReference(
+      const std::string& policy,
+      std::unique_ptr<base::DictionaryValue> metadata);
 
   ExternalDataFetcher::FetchCallback ConstructFetchCallback(int id);
   void ResetCallbackData();
 
-  void OnFetchDone(int id, scoped_ptr<std::string> data);
+  void OnFetchDone(int id, std::unique_ptr<std::string> data);
 
   void FetchAll();
 
@@ -129,14 +132,14 @@ class CloudExternalDataManagerBaseTest : public testing::Test {
 
   base::MessageLoop message_loop_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<ResourceCache> resource_cache_;
+  std::unique_ptr<ResourceCache> resource_cache_;
   MockCloudPolicyStore cloud_policy_store_;
   scoped_refptr<net::TestURLRequestContextGetter> request_content_getter_;
   FakeURLFetcherFactory fetcher_factory_;
 
-  scoped_ptr<CloudExternalDataManagerBase> external_data_manager_;
+  std::unique_ptr<CloudExternalDataManagerBase> external_data_manager_;
 
-  std::map<int, std::string*> callback_data_;
+  std::map<int, std::unique_ptr<std::string>> callback_data_;
   PolicyDetailsMap policy_details_;
 
  private:
@@ -149,16 +152,14 @@ CloudExternalDataManagerBaseTest::CloudExternalDataManagerBaseTest() {
 void CloudExternalDataManagerBaseTest::SetUp() {
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
   resource_cache_.reset(
-      new ResourceCache(temp_dir_.path(), message_loop_.task_runner()));
+      new ResourceCache(temp_dir_.GetPath(), message_loop_.task_runner()));
   SetUpExternalDataManager();
 
   // Set |kStringPolicy| to a string value.
-  cloud_policy_store_.policy_map_.Set(kStringPolicy,
-                                      POLICY_LEVEL_MANDATORY,
-                                      POLICY_SCOPE_USER,
-                                      POLICY_SOURCE_CLOUD,
-                                      new base::StringValue(std::string()),
-                                      NULL);
+  cloud_policy_store_.policy_map_.Set(
+      kStringPolicy, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+      POLICY_SOURCE_CLOUD, base::MakeUnique<base::StringValue>(std::string()),
+      nullptr);
   // Make |k10BytePolicy| reference 10 bytes of external data.
   SetExternalDataReference(
       k10BytePolicy,
@@ -190,32 +191,28 @@ void CloudExternalDataManagerBaseTest::SetUpExternalDataManager() {
       policy_details_.GetCallback(), message_loop_.task_runner(),
       message_loop_.task_runner()));
   external_data_manager_->SetExternalDataStore(
-      make_scoped_ptr(new CloudExternalDataStore(
-          kCacheKey, message_loop_.task_runner(), resource_cache_.get())));
+      base::MakeUnique<CloudExternalDataStore>(
+          kCacheKey, message_loop_.task_runner(), resource_cache_.get()));
   external_data_manager_->SetPolicyStore(&cloud_policy_store_);
 }
 
-scoped_ptr<base::DictionaryValue>
-    CloudExternalDataManagerBaseTest::ConstructMetadata(
-        const std::string& url,
-        const std::string& hash) {
-  scoped_ptr<base::DictionaryValue> metadata(new base::DictionaryValue);
+std::unique_ptr<base::DictionaryValue>
+CloudExternalDataManagerBaseTest::ConstructMetadata(const std::string& url,
+                                                    const std::string& hash) {
+  std::unique_ptr<base::DictionaryValue> metadata(new base::DictionaryValue);
   metadata->SetStringWithoutPathExpansion("url", url);
   metadata->SetStringWithoutPathExpansion("hash", base::HexEncode(hash.c_str(),
                                                                   hash.size()));
-  return metadata.Pass();
+  return metadata;
 }
 
 void CloudExternalDataManagerBaseTest::SetExternalDataReference(
     const std::string& policy,
-    scoped_ptr<base::DictionaryValue> metadata) {
+    std::unique_ptr<base::DictionaryValue> metadata) {
   cloud_policy_store_.policy_map_.Set(
-      policy,
-      POLICY_LEVEL_MANDATORY,
-      POLICY_SCOPE_USER,
-      POLICY_SOURCE_CLOUD,
-      metadata.release(),
-      new ExternalDataFetcher(
+      policy, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      std::move(metadata),
+      base::MakeUnique<ExternalDataFetcher>(
           external_data_manager_->weak_factory_.GetWeakPtr(), policy));
 }
 
@@ -227,14 +224,13 @@ CloudExternalDataManagerBaseTest::ConstructFetchCallback(int id) {
 }
 
 void CloudExternalDataManagerBaseTest::ResetCallbackData() {
-  STLDeleteValues(&callback_data_);
+  callback_data_.clear();
 }
 
 void CloudExternalDataManagerBaseTest::OnFetchDone(
     int id,
-    scoped_ptr<std::string> data) {
-  delete callback_data_[id];
-  callback_data_[id] = data.release();
+    std::unique_ptr<std::string> data) {
+  callback_data_[id] = std::move(data);
 }
 
 void CloudExternalDataManagerBaseTest::FetchAll() {
@@ -550,7 +546,7 @@ TEST_F(CloudExternalDataManagerBaseTest, LoadFromCache) {
 TEST_F(CloudExternalDataManagerBaseTest, PruneCacheOnStartup) {
   external_data_manager_.reset();
   base::RunLoop().RunUntilIdle();
-  scoped_ptr<CloudExternalDataStore> cache(new CloudExternalDataStore(
+  std::unique_ptr<CloudExternalDataStore> cache(new CloudExternalDataStore(
       kCacheKey, message_loop_.task_runner(), resource_cache_.get()));
   // Store valid external data for |k10BytePolicy| in the cache.
   EXPECT_TRUE(cache->Store(k10BytePolicy,
@@ -601,7 +597,7 @@ TEST_F(CloudExternalDataManagerBaseTest, PruneCacheOnChange) {
   // Store valid external data for |k20BytePolicy| in the cache.
   external_data_manager_.reset();
   base::RunLoop().RunUntilIdle();
-  scoped_ptr<CloudExternalDataStore> cache(new CloudExternalDataStore(
+  std::unique_ptr<CloudExternalDataStore> cache(new CloudExternalDataStore(
       kCacheKey, message_loop_.task_runner(), resource_cache_.get()));
   EXPECT_TRUE(cache->Store(k20BytePolicy,
                            crypto::SHA256HashString(k20ByteData),
@@ -636,7 +632,7 @@ TEST_F(CloudExternalDataManagerBaseTest, PruneCacheOnChange) {
 TEST_F(CloudExternalDataManagerBaseTest, CacheCorruption) {
   external_data_manager_.reset();
   base::RunLoop().RunUntilIdle();
-  scoped_ptr<CloudExternalDataStore> cache(new CloudExternalDataStore(
+  std::unique_ptr<CloudExternalDataStore> cache(new CloudExternalDataStore(
       kCacheKey, message_loop_.task_runner(), resource_cache_.get()));
   // Store external data for |k10BytePolicy| that exceeds the maximal external
   // data size allowed for that policy.

@@ -4,8 +4,14 @@
 
 #include "ui/events/gestures/blink/web_gesture_curve_impl.h"
 
+#include <limits.h>
+
+#include <utility>
+
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
+#include "build/build_config.h"
 #include "third_party/WebKit/public/platform/WebFloatSize.h"
 #include "third_party/WebKit/public/platform/WebGestureCurveTarget.h"
 #include "ui/events/gestures/fling_curve.h"
@@ -21,11 +27,11 @@ using blink::WebGestureCurve;
 namespace ui {
 namespace {
 
-scoped_ptr<GestureCurve> CreateDefaultPlatformCurve(
+std::unique_ptr<GestureCurve> CreateDefaultPlatformCurve(
     const gfx::Vector2dF& initial_velocity) {
   DCHECK(!initial_velocity.IsZero());
 #if defined(OS_ANDROID)
-  auto scroller = make_scoped_ptr(new Scroller(Scroller::Config()));
+  auto scroller = base::MakeUnique<Scroller>(Scroller::Config());
   scroller->Fling(0,
                   0,
                   initial_velocity.x(),
@@ -35,43 +41,43 @@ scoped_ptr<GestureCurve> CreateDefaultPlatformCurve(
                   INT_MIN,
                   INT_MAX,
                   base::TimeTicks());
-  return scroller.Pass();
+  return std::move(scroller);
 #else
-  return make_scoped_ptr(
-      new FlingCurve(initial_velocity, base::TimeTicks()));
+  return base::MakeUnique<FlingCurve>(initial_velocity, base::TimeTicks());
 #endif
 }
 
 }  // namespace
 
 // static
-scoped_ptr<WebGestureCurve> WebGestureCurveImpl::CreateFromDefaultPlatformCurve(
+std::unique_ptr<WebGestureCurve>
+WebGestureCurveImpl::CreateFromDefaultPlatformCurve(
     const gfx::Vector2dF& initial_velocity,
     const gfx::Vector2dF& initial_offset,
     bool on_main_thread) {
-  return scoped_ptr<WebGestureCurve>(new WebGestureCurveImpl(
+  return std::unique_ptr<WebGestureCurve>(new WebGestureCurveImpl(
       CreateDefaultPlatformCurve(initial_velocity), initial_offset,
       on_main_thread ? ThreadType::MAIN : ThreadType::IMPL));
 }
 
 // static
-scoped_ptr<WebGestureCurve> WebGestureCurveImpl::CreateFromUICurveForTesting(
-    scoped_ptr<GestureCurve> curve,
+std::unique_ptr<WebGestureCurve>
+WebGestureCurveImpl::CreateFromUICurveForTesting(
+    std::unique_ptr<GestureCurve> curve,
     const gfx::Vector2dF& initial_offset) {
-  return scoped_ptr<WebGestureCurve>(
-      new WebGestureCurveImpl(curve.Pass(), initial_offset, ThreadType::TEST));
+  return std::unique_ptr<WebGestureCurve>(new WebGestureCurveImpl(
+      std::move(curve), initial_offset, ThreadType::TEST));
 }
 
-WebGestureCurveImpl::WebGestureCurveImpl(scoped_ptr<GestureCurve> curve,
+WebGestureCurveImpl::WebGestureCurveImpl(std::unique_ptr<GestureCurve> curve,
                                          const gfx::Vector2dF& initial_offset,
                                          ThreadType animating_thread_type)
-    : curve_(curve.Pass()),
+    : curve_(std::move(curve)),
       last_offset_(initial_offset),
       animating_thread_type_(animating_thread_type),
       ticks_since_first_animate_(0),
       first_animate_time_(0),
-      last_animate_time_(0) {
-}
+      last_animate_time_(0) {}
 
 WebGestureCurveImpl::~WebGestureCurveImpl() {
   if (ticks_since_first_animate_ <= 1)

@@ -3,6 +3,10 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/android/history_report/history_report_jni_bridge.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/android/jni_array.h"
@@ -23,6 +27,9 @@
 #include "components/history/core/browser/history_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "jni/HistoryReportJniBridge_jni.h"
+
+using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace history_report {
 
@@ -45,7 +52,7 @@ HistoryReportJniBridge::HistoryReportJniBridge(JNIEnv* env, jobject obj)
   usage_reports_buffer_service_.reset(
       new UsageReportsBufferService(profile->GetPath()));
   usage_reports_buffer_service_->Init();
-  bookmark_model_.reset(BookmarkModelFactory::GetForProfile(profile));
+  bookmark_model_.reset(BookmarkModelFactory::GetForBrowserContext(profile));
   base::Callback<void(void)> on_change = base::Bind(
       &history_report::HistoryReportJniBridge::NotifyDataChanged,
       base::Unretained(this));
@@ -83,24 +90,23 @@ base::android::ScopedJavaLocalRef<jobjectArray> HistoryReportJniBridge::Query(
     const JavaParamRef<jobject>& obj,
     jlong last_seq_no,
     jint limit) {
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > entries =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> entries =
       data_provider_->Query(last_seq_no, limit);
   ScopedJavaLocalRef<jobjectArray> jentries_array =
       history_report::Java_HistoryReportJniBridge_createDeltaFileEntriesArray(
           env, entries->size());
 
-  int64 max_seq_no = 0;
+  int64_t max_seq_no = 0;
   for (size_t i = 0; i < entries->size(); ++i) {
     const DeltaFileEntryWithData& entry = (*entries)[i];
     max_seq_no = max_seq_no < entry.SeqNo() ? entry.SeqNo() : max_seq_no;
     history_report::Java_HistoryReportJniBridge_setDeltaFileEntry(
-        env, jentries_array.obj(), i, entry.SeqNo(),
-        base::android::ConvertUTF8ToJavaString(env, entry.Type()).obj(),
-        base::android::ConvertUTF8ToJavaString(env, entry.Id()).obj(),
-        base::android::ConvertUTF8ToJavaString(env, entry.Url()).obj(),
-        entry.Score(),
-        base::android::ConvertUTF16ToJavaString(env, entry.Title()).obj(),
-        base::android::ConvertUTF8ToJavaString(env, entry.IndexedUrl()).obj());
+        env, jentries_array, i, entry.SeqNo(),
+        base::android::ConvertUTF8ToJavaString(env, entry.Type()),
+        base::android::ConvertUTF8ToJavaString(env, entry.Id()),
+        base::android::ConvertUTF8ToJavaString(env, entry.Url()), entry.Score(),
+        base::android::ConvertUTF16ToJavaString(env, entry.Title()),
+        base::android::ConvertUTF8ToJavaString(env, entry.IndexedUrl()));
   }
 
   // Check if all entries from delta file were synced and start reporting usage
@@ -115,7 +121,7 @@ base::android::ScopedJavaLocalRef<jobjectArray>
 HistoryReportJniBridge::GetUsageReportsBatch(JNIEnv* env,
                                              const JavaParamRef<jobject>& obj,
                                              jint batch_size) {
-  scoped_ptr<std::vector<UsageReport> > reports =
+  std::unique_ptr<std::vector<UsageReport>> reports =
       usage_reports_buffer_service_->GetUsageReportsBatch(batch_size);
   ScopedJavaLocalRef<jobjectArray> jreports_array =
       history_report::Java_HistoryReportJniBridge_createUsageReportsArray(env,
@@ -125,9 +131,9 @@ HistoryReportJniBridge::GetUsageReportsBatch(JNIEnv* env,
     const UsageReport& report = (*reports)[i];
     std::string key = usage_report_util::ReportToKey(report);
     history_report::Java_HistoryReportJniBridge_setUsageReport(
-        env, jreports_array.obj(), i,
-        base::android::ConvertUTF8ToJavaString(env, key).obj(),
-        base::android::ConvertUTF8ToJavaString(env, report.id()).obj(),
+        env, jreports_array, i,
+        base::android::ConvertUTF8ToJavaString(env, key),
+        base::android::ConvertUTF8ToJavaString(env, report.id()),
         report.timestamp_ms(), report.typed_visit());
   }
   return jreports_array;
@@ -146,30 +152,28 @@ void HistoryReportJniBridge::NotifyDataChanged() {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
   if (!obj.is_null())
-    history_report::Java_HistoryReportJniBridge_onDataChanged(env, obj.obj());
+    history_report::Java_HistoryReportJniBridge_onDataChanged(env, obj);
 }
 
 void HistoryReportJniBridge::NotifyDataCleared() {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
   if (!obj.is_null())
-    history_report::Java_HistoryReportJniBridge_onDataCleared(env, obj.obj());
+    history_report::Java_HistoryReportJniBridge_onDataCleared(env, obj);
 }
 
 void HistoryReportJniBridge::StopReporting() {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
   if (!obj.is_null())
-    history_report::Java_HistoryReportJniBridge_stopReportingTask(env,
-                                                                  obj.obj());
+    history_report::Java_HistoryReportJniBridge_stopReportingTask(env, obj);
 }
 
 void HistoryReportJniBridge::StartReporting() {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
   if (!obj.is_null())
-    history_report::Java_HistoryReportJniBridge_startReportingTask(env,
-                                                                   obj.obj());
+    history_report::Java_HistoryReportJniBridge_startReportingTask(env, obj);
 }
 
 jboolean HistoryReportJniBridge::AddHistoricVisitsToUsageReportsBuffer(

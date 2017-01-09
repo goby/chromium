@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//testing/test.gni")
+import("//testing/libfuzzer/fuzzer_test.gni")
 
 defines = [ "GN_BUILD" ]
 
@@ -14,6 +15,8 @@ static_library("gn_lib") {
     "action_target_generator.h",
     "action_values.cc",
     "action_values.h",
+    "analyzer.cc",
+    "analyzer.h",
     "args.cc",
     "args.h",
     "binary_target_generator.cc",
@@ -24,8 +27,15 @@ static_library("gn_lib") {
     "builder.h",
     "builder_record.cc",
     "builder_record.h",
+    "bundle_data.cc",
+    "bundle_data.h",
+    "bundle_data_target_generator.cc",
+    "bundle_data_target_generator.h",
+    "bundle_file_rule.cc",
+    "bundle_file_rule.h",
     "c_include_iterator.cc",
     "c_include_iterator.h",
+    "command_analyze.cc",
     "command_args.cc",
     "command_check.cc",
     "command_clean.cc",
@@ -48,8 +58,14 @@ static_library("gn_lib") {
     "config_values_generator.h",
     "copy_target_generator.cc",
     "copy_target_generator.h",
+    "create_bundle_target_generator.cc",
+    "create_bundle_target_generator.h",
     "deps_iterator.cc",
     "deps_iterator.h",
+    "desc_builder.cc",
+    "desc_builder.h",
+    "eclipse_writer.cc",
+    "eclipse_writer.h",
     "err.cc",
     "err.h",
     "escape.cc",
@@ -91,11 +107,15 @@ static_library("gn_lib") {
     "input_file_manager.h",
     "item.cc",
     "item.h",
+    "json_project_writer.cc",
+    "json_project_writer.h",
     "label.cc",
     "label.h",
     "label_pattern.cc",
     "label_pattern.h",
     "label_ptr.h",
+    "lib_file.cc",
+    "lib_file.h",
     "loader.cc",
     "loader.h",
     "location.cc",
@@ -106,8 +126,12 @@ static_library("gn_lib") {
     "ninja_binary_target_writer.h",
     "ninja_build_writer.cc",
     "ninja_build_writer.h",
+    "ninja_bundle_data_target_writer.cc",
+    "ninja_bundle_data_target_writer.h",
     "ninja_copy_target_writer.cc",
     "ninja_copy_target_writer.h",
+    "ninja_create_bundle_target_writer.cc",
+    "ninja_create_bundle_target_writer.h",
     "ninja_group_target_writer.cc",
     "ninja_group_target_writer.h",
     "ninja_target_writer.cc",
@@ -122,6 +146,8 @@ static_library("gn_lib") {
     "operators.h",
     "output_file.cc",
     "output_file.h",
+    "parse_node_value_adapter.cc",
+    "parse_node_value_adapter.h",
     "parse_tree.cc",
     "parse_tree.h",
     "parser.cc",
@@ -130,6 +156,10 @@ static_library("gn_lib") {
     "path_output.h",
     "pattern.cc",
     "pattern.h",
+    "pool.cc",
+    "pool.h",
+    "qt_creator_writer.cc",
+    "qt_creator_writer.h",
     "runtime_deps.cc",
     "runtime_deps.h",
     "scheduler.cc",
@@ -187,6 +217,16 @@ static_library("gn_lib") {
     "variables.h",
     "visibility.cc",
     "visibility.h",
+    "visual_studio_utils.cc",
+    "visual_studio_utils.h",
+    "visual_studio_writer.cc",
+    "visual_studio_writer.h",
+    "xcode_object.cc",
+    "xcode_object.h",
+    "xcode_writer.cc",
+    "xcode_writer.h",
+    "xml_element_writer.cc",
+    "xml_element_writer.h",
   ]
 
   deps = [
@@ -230,21 +270,14 @@ executable("gn") {
     ":last_commit_position",
     "//base",
     "//build/config/sanitizers:deps",
-  ]
-}
-
-# TODO(GYP): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("gn_unittests_run") {
-  testonly = true
-  deps = [
-    ":gn_unittests",
+    "//build/win:default_exe_manifest",
   ]
 }
 
 test("gn_unittests") {
   sources = [
     "action_target_generator_unittest.cc",
+    "analyzer_unittest.cc",
     "args_unittest.cc",
     "builder_unittest.cc",
     "c_include_iterator_unittest.cc",
@@ -261,6 +294,8 @@ test("gn_unittests") {
     "function_get_target_outputs_unittest.cc",
     "function_process_file_template_unittest.cc",
     "function_rebase_path_unittest.cc",
+    "function_template_unittest.cc",
+    "function_toolchain_unittest.cc",
     "function_write_file_unittest.cc",
     "functions_target_unittest.cc",
     "functions_unittest.cc",
@@ -272,7 +307,10 @@ test("gn_unittests") {
     "loader_unittest.cc",
     "ninja_action_target_writer_unittest.cc",
     "ninja_binary_target_writer_unittest.cc",
+    "ninja_build_writer_unittest.cc",
+    "ninja_bundle_data_target_writer_unittest.cc",
     "ninja_copy_target_writer_unittest.cc",
+    "ninja_create_bundle_target_writer_unittest.cc",
     "ninja_group_target_writer_unittest.cc",
     "ninja_target_writer_unittest.cc",
     "ninja_toolchain_writer_unittest.cc",
@@ -297,6 +335,9 @@ test("gn_unittests") {
     "unique_vector_unittest.cc",
     "value_unittest.cc",
     "visibility_unittest.cc",
+    "visual_studio_utils_unittest.cc",
+    "visual_studio_writer_unittest.cc",
+    "xml_element_writer_unittest.cc",
   ]
 
   data = [
@@ -311,12 +352,11 @@ test("gn_unittests") {
   ]
 }
 
-executable("generate_test_gn_data") {
+fuzzer_test("gn_parser_fuzzer") {
   sources = [
-    "generate_test_gn_data.cc",
+    "parser_fuzzer.cc",
   ]
   deps = [
-    "//base",
-    "//build/config/sanitizers:deps",
+    ":gn_lib",
   ]
 }

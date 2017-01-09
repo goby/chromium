@@ -4,6 +4,9 @@
 
 #include "cc/blink/web_scrollbar_layer_impl.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "cc/blink/scrollbar_impl.h"
 #include "cc/blink/web_layer_impl.h"
 #include "cc/layers/layer.h"
@@ -27,15 +30,13 @@ cc::ScrollbarOrientation ConvertOrientation(
 namespace cc_blink {
 
 WebScrollbarLayerImpl::WebScrollbarLayerImpl(
-    blink::WebScrollbar* scrollbar,
+    std::unique_ptr<blink::WebScrollbar> scrollbar,
     blink::WebScrollbarThemePainter painter,
-    blink::WebScrollbarThemeGeometry* geometry)
+    std::unique_ptr<blink::WebScrollbarThemeGeometry> geometry)
     : layer_(new WebLayerImpl(PaintedScrollbarLayer::Create(
-          WebLayerImpl::LayerSettings(),
-          scoped_ptr<cc::Scrollbar>(
-              new ScrollbarImpl(make_scoped_ptr(scrollbar),
-                                painter,
-                                make_scoped_ptr(geometry))),
+          base::MakeUnique<ScrollbarImpl>(std::move(scrollbar),
+                                          painter,
+                                          std::move(geometry)),
           0))) {}
 
 WebScrollbarLayerImpl::WebScrollbarLayerImpl(
@@ -44,13 +45,11 @@ WebScrollbarLayerImpl::WebScrollbarLayerImpl(
     int track_start,
     bool is_left_side_vertical_scrollbar)
     : layer_(new WebLayerImpl(
-          SolidColorScrollbarLayer::Create(WebLayerImpl::LayerSettings(),
-                                           ConvertOrientation(orientation),
+          SolidColorScrollbarLayer::Create(ConvertOrientation(orientation),
                                            thumb_thickness,
                                            track_start,
                                            is_left_side_vertical_scrollbar,
-                                           0))) {
-}
+                                           0))) {}
 
 WebScrollbarLayerImpl::~WebScrollbarLayerImpl() {
 }

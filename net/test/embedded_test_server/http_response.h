@@ -7,9 +7,9 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "net/http/http_status_code.h"
 
@@ -94,6 +94,20 @@ class RawHttpResponse : public HttpResponse {
   const std::string contents_;
 
   DISALLOW_COPY_AND_ASSIGN(RawHttpResponse);
+};
+
+// "Response" where the server doesn't actually respond until the server is
+// destroyed.
+class HungResponse : public HttpResponse {
+ public:
+  HungResponse() {}
+  ~HungResponse() override {}
+
+  void SendResponse(const SendBytesCallback& send,
+                    const SendCompleteCallback& done) override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(HungResponse);
 };
 
 }  // namespace test_server

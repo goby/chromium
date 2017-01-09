@@ -5,11 +5,20 @@
 #include "chrome/browser/ui/translate/translate_bubble_view_state_transition.h"
 
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
+
+namespace translate {
+
+void ReportUiAction(translate::TranslateBubbleUiEvent action) {
+  UMA_HISTOGRAM_ENUMERATION("Translate.BubbleUiEvent", action,
+                            translate::TRANSLATE_BUBBLE_UI_EVENT_MAX);
+}
+
+}  // namespace translate
 
 TranslateBubbleViewStateTransition::TranslateBubbleViewStateTransition(
     TranslateBubbleModel::ViewState view_state)
-    : view_state_(view_state),
-      view_state_before_advanced_view_(view_state) {
+    : view_state_(view_state), view_state_before_advanced_view_(view_state) {
   // The initial view type must not be 'Advanced'.
   DCHECK_NE(TranslateBubbleModel::VIEW_STATE_ADVANCED, view_state_);
 }
@@ -19,9 +28,12 @@ void TranslateBubbleViewStateTransition::SetViewState(
   view_state_ = view_state;
   if (view_state != TranslateBubbleModel::VIEW_STATE_ADVANCED)
     view_state_before_advanced_view_ = view_state;
+  else
+    translate::ReportUiAction(translate::SET_STATE_OPTIONS);
 }
 
 void TranslateBubbleViewStateTransition::GoBackFromAdvanced() {
   DCHECK(view_state_ == TranslateBubbleModel::VIEW_STATE_ADVANCED);
+  translate::ReportUiAction(translate::LEAVE_STATE_OPTIONS);
   SetViewState(view_state_before_advanced_view_);
 }

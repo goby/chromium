@@ -7,17 +7,19 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "components/login/localized_values_builder.h"
+#include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "ui/base/webui/web_ui_util.h"
@@ -25,9 +27,6 @@
 namespace {
 
 const char kJsScreenPath[] = "login.AutolaunchScreen";
-
-// Autolaunch screen id.
-const char kAutolaunchScreen[] = "autolaunch";
 
 }  // namespace
 
@@ -54,7 +53,7 @@ void KioskAutolaunchScreenHandler::Show() {
     return;
   }
   UpdateKioskApp();
-  ShowScreen(kAutolaunchScreen, NULL);
+  ShowScreen(OobeScreen::SCREEN_KIOSK_AUTOLAUNCH);
 }
 
 void KioskAutolaunchScreenHandler::SetDelegate(Delegate* delegate) {

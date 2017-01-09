@@ -242,14 +242,14 @@ function waitForEvents(fileOperationManager) {
  */
 var volumeManager;
 
-var VolumeManager = {};
+var volumeManagerFactory = {};
 
 /**
  * Provide VolumeManager.getInstande() for FileOperationManager using mocked
  * volume manager instance.
  * @type {!Promise<(FakeVolumeManager|{getVolumeInfo: function()}?)>}
  */
-VolumeManager.getInstance = function() {
+volumeManagerFactory.getInstance = function() {
   return Promise.resolve(volumeManager);
 };
 
@@ -434,19 +434,16 @@ function testDeduplicatePath(callback) {
       then(function(path) {
         assertEquals('file (1).txt', path);
       });
-  var failedPromise =
+  var moreExistingPathPromise =
       fileOperationUtil.deduplicatePath(fileSystem3.root, 'file.txt').
-      then(function() {
-        assertTrue(false, 'fileOperationUtil.Error is not reported.');
-      }, function(error) {
-        assertTrue(error instanceof fileOperationUtil.Error);
-        assertEquals(util.FileOperationErrorType.TARGET_EXISTS, error.code);
+      then(function(path) {
+        assertEquals('file (10).txt', path);
       });
 
   var testPromise = Promise.all([
     nonExistingPromise,
     existingPathPromise,
-    failedPromise
+    moreExistingPathPromise,
   ]);
   reportPromise(testPromise, callback);
 }

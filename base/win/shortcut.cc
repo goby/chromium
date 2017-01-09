@@ -46,6 +46,9 @@ ShortcutProperties::ShortcutProperties()
     : icon_index(-1), dual_mode(false), options(0U) {
 }
 
+ShortcutProperties::ShortcutProperties(const ShortcutProperties& other) =
+    default;
+
 ShortcutProperties::~ShortcutProperties() {
 }
 
@@ -183,7 +186,7 @@ bool CreateOrUpdateShortcutLink(const FilePath& shortcut_path,
 }
 
 bool ResolveShortcutProperties(const FilePath& shortcut_path,
-                               uint32 options,
+                               uint32_t options,
                                ShortcutProperties* properties) {
   DCHECK(options && properties);
   base::ThreadRestrictions::AssertIOAllowed();
@@ -296,7 +299,7 @@ bool ResolveShortcutProperties(const FilePath& shortcut_path,
 bool ResolveShortcut(const FilePath& shortcut_path,
                      FilePath* target_path,
                      string16* args) {
-  uint32 options = 0;
+  uint32_t options = 0;
   if (target_path)
     options |= ShortcutProperties::PROPERTIES_TARGET;
   if (args)

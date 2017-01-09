@@ -4,10 +4,10 @@
 
 #include "net/spdy/hpack/hpack_constants.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "net/spdy/hpack/hpack_huffman_table.h"
 #include "net/spdy/hpack/hpack_static_table.h"
@@ -22,17 +22,17 @@ struct SharedHpackHuffmanTable {
  public:
   SharedHpackHuffmanTable() {
     std::vector<HpackHuffmanSymbol> code = HpackHuffmanCode();
-    scoped_ptr<HpackHuffmanTable> mutable_table(new HpackHuffmanTable());
+    std::unique_ptr<HpackHuffmanTable> mutable_table(new HpackHuffmanTable());
     CHECK(mutable_table->Initialize(&code[0], code.size()));
     CHECK(mutable_table->IsInitialized());
-    table.reset(mutable_table.release());
+    table = std::move(mutable_table);
   }
 
   static SharedHpackHuffmanTable* GetInstance() {
     return base::Singleton<SharedHpackHuffmanTable>::get();
   }
 
-  scoped_ptr<const HpackHuffmanTable> table;
+  std::unique_ptr<const HpackHuffmanTable> table;
 };
 
 // SharedHpackStaticTable is a Singleton wrapping a HpackStaticTable
@@ -41,17 +41,17 @@ struct SharedHpackStaticTable {
  public:
   SharedHpackStaticTable() {
     std::vector<HpackStaticEntry> static_table = HpackStaticTableVector();
-    scoped_ptr<HpackStaticTable> mutable_table(new HpackStaticTable());
+    std::unique_ptr<HpackStaticTable> mutable_table(new HpackStaticTable());
     mutable_table->Initialize(&static_table[0], static_table.size());
     CHECK(mutable_table->IsInitialized());
-    table.reset(mutable_table.release());
+    table = std::move(mutable_table);
   }
 
   static SharedHpackStaticTable* GetInstance() {
     return base::Singleton<SharedHpackStaticTable>::get();
   }
 
-  scoped_ptr<const HpackStaticTable> table;
+  std::unique_ptr<const HpackStaticTable> table;
 };
 
 }  // namespace

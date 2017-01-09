@@ -5,6 +5,8 @@
 #ifndef CC_QUADS_DRAW_QUAD_H_
 #define CC_QUADS_DRAW_QUAD_H_
 
+#include <stddef.h>
+
 #include "base/callback.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/resource_id.h"
@@ -14,8 +16,6 @@ namespace base {
 namespace trace_event {
 class TracedValue;
 }
-class Value;
-class DictionaryValue;
 }
 
 namespace cc {
@@ -36,7 +36,6 @@ class CC_EXPORT DrawQuad {
   enum Material {
     INVALID,
     DEBUG_BORDER,
-    IO_SURFACE_CONTENT,
     PICTURE_CONTENT,
     RENDER_PASS,
     SOLID_COLOR,
@@ -48,6 +47,7 @@ class CC_EXPORT DrawQuad {
     MATERIAL_LAST = YUV_VIDEO_CONTENT
   };
 
+  DrawQuad(const DrawQuad& other);
   virtual ~DrawQuad();
 
   Material material;
@@ -122,7 +122,13 @@ class CC_EXPORT DrawQuad {
       return ids + count;
     }
 
-    size_t count;
+    const ResourceId* const_begin() const { return ids; }
+    const ResourceId* const_end() const {
+      DCHECK_LE(count, kMaxResourceIdCount);
+      return ids + count;
+    }
+
+    uint32_t count;
     ResourceId ids[kMaxResourceIdCount];
   };
 

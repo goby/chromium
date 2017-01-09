@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/renderer/pepper/pepper_webplugin_impl.h"
+
+#include <stdint.h>
+
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/test/render_view_test.h"
-#include "content/renderer/pepper/pepper_webplugin_impl.h"
 #include "content/renderer/pepper/plugin_instance_throttler_impl.h"
 #include "content/renderer/pepper/plugin_module.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
@@ -165,11 +169,12 @@ class PepperWebPluginImplBrowserTest
                               blink::WebLocalFrame* frame,
                               const blink::WebPluginParams& params,
                               blink::WebPlugin** plugin) override {
-      current_test_->throttler_ = new PluginInstanceThrottlerImpl;
+      current_test_->throttler_ =
+          new PluginInstanceThrottlerImpl(RenderFrame::DONT_RECORD_DECISION);
       current_test_->throttler_->AddObserver(current_test_);
-      *plugin = render_frame->CreatePlugin(frame,
-          GetPluginInfo().ToWebPluginInfo(), params,
-          make_scoped_ptr(current_test_->throttler_));
+      *plugin = render_frame->CreatePlugin(
+          frame, GetPluginInfo().ToWebPluginInfo(), params,
+          base::WrapUnique(current_test_->throttler_));
       return *plugin;
     }
   };

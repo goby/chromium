@@ -4,11 +4,14 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/binary_integrity_analyzer_mac.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/mac/bundle_locations.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident.h"
 #include "chrome/browser/safe_browsing/incident_reporting/mock_incident_receiver.h"
@@ -61,7 +64,7 @@ void BinaryIntegrityAnalyzerMacTest::SetUp() {
   base::FilePath signed_bundle_path =
       base::FilePath(test_data_dir_).Append(kBundleBase);
   base::FilePath copied_bundle_path =
-      base::FilePath(temp_dir_.path()).Append(kBundleBase);
+      base::FilePath(temp_dir_.GetPath()).Append(kBundleBase);
   ASSERT_TRUE(
       base::CopyDirectory(signed_bundle_path, copied_bundle_path, true));
 }
@@ -89,14 +92,14 @@ TEST_F(BinaryIntegrityAnalyzerMacTest, GetCriticalPathsAndRequirements) {
 }
 
 TEST_F(BinaryIntegrityAnalyzerMacTest, VerifyBinaryIntegrityForTesting) {
-  scoped_ptr<MockIncidentReceiver> mock_receiver(
+  std::unique_ptr<MockIncidentReceiver> mock_receiver(
       new StrictMock<MockIncidentReceiver>());
-  base::FilePath bundle = temp_dir_.path().Append(kBundleBase);
+  base::FilePath bundle = temp_dir_.GetPath().Append(kBundleBase);
   std::string requirement(
       "certificate leaf[subject.CN]=\"untrusted@goat.local\"");
 
   // Run check on valid bundle.
-  scoped_ptr<Incident> incident_to_clear;
+  std::unique_ptr<Incident> incident_to_clear;
   EXPECT_CALL(*mock_receiver, DoClearIncidentForProcess(_))
       .WillOnce(TakeIncident(&incident_to_clear));
   VerifyBinaryIntegrityForTesting(mock_receiver.get(), bundle, requirement);
@@ -105,17 +108,17 @@ TEST_F(BinaryIntegrityAnalyzerMacTest, VerifyBinaryIntegrityForTesting) {
   ASSERT_EQ(IncidentType::BINARY_INTEGRITY, incident_to_clear->GetType());
   ASSERT_EQ(incident_to_clear->GetKey(), "test-bundle.app");
 
-  base::FilePath exe_path = temp_dir_.path().Append(kBundleURL);
+  base::FilePath exe_path = temp_dir_.GetPath().Append(kBundleURL);
   ASSERT_TRUE(CorruptFileContent(exe_path));
 
-  scoped_ptr<Incident> incident;
+  std::unique_ptr<Incident> incident;
   EXPECT_CALL(*mock_receiver, DoAddIncidentForProcess(_))
       .WillOnce(TakeIncident(&incident));
 
   VerifyBinaryIntegrityForTesting(mock_receiver.get(), bundle, requirement);
 
   // Verify that the incident report contains the expected data.
-  scoped_ptr<ClientIncidentReport_IncidentData> incident_data(
+  std::unique_ptr<ClientIncidentReport_IncidentData> incident_data(
       incident->TakePayload());
 
   ASSERT_TRUE(incident_data->has_binary_integrity());

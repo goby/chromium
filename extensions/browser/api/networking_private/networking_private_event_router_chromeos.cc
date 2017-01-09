@@ -5,6 +5,7 @@
 #include "extensions/browser/api/networking_private/networking_private_event_router.h"
 
 #include "base/json/json_writer.h"
+#include "base/macros.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_state.h"
@@ -165,12 +166,13 @@ void NetworkingPrivateEventRouterImpl::NetworkListChanged() {
     changes.push_back((*iter)->guid());
   }
 
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       api::networking_private::OnNetworkListChanged::Create(changes));
-  scoped_ptr<Event> extension_event(new Event(
-      events::NETWORKING_PRIVATE_ON_NETWORK_LIST_CHANGED,
-      api::networking_private::OnNetworkListChanged::kEventName, args.Pass()));
-  event_router->BroadcastEvent(extension_event.Pass());
+  std::unique_ptr<Event> extension_event(
+      new Event(events::NETWORKING_PRIVATE_ON_NETWORK_LIST_CHANGED,
+                api::networking_private::OnNetworkListChanged::kEventName,
+                std::move(args)));
+  event_router->BroadcastEvent(std::move(extension_event));
 }
 
 void NetworkingPrivateEventRouterImpl::DeviceListChanged() {
@@ -180,13 +182,13 @@ void NetworkingPrivateEventRouterImpl::DeviceListChanged() {
     return;
   }
 
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       api::networking_private::OnDeviceStateListChanged::Create());
-  scoped_ptr<Event> extension_event(
+  std::unique_ptr<Event> extension_event(
       new Event(events::NETWORKING_PRIVATE_ON_DEVICE_STATE_LIST_CHANGED,
                 api::networking_private::OnDeviceStateListChanged::kEventName,
-                args.Pass()));
-  event_router->BroadcastEvent(extension_event.Pass());
+                std::move(args)));
+  event_router->BroadcastEvent(std::move(extension_event));
 }
 
 void NetworkingPrivateEventRouterImpl::NetworkPropertiesUpdated(
@@ -199,13 +201,13 @@ void NetworkingPrivateEventRouterImpl::NetworkPropertiesUpdated(
     return;
   }
   NET_LOG_EVENT("NetworkingPrivate.NetworkPropertiesUpdated", network->path());
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       api::networking_private::OnNetworksChanged::Create(
           std::vector<std::string>(1, network->guid())));
-  scoped_ptr<Event> extension_event(new Event(
+  std::unique_ptr<Event> extension_event(new Event(
       events::NETWORKING_PRIVATE_ON_NETWORKS_CHANGED,
-      api::networking_private::OnNetworksChanged::kEventName, args.Pass()));
-  event_router->BroadcastEvent(extension_event.Pass());
+      api::networking_private::OnNetworksChanged::kEventName, std::move(args)));
+  event_router->BroadcastEvent(std::move(extension_event));
 }
 
 void NetworkingPrivateEventRouterImpl::DevicePropertiesUpdated(
@@ -260,14 +262,14 @@ void NetworkingPrivateEventRouterImpl::OnPortalDetectionCompleted(
       break;
   }
 
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       api::networking_private::OnPortalDetectionCompleted::Create(path,
                                                                   status));
-  scoped_ptr<Event> extension_event(
+  std::unique_ptr<Event> extension_event(
       new Event(events::NETWORKING_PRIVATE_ON_PORTAL_DETECTION_COMPLETED,
                 api::networking_private::OnPortalDetectionCompleted::kEventName,
-                args.Pass()));
-  event_router->BroadcastEvent(extension_event.Pass());
+                std::move(args)));
+  event_router->BroadcastEvent(std::move(extension_event));
 }
 
 NetworkingPrivateEventRouter* NetworkingPrivateEventRouter::Create(

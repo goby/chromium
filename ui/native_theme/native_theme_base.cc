@@ -5,10 +5,10 @@
 #include "ui/native_theme/native_theme_base.h"
 
 #include <limits>
+#include <memory>
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
@@ -16,8 +16,10 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/skia_util.h"
@@ -43,10 +45,14 @@ const SkColor kSliderThumbBorderDarkGrey =
 
 const SkColor kTextBorderColor = SkColorSetRGB(0xa9, 0xa9, 0xa9);
 
+const SkColor kProgressBorderColor = kTextBorderColor;
+const SkColor kProgressTickColor = SkColorSetRGB(0xED, 0xED, 0xED);
+const SkColor kProgressValueColor = gfx::kGoogleBlue300;
+
 const SkColor kMenuPopupBackgroundColor = SkColorSetRGB(210, 225, 246);
 
-const unsigned int kDefaultScrollbarWidth = 15;
-const unsigned int kDefaultScrollbarButtonLength = 14;
+const int kDefaultScrollbarWidth = 15;
+const int kDefaultScrollbarButtonLength = 14;
 
 const SkColor kCheckboxTinyColor = SK_ColorGRAY;
 const SkColor kCheckboxShadowColor = SkColorSetARGB(0x15, 0, 0, 0);
@@ -92,10 +98,6 @@ namespace ui {
 gfx::Size NativeThemeBase::GetPartSize(Part part,
                                        State state,
                                        const ExtraParams& extra) const {
-  gfx::Size size = CommonThemeGetPartSize(part, state, extra);
-  if (!size.IsEmpty())
-    return size;
-
   switch (part) {
     // Please keep these in the order of NativeTheme::Part.
     case kCheckbox:
@@ -104,17 +106,8 @@ gfx::Size NativeThemeBase::GetPartSize(Part part,
       return gfx::Size(scrollbar_width_, 0);
     case kMenuList:
       return gfx::Size();  // No default size.
-    case kMenuCheck:
-    case kMenuCheckBackground:
-    case kMenuPopupArrow:
-      NOTIMPLEMENTED();
-      break;
     case kMenuPopupBackground:
       return gfx::Size();  // No default size.
-    case kMenuPopupGutter:
-    case kMenuPopupSeparator:
-      NOTIMPLEMENTED();
-      break;
     case kMenuItemBackground:
     case kProgressBar:
     case kPushButton:
@@ -163,31 +156,6 @@ gfx::Size NativeThemeBase::GetPartSize(Part part,
   return gfx::Size();
 }
 
-void NativeThemeBase::PaintStateTransition(SkCanvas* canvas,
-                                           Part part,
-                                           State startState,
-                                           State endState,
-                                           double progress,
-                                           const gfx::Rect& rect) const {
-  if (rect.IsEmpty())
-    return;
-
-  // Currently state transition is animation only working for overlay scrollbars
-  // on Aura platforms.
-  switch (part) {
-    case kScrollbarHorizontalThumb:
-    case kScrollbarVerticalThumb:
-      PaintScrollbarThumbStateTransition(
-          canvas, startState, endState, progress, rect);
-      break;
-    default:
-      NOTREACHED() << "Does not support state transition for this part:"
-                   << part;
-      break;
-  }
-  return;
-}
-
 void NativeThemeBase::Paint(SkCanvas* canvas,
                             Part part,
                             State state,
@@ -196,11 +164,11 @@ void NativeThemeBase::Paint(SkCanvas* canvas,
   if (rect.IsEmpty())
     return;
 
+  canvas->save();
+  canvas->clipRect(gfx::RectToSkRect(rect));
+
   switch (part) {
     // Please keep these in the order of NativeTheme::Part.
-    case kComboboxArrow:
-      CommonThemePaintComboboxArrow(canvas, rect);
-      break;
     case kCheckbox:
       PaintCheckbox(canvas, state, rect, extra.button);
       break;
@@ -210,20 +178,11 @@ void NativeThemeBase::Paint(SkCanvas* canvas,
     case kMenuList:
       PaintMenuList(canvas, state, rect, extra.menu_list);
       break;
-    case kMenuCheck:
-    case kMenuCheckBackground:
-    case kMenuPopupArrow:
-      NOTIMPLEMENTED();
-      break;
     case kMenuPopupBackground:
       PaintMenuPopupBackground(canvas, rect.size(), extra.menu_background);
       break;
-    case kMenuPopupGutter:
-    case kMenuPopupSeparator:
-      NOTIMPLEMENTED();
-      break;
     case kMenuItemBackground:
-      PaintMenuItemBackground(canvas, state, rect, extra.menu_list);
+      PaintMenuItemBackground(canvas, state, rect, extra.menu_item);
       break;
     case kProgressBar:
       PaintProgressBar(canvas, state, rect, extra.progress_bar);
@@ -243,7 +202,8 @@ void NativeThemeBase::Paint(SkCanvas* canvas,
       break;
     case kScrollbarHorizontalThumb:
     case kScrollbarVerticalThumb:
-      PaintScrollbarThumb(canvas, part, state, rect);
+      PaintScrollbarThumb(canvas, part, state, rect,
+                          extra.scrollbar_thumb.scrollbar_theme);
       break;
     case kScrollbarHorizontalTrack:
     case kScrollbarVerticalTrack:
@@ -278,6 +238,8 @@ void NativeThemeBase::Paint(SkCanvas* canvas,
       NOTREACHED() << "Unknown theme part: " << part;
       break;
   }
+
+  canvas->restore();
 }
 
 NativeThemeBase::NativeThemeBase()
@@ -373,50 +335,57 @@ void NativeThemeBase::PaintArrow(SkCanvas* gc,
                                  const gfx::Rect& rect,
                                  Part direction,
                                  SkColor color) const {
-  int width_middle, length_middle;
-  if (direction == kScrollbarUpArrow || direction == kScrollbarDownArrow) {
-    width_middle = rect.width() / 2 + 1;
-    length_middle = rect.height() / 2 + 1;
-  } else {
-    length_middle = rect.width() / 2 + 1;
-    width_middle = rect.height() / 2 + 1;
-  }
-
   SkPaint paint;
   paint.setColor(color);
-  paint.setAntiAlias(false);
-  paint.setStyle(SkPaint::kFill_Style);
 
-  SkPath path;
-  // The constants in this block of code are hand-tailored to produce good
-  // looking arrows without anti-aliasing.
-  switch (direction) {
-    case kScrollbarUpArrow:
-      path.moveTo(rect.x() + width_middle - 4, rect.y() + length_middle + 2);
-      path.rLineTo(7, 0);
-      path.rLineTo(-4, -4);
-      break;
-    case kScrollbarDownArrow:
-      path.moveTo(rect.x() + width_middle - 4, rect.y() + length_middle - 3);
-      path.rLineTo(7, 0);
-      path.rLineTo(-4, 4);
-      break;
-    case kScrollbarRightArrow:
-      path.moveTo(rect.x() + length_middle - 3, rect.y() + width_middle - 4);
-      path.rLineTo(0, 7);
-      path.rLineTo(4, -4);
-      break;
-    case kScrollbarLeftArrow:
-      path.moveTo(rect.x() + length_middle + 1, rect.y() + width_middle - 5);
-      path.rLineTo(0, 9);
-      path.rLineTo(-4, -4);
-      break;
-    default:
-      break;
-  }
-  path.close();
+  SkPath path = PathForArrow(rect, direction);
 
   gc->drawPath(path, paint);
+}
+
+SkPath NativeThemeBase::PathForArrow(const gfx::Rect& rect,
+                                     Part direction) const {
+  gfx::Rect bounding_rect = BoundingRectForArrow(rect);
+  const gfx::PointF center = gfx::RectF(bounding_rect).CenterPoint();
+  SkPath path;
+  SkMatrix transform;
+  transform.setIdentity();
+  if (direction == kScrollbarUpArrow || direction == kScrollbarDownArrow) {
+    int arrow_altitude = bounding_rect.height() / 2 + 1;
+    path.moveTo(bounding_rect.x(), bounding_rect.bottom());
+    path.rLineTo(bounding_rect.width(), 0);
+    path.rLineTo(-bounding_rect.width() / 2.0f, -arrow_altitude);
+    path.close();
+    path.offset(0, -arrow_altitude / 2 + 1);
+    if (direction == kScrollbarDownArrow) {
+      transform.setScale(1, -1, center.x(), center.y());
+    }
+  } else {
+    int arrow_altitude = bounding_rect.width() / 2 + 1;
+    path.moveTo(bounding_rect.x(), bounding_rect.y());
+    path.rLineTo(0, bounding_rect.height());
+    path.rLineTo(arrow_altitude, -bounding_rect.height() / 2.0f);
+    path.close();
+    path.offset(arrow_altitude / 2, 0);
+    if (direction == kScrollbarLeftArrow) {
+      transform.setScale(-1, 1, center.x(), center.y());
+    }
+  }
+  path.transform(transform);
+
+  return path;
+}
+
+gfx::Rect NativeThemeBase::BoundingRectForArrow(const gfx::Rect& rect) const {
+  const std::pair<int, int> rect_sides =
+      std::minmax(rect.width(), rect.height());
+  const int side_length_inset = 2 * std::ceil(rect_sides.second / 4.f);
+  const int side_length =
+      std::min(rect_sides.first, rect_sides.second - side_length_inset);
+  // When there are an odd number of pixels, put the extra on the top/left.
+  return gfx::Rect(rect.x() + (rect.width() - side_length + 1) / 2,
+                   rect.y() + (rect.height() - side_length + 1) / 2,
+                   side_length, side_length);
 }
 
 void NativeThemeBase::PaintScrollbarTrack(SkCanvas* canvas,
@@ -441,9 +410,10 @@ void NativeThemeBase::PaintScrollbarTrack(SkCanvas* canvas,
 }
 
 void NativeThemeBase::PaintScrollbarThumb(SkCanvas* canvas,
-                                           Part part,
-                                           State state,
-                                           const gfx::Rect& rect) const {
+                                          Part part,
+                                          State state,
+                                          const gfx::Rect& rect,
+                                          ScrollbarOverlayColorTheme) const {
   const bool hovered = state == kHovered;
   const int midx = rect.x() + rect.width() / 2;
   const int midy = rect.y() + rect.height() / 2;
@@ -624,12 +594,10 @@ SkRect NativeThemeBase::PaintCheckboxRadioCommon(
   else /* kNormal */
     startEndColors = kCheckboxGradientColors;
   SkColor colors[3] = {startEndColors[0], startEndColors[0], startEndColors[1]};
-  skia::RefPtr<SkShader> shader = skia::AdoptRef(
-      SkGradientShader::CreateLinear(
-          gradient_bounds, colors, NULL, 3, SkShader::kClamp_TileMode));
   SkPaint paint;
   paint.setAntiAlias(true);
-  paint.setShader(shader.get());
+  paint.setShader(SkGradientShader::MakeLinear(gradient_bounds, colors, NULL, 3,
+                                               SkShader::kClamp_TileMode));
   paint.setStyle(SkPaint::kFill_Style);
   canvas->drawRoundRect(skrect, borderRadius, borderRadius, paint);
   paint.setShader(NULL);
@@ -708,12 +676,11 @@ void NativeThemeBase::PaintButton(SkCanvas* canvas,
     std::swap(gradient_bounds[0], gradient_bounds[1]);
   SkColor colors[2] = { light_color, base_color };
 
-  skia::RefPtr<SkShader> shader = skia::AdoptRef(
-      SkGradientShader::CreateLinear(
-          gradient_bounds, colors, NULL, 2, SkShader::kClamp_TileMode));
   paint.setStyle(SkPaint::kFill_Style);
   paint.setAntiAlias(true);
-  paint.setShader(shader.get());
+  paint.setShader(
+      SkGradientShader::MakeLinear(
+          gradient_bounds, colors, NULL, 2, SkShader::kClamp_TileMode));
 
   canvas->drawRoundRect(skrect, SkIntToScalar(1), SkIntToScalar(1), paint);
   paint.setShader(NULL);
@@ -793,14 +760,14 @@ void NativeThemeBase::PaintMenuPopupBackground(
     SkCanvas* canvas,
     const gfx::Size& size,
     const MenuBackgroundExtraParams& menu_background) const {
-  canvas->drawColor(kMenuPopupBackgroundColor, SkXfermode::kSrc_Mode);
+  canvas->drawColor(kMenuPopupBackgroundColor, SkBlendMode::kSrc);
 }
 
 void NativeThemeBase::PaintMenuItemBackground(
     SkCanvas* canvas,
     State state,
     const gfx::Rect& rect,
-    const MenuListExtraParams& menu_list) const {
+    const MenuItemExtraParams& menu_item) const {
   // By default don't draw anything over the normal background.
 }
 
@@ -889,121 +856,51 @@ void NativeThemeBase::PaintInnerSpinButton(SkCanvas* canvas,
   PaintArrowButton(canvas, half, kScrollbarDownArrow, south_state);
 }
 
-void NativeThemeBase::PaintProgressBar(SkCanvas* canvas,
+void NativeThemeBase::PaintProgressBar(
+    SkCanvas* canvas,
     State state,
     const gfx::Rect& rect,
     const ProgressBarExtraParams& progress_bar) const {
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-  gfx::ImageSkia* bar_image = rb.GetImageSkiaNamed(IDR_PROGRESS_BAR);
-  gfx::ImageSkia* left_border_image = rb.GetImageSkiaNamed(
-      IDR_PROGRESS_BORDER_LEFT);
-  gfx::ImageSkia* right_border_image = rb.GetImageSkiaNamed(
-      IDR_PROGRESS_BORDER_RIGHT);
+  DCHECK(!rect.IsEmpty());
 
-  DCHECK(bar_image->width() > 0);
-  DCHECK(rect.width() > 0);
+  canvas->drawColor(SK_ColorWHITE);
 
-  float tile_scale_y = static_cast<float>(rect.height()) / bar_image->height();
-
-  int dest_left_border_width = left_border_image->width();
-  int dest_right_border_width = right_border_image->width();
-
-  // Since an implicit float -> int conversion will truncate, we want to make
-  // sure that if a border is desired, it gets at least one pixel.
-  if (dest_left_border_width > 0) {
-    dest_left_border_width = dest_left_border_width * tile_scale_y;
-    dest_left_border_width = std::max(dest_left_border_width, 1);
+  // Draw the tick marks. The spacing between the tick marks is adjusted to
+  // evenly divide into the width.
+  SkPath path;
+  int stroke_width = std::max(1, rect.height() / 18);
+  int tick_width = 16 * stroke_width;
+  int ticks = rect.width() / tick_width + (rect.width() % tick_width ? 1 : 0);
+  SkScalar tick_spacing = SkIntToScalar(rect.width()) / ticks;
+  for (int i = 1; i < ticks; ++i) {
+    path.moveTo(rect.x() + i * tick_spacing, rect.y());
+    path.rLineTo(0, rect.height());
   }
-  if (dest_right_border_width > 0) {
-    dest_right_border_width = dest_right_border_width * tile_scale_y;
-    dest_right_border_width = std::max(dest_right_border_width, 1);
-  }
+  SkPaint stroke_paint;
+  stroke_paint.setColor(kProgressTickColor);
+  stroke_paint.setStyle(SkPaint::kStroke_Style);
+  stroke_paint.setStrokeWidth(stroke_width);
+  canvas->drawPath(path, stroke_paint);
 
-  // Since the width of the progress bar may not be evenly divisible by the
-  // tile size, in order to make it look right we may need to draw some of the
-  // with a width of 1 pixel smaller than the rest of the tiles.
-  int new_tile_width = static_cast<int>(bar_image->width() * tile_scale_y);
-  new_tile_width = std::max(new_tile_width, 1);
+  // Draw progress.
+  gfx::Rect progress_rect(progress_bar.value_rect_x, progress_bar.value_rect_y,
+                          progress_bar.value_rect_width,
+                          progress_bar.value_rect_height);
+  SkPaint progress_paint;
+  progress_paint.setColor(kProgressValueColor);
+  progress_paint.setStyle(SkPaint::kFill_Style);
+  canvas->drawRect(gfx::RectToSkRect(progress_rect), progress_paint);
 
-  float tile_scale_x = static_cast<float>(new_tile_width) / bar_image->width();
-  if (rect.width() % new_tile_width == 0) {
-    DrawTiledImage(canvas, *bar_image, 0, 0, tile_scale_x, tile_scale_y,
-        rect.x(), rect.y(),
-        rect.width(), rect.height());
-  } else {
-    int num_tiles = 1 + rect.width() / new_tile_width;
-    int overshoot = num_tiles * new_tile_width - rect.width();
-    // Since |overshoot| represents the number of tiles that were too big, draw
-    // |overshoot| tiles with their width reduced by 1.
-    int num_big_tiles = num_tiles - overshoot;
-    int num_small_tiles = overshoot;
-    int small_width = new_tile_width - 1;
-    float small_scale_x = static_cast<float>(small_width) / bar_image->width();
-    float big_scale_x = tile_scale_x;
-
-    gfx::Rect big_rect = rect;
-    gfx::Rect small_rect = rect;
-    big_rect.Inset(0, 0, num_small_tiles*small_width, 0);
-    small_rect.Inset(num_big_tiles*new_tile_width, 0, 0, 0);
-
-    DrawTiledImage(canvas, *bar_image, 0, 0, big_scale_x, tile_scale_y,
-      big_rect.x(), big_rect.y(), big_rect.width(), big_rect.height());
-    DrawTiledImage(canvas, *bar_image, 0, 0, small_scale_x, tile_scale_y,
-      small_rect.x(), small_rect.y(), small_rect.width(), small_rect.height());
-  }
-  if (progress_bar.value_rect_width) {
-    gfx::ImageSkia* value_image = rb.GetImageSkiaNamed(IDR_PROGRESS_VALUE);
-
-    new_tile_width = static_cast<int>(value_image->width() * tile_scale_y);
-    tile_scale_x = static_cast<float>(new_tile_width) /
-        value_image->width();
-
-    DrawTiledImage(canvas, *value_image, 0, 0, tile_scale_x, tile_scale_y,
-        progress_bar.value_rect_x,
-        progress_bar.value_rect_y,
-        progress_bar.value_rect_width,
-        progress_bar.value_rect_height);
-  }
-
-  DrawImageInt(canvas, *left_border_image, 0, 0, left_border_image->width(),
-      left_border_image->height(), rect.x(), rect.y(), dest_left_border_width,
-      rect.height());
-
-  int dest_x = rect.right() - dest_right_border_width;
-  DrawImageInt(canvas, *right_border_image, 0, 0, right_border_image->width(),
-               right_border_image->height(), dest_x, rect.y(),
-               dest_right_border_width, rect.height());
+  // Draw the border.
+  gfx::RectF border_rect(rect);
+  border_rect.Inset(stroke_width / 2.0f, stroke_width / 2.0f);
+  stroke_paint.setColor(kProgressBorderColor);
+  canvas->drawRect(gfx::RectFToSkRect(border_rect), stroke_paint);
 }
 
 void NativeThemeBase::AdjustCheckboxRadioRectForPadding(SkRect* rect) const {
   // By default we only take 1px from right and bottom for the drop shadow.
   rect->iset(rect->x(), rect->y(), rect->right() - 1, rect->bottom() - 1);
-}
-
-bool NativeThemeBase::IntersectsClipRectInt(SkCanvas* canvas,
-                                            int x, int y, int w, int h) const {
-  SkRect clip;
-  return canvas->getClipBounds(&clip) &&
-      clip.intersect(SkIntToScalar(x), SkIntToScalar(y), SkIntToScalar(x + w),
-                     SkIntToScalar(y + h));
-}
-
-void NativeThemeBase::DrawImageInt(
-    SkCanvas* sk_canvas, const gfx::ImageSkia& image,
-    int src_x, int src_y, int src_w, int src_h,
-    int dest_x, int dest_y, int dest_w, int dest_h) const {
-  scoped_ptr<gfx::Canvas> canvas(CommonThemeCreateCanvas(sk_canvas));
-  canvas->DrawImageInt(image, src_x, src_y, src_w, src_h,
-      dest_x, dest_y, dest_w, dest_h, true);
-}
-
-void NativeThemeBase::DrawTiledImage(SkCanvas* sk_canvas,
-    const gfx::ImageSkia& image,
-    int src_x, int src_y, float tile_scale_x, float tile_scale_y,
-    int dest_x, int dest_y, int w, int h) const {
-  scoped_ptr<gfx::Canvas> canvas(CommonThemeCreateCanvas(sk_canvas));
-  canvas->TileImageInt(image, src_x, src_y, tile_scale_x,
-      tile_scale_y, dest_x, dest_y, w, h);
 }
 
 SkColor NativeThemeBase::SaturateAndBrighten(SkScalar* hsv,

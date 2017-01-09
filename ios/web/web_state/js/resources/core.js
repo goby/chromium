@@ -11,19 +11,24 @@
 goog.provide('__crWeb.core');
 
 goog.require('__crWeb.common');
-goog.require('__crWeb.coreDynamic');
 goog.require('__crWeb.message');
-
-/**
- * The Chrome object is populated in an anonymous object defined at
- * initialization to prevent polluting the global namespace.
- */
 
 /* Beginning of anonymous object. */
 (function() {
-  // TODO(jimblackler): use this namespace as a wrapper for all externally-
-  // visible functions, to be consistent with other JS scripts. crbug.com/380390
   __gCrWeb['core'] = {};
+
+  /**
+   * Handles document load completion tasks. Invoked from
+   * [WKNavigationDelegate webView:didFinishNavigation:], when document load is
+   * complete.
+   */
+  __gCrWeb.didFinishNavigation = function() {
+    // Send the favicons to the browser.
+    __gCrWeb.sendFaviconsToHost();
+    // Add placeholders for plugin content.
+    if (__gCrWeb.common.updatePluginPlaceholders())
+      __gCrWeb.message.invokeOnHost({'command': 'addPluginPlaceholders'});
+  }
 
   // JavaScript errors are logged on the main application side. The handler is
   // added ASAP to catch any errors in startup. Note this does not appear to
@@ -176,20 +181,24 @@ goog.require('__crWeb.message');
             tagName === 'select' || tagName === 'option') {
           // If the element is a known input element, stop the spiral search and
           // return empty results.
-          return '{}';
+          return {};
         }
 
         if (tagName === 'a' && element.href) {
           // Found a link.
-          return __gCrWeb.common.JSONStringify(
-              {href: element.href,
-               referrerPolicy: getReferrerPolicy_(element)});
+          return {
+            href: element.href,
+            referrerPolicy: getReferrerPolicy_(element),
+            innerText: element.innerText
+          };
         }
 
         if (tagName === 'img' && element.src) {
           // Found an image.
-          var result = {src: element.src,
-                        referrerPolicy: getReferrerPolicy_()};
+          var result = {
+            src: element.src,
+            referrerPolicy: getReferrerPolicy_()
+          };
           // Copy the title, if any.
           if (element.title) {
             result.title = element.title;
@@ -214,12 +223,22 @@ goog.require('__crWeb.message');
             }
             parent = parent.parentNode;
           }
-          return __gCrWeb.common.JSONStringify(result);
+          return result;
         }
         element = element.parentNode;
       }
     }
-    return '{}';
+    return {};
+  };
+
+  // Suppresses the next click such that they are not handled by JS click
+  // event handlers.
+  __gCrWeb['suppressNextClick'] = function() {
+    var suppressNextClick = function(evt) {
+      evt.preventDefault();
+      document.removeEventListener('click', suppressNextClick, false);
+    };
+    document.addEventListener('click', suppressNextClick);
   };
 
   // Returns true if the top window or any frames inside contain an input
@@ -321,10 +340,6 @@ goog.require('__crWeb.message');
     __gCrWeb.message.invokeOnHost(command);
   };
 
-  function invokeOnHostImmediate_(command) {
-    __gCrWeb.message.invokeOnHostImmediate(command);
-  };
-
   /**
    * Gets the referrer policy to use for navigations away from the current page.
    * If a link element is passed, and it includes a rel=noreferrer tag, that
@@ -359,8 +374,8 @@ goog.require('__crWeb.message');
   // Various aspects of global DOM behavior are overridden here.
 
   // A popstate event needs to be fired anytime the active history entry
-  // changes. Either via back, forward, go navigation or by loading the URL,
-  // clicking on a link, etc.
+  // changes without an associated document change. Either via back, forward, go
+  // navigation or by loading the URL, clicking on a link, etc.
   __gCrWeb['dispatchPopstateEvent'] = function(stateObject) {
     var popstateEvent = window.document.createEvent('HTMLEvents');
     popstateEvent.initEvent('popstate', true, false);
@@ -375,9 +390,28 @@ goog.require('__crWeb.message');
     }, 0);
   };
 
-  // Keep the original replaceState() method. It's needed to update UIWebView's
-  // URL and window.history.state property during history navigations that don't
-  // cause a page load.
+  // A hashchange event needs to be fired after a same-document history
+  // navigation between two URLs that are equivalent except for their fragments.
+  __gCrWeb['dispatchHashchangeEvent'] = function(oldURL, newURL) {
+    var hashchangeEvent = window.document.createEvent('HTMLEvents');
+    hashchangeEvent.initEvent('hashchange', true, false);
+    if (oldURL)
+      hashchangeEvent.oldURL = oldURL;
+    if (newURL)
+      hashchangeEvent.newURL = newURL
+
+    // setTimeout() is used in order to return immediately. Otherwise the
+    // dispatchEvent call waits for all event handlers to return, which could
+    // cause a ReentryGuard failure.
+    window.setTimeout(function() {
+      window.dispatchEvent(hashchangeEvent);
+    }, 0);
+  };
+
+  // Keep the original pushState() and replaceState() methods. It's needed to
+  // update the web view's URL and window.history.state property during history
+  // navigations that don't cause a page load.
+  var originalWindowHistoryPushState = window.history.pushState;
   var originalWindowHistoryReplaceState = window.history.replaceState;
   __gCrWeb['replaceWebViewURL'] = function(url, stateObject) {
     originalWindowHistoryReplaceState.call(history, stateObject, '', url);
@@ -401,7 +435,8 @@ goog.require('__crWeb.message');
         typeof(stateObject) == 'undefined' ? '' :
             __gCrWeb.common.JSONStringify(stateObject);
     pageUrl = pageUrl || window.location.href;
-    originalWindowHistoryReplaceState.call(history, stateObject, '', pageUrl);
+    originalWindowHistoryPushState.call(history, stateObject,
+                                        pageTitle, pageUrl);
     invokeOnHost_({'command': 'window.history.didPushState',
                    'stateObject': serializedState,
                    'baseUrl': document.baseURI,
@@ -416,7 +451,8 @@ goog.require('__crWeb.message');
         typeof(stateObject) == 'undefined' ? '' :
             __gCrWeb.common.JSONStringify(stateObject);
     pageUrl = pageUrl || window.location.href;
-    originalWindowHistoryReplaceState.call(history, stateObject, '', pageUrl);
+    originalWindowHistoryReplaceState.call(history, stateObject,
+                                           pageTitle, pageUrl);
     invokeOnHost_({'command': 'window.history.didReplaceState',
                    'stateObject': serializedState,
                    'baseUrl': document.baseURI,
@@ -431,6 +467,11 @@ goog.require('__crWeb.message');
     return anchor.href;
   };
 
+  __gCrWeb['sendFaviconsToHost'] = function() {
+    __gCrWeb.message.invokeOnHost({'command': 'document.favicons',
+                                   'favicons': __gCrWeb.common.getFavicons()});
+  }
+
   // Tracks whether user is in the middle of scrolling/dragging. If user is
   // scrolling, ignore window.scrollTo() until user stops scrolling.
   var webViewScrollViewIsDragging_ = false;
@@ -444,16 +485,9 @@ goog.require('__crWeb.message');
     originalWindowScrollTo(x, y);
   };
 
-  // Intercept window.close calls.
-  window.close = function() {
-    invokeOnHost_({'command': 'window.close.self'});
-  };
-
   window.addEventListener('hashchange', function(evt) {
     invokeOnHost_({'command': 'window.hashchange'});
   });
-
-  __gCrWeb.core_dynamic.addEventListeners();
 
   // Returns if a frame with |name| is found in |currentWindow|.
   // Note frame.name is undefined for cross domain frames.
@@ -534,15 +568,10 @@ goog.require('__crWeb.message');
       // W3C recommended behavior.
       href = 'about:blank';
     }
-    // ExternalRequest messages need to be handled before the expected
-    // shouldStartLoadWithRequest, as such we cannot wait for the regular
-    // message queue invoke which delays to avoid illegal recursion into
-    // UIWebView. This immediate class of messages is handled ASAP by
-    // CRWWebController.
-    invokeOnHostImmediate_({'command': 'externalRequest',
-                               'href': href,
-                             'target': target,
-                     'referrerPolicy': getReferrerPolicy_()});
+    invokeOnHost_({'command': 'externalRequest',
+                      'href': href,
+                    'target': target,
+            'referrerPolicy': getReferrerPolicy_()});
   };
 
   var resetExternalRequest_ = function() {
@@ -569,10 +598,10 @@ goog.require('__crWeb.message');
    * the window-level overrides can be applied as soon as possible.
    */
   __gCrWeb.core.documentInject = function() {
-    // Perform web view specific operations requiring document.body presence.
-    // If necessary returns and waits for document to be present.
-    if (!__gCrWeb.core_dynamic.documentInject())
-      return;
+    // Flush the message queue.
+    if (__gCrWeb.message) {
+      __gCrWeb.message.invokeQueues();
+    }
 
     document.addEventListener('click', function(evt) {
       var node = getTargetLink_(evt.target);
@@ -608,14 +637,6 @@ goog.require('__crWeb.message');
         return;
 
       if (isInternaLink_(node)) {
-        if (evt['defaultPrevented'])
-          return;
-        // Internal link. The web view will handle navigation, but register
-        // the anchor for UIWebView to start the progress indicator ASAP and
-        // notify web controller as soon as possible of impending navigation.
-        if (__gCrWeb.core_dynamic.handleInternalClickEvent) {
-          __gCrWeb.core_dynamic.handleInternalClickEvent(node);
-        }
         return;
       } else {
         // Resets the external request if it has been canceled, otherwise
@@ -649,10 +670,6 @@ goog.require('__crWeb.message');
     }, false);
 
     addFormEventListeners_();
-
-   // Handle or wait for and handle document load completion, if applicable.
-   if (__gCrWeb.core_dynamic.handleDocumentLoaded)
-     __gCrWeb.core_dynamic.handleDocumentLoaded();
 
     return true;
   };

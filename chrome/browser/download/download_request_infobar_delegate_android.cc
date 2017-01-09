@@ -4,10 +4,11 @@
 
 #include "chrome/browser/download/download_request_infobar_delegate_android.h"
 
+#include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/infobars/core/infobar.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
 DownloadRequestInfoBarDelegateAndroid::FakeCreateCallback*
@@ -39,7 +40,7 @@ void DownloadRequestInfoBarDelegateAndroid::Create(
     host->Cancel();
   } else {
     infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-        scoped_ptr<ConfirmInfoBarDelegate>(
+        std::unique_ptr<ConfirmInfoBarDelegate>(
             new DownloadRequestInfoBarDelegateAndroid(host))));
   }
 }
@@ -54,8 +55,13 @@ DownloadRequestInfoBarDelegateAndroid::DownloadRequestInfoBarDelegateAndroid(
     base::WeakPtr<DownloadRequestLimiter::TabDownloadState> host)
     : ConfirmInfoBarDelegate(), responded_(false), host_(host) {}
 
+infobars::InfoBarDelegate::InfoBarIdentifier
+DownloadRequestInfoBarDelegateAndroid::GetIdentifier() const {
+  return DOWNLOAD_REQUEST_INFOBAR_DELEGATE_ANDROID;
+}
+
 int DownloadRequestInfoBarDelegateAndroid::GetIconId() const {
-  return IDR_INFOBAR_MULTIPLE_DOWNLOADS;
+  return IDR_ANDROID_INFOBAR_MULTIPLE_DOWNLOADS;
 }
 
 base::string16 DownloadRequestInfoBarDelegateAndroid::GetMessageText() const {

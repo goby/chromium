@@ -4,13 +4,18 @@
 
 #include "extensions/browser/app_window/app_window_geometry_cache.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/mock_pref_change_callback.h"
-#include "base/prefs/pref_service_factory.h"
-#include "base/prefs/testing_pref_store.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/mock_pref_change_callback.h"
+#include "components/prefs/pref_service_factory.h"
+#include "components/prefs/testing_pref_store.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_utils.h"
@@ -32,8 +37,8 @@ const char kWindowId2[] = "windowid2";
 // Create a very simple extension with id.
 scoped_refptr<Extension> CreateExtension(const std::string& id) {
   return ExtensionBuilder()
-      .SetManifest(DictionaryBuilder().Set("name", "test").Set(
-          "version", "0.1"))
+      .SetManifest(
+          DictionaryBuilder().Set("name", "test").Set("version", "0.1").Build())
       .SetID(id)
       .Build();
 }
@@ -70,10 +75,10 @@ class AppWindowGeometryCacheTest : public ExtensionsTest {
  protected:
   base::MessageLoopForUI ui_message_loop_;
   content::TestBrowserThread ui_thread_;
-  scoped_ptr<ExtensionPrefValueMap> extension_pref_value_map_;
-  scoped_ptr<PrefService> pref_service_;
-  scoped_ptr<ExtensionPrefs> extension_prefs_;
-  scoped_ptr<AppWindowGeometryCache> cache_;
+  std::unique_ptr<ExtensionPrefValueMap> extension_pref_value_map_;
+  std::unique_ptr<PrefService> pref_service_;
+  std::unique_ptr<ExtensionPrefs> extension_prefs_;
+  std::unique_ptr<AppWindowGeometryCache> cache_;
 };
 
 void AppWindowGeometryCacheTest::SetUp() {
@@ -81,14 +86,14 @@ void AppWindowGeometryCacheTest::SetUp() {
 
   // Set up all the dependencies of ExtensionPrefs.
   extension_pref_value_map_.reset(new ExtensionPrefValueMap);
-  base::PrefServiceFactory factory;
+  PrefServiceFactory factory;
   factory.set_user_prefs(new TestingPrefStore);
   factory.set_extension_prefs(new TestingPrefStore);
   user_prefs::PrefRegistrySyncable* pref_registry =
       new user_prefs::PrefRegistrySyncable;
   // Prefs should be registered before the PrefService is created.
   ExtensionPrefs::RegisterProfilePrefs(pref_registry);
-  pref_service_ = factory.Create(pref_registry).Pass();
+  pref_service_ = factory.Create(pref_registry);
 
   extension_prefs_.reset(ExtensionPrefs::Create(
       browser_context(), pref_service_.get(),
@@ -116,8 +121,10 @@ void AppWindowGeometryCacheTest::AddGeometryAndLoadExtension(
     const gfx::Rect& bounds,
     const gfx::Rect& screen_bounds,
     ui::WindowShowState state) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
-  base::DictionaryValue* value = new base::DictionaryValue;
+  std::unique_ptr<base::DictionaryValue> dict =
+      base::MakeUnique<base::DictionaryValue>();
+  std::unique_ptr<base::DictionaryValue> value =
+      base::MakeUnique<base::DictionaryValue>();
   value->SetInteger("x", bounds.x());
   value->SetInteger("y", bounds.y());
   value->SetInteger("w", bounds.width());
@@ -127,8 +134,8 @@ void AppWindowGeometryCacheTest::AddGeometryAndLoadExtension(
   value->SetInteger("screen_bounds_w", screen_bounds.width());
   value->SetInteger("screen_bounds_h", screen_bounds.height());
   value->SetInteger("state", state);
-  dict->SetWithoutPathExpansion(window_id, value);
-  extension_prefs_->SetGeometryCache(extension_id, dict.Pass());
+  dict->SetWithoutPathExpansion(window_id, std::move(value));
+  extension_prefs_->SetGeometryCache(extension_id, std::move(dict));
   LoadExtension(extension_id);
 }
 
@@ -159,8 +166,10 @@ std::string AppWindowGeometryCacheTest::AddExtensionWithPrefs(
       browser_context()->GetPath().AppendASCII("Extensions").AppendASCII(name);
   scoped_refptr<Extension> extension =
       ExtensionBuilder()
-          .SetManifest(
-               DictionaryBuilder().Set("name", "test").Set("version", "0.1"))
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "test")
+                           .Set("version", "0.1")
+                           .Build())
           .SetPath(path)
           .Build();
 

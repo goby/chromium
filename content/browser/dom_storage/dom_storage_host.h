@@ -7,9 +7,12 @@
 
 #include <map>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "base/strings/nullable_string16.h"
 #include "base/strings/string16.h"
+#include "content/browser/bad_message.h"
 #include "content/common/content_export.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 
@@ -32,8 +35,10 @@ class CONTENT_EXPORT DOMStorageHost {
   explicit DOMStorageHost(DOMStorageContextImpl* context);
   ~DOMStorageHost();
 
-  bool OpenStorageArea(int connection_id, int namespace_id,
-                       const GURL& origin);
+  base::Optional<bad_message::BadMessageReason>
+      OpenStorageArea(int connection_id,
+                      int namespace_id,
+                      const GURL& origin);
   void CloseStorageArea(int connection_id);
   bool ExtractAreaValues(int connection_id, DOMStorageValuesMap* map);
   unsigned GetAreaLength(int connection_id);
@@ -43,11 +48,15 @@ class CONTENT_EXPORT DOMStorageHost {
   bool SetAreaItem(int connection_id, const base::string16& key,
                    const base::string16& value, const GURL& page_url,
                    base::NullableString16* old_value);
-  bool RemoveAreaItem(int connection_id, const base::string16& key,
-                  const GURL& page_url,
-                  base::string16* old_value);
+  bool RemoveAreaItem(int connection_id,
+                      const base::string16& key,
+                      const GURL& page_url,
+                      base::string16* old_value);
   bool ClearArea(int connection_id, const GURL& page_url);
   bool HasAreaOpen(int namespace_id, const GURL& origin) const;
+  bool HasConnection(int connection_id) const {
+    return !!GetOpenArea(connection_id);
+  }
 
  private:
   // Struct to hold references needed for areas that are open
@@ -56,12 +65,13 @@ class CONTENT_EXPORT DOMStorageHost {
     scoped_refptr<DOMStorageNamespace> namespace_;
     scoped_refptr<DOMStorageArea> area_;
     NamespaceAndArea();
+    NamespaceAndArea(const NamespaceAndArea& other);
     ~NamespaceAndArea();
   };
   typedef std::map<int, NamespaceAndArea > AreaMap;
 
-  DOMStorageArea* GetOpenArea(int connection_id);
-  DOMStorageNamespace* GetNamespace(int connection_id);
+  DOMStorageArea* GetOpenArea(int connection_id) const;
+  DOMStorageNamespace* GetNamespace(int connection_id) const;
 
   scoped_refptr<DOMStorageContextImpl> context_;
   AreaMap connections_;

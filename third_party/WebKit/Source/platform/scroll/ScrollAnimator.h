@@ -32,36 +32,78 @@
 #define ScrollAnimator_h
 
 #include "platform/Timer.h"
-#include "platform/geometry/FloatPoint.h"
+#include "platform/animation/CompositorAnimationDelegate.h"
+#include "platform/animation/CompositorAnimationPlayerClient.h"
+#include "platform/animation/CompositorScrollOffsetAnimationCurve.h"
 #include "platform/scroll/ScrollAnimatorBase.h"
-#include "public/platform/WebScrollOffsetAnimationCurve.h"
+#include <memory>
 
 namespace blink {
 
-class ScrollAnimatorTest;
+class CompositorAnimationTimeline;
 
-class PLATFORM_EXPORT ScrollAnimator final : public ScrollAnimatorBase {
-public:
-    explicit ScrollAnimator(ScrollableArea*, WTF::TimeFunction = WTF::monotonicallyIncreasingTime);
-    ~ScrollAnimator() override;
+class PLATFORM_EXPORT ScrollAnimator : public ScrollAnimatorBase {
+ public:
+  explicit ScrollAnimator(ScrollableArea*,
+                          WTF::TimeFunction = WTF::monotonicallyIncreasingTime);
+  ~ScrollAnimator() override;
 
-    ScrollResultOneDimensional userScroll(ScrollbarOrientation, ScrollGranularity, float step, float delta) override;
-    void scrollToOffsetWithoutAnimation(const FloatPoint&) override;
+  bool hasRunningAnimation() const override;
+  ScrollOffset computeDeltaToConsume(const ScrollOffset& delta) const override;
 
-    void cancelAnimations() override;
-    void serviceScrollAnimations() override;
-    bool hasRunningAnimation() const override;
+  ScrollResult userScroll(ScrollGranularity,
+                          const ScrollOffset& delta) override;
+  void scrollToOffsetWithoutAnimation(const ScrollOffset&) override;
+  ScrollOffset desiredTargetOffset() const override;
 
-    DECLARE_VIRTUAL_TRACE();
+  // ScrollAnimatorCompositorCoordinator implementation.
+  void tickAnimation(double monotonicTime) override;
+  void cancelAnimation() override;
+  void adjustAnimationAndSetScrollOffset(const ScrollOffset&,
+                                         ScrollType) override;
+  void takeOverCompositorAnimation() override;
+  void resetAnimationState() override;
+  void updateCompositorAnimations() override;
+  void notifyCompositorAnimationFinished(int groupId) override;
+  void notifyCompositorAnimationAborted(int groupId) override;
+  void layerForCompositedScrollingDidChange(
+      CompositorAnimationTimeline*) override;
 
-protected:
-    void animationTimerFired();
+  DECLARE_VIRTUAL_TRACE();
 
-    OwnPtr<WebScrollOffsetAnimationCurve> m_animationCurve;
-    double m_startTime;
-    WTF::TimeFunction m_timeFunction;
+ protected:
+  // Returns whether or not the animation was sent to the compositor.
+  virtual bool sendAnimationToCompositor();
+
+  void notifyAnimationTakeover(double monotonicTime,
+                               double animationStartTime,
+                               std::unique_ptr<cc::AnimationCurve>) override;
+
+  std::unique_ptr<CompositorScrollOffsetAnimationCurve> m_animationCurve;
+  double m_startTime;
+  WTF::TimeFunction m_timeFunction;
+
+ private:
+  // Returns true if the animation was scheduled successfully. If animation
+  // could not be scheduled (e.g. because the frame is detached), scrolls
+  // immediately to the target and returns false.
+  bool registerAndScheduleAnimation();
+
+  void createAnimationCurve();
+  void postAnimationCleanupAndReset();
+
+  void addMainThreadScrollingReason();
+  void removeMainThreadScrollingReason();
+
+  // Returns true if will animate to the given target offset. Returns false
+  // only when there is no animation running and we are not starting one
+  // because we are already at targetPos.
+  bool willAnimateToOffset(const ScrollOffset& targetPos);
+
+  ScrollOffset m_targetOffset;
+  ScrollGranularity m_lastGranularity;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ScrollAnimator_h
+#endif  // ScrollAnimator_h

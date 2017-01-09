@@ -5,9 +5,9 @@
 #ifndef UI_GFX_LINUX_FONT_DELEGATE_H_
 #define UI_GFX_LINUX_FONT_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "ui/gfx/font_render_params.h"
 #include "ui/gfx/gfx_export.h"
 
@@ -39,6 +39,7 @@ class GFX_EXPORT LinuxFontDelegate {
       std::string* family_out,
       int* size_pixels_out,
       int* style_out,
+      Font::Weight* weight_out,
       FontRenderParams* params_out) const = 0;
 };
 

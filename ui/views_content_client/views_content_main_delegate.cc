@@ -10,6 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/path_service.h"
+#include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
@@ -69,6 +70,13 @@ void ViewsContentMainDelegate::PreSandboxStartup() {
   ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
       content_resources_pak_path.AppendASCII("content_resources.pak"),
       ui::SCALE_FACTOR_100P);
+
+  if (ui::ResourceBundle::IsScaleFactorSupported(ui::SCALE_FACTOR_200P)) {
+    base::FilePath ui_test_resources_200 = ui_test_pak_path.DirName().Append(
+        FILE_PATH_LITERAL("ui_test_200_percent.pak"));
+    ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
+        ui_test_resources_200, ui::SCALE_FACTOR_200P);
+  }
 }
 
 content::ContentBrowserClient*

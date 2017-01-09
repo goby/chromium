@@ -9,32 +9,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <memory>
+#include <utility>
+
 #if defined(OS_POSIX)
 #include <unistd.h>
 #endif
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/nacl/common/nacl_messages.h"
 #include "components/nacl/common/nacl_renderer_messages.h"
 #include "components/nacl/common/nacl_switches.h"
 #include "components/nacl/loader/nacl_ipc_adapter.h"
 #include "components/nacl/loader/nacl_validation_db.h"
 #include "components/nacl/loader/nacl_validation_query.h"
-#include "ipc/attachment_broker_unprivileged.h"
+#include "content/public/common/mojo_channel_switches.h"
 #include "ipc/ipc_channel_handle.h"
-#include "ipc/ipc_switches.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message_filter.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "native_client/src/public/chrome_main.h"
 #include "native_client/src/public/nacl_app.h"
 #include "native_client/src/public/nacl_desc.h"
 
 #if defined(OS_POSIX)
-#include "base/file_descriptor_posix.h"
+#include "base/posix/global_descriptors.h"
+#include "content/public/common/content_descriptors.h"
 #endif
 
 #if defined(OS_LINUX)
@@ -45,6 +53,7 @@
 #include <io.h>
 
 #include "content/public/common/sandbox_init.h"
+#include "mojo/edk/embedder/platform_channel_pair.h"
 #endif
 
 namespace {
@@ -72,56 +81,13 @@ void LoadStatusCallback(int load_status) {
           static_cast<NaClErrorCode>(load_status)));
 }
 
-#if defined(OS_MACOSX)
-
-// On Mac OS X, shm_open() works in the sandbox but does not give us
-// an FD that we can map as PROT_EXEC.  Rather than doing an IPC to
-// get an executable SHM region when CreateMemoryObject() is called,
-// we preallocate one on startup, since NaCl's sel_ldr only needs one
-// of them.  This saves a round trip.
-
-base::subtle::Atomic32 g_shm_fd = -1;
-
-int CreateMemoryObject(size_t size, int executable) {
-  if (executable && size > 0) {
-    int result_fd = base::subtle::NoBarrier_AtomicExchange(&g_shm_fd, -1);
-    if (result_fd != -1) {
-      // ftruncate() is disallowed by the Mac OS X sandbox and
-      // returns EPERM.  Luckily, we can get the same effect with
-      // lseek() + write().
-      if (lseek(result_fd, size - 1, SEEK_SET) == -1) {
-        LOG(ERROR) << "lseek() failed: " << errno;
-        return -1;
-      }
-      if (write(result_fd, "", 1) != 1) {
-        LOG(ERROR) << "write() failed: " << errno;
-        return -1;
-      }
-      return result_fd;
-    }
-  }
-  // Fall back to NaCl's default implementation.
-  return -1;
-}
-
-#elif defined(OS_LINUX)
+#if defined(OS_LINUX)
 
 int CreateMemoryObject(size_t size, int executable) {
   return content::MakeSharedMemorySegmentViaIPC(size, executable);
 }
 
 #elif defined(OS_WIN)
-// We wrap the function to convert the bool return value to an int.
-int BrokerDuplicateHandle(NaClHandle source_handle,
-                          uint32_t process_id,
-                          NaClHandle* target_handle,
-                          uint32_t desired_access,
-                          uint32_t options) {
-  return content::BrokerDuplicateHandle(source_handle, process_id,
-                                        target_handle, desired_access,
-                                        options);
-}
-
 int AttachDebugExceptionHandler(const void* info, size_t info_size) {
   std::string info_string(reinterpret_cast<const char*>(info), info_size);
   bool result = false;
@@ -139,7 +105,7 @@ void DebugStubPortSelectedHandler(uint16_t port) {
 
 // Creates the PPAPI IPC channel between the NaCl IRT and the host
 // (browser/renderer) process, and starts to listen it on the thread where
-// the given message_loop_proxy runs.
+// the given task runner runs.
 // Also, creates and sets the corresponding NaClDesc to the given nap with
 // the FD #.
 void SetUpIPCAdapter(
@@ -149,13 +115,12 @@ void SetUpIPCAdapter(
     int nacl_fd,
     NaClIPCAdapter::ResolveFileTokenCallback resolve_file_token_cb,
     NaClIPCAdapter::OpenResourceCallback open_resource_cb) {
-  scoped_refptr<NaClIPCAdapter> ipc_adapter(new NaClIPCAdapter(
-      *handle, task_runner.get(), resolve_file_token_cb, open_resource_cb));
+  mojo::MessagePipe pipe;
+  scoped_refptr<NaClIPCAdapter> ipc_adapter(
+      new NaClIPCAdapter(pipe.handle0.release(), task_runner,
+                         resolve_file_token_cb, open_resource_cb));
   ipc_adapter->ConnectChannel();
-#if defined(OS_POSIX)
-  handle->socket =
-      base::FileDescriptor(ipc_adapter->TakeClientFileDescriptor());
-#endif
+  *handle = pipe.handle1.release();
 
   // Pass a NaClDesc to the untrusted side. This will hold a ref to the
   // NaClIPCAdapter.
@@ -196,7 +161,8 @@ class BrowserValidationDBProxy : public NaClValidationDB {
 };
 
 NaClListener::NaClListener()
-    : shutdown_event_(true, false),
+    : shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
       io_thread_("NaCl_IOThread"),
 #if defined(OS_LINUX)
       prereserved_sandbox_size_(0),
@@ -204,14 +170,25 @@ NaClListener::NaClListener()
 #if defined(OS_POSIX)
       number_of_cores_(-1),  // unknown/error
 #endif
-      main_loop_(NULL),
       is_started_(false) {
-  attachment_broker_.reset(
-      IPC::AttachmentBrokerUnprivileged::CreateBroker().release());
   io_thread_.StartWithOptions(
       base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
   DCHECK(g_listener == NULL);
   g_listener = this;
+
+  mojo_ipc_support_ =
+      base::MakeUnique<mojo::edk::ScopedIPCSupport>(io_thread_.task_runner());
+#if defined(OS_WIN)
+  mojo::edk::ScopedPlatformHandle platform_channel(
+      mojo::edk::PlatformChannelPair::PassClientHandleFromParentProcess(
+          *base::CommandLine::ForCurrentProcess()));
+#else
+  mojo::edk::ScopedPlatformHandle platform_channel(
+      mojo::edk::PlatformHandle(
+          base::GlobalDescriptors::GetInstance()->Get(kMojoIPCChannel)));
+#endif
+  DCHECK(platform_channel.is_valid());
+  mojo::edk::SetParentPipeHandle(std::move(platform_channel));
 }
 
 NaClListener::~NaClListener() {
@@ -221,8 +198,8 @@ NaClListener::~NaClListener() {
 }
 
 bool NaClListener::Send(IPC::Message* msg) {
-  DCHECK(main_loop_ != NULL);
-  if (base::MessageLoop::current() == main_loop_) {
+  DCHECK(!!main_task_runner_);
+  if (main_task_runner_->BelongsToCurrentThread()) {
     // This thread owns the channel.
     return channel_->Send(msg);
   } else {
@@ -260,18 +237,19 @@ class FileTokenMessageFilter : public IPC::MessageFilter {
 };
 
 void NaClListener::Listen() {
-  std::string channel_name =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kProcessChannelID);
+  mojo::ScopedMessagePipeHandle handle(
+      mojo::edk::CreateChildMessagePipe(
+          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+              switches::kMojoChannelToken)));
+  DCHECK(handle.is_valid());
+
   channel_ = IPC::SyncChannel::Create(this, io_thread_.task_runner().get(),
                                       &shutdown_event_);
   filter_ = channel_->CreateSyncMessageFilter();
   channel_->AddFilter(new FileTokenMessageFilter());
-  channel_->Init(channel_name, IPC::Channel::MODE_CLIENT, true);
-  if (attachment_broker_.get())
-    attachment_broker_->DesignateBrokerCommunicationChannel(channel_.get());
-  main_loop_ = base::MessageLoop::current();
-  main_loop_->Run();
+  channel_->Init(handle.release(), IPC::Channel::MODE_CLIENT, true);
+  main_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+  base::RunLoop().Run();
 }
 
 bool NaClListener::OnMessageReceived(const IPC::Message& msg) {
@@ -354,36 +332,29 @@ void NaClListener::OnStart(const nacl::NaClStartParams& params) {
   IPC::ChannelHandle ppapi_renderer_handle;
   IPC::ChannelHandle manifest_service_handle;
 
-  if (params.enable_ipc_proxy) {
-    browser_handle = IPC::Channel::GenerateVerifiedChannelID("nacl");
-    ppapi_renderer_handle = IPC::Channel::GenerateVerifiedChannelID("nacl");
-    manifest_service_handle = IPC::Channel::GenerateVerifiedChannelID("nacl");
+  // Create the PPAPI IPC channels between the NaCl IRT and the host
+  // (browser/renderer) processes. The IRT uses these channels to
+  // communicate with the host and to initialize the IPC dispatchers.
+  SetUpIPCAdapter(&browser_handle, io_thread_.task_runner(), nap,
+                  NACL_CHROME_DESC_BASE,
+                  NaClIPCAdapter::ResolveFileTokenCallback(),
+                  NaClIPCAdapter::OpenResourceCallback());
+  SetUpIPCAdapter(&ppapi_renderer_handle, io_thread_.task_runner(), nap,
+                  NACL_CHROME_DESC_BASE + 1,
+                  NaClIPCAdapter::ResolveFileTokenCallback(),
+                  NaClIPCAdapter::OpenResourceCallback());
+  SetUpIPCAdapter(
+      &manifest_service_handle, io_thread_.task_runner(), nap,
+      NACL_CHROME_DESC_BASE + 2,
+      base::Bind(&NaClListener::ResolveFileToken, base::Unretained(this)),
+      base::Bind(&NaClListener::OnOpenResource, base::Unretained(this)));
 
-    // Create the PPAPI IPC channels between the NaCl IRT and the host
-    // (browser/renderer) processes. The IRT uses these channels to
-    // communicate with the host and to initialize the IPC dispatchers.
-    SetUpIPCAdapter(&browser_handle, io_thread_.task_runner(), nap,
-                    NACL_CHROME_DESC_BASE,
-                    NaClIPCAdapter::ResolveFileTokenCallback(),
-                    NaClIPCAdapter::OpenResourceCallback());
-    SetUpIPCAdapter(&ppapi_renderer_handle, io_thread_.task_runner(), nap,
-                    NACL_CHROME_DESC_BASE + 1,
-                    NaClIPCAdapter::ResolveFileTokenCallback(),
-                    NaClIPCAdapter::OpenResourceCallback());
-    SetUpIPCAdapter(
-        &manifest_service_handle, io_thread_.task_runner(), nap,
-        NACL_CHROME_DESC_BASE + 2,
-        base::Bind(&NaClListener::ResolveFileToken, base::Unretained(this)),
-        base::Bind(&NaClListener::OnOpenResource, base::Unretained(this)));
-  }
-
+  mojo::MessagePipe trusted_pipe;
   trusted_listener_ =
-      new NaClTrustedListener(IPC::Channel::GenerateVerifiedChannelID("nacl"),
+      new NaClTrustedListener(trusted_pipe.handle0.release(),
                               io_thread_.task_runner().get(), &shutdown_event_);
   if (!Send(new NaClProcessHostMsg_PpapiChannelsCreated(
-          browser_handle,
-          ppapi_renderer_handle,
-          trusted_listener_->TakeClientChannelHandle(),
+          browser_handle, ppapi_renderer_handle, trusted_pipe.handle1.release(),
           manifest_service_handle)))
     LOG(FATAL) << "Failed to send IPC channel handle to NaClProcessHost.";
 
@@ -392,18 +363,17 @@ void NaClListener::OnStart(const nacl::NaClStartParams& params) {
     LOG(FATAL) << "NaClChromeMainArgsCreate() failed";
   }
 
-#if defined(OS_LINUX) || defined(OS_MACOSX)
+#if defined(OS_POSIX)
   args->number_of_cores = number_of_cores_;
+#endif
+
+#if defined(OS_LINUX)
   args->create_memory_object_func = CreateMemoryObject;
-# if defined(OS_MACOSX)
-  CHECK(params.mac_shm_fd != IPC::InvalidPlatformFileForTransit());
-  g_shm_fd = IPC::PlatformFileForTransitToPlatformFile(params.mac_shm_fd);
-# endif
 #endif
 
   DCHECK(params.process_type != nacl::kUnknownNaClProcessType);
   CHECK(params.irt_handle != IPC::InvalidPlatformFileForTransit());
-  NaClHandle irt_handle =
+  base::PlatformFile irt_handle =
       IPC::PlatformFileForTransitToPlatformFile(params.irt_handle);
 
 #if defined(OS_WIN)
@@ -425,9 +395,6 @@ void NaClListener::OnStart(const nacl::NaClStartParams& params) {
         params.version);
   }
 
-  CHECK(params.imc_bootstrap_handle != IPC::InvalidPlatformFileForTransit());
-  args->imc_bootstrap_handle =
-      IPC::PlatformFileForTransitToPlatformFile(params.imc_bootstrap_handle);
   args->enable_debug_stub = params.enable_debug_stub;
 
   // Now configure parts that depend on process type.
@@ -459,7 +426,6 @@ void NaClListener::OnStart(const nacl::NaClStartParams& params) {
           params.debug_stub_server_bound_socket);
 #endif
 #if defined(OS_WIN)
-  args->broker_duplicate_handle_func = BrokerDuplicateHandle;
   args->attach_debug_exception_handler_func = AttachDebugExceptionHandler;
   args->debug_stub_server_port_selected_handler_func =
       DebugStubPortSelectedHandler;

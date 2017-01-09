@@ -5,7 +5,10 @@
 #ifndef CC_LAYERS_VIEWPORT_H_
 #define CC_LAYERS_VIEWPORT_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "cc/layers/layer_impl.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
@@ -32,30 +35,51 @@ class CC_EXPORT Viewport {
     gfx::Vector2dF content_scrolled_delta;
   };
 
-  static scoped_ptr<Viewport> Create(LayerTreeHostImpl* host_impl);
+  static std::unique_ptr<Viewport> Create(LayerTreeHostImpl* host_impl);
 
   // Differs from scrolling in that only the visual viewport is moved, without
-  // affecting the top controls or outer viewport.
+  // affecting the browser controls or outer viewport.
   void Pan(const gfx::Vector2dF& delta);
 
   // Scrolls the viewport, applying the unique bubbling between the inner and
-  // outer viewport. Scrolls can be consumed by top controls.
+  // outer viewport unless the scroll_outer_viewport bit is off. Scrolls can be
+  // consumed by browser controls.
   ScrollResult ScrollBy(const gfx::Vector2dF& delta,
                         const gfx::Point& viewport_point,
                         bool is_wheel_scroll,
-                        bool affect_top_controls);
+                        bool affect_browser_controls,
+                        bool scroll_outer_viewport);
+
+  // Scrolls the viewport. Unlike the above method, scrolls the inner before
+  // the outer viewport. Doesn't affect browser controls or return a result
+  // since callers don't need it.
+  void ScrollByInnerFirst(const gfx::Vector2dF& delta);
+
+  // Scrolls the viewport, bubbling the delta between the inner and outer
+  // viewport. Only animates either of the two viewports.
+  gfx::Vector2dF ScrollAnimated(const gfx::Vector2dF& delta,
+                                base::TimeDelta delayed_by);
 
   void PinchUpdate(float magnify_delta, const gfx::Point& anchor);
   void PinchEnd();
 
+  // Returns the "representative" viewport layer. That is, the one that's set
+  // as the currently scrolling layer when the viewport scrolls and the one used
+  // in the scrolling code to indicate scrolling should happen via this class.
+  LayerImpl* MainScrollLayer() const;
+
  private:
   explicit Viewport(LayerTreeHostImpl* host_impl);
 
-  bool ShouldTopControlsConsumeScroll(const gfx::Vector2dF& scroll_delta) const;
+  // Returns true if viewport_delta is stricly less than pending_delta.
+  static bool ShouldAnimateViewport(const gfx::Vector2dF& viewport_delta,
+                                    const gfx::Vector2dF& pending_delta);
+  bool ShouldBrowserControlsConsumeScroll(
+      const gfx::Vector2dF& scroll_delta) const;
   gfx::Vector2dF AdjustOverscroll(const gfx::Vector2dF& delta) const;
 
-  // Sends the delta to the top controls, returns the amount applied.
-  gfx::Vector2dF ScrollTopControls(const gfx::Vector2dF& delta);
+  // Sends the delta to the browser controls, returns the amount applied.
+  gfx::Vector2dF ScrollBrowserControls(const gfx::Vector2dF& delta);
 
   gfx::ScrollOffset MaxTotalScrollOffset() const;
   gfx::ScrollOffset TotalScrollOffset() const;
@@ -72,6 +96,8 @@ class CC_EXPORT Viewport {
   // The pinch zoom anchor point is adjusted by this amount during a pinch. This
   // is used to "snap" a pinch-zoom to the edge of the screen.
   gfx::Vector2d pinch_anchor_adjustment_;
+
+  FRIEND_TEST_ALL_PREFIXES(ViewportTest, ShouldAnimateViewport);
 
   DISALLOW_COPY_AND_ASSIGN(Viewport);
 };

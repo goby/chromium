@@ -23,58 +23,60 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/editing/commands/InsertIntoTextNodeCommand.h"
 
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "core/dom/Document.h"
 #include "core/dom/Text.h"
+#include "core/editing/EditingUtilities.h"
 #include "core/frame/Settings.h"
 #include "core/layout/LayoutText.h"
 
 namespace blink {
 
-InsertIntoTextNodeCommand::InsertIntoTextNodeCommand(PassRefPtrWillBeRawPtr<Text> node, unsigned offset, const String& text)
-    : SimpleEditCommand(node->document())
-    , m_node(node)
-    , m_offset(offset)
-    , m_text(text)
-{
-    ASSERT(m_node);
-    ASSERT(m_offset <= m_node->length());
-    ASSERT(!m_text.isEmpty());
+InsertIntoTextNodeCommand::InsertIntoTextNodeCommand(Text* node,
+                                                     unsigned offset,
+                                                     const String& text)
+    : SimpleEditCommand(node->document()),
+      m_node(node),
+      m_offset(offset),
+      m_text(text) {
+  DCHECK(m_node);
+  DCHECK_LE(m_offset, m_node->length());
+  DCHECK(!m_text.isEmpty());
 }
 
-void InsertIntoTextNodeCommand::doApply()
-{
-    bool passwordEchoEnabled = document().settings() && document().settings()->passwordEchoEnabled();
-    if (passwordEchoEnabled)
-        document().updateLayoutIgnorePendingStylesheets();
+void InsertIntoTextNodeCommand::doApply(EditingState*) {
+  bool passwordEchoEnabled =
+      document().settings() && document().settings()->passwordEchoEnabled();
+  if (passwordEchoEnabled)
+    document().updateStyleAndLayoutIgnorePendingStylesheets();
 
-    if (!m_node->hasEditableStyle())
-        return;
+  if (!hasEditableStyle(*m_node))
+    return;
 
-    if (passwordEchoEnabled) {
-        LayoutText* layoutText = m_node->layoutObject();
-        if (layoutText && layoutText->isSecure())
-            layoutText->momentarilyRevealLastTypedCharacter(m_offset + m_text.length() - 1);
-    }
+  if (passwordEchoEnabled) {
+    LayoutText* layoutText = m_node->layoutObject();
+    if (layoutText && layoutText->isSecure())
+      layoutText->momentarilyRevealLastTypedCharacter(m_offset +
+                                                      m_text.length() - 1);
+  }
 
-    m_node->insertData(m_offset, m_text, IGNORE_EXCEPTION, CharacterData::DeprecatedRecalcStyleImmediatlelyForEditing);
+  m_node->insertData(m_offset, m_text, IGNORE_EXCEPTION);
+  document().updateStyleAndLayout();
 }
 
-void InsertIntoTextNodeCommand::doUnapply()
-{
-    if (!m_node->hasEditableStyle())
-        return;
+void InsertIntoTextNodeCommand::doUnapply() {
+  if (!hasEditableStyle(*m_node))
+    return;
 
-    m_node->deleteData(m_offset, m_text.length(), IGNORE_EXCEPTION, CharacterData::DeprecatedRecalcStyleImmediatlelyForEditing);
+  m_node->deleteData(m_offset, m_text.length(), IGNORE_EXCEPTION);
+  document().updateStyleAndLayout();
 }
 
-DEFINE_TRACE(InsertIntoTextNodeCommand)
-{
-    visitor->trace(m_node);
-    SimpleEditCommand::trace(visitor);
+DEFINE_TRACE(InsertIntoTextNodeCommand) {
+  visitor->trace(m_node);
+  SimpleEditCommand::trace(visitor);
 }
 
-} // namespace blink
+}  // namespace blink

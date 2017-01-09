@@ -10,7 +10,7 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -74,7 +74,7 @@ class SandboxedUnpackerTest : public ExtensionsTest {
     client_ = new MockSandboxedUnpackerClient;
 
     sandboxed_unpacker_ = new SandboxedUnpacker(
-        Manifest::INTERNAL, Extension::NO_FLAGS, extensions_dir_.path(),
+        Manifest::INTERNAL, Extension::NO_FLAGS, extensions_dir_.GetPath(),
         base::ThreadTaskRunnerHandle::Get(), client_);
   }
 
@@ -109,15 +109,15 @@ class SandboxedUnpackerTest : public ExtensionsTest {
     base::ScopedTempDir temp_dir;
     ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
     base::FilePath crx_path = GetCrxFullPath(crx_name);
-    ASSERT_TRUE(zip::Unzip(crx_path, temp_dir.path()));
+    ASSERT_TRUE(zip::Unzip(crx_path, temp_dir.GetPath()));
 
     std::string fake_id = crx_file::id_util::GenerateId(crx_name);
     std::string fake_public_key;
     base::Base64Encode(std::string(2048, 'k'), &fake_public_key);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&SandboxedUnpacker::StartWithDirectory,
-                              sandboxed_unpacker_.get(), fake_id,
-                              fake_public_key, temp_dir.Take()));
+        FROM_HERE,
+        base::Bind(&SandboxedUnpacker::StartWithDirectory, sandboxed_unpacker_,
+                   fake_id, fake_public_key, temp_dir.Take()));
     client_->WaitForUnpack();
   }
 
@@ -131,8 +131,8 @@ class SandboxedUnpackerTest : public ExtensionsTest {
   base::ScopedTempDir extensions_dir_;
   MockSandboxedUnpackerClient* client_;
   scoped_refptr<SandboxedUnpacker> sandboxed_unpacker_;
-  scoped_ptr<content::TestBrowserThreadBundle> browser_threads_;
-  scoped_ptr<content::InProcessUtilityThreadHelper>
+  std::unique_ptr<content::TestBrowserThreadBundle> browser_threads_;
+  std::unique_ptr<content::InProcessUtilityThreadHelper>
       in_process_utility_thread_helper_;
 };
 

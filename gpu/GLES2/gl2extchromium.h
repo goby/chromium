@@ -14,25 +14,12 @@
 extern "C" {
 #endif
 
-/* GL_CHROMIUM_iosurface */
-#ifndef GL_CHROMIUM_iosurface
-#define GL_CHROMIUM_iosurface 1
-#ifdef GL_GLEXT_PROTOTYPES
-GL_APICALL void GL_APIENTRY glTexImageIOSurface2DCHROMIUM(
-    GLenum target, GLsizei width, GLsizei height, GLuint ioSurfaceId,
-    GLuint plane);
-#endif
-typedef void (GL_APIENTRYP PFNGLTEXIMAGEIOSURFACE2DCHROMIUMPROC) (
-    GLenum target, GLsizei width, GLsizei height, GLuint ioSurfaceId,
-    GLuint plane);
-#endif  /* GL_CHROMIUM_iosurface */
-
 /* GL_CHROMIUM_texture_mailbox */
 #ifndef GL_CHROMIUM_texture_mailbox
 #define GL_CHROMIUM_texture_mailbox 1
 
 #ifndef GL_MAILBOX_SIZE_CHROMIUM
-#define GL_MAILBOX_SIZE_CHROMIUM 64
+#define GL_MAILBOX_SIZE_CHROMIUM 16
 #endif
 #ifdef GL_GLEXT_PROTOTYPES
 GL_APICALL void GL_APIENTRY glGenMailboxCHROMIUM(GLbyte* mailbox);
@@ -115,8 +102,8 @@ typedef void (
 #define GL_READ_WRITE_CHROMIUM 0x78F2
 #endif
 
-#ifndef GL_RGB_YUV_420_CHROMIUM
-#define GL_RGB_YUV_420_CHROMIUM 0x78FA
+#ifndef GL_RGB_YCRCB_420_CHROMIUM
+#define GL_RGB_YCRCB_420_CHROMIUM 0x78FA
 #endif
 
 #ifndef GL_RGB_YCBCR_422_CHROMIUM
@@ -140,6 +127,15 @@ typedef GLuint(GL_APIENTRYP PFNGLCREATEGPUMEMORYBUFFERIMAGECHROMIUMPROC)(
     GLenum internalformat,
     GLenum usage);
 #endif  /* GL_CHROMIUM_gpu_memory_buffer_image */
+
+/* GL_CHROMIUM_deschedule */
+#ifndef GL_CHROMIUM_deschedule
+#define GL_CHROMIUM_deschedule 1
+#ifdef GL_GLEXT_PROTOTYPES
+GL_APICALL void GL_APIENTRY glDescheduleUntilFinishedCHROMIUM();
+#endif
+typedef void(GL_APIENTRYP PFNGLDESCHEDULEUNTILFINISHEDCHROMIUM)();
+#endif  /* GL_CHROMIUM_deschedule */
 
 /* GL_CHROMIUM_map_sub */
 #ifndef GL_CHROMIUM_map_sub
@@ -367,7 +363,6 @@ typedef void (GL_APIENTRYP PFNGLBLITFRAMEBUFFERCHROMIUMPROC) (GLint srcX0, GLint
 
 #ifdef GL_GLEXT_PROTOTYPES
 GL_APICALL void GL_APIENTRY glCopyTextureCHROMIUM(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint internalformat,
@@ -377,7 +372,6 @@ GL_APICALL void GL_APIENTRY glCopyTextureCHROMIUM(
     GLboolean unpack_unmultiply_alpha);
 
 GL_APICALL void GL_APIENTRY glCopySubTextureCHROMIUM(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint xoffset,
@@ -391,7 +385,6 @@ GL_APICALL void GL_APIENTRY glCopySubTextureCHROMIUM(
     GLboolean unpack_unmultiply_alpha);
 #endif
 typedef void(GL_APIENTRYP PFNGLCOPYTEXTURECHROMIUMPROC)(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint internalformat,
@@ -401,7 +394,6 @@ typedef void(GL_APIENTRYP PFNGLCOPYTEXTURECHROMIUMPROC)(
     GLboolean unpack_unmultiply_alpha);
 
 typedef void(GL_APIENTRYP PFNGLCOPYSUBTEXTURECHROMIUMPROC)(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint xoffset,
@@ -420,32 +412,10 @@ typedef void(GL_APIENTRYP PFNGLCOPYSUBTEXTURECHROMIUMPROC)(
 #define GL_CHROMIUM_compressed_copy_texture 1
 #ifdef GL_GLEXT_PROTOTYPES
 GL_APICALL void GL_APIENTRY glCompressedCopyTextureCHROMIUM(
-    GLenum target, GLenum source_id, GLenum dest_id);
-
-GL_APICALL void GL_APIENTRY glCompressedCopySubTextureCHROMIUM(
-    GLenum target,
-    GLenum source_id,
-    GLenum dest_id,
-    GLint xoffset,
-    GLint yoffset,
-    GLint x,
-    GLint y,
-    GLsizei width,
-    GLsizei height);
+    GLenum source_id, GLenum dest_id);
 #endif
 typedef void(GL_APIENTRYP PFNGLCOMPRESSEDCOPYTEXTURECHROMIUMPROC)(
-    GLenum target, GLenum source_id, GLenum dest_id);
-
-typedef void(GL_APIENTRYP PFNGLCOMPRESSEDCOPYSUBTEXTURECHROMIUMPROC)(
-    GLenum target,
-    GLenum source_id,
-    GLenum dest_id,
-    GLint xoffset,
-    GLint yoffset,
-    GLint x,
-    GLint y,
-    GLsizei width,
-    GLsizei height);
+    GLenum source_id, GLenum dest_id);
 #endif  /* GL_CHROMIUM_compressed_copy_texture */
 
 /* GL_CHROMIUM_lose_context */
@@ -690,12 +660,20 @@ GL_APICALL GLuint GL_APIENTRY glInsertSyncPointCHROMIUM();
 GL_APICALL GLuint64 GL_APIENTRY glInsertFenceSyncCHROMIUM();
 GL_APICALL void GL_APIENTRY glGenSyncTokenCHROMIUM(GLuint64 fence_sync,
                                                    GLbyte* sync_token);
+GL_APICALL void GL_APIENTRY glGenUnverifiedSyncTokenCHROMIUM(
+    GLuint64 fence_sync, GLbyte* sync_token);
+GL_APICALL void GL_APIENTRY glVerifySyncTokensCHROMIUM(GLbyte **sync_tokens,
+                                                       GLsizei count);
 GL_APICALL void GL_APIENTRY glWaitSyncTokenCHROMIUM(const GLbyte* sync_token);
 #endif
 typedef GLuint (GL_APIENTRYP PFNGLINSERTSYNCPOINTCHROMIUMPROC) ();
 typedef GLuint64 (GL_APIENTRYP PFNGLINSERTFENCESYNCCHROMIUMPROC) ();
 typedef void (GL_APIENTRYP PFNGLGENSYNCTOKENCHROMIUMPROC) (GLuint64 fence_sync,
                                                            GLbyte* sync_token);
+typedef void (GL_APIENTRYP PFNGLGENUNVERIFIEDSYNCTOKENCHROMIUMPROC) (
+    GLuint64 fence_sync, GLbyte* sync_token);
+typedef void (GL_APIENTRYP PFNGLVERIFYSYNCTOKENSCHROMIUMPROC) (
+    GLbyte **sync_tokens, GLsizei count);
 typedef void (GL_APIENTRYP PFNGLWAITSYNCTOKENCHROMIUM) (
     const GLbyte* sync_tokens);
 #endif  /* GL_CHROMIUM_sync_point */
@@ -713,35 +691,6 @@ typedef void (GL_APIENTRYP PFNGLWAITSYNCTOKENCHROMIUM) (
 #define GL_RGB32F 0x8815
 #endif
 #endif /* GL_CHROMIUM_color_buffer_float_rgb */
-
-/* GL_CHROMIUM_subscribe_uniform */
-#ifndef GL_CHROMIUM_subscribe_uniform
-#define GL_CHROMIUM_subscribe_uniform 1
-
-#ifndef GL_SUBSCRIBED_VALUES_BUFFER_CHROMIUM
-#define GL_SUBSCRIBED_VALUES_BUFFER_CHROMIUM 0x924B
-#endif
-
-#ifndef GL_MOUSE_POSITION_CHROMIUM
-#define GL_MOUSE_POSITION_CHROMIUM 0x924C
-#endif
-
-#ifdef GL_GLEXT_PROTOTYPES
-GL_APICALL void GL_APIENTRY
-glGenValuebuffersCHROMIUM(GLsizei n, GLuint* buffers);
-GL_APICALL void GL_APIENTRY
-glDeleteValuebuffersCHROMIUM(GLsizei n, const GLuint* valuebuffers);
-GL_APICALL GLboolean GL_APIENTRY glIsValuebufferCHROMIUM(GLuint valuebuffer);
-GL_APICALL void GL_APIENTRY
-glBindValuebufferCHROMIUM(GLenum target, GLuint valuebuffer);
-GL_APICALL void GL_APIENTRY
-glSubscribeValueCHROMIUM(GLenum target, GLenum subscription);
-GL_APICALL void GL_APIENTRY glPopulateSubscribedValuesCHROMIUM(GLenum target);
-GL_APICALL void GL_APIENTRY glUniformValuebufferCHROMIUM(GLint location,
-                                                         GLenum target,
-                                                         GLenum subscription);
-#endif
-#endif /* GL_CHROMIUM_subscribe_uniform */
 
 /* GL_CHROMIUM_schedule_overlay_plane */
 #ifndef GL_CHROMIUM_schedule_overlay_plane
@@ -801,22 +750,56 @@ typedef void(GL_APIENTRYP PFNGLSCHEDULEOVERLAYPLANECHROMIUMPROC)(
 
 #ifndef GL_CHROMIUM_schedule_ca_layer
 #define GL_CHROMIUM_schedule_ca_layer 1
+
+#ifndef GL_CA_LAYER_EDGE_LEFT_CHROMIUM
+#define GL_CA_LAYER_EDGE_LEFT_CHROMIUM 0x1
+#endif
+
+#ifndef GL_CA_LAYER_EDGE_RIGHT_CHROMIUM
+#define GL_CA_LAYER_EDGE_RIGHT_CHROMIUM 0x2
+#endif
+
+#ifndef GL_CA_LAYER_EDGE_BOTTOM_CHROMIUM
+#define GL_CA_LAYER_EDGE_BOTTOM_CHROMIUM 0x4
+#endif
+
+#ifndef GL_CA_LAYER_EDGE_TOP_CHROMIUM
+#define GL_CA_LAYER_EDGE_TOP_CHROMIUM 0x8
+#endif
+
 #ifdef GL_GLEXT_PROTOTYPES
+GL_APICALL void GL_APIENTRY
+glScheduleCALayerSharedStateCHROMIUM(GLfloat opacity,
+                                     GLboolean is_clipped,
+                                     const GLfloat* clip_rect,
+                                     GLint sorting_context_id,
+                                     const GLfloat* transform);
 GL_APICALL void GL_APIENTRY
 glScheduleCALayerCHROMIUM(GLuint contents_texture_id,
                           const GLfloat* contents_rect,
-                          GLfloat opacity,
                           GLuint background_color,
-                          const GLfloat* bounds_size,
-                          const GLfloat* transform);
+                          GLuint edge_aa_mask,
+                          const GLfloat* bounds_rect,
+                          GLuint filter);
+GL_APICALL void GL_APIENTRY
+glScheduleCALayerInUseQueryCHROMIUM(GLsizei count, const GLuint* textures);
 #endif
+typedef void(GL_APIENTRYP PFNGLSCHEDULECALAYERSHAREDSTATECHROMIUMPROC)(
+    GLfloat opacity,
+    GLboolean is_clipped,
+    const GLfloat* clip_rect,
+    GLint sorting_context_id,
+    const GLfloat* transform);
 typedef void(GL_APIENTRYP PFNGLSCHEDULECALAYERCHROMIUMPROC)(
     GLuint contents_texture_id,
     const GLfloat* contents_rect,
-    GLfloat opacity,
     GLuint background_color,
-    const GLfloat* bounds_size,
-    const GLfloat* transform);
+    GLuint edge_aa_mask,
+    const GLfloat* bounds_rect,
+    GLuint filter);
+typedef void(GL_APIENTRYP PFNGLSCHEDULECALAYERINUSEQUERYCHROMIUMPROC)(
+    GLsizei count,
+    const GLuint* textures);
 #endif /* GL_CHROMIUM_schedule_ca_layer */
 
 /* GL_CHROMIUM_sync_query */
@@ -1209,6 +1192,16 @@ typedef GLint(GL_APIENTRYP PFNGLGETFRAGDATAINDEXEXT)(GLuint program,
 #define GL_ONE_MINUS_SRC1_ALPHA_EXT 0x88FB
 #define GL_MAX_DUAL_SOURCE_DRAW_BUFFERS_EXT 0x88FC
 #endif /* GL_EXT_blend_func_extended */
+
+#ifndef GL_CHROMIUM_framebuffer_mixed_samples
+#define GL_CHROMIUM_framebuffer_mixed_samples 1
+typedef void(GL_APIENTRYP PFNGLCOVERAGEMODULATIONCHROMIUMPROC)(
+    GLenum components);
+#ifdef GL_GLEXT_PROTOTYPES
+GL_APICALL void GL_APIENTRY glCoverageModulationCHROMIUM(GLenum components);
+#endif
+#define GL_COVERAGE_MODULATION_CHROMIUM 0x9332
+#endif /* GL_CHROMIUM_framebuffer_mixed_samples */
 
 #ifdef __cplusplus
 }

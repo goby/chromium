@@ -4,6 +4,8 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/incident.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
@@ -13,8 +15,12 @@ namespace safe_browsing {
 Incident::~Incident() {
 }
 
-scoped_ptr<ClientIncidentReport_IncidentData> Incident::TakePayload() {
-  return payload_.Pass();
+std::unique_ptr<ClientIncidentReport_IncidentData> Incident::TakePayload() {
+  return std::move(payload_);
+}
+
+MinimumProfileConsent Incident::GetMinimumProfileConsent() const {
+  return MinimumProfileConsent::SAFE_BROWSING_ENABLED;
 }
 
 Incident::Incident() : payload_(new ClientIncidentReport_IncidentData) {

@@ -5,12 +5,12 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_LAYER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/android/compositor/layer/layer.h"
 
 namespace cc {
-class ImageLayer;
 class Layer;
 class NinePatchLayer;
 class SolidColorLayer;
@@ -25,9 +25,6 @@ namespace ui {
 class ResourceManager;
 }
 
-class SkBitmap;
-
-namespace chrome {
 namespace android {
 
 class ContentLayer;
@@ -47,12 +44,14 @@ class TabLayer : public Layer {
 
   void SetProperties(int id,
                      bool can_use_live_layer,
+                     bool browser_controls_at_bottom,
                      int toolbar_resource_id,
                      int close_button_resource_id,
                      int shadow_resource_id,
                      int contour_resource_id,
                      int back_logo_resource_id,
                      int border_resource_id,
+                     int border_inner_shadow_resource_id,
                      int default_background_color,
                      int back_logo_color,
                      bool is_portrait,
@@ -70,6 +69,7 @@ class TabLayer : public Layer {
                      float rotation_y,
                      float alpha,
                      float border_alpha,
+                     float border_inner_shadow_alpha,
                      float contour_alpha,
                      float shadow_alpha,
                      float close_alpha,
@@ -83,7 +83,9 @@ class TabLayer : public Layer {
                      float view_width,
                      float view_height,
                      bool show_toolbar,
+                     int default_theme_color,
                      int toolbar_background_color,
+                     int close_button_color,
                      bool anonymize_toolbar,
                      int toolbar_textbox_resource_id,
                      int toolbar_textbox_background_color,
@@ -91,12 +93,16 @@ class TabLayer : public Layer {
                      float toolbar_alpha,
                      float toolbar_y_offset,
                      float side_border_scale,
-                     bool attach_content,
                      bool inset_border);
 
   bool is_incognito() const { return incognito_; }
 
   scoped_refptr<cc::Layer> layer() override;
+
+  static void ComputePaddingPositions(const gfx::Size& content_size,
+                                      const gfx::Size& desired_size,
+                                      gfx::Rect* side_padding_rect,
+                                      gfx::Rect* bottom_padding_rect);
 
  protected:
   TabLayer(bool incognito,
@@ -127,9 +133,11 @@ class TabLayer : public Layer {
   scoped_refptr<ToolbarLayer> toolbar_layer_;
   scoped_refptr<cc::Layer> title_;
   scoped_refptr<ContentLayer> content_;
-  scoped_refptr<cc::SolidColorLayer> padding_;
+  scoped_refptr<cc::SolidColorLayer> side_padding_;
+  scoped_refptr<cc::SolidColorLayer> bottom_padding_;
   scoped_refptr<cc::UIResourceLayer> close_button_;
   scoped_refptr<cc::NinePatchLayer> front_border_;
+  scoped_refptr<cc::NinePatchLayer> front_border_inner_shadow_;
   scoped_refptr<cc::NinePatchLayer> contour_shadow_;
   scoped_refptr<cc::NinePatchLayer> shadow_;
   scoped_refptr<cc::UIResourceLayer> back_logo_;
@@ -139,6 +147,5 @@ class TabLayer : public Layer {
 };
 
 }  //  namespace android
-}  //  namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_LAYER_H_

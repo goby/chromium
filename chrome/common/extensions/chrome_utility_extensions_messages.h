@@ -4,36 +4,25 @@
 
 // Multiply-included message file, so no include guard.
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
-#include "chrome/common/media_galleries/iphoto_library.h"
+#include "build/build_config.h"
 #include "chrome/common/media_galleries/itunes_library.h"
 #include "chrome/common/media_galleries/metadata_types.h"
 #include "chrome/common/media_galleries/picasa_types.h"
+#include "extensions/features/features.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_platform_file.h"
 
-#if !defined(ENABLE_EXTENSIONS)
+#if !BUILDFLAG(ENABLE_EXTENSIONS)
 #error "Extensions must be enabled"
 #endif
 
 #define IPC_MESSAGE_START ChromeUtilityExtensionsMsgStart
-
-#if defined(OS_MACOSX)
-IPC_STRUCT_TRAITS_BEGIN(iphoto::parser::Photo)
-  IPC_STRUCT_TRAITS_MEMBER(id)
-  IPC_STRUCT_TRAITS_MEMBER(location)
-  IPC_STRUCT_TRAITS_MEMBER(original_location)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(iphoto::parser::Library)
-  IPC_STRUCT_TRAITS_MEMBER(albums)
-  IPC_STRUCT_TRAITS_MEMBER(all_photos)
-IPC_STRUCT_TRAITS_END()
-#endif  // defined(OS_MACOSX)
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
 IPC_STRUCT_TRAITS_BEGIN(itunes::parser::Track)
@@ -83,13 +72,6 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityMsg_ParseITunesPrefXml,
                      std::string /* XML to parse */)
 #endif  // defined(OS_WIN)
 
-#if defined(OS_MACOSX)
-// Tell the utility process to parse the iPhoto library XML file and
-// return the parse result as well as the iPhoto library as an iphoto::Library.
-IPC_MESSAGE_CONTROL1(ChromeUtilityMsg_ParseIPhotoLibraryXmlFile,
-                     IPC::PlatformFileForTransit /* XML file to parse */)
-#endif  // defined(OS_MACOSX)
-
 #if defined(OS_WIN) || defined(OS_MACOSX)
 // Tell the utility process to parse the iTunes library XML file and
 // return the parse result as well as the iTunes library as an itunes::Library.
@@ -113,16 +95,16 @@ IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_IndexPicasaAlbumsContents,
 // |milliseconds_of_decoding| wall clock time. It is still not safe to decode
 // the file in the browser process after this check.
 IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_CheckMediaFile,
-                     int64 /* milliseconds_of_decoding */,
+                     int64_t /* milliseconds_of_decoding */,
                      IPC::PlatformFileForTransit /* Media file to parse */)
 
 IPC_MESSAGE_CONTROL3(ChromeUtilityMsg_ParseMediaMetadata,
                      std::string /* mime_type */,
-                     int64 /* total_size */,
+                     int64_t /* total_size */,
                      bool /* get_attached_images */)
 
 IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_RequestBlobBytes_Finished,
-                     int64 /* request_id */,
+                     int64_t /* request_id */,
                      std::string /* bytes */)
 
 // Requests that the utility process write the contents of the source file to
@@ -152,14 +134,6 @@ IPC_MESSAGE_CONTROL0(ChromeUtilityMsg_ImageWriter_Cancel)
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_GotITunesDirectory,
                      base::FilePath /* Path to iTunes library */)
 #endif  // defined(OS_WIN)
-
-#if defined(OS_MACOSX)
-// Reply after parsing the iPhoto library XML file with the parser result and
-// an iphoto::Library data structure.
-IPC_MESSAGE_CONTROL2(ChromeUtilityHostMsg_GotIPhotoLibrary,
-                     bool /* Parser result */,
-                     iphoto::parser::Library /* iPhoto library */)
-#endif  // defined(OS_MACOSX)
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
 // Reply after parsing the iTunes library XML file with the parser result and
@@ -193,9 +167,9 @@ IPC_MESSAGE_CONTROL3(
     std::vector<metadata::AttachedImage> /* attached_images */)
 
 IPC_MESSAGE_CONTROL3(ChromeUtilityHostMsg_RequestBlobBytes,
-                     int64 /* request_id */,
-                     int64 /* start_byte */,
-                     int64 /* length */)
+                     int64_t /* request_id */,
+                     int64_t /* start_byte */,
+                     int64_t /* length */)
 
 // Reply when a write or verify operation succeeds.
 IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_ImageWriter_Succeeded)
@@ -209,7 +183,7 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ImageWriter_Failed,
 
 // Periodic status update about the progress of an operation.
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_ImageWriter_Progress,
-                     int64 /* number of bytes processed */)
+                     int64_t /* number of bytes processed */)
 
 #if defined(OS_WIN)
 // Get plain-text WiFi credentials from the system (requires UAC privilege

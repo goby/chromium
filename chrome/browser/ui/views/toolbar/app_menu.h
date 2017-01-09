@@ -6,10 +6,10 @@
 #define CHROME_BROWSER_UI_VIEWS_TOOLBAR_APP_MENU_H_
 
 #include <map>
+#include <memory>
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
@@ -24,16 +24,10 @@ class BookmarkMenuDelegate;
 class Browser;
 class ExtensionToolbarMenuView;
 
-namespace ui {
-class NativeTheme;
-}
-
 namespace views {
 class MenuButton;
-struct MenuConfig;
 class MenuItemView;
 class MenuRunner;
-class View;
 }
 
 // AppMenu adapts the AppMenuModel to view's menu related classes.
@@ -67,8 +61,7 @@ class AppMenu : public views::MenuDelegate,
 
   // MenuDelegate overrides:
   const gfx::FontList* GetLabelFontList(int command_id) const override;
-  bool GetShouldUseDisabledEmphasizedForegroundColor(
-      int command_id) const override;
+  bool GetShouldUseNormalForegroundColor(int command_id) const override;
   base::string16 GetTooltipText(int command_id,
                                 const gfx::Point& p) const override;
   bool IsTriggerableEvent(views::MenuItemView* menu,
@@ -103,6 +96,8 @@ class AppMenu : public views::MenuDelegate,
   void WillShowMenu(views::MenuItemView* menu) override;
   void WillHideMenu(views::MenuItemView* menu) override;
   bool ShouldCloseOnDragComplete() override;
+  void OnMenuClosed(views::MenuItemView* menu,
+                    views::MenuRunner::RunResult result) override;
 
   // bookmarks::BaseBookmarkModelObserver overrides:
   void BookmarkModelChanged() override;
@@ -157,7 +152,7 @@ class AppMenu : public views::MenuDelegate,
   // The views menu. Owned by |menu_runner_|.
   views::MenuItemView* root_;
 
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
   // Maps from the command ID in model to the model/index pair the item came
   // from.
@@ -174,7 +169,7 @@ class AppMenu : public views::MenuDelegate,
   int selected_index_;
 
   // Used for managing the bookmark menu items.
-  scoped_ptr<BookmarkMenuDelegate> bookmark_menu_delegate_;
+  std::unique_ptr<BookmarkMenuDelegate> bookmark_menu_delegate_;
 
   // Menu corresponding to IDC_BOOKMARKS_MENU.
   views::MenuItemView* bookmark_menu_;
@@ -190,7 +185,7 @@ class AppMenu : public views::MenuDelegate,
   ExtensionToolbarMenuView* extension_toolbar_;
 
   // Used for managing "Recent tabs" menu items.
-  scoped_ptr<RecentTabsMenuModelDelegate> recent_tabs_menu_model_delegate_;
+  std::unique_ptr<RecentTabsMenuModelDelegate> recent_tabs_menu_model_delegate_;
 
   content::NotificationRegistrar registrar_;
 

@@ -16,19 +16,13 @@ cr.define('settings', function() {
   /**
    * Fake of chrome.settingsPrivate API. Use by setting
    * CrSettingsPrefs.deferInitialization to true, then passing a
-   * FakeSettingsPrivate to SettingsPrefs.initializeForTesting.
+   * FakeSettingsPrivate to settings-prefs#initialize().
    * @constructor
    * @param {Array<!settings.FakeSettingsPrivate.Pref>=} opt_initialPrefs
    * @implements {SettingsPrivate}
    */
   function FakeSettingsPrivate(opt_initialPrefs) {
     this.prefs = {};
-
-    // Hack alert: bind this instance's onPrefsChanged members to this.
-    this.onPrefsChanged = {
-      addListener: this.onPrefsChanged.addListener.bind(this),
-      removeListener: this.onPrefsChanged.removeListener.bind(this),
-    };
 
     if (!opt_initialPrefs)
       return;
@@ -38,15 +32,7 @@ cr.define('settings', function() {
 
   FakeSettingsPrivate.prototype = {
     // chrome.settingsPrivate overrides.
-    onPrefsChanged: {
-      addListener: function(listener) {
-        this.listener_ = listener;
-      },
-
-      removeListener: function(listener) {
-        this.listener_ = null;
-      },
-    },
+    onPrefsChanged: new FakeChromeEvent(),
 
     getAllPrefs: function(callback) {
       // Send a copy of prefs to keep our internal state private.
@@ -104,7 +90,7 @@ cr.define('settings', function() {
     },
 
     /**
-     * Notifies the listener of pref changes.
+     * Notifies the listeners of pref changes.
      * @param {!Object<{key: string, value: *}>} changes
      */
     sendPrefChanges: function(changes) {
@@ -115,7 +101,7 @@ cr.define('settings', function() {
         pref.value = change.value;
         prefs.push(deepCopy(pref));
       }
-      this.listener_(prefs);
+      this.onPrefsChanged.callListeners(prefs);
     },
 
     // Private methods for use by the fake API.

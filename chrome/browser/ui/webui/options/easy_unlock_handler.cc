@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/easy_unlock_service.h"
@@ -89,8 +90,9 @@ void EasyUnlockHandler::SendTurnOffOperationStatus() {
       status_string = "idle";
       break;
   }
-  web_ui()->CallJavascriptFunction("EasyUnlockTurnOffOverlay.updateUIState",
-                                   base::StringValue(status_string));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "EasyUnlockTurnOffOverlay.updateUIState",
+      base::StringValue(status_string));
 }
 
 void EasyUnlockHandler::HandleGetTurnOffFlowStatus(

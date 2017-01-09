@@ -32,55 +32,63 @@
 #define RangeInputType_h
 
 #include "core/html/forms/InputType.h"
+#include "core/html/forms/InputTypeView.h"
 
 namespace blink {
 
 class ExceptionState;
 class SliderThumbElement;
 
-class RangeInputType final : public InputType {
-public:
-    static PassRefPtrWillBeRawPtr<InputType> create(HTMLInputElement&);
+class RangeInputType final : public InputType, public InputTypeView {
+  USING_GARBAGE_COLLECTED_MIXIN(RangeInputType);
 
-private:
-    RangeInputType(HTMLInputElement&);
-    void countUsage() override;
-    const AtomicString& formControlType() const override;
-    double valueAsDouble() const override;
-    void setValueAsDouble(double, TextFieldEventBehavior, ExceptionState&) const override;
-    bool typeMismatchFor(const String&) const override;
-    bool supportsRequired() const override;
-    StepRange createStepRange(AnyStepHandling) const override;
-    bool isSteppable() const override;
-    void handleMouseDownEvent(MouseEvent*) override;
-    void handleTouchEvent(TouchEvent*) override;
-    bool hasTouchEventHandler() const override;
-    void handleKeydownEvent(KeyboardEvent*) override;
-    LayoutObject* createLayoutObject(const ComputedStyle&) const override;
-    void createShadowSubtree() override;
-    Decimal parseToNumber(const String&, const Decimal&) const override;
-    String serialize(const Decimal&) const override;
-    void accessKeyAction(bool sendMouseEvents) override;
-    void sanitizeValueInResponseToMinOrMaxAttributeChange() override;
-    void setValue(const String&, bool valueChanged, TextFieldEventBehavior) override;
-    String fallbackValue() const override;
-    String sanitizeValue(const String& proposedValue) const override;
-    bool shouldRespectListAttribute() override;
-    void disabledAttributeChanged() override;
-    void listAttributeTargetChanged() override;
-    Decimal findClosestTickMarkValue(const Decimal&) override;
+ public:
+  static InputType* create(HTMLInputElement&);
+  DECLARE_VIRTUAL_TRACE();
+  using InputType::element;
 
-    SliderThumbElement* sliderThumbElement() const;
-    Element* sliderTrackElement() const;
-    void updateTickMarkValues();
+ private:
+  RangeInputType(HTMLInputElement&);
+  InputTypeView* createView() override;
+  ValueMode valueMode() const override;
+  void countUsage() override;
+  const AtomicString& formControlType() const override;
+  double valueAsDouble() const override;
+  void setValueAsDouble(double,
+                        TextFieldEventBehavior,
+                        ExceptionState&) const override;
+  bool typeMismatchFor(const String&) const override;
+  bool supportsRequired() const override;
+  StepRange createStepRange(AnyStepHandling) const override;
+  bool isSteppable() const override;
+  void handleMouseDownEvent(MouseEvent*) override;
+  void handleKeydownEvent(KeyboardEvent*) override;
+  LayoutObject* createLayoutObject(const ComputedStyle&) const override;
+  void createShadowSubtree() override;
+  Decimal parseToNumber(const String&, const Decimal&) const override;
+  String serialize(const Decimal&) const override;
+  void accessKeyAction(bool sendMouseEvents) override;
+  void sanitizeValueInResponseToMinOrMaxAttributeChange() override;
+  void stepAttributeChanged() override;
+  void warnIfValueIsInvalid(const String&) const override;
+  void didSetValue(const String&, bool valueChanged) override;
+  String sanitizeValue(const String& proposedValue) const override;
+  bool shouldRespectListAttribute() override;
+  void disabledAttributeChanged() override;
+  void listAttributeTargetChanged() override;
+  Decimal findClosestTickMarkValue(const Decimal&) override;
 
-    // InputTypeView function:
-    void updateView() override;
+  SliderThumbElement* sliderThumbElement() const;
+  Element* sliderTrackElement() const;
+  void updateTickMarkValues();
 
-    bool m_tickMarkValuesDirty;
-    Vector<Decimal> m_tickMarkValues;
+  // InputTypeView function:
+  void updateView() override;
+
+  bool m_tickMarkValuesDirty;
+  Vector<Decimal> m_tickMarkValues;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // RangeInputType_h
+#endif  // RangeInputType_h

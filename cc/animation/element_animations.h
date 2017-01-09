@@ -5,16 +5,21 @@
 #ifndef CC_ANIMATION_ELEMENT_ANIMATIONS_H_
 #define CC_ANIMATION_ELEMENT_ANIMATIONS_H_
 
-#include "base/containers/linked_list.h"
+#include <memory>
+#include <vector>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "cc/animation/animation_delegate.h"
-#include "cc/animation/layer_animation_controller.h"
-#include "cc/animation/layer_animation_value_provider.h"
-#include "cc/base/cc_export.h"
+#include "base/observer_list.h"
+#include "cc/animation/animation_export.h"
+#include "cc/trees/element_id.h"
+#include "cc/trees/property_animation_state.h"
+#include "cc/trees/target_property.h"
+#include "ui/gfx/geometry/scroll_offset.h"
+#include "ui/gfx/transform.h"
 
 namespace gfx {
-class ScrollOffset;
-class Transform;
+class BoxF;
 }
 
 namespace cc {
@@ -22,96 +27,170 @@ namespace cc {
 class AnimationHost;
 class AnimationPlayer;
 class FilterOperations;
-class LayerAnimationController;
-enum class LayerTreeType;
+enum class ElementListType;
+struct AnimationEvent;
+
+enum class UpdateTickingType { NORMAL, FORCE };
 
 // An ElementAnimations owns a list of all AnimationPlayers, attached to
-// the layer. Also, it owns LayerAnimationController instance (1:1
-// relationship)
-// ElementAnimations object redirects all events from LAC to the list
-// of animation layers.
+// the element.
 // This is a CC counterpart for blink::ElementAnimations (in 1:1 relationship).
 // No pointer to/from respective blink::ElementAnimations object for now.
-class CC_EXPORT ElementAnimations : public AnimationDelegate,
-                                    public LayerAnimationValueProvider {
+class CC_ANIMATION_EXPORT ElementAnimations
+    : public base::RefCounted<ElementAnimations> {
  public:
-  static scoped_ptr<ElementAnimations> Create(AnimationHost* host);
-  ~ElementAnimations() override;
+  static scoped_refptr<ElementAnimations> Create();
 
-  int layer_id() const {
-    return layer_animation_controller_ ? layer_animation_controller_->id() : 0;
-  }
+  ElementId element_id() const { return element_id_; }
+  void SetElementId(ElementId element_id);
 
   // Parent AnimationHost.
   AnimationHost* animation_host() { return animation_host_; }
   const AnimationHost* animation_host() const { return animation_host_; }
+  void SetAnimationHost(AnimationHost* host);
 
-  LayerAnimationController* layer_animation_controller() const {
-    return layer_animation_controller_.get();
-  }
+  void InitAffectedElementTypes();
+  void ClearAffectedElementTypes();
 
-  void CreateLayerAnimationController(int layer_id);
-  void DestroyLayerAnimationController();
-
-  void LayerRegistered(int layer_id, LayerTreeType tree_type);
-  void LayerUnregistered(int layer_id, LayerTreeType tree_type);
-
-  bool has_active_value_observer_for_testing() const {
-    return active_value_observer_;
-  }
-  bool has_pending_value_observer_for_testing() const {
-    return pending_value_observer_;
-  }
+  void ElementRegistered(ElementId element_id, ElementListType list_type);
+  void ElementUnregistered(ElementId element_id, ElementListType list_type);
 
   void AddPlayer(AnimationPlayer* player);
   void RemovePlayer(AnimationPlayer* player);
   bool IsEmpty() const;
 
-  typedef base::LinkedList<AnimationPlayer> PlayersList;
-  typedef base::LinkNode<AnimationPlayer> PlayersListNode;
-  const PlayersList& players_list() const { return *players_list_.get(); }
+  typedef base::ObserverList<AnimationPlayer> PlayersList;
+  const PlayersList& players_list() const { return players_list_; }
 
-  void PushPropertiesTo(ElementAnimations* element_animations_impl);
+  // Ensures that the list of active animations on the main thread and the impl
+  // thread are kept in sync. This function does not take ownership of the impl
+  // thread ElementAnimations.
+  void PushPropertiesTo(
+      scoped_refptr<ElementAnimations> element_animations_impl) const;
+
+  // Returns true if there are any animations that have neither finished nor
+  // aborted.
+  bool HasTickingAnimation() const;
+
+  // Returns true if there are any animations at all to process.
+  bool HasAnyAnimation() const;
+
+  bool HasAnyAnimationTargetingProperty(TargetProperty::Type property) const;
+
+  // Returns true if there is an animation that is either currently animating
+  // the given property or scheduled to animate this property in the future, and
+  // that affects the given tree type.
+  bool IsPotentiallyAnimatingProperty(TargetProperty::Type target_property,
+                                      ElementListType list_type) const;
+
+  // Returns true if there is an animation that is currently animating the given
+  // property and that affects the given tree type.
+  bool IsCurrentlyAnimatingProperty(TargetProperty::Type target_property,
+                                    ElementListType list_type) const;
+
+  void NotifyAnimationStarted(const AnimationEvent& event);
+  void NotifyAnimationFinished(const AnimationEvent& event);
+  void NotifyAnimationAborted(const AnimationEvent& event);
+  void NotifyAnimationPropertyUpdate(const AnimationEvent& event);
+  void NotifyAnimationTakeover(const AnimationEvent& event);
+
+  bool has_element_in_active_list() const {
+    return has_element_in_active_list_;
+  }
+  bool has_element_in_pending_list() const {
+    return has_element_in_pending_list_;
+  }
+  bool has_element_in_any_list() const {
+    return has_element_in_active_list_ || has_element_in_pending_list_;
+  }
+
+  void set_has_element_in_active_list(bool has_element_in_active_list) {
+    has_element_in_active_list_ = has_element_in_active_list;
+  }
+  void set_has_element_in_pending_list(bool has_element_in_pending_list) {
+    has_element_in_pending_list_ = has_element_in_pending_list;
+  }
+
+  bool HasFilterAnimationThatInflatesBounds() const;
+  bool HasTransformAnimationThatInflatesBounds() const;
+  bool HasAnimationThatInflatesBounds() const {
+    return HasTransformAnimationThatInflatesBounds() ||
+           HasFilterAnimationThatInflatesBounds();
+  }
+
+  bool FilterAnimationBoundsForBox(const gfx::BoxF& box,
+                                   gfx::BoxF* bounds) const;
+  bool TransformAnimationBoundsForBox(const gfx::BoxF& box,
+                                      gfx::BoxF* bounds) const;
+
+  bool HasOnlyTranslationTransforms(ElementListType list_type) const;
+
+  bool AnimationsPreserveAxisAlignment() const;
+
+  // Sets |start_scale| to the maximum of starting animation scale along any
+  // dimension at any destination in active animations. Returns false if the
+  // starting scale cannot be computed.
+  bool AnimationStartScale(ElementListType list_type, float* start_scale) const;
+
+  // Sets |max_scale| to the maximum scale along any dimension at any
+  // destination in active animations. Returns false if the maximum scale cannot
+  // be computed.
+  bool MaximumTargetScale(ElementListType list_type, float* max_scale) const;
+
+  bool ScrollOffsetAnimationWasInterrupted() const;
+
+  void SetNeedsPushProperties();
+  bool needs_push_properties() const { return needs_push_properties_; }
+
+  void UpdateClientAnimationState();
+  void SetNeedsUpdateImplClientState();
+
+  void NotifyClientOpacityAnimated(float opacity,
+                                   bool notify_active_elements,
+                                   bool notify_pending_elements);
+  void NotifyClientTransformAnimated(const gfx::Transform& transform,
+                                     bool notify_active_elements,
+                                     bool notify_pending_elements);
+  void NotifyClientFilterAnimated(const FilterOperations& filter,
+                                  bool notify_active_elements,
+                                  bool notify_pending_elements);
+  void NotifyClientScrollOffsetAnimated(const gfx::ScrollOffset& scroll_offset,
+                                        bool notify_active_elements,
+                                        bool notify_pending_elements);
+  gfx::ScrollOffset ScrollOffsetForAnimation() const;
 
  private:
-  explicit ElementAnimations(AnimationHost* host);
+  friend class base::RefCounted<ElementAnimations>;
 
-  void SetFilterMutated(LayerTreeType tree_type,
+  ElementAnimations();
+  ~ElementAnimations();
+
+  void OnFilterAnimated(ElementListType list_type,
                         const FilterOperations& filters);
-  void SetOpacityMutated(LayerTreeType tree_type, float opacity);
-  void SetTransformMutated(LayerTreeType tree_type,
+  void OnOpacityAnimated(ElementListType list_type, float opacity);
+  void OnTransformAnimated(ElementListType list_type,
                            const gfx::Transform& transform);
-  void SetScrollOffsetMutated(LayerTreeType tree_type,
+  void OnScrollOffsetAnimated(ElementListType list_type,
                               const gfx::ScrollOffset& scroll_offset);
-  void SetTransformIsPotentiallyAnimatingChanged(LayerTreeType tree_type,
-                                                 bool is_animating);
 
-  void CreateActiveValueObserver();
-  void DestroyActiveValueObserver();
+  static TargetProperties GetPropertiesMaskForAnimationState();
 
-  void CreatePendingValueObserver();
-  void DestroyPendingValueObserver();
+  void UpdatePlayersTickingState(UpdateTickingType update_ticking_type) const;
+  void RemovePlayersFromTicking() const;
 
-  // AnimationDelegate implementation
-  void NotifyAnimationStarted(base::TimeTicks monotonic_time,
-                              Animation::TargetProperty target_property,
-                              int group) override;
-  void NotifyAnimationFinished(base::TimeTicks monotonic_time,
-                               Animation::TargetProperty target_property,
-                               int group) override;
-
-  // LayerAnimationValueProvider implementation.
-  gfx::ScrollOffset ScrollOffsetForAnimation() const override;
-
-  scoped_ptr<PlayersList> players_list_;
-
-  class ValueObserver;
-  scoped_ptr<ValueObserver> active_value_observer_;
-  scoped_ptr<ValueObserver> pending_value_observer_;
-
-  // LAC is owned by ElementAnimations (1:1 relationship).
-  scoped_refptr<LayerAnimationController> layer_animation_controller_;
+  PlayersList players_list_;
   AnimationHost* animation_host_;
+  ElementId element_id_;
+
+  bool has_element_in_active_list_;
+  bool has_element_in_pending_list_;
+
+  mutable bool needs_push_properties_;
+
+  PropertyAnimationState active_state_;
+  PropertyAnimationState pending_state_;
+
+  mutable bool needs_update_impl_client_state_;
 
   DISALLOW_COPY_AND_ASSIGN(ElementAnimations);
 };

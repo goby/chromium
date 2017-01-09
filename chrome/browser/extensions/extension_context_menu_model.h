@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_CONTEXT_MENU_MODEL_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_CONTEXT_MENU_MODEL_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/base/models/simple_menu_model.h"
 
 class Browser;
@@ -21,7 +22,6 @@ class WebContents;
 namespace extensions {
 class Extension;
 class ContextMenuMatcher;
-class ExtensionContextMenuModelTest;
 
 // The context menu model for extension icons.
 class ExtensionContextMenuModel : public ui::SimpleMenuModel,
@@ -79,8 +79,6 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   // SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
   ui::SimpleMenuModel* page_access_submenu_for_testing() {
@@ -132,9 +130,9 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   ButtonVisibility button_visibility_;
 
   // Menu matcher for context menu items specified by the extension.
-  scoped_ptr<ContextMenuMatcher> extension_items_;
+  std::unique_ptr<ContextMenuMatcher> extension_items_;
 
-  scoped_ptr<ui::SimpleMenuModel> page_access_submenu_;
+  std::unique_ptr<ui::SimpleMenuModel> page_access_submenu_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionContextMenuModel);
 };

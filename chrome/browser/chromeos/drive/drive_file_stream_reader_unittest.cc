@@ -4,15 +4,18 @@
 
 #include "chrome/browser/chromeos/drive/drive_file_stream_reader.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
-#include "components/drive/drive_test_util.h"
-#include "components/drive/fake_file_system.h"
+#include "components/drive/chromeos/drive_test_util.h"
+#include "components/drive/chromeos/fake_file_system.h"
 #include "components/drive/file_system_core_util.h"
 #include "components/drive/local_file_reader.h"
 #include "components/drive/service/fake_drive_service.h"
@@ -48,7 +51,7 @@ class LocalReaderProxyTest : public ::testing::Test {
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     ASSERT_TRUE(google_apis::test_util::CreateFileOfSpecifiedSize(
-        temp_dir_.path(), 1024, &file_path_, &file_content_));
+        temp_dir_.GetPath(), 1024, &file_path_, &file_content_));
 
     worker_thread_.reset(new base::Thread("ReaderProxyTest"));
     ASSERT_TRUE(worker_thread_->Start());
@@ -60,19 +63,19 @@ class LocalReaderProxyTest : public ::testing::Test {
   base::FilePath file_path_;
   std::string file_content_;
 
-  scoped_ptr<base::Thread> worker_thread_;
+  std::unique_ptr<base::Thread> worker_thread_;
 };
 
 TEST_F(LocalReaderProxyTest, Read) {
   // Open the file first.
-  scoped_ptr<util::LocalFileReader> file_reader(
+  std::unique_ptr<util::LocalFileReader> file_reader(
       new util::LocalFileReader(worker_thread_->task_runner().get()));
   net::TestCompletionCallback callback;
   file_reader->Open(file_path_, 0, callback.callback());
   ASSERT_EQ(net::OK, callback.WaitForResult());
 
   // Test instance.
-  LocalReaderProxy proxy(file_reader.Pass(), file_content_.size());
+  LocalReaderProxy proxy(std::move(file_reader), file_content_.size());
 
   // Make sure the read content is as same as the file.
   std::string content;
@@ -86,14 +89,14 @@ TEST_F(LocalReaderProxyTest, ReadWithLimit) {
       file_content_.substr(0, file_content_.size() / 2);
 
   // Open the file first.
-  scoped_ptr<util::LocalFileReader> file_reader(
+  std::unique_ptr<util::LocalFileReader> file_reader(
       new util::LocalFileReader(worker_thread_->task_runner().get()));
   net::TestCompletionCallback callback;
   file_reader->Open(file_path_, 0, callback.callback());
   ASSERT_EQ(net::OK, callback.WaitForResult());
 
   // Test instance.
-  LocalReaderProxy proxy(file_reader.Pass(), expected_content.size());
+  LocalReaderProxy proxy(std::move(file_reader), expected_content.size());
 
   // Make sure the read content is as same as the file.
   std::string content;
@@ -137,8 +140,8 @@ TEST_F(NetworkReaderProxyTest, Read) {
     EXPECT_EQ(net::ERR_IO_PENDING, result);
 
     // And when the data is supplied, the callback will be called.
-    scoped_ptr<std::string> data(new std::string("abcde"));
-    proxy.OnGetContent(data.Pass());
+    std::unique_ptr<std::string> data(new std::string("abcde"));
+    proxy.OnGetContent(std::move(data));
 
     // The returned data should be fit to the buffer size.
     result = callback.GetResult(result);
@@ -152,9 +155,9 @@ TEST_F(NetworkReaderProxyTest, Read) {
 
     // Supply the data before calling Read operation.
     data.reset(new std::string("fg"));
-    proxy.OnGetContent(data.Pass());
+    proxy.OnGetContent(std::move(data));
     data.reset(new std::string("hij"));
-    proxy.OnGetContent(data.Pass());  // Now 10 bytes are supplied.
+    proxy.OnGetContent(std::move(data));  // Now 10 bytes are supplied.
 
     // The data should be concatenated if possible.
     result = proxy.Read(buffer.get(), kBufferSize, callback.callback());
@@ -187,12 +190,12 @@ TEST_F(NetworkReaderProxyTest, ReadWithLimit) {
   EXPECT_EQ(net::ERR_IO_PENDING, result);
 
   // And when the data is supplied, the callback will be called.
-  scoped_ptr<std::string> data(new std::string("abcde"));
-  proxy.OnGetContent(data.Pass());
+  std::unique_ptr<std::string> data(new std::string("abcde"));
+  proxy.OnGetContent(std::move(data));
   data.reset(new std::string("fgh"));
-  proxy.OnGetContent(data.Pass());
+  proxy.OnGetContent(std::move(data));
   data.reset(new std::string("ijklmno"));
-  proxy.OnGetContent(data.Pass());
+  proxy.OnGetContent(std::move(data));
 
   // The returned data should be fit to the buffer size.
   result = callback.GetResult(result);
@@ -206,9 +209,9 @@ TEST_F(NetworkReaderProxyTest, ReadWithLimit) {
 
   // Supply the data before calling Read operation.
   data.reset(new std::string("pqrs"));
-  proxy.OnGetContent(data.Pass());
+  proxy.OnGetContent(std::move(data));
   data.reset(new std::string("tuvwxyz"));
-  proxy.OnGetContent(data.Pass());  // 't' is the 20-th byte.
+  proxy.OnGetContent(std::move(data));  // 't' is the 20-th byte.
 
   // The data should be concatenated if possible.
   result = proxy.Read(buffer.get(), kBufferSize, callback.callback());
@@ -253,8 +256,8 @@ TEST_F(NetworkReaderProxyTest, ErrorWithPendingData) {
   scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(kBufferSize));
 
   // Supply the data before an error.
-  scoped_ptr<std::string> data(new std::string("abcde"));
-  proxy.OnGetContent(data.Pass());
+  std::unique_ptr<std::string> data(new std::string("abcde"));
+  proxy.OnGetContent(std::move(data));
 
   // Emulate that an error is found.
   proxy.OnCompleted(FILE_ERROR_FAILED);
@@ -318,10 +321,10 @@ class DriveFileStreamReaderTest : public ::testing::Test {
 
   content::TestBrowserThreadBundle thread_bundle_;
 
-  scoped_ptr<base::Thread> worker_thread_;
+  std::unique_ptr<base::Thread> worker_thread_;
 
-  scoped_ptr<FakeDriveService> fake_drive_service_;
-  scoped_ptr<test_util::FakeFileSystem> fake_file_system_;
+  std::unique_ptr<FakeDriveService> fake_drive_service_;
+  std::unique_ptr<test_util::FakeFileSystem> fake_file_system_;
 };
 
 TEST_F(DriveFileStreamReaderTest, Read) {
@@ -329,12 +332,12 @@ TEST_F(DriveFileStreamReaderTest, Read) {
       util::GetDriveMyDriveRootPath().AppendASCII("File 1.txt");
   // Create the reader, and initialize it.
   // In this case, the file is not yet locally cached.
-  scoped_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
+  std::unique_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
       GetFileSystemGetter(), worker_thread_->task_runner().get()));
   EXPECT_FALSE(reader->IsInitialized());
 
   int error = net::ERR_FAILED;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   {
     base::RunLoop run_loop;
     reader->Initialize(
@@ -390,19 +393,19 @@ TEST_F(DriveFileStreamReaderTest, Read) {
 
 TEST_F(DriveFileStreamReaderTest, ReadRange) {
   // In this test case, we just confirm that the part of file is read.
-  const int64 kRangeOffset = 3;
-  const int64 kRangeLength = 4;
+  const int64_t kRangeOffset = 3;
+  const int64_t kRangeLength = 4;
 
   const base::FilePath kDriveFile =
       util::GetDriveMyDriveRootPath().AppendASCII("File 1.txt");
   // Create the reader, and initialize it.
   // In this case, the file is not yet locally cached.
-  scoped_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
+  std::unique_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
       GetFileSystemGetter(), worker_thread_->task_runner().get()));
   EXPECT_FALSE(reader->IsInitialized());
 
   int error = net::ERR_FAILED;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   net::HttpByteRange byte_range;
   byte_range.set_first_byte_position(kRangeOffset);
   // Last byte position is inclusive.
@@ -426,7 +429,7 @@ TEST_F(DriveFileStreamReaderTest, ReadRange) {
   ASSERT_EQ(net::OK, test_util::ReadAllData(reader.get(), &first_content));
 
   // The length should be equal to range length.
-  EXPECT_EQ(kRangeLength, static_cast<int64>(first_content.size()));
+  EXPECT_EQ(kRangeLength, static_cast<int64_t>(first_content.size()));
 
   // Create second instance and initialize it.
   // In this case, the file should be cached one.
@@ -459,19 +462,19 @@ TEST_F(DriveFileStreamReaderTest, ReadRange) {
 }
 
 TEST_F(DriveFileStreamReaderTest, OutOfRangeError) {
-  const int64 kRangeOffset = 1000000;  // Out of range.
-  const int64 kRangeLength = 4;
+  const int64_t kRangeOffset = 1000000;  // Out of range.
+  const int64_t kRangeLength = 4;
 
   const base::FilePath kDriveFile =
       util::GetDriveMyDriveRootPath().AppendASCII("File 1.txt");
   // Create the reader, and initialize it.
   // In this case, the file is not yet locally cached.
-  scoped_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
+  std::unique_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
       GetFileSystemGetter(), worker_thread_->task_runner().get()));
   EXPECT_FALSE(reader->IsInitialized());
 
   int error = net::ERR_FAILED;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   net::HttpByteRange byte_range;
   byte_range.set_first_byte_position(kRangeOffset);
   // Last byte position is inclusive.
@@ -494,7 +497,7 @@ TEST_F(DriveFileStreamReaderTest, ZeroByteFileRead) {
   // Prepare an empty file
   {
     google_apis::DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-    scoped_ptr<google_apis::FileResource> entry;
+    std::unique_ptr<google_apis::FileResource> entry;
     fake_drive_service_->AddNewFile(
         "text/plain",
         "",  // empty
@@ -512,12 +515,12 @@ TEST_F(DriveFileStreamReaderTest, ZeroByteFileRead) {
       util::GetDriveMyDriveRootPath().AppendASCII("EmptyFile.txt");
   // Create the reader, and initialize it.
   // In this case, the file is not yet locally cached.
-  scoped_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
+  std::unique_ptr<DriveFileStreamReader> reader(new DriveFileStreamReader(
       GetFileSystemGetter(), worker_thread_->task_runner().get()));
   EXPECT_FALSE(reader->IsInitialized());
 
   int error = net::ERR_FAILED;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   {
     base::RunLoop run_loop;
     reader->Initialize(

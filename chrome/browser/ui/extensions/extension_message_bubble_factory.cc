@@ -8,6 +8,7 @@
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/field_trial.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/dev_mode_bubble_delegate.h"
 #include "chrome/browser/extensions/extension_message_bubble_controller.h"
 #include "chrome/browser/extensions/install_verifier.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/extensions/suspicious_extension_bubble_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/common/channel_info.h"
 #include "components/version_info/version_info.h"
 #include "extensions/common/feature_switch.h"
@@ -37,7 +39,7 @@ ExtensionMessageBubbleFactory::OverrideForTesting g_override_for_testing =
 const char kEnableDevModeWarningExperimentName[] =
     "ExtensionDeveloperModeWarning";
 
-#if !defined(OS_WIN)
+#if !defined(OS_WIN) && !defined(OS_MACOSX)
 const char kEnableProxyWarningExperimentName[] = "ExtensionProxyWarning";
 #endif
 
@@ -60,7 +62,7 @@ bool EnableSuspiciousExtensionsBubble() {
 }
 
 bool EnableSettingsApiBubble() {
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_MACOSX)
   return true;
 #else
   return g_override_for_testing ==
@@ -69,7 +71,7 @@ bool EnableSettingsApiBubble() {
 }
 
 bool EnableProxyOverrideBubble() {
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_MACOSX)
   return true;
 #else
   return g_override_for_testing ==
@@ -101,17 +103,17 @@ ExtensionMessageBubbleFactory::ExtensionMessageBubbleFactory(Browser* browser)
 ExtensionMessageBubbleFactory::~ExtensionMessageBubbleFactory() {
 }
 
-scoped_ptr<extensions::ExtensionMessageBubbleController>
+std::unique_ptr<extensions::ExtensionMessageBubbleController>
 ExtensionMessageBubbleFactory::GetController() {
   Profile* original_profile = browser_->profile()->GetOriginalProfile();
   std::set<Profile*>& profiles_evaluated = g_profiles_evaluated.Get();
   bool is_initial_check = profiles_evaluated.count(original_profile) == 0;
   profiles_evaluated.insert(original_profile);
 
-  scoped_ptr<extensions::ExtensionMessageBubbleController> controller;
+  std::unique_ptr<extensions::ExtensionMessageBubbleController> controller;
 
   if (g_override_for_testing == OVERRIDE_DISABLED)
-    return controller.Pass();
+    return controller;
 
   // The list of suspicious extensions takes priority over the dev mode bubble
   // and the settings API bubble, since that needs to be shown as soon as we
@@ -128,18 +130,20 @@ ExtensionMessageBubbleFactory::GetController() {
                 browser_->profile()),
             browser_));
     if (controller->ShouldShow())
-      return controller.Pass();
+      return controller;
   }
 
   if (EnableSettingsApiBubble()) {
-    // No use showing this if it's not the startup of the profile.
-    if (is_initial_check) {
+    // No use showing this if it's not the startup of the profile, and if the
+    // browser was restarted, then we always do a session restore (rather than
+    // showing normal startup pages).
+    if (is_initial_check && !StartupBrowserCreator::WasRestarted()) {
       controller.reset(new extensions::ExtensionMessageBubbleController(
               new extensions::SettingsApiBubbleDelegate(
                   browser_->profile(), extensions::BUBBLE_TYPE_STARTUP_PAGES),
                   browser_));
       if (controller->ShouldShow())
-        return controller.Pass();
+        return controller;
     }
   }
 
@@ -150,7 +154,7 @@ ExtensionMessageBubbleFactory::GetController() {
                 browser_->profile()),
             browser_));
     if (controller->ShouldShow())
-      return controller.Pass();
+      return controller;
   }
 
   if (EnableDevModeBubble()) {
@@ -160,11 +164,11 @@ ExtensionMessageBubbleFactory::GetController() {
                 browser_->profile()),
             browser_));
     if (controller->ShouldShow())
-      return controller.Pass();
+      return controller;
   }
 
   controller.reset();
-  return controller.Pass();
+  return controller;
 }
 
 // static

@@ -5,10 +5,13 @@
 #ifndef CONTENT_PUBLIC_TEST_TEST_UTILS_H_
 #define CONTENT_PUBLIC_TEST_TEST_UTILS_H_
 
+#include <memory>
+
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_checker.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_child_process_observer.h"
 #include "content/public/browser/browser_thread.h"
@@ -32,6 +35,7 @@ class CommandLine;
 namespace content {
 
 class RenderFrameHost;
+class TestServiceManagerContext;
 
 // Turns on nestable tasks, runs the message loop, then resets nestable tasks
 // to what they were originally. Prefer this over MessageLoop::Run for in
@@ -44,11 +48,12 @@ void RunThisRunLoop(base::RunLoop* run_loop);
 // Turns on nestable tasks, runs all pending tasks in the message loop,
 // then resets nestable tasks to what they were originally. Prefer this
 // over MessageLoop::RunAllPending for in process browser tests to run
-// all pending tasks.
+// all pending tasks. Can only be called from the UI thread.
 void RunAllPendingInMessageLoop();
 
 // Blocks the current thread until all the pending messages in the loop of the
-// thread |thread_id| have been processed.
+// thread |thread_id| have been processed. Can only be called from the UI
+// thread.
 void RunAllPendingInMessageLoop(BrowserThread::ID thread_id);
 
 // Runs until both the blocking pool and the current message loop are empty
@@ -57,14 +62,15 @@ void RunAllBlockingPoolTasksUntilIdle();
 
 // Get task to quit the given RunLoop. It allows a few generations of pending
 // tasks to run as opposed to run_loop->QuitClosure().
-base::Closure GetQuitTaskForRunLoop(base::RunLoop* run_loop);
+base::Closure GetDeferredQuitTaskForRunLoop(base::RunLoop* run_loop);
 
 // Executes the specified JavaScript in the specified frame, and runs a nested
 // MessageLoop. When the result is available, it is returned.
 // This should not be used; the use of the ExecuteScript functions in
 // browser_test_utils is preferable.
-scoped_ptr<base::Value> ExecuteScriptAndGetValue(
-    RenderFrameHost* render_frame_host, const std::string& script);
+std::unique_ptr<base::Value> ExecuteScriptAndGetValue(
+    RenderFrameHost* render_frame_host,
+    const std::string& script);
 
 // Returns true if all sites are isolated. Typically used to bail from a test
 // that is incompatible with --site-per-process.
@@ -83,9 +89,25 @@ bool RegisterJniForTesting(JNIEnv* env);
 // Helper class to Run and Quit the message loop. Run and Quit can only happen
 // once per instance. Make a new instance for each use. Calling Quit after Run
 // has returned is safe and has no effect.
+// Note that by default Quit does not quit immediately. If that is not what you
+// really need, pass QuitMode::IMMEDIATE in the constructor.
+//
+// DEPRECATED. Consider using base::RunLoop, in most cases MessageLoopRunner is
+// not needed.  If you need to defer quitting the loop, use
+// GetDeferredQuitTaskForRunLoop directly.
+// If you found a case where base::RunLoop is inconvenient or can not be used at
+// all, please post details in a comment on https://crbug.com/668707.
 class MessageLoopRunner : public base::RefCounted<MessageLoopRunner> {
  public:
-  MessageLoopRunner();
+  enum class QuitMode {
+    // Message loop stops after finishing the current task.
+    IMMEDIATE,
+
+    // Several generations of posted tasks are executed before stopping.
+    DEFERRED,
+  };
+
+  MessageLoopRunner(QuitMode mode = QuitMode::DEFERRED);
 
   // Run the current MessageLoop unless the quit closure
   // has already been called.
@@ -107,6 +129,8 @@ class MessageLoopRunner : public base::RefCounted<MessageLoopRunner> {
   friend class base::RefCounted<MessageLoopRunner>;
   ~MessageLoopRunner();
 
+  QuitMode quit_mode_;
+
   // True when the message loop is running.
   bool loop_running_;
 
@@ -114,6 +138,8 @@ class MessageLoopRunner : public base::RefCounted<MessageLoopRunner> {
   bool quit_closure_called_;
 
   base::RunLoop run_loop_;
+
+  base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(MessageLoopRunner);
 };
@@ -234,6 +260,7 @@ class InProcessUtilityThreadHelper : public BrowserChildProcessObserver {
 
   int child_thread_count_;
   scoped_refptr<MessageLoopRunner> runner_;
+  std::unique_ptr<TestServiceManagerContext> shell_context_;
 
   DISALLOW_COPY_AND_ASSIGN(InProcessUtilityThreadHelper);
 };
@@ -255,7 +282,7 @@ class RenderFrameDeletedObserver : public WebContentsObserver {
   int process_id_;
   int routing_id_;
   bool deleted_;
-  scoped_ptr<base::RunLoop> runner_;
+  std::unique_ptr<base::RunLoop> runner_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderFrameDeletedObserver);
 };

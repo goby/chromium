@@ -4,6 +4,8 @@
 
 #include "ui/chromeos/ime/input_method_menu_manager.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 
@@ -33,9 +35,8 @@ InputMethodMenuManager::GetCurrentInputMethodMenuItemList() const {
 void InputMethodMenuManager::SetCurrentInputMethodMenuItemList(
     const InputMethodMenuItemList& menu_list) {
   menu_list_ = menu_list;
-  FOR_EACH_OBSERVER(InputMethodMenuManager::Observer,
-                    observers_,
-                    InputMethodMenuItemChanged(this));
+  for (InputMethodMenuManager::Observer& observer : observers_)
+    observer.InputMethodMenuItemChanged(this);
 }
 
 bool InputMethodMenuManager::HasInputMethodMenuItemForKey(

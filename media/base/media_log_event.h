@@ -5,6 +5,9 @@
 #ifndef MEDIA_BASE_MEDIA_LOG_EVENT_H_
 #define MEDIA_BASE_MEDIA_LOG_EVENT_H_
 
+#include <stdint.h>
+#include <memory>
+
 #include "base/time/time.h"
 #include "base/values.h"
 
@@ -20,7 +23,7 @@ struct MediaLogEvent {
   MediaLogEvent& operator=(const MediaLogEvent& event) {
     id = event.id;
     type = event.type;
-    scoped_ptr<base::DictionaryValue> event_copy(event.params.DeepCopy());
+    std::unique_ptr<base::DictionaryValue> event_copy(event.params.DeepCopy());
     params.Swap(event_copy.get());
     time = event.time;
     return *this;
@@ -92,10 +95,13 @@ struct MediaLogEvent {
     // A property has changed without any special event occurring.
     PROPERTY_CHANGE,
 
-    TYPE_LAST = PROPERTY_CHANGE
+    // Indicates that updated watch time statistics are available.
+    WATCH_TIME_UPDATE,
+
+    TYPE_LAST = WATCH_TIME_UPDATE
   };
 
-  int32 id;
+  int32_t id;
   Type type;
   base::DictionaryValue params;
   base::TimeTicks time;

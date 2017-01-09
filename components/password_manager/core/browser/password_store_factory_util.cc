@@ -4,23 +4,22 @@
 
 #include "components/password_manager/core/browser/password_store_factory_util.h"
 
-#include "base/command_line.h"
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "components/password_manager/core/browser/affiliated_match_helper.h"
 #include "components/password_manager/core/browser/affiliation_service.h"
 #include "components/password_manager/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
+#include "components/password_manager/core/common/password_manager_features.h"
 
 namespace password_manager {
 
 namespace {
 
-bool ShouldAffiliationBasedMatchingBeActive(
-    sync_driver::SyncService* sync_service) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (!IsAffiliationBasedMatchingEnabled(*command_line))
-    return false;
-
-  return sync_service && sync_service->CanSyncStart() &&
+bool ShouldAffiliationBasedMatchingBeActive(syncer::SyncService* sync_service) {
+  return base::FeatureList::IsEnabled(features::kAffiliationBasedMatching) &&
+         sync_service && sync_service->CanSyncStart() &&
          sync_service->IsSyncActive() &&
          sync_service->GetPreferredDataTypes().Has(syncer::PASSWORDS) &&
          !sync_service->IsUsingSecondaryPassphrase();
@@ -34,17 +33,17 @@ void ActivateAffiliationBasedMatching(
   // The PasswordStore is so far the only consumer of the AffiliationService,
   // therefore the service is owned by the AffiliatedMatchHelper, which in
   // turn is owned by the PasswordStore.
-  scoped_ptr<AffiliationService> affiliation_service(
+  std::unique_ptr<AffiliationService> affiliation_service(
       new AffiliationService(db_thread_runner));
   affiliation_service->Initialize(request_context_getter, db_path);
-  scoped_ptr<AffiliatedMatchHelper> affiliated_match_helper(
-      new AffiliatedMatchHelper(password_store, affiliation_service.Pass()));
+  std::unique_ptr<AffiliatedMatchHelper> affiliated_match_helper(
+      new AffiliatedMatchHelper(password_store,
+                                std::move(affiliation_service)));
   affiliated_match_helper->Initialize();
-  password_store->SetAffiliatedMatchHelper(affiliated_match_helper.Pass());
+  password_store->SetAffiliatedMatchHelper(std::move(affiliated_match_helper));
 
   password_store->enable_propagating_password_changes_to_web_credentials(
-      IsPropagatingPasswordChangesToWebCredentialsEnabled(
-          *base::CommandLine::ForCurrentProcess()));
+      base::FeatureList::IsEnabled(features::kAffiliationBasedMatching));
 }
 
 base::FilePath GetAffiliationDatabasePath(const base::FilePath& profile_path) {
@@ -55,7 +54,7 @@ base::FilePath GetAffiliationDatabasePath(const base::FilePath& profile_path) {
 
 void ToggleAffiliationBasedMatchingBasedOnPasswordSyncedState(
     PasswordStore* password_store,
-    sync_driver::SyncService* sync_service,
+    syncer::SyncService* sync_service,
     net::URLRequestContextGetter* request_context_getter,
     const base::FilePath& profile_path,
     scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner) {
@@ -72,7 +71,7 @@ void ToggleAffiliationBasedMatchingBasedOnPasswordSyncedState(
                                      db_thread_runner);
   } else if (!matching_should_be_active && matching_is_active) {
     password_store->SetAffiliatedMatchHelper(
-        make_scoped_ptr<AffiliatedMatchHelper>(nullptr));
+        base::WrapUnique<AffiliatedMatchHelper>(nullptr));
   }
 }
 
@@ -88,10 +87,10 @@ void TrimOrDeleteAffiliationCacheForStoreAndPath(
   }
 }
 
-scoped_ptr<LoginDatabase> CreateLoginDatabase(
+std::unique_ptr<LoginDatabase> CreateLoginDatabase(
     const base::FilePath& profile_path) {
   base::FilePath login_db_file_path = profile_path.Append(kLoginDataFileName);
-  return make_scoped_ptr(new LoginDatabase(login_db_file_path));
+  return base::MakeUnique<LoginDatabase>(login_db_file_path);
 }
 
 }  // namespace password_manager

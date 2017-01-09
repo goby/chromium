@@ -6,8 +6,8 @@
 #define ASH_WM_SYSTEM_MODAL_CONTAINER_EVENT_FILTER_H_
 
 #include "ash/ash_export.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/events/event_handler.h"
 
 namespace ash {
@@ -20,9 +20,8 @@ class ASH_EXPORT SystemModalContainerEventFilter : public ui::EventHandler {
       SystemModalContainerEventFilterDelegate* delegate);
   ~SystemModalContainerEventFilter() override;
 
-  // Overridden from ui::EventHandler:
-  void OnKeyEvent(ui::KeyEvent* event) override;
-  void OnMouseEvent(ui::MouseEvent* event) override;
+  // ui::EventHandler:
+  void OnEvent(ui::Event* event) override;
 
  private:
   SystemModalContainerEventFilterDelegate* delegate_;

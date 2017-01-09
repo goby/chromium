@@ -7,11 +7,11 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/screens/user_image_view.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
-#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -37,11 +37,9 @@ class UserImageScreenHandler : public UserImageView, public BaseScreenHandler {
   void Unbind() override;
   void Show() override;
   void Hide() override;
-  void PrepareToShow() override;
   void HideCurtain() override;
 
  private:
-
   // Sends image data to the page.
   void HandleGetImages();
 

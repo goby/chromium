@@ -10,13 +10,10 @@
 class GURL;
 
 namespace net {
-class HostPortPair;
 class ProxyServer;
 }
 
 namespace data_reduction_proxy {
-
-struct DataReductionProxyTypeInfo;
 
 class DataReductionProxyConfigValues {
  public:
@@ -37,15 +34,8 @@ class DataReductionProxyConfigValues {
   // Returns true if the fallback proxy may be used.
   virtual bool fallback_allowed() const = 0;
 
-  // Returns true if the proxy server uses an HTTP tunnel to provide HTTPS
-  // proxying.
-  virtual bool UsingHTTPTunnel(const net::HostPortPair& proxy_server) const = 0;
-
   // Returns the HTTP proxy servers to be used.
   virtual const std::vector<net::ProxyServer>& proxies_for_http() const = 0;
-
-  // Returns the HTTPS proxy servers to be used.
-  virtual const std::vector<net::ProxyServer>& proxies_for_https() const = 0;
 
   // Returns the URL to check to decide if the secure proxy origin should be
   // used.

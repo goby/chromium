@@ -5,13 +5,14 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_interceptor.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_configurator.h"
@@ -20,6 +21,7 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
@@ -124,40 +126,46 @@ class DataReductionProxyInterceptorTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
-  void Init(scoped_ptr<net::URLRequestJobFactory> factory) {
-    job_factory_ = factory.Pass();
+  void Init(std::unique_ptr<net::URLRequestJobFactory> factory) {
+    job_factory_ = std::move(factory);
     default_context_->set_job_factory(job_factory_.get());
     default_context_->Init();
   }
 
   base::MessageLoopForIO message_loop_;
-  scoped_ptr<DataReductionProxyTestContext> test_context_;
+  std::unique_ptr<DataReductionProxyTestContext> test_context_;
   net::TestNetworkDelegate default_network_delegate_;
-  scoped_ptr<net::URLRequestJobFactory> job_factory_;
-  scoped_ptr<net::TestURLRequestContext> default_context_;
+  std::unique_ptr<net::URLRequestJobFactory> job_factory_;
+  std::unique_ptr<net::TestURLRequestContext> default_context_;
 };
 
-TEST_F(DataReductionProxyInterceptorTest, TestJobFactoryChaining) {
+// Disabled on Mac due to flakiness. See crbug.com/601562.
+#if defined(OS_MACOSX)
+#define MAYBE_TestJobFactoryChaining DISABLED_TestJobFactoryChaining
+#else
+#define MAYBE_TestJobFactoryChaining TestJobFactoryChaining
+#endif
+TEST_F(DataReductionProxyInterceptorTest, MAYBE_TestJobFactoryChaining) {
   // Verifies that job factories can be chained.
-  scoped_ptr<net::URLRequestJobFactory> impl(
+  std::unique_ptr<net::URLRequestJobFactory> impl(
       new net::URLRequestJobFactoryImpl());
 
   CountingURLRequestInterceptor* interceptor2 =
       new CountingURLRequestInterceptor();
-  scoped_ptr<net::URLRequestJobFactory> factory2(
+  std::unique_ptr<net::URLRequestJobFactory> factory2(
       new net::URLRequestInterceptingJobFactory(
-          impl.Pass(), make_scoped_ptr(interceptor2)));
+          std::move(impl), base::WrapUnique(interceptor2)));
 
   CountingURLRequestInterceptor* interceptor1 =
       new CountingURLRequestInterceptor();
-  scoped_ptr<net::URLRequestJobFactory> factory1(
+  std::unique_ptr<net::URLRequestJobFactory> factory1(
       new net::URLRequestInterceptingJobFactory(
-          factory2.Pass(), make_scoped_ptr(interceptor1)));
+          std::move(factory2), base::WrapUnique(interceptor1)));
 
-  Init(factory1.Pass());
+  Init(std::move(factory1));
 
   net::TestDelegate d;
-  scoped_ptr<net::URLRequest> req(default_context_->CreateRequest(
+  std::unique_ptr<net::URLRequest> req(default_context_->CreateRequest(
       GURL("http://foo"), net::DEFAULT_PRIORITY, &d));
 
   req->Start();
@@ -214,10 +222,10 @@ class DataReductionProxyInterceptorWithServerTest : public testing::Test {
 
     context_.set_proxy_service(proxy_service_.get());
 
-    scoped_ptr<net::URLRequestJobFactoryImpl> job_factory_impl(
+    std::unique_ptr<net::URLRequestJobFactoryImpl> job_factory_impl(
         new net::URLRequestJobFactoryImpl());
     job_factory_.reset(new net::URLRequestInterceptingJobFactory(
-        job_factory_impl.Pass(),
+        std::move(job_factory_impl),
         test_context_->io_data()->CreateInterceptor()));
     context_.set_job_factory(job_factory_.get());
     context_.Init();
@@ -236,9 +244,9 @@ class DataReductionProxyInterceptorWithServerTest : public testing::Test {
   net::TestURLRequestContext context_;
   net::EmbeddedTestServer proxy_;
   net::EmbeddedTestServer direct_;
-  scoped_ptr<net::ProxyService> proxy_service_;
-  scoped_ptr<net::URLRequestJobFactory> job_factory_;
-  scoped_ptr<DataReductionProxyTestContext> test_context_;
+  std::unique_ptr<net::ProxyService> proxy_service_;
+  std::unique_ptr<net::URLRequestJobFactory> job_factory_;
+  std::unique_ptr<DataReductionProxyTestContext> test_context_;
 };
 
 TEST_F(DataReductionProxyInterceptorWithServerTest, TestBypass) {
@@ -246,29 +254,25 @@ TEST_F(DataReductionProxyInterceptorWithServerTest, TestBypass) {
   // that cover every imaginable response that could trigger a bypass, see:
   // DataReductionProxyProtocolTest.
   net::TestDelegate delegate;
-  scoped_ptr<net::URLRequest> request(
-      context().CreateRequest(direct().GetURL("/block10.html"),
-                             net::DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<net::URLRequest> request(context().CreateRequest(
+      direct().GetURL("/block10.html"), net::DEFAULT_PRIORITY, &delegate));
   request->Start();
   EXPECT_TRUE(request->is_pending());
   base::RunLoop().Run();
 
-  EXPECT_EQ(net::URLRequestStatus::SUCCESS, request->status().status());
-  EXPECT_EQ(net::OK, request->status().error());
+  EXPECT_EQ(net::OK, delegate.request_status());
   EXPECT_EQ("hello", delegate.data_received());
 }
 
 TEST_F(DataReductionProxyInterceptorWithServerTest, TestNoBypass) {
   net::TestDelegate delegate;
-  scoped_ptr<net::URLRequest> request(
-      context().CreateRequest(direct().GetURL("/noblock.html"),
-                             net::DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<net::URLRequest> request(context().CreateRequest(
+      direct().GetURL("/noblock.html"), net::DEFAULT_PRIORITY, &delegate));
   request->Start();
   EXPECT_TRUE(request->is_pending());
   base::RunLoop().Run();
 
-  EXPECT_EQ(net::URLRequestStatus::SUCCESS, request->status().status());
-  EXPECT_EQ(net::OK, request->status().error());
+  EXPECT_EQ(net::OK, delegate.request_status());
   EXPECT_EQ("hello", delegate.data_received());
 }
 
@@ -287,6 +291,8 @@ class DataReductionProxyInterceptorEndToEndTest : public testing::Test {
             .Build();
     drp_test_context_->AttachToURLRequestContext(&context_storage_);
     context_.set_client_socket_factory(&mock_socket_factory_);
+    proxy_delegate_ = drp_test_context_->io_data()->CreateProxyDelegate();
+    context_.set_proxy_delegate(proxy_delegate_.get());
     context_.Init();
     drp_test_context_->EnableDataReductionProxyWithSecureProxyCheckSuccess();
 
@@ -298,17 +304,15 @@ class DataReductionProxyInterceptorEndToEndTest : public testing::Test {
 
   // Creates a URLRequest using the test's TestURLRequestContext and executes
   // it. Returns the created URLRequest.
-  scoped_ptr<net::URLRequest> CreateAndExecuteRequest(const GURL& url) {
-    scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> CreateAndExecuteRequest(const GURL& url) {
+    std::unique_ptr<net::URLRequest> request(
         context_.CreateRequest(url, net::IDLE, &delegate_));
     request->Start();
     drp_test_context_->RunUntilIdle();
-    return request.Pass();
+    return request;
   }
 
-  const net::TestDelegate& delegate() const {
-    return delegate_;
-  }
+  const net::TestDelegate& delegate() const { return delegate_; }
 
   net::MockClientSocketFactory* mock_socket_factory() {
     return &mock_socket_factory_;
@@ -328,7 +332,8 @@ class DataReductionProxyInterceptorEndToEndTest : public testing::Test {
   net::MockClientSocketFactory mock_socket_factory_;
   net::TestURLRequestContext context_;
   net::URLRequestContextStorage context_storage_;
-  scoped_ptr<DataReductionProxyTestContext> drp_test_context_;
+  std::unique_ptr<net::ProxyDelegate> proxy_delegate_;
+  std::unique_ptr<DataReductionProxyTestContext> drp_test_context_;
 };
 
 const std::string kBody = "response body";
@@ -344,14 +349,13 @@ TEST_F(DataReductionProxyInterceptorEndToEndTest, ResponseWithoutRetry) {
       mock_reads, arraysize(mock_reads), nullptr, 0);
   mock_socket_factory()->AddSocketDataProvider(&socket_data_provider);
 
-  scoped_ptr<net::URLRequest> request =
+  std::unique_ptr<net::URLRequest> request =
       CreateAndExecuteRequest(GURL("http://foo.com"));
 
-  EXPECT_EQ(net::URLRequestStatus::SUCCESS, request->status().status());
+  EXPECT_EQ(net::OK, delegate().request_status());
   EXPECT_EQ(200, request->GetResponseCode());
   EXPECT_EQ(kBody, delegate().data_received());
-  EXPECT_EQ(origin().host_port_pair().ToString(),
-            request->proxy_server().ToString());
+  EXPECT_EQ(origin(), request->proxy_server());
 }
 
 TEST_F(DataReductionProxyInterceptorEndToEndTest, RedirectWithoutRetry) {
@@ -378,14 +382,13 @@ TEST_F(DataReductionProxyInterceptorEndToEndTest, RedirectWithoutRetry) {
       response_mock_reads, arraysize(response_mock_reads), nullptr, 0);
   mock_socket_factory()->AddSocketDataProvider(&response_socket_data_provider);
 
-  scoped_ptr<net::URLRequest> request =
+  std::unique_ptr<net::URLRequest> request =
       CreateAndExecuteRequest(GURL("http://foo.com"));
 
-  EXPECT_EQ(net::URLRequestStatus::SUCCESS, request->status().status());
+  EXPECT_EQ(net::OK, delegate().request_status());
   EXPECT_EQ(200, request->GetResponseCode());
   EXPECT_EQ(kBody, delegate().data_received());
-  EXPECT_EQ(origin().host_port_pair().ToString(),
-            request->proxy_server().ToString());
+  EXPECT_EQ(origin(), request->proxy_server());
   // The redirect should have been processed and followed normally.
   EXPECT_EQ(1, delegate().received_redirect_count());
 }
@@ -413,10 +416,10 @@ TEST_F(DataReductionProxyInterceptorEndToEndTest, ResponseWithBypassAndRetry) {
       retry_mock_reads, arraysize(retry_mock_reads), nullptr, 0);
   mock_socket_factory()->AddSocketDataProvider(&retry_socket_data_provider);
 
-  scoped_ptr<net::URLRequest> request = CreateAndExecuteRequest(
-      GURL("http://foo.com"));
+  std::unique_ptr<net::URLRequest> request =
+      CreateAndExecuteRequest(GURL("http://foo.com"));
 
-  EXPECT_EQ(net::URLRequestStatus::SUCCESS, request->status().status());
+  EXPECT_EQ(net::OK, delegate().request_status());
   EXPECT_EQ(200, request->GetResponseCode());
   EXPECT_EQ(kBody, delegate().data_received());
   EXPECT_FALSE(request->was_fetched_via_proxy());
@@ -451,18 +454,19 @@ TEST_F(DataReductionProxyInterceptorEndToEndTest, RedirectWithBypassAndRetry) {
           MockRead(net::SYNCHRONOUS, net::OK),
       },
   };
-  std::vector<scoped_ptr<net::SocketDataProvider>> socket_data_providers;
+  std::vector<std::unique_ptr<net::SocketDataProvider>> socket_data_providers;
   for (MockRead* mock_reads : mock_reads_array) {
-    socket_data_providers.push_back(make_scoped_ptr(
-        new net::StaticSocketDataProvider(mock_reads, 3, nullptr, 0)));
+    socket_data_providers.push_back(
+        base::MakeUnique<net::StaticSocketDataProvider>(mock_reads, 3, nullptr,
+                                                        0));
     mock_socket_factory()->AddSocketDataProvider(
         socket_data_providers.back().get());
   }
 
-  scoped_ptr<net::URLRequest> request =
+  std::unique_ptr<net::URLRequest> request =
       CreateAndExecuteRequest(GURL("http://foo.com"));
 
-  EXPECT_EQ(net::URLRequestStatus::SUCCESS, request->status().status());
+  EXPECT_EQ(net::OK, delegate().request_status());
   EXPECT_EQ(200, request->GetResponseCode());
   EXPECT_EQ(kBody, delegate().data_received());
   EXPECT_FALSE(request->was_fetched_via_proxy());
@@ -472,7 +476,13 @@ TEST_F(DataReductionProxyInterceptorEndToEndTest, RedirectWithBypassAndRetry) {
   EXPECT_EQ(std::vector<GURL>(1, GURL("http://foo.com")), request->url_chain());
 }
 
-TEST_F(DataReductionProxyInterceptorEndToEndTest, RedirectChainToHttps) {
+// https://crbug.com/668197: Flaky on android_n5x_swarming_rel bot.
+#if defined(OS_ANDROID)
+#define MAYBE_RedirectChainToHttps DISABLED_RedirectChainToHttps
+#else
+#define MAYBE_RedirectChainToHttps RedirectChainToHttps
+#endif
+TEST_F(DataReductionProxyInterceptorEndToEndTest, MAYBE_RedirectChainToHttps) {
   // First, a redirect is successfully received through the Data Reduction
   // Proxy. HSTS is forced for play.google.com and prebaked into Chrome, so
   // http://play.google.com will automatically be redirected to
@@ -502,7 +512,7 @@ TEST_F(DataReductionProxyInterceptorEndToEndTest, RedirectChainToHttps) {
                                                        net::OK);
   mock_socket_factory()->AddSSLSocketDataProvider(&https_response_ssl_socket);
 
-  scoped_ptr<net::URLRequest> request =
+  std::unique_ptr<net::URLRequest> request =
       CreateAndExecuteRequest(GURL("http://music.google.com"));
   EXPECT_FALSE(delegate().request_failed());
   EXPECT_EQ(kBody, delegate().data_received());

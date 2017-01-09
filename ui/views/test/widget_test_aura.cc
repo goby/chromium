@@ -4,14 +4,16 @@
 
 #include "ui/views/test/widget_test.h"
 
+#include "build/build_config.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_delegate.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(USE_X11)
 #include <X11/Xutil.h>
-#include "ui/gfx/x/x11_types.h"
+#include "ui/gfx/x/x11_types.h"  // nogncheck
 #endif
 
 namespace views {
@@ -49,11 +51,6 @@ bool FindLayersInOrder(const std::vector<ui::Layer*>& children,
 }  // namespace
 
 // static
-void WidgetTest::SimulateNativeDestroy(Widget* widget) {
-  delete widget->GetNativeView();
-}
-
-// static
 void WidgetTest::SimulateNativeActivate(Widget* widget) {
   gfx::NativeView native_view = widget->GetNativeView();
   aura::client::GetFocusClient(native_view)->FocusWindow(native_view);
@@ -77,8 +74,10 @@ bool WidgetTest::IsWindowStackedAbove(Widget* above, Widget* below) {
   return FindLayersInOrder(root_layer->children(), &first, &second);
 }
 
-// static
 gfx::Size WidgetTest::GetNativeWidgetMinimumContentSize(Widget* widget) {
+  if (IsMus())
+    return widget->GetNativeWindow()->delegate()->GetMinimumSize();
+
   // On Windows, HWNDMessageHandler receives a WM_GETMINMAXINFO message whenever
   // the window manager is interested in knowing the size constraints. On
   // ChromeOS, it's handled internally. Elsewhere, the size constraints need to
@@ -108,6 +107,11 @@ ui::EventProcessor* WidgetTest::GetEventProcessor(Widget* widget) {
 ui::internal::InputMethodDelegate* WidgetTest::GetInputMethodDelegateForWidget(
     Widget* widget) {
   return widget->GetNativeWindow()->GetRootWindow()->GetHost();
+}
+
+// static
+bool WidgetTest::IsNativeWindowTransparent(gfx::NativeWindow window) {
+  return window->transparent();
 }
 
 }  // namespace test

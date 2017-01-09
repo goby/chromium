@@ -13,7 +13,6 @@
 #include "third_party/skia/include/core/SkPixmap.h"
 
 struct SkIRect;
-struct SkPoint;
 struct SkRect;
 class SkCanvas;
 class SkMatrix;
@@ -35,19 +34,7 @@ class NSImageRep;
 class NSColor;
 #endif
 
-namespace gfx {
-
-// Converts a Skia point to a CoreGraphics CGPoint.
-// Both use same in-memory format.
-inline const CGPoint& SkPointToCGPoint(const SkPoint& point) {
-  return reinterpret_cast<const CGPoint&>(point);
-}
-
-// Converts a CoreGraphics point to a Skia CGPoint.
-// Both use same in-memory format.
-inline const SkPoint& CGPointToSkPoint(const CGPoint& point) {
-  return reinterpret_cast<const SkPoint&>(point);
-}
+namespace skia {
 
 // Matrix converters.
 SK_API CGAffineTransform SkMatrixToCGAffineTransform(const SkMatrix& matrix);
@@ -109,8 +96,13 @@ SK_API NSImage* SkBitmapToNSImage(const SkBitmap& icon);
 // Converts a SkCanvas temporarily to a CGContext
 class SK_API SkiaBitLocker {
  public:
-  // TODO(ccameron): delete this constructor
-  explicit SkiaBitLocker(SkCanvas* canvas);
+  /**
+    User clip rect is an *additional* clip to be applied in addition to the
+    current state of the canvas, in *local* rather than device coordinates.
+    If no additional clipping is desired, pass in
+    SkIRect::MakeSize(canvas->getBaseLayerSize()) transformed by the inverse
+    CTM.
+   */
   SkiaBitLocker(SkCanvas* canvas,
                 const SkIRect& userClipRect,
                 SkScalar bitmapScaleFactor = 1);
@@ -123,11 +115,6 @@ class SK_API SkiaBitLocker {
   SkIRect computeDirtyRect();
 
   SkCanvas* canvas_;
-
-  // If the user specified a clip rect it would draw into then the locker may
-  // skip the step of searching for a rect bounding the pixels that the user
-  // has drawn into.
-  bool userClipRectSpecified_;
 
   CGContextRef cgContext_;
   // offscreen_ is only valid if useDeviceBits_ is false
@@ -148,6 +135,6 @@ class SK_API SkiaBitLocker {
 };
 
 
-}  // namespace gfx
+}  // namespace skia
 
 #endif  // SKIA_EXT_SKIA_UTILS_MAC_H_

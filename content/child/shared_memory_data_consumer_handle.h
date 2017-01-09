@@ -5,9 +5,13 @@
 #ifndef CONTENT_CHILD_SHARED_MEMORY_DATA_CONSUMER_HANDLE_H_
 #define CONTENT_CHILD_SHARED_MEMORY_DATA_CONSUMER_HANDLE_H_
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/content_export.h"
 #include "content/public/child/request_peer.h"
 #include "third_party/WebKit/public/platform/WebDataConsumerHandle.h"
@@ -32,7 +36,7 @@ class CONTENT_EXPORT SharedMemoryDataConsumerHandle final
     ~Writer();
     // Note: Writer assumes |AddData| is not called in a client's didGetReadable
     // callback. There isn't such assumption for |Close| and |Fail|.
-    void AddData(scoped_ptr<RequestPeer::ReceivedData> data);
+    void AddData(std::unique_ptr<RequestPeer::ReceivedData> data);
     void Close();
     // TODO(yhirano): Consider providing error code.
     void Fail();
@@ -66,7 +70,7 @@ class CONTENT_EXPORT SharedMemoryDataConsumerHandle final
   // Creates a handle and a writer associated with the handle. The created
   // writer should be used on the calling thread.
   SharedMemoryDataConsumerHandle(BackpressureMode mode,
-                                 scoped_ptr<Writer>* writer);
+                                 std::unique_ptr<Writer>* writer);
   // |on_reader_detached| will be called aynchronously on the calling thread
   // when the reader (including the handle) is detached (i.e. both the handle
   // and the reader are destructed). The callback will be reset in the internal
@@ -74,13 +78,12 @@ class CONTENT_EXPORT SharedMemoryDataConsumerHandle final
   // and the callback will never be called.
   SharedMemoryDataConsumerHandle(BackpressureMode mode,
                                  const base::Closure& on_reader_detached,
-                                 scoped_ptr<Writer>* writer);
+                                 std::unique_ptr<Writer>* writer);
   ~SharedMemoryDataConsumerHandle() override;
 
-  scoped_ptr<Reader> ObtainReader(Client* client);
+  std::unique_ptr<Reader> obtainReader(Client* client) override;
 
  private:
-  ReaderImpl* obtainReaderInternal(Client* client) override;
   const char* debugName() const override;
 
   scoped_refptr<Context> context_;

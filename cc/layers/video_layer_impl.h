@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/resources/release_callback_impl.h"
@@ -25,14 +26,15 @@ class CC_EXPORT VideoLayerImpl : public LayerImpl {
  public:
   // Must be called on the impl thread while the main thread is blocked. This is
   // so that |provider| stays alive while this is being created.
-  static scoped_ptr<VideoLayerImpl> Create(LayerTreeImpl* tree_impl,
-                                           int id,
-                                           VideoFrameProvider* provider,
-                                           media::VideoRotation video_rotation);
+  static std::unique_ptr<VideoLayerImpl> Create(
+      LayerTreeImpl* tree_impl,
+      int id,
+      VideoFrameProvider* provider,
+      media::VideoRotation video_rotation);
   ~VideoLayerImpl() override;
 
   // LayerImpl implementation.
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
   bool WillDraw(DrawMode draw_mode,
                 ResourceProvider* resource_provider) override;
   void AppendQuads(RenderPass* render_pass,
@@ -49,7 +51,7 @@ class CC_EXPORT VideoLayerImpl : public LayerImpl {
   VideoLayerImpl(
       LayerTreeImpl* tree_impl,
       int id,
-      const scoped_refptr<VideoFrameProviderClientImpl>& provider_client_impl,
+      scoped_refptr<VideoFrameProviderClientImpl> provider_client_impl,
       media::VideoRotation video_rotation);
 
   const char* LayerTypeAsString() const override;
@@ -60,8 +62,12 @@ class CC_EXPORT VideoLayerImpl : public LayerImpl {
 
   media::VideoRotation video_rotation_;
 
-  scoped_ptr<VideoResourceUpdater> updater_;
+  std::unique_ptr<VideoResourceUpdater> updater_;
   VideoFrameExternalResources::ResourceType frame_resource_type_;
+  float frame_resource_offset_;
+  float frame_resource_multiplier_;
+  uint32_t frame_bits_per_channel_;
+
   struct FrameResource {
     FrameResource(ResourceId id,
                   gfx::Size size_in_pixels,

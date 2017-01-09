@@ -4,6 +4,8 @@
 
 #include "ui/views/view_targeter.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "ui/events/event_targeter.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/path.h"
@@ -123,6 +125,7 @@ TEST_F(ViewTargeterTest, ViewTargeterForKeyEvents) {
       CreateParams(Widget::InitParams::TYPE_POPUP);
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   widget.Init(init_params);
+  widget.Show();
 
   View* content = new View;
   View* child = new View;
@@ -132,7 +135,7 @@ TEST_F(ViewTargeterTest, ViewTargeterForKeyEvents) {
   content->AddChildView(child);
   child->AddChildView(grandchild);
 
-  grandchild->SetFocusable(true);
+  grandchild->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   grandchild->RequestFocus();
 
   internal::RootView* root_view =
@@ -231,14 +234,14 @@ class GestureEventForTest : public ui::GestureEvent {
       : GestureEvent(x,
                      y,
                      0,
-                     base::TimeDelta(),
+                     base::TimeTicks(),
                      ui::GestureEventDetails(type)) {}
 
   GestureEventForTest(ui::GestureEventDetails details)
       : GestureEvent(details.bounding_box().CenterPoint().x(),
                      details.bounding_box().CenterPoint().y(),
                      0,
-                     base::TimeDelta(),
+                     base::TimeTicks(),
                      details) {}
 };
 
@@ -616,7 +619,7 @@ TEST_F(ViewTargeterTest, HitTestCallsOnView) {
   v2->SetBoundsRect(v2_bounds);
   root_view->AddChildView(v2);
   ViewTargeter* view_targeter = new ViewTargeter(v2);
-  v2->SetEventTargeter(make_scoped_ptr(view_targeter));
+  v2->SetEventTargeter(base::WrapUnique(view_targeter));
 
   gfx::Point v1_centerpoint = v1_bounds.CenterPoint();
   gfx::Point v2_centerpoint = v2_bounds.CenterPoint();

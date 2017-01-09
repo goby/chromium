@@ -4,17 +4,21 @@
 
 #include "storage/browser/fileapi/file_system_dir_url_request_job.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "net/base/directory_listing.h"
 #include "net/base/io_buffer.h"
-#include "net/base/net_util.h"
 #include "net/url_request/url_request.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_operation_runner.h"
@@ -54,10 +58,9 @@ int FileSystemDirURLRequestJob::ReadRawData(net::IOBuffer* dest,
 }
 
 void FileSystemDirURLRequestJob::Start() {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&FileSystemDirURLRequestJob::StartAsync,
-                 weak_factory_.GetWeakPtr()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&FileSystemDirURLRequestJob::StartAsync,
+                            weak_factory_.GetWeakPtr()));
 }
 
 void FileSystemDirURLRequestJob::Kill() {
@@ -100,8 +103,8 @@ void FileSystemDirURLRequestJob::StartAsync() {
     return;
   }
   file_system_context_->operation_runner()->ReadDirectory(
-      url_,
-      base::Bind(&FileSystemDirURLRequestJob::DidReadDirectory, this));
+      url_, base::Bind(&FileSystemDirURLRequestJob::DidReadDirectory,
+                       weak_factory_.GetWeakPtr()));
 }
 
 void FileSystemDirURLRequestJob::DidAttemptAutoMount(base::File::Error result) {
@@ -159,7 +162,8 @@ void FileSystemDirURLRequestJob::GetMetadata(size_t index) {
   file_system_context_->operation_runner()->GetMetadata(
       url, FileSystemOperation::GET_METADATA_FIELD_SIZE |
                FileSystemOperation::GET_METADATA_FIELD_LAST_MODIFIED,
-      base::Bind(&FileSystemDirURLRequestJob::DidGetMetadata, this, index));
+      base::Bind(&FileSystemDirURLRequestJob::DidGetMetadata,
+                 weak_factory_.GetWeakPtr(), index));
 }
 
 void FileSystemDirURLRequestJob::DidGetMetadata(

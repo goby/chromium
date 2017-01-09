@@ -4,9 +4,11 @@
 
 #include "chrome/browser/extensions/api/messaging/native_message_port.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/api/messaging/native_message_process_host.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -20,7 +22,7 @@ namespace extensions {
 class NativeMessagePort::Core : public NativeMessageHost::Client {
  public:
   Core(
-      scoped_ptr<NativeMessageHost> host,
+      std::unique_ptr<NativeMessageHost> host,
       base::WeakPtr<NativeMessagePort> port,
       scoped_refptr<base::SingleThreadTaskRunner> message_service_task_runner_);
   ~Core() override;
@@ -32,7 +34,7 @@ class NativeMessagePort::Core : public NativeMessageHost::Client {
   void CloseChannel(const std::string& error_message) override;
 
  private:
-  scoped_ptr<NativeMessageHost> host_;
+  std::unique_ptr<NativeMessageHost> host_;
   base::WeakPtr<NativeMessagePort> port_;
 
   scoped_refptr<base::SingleThreadTaskRunner> message_service_task_runner_;
@@ -40,10 +42,10 @@ class NativeMessagePort::Core : public NativeMessageHost::Client {
 };
 
 NativeMessagePort::Core::Core(
-    scoped_ptr<NativeMessageHost> host,
+    std::unique_ptr<NativeMessageHost> host,
     base::WeakPtr<NativeMessagePort> port,
     scoped_refptr<base::SingleThreadTaskRunner> message_service_task_runner)
-    : host_(host.Pass()),
+    : host_(std::move(host)),
       port_(port),
       message_service_task_runner_(message_service_task_runner),
       host_task_runner_(host_->task_runner()) {
@@ -84,13 +86,13 @@ void NativeMessagePort::Core::CloseChannel(const std::string& error_message) {
 
 NativeMessagePort::NativeMessagePort(
     base::WeakPtr<MessageService> message_service,
-    int port_id,
-    scoped_ptr<NativeMessageHost> native_message_host)
+    const PortId& port_id,
+    std::unique_ptr<NativeMessageHost> native_message_host)
     : weak_message_service_(message_service),
       host_task_runner_(native_message_host->task_runner()),
       port_id_(port_id),
       weak_factory_(this) {
-  core_.reset(new Core(native_message_host.Pass(),
+  core_.reset(new Core(std::move(native_message_host),
                        weak_factory_.GetWeakPtr(),
                        base::ThreadTaskRunnerHandle::Get()));
 }
@@ -100,9 +102,16 @@ NativeMessagePort::~NativeMessagePort() {
   host_task_runner_->DeleteSoon(FROM_HERE, core_.release());
 }
 
-void NativeMessagePort::DispatchOnMessage(
-    const Message& message,
-    int target_port_id) {
+bool NativeMessagePort::IsValidPort() {
+  // The native message port is immediately connected after construction, so it
+  // is not possible to invalidate the port between construction and connection.
+  // The return value doesn't matter since native messaging follows a code path
+  // where IsValidPort() is never called.
+  NOTREACHED();
+  return true;
+}
+
+void NativeMessagePort::DispatchOnMessage(const Message& message) {
   DCHECK(thread_checker_.CalledOnValidThread());
   core_->OnMessageFromChrome(message.data);
 }

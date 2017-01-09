@@ -4,10 +4,13 @@
 
 #include "components/webcrypto/blink_key_handle.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/macros.h"
 #include "components/webcrypto/crypto_data.h"
 #include "components/webcrypto/status.h"
+#include "third_party/boringssl/src/include/openssl/evp.h"
 
 namespace webcrypto {
 
@@ -24,6 +27,9 @@ class AsymKey;
 // 'raw', 'pkcs8', or 'spki' format. This is to allow structured cloning of
 // keys to be done synchronously from the target Blink thread, without having to
 // lock access to the key throughout the code.
+//
+// TODO(eroman): Should be able to do the key export needed for structured
+//               clone synchronously.
 class Key : public blink::WebCryptoKeyHandle {
  public:
   explicit Key(const CryptoData& serialized_key_data)
@@ -61,16 +67,18 @@ class SymKey : public Key {
 
 class AsymKey : public Key {
  public:
-  AsymKey(crypto::ScopedEVP_PKEY pkey,
+  // After construction the |pkey| should NOT be mutated.
+  AsymKey(bssl::UniquePtr<EVP_PKEY> pkey,
           const std::vector<uint8_t>& serialized_key_data)
-      : Key(CryptoData(serialized_key_data)), pkey_(pkey.Pass()) {}
+      : Key(CryptoData(serialized_key_data)), pkey_(std::move(pkey)) {}
 
   AsymKey* AsAsymKey() override { return this; }
 
+  // The caller should NOT mutate this EVP_PKEY.
   EVP_PKEY* pkey() { return pkey_.get(); }
 
  private:
-  crypto::ScopedEVP_PKEY pkey_;
+  bssl::UniquePtr<EVP_PKEY> pkey_;
 
   DISALLOW_COPY_AND_ASSIGN(AsymKey);
 };
@@ -103,9 +111,9 @@ blink::WebCryptoKeyHandle* CreateSymmetricKeyHandle(
 }
 
 blink::WebCryptoKeyHandle* CreateAsymmetricKeyHandle(
-    crypto::ScopedEVP_PKEY pkey,
+    bssl::UniquePtr<EVP_PKEY> pkey,
     const std::vector<uint8_t>& serialized_key_data) {
-  return new AsymKey(pkey.Pass(), serialized_key_data);
+  return new AsymKey(std::move(pkey), serialized_key_data);
 }
 
 }  // namespace webcrypto

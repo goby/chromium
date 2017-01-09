@@ -5,14 +5,14 @@
 #ifndef CHROME_BROWSER_APPS_APP_URL_REDIRECTOR_H_
 #define CHROME_BROWSER_APPS_APP_URL_REDIRECTOR_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "content/public/browser/navigation_throttle.h"
 
 namespace content {
 class NavigationHandle;
 class NavigationThrottle;
-class WebContents;
 }
 
 // This class creates navigation throttles that redirect URLs to apps that have
@@ -20,7 +20,7 @@ class WebContents;
 // a UI thread class.
 class AppUrlRedirector {
  public:
-  static scoped_ptr<content::NavigationThrottle> MaybeCreateThrottleFor(
+  static std::unique_ptr<content::NavigationThrottle> MaybeCreateThrottleFor(
       content::NavigationHandle* handle);
 
  private:

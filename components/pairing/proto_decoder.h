@@ -5,12 +5,13 @@
 #ifndef COMPONENTS_PAIRING_PROTO_DECODER_H_
 #define COMPONENTS_PAIRING_PROTO_DECODER_H_
 
+#include <stdint.h>
+
 #include <deque>
 
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/pairing/message_buffer.h"
 
 namespace net {

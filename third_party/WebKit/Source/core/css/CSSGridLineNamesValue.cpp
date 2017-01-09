@@ -28,20 +28,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/css/CSSGridLineNamesValue.h"
+
+#include "wtf/text/WTFString.h"
 
 namespace blink {
 
-String CSSGridLineNamesValue::customCSSText() const
-{
-    return "[" + CSSValueList::customCSSText() + "]";
+String CSSGridLineNamesValue::customCSSText() const {
+  return "[" + CSSValueList::customCSSText() + "]";
 }
 
 CSSGridLineNamesValue::CSSGridLineNamesValue()
-    : CSSValueList(GridLineNamesClass, SpaceSeparator)
-{
-}
+    : CSSValueList(GridLineNamesClass, SpaceSeparator) {}
 
-}
-
+}  // namespace blink

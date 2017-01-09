@@ -8,25 +8,24 @@
 #include "ios/chrome/browser/autocomplete/in_memory_url_index_factory.h"
 #include "ios/chrome/browser/autocomplete/shortcuts_backend_factory.h"
 #include "ios/chrome/browser/autofill/personal_data_manager_factory.h"
-#include "ios/chrome/browser/bookmarks/bookmark_client_factory.h"
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "ios/chrome/browser/bookmarks/startup_task_runner_service_factory.h"
 #include "ios/chrome/browser/content_settings/cookie_settings_factory.h"
 #include "ios/chrome/browser/dom_distiller/dom_distiller_service_factory.h"
-#include "ios/chrome/browser/enhanced_bookmarks/bookmark_server_cluster_service_factory.h"
-#include "ios/chrome/browser/enhanced_bookmarks/enhanced_bookmark_model_factory.h"
 #include "ios/chrome/browser/favicon/favicon_service_factory.h"
 #include "ios/chrome/browser/favicon/ios_chrome_favicon_loader_factory.h"
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_cache_factory.h"
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
+#include "ios/chrome/browser/google/google_logo_service_factory.h"
 #include "ios/chrome/browser/google/google_url_tracker_factory.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
 #include "ios/chrome/browser/history/top_sites_factory.h"
 #include "ios/chrome/browser/history/web_history_service_factory.h"
 #include "ios/chrome/browser/invalidation/ios_chrome_profile_invalidation_provider_factory.h"
-#include "ios/chrome/browser/ntp_snippets/ios_chrome_ntp_snippets_service_factory.h"
+#include "ios/chrome/browser/ntp_snippets/ios_chrome_content_suggestions_service_factory.h"
 #include "ios/chrome/browser/passwords/ios_chrome_password_manager_setting_migrator_service_factory.h"
 #include "ios/chrome/browser/passwords/ios_chrome_password_store_factory.h"
+#include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
 #include "ios/chrome/browser/services/gcm/ios_chrome_gcm_profile_service_factory.h"
 #include "ios/chrome/browser/signin/about_signin_internals_factory.h"
@@ -34,6 +33,7 @@
 #include "ios/chrome/browser/signin/account_fetcher_service_factory.h"
 #include "ios/chrome/browser/signin/account_reconcilor_factory.h"
 #include "ios/chrome/browser/signin/account_tracker_service_factory.h"
+#include "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
 #include "ios/chrome/browser/signin/signin_client_factory.h"
@@ -44,7 +44,10 @@
 #include "ios/chrome/browser/translate/translate_accept_languages_factory.h"
 #include "ios/chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "ios/chrome/browser/web_data_service_factory.h"
-#include "ios/public/provider/chrome/browser/keyed_service_provider.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 // This method gets the instance of each ServiceFactory. We do this so that
 // each ServiceFactory initializes itself and registers its dependencies with
@@ -56,10 +59,8 @@
 // TODO(erg): This needs to be something else. I don't think putting every
 // FooServiceFactory here will scale or is desirable long term.
 void EnsureBrowserStateKeyedServiceFactoriesBuilt() {
-  BookmarkClientFactory::GetInstance();
+  autofill::PersonalDataManagerFactory::GetInstance();
   dom_distiller::DomDistillerServiceFactory::GetInstance();
-  enhanced_bookmarks::BookmarkServerClusterServiceFactory::GetInstance();
-  enhanced_bookmarks::EnhancedBookmarkModelFactory::GetInstance();
   ios::AboutSigninInternalsFactory::GetInstance();
   ios::AccountConsistencyServiceFactory::GetInstance();
   ios::AccountFetcherServiceFactory::GetInstance();
@@ -82,21 +83,20 @@ void EnsureBrowserStateKeyedServiceFactoriesBuilt() {
   ios::TopSitesFactory::GetInstance();
   ios::WebDataServiceFactory::GetInstance();
   ios::WebHistoryServiceFactory::GetInstance();
+  AuthenticationServiceFactory::GetInstance();
   IOSChromeGCMProfileServiceFactory::GetInstance();
   IOSChromeLargeIconCacheFactory::GetInstance();
   IOSChromeLargeIconServiceFactory::GetInstance();
   IOSChromeFaviconLoaderFactory::GetInstance();
-  IOSChromeNTPSnippetsServiceFactory::GetInstance();
+  IOSChromeContentSuggestionsServiceFactory::GetInstance();
   IOSChromePasswordManagerSettingMigratorServiceFactory::GetInstance();
   IOSChromePasswordStoreFactory::GetInstance();
   IOSChromeProfileInvalidationProviderFactory::GetInstance();
+  GoogleLogoServiceFactory::GetInstance();
   OAuth2TokenServiceFactory::GetInstance();
-  PersonalDataManagerFactory::GetInstance();
+  ReadingListModelFactory::GetInstance();
   SigninClientFactory::GetInstance();
   suggestions::SuggestionsServiceFactory::GetInstance();
   SyncSetupServiceFactory::GetInstance();
   TranslateAcceptLanguagesFactory::GetInstance();
-
-  if (ios::GetKeyedServiceProvider())
-    ios::GetKeyedServiceProvider()->AssertKeyedFactoriesBuilt();
 }

@@ -4,6 +4,8 @@
 
 #include "components/signin/core/browser/account_reconcilor.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/bind.h"
@@ -12,7 +14,7 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_client.h"
@@ -24,9 +26,13 @@
 
 namespace {
 
+// String used for source parameter in GAIA cookie manager calls.
+const char kSource[] = "ChromiumAccountReconcilor";
+
 class AccountEqualToFunc {
  public:
-  AccountEqualToFunc(const gaia::ListedAccount& account) : account_(account) {}
+  explicit AccountEqualToFunc(const gaia::ListedAccount& account)
+      : account_(account) {}
   bool operator()(const gaia::ListedAccount& other) const;
 
  private:
@@ -240,14 +246,14 @@ void AccountReconcilor::PerformMergeAction(const std::string& account_id) {
     return;
   }
   VLOG(1) << "AccountReconcilor::PerformMergeAction: " << account_id;
-  cookie_manager_service_->AddAccountToCookie(account_id);
+  cookie_manager_service_->AddAccountToCookie(account_id, kSource);
 }
 
 void AccountReconcilor::PerformLogoutAllAccountsAction() {
   if (!switches::IsEnableAccountConsistency())
     return;
   VLOG(1) << "AccountReconcilor::PerformLogoutAllAccountsAction";
-  cookie_manager_service_->LogOutAllAccounts();
+  cookie_manager_service_->LogOutAllAccounts(kSource);
 }
 
 void AccountReconcilor::StartReconcile() {
@@ -278,15 +284,24 @@ void AccountReconcilor::StartReconcile() {
   is_reconcile_started_ = true;
   error_during_last_reconcile_ = false;
 
+  // ListAccounts() also gets signed out accounts but this class doesn't use
+  // them.
+  std::vector<gaia::ListedAccount> signed_out_accounts;
+
   // Rely on the GCMS to manage calls to and responses from ListAccounts.
-  if (cookie_manager_service_->ListAccounts(&gaia_accounts_)) {
+  if (cookie_manager_service_->ListAccounts(&gaia_accounts_,
+                                            &signed_out_accounts,
+                                            kSource)) {
     OnGaiaAccountsInCookieUpdated(
-        gaia_accounts_, GoogleServiceAuthError(GoogleServiceAuthError::NONE));
+        gaia_accounts_,
+        signed_out_accounts,
+        GoogleServiceAuthError(GoogleServiceAuthError::NONE));
   }
 }
 
 void AccountReconcilor::OnGaiaAccountsInCookieUpdated(
         const std::vector<gaia::ListedAccount>& accounts,
+        const std::vector<gaia::ListedAccount>& signed_out_accounts,
         const GoogleServiceAuthError& error) {
   VLOG(1) << "AccountReconcilor::OnGaiaAccountsInCookieUpdated: "
           << "CookieJar " << accounts.size() << " accounts, "
@@ -356,7 +371,7 @@ void AccountReconcilor::OnNewProfileManagementFlagChanged(
 void AccountReconcilor::OnReceivedManageAccountsResponse(
     signin::GAIAServiceType service_type) {
   if (service_type == signin::GAIA_SERVICE_TYPE_ADDSESSION) {
-    cookie_manager_service_->TriggerListAccounts();
+    cookie_manager_service_->TriggerListAccounts(kSource);
   }
 }
 

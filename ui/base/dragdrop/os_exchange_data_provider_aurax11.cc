@@ -4,6 +4,8 @@
 
 #include "ui/base/dragdrop/os_exchange_data_provider_aurax11.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_split.h"
@@ -31,18 +33,16 @@ const char kRendererTaint[] = "chromium/x-renderer-taint";
 
 const char kNetscapeURL[] = "_NETSCAPE_URL";
 
-const char* kAtomsToCache[] = {
-  kString,
-  kText,
-  kUtf8String,
-  kDndSelection,
-  Clipboard::kMimeTypeURIList,
-  kMimeTypeMozillaURL,
-  kNetscapeURL,
-  Clipboard::kMimeTypeText,
-  kRendererTaint,
-  NULL
-};
+const char* kAtomsToCache[] = {kString,
+                               kText,
+                               kUtf8String,
+                               kDndSelection,
+                               Clipboard::kMimeTypeURIList,
+                               Clipboard::kMimeTypeMozillaURL,
+                               kNetscapeURL,
+                               Clipboard::kMimeTypeText,
+                               kRendererTaint,
+                               nullptr};
 
 }  // namespace
 
@@ -109,10 +109,12 @@ SelectionFormatMap OSExchangeDataProviderAuraX11::GetFormatMap() const {
   return selection_owner_.selection_format_map();
 }
 
-OSExchangeData::Provider* OSExchangeDataProviderAuraX11::Clone() const {
-  OSExchangeDataProviderAuraX11* ret = new OSExchangeDataProviderAuraX11();
+std::unique_ptr<OSExchangeData::Provider>
+OSExchangeDataProviderAuraX11::Clone() const {
+  std::unique_ptr<OSExchangeDataProviderAuraX11> ret(
+      new OSExchangeDataProviderAuraX11());
   ret->format_map_ = format_map_;
-  return ret;
+  return std::move(ret);
 }
 
 void OSExchangeDataProviderAuraX11::MarkOriginatedFromRenderer() {
@@ -156,7 +158,8 @@ void OSExchangeDataProviderAuraX11::SetURL(const GURL& url,
     scoped_refptr<base::RefCountedMemory> mem(
         base::RefCountedBytes::TakeVector(&data));
 
-    format_map_.Insert(atom_cache_.GetAtom(kMimeTypeMozillaURL), mem);
+    format_map_.Insert(atom_cache_.GetAtom(Clipboard::kMimeTypeMozillaURL),
+                       mem);
 
     // Set a string fallback as well.
     SetString(spec);
@@ -255,7 +258,7 @@ bool OSExchangeDataProviderAuraX11::GetURLAndTitle(
     // but that doesn't match the assumptions of the rest of the system which
     // expect single types.
 
-    if (data.GetType() == atom_cache_.GetAtom(kMimeTypeMozillaURL)) {
+    if (data.GetType() == atom_cache_.GetAtom(Clipboard::kMimeTypeMozillaURL)) {
       // Mozilla URLs are (UTF16: URL, newline, title).
       base::string16 unparsed;
       data.AssignTo(&unparsed);
@@ -362,7 +365,7 @@ bool OSExchangeDataProviderAuraX11::HasURL(
   // Windows does and stuffs all the data into one mime type.
   ui::SelectionData data(format_map_.GetFirstOf(requested_types));
   if (data.IsValid()) {
-    if (data.GetType() == atom_cache_.GetAtom(kMimeTypeMozillaURL)) {
+    if (data.GetType() == atom_cache_.GetAtom(Clipboard::kMimeTypeMozillaURL)) {
       // File managers shouldn't be using this type, so this is a URL.
       return true;
     } else if (data.GetType() == atom_cache_.GetAtom(
@@ -423,7 +426,7 @@ void OSExchangeDataProviderAuraX11::SetFileContents(
     const std::string& file_contents) {
   DCHECK(!filename.empty());
   DCHECK(format_map_.end() ==
-         format_map_.find(atom_cache_.GetAtom(kMimeTypeMozillaURL)));
+         format_map_.find(atom_cache_.GetAtom(Clipboard::kMimeTypeMozillaURL)));
 
   file_contents_name_ = filename;
 
@@ -542,14 +545,6 @@ bool OSExchangeDataProviderAuraX11::GetPlainTextURL(GURL* url) const {
 
 std::vector< ::Atom> OSExchangeDataProviderAuraX11::GetTargets() const {
   return format_map_.GetTypes();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// OSExchangeData, public:
-
-// static
-OSExchangeData::Provider* OSExchangeData::CreateProvider() {
-  return new OSExchangeDataProviderAuraX11();
 }
 
 }  // namespace ui

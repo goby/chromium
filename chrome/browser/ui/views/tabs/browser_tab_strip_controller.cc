@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/views/tabs/browser_tab_strip_controller.h"
 
 #include "base/auto_reset.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/task_runner_util.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -28,11 +28,11 @@
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/favicon/content/content_favicon_driver.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/mime_util/mime_util.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/plugin_service.h"
@@ -45,6 +45,7 @@
 #include "ui/gfx/image/image.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/widget/widget.h"
+#include "url/origin.h"
 
 using base::UserMetricsAction;
 using content::WebContents;
@@ -60,16 +61,15 @@ TabRendererData::NetworkState TabContentsNetworkState(
   return TabRendererData::NETWORK_STATE_LOADING;
 }
 
-bool DetermineTabStripLayoutStacked(
-    PrefService* prefs,
-    chrome::HostDesktopType host_desktop_type,
-    bool* adjust_layout) {
+bool DetermineTabStripLayoutStacked(PrefService* prefs, bool* adjust_layout) {
   *adjust_layout = false;
   // For ash, always allow entering stacked mode.
-  if (host_desktop_type != chrome::HOST_DESKTOP_TYPE_ASH)
-    return false;
+#if defined(USE_ASH)
   *adjust_layout = true;
   return prefs->GetBoolean(prefs::kTabStripStackedLayout);
+#else
+  return false;
+#endif
 }
 
 // Get the MIME type of the file pointed to by the url, based on the file's
@@ -132,7 +132,7 @@ class BrowserTabStripController::TabContextMenuContents
         tab_);
   }
   bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override {
+                                  ui::Accelerator* accelerator) const override {
     int browser_cmd;
     return TabStripModel::ContextMenuCommandToBrowserCommand(command_id,
                                                              &browser_cmd) ?
@@ -160,8 +160,8 @@ class BrowserTabStripController::TabContextMenuContents
   }
 
  private:
-  scoped_ptr<TabMenuModel> model_;
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<TabMenuModel> model_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
   // The tab we're showing a menu for.
   Tab* tab_;
@@ -265,15 +265,6 @@ bool BrowserTabStripController::IsTabPinned(int model_index) const {
   return model_->ContainsIndex(model_index) && model_->IsTabPinned(model_index);
 }
 
-bool BrowserTabStripController::IsNewTabPage(int model_index) const {
-  if (!model_->ContainsIndex(model_index))
-    return false;
-
-  const WebContents* contents = model_->GetWebContentsAt(model_index);
-  return contents && (contents->GetURL() == GURL(chrome::kChromeUINewTabURL) ||
-                      search::IsInstantNTP(contents));
-}
-
 void BrowserTabStripController::SelectTab(int model_index) {
   model_->ActivateTabAt(model_index, true);
 }
@@ -304,7 +295,7 @@ void BrowserTabStripController::CloseTab(int model_index,
 void BrowserTabStripController::ToggleTabAudioMute(int model_index) {
   content::WebContents* const contents = model_->GetWebContentsAt(model_index);
   chrome::SetTabAudioMuted(contents, !contents->IsAudioMuted(),
-                           TAB_MUTED_REASON_AUDIO_INDICATOR, std::string());
+                           TabMutedReason::AUDIO_INDICATOR, std::string());
 }
 
 void BrowserTabStripController::ShowContextMenuForTab(
@@ -351,10 +342,10 @@ void BrowserTabStripController::PerformDrop(bool drop_before,
 
   if (drop_before) {
     content::RecordAction(UserMetricsAction("Tab_DropURLBetweenTabs"));
-    params.disposition = NEW_FOREGROUND_TAB;
+    params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   } else {
     content::RecordAction(UserMetricsAction("Tab_DropURLOnTab"));
-    params.disposition = CURRENT_TAB;
+    params.disposition = WindowOpenDisposition::CURRENT_TAB;
     params.source_contents = model_->GetWebContentsAt(index);
   }
   params.window_action = chrome::NavigateParams::SHOW_WINDOW;
@@ -383,15 +374,13 @@ void BrowserTabStripController::CreateNewTabWithLocation(
 }
 
 bool BrowserTabStripController::IsIncognito() {
-  return browser_->profile()->IsOffTheRecord();
+  return browser_->profile()->GetProfileType() == Profile::INCOGNITO_PROFILE;
 }
 
 void BrowserTabStripController::StackedLayoutMaybeChanged() {
   bool adjust_layout = false;
-  bool stacked_layout =
-      DetermineTabStripLayoutStacked(g_browser_process->local_state(),
-                                     browser_->host_desktop_type(),
-                                     &adjust_layout);
+  bool stacked_layout = DetermineTabStripLayoutStacked(
+      g_browser_process->local_state(), &adjust_layout);
   if (!adjust_layout || stacked_layout == tabstrip_->stacked_layout())
     return;
 
@@ -426,10 +415,16 @@ void BrowserTabStripController::CheckFileSupported(const GURL& url) {
                  url));
 }
 
+SkColor BrowserTabStripController::GetToolbarTopSeparatorColor() const {
+  return BrowserView::GetBrowserViewForBrowser(browser_)->frame()
+      ->GetFrameView()->GetToolbarTopSeparatorColor();
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserTabStripController, TabStripModelObserver implementation:
 
-void BrowserTabStripController::TabInsertedAt(WebContents* contents,
+void BrowserTabStripController::TabInsertedAt(TabStripModel* tab_strip_model,
+                                              WebContents* contents,
                                               int model_index,
                                               bool is_active) {
   DCHECK(contents);
@@ -442,7 +437,7 @@ void BrowserTabStripController::TabDetachedAt(WebContents* contents,
   // Cancel any pending tab transition.
   hover_tab_selector_.CancelTabTransition();
 
-  tabstrip_->RemoveTabAt(model_index);
+  tabstrip_->RemoveTabAt(contents, model_index);
 }
 
 void BrowserTabStripController::TabSelectionChanged(
@@ -482,8 +477,10 @@ void BrowserTabStripController::TabReplacedAt(TabStripModel* tab_strip_model,
   SetTabDataAt(new_contents, model_index);
 }
 
-void BrowserTabStripController::TabPinnedStateChanged(WebContents* contents,
-                                                      int model_index) {
+void BrowserTabStripController::TabPinnedStateChanged(
+    TabStripModel* tab_strip_model,
+    WebContents* contents,
+    int model_index) {
   SetTabDataAt(contents, model_index);
 }
 
@@ -497,10 +494,7 @@ void BrowserTabStripController::SetTabRendererDataFromModel(
     int model_index,
     TabRendererData* data,
     TabStatus tab_status) {
-  favicon::FaviconDriver* favicon_driver =
-      favicon::ContentFaviconDriver::FromWebContents(contents);
-
-  data->favicon = favicon_driver->GetFavicon().AsImageSkia();
+  data->favicon = favicon::TabFaviconFromWebContents(contents).AsImageSkia();
   data->network_state = TabContentsNetworkState(contents);
   data->title = contents->GetTitle();
   data->url = contents->GetURL();
@@ -511,7 +505,7 @@ void BrowserTabStripController::SetTabRendererDataFromModel(
   data->show_icon = data->pinned || favicon::ShouldDisplayFavicon(contents);
   data->blocked = model_->IsTabBlocked(model_index);
   data->app = extensions::TabHelper::FromWebContents(contents)->is_app();
-  data->media_state = chrome::GetTabMediaStateForContents(contents);
+  data->alert_state = chrome::GetTabAlertStateForContents(contents);
 }
 
 void BrowserTabStripController::SetTabDataAt(content::WebContents* web_contents,
@@ -561,10 +555,8 @@ void BrowserTabStripController::AddTab(WebContents* contents,
 
 void BrowserTabStripController::UpdateStackedLayout() {
   bool adjust_layout = false;
-  bool stacked_layout =
-      DetermineTabStripLayoutStacked(g_browser_process->local_state(),
-                                     browser_->host_desktop_type(),
-                                     &adjust_layout);
+  bool stacked_layout = DetermineTabStripLayoutStacked(
+      g_browser_process->local_state(), &adjust_layout);
   tabstrip_->set_adjust_layout(adjust_layout);
   tabstrip_->SetStackedLayout(stacked_layout);
 }
@@ -583,6 +575,6 @@ void BrowserTabStripController::OnFindURLMimeTypeCompleted(
           content::PluginService::GetInstance()->GetPluginInfo(
               -1,                // process ID
               MSG_ROUTING_NONE,  // routing ID
-              model_->profile()->GetResourceContext(), url, GURL(), mime_type,
-              false, NULL, &plugin, NULL));
+              model_->profile()->GetResourceContext(), url, url::Origin(),
+              mime_type, false, NULL, &plugin, NULL));
 }

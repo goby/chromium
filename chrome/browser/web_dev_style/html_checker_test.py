@@ -56,6 +56,28 @@ class HtmlCheckerTest(SuperMoxTestBase):
     for line in lines:
       self.ShouldPassCheck(line, self.checker.ClassesUseDashFormCheck)
 
+  def testSingleQuoteCheckFails(self):
+    lines = [
+      """ <a href='classBar'> """,
+      """<a foo$="bar" href$='classBar'>""",
+      """<a foo="bar" less="more" href='classBar' kittens="cats">""",
+      """<a cats href='classBar' dogs>""",
+      """<a cats\n href='classBat\nclassBaz'\n dogs>""",
+    ]
+    for line in lines:
+      self.ShouldFailCheck(line, self.checker.DoNotUseSingleQuotesCheck)
+
+  def testSingleQuoteCheckPasses(self):
+    lines = [
+      """<b id="super-valid">SO VALID!</b>""",
+      """<a text$="i ain't got invalid quotes">i don't</a>""",
+      """<span>[[i18n('blah')]]</span> """,
+      """<a cats href="classBar" dogs>""",
+      """<a cats\n href="classBar"\n dogs>""",
+    ]
+    for line in lines:
+      self.ShouldPassCheck(line, self.checker.DoNotUseSingleQuotesCheck)
+
   def testDoNotCloseSingleTagsCheckFails(self):
     lines = [
       "<input/>",
@@ -148,22 +170,44 @@ class HtmlCheckerTest(SuperMoxTestBase):
 
   def testLabelCheckFails(self):
     lines = [
-      ' for="abc"',
-      "for=    ",
-      " \tfor=    ",
-      "   for="
+      ' <label for="abc"',
+      " <label for=    ",
+      " <label\tfor=    ",
+      ' <label\n blah="1" blee="3"\n for="goop"',
     ]
     for line in lines:
       self.ShouldFailCheck(line, self.checker.LabelCheck)
 
-  def testLabelCheckPass(self):
+  def testLabelCheckPasses(self):
     lines = [
       ' my-for="abc" ',
       ' myfor="abc" ',
       " <for",
+      ' <paper-tooltip for="id-name"',
     ]
     for line in lines:
       self.ShouldPassCheck(line, self.checker.LabelCheck)
+
+  def testQuotePolymerBindingsFails(self):
+    lines = [
+      "<a href=[[blah]]>",
+      "<div class$=[[class_]]>",
+      "<settings-checkbox prefs={{prefs}}",
+      "<paper-button actionable$=[[isActionable_(a,b)]]>",
+    ]
+    for line in lines:
+      self.ShouldFailCheck(line, self.checker.QuotePolymerBindings)
+
+  def testQuotePolymerBindingsPasses(self):
+    lines = [
+      '<a href="[[blah]]">',
+      '<span id="blah">[[text]]</span>',
+      '<setting-checkbox prefs="{{prefs}}">',
+      '<paper-input tab-index="[[tabIndex_]]">',
+      '<div style="font: [[getFont_(item)]]">',
+    ]
+    for line in lines:
+      self.ShouldPassCheck(line, self.checker.QuotePolymerBindings)
 
 
 if __name__ == '__main__':

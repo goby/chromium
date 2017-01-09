@@ -6,9 +6,10 @@
 
 #include "base/files/file_path.h"
 #include "base/location.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/history/core/browser/download_constants.h"
 #include "components/history/core/browser/download_row.h"
 #include "components/history/core/browser/history_backend.h"
@@ -29,10 +30,12 @@ class BackendDelegate : public HistoryBackend::Delegate {
       : history_test_(history_test) {}
 
   // HistoryBackend::Delegate implementation.
-  void NotifyProfileError(sql::InitStatus init_status) override {
+  void NotifyProfileError(sql::InitStatus init_status,
+                          const std::string& diagnostics) override {
     history_test_->last_profile_error_ = init_status;
   }
-  void SetInMemoryBackend(scoped_ptr<InMemoryHistoryBackend> backend) override {
+  void SetInMemoryBackend(
+      std::unique_ptr<InMemoryHistoryBackend> backend) override {
     // Save the in-memory backend to the history test object, this happens
     // synchronously, so we don't have to do anything fancy.
     history_test_->in_mem_backend_.swap(backend);
@@ -68,7 +71,7 @@ HistoryBackendDBBaseTest::~HistoryBackendDBBaseTest() {
 
 void HistoryBackendDBBaseTest::SetUp() {
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-  history_dir_ = temp_dir_.path().AppendASCII("HistoryBackendDBBaseTest");
+  history_dir_ = temp_dir_.GetPath().AppendASCII("HistoryBackendDBBaseTest");
   ASSERT_TRUE(base::CreateDirectory(history_dir_));
 }
 
@@ -79,13 +82,13 @@ void HistoryBackendDBBaseTest::TearDown() {
   // test.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 void HistoryBackendDBBaseTest::CreateBackendAndDatabase() {
   backend_ = new HistoryBackend(new BackendDelegate(this), nullptr,
                                 base::ThreadTaskRunnerHandle::Get());
-  backend_->Init(std::string(), false,
+  backend_->Init(false,
                  TestHistoryDatabaseParamsForPath(history_dir_));
   db_ = backend_->db_.get();
   DCHECK(in_mem_backend_) << "Mem backend should have been set by "
@@ -95,7 +98,7 @@ void HistoryBackendDBBaseTest::CreateBackendAndDatabase() {
 void HistoryBackendDBBaseTest::CreateBackendAndDatabaseAllowFail() {
   backend_ = new HistoryBackend(new BackendDelegate(this), nullptr,
                                 base::ThreadTaskRunnerHandle::Get());
-  backend_->Init(std::string(), false,
+  backend_->Init(false,
                  TestHistoryDatabaseParamsForPath(history_dir_));
   db_ = backend_->db_.get();
 }
@@ -116,31 +119,23 @@ void HistoryBackendDBBaseTest::DeleteBackend() {
   }
 }
 
-bool HistoryBackendDBBaseTest::AddDownload(uint32 id,
+bool HistoryBackendDBBaseTest::AddDownload(uint32_t id,
+                                           const std::string& guid,
                                            DownloadState state,
                                            base::Time time) {
   std::vector<GURL> url_chain;
   url_chain.push_back(GURL("foo-url"));
 
-  DownloadRow download(base::FilePath(FILE_PATH_LITERAL("current-path")),
-                       base::FilePath(FILE_PATH_LITERAL("target-path")),
-                       url_chain,
-                       GURL("http://referrer.com/"),
-                       "application/vnd.oasis.opendocument.text",
-                       "application/octet-stream",
-                       time,
-                       time,
-                       std::string(),
-                       std::string(),
-                       0,
-                       512,
-                       state,
-                       DownloadDangerType::NOT_DANGEROUS,
-                       kTestDownloadInterruptReasonNone,
-                       id,
-                       false,
-                       "by_ext_id",
-                       "by_ext_name");
+  DownloadRow download(
+      base::FilePath(FILE_PATH_LITERAL("current-path")),
+      base::FilePath(FILE_PATH_LITERAL("target-path")), url_chain,
+      GURL("http://referrer.example.com/"), GURL("http://site-url.example.com"),
+      GURL("http://tab-url.example.com/"),
+      GURL("http://tab-referrer-url.example.com/"), std::string(),
+      "application/vnd.oasis.opendocument.text", "application/octet-stream",
+      time, time, std::string(), std::string(), 0, 512, state,
+      DownloadDangerType::NOT_DANGEROUS, kTestDownloadInterruptReasonNone,
+      std::string(), id, guid, false, "by_ext_id", "by_ext_name");
   return db_->CreateDownload(download);
 }
 

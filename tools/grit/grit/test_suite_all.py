@@ -35,6 +35,7 @@ class TestSuiteAll(unittest.TestSuite):
     import grit.format.c_format_unittest
     import grit.format.chrome_messages_json_unittest
     import grit.format.data_pack_unittest
+    import grit.format.gzip_string_unittest
     import grit.format.html_inline_unittest
     import grit.format.js_map_format_unittest
     import grit.format.rc_header_unittest
@@ -46,7 +47,6 @@ class TestSuiteAll(unittest.TestSuite):
     import grit.format.policy_templates.writers.admx_writer_unittest
     import grit.format.policy_templates.writers.android_policy_writer_unittest
     import grit.format.policy_templates.writers.doc_writer_unittest
-    import grit.format.policy_templates.writers.ios_plist_writer_unittest
     import grit.format.policy_templates.writers.json_writer_unittest
     import grit.format.policy_templates.writers.plist_strings_writer_unittest
     import grit.format.policy_templates.writers.plist_writer_unittest
@@ -95,6 +95,7 @@ class TestSuiteAll(unittest.TestSuite):
         grit.format.html_inline_unittest.HtmlInlineUnittest,
         grit.format.js_map_format_unittest.JsMapFormatUnittest,
         grit.format.rc_header_unittest.RcHeaderFormatterUnittest,
+        grit.format.gzip_string_unittest.FormatGzipStringUnittest,
         grit.format.rc_unittest.FormatRcUnittest,
         grit.format.resource_map_unittest.FormatResourceMapUnittest,
         grit.format.policy_templates.policy_template_generator_unittest.
@@ -109,8 +110,6 @@ class TestSuiteAll(unittest.TestSuite):
             AndroidPolicyWriterUnittest,
         grit.format.policy_templates.writers.doc_writer_unittest.
             DocWriterUnittest,
-        grit.format.policy_templates.writers.ios_plist_writer_unittest.
-            IOSPListWriterUnittest,
         grit.format.policy_templates.writers.json_writer_unittest.
             JsonWriterUnittest,
         grit.format.policy_templates.writers.plist_strings_writer_unittest.

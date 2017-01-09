@@ -26,11 +26,6 @@ function secondImageLoaded()
     console.log("Done2.");
 }
 
-function forceCachedResourceLoaderGC() {
-    if (window.internals)
-        window.internals.garbageCollectDocumentResources();
-}
-
 function test()
 {
     var imageRequest;
@@ -41,7 +36,7 @@ function test()
     function step2()
     {
         imageRequest = InspectorTest.networkRequests().pop();
-        imageRequest.requestContent(step3);
+        imageRequest.requestContent().then(step3);
     }
 
     var originalContentLength;
@@ -72,12 +67,9 @@ function test()
 
     function step6()
     {
-        // Force CachedResourceLoader garbage collector run.
-        InspectorTest.evaluateInPage("forceCachedResourceLoaderGC()");
-
         // Re-request content now that CachedResource should have been destroyed.
         delete imageRequest._content;
-        imageRequest.requestContent(step7);
+        imageRequest.requestContent().then(step7);
     }
 
     function step7()

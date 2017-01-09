@@ -10,9 +10,8 @@
 #import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#include "ios/web/public/test/web_test_util.h"
+#include "ios/web/public/test/web_test.h"
 #import "ios/web/public/web_view_creation_util.h"
-#import "ios/web/test/web_test.h"
 #import "ios/web/web_state/ui/crw_wk_script_message_router.h"
 #import "testing/gtest_mac.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -35,16 +34,19 @@ NSString* const kBlobToBase64StringScript =
      "};";
 
 // Tests that the POST request is correctly executed through XMLHttpRequest.
-TEST_F(CRWJSPOSTRequestLoaderTest, LoadsCorrectHTML) {
-  CR_TEST_REQUIRES_WK_WEB_VIEW();
-
+// TODO(crbug.com/592034): This test is flaky on device.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_LoadsCorrectHTML LoadsCorrectHTML
+#else
+#define MAYBE_LoadsCorrectHTML DISABLED_LoadsCorrectHTML
+#endif
+TEST_F(CRWJSPOSTRequestLoaderTest, MAYBE_LoadsCorrectHTML) {
   // Set up necessary objects.
   scoped_nsobject<CRWJSPOSTRequestLoader> loader(
       [[CRWJSPOSTRequestLoader alloc] init]);
-  scoped_nsobject<WKWebView> web_view(
-      web::CreateWKWebView(CGRectZero, GetBrowserState()));
+  WKWebView* web_view = web::BuildWKWebView(CGRectZero, GetBrowserState());
   WKUserContentController* contentController =
-      web_view.get().configuration.userContentController;
+      web_view.configuration.userContentController;
   scoped_nsobject<CRWWKScriptMessageRouter> messageRouter(
       [[CRWWKScriptMessageRouter alloc]
           initWithUserContentController:contentController]);

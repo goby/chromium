@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
@@ -45,7 +46,7 @@ class ComponentExtensionIMEManagerImpl
       std::vector<ComponentExtensionIME>* out_imes);
 
   // Parses manifest string to manifest json dictionary value.
-  static scoped_ptr<base::DictionaryValue> GetManifest(
+  static std::unique_ptr<base::DictionaryValue> GetManifest(
       const std::string& manifest_string);
 
   // Reads extension information: description, option page. This function

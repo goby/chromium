@@ -7,7 +7,6 @@
 #include <algorithm>
 
 #include "third_party/skia/include/core/SkColor.h"
-#include "third_party/skia/include/core/SkXfermode.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/compositor/paint_recorder.h"
 #include "ui/gfx/canvas.h"
@@ -29,18 +28,20 @@ namespace {
 // right and bottom layers are stretched to the height or width of the
 // center image.
 
-void ScaleWidth(gfx::Size center, ui::Layer* layer, gfx::Transform& transform) {
+void ScaleWidth(const gfx::Size& center,
+                ui::Layer* layer,
+                gfx::Transform* transform) {
   float layer_width = layer->bounds().width() * layer->device_scale_factor();
   float scale = static_cast<float>(center.width()) / layer_width;
-  transform.Scale(scale, 1.0);
+  transform->Scale(scale, 1.0);
 }
 
-void ScaleHeight(gfx::Size center,
+void ScaleHeight(const gfx::Size& center,
                  ui::Layer* layer,
-                 gfx::Transform& transform) {
+                 gfx::Transform* transform) {
   float layer_height = layer->bounds().height() * layer->device_scale_factor();
   float scale = static_cast<float>(center.height()) / layer_height;
-  transform.Scale(1.0, scale);
+  transform->Scale(1.0, scale);
 }
 
 // Returns the dimensions of |image| if non-NULL or gfx::Size(0, 0) otherwise.
@@ -153,7 +154,7 @@ void ImageGrid::SetSize(const gfx::Size& size) {
     if (center_width > 0) {
       gfx::Transform transform;
       transform.Translate(left, 0);
-      ScaleWidth(center_size_in_pixels, top_layer_.get(), transform);
+      ScaleWidth(center_size_in_pixels, top_layer_.get(), &transform);
       top_layer_->SetTransform(transform);
     }
     top_layer_->SetVisible(center_width > 0);
@@ -163,7 +164,7 @@ void ImageGrid::SetSize(const gfx::Size& size) {
       gfx::Transform transform;
       transform.Translate(
           left, size.height() - bottom_layer_->bounds().height());
-      ScaleWidth(center_size_in_pixels, bottom_layer_.get(), transform);
+      ScaleWidth(center_size_in_pixels, bottom_layer_.get(), &transform);
       bottom_layer_->SetTransform(transform);
     }
     bottom_layer_->SetVisible(center_width > 0);
@@ -172,7 +173,7 @@ void ImageGrid::SetSize(const gfx::Size& size) {
     if (center_height > 0) {
       gfx::Transform transform;
       transform.Translate(0, top);
-      ScaleHeight(center_size_in_pixels, left_layer_.get(), transform);
+      ScaleHeight(center_size_in_pixels, left_layer_.get(), &transform);
       left_layer_->SetTransform(transform);
     }
     left_layer_->SetVisible(center_height > 0);
@@ -182,7 +183,7 @@ void ImageGrid::SetSize(const gfx::Size& size) {
       gfx::Transform transform;
       transform.Translate(
           size.width() - right_layer_->bounds().width(), top);
-      ScaleHeight(center_size_in_pixels, right_layer_.get(), transform);
+      ScaleHeight(center_size_in_pixels, right_layer_.get(), &transform);
       right_layer_->SetTransform(transform);
     }
     right_layer_->SetVisible(center_height > 0);
@@ -268,7 +269,7 @@ void ImageGrid::ImagePainter::SetClipRect(const gfx::Rect& clip_rect,
 }
 
 void ImageGrid::ImagePainter::OnPaintLayer(const ui::PaintContext& context) {
-  gfx::Size bounding_size(clip_rect_.right(), clip_rect_.bottom());
+  gfx::Size bounding_size(image_.width(), image_.height());
   ui::PaintRecorder recorder(context, bounding_size);
   if (!clip_rect_.IsEmpty())
     recorder.canvas()->ClipRect(clip_rect_);
@@ -284,13 +285,9 @@ void ImageGrid::ImagePainter::OnDeviceScaleFactorChanged(
   // Redrawing will take care of scale factor change.
 }
 
-base::Closure ImageGrid::ImagePainter::PrepareForLayerBoundsChange() {
-  return base::Closure();
-}
-
 void ImageGrid::SetImage(const gfx::Image* image,
-                         scoped_ptr<ui::Layer>* layer_ptr,
-                         scoped_ptr<ImagePainter>* painter_ptr,
+                         std::unique_ptr<ui::Layer>* layer_ptr,
+                         std::unique_ptr<ImagePainter>* painter_ptr,
                          ImageType type) {
   // Minimum width (for HORIZONTAL) or height (for VERTICAL) of the
   // |image| so that layers are scaled property if the device scale
@@ -298,8 +295,6 @@ void ImageGrid::SetImage(const gfx::Image* image,
   const int kMinimumSize = 20;
 
   // Clean out old layers and painters.
-  if (layer_ptr->get())
-    layer_->Remove(layer_ptr->get());
   layer_ptr->reset();
   painter_ptr->reset();
 

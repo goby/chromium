@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_DEVTOOLS_DEVTOOLS_WINDOW_H_
 #define CHROME_BROWSER_DEVTOOLS_DEVTOOLS_WINDOW_H_
 
+#include "base/macros.h"
 #include "chrome/browser/devtools/devtools_contents_resizing_strategy.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
@@ -20,7 +21,6 @@ namespace content {
 class DevToolsAgentHost;
 struct NativeWebKeyboardEvent;
 class RenderFrameHost;
-class RenderViewHost;
 }
 
 namespace user_prefs {
@@ -76,10 +76,11 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // ToggleDevToolsWindow().
   static void OpenDevToolsWindow(content::WebContents* inspected_web_contents);
 
-  // Open or reveal DevTools window. This window will be undocked.
+  // Open or reveal DevTools window, with no special action. Use |profile| to
+  // open client window in, default to |host|'s profile if none given.
   static void OpenDevToolsWindow(
-      Profile* profile,
-      const scoped_refptr<content::DevToolsAgentHost>& agent_host);
+      scoped_refptr<content::DevToolsAgentHost> host,
+      Profile* profile);
 
   // Perform specified action for current WebContents inside a |browser|.
   // This may close currently open DevTools window.
@@ -102,7 +103,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
       Profile* profile,
       const std::string& frontend_uri,
       const scoped_refptr<content::DevToolsAgentHost>& agent_host,
-      bool isWorker);
+      bool is_worker,
+      bool is_v8_only);
 
   // Worker frontend is always undocked.
   static void OpenDevToolsWindowForWorker(
@@ -112,11 +114,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   static void InspectElement(content::RenderFrameHost* inspected_frame_host,
                              int x,
                              int y);
-
-  // Creates and opens the front-end API channel to applicable front-end in a
-  // form of devtools agent host.
-  static content::DevToolsExternalAgentProxyDelegate*
-      CreateWebSocketAPIChannel(const std::string& path);
 
   // Sets closure to be called after load is done. If already loaded, calls
   // closure immediately.
@@ -128,13 +125,13 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // Reloads inspected web contents as if it was triggered from DevTools.
   // Returns true if it has successfully handled reload, false if the caller
   // is to proceed reload without DevTools interception.
-  bool ReloadInspectedWebContents(bool ignore_cache);
+  bool ReloadInspectedWebContents(bool bypass_cache);
 
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params) override;
 
-  void ShowCertificateViewer(int certificate_id);
+  void ShowCertificateViewer(scoped_refptr<net::X509Certificate> certificate);
 
   // BeforeUnload interception ////////////////////////////////////////////////
 
@@ -210,8 +207,19 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // by user.
   static void OnPageCloseCanceled(content::WebContents* contents);
 
+  content::WebContents* GetInspectedWebContents();
+
  private:
   friend class DevToolsWindowTesting;
+  friend class DevToolsWindowCreationObserver;
+
+  using CreationCallback = base::Callback<void(DevToolsWindow*)>;
+  static void AddCreationCallbackForTest(const CreationCallback& callback);
+  static void RemoveCreationCallbackForTest(const CreationCallback& callback);
+
+  static void OpenDevToolsWindowForFrame(
+      Profile* profile,
+      const scoped_refptr<content::DevToolsAgentHost>& agent_host);
 
   // DevTools lifecycle typically follows this way:
   // - Toggle/Open: client call;
@@ -244,15 +252,16 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                                 const GURL& frontend_url,
                                 content::WebContents* inspected_web_contents,
                                 bool shared_worker_frontend,
+                                bool v8_only_frontend,
                                 const std::string& remote_frontend,
                                 bool can_dock,
                                 const std::string& settings);
   static GURL GetDevToolsURL(Profile* profile,
                              const GURL& base_url,
                              bool shared_worker_frontend,
+                             bool v8_only_frontend,
                              const std::string& remote_frontend,
-                             bool can_dock,
-                             const std::string& settings);
+                             bool can_dock);
 
   static DevToolsWindow* CreateDevToolsWindowForWorker(Profile* profile);
   static void ToggleDevToolsWindow(
@@ -270,6 +279,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                       bool user_gesture,
                       bool* was_blocked) override;
   void WebContentsCreated(content::WebContents* source_contents,
+                          int opener_render_process_id,
                           int opener_render_frame_id,
                           const std::string& frame_name,
                           const GURL& target_url,
@@ -291,14 +301,18 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
       content::WebContents* web_contents,
       SkColor color,
       const std::vector<content::ColorSuggestion>& suggestions) override;
-  void RunFileChooser(content::WebContents* web_contents,
+  void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
+  void ShowCertificateViewerInDevTools(
+      content::WebContents* web_contents,
+      scoped_refptr<net::X509Certificate> certificate) override;
 
   // content::DevToolsUIBindings::Delegate overrides
   void ActivateWindow() override;
   void CloseWindow() override;
+  void Inspect(scoped_refptr<content::DevToolsAgentHost> host) override;
   void SetInspectedPageBounds(const gfx::Rect& rect) override;
   void InspectElementCompleted() override;
   void SetIsDocked(bool is_docked) override;
@@ -306,6 +320,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   void SetWhitelistedShortcuts(const std::string& message) override;
   void InspectedContentsClosing() override;
   void OnLoadCompleted() override;
+  void ReadyForTest() override;
   InfoBarService* GetInfoBarService() override;
   void RenderProcessGone(bool crashed) override;
 
@@ -317,9 +332,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   void LoadCompleted();
   void UpdateBrowserToolbar();
   void UpdateBrowserWindow();
-  content::WebContents* GetInspectedWebContents();
 
-  scoped_ptr<ObserverWithAccessor> inspected_contents_observer_;
+  std::unique_ptr<ObserverWithAccessor> inspected_contents_observer_;
 
   Profile* profile_;
   content::WebContents* main_web_contents_;
@@ -328,6 +342,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   Browser* browser_;
   bool is_docked_;
   const bool can_dock_;
+  bool close_on_detach_;
   LifeStage life_stage_;
   DevToolsToggleAction action_on_load_;
   DevToolsContentsResizingStrategy contents_resizing_strategy_;
@@ -336,9 +351,11 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   bool intercepted_page_beforeunload_;
   base::Closure load_completed_callback_;
   base::Closure close_callback_;
+  bool ready_for_test_;
+  base::Closure ready_for_test_callback_;
 
   base::TimeTicks inspect_element_start_time_;
-  scoped_ptr<DevToolsEventForwarder> event_forwarder_;
+  std::unique_ptr<DevToolsEventForwarder> event_forwarder_;
 
   friend class DevToolsEventForwarder;
   DISALLOW_COPY_AND_ASSIGN(DevToolsWindow);

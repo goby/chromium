@@ -10,23 +10,27 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "components/url_matcher/url_matcher.h"
 #include "extensions/browser/api/declarative/declarative_rule.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition_attribute.h"
 #include "net/http/http_response_headers.h"
 
+namespace net {
+class URLRequest;
+}
+
 namespace extensions {
+class ExtensionNavigationUIData;
 
 // Container for information about a URLRequest to determine which
 // rules apply to the request.
 struct WebRequestData {
   WebRequestData(net::URLRequest* request, RequestStage stage);
-  WebRequestData(
-      net::URLRequest* request,
-      RequestStage stage,
-      const net::HttpResponseHeaders* original_response_headers);
+  WebRequestData(net::URLRequest* request,
+                 RequestStage stage,
+                 ExtensionNavigationUIData* navigation_ui_data,
+                 const net::HttpResponseHeaders* original_response_headers);
   ~WebRequestData();
 
   // The network request that is currently being processed.
@@ -35,6 +39,7 @@ struct WebRequestData {
   RequestStage stage;
   // Additional information about requests that is not
   // available in all request stages.
+  ExtensionNavigationUIData* navigation_ui_data;
   const net::HttpResponseHeaders* original_response_headers;
 };
 
@@ -78,7 +83,7 @@ class WebRequestCondition {
 
   // Factory method that instantiates a WebRequestCondition according to
   // the description |condition| passed by the extension API.
-  static scoped_ptr<WebRequestCondition> Create(
+  static std::unique_ptr<WebRequestCondition> Create(
       const Extension* extension,
       url_matcher::URLMatcherConditionFactory* url_matcher_condition_factory,
       const base::Value& condition,

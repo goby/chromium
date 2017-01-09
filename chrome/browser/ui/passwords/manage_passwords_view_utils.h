@@ -18,16 +18,33 @@ class Range;
 
 class GURL;
 
+enum class PasswordTitleType {
+  SAVE_PASSWORD,    // plain password
+  SAVE_ACCOUNT,     // login via IDP
+  UPDATE_PASSWORD,  // update plain password
+};
+
+class Profile;
+
 // The desired width and height in pixels for an account avatar.
-extern const int kAvatarImageSize;
+constexpr int kAvatarImageSize = 32;
+
+// The desired width and height for the 'i' icon used for the PSL matches in the
+// account chooser.
+constexpr int kInfoIconSize = 16;
 
 // Crops and scales |image_skia| to the desired size for an account avatar.
 gfx::ImageSkia ScaleImageForAccountAvatar(gfx::ImageSkia image_skia);
 
+// Returns the upper and lower label to be displayed in the account chooser UI
+// for |form|. The lower label can be multiline.
+std::pair<base::string16, base::string16> GetCredentialLabelsForAccountChooser(
+    const autofill::PasswordForm& form);
+
 // Sets the formatted |title| in the Save Password bubble or the Update Password
-// bubble (depending on |is_update_password_bubble|). If the registry
-// controlled domain of |user_visible_url| (i.e. the one seen in the omnibox)
-// differs from the registry controlled domain of |form_origin_url|, sets
+// bubble (depending on |dialog_type|). If the registry controlled domain of
+// |user_visible_url| (i.e. the one seen in the omnibox) differs from the
+// registry controlled domain of |form_origin_url|, sets
 // |IDS_SAVE_PASSWORD_TITLE| as the |title| so that it replaces "this site" in
 // title text with output of |FormatUrlForSecurityDisplay(form_origin_url)|.
 // Otherwise, sets |IDS_SAVE_PASSWORD| as the |title| having "this site".
@@ -38,7 +55,7 @@ void GetSavePasswordDialogTitleTextAndLinkRange(
     const GURL& user_visible_url,
     const GURL& form_origin_url,
     bool is_smartlock_branding_enabled,
-    bool is_update_password_bubble,
+    PasswordTitleType dialog_type,
     base::string16* title,
     gfx::Range* title_link_range);
 
@@ -61,18 +78,9 @@ void GetManagePasswordsDialogTitleText(const GURL& user_visible_url,
 // branding.
 void GetAccountChooserDialogTitleTextAndLinkRange(
     bool is_smartlock_branding_enabled,
+    bool many_accounts,
     base::string16* title,
     gfx::Range* title_link_range);
-
-// Sets the formatted |explanation| in the Auto sign-in prompt.
-// If |is_smartlock_branding_enabled| is true, sets the
-// |explanation_link_range| for the "Google Smart Lock" text range to be set
-// visibly as a hyperlink in the prompt, otherwise chooses the title which
-// doesn't contain Smart Lock branding.
-void GetAutoSigninPromptFirstRunExperienceExplanation(
-    bool is_smartlock_branding_enabled,
-    base::string16* explanation,
-    gfx::Range* explanation_link_range);
 
 // Loads |smartlock_string_id| or |default_string_id| string from the resources
 // and substitutes the placeholder with the correct password manager branding
@@ -88,5 +96,9 @@ void GetBrandedTextAndLinkRange(
 
 // Returns an username in the form that should be shown in the bubble.
 base::string16 GetDisplayUsername(const autofill::PasswordForm& form);
+
+// Check if |profile| syncing the Auto sign-in settings (by checking that user
+// syncs the PRIORITY_PREFERENCE). The view appearance might depend on it.
+bool IsSyncingAutosignSetting(Profile* profile);
 
 #endif  // CHROME_BROWSER_UI_PASSWORDS_MANAGE_PASSWORDS_VIEW_UTILS_H_

@@ -5,19 +5,17 @@
 #ifndef IOS_WEB_PUBLIC_TEST_RESPONSE_PROVIDERS_RESPONSE_PROVIDER_H_
 #define IOS_WEB_PUBLIC_TEST_RESPONSE_PROVIDERS_RESPONSE_PROVIDER_H_
 
+#include <map>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "url/gurl.h"
 
-#ifdef __OBJC__
 @class GCDWebServerResponse;
-#else
-class GCDWebServerResponse;
-#endif
 
 namespace web {
 
@@ -32,6 +30,7 @@ class ResponseProvider {
             const std::string& method,
             const std::string& body,
             const net::HttpRequestHeaders& headers);
+    Request(const Request& other);
     virtual ~Request();
 
     // The URL for the request.
@@ -55,6 +54,11 @@ class ResponseProvider {
   // Gets default response headers with a text/html content type and a 200
   // response code.
   static scoped_refptr<net::HttpResponseHeaders> GetDefaultResponseHeaders();
+  // Gets a map of response headers with a text/html content type, a 200
+  // response code and Set-Cookie in headers.
+  static std::map<GURL, scoped_refptr<net::HttpResponseHeaders>>
+  GetDefaultResponseHeaders(
+      const std::map<GURL, std::pair<std::string, std::string>>& responses);
   // Gets configurable response headers with a provided content type and a
   // 200 response code.
   static scoped_refptr<net::HttpResponseHeaders> GetResponseHeaders(

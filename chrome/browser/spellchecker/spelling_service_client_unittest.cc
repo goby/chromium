@@ -2,20 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/spellcheck/browser/spelling_service_client.h"
+
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/spellchecker/spelling_service_client.h"
-#include "chrome/common/pref_names.h"
-#include "chrome/common/spellcheck_result.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/pref_service.h"
+#include "components/spellcheck/browser/pref_names.h"
+#include "components/spellcheck/common/spellcheck_result.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/test_url_fetcher_factory.h"
@@ -54,9 +58,11 @@ class TestSpellingURLFetcher : public net::TestURLFetcher {
     EXPECT_EQ("application/json", upload_content_type);
 
     // Parse the JSON to be sent to the service, and verify its parameters.
-    scoped_ptr<base::DictionaryValue> value(static_cast<base::DictionaryValue*>(
-        base::JSONReader::Read(upload_content, base::JSON_ALLOW_TRAILING_COMMAS)
-            .release()));
+    std::unique_ptr<base::DictionaryValue> value(
+        static_cast<base::DictionaryValue*>(
+            base::JSONReader::Read(upload_content,
+                                   base::JSON_ALLOW_TRAILING_COMMAS)
+                .release()));
     ASSERT_TRUE(value.get());
     std::string method;
     EXPECT_TRUE(value->GetString("method", &method));
@@ -165,12 +171,12 @@ class TestingSpellingServiceClient : public SpellingServiceClient {
   }
 
  private:
-  scoped_ptr<net::URLFetcher> CreateURLFetcher(const GURL& url) override {
+  std::unique_ptr<net::URLFetcher> CreateURLFetcher(const GURL& url) override {
     EXPECT_EQ("https://www.googleapis.com/rpc", url.spec());
     fetcher_ = new TestSpellingURLFetcher(
         0, url, this, request_type_, sanitized_request_text_, request_language_,
         response_status_, response_data_);
-    return scoped_ptr<net::URLFetcher>(fetcher_);
+    return std::unique_ptr<net::URLFetcher>(fetcher_);
   }
 
   int request_type_;
@@ -325,8 +331,8 @@ TEST_F(SpellingServiceClientTest, RequestTextCheck) {
   };
 
   PrefService* pref = profile_.GetPrefs();
-  pref->SetBoolean(prefs::kEnableContinuousSpellcheck, true);
-  pref->SetBoolean(prefs::kSpellCheckUseSpellingService, true);
+  pref->SetBoolean(spellcheck::prefs::kEnableSpellcheck, true);
+  pref->SetBoolean(spellcheck::prefs::kSpellCheckUseSpellingService, true);
 
   for (size_t i = 0; i < arraysize(kTests); ++i) {
     client_.SetHTTPRequest(kTests[i].request_type,
@@ -337,7 +343,7 @@ TEST_F(SpellingServiceClientTest, RequestTextCheck) {
                                        kTests[i].corrected_text);
     base::ListValue dictionary;
     dictionary.AppendString(kTests[i].language);
-    pref->Set(prefs::kSpellCheckDictionaries, dictionary);
+    pref->Set(spellcheck::prefs::kSpellCheckDictionaries, dictionary);
 
     client_.RequestTextCheck(
         &profile_,
@@ -360,20 +366,20 @@ TEST_F(SpellingServiceClientTest, AvailableServices) {
   // When a user disables spellchecking or prevent using the Spelling service,
   // this function should return false both for suggestions and for spellcheck.
   PrefService* pref = profile_.GetPrefs();
-  pref->SetBoolean(prefs::kEnableContinuousSpellcheck, false);
-  pref->SetBoolean(prefs::kSpellCheckUseSpellingService, false);
+  pref->SetBoolean(spellcheck::prefs::kEnableSpellcheck, false);
+  pref->SetBoolean(spellcheck::prefs::kSpellCheckUseSpellingService, false);
   EXPECT_FALSE(client_.IsAvailable(&profile_, kSuggest));
   EXPECT_FALSE(client_.IsAvailable(&profile_, kSpellcheck));
 
-  pref->SetBoolean(prefs::kEnableContinuousSpellcheck, true);
-  pref->SetBoolean(prefs::kSpellCheckUseSpellingService, true);
+  pref->SetBoolean(spellcheck::prefs::kEnableSpellcheck, true);
+  pref->SetBoolean(spellcheck::prefs::kSpellCheckUseSpellingService, true);
 
   // For locales supported by the SpellCheck service, this function returns
   // false for suggestions and true for spellcheck. (The comment in
   // SpellingServiceClient::IsAvailable() describes why this function returns
   // false for suggestions.) If there is no language set, then we
   // do not allow any remote.
-  pref->Set(prefs::kSpellCheckDictionaries, base::ListValue());
+  pref->Set(spellcheck::prefs::kSpellCheckDictionaries, base::ListValue());
 
   EXPECT_FALSE(client_.IsAvailable(&profile_, kSuggest));
   EXPECT_FALSE(client_.IsAvailable(&profile_, kSpellcheck));
@@ -386,7 +392,7 @@ TEST_F(SpellingServiceClientTest, AvailableServices) {
   for (size_t i = 0; i < arraysize(kSupported); ++i) {
     base::ListValue dictionary;
     dictionary.AppendString(kSupported[i]);
-    pref->Set(prefs::kSpellCheckDictionaries, dictionary);
+    pref->Set(spellcheck::prefs::kSpellCheckDictionaries, dictionary);
 
     EXPECT_FALSE(client_.IsAvailable(&profile_, kSuggest));
     EXPECT_TRUE(client_.IsAvailable(&profile_, kSpellcheck));
@@ -404,7 +410,7 @@ TEST_F(SpellingServiceClientTest, AvailableServices) {
     SCOPED_TRACE(std::string("Expected language ") + kUnsupported[i]);
     base::ListValue dictionary;
     dictionary.AppendString(kUnsupported[i]);
-    pref->Set(prefs::kSpellCheckDictionaries, dictionary);
+    pref->Set(spellcheck::prefs::kSpellCheckDictionaries, dictionary);
 
     EXPECT_TRUE(client_.IsAvailable(&profile_, kSuggest));
     EXPECT_FALSE(client_.IsAvailable(&profile_, kSpellcheck));

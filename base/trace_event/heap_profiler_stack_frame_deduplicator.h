@@ -31,7 +31,10 @@ class BASE_EXPORT StackFrameDeduplicator : public ConvertableToTraceFormat {
   // A node in the call tree.
   struct FrameNode {
     FrameNode(StackFrame frame, int parent_frame_index);
+    FrameNode(const FrameNode& other);
     ~FrameNode();
+
+    size_t EstimateMemoryUsage() const;
 
     StackFrame frame;
 
@@ -46,10 +49,13 @@ class BASE_EXPORT StackFrameDeduplicator : public ConvertableToTraceFormat {
   using ConstIterator = std::vector<FrameNode>::const_iterator;
 
   StackFrameDeduplicator();
+  ~StackFrameDeduplicator() override;
 
-  // Inserts a backtrace and returns the index of its leaf node in |frames_|.
+  // Inserts a backtrace where |beginFrame| is a pointer to the bottom frame
+  // (e.g. main) and |endFrame| is a pointer past the top frame (most recently
+  // called function), and returns the index of its leaf node in |frames_|.
   // Returns -1 if the backtrace is empty.
-  int Insert(const Backtrace& bt);
+  int Insert(const StackFrame* beginFrame, const StackFrame* endFrame);
 
   // Iterators over the frame nodes in the call tree.
   ConstIterator begin() const { return frames_.begin(); }
@@ -63,8 +69,6 @@ class BASE_EXPORT StackFrameDeduplicator : public ConvertableToTraceFormat {
   void EstimateTraceMemoryOverhead(TraceEventMemoryOverhead* overhead) override;
 
  private:
-  ~StackFrameDeduplicator() override;
-
   std::map<StackFrame, int> roots_;
   std::vector<FrameNode> frames_;
 

@@ -7,13 +7,10 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/process/process_handle.h"
 #include "base/time/time.h"
 #include "components/metrics/proto/chrome_user_metrics_extension.pb.h"
-
-namespace base {
-class TimeDelta;
-}
 
 namespace tracked_objects {
 struct ProcessDataPhaseSnapshot;

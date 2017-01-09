@@ -4,6 +4,8 @@
 
 #include "android_webview/native/permission/permission_request_handler.h"
 
+#include <utility>
+
 #include "android_webview/native/permission/aw_permission_request.h"
 #include "android_webview/native/permission/aw_permission_request_delegate.h"
 #include "android_webview/native/permission/permission_request_handler_client.h"
@@ -42,7 +44,7 @@ PermissionRequestHandler::~PermissionRequestHandler() {
 }
 
 void PermissionRequestHandler::SendRequest(
-    scoped_ptr<AwPermissionRequestDelegate> request) {
+    std::unique_ptr<AwPermissionRequestDelegate> request) {
   if (Preauthorized(request->GetOrigin(), request->GetResources())) {
     request->NotifyRequestResult(true);
     return;
@@ -50,14 +52,14 @@ void PermissionRequestHandler::SendRequest(
 
   base::WeakPtr<AwPermissionRequest> weak_request;
   base::android::ScopedJavaLocalRef<jobject> java_peer =
-      AwPermissionRequest::Create(request.Pass(), &weak_request);
+      AwPermissionRequest::Create(std::move(request), &weak_request);
   requests_.push_back(weak_request);
   client_->OnPermissionRequest(java_peer, weak_request.get());
   PruneRequests();
 }
 
 void PermissionRequestHandler::CancelRequest(const GURL& origin,
-                                             int64 resources) {
+                                             int64_t resources) {
   // The request list might have multiple requests with same origin and
   // resources.
   RequestIterator i = FindRequest(origin, resources);
@@ -69,7 +71,7 @@ void PermissionRequestHandler::CancelRequest(const GURL& origin,
 }
 
 void PermissionRequestHandler::PreauthorizePermission(const GURL& origin,
-                                                      int64 resources) {
+                                                      int64_t resources) {
   if (!resources)
     return;
 
@@ -86,17 +88,16 @@ void PermissionRequestHandler::NavigationEntryCommitted(
     const content::LoadCommittedDetails& details) {
   const ui::PageTransition transition = details.entry->GetTransitionType();
   if (details.is_navigation_to_different_page() ||
-      ui::PageTransitionStripQualifier(transition) ==
-      ui::PAGE_TRANSITION_RELOAD ||
+      ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD) ||
       contents_unique_id_ != details.entry->GetUniqueID()) {
     CancelAllRequests();
     contents_unique_id_ = details.entry->GetUniqueID();
   }
 }
 
-PermissionRequestHandler::RequestIterator
-PermissionRequestHandler::FindRequest(const GURL& origin,
-                                      int64 resources) {
+PermissionRequestHandler::RequestIterator PermissionRequestHandler::FindRequest(
+    const GURL& origin,
+    int64_t resources) {
   RequestIterator i;
   for (i = requests_.begin(); i != requests_.end(); ++i) {
     if (i->get() && i->get()->GetOrigin() == origin &&
@@ -130,8 +131,8 @@ void PermissionRequestHandler::PruneRequests() {
 }
 
 bool PermissionRequestHandler::Preauthorized(const GURL& origin,
-                                              int64 resources) {
-  std::map<std::string, int64>::iterator i =
+                                             int64_t resources) {
+  std::map<std::string, int64_t>::iterator i =
       preauthorized_permission_.find(origin.GetOrigin().spec());
 
   return i != preauthorized_permission_.end() &&

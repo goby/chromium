@@ -24,7 +24,9 @@
   COLLAPSE_SESSION: 6,
   EXPAND_SESSION: 7,
   OPEN_ALL: 8,
-  LIMIT: 9  // Should always be the last one.
+  HAS_FOREIGN_DATA: 9,
+  HIDE_FOR_NOW: 10,
+  LIMIT: 11  // Should always be the last one.
 };
 
 /**
@@ -65,9 +67,10 @@ DeviceContextMenuController.prototype.initialize = function() {
   this.expandItem_ = this.appendMenuItem_('expandSessionMenuItemText');
   this.expandItem_.addEventListener('activate',
                                     this.onCollapseOrExpand_.bind(this));
-  this.openAllItem_ = this.appendMenuItem_('restoreSessionMenuItemText');
-  this.openAllItem_.addEventListener('activate',
-                                     this.onOpenAll_.bind(this));
+  var openAllItem = this.appendMenuItem_('restoreSessionMenuItemText');
+  openAllItem.addEventListener('activate', this.onOpenAll_.bind(this));
+  var deleteItem = this.appendMenuItem_('deleteSessionMenuItemText');
+  deleteItem.addEventListener('activate', this.onDeleteSession_.bind(this));
 };
 
 /**
@@ -122,6 +125,16 @@ DeviceContextMenuController.prototype.onCollapseOrExpand_ = function(e) {
 DeviceContextMenuController.prototype.onOpenAll_ = function(e) {
   chrome.send('openForeignSession', [this.session_.tag]);
   recordUmaEvent_(HISTOGRAM_EVENT.OPEN_ALL);
+};
+
+/**
+ * Handler for the 'Hide for now' menu item.
+ * @param {Event} e The activation event.
+ * @private
+ */
+DeviceContextMenuController.prototype.onDeleteSession_ = function(e) {
+  chrome.send('deleteForeignSession', [this.session_.tag]);
+  recordUmaEvent_(HISTOGRAM_EVENT.HIDE_FOR_NOW);
 };
 
 /**
@@ -262,7 +275,7 @@ Device.prototype.createSessionContents_ = function(maxNumTabs) {
         numTabsShown++;
         var a = createElementWithClassName('a', 'device-tab-entry');
         a.href = tab.url;
-        a.style.backgroundImage = getFaviconImageSet(tab.url);
+        a.style.backgroundImage = cr.icon.getFavicon(tab.url);
         this.addHighlightedText_(a, tab.title);
         // Add a tooltip, since it might be ellipsized. The ones that are not
         // necessary will be removed once added to the document, so we can
@@ -273,15 +286,20 @@ Device.prototype.createSessionContents_ = function(maxNumTabs) {
         // turns.
         function makeClickHandler(sessionTag, windowId, tabId) {
           return function(e) {
+            if (e.button > 1)
+              return; // Ignore buttons other than left and middle.
             recordUmaEvent_(HISTOGRAM_EVENT.LINK_CLICKED);
             chrome.send('openForeignSession', [sessionTag, windowId, tabId,
                 e.button, e.altKey, e.ctrlKey, e.metaKey, e.shiftKey]);
             e.preventDefault();
           };
         };
-        a.addEventListener('click', makeClickHandler(sessionTag,
-                                                     String(win.sessionId),
-                                                     String(tab.sessionId)));
+        ['click', 'auxclick'].forEach(function(eventName) {
+          a.addEventListener(eventName,
+                             makeClickHandler(sessionTag,
+                                              String(win.sessionId),
+                                              String(tab.sessionId)));
+        });
         var wrapper = createElementWithClassName('div', 'device-tab-wrapper');
         wrapper.appendChild(a);
         contents.appendChild(wrapper);
@@ -296,7 +314,9 @@ Device.prototype.createSessionContents_ = function(maxNumTabs) {
     moreLink.classList.add('device-show-more-tabs');
     moreLink.addEventListener('click', this.view_.increaseRowHeight.bind(
         this.view_, this.row_, numTabsHidden));
-    moreLink.textContent = loadTimeData.getStringF('xMore', numTabsHidden);
+    // TODO(jshin): Use plural message formatter when available in JS.
+    moreLink.textContent = loadTimeData.getStringF('xMore',
+        numTabsHidden.toLocaleString());
     var moreWrapper = createElementWithClassName('div', 'more-wrapper');
     moreWrapper.appendChild(moreLink);
     contents.appendChild(moreWrapper);
@@ -353,6 +373,7 @@ function DevicesView() {
   this.rowHeights_ = [NB_ENTRIES_FIRST_ROW_COLUMN];
   this.focusGrids_ = [];
   this.updateSignInState(loadTimeData.getBoolean('isUserSignedIn'));
+  this.hasSeenForeignData_ = false;
   recordUmaEvent_(HISTOGRAM_EVENT.INITIALIZED);
 }
 
@@ -379,6 +400,14 @@ DevicesView.prototype.setSessionList = function(sessionList) {
   for (var i = 0; i < sessionList.length; i++)
     this.devices_.push(new Device(sessionList[i], this));
   this.displayResults_();
+
+  // This metric should only be emitted if we see foreign data, and it should
+  // only be emitted once per page refresh. Flip flag to remember because this
+  // method is called upon any update.
+  if (!this.hasSeenForeignData_ && sessionList.length > 0) {
+    this.hasSeenForeignData_ = true;
+    recordUmaEvent_(HISTOGRAM_EVENT.HAS_FOREIGN_DATA);
+  }
 };
 
 
@@ -512,18 +541,12 @@ DevicesView.prototype.displayResults_ = function() {
 /**
  * Sets the menu model data. An empty list means that either there are no
  * foreign sessions, or tab sync is disabled for this profile.
- * |isTabSyncEnabled| makes it possible to distinguish between the cases.
  *
  * @param {Array} sessionList Array of objects describing the sessions
  *     from other devices.
- * @param {boolean} isTabSyncEnabled Is tab sync enabled for this profile?
  */
-function setForeignSessions(sessionList, isTabSyncEnabled) {
-  // The other devices is shown iff tab sync is enabled.
-  if (isTabSyncEnabled)
-    devicesView.setSessionList(sessionList);
-  else
-    devicesView.clearDOM();
+function setForeignSessions(sessionList) {
+  devicesView.setSessionList(sessionList);
 }
 
 /**

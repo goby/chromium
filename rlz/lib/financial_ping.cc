@@ -6,13 +6,20 @@
 
 #include "rlz/lib/financial_ping.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/atomicops.h"
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "rlz/lib/assert.h"
 #include "rlz/lib/lib_values.h"
 #include "rlz/lib/machine_id.h"
@@ -64,7 +71,7 @@ namespace {
 // Returns the time relative to a fixed point in the past in multiples of
 // 100 ns stepts. The point in the past is arbitrary but can't change, as the
 // result of this value is stored on disk.
-int64 GetSystemTimeAsInt64() {
+int64_t GetSystemTimeAsInt64() {
 #if defined(OS_WIN)
   FILETIME now_as_file_time;
   // Relative to Jan 1, 1601 (UTC).
@@ -77,7 +84,7 @@ int64 GetSystemTimeAsInt64() {
 #else
   // Seconds since epoch (Jan 1, 1970).
   double now_seconds = base::Time::Now().ToDoubleT();
-  return static_cast<int64>(now_seconds * 1000 * 1000 * 10);
+  return static_cast<int64_t>(now_seconds * 1000 * 1000 * 10);
 #endif
 }
 
@@ -226,10 +233,8 @@ void ShutdownCheck(base::WeakPtr<base::RunLoop> weak) {
   // How frequently the financial ping thread should check
   // the shutdown condition?
   const base::TimeDelta kInterval = base::TimeDelta::FromMilliseconds(500);
-  base::MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&ShutdownCheck, weak),
-      kInterval);
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&ShutdownCheck, weak), kInterval);
 }
 #endif
 
@@ -277,7 +282,7 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
     return false;
 
   // Get the response text.
-  scoped_ptr<char[]> buffer(new char[kMaxPingResponseLength]);
+  std::unique_ptr<char[]> buffer(new char[kMaxPingResponseLength]);
   if (buffer.get() == NULL)
     return false;
 
@@ -302,7 +307,7 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
     return false;
 
   // Run a blocking event loop to match the win inet implementation.
-  scoped_ptr<base::MessageLoop> message_loop;
+  std::unique_ptr<base::MessageLoop> message_loop;
   // Ensure that we have a MessageLoop.
   if (!base::MessageLoop::current())
     message_loop.reset(new base::MessageLoop);
@@ -313,7 +318,7 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
                                        kFinancialServer, kFinancialPort,
                                        request);
 
-  scoped_ptr<net::URLFetcher> fetcher =
+  std::unique_ptr<net::URLFetcher> fetcher =
       net::URLFetcher::Create(GURL(url), net::URLFetcher::GET, &delegate);
 
   fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE |
@@ -330,13 +335,12 @@ bool FinancialPing::PingServer(const char* request, std::string* response) {
   const base::TimeDelta kTimeout = base::TimeDelta::FromMinutes(5);
   base::MessageLoop::ScopedNestableTaskAllower allow_nested(
       base::MessageLoop::current());
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&ShutdownCheck, weak.GetWeakPtr()));
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&ShutdownCheck, weak.GetWeakPtr()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&net::URLFetcher::Start, base::Unretained(fetcher.get())));
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, loop.QuitClosure(), kTimeout);
 
   loop.Run();
@@ -354,12 +358,12 @@ bool FinancialPing::IsPingTime(Product product, bool no_delay) {
   if (!store || !store->HasAccess(RlzValueStore::kReadAccess))
     return false;
 
-  int64 last_ping = 0;
+  int64_t last_ping = 0;
   if (!store->ReadPingTime(product, &last_ping))
     return true;
 
-  uint64 now = GetSystemTimeAsInt64();
-  int64 interval = now - last_ping;
+  uint64_t now = GetSystemTimeAsInt64();
+  int64_t interval = now - last_ping;
 
   // If interval is negative, clock was probably reset. So ping.
   if (interval < 0)
@@ -382,7 +386,7 @@ bool FinancialPing::UpdateLastPingTime(Product product) {
   if (!store || !store->HasAccess(RlzValueStore::kWriteAccess))
     return false;
 
-  uint64 now = GetSystemTimeAsInt64();
+  uint64_t now = GetSystemTimeAsInt64();
   return store->WritePingTime(product, now);
 }
 

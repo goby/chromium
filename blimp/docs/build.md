@@ -1,57 +1,104 @@
-# Using GN
-Blimp only supports building using [GN](../../tools/gn/README.md), and only
-supports building for Android and Linux. A quick overview over how to use GN can
-be found in the GN [quick start guide](../../tools/gn/docs/quick_start.md).
+[TOC]
 
-## Android setup
-To setup GN, run the following command:
+# Checkout
+If you want to build the Android client then you will need to follow
+instructions [here](https://www.chromium.org/developers/how-tos/android-build-instructions)
+to sync Android related code as well.
+
+# Using GN
+Blimp only supports building using [GN](../../tools/gn/README.md). A quick
+overview over how to use GN can be found in the GN
+[quick start guide](../../tools/gn/docs/quick_start.md).
+
+## Building
+
+There are two different build configurations depending on what you want to
+build, either the client or the engine.
+
+Regardless of which you build, it is helpful to setup the following
+environment variable in your shell to get a better view of how the build is
+progressing:
+
+```bash
+export NINJA_STATUS="[%r %f/%s/%u/%t] "
+```
+
+It will give you a count for the following values:
+`[RUNNING FINISHED/STARTED/NOT_STARTED/TOTAL]`. See the
+[ninja manual](https://ninja-build.org/manual.html#_environment_variables)
+for a full list of template values.
+
+### Android client
+
+Create an out-directory and set the GN args:
+
+```bash
+mkdir -p out-android/Debug
+echo "import(\"//build/args/blimp_client.gn\")" > out-android/Debug/args.gn
+gn gen out-android/Debug
+```
+
+To build:
+
+```bash
+ninja -C out-android/Debug blimp chrome_public_apk
+```
+
+You can install with this command:
+
+```bash
+adb install out-android/Debug/apks/ChromePublic.apk
+```
+
+To add your own build preferences:
 
 ```bash
 gn args out-android/Debug
 ```
 
-This will bring up an editor, where you can type in the following:
+For example, you can build `x86` APK by adding `target_cpu = "x86"` to the `gn
+args`.
+
+
+### Engine
+
+Create another out-directory and set the GN args:
 
 ```bash
-target_os = "android"
-is_debug = true
-is_clang = true
-is_component_build = true
-symbol_level = 1  # Use -g1 instead of -g2
-use_goma = true
+mkdir -p out-linux/Debug
+echo "import(\"//build/args/blimp_engine.gn\")" > out-linux/Debug/args.gn
+gn gen out-linux/Debug
 ```
 
-## Linux setup
-For building for Linux, you can have a side-by-side out-directory:
+To build:
+
+```bash
+ninja -C out-linux/Debug blimp
+```
+
+To add your own build preferences
 
 ```bash
 gn args out-linux/Debug
 ```
 
-Use the same arguments as above, but remove `target_os`.
+## Adding new build arguments
 
-```bash
-is_debug = true
-is_clang = true
-is_component_build = true
-symbol_level = 1  # Use -g1 instead of -g2
-use_goma = true
-use_aura = true
-use_ozone = true
-```
+Adding new build arguments should be fairly rare. Arguments first need to be
+[declared](../../tools/gn/docs/quick_start.md#Add-a-new-build-argument).
 
-# Building
+They can then be used to change how the binary is built or passed through to
+code as a
+[defines](../../tools/gn/docs/reference.md#defines_C-preprocessor-defines).
 
-To build blimp, build the target ```blimp```.
+Finally the Blimp argument templates should be updated to reflect the
+(non-default for Chrome) behavior desired by Blimp (see below).
 
-## Building for Android
+## Updating bulid arguments in templates
 
-```bash
-ninja -C out-android/Debug blimp
-```
+Build argument templates exist for the client and engine at
+[`build/args/blimp_client.gn`](../../build/args/blimp_client.gn) and
+[`build/args/blimp_engine.gn`](../../build/args/blimp_engine.gn).
 
-## Building for Linux
-
-```bash
-ninja -C out-linux/Debug blimp
-```
+These can be updated as in the same manner as your personal `args.gn` files
+to override default argument values.

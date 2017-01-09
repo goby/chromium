@@ -4,6 +4,8 @@
 
 #include "components/pdf/browser/pdf_web_contents_helper.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/pdf/browser/open_pdf_in_reader_prompt_client.h"
@@ -18,29 +20,30 @@ namespace pdf {
 // static
 void PDFWebContentsHelper::CreateForWebContentsWithClient(
     content::WebContents* contents,
-    scoped_ptr<PDFWebContentsHelperClient> client) {
+    std::unique_ptr<PDFWebContentsHelperClient> client) {
   if (FromWebContents(contents))
     return;
   contents->SetUserData(UserDataKey(),
-                        new PDFWebContentsHelper(contents, client.Pass()));
+                        new PDFWebContentsHelper(contents, std::move(client)));
 }
 
 PDFWebContentsHelper::PDFWebContentsHelper(
     content::WebContents* web_contents,
-    scoped_ptr<PDFWebContentsHelperClient> client)
-    : content::WebContentsObserver(web_contents), client_(client.Pass()) {
-}
+    std::unique_ptr<PDFWebContentsHelperClient> client)
+    : content::WebContentsObserver(web_contents), client_(std::move(client)) {}
 
 PDFWebContentsHelper::~PDFWebContentsHelper() {
 }
 
 void PDFWebContentsHelper::ShowOpenInReaderPrompt(
-    scoped_ptr<OpenPDFInReaderPromptClient> prompt) {
-  open_in_reader_prompt_ = prompt.Pass();
+    std::unique_ptr<OpenPDFInReaderPromptClient> prompt) {
+  open_in_reader_prompt_ = std::move(prompt);
   UpdateLocationBar();
 }
 
-bool PDFWebContentsHelper::OnMessageReceived(const IPC::Message& message) {
+bool PDFWebContentsHelper::OnMessageReceived(
+    const IPC::Message& message,
+    content::RenderFrameHost* render_frame_host) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(PDFWebContentsHelper, message)
     IPC_MESSAGE_HANDLER(PDFHostMsg_PDFHasUnsupportedFeature,

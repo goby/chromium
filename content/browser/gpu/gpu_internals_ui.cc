@@ -4,21 +4,24 @@
 
 #include "content/browser/gpu/gpu_internals_ui.h"
 
-#if defined(OS_LINUX) && defined(USE_X11)
-#include <X11/Xlib.h>
-#endif
+#include <stddef.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/i18n/time_formatting.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringize_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "content/browser/gpu/browser_gpu_memory_buffer_manager.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
@@ -34,16 +37,22 @@
 #include "content/public/common/url_constants.h"
 #include "gpu/config/gpu_feature_type.h"
 #include "gpu/config/gpu_info.h"
+#include "skia/ext/skia_commit_hash.h"
 #include "third_party/angle/src/common/version.h"
+#include "third_party/skia/include/core/SkMilestone.h"
 #include "ui/gl/gpu_switching_manager.h"
 
+#if defined(OS_LINUX) && defined(USE_X11)
+#include <X11/Xlib.h>
+#endif
 #if defined(OS_WIN)
 #include "ui/base/win/shell.h"
+#include "ui/gfx/win/physical_size.h"
 #endif
 
 #if defined(OS_LINUX) && defined(USE_X11)
-#include "ui/base/x/x11_util.h"
-#include "ui/gfx/x/x11_atom_cache.h"
+#include "ui/base/x/x11_util.h"       // nogncheck
+#include "ui/gfx/x/x11_atom_cache.h"  // nogncheck
 #endif
 
 namespace content {
@@ -55,20 +64,23 @@ WebUIDataSource* CreateGpuHTMLSource() {
   source->SetJsonPath("strings.js");
   source->AddResourcePath("gpu_internals.js", IDR_GPU_INTERNALS_JS);
   source->SetDefaultResource(IDR_GPU_INTERNALS_HTML);
+  source->DisableI18nAndUseGzipForAllPaths();
   return source;
 }
 
-base::DictionaryValue* NewDescriptionValuePair(const std::string& desc,
+std::unique_ptr<base::DictionaryValue> NewDescriptionValuePair(
+    const std::string& desc,
     const std::string& value) {
-  base::DictionaryValue* dict = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("description", desc);
   dict->SetString("value", value);
   return dict;
 }
 
-base::DictionaryValue* NewDescriptionValuePair(const std::string& desc,
+std::unique_ptr<base::DictionaryValue> NewDescriptionValuePair(
+    const std::string& desc,
     base::Value* value) {
-  base::DictionaryValue* dict = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("description", desc);
   dict->Set("value", value);
   return dict;
@@ -116,6 +128,9 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
   basic_info->Append(NewDescriptionValuePair(
       "In-process GPU", new base::FundamentalValue(gpu_info.in_process_gpu)));
   basic_info->Append(NewDescriptionValuePair(
+      "Passthrough Command Decoder",
+      new base::FundamentalValue(gpu_info.passthrough_cmd_decoder)));
+  basic_info->Append(NewDescriptionValuePair(
       "Sandboxed", new base::FundamentalValue(gpu_info.sandboxed)));
   basic_info->Append(NewDescriptionValuePair(
       "GPU0", GPUDeviceToString(gpu_info.gpu)));
@@ -141,9 +156,20 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
       ui::win::IsAeroGlassEnabled() ? "Aero Glass" : "none";
   basic_info->Append(
       NewDescriptionValuePair("Desktop compositing", compositor));
-  if (GpuDataManagerImpl::GetInstance()->ShouldUseWarp()) {
-    basic_info->Append(NewDescriptionValuePair("Using WARP",
-        new base::FundamentalValue(true)));
+
+  std::vector<gfx::PhysicalDisplaySize> display_sizes =
+      gfx::GetPhysicalSizeForDisplays();
+  for (const auto& display_size : display_sizes) {
+    const int w = display_size.width_mm;
+    const int h = display_size.height_mm;
+    const double size_mm = sqrt(w * w + h * h);
+    const double size_inches = 0.0393701 * size_mm;
+    const double rounded_size_inches = floor(10.0 * size_inches) / 10.0;
+    std::string size_string = base::StringPrintf("%.1f\"", rounded_size_inches);
+    std::string description_string = base::StringPrintf(
+        "Diagonal Monitor Size of %s", display_size.display_name.c_str());
+    basic_info->Append(
+        NewDescriptionValuePair(description_string, size_string));
   }
 #endif
 
@@ -187,7 +213,7 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
   basic_info->Append(NewDescriptionValuePair("Window manager",
                                              ui::GuessWindowManagerName()));
   {
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     std::string value;
     const char kXDGCurrentDesktop[] = "XDG_CURRENT_DESKTOP";
     if (env->GetVar(kXDGCurrentDesktop, &value))
@@ -195,7 +221,7 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
     const char kGDMSession[] = "GDMSESSION";
     if (env->GetVar(kGDMSession, &value))
       basic_info->Append(NewDescriptionValuePair(kGDMSession, value));
-    const char* kAtomsToCache[] = {
+    const char* const kAtomsToCache[] = {
         "_NET_WM_CM_S0",
         NULL
     };
@@ -224,10 +250,17 @@ base::DictionaryValue* GpuInfoAsDictionaryValue() {
   info->Set("basic_info", basic_info);
 
 #if defined(OS_WIN)
-  scoped_ptr<base::Value> dx_info = base::Value::CreateNullValue();
+  std::unique_ptr<base::Value> dx_info = base::Value::CreateNullValue();
   if (gpu_info.dx_diagnostics.children.size())
     dx_info.reset(DxDiagNodeToList(gpu_info.dx_diagnostics));
-  info->Set("diagnostics", dx_info.Pass());
+  info->Set("diagnostics", std::move(dx_info));
+#endif
+
+#if defined(USE_X11) && !defined(OS_CHROMEOS)
+  basic_info->Append(NewDescriptionValuePair(
+      "System visual ID", base::Uint64ToString(gpu_info.system_visual)));
+  basic_info->Append(NewDescriptionValuePair(
+      "RGBA visual ID", base::Uint64ToString(gpu_info.rgba_visual)));
 #endif
 
   return info;
@@ -247,6 +280,10 @@ const char* BufferFormatToString(gfx::BufferFormat format) {
       return "ETC1";
     case gfx::BufferFormat::R_8:
       return "R_8";
+    case gfx::BufferFormat::RG_88:
+      return "RG_88";
+    case gfx::BufferFormat::BGR_565:
+      return "BGR_565";
     case gfx::BufferFormat::RGBA_4444:
       return "RGBA_4444";
     case gfx::BufferFormat::RGBX_8888:
@@ -257,8 +294,8 @@ const char* BufferFormatToString(gfx::BufferFormat format) {
       return "BGRX_8888";
     case gfx::BufferFormat::BGRA_8888:
       return "BGRA_8888";
-    case gfx::BufferFormat::YUV_420:
-      return "YUV_420";
+    case gfx::BufferFormat::YVU_420:
+      return "YVU_420";
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       return "YUV_420_BIPLANAR";
     case gfx::BufferFormat::UYVY_422:
@@ -283,7 +320,19 @@ const char* BufferUsageToString(gfx::BufferUsage usage) {
   return nullptr;
 }
 
-base::DictionaryValue* GpuMemoryBufferInfoAsDictionaryValue() {
+base::ListValue* CompositorInfo() {
+  base::ListValue* compositor_info = new base::ListValue();
+
+  compositor_info->Append(NewDescriptionValuePair(
+      "Tile Update Mode",
+      IsZeroCopyUploadEnabled() ? "Zero-copy" : "One-copy"));
+
+  compositor_info->Append(NewDescriptionValuePair(
+      "Partial Raster", IsPartialRasterEnabled() ? "Enabled" : "Disabled"));
+  return compositor_info;
+}
+
+base::ListValue* GpuMemoryBufferInfo() {
   base::ListValue* gpu_memory_buffer_info = new base::ListValue();
 
   BrowserGpuMemoryBufferManager* gpu_memory_buffer_manager =
@@ -309,11 +358,7 @@ base::DictionaryValue* GpuMemoryBufferInfoAsDictionaryValue() {
         BufferFormatToString(static_cast<gfx::BufferFormat>(format)),
         native_usage_support));
   }
-
-  base::DictionaryValue* info = new base::DictionaryValue();
-  info->Set("gpu_memory_buffer_info", gpu_memory_buffer_info);
-
-  return info;
+  return gpu_memory_buffer_info;
 }
 
 // This class receives javascript messages from the renderer.
@@ -398,8 +443,7 @@ void GpuMessageHandler::OnCallAsync(const base::ListValue* args) {
     ok = args->Get(i, &arg);
     DCHECK(ok);
 
-    base::Value* argCopy = arg->DeepCopy();
-    submessageArgs->Append(argCopy);
+    submessageArgs->Append(arg->CreateDeepCopy());
   }
 
   // call the submessage handler
@@ -417,13 +461,12 @@ void GpuMessageHandler::OnCallAsync(const base::ListValue* args) {
 
   // call BrowserBridge.onCallAsyncReply with result
   if (ret) {
-    web_ui()->CallJavascriptFunction("browserBridge.onCallAsyncReply",
-        *requestId,
-        *ret);
+    web_ui()->CallJavascriptFunctionUnsafe("browserBridge.onCallAsyncReply",
+                                           *requestId, *ret);
     delete ret;
   } else {
-    web_ui()->CallJavascriptFunction("browserBridge.onCallAsyncReply",
-        *requestId);
+    web_ui()->CallJavascriptFunctionUnsafe("browserBridge.onCallAsyncReply",
+                                           *requestId);
   }
 }
 
@@ -460,7 +503,9 @@ base::Value* GpuMessageHandler::OnRequestClientInfo(
                   base::SysInfo::OperatingSystemName() + " " +
                   base::SysInfo::OperatingSystemVersion());
   dict->SetString("angle_commit_id", ANGLE_COMMIT_HASH);
-  dict->SetString("graphics_backend", "Skia");
+  dict->SetString("graphics_backend",
+                  std::string("Skia/" STRINGIZE(SK_MILESTONE)
+                              " " SKIA_COMMIT_HASH));
   dict->SetString("blacklist_version",
       GpuDataManagerImpl::GetInstance()->GetBlacklistVersion());
   dict->SetString("driver_bug_list_version",
@@ -477,8 +522,8 @@ base::Value* GpuMessageHandler::OnRequestLogMessages(const base::ListValue*) {
 
 void GpuMessageHandler::OnGpuInfoUpdate() {
   // Get GPU Info.
-  scoped_ptr<base::DictionaryValue> gpu_info_val(GpuInfoAsDictionaryValue());
-
+  std::unique_ptr<base::DictionaryValue> gpu_info_val(
+      GpuInfoAsDictionaryValue());
 
   // Add in blacklisting features
   base::DictionaryValue* feature_status = new base::DictionaryValue;
@@ -489,18 +534,12 @@ void GpuMessageHandler::OnGpuInfoUpdate() {
     workarounds->AppendString(workaround);
   feature_status->Set("workarounds", workarounds);
   gpu_info_val->Set("featureStatus", feature_status);
+  gpu_info_val->Set("compositorInfo", CompositorInfo());
+  gpu_info_val->Set("gpuMemoryBufferInfo", GpuMemoryBufferInfo());
 
   // Send GPU Info to javascript.
-  web_ui()->CallJavascriptFunction("browserBridge.onGpuInfoUpdate",
-      *(gpu_info_val.get()));
-
-  // Get GpuMemoryBuffer Info.
-  scoped_ptr<base::DictionaryValue> gpu_memory_buffer_info_val(
-      GpuMemoryBufferInfoAsDictionaryValue());
-
-  // Send GpuMemoryBuffer Info to javascript.
-  web_ui()->CallJavascriptFunction("browserBridge.onGpuMemoryBufferInfoUpdate",
-                                   *(gpu_memory_buffer_info_val.get()));
+  web_ui()->CallJavascriptFunctionUnsafe("browserBridge.onGpuInfoUpdate",
+                                         *(gpu_info_val.get()));
 }
 
 void GpuMessageHandler::OnGpuSwitched() {

@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <sched.h>
 #include <signal.h>
+#include <stddef.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
@@ -167,6 +168,21 @@ BPF_TEST_C(BaselinePolicy, Socketpair, BaselinePolicy) {
   TestPipeOrSocketPair(base::ScopedFD(sv[0]), base::ScopedFD(sv[1]));
 }
 
+#if !defined(GRND_NONBLOCK)
+#define GRND_NONBLOCK 1
+#endif
+
+BPF_TEST_C(BaselinePolicy, GetRandom, BaselinePolicy) {
+  char buf[1];
+
+  // Many systems do not yet support getrandom(2) so ENOSYS is a valid result
+  // here.
+  int ret = HANDLE_EINTR(syscall(__NR_getrandom, buf, sizeof(buf), 0));
+  BPF_ASSERT((ret == -1 && errno == ENOSYS) || ret == 1);
+  ret = HANDLE_EINTR(syscall(__NR_getrandom, buf, sizeof(buf), GRND_NONBLOCK));
+  BPF_ASSERT((ret == -1 && (errno == ENOSYS || errno == EAGAIN)) || ret == 1);
+}
+
 // Not all architectures can restrict the domain for socketpair().
 #if defined(__x86_64__) || defined(__arm__) || defined(__aarch64__)
 BPF_DEATH_TEST_C(BaselinePolicy,
@@ -247,6 +263,19 @@ TEST_BASELINE_SIGSYS(__NR_inotify_init);
 TEST_BASELINE_SIGSYS(__NR_vserver);
 #endif
 
+#if defined(LIBC_GLIBC) && !defined(OS_CHROMEOS)
+BPF_TEST_C(BaselinePolicy, FutexEINVAL, BaselinePolicy) {
+  int ops[] = {
+      FUTEX_CMP_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI_PRIVATE,
+      FUTEX_UNLOCK_PI_PRIVATE,
+  };
+
+  for (int op : ops) {
+    BPF_ASSERT_EQ(-1, syscall(__NR_futex, NULL, op, 0, NULL, NULL, 0));
+    BPF_ASSERT_EQ(EINVAL, errno);
+  }
+}
+#else
 BPF_DEATH_TEST_C(BaselinePolicy,
                  FutexWithRequeuePriorityInheritence,
                  DEATH_SEGV_MESSAGE(GetFutexErrorMessageContentForTests()),
@@ -270,6 +299,7 @@ BPF_DEATH_TEST_C(BaselinePolicy,
   syscall(__NR_futex, NULL, FUTEX_UNLOCK_PI_PRIVATE, 0, NULL, NULL, 0);
   _exit(1);
 }
+#endif  // defined(LIBC_GLIBC) && !defined(OS_CHROMEOS)
 
 BPF_TEST_C(BaselinePolicy, PrctlDumpable, BaselinePolicy) {
   const int is_dumpable = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
@@ -334,7 +364,18 @@ BPF_DEATH_TEST_C(BaselinePolicy,
   clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
 }
 
-#if defined(__x86_64__)
+#if !defined(GRND_RANDOM)
+#define GRND_RANDOM 2
+#endif
+
+BPF_DEATH_TEST_C(BaselinePolicy,
+                 GetRandomOfDevRandomCrashes,
+                 DEATH_SEGV_MESSAGE(sandbox::GetErrorMessageContentForTests()),
+                 BaselinePolicy) {
+  syscall(__NR_getrandom, NULL, 0, GRND_RANDOM);
+}
+
+#if !defined(__i386__)
 BPF_DEATH_TEST_C(BaselinePolicy,
                  GetSockOptWrongLevelSigsys,
                  DEATH_SEGV_MESSAGE(sandbox::GetErrorMessageContentForTests()),

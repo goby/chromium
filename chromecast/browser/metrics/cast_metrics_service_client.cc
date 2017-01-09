@@ -8,10 +8,10 @@
 #include "base/guid.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chromecast/base/cast_sys_info_util.h"
 #include "chromecast/base/chromecast_switches.h"
 #include "chromecast/base/path_utils.h"
@@ -22,6 +22,7 @@
 #include "chromecast/browser/metrics/cast_stability_metrics_provider.h"
 #include "chromecast/public/cast_sys_info.h"
 #include "components/metrics/client_info.h"
+#include "components/metrics/enabled_state_provider.h"
 #include "components/metrics/gpu/gpu_metrics_provider.h"
 #include "components/metrics/metrics_provider.h"
 #include "components/metrics/metrics_service.h"
@@ -31,6 +32,8 @@
 #include "components/metrics/profiler/profiler_metrics_provider.h"
 #include "components/metrics/ui/screen_info_metrics_provider.h"
 #include "components/metrics/url_constants.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/common/content_switches.h"
 
 #if defined(OS_LINUX)
@@ -86,11 +89,11 @@ GetReleaseChannelFromUpdateChannelName(const std::string& channel_name) {
 }  // namespace
 
 // static
-scoped_ptr<CastMetricsServiceClient> CastMetricsServiceClient::Create(
+std::unique_ptr<CastMetricsServiceClient> CastMetricsServiceClient::Create(
     base::TaskRunner* io_task_runner,
     PrefService* pref_service,
     net::URLRequestContextGetter* request_context) {
-  return make_scoped_ptr(new CastMetricsServiceClient(
+  return base::WrapUnique(new CastMetricsServiceClient(
       io_task_runner, pref_service, request_context));
 }
 
@@ -113,9 +116,6 @@ void CastMetricsServiceClient::SetMetricsClientId(
 #endif
 }
 
-void CastMetricsServiceClient::OnRecordingDisabled() {
-}
-
 void CastMetricsServiceClient::StoreClientInfo(
     const ::metrics::ClientInfo& client_info) {
   const std::string& client_id = client_info.client_id;
@@ -124,8 +124,9 @@ void CastMetricsServiceClient::StoreClientInfo(
   SetMetricsClientId(client_id);
 }
 
-scoped_ptr< ::metrics::ClientInfo> CastMetricsServiceClient::LoadClientInfo() {
-  scoped_ptr< ::metrics::ClientInfo> client_info(new ::metrics::ClientInfo);
+std::unique_ptr<::metrics::ClientInfo>
+CastMetricsServiceClient::LoadClientInfo() {
+  std::unique_ptr<::metrics::ClientInfo> client_info(new ::metrics::ClientInfo);
   client_info_loaded_ = true;
 
   // kMetricsIsNewClientID would be missing if either the device was just
@@ -137,7 +138,7 @@ scoped_ptr< ::metrics::ClientInfo> CastMetricsServiceClient::LoadClientInfo() {
       // Force old client id to be regenerated. See b/9487011.
       client_info->client_id = base::GenerateGUID();
       pref_service_->SetBoolean(prefs::kMetricsIsNewClientID, true);
-      return client_info.Pass();
+      return client_info;
     }
     // else the device was just FDR'ed, pass through.
   }
@@ -145,7 +146,7 @@ scoped_ptr< ::metrics::ClientInfo> CastMetricsServiceClient::LoadClientInfo() {
   // Use "forced" client ID if available.
   if (!force_client_id_.empty() && base::IsValidGUID(force_client_id_)) {
     client_info->client_id = force_client_id_;
-    return client_info.Pass();
+    return client_info;
   }
 
   if (force_client_id_.empty()) {
@@ -155,18 +156,12 @@ scoped_ptr< ::metrics::ClientInfo> CastMetricsServiceClient::LoadClientInfo() {
     LOG(ERROR) << "Invalid client id from platform: " << force_client_id_
                << " from platform.";
   }
-  return scoped_ptr< ::metrics::ClientInfo>();
-}
-
-bool CastMetricsServiceClient::IsOffTheRecordSessionActive() {
-  // Chromecast behaves as "off the record" w/r/t recording browsing state,
-  // but this value is about not disabling metrics because of it.
-  return false;
+  return std::unique_ptr<::metrics::ClientInfo>();
 }
 
 int32_t CastMetricsServiceClient::GetProduct() {
   // Chromecast currently uses the same product identifier as Chrome.
-  return ::metrics::ChromeUserMetricsExtension::CHROME;
+  return ::metrics::ChromeUserMetricsExtension::CAST;
 }
 
 std::string CastMetricsServiceClient::GetApplicationLocale() {
@@ -178,7 +173,7 @@ bool CastMetricsServiceClient::GetBrand(std::string* brand_code) {
 }
 
 ::metrics::SystemProfileProto::Channel CastMetricsServiceClient::GetChannel() {
-  scoped_ptr<CastSysInfo> sys_info = CreateSysInfo();
+  std::unique_ptr<CastSysInfo> sys_info = CreateSysInfo();
 
 #if defined(OS_ANDROID)
   switch (sys_info->GetBuildType()) {
@@ -211,9 +206,13 @@ std::string CastMetricsServiceClient::GetVersionString() {
   version_string.append("-K");
   version_string.append(base::IntToString(build_number));
 
-  int is_official_build =
+  const ::metrics::SystemProfileProto::Channel channel = GetChannel();
+  CHECK(!CAST_IS_DEBUG_BUILD() ||
+        channel != ::metrics::SystemProfileProto::CHANNEL_STABLE);
+  const bool is_official_build =
       build_number > 0 &&
-      GetChannel() != ::metrics::SystemProfileProto::CHANNEL_UNKNOWN;
+      !CAST_IS_DEBUG_BUILD() &&
+      channel != ::metrics::SystemProfileProto::CHANNEL_UNKNOWN;
   if (!is_official_build)
     version_string.append("-devel");
 
@@ -233,7 +232,7 @@ void CastMetricsServiceClient::CollectFinalMetricsForLog(
   done_callback.Run();
 }
 
-scoped_ptr< ::metrics::MetricsLogUploader>
+std::unique_ptr<::metrics::MetricsLogUploader>
 CastMetricsServiceClient::CreateUploader(
     const base::Callback<void(int)>& on_upload_complete) {
   std::string uma_server_url(::metrics::kDefaultMetricsServerUrl);
@@ -243,15 +242,18 @@ CastMetricsServiceClient::CreateUploader(
         command_line->GetSwitchValueASCII(switches::kOverrideMetricsUploadUrl));
   }
   DCHECK(!uma_server_url.empty());
-  return scoped_ptr< ::metrics::MetricsLogUploader>(
-      new ::metrics::NetMetricsLogUploader(request_context_,
-                                           uma_server_url,
+  return std::unique_ptr<::metrics::MetricsLogUploader>(
+      new ::metrics::NetMetricsLogUploader(request_context_, uma_server_url,
                                            ::metrics::kDefaultMetricsMimeType,
                                            on_upload_complete));
 }
 
 base::TimeDelta CastMetricsServiceClient::GetStandardUploadInterval() {
   return base::TimeDelta::FromMinutes(kStandardUploadIntervalMinutes);
+}
+
+bool CastMetricsServiceClient::IsConsentGiven() {
+  return pref_service_->GetBoolean(prefs::kOptInStats);
 }
 
 void CastMetricsServiceClient::EnableMetricsService(bool enabled) {
@@ -298,7 +300,9 @@ void CastMetricsServiceClient::OnApplicationNotIdle() {
 
 void CastMetricsServiceClient::ProcessExternalEvents(const base::Closure& cb) {
 #if defined(OS_LINUX)
-  external_metrics_->ProcessExternalEvents(cb);
+  external_metrics_->ProcessExternalEvents(
+      base::Bind(&ExternalMetrics::ProcessExternalEvents,
+                 base::Unretained(platform_metrics_), cb));
 #else
   cb.Run();
 #endif  // defined(OS_LINUX)
@@ -318,9 +322,7 @@ void CastMetricsServiceClient::Initialize(CastService* cast_service) {
   cast_service_ = cast_service;
 
   metrics_state_manager_ = ::metrics::MetricsStateManager::Create(
-      pref_service_,
-      base::Bind(&CastMetricsServiceClient::IsReportingEnabled,
-                 base::Unretained(this)),
+      pref_service_, this,
       base::Bind(&CastMetricsServiceClient::StoreClientInfo,
                  base::Unretained(this)),
       base::Bind(&CastMetricsServiceClient::LoadClientInfo,
@@ -340,25 +342,25 @@ void CastMetricsServiceClient::Initialize(CastService* cast_service) {
   CastStabilityMetricsProvider* stability_provider =
       new CastStabilityMetricsProvider(metrics_service_.get());
   metrics_service_->RegisterMetricsProvider(
-      scoped_ptr< ::metrics::MetricsProvider>(stability_provider));
+      std::unique_ptr<::metrics::MetricsProvider>(stability_provider));
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (!command_line->HasSwitch(switches::kDisableGpu)) {
     metrics_service_->RegisterMetricsProvider(
-        scoped_ptr< ::metrics::MetricsProvider>(
+        std::unique_ptr<::metrics::MetricsProvider>(
             new ::metrics::GPUMetricsProvider));
 
     // TODO(gfhuang): Does ChromeCast actually need metrics about screen info?
     // crbug.com/541577
     metrics_service_->RegisterMetricsProvider(
-        scoped_ptr< ::metrics::MetricsProvider>(
+        std::unique_ptr<::metrics::MetricsProvider>(
             new ::metrics::ScreenInfoMetricsProvider));
   }
   metrics_service_->RegisterMetricsProvider(
-      scoped_ptr< ::metrics::MetricsProvider>(
+      std::unique_ptr<::metrics::MetricsProvider>(
           new ::metrics::NetworkMetricsProvider(io_task_runner_)));
   metrics_service_->RegisterMetricsProvider(
-      scoped_ptr< ::metrics::MetricsProvider>(
+      std::unique_ptr<::metrics::MetricsProvider>(
           new ::metrics::ProfilerMetricsProvider));
   shell::CastBrowserProcess::GetInstance()->browser_client()->
       RegisterMetricsProviders(metrics_service_.get());
@@ -400,10 +402,6 @@ void CastMetricsServiceClient::Finalize() {
   platform_metrics_ = nullptr;
 #endif  // defined(OS_LINUX)
   metrics_service_->Stop();
-}
-
-bool CastMetricsServiceClient::IsReportingEnabled() {
-  return pref_service_->GetBoolean(prefs::kOptInStats);
 }
 
 }  // namespace metrics

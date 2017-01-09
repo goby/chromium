@@ -5,9 +5,11 @@
 #include "net/spdy/spdy_buffer.h"
 
 #include <cstring>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "net/base/io_buffer.h"
 #include "net/spdy/spdy_protocol.h"
 
@@ -18,17 +20,18 @@ namespace {
 // Bound on largest frame any SPDY version has allowed.
 const size_t kMaxSpdyFrameSize = 0x00ffffff;
 
-// Makes a SpdyFrame with |size| bytes of data copied from
-// |data|. |data| must be non-NULL and |size| must be positive.
-scoped_ptr<SpdyFrame> MakeSpdyFrame(const char* data, size_t size) {
+// Makes a SpdySerializedFrame with |size| bytes of data copied from |data|.
+// |data| must be non-NULL and |size| must be positive.
+std::unique_ptr<SpdySerializedFrame> MakeSpdySerializedFrame(const char* data,
+                                                             size_t size) {
   DCHECK(data);
   CHECK_GT(size, 0u);
   CHECK_LE(size, kMaxSpdyFrameSize);
-  scoped_ptr<char[]> frame_data(new char[size]);
+  std::unique_ptr<char[]> frame_data(new char[size]);
   std::memcpy(frame_data.get(), data, size);
-  scoped_ptr<SpdyFrame> frame(
-      new SpdyFrame(frame_data.release(), size, true /* owns_buffer */));
-  return frame.Pass();
+  std::unique_ptr<SpdySerializedFrame> frame(new SpdySerializedFrame(
+      frame_data.release(), size, true /* owns_buffer */));
+  return frame;
 }
 
 }  // namespace
@@ -54,10 +57,9 @@ class SpdyBuffer::SharedFrameIOBuffer : public IOBuffer {
   DISALLOW_COPY_AND_ASSIGN(SharedFrameIOBuffer);
 };
 
-SpdyBuffer::SpdyBuffer(scoped_ptr<SpdyFrame> frame)
-    : shared_frame_(new SharedFrame()),
-      offset_(0) {
-  shared_frame_->data = frame.Pass();
+SpdyBuffer::SpdyBuffer(std::unique_ptr<SpdySerializedFrame> frame)
+    : shared_frame_(new SharedFrame()), offset_(0) {
+  shared_frame_->data = std::move(frame);
 }
 
 // The given data may not be strictly a SPDY frame; we (ab)use
@@ -67,7 +69,7 @@ SpdyBuffer::SpdyBuffer(const char* data, size_t size) :
     offset_(0) {
   CHECK_GT(size, 0u);
   CHECK_LE(size, kMaxSpdyFrameSize);
-  shared_frame_->data = MakeSpdyFrame(data, size);
+  shared_frame_->data = MakeSpdySerializedFrame(data, size);
 }
 
 SpdyBuffer::~SpdyBuffer() {

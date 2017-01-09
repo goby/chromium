@@ -9,8 +9,8 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
-#include "base/prefs/pref_member.h"
 #include "base/time/time.h"
+#include "components/prefs/pref_member.h"
 #include "components/translate/core/common/translate_pref_names.h"
 #include "components/translate/core/language_detection/language_detection_util.h"
 #import "components/translate/ios/browser/js_language_detection_manager.h"
@@ -47,7 +47,7 @@ LanguageDetectionController::LanguageDetectionController(
 LanguageDetectionController::~LanguageDetectionController() {
 }
 
-scoped_ptr<LanguageDetectionController::CallbackList::Subscription>
+std::unique_ptr<LanguageDetectionController::CallbackList::Subscription>
 LanguageDetectionController::RegisterLanguageDetectionCallback(
     const Callback& callback) {
   return language_detection_callbacks_.Add(callback);

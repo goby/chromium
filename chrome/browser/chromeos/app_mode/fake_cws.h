@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -54,7 +55,7 @@ class FakeCWS {
                              std::string* update_check_content);
 
   // Request handler for kiosk app update server.
-  scoped_ptr<net::test_server::HttpResponse> HandleRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
       const net::test_server::HttpRequest& request);
 
   GURL web_store_url_;

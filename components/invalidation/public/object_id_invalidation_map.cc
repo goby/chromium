@@ -4,6 +4,8 @@
 
 #include "components/invalidation/public/object_id_invalidation_map.h"
 
+#include <stddef.h>
+
 #include "base/json/json_string_value_serializer.h"
 
 namespace syncer {
@@ -19,6 +21,9 @@ ObjectIdInvalidationMap ObjectIdInvalidationMap::InvalidateAll(
 }
 
 ObjectIdInvalidationMap::ObjectIdInvalidationMap() {}
+
+ObjectIdInvalidationMap::ObjectIdInvalidationMap(
+    const ObjectIdInvalidationMap& other) = default;
 
 ObjectIdInvalidationMap::~ObjectIdInvalidationMap() {}
 
@@ -79,16 +84,16 @@ bool ObjectIdInvalidationMap::operator==(
   return map_ == other.map_;
 }
 
-scoped_ptr<base::ListValue> ObjectIdInvalidationMap::ToValue() const {
-  scoped_ptr<base::ListValue> value(new base::ListValue());
+std::unique_ptr<base::ListValue> ObjectIdInvalidationMap::ToValue() const {
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   for (IdToListMap::const_iterator it1 = map_.begin();
        it1 != map_.end(); ++it1) {
     for (SingleObjectInvalidationSet::const_iterator it2 =
          it1->second.begin(); it2 != it1->second.end(); ++it2) {
-      value->Append(it2->ToValue().release());
+      value->Append(it2->ToValue());
     }
   }
-  return value.Pass();
+  return value;
 }
 
 bool ObjectIdInvalidationMap::ResetFromValue(const base::ListValue& value) {
@@ -98,7 +103,8 @@ bool ObjectIdInvalidationMap::ResetFromValue(const base::ListValue& value) {
     if (!value.GetDictionary(i, &dict)) {
       return false;
     }
-    scoped_ptr<Invalidation> invalidation = Invalidation::InitFromValue(*dict);
+    std::unique_ptr<Invalidation> invalidation =
+        Invalidation::InitFromValue(*dict);
     if (!invalidation) {
       return false;
     }

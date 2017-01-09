@@ -79,14 +79,13 @@ class ChannelInfo {
   // modified.
   bool SetReadyMode(bool value);
 
-  // Adds the -stage: modifier with the given string (if |stage| is non-NULL) or
-  // removes the -stage: modifier (otherwise), returning true if the value is
-  // modified.
-  bool SetStage(const wchar_t* stage);
+  // Removes the -stage: modifier, returning true if the value is modified.
+  bool ClearStage();
 
-  // Returns the string identifying the current stage, or an empty string if the
-  // -stage: modifier is not present in the value.
-  base::string16 GetStage() const;
+  // Returns the string identifying the stats default state (i.e., the starting
+  // value of the "send usage stats" checkbox during install), or an empty
+  // string if the -statsdef_ modifier is not present in the value.
+  base::string16 GetStatsDefault() const;
 
   // Returns true if the -full suffix is present in the value.
   bool HasFullSuffix() const;

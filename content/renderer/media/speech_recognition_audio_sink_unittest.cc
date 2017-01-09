@@ -4,17 +4,23 @@
 
 #include "content/renderer/media/speech_recognition_audio_sink.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include <utility>
+
 #include "base/bind.h"
-#include "base/strings/utf_string_conversions.h"
+#include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "content/renderer/media/media_stream_audio_source.h"
-#include "content/renderer/media/mock_media_constraint_factory.h"
-#include "content/renderer/media/webrtc/webrtc_local_audio_track_adapter.h"
-#include "content/renderer/media/webrtc_local_audio_track.h"
-#include "media/audio/audio_parameters.h"
+#include "content/renderer/media/media_stream_audio_track.h"
+#include "content/renderer/media/webrtc/mock_peer_connection_dependency_factory.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_parameters.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
+#include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebHeap.h"
 
 namespace {
@@ -49,7 +55,7 @@ class MockSyncSocket : public base::SyncSocket {
   struct SharedBuffer {
     SharedBuffer() : data(), start(0), length(0) {}
 
-    uint8 data[kSharedBufferSize];
+    uint8_t data[kSharedBufferSize];
     size_t start;
     size_t length;
   };
@@ -87,7 +93,7 @@ size_t MockSyncSocket::Send(const void* buffer, size_t length) {
   if (in_failure_mode_)
     return 0;
 
-  const uint8* b = static_cast<const uint8*>(buffer);
+  const uint8_t* b = static_cast<const uint8_t*>(buffer);
   for (size_t i = 0; i < length; ++i, ++buffer_->length)
     buffer_->data[buffer_->start + buffer_->length] = b[i];
 
@@ -96,7 +102,7 @@ size_t MockSyncSocket::Send(const void* buffer, size_t length) {
 }
 
 size_t MockSyncSocket::Receive(void* buffer, size_t length) {
-  uint8* b = static_cast<uint8*>(buffer);
+  uint8_t* b = static_cast<uint8_t*>(buffer);
   for (size_t i = buffer_->start; i < buffer_->length; ++i, ++buffer_->start)
     b[i] = buffer_->data[buffer_->start];
 
@@ -117,7 +123,7 @@ class FakeSpeechRecognizer {
       const media::AudioParameters& sink_params,
       base::SharedMemoryHandle* foreign_memory_handle) {
     // Shared memory is allocated, mapped and shared.
-    const uint32 kSharedMemorySize =
+    const uint32_t kSharedMemorySize =
         sizeof(media::AudioInputBufferParameters) +
         media::AudioBus::CalculateMemorySize(sink_params);
     shared_memory_.reset(new base::SharedMemory());
@@ -182,15 +188,15 @@ class FakeSpeechRecognizer {
   bool is_responsive_;
 
   // Shared memory for the audio and synchronization.
-  scoped_ptr<base::SharedMemory> shared_memory_;
+  std::unique_ptr<base::SharedMemory> shared_memory_;
 
   // Fake sockets and their shared buffer.
-  scoped_ptr<MockSyncSocket::SharedBuffer> shared_buffer_;
-  scoped_ptr<MockSyncSocket> receiving_socket_;
+  std::unique_ptr<MockSyncSocket::SharedBuffer> shared_buffer_;
+  std::unique_ptr<MockSyncSocket> receiving_socket_;
   MockSyncSocket* sending_socket_;
 
   // Audio bus wrapping the shared memory from the renderer.
-  scoped_ptr<media::AudioBus> audio_track_bus_;
+  std::unique_ptr<media::AudioBus> audio_track_bus_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeSpeechRecognizer);
 };
@@ -199,11 +205,27 @@ class FakeSpeechRecognizer {
 
 namespace content {
 
+namespace {
+
+class TestDrivenAudioSource : public MediaStreamAudioSource {
+ public:
+  TestDrivenAudioSource() : MediaStreamAudioSource(true) {}
+  ~TestDrivenAudioSource() final {}
+
+  // Expose protected methods as public for testing.
+  using MediaStreamAudioSource::SetFormat;
+  using MediaStreamAudioSource::DeliverDataToTracks;
+};
+
+}  // namespace
+
 class SpeechRecognitionAudioSinkTest : public testing::Test {
  public:
   SpeechRecognitionAudioSinkTest() {}
 
   ~SpeechRecognitionAudioSinkTest() {
+    blink_source_.reset();
+    blink_track_.reset();
     speech_audio_sink_.reset();
     blink::WebHeap::collectAllGarbageForTesting();
   }
@@ -211,10 +233,10 @@ class SpeechRecognitionAudioSinkTest : public testing::Test {
   // Initializes the producer and consumer with specified audio parameters.
   // Returns the minimal number of input audio buffers which need to be captured
   // before they get sent to the consumer.
-  uint32 Initialize(int input_sample_rate,
-                    int input_frames_per_buffer,
-                    int output_sample_rate,
-                    int output_frames_per_buffer) {
+  uint32_t Initialize(int input_sample_rate,
+                      int input_frames_per_buffer,
+                      int output_sample_rate,
+                      int output_frames_per_buffer) {
     // Audio Environment setup.
     source_params_.Reset(kInputFormat,
                          kInputChannelLayout,
@@ -233,29 +255,27 @@ class SpeechRecognitionAudioSinkTest : public testing::Test {
     sample_frames_captured_ = 0;
 
     // Prepare the track and audio source.
-    blink::WebMediaStreamTrack blink_track;
-    PrepareBlinkTrackOfType(MEDIA_DEVICE_AUDIO_CAPTURE, &blink_track);
-
-    // Get the native track from the blink track and initialize.
-    native_track_ =
-        static_cast<WebRtcLocalAudioTrack*>(blink_track.extraData());
-    native_track_->OnSetFormat(source_params_);
+    PrepareBlinkTrackOfType(MEDIA_DEVICE_AUDIO_CAPTURE, &blink_track_);
+    blink_source_ = blink_track_.source();
+    static_cast<TestDrivenAudioSource*>(
+        MediaStreamAudioSource::From(blink_source_))->SetFormat(source_params_);
 
     // Create and initialize the consumer.
     recognizer_.reset(new FakeSpeechRecognizer());
     base::SharedMemoryHandle foreign_memory_handle;
-    recognizer_->Initialize(blink_track, sink_params_, &foreign_memory_handle);
+    recognizer_->Initialize(blink_track_, sink_params_, &foreign_memory_handle);
 
     // Create the producer.
-    scoped_ptr<base::SyncSocket> sending_socket(recognizer_->sending_socket());
+    std::unique_ptr<base::SyncSocket> sending_socket(
+        recognizer_->sending_socket());
     speech_audio_sink_.reset(new SpeechRecognitionAudioSink(
-        blink_track, sink_params_, foreign_memory_handle,
-        sending_socket.Pass(),
+        blink_track_, sink_params_, foreign_memory_handle,
+        std::move(sending_socket),
         base::Bind(&SpeechRecognitionAudioSinkTest::StoppedCallback,
                    base::Unretained(this))));
 
     // Return number of buffers needed to trigger resampling and consumption.
-    return static_cast<uint32>(std::ceil(
+    return static_cast<uint32_t>(std::ceil(
         static_cast<double>(output_frames_per_buffer * input_sample_rate) /
         (input_frames_per_buffer * output_sample_rate)));
   }
@@ -266,41 +286,32 @@ class SpeechRecognitionAudioSinkTest : public testing::Test {
  protected:
   // Prepares a blink track of a given MediaStreamType and attaches the native
   // track which can be used to capture audio data and pass it to the producer.
-  static void PrepareBlinkTrackOfType(
-      const MediaStreamType device_type,
-      blink::WebMediaStreamTrack* blink_track) {
-    StreamDeviceInfo device_info(device_type, "Mock device",
-                                 "mock_device_id");
-    MockMediaConstraintFactory constraint_factory;
-    const blink::WebMediaConstraints constraints =
-        constraint_factory.CreateWebMediaConstraints();
-    scoped_refptr<WebRtcAudioCapturer> capturer(
-        WebRtcAudioCapturer::CreateCapturer(-1, device_info, constraints, NULL,
-                                            NULL));
-    scoped_refptr<WebRtcLocalAudioTrackAdapter> adapter(
-        WebRtcLocalAudioTrackAdapter::Create(std::string(), NULL));
-    scoped_ptr<WebRtcLocalAudioTrack> native_track(
-        new WebRtcLocalAudioTrack(adapter.get(), capturer, NULL));
-    blink::WebMediaStreamSource blink_audio_source;
-    blink_audio_source.initialize(base::UTF8ToUTF16("dummy_source_id"),
-                                  blink::WebMediaStreamSource::TypeAudio,
-                                  base::UTF8ToUTF16("dummy_source_name"),
-                                  false /* remote */, true /* readonly */);
-    MediaStreamSource::SourceStoppedCallback cb;
-    blink_audio_source.setExtraData(
-        new MediaStreamAudioSource(-1, device_info, cb, NULL));
+  void PrepareBlinkTrackOfType(const MediaStreamType device_type,
+                               blink::WebMediaStreamTrack* blink_track) {
+    blink::WebMediaStreamSource blink_source;
+    blink_source.initialize(blink::WebString::fromUTF8("dummy_source_id"),
+                            blink::WebMediaStreamSource::TypeAudio,
+                            blink::WebString::fromUTF8("dummy_source_name"),
+                            false /* remote */);
+    TestDrivenAudioSource* const audio_source = new TestDrivenAudioSource();
+    audio_source->SetDeviceInfo(
+        StreamDeviceInfo(device_type, "Mock device", "mock_device_id"));
+    blink_source.setExtraData(audio_source);  // Takes ownership.
+
     blink_track->initialize(blink::WebString::fromUTF8("dummy_track"),
-                            blink_audio_source);
-    blink_track->setExtraData(native_track.release());
+                            blink_source);
+    ASSERT_TRUE(audio_source->ConnectToTrack(*blink_track));
   }
 
   // Emulates an audio capture device capturing data from the source.
-  inline void CaptureAudio(const uint32 buffers) {
-    for (uint32 i = 0; i < buffers; ++i) {
+  inline void CaptureAudio(const uint32_t buffers) {
+    for (uint32_t i = 0; i < buffers; ++i) {
       const base::TimeTicks estimated_capture_time = first_frame_capture_time_ +
           (sample_frames_captured_ * base::TimeDelta::FromSeconds(1) /
                source_params_.sample_rate());
-      native_track()->Capture(*source_bus_, estimated_capture_time, false);
+      static_cast<TestDrivenAudioSource*>(
+          MediaStreamAudioSource::From(blink_source_))
+              ->DeliverDataToTracks(*source_bus_, estimated_capture_time);
       sample_frames_captured_ += source_bus_->frames();
     }
   }
@@ -311,14 +322,15 @@ class SpeechRecognitionAudioSinkTest : public testing::Test {
   }
 
   // Helper method for verifying captured audio data has been consumed.
-  inline void AssertConsumedBuffers(const uint32 buffer_index) {
+  inline void AssertConsumedBuffers(const uint32_t buffer_index) {
     ASSERT_EQ(buffer_index, recognizer()->GetAudioInputBuffer()->params.size);
   }
 
   // Helper method for providing audio data to producer and verifying it was
   // consumed on the recognizer.
-  inline void CaptureAudioAndAssertConsumedBuffers(const uint32 buffers,
-                                                   const uint32 buffer_index) {
+  inline void CaptureAudioAndAssertConsumedBuffers(
+      const uint32_t buffers,
+      const uint32_t buffer_index) {
     CaptureAudio(buffers);
     AssertConsumedBuffers(buffer_index);
   }
@@ -330,15 +342,13 @@ class SpeechRecognitionAudioSinkTest : public testing::Test {
       const int input_frames_per_buffer,
       const int output_sample_rate,
       const int output_frames_per_buffer,
-      const uint32 consumptions) {
-    const uint32 buffers_per_notification =
-        Initialize(input_sample_rate,
-                   input_frames_per_buffer,
-                   output_sample_rate,
-                   output_frames_per_buffer);
+      const uint32_t consumptions) {
+    const uint32_t buffers_per_notification =
+        Initialize(input_sample_rate, input_frames_per_buffer,
+                   output_sample_rate, output_frames_per_buffer);
     AssertConsumedBuffers(0U);
 
-    for (uint32 i = 1U; i <= consumptions; ++i) {
+    for (uint32_t i = 1U; i <= consumptions; ++i) {
       CaptureAudio(buffers_per_notification);
       ASSERT_EQ(i, recognizer()->GetAudioInputBuffer()->params.size)
           << "Tested at rates: "
@@ -355,23 +365,30 @@ class SpeechRecognitionAudioSinkTest : public testing::Test {
 
   const media::AudioParameters& sink_params() const { return sink_params_; }
 
-  WebRtcLocalAudioTrack* native_track() const { return native_track_; }
+  MediaStreamAudioTrack* native_track() const {
+    return MediaStreamAudioTrack::From(blink_track_);
+  }
 
  private:
+  MockPeerConnectionDependencyFactory mock_dependency_factory_;
+
   // Producer.
-  scoped_ptr<SpeechRecognitionAudioSink> speech_audio_sink_;
+  std::unique_ptr<SpeechRecognitionAudioSink> speech_audio_sink_;
 
   // Consumer.
-  scoped_ptr<FakeSpeechRecognizer> recognizer_;
+  std::unique_ptr<FakeSpeechRecognizer> recognizer_;
 
   // Audio related members.
-  scoped_ptr<media::AudioBus> source_bus_;
+  std::unique_ptr<media::AudioBus> source_bus_;
   media::AudioParameters source_params_;
   media::AudioParameters sink_params_;
-  WebRtcLocalAudioTrack* native_track_;
+  blink::WebMediaStreamSource blink_source_;
+  blink::WebMediaStreamTrack blink_track_;
 
   base::TimeTicks first_frame_capture_time_;
-  int64 sample_frames_captured_;
+  int64_t sample_frames_captured_;
+
+  base::MessageLoop message_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(SpeechRecognitionAudioSinkTest);
 };
@@ -390,7 +407,6 @@ TEST_F(SpeechRecognitionAudioSinkTest, CheckIsSupportedAudioTrack) {
   p[MEDIA_TAB_VIDEO_CAPTURE] = false;
   p[MEDIA_DESKTOP_VIDEO_CAPTURE] = false;
   p[MEDIA_DESKTOP_AUDIO_CAPTURE] = false;
-  p[MEDIA_DEVICE_AUDIO_OUTPUT] = false;
 
   // Ensure this test gets updated along with |content::MediaStreamType| enum.
   EXPECT_EQ(NUM_MEDIA_TYPES, p.size());
@@ -433,12 +449,12 @@ TEST_F(SpeechRecognitionAudioSinkTest, AudioDataIsResampledOnSink) {
   // Input audio is sampled at 44.1 KHz with data chunks of 10ms. Desired output
   // is corresponding to the speech recognition engine requirements: 16 KHz with
   // 100 ms chunks (1600 frames per buffer).
-  const uint32 kSourceFrames = 441;
-  const uint32 buffers_per_notification =
+  const uint32_t kSourceFrames = 441;
+  const uint32_t buffers_per_notification =
       Initialize(44100, kSourceFrames, 16000, 1600);
   // Fill audio input frames with 0, 1, 2, 3, ..., 440.
-  int16 source_data[kSourceFrames * kInputChannels];
-  for (uint32 i = 0; i < kSourceFrames; ++i) {
+  int16_t source_data[kSourceFrames * kInputChannels];
+  for (uint32_t i = 0; i < kSourceFrames; ++i) {
     for (int c = 0; c < kInputChannels; ++c)
       source_data[i * kInputChannels + c] = i;
   }
@@ -447,18 +463,18 @@ TEST_F(SpeechRecognitionAudioSinkTest, AudioDataIsResampledOnSink) {
 
   // Prepare sink audio bus and data for rendering.
   media::AudioBus* sink_bus = recognizer()->audio_bus();
-  const uint32 kSinkDataLength = 1600 * kOutputChannels;
-  int16 sink_data[kSinkDataLength] = {0};
+  const uint32_t kSinkDataLength = 1600 * kOutputChannels;
+  int16_t sink_data[kSinkDataLength] = {0};
 
   // Render the audio data from the recognizer.
   sink_bus->ToInterleaved(sink_bus->frames(),
                           sink_params().bits_per_sample() / 8, sink_data);
 
   // Checking only a fraction of the sink frames.
-  const uint32 kNumFramesToTest = 12;
+  const uint32_t kNumFramesToTest = 12;
 
   // Check all channels are zeroed out before we trigger resampling.
-  for (uint32 i = 0; i < kNumFramesToTest; ++i) {
+  for (uint32_t i = 0; i < kNumFramesToTest; ++i) {
     for (int c = 0; c < kOutputChannels; ++c)
       EXPECT_EQ(0, sink_data[i * kOutputChannels + c]);
   }
@@ -472,11 +488,11 @@ TEST_F(SpeechRecognitionAudioSinkTest, AudioDataIsResampledOnSink) {
                           sink_params().bits_per_sample() / 8, sink_data);
 
   // Resampled data expected frames. Extracted based on |source_data|.
-  const int16 kExpectedData[kNumFramesToTest] = {0,  2,  5,  8,  11, 13,
-                                                 16, 19, 22, 24, 27, 30};
+  const int16_t kExpectedData[kNumFramesToTest] = {0,  2,  5,  8,  11, 13,
+                                                   16, 19, 22, 24, 27, 30};
 
   // Check all channels have the same resampled data.
-  for (uint32 i = 0; i < kNumFramesToTest; ++i) {
+  for (uint32_t i = 0; i < kNumFramesToTest; ++i) {
     for (int c = 0; c < kOutputChannels; ++c)
       EXPECT_EQ(kExpectedData[i], sink_data[i * kOutputChannels + c]);
   }
@@ -484,7 +500,7 @@ TEST_F(SpeechRecognitionAudioSinkTest, AudioDataIsResampledOnSink) {
 
 // Checks that the producer does not misbehave when a socket failure occurs.
 TEST_F(SpeechRecognitionAudioSinkTest, SyncSocketFailsSendingData) {
-  const uint32 buffers_per_notification = Initialize(44100, 441, 16000, 1600);
+  const uint32_t buffers_per_notification = Initialize(44100, 441, 16000, 1600);
   // Start with no problems on the socket.
   AssertConsumedBuffers(0U);
   CaptureAudioAndAssertConsumedBuffers(buffers_per_notification, 1U);
@@ -499,7 +515,7 @@ TEST_F(SpeechRecognitionAudioSinkTest, SyncSocketFailsSendingData) {
 // We check that the FIFO overflow does not occur and that the producer is able
 // to resume.
 TEST_F(SpeechRecognitionAudioSinkTest, RepeatedSycnhronizationLag) {
-  const uint32 buffers_per_notification = Initialize(44100, 441, 16000, 1600);
+  const uint32_t buffers_per_notification = Initialize(44100, 441, 16000, 1600);
 
   // Start with no synchronization problems.
   AssertConsumedBuffers(0U);
@@ -520,7 +536,7 @@ TEST_F(SpeechRecognitionAudioSinkTest, RepeatedSycnhronizationLag) {
 
 // Checks that an OnStoppedCallback is issued when the track is stopped.
 TEST_F(SpeechRecognitionAudioSinkTest, OnReadyStateChangedOccured) {
-  const uint32 buffers_per_notification = Initialize(44100, 441, 16000, 1600);
+  const uint32_t buffers_per_notification = Initialize(44100, 441, 16000, 1600);
   AssertConsumedBuffers(0U);
   CaptureAudioAndAssertConsumedBuffers(buffers_per_notification, 1U);
   EXPECT_CALL(*this, StoppedCallback()).Times(1);

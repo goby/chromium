@@ -4,15 +4,10 @@ include_rules = [
   # Chromecast code should explicitly declare its dependencies on each
   # sub-directory within chromecast/.
   "-chromecast",
-  "+chromecast/base",
-  "+chromecast/public",
 
   # Other Chromecast-wide dependencies.
-  "+content/public/common",
-  "+crypto",
-  "+grit/chromecast_settings.h",
-  "+grit/shell_resources.h",
-  "+jni",
-  "+net",
-  "+ui",
+  "+chromecast/base",
+  "+chromecast/chromecast_features.h",
+  "+chromecast/public",
+  "+third_party/boringssl/src/include",
 ]

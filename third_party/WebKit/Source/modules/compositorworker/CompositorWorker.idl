@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 [
-    ActiveDOMObject,
+    ActiveScriptWrappable,
+    DependentLifetime,
     Constructor(DOMString scriptUrl),
     ConstructorCallWith=ExecutionContext,
-    GarbageCollected,
     RaisesException=Constructor,
     RuntimeEnabled=CompositorWorker,
 ] interface CompositorWorker : EventTarget {

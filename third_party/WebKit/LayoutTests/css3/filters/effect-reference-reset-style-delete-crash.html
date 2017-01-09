@@ -4,7 +4,7 @@
   <script src="../../resources/js-test.js"></script>
 </head>
 <body>
-  <img id="html" style="-webkit-filter: url(#MyFilter); filter: url(#MyFilter);" src="resources/reference.png">
+  <img id="html" style="filter: url(#MyFilter);" src="resources/reference.png">
   <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" version="1.1" id="svg">
     <defs>
       <filter id="MyFilter">
@@ -12,6 +12,15 @@
       </filter>
     </defs>
   </svg>
-  <script src="script-tests/effect-reference-delete-crash.js"></script>
+  <script>
+    description("Test that no crash occurs when a SVG filter is deleted that used to be referenced by an HTML element but is no longer.");
+
+    html = document.getElementById('html');
+    html.style = "";
+    svg = document.getElementById('svg');
+    svg.parentNode.removeChild(svg);
+
+    successfullyParsed = true;
+  </script>
 </body>
 </html>

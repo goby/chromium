@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
 #include "extensions/common/error_utils.h"
@@ -101,12 +102,12 @@ TEST_F(OptionsPageManifestTest, OptionsUIPage) {
   scoped_refptr<Extension> extension =
       LoadAndExpectSuccess("options_ui_page_basic.json");
   EXPECT_EQ(base::StringPrintf("chrome-extension://%s/options.html",
-                               extension.get()->id().c_str()),
+                               extension->id().c_str()),
             OptionsPageInfo::GetOptionsPage(extension.get()).spec());
 
   extension = LoadAndExpectSuccess("options_ui_page_with_legacy_page.json");
   EXPECT_EQ(base::StringPrintf("chrome-extension://%s/newoptions.html",
-                               extension.get()->id().c_str()),
+                               extension->id().c_str()),
             OptionsPageInfo::GetOptionsPage(extension.get()).spec());
 
   Testcase testcases[] = {Testcase("options_ui_page_bad_url.json",

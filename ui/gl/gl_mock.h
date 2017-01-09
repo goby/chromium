@@ -12,7 +12,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/gl/gl_bindings.h"
 
-namespace gfx {
+namespace gl {
 
 class MockGLInterface {
  public:
@@ -42,21 +42,85 @@ class MockGLInterface {
       const void* /*data*/) {
     NOTREACHED();
   }
-  void TexSubImage3D(
-      GLenum /*target*/, GLint /*level*/, GLint /*xoffset*/, GLint /*yoffset*/,
-      GLint /*zoffset*/, GLsizei /*width*/, GLsizei /*height*/,
-      GLsizei /*depth*/, GLenum /*format*/, GLenum /*type*/,
-      const void* /*pixels*/) {
+
+  void CopySubTextureCHROMIUM(GLuint /*sourceId*/,
+                              GLuint /*destId*/,
+                              GLint /*xoffset*/,
+                              GLint /*yoffset*/,
+                              GLint /*x*/,
+                              GLint /*y*/,
+                              GLsizei /*width*/,
+                              GLsizei /*height*/,
+                              GLboolean /*unpackFlipY*/,
+                              GLboolean /*unpackPremultiplyAlpha*/,
+                              GLboolean /*unpackUnmultiplyAlpha*/) {
     NOTREACHED();
   }
+
+  void TexImage3DRobustANGLE(GLenum target,
+                             GLint level,
+                             GLint internalformat,
+                             GLsizei width,
+                             GLsizei height,
+                             GLsizei depth,
+                             GLint border,
+                             GLenum format,
+                             GLenum type,
+                             GLsizei bufSize,
+                             const void* pixels) {
+    NOTREACHED();
+  }
+
+  void TexSubImage3D(
+      GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset,
+      GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type,
+      const void* pixels) {
+    if (pixels == nullptr) {
+      TexSubImage3DNoData(target, level, xoffset, yoffset, zoffset,
+                          width, height, depth, format, type);
+    } else {
+      NOTREACHED();
+    }
+  }
+
+  void TexSubImage3DRobustANGLE(GLenum target,
+                                GLint level,
+                                GLint xoffset,
+                                GLint yoffset,
+                                GLint zoffset,
+                                GLsizei width,
+                                GLsizei height,
+                                GLsizei depth,
+                                GLenum format,
+                                GLenum type,
+                                GLsizei bufSize,
+                                const void* pixels) {
+    NOTREACHED();
+  }
+
+  MOCK_METHOD10(TexSubImage3DNoData,
+                void(GLenum target,
+                     GLint level,
+                     GLint xoffset,
+                     GLint yoffset,
+                     GLint zoffset,
+                     GLsizei width,
+                     GLsizei height,
+                     GLsizei depth,
+                     GLenum format,
+                     GLenum type));
 
  private:
   static MockGLInterface* interface_;
 
   // Static mock functions that invoke the member functions of interface_.
   #include "gl_bindings_autogen_mock.h"
+
+  static void GL_BINDING_CALL Mock_glTexSubImage3DNoData(
+      GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset,
+      GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_MOCK_H_

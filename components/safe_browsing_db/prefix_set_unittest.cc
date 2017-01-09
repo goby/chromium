@@ -4,8 +4,13 @@
 
 #include "components/safe_browsing_db/prefix_set.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #include <algorithm>
 #include <iterator>
+#include <memory>
 #include <set>
 #include <string>
 
@@ -14,11 +19,11 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/md5.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "components/safe_browsing_db/util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -35,12 +40,12 @@ const SBPrefix kHighBitSet = 3u * 1000u * 1000u * 1000u;
 class PrefixSetTest : public PlatformTest {
  protected:
   // Constants for the v1 format.
-  static const size_t kMagicOffset = 0 * sizeof(uint32);
-  static const size_t kVersionOffset = 1 * sizeof(uint32);
-  static const size_t kIndexSizeOffset = 2 * sizeof(uint32);
-  static const size_t kDeltasSizeOffset = 3 * sizeof(uint32);
-  static const size_t kFullHashesSizeOffset = 4 * sizeof(uint32);
-  static const size_t kPayloadOffset = 5 * sizeof(uint32);
+  static const size_t kMagicOffset = 0 * sizeof(uint32_t);
+  static const size_t kVersionOffset = 1 * sizeof(uint32_t);
+  static const size_t kIndexSizeOffset = 2 * sizeof(uint32_t);
+  static const size_t kDeltasSizeOffset = 3 * sizeof(uint32_t);
+  static const size_t kFullHashesSizeOffset = 4 * sizeof(uint32_t);
+  static const size_t kPayloadOffset = 5 * sizeof(uint32_t);
 
   // Generate a set of random prefixes to share between tests.  For
   // most tests this generation was a large fraction of the test time.
@@ -52,9 +57,10 @@ class PrefixSetTest : public PlatformTest {
     // Distribute clusters of prefixes.
     for (size_t i = 0; i < 250; ++i) {
       // Unsigned for overflow characteristics.
-      const uint32 base = static_cast<uint32>(base::RandUint64());
+      const uint32_t base = static_cast<uint32_t>(base::RandUint64());
       for (size_t j = 0; j < 10; ++j) {
-        const uint32 delta = static_cast<uint32>(base::RandUint64() & 0xFFFF);
+        const uint32_t delta =
+            static_cast<uint32_t>(base::RandUint64() & 0xFFFF);
         const SBPrefix prefix = static_cast<SBPrefix>(base + delta);
         shared_prefixes_.push_back(prefix);
       }
@@ -104,7 +110,7 @@ class PrefixSetTest : public PlatformTest {
     if (!temp_dir_.IsValid() && !temp_dir_.CreateUniqueTempDir())
       return false;
 
-    base::FilePath filename = temp_dir_.path().AppendASCII("PrefixSetTest");
+    base::FilePath filename = temp_dir_.GetPath().AppendASCII("PrefixSetTest");
 
     PrefixSetBuilder builder(shared_prefixes_);
     if (!builder.GetPrefixSetNoHashes()->WriteFile(filename))
@@ -114,11 +120,11 @@ class PrefixSetTest : public PlatformTest {
     return true;
   }
 
-  // Helper function to read the uint32 value at |offset|, increment it
+  // Helper function to read the uint32_t value at |offset|, increment it
   // by |inc|, and write it back in place.  |fp| should be opened in
   // r+ mode.
   static void IncrementIntAt(FILE* fp, long offset, int inc) {
-    uint32 value = 0;
+    uint32_t value = 0;
 
     ASSERT_NE(-1, fseek(fp, offset, SEEK_SET));
     ASSERT_EQ(1U, fread(&value, sizeof(value), 1, fp));
@@ -159,11 +165,11 @@ class PrefixSetTest : public PlatformTest {
     ASSERT_EQ(file_size, ftell(fp));
   }
 
-  // Open |filename| and increment the uint32 at |offset| by |inc|.
+  // Open |filename| and increment the uint32_t at |offset| by |inc|.
   // Then re-generate the checksum to account for the new contents.
   void ModifyAndCleanChecksum(const base::FilePath& filename, long offset,
                               int inc) {
-    int64 size_64;
+    int64_t size_64;
     ASSERT_TRUE(base::GetFileSize(filename, &size_64));
 
     base::ScopedFILE file(base::OpenFile(filename, "r+b"));
@@ -171,7 +177,7 @@ class PrefixSetTest : public PlatformTest {
     CleanChecksum(file.get());
     file.reset();
 
-    int64 new_size_64;
+    int64_t new_size_64;
     ASSERT_TRUE(base::GetFileSize(filename, &new_size_64));
     ASSERT_EQ(new_size_64, size_64);
   }
@@ -199,7 +205,7 @@ class PrefixSetTest : public PlatformTest {
     while (fgets(buf, sizeof(buf), file.get())) {
       std::string trimmed;
       if (base::TRIM_TRAILING !=
-          base::TrimWhitespace(buf, base::TRIM_ALL, &trimmed))
+          base::TrimWhitespaceASCII(buf, base::TRIM_ALL, &trimmed))
         return false;
       unsigned prefix;
       if (!base::StringToUint(trimmed, &prefix))
@@ -227,7 +233,7 @@ TEST_F(PrefixSetTest, Baseline) {
 TEST_F(PrefixSetTest, Empty) {
   const std::vector<SBPrefix> empty;
   PrefixSetBuilder builder(empty);
-  scoped_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
+  std::unique_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
   for (size_t i = 0; i < shared_prefixes_.size(); ++i) {
     EXPECT_FALSE(prefix_set->PrefixExists(shared_prefixes_[i]));
   }
@@ -237,7 +243,7 @@ TEST_F(PrefixSetTest, Empty) {
 TEST_F(PrefixSetTest, OneElement) {
   const std::vector<SBPrefix> prefixes(100, 0u);
   PrefixSetBuilder builder(prefixes);
-  scoped_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
+  std::unique_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
   EXPECT_FALSE(prefix_set->PrefixExists(static_cast<SBPrefix>(-1)));
   EXPECT_TRUE(prefix_set->PrefixExists(prefixes[0]));
   EXPECT_FALSE(prefix_set->PrefixExists(1u));
@@ -267,7 +273,7 @@ TEST_F(PrefixSetTest, IntMinMax) {
 
   std::sort(prefixes.begin(), prefixes.end());
   PrefixSetBuilder builder(prefixes);
-  scoped_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
+  std::unique_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
 
   // Check that |GetPrefixes()| returns the same set of prefixes as
   // was passed in.
@@ -290,7 +296,7 @@ TEST_F(PrefixSetTest, AllBig) {
 
   std::sort(prefixes.begin(), prefixes.end());
   PrefixSetBuilder builder(prefixes);
-  scoped_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
+  std::unique_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
 
   // Check that |GetPrefixes()| returns the same set of prefixes as
   // was passed in.
@@ -344,7 +350,7 @@ TEST_F(PrefixSetTest, EdgeCases) {
 
   std::sort(prefixes.begin(), prefixes.end());
   PrefixSetBuilder builder(prefixes);
-  scoped_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
+  std::unique_ptr<const PrefixSet> prefix_set = builder.GetPrefixSetNoHashes();
 
   // Check that |GetPrefixes()| returns the same set of prefixes as
   // was passed in.
@@ -378,7 +384,7 @@ TEST_F(PrefixSetTest, ReadWrite) {
   // the prefixes.  Leaves the path in |filename|.
   {
     ASSERT_TRUE(GetPrefixSetFile(&filename));
-    scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+    std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
     ASSERT_TRUE(prefix_set.get());
     CheckPrefixes(*prefix_set, shared_prefixes_);
   }
@@ -392,7 +398,7 @@ TEST_F(PrefixSetTest, ReadWrite) {
     PrefixSetBuilder builder(prefixes);
     ASSERT_TRUE(builder.GetPrefixSetNoHashes()->WriteFile(filename));
 
-    scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+    std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
     ASSERT_TRUE(prefix_set.get());
     CheckPrefixes(*prefix_set, prefixes);
   }
@@ -403,7 +409,7 @@ TEST_F(PrefixSetTest, ReadWrite) {
     PrefixSetBuilder builder(prefixes);
     ASSERT_TRUE(builder.GetPrefixSetNoHashes()->WriteFile(filename));
 
-    scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+    std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
     ASSERT_TRUE(prefix_set.get());
     CheckPrefixes(*prefix_set, prefixes);
   }
@@ -428,7 +434,7 @@ TEST_F(PrefixSetTest, ReadWrite) {
     PrefixSetBuilder builder(prefixes);
     ASSERT_TRUE(builder.GetPrefixSet(hashes)->WriteFile(filename));
 
-    scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+    std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
     ASSERT_TRUE(prefix_set.get());
     CheckPrefixes(*prefix_set, prefixes);
 
@@ -450,7 +456,7 @@ TEST_F(PrefixSetTest, CorruptionHelpers) {
   base::ScopedFILE file(base::OpenFile(filename, "r+b"));
   IncrementIntAt(file.get(), kPayloadOffset, 1);
   file.reset();
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 
   // Fix up the checksum and it will read successfully (though the
@@ -469,7 +475,7 @@ TEST_F(PrefixSetTest, CorruptionMagic) {
 
   ASSERT_NO_FATAL_FAILURE(
       ModifyAndCleanChecksum(filename, kMagicOffset, 1));
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -480,7 +486,7 @@ TEST_F(PrefixSetTest, CorruptionVersion) {
 
   ASSERT_NO_FATAL_FAILURE(
       ModifyAndCleanChecksum(filename, kVersionOffset, 10));
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -491,7 +497,7 @@ TEST_F(PrefixSetTest, CorruptionIndexSize) {
 
   ASSERT_NO_FATAL_FAILURE(
       ModifyAndCleanChecksum(filename, kIndexSizeOffset, 1));
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -502,7 +508,7 @@ TEST_F(PrefixSetTest, CorruptionDeltasSize) {
 
   ASSERT_NO_FATAL_FAILURE(
       ModifyAndCleanChecksum(filename, kDeltasSizeOffset, 1));
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -513,7 +519,7 @@ TEST_F(PrefixSetTest, CorruptionFullHashesSize) {
 
   ASSERT_NO_FATAL_FAILURE(
       ModifyAndCleanChecksum(filename, kFullHashesSizeOffset, 1));
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -526,7 +532,7 @@ TEST_F(PrefixSetTest, CorruptionPayload) {
   base::ScopedFILE file(base::OpenFile(filename, "r+b"));
   ASSERT_NO_FATAL_FAILURE(IncrementIntAt(file.get(), 666, 1));
   file.reset();
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -535,13 +541,13 @@ TEST_F(PrefixSetTest, CorruptionDigest) {
   base::FilePath filename;
   ASSERT_TRUE(GetPrefixSetFile(&filename));
 
-  int64 size_64;
+  int64_t size_64;
   ASSERT_TRUE(base::GetFileSize(filename, &size_64));
   base::ScopedFILE file(base::OpenFile(filename, "r+b"));
   long digest_offset = static_cast<long>(size_64 - sizeof(base::MD5Digest));
   ASSERT_NO_FATAL_FAILURE(IncrementIntAt(file.get(), digest_offset, 1));
   file.reset();
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -555,7 +561,7 @@ TEST_F(PrefixSetTest, CorruptionExcess) {
   const char buf[] = "im in ur base, killing ur d00dz.";
   ASSERT_EQ(strlen(buf), fwrite(buf, 1, strlen(buf), file.get()));
   file.reset();
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -568,15 +574,15 @@ TEST_F(PrefixSetTest, SizeTRecovery) {
   base::ScopedFILE file(base::OpenFile(filename, "r+b"));
 
   // Leave existing magic and version.
-  ASSERT_NE(-1, fseek(file.get(), sizeof(uint32) * 2, SEEK_SET));
+  ASSERT_NE(-1, fseek(file.get(), sizeof(uint32_t) * 2, SEEK_SET));
 
   // Indicate two index values and two deltas.
-  uint32 val = 2;
+  uint32_t val = 2;
   ASSERT_EQ(sizeof(val), fwrite(&val, 1, sizeof(val), file.get()));
   ASSERT_EQ(sizeof(val), fwrite(&val, 1, sizeof(val), file.get()));
 
   // Write two index values with 64-bit "size_t".
-  std::pair<SBPrefix, uint64> item;
+  std::pair<SBPrefix, uint64_t> item;
   memset(&item, 0, sizeof(item));  // Includes any padding.
   item.first = 17;
   item.second = 0;
@@ -586,7 +592,7 @@ TEST_F(PrefixSetTest, SizeTRecovery) {
   ASSERT_EQ(sizeof(item), fwrite(&item, 1, sizeof(item), file.get()));
 
   // Write two delta values.
-  uint16 delta = 23;
+  uint16_t delta = 23;
   ASSERT_EQ(sizeof(delta), fwrite(&delta, 1, sizeof(delta), file.get()));
   ASSERT_EQ(sizeof(delta), fwrite(&delta, 1, sizeof(delta), file.get()));
 
@@ -597,7 +603,7 @@ TEST_F(PrefixSetTest, SizeTRecovery) {
   CleanChecksum(file.get());
   file.reset();  // Flush updates.
 
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -620,7 +626,7 @@ TEST_F(PrefixSetTest, FullHashBuild) {
   hashes.push_back(kHash5);
 
   PrefixSetBuilder builder(prefixes);
-  scoped_ptr<const PrefixSet> prefix_set = builder.GetPrefixSet(hashes);
+  std::unique_ptr<const PrefixSet> prefix_set = builder.GetPrefixSet(hashes);
 
   EXPECT_TRUE(prefix_set->Exists(kHash1));
   EXPECT_TRUE(prefix_set->Exists(kHash2));
@@ -646,18 +652,18 @@ TEST_F(PrefixSetTest, ReadSigned) {
   base::ScopedFILE file(base::OpenFile(filename, "r+b"));
 
   // Leave existing magic.
-  ASSERT_NE(-1, fseek(file.get(), sizeof(uint32), SEEK_SET));
+  ASSERT_NE(-1, fseek(file.get(), sizeof(uint32_t), SEEK_SET));
 
   // Version 1.
-  uint32 version = 1;
+  uint32_t version = 1;
   ASSERT_EQ(sizeof(version), fwrite(&version, 1, sizeof(version), file.get()));
 
   // Indicate two index values and two deltas.
-  uint32 val = 2;
+  uint32_t val = 2;
   ASSERT_EQ(sizeof(val), fwrite(&val, 1, sizeof(val), file.get()));
   ASSERT_EQ(sizeof(val), fwrite(&val, 1, sizeof(val), file.get()));
 
-  std::pair<int32, uint32> item;
+  std::pair<int32_t, uint32_t> item;
   memset(&item, 0, sizeof(item));  // Includes any padding.
   item.first = -1000;
   item.second = 0;
@@ -667,7 +673,7 @@ TEST_F(PrefixSetTest, ReadSigned) {
   ASSERT_EQ(sizeof(item), fwrite(&item, 1, sizeof(item), file.get()));
 
   // Write two delta values.
-  uint16 delta = 23;
+  uint16_t delta = 23;
   ASSERT_EQ(sizeof(delta), fwrite(&delta, 1, sizeof(delta), file.get()));
   ASSERT_EQ(sizeof(delta), fwrite(&delta, 1, sizeof(delta), file.get()));
 
@@ -678,7 +684,7 @@ TEST_F(PrefixSetTest, ReadSigned) {
   CleanChecksum(file.get());
   file.reset();  // Flush updates.
 
-  scoped_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
+  std::unique_ptr<const PrefixSet> prefix_set = PrefixSet::LoadFile(filename);
   ASSERT_FALSE(prefix_set.get());
 }
 
@@ -694,7 +700,7 @@ TEST_F(PrefixSetTest, Version2) {
   base::FilePath golden_path = TestFilePath();
   golden_path = golden_path.AppendASCII(kBasename);
 
-  scoped_ptr<const PrefixSet> prefix_set(PrefixSet::LoadFile(golden_path));
+  std::unique_ptr<const PrefixSet> prefix_set(PrefixSet::LoadFile(golden_path));
   ASSERT_FALSE(prefix_set.get());
 }
 #endif
@@ -711,7 +717,7 @@ TEST_F(PrefixSetTest, Version3) {
   base::FilePath golden_path = TestFilePath();
   golden_path = golden_path.AppendASCII(kBasename);
 
-  scoped_ptr<const PrefixSet> prefix_set(PrefixSet::LoadFile(golden_path));
+  std::unique_ptr<const PrefixSet> prefix_set(PrefixSet::LoadFile(golden_path));
   ASSERT_TRUE(prefix_set.get());
   CheckPrefixes(*prefix_set, ref_prefixes);
 

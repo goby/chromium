@@ -2,17 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ios/web/app/web_main_runner.h"
+#include "ios/web/public/app/web_main_runner.h"
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/statistics_recorder.h"
 #include "ios/web/app/web_main_loop.h"
 #include "ios/web/public/url_schemes.h"
 #include "ios/web/public/web_client.h"
 #include "ui/base/ui_base_paths.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 
@@ -111,8 +116,8 @@ class WebMainRunnerImpl : public WebMainRunner {
   // Used if the embedder doesn't set one.
   WebClient empty_web_client_;
 
-  scoped_ptr<base::AtExitManager> exit_manager_;
-  scoped_ptr<WebMainLoop> main_loop_;
+  std::unique_ptr<base::AtExitManager> exit_manager_;
+  std::unique_ptr<WebMainLoop> main_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMainRunnerImpl);
 };

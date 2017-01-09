@@ -4,16 +4,21 @@
 
 #include "chrome/browser/after_startup_task_utils.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process_info.h"
 #include "base/rand_util.h"
-#include "base/synchronization/cancellation_flag.h"
+#include "base/synchronization/atomic_flag.h"
 #include "base/task_runner.h"
 #include "base/tracked_objects.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_iterator.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
@@ -23,7 +28,6 @@
 using content::BrowserThread;
 using content::WebContents;
 using content::WebContentsObserver;
-using StartupCompleteFlag = base::CancellationFlag;
 
 namespace {
 
@@ -40,7 +44,7 @@ struct AfterStartupTask {
 };
 
 // The flag may be read on any thread, but must only be set on the UI thread.
-base::LazyInstance<StartupCompleteFlag>::Leaky g_startup_complete_flag;
+base::LazyInstance<base::AtomicFlag>::Leaky g_startup_complete_flag;
 
 // The queue may only be accessed on the UI thread.
 base::LazyInstance<std::deque<AfterStartupTask*>>::Leaky g_after_startup_tasks;
@@ -53,35 +57,35 @@ bool IsBrowserStartupComplete() {
   return g_startup_complete_flag.Get().IsSet();
 }
 
-void RunTask(scoped_ptr<AfterStartupTask> queued_task) {
+void RunTask(std::unique_ptr<AfterStartupTask> queued_task) {
   // We're careful to delete the caller's |task| on the target runner's thread.
   DCHECK(queued_task->task_runner->RunsTasksOnCurrentThread());
   queued_task->task.Run();
 }
 
-void ScheduleTask(scoped_ptr<AfterStartupTask> queued_task) {
+void ScheduleTask(std::unique_ptr<AfterStartupTask> queued_task) {
   // Spread their execution over a brief time.
   const int kMinDelaySec = 0;
   const int kMaxDelaySec = 10;
   scoped_refptr<base::TaskRunner> target_runner = queued_task->task_runner;
   tracked_objects::Location from_here = queued_task->from_here;
   target_runner->PostDelayedTask(
-      from_here, base::Bind(&RunTask, base::Passed(queued_task.Pass())),
+      from_here, base::Bind(&RunTask, base::Passed(std::move(queued_task))),
       base::TimeDelta::FromSeconds(base::RandInt(kMinDelaySec, kMaxDelaySec)));
 }
 
-void QueueTask(scoped_ptr<AfterStartupTask> queued_task) {
+void QueueTask(std::unique_ptr<AfterStartupTask> queued_task) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(QueueTask, base::Passed(queued_task.Pass())));
+        base::Bind(QueueTask, base::Passed(std::move(queued_task))));
     return;
   }
 
   // The flag may have been set while the task to invoke this method
   // on the UI thread was inflight.
   if (IsBrowserStartupComplete()) {
-    ScheduleTask(queued_task.Pass());
+    ScheduleTask(std::move(queued_task));
     return;
   }
   g_after_startup_tasks.Get().push_back(queued_task.release());
@@ -102,7 +106,7 @@ void SetBrowserStartupIsComplete() {
                              g_after_startup_tasks.Get().size());
   g_startup_complete_flag.Get().Set();
   for (AfterStartupTask* queued_task : g_after_startup_tasks.Get())
-    ScheduleTask(make_scoped_ptr(queued_task));
+    ScheduleTask(base::WrapUnique(queued_task));
   g_after_startup_tasks.Get().clear();
 
   // The shrink_to_fit() method is not available for all of our build targets.
@@ -158,8 +162,8 @@ void StartupObserver::Start() {
 
 #if !defined(OS_ANDROID)
   WebContents* contents = nullptr;
-  for (chrome::BrowserIterator iter; !iter.done(); iter.Next()) {
-    contents = (*iter)->tab_strip_model()->GetActiveWebContents();
+  for (auto* browser : *BrowserList::GetInstance()) {
+    contents = browser->tab_strip_model()->GetActiveWebContents();
     if (contents && contents->GetMainFrame() &&
         contents->GetMainFrame()->GetVisibilityState() ==
             blink::WebPageVisibilityStateVisible) {
@@ -188,6 +192,27 @@ void StartupObserver::Start() {
 
 }  // namespace
 
+AfterStartupTaskUtils::Runner::Runner(
+    scoped_refptr<base::TaskRunner> destination_runner)
+    : destination_runner_(std::move(destination_runner)) {
+  DCHECK(destination_runner_);
+}
+
+AfterStartupTaskUtils::Runner::~Runner() = default;
+
+bool AfterStartupTaskUtils::Runner::PostDelayedTask(
+    const tracked_objects::Location& from_here,
+    const base::Closure& task,
+    base::TimeDelta delay) {
+  DCHECK(delay.is_zero());
+  AfterStartupTaskUtils::PostTask(from_here, destination_runner_, task);
+  return true;
+}
+
+bool AfterStartupTaskUtils::Runner::RunsTasksOnCurrentThread() const {
+  return destination_runner_->RunsTasksOnCurrentThread();
+}
+
 void AfterStartupTaskUtils::StartMonitoringStartup() {
   // The observer is self-deleting.
   (new StartupObserver)->Start();
@@ -195,16 +220,16 @@ void AfterStartupTaskUtils::StartMonitoringStartup() {
 
 void AfterStartupTaskUtils::PostTask(
     const tracked_objects::Location& from_here,
-    const scoped_refptr<base::TaskRunner>& task_runner,
+    const scoped_refptr<base::TaskRunner>& destination_runner,
     const base::Closure& task) {
   if (IsBrowserStartupComplete()) {
-    task_runner->PostTask(from_here, task);
+    destination_runner->PostTask(from_here, task);
     return;
   }
 
-  scoped_ptr<AfterStartupTask> queued_task(
-      new AfterStartupTask(from_here, task_runner, task));
-  QueueTask(queued_task.Pass());
+  std::unique_ptr<AfterStartupTask> queued_task(
+      new AfterStartupTask(from_here, destination_runner, task));
+  QueueTask(std::move(queued_task));
 }
 
 void AfterStartupTaskUtils::SetBrowserStartupIsCompleteForTesting() {

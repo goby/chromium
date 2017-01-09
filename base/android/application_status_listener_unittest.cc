@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include "base/android/application_status_listener.h"
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback_forward.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
@@ -41,10 +43,10 @@ class MultiThreadedTest {
  public:
   MultiThreadedTest()
       : state_(kInvalidApplicationState),
-        event_(false, false),
+        event_(WaitableEvent::ResetPolicy::AUTOMATIC,
+               WaitableEvent::InitialState::NOT_SIGNALED),
         thread_("ApplicationStatusTest thread"),
-        main_() {
-  }
+        main_() {}
 
   void Run() {
     // Start the thread and tell it to register for events.
@@ -92,7 +94,7 @@ class MultiThreadedTest {
   base::WaitableEvent event_;
   base::Thread thread_;
   base::MessageLoop main_;
-  scoped_ptr<ApplicationStatusListener> listener_;
+  std::unique_ptr<ApplicationStatusListener> listener_;
 };
 
 }  // namespace

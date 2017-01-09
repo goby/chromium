@@ -4,6 +4,12 @@
 
 #include "extensions/browser/guest_view/web_view/web_view_permission_helper.h"
 
+#include <utility>
+
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/guest_view/browser/guest_view_event.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -13,6 +19,7 @@
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_helper_delegate.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_types.h"
+#include "ppapi/features/features.h"
 
 using content::BrowserPluginGuestDelegate;
 using content::RenderViewHost;
@@ -80,6 +87,7 @@ void RecordUserInitiatedUMA(
       case WEB_VIEW_PERMISSION_TYPE_LOAD_PLUGIN:
         content::RecordAction(
             UserMetricsAction("WebView.Guest.PermissionAllow.PluginLoad"));
+        break;
       case WEB_VIEW_PERMISSION_TYPE_MEDIA:
         content::RecordAction(
             UserMetricsAction("WebView.PermissionAllow.Media"));
@@ -175,7 +183,7 @@ WebViewPermissionHelper* WebViewPermissionHelper::FromWebContents(
   return web_view_guest->web_view_permission_helper_.get();
 }
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 bool WebViewPermissionHelper::OnMessageReceived(
     const IPC::Message& message,
     content::RenderFrameHost* render_frame_host) {
@@ -186,7 +194,7 @@ bool WebViewPermissionHelper::OnMessageReceived(
 bool WebViewPermissionHelper::OnMessageReceived(const IPC::Message& message) {
   return web_view_permission_helper_delegate_->OnMessageReceived(message);
 }
-#endif  // defined(ENABLE_PLUGINS)
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 void WebViewPermissionHelper::RequestMediaAccessPermission(
     content::WebContents* source,
@@ -227,14 +235,14 @@ void WebViewPermissionHelper::OnMediaPermissionResponse(
   if (!allow) {
     callback.Run(content::MediaStreamDevices(),
                  content::MEDIA_DEVICE_PERMISSION_DENIED,
-                 scoped_ptr<content::MediaStreamUI>());
+                 std::unique_ptr<content::MediaStreamUI>());
     return;
   }
   if (!web_view_guest()->attached() ||
       !web_view_guest()->embedder_web_contents()->GetDelegate()) {
     callback.Run(content::MediaStreamDevices(),
                  content::MEDIA_DEVICE_INVALID_STATE,
-                 scoped_ptr<content::MediaStreamUI>());
+                 std::unique_ptr<content::MediaStreamUI>());
     return;
   }
 
@@ -314,37 +322,36 @@ int WebViewPermissionHelper::RequestPermission(
     // objects held by the permission request are not destroyed immediately
     // after creation. This is to allow those same objects to be accessed again
     // in the same scope without fear of use after freeing.
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&PermissionResponseCallback::Run,
                    base::Owned(new PermissionResponseCallback(callback)),
-                   allowed_by_default,
-                   std::string()));
+                   allowed_by_default, std::string()));
     return webview::kInvalidPermissionRequestID;
   }
 
   int request_id = next_permission_request_id_++;
   pending_permission_requests_[request_id] =
       PermissionResponseInfo(callback, permission_type, allowed_by_default);
-  scoped_ptr<base::DictionaryValue> args(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
   args->Set(webview::kRequestInfo, request_info.DeepCopy());
   args->SetInteger(webview::kRequestId, request_id);
   switch (permission_type) {
     case WEB_VIEW_PERMISSION_TYPE_NEW_WINDOW: {
-      web_view_guest_->DispatchEventToView(
-          new GuestViewEvent(webview::kEventNewWindow, args.Pass()));
+      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+          webview::kEventNewWindow, std::move(args)));
       break;
     }
     case WEB_VIEW_PERMISSION_TYPE_JAVASCRIPT_DIALOG: {
-      web_view_guest_->DispatchEventToView(
-          new GuestViewEvent(webview::kEventDialog, args.Pass()));
+      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+          webview::kEventDialog, std::move(args)));
       break;
     }
     default: {
       args->SetString(webview::kPermission,
                       PermissionTypeToString(permission_type));
-      web_view_guest_->DispatchEventToView(new GuestViewEvent(
-          webview::kEventPermissionRequest, args.Pass()));
+      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+          webview::kEventPermissionRequest, std::move(args)));
       break;
     }
   }
@@ -400,6 +407,9 @@ WebViewPermissionHelper::PermissionResponseInfo::PermissionResponseInfo(
       permission_type(permission_type),
       allowed_by_default(allowed_by_default) {
 }
+
+WebViewPermissionHelper::PermissionResponseInfo::PermissionResponseInfo(
+    const PermissionResponseInfo& other) = default;
 
 WebViewPermissionHelper::PermissionResponseInfo::~PermissionResponseInfo() {
 }

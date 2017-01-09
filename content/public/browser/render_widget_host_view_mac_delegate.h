@@ -8,6 +8,7 @@
 #import <Cocoa/Cocoa.h>
 
 namespace blink {
+class WebGestureEvent;
 class WebMouseWheelEvent;
 }
 
@@ -50,16 +51,12 @@ class WebMouseWheelEvent;
 - (void)touchesCancelledWithEvent:(NSEvent*)event;
 - (void)touchesEndedWithEvent:(NSEvent*)event;
 
-// These methods control whether a given view is allowed to rubberband in the
-// given direction. This is inversely related to whether the view is allowed to
-// 2-finger history swipe in the given direction.
-- (BOOL)canRubberbandLeft:(NSView*)view;
-- (BOOL)canRubberbandRight:(NSView*)view;
-
 // The browser process received an ACK from the renderer after it processed
 // |event|.
 - (void)rendererHandledWheelEvent:(const blink::WebMouseWheelEvent&)event
                          consumed:(BOOL)consumed;
+- (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
+                                 consumed:(BOOL)consumed;
 @end
 
 #endif  // CONTENT_PUBLIC_BROWSER_RENDER_WIDGET_HOST_VIEW_MAC_DELEGATE_H_

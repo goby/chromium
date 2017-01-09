@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_PREFS_INCOGNITO_MODE_PREFS_H_
 #define CHROME_BROWSER_PREFS_INCOGNITO_MODE_PREFS_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 
 class PrefService;
 class Profile;
@@ -77,6 +78,18 @@ class IncognitoModePrefs {
   static bool ArePlatformParentalControlsEnabled() WARN_UNUSED_RESULT;
 
  private:
+  // Specifies whether parental controls should be checked. See comment below.
+  enum GetAvailabilityMode {
+    CHECK_PARENTAL_CONTROLS,
+    DONT_CHECK_PARENTAL_CONTROLS,
+  };
+
+  // Internal version of GetAvailability() that specifies whether parental
+  // controls should be checked (which is expensive and not always necessary
+  // to do - such as when checking for FORCED state).
+  static Availability GetAvailabilityInternal(const PrefService* pref_service,
+                                              GetAvailabilityMode mode);
+
   DISALLOW_IMPLICIT_CONSTRUCTORS(IncognitoModePrefs);
 };
 

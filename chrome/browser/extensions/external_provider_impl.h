@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/extensions/external_loader.h"
 #include "extensions/browser/external_provider_interface.h"
@@ -54,13 +55,18 @@ class ExternalProviderImpl : public ExternalProviderInterface {
   // owned ExternalLoader instance.
   virtual void SetPrefs(base::DictionaryValue* prefs);
 
+  // Updates the underlying prefs and notifies provider.
+  // Only to be called by the owned ExternalLoader instance.
+  void UpdatePrefs(base::DictionaryValue* prefs);
+
   // ExternalProvider implementation:
   void ServiceShutdown() override;
   void VisitRegisteredExtension() override;
   bool HasExtension(const std::string& id) const override;
-  bool GetExtensionDetails(const std::string& id,
-                           Manifest::Location* location,
-                           scoped_ptr<base::Version>* version) const override;
+  bool GetExtensionDetails(
+      const std::string& id,
+      Manifest::Location* location,
+      std::unique_ptr<base::Version>* version) const override;
 
   bool IsReady() const override;
 
@@ -95,6 +101,13 @@ class ExternalProviderImpl : public ExternalProviderInterface {
       const std::string& extension_id,
       std::set<std::string>* unsupported_extensions);
 
+  // Retrieves the extensions that were found in this provider.
+  void RetrieveExtensionsFromPrefs(
+      std::vector<std::unique_ptr<ExternalInstallInfoUpdateUrl>>*
+          external_update_url_extensions,
+      std::vector<std::unique_ptr<ExternalInstallInfoFile>>*
+          external_file_extensions);
+
   // Location for external extensions that are provided by this provider from
   // local crx files.
   const Manifest::Location crx_location_;
@@ -108,7 +121,7 @@ class ExternalProviderImpl : public ExternalProviderInterface {
   VisitorInterface* service_;  // weak
 
   // Dictionary of the external extensions that are provided by this provider.
-  scoped_ptr<base::DictionaryValue> prefs_;
+  std::unique_ptr<base::DictionaryValue> prefs_;
 
   // Indicates that the extensions provided by this provider are loaded
   // entirely.

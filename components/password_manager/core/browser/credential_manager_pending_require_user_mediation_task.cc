@@ -5,46 +5,36 @@
 #include "components/password_manager/core/browser/credential_manager_pending_require_user_mediation_task.h"
 
 #include "components/autofill/core/common/password_form.h"
-#include "components/password_manager/core/browser/affiliated_match_helper.h"
-#include "components/password_manager/core/browser/password_store.h"
-#include "url/gurl.h"
 
 namespace password_manager {
 
 CredentialManagerPendingRequireUserMediationTask::
     CredentialManagerPendingRequireUserMediationTask(
-        CredentialManagerPendingRequireUserMediationTaskDelegate* delegate,
-        const GURL& origin,
-        const std::vector<std::string>& affiliated_realms)
-    : delegate_(delegate),
-      affiliated_realms_(affiliated_realms.begin(), affiliated_realms.end()) {
-  origins_.insert(origin.spec());
-}
+        CredentialManagerPendingRequireUserMediationTaskDelegate* delegate)
+    : delegate_(delegate), pending_requests_(0) {}
 
 CredentialManagerPendingRequireUserMediationTask::
     ~CredentialManagerPendingRequireUserMediationTask() = default;
 
 void CredentialManagerPendingRequireUserMediationTask::AddOrigin(
-    const GURL& origin) {
-  origins_.insert(origin.spec());
+    const PasswordStore::FormDigest& form_digest) {
+  delegate_->GetPasswordStore()->GetLogins(form_digest, this);
+  pending_requests_++;
 }
 
 void CredentialManagerPendingRequireUserMediationTask::
-    OnGetPasswordStoreResults(ScopedVector<autofill::PasswordForm> results) {
+    OnGetPasswordStoreResults(
+        std::vector<std::unique_ptr<autofill::PasswordForm>> results) {
   PasswordStore* store = delegate_->GetPasswordStore();
-  for (autofill::PasswordForm* form : results) {
-    if (origins_.count(form->origin.spec()) ||
-        (affiliated_realms_.count(form->signon_realm) &&
-         AffiliatedMatchHelper::IsValidAndroidCredential(*form))) {
+  for (const auto& form : results) {
+    if (!form->skip_zero_click) {
       form->skip_zero_click = true;
-      // Note that UpdateLogin ends up copying the form while posting a task to
-      // update the PasswordStore, so it's fine to let |results| delete the
-      // original at the end of this method.
       store->UpdateLogin(*form);
     }
   }
-
-  delegate_->DoneRequiringUserMediation();
+  pending_requests_--;
+  if (!pending_requests_)
+    delegate_->DoneRequiringUserMediation();
 }
 
 }  // namespace password_manager

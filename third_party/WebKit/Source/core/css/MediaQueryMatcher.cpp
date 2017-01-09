@@ -17,7 +17,6 @@
  *  Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/css/MediaQueryMatcher.h"
 
 #include "core/css/MediaList.h"
@@ -33,124 +32,109 @@
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<MediaQueryMatcher> MediaQueryMatcher::create(Document& document)
-{
-    return adoptRefWillBeNoop(new MediaQueryMatcher(document));
+MediaQueryMatcher* MediaQueryMatcher::create(Document& document) {
+  return new MediaQueryMatcher(document);
 }
 
 MediaQueryMatcher::MediaQueryMatcher(Document& document)
-    : m_document(&document)
-{
-    ASSERT(m_document);
+    : m_document(&document) {
+  ASSERT(m_document);
 }
 
-MediaQueryMatcher::~MediaQueryMatcher()
-{
+MediaQueryMatcher::~MediaQueryMatcher() {}
+
+void MediaQueryMatcher::documentDetached() {
+  m_document = nullptr;
+  m_evaluator = nullptr;
 }
 
-void MediaQueryMatcher::documentDetached()
-{
-    m_document = nullptr;
-    m_evaluator = nullptr;
+MediaQueryEvaluator* MediaQueryMatcher::createEvaluator() const {
+  if (!m_document || !m_document->frame())
+    return nullptr;
+
+  return new MediaQueryEvaluator(m_document->frame());
 }
 
-PassOwnPtr<MediaQueryEvaluator> MediaQueryMatcher::createEvaluator() const
-{
-    if (!m_document || !m_document->frame())
-        return nullptr;
+bool MediaQueryMatcher::evaluate(const MediaQuerySet* media) {
+  ASSERT(!m_document || m_document->frame() || !m_evaluator);
 
-    return adoptPtr(new MediaQueryEvaluator(m_document->frame()));
-}
-
-bool MediaQueryMatcher::evaluate(const MediaQuerySet* media)
-{
-    ASSERT(!m_document || m_document->frame() || !m_evaluator);
-
-    if (!media)
-        return false;
-
-    // Cache the evaluator to avoid allocating one per evaluation.
-    if (!m_evaluator)
-        m_evaluator = createEvaluator();
-
-    if (m_evaluator)
-        return m_evaluator->eval(media);
-
+  if (!media)
     return false;
+
+  // Cache the evaluator to avoid allocating one per evaluation.
+  if (!m_evaluator)
+    m_evaluator = createEvaluator();
+
+  if (m_evaluator)
+    return m_evaluator->eval(media);
+
+  return false;
 }
 
-PassRefPtrWillBeRawPtr<MediaQueryList> MediaQueryMatcher::matchMedia(const String& query)
-{
-    if (!m_document)
-        return nullptr;
+MediaQueryList* MediaQueryMatcher::matchMedia(const String& query) {
+  if (!m_document)
+    return nullptr;
 
-    RefPtrWillBeRawPtr<MediaQuerySet> media = MediaQuerySet::create(query);
-    return MediaQueryList::create(m_document, this, media);
+  MediaQuerySet* media = MediaQuerySet::create(query);
+  return MediaQueryList::create(m_document, this, media);
 }
 
-void MediaQueryMatcher::addMediaQueryList(MediaQueryList* query)
-{
-    if (!m_document)
-        return;
-    m_mediaLists.add(query);
+void MediaQueryMatcher::addMediaQueryList(MediaQueryList* query) {
+  if (!m_document)
+    return;
+  m_mediaLists.add(query);
 }
 
-void MediaQueryMatcher::removeMediaQueryList(MediaQueryList* query)
-{
-    if (!m_document)
-        return;
-    m_mediaLists.remove(query);
+void MediaQueryMatcher::removeMediaQueryList(MediaQueryList* query) {
+  if (!m_document)
+    return;
+  m_mediaLists.remove(query);
 }
 
-void MediaQueryMatcher::addViewportListener(PassRefPtrWillBeRawPtr<MediaQueryListListener> listener)
-{
-    if (!m_document)
-        return;
-    m_viewportListeners.add(listener);
+void MediaQueryMatcher::addViewportListener(MediaQueryListListener* listener) {
+  if (!m_document)
+    return;
+  m_viewportListeners.add(listener);
 }
 
-void MediaQueryMatcher::removeViewportListener(PassRefPtrWillBeRawPtr<MediaQueryListListener> listener)
-{
-    if (!m_document)
-        return;
-    m_viewportListeners.remove(listener);
+void MediaQueryMatcher::removeViewportListener(
+    MediaQueryListListener* listener) {
+  if (!m_document)
+    return;
+  m_viewportListeners.remove(listener);
 }
 
-void MediaQueryMatcher::mediaFeaturesChanged()
-{
-    if (!m_document)
-        return;
+void MediaQueryMatcher::mediaFeaturesChanged() {
+  if (!m_document)
+    return;
 
-    WillBeHeapVector<RefPtrWillBeMember<MediaQueryListListener>> listenersToNotify;
-    for (const auto& list : m_mediaLists) {
-        if (list->mediaFeaturesChanged(&listenersToNotify)) {
-            RefPtrWillBeRawPtr<Event> event(MediaQueryListEvent::create(list));
-            event->setTarget(list);
-            m_document->enqueueUniqueAnimationFrameEvent(event);
-        }
+  HeapVector<Member<MediaQueryListListener>> listenersToNotify;
+  for (const auto& list : m_mediaLists) {
+    if (list->mediaFeaturesChanged(&listenersToNotify)) {
+      Event* event = MediaQueryListEvent::create(list);
+      event->setTarget(list);
+      m_document->enqueueUniqueAnimationFrameEvent(event);
     }
-    m_document->enqueueMediaQueryChangeListeners(listenersToNotify);
+  }
+  m_document->enqueueMediaQueryChangeListeners(listenersToNotify);
 }
 
-void MediaQueryMatcher::viewportChanged()
-{
-    if (!m_document)
-        return;
+void MediaQueryMatcher::viewportChanged() {
+  if (!m_document)
+    return;
 
-    WillBeHeapVector<RefPtrWillBeMember<MediaQueryListListener>> listenersToNotify;
-    for (const auto& listener : m_viewportListeners)
-        listenersToNotify.append(listener);
+  HeapVector<Member<MediaQueryListListener>> listenersToNotify;
+  for (const auto& listener : m_viewportListeners)
+    listenersToNotify.append(listener);
 
-    m_document->enqueueMediaQueryChangeListeners(listenersToNotify);
+  m_document->enqueueMediaQueryChangeListeners(listenersToNotify);
 }
 
-DEFINE_TRACE(MediaQueryMatcher)
-{
-#if ENABLE(OILPAN)
-    visitor->trace(m_document);
-    visitor->trace(m_mediaLists);
-    visitor->trace(m_viewportListeners);
-#endif
+DEFINE_TRACE(MediaQueryMatcher) {
+  visitor->trace(m_document);
+  visitor->trace(m_evaluator);
+  visitor->trace(m_mediaLists);
+  visitor->trace(m_viewportListeners);
 }
 
-}
+}  // namespace blink

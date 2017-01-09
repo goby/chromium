@@ -13,7 +13,6 @@
 #include "ppapi/c/dev/ppb_cursor_control_dev.h"
 #include "ppapi/c/dev/ppb_device_ref_dev.h"
 #include "ppapi/c/dev/ppb_file_chooser_dev.h"
-#include "ppapi/c/dev/ppb_font_dev.h"
 #include "ppapi/c/dev/ppb_gles_chromium_texture_mapping_dev.h"
 #include "ppapi/c/dev/ppb_ime_input_event_dev.h"
 #include "ppapi/c/dev/ppb_memory_dev.h"
@@ -70,6 +69,7 @@
 #include "ppapi/c/ppb_video_encoder.h"
 #include "ppapi/c/ppb_video_frame.h"
 #include "ppapi/c/ppb_view.h"
+#include "ppapi/c/ppb_vpn_provider.h"
 #include "ppapi/c/ppb_websocket.h"
 #include "ppapi/c/private/ppb_camera_capabilities_private.h"
 #include "ppapi/c/private/ppb_camera_device_private.h"
@@ -92,6 +92,7 @@
 #include "ppapi/c/private/ppb_isolated_file_system_private.h"
 #include "ppapi/c/private/ppb_output_protection_private.h"
 #include "ppapi/c/private/ppb_pdf.h"
+#include "ppapi/c/private/ppb_platform_verification_private.h"
 #include "ppapi/c/private/ppb_proxy_private.h"
 #include "ppapi/c/private/ppb_tcp_server_socket_private.h"
 #include "ppapi/c/private/ppb_tcp_socket_private.h"
@@ -107,10 +108,6 @@
 #include "ppapi/c/trusted/ppb_file_chooser_trusted.h"
 #include "ppapi/c/trusted/ppb_url_loader_trusted.h"
 #include "ppapi/thunk/thunk.h"
-
-#if defined(OS_CHROMEOS)
-#include "ppapi/c/private/ppb_platform_verification_private.h"
-#endif
 
 bool IsSupportedPepperInterface(const char* name) {
 // TODO(brettw) put these in a hash map for better performance.

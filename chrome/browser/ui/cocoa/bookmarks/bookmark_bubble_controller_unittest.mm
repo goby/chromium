@@ -4,8 +4,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/basictypes.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -16,8 +16,8 @@
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bubble_controller.h"
 #include "chrome/browser/ui/cocoa/browser_window_controller.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
@@ -26,6 +26,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 using base::ASCIIToUTF16;
 using bookmarks::BookmarkBubbleObserver;
@@ -81,7 +82,8 @@ class BookmarkBubbleControllerTest : public CocoaProfileTest {
       [controller_ close];
       controller_ = nil;
     }
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(profile());
     bookmarks::ManagedBookmarkService* managed =
         ManagedBookmarkServiceFactory::GetForProfile(profile());
     controller_ = [[BookmarkBubbleController alloc]
@@ -100,7 +102,7 @@ class BookmarkBubbleControllerTest : public CocoaProfileTest {
   }
 
   BookmarkModel* GetBookmarkModel() {
-    return BookmarkModelFactory::GetForProfile(profile());
+    return BookmarkModelFactory::GetForBrowserContext(profile());
   }
 
   const BookmarkNode* CreateTestBookmark() {
@@ -119,16 +121,19 @@ class BookmarkBubbleControllerTest : public CocoaProfileTest {
 // static
 int BookmarkBubbleControllerTest::edits_;
 
-// Confirm basics about the bubble window (e.g. that it is inside the
-// parent window)
+// Confirm basics about the bubble window (e.g. that its frame fits inside, or
+// almost completely fits inside, its parent window's frame).
 TEST_F(BookmarkBubbleControllerTest, TestBubbleWindow) {
   const BookmarkNode* node = CreateTestBookmark();
   BookmarkBubbleController* controller = ControllerForNode(node);
   EXPECT_TRUE(controller);
   NSWindow* window = [controller window];
   EXPECT_TRUE(window);
-  EXPECT_TRUE(NSContainsRect([browser()->window()->GetNativeWindow() frame],
-                             [window frame]));
+  NSRect browser_window_frame = [browser()->window()->GetNativeWindow() frame];
+  // In this test case the bookmarks bubble's window frame extendeds slightly
+  // beyond its parent window's frame.
+  browser_window_frame.size.width += 1;
+  EXPECT_TRUE(NSContainsRect(browser_window_frame, [window frame]));
 }
 
 // Test that we can handle closing the parent window
@@ -384,7 +389,7 @@ TEST_F(BookmarkBubbleControllerTest, PopUpSelectionChanged) {
 // the user clicking the star, then sending the "cancel" command to represent
 // them pressing escape. The bookmark should not be there.
 TEST_F(BookmarkBubbleControllerTest, EscapeRemovesNewBookmark) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   bookmarks::ManagedBookmarkService* managed =
       ManagedBookmarkServiceFactory::GetForProfile(profile());
   const BookmarkNode* node = CreateTestBookmark();

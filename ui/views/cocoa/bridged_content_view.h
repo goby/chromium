@@ -22,8 +22,9 @@ class View;
 // The NSView that sits as the root contentView of the NSWindow, whilst it has
 // a views::RootView present. Bridges requests from Cocoa to the hosted
 // views::View.
-@interface BridgedContentView
-    : ToolTipBaseView<NSTextInputClient, NSUserInterfaceValidations> {
+@interface BridgedContentView : ToolTipBaseView<NSTextInputClient,
+                                                NSUserInterfaceValidations,
+                                                NSDraggingSource> {
  @private
   // Weak. The hosted RootView, owned by hostedView_->GetWidget().
   views::View* hostedView_;
@@ -35,8 +36,8 @@ class View;
   // A tracking area installed to enable mouseMoved events.
   ui::ScopedCrTrackingArea cursorTrackingArea_;
 
-  // Whether the view is reacting to a keyDown event on the view.
-  BOOL inKeyDown_;
+  // The keyDown event currently being handled, nil otherwise.
+  NSEvent* keyDownEvent_;
 
   // The last tooltip text, used to limit updates.
   base::string16 lastTooltipText_;
@@ -47,6 +48,9 @@ class View;
 
   // Whether dragging on the view moves the window.
   BOOL mouseDownCanMoveWindow_;
+
+  // The cached window mask. Only used for non-rectangular windows on 10.9.
+  base::scoped_nsobject<NSBezierPath> windowMask_;
 }
 
 @property(readonly, nonatomic) views::View* hostedView;
@@ -72,6 +76,13 @@ class View;
 // |locationInContent| is the position from the top left of the window's
 // contentRect (also this NSView's frame), as given by a ui::LocatedEvent.
 - (void)updateTooltipIfRequiredAt:(const gfx::Point&)locationInContent;
+
+// Update windowMask_ depending on the current view bounds.
+- (void)updateWindowMask;
+
+// Notifies the associated FocusManager whether full keyboard access is enabled
+// or not.
+- (void)updateFullKeyboardAccess;
 
 @end
 

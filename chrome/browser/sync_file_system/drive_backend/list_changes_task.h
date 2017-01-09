@@ -5,7 +5,11 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_LIST_CHANGES_TASK_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_LIST_CHANGES_TASK_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_task.h"
@@ -31,15 +35,15 @@ class ListChangesTask : public SyncTask {
   explicit ListChangesTask(SyncEngineContext* sync_context);
   ~ListChangesTask() override;
 
-  void RunPreflight(scoped_ptr<SyncTaskToken> token) override;
+  void RunPreflight(std::unique_ptr<SyncTaskToken> token) override;
 
  private:
-  void StartListing(scoped_ptr<SyncTaskToken> token);
-  void DidListChanges(scoped_ptr<SyncTaskToken> token,
+  void StartListing(std::unique_ptr<SyncTaskToken> token);
+  void DidListChanges(std::unique_ptr<SyncTaskToken> token,
                       google_apis::DriveApiErrorCode error,
-                      scoped_ptr<google_apis::ChangeList> change_list);
-  void CheckInChangeList(int64 largest_change_id,
-                         scoped_ptr<SyncTaskToken> token);
+                      std::unique_ptr<google_apis::ChangeList> change_list);
+  void CheckInChangeList(int64_t largest_change_id,
+                         std::unique_ptr<SyncTaskToken> token);
 
   bool IsContextReady();
   MetadataDatabase* metadata_database();

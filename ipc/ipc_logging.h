@@ -14,9 +14,9 @@
 #include <vector>
 
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "ipc/ipc_export.h"
 
 // Logging function. |name| is a string in ASCII and |params| is a string in
@@ -67,10 +67,9 @@ class IPC_EXPORT Logging {
   // received.
   void OnReceivedLoggingMessage(const Message& message);
 
-  void OnSendMessage(Message* message, const std::string& channel_id);
+  void OnSendMessage(Message* message);
   void OnPreDispatchMessage(const Message& message);
-  void OnPostDispatchMessage(const Message& message,
-                             const std::string& channel_id);
+  void OnPostDispatchMessage(const Message& message);
 
   // Like the *MsgLog functions declared for each message class, except this
   // calls the correct one based on the message type automatically.  Defined in
@@ -115,7 +114,7 @@ class IPC_EXPORT Logging {
   bool queue_invoke_later_pending_;
 
   Sender* sender_;
-  base::MessageLoop* main_thread_;
+  scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
 
   Consumer* consumer_;
 

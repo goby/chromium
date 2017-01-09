@@ -4,6 +4,8 @@
 
 #include "chromeos/network/certificate_pattern.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/values.h"
 #include "components/onc/onc_constants.h"
@@ -46,6 +48,9 @@ IssuerSubjectPattern::IssuerSubjectPattern(
 IssuerSubjectPattern::IssuerSubjectPattern() {
 }
 
+IssuerSubjectPattern::IssuerSubjectPattern(const IssuerSubjectPattern& other) =
+    default;
+
 IssuerSubjectPattern::~IssuerSubjectPattern() {
 }
 
@@ -79,6 +84,9 @@ void IssuerSubjectPattern::ReadFromONCDictionary(
 
 CertificatePattern::CertificatePattern() {
 }
+
+CertificatePattern::CertificatePattern(const CertificatePattern& other) =
+    default;
 
 CertificatePattern::~CertificatePattern() {
 }

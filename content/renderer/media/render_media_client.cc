@@ -31,15 +31,15 @@ RenderMediaClient::~RenderMediaClient() {
 
 void RenderMediaClient::AddKeySystemsInfoForUMA(
     std::vector<media::KeySystemInfoForUMA>* key_systems_info_for_uma) {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
 #if defined(WIDEVINE_CDM_AVAILABLE)
   key_systems_info_for_uma->push_back(media::KeySystemInfoForUMA(
-      kWidevineKeySystem, kWidevineKeySystemNameForUMA, true));
+      kWidevineKeySystem, kWidevineKeySystemNameForUMA));
 #endif  // WIDEVINE_CDM_AVAILABLE
 }
 
 bool RenderMediaClient::IsKeySystemsUpdateNeeded() {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // Always needs update if we have never updated, regardless the
@@ -65,11 +65,13 @@ bool RenderMediaClient::IsKeySystemsUpdateNeeded() {
 }
 
 void RenderMediaClient::AddSupportedKeySystems(
-    std::vector<media::KeySystemInfo>* key_systems_info) {
-  DVLOG(2) << __FUNCTION__;
+    std::vector<std::unique_ptr<media::KeySystemProperties>>*
+        key_systems_properties) {
+  DVLOG(2) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  GetContentClient()->renderer()->AddKeySystems(key_systems_info);
+  GetContentClient()->renderer()->AddSupportedKeySystems(
+      key_systems_properties);
 
   has_updated_ = true;
   last_update_time_ticks_ = tick_clock_->NowTicks();
@@ -77,8 +79,8 @@ void RenderMediaClient::AddSupportedKeySystems(
   // Check whether all potentially supported key systems are supported. If so,
   // no need to update again.
 #if defined(WIDEVINE_CDM_AVAILABLE) && defined(WIDEVINE_CDM_IS_COMPONENT)
-  for (const media::KeySystemInfo& key_system_info : *key_systems_info) {
-    if (key_system_info.key_system == kWidevineKeySystem)
+  for (const auto& properties : *key_systems_properties) {
+    if (properties->GetKeySystemName() == kWidevineKeySystem)
       is_update_needed_ = false;
   }
 #else
@@ -91,8 +93,30 @@ void RenderMediaClient::RecordRapporURL(const std::string& metric,
   GetContentClient()->renderer()->RecordRapporURL(metric, url);
 }
 
+bool RenderMediaClient::IsSupportedVideoConfig(media::VideoCodec codec,
+                                               media::VideoCodecProfile profile,
+                                               int level) {
+  switch (codec) {
+    case media::kCodecH264:
+    case media::kCodecVP8:
+    case media::kCodecVP9:
+    case media::kCodecTheora:
+      return true;
+
+    case media::kUnknownVideoCodec:
+    case media::kCodecVC1:
+    case media::kCodecMPEG2:
+    case media::kCodecMPEG4:
+    case media::kCodecHEVC:
+      return false;
+  }
+
+  NOTREACHED();
+  return false;
+}
+
 void RenderMediaClient::SetTickClockForTesting(
-    scoped_ptr<base::TickClock> tick_clock) {
+    std::unique_ptr<base::TickClock> tick_clock) {
   tick_clock_.swap(tick_clock);
 }
 

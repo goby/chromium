@@ -28,72 +28,30 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "core/html/shadow/ProgressShadowElement.h"
 
 #include "core/HTMLNames.h"
 #include "core/html/HTMLProgressElement.h"
-#include "core/layout/LayoutProgress.h"
+#include "core/layout/LayoutObject.h"
 
 namespace blink {
 
 using namespace HTMLNames;
 
 ProgressShadowElement::ProgressShadowElement(Document& document)
-    : HTMLDivElement(document)
-{
+    : HTMLDivElement(document) {}
+
+DEFINE_NODE_FACTORY(ProgressShadowElement)
+
+HTMLProgressElement* ProgressShadowElement::progressElement() const {
+  return toHTMLProgressElement(ownerShadowHost());
 }
 
-HTMLProgressElement* ProgressShadowElement::progressElement() const
-{
-    return toHTMLProgressElement(shadowHost());
+bool ProgressShadowElement::layoutObjectIsNeeded(const ComputedStyle& style) {
+  LayoutObject* progressLayoutObject = progressElement()->layoutObject();
+  return progressLayoutObject &&
+         !progressLayoutObject->style()->hasAppearance() &&
+         HTMLDivElement::layoutObjectIsNeeded(style);
 }
 
-bool ProgressShadowElement::layoutObjectIsNeeded(const ComputedStyle& style)
-{
-    LayoutObject* progressLayoutObject = progressElement()->layoutObject();
-    return progressLayoutObject && !progressLayoutObject->style()->hasAppearance() && HTMLDivElement::layoutObjectIsNeeded(style);
-}
-
-inline ProgressInnerElement::ProgressInnerElement(Document& document)
-    : ProgressShadowElement(document)
-{
-}
-
-DEFINE_NODE_FACTORY(ProgressInnerElement)
-
-LayoutObject* ProgressInnerElement::createLayoutObject(const ComputedStyle&)
-{
-    return new LayoutProgress(this);
-}
-
-bool ProgressInnerElement::layoutObjectIsNeeded(const ComputedStyle& style)
-{
-    if (progressElement()->openShadowRoot())
-        return HTMLDivElement::layoutObjectIsNeeded(style);
-
-    LayoutObject* progressLayoutObject = progressElement()->layoutObject();
-    return progressLayoutObject && !progressLayoutObject->style()->hasAppearance() && HTMLDivElement::layoutObjectIsNeeded(style);
-}
-
-inline ProgressBarElement::ProgressBarElement(Document& document)
-    : ProgressShadowElement(document)
-{
-}
-
-DEFINE_NODE_FACTORY(ProgressBarElement)
-
-ProgressValueElement::ProgressValueElement(Document& document)
-    : ProgressShadowElement(document)
-{
-}
-
-void ProgressValueElement::setWidthPercentage(double width)
-{
-    setInlineStyleProperty(CSSPropertyWidth, width, CSSPrimitiveValue::UnitType::Percentage);
-}
-
-DEFINE_NODE_FACTORY(ProgressValueElement)
-
-}
+}  // namespace blink

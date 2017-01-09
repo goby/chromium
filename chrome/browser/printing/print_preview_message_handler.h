@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_PRINTING_PRINT_PREVIEW_MESSAGE_HANDLER_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
@@ -17,6 +18,7 @@ struct PrintHostMsg_RequestPrintPreview_Params;
 struct PrintHostMsg_SetOptionsFromDocument_Params;
 
 namespace content {
+class RenderFrameHost;
 class WebContents;
 }
 
@@ -36,7 +38,8 @@ class PrintPreviewMessageHandler
   ~PrintPreviewMessageHandler() override;
 
   // content::WebContentsObserver implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
+  bool OnMessageReceived(const IPC::Message& message,
+                         content::RenderFrameHost* render_frame_host) override;
 
  private:
   explicit PrintPreviewMessageHandler(content::WebContents* web_contents);
@@ -51,6 +54,7 @@ class PrintPreviewMessageHandler
 
   // Message handlers.
   void OnRequestPrintPreview(
+      content::RenderFrameHost* render_frame_host,
       const PrintHostMsg_RequestPrintPreview_Params& params);
   void OnDidGetDefaultPageLayout(const PageSizeMargins& page_layout_in_points,
                                  const gfx::Rect& printable_area_in_points,

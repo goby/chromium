@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_ACTION_ICON_FACTORY_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_ACTION_ICON_FACTORY_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "extensions/browser/extension_icon_image.h"
 
 class ExtensionAction;
-class ExtensionIconSet;
 class Profile;
 
 namespace extensions {
@@ -53,7 +54,6 @@ class ExtensionActionIconFactory : public extensions::IconImage::Observer {
   gfx::Image GetIcon(int tab_id);
 
  private:
-  const extensions::Extension* extension_;
   const ExtensionAction* action_;
   Observer* observer_;
 

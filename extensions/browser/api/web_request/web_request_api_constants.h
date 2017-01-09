@@ -14,6 +14,7 @@ extern const char kChallengerKey[];
 extern const char kErrorKey[];
 extern const char kFrameIdKey[];
 extern const char kParentFrameIdKey[];
+extern const char kProcessIdKey[];
 extern const char kFromCache[];
 extern const char kHostKey[];
 extern const char kIpKey[];
@@ -73,6 +74,7 @@ extern const char kOnResponseStarted[];
 extern const char kOnSendHeaders[];
 
 // Error messages.
+extern const char kInvalidPublicSessionBlockingResponse[];
 extern const char kInvalidRedirectUrl[];
 extern const char kInvalidBlockingResponse[];
 extern const char kInvalidRequestFilterUrl[];

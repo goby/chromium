@@ -4,6 +4,8 @@
 
 #include "content/browser/webui/web_ui_impl.h"
 
+#include <stddef.h>
+
 #include "base/debug/dump_without_crashing.h"
 #include "base/json/json_writer.h"
 #include "base/strings/utf_string_conversions.h"
@@ -16,14 +18,36 @@
 #include "content/browser/webui/web_ui_controller_factory_registry.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/content_client.h"
 
 namespace content {
+
+class WebUIImpl::MainFrameNavigationObserver : public WebContentsObserver {
+ public:
+  MainFrameNavigationObserver(WebUIImpl* web_ui, WebContents* contents)
+      : WebContentsObserver(contents), web_ui_(web_ui) {}
+  ~MainFrameNavigationObserver() override {}
+
+ private:
+  void DidFinishNavigation(NavigationHandle* navigation_handle) override {
+    // Only disallow JavaScript on cross-document navigations in the main frame.
+    if (!navigation_handle->IsInMainFrame() ||
+        !navigation_handle->HasCommitted() || navigation_handle->IsSamePage()) {
+      return;
+    }
+
+    web_ui_->DisallowJavascriptOnAllHandlers();
+  }
+
+  WebUIImpl* web_ui_;
+};
 
 const WebUI::TypeID WebUI::kNoWebUI = NULL;
 
@@ -45,9 +69,9 @@ base::string16 WebUI::GetJavascriptCall(
 }
 
 WebUIImpl::WebUIImpl(WebContents* contents, const std::string& frame_name)
-    : link_transition_type_(ui::PAGE_TRANSITION_LINK),
-      bindings_(BINDINGS_POLICY_WEB_UI),
+    : bindings_(BINDINGS_POLICY_WEB_UI),
       web_contents_(contents),
+      web_contents_observer_(new MainFrameNavigationObserver(this, contents)),
       frame_name_(frame_name) {
   DCHECK(contents);
 }
@@ -83,18 +107,19 @@ void WebUIImpl::OnWebUISend(const GURL& source_url,
   ProcessWebUIMessage(source_url, message, args);
 }
 
-void WebUIImpl::RenderViewCreated(RenderViewHost* render_view_host) {
-  controller_->RenderViewCreated(render_view_host);
+void WebUIImpl::RenderFrameCreated(RenderFrameHost* render_frame_host) {
+  controller_->RenderFrameCreated(render_frame_host);
 }
 
-void WebUIImpl::RenderViewReused(RenderViewHost* render_view_host,
-                                 bool was_main_frame) {
-  if (was_main_frame) {
-    GURL site_url = render_view_host->GetSiteInstance()->GetSiteURL();
+void WebUIImpl::RenderFrameReused(RenderFrameHost* render_frame_host) {
+  if (!render_frame_host->GetParent()) {
+    GURL site_url = render_frame_host->GetSiteInstance()->GetSiteURL();
     GetContentClient()->browser()->LogWebUIUrl(site_url);
   }
+}
 
-  controller_->RenderViewReused(render_view_host);
+void WebUIImpl::RenderFrameHostSwappingOut() {
+  DisallowJavascriptOnAllHandlers();
 }
 
 WebContents* WebUIImpl::GetWebContents() const {
@@ -111,14 +136,6 @@ const base::string16& WebUIImpl::GetOverriddenTitle() const {
 
 void WebUIImpl::OverrideTitle(const base::string16& title) {
   overridden_title_ = title;
-}
-
-ui::PageTransition WebUIImpl::GetLinkTransitionType() const {
-  return link_transition_type_;
-}
-
-void WebUIImpl::SetLinkTransitionType(ui::PageTransition type) {
-  link_transition_type_ = type;
 }
 
 int WebUIImpl::GetBindings() const {
@@ -141,23 +158,33 @@ void WebUIImpl::SetController(WebUIController* controller) {
   controller_.reset(controller);
 }
 
-void WebUIImpl::CallJavascriptFunction(const std::string& function_name) {
+bool WebUIImpl::CanCallJavascript() {
+  RenderFrameHost* target_frame = TargetFrame();
+  return target_frame &&
+         (ChildProcessSecurityPolicyImpl::GetInstance()->HasWebUIBindings(
+              target_frame->GetProcess()->GetID()) ||
+          // It's possible to load about:blank in a Web UI renderer.
+          // See http://crbug.com/42547
+          target_frame->GetLastCommittedURL().spec() == url::kAboutBlankURL);
+}
+
+void WebUIImpl::CallJavascriptFunctionUnsafe(const std::string& function_name) {
   DCHECK(base::IsStringASCII(function_name));
   base::string16 javascript = base::ASCIIToUTF16(function_name + "();");
   ExecuteJavascript(javascript);
 }
 
-void WebUIImpl::CallJavascriptFunction(const std::string& function_name,
-                                       const base::Value& arg) {
+void WebUIImpl::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg) {
   DCHECK(base::IsStringASCII(function_name));
   std::vector<const base::Value*> args;
   args.push_back(&arg);
   ExecuteJavascript(GetJavascriptCall(function_name, args));
 }
 
-void WebUIImpl::CallJavascriptFunction(
-    const std::string& function_name,
-    const base::Value& arg1, const base::Value& arg2) {
+void WebUIImpl::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg1,
+                                             const base::Value& arg2) {
   DCHECK(base::IsStringASCII(function_name));
   std::vector<const base::Value*> args;
   args.push_back(&arg1);
@@ -165,9 +192,10 @@ void WebUIImpl::CallJavascriptFunction(
   ExecuteJavascript(GetJavascriptCall(function_name, args));
 }
 
-void WebUIImpl::CallJavascriptFunction(
-    const std::string& function_name,
-    const base::Value& arg1, const base::Value& arg2, const base::Value& arg3) {
+void WebUIImpl::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg1,
+                                             const base::Value& arg2,
+                                             const base::Value& arg3) {
   DCHECK(base::IsStringASCII(function_name));
   std::vector<const base::Value*> args;
   args.push_back(&arg1);
@@ -176,12 +204,11 @@ void WebUIImpl::CallJavascriptFunction(
   ExecuteJavascript(GetJavascriptCall(function_name, args));
 }
 
-void WebUIImpl::CallJavascriptFunction(
-    const std::string& function_name,
-    const base::Value& arg1,
-    const base::Value& arg2,
-    const base::Value& arg3,
-    const base::Value& arg4) {
+void WebUIImpl::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg1,
+                                             const base::Value& arg2,
+                                             const base::Value& arg3,
+                                             const base::Value& arg4) {
   DCHECK(base::IsStringASCII(function_name));
   std::vector<const base::Value*> args;
   args.push_back(&arg1);
@@ -191,7 +218,7 @@ void WebUIImpl::CallJavascriptFunction(
   ExecuteJavascript(GetJavascriptCall(function_name, args));
 }
 
-void WebUIImpl::CallJavascriptFunction(
+void WebUIImpl::CallJavascriptFunctionUnsafe(
     const std::string& function_name,
     const std::vector<const base::Value*>& args) {
   DCHECK(base::IsStringASCII(function_name));
@@ -220,6 +247,10 @@ void WebUIImpl::ProcessWebUIMessage(const GURL& source_url,
   }
 }
 
+ScopedVector<WebUIMessageHandler>* WebUIImpl::GetHandlersForTesting() {
+  return &handlers_;
+}
+
 // WebUIImpl, protected: -------------------------------------------------------
 
 void WebUIImpl::AddMessageHandler(WebUIMessageHandler* handler) {
@@ -230,20 +261,12 @@ void WebUIImpl::AddMessageHandler(WebUIMessageHandler* handler) {
 }
 
 void WebUIImpl::ExecuteJavascript(const base::string16& javascript) {
-  RenderFrameHost* target_frame = TargetFrame();
-  if (target_frame) {
-    if (!(ChildProcessSecurityPolicyImpl::GetInstance()->HasWebUIBindings(
-              target_frame->GetProcess()->GetID()) ||
-          // It's possible to load about:blank in a Web UI renderer.
-          // See http://crbug.com/42547
-          target_frame->GetLastCommittedURL().spec() == url::kAboutBlankURL)) {
-      // Don't crash when we try to inject JavaScript into a non-WebUI page, but
-      // upload a crash report anyways. http://crbug.com/516690
-      base::debug::DumpWithoutCrashing();
-      return;
-    }
-    target_frame->ExecuteJavaScript(javascript);
-  }
+  // Silently ignore the request. Would be nice to clean-up WebUI so we
+  // could turn this into a CHECK(). http://crbug.com/516690.
+  if (!CanCallJavascript())
+    return;
+
+  TargetFrame()->ExecuteJavaScript(javascript);
 }
 
 RenderFrameHost* WebUIImpl::TargetFrame() {
@@ -268,6 +291,11 @@ void WebUIImpl::AddToSetIfFrameNameMatches(
     RenderFrameHost* host) {
   if (host->GetFrameName() == frame_name_)
     frame_set->insert(host);
+}
+
+void WebUIImpl::DisallowJavascriptOnAllHandlers() {
+  for (WebUIMessageHandler* handler : handlers_)
+    handler->DisallowJavascript();
 }
 
 }  // namespace content

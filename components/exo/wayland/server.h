@@ -5,12 +5,12 @@
 #ifndef COMPONENTS_EXO_WAYLAND_SERVER_H_
 #define COMPONENTS_EXO_WAYLAND_SERVER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
-#include "components/exo/wayland/scoped_wl_types.h"
+#include "components/exo/wayland/scoped_wl.h"
 
 namespace exo {
 class Display;
@@ -18,7 +18,7 @@ class Display;
 namespace wayland {
 
 // This class is a thin wrapper around a Wayland display server. All Wayland
-// requests are dispatched into the given Exospere display.
+// requests are dispatched into the given Exosphere display.
 class Server {
  public:
   explicit Server(Display* display);
@@ -26,7 +26,7 @@ class Server {
 
   // Creates a Wayland display server that clients can connect to using the
   // default socket name.
-  static scoped_ptr<Server> Create(Display* display);
+  static std::unique_ptr<Server> Create(Display* display);
 
   // This adds a Unix socket to the Wayland display server which can be used
   // by clients to connect to the display server.
@@ -36,7 +36,7 @@ class Server {
   int GetFileDescriptor() const;
 
   // This function dispatches events. This must be called on a thread for
-  // which it's safe to access the Exospere display that this server was
+  // which it's safe to access the Exosphere display that this server was
   // created for. The |timeout| argument specifies the amount of time that
   // Dispatch() should block waiting for the file descriptor to become ready.
   void Dispatch(base::TimeDelta timeout);
@@ -46,7 +46,7 @@ class Server {
 
  private:
   Display* const display_;
-  ScopedWLDisplay wl_display_;
+  std::unique_ptr<wl_display, WlDisplayDeleter> wl_display_;
 
   DISALLOW_COPY_AND_ASSIGN(Server);
 };

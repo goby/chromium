@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/network/NetworkHints.h"
 
 #include "public/platform/Platform.h"
@@ -32,18 +31,25 @@
 
 namespace blink {
 
-void prefetchDNS(const String& hostname)
-{
-    if (WebPrescientNetworking* prescientNetworking = Platform::current()->prescientNetworking())
-        prescientNetworking->prefetchDNS(hostname);
+void prefetchDNS(const String& hostname) {
+  if (WebPrescientNetworking* prescientNetworking =
+          Platform::current()->prescientNetworking())
+    prescientNetworking->prefetchDNS(hostname);
 }
 
-void preconnect(const KURL& url, const CrossOriginAttributeValue crossOrigin)
-{
-    if (WebPrescientNetworking* prescientNetworking = Platform::current()->prescientNetworking()) {
-        bool allowCredentials = (crossOrigin != CrossOriginAttributeAnonymous);
-        prescientNetworking->preconnect(url, allowCredentials);
-    }
+void preconnect(const KURL& url, const CrossOriginAttributeValue crossOrigin) {
+  if (WebPrescientNetworking* prescientNetworking =
+          Platform::current()->prescientNetworking()) {
+    bool allowCredentials = (crossOrigin != CrossOriginAttributeAnonymous);
+    prescientNetworking->preconnect(url, allowCredentials);
+  }
 }
 
-} // namespace blink
+void sendNavigationHint(const KURL& url, WebNavigationHintType type) {
+  if (WebPrescientNetworking* prescientNetworking =
+          Platform::current()->prescientNetworking()) {
+    prescientNetworking->sendNavigationHint(url, type);
+  }
+}
+
+}  // namespace blink

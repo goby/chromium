@@ -5,20 +5,23 @@
 #include "chrome/browser/ui/cocoa/javascript_app_modal_dialog_cocoa.h"
 
 #import <Cocoa/Cocoa.h>
+#include <stddef.h>
 
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/chrome_browser_application_mac.h"
-#include "chrome/browser/ui/app_modal/chrome_javascript_native_dialog_factory.h"
 #include "chrome/browser/ui/blocked_content/app_modal_dialog_helper.h"
+#include "chrome/browser/ui/javascript_dialogs/chrome_javascript_native_dialog_factory.h"
 #include "components/app_modal/javascript_app_modal_dialog.h"
 #include "components/app_modal/javascript_dialog_manager.h"
 #include "components/app_modal/javascript_native_dialog_factory.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/text_elider.h"
@@ -79,8 +82,17 @@ const int kMessageTextMaxSlots = 2000;
 }
 
 - (NSAlert*)alert {
-  if (!alert_)
+  if (!alert_) {
     alert_.reset([[NSAlert alloc] init]);
+    if (!nativeDialog_->dialog()->is_before_unload_dialog()) {
+      // Set a blank icon for dialogs with text provided by the page.
+      // "onbeforeunload" dialogs don't have text provided by the page, so it's
+      // OK to use the app icon.
+      NSImage* image =
+          [[[NSImage alloc] initWithSize:NSMakeSize(1, 1)] autorelease];
+      [alert_ setIcon:image];
+    }
+  }
   return alert_;
 }
 
@@ -128,6 +140,10 @@ const int kMessageTextMaxSlots = 2000;
   DCHECK(!alertShown_);
   alertShown_ = YES;
   NSAlert* alert = [self alert];
+
+  [alert layout];
+  [[alert window] recalculateKeyViewLoop];
+
   [alert beginSheetModalForWindow:nil  // nil here makes it app-modal
                     modalDelegate:self
                    didEndSelector:@selector(alertDidEnd:returnCode:contextInfo:)
@@ -460,7 +476,6 @@ class ChromeJavaScriptNativeDialogCocoaFactory
 }  // namespace
 
 void InstallChromeJavaScriptNativeDialogFactory() {
-  app_modal::JavaScriptDialogManager::GetInstance()->
-      SetNativeDialogFactory(
-          make_scoped_ptr(new ChromeJavaScriptNativeDialogCocoaFactory));
+  app_modal::JavaScriptDialogManager::GetInstance()->SetNativeDialogFactory(
+      base::WrapUnique(new ChromeJavaScriptNativeDialogCocoaFactory));
 }

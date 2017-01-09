@@ -4,18 +4,21 @@
 
 #include "chrome/browser/notifications/notification_object_proxy.h"
 
-#include "base/guid.h"
+#include <utility>
+
 #include "base/logging.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "content/public/browser/desktop_notification_delegate.h"
+#include "url/gurl.h"
 
 NotificationObjectProxy::NotificationObjectProxy(
     content::BrowserContext* browser_context,
-    scoped_ptr<content::DesktopNotificationDelegate> delegate)
-    : browser_context_(browser_context),
-      delegate_(delegate.Pass()),
-      displayed_(false),
-      id_(base::GenerateGUID()) {}
+    const std::string& notification_id,
+    const GURL& origin,
+    std::unique_ptr<content::DesktopNotificationDelegate> delegate)
+    : WebNotificationDelegate(browser_context, notification_id, origin),
+      delegate_(std::move(delegate)),
+      displayed_(false) {}
 
 NotificationObjectProxy::~NotificationObjectProxy() {}
 
@@ -24,6 +27,7 @@ void NotificationObjectProxy::Display() {
   // but we only want to fire the event the first time.
   if (displayed_)
     return;
+
   displayed_ = true;
 
   delegate_->NotificationDisplayed();
@@ -40,20 +44,6 @@ void NotificationObjectProxy::Click() {
 void NotificationObjectProxy::ButtonClick(int button_index) {
   // Notification buttons not are supported for non persistent notifications.
   DCHECK_EQ(button_index, 0);
-  PlatformNotificationServiceImpl::GetInstance()->OpenNotificationSettings(
-      browser_context_);
-}
 
-void NotificationObjectProxy::SettingsClick() {
-  PlatformNotificationServiceImpl::GetInstance()->OpenNotificationSettings(
-      browser_context_);
-  return;
-}
-
-bool NotificationObjectProxy::ShouldDisplaySettingsButton() {
-  return true;
-}
-
-std::string NotificationObjectProxy::id() const {
-  return id_;
+  NotificationCommon::OpenNotificationSettings(browser_context());
 }

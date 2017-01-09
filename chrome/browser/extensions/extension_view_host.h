@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_VIEW_HOST_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_VIEW_HOST_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/browser/notification_observer.h"
@@ -65,6 +67,7 @@ class ExtensionViewHost
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params) override;
+  bool ShouldTransferNavigation(bool is_main_frame_navigation) override;
   bool PreHandleKeyboardEvent(content::WebContents* source,
                               const content::NativeWebKeyboardEvent& event,
                               bool* is_keyboard_shortcut) override;
@@ -77,7 +80,7 @@ class ExtensionViewHost
       content::WebContents* web_contents,
       SkColor color,
       const std::vector<content::ColorSuggestion>& suggestions) override;
-  void RunFileChooser(content::WebContents* tab,
+  void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   void ResizeDueToAutoResize(content::WebContents* source,
                              const gfx::Size& new_size) override;
@@ -109,18 +112,20 @@ class ExtensionViewHost
 
  private:
   // Implemented per-platform. Create the platform-specific ExtensionView.
-  static scoped_ptr<ExtensionView> CreateExtensionView(ExtensionViewHost* host,
-                                                       Browser* browser);
+  static std::unique_ptr<ExtensionView> CreateExtensionView(
+      ExtensionViewHost* host,
+      Browser* browser);
 
   // Optional view that shows the rendered content in the UI.
-  scoped_ptr<ExtensionView> view_;
+  std::unique_ptr<ExtensionView> view_;
 
   // The relevant WebContents associated with this ExtensionViewHost, if any.
   content::WebContents* associated_web_contents_;
 
   // Observer to detect when the associated web contents is destroyed.
   class AssociatedWebContentsObserver;
-  scoped_ptr<AssociatedWebContentsObserver> associated_web_contents_observer_;
+  std::unique_ptr<AssociatedWebContentsObserver>
+      associated_web_contents_observer_;
 
   content::NotificationRegistrar registrar_;
 

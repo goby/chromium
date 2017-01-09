@@ -4,145 +4,87 @@
 
 #include "chrome/browser/devtools/remote_debugging_server.h"
 
+#include <utility>
+
 #include "base/lazy_instance.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_window.h"
-#include "chrome/browser/history/top_sites_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_iterator.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths.h"
-#include "components/devtools_http_handler/devtools_http_handler.h"
-#include "components/devtools_http_handler/devtools_http_handler_delegate.h"
-#include "components/history/core/browser/top_sites.h"
 #include "components/version_info/version_info.h"
+#include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_frontend_host.h"
-#include "grit/browser_resources.h"
+#include "content/public/browser/devtools_socket_factory.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/tcp_server_socket.h"
+#include "third_party/WebKit/public/public_features.h"
 #include "ui/base/resource/resource_bundle.h"
 
 namespace {
 
 base::LazyInstance<bool>::Leaky g_tethering_enabled = LAZY_INSTANCE_INITIALIZER;
 
-const uint16 kMinTetheringPort = 9333;
-const uint16 kMaxTetheringPort = 9444;
+const uint16_t kMinTetheringPort = 9333;
+const uint16_t kMaxTetheringPort = 9444;
 const int kBackLog = 10;
 
 class TCPServerSocketFactory
-    : public devtools_http_handler::DevToolsHttpHandler::ServerSocketFactory {
+    : public content::DevToolsSocketFactory {
  public:
-  TCPServerSocketFactory(const std::string& address, uint16 port)
+  TCPServerSocketFactory(const std::string& address, uint16_t port)
       : address_(address),
         port_(port),
-        last_tethering_port_(kMinTetheringPort) {
-  }
+        last_tethering_port_(kMinTetheringPort) {}
 
  private:
-  // devtools_http_handler::DevToolsHttpHandler::ServerSocketFactory.
-  scoped_ptr<net::ServerSocket> CreateForHttpServer() override {
-    scoped_ptr<net::ServerSocket> socket(
-        new net::TCPServerSocket(nullptr, net::NetLog::Source()));
-    if (socket->ListenWithAddressAndPort(address_, port_, kBackLog) != net::OK)
-      return scoped_ptr<net::ServerSocket>();
-
-    return socket;
+  std::unique_ptr<net::ServerSocket> CreateLocalHostServerSocket(int port) {
+    std::unique_ptr<net::ServerSocket> socket(
+        new net::TCPServerSocket(nullptr, net::NetLogSource()));
+    if (socket->ListenWithAddressAndPort(
+            "127.0.0.1", port, kBackLog) == net::OK)
+      return socket;
+    if (socket->ListenWithAddressAndPort("::1", port, kBackLog) == net::OK)
+      return socket;
+    return std::unique_ptr<net::ServerSocket>();
   }
 
-  scoped_ptr<net::ServerSocket> CreateForTethering(std::string* name) override {
+  // content::DevToolsSocketFactory.
+  std::unique_ptr<net::ServerSocket> CreateForHttpServer() override {
+    std::unique_ptr<net::ServerSocket> socket(
+        new net::TCPServerSocket(nullptr, net::NetLogSource()));
+    if (address_.empty())
+      return CreateLocalHostServerSocket(port_);
+    if (socket->ListenWithAddressAndPort(address_, port_, kBackLog) == net::OK)
+      return socket;
+    return std::unique_ptr<net::ServerSocket>();
+  }
+
+  std::unique_ptr<net::ServerSocket> CreateForTethering(
+      std::string* name) override {
     if (!g_tethering_enabled.Get())
-      return scoped_ptr<net::ServerSocket>();
+      return std::unique_ptr<net::ServerSocket>();
 
     if (last_tethering_port_ == kMaxTetheringPort)
       last_tethering_port_ = kMinTetheringPort;
-    uint16 port = ++last_tethering_port_;
+    uint16_t port = ++last_tethering_port_;
     *name = base::UintToString(port);
-    scoped_ptr<net::TCPServerSocket> socket(
-        new net::TCPServerSocket(nullptr, net::NetLog::Source()));
-    if (socket->ListenWithAddressAndPort("127.0.0.1", port, kBackLog) !=
-        net::OK) {
-      return scoped_ptr<net::ServerSocket>();
-    }
-    return socket.Pass();
+    return CreateLocalHostServerSocket(port);
   }
 
   std::string address_;
-  uint16 port_;
-  uint16 last_tethering_port_;
+  uint16_t port_;
+  uint16_t last_tethering_port_;
 
   DISALLOW_COPY_AND_ASSIGN(TCPServerSocketFactory);
 };
-
-class ChromeDevToolsHttpHandlerDelegate
-    : public devtools_http_handler::DevToolsHttpHandlerDelegate {
- public:
-  ChromeDevToolsHttpHandlerDelegate();
-  ~ChromeDevToolsHttpHandlerDelegate() override;
-
-  // devtools_http_handler::DevToolsHttpHandlerDelegate implementation.
-  std::string GetDiscoveryPageHTML() override;
-  std::string GetFrontendResource(const std::string& path) override;
-  std::string GetPageThumbnailData(const GURL& url) override;
-  content::DevToolsExternalAgentProxyDelegate*
-      HandleWebSocketConnection(const std::string& path) override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ChromeDevToolsHttpHandlerDelegate);
-};
-
-ChromeDevToolsHttpHandlerDelegate::ChromeDevToolsHttpHandlerDelegate() {
-}
-
-ChromeDevToolsHttpHandlerDelegate::~ChromeDevToolsHttpHandlerDelegate() {
-}
-
-std::string ChromeDevToolsHttpHandlerDelegate::GetDiscoveryPageHTML() {
-  std::set<Profile*> profiles;
-  for (chrome::BrowserIterator it; !it.done(); it.Next())
-    profiles.insert((*it)->profile());
-
-  for (std::set<Profile*>::iterator it = profiles.begin();
-       it != profiles.end(); ++it) {
-    scoped_refptr<history::TopSites> ts = TopSitesFactory::GetForProfile(*it);
-    if (ts) {
-      // TopSites updates itself after a delay. Ask TopSites to update itself
-      // when we're about to show the remote debugging landing page.
-      ts->SyncWithHistory();
-    }
-  }
-  return ResourceBundle::GetSharedInstance().GetRawDataResource(
-      IDR_DEVTOOLS_DISCOVERY_PAGE_HTML).as_string();
-}
-
-std::string ChromeDevToolsHttpHandlerDelegate::GetFrontendResource(
-    const std::string& path) {
-  return content::DevToolsFrontendHost::GetFrontendResource(path).as_string();
-}
-
-std::string ChromeDevToolsHttpHandlerDelegate::GetPageThumbnailData(
-    const GURL& url) {
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    Profile* profile = (*it)->profile();
-    scoped_refptr<history::TopSites> top_sites =
-        TopSitesFactory::GetForProfile(profile);
-    if (!top_sites)
-      continue;
-    scoped_refptr<base::RefCountedMemory> data;
-    if (top_sites->GetPageThumbnail(url, false, &data))
-      return std::string(data->front_as<char>(), data->size());
-  }
-  return std::string();
-}
-
-content::DevToolsExternalAgentProxyDelegate*
-ChromeDevToolsHttpHandlerDelegate::HandleWebSocketConnection(
-    const std::string& path) {
-  return DevToolsWindow::CreateWebSocketAPIChannel(path);
-}
 
 }  // namespace
 
@@ -151,10 +93,8 @@ void RemoteDebuggingServer::EnableTetheringForDebug() {
   g_tethering_enabled.Get() = true;
 }
 
-RemoteDebuggingServer::RemoteDebuggingServer(
-    chrome::HostDesktopType host_desktop_type,
-    const std::string& ip,
-    uint16 port) {
+RemoteDebuggingServer::RemoteDebuggingServer(const std::string& ip,
+                                             uint16_t port) {
   base::FilePath output_dir;
   if (!port) {
     // The client requested an ephemeral port. Must write the selected
@@ -165,22 +105,22 @@ RemoteDebuggingServer::RemoteDebuggingServer(
   }
 
   base::FilePath debug_frontend_dir;
-#if defined(DEBUG_DEVTOOLS)
-  PathService::Get(chrome::DIR_INSPECTOR, &debug_frontend_dir);
+#if BUILDFLAG(DEBUG_DEVTOOLS)
+  PathService::Get(chrome::DIR_INSPECTOR_DEBUG, &debug_frontend_dir);
 #endif
 
-  devtools_http_handler_.reset(new devtools_http_handler::DevToolsHttpHandler(
-      make_scoped_ptr(new TCPServerSocketFactory(ip, port)),
+  content::DevToolsAgentHost::StartRemoteDebuggingServer(
+      base::MakeUnique<TCPServerSocketFactory>(ip, port),
       std::string(),
-      new ChromeDevToolsHttpHandlerDelegate(),
       output_dir,
       debug_frontend_dir,
       version_info::GetProductNameAndVersionForUserAgent(),
-      ::GetUserAgent()));
+      ::GetUserAgent());
 }
 
 RemoteDebuggingServer::~RemoteDebuggingServer() {
   // Ensure Profile is alive, because the whole DevTools subsystem
   // accesses it during shutdown.
   DCHECK(g_browser_process->profile_manager());
+  content::DevToolsAgentHost::StopRemoteDebuggingServer();
 }

@@ -10,27 +10,25 @@
 
 namespace blink {
 
-class AudioTrackList final : public TrackListBase<AudioTrack> {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static AudioTrackList* create(HTMLMediaElement&);
+class CORE_EXPORT AudioTrackList final : public TrackListBase<AudioTrack> {
+  DEFINE_WRAPPERTYPEINFO();
 
-    ~AudioTrackList() override;
+ public:
+  static AudioTrackList* create(HTMLMediaElement&);
 
-    bool hasEnabledTrack() const;
+  ~AudioTrackList() override;
 
-    // EventTarget
-    const AtomicString& interfaceName() const override;
+  bool hasEnabledTrack() const;
 
-    DEFINE_INLINE_TRACE()
-    {
-        TrackListBase<AudioTrack>::trace(visitor);
-    }
+  // EventTarget
+  const AtomicString& interfaceName() const override;
 
-private:
-    explicit AudioTrackList(HTMLMediaElement&);
+  DEFINE_INLINE_TRACE() { TrackListBase<AudioTrack>::trace(visitor); }
+
+ private:
+  explicit AudioTrackList(HTMLMediaElement&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // AudioTrackList_h
+#endif  // AudioTrackList_h

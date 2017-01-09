@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_CHROME_NET_BENCHMARKING_MESSAGE_FILTER_H_
 #define CHROME_BROWSER_CHROME_NET_BENCHMARKING_MESSAGE_FILTER_H_
 
+#include "base/macros.h"
 #include "content/public/browser/browser_message_filter.h"
 
 namespace net {
@@ -24,6 +25,9 @@ class ChromeNetBenchmarkingMessageFilter
 
   // content::BrowserMessageFilter methods:
   bool OnMessageReceived(const IPC::Message& message) override;
+  void OverrideThreadForMessage(const IPC::Message& message,
+                                content::BrowserThread::ID* thread) override;
+
 
  private:
   ~ChromeNetBenchmarkingMessageFilter() override;
@@ -40,6 +44,7 @@ class ChromeNetBenchmarkingMessageFilter
 
   // The Profile associated with our renderer process.  This should only be
   // accessed on the UI thread!
+  // TODO(623967): Store the Predictor* here instead of the Profile.
   Profile* profile_;
   scoped_refptr<net::URLRequestContextGetter> request_context_;
 

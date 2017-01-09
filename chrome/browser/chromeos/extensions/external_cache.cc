@@ -4,6 +4,9 @@
 
 #include "chrome/browser/chromeos/extensions/external_cache.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
@@ -67,8 +70,8 @@ void ExternalCache::Shutdown(const base::Closure& callback) {
 }
 
 void ExternalCache::UpdateExtensionsList(
-    scoped_ptr<base::DictionaryValue> prefs) {
-  extensions_ = prefs.Pass();
+    std::unique_ptr<base::DictionaryValue> prefs) {
+  extensions_ = std::move(prefs);
 
   if (extensions_->empty()) {
     // If list of know extensions is empty, don't init cache on disk. It is
@@ -151,17 +154,11 @@ void ExternalCache::PutExternalExtension(
 void ExternalCache::Observe(int type,
                             const content::NotificationSource& source,
                             const content::NotificationDetails& details) {
-  switch (type) {
-    case extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR: {
-      extensions::CrxInstaller* installer =
-          content::Source<extensions::CrxInstaller>(source).ptr();
-      OnDamagedFileDetected(installer->source_file());
-      break;
-    }
+  DCHECK_EQ(extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR, type);
 
-    default:
-      NOTREACHED();
-  }
+  extensions::CrxInstaller* installer =
+      content::Source<extensions::CrxInstaller>(source).ptr();
+  OnDamagedFileDetected(installer->source_file());
 }
 
 void ExternalCache::OnExtensionDownloadFailed(
@@ -260,7 +257,7 @@ void ExternalCache::CheckCache() {
         update_url = extension_urls::GetWebstoreUpdateUrl();
 
       if (update_url.is_valid())
-        downloader_->AddPendingExtension(it.key(), update_url, 0);
+        downloader_->AddPendingExtension(it.key(), update_url, false, 0);
     }
 
     base::FilePath file_path;

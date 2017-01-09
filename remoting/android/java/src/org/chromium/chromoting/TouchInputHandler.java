@@ -8,37 +8,42 @@ import android.content.Context;
 import android.graphics.Matrix;
 import android.graphics.PointF;
 import android.graphics.Rect;
+import android.util.Pair;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
-import android.widget.Scroller;
+import android.view.ViewConfiguration;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * This class is responsible for handling Touch input from the user.  Touch events which manipulate
  * the local canvas are handled in this class and any input which should be sent to the remote host
  * are passed to the InputStrategyInterface implementation set by the DesktopView.
  */
-public class TouchInputHandler implements TouchInputHandlerInterface {
-    /**
-     * Minimum change to the scaling factor to be recognized as a zoom gesture. Setting lower
-     * values here will result in more frequent canvas redraws during zooming.
-     */
-    private static final double MIN_ZOOM_DELTA = 0.05;
+public class TouchInputHandler {
+    private static final float EPSILON = 0.001f;
 
-    private final DesktopViewInterface mViewer;
+    private final List<Pair<Object, Event<?>>> mAttachedEvents = new ArrayList<>();
+    private final Desktop mDesktop;
     private final RenderData mRenderData;
     private final DesktopCanvas mDesktopCanvas;
-    private InputStrategyInterface mInputStrategy;
-
-    private GestureDetector mScroller;
-    private ScaleGestureDetector mZoomer;
-    private TapGestureDetector mTapDetector;
-
-    /** Used to calculate the physics for flinging the cursor. */
-    private Scroller mFlingScroller;
+    private final RenderStub mRenderStub;
+    private final GestureDetector mScroller;
+    private final ScaleGestureDetector mZoomer;
+    private final TapGestureDetector mTapDetector;
 
     /** Used to disambiguate a 2-finger gesture as a swipe or a pinch. */
-    private SwipePinchDetector mSwipePinchDetector;
+    private final SwipePinchDetector mSwipePinchDetector;
+
+    // Used for processing cursor & scroller fling animations.
+    // May consider using a List of AnimationJob if we have more than two animation jobs in
+    // the future.
+    private final FlingAnimationJob mCursorAnimationJob;
+    private final FlingAnimationJob mScrollAnimationJob;
+
+    private InputStrategyInterface mInputStrategy;
 
     /**
      * Used for tracking swipe gestures. Only the Y-direction is needed for responding to swipe-up
@@ -52,8 +57,17 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
      */
     private float mSwipeThreshold;
 
-    /** Mouse-button currently held down, or BUTTON_UNDEFINED otherwise. */
-    private int mHeldButton = BUTTON_UNDEFINED;
+    /**
+     * Distance, in pixels, from the edge of the screen in which a touch event should be considered
+     * as having originated from that edge.
+     */
+    private final int mEdgeSlopInPx;
+
+    /**
+     * Defines an inset boundary within which pan gestures are allowed.  Pan gestures which
+     * originate outside of this boundary will be ignored.
+     */
+    private Rect mPanGestureBounds = new Rect();
 
     /**
      * Set to true to prevent any further movement of the cursor, for example, when showing the
@@ -68,18 +82,124 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
     private boolean mSuppressFling = false;
 
     /**
+     * Set to true when 2-finger fling (scroll gesture with final velocity) is detected to trigger
+     * a scrolling animation.
+     */
+    private boolean mScrollFling = false;
+
+    /**
      * Set to true when 3-finger swipe gesture is complete, so that further movement doesn't
      * trigger more swipe actions.
      */
     private boolean mSwipeCompleted = false;
 
-    public TouchInputHandler(DesktopViewInterface viewer, Context context, RenderData renderData) {
-        mViewer = viewer;
-        mRenderData = renderData;
-        mDesktopCanvas = new DesktopCanvas(mViewer, mRenderData);
+    /**
+     * Set to true when a 1 finger pan gesture originates with a longpress.  This means the user
+     * is performing a drag operation.
+     */
+    private boolean mIsDragging = false;
+
+    private Event.ParameterCallback<Boolean, Void> mProcessAnimationCallback;
+
+    /**
+     * This class implements fling animation for cursor
+     */
+    private class CursorAnimationJob extends FlingAnimationJob {
+        public CursorAnimationJob(Context context) {
+            super(context);
+        }
+
+        @Override
+        protected void processAction(float deltaX, float deltaY) {
+            float[] delta = {deltaX, deltaY};
+            Matrix canvasToImage = new Matrix();
+            mRenderData.transform.invert(canvasToImage);
+            canvasToImage.mapVectors(delta);
+
+            moveViewportByOffset(-delta[0], -delta[1]);
+        }
+    }
+
+    /**
+     * This class implements fling animation for scrolling
+     */
+    private class ScrollAnimationJob extends FlingAnimationJob {
+        public ScrollAnimationJob(Context context) {
+            super(context);
+        }
+
+        @Override
+        protected void processAction(float deltaX, float deltaY) {
+            mInputStrategy.onScroll(-deltaX, -deltaY);
+        }
+    }
+
+    /**
+     * This class provides a NULL implementation which will be used until a real input
+     * strategy has been created and set.  Using this as the default implementation will prevent
+     * crashes if the owning class does not create/set a real InputStrategy before the host size
+     * information is received (or if the user interacts with the screen in that case).  This class
+     * has default values which will also allow the user to pan/zoom the desktop image until an
+     * InputStrategy implementation has been set.
+     */
+    private static class NullInputStrategy implements InputStrategyInterface {
+        NullInputStrategy() {}
+
+        @Override
+        public boolean onTap(int button) {
+            return false;
+        }
+
+        @Override
+        public boolean onPressAndHold(int button) {
+            return false;
+        }
+
+        @Override
+        public void onMotionEvent(MotionEvent event) {
+            return;
+        }
+
+        @Override
+        public void onScroll(float distanceX, float distanceY) {
+            return;
+        }
+
+        @Override
+        public void injectCursorMoveEvent(int x, int y) {
+            return;
+        }
+
+        @Override
+        public RenderStub.InputFeedbackType getShortPressFeedbackType() {
+            return RenderStub.InputFeedbackType.NONE;
+        }
+
+        @Override
+        public RenderStub.InputFeedbackType getLongPressFeedbackType() {
+            return RenderStub.InputFeedbackType.NONE;
+        }
+
+        @Override
+        public boolean isIndirectInputMode() {
+            return false;
+        }
+    }
+
+    public TouchInputHandler(DesktopView viewer, Desktop desktop, RenderStub renderStub,
+                             final InputEventSender injector) {
+        Preconditions.notNull(viewer);
+        Preconditions.notNull(desktop);
+        Preconditions.notNull(renderStub);
+        Preconditions.notNull(injector);
+
+        mDesktop = desktop;
+        mRenderStub = renderStub;
+        mRenderData = new RenderData();
+        mDesktopCanvas = new DesktopCanvas(renderStub, mRenderData);
 
         GestureListener listener = new GestureListener();
-        mScroller = new GestureDetector(context, listener, null, false);
+        mScroller = new GestureDetector(desktop, listener, null, false);
 
         // If long-press is enabled, the gesture-detector will not emit any further onScroll
         // notifications after the onLongPress notification. Since onScroll is being used for
@@ -87,20 +207,153 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
         // down too long.
         mScroller.setIsLongpressEnabled(false);
 
-        mZoomer = new ScaleGestureDetector(context, listener);
-        mTapDetector = new TapGestureDetector(context, listener);
-        mFlingScroller = new Scroller(context);
-        mSwipePinchDetector = new SwipePinchDetector(context);
+        mZoomer = new ScaleGestureDetector(desktop, listener);
+        mTapDetector = new TapGestureDetector(desktop, listener);
+        mSwipePinchDetector = new SwipePinchDetector(desktop);
 
         // The threshold needs to be bigger than the ScaledTouchSlop used by the gesture-detectors,
         // so that a gesture cannot be both a tap and a swipe. It also needs to be small enough so
         // that intentional swipes are usually detected.
-        float density = context.getResources().getDisplayMetrics().density;
+        float density = desktop.getResources().getDisplayMetrics().density;
         mSwipeThreshold = 40 * density;
+
+        mEdgeSlopInPx = ViewConfiguration.get(desktop).getScaledEdgeSlop();
+
+        mInputStrategy = new NullInputStrategy();
+
+        mCursorAnimationJob = new CursorAnimationJob(desktop);
+        mScrollAnimationJob = new ScrollAnimationJob(desktop);
+
+        mProcessAnimationCallback = new Event.ParameterCallback<Boolean, Void>() {
+            @Override
+            public Boolean run(Void p) {
+                return processAnimation();
+            }
+        };
+
+        attachEvent(viewer.onTouch(), new Event.ParameterRunnable<TouchEventParameter>() {
+            @Override
+            public void run(TouchEventParameter parameter) {
+                parameter.handled = handleTouchEvent(parameter.event);
+            }
+        });
+
+        attachEvent(desktop.onInputModeChanged(),
+                new Event.ParameterRunnable<InputModeChangedEventParameter>() {
+                    @Override
+                    public void run(InputModeChangedEventParameter parameter) {
+                        handleInputModeChanged(parameter, injector);
+                    }
+                });
+
+        attachEvent(desktop.onSystemUiVisibilityChanged(),
+                new Event.ParameterRunnable<SystemUiVisibilityChangedEventParameter>() {
+                    @Override
+                    public void run(SystemUiVisibilityChangedEventParameter parameter) {
+                        mDesktopCanvas.onSystemUiVisibilityChanged(parameter);
+                    }
+                });
+
+        attachEvent(renderStub.onClientSizeChanged(),
+                new Event.ParameterRunnable<SizeChangedEventParameter>() {
+                    @Override
+                    public void run(SizeChangedEventParameter parameter) {
+                        handleClientSizeChanged(parameter.width, parameter.height);
+                    }
+                });
+
+        attachEvent(renderStub.onHostSizeChanged(),
+                new Event.ParameterRunnable<SizeChangedEventParameter>() {
+                    @Override
+                    public void run(SizeChangedEventParameter parameter) {
+                        handleHostSizeChanged(parameter.width, parameter.height);
+                    }
+                });
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
+    private <ParamT> void attachEvent(Event<ParamT> event,
+                                      Event.ParameterRunnable<ParamT> runnable) {
+        mAttachedEvents.add(new Pair<Object, Event<?>>(event.add(runnable), event));
+    }
+
+    /**
+     * Detaches all registered event listeners. This function should be called exactly once.
+     */
+    public void detachEventListeners() {
+        Preconditions.isTrue(!mAttachedEvents.isEmpty());
+        abortAnimation();
+        for (Pair<Object, Event<?>> pair : mAttachedEvents) {
+            pair.second.remove(pair.first);
+        }
+        mAttachedEvents.clear();
+    }
+
+    /**
+     * Steps forward the animation.
+     * @return true if the animation is not finished yet.
+     */
+    private boolean processAnimation() {
+        return mCursorAnimationJob.processAnimation() || mScrollAnimationJob.processAnimation();
+    }
+
+    /**
+     * Start stepping animation when onCanvasRendered is triggered.
+     */
+    private void startAnimation() {
+        mRenderStub.onCanvasRendered().addSelfRemovable(mProcessAnimationCallback);
+    }
+
+    /**
+     * Abort all animations.
+     */
+    private void abortAnimation() {
+        mCursorAnimationJob.abortAnimation();
+        mScrollAnimationJob.abortAnimation();
+    }
+
+    private void handleInputModeChanged(
+            InputModeChangedEventParameter parameter, InputEventSender injector) {
+        final Desktop.InputMode inputMode = parameter.inputMode;
+        final CapabilityManager.HostCapability hostTouchCapability =
+                parameter.hostCapability;
+        // We need both input mode and host input capabilities to select the input
+        // strategy.
+        if (!inputMode.isSet() || !hostTouchCapability.isSet()) {
+            return;
+        }
+
+        switch (inputMode) {
+            case TRACKPAD:
+                setInputStrategy(new TrackpadInputStrategy(mRenderData, injector));
+                mDesktopCanvas.adjustViewportForSystemUi(true);
+                moveCursorToScreenCenter();
+                break;
+
+            case TOUCH:
+                mDesktopCanvas.adjustViewportForSystemUi(false);
+                if (hostTouchCapability.isSupported()) {
+                    setInputStrategy(new TouchInputStrategy(mRenderData, injector));
+                } else {
+                    setInputStrategy(
+                            new SimulatedTouchInputStrategy(mRenderData, injector, mDesktop));
+                }
+                break;
+
+            default:
+                // Unreachable, but required by Google Java style and findbugs.
+                assert false : "Unreached";
+        }
+
+        // Ensure the cursor state is updated appropriately.
+        mRenderStub.setCursorVisibility(mRenderData.drawCursor);
+    }
+
+    private boolean handleTouchEvent(MotionEvent event) {
+        // Give the underlying input strategy a chance to observe the current motion event before
+        // passing it to the gesture detectors.  This allows the input strategy to react to the
+        // event or save the payload for use in recreating the gesture remotely.
+        mInputStrategy.onMotionEvent(event);
+
         // Avoid short-circuit logic evaluation - ensure all gesture detectors see all events so
         // that they generate correct notifications.
         boolean handled = mScroller.onTouchEvent(event);
@@ -110,18 +363,15 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
 
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                mViewer.setAnimationEnabled(false);
+                abortAnimation();
                 mSuppressCursorMovement = false;
                 mSuppressFling = false;
                 mSwipeCompleted = false;
+                mIsDragging = false;
                 break;
 
             case MotionEvent.ACTION_POINTER_DOWN:
                 mTotalMotionY = 0;
-                break;
-
-            case MotionEvent.ACTION_UP:
-                releaseAnyHeldButton();
                 break;
 
             default:
@@ -130,100 +380,96 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
         return handled;
     }
 
-    @Override
-    public void onClientSizeChanged(int width, int height) {
-        mDesktopCanvas.repositionImageWithZoom();
+    private void handleClientSizeChanged(int width, int height) {
+        mRenderData.screenWidth = width;
+        mRenderData.screenHeight = height;
+
+        mPanGestureBounds = new Rect(
+                mEdgeSlopInPx, mEdgeSlopInPx, width - mEdgeSlopInPx, height - mEdgeSlopInPx);
+        resizeImageToFitScreen();
     }
 
-    @Override
-    public void onHostSizeChanged(int width, int height) {
-        moveCursor((float) width / 2, (float) height / 2);
-        mDesktopCanvas.resizeImageToFitScreen();
+    private void handleHostSizeChanged(int width, int height) {
+        mRenderData.imageWidth = width;
+        mRenderData.imageHeight = height;
+
+        resizeImageToFitScreen();
     }
 
-    @Override
-    public void onSoftInputMethodVisibilityChanged(boolean inputMethodVisible, Rect bounds) {
-        synchronized (mRenderData) {
-            if (inputMethodVisible) {
-                mDesktopCanvas.setInputMethodOffsetValues(mRenderData.screenWidth - bounds.right,
-                                                          mRenderData.screenHeight - bounds.bottom);
-            } else {
-                mDesktopCanvas.setInputMethodOffsetValues(0, 0);
-            }
-        }
-
-        mDesktopCanvas.repositionImageWithZoom();
-    }
-
-    @Override
-    public void processAnimation() {
-        int previousX = mFlingScroller.getCurrX();
-        int previousY = mFlingScroller.getCurrY();
-        if (!mFlingScroller.computeScrollOffset()) {
-            mViewer.setAnimationEnabled(false);
+    private void resizeImageToFitScreen() {
+        if (mRenderData.imageWidth == 0 || mRenderData.imageHeight == 0
+                || mRenderData.screenWidth == 0 || mRenderData.screenHeight == 0) {
             return;
         }
-        int deltaX = mFlingScroller.getCurrX() - previousX;
-        int deltaY = mFlingScroller.getCurrY() - previousY;
-        float[] delta = {deltaX, deltaY};
-        synchronized (mRenderData) {
-            Matrix canvasToImage = new Matrix();
-            mRenderData.transform.invert(canvasToImage);
-            canvasToImage.mapVectors(delta);
-        }
 
-        moveCursorRelative(-delta[0], -delta[1]);
+        mDesktopCanvas.resizeImageToFitScreen();
+
+        moveCursorToScreenCenter();
     }
 
-    @Override
-    public void setInputStrategy(InputStrategyInterface inputStrategy) {
+    private void moveCursorToScreenCenter() {
+        float screenCenterX = (float) mRenderData.screenWidth / 2;
+        float screenCenterY = (float) mRenderData.screenHeight / 2;
+
+        float[] imagePoint = mapScreenPointToImagePoint(screenCenterX, screenCenterY);
+        mDesktopCanvas.setCursorPosition(imagePoint[0], imagePoint[1]);
+
+        moveCursorToScreenPoint(screenCenterX, screenCenterY);
+    }
+
+    private void setInputStrategy(InputStrategyInterface inputStrategy) {
+        // Since the rules for flinging differ between input modes, we want to stop running the
+        // current fling animation when the mode changes to prevent a wonky experience.
+        abortAnimation();
         mInputStrategy = inputStrategy;
-        mDesktopCanvas.setCenterCursorInView(mInputStrategy.centerCursorInView());
     }
 
-    /** Moves the mouse-cursor relative to the current position. */
-    private void moveCursorRelative(float deltaX, float deltaY) {
-        if (mInputStrategy.invertCursorMovement()) {
+    /** Moves the desired center of the viewport using the specified deltas. */
+    private void moveViewportByOffset(float deltaX, float deltaY) {
+        // If we are in an indirect mode or are in the middle of a drag operation, then we want to
+        // invert the direction of the operation (i.e. follow the motion of the finger).
+        boolean followCursor = (mInputStrategy.isIndirectInputMode() || mIsDragging);
+        if (followCursor) {
             deltaX = -deltaX;
             deltaY = -deltaY;
         }
 
-        PointF cursorPosition = mDesktopCanvas.getCursorPosition();
-        moveCursor(cursorPosition.x + deltaX, cursorPosition.y + deltaY);
+        // Determine the center point from which to apply the delta.
+        // For indirect input modes (i.e. trackpad), the view generally follows the cursor.
+        // For direct input modes (i.e. touch) the should track the user's motion.
+        // If the user is dragging, then the viewport should always follow the user's finger.
+        if (mInputStrategy.isIndirectInputMode()) {
+            PointF newCursorPos = mDesktopCanvas.moveCursorPosition(deltaX, deltaY);
+            moveCursor(newCursorPos.x, newCursorPos.y);
+        } else {
+            mDesktopCanvas.moveViewportCenter(deltaX, deltaY);
+        }
     }
 
-    /** Moves the mouse-cursor, injects a mouse-move event and repositions the image. */
+    /** Moves the cursor to the specified position on the screen. */
+    private void moveCursorToScreenPoint(float screenX, float screenY) {
+        float[] imagePoint = mapScreenPointToImagePoint(screenX, screenY);
+        moveCursor(imagePoint[0], imagePoint[1]);
+    }
+
+    /** Moves the cursor to the specified position on the remote host. */
     private void moveCursor(float newX, float newY) {
-        synchronized (mRenderData) {
-            // Constrain cursor to the image area.
-            if (newX < 0) {
-                newX = 0;
-            } else if (newX > mRenderData.imageWidth) {
-                newX = mRenderData.imageWidth;
-            }
-
-            if (newY < 0) {
-                newY = 0;
-            } else if (newY > mRenderData.imageHeight) {
-                newY = mRenderData.imageHeight;
-            }
-
-            mDesktopCanvas.setCursorPosition(newX, newY);
+        boolean cursorMoved = mRenderData.setCursorPosition(newX, newY);
+        if (cursorMoved) {
+            mInputStrategy.injectCursorMoveEvent((int) newX, (int) newY);
         }
 
-        mDesktopCanvas.repositionImage();
-
-        mInputStrategy.injectRemoteMoveEvent((int) newX, (int) newY);
+        mRenderStub.moveCursor(mRenderData.getCursorPosition());
     }
 
     /** Processes a (multi-finger) swipe gesture. */
     private boolean onSwipe() {
         if (mTotalMotionY > mSwipeThreshold) {
             // Swipe down occurred.
-            mViewer.showActionBar();
+            mDesktop.showSystemUi();
         } else if (mTotalMotionY < -mSwipeThreshold) {
             // Swipe up occurred.
-            mViewer.showKeyboard();
+            mDesktop.showKeyboard();
         } else {
             return false;
         }
@@ -234,12 +480,16 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
         return true;
     }
 
-    /** Injects a button-up event if the button is currently held down (during a drag event). */
-    private void releaseAnyHeldButton() {
-        if (mHeldButton != BUTTON_UNDEFINED) {
-            mInputStrategy.injectRemoteButtonEvent(mHeldButton, false);
-            mHeldButton = BUTTON_UNDEFINED;
-        }
+    /** Translates a point in screen coordinates to a location on the desktop image. */
+    private float[] mapScreenPointToImagePoint(float screenX, float screenY) {
+        float[] mappedPoints = {screenX, screenY};
+        Matrix screenToImage = new Matrix();
+
+        mRenderData.transform.invert(screenToImage);
+
+        screenToImage.mapPoints(mappedPoints);
+
+        return mappedPoints;
     }
 
     /** Responds to touch events filtered by the gesture detectors. */
@@ -252,7 +502,16 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
         @Override
         public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
             int pointerCount = e2.getPointerCount();
-            if (pointerCount == 3 && !mSwipeCompleted) {
+
+            // Check to see if the motion originated at the edge of the screen.
+            // If so, then the user is likely swiping in to display system UI.
+            if (!mPanGestureBounds.contains((int) e1.getX(), (int) e1.getY())) {
+                // Prevent the cursor being moved or flung by the gesture.
+                mSuppressCursorMovement = true;
+                return false;
+            }
+
+            if (pointerCount >= 3 && !mSwipeCompleted) {
                 // Note that distance values are reversed. For example, dragging a finger in the
                 // direction of increasing Y coordinate (downwards) results in distanceY being
                 // negative.
@@ -261,10 +520,16 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
             }
 
             if (pointerCount == 2 && mSwipePinchDetector.isSwiping()) {
-                mInputStrategy.injectRemoteScrollEvent(-(int) distanceX, -(int) distanceY);
+                if (!mInputStrategy.isIndirectInputMode()) {
+                    // Ensure the cursor is located at the coordinates of the original event,
+                    // otherwise the target window may not receive the scroll event correctly.
+                    moveCursorToScreenPoint(e1.getX(), e1.getY());
+                }
+                mInputStrategy.onScroll(distanceX, distanceY);
 
                 // Prevent the cursor being moved or flung by the gesture.
                 mSuppressCursorMovement = true;
+                mScrollFling = true;
                 return true;
             }
 
@@ -273,13 +538,17 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
             }
 
             float[] delta = {distanceX, distanceY};
-            synchronized (mRenderData) {
-                Matrix canvasToImage = new Matrix();
-                mRenderData.transform.invert(canvasToImage);
-                canvasToImage.mapVectors(delta);
-            }
 
-            moveCursorRelative(delta[0], delta[1]);
+            Matrix canvasToImage = new Matrix();
+            mRenderData.transform.invert(canvasToImage);
+            canvasToImage.mapVectors(delta);
+
+            moveViewportByOffset(delta[0], delta[1]);
+            if (!mInputStrategy.isIndirectInputMode() && mIsDragging) {
+                // Ensure the cursor follows the user's finger when the user is dragging under
+                // direct input mode.
+                moveCursorToScreenPoint(e2.getX(), e2.getY());
+            }
             return true;
         }
 
@@ -288,27 +557,26 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
          */
         @Override
         public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
-            // If cursor movement is suppressed, fling also needs to be suppressed, as the
-            // gesture-detector will still generate onFling() notifications based on movement of
-            // the fingers, which would result in unwanted cursor movement.
-            if (mSuppressCursorMovement || mSuppressFling) {
+            if (mSuppressFling) {
                 return false;
             }
 
-            // The fling physics calculation is based on screen coordinates, so that it will
-            // behave consistently at different zoom levels (and will work nicely at high zoom
-            // levels, since |mFlingScroller| outputs integer coordinates). However, the desktop
-            // will usually be panned as the cursor is moved across the desktop, which means the
-            // transformation mapping from screen to desktop coordinates will change. To deal with
-            // this, the cursor movement is computed from relative coordinate changes from
-            // |mFlingScroller|. This means the fling can be started at (0, 0) with no bounding
-            // constraints - the cursor is already constrained by the desktop size.
-            mFlingScroller.fling(0, 0, (int) velocityX, (int) velocityY, Integer.MIN_VALUE,
-                    Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE);
-            // Initialize the scroller's current offset coordinates, since they are used for
-            // calculating the delta values.
-            mFlingScroller.computeScrollOffset();
-            mViewer.setAnimationEnabled(true);
+            if (mScrollFling) {
+                mScrollAnimationJob.startAnimation(velocityX, velocityY);
+                startAnimation();
+                mScrollFling = false;
+                return true;
+            }
+
+            if (mSuppressCursorMovement) {
+                return false;
+            }
+
+            // If cursor movement is suppressed, fling also needs to be suppressed, as the
+            // gesture-detector will still generate onFling() notifications based on movement of
+            // the fingers, which would result in unwanted cursor movement.
+            mCursorAnimationJob.startAnimation(velocityX, velocityY);
+            startAnimation();
             return true;
         }
 
@@ -319,16 +587,8 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
                 return false;
             }
 
-            if (Math.abs(detector.getScaleFactor() - 1) < MIN_ZOOM_DELTA) {
-                return false;
-            }
-
-            float scaleFactor = detector.getScaleFactor();
-            synchronized (mRenderData) {
-                mRenderData.transform.postScale(
-                        scaleFactor, scaleFactor, detector.getFocusX(), detector.getFocusY());
-            }
-            mDesktopCanvas.repositionImageWithZoom();
+            mDesktopCanvas.scaleAndRepositionImage(detector.getScaleFactor(), detector.getFocusX(),
+                    detector.getFocusY(), mInputStrategy.isIndirectInputMode());
 
             return true;
         }
@@ -356,26 +616,48 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
 
         /** Called when the user taps the screen with one or more fingers. */
         @Override
-        public boolean onTap(int pointerCount) {
+        public boolean onTap(int pointerCount, float x, float y) {
             int button = mouseButtonFromPointerCount(pointerCount);
-            if (button == BUTTON_UNDEFINED) {
+            if (button == InputStub.BUTTON_UNDEFINED) {
                 return false;
-            } else {
-                mInputStrategy.injectRemoteButtonEvent(button, true);
-                mInputStrategy.injectRemoteButtonEvent(button, false);
-                mViewer.showInputFeedback(mInputStrategy.getShortPressFeedbackType());
-                return true;
             }
+
+            if (!mInputStrategy.isIndirectInputMode()) {
+                if (screenPointLiesOutsideImageBoundary(x, y)) {
+                    return false;
+                }
+                moveCursorToScreenPoint(x, y);
+            }
+
+            if (mInputStrategy.onTap(button)) {
+                PointF pos = mRenderData.getCursorPosition();
+
+                mRenderStub.showInputFeedback(mInputStrategy.getShortPressFeedbackType(), pos);
+            }
+            return true;
         }
 
         /** Called when a long-press is triggered for one or more fingers. */
         @Override
-        public void onLongPress(int pointerCount) {
-            mHeldButton = mouseButtonFromPointerCount(pointerCount);
-            if (mHeldButton != BUTTON_UNDEFINED) {
-                mInputStrategy.injectRemoteButtonEvent(mHeldButton, true);
-                mViewer.showInputFeedback(mInputStrategy.getLongPressFeedbackType());
+        public void onLongPress(int pointerCount, float x, float y) {
+            int button = mouseButtonFromPointerCount(pointerCount);
+            if (button == InputStub.BUTTON_UNDEFINED) {
+                return;
+            }
+
+            if (!mInputStrategy.isIndirectInputMode()) {
+                if (screenPointLiesOutsideImageBoundary(x, y)) {
+                    return;
+                }
+                moveCursorToScreenPoint(x, y);
+            }
+
+            if (mInputStrategy.onPressAndHold(button)) {
+                PointF pos = mRenderData.getCursorPosition();
+
+                mRenderStub.showInputFeedback(mInputStrategy.getLongPressFeedbackType(), pos);
                 mSuppressFling = true;
+                mIsDragging = true;
             }
         }
 
@@ -383,14 +665,25 @@ public class TouchInputHandler implements TouchInputHandlerInterface {
         private int mouseButtonFromPointerCount(int pointerCount) {
             switch (pointerCount) {
                 case 1:
-                    return BUTTON_LEFT;
+                    return InputStub.BUTTON_LEFT;
                 case 2:
-                    return BUTTON_RIGHT;
+                    return InputStub.BUTTON_RIGHT;
                 case 3:
-                    return BUTTON_MIDDLE;
+                    return InputStub.BUTTON_MIDDLE;
                 default:
-                    return BUTTON_UNDEFINED;
+                    return InputStub.BUTTON_UNDEFINED;
             }
+        }
+
+        /** Determines whether the given screen point lies outside the desktop image. */
+        private boolean screenPointLiesOutsideImageBoundary(float screenX, float screenY) {
+            float[] mappedPoints = mapScreenPointToImagePoint(screenX, screenY);
+
+            float imageWidth = (float) mRenderData.imageWidth + EPSILON;
+            float imageHeight = (float) mRenderData.imageHeight + EPSILON;
+
+            return mappedPoints[0] < -EPSILON || mappedPoints[0] > imageWidth
+                    || mappedPoints[1] < -EPSILON || mappedPoints[1] > imageHeight;
         }
     }
 }

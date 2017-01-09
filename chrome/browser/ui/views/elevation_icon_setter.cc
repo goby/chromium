@@ -6,6 +6,7 @@
 
 #include "base/callback.h"
 #include "base/task_runner_util.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/views/controls/button/label_button.h"
 
@@ -14,8 +15,8 @@
 #include <shellapi.h>
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
+#include "ui/display/win/dpi.h"
 #include "ui/gfx/icon_util.h"
-#include "ui/gfx/win/dpi.h"
 #endif
 
 
@@ -23,12 +24,12 @@
 
 namespace {
 
-scoped_ptr<SkBitmap> GetElevationIcon() {
-  scoped_ptr<SkBitmap> icon;
+std::unique_ptr<SkBitmap> GetElevationIcon() {
+  std::unique_ptr<SkBitmap> icon;
 #if defined(OS_WIN)
   if ((base::win::GetVersion() < base::win::VERSION_VISTA) ||
       !base::win::UserAccountControlIsEnabled())
-    return icon.Pass();
+    return icon;
 
   SHSTOCKICONINFO icon_info = { sizeof(SHSTOCKICONINFO) };
   typedef HRESULT (STDAPICALLTYPE *GetStockIconInfo)(SHSTOCKICONID,
@@ -42,14 +43,14 @@ scoped_ptr<SkBitmap> GetElevationIcon() {
   // TODO(pkasting): Run on a background thread since this call spins a nested
   // message loop.
   if (FAILED((*func)(SIID_SHIELD, SHGSI_ICON | SHGSI_SMALLICON, &icon_info)))
-    return icon.Pass();
+    return icon;
 
   icon.reset(IconUtil::CreateSkBitmapFromHICON(
       icon_info.hIcon,
       gfx::Size(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON))));
   DestroyIcon(icon_info.hIcon);
 #endif
-  return icon.Pass();
+  return icon;
 }
 
 }  // namespace
@@ -74,13 +75,13 @@ ElevationIconSetter::~ElevationIconSetter() {
 }
 
 void ElevationIconSetter::SetButtonIcon(const base::Closure& callback,
-                                        scoped_ptr<SkBitmap> icon) {
+                                        std::unique_ptr<SkBitmap> icon) {
   if (icon) {
     float device_scale_factor = 1.0f;
 #if defined(OS_WIN)
     // Windows gives us back a correctly-scaled image for the current DPI, so
     // mark this image as having been scaled for the current DPI already.
-    device_scale_factor = gfx::GetDPIScale();
+    device_scale_factor = display::win::GetDPIScale();
 #endif
     button_->SetImage(
         views::Button::STATE_NORMAL,

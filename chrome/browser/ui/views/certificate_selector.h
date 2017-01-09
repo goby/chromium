@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_CERTIFICATE_SELECTOR_H_
 #define CHROME_BROWSER_UI_VIEWS_CERTIFICATE_SELECTOR_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "net/cert/x509_certificate.h"
 #include "ui/views/controls/button/button.h"
@@ -21,6 +22,10 @@ namespace views {
 class LabelButton;
 class TableView;
 class View;
+}
+
+namespace ui {
+class TableModel;
 }
 
 namespace chrome {
@@ -76,7 +81,9 @@ class CertificateSelector : public views::DialogDelegateView,
   // Initializes the dialog. |text| is shown above the list of certificates
   // and is supposed to explain to the user what the implication of the
   // certificate selection is.
-  void InitWithText(scoped_ptr<views::View> text_label);
+  void InitWithText(std::unique_ptr<views::View> text_label);
+
+  ui::TableModel* table_model_for_testing() const;
 
  private:
   class CertificateTableModel;
@@ -88,7 +95,7 @@ class CertificateSelector : public views::DialogDelegateView,
   // shown only if there is at least one non-empty provider, i.e. non-platform
   // certificate.
   bool show_provider_column_ = false;
-  scoped_ptr<CertificateTableModel> model_;
+  std::unique_ptr<CertificateTableModel> model_;
 
   content::WebContents* const web_contents_;
 

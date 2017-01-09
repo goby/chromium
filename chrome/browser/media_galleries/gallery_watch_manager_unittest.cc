@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media_galleries/gallery_watch_manager.h"
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_path_override.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/test_extension_system.h"
-#include "chrome/browser/media_galleries/gallery_watch_manager.h"
 #include "chrome/browser/media_galleries/gallery_watch_manager_observer.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences_factory.h"
@@ -167,7 +171,7 @@ class GalleryWatchManagerTest : public GalleryWatchManagerObserver,
     pending_loop_->Quit();
   }
 
-  scoped_ptr<GalleryWatchManager> manager_;
+  std::unique_ptr<GalleryWatchManager> manager_;
 
   // Needed for extension service & friends to work.
   content::TestBrowserThreadBundle thread_bundle_;
@@ -183,7 +187,7 @@ class GalleryWatchManagerTest : public GalleryWatchManagerObserver,
 #endif
 
   storage_monitor::TestStorageMonitor* monitor_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   MediaGalleriesPreferences* gallery_prefs_;
 
   bool expect_gallery_changed_;
@@ -196,7 +200,7 @@ class GalleryWatchManagerTest : public GalleryWatchManagerObserver,
 TEST_F(GalleryWatchManagerTest, Basic) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  MediaGalleryPrefId id = AddGallery(temp_dir.path());
+  MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
 
   base::RunLoop loop;
   if (GalleryWatchesSupported()) {
@@ -224,33 +228,33 @@ TEST_F(GalleryWatchManagerTest, AddAndRemoveTwoWatches) {
 
   base::ScopedTempDir temp1;
   ASSERT_TRUE(temp1.CreateUniqueTempDir());
-  MediaGalleryPrefId id1 = AddGallery(temp1.path());
+  MediaGalleryPrefId id1 = AddGallery(temp1.GetPath());
 
   base::ScopedTempDir temp2;
   ASSERT_TRUE(temp2.CreateUniqueTempDir());
-  MediaGalleryPrefId id2 = AddGallery(temp2.path());
+  MediaGalleryPrefId id2 = AddGallery(temp2.GetPath());
 
   // Add first watch and test it was added correctly.
   AddAndConfirmWatch(id1);
   MediaGalleryPrefIdSet set1 =
       manager()->GetWatchSet(profile(), extension()->id());
   EXPECT_EQ(1u, set1.size());
-  EXPECT_TRUE(ContainsKey(set1, id1));
+  EXPECT_TRUE(base::ContainsKey(set1, id1));
 
   // Test that the second watch was added correctly too.
   AddAndConfirmWatch(id2);
   MediaGalleryPrefIdSet set2 =
       manager()->GetWatchSet(profile(), extension()->id());
   EXPECT_EQ(2u, set2.size());
-  EXPECT_TRUE(ContainsKey(set2, id1));
-  EXPECT_TRUE(ContainsKey(set2, id2));
+  EXPECT_TRUE(base::ContainsKey(set2, id1));
+  EXPECT_TRUE(base::ContainsKey(set2, id2));
 
   // Remove first watch and test that the second is still in there.
   manager()->RemoveWatch(profile(), extension()->id(), id1);
   MediaGalleryPrefIdSet set3 =
       manager()->GetWatchSet(profile(), extension()->id());
   EXPECT_EQ(1u, set3.size());
-  EXPECT_TRUE(ContainsKey(set3, id2));
+  EXPECT_TRUE(base::ContainsKey(set3, id2));
 
   // Try removing the first watch again and test that it has no effect.
   manager()->RemoveWatch(profile(), extension()->id(), id1);
@@ -267,11 +271,11 @@ TEST_F(GalleryWatchManagerTest, RemoveAllWatches) {
 
   base::ScopedTempDir temp1;
   ASSERT_TRUE(temp1.CreateUniqueTempDir());
-  MediaGalleryPrefId id1 = AddGallery(temp1.path());
+  MediaGalleryPrefId id1 = AddGallery(temp1.GetPath());
 
   base::ScopedTempDir temp2;
   ASSERT_TRUE(temp2.CreateUniqueTempDir());
-  MediaGalleryPrefId id2 = AddGallery(temp2.path());
+  MediaGalleryPrefId id2 = AddGallery(temp2.GetPath());
 
   // Add watches.
   AddAndConfirmWatch(id1);
@@ -295,7 +299,7 @@ TEST_F(GalleryWatchManagerTest, DropWatchOnGalleryRemoved) {
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  MediaGalleryPrefId id = AddGallery(temp_dir.path());
+  MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
   AddAndConfirmWatch(id);
 
   base::RunLoop success_loop;
@@ -310,7 +314,7 @@ TEST_F(GalleryWatchManagerTest, DropWatchOnGalleryPermissionRevoked) {
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  MediaGalleryPrefId id = AddGallery(temp_dir.path());
+  MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
   AddAndConfirmWatch(id);
 
   base::RunLoop success_loop;
@@ -326,13 +330,13 @@ TEST_F(GalleryWatchManagerTest, DropWatchOnStorageRemoved) {
   // Create a temporary directory and treat is as a removable storage device.
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  storage_monitor()->AddRemovablePath(temp_dir.path());
+  storage_monitor()->AddRemovablePath(temp_dir.GetPath());
   storage_monitor::StorageInfo storage_info;
-  ASSERT_TRUE(
-      storage_monitor()->GetStorageInfoForPath(temp_dir.path(), &storage_info));
+  ASSERT_TRUE(storage_monitor()->GetStorageInfoForPath(temp_dir.GetPath(),
+                                                       &storage_info));
   storage_monitor()->receiver()->ProcessAttach(storage_info);
 
-  MediaGalleryPrefId id = AddGallery(temp_dir.path());
+  MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
   AddAndConfirmWatch(id);
 
   base::RunLoop success_loop;
@@ -347,13 +351,13 @@ TEST_F(GalleryWatchManagerTest, TestWatchOperation) {
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  MediaGalleryPrefId id = AddGallery(temp_dir.path());
+  MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
   AddAndConfirmWatch(id);
 
   base::RunLoop success_loop;
   ExpectGalleryChanged(&success_loop);
-  ASSERT_EQ(
-      4, base::WriteFile(temp_dir.path().AppendASCII("fake file"), "blah", 4));
+  ASSERT_EQ(4, base::WriteFile(temp_dir.GetPath().AppendASCII("fake file"),
+                               "blah", 4));
   success_loop.Run();
 }
 
@@ -363,7 +367,7 @@ TEST_F(GalleryWatchManagerTest, TestWatchOperationAfterProfileShutdown) {
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  MediaGalleryPrefId id = AddGallery(temp_dir.path());
+  MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
   AddAndConfirmWatch(id);
 
   ShutdownProfile();
@@ -371,8 +375,8 @@ TEST_F(GalleryWatchManagerTest, TestWatchOperationAfterProfileShutdown) {
   // Trigger a watch that should have been removed when the profile was
   // destroyed to catch regressions. crbug.com/467627
   base::RunLoop run_loop;
-  ASSERT_EQ(
-      4, base::WriteFile(temp_dir.path().AppendASCII("fake file"), "blah", 4));
+  ASSERT_EQ(4, base::WriteFile(temp_dir.GetPath().AppendASCII("fake file"),
+                               "blah", 4));
   run_loop.RunUntilIdle();
 }
 
@@ -383,13 +387,13 @@ TEST_F(GalleryWatchManagerTest, TestStorageRemovedAfterProfileShutdown) {
   // Create a temporary directory and treat is as a removable storage device.
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  storage_monitor()->AddRemovablePath(temp_dir.path());
+  storage_monitor()->AddRemovablePath(temp_dir.GetPath());
   storage_monitor::StorageInfo storage_info;
-  ASSERT_TRUE(
-      storage_monitor()->GetStorageInfoForPath(temp_dir.path(), &storage_info));
+  ASSERT_TRUE(storage_monitor()->GetStorageInfoForPath(temp_dir.GetPath(),
+                                                       &storage_info));
   storage_monitor()->receiver()->ProcessAttach(storage_info);
 
-  MediaGalleryPrefId id = AddGallery(temp_dir.path());
+  MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
   AddAndConfirmWatch(id);
 
   ShutdownProfile();

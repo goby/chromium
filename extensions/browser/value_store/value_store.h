@@ -5,10 +5,14 @@
 #ifndef EXTENSIONS_BROWSER_VALUE_STORE_VALUE_STORE_H_
 #define EXTENSIONS_BROWSER_VALUE_STORE_VALUE_STORE_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "extensions/browser/value_store/value_store_change.h"
 
@@ -39,9 +43,27 @@ class ValueStore {
     OTHER_ERROR,
   };
 
+  enum BackingStoreRestoreStatus {
+    // No restore attempted.
+    RESTORE_NONE,
+    // Corrupted backing store successfully deleted.
+    DB_RESTORE_DELETE_SUCCESS,
+    // Corrupted backing store cannot be deleted.
+    DB_RESTORE_DELETE_FAILURE,
+    // Corrupted backing store successfully repaired.
+    DB_RESTORE_REPAIR_SUCCESS,
+    // Corrupted value successfully deleted.
+    VALUE_RESTORE_DELETE_SUCCESS,
+    // Corrupted value cannot be deleted.
+    VALUE_RESTORE_DELETE_FAILURE,
+  };
+
   // The status (result) of an operation on a ValueStore.
   struct Status {
     Status();
+    Status(StatusCode code,
+           BackingStoreRestoreStatus restore_status,
+           const std::string& message);
     Status(StatusCode code, const std::string& message);
     ~Status();
 
@@ -49,8 +71,15 @@ class ValueStore {
 
     bool IsCorrupted() const { return code == CORRUPTION; }
 
+    // Merge |status| into this object. Any members (either |code|,
+    // |restore_status|, or |message| in |status| will be used, but only if this
+    // object's members are at their default value.
+    void Merge(const Status& status);
+
     // The status code.
     StatusCode code;
+
+    BackingStoreRestoreStatus restore_status;
 
     // Message associated with the status (error) if there is one.
     std::string message;
@@ -59,7 +88,8 @@ class ValueStore {
   // The result of a read operation (Get).
   class ReadResultType {
    public:
-    explicit ReadResultType(scoped_ptr<base::DictionaryValue> settings);
+    ReadResultType(std::unique_ptr<base::DictionaryValue> settings,
+                   const Status& status);
     explicit ReadResultType(const Status& status);
     ~ReadResultType();
 
@@ -69,24 +99,25 @@ class ValueStore {
     //
     // Must only be called if there is no error.
     base::DictionaryValue& settings() { return *settings_; }
-    scoped_ptr<base::DictionaryValue> PassSettings() {
-      return settings_.Pass();
+    std::unique_ptr<base::DictionaryValue> PassSettings() {
+      return std::move(settings_);
     }
 
     const Status& status() const { return status_; }
 
    private:
-    scoped_ptr<base::DictionaryValue> settings_;
+    std::unique_ptr<base::DictionaryValue> settings_;
     Status status_;
 
     DISALLOW_COPY_AND_ASSIGN(ReadResultType);
   };
-  typedef scoped_ptr<ReadResultType> ReadResult;
+  typedef std::unique_ptr<ReadResultType> ReadResult;
 
   // The result of a write operation (Set/Remove/Clear).
   class WriteResultType {
    public:
-    explicit WriteResultType(scoped_ptr<ValueStoreChangeList> changes);
+    WriteResultType(std::unique_ptr<ValueStoreChangeList> changes,
+                    const Status& status);
     explicit WriteResultType(const Status& status);
     ~WriteResultType();
 
@@ -94,17 +125,19 @@ class ValueStore {
     // Won't be present if the NO_GENERATE_CHANGES WriteOptions was given.
     // Only call if no error.
     ValueStoreChangeList& changes() { return *changes_; }
-    scoped_ptr<ValueStoreChangeList> PassChanges() { return changes_.Pass(); }
+    std::unique_ptr<ValueStoreChangeList> PassChanges() {
+      return std::move(changes_);
+    }
 
     const Status& status() const { return status_; }
 
    private:
-    scoped_ptr<ValueStoreChangeList> changes_;
+    std::unique_ptr<ValueStoreChangeList> changes_;
     Status status_;
 
     DISALLOW_COPY_AND_ASSIGN(WriteResultType);
   };
-  typedef scoped_ptr<WriteResultType> WriteResult;
+  typedef std::unique_ptr<WriteResultType> WriteResult;
 
   // Options for write operations.
   enum WriteOptionsValues {
@@ -122,17 +155,19 @@ class ValueStore {
   virtual ~ValueStore() {}
 
   // Helpers for making a Read/WriteResult.
-  template<typename T>
-  static ReadResult MakeReadResult(scoped_ptr<T> arg) {
-    return ReadResult(new ReadResultType(arg.Pass()));
+  template <typename T>
+  static ReadResult MakeReadResult(std::unique_ptr<T> arg,
+                                   const Status& status) {
+    return ReadResult(new ReadResultType(std::move(arg), status));
   }
   static ReadResult MakeReadResult(const Status& status) {
     return ReadResult(new ReadResultType(status));
   }
 
-  template<typename T>
-  static WriteResult MakeWriteResult(scoped_ptr<T> arg) {
-    return WriteResult(new WriteResultType(arg.Pass()));
+  template <typename T>
+  static WriteResult MakeWriteResult(std::unique_ptr<T> arg,
+                                     const Status& status) {
+    return WriteResult(new WriteResultType(std::move(arg), status));
   }
   static WriteResult MakeWriteResult(const Status& status) {
     return WriteResult(new WriteResultType(status));
@@ -177,27 +212,6 @@ class ValueStore {
 
   // Clears the storage.
   virtual WriteResult Clear() = 0;
-
-  // In the event of corruption, the ValueStore should be able to restore
-  // itself. This means deleting local corrupted files. If only a few keys are
-  // corrupted, then some of the database may be saved. If the full database is
-  // corrupted, this will erase it in its entirety.
-  // Returns true on success, false on failure. The only way this will fail is
-  // if we also cannot delete the database file.
-  // Note: This method may be expensive; some implementations may need to read
-  // the entire database to restore. Use sparingly.
-  // Note: This method (and the following RestoreKey()) are rude, and do not
-  // make any logs, track changes, or other generally polite things. Please do
-  // not use these as substitutes for Clear() and Remove().
-  virtual bool Restore() = 0;
-
-  // Similar to Restore(), but for only a particular key. If the key is corrupt,
-  // this will forcefully remove the key. It does not look at the database on
-  // the whole, which makes it faster, but does not guarantee there is no
-  // additional corruption.
-  // Returns true on success, and false on failure. If false, the next step is
-  // probably to Restore() the whole database.
-  virtual bool RestoreKey(const std::string& key) = 0;
 };
 
 #endif  // EXTENSIONS_BROWSER_VALUE_STORE_VALUE_STORE_H_

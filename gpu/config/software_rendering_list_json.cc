@@ -18,7 +18,7 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
 {
   "name": "software rendering list",
   // Please update the version number whenever you change this file.
-  "version": "10.16",
+  "version": "12.06",
   "entries": [
     {
       "id": 1,
@@ -29,10 +29,12 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
       },
       "vendor_id": "0x1002",
       "device_id": ["0x7249"],
+      "multi_gpu_category": "any",
       "features": [
         "webgl",
         "flash_3d",
-        "flash_stage3d"
+        "flash_stage3d",
+        "gpu_rasterization"
       ]
     },
     {
@@ -86,6 +88,9 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
             "op": ">=",
             "value": "10.0.4"
           }
+        },
+        {
+          "driver_vendor": ".*ANGLE.*"
         }
       ],
       "features": [
@@ -114,10 +119,12 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
       },
       "vendor_id": "0x10de",
       "device_id": ["0x0393"],
+      "multi_gpu_category": "any",
       "features": [
         "webgl",
         "flash_3d",
-        "flash_stage3d"
+        "flash_stage3d",
+        "gpu_rasterization"
       ]
     },
     {
@@ -240,22 +247,6 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
       ]
     },
     {
-      "id": 24,
-      "description": "Accelerated 2d canvas is unstable in Linux at the moment",
-      "os": {
-        "type": "linux"
-      },
-      "exceptions": [
-        {
-          "gl_vendor": "Vivante Corporation", 
-          "gl_renderer": "Vivante GC1000"
-        }
-      ],
-      "features": [
-        "accelerated_2d_canvas"
-      ]
-    },
-    {
       "id": 27,
       "description": "ATI/AMD cards with older drivers in Linux are crash-prone",
       "cr_bugs": [95934, 94973, 136240, 357314],
@@ -367,69 +358,12 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
         "type": "linux"
       },
       "multi_gpu_style": "optimus",
-      "exceptions": [
-        {
-          "driver_vendor": "Mesa",
-          "driver_version": {
-            "op": ">=",
-            "value": "10.1"
-          },
-          "gl_vendor": "Intel.*"
-        }
-      ],
-      "features": [
-        "all"
-      ]
-    },
-    {
-      "id": 38,
-      "description": "Accelerated 2D canvas is unstable for NVidia GeForce 9400M on Lion",
-      "cr_bugs": [130495],
-      "os": {
-        "type": "macosx",
-        "version": {
-          "op": "=",
-          "value": "10.7"
-        }
+      "driver_vendor": "Mesa",
+      "driver_version": {
+        "op": "<",
+        "value": "10.1"
       },
-      "vendor_id": "0x10de",
-      "device_id": ["0x0863"],
-      "features": [
-        "accelerated_2d_canvas"
-      ]
-    },
-    {
-      "id": 42,
-      "description": "AMD Radeon HD 6490M and 6970M on Snow Leopard are buggy",
-      "cr_bugs": [137307, 285350],
-      "os": {
-        "type": "macosx",
-        "version": {
-          "op": "=",
-          "value": "10.6"
-        }
-      },
-      "vendor_id": "0x1002",
-      "device_id": ["0x6760", "0x6720"],
-      "features": [
-        "webgl"
-      ]
-    },
-    {
-      "id": 44,
-      "description": "Intel HD 4000 causes kernel panic on Lion",
-      "cr_bugs": [134015],
-      "os": {
-        "type": "macosx",
-        "version": {
-          "op": "between",
-          "value": "10.7.0",
-          "value2": "10.7.4"
-        }
-      },
-      "vendor_id": "0x8086",
-      "device_id": ["0x0166"],
-      "multi_gpu_category": "any",
+      "gl_vendor": "Intel.*",
       "features": [
         "all"
       ]
@@ -492,29 +426,9 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
       ]
     },
     {
-      "id": 49,
-      "description": "NVidia GeForce GT 650M can cause the system to hang with flash 3D",
-      "cr_bugs": [140175],
-      "os": {
-        "type": "macosx",
-        "version": {
-          "op": "between",
-          "value": "10.8.0",
-          "value2": "10.8.1"
-        }
-      },
-      "multi_gpu_style": "optimus",
-      "vendor_id": "0x10de",
-      "device_id": ["0x0fd5"],
-      "features": [
-        "flash_3d",
-        "flash_stage3d"
-      ]
-    },
-    {
       "id": 50,
       "description": "Disable VMware software renderer on older Mesa",
-      "cr_bugs": [145531, 332596],
+      "cr_bugs": [145531, 332596, 571899],
       "os": {
         "type": "linux"
       },
@@ -527,6 +441,14 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
             "value": "9.2.1"
           },
           "gl_renderer": ".*SVGA3D.*"
+        },
+        {
+          "driver_vendor": "Mesa",
+          "driver_version": {
+            "op": ">=",
+            "value": "10.1.3"
+          },
+          "gl_renderer": ".*Gallium.*llvmpipe.*"
         }
       ],
       "features": [
@@ -695,23 +617,6 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
       ]
     },
     {
-      "id": 73,
-      "description": "WebGL is buggy with the NVIDIA GeForce GT 330M, 9400, and 9400M on MacOSX earlier than 10.8",
-      "cr_bugs": [233523],
-      "os": {
-        "type": "macosx",
-        "version": {
-          "op": "<",
-          "value": "10.8"
-        }
-      },
-      "vendor_id": "0x10de",
-      "device_id": ["0x0a29", "0x0861", "0x0863"],
-      "features": [
-        "webgl"
-      ]
-    },
-    {
       "id": 74,
       "description": "GPU access is blocked if users don't have proper graphics driver installed after Windows installation",
       "cr_bugs": [248178],
@@ -786,61 +691,14 @@ LONG_STRING_CONST(
       ]
     },
     {
-      "id": 81,
-      "description": "Apple software renderer used under VMWare hangs on Mac OS 10.6 and 10.7",
-      "cr_bugs": [230931],
-      "os": {
-        "type": "macosx",
-        "version": {
-          "op": "<=",
-          "value": "10.7"
-        }
-      },
-      "vendor_id": "0x15ad",
-      "features": [
-        "all"
-      ]
-    },
-    {
       "id": 82,
       "description": "MediaCodec is still too buggy to use for encoding (b/11536167)",
+      "cr_bugs": [615108],
       "os": {
         "type": "android"
       },
       "features": [
         "accelerated_video_encode"
-      ]
-    },
-    {
-      "id": 83,
-      "description": "Samsung Galaxy NOTE is too buggy to use for video decoding",
-      "cr_bugs": [308721],
-      "os": {
-        "type": "android",
-        "version": {
-          "op": "<",
-          "value": "4.4"
-        }
-      },
-      "machine_model_name": ["GT-.*"],
-      "features": [
-        "accelerated_video_decode"
-      ]
-    },
-    {
-      "id": 85,
-      "description": "Samsung Galaxy S4 is too buggy to use for video decoding",
-      "cr_bugs": [329072],
-      "os": {
-        "type": "android",
-        "version": {
-          "op": "<",
-          "value": "4.4"
-        }
-      },
-      "machine_model_name": ["SCH-.*"],
-      "features": [
-        "accelerated_video_decode"
       ]
     },
     {
@@ -1066,22 +924,6 @@ LONG_STRING_CONST(
       ]
     },
     {
-      "id": 101,
-      "description": "Samsung Galaxy Tab is too buggy to use for video decoding",
-      "cr_bugs": [408353],
-      "os": {
-        "type": "android",
-        "version": {
-          "op": "<",
-          "value": "4.4"
-        }
-      },
-      "machine_model_name": ["SM-.*"],
-      "features": [
-        "accelerated_video_decode"
-      ]
-    },
-    {
       "id": 102,
       "description": "Accelerated 2D canvas and Ganesh broken on Galaxy Tab 2",
       "cr_bugs": [416910],
@@ -1092,23 +934,6 @@ LONG_STRING_CONST(
       "features": [
         "accelerated_2d_canvas",
         "gpu_rasterization"
-      ]
-    },
-    {
-      "id": 103,
-      "description": "Intel GM965/GL960 crash often on Mac OS 10.6",
-      "cr_bugs": [421641],
-      "os": {
-        "type": "macosx",
-        "version": {
-          "op": "=",
-          "value": "10.6"
-        }
-      },
-      "vendor_id": "0x8086",
-      "device_id": ["0x2a02"],
-      "features": [
-        "all"
       ]
     },
     {
@@ -1184,6 +1009,419 @@ LONG_STRING_CONST(
       "features": [
         "gpu_rasterization",
         "accelerated_2d_canvas"
+      ]
+    },
+    {
+      "id": 109,
+      "description": "MediaCodec on Adreno 330 / 4.2.2 doesn't always send FORMAT_CHANGED",
+      "cr_bugs": [585963],
+      "os": {
+        "type": "android",
+        "version": {
+          "op": "=",
+          "value": "4.2.2"
+        }
+      },
+      "gl_renderer": "Adreno \\(TM\\) 330",
+      "driver_version": {
+        "op": "=",
+        "value": "45.0"
+      },
+      "features": [
+        "accelerated_video_decode"
+      ]
+    },
+    {
+      "id": 110,
+      "description": "Only enable WebGL for the Mesa Gallium llvmpipe driver",
+      "cr_bugs": [571899],
+      "os": {
+        "type": "linux"
+      },
+      "driver_vendor": "Mesa",
+      "gl_vendor": "VMware.*",
+      "gl_renderer": ".*Gallium.*llvmpipe.*",
+      "features": [
+        "all",
+        {"exceptions": [
+          "webgl"
+        ]}
+      ]
+    },
+    {
+      "id": 111,
+      "description": "Apple Software Renderer used under VMWare experiences synchronization issues with GPU Raster",
+      "cr_bugs": [607829],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x15ad",
+      "multi_gpu_category": "any",
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 112,
+      "description": "Intel HD 3000 driver crashes frequently on Mac",
+      "cr_bugs": [592130],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x8086",
+      "device_id": ["0x0116", "0x0126"],
+      "features": [
+        "all"
+      ]
+    },
+    {
+      "id": 113,
+      "description": "Some GPUs on Mac can perform poorly with GPU rasterization. Disable all known Intel GPUs other than Intel 6th and 7th Generation cards, which have been tested.",
+      "cr_bugs": [613272, 614468],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x8086",
+      "device_id": ["0x0126", "0x0116", "0x191e", "0x0046", "0x1912",
+                    "0x2a02", "0x27a2", "0x2a42"],
+      "multi_gpu_category": "any",
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 114,
+      "description": "Some GPUs on Mac can perform poorly with GPU rasterization. Disable all known NVidia GPUs other than the Geforce 6xx and 7xx series, which have been tested.",
+      "cr_bugs": [613272, 614468],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x10de",
+      "device_id": ["0x0863", "0x08a0", "0x0a29", "0x0869", "0x0867",
+                    "0x08a3", "0x11a3", "0x08a2", "0x0407", "0x0861",
+                    "0x08a4", "0x0647", "0x0640", "0x0866", "0x0655",
+                    "0x062e", "0x0609", "0x1187", "0x13c2", "0x0602",
+                    "0x1180", "0x1401", "0x0fc8", "0x0611", "0x1189",
+                    "0x11c0", "0x0870", "0x0a65", "0x06dd", "0x0fc1",
+                    "0x1380", "0x11c6", "0x104a", "0x1184", "0x0fc6",
+                    "0x13c0", "0x1381", "0x05e3", "0x1183", "0x05fe",
+                    "0x1004", "0x17c8", "0x11ba", "0x0a20", "0x0f00",
+                    "0x0ca3", "0x06fd", "0x0f02", "0x0614", "0x0402",
+                    "0x13bb", "0x0401", "0x0f01", "0x1287", "0x0615",
+                    "0x1402", "0x019d", "0x0400", "0x0622", "0x06e4",
+                    "0x06cd", "0x1201", "0x100a", "0x10c3", "0x1086",
+                    "0x17c2", "0x1005", "0x0a23", "0x0de0", "0x1040",
+                    "0x0421", "0x1282", "0x0e22", "0x0e23", "0x0610",
+                    "0x11c8", "0x11c2", "0x1188", "0x0de9", "0x1200",
+                    "0x1244", "0x0dc4", "0x0df8", "0x0641", "0x0613",
+                    "0x11fa", "0x100c", "0x0de1", "0x0ca5", "0x0cb1",
+                    "0x0a6c", "0x05ff", "0x05e2", "0x0a2d", "0x06c0",
+                    "0x1288", "0x1048", "0x1081", "0x0dd8", "0x05e6",
+                    "0x11c4", "0x0605", "0x1080", "0x042f", "0x0ca2",
+                    "0x1245", "0x124d", "0x1284", "0x0191", "0x1050",
+                    "0x0ffd", "0x0193", "0x061a", "0x0422", "0x1185",
+                    "0x103a", "0x0fc2", "0x0194", "0x0df5", "0x040e",
+                    "0x065b", "0x0de2", "0x0a75", "0x0601", "0x1087",
+                    "0x019e", "0x104b", "0x107d", "0x1382", "0x042b",
+                    "0x1049", "0x0df0", "0x11a1", "0x040f", "0x0de3",
+                    "0x0fc0", "0x13d8", "0x0de4", "0x11e2", "0x0644",
+                    "0x0fd1", "0x0dfa"],
+      "multi_gpu_category": "any",
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 115,
+      "description": "Some GPUs on Mac can perform poorly with GPU rasterization. Disable all known AMD GPUs other than the R200, R300, and D series, which have been tested.",
+      "cr_bugs": [613272, 614468],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x1002",
+      "device_id": ["0x6741", "0x6740", "0x9488", "0x9583", "0x6720",
+                    "0x6760", "0x68c0", "0x68a1", "0x944a", "0x94c8",
+                    "0x6819", "0x68b8", "0x6920", "0x6938", "0x6640",
+                    "0x9588", "0x6898", "0x9440", "0x6738", "0x6739",
+                    "0x6818", "0x6758", "0x6779", "0x9490", "0x68d9",
+                    "0x683f", "0x683d", "0x6899", "0x6759", "0x68e0",
+                    "0x68d8", "0x68ba", "0x68f9", "0x9501", "0x68a0",
+                    "0x6841", "0x6840", "0x9442", "0x6658", "0x68c8",
+                    "0x68c1"],
+      "multi_gpu_category": "any",
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 116,
+      "description": "Some GPUs on Mac can perform poorly with GPU rasterization. Disable untested Virtualbox GPU.",
+      "cr_bugs": [613272, 614468],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x80ee",
+      "multi_gpu_category": "any",
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 117,
+      "description": "MediaCodec on Vivante hangs in MediaCodec often",
+      "cr_bugs": [626814],
+      "os": {
+        "type": "android",
+        "version": {
+          "op": "<=",
+          "value": "4.4.4"
+        }
+      },
+      "gl_renderer": ".*Vivante.*",
+      "features": [
+        "accelerated_video_decode"
+      ]
+    },
+    {
+      "id": 118,
+      "description": "webgl/canvas crashy on imporperly parsed vivante driver",
+      "cr_bugs": [628059],
+      "os": {
+        "type": "android",
+        "version": {
+          "op": "<=",
+          "value": "4.4.4"
+        }
+      },
+      "gl_vendor": "Vivante.*",
+      "gl_renderer": ".*PXA.*",
+      "features": [
+        "webgl",
+        "accelerated_2d_canvas"
+      ]
+    },
+    {
+      "id": 119,
+      "description": "There are display issues with GPU Raster on OSX 10.9",
+      "cr_bugs": [611310],
+      "os": {
+        "type": "macosx",
+        "version": {
+          "op": "<=",
+          "value": "10.9"
+        }
+      },
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 120,
+      "description": "VPx decoding isn't supported before Windows 10 anniversary update.",
+      "cr_bugs": [616318],
+      "os": {
+        "type": "win",
+        "version": {
+          "op": "<",
+          "value": "10.0.14393"
+        }
+      },
+      "features": [
+        "accelerated_vpx_decode"
+      ]
+    },
+    {
+      "id": 121,
+      "description": "VPx decoding is too slow on Intel Broadwell, Skylake, and CherryView",
+      "cr_bugs": [616318],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "device_id": ["0x1602", "0x1606", "0x160a", "0x160b", "0x160d",
+                    "0x160e", "0x1612", "0x1616", "0x161a", "0x161b",
+                    "0x161d", "0x161e", "0x1622", "0x1626", "0x162a",
+                    "0x162b", "0x162d", "0x162e", "0x22b0", "0x22b1",
+                    "0x22b2", "0x22b3", "0x1902", "0x1906", "0x190a",
+                    "0x190b", "0x190e", "0x1912", "0x1913", "0x1915",
+                    "0x1916", "0x1917", "0x191a", "0x191b", "0x191d",
+                    "0x191e", "0x1921", "0x1923", "0x1926", "0x1927",
+                    "0x192a", "0x192b", "0x192d", "0x1932", "0x193a",
+                    "0x193b", "0x193d"],
+      "features": [
+        "accelerated_vpx_decode"
+      ]
+    },
+    {
+      "id": 122,
+      "description": "GPU rasterization should only be enabled on NVIDIA Pascal and Maxwell, Intel Broadwell+, and AMD RX-R2 GPUs for now.",
+      "cr_bugs": [643850],
+      "os": {
+        "type": "win"
+      },
+      "features": [
+        "gpu_rasterization"
+      ],
+      "exceptions": [
+        {
+          "vendor_id": "0x10de",
+          "device_id": ["0x1340", "0x1341", "0x1344", "0x1346", "0x1347",
+                        "0x1348", "0x1349", "0x134d", "0x134e", "0x134f",
+                        "0x137a", "0x137d", "0x1380", "0x1381", "0x1382",
+                        "0x1389", "0x1390", "0x1391", "0x1392", "0x1393",
+                        "0x1398", "0x139a", "0x139b", "0x139c", "0x139d",
+                        "0x13b0", "0x13b1", "0x13b2", "0x13b9", "0x13ba",
+                        "0x13bb", "0x13bc", "0x13bd", "0x13c0", "0x13c1",
+                        "0x13c2", "0x13c3", "0x13d7", "0x13d8", "0x13d9",
+                        "0x13da", "0x13f0", "0x13f1", "0x13f2", "0x13f3",
+                        "0x13f8", "0x13f9", "0x13fa", "0x1401", "0x1402",
+                        "0x1406", "0x1407", "0x1427", "0x1430", "0x1431",
+                        "0x1617", "0x1618", "0x1619", "0x161a", "0x1667",
+                        "0x17c2", "0x17c8", "0x17f0", "0x17fd", "0x15f0",
+                        "0x15f1", "0x15f8", "0x15f9", "0x1725", "0x172e",
+                        "0x172f", "0x1b00", "0x1b01", "0x1b70", "0x1b78",
+                        "0x1b80", "0x1b81", "0x1b82", "0x1b83", "0x1bb0",
+                        "0x1bb1", "0x1bb4", "0x1c00", "0x1c01", "0x1c02",
+                        "0x1c03", "0x1c30", "0x1c70", "0x1c80", "0x1c81",
+                        "0x1c82", "0x1ca7", "0x1ca8", "0x1caa", "0x1d01"]
+
+        },
+        {
+          "os": {
+            "type": "win",
+            "version": {
+              "op": ">=",
+              "value": "8.1"
+            }
+          },
+          "vendor_id": "0x8086",
+          "device_id": ["0x1602", "0x1606", "0x160a", "0x160b", "0x160d",
+                        "0x160e", "0x1612", "0x1616", "0x161a", "0x161b",
+                        "0x161d", "0x161e", "0x1622", "0x1626", "0x162a",
+                        "0x162b", "0x162d", "0x162e", "0x22b0", "0x22b1",
+                        "0x22b2", "0x22b3", "0x1902", "0x1906", "0x190a",
+                        "0x190b", "0x190e", "0x1912", "0x1913", "0x1915",
+                        "0x1916", "0x1917", "0x191a", "0x191b", "0x191d",
+                        "0x191e", "0x1921", "0x1923", "0x1926", "0x1927",
+                        "0x192a", "0x192b", "0x192d", "0x1932", "0x193a",
+                        "0x193b", "0x193d", "0x0a84", "0x1a84", "0x1a85",
+                        "0x5a84", "0x5a85", "0x5916", "0x5913", "0x5906",
+                        "0x5926", "0x5921", "0x5915", "0x590e", "0x591e",
+                        "0x5912", "0x5917", "0x5902", "0x591b", "0x593b",
+                        "0x590b", "0x591a", "0x590a", "0x591d", "0x5908",
+                        "0x5923", "0x5927"]
+        },
+        {
+          "os": {
+            "type": "win",
+            "version": {
+              "op": ">=",
+              "value": "8.1"
+            }
+          },
+          "vendor_id": "0x1002",
+          "device_id": ["0x1309", "0x130a", "0x130b", "0x130c", "0x130d",
+                        "0x130e", "0x130f", "0x1313", "0x1315", "0x1316",
+                        "0x1318", "0x131b", "0x131c", "0x131d", "0x6600",
+                        "0x6604", "0x6605", "0x6610", "0x6611", "0x6617",
+                        "0x6640", "0x6646", "0x6647", "0x6647", "0x6658",
+                        "0x665d", "0x665f", "0x6660", "0x6663", "0x6664",
+                        "0x6665", "0x6667", "0x67b0", "0x67b1", "0x67b9",
+                        "0x67df", "0x67ef", "0x6810", "0x6811", "0x6820",
+                        "0x6821", "0x682b", "0x6835", "0x6900", "0x6901",
+                        "0x6907", "0x6920", "0x6921", "0x6938", "0x6939",
+                        "0x7300", "0x9851", "0x9852", "0x9853", "0x9854",
+                        "0x9855", "0x9856", "0x9874", "0x98e4"]
+        }
+      ]
+    },
+    {
+      "id": 123,
+      "description": "Accelerated VPx decoding is hanging on some videos.",
+      "cr_bugs": [654111],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "driver_version": {
+        "op": "<",
+        "value": "21.20.16.4542"
+      },
+      "features": [
+        "accelerated_vpx_decode"
+      ]
+    },
+    {
+      "id": 124,
+      "description": "New AMD drivers have rendering glitches with GPU Rasterization",
+      "cr_bugs": [653538],
+      "os" : {
+        "type": "win"
+      },
+      "vendor_id": "0x1002",
+      "driver_version": {
+        "op": ">",
+        "value": "16.200.1035.1001"
+      },
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+)  // String split to avoid MSVC char limit.
+LONG_STRING_CONST(
+    {
+      "id": 125,
+      "description": "VirtualBox driver is unstable on linux.",
+      "cr_bugs": [656572, 658668],
+      "os": {
+        "type": "linux"
+      },
+      "vendor_id": "0x80ee",
+      "device_id": ["0xbeef"],
+      "features": [
+        "all"
+      ]
+    },
+    {
+      "id": 126,
+      "description": "Don't allow ES3 on Mac core profile < 4.1",
+      "cr_bugs": [295792],
+      "os": {
+        "type": "macosx"
+      },
+      "gl_version": {
+        "op": "<",
+        "value": "4.1"
+      },
+      "features": [
+        "webgl2"
+      ]
+    },
+    {
+      "id": 128,
+      "description": "WebGL 2 is not yet ready on Android",
+      "cr_bugs": [295792, 641635],
+      "os": {
+        "type": "android"
+      },
+      "features": [
+        "webgl2"
+      ]
+    },
+    {
+      "id":129,
+      "description": "Intel drivers are buggy on Linux 2.x",
+      "cr_bugs": [662909],
+      "os": {
+        "type": "linux",
+        "version": {
+          "op": "<",
+          "value": "3.0"
+        }
+      },
+      "vendor_id": "0x8086",
+      "features": [
+        "all"
       ]
     }
   ]

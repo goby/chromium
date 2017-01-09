@@ -14,7 +14,7 @@ using ui::MotionEvent;
 
 namespace content {
 namespace {
-scoped_ptr<GestureDetector> CreateGestureDetector(
+std::unique_ptr<GestureDetector> CreateGestureDetector(
     ui::GestureListener* listener) {
   GestureDetector::Config config =
       ui::GetGestureProviderConfig(
@@ -25,12 +25,12 @@ scoped_ptr<GestureDetector> CreateGestureDetector(
 
   // Doubletap, showpress and longpress detection are not required, and
   // should be explicitly disabled for efficiency.
-  scoped_ptr<ui::GestureDetector> detector(
+  std::unique_ptr<ui::GestureDetector> detector(
       new ui::GestureDetector(config, listener, null_double_tap_listener));
   detector->set_longpress_enabled(false);
   detector->set_showpress_enabled(false);
 
-  return detector.Pass();
+  return detector;
 }
 
 }  // namespace
@@ -89,6 +89,11 @@ bool StylusTextSelector::OnTouchEvent(const MotionEvent& event) {
     case MotionEvent::ACTION_POINTER_DOWN:
       break;
     case MotionEvent::ACTION_NONE:
+    case MotionEvent::ACTION_HOVER_ENTER:
+    case MotionEvent::ACTION_HOVER_EXIT:
+    case MotionEvent::ACTION_HOVER_MOVE:
+    case MotionEvent::ACTION_BUTTON_PRESS:
+    case MotionEvent::ACTION_BUTTON_RELEASE:
       NOTREACHED();
       break;
   }
@@ -112,6 +117,7 @@ bool StylusTextSelector::OnSingleTapUp(const MotionEvent& e, int tap_count) {
 
 bool StylusTextSelector::OnScroll(const MotionEvent& e1,
                                   const MotionEvent& e2,
+                                  const MotionEvent& secondary_pointer_down,
                                   float distance_x,
                                   float distance_y) {
   DCHECK(text_selection_triggered_);

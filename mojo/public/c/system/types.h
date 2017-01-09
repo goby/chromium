@@ -182,4 +182,38 @@ struct MOJO_ALIGNAS(4) MojoHandleSignalsState {
 MOJO_STATIC_ASSERT(sizeof(MojoHandleSignalsState) == 8,
                    "MojoHandleSignalsState has wrong size");
 
+// |MojoWatchNotificationFlags|: Passed to a callback invoked as a result of
+// signals being raised on a handle watched by |MojoWatch()|. May take the
+// following values:
+//   |MOJO_WATCH_NOTIFICATION_FLAG_FROM_SYSTEM| - The callback is being invoked
+//       as a result of a system-level event rather than a direct API call from
+//       user code. This may be used as an indication that user code is safe to
+//       call without fear of reentry.
+
+typedef uint32_t MojoWatchNotificationFlags;
+
+#ifdef __cplusplus
+const MojoWatchNotificationFlags MOJO_WATCH_NOTIFICATION_FLAG_NONE = 0;
+const MojoWatchNotificationFlags MOJO_WATCH_NOTIFICATION_FLAG_FROM_SYSTEM =
+    1 << 0;
+#else
+#define MOJO_WATCH_NOTIFICATION_FLAG_NONE ((MojoWatchNotificationFlags)0)
+#define MOJO_WATCH_NOTIFICATION_FLAG_FROM_SYSTEM \
+    ((MojoWatchNotificationFlags)1 << 0);
+#endif
+
+// |MojoPropertyType|: Property types that can be passed to |MojoGetProperty()|
+// to retrieve system properties. May take the following values:
+//   |MOJO_PROPERTY_TYPE_SYNC_CALL_ALLOWED| - Whether making synchronous calls
+//       (i.e., blocking to wait for a response to an outbound message) is
+//       allowed. The property value is of boolean type. If the value is true,
+//       users should refrain from making sync calls.
+typedef uint32_t MojoPropertyType;
+
+#ifdef __cplusplus
+const MojoPropertyType MOJO_PROPERTY_TYPE_SYNC_CALL_ALLOWED = 0;
+#else
+#define MOJO_PROPERTY_TYPE_SYNC_CALL_ALLOWED ((MojoPropertyType)0)
+#endif
+
 #endif  // MOJO_PUBLIC_C_SYSTEM_TYPES_H_

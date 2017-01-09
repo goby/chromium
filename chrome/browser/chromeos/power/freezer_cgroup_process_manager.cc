@@ -10,6 +10,7 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/public/browser/browser_thread.h"
@@ -31,7 +32,7 @@ class FreezerCgroupProcessManager::FileWorker {
  public:
   // Called on UI thread.
   explicit FileWorker(scoped_refptr<base::SequencedTaskRunner> file_thread)
-      : ui_thread_(content::BrowserThread::GetMessageLoopProxyForThread(
+      : ui_thread_(content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::UI)),
         file_thread_(file_thread) {
     DCHECK(ui_thread_->RunsTasksOnCurrentThread());
@@ -131,7 +132,7 @@ class FreezerCgroupProcessManager::FileWorker {
 };
 
 FreezerCgroupProcessManager::FreezerCgroupProcessManager()
-    : file_thread_(content::BrowserThread::GetMessageLoopProxyForThread(
+    : file_thread_(content::BrowserThread::GetTaskRunnerForThread(
           content::BrowserThread::FILE)),
       file_worker_(new FileWorker(file_thread_)) {
   file_thread_->PostTask(FROM_HERE,

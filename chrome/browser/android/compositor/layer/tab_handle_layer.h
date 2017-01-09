@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_HANDLE_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_HANDLE_LAYER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "cc/layers/nine_patch_layer.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/ui_resource_layer.h"
@@ -22,7 +23,6 @@ namespace ui {
 class ResourceManager;
 }
 
-namespace chrome {
 namespace android {
 
 class LayerTitleCache;
@@ -70,6 +70,5 @@ class TabHandleLayer : public Layer {
 };
 
 }  // namespace android
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_TAB_HANDLE_LAYER_H_

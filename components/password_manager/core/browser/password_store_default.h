@@ -5,10 +5,11 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_STORE_DEFAULT_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_STORE_DEFAULT_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/password_manager/core/browser/login_database.h"
 #include "components/password_manager/core/browser/password_store.h"
 
@@ -23,7 +24,7 @@ class PasswordStoreDefault : public PasswordStore {
   PasswordStoreDefault(
       scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
       scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner,
-      scoped_ptr<LoginDatabase> login_db);
+      std::unique_ptr<LoginDatabase> login_db);
 
   bool Init(const syncer::SyncableService::StartSyncFlare& flare) override;
 
@@ -47,8 +48,8 @@ class PasswordStoreDefault : public PasswordStore {
       const autofill::PasswordForm& form) override;
   PasswordStoreChangeList RemoveLoginImpl(
       const autofill::PasswordForm& form) override;
-  PasswordStoreChangeList RemoveLoginsByOriginAndTimeImpl(
-      const url::Origin& origin,
+  PasswordStoreChangeList RemoveLoginsByURLAndTimeImpl(
+      const base::Callback<bool(const GURL&)>& url_filter,
       base::Time delete_begin,
       base::Time delete_end) override;
   PasswordStoreChangeList RemoveLoginsCreatedBetweenImpl(
@@ -57,25 +58,28 @@ class PasswordStoreDefault : public PasswordStore {
   PasswordStoreChangeList RemoveLoginsSyncedBetweenImpl(
       base::Time delete_begin,
       base::Time delete_end) override;
-  bool RemoveStatisticsCreatedBetweenImpl(base::Time delete_begin,
-                                          base::Time delete_end) override;
-  ScopedVector<autofill::PasswordForm> FillMatchingLogins(
-      const autofill::PasswordForm& form,
-      AuthorizationPromptPolicy prompt_policy) override;
+  PasswordStoreChangeList DisableAutoSignInForOriginsImpl(
+      const base::Callback<bool(const GURL&)>& origin_filter) override;
+  bool RemoveStatisticsByOriginAndTimeImpl(
+      const base::Callback<bool(const GURL&)>& origin_filter,
+      base::Time delete_begin,
+      base::Time delete_end) override;
+  std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
+      const FormDigest& form) override;
   bool FillAutofillableLogins(
-      ScopedVector<autofill::PasswordForm>* forms) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool FillBlacklistLogins(
-      ScopedVector<autofill::PasswordForm>* forms) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   void AddSiteStatsImpl(const InteractionsStats& stats) override;
   void RemoveSiteStatsImpl(const GURL& origin_domain) override;
-  std::vector<scoped_ptr<InteractionsStats>> GetSiteStatsImpl(
+  std::vector<InteractionsStats> GetSiteStatsImpl(
       const GURL& origin_domain) override;
 
   inline bool DeleteAndRecreateDatabaseFile() {
     return login_db_->DeleteAndRecreateDatabaseFile();
   }
 
-  void set_login_db(scoped_ptr<password_manager::LoginDatabase> login_db) {
+  void set_login_db(std::unique_ptr<password_manager::LoginDatabase> login_db) {
     login_db_.swap(login_db);
   }
 
@@ -87,7 +91,7 @@ class PasswordStoreDefault : public PasswordStore {
   // in an uninitialized state, so as to allow injecting mocks, then Init() is
   // called on the DB thread in a deferred manner. If opening the DB fails,
   // |login_db_| will be reset and stay NULL for the lifetime of |this|.
-  scoped_ptr<LoginDatabase> login_db_;
+  std::unique_ptr<LoginDatabase> login_db_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordStoreDefault);
 };

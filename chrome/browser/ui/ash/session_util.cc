@@ -4,34 +4,31 @@
 
 #include "chrome/browser/ui/ash/session_util.h"
 
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "ash/content/shell_content_state.h"
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
+#include "ash/resources/grit/ash_resources.h"
+#include "build/build_config.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_context.h"
-#include "grit/ash_resources.h"
 #include "ui/aura/window.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia_operations.h"
 
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "components/user_manager/user_manager.h"
-#endif
-
 content::BrowserContext* GetActiveBrowserContext() {
-#if defined(OS_CHROMEOS)
   DCHECK(user_manager::UserManager::Get()->GetLoggedInUsers().size());
-#endif
   return ProfileManager::GetActiveUserProfile();
 }
 
 bool CanShowWindowForUser(
     aura::Window* window,
     const GetActiveBrowserContextCallback& get_context_callback) {
+  DCHECK(window);
   ash::SessionStateDelegate* delegate =
-      ash::Shell::GetInstance()->session_state_delegate();
+      ash::WmShell::Get()->GetSessionStateDelegate();
   if (delegate->NumberOfLoggedInUsers() > 1) {
     content::BrowserContext* active_browser_context =
         get_context_callback.Run();
@@ -50,19 +47,7 @@ bool CanShowWindowForUser(
   return true;
 }
 
-namespace {
-#if defined(OS_CHROMEOS)
-user_manager::UserInfo* GetUserInfoForContext(
-    content::BrowserContext* context) {
-  return chromeos::ProfileHelper::Get()->GetUserByProfile(
-      Profile::FromBrowserContext(context));
-}
-#endif
-
-}  // namespace
-
 gfx::ImageSkia GetAvatarImageForContext(content::BrowserContext* context) {
-#if defined(OS_CHROMEOS)
   static const gfx::ImageSkia* holder =
       ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
           IDR_AVATAR_HOLDER);
@@ -70,13 +55,14 @@ gfx::ImageSkia GetAvatarImageForContext(content::BrowserContext* context) {
       ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
           IDR_AVATAR_HOLDER_MASK);
 
-  gfx::ImageSkia user_image = GetUserInfoForContext(context)->GetImage();
+  gfx::ImageSkia user_image =
+      chromeos::ProfileHelper::Get()
+          ->GetUserByProfile(Profile::FromBrowserContext(context))
+          ->GetImage();
+
   gfx::ImageSkia resized = gfx::ImageSkiaOperations::CreateResizedImage(
       user_image, skia::ImageOperations::RESIZE_BEST, holder->size());
   gfx::ImageSkia masked =
       gfx::ImageSkiaOperations::CreateMaskedImage(resized, *holder_mask);
   return gfx::ImageSkiaOperations::CreateSuperimposedImage(*holder, masked);
-#else
-  return gfx::ImageSkia();
-#endif
 }

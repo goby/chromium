@@ -4,10 +4,12 @@
 
 #include "chrome/browser/extensions/api/file_system/request_file_system_dialog_view.h"
 
+#include <stddef.h>
+
 #include <cstdlib>
 
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "content/public/browser/web_contents.h"
@@ -40,7 +42,7 @@ void RequestFileSystemDialogView::ShowDialog(
 RequestFileSystemDialogView::~RequestFileSystemDialogView() {
 }
 
-base::string16 RequestFileSystemDialogView::GetDialogTitle() const {
+base::string16 RequestFileSystemDialogView::GetAccessibleWindowTitle() const {
   return l10n_util::GetStringUTF16(
       IDS_FILE_SYSTEM_REQUEST_FILE_SYSTEM_DIALOG_TITLE);
 }
@@ -119,7 +121,7 @@ RequestFileSystemDialogView::RequestFileSystemDialogView(
 
   views::StyledLabel* const label = new views::StyledLabel(message, nullptr);
   views::StyledLabel::RangeStyleInfo bold_style;
-  bold_style.font_style = gfx::Font::BOLD;
+  bold_style.weight = gfx::Font::Weight::BOLD;
 
   DCHECK_EQ(2u, placeholder_offsets.size());
   label->AddStyleRange(gfx::Range(placeholder_offsets[0],

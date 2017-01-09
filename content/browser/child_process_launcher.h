@@ -5,22 +5,49 @@
 #ifndef CONTENT_BROWSER_CHILD_PROCESS_LAUNCHER_H_
 #define CONTENT_BROWSER_CHILD_PROCESS_LAUNCHER_H_
 
-#include "base/basictypes.h"
 #include "base/files/scoped_file.h"
+#include "base/macros.h"
+#include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/threading/non_thread_safe.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/sandboxed_process_launcher_delegate.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
+
+#if defined(OS_WIN)
+#include "sandbox/win/src/sandbox_types.h"
+#endif
 
 namespace base {
 class CommandLine;
 }
 
 namespace content {
-class SandboxedProcessLauncherDelegate;
+
+// Note: These codes are listed in a histogram and any new codes should be added
+// at the end.
+enum LaunchResultCode {
+  // Launch start code, to not overlap with sandbox::ResultCode.
+  LAUNCH_RESULT_START = 1001,
+  // Launch success.
+  LAUNCH_RESULT_SUCCESS,
+  // Generic launch failure.
+  LAUNCH_RESULT_FAILURE,
+  // Placeholder for last item of the enum.
+  LAUNCH_RESULT_CODE_LAST_CODE
+};
+
+#if defined(OS_WIN)
+static_assert(static_cast<int>(LAUNCH_RESULT_START) >
+                  static_cast<int>(sandbox::SBOX_ERROR_LAST),
+              "LaunchResultCode must not overlap with sandbox::ResultCode");
+#endif
 
 // Launches a process asynchronously and notifies the client of the process
 // handle when it's available.  It's used to avoid blocking the calling thread
@@ -33,7 +60,7 @@ class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
     // constructed on.
     virtual void OnProcessLaunched() = 0;
 
-    virtual void OnProcessLaunchFailed() {};
+    virtual void OnProcessLaunchFailed(int error_code) {};
 
    protected:
     virtual ~Client() {}
@@ -44,11 +71,17 @@ class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
   // the callback won't be called.  If the process is still running by the time
   // this object destructs, it will be terminated.
   // Takes ownership of cmd_line.
+  //
+  // If |process_error_callback| is provided, it will be called if a Mojo error
+  // is encountered when processing messages from the child process. This
+  // callback must be safe to call from any thread.
   ChildProcessLauncher(
       SandboxedProcessLauncherDelegate* delegate,
       base::CommandLine* cmd_line,
       int child_process_id,
       Client* client,
+      const std::string& mojo_child_token,
+      const mojo::edk::ProcessErrorCallback& process_error_callback,
       bool terminate_on_shutdown = true);
   ~ChildProcessLauncher();
 
@@ -94,38 +127,34 @@ class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
   // client went away.
   static void DidLaunch(base::WeakPtr<ChildProcessLauncher> instance,
                         bool terminate_on_shutdown,
-                        bool zygote,
+                        mojo::edk::ScopedPlatformHandle server_handle,
+                        ZygoteHandle zygote,
 #if defined(OS_ANDROID)
-                        base::ScopedFD ipcfd,
+                        base::ScopedFD mojo_fd,
 #endif
-                        base::Process process);
+                        base::Process process,
+                        int error_code);
 
   // Notifies the client about the result of the operation.
-  void Notify(bool zygote,
-#if defined(OS_ANDROID)
-              base::ScopedFD ipcfd,
-#endif
-              base::Process process);
-
-#if defined(MOJO_SHELL_CLIENT)
-  // When this process is run from an external Mojo shell, this function will
-  // create a channel and pass one end to the spawned process and register the
-  // other end with the external shell, allowing the spawned process to bind an
-  // Application request from the shell.
-  void CreateMojoShellChannel(base::CommandLine* command_line,
-                              int child_process_id);
-#endif
+  void Notify(ZygoteHandle zygote,
+              mojo::edk::ScopedPlatformHandle server_handle,
+              base::Process process,
+              int error_code);
 
   Client* client_;
   BrowserThread::ID client_thread_id_;
   base::Process process_;
   base::TerminationStatus termination_status_;
   int exit_code_;
-  bool zygote_;
+  ZygoteHandle zygote_;
   bool starting_;
+  const mojo::edk::ProcessErrorCallback process_error_callback_;
+
   // Controls whether the child process should be terminated on browser
   // shutdown. Default behavior is to terminate the child.
   const bool terminate_child_on_shutdown_;
+
+  const std::string mojo_child_token_;
 
   base::WeakPtrFactory<ChildProcessLauncher> weak_factory_;
 

@@ -15,21 +15,23 @@ import android.widget.ListView;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.SuppressFBWarnings;
-import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 
+import java.util.concurrent.Callable;
+
 /**
  * Tests AppMenu popup
  */
+@RetryOnFailure
 public class AppMenuTest extends ChromeActivityTestCaseBase<ChromeActivity> {
     private static final String TEST_URL = UrlUtils.encodeHtmlDataUri("<html>poit.</html>");
 
@@ -85,26 +87,25 @@ public class AppMenuTest extends ChromeActivityTestCaseBase<ChromeActivity> {
         super.setUp();
 
         showAppMenuAndAssertMenuShown();
-        mAppMenu = getActivity().getAppMenuHandler().getAppMenuForTest();
+        mAppMenu = getActivity().getAppMenuHandler().getAppMenu();
         ThreadUtils.runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 mAppMenu.getPopup().getListView().setSelection(0);
             }
         });
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(Criteria.equals(0, new Callable<Integer>() {
             @Override
-            public boolean isSatisfied() {
-                return getCurrentFocusedRow() == 0;
+            public Integer call() {
+                return getCurrentFocusedRow();
             }
-        });
+        }));
         getInstrumentation().waitForIdleSync();
     }
 
     /**
      * Verify opening a new tab from the menu.
      */
-    @CommandLineFlags.Add(ChromeSwitches.DISABLE_DOCUMENT_MODE)
     @SmallTest
     @Feature({"Browser", "Main"})
     public void testMenuNewTab() throws InterruptedException {
@@ -195,14 +196,13 @@ public class AppMenuTest extends ChromeActivityTestCaseBase<ChromeActivity> {
     /*
     @SmallTest
     @Feature({"Browser", "Main"})
-    crbug.com/458193
     */
-    @DisabledTest
+    @DisabledTest(message = "crbug.com/458193")
     public void testChangingOrientationHidesMenu() throws InterruptedException {
         getActivity().setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         showAppMenuAndAssertMenuShown();
         getActivity().setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        CriteriaHelper.pollForCriteria(new Criteria("AppMenu did not dismiss") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("AppMenu did not dismiss") {
             @Override
             public boolean isSatisfied() {
                 return !mAppMenuHandler.isAppMenuShowing();
@@ -217,7 +217,7 @@ public class AppMenuTest extends ChromeActivityTestCaseBase<ChromeActivity> {
                 mAppMenuHandler.showAppMenu(null, false);
             }
         });
-        CriteriaHelper.pollForCriteria(new Criteria("AppMenu did not show") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("AppMenu did not show") {
             @Override
             public boolean isSatisfied() {
                 return mAppMenuHandler.isAppMenuShowing();
@@ -228,7 +228,7 @@ public class AppMenuTest extends ChromeActivityTestCaseBase<ChromeActivity> {
     private void hitEnterAndAssertAppMenuDismissed() throws InterruptedException {
         getInstrumentation().waitForIdleSync();
         pressKey(KeyEvent.KEYCODE_ENTER);
-        CriteriaHelper.pollForCriteria(new Criteria("AppMenu did not dismiss") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("AppMenu did not dismiss") {
             @Override
             public boolean isSatisfied() {
                 return !mAppMenuHandler.isAppMenuShowing();
@@ -243,24 +243,24 @@ public class AppMenuTest extends ChromeActivityTestCaseBase<ChromeActivity> {
         for (int index = getCurrentFocusedRow(); index != end; index += increment) {
             pressKey(towardsTop ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN);
             final int expectedPosition = index + increment;
-            CriteriaHelper.pollForCriteria(
-                    new Criteria("Focus did not move to the next menu item") {
+            CriteriaHelper.pollInstrumentationThread(
+                    Criteria.equals(expectedPosition, new Callable<Integer>() {
                         @Override
-                        public boolean isSatisfied() {
-                            return getCurrentFocusedRow() == expectedPosition;
+                        public Integer call() {
+                            return getCurrentFocusedRow();
                         }
-                    });
+                    }));
         }
 
         // Try moving past it by one.
         if (movePast) {
             pressKey(towardsTop ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN);
-            CriteriaHelper.pollForCriteria(new Criteria("Focus moved past the edge menu item") {
+            CriteriaHelper.pollInstrumentationThread(Criteria.equals(end, new Callable<Integer>() {
                 @Override
-                public boolean isSatisfied() {
-                    return getCurrentFocusedRow() == end;
+                public Integer call() {
+                    return getCurrentFocusedRow();
                 }
-            });
+            }));
         }
 
         // The menu should stay open.

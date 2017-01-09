@@ -4,7 +4,9 @@
 
 #include "components/omnibox/browser/autocomplete_input.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -23,11 +25,11 @@ TEST(AutocompleteInputTest, InputType) {
     const metrics::OmniboxInputType::Type type;
   } input_cases[] = {
     { base::string16(), metrics::OmniboxInputType::INVALID },
-    { ASCIIToUTF16("?"), metrics::OmniboxInputType::FORCED_QUERY },
-    { ASCIIToUTF16("?foo"), metrics::OmniboxInputType::FORCED_QUERY },
-    { ASCIIToUTF16("?foo bar"), metrics::OmniboxInputType::FORCED_QUERY },
+    { ASCIIToUTF16("?"), metrics::OmniboxInputType::QUERY },
+    { ASCIIToUTF16("?foo"), metrics::OmniboxInputType::QUERY },
+    { ASCIIToUTF16("?foo bar"), metrics::OmniboxInputType::QUERY },
     { ASCIIToUTF16("?http://foo.com/bar"),
-      metrics::OmniboxInputType::FORCED_QUERY },
+      metrics::OmniboxInputType::QUERY },
     { ASCIIToUTF16("foo"), metrics::OmniboxInputType::UNKNOWN },
     { ASCIIToUTF16("localhost"), metrics::OmniboxInputType::URL },
     { ASCIIToUTF16("foo._"), metrics::OmniboxInputType::QUERY },
@@ -43,7 +45,7 @@ TEST(AutocompleteInputTest, InputType) {
     { ASCIIToUTF16("foo/bar/"), metrics::OmniboxInputType::URL },
     { ASCIIToUTF16("foo/bar baz\\"), metrics::OmniboxInputType::URL },
     { ASCIIToUTF16("foo.com/bar"), metrics::OmniboxInputType::URL },
-    { ASCIIToUTF16("foo;bar"), metrics::OmniboxInputType::UNKNOWN },
+    { ASCIIToUTF16("foo;bar"), metrics::OmniboxInputType::QUERY },
     { ASCIIToUTF16("foo/bar baz"), metrics::OmniboxInputType::UNKNOWN },
     { ASCIIToUTF16("foo bar.com"), metrics::OmniboxInputType::QUERY },
     { ASCIIToUTF16("foo bar"), metrics::OmniboxInputType::QUERY },
@@ -83,10 +85,9 @@ TEST(AutocompleteInputTest, InputType) {
     { ASCIIToUTF16("user@foo:45"), metrics::OmniboxInputType::URL },
     { ASCIIToUTF16("user:pass@1.2:45"), metrics::OmniboxInputType::URL },
     { ASCIIToUTF16("host?query"), metrics::OmniboxInputType::UNKNOWN },
-    { ASCIIToUTF16("host#ref"), metrics::OmniboxInputType::QUERY },
-    { ASCIIToUTF16("host#"), metrics::OmniboxInputType::QUERY },
-    { ASCIIToUTF16("host#ref"), metrics::OmniboxInputType::QUERY },
-    { ASCIIToUTF16("host# ref"), metrics::OmniboxInputType::QUERY },
+    { ASCIIToUTF16("host#"), metrics::OmniboxInputType::UNKNOWN },
+    { ASCIIToUTF16("host#ref"), metrics::OmniboxInputType::UNKNOWN },
+    { ASCIIToUTF16("host# ref"), metrics::OmniboxInputType::UNKNOWN },
     { ASCIIToUTF16("host/#ref"), metrics::OmniboxInputType::URL },
     { ASCIIToUTF16("host/?#ref"), metrics::OmniboxInputType::URL },
     { ASCIIToUTF16("host/?#"), metrics::OmniboxInputType::URL },
@@ -160,8 +161,8 @@ TEST(AutocompleteInputTest, InputType) {
     { ASCIIToUTF16("chrome-search://"), metrics::OmniboxInputType::QUERY },
     { ASCIIToUTF16("chrome-devtools:"), metrics::OmniboxInputType::QUERY },
     { ASCIIToUTF16("about://f;"), metrics::OmniboxInputType::QUERY },
-    { ASCIIToUTF16("://w"), metrics::OmniboxInputType::QUERY },
-    { ASCIIToUTF16(":w"), metrics::OmniboxInputType::QUERY },
+    { ASCIIToUTF16("://w"), metrics::OmniboxInputType::UNKNOWN },
+    { ASCIIToUTF16(":w"), metrics::OmniboxInputType::UNKNOWN },
     { base::WideToUTF16(L".\u062A"), metrics::OmniboxInputType::UNKNOWN },
   };
 
@@ -285,19 +286,22 @@ TEST(AutocompleteInputTest, InputTypeWithCursorPosition) {
     { ASCIIToUTF16("foo bar"), base::string16::npos,
       ASCIIToUTF16("foo bar"), base::string16::npos },
 
-    // regular case, no changes.
+    // Regular case, no changes.
     { ASCIIToUTF16("foo bar"), 3, ASCIIToUTF16("foo bar"), 3 },
 
-    // extra leading space.
+    // Extra leading space.
     { ASCIIToUTF16("  foo bar"), 3, ASCIIToUTF16("foo bar"), 1 },
     { ASCIIToUTF16("      foo bar"), 3, ASCIIToUTF16("foo bar"), 0 },
     { ASCIIToUTF16("      foo bar   "), 2, ASCIIToUTF16("foo bar   "), 0 },
 
-    // forced query.
-    { ASCIIToUTF16("?foo bar"), 2, ASCIIToUTF16("foo bar"), 1 },
-    { ASCIIToUTF16("  ?foo bar"), 4, ASCIIToUTF16("foo bar"), 1 },
-    { ASCIIToUTF16("?  foo bar"), 4, ASCIIToUTF16("foo bar"), 1 },
-    { ASCIIToUTF16("  ?  foo bar"), 6, ASCIIToUTF16("foo bar"), 1 },
+    // A leading '?' used to be a magic character indicating the following
+    // input should be treated as a "forced query", but now if such a string
+    // reaches the AutocompleteInput parser the '?' should just be treated like
+    // a normal character.
+    { ASCIIToUTF16("?foo bar"), 2, ASCIIToUTF16("?foo bar"), 2 },
+    { ASCIIToUTF16("  ?foo bar"), 4, ASCIIToUTF16("?foo bar"), 2 },
+    { ASCIIToUTF16("?  foo bar"), 4, ASCIIToUTF16("?  foo bar"), 4 },
+    { ASCIIToUTF16("  ?  foo bar"), 6, ASCIIToUTF16("?  foo bar"), 4 },
   };
 
   for (size_t i = 0; i < arraysize(input_cases); ++i) {

@@ -5,10 +5,11 @@
 #include "chromeos/dbus/shill_ipconfig_client.h"
 
 #include <map>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/values.h"
 #include "chromeos/dbus/shill_property_changed_observer.h"
@@ -60,7 +61,7 @@ class ShillIPConfigClientImpl : public ShillIPConfigClient {
   void Init(dbus::Bus* bus) override { bus_ = bus; }
 
  private:
-  using HelperMap = std::map<std::string, scoped_ptr<ShillClientHelper>>;
+  using HelperMap = std::map<std::string, std::unique_ptr<ShillClientHelper>>;
 
   // Returns the corresponding ShillClientHelper for the profile.
   ShillClientHelper* GetHelper(const dbus::ObjectPath& ipconfig_path) {
@@ -71,7 +72,8 @@ class ShillIPConfigClientImpl : public ShillIPConfigClient {
     // There is no helper for the profile, create it.
     dbus::ObjectProxy* object_proxy =
         bus_->GetObjectProxy(shill::kFlimflamServiceName, ipconfig_path);
-    scoped_ptr<ShillClientHelper> helper(new ShillClientHelper(object_proxy));
+    std::unique_ptr<ShillClientHelper> helper(
+        new ShillClientHelper(object_proxy));
     helper->MonitorPropertyChanged(shill::kFlimflamIPConfigInterface);
     ShillClientHelper* helper_ptr = helper.get();
     helpers_[ipconfig_path.value()] = std::move(helper);
@@ -114,7 +116,7 @@ void ShillIPConfigClientImpl::SetProperty(
   writer.AppendString(name);
   // IPConfig supports writing basic type and string array properties.
   switch (value.GetType()) {
-    case base::Value::TYPE_LIST: {
+    case base::Value::Type::LIST: {
       const base::ListValue* list_value = NULL;
       value.GetAsList(&list_value);
       dbus::MessageWriter variant_writer(NULL);
@@ -124,7 +126,7 @@ void ShillIPConfigClientImpl::SetProperty(
       for (base::ListValue::const_iterator it = list_value->begin();
            it != list_value->end();
            ++it) {
-        DLOG_IF(ERROR, (*it)->GetType() != base::Value::TYPE_STRING)
+        DLOG_IF(ERROR, (*it)->GetType() != base::Value::Type::STRING)
             << "Unexpected type " << (*it)->GetType();
         std::string str;
         (*it)->GetAsString(&str);
@@ -133,10 +135,10 @@ void ShillIPConfigClientImpl::SetProperty(
       variant_writer.CloseContainer(&array_writer);
       writer.CloseContainer(&variant_writer);
     }
-    case base::Value::TYPE_BOOLEAN:
-    case base::Value::TYPE_INTEGER:
-    case base::Value::TYPE_DOUBLE:
-    case base::Value::TYPE_STRING:
+    case base::Value::Type::BOOLEAN:
+    case base::Value::Type::INTEGER:
+    case base::Value::Type::DOUBLE:
+    case base::Value::Type::STRING:
       dbus::AppendBasicTypeValueDataAsVariant(&writer, value);
       break;
     default:

@@ -4,20 +4,94 @@
 
 package org.chromium.net;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.net.impl.CronetEngineBuilderImpl;
+import org.chromium.net.impl.CronetUrlRequest;
+import org.chromium.net.impl.CronetUrlRequestContext;
 
 /**
  * Utilities for Cronet testing
  */
 @JNINamespace("cronet")
 public class CronetTestUtil {
+    static final String SDCH_FAKE_HOST = "fake.sdch.domain";
+    // QUIC test domain must match the certificate used
+    // (quic_test.example.com.crt and quic_test.example.com.key.pkcs8), and
+    // the file served (
+    // components/cronet/android/test/assets/test/quic_data/simple.txt).
+    static final String QUIC_FAKE_HOST = "test.example.com";
+    private static final String[] TEST_DOMAINS = {SDCH_FAKE_HOST, QUIC_FAKE_HOST};
+    private static final String LOOPBACK_ADDRESS = "127.0.0.1";
+
     /**
-     * Start QUIC server on local host.
-     * @return non-zero QUIC server port number on success or 0 if failed.
+     * Generates rules for customized DNS mapping for testing hostnames used by test servers,
+     * namely:
+     * <ul>
+     * <li>{@link QuicTestServer#getServerHost}</li>
+     * <li>{@link NativeTestServer#getSdchURL}</li>'s host
+     * </ul>
+     * Maps the test hostnames to 127.0.0.1.
      */
-    public static int startQuicServer() {
-        return nativeStartQuicServer();
+    public static JSONObject generateHostResolverRules() throws JSONException {
+        return generateHostResolverRules(LOOPBACK_ADDRESS);
     }
 
-    private static native int nativeStartQuicServer();
+    /**
+     * Generates rules for customized DNS mapping for testing hostnames used by test servers,
+     * namely:
+     * <ul>
+     * <li>{@link QuicTestServer#getServerHost}</li>
+     * <li>{@link NativeTestServer#getSdchURL}</li>'s host
+     * </ul>
+     * @param destination host to map to
+     */
+    public static JSONObject generateHostResolverRules(String destination) throws JSONException {
+        StringBuilder rules = new StringBuilder();
+        for (String domain : TEST_DOMAINS) {
+            rules.append("MAP " + domain + " " + destination + ",");
+        }
+        return new JSONObject().put("host_resolver_rules", rules);
+    }
+
+    /**
+     * Prepare {@code cronetEngine}'s network thread so libcronet_test code can run on it.
+     */
+    public static class NetworkThreadTestConnector {
+        private final CronetUrlRequestContext mRequestContext;
+
+        public NetworkThreadTestConnector(CronetEngine cronetEngine) {
+            mRequestContext = (CronetUrlRequestContext) cronetEngine;
+            nativePrepareNetworkThread(mRequestContext.getUrlRequestContextAdapter());
+        }
+
+        public void shutdown() {
+            nativeCleanupNetworkThread(mRequestContext.getUrlRequestContextAdapter());
+        }
+    }
+
+    /**
+     * Returns the value of load flags in |urlRequest|.
+     * @param urlRequest is the UrlRequest object of interest.
+     */
+    public static int getLoadFlags(UrlRequest urlRequest) {
+        return nativeGetLoadFlags(((CronetUrlRequest) urlRequest).getUrlRequestAdapterForTesting());
+    }
+
+    public static void setMockCertVerifierForTesting(
+            ExperimentalCronetEngine.Builder builder, long mockCertVerifier) {
+        getCronetEngineBuilderImpl(builder).setMockCertVerifierForTesting(mockCertVerifier);
+    }
+
+    public static CronetEngineBuilderImpl getCronetEngineBuilderImpl(
+            ExperimentalCronetEngine.Builder builder) {
+        return (CronetEngineBuilderImpl) builder.getBuilderDelegate();
+    }
+
+    private static native int nativeGetLoadFlags(long urlRequestAdapter);
+
+    private static native void nativePrepareNetworkThread(long contextAdapter);
+    private static native void nativeCleanupNetworkThread(long contextAdapter);
 }

@@ -4,7 +4,11 @@
 
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 
+#include "base/macros.h"
+#include "base/sys_info.h"
+#include "chrome/browser/chromeos/system/fake_input_device_settings.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/service_manager/runner/common/client_util.h"
 #include "ui/ozone/public/input_controller.h"
 #include "ui/ozone/public/ozone_platform.h"
 
@@ -14,7 +18,12 @@ namespace system {
 namespace {
 
 InputDeviceSettings* g_instance = nullptr;
-InputDeviceSettings* g_test_instance = nullptr;
+
+std::unique_ptr<ui::InputController> CreateStubInputControllerIfNecessary() {
+  return service_manager::ServiceManagerIsRemote()
+             ? ui::CreateStubInputController()
+             : nullptr;
+}
 
 // InputDeviceSettings for Linux without X11 (a.k.a. Ozone).
 class InputDeviceSettingsImplOzone : public InputDeviceSettings {
@@ -39,8 +48,13 @@ class InputDeviceSettingsImplOzone : public InputDeviceSettings {
   void SetPrimaryButtonRight(bool right) override;
   void ReapplyTouchpadSettings() override;
   void ReapplyMouseSettings() override;
+  InputDeviceSettings::FakeInterface* GetFakeInterface() override;
   void SetInternalTouchpadEnabled(bool enabled) override;
   void SetTouchscreensEnabled(bool enabled) override;
+
+  // TODO(sad): A stub input controller is used when running inside mus.
+  // http://crbug.com/601981
+  std::unique_ptr<ui::InputController> stub_controller_;
 
   // Cached InputController pointer. It should be fixed throughout the browser
   // session.
@@ -54,10 +68,13 @@ class InputDeviceSettingsImplOzone : public InputDeviceSettings {
 };
 
 InputDeviceSettingsImplOzone::InputDeviceSettingsImplOzone()
-    : input_controller_(
-          ui::OzonePlatform::GetInstance()->GetInputController()) {
+    : stub_controller_(CreateStubInputControllerIfNecessary()),
+      input_controller_(
+          stub_controller_
+              ? stub_controller_.get()
+              : ui::OzonePlatform::GetInstance()->GetInputController()) {
   // Make sure the input controller does exist.
-  DCHECK(ui::OzonePlatform::GetInstance()->GetInputController());
+  DCHECK(input_controller_);
 }
 
 void InputDeviceSettingsImplOzone::TouchpadExists(
@@ -130,6 +147,11 @@ void InputDeviceSettingsImplOzone::ReapplyMouseSettings() {
   MouseSettings::Apply(current_mouse_settings_, this);
 }
 
+InputDeviceSettings::FakeInterface*
+InputDeviceSettingsImplOzone::GetFakeInterface() {
+  return nullptr;
+}
+
 void InputDeviceSettingsImplOzone::SetInternalTouchpadEnabled(bool enabled) {
   input_controller_->SetInternalTouchpadEnabled(enabled);
 }
@@ -142,20 +164,13 @@ void InputDeviceSettingsImplOzone::SetTouchscreensEnabled(bool enabled) {
 
 // static
 InputDeviceSettings* InputDeviceSettings::Get() {
-  if (g_test_instance)
-    return g_test_instance;
-  if (!g_instance)
-    g_instance = new InputDeviceSettingsImplOzone;
+  if (!g_instance) {
+    if (base::SysInfo::IsRunningOnChromeOS())
+      g_instance = new InputDeviceSettingsImplOzone;
+    else
+      g_instance = new FakeInputDeviceSettings();
+  }
   return g_instance;
-}
-
-// static
-void InputDeviceSettings::SetSettingsForTesting(
-    InputDeviceSettings* test_settings) {
-  if (g_test_instance == test_settings)
-    return;
-  delete g_test_instance;
-  g_test_instance = test_settings;
 }
 
 }  // namespace system

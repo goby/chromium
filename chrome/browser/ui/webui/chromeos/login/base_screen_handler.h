@@ -10,7 +10,9 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/screens/model_view_channel.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "components/login/base_screen_handler_utils.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
@@ -19,7 +21,6 @@
 namespace base {
 class DictionaryValue;
 class ListValue;
-class Value;
 }
 
 namespace login {
@@ -29,6 +30,7 @@ class LocalizedValuesBuilder;
 namespace chromeos {
 
 class BaseScreen;
+class OobeUI;
 
 // Base class for the OOBE/Login WebUI handlers.
 class BaseScreenHandler : public content::WebUIMessageHandler,
@@ -85,15 +87,15 @@ class BaseScreenHandler : public content::WebUIMessageHandler,
 
   template<typename A1>
   void CallJS(const std::string& method, const A1& arg1) {
-    web_ui()->CallJavascriptFunction(FullMethodPath(method),
-                                     ::login::MakeValue(arg1));
+    web_ui()->CallJavascriptFunctionUnsafe(FullMethodPath(method),
+                                           ::login::MakeValue(arg1));
   }
 
   template<typename A1, typename A2>
   void CallJS(const std::string& method, const A1& arg1, const A2& arg2) {
-    web_ui()->CallJavascriptFunction(FullMethodPath(method),
-                                     ::login::MakeValue(arg1),
-                                     ::login::MakeValue(arg2));
+    web_ui()->CallJavascriptFunctionUnsafe(FullMethodPath(method),
+                                           ::login::MakeValue(arg1),
+                                           ::login::MakeValue(arg2));
   }
 
   template<typename A1, typename A2, typename A3>
@@ -101,10 +103,9 @@ class BaseScreenHandler : public content::WebUIMessageHandler,
               const A1& arg1,
               const A2& arg2,
               const A3& arg3) {
-    web_ui()->CallJavascriptFunction(FullMethodPath(method),
-                                     ::login::MakeValue(arg1),
-                                     ::login::MakeValue(arg2),
-                                     ::login::MakeValue(arg3));
+    web_ui()->CallJavascriptFunctionUnsafe(
+        FullMethodPath(method), ::login::MakeValue(arg1),
+        ::login::MakeValue(arg2), ::login::MakeValue(arg3));
   }
 
   template<typename A1, typename A2, typename A3, typename A4>
@@ -113,11 +114,10 @@ class BaseScreenHandler : public content::WebUIMessageHandler,
               const A2& arg2,
               const A3& arg3,
               const A4& arg4) {
-    web_ui()->CallJavascriptFunction(FullMethodPath(method),
-                                     ::login::MakeValue(arg1),
-                                     ::login::MakeValue(arg2),
-                                     ::login::MakeValue(arg3),
-                                     ::login::MakeValue(arg4));
+    web_ui()->CallJavascriptFunctionUnsafe(
+        FullMethodPath(method), ::login::MakeValue(arg1),
+        ::login::MakeValue(arg2), ::login::MakeValue(arg3),
+        ::login::MakeValue(arg4));
   }
 
   // Shortcut methods for adding WebUI callbacks.
@@ -146,9 +146,17 @@ class BaseScreenHandler : public content::WebUIMessageHandler,
   // Called when the page is ready and handler can do initialization.
   virtual void Initialize() = 0;
 
-  // Show selected WebUI |screen|. Optionally it can pass screen initialization
-  // data via |data| parameter.
-  void ShowScreen(const char* screen, const base::DictionaryValue* data);
+  // Show selected WebUI |screen|.
+  void ShowScreen(OobeScreen screen);
+  // Show selected WebUI |screen|. Pass screen initialization using the |data|
+  // parameter.
+  void ShowScreenWithData(OobeScreen screen, const base::DictionaryValue* data);
+
+  // Returns the OobeUI instance.
+  OobeUI* GetOobeUI() const;
+
+  // Returns current visible OOBE screen.
+  OobeScreen GetCurrentScreen() const;
 
   // Whether page is ready.
   bool page_is_ready() const { return page_is_ready_; }

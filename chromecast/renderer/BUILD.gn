@@ -8,22 +8,20 @@ source_set("renderer") {
   sources = [
     "cast_content_renderer_client.cc",
     "cast_content_renderer_client.h",
-    "cast_media_load_deferrer.cc",
-    "cast_media_load_deferrer.h",
-    "cast_render_process_observer.cc",
-    "cast_render_process_observer.h",
+    "cast_gin_runner.cc",
+    "cast_gin_runner.h",
+    "cast_render_frame_action_deferrer.cc",
+    "cast_render_frame_action_deferrer.h",
     "key_systems_cast.cc",
     "key_systems_cast.h",
   ]
 
+  public_deps = [
+    "//chromecast/renderer/media",
+  ]
+
   if (chromecast_branding == "public") {
     sources += [ "cast_content_renderer_client_simple.cc" ]
-  }
-
-  if (!is_android) {
-    public_deps = [
-      "//chromecast/renderer/media",
-    ]
   }
 
   if (use_playready) {
@@ -38,11 +36,14 @@ source_set("renderer") {
     "//chromecast/media",
     "//components/cdm/renderer",
     "//components/network_hints/renderer",
+    "//content:resources_grit",
     "//content/public/common",
     "//content/public/renderer",
     "//crypto",
+    "//gin:gin",
     "//ipc",
     "//media",
-    "//third_party/widevine/cdm:version_h",
+    "//services/service_manager/public/cpp",
+    "//third_party/widevine/cdm:headers",
   ]
 }

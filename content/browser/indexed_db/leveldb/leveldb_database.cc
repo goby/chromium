@@ -4,18 +4,27 @@
 
 #include "content/browser/indexed_db/leveldb/leveldb_database.h"
 
-#include <cerrno>
+#include <inttypes.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <cerrno>
+#include <memory>
+#include <utility>
+
 #include "base/files/file.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/sys_info.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/process_memory_dump.h"
+#include "build/build_config.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_tracing.h"
 #include "content/browser/indexed_db/leveldb/leveldb_comparator.h"
@@ -86,6 +95,8 @@ LevelDBSnapshot::~LevelDBSnapshot() { db_->ReleaseSnapshot(snapshot_); }
 LevelDBDatabase::LevelDBDatabase() {}
 
 LevelDBDatabase::~LevelDBDatabase() {
+  base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
+      this);
   // db_'s destructor uses comparator_adapter_; order of deletion is important.
   CloseDatabase();
   comparator_adapter_.reset();
@@ -105,8 +116,8 @@ static leveldb::Status OpenDB(
     leveldb::Comparator* comparator,
     leveldb::Env* env,
     const base::FilePath& path,
-    leveldb::DB** db,
-    scoped_ptr<const leveldb::FilterPolicy>* filter_policy) {
+    std::unique_ptr<leveldb::DB>* db,
+    std::unique_ptr<const leveldb::FilterPolicy>* filter_policy) {
   filter_policy->reset(leveldb::NewBloomFilterPolicy(10));
   leveldb::Options options;
   options.comparator = comparator;
@@ -115,6 +126,8 @@ static leveldb::Status OpenDB(
   options.filter_policy = filter_policy->get();
   options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   options.compression = leveldb::kSnappyCompression;
+  options.write_buffer_size =
+      leveldb_env::WriteBufferSize(base::SysInfo::AmountOfTotalDiskSpace(path));
 
   // For info about the troubles we've run into with this parameter, see:
   // https://code.google.com/p/chromium/issues/detail?id=227313#c11
@@ -122,7 +135,9 @@ static leveldb::Status OpenDB(
   options.env = env;
 
   // ChromiumEnv assumes UTF8, converts back to FilePath before using.
-  leveldb::Status s = leveldb::DB::Open(options, path.AsUTF8Unsafe(), db);
+  leveldb::DB* db_ptr = nullptr;
+  leveldb::Status s = leveldb::DB::Open(options, path.AsUTF8Unsafe(), &db_ptr);
+  db->reset(db_ptr);
 
   return s;
 }
@@ -149,23 +164,23 @@ class LockImpl : public LevelDBLock {
 };
 }  // namespace
 
-scoped_ptr<LevelDBLock> LevelDBDatabase::LockForTesting(
+std::unique_ptr<LevelDBLock> LevelDBDatabase::LockForTesting(
     const base::FilePath& file_name) {
   leveldb::Env* env = LevelDBEnv::Get();
   base::FilePath lock_path = file_name.AppendASCII("LOCK");
   leveldb::FileLock* lock = NULL;
   leveldb::Status status = env->LockFile(lock_path.AsUTF8Unsafe(), &lock);
   if (!status.ok())
-    return scoped_ptr<LevelDBLock>();
+    return std::unique_ptr<LevelDBLock>();
   DCHECK(lock);
-  return scoped_ptr<LevelDBLock>(new LockImpl(env, lock));
+  return base::MakeUnique<LockImpl>(env, lock);
 }
 
 static int CheckFreeSpace(const char* const type,
                           const base::FilePath& file_name) {
   std::string name =
       std::string("WebCore.IndexedDB.LevelDB.Open") + type + "FreeDiskSpace";
-  int64 free_disk_space_in_k_bytes =
+  int64_t free_disk_space_in_k_bytes =
       base::SysInfo::AmountOfFreeDiskSpace(file_name) / 1024;
   if (free_disk_space_in_k_bytes < 0) {
     base::Histogram::FactoryGet(
@@ -179,7 +194,7 @@ static int CheckFreeSpace(const char* const type,
   int clamped_disk_space_k_bytes = free_disk_space_in_k_bytes > INT_MAX
                                        ? INT_MAX
                                        : free_disk_space_in_k_bytes;
-  const uint64 histogram_max = static_cast<uint64>(1e9);
+  const uint64_t histogram_max = static_cast<uint64_t>(1e9);
   static_assert(histogram_max <= INT_MAX, "histogram_max too big");
   base::Histogram::FactoryGet(name,
                               1,
@@ -272,16 +287,16 @@ static void HistogramLevelDBError(const std::string& histogram_name,
 
 leveldb::Status LevelDBDatabase::Open(const base::FilePath& file_name,
                                       const LevelDBComparator* comparator,
-                                      scoped_ptr<LevelDBDatabase>* result,
+                                      std::unique_ptr<LevelDBDatabase>* result,
                                       bool* is_disk_full) {
   IDB_TRACE("LevelDBDatabase::Open");
   base::TimeTicks begin_time = base::TimeTicks::Now();
 
-  scoped_ptr<ComparatorAdapter> comparator_adapter(
-      new ComparatorAdapter(comparator));
+  std::unique_ptr<ComparatorAdapter> comparator_adapter(
+      base::MakeUnique<ComparatorAdapter>(comparator));
 
-  leveldb::DB* db;
-  scoped_ptr<const leveldb::FilterPolicy> filter_policy;
+  std::unique_ptr<leveldb::DB> db;
+  std::unique_ptr<const leveldb::FilterPolicy> filter_policy;
   const leveldb::Status s = OpenDB(comparator_adapter.get(), LevelDBEnv::Get(),
                                    file_name, &db, &filter_policy);
 
@@ -303,23 +318,25 @@ leveldb::Status LevelDBDatabase::Open(const base::FilePath& file_name,
 
   CheckFreeSpace("Success", file_name);
 
-  (*result).reset(new LevelDBDatabase);
-  (*result)->db_ = make_scoped_ptr(db);
-  (*result)->comparator_adapter_ = comparator_adapter.Pass();
+  (*result) = base::WrapUnique(new LevelDBDatabase());
+  (*result)->db_ = std::move(db);
+  (*result)->comparator_adapter_ = std::move(comparator_adapter);
   (*result)->comparator_ = comparator;
-  (*result)->filter_policy_ = filter_policy.Pass();
+  (*result)->filter_policy_ = std::move(filter_policy);
+  (*result)->file_name_for_tracing = file_name.BaseName().AsUTF8Unsafe();
 
   return s;
 }
 
-scoped_ptr<LevelDBDatabase> LevelDBDatabase::OpenInMemory(
+std::unique_ptr<LevelDBDatabase> LevelDBDatabase::OpenInMemory(
     const LevelDBComparator* comparator) {
-  scoped_ptr<ComparatorAdapter> comparator_adapter(
-      new ComparatorAdapter(comparator));
-  scoped_ptr<leveldb::Env> in_memory_env(leveldb::NewMemEnv(LevelDBEnv::Get()));
+  std::unique_ptr<ComparatorAdapter> comparator_adapter(
+      base::MakeUnique<ComparatorAdapter>(comparator));
+  std::unique_ptr<leveldb::Env> in_memory_env(
+      leveldb::NewMemEnv(LevelDBEnv::Get()));
 
-  leveldb::DB* db;
-  scoped_ptr<const leveldb::FilterPolicy> filter_policy;
+  std::unique_ptr<leveldb::DB> db;
+  std::unique_ptr<const leveldb::FilterPolicy> filter_policy;
   const leveldb::Status s = OpenDB(comparator_adapter.get(),
                                    in_memory_env.get(),
                                    base::FilePath(),
@@ -328,17 +345,19 @@ scoped_ptr<LevelDBDatabase> LevelDBDatabase::OpenInMemory(
 
   if (!s.ok()) {
     LOG(ERROR) << "Failed to open in-memory LevelDB database: " << s.ToString();
-    return scoped_ptr<LevelDBDatabase>();
+    return std::unique_ptr<LevelDBDatabase>();
   }
 
-  scoped_ptr<LevelDBDatabase> result(new LevelDBDatabase);
-  result->env_ = in_memory_env.Pass();
-  result->db_ = make_scoped_ptr(db);
-  result->comparator_adapter_ = comparator_adapter.Pass();
+  std::unique_ptr<LevelDBDatabase> result =
+      base::WrapUnique(new LevelDBDatabase());
+  result->env_ = std::move(in_memory_env);
+  result->db_ = std::move(db);
+  result->comparator_adapter_ = std::move(comparator_adapter);
   result->comparator_ = comparator;
-  result->filter_policy_ = filter_policy.Pass();
+  result->filter_policy_ = std::move(filter_policy);
+  result->file_name_for_tracing = "in-memory-database";
 
-  return result.Pass();
+  return result;
 }
 
 leveldb::Status LevelDBDatabase::Put(const StringPiece& key,
@@ -407,16 +426,16 @@ leveldb::Status LevelDBDatabase::Write(const LevelDBWriteBatch& write_batch) {
   return s;
 }
 
-scoped_ptr<LevelDBIterator> LevelDBDatabase::CreateIterator(
+std::unique_ptr<LevelDBIterator> LevelDBDatabase::CreateIterator(
     const LevelDBSnapshot* snapshot) {
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;  // TODO(jsbell): Disable this if the
                                          // performance impact is too great.
   read_options.snapshot = snapshot ? snapshot->snapshot_ : 0;
 
-  scoped_ptr<leveldb::Iterator> i(db_->NewIterator(read_options));
-  return scoped_ptr<LevelDBIterator>(
-      IndexedDBClassFactory::Get()->CreateIteratorImpl(i.Pass()));
+  std::unique_ptr<leveldb::Iterator> i(db_->NewIterator(read_options));
+  return std::unique_ptr<LevelDBIterator>(
+      IndexedDBClassFactory::Get()->CreateIteratorImpl(std::move(i)));
 }
 
 const LevelDBComparator* LevelDBDatabase::Comparator() const {
@@ -434,5 +453,30 @@ void LevelDBDatabase::Compact(const base::StringPiece& start,
 }
 
 void LevelDBDatabase::CompactAll() { db_->CompactRange(NULL, NULL); }
+
+bool LevelDBDatabase::OnMemoryDump(
+    const base::trace_event::MemoryDumpArgs& args,
+    base::trace_event::ProcessMemoryDump* pmd) {
+  if (!db_)
+    return false;
+
+  std::string value;
+  uint64_t size;
+  bool res = db_->GetProperty("leveldb.approximate-memory-usage", &value);
+  DCHECK(res);
+  base::StringToUint64(value, &size);
+
+  auto* dump = pmd->CreateAllocatorDump(base::StringPrintf(
+      "leveldb/index_db/0x%" PRIXPTR, reinterpret_cast<uintptr_t>(db_.get())));
+  dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                  base::trace_event::MemoryAllocatorDump::kUnitsBytes, size);
+  dump->AddString("file_name", "", file_name_for_tracing);
+
+  // Memory is allocated from system allocator (malloc).
+  pmd->AddSuballocation(dump->guid(),
+                        base::trace_event::MemoryDumpManager::GetInstance()
+                            ->system_allocator_pool_name());
+  return true;
+}
 
 }  // namespace content

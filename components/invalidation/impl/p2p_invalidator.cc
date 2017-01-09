@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -112,7 +113,7 @@ std::string P2PNotificationData::ToString() const {
 }
 
 bool P2PNotificationData::ResetFromString(const std::string& str) {
-  scoped_ptr<base::Value> data_value = base::JSONReader::Read(str);
+  std::unique_ptr<base::Value> data_value = base::JSONReader::Read(str);
   const base::DictionaryValue* data_dict = NULL;
   if (!data_value.get() || !data_value->GetAsDictionary(&data_dict)) {
     LOG(WARNING) << "Could not parse " << str << " as a dictionary";
@@ -135,10 +136,11 @@ bool P2PNotificationData::ResetFromString(const std::string& str) {
   return true;
 }
 
-P2PInvalidator::P2PInvalidator(scoped_ptr<notifier::PushClient> push_client,
-                               const std::string& invalidator_client_id,
-                               P2PNotificationTarget send_notification_target)
-    : push_client_(push_client.Pass()),
+P2PInvalidator::P2PInvalidator(
+    std::unique_ptr<notifier::PushClient> push_client,
+    const std::string& invalidator_client_id,
+    P2PNotificationTarget send_notification_target)
+    : push_client_(std::move(push_client)),
       invalidator_client_id_(invalidator_client_id),
       logged_in_(false),
       notifications_enabled_(false),
@@ -208,7 +210,7 @@ void P2PInvalidator::RequestDetailedStatus(
     base::Callback<void(const base::DictionaryValue&)> callback) const {
   DCHECK(thread_checker_.CalledOnValidThread());
   // TODO(mferreria): Make the P2P Invalidator work.
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   callback.Run(*value);
 }
 

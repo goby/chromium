@@ -6,9 +6,10 @@
 #define EXTENSIONS_COMMON_EVENT_FILTER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "components/url_matcher/url_matcher.h"
 #include "extensions/common/event_filtering_info.h"
 #include "extensions/common/event_matcher.h"
@@ -27,7 +28,7 @@ class EventFilter {
   // Adds an event matcher that will be used in calls to MatchEvent(). Returns
   // the id of the matcher, or -1 if there was an error.
   MatcherID AddEventMatcher(const std::string& event_name,
-                            scoped_ptr<EventMatcher> matcher);
+                            std::unique_ptr<EventMatcher> matcher);
 
   // Retrieve the EventMatcher with the given id.
   EventMatcher* GetEventMatcher(MatcherID id);
@@ -62,7 +63,7 @@ class EventFilter {
     // URLMatcherConditionSets that match the URL constraints specified by
     // |event_matcher|.
     EventMatcherEntry(
-        scoped_ptr<EventMatcher> event_matcher,
+        std::unique_ptr<EventMatcher> event_matcher,
         url_matcher::URLMatcher* url_matcher,
         const url_matcher::URLMatcherConditionSet::Vector& condition_sets);
     ~EventMatcherEntry();
@@ -78,7 +79,7 @@ class EventFilter {
     }
 
    private:
-    scoped_ptr<EventMatcher> event_matcher_;
+    std::unique_ptr<EventMatcher> event_matcher_;
     // The id sets in url_matcher_ that this EventMatcher owns.
     std::vector<url_matcher::URLMatcherConditionSet::ID> condition_set_ids_;
     url_matcher::URLMatcher* url_matcher_;
@@ -87,10 +88,11 @@ class EventFilter {
   };
 
   // Maps from a matcher id to an event matcher entry.
-  typedef std::map<MatcherID, linked_ptr<EventMatcherEntry> > EventMatcherMap;
+  using EventMatcherMap =
+      std::map<MatcherID, std::unique_ptr<EventMatcherEntry>>;
 
   // Maps from event name to the map of matchers that are registered for it.
-  typedef std::map<std::string, EventMatcherMap> EventMatcherMultiMap;
+  using EventMatcherMultiMap = std::map<std::string, EventMatcherMap>;
 
   // Adds the list of URL filters in |matcher| to the URL matcher, having
   // matches for those URLs map to |id|.

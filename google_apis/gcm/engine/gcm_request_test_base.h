@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/backoff_entry.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
@@ -29,6 +30,12 @@ class GCMRequestTestBase : public testing::Test {
   // Completes the URL fetch.
   // It can be overridden by the test class to add additional logic.
   virtual void CompleteFetch();
+
+  // Verifies that the Fetcher's upload_data exactly matches the given
+  // properties. The map will be cleared as a side-effect. Wrap calls to this
+  // with ASSERT_NO_FATAL_FAILURE.
+  void VerifyFetcherUploadData(
+      std::map<std::string, std::string>* expected_pairs);
 
   net::URLRequestContextGetter* url_request_context_getter() const {
     return url_request_context_getter_.get();

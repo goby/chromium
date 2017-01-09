@@ -8,11 +8,12 @@
 #include <string>
 #include <vector>
 
-#include "base/prefs/pref_member.h"
+#include "base/macros.h"
 #include "base/threading/thread.h"
 #include "components/password_manager/core/browser/keychain_migration_status_mac.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
+#include "components/prefs/pref_member.h"
 
 namespace crypto {
 class AppleKeychain;
@@ -22,7 +23,6 @@ namespace password_manager {
 class LoginDatabase;
 }
 
-class PasswordStoreMac;
 class SimplePasswordStoreMac;
 
 // The class is a proxy for either PasswordStoreMac or SimplePasswordStoreMac.
@@ -33,8 +33,8 @@ class PasswordStoreProxyMac : public password_manager::PasswordStore {
  public:
   PasswordStoreProxyMac(
       scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
-      scoped_ptr<crypto::AppleKeychain> keychain,
-      scoped_ptr<password_manager::LoginDatabase> login_db,
+      std::unique_ptr<crypto::AppleKeychain> keychain,
+      std::unique_ptr<password_manager::LoginDatabase> login_db,
       PrefService* prefs);
 
   bool Init(const syncer::SyncableService::StartSyncFlare& flare) override;
@@ -47,8 +47,8 @@ class PasswordStoreProxyMac : public password_manager::PasswordStore {
     return login_metadata_db_.get();
   }
 
-  scoped_refptr<PasswordStoreMac> password_store_mac() {
-    return password_store_mac_;
+  crypto::AppleKeychain* keychain() {
+    return keychain_.get();
   }
 #endif
 
@@ -75,37 +75,46 @@ class PasswordStoreProxyMac : public password_manager::PasswordStore {
       const autofill::PasswordForm& form) override;
   password_manager::PasswordStoreChangeList RemoveLoginImpl(
       const autofill::PasswordForm& form) override;
+  password_manager::PasswordStoreChangeList RemoveLoginsByURLAndTimeImpl(
+      const base::Callback<bool(const GURL&)>& url_filter,
+      base::Time delete_begin,
+      base::Time delete_end) override;
   password_manager::PasswordStoreChangeList RemoveLoginsCreatedBetweenImpl(
       base::Time delete_begin,
       base::Time delete_end) override;
   password_manager::PasswordStoreChangeList RemoveLoginsSyncedBetweenImpl(
       base::Time delete_begin,
       base::Time delete_end) override;
-  bool RemoveStatisticsCreatedBetweenImpl(base::Time delete_begin,
-                                          base::Time delete_end) override;
-  ScopedVector<autofill::PasswordForm> FillMatchingLogins(
-      const autofill::PasswordForm& form,
-      AuthorizationPromptPolicy prompt_policy) override;
+  password_manager::PasswordStoreChangeList DisableAutoSignInForOriginsImpl(
+      const base::Callback<bool(const GURL&)>& origin_filter) override;
+  bool RemoveStatisticsByOriginAndTimeImpl(
+      const base::Callback<bool(const GURL&)>& origin_filter,
+      base::Time delete_begin,
+      base::Time delete_end) override;
+  std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
+      const FormDigest& form) override;
   bool FillAutofillableLogins(
-      ScopedVector<autofill::PasswordForm>* forms) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool FillBlacklistLogins(
-      ScopedVector<autofill::PasswordForm>* forms) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   void AddSiteStatsImpl(
       const password_manager::InteractionsStats& stats) override;
   void RemoveSiteStatsImpl(const GURL& origin_domain) override;
-  std::vector<scoped_ptr<password_manager::InteractionsStats>> GetSiteStatsImpl(
+  std::vector<password_manager::InteractionsStats> GetSiteStatsImpl(
       const GURL& origin_domain) override;
 
-  scoped_refptr<PasswordStoreMac> password_store_mac_;
   scoped_refptr<SimplePasswordStoreMac> password_store_simple_;
 
   // The login metadata SQL database. If opening the DB on |thread_| fails,
   // |login_metadata_db_| will be reset to NULL for the lifetime of |this|.
   // The ownership may be transferred to |password_store_simple_|.
-  scoped_ptr<password_manager::LoginDatabase> login_metadata_db_;
+  std::unique_ptr<password_manager::LoginDatabase> login_metadata_db_;
+
+  // Keychain wrapper.
+  const std::unique_ptr<crypto::AppleKeychain> keychain_;
 
   // Thread that the synchronous methods are run on.
-  scoped_ptr<base::Thread> thread_;
+  std::unique_ptr<base::Thread> thread_;
 
   // Current migration status for the profile.
   IntegerPrefMember migration_status_;

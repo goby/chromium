@@ -4,27 +4,53 @@
 
 #include "chrome/browser/android/data_usage/data_use_tab_model.h"
 
+#include <stdint.h>
+
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/single_thread_task_runner.h"
+#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/time/default_tick_clock.h"
+#include "base/time/tick_clock.h"
 #include "base/time/time.h"
+#include "chrome/browser/android/data_usage/data_use_matcher.h"
 #include "chrome/browser/android/data_usage/external_data_use_observer.h"
-#include "components/data_usage/core/data_use.h"
 #include "components/variations/variations_associated_data.h"
+#include "content/public/browser/navigation_entry.h"
 #include "url/gurl.h"
 
 namespace {
 
-// Indicates the default maximum number of tabs to maintain session information
-// about. May be overridden by the field trial.
+// Default maximum number of tabs to maintain session information about. May be
+// overridden by the field trial.
 const size_t kDefaultMaxTabEntries = 200;
 
-const char kUMAExpiredInactiveTabEntryRemovalDurationSecondsHistogram[] =
-    "DataUse.TabModel.ExpiredInactiveTabEntryRemovalDuration";
-const char kUMAExpiredActiveTabEntryRemovalDurationHoursHistogram[] =
-    "DataUse.TabModel.ExpiredActiveTabEntryRemovalDuration";
-const char kUMAUnexpiredTabEntryRemovalDurationMinutesHistogram[] =
-    "DataUse.TabModel.UnexpiredTabEntryRemovalDuration";
+// Default maximum number of tracking session history to maintain per tab. May
+// be overridden by the field trial.
+const size_t kDefaultMaxSessionsPerTab = 5;
+
+// Default expiration duration in seconds, after which a closed and an open tab
+// entry can be removed from the list of tab entries, respectively. May be
+// overridden by the field trial.
+const uint32_t kDefaultClosedTabExpirationDurationSeconds = 30;  // 30 seconds.
+const uint32_t kDefaultOpenTabExpirationDurationSeconds =
+    60 * 60 * 24 * 5;  // 5 days.
+
+// Default expiration duration in seconds of a matching rule, used when
+// expiration time is not specified.
+const uint32_t kDefaultMatchingRuleExpirationDurationSeconds =
+    60 * 60 * 24;  // 24 hours.
+
+const char kUMAExpiredInactiveTabEntryRemovalDurationHistogram[] =
+    "DataUsage.TabModel.ExpiredInactiveTabEntryRemovalDuration";
+const char kUMAExpiredActiveTabEntryRemovalDurationHistogram[] =
+    "DataUsage.TabModel.ExpiredActiveTabEntryRemovalDuration";
+const char kUMAUnexpiredTabEntryRemovalDurationHistogram[] =
+    "DataUsage.TabModel.UnexpiredTabEntryRemovalDuration";
+
+// Key used to save the data use tracking label in navigation entry extra data.
+const char kDataUseTabModelLabel[] = "data_use_tab_model_label";
 
 // Returns true if |tab_id| is a valid tab ID.
 bool IsValidTabID(SessionID::id_type tab_id) {
@@ -33,7 +59,7 @@ bool IsValidTabID(SessionID::id_type tab_id) {
 
 // Returns various parameters from the values specified in the field trial.
 size_t GetMaxTabEntries() {
-  size_t max_tab_entries = -1;
+  size_t max_tab_entries = kDefaultMaxTabEntries;
   std::string variation_value = variations::GetVariationParamValue(
       chrome::android::ExternalDataUseObserver::
           kExternalDataUseObserverFieldTrial,
@@ -45,20 +71,92 @@ size_t GetMaxTabEntries() {
   return kDefaultMaxTabEntries;
 }
 
+// Returns various parameters from the values specified in the field trial.
+size_t GetMaxSessionsPerTab() {
+  size_t max_sessions_per_tab = kDefaultMaxSessionsPerTab;
+  std::string variation_value = variations::GetVariationParamValue(
+      chrome::android::ExternalDataUseObserver::
+          kExternalDataUseObserverFieldTrial,
+      "max_sessions_per_tab");
+  if (!variation_value.empty() &&
+      base::StringToSizeT(variation_value, &max_sessions_per_tab)) {
+    return max_sessions_per_tab;
+  }
+  return kDefaultMaxSessionsPerTab;
+}
+
+base::TimeDelta GetClosedTabExpirationDuration() {
+  uint32_t duration_seconds = kDefaultClosedTabExpirationDurationSeconds;
+  std::string variation_value = variations::GetVariationParamValue(
+      chrome::android::ExternalDataUseObserver::
+          kExternalDataUseObserverFieldTrial,
+      "closed_tab_expiration_duration_seconds");
+  if (!variation_value.empty() &&
+      base::StringToUint(variation_value, &duration_seconds)) {
+    return base::TimeDelta::FromSeconds(duration_seconds);
+  }
+  return base::TimeDelta::FromSeconds(
+      kDefaultClosedTabExpirationDurationSeconds);
+}
+
+base::TimeDelta GetOpenTabExpirationDuration() {
+  uint32_t duration_seconds = kDefaultOpenTabExpirationDurationSeconds;
+  std::string variation_value = variations::GetVariationParamValue(
+      chrome::android::ExternalDataUseObserver::
+          kExternalDataUseObserverFieldTrial,
+      "open_tab_expiration_duration_seconds");
+  if (!variation_value.empty() &&
+      base::StringToUint(variation_value, &duration_seconds)) {
+    return base::TimeDelta::FromSeconds(duration_seconds);
+  }
+  return base::TimeDelta::FromSeconds(kDefaultOpenTabExpirationDurationSeconds);
+}
+
+base::TimeDelta GetDefaultMatchingRuleExpirationDuration() {
+  uint32_t duration_seconds = kDefaultMatchingRuleExpirationDurationSeconds;
+  std::string variation_value = variations::GetVariationParamValue(
+      chrome::android::ExternalDataUseObserver::
+          kExternalDataUseObserverFieldTrial,
+      "default_matching_rule_expiration_duration_seconds");
+  if (!variation_value.empty() &&
+      base::StringToUint(variation_value, &duration_seconds)) {
+    return base::TimeDelta::FromSeconds(duration_seconds);
+  }
+  return base::TimeDelta::FromSeconds(
+      kDefaultMatchingRuleExpirationDurationSeconds);
+}
+
 }  // namespace
 
 namespace chrome {
 
 namespace android {
 
+// static
+const char DataUseTabModel::kDefaultTag[] = "ChromeTab";
+const char DataUseTabModel::kCustomTabTag[] = "ChromeCustomTab";
+
 DataUseTabModel::DataUseTabModel(
-    const ExternalDataUseObserver* data_use_observer,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
-    : data_use_observer_(data_use_observer),
-      max_tab_entries_(GetMaxTabEntries()),
-      ui_task_runner_(ui_task_runner),
+    const base::Closure& force_fetch_matching_rules_callback,
+    const base::Callback<void(bool)>& on_matching_rules_fetched_callback)
+    : max_tab_entries_(GetMaxTabEntries()),
+      max_sessions_per_tab_(GetMaxSessionsPerTab()),
+      closed_tab_expiration_duration_(GetClosedTabExpirationDuration()),
+      open_tab_expiration_duration_(GetOpenTabExpirationDuration()),
+      tick_clock_(new base::DefaultTickClock()),
+      force_fetch_matching_rules_callback_(force_fetch_matching_rules_callback),
+      is_ready_for_navigation_event_(false),
+      is_control_app_installed_(false),
       weak_factory_(this) {
-  DCHECK(ui_task_runner_);
+  DCHECK(force_fetch_matching_rules_callback_);
+  DCHECK(on_matching_rules_fetched_callback);
+  data_use_matcher_.reset(new DataUseMatcher(
+      base::Bind(&DataUseTabModel::OnTrackingLabelRemoved, GetWeakPtr()),
+      on_matching_rules_fetched_callback,
+      GetDefaultMatchingRuleExpirationDuration()));
+  // Detach from current thread since rest of DataUseTabModel lives on the UI
+  // thread and the current thread may not be UI thread..
+  thread_checker_.DetachFromThread();
 }
 
 DataUseTabModel::~DataUseTabModel() {
@@ -70,53 +168,36 @@ base::WeakPtr<DataUseTabModel> DataUseTabModel::GetWeakPtr() {
   return weak_factory_.GetWeakPtr();
 }
 
-void DataUseTabModel::OnNavigationEvent(SessionID::id_type tab_id,
-                                        TransitionType transition,
-                                        const GURL& url,
-                                        const std::string& package) {
+void DataUseTabModel::OnNavigationEvent(
+    SessionID::id_type tab_id,
+    TransitionType transition,
+    const GURL& url,
+    const std::string& package,
+    content::NavigationEntry* navigation_entry) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(IsValidTabID(tab_id));
+  DCHECK(!navigation_entry || (navigation_entry->GetURL() == url));
 
-  switch (transition) {
-    case TRANSITION_OMNIBOX_SEARCH:
-    case TRANSITION_OMNIBOX_NAVIGATION:
-    case TRANSITION_FROM_EXTERNAL_APP: {
-      // Enter events.
-      bool start_tracking = false;
-      std::string label;
-      TabEntryMap::const_iterator tab_entry_iterator =
-          active_tabs_.find(tab_id);
-      if (tab_entry_iterator != active_tabs_.end() &&
-          tab_entry_iterator->second.IsTrackingDataUse()) {
-        break;
-      }
-      if (transition == TRANSITION_FROM_EXTERNAL_APP) {
-        // Package name should match, for transitions from external app.
-        if (!package.empty() &&
-            data_use_observer_->MatchesAppPackageName(package, &label)) {
-          DCHECK(!label.empty());
-          start_tracking = true;
-        }
-      }
-      if (!start_tracking && !url.is_empty() &&
-          data_use_observer_->Matches(url, &label)) {
-        DCHECK(!label.empty());
-        start_tracking = true;
-      }
-      if (start_tracking)
-        StartTrackingDataUse(tab_id, label);
-      break;
-    }
+  std::string current_label, new_label;
+  bool is_package_match;
 
-    case TRANSITION_BOOKMARK:
-    case TRANSITION_HISTORY_ITEM:
-      // Exit events.
-      EndTrackingDataUse(tab_id);
-      break;
+  if (is_control_app_installed_ && !data_use_matcher_->HasRules())
+    force_fetch_matching_rules_callback_.Run();
 
-    default:
-      NOTREACHED();
-      break;
+  GetCurrentAndNewLabelForNavigationEvent(tab_id, transition, url, package,
+                                          navigation_entry, &current_label,
+                                          &new_label, &is_package_match);
+  if (!current_label.empty() && new_label.empty()) {
+    EndTrackingDataUse(tab_id);
+  } else if (current_label.empty() && !new_label.empty()) {
+    StartTrackingDataUse(
+        tab_id, new_label,
+        ((transition == TRANSITION_CUSTOM_TAB) && is_package_match));
+  }
+  if (navigation_entry && !new_label.empty()) {
+    // Save the label to be used for back-forward navigations.
+    navigation_entry->SetExtraData(kDataUseTabModelLabel,
+                                   base::ASCIIToUTF16(new_label));
   }
 }
 
@@ -134,86 +215,255 @@ void DataUseTabModel::OnTabCloseEvent(SessionID::id_type tab_id) {
   tab_entry.OnTabCloseEvent();
 }
 
-void DataUseTabModel::OnTrackingLabelRemoved(std::string label) {
-  for (auto& tab_entry : active_tabs_) {
-    if (tab_entry.second.EndTrackingWithLabel(label))
-      NotifyObserversOfTrackingEnding(tab_entry.first);
-  }
+void DataUseTabModel::OnTrackingLabelRemoved(const std::string& label) {
+  for (auto& tab_entry : active_tabs_)
+    tab_entry.second.EndTrackingWithLabel(label);
 }
 
-bool DataUseTabModel::GetLabelForDataUse(const data_usage::DataUse& data_use,
-                                         std::string* output_label) const {
+bool DataUseTabModel::GetTrackingInfoForTabAtTime(
+    SessionID::id_type tab_id,
+    const base::TimeTicks timestamp,
+    TrackingInfo* output_tracking_info) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  *output_label = "";
+  output_tracking_info->label = "";
 
   // Data use that cannot be attributed to a tab will not be labeled.
-  if (!IsValidTabID(data_use.tab_id))
+  if (!IsValidTabID(tab_id))
     return false;
 
-  TabEntryMap::const_iterator tab_entry_iterator =
-      active_tabs_.find(data_use.tab_id);
+  TabEntryMap::const_iterator tab_entry_iterator = active_tabs_.find(tab_id);
   if (tab_entry_iterator != active_tabs_.end()) {
-    return tab_entry_iterator->second.GetLabel(data_use.request_start,
-                                               output_label);
+    bool is_available = tab_entry_iterator->second.GetLabel(
+        timestamp, &output_tracking_info->label);
+    if (is_available) {
+      output_tracking_info->tag =
+          tab_entry_iterator->second.is_custom_tab_package_match()
+              ? DataUseTabModel::kCustomTabTag
+              : DataUseTabModel::kDefaultTag;
+    }
+    return is_available;
   }
 
   return false;  // Tab session not found.
 }
 
-void DataUseTabModel::AddObserver(base::WeakPtr<TabDataUseObserver> observer) {
+bool DataUseTabModel::WouldNavigationEventEndTracking(
+    SessionID::id_type tab_id,
+    TransitionType transition,
+    const GURL& url,
+    const content::NavigationEntry* navigation_entry) const {
   DCHECK(thread_checker_.CalledOnValidThread());
-  observers_.push_back(observer);
+  DCHECK(IsValidTabID(tab_id));
+  std::string current_label, new_label;
+  bool is_package_match;
+  GetCurrentAndNewLabelForNavigationEvent(
+      tab_id, transition, url, std::string(), navigation_entry, &current_label,
+      &new_label, &is_package_match);
+  return (!current_label.empty() && new_label.empty());
 }
 
-base::TimeTicks DataUseTabModel::Now() const {
-  return base::TimeTicks::Now();
+void DataUseTabModel::AddObserver(TabDataUseObserver* observer) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  observers_.AddObserver(observer);
+}
+
+void DataUseTabModel::RemoveObserver(TabDataUseObserver* observer) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  observers_.RemoveObserver(observer);
+}
+
+void DataUseTabModel::RegisterURLRegexes(
+    const std::vector<std::string>& app_package_name,
+    const std::vector<std::string>& domain_path_regex,
+    const std::vector<std::string>& label) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  // Fetch rule requests could be started when control app was installed, and
+  // the response could be received when control app was uninstalled. Ignore
+  // these spurious rule fetch responses.
+  if (!is_control_app_installed_)
+    return;
+  data_use_matcher_->RegisterURLRegexes(app_package_name, domain_path_regex,
+                                        label);
+  if (!is_ready_for_navigation_event_) {
+    is_ready_for_navigation_event_ = true;
+    NotifyObserversOfDataUseTabModelReady();
+  }
+}
+
+void DataUseTabModel::OnControlAppInstallStateChange(
+    bool is_control_app_installed) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(data_use_matcher_);
+
+  is_control_app_installed_ = is_control_app_installed;
+  std::vector<std::string> empty;
+  if (!is_control_app_installed_) {
+    // Clear rules.
+    data_use_matcher_->RegisterURLRegexes(empty, empty, empty);
+    if (!is_ready_for_navigation_event_) {
+      is_ready_for_navigation_event_ = true;
+      NotifyObserversOfDataUseTabModelReady();
+    }
+  } else {
+    // Fetch the matching rules when the app is installed.
+    force_fetch_matching_rules_callback_.Run();
+  }
+}
+
+base::TimeTicks DataUseTabModel::NowTicks() const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  return tick_clock_->NowTicks();
+}
+
+bool DataUseTabModel::IsCustomTabPackageMatch(SessionID::id_type tab_id) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  TabEntryMap::const_iterator tab_entry_iterator = active_tabs_.find(tab_id);
+  return (tab_entry_iterator != active_tabs_.end()) &&
+         tab_entry_iterator->second.is_custom_tab_package_match();
 }
 
 void DataUseTabModel::NotifyObserversOfTrackingStarting(
     SessionID::id_type tab_id) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(ui_task_runner_);
-  for (const auto& observer : observers_) {
-    ui_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&TabDataUseObserver::NotifyTrackingStarting,
-                              observer, tab_id));
-  }
+  for (TabDataUseObserver& observer : observers_)
+    observer.NotifyTrackingStarting(tab_id);
 }
 
 void DataUseTabModel::NotifyObserversOfTrackingEnding(
     SessionID::id_type tab_id) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(ui_task_runner_);
-  for (const auto& observer : observers_) {
-    ui_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&TabDataUseObserver::NotifyTrackingEnding,
-                              observer, tab_id));
+  for (TabDataUseObserver& observer : observers_)
+    observer.NotifyTrackingEnding(tab_id);
+}
+
+void DataUseTabModel::NotifyObserversOfDataUseTabModelReady() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  for (TabDataUseObserver& observer : observers_)
+    observer.OnDataUseTabModelReady();
+}
+
+void DataUseTabModel::GetCurrentAndNewLabelForNavigationEvent(
+    SessionID::id_type tab_id,
+    TransitionType transition,
+    const GURL& url,
+    const std::string& package,
+    const content::NavigationEntry* navigation_entry,
+    std::string* current_label,
+    std::string* new_label,
+    bool* is_package_match) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(IsValidTabID(tab_id));
+
+  TabEntryMap::const_iterator tab_entry_iterator = active_tabs_.find(tab_id);
+  *current_label =
+      (tab_entry_iterator != active_tabs_.end())
+          ? tab_entry_iterator->second.GetActiveTrackingSessionLabel()
+          : std::string();
+  bool matches;
+  *new_label = "";
+  *is_package_match = false;
+
+  if (!current_label->empty() &&
+      tab_entry_iterator->second.is_custom_tab_package_match()) {
+    DCHECK_NE(transition, TRANSITION_OMNIBOX_SEARCH);
+    DCHECK_NE(transition, TRANSITION_OMNIBOX_NAVIGATION);
+    DCHECK_NE(transition, TRANSITION_HISTORY_ITEM);
+    *new_label = *current_label;
+    return;
+  }
+
+  switch (transition) {
+    case TRANSITION_OMNIBOX_SEARCH:
+    case TRANSITION_OMNIBOX_NAVIGATION:
+    case TRANSITION_BOOKMARK:
+      // Enter or exit events.
+      if (!url.is_empty()) {
+        matches = data_use_matcher_->MatchesURL(url, new_label);
+        DCHECK_NE(matches, new_label->empty());
+      }
+      break;
+
+    case TRANSITION_CUSTOM_TAB:
+    case TRANSITION_LINK:
+    case TRANSITION_RELOAD:
+      // Enter events.
+      if (!current_label->empty()) {
+        *new_label = *current_label;
+        break;
+      }
+      // Package name should match, for transitions from external app.
+      if (transition == TRANSITION_CUSTOM_TAB && !package.empty()) {
+        matches = data_use_matcher_->MatchesAppPackageName(package, new_label);
+        DCHECK_NE(matches, new_label->empty());
+        *is_package_match = matches;
+      }
+      if (new_label->empty() && !url.is_empty()) {
+        matches = data_use_matcher_->MatchesURL(url, new_label);
+        DCHECK_NE(matches, new_label->empty());
+      }
+      break;
+
+    case TRANSITION_HISTORY_ITEM:
+      // Exit events.
+      DCHECK(new_label->empty());
+      break;
+
+    case TRANSITION_FORWARD_BACK:
+      if (navigation_entry) {
+        base::string16 navigation_entry_label;
+        if (navigation_entry->GetExtraData(kDataUseTabModelLabel,
+                                           &navigation_entry_label)) {
+          std::string label = base::UTF16ToASCII(navigation_entry_label);
+          DCHECK(!label.empty());
+          if (data_use_matcher_->HasValidRuleWithLabel(label))
+            *new_label = label;
+        }
+      }
+      break;
+
+    case TRANSITION_FORM_SUBMIT:
+      // No change in the tracking state.
+      *new_label = *current_label;
+      break;
+
+    default:
+      NOTREACHED();
+      break;
   }
 }
 
 void DataUseTabModel::StartTrackingDataUse(SessionID::id_type tab_id,
-                                           const std::string& label) {
+                                           const std::string& label,
+                                           bool is_custom_tab_package_match) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   // TODO(rajendrant): Explore ability to handle changes in label for current
   // session.
   bool new_tab_entry_added = false;
   TabEntryMap::iterator tab_entry_iterator = active_tabs_.find(tab_id);
   if (tab_entry_iterator == active_tabs_.end()) {
-    auto new_entry =
-        active_tabs_.insert(TabEntryMap::value_type(tab_id, TabDataUseEntry()));
+    auto new_entry = active_tabs_.insert(
+        TabEntryMap::value_type(tab_id, TabDataUseEntry(this)));
     tab_entry_iterator = new_entry.first;
     DCHECK(tab_entry_iterator != active_tabs_.end());
     DCHECK(!tab_entry_iterator->second.IsTrackingDataUse());
     new_tab_entry_added = true;
   }
-  if (tab_entry_iterator->second.StartTracking(label))
+  if (tab_entry_iterator->second.StartTracking(label)) {
+    tab_entry_iterator->second.set_custom_tab_package_match(
+        is_custom_tab_package_match);
     NotifyObserversOfTrackingStarting(tab_id);
+  }
 
   if (new_tab_entry_added)
     CompactTabEntries();  // Keep total number of tab entries within limit.
 }
 
 void DataUseTabModel::EndTrackingDataUse(SessionID::id_type tab_id) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   TabEntryMap::iterator tab_entry_iterator = active_tabs_.find(tab_id);
   if (tab_entry_iterator != active_tabs_.end() &&
       tab_entry_iterator->second.EndTracking()) {
@@ -229,17 +479,15 @@ void DataUseTabModel::CompactTabEntries() {
     if (tab_entry.IsExpired()) {
       // Track the lifetime of expired tab entry.
       const base::TimeDelta removal_time =
-          Now() - tab_entry.GetLatestStartOrEndTime();
+          NowTicks() - tab_entry.GetLatestStartOrEndTime();
       if (!tab_entry.IsTrackingDataUse()) {
         UMA_HISTOGRAM_CUSTOM_TIMES(
-            kUMAExpiredInactiveTabEntryRemovalDurationSecondsHistogram,
-            removal_time, base::TimeDelta::FromSeconds(1),
-            base::TimeDelta::FromHours(1), 50);
+            kUMAExpiredInactiveTabEntryRemovalDurationHistogram, removal_time,
+            base::TimeDelta::FromSeconds(1), base::TimeDelta::FromHours(1), 50);
       } else {
         UMA_HISTOGRAM_CUSTOM_TIMES(
-            kUMAExpiredActiveTabEntryRemovalDurationHoursHistogram,
-            removal_time, base::TimeDelta::FromHours(1),
-            base::TimeDelta::FromDays(5), 50);
+            kUMAExpiredActiveTabEntryRemovalDurationHistogram, removal_time,
+            base::TimeDelta::FromHours(1), base::TimeDelta::FromDays(5), 50);
       }
       active_tabs_.erase(tab_entry_iterator++);
     } else {
@@ -263,8 +511,9 @@ void DataUseTabModel::CompactTabEntries() {
     }
     DCHECK(oldest_tab_entry_iterator != active_tabs_.end());
     UMA_HISTOGRAM_CUSTOM_TIMES(
-        kUMAUnexpiredTabEntryRemovalDurationMinutesHistogram,
-        Now() - oldest_tab_entry_iterator->second.GetLatestStartOrEndTime(),
+        kUMAUnexpiredTabEntryRemovalDurationHistogram,
+        NowTicks() -
+            oldest_tab_entry_iterator->second.GetLatestStartOrEndTime(),
         base::TimeDelta::FromMinutes(1), base::TimeDelta::FromHours(1), 50);
     active_tabs_.erase(oldest_tab_entry_iterator);
   }

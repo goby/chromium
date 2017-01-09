@@ -4,9 +4,11 @@
 
 #include "ash/system/chromeos/power/power_event_observer.h"
 
+#include <memory>
+
+#include "ash/common/test/test_session_state_delegate.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager_client.h"
@@ -35,7 +37,7 @@ class PowerEventObserverTest : public test::AshTestBase {
  protected:
   int GetNumVisibleCompositors() {
     int result = 0;
-    for (const auto& window : Shell::GetAllRootWindows()) {
+    for (auto* window : Shell::GetAllRootWindows()) {
       if (window->GetHost()->compositor()->IsVisible())
         ++result;
     }
@@ -43,7 +45,7 @@ class PowerEventObserverTest : public test::AshTestBase {
     return result;
   }
 
-  scoped_ptr<PowerEventObserver> observer_;
+  std::unique_ptr<PowerEventObserver> observer_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PowerEventObserverTest);
@@ -56,8 +58,8 @@ TEST_F(PowerEventObserverTest, LockBeforeSuspend) {
 
   // Check that the observer requests a suspend-readiness callback when it hears
   // that the system is about to suspend.
-  SetCanLockScreen(true);
-  SetShouldLockScreenBeforeSuspending(true);
+  test::TestSessionStateDelegate::SetCanLockScreen(true);
+  SetShouldLockScreenAutomatically(true);
   observer_->SuspendImminent();
   EXPECT_EQ(1, client->GetNumPendingSuspendReadinessCallbacks());
 
@@ -78,7 +80,7 @@ TEST_F(PowerEventObserverTest, LockBeforeSuspend) {
   // It also shouldn't request a callback if it isn't instructed to lock the
   // screen.
   observer_->SuspendDone(base::TimeDelta());
-  SetShouldLockScreenBeforeSuspending(false);
+  SetShouldLockScreenAutomatically(false);
   observer_->SuspendImminent();
   EXPECT_EQ(0, client->GetNumPendingSuspendReadinessCallbacks());
 }
@@ -94,8 +96,8 @@ TEST_F(PowerEventObserverTest, SetInvisibleBeforeSuspend) {
 
   // Tests that all the Compositors are marked invisible _after_ the screen lock
   // animations have completed.
-  SetCanLockScreen(true);
-  SetShouldLockScreenBeforeSuspending(true);
+  test::TestSessionStateDelegate::SetCanLockScreen(true);
+  SetShouldLockScreenAutomatically(true);
 
   observer_->SuspendImminent();
   EXPECT_EQ(1, GetNumVisibleCompositors());
@@ -113,8 +115,8 @@ TEST_F(PowerEventObserverTest, SetInvisibleBeforeSuspend) {
 TEST_F(PowerEventObserverTest, CanceledSuspend) {
   // Tests that the Compositors are not marked invisible if a suspend is
   // canceled or the system resumes before the lock screen is ready.
-  SetCanLockScreen(true);
-  SetShouldLockScreenBeforeSuspending(true);
+  test::TestSessionStateDelegate::SetCanLockScreen(true);
+  SetShouldLockScreenAutomatically(true);
   observer_->SuspendImminent();
   EXPECT_EQ(1, GetNumVisibleCompositors());
 
@@ -135,8 +137,8 @@ TEST_F(PowerEventObserverTest, DelayResuspendForLockAnimations) {
   //
   // In this case, the observer should block the second suspend request until
   // the animations have completed.
-  SetCanLockScreen(true);
-  SetShouldLockScreenBeforeSuspending(true);
+  test::TestSessionStateDelegate::SetCanLockScreen(true);
+  SetShouldLockScreenAutomatically(true);
 
   chromeos::PowerManagerClient* client =
       chromeos::DBusThreadManager::Get()->GetPowerManagerClient();

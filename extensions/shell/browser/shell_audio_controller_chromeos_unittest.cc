@@ -4,7 +4,12 @@
 
 #include "extensions/shell/browser/shell_audio_controller_chromeos.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chromeos/audio/audio_device.h"
 #include "chromeos/audio/audio_devices_pref_handler.h"
 #include "chromeos/audio/cras_audio_handler.h"
@@ -23,12 +28,12 @@ class ShellAudioControllerTest : public testing::Test {
  public:
   ShellAudioControllerTest() : next_node_id_(1) {
     // This also initializes DBusThreadManager.
-    scoped_ptr<chromeos::DBusThreadManagerSetter> dbus_setter =
+    std::unique_ptr<chromeos::DBusThreadManagerSetter> dbus_setter =
         chromeos::DBusThreadManager::GetSetterForTesting();
 
     audio_client_ = new chromeos::FakeCrasAudioClient();
     audio_client_->SetAudioNodesForTesting(AudioNodeList());
-    dbus_setter->SetCrasAudioClient(make_scoped_ptr(audio_client_));
+    dbus_setter->SetCrasAudioClient(base::WrapUnique(audio_client_));
 
     chromeos::CrasAudioHandler::InitializeForTesting();
     audio_handler_ = chromeos::CrasAudioHandler::Get();
@@ -56,7 +61,7 @@ class ShellAudioControllerTest : public testing::Test {
   }
 
   // Changes the active state of the node with |id| in |nodes|.
-  void SetNodeActive(AudioNodeList* nodes, uint64 id, bool active) {
+  void SetNodeActive(AudioNodeList* nodes, uint64_t id, bool active) {
     for (AudioNodeList::iterator it = nodes->begin();
          it != nodes->end(); ++it) {
       if (it->id == id) {
@@ -69,10 +74,10 @@ class ShellAudioControllerTest : public testing::Test {
 
   chromeos::FakeCrasAudioClient* audio_client_;  // Not owned.
   chromeos::CrasAudioHandler* audio_handler_;  // Not owned.
-  scoped_ptr<ShellAudioController> controller_;
+  std::unique_ptr<ShellAudioController> controller_;
 
   // Next audio node ID to be returned by CreateNode().
-  uint64 next_node_id_;
+  uint64_t next_node_id_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ShellAudioControllerTest);

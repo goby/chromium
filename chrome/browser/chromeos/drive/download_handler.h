@@ -5,7 +5,10 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DRIVE_DOWNLOAD_HANDLER_H_
 #define CHROME_BROWSER_CHROMEOS_DRIVE_DOWNLOAD_HANDLER_H_
 
+#include <stdint.h>
+
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/download/all_download_item_notifier.h"
 #include "components/drive/file_errors.h"
@@ -21,7 +24,6 @@ class DownloadManager;
 namespace drive {
 
 class FileSystemInterface;
-class ResourceEntry;
 
 // Observes downloads to temporary local drive folder. Schedules these
 // downloads for upload to drive service.
@@ -74,7 +76,7 @@ class DownloadHandler : public AllDownloadItemNotifier::Observer {
       const content::CheckForFileExistenceCallback& callback);
 
   // Calculates request space for |downloads|.
-  int64 CalculateRequestSpace(
+  int64_t CalculateRequestSpace(
       const content::DownloadManager::DownloadVector& downloads);
 
   // Checks available storage space and free disk space if necessary. Actual
@@ -121,8 +123,8 @@ class DownloadHandler : public AllDownloadItemNotifier::Observer {
   FileSystemInterface* file_system_;  // Owned by DriveIntegrationService.
 
   // Observe the DownloadManager for new downloads.
-  scoped_ptr<AllDownloadItemNotifier> notifier_;
-  scoped_ptr<AllDownloadItemNotifier> notifier_incognito_;
+  std::unique_ptr<AllDownloadItemNotifier> notifier_;
+  std::unique_ptr<AllDownloadItemNotifier> notifier_incognito_;
 
   // Temporary download location directory.
   base::FilePath drive_tmp_download_path_;

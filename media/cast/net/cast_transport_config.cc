@@ -8,15 +8,15 @@ namespace media {
 namespace cast {
 
 CastTransportRtpConfig::CastTransportRtpConfig()
-    : ssrc(0), feedback_ssrc(0), rtp_payload_type(0) {}
+    : rtp_stream_id(0),
+      ssrc(0),
+      feedback_ssrc(0),
+      rtp_payload_type(RtpPayloadType::UNKNOWN) {}
 
 CastTransportRtpConfig::~CastTransportRtpConfig() {}
 
 EncodedFrame::EncodedFrame()
     : dependency(UNKNOWN_DEPENDENCY),
-      frame_id(0),
-      referenced_frame_id(0),
-      rtp_timestamp(0),
       new_playout_delay_ms(0) {}
 
 EncodedFrame::~EncodedFrame() {}
@@ -34,7 +34,6 @@ void EncodedFrame::CopyMetadataTo(EncodedFrame* dest) const {
 RtcpSenderInfo::RtcpSenderInfo()
     : ntp_seconds(0),
       ntp_fraction(0),
-      rtp_timestamp(0),
       send_packet_count(0),
       send_octet_count(0) {}
 RtcpSenderInfo::~RtcpSenderInfo() {}

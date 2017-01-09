@@ -5,11 +5,13 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_PAGE_FLIP_REQUEST_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_PAGE_FLIP_REQUEST_H_
 
+#include <memory>
+
 #include "base/atomic_ref_count.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/gfx/swap_result.h"
-#include "ui/ozone/public/surface_ozone_egl.h"
+#include "ui/ozone/public/swap_completion_callback.h"
 
 namespace ui {
 

@@ -7,14 +7,18 @@
 #include <stddef.h>
 #include <algorithm>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_country.h"
 #include "components/autofill/core/browser/autofill_field.h"
+#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/autofill_profile_comparator.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/country_names.h"
+#include "components/autofill/core/browser/state_names.h"
+#include "components/autofill/core/common/autofill_l10n_util.h"
 
 namespace autofill {
 
@@ -38,6 +42,16 @@ Address& Address::operator=(const Address& address) {
   zip_code_ = address.zip_code_;
   sorting_code_ = address.sorting_code_;
   return *this;
+}
+
+bool Address::operator==(const Address& other) const {
+  if (this == &other)
+    return true;
+  return street_address_ == other.street_address_ &&
+         dependent_locality_ == other.dependent_locality_ &&
+         city_ == other.city_ && state_ == other.state_ &&
+         zip_code_ == other.zip_code_ && sorting_code_ == other.sorting_code_ &&
+         country_code_ == other.country_code_;
 }
 
 base::string16 Address::GetRawInfo(ServerFieldType type) const {
@@ -73,8 +87,11 @@ base::string16 Address::GetRawInfo(ServerFieldType type) const {
     case ADDRESS_HOME_STREET_ADDRESS:
       return base::JoinString(street_address_, base::ASCIIToUTF16("\n"));
 
+    case ADDRESS_HOME_APT_NUM:
+      return base::string16();
+
     default:
-      NOTREACHED();
+      NOTREACHED() << "Unrecognized type: " << type;
       return base::string16();
   }
 }
@@ -170,7 +187,7 @@ bool Address::SetInfo(const AutofillType& type,
 
   ServerFieldType storable_type = type.GetStorableType();
   if (storable_type == ADDRESS_HOME_COUNTRY && !value.empty()) {
-    country_code_ = AutofillCountry::GetCountryCode(value, app_locale);
+    country_code_ = CountryNames::GetInstance()->GetCountryCode(value);
     return !country_code_.empty();
   }
 
@@ -195,9 +212,30 @@ void Address::GetMatchingTypes(const base::string16& text,
   FormGroup::GetMatchingTypes(text, app_locale, matching_types);
 
   // Check to see if the |text| canonicalized as a country name is a match.
-  std::string country_code = AutofillCountry::GetCountryCode(text, app_locale);
+  std::string country_code = CountryNames::GetInstance()->GetCountryCode(text);
   if (!country_code.empty() && country_code_ == country_code)
     matching_types->insert(ADDRESS_HOME_COUNTRY);
+
+  AutofillProfileComparator comparator(app_locale);
+  // Check to see if the |text| could be the full name or abbreviation of a
+  // state.
+  base::string16 canon_text = comparator.NormalizeForComparison(text);
+  base::string16 state_name;
+  base::string16 state_abbreviation;
+  state_names::GetNameAndAbbreviation(canon_text, &state_name,
+                                      &state_abbreviation);
+  if (!state_name.empty() || !state_abbreviation.empty()) {
+    l10n::CaseInsensitiveCompare compare;
+    base::string16 canon_profile_state =
+        comparator.NormalizeForComparison(
+            GetInfo(AutofillType(ADDRESS_HOME_STATE), app_locale));
+    if ((!state_name.empty() &&
+         compare.StringsEqual(state_name, canon_profile_state)) ||
+        (!state_abbreviation.empty() &&
+         compare.StringsEqual(state_abbreviation, canon_profile_state))) {
+      matching_types->insert(ADDRESS_HOME_STATE);
+    }
+  }
 }
 
 void Address::GetSupportedTypes(ServerFieldTypeSet* supported_types) const {

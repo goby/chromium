@@ -30,7 +30,7 @@ class PendingExtensionInfo {
   PendingExtensionInfo(const std::string& id,
                        const std::string& install_parameter,
                        const GURL& update_url,
-                       const Version& version,
+                       const base::Version& version,
                        ShouldAllowInstallPredicate should_allow_install,
                        bool is_from_sync,
                        Manifest::Location install_source,
@@ -41,6 +41,8 @@ class PendingExtensionInfo {
   // Required for STL container membership.  Should not be used directly.
   PendingExtensionInfo();
 
+  PendingExtensionInfo(const PendingExtensionInfo& other);
+
   ~PendingExtensionInfo();
 
   // Consider two PendingExtensionInfos equal if their ids are equal.
@@ -48,7 +50,7 @@ class PendingExtensionInfo {
 
   const std::string& id() const { return id_; }
   const GURL& update_url() const { return update_url_; }
-  const Version& version() const { return version_; }
+  const base::Version& version() const { return version_; }
   const std::string& install_parameter() const { return install_parameter_; }
 
   // ShouldAllowInstall() returns the result of running constructor argument
@@ -77,7 +79,7 @@ class PendingExtensionInfo {
   std::string id_;
 
   GURL update_url_;
-  Version version_;
+  base::Version version_;
   std::string install_parameter_;
 
   // When the extension is about to be installed, this function is

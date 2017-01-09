@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_FILTERS_VP9_RAW_BITS_READER_
-#define MEDIA_FILTERS_VP9_RAW_BITS_READER_
+#ifndef MEDIA_FILTERS_VP9_RAW_BITS_READER_H_
+#define MEDIA_FILTERS_VP9_RAW_BITS_READER_H_
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/base/media_export.h"
 
 namespace media {
@@ -47,8 +48,12 @@ class MEDIA_EXPORT Vp9RawBitsReader {
   // If the read goes beyond the end of buffer, the return value is undefined.
   int ReadSignedLiteral(int bits);
 
+  // Consumes trailing bits up to next byte boundary. Returns true if no
+  // trailing bits or they are all zero.
+  bool ConsumeTrailingBits();
+
  private:
-  scoped_ptr<BitReader> reader_;
+  std::unique_ptr<BitReader> reader_;
 
   // Indicates if none of the reads since the last Initialize() call has gone
   // beyond the end of available data.
@@ -59,4 +64,4 @@ class MEDIA_EXPORT Vp9RawBitsReader {
 
 }  // namespace media
 
-#endif  // MEDIA_FILTERS_VP9_RAW_BITS_READER_
+#endif  // MEDIA_FILTERS_VP9_RAW_BITS_READER_H_

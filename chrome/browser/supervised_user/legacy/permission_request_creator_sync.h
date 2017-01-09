@@ -5,14 +5,17 @@
 #ifndef CHROME_BROWSER_SUPERVISED_USER_LEGACY_PERMISSION_REQUEST_CREATOR_SYNC_H_
 #define CHROME_BROWSER_SUPERVISED_USER_LEGACY_PERMISSION_REQUEST_CREATOR_SYNC_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/supervised_user/permission_request_creator.h"
 
-class ProfileSyncService;
 class SupervisedUserSettingsService;
 class SupervisedUserSharedSettingsService;
+
+namespace browser_sync {
+class ProfileSyncService;
+}  // namespace browser_sync
 
 // The requests are stored using a prefix followed by a URIEncoded version of
 // the URL/extension ID. Each entry contains a dictionary which currently has
@@ -22,7 +25,7 @@ class PermissionRequestCreatorSync : public PermissionRequestCreator {
   PermissionRequestCreatorSync(
       SupervisedUserSettingsService* settings_service,
       SupervisedUserSharedSettingsService* shared_settings_service,
-      ProfileSyncService* sync_service,
+      browser_sync::ProfileSyncService* sync_service,
       const std::string& name,
       const std::string& supervised_user_id);
   ~PermissionRequestCreatorSync() override;
@@ -31,6 +34,8 @@ class PermissionRequestCreatorSync : public PermissionRequestCreator {
   bool IsEnabled() const override;
   void CreateURLAccessRequest(const GURL& url_requested,
                               const SuccessCallback& callback) override;
+  void CreateExtensionInstallRequest(const std::string& id,
+                                     const SuccessCallback& callback) override;
   void CreateExtensionUpdateRequest(const std::string& id,
                                     const SuccessCallback& callback) override;
 
@@ -41,7 +46,7 @@ class PermissionRequestCreatorSync : public PermissionRequestCreator {
                      const SuccessCallback& callback);
   SupervisedUserSettingsService* settings_service_;
   SupervisedUserSharedSettingsService* shared_settings_service_;
-  ProfileSyncService* sync_service_;
+  browser_sync::ProfileSyncService* sync_service_;
   std::string name_;
   std::string supervised_user_id_;
 };

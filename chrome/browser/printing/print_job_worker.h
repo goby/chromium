@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_PRINTING_PRINT_JOB_WORKER_H_
 #define CHROME_BROWSER_PRINTING_PRINT_JOB_WORKER_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
 #include "chrome/browser/printing/printer_query.h"
@@ -34,24 +36,25 @@ class PrintedPage;
 class PrintJobWorker {
  public:
   PrintJobWorker(int render_process_id,
-                 int render_view_id,
+                 int render_frame_id,
                  PrintJobWorkerOwner* owner);
   virtual ~PrintJobWorker();
 
   void SetNewOwner(PrintJobWorkerOwner* new_owner);
 
   // Initializes the print settings. If |ask_user_for_settings| is true, a
-  // Print... dialog box will be shown to ask the user his preference.
+  // Print... dialog box will be shown to ask the user their preference.
   // |is_scripted| should be true for calls coming straight from window.print().
-  void GetSettings(
-      bool ask_user_for_settings,
-      int document_page_count,
-      bool has_selection,
-      MarginType margin_type,
-      bool is_scripted);
+  // |is_modifiable| implies HTML and not other formats like PDF.
+  void GetSettings(bool ask_user_for_settings,
+                   int document_page_count,
+                   bool has_selection,
+                   MarginType margin_type,
+                   bool is_scripted,
+                   bool is_modifiable);
 
   // Set the new print settings.
-  void SetSettings(scoped_ptr<base::DictionaryValue> new_settings);
+  void SetSettings(std::unique_ptr<base::DictionaryValue> new_settings);
 
   // Starts the printing loop. Every pages are printed as soon as the data is
   // available. Makes sure the new_document is the right one.
@@ -115,7 +118,7 @@ class PrintJobWorker {
       bool is_scripted);
 
   // Called on the UI thread to update the print settings.
-  void UpdatePrintSettings(scoped_ptr<base::DictionaryValue> new_settings);
+  void UpdatePrintSettings(std::unique_ptr<base::DictionaryValue> new_settings);
 
   // Reports settings back to owner_.
   void GetSettingsDone(PrintingContext::Result result);
@@ -126,10 +129,10 @@ class PrintJobWorker {
   void UseDefaultSettings();
 
   // Printing context delegate.
-  scoped_ptr<PrintingContext::Delegate> printing_context_delegate_;
+  std::unique_ptr<PrintingContext::Delegate> printing_context_delegate_;
 
   // Information about the printer setting.
-  scoped_ptr<PrintingContext> printing_context_;
+  std::unique_ptr<PrintingContext> printing_context_;
 
   // The printed document. Only has read-only access.
   scoped_refptr<PrintedDocument> document_;

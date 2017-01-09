@@ -4,13 +4,17 @@
 
 #include "ui/ozone/demo/surfaceless_gl_renderer.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/display/types/display_snapshot.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_image.h"
-#include "ui/gl/gl_image_ozone_native_pixmap.h"
 #include "ui/gl/gl_surface.h"
+#include "ui/ozone/gl/gl_image_ozone_native_pixmap.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/surface_factory_ozone.h"
 
@@ -26,7 +30,6 @@ SurfacelessGlRenderer::BufferWrapper::~BufferWrapper() {
   if (gl_tex_) {
     image_->ReleaseTexImage(GL_TEXTURE_2D);
     glDeleteTextures(1, &gl_tex_);
-    image_->Destroy(true);
   }
 }
 
@@ -36,14 +39,14 @@ bool SurfacelessGlRenderer::BufferWrapper::Initialize(
   glGenFramebuffersEXT(1, &gl_fb_);
   glGenTextures(1, &gl_tex_);
 
+  gfx::BufferFormat format = ui::DisplaySnapshot::PrimaryFormat();
   scoped_refptr<NativePixmap> pixmap =
       OzonePlatform::GetInstance()
           ->GetSurfaceFactoryOzone()
-          ->CreateNativePixmap(widget, size, gfx::BufferFormat::BGRX_8888,
-                               gfx::BufferUsage::SCANOUT);
-  scoped_refptr<gfx::GLImageOzoneNativePixmap> image(
-      new gfx::GLImageOzoneNativePixmap(size, GL_RGB));
-  if (!image->Initialize(pixmap.get(), gfx::BufferFormat::BGRX_8888)) {
+          ->CreateNativePixmap(widget, size, format, gfx::BufferUsage::SCANOUT);
+  scoped_refptr<ui::GLImageOzoneNativePixmap> image(
+      new ui::GLImageOzoneNativePixmap(size, GL_RGB));
+  if (!image->Initialize(pixmap.get(), format)) {
     LOG(ERROR) << "Failed to create GLImage";
     return false;
   }
@@ -73,7 +76,7 @@ void SurfacelessGlRenderer::BufferWrapper::BindFramebuffer() {
 
 SurfacelessGlRenderer::SurfacelessGlRenderer(
     gfx::AcceleratedWidget widget,
-    const scoped_refptr<gfx::GLSurface>& surface,
+    const scoped_refptr<gl::GLSurface>& surface,
     const gfx::Size& size)
     : GlRenderer(widget, surface, size), weak_ptr_factory_(this) {}
 

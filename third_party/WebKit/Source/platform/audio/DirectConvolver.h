@@ -34,31 +34,28 @@
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
 
-#if USE(WEBAUDIO_IPP)
-#include <ipps.h>
-#endif // USE(WEBAUDIO_IPP)
-
 namespace blink {
 
 class PLATFORM_EXPORT DirectConvolver {
-    USING_FAST_MALLOC(DirectConvolver);
-    WTF_MAKE_NONCOPYABLE(DirectConvolver);
-public:
-    DirectConvolver(size_t inputBlockSize);
+  USING_FAST_MALLOC(DirectConvolver);
+  WTF_MAKE_NONCOPYABLE(DirectConvolver);
 
-    void process(AudioFloatArray* convolutionKernel, const float* sourceP, float* destP, size_t framesToProcess);
+ public:
+  DirectConvolver(size_t inputBlockSize);
 
-    void reset();
+  void process(AudioFloatArray* convolutionKernel,
+               const float* sourceP,
+               float* destP,
+               size_t framesToProcess);
 
-private:
-    size_t m_inputBlockSize;
+  void reset();
 
-#if USE(WEBAUDIO_IPP)
-    AudioFloatArray m_overlayBuffer;
-#endif // USE(WEBAUDIO_IPP)
-    AudioFloatArray m_buffer;
+ private:
+  size_t m_inputBlockSize;
+
+  AudioFloatArray m_buffer;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DirectConvolver_h
+#endif  // DirectConvolver_h

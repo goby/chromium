@@ -2,40 +2,47 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/presentation/PresentationConnectionCallbacks.h"
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
+#include "core/dom/DOMException.h"
 #include "modules/presentation/PresentationConnection.h"
 #include "modules/presentation/PresentationError.h"
 #include "modules/presentation/PresentationRequest.h"
 #include "public/platform/modules/presentation/WebPresentationConnectionClient.h"
 #include "public/platform/modules/presentation/WebPresentationError.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PresentationConnectionCallbacks::PresentationConnectionCallbacks(ScriptPromiseResolver* resolver, PresentationRequest* request)
-    : m_resolver(resolver)
-    , m_request(request)
-{
-    ASSERT(m_resolver);
-    ASSERT(m_request);
+PresentationConnectionCallbacks::PresentationConnectionCallbacks(
+    ScriptPromiseResolver* resolver,
+    PresentationRequest* request)
+    : m_resolver(resolver), m_request(request) {
+  ASSERT(m_resolver);
+  ASSERT(m_request);
 }
 
-void PresentationConnectionCallbacks::onSuccess(WebPassOwnPtr<WebPresentationConnectionClient> PresentationConnectionClient)
-{
-    OwnPtr<WebPresentationConnectionClient> result(PresentationConnectionClient.release());
+void PresentationConnectionCallbacks::onSuccess(
+    std::unique_ptr<WebPresentationConnectionClient>
+        PresentationConnectionClient) {
+  std::unique_ptr<WebPresentationConnectionClient> result(
+      WTF::wrapUnique(PresentationConnectionClient.release()));
 
-    if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
-        return;
-    m_resolver->resolve(PresentationConnection::take(m_resolver.get(), result.release(), m_request));
+  if (!m_resolver->getExecutionContext() ||
+      m_resolver->getExecutionContext()->isContextDestroyed())
+    return;
+  m_resolver->resolve(PresentationConnection::take(
+      m_resolver.get(), std::move(result), m_request));
 }
 
-void PresentationConnectionCallbacks::onError(const WebPresentationError& error)
-{
-    if (!m_resolver->executionContext() || m_resolver->executionContext()->activeDOMObjectsAreStopped())
-        return;
-    m_resolver->reject(PresentationError::take(m_resolver.get(), error));
+void PresentationConnectionCallbacks::onError(
+    const WebPresentationError& error) {
+  if (!m_resolver->getExecutionContext() ||
+      m_resolver->getExecutionContext()->isContextDestroyed())
+    return;
+  m_resolver->reject(PresentationError::take(m_resolver.get(), error));
 }
 
-} // namespace blink
+}  // namespace blink

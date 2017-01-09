@@ -7,26 +7,31 @@
 
 #include "ios/chrome/browser/about_flags.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #import <UIKit/UIKit.h>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/sys_info.h"
-#include "components/autofill/core/common/autofill_switches.h"
+#include "base/task_scheduler/switches.h"
 #include "components/dom_distiller/core/dom_distiller_switches.h"
-#include "components/enhanced_bookmarks/enhanced_bookmark_switches.h"
 #include "components/flags_ui/feature_entry.h"
 #include "components/flags_ui/feature_entry_macros.h"
 #include "components/flags_ui/flags_storage.h"
 #include "components/flags_ui/flags_ui_switches.h"
-#include "components/sync_driver/sync_driver_switches.h"
+#include "components/ntp_tiles/switches.h"
+#include "components/reading_list/core/reading_list_switches.h"
+#include "components/strings/grit/components_strings.h"
+#include "components/sync/driver/sync_driver_switches.h"
 #include "google_apis/gaia/gaia_switches.h"
-#include "grit/components_strings.h"
 #include "ios/chrome/browser/chrome_switches.h"
+#include "ios/chrome/browser/google_api_keys.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/web/public/user_agent.h"
 #include "ios/web/public/web_view_creation_util.h"
@@ -49,17 +54,17 @@ namespace {
 // When adding a new choice, add it to the end of the list.
 const flags_ui::FeatureEntry kFeatureEntries[] = {
     {"contextual-search", IDS_IOS_FLAGS_CONTEXTUAL_SEARCH,
-     IDS_IOS_FLAGS_CONTEXTUAL_SEARCH_DESCRIPTION,
-     flags_ui::kOsIos,
+     IDS_IOS_FLAGS_CONTEXTUAL_SEARCH_DESCRIPTION, flags_ui::kOsIos,
      ENABLE_DISABLE_VALUE_TYPE(switches::kEnableContextualSearch,
                                switches::kDisableContextualSearch)},
-    {"enhanced-bookmarks-experiment", IDS_FLAGS_ENHANCED_BOOKMARKS_NAME,
-     IDS_FLAGS_ENHANCED_BOOKMARKS_DESCRIPTION,
-     flags_ui::kOsIos,
-     ENABLE_DISABLE_VALUE_TYPE_AND_VALUE(switches::kEnhancedBookmarksExperiment,
-                                         "1",
-                                         switches::kEnhancedBookmarksExperiment,
-                                         "0")},
+    {"ios-physical-web", IDS_IOS_FLAGS_PHYSICAL_WEB,
+     IDS_IOS_FLAGS_PHYSICAL_WEB_DESCRIPTION, flags_ui::kOsIos,
+     ENABLE_DISABLE_VALUE_TYPE(switches::kEnableIOSPhysicalWeb,
+                               switches::kDisableIOSPhysicalWeb)},
+    {"browser-task-scheduler", IDS_IOS_FLAGS_BROWSER_TASK_SCHEDULER_NAME,
+     IDS_IOS_FLAGS_BROWSER_TASK_SCHEDULER_DESCRIPTION, flags_ui::kOsIos,
+     ENABLE_DISABLE_VALUE_TYPE(switches::kEnableBrowserTaskScheduler,
+                               switches::kDisableBrowserTaskScheduler)},
 };
 
 // Add all switches from experimental flags to |command_line|.
@@ -71,19 +76,22 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
   NSString* gaia_environment = [defaults stringForKey:kGAIAEnvironment];
   if ([gaia_environment isEqualToString:@"Staging"]) {
     command_line->AppendSwitchASCII(switches::kGoogleApisUrl,
-                                    GOOGLE_STAGING_API_URL);
-    command_line->AppendSwitchASCII(switches::kLsoUrl, GOOGLE_STAGING_LSO_URL);
+                                    BUILDFLAG(GOOGLE_STAGING_API_URL));
+    command_line->AppendSwitchASCII(switches::kLsoUrl,
+                                    BUILDFLAG(GOOGLE_STAGING_LSO_URL));
   } else if ([gaia_environment isEqualToString:@"Test"]) {
-    command_line->AppendSwitchASCII(switches::kGaiaUrl, GOOGLE_TEST_OAUTH_URL);
+    command_line->AppendSwitchASCII(switches::kGaiaUrl,
+                                    BUILDFLAG(GOOGLE_TEST_OAUTH_URL));
     command_line->AppendSwitchASCII(switches::kGoogleApisUrl,
-                                    GOOGLE_TEST_API_URL);
-    command_line->AppendSwitchASCII(switches::kLsoUrl, GOOGLE_TEST_LSO_URL);
+                                    BUILDFLAG(GOOGLE_TEST_API_URL));
+    command_line->AppendSwitchASCII(switches::kLsoUrl,
+                                    BUILDFLAG(GOOGLE_TEST_LSO_URL));
     command_line->AppendSwitchASCII(switches::kSyncServiceURL,
-                                    GOOGLE_TEST_SYNC_URL);
+                                    BUILDFLAG(GOOGLE_TEST_SYNC_URL));
     command_line->AppendSwitchASCII(switches::kOAuth2ClientID,
-                                    GOOGLE_TEST_OAUTH_CLIENT_ID);
+                                    BUILDFLAG(GOOGLE_TEST_OAUTH_CLIENT_ID));
     command_line->AppendSwitchASCII(switches::kOAuth2ClientSecret,
-                                    GOOGLE_TEST_OAUTH_CLIENT_SECRET);
+                                    BUILDFLAG(GOOGLE_TEST_OAUTH_CLIENT_SECRET));
   }
 
   // Populate command line flag for the Tab Switcher experiment from the
@@ -105,13 +113,13 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
     command_line->AppendSwitch(switches::kDisableLRUSnapshotCache);
   }
 
-  // Populate command line flag for the NTP favicons experiment from the
+  // Populate command line flag for the AllBookmarks from the
   // configuration plist.
-  NSString* enableNTPFavicons = [defaults stringForKey:@"EnableNTPFavicons"];
-  if ([enableNTPFavicons isEqualToString:@"Enabled"]) {
-    command_line->AppendSwitch(switches::kEnableNTPFavicons);
-  } else if ([enableNTPFavicons isEqualToString:@"Disabled"]) {
-    command_line->AppendSwitch(switches::kDisableNTPFavicons);
+  NSString* enableAllBookmarks = [defaults stringForKey:@"AllBookmarks"];
+  if ([enableAllBookmarks isEqualToString:@"Enabled"]) {
+    command_line->AppendSwitch(switches::kEnableAllBookmarksView);
+  } else if ([enableAllBookmarks isEqualToString:@"Disabled"]) {
+    command_line->AppendSwitch(switches::kDisableAllBookmarksView);
   }
 
   // Populate command line flags from PasswordGenerationEnabled.
@@ -123,15 +131,13 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
     command_line->AppendSwitch(switches::kDisableIOSPasswordGeneration);
   }
 
-  // Populate command line flags from EnableBookmarkCollections.
-  NSString* bookmarkCollectionState =
-      [defaults stringForKey:@"BookmarkCollectionState"];
-  if ([bookmarkCollectionState isEqualToString:@"OptIn"]) {
-    command_line->AppendSwitchNative(switches::kEnhancedBookmarksExperiment,
-                                     "1");
-  } else if ([bookmarkCollectionState isEqualToString:@"OptOut"]) {
-    command_line->AppendSwitchNative(switches::kEnhancedBookmarksExperiment,
-                                     "0");
+  // Populate command line flags from PhysicalWebEnabled.
+  NSString* enablePhysicalWebValue =
+      [defaults stringForKey:@"PhysicalWebEnabled"];
+  if ([enablePhysicalWebValue isEqualToString:@"Enabled"]) {
+    command_line->AppendSwitch(switches::kEnableIOSPhysicalWeb);
+  } else if ([enablePhysicalWebValue isEqualToString:@"Disabled"]) {
+    command_line->AppendSwitch(switches::kDisableIOSPhysicalWeb);
   }
 
   // Web page replay flags.
@@ -150,14 +156,6 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
 
   if ([defaults boolForKey:@"EnableCredentialManagement"])
     command_line->AppendSwitch(switches::kEnableCredentialManagerAPI);
-
-  // Populate command line flags from FullFormAutofill.
-  NSString* fullFormAutofillValue = [defaults stringForKey:@"FullFormAutofill"];
-  if ([fullFormAutofillValue isEqualToString:@"Enabled"]) {
-    command_line->AppendSwitch(autofill::switches::kEnableFullFormAutofillIOS);
-  } else if ([fullFormAutofillValue isEqualToString:@"Disabled"]) {
-    command_line->AppendSwitch(autofill::switches::kDisableFullFormAutofillIOS);
-  }
 
   NSString* autoReloadEnabledValue =
       [defaults stringForKey:@"AutoReloadEnabled"];
@@ -184,45 +182,78 @@ void AppendSwitchesFromExperimentalSettings(base::CommandLine* command_line) {
     NSString* readerModeDetectionHeuristics =
         [defaults stringForKey:@"ReaderModeDetectionHeuristics"];
     if (!readerModeDetectionHeuristics) {
-      command_line->AppendSwitch(switches::reader_mode_heuristics::kOGArticle);
+      command_line->AppendSwitchASCII(
+          switches::kReaderModeHeuristics,
+          switches::reader_mode_heuristics::kOGArticle);
     } else if ([readerModeDetectionHeuristics isEqualToString:@"AdaBoost"]) {
-      command_line->AppendSwitch(switches::reader_mode_heuristics::kAdaBoost);
+      command_line->AppendSwitchASCII(
+          switches::kReaderModeHeuristics,
+          switches::reader_mode_heuristics::kAdaBoost);
     } else {
       DCHECK([readerModeDetectionHeuristics isEqualToString:@"Off"]);
+      command_line->AppendSwitchASCII(switches::kReaderModeHeuristics,
+                                      switches::reader_mode_heuristics::kNone);
     }
   }
 
-  // Populate command line flags from DisableKeyboardCommands.
-  if ([defaults boolForKey:@"DisableKeyboardCommands"])
-    command_line->AppendSwitch(switches::kDisableKeyboardCommands);
-
-  // TODO(crbug.com/450311): Remove this compile-time flag once bots are passing
-  // the compile-time flag.
-#if defined(FORCE_ENABLE_WKWEBVIEW)
-  if (web::IsWKWebViewSupported())
-    command_line->AppendSwitch(switches::kEnableIOSWKWebView);
-#else
-  // Populate command line flags from EnableWKWebView.
-  NSString* enableWKWebViewValue = [defaults stringForKey:@"EnableWKWebView"];
-  if ([enableWKWebViewValue isEqualToString:@"Enabled"]) {
-    command_line->AppendSwitch(switches::kEnableIOSWKWebView);
-  } else if ([enableWKWebViewValue isEqualToString:@"Disabled"]) {
-    command_line->AppendSwitch(switches::kDisableIOSWKWebView);
+  // Populate command line flags from EnablePopularSites.
+  NSString* EnablePopularSites = [defaults stringForKey:@"EnablePopularSites"];
+  if ([EnablePopularSites isEqualToString:@"Enabled"]) {
+    command_line->AppendSwitch(ntp_tiles::switches::kEnableNTPPopularSites);
+  } else if ([EnablePopularSites isEqualToString:@"Disabled"]) {
+    command_line->AppendSwitch(ntp_tiles::switches::kDisableNTPPopularSites);
   }
-#endif
 
   // Set the UA flag if UseMobileSafariUA is enabled.
   if ([defaults boolForKey:@"UseMobileSafariUA"]) {
     // Safari uses "Vesion/", followed by the OS version excluding bugfix, where
     // Chrome puts its product token.
-    int32 major = 0;
-    int32 minor = 0;
-    int32 bugfix = 0;
+    int32_t major = 0;
+    int32_t minor = 0;
+    int32_t bugfix = 0;
     base::SysInfo::OperatingSystemVersionNumbers(&major, &minor, &bugfix);
     std::string product = base::StringPrintf("Version/%d.%d", major, minor);
 
     command_line->AppendSwitchASCII(switches::kUserAgent,
                                     web::BuildUserAgentFromProduct(product));
+  }
+
+  // Populate command line flags from QRScanner.
+  if ([defaults boolForKey:@"DisableQRCodeReader"]) {
+    command_line->AppendSwitch(switches::kDisableQRScanner);
+  } else {
+    command_line->AppendSwitch(switches::kEnableQRScanner);
+  }
+
+  // Populate command line flag for the Payment Request API.
+  NSString* enable_payment_request =
+      [defaults stringForKey:@"EnablePaymentRequest"];
+  if ([enable_payment_request isEqualToString:@"Enabled"]) {
+    command_line->AppendSwitch(switches::kEnablePaymentRequest);
+  } else if ([enable_payment_request isEqualToString:@"Disabled"]) {
+    command_line->AppendSwitch(switches::kDisablePaymentRequest);
+  }
+
+  // Populate command line flags from Reading List.
+  if ([defaults boolForKey:@"EnableReadingList"]) {
+    command_line->AppendSwitch(reading_list::switches::kEnableReadingList);
+  } else {
+    command_line->AppendSwitch(reading_list::switches::kDisableReadingList);
+  }
+
+  // Populate command line flag for Spotlight Actions.
+  if ([defaults boolForKey:@"DisableSpotlightActions"]) {
+    command_line->AppendSwitch(switches::kDisableSpotlightActions);
+  }
+
+  // Populate command line flag for the Rename "Save Image" to "Download Image"
+  // experiment.
+  NSString* enableDownloadRenaming =
+      [defaults stringForKey:@"EnableDownloadRenaming"];
+  if ([enableDownloadRenaming isEqualToString:@"Enabled"]) {
+    command_line->AppendSwitch(switches::kEnableDownloadImageRenaming);
+  } else if ([enableDownloadRenaming isEqualToString:@"Disabled"]) {
+    command_line->AppendSwitch(switches::kDisableDownloadImageRenaming);
   }
 
   // Freeform commandline flags.  These are added last, so that any flags added
@@ -280,6 +311,13 @@ void ConvertFlagsToSwitches(flags_ui::FlagsStorage* flags_storage,
       flags_storage, command_line, flags_ui::kAddSentinels,
       switches::kEnableIOSFeatures, switches::kDisableIOSFeatures);
   AppendSwitchesFromExperimentalSettings(command_line);
+}
+
+std::vector<std::string> RegisterAllFeatureVariationParameters(
+    flags_ui::FlagsStorage* flags_storage,
+    base::FeatureList* feature_list) {
+  return FlagsStateSingleton::GetFlagsState()
+      ->RegisterAllFeatureVariationParameters(flags_storage, feature_list);
 }
 
 void GetFlagFeatureEntries(flags_ui::FlagsStorage* flags_storage,

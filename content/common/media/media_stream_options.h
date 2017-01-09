@@ -13,79 +13,47 @@
 
 namespace content {
 
-// MediaStreamConstraint keys for constraints that are passed to getUserMedia.
-CONTENT_EXPORT extern const char kMediaStreamSource[];
-CONTENT_EXPORT extern const char kMediaStreamSourceId[];
-CONTENT_EXPORT extern const char kMediaStreamSourceInfoId[];
+// Names for media stream source capture types.
+// These are values of the "TrackControls.stream_source" field, and are
+// set via the "chromeMediaSource" constraint.
 CONTENT_EXPORT extern const char kMediaStreamSourceTab[];
 CONTENT_EXPORT extern const char kMediaStreamSourceScreen[];
 CONTENT_EXPORT extern const char kMediaStreamSourceDesktop[];
 CONTENT_EXPORT extern const char kMediaStreamSourceSystem[];
 
-// Experimental constraint to do device matching.  When this optional constraint
-// is set, WebRTC audio renderer will render audio from media streams to an
-// output device that belongs to the same hardware as the requested source
-// device belongs to.
-CONTENT_EXPORT extern const char kMediaStreamRenderToAssociatedSink[];
-
-// Controls whether the hotword audio stream is used on platforms that support
-// it.
-CONTENT_EXPORT extern const char kMediaStreamAudioHotword[];
-
-// StreamOptions is a Chromium representation of constraints
-// used in WebUserMediaRequest.
-// It describes properties requested by JS in a request for a new
-// media stream.
-class CONTENT_EXPORT StreamOptions {
+struct CONTENT_EXPORT TrackControls {
  public:
-  StreamOptions();
-  StreamOptions(bool request_audio, bool request_video);
-  ~StreamOptions();
+  TrackControls();
+  explicit TrackControls(bool request);
+  explicit TrackControls(const TrackControls& other);
+  ~TrackControls();
+  bool requested;
 
-  struct CONTENT_EXPORT Constraint {
-    Constraint();
-    Constraint(const std::string& name,
-               const std::string& value);
+  // Source. This is "tab", "screen", "desktop", "system", or blank.
+  // Consider replacing with MediaStreamType enum variables.
+  std::string stream_source;  // audio.kMediaStreamSource
 
-    std::string name;
-    std::string value;
-  };
-  typedef std::vector<Constraint> Constraints;
+  // An empty string represents the default device.
+  // A nonempty string represents a specific device.
+  std::string device_id;
+};
 
-  bool audio_requested;
-  Constraints mandatory_audio;
-  Constraints optional_audio;
-
-  bool video_requested;
-  Constraints mandatory_video;
-  Constraints optional_video;
-
-  // Fetches |value| from the first audio constraint with a name that matches
-  // |name| from |mandatory_audio| and |optional_audio|. First mandatory
-  // constraints are searched, then optional.
-  // |is_mandatory| may be NULL but if it is provided, it is set
-  // to true if the found constraint is mandatory.
-  // Returns false if no constraint is found.
-  bool GetFirstAudioConstraintByName(const std::string& name,
-                                     std::string* value,
-                                     bool* is_mandatory) const;
-
-  // Fetches |value| from the first video constraint with a name that matches
-  // |name| from |mandatory_video| and |optional_video|. First mandatory
-  // constraints are searched, then optional.
-  // |is_mandatory| may be NULL but if it is provided, it is set
-  // to true if the found constraint is mandatory.
-  // Returns false if no constraint is found.
-  bool GetFirstVideoConstraintByName(const std::string& name,
-                                     std::string* value,
-                                     bool* is_mandatory) const;
-
-  // Fetches |values| from all constraint with a name that matches |name|
-  // from |constraints|.
-  static void GetConstraintsByName(
-      const StreamOptions::Constraints& constraints,
-      const std::string& name,
-      std::vector<std::string>* values);
+// StreamControls describes what is sent to the browser process
+// from the renderer process in order to control the opening of a device
+// pair. This may result in opening one audio and/or one video device.
+// This has to be a struct with public members in order to allow it to
+// be sent in the IPC of media_stream_messages.h
+struct CONTENT_EXPORT StreamControls {
+ public:
+  StreamControls();
+  StreamControls(bool request_audio, bool request_video);
+  ~StreamControls();
+  TrackControls audio;
+  TrackControls video;
+  // Hotword functionality (chromeos only)
+  // See crbug.com/564574 for discussion on possibly #ifdef'ing this out.
+  bool hotword_enabled;  // kMediaStreamAudioHotword = "googHotword";
+  bool disable_local_echo;
 };
 
 // StreamDeviceInfo describes information about a device.

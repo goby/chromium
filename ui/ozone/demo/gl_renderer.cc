@@ -5,16 +5,17 @@
 #include "ui/ozone/demo/gl_renderer.h"
 
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_surface.h"
+#include "ui/gl/init/gl_factory.h"
 
 namespace ui {
 
 GlRenderer::GlRenderer(gfx::AcceleratedWidget widget,
-                       const scoped_refptr<gfx::GLSurface>& surface,
+                       const scoped_refptr<gl::GLSurface>& surface,
                        const gfx::Size& size)
     : RendererBase(widget, size), surface_(surface), weak_ptr_factory_(this) {}
 
@@ -22,14 +23,14 @@ GlRenderer::~GlRenderer() {
 }
 
 bool GlRenderer::Initialize() {
-  context_ = gfx::GLContext::CreateGLContext(NULL, surface_.get(),
-                                             gfx::PreferIntegratedGpu);
+  context_ = gl::init::CreateGLContext(nullptr, surface_.get(),
+                                       gl::GLContextAttribs());
   if (!context_.get()) {
     LOG(ERROR) << "Failed to create GL context";
     return false;
   }
 
-  surface_->Resize(size_, 1.f);
+  surface_->Resize(size_, 1.f, true);
 
   if (!context_->MakeCurrent(surface_.get())) {
     LOG(ERROR) << "Failed to make GL context current";

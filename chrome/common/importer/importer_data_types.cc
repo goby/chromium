@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "chrome/common/importer/importer_data_types.h"
 
 namespace importer {
@@ -11,15 +12,21 @@ SourceProfile::SourceProfile()
       services_supported(0) {
 }
 
+SourceProfile::SourceProfile(const SourceProfile& other) = default;
+
 SourceProfile::~SourceProfile() {
 }
 
-#if defined(OS_WIN)
 ImporterIE7PasswordInfo::ImporterIE7PasswordInfo() {
 }
 
+ImporterIE7PasswordInfo::ImporterIE7PasswordInfo(
+    const ImporterIE7PasswordInfo& other) = default;
+
 ImporterIE7PasswordInfo::~ImporterIE7PasswordInfo() {
 }
-#endif
+
+ImporterIE7PasswordInfo& ImporterIE7PasswordInfo::operator=(
+    const ImporterIE7PasswordInfo& other) = default;
 
 }  // namespace importer

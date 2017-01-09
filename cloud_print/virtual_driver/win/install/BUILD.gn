@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//chrome/version.gni")
+import("//chrome/process_version_rc_template.gni")
 import("//tools/grit/grit_rule.gni")
 
 assert(is_win)
@@ -16,10 +16,12 @@ executable("virtual_driver_setup") {
   configs += [ "//build/config/win:windowed" ]
 
   deps = [
-    ":copy_gcp_driver",
+    ":copy_gcp_driver_gpd",
+    ":copy_gcp_driver_inf",
     ":resources",
     ":setup_version",
     "//base",
+    "//cloud_print/common",
     "//cloud_print/common:install_utils",
     "//cloud_print/virtual_driver/win",
   ]
@@ -28,17 +30,25 @@ executable("virtual_driver_setup") {
   ldflags = [ "/DELAYLOAD:winspool.drv" ]
 }
 
-copy("copy_gcp_driver") {
+copy("copy_gcp_driver_gpd") {
   sources = [
-    "../../gcp_driver.gpd",
+    "inf/gcp_driver.gpd",
   ]
   outputs = [
     "$root_build_dir/gcp_driver.gpd",
   ]
 }
 
-process_version("setup_version") {
-  template_file = chrome_version_rc_template
+copy("copy_gcp_driver_inf") {
+  sources = [
+    "inf/gcp_driver.inf",
+  ]
+  outputs = [
+    "$root_build_dir/gcp_driver.inf",
+  ]
+}
+
+process_version_rc_template("setup_version") {
   sources = [
     "virtual_driver_setup_exe.ver",
   ]

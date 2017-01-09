@@ -35,6 +35,7 @@ void GLES2DecoderTestBase::SetupInitCapabilitiesExpectations(bool es3_capable) {
 }
 
 void GLES2DecoderTestBase::SetupInitStateExpectations(bool es3_capable) {
+  auto* feature_info_ = group_->feature_info();
   EXPECT_CALL(*gl_, BlendColor(0.0f, 0.0f, 0.0f, 0.0f))
       .Times(1)
       .RetiresOnSaturation();
@@ -52,27 +53,36 @@ void GLES2DecoderTestBase::SetupInitStateExpectations(bool es3_capable) {
   EXPECT_CALL(*gl_, ColorMask(true, true, true, true))
       .Times(1)
       .RetiresOnSaturation();
+  if (group_->feature_info()
+          ->feature_flags()
+          .chromium_framebuffer_mixed_samples) {
+    EXPECT_CALL(*gl_, CoverageModulationNV(GL_NONE))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
   EXPECT_CALL(*gl_, CullFace(GL_BACK)).Times(1).RetiresOnSaturation();
   EXPECT_CALL(*gl_, DepthFunc(GL_LESS)).Times(1).RetiresOnSaturation();
   EXPECT_CALL(*gl_, DepthMask(true)).Times(1).RetiresOnSaturation();
   EXPECT_CALL(*gl_, DepthRange(0.0f, 1.0f)).Times(1).RetiresOnSaturation();
   EXPECT_CALL(*gl_, FrontFace(GL_CCW)).Times(1).RetiresOnSaturation();
-  EXPECT_CALL(*gl_, Hint(GL_GENERATE_MIPMAP_HINT, GL_DONT_CARE))
-      .Times(1)
-      .RetiresOnSaturation();
-  if (group_->feature_info()->feature_flags().oes_standard_derivatives) {
+  if (!feature_info_->gl_version_info().is_desktop_core_profile) {
+    EXPECT_CALL(*gl_, Hint(GL_GENERATE_MIPMAP_HINT, GL_DONT_CARE))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+  if (feature_info_->feature_flags().oes_standard_derivatives) {
     EXPECT_CALL(*gl_,
                 Hint(GL_FRAGMENT_SHADER_DERIVATIVE_HINT_OES, GL_DONT_CARE))
         .Times(1)
         .RetiresOnSaturation();
   }
-  EXPECT_CALL(*gl_, LineWidth(1.0f)).Times(1).RetiresOnSaturation();
-  if (group_->feature_info()->feature_flags().chromium_path_rendering) {
+  SetupInitStateManualExpectationsForDoLineWidth(1.0f);
+  if (feature_info_->feature_flags().chromium_path_rendering) {
     EXPECT_CALL(*gl_, MatrixLoadfEXT(GL_PATH_MODELVIEW_CHROMIUM, _))
         .Times(1)
         .RetiresOnSaturation();
   }
-  if (group_->feature_info()->feature_flags().chromium_path_rendering) {
+  if (feature_info_->feature_flags().chromium_path_rendering) {
     EXPECT_CALL(*gl_, MatrixLoadfEXT(GL_PATH_PROJECTION_CHROMIUM, _))
         .Times(1)
         .RetiresOnSaturation();
@@ -88,46 +98,6 @@ void GLES2DecoderTestBase::SetupInitStateExpectations(bool es3_capable) {
   EXPECT_CALL(*gl_, PixelStorei(GL_UNPACK_ALIGNMENT, 4))
       .Times(1)
       .RetiresOnSaturation();
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_PACK_ROW_LENGTH, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_PACK_SKIP_PIXELS, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_PACK_SKIP_ROWS, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_UNPACK_ROW_LENGTH, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_UNPACK_SKIP_PIXELS, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_UNPACK_SKIP_ROWS, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
-  if (es3_capable) {
-    EXPECT_CALL(*gl_, PixelStorei(GL_UNPACK_SKIP_IMAGES, 0))
-        .Times(1)
-        .RetiresOnSaturation();
-  }
   EXPECT_CALL(*gl_, PolygonOffset(0.0f, 0.0f)).Times(1).RetiresOnSaturation();
   EXPECT_CALL(*gl_, SampleCoverage(1.0f, false)).Times(1).RetiresOnSaturation();
   EXPECT_CALL(*gl_,
@@ -156,5 +126,6 @@ void GLES2DecoderTestBase::SetupInitStateExpectations(bool es3_capable) {
               Viewport(kViewportX, kViewportY, kViewportWidth, kViewportHeight))
       .Times(1)
       .RetiresOnSaturation();
+  SetupInitStateManualExpectations(es3_capable);
 }
 #endif  // GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_DECODER_UNITTEST_0_AUTOGEN_H_

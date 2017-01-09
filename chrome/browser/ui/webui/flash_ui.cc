@@ -4,13 +4,18 @@
 
 #include "chrome/browser/ui/webui/flash_ui.h"
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/i18n/time_formatting.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
@@ -19,14 +24,17 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
-#include "chrome/browser/crash_upload_list.h"
+#include "build/build_config.h"
+#include "chrome/browser/crash_upload_list/crash_upload_list.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/browser/gpu_data_manager_observer.h"
@@ -39,8 +47,6 @@
 #include "content/public/common/content_constants.h"
 #include "content/public/common/webplugininfo.h"
 #include "gpu/config/gpu_info.h"
-#include "grit/browser_resources.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_WIN)
@@ -183,10 +189,10 @@ void FlashDOMHandler::OnUploadListAvailable() {
 void AddPair(base::ListValue* list,
              const base::string16& key,
              const base::string16& value) {
-  base::DictionaryValue* results = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> results(new base::DictionaryValue());
   results->SetString("key", key);
   results->SetString("value", value);
-  list->Append(results);
+  list->Append(std::move(results));
 }
 
 void AddPair(base::ListValue* list,
@@ -369,7 +375,7 @@ void FlashDOMHandler::MaybeRespondToPage() {
 
   base::DictionaryValue flashInfo;
   flashInfo.Set("flashInfo", list);
-  web_ui()->CallJavascriptFunction("returnFlashInfo", flashInfo);
+  web_ui()->CallJavascriptFunctionUnsafe("returnFlashInfo", flashInfo);
 }
 
 }  // namespace

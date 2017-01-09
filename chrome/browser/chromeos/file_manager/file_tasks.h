@@ -84,6 +84,7 @@
 //            "file_browser_handlers" in manifest.
 // - "app" - File handler - app declaring "file_handlers" in manifest.json.
 // - "drive" - Drive App
+// - "arc" - ARC App
 //
 // <task-action-id> is an ID string used for identifying actions provided
 // from a single Chrome Extension/App. In other words, a single
@@ -110,11 +111,11 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILE_MANAGER_FILE_TASKS_H_
 #define CHROME_BROWSER_CHROMEOS_FILE_MANAGER_FILE_TASKS_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "chrome/browser/extensions/api/file_handlers/app_file_handler_util.h"
 #include "chrome/common/extensions/api/file_manager_private.h"
@@ -125,6 +126,10 @@ class Profile;
 
 namespace drive {
 class DriveAppRegistry;
+}
+
+namespace extensions {
+struct EntryInfo;
 }
 
 namespace storage {
@@ -139,6 +144,7 @@ enum TaskType {
   TASK_TYPE_FILE_BROWSER_HANDLER,
   TASK_TYPE_FILE_HANDLER,
   TASK_TYPE_DRIVE_APP,
+  TASK_TYPE_ARC_APP,
   TASK_TYPE_UNKNOWN,  // Used only for handling errors.
 };
 
@@ -163,15 +169,25 @@ struct TaskDescriptor {
 // Describes a task with extra information such as icon URL.
 class FullTaskDescriptor {
  public:
-  FullTaskDescriptor(const TaskDescriptor& task_descriptor,
-                     const std::string& task_title,
-                     const GURL& icon_url,
-                     bool is_default,
-                     bool is_generic_file_handler);
+  FullTaskDescriptor(
+      const TaskDescriptor& task_descriptor,
+      const std::string& task_title,
+      const extensions::api::file_manager_private::Verb task_verb,
+      const GURL& icon_url,
+      bool is_default,
+      bool is_generic_file_handler);
+
+  ~FullTaskDescriptor();
+
+  FullTaskDescriptor(const FullTaskDescriptor& other);
   const TaskDescriptor& task_descriptor() const { return task_descriptor_; }
 
   // The title of the task.
   const std::string& task_title() const { return task_title_; }
+  // The verb of the task.
+  extensions::api::file_manager_private::Verb task_verb() const {
+    return task_verb_;
+  }
   // The icon URL for the task (ex. app icon)
   const GURL& icon_url() const { return icon_url_; }
 
@@ -191,6 +207,7 @@ class FullTaskDescriptor {
  private:
   TaskDescriptor task_descriptor_;
   std::string task_title_;
+  extensions::api::file_manager_private::Verb task_verb_;
   GURL icon_url_;
   bool is_default_;
   bool is_generic_file_handler_;
@@ -255,26 +272,23 @@ bool ExecuteFileTask(Profile* profile,
                      const std::vector<storage::FileSystemURL>& file_urls,
                      const FileTaskFinishedCallback& done);
 
-typedef extensions::app_file_handler_util::PathAndMimeTypeSet
-    PathAndMimeTypeSet;
-
-// Finds the Drive app tasks that can be used with the given |path_mime_set|
+// Finds the Drive app tasks that can be used with the given |entries|
 // from |drive_app_registry|, and append them to the |result_list|.
 // Drive app tasks will be found only if all of the files are on Drive.
 void FindDriveAppTasks(const drive::DriveAppRegistry& drive_app_registry,
-                       const PathAndMimeTypeSet& path_mime_set,
+                       const std::vector<extensions::EntryInfo>& entries,
                        std::vector<FullTaskDescriptor>* result_list);
 
-// Returns true if a file handler matches with files as good match.
+// Returns true if a file handler matches with entries as good match.
 bool IsGoodMatchFileHandler(
     const extensions::FileHandlerInfo& file_handler_info,
-    const PathAndMimeTypeSet& path_mime_set);
+    const std::vector<extensions::EntryInfo>& entries);
 
 // Finds the file handler tasks (apps declaring "file_handlers" in
-// manifest.json) that can be used with the given files, appending them to
+// manifest.json) that can be used with the given entries, appending them to
 // the |result_list|.
 void FindFileHandlerTasks(Profile* profile,
-                          const PathAndMimeTypeSet& path_mime_set,
+                          const std::vector<extensions::EntryInfo>& entries,
                           std::vector<FullTaskDescriptor>* result_list);
 
 // Finds the file browser handler tasks (app/extensions declaring
@@ -285,29 +299,33 @@ void FindFileBrowserHandlerTasks(
     const std::vector<GURL>& file_urls,
     std::vector<FullTaskDescriptor>* result_list);
 
+// Callback function type for FindAllTypesOfTasks.
+typedef base::Callback<void(
+    std::unique_ptr<std::vector<FullTaskDescriptor>> result)>
+    FindTasksCallback;
+
 // Finds all types (drive, file handlers, file browser handlers) of
 // tasks. See the comment at FindDriveAppTasks() about |result_list|.
 // Drive app tasks will be found only if all of the files are on Drive.
 // |drive_app_registry| can be NULL if the drive app registry is not
 // present.
 //
-// If |path_mime_set| contains a Google document, only the internal tasks of
+// If |entries| contains a Google document, only the internal tasks of
 // Files.app (i.e., tasks having the app ID of Files.app) are listed.
 // This is to avoid dups between Drive app tasks and an internal handler that
 // Files.app provides, and to avoid listing normal file handler and file browser
 // handler tasks, which can handle only normal files.
-void FindAllTypesOfTasks(
-    Profile* profile,
-    const drive::DriveAppRegistry* drive_app_registry,
-    const PathAndMimeTypeSet& path_mime_set,
-    const std::vector<GURL>& file_urls,
-    std::vector<FullTaskDescriptor>* result_list);
+void FindAllTypesOfTasks(Profile* profile,
+                         const drive::DriveAppRegistry* drive_app_registry,
+                         const std::vector<extensions::EntryInfo>& entries,
+                         const std::vector<GURL>& file_urls,
+                         const FindTasksCallback& callback);
 
 // Chooses the default task in |tasks| and sets it as default, if the default
 // task is found (i.e. the default task may not exist in |tasks|). No tasks
 // should be set as default before calling this function.
 void ChooseAndSetDefaultTask(const PrefService& pref_service,
-                             const PathAndMimeTypeSet& path_mime_set,
+                             const std::vector<extensions::EntryInfo>& entries,
                              std::vector<FullTaskDescriptor>* tasks);
 
 }  // namespace file_tasks

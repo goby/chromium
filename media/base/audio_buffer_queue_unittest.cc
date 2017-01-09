@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/base/audio_buffer_queue.h"
+
 #include <stdint.h>
 
 #include <limits>
+#include <memory>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "media/base/audio_buffer.h"
-#include "media/base/audio_buffer_queue.h"
 #include "media/base/audio_bus.h"
 #include "media/base/test_helpers.h"
 #include "media/base/timestamp_constants.h"
@@ -41,14 +42,9 @@ static scoped_refptr<AudioBuffer> MakeTestBuffer(SampleFormat format,
                                                  T start,
                                                  T step,
                                                  int frames) {
-  return MakeAudioBuffer<T>(format,
-                            channel_layout,
+  return MakeAudioBuffer<T>(format, channel_layout,
                             ChannelLayoutToChannelCount(channel_layout),
-                            kSampleRate,
-                            start,
-                            step,
-                            frames,
-                            kNoTimestamp());
+                            kSampleRate, start, step, frames, kNoTimestamp);
 }
 
 TEST(AudioBufferQueueTest, AppendAndClear) {
@@ -89,7 +85,7 @@ TEST(AudioBufferQueueTest, IteratorCheck) {
   const ChannelLayout channel_layout = CHANNEL_LAYOUT_MONO;
   const int channels = ChannelLayoutToChannelCount(channel_layout);
   AudioBufferQueue buffer;
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
 
   // Append 40 frames in 5 buffers. Intersperse ReadFrames() to make the
   // iterator is pointing to the correct position.
@@ -166,7 +162,7 @@ TEST(AudioBufferQueueTest, ReadF32) {
   EXPECT_EQ(76, buffer.frames());
 
   // Read 3 frames from the buffer.
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
   EXPECT_EQ(3, buffer.ReadFrames(3, 0, bus.get()));
   EXPECT_EQ(73, buffer.frames());
   VerifyBus(bus.get(), 0, 3, 6, 1, 1);
@@ -197,7 +193,7 @@ TEST(AudioBufferQueueTest, ReadU8) {
       MakeTestBuffer<uint8_t>(kSampleFormatU8, channel_layout, 128, 1, frames));
 
   // Read all 4 frames from the buffer.
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, frames);
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, frames);
   EXPECT_EQ(frames, buffer.ReadFrames(frames, 0, bus.get()));
   EXPECT_EQ(0, buffer.frames());
   VerifyBus(bus.get(), 0, frames, bus->frames(), 0, 1.0f / 127.0f);
@@ -217,7 +213,7 @@ TEST(AudioBufferQueueTest, ReadS16) {
 
   // Read 6 frames from the buffer.
   const int frames = 6;
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, buffer.frames());
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, buffer.frames());
   EXPECT_EQ(frames, buffer.ReadFrames(frames, 0, bus.get()));
   EXPECT_EQ(18, buffer.frames());
   VerifyBus(bus.get(), 0, 4, 4, 1.0f / std::numeric_limits<int16_t>::max(),
@@ -239,7 +235,7 @@ TEST(AudioBufferQueueTest, ReadS32) {
   EXPECT_EQ(24, buffer.frames());
 
   // Read 6 frames from the buffer.
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
   EXPECT_EQ(6, buffer.ReadFrames(6, 0, bus.get()));
   EXPECT_EQ(18, buffer.frames());
   VerifyBus(bus.get(), 0, 4, 4, 1.0f / std::numeric_limits<int32_t>::max(),
@@ -267,7 +263,7 @@ TEST(AudioBufferQueueTest, ReadF32Planar) {
   EXPECT_EQ(14, buffer.frames());
 
   // Read 6 frames from the buffer.
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
   EXPECT_EQ(6, buffer.ReadFrames(6, 0, bus.get()));
   EXPECT_EQ(8, buffer.frames());
   VerifyBus(bus.get(), 0, 4, 4, 1, 1);
@@ -287,7 +283,7 @@ TEST(AudioBufferQueueTest, ReadS16Planar) {
   EXPECT_EQ(24, buffer.frames());
 
   // Read 6 frames from the buffer.
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
   EXPECT_EQ(6, buffer.ReadFrames(6, 0, bus.get()));
   EXPECT_EQ(18, buffer.frames());
   VerifyBus(bus.get(), 0, 4, 4, 1.0f / std::numeric_limits<int16_t>::max(),
@@ -311,7 +307,7 @@ TEST(AudioBufferQueueTest, ReadManyChannels) {
   EXPECT_EQ(76, buffer.frames());
 
   // Read 3 frames from the buffer.
-  scoped_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
+  std::unique_ptr<AudioBus> bus = AudioBus::Create(channels, 100);
   EXPECT_EQ(30, buffer.ReadFrames(30, 0, bus.get()));
   EXPECT_EQ(46, buffer.frames());
   VerifyBus(bus.get(), 0, 6, 6, 0, 1);
@@ -331,7 +327,7 @@ TEST(AudioBufferQueueTest, Peek) {
   EXPECT_EQ(frames, buffer.frames());
 
   // Peek at the first 30 frames.
-  scoped_ptr<AudioBus> bus1 = AudioBus::Create(channels, frames);
+  std::unique_ptr<AudioBus> bus1 = AudioBus::Create(channels, frames);
   EXPECT_EQ(frames, buffer.frames());
   EXPECT_EQ(frames, buffer.PeekFrames(60, 0, 0, bus1.get()));
   EXPECT_EQ(30, buffer.PeekFrames(30, 0, 0, bus1.get()));
@@ -339,7 +335,7 @@ TEST(AudioBufferQueueTest, Peek) {
   VerifyBus(bus1.get(), 0, 30, bus1->frames(), 0, 1);
 
   // Now read the next 30 frames (which should be the same as those peeked at).
-  scoped_ptr<AudioBus> bus2 = AudioBus::Create(channels, frames);
+  std::unique_ptr<AudioBus> bus2 = AudioBus::Create(channels, frames);
   EXPECT_EQ(30, buffer.ReadFrames(30, 0, bus2.get()));
   VerifyBus(bus2.get(), 0, 30, bus2->frames(), 0, 1);
 

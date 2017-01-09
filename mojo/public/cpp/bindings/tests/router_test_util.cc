@@ -4,6 +4,8 @@
 
 #include "mojo/public/cpp/bindings/tests/router_test_util.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "mojo/public/cpp/bindings/lib/message_builder.h"
@@ -17,8 +19,7 @@ void AllocRequestMessage(uint32_t name, const char* text, Message* message) {
   size_t payload_size = strlen(text) + 1;  // Plus null terminator.
   internal::RequestMessageBuilder builder(name, payload_size);
   memcpy(builder.buffer()->Allocate(payload_size), text, payload_size);
-
-  builder.message()->MoveTo(message);
+  *message = std::move(*builder.message());
 }
 
 void AllocResponseMessage(uint32_t name,
@@ -28,14 +29,21 @@ void AllocResponseMessage(uint32_t name,
   size_t payload_size = strlen(text) + 1;  // Plus null terminator.
   internal::ResponseMessageBuilder builder(name, payload_size, request_id);
   memcpy(builder.buffer()->Allocate(payload_size), text, payload_size);
-
-  builder.message()->MoveTo(message);
+  *message = std::move(*builder.message());
 }
 
-MessageAccumulator::MessageAccumulator(MessageQueue* queue) : queue_(queue) {}
+MessageAccumulator::MessageAccumulator(MessageQueue* queue,
+                                       const base::Closure& closure)
+    : queue_(queue), closure_(closure) {}
+
+MessageAccumulator::~MessageAccumulator() {}
 
 bool MessageAccumulator::Accept(Message* message) {
   queue_->Push(message);
+  if (!closure_.is_null()) {
+    closure_.Run();
+    closure_.Reset();
+  }
   return true;
 }
 
@@ -48,7 +56,7 @@ bool ResponseGenerator::Accept(Message* message) {
 bool ResponseGenerator::AcceptWithResponder(
     Message* message,
     MessageReceiverWithStatus* responder) {
-  EXPECT_TRUE(message->has_flag(internal::kMessageExpectsResponse));
+  EXPECT_TRUE(message->has_flag(Message::kFlagExpectsResponse));
 
   bool result = SendResponse(message->name(), message->request_id(),
                              reinterpret_cast<const char*>(message->payload()),
@@ -70,8 +78,8 @@ bool ResponseGenerator::SendResponse(uint32_t name,
   return responder->Accept(&response);
 }
 
-LazyResponseGenerator::LazyResponseGenerator()
-    : responder_(nullptr), name_(0), request_id_(0) {}
+LazyResponseGenerator::LazyResponseGenerator(const base::Closure& closure)
+    : responder_(nullptr), name_(0), request_id_(0), closure_(closure) {}
 
 LazyResponseGenerator::~LazyResponseGenerator() {
   delete responder_;
@@ -85,6 +93,10 @@ bool LazyResponseGenerator::AcceptWithResponder(
   request_string_ =
       std::string(reinterpret_cast<const char*>(message->payload()));
   responder_ = responder;
+  if (!closure_.is_null()) {
+    closure_.Run();
+    closure_.Reset();
+  }
   return true;
 }
 

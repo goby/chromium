@@ -8,17 +8,18 @@
 #include <string>
 #include <vector>
 
-#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/chromeos/extensions/wallpaper_function_base.h"
 #include "chrome/common/extensions/api/wallpaper_private.h"
+#include "components/signin/core/account_id/account_id.h"
+#include "components/wallpaper/wallpaper_files_id.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
-namespace chromeos {
-class UserImage;
-}  // namespace chromeos
+namespace base {
+class RefCountedBytes;
+}
 
 // Wallpaper manager strings.
-class WallpaperPrivateGetStringsFunction : public SyncExtensionFunction {
+class WallpaperPrivateGetStringsFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.getStrings",
                              WALLPAPERPRIVATE_GETSTRINGS)
@@ -26,12 +27,13 @@ class WallpaperPrivateGetStringsFunction : public SyncExtensionFunction {
  protected:
   ~WallpaperPrivateGetStringsFunction() override {}
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 };
 
 // Check if sync themes setting is enabled.
-class WallpaperPrivateGetSyncSettingFunction : public SyncExtensionFunction {
+class WallpaperPrivateGetSyncSettingFunction
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.getSyncSetting",
                              WALLPAPERPRIVATE_GETSYNCSETTING)
@@ -39,8 +41,8 @@ class WallpaperPrivateGetSyncSettingFunction : public SyncExtensionFunction {
  protected:
   ~WallpaperPrivateGetSyncSettingFunction() override {}
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 };
 
 class WallpaperPrivateSetWallpaperIfExistsFunction
@@ -68,15 +70,12 @@ class WallpaperPrivateSetWallpaperIfExistsFunction
   void ReadFileAndInitiateStartDecode(const base::FilePath& file_path,
                                       const base::FilePath& fallback_path);
 
-  scoped_ptr<extensions::api::wallpaper_private::SetWallpaperIfExists::Params>
+  std::unique_ptr<
+      extensions::api::wallpaper_private::SetWallpaperIfExists::Params>
       params;
 
   // User id of the active user when this api is been called.
-  std::string user_id_;
-
-  // Sequence token associated with wallpaper operations. Shared with
-  // WallpaperManager.
-  base::SequencedWorkerPool::SequenceToken sequence_token_;
+  AccountId account_id_ = EmptyAccountId();
 };
 
 class WallpaperPrivateSetWallpaperFunction : public WallpaperFunctionBase {
@@ -99,20 +98,17 @@ class WallpaperPrivateSetWallpaperFunction : public WallpaperFunctionBase {
   void SaveToFile();
 
   // Sets wallpaper to the decoded image.
-  void SetDecodedWallpaper(scoped_ptr<gfx::ImageSkia> image);
+  void SetDecodedWallpaper(std::unique_ptr<gfx::ImageSkia> image);
 
-  scoped_ptr<extensions::api::wallpaper_private::SetWallpaper::Params> params;
+  std::unique_ptr<extensions::api::wallpaper_private::SetWallpaper::Params>
+      params;
 
   // The decoded wallpaper. It may accessed from UI thread to set wallpaper or
   // FILE thread to resize and save wallpaper to disk.
   gfx::ImageSkia wallpaper_;
 
-  // User id of the active user when this api is been called.
-  std::string user_id_;
-
-  // Sequence token associated with wallpaper operations. Shared with
-  // WallpaperManager.
-  base::SequencedWorkerPool::SequenceToken sequence_token_;
+  // User account id of the active user when this api is been called.
+  AccountId account_id_ = EmptyAccountId();
 };
 
 class WallpaperPrivateResetWallpaperFunction
@@ -150,23 +146,20 @@ class WallpaperPrivateSetCustomWallpaperFunction
   // Generates thumbnail of custom wallpaper. A simple STRETCH is used for
   // generating thunbail.
   void GenerateThumbnail(const base::FilePath& thumbnail_path,
-                         scoped_ptr<gfx::ImageSkia> image);
+                         std::unique_ptr<gfx::ImageSkia> image);
 
   // Thumbnail is ready. Calls api function javascript callback.
   void ThumbnailGenerated(base::RefCountedBytes* data);
 
-  scoped_ptr<extensions::api::wallpaper_private::SetCustomWallpaper::Params>
+  std::unique_ptr<
+      extensions::api::wallpaper_private::SetCustomWallpaper::Params>
       params;
 
-  // User id of the active user when this api is been called.
-  std::string user_id_;
+  // User account id of the active user when this api is been called.
+  AccountId account_id_ = EmptyAccountId();
 
   // User id hash of the logged in user.
-  std::string user_id_hash_;
-
-  // Sequence token associated with wallpaper operations. Shared with
-  // WallpaperManager.
-  base::SequencedWorkerPool::SequenceToken sequence_token_;
+  wallpaper::WallpaperFilesId wallpaper_files_id_;
 };
 
 class WallpaperPrivateSetCustomWallpaperLayoutFunction
@@ -185,7 +178,7 @@ class WallpaperPrivateSetCustomWallpaperLayoutFunction
 };
 
 class WallpaperPrivateMinimizeInactiveWindowsFunction
-    : public AsyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.minimizeInactiveWindows",
                              WALLPAPERPRIVATE_MINIMIZEINACTIVEWINDOWS)
@@ -194,13 +187,11 @@ class WallpaperPrivateMinimizeInactiveWindowsFunction
 
  protected:
   ~WallpaperPrivateMinimizeInactiveWindowsFunction() override;
-
-  // AsyncExtensionFunction overrides.
-  bool RunAsync() override;
+  ResponseAction Run() override;
 };
 
 class WallpaperPrivateRestoreMinimizedWindowsFunction
-    : public AsyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.restoreMinimizedWindows",
                              WALLPAPERPRIVATE_RESTOREMINIMIZEDWINDOWS)
@@ -209,9 +200,7 @@ class WallpaperPrivateRestoreMinimizedWindowsFunction
 
  protected:
   ~WallpaperPrivateRestoreMinimizedWindowsFunction() override;
-
-  // AsyncExtensionFunction overrides.
-  bool RunAsync() override;
+  ResponseAction Run() override;
 };
 
 class WallpaperPrivateGetThumbnailFunction : public AsyncExtensionFunction {
@@ -241,10 +230,6 @@ class WallpaperPrivateGetThumbnailFunction : public AsyncExtensionFunction {
 
   // Gets thumbnail from |path|. If |path| does not exist, call FileNotLoaded().
   void Get(const base::FilePath& path);
-
-  // Sequence token associated with wallpaper operations. Shared with
-  // WallpaperManager.
-  base::SequencedWorkerPool::SequenceToken sequence_token_;
 };
 
 class WallpaperPrivateSaveThumbnailFunction : public AsyncExtensionFunction {
@@ -269,10 +254,6 @@ class WallpaperPrivateSaveThumbnailFunction : public AsyncExtensionFunction {
 
   // Saves thumbnail to thumbnail directory as |file_name|.
   void Save(const std::vector<char>& data, const std::string& file_name);
-
-  // Sequence token associated with wallpaper operations. Shared with
-  // WallpaperManager.
-  base::SequencedWorkerPool::SequenceToken sequence_token_;
 };
 
 class WallpaperPrivateGetOfflineWallpaperListFunction
@@ -295,10 +276,21 @@ class WallpaperPrivateGetOfflineWallpaperListFunction
   // Sends the list of files to extension api caller. If no files or no
   // directory, sends empty list.
   void OnComplete(const std::vector<std::string>& file_list);
+};
 
-  // Sequence token associated with wallpaper operations. Shared with
-  // WallpaperManager.
-  base::SequencedWorkerPool::SequenceToken sequence_token_;
+// The wallpaper UMA is recorded when a new wallpaper is set, either by the
+// built-in Wallpaper Picker App, or by a third party App.
+class WallpaperPrivateRecordWallpaperUMAFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("wallpaperPrivate.recordWallpaperUMA",
+                             WALLPAPERPRIVATE_RECORDWALLPAPERUMA)
+
+ protected:
+  ~WallpaperPrivateRecordWallpaperUMAFunction() override {}
+
+  // ExtensionFunction:
+  ResponseAction Run() override;
 };
 
 #endif  // CHROME_BROWSER_CHROMEOS_EXTENSIONS_WALLPAPER_PRIVATE_API_H_

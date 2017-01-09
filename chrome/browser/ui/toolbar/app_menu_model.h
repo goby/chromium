@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_TOOLBAR_APP_MENU_MODEL_H_
 #define CHROME_BROWSER_UI_TOOLBAR_APP_MENU_MODEL_H_
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
@@ -26,74 +27,52 @@ namespace {
 class MockAppMenuModel;
 }  // namespace
 
+// Values should correspond to 'WretchMenuAction' enum in histograms.xml.
 enum AppMenuAction {
   MENU_ACTION_NEW_TAB = 0,
-  MENU_ACTION_NEW_WINDOW,
-  MENU_ACTION_NEW_INCOGNITO_WINDOW,
-  MENU_ACTION_SHOW_BOOKMARK_BAR,
-  MENU_ACTION_SHOW_BOOKMARK_MANAGER,
-  MENU_ACTION_IMPORT_SETTINGS,
-  MENU_ACTION_BOOKMARK_PAGE,
-  MENU_ACTION_BOOKMARK_ALL_TABS,
-  MENU_ACTION_PIN_TO_START_SCREEN,
-  MENU_ACTION_RESTORE_TAB,
-  MENU_ACTION_WIN_DESKTOP_RESTART,
-  MENU_ACTION_WIN8_METRO_RESTART,
-  MENU_ACTION_WIN_CHROMEOS_RESTART,
-  MENU_ACTION_DISTILL_PAGE,
-  MENU_ACTION_SAVE_PAGE,
-  MENU_ACTION_FIND,
-  MENU_ACTION_PRINT,
-  MENU_ACTION_CUT,
-  MENU_ACTION_COPY,
-  MENU_ACTION_PASTE,
-  MENU_ACTION_CREATE_HOSTED_APP,
-  MENU_ACTION_CREATE_SHORTCUTS,
-  MENU_ACTION_MANAGE_EXTENSIONS,
-  MENU_ACTION_TASK_MANAGER,
-  MENU_ACTION_CLEAR_BROWSING_DATA,
-  MENU_ACTION_VIEW_SOURCE,
-  MENU_ACTION_DEV_TOOLS,
-  MENU_ACTION_DEV_TOOLS_CONSOLE,
-  MENU_ACTION_DEV_TOOLS_DEVICES,
-  MENU_ACTION_PROFILING_ENABLED,
-  MENU_ACTION_ZOOM_MINUS,
-  MENU_ACTION_ZOOM_PLUS,
-  MENU_ACTION_FULLSCREEN,
-  MENU_ACTION_SHOW_HISTORY,
-  MENU_ACTION_SHOW_DOWNLOADS,
-  MENU_ACTION_SHOW_SYNC_SETUP,
-  MENU_ACTION_OPTIONS,
-  MENU_ACTION_ABOUT,
-  MENU_ACTION_HELP_PAGE_VIA_MENU,
-  MENU_ACTION_FEEDBACK,
-  MENU_ACTION_TOGGLE_REQUEST_TABLET_SITE,
-  MENU_ACTION_EXIT,
-  MENU_ACTION_RECENT_TAB,
-  MENU_ACTION_BOOKMARK_OPEN,
+  MENU_ACTION_NEW_WINDOW = 1,
+  MENU_ACTION_NEW_INCOGNITO_WINDOW = 2,
+  MENU_ACTION_SHOW_BOOKMARK_BAR = 3,
+  MENU_ACTION_SHOW_BOOKMARK_MANAGER = 4,
+  MENU_ACTION_IMPORT_SETTINGS = 5,
+  MENU_ACTION_BOOKMARK_PAGE = 6,
+  MENU_ACTION_BOOKMARK_ALL_TABS = 7,
+  MENU_ACTION_PIN_TO_START_SCREEN = 8,
+  MENU_ACTION_RESTORE_TAB = 9,
+  MENU_ACTION_DISTILL_PAGE = 13,
+  MENU_ACTION_SAVE_PAGE = 14,
+  MENU_ACTION_FIND = 15,
+  MENU_ACTION_PRINT = 16,
+  MENU_ACTION_CUT = 17,
+  MENU_ACTION_COPY = 18,
+  MENU_ACTION_PASTE = 19,
+  MENU_ACTION_CREATE_HOSTED_APP = 20,
+  MENU_ACTION_CREATE_SHORTCUTS = 21,
+  MENU_ACTION_MANAGE_EXTENSIONS = 22,
+  MENU_ACTION_TASK_MANAGER = 23,
+  MENU_ACTION_CLEAR_BROWSING_DATA = 24,
+  MENU_ACTION_VIEW_SOURCE = 25,
+  MENU_ACTION_DEV_TOOLS = 26,
+  MENU_ACTION_DEV_TOOLS_CONSOLE = 27,
+  MENU_ACTION_DEV_TOOLS_DEVICES = 28,
+  MENU_ACTION_PROFILING_ENABLED = 29,
+  MENU_ACTION_ZOOM_MINUS = 30,
+  MENU_ACTION_ZOOM_PLUS = 31,
+  MENU_ACTION_FULLSCREEN = 32,
+  MENU_ACTION_SHOW_HISTORY = 33,
+  MENU_ACTION_SHOW_DOWNLOADS = 34,
+  MENU_ACTION_SHOW_SYNC_SETUP = 35,
+  MENU_ACTION_OPTIONS = 36,
+  MENU_ACTION_ABOUT = 37,
+  MENU_ACTION_HELP_PAGE_VIA_MENU = 38,
+  MENU_ACTION_FEEDBACK = 39,
+  MENU_ACTION_TOGGLE_REQUEST_TABLET_SITE = 40,
+  MENU_ACTION_EXIT = 43,
+  MENU_ACTION_RECENT_TAB = 41,
+  MENU_ACTION_BOOKMARK_OPEN = 42,
+  MENU_ACTION_UPGRADE_DIALOG = 44,
+  MENU_ACTION_CAST = 45,
   LIMIT_MENU_ACTION
-};
-
-// A menu model that builds the contents of an encoding menu.
-class EncodingMenuModel : public ui::SimpleMenuModel,
-                          public ui::SimpleMenuModel::Delegate {
- public:
-  explicit EncodingMenuModel(Browser* browser);
-  ~EncodingMenuModel() override;
-
-  // Overridden from ui::SimpleMenuModel::Delegate:
-  bool IsCommandIdChecked(int command_id) const override;
-  bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
-  void ExecuteCommand(int command_id, int event_flags) override;
-
- private:
-  void Build();
-
-  Browser* browser_;  // weak
-
-  DISALLOW_COPY_AND_ASSIGN(EncodingMenuModel);
 };
 
 // A menu model that builds the contents of the zoom menu.
@@ -115,8 +94,6 @@ class ToolsMenuModel : public ui::SimpleMenuModel {
 
  private:
   void Build(Browser* browser);
-
-  scoped_ptr<EncodingMenuModel> encoding_menu_model_;
 
   DISALLOW_COPY_AND_ASSIGN(ToolsMenuModel);
 };
@@ -147,7 +124,7 @@ class AppMenuModel : public ui::SimpleMenuModel,
   bool IsCommandIdEnabled(int command_id) const override;
   bool IsCommandIdVisible(int command_id) const override;
   bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
+                                  ui::Accelerator* accelerator) const override;
 
   // Overridden from TabStripModelObserver:
   void ActiveTabChanged(content::WebContents* old_contents,
@@ -221,31 +198,32 @@ class AppMenuModel : public ui::SimpleMenuModel,
   bool uma_action_recorded_;
 
   // Models for the special menu items with buttons.
-  scoped_ptr<ui::ButtonMenuItemModel> edit_menu_item_model_;
-  scoped_ptr<ui::ButtonMenuItemModel> zoom_menu_item_model_;
+  std::unique_ptr<ui::ButtonMenuItemModel> edit_menu_item_model_;
+  std::unique_ptr<ui::ButtonMenuItemModel> zoom_menu_item_model_;
 
   // Label of the zoom label in the zoom menu item.
   base::string16 zoom_label_;
 
 #if defined(GOOGLE_CHROME_BUILD)
   // Help menu.
-  scoped_ptr<HelpMenuModel> help_menu_model_;
+  std::unique_ptr<HelpMenuModel> help_menu_model_;
 #endif
 
   // Tools menu.
-  scoped_ptr<ToolsMenuModel> tools_menu_model_;
+  std::unique_ptr<ToolsMenuModel> tools_menu_model_;
 
   // Bookmark submenu.
-  scoped_ptr<BookmarkSubMenuModel> bookmark_sub_menu_model_;
+  std::unique_ptr<BookmarkSubMenuModel> bookmark_sub_menu_model_;
 
   // Recent Tabs submenu.
-  scoped_ptr<RecentTabsSubMenuModel> recent_tabs_sub_menu_model_;
+  std::unique_ptr<RecentTabsSubMenuModel> recent_tabs_sub_menu_model_;
 
   ui::AcceleratorProvider* provider_;  // weak
 
   Browser* browser_;  // weak
 
-  scoped_ptr<content::HostZoomMap::Subscription> browser_zoom_subscription_;
+  std::unique_ptr<content::HostZoomMap::Subscription>
+      browser_zoom_subscription_;
   content::NotificationRegistrar registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(AppMenuModel);

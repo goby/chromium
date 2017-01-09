@@ -5,12 +5,13 @@
 #ifndef BLIMP_ENGINE_RENDERER_BLIMP_CONTENT_RENDERER_CLIENT_H_
 #define BLIMP_ENGINE_RENDERER_BLIMP_CONTENT_RENDERER_CLIENT_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/renderer/content_renderer_client.h"
 
 namespace web_cache {
-class WebCacheRenderProcessObserver;
+class WebCacheImpl;
 }
 
 namespace blimp {
@@ -23,10 +24,19 @@ class BlimpContentRendererClient : public content::ContentRendererClient {
 
   // content::ContentRendererClient implementation.
   void RenderThreadStarted() override;
+  cc::ImageSerializationProcessor* GetImageSerializationProcessor() override;
+  std::unique_ptr<cc::RemoteCompositorBridge> CreateRemoteCompositorBridge(
+      content::RemoteProtoChannel* remote_proto_channel,
+      scoped_refptr<base::SingleThreadTaskRunner> compositor_main_task_runner)
+      override;
 
  private:
-  // This observer manages the process-global web cache.
-  scoped_ptr<web_cache::WebCacheRenderProcessObserver> web_cache_observer_;
+  // Manages the process-global web cache.
+  std::unique_ptr<web_cache::WebCacheImpl> web_cache_impl_;
+
+  // Provides the functionality to serialize images in SkPicture.
+  std::unique_ptr<cc::ImageSerializationProcessor>
+      image_serialization_processor_;
 
   DISALLOW_COPY_AND_ASSIGN(BlimpContentRendererClient);
 };

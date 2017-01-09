@@ -38,14 +38,22 @@ class IconWithBadgeImageSource : public gfx::CanvasImageSource {
   ~IconWithBadgeImageSource() override;
 
   void SetIcon(const gfx::Image& icon);
-  void SetBadge(scoped_ptr<Badge> badge);
+  void SetBadge(std::unique_ptr<Badge> badge);
   void set_grayscale(bool grayscale) { grayscale_ = grayscale; }
-  void set_paint_decoration(bool paint_decoration) {
-    paint_decoration_ = paint_decoration;
+  void set_paint_page_action_decoration(bool should_paint) {
+    paint_page_action_decoration_ = should_paint;
+  }
+  void set_paint_blocked_actions_decoration(bool should_paint) {
+    paint_blocked_actions_decoration_ = should_paint;
   }
 
   bool grayscale() const { return grayscale_; }
-  bool paint_decoration() const { return paint_decoration_; }
+  bool paint_page_action_decoration() const {
+    return paint_page_action_decoration_;
+  }
+  bool paint_blocked_actions_decoration() const {
+    return paint_blocked_actions_decoration_;
+  }
 
  private:
   // gfx::CanvasImageSource:
@@ -56,13 +64,17 @@ class IconWithBadgeImageSource : public gfx::CanvasImageSource {
 
   // Paints a decoration over the base icon to indicate that the action wants to
   // run.
-  void PaintDecoration(gfx::Canvas* canvas);
+  void PaintPageActionDecoration(gfx::Canvas* canvas);
+
+  // Paints a decoration over the base icon to indicate that the extension has
+  // a blocked action that wants to run.
+  void PaintBlockedActionDecoration(gfx::Canvas* canvas);
 
   // The base icon to draw.
   gfx::Image icon_;
 
   // An optional badge to draw over the base icon.
-  scoped_ptr<Badge> badge_;
+  std::unique_ptr<Badge> badge_;
 
   // Whether or not the icon should be grayscaled (e.g., to show it is
   // disabled).
@@ -70,7 +82,11 @@ class IconWithBadgeImageSource : public gfx::CanvasImageSource {
 
   // Whether or not to paint a decoration over the base icon to indicate the
   // represented action wants to run.
-  bool paint_decoration_;
+  bool paint_page_action_decoration_;
+
+  // Whether or not to paint a decoration to indicate that the extension has
+  // had actions blocked.
+  bool paint_blocked_actions_decoration_;
 
   DISALLOW_COPY_AND_ASSIGN(IconWithBadgeImageSource);
 };

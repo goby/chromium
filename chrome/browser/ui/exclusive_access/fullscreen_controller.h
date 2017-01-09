@@ -7,8 +7,9 @@
 
 #include <set>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_controller_base.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "content/public/browser/notification_observer.h"
@@ -64,10 +65,6 @@ class FullscreenController : public ExclusiveAccessControllerBase {
 
   void ToggleBrowserFullscreenMode();
 
-  // Fullscreen mode with tab strip and toolbar shown.
-  // Currently only supported on Mac.
-  void ToggleBrowserFullscreenWithToolbar();
-
   // Extension API implementation uses this method to toggle fullscreen mode.
   // The extension's name is displayed in the full screen bubble UI to attribute
   // the cause of the full screen state change.
@@ -87,8 +84,8 @@ class FullscreenController : public ExclusiveAccessControllerBase {
   // Returns true if controller has entered fullscreen mode.
   bool IsControllerInitiatedFullscreen() const;
 
-  // Returns true if the user has accepted fullscreen.
-  bool IsUserAcceptedFullscreen() const;
+  // Returns true if the site has entered fullscreen.
+  bool IsTabFullscreen() const;
 
   // Returns true if the tab is/will be in fullscreen mode. Note: This does NOT
   // indicate whether the browser window is/will be fullscreened as well. See
@@ -116,23 +113,12 @@ class FullscreenController : public ExclusiveAccessControllerBase {
 
   // Platform Fullscreen ///////////////////////////////////////////////////////
 
-#if defined(OS_WIN)
-  // Returns whether we are currently in a Metro snap view.
-  bool IsInMetroSnapMode();
-
-  // API that puts the window into a mode suitable for rendering when Chrome
-  // is rendered in a 20% screen-width Metro snap view on Windows 8.
-  void SetMetroSnapMode(bool enable);
-#endif  // OS_WIN
-
   // Overrde from ExclusiveAccessControllerBase.
   void OnTabDetachedFromView(content::WebContents* web_contents) override;
   void OnTabClosing(content::WebContents* web_contents) override;
   bool HandleUserPressedEscape() override;
 
   void ExitExclusiveAccessToPreviousState() override;
-  bool OnAcceptExclusiveAccessPermission() override;
-  bool OnDenyExclusiveAccessPermission() override;
   GURL GetURLForExclusiveAccessBubble() const override;
   void ExitExclusiveAccessIfNecessary() override;
   // Callbacks /////////////////////////////////////////////////////////////////
@@ -145,7 +131,6 @@ class FullscreenController : public ExclusiveAccessControllerBase {
 
   enum FullscreenInternalOption {
     BROWSER,
-    BROWSER_WITH_TOOLBAR,
     TAB
   };
 
@@ -158,12 +143,12 @@ class FullscreenController : public ExclusiveAccessControllerBase {
   // necessary.
   void NotifyTabExclusiveAccessLost() override;
 
+  void RecordBubbleReshowsHistogram(int bubble_reshow_count) override;
+
   void ToggleFullscreenModeInternal(FullscreenInternalOption option);
   void EnterFullscreenModeInternal(FullscreenInternalOption option);
   void ExitFullscreenModeInternal();
   void SetFullscreenedTab(content::WebContents* tab, const GURL& origin);
-
-  ContentSetting GetFullscreenSetting() const;
 
   void SetPrivilegedFullscreenForTesting(bool is_privileged);
   // Returns true if |web_contents| was toggled into/out of fullscreen mode as a
@@ -190,15 +175,13 @@ class FullscreenController : public ExclusiveAccessControllerBase {
   enum PriorFullscreenState {
     STATE_INVALID,
     STATE_NORMAL,
-    STATE_BROWSER_FULLSCREEN_NO_TOOLBAR,
-    STATE_BROWSER_FULLSCREEN_WITH_TOOLBAR,
+    STATE_BROWSER_FULLSCREEN,
   };
   // The state before entering tab fullscreen mode via webkitRequestFullScreen.
   // When not in tab fullscreen, it is STATE_INVALID.
   PriorFullscreenState state_prior_to_tab_fullscreen_;
-  // True if tab fullscreen has been allowed, either by settings or by user
-  // clicking the allow button on the fullscreen infobar.
-  bool tab_fullscreen_accepted_;
+  // True if the site has entered into fullscreen.
+  bool tab_fullscreen_;
 
   // True if this controller has toggled into tab OR browser fullscreen.
   bool toggled_into_fullscreen_;

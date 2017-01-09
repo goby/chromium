@@ -85,13 +85,12 @@ function test()
 
         for (var i = 0; i < events.length; ++i) {
             var event = events[i];
-            if (event.phase === WebInspector.TracingModel.Phase.Complete)
+            if (event.phase === SDK.TracingModel.Phase.Complete)
                 ++phaseComplete;
             if (event.name in knownEvents)
                 ++knownEvents[event.name];
         }
         InspectorTest.assertGreaterOrEqual(events.length, 100, "Too few trace events recorded");
-        InspectorTest.assertGreaterOrEqual(knownEvents["v8.callFunction"], 1, "Too few v8.callFunction");
         InspectorTest.assertGreaterOrEqual(knownEvents["UpdateLayoutTree"], 1, "Too few UpdateLayoutTree");
         InspectorTest.assertGreaterOrEqual(knownEvents["FrameView::layout"], 1, "Too few FrameView::layout");
         InspectorTest.assertGreaterOrEqual(phaseComplete, 50, "Too few begin events");

@@ -5,15 +5,17 @@
 #include "ui/views/corewm/cursor_height_provider_win.h"
 
 #include <windows.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <map>
+#include <memory>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/win/scoped_hdc.h"
 
 namespace {
-using PixelData = scoped_ptr<uint32_t[]>;
+using PixelData = std::unique_ptr<uint32_t[]>;
 using HeightStorage = std::map<HCURSOR, int>;
 
 const uint32_t kBitsPeruint32 = sizeof(uint32_t) * 8;
@@ -34,11 +36,11 @@ PixelData GetBitmapData(HBITMAP handle, const BITMAPINFO& info, HDC hdc) {
   // Masks are monochromatic.
   DCHECK_EQ(info.bmiHeader.biBitCount, 1);
   if (info.bmiHeader.biBitCount != 1)
-    return data.Pass();
+    return data;
 
   // When getting pixel data palette is appended to memory pointed by
   // BITMAPINFO passed so allocate additional memory to store additional data.
-  scoped_ptr<char[]> header(new char[KHeaderAndPalette]);
+  std::unique_ptr<char[]> header(new char[KHeaderAndPalette]);
   memcpy(header.get(), &(info.bmiHeader), sizeof(info.bmiHeader));
 
   data.reset(new uint32_t[info.bmiHeader.biSizeImage / sizeof(uint32_t)]);
@@ -54,7 +56,7 @@ PixelData GetBitmapData(HBITMAP handle, const BITMAPINFO& info, HDC hdc) {
   if (result == 0)
     data.reset();
 
-  return data.Pass();
+  return data;
 }
 
 // Checks if the specifed row is transparent in provided bitmap.
@@ -104,17 +106,48 @@ int CalculateCursorHeight(HCURSOR cursor_handle) {
   if (data == NULL)
     return kDefaultHeight;
 
-  const int cursor_height = GetSystemMetrics(SM_CYCURSOR);
-  // Crash data seems to indicate cursor_height may be bigger than the bitmap.
-  int i = std::max(0, static_cast<int>(bitmap_info.bmiHeader.biHeight) -
-                   cursor_height);
-  for (; i < bitmap_info.bmiHeader.biHeight; ++i) {
-    if (!IsRowTransparent(data, row_size, last_byte_mask, i)) {
-      i--;
+  // There are 2 types of cursors: Ones that cover the area underneath
+  // completely (i.e. hand cursor) and ones that partially cover
+  // and partially blend with background (i. e. I-beam cursor).
+  // These will have either 1 square mask or 2 masks stacked on top
+  // of each other (xor mask and and mask).
+  const bool has_xor_mask =
+      bitmap_info.bmiHeader.biHeight == 2 * bitmap_info.bmiHeader.biWidth;
+  const int cursor_height =
+      has_xor_mask ? static_cast<int>(bitmap_info.bmiHeader.biHeight / 2)
+                   : static_cast<int>(bitmap_info.bmiHeader.biHeight);
+  int xor_offset;
+  if (has_xor_mask) {
+    for (xor_offset = 0; xor_offset < cursor_height; ++xor_offset) {
+      const uint32_t row_start = row_size * xor_offset;
+      const uint32_t row_boundary = row_start + row_size;
+      for (uint32_t i = row_start; i < row_boundary; ++i)
+        data.get()[i] = ~(data.get()[i]);
+      if (!IsRowTransparent(data, row_size, last_byte_mask, xor_offset)) {
+        break;
+      }
+    }
+  } else {
+    xor_offset = cursor_height;
+  }
+
+  int and_offset;
+
+  for (and_offset = has_xor_mask ? cursor_height : 0;
+       and_offset < bitmap_info.bmiHeader.biHeight; ++and_offset) {
+    if (!IsRowTransparent(data, row_size, last_byte_mask, and_offset)) {
       break;
     }
   }
-  return bitmap_info.bmiHeader.biHeight - i - icon.yHotspot;
+  if (has_xor_mask) {
+    and_offset -= cursor_height;
+  }
+  const int offset = std::min(xor_offset, and_offset);
+
+  DeleteObject(icon.hbmColor);
+  DeleteObject(icon.hbmMask);
+
+  return cursor_height - offset - icon.yHotspot + 1;
 }
 
 }  // namespace

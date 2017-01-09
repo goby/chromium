@@ -4,25 +4,28 @@
 
 #include "chrome/browser/extensions/browser_action_test_util.h"
 
+#include <stddef.h>
+
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/ui/browser.h"
 #import "chrome/browser/ui/cocoa/browser_window_cocoa.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_container_view.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_controller.h"
 #import "chrome/browser/ui/cocoa/extensions/extension_popup_controller.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/common/chrome_constants.h"
-#include "grit/theme_resources.h"
 #include "ui/base/theme_provider.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -117,14 +120,6 @@ int BrowserActionTestUtil::VisibleBrowserActions() {
   return [GetController(browser_, test_helper_.get()) visibleButtonCount];
 }
 
-bool BrowserActionTestUtil::IsChevronShowing() {
-  BrowserActionsController* controller =
-      GetController(browser_, test_helper_.get());
-  // The magic "18" comes from kChevronWidth in browser_actions_controller.mm.
-  return ![controller chevronIsHidden] &&
-         NSWidth([[controller containerView] animationEndFrame]) >= 18;
-}
-
 void BrowserActionTestUtil::InspectPopup(int index) {
   NOTREACHED();
 }
@@ -194,10 +189,11 @@ ToolbarActionsBar* BrowserActionTestUtil::GetToolbarActionsBar() {
   return [GetController(browser_, test_helper_.get()) toolbarActionsBar];
 }
 
-scoped_ptr<BrowserActionTestUtil> BrowserActionTestUtil::CreateOverflowBar() {
+std::unique_ptr<BrowserActionTestUtil>
+BrowserActionTestUtil::CreateOverflowBar() {
   CHECK(!GetToolbarActionsBar()->in_overflow_mode())
       << "Only a main bar can create an overflow bar!";
-  return make_scoped_ptr(new BrowserActionTestUtil(browser_, this));
+  return base::WrapUnique(new BrowserActionTestUtil(browser_, this));
 }
 
 // static

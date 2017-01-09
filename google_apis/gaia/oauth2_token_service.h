@@ -5,13 +5,15 @@
 #ifndef GOOGLE_APIS_GAIA_OAUTH2_TOKEN_SERVICE_H_
 #define GOOGLE_APIS_GAIA_OAUTH2_TOKEN_SERVICE_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/threading/non_thread_safe.h"
@@ -91,8 +93,12 @@ class OAuth2TokenService : public base::NonThreadSafe {
    public:
     // Called whenever a new login-scoped refresh token is available for
     // account |account_id|. Once available, access tokens can be retrieved for
-    // this account.  This is called during initial startup for each token
-    // loaded.
+    // this account. This is called during initial startup for each token
+    // loaded (and any time later when, e.g., credentials change). When called,
+    // any pending token request is cancelled and needs to be retried. Such a
+    // pending request can easily occur on Android, where refresh tokens are
+    // held by the OS and are thus often available on startup even before
+    // OnRefreshTokenAvailable() is called.
     virtual void OnRefreshTokenAvailable(const std::string& account_id) {}
     // Called whenever the login-scoped refresh token becomes unavailable for
     // account |account_id|.
@@ -148,14 +154,14 @@ class OAuth2TokenService : public base::NonThreadSafe {
   // |scopes| is the set of scopes to get an access token for, |consumer| is
   // the object that will be called back with results if the returned request
   // is not deleted. Virtual for mocking.
-  virtual scoped_ptr<Request> StartRequest(const std::string& account_id,
-                                           const ScopeSet& scopes,
-                                           Consumer* consumer);
+  virtual std::unique_ptr<Request> StartRequest(const std::string& account_id,
+                                                const ScopeSet& scopes,
+                                                Consumer* consumer);
 
   // This method does the same as |StartRequest| except it uses |client_id| and
   // |client_secret| to identify OAuth client app instead of using
   // Chrome's default values.
-  scoped_ptr<Request> StartRequestForClient(
+  std::unique_ptr<Request> StartRequestForClient(
       const std::string& account_id,
       const std::string& client_id,
       const std::string& client_secret,
@@ -165,7 +171,7 @@ class OAuth2TokenService : public base::NonThreadSafe {
   // This method does the same as |StartRequest| except it uses the request
   // context given by |getter| instead of using the one returned by
   // |GetRequestContext| implemented by derived classes.
-  scoped_ptr<Request> StartRequestWithContext(
+  std::unique_ptr<Request> StartRequestWithContext(
       const std::string& account_id,
       net::URLRequestContextGetter* getter,
       const ScopeSet& scopes,
@@ -296,6 +302,7 @@ class OAuth2TokenService : public base::NonThreadSafe {
     RequestParameters(const std::string& client_id,
                       const std::string& account_id,
                       const ScopeSet& scopes);
+    RequestParameters(const RequestParameters& other);
     ~RequestParameters();
     bool operator<(const RequestParameters& params) const;
 
@@ -306,8 +313,6 @@ class OAuth2TokenService : public base::NonThreadSafe {
     // URL scopes for the requested access token.
     ScopeSet scopes;
   };
-
-  typedef std::map<RequestParameters, Fetcher*> PendingFetcherMap;
 
   // Provide a request context used for fetching access tokens with the
   // |StartRequest| method.
@@ -322,7 +327,7 @@ class OAuth2TokenService : public base::NonThreadSafe {
   // This method does the same as |StartRequestWithContext| except it
   // uses |client_id| and |client_secret| to identify OAuth
   // client app instead of using Chrome's default values.
-  scoped_ptr<Request> StartRequestForClientWithContext(
+  std::unique_ptr<Request> StartRequestForClientWithContext(
       const std::string& account_id,
       net::URLRequestContextGetter* getter,
       const std::string& client_id,
@@ -361,11 +366,11 @@ class OAuth2TokenService : public base::NonThreadSafe {
   typedef std::map<RequestParameters, CacheEntry> TokenCache;
   TokenCache token_cache_;
 
-  scoped_ptr<OAuth2TokenServiceDelegate> delegate_;
+  std::unique_ptr<OAuth2TokenServiceDelegate> delegate_;
 
   // A map from fetch parameters to a fetcher that is fetching an OAuth2 access
   // token using these parameters.
-  PendingFetcherMap pending_fetchers_;
+  std::map<RequestParameters, std::unique_ptr<Fetcher>> pending_fetchers_;
 
   // List of observers to notify when access token status changes.
   base::ObserverList<DiagnosticsObserver, true> diagnostics_observer_list_;

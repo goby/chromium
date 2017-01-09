@@ -6,6 +6,7 @@
 
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
+#include <stdint.h>
 
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
@@ -21,9 +22,8 @@ PreExecDelegate::PreExecDelegate(
       sandbox_server_bootstrap_name_ptr_(
           sandbox_server_bootstrap_name_.c_str()),
       sandbox_token_(sandbox_token),
-      is_yosemite_or_later_(base::mac::IsOSYosemiteOrLater()),
-      look_up_message_(CreateBootstrapLookUpMessage()) {
-}
+      is_yosemite_or_later_(base::mac::IsAtLeastOS10_10()),
+      look_up_message_(CreateBootstrapLookUpMessage()) {}
 
 PreExecDelegate::~PreExecDelegate() {}
 

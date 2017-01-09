@@ -6,16 +6,18 @@
 
 #include <IOKit/serial/IOSerialKeys.h>
 #include <IOKit/usb/IOUSBLib.h>
+#include <stdint.h>
 
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_ioobject.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -72,9 +74,9 @@ bool GetStringProperty(io_service_t service,
   return false;
 }
 
-// Searches the specified service for a uint16 property with the specified key,
-// sets value to that property's value, and returns whether the operation was
-// successful.
+// Searches the specified service for a uint16_t property with the specified
+// key, sets value to that property's value, and returns whether the operation
+// was successful.
 bool GetUInt16Property(io_service_t service,
                        const CFStringRef key,
                        uint16_t* value) {
@@ -99,19 +101,19 @@ int Clamp(int value, int min, int max) {
 // enumerating serial devices (IOKit).  This new method gives more information
 // about the devices than the old method.
 mojo::Array<serial::DeviceInfoPtr> GetDevicesNew() {
-  mojo::Array<serial::DeviceInfoPtr> devices(0);
+  mojo::Array<serial::DeviceInfoPtr> devices;
 
   // Make a service query to find all serial devices.
   CFMutableDictionaryRef matchingDict =
       IOServiceMatching(kIOSerialBSDServiceValue);
   if (!matchingDict)
-    return devices.Pass();
+    return devices;
 
   io_iterator_t it;
   kern_return_t kr =
       IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &it);
   if (kr != KERN_SUCCESS)
-    return devices.Pass();
+    return devices;
 
   base::mac::ScopedIOObject<io_iterator_t> scoped_it(it);
   base::mac::ScopedIOObject<io_service_t> scoped_device;
@@ -135,7 +137,7 @@ mojo::Array<serial::DeviceInfoPtr> GetDevicesNew() {
     mojo::String displayName;
     if (GetStringProperty(scoped_device.get(), CFSTR(kUSBProductString),
                           &displayName)) {
-      callout_info->display_name = displayName;
+      callout_info->display_name = displayName.PassStorage();
     }
 
     // Each serial device has two "paths" in /dev/ associated with it: a
@@ -147,18 +149,18 @@ mojo::Array<serial::DeviceInfoPtr> GetDevicesNew() {
                           &dialinDevice)) {
       serial::DeviceInfoPtr dialin_info = callout_info.Clone();
       dialin_info->path = dialinDevice;
-      devices.push_back(dialin_info.Pass());
+      devices.push_back(std::move(dialin_info));
     }
 
     mojo::String calloutDevice;
     if (GetStringProperty(scoped_device.get(), CFSTR(kIOCalloutDeviceKey),
                           &calloutDevice)) {
       callout_info->path = calloutDevice;
-      devices.push_back(callout_info.Pass());
+      devices.push_back(std::move(callout_info));
     }
   }
 
-  return devices.Pass();
+  return devices;
 }
 
 // Returns an array of devices as retrieved through the old method of
@@ -178,7 +180,7 @@ mojo::Array<serial::DeviceInfoPtr> GetDevicesOld() {
   valid_patterns.insert("/dev/tty.*");
   valid_patterns.insert("/dev/cu.*");
 
-  mojo::Array<serial::DeviceInfoPtr> devices(0);
+  mojo::Array<serial::DeviceInfoPtr> devices;
   base::FileEnumerator enumerator(kDevRoot, false, kFilesAndSymLinks);
   do {
     const base::FilePath next_device_path(enumerator.Next());
@@ -191,19 +193,20 @@ mojo::Array<serial::DeviceInfoPtr> GetDevicesOld() {
       if (base::MatchPattern(next_device, *i)) {
         serial::DeviceInfoPtr info(serial::DeviceInfo::New());
         info->path = next_device;
-        devices.push_back(info.Pass());
+        devices.push_back(std::move(info));
         break;
       }
     }
   } while (true);
-  return devices.Pass();
+  return devices;
 }
 
 }  // namespace
 
 // static
-scoped_ptr<SerialDeviceEnumerator> SerialDeviceEnumerator::Create() {
-  return scoped_ptr<SerialDeviceEnumerator>(new SerialDeviceEnumeratorMac());
+std::unique_ptr<SerialDeviceEnumerator> SerialDeviceEnumerator::Create() {
+  return std::unique_ptr<SerialDeviceEnumerator>(
+      new SerialDeviceEnumeratorMac());
 }
 
 SerialDeviceEnumeratorMac::SerialDeviceEnumeratorMac() {}
@@ -235,7 +238,7 @@ mojo::Array<serial::DeviceInfoPtr> SerialDeviceEnumeratorMac::GetDevices() {
   mojo::Array<serial::DeviceInfoPtr> devices;
   deviceMap.DecomposeMapTo(&paths, &devices);
 
-  return devices.Pass();
+  return devices;
 }
 
 }  // namespace device

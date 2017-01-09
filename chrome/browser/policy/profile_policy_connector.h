@@ -5,11 +5,12 @@
 #ifndef CHROME_BROWSER_POLICY_PROFILE_POLICY_CONNECTOR_H_
 #define CHROME_BROWSER_POLICY_PROFILE_POLICY_CONNECTOR_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
 
 namespace user_manager {
@@ -37,7 +38,7 @@ class ProfilePolicyConnector : public KeyedService {
       SchemaRegistry* schema_registry,
       CloudPolicyManager* user_cloud_policy_manager);
 
-  void InitForTesting(scoped_ptr<PolicyService> service);
+  void InitForTesting(std::unique_ptr<PolicyService> service);
   void OverrideIsManagedForTesting(bool is_managed);
 
   // KeyedService:
@@ -66,7 +67,6 @@ class ProfilePolicyConnector : public KeyedService {
   const ConfigurationPolicyProvider* DeterminePolicyProviderForPolicy(
       const char* name) const;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
 #if defined(OS_CHROMEOS)
   // Some of the user policy configuration affects browser global state, and
   // can only come from one Profile. |is_primary_user_| is true if this
@@ -75,12 +75,12 @@ class ProfilePolicyConnector : public KeyedService {
   // local state.
   bool is_primary_user_;
 
-  scoped_ptr<ConfigurationPolicyProvider> special_user_policy_provider_;
+  std::unique_ptr<ConfigurationPolicyProvider> special_user_policy_provider_;
 #endif  // defined(OS_CHROMEOS)
 
-  scoped_ptr<ConfigurationPolicyProvider> wrapped_platform_policy_provider_;
+  std::unique_ptr<ConfigurationPolicyProvider>
+      wrapped_platform_policy_provider_;
   CloudPolicyManager* user_cloud_policy_manager_;
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
   // |policy_providers_| contains a list of the policy providers available for
   // the PolicyService of this connector, in decreasing order of priority.
@@ -92,8 +92,8 @@ class ProfilePolicyConnector : public KeyedService {
   // result is true, so take care if a provider overrides that.
   std::vector<ConfigurationPolicyProvider*> policy_providers_;
 
-  scoped_ptr<PolicyService> policy_service_;
-  scoped_ptr<bool> is_managed_override_;
+  std::unique_ptr<PolicyService> policy_service_;
+  std::unique_ptr<bool> is_managed_override_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfilePolicyConnector);
 };

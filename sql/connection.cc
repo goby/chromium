@@ -4,7 +4,12 @@
 
 #include "sql/connection.h"
 
+#include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
+
+#include <utility>
 
 #include "base/bind.h"
 #include "base/debug/dump_without_crashing.h"
@@ -13,21 +18,25 @@
 #include "base/format_macros.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/lazy_instance.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
-#include "base/trace_event/process_memory_dump.h"
+#include "sql/connection_memory_dump_provider.h"
+#include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "third_party/sqlite/sqlite3.h"
 
 #if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
+#include "base/ios/ios_util.h"
 #include "third_party/sqlite/src/ext/icu/sqliteicu.h"
 #endif
 
@@ -108,9 +117,8 @@ int BackupDatabase(sqlite3* src, sqlite3* dst, const char* db_name) {
 // just use clean names to start with.
 bool ValidAttachmentPoint(const char* attachment_point) {
   for (size_t i = 0; attachment_point[i]; ++i) {
-    if (!((attachment_point[i] >= '0' && attachment_point[i] <= '9') ||
-          (attachment_point[i] >= 'a' && attachment_point[i] <= 'z') ||
-          (attachment_point[i] >= 'A' && attachment_point[i] <= 'Z') ||
+    if (!(base::IsAsciiDigit(attachment_point[i]) ||
+          base::IsAsciiAlpha(attachment_point[i]) ||
           attachment_point[i] == '_')) {
       return false;
     }
@@ -119,22 +127,22 @@ bool ValidAttachmentPoint(const char* attachment_point) {
 }
 
 void RecordSqliteMemory10Min() {
-  const int64 used = sqlite3_memory_used();
+  const int64_t used = sqlite3_memory_used();
   UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.TenMinutes", used / 1024);
 }
 
 void RecordSqliteMemoryHour() {
-  const int64 used = sqlite3_memory_used();
+  const int64_t used = sqlite3_memory_used();
   UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.OneHour", used / 1024);
 }
 
 void RecordSqliteMemoryDay() {
-  const int64 used = sqlite3_memory_used();
+  const int64_t used = sqlite3_memory_used();
   UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.OneDay", used / 1024);
 }
 
 void RecordSqliteMemoryWeek() {
-  const int64 used = sqlite3_memory_used();
+  const int64_t used = sqlite3_memory_used();
   UMA_HISTOGRAM_COUNTS("Sqlite.MemoryKB.OneWeek", used / 1024);
 }
 
@@ -154,18 +162,18 @@ void InitializeSqlite() {
     sqlite3_initialize();
 
     // Schedule callback to record memory footprint histograms at 10m, 1h, and
-    // 1d.  There may not be a message loop in tests.
-    if (base::MessageLoop::current()) {
-      base::MessageLoop::current()->PostDelayedTask(
+    // 1d. There may not be a registered thread task runner in tests.
+    if (base::ThreadTaskRunnerHandle::IsSet()) {
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemory10Min),
           base::TimeDelta::FromMinutes(10));
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemoryHour),
           base::TimeDelta::FromHours(1));
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemoryDay),
           base::TimeDelta::FromDays(1));
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemoryWeek),
           base::TimeDelta::FromDays(7));
     }
@@ -223,81 +231,19 @@ std::string AsUTF8ForSQL(const base::FilePath& path) {
 namespace sql {
 
 // static
-Connection::ErrorIgnorerCallback* Connection::current_ignorer_cb_ = NULL;
+Connection::ErrorExpecterCallback* Connection::current_expecter_cb_ = NULL;
 
 // static
-bool Connection::ShouldIgnoreSqliteError(int error) {
-  if (!current_ignorer_cb_)
+bool Connection::IsExpectedSqliteError(int error) {
+  if (!current_expecter_cb_)
     return false;
-  return current_ignorer_cb_->Run(error);
-}
-
-// static
-bool Connection::ShouldIgnoreSqliteCompileError(int error) {
-  // Put this first in case tests need to see that the check happened.
-  if (ShouldIgnoreSqliteError(error))
-    return true;
-
-  // Trim extended error codes.
-  int basic_error = error & 0xff;
-
-  // These errors relate more to the runtime context of the system than to
-  // errors with a SQL statement or with the schema, so they aren't generally
-  // interesting to flag.  This list is not comprehensive.
-  return basic_error == SQLITE_BUSY ||
-      basic_error == SQLITE_NOTADB ||
-      basic_error == SQLITE_CORRUPT;
-}
-
-bool Connection::OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
-                              base::trace_event::ProcessMemoryDump* pmd) {
-  if (args.level_of_detail ==
-          base::trace_event::MemoryDumpLevelOfDetail::LIGHT ||
-      !db_) {
-    return true;
-  }
-
-  // The high water mark is not tracked for the following usages.
-  int cache_size, dummy_int;
-  sqlite3_db_status(db_, SQLITE_DBSTATUS_CACHE_USED, &cache_size, &dummy_int,
-                    0 /* resetFlag */);
-  int schema_size;
-  sqlite3_db_status(db_, SQLITE_DBSTATUS_SCHEMA_USED, &schema_size, &dummy_int,
-                    0 /* resetFlag */);
-  int statement_size;
-  sqlite3_db_status(db_, SQLITE_DBSTATUS_STMT_USED, &statement_size, &dummy_int,
-                    0 /* resetFlag */);
-
-  std::string name = base::StringPrintf(
-      "sqlite/%s_connection/%p",
-      histogram_tag_.empty() ? "Unknown" : histogram_tag_.c_str(), this);
-  base::trace_event::MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(name);
-  dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
-                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                  cache_size + schema_size + statement_size);
-  dump->AddScalar("cache_size",
-                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                  cache_size);
-  dump->AddScalar("schema_size",
-                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                  schema_size);
-  dump->AddScalar("statement_size",
-                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                  statement_size);
-  return true;
+  return current_expecter_cb_->Run(error);
 }
 
 void Connection::ReportDiagnosticInfo(int extended_error, Statement* stmt) {
   AssertIOAllowed();
 
-  std::string debug_info;
-  const int error = (extended_error & 0xFF);
-  if (error == SQLITE_CORRUPT) {
-    debug_info = CollectCorruptionInfo();
-  } else {
-    debug_info = CollectErrorInfo(extended_error, stmt);
-  }
-
+  std::string debug_info = GetDiagnosticInfo(extended_error, stmt);
   if (!debug_info.empty() && RegisterIntentToUpload()) {
     char debug_buf[2000];
     base::strlcpy(debug_buf, debug_info.c_str(), arraysize(debug_buf));
@@ -308,15 +254,15 @@ void Connection::ReportDiagnosticInfo(int extended_error, Statement* stmt) {
 }
 
 // static
-void Connection::SetErrorIgnorer(Connection::ErrorIgnorerCallback* cb) {
-  CHECK(current_ignorer_cb_ == NULL);
-  current_ignorer_cb_ = cb;
+void Connection::SetErrorExpecter(Connection::ErrorExpecterCallback* cb) {
+  CHECK(current_expecter_cb_ == NULL);
+  current_expecter_cb_ = cb;
 }
 
 // static
-void Connection::ResetErrorIgnorer() {
-  CHECK(current_ignorer_cb_);
-  current_ignorer_cb_ = NULL;
+void Connection::ResetErrorExpecter() {
+  CHECK(current_expecter_cb_);
+  current_expecter_cb_ = NULL;
 }
 
 bool StatementID::operator<(const StatementID& other) const {
@@ -372,6 +318,7 @@ Connection::Connection()
       needs_rollback_(false),
       in_memory_(false),
       poisoned_(false),
+      mmap_alt_status_(false),
       mmap_disabled_(false),
       mmap_enabled_(false),
       total_changes_at_last_release_(0),
@@ -381,13 +328,9 @@ Connection::Connection()
       update_time_histogram_(NULL),
       query_time_histogram_(NULL),
       clock_(new TimeSource()) {
-  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-      this, "sql::Connection", nullptr);
 }
 
 Connection::~Connection() {
-  base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
-      this);
   Close();
 }
 
@@ -458,6 +401,7 @@ bool Connection::Open(const base::FilePath& path) {
               base::HistogramBase::kUmaTargetedHistogramFlag);
       if (histogram)
         histogram->Add(sample);
+      UMA_HISTOGRAM_COUNTS("Sqlite.SizeKB", sample);
     }
   }
 
@@ -505,6 +449,17 @@ void Connection::CloseInternal(bool forced) {
     // of the function. http://crbug.com/136655.
     AssertIOAllowed();
 
+    // Reseting acquires a lock to ensure no dump is happening on the database
+    // at the same time. Unregister takes ownership of provider and it is safe
+    // since the db is reset. memory_dump_provider_ could be null if db_ was
+    // poisoned.
+    if (memory_dump_provider_) {
+      memory_dump_provider_->ResetDatabase();
+      base::trace_event::MemoryDumpManager::GetInstance()
+          ->UnregisterAndDeleteDumpProviderSoon(
+              std::move(memory_dump_provider_));
+    }
+
     int rc = sqlite3_close(db_);
     if (rc != SQLITE_OK) {
       UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.CloseFailure", rc);
@@ -551,7 +506,7 @@ void Connection::Preload() {
   if (preload_size > file_size)
     preload_size = file_size;
 
-  scoped_ptr<char[]> buf(new char[page_size]);
+  std::unique_ptr<char[]> buf(new char[page_size]);
   for (sqlite3_int64 pos = 0; pos < preload_size; pos += page_size) {
     rc = file->pMethods->xRead(file, buf.get(), page_size, pos);
 
@@ -604,7 +559,12 @@ void Connection::Preload() {
 // work.  There could be two prepared statements, one for cache_size=1 one for
 // cache_size=goal.
 void Connection::ReleaseCacheMemoryIfNeeded(bool implicit_change_performed) {
-  DCHECK(is_open());
+  // The database could have been closed during a transaction as part of error
+  // recovery.
+  if (!db_) {
+    DLOG_IF(FATAL, !poisoned_) << "Illegal use of connection without a db";
+    return;
+  }
 
   // If memory-mapping is not enabled, the page cache helps performance.
   if (!mmap_enabled_)
@@ -683,26 +643,27 @@ bool Connection::RegisterIntentToUpload() const {
   // already bad.
   base::AutoLock lock(g_sqlite_init_lock.Get());
 
-  scoped_ptr<base::Value> root;
+  std::unique_ptr<base::Value> root;
   if (!base::PathExists(breadcrumb_path)) {
-    scoped_ptr<base::DictionaryValue> root_dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> root_dict(
+        new base::DictionaryValue());
     root_dict->SetInteger(kVersionKey, kVersion);
 
-    scoped_ptr<base::ListValue> dumps(new base::ListValue);
+    std::unique_ptr<base::ListValue> dumps(new base::ListValue);
     dumps->AppendString(histogram_tag_);
-    root_dict->Set(kDiagnosticDumpsKey, dumps.Pass());
+    root_dict->Set(kDiagnosticDumpsKey, std::move(dumps));
 
-    root = root_dict.Pass();
+    root = std::move(root_dict);
   } else {
     // Failure to read a valid dictionary implies that something is going wrong
     // on the system.
     JSONFileValueDeserializer deserializer(breadcrumb_path);
-    scoped_ptr<base::Value> read_root(
+    std::unique_ptr<base::Value> read_root(
         deserializer.Deserialize(nullptr, nullptr));
     if (!read_root.get())
       return false;
-    scoped_ptr<base::DictionaryValue> root_dict =
-        base::DictionaryValue::From(read_root.Pass());
+    std::unique_ptr<base::DictionaryValue> root_dict =
+        base::DictionaryValue::From(std::move(read_root));
     if (!root_dict)
       return false;
 
@@ -726,7 +687,7 @@ bool Connection::RegisterIntentToUpload() const {
 
     // Record intention to proceed with upload.
     dumps->AppendString(histogram_tag_);
-    root = root_dict.Pass();
+    root = std::move(root_dict);
   }
 
   const base::FilePath breadcrumb_new =
@@ -841,7 +802,7 @@ std::string Connection::CollectCorruptionInfo() {
   // If the file cannot be accessed it is unlikely that an integrity check will
   // turn up actionable information.
   const base::FilePath db_path = DbPath();
-  int64 db_size = -1;
+  int64_t db_size = -1;
   if (!base::GetFileSize(db_path, &db_size) || db_size < 0)
     return std::string();
 
@@ -853,7 +814,7 @@ std::string Connection::CollectCorruptionInfo() {
                       db_size);
 
   // Only check files up to 8M to keep things from blocking too long.
-  const int64 kMaxIntegrityCheckSize = 8192 * 1024;
+  const int64_t kMaxIntegrityCheckSize = 8192 * 1024;
   if (db_size > kMaxIntegrityCheckSize) {
     debug_info += "integrity_check skipped due to size\n";
   } else {
@@ -880,57 +841,91 @@ std::string Connection::CollectCorruptionInfo() {
   return debug_info;
 }
 
+bool Connection::GetMmapAltStatus(int64_t* status) {
+  // The [meta] version uses a missing table as a signal for a fresh database.
+  // That will not work for the view, which would not exist in either a new or
+  // an existing database.  A new database _should_ be only one page long, so
+  // just don't bother optimizing this case (start at offset 0).
+  // TODO(shess): Could the [meta] case also get simpler, then?
+  if (!DoesViewExist("MmapStatus")) {
+    *status = 0;
+    return true;
+  }
+
+  const char* kMmapStatusSql = "SELECT * FROM MmapStatus";
+  Statement s(GetUniqueStatement(kMmapStatusSql));
+  if (s.Step())
+    *status = s.ColumnInt64(0);
+  return s.Succeeded();
+}
+
+bool Connection::SetMmapAltStatus(int64_t status) {
+  if (!BeginTransaction())
+    return false;
+
+  // View may not exist on first run.
+  if (!Execute("DROP VIEW IF EXISTS MmapStatus")) {
+    RollbackTransaction();
+    return false;
+  }
+
+  // Views live in the schema, so they cannot be parameterized.  For an integer
+  // value, this construct should be safe from SQL injection, if the value
+  // becomes more complicated use "SELECT quote(?)" to generate a safe quoted
+  // value.
+  const std::string createViewSql =
+      base::StringPrintf("CREATE VIEW MmapStatus (value) AS SELECT %" PRId64,
+                         status);
+  if (!Execute(createViewSql.c_str())) {
+    RollbackTransaction();
+    return false;
+  }
+
+  return CommitTransaction();
+}
+
 size_t Connection::GetAppropriateMmapSize() {
   AssertIOAllowed();
 
-  // TODO(shess): Using sql::MetaTable seems indicated, but mixing
-  // sql::MetaTable and direct access seems error-prone.  It might make sense to
-  // simply integrate sql::MetaTable functionality into sql::Connection.
-
-#if defined(OS_IOS)
-  // iOS SQLite does not support memory mapping.
-  return 0;
-#endif
-
-  // If the database doesn't have a place to track progress, assume the worst.
-  // This will happen when new databases are created.
-  if (!DoesTableExist("meta")) {
-    RecordOneEvent(EVENT_MMAP_META_MISSING);
+#if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
+  if (!base::ios::IsRunningOnIOS10OrLater()) {
+    // iOS SQLite does not support memory mapping.
     return 0;
   }
+#endif
 
-  // Key into meta table to get status from a previous run.  The value
-  // represents how much data in bytes has successfully been read from the
-  // database.  |kMmapFailure| indicates that there was a read error and the
-  // database should not be memory-mapped, while |kMmapSuccess| indicates that
-  // the entire file was read at some point and can be memory-mapped without
-  // constraint.
-  const char* kMmapStatusKey = "mmap_status";
-  static const sqlite3_int64 kMmapFailure = -2;
-  static const sqlite3_int64 kMmapSuccess = -1;
+  // How much to map if no errors are found.  50MB encompasses the 99th
+  // percentile of Chrome databases in the wild, so this should be good.
+  const size_t kMmapEverything = 256 * 1024 * 1024;
 
-  // Start reading from 0 unless status is found in meta table.
-  sqlite3_int64 mmap_ofs = 0;
+  // Progress information is tracked in the [meta] table for databases which use
+  // sql::MetaTable, otherwise it is tracked in a special view.
+  // TODO(shess): Move all cases to the view implementation.
+  int64_t mmap_ofs = 0;
+  if (mmap_alt_status_) {
+    if (!GetMmapAltStatus(&mmap_ofs)) {
+      RecordOneEvent(EVENT_MMAP_STATUS_FAILURE_READ);
+      return 0;
+    }
+  } else {
+    // If [meta] doesn't exist, yet, it's a new database, assume the best.
+    // sql::MetaTable::Init() will preload kMmapSuccess.
+    if (!MetaTable::DoesTableExist(this)) {
+      RecordOneEvent(EVENT_MMAP_META_MISSING);
+      return kMmapEverything;
+    }
 
-  // Retrieve the current status.  It is fine for the status to be missing
-  // entirely, but any error prevents memory-mapping.
-  {
-    const char* kMmapStatusSql = "SELECT value FROM meta WHERE key = ?";
-    Statement s(GetUniqueStatement(kMmapStatusSql));
-    s.BindString(0, kMmapStatusKey);
-    if (s.Step()) {
-      mmap_ofs = s.ColumnInt64(0);
-    } else if (!s.Succeeded()) {
+    if (!MetaTable::GetMmapStatus(this, &mmap_ofs)) {
       RecordOneEvent(EVENT_MMAP_META_FAILURE_READ);
       return 0;
     }
   }
 
   // Database read failed in the past, don't memory map.
-  if (mmap_ofs == kMmapFailure) {
+  if (mmap_ofs == MetaTable::kMmapFailure) {
     RecordOneEvent(EVENT_MMAP_FAILED);
     return 0;
-  } else if (mmap_ofs != kMmapSuccess) {
+  } else if (mmap_ofs != MetaTable::kMmapSuccess) {
     // Continue reading from previous offset.
     DCHECK_GE(mmap_ofs, 0);
 
@@ -981,7 +976,7 @@ size_t Connection::GetAppropriateMmapSize() {
           break;
         } else {
           // TODO(shess): Consider calling OnSqliteError().
-          mmap_ofs = kMmapFailure;
+          mmap_ofs = MetaTable::kMmapFailure;
           break;
         }
       }
@@ -989,32 +984,35 @@ size_t Connection::GetAppropriateMmapSize() {
       // Log these events after update to distinguish meta update failure.
       Events event;
       if (mmap_ofs >= db_size) {
-        mmap_ofs = kMmapSuccess;
+        mmap_ofs = MetaTable::kMmapSuccess;
         event = EVENT_MMAP_SUCCESS_NEW;
       } else if (mmap_ofs > 0) {
         event = EVENT_MMAP_SUCCESS_PARTIAL;
       } else {
-        DCHECK_EQ(kMmapFailure, mmap_ofs);
+        DCHECK_EQ(MetaTable::kMmapFailure, mmap_ofs);
         event = EVENT_MMAP_FAILED_NEW;
       }
 
-      const char* kMmapUpdateStatusSql = "REPLACE INTO meta VALUES (?, ?)";
-      Statement s(GetUniqueStatement(kMmapUpdateStatusSql));
-      s.BindString(0, kMmapStatusKey);
-      s.BindInt64(1, mmap_ofs);
-      if (!s.Run()) {
-        RecordOneEvent(EVENT_MMAP_META_FAILURE_UPDATE);
-        return 0;
+      if (mmap_alt_status_) {
+        if (!SetMmapAltStatus(mmap_ofs)) {
+          RecordOneEvent(EVENT_MMAP_STATUS_FAILURE_UPDATE);
+          return 0;
+        }
+      } else {
+        if (!MetaTable::SetMmapStatus(this, mmap_ofs)) {
+          RecordOneEvent(EVENT_MMAP_META_FAILURE_UPDATE);
+          return 0;
+        }
       }
 
       RecordOneEvent(event);
     }
   }
 
-  if (mmap_ofs == kMmapFailure)
+  if (mmap_ofs == MetaTable::kMmapFailure)
     return 0;
-  if (mmap_ofs == kMmapSuccess)
-    return 256 * 1024 * 1024;
+  if (mmap_ofs == MetaTable::kMmapSuccess)
+    return kMmapEverything;
   return mmap_ofs;
 }
 
@@ -1486,7 +1484,14 @@ scoped_refptr<Connection::StatementRef> Connection::GetCachedStatement(
 
 scoped_refptr<Connection::StatementRef> Connection::GetUniqueStatement(
     const char* sql) {
+  return GetStatementImpl(this, sql);
+}
+
+scoped_refptr<Connection::StatementRef> Connection::GetStatementImpl(
+    sql::Connection* tracking_db, const char* sql) const {
   AssertIOAllowed();
+  DCHECK(sql);
+  DCHECK(!tracking_db || const_cast<Connection*>(tracking_db)==this);
 
   // Return inactive statement.
   if (!db_)
@@ -1496,33 +1501,19 @@ scoped_refptr<Connection::StatementRef> Connection::GetUniqueStatement(
   int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
     // This is evidence of a syntax error in the incoming SQL.
-    if (!ShouldIgnoreSqliteCompileError(rc))
+    if (rc == SQLITE_ERROR)
       DLOG(FATAL) << "SQL compile error " << GetErrorMessage();
 
     // It could also be database corruption.
     OnSqliteError(rc, NULL, sql);
     return new StatementRef(NULL, NULL, false);
   }
-  return new StatementRef(this, stmt, true);
+  return new StatementRef(tracking_db, stmt, true);
 }
 
-// TODO(shess): Unify this with GetUniqueStatement().  The only difference that
-// seems legitimate is not passing |this| to StatementRef.
 scoped_refptr<Connection::StatementRef> Connection::GetUntrackedStatement(
     const char* sql) const {
-  // Return inactive statement.
-  if (!db_)
-    return new StatementRef(NULL, NULL, poisoned_);
-
-  sqlite3_stmt* stmt = NULL;
-  int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, NULL);
-  if (rc != SQLITE_OK) {
-    // This is evidence of a syntax error in the incoming SQL.
-    if (!ShouldIgnoreSqliteCompileError(rc))
-      DLOG(FATAL) << "SQL compile error " << GetErrorMessage();
-    return new StatementRef(NULL, NULL, false);
-  }
-  return new StatementRef(NULL, stmt, true);
+  return GetStatementImpl(NULL, sql);
 }
 
 std::string Connection::GetSchema() const {
@@ -1563,22 +1554,26 @@ bool Connection::IsSQLValid(const char* sql) {
   return true;
 }
 
-bool Connection::DoesTableExist(const char* table_name) const {
-  return DoesTableOrIndexExist(table_name, "table");
-}
-
 bool Connection::DoesIndexExist(const char* index_name) const {
-  return DoesTableOrIndexExist(index_name, "index");
+  return DoesSchemaItemExist(index_name, "index");
 }
 
-bool Connection::DoesTableOrIndexExist(
+bool Connection::DoesTableExist(const char* table_name) const {
+  return DoesSchemaItemExist(table_name, "table");
+}
+
+bool Connection::DoesViewExist(const char* view_name) const {
+  return DoesSchemaItemExist(view_name, "view");
+}
+
+bool Connection::DoesSchemaItemExist(
     const char* name, const char* type) const {
   const char* kSql =
       "SELECT name FROM sqlite_master WHERE type=? AND name=? COLLATE NOCASE";
   Statement statement(GetUntrackedStatement(kSql));
 
-  // This can happen if the database is corrupt and the error is being ignored
-  // for testing purposes.
+  // This can happen if the database is corrupt and the error is a test
+  // expectation.
   if (!statement.is_valid())
     return false;
 
@@ -1596,8 +1591,8 @@ bool Connection::DoesColumnExist(const char* table_name,
 
   Statement statement(GetUntrackedStatement(sql.c_str()));
 
-  // This can happen if the database is corrupt and the error is being ignored
-  // for testing purposes.
+  // This can happen if the database is corrupt and the error is a test
+  // expectation.
   if (!statement.is_valid())
     return false;
 
@@ -1753,15 +1748,28 @@ bool Connection::OpenInternal(const std::string& file_name,
   err = sqlite3_extended_result_codes(db_, 1);
   DCHECK_EQ(err, SQLITE_OK) << "Could not enable extended result codes";
 
-  // sqlite3_open() does not actually read the database file (unless a
-  // hot journal is found).  Successfully executing this pragma on an
-  // existing database requires a valid header on page 1.
+  // sqlite3_open() does not actually read the database file (unless a hot
+  // journal is found).  Successfully executing this pragma on an existing
+  // database requires a valid header on page 1.  ExecuteAndReturnErrorCode() to
+  // get the error code before error callback (potentially) overwrites.
   // TODO(shess): For now, just probing to see what the lay of the
   // land is.  If it's mostly SQLITE_NOTADB, then the database should
   // be razed.
   err = ExecuteAndReturnErrorCode("PRAGMA auto_vacuum");
-  if (err != SQLITE_OK)
+  if (err != SQLITE_OK) {
     UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.OpenProbeFailure", err);
+    OnSqliteError(err, nullptr, "PRAGMA auto_vacuum");
+
+    // Retry or bail out if the error handler poisoned the handle.
+    // TODO(shess): Move this handling to one place (see also sqlite3_open and
+    // secure_delete).  Possibly a wrapper function?
+    if (poisoned_) {
+      Close();
+      if (retry_flag == RETRY_ON_POISON)
+        return OpenInternal(file_name, NO_RETRY);
+      return false;
+    }
+  }
 
 #if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
   // The version of SQLite shipped with iOS doesn't enable ICU, which includes
@@ -1857,6 +1865,12 @@ bool Connection::OpenInternal(const std::string& file_name,
       mmap_enabled_ = true;
   }
 
+  DCHECK(!memory_dump_provider_);
+  memory_dump_provider_.reset(
+      new ConnectionMemoryDumpProvider(db_, histogram_tag_));
+  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
+      memory_dump_provider_.get(), "sql::Connection", nullptr);
+
   return true;
 }
 
@@ -1916,7 +1930,8 @@ void Connection::AddTaggedHistogram(const std::string& name,
     histogram->Add(sample);
 }
 
-int Connection::OnSqliteError(int err, sql::Statement *stmt, const char* sql) {
+int Connection::OnSqliteError(
+    int err, sql::Statement *stmt, const char* sql) const {
   UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.Error", err);
   AddTaggedHistogram("Sqlite.Error", err);
 
@@ -1943,7 +1958,7 @@ int Connection::OnSqliteError(int err, sql::Statement *stmt, const char* sql) {
   }
 
   // The default handling is to assert on debug and to ignore on release.
-  if (!ShouldIgnoreSqliteError(err))
+  if (!IsExpectedSqliteError(err))
     DLOG(FATAL) << GetErrorMessage();
   return err;
 }
@@ -1957,6 +1972,40 @@ bool Connection::QuickIntegrityCheck() {
   if (!IntegrityCheckHelper("PRAGMA quick_check", &messages))
     return false;
   return messages.size() == 1 && messages[0] == "ok";
+}
+
+std::string Connection::GetDiagnosticInfo(int extended_error,
+                                          Statement* statement) {
+  // Prevent reentrant calls to the error callback.
+  ErrorCallback original_callback = std::move(error_callback_);
+  reset_error_callback();
+
+  // Trim extended error codes.
+  const int error = (extended_error & 0xFF);
+  // CollectCorruptionInfo() is implemented in terms of sql::Connection,
+  // TODO(shess): Rewrite IntegrityCheckHelper() in terms of raw SQLite.
+  std::string result = (error == SQLITE_CORRUPT)
+                           ? CollectCorruptionInfo()
+                           : CollectErrorInfo(extended_error, statement);
+
+  // The following queries must be executed after CollectErrorInfo() above, so
+  // if they result in their own errors, they don't interfere with
+  // CollectErrorInfo().
+  const bool has_valid_header =
+      (ExecuteAndReturnErrorCode("PRAGMA auto_vacuum") == SQLITE_OK);
+  const bool select_sqlite_master_result =
+      (ExecuteAndReturnErrorCode("SELECT COUNT(*) FROM sqlite_master") ==
+       SQLITE_OK);
+
+  // Restore the original error callback.
+  error_callback_ = std::move(original_callback);
+
+  base::StringAppendF(&result, "Has valid header: %s\n",
+                      (has_valid_header ? "Yes" : "No"));
+  base::StringAppendF(&result, "Has valid schema: %s\n",
+                      (select_sqlite_master_result ? "Yes" : "No"));
+
+  return result;
 }
 
 // TODO(shess): Allow specifying maximum results (default 100 lines).
@@ -1993,6 +2042,12 @@ bool Connection::IntegrityCheckHelper(
   ignore_result(Execute(kNoWritableSchema));
 
   return ret;
+}
+
+bool Connection::ReportMemoryUsage(base::trace_event::ProcessMemoryDump* pmd,
+                                   const std::string& dump_name) {
+  return memory_dump_provider_ &&
+         memory_dump_provider_->ReportMemoryUsage(pmd, dump_name);
 }
 
 base::TimeTicks TimeSource::Now() {

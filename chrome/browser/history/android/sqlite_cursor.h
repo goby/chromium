@@ -6,12 +6,13 @@
 #define CHROME_BROWSER_HISTORY_ANDROID_SQLITE_CURSOR_H_
 
 #include <jni.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -80,45 +81,59 @@ class SQLiteCursor {
   // JNI methods -----------------------------------------------------------
 
   // Returns the result row count.
-  jint GetCount(JNIEnv* env, jobject obj);
+  jint GetCount(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
   // Returns the result's columns' name.
   base::android::ScopedJavaLocalRef<jobjectArray> GetColumnNames(
       JNIEnv* env,
-      jobject obj);
+      const base::android::JavaParamRef<jobject>& obj);
 
   // Returns the given column value as jstring.
-  base::android::ScopedJavaLocalRef<jstring> GetString(JNIEnv* env,
-                                                       jobject obj,
-                                                       jint column);
+  base::android::ScopedJavaLocalRef<jstring> GetString(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint column);
 
   // Returns the given column value as jlong.
-  jlong GetLong(JNIEnv* env, jobject obj, jint column);
+  jlong GetLong(JNIEnv* env,
+                const base::android::JavaParamRef<jobject>& obj,
+                jint column);
 
   // Returns the given column value as int.
-  jint GetInt(JNIEnv* env, jobject obj, jint column);
+  jint GetInt(JNIEnv* env,
+              const base::android::JavaParamRef<jobject>& obj,
+              jint column);
 
   // Returns the given column value as double.
-  jdouble GetDouble(JNIEnv* env, jobject obj, jint column);
+  jdouble GetDouble(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& obj,
+                    jint column);
 
   // Returns the given column value as jbyteArray.
-  base::android::ScopedJavaLocalRef<jbyteArray> GetBlob(JNIEnv* env,
-                                                        jobject obj,
-                                                        jint column);
+  base::android::ScopedJavaLocalRef<jbyteArray> GetBlob(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint column);
 
   // Return JNI_TRUE if the give column value is NULL, JNI_FALSE otherwise.
-  jboolean IsNull(JNIEnv* env, jobject obj, jint column);
+  jboolean IsNull(JNIEnv* env,
+                  const base::android::JavaParamRef<jobject>& obj,
+                  jint column);
 
   // Moves the cursor to |pos|, returns new position.
   // If the returned position is not equal to |pos|, then the cursor points to
   // the last row.
-  jint MoveTo(JNIEnv* env, jobject obj, jint pos);
+  jint MoveTo(JNIEnv* env,
+              const base::android::JavaParamRef<jobject>& obj,
+              jint pos);
 
   // Returns the type of column.
-  jint GetColumnType(JNIEnv* env, jobject obj, jint column);
+  jint GetColumnType(JNIEnv* env,
+                     const base::android::JavaParamRef<jobject>& obj,
+                     jint column);
 
   // Called from Java to relase this object.
-  void Destroy(JNIEnv* env, jobject obj);
+  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SQLiteCursorTest, Run);
@@ -175,7 +190,7 @@ class SQLiteCursor {
   AndroidHistoryProviderService* service_;
 
   // Live on UI thread.
-  scoped_ptr<base::CancelableTaskTracker> tracker_;
+  std::unique_ptr<base::CancelableTaskTracker> tracker_;
 
   // The count of result rows.
   int count_;

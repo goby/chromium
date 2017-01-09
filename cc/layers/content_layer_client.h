@@ -5,6 +5,8 @@
 #ifndef CC_LAYERS_CONTENT_LAYER_CLIENT_H_
 #define CC_LAYERS_CONTENT_LAYER_CLIENT_H_
 
+#include <stddef.h>
+
 #include "cc/base/cc_export.h"
 #include "cc/playback/display_item_list.h"
 
@@ -18,9 +20,12 @@ class CC_EXPORT ContentLayerClient {
  public:
   enum PaintingControlSetting {
     PAINTING_BEHAVIOR_NORMAL,
+    PAINTING_BEHAVIOR_NORMAL_FOR_TEST,
     DISPLAY_LIST_CONSTRUCTION_DISABLED,
     DISPLAY_LIST_CACHING_DISABLED,
-    DISPLAY_LIST_PAINTING_DISABLED
+    DISPLAY_LIST_PAINTING_DISABLED,
+    SUBSEQUENCE_CACHING_DISABLED,
+    PARTIAL_INVALIDATION,
   };
 
   // The paintable region is the rectangular region, within the bounds of the

@@ -34,357 +34,505 @@
 #include "platform/PlatformExport.h"
 #include "platform/heap/GCInfo.h"
 #include "platform/heap/HeapPage.h"
+#include "platform/heap/PageMemory.h"
+#include "platform/heap/StackFrameDepth.h"
 #include "platform/heap/ThreadState.h"
 #include "platform/heap/Visitor.h"
 #include "wtf/AddressSanitizer.h"
+#include "wtf/Allocator.h"
 #include "wtf/Assertions.h"
 #include "wtf/Atomics.h"
 #include "wtf/Forward.h"
+#include <memory>
 
 namespace blink {
 
-template<typename T> class Member;
-template<typename T> class WeakMember;
-template<typename T> class UntracedMember;
+class FreePagePool;
+class OrphanedPagePool;
 
-template<typename T, bool = NeedsAdjustAndMark<T>::value> class ObjectAliveTrait;
+class PLATFORM_EXPORT HeapAllocHooks {
+ public:
+  // TODO(hajimehoshi): Pass a type name of the allocated object.
+  typedef void AllocationHook(Address, size_t, const char*);
+  typedef void FreeHook(Address);
 
-template<typename T>
+  static void setAllocationHook(AllocationHook* hook) {
+    m_allocationHook = hook;
+  }
+  static void setFreeHook(FreeHook* hook) { m_freeHook = hook; }
+
+  static void allocationHookIfEnabled(Address address,
+                                      size_t size,
+                                      const char* typeName) {
+    AllocationHook* allocationHook = m_allocationHook;
+    if (UNLIKELY(!!allocationHook))
+      allocationHook(address, size, typeName);
+  }
+
+  static void freeHookIfEnabled(Address address) {
+    FreeHook* freeHook = m_freeHook;
+    if (UNLIKELY(!!freeHook))
+      freeHook(address);
+  }
+
+ private:
+  static AllocationHook* m_allocationHook;
+  static FreeHook* m_freeHook;
+};
+
+class CrossThreadPersistentRegion;
+template <typename T>
+class Member;
+template <typename T>
+class WeakMember;
+template <typename T>
+class UntracedMember;
+
+template <typename T, bool = NeedsAdjustAndMark<T>::value>
+class ObjectAliveTrait;
+
+template <typename T>
 class ObjectAliveTrait<T, false> {
-public:
-    static bool isHeapObjectAlive(T* object)
-    {
-        static_assert(sizeof(T), "T must be fully defined");
-        return HeapObjectHeader::fromPayload(object)->isMarked();
-    }
+  STATIC_ONLY(ObjectAliveTrait);
+
+ public:
+  static bool isHeapObjectAlive(const T* object) {
+    static_assert(sizeof(T), "T must be fully defined");
+    return HeapObjectHeader::fromPayload(object)->isMarked();
+  }
 };
 
-template<typename T>
+template <typename T>
 class ObjectAliveTrait<T, true> {
-public:
-    static bool isHeapObjectAlive(T* object)
-    {
-        static_assert(sizeof(T), "T must be fully defined");
-        return object->isHeapObjectAlive();
-    }
+  STATIC_ONLY(ObjectAliveTrait);
+
+ public:
+  NO_SANITIZE_ADDRESS
+  static bool isHeapObjectAlive(const T* object) {
+    static_assert(sizeof(T), "T must be fully defined");
+    return object->isHeapObjectAlive();
+  }
 };
 
-class PLATFORM_EXPORT Heap {
-public:
-    static void init();
-    static void shutdown();
-    static void doShutdown();
+class PLATFORM_EXPORT ProcessHeap {
+  STATIC_ONLY(ProcessHeap);
 
-#if ENABLE(ASSERT)
-    static BasePage* findPageFromAddress(Address);
-    static BasePage* findPageFromAddress(const void* pointer) { return findPageFromAddress(reinterpret_cast<Address>(const_cast<void*>(pointer))); }
-#endif
+ public:
+  static void init();
+  static void shutdown();
 
-    template<typename T>
-    static inline bool isHeapObjectAlive(T* object)
-    {
-        static_assert(sizeof(T), "T must be fully defined");
-        // The strongification of collections relies on the fact that once a
-        // collection has been strongified, there is no way that it can contain
-        // non-live entries, so no entries will be removed. Since you can't set
-        // the mark bit on a null pointer, that means that null pointers are
-        // always 'alive'.
-        if (!object)
-            return true;
-        return ObjectAliveTrait<T>::isHeapObjectAlive(object);
-    }
-    template<typename T>
-    static inline bool isHeapObjectAlive(const Member<T>& member)
-    {
-        return isHeapObjectAlive(member.get());
-    }
-    template<typename T>
-    static inline bool isHeapObjectAlive(const WeakMember<T>& member)
-    {
-        return isHeapObjectAlive(member.get());
-    }
-    template<typename T>
-    static inline bool isHeapObjectAlive(const UntracedMember<T>& member)
-    {
-        return isHeapObjectAlive(member.get());
-    }
-    template<typename T>
-    static inline bool isHeapObjectAlive(const RawPtr<T>& ptr)
-    {
-        return isHeapObjectAlive(ptr.get());
-    }
+  static CrossThreadPersistentRegion& crossThreadPersistentRegion();
 
-    // Is the finalizable GC object still alive, but slated for lazy sweeping?
-    // If a lazy sweep is in progress, returns true if the object was found
-    // to be not reachable during the marking phase, but it has yet to be swept
-    // and finalized. The predicate returns false in all other cases.
-    //
-    // Holding a reference to an already-dead object is not a valid state
-    // to be in; willObjectBeLazilySwept() has undefined behavior if passed
-    // such a reference.
-    template<typename T>
-    NO_LAZY_SWEEP_SANITIZE_ADDRESS
-    static bool willObjectBeLazilySwept(const T* objectPointer)
-    {
-        static_assert(IsGarbageCollectedType<T>::value, "only objects deriving from GarbageCollected can be used.");
-        BasePage* page = pageFromObject(objectPointer);
-        if (page->hasBeenSwept())
-            return false;
-        ASSERT(page->heap()->threadState()->isSweepingInProgress());
+  static void increaseTotalAllocatedObjectSize(size_t delta) {
+    atomicAdd(&s_totalAllocatedObjectSize, static_cast<long>(delta));
+  }
+  static void decreaseTotalAllocatedObjectSize(size_t delta) {
+    atomicSubtract(&s_totalAllocatedObjectSize, static_cast<long>(delta));
+  }
+  static size_t totalAllocatedObjectSize() {
+    return acquireLoad(&s_totalAllocatedObjectSize);
+  }
+  static void increaseTotalMarkedObjectSize(size_t delta) {
+    atomicAdd(&s_totalMarkedObjectSize, static_cast<long>(delta));
+  }
+  static void decreaseTotalMarkedObjectSize(size_t delta) {
+    atomicSubtract(&s_totalMarkedObjectSize, static_cast<long>(delta));
+  }
+  static size_t totalMarkedObjectSize() {
+    return acquireLoad(&s_totalMarkedObjectSize);
+  }
+  static void increaseTotalAllocatedSpace(size_t delta) {
+    atomicAdd(&s_totalAllocatedSpace, static_cast<long>(delta));
+  }
+  static void decreaseTotalAllocatedSpace(size_t delta) {
+    atomicSubtract(&s_totalAllocatedSpace, static_cast<long>(delta));
+  }
+  static size_t totalAllocatedSpace() {
+    return acquireLoad(&s_totalAllocatedSpace);
+  }
+  static void resetHeapCounters();
 
-        return !Heap::isHeapObjectAlive(const_cast<T*>(objectPointer));
-    }
+ private:
+  static bool s_shutdownComplete;
+  static size_t s_totalAllocatedSpace;
+  static size_t s_totalAllocatedObjectSize;
+  static size_t s_totalMarkedObjectSize;
 
-    // Push a trace callback on the marking stack.
-    static void pushTraceCallback(void* containerObject, TraceCallback);
-
-    // Push a trace callback on the post-marking callback stack.  These
-    // callbacks are called after normal marking (including ephemeron
-    // iteration).
-    static void pushPostMarkingCallback(void*, TraceCallback);
-
-    // Add a weak pointer callback to the weak callback work list.  General
-    // object pointer callbacks are added to a thread local weak callback work
-    // list and the callback is called on the thread that owns the object, with
-    // the closure pointer as an argument.  Most of the time, the closure and
-    // the containerObject can be the same thing, but the containerObject is
-    // constrained to be on the heap, since the heap is used to identify the
-    // correct thread.
-    static void pushThreadLocalWeakCallback(void* closure, void* containerObject, WeakCallback);
-
-    // Similar to the more general pushThreadLocalWeakCallback, but cell
-    // pointer callbacks are added to a static callback work list and the weak
-    // callback is performed on the thread performing garbage collection.  This
-    // is OK because cells are just cleared and no deallocation can happen.
-    static void pushGlobalWeakCallback(void** cell, WeakCallback);
-
-    // Pop the top of a marking stack and call the callback with the visitor
-    // and the object.  Returns false when there is nothing more to do.
-    static bool popAndInvokeTraceCallback(Visitor*);
-
-    // Remove an item from the post-marking callback stack and call
-    // the callback with the visitor and the object pointer.  Returns
-    // false when there is nothing more to do.
-    static bool popAndInvokePostMarkingCallback(Visitor*);
-
-    // Remove an item from the weak callback work list and call the callback
-    // with the visitor and the closure pointer.  Returns false when there is
-    // nothing more to do.
-    static bool popAndInvokeGlobalWeakCallback(Visitor*);
-
-    // Register an ephemeron table for fixed-point iteration.
-    static void registerWeakTable(void* containerObject, EphemeronCallback, EphemeronCallback);
-#if ENABLE(ASSERT)
-    static bool weakTableRegistered(const void*);
-#endif
-
-    static inline size_t allocationSizeFromSize(size_t size)
-    {
-        // Check the size before computing the actual allocation size.  The
-        // allocation size calculation can overflow for large sizes and the check
-        // therefore has to happen before any calculation on the size.
-        RELEASE_ASSERT(size < maxHeapObjectSize);
-
-        // Add space for header.
-        size_t allocationSize = size + sizeof(HeapObjectHeader);
-        // Align size with allocation granularity.
-        allocationSize = (allocationSize + allocationMask) & ~allocationMask;
-        return allocationSize;
-    }
-    static Address allocateOnHeapIndex(ThreadState*, size_t, int heapIndex, size_t gcInfoIndex);
-    template<typename T> static Address allocate(size_t, bool eagerlySweep = false);
-    template<typename T> static Address reallocate(void* previous, size_t);
-
-    static const char* gcReasonString(BlinkGC::GCReason);
-    static void collectGarbage(BlinkGC::StackState, BlinkGC::GCType, BlinkGC::GCReason);
-    static void collectGarbageForTerminatingThread(ThreadState*);
-    static void collectAllGarbage();
-
-    static void processMarkingStack(Visitor*);
-    static void postMarkingProcessing(Visitor*);
-    static void globalWeakProcessing(Visitor*);
-    static void setForcePreciseGCForTesting();
-
-    static void preGC();
-    static void postGC(BlinkGC::GCType);
-
-    // Conservatively checks whether an address is a pointer in any of the
-    // thread heaps.  If so marks the object pointed to as live.
-    static Address checkAndMarkPointer(Visitor*, Address);
-
-    static size_t objectPayloadSizeForTesting();
-
-    static void flushHeapDoesNotContainCache();
-
-    static FreePagePool* freePagePool() { return s_freePagePool; }
-    static OrphanedPagePool* orphanedPagePool() { return s_orphanedPagePool; }
-
-    // This look-up uses the region search tree and a negative contains cache to
-    // provide an efficient mapping from arbitrary addresses to the containing
-    // heap-page if one exists.
-    static BasePage* lookup(Address);
-    static void addPageMemoryRegion(PageMemoryRegion*);
-    static void removePageMemoryRegion(PageMemoryRegion*);
-
-    static const GCInfo* gcInfo(size_t gcInfoIndex)
-    {
-        ASSERT(gcInfoIndex >= 1);
-        ASSERT(gcInfoIndex < GCInfoTable::maxIndex);
-        ASSERT(s_gcInfoTable);
-        const GCInfo* info = s_gcInfoTable[gcInfoIndex];
-        ASSERT(info);
-        return info;
-    }
-
-    static void setMarkedObjectSizeAtLastCompleteSweep(size_t size) { releaseStore(&s_markedObjectSizeAtLastCompleteSweep, size); }
-    static size_t markedObjectSizeAtLastCompleteSweep() { return acquireLoad(&s_markedObjectSizeAtLastCompleteSweep); }
-    static void increaseAllocatedObjectSize(size_t delta) { atomicAdd(&s_allocatedObjectSize, static_cast<long>(delta)); }
-    static void decreaseAllocatedObjectSize(size_t delta) { atomicSubtract(&s_allocatedObjectSize, static_cast<long>(delta)); }
-    static size_t allocatedObjectSize() { return acquireLoad(&s_allocatedObjectSize); }
-    static void increaseMarkedObjectSize(size_t delta) { atomicAdd(&s_markedObjectSize, static_cast<long>(delta)); }
-    static size_t markedObjectSize() { return acquireLoad(&s_markedObjectSize); }
-    static void increaseAllocatedSpace(size_t delta) { atomicAdd(&s_allocatedSpace, static_cast<long>(delta)); }
-    static void decreaseAllocatedSpace(size_t delta) { atomicSubtract(&s_allocatedSpace, static_cast<long>(delta)); }
-    static size_t allocatedSpace() { return acquireLoad(&s_allocatedSpace); }
-    static size_t objectSizeAtLastGC() { return acquireLoad(&s_objectSizeAtLastGC); }
-    static void increaseWrapperCount(size_t delta) { atomicAdd(&s_wrapperCount, static_cast<long>(delta)); }
-    static void decreaseWrapperCount(size_t delta) { atomicSubtract(&s_wrapperCount, static_cast<long>(delta)); }
-    static size_t wrapperCount() { return acquireLoad(&s_wrapperCount); }
-    static size_t wrapperCountAtLastGC() { return acquireLoad(&s_wrapperCountAtLastGC); }
-    static void increaseCollectedWrapperCount(size_t delta) { atomicAdd(&s_collectedWrapperCount, static_cast<long>(delta)); }
-    static size_t collectedWrapperCount() { return acquireLoad(&s_collectedWrapperCount); }
-    static size_t partitionAllocSizeAtLastGC() { return acquireLoad(&s_partitionAllocSizeAtLastGC); }
-
-    static double estimatedMarkingTime();
-    static void reportMemoryUsageHistogram();
-    static void reportMemoryUsageForTracing();
-
-#if ENABLE(ASSERT)
-    static uint16_t gcGeneration() { return s_gcGeneration; }
-#endif
-
-private:
-    // A RegionTree is a simple binary search tree of PageMemoryRegions sorted
-    // by base addresses.
-    class RegionTree {
-    public:
-        explicit RegionTree(PageMemoryRegion* region) : m_region(region), m_left(nullptr), m_right(nullptr) { }
-        ~RegionTree()
-        {
-            delete m_left;
-            delete m_right;
-        }
-        PageMemoryRegion* lookup(Address);
-        static void add(RegionTree*, RegionTree**);
-        static void remove(PageMemoryRegion*, RegionTree**);
-    private:
-        PageMemoryRegion* m_region;
-        RegionTree* m_left;
-        RegionTree* m_right;
-    };
-
-    // Reset counters that track live and allocated-since-last-GC sizes.
-    static void resetHeapCounters();
-
-    static int heapIndexForObjectSize(size_t);
-    static bool isNormalHeapIndex(int);
-
-    static CallbackStack* s_markingStack;
-    static CallbackStack* s_postMarkingCallbackStack;
-    static CallbackStack* s_globalWeakCallbackStack;
-    static CallbackStack* s_ephemeronStack;
-    static HeapDoesNotContainCache* s_heapDoesNotContainCache;
-    static bool s_shutdownCalled;
-    static FreePagePool* s_freePagePool;
-    static OrphanedPagePool* s_orphanedPagePool;
-    static RegionTree* s_regionTree;
-    static size_t s_allocatedSpace;
-    static size_t s_allocatedObjectSize;
-    static size_t s_objectSizeAtLastGC;
-    static size_t s_markedObjectSize;
-    static size_t s_markedObjectSizeAtLastCompleteSweep;
-    static size_t s_wrapperCount;
-    static size_t s_wrapperCountAtLastGC;
-    static size_t s_collectedWrapperCount;
-    static size_t s_partitionAllocSizeAtLastGC;
-    static double s_estimatedMarkingTimePerByte;
-#if ENABLE(ASSERT)
-    static uint16_t s_gcGeneration;
-#endif
-
-    friend class ThreadState;
+  friend class ThreadState;
 };
 
-template<typename T>
+// Stats for the heap.
+class ThreadHeapStats {
+  USING_FAST_MALLOC(ThreadHeapStats);
+
+ public:
+  ThreadHeapStats();
+  void setMarkedObjectSizeAtLastCompleteSweep(size_t size) {
+    releaseStore(&m_markedObjectSizeAtLastCompleteSweep, size);
+  }
+  size_t markedObjectSizeAtLastCompleteSweep() {
+    return acquireLoad(&m_markedObjectSizeAtLastCompleteSweep);
+  }
+  void increaseAllocatedObjectSize(size_t delta);
+  void decreaseAllocatedObjectSize(size_t delta);
+  size_t allocatedObjectSize() { return acquireLoad(&m_allocatedObjectSize); }
+  void increaseMarkedObjectSize(size_t delta);
+  size_t markedObjectSize() { return acquireLoad(&m_markedObjectSize); }
+  void increaseAllocatedSpace(size_t delta);
+  void decreaseAllocatedSpace(size_t delta);
+  size_t allocatedSpace() { return acquireLoad(&m_allocatedSpace); }
+  size_t objectSizeAtLastGC() { return acquireLoad(&m_objectSizeAtLastGC); }
+  void increaseWrapperCount(size_t delta) {
+    atomicAdd(&m_wrapperCount, static_cast<long>(delta));
+  }
+  void decreaseWrapperCount(size_t delta) {
+    atomicSubtract(&m_wrapperCount, static_cast<long>(delta));
+  }
+  size_t wrapperCount() { return acquireLoad(&m_wrapperCount); }
+  size_t wrapperCountAtLastGC() { return acquireLoad(&m_wrapperCountAtLastGC); }
+  void increaseCollectedWrapperCount(size_t delta) {
+    atomicAdd(&m_collectedWrapperCount, static_cast<long>(delta));
+  }
+  size_t collectedWrapperCount() {
+    return acquireLoad(&m_collectedWrapperCount);
+  }
+  size_t partitionAllocSizeAtLastGC() {
+    return acquireLoad(&m_partitionAllocSizeAtLastGC);
+  }
+  void setEstimatedMarkingTimePerByte(double estimatedMarkingTimePerByte) {
+    m_estimatedMarkingTimePerByte = estimatedMarkingTimePerByte;
+  }
+  double estimatedMarkingTimePerByte() const {
+    return m_estimatedMarkingTimePerByte;
+  }
+  double estimatedMarkingTime();
+  void reset();
+
+ private:
+  size_t m_allocatedSpace;
+  size_t m_allocatedObjectSize;
+  size_t m_objectSizeAtLastGC;
+  size_t m_markedObjectSize;
+  size_t m_markedObjectSizeAtLastCompleteSweep;
+  size_t m_wrapperCount;
+  size_t m_wrapperCountAtLastGC;
+  size_t m_collectedWrapperCount;
+  size_t m_partitionAllocSizeAtLastGC;
+  double m_estimatedMarkingTimePerByte;
+};
+
+using ThreadStateSet = HashSet<ThreadState*>;
+
+class PLATFORM_EXPORT ThreadHeap {
+ public:
+  ThreadHeap();
+  ~ThreadHeap();
+
+  // Returns true for main thread's heap.
+  // TODO(keishi): Per-thread-heap will return false.
+  bool isMainThreadHeap() { return this == ThreadHeap::mainThreadHeap(); }
+  static ThreadHeap* mainThreadHeap() { return s_mainThreadHeap; }
+
+#if ENABLE(ASSERT)
+  bool isAtSafePoint();
+  BasePage* findPageFromAddress(Address);
+#endif
+
+  template <typename T>
+  static inline bool isHeapObjectAlive(const T* object) {
+    static_assert(sizeof(T), "T must be fully defined");
+    // The strongification of collections relies on the fact that once a
+    // collection has been strongified, there is no way that it can contain
+    // non-live entries, so no entries will be removed. Since you can't set
+    // the mark bit on a null pointer, that means that null pointers are
+    // always 'alive'.
+    if (!object)
+      return true;
+    // TODO(keishi): some tests create CrossThreadPersistent on non attached
+    // threads.
+    if (!ThreadState::current())
+      return true;
+    if (&ThreadState::current()->heap() !=
+        &pageFromObject(object)->arena()->getThreadState()->heap())
+      return true;
+    return ObjectAliveTrait<T>::isHeapObjectAlive(object);
+  }
+  template <typename T>
+  static inline bool isHeapObjectAlive(const Member<T>& member) {
+    return isHeapObjectAlive(member.get());
+  }
+  template <typename T>
+  static inline bool isHeapObjectAlive(const WeakMember<T>& member) {
+    return isHeapObjectAlive(member.get());
+  }
+  template <typename T>
+  static inline bool isHeapObjectAlive(const UntracedMember<T>& member) {
+    return isHeapObjectAlive(member.get());
+  }
+
+  StackFrameDepth& stackFrameDepth() { return m_stackFrameDepth; }
+
+  RecursiveMutex& threadAttachMutex() { return m_threadAttachMutex; }
+  const ThreadStateSet& threads() const { return m_threads; }
+  ThreadHeapStats& heapStats() { return m_stats; }
+  SafePointBarrier* safePointBarrier() { return m_safePointBarrier.get(); }
+  CallbackStack* markingStack() const { return m_markingStack.get(); }
+  CallbackStack* postMarkingCallbackStack() const {
+    return m_postMarkingCallbackStack.get();
+  }
+  CallbackStack* globalWeakCallbackStack() const {
+    return m_globalWeakCallbackStack.get();
+  }
+  CallbackStack* ephemeronStack() const { return m_ephemeronStack.get(); }
+
+  void attach(ThreadState*);
+  void detach(ThreadState*);
+  void lockThreadAttachMutex();
+  void unlockThreadAttachMutex();
+  bool park();
+  void resume();
+
+  void visitPersistentRoots(Visitor*);
+  void visitStackRoots(Visitor*);
+  void checkAndPark(ThreadState*, SafePointAwareMutexLocker*);
+  void enterSafePoint(ThreadState*);
+  void leaveSafePoint(ThreadState*, SafePointAwareMutexLocker*);
+
+  // Add a weak pointer callback to the weak callback work list.  General
+  // object pointer callbacks are added to a thread local weak callback work
+  // list and the callback is called on the thread that owns the object, with
+  // the closure pointer as an argument.  Most of the time, the closure and
+  // the containerObject can be the same thing, but the containerObject is
+  // constrained to be on the heap, since the heap is used to identify the
+  // correct thread.
+  void pushThreadLocalWeakCallback(void* closure,
+                                   void* containerObject,
+                                   WeakCallback);
+
+  static RecursiveMutex& allHeapsMutex();
+  static HashSet<ThreadHeap*>& allHeaps();
+
+  // Is the finalizable GC object still alive, but slated for lazy sweeping?
+  // If a lazy sweep is in progress, returns true if the object was found
+  // to be not reachable during the marking phase, but it has yet to be swept
+  // and finalized. The predicate returns false in all other cases.
+  //
+  // Holding a reference to an already-dead object is not a valid state
+  // to be in; willObjectBeLazilySwept() has undefined behavior if passed
+  // such a reference.
+  template <typename T>
+  NO_SANITIZE_ADDRESS static bool willObjectBeLazilySwept(
+      const T* objectPointer) {
+    static_assert(IsGarbageCollectedType<T>::value,
+                  "only objects deriving from GarbageCollected can be used.");
+    BasePage* page = pageFromObject(objectPointer);
+    // Page has been swept and it is still alive.
+    if (page->hasBeenSwept())
+      return false;
+    ASSERT(page->arena()->getThreadState()->isSweepingInProgress());
+
+    // If marked and alive, the object hasn't yet been swept..and won't
+    // be once its page is processed.
+    if (ThreadHeap::isHeapObjectAlive(const_cast<T*>(objectPointer)))
+      return false;
+
+    if (page->isLargeObjectPage())
+      return true;
+
+    // If the object is unmarked, it may be on the page currently being
+    // lazily swept.
+    return page->arena()->willObjectBeLazilySwept(
+        page, const_cast<T*>(objectPointer));
+  }
+
+  // Push a trace callback on the marking stack.
+  void pushTraceCallback(void* containerObject, TraceCallback);
+
+  // Push a trace callback on the post-marking callback stack.  These
+  // callbacks are called after normal marking (including ephemeron
+  // iteration).
+  void pushPostMarkingCallback(void*, TraceCallback);
+
+  // Similar to the more general pushThreadLocalWeakCallback, but cell
+  // pointer callbacks are added to a static callback work list and the weak
+  // callback is performed on the thread performing garbage collection.  This
+  // is OK because cells are just cleared and no deallocation can happen.
+  void pushGlobalWeakCallback(void** cell, WeakCallback);
+
+  // Pop the top of a marking stack and call the callback with the visitor
+  // and the object.  Returns false when there is nothing more to do.
+  bool popAndInvokeTraceCallback(Visitor*);
+
+  // Remove an item from the post-marking callback stack and call
+  // the callback with the visitor and the object pointer.  Returns
+  // false when there is nothing more to do.
+  bool popAndInvokePostMarkingCallback(Visitor*);
+
+  // Remove an item from the weak callback work list and call the callback
+  // with the visitor and the closure pointer.  Returns false when there is
+  // nothing more to do.
+  bool popAndInvokeGlobalWeakCallback(Visitor*);
+
+  // Register an ephemeron table for fixed-point iteration.
+  void registerWeakTable(void* containerObject,
+                         EphemeronCallback,
+                         EphemeronCallback);
+#if ENABLE(ASSERT)
+  bool weakTableRegistered(const void*);
+#endif
+
+  BlinkGC::GCReason lastGCReason() { return m_lastGCReason; }
+  RegionTree* getRegionTree() { return m_regionTree.get(); }
+
+  static inline size_t allocationSizeFromSize(size_t size) {
+    // Add space for header.
+    size_t allocationSize = size + sizeof(HeapObjectHeader);
+    // The allocation size calculation can overflow for large sizes.
+    RELEASE_ASSERT(allocationSize > size);
+    // Align size with allocation granularity.
+    allocationSize = (allocationSize + allocationMask) & ~allocationMask;
+    return allocationSize;
+  }
+  static Address allocateOnArenaIndex(ThreadState*,
+                                      size_t,
+                                      int arenaIndex,
+                                      size_t gcInfoIndex,
+                                      const char* typeName);
+  template <typename T>
+  static Address allocate(size_t, bool eagerlySweep = false);
+  template <typename T>
+  static Address reallocate(void* previous, size_t);
+
+  void processMarkingStack(Visitor*);
+  void postMarkingProcessing(Visitor*);
+  void globalWeakProcessing(Visitor*);
+
+  void preGC();
+  void postGC(BlinkGC::GCType);
+
+  // Conservatively checks whether an address is a pointer in any of the
+  // thread heaps.  If so marks the object pointed to as live.
+  Address checkAndMarkPointer(Visitor*, Address);
+
+  size_t objectPayloadSizeForTesting();
+
+  void flushHeapDoesNotContainCache();
+
+  FreePagePool* getFreePagePool() { return m_freePagePool.get(); }
+  OrphanedPagePool* getOrphanedPagePool() { return m_orphanedPagePool.get(); }
+
+  // This look-up uses the region search tree and a negative contains cache to
+  // provide an efficient mapping from arbitrary addresses to the containing
+  // heap-page if one exists.
+  BasePage* lookupPageForAddress(Address);
+
+  static const GCInfo* gcInfo(size_t gcInfoIndex) {
+    ASSERT(gcInfoIndex >= 1);
+    ASSERT(gcInfoIndex < GCInfoTable::maxIndex);
+    ASSERT(s_gcInfoTable);
+    const GCInfo* info = s_gcInfoTable[gcInfoIndex];
+    ASSERT(info);
+    return info;
+  }
+
+  static void reportMemoryUsageHistogram();
+  static void reportMemoryUsageForTracing();
+
+ private:
+  // Reset counters that track live and allocated-since-last-GC sizes.
+  void resetHeapCounters();
+
+  static int arenaIndexForObjectSize(size_t);
+  static bool isNormalArenaIndex(int);
+
+  void commitCallbackStacks();
+  void decommitCallbackStacks();
+
+  RecursiveMutex m_threadAttachMutex;
+  ThreadStateSet m_threads;
+  ThreadHeapStats m_stats;
+  std::unique_ptr<RegionTree> m_regionTree;
+  std::unique_ptr<HeapDoesNotContainCache> m_heapDoesNotContainCache;
+  std::unique_ptr<SafePointBarrier> m_safePointBarrier;
+  std::unique_ptr<FreePagePool> m_freePagePool;
+  std::unique_ptr<OrphanedPagePool> m_orphanedPagePool;
+  std::unique_ptr<CallbackStack> m_markingStack;
+  std::unique_ptr<CallbackStack> m_postMarkingCallbackStack;
+  std::unique_ptr<CallbackStack> m_globalWeakCallbackStack;
+  std::unique_ptr<CallbackStack> m_ephemeronStack;
+  BlinkGC::GCReason m_lastGCReason;
+  StackFrameDepth m_stackFrameDepth;
+
+  static ThreadHeap* s_mainThreadHeap;
+
+  friend class ThreadState;
+};
+
+template <typename T>
 struct IsEagerlyFinalizedType {
-private:
-    typedef char YesType;
-    struct NoType {
-        char padding[8];
-    };
+  STATIC_ONLY(IsEagerlyFinalizedType);
 
-    template <typename U> static YesType checkMarker(typename U::IsEagerlyFinalizedMarker*);
-    template <typename U> static NoType checkMarker(...);
+ private:
+  typedef char YesType;
+  struct NoType {
+    char padding[8];
+  };
 
-public:
-    static const bool value = sizeof(checkMarker<T>(nullptr)) == sizeof(YesType);
+  template <typename U>
+  static YesType checkMarker(typename U::IsEagerlyFinalizedMarker*);
+  template <typename U>
+  static NoType checkMarker(...);
+
+ public:
+  static const bool value = sizeof(checkMarker<T>(nullptr)) == sizeof(YesType);
 };
 
-template<typename T> class GarbageCollected {
-    IS_GARBAGE_COLLECTED_TYPE();
-    WTF_MAKE_NONCOPYABLE(GarbageCollected);
+template <typename T>
+class GarbageCollected {
+  IS_GARBAGE_COLLECTED_TYPE();
+  WTF_MAKE_NONCOPYABLE(GarbageCollected);
 
-    // For now direct allocation of arrays on the heap is not allowed.
-    void* operator new[](size_t size);
+  // For now direct allocation of arrays on the heap is not allowed.
+  void* operator new[](size_t size);
 
 #if OS(WIN) && COMPILER(MSVC)
-    // Due to some quirkiness in the MSVC compiler we have to provide
-    // the delete[] operator in the GarbageCollected subclasses as it
-    // is called when a class is exported in a DLL.
-protected:
-    void operator delete[](void* p)
-    {
-        ASSERT_NOT_REACHED();
-    }
+  // Due to some quirkiness in the MSVC compiler we have to provide
+  // the delete[] operator in the GarbageCollected subclasses as it
+  // is called when a class is exported in a DLL.
+ protected:
+  void operator delete[](void* p) { ASSERT_NOT_REACHED(); }
 #else
-    void operator delete[](void* p);
+  void operator delete[](void* p);
 #endif
 
-public:
-    using GarbageCollectedType = T;
+ public:
+  using GarbageCollectedType = T;
 
-    void* operator new(size_t size)
-    {
-        return allocateObject(size, IsEagerlyFinalizedType<T>::value);
-    }
+  void* operator new(size_t size) {
+    return allocateObject(size, IsEagerlyFinalizedType<T>::value);
+  }
 
-    static void* allocateObject(size_t size, bool eagerlySweep)
-    {
-        return Heap::allocate<T>(size, eagerlySweep);
-    }
+  static void* allocateObject(size_t size, bool eagerlySweep) {
+    return ThreadHeap::allocate<T>(size, eagerlySweep);
+  }
 
-    void operator delete(void* p)
-    {
-        ASSERT_NOT_REACHED();
-    }
+  void operator delete(void* p) { ASSERT_NOT_REACHED(); }
 
-protected:
-    GarbageCollected()
-    {
-    }
+ protected:
+  GarbageCollected() {}
 };
 
-// Assigning class types to their heaps.
+// Assigning class types to their arenas.
 //
-// We use sized heaps for most 'normal' objects to improve memory locality.
+// We use sized arenas for most 'normal' objects to improve memory locality.
 // It seems that the same type of objects are likely to be accessed together,
 // which means that we want to group objects by type. That's one reason
-// why we provide dedicated heaps for popular types (e.g., Node, CSSValue),
-// but it's not practical to prepare dedicated heaps for all types.
+// why we provide dedicated arenas for popular types (e.g., Node, CSSValue),
+// but it's not practical to prepare dedicated arenas for all types.
 // Thus we group objects by their sizes, hoping that this will approximately
 // group objects by their types.
 //
-// An exception to the use of sized heaps is made for class types that
+// An exception to the use of sized arenas is made for class types that
 // require prompt finalization after a garbage collection. That is, their
 // instances have to be finalized early and cannot be delayed until lazy
 // sweeping kicks in for their heap and page. The EAGERLY_FINALIZE()
@@ -393,120 +541,139 @@ protected:
 // for a class.
 //
 
-inline int Heap::heapIndexForObjectSize(size_t size)
-{
-    if (size < 64) {
-        if (size < 32)
-            return BlinkGC::NormalPage1HeapIndex;
-        return BlinkGC::NormalPage2HeapIndex;
-    }
-    if (size < 128)
-        return BlinkGC::NormalPage3HeapIndex;
-    return BlinkGC::NormalPage4HeapIndex;
+inline int ThreadHeap::arenaIndexForObjectSize(size_t size) {
+  if (size < 64) {
+    if (size < 32)
+      return BlinkGC::NormalPage1ArenaIndex;
+    return BlinkGC::NormalPage2ArenaIndex;
+  }
+  if (size < 128)
+    return BlinkGC::NormalPage3ArenaIndex;
+  return BlinkGC::NormalPage4ArenaIndex;
 }
 
-inline bool Heap::isNormalHeapIndex(int index)
-{
-    return index >= BlinkGC::NormalPage1HeapIndex && index <= BlinkGC::NormalPage4HeapIndex;
+inline bool ThreadHeap::isNormalArenaIndex(int index) {
+  return index >= BlinkGC::NormalPage1ArenaIndex &&
+         index <= BlinkGC::NormalPage4ArenaIndex;
 }
 
 #define DECLARE_EAGER_FINALIZATION_OPERATOR_NEW() \
-public:                                           \
-    GC_PLUGIN_IGNORE("491488")                    \
-    void* operator new(size_t size)               \
-    {                                             \
-        return allocateObject(size, true);        \
-    }
+ public:                                          \
+  GC_PLUGIN_IGNORE("491488")                      \
+  void* operator new(size_t size) { return allocateObject(size, true); }
 
-#define IS_EAGERLY_FINALIZED() (pageFromObject(this)->heap()->heapIndex() == BlinkGC::EagerSweepHeapIndex)
-#if ENABLE(ASSERT) && ENABLE(OILPAN)
+#define IS_EAGERLY_FINALIZED() \
+  (pageFromObject(this)->arena()->arenaIndex() == BlinkGC::EagerSweepArenaIndex)
+#if ENABLE(ASSERT)
 class VerifyEagerFinalization {
-public:
-    ~VerifyEagerFinalization()
-    {
-        // If this assert triggers, the class annotated as eagerly
-        // finalized ended up not being allocated on the heap
-        // set aside for eager finalization. The reason is most
-        // likely that the effective 'operator new' overload for
-        // this class' leftmost base is for a class that is not
-        // eagerly finalized. Declaring and defining an 'operator new'
-        // for this class is what's required -- consider using
-        // DECLARE_EAGER_FINALIZATION_OPERATOR_NEW().
-        ASSERT(IS_EAGERLY_FINALIZED());
-    }
+  DISALLOW_NEW();
+
+ public:
+  ~VerifyEagerFinalization() {
+    // If this assert triggers, the class annotated as eagerly
+    // finalized ended up not being allocated on the heap
+    // set aside for eager finalization. The reason is most
+    // likely that the effective 'operator new' overload for
+    // this class' leftmost base is for a class that is not
+    // eagerly finalized. Declaring and defining an 'operator new'
+    // for this class is what's required -- consider using
+    // DECLARE_EAGER_FINALIZATION_OPERATOR_NEW().
+    ASSERT(IS_EAGERLY_FINALIZED());
+  }
 };
-#define EAGERLY_FINALIZE()                             \
-private:                                               \
-    VerifyEagerFinalization m_verifyEagerFinalization; \
-public:                                                \
-    typedef int IsEagerlyFinalizedMarker
+#define EAGERLY_FINALIZE()                           \
+ private:                                            \
+  VerifyEagerFinalization m_verifyEagerFinalization; \
+                                                     \
+ public:                                             \
+  typedef int IsEagerlyFinalizedMarker
 #else
-#define EAGERLY_FINALIZE() typedef int IsEagerlyFinalizedMarker
+#define EAGERLY_FINALIZE() \
+ public:                   \
+  typedef int IsEagerlyFinalizedMarker
 #endif
 
-#if !ENABLE(OILPAN)
-#define EAGERLY_FINALIZE_WILL_BE_REMOVED() EAGERLY_FINALIZE()
-#else
-#define EAGERLY_FINALIZE_WILL_BE_REMOVED()
-#endif
-
-inline Address Heap::allocateOnHeapIndex(ThreadState* state, size_t size, int heapIndex, size_t gcInfoIndex)
-{
-    ASSERT(state->isAllocationAllowed());
-    ASSERT(heapIndex != BlinkGC::LargeObjectHeapIndex);
-    NormalPageHeap* heap = static_cast<NormalPageHeap*>(state->heap(heapIndex));
-    return heap->allocateObject(allocationSizeFromSize(size), gcInfoIndex);
+inline Address ThreadHeap::allocateOnArenaIndex(ThreadState* state,
+                                                size_t size,
+                                                int arenaIndex,
+                                                size_t gcInfoIndex,
+                                                const char* typeName) {
+  ASSERT(state->isAllocationAllowed());
+  ASSERT(arenaIndex != BlinkGC::LargeObjectArenaIndex);
+  NormalPageArena* arena =
+      static_cast<NormalPageArena*>(state->arena(arenaIndex));
+  Address address =
+      arena->allocateObject(allocationSizeFromSize(size), gcInfoIndex);
+  HeapAllocHooks::allocationHookIfEnabled(address, size, typeName);
+  return address;
 }
 
-template<typename T>
-Address Heap::allocate(size_t size, bool eagerlySweep)
-{
-    ThreadState* state = ThreadStateFor<ThreadingTrait<T>::Affinity>::state();
-    return Heap::allocateOnHeapIndex(state, size, eagerlySweep ? BlinkGC::EagerSweepHeapIndex : Heap::heapIndexForObjectSize(size), GCInfoTrait<T>::index());
+template <typename T>
+Address ThreadHeap::allocate(size_t size, bool eagerlySweep) {
+  ThreadState* state = ThreadStateFor<ThreadingTrait<T>::Affinity>::state();
+  const char* typeName = WTF_HEAP_PROFILER_TYPE_NAME(T);
+  return ThreadHeap::allocateOnArenaIndex(
+      state, size, eagerlySweep ? BlinkGC::EagerSweepArenaIndex
+                                : ThreadHeap::arenaIndexForObjectSize(size),
+      GCInfoTrait<T>::index(), typeName);
 }
 
-template<typename T>
-Address Heap::reallocate(void* previous, size_t size)
-{
-    // Not intended to be a full C realloc() substitute;
-    // realloc(nullptr, size) is not a supported alias for malloc(size).
+template <typename T>
+Address ThreadHeap::reallocate(void* previous, size_t size) {
+  // Not intended to be a full C realloc() substitute;
+  // realloc(nullptr, size) is not a supported alias for malloc(size).
 
-    // TODO(sof): promptly free the previous object.
-    if (!size) {
-        // If the new size is 0 this is considered equivalent to free(previous).
-        return nullptr;
-    }
+  // TODO(sof): promptly free the previous object.
+  if (!size) {
+    // If the new size is 0 this is considered equivalent to free(previous).
+    return nullptr;
+  }
 
-    ThreadState* state = ThreadStateFor<ThreadingTrait<T>::Affinity>::state();
-    HeapObjectHeader* previousHeader = HeapObjectHeader::fromPayload(previous);
-    BasePage* page = pageFromObject(previousHeader);
-    ASSERT(page);
-    int heapIndex = page->heap()->heapIndex();
-    // Recompute the effective heap index if previous allocation
-    // was on the normal heaps or a large object.
-    if (isNormalHeapIndex(heapIndex) || heapIndex == BlinkGC::LargeObjectHeapIndex)
-        heapIndex = heapIndexForObjectSize(size);
+  ThreadState* state = ThreadStateFor<ThreadingTrait<T>::Affinity>::state();
+  HeapObjectHeader* previousHeader = HeapObjectHeader::fromPayload(previous);
+  BasePage* page = pageFromObject(previousHeader);
+  ASSERT(page);
 
-    // TODO(haraken): We don't support reallocate() for finalizable objects.
-    ASSERT(!Heap::gcInfo(previousHeader->gcInfoIndex())->hasFinalizer());
-    ASSERT(previousHeader->gcInfoIndex() == GCInfoTrait<T>::index());
-    Address address = Heap::allocateOnHeapIndex(state, size, heapIndex, GCInfoTrait<T>::index());
-    size_t copySize = previousHeader->payloadSize();
-    if (copySize > size)
-        copySize = size;
-    memcpy(address, previous, copySize);
-    return address;
+  // Determine arena index of new allocation.
+  int arenaIndex;
+  if (size >= largeObjectSizeThreshold) {
+    arenaIndex = BlinkGC::LargeObjectArenaIndex;
+  } else {
+    arenaIndex = page->arena()->arenaIndex();
+    if (isNormalArenaIndex(arenaIndex) ||
+        arenaIndex == BlinkGC::LargeObjectArenaIndex)
+      arenaIndex = arenaIndexForObjectSize(size);
+  }
+
+  size_t gcInfoIndex = GCInfoTrait<T>::index();
+  // TODO(haraken): We don't support reallocate() for finalizable objects.
+  ASSERT(!ThreadHeap::gcInfo(previousHeader->gcInfoIndex())->hasFinalizer());
+  ASSERT(previousHeader->gcInfoIndex() == gcInfoIndex);
+  HeapAllocHooks::freeHookIfEnabled(static_cast<Address>(previous));
+  Address address;
+  if (arenaIndex == BlinkGC::LargeObjectArenaIndex) {
+    address = page->arena()->allocateLargeObject(allocationSizeFromSize(size),
+                                                 gcInfoIndex);
+  } else {
+    const char* typeName = WTF_HEAP_PROFILER_TYPE_NAME(T);
+    address = ThreadHeap::allocateOnArenaIndex(state, size, arenaIndex,
+                                               gcInfoIndex, typeName);
+  }
+  size_t copySize = previousHeader->payloadSize();
+  if (copySize > size)
+    copySize = size;
+  memcpy(address, previous, copySize);
+  return address;
 }
 
-template<typename Derived>
-template<typename T>
-void VisitorHelper<Derived>::handleWeakCell(Visitor* self, void* object)
-{
-    T** cell = reinterpret_cast<T**>(object);
-    if (*cell && !ObjectAliveTrait<T>::isHeapObjectAlive(*cell))
-        *cell = nullptr;
+template <typename Derived>
+template <typename T>
+void VisitorHelper<Derived>::handleWeakCell(Visitor* self, void* object) {
+  T** cell = reinterpret_cast<T**>(object);
+  if (*cell && !ObjectAliveTrait<T>::isHeapObjectAlive(*cell))
+    *cell = nullptr;
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // Heap_h
+#endif  // Heap_h

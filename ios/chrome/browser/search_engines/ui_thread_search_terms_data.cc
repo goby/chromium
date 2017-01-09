@@ -21,7 +21,7 @@
 #include "url/gurl.h"
 
 #if defined(ENABLE_RLZ)
-#include "components/rlz/rlz_tracker.h"
+#include "components/rlz/rlz_tracker.h"  // nogncheck
 #endif
 
 namespace ios {
@@ -91,44 +91,15 @@ std::string UIThreadSearchTermsData::GetSuggestRequestIdentifier() const {
   return "chrome-ext-ansg";
 }
 
-bool UIThreadSearchTermsData::IsShowingSearchTermsOnSearchResultsPages() const {
+std::string UIThreadSearchTermsData::InstantExtendedEnabledParam() const {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return search::IsInstantExtendedAPIEnabled() &&
-         search::IsQueryExtractionEnabled();
-}
-
-std::string UIThreadSearchTermsData::InstantExtendedEnabledParam(
-    bool for_search) const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  return search::InstantExtendedEnabledParam(for_search);
+  return search::InstantExtendedEnabledParam();
 }
 
 std::string UIThreadSearchTermsData::ForceInstantResultsParam(
     bool for_prerender) const {
   DCHECK(thread_checker_.CalledOnValidThread());
   return search::ForceInstantResultsParam(for_prerender);
-}
-
-int UIThreadSearchTermsData::OmniboxStartMargin() const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  // iOS has not InstantService.
-  return search::kDisableStartMargin;
-}
-
-std::string UIThreadSearchTermsData::NTPIsThemedParam() const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  // iOS does not supports themed NTP.
-  return std::string();
-}
-
-std::string UIThreadSearchTermsData::IOSWebViewTypeParam() const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  std::string param = experimental_flags::GetWKWebViewSearchParams();
-  if (param.empty()) {
-    return std::string();
-  }
-
-  return "&esrch=" + net::EscapeQueryParamValue(param, true);
 }
 
 std::string UIThreadSearchTermsData::GoogleImageSearchSource() const {

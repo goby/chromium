@@ -58,10 +58,11 @@
 
     /**
      * Returns false if the element is required and not checked, and true otherwise.
-     * @return {boolean} true if `required` is false, or if `required` and `checked` are both true.
+     * @param {*=} _value Ignored.
+     * @return {boolean} true if `required` is false or if `checked` is true.
      */
     _getValidity: function(_value) {
-      return this.disabled || !this.required || (this.required && this.checked);
+      return this.disabled || !this.required || this.checked;
     },
 
     /**

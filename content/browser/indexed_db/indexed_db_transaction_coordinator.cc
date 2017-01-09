@@ -4,7 +4,6 @@
 
 #include "content/browser/indexed_db/indexed_db_transaction_coordinator.h"
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "content/browser/indexed_db/indexed_db_transaction.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
@@ -14,12 +13,12 @@ namespace content {
 IndexedDBTransactionCoordinator::IndexedDBTransactionCoordinator() {}
 
 IndexedDBTransactionCoordinator::~IndexedDBTransactionCoordinator() {
-  DCHECK(!queued_transactions_.size());
-  DCHECK(!started_transactions_.size());
+  DCHECK(queued_transactions_.empty());
+  DCHECK(started_transactions_.empty());
 }
 
 void IndexedDBTransactionCoordinator::DidCreateTransaction(
-    scoped_refptr<IndexedDBTransaction> transaction) {
+    IndexedDBTransaction* transaction) {
   DCHECK(!queued_transactions_.count(transaction));
   DCHECK(!started_transactions_.count(transaction));
   DCHECK_EQ(IndexedDBTransaction::CREATED, transaction->state());
@@ -66,12 +65,11 @@ bool IndexedDBTransactionCoordinator::IsActive(
 std::vector<const IndexedDBTransaction*>
 IndexedDBTransactionCoordinator::GetTransactions() const {
   std::vector<const IndexedDBTransaction*> result;
-
-  for (const auto& transaction : started_transactions_)
-    result.push_back(transaction.get());
-  for (const auto& transaction : queued_transactions_)
-    result.push_back(transaction.get());
-
+  result.reserve(started_transactions_.size() + queued_transactions_.size());
+  result.insert(result.end(), started_transactions_.begin(),
+                started_transactions_.end());
+  result.insert(result.end(), queued_transactions_.begin(),
+                queued_transactions_.end());
   return result;
 }
 
@@ -87,7 +85,7 @@ void IndexedDBTransactionCoordinator::ProcessQueuedTransactions() {
   // taking a snapshot of the database, which does not include uncommitted
   // data. ("Version change" transactions are exclusive, but handled by the
   // connection sequencing in IndexedDBDatabase.)
-  std::set<int64> locked_scope;
+  std::set<int64_t> locked_scope;
   for (const auto& transaction : started_transactions_) {
     if (transaction->mode() == blink::WebIDBTransactionModeReadWrite) {
       // Started read/write transactions have exclusive access to the object
@@ -97,11 +95,11 @@ void IndexedDBTransactionCoordinator::ProcessQueuedTransactions() {
     }
   }
 
-  TransactionSet::const_iterator it = queued_transactions_.begin();
+  auto it = queued_transactions_.begin();
   while (it != queued_transactions_.end()) {
-    scoped_refptr<IndexedDBTransaction> transaction = *it;
+    IndexedDBTransaction* transaction = *it;
     ++it;
-    if (CanStartTransaction(transaction.get(), locked_scope)) {
+    if (CanStartTransaction(transaction, locked_scope)) {
       DCHECK_EQ(IndexedDBTransaction::CREATED, transaction->state());
       queued_transactions_.erase(transaction);
       started_transactions_.insert(transaction);
@@ -136,7 +134,7 @@ static bool DoSetsIntersect(const std::set<T>& set1,
 
 bool IndexedDBTransactionCoordinator::CanStartTransaction(
     IndexedDBTransaction* const transaction,
-    const std::set<int64>& locked_scope) const {
+    const std::set<int64_t>& locked_scope) const {
   DCHECK(queued_transactions_.count(transaction));
   switch (transaction->mode()) {
     case blink::WebIDBTransactionModeVersionChange:

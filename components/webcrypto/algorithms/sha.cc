@@ -2,17 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <openssl/evp.h>
-#include <openssl/sha.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "components/webcrypto/algorithm_implementation.h"
 #include "components/webcrypto/algorithms/util.h"
 #include "components/webcrypto/crypto_data.h"
 #include "components/webcrypto/status.h"
 #include "crypto/openssl_util.h"
-#include "crypto/scoped_openssl_types.h"
+#include "third_party/boringssl/src/include/openssl/digest.h"
 
 namespace webcrypto {
 
@@ -26,7 +27,6 @@ class DigestorImpl : public blink::WebCryptoDigestor {
  public:
   explicit DigestorImpl(blink::WebCryptoAlgorithmId algorithm_id)
       : initialized_(false),
-        digest_context_(EVP_MD_CTX_create()),
         algorithm_id_(algorithm_id) {}
 
   bool consume(const unsigned char* data, unsigned int size) override {
@@ -55,7 +55,7 @@ class DigestorImpl : public blink::WebCryptoDigestor {
   }
 
   Status FinishWithVectorAndStatus(std::vector<uint8_t>* result) {
-    const int hash_expected_size = EVP_MD_CTX_size(digest_context_.get());
+    const size_t hash_expected_size = EVP_MD_CTX_size(digest_context_.get());
     result->resize(hash_expected_size);
     unsigned int hash_buffer_size;  // ignored
     return FinishInternal(result->data(), &hash_buffer_size);
@@ -70,9 +70,6 @@ class DigestorImpl : public blink::WebCryptoDigestor {
     if (!digest_algorithm)
       return Status::ErrorUnsupported();
 
-    if (!digest_context_.get())
-      return Status::OperationError();
-
     if (!EVP_DigestInit_ex(digest_context_.get(), digest_algorithm, NULL))
       return Status::OperationError();
 
@@ -86,20 +83,20 @@ class DigestorImpl : public blink::WebCryptoDigestor {
     if (!error.IsSuccess())
       return error;
 
-    const int hash_expected_size = EVP_MD_CTX_size(digest_context_.get());
-    if (hash_expected_size <= 0)
+    const size_t hash_expected_size = EVP_MD_CTX_size(digest_context_.get());
+    if (hash_expected_size == 0)
       return Status::ErrorUnexpected();
-    DCHECK_LE(hash_expected_size, EVP_MAX_MD_SIZE);
+    DCHECK_LE(hash_expected_size, static_cast<unsigned>(EVP_MAX_MD_SIZE));
 
     if (!EVP_DigestFinal_ex(digest_context_.get(), result, result_size) ||
-        static_cast<int>(*result_size) != hash_expected_size)
+        *result_size != hash_expected_size)
       return Status::OperationError();
 
     return Status::Success();
   }
 
   bool initialized_;
-  crypto::ScopedEVP_MD_CTX digest_context_;
+  bssl::ScopedEVP_MD_CTX digest_context_;
   blink::WebCryptoAlgorithmId algorithm_id_;
   unsigned char result_[EVP_MAX_MD_SIZE];
 };
@@ -121,13 +118,13 @@ class ShaImplementation : public AlgorithmImplementation {
 
 }  // namespace
 
-scoped_ptr<AlgorithmImplementation> CreateShaImplementation() {
-  return make_scoped_ptr(new ShaImplementation());
+std::unique_ptr<AlgorithmImplementation> CreateShaImplementation() {
+  return base::MakeUnique<ShaImplementation>();
 }
 
-scoped_ptr<blink::WebCryptoDigestor> CreateDigestorImplementation(
+std::unique_ptr<blink::WebCryptoDigestor> CreateDigestorImplementation(
     blink::WebCryptoAlgorithmId algorithm) {
-  return scoped_ptr<blink::WebCryptoDigestor>(new DigestorImpl(algorithm));
+  return std::unique_ptr<blink::WebCryptoDigestor>(new DigestorImpl(algorithm));
 }
 
 }  // namespace webcrypto

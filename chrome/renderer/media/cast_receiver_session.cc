@@ -4,14 +4,16 @@
 
 #include "chrome/renderer/media/cast_receiver_session.h"
 
+#include <memory>
+
 #include "base/location.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/renderer/media/cast_receiver_audio_valve.h"
 #include "content/public/renderer/render_thread.h"
 #include "media/base/audio_capturer_source.h"
 #include "media/base/bind_to_current_loop.h"
-#include "media/base/video_capturer_source.h"
+#include "media/capture/video_capturer_source.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
@@ -57,8 +59,7 @@ class CastReceiverSession::VideoCapturerSource
 
 CastReceiverSession::CastReceiverSession()
     : delegate_(new CastReceiverSessionDelegate()),
-      io_task_runner_(
-          content::RenderThread::Get()->GetIOMessageLoopProxy()) {}
+      io_task_runner_(content::RenderThread::Get()->GetIOTaskRunner()) {}
 
 CastReceiverSession::~CastReceiverSession() {
   // We should always be able to delete the object on the IO thread.
@@ -70,7 +71,7 @@ void CastReceiverSession::Start(
     const media::cast::FrameReceiverConfig& video_config,
     const net::IPEndPoint& local_endpoint,
     const net::IPEndPoint& remote_endpoint,
-    scoped_ptr<base::DictionaryValue> options,
+    std::unique_ptr<base::DictionaryValue> options,
     const media::VideoCaptureFormat& capture_format,
     const StartCB& start_callback,
     const CastReceiverSessionDelegate::ErrorCallback& error_callback) {
@@ -90,7 +91,7 @@ void CastReceiverSession::Start(
                  media::BindToCurrentLoop(error_callback)));
   scoped_refptr<media::AudioCapturerSource> audio(
       new CastReceiverSession::AudioCapturerSource(this));
-  scoped_ptr<media::VideoCapturerSource> video(
+  std::unique_ptr<media::VideoCapturerSource> video(
       new CastReceiverSession::VideoCapturerSource(this));
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(start_callback, audio, base::Passed(&video)));
@@ -169,7 +170,7 @@ void CastReceiverSession::AudioCapturerSource::Initialize(
     callback->OnCaptureError(std::string());
     return;
   }
-  audio_valve_ = new CastReceiverAudioValve(callback);
+  audio_valve_ = new CastReceiverAudioValve(params, callback);
 }
 
 void CastReceiverSession::AudioCapturerSource::Start() {

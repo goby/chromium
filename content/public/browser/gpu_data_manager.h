@@ -16,7 +16,6 @@ class GURL;
 
 namespace base {
 class FilePath;
-class ListValue;
 }
 
 namespace gpu {
@@ -78,10 +77,6 @@ class GpuDataManager {
   // Register a path to SwiftShader.
   virtual void RegisterSwiftShaderPath(const base::FilePath& path) = 0;
 
-  // Returns current state about WARP, which may be due to command-line
-  // arguments or saved state.
-  virtual bool ShouldUseWarp() const = 0;
-
   // Registers/unregister |observer|.
   virtual void AddObserver(GpuDataManagerObserver* observer) = 0;
   virtual void RemoveObserver(GpuDataManagerObserver* observer) = 0;
@@ -89,9 +84,6 @@ class GpuDataManager {
   // Allows a given domain previously blocked from accessing 3D APIs
   // to access them again.
   virtual void UnblockDomainFrom3DAPIs(const GURL& url) = 0;
-
-  // Disable the gpu process watchdog thread.
-  virtual void DisableGpuWatchdog() = 0;
 
   // Set GL strings. This triggers a re-calculation of GPU blacklist
   // decision.
@@ -113,6 +105,10 @@ class GpuDataManager {
   // Extensions that are currently disabled.
   virtual void GetDisabledExtensions(
       std::string* disabled_extensions) const = 0;
+
+  // Sets the initial GPU information. This should happen before calculating
+  // the backlists decision and applying commandline switches.
+  virtual void SetGpuInfo(const gpu::GPUInfo& gpu_info) = 0;
 
  protected:
   virtual ~GpuDataManager() {}

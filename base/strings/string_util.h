@@ -9,15 +9,17 @@
 
 #include <ctype.h>
 #include <stdarg.h>   // va_list
+#include <stddef.h>
+#include <stdint.h>
 
 #include <string>
 #include <vector>
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"  // For implicit conversions.
+#include "build/build_config.h"
 
 namespace base {
 
@@ -243,12 +245,6 @@ BASE_EXPORT TrimPositions TrimWhitespaceASCII(const std::string& input,
 BASE_EXPORT StringPiece TrimWhitespaceASCII(StringPiece input,
                                             TrimPositions positions);
 
-// Deprecated. This function is only for backward compatibility and calls
-// TrimWhitespaceASCII().
-BASE_EXPORT TrimPositions TrimWhitespace(const std::string& input,
-                                         TrimPositions positions,
-                                         std::string* output);
-
 // Searches  for CR or LF characters.  Removes all contiguous whitespace
 // strings that contain them.  This is useful when trying to deal with text
 // copied from terminals.
@@ -341,7 +337,15 @@ inline bool IsAsciiWhitespace(Char c) {
 }
 template <typename Char>
 inline bool IsAsciiAlpha(Char c) {
-  return ((c >= 'A') && (c <= 'Z')) || ((c >= 'a') && (c <= 'z'));
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+template <typename Char>
+inline bool IsAsciiUpper(Char c) {
+  return c >= 'A' && c <= 'Z';
+}
+template <typename Char>
+inline bool IsAsciiLower(Char c) {
+  return c >= 'a' && c <= 'z';
 }
 template <typename Char>
 inline bool IsAsciiDigit(Char c) {
@@ -369,7 +373,7 @@ BASE_EXPORT bool IsUnicodeWhitespace(wchar_t c);
 // appropriate for use in any UI; use of FormatBytes and friends in ui/base is
 // highly recommended instead. TODO(avi): Figure out how to get callers to use
 // FormatBytes instead; remove this.
-BASE_EXPORT string16 FormatBytesUnlocalized(int64 bytes);
+BASE_EXPORT string16 FormatBytesUnlocalized(int64_t bytes);
 
 // Starting at |start_offset| (usually 0), replace the first instance of
 // |find_this| with |replace_with|.
@@ -433,7 +437,7 @@ BASE_EXPORT std::string JoinString(const std::vector<std::string>& parts,
 BASE_EXPORT string16 JoinString(const std::vector<string16>& parts,
                                 StringPiece16 separator);
 
-// Replace $1-$2-$3..$9 in the format string with |a|-|b|-|c|..|i| respectively.
+// Replace $1-$2-$3..$9 in the format string with values from |subst|.
 // Additionally, any number of consecutive '$' characters is replaced by that
 // number less one. Eg $$->$, $$$->$$, etc. The offsets parameter here can be
 // NULL. This only allows you to use up to nine replacements.

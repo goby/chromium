@@ -24,7 +24,6 @@
  *
  */
 
-#include "config.h"
 #include "core/events/PopStateEvent.h"
 
 #include "bindings/core/v8/SerializedScriptValue.h"
@@ -33,55 +32,47 @@
 namespace blink {
 
 PopStateEvent::PopStateEvent()
-    : Event(EventTypeNames::popstate, false, true)
-    , m_serializedState(nullptr)
-    , m_history(nullptr)
-{
+    : Event(EventTypeNames::popstate, false, true),
+      m_serializedState(nullptr),
+      m_history(nullptr) {}
+
+PopStateEvent::PopStateEvent(const AtomicString& type,
+                             const PopStateEventInit& initializer)
+    : Event(type, initializer), m_history(nullptr) {
+  if (initializer.hasState())
+    m_state = initializer.state();
 }
 
-PopStateEvent::PopStateEvent(const AtomicString& type, const PopStateEventInit& initializer)
-    : Event(type, initializer)
-    , m_history(nullptr)
-{
-    if (initializer.hasState())
-        m_state = initializer.state();
+PopStateEvent::PopStateEvent(PassRefPtr<SerializedScriptValue> serializedState,
+                             History* history)
+    : Event(EventTypeNames::popstate, false, true),
+      m_serializedState(serializedState),
+      m_history(history) {}
+
+PopStateEvent::~PopStateEvent() {}
+
+PopStateEvent* PopStateEvent::create() {
+  return new PopStateEvent;
 }
 
-PopStateEvent::PopStateEvent(PassRefPtr<SerializedScriptValue> serializedState, History* history)
-    : Event(EventTypeNames::popstate, false, true)
-    , m_serializedState(serializedState)
-    , m_history(history)
-{
+PopStateEvent* PopStateEvent::create(
+    PassRefPtr<SerializedScriptValue> serializedState,
+    History* history) {
+  return new PopStateEvent(std::move(serializedState), history);
 }
 
-PopStateEvent::~PopStateEvent()
-{
+PopStateEvent* PopStateEvent::create(const AtomicString& type,
+                                     const PopStateEventInit& initializer) {
+  return new PopStateEvent(type, initializer);
 }
 
-PassRefPtrWillBeRawPtr<PopStateEvent> PopStateEvent::create()
-{
-    return adoptRefWillBeNoop(new PopStateEvent);
+const AtomicString& PopStateEvent::interfaceName() const {
+  return EventNames::PopStateEvent;
 }
 
-PassRefPtrWillBeRawPtr<PopStateEvent> PopStateEvent::create(PassRefPtr<SerializedScriptValue> serializedState, History* history)
-{
-    return adoptRefWillBeNoop(new PopStateEvent(serializedState, history));
+DEFINE_TRACE(PopStateEvent) {
+  visitor->trace(m_history);
+  Event::trace(visitor);
 }
 
-PassRefPtrWillBeRawPtr<PopStateEvent> PopStateEvent::create(const AtomicString& type, const PopStateEventInit& initializer)
-{
-    return adoptRefWillBeNoop(new PopStateEvent(type, initializer));
-}
-
-const AtomicString& PopStateEvent::interfaceName() const
-{
-    return EventNames::PopStateEvent;
-}
-
-DEFINE_TRACE(PopStateEvent)
-{
-    visitor->trace(m_history);
-    Event::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

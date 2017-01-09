@@ -4,10 +4,13 @@
 
 #include "ui/gfx/font.h"
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gfx/font_names_testing.h"
 
 #if defined(OS_WIN)
 #include "ui/gfx/platform_font_win.h"
@@ -68,11 +71,12 @@ TEST_F(FontTest, MAYBE_LoadArial) {
 #endif
 TEST_F(FontTest, MAYBE_LoadArialBold) {
   Font cf("Arial", 16);
-  Font bold(cf.Derive(0, Font::BOLD));
+  Font bold(cf.Derive(0, Font::NORMAL, Font::Weight::BOLD));
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_IOS)
   EXPECT_TRUE(bold.GetNativeFont());
 #endif
-  EXPECT_EQ(bold.GetStyle(), Font::BOLD);
+  EXPECT_EQ(bold.GetStyle(), Font::NORMAL);
+  EXPECT_EQ(bold.GetWeight(), Font::Weight::BOLD);
   EXPECT_EQ("arial", base::ToLowerASCII(cf.GetActualFontNameForTesting()));
 }
 
@@ -142,11 +146,14 @@ TEST_F(FontTest, MAYBE_GetActualFontNameForTesting) {
       << "Your test environment seems to be missing Arial font, which is "
       << "needed for unittests.  Check if Arial font is installed.\n"
       << "********";
-  Font symbol("Symbol", 16);
-  EXPECT_EQ("symbol", base::ToLowerASCII(symbol.GetActualFontNameForTesting()))
+  Font symbol(kSymbolFontName, 16);
+  EXPECT_EQ(base::ToLowerASCII(kSymbolFontName),
+            base::ToLowerASCII(symbol.GetActualFontNameForTesting()))
       << "********\n"
-      << "Your test environment seems to be missing Symbol font, which is "
-      << "needed for unittests.  Check if Symbol font is installed.\n"
+      << "Your test environment seems to be missing the " << kSymbolFontName
+      << " font, which is "
+      << "needed for unittests.  Check if " << kSymbolFontName
+      << " font is installed.\n"
       << "********";
 
   const char* const invalid_font_name = "no_such_font_name";
@@ -155,13 +162,32 @@ TEST_F(FontTest, MAYBE_GetActualFontNameForTesting) {
             base::ToLowerASCII(fallback_font.GetActualFontNameForTesting()));
 }
 
+#if defined(OS_ANDROID)
+// https://crbug.com/642010
+#define MAYBE_DeriveFont DISABLED_DeriveFont
+#else
+#define MAYBE_DeriveFont DeriveFont
+#endif
+TEST_F(FontTest, MAYBE_DeriveFont) {
+  Font cf("Arial", 8);
+  const int kSizeDelta = 2;
+  Font cf_underlined =
+      cf.Derive(0, cf.GetStyle() | gfx::Font::UNDERLINE, cf.GetWeight());
+  Font cf_underlined_resized = cf_underlined.Derive(
+      kSizeDelta, cf_underlined.GetStyle(), cf_underlined.GetWeight());
+  EXPECT_EQ(cf.GetStyle() | gfx::Font::UNDERLINE,
+            cf_underlined_resized.GetStyle());
+  EXPECT_EQ(cf.GetFontSize() + kSizeDelta, cf_underlined_resized.GetFontSize());
+  EXPECT_EQ(cf.GetWeight(), cf_underlined_resized.GetWeight());
+}
+
 #if defined(OS_WIN)
 TEST_F(FontTest, DeriveResizesIfSizeTooSmall) {
   Font cf("Arial", 8);
   // The minimum font size is set to 5 in browser_main.cc.
   ScopedMinimumFontSizeCallback minimum_size(5);
 
-  Font derived_font = cf.Derive(-4, cf.GetStyle());
+  Font derived_font = cf.Derive(-4, cf.GetStyle(), cf.GetWeight());
   EXPECT_EQ(5, derived_font.GetFontSize());
 }
 
@@ -170,7 +196,7 @@ TEST_F(FontTest, DeriveKeepsOriginalSizeIfHeightOk) {
   // The minimum font size is set to 5 in browser_main.cc.
   ScopedMinimumFontSizeCallback minimum_size(5);
 
-  Font derived_font = cf.Derive(-2, cf.GetStyle());
+  Font derived_font = cf.Derive(-2, cf.GetStyle(), cf.GetWeight());
   EXPECT_EQ(6, derived_font.GetFontSize());
 }
 #endif  // defined(OS_WIN)

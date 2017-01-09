@@ -5,10 +5,17 @@
 #ifndef CONTENT_RENDERER_MEDIA_ANDROID_STREAM_TEXTURE_FACTORY_H_
 #define CONTENT_RENDERER_MEDIA_ANDROID_STREAM_TEXTURE_FACTORY_H_
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
+#include "base/unguessable_token.h"
 #include "cc/layers/video_frame_provider.h"
+#include "content/common/content_export.h"
+#include "content/renderer/gpu/stream_texture_host_android.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -16,71 +23,105 @@ namespace gpu {
 namespace gles2 {
 class GLES2Interface;
 }  // namespace gles2
+class GpuChannelHost;
 }  // namespace gpu
 
 namespace content {
 
+class ContextProviderCommandBuffer;
+class StreamTextureFactory;
+
 // The proxy class for the gpu thread to notify the compositor thread
 // when a new video frame is available.
-class StreamTextureProxy {
+class StreamTextureProxy : public StreamTextureHost::Listener {
  public:
-  virtual ~StreamTextureProxy() {}
+  ~StreamTextureProxy() override;
 
-  // Initialize and bind to the loop, which becomes the thread that
-  // a connected client will receive callbacks on. This can be called
-  // on any thread, but must be called with the same loop every time.
-  virtual void BindToLoop(int32 stream_id,
-                          cc::VideoFrameProvider::Client* client,
-                          scoped_refptr<base::SingleThreadTaskRunner> loop) = 0;
+  // Initialize and bind to |task_runner|, which becomes the thread that the
+  // provided callback will be run on. This can be called on any thread, but
+  // must be called with the same |task_runner| every time.
+  void BindToTaskRunner(
+      const base::Closure& received_frame_cb,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
-  // Causes this instance to be deleted on the thread it is bound to.
-  virtual void Release() = 0;
+  // StreamTextureHost::Listener implementation:
+  void OnFrameAvailable() override;
+
+  // Set the streamTexture size.
+  void SetStreamTextureSize(const gfx::Size& size);
+
+  // Send an IPC message to the browser process to request a java surface
+  // object for the given route_id. After the the surface is created,
+  // it will be passed back to the WebMediaPlayerAndroid object identified by
+  // the player_id.
+  void EstablishPeer(int player_id, int frame_id);
+
+  // Sends an IPC to the GPU process.
+  // Asks the StreamTexture to forward its SurfaceTexture to the
+  // ScopedSurfaceRequestManager, using the gpu::ScopedSurfaceRequestConduit.
+  void ForwardStreamTextureForSurfaceRequest(
+      const base::UnguessableToken& request_token);
 
   struct Deleter {
     inline void operator()(StreamTextureProxy* ptr) const { ptr->Release(); }
   };
+ private:
+  friend class StreamTextureFactory;
+  explicit StreamTextureProxy(std::unique_ptr<StreamTextureHost> host);
+
+  void BindOnThread();
+  void Release();
+
+  const std::unique_ptr<StreamTextureHost> host_;
+
+  // Protects access to |received_frame_cb_| and |task_runner_|.
+  base::Lock lock_;
+  base::Closure received_frame_cb_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
+  DISALLOW_IMPLICIT_CONSTRUCTORS(StreamTextureProxy);
 };
 
-typedef scoped_ptr<StreamTextureProxy, StreamTextureProxy::Deleter>
+typedef std::unique_ptr<StreamTextureProxy, StreamTextureProxy::Deleter>
     ScopedStreamTextureProxy;
 
-class StreamTextureFactoryContextObserver {
- public:
-  virtual ~StreamTextureFactoryContextObserver() {}
-  virtual void ResetStreamTextureProxy() = 0;
-};
-
 // Factory class for managing stream textures.
-class StreamTextureFactory : public base::RefCounted<StreamTextureFactory> {
+class CONTENT_EXPORT StreamTextureFactory
+    : public base::RefCounted<StreamTextureFactory> {
  public:
-  // Create the StreamTextureProxy object.
-  virtual StreamTextureProxy* CreateProxy() = 0;
+  static scoped_refptr<StreamTextureFactory> Create(
+      scoped_refptr<ContextProviderCommandBuffer> context_provider);
 
-  // Send an IPC message to the browser process to request a java surface
-  // object for the given stream_id. After the the surface is created,
-  // it will be passed back to the WebMediaPlayerAndroid object identified by
-  // the player_id.
-  virtual void EstablishPeer(int32 stream_id, int player_id, int frame_id) = 0;
-
-  // Creates a StreamTexture and returns its id.  Sets |*texture_id| to the
-  // client-side id of the StreamTexture. The texture is produced into
-  // a mailbox so it can be shipped in a VideoFrame.
-  virtual unsigned CreateStreamTexture(unsigned texture_target,
+  // Create the StreamTextureProxy object. This internally calls
+  // CreateSteamTexture with the recieved arguments. CreateSteamTexture
+  // generates a texture and stores it in  *texture_id, the texture is produced
+  // into a mailbox so it can be shipped in a VideoFrame, it creates a
+  // gpu::StreamTexture and returns its route_id. If this route_id is  invalid
+  // nullptr is returned and *texture_id will be set to 0. If the route_id is
+  // valid it returns StreamTextureProxy object. The caller needs to take care
+  // of cleaning up the texture_id.
+  ScopedStreamTextureProxy CreateProxy(unsigned texture_target,
                                        unsigned* texture_id,
-                                       gpu::Mailbox* texture_mailbox) = 0;
+                                       gpu::Mailbox* texture_mailbox);
 
-  // Set the streamTexture size for the given stream Id.
-  virtual void SetStreamTextureSize(int32 texture_id,
-                                    const gfx::Size& size) = 0;
+  gpu::gles2::GLES2Interface* ContextGL();
 
-  virtual gpu::gles2::GLES2Interface* ContextGL() = 0;
-
-  virtual void AddObserver(StreamTextureFactoryContextObserver* obs) = 0;
-  virtual void RemoveObserver(StreamTextureFactoryContextObserver* obs) = 0;
-
- protected:
+ private:
   friend class base::RefCounted<StreamTextureFactory>;
-  virtual ~StreamTextureFactory() {}
+  StreamTextureFactory(
+      scoped_refptr<ContextProviderCommandBuffer> context_provider);
+  ~StreamTextureFactory();
+  // Creates a gpu::StreamTexture and returns its id.  Sets |*texture_id| to the
+  // client-side id of the gpu::StreamTexture. The texture is produced into
+  // a mailbox so it can be shipped in a VideoFrame.
+  unsigned CreateStreamTexture(unsigned texture_target,
+                               unsigned* texture_id,
+                               gpu::Mailbox* texture_mailbox);
+
+  scoped_refptr<ContextProviderCommandBuffer> context_provider_;
+  scoped_refptr<gpu::GpuChannelHost> channel_;
+
+  DISALLOW_IMPLICIT_CONSTRUCTORS(StreamTextureFactory);
 };
 
 }  // namespace content

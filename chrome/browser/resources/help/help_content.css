@@ -1,7 +1,6 @@
 /* Copyright 2014 The Chromium Authors. All rights reserved.
  * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file.
- */
+ * found in the LICENSE file. */
 
 #about-container {
   align-items: center;
@@ -16,14 +15,6 @@
   -webkit-margin-start: 10px;
 }
 
-@-webkit-keyframes spin {
-  to { transform: rotate(-10turn); }
-}
-
-#product-logo.spin {
-  -webkit-animation: spin 500ms cubic-bezier(1, 0, 0, 1) forwards;
-}
-
 #version-container {
   margin-top: 30px;
 }
@@ -33,6 +24,7 @@
 }
 
 #update-status-container {
+  margin-bottom: 12px;
   margin-top: 10px;
 }
 
@@ -91,7 +83,29 @@
   background-size: 18px;
 }
 
+#controlled-feature-icon {
+  background-image: url(../../../../ui/webui/resources/images/business.svg);
+  background-size: 18px;
+}
+
+#eol-status-icon {
+  background-image: url(../../../../ui/webui/resources/images/eol.svg);
+  background-size: 18px;
+}
+
+#eol-status-container {
+  margin-bottom: 12px;
+  margin-top: 10px;
+}
+
+#eol-status-message-container {
+  -webkit-margin-start: 8px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
 #update-status-message-container {
+  -webkit-margin-start: 8px;
   display: inline-block;
   vertical-align: middle;
 }

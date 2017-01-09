@@ -7,7 +7,6 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 
-#include "base/basictypes.h"
 #include "build/build_config.h"
 #include "content/common/sandbox_linux/sandbox_linux.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
@@ -16,8 +15,17 @@
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_sets.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 
-#if defined(USE_VGEM_MAP)
-#include <libdrm/vgem_drm.h>
+#if defined(OS_CHROMEOS)
+// TODO(vignatti): replace the local definitions below with #include
+// <linux/dma-buf.h> once kernel version 4.6 becomes widely used.
+#include <linux/types.h>
+
+struct local_dma_buf_sync {
+  __u64 flags;
+};
+#define LOCAL_DMA_BUF_BASE 'b'
+#define LOCAL_DMA_BUF_IOCTL_SYNC \
+  _IOW(LOCAL_DMA_BUF_BASE, 0, struct local_dma_buf_sync)
 #endif
 
 using sandbox::SyscallSets;
@@ -35,12 +43,9 @@ ResultExpr RestrictIoctl() {
   return Switch(request)
       .SANDBOX_BPF_DSL_CASES((static_cast<unsigned long>(TCGETS), FIONREAD),
                              Allow())
-#if defined(USE_VGEM_MAP)
-      // Type of DRM_IOCTL_XXX is unsigned long on IA and unsigned int on ARM.
+#if defined(OS_CHROMEOS)
       .SANDBOX_BPF_DSL_CASES(
-          (static_cast<unsigned long>(DRM_IOCTL_GEM_CLOSE),
-           DRM_IOCTL_VGEM_MODE_MAP_DUMB, DRM_IOCTL_PRIME_FD_TO_HANDLE),
-          Allow())
+          (static_cast<unsigned long>(LOCAL_DMA_BUF_IOCTL_SYNC)), Allow())
 #endif
       .Default(sandbox::CrashSIGSYSIoctl());
 }
@@ -61,7 +66,8 @@ ResultExpr RendererProcessPolicy::EvaluateSyscall(int sysno) const {
     // Allow the system calls below.
     case __NR_fdatasync:
     case __NR_fsync:
-#if defined(__i386__) || defined(__x86_64__) || defined(__mips__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__mips__) || \
+    defined(__aarch64__)
     case __NR_getrlimit:
 #endif
 #if defined(__i386__) || defined(__arm__)
@@ -82,7 +88,8 @@ ResultExpr RendererProcessPolicy::EvaluateSyscall(int sysno) const {
     case __NR_sched_setscheduler:
       return sandbox::RestrictSchedTarget(GetPolicyPid(), sysno);
     case __NR_prlimit64:
-      return Error(EPERM);  // See crbug.com/160157.
+      // See crbug.com/662450.
+      return sandbox::RestrictPrlimitToGetrlimit(GetPolicyPid());
     default:
       // Default on the content baseline policy.
       return SandboxBPFBasePolicy::EvaluateSyscall(sysno);

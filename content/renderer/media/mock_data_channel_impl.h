@@ -5,10 +5,12 @@
 #ifndef CONTENT_RENDERER_MEDIA_MOCK_DATA_CHANNEL_IMPL_H_
 #define CONTENT_RENDERER_MEDIA_MOCK_DATA_CHANNEL_IMPL_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/macros.h"
-#include "third_party/libjingle/source/talk/app/webrtc/peerconnectioninterface.h"
+#include "third_party/webrtc/api/peerconnectioninterface.h"
 
 namespace content {
 
@@ -28,6 +30,10 @@ class MockDataChannel : public webrtc::DataChannelInterface {
   bool negotiated() const override;
   int id() const override;
   DataState state() const override;
+  uint32_t messages_sent() const override;
+  uint64_t bytes_sent() const override;
+  uint32_t messages_received() const override;
+  uint64_t bytes_received() const override;
   uint64_t buffered_amount() const override;
   void Close() override;
   bool Send(const webrtc::DataBuffer& buffer) override;

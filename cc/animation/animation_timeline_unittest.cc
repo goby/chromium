@@ -15,9 +15,10 @@ namespace cc {
 namespace {
 
 TEST(AnimationTimelineTest, SyncPlayersAttachDetach) {
-  scoped_ptr<AnimationHost> host(AnimationHost::Create(ThreadInstance::MAIN));
-  scoped_ptr<AnimationHost> host_impl(
-      AnimationHost::Create(ThreadInstance::IMPL));
+  std::unique_ptr<AnimationHost> host(
+      AnimationHost::CreateForTesting(ThreadInstance::MAIN));
+  std::unique_ptr<AnimationHost> host_impl(
+      AnimationHost::CreateForTesting(ThreadInstance::IMPL));
 
   const int timeline_id = AnimationIdProvider::NextTimelineId();
   const int player_id = AnimationIdProvider::NextPlayerId();
@@ -60,9 +61,10 @@ TEST(AnimationTimelineTest, SyncPlayersAttachDetach) {
 }
 
 TEST(AnimationTimelineTest, ClearPlayers) {
-  scoped_ptr<AnimationHost> host(AnimationHost::Create(ThreadInstance::MAIN));
-  scoped_ptr<AnimationHost> host_impl(
-      AnimationHost::Create(ThreadInstance::IMPL));
+  std::unique_ptr<AnimationHost> host(
+      AnimationHost::CreateForTesting(ThreadInstance::MAIN));
+  std::unique_ptr<AnimationHost> host_impl(
+      AnimationHost::CreateForTesting(ThreadInstance::IMPL));
 
   const int timeline_id = AnimationIdProvider::NextTimelineId();
   const int player_id1 = AnimationIdProvider::NextPlayerId();

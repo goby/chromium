@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include "components/autofill/core/browser/phone_field.h"
+
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_scanner.h"
-#include "components/autofill/core/browser/phone_field.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -31,27 +38,27 @@ class PhoneFieldTest : public testing::Test {
 
  protected:
   // Downcast for tests.
-  static scoped_ptr<PhoneField> Parse(AutofillScanner* scanner) {
-    scoped_ptr<FormField> field = PhoneField::Parse(scanner);
-    return make_scoped_ptr(static_cast<PhoneField*>(field.release()));
+  static std::unique_ptr<PhoneField> Parse(AutofillScanner* scanner) {
+    std::unique_ptr<FormField> field = PhoneField::Parse(scanner);
+    return base::WrapUnique(static_cast<PhoneField*>(field.release()));
   }
 
   void Clear() {
     list_.clear();
     field_.reset();
-    field_type_map_.clear();
+    field_candidates_map_.clear();
   }
 
   void CheckField(const std::string& name,
                   ServerFieldType expected_type) const {
-    auto it = field_type_map_.find(ASCIIToUTF16(name));
-    ASSERT_TRUE(it != field_type_map_.end()) << name;
-    EXPECT_EQ(expected_type, it->second) << name;
+    auto it = field_candidates_map_.find(ASCIIToUTF16(name));
+    ASSERT_TRUE(it != field_candidates_map_.end()) << name;
+    EXPECT_EQ(expected_type, it->second.BestHeuristicType()) << name;
   }
 
   ScopedVector<AutofillField> list_;
-  scoped_ptr<PhoneField> field_;
-  ServerFieldTypeMap field_type_map_;
+  std::unique_ptr<PhoneField> field_;
+  FieldCandidatesMap field_candidates_map_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PhoneFieldTest);
@@ -73,10 +80,10 @@ TEST_F(PhoneFieldTest, NonParse) {
 TEST_F(PhoneFieldTest, ParseOneLinePhone) {
   FormFieldData field;
 
-  for (size_t i = 0; i < arraysize(kFieldTypes); ++i) {
+  for (const char* field_type : kFieldTypes) {
     Clear();
 
-    field.form_control_type = kFieldTypes[i];
+    field.form_control_type = field_type;
     field.label = ASCIIToUTF16("Phone");
     field.name = ASCIIToUTF16("phone");
     list_.push_back(new AutofillField(field, ASCIIToUTF16("phone1")));
@@ -84,7 +91,7 @@ TEST_F(PhoneFieldTest, ParseOneLinePhone) {
     AutofillScanner scanner(list_.get());
     field_ = Parse(&scanner);
     ASSERT_NE(nullptr, field_.get());
-    ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
+    field_->AddClassifications(&field_candidates_map_);
     CheckField("phone1", PHONE_HOME_WHOLE_NUMBER);
   }
 }
@@ -92,10 +99,10 @@ TEST_F(PhoneFieldTest, ParseOneLinePhone) {
 TEST_F(PhoneFieldTest, ParseTwoLinePhone) {
   FormFieldData field;
 
-  for (size_t i = 0; i < arraysize(kFieldTypes); ++i) {
+  for (const char* field_type : kFieldTypes) {
     Clear();
 
-    field.form_control_type = kFieldTypes[i];
+    field.form_control_type = field_type;
     field.label = ASCIIToUTF16("Area Code");
     field.name = ASCIIToUTF16("area code");
     list_.push_back(new AutofillField(field, ASCIIToUTF16("areacode1")));
@@ -107,7 +114,7 @@ TEST_F(PhoneFieldTest, ParseTwoLinePhone) {
     AutofillScanner scanner(list_.get());
     field_ = Parse(&scanner);
     ASSERT_NE(nullptr, field_.get());
-    ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
+    field_->AddClassifications(&field_candidates_map_);
     CheckField("areacode1", PHONE_HOME_CITY_CODE);
     CheckField("phone2", PHONE_HOME_NUMBER);
   }
@@ -121,10 +128,10 @@ TEST_F(PhoneFieldTest, ThreePartPhoneNumber) {
   // than 4.
   FormFieldData field;
 
-  for (size_t i = 0; i < arraysize(kFieldTypes); ++i) {
+  for (const char* field_type : kFieldTypes) {
     Clear();
 
-    field.form_control_type = kFieldTypes[i];
+    field.form_control_type = field_type;
     field.label = ASCIIToUTF16("Phone:");
     field.name = ASCIIToUTF16("dayphone1");
     field.max_length = 0;
@@ -148,11 +155,11 @@ TEST_F(PhoneFieldTest, ThreePartPhoneNumber) {
     AutofillScanner scanner(list_.get());
     field_ = Parse(&scanner);
     ASSERT_NE(nullptr, field_.get());
-    ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
+    field_->AddClassifications(&field_candidates_map_);
     CheckField("areacode1", PHONE_HOME_CITY_CODE);
     CheckField("prefix2", PHONE_HOME_NUMBER);
     CheckField("suffix3", PHONE_HOME_NUMBER);
-    EXPECT_FALSE(ContainsKey(field_type_map_, ASCIIToUTF16("ext4")));
+    EXPECT_TRUE(base::ContainsKey(field_candidates_map_, ASCIIToUTF16("ext4")));
   }
 }
 
@@ -162,10 +169,10 @@ TEST_F(PhoneFieldTest, ThreePartPhoneNumber) {
 TEST_F(PhoneFieldTest, ThreePartPhoneNumberPrefixSuffix) {
   FormFieldData field;
 
-  for (size_t i = 0; i < arraysize(kFieldTypes); ++i) {
+  for (const char* field_type : kFieldTypes) {
     Clear();
 
-    field.form_control_type = kFieldTypes[i];
+    field.form_control_type = field_type;
     field.label = ASCIIToUTF16("Phone:");
     field.name = ASCIIToUTF16("area");
     list_.push_back(new AutofillField(field, ASCIIToUTF16("areacode1")));
@@ -181,7 +188,7 @@ TEST_F(PhoneFieldTest, ThreePartPhoneNumberPrefixSuffix) {
     AutofillScanner scanner(list_.get());
     field_ = Parse(&scanner);
     ASSERT_NE(nullptr, field_.get());
-    ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
+    field_->AddClassifications(&field_candidates_map_);
     CheckField("areacode1", PHONE_HOME_CITY_CODE);
     CheckField("prefix2", PHONE_HOME_NUMBER);
     CheckField("suffix3", PHONE_HOME_NUMBER);
@@ -191,10 +198,10 @@ TEST_F(PhoneFieldTest, ThreePartPhoneNumberPrefixSuffix) {
 TEST_F(PhoneFieldTest, ThreePartPhoneNumberPrefixSuffix2) {
   FormFieldData field;
 
-  for (size_t i = 0; i < arraysize(kFieldTypes); ++i) {
+  for (const char* field_type : kFieldTypes) {
     Clear();
 
-    field.form_control_type = kFieldTypes[i];
+    field.form_control_type = field_type;
     field.label = ASCIIToUTF16("(");
     field.name = ASCIIToUTF16("phone1");
     field.max_length = 3;
@@ -213,7 +220,7 @@ TEST_F(PhoneFieldTest, ThreePartPhoneNumberPrefixSuffix2) {
     AutofillScanner scanner(list_.get());
     field_ = Parse(&scanner);
     ASSERT_NE(nullptr, field_.get());
-    ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
+    field_->AddClassifications(&field_candidates_map_);
     CheckField("phone1", PHONE_HOME_CITY_CODE);
     CheckField("phone2", PHONE_HOME_NUMBER);
     CheckField("phone3", PHONE_HOME_NUMBER);
@@ -225,10 +232,10 @@ TEST_F(PhoneFieldTest, CountryAndCityAndPhoneNumber) {
   // The |maxlength| is considered, otherwise it's too broad.
   FormFieldData field;
 
-  for (size_t i = 0; i < arraysize(kFieldTypes); ++i) {
+  for (const char* field_type : kFieldTypes) {
     Clear();
 
-    field.form_control_type = kFieldTypes[i];
+    field.form_control_type = field_type;
     field.label = ASCIIToUTF16("Phone Number");
     field.name = ASCIIToUTF16("CountryCode");
     field.max_length = 3;
@@ -242,7 +249,7 @@ TEST_F(PhoneFieldTest, CountryAndCityAndPhoneNumber) {
     AutofillScanner scanner(list_.get());
     field_ = Parse(&scanner);
     ASSERT_NE(nullptr, field_.get());
-    ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
+    field_->AddClassifications(&field_candidates_map_);
     CheckField("country", PHONE_HOME_COUNTRY_CODE);
     CheckField("phone", PHONE_HOME_CITY_AND_NUMBER);
   }

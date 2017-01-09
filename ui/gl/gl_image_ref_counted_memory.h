@@ -5,7 +5,11 @@
 #ifndef UI_GL_GL_IMAGE_REF_COUNTED_MEMORY_H_
 #define UI_GL_GL_IMAGE_REF_COUNTED_MEMORY_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "ui/gl/gl_export.h"
 #include "ui/gl/gl_image_memory.h"
 
 namespace base {
@@ -14,7 +18,7 @@ class RefCountedMemory;
 
 namespace gl {
 
-class GL_EXPORT GLImageRefCountedMemory : public gl::GLImageMemory {
+class GL_EXPORT GLImageRefCountedMemory : public GLImageMemory {
  public:
   GLImageRefCountedMemory(const gfx::Size& size, unsigned internalformat);
 
@@ -22,7 +26,6 @@ class GL_EXPORT GLImageRefCountedMemory : public gl::GLImageMemory {
                   gfx::BufferFormat format);
 
   // Overridden from GLImage:
-  void Destroy(bool have_context) override;
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                     uint64_t process_tracing_id,
                     const std::string& dump_name) override;

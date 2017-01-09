@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
-#include "components/sync_driver/signin_manager_wrapper.h"
+#include "base/macros.h"
+#include "components/sync/driver/signin_manager_wrapper.h"
 
 class Profile;
 class SigninManagerBase;

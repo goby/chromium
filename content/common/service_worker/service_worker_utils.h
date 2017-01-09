@@ -5,10 +5,12 @@
 #ifndef CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_UTILS_H_
 #define CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_UTILS_H_
 
+#include "base/command_line.h"
 #include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 #include "content/common/service_worker/service_worker_types.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/resource_type.h"
 #include "url/gurl.h"
 
@@ -39,6 +41,15 @@ class ServiceWorkerUtils {
   static bool ContainsDisallowedCharacter(const GURL& scope,
                                           const GURL& script_url,
                                           std::string* error_message);
+
+  static bool IsMojoForServiceWorkerEnabled();
+
+  // Returns true if all members of |urls| have the same origin, and
+  // OriginCanAccessServiceWorkers is true for this origin.
+  // If --disable-web-security is enabled, the same origin check is
+  // not performed.
+  CONTENT_EXPORT static bool AllOriginsMatchAndCanAccessServiceWorkers(
+      const std::vector<GURL>& urls);
 
   // PlzNavigate
   // Returns true if the |provider_id| was assigned by the browser process.

@@ -6,6 +6,8 @@ package org.chromium.content.browser.test;
 
 import android.test.InstrumentationTestCase;
 
+import org.chromium.base.ContextUtils;
+import org.chromium.base.PathUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
@@ -17,6 +19,8 @@ import org.chromium.content.browser.test.util.ApplicationUtils;
  * Test extension that adds support for loading and dealing with native libraries.
  */
 public class NativeLibraryTestBase extends InstrumentationTestCase {
+    private static final String PRIVATE_DATA_DIRECTORY_SUFFIX = "content";
+
     /**
      * Loads the native library on the activity UI thread (must not be called from the UI thread).
      */
@@ -34,6 +38,8 @@ public class NativeLibraryTestBase extends InstrumentationTestCase {
 
     private void handleNativeInitialization(final boolean initBrowserProcess) {
         assertFalse(ThreadUtils.runningOnUiThread());
+
+        PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX);
 
         try {
             ApplicationUtils.waitForLibraryDependencies(getInstrumentation());
@@ -55,15 +61,14 @@ public class NativeLibraryTestBase extends InstrumentationTestCase {
     private void nativeInitialization(boolean initBrowserProcess) {
         if (initBrowserProcess) {
             try {
-                BrowserStartupController.get(getInstrumentation().getTargetContext(),
+                BrowserStartupController.get(ContextUtils.getApplicationContext(),
                         LibraryProcessType.PROCESS_BROWSER).startBrowserProcessesSync(false);
             } catch (ProcessInitException e) {
                 throw new Error(e);
             }
         } else {
             try {
-                LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER)
-                        .ensureInitialized(getInstrumentation().getTargetContext());
+                LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER).ensureInitialized();
             } catch (ProcessInitException e) {
                 throw new Error(e);
             }

@@ -6,44 +6,49 @@
 #define COMPONENTS_SUGGESTIONS_IMAGE_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "components/image_fetcher/image_fetcher_delegate.h"
 #include "components/leveldb_proto/proto_database.h"
-#include "components/suggestions/image_fetcher_delegate.h"
 #include "components/suggestions/proto/suggestions.pb.h"
 #include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
 
-namespace net {
-class URLRequestContextGetter;
+namespace gfx {
+class Image;
+}
+
+namespace image_fetcher {
+class ImageFetcher;
 }
 
 namespace suggestions {
 
 class ImageData;
-class ImageFetcher;
 class SuggestionsProfile;
 
 // A class used to fetch server images asynchronously and manage the caching
 // layer (both in memory and on disk).
-class ImageManager : public ImageFetcherDelegate {
+class ImageManager : public image_fetcher::ImageFetcherDelegate {
  public:
   typedef std::vector<ImageData> ImageDataVector;
+  using ImageCallback = base::Callback<void(const GURL&, const gfx::Image&)>;
 
-  ImageManager(scoped_ptr<ImageFetcher> image_fetcher,
-               scoped_ptr<leveldb_proto::ProtoDatabase<ImageData>> database,
-               const base::FilePath& database_dir,
-               scoped_refptr<base::TaskRunner> background_task_runner);
+  ImageManager(
+      std::unique_ptr<image_fetcher::ImageFetcher> image_fetcher,
+      std::unique_ptr<leveldb_proto::ProtoDatabase<ImageData>> database,
+      const base::FilePath& database_dir,
+      scoped_refptr<base::TaskRunner> background_task_runner);
   ~ImageManager() override;
 
   virtual void Initialize(const SuggestionsProfile& suggestions);
@@ -52,13 +57,13 @@ class ImageManager : public ImageFetcherDelegate {
   virtual void AddImageURL(const GURL& url, const GURL& image_url);
 
   // Should be called from the UI thread.
-  virtual void GetImageForURL(
-      const GURL& url,
-      base::Callback<void(const GURL&, const SkBitmap*)> callback);
+  virtual void GetImageForURL(const GURL& url, ImageCallback callback);
 
  protected:
+  // Methods inherited from image_fetcher::ImageFetcherDelegate
+
   // Perform additional tasks when an image has been fetched.
-  void OnImageFetched(const GURL& url, const SkBitmap* bitmap) override;
+  void OnImageFetched(const std::string& url, const gfx::Image& image) override;
 
  private:
   friend class MockImageManager;
@@ -72,7 +77,7 @@ class ImageManager : public ImageFetcherDelegate {
   // Used for testing.
   ImageManager();
 
-  typedef std::vector<base::Callback<void(const GURL&, const SkBitmap*)> >
+  typedef std::vector<base::Callback<void(const GURL&, const gfx::Image&)> >
       CallbackVector;
   typedef base::hash_map<std::string, scoped_refptr<base::RefCountedMemory>>
       ImageMap;
@@ -81,6 +86,7 @@ class ImageManager : public ImageFetcherDelegate {
   // pending callbacks).
   struct ImageCacheRequest {
     ImageCacheRequest();
+    ImageCacheRequest(const ImageCacheRequest& other);
     ~ImageCacheRequest();
 
     GURL url;
@@ -97,35 +103,33 @@ class ImageManager : public ImageFetcherDelegate {
   bool GetImageURL(const GURL& url, GURL* image_url);
 
   void QueueCacheRequest(
-      const GURL& url, const GURL& image_url,
-      base::Callback<void(const GURL&, const SkBitmap*)> callback);
+      const GURL& url, const GURL& image_url, ImageCallback callback);
 
   void ServeFromCacheOrNetwork(
-      const GURL& url, const GURL& image_url,
-      base::Callback<void(const GURL&, const SkBitmap*)> callback);
+      const GURL& url, const GURL& image_url, ImageCallback callback);
 
   void OnCacheImageDecoded(
       const GURL& url,
       const GURL& image_url,
-      base::Callback<void(const GURL&, const SkBitmap*)> callback,
-      scoped_ptr<SkBitmap> bitmap);
+      const ImageCallback& callback,
+      std::unique_ptr<SkBitmap> bitmap);
 
   // Returns null if the |url| had no entry in the cache.
   scoped_refptr<base::RefCountedMemory> GetEncodedImageFromCache(
       const GURL& url);
 
   // Save the image bitmap in the cache and in the database.
-  void SaveImage(const GURL& url, const SkBitmap& bitmap);
+  void SaveImage(const std::string& url, const SkBitmap& bitmap);
 
   // Database callback methods.
   // Will initiate loading the entries.
   void OnDatabaseInit(bool success);
   // Will transfer the loaded |entries| in memory (|image_map_|).
-  void OnDatabaseLoad(bool success, scoped_ptr<ImageDataVector> entries);
+  void OnDatabaseLoad(bool success, std::unique_ptr<ImageDataVector> entries);
   void OnDatabaseSave(bool success);
 
   // Take entries from the database and put them in the local cache.
-  void LoadEntriesInCache(scoped_ptr<ImageDataVector> entries);
+  void LoadEntriesInCache(std::unique_ptr<ImageDataVector> entries);
 
   void ServePendingCacheRequests();
 
@@ -140,9 +144,9 @@ class ImageManager : public ImageFetcherDelegate {
   // Holding the bitmaps in memory, keyed by website URL string.
   ImageMap image_map_;
 
-  scoped_ptr<ImageFetcher> image_fetcher_;
+  std::unique_ptr<image_fetcher::ImageFetcher> image_fetcher_;
 
-  scoped_ptr<leveldb_proto::ProtoDatabase<ImageData> > database_;
+  std::unique_ptr<leveldb_proto::ProtoDatabase<ImageData>> database_;
 
   scoped_refptr<base::TaskRunner> background_task_runner_;
 

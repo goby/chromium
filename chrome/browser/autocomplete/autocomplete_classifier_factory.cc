@@ -4,6 +4,7 @@
 
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/autocomplete/in_memory_url_index_factory.h"
@@ -14,8 +15,9 @@
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
+#include "extensions/features/features.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
 #endif
@@ -33,22 +35,22 @@ AutocompleteClassifierFactory* AutocompleteClassifierFactory::GetInstance() {
 }
 
 // static
-scoped_ptr<KeyedService> AutocompleteClassifierFactory::BuildInstanceFor(
+std::unique_ptr<KeyedService> AutocompleteClassifierFactory::BuildInstanceFor(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
-  return make_scoped_ptr(new AutocompleteClassifier(
-      make_scoped_ptr(new AutocompleteController(
-          make_scoped_ptr(new ChromeAutocompleteProviderClient(profile)), NULL,
+  return base::MakeUnique<AutocompleteClassifier>(
+      base::WrapUnique(new AutocompleteController(
+          base::WrapUnique(new ChromeAutocompleteProviderClient(profile)), NULL,
           AutocompleteClassifier::kDefaultOmniboxProviders)),
-      scoped_ptr<AutocompleteSchemeClassifier>(
-          new ChromeAutocompleteSchemeClassifier(profile))));
+      std::unique_ptr<AutocompleteSchemeClassifier>(
+          new ChromeAutocompleteSchemeClassifier(profile)));
 }
 
 AutocompleteClassifierFactory::AutocompleteClassifierFactory()
     : BrowserContextKeyedServiceFactory(
         "AutocompleteClassifier",
         BrowserContextDependencyManager::GetInstance()) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   DependsOn(
       extensions::ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 #endif

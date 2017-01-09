@@ -9,9 +9,10 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_ZERO_SUGGEST_PROVIDER_H_
 #define COMPONENTS_OMNIBOX_BROWSER_ZERO_SUGGEST_PROVIDER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/base_search_provider.h"
@@ -19,9 +20,9 @@
 #include "net/url_request/url_fetcher_delegate.h"
 
 class AutocompleteProviderListener;
+class HistoryURLProvider;
 
 namespace base {
-class ListValue;
 class Value;
 }
 
@@ -48,6 +49,7 @@ class ZeroSuggestProvider : public BaseSearchProvider,
  public:
   // Creates and returns an instance of this provider.
   static ZeroSuggestProvider* Create(AutocompleteProviderClient* client,
+                                     HistoryURLProvider* history_url_provider,
                                      AutocompleteProviderListener* listener);
 
   // Registers a preference used to cache zero suggest results.
@@ -65,6 +67,7 @@ class ZeroSuggestProvider : public BaseSearchProvider,
 
  private:
   ZeroSuggestProvider(AutocompleteProviderClient* client,
+                      HistoryURLProvider* history_url_provider,
                       AutocompleteProviderListener* listener);
 
   ~ZeroSuggestProvider() override;
@@ -123,6 +126,9 @@ class ZeroSuggestProvider : public BaseSearchProvider,
   // populates |matches_| with cached results.
   void MaybeUseCachedSuggestions();
 
+  // Used for efficiency when creating the verbatim match.  Can be null.
+  HistoryURLProvider* history_url_provider_;
+
   AutocompleteProviderListener* listener_;
 
   // The URL for which a suggestion fetch is pending.
@@ -136,7 +142,7 @@ class ZeroSuggestProvider : public BaseSearchProvider,
   base::string16 permanent_text_;
 
   // Fetcher used to retrieve results.
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   // Suggestion for the current URL.
   AutocompleteMatch current_url_match_;

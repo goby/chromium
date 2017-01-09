@@ -5,9 +5,11 @@
 #include "extensions/renderer/script_injection.h"
 
 #include <map>
+#include <utility>
 
 #include "base/lazy_instance.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
 #include "content/public/child/v8_value_converter.h"
@@ -20,11 +22,11 @@
 #include "extensions/renderer/extensions_renderer_client.h"
 #include "extensions/renderer/script_injection_callback.h"
 #include "extensions/renderer/scripts_run_info.h"
+#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebScriptSource.h"
-#include "third_party/WebKit/public/web/WebSecurityOrigin.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -35,10 +37,10 @@ using IsolatedWorldMap = std::map<std::string, int>;
 base::LazyInstance<IsolatedWorldMap> g_isolated_worlds =
     LAZY_INSTANCE_INITIALIZER;
 
-const int64 kInvalidRequestId = -1;
+const int64_t kInvalidRequestId = -1;
 
 // The id of the next pending injection.
-int64 g_next_pending_id = 0;
+int64_t g_next_pending_id = 0;
 
 // Gets the isolated world ID to use for the given |injection_host|
 // in the given |frame|. If no isolated world has been created for that
@@ -114,17 +116,19 @@ void ScriptInjection::RemoveIsolatedWorld(const std::string& host_id) {
 }
 
 ScriptInjection::ScriptInjection(
-    scoped_ptr<ScriptInjector> injector,
+    std::unique_ptr<ScriptInjector> injector,
     content::RenderFrame* render_frame,
-    scoped_ptr<const InjectionHost> injection_host,
-    UserScript::RunLocation run_location)
-    : injector_(injector.Pass()),
+    std::unique_ptr<const InjectionHost> injection_host,
+    UserScript::RunLocation run_location,
+    bool log_activity)
+    : injector_(std::move(injector)),
       render_frame_(render_frame),
-      injection_host_(injection_host.Pass()),
+      injection_host_(std::move(injection_host)),
       run_location_(run_location),
       request_id_(kInvalidRequestId),
       complete_(false),
       did_inject_js_(false),
+      log_activity_(log_activity),
       frame_watcher_(new FrameWatcher(render_frame, this)),
       weak_ptr_factory_(this) {
   CHECK(injection_host_.get());
@@ -194,10 +198,8 @@ void ScriptInjection::RequestPermissionFromBrowser() {
   // invalid request (which is treated like a notification).
   request_id_ = g_next_pending_id++;
   render_frame_->Send(new ExtensionHostMsg_RequestScriptInjectionPermission(
-      render_frame_->GetRoutingID(),
-      host_id().id(),
-      injector_->script_type(),
-      request_id_));
+      render_frame_->GetRoutingID(), host_id().id(), injector_->script_type(),
+      run_location_, request_id_));
 }
 
 void ScriptInjection::NotifyWillNotInject(
@@ -211,22 +213,29 @@ ScriptInjection::InjectionResult ScriptInjection::Inject(
   DCHECK(injection_host_);
   DCHECK(scripts_run_info);
   DCHECK(!complete_);
+  bool should_inject_js = injector_->ShouldInjectJs(
+      run_location_, scripts_run_info->executing_scripts[host_id().id()]);
+  bool should_inject_css = injector_->ShouldInjectCss(
+      run_location_, scripts_run_info->injected_stylesheets[host_id().id()]);
 
-  bool should_inject_js = injector_->ShouldInjectJs(run_location_);
-  bool should_inject_css = injector_->ShouldInjectCss(run_location_);
-  DCHECK(should_inject_js || should_inject_css);
+  // This can happen if the extension specified a script to
+  // be run in multiple rules, and the script has already run.
+  // See crbug.com/631247.
+  if (!should_inject_js && !should_inject_css) {
+    return INJECTION_FINISHED;
+  }
 
   if (should_inject_js)
-    InjectJs();
+    InjectJs(&(scripts_run_info->executing_scripts[host_id().id()]),
+             &(scripts_run_info->num_js));
   if (should_inject_css)
-    InjectCss();
+    InjectCss(&(scripts_run_info->injected_stylesheets[host_id().id()]),
+              &(scripts_run_info->num_css));
 
   complete_ = did_inject_js_ || !should_inject_js;
 
-  injector_->GetRunInfo(scripts_run_info, run_location_);
-
   if (complete_) {
-    injector_->OnInjectionComplete(execution_result_.Pass(), run_location_,
+    injector_->OnInjectionComplete(std::move(execution_result_), run_location_,
                                    render_frame_);
   } else {
     ++scripts_run_info->num_blocking_js;
@@ -235,11 +244,13 @@ ScriptInjection::InjectionResult ScriptInjection::Inject(
   return complete_ ? INJECTION_FINISHED : INJECTION_BLOCKED;
 }
 
-void ScriptInjection::InjectJs() {
+void ScriptInjection::InjectJs(std::set<std::string>* executing_scripts,
+                               size_t* num_injected_js_scripts) {
   DCHECK(!did_inject_js_);
   blink::WebLocalFrame* web_frame = render_frame_->GetWebFrame();
-  std::vector<blink::WebScriptSource> sources =
-      injector_->GetJsSources(run_location_);
+  std::vector<blink::WebScriptSource> sources = injector_->GetJsSources(
+      run_location_, executing_scripts, num_injected_js_scripts);
+  DCHECK(!sources.empty());
   bool in_main_world = injector_->ShouldExecuteInMainWorld();
   int world_id = in_main_world
                      ? DOMActivityLogger::kMainWorldId
@@ -247,13 +258,13 @@ void ScriptInjection::InjectJs() {
                                                      web_frame);
   bool is_user_gesture = injector_->IsUserGesture();
 
-  scoped_ptr<blink::WebScriptExecutionCallback> callback(
+  std::unique_ptr<blink::WebScriptExecutionCallback> callback(
       new ScriptInjectionCallback(
           base::Bind(&ScriptInjection::OnJsInjectionCompleted,
                      weak_ptr_factory_.GetWeakPtr())));
 
   base::ElapsedTimer exec_timer;
-  if (injection_host_->id().type() == HostID::EXTENSIONS)
+  if (injection_host_->id().type() == HostID::EXTENSIONS && log_activity_)
     DOMActivityLogger::AttachToWorld(world_id, injection_host_->id().id());
   if (in_main_world) {
     // We only inject in the main world for javascript: urls.
@@ -277,14 +288,14 @@ void ScriptInjection::InjectJs() {
 }
 
 void ScriptInjection::OnJsInjectionCompleted(
-    const blink::WebVector<v8::Local<v8::Value> >& results) {
+    const std::vector<v8::Local<v8::Value>>& results) {
   DCHECK(!did_inject_js_);
 
   bool expects_results = injector_->ExpectsResults();
   if (expects_results) {
-    if (!results.isEmpty() && !results[0].IsEmpty()) {
+    if (!results.empty() && !results[0].IsEmpty()) {
       // Right now, we only support returning single results (per frame).
-      scoped_ptr<content::V8ValueConverter> v8_converter(
+      std::unique_ptr<content::V8ValueConverter> v8_converter(
           content::V8ValueConverter::create());
       // It's safe to always use the main world context when converting
       // here. V8ValueConverterImpl shouldn't actually care about the
@@ -292,7 +303,7 @@ void ScriptInjection::OnJsInjectionCompleted(
       // when encountered.
       v8::Local<v8::Context> context =
           render_frame_->GetWebFrame()->mainWorldScriptContext();
-      execution_result_.reset(v8_converter->FromV8Value(results[0], context));
+      execution_result_ = v8_converter->FromV8Value(results[0], context);
     }
     if (!execution_result_.get())
       execution_result_ = base::Value::CreateNullValue();
@@ -302,19 +313,20 @@ void ScriptInjection::OnJsInjectionCompleted(
   // If |async_completion_callback_| is set, it means the script finished
   // asynchronously, and we should run it.
   if (!async_completion_callback_.is_null()) {
-    injector_->OnInjectionComplete(execution_result_.Pass(), run_location_,
+    injector_->OnInjectionComplete(std::move(execution_result_), run_location_,
                                    render_frame_);
     // Warning: this object can be destroyed after this line!
     async_completion_callback_.Run(this);
   }
 }
 
-void ScriptInjection::InjectCss() {
-  std::vector<std::string> css_sources =
-      injector_->GetCssSources(run_location_);
+void ScriptInjection::InjectCss(std::set<std::string>* injected_stylesheets,
+                                size_t* num_injected_stylesheets) {
+  std::vector<blink::WebString> css_sources = injector_->GetCssSources(
+      run_location_, injected_stylesheets, num_injected_stylesheets);
   blink::WebLocalFrame* web_frame = render_frame_->GetWebFrame();
-  for (const std::string& css : css_sources)
-    web_frame->document().insertStyleSheet(blink::WebString::fromUTF8(css));
+  for (const blink::WebString& css : css_sources)
+    web_frame->document().insertStyleSheet(css);
 }
 
 }  // namespace extensions

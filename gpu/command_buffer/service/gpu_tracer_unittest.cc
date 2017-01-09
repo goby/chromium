@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
@@ -22,8 +24,8 @@ using ::testing::Exactly;
 using ::testing::Invoke;
 using ::testing::Return;
 
-int64 g_fakeCPUTime = 0;
-int64 FakeCpuTime() {
+int64_t g_fakeCPUTime = 0;
+int64_t FakeCpuTime() {
   return g_fakeCPUTime;
 }
 
@@ -32,8 +34,10 @@ class MockOutputter : public Outputter {
   MockOutputter() {}
   MOCK_METHOD5(TraceDevice,
                void(GpuTracerSource source,
-                    const std::string& category, const std::string& name,
-                    int64 start_time, int64 end_time));
+                    const std::string& category,
+                    const std::string& name,
+                    int64_t start_time,
+                    int64_t end_time));
 
   MOCK_METHOD3(TraceServiceBegin,
                void(GpuTracerSource source,
@@ -82,22 +86,21 @@ class GPUTracerTester : public GPUTracer {
 
 class BaseGpuTest : public GpuServiceTest {
  public:
-  explicit BaseGpuTest(gfx::GPUTiming::TimerType test_timer_type)
-      : test_timer_type_(test_timer_type) {
-  }
+  explicit BaseGpuTest(gl::GPUTiming::TimerType test_timer_type)
+      : test_timer_type_(test_timer_type) {}
 
  protected:
   void SetUp() override {
     g_fakeCPUTime = 0;
     const char* gl_version = "3.2";
     const char* extensions = "";
-    if (GetTimerType() == gfx::GPUTiming::kTimerTypeEXT) {
-      gl_version = "opengl 2.1";
+    if (GetTimerType() == gl::GPUTiming::kTimerTypeEXT) {
+      gl_version = "2.1";
       extensions = "GL_EXT_timer_query";
-    } else if (GetTimerType() == gfx::GPUTiming::kTimerTypeDisjoint) {
+    } else if (GetTimerType() == gl::GPUTiming::kTimerTypeDisjoint) {
       gl_version = "opengl es 3.0";
       extensions = "GL_EXT_disjoint_timer_query";
-    } else if (GetTimerType() == gfx::GPUTiming::kTimerTypeARB) {
+    } else if (GetTimerType() == gl::GPUTiming::kTimerTypeARB) {
       // TODO(sievers): The tracer should not depend on ARB_occlusion_query.
       // Try merge Query APIs (core, ARB, EXT) into a single binding each.
       extensions = "GL_ARB_timer_query GL_ARB_occlusion_query";
@@ -105,7 +108,7 @@ class BaseGpuTest : public GpuServiceTest {
     GpuServiceTest::SetUpWithGLVersion(gl_version, extensions);
 
     // Disjoint check should only be called by kTracerTypeDisjointTimer type.
-    if (GetTimerType() == gfx::GPUTiming::kTimerTypeDisjoint)
+    if (GetTimerType() == gl::GPUTiming::kTimerTypeDisjoint)
       gl_fake_queries_.ExpectDisjointCalls(*gl_);
     else
       gl_fake_queries_.ExpectNoDisjointCalls(*gl_);
@@ -128,7 +131,7 @@ class BaseGpuTest : public GpuServiceTest {
   void ExpectTraceQueryMocks() {
     if (gpu_timing_client_->IsAvailable()) {
       // Delegate query APIs used by GPUTrace to a GlFakeQueries
-      const bool elapsed = (GetTimerType() == gfx::GPUTiming::kTimerTypeEXT);
+      const bool elapsed = (GetTimerType() == gl::GPUTiming::kTimerTypeEXT);
       gl_fake_queries_.ExpectGPUTimerQuery(*gl_, elapsed);
     }
   }
@@ -144,8 +147,9 @@ class BaseGpuTest : public GpuServiceTest {
   void ExpectOutputterEndMocks(MockOutputter* outputter,
                                GpuTracerSource source,
                                const std::string& category,
-                               const std::string& name, int64 expect_start_time,
-                               int64 expect_end_time,
+                               const std::string& name,
+                               int64_t expect_start_time,
+                               int64_t expect_end_time,
                                bool trace_service,
                                bool trace_device) {
     if (trace_service) {
@@ -166,8 +170,8 @@ class BaseGpuTest : public GpuServiceTest {
   }
 
   void ExpectDisjointOutputMocks(MockOutputter* outputter,
-                                 int64 expect_start_time,
-                                 int64 expect_end_time) {
+                                 int64_t expect_start_time,
+                                 int64_t expect_end_time) {
     EXPECT_CALL(*outputter,
                 TraceDevice(kTraceDisjoint, "DisjointEvent", _,
                             expect_start_time, expect_end_time))
@@ -185,8 +189,9 @@ class BaseGpuTest : public GpuServiceTest {
                             bool tracing_device,
                             GpuTracerSource source,
                             const std::string& category,
-                            const std::string& name, int64 expect_start_time,
-                            int64 expect_end_time) {
+                            const std::string& name,
+                            int64_t expect_start_time,
+                            int64_t expect_end_time) {
     if (tracing_service)
       ExpectOutputterBeginMocks(outputter, source, category, name);
     const bool valid_timer = tracing_device &&
@@ -197,26 +202,26 @@ class BaseGpuTest : public GpuServiceTest {
   }
 
   void ExpectTracerOffsetQueryMocks() {
-    if (GetTimerType() != gfx::GPUTiming::kTimerTypeARB) {
+    if (GetTimerType() != gl::GPUTiming::kTimerTypeARB) {
       gl_fake_queries_.ExpectNoOffsetCalculationQuery(*gl_);
     } else {
       gl_fake_queries_.ExpectOffsetCalculationQuery(*gl_);
     }
   }
 
-  gfx::GPUTiming::TimerType GetTimerType() { return test_timer_type_; }
+  gl::GPUTiming::TimerType GetTimerType() { return test_timer_type_; }
 
-  gfx::GPUTiming::TimerType test_timer_type_;
-  gfx::GPUTimingFake gl_fake_queries_;
+  gl::GPUTiming::TimerType test_timer_type_;
+  gl::GPUTimingFake gl_fake_queries_;
 
-  scoped_refptr<gfx::GPUTimingClient> gpu_timing_client_;
+  scoped_refptr<gl::GPUTimingClient> gpu_timing_client_;
   scoped_refptr<MockOutputter> outputter_ref_;
 };
 
 // Test GPUTrace calls all the correct gl calls.
 class BaseGpuTraceTest : public BaseGpuTest {
  public:
-  explicit BaseGpuTraceTest(gfx::GPUTiming::TimerType test_timer_type)
+  explicit BaseGpuTraceTest(gl::GPUTiming::TimerType test_timer_type)
       : BaseGpuTest(test_timer_type) {}
 
   void DoTraceTest(bool tracing_service, bool tracing_device) {
@@ -224,13 +229,13 @@ class BaseGpuTraceTest : public BaseGpuTest {
     const GpuTracerSource tracer_source = kTraceCHROMIUM;
     const std::string category_name("trace_category");
     const std::string trace_name("trace_test");
-    const int64 offset_time = 3231;
+    const int64_t offset_time = 3231;
     const GLint64 start_timestamp = 7 * base::Time::kNanosecondsPerMicrosecond;
     const GLint64 end_timestamp = 32 * base::Time::kNanosecondsPerMicrosecond;
-    const int64 expect_start_time =
+    const int64_t expect_start_time =
         (start_timestamp / base::Time::kNanosecondsPerMicrosecond) +
         offset_time;
-    const int64 expect_end_time =
+    const int64_t expect_end_time =
         (end_timestamp / base::Time::kNanosecondsPerMicrosecond) + offset_time;
 
     ExpectOutputterMocks(outputter_ref_.get(), tracing_service, tracing_device,
@@ -268,7 +273,7 @@ class BaseGpuTraceTest : public BaseGpuTest {
     g_fakeCPUTime = expect_end_time;
     EXPECT_TRUE(trace->IsAvailable());
 
-    // Proces should output expected Trace results to MockOutputter
+    // Process should output expected Trace results to MockOutputter
     trace->Process();
 
     // Destroy trace after we are done.
@@ -280,13 +285,13 @@ class BaseGpuTraceTest : public BaseGpuTest {
 
 class GpuARBTimerTraceTest : public BaseGpuTraceTest {
  public:
-  GpuARBTimerTraceTest() : BaseGpuTraceTest(gfx::GPUTiming::kTimerTypeARB) {}
+  GpuARBTimerTraceTest() : BaseGpuTraceTest(gl::GPUTiming::kTimerTypeARB) {}
 };
 
 class GpuDisjointTimerTraceTest : public BaseGpuTraceTest {
  public:
   GpuDisjointTimerTraceTest()
-      : BaseGpuTraceTest(gfx::GPUTiming::kTimerTypeDisjoint) {}
+      : BaseGpuTraceTest(gl::GPUTiming::kTimerTypeDisjoint) {}
 };
 
 TEST_F(GpuARBTimerTraceTest, ARBTimerTraceTestOff) {
@@ -324,7 +329,7 @@ TEST_F(GpuDisjointTimerTraceTest, DisjointTimerTraceTestBothOn) {
 // Test GPUTracer calls all the correct gl calls.
 class BaseGpuTracerTest : public BaseGpuTest {
  public:
-  explicit BaseGpuTracerTest(gfx::GPUTiming::TimerType test_timer_type)
+  explicit BaseGpuTracerTest(gl::GPUTiming::TimerType test_timer_type)
       : BaseGpuTest(test_timer_type) {}
 
   void DoBasicTracerTest() {
@@ -366,13 +371,13 @@ class BaseGpuTracerTest : public BaseGpuTest {
 
     const std::string category_name("trace_category");
     const std::string trace_name("trace_test");
-    const int64 offset_time = 3231;
+    const int64_t offset_time = 3231;
     const GLint64 start_timestamp = 7 * base::Time::kNanosecondsPerMicrosecond;
     const GLint64 end_timestamp = 32 * base::Time::kNanosecondsPerMicrosecond;
-    const int64 expect_start_time =
+    const int64_t expect_start_time =
         (start_timestamp / base::Time::kNanosecondsPerMicrosecond) +
         offset_time;
-    const int64 expect_end_time =
+    const int64_t expect_end_time =
         (end_timestamp / base::Time::kNanosecondsPerMicrosecond) + offset_time;
 
     MockGLES2Decoder decoder;
@@ -442,9 +447,9 @@ class BaseGpuTracerTest : public BaseGpuTest {
     const std::string category_name("trace_category");
     const std::string trace_name("trace_test");
     const GpuTracerSource source = static_cast<GpuTracerSource>(0);
-    const int64 offset_time = 3231;
+    const int64_t offset_time = 3231;
     const GLint64 start_timestamp = 7 * base::Time::kNanosecondsPerMicrosecond;
-    const int64 expect_start_time =
+    const int64_t expect_start_time =
         (start_timestamp / base::Time::kNanosecondsPerMicrosecond) +
         offset_time;
     const bool valid_timer = gpu_timing_client_->IsAvailable();
@@ -518,13 +523,13 @@ class BaseGpuTracerTest : public BaseGpuTest {
     const std::string category_name("trace_category");
     const std::string trace_name("trace_test");
     const GpuTracerSource source = static_cast<GpuTracerSource>(0);
-    const int64 offset_time = 3231;
+    const int64_t offset_time = 3231;
     const GLint64 start_timestamp = 7 * base::Time::kNanosecondsPerMicrosecond;
     const GLint64 end_timestamp = 32 * base::Time::kNanosecondsPerMicrosecond;
-    const int64 expect_start_time =
+    const int64_t expect_start_time =
         (start_timestamp / base::Time::kNanosecondsPerMicrosecond) +
         offset_time;
-    const int64 expect_end_time =
+    const int64_t expect_end_time =
         (end_timestamp / base::Time::kNanosecondsPerMicrosecond) + offset_time;
 
     MockGLES2Decoder decoder;
@@ -550,7 +555,7 @@ class BaseGpuTracerTest : public BaseGpuTest {
 
     // Create GPUTimingClient to make sure disjoint value is correct. This
     // should not interfere with the tracer's disjoint value.
-    scoped_refptr<gfx::GPUTimingClient> disjoint_client =
+    scoped_refptr<gl::GPUTimingClient> disjoint_client =
         GetGLContext()->CreateGPUTimingClient();
 
     // We assert here based on the disjoint_client because if disjoints are not
@@ -580,13 +585,13 @@ class BaseGpuTracerTest : public BaseGpuTest {
     const std::string category_name("trace_category");
     const std::string trace_name("trace_test");
     const GpuTracerSource source = static_cast<GpuTracerSource>(0);
-    const int64 offset_time = 3231;
+    const int64_t offset_time = 3231;
     const GLint64 start_timestamp = 7 * base::Time::kNanosecondsPerMicrosecond;
     const GLint64 end_timestamp = 32 * base::Time::kNanosecondsPerMicrosecond;
-    const int64 expect_start_time =
+    const int64_t expect_start_time =
         (start_timestamp / base::Time::kNanosecondsPerMicrosecond) +
         offset_time;
-    const int64 expect_end_time =
+    const int64_t expect_end_time =
         (end_timestamp / base::Time::kNanosecondsPerMicrosecond) + offset_time;
 
     MockGLES2Decoder decoder;
@@ -632,24 +637,23 @@ class BaseGpuTracerTest : public BaseGpuTest {
 class InvalidTimerTracerTest : public BaseGpuTracerTest {
  public:
   InvalidTimerTracerTest()
-      : BaseGpuTracerTest(gfx::GPUTiming::kTimerTypeInvalid) {}
+      : BaseGpuTracerTest(gl::GPUTiming::kTimerTypeInvalid) {}
 };
 
 class GpuEXTTimerTracerTest : public BaseGpuTracerTest {
  public:
-  GpuEXTTimerTracerTest() : BaseGpuTracerTest(gfx::GPUTiming::kTimerTypeEXT) {}
+  GpuEXTTimerTracerTest() : BaseGpuTracerTest(gl::GPUTiming::kTimerTypeEXT) {}
 };
 
 class GpuARBTimerTracerTest : public BaseGpuTracerTest {
  public:
-  GpuARBTimerTracerTest()
-      : BaseGpuTracerTest(gfx::GPUTiming::kTimerTypeARB) {}
+  GpuARBTimerTracerTest() : BaseGpuTracerTest(gl::GPUTiming::kTimerTypeARB) {}
 };
 
 class GpuDisjointTimerTracerTest : public BaseGpuTracerTest {
  public:
   GpuDisjointTimerTracerTest()
-      : BaseGpuTracerTest(gfx::GPUTiming::kTimerTypeDisjoint) {}
+      : BaseGpuTracerTest(gl::GPUTiming::kTimerTypeDisjoint) {}
 };
 
 TEST_F(InvalidTimerTracerTest, InvalidTimerBasicTracerTest) {
@@ -741,8 +745,8 @@ class GPUTracerTest : public GpuServiceTest {
     decoder_ = nullptr;
     GpuServiceTest::TearDown();
   }
-  scoped_ptr<MockGLES2Decoder> decoder_;
-  scoped_ptr<GPUTracerTester> tracer_tester_;
+  std::unique_ptr<MockGLES2Decoder> decoder_;
+  std::unique_ptr<GPUTracerTester> tracer_tester_;
 };
 
 TEST_F(GPUTracerTest, IsTracingTest) {
@@ -772,9 +776,9 @@ TEST_F(GPUTracerTest, TraceDuringDecodeTest) {
 }
 
 TEST_F(GpuDisjointTimerTracerTest, MultipleClientsDisjointTest) {
-  scoped_refptr<gfx::GPUTimingClient> client1 =
+  scoped_refptr<gl::GPUTimingClient> client1 =
       GetGLContext()->CreateGPUTimingClient();
-  scoped_refptr<gfx::GPUTimingClient>  client2 =
+  scoped_refptr<gl::GPUTimingClient> client2 =
       GetGLContext()->CreateGPUTimingClient();
 
   // Test both clients are initialized as no errors.
@@ -795,7 +799,7 @@ TEST_F(GpuDisjointTimerTracerTest, MultipleClientsDisjointTest) {
   gl_fake_queries_.SetDisjoint();
 
   // Test new client disjoint value is cleared.
-  scoped_refptr<gfx::GPUTimingClient>  client3 =
+  scoped_refptr<gl::GPUTimingClient> client3 =
       GetGLContext()->CreateGPUTimingClient();
   ASSERT_TRUE(client1->CheckAndResetTimerErrors());
   ASSERT_TRUE(client2->CheckAndResetTimerErrors());

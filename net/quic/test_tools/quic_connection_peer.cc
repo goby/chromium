@@ -5,10 +5,10 @@
 #include "net/quic/test_tools/quic_connection_peer.h"
 
 #include "base/stl_util.h"
-#include "net/quic/congestion_control/send_algorithm_interface.h"
-#include "net/quic/quic_connection.h"
-#include "net/quic/quic_packet_writer.h"
-#include "net/quic/quic_received_packet_manager.h"
+#include "net/quic/core/congestion_control/send_algorithm_interface.h"
+#include "net/quic/core/quic_multipath_sent_packet_manager.h"
+#include "net/quic/core/quic_packet_writer.h"
+#include "net/quic/core/quic_received_packet_manager.h"
 #include "net/quic/test_tools/quic_framer_peer.h"
 #include "net/quic/test_tools/quic_packet_generator_peer.h"
 #include "net/quic/test_tools/quic_sent_packet_manager_peer.h"
@@ -24,14 +24,23 @@ void QuicConnectionPeer::SendAck(QuicConnection* connection) {
 // static
 void QuicConnectionPeer::SetSendAlgorithm(
     QuicConnection* connection,
+    QuicPathId path_id,
     SendAlgorithmInterface* send_algorithm) {
-  connection->sent_packet_manager_.send_algorithm_.reset(send_algorithm);
+  GetSentPacketManager(connection, path_id)->SetSendAlgorithm(send_algorithm);
 }
 
 // static
-void QuicConnectionPeer::PopulateAckFrame(QuicConnection* connection,
-                                          QuicAckFrame* ack) {
-  connection->PopulateAckFrame(ack);
+void QuicConnectionPeer::SetLossAlgorithm(
+    QuicConnection* connection,
+    QuicPathId path_id,
+    LossDetectionInterface* loss_algorithm) {
+  GetSentPacketManager(connection, path_id)->loss_algorithm_ = loss_algorithm;
+}
+
+// static
+const QuicFrame QuicConnectionPeer::GetUpdatedAckFrame(
+    QuicConnection* connection) {
+  return connection->GetUpdatedAckFrame();
 }
 
 // static
@@ -62,46 +71,22 @@ QuicPacketGenerator* QuicConnectionPeer::GetPacketGenerator(
 
 // static
 QuicSentPacketManager* QuicConnectionPeer::GetSentPacketManager(
-    QuicConnection* connection) {
-  return &connection->sent_packet_manager_;
+    QuicConnection* connection,
+    QuicPathId path_id) {
+  if (FLAGS_quic_enable_multipath) {
+    return static_cast<QuicSentPacketManager*>(
+        static_cast<QuicMultipathSentPacketManager*>(
+            connection->sent_packet_manager_.get())
+            ->MaybeGetSentPacketManagerForPath(path_id));
+  }
+  return static_cast<QuicSentPacketManager*>(
+      connection->sent_packet_manager_.get());
 }
 
 // static
 QuicTime::Delta QuicConnectionPeer::GetNetworkTimeout(
     QuicConnection* connection) {
   return connection->idle_network_timeout_;
-}
-
-// static
-QuicSentEntropyManager* QuicConnectionPeer::GetSentEntropyManager(
-    QuicConnection* connection) {
-  return &connection->sent_entropy_manager_;
-}
-
-// static
-// TODO(ianswett): Create a GetSentEntropyHash which accepts an AckFrame.
-QuicPacketEntropyHash QuicConnectionPeer::GetSentEntropyHash(
-    QuicConnection* connection,
-    QuicPacketNumber packet_number) {
-  QuicSentEntropyManager::CumulativeEntropy last_entropy_copy =
-      connection->sent_entropy_manager_.last_cumulative_entropy_;
-  connection->sent_entropy_manager_.UpdateCumulativeEntropy(packet_number,
-                                                            &last_entropy_copy);
-  return last_entropy_copy.entropy;
-}
-
-// static
-QuicPacketEntropyHash QuicConnectionPeer::PacketEntropy(
-    QuicConnection* connection,
-    QuicPacketNumber packet_number) {
-  return connection->sent_entropy_manager_.GetPacketEntropy(packet_number);
-}
-
-// static
-QuicPacketEntropyHash QuicConnectionPeer::ReceivedEntropyHash(
-    QuicConnection* connection,
-    QuicPacketNumber packet_number) {
-  return connection->received_packet_manager_.EntropyHash(packet_number);
 }
 
 // static
@@ -113,19 +98,25 @@ void QuicConnectionPeer::SetPerspective(QuicConnection* connection,
 
 // static
 void QuicConnectionPeer::SetSelfAddress(QuicConnection* connection,
-                                        const IPEndPoint& self_address) {
+                                        const QuicSocketAddress& self_address) {
   connection->self_address_ = self_address;
 }
 
 // static
 void QuicConnectionPeer::SetPeerAddress(QuicConnection* connection,
-                                        const IPEndPoint& peer_address) {
+                                        const QuicSocketAddress& peer_address) {
   connection->peer_address_ = peer_address;
 }
 
 // static
 bool QuicConnectionPeer::IsSilentCloseEnabled(QuicConnection* connection) {
-  return connection->silent_close_enabled_;
+  return connection->idle_timeout_connection_close_behavior_ ==
+         ConnectionCloseBehavior::SILENT_CLOSE;
+}
+
+// static
+bool QuicConnectionPeer::IsMultipathEnabled(QuicConnection* connection) {
+  return connection->multipath_enabled_;
 }
 
 // static
@@ -135,21 +126,27 @@ void QuicConnectionPeer::SwapCrypters(QuicConnection* connection,
 }
 
 // static
+void QuicConnectionPeer::SetCurrentPacket(QuicConnection* connection,
+                                          base::StringPiece current_packet) {
+  connection->current_packet_data_ = current_packet.data();
+  connection->last_size_ = current_packet.size();
+}
+
+// static
 QuicConnectionHelperInterface* QuicConnectionPeer::GetHelper(
     QuicConnection* connection) {
   return connection->helper_;
 }
 
 // static
-QuicFramer* QuicConnectionPeer::GetFramer(QuicConnection* connection) {
-  return &connection->framer_;
+QuicAlarmFactory* QuicConnectionPeer::GetAlarmFactory(
+    QuicConnection* connection) {
+  return connection->alarm_factory_;
 }
 
 // static
-QuicFecGroup* QuicConnectionPeer::GetFecGroup(QuicConnection* connection,
-                                              int fec_group) {
-  connection->last_header_.fec_group = fec_group;
-  return connection->GetFecGroup();
+QuicFramer* QuicConnectionPeer::GetFramer(QuicConnection* connection) {
+  return &connection->framer_;
 }
 
 // static
@@ -160,11 +157,6 @@ QuicAlarm* QuicConnectionPeer::GetAckAlarm(QuicConnection* connection) {
 // static
 QuicAlarm* QuicConnectionPeer::GetPingAlarm(QuicConnection* connection) {
   return connection->ping_alarm_.get();
-}
-
-// static
-QuicAlarm* QuicConnectionPeer::GetFecAlarm(QuicConnection* connection) {
-  return connection->fec_alarm_.get();
 }
 
 // static
@@ -212,7 +204,8 @@ void QuicConnectionPeer::SetWriter(QuicConnection* connection,
 }
 
 // static
-void QuicConnectionPeer::CloseConnection(QuicConnection* connection) {
+void QuicConnectionPeer::TearDownLocalConnectionState(
+    QuicConnection* connection) {
   connection->connected_ = false;
 }
 
@@ -223,7 +216,7 @@ QuicEncryptedPacket* QuicConnectionPeer::GetConnectionClosePacket(
       connection->termination_packets_->empty()) {
     return nullptr;
   }
-  return (*connection->termination_packets_)[0];
+  return (*connection->termination_packets_)[0].get();
 }
 
 // static
@@ -263,8 +256,24 @@ void QuicConnectionPeer::SetNextMtuProbeAt(QuicConnection* connection,
 }
 
 // static
-void QuicConnectionPeer::EnableAckDecimation(QuicConnection* connection) {
-  connection->ack_decimation_enabled_ = true;
+void QuicConnectionPeer::SetAckMode(QuicConnection* connection,
+                                    QuicConnection::AckMode ack_mode) {
+  connection->ack_mode_ = ack_mode;
+}
+
+// static
+void QuicConnectionPeer::SetAckDecimationDelay(QuicConnection* connection,
+                                               float ack_decimation_delay) {
+  connection->ack_decimation_delay_ = ack_decimation_delay;
+}
+
+// static
+bool QuicConnectionPeer::HasRetransmittableFrames(
+    QuicConnection* connection,
+    QuicPathId path_id,
+    QuicPacketNumber packet_number) {
+  return QuicSentPacketManagerPeer::HasRetransmittableFrames(
+      GetSentPacketManager(connection, path_id), packet_number);
 }
 
 }  // namespace test

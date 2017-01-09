@@ -6,10 +6,13 @@
 #define CONTENT_RENDERER_PUSH_MESSAGING_PUSH_MESSAGING_DISPATCHER_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/id_map.h"
+#include "base/macros.h"
 #include "content/public/common/push_messaging_status.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "third_party/WebKit/public/platform/modules/push_messaging/WebPushClient.h"
@@ -28,6 +31,8 @@ class Message;
 namespace content {
 
 struct Manifest;
+struct ManifestDebugInfo;
+struct PushSubscriptionOptions;
 
 class PushMessagingDispatcher : public RenderFrameObserver,
                                 public blink::WebPushClient {
@@ -36,30 +41,39 @@ class PushMessagingDispatcher : public RenderFrameObserver,
   ~PushMessagingDispatcher() override;
 
  private:
-  // RenderFrame::Observer implementation.
+  // RenderFrameObserver implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
+  void OnDestruct() override;
 
   // WebPushClient implementation.
   void subscribe(
       blink::WebServiceWorkerRegistration* service_worker_registration,
       const blink::WebPushSubscriptionOptions& options,
-      blink::WebPushSubscriptionCallbacks* callbacks) override;
+      std::unique_ptr<blink::WebPushSubscriptionCallbacks> callbacks) override;
+
+  void DidGetManifest(
+      blink::WebServiceWorkerRegistration* service_worker_registration,
+      const blink::WebPushSubscriptionOptions& options,
+      std::unique_ptr<blink::WebPushSubscriptionCallbacks> callbacks,
+      const GURL& manifest_url,
+      const Manifest& manifest,
+      const ManifestDebugInfo&);
 
   void DoSubscribe(
       blink::WebServiceWorkerRegistration* service_worker_registration,
-      const blink::WebPushSubscriptionOptions& options,
-      blink::WebPushSubscriptionCallbacks* callbacks,
-      const Manifest& manifest);
+      const PushSubscriptionOptions& options,
+      std::unique_ptr<blink::WebPushSubscriptionCallbacks> callbacks);
 
   void OnSubscribeFromDocumentSuccess(int32_t request_id,
                                       const GURL& endpoint,
+                                      const PushSubscriptionOptions& options,
                                       const std::vector<uint8_t>& p256dh,
                                       const std::vector<uint8_t>& auth);
 
   void OnSubscribeFromDocumentError(int32_t request_id,
                                     PushRegistrationStatus status);
 
-  IDMap<blink::WebPushSubscriptionCallbacks, IDMapOwnPointer>
+  IDMap<std::unique_ptr<blink::WebPushSubscriptionCallbacks>>
       subscription_callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(PushMessagingDispatcher);

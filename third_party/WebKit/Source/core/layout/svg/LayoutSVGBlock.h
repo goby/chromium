@@ -26,37 +26,66 @@ namespace blink {
 
 class SVGElement;
 
+// A common class of SVG objects that delegate layout, paint, etc. tasks to
+// LayoutBlockFlow. It has two coordinate spaces:
+// - local SVG coordinate space: similar to LayoutSVGModelObject, the space
+//   that localSVGTransform() applies.
+// - local HTML coordinate space: defined by frameRect() as if the local SVG
+//   coordinate space created a containing block. Like other LayoutBlockFlow
+//   objects, LayoutSVGBlock's frameRect() is also in physical coordinates with
+//   flipped blocks direction in the "containing block".
 class LayoutSVGBlock : public LayoutBlockFlow {
-public:
-    explicit LayoutSVGBlock(SVGElement*);
+ public:
+  explicit LayoutSVGBlock(SVGElement*);
 
-    LayoutRect clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* = nullptr) const final;
+  // These mapping functions map coordinates in HTML spaces.
+  void mapLocalToAncestor(const LayoutBoxModelObject* ancestor,
+                          TransformState&,
+                          MapCoordinatesFlags = ApplyContainerFlip) const final;
+  void mapAncestorToLocal(const LayoutBoxModelObject* ancestor,
+                          TransformState&,
+                          MapCoordinatesFlags = ApplyContainerFlip) const final;
+  const LayoutObject* pushMappingToContainer(
+      const LayoutBoxModelObject* ancestorToStopAt,
+      LayoutGeometryMap&) const final;
+  bool mapToVisualRectInAncestorSpace(
+      const LayoutBoxModelObject* ancestor,
+      LayoutRect&,
+      VisualRectFlags = DefaultVisualRectFlags) const final;
 
-    void mapLocalToContainer(const LayoutBoxModelObject* paintInvalidationContainer, TransformState&, MapCoordinatesFlags = ApplyContainerFlip, bool* wasFixed = nullptr, const PaintInvalidationState* = nullptr) const final;
-    const LayoutObject* pushMappingToContainer(const LayoutBoxModelObject* ancestorToStopAt, LayoutGeometryMap&) const final;
+  AffineTransform localSVGTransform() const final { return m_localTransform; }
 
-    AffineTransform localTransform() const final { return m_localTransform; }
+  PaintLayerType layerTypeRequired() const final { return NoPaintLayer; }
 
-    PaintLayerType layerTypeRequired() const final { return NoPaintLayer; }
+ protected:
+  void willBeDestroyed() override;
 
-    void invalidateTreeIfNeeded(PaintInvalidationState&) override;
+  AffineTransform m_localTransform;
 
-protected:
-    void willBeDestroyed() override;
-    void mapRectToPaintInvalidationBacking(const LayoutBoxModelObject* paintInvalidationContainer, LayoutRect&, const PaintInvalidationState*) const final;
+  bool isOfType(LayoutObjectType type) const override {
+    return type == LayoutObjectSVG || LayoutBlockFlow::isOfType(type);
+  }
 
-    AffineTransform m_localTransform;
+ private:
+  LayoutRect absoluteVisualRect() const final;
 
-    bool isOfType(LayoutObjectType type) const override { return type == LayoutObjectSVG || LayoutBlockFlow::isOfType(type); }
-private:
-    void updateFromStyle() final;
+  bool allowsOverflowClip() const final;
 
-    void absoluteRects(Vector<IntRect>&, const LayoutPoint& accumulatedOffset) const final;
+  void absoluteRects(Vector<IntRect>&,
+                     const LayoutPoint& accumulatedOffset) const final;
 
-    void styleDidChange(StyleDifference, const ComputedStyle* oldStyle) final;
+  void styleDidChange(StyleDifference, const ComputedStyle* oldStyle) final;
 
-    bool nodeAtPoint(HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
+  bool nodeAtPoint(HitTestResult&,
+                   const HitTestLocation& locationInContainer,
+                   const LayoutPoint& accumulatedOffset,
+                   HitTestAction) override;
+
+  // The inherited version doesn't check for SVG effects.
+  bool paintedOutputOfObjectHasNoEffectRegardlessOfSize() const override {
+    return false;
+  }
 };
 
-}
-#endif // LayoutSVGBlock_h
+}  // namespace blink
+#endif  // LayoutSVGBlock_h

@@ -4,11 +4,14 @@
 
 #include "content/browser/loader/async_resource_handler.h"
 
+#include <stddef.h>
 #include <string>
+#include <utility>
 
 #include "base/format_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -37,25 +40,25 @@ const size_t kPayloadSize = 1062882;  // 2*3^12
 const size_t kPayloadSize = 28697814;  // 2*3^15
 #endif
 
-scoped_ptr<net::test_server::HttpResponse> HandlePostAndRedirectURLs(
-  const std::string& request_path,
-  const net::test_server::HttpRequest& request) {
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+std::unique_ptr<net::test_server::HttpResponse> HandlePostAndRedirectURLs(
+    const std::string& request_path,
+    const net::test_server::HttpRequest& request) {
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse());
   if (base::StartsWith(request.relative_url, kRedirectPostPath,
                        base::CompareCase::SENSITIVE)) {
     http_response->set_code(net::HTTP_TEMPORARY_REDIRECT);
     http_response->AddCustomHeader("Location", kPostPath);
-    EXPECT_EQ(request.content.length(), kPayloadSize);;
-    return http_response.Pass();
-  } else if(base::StartsWith(request.relative_url, kPostPath,
-                             base::CompareCase::SENSITIVE)) {
+    EXPECT_EQ(request.content.length(), kPayloadSize);
+    return std::move(http_response);
+  } else if (base::StartsWith(request.relative_url, kPostPath,
+                              base::CompareCase::SENSITIVE)) {
     http_response->set_content("hello");
     http_response->set_content_type("text/plain");
     EXPECT_EQ(request.content.length(), kPayloadSize);
-    return http_response.Pass();
+    return std::move(http_response);
   } else {
-    return scoped_ptr<net::test_server::HttpResponse>();
+    return std::unique_ptr<net::test_server::HttpResponse>();
   }
 }
 
@@ -66,19 +69,17 @@ class AsyncResourceHandlerBrowserTest : public ContentBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(AsyncResourceHandlerBrowserTest, UploadProgress) {
   net::EmbeddedTestServer* test_server = embedded_test_server();
-  ASSERT_TRUE(test_server->Start());
   test_server->RegisterRequestHandler(
       base::Bind(&HandlePostAndRedirectURLs, kPostPath));
+  ASSERT_TRUE(test_server->Start());
 
   NavigateToURL(shell(),
                 test_server->GetURL("/loader/async_resource_handler.html"));
 
   std::string js_result;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      shell()->web_contents(),
-      base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
-                         kPostPath,
-                         kPayloadSize),
+      shell(), base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
+                                  kPostPath, kPayloadSize),
       &js_result));
   EXPECT_EQ(js_result, "success");
 }
@@ -86,19 +87,17 @@ IN_PROC_BROWSER_TEST_F(AsyncResourceHandlerBrowserTest, UploadProgress) {
 IN_PROC_BROWSER_TEST_F(AsyncResourceHandlerBrowserTest,
                        UploadProgressRedirect) {
   net::EmbeddedTestServer* test_server = embedded_test_server();
-  ASSERT_TRUE(test_server->Start());
   test_server->RegisterRequestHandler(
       base::Bind(&HandlePostAndRedirectURLs, kRedirectPostPath));
+  ASSERT_TRUE(test_server->Start());
 
   NavigateToURL(shell(),
                 test_server->GetURL("/loader/async_resource_handler.html"));
 
   std::string js_result;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      shell()->web_contents(),
-      base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
-                         kRedirectPostPath,
-                         kPayloadSize),
+      shell(), base::StringPrintf("WaitForAsyncXHR('%s', %" PRIuS ")",
+                                  kRedirectPostPath, kPayloadSize),
       &js_result));
   EXPECT_EQ(js_result, "success");
 }

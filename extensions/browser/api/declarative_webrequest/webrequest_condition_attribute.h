@@ -5,22 +5,18 @@
 #ifndef EXTENSIONS_BROWSER_API_DECLARATIVE_WEBREQUEST_WEBREQUEST_CONDITION_ATTRIBUTE_H_
 #define EXTENSIONS_BROWSER_API_DECLARATIVE_WEBREQUEST_WEBREQUEST_CONDITION_ATTRIBUTE_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/common/resource_type.h"
 #include "extensions/browser/api/declarative_webrequest/request_stage.h"
 #include "extensions/common/api/events.h"
 
 namespace base {
 class Value;
-}
-
-namespace net {
-class URLRequest;
 }
 
 namespace extensions {
@@ -167,10 +163,11 @@ class WebRequestConditionAttributeRequestHeaders
 
  private:
   WebRequestConditionAttributeRequestHeaders(
-      scoped_ptr<const HeaderMatcher> header_matcher, bool positive);
+      std::unique_ptr<const HeaderMatcher> header_matcher,
+      bool positive);
   ~WebRequestConditionAttributeRequestHeaders() override;
 
-  const scoped_ptr<const HeaderMatcher> header_matcher_;
+  const std::unique_ptr<const HeaderMatcher> header_matcher_;
   const bool positive_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRequestConditionAttributeRequestHeaders);
@@ -200,10 +197,11 @@ class WebRequestConditionAttributeResponseHeaders
 
  private:
   WebRequestConditionAttributeResponseHeaders(
-      scoped_ptr<const HeaderMatcher> header_matcher, bool positive);
+      std::unique_ptr<const HeaderMatcher> header_matcher,
+      bool positive);
   ~WebRequestConditionAttributeResponseHeaders() override;
 
-  const scoped_ptr<const HeaderMatcher> header_matcher_;
+  const std::unique_ptr<const HeaderMatcher> header_matcher_;
   const bool positive_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRequestConditionAttributeResponseHeaders);

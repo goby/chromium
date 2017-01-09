@@ -4,6 +4,8 @@
 
 #include "extensions/browser/api/system_storage/system_storage_api.h"
 
+#include "base/memory/ptr_util.h"
+
 using storage_monitor::StorageMonitor;
 
 namespace extensions {
@@ -41,7 +43,8 @@ SystemStorageEjectDeviceFunction::~SystemStorageEjectDeviceFunction() {
 bool SystemStorageEjectDeviceFunction::RunAsync() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  scoped_ptr<EjectDevice::Params> params(EjectDevice::Params::Create(*args_));
+  std::unique_ptr<EjectDevice::Params> params(
+      EjectDevice::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   StorageMonitor::GetInstance()->EnsureInitialized(
@@ -87,7 +90,8 @@ void SystemStorageEjectDeviceFunction::HandleResponse(
       result = api::system_storage::EJECT_DEVICE_RESULT_CODE_FAILURE;
   }
 
-  SetResult(new base::StringValue(api::system_storage::ToString(result)));
+  SetResult(base::MakeUnique<base::StringValue>(
+      api::system_storage::ToString(result)));
   SendResponse(true);
 }
 
@@ -102,7 +106,7 @@ SystemStorageGetAvailableCapacityFunction::
 bool SystemStorageGetAvailableCapacityFunction::RunAsync() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  scoped_ptr<GetAvailableCapacity::Params> params(
+  std::unique_ptr<GetAvailableCapacity::Params> params(
       GetAvailableCapacity::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -135,7 +139,7 @@ void SystemStorageGetAvailableCapacityFunction::OnQueryCompleted(
     api::system_storage::StorageAvailableCapacityInfo result;
     result.id = transient_id;
     result.available_capacity = available_capacity;
-    SetResult(result.ToValue().release());
+    SetResult(result.ToValue());
   } else {
     SetError("Error occurred when querying available capacity.");
   }

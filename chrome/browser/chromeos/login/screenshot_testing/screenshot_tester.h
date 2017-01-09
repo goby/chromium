@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
@@ -28,6 +29,7 @@ class ScreenshotTester {
   // Contains the results of comparison
   struct Result {
     Result();
+    Result(const Result& other);
     ~Result();
 
     // Is true if screenshots are considered to be equal, false otherwise.

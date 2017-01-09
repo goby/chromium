@@ -2,14 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/local_discovery/test_service_discovery_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
@@ -31,9 +38,9 @@
 #include "net/url_request/url_request_test_util.h"
 
 #if defined(OS_CHROMEOS)
-#include "base/prefs/pref_service.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_switches.h"
+#include "components/prefs/pref_service.h"
 #endif
 
 using testing::InvokeWithoutArgs;
@@ -53,7 +60,7 @@ namespace local_discovery {
 
 namespace {
 
-const uint8 kQueryData[] = {
+const uint8_t kQueryData[] = {
   // Header
   0x00, 0x00,
   0x00, 0x00,               // Flags not set.
@@ -73,7 +80,7 @@ const uint8 kQueryData[] = {
   0x00, 0x01,               // QCLASS: IN class. Unicast bit not set.
 };
 
-const uint8 kAnnouncePacket[] = {
+const uint8_t kAnnouncePacket[] = {
   // Header
   0x00, 0x00,               // ID is zeroed out
   0x80, 0x00,               // Standard query response, no error
@@ -148,7 +155,7 @@ const uint8 kAnnouncePacket[] = {
 };
 
 
-const uint8 kGoodbyePacket[] = {
+const uint8_t kGoodbyePacket[] = {
   // Header
   0x00, 0x00,               // ID is zeroed out
   0x80, 0x00,               // Standard query response, RA, no error
@@ -185,7 +192,7 @@ const uint8 kGoodbyePacket[] = {
   0x00,
 };
 
-const uint8 kAnnouncePacketRegistered[] = {
+const uint8_t kAnnouncePacketRegistered[] = {
   // Header
   0x00, 0x00,               // ID is zeroed out
   0x80, 0x00,               // Standard query response, RA, no error
@@ -223,19 +230,19 @@ const char kResponseInfoWithID[] = "{"
 
 const char kResponseRegisterStart[] = "{"
     "     \"action\": \"start\","
-    "     \"user\": \"user@host.com\""
+    "     \"user\": \"user@consumer.example.com\""
     "}";
 
 const char kResponseRegisterClaimTokenNoConfirm[] = "{"
     "    \"action\": \"getClaimToken\","
-    "    \"user\": \"user@host.com\","
+    "    \"user\": \"user@consumer.example.com\","
     "    \"error\": \"pending_user_action\","
     "    \"timeout\": 1"
     "}";
 
 const char kResponseRegisterClaimTokenConfirm[] = "{"
     "    \"action\": \"getClaimToken\","
-    "    \"user\": \"user@host.com\","
+    "    \"user\": \"user@consumer.example.com\","
     "    \"token\": \"MySampleToken\","
     "    \"claim_url\": \"http://someurl.com/\""
     "}";
@@ -244,7 +251,7 @@ const char kResponseCloudPrintConfirm[] = "{ \"success\": true }";
 
 const char kResponseRegisterComplete[] = "{"
     "    \"action\": \"complete\","
-    "    \"user\": \"user@host.com\","
+    "    \"user\": \"user@consumer.example.com\","
     "    \"device_id\": \"my_id\""
     "}";
 
@@ -261,20 +268,22 @@ const char kResponseGaiaId[] = "{"
 const char kURLInfo[] = "http://1.2.3.4:8888/privet/info";
 
 const char kURLRegisterStart[] =
-    "http://1.2.3.4:8888/privet/register?action=start&user=user%40host.com";
+    "http://1.2.3.4:8888/privet/register?action=start&"
+    "user=user%40consumer.example.com";
 
 const char kURLRegisterClaimToken[] =
     "http://1.2.3.4:8888/privet/register?action=getClaimToken&"
-    "user=user%40host.com";
+    "user=user%40consumer.example.com";
 
 const char kURLCloudPrintConfirm[] =
     "https://www.google.com/cloudprint/confirm?token=MySampleToken";
 
 const char kURLRegisterComplete[] =
-    "http://1.2.3.4:8888/privet/register?action=complete&user=user%40host.com";
+    "http://1.2.3.4:8888/privet/register?action=complete&"
+    "user=user%40consumer.example.com";
 
 const char kSampleGaiaId[] = "12345";
-const char kSampleUser[] = "user@host.com";
+const char kSampleUser[] = "user@consumer.example.com";
 
 class TestMessageLoopCondition {
  public:
@@ -297,7 +306,7 @@ class TestMessageLoopCondition {
   void Wait() {
     while (!signaled_) {
       waiting_ = true;
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
       waiting_ = false;
     }
     signaled_ = false;
@@ -320,14 +329,14 @@ class MockableFakeURLFetcherCreator {
 
   MOCK_METHOD1(OnCreateFakeURLFetcher, void(const std::string& url));
 
-  scoped_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* delegate,
       const std::string& response_data,
       net::HttpStatusCode response_code,
       net::URLRequestStatus::Status status) {
     OnCreateFakeURLFetcher(url.spec());
-    return scoped_ptr<net::FakeURLFetcher>(new net::FakeURLFetcher(
+    return std::unique_ptr<net::FakeURLFetcher>(new net::FakeURLFetcher(
         url, delegate, response_data, response_code, status));
   }
 
@@ -445,10 +454,10 @@ class LocalDiscoveryUITest : public WebUIBrowserTest {
     base::CancelableCallback<void()> callback(
         base::Bind(&base::MessageLoop::QuitWhenIdle,
                    base::Unretained(base::MessageLoop::current())));
-    base::MessageLoop::current()->task_runner()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, callback.callback(), time_period);
 
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     callback.Cancel();
   }
 
@@ -494,7 +503,7 @@ IN_PROC_BROWSER_TEST_F(LocalDiscoveryUITest, AddRowTest) {
   test_service_discovery_client()->SimulateReceive(
       kAnnouncePacket, sizeof(kAnnouncePacket));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(WebUIBrowserTest::RunJavascriptTest("checkOneDevice"));
 
@@ -506,8 +515,8 @@ IN_PROC_BROWSER_TEST_F(LocalDiscoveryUITest, AddRowTest) {
   EXPECT_TRUE(WebUIBrowserTest::RunJavascriptTest("checkNoDevices"));
 }
 
-
-IN_PROC_BROWSER_TEST_F(LocalDiscoveryUITest, RegisterTest) {
+// Flaky: http://crbug.com/660669.
+IN_PROC_BROWSER_TEST_F(LocalDiscoveryUITest, DISABLED_RegisterTest) {
   TestMessageLoopCondition condition_token_claimed;
 
   ui_test_utils::NavigateToURL(browser(), GURL(
@@ -517,7 +526,7 @@ IN_PROC_BROWSER_TEST_F(LocalDiscoveryUITest, RegisterTest) {
   test_service_discovery_client()->SimulateReceive(
       kAnnouncePacket, sizeof(kAnnouncePacket));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(WebUIBrowserTest::RunJavascriptTest("checkOneDevice"));
 
@@ -570,7 +579,7 @@ IN_PROC_BROWSER_TEST_F(LocalDiscoveryUITest, RegisterTest) {
   test_service_discovery_client()->SimulateReceive(
       kAnnouncePacketRegistered, sizeof(kAnnouncePacketRegistered));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(WebUIBrowserTest::RunJavascriptTest("expectRegisterDone"));
 }

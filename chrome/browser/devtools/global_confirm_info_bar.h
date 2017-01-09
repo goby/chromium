@@ -25,17 +25,19 @@ class WebContents;
 class GlobalConfirmInfoBar : public TabStripModelObserver,
                              public infobars::InfoBarManager::Observer {
  public:
-  static base::WeakPtr<GlobalConfirmInfoBar>
-      Show(scoped_ptr<ConfirmInfoBarDelegate> delegate);
+  static base::WeakPtr<GlobalConfirmInfoBar> Show(
+      std::unique_ptr<ConfirmInfoBarDelegate> delegate);
   void Close();
 
  private:
-  explicit GlobalConfirmInfoBar(scoped_ptr<ConfirmInfoBarDelegate> delegate);
+  explicit GlobalConfirmInfoBar(
+      std::unique_ptr<ConfirmInfoBarDelegate> delegate);
   ~GlobalConfirmInfoBar() override;
   class DelegateProxy;
 
   // TabStripModelObserver:
-  void TabInsertedAt(content::WebContents* web_contents,
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     content::WebContents* web_contents,
                      int index,
                      bool foreground) override;
   void TabChangedAt(content::WebContents* web_contents,
@@ -46,7 +48,10 @@ class GlobalConfirmInfoBar : public TabStripModelObserver,
   void OnInfoBarRemoved(infobars::InfoBar* info_bar, bool animate) override;
   void OnManagerShuttingDown(infobars::InfoBarManager* manager) override;
 
-  scoped_ptr<ConfirmInfoBarDelegate> delegate_;
+  // Adds the info bar to the tab if it is missing.
+  void MaybeAddInfoBar(content::WebContents* web_contents);
+
+  std::unique_ptr<ConfirmInfoBarDelegate> delegate_;
   std::map<infobars::InfoBarManager*, DelegateProxy*> proxies_;
   BrowserTabStripTracker browser_tab_strip_tracker_;
 

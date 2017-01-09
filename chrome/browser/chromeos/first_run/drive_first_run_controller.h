@@ -4,7 +4,7 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FIRST_RUN_DRIVE_FIRST_RUN_CONTROLLER_H_
 #define CHROME_BROWSER_CHROMEOS_FIRST_RUN_DRIVE_FIRST_RUN_CONTROLLER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/profiles/profile.h"
@@ -77,7 +77,7 @@ class DriveFirstRunController {
   void CleanUp();
 
   Profile* profile_;
-  scoped_ptr<DriveWebContentsManager> web_contents_manager_;
+  std::unique_ptr<DriveWebContentsManager> web_contents_manager_;
   base::OneShotTimer web_contents_timer_;
   base::OneShotTimer initial_delay_timer_;
   bool started_;

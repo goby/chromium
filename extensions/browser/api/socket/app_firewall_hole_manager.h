@@ -5,8 +5,11 @@
 #ifndef EXTENSIONS_BROWSER_API_SOCKET_APP_FIREWALL_HOLE_MANAGER_H_
 #define EXTENSIONS_BROWSER_API_SOCKET_APP_FIREWALL_HOLE_MANAGER_H_
 
+#include <stdint.h>
+
 #include <map>
 
+#include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "chromeos/network/firewall_hole.h"
 #include "extensions/browser/app_window/app_window_registry.h"
@@ -24,7 +27,7 @@ class AppFirewallHoleManager;
 // closed on destruction.
 class AppFirewallHole {
  public:
-  typedef chromeos::FirewallHole::PortType PortType;
+  using PortType = chromeos::FirewallHole::PortType;
 
   ~AppFirewallHole();
 
@@ -35,25 +38,24 @@ class AppFirewallHole {
  private:
   friend class AppFirewallHoleManager;
 
-  AppFirewallHole(AppFirewallHoleManager* manager,
+  AppFirewallHole(const base::WeakPtr<AppFirewallHoleManager>& manager,
                   PortType type,
                   uint16_t port,
                   const std::string& extension_id);
 
   void SetVisible(bool app_visible);
-  void OnFirewallHoleOpened(scoped_ptr<chromeos::FirewallHole> firewall_hole);
+  void OnFirewallHoleOpened(
+      std::unique_ptr<chromeos::FirewallHole> firewall_hole);
 
   PortType type_;
   uint16_t port_;
   std::string extension_id_;
   bool app_visible_ = false;
 
-  // This object is destroyed when the AppFirewallHoleManager that owns it is
-  // destroyed and so a raw pointer is okay here.
-  AppFirewallHoleManager* manager_;
+  base::WeakPtr<AppFirewallHoleManager> manager_;
 
   // This will hold the FirewallHole object if one is opened.
-  scoped_ptr<chromeos::FirewallHole> firewall_hole_;
+  std::unique_ptr<chromeos::FirewallHole> firewall_hole_;
 
   base::WeakPtrFactory<AppFirewallHole> weak_factory_;
 };
@@ -70,11 +72,11 @@ class AppFirewallHoleManager : public KeyedService,
   // Returns the instance for a given browser context, or NULL if none.
   static AppFirewallHoleManager* Get(content::BrowserContext* context);
 
-  // Takes ownership of the AppFirewallHole and will open a port on the system
-  // firewall if the associated application is currently visible.
-  scoped_ptr<AppFirewallHole> Open(AppFirewallHole::PortType type,
-                                   uint16_t port,
-                                   const std::string& extension_id);
+  // Opens a port on the system firewall if the associated application is
+  // currently visible.
+  std::unique_ptr<AppFirewallHole> Open(AppFirewallHole::PortType type,
+                                        uint16_t port,
+                                        const std::string& extension_id);
 
  private:
   friend class AppFirewallHole;
@@ -89,6 +91,8 @@ class AppFirewallHoleManager : public KeyedService,
   content::BrowserContext* context_;
   ScopedObserver<AppWindowRegistry, AppWindowRegistry::Observer> observer_;
   std::multimap<std::string, AppFirewallHole*> tracked_holes_;
+
+  base::WeakPtrFactory<AppFirewallHoleManager> weak_factory_;
 };
 
 }  // namespace extensions

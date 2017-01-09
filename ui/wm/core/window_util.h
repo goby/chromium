@@ -5,11 +5,10 @@
 #ifndef UI_WM_CORE_WINDOW_UTIL_H_
 #define UI_WM_CORE_WINDOW_UTIL_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/wm/wm_export.h"
 
 namespace aura {
@@ -43,8 +42,14 @@ WM_EXPORT aura::Window* GetToplevelWindow(aura::Window* window);
 //
 // As a result of this |root| has freshly created layers, meaning the layers
 // have not yet been painted to.
-WM_EXPORT scoped_ptr<ui::LayerTreeOwner> RecreateLayers(
+WM_EXPORT std::unique_ptr<ui::LayerTreeOwner> RecreateLayers(
     ui::LayerOwner* root);
+
+// Returns a layer tree that mirrors |root|. Used for live window previews. If
+// |sync_bounds| is true, the bounds of all mirror layers except the root are
+// synchronized. See |sync_bounds_| in ui::Layer.
+WM_EXPORT std::unique_ptr<ui::LayerTreeOwner> MirrorLayers(
+    ui::LayerOwner* root, bool sync_bounds);
 
 // Convenience functions that get the TransientWindowManager for the window and
 // redirect appropriately. These are preferable to calling functions on

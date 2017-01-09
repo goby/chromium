@@ -6,37 +6,39 @@
 #define CSSURIValue_h
 
 #include "core/css/CSSValue.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
+#include "wtf/text/WTFString.h"
 
 namespace blink {
 
+class Document;
+class SVGElementProxy;
+
 class CSSURIValue : public CSSValue {
-public:
-    static PassRefPtrWillBeRawPtr<CSSURIValue> create(const String& str)
-    {
-        return adoptRefWillBeNoop(new CSSURIValue(str));
-    }
+ public:
+  static CSSURIValue* create(const String& str) { return new CSSURIValue(str); }
+  ~CSSURIValue();
 
-    String value() const { return m_string; }
+  SVGElementProxy& ensureElementProxy(Document&) const;
 
-    String customCSSText() const;
+  const String& value() const { return m_url; }
+  const String& url() const { return m_url; }
 
-    bool equals(const CSSURIValue& other) const
-    {
-        return m_string == other.m_string;
-    }
+  String customCSSText() const;
 
-    DECLARE_TRACE_AFTER_DISPATCH();
+  bool equals(const CSSURIValue&) const;
 
-private:
-    CSSURIValue(const String&);
+  DECLARE_TRACE_AFTER_DISPATCH();
 
-    String m_string;
+ private:
+  explicit CSSURIValue(const String&);
+
+  String m_url;
+
+  mutable Member<SVGElementProxy> m_proxy;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSURIValue, isURIValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSURIValue_h
+#endif  // CSSURIValue_h

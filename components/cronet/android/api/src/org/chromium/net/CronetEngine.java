@@ -5,34 +5,21 @@
 package org.chromium.net;
 
 import android.content.Context;
-import android.support.annotation.IntDef;
-import android.util.Base64;
-import android.util.Log;
+import android.net.http.HttpResponseCache;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.File;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.reflect.Constructor;
-import java.net.IDN;
-import java.net.Proxy;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandlerFactory;
 import java.util.Date;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
-import java.util.regex.Pattern;
 
+import javax.net.ssl.HttpsURLConnection;
 /**
  * An engine to process {@link UrlRequest}s, which uses the best HTTP stack
- * available on the current platform.
+ * available on the current platform. An instance of this class can be created
+ * using {@link Builder}.
  */
 public abstract class CronetEngine {
     /**
@@ -40,46 +27,67 @@ public abstract class CronetEngine {
      * {@code CronetEngine}. Configuration options are set on the builder and
      * then {@link #build} is called to create the {@code CronetEngine}.
      */
+    // NOTE(kapishnikov): In order to avoid breaking the existing API clients, all future methods
+    // added to this class and other API classes must have default implementation.
     public static class Builder {
-        private static final Pattern INVALID_PKP_HOST_NAME = Pattern.compile("^[0-9\\.]*$");
-
-        private final JSONObject mConfig;
-        private final Context mContext;
-
         /**
-         * Default config enables SPDY, disables QUIC, SDCH and HTTP cache.
-         * @param context Android {@link Context} for engine to use.
+         * A class which provides a method for loading the cronet native library. Apps needing to
+         * implement custom library loading logic can inherit from this class and pass an instance
+         * to {@link CronetEngine.Builder#setLibraryLoader}. For example, this might be required
+         * to work around {@code UnsatisfiedLinkError}s caused by flaky installation on certain
+         * older devices.
          */
-        public Builder(Context context) {
-            mConfig = new JSONObject();
-            mContext = context;
-            enableLegacyMode(false);
-            enableQUIC(false);
-            enableHTTP2(true);
-            enableSDCH(false);
-            enableHttpCache(HTTP_CACHE_DISABLED, 0);
+        public abstract static class LibraryLoader {
+            /**
+             * Loads the native library.
+             * @param libName name of the library to load
+             */
+            public abstract void loadLibrary(String libName);
         }
 
         /**
-         * Constructs a User-Agent string including Cronet version, and
-         * application name and version.
+         * Reference to the actual builder implementation.
+         * {@hide exclude from JavaDoc}.
+         */
+        protected final ICronetEngineBuilder mBuilderDelegate;
+
+        /**
+         * Constructs a {@link Builder} object that facilitates creating a
+         * {@link CronetEngine}. The default configuration enables HTTP/2 and
+         * disables QUIC, SDCH and the HTTP cache.
+         *
+         * @param context Android {@link Context}, which is used by
+         *                {@link Builder} to retrieve the application
+         *                context. A reference to only the application
+         *                context will be kept, so as to avoid extending
+         *                the lifetime of {@code context} unnecessarily.
+         */
+        public Builder(Context context) {
+            mBuilderDelegate = ImplLoader.load(context);
+        }
+
+        /**
+         * Constructs a User-Agent string including application name and version,
+         * system build version, model and id, and Cronet version.
          *
          * @return User-Agent string.
          */
         public String getDefaultUserAgent() {
-            return UserAgent.from(mContext);
+            return mBuilderDelegate.getDefaultUserAgent();
         }
 
         /**
-         * Overrides the User-Agent header for all requests.
+         * Overrides the User-Agent header for all requests. An explicitly
+         * set User-Agent header (set using
+         * {@link UrlRequest.Builder#addHeader}) will override a value set
+         * using this function.
+         *
+         * @param userAgent the User-Agent string to use for all requests.
          * @return the builder to facilitate chaining.
          */
         public Builder setUserAgent(String userAgent) {
-            return putString(CronetEngineBuilderList.USER_AGENT, userAgent);
-        }
-
-        String getUserAgent() {
-            return mConfig.optString(CronetEngineBuilderList.USER_AGENT);
+            mBuilderDelegate.setUserAgent(userAgent);
+            return this;
         }
 
         /**
@@ -94,62 +102,42 @@ public abstract class CronetEngine {
          * @return the builder to facilitate chaining.
          */
         public Builder setStoragePath(String value) {
-            if (!new File(value).isDirectory()) {
-                throw new IllegalArgumentException(
-                        "Storage path must be set to existing directory");
-            }
-
-            return putString(CronetEngineBuilderList.STORAGE_PATH, value);
-        }
-
-        String storagePath() {
-            return mConfig.optString(CronetEngineBuilderList.STORAGE_PATH);
+            mBuilderDelegate.setStoragePath(value);
+            return this;
         }
 
         /**
-         * Sets whether falling back to implementation based on system's
-         * {@link java.net.HttpURLConnection} implementation is enabled.
-         * Defaults to disabled.
-         * @return the builder to facilitate chaining.
-         * @deprecated Not supported by the new API.
-         */
-        @Deprecated
-        public Builder enableLegacyMode(boolean value) {
-            return putBoolean(CronetEngineBuilderList.ENABLE_LEGACY_MODE, value);
-        }
-
-        boolean legacyMode() {
-            return mConfig.optBoolean(CronetEngineBuilderList.ENABLE_LEGACY_MODE);
-        }
-
-        /**
-         * Overrides the name of the native library backing Cronet.
+         * Sets a {@link LibraryLoader} to be used to load the native library.
+         * If not set, the library will be loaded using {@link System#loadLibrary}.
+         * @param loader {@code LibraryLoader} to be used to load the native library.
          * @return the builder to facilitate chaining.
          */
-        Builder setLibraryName(String libName) {
-            return putString(CronetEngineBuilderList.NATIVE_LIBRARY_NAME, libName);
-        }
-
-        String libraryName() {
-            return mConfig.optString(CronetEngineBuilderList.NATIVE_LIBRARY_NAME, "cronet");
+        public Builder setLibraryLoader(LibraryLoader loader) {
+            mBuilderDelegate.setLibraryLoader(loader);
+            return this;
         }
 
         /**
          * Sets whether <a href="https://www.chromium.org/quic">QUIC</a> protocol
-         * is enabled. Defaults to disabled.
+         * is enabled. Defaults to disabled. If QUIC is enabled, then QUIC User Agent Id
+         * containing application name and Cronet version is sent to the server.
+         * @param value {@code true} to enable QUIC, {@code false} to disable.
          * @return the builder to facilitate chaining.
          */
-        public Builder enableQUIC(boolean value) {
-            return putBoolean(CronetEngineBuilderList.ENABLE_QUIC, value);
+        public Builder enableQuic(boolean value) {
+            mBuilderDelegate.enableQuic(value);
+            return this;
         }
 
         /**
          * Sets whether <a href="https://tools.ietf.org/html/rfc7540">HTTP/2</a>
          * protocol is enabled. Defaults to enabled.
+         * @param value {@code true} to enable HTTP/2, {@code false} to disable.
          * @return the builder to facilitate chaining.
          */
-        public Builder enableHTTP2(boolean value) {
-            return putBoolean(CronetEngineBuilderList.ENABLE_SPDY, value);
+        public Builder enableHttp2(boolean value) {
+            mBuilderDelegate.enableHttp2(value);
+            return this;
         }
 
         /**
@@ -157,60 +145,13 @@ public abstract class CronetEngine {
          * <a
          * href="https://lists.w3.org/Archives/Public/ietf-http-wg/2008JulSep/att-0441/Shared_Dictionary_Compression_over_HTTP.pdf">
          * SDCH</a> compression is enabled. Defaults to disabled.
+         * @param value {@code true} to enable SDCH, {@code false} to disable.
          * @return the builder to facilitate chaining.
          */
-        public Builder enableSDCH(boolean value) {
-            return putBoolean(CronetEngineBuilderList.ENABLE_SDCH, value);
-        }
-
-        /**
-         * Enables
-         * <a href="https://developer.chrome.com/multidevice/data-compression">Data
-         * Reduction Proxy</a>. Defaults to disabled.
-         * @param key key to use when authenticating with the proxy.
-         * @return the builder to facilitate chaining.
-         */
-        public Builder enableDataReductionProxy(String key) {
-            return (putString(CronetEngineBuilderList.DATA_REDUCTION_PROXY_KEY, key));
-        }
-
-        /**
-         * Overrides
-         * <a href="https://developer.chrome.com/multidevice/data-compression">
-         * Data Reduction Proxy</a> configuration parameters with a primary
-         * proxy name, fallback proxy name, and a secure proxy check URL. Proxies
-         * are specified as [scheme://]host[:port]. Used for testing.
-         * @param primaryProxy the primary data reduction proxy to use.
-         * @param fallbackProxy a fallback data reduction proxy to use.
-         * @param secureProxyCheckUrl a URL to fetch to determine if using a secure
-         * proxy is allowed.
-         * @return the builder to facilitate chaining.
-         * @hide
-         * @deprecated Marked as deprecated because @hide doesn't properly hide but
-         *         javadocs are built with nodeprecated="yes".
-         */
-        @SuppressWarnings("DepAnn")
-        public Builder setDataReductionProxyOptions(
-                String primaryProxy, String fallbackProxy, String secureProxyCheckUrl) {
-            if (primaryProxy.isEmpty() || fallbackProxy.isEmpty()
-                    || secureProxyCheckUrl.isEmpty()) {
-                throw new IllegalArgumentException(
-                        "Primary and fallback proxies and check url must be set");
-            }
-            putString(CronetEngineBuilderList.DATA_REDUCTION_PRIMARY_PROXY, primaryProxy);
-            putString(CronetEngineBuilderList.DATA_REDUCTION_FALLBACK_PROXY, fallbackProxy);
-            putString(CronetEngineBuilderList.DATA_REDUCTION_SECURE_PROXY_CHECK_URL,
-                    secureProxyCheckUrl);
+        public Builder enableSdch(boolean value) {
+            mBuilderDelegate.enableSdch(value);
             return this;
         }
-
-        /** @deprecated not really deprecated but hidden. */
-        @IntDef({
-                HTTP_CACHE_DISABLED, HTTP_CACHE_IN_MEMORY, HTTP_CACHE_DISK_NO_HTTP, HTTP_CACHE_DISK,
-        })
-        @Retention(RetentionPolicy.SOURCE)
-        @SuppressWarnings("DepAnn")
-        public @interface HttpCacheSetting {}
 
         /**
          * Setting to disable HTTP cache. Some data may still be temporarily stored in memory.
@@ -247,33 +188,8 @@ public abstract class CronetEngine {
          * exceeded at times).
          * @return the builder to facilitate chaining.
          */
-        public Builder enableHttpCache(@HttpCacheSetting int cacheMode, long maxSize) {
-            if (cacheMode == HTTP_CACHE_DISK || cacheMode == HTTP_CACHE_DISK_NO_HTTP) {
-                if (storagePath().isEmpty()) {
-                    throw new IllegalArgumentException("Storage path must be set");
-                }
-            } else {
-                if (!storagePath().isEmpty()) {
-                    throw new IllegalArgumentException("Storage path must be empty");
-                }
-            }
-            putBoolean(CronetEngineBuilderList.LOAD_DISABLE_CACHE,
-                    cacheMode == HTTP_CACHE_DISABLED || cacheMode == HTTP_CACHE_DISK_NO_HTTP);
-            putLong(CronetEngineBuilderList.HTTP_CACHE_MAX_SIZE, maxSize);
-
-            switch (cacheMode) {
-                case HTTP_CACHE_DISABLED:
-                    return putString(CronetEngineBuilderList.HTTP_CACHE,
-                            CronetEngineBuilderList.HTTP_CACHE_DISABLED);
-                case HTTP_CACHE_DISK_NO_HTTP:
-                case HTTP_CACHE_DISK:
-                    return putString(CronetEngineBuilderList.HTTP_CACHE,
-                            CronetEngineBuilderList.HTTP_CACHE_DISK);
-
-                case HTTP_CACHE_IN_MEMORY:
-                    return putString(CronetEngineBuilderList.HTTP_CACHE,
-                            CronetEngineBuilderList.HTTP_CACHE_MEMORY);
-            }
+        public Builder enableHttpCache(int cacheMode, long maxSize) {
+            mBuilderDelegate.enableHttpCache(cacheMode, maxSize);
             return this;
         }
 
@@ -289,24 +205,7 @@ public abstract class CronetEngine {
          * @return the builder to facilitate chaining.
          */
         public Builder addQuicHint(String host, int port, int alternatePort) {
-            if (host.contains("/")) {
-                throw new IllegalArgumentException("Illegal QUIC Hint Host: " + host);
-            }
-            try {
-                JSONArray quicHints = mConfig.optJSONArray(CronetEngineBuilderList.QUIC_HINTS);
-                if (quicHints == null) {
-                    quicHints = new JSONArray();
-                    mConfig.put(CronetEngineBuilderList.QUIC_HINTS, quicHints);
-                }
-
-                JSONObject hint = new JSONObject();
-                hint.put(CronetEngineBuilderList.QUIC_HINT_HOST, host);
-                hint.put(CronetEngineBuilderList.QUIC_HINT_PORT, port);
-                hint.put(CronetEngineBuilderList.QUIC_HINT_ALT_PORT, alternatePort);
-                quicHints.put(hint);
-            } catch (JSONException e) {
-                // Intentionally do nothing.
-            }
+            mBuilderDelegate.addQuicHint(host, port, alternatePort);
             return this;
         }
 
@@ -353,243 +252,37 @@ public abstract class CronetEngine {
          */
         public Builder addPublicKeyPins(String hostName, Set<byte[]> pinsSha256,
                 boolean includeSubdomains, Date expirationDate) {
-            if (hostName == null) {
-                throw new NullPointerException("The hostname cannot be null");
-            }
-            if (pinsSha256 == null) {
-                throw new NullPointerException("The set of SHA256 pins cannot be null");
-            }
-            if (expirationDate == null) {
-                throw new NullPointerException("The pin expiration date cannot be null");
-            }
-            String idnHostName = validateHostNameForPinningAndConvert(hostName);
-            try {
-                // Add PKP_LIST JSON array element if it is not present.
-                JSONArray pkpList = mConfig.optJSONArray(CronetEngineBuilderList.PKP_LIST);
-                if (pkpList == null) {
-                    pkpList = new JSONArray();
-                    mConfig.put(CronetEngineBuilderList.PKP_LIST, pkpList);
-                }
-
-                // Convert the pin to BASE64 encoding. The hash set will eliminate duplications.
-                Set<String> hashes = new HashSet<>(pinsSha256.size());
-                for (byte[] pinSha256 : pinsSha256) {
-                    hashes.add(convertSha256ToBase64WithPrefix(pinSha256));
-                }
-
-                // Add new element to PKP_LIST JSON array.
-                JSONObject pkp = new JSONObject();
-                pkp.put(CronetEngineBuilderList.PKP_HOST, idnHostName);
-                pkp.put(CronetEngineBuilderList.PKP_PIN_HASHES, new JSONArray(hashes));
-                pkp.put(CronetEngineBuilderList.PKP_INCLUDE_SUBDOMAINS, includeSubdomains);
-                // The expiration time is passed as a double, in seconds since January 1, 1970.
-                pkp.put(CronetEngineBuilderList.PKP_EXPIRATION_DATE,
-                        (double) expirationDate.getTime() / 1000);
-                pkpList.put(pkp);
-            } catch (JSONException e) {
-                // This exception should never happen.
-                throw new RuntimeException(
-                        "Failed to add pubic key pins with the given arguments", e);
-            }
+            mBuilderDelegate.addPublicKeyPins(
+                    hostName, pinsSha256, includeSubdomains, expirationDate);
             return this;
         }
 
         /**
-         * Converts a given SHA256 array of bytes to BASE64 encoded string and prepends
-         * {@code sha256/} prefix to it. The format corresponds to the format that is expected by
-         * {@code net::HashValue} class.
+         * Enables or disables public key pinning bypass for local trust anchors. Disabling the
+         * bypass for local trust anchors is highly discouraged since it may prohibit the app
+         * from communicating with the pinned hosts. E.g., a user may want to send all traffic
+         * through an SSL enabled proxy by changing the device proxy settings and adding the
+         * proxy certificate to the list of local trust anchor. Disabling the bypass will most
+         * likly prevent the app from sending any traffic to the pinned hosts. For more
+         * information see 'How does key pinning interact with local proxies and filters?' at
+         * https://www.chromium.org/Home/chromium-security/security-faq
          *
-         * @param sha256 SHA256 bytes to convert to BASE64.
-         * @return the BASE64 encoded SHA256 with the prefix.
-         * @throws IllegalArgumentException if the provided pin is invalid.
-         */
-        private static String convertSha256ToBase64WithPrefix(byte[] sha256) {
-            if (sha256 == null || sha256.length != 32) {
-                throw new IllegalArgumentException("Public key pin is invalid");
-            }
-            return "sha256/" + Base64.encodeToString(sha256, Base64.NO_WRAP);
-        }
-
-        /**
-         * Checks whether a given string represents a valid host name for PKP and converts it
-         * to ASCII Compatible Encoding representation according to RFC 1122, RFC 1123 and
-         * RFC 3490. This method is more restrictive than required by RFC 7469. Thus, a host
-         * that contains digits and the dot character only is considered invalid.
-         *
-         * Note: Currently Cronet doesn't have native implementation of host name validation that
-         *       can be used. There is code that parses a provided URL but doesn't ensure its
-         *       correctness. The implementation relies on {@code getaddrinfo} function.
-         *
-         * @param hostName host name to check and convert.
-         * @return true if the string is a valid host name.
-         * @throws IllegalArgumentException if the the given string does not represent a valid
-         *                                  hostname.
-         */
-        private static String validateHostNameForPinningAndConvert(String hostName)
-                throws IllegalArgumentException {
-            if (INVALID_PKP_HOST_NAME.matcher(hostName).matches()) {
-                throw new IllegalArgumentException("Hostname " + hostName + " is illegal."
-                        + " A hostname should not consist of digits and/or dots only.");
-            }
-            try {
-                return IDN.toASCII(hostName, IDN.USE_STD3_ASCII_RULES);
-            } catch (IllegalArgumentException ex) {
-                throw new IllegalArgumentException("Hostname " + hostName + " is illegal."
-                        + " The name of the host does not comply with RFC 1122 and RFC 1123.");
-            }
-        }
-
-        /**
-         * Sets experimental options to be used in Cronet.
-         *
-         * @param options JSON formatted experimental options.
+         * @param value {@code true} to enable the bypass, {@code false} to disable.
          * @return the builder to facilitate chaining.
          */
-        public Builder setExperimentalOptions(String options) {
-            return putString(CronetEngineBuilderList.EXPERIMENTAL_OPTIONS, options);
-        }
-
-        /**
-         * Sets a native MockCertVerifier for testing.
-         */
-        Builder setMockCertVerifierForTesting(long mockCertVerifier) {
-            return putString(
-                    CronetEngineBuilderList.MOCK_CERT_VERIFIER, String.valueOf(mockCertVerifier));
-        }
-
-        /**
-         * Gets a JSON string representation of the builder.
-         */
-        String toJSONString() {
-            return mConfig.toString();
-        }
-
-        /**
-         * Returns {@link Context} for builder.
-         *
-         * @return {@link Context} for builder.
-         */
-        Context getContext() {
-            return mContext;
-        }
-
-        /**
-         * Sets a boolean value in the config. Returns a reference to the same
-         * config object, so you can chain put calls together.
-         * @return the builder to facilitate chaining.
-         */
-        private Builder putBoolean(String key, boolean value) {
-            try {
-                mConfig.put(key, value);
-            } catch (JSONException e) {
-                // Intentionally do nothing.
-            }
-            return this;
-        }
-
-        /**
-         * Sets a long value in the config. Returns a reference to the same
-         * config object, so you can chain put calls together.
-         * @return the builder to facilitate chaining.
-         */
-        private Builder putLong(String key, long value) {
-            try {
-                mConfig.put(key, value);
-            } catch (JSONException e) {
-                // Intentionally do nothing.
-            }
-            return this;
-        }
-
-        /**
-         * Sets a string value in the config. Returns a reference to the same
-         * config object, so you can chain put calls together.
-         * @return the builder to facilitate chaining.
-         */
-        private Builder putString(String key, String value) {
-            try {
-                mConfig.put(key, value);
-            } catch (JSONException e) {
-                // Intentionally do nothing.
-            }
+        public Builder enablePublicKeyPinningBypassForLocalTrustAnchors(boolean value) {
+            mBuilderDelegate.enablePublicKeyPinningBypassForLocalTrustAnchors(value);
             return this;
         }
 
         /**
          * Build a {@link CronetEngine} using this builder's configuration.
+         * @return constructed {@link CronetEngine}.
          */
         public CronetEngine build() {
-            CronetEngine engine = createContext(this);
-            // Clear MOCK_CERT_VERIFIER reference if there is any, since
-            // the ownership has been transferred to the engine.
-            mConfig.remove(CronetEngineBuilderList.MOCK_CERT_VERIFIER);
-            return engine;
+            return mBuilderDelegate.build();
         }
     }
-
-    private static final String TAG = "UrlRequestFactory";
-    private static final String CRONET_URL_REQUEST_CONTEXT =
-            "org.chromium.net.CronetUrlRequestContext";
-
-    /**
-     * Creates a {@link UrlRequest} object. All callbacks will
-     * be called on {@code executor}'s thread. {@code executor} must not run
-     * tasks on the current thread to prevent blocking networking operations
-     * and causing exceptions during shutdown. Request is given medium priority,
-     * see {@link UrlRequest.Builder#REQUEST_PRIORITY_MEDIUM}. To specify other
-     * priorities see {@link #createRequest(String, UrlRequest.Callback,
-     * Executor, int priority)}.
-     *
-     * @param url {@link URL} for the request.
-     * @param callback callback object that gets invoked on different events.
-     * @param executor {@link Executor} on which all callbacks will be invoked.
-     * @return new request.
-     * @deprecated Use {@link UrlRequest.Builder#build}.
-     */
-    @Deprecated
-    public abstract UrlRequest createRequest(
-            String url, UrlRequest.Callback callback, Executor executor);
-
-    /**
-     * Creates a {@link UrlRequest} object. All callbacks will
-     * be called on {@code executor}'s thread. {@code executor} must not run
-     * tasks on the current thread to prevent blocking networking operations
-     * and causing exceptions during shutdown.
-     *
-     * @param url {@link URL} for the request.
-     * @param callback callback object that gets invoked on different events.
-     * @param executor {@link Executor} on which all callbacks will be invoked.
-     * @param priority priority of the request which should be one of the
-     *         {@link UrlRequest.Builder#REQUEST_PRIORITY_IDLE REQUEST_PRIORITY_*}
-     *         values.
-     * @return new request.
-     * @deprecated Use {@link UrlRequest.Builder#build}.
-     */
-    @Deprecated
-    public abstract UrlRequest createRequest(
-            String url, UrlRequest.Callback callback, Executor executor, int priority);
-
-    /**
-     * Creates a {@link BidirectionalStream} object. {@code callback} methods will
-     * be invoked on {@code executor}. {@code executor} must not run
-     * tasks on the current thread to prevent blocking networking operations
-     * and causing exceptions during shutdown.
-     *
-     * @param url the URL for the stream
-     * @param callback the object whose methods get invoked upon different events
-     * @param executor the {@link Executor} on which all callbacks will be called
-     * @param httpMethod the HTTP method to use for the stream
-     * @param requestHeaders the list of request headers
-     * @return a new stream.
-     */
-    abstract BidirectionalStream createBidirectionalStream(String url,
-            BidirectionalStream.Callback callback, Executor executor, String httpMethod,
-            List<Map.Entry<String, String>> requestHeaders);
-
-    /**
-     * @return {@code true} if the engine is enabled.
-     */
-    abstract boolean isEnabled();
 
     /**
      * @return a human-readable version string of the engine.
@@ -608,14 +301,18 @@ public abstract class CronetEngine {
     public abstract void shutdown();
 
     /**
-     * Starts NetLog logging to a file. The NetLog is useful for debugging.
+     * Starts NetLog logging to a file. The NetLog will contain events emitted
+     * by all live CronetEngines. The NetLog is useful for debugging.
      * The file can be viewed using a Chrome browser navigated to
      * chrome://net-internals/#import
      * @param fileName the complete file path. It must not be empty. If the file
      *            exists, it is truncated before starting. If actively logging,
      *            this method is ignored.
      * @param logAll {@code true} to include basic events, user cookies,
-     *            credentials and all transferred bytes in the log.
+     *            credentials and all transferred bytes in the log. This option presents
+     *            a privacy risk, since it exposes the user's credentials, and should
+     *            only be used with the user's consent and in situations where the log
+     *            won't be public.
      *            {@code false} to just include basic events.
      */
     public abstract void startNetLogToFile(String fileName, boolean logAll);
@@ -628,7 +325,7 @@ public abstract class CronetEngine {
 
     /**
      * Returns differences in metrics collected by Cronet since the last call to
-     * {@link #getGlobalMetricsDeltas}.
+     * this method.
      * <p>
      * Cronet collects these metrics globally. This means deltas returned by
      * {@code getGlobalMetricsDeltas()} will include measurements of requests
@@ -651,82 +348,6 @@ public abstract class CronetEngine {
     public abstract byte[] getGlobalMetricsDeltas();
 
     /**
-     * Enables the network quality estimator, which collects and reports
-     * measurements of round trip time (RTT) and downstream throughput at
-     * various layers of the network stack. After enabling the estimator,
-     * listeners of RTT and throughput can be added with
-     * {@link #addRttListener} and {@link #addThroughputListener} and
-     * removed with {@link #removeRttListener} and
-     * {@link #removeThroughputListener}. The estimator uses memory and CPU
-     * only when enabled.
-     * @param executor an executor that will be used to notified all
-     *            added RTT and throughput listeners.
-     * @deprecated not really deprecated but hidden for now as it's a prototype.
-     */
-    @Deprecated public abstract void enableNetworkQualityEstimator(Executor executor);
-
-    /**
-     * Enables the network quality estimator for testing. This must be called
-     * before round trip time and throughput listeners are added. Set both
-     * boolean parameters to false for default behavior.
-     * @param useLocalHostRequests include requests to localhost in estimates.
-     * @param useSmallerResponses include small responses in throughput estimates.
-     * @param executor an {@link java.util.concurrent.Executor} on which all
-     *            listeners will be called.
-     * @deprecated not really deprecated but hidden for now as it's a prototype.
-     */
-    @Deprecated
-    abstract void enableNetworkQualityEstimatorForTesting(
-            boolean useLocalHostRequests, boolean useSmallerResponses, Executor executor);
-
-    /**
-     * Registers a listener that gets called whenever the network quality
-     * estimator witnesses a sample round trip time. This must be called
-     * after {@link #enableNetworkQualityEstimator}, and with throw an
-     * exception otherwise. Round trip times may be recorded at various layers
-     * of the network stack, including TCP, QUIC, and at the URL request layer.
-     * The listener is called on the {@link java.util.concurrent.Executor} that
-     * is passed to {@link #enableNetworkQualityEstimator}.
-     * @param listener the listener of round trip times.
-     * @deprecated not really deprecated but hidden for now as it's a prototype.
-     */
-    @Deprecated public abstract void addRttListener(NetworkQualityRttListener listener);
-
-    /**
-     * Removes a listener of round trip times if previously registered with
-     * {@link #addRttListener}. This should be called after a
-     * {@link NetworkQualityRttListener} is added in order to stop receiving
-     * observations.
-     * @param listener the listener of round trip times.
-     * @deprecated not really deprecated but hidden for now as it's a prototype.
-     */
-    @Deprecated public abstract void removeRttListener(NetworkQualityRttListener listener);
-
-    /**
-     * Registers a listener that gets called whenever the network quality
-     * estimator witnesses a sample throughput measurement. This must be called
-     * after {@link #enableNetworkQualityEstimator}. Throughput observations
-     * are computed by measuring bytes read over the active network interface
-     * at times when at least one URL response is being received. The listener
-     * is called on the {@link java.util.concurrent.Executor} that is passed to
-     * {@link #enableNetworkQualityEstimator}.
-     * @param listener the listener of throughput.
-     * @deprecated not really deprecated but hidden for now as it's a prototype.
-     */
-    @Deprecated
-    public abstract void addThroughputListener(NetworkQualityThroughputListener listener);
-
-    /**
-     * Removes a listener of throughput. This should be called after a
-     * {@link NetworkQualityThroughputListener} is added with
-     * {@link #addThroughputListener} in order to stop receiving observations.
-     * @param listener the listener of throughput.
-     * @deprecated not really deprecated but hidden for now as it's a prototype.
-     */
-    @Deprecated
-    public abstract void removeThroughputListener(NetworkQualityThroughputListener listener);
-
-    /**
      * Establishes a new connection to the resource specified by the {@link URL} {@code url}.
      * <p>
      * <b>Note:</b> Cronet's {@link java.net.HttpURLConnection} implementation is subject to certain
@@ -734,25 +355,9 @@ public abstract class CronetEngine {
      *
      * @param url URL of resource to connect to.
      * @return an {@link java.net.HttpURLConnection} instance implemented by this CronetEngine.
+     * @throws IOException if an error occurs while opening the connection.
      */
-    public abstract URLConnection openConnection(URL url);
-
-    /**
-     * Establishes a new connection to the resource specified by the {@link URL} {@code url}
-     * using the given proxy.
-     * <p>
-     * <b>Note:</b> Cronet's {@link java.net.HttpURLConnection} implementation is subject to certain
-     * limitations, see {@link #createURLStreamHandlerFactory} for details.
-     *
-     * @param url URL of resource to connect to.
-     * @param proxy proxy to use when establishing connection.
-     * @return an {@link java.net.HttpURLConnection} instance implemented by this CronetEngine.
-     * @hide
-     * @deprecated Marked as deprecated because @hide doesn't properly hide but
-     *         javadocs are built with nodeprecated="yes".
-     *         TODO(pauljensen): Expose once implemented, http://crbug.com/418111
-     */
-    @SuppressWarnings("DepAnn") public abstract URLConnection openConnection(URL url, Proxy proxy);
+    public abstract URLConnection openConnection(URL url) throws IOException;
 
     /**
      * Creates a {@link URLStreamHandlerFactory} to handle HTTP and HTTPS
@@ -763,8 +368,7 @@ public abstract class CronetEngine {
      * Cronet does not use certain HTTP features provided via the system:
      * <ul>
      * <li>the HTTP cache installed via
-     *     {@link android.net.http.HttpResponseCache#install(java.io.File, long)
-     *            HttpResponseCache.install()}</li>
+     *     {@link HttpResponseCache#install(java.io.File, long) HttpResponseCache.install()}</li>
      * <li>the HTTP authentication method installed via
      *     {@link java.net.Authenticator#setDefault}</li>
      * <li>the HTTP cookie storage installed via {@link java.net.CookieHandler#setDefault}</li>
@@ -772,14 +376,14 @@ public abstract class CronetEngine {
      * <p>
      * While Cronet supports and encourages requests using the HTTPS protocol,
      * Cronet does not provide support for the
-     * {@link javax.net.ssl.HttpsURLConnection} API. This lack of support also
+     * {@link HttpsURLConnection} API. This lack of support also
      * includes not using certain HTTPS features provided via the system:
      * <ul>
      * <li>the HTTPS hostname verifier installed via {@link
-     *   javax.net.ssl.HttpsURLConnection#setDefaultHostnameVerifier(javax.net.ssl.HostnameVerifier)
+     *   HttpsURLConnection#setDefaultHostnameVerifier(javax.net.ssl.HostnameVerifier)
      *     HttpsURLConnection.setDefaultHostnameVerifier()}</li>
      * <li>the HTTPS socket factory installed via {@link
-     *   javax.net.ssl.HttpsURLConnection#setDefaultSSLSocketFactory(javax.net.ssl.SSLSocketFactory)
+     *   HttpsURLConnection#setDefaultSSLSocketFactory(javax.net.ssl.SSLSocketFactory)
      *     HttpsURLConnection.setDefaultSSLSocketFactory()}</li>
      * </ul>
      *
@@ -789,48 +393,16 @@ public abstract class CronetEngine {
     public abstract URLStreamHandlerFactory createURLStreamHandlerFactory();
 
     /**
-     * Creates a {@link CronetEngine} with the given {@link Builder}.
+     * Creates a builder for {@link UrlRequest}. All callbacks for
+     * generated {@link UrlRequest} objects will be invoked on
+     * {@code executor}'s threads. {@code executor} must not run tasks on the
+     * thread calling {@link Executor#execute} to prevent blocking networking
+     * operations and causing exceptions during shutdown.
      *
-     * @param builder builder to used for creating the CronetEngine instance.
-     * @return the created CronetEngine instance.
-     * @deprecated Use {@link CronetEngine.Builder}.
+     * @param url URL for the generated requests.
+     * @param callback callback object that gets invoked on different events.
+     * @param executor {@link Executor} on which all callbacks will be invoked.
      */
-    @Deprecated
-    public static CronetEngine createContext(Builder builder) {
-        CronetEngine cronetEngine = null;
-        if (builder.getUserAgent().isEmpty()) {
-            builder.setUserAgent(builder.getDefaultUserAgent());
-        }
-        if (!builder.legacyMode()) {
-            cronetEngine = createCronetEngine(builder);
-        }
-        if (cronetEngine == null) {
-            // TODO(mef): Fallback to stub implementation. Once stub
-            // implementation is available merge with createCronetFactory.
-            cronetEngine = createCronetEngine(builder);
-        }
-        Log.i(TAG, "Using network stack: " + cronetEngine.getVersionString());
-        return cronetEngine;
-    }
-
-    private static CronetEngine createCronetEngine(Builder builder) {
-        CronetEngine cronetEngine = null;
-        try {
-            Class<? extends CronetEngine> engineClass =
-                    CronetEngine.class.getClassLoader()
-                            .loadClass(CRONET_URL_REQUEST_CONTEXT)
-                            .asSubclass(CronetEngine.class);
-            Constructor<? extends CronetEngine> constructor =
-                    engineClass.getConstructor(Builder.class);
-            CronetEngine possibleEngine = constructor.newInstance(builder);
-            if (possibleEngine.isEnabled()) {
-                cronetEngine = possibleEngine;
-            }
-        } catch (ClassNotFoundException e) {
-            // Leave as null.
-        } catch (Exception e) {
-            throw new IllegalStateException("Cannot instantiate: " + CRONET_URL_REQUEST_CONTEXT, e);
-        }
-        return cronetEngine;
-    }
+    public abstract UrlRequest.Builder newUrlRequestBuilder(
+            String url, UrlRequest.Callback callback, Executor executor);
 }

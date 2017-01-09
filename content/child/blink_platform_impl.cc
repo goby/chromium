@@ -6,15 +6,16 @@
 
 #include <math.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
-#include "base/metrics/histogram.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/user_metrics_action.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -23,52 +24,37 @@
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/memory_allocator_dump_guid.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "blink/public/resources/grit/blink_image_resources.h"
 #include "blink/public/resources/grit/blink_resources.h"
+#include "build/build_config.h"
 #include "components/mime_util/mime_util.h"
-#include "components/scheduler/child/web_task_runner_impl.h"
-#include "components/scheduler/child/webthread_impl_for_worker_scheduler.h"
 #include "content/app/resources/grit/content_resources.h"
 #include "content/app/strings/grit/content_strings.h"
-#include "content/child/background_sync/background_sync_provider.h"
 #include "content/child/child_thread_impl.h"
 #include "content/child/content_child_helpers.h"
-#include "content/child/geofencing/web_geofencing_provider_impl.h"
-#include "content/child/navigator_connect/service_port_provider.h"
 #include "content/child/notifications/notification_dispatcher.h"
 #include "content/child/notifications/notification_manager.h"
-#include "content/child/permissions/permission_dispatcher.h"
-#include "content/child/permissions/permission_dispatcher_thread_proxy.h"
 #include "content/child/push_messaging/push_dispatcher.h"
 #include "content/child/push_messaging/push_provider.h"
 #include "content/child/thread_safe_sender.h"
-#include "content/child/web_discardable_memory_impl.h"
-#include "content/child/web_memory_dump_provider_adapter.h"
-#include "content/child/web_process_memory_dump_impl.h"
 #include "content/child/web_url_loader_impl.h"
 #include "content/child/web_url_request_util.h"
-#include "content/child/websocket_bridge.h"
-#include "content/child/worker_task_runner.h"
+#include "content/child/worker_thread_registry.h"
 #include "content/public/common/content_client.h"
-#include "net/base/data_url.h"
-#include "net/base/ip_address_number.h"
 #include "net/base/net_errors.h"
-#include "net/base/port_util.h"
-#include "third_party/WebKit/public/platform/WebConvertableToTraceFormat.h"
 #include "third_party/WebKit/public/platform/WebData.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
-#include "third_party/WebKit/public/platform/WebMemoryDumpProvider.h"
+#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebWaitableEvent.h"
-#include "third_party/WebKit/public/web/WebSecurityOrigin.h"
+#include "third_party/WebKit/public/platform/scheduler/child/webthread_impl_for_worker_scheduler.h"
 #include "ui/base/layout.h"
 #include "ui/events/gestures/blink/web_gesture_curve_impl.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
@@ -81,99 +67,12 @@ using blink::WebThemeEngine;
 using blink::WebURL;
 using blink::WebURLError;
 using blink::WebURLLoader;
+using blink::scheduler::WebThreadImplForWorkerScheduler;
 
 namespace content {
 
 namespace {
 
-class WebWaitableEventImpl : public blink::WebWaitableEvent {
- public:
-  WebWaitableEventImpl(ResetPolicy policy, InitialState state) {
-    bool manual_reset = policy == ResetPolicy::Manual;
-    bool initially_signaled = state == InitialState::Signaled;
-    impl_.reset(new base::WaitableEvent(manual_reset, initially_signaled));
-  }
-  ~WebWaitableEventImpl() override {}
-
-  void reset() override { impl_->Reset(); }
-  void wait() override { impl_->Wait(); }
-  void signal() override { impl_->Signal(); }
-
-  base::WaitableEvent* impl() {
-    return impl_.get();
-  }
-
- private:
-  scoped_ptr<base::WaitableEvent> impl_;
-  DISALLOW_COPY_AND_ASSIGN(WebWaitableEventImpl);
-};
-
-// A simple class to cache the memory usage for a given amount of time.
-class MemoryUsageCache {
- public:
-  // Retrieves the Singleton.
-  static MemoryUsageCache* GetInstance() {
-    return base::Singleton<MemoryUsageCache>::get();
-  }
-
-  MemoryUsageCache() : memory_value_(0) { Init(); }
-  ~MemoryUsageCache() {}
-
-  void Init() {
-    const unsigned int kCacheSeconds = 1;
-    cache_valid_time_ = base::TimeDelta::FromSeconds(kCacheSeconds);
-  }
-
-  // Returns true if the cached value is fresh.
-  // Returns false if the cached value is stale, or if |cached_value| is NULL.
-  bool IsCachedValueValid(size_t* cached_value) {
-    base::AutoLock scoped_lock(lock_);
-    if (!cached_value)
-      return false;
-    if (base::Time::Now() - last_updated_time_ > cache_valid_time_)
-      return false;
-    *cached_value = memory_value_;
-    return true;
-  };
-
-  // Setter for |memory_value_|, refreshes |last_updated_time_|.
-  void SetMemoryValue(const size_t value) {
-    base::AutoLock scoped_lock(lock_);
-    memory_value_ = value;
-    last_updated_time_ = base::Time::Now();
-  }
-
- private:
-  // The cached memory value.
-  size_t memory_value_;
-
-  // How long the cached value should remain valid.
-  base::TimeDelta cache_valid_time_;
-
-  // The last time the cached value was updated.
-  base::Time last_updated_time_;
-
-  base::Lock lock_;
-};
-
-class ConvertableToTraceFormatWrapper
-    : public base::trace_event::ConvertableToTraceFormat {
- public:
-  // We move a reference pointer from |convertable| to |convertable_|,
-  // rather than copying, for thread safety. https://crbug.com/478149
-  explicit ConvertableToTraceFormatWrapper(
-      blink::WebConvertableToTraceFormat& convertable) {
-    convertable_.moveFrom(convertable);
-  }
-  void AppendAsTraceFormat(std::string* out) const override {
-    *out += convertable_.asTraceFormat().utf8();
-  }
-
- private:
-  ~ConvertableToTraceFormatWrapper() override {}
-
-  blink::WebConvertableToTraceFormat convertable_;
-};
 
 }  // namespace
 
@@ -193,10 +92,10 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_AX_CALENDAR_WEEK_DESCRIPTION;
     case WebLocalizedString::AXCheckedCheckBoxActionVerb:
       return IDS_AX_CHECKED_CHECK_BOX_ACTION_VERB;
-    case WebLocalizedString::AXDateTimeFieldEmptyValueText:
-      return IDS_AX_DATE_TIME_FIELD_EMPTY_VALUE_TEXT;
     case WebLocalizedString::AXDayOfMonthFieldText:
       return IDS_AX_DAY_OF_MONTH_FIELD_TEXT;
+    case WebLocalizedString::AXDefaultActionVerb:
+      return IDS_AX_DEFAULT_ACTION_VERB;
     case WebLocalizedString::AXHeadingText:
       return IDS_AX_ROLE_HEADING;
     case WebLocalizedString::AXHourFieldText:
@@ -241,10 +140,14 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_AX_MEDIA_SHOW_CLOSED_CAPTIONS_BUTTON;
     case WebLocalizedString::AXMediaHideClosedCaptionsButton:
       return IDS_AX_MEDIA_HIDE_CLOSED_CAPTIONS_BUTTON;
-    case WebLocalizedString::AxMediaCastOffButton:
+    case WebLocalizedString::AXMediaCastOffButton:
       return IDS_AX_MEDIA_CAST_OFF_BUTTON;
-    case WebLocalizedString::AxMediaCastOnButton:
+    case WebLocalizedString::AXMediaCastOnButton:
       return IDS_AX_MEDIA_CAST_ON_BUTTON;
+    case WebLocalizedString::AXMediaDownloadButton:
+      return IDS_AX_MEDIA_DOWNLOAD_BUTTON;
+    case WebLocalizedString::AXMediaOverflowButton:
+      return IDS_AX_MEDIA_OVERFLOW_BUTTON;
     case WebLocalizedString::AXMediaAudioElementHelp:
       return IDS_AX_MEDIA_AUDIO_ELEMENT_HELP;
     case WebLocalizedString::AXMediaVideoElementHelp:
@@ -277,16 +180,20 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_AX_MEDIA_SHOW_CLOSED_CAPTIONS_BUTTON_HELP;
     case WebLocalizedString::AXMediaHideClosedCaptionsButtonHelp:
       return IDS_AX_MEDIA_HIDE_CLOSED_CAPTIONS_BUTTON_HELP;
-    case WebLocalizedString::AxMediaCastOffButtonHelp:
+    case WebLocalizedString::AXMediaCastOffButtonHelp:
       return IDS_AX_MEDIA_CAST_OFF_BUTTON_HELP;
-    case WebLocalizedString::AxMediaCastOnButtonHelp:
+    case WebLocalizedString::AXMediaCastOnButtonHelp:
       return IDS_AX_MEDIA_CAST_ON_BUTTON_HELP;
+    case WebLocalizedString::AXMediaOverflowButtonHelp:
+      return IDS_AX_MEDIA_OVERFLOW_BUTTON_HELP;
     case WebLocalizedString::AXMillisecondFieldText:
       return IDS_AX_MILLISECOND_FIELD_TEXT;
     case WebLocalizedString::AXMinuteFieldText:
       return IDS_AX_MINUTE_FIELD_TEXT;
     case WebLocalizedString::AXMonthFieldText:
       return IDS_AX_MONTH_FIELD_TEXT;
+    case WebLocalizedString::AXPopUpButtonActionVerb:
+      return IDS_AX_POP_UP_BUTTON_ACTION_VERB;
     case WebLocalizedString::AXRadioButtonActionVerb:
       return IDS_AX_RADIO_BUTTON_ACTION_VERB;
     case WebLocalizedString::AXSecondFieldText:
@@ -313,6 +220,8 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_FORM_DATE_FORMAT_YEAR;
     case WebLocalizedString::DetailsLabel:
       return IDS_DETAILS_WITHOUT_SUMMARY_LABEL;
+    case WebLocalizedString::DownloadButtonLabel:
+      return IDS_DOWNLOAD_BUTTON_LABEL;
     case WebLocalizedString::FileButtonChooseFileLabel:
       return IDS_FORM_FILE_BUTTON_LABEL;
     case WebLocalizedString::FileButtonChooseMultipleFilesLabel:
@@ -339,6 +248,26 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_FORM_OTHER_TIME_LABEL;
     case WebLocalizedString::OtherWeekLabel:
       return IDS_FORM_OTHER_WEEK_LABEL;
+    case WebLocalizedString::OverflowMenuCaptions:
+      return IDS_MEDIA_OVERFLOW_MENU_CLOSED_CAPTIONS;
+    case WebLocalizedString::OverflowMenuCast:
+      return IDS_MEDIA_OVERFLOW_MENU_CAST;
+    case WebLocalizedString::OverflowMenuEnterFullscreen:
+      return IDS_MEDIA_OVERFLOW_MENU_ENTER_FULLSCREEN;
+    case WebLocalizedString::OverflowMenuExitFullscreen:
+      return IDS_MEDIA_OVERFLOW_MENU_EXIT_FULLSCREEN;
+    case WebLocalizedString::OverflowMenuStopCast:
+      return IDS_MEDIA_OVERFLOW_MENU_STOP_CAST;
+    case WebLocalizedString::OverflowMenuMute:
+      return IDS_MEDIA_OVERFLOW_MENU_MUTE;
+    case WebLocalizedString::OverflowMenuUnmute:
+      return IDS_MEDIA_OVERFLOW_MENU_UNMUTE;
+    case WebLocalizedString::OverflowMenuPlay:
+      return IDS_MEDIA_OVERFLOW_MENU_PLAY;
+    case WebLocalizedString::OverflowMenuPause:
+      return IDS_MEDIA_OVERFLOW_MENU_PAUSE;
+    case WebLocalizedString::OverflowMenuDownload:
+      return IDS_MEDIA_OVERFLOW_MENU_DOWNLOAD;
     case WebLocalizedString::PlaceholderForDayOfMonthField:
       return IDS_FORM_PLACEHOLDER_FOR_DAY_OF_MONTH_FIELD;
     case WebLocalizedString::PlaceholderForMonthField:
@@ -423,6 +352,10 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_FORM_INPUT_WEEK_TEMPLATE;
     case WebLocalizedString::WeekNumberLabel:
       return IDS_FORM_WEEK_NUMBER_LABEL;
+    case WebLocalizedString::TextTracksNoLabel:
+      return IDS_MEDIA_TRACKS_NO_LABEL;
+    case WebLocalizedString::TextTracksOff:
+      return IDS_MEDIA_TRACKS_OFF;
     // This "default:" line exists to avoid compile warnings about enum
     // coverage when we add a new symbol to WebLocalizedString.h in WebKit.
     // After a planned WebKit patch is landed, we need to add a case statement
@@ -432,22 +365,6 @@ static int ToMessageID(WebLocalizedString::Name name) {
   }
   return -1;
 }
-
-class TraceLogObserverAdapter
-    : public base::trace_event::TraceLog::EnabledStateObserver {
- public:
-  TraceLogObserverAdapter(
-      blink::Platform::TraceLogEnabledStateObserver* observer)
-      : observer_(observer) {}
-
-  void OnTraceLogEnabled() override { observer_->onTraceLogEnabled(); }
-
-  void OnTraceLogDisabled() override { observer_->onTraceLogDisabled(); }
-
- private:
-  blink::Platform::TraceLogEnabledStateObserver* observer_;
-  DISALLOW_COPY_AND_ASSIGN(TraceLogObserverAdapter);
-};
 
 // TODO(skyostil): Ensure that we always have an active task runner when
 // constructing the platform.
@@ -467,17 +384,22 @@ BlinkPlatformImpl::BlinkPlatformImpl(
 void BlinkPlatformImpl::InternalInit() {
   // ChildThread may not exist in some tests.
   if (ChildThreadImpl::current()) {
-    geofencing_provider_.reset(new WebGeofencingProviderImpl(
-        ChildThreadImpl::current()->thread_safe_sender()));
     thread_safe_sender_ = ChildThreadImpl::current()->thread_safe_sender();
     notification_dispatcher_ =
         ChildThreadImpl::current()->notification_dispatcher();
     push_dispatcher_ = ChildThreadImpl::current()->push_dispatcher();
-    permission_client_.reset(new PermissionDispatcher(
-        ChildThreadImpl::current()->service_registry()));
-    main_thread_sync_provider_.reset(
-        new BackgroundSyncProvider(main_thread_task_runner_.get()));
   }
+}
+
+void BlinkPlatformImpl::WaitUntilWebThreadTLSUpdate(
+    blink::scheduler::WebThreadBase* thread) {
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
+  thread->GetTaskRunner()->PostTask(
+      FROM_HERE,
+      base::Bind(&BlinkPlatformImpl::UpdateWebThreadTLS, base::Unretained(this),
+                 base::Unretained(thread), base::Unretained(&event)));
+  event.Wait();
 }
 
 void BlinkPlatformImpl::UpdateWebThreadTLS(blink::WebThread* thread,
@@ -490,40 +412,8 @@ void BlinkPlatformImpl::UpdateWebThreadTLS(blink::WebThread* thread,
 BlinkPlatformImpl::~BlinkPlatformImpl() {
 }
 
-WebURLLoader* BlinkPlatformImpl::createURLLoader() {
-  ChildThreadImpl* child_thread = ChildThreadImpl::current();
-  // There may be no child thread in RenderViewTests.  These tests can still use
-  // data URLs to bypass the ResourceDispatcher.
-  return new WebURLLoaderImpl(
-      child_thread ? child_thread->resource_dispatcher() : NULL,
-      make_scoped_ptr(new scheduler::WebTaskRunnerImpl(
-            base::ThreadTaskRunnerHandle::Get())));
-}
-
-blink::WebSocketHandle* BlinkPlatformImpl::createWebSocketHandle() {
-  return new WebSocketBridge;
-}
-
 WebString BlinkPlatformImpl::userAgent() {
-  CR_DEFINE_STATIC_LOCAL(
-      blink::WebString, user_agent,
-      (blink::WebString::fromUTF8(GetContentClient()->GetUserAgent())));
-  DCHECK(user_agent ==
-         blink::WebString::fromUTF8(GetContentClient()->GetUserAgent()));
-  return user_agent;
-}
-
-WebData BlinkPlatformImpl::parseDataURL(const WebURL& url,
-                                        WebString& mimetype_out,
-                                        WebString& charset_out) {
-  std::string mime_type, char_set, data;
-  if (net::DataURL::Parse(url, &mime_type, &char_set, &data) &&
-      mime_util::IsSupportedMimeType(mime_type)) {
-    mimetype_out = WebString::fromUTF8(mime_type);
-    charset_out = WebString::fromUTF8(char_set);
-    return data;
-  }
-  return WebData();
+  return blink::WebString::fromUTF8(GetContentClient()->GetUserAgent());
 }
 
 WebURLError BlinkPlatformImpl::cancelledError(
@@ -531,262 +421,28 @@ WebURLError BlinkPlatformImpl::cancelledError(
   return CreateWebURLError(unreachableURL, false, net::ERR_ABORTED);
 }
 
-bool BlinkPlatformImpl::isReservedIPAddress(
-    const blink::WebString& host) const {
-  net::IPAddressNumber address;
-  if (!net::ParseURLHostnameToNumber(host.utf8(), &address))
-    return false;
-  return net::IsIPAddressReserved(address);
-}
-
-bool BlinkPlatformImpl::portAllowed(const blink::WebURL& url) const {
-  GURL gurl = GURL(url);
-  // Return true for URLs without a port specified.  This is needed to let
-  // through non-network schemes that don't go over the network.
-  if (!gurl.has_port())
-    return true;
-  return net::IsPortAllowedForScheme(gurl.EffectiveIntPort(), gurl.scheme());
-}
-
 blink::WebThread* BlinkPlatformImpl::createThread(const char* name) {
-  return createThreadWithOptions(name, base::Thread::Options()).release();
+  std::unique_ptr<WebThreadImplForWorkerScheduler> thread(
+      new WebThreadImplForWorkerScheduler(name));
+  thread->Init();
+  WaitUntilWebThreadTLSUpdate(thread.get());
+  return thread.release();
 }
 
-scoped_ptr<scheduler::WebThreadBase> BlinkPlatformImpl::createThreadWithOptions(
-    const char* name,
-    base::Thread::Options options) {
-  scoped_ptr<scheduler::WebThreadBase> thread(
-      new scheduler::WebThreadImplForWorkerScheduler(name, options));
-  base::WaitableEvent event(false, false);
-  thread->TaskRunner()->PostTask(
-      FROM_HERE,
-      base::Bind(&BlinkPlatformImpl::UpdateWebThreadTLS, base::Unretained(this),
-                 base::Unretained(thread.get()), base::Unretained(&event)));
-  event.Wait();
-  return thread;
+void BlinkPlatformImpl::SetCompositorThread(
+    blink::scheduler::WebThreadBase* compositor_thread) {
+  compositor_thread_ = compositor_thread;
+  if (compositor_thread_)
+    WaitUntilWebThreadTLSUpdate(compositor_thread_);
 }
 
 blink::WebThread* BlinkPlatformImpl::currentThread() {
   return static_cast<blink::WebThread*>(current_thread_slot_.Get());
 }
 
-void BlinkPlatformImpl::yieldCurrentThread() {
-  base::PlatformThread::YieldCurrentThread();
-}
-
-blink::WebWaitableEvent* BlinkPlatformImpl::createWaitableEvent(
-    blink::WebWaitableEvent::ResetPolicy policy,
-    blink::WebWaitableEvent::InitialState state) {
-  return new WebWaitableEventImpl(policy, state);
-}
-
-blink::WebWaitableEvent* BlinkPlatformImpl::waitMultipleEvents(
-    const blink::WebVector<blink::WebWaitableEvent*>& web_events) {
-  std::vector<base::WaitableEvent*> events;
-  for (size_t i = 0; i < web_events.size(); ++i)
-    events.push_back(static_cast<WebWaitableEventImpl*>(web_events[i])->impl());
-  size_t idx = base::WaitableEvent::WaitMany(events.data(), events.size());
-  DCHECK_LT(idx, web_events.size());
-  return web_events[idx];
-}
-
-void BlinkPlatformImpl::decrementStatsCounter(const char* name) {
-}
-
-void BlinkPlatformImpl::incrementStatsCounter(const char* name) {
-}
-
-void BlinkPlatformImpl::histogramCustomCounts(
-    const char* name, int sample, int min, int max, int bucket_count) {
-  // Copied from histogram macro, but without the static variable caching
-  // the histogram because name is dynamic.
-  base::HistogramBase* counter =
-      base::Histogram::FactoryGet(name, min, max, bucket_count,
-          base::HistogramBase::kUmaTargetedHistogramFlag);
-  DCHECK_EQ(name, counter->histogram_name());
-  counter->Add(sample);
-}
-
-void BlinkPlatformImpl::histogramEnumeration(
-    const char* name, int sample, int boundary_value) {
-  // Copied from histogram macro, but without the static variable caching
-  // the histogram because name is dynamic.
-  base::HistogramBase* counter =
-      base::LinearHistogram::FactoryGet(name, 1, boundary_value,
-          boundary_value + 1, base::HistogramBase::kUmaTargetedHistogramFlag);
-  DCHECK_EQ(name, counter->histogram_name());
-  counter->Add(sample);
-}
-
-void BlinkPlatformImpl::histogramSparse(const char* name, int sample) {
-  // For sparse histograms, we can use the macro, as it does not incorporate a
-  // static.
-  UMA_HISTOGRAM_SPARSE_SLOWLY(name, sample);
-}
-
-const unsigned char* BlinkPlatformImpl::getTraceCategoryEnabledFlag(
-    const char* category_group) {
-  return TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(category_group);
-}
-
-blink::Platform::TraceEventAPIAtomicWord*
-BlinkPlatformImpl::getTraceSamplingState(const unsigned thread_bucket) {
-  switch (thread_bucket) {
-    case 0:
-      return reinterpret_cast<blink::Platform::TraceEventAPIAtomicWord*>(
-          &TRACE_EVENT_API_THREAD_BUCKET(0));
-    case 1:
-      return reinterpret_cast<blink::Platform::TraceEventAPIAtomicWord*>(
-          &TRACE_EVENT_API_THREAD_BUCKET(1));
-    case 2:
-      return reinterpret_cast<blink::Platform::TraceEventAPIAtomicWord*>(
-          &TRACE_EVENT_API_THREAD_BUCKET(2));
-    default:
-      NOTREACHED() << "Unknown thread bucket type.";
-  }
-  return NULL;
-}
-
-static_assert(
-    sizeof(blink::Platform::TraceEventHandle) ==
-        sizeof(base::trace_event::TraceEventHandle),
-    "TraceEventHandle types must be same size");
-
-blink::Platform::TraceEventHandle BlinkPlatformImpl::addTraceEvent(
-    char phase,
-    const unsigned char* category_group_enabled,
-    const char* name,
-    unsigned long long id,
-    unsigned long long bind_id,
-    double timestamp,
-    int num_args,
-    const char** arg_names,
-    const unsigned char* arg_types,
-    const unsigned long long* arg_values,
-    blink::WebConvertableToTraceFormat* convertable_values,
-    unsigned int flags) {
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat>
-      convertable_wrappers[2];
-  if (convertable_values) {
-    size_t size = std::min(static_cast<size_t>(num_args),
-                           arraysize(convertable_wrappers));
-    for (size_t i = 0; i < size; ++i) {
-      if (arg_types[i] == TRACE_VALUE_TYPE_CONVERTABLE) {
-        convertable_wrappers[i] =
-            new ConvertableToTraceFormatWrapper(convertable_values[i]);
-      }
-    }
-  }
-  base::TimeTicks timestamp_tt =
-      base::TimeTicks() + base::TimeDelta::FromSecondsD(timestamp);
-  base::trace_event::TraceEventHandle handle =
-      TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_THREAD_ID_AND_TIMESTAMP(
-          phase, category_group_enabled, name, id, trace_event_internal::kNoId,
-          bind_id, base::PlatformThread::CurrentId(), timestamp_tt, num_args,
-          arg_names, arg_types, arg_values, convertable_wrappers, flags);
-  blink::Platform::TraceEventHandle result;
-  memcpy(&result, &handle, sizeof(result));
-  return result;
-}
-
-blink::Platform::TraceEventHandle BlinkPlatformImpl::addTraceEvent(
-    char phase,
-    const unsigned char* category_group_enabled,
-    const char* name,
-    unsigned long long id,
-    double timestamp,
-    int num_args,
-    const char** arg_names,
-    const unsigned char* arg_types,
-    const unsigned long long* arg_values,
-    blink::WebConvertableToTraceFormat* convertable_values,
-    unsigned char flags) {
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat>
-      convertable_wrappers[2];
-  if (convertable_values) {
-    size_t size = std::min(static_cast<size_t>(num_args),
-                           arraysize(convertable_wrappers));
-    for (size_t i = 0; i < size; ++i) {
-      if (arg_types[i] == TRACE_VALUE_TYPE_CONVERTABLE) {
-        convertable_wrappers[i] =
-            new ConvertableToTraceFormatWrapper(convertable_values[i]);
-      }
-    }
-  }
-  base::TimeTicks timestamp_tt =
-      base::TimeTicks() + base::TimeDelta::FromSecondsD(timestamp);
-  base::trace_event::TraceEventHandle handle =
-      TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_THREAD_ID_AND_TIMESTAMP(
-          phase, category_group_enabled, name, id, trace_event_internal::kNoId,
-          base::PlatformThread::CurrentId(), timestamp_tt, num_args, arg_names,
-          arg_types, arg_values, convertable_wrappers, flags);
-  blink::Platform::TraceEventHandle result;
-  memcpy(&result, &handle, sizeof(result));
-  return result;
-}
-
-void BlinkPlatformImpl::updateTraceEventDuration(
-    const unsigned char* category_group_enabled,
-    const char* name,
-    TraceEventHandle handle) {
-  base::trace_event::TraceEventHandle traceEventHandle;
-  memcpy(&traceEventHandle, &handle, sizeof(handle));
-  TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION(
-      category_group_enabled, name, traceEventHandle);
-}
-
-void BlinkPlatformImpl::registerMemoryDumpProvider(
-    blink::WebMemoryDumpProvider* wmdp, const char* name) {
-  WebMemoryDumpProviderAdapter* wmdp_adapter =
-      new WebMemoryDumpProviderAdapter(wmdp);
-  bool did_insert =
-      memory_dump_providers_.add(wmdp, make_scoped_ptr(wmdp_adapter)).second;
-  if (!did_insert)
-    return;
-  wmdp_adapter->set_is_registered(true);
-  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-      wmdp_adapter, name, base::ThreadTaskRunnerHandle::Get());
-}
-
-void BlinkPlatformImpl::unregisterMemoryDumpProvider(
-    blink::WebMemoryDumpProvider* wmdp) {
-  scoped_ptr<WebMemoryDumpProviderAdapter> wmdp_adapter =
-      memory_dump_providers_.take_and_erase(wmdp);
-  if (!wmdp_adapter)
-    return;
-  base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
-      wmdp_adapter.get());
-  wmdp_adapter->set_is_registered(false);
-}
-
-blink::WebProcessMemoryDump* BlinkPlatformImpl::createProcessMemoryDump() {
-  return new WebProcessMemoryDumpImpl();
-}
-
-blink::Platform::WebMemoryAllocatorDumpGuid
-BlinkPlatformImpl::createWebMemoryAllocatorDumpGuid(
-    const blink::WebString& guidStr) {
-  return base::trace_event::MemoryAllocatorDumpGuid(guidStr.utf8()).ToUint64();
-}
-
-void BlinkPlatformImpl::addTraceLogEnabledStateObserver(
-    TraceLogEnabledStateObserver* observer) {
-  TraceLogObserverAdapter* adapter = new TraceLogObserverAdapter(observer);
-  bool did_insert =
-      trace_log_observers_.add(observer, make_scoped_ptr(adapter)).second;
-  DCHECK(did_insert);
-  base::trace_event::TraceLog::GetInstance()->AddEnabledStateObserver(adapter);
-}
-
-void BlinkPlatformImpl::removeTraceLogEnabledStateObserver(
-    TraceLogEnabledStateObserver* observer) {
-  scoped_ptr<TraceLogObserverAdapter> adapter =
-      trace_log_observers_.take_and_erase(observer);
-  DCHECK(adapter);
-  DCHECK(base::trace_event::TraceLog::GetInstance()->HasEnabledStateObserver(
-      adapter.get()));
-  base::trace_event::TraceLog::GetInstance()->RemoveEnabledStateObserver(
-      adapter.get());
+void BlinkPlatformImpl::recordAction(const blink::UserMetricsAction& name) {
+    if (ChildThread* child_thread = ChildThread::Get())
+        child_thread->RecordComputedAction(name.action());
 }
 
 namespace {
@@ -857,64 +513,29 @@ struct DataResource {
 const DataResource kDataResources[] = {
     {"missingImage", IDR_BROKENIMAGE, ui::SCALE_FACTOR_100P},
     {"missingImage@2x", IDR_BROKENIMAGE, ui::SCALE_FACTOR_200P},
-    {"mediaplayerPause", IDR_MEDIAPLAYER_PAUSE_BUTTON, ui::SCALE_FACTOR_100P},
-    {"mediaplayerPauseNew",
-     IDR_MEDIAPLAYER_PAUSE_BUTTON_NEW,
+    {"mediaplayerPause",
+     IDR_MEDIAPLAYER_PAUSE_BUTTON,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerPlay", IDR_MEDIAPLAYER_PLAY_BUTTON, ui::SCALE_FACTOR_100P},
-    {"mediaplayerPlayNew",
-     IDR_MEDIAPLAYER_PLAY_BUTTON_NEW,
+    {"mediaplayerPlay",
+     IDR_MEDIAPLAYER_PLAY_BUTTON,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerPlayDisabled",
-     IDR_MEDIAPLAYER_PLAY_BUTTON_DISABLED,
+    {"mediaplayerSoundNotMuted",
+     IDR_MEDIAPLAYER_SOUND_NOT_MUTED_BUTTON,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerSoundLevel3",
-     IDR_MEDIAPLAYER_SOUND_LEVEL3_BUTTON,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerSoundLevel3New",
-     IDR_MEDIAPLAYER_SOUND_LEVEL3_BUTTON_NEW,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerSoundLevel2",
-     IDR_MEDIAPLAYER_SOUND_LEVEL2_BUTTON,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerSoundLevel1",
-     IDR_MEDIAPLAYER_SOUND_LEVEL1_BUTTON,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerSoundLevel0",
-     IDR_MEDIAPLAYER_SOUND_LEVEL0_BUTTON,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerSoundLevel0New",
-     IDR_MEDIAPLAYER_SOUND_LEVEL0_BUTTON_NEW,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerSoundDisabled",
-     IDR_MEDIAPLAYER_SOUND_DISABLED,
+    {"mediaplayerSoundMuted",
+     IDR_MEDIAPLAYER_SOUND_MUTED_BUTTON,
      ui::SCALE_FACTOR_100P},
     {"mediaplayerSliderThumb",
      IDR_MEDIAPLAYER_SLIDER_THUMB,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerSliderThumbNew",
-     IDR_MEDIAPLAYER_SLIDER_THUMB_NEW,
-     ui::SCALE_FACTOR_100P},
     {"mediaplayerVolumeSliderThumb",
      IDR_MEDIAPLAYER_VOLUME_SLIDER_THUMB,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerVolumeSliderThumbNew",
-     IDR_MEDIAPLAYER_VOLUME_SLIDER_THUMB_NEW,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerVolumeSliderThumbDisabled",
-     IDR_MEDIAPLAYER_VOLUME_SLIDER_THUMB_DISABLED,
      ui::SCALE_FACTOR_100P},
     {"mediaplayerClosedCaption",
      IDR_MEDIAPLAYER_CLOSEDCAPTION_BUTTON,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerClosedCaptionNew",
-     IDR_MEDIAPLAYER_CLOSEDCAPTION_BUTTON_NEW,
-     ui::SCALE_FACTOR_100P},
     {"mediaplayerClosedCaptionDisabled",
      IDR_MEDIAPLAYER_CLOSEDCAPTION_BUTTON_DISABLED,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerClosedCaptionDisabledNew",
-     IDR_MEDIAPLAYER_CLOSEDCAPTION_BUTTON_DISABLED_NEW,
      ui::SCALE_FACTOR_100P},
     {"mediaplayerEnterFullscreen",
      IDR_MEDIAPLAYER_ENTER_FULLSCREEN_BUTTON,
@@ -922,42 +543,35 @@ const DataResource kDataResources[] = {
     {"mediaplayerExitFullscreen",
      IDR_MEDIAPLAYER_EXIT_FULLSCREEN_BUTTON,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerFullscreen",
-     IDR_MEDIAPLAYER_FULLSCREEN_BUTTON,
-     ui::SCALE_FACTOR_100P},
     {"mediaplayerCastOff",
      IDR_MEDIAPLAYER_CAST_BUTTON_OFF,
      ui::SCALE_FACTOR_100P},
     {"mediaplayerCastOn",
      IDR_MEDIAPLAYER_CAST_BUTTON_ON,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerCastOffNew",
-     IDR_MEDIAPLAYER_CAST_BUTTON_OFF_NEW,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerCastOnNew",
-     IDR_MEDIAPLAYER_CAST_BUTTON_ON_NEW,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerFullscreenDisabled",
-     IDR_MEDIAPLAYER_FULLSCREEN_BUTTON_DISABLED,
-     ui::SCALE_FACTOR_100P},
     {"mediaplayerOverlayCastOff",
      IDR_MEDIAPLAYER_OVERLAY_CAST_BUTTON_OFF,
-     ui::SCALE_FACTOR_100P},
-    {"mediaplayerOverlayCastOffNew",
-     IDR_MEDIAPLAYER_OVERLAY_CAST_BUTTON_OFF_NEW,
      ui::SCALE_FACTOR_100P},
     {"mediaplayerOverlayPlay",
      IDR_MEDIAPLAYER_OVERLAY_PLAY_BUTTON,
      ui::SCALE_FACTOR_100P},
-    {"mediaplayerOverlayPlayNew",
-     IDR_MEDIAPLAYER_OVERLAY_PLAY_BUTTON_NEW,
+    {"mediaplayerTrackSelectionCheckmark",
+     IDR_MEDIAPLAYER_TRACKSELECTION_CHECKMARK,
+     ui::SCALE_FACTOR_100P},
+    {"mediaplayerClosedCaptionsIcon",
+     IDR_MEDIAPLAYER_CLOSEDCAPTIONS_ICON,
+     ui::SCALE_FACTOR_100P},
+    {"mediaplayerSubtitlesIcon",
+     IDR_MEDIAPLAYER_SUBTITLES_ICON,
+     ui::SCALE_FACTOR_100P},
+    {"mediaplayerOverflowMenu",
+     IDR_MEDIAPLAYER_OVERFLOW_MENU_ICON,
+     ui::SCALE_FACTOR_100P},
+    {"mediaplayerDownloadIcon",
+     IDR_MEDIAPLAYER_DOWNLOAD_ICON,
      ui::SCALE_FACTOR_100P},
     {"searchCancel", IDR_SEARCH_CANCEL, ui::SCALE_FACTOR_100P},
     {"searchCancelPressed", IDR_SEARCH_CANCEL_PRESSED, ui::SCALE_FACTOR_100P},
-    {"searchMagnifier", IDR_SEARCH_MAGNIFIER, ui::SCALE_FACTOR_100P},
-    {"searchMagnifierResults",
-     IDR_SEARCH_MAGNIFIER_RESULTS,
-     ui::SCALE_FACTOR_100P},
     {"textAreaResizeCorner", IDR_TEXTAREA_RESIZER, ui::SCALE_FACTOR_100P},
     {"textAreaResizeCorner@2x", IDR_TEXTAREA_RESIZER, ui::SCALE_FACTOR_200P},
     {"generatePassword", IDR_PASSWORD_GENERATION_ICON, ui::SCALE_FACTOR_100P},
@@ -967,22 +581,22 @@ const DataResource kDataResources[] = {
     {"html.css", IDR_UASTYLE_HTML_CSS, ui::SCALE_FACTOR_NONE},
     {"quirks.css", IDR_UASTYLE_QUIRKS_CSS, ui::SCALE_FACTOR_NONE},
     {"view-source.css", IDR_UASTYLE_VIEW_SOURCE_CSS, ui::SCALE_FACTOR_NONE},
-#if defined(OS_ANDROID)
+    // Not limited to Android since it's used for mobile layouts in inspector.
     {"themeChromiumAndroid.css",
      IDR_UASTYLE_THEME_CHROMIUM_ANDROID_CSS,
      ui::SCALE_FACTOR_NONE},
+    // Not limited to Android since it's used for mobile layouts in inspector.
+    {"fullscreenAndroid.css",
+      IDR_UASTYLE_FULLSCREEN_ANDROID_CSS,
+      ui::SCALE_FACTOR_NONE},
+    // Not limited to Android since it's used for mobile layouts in inspector.
     {"mediaControlsAndroid.css",
      IDR_UASTYLE_MEDIA_CONTROLS_ANDROID_CSS,
      ui::SCALE_FACTOR_NONE},
-    {"mediaControlsAndroidNew.css",
-     IDR_UASTYLE_MEDIA_CONTROLS_ANDROID_NEW_CSS,
-     ui::SCALE_FACTOR_NONE},
-#endif
-#if !defined(OS_WIN)
+    // Not limited to Linux since it's used for mobile layouts in inspector.
     {"themeChromiumLinux.css",
      IDR_UASTYLE_THEME_CHROMIUM_LINUX_CSS,
      ui::SCALE_FACTOR_NONE},
-#endif
     {"themeInputMultipleFields.css",
      IDR_UASTYLE_THEME_INPUT_MULTIPLE_FIELDS_CSS,
      ui::SCALE_FACTOR_NONE},
@@ -998,22 +612,16 @@ const DataResource kDataResources[] = {
     {"mediaControls.css",
      IDR_UASTYLE_MEDIA_CONTROLS_CSS,
      ui::SCALE_FACTOR_NONE},
-    {"mediaControlsNew.css",
-     IDR_UASTYLE_MEDIA_CONTROLS_NEW_CSS,
-     ui::SCALE_FACTOR_NONE},
     {"fullscreen.css", IDR_UASTYLE_FULLSCREEN_CSS, ui::SCALE_FACTOR_NONE},
     {"xhtmlmp.css", IDR_UASTYLE_XHTMLMP_CSS, ui::SCALE_FACTOR_NONE},
     {"viewportAndroid.css",
      IDR_UASTYLE_VIEWPORT_ANDROID_CSS,
      ui::SCALE_FACTOR_NONE},
+    {"viewportTelevision.css",
+     IDR_UASTYLE_VIEWPORT_TELEVISION_CSS,
+     ui::SCALE_FACTOR_NONE},
     {"InspectorOverlayPage.html",
      IDR_INSPECTOR_OVERLAY_PAGE_HTML,
-     ui::SCALE_FACTOR_NONE},
-    {"InjectedScriptSource.js",
-     IDR_INSPECTOR_INJECTED_SCRIPT_SOURCE_JS,
-     ui::SCALE_FACTOR_NONE},
-    {"DebuggerScriptSource.js",
-     IDR_INSPECTOR_DEBUGGER_SCRIPT_SOURCE_JS,
      ui::SCALE_FACTOR_NONE},
     {"DocumentExecCommand.js",
      IDR_PRIVATE_SCRIPT_DOCUMENTEXECCOMMAND_JS,
@@ -1023,9 +631,6 @@ const DataResource kDataResources[] = {
      ui::SCALE_FACTOR_NONE},
     {"DocumentXMLTreeViewer.js",
      IDR_PRIVATE_SCRIPT_DOCUMENTXMLTREEVIEWER_JS,
-     ui::SCALE_FACTOR_NONE},
-    {"HTMLMarqueeElement.js",
-     IDR_PRIVATE_SCRIPT_HTMLMARQUEEELEMENT_JS,
      ui::SCALE_FACTOR_NONE},
     {"PrivateScriptRunner.js",
      IDR_PRIVATE_SCRIPT_PRIVATESCRIPTRUNNER_JS,
@@ -1114,24 +719,6 @@ WebString BlinkPlatformImpl::queryLocalizedString(
       GetContentClient()->GetLocalizedString(message_id), values, NULL);
 }
 
-double BlinkPlatformImpl::currentTimeSeconds() {
-  return base::Time::Now().ToDoubleT();
-}
-
-double BlinkPlatformImpl::monotonicallyIncreasingTimeSeconds() {
-  return base::TimeTicks::Now().ToInternalValue() /
-      static_cast<double>(base::Time::kMicrosecondsPerSecond);
-}
-
-double BlinkPlatformImpl::systemTraceTime() {
-  return (base::TimeTicks::Now() - base::TimeTicks()).InSecondsF();
-}
-
-void BlinkPlatformImpl::cryptographicallyRandomValues(
-    unsigned char* buffer, size_t length) {
-  base::RandBytes(buffer, length);
-}
-
 blink::WebThread* BlinkPlatformImpl::compositorThread() const {
   return compositor_thread_;
 }
@@ -1146,25 +733,21 @@ blink::WebGestureCurve* BlinkPlatformImpl::createFlingAnimationCurve(
              IsMainThread()).release();
 }
 
-void BlinkPlatformImpl::didStartWorkerRunLoop() {
-  WorkerTaskRunner* worker_task_runner = WorkerTaskRunner::Instance();
-  worker_task_runner->DidStartWorkerRunLoop();
+void BlinkPlatformImpl::didStartWorkerThread() {
+  WorkerThreadRegistry::Instance()->DidStartCurrentWorkerThread();
 }
 
-void BlinkPlatformImpl::didStopWorkerRunLoop() {
-  // TODO(kalman): blink::Platform::didStopWorkerRunLoop should be called
-  // willStopWorkerRunLoop, because at this point the run loop hasn't been
-  // stopped. WillStopWorkerRunLoop is the correct name.
-  WorkerTaskRunner* worker_task_runner = WorkerTaskRunner::Instance();
-  worker_task_runner->WillStopWorkerRunLoop();
+void BlinkPlatformImpl::willStopWorkerThread() {
+  WorkerThreadRegistry::Instance()->WillStopCurrentWorkerThread();
+}
+
+bool BlinkPlatformImpl::allowScriptExtensionForServiceWorker(
+    const blink::WebURL& scriptUrl) {
+  return GetContentClient()->AllowScriptExtensionForServiceWorker(scriptUrl);
 }
 
 blink::WebCrypto* BlinkPlatformImpl::crypto() {
   return &web_crypto_;
-}
-
-blink::WebGeofencingProvider* BlinkPlatformImpl::geofencingProvider() {
-  return geofencing_provider_.get();
 }
 
 blink::WebNotificationManager*
@@ -1174,7 +757,6 @@ BlinkPlatformImpl::notificationManager() {
 
   return NotificationManager::ThreadSpecificInstance(
       thread_safe_sender_.get(),
-      main_thread_task_runner_.get(),
       notification_dispatcher_.get());
 }
 
@@ -1184,30 +766,6 @@ blink::WebPushProvider* BlinkPlatformImpl::pushProvider() {
 
   return PushProvider::ThreadSpecificInstance(thread_safe_sender_.get(),
                                               push_dispatcher_.get());
-}
-
-blink::WebServicePortProvider* BlinkPlatformImpl::createServicePortProvider(
-    blink::WebServicePortProviderClient* client) {
-  return new ServicePortProvider(client, main_thread_task_runner_);
-}
-
-blink::WebPermissionClient* BlinkPlatformImpl::permissionClient() {
-  if (!permission_client_.get())
-    return nullptr;
-
-  if (IsMainThread())
-    return permission_client_.get();
-
-  return PermissionDispatcherThreadProxy::GetThreadInstance(
-      main_thread_task_runner_.get(), permission_client_.get());
-}
-
-blink::WebSyncProvider* BlinkPlatformImpl::backgroundSyncProvider() {
-  if (IsMainThread())
-    return main_thread_sync_provider_.get();
-
-  return BackgroundSyncProvider::GetOrCreateThreadSpecificInstance(
-      main_thread_task_runner_.get());
 }
 
 WebThemeEngine* BlinkPlatformImpl::themeEngine() {
@@ -1243,7 +801,7 @@ long long BlinkPlatformImpl::databaseGetFileSize(
 }
 
 long long BlinkPlatformImpl::databaseGetSpaceAvailableForOrigin(
-    const blink::WebString& origin_identifier) {
+    const blink::WebSecurityOrigin& origin) {
   return 0;
 }
 
@@ -1255,49 +813,17 @@ bool BlinkPlatformImpl::databaseSetFileSize(
 blink::WebString BlinkPlatformImpl::signedPublicKeyAndChallengeString(
     unsigned key_size_index,
     const blink::WebString& challenge,
-    const blink::WebURL& url) {
+    const blink::WebURL& url,
+    const blink::WebURL& top_origin) {
   return blink::WebString("");
 }
 
-static size_t getMemoryUsageMB(bool bypass_cache) {
-  size_t current_mem_usage = 0;
-  MemoryUsageCache* mem_usage_cache_singleton = MemoryUsageCache::GetInstance();
-  if (!bypass_cache &&
-      mem_usage_cache_singleton->IsCachedValueValid(&current_mem_usage))
-    return current_mem_usage;
-
-  current_mem_usage = GetMemoryUsageKB() >> 10;
-  mem_usage_cache_singleton->SetMemoryValue(current_mem_usage);
-  return current_mem_usage;
-}
-
-size_t BlinkPlatformImpl::memoryUsageMB() {
-  return getMemoryUsageMB(false);
-}
-
 size_t BlinkPlatformImpl::actualMemoryUsageMB() {
-  return getMemoryUsageMB(true);
-}
-
-size_t BlinkPlatformImpl::physicalMemoryMB() {
-  return static_cast<size_t>(base::SysInfo::AmountOfPhysicalMemoryMB());
-}
-
-size_t BlinkPlatformImpl::virtualMemoryLimitMB() {
-  return static_cast<size_t>(base::SysInfo::AmountOfVirtualMemoryMB());
-}
-
-bool BlinkPlatformImpl::isLowEndDeviceMode() {
-  return base::SysInfo::IsLowEndDevice();
+  return GetMemoryUsageKB() >> 10;
 }
 
 size_t BlinkPlatformImpl::numberOfProcessors() {
   return static_cast<size_t>(base::SysInfo::NumberOfProcessors());
-}
-
-blink::WebDiscardableMemory*
-BlinkPlatformImpl::allocateAndLockDiscardableMemory(size_t bytes) {
-  return content::WebDiscardableMemoryImpl::CreateLockedMemory(bytes).release();
 }
 
 size_t BlinkPlatformImpl::maxDecodedImageBytes() {

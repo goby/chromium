@@ -4,7 +4,12 @@
 
 #include "chrome/browser/chromeos/file_system_provider/fake_provided_file_system.h"
 
-#include "base/thread_task_runner_handle.h"
+#include <stddef.h>
+
+#include <utility>
+
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 
 namespace chromeos {
@@ -26,10 +31,9 @@ const base::FilePath::CharType kFakeFilePath[] =
 FakeEntry::FakeEntry() {
 }
 
-FakeEntry::FakeEntry(scoped_ptr<EntryMetadata> metadata,
+FakeEntry::FakeEntry(std::unique_ptr<EntryMetadata> metadata,
                      const std::string& contents)
-    : metadata(metadata.Pass()), contents(contents) {
-}
+    : metadata(std::move(metadata)), contents(contents) {}
 
 FakeEntry::~FakeEntry() {
 }
@@ -53,21 +57,21 @@ FakeProvidedFileSystem::~FakeProvidedFileSystem() {}
 void FakeProvidedFileSystem::AddEntry(const base::FilePath& entry_path,
                                       bool is_directory,
                                       const std::string& name,
-                                      int64 size,
+                                      int64_t size,
                                       base::Time modification_time,
                                       std::string mime_type,
                                       std::string contents) {
   DCHECK(entries_.find(entry_path) == entries_.end());
-  scoped_ptr<EntryMetadata> metadata(new EntryMetadata);
+  std::unique_ptr<EntryMetadata> metadata(new EntryMetadata);
 
   metadata->is_directory.reset(new bool(is_directory));
   metadata->name.reset(new std::string(name));
-  metadata->size.reset(new int64(size));
+  metadata->size.reset(new int64_t(size));
   metadata->modification_time.reset(new base::Time(modification_time));
   metadata->mime_type.reset(new std::string(mime_type));
 
   entries_[entry_path] =
-      make_linked_ptr(new FakeEntry(metadata.Pass(), contents));
+      make_linked_ptr(new FakeEntry(std::move(metadata), contents));
 }
 
 const FakeEntry* FakeProvidedFileSystem::GetEntry(
@@ -91,13 +95,12 @@ AbortCallback FakeProvidedFileSystem::GetMetadata(
   const Entries::const_iterator entry_it = entries_.find(entry_path);
 
   if (entry_it == entries_.end()) {
-    return PostAbortableTask(
-        base::Bind(callback,
-                   base::Passed(make_scoped_ptr<EntryMetadata>(NULL)),
-                   base::File::FILE_ERROR_NOT_FOUND));
+    return PostAbortableTask(base::Bind(
+        callback, base::Passed(base::WrapUnique<EntryMetadata>(NULL)),
+        base::File::FILE_ERROR_NOT_FOUND));
   }
 
-  scoped_ptr<EntryMetadata> metadata(new EntryMetadata);
+  std::unique_ptr<EntryMetadata> metadata(new EntryMetadata);
   if (fields & ProvidedFileSystemInterface::METADATA_FIELD_IS_DIRECTORY) {
     metadata->is_directory.reset(
         new bool(*entry_it->second->metadata->is_directory));
@@ -105,7 +108,7 @@ AbortCallback FakeProvidedFileSystem::GetMetadata(
   if (fields & ProvidedFileSystemInterface::METADATA_FIELD_NAME)
     metadata->name.reset(new std::string(*entry_it->second->metadata->name));
   if (fields & ProvidedFileSystemInterface::METADATA_FIELD_SIZE)
-    metadata->size.reset(new int64(*entry_it->second->metadata->size));
+    metadata->size.reset(new int64_t(*entry_it->second->metadata->size));
   if (fields & ProvidedFileSystemInterface::METADATA_FIELD_MODIFICATION_TIME) {
     metadata->modification_time.reset(
         new base::Time(*entry_it->second->metadata->modification_time));
@@ -196,7 +199,7 @@ AbortCallback FakeProvidedFileSystem::CloseFile(
 AbortCallback FakeProvidedFileSystem::ReadFile(
     int file_handle,
     net::IOBuffer* buffer,
-    int64 offset,
+    int64_t offset,
     int length,
     const ProvidedFileSystemInterface::ReadChunkReceivedCallback& callback) {
   const auto opened_file_it = opened_files_.find(file_handle);
@@ -221,7 +224,7 @@ AbortCallback FakeProvidedFileSystem::ReadFile(
   }
 
   // Send the response byte by byte.
-  int64 current_offset = offset;
+  int64_t current_offset = offset;
   int current_length = length;
 
   // Reading behind EOF is fine, it will just return 0 bytes.
@@ -296,7 +299,7 @@ AbortCallback FakeProvidedFileSystem::MoveEntry(
 
 AbortCallback FakeProvidedFileSystem::Truncate(
     const base::FilePath& file_path,
-    int64 length,
+    int64_t length,
     const storage::AsyncFileUtil::StatusCallback& callback) {
   // TODO(mtomasz): Implement it once needed.
   return PostAbortableTask(base::Bind(callback, base::File::FILE_OK));
@@ -305,7 +308,7 @@ AbortCallback FakeProvidedFileSystem::Truncate(
 AbortCallback FakeProvidedFileSystem::WriteFile(
     int file_handle,
     net::IOBuffer* buffer,
-    int64 offset,
+    int64_t offset,
     int length,
     const storage::AsyncFileUtil::StatusCallback& callback) {
   const auto opened_file_it = opened_files_.find(file_handle);
@@ -394,7 +397,7 @@ void FakeProvidedFileSystem::Notify(
     const base::FilePath& entry_path,
     bool recursive,
     storage::WatcherManager::ChangeType change_type,
-    scoped_ptr<ProvidedFileSystemObserver::Changes> changes,
+    std::unique_ptr<ProvidedFileSystemObserver::Changes> changes,
     const std::string& tag,
     const storage::AsyncFileUtil::StatusCallback& callback) {
   NOTREACHED();
@@ -407,10 +410,10 @@ void FakeProvidedFileSystem::Configure(
   callback.Run(base::File::FILE_ERROR_SECURITY);
 }
 
-ProvidedFileSystemInterface* FakeProvidedFileSystem::Create(
+std::unique_ptr<ProvidedFileSystemInterface> FakeProvidedFileSystem::Create(
     Profile* profile,
     const ProvidedFileSystemInfo& file_system_info) {
-  return new FakeProvidedFileSystem(file_system_info);
+  return base::MakeUnique<FakeProvidedFileSystem>(file_system_info);
 }
 
 base::WeakPtr<ProvidedFileSystemInterface>

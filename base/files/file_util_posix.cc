@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,21 +22,17 @@
 #include <time.h>
 #include <unistd.h>
 
-#if defined(OS_MACOSX)
-#include <AvailabilityMacros.h>
-#include "base/mac/foundation_util.h"
-#endif
-
-#include "base/basictypes.h"
+#include "base/environment.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/stl_util.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
@@ -43,6 +40,12 @@
 #include "base/sys_info.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
+
+#if defined(OS_MACOSX)
+#include <AvailabilityMacros.h>
+#include "base/mac/foundation_util.h"
+#endif
 
 #if defined(OS_ANDROID)
 #include "base/android/content_uri_utils.h"
@@ -348,6 +351,55 @@ bool CopyDirectory(const FilePath& from_path,
 }
 #endif  // !defined(OS_NACL_NONSFI)
 
+bool CreateLocalNonBlockingPipe(int fds[2]) {
+#if defined(OS_LINUX)
+  return pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0;
+#else
+  int raw_fds[2];
+  if (pipe(raw_fds) != 0)
+    return false;
+  ScopedFD fd_out(raw_fds[0]);
+  ScopedFD fd_in(raw_fds[1]);
+  if (!SetCloseOnExec(fd_out.get()))
+    return false;
+  if (!SetCloseOnExec(fd_in.get()))
+    return false;
+  if (!SetNonBlocking(fd_out.get()))
+    return false;
+  if (!SetNonBlocking(fd_in.get()))
+    return false;
+  fds[0] = fd_out.release();
+  fds[1] = fd_in.release();
+  return true;
+#endif
+}
+
+bool SetNonBlocking(int fd) {
+  const int flags = fcntl(fd, F_GETFL);
+  if (flags == -1)
+    return false;
+  if (flags & O_NONBLOCK)
+    return true;
+  if (HANDLE_EINTR(fcntl(fd, F_SETFL, flags | O_NONBLOCK)) == -1)
+    return false;
+  return true;
+}
+
+bool SetCloseOnExec(int fd) {
+#if defined(OS_NACL_NONSFI)
+  const int flags = 0;
+#else
+  const int flags = fcntl(fd, F_GETFD);
+  if (flags == -1)
+    return false;
+  if (flags & FD_CLOEXEC)
+    return true;
+#endif  // defined(OS_NACL_NONSFI)
+  if (HANDLE_EINTR(fcntl(fd, F_SETFD, flags | FD_CLOEXEC)) == -1)
+    return false;
+  return true;
+}
+
 bool PathExists(const FilePath& path) {
   ThreadRestrictions::AssertIOAllowed();
 #if defined(OS_ANDROID)
@@ -441,6 +493,25 @@ bool SetPosixFilePermissions(const FilePath& path,
     return false;
 
   return true;
+}
+
+bool ExecutableExistsInPath(Environment* env,
+                            const FilePath::StringType& executable) {
+  std::string path;
+  if (!env->GetVar("PATH", &path)) {
+    LOG(ERROR) << "No $PATH variable. Assuming no " << executable << ".";
+    return false;
+  }
+
+  for (const StringPiece& cur_path :
+       SplitStringPiece(path, ":", KEEP_WHITESPACE, SPLIT_WANT_NONEMPTY)) {
+    FilePath file(cur_path);
+    int permissions;
+    if (GetPosixFilePermissions(file.Append(executable), &permissions) &&
+        (permissions & FILE_PERMISSION_EXECUTE_BY_USER))
+      return true;
+  }
+  return false;
 }
 
 #if !defined(OS_MACOSX)

@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+module mojom;
+
+import "url/mojo/url.mojom";
+
 struct SiteEngagementInfo {
-  string origin;
+  url.mojom.Url origin;
   double score;
 };
 
 interface SiteEngagementUIHandler {
   GetSiteEngagementInfo() => (array<SiteEngagementInfo> info);
+  SetSiteEngagementScoreForOrigin(url.mojom.Url origin, double score);
 };

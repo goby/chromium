@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DRIVE_DRIVE_FILE_STREAM_READER_H_
 #define CHROME_BROWSER_CHROMEOS_DRIVE_DRIVE_FILE_STREAM_READER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/threading/thread_checker.h"
 #include "components/drive/file_errors.h"
@@ -45,7 +47,7 @@ class ReaderProxy {
                    const net::CompletionCallback& callback) = 0;
 
   // Called when the data from the server is received.
-  virtual void OnGetContent(scoped_ptr<std::string> data) = 0;
+  virtual void OnGetContent(std::unique_ptr<std::string> data) = 0;
 
   // Called when the accessing to the file system is completed.
   virtual void OnCompleted(FileError error) = 0;
@@ -58,26 +60,26 @@ class LocalReaderProxy : public ReaderProxy {
   // This class takes its ownership.
   // |length| is the number of bytes to be read. It must be equal or
   // smaller than the remaining data size in the |file_reader|.
-  LocalReaderProxy(
-      scoped_ptr<util::LocalFileReader> file_reader, int64 length);
+  LocalReaderProxy(std::unique_ptr<util::LocalFileReader> file_reader,
+                   int64_t length);
   ~LocalReaderProxy() override;
 
   // ReaderProxy overrides.
   int Read(net::IOBuffer* buffer,
            int buffer_length,
            const net::CompletionCallback& callback) override;
-  void OnGetContent(scoped_ptr<std::string> data) override;
+  void OnGetContent(std::unique_ptr<std::string> data) override;
   void OnCompleted(FileError error) override;
 
  private:
-  scoped_ptr<util::LocalFileReader> file_reader_;
+  std::unique_ptr<util::LocalFileReader> file_reader_;
 
   // Callback for the LocalFileReader::Read.
   void OnReadCompleted(
       const net::CompletionCallback& callback, int read_result);
 
   // The number of remaining bytes to be read.
-  int64 remaining_length_;
+  int64_t remaining_length_;
 
   base::ThreadChecker thread_checker_;
 
@@ -94,16 +96,17 @@ class NetworkReaderProxy : public ReaderProxy {
   // to cancel the job. |job_canceller| should be the callback to run the
   // cancelling. |full_content_length| is necessary for determining whether the
   // deletion is done in the middle of download process.
-  NetworkReaderProxy(
-      int64 offset, int64 content_length, int64 full_content_length,
-      const base::Closure& job_canceller);
+  NetworkReaderProxy(int64_t offset,
+                     int64_t content_length,
+                     int64_t full_content_length,
+                     const base::Closure& job_canceller);
   ~NetworkReaderProxy() override;
 
   // ReaderProxy overrides.
   int Read(net::IOBuffer* buffer,
            int buffer_length,
            const net::CompletionCallback& callback) override;
-  void OnGetContent(scoped_ptr<std::string> data) override;
+  void OnGetContent(std::unique_ptr<std::string> data) override;
   void OnCompleted(FileError error) override;
 
  private:
@@ -111,11 +114,11 @@ class NetworkReaderProxy : public ReaderProxy {
   ScopedVector<std::string> pending_data_;
 
   // The number of bytes to be skipped.
-  int64 remaining_offset_;
+  int64_t remaining_offset_;
 
   // The number of bytes of remaining data (including the data not yet
   // received from the server).
-  int64 remaining_content_length_;
+  int64_t remaining_content_length_;
 
   // Flag to remember whether this read request is for reading till the end of
   // the file.
@@ -157,7 +160,7 @@ class DriveFileStreamReader {
 
   // Callback to return the result of Initialize().
   // |error| is net::Error code.
-  typedef base::Callback<void(int error, scoped_ptr<ResourceEntry> entry)>
+  typedef base::Callback<void(int error, std::unique_ptr<ResourceEntry> entry)>
       InitializeCompletionCallback;
 
   DriveFileStreamReader(const FileSystemGetter& file_system_getter,
@@ -195,19 +198,19 @@ class DriveFileStreamReader {
       const InitializeCompletionCallback& callback,
       FileError error,
       const base::FilePath& local_cache_file_path,
-      scoped_ptr<ResourceEntry> entry);
+      std::unique_ptr<ResourceEntry> entry);
 
   // Part of Initialize. Called when the local file open process is done.
   void InitializeAfterLocalFileOpen(
-      int64 length,
+      int64_t length,
       const InitializeCompletionCallback& callback,
-      scoped_ptr<ResourceEntry> entry,
-      scoped_ptr<util::LocalFileReader> file_reader,
+      std::unique_ptr<ResourceEntry> entry,
+      std::unique_ptr<util::LocalFileReader> file_reader,
       int open_result);
 
   // Called when the data is received from the server.
   void OnGetContent(google_apis::DriveApiErrorCode error_code,
-                    scoped_ptr<std::string> data);
+                    std::unique_ptr<std::string> data);
 
   // Called when GetFileContent is completed.
   void OnGetFileContentCompletion(
@@ -217,7 +220,7 @@ class DriveFileStreamReader {
   const FileSystemGetter file_system_getter_;
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
   base::Closure cancel_download_closure_;
-  scoped_ptr<internal::ReaderProxy> reader_proxy_;
+  std::unique_ptr<internal::ReaderProxy> reader_proxy_;
 
   base::ThreadChecker thread_checker_;
 

@@ -3,7 +3,16 @@
      Use of this source code is governed by a BSD-style license that can be
      found in the LICENSE file. -->
 
-<resources xmlns:android="http://schemas.android.com/apk/res/android">
+<resources
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="MissingTranslation">
+
+    <!-- Font to use when a spec asks for "Roboto Medium".
+         Bolding the text makes it look almost, but not quite, entirely unlike Roboto Medium,
+         which doesn't exist pre-L. -->
+    <string name="roboto_medium_typeface">sans-serif</string>
+    <integer name="roboto_medium_textstyle">1</integer>
 
     <!-- Menu Animation Constants -->
     <item type="fraction" format="fraction" name="menu_animation_pivot_x">95%</item>
@@ -26,15 +35,8 @@
     <!-- Compositor Tab Title Text -->
     <bool name="compositor_tab_title_fake_bold_text">true</bool>
 
-    <!-- The maximum indent depth of folders when selecting bookmarks. -->
-    <integer name="select_bookmark_folder_max_depth_indent">5</integer>
     <!-- TabSwitcher - Maximum amount to tilt tabs in over scroll in degrees. -->
     <integer name="over_scroll_angle">15</integer>
-
-    <!-- Font to use for an InfoBar's message, corresponding to a Roboto Bold.
-         Looks almost, but not quite, entirely unlike Roboto Medium, which doesn't exist pre-L. -->
-    <string name="infobar_message_typeface">sans-serif</string>
-    <integer name="infobar_message_textstyle">1</integer>
 
     <!-- Help and Feedback
          These constants should be in sync with the context names on go/mobilehelprecs.
@@ -54,5 +56,15 @@
     <string name="help_context_incognito_learn_more">chrome_incognito</string>
     <string name="help_context_usage_reports">send_crash_report</string>
     <string name="help_context_sad_tab">mobile_awsnap</string>
+    <string name="help_context_physical_web">physical_web</string>
+    <string name="help_context_clear_browsing_data">clear_browsing_data</string>
+    <string name="help_context_change_sync_passphrase">change_sync_passphrase</string>
 
+    <!-- Our manage space activity. Default pre-KitKat to be nothing. -->
+    <string name="manage_space_activity"></string>
+
+    <!-- Whether the device is a tablet or large tablet. Used to determine which resources the OS
+         loaded. -->
+    <bool name="is_tablet">false</bool>
+    <bool name="is_large_tablet">false</bool>
 </resources>

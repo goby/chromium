@@ -28,10 +28,11 @@ class BackgroundSyncMetrics {
     REGISTRATION_IS_DUPLICATE
   };
 
+  // Records the start of a sync event.
+  static void RecordEventStarted(bool startedin_foreground);
+
   // Records the result of a single sync event firing.
-  static void RecordEventResult(SyncPeriodicity periodicity,
-                                bool result,
-                                bool finished_in_foreground);
+  static void RecordEventResult(bool result, bool finished_in_foreground);
 
   // Records the result of running a batch of sync events, including the total
   // time spent, and the batch size.
@@ -42,17 +43,11 @@ class BackgroundSyncMetrics {
   // indicates whether the conditions were sufficient for the sync to fire
   // immediately at the time it was registered.
   static void CountRegisterSuccess(
-      SyncPeriodicity periodicity,
       RegistrationCouldFire could_fire,
       RegistrationIsDuplicate registration_is_duplicate);
 
   // Records the status of a failed sync registration.
-  static void CountRegisterFailure(SyncPeriodicity periodicity,
-                                   BackgroundSyncStatus status);
-
-  // Records the result of trying to unregister a sync.
-  static void CountUnregister(SyncPeriodicity periodicity,
-                              BackgroundSyncStatus result);
+  static void CountRegisterFailure(BackgroundSyncStatus status);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(BackgroundSyncMetrics);

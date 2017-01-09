@@ -7,6 +7,7 @@
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_export.h"
 
@@ -22,6 +23,10 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterFactory {
   // Returns true if the Bluetooth adapter is available for the current
   // platform.
   static bool IsBluetoothAdapterAvailable();
+
+  // Returns true if Bluetooth Low Energy is available for the current
+  // platform.
+  static bool IsLowEnergyAvailable();
 
   // Returns the shared instance of the default adapter, creating and
   // initializing it if necessary. |callback| is called with the adapter

@@ -4,13 +4,16 @@
 
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_api.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/guid.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/extensions/api/autofill_private/autofill_util.h"
 #include "chrome/common/extensions/api/autofill_private.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "extensions/browser/extension_function.h"
@@ -64,63 +67,63 @@ void PopulateAddressComponents(
             addressinput::AddressUiComponent::HINT_LONG ||
         components[i].length_hint ==
             addressinput::AddressUiComponent::HINT_LONG) {
-      row = new autofill_private::AddressComponentRow;
-      address_components->components.push_back(make_linked_ptr(row));
+      address_components->components.push_back(
+          autofill_private::AddressComponentRow());
+      row = &address_components->components.back();
     }
 
-    scoped_ptr<autofill_private::AddressComponent>
-        component(new autofill_private::AddressComponent);
-    component->field_name = components[i].name;
+    autofill_private::AddressComponent component;
+    component.field_name = components[i].name;
 
     switch (components[i].field) {
       case i18n::addressinput::COUNTRY:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_COUNTRY_CODE;
         break;
       case i18n::addressinput::ADMIN_AREA:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_ADDRESS_LEVEL_1;
         break;
       case i18n::addressinput::LOCALITY:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_ADDRESS_LEVEL_2;
         break;
       case i18n::addressinput::DEPENDENT_LOCALITY:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_ADDRESS_LEVEL_3;
         break;
       case i18n::addressinput::SORTING_CODE:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_SORTING_CODE;
         break;
       case i18n::addressinput::POSTAL_CODE:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_POSTAL_CODE;
         break;
       case i18n::addressinput::STREET_ADDRESS:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_ADDRESS_LINES;
         break;
       case i18n::addressinput::ORGANIZATION:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_COMPANY_NAME;
         break;
       case i18n::addressinput::RECIPIENT:
-        component->field =
+        component.field =
             autofill_private::AddressField::ADDRESS_FIELD_FULL_NAME;
         break;
     }
 
     switch (components[i].length_hint) {
       case addressinput::AddressUiComponent::HINT_LONG:
-        component->is_long_field = true;
+        component.is_long_field = true;
         break;
       case addressinput::AddressUiComponent::HINT_SHORT:
-        component->is_long_field = false;
+        component.is_long_field = false;
         break;
     }
 
-    row->row.push_back(make_linked_ptr(component.release()));
+    row->row.push_back(std::move(component));
   }
 }
 
@@ -168,17 +171,15 @@ AutofillPrivateSaveAddressFunction::AutofillPrivateSaveAddressFunction()
 AutofillPrivateSaveAddressFunction::~AutofillPrivateSaveAddressFunction() {}
 
 ExtensionFunction::ResponseAction AutofillPrivateSaveAddressFunction::Run() {
-  scoped_ptr<api::autofill_private::SaveAddress::Params> parameters =
+  std::unique_ptr<api::autofill_private::SaveAddress::Params> parameters =
       api::autofill_private::SaveAddress::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   autofill::PersonalDataManager* personal_data =
       autofill::PersonalDataManagerFactory::GetForProfile(
       chrome_details_.GetProfile());
-  if (!personal_data || !personal_data->IsDataLoaded()) {
-    error_ = kErrorDataUnavailable;
-    return RespondNow(NoArguments());
-  }
+  if (!personal_data || !personal_data->IsDataLoaded())
+    return RespondNow(Error(kErrorDataUnavailable));
 
   api::autofill_private::AddressEntry* address = &parameters->address;
 
@@ -275,6 +276,34 @@ ExtensionFunction::ResponseAction AutofillPrivateSaveAddressFunction::Run() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// AutofillPrivateGetCountryListFunction
+
+AutofillPrivateGetCountryListFunction::AutofillPrivateGetCountryListFunction()
+    : chrome_details_(this) {}
+
+AutofillPrivateGetCountryListFunction::
+    ~AutofillPrivateGetCountryListFunction() {}
+
+ExtensionFunction::ResponseAction AutofillPrivateGetCountryListFunction::Run() {
+  autofill::PersonalDataManager* personal_data =
+      autofill::PersonalDataManagerFactory::GetForProfile(
+          chrome_details_.GetProfile());
+
+  // Return an empty list if data is not loaded.
+  if (!(personal_data && personal_data->IsDataLoaded())) {
+    autofill_util::CountryEntryList empty_list;
+    return RespondNow(ArgumentList(
+        api::autofill_private::GetCountryList::Results::Create(empty_list)));
+  }
+
+  autofill_util::CountryEntryList country_list =
+      autofill_util::GenerateCountryList(*personal_data);
+
+  return RespondNow(ArgumentList(
+      api::autofill_private::GetCountryList::Results::Create(country_list)));
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // AutofillPrivateGetAddressComponentsFunction
 
 AutofillPrivateGetAddressComponentsFunction::
@@ -282,8 +311,9 @@ AutofillPrivateGetAddressComponentsFunction::
 
 ExtensionFunction::ResponseAction
     AutofillPrivateGetAddressComponentsFunction::Run() {
-  scoped_ptr<api::autofill_private::GetAddressComponents::Params> parameters =
-      api::autofill_private::GetAddressComponents::Params::Create(*args_);
+  std::unique_ptr<api::autofill_private::GetAddressComponents::Params>
+      parameters =
+          api::autofill_private::GetAddressComponents::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   autofill_private::AddressComponents components;
@@ -292,7 +322,30 @@ ExtensionFunction::ResponseAction
       g_browser_process->GetApplicationLocale(),
       &components);
 
-  return RespondNow(OneArgument(components.ToValue().release()));
+  return RespondNow(OneArgument(components.ToValue()));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// AutofillPrivateGetAddressListFunction
+
+AutofillPrivateGetAddressListFunction::AutofillPrivateGetAddressListFunction()
+    : chrome_details_(this) {}
+
+AutofillPrivateGetAddressListFunction::
+    ~AutofillPrivateGetAddressListFunction() {}
+
+ExtensionFunction::ResponseAction AutofillPrivateGetAddressListFunction::Run() {
+  autofill::PersonalDataManager* personal_data =
+      autofill::PersonalDataManagerFactory::GetForProfile(
+          chrome_details_.GetProfile());
+
+  DCHECK(personal_data && personal_data->IsDataLoaded());
+
+  autofill_util::AddressEntryList address_list =
+      autofill_util::GenerateAddressList(*personal_data);
+
+  return RespondNow(ArgumentList(
+      api::autofill_private::GetAddressList::Results::Create(address_list)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -305,17 +358,15 @@ AutofillPrivateSaveCreditCardFunction::
     ~AutofillPrivateSaveCreditCardFunction() {}
 
 ExtensionFunction::ResponseAction AutofillPrivateSaveCreditCardFunction::Run() {
-  scoped_ptr<api::autofill_private::SaveCreditCard::Params> parameters =
+  std::unique_ptr<api::autofill_private::SaveCreditCard::Params> parameters =
       api::autofill_private::SaveCreditCard::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   autofill::PersonalDataManager* personal_data =
       autofill::PersonalDataManagerFactory::GetForProfile(
       chrome_details_.GetProfile());
-  if (!personal_data || !personal_data->IsDataLoaded()) {
-    error_ = kErrorDataUnavailable;
-    return RespondNow(NoArguments());
-  }
+  if (!personal_data || !personal_data->IsDataLoaded())
+    return RespondNow(Error(kErrorDataUnavailable));
 
   api::autofill_private::CreditCardEntry* card = &parameters->card;
 
@@ -323,9 +374,8 @@ ExtensionFunction::ResponseAction AutofillPrivateSaveCreditCardFunction::Run() {
   autofill::CreditCard credit_card(guid, kSettingsOrigin);
 
   if (card->name) {
-    credit_card.SetRawInfo(
-        autofill::CREDIT_CARD_NAME,
-        base::UTF8ToUTF16(*card->name));
+    credit_card.SetRawInfo(autofill::CREDIT_CARD_NAME_FULL,
+                           base::UTF8ToUTF16(*card->name));
   }
 
   if (card->card_number) {
@@ -365,17 +415,15 @@ AutofillPrivateRemoveEntryFunction::AutofillPrivateRemoveEntryFunction()
 AutofillPrivateRemoveEntryFunction::~AutofillPrivateRemoveEntryFunction() {}
 
 ExtensionFunction::ResponseAction AutofillPrivateRemoveEntryFunction::Run() {
-  scoped_ptr<api::autofill_private::RemoveEntry::Params> parameters =
+  std::unique_ptr<api::autofill_private::RemoveEntry::Params> parameters =
       api::autofill_private::RemoveEntry::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   autofill::PersonalDataManager* personal_data =
       autofill::PersonalDataManagerFactory::GetForProfile(
       chrome_details_.GetProfile());
-  if (!personal_data || !personal_data->IsDataLoaded()) {
-    error_ = kErrorDataUnavailable;
-    return RespondNow(NoArguments());
-  }
+  if (!personal_data || !personal_data->IsDataLoaded())
+    return RespondNow(Error(kErrorDataUnavailable));
 
   personal_data->RemoveByGUID(parameters->guid);
 
@@ -390,20 +438,21 @@ AutofillPrivateValidatePhoneNumbersFunction::
 
 ExtensionFunction::ResponseAction
     AutofillPrivateValidatePhoneNumbersFunction::Run() {
-  scoped_ptr<api::autofill_private::ValidatePhoneNumbers::Params> parameters =
-      api::autofill_private::ValidatePhoneNumbers::Params::Create(*args_);
+  std::unique_ptr<api::autofill_private::ValidatePhoneNumbers::Params>
+      parameters =
+          api::autofill_private::ValidatePhoneNumbers::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   api::autofill_private::ValidatePhoneParams* params = &parameters->params;
 
   // Extract the phone numbers into a ListValue.
-  scoped_ptr<base::ListValue> phoneNumbers(new base::ListValue);
-  phoneNumbers->AppendStrings(params->phone_numbers);
+  std::unique_ptr<base::ListValue> phone_numbers(new base::ListValue);
+  phone_numbers->AppendStrings(params->phone_numbers);
 
-  RemoveDuplicatePhoneNumberAtIndex(
-      params->index_of_new_number, params->country_code, phoneNumbers.get());
+  RemoveDuplicatePhoneNumberAtIndex(params->index_of_new_number,
+                                    params->country_code, phone_numbers.get());
 
-  return RespondNow(OneArgument(phoneNumbers.Pass()));
+  return RespondNow(OneArgument(std::move(phone_numbers)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -416,21 +465,45 @@ AutofillPrivateMaskCreditCardFunction::
     ~AutofillPrivateMaskCreditCardFunction() {}
 
 ExtensionFunction::ResponseAction AutofillPrivateMaskCreditCardFunction::Run() {
-  scoped_ptr<api::autofill_private::MaskCreditCard::Params> parameters =
+  std::unique_ptr<api::autofill_private::MaskCreditCard::Params> parameters =
       api::autofill_private::MaskCreditCard::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters.get());
 
   autofill::PersonalDataManager* personal_data =
       autofill::PersonalDataManagerFactory::GetForProfile(
       chrome_details_.GetProfile());
-  if (!personal_data || !personal_data->IsDataLoaded()) {
-    error_ = kErrorDataUnavailable;
-    return RespondNow(NoArguments());
-  }
+  if (!personal_data || !personal_data->IsDataLoaded())
+    return RespondNow(Error(kErrorDataUnavailable));
 
   personal_data->ResetFullServerCard(parameters->guid);
 
   return RespondNow(NoArguments());
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// AutofillPrivateGetCreditCardListFunction
+
+AutofillPrivateGetCreditCardListFunction::
+    AutofillPrivateGetCreditCardListFunction()
+    : chrome_details_(this) {}
+
+AutofillPrivateGetCreditCardListFunction::
+    ~AutofillPrivateGetCreditCardListFunction() {}
+
+ExtensionFunction::ResponseAction
+AutofillPrivateGetCreditCardListFunction::Run() {
+  autofill::PersonalDataManager* personal_data =
+      autofill::PersonalDataManagerFactory::GetForProfile(
+          chrome_details_.GetProfile());
+
+  DCHECK(personal_data && personal_data->IsDataLoaded());
+
+  autofill_util::CreditCardEntryList credit_card_list =
+      autofill_util::GenerateCreditCardList(*personal_data);
+
+  return RespondNow(
+      ArgumentList(api::autofill_private::GetCreditCardList::Results::Create(
+          credit_card_list)));
 }
 
 }  // namespace extensions

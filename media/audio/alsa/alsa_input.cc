@@ -4,10 +4,14 @@
 
 #include "media/audio/alsa/alsa_input.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/audio/alsa/alsa_output.h"
 #include "media/audio/alsa/alsa_util.h"
 #include "media/audio/alsa/alsa_wrapper.h"
@@ -60,7 +64,7 @@ bool AlsaPcmInputStream::Open() {
     return false;
   }
 
-  uint32 latency_us =
+  uint32_t latency_us =
       buffer_duration_.InMicroseconds() * kNumPacketsInRingBuffer;
 
   // Use the same minimum required latency as output.
@@ -87,7 +91,7 @@ bool AlsaPcmInputStream::Open() {
   }
 
   if (device_handle_) {
-    audio_buffer_.reset(new uint8[bytes_per_buffer_]);
+    audio_buffer_.reset(new uint8_t[bytes_per_buffer_]);
 
     // Open the microphone mixer.
     mixer_handle_ = alsa_util::OpenMixer(wrapper_, device_name_);
@@ -121,7 +125,7 @@ void AlsaPcmInputStream::Start(AudioInputCallback* callback) {
     // driver. This could also give us a smooth read sequence going forward.
     base::TimeDelta delay = buffer_duration_ + buffer_duration_ / 2;
     next_read_time_ = base::TimeTicks::Now() + delay;
-    base::MessageLoop::current()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
         base::Bind(&AlsaPcmInputStream::ReadAudio, weak_factory_.GetWeakPtr()),
         delay);
@@ -188,7 +192,7 @@ void AlsaPcmInputStream::ReadAudio() {
     }
 
     base::TimeDelta next_check_time = buffer_duration_ / 2;
-    base::MessageLoop::current()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
         base::Bind(&AlsaPcmInputStream::ReadAudio, weak_factory_.GetWeakPtr()),
         next_check_time);
@@ -196,8 +200,8 @@ void AlsaPcmInputStream::ReadAudio() {
   }
 
   int num_buffers = frames / params_.frames_per_buffer();
-  uint32 hardware_delay_bytes =
-      static_cast<uint32>(GetCurrentDelay() * params_.GetBytesPerFrame());
+  uint32_t hardware_delay_bytes =
+      static_cast<uint32_t>(GetCurrentDelay() * params_.GetBytesPerFrame());
   double normalized_volume = 0.0;
 
   // Update the AGC volume level once every second. Note that, |volume| is
@@ -233,7 +237,7 @@ void AlsaPcmInputStream::ReadAudio() {
     delay = base::TimeDelta();
   }
 
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&AlsaPcmInputStream::ReadAudio, weak_factory_.GetWeakPtr()),
       delay);

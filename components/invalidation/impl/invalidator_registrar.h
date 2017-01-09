@@ -7,16 +7,12 @@
 
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "components/invalidation/public/invalidation_export.h"
 #include "components/invalidation/public/invalidation_handler.h"
 #include "components/invalidation/public/invalidation_util.h"
-
-namespace invalidation {
-class ObjectId;
-}  // namespace invalidation
 
 namespace syncer {
 

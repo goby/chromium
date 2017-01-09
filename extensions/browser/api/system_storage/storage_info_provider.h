@@ -8,6 +8,7 @@
 #include <set>
 
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list_threadsafe.h"
 #include "extensions/browser/api/system_info/system_info_provider.h"
@@ -28,8 +29,7 @@ void BuildStorageUnitInfo(const storage_monitor::StorageInfo& info,
 
 }  // namespace systeminfo
 
-typedef std::vector<linked_ptr<api::system_storage::StorageUnitInfo>>
-    StorageUnitInfoList;
+typedef std::vector<api::system_storage::StorageUnitInfo> StorageUnitInfoList;
 
 class StorageInfoProvider : public SystemInfoProvider {
  public:
@@ -46,7 +46,7 @@ class StorageInfoProvider : public SystemInfoProvider {
   virtual double GetStorageFreeSpaceFromTransientIdOnFileThread(
       const std::string& transient_id);
 
-  const StorageUnitInfoList& storage_unit_info_list() const;
+  const StorageUnitInfoList& storage_unit_info_list() const { return info_; }
 
   static void InitializeForTesting(scoped_refptr<StorageInfoProvider> provider);
 

@@ -1,100 +1,18 @@
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "children": [
-        {
-          "position": [18, 10],
-          "bounds": [210, 210],
-          "contentsOpaque": true,
-          "drawsContent": true,
-          "backgroundColor": "#0000FF"
-        }
-      ]
-    }
-  ]
-}
-
-
---------
-Frame: '-->'
---------
-{
-  "bounds": [285, 192],
-  "children": [
+      "drawsContent": true
+    },
     {
-      "bounds": [285, 192],
+      "name": "LayoutBlockFlow DIV class='box'",
+      "position": [18, 10],
+      "bounds": [210, 210],
+      "contentsOpaque": true,
       "drawsContent": true,
-      "children": [
-        {
-          "position": [8, 8],
-          "bounds": [252, 172],
-          "drawsContent": true,
-          "children": [
-            {
-              "position": [1, 1],
-              "bounds": [250, 170],
-              "children": [
-                {
-                  "bounds": [250, 170],
-                  "children": [
-                    {
-                      "children": [
-                        {
-                          "bounds": [250, 230],
-                          "children": [
-                            {
-                              "bounds": [250, 230],
-                              "drawsContent": true,
-                              "backgroundColor": "#C0C0C0",
-                              "children": [
-                                {
-                                  "position": [18, 10],
-                                  "bounds": [210, 210],
-                                  "contentsOpaque": true,
-                                  "drawsContent": true,
-                                  "backgroundColor": "#0000FF"
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-
-
---------
-Frame: '/-->'
---------
-{
-  "bounds": [250, 230],
-  "children": [
-    {
-      "bounds": [250, 230],
-      "drawsContent": true,
-      "backgroundColor": "#C0C0C0",
-      "children": [
-        {
-          "position": [18, 10],
-          "bounds": [210, 210],
-          "contentsOpaque": true,
-          "drawsContent": true,
-          "backgroundColor": "#0000FF"
-        }
-      ]
+      "backgroundColor": "#0000FF"
     }
   ]
 }

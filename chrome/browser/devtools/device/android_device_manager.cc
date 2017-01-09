@@ -4,13 +4,17 @@
 
 #include "chrome/browser/devtools/device/android_device_manager.h"
 
+#include <stddef.h>
 #include <string.h>
 
+#include <utility>
+
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/socket/stream_socket.h"
@@ -57,7 +61,7 @@ static void PostHttpUpgradeCallback(
     int result,
     const std::string& extensions,
     const std::string& body_head,
-    scoped_ptr<net::StreamSocket> socket) {
+    std::unique_ptr<net::StreamSocket> socket) {
   response_task_runner->PostTask(
       FROM_HERE, base::Bind(callback, result, extensions, body_head,
                             base::Passed(&socket)));
@@ -71,45 +75,44 @@ class HttpRequest {
   static void CommandRequest(const std::string& request,
                              const CommandCallback& callback,
                              int result,
-                             scoped_ptr<net::StreamSocket> socket) {
+                             std::unique_ptr<net::StreamSocket> socket) {
     if (result != net::OK) {
       callback.Run(result, std::string());
       return;
     }
-    new HttpRequest(socket.Pass(), request, callback);
+    new HttpRequest(std::move(socket), request, callback);
   }
 
   static void HttpUpgradeRequest(const std::string& request,
                                  const HttpUpgradeCallback& callback,
                                  int result,
-                                 scoped_ptr<net::StreamSocket> socket) {
+                                 std::unique_ptr<net::StreamSocket> socket) {
     if (result != net::OK) {
-      callback.Run(
-          result, std::string(), std::string(),
-          make_scoped_ptr<net::StreamSocket>(nullptr));
+      callback.Run(result, std::string(), std::string(),
+                   base::WrapUnique<net::StreamSocket>(nullptr));
       return;
     }
-    new HttpRequest(socket.Pass(), request, callback);
+    new HttpRequest(std::move(socket), request, callback);
   }
 
  private:
-  HttpRequest(scoped_ptr<net::StreamSocket> socket,
+  HttpRequest(std::unique_ptr<net::StreamSocket> socket,
               const std::string& request,
               const CommandCallback& callback)
-      : socket_(socket.Pass()),
+      : socket_(std::move(socket)),
         command_callback_(callback),
         expected_size_(-1),
         header_size_(0) {
     SendRequest(request);
   }
 
-  HttpRequest(scoped_ptr<net::StreamSocket> socket,
+  HttpRequest(std::unique_ptr<net::StreamSocket> socket,
               const std::string& request,
               const HttpUpgradeCallback& callback)
-    : socket_(socket.Pass()),
-      http_upgrade_callback_(callback),
-      expected_size_(-1),
-      header_size_(0) {
+      : socket_(std::move(socket)),
+        http_upgrade_callback_(callback),
+        expected_size_(-1),
+        header_size_(0) {
     SendRequest(request);
   }
 
@@ -198,7 +201,8 @@ class HttpRequest {
       } else {
         // Pass the WebSocket frames (in |body|), too.
         http_upgrade_callback_.Run(net::OK,
-            ExtractHeader("Sec-WebSocket-Extensions:"), body, socket_.Pass());
+                                   ExtractHeader("Sec-WebSocket-Extensions:"),
+                                   body, std::move(socket_));
       }
       delete this;
       return;
@@ -223,7 +227,7 @@ class HttpRequest {
 
     std::string value = response_.substr(
         start_pos + header.length(), endline_pos - start_pos - header.length());
-    base::TrimWhitespace(value, base::TRIM_ALL, &value);
+    base::TrimWhitespaceASCII(value, base::TRIM_ALL, &value);
     return value;
   }
 
@@ -233,15 +237,14 @@ class HttpRequest {
     if (!command_callback_.is_null()) {
       command_callback_.Run(result, std::string());
     } else {
-      http_upgrade_callback_.Run(
-          result, std::string(), std::string(),
-          make_scoped_ptr<net::StreamSocket>(nullptr));
+      http_upgrade_callback_.Run(result, std::string(), std::string(),
+                                 base::WrapUnique<net::StreamSocket>(nullptr));
     }
     delete this;
     return false;
   }
 
-  scoped_ptr<net::StreamSocket> socket_;
+  std::unique_ptr<net::StreamSocket> socket_;
   scoped_refptr<net::DrainableIOBuffer> request_;
   std::string response_;
   CommandCallback command_callback_;
@@ -265,7 +268,7 @@ class DevicesRequest : public base::RefCountedThreadSafe<DevicesRequest> {
   typedef AndroidDeviceManager::DeviceProvider DeviceProvider;
   typedef AndroidDeviceManager::DeviceProviders DeviceProviders;
   typedef AndroidDeviceManager::DeviceDescriptors DeviceDescriptors;
-  typedef base::Callback<void(scoped_ptr<DeviceDescriptors>)>
+  typedef base::Callback<void(std::unique_ptr<DeviceDescriptors>)>
       DescriptorsCallback;
 
   static void Start(
@@ -312,7 +315,7 @@ class DevicesRequest : public base::RefCountedThreadSafe<DevicesRequest> {
 
   scoped_refptr<base::SingleThreadTaskRunner> response_task_runner_;
   DescriptorsCallback callback_;
-  scoped_ptr<DeviceDescriptors> descriptors_;
+  std::unique_ptr<DeviceDescriptors> descriptors_;
 };
 
 void ReleaseDeviceAndProvider(
@@ -328,15 +331,23 @@ AndroidDeviceManager::BrowserInfo::BrowserInfo()
     : type(kTypeOther) {
 }
 
+AndroidDeviceManager::BrowserInfo::BrowserInfo(const BrowserInfo& other) =
+    default;
+
 AndroidDeviceManager::DeviceInfo::DeviceInfo()
     : model(kModelOffline), connected(false) {
 }
+
+AndroidDeviceManager::DeviceInfo::DeviceInfo(const DeviceInfo& other) = default;
 
 AndroidDeviceManager::DeviceInfo::~DeviceInfo() {
 }
 
 AndroidDeviceManager::DeviceDescriptor::DeviceDescriptor() {
 }
+
+AndroidDeviceManager::DeviceDescriptor::DeviceDescriptor(
+    const DeviceDescriptor& other) = default;
 
 AndroidDeviceManager::DeviceDescriptor::~DeviceDescriptor() {
 }
@@ -433,20 +444,16 @@ AndroidDeviceManager::Device::Device(
 }
 
 AndroidDeviceManager::Device::~Device() {
-  std::set<AndroidWebSocket*> sockets_copy(sockets_);
-  for (AndroidWebSocket* socket : sockets_copy)
-    socket->OnSocketClosed();
-
   provider_->AddRef();
   DeviceProvider* raw_ptr = provider_.get();
-  provider_ = NULL;
+  provider_ = nullptr;
   task_runner_->PostTask(FROM_HERE,
                          base::Bind(&ReleaseDeviceAndProvider,
                                     base::Unretained(raw_ptr), serial_));
 }
 
 AndroidDeviceManager::HandlerThread*
-AndroidDeviceManager::HandlerThread::instance_ = NULL;
+AndroidDeviceManager::HandlerThread::instance_ = nullptr;
 
 // static
 scoped_refptr<AndroidDeviceManager::HandlerThread>
@@ -465,24 +472,25 @@ AndroidDeviceManager::HandlerThread::HandlerThread() {
   options.message_loop_type = base::MessageLoop::TYPE_IO;
   if (!thread_->StartWithOptions(options)) {
     delete thread_;
-    thread_ = NULL;
+    thread_ = nullptr;
   }
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
 AndroidDeviceManager::HandlerThread::message_loop() {
-  return thread_ ? thread_->task_runner() : NULL;
+  return thread_ ? thread_->task_runner() : nullptr;
 }
 
 // static
 void AndroidDeviceManager::HandlerThread::StopThread(
     base::Thread* thread) {
   thread->Stop();
+  delete thread;
 }
 
 AndroidDeviceManager::HandlerThread::~HandlerThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  instance_ = NULL;
+  instance_ = nullptr;
   if (!thread_)
     return;
   // Shut down thread on FILE thread to join into IO.
@@ -492,8 +500,8 @@ AndroidDeviceManager::HandlerThread::~HandlerThread() {
 }
 
 // static
-scoped_ptr<AndroidDeviceManager> AndroidDeviceManager::Create() {
-  return make_scoped_ptr(new AndroidDeviceManager());
+std::unique_ptr<AndroidDeviceManager> AndroidDeviceManager::Create() {
+  return base::WrapUnique(new AndroidDeviceManager());
 }
 
 void AndroidDeviceManager::SetDeviceProviders(
@@ -502,7 +510,7 @@ void AndroidDeviceManager::SetDeviceProviders(
       it != providers_.end(); ++it) {
     (*it)->AddRef();
     DeviceProvider* raw_ptr = it->get();
-    *it = NULL;
+    *it = nullptr;
     handler_thread_->message_loop()->ReleaseSoon(FROM_HERE, raw_ptr);
   }
   providers_ = providers;
@@ -525,7 +533,7 @@ AndroidDeviceManager::~AndroidDeviceManager() {
 
 void AndroidDeviceManager::UpdateDevices(
     const DevicesCallback& callback,
-    scoped_ptr<DeviceDescriptors> descriptors) {
+    std::unique_ptr<DeviceDescriptors> descriptors) {
   Devices response;
   DeviceWeakMap new_devices;
   for (DeviceDescriptors::const_iterator it = descriptors->begin();

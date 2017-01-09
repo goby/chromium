@@ -4,9 +4,13 @@
 
 #include "chrome/browser/extensions/extension_action_storage_manager.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_action.h"
@@ -48,7 +52,7 @@ enum StoredAppearance {
 
 // Conversion function for reading/writing to storage.
 SkColor RawStringToSkColor(const std::string& str) {
-  uint64 value = 0;
+  uint64_t value = 0;
   base::StringToUint64(str, &value);
   SkColor color = static_cast<SkColor>(value);
   DCHECK(value == color);  // ensure value fits into color's 32 bits
@@ -156,9 +160,10 @@ void SetDefaultsFromValue(const base::DictionaryValue* dict,
 
 // Store |action|'s default values in a DictionaryValue for use in storing to
 // disk.
-scoped_ptr<base::DictionaryValue> DefaultsToValue(ExtensionAction* action) {
+std::unique_ptr<base::DictionaryValue> DefaultsToValue(
+    ExtensionAction* action) {
   const int kDefaultTabId = ExtensionAction::kDefaultTabId;
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
   dict->SetString(kPopupUrlStorageKey,
                   action->GetPopupUrl(kDefaultTabId).spec());
@@ -175,14 +180,15 @@ scoped_ptr<base::DictionaryValue> DefaultsToValue(ExtensionAction* action) {
   gfx::ImageSkia icon =
       action->GetExplicitlySetIcon(kDefaultTabId).AsImageSkia();
   if (!icon.isNull()) {
-    scoped_ptr<base::DictionaryValue> icon_value(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> icon_value(
+        new base::DictionaryValue());
     std::vector<gfx::ImageSkiaRep> image_reps = icon.image_reps();
     for (const gfx::ImageSkiaRep& rep : image_reps) {
       int size = static_cast<int>(rep.scale() * icon.width());
       std::string size_string = base::IntToString(size);
       icon_value->SetString(size_string, BitmapToString(rep.sk_bitmap()));
     }
-    dict->Set(kIconStorageKey, icon_value.Pass());
+    dict->Set(kIconStorageKey, std::move(icon_value));
   }
   return dict;
 }
@@ -241,16 +247,16 @@ void ExtensionActionStorageManager::WriteToStorage(
     ExtensionAction* extension_action) {
   StateStore* store = GetStateStore();
   if (store) {
-    scoped_ptr<base::DictionaryValue> defaults =
+    std::unique_ptr<base::DictionaryValue> defaults =
         DefaultsToValue(extension_action);
     store->SetExtensionValue(extension_action->extension_id(),
-                             kBrowserActionStorageKey,
-                             defaults.Pass());
+                             kBrowserActionStorageKey, std::move(defaults));
   }
 }
 
 void ExtensionActionStorageManager::ReadFromStorage(
-    const std::string& extension_id, scoped_ptr<base::Value> value) {
+    const std::string& extension_id,
+    std::unique_ptr<base::Value> value) {
   const Extension* extension = ExtensionRegistry::Get(browser_context_)->
       enabled_extensions().GetByID(extension_id);
   if (!extension)

@@ -2,17 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/test/python_utils.h"
+
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/launch.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "net/test/python_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+TEST(PythonUtils, Clear) {
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
+  env->SetVar(kPythonPathEnv, "foo");
+  EXPECT_TRUE(env->HasVar(kPythonPathEnv));
+
+  ClearPythonPath();
+  EXPECT_FALSE(env->HasVar(kPythonPathEnv));
+}
 
 TEST(PythonUtils, Append) {
   const base::FilePath::CharType kAppendDir1[] =
@@ -20,7 +30,7 @@ TEST(PythonUtils, Append) {
   const base::FilePath::CharType kAppendDir2[] =
       FILE_PATH_LITERAL("test/path_append2");
 
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
 
   std::string python_path;
   base::FilePath append_path1(kAppendDir1);
@@ -61,6 +71,6 @@ TEST(PythonUtils, MAYBE_PythonRunTime) {
   cmd_line.AppendArg(python_cmd);
   std::string output;
   EXPECT_TRUE(base::GetAppOutput(cmd_line, &output));
-  base::TrimWhitespace(output, base::TRIM_TRAILING, &output);
+  base::TrimWhitespaceASCII(output, base::TRIM_TRAILING, &output);
   EXPECT_EQ(input, output);
 }

@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_TRANSLATE_CORE_BROWSER_OPTIONS_MENU_MODEL_H_
 #define COMPONENTS_TRANSLATE_CORE_BROWSER_OPTIONS_MENU_MODEL_H_
 
+#include "base/macros.h"
 #include "ui/base/models/simple_menu_model.h"
 
 namespace translate {
@@ -31,8 +32,6 @@ class OptionsMenuModel : public ui::SimpleMenuModel,
   // ui::SimpleMenuModel::Delegate implementation:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
  private:

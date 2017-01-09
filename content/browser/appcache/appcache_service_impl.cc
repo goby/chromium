@@ -5,14 +5,16 @@
 #include "content/browser/appcache/appcache_service_impl.h"
 
 #include <functional>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_backend_impl.h"
 #include "content/browser/appcache/appcache_entry.h"
@@ -49,12 +51,14 @@ class AppCacheServiceImpl::AsyncHelper
   AsyncHelper(AppCacheServiceImpl* service,
               const net::CompletionCallback& callback)
       : service_(service), callback_(callback) {
-    service_->pending_helpers_.insert(this);
+    service_->pending_helpers_[this] = base::WrapUnique(this);
   }
 
   ~AsyncHelper() override {
-    if (service_)
+    if (service_) {
+      service_->pending_helpers_[this].release();
       service_->pending_helpers_.erase(this);
+    }
   }
 
   virtual void Start() = 0;
@@ -80,7 +84,7 @@ void AppCacheServiceImpl::AsyncHelper::Cancel() {
     callback_.Reset();
   }
   service_->storage()->CancelDelegateCallbacks(this);
-  service_ = NULL;
+  service_ = nullptr;
 }
 
 // DeleteHelper -------
@@ -255,9 +259,10 @@ void AppCacheServiceImpl::GetInfoHelper::OnAllInfo(
 
 class AppCacheServiceImpl::CheckResponseHelper : AsyncHelper {
  public:
-  CheckResponseHelper(
-      AppCacheServiceImpl* service, const GURL& manifest_url, int64 cache_id,
-      int64 response_id)
+  CheckResponseHelper(AppCacheServiceImpl* service,
+                      const GURL& manifest_url,
+                      int64_t cache_id,
+                      int64_t response_id)
       : AsyncHelper(service, net::CompletionCallback()),
         manifest_url_(manifest_url),
         cache_id_(cache_id),
@@ -265,8 +270,7 @@ class AppCacheServiceImpl::CheckResponseHelper : AsyncHelper {
         kIOBufferSize(32 * 1024),
         expected_total_size_(0),
         amount_headers_read_(0),
-        amount_data_read_(0) {
-  }
+        amount_data_read_(0) {}
 
   void Start() override {
     service_->storage()->LoadOrCreateGroup(manifest_url_, this);
@@ -286,16 +290,16 @@ class AppCacheServiceImpl::CheckResponseHelper : AsyncHelper {
 
   // Inputs describing what to check.
   GURL manifest_url_;
-  int64 cache_id_;
-  int64 response_id_;
+  int64_t cache_id_;
+  int64_t response_id_;
 
   // Internals used to perform the checks.
   const int kIOBufferSize;
   scoped_refptr<AppCache> cache_;
-  scoped_ptr<AppCacheResponseReader> response_reader_;
+  std::unique_ptr<AppCacheResponseReader> response_reader_;
   scoped_refptr<HttpResponseInfoIOBuffer> info_buffer_;
   scoped_refptr<net::IOBuffer> data_buffer_;
-  int64 expected_total_size_;
+  int64_t expected_total_size_;
   int amount_headers_read_;
   int amount_data_read_;
   DISALLOW_COPY_AND_ASSIGN(CheckResponseHelper);
@@ -329,8 +333,8 @@ void AppCacheServiceImpl::CheckResponseHelper::OnGroupLoaded(
 
   // Verify that we can read the response info and data.
   expected_total_size_ = entry->response_size();
-  response_reader_.reset(service_->storage()->CreateResponseReader(
-      manifest_url_, group->group_id(), response_id_));
+  response_reader_.reset(
+      service_->storage()->CreateResponseReader(manifest_url_, response_id_));
   info_buffer_ = new HttpResponseInfoIOBuffer();
   response_reader_->ReadInfo(
       info_buffer_.get(),
@@ -387,19 +391,19 @@ void AppCacheServiceImpl::CheckResponseHelper::OnReadDataComplete(int result) {
 // AppCacheStorageReference ------
 
 AppCacheStorageReference::AppCacheStorageReference(
-    scoped_ptr<AppCacheStorage> storage)
-    : storage_(storage.Pass()) {}
+    std::unique_ptr<AppCacheStorage> storage)
+    : storage_(std::move(storage)) {}
 AppCacheStorageReference::~AppCacheStorageReference() {}
 
 // AppCacheServiceImpl -------
 
 AppCacheServiceImpl::AppCacheServiceImpl(
     storage::QuotaManagerProxy* quota_manager_proxy)
-    : appcache_policy_(NULL),
-      quota_client_(NULL),
-      handler_factory_(NULL),
+    : appcache_policy_(nullptr),
+      quota_client_(nullptr),
+      handler_factory_(nullptr),
       quota_manager_proxy_(quota_manager_proxy),
-      request_context_(NULL),
+      request_context_(nullptr),
       force_keep_session_state_(false),
       weak_factory_(this) {
   if (quota_manager_proxy_.get()) {
@@ -410,10 +414,11 @@ AppCacheServiceImpl::AppCacheServiceImpl(
 
 AppCacheServiceImpl::~AppCacheServiceImpl() {
   DCHECK(backends_.empty());
-  std::for_each(pending_helpers_.begin(),
-                pending_helpers_.end(),
-                std::mem_fun(&AsyncHelper::Cancel));
-  STLDeleteElements(&pending_helpers_);
+  for (auto& observer : observers_)
+    observer.OnServiceDestructionImminent(this);
+  for (auto& helper : pending_helpers_)
+    helper.first->Cancel();
+  pending_helpers_.clear();
   if (quota_client_)
     quota_client_->NotifyAppCacheDestroyed();
 
@@ -468,10 +473,10 @@ void AppCacheServiceImpl::Reinitialize() {
 
   // Inform observers of about this and give them a chance to
   // defer deletion of the old storage object.
-  scoped_refptr<AppCacheStorageReference>
-      old_storage_ref(new AppCacheStorageReference(storage_.Pass()));
-  FOR_EACH_OBSERVER(Observer, observers_,
-                    OnServiceReinitialized(old_storage_ref.get()));
+  scoped_refptr<AppCacheStorageReference> old_storage_ref(
+      new AppCacheStorageReference(std::move(storage_)));
+  for (auto& observer : observers_)
+    observer.OnServiceReinitialized(old_storage_ref.get());
 
   Initialize(cache_directory_, db_thread_, cache_thread_);
 }
@@ -498,8 +503,8 @@ void AppCacheServiceImpl::DeleteAppCachesForOrigin(
 }
 
 void AppCacheServiceImpl::CheckAppCacheResponse(const GURL& manifest_url,
-                                            int64 cache_id,
-                                            int64 response_id) {
+                                                int64_t cache_id,
+                                                int64_t response_id) {
   CheckResponseHelper* helper = new CheckResponseHelper(
       this, manifest_url, cache_id, response_id);
   helper->Start();

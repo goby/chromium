@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/signin/core/browser/gaia_cookie_manager_service.h"
 
@@ -58,6 +58,7 @@ class OAuth2LoginVerifier : public GaiaCookieManagerService::Observer {
       const GoogleServiceAuthError& error) override;
   void OnGaiaAccountsInCookieUpdated(
       const std::vector<gaia::ListedAccount>& accounts,
+      const std::vector<gaia::ListedAccount>& signed_out_accounts,
       const GoogleServiceAuthError& error) override;
 
   OAuth2LoginVerifier::Delegate* delegate_;

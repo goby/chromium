@@ -4,6 +4,9 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/environment_data_collection_win.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <string>
 
@@ -25,8 +28,6 @@
 namespace safe_browsing {
 
 namespace {
-
-const wchar_t test_dll[] = L"test_name.dll";
 
 // Returns true if a dll with filename |dll_name| is found in |process_report|,
 // providing a copy of it in |result|.
@@ -122,53 +123,6 @@ TEST(SafeBrowsingEnvironmentDataCollectionWinTest, RecordLspFeature) {
   FAIL() << "No LSP feature found for " << lsp;
 }
 
-TEST(SafeBrowsingEnvironmentDataCollectionWinTest, CollectDllBlacklistData) {
-  // Ensure that CollectDllBlacklistData correctly adds the set of sanitized dll
-  // names currently stored in the registry to the report.
-  registry_util::RegistryOverrideManager override_manager;
-  override_manager.OverrideRegistry(HKEY_CURRENT_USER);
-
-  base::win::RegKey blacklist_registry_key(HKEY_CURRENT_USER,
-                                           blacklist::kRegistryFinchListPath,
-                                           KEY_QUERY_VALUE | KEY_SET_VALUE);
-
-  // Check that with an empty registry the blacklisted dlls field is left empty.
-  ClientIncidentReport_EnvironmentData_Process process_report;
-  CollectDllBlacklistData(&process_report);
-  EXPECT_EQ(0, process_report.blacklisted_dll_size());
-
-  // Check that after adding exactly one dll to the registry it appears in the
-  // process report.
-  blacklist_registry_key.WriteValue(test_dll, test_dll);
-  CollectDllBlacklistData(&process_report);
-  ASSERT_EQ(1, process_report.blacklisted_dll_size());
-
-  base::string16 process_report_dll =
-      base::UTF8ToWide(process_report.blacklisted_dll(0));
-  EXPECT_EQ(base::string16(test_dll), process_report_dll);
-
-  // Check that if the registry contains the full path to a dll it is properly
-  // sanitized before being reported.
-  blacklist_registry_key.DeleteValue(test_dll);
-  process_report.clear_blacklisted_dll();
-
-  base::FilePath path;
-  ASSERT_TRUE(PathService::Get(base::DIR_HOME, &path));
-  base::string16 input_path =
-      path.Append(FILE_PATH_LITERAL("test_path.dll")).value();
-
-  std::string path_expected = base::FilePath(FILE_PATH_LITERAL("~"))
-                                  .Append(FILE_PATH_LITERAL("test_path.dll"))
-                                  .AsUTF8Unsafe();
-
-  blacklist_registry_key.WriteValue(input_path.c_str(), input_path.c_str());
-  CollectDllBlacklistData(&process_report);
-
-  ASSERT_EQ(1, process_report.blacklisted_dll_size());
-  std::string process_report_path = process_report.blacklisted_dll(0);
-  EXPECT_EQ(path_expected, process_report_path);
-}
-
 #if !defined(_WIN64)
 TEST(SafeBrowsingEnvironmentDataCollectionWinTest, VerifyLoadedModules) {
   //  Load the test modules.
@@ -193,7 +147,7 @@ TEST(SafeBrowsingEnvironmentDataCollectionWinTest, VerifyLoadedModules) {
                      reinterpret_cast<void*>(&new_val),
                      1,
                      &bytes_written);
-  ASSERT_EQ(1, bytes_written);
+  ASSERT_EQ(1u, bytes_written);
 
   ClientIncidentReport_EnvironmentData_Process process_report;
   CollectModuleVerificationData(kTestDllNames, kTestDllNamesCount,
@@ -258,13 +212,14 @@ TEST(SafeBrowsingEnvironmentDataCollectionWinTest, CollectRegistryData) {
   CollectRegistryData(kRegKeysToCollect, 1, &registry_data_pb);
 
   // Expect 1 registry key, 1 value.
-  EXPECT_EQ(1U, registry_data_pb.size());
+  EXPECT_EQ(1, registry_data_pb.size());
   EXPECT_EQ("HKEY_CURRENT_USER\\Software\\TestKey",
             registry_data_pb.Get(0).name());
-  EXPECT_EQ(1U, registry_data_pb.Get(0).value_size());
+  EXPECT_EQ(1, registry_data_pb.Get(0).value_size());
   EXPECT_EQ(base::WideToUTF8(kStringValueName),
             registry_data_pb.Get(0).value(0).name());
-  EXPECT_EQ(REG_SZ, registry_data_pb.Get(0).value(0).type());
+  EXPECT_EQ(static_cast<uint32_t>(REG_SZ),
+            registry_data_pb.Get(0).value(0).type());
   const char* value_data = registry_data_pb.Get(0).value(0).data().c_str();
   EXPECT_EQ(kStringData,
             std::wstring(reinterpret_cast<const wchar_t*>(&value_data[0])));
@@ -276,8 +231,8 @@ TEST(SafeBrowsingEnvironmentDataCollectionWinTest, CollectRegistryData) {
   CollectRegistryData(kRegKeysToCollect, 1, &registry_data_pb);
 
   // Expect 1 registry key, 2 values.
-  EXPECT_EQ(1U, registry_data_pb.size());
-  EXPECT_EQ(2U, registry_data_pb.Get(0).value_size());
+  EXPECT_EQ(1, registry_data_pb.size());
+  EXPECT_EQ(2, registry_data_pb.Get(0).value_size());
 
   // Add a subkey.
   const wchar_t kTestValueName[] = L"TestValue";
@@ -293,16 +248,16 @@ TEST(SafeBrowsingEnvironmentDataCollectionWinTest, CollectRegistryData) {
   CollectRegistryData(kRegKeysToCollect, 1, &registry_data_pb);
 
   // Expect 1 subkey, 1 value.
-  EXPECT_EQ(1U, registry_data_pb.Get(0).key_size());
+  EXPECT_EQ(1, registry_data_pb.Get(0).key_size());
   const ClientIncidentReport_EnvironmentData_OS_RegistryKey& subkey_pb =
       registry_data_pb.Get(0).key(0);
   EXPECT_EQ(base::WideToUTF8(kSubKey), subkey_pb.name());
-  EXPECT_EQ(1U, subkey_pb.value_size());
+  EXPECT_EQ(1, subkey_pb.value_size());
   EXPECT_EQ(base::WideToUTF8(kTestValueName), subkey_pb.value(0).name());
   value_data = subkey_pb.value(0).data().c_str();
   EXPECT_EQ(kTestData,
             std::wstring(reinterpret_cast<const wchar_t*>(&value_data[0])));
-  EXPECT_EQ(REG_SZ, subkey_pb.value(0).type());
+  EXPECT_EQ(static_cast<uint32_t>(REG_SZ), subkey_pb.value(0).type());
 }
 
 TEST(SafeBrowsingEnvironmentDataCollectionWinTest,

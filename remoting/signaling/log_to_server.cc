@@ -4,6 +4,8 @@
 
 #include "remoting/signaling/log_to_server.h"
 
+#include <utility>
+
 #include "remoting/base/constants.h"
 #include "remoting/signaling/iq_sender.h"
 #include "remoting/signaling/signal_strategy.h"
@@ -57,18 +59,15 @@ void LogToServer::SendPendingEntries() {
     return;
   }
   // Make one stanza containing all the pending entries.
-  scoped_ptr<XmlElement> stanza(ServerLogEntry::MakeStanza());
+  std::unique_ptr<XmlElement> stanza(ServerLogEntry::MakeStanza());
   while (!pending_entries_.empty()) {
     ServerLogEntry& entry = pending_entries_.front();
     stanza->AddElement(entry.ToStanza().release());
     pending_entries_.pop_front();
   }
-  // Send the stanza to the server.
-  scoped_ptr<IqRequest> req = iq_sender_->SendIq(
-      buzz::STR_SET, directory_bot_jid_, stanza.Pass(),
-      IqSender::ReplyCallback());
-  // We ignore any response, so let the IqRequest be destroyed.
-  return;
+  // Send the stanza to the server and ignore the response.
+  iq_sender_->SendIq(buzz::STR_SET, directory_bot_jid_, std::move(stanza),
+                     IqSender::ReplyCallback());
 }
 
 }  // namespace remoting

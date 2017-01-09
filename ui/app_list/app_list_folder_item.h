@@ -5,9 +5,12 @@
 #ifndef UI_APP_LIST_APP_LIST_FOLDER_ITEM_H_
 #define UI_APP_LIST_APP_LIST_FOLDER_ITEM_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "ui/app_list/app_list_export.h"
 #include "ui/app_list/app_list_item.h"
 #include "ui/app_list/app_list_item_list_observer.h"
@@ -80,7 +83,7 @@ class APP_LIST_EXPORT AppListFolderItem : public AppListItem,
   const FolderType folder_type_;
 
   // List of items in the folder.
-  scoped_ptr<AppListItemList> item_list_;
+  std::unique_ptr<AppListItemList> item_list_;
 
   FolderImage folder_image_;
 

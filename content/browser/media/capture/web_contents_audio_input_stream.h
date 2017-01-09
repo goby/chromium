@@ -15,6 +15,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "media/audio/audio_io.h"
@@ -72,11 +73,12 @@ class CONTENT_EXPORT WebContentsAudioInputStream
   // thread, and the VirtualAudioOuputStreams on the audio thread.
   class Impl;
 
-  WebContentsAudioInputStream(
-      int render_process_id, int main_render_frame_id,
-      AudioMirroringManager* mirroring_manager,
-      const scoped_refptr<WebContentsTracker>& tracker,
-      media::VirtualAudioInputStream* mixer_stream);
+  WebContentsAudioInputStream(int render_process_id,
+                              int main_render_frame_id,
+                              AudioMirroringManager* mirroring_manager,
+                              const scoped_refptr<WebContentsTracker>& tracker,
+                              media::VirtualAudioInputStream* mixer_stream,
+                              bool is_duplication);
 
   ~WebContentsAudioInputStream() override;
 

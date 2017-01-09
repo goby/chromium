@@ -5,9 +5,10 @@
 #ifndef COMPONENTS_KEYED_SERVICE_IOS_BROWSER_STATE_KEYED_SERVICE_FACTORY_H_
 #define COMPONENTS_KEYED_SERVICE_IOS_BROWSER_STATE_KEYED_SERVICE_FACTORY_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/keyed_service/core/keyed_service_export.h"
 #include "components/keyed_service/core/keyed_service_factory.h"
 
@@ -31,8 +32,8 @@ class KEYED_SERVICE_EXPORT BrowserStateKeyedServiceFactory
   // A function that supplies the instance of a KeyedService for a given
   // BrowserState. This is used primarily for testing, where we want to feed
   // a specific mock into the BSKSF system.
-  typedef scoped_ptr<KeyedService>(*TestingFactoryFunction)(
-      web::BrowserState* context);
+  using TestingFactoryFunction =
+      std::unique_ptr<KeyedService> (*)(web::BrowserState* context);
 
   // Associates |factory| with |context| so that |factory| is used to create
   // the KeyedService when requested.  |factory| can be NULL to signal that
@@ -58,7 +59,7 @@ class KEYED_SERVICE_EXPORT BrowserStateKeyedServiceFactory
   //         BrowserStateDependencyManager::GetInstance()) {
   //   }
   BrowserStateKeyedServiceFactory(const char* name,
-                                  /*BrowserState*/DependencyManager* manager);
+                                  BrowserStateDependencyManager* manager);
   ~BrowserStateKeyedServiceFactory() override;
 
   // Common implementation that maps |context| to some service object. Deals
@@ -90,7 +91,7 @@ class KEYED_SERVICE_EXPORT BrowserStateKeyedServiceFactory
 
   // All subclasses of BrowserStateKeyedServiceFactory must return a
   // KeyedService instead of just a BrowserStateKeyedBase.
-  virtual scoped_ptr<KeyedService> BuildServiceInstanceFor(
+  virtual std::unique_ptr<KeyedService> BuildServiceInstanceFor(
       web::BrowserState* context) const = 0;
 
   // A helper object actually listens for notifications about BrowserState
@@ -116,17 +117,11 @@ class KEYED_SERVICE_EXPORT BrowserStateKeyedServiceFactory
       user_prefs::PrefRegistrySyncable* registry) {}
 
   // KeyedServiceFactory:
-  scoped_ptr<KeyedService> BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceFor(
       base::SupportsUserData* context) const final;
   bool IsOffTheRecord(base::SupportsUserData* context) const final;
 
   // KeyedServiceBaseFactory:
-#if defined(OS_IOS)
-  base::SupportsUserData* GetTypedContext(
-      base::SupportsUserData* context) const override;
-  base::SupportsUserData* GetContextForDependencyManager(
-      base::SupportsUserData* context) const override;
-#endif  // defined(OS_IOS)
   base::SupportsUserData* GetContextToUse(
       base::SupportsUserData* context) const final;
   bool ServiceIsCreatedWithContext() const final;

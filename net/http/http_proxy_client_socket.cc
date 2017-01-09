@@ -8,12 +8,10 @@
 #include "base/bind_helpers.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "net/base/auth.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/io_buffer.h"
-#include "net/base/net_util.h"
 #include "net/base/proxy_delegate.h"
 #include "net/http/http_basic_stream.h"
 #include "net/http/http_network_session.h"
@@ -22,6 +20,7 @@
 #include "net/http/http_stream_parser.h"
 #include "net/http/proxy_connect_redirect_http_stream.h"
 #include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
 #include "net/socket/client_socket_handle.h"
 #include "url/gurl.h"
 
@@ -35,7 +34,7 @@ HttpProxyClientSocket::HttpProxyClientSocket(
     HttpAuthController* http_auth_controller,
     bool tunnel,
     bool using_spdy,
-    NextProto protocol_negotiated,
+    NextProto negotiated_protocol,
     ProxyDelegate* proxy_delegate,
     bool is_https_proxy)
     : io_callback_(base::Bind(&HttpProxyClientSocket::OnIOComplete,
@@ -46,7 +45,7 @@ HttpProxyClientSocket::HttpProxyClientSocket(
       auth_(http_auth_controller),
       tunnel_(tunnel),
       using_spdy_(using_spdy),
-      protocol_negotiated_(protocol_negotiated),
+      negotiated_protocol_(negotiated_protocol),
       is_https_proxy_(is_https_proxy),
       redirect_has_load_timing_info_(false),
       proxy_server_(proxy_server),
@@ -90,8 +89,8 @@ bool HttpProxyClientSocket::IsUsingSpdy() const {
   return using_spdy_;
 }
 
-NextProto HttpProxyClientSocket::GetProtocolNegotiated() const {
-  return protocol_negotiated_;
+NextProto HttpProxyClientSocket::GetProxyNegotiatedProtocol() const {
+  return negotiated_protocol_;
 }
 
 const HttpResponseInfo* HttpProxyClientSocket::GetConnectResponseInfo() const {
@@ -147,7 +146,7 @@ bool HttpProxyClientSocket::IsConnectedAndIdle() const {
     transport_->socket()->IsConnectedAndIdle();
 }
 
-const BoundNetLog& HttpProxyClientSocket::NetLog() const {
+const NetLogWithSource& HttpProxyClientSocket::NetLog() const {
   return net_log_;
 }
 
@@ -170,14 +169,6 @@ void HttpProxyClientSocket::SetOmniboxSpeculation() {
 bool HttpProxyClientSocket::WasEverUsed() const {
   if (transport_.get() && transport_->socket()) {
     return transport_->socket()->WasEverUsed();
-  }
-  NOTREACHED();
-  return false;
-}
-
-bool HttpProxyClientSocket::UsingTCPFastOpen() const {
-  if (transport_.get() && transport_->socket()) {
-    return transport_->socket()->UsingTCPFastOpen();
   }
   NOTREACHED();
   return false;
@@ -244,11 +235,11 @@ int HttpProxyClientSocket::Write(IOBuffer* buf, int buf_len,
   return transport_->socket()->Write(buf, buf_len, callback);
 }
 
-int HttpProxyClientSocket::SetReceiveBufferSize(int32 size) {
+int HttpProxyClientSocket::SetReceiveBufferSize(int32_t size) {
   return transport_->socket()->SetReceiveBufferSize(size);
 }
 
-int HttpProxyClientSocket::SetSendBufferSize(int32 size) {
+int HttpProxyClientSocket::SetSendBufferSize(int32_t size) {
   return transport_->socket()->SetSendBufferSize(size);
 }
 
@@ -268,7 +259,7 @@ int HttpProxyClientSocket::PrepareForAuthRestart() {
   // The request should be retried at a higher layer.
   if (!response_.headers->IsKeepAlive() ||
       !http_stream_parser_->CanFindEndOfResponse() ||
-      !transport_->socket()->IsConnectedAndIdle()) {
+      !transport_->socket()->IsConnected()) {
     transport_->socket()->Disconnect();
     return ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH;
   }
@@ -284,6 +275,10 @@ int HttpProxyClientSocket::PrepareForAuthRestart() {
 }
 
 int HttpProxyClientSocket::DidDrainBodyForAuthRestart() {
+  // Can't reuse the socket if there's still unread data on it.
+  if (!transport_->socket()->IsConnectedAndIdle())
+    return ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH;
+
   next_state_ = STATE_GENERATE_AUTH_TOKEN;
   transport_->set_reuse_type(ClientSocketHandle::REUSED_IDLE);
 
@@ -340,24 +335,24 @@ int HttpProxyClientSocket::DoLoop(int last_io_result) {
       case STATE_SEND_REQUEST:
         DCHECK_EQ(OK, rv);
         net_log_.BeginEvent(
-            NetLog::TYPE_HTTP_TRANSACTION_TUNNEL_SEND_REQUEST);
+            NetLogEventType::HTTP_TRANSACTION_TUNNEL_SEND_REQUEST);
         rv = DoSendRequest();
         break;
       case STATE_SEND_REQUEST_COMPLETE:
         rv = DoSendRequestComplete(rv);
         net_log_.EndEventWithNetErrorCode(
-            NetLog::TYPE_HTTP_TRANSACTION_TUNNEL_SEND_REQUEST, rv);
+            NetLogEventType::HTTP_TRANSACTION_TUNNEL_SEND_REQUEST, rv);
         break;
       case STATE_READ_HEADERS:
         DCHECK_EQ(OK, rv);
         net_log_.BeginEvent(
-            NetLog::TYPE_HTTP_TRANSACTION_TUNNEL_READ_HEADERS);
+            NetLogEventType::HTTP_TRANSACTION_TUNNEL_READ_HEADERS);
         rv = DoReadHeaders();
         break;
       case STATE_READ_HEADERS_COMPLETE:
         rv = DoReadHeadersComplete(rv);
         net_log_.EndEventWithNetErrorCode(
-            NetLog::TYPE_HTTP_TRANSACTION_TUNNEL_READ_HEADERS, rv);
+            NetLogEventType::HTTP_TRANSACTION_TUNNEL_READ_HEADERS, rv);
         break;
       case STATE_DRAIN_BODY:
         DCHECK_EQ(OK, rv);
@@ -413,10 +408,9 @@ int HttpProxyClientSocket::DoSendRequest() {
                        &request_line_, &request_headers_);
 
     net_log_.AddEvent(
-        NetLog::TYPE_HTTP_TRANSACTION_SEND_TUNNEL_HEADERS,
+        NetLogEventType::HTTP_TRANSACTION_SEND_TUNNEL_HEADERS,
         base::Bind(&HttpRequestHeaders::NetLogCallback,
-                   base::Unretained(&request_headers_),
-                   &request_line_));
+                   base::Unretained(&request_headers_), &request_line_));
   }
 
   parser_buf_ = new GrowableIOBuffer();
@@ -448,7 +442,7 @@ int HttpProxyClientSocket::DoReadHeadersComplete(int result) {
     return ERR_TUNNEL_CONNECTION_FAILED;
 
   net_log_.AddEvent(
-      NetLog::TYPE_HTTP_TRANSACTION_READ_TUNNEL_RESPONSE_HEADERS,
+      NetLogEventType::HTTP_TRANSACTION_READ_TUNNEL_RESPONSE_HEADERS,
       base::Bind(&HttpResponseHeaders::NetLogCallback, response_.headers));
 
   if (proxy_delegate_) {
@@ -516,7 +510,6 @@ int HttpProxyClientSocket::DoReadHeadersComplete(int result) {
 
 int HttpProxyClientSocket::DoDrainBody() {
   DCHECK(drain_buf_.get());
-  DCHECK(transport_->is_initialized());
   next_state_ = STATE_DRAIN_BODY_COMPLETE;
   return http_stream_parser_->ReadResponseBody(
       drain_buf_.get(), kDrainBodyBufferSize, io_callback_);

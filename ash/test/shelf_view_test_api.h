@@ -5,9 +5,9 @@
 #ifndef ASH_TEST_SHELF_VIEW_TEST_API_H_
 #define ASH_TEST_SHELF_VIEW_TEST_API_H_
 
-#include "ash/shelf/shelf_item_delegate.h"
-#include "ash/shelf/shelf_item_types.h"
-#include "base/basictypes.h"
+#include "ash/common/shelf/shelf_item_delegate.h"
+#include "ash/common/shelf/shelf_item_types.h"
+#include "base/macros.h"
 
 namespace gfx {
 class Rect;
@@ -20,13 +20,16 @@ class Event;
 
 namespace views {
 class Button;
+class InkDrop;
 }
 
 namespace ash {
 class OverflowBubble;
+class OverflowButton;
 class ShelfButton;
 class ShelfButtonPressedMetricTracker;
 class ShelfDelegate;
+class ShelfTooltipManager;
 class ShelfView;
 
 namespace test {
@@ -59,17 +62,32 @@ class ShelfViewTestAPI {
   // Makes shelf view show its overflow bubble.
   void ShowOverflowBubble();
 
+  // Makes shelf view hide its overflow bubble.
+  void HideOverflowBubble();
+
+  // Returns true if the overflow bubble is visible.
+  bool IsShowingOverflowBubble() const;
+
   // Sets animation duration in milliseconds for test.
   void SetAnimationDuration(int duration_ms);
 
   // Runs message loop and waits until all add/remove animations are done.
   void RunMessageLoopUntilAnimationsDone();
 
+  // Closes the app list or context menu if it is running.
+  void CloseMenu();
+
   // An accessor for |shelf_view|.
   ShelfView* shelf_view() { return shelf_view_; }
 
+  // An accessor for the shelf tooltip manager.
+  ShelfTooltipManager* tooltip_manager();
+
   // An accessor for overflow bubble.
   OverflowBubble* overflow_bubble();
+
+  // An accessor for overflow button.
+  OverflowButton* overflow_button() const;
 
   // Returns the preferred size of |shelf_view_|.
   gfx::Size GetPreferredSize();
@@ -80,8 +98,13 @@ class ShelfViewTestAPI {
   // Returns the button space size.
   int GetButtonSpacing();
 
+  // Returns minimum distance before drag starts.
+  int GetMinimumDragDistance() const;
+
   // Wrapper for ShelfView::ButtonPressed.
-  void ButtonPressed(views::Button* sender, const ui::Event& event);
+  void ButtonPressed(views::Button* sender,
+                     const ui::Event& event,
+                     views::InkDrop* ink_drop);
 
   // Wrapper for ShelfView::SameDragType.
   bool SameDragType(ShelfItemType typea, ShelfItemType typeb) const;

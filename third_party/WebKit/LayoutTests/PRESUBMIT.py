@@ -12,15 +12,20 @@ import filecmp
 
 
 def _CheckTestharnessResults(input_api, output_api):
-    expected_files = [f.AbsoluteLocalPath() for f in input_api.AffectedFiles() if f.LocalPath().endswith('-expected.txt') and f.Action() != 'D']
-    if len(expected_files) == 0:
+    """Checks for testharness.js test baseline files that contain only PASS lines.
+
+    In general these files are unnecessary because for testharness.js tests, if there is
+    no baseline file then the test is considered to pass when the output is all PASS.
+    """
+    baseline_files = _TestharnessBaselineFilesToCheck(input_api)
+    if not baseline_files:
         return []
 
     checker_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
         '..', 'Tools', 'Scripts', 'check-testharness-expected-pass')
 
     args = [input_api.python_executable, checker_path]
-    args.extend(expected_files)
+    args.extend(baseline_files)
     _, errs = input_api.subprocess.Popen(args,
         stdout=input_api.subprocess.PIPE,
         stderr=input_api.subprocess.PIPE).communicate()
@@ -29,36 +34,51 @@ def _CheckTestharnessResults(input_api, output_api):
     return []
 
 
+def _TestharnessBaselineFilesToCheck(input_api):
+    """Returns a list of paths of -expected.txt files for testharness.js tests."""
+    baseline_files = []
+    for f in input_api.AffectedFiles():
+        if f.Action() == 'D':
+            continue
+        path = f.AbsoluteLocalPath()
+        if not path.endswith('-expected.txt'):
+            continue
+        if (input_api.os_path.join('LayoutTests', 'platform') in path or
+            input_api.os_path.join('LayoutTests', 'virtual') in path):
+            # We want to ignore files in LayoutTests/platform, because some all-PASS
+            # platform specific baselines may be necessary to prevent fallback to a
+            # more general baseline; we also ignore files in LayoutTests/virtual
+            # for a similar reason; some all-pass baselines are necessary to
+            # prevent fallback to the corresponding non-virtual test baseline.
+            continue
+        baseline_files.append(path)
+    return baseline_files
+
+
 def _CheckIdenticalFiles(input_api, output_api):
     """Verifies that certain files are identical in various locations.
-    These files should always be updated together."""
 
+    These files should always be updated together. If this list is modified,
+    consider also changing the list of files to copy from web-platform-tests
+    when importing in Tools/Scripts/webkitpy/deps_updater.py.
+    """
     dirty_files = set(input_api.LocalPaths())
 
-    groups = [[
-        'resources/testharness.js',
-        'http/tests/resources/testharness.js',
-        'http/tests/w3c/resources/testharness.js',
-    ], [
-        'resources/testharnessreport.js',
-        'http/tests/resources/testharnessreport.js',
-        'http/tests/w3c/resources/testharnessreport.js',
-    ], [
-        'resources/idlharness.js',
-        'http/tests/w3c/resources/idlharness.js',
-    ], [
-        'resources/WebIDLParser.js',
-        'http/tests/w3c/resources/WebIDLParser.js',
-    ], [
-        'resources/testharness-helpers.js',
-        'http/tests/resources/testharness-helpers.js',
-    ]]
+    # TODO(tkent): Remove vendor-prefix.js, testharnessreport.js, and
+    # WebIDLParser.js from |groups| after enabling WPTServe.
+    groups = [
+        ('imported/wpt/common/vendor-prefix.js', 'resources/vendor-prefix.js'),
+        ('imported/wpt/resources/idlharness.js', 'resources/idlharness.js'),
+        ('imported/wpt/resources/testharness.js', 'resources/testharness.js'),
+        ('imported/wpt/resources/testharnessreport.js', 'resources/testharnessreport.js'),
+        ('imported/wpt/resources/WebIDLParser.js', 'resources/WebIDLParser.js'),
+    ]
 
     def _absolute_path(s):
         return input_api.os_path.join(input_api.PresubmitLocalPath(), *s.split('/'))
 
     def _local_path(s):
-        return input_api.os_path.join('LayoutTests', *s.split('/'))
+        return input_api.os_path.join('third_party', 'WebKit', 'LayoutTests', *s.split('/'))
 
     errors = []
     for group in groups:

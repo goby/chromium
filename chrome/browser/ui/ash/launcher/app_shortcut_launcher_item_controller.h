@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/ash/launcher/launcher_item_controller.h"
 #include "url/gurl.h"
@@ -15,8 +16,8 @@
 class Browser;
 class URLPattern;
 
-namespace aura {
-class Window;
+namespace content {
+class WebContents;
 }
 
 namespace extensions {
@@ -30,15 +31,16 @@ class ChromeLauncherController;
 // item with the appropriate LauncherItemController type).
 class AppShortcutLauncherItemController : public LauncherItemController {
  public:
-  AppShortcutLauncherItemController(const std::string& app_id,
-                                    ChromeLauncherController* controller);
-
   ~AppShortcutLauncherItemController() override;
+
+  static AppShortcutLauncherItemController* Create(
+      const std::string& app_id,
+      const std::string& launch_id,
+      ChromeLauncherController* controller);
 
   std::vector<content::WebContents*> GetRunningApplications();
 
   // LauncherItemController overrides:
-  bool IsOpen() const override;
   bool IsVisible() const override;
   void Launch(ash::LaunchSource source, int event_flags) override;
   ash::ShelfItemDelegate::PerformedAction Activate(
@@ -47,11 +49,9 @@ class AppShortcutLauncherItemController : public LauncherItemController {
   ash::ShelfItemDelegate::PerformedAction ItemSelected(
       const ui::Event& event) override;
   base::string16 GetTitle() override;
-  ui::MenuModel* CreateContextMenu(aura::Window* root_window) override;
   ash::ShelfMenuModel* CreateApplicationMenu(int event_flags) override;
   bool IsDraggable() override;
   bool CanPin() const override;
-  bool ShouldShowTooltip() override;
   void Close() override;
 
   // Get the refocus url pattern, which can be used to identify this application
@@ -59,6 +59,13 @@ class AppShortcutLauncherItemController : public LauncherItemController {
   const GURL& refocus_url() const { return refocus_url_; }
   // Set the refocus url pattern. Used by unit tests.
   void set_refocus_url(const GURL& refocus_url) { refocus_url_ = refocus_url; }
+
+  ChromeLauncherController* controller() { return chrome_launcher_controller_; }
+
+ protected:
+  AppShortcutLauncherItemController(const std::string& app_id,
+                                    const std::string& launch_id,
+                                    ChromeLauncherController* controller);
 
  private:
   // Get the last running application.

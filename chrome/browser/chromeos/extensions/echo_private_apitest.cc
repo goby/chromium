@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/ui/echo_dialog_view.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -44,17 +44,18 @@ class ExtensionEchoPrivateApiTest : public ExtensionApiTest {
 
   void RunDefaultGetUserFunctionAndExpectResultEquals(bool expected_result) {
     scoped_refptr<EchoPrivateGetUserConsentFunction> function(
-        EchoPrivateGetUserConsentFunction::CreateForTest(base::Bind(
-            &ExtensionEchoPrivateApiTest::OnDialogShown, this)));
+        EchoPrivateGetUserConsentFunction::CreateForTest(
+            base::Bind(&ExtensionEchoPrivateApiTest::OnDialogShown,
+                       base::Unretained(this))));
     function->set_has_callback(true);
 
-    scoped_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
+    std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
         function.get(),
         "[{\"serviceName\":\"some_name\",\"origin\":\"http://chromium.org\"}]",
         browser()));
 
     ASSERT_TRUE(result.get());
-    ASSERT_EQ(base::Value::TYPE_BOOLEAN, result->GetType());
+    ASSERT_EQ(base::Value::Type::BOOLEAN, result->GetType());
 
     bool result_as_boolean = false;
     ASSERT_TRUE(result->GetAsBoolean(&result_as_boolean));

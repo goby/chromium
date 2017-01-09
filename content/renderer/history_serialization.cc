@@ -4,9 +4,14 @@
 
 #include "content/renderer/history_serialization.h"
 
+#include <stddef.h>
+
+#include "base/strings/nullable_string16.h"
+#include "content/child/web_url_request_util.h"
 #include "content/common/page_state_serialization.h"
 #include "content/public/common/page_state.h"
 #include "content/renderer/history_entry.h"
+#include "third_party/WebKit/public/platform/WebData.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
 #include "third_party/WebKit/public/platform/WebHTTPBody.h"
 #include "third_party/WebKit/public/platform/WebPoint.h"
@@ -15,6 +20,7 @@
 #include "third_party/WebKit/public/web/WebHistoryItem.h"
 #include "third_party/WebKit/public/web/WebSerializedScriptValue.h"
 
+using blink::WebData;
 using blink::WebHTTPBody;
 using blink::WebHistoryItem;
 using blink::WebSerializedScriptValue;
@@ -31,67 +37,17 @@ void ToNullableString16Vector(const WebVector<WebString>& input,
     output->push_back(input[i]);
 }
 
-void ToExplodedHttpBodyElement(const WebHTTPBody::Element& input,
-                               ExplodedHttpBodyElement* output) {
-  switch (input.type) {
-    case WebHTTPBody::Element::TypeData:
-      output->data.assign(input.data.data(), input.data.size());
-      break;
-    case WebHTTPBody::Element::TypeFile:
-      output->file_path = input.filePath;
-      output->file_start = input.fileStart;
-      output->file_length = input.fileLength;
-      output->file_modification_time = input.modificationTime;
-      break;
-    case WebHTTPBody::Element::TypeFileSystemURL:
-      output->filesystem_url = input.fileSystemURL;
-      output->file_start = input.fileStart;
-      output->file_length = input.fileLength;
-      output->file_modification_time = input.modificationTime;
-      break;
-    case WebHTTPBody::Element::TypeBlob:
-      output->blob_uuid = input.blobUUID.utf8();
-      break;
-  }
-}
-
-void AppendHTTPBodyElement(const ExplodedHttpBodyElement& element,
-                           WebHTTPBody* http_body) {
-  switch (element.type) {
-    case WebHTTPBody::Element::TypeData:
-      http_body->appendData(element.data);
-      break;
-    case WebHTTPBody::Element::TypeFile:
-      http_body->appendFileRange(
-          element.file_path,
-          element.file_start,
-          element.file_length,
-          element.file_modification_time);
-      break;
-    case WebHTTPBody::Element::TypeFileSystemURL:
-      http_body->appendFileSystemURLRange(
-          element.filesystem_url,
-          element.file_start,
-          element.file_length,
-          element.file_modification_time);
-      break;
-    case WebHTTPBody::Element::TypeBlob:
-      http_body->appendBlob(WebString::fromUTF8(element.blob_uuid));
-      break;
-  }
-}
-
 void GenerateFrameStateFromItem(const WebHistoryItem& item,
                                 ExplodedFrameState* state) {
   state->url_string = item.urlString();
   state->referrer = item.referrer();
-  state->referrer_policy = item.referrerPolicy();
+  state->referrer_policy = item.getReferrerPolicy();
   state->target = item.target();
   if (!item.stateObject().isNull())
     state->state_object = item.stateObject().toString();
   state->scroll_restoration_type = item.scrollRestorationType();
   state->visual_viewport_scroll_offset = item.visualViewportScrollOffset();
-  state->scroll_offset = item.scrollOffset();
+  state->scroll_offset = item.getScrollOffset();
   state->item_sequence_number = item.itemSequenceNumber();
   state->document_sequence_number =
       item.documentSequenceNumber();
@@ -100,15 +56,8 @@ void GenerateFrameStateFromItem(const WebHistoryItem& item,
 
   state->http_body.http_content_type = item.httpContentType();
   const WebHTTPBody& http_body = item.httpBody();
-  state->http_body.is_null = http_body.isNull();
-  if (!state->http_body.is_null) {
-    state->http_body.identifier = http_body.identifier();
-    state->http_body.elements.resize(http_body.elementCount());
-    for (size_t i = 0; i < http_body.elementCount(); ++i) {
-      WebHTTPBody::Element element;
-      http_body.elementAt(i, element);
-      ToExplodedHttpBodyElement(element, &state->http_body.elements[i]);
-    }
+  if (!http_body.isNull()) {
+    state->http_body.request_body = GetRequestBodyForWebHTTPBody(http_body);
     state->http_body.contains_passwords = http_body.containsPasswordData();
   }
 }
@@ -155,13 +104,9 @@ void RecursivelyGenerateHistoryItem(const ExplodedFrameState& state,
     item.setDocumentSequenceNumber(state.document_sequence_number);
 
   item.setHTTPContentType(state.http_body.http_content_type);
-  if (!state.http_body.is_null) {
-    WebHTTPBody http_body;
-    http_body.initialize();
-    http_body.setIdentifier(state.http_body.identifier);
-    for (size_t i = 0; i < state.http_body.elements.size(); ++i)
-      AppendHTTPBodyElement(state.http_body.elements[i], &http_body);
-    item.setHTTPBody(http_body);
+  if (state.http_body.request_body != nullptr) {
+    item.setHTTPBody(
+        GetWebHTTPBodyForRequestBody(state.http_body.request_body));
   }
   node->set_item(item);
 
@@ -177,9 +122,7 @@ PageState HistoryEntryToPageState(HistoryEntry* entry) {
                                 &state.referenced_files);
 
   std::string encoded_data;
-  if (!EncodePageState(state, &encoded_data))
-    return PageState();
-
+  EncodePageState(state, &encoded_data);
   return PageState::CreateFromEncodedData(encoded_data);
 }
 
@@ -190,21 +133,20 @@ PageState SingleHistoryItemToPageState(const WebHistoryItem& item) {
   GenerateFrameStateFromItem(item, &state.top);
 
   std::string encoded_data;
-  if (!EncodePageState(state, &encoded_data))
-    return PageState();
-
+  EncodePageState(state, &encoded_data);
   return PageState::CreateFromEncodedData(encoded_data);
 }
 
-scoped_ptr<HistoryEntry> PageStateToHistoryEntry(const PageState& page_state) {
+std::unique_ptr<HistoryEntry> PageStateToHistoryEntry(
+    const PageState& page_state) {
   ExplodedPageState state;
   if (!DecodePageState(page_state.ToEncodedData(), &state))
-    return scoped_ptr<HistoryEntry>();
+    return std::unique_ptr<HistoryEntry>();
 
-  scoped_ptr<HistoryEntry> entry(new HistoryEntry());
+  std::unique_ptr<HistoryEntry> entry(new HistoryEntry());
   RecursivelyGenerateHistoryItem(state.top, entry->root_history_node());
 
-  return entry.Pass();
+  return entry;
 }
 
 }  // namespace content

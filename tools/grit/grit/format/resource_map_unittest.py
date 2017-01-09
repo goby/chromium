@@ -68,7 +68,8 @@ extern const size_t kTheRcHeaderSize;''', output)
         resource_map.GetFormatter('resource_map_source')(grd, 'en', '.')))
     self.assertEqual('''\
 #include "the_resource_map_header.h"
-#include "base/basictypes.h"
+#include <stddef.h>
+#include "base/macros.h"
 #include "the_rc_header.h"
 const GritResourceMap kTheRcHeader[] = {
   {"IDC_KLONKMENU", IDC_KLONKMENU},
@@ -82,7 +83,8 @@ const size_t kTheRcHeaderSize = arraysize(kTheRcHeader);''', output)
         resource_map.GetFormatter('resource_file_map_source')(grd, 'en', '.')))
     self.assertEqual('''\
 #include "the_resource_map_header.h"
-#include "base/basictypes.h"
+#include <stddef.h>
+#include "base/macros.h"
 #include "the_rc_header.h"
 const GritResourceMap kTheRcHeader[] = {
   {"grit/testdata/klonk.rc", IDC_KLONKMENU},
@@ -114,6 +116,28 @@ const size_t kTheRcHeaderSize = arraysize(kTheRcHeader);''', output)
               <structure type="chrome_scaled_image" name="IDR_MISSING"
                          file="bar.png" />
             </if>
+            <if expr="True">
+              <structure type="chrome_scaled_image" name="IDR_BLOB"
+                         file="blob.png" />
+            </if>
+            <if expr="True">
+              <then>
+                <structure type="chrome_scaled_image" name="IDR_METEOR"
+                           file="meteor.png" />
+              </then>
+              <else>
+                <structure type="chrome_scaled_image" name="IDR_METEOR"
+                           file="roetem.png" />
+              </else>
+            </if>
+            <if expr="False">
+              <structure type="chrome_scaled_image" name="IDR_LAST"
+                         file="zyx.png" />
+            </if>
+            <if expr="True">
+              <structure type="chrome_scaled_image" name="IDR_LAST"
+                         file="xyz.png" />
+            </if>
          </structures>
         </release>
       </grit>'''), util.PathFromRoot('.'))
@@ -136,20 +160,28 @@ extern const size_t kTheRcHeaderSize;''', output)
         resource_map.GetFormatter('resource_map_source')(grd, 'en', '.')))
     self.assertEqual('''\
 #include "the_resource_map_header.h"
-#include "base/basictypes.h"
+#include <stddef.h>
+#include "base/macros.h"
 #include "the_rc_header.h"
 const GritResourceMap kTheRcHeader[] = {
   {"IDR_KLONKMENU", IDR_KLONKMENU},
+  {"IDR_BLOB", IDR_BLOB},
+  {"IDR_METEOR", IDR_METEOR},
+  {"IDR_LAST", IDR_LAST},
 };
 const size_t kTheRcHeaderSize = arraysize(kTheRcHeader);''', output)
     output = util.StripBlankLinesAndComments(''.join(
         resource_map.GetFormatter('resource_map_source')(grd, 'en', '.')))
     self.assertEqual('''\
 #include "the_resource_map_header.h"
-#include "base/basictypes.h"
+#include <stddef.h>
+#include "base/macros.h"
 #include "the_rc_header.h"
 const GritResourceMap kTheRcHeader[] = {
   {"IDR_KLONKMENU", IDR_KLONKMENU},
+  {"IDR_BLOB", IDR_BLOB},
+  {"IDR_METEOR", IDR_METEOR},
+  {"IDR_LAST", IDR_LAST},
 };
 const size_t kTheRcHeaderSize = arraysize(kTheRcHeader);''', output)
 
@@ -174,6 +206,23 @@ const size_t kTheRcHeaderSize = arraysize(kTheRcHeader);''', output)
               <include type="foo" file="def" name="IDS_MISSING" />
             </if>
             <include type="foo" file="mno" name="IDS_THIRDPRESENT" />
+            <if expr="True">
+              <include type="foo" file="blob" name="IDS_BLOB" />
+            </if>
+            <if expr="True">
+              <then>
+                <include type="foo" file="meteor" name="IDS_METEOR" />
+              </then>
+              <else>
+                <include type="foo" file="roetem" name="IDS_METEOR" />
+              </else>
+            </if>
+            <if expr="False">
+              <include type="foo" file="zyx" name="IDS_LAST" />
+            </if>
+            <if expr="True">
+              <include type="foo" file="xyz" name="IDS_LAST" />
+            </if>
          </includes>
         </release>
       </grit>'''), util.PathFromRoot('.'))
@@ -196,24 +245,32 @@ extern const size_t kTheRcHeaderSize;''', output)
         resource_map.GetFormatter('resource_map_source')(grd, 'en', '.')))
     self.assertEqual('''\
 #include "the_resource_map_header.h"
-#include "base/basictypes.h"
+#include <stddef.h>
+#include "base/macros.h"
 #include "the_rc_header.h"
 const GritResourceMap kTheRcHeader[] = {
   {"IDC_KLONKMENU", IDC_KLONKMENU},
   {"IDS_FIRSTPRESENT", IDS_FIRSTPRESENT},
   {"IDS_THIRDPRESENT", IDS_THIRDPRESENT},
+  {"IDS_BLOB", IDS_BLOB},
+  {"IDS_METEOR", IDS_METEOR},
+  {"IDS_LAST", IDS_LAST},
 };
 const size_t kTheRcHeaderSize = arraysize(kTheRcHeader);''', output)
     output = util.StripBlankLinesAndComments(''.join(
         resource_map.GetFormatter('resource_file_map_source')(grd, 'en', '.')))
     self.assertEqual('''\
 #include "the_resource_map_header.h"
-#include "base/basictypes.h"
+#include <stddef.h>
+#include "base/macros.h"
 #include "the_rc_header.h"
 const GritResourceMap kTheRcHeader[] = {
   {"grit/testdata/klonk.rc", IDC_KLONKMENU},
   {"abc", IDS_FIRSTPRESENT},
   {"mno", IDS_THIRDPRESENT},
+  {"blob", IDS_BLOB},
+  {"meteor", IDS_METEOR},
+  {"xyz", IDS_LAST},
 };
 const size_t kTheRcHeaderSize = arraysize(kTheRcHeader);''', output)
 
@@ -266,7 +323,8 @@ extern const size_t kTheRcHeaderSize;''', output)
         resource_map.GetFormatter('resource_map_source')(grd, 'en', '.')))
     self.assertEqual('''\
 #include "the_rc_map_header.h"
-#include "base/basictypes.h"
+#include <stddef.h>
+#include "base/macros.h"
 #include "the_rc_header.h"
 const GritResourceMap kTheRcHeader[] = {
   {"IDS_PRODUCT_NAME", IDS_PRODUCT_NAME},

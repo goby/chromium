@@ -5,10 +5,13 @@
 #ifndef PPAPI_PROXY_PROXY_CHANNEL_H_
 #define PPAPI_PROXY_PROXY_CHANNEL_H_
 
+#include <memory>
+
 #include "base/files/scoped_file.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/process/process.h"
+#include "build/build_config.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_platform_file.h"
 #include "ipc/ipc_sender.h"
@@ -99,9 +102,7 @@ class PPAPI_PROXY_EXPORT ProxyChannel
     return channel_.get();
   }
 
-#if defined(OS_POSIX) && !defined(OS_NACL)
-  base::ScopedFD TakeRendererFD();
-#endif
+  base::ProcessId peer_pid() { return peer_pid_; }
 
  protected:
   explicit ProxyChannel();
@@ -134,7 +135,7 @@ class PPAPI_PROXY_EXPORT ProxyChannel
 
   // Will be null for some tests when there is a test_sink_, and if the
   // remote side has crashed.
-  scoped_ptr<IPC::SyncChannel> channel_;
+  std::unique_ptr<IPC::SyncChannel> channel_;
 
   DISALLOW_COPY_AND_ASSIGN(ProxyChannel);
 };

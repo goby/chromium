@@ -5,15 +5,19 @@
 #ifndef CONTENT_RENDERER_MEDIA_MIDI_MESSAGE_FILTER_H_
 #define CONTENT_RENDERER_MEDIA_MIDI_MESSAGE_FILTER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "ipc/message_filter.h"
 #include "media/midi/midi_port_info.h"
-#include "media/midi/result.h"
-#include "third_party/WebKit/public/platform/WebMIDIAccessorClient.h"
+#include "media/midi/midi_service.mojom.h"
+#include "third_party/WebKit/public/platform/modules/webmidi/WebMIDIAccessorClient.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -21,7 +25,13 @@ class SingleThreadTaskRunner;
 
 namespace content {
 
-// MessageFilter that handles MIDI messages.
+// MessageFilter that handles MIDI messages. Created on render thread, and
+// host multiple clients running on multiple frames on IO thread.
+// Web MIDI intentionally uses MessageFilter (in a renderer process) and
+// BrowserMessageFilter (in the browser process) to intercept MIDI messages and
+// process them on IO thread in the browser process since these messages are
+// time critical. Non-critical operations like permission management are
+// handled in MidiDispatcher.
 class CONTENT_EXPORT MidiMessageFilter : public IPC::MessageFilter {
  public:
   explicit MidiMessageFilter(
@@ -34,8 +44,8 @@ class CONTENT_EXPORT MidiMessageFilter : public IPC::MessageFilter {
 
   // A client will only be able to call this method if it has a suitable
   // output port (from addOutputPort()).
-  void SendMidiData(uint32 port,
-                    const uint8* data,
+  void SendMidiData(uint32_t port,
+                    const uint8_t* data,
                     size_t length,
                     double timestamp);
 
@@ -44,22 +54,14 @@ class CONTENT_EXPORT MidiMessageFilter : public IPC::MessageFilter {
     return io_task_runner_.get();
   }
 
-  static blink::WebMIDIAccessorClient::MIDIPortState ToBlinkState(
-      media::midi::MidiPortState state) {
-    // "open" status is separately managed by blink per MIDIAccess instance.
-    if (state == media::midi::MIDI_PORT_OPENED)
-      state = media::midi::MIDI_PORT_CONNECTED;
-    return static_cast<blink::WebMIDIAccessorClient::MIDIPortState>(state);
-  }
-
  protected:
   ~MidiMessageFilter() override;
 
  private:
   void StartSessionOnIOThread();
 
-  void SendMidiDataOnIOThread(uint32 port,
-                              const std::vector<uint8>& data,
+  void SendMidiDataOnIOThread(uint32_t port,
+                              const std::vector<uint8_t>& data,
                               double timestamp);
 
   void EndSessionOnIOThread();
@@ -69,32 +71,32 @@ class CONTENT_EXPORT MidiMessageFilter : public IPC::MessageFilter {
 
   // IPC::MessageFilter override. Called on |io_task_runner|.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelClosing() override;
 
   // Called when the browser process has approved (or denied) access to
   // MIDI hardware.
-  void OnSessionStarted(media::midi::Result result);
+  void OnSessionStarted(midi::mojom::Result result);
 
   // These functions are called in 2 cases:
   //  (1) Just before calling |OnSessionStarted|, to notify the recipient about
   //      existing ports.
   //  (2) To notify the recipient that a new device was connected and that new
   //      ports have been created.
-  void OnAddInputPort(media::midi::MidiPortInfo info);
-  void OnAddOutputPort(media::midi::MidiPortInfo info);
+  void OnAddInputPort(midi::MidiPortInfo info);
+  void OnAddOutputPort(midi::MidiPortInfo info);
 
   // These functions are called to notify the recipient that a device that is
   // notified via OnAddInputPort() or OnAddOutputPort() gets disconnected, or
   // connected again.
-  void OnSetInputPortState(uint32 port, media::midi::MidiPortState state);
-  void OnSetOutputPortState(uint32 port, media::midi::MidiPortState state);
+  void OnSetInputPortState(uint32_t port, midi::mojom::PortState state);
+  void OnSetOutputPortState(uint32_t port, midi::mojom::PortState state);
 
   // Called when the browser process has sent MIDI data containing one or
   // more messages.
-  void OnDataReceived(uint32 port,
-                      const std::vector<uint8>& data,
+  void OnDataReceived(uint32_t port,
+                      const std::vector<uint8_t>& data,
                       double timestamp);
 
   // From time-to-time, the browser incrementally informs us of how many bytes
@@ -103,15 +105,15 @@ class CONTENT_EXPORT MidiMessageFilter : public IPC::MessageFilter {
   void OnAcknowledgeSentData(size_t bytes_sent);
 
   // Following methods, Handle*, run on |main_task_runner_|.
-  void HandleClientAdded(media::midi::Result result);
+  void HandleClientAdded(midi::mojom::Result result);
 
-  void HandleAddInputPort(media::midi::MidiPortInfo info);
-  void HandleAddOutputPort(media::midi::MidiPortInfo info);
-  void HandleSetInputPortState(uint32 port, media::midi::MidiPortState state);
-  void HandleSetOutputPortState(uint32 port, media::midi::MidiPortState state);
+  void HandleAddInputPort(midi::MidiPortInfo info);
+  void HandleAddOutputPort(midi::MidiPortInfo info);
+  void HandleSetInputPortState(uint32_t port, midi::mojom::PortState state);
+  void HandleSetOutputPortState(uint32_t port, midi::mojom::PortState state);
 
-  void HandleDataReceived(uint32 port,
-                          const std::vector<uint8>& data,
+  void HandleDataReceived(uint32_t port,
+                          const std::vector<uint8_t>& data,
                           double timestamp);
 
   void HandleAckknowledgeSentData(size_t bytes_sent);
@@ -142,11 +144,11 @@ class CONTENT_EXPORT MidiMessageFilter : public IPC::MessageFilter {
   ClientsQueue clients_waiting_session_queue_;
 
   // Represents a result on starting a session. Can be accessed only on
-  media::midi::Result session_result_;
+  midi::mojom::Result session_result_;
 
   // Holds MidiPortInfoList for input ports and output ports.
-  media::midi::MidiPortInfoList inputs_;
-  media::midi::MidiPortInfoList outputs_;
+  midi::MidiPortInfoList inputs_;
+  midi::MidiPortInfoList outputs_;
 
   size_t unacknowledged_bytes_sent_;
 

@@ -24,8 +24,17 @@ DirectoryItemTreeBaseMethods.getItemByEntry = function(entry) {
     var item = this.items[i];
     if (!item.entry)
       continue;
-    if (util.isSameEntry(item.entry, entry))
+    if (util.isSameEntry(item.entry, entry)) {
+      // The Drive root volume item "Google Drive" and its child "My Drive" have
+      // the same entry. When we look for a tree item of Drive's root directory,
+      // "My Drive" should be returned, as we use "Google Drive" for grouping
+      // "My Drive", "Shared with me", "Recent", and "Offline".
+      // Therefore, we have to skip "Google Drive" here.
+      if (item instanceof DriveVolumeItem)
+        return item.getItemByEntry(entry);
+
       return item;
+    }
     if (util.isDescendantEntry(item.entry, entry))
       return item.getItemByEntry(entry);
   }
@@ -92,7 +101,6 @@ var MENU_TREE_ITEM_INNER_HTML =
 function DirectoryItem(label, tree) {
   var item = new cr.ui.TreeItem();
   item.__proto__ = DirectoryItem.prototype;
-
   item.parentTree_ = tree;
   item.directoryModel_ = tree.directoryModel;
   item.fileFilter_ = tree.directoryModel.getFileFilter();
@@ -100,11 +108,22 @@ function DirectoryItem(label, tree) {
   item.innerHTML = TREE_ITEM_INNER_HTML;
   item.addEventListener('expand', item.onExpand_.bind(item), false);
 
+  // Listen for collapse because for the delayed expansion case all
+  // children are also collapsed.
+  item.addEventListener('collapse', item.onCollapse_.bind(item), false);
+
+  // Default delayExpansion to false. Volumes will set it to true for
+  // provided file systems. SubDirectories will inherit from their
+  // parent.
+  item.delayExpansion = false;
+
   // Sets hasChildren=false tentatively. This will be overridden after
   // scanning sub-directories in updateSubElementsFromList().
   item.hasChildren = false;
 
   item.label = label;
+  item.setAttribute('aria-label', label);
+
   return item;
 }
 
@@ -155,8 +174,19 @@ DirectoryItem.prototype.updateSubElementsFromList = function(recursive) {
       index++;
     } else if (util.isSameEntry(currentEntry, currentElement.entry)) {
       currentElement.updateSharedStatusIcon();
-      if (recursive && this.expanded)
-        currentElement.updateSubDirectories(true /* recursive */);
+      if (recursive && this.expanded) {
+        if (this.delayExpansion) {
+          // Only update deeper on expanded children.
+          if (currentElement.expanded) {
+            currentElement.updateSubDirectories(true /* recursive */);
+          }
+
+          // Show the expander even without knowing if there are children.
+          currentElement.mayHaveChildren_ = true;
+        } else {
+          currentElement.updateSubDirectories(true /* recursive */);
+        }
+      }
       index++;
     } else if (currentEntry.toURL() < currentElement.entry.toURL()) {
       var item = new SubDirectoryItem(label, currentEntry, this, tree);
@@ -215,14 +245,26 @@ DirectoryItem.prototype.scrollIntoViewIfNeeded = function(opt_unused) {
  * unintended changing of directories. Removing is done externally, and other
  * code will navigate to another directory.
  *
- * @param {!cr.ui.TreeItem} child The tree item child to remove.
+ * @param {!cr.ui.TreeItem=} child The tree item child to remove.
  * @override
  */
 DirectoryItem.prototype.remove = function(child) {
-  this.lastElementChild.removeChild(child);
+  this.lastElementChild.removeChild(/** @type {!cr.ui.TreeItem} */(child));
   if (this.items.length == 0)
     this.hasChildren = false;
 };
+
+
+/**
+ * Removes the has-children attribute which allows returning
+ * to the ambiguous may-have-children state.
+ */
+DirectoryItem.prototype.clearHasChildren = function() {
+  var rowItem = this.firstElementChild;
+  this.removeAttribute('has-children');
+  rowItem.removeAttribute('has-children');
+};
+
 
 /**
  * Invoked when the item is being expanded.
@@ -236,6 +278,30 @@ DirectoryItem.prototype.onExpand_ = function(e) {
       function() {
         this.expanded = false;
       }.bind(this));
+
+  e.stopPropagation();
+};
+
+
+/**
+ * Invoked when the item is being collapsed.
+ * @param {!Event} e Event.
+ * @private
+ */
+DirectoryItem.prototype.onCollapse_ = function(e) {
+  if (this.delayExpansion) {
+    // For file systems where it is performance intensive
+    // to update recursively when items expand this proactively
+    // collapses all children to avoid having to traverse large
+    // parts of the tree when reopened.
+    for (var i = 0; i < this.items.length; i++) {
+      var item = this.items[i];
+
+      if (item.expanded) {
+        item.expanded = false;
+      }
+    }
+  }
 
   e.stopPropagation();
 };
@@ -389,6 +455,12 @@ function SubDirectoryItem(label, dirEntry, parentDirItem, tree) {
   item.__proto__ = SubDirectoryItem.prototype;
 
   item.entry = dirEntry;
+  item.delayExpansion = parentDirItem.delayExpansion;
+
+  if (item.delayExpansion) {
+    item.clearHasChildren();
+    item.mayHaveChildren_ = true;
+  }
 
   // Sets up icons of the item.
   var icon = item.querySelector('.icon');
@@ -460,6 +532,10 @@ function VolumeItem(modelItem, tree) {
 
   item.modelItem_ = modelItem;
   item.volumeInfo_ = modelItem.volumeInfo;
+
+  // Provided volumes should delay the expansion of child nodes
+  // for performance reasons.
+  item.delayExpansion = (item.volumeInfo.volumeType === 'provided');
 
   // Set helper attribute for testing.
   if (window.IN_TEST)
@@ -1170,9 +1246,6 @@ DirectoryTree.prototype.decorateDirectoryTree = function(
       this.onDirectoryContentChanged_.bind(this);
   chrome.fileManagerPrivate.onDirectoryChanged.addListener(
       this.privateOnDirectoryChangedBound_);
-
-  this.scrollBar_ = new ScrollBar();
-  this.scrollBar_.initialize(this.parentElement, this);
 
   /**
    * Flag to show fake entries in the tree.

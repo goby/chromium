@@ -28,7 +28,9 @@ void PostAndWaitForWatchdogThread(base::WaitableEvent* event) {
 }
 
 void NotifyApplicationStateChange(base::android::ApplicationState state) {
-  base::WaitableEvent watchdog_thread_event(false, false);
+  base::WaitableEvent watchdog_thread_event(
+      base::WaitableEvent::ResetPolicy::AUTOMATIC,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   base::android::ApplicationStatusListener::NotifyApplicationStateChange(state);
   base::RunLoop().RunUntilIdle();
@@ -45,8 +47,7 @@ TEST(ThreadWatcherAndroidTest, ApplicationStatusNotification) {
   base::MessageLoopForUI message_loop_for_ui;
   content::TestBrowserThread ui_thread(BrowserThread::UI, &message_loop_for_ui);
 
-
-  scoped_ptr<WatchDogThread> watchdog_thread_(new WatchDogThread());
+  std::unique_ptr<WatchDogThread> watchdog_thread_(new WatchDogThread());
   watchdog_thread_->StartAndWaitForTesting();
 
   EXPECT_FALSE(ThreadWatcherList::g_thread_watcher_list_);

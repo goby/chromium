@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "chrome/browser/safe_browsing/protocol_parser.h"
-#include "chrome/browser/safe_browsing/safe_browsing_util.h"
+#include "components/safe_browsing_db/metadata.pb.h"
+#include "components/safe_browsing_db/util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace safe_browsing {
@@ -17,6 +20,7 @@ namespace {
 
 const char kDefaultPhishList[] = "goog-phish-shavar";
 const char kDefaultMalwareList[] = "goog-malware-shavar";
+const char kDefaultUwSList[] = "goog-unwanted-shavar";
 
 }  // namespace
 
@@ -36,7 +40,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestAddChunk) {
     '9', '9', '9', '9',
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_TRUE(ParseChunk(kRawAddChunk, sizeof(kRawAddChunk), &chunks));
   ASSERT_EQ(1U, chunks.size());
   EXPECT_EQ(1, chunks[0]->ChunkNumber());
@@ -81,7 +85,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestAddFullChunk) {
     full_hash2.full_hash[i] = (i % 2) ? '3' : '2';
   }
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_TRUE(ParseChunk(kRawAddChunk, sizeof(kRawAddChunk), &chunks));
   ASSERT_EQ(1U, chunks.size());
   EXPECT_EQ(1, chunks[0]->ChunkNumber());
@@ -121,7 +125,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestAddChunks) {
     'g', 'g', 'g', 'g',
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_TRUE(ParseChunk(kRawAddChunk, sizeof(kRawAddChunk), &chunks));
   ASSERT_EQ(2U, chunks.size());
 
@@ -161,7 +165,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestTruncatedPrefixChunk) {
     '3', '3', '3', '3',
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_FALSE(ParseChunk(kRawAddChunk, sizeof(kRawAddChunk), &chunks));
 }
 
@@ -182,7 +186,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestTruncatedFullHashChunk) {
     '0', '1', '0', '1', '0', '1', '0', '1',
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_FALSE(ParseChunk(kRawAddChunk, sizeof(kRawAddChunk), &chunks));
 }
 
@@ -199,7 +203,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestHugeChunk) {
     '3', '3', '3', '3',
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_FALSE(ParseChunk(kRawAddChunk, sizeof(kRawAddChunk), &chunks));
 }
 
@@ -220,7 +224,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestSubChunk) {
     '\x07', '\x09',            // varint 7, varint 9
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_TRUE(ParseChunk(kRawSubChunk, sizeof(kRawSubChunk), &chunks));
   ASSERT_EQ(1U, chunks.size());
   EXPECT_EQ(3, chunks[0]->ChunkNumber());
@@ -269,7 +273,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestSubFullChunk) {
     full_hash2.full_hash[i] = i % 2 ? '3' : '2';
   }
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_TRUE(ParseChunk(kRawSubChunk, sizeof(kRawSubChunk), &chunks));
   ASSERT_EQ(1U, chunks.size());
   EXPECT_EQ(2, chunks[0]->ChunkNumber());
@@ -430,36 +434,69 @@ TEST(SafeBrowsingProtocolParsingTest, TestGetHash) {
                    sizeof(SBFullHash)), 0);
   EXPECT_EQ(MALWARE, full_hashes[2].list_id);
 
-  // Test metadata parsing.
+  // Test metadata parsing. Make some metadata protos to fill in the message.
+  MalwarePatternType malware_proto;
+
+  malware_proto.set_pattern_type(MalwarePatternType::LANDING);
+  std::string metadata_pb_landing;
+  ASSERT_TRUE(malware_proto.SerializeToString(&metadata_pb_landing));
+
+  malware_proto.set_pattern_type(MalwarePatternType::DISTRIBUTION);
+  std::string metadata_pb_distribution;
+  ASSERT_TRUE(malware_proto.SerializeToString(&metadata_pb_distribution));
+
+  SocialEngineeringPatternType se_proto;
+  se_proto.set_pattern_type(
+      SocialEngineeringPatternType::SOCIAL_ENGINEERING_ADS);
+  std::string metadata_pb_se_ads;
+  ASSERT_TRUE(se_proto.SerializeToString(&metadata_pb_se_ads));
+
   const std::string get_hash3(base::StringPrintf(
       "45\n"
       "%s:32:2:m\n"
       "zzzzyyyyxxxxwwwwvvvvuuuuttttssss"
       "00112233445566778899aabbccddeeff"
-      "2\nab2\nxy"
+      "%zu\n%s"  // meta 1
+      "%zu\n%s"  // meta 2
+      "%s:32:1:m\n"
+      "cafebeefcafebeefdeaddeaddeaddead"
+      "%zu\n%s"  // meta 3
       "%s:32:1\n"
-      "cafebeefcafebeefdeaddeaddeaddead",
-      kDefaultMalwareList,
-      kDefaultPhishList));
+      "dafebeefcafebeefdeaddeaddeaddead",
+      kDefaultMalwareList, metadata_pb_landing.size(),
+      metadata_pb_landing.c_str(), metadata_pb_distribution.size(),
+      metadata_pb_distribution.c_str(), kDefaultPhishList,
+      metadata_pb_se_ads.size(), metadata_pb_se_ads.c_str(), kDefaultUwSList));
   EXPECT_TRUE(ParseGetHash(get_hash3.data(), get_hash3.length(),
                            &cache_lifetime, &full_hashes));
 
-  ASSERT_EQ(3U, full_hashes.size());
+  ASSERT_EQ(4U, full_hashes.size());
   EXPECT_EQ(memcmp(&full_hashes[0].hash,
                    "zzzzyyyyxxxxwwwwvvvvuuuuttttssss",
                    sizeof(SBFullHash)), 0);
   EXPECT_EQ(MALWARE, full_hashes[0].list_id);
-  EXPECT_EQ(std::string("ab"), full_hashes[0].metadata);
+  EXPECT_EQ(ThreatPatternType::MALWARE_LANDING,
+            full_hashes[0].metadata.threat_pattern_type);
+
   EXPECT_EQ(memcmp(&full_hashes[1].hash,
                    "00112233445566778899aabbccddeeff",
                    sizeof(SBFullHash)), 0);
   EXPECT_EQ(MALWARE, full_hashes[1].list_id);
-  EXPECT_EQ(std::string("xy"), full_hashes[1].metadata);
+  EXPECT_EQ(ThreatPatternType::MALWARE_DISTRIBUTION,
+            full_hashes[1].metadata.threat_pattern_type);
+
   EXPECT_EQ(memcmp(&full_hashes[2].hash,
                    "cafebeefcafebeefdeaddeaddeaddead",
                    sizeof(SBFullHash)), 0);
   EXPECT_EQ(PHISH, full_hashes[2].list_id);
-  EXPECT_EQ(std::string(), full_hashes[2].metadata);
+  EXPECT_EQ(ThreatPatternType::SOCIAL_ENGINEERING_ADS,
+            full_hashes[2].metadata.threat_pattern_type);
+  EXPECT_EQ(memcmp(&full_hashes[3].hash, "dafebeefcafebeefdeaddeaddeaddead",
+                   sizeof(SBFullHash)),
+            0);
+  EXPECT_EQ(UNWANTEDURL, full_hashes[3].list_id);
+  EXPECT_EQ(ThreatPatternType::NONE,
+            full_hashes[3].metadata.threat_pattern_type);
 }
 
 TEST(SafeBrowsingProtocolParsingTest, TestGetHashWithUnknownList) {
@@ -506,7 +543,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestGetHashWithUnknownListAndMetadata) {
       "600\n"
       "BADLISTNAME:32:1:m\n"
       "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-      "8\nMETADATA"
+      "8\nMETADATA"  // not even parsed (lest the parser DCHECK's).
       "%s:32:1\n"
       "0123456789hashhashhashhashhashha",
       kDefaultMalwareList));
@@ -517,7 +554,8 @@ TEST(SafeBrowsingProtocolParsingTest, TestGetHashWithUnknownListAndMetadata) {
                    "0123456789hashhashhashhashhashha",
                    sizeof(SBFullHash)), 0);
   EXPECT_EQ(MALWARE, full_hashes[0].list_id);
-  EXPECT_EQ(std::string(), full_hashes[0].metadata);
+  EXPECT_EQ(ThreatPatternType::NONE,
+            full_hashes[0].metadata.threat_pattern_type);
 }
 
 TEST(SafeBrowsingProtocolParsingTest, TestFormatHash) {
@@ -552,7 +590,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestZeroSizeAddChunk) {
     '\x02',                    // chunk_number varint 2
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_TRUE(ParseChunk(kEmptyAddChunk, sizeof(kEmptyAddChunk), &chunks));
   ASSERT_EQ(1U, chunks.size());
   EXPECT_EQ(2, chunks[0]->ChunkNumber());
@@ -623,7 +661,7 @@ TEST(SafeBrowsingProtocolParsingTest, TestZeroSizeSubChunk) {
     '\x01',                    // enum ChunkType == SUB
   };
 
-  std::vector<scoped_ptr<SBChunkData>> chunks;
+  std::vector<std::unique_ptr<SBChunkData>> chunks;
   EXPECT_TRUE(ParseChunk(kEmptySubChunk, sizeof(kEmptySubChunk), &chunks));
   ASSERT_EQ(1U, chunks.size());
   EXPECT_EQ(2, chunks[0]->ChunkNumber());

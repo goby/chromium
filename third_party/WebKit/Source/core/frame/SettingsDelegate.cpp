@@ -28,24 +28,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/frame/SettingsDelegate.h"
 
 #include "core/frame/Settings.h"
+#include <memory>
 
 namespace blink {
 
-SettingsDelegate::SettingsDelegate(PassOwnPtr<Settings> settings)
-    : m_settings(settings)
-{
-    if (m_settings)
-        m_settings->setDelegate(this);
+SettingsDelegate::SettingsDelegate(std::unique_ptr<Settings> settings)
+    : m_settings(std::move(settings)) {
+  if (m_settings)
+    m_settings->setDelegate(this);
 }
 
-SettingsDelegate::~SettingsDelegate()
-{
-    if (m_settings)
-        m_settings->setDelegate(0);
+SettingsDelegate::~SettingsDelegate() {
+  if (m_settings)
+    m_settings->setDelegate(0);
 }
 
-} // namespace blink
+}  // namespace blink

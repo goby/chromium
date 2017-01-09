@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "gpu/config/gpu_control_list_jsons.h"
 #include "gpu/config/gpu_driver_bug_list.h"
 #include "gpu/config/gpu_driver_bug_workaround_type.h"
@@ -45,13 +48,13 @@ class GpuDriverBugListTest : public testing::Test {
 };
 
 TEST_F(GpuDriverBugListTest, CurrentDriverBugListValidation) {
-  scoped_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
+  std::unique_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
   std::string json;
   EXPECT_TRUE(list->LoadList(kGpuDriverBugListJson, GpuControlList::kAllOs));
 }
 
 TEST_F(GpuDriverBugListTest, CurrentListForARM) {
-  scoped_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
+  std::unique_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
   EXPECT_TRUE(list->LoadList(kGpuDriverBugListJson, GpuControlList::kAllOs));
 
   GPUInfo gpu_info;
@@ -63,7 +66,7 @@ TEST_F(GpuDriverBugListTest, CurrentListForARM) {
 }
 
 TEST_F(GpuDriverBugListTest, CurrentListForImagination) {
-  scoped_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
+  std::unique_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
   EXPECT_TRUE(list->LoadList(kGpuDriverBugListJson, GpuControlList::kAllOs));
 
   GPUInfo gpu_info;
@@ -101,13 +104,13 @@ TEST_F(GpuDriverBugListTest, GpuSwitching) {
         ]
       }
   );
-  scoped_ptr<GpuDriverBugList> driver_bug_list(GpuDriverBugList::Create());
+  std::unique_ptr<GpuDriverBugList> driver_bug_list(GpuDriverBugList::Create());
   EXPECT_TRUE(driver_bug_list->LoadList(json, GpuControlList::kAllOs));
   std::set<int> switching = driver_bug_list->MakeDecision(
       GpuControlList::kOsMacosx, "10.8", gpu_info());
   EXPECT_EQ(1u, switching.size());
   EXPECT_EQ(1u, switching.count(FORCE_DISCRETE_GPU));
-  std::vector<uint32> entries;
+  std::vector<uint32_t> entries;
   driver_bug_list->GetDecisionEntries(&entries, false);
   ASSERT_EQ(1u, entries.size());
   EXPECT_EQ(1u, entries[0]);
@@ -177,7 +180,7 @@ TEST_F(GpuDriverBugListTest, NVIDIANumberingScheme) {
       }
   );
 
-  scoped_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
+  std::unique_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
   EXPECT_TRUE(list->LoadList(json, GpuControlList::kAllOs));
 
   GPUInfo gpu_info;
@@ -202,6 +205,12 @@ TEST_F(GpuDriverBugListTest, NVIDIANumberingScheme) {
   gpu_info.driver_version = "9.18.13.2723";
   bugs = list->MakeDecision(GpuControlList::kOsWin, "7.0", gpu_info);
   EXPECT_EQ(0u, bugs.count(DISABLE_D3D11));
+}
+
+TEST_F(GpuDriverBugListTest, DuplicatedBugIDValidation) {
+  std::unique_ptr<GpuDriverBugList> list(GpuDriverBugList::Create());
+  EXPECT_TRUE(list->LoadList(kGpuDriverBugListJson, GpuControlList::kAllOs));
+  EXPECT_FALSE(list->has_duplicated_entry_id());
 }
 
 }  // namespace gpu

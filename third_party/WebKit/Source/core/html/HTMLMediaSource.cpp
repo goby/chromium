@@ -28,17 +28,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/HTMLMediaSource.h"
 
 namespace blink {
 
 URLRegistry* HTMLMediaSource::s_registry = 0;
 
-void HTMLMediaSource::setRegistry(URLRegistry* registry)
-{
-    ASSERT(!s_registry);
-    s_registry = registry;
+void HTMLMediaSource::setRegistry(URLRegistry* registry) {
+  DCHECK(!s_registry);
+  s_registry = registry;
 }
 
-}
+}  // namespace blink

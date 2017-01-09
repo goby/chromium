@@ -63,6 +63,7 @@ component("shared_impl") {
     "ppb_crypto_shared.cc",
     "ppb_device_ref_shared.cc",
     "ppb_device_ref_shared.h",
+    "ppb_flash_font_file_shared.h",
     "ppb_gamepad_shared.cc",
     "ppb_gamepad_shared.h",
     "ppb_graphics_3d_shared.cc",
@@ -117,6 +118,8 @@ component("shared_impl") {
     "var.h",
     "var_tracker.cc",
     "var_tracker.h",
+    "vpn_provider_util.cc",
+    "vpn_provider_util.h",
 
     # TODO(viettrungluu): Split these out; it won"t be used in NaCl.
     "private/net_address_private_impl.cc",
@@ -139,17 +142,15 @@ component("shared_impl") {
     ]
   }
 
-  # TODO(GYP) this isn't correct. This should only be specifically for the
-  # nacl_win64 build (cross-compiled for a 32-bit Chrome), rather than the
-  # native 64-bit Chrome build.
+  # This condition is catching the build of nacl64.exe, which is built
+  # in the 64-bit toolchain when the overall build is 32-bit.
   # See also //ppapi/thunk
-  if (is_win && current_cpu == "x64" && current_toolchain != default_toolchain) {
+  if (is_win && target_cpu == "x86" && current_cpu == "x64") {
     sources -= [
       "ppb_audio_shared.cc",
       "ppb_graphics_3d_shared.cc",
       "ppb_opengles2_shared.cc",
       "private/net_address_private_impl.cc",
-      "private/ppb_host_resolver_shared.cc",
     ]
   }
 
@@ -198,7 +199,7 @@ component("shared_impl") {
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
 
   sources = [
@@ -208,12 +209,14 @@ source_set("test_support") {
     "test_utils.h",
   ]
 
+  public_deps = [
+    "//ppapi/shared_impl",
+  ]
   deps = [
     "//base/test:test_support",
     "//ipc",
     "//ipc:test_support",
     "//ppapi/proxy",
-    "//ppapi/shared_impl",
     "//testing/gmock",
     "//testing/gtest",
   ]

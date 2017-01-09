@@ -22,7 +22,7 @@ bool GLStateRestorerImpl::IsInitialized() {
   return decoder_->initialized();
 }
 
-void GLStateRestorerImpl::RestoreState(const gfx::GLStateRestorer* prev_state) {
+void GLStateRestorerImpl::RestoreState(const gl::GLStateRestorer* prev_state) {
   DCHECK(decoder_.get());
   const GLStateRestorerImpl* restorer_impl =
       static_cast<const GLStateRestorerImpl*>(prev_state);
@@ -39,6 +39,11 @@ void GLStateRestorerImpl::RestoreAllTextureUnitBindings() {
 void GLStateRestorerImpl::RestoreActiveTextureUnitBinding(unsigned int target) {
   DCHECK(decoder_.get());
   decoder_->RestoreActiveTextureUnitBinding(target);
+}
+
+void GLStateRestorerImpl::RestoreAllExternalTextureBindingsIfNeeded() {
+  DCHECK(decoder_.get());
+  decoder_->RestoreAllExternalTextureBindingsIfNeeded();
 }
 
 void GLStateRestorerImpl::RestoreFramebufferBindings() {

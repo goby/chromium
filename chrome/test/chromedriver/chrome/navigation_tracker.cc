@@ -8,33 +8,48 @@
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/browser_info.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
+#include "chrome/test/chromedriver/chrome/javascript_dialog_manager.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 
 namespace {
 
-const std::string kDummyFrameName = "chromedriver dummy frame";
-const std::string kDummyFrameUrl = "about:blank";
-const std::string kUnreachableWebDataURL = "data:text/html,chromewebdata";
+const char kDummyFrameName[] = "chromedriver dummy frame";
+const char kDummyFrameUrl[] = "about:blank";
+const char kUnreachableWebDataURL[] = "data:text/html,chromewebdata";
+const char kAutomationExtensionBackgroundPage[] =
+    "chrome-extension://aapnijgdinlhnhlmodcfapnahmbfebeb/"
+    "_generated_background_page.html";
+
+Status MakeNavigationCheckFailedStatus(Status command_status) {
+  return Status(command_status.code() == kTimeout ? kTimeout : kUnknownError,
+                "cannot determine loading status", command_status);
+}
 
 }  // namespace
 
-NavigationTracker::NavigationTracker(DevToolsClient* client,
-                                     const BrowserInfo* browser_info)
+NavigationTracker::NavigationTracker(
+    DevToolsClient* client,
+    const BrowserInfo* browser_info,
+    const JavaScriptDialogManager* dialog_manager)
     : client_(client),
       loading_state_(kUnknown),
       browser_info_(browser_info),
+      dialog_manager_(dialog_manager),
       dummy_execution_context_id_(0),
       load_event_fired_(true),
       timed_out_(false) {
   client_->AddListener(this);
 }
 
-NavigationTracker::NavigationTracker(DevToolsClient* client,
-                                     LoadingState known_state,
-                                     const BrowserInfo* browser_info)
+NavigationTracker::NavigationTracker(
+    DevToolsClient* client,
+    LoadingState known_state,
+    const BrowserInfo* browser_info,
+    const JavaScriptDialogManager* dialog_manager)
     : client_(client),
       loading_state_(known_state),
       browser_info_(browser_info),
+      dialog_manager_(dialog_manager),
       dummy_execution_context_id_(0),
       load_event_fired_(true),
       timed_out_(false) {
@@ -44,8 +59,18 @@ NavigationTracker::NavigationTracker(DevToolsClient* client,
 NavigationTracker::~NavigationTracker() {}
 
 Status NavigationTracker::IsPendingNavigation(const std::string& frame_id,
+                                              const Timeout* timeout,
                                               bool* is_pending) {
   if (!IsExpectingFrameLoadingEvents()) {
+    if (IsEventLoopPausedByDialogs() && dialog_manager_->IsDialogOpen()) {
+      // The render process is paused while modal dialogs are open, so
+      // Runtime.evaluate will block and time out if we attempt to call it. In
+      // this case we can consider the page to have loaded, so that we return
+      // control back to the test and let it dismiss the dialog.
+      *is_pending = false;
+      return Status(kOk);
+    }
+
     // Some DevTools commands (e.g. Input.dispatchMouseEvent) are handled in the
     // browser process, and may cause the renderer process to start a new
     // navigation. We need to call Runtime.evaluate to force a roundtrip to the
@@ -53,9 +78,9 @@ Status NavigationTracker::IsPendingNavigation(const std::string& frame_id,
     // (see crbug.com/524079).
     base::DictionaryValue params;
     params.SetString("expression", "1");
-    scoped_ptr<base::DictionaryValue> result;
-    Status status = client_->SendCommandAndGetResult(
-        "Runtime.evaluate", params, &result);
+    std::unique_ptr<base::DictionaryValue> result;
+    Status status = client_->SendCommandAndGetResultWithTimeout(
+        "Runtime.evaluate", params, timeout, &result);
     int value = 0;
     if (status.code() == kDisconnected) {
       // If we receive a kDisconnected status code from Runtime.evaluate, don't
@@ -63,10 +88,24 @@ Status NavigationTracker::IsPendingNavigation(const std::string& frame_id,
       // events from it until we reconnect.
       *is_pending = false;
       return Status(kOk);
+    } else if (status.code() == kUnexpectedAlertOpen &&
+               IsEventLoopPausedByDialogs()) {
+      // The JS event loop is paused while modal dialogs are open, so return
+      // control to the test so that it can dismiss the dialog.
+      *is_pending = false;
+      return Status(kOk);
+    } else if (status.IsError() && dialog_manager_->IsDialogOpen()) {
+      // TODO(samuong): Remove when we stop supporting M51.
+      // When a dialog is open, DevTools returns "Internal error: result is not
+      // an Object" for this request. If this happens, we assume that any
+      // cross-process navigation has started, and determine whether a
+      // navigation is pending based on the number of scheduled and pending
+      // frames.
+      LOG(WARNING) << "Failed to evaluate expression while dialog was open";
     } else if (status.IsError() ||
                !result->GetInteger("result.value", &value) ||
                value != 1) {
-      return Status(kUnknownError, "cannot determine loading status", status);
+      return MakeNavigationCheckFailedStatus(status);
     }
   }
 
@@ -75,16 +114,26 @@ Status NavigationTracker::IsPendingNavigation(const std::string& frame_id,
     // content and the server hasn't responded at all, a dummy page is created
     // for the new window. In such case, the baseURL will be empty.
     base::DictionaryValue empty_params;
-    scoped_ptr<base::DictionaryValue> result;
-    Status status = client_->SendCommandAndGetResult(
-        "DOM.getDocument", empty_params, &result);
+    std::unique_ptr<base::DictionaryValue> result;
+    Status status = client_->SendCommandAndGetResultWithTimeout(
+        "DOM.getDocument", empty_params, timeout, &result);
     std::string base_url;
     if (status.IsError() || !result->GetString("root.baseURL", &base_url))
-      return Status(kUnknownError, "cannot determine loading status", status);
+      return MakeNavigationCheckFailedStatus(status);
     if (base_url.empty()) {
       *is_pending = true;
       loading_state_ = kLoading;
       return Status(kOk);
+    }
+
+    // If we're loading the ChromeDriver automation extension background page,
+    // look for a known function to determine the loading status.
+    if (base_url == kAutomationExtensionBackgroundPage) {
+      bool function_exists = false;
+      status = CheckFunctionExists(timeout, &function_exists);
+      if (status.IsError())
+        return MakeNavigationCheckFailedStatus(status);
+      loading_state_ = function_exists ? kNotLoading : kLoading;
     }
 
     // If the loading state is unknown (which happens after first connecting),
@@ -93,24 +142,24 @@ Status NavigationTracker::IsPendingNavigation(const std::string& frame_id,
     // received until all frames are loaded.  Loading is forced to start by
     // attaching a temporary iframe.  Forcing loading to start is not
     // necessary if the main frame is not yet loaded.
-    const std::string kStartLoadingIfMainFrameNotLoading =
+    const std::string kStartLoadingIfMainFrameNotLoading = base::StringPrintf(
        "var isLoaded = document.readyState == 'complete' ||"
        "    document.readyState == 'interactive';"
        "if (isLoaded) {"
        "  var frame = document.createElement('iframe');"
-       "  frame.name = '" + kDummyFrameName + "';"
-       "  frame.src = '" + kDummyFrameUrl + "';"
+       "  frame.name = '%s';"
+       "  frame.src = '%s';"
        "  document.body.appendChild(frame);"
        "  window.setTimeout(function() {"
        "    document.body.removeChild(frame);"
        "  }, 0);"
-       "}";
+       "}", kDummyFrameName, kDummyFrameUrl);
     base::DictionaryValue params;
     params.SetString("expression", kStartLoadingIfMainFrameNotLoading);
-    status = client_->SendCommandAndGetResult(
-        "Runtime.evaluate", params, &result);
+    status = client_->SendCommandAndGetResultWithTimeout(
+        "Runtime.evaluate", params, timeout, &result);
     if (status.IsError())
-      return Status(kUnknownError, "cannot determine loading status", status);
+      return MakeNavigationCheckFailedStatus(status);
 
     // Between the time the JavaScript is evaluated and
     // SendCommandAndGetResult returns, OnEvent may have received info about
@@ -128,6 +177,20 @@ Status NavigationTracker::IsPendingNavigation(const std::string& frame_id,
     *is_pending |= scheduled_frame_set_.count(frame_id) > 0;
     *is_pending |= pending_frame_set_.count(frame_id) > 0;
   }
+  return Status(kOk);
+}
+
+Status NavigationTracker::CheckFunctionExists(const Timeout* timeout,
+                                              bool* exists) {
+  base::DictionaryValue params;
+  params.SetString("expression", "typeof(getWindowInfo)");
+  std::unique_ptr<base::DictionaryValue> result;
+  Status status = client_->SendCommandAndGetResultWithTimeout(
+      "Runtime.evaluate", params, timeout, &result);
+  std::string type;
+  if (status.IsError() || !result->GetString("result.value", &type))
+    return MakeNavigationCheckFailedStatus(status);
+  *exists = type == "function";
   return Status(kOk);
 }
 
@@ -178,6 +241,7 @@ Status NavigationTracker::OnEvent(DevToolsClient* client,
     if (!params.GetString("frameId", &frame_id))
       return Status(kUnknownError, "missing or invalid 'frameId'");
 
+    scheduled_frame_set_.erase(frame_id);
     pending_frame_set_.erase(frame_id);
     if (expecting_single_stop_event)
       pending_frame_set_.clear();
@@ -217,15 +281,24 @@ Status NavigationTracker::OnEvent(DevToolsClient* client,
         pending_frame_set_.clear();
         scheduled_frame_set_.clear();
       } else {
+        // Discard pending and scheduled frames, except for the root frame,
+        // which just navigated (and which we should consider pending until we
+        // receive a Page.frameStoppedLoading event for it).
+        std::string frame_id;
+        if (!params.GetString("frame.id", &frame_id))
+          return Status(kUnknownError, "missing or invalid 'frame.id'");
+        bool frame_was_pending = pending_frame_set_.count(frame_id) > 0;
+        pending_frame_set_.clear();
+        scheduled_frame_set_.clear();
+        if (frame_was_pending)
+          pending_frame_set_.insert(frame_id);
         // If the URL indicates that the web page is unreachable (the sad tab
-        // page) then discard any pending or scheduled navigations.
+        // page) then discard all pending navigations.
         std::string frame_url;
         if (!params.GetString("frame.url", &frame_url))
           return Status(kUnknownError, "missing or invalid 'frame.url'");
-        if (frame_url == kUnreachableWebDataURL) {
+        if (frame_url == kUnreachableWebDataURL)
           pending_frame_set_.clear();
-          scheduled_frame_set_.clear();
-        }
       }
     } else {
       // If a child frame just navigated, check if it is the dummy frame that
@@ -243,8 +316,21 @@ Status NavigationTracker::OnEvent(DevToolsClient* client,
   } else if (method == "Runtime.executionContextsCleared") {
     if (!IsExpectingFrameLoadingEvents()) {
       execution_context_set_.clear();
-      ResetLoadingState(kLoading);
       load_event_fired_ = false;
+      if (browser_info_->build_no >= 2685 && execution_context_set_.empty()) {
+        // As of crrev.com/382211, DevTools sends an executionContextsCleared
+        // event right before the first execution context is created, but after
+        // Page.loadEventFired. Set the loading state to loading, but do not
+        // clear the pending and scheduled frame sets, since they may contain
+        // frames that we're still waiting for.
+        loading_state_ = kLoading;
+      } else {
+        // In older browser versions, this event signifies the first event after
+        // a cross-process navigation. Set the loading state, and clear any
+        // pending or scheduled frames, since we're about to navigate away from
+        // them.
+        ResetLoadingState(kLoading);
+      }
     }
   } else if (method == "Runtime.executionContextCreated") {
     if (!IsExpectingFrameLoadingEvents()) {
@@ -252,8 +338,11 @@ Status NavigationTracker::OnEvent(DevToolsClient* client,
       if (!params.GetInteger("context.id", &execution_context_id))
         return Status(kUnknownError, "missing or invalid 'context.id'");
       std::string frame_id;
-      if (!params.GetString("context.frameId", &frame_id))
-        return Status(kUnknownError, "missing or invalid 'context.frameId'");
+      if (!params.GetString("context.auxData.frameId", &frame_id)) {
+        // TODO(samuong): remove this when we stop supporting Chrome 53.
+        if (!params.GetString("context.frameId", &frame_id))
+          return Status(kUnknownError, "missing or invalid 'context.frameId'");
+      }
       if (frame_id == dummy_frame_id_)
         dummy_execution_context_id_ = execution_context_id;
       else
@@ -286,22 +375,8 @@ Status NavigationTracker::OnEvent(DevToolsClient* client,
 Status NavigationTracker::OnCommandSuccess(
     DevToolsClient* client,
     const std::string& method,
-    const base::DictionaryValue& result) {
-  if (!IsExpectingFrameLoadingEvents()) {
-    if (method == "Page.navigate" && loading_state_ == kLoading) {
-      // In all versions of Chrome that are supported by ChromeDriver, except
-      // for old versions of Android WebView, Page.navigate will return a
-      // frameId in the command response. We'll get a notification that the
-      // frame has loaded when we get the Page.frameStoppedLoading event, so
-      // keep track of the pending frame id here.
-      std::string pending_frame_id;
-      if (result.GetString("frameId", &pending_frame_id)) {
-        pending_frame_set_.insert(pending_frame_id);
-        return Status(kOk);
-      }
-    }
-  }
-
+    const base::DictionaryValue& result,
+    const Timeout& command_timeout) {
   if ((method == "Page.navigate" || method == "Page.navigateToHistoryEntry") &&
       loading_state_ != kLoading) {
     // At this point the browser has initiated the navigation, but besides that,
@@ -332,12 +407,12 @@ Status NavigationTracker::OnCommandSuccess(
     loading_state_ = kUnknown;
     base::DictionaryValue params;
     params.SetString("expression", "document.URL");
-    scoped_ptr<base::DictionaryValue> result;
-    Status status = client_->SendCommandAndGetResult(
-        "Runtime.evaluate", params, &result);
+    std::unique_ptr<base::DictionaryValue> result;
+    Status status = client_->SendCommandAndGetResultWithTimeout(
+        "Runtime.evaluate", params, &command_timeout, &result);
     std::string url;
     if (status.IsError() || !result->GetString("result.value", &url))
-      return Status(kUnknownError, "cannot determine loading status", status);
+      return MakeNavigationCheckFailedStatus(status);
     if (loading_state_ == kUnknown && url.empty())
       loading_state_ = kLoading;
   }
@@ -362,4 +437,17 @@ bool NavigationTracker::IsExpectingFrameLoadingEvents() {
     return browser_info_->build_no < 2358;
   else
     return browser_info_->major_version < 44;
+}
+
+bool NavigationTracker::IsEventLoopPausedByDialogs() {
+  // As of crrev.com/394883 (Chrome 52+) the JavaScript event loop is paused by
+  // modal dialogs. This pauses the render process so we need to be careful not
+  // to issue Runtime.evaluate commands while an alert is up, otherwise the call
+  // will block and timeout. For details refer to
+  // https://bugs.chromium.org/p/chromedriver/issues/detail?id=1381.
+  // TODO(samuong): Remove this once we stop supporting M51.
+  if (browser_info_->browser_name == "chrome")
+    return browser_info_->build_no >= 2743;
+  else
+    return browser_info_->major_version >= 52;
 }

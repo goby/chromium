@@ -4,23 +4,30 @@
 
 #include "chrome/browser/ui/webui/help/help_handler.h"
 
+#include <stddef.h>
+
 #include <string>
 
-#include "base/basictypes.h"
+#include "ash/common/system/chromeos/devicetype_utils.h"
+#include "base/base_switches.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/i18n/message_formatter.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_runner_util.h"
+#include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/obsolete_system/obsolete_system.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -33,22 +40,21 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/google/core/browser/google_util.h"
+#include "components/policy/core/common/policy_namespace.h"
+#include "components/policy/policy_constants.h"
+#include "components/strings/grit/components_chromium_strings.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "content/public/common/user_agent.h"
-#include "grit/components_chromium_strings.h"
-#include "grit/components_google_chrome_strings.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "v8/include/v8.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/files/file_util_proxy.h"
 #include "base/i18n/time_formatting.h"
-#include "base/prefs/pref_service.h"
 #include "base/sys_info.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
@@ -63,6 +69,7 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "chromeos/system/statistics_provider.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
 #endif
 
@@ -122,7 +129,8 @@ bool CanChangeChannel(Profile* profile) {
     const user_manager::User* user =
         profile ? chromeos::ProfileHelper::Get()->GetUserByProfile(profile)
                 : nullptr;
-    std::string email = user ? user->email() : std::string();
+    std::string email =
+        user ? user->GetAccountId().GetUserEmail() : std::string();
     size_t at_pos = email.find('@');
     if (at_pos != std::string::npos && at_pos + 1 < email.length())
       domain = email.substr(email.find('@') + 1);
@@ -196,12 +204,25 @@ std::string ReadRegulatoryLabelText(const base::FilePath& path) {
   return std::string();
 }
 
+// Returns messages that applys to this eol status
+base::string16 GetEolMessage(update_engine::EndOfLifeStatus status) {
+  if (status == update_engine::EndOfLifeStatus::kSecurityOnly) {
+    return l10n_util::GetStringUTF16(IDS_ABOUT_PAGE_EOL_SECURITY_ONLY);
+
+  } else {
+    return l10n_util::GetStringUTF16(IDS_ABOUT_PAGE_EOL_EOL);
+  }
+}
+
 #endif  // defined(OS_CHROMEOS)
 
 }  // namespace
 
 HelpHandler::HelpHandler()
-    : weak_factory_(this) {
+    : policy_registrar_(
+        g_browser_process->policy_service(),
+        policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME, std::string())),
+      weak_factory_(this) {
 }
 
 HelpHandler::~HelpHandler() {
@@ -227,8 +248,10 @@ void HelpHandler::GetLocalizedValues(base::DictionaryValue* localized_strings) {
 #endif
     {"productName", IDS_PRODUCT_NAME},
     {"updateCheckStarted", IDS_UPGRADE_CHECK_STARTED},
-    {"upToDate", IDS_UPGRADE_UP_TO_DATE},
     {"updating", IDS_UPGRADE_UPDATING},
+#if defined(OS_CHROMEOS) || defined(OS_WIN)
+    {"updateDisabledByPolicy", IDS_UPGRADE_DISABLED_BY_POLICY},
+#endif  // defined(OS_CHROMEOS) || defined(OS_WIN)
 #if defined(OS_CHROMEOS)
     {"updateButton", IDS_UPGRADE_BUTTON},
     {"updatingChannelSwitch", IDS_UPGRADE_UPDATING_CHANNEL_SWITCH},
@@ -241,6 +264,7 @@ void HelpHandler::GetLocalizedValues(base::DictionaryValue* localized_strings) {
     {"reportAnIssue", IDS_REPORT_AN_ISSUE},
 #if defined(OS_CHROMEOS)
     {"platform", IDS_PLATFORM_LABEL},
+    {"arcVersion", IDS_ARC_VERSION_LABEL},
     {"firmware", IDS_ABOUT_PAGE_FIRMWARE},
     {"showMoreInfo", IDS_SHOW_MORE_INFO},
     {"hideMoreInfo", IDS_HIDE_MORE_INFO},
@@ -248,6 +272,7 @@ void HelpHandler::GetLocalizedValues(base::DictionaryValue* localized_strings) {
     {"stable", IDS_ABOUT_PAGE_CHANNEL_STABLE},
     {"beta", IDS_ABOUT_PAGE_CHANNEL_BETA},
     {"dev", IDS_ABOUT_PAGE_CHANNEL_DEVELOPMENT},
+    {"devChannelDisclaimer", IDS_ABOUT_PAGE_CHANNEL_DEVELOPMENT_DISCLAIMER},
     {"channel-changed", IDS_ABOUT_PAGE_CHANNEL_CHANGED},
     {"currentChannelStable", IDS_ABOUT_PAGE_CURRENT_CHANNEL_STABLE},
     {"currentChannelBeta", IDS_ABOUT_PAGE_CURRENT_CHANNEL_BETA},
@@ -271,7 +296,6 @@ void HelpHandler::GetLocalizedValues(base::DictionaryValue* localized_strings) {
      IDS_ABOUT_PAGE_CHANNEL_CHANGE_PAGE_CHANGE_BUTTON},
     {"channelChangePageCancelButton",
      IDS_ABOUT_PAGE_CHANNEL_CHANGE_PAGE_CANCEL_BUTTON},
-    {"webkit", IDS_WEBKIT},
     {"userAgent", IDS_VERSION_UI_USER_AGENT},
     {"commandLine", IDS_VERSION_UI_COMMAND_LINE},
     {"buildDate", IDS_VERSION_UI_BUILD_DATE},
@@ -289,6 +313,14 @@ void HelpHandler::GetLocalizedValues(base::DictionaryValue* localized_strings) {
                                  l10n_util::GetStringUTF16(resources[i].ids));
   }
 
+#if defined(OS_CHROMEOS)
+  localized_strings->SetString("upToDate", ash::SubstituteChromeOSDeviceType(
+      IDS_UPGRADE_UP_TO_DATE));
+#else
+  localized_strings->SetString("upToDate", l10n_util::GetStringUTF16(
+      IDS_UPGRADE_UP_TO_DATE));
+#endif
+
   localized_strings->SetString("updateObsoleteSystem",
                                ObsoleteSystem::LocalizedObsoleteString());
   localized_strings->SetString("updateObsoleteSystemURL",
@@ -299,12 +331,11 @@ void HelpHandler::GetLocalizedValues(base::DictionaryValue* localized_strings) {
       l10n_util::GetStringFUTF16(IDS_ABOUT_PRODUCT_VERSION,
                                  BuildBrowserVersionString()));
 
-  base::Time::Exploded exploded_time;
-  base::Time::Now().LocalExplode(&exploded_time);
   localized_strings->SetString(
       "productCopyright",
-       l10n_util::GetStringFUTF16(IDS_ABOUT_VERSION_COPYRIGHT,
-                                  base::IntToString16(exploded_time.year)));
+      base::i18n::MessageFormatter::FormatWithNumberedArgs(
+          l10n_util::GetStringUTF16(IDS_ABOUT_VERSION_COPYRIGHT),
+          base::Time::Now()));
 
   base::string16 license = l10n_util::GetStringFUTF16(
       IDS_VERSION_UI_LICENSE, base::ASCIIToUTF16(chrome::kChromiumProjectURL),
@@ -333,13 +364,16 @@ void HelpHandler::GetLocalizedValues(base::DictionaryValue* localized_strings) {
           chromeos::switches::kDisableNewChannelSwitcherUI)) {
     localized_strings->SetBoolean("disableNewChannelSwitcherUI", true);
   }
+
+  localized_strings->SetString(
+      "eolLearnMore", l10n_util::GetStringFUTF16(
+                          IDS_ABOUT_PAGE_EOL_LEARN_MORE,
+                          base::ASCIIToUTF16(chrome::kEolNotificationURL)));
 #endif
 
   base::string16 tos = l10n_util::GetStringFUTF16(
       IDS_ABOUT_TERMS_OF_SERVICE, base::UTF8ToUTF16(chrome::kChromeUITermsURL));
   localized_strings->SetString("productTOS", tos);
-
-  localized_strings->SetString("webkitVersion", content::GetWebKitVersion());
 
   localized_strings->SetString("jsEngine", "V8");
   localized_strings->SetString("jsEngineVersion", v8::V8::GetVersion());
@@ -355,6 +389,10 @@ void HelpHandler::RegisterMessages() {
   version_updater_.reset(VersionUpdater::Create(web_ui()->GetWebContents()));
   registrar_.Add(this, chrome::NOTIFICATION_UPGRADE_RECOMMENDED,
                  content::NotificationService::AllSources());
+  policy_registrar_.Observe(
+      policy::key::kDeviceAutoUpdateDisabled,
+      base::Bind(&HelpHandler::OnDeviceAutoUpdatePolicyChanged,
+                 base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback("onPageLoaded",
       base::Bind(&HelpHandler::OnPageLoaded, base::Unretained(this)));
@@ -386,16 +424,11 @@ void HelpHandler::RegisterMessages() {
 
 void HelpHandler::Observe(int type, const content::NotificationSource& source,
                           const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_UPGRADE_RECOMMENDED: {
-      // A version update is installed and ready to go. Refresh the UI so the
-      // correct state will be shown.
-      RequestUpdate(NULL);
-      break;
-    }
-    default:
-      NOTREACHED();
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_UPGRADE_RECOMMENDED, type);
+
+  // A version update is installed and ready to go. Refresh the UI so the
+  // correct state will be shown.
+  RequestUpdate(nullptr);
 }
 
 // static
@@ -413,6 +446,33 @@ base::string16 HelpHandler::BuildBrowserVersionString() {
   return base::UTF8ToUTF16(version);
 }
 
+void HelpHandler::OnDeviceAutoUpdatePolicyChanged(
+    const base::Value* previous_policy,
+    const base::Value* current_policy) {
+  bool previous_auto_update_disabled = false;
+  if (previous_policy)
+    CHECK(previous_policy->GetAsBoolean(&previous_auto_update_disabled));
+
+  bool current_auto_update_disabled = false;
+  if (current_policy)
+    CHECK(current_policy->GetAsBoolean(&current_auto_update_disabled));
+
+  if (current_auto_update_disabled != previous_auto_update_disabled) {
+    // Refresh the update status to refresh the status of the UI.
+    RefreshUpdateStatus();
+  }
+}
+
+void HelpHandler::RefreshUpdateStatus() {
+  // On Chrome OS, do not check for an update automatically.
+#if defined(OS_CHROMEOS)
+  static_cast<VersionUpdaterCros*>(version_updater_.get())->GetUpdateStatus(
+      base::Bind(&HelpHandler::SetUpdateStatus, base::Unretained(this)));
+#else
+  RequestUpdate(NULL);
+#endif
+}
+
 void HelpHandler::OnPageLoaded(const base::ListValue* args) {
 #if defined(OS_CHROMEOS)
   base::PostTaskAndReplyWithResult(
@@ -425,38 +485,38 @@ void HelpHandler::OnPageLoaded(const base::ListValue* args) {
   base::PostTaskAndReplyWithResult(
       content::BrowserThread::GetBlockingPool(),
       FROM_HERE,
+      base::Bind(&chromeos::version_loader::GetARCVersion),
+      base::Bind(&HelpHandler::OnARCVersion,
+                 weak_factory_.GetWeakPtr()));
+  base::PostTaskAndReplyWithResult(
+      content::BrowserThread::GetBlockingPool(),
+      FROM_HERE,
       base::Bind(&chromeos::version_loader::GetFirmware),
       base::Bind(&HelpHandler::OnOSFirmware,
                  weak_factory_.GetWeakPtr()));
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "help.HelpPage.updateEnableReleaseChannel",
       base::FundamentalValue(CanChangeChannel(Profile::FromWebUI(web_ui()))));
 
   base::Time build_time = base::SysInfo::GetLsbReleaseTime();
   base::string16 build_date = base::TimeFormatFriendlyDate(build_time);
-  web_ui()->CallJavascriptFunction("help.HelpPage.setBuildDate",
-                                   base::StringValue(build_date));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setBuildDate",
+                                         base::StringValue(build_date));
 #endif  // defined(OS_CHROMEOS)
 
-  // On Chrome OS, do not check for an update automatically.
-#if defined(OS_CHROMEOS)
-  static_cast<VersionUpdaterCros*>(version_updater_.get())->GetUpdateStatus(
-      base::Bind(&HelpHandler::SetUpdateStatus, base::Unretained(this)));
-#else
-  RequestUpdate(NULL);
-#endif
+  RefreshUpdateStatus();
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "help.HelpPage.setObsoleteSystem",
       base::FundamentalValue(ObsoleteSystem::IsObsoleteNowOrSoon()));
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "help.HelpPage.setObsoleteSystemEndOfTheLine",
       base::FundamentalValue(ObsoleteSystem::IsObsoleteNowOrSoon() &&
                              ObsoleteSystem::IsEndOfTheLine()));
 
 #if defined(OS_CHROMEOS)
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "help.HelpPage.updateIsEnterpriseManaged",
       base::FundamentalValue(IsEnterpriseManaged()));
   // First argument to GetChannel() is a flag that indicates whether
@@ -466,6 +526,12 @@ void HelpHandler::OnPageLoaded(const base::ListValue* args) {
       base::Bind(&HelpHandler::OnCurrentChannel, weak_factory_.GetWeakPtr()));
   version_updater_->GetChannel(false,
       base::Bind(&HelpHandler::OnTargetChannel, weak_factory_.GetWeakPtr()));
+
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kDisableEolNotification)) {
+    version_updater_->GetEolStatus(
+        base::Bind(&HelpHandler::OnEolStatus, weak_factory_.GetWeakPtr()));
+  }
 
   base::PostTaskAndReplyWithResult(
       content::BrowserThread::GetBlockingPool(),
@@ -484,7 +550,7 @@ void HelpHandler::PromoteUpdater(const base::ListValue* args) {
 
 void HelpHandler::RelaunchNow(const base::ListValue* args) {
   DCHECK(args->empty());
-  version_updater_->RelaunchBrowser();
+  chrome::AttemptRelaunch();
 }
 
 void HelpHandler::OpenFeedbackDialog(const base::ListValue* args) {
@@ -524,7 +590,8 @@ void HelpHandler::SetChannel(const base::ListValue* args) {
   if (user_manager::UserManager::Get()->IsCurrentUserOwner()) {
     // Check for update after switching release channel.
     version_updater_->CheckForUpdate(base::Bind(&HelpHandler::SetUpdateStatus,
-                                                base::Unretained(this)));
+                                                base::Unretained(this)),
+                                     VersionUpdater::PromoteCallback());
   }
 }
 
@@ -546,12 +613,14 @@ void HelpHandler::RelaunchAndPowerwash(const base::ListValue* args) {
 #endif  // defined(OS_CHROMEOS)
 
 void HelpHandler::RequestUpdate(const base::ListValue* args) {
+  VersionUpdater::PromoteCallback promote_callback;
   version_updater_->CheckForUpdate(
-      base::Bind(&HelpHandler::SetUpdateStatus, base::Unretained(this))
+      base::Bind(&HelpHandler::SetUpdateStatus, base::Unretained(this)),
 #if defined(OS_MACOSX)
-      , base::Bind(&HelpHandler::SetPromotionState, base::Unretained(this))
-#endif
-      );
+      base::Bind(&HelpHandler::SetPromotionState, base::Unretained(this)));
+#else
+      VersionUpdater::PromoteCallback());
+#endif  // OS_MACOSX
 }
 
 void HelpHandler::SetUpdateStatus(VersionUpdater::Status status,
@@ -586,13 +655,13 @@ void HelpHandler::SetUpdateStatus(VersionUpdater::Status status,
     break;
   }
 
-  web_ui()->CallJavascriptFunction("help.HelpPage.setUpdateStatus",
-                                   base::StringValue(status_str),
-                                   base::StringValue(message));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setUpdateStatus",
+                                         base::StringValue(status_str),
+                                         base::StringValue(message));
 
   if (status == VersionUpdater::UPDATING) {
-    web_ui()->CallJavascriptFunction("help.HelpPage.setProgress",
-                                     base::FundamentalValue(progress));
+    web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setProgress",
+                                           base::FundamentalValue(progress));
   }
 
 #if defined(OS_CHROMEOS)
@@ -600,16 +669,16 @@ void HelpHandler::SetUpdateStatus(VersionUpdater::Status status,
       status == VersionUpdater::FAILED_CONNECTION_TYPE_DISALLOWED) {
     base::string16 types_msg = GetAllowedConnectionTypesMessage();
     if (!types_msg.empty()) {
-      web_ui()->CallJavascriptFunction(
+      web_ui()->CallJavascriptFunctionUnsafe(
           "help.HelpPage.setAndShowAllowedConnectionTypesMsg",
           base::StringValue(types_msg));
     } else {
-      web_ui()->CallJavascriptFunction(
+      web_ui()->CallJavascriptFunctionUnsafe(
           "help.HelpPage.showAllowedConnectionTypesMsg",
           base::FundamentalValue(false));
     }
   } else {
-    web_ui()->CallJavascriptFunction(
+    web_ui()->CallJavascriptFunctionUnsafe(
         "help.HelpPage.showAllowedConnectionTypesMsg",
         base::FundamentalValue(false));
   }
@@ -631,30 +700,35 @@ void HelpHandler::SetPromotionState(VersionUpdater::PromotionState state) {
     break;
   }
 
-  web_ui()->CallJavascriptFunction("help.HelpPage.setPromotionState",
-                                   base::StringValue(state_str));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setPromotionState",
+                                         base::StringValue(state_str));
 }
 #endif  // defined(OS_MACOSX)
 
 #if defined(OS_CHROMEOS)
 void HelpHandler::OnOSVersion(const std::string& version) {
-  web_ui()->CallJavascriptFunction("help.HelpPage.setOSVersion",
-                                   base::StringValue(version));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setOSVersion",
+                                         base::StringValue(version));
+}
+
+void HelpHandler::OnARCVersion(const std::string& firmware) {
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setARCVersion",
+                                         base::StringValue(firmware));
 }
 
 void HelpHandler::OnOSFirmware(const std::string& firmware) {
-  web_ui()->CallJavascriptFunction("help.HelpPage.setOSFirmware",
-                                   base::StringValue(firmware));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setOSFirmware",
+                                         base::StringValue(firmware));
 }
 
 void HelpHandler::OnCurrentChannel(const std::string& channel) {
-  web_ui()->CallJavascriptFunction(
-      "help.HelpPage.updateCurrentChannel", base::StringValue(channel));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.updateCurrentChannel",
+                                         base::StringValue(channel));
 }
 
 void HelpHandler::OnTargetChannel(const std::string& channel) {
-  web_ui()->CallJavascriptFunction(
-      "help.HelpPage.updateTargetChannel", base::StringValue(channel));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.updateTargetChannel",
+                                         base::StringValue(channel));
 }
 
 void HelpHandler::OnRegulatoryLabelDirFound(const base::FilePath& path) {
@@ -674,15 +748,33 @@ void HelpHandler::OnRegulatoryLabelDirFound(const base::FilePath& path) {
 void HelpHandler::OnRegulatoryLabelImageFound(const base::FilePath& path) {
   std::string url = std::string("chrome://") + chrome::kChromeOSAssetHost +
       "/" + path.MaybeAsASCII();
-  web_ui()->CallJavascriptFunction("help.HelpPage.setRegulatoryLabelPath",
-                                   base::StringValue(url));
+  web_ui()->CallJavascriptFunctionUnsafe("help.HelpPage.setRegulatoryLabelPath",
+                                         base::StringValue(url));
 }
 
 void HelpHandler::OnRegulatoryLabelTextRead(const std::string& text) {
   // Remove unnecessary whitespace.
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "help.HelpPage.setRegulatoryLabelText",
       base::StringValue(base::CollapseWhitespaceASCII(text, true)));
+}
+
+void HelpHandler::OnEolStatus(update_engine::EndOfLifeStatus status) {
+  if (status == update_engine::EndOfLifeStatus::kSupported ||
+      IsEnterpriseManaged()) {
+    return;
+  }
+
+  if (status == update_engine::EndOfLifeStatus::kSupported) {
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "help.HelpPage.updateEolMessage", base::StringValue("device_supported"),
+        base::StringValue(""));
+  } else {
+    base::string16 message = GetEolMessage(status);
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "help.HelpPage.updateEolMessage", base::StringValue("device_endoflife"),
+        base::StringValue(message));
+  }
 }
 
 #endif  // defined(OS_CHROMEOS)

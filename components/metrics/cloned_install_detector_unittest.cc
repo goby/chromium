@@ -4,10 +4,10 @@
 
 #include "components/metrics/cloned_install_detector.h"
 
-#include "base/prefs/testing_pref_service.h"
 #include "components/metrics/machine_id_provider.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_state_manager.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace metrics {
@@ -27,7 +27,7 @@ TEST(ClonedInstallDetectorTest, SaveId) {
   TestingPrefServiceSimple prefs;
   ClonedInstallDetector::RegisterPrefs(prefs.registry());
 
-  scoped_ptr<ClonedInstallDetector> detector(
+  std::unique_ptr<ClonedInstallDetector> detector(
       new ClonedInstallDetector(MachineIdProvider::CreateInstance()));
 
   detector->SaveMachineId(&prefs, kTestRawId);
@@ -42,7 +42,7 @@ TEST(ClonedInstallDetectorTest, DetectClone) {
   // Save a machine id that will cause a clone to be detected.
   prefs.SetInteger(prefs::kMetricsMachineId, kTestHashedId + 1);
 
-  scoped_ptr<ClonedInstallDetector> detector(
+  std::unique_ptr<ClonedInstallDetector> detector(
       new ClonedInstallDetector(MachineIdProvider::CreateInstance()));
 
   detector->SaveMachineId(&prefs, kTestRawId);

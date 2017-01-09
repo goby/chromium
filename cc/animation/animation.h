@@ -5,10 +5,12 @@
 #ifndef CC_ANIMATION_ANIMATION_H_
 #define CC_ANIMATION_ANIMATION_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/time.h"
-#include "cc/base/cc_export.h"
+#include "cc/animation/animation_export.h"
+#include "cc/trees/target_property.h"
 
 namespace cc {
 
@@ -17,7 +19,7 @@ class AnimationCurve;
 // An Animation contains all the state required to play an AnimationCurve.
 // Specifically, the affected property, the run state (paused, finished, etc.),
 // loop count, last pause time, and the total time spent paused.
-class CC_EXPORT Animation {
+class CC_ANIMATION_EXPORT Animation {
  public:
   // Animations begin in the 'WAITING_FOR_TARGET_AVAILABILITY' state. An
   // Animation waiting for target availibility will run as soon as its target
@@ -26,7 +28,10 @@ class CC_EXPORT Animation {
   // the STARTING state, and then into the RUNNING state. RUNNING animations may
   // toggle between RUNNING and PAUSED, and may be stopped by moving into either
   // the ABORTED or FINISHED states. A FINISHED animation was allowed to run to
-  // completion, but an ABORTED animation was not.
+  // completion, but an ABORTED animation was not. An animation in the state
+  // ABORTED_BUT_NEEDS_COMPLETION is an animation that was aborted for
+  // some reason, but needs to be finished. Currently this is for impl-only
+  // scroll offset animations that need to be completed on the main thread.
   enum RunState {
     WAITING_FOR_TARGET_AVAILABILITY = 0,
     WAITING_FOR_DELETION,
@@ -35,44 +40,26 @@ class CC_EXPORT Animation {
     PAUSED,
     FINISHED,
     ABORTED,
+    ABORTED_BUT_NEEDS_COMPLETION,
     // This sentinel must be last.
-    LAST_RUN_STATE = ABORTED
+    LAST_RUN_STATE = ABORTED_BUT_NEEDS_COMPLETION
   };
 
-  enum TargetProperty {
-    TRANSFORM = 0,
-    OPACITY,
-    FILTER,
-    SCROLL_OFFSET,
-    BACKGROUND_COLOR,
-    // This sentinel must be last.
-    LAST_TARGET_PROPERTY = BACKGROUND_COLOR
-  };
+  enum class Direction { NORMAL, REVERSE, ALTERNATE_NORMAL, ALTERNATE_REVERSE };
 
-  enum Direction {
-    DIRECTION_NORMAL,
-    DIRECTION_REVERSE,
-    DIRECTION_ALTERNATE,
-    DIRECTION_ALTERNATE_REVERSE
-  };
+  enum class FillMode { NONE, FORWARDS, BACKWARDS, BOTH, AUTO };
 
-  enum FillMode {
-    FILL_MODE_NONE,
-    FILL_MODE_FORWARDS,
-    FILL_MODE_BACKWARDS,
-    FILL_MODE_BOTH
-  };
-
-  static scoped_ptr<Animation> Create(scoped_ptr<AnimationCurve> curve,
-                                      int animation_id,
-                                      int group_id,
-                                      TargetProperty target_property);
+  static std::unique_ptr<Animation> Create(
+      std::unique_ptr<AnimationCurve> curve,
+      int animation_id,
+      int group_id,
+      TargetProperty::Type target_property);
 
   virtual ~Animation();
 
   int id() const { return id_; }
   int group() const { return group_; }
-  TargetProperty target_property() const { return target_property_; }
+  TargetProperty::Type target_property() const { return target_property_; }
 
   RunState run_state() const { return run_state_; }
   void SetRunState(RunState run_state, base::TimeTicks monotonic_time);
@@ -149,7 +136,8 @@ class CC_EXPORT Animation {
   base::TimeDelta TrimTimeToCurrentIteration(
       base::TimeTicks monotonic_time) const;
 
-  scoped_ptr<Animation> CloneAndInitialize(RunState initial_run_state) const;
+  std::unique_ptr<Animation> CloneAndInitialize(
+      RunState initial_run_state) const;
 
   void set_is_controlling_instance_for_test(bool is_controlling_instance) {
     is_controlling_instance_ = is_controlling_instance;
@@ -161,25 +149,25 @@ class CC_EXPORT Animation {
   void set_is_impl_only(bool is_impl_only) { is_impl_only_ = is_impl_only; }
   bool is_impl_only() const { return is_impl_only_; }
 
-  void set_affects_active_observers(bool affects_active_observers) {
-    affects_active_observers_ = affects_active_observers;
+  void set_affects_active_elements(bool affects_active_elements) {
+    affects_active_elements_ = affects_active_elements;
   }
-  bool affects_active_observers() const { return affects_active_observers_; }
+  bool affects_active_elements() const { return affects_active_elements_; }
 
-  void set_affects_pending_observers(bool affects_pending_observers) {
-    affects_pending_observers_ = affects_pending_observers;
+  void set_affects_pending_elements(bool affects_pending_elements) {
+    affects_pending_elements_ = affects_pending_elements;
   }
-  bool affects_pending_observers() const { return affects_pending_observers_; }
+  bool affects_pending_elements() const { return affects_pending_elements_; }
 
  private:
-  Animation(scoped_ptr<AnimationCurve> curve,
+  Animation(std::unique_ptr<AnimationCurve> curve,
             int animation_id,
             int group_id,
-            TargetProperty target_property);
+            TargetProperty::Type target_property);
 
   base::TimeDelta ConvertToActiveTime(base::TimeTicks monotonic_time) const;
 
-  scoped_ptr<AnimationCurve> curve_;
+  std::unique_ptr<AnimationCurve> curve_;
 
   // IDs must be unique.
   int id_;
@@ -190,7 +178,7 @@ class CC_EXPORT Animation {
   // all animations in the group have finished animating.
   int group_;
 
-  TargetProperty target_property_;
+  TargetProperty::Type target_property_;
   RunState run_state_;
   double iterations_;
   double iteration_start_;
@@ -232,18 +220,18 @@ class CC_EXPORT Animation {
   bool is_impl_only_;
 
   // When pushed from a main-thread controller to a compositor-thread
-  // controller, an animation will initially only affect pending observers
+  // controller, an animation will initially only affect pending elements
   // (corresponding to layers in the pending tree). Animations that only
-  // affect pending observers are able to reach the STARTING state and tick
-  // pending observers, but cannot proceed any further and do not tick active
-  // observers. After activation, such animations affect both kinds of observers
+  // affect pending elements are able to reach the STARTING state and tick
+  // pending elements, but cannot proceed any further and do not tick active
+  // elements. After activation, such animations affect both kinds of elements
   // and are able to proceed past the STARTING state. When the removal of
   // an animation is pushed from a main-thread controller to a
   // compositor-thread controller, this initially only makes the animation
-  // stop affecting pending observers. After activation, such animations no
-  // longer affect any observers, and are deleted.
-  bool affects_active_observers_;
-  bool affects_pending_observers_;
+  // stop affecting pending elements. After activation, such animations no
+  // longer affect any elements, and are deleted.
+  bool affects_active_elements_;
+  bool affects_pending_elements_;
 
   DISALLOW_COPY_AND_ASSIGN(Animation);
 };

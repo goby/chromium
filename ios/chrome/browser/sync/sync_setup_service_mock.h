@@ -12,8 +12,7 @@
 // Mock for the class that allows configuring sync on iOS.
 class SyncSetupServiceMock : public SyncSetupService {
  public:
-  SyncSetupServiceMock(sync_driver::SyncService* sync_service,
-                       PrefService* prefs);
+  SyncSetupServiceMock(syncer::SyncService* sync_service, PrefService* prefs);
   ~SyncSetupServiceMock();
 
   MOCK_CONST_METHOD0(IsSyncEnabled, bool());
@@ -23,6 +22,14 @@ class SyncSetupServiceMock : public SyncSetupService {
   MOCK_METHOD0(GetSyncServiceState, SyncServiceState());
 
   MOCK_CONST_METHOD1(IsDataTypeEnabled, bool(syncer::ModelType));
+
+  MOCK_METHOD0(HasFinishedInitialSetup, bool());
+
+  MOCK_METHOD0(PrepareForFirstSyncSetup, void());
+
+  // Allow the real SyncSetupService::HasFinishedInitialSetup() to be used when
+  // mocking HasFinishedInitialSetup().
+  bool SyncSetupServiceHasFinishedInitialSetup();
 };
 
 #endif  // IOS_CHROME_BROWSER_SYNC_SYNC_SETUP_SERVICE_MOCK_H_

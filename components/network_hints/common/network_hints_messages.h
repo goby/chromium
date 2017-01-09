@@ -7,9 +7,10 @@
 #include <vector>
 
 #include "components/network_hints/common/network_hints_common.h"
-#include "content/public/common/common_param_traits.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_message_utils.h"
+#include "third_party/WebKit/public/platform/WebNavigationHintType.h"
+#include "url/ipc/url_param_traits.h"
 
 // Singly-included section for custom IPC traits.
 #ifndef COMPONENTS_NETWORK_HINTS_COMMON_NETWORK_HINTS_MESSAGES_H_
@@ -20,8 +21,10 @@ namespace IPC {
 template <>
 struct ParamTraits<network_hints::LookupRequest> {
   typedef network_hints::LookupRequest param_type;
-  static void Write(Message* m, const param_type& p);
-  static bool Read(const Message* m, base::PickleIterator* iter, param_type* r);
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
   static void Log(const param_type& p, std::string* l);
 };
 
@@ -30,6 +33,9 @@ struct ParamTraits<network_hints::LookupRequest> {
 #endif  // COMPONENTS_NETWORK_HINTS_COMMON_NETWORK_HINTS_MESSAGES_H_
 
 #define IPC_MESSAGE_START NetworkHintsMsgStart
+
+IPC_ENUM_TRAITS_MAX_VALUE(blink::WebNavigationHintType,
+                          blink::WebNavigationHintType::Last)
 
 //-----------------------------------------------------------------------------
 // Host messages
@@ -46,3 +52,8 @@ IPC_MESSAGE_CONTROL3(NetworkHintsMsg_Preconnect,
                      GURL /* preconnect target url */,
                      bool /* Does connection have its credentials flag set */,
                      int /* number of connections */)
+
+// Request to trigger possible optimizations for navigation.
+IPC_MESSAGE_CONTROL2(NetworkHintsMsg_NavigationHint,
+                     GURL /* document url */,
+                     blink::WebNavigationHintType /* navigation hint type */)

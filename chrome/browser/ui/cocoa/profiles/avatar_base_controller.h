@@ -7,15 +7,19 @@
 
 #import <AppKit/AppKit.h>
 
+#include <memory>
+
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
+#include "chrome/browser/ui/avatar_button_error_controller.h"
+#include "chrome/browser/ui/avatar_button_error_controller_delegate.h"
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/has_weak_browser_pointer.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 
 @class BaseBubbleController;
 class Browser;
-class ProfileInfoUpdateObserver;
+class ProfileUpdateObserver;
 
 // This view controller manages the button that sits in the top of the
 // window frame when using multi-profiles, and shows information about the
@@ -27,12 +31,13 @@ class ProfileInfoUpdateObserver;
   // The avatar button. Child classes are responsible for implementing it.
   base::scoped_nsobject<NSButton> button_;
 
+  // Observer that listens for updates to the ProfileAttributesStorage as well
+  // as AvatarButtonErrorController.
+  std::unique_ptr<ProfileUpdateObserver> profileObserver_;
+
  @private
   // The menu controller, if the menu is open.
   BaseBubbleController* menuController_;
-
-  // Observer that listens for updates to the ProfileInfoCache.
-  scoped_ptr<ProfileInfoUpdateObserver> profileInfoObserver_;
 }
 
 // The avatar button view.
@@ -44,7 +49,11 @@ class ProfileInfoUpdateObserver;
 // Shows the avatar bubble in the given mode.
 - (void)showAvatarBubbleAnchoredAt:(NSView*)anchor
                           withMode:(BrowserWindow::AvatarBubbleMode)mode
-                   withServiceType:(signin::GAIAServiceType)serviceType;
+                   withServiceType:(signin::GAIAServiceType)serviceType
+                   fromAccessPoint:(signin_metrics::AccessPoint)accessPoint;
+
+// Called when the avatar bubble will close.
+- (void)bubbleWillClose:(NSNotification*)notif;
 
 @end
 
@@ -53,5 +62,34 @@ class ProfileInfoUpdateObserver;
 
 - (BOOL)isCtrlPressed;
 @end
+
+class ProfileUpdateObserver : public ProfileAttributesStorage::Observer,
+                              public AvatarButtonErrorControllerDelegate {
+ public:
+  ProfileUpdateObserver(Profile* profile,
+                        AvatarBaseController* avatarController);
+  ~ProfileUpdateObserver() override;
+
+  // ProfileAttributesStorage::Observer:
+  void OnProfileAdded(const base::FilePath& profile_path) override;
+  void OnProfileWasRemoved(const base::FilePath& profile_path,
+                           const base::string16& profile_name) override;
+  void OnProfileNameChanged(const base::FilePath& profile_path,
+                            const base::string16& old_profile_name) override;
+  void OnProfileSupervisedUserIdChanged(
+      const base::FilePath& profile_path) override;
+
+  // AvatarButtonErrorControllerDelegate:
+  void OnAvatarErrorChanged() override;
+
+  bool HasAvatarError();
+
+ private:
+  AvatarButtonErrorController errorController_;
+  Profile* profile_;
+  AvatarBaseController* avatarController_;  // Weak; owns this.
+
+  DISALLOW_COPY_AND_ASSIGN(ProfileUpdateObserver);
+};
 
 #endif  // CHROME_BROWSER_UI_COCOA_PROFILES_AVATAR_BASE_CONTROLLER_H_

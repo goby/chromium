@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -43,7 +44,7 @@ class DistillerURLFetcher : public net::URLFetcherDelegate {
                         const URLFetcherCallback& callback);
 
  protected:
-  virtual scoped_ptr<net::URLFetcher> CreateURLFetcher(
+  virtual std::unique_ptr<net::URLFetcher> CreateURLFetcher(
       net::URLRequestContextGetter* context_getter,
       const std::string& url);
 
@@ -51,7 +52,7 @@ class DistillerURLFetcher : public net::URLFetcherDelegate {
   // net::URLFetcherDelegate:
   void OnURLFetchComplete(const net::URLFetcher* source) override;
 
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   URLFetcherCallback callback_;
   net::URLRequestContextGetter* context_getter_;
   DISALLOW_COPY_AND_ASSIGN(DistillerURLFetcher);

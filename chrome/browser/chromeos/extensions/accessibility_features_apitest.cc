@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
 #include "base/json/json_writer.h"
-#include "base/prefs/pref_service.h"
-#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "extensions/test/result_catcher.h"
 
 // API tests for chrome.accessibilityFeatures API.
@@ -67,7 +68,7 @@ class AccessibilityFeaturesApiTest : public ExtensionApiTest,
   bool ShouldModifyingFeatureSucceed() const { return GetParam(); }
 
   // Returns preference path for accessibility features as defined by the API.
-  const char* const GetPrefForFeature(const std::string& feature) {
+  const char* GetPrefForFeature(const std::string& feature) {
     if (feature == "spokenFeedback")
       return prefs::kAccessibilitySpokenFeedbackEnabled;
     if (feature == "largeCursor")
@@ -148,12 +149,12 @@ class AccessibilityFeaturesApiTest : public ExtensionApiTest,
     base::DictionaryValue test_arg;
     test_arg.SetString(kTestNameKey, test_name);
 
-    scoped_ptr<base::ListValue> enabled_list(new base::ListValue);
+    std::unique_ptr<base::ListValue> enabled_list(new base::ListValue);
     for (size_t i = 0; i < enabled_features.size(); ++i)
       enabled_list->AppendString(enabled_features[i]);
     test_arg.Set(kEnabledFeaturesKey, enabled_list.release());
 
-    scoped_ptr<base::ListValue> disabled_list(new base::ListValue);
+    std::unique_ptr<base::ListValue> disabled_list(new base::ListValue);
     for (size_t i = 0; i < disabled_features.size(); ++i)
       disabled_list->AppendString(disabled_features[i]);
     test_arg.Set(kDisabledFeaturesKey, disabled_list.release());

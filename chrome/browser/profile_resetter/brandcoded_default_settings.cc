@@ -18,12 +18,12 @@ BrandcodedDefaultSettings::BrandcodedDefaultSettings(const std::string& prefs) {
   if (!prefs.empty()) {
     JSONStringValueDeserializer json(prefs);
     std::string error;
-    scoped_ptr<base::Value> root(json.Deserialize(NULL, &error));
+    std::unique_ptr<base::Value> root(json.Deserialize(NULL, &error));
     if (!root.get()) {
       VLOG(1) << "Failed to parse brandcode prefs file: " << error;
       return;
     }
-    if (!root->IsType(base::Value::TYPE_DICTIONARY)) {
+    if (!root->IsType(base::Value::Type::DICTIONARY)) {
       VLOG(1) << "Failed to parse brandcode prefs file: "
               << "Root item must be a dictionary.";
       return;
@@ -36,7 +36,7 @@ BrandcodedDefaultSettings::BrandcodedDefaultSettings(const std::string& prefs) {
 BrandcodedDefaultSettings::~BrandcodedDefaultSettings() {
 }
 
-scoped_ptr<base::ListValue>
+std::unique_ptr<base::ListValue>
 BrandcodedDefaultSettings::GetSearchProviderOverrides() const {
   return ExtractList(prefs::kSearchProviderOverrides);
 }
@@ -86,18 +86,18 @@ bool BrandcodedDefaultSettings::GetRestoreOnStartup(
                                         restore_on_startup);
 }
 
-scoped_ptr<base::ListValue>
+std::unique_ptr<base::ListValue>
 BrandcodedDefaultSettings::GetUrlsToRestoreOnStartup() const {
   return ExtractList(prefs::kURLsToRestoreOnStartup);
 }
 
-scoped_ptr<base::ListValue> BrandcodedDefaultSettings::ExtractList(
+std::unique_ptr<base::ListValue> BrandcodedDefaultSettings::ExtractList(
     const char* pref_name) const {
   const base::ListValue* value = NULL;
   if (master_dictionary_ &&
       master_dictionary_->GetList(pref_name, &value) &&
       !value->empty()) {
-    return scoped_ptr<base::ListValue>(value->DeepCopy());
+    return std::unique_ptr<base::ListValue>(value->DeepCopy());
   }
-  return scoped_ptr<base::ListValue>();
+  return std::unique_ptr<base::ListValue>();
 }

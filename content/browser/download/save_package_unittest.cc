@@ -2,13 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
+#include "content/browser/download/save_file_manager.h"
 #include "content/browser/download/save_package.h"
+#include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/public/common/url_constants.h"
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
@@ -30,19 +38,12 @@ namespace {
 
 // This constant copied from save_package.cc.
 #if defined(OS_WIN)
-const uint32 kMaxFilePathLength = MAX_PATH - 1;
-const uint32 kMaxFileNameLength = MAX_PATH - 1;
+const uint32_t kMaxFilePathLength = MAX_PATH - 1;
+const uint32_t kMaxFileNameLength = MAX_PATH - 1;
 #elif defined(OS_POSIX)
-const uint32 kMaxFilePathLength = PATH_MAX - 1;
-const uint32 kMaxFileNameLength = NAME_MAX;
+const uint32_t kMaxFilePathLength = PATH_MAX - 1;
+const uint32_t kMaxFileNameLength = NAME_MAX;
 #endif
-
-// Used to make long filenames.
-std::string long_file_name(
-    "EFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz01234567"
-    "89ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz012345"
-    "6789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz0123"
-    "456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789a");
 
 bool HasOrdinalNumber(const base::FilePath::StringType& filename) {
   base::FilePath::StringType::size_type r_paren_index =
@@ -89,7 +90,7 @@ class SavePackageTest : public RenderViewHostImplTestHarness {
   }
 
   GURL GetUrlToBeSaved() {
-    return save_package_success_->GetUrlToBeSaved();
+    return SavePackage::GetUrlToBeSaved(save_package_success_->web_contents());
   }
 
  protected:
@@ -100,20 +101,45 @@ class SavePackageTest : public RenderViewHostImplTestHarness {
     // RenderViewHostImplTestHarness::SetUp.
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
-    save_package_success_ = new SavePackage(contents(),
-        temp_dir_.path().AppendASCII("testfile" HTML_EXTENSION),
-        temp_dir_.path().AppendASCII("testfile_files"));
+    save_package_success_ = new SavePackage(
+        contents(), SAVE_PAGE_TYPE_AS_COMPLETE_HTML,
+        temp_dir_.GetPath().AppendASCII("testfile" HTML_EXTENSION),
+        temp_dir_.GetPath().AppendASCII("testfile_files"));
 
-    // We need to construct a path that is *almost* kMaxFilePathLength long
-    long_file_name.reserve(kMaxFilePathLength + long_file_name.length());
-    while (long_file_name.length() < kMaxFilePathLength)
-      long_file_name += long_file_name;
-    long_file_name.resize(
-        kMaxFilePathLength - 9 - temp_dir_.path().value().length());
+    base::FilePath::StringType long_file_name = GetLongFileName();
+    save_package_fail_ = new SavePackage(
+        contents(), SAVE_PAGE_TYPE_AS_COMPLETE_HTML,
+        temp_dir_.GetPath().Append(long_file_name + FPL_HTML_EXTENSION),
+        temp_dir_.GetPath().Append(long_file_name + FPL("_files")));
+  }
 
-    save_package_fail_ = new SavePackage(contents(),
-        temp_dir_.path().AppendASCII(long_file_name + HTML_EXTENSION),
-        temp_dir_.path().AppendASCII(long_file_name + "_files"));
+  BrowserContext* CreateBrowserContext() override {
+    // This method is invoked after the browser threads have been created and
+    // obviously before the BrowserContext is created. This is the correct time
+    // to create a ResourceDispatcherHostImpl so that our SavePackage objects
+    // can initialize correctly.
+    rdh_.reset(new ResourceDispatcherHostImpl);
+    // Initialize the SaveFileManager instance which we will use for the tests.
+    save_file_manager_ = new SaveFileManager();
+    return RenderViewHostImplTestHarness::CreateBrowserContext();
+  }
+
+  void TearDown() override {
+    DeleteContents();
+    base::RunLoop().RunUntilIdle();
+
+    save_package_success_ = nullptr;
+    save_package_fail_ = nullptr;
+    rdh_.reset();
+
+    RenderViewHostImplTestHarness::TearDown();
+  }
+
+  // Returns a path that is *almost* kMaxFilePathLength long
+  base::FilePath::StringType GetLongFileName() const {
+    size_t target_length =
+        kMaxFilePathLength - 9 - temp_dir_.GetPath().value().length();
+    return base::FilePath::StringType(target_length, FPL('a'));
   }
 
  private:
@@ -123,6 +149,9 @@ class SavePackageTest : public RenderViewHostImplTestHarness {
   scoped_refptr<SavePackage> save_package_fail_;
 
   base::ScopedTempDir temp_dir_;
+
+  std::unique_ptr<ResourceDispatcherHostImpl> rdh_;
+  scoped_refptr<SaveFileManager> save_file_manager_;
 };
 
 static const struct {
@@ -206,19 +235,21 @@ TEST_F(SavePackageTest, TestUnSuccessfullyGenerateSavePackageFilename) {
 #endif
 TEST_F(SavePackageTest, MAYBE_TestLongSavePackageFilename) {
   const std::string base_url("http://www.google.com/");
-  const std::string long_file = long_file_name + ".css";
-  const std::string url = base_url + long_file;
+  const base::FilePath::StringType long_file_name =
+      GetLongFileName() + FPL(".css");
+  const std::string url =
+      base_url + base::FilePath(long_file_name).AsUTF8Unsafe();
 
   base::FilePath::StringType filename;
   // Test that the filename is successfully shortened to fit.
   ASSERT_TRUE(GetGeneratedFilename(true, std::string(), url, false, &filename));
-  EXPECT_TRUE(filename.length() < long_file.length());
+  EXPECT_TRUE(filename.length() < long_file_name.length());
   EXPECT_FALSE(HasOrdinalNumber(filename));
 
   // Test that the filename is successfully shortened to fit, and gets an
   // an ordinal appended.
   ASSERT_TRUE(GetGeneratedFilename(true, std::string(), url, false, &filename));
-  EXPECT_TRUE(filename.length() < long_file.length());
+  EXPECT_TRUE(filename.length() < long_file_name.length());
   EXPECT_TRUE(HasOrdinalNumber(filename));
 
   // Test that the filename is successfully shortened to fit, and gets a
@@ -226,7 +257,7 @@ TEST_F(SavePackageTest, MAYBE_TestLongSavePackageFilename) {
   base::FilePath::StringType filename2;
   ASSERT_TRUE(
       GetGeneratedFilename(true, std::string(), url, false, &filename2));
-  EXPECT_TRUE(filename2.length() < long_file.length());
+  EXPECT_TRUE(filename2.length() < long_file_name.length());
   EXPECT_TRUE(HasOrdinalNumber(filename2));
   EXPECT_NE(filename, filename2);
 }
@@ -240,17 +271,12 @@ TEST_F(SavePackageTest, MAYBE_TestLongSavePackageFilename) {
 TEST_F(SavePackageTest, MAYBE_TestLongSafePureFilename) {
   const base::FilePath save_dir(FPL("test_dir"));
   const base::FilePath::StringType ext(FPL_HTML_EXTENSION);
-  base::FilePath::StringType filename =
-#if defined(OS_WIN)
-      base::ASCIIToUTF16(long_file_name);
-#else
-      long_file_name;
-#endif
+  base::FilePath::StringType filename = GetLongFileName();
 
   // Test that the filename + extension doesn't exceed kMaxFileNameLength
-  uint32 max_path = SavePackage::GetMaxPathLengthForDirectory(save_dir);
-  ASSERT_TRUE(SavePackage::GetSafePureFileName(save_dir, ext, max_path,
-                                               &filename));
+  uint32_t max_path = SavePackage::GetMaxPathLengthForDirectory(save_dir);
+  ASSERT_TRUE(SavePackage::TruncateBaseNameToFitPathConstraints(
+      save_dir, ext, max_path, &filename));
   EXPECT_TRUE(filename.length() <= kMaxFileNameLength-ext.length());
 }
 
@@ -325,7 +351,7 @@ TEST_F(SavePackageTest, MAYBE_TestEnsureMimeExtension) {
     { FPL("filename.abc"), FPL("filename.abc"), "unknown/unknown" },
     { FPL("filename"), FPL("filename"), "unknown/unknown" },
   };
-  for (uint32 i = 0; i < arraysize(kExtensionTests); ++i) {
+  for (uint32_t i = 0; i < arraysize(kExtensionTests); ++i) {
     base::FilePath original = base::FilePath(kExtensionTests[i].page_title);
     base::FilePath expected = base::FilePath(kExtensionTests[i].expected_name);
     std::string mime_type(kExtensionTests[i].contents_mime_type);
@@ -394,15 +420,13 @@ static const struct SuggestedSaveNameTestCase {
 #define MAYBE_TestSuggestedSaveNames TestSuggestedSaveNames
 #endif
 TEST_F(SavePackageTest, MAYBE_TestSuggestedSaveNames) {
+  GURL url = net::URLRequestMockHTTPJob::GetMockUrl("save_page/a.htm");
+  NavigateAndCommit(url);
   for (size_t i = 0; i < arraysize(kSuggestedSaveNames); ++i) {
-    scoped_refptr<SavePackage> save_package(
-        new SavePackage(contents(), base::FilePath(), base::FilePath()));
-    save_package->page_url_ = GURL(kSuggestedSaveNames[i].page_url);
-    save_package->title_ = kSuggestedSaveNames[i].page_title;
-
-    base::FilePath save_name = save_package->GetSuggestedNameForSaveAs(
-        kSuggestedSaveNames[i].ensure_html_extension,
-        std::string(), std::string());
+    base::FilePath save_name = SavePackage::GetSuggestedNameForSaveAs(
+        kSuggestedSaveNames[i].page_title,
+        GURL(kSuggestedSaveNames[i].page_url),
+        kSuggestedSaveNames[i].ensure_html_extension, std::string());
     EXPECT_EQ(kSuggestedSaveNames[i].expected_name, save_name.value()) <<
         "Test case " << i;
   }

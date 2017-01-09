@@ -4,6 +4,8 @@
 
 #include "ppapi/proxy/media_stream_track_resource_base.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "ppapi/proxy/ppapi_messages.h"
 
@@ -71,9 +73,9 @@ void MediaStreamTrackResourceBase::OnPluginMsgInitBuffers(
   base::SharedMemoryHandle shm_handle = base::SharedMemory::NULLHandle();
   params.TakeSharedMemoryHandleAtIndex(0, &shm_handle);
   buffer_manager_.SetBuffers(number_of_buffers, buffer_size,
-      scoped_ptr<base::SharedMemory>(new base::SharedMemory(shm_handle,
-                                                            readonly)),
-      false);
+                             std::unique_ptr<base::SharedMemory>(
+                                 new base::SharedMemory(shm_handle, readonly)),
+                             false);
 }
 
 void MediaStreamTrackResourceBase::OnPluginMsgEnqueueBuffer(

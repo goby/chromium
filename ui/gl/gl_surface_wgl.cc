@@ -4,14 +4,15 @@
 
 #include "ui/gl/gl_surface_wgl.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_wgl_api_implementation.h"
 
-namespace gfx {
+namespace gl {
 
 namespace {
 const PIXELFORMATDESCRIPTOR kPixelFormatDescriptor = {
@@ -163,7 +164,7 @@ bool GLSurfaceWGL::InitializeOneOff() {
     return true;
 
   DCHECK(g_display == NULL);
-  scoped_ptr<DisplayWGL> wgl_display(new DisplayWGL);
+  std::unique_ptr<DisplayWGL> wgl_display(new DisplayWGL);
   if (!wgl_display->Init())
     return false;
 
@@ -191,7 +192,7 @@ NativeViewGLSurfaceWGL::~NativeViewGLSurfaceWGL() {
   Destroy();
 }
 
-bool NativeViewGLSurfaceWGL::Initialize() {
+bool NativeViewGLSurfaceWGL::Initialize(GLSurface::Format format) {
   DCHECK(!device_context_);
 
   RECT rect;
@@ -238,6 +239,8 @@ bool NativeViewGLSurfaceWGL::Initialize() {
     return false;
   }
 
+  format_ = format;
+
   return true;
 }
 
@@ -250,6 +253,32 @@ void NativeViewGLSurfaceWGL::Destroy() {
 
   child_window_ = NULL;
   device_context_ = NULL;
+}
+
+bool NativeViewGLSurfaceWGL::Resize(const gfx::Size& size,
+                                    float scale_factor,
+                                    bool has_alpha) {
+  RECT rect;
+  if (!GetClientRect(window_, &rect)) {
+    LOG(ERROR) << "Failed to get parent window size.";
+    return false;
+  }
+  DCHECK(size.width() == (rect.right - rect.left) &&
+         size.height() == (rect.bottom - rect.top));
+  if (!MoveWindow(child_window_, 0, 0, size.width(), size.height(), FALSE)) {
+    LOG(ERROR) << "Failed to resize child window.";
+    return false;
+  }
+  return true;
+}
+
+bool NativeViewGLSurfaceWGL::Recreate() {
+  Destroy();
+  if (!Initialize(format_)) {
+    LOG(ERROR) << "Failed to create surface.";
+    return false;
+  }
+  return true;
 }
 
 bool NativeViewGLSurfaceWGL::IsOffscreen() {
@@ -305,10 +334,10 @@ PbufferGLSurfaceWGL::~PbufferGLSurfaceWGL() {
   Destroy();
 }
 
-bool PbufferGLSurfaceWGL::Initialize() {
+bool PbufferGLSurfaceWGL::Initialize(GLSurface::Format format) {
   DCHECK(!device_context_);
 
-  if (!gfx::g_driver_wgl.fn.wglCreatePbufferARBFn) {
+  if (!g_driver_wgl.fn.wglCreatePbufferARBFn) {
     LOG(ERROR) << "wglCreatePbufferARB not available.";
     Destroy();
     return false;
@@ -365,4 +394,4 @@ void* PbufferGLSurfaceWGL::GetHandle() {
   return device_context_;
 }
 
-}  // namespace gfx
+}  // namespace gl

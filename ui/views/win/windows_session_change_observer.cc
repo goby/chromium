@@ -5,14 +5,15 @@
 #include "ui/views/win/windows_session_change_observer.h"
 
 #include <wtsapi32.h>
-#pragma comment(lib, "wtsapi32.lib")
+
+#include <memory>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
 #include "base/task_runner.h"
@@ -52,9 +53,8 @@ class WindowsSessionChangeObserver::WtsRegistrationNotificationManager {
   void OnWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
       case WM_WTSSESSION_CHANGE:
-        FOR_EACH_OBSERVER(WindowsSessionChangeObserver,
-                          observer_list_,
-                          OnSessionChange(wparam));
+        for (WindowsSessionChangeObserver& observer : observer_list_)
+          observer.OnSessionChange(wparam);
         break;
       case WM_DESTROY:
         RemoveSingletonHwndObserver();
@@ -95,13 +95,12 @@ class WindowsSessionChangeObserver::WtsRegistrationNotificationManager {
     // Under both cases we are in shutdown, which means no other worker threads
     // can be running.
     WTSUnRegisterSessionNotification(gfx::SingletonHwnd::GetInstance()->hwnd());
-    FOR_EACH_OBSERVER(WindowsSessionChangeObserver,
-                      observer_list_,
-                      ClearCallback());
+    for (WindowsSessionChangeObserver& observer : observer_list_)
+      observer.ClearCallback();
   }
 
   base::ObserverList<WindowsSessionChangeObserver, true> observer_list_;
-  scoped_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
+  std::unique_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(WtsRegistrationNotificationManager);
 };

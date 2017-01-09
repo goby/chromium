@@ -5,14 +5,19 @@
 #include "storage/browser/fileapi/sandbox_directory_database.h"
 
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <stack>
 
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/pickle.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -51,7 +56,7 @@ bool FileInfoFromPickle(const base::Pickle& pickle,
   base::PickleIterator iter(pickle);
   std::string data_path;
   std::string name;
-  int64 internal_time;
+  int64_t internal_time;
 
   if (iter.ReadInt64(&info->parent_id) &&
       iter.ReadString(&data_path) &&
@@ -72,7 +77,7 @@ const char kChildLookupPrefix[] = "CHILD_OF:";
 const char kChildLookupSeparator[] = ":";
 const char kLastFileIdKey[] = "LAST_FILE_ID";
 const char kLastIntegerKey[] = "LAST_INTEGER";
-const int64 kMinimumReportIntervalHours = 1;
+const int64_t kMinimumReportIntervalHours = 1;
 const char kInitStatusHistogramLabel[] = "FileSystem.DirectoryDatabaseInit";
 const char kDatabaseRepairHistogramLabel[] =
     "FileSystem.DirectoryDatabaseRepair";
@@ -190,7 +195,8 @@ DatabaseCheckHelper::DatabaseCheckHelper(
 }
 
 bool DatabaseCheckHelper::IsDatabaseEmpty() {
-  scoped_ptr<leveldb::Iterator> itr(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> itr(
+      db_->NewIterator(leveldb::ReadOptions()));
   itr->SeekToFirst();
   return !itr->Valid();
 }
@@ -198,10 +204,11 @@ bool DatabaseCheckHelper::IsDatabaseEmpty() {
 bool DatabaseCheckHelper::ScanDatabase() {
   // Scans all database entries sequentially to verify each of them has unique
   // backing file.
-  int64 max_file_id = -1;
+  int64_t max_file_id = -1;
   std::set<FileId> file_ids;
 
-  scoped_ptr<leveldb::Iterator> itr(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> itr(
+      db_->NewIterator(leveldb::ReadOptions()));
   for (itr->SeekToFirst(); itr->Valid(); itr->Next()) {
     std::string key = itr->key().ToString();
     if (base::StartsWith(key, kChildLookupPrefix,
@@ -477,7 +484,8 @@ bool SandboxDirectoryDatabase::ListChildren(
   DCHECK(children);
   std::string child_key_prefix = GetChildListingKeyPrefix(parent_id);
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> iter(
+      db_->NewIterator(leveldb::ReadOptions()));
   iter->Seek(child_key_prefix);
   children->clear();
   while (iter->Valid() && base::StartsWith(iter->key().ToString(),
@@ -675,7 +683,7 @@ bool SandboxDirectoryDatabase::OverwritingMoveFile(
   return true;
 }
 
-bool SandboxDirectoryDatabase::GetNextInteger(int64* next) {
+bool SandboxDirectoryDatabase::GetNextInteger(int64_t* next) {
   if (!Init(REPAIR_ON_CORRUPTION))
     return false;
   DCHECK(next);
@@ -683,7 +691,7 @@ bool SandboxDirectoryDatabase::GetNextInteger(int64* next) {
   leveldb::Status status =
       db_->Get(leveldb::ReadOptions(), LastIntegerKey(), &int_string);
   if (status.ok()) {
-    int64 temp;
+    int64_t temp;
     if (!base::StringToInt64(int_string, &temp)) {
       LOG(ERROR) << "Hit database corruption!";
       return false;
@@ -841,11 +849,15 @@ void SandboxDirectoryDatabase::ReportInitStatus(
 
 bool SandboxDirectoryDatabase::StoreDefaultValues() {
   // Verify that this is a totally new database, and initialize it.
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(leveldb::ReadOptions()));
-  iter->SeekToFirst();
-  if (iter->Valid()) {  // DB was not empty--we shouldn't have been called.
-    LOG(ERROR) << "File system origin database is corrupt!";
-    return false;
+  {
+    // Scope the iterator to ensure deleted before database is closed.
+    std::unique_ptr<leveldb::Iterator> iter(
+        db_->NewIterator(leveldb::ReadOptions()));
+    iter->SeekToFirst();
+    if (iter->Valid()) {  // DB was not empty--we shouldn't have been called.
+      LOG(ERROR) << "File system origin database is corrupt!";
+      return false;
+    }
   }
   // This is always the first write into the database.  If we ever add a
   // version number, it should go in this transaction too.

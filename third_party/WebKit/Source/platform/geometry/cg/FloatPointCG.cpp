@@ -24,20 +24,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/geometry/FloatPoint.h"
 
 #include <ApplicationServices/ApplicationServices.h>
 
 namespace blink {
 
-FloatPoint::FloatPoint(const CGPoint& p) : m_x(p.x), m_y(p.y)
-{
+FloatPoint::FloatPoint(const CGPoint& p) : m_x(p.x), m_y(p.y) {}
+
+FloatPoint::operator CGPoint() const {
+  return CGPointMake(m_x, m_y);
 }
 
-FloatPoint::operator CGPoint() const
-{
-    return CGPointMake(m_x, m_y);
-}
-
-}
+}  // namespace blink

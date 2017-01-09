@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/stl_util.h"
-
-#include "media/base/decrypt_config.h"
 #include "media/filters/h264_parser.h"
+
+#include <limits>
+#include <memory>
+
+#include "base/logging.h"
+#include "base/macros.h"
+#include "base/numerics/safe_math.h"
+#include "media/base/decrypt_config.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace media {
 
@@ -37,6 +42,101 @@ H264NALU::H264NALU() {
 
 H264SPS::H264SPS() {
   memset(this, 0, sizeof(*this));
+}
+
+// Based on T-REC-H.264 7.4.2.1.1, "Sequence parameter set data semantics",
+// available from http://www.itu.int/rec/T-REC-H.264.
+base::Optional<gfx::Size> H264SPS::GetCodedSize() const {
+  // Interlaced frames are twice the height of each field.
+  const int mb_unit = 16;
+  int map_unit = frame_mbs_only_flag ? 16 : 32;
+
+  // Verify that the values are not too large before multiplying them.
+  // TODO(sandersd): These limits could be much smaller. The currently-largest
+  // specified limit (excluding SVC, multiview, etc., which I didn't bother to
+  // read) is 543 macroblocks (section A.3.1).
+  int max_mb_minus1 = std::numeric_limits<int>::max() / mb_unit - 1;
+  int max_map_units_minus1 = std::numeric_limits<int>::max() / map_unit - 1;
+  if (pic_width_in_mbs_minus1 > max_mb_minus1 ||
+      pic_height_in_map_units_minus1 > max_map_units_minus1) {
+    DVLOG(1) << "Coded size is too large.";
+    return base::nullopt;
+  }
+
+  return gfx::Size(mb_unit * (pic_width_in_mbs_minus1 + 1),
+                   map_unit * (pic_height_in_map_units_minus1 + 1));
+}
+
+// Also based on section 7.4.2.1.1.
+base::Optional<gfx::Rect> H264SPS::GetVisibleRect() const {
+  base::Optional<gfx::Size> coded_size = GetCodedSize();
+  if (!coded_size)
+    return base::nullopt;
+
+  if (!frame_cropping_flag)
+    return gfx::Rect(coded_size.value());
+
+  int crop_unit_x;
+  int crop_unit_y;
+  if (chroma_array_type == 0) {
+    crop_unit_x = 1;
+    crop_unit_y = frame_mbs_only_flag ? 1 : 2;
+  } else {
+    // Section 6.2.
+    // |chroma_format_idc| may be:
+    //   1 => 4:2:0
+    //   2 => 4:2:2
+    //   3 => 4:4:4
+    // Everything else has |chroma_array_type| == 0.
+    int sub_width_c = chroma_format_idc > 2 ? 1 : 2;
+    int sub_height_c = chroma_format_idc > 1 ? 1 : 2;
+    crop_unit_x = sub_width_c;
+    crop_unit_y = sub_height_c * (frame_mbs_only_flag ? 1 : 2);
+  }
+
+  // Verify that the values are not too large before multiplying.
+  if (coded_size->width() / crop_unit_x < frame_crop_left_offset ||
+      coded_size->width() / crop_unit_x < frame_crop_right_offset ||
+      coded_size->height() / crop_unit_y < frame_crop_top_offset ||
+      coded_size->height() / crop_unit_y < frame_crop_bottom_offset) {
+    DVLOG(1) << "Frame cropping exceeds coded size.";
+    return base::nullopt;
+  }
+  int crop_left = crop_unit_x * frame_crop_left_offset;
+  int crop_right = crop_unit_x * frame_crop_right_offset;
+  int crop_top = crop_unit_y * frame_crop_top_offset;
+  int crop_bottom = crop_unit_y * frame_crop_bottom_offset;
+
+  // Verify that the values are sane. Note that some decoders also require that
+  // crops are smaller than a macroblock and/or that crops must be adjacent to
+  // at least one corner of the coded frame.
+  if (coded_size->width() - crop_left <= crop_right ||
+      coded_size->height() - crop_top <= crop_bottom) {
+    DVLOG(1) << "Frame cropping excludes entire frame.";
+    return base::nullopt;
+  }
+
+  return gfx::Rect(crop_left, crop_top,
+                   coded_size->width() - crop_left - crop_right,
+                   coded_size->height() - crop_top - crop_bottom);
+}
+
+// Based on T-REC-H.264 E.2.1, "VUI parameters semantics",
+// available from http://www.itu.int/rec/T-REC-H.264.
+gfx::ColorSpace H264SPS::GetColorSpace() const {
+  if (colour_description_present_flag) {
+    return gfx::ColorSpace(
+        colour_primaries, transfer_characteristics, matrix_coefficients,
+        video_full_range_flag ? gfx::ColorSpace::RangeID::FULL
+                              : gfx::ColorSpace::RangeID::LIMITED);
+  } else {
+    return gfx::ColorSpace(gfx::ColorSpace::PrimaryID::UNSPECIFIED,
+                           gfx::ColorSpace::TransferID::UNSPECIFIED,
+                           gfx::ColorSpace::MatrixID::UNSPECIFIED,
+                           video_full_range_flag
+                               ? gfx::ColorSpace::RangeID::FULL
+                               : gfx::ColorSpace::RangeID::LIMITED);
+  }
 }
 
 H264PPS::H264PPS() {
@@ -123,8 +223,6 @@ H264Parser::H264Parser() {
 }
 
 H264Parser::~H264Parser() {
-  STLDeleteValues(&active_SPSes_);
-  STLDeleteValues(&active_PPSes_);
 }
 
 void H264Parser::Reset() {
@@ -133,13 +231,14 @@ void H264Parser::Reset() {
   encrypted_ranges_.clear();
 }
 
-void H264Parser::SetStream(const uint8* stream, off_t stream_size) {
+void H264Parser::SetStream(const uint8_t* stream, off_t stream_size) {
   std::vector<SubsampleEntry> subsamples;
   SetEncryptedStream(stream, stream_size, subsamples);
 }
 
 void H264Parser::SetEncryptedStream(
-    const uint8* stream, off_t stream_size,
+    const uint8_t* stream,
+    off_t stream_size,
     const std::vector<SubsampleEntry>& subsamples) {
   DCHECK(stream);
   DCHECK_GT(stream_size, 0);
@@ -148,12 +247,13 @@ void H264Parser::SetEncryptedStream(
   bytes_left_ = stream_size;
 
   encrypted_ranges_.clear();
-  const uint8* start = stream;
-  const uint8* stream_end = stream_ + bytes_left_;
+  const uint8_t* start = stream;
+  const uint8_t* stream_end = stream_ + bytes_left_;
   for (size_t i = 0; i < subsamples.size() && start < stream_end; ++i) {
     start += subsamples[i].clear_bytes;
 
-    const uint8* end = std::min(start + subsamples[i].cypher_bytes, stream_end);
+    const uint8_t* end =
+        std::min(start + subsamples[i].cypher_bytes, stream_end);
     encrypted_ranges_.Add(start, end);
     start = end;
   }
@@ -166,7 +266,7 @@ const H264PPS* H264Parser::GetPPS(int pps_id) const {
     return nullptr;
   }
 
-  return it->second;
+  return it->second.get();
 }
 
 const H264SPS* H264Parser::GetSPS(int sps_id) const {
@@ -176,16 +276,18 @@ const H264SPS* H264Parser::GetSPS(int sps_id) const {
     return nullptr;
   }
 
-  return it->second;
+  return it->second.get();
 }
 
-static inline bool IsStartCode(const uint8* data) {
+static inline bool IsStartCode(const uint8_t* data) {
   return data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01;
 }
 
 // static
-bool H264Parser::FindStartCode(const uint8* data, off_t data_size,
-                               off_t* offset, off_t* start_code_size) {
+bool H264Parser::FindStartCode(const uint8_t* data,
+                               off_t data_size,
+                               off_t* offset,
+                               off_t* start_code_size) {
   DCHECK_GE(data_size, 0);
   off_t bytes_left = data_size;
 
@@ -235,7 +337,7 @@ bool H264Parser::LocateNALU(off_t* nalu_size, off_t* start_code_size) {
   stream_ += nalu_start_off;
   bytes_left_ -= nalu_start_off;
 
-  const uint8* nalu_data = stream_ + annexb_start_code_size;
+  const uint8_t* nalu_data = stream_ + annexb_start_code_size;
   off_t max_nalu_data_size = bytes_left_ - annexb_start_code_size;
   if (max_nalu_data_size <= 0) {
     DVLOG(3) << "End of stream";
@@ -262,16 +364,16 @@ bool H264Parser::LocateNALU(off_t* nalu_size, off_t* start_code_size) {
 }
 
 bool H264Parser::FindStartCodeInClearRanges(
-    const uint8* data,
+    const uint8_t* data,
     off_t data_size,
-    const Ranges<const uint8*>& encrypted_ranges,
+    const Ranges<const uint8_t*>& encrypted_ranges,
     off_t* offset,
     off_t* start_code_size) {
   if (encrypted_ranges.size() == 0)
     return FindStartCode(data, data_size, offset, start_code_size);
 
   DCHECK_GE(data_size, 0);
-  const uint8* start = data;
+  const uint8_t* start = data;
   do {
     off_t bytes_left = data_size - (start - data);
 
@@ -280,9 +382,9 @@ bool H264Parser::FindStartCodeInClearRanges(
 
     // Construct a Ranges object that represents the region occupied
     // by the start code and the 1 byte needed to read the NAL unit type.
-    const uint8* start_code = start + *offset;
-    const uint8* start_code_end = start_code + *start_code_size;
-    Ranges<const uint8*> start_code_range;
+    const uint8_t* start_code = start + *offset;
+    const uint8_t* start_code_end = start_code + *start_code_size;
+    Ranges<const uint8_t*> start_code_range;
     start_code_range.Add(start_code, start_code_end + 1);
 
     if (encrypted_ranges.IntersectionWith(start_code_range).size() > 0) {
@@ -296,6 +398,33 @@ bool H264Parser::FindStartCodeInClearRanges(
   // Update |*offset| to include the data we skipped over.
   *offset += start - data;
   return true;
+}
+
+VideoCodecProfile H264Parser::ProfileIDCToVideoCodecProfile(int profile_idc) {
+  switch (profile_idc) {
+    case H264SPS::kProfileIDCBaseline:
+      return H264PROFILE_BASELINE;
+    case H264SPS::kProfileIDCMain:
+      return H264PROFILE_MAIN;
+    case H264SPS::kProfileIDCHigh:
+      return H264PROFILE_HIGH;
+    case H264SPS::kProfileIDHigh10:
+      return H264PROFILE_HIGH10PROFILE;
+    case H264SPS::kProfileIDHigh422:
+      return H264PROFILE_HIGH422PROFILE;
+    case H264SPS::kProfileIDHigh444Predictive:
+      return H264PROFILE_HIGH444PREDICTIVEPROFILE;
+    case H264SPS::kProfileIDScalableBaseline:
+      return H264PROFILE_SCALABLEBASELINE;
+    case H264SPS::kProfileIDScalableHigh:
+      return H264PROFILE_SCALABLEHIGH;
+    case H264SPS::kProfileIDStereoHigh:
+      return H264PROFILE_STEREOHIGH;
+    case H264SPS::kProfileIDSMultiviewHigh:
+      return H264PROFILE_MULTIVIEWHIGH;
+  }
+  NOTREACHED() << "unknown video profile: " << profile_idc;
+  return VIDEO_CODEC_PROFILE_UNKNOWN;
 }
 
 H264Parser::Result H264Parser::ReadUE(int* val) {
@@ -313,7 +442,15 @@ H264Parser::Result H264Parser::ReadUE(int* val) {
     return kInvalidStream;
 
   // Calculate exp-Golomb code value of size num_bits.
-  *val = (1 << num_bits) - 1;
+  // Special case for |num_bits| == 31 to avoid integer overflow. The only
+  // valid representation as an int is 2^31 - 1, so the remaining bits must
+  // be 0 or else the number is too large.
+  *val = (1u << num_bits) - 1u;
+
+  if (num_bits == 31) {
+    READ_BITS_OR_RETURN(num_bits, &rest);
+    return (rest == 0) ? kOk : kInvalidStream;
+  }
 
   if (num_bits > 0) {
     READ_BITS_OR_RETURN(num_bits, &rest);
@@ -694,13 +831,17 @@ H264Parser::Result H264Parser::ParseVUIParameters(H264SPS* sps) {
   if (data)
     READ_BOOL_OR_RETURN(&data);  // overscan_appropriate_flag
 
-  READ_BOOL_OR_RETURN(&data);  // video_signal_type_present_flag
-  if (data) {
-    READ_BITS_OR_RETURN(3, &data);  // video_format
-    READ_BOOL_OR_RETURN(&data);  // video_full_range_flag
-    READ_BOOL_OR_RETURN(&data);  // colour_description_present_flag
-    if (data)
-      READ_BITS_OR_RETURN(24, &data);  // color description syntax elements
+  READ_BOOL_OR_RETURN(&sps->video_signal_type_present_flag);
+  if (sps->video_signal_type_present_flag) {
+    READ_BITS_OR_RETURN(3, &sps->video_format);
+    READ_BOOL_OR_RETURN(&sps->video_full_range_flag);
+    READ_BOOL_OR_RETURN(&sps->colour_description_present_flag);
+    if (sps->colour_description_present_flag) {
+      // color description syntax elements
+      READ_BITS_OR_RETURN(8, &sps->colour_primaries);
+      READ_BITS_OR_RETURN(8, &sps->transfer_characteristics);
+      READ_BITS_OR_RETURN(8, &sps->matrix_coefficients);
+    }
   }
 
   READ_BOOL_OR_RETURN(&data);  // chroma_loc_info_present_flag
@@ -768,7 +909,7 @@ H264Parser::Result H264Parser::ParseSPS(int* sps_id) {
 
   *sps_id = -1;
 
-  scoped_ptr<H264SPS> sps(new H264SPS());
+  std::unique_ptr<H264SPS> sps(new H264SPS());
 
   READ_BITS_OR_RETURN(8, &sps->profile_idc);
   READ_BOOL_OR_RETURN(&sps->constraint_set0_flag);
@@ -826,10 +967,10 @@ H264Parser::Result H264Parser::ParseSPS(int* sps_id) {
   READ_UE_OR_RETURN(&sps->pic_order_cnt_type);
   TRUE_OR_RETURN(sps->pic_order_cnt_type < 3);
 
-  sps->expected_delta_per_pic_order_cnt_cycle = 0;
   if (sps->pic_order_cnt_type == 0) {
     READ_UE_OR_RETURN(&sps->log2_max_pic_order_cnt_lsb_minus4);
     TRUE_OR_RETURN(sps->log2_max_pic_order_cnt_lsb_minus4 < 13);
+    sps->expected_delta_per_pic_order_cnt_cycle = 0;
   } else if (sps->pic_order_cnt_type == 1) {
     READ_BOOL_OR_RETURN(&sps->delta_pic_order_always_zero_flag);
     READ_SE_OR_RETURN(&sps->offset_for_non_ref_pic);
@@ -837,11 +978,14 @@ H264Parser::Result H264Parser::ParseSPS(int* sps_id) {
     READ_UE_OR_RETURN(&sps->num_ref_frames_in_pic_order_cnt_cycle);
     TRUE_OR_RETURN(sps->num_ref_frames_in_pic_order_cnt_cycle < 255);
 
+    base::CheckedNumeric<int> offset_acc = 0;
     for (int i = 0; i < sps->num_ref_frames_in_pic_order_cnt_cycle; ++i) {
       READ_SE_OR_RETURN(&sps->offset_for_ref_frame[i]);
-      sps->expected_delta_per_pic_order_cnt_cycle +=
-          sps->offset_for_ref_frame[i];
+      offset_acc += sps->offset_for_ref_frame[i];
     }
+    if (!offset_acc.IsValid())
+      return kInvalidStream;
+    sps->expected_delta_per_pic_order_cnt_cycle = offset_acc.ValueOrDefault(0);
   }
 
   READ_UE_OR_RETURN(&sps->max_num_ref_frames);
@@ -874,8 +1018,7 @@ H264Parser::Result H264Parser::ParseSPS(int* sps_id) {
 
   // If an SPS with the same id already exists, replace it.
   *sps_id = sps->seq_parameter_set_id;
-  delete active_SPSes_[*sps_id];
-  active_SPSes_[*sps_id] = sps.release();
+  active_SPSes_[*sps_id] = std::move(sps);
 
   return kOk;
 }
@@ -887,7 +1030,7 @@ H264Parser::Result H264Parser::ParsePPS(int* pps_id) {
 
   *pps_id = -1;
 
-  scoped_ptr<H264PPS> pps(new H264PPS());
+  std::unique_ptr<H264PPS> pps(new H264PPS());
 
   READ_UE_OR_RETURN(&pps->pic_parameter_set_id);
   READ_UE_OR_RETURN(&pps->seq_parameter_set_id);
@@ -950,8 +1093,7 @@ H264Parser::Result H264Parser::ParsePPS(int* pps_id) {
 
   // If a PPS with the same id already exists, replace it.
   *pps_id = pps->pic_parameter_set_id;
-  delete active_PPSes_[*pps_id];
-  active_PPSes_[*pps_id] = pps.release();
+  active_PPSes_[*pps_id] = std::move(pps);
 
   return kOk;
 }

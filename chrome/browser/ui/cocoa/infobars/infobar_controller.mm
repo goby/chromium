@@ -15,8 +15,12 @@
 #import "chrome/browser/ui/cocoa/infobars/infobar_container_controller.h"
 #import "chrome/browser/ui/cocoa/infobars/infobar_gradient_view.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
+#include "components/strings/grit/components_strings.h"
 #import "ui/base/cocoa/controls/hyperlink_text_view.h"
+#include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/image/image.h"
 #include "ui/resources/grit/ui_resources.h"
 
@@ -50,6 +54,8 @@
   [[closeButton_ cell] setImageID:IDR_CLOSE_1
                    forButtonState:image_button_cell::kDisabledState];
 
+  [closeButton_ setTitle:l10n_util::GetNSString(IDS_ACCNAME_CLOSE)];
+
   if (![self delegate]->GetIcon().IsEmpty()) {
     [image_ setImage:[self delegate]->GetIcon().ToNSImage()];
   } else {
@@ -66,6 +72,16 @@
   [self initializeLabel];
 
   [self addAdditionalControls];
+
+  // Infobars are drawn a little taller, so have to move its controls to keep
+  // them centered.
+  // TODO(ellyjones): Remove this constant.
+  CGFloat heightDelta = 2;
+  for (NSView* nextSubview in [infoBarView_ subviews]) {
+    NSRect frame = [nextSubview frame];
+    frame.origin.y += heightDelta / 2;
+    [nextSubview setFrame:frame];
+  }
 
   [infoBarView_ setInfobarType:[self delegate]->GetInfoBarType()];
   [infoBarView_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];

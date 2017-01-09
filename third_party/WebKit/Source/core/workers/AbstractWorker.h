@@ -32,12 +32,11 @@
 #define AbstractWorker_h
 
 #include "core/CoreExport.h"
-#include "core/dom/ActiveDOMObject.h"
+#include "core/dom/SuspendableObject.h"
 #include "core/events/EventListener.h"
 #include "core/events/EventTarget.h"
 #include "platform/heap/Handle.h"
-#include "wtf/RefCounted.h"
-#include "wtf/text/AtomicStringHash.h"
+#include "wtf/Forward.h"
 
 namespace blink {
 
@@ -45,25 +44,31 @@ class ExceptionState;
 class KURL;
 class ExecutionContext;
 
-class CORE_EXPORT AbstractWorker : public RefCountedGarbageCollectedEventTargetWithInlineData<AbstractWorker>, public ActiveDOMObject {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(AbstractWorker);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(AbstractWorker);
-public:
-    // EventTarget APIs
-    ExecutionContext* executionContext() const final { return ActiveDOMObject::executionContext(); }
+class CORE_EXPORT AbstractWorker : public EventTargetWithInlineData,
+                                   public SuspendableObject {
+  USING_GARBAGE_COLLECTED_MIXIN(AbstractWorker);
 
-    DEFINE_STATIC_ATTRIBUTE_EVENT_LISTENER(error);
+ public:
+  // EventTarget APIs
+  ExecutionContext* getExecutionContext() const final {
+    return SuspendableObject::getExecutionContext();
+  }
 
-    AbstractWorker(ExecutionContext*);
-    ~AbstractWorker() override;
+  DEFINE_STATIC_ATTRIBUTE_EVENT_LISTENER(error);
 
-    DECLARE_VIRTUAL_TRACE();
+  AbstractWorker(ExecutionContext*);
+  ~AbstractWorker() override;
 
-protected:
-    // Helper function that converts a URL to an absolute URL and checks the result for validity.
-    KURL resolveURL(const String& url, ExceptionState&);
+  DECLARE_VIRTUAL_TRACE();
+
+ protected:
+  // Helper function that converts a URL to an absolute URL and checks the
+  // result for validity.
+  KURL resolveURL(const String& url,
+                  ExceptionState&,
+                  WebURLRequest::RequestContext);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // AbstractWorker_h
+#endif  // AbstractWorker_h

@@ -4,7 +4,8 @@
 
 #include "ui/gfx/path_win.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/win/scoped_gdi_object.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/gfx/path.h"
@@ -17,8 +18,9 @@ HRGN CreateHRGNFromSkRegion(const SkRegion& region) {
 
   for (SkRegion::Iterator i(region); !i.done(); i.next()) {
     const SkIRect& rect = i.rect();
-    ::SetRectRgn(temp, rect.left(), rect.top(), rect.right(), rect.bottom());
-    ::CombineRgn(result, result, temp, RGN_OR);
+    ::SetRectRgn(temp.get(),
+                 rect.left(), rect.top(), rect.right(), rect.bottom());
+    ::CombineRgn(result.get(), result.get(), temp.get(), RGN_OR);
   }
 
   return result.release();

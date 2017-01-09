@@ -5,6 +5,7 @@
 #ifndef UI_BASE_IME_LINUX_FAKE_INPUT_METHOD_CONTEXT_FACTORY_H_
 #define UI_BASE_IME_LINUX_FAKE_INPUT_METHOD_CONTEXT_FACTORY_H_
 
+#include "base/macros.h"
 #include "ui/base/ime/linux/linux_input_method_context_factory.h"
 
 namespace ui {
@@ -16,7 +17,7 @@ class FakeInputMethodContextFactory : public LinuxInputMethodContextFactory {
   FakeInputMethodContextFactory();
 
   // LinuxInputMethodContextFactory:
-  scoped_ptr<LinuxInputMethodContext> CreateInputMethodContext(
+  std::unique_ptr<LinuxInputMethodContext> CreateInputMethodContext(
       LinuxInputMethodContextDelegate* delegate,
       bool is_simple) const override;
 

@@ -4,26 +4,28 @@
 
 #include "ui/gfx/win/direct_manipulation.h"
 
-#include "base/basictypes.h"
 #include "base/win/windows_version.h"
 
 namespace gfx {
 namespace win {
 
 // static
-scoped_ptr<DirectManipulationHelper>
+std::unique_ptr<DirectManipulationHelper>
 DirectManipulationHelper::CreateInstance() {
-  scoped_ptr<DirectManipulationHelper> instance;
+  std::unique_ptr<DirectManipulationHelper> instance;
 
   if (base::win::GetVersion() >= base::win::VERSION_WIN10)
     instance.reset(new DirectManipulationHelper);
 
-  return instance.Pass();
+  return instance;
 }
 
 DirectManipulationHelper::DirectManipulationHelper() {}
 
-DirectManipulationHelper::~DirectManipulationHelper() {}
+DirectManipulationHelper::~DirectManipulationHelper() {
+  if (view_port_outer_)
+    view_port_outer_->Abandon();
+}
 
 void DirectManipulationHelper::Initialize(HWND window) {
   DCHECK(::IsWindow(window));

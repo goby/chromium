@@ -4,13 +4,14 @@
 
 #include "chrome/browser/chromeos/certificate_provider/certificate_requests.h"
 
+#include <memory>
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 
@@ -49,7 +50,7 @@ int CertificateRequests::AddRequest(
     const std::vector<std::string>& extension_ids,
     const base::Callback<void(const net::CertificateList&)>& callback,
     const base::Callback<void(int)>& timeout_callback) {
-  scoped_ptr<CertificateRequestState> state(new CertificateRequestState);
+  std::unique_ptr<CertificateRequestState> state(new CertificateRequestState);
   state->callback = callback;
   state->pending_extensions.insert(extension_ids.begin(), extension_ids.end());
 
@@ -59,7 +60,7 @@ int CertificateRequests::AddRequest(
       base::Bind(timeout_callback, request_id));
 
   const auto insert_result =
-      requests_.insert(std::make_pair(request_id, state.Pass()));
+      requests_.insert(std::make_pair(request_id, std::move(state)));
   DCHECK(insert_result.second) << "request id already in use.";
   return request_id;
 }

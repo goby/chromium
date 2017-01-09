@@ -4,15 +4,20 @@
 
 #include "content/browser/renderer_host/pepper/pepper_renderer_connection.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/browser_child_process_host_impl.h"
 #include "content/browser/ppapi_plugin_process_host.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
-#include "content/common/frame_messages.h"
-#include "content/common/pepper_renderer_instance_data.h"
 #include "content/browser/renderer_host/pepper/pepper_file_ref_host.h"
 #include "content/browser/renderer_host/pepper/pepper_file_system_browser_host.h"
+#include "content/common/frame_messages.h"
+#include "content/common/pepper_renderer_instance_data.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "ipc/ipc_message_macros.h"
@@ -25,9 +30,8 @@ namespace content {
 
 namespace {
 
-const uint32 kFilteredMessageClasses[] = {
-  PpapiMsgStart,
-  FrameMsgStart,
+const uint32_t kFilteredMessageClasses[] = {
+    PpapiMsgStart, FrameMsgStart,
 };
 
 // Responsible for creating the pending resource hosts, holding their IDs until
@@ -46,7 +50,7 @@ class PendingHostCreator : public base::RefCounted<PendingHostCreator> {
   // attached to a real resource.
   void AddPendingResourceHost(
       size_t index,
-      scoped_ptr<ppapi::host::ResourceHost> resource_host);
+      std::unique_ptr<ppapi::host::ResourceHost> resource_host);
 
  private:
   friend class base::RefCounted<PendingHostCreator>;
@@ -77,9 +81,9 @@ PendingHostCreator::PendingHostCreator(BrowserPpapiHostImpl* host,
 
 void PendingHostCreator::AddPendingResourceHost(
     size_t index,
-    scoped_ptr<ppapi::host::ResourceHost> resource_host) {
+    std::unique_ptr<ppapi::host::ResourceHost> resource_host) {
   pending_resource_host_ids_[index] =
-      host_->GetPpapiHost()->AddPendingResourceHost(resource_host.Pass());
+      host_->GetPpapiHost()->AddPendingResourceHost(std::move(resource_host));
 }
 
 PendingHostCreator::~PendingHostCreator() {
@@ -169,7 +173,7 @@ void PepperRendererConnection::OnMsgCreateResourceHostsFromHost(
       host, this, routing_id, params.sequence(), nested_msgs.size());
   for (size_t i = 0; i < nested_msgs.size(); ++i) {
     const IPC::Message& nested_msg = nested_msgs[i];
-    scoped_ptr<ppapi::host::ResourceHost> resource_host;
+    std::unique_ptr<ppapi::host::ResourceHost> resource_host;
     if (host->IsValidInstance(instance)) {
       if (nested_msg.type() == PpapiHostMsg_FileRef_CreateForRawFS::ID) {
         // FileRef_CreateForRawFS is only permitted from the renderer. Because
@@ -215,7 +219,7 @@ void PepperRendererConnection::OnMsgCreateResourceHostsFromHost(
     }
 
     if (resource_host.get())
-      creator->AddPendingResourceHost(i, resource_host.Pass());
+      creator->AddPendingResourceHost(i, std::move(resource_host));
   }
 
   // Note: All of the pending host IDs that were added as part of this

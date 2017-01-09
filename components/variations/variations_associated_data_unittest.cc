@@ -4,7 +4,10 @@
 
 #include "components/variations/variations_associated_data.h"
 
+#include "base/feature_list.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
+#include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace variations {
@@ -46,8 +49,18 @@ class VariationsAssociatedDataTest : public ::testing::Test {
     testing::ClearAllVariationParams();
   }
 
+  void CreateFeatureWithTrial(const base::Feature& feature,
+                              base::FeatureList::OverrideState override_state,
+                              base::FieldTrial* trial) {
+    std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
+    feature_list->RegisterFieldTrialOverride(feature.name, override_state,
+                                             trial);
+    scoped_feature_list_.InitWithFeatureList(std::move(feature_list));
+  }
+
  private:
   base::FieldTrialList field_trial_list_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(VariationsAssociatedDataTest);
 };
@@ -167,8 +180,6 @@ TEST_F(VariationsAssociatedDataTest, CollectionsCoexist) {
   EXPECT_EQ(EMPTY_ID,
             GetIDForTrial(GOOGLE_WEB_PROPERTIES_TRIGGER, trial_true.get()));
   EXPECT_EQ(EMPTY_ID,
-            GetIDForTrial(GOOGLE_UPDATE_SERVICE, trial_true.get()));
-  EXPECT_EQ(EMPTY_ID,
             GetIDForTrial(CHROME_SYNC_SERVICE, trial_true.get()));
 
   AssociateGoogleVariationID(GOOGLE_WEB_PROPERTIES, trial_true->trial_name(),
@@ -176,25 +187,12 @@ TEST_F(VariationsAssociatedDataTest, CollectionsCoexist) {
   EXPECT_EQ(TEST_VALUE_A,
             GetIDForTrial(GOOGLE_WEB_PROPERTIES, trial_true.get()));
   EXPECT_EQ(EMPTY_ID,
-            GetIDForTrial(GOOGLE_UPDATE_SERVICE, trial_true.get()));
-  EXPECT_EQ(EMPTY_ID,
-            GetIDForTrial(CHROME_SYNC_SERVICE, trial_true.get()));
-
-  AssociateGoogleVariationID(GOOGLE_UPDATE_SERVICE, trial_true->trial_name(),
-      default_name, TEST_VALUE_A);
-  EXPECT_EQ(TEST_VALUE_A,
-            GetIDForTrial(GOOGLE_WEB_PROPERTIES, trial_true.get()));
-  EXPECT_EQ(TEST_VALUE_A,
-            GetIDForTrial(GOOGLE_UPDATE_SERVICE, trial_true.get()));
-  EXPECT_EQ(EMPTY_ID,
             GetIDForTrial(CHROME_SYNC_SERVICE, trial_true.get()));
 
   AssociateGoogleVariationID(CHROME_SYNC_SERVICE, trial_true->trial_name(),
       default_name, TEST_VALUE_A);
   EXPECT_EQ(TEST_VALUE_A,
             GetIDForTrial(GOOGLE_WEB_PROPERTIES, trial_true.get()));
-  EXPECT_EQ(TEST_VALUE_A,
-            GetIDForTrial(GOOGLE_UPDATE_SERVICE, trial_true.get()));
   EXPECT_EQ(TEST_VALUE_A,
             GetIDForTrial(CHROME_SYNC_SERVICE, trial_true.get()));
 
@@ -208,25 +206,12 @@ TEST_F(VariationsAssociatedDataTest, CollectionsCoexist) {
   EXPECT_EQ(TEST_VALUE_A,
             GetIDForTrial(GOOGLE_WEB_PROPERTIES_TRIGGER, trial_true.get()));
   EXPECT_EQ(EMPTY_ID,
-            GetIDForTrial(GOOGLE_UPDATE_SERVICE, trial_true.get()));
-  EXPECT_EQ(EMPTY_ID,
-            GetIDForTrial(CHROME_SYNC_SERVICE, trial_true.get()));
-
-  AssociateGoogleVariationID(GOOGLE_UPDATE_SERVICE, trial_true->trial_name(),
-                             default_name, TEST_VALUE_A);
-  EXPECT_EQ(TEST_VALUE_A,
-            GetIDForTrial(GOOGLE_WEB_PROPERTIES_TRIGGER, trial_true.get()));
-  EXPECT_EQ(TEST_VALUE_A,
-            GetIDForTrial(GOOGLE_UPDATE_SERVICE, trial_true.get()));
-  EXPECT_EQ(EMPTY_ID,
             GetIDForTrial(CHROME_SYNC_SERVICE, trial_true.get()));
 
   AssociateGoogleVariationID(CHROME_SYNC_SERVICE, trial_true->trial_name(),
       default_name, TEST_VALUE_A);
   EXPECT_EQ(TEST_VALUE_A,
             GetIDForTrial(GOOGLE_WEB_PROPERTIES_TRIGGER, trial_true.get()));
-  EXPECT_EQ(TEST_VALUE_A,
-            GetIDForTrial(GOOGLE_UPDATE_SERVICE, trial_true.get()));
   EXPECT_EQ(TEST_VALUE_A,
             GetIDForTrial(CHROME_SYNC_SERVICE, trial_true.get()));
 }
@@ -343,6 +328,164 @@ TEST_F(VariationsAssociatedDataTest, GetVariationParamValue_ActivatesTrial) {
   std::map<std::string, std::string> params;
   EXPECT_EQ(std::string(), GetVariationParamValue(kTrialName, "x"));
   ASSERT_TRUE(base::FieldTrialList::IsTrialActive(kTrialName));
+}
+
+TEST_F(VariationsAssociatedDataTest, GetVariationParamsByFeature) {
+  const std::string kTrialName = "GetVariationParamsByFeature";
+  const base::Feature kFeature{"TestFeature",
+                               base::FEATURE_DISABLED_BY_DEFAULT};
+
+  std::map<std::string, std::string> params;
+  params["x"] = "1";
+  variations::AssociateVariationParams(kTrialName, "A", params);
+  scoped_refptr<base::FieldTrial> trial(
+      CreateFieldTrial(kTrialName, 100, "A", NULL));
+
+  CreateFeatureWithTrial(kFeature, base::FeatureList::OVERRIDE_ENABLE_FEATURE,
+                         trial.get());
+
+  std::map<std::string, std::string> actualParams;
+  EXPECT_TRUE(GetVariationParamsByFeature(kFeature, &actualParams));
+  EXPECT_EQ(params, actualParams);
+}
+
+TEST_F(VariationsAssociatedDataTest, GetVariationParamValueByFeature) {
+  const std::string kTrialName = "GetVariationParamsByFeature";
+  const base::Feature kFeature{"TestFeature",
+                               base::FEATURE_DISABLED_BY_DEFAULT};
+
+  std::map<std::string, std::string> params;
+  params["x"] = "1";
+  variations::AssociateVariationParams(kTrialName, "A", params);
+  scoped_refptr<base::FieldTrial> trial(
+      CreateFieldTrial(kTrialName, 100, "A", NULL));
+
+  CreateFeatureWithTrial(kFeature, base::FeatureList::OVERRIDE_ENABLE_FEATURE,
+                         trial.get());
+
+  std::map<std::string, std::string> actualParams;
+  EXPECT_EQ(params["x"], GetVariationParamValueByFeature(kFeature, "x"));
+}
+
+TEST_F(VariationsAssociatedDataTest, GetVariationParamsByFeature_Disable) {
+  const std::string kTrialName = "GetVariationParamsByFeature";
+  const base::Feature kFeature{"TestFeature",
+                               base::FEATURE_DISABLED_BY_DEFAULT};
+
+  std::map<std::string, std::string> params;
+  params["x"] = "1";
+  variations::AssociateVariationParams(kTrialName, "A", params);
+  scoped_refptr<base::FieldTrial> trial(
+      CreateFieldTrial(kTrialName, 100, "A", NULL));
+
+  CreateFeatureWithTrial(kFeature, base::FeatureList::OVERRIDE_DISABLE_FEATURE,
+                         trial.get());
+
+  std::map<std::string, std::string> actualParams;
+  EXPECT_FALSE(GetVariationParamsByFeature(kFeature, &actualParams));
+}
+
+TEST_F(VariationsAssociatedDataTest, GetVariationParamValueByFeature_Disable) {
+  const std::string kTrialName = "GetVariationParamsByFeature";
+  const base::Feature kFeature{"TestFeature",
+                               base::FEATURE_DISABLED_BY_DEFAULT};
+
+  std::map<std::string, std::string> params;
+  params["x"] = "1";
+  variations::AssociateVariationParams(kTrialName, "A", params);
+  scoped_refptr<base::FieldTrial> trial(
+      CreateFieldTrial(kTrialName, 100, "A", NULL));
+
+  CreateFeatureWithTrial(kFeature, base::FeatureList::OVERRIDE_DISABLE_FEATURE,
+                         trial.get());
+
+  std::map<std::string, std::string> actualParams;
+  EXPECT_EQ(std::string(), GetVariationParamValueByFeature(kFeature, "x"));
+}
+
+TEST_F(VariationsAssociatedDataTest, GetVariationParamByFeatureAsInt) {
+  const std::string kTrialName = "GetVariationParamsByFeature";
+  const base::Feature kFeature{"TestFeature",
+                               base::FEATURE_DISABLED_BY_DEFAULT};
+
+  std::map<std::string, std::string> params;
+  params["a"] = "1";
+  params["b"] = "1.5";
+  params["c"] = "foo";
+  params["d"] = "";
+  // "e" is not registered
+  variations::AssociateVariationParams(kTrialName, "A", params);
+  scoped_refptr<base::FieldTrial> trial(
+      CreateFieldTrial(kTrialName, 100, "A", NULL));
+
+  CreateFeatureWithTrial(kFeature, base::FeatureList::OVERRIDE_ENABLE_FEATURE,
+                         trial.get());
+
+  std::map<std::string, std::string> actualParams;
+  EXPECT_EQ(1, GetVariationParamByFeatureAsInt(kFeature, "a", 0));
+  EXPECT_EQ(0, GetVariationParamByFeatureAsInt(kFeature, "b", 0));  // invalid
+  EXPECT_EQ(0, GetVariationParamByFeatureAsInt(kFeature, "c", 0));  // invalid
+  EXPECT_EQ(0, GetVariationParamByFeatureAsInt(kFeature, "d", 0));  // empty
+  EXPECT_EQ(0, GetVariationParamByFeatureAsInt(kFeature, "e", 0));  // empty
+}
+
+TEST_F(VariationsAssociatedDataTest, GetVariationParamByFeatureAsDouble) {
+  const std::string kTrialName = "GetVariationParamsByFeature";
+  const base::Feature kFeature{"TestFeature",
+                               base::FEATURE_DISABLED_BY_DEFAULT};
+
+  std::map<std::string, std::string> params;
+  params["a"] = "1";
+  params["b"] = "1.5";
+  params["c"] = "1.0e-10";
+  params["d"] = "foo";
+  params["e"] = "";
+  // "f" is not registered
+  variations::AssociateVariationParams(kTrialName, "A", params);
+  scoped_refptr<base::FieldTrial> trial(
+      CreateFieldTrial(kTrialName, 100, "A", NULL));
+
+  CreateFeatureWithTrial(kFeature, base::FeatureList::OVERRIDE_ENABLE_FEATURE,
+                         trial.get());
+
+  std::map<std::string, std::string> actualParams;
+  EXPECT_EQ(1, GetVariationParamByFeatureAsDouble(kFeature, "a", 0));
+  EXPECT_EQ(1.5, GetVariationParamByFeatureAsDouble(kFeature, "b", 0));
+  EXPECT_EQ(1.0e-10, GetVariationParamByFeatureAsDouble(kFeature, "c", 0));
+  EXPECT_EQ(0,
+            GetVariationParamByFeatureAsDouble(kFeature, "d", 0));  // invalid
+  EXPECT_EQ(0, GetVariationParamByFeatureAsDouble(kFeature, "e", 0));  // empty
+  EXPECT_EQ(0, GetVariationParamByFeatureAsDouble(kFeature, "f", 0));  // empty
+}
+
+TEST_F(VariationsAssociatedDataTest, GetVariationParamByFeatureAsBool) {
+  const std::string kTrialName = "GetVariationParamsByFeature";
+  const base::Feature kFeature{"TestFeature",
+                               base::FEATURE_DISABLED_BY_DEFAULT};
+
+  std::map<std::string, std::string> params;
+  params["a"] = "true";
+  params["b"] = "false";
+  params["c"] = "1";
+  params["d"] = "False";
+  params["e"] = "";
+  // "f" is not registered
+  variations::AssociateVariationParams(kTrialName, "A", params);
+  scoped_refptr<base::FieldTrial> trial(
+      CreateFieldTrial(kTrialName, 100, "A", NULL));
+
+  CreateFeatureWithTrial(kFeature, base::FeatureList::OVERRIDE_ENABLE_FEATURE,
+                         trial.get());
+
+  std::map<std::string, std::string> actualParams;
+  EXPECT_TRUE(GetVariationParamByFeatureAsBool(kFeature, "a", false));
+  EXPECT_FALSE(GetVariationParamByFeatureAsBool(kFeature, "b", true));
+  EXPECT_FALSE(
+      GetVariationParamByFeatureAsBool(kFeature, "c", false));  // invalid
+  EXPECT_TRUE(
+      GetVariationParamByFeatureAsBool(kFeature, "d", true));  // invalid
+  EXPECT_TRUE(GetVariationParamByFeatureAsBool(kFeature, "e", true));  // empty
+  EXPECT_TRUE(GetVariationParamByFeatureAsBool(kFeature, "f", true));  // empty
 }
 
 }  // namespace variations

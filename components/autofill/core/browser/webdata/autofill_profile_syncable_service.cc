@@ -4,19 +4,26 @@
 
 #include "components/autofill/core/browser/webdata/autofill_profile_syncable_service.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/guid.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_country.h"
 #include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/autofill_profile_comparator.h"
+#include "components/autofill/core/browser/country_names.h"
 #include "components/autofill/core/browser/form_group.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "components/webdata/common/web_database.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/protocol/sync.pb.h"
 
 using base::ASCIIToUTF16;
 using base::UTF8ToUTF16;
@@ -86,8 +93,8 @@ syncer::SyncMergeResult
 AutofillProfileSyncableService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> sync_error_factory) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) {
   DCHECK(CalledOnValidThread());
   DCHECK(!sync_processor_.get());
   DCHECK(sync_processor.get());
@@ -95,8 +102,8 @@ AutofillProfileSyncableService::MergeDataAndStartSyncing(
   DVLOG(1) << "Associating Autofill: MergeDataAndStartSyncing";
 
   syncer::SyncMergeResult merge_result(type);
-  sync_error_factory_ = sync_error_factory.Pass();
-  if (!LoadAutofillData(&profiles_.get())) {
+  sync_error_factory_ = std::move(sync_error_factory);
+  if (!LoadAutofillData(&profiles_)) {
     merge_result.set_error(sync_error_factory_->CreateAndUploadError(
         FROM_HERE, "Could not get the autofill data from WebDatabase."));
     return merge_result;
@@ -114,40 +121,50 @@ AutofillProfileSyncableService::MergeDataAndStartSyncing(
     }
   }
 
-  sync_processor_ = sync_processor.Pass();
+  sync_processor_ = std::move(sync_processor);
 
-  GUIDToProfileMap remaining_profiles;
-  CreateGUIDToProfileMap(profiles_.get(), &remaining_profiles);
+  GUIDToProfileMap remaining_local_profiles;
+  CreateGUIDToProfileMap(profiles_, &remaining_local_profiles);
   DataBundle bundle;
-  // Go through and check for all the profiles that sync already knows about.
+  // For every incoming profile from sync, attempt to update a local profile or
+  // otherwise create a new one.
   for (const auto& sync_iter : initial_sync_data) {
-    GUIDToProfileMap::iterator it =
-        CreateOrUpdateProfile(sync_iter, &remaining_profiles, &bundle);
+    auto it =
+        CreateOrUpdateProfile(sync_iter, &remaining_local_profiles, &bundle);
     // |it| points to created/updated profile. Add it to the |profiles_map_| and
-    // then remove it from |remaining_profiles|. After this loop is completed
-    // |remaining_profiles| will have only those profiles that are not in the
-    // sync.
+    // then remove it from |remaining_local_profiles|. After this loop is
+    // completed |remaining_local_profiles| will have only those profiles that
+    // are not in the sync.
     profiles_map_[it->first] = it->second;
-    remaining_profiles.erase(it);
+    // This may be a no-op since |it| is sometimes an entirely new profile that
+    // came from sync.
+    remaining_local_profiles.erase(it);
   }
 
   // Check for similar unmatched profiles - they are created independently on
   // two systems, so merge them.
-  for (const auto& it : bundle.candidates_to_merge) {
-    GUIDToProfileMap::iterator profile_to_merge =
-        remaining_profiles.find(it.first);
-    if (profile_to_merge != remaining_profiles.end()) {
+  for (const auto& sync_profile_it : bundle.candidates_to_merge) {
+    auto profile_to_merge =
+        remaining_local_profiles.find(sync_profile_it.first);
+    if (profile_to_merge != remaining_local_profiles.end()) {
       bundle.profiles_to_delete.push_back(profile_to_merge->second->guid());
-      if (MergeProfile(*(profile_to_merge->second), it.second, app_locale_))
-        bundle.profiles_to_sync_back.push_back(it.second);
+      // For similar profile pairs, the local profile is always removed and its
+      // content merged (if applicable) in the profile that came from sync.
+      if (MergeSimilarProfiles(*(profile_to_merge->second),
+                               sync_profile_it.second, app_locale_)) {
+        // if new changes were merged into |sync_profile_it.second| from
+        // |profile_to_merge|, they will be synced back.
+        bundle.profiles_to_sync_back.push_back(sync_profile_it.second);
+      }
       DVLOG(2) << "[AUTOFILL SYNC]"
-               << "Found similar profile in sync db but with a different guid: "
-               << UTF16ToUTF8(it.second->GetRawInfo(NAME_FIRST))
-               << UTF16ToUTF8(it.second->GetRawInfo(NAME_LAST))
-               << "New guid " << it.second->guid()
+               << "Found similar profile in sync db but with a "
+                  "different guid: "
+               << UTF16ToUTF8(sync_profile_it.second->GetRawInfo(NAME_FIRST))
+               << UTF16ToUTF8(sync_profile_it.second->GetRawInfo(NAME_LAST))
+               << "New guid " << sync_profile_it.second->guid()
                << ". Profile to be deleted "
                << profile_to_merge->second->guid();
-      remaining_profiles.erase(profile_to_merge);
+      remaining_local_profiles.erase(profile_to_merge);
     }
   }
 
@@ -159,7 +176,7 @@ AutofillProfileSyncableService::MergeDataAndStartSyncing(
   }
 
   syncer::SyncChangeList new_changes;
-  for (const auto& it : remaining_profiles) {
+  for (const auto& it : remaining_local_profiles) {
     new_changes.push_back(
         syncer::SyncChange(FROM_HERE,
                            syncer::SyncChange::ACTION_ADD,
@@ -179,8 +196,10 @@ AutofillProfileSyncableService::MergeDataAndStartSyncing(
         sync_processor_->ProcessSyncChanges(FROM_HERE, new_changes));
   }
 
-  if (webdata_backend_)
+  if (webdata_backend_) {
     webdata_backend_->NotifyOfMultipleAutofillChanges();
+    webdata_backend_->NotifyThatSyncHasStarted(type);
+  }
 
   return merge_result;
 }
@@ -270,7 +289,7 @@ void AutofillProfileSyncableService::AutofillProfileChanged(
 }
 
 bool AutofillProfileSyncableService::LoadAutofillData(
-    std::vector<AutofillProfile*>* profiles) {
+    std::vector<std::unique_ptr<AutofillProfile>>* profiles) {
   return GetAutofillTable()->GetAutofillProfiles(profiles);
 }
 
@@ -301,8 +320,7 @@ bool AutofillProfileSyncableService::SaveChangesToWebData(
 // static
 bool AutofillProfileSyncableService::OverwriteProfileWithServerData(
     const sync_pb::AutofillProfileSpecifics& specifics,
-    AutofillProfile* profile,
-    const std::string& app_locale) {
+    AutofillProfile* profile) {
   bool diff = false;
   if (specifics.has_origin() && profile->origin() != specifics.origin()) {
     bool was_verified = profile->IsVerified();
@@ -364,7 +382,7 @@ bool AutofillProfileSyncableService::OverwriteProfileWithServerData(
   base::string16 country_name_or_code =
       ASCIIToUTF16(specifics.address_home_country());
   std::string country_code =
-      AutofillCountry::GetCountryCode(country_name_or_code, app_locale);
+      CountryNames::GetInstance()->GetCountryCode(country_name_or_code);
   diff = UpdateField(ADDRESS_HOME_COUNTRY, country_code, profile) || diff;
 
   // Update the street address.  In newer versions of Chrome (M34+), this data
@@ -467,12 +485,12 @@ void AutofillProfileSyncableService::WriteAutofillProfile(
 }
 
 void AutofillProfileSyncableService::CreateGUIDToProfileMap(
-    const std::vector<AutofillProfile*>& profiles,
+    const std::vector<std::unique_ptr<AutofillProfile>>& profiles,
     GUIDToProfileMap* profile_map) {
   DCHECK(profile_map);
   profile_map->clear();
-  for (size_t i = 0; i < profiles.size(); ++i)
-    (*profile_map)[profiles[i]->guid()] = profiles[i];
+  for (const auto& profile : profiles)
+    (*profile_map)[profile->guid()] = profile.get();
 }
 
 AutofillProfileSyncableService::GUIDToProfileMap::iterator
@@ -489,35 +507,36 @@ AutofillProfileSyncableService::CreateOrUpdateProfile(
   const sync_pb::AutofillProfileSpecifics& autofill_specifics(
       specifics.autofill_profile());
 
-  GUIDToProfileMap::iterator existing_profile = profile_map->find(
-        autofill_specifics.guid());
+  auto existing_profile = profile_map->find(autofill_specifics.guid());
   if (existing_profile != profile_map->end()) {
     // The synced profile already exists locally.  It might need to be updated.
-    if (OverwriteProfileWithServerData(
-            autofill_specifics, existing_profile->second, app_locale_)) {
+    if (OverwriteProfileWithServerData(autofill_specifics,
+                                       existing_profile->second)) {
       bundle->profiles_to_update.push_back(existing_profile->second);
     }
     return existing_profile;
   }
 
   // New profile synced.
-  AutofillProfile* new_profile = new AutofillProfile(
-      autofill_specifics.guid(), autofill_specifics.origin());
-  OverwriteProfileWithServerData(autofill_specifics, new_profile, app_locale_);
+  std::unique_ptr<AutofillProfile> new_profile =
+      base::MakeUnique<AutofillProfile>(autofill_specifics.guid(),
+                                        autofill_specifics.origin());
+  AutofillProfile* new_profile_ptr = new_profile.get();
+  OverwriteProfileWithServerData(autofill_specifics, new_profile_ptr);
 
   // Check if profile appears under a different guid. Compares only profile
   // contents. (Ignores origin and language code in comparison.)
   //
   // Unverified profiles should never overwrite verified ones.
-  for (GUIDToProfileMap::iterator it = profile_map->begin();
-       it != profile_map->end(); ++it) {
+  AutofillProfileComparator comparator(app_locale_);
+  for (auto it = profile_map->begin(); it != profile_map->end(); ++it) {
     AutofillProfile* local_profile = it->second;
     if (local_profile->Compare(*new_profile) == 0) {
       // Ensure that a verified profile can never revert back to an unverified
       // one.
       if (local_profile->IsVerified() && !new_profile->IsVerified()) {
         new_profile->set_origin(local_profile->origin());
-        bundle->profiles_to_sync_back.push_back(new_profile);
+        bundle->profiles_to_sync_back.push_back(new_profile.get());
       }
 
       bundle->profiles_to_delete.push_back(local_profile->guid());
@@ -529,20 +548,20 @@ AutofillProfileSyncableService::CreateOrUpdateProfile(
                << ". Profile to be deleted " << local_profile->guid();
       profile_map->erase(it);
       break;
-    } else if (!local_profile->IsVerified() &&
-               !new_profile->IsVerified() &&
-               !local_profile->PrimaryValue().empty() &&
-               local_profile->PrimaryValue() == new_profile->PrimaryValue()) {
-      // Add it to candidates for merge - if there is no profile with this
-      // guid we will merge them.
+    } else if (!local_profile->IsVerified() && !new_profile->IsVerified() &&
+               comparator.AreMergeable(*local_profile, *new_profile)) {
+      // Add it to candidates for merge - if there is no profile with this guid
+      // we will merge them.
       bundle->candidates_to_merge.insert(
-          std::make_pair(local_profile->guid(), new_profile));
+          std::make_pair(local_profile->guid(), new_profile_ptr));
+      break;
     }
   }
-  profiles_.push_back(new_profile);
-  bundle->profiles_to_add.push_back(new_profile);
-  return profile_map->insert(std::make_pair(new_profile->guid(),
-                                            new_profile)).first;
+  profiles_.push_back(std::move(new_profile));
+  bundle->profiles_to_add.push_back(new_profile_ptr);
+  return profile_map
+      ->insert(std::make_pair(new_profile_ptr->guid(), new_profile_ptr))
+      .first;
 }
 
 void AutofillProfileSyncableService::ActOnChange(
@@ -568,12 +587,12 @@ void AutofillProfileSyncableService::ActOnChange(
                              CreateData(*(change.data_model()))));
       DCHECK(profiles_map_.find(change.data_model()->guid()) ==
              profiles_map_.end());
-      profiles_.push_back(new AutofillProfile(*(change.data_model())));
-      profiles_map_[change.data_model()->guid()] = profiles_.get().back();
+      profiles_.push_back(
+          base::MakeUnique<AutofillProfile>(*(change.data_model())));
+      profiles_map_[change.data_model()->guid()] = profiles_.back().get();
       break;
     case AutofillProfileChange::UPDATE: {
-      GUIDToProfileMap::iterator it = profiles_map_.find(
-          change.data_model()->guid());
+      auto it = profiles_map_.find(change.data_model()->guid());
       DCHECK(it != profiles_map_.end());
       *(it->second) = *(change.data_model());
       new_changes.push_back(
@@ -624,13 +643,13 @@ bool AutofillProfileSyncableService::UpdateField(
   return true;
 }
 
-bool AutofillProfileSyncableService::MergeProfile(
+bool AutofillProfileSyncableService::MergeSimilarProfiles(
     const AutofillProfile& merge_from,
     AutofillProfile* merge_into,
     const std::string& app_locale) {
-  // Overwrites all values. Does not overwrite GUID.
-  merge_into->OverwriteWith(merge_from, app_locale);
-  return !merge_into->EqualsForSyncPurposes(merge_from);
+  const AutofillProfile old_merge_into = *merge_into;
+  merge_into->MergeDataFrom(merge_from, app_locale);
+  return !merge_into->EqualsForSyncPurposes(old_merge_into);
 }
 
 AutofillTable* AutofillProfileSyncableService::GetAutofillTable() const {
@@ -643,6 +662,9 @@ void AutofillProfileSyncableService::InjectStartSyncFlare(
 }
 
 AutofillProfileSyncableService::DataBundle::DataBundle() {}
+
+AutofillProfileSyncableService::DataBundle::DataBundle(
+    const DataBundle& other) = default;
 
 AutofillProfileSyncableService::DataBundle::~DataBundle() {}
 

@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_NETWORK_DROPDOWN_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_NETWORK_DROPDOWN_HANDLER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/network_dropdown.h"
@@ -51,7 +52,11 @@ class NetworkDropdownHandler : public BaseScreenHandler,
   // Handles network drop-down refresh.
   void HandleNetworkDropdownRefresh();
 
-  scoped_ptr<NetworkDropdown> dropdown_;
+  void HandleLaunchProxySettingsDialog();
+  void HandleLaunchAddWiFiNetworkDialog();
+  void HandleLaunchAddMobileNetworkDialog();
+
+  std::unique_ptr<NetworkDropdown> dropdown_;
 
   base::ObserverList<Observer> observers_;
 

@@ -1,30 +1,22 @@
 {
     "extensions": [
         {
-            "type": "@WebInspector.PanelFactory",
-            "name": "network",
+            "type": "view",
+            "location": "panel",
+            "id": "network",
             "title": "Network",
             "order": 40,
-            "className": "WebInspector.NetworkPanelFactory"
+            "className": "Network.NetworkPanel"
         },
         {
-            "type": "@WebInspector.ContextMenu.Provider",
-            "contextTypes": ["WebInspector.NetworkRequest", "WebInspector.Resource", "WebInspector.UISourceCode"],
-            "className": "WebInspector.NetworkPanel.ContextMenuProvider"
+            "type": "@UI.ContextMenu.Provider",
+            "contextTypes": ["SDK.NetworkRequest", "SDK.Resource", "Workspace.UISourceCode"],
+            "className": "Network.NetworkPanel.ContextMenuProvider"
         },
         {
-            "type": "@WebInspector.Revealer",
-            "contextTypes": ["WebInspector.NetworkRequest"],
-            "className": "WebInspector.NetworkPanel.RequestRevealer"
-        },
-        {
-            "type": "setting",
-            "category": "Network",
-            "title": "Show primary load waterfall",
-            "settingName": "networkShowPrimaryLoadWaterfall",
-            "settingType": "boolean",
-            "experiment": "showPrimaryLoadWaterfallInNetworkTimeline",
-            "defaultValue": false
+            "type": "@Common.Revealer",
+            "contextTypes": ["SDK.NetworkRequest"],
+            "className": "Network.NetworkPanel.RequestRevealer"
         },
         {
             "type": "setting",
@@ -32,21 +24,32 @@
             "title": "Color-code resource types",
             "settingName": "networkColorCodeResourceTypes",
             "settingType": "boolean",
-            "defaultValue": false
+            "defaultValue": false,
+            "tags": "color code, resource type",
+            "options": [
+                { "value": true, "title": "Color code by resource type" },
+                { "value": false, "title": "Use default colors" }
+            ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "network.blocked-urls.show",
-            "className": "WebInspector.BlockedURLsPane.ActionDelegate",
-            "iconClass": "block-toolbar-item",
+            "className": "Network.BlockedURLsPane.ActionDelegate",
+            "iconClass": "largeicon-block",
             "title": "Block network requests"
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "network.toggle-recording",
-            "iconClass": "record-toolbar-item",
-            "contextTypes": ["WebInspector.NetworkPanel"],
-            "className": "WebInspector.NetworkPanel.RecordActionDelegate",
+            "iconClass": "largeicon-start-recording",
+            "toggledIconClass": "largeicon-stop-recording",
+            "toggleWithRedColor": true,
+            "contextTypes": ["Network.NetworkPanel"],
+            "className": "Network.NetworkPanel.RecordActionDelegate",
+            "options": [
+                { "value": true, "title": "Record network log" },
+                { "value": false, "title": "Stop recording network log" }
+            ],
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -59,33 +62,24 @@
             ]
         },
         {
-            "type": "drawer-view",
-            "name": "network.blocked-urls",
+            "type": "view",
+            "location": "drawer-view",
+            "id": "network.blocked-urls",
             "title": "Request blocking",
             "persistence": "closeable",
             "order": 60,
-            "className": "WebInspector.BlockedURLsPane",
+            "className": "Network.BlockedURLsPane",
             "experiment": "requestBlocking"
         },
         {
-            "type": "@WebInspector.ActionDelegate",
-            "actionId": "network.show-config",
-            "title": "Network conditions",
-            "className": "WebInspector.NetworkConfigView.ShowActionDelegate"
-        },
-        {
-            "type": "context-menu-item",
-            "location": "mainMenu/tools/open",
-            "order": 60,
-            "actionId": "network.show-config"
-        },
-        {
-            "type": "drawer-view",
-            "name": "network.config",
+            "type": "view",
+            "location": "drawer-view",
+            "id": "network.config",
             "title": "Network conditions",
             "persistence": "closeable",
             "order": 40,
-            "className": "WebInspector.NetworkConfigView"
+            "className": "Network.NetworkConfigView",
+            "tags": "disk cache, network throttling, useragent, user agent"
         }
     ],
     "dependencies": [
@@ -106,7 +100,10 @@
         "NetworkItemView.js",
         "NetworkTimeCalculator.js",
         "NetworkLogView.js",
+        "NetworkLogViewColumns.js",
+        "NetworkManageCustomHeadersView.js",
         "NetworkOverview.js",
+        "NetworkWaterfallColumn.js",
         "RequestCookiesView.js",
         "RequestHeadersView.js",
         "RequestHTMLView.js",
@@ -122,10 +119,14 @@
         "eventSourceMessagesView.css",
         "networkConfigView.css",
         "networkLogView.css",
+        "networkManageCustomHeadersView.css",
         "networkPanel.css",
+        "networkWaterfallColumn.css",
         "requestCookiesView.css",
+        "requestHeadersTree.css",
         "requestHeadersView.css",
         "webSocketFrameView.css",
+        "xmlTree.css",
         "xmlView.css"
     ]
 }

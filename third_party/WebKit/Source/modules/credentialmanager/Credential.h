@@ -6,6 +6,7 @@
 #define Credential_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
+#include "modules/ModulesExport.h"
 #include "platform/credentialmanager/PlatformCredential.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
@@ -14,29 +15,36 @@ namespace blink {
 
 class ExceptionState;
 
-class Credential : public GarbageCollectedFinalized<Credential>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    // Credential.idl
-    const String& id() const { return m_platformCredential->id(); }
-    const String& name() const { return m_platformCredential->name(); }
-    const KURL& iconURL() const { return m_platformCredential->iconURL(); }
-    const String& type() const { return m_platformCredential->type(); }
+class MODULES_EXPORT Credential : public GarbageCollectedFinalized<Credential>,
+                                  public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    DECLARE_VIRTUAL_TRACE();
+ public:
+  virtual ~Credential();
 
-    PlatformCredential* platformCredential() const { return m_platformCredential; }
+  // Credential.idl
+  const String& id() const { return m_platformCredential->id(); }
+  const String& name() const { return m_platformCredential->name(); }
+  const KURL& iconURL() const { return m_platformCredential->iconURL(); }
+  const String& type() const { return m_platformCredential->type(); }
 
-protected:
-    Credential(PlatformCredential*);
-    Credential(const String& id, const String& name, const KURL& icon);
+  DECLARE_VIRTUAL_TRACE();
 
-    // Parses a string as a KURL. Throws an exception via |exceptionState| if an invalid URL is produced.
-    static KURL parseStringAsURL(const String&, ExceptionState&);
+  PlatformCredential* getPlatformCredential() const {
+    return m_platformCredential;
+  }
 
-    Member<PlatformCredential> m_platformCredential;
+ protected:
+  Credential(PlatformCredential*);
+  Credential(const String& id, const String& name, const KURL& icon);
+
+  // Parses a string as a KURL. Throws an exception via |exceptionState| if an
+  // invalid URL is produced.
+  static KURL parseStringAsURL(const String&, ExceptionState&);
+
+  Member<PlatformCredential> m_platformCredential;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // Credential_h
+#endif  // Credential_h

@@ -4,18 +4,24 @@
 
 #include "chrome/browser/download/download_path_reservation_tracker.h"
 
+#include <stddef.h>
+
 #include <map>
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/third_party/icu/icu_utf.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/features.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item.h"
 
@@ -49,7 +55,8 @@ ReservationMap* g_reservation_map = NULL;
 // Observes a DownloadItem for changes to its target path and state. Updates or
 // revokes associated download path reservations as necessary. Created, invoked
 // and destroyed on the UI thread.
-class DownloadItemObserver : public DownloadItem::Observer {
+class DownloadItemObserver : public DownloadItem::Observer,
+                             public base::SupportsUserData::Data {
  public:
   explicit DownloadItemObserver(DownloadItem* download_item);
 
@@ -65,6 +72,8 @@ class DownloadItemObserver : public DownloadItem::Observer {
   // Last known target path for the download.
   base::FilePath last_target_path_;
 
+  static const int kUserDataKey;
+
   DISALLOW_COPY_AND_ASSIGN(DownloadItemObserver);
 };
 
@@ -74,13 +83,13 @@ bool IsPathReserved(const base::FilePath& path) {
   // No reservation map => no reservations.
   if (g_reservation_map == NULL)
     return false;
-  // Unfortunately path normalization doesn't work reliably for non-existant
-  // files. So given a FilePath, we can't derive a normalized key that we can
-  // use for lookups. We only expect a small number of concurrent downloads at
-  // any given time, so going through all of them shouldn't be too slow.
+
+  // We only expect a small number of concurrent downloads at any given time, so
+  // going through all of them shouldn't be too slow.
   for (ReservationMap::const_iterator iter = g_reservation_map->begin();
        iter != g_reservation_map->end(); ++iter) {
-    if (iter->second == path)
+    if (base::FilePath::CompareEqualIgnoreCase(iter->second.value(),
+                                               path.value()))
       return true;
   }
   return false;
@@ -163,8 +172,13 @@ bool CreateReservation(
   if (g_reservation_map == NULL)
     g_reservation_map = new ReservationMap;
 
-  ReservationMap& reservations = *g_reservation_map;
-  DCHECK(!ContainsKey(reservations, key));
+  // Erase the reservation if it already exists. This can happen during
+  // automatic resumption where a new target determination request may be issued
+  // for a DownloadItem without an intervening transition to INTERRUPTED.
+  //
+  // Revoking and re-acquiring the reservation forces us to re-verify the claims
+  // we are making about the path.
+  g_reservation_map->erase(key);
 
   base::FilePath target_path(suggested_path.NormalizePathSeparators());
   base::FilePath target_dir = target_path.DirName();
@@ -189,9 +203,17 @@ bool CreateReservation(
   // to the user's "My Documents" directory. We'll prompt them in this case.
   if (!base::PathIsWritable(target_dir)) {
     DVLOG(1) << "Unable to write to directory \"" << target_dir.value() << "\"";
+#if BUILDFLAG(ANDROID_JAVA_UI)
+    // On Android, DIR_USER_DOCUMENTS is in reality a subdirectory
+    // of DIR_ANDROID_APP_DATA which isn't accessible by other apps.
+    reserved_path->clear();
+    (*g_reservation_map)[key] = *reserved_path;
+    return false;
+#else
     is_path_writeable = false;
     PathService::Get(chrome::DIR_USER_DOCUMENTS, &target_dir);
     target_path = target_dir.Append(filename);
+#endif  // BUILDFLAG(ANDROID_JAVA_UI)
   }
 
   if (is_path_writeable) {
@@ -240,7 +262,7 @@ bool CreateReservation(
     }
   }
 
-  reservations[key] = target_path;
+  (*g_reservation_map)[key] = target_path;
   bool verified = (is_path_writeable && !has_conflicts && !name_too_long);
   *reserved_path = target_path;
   return verified;
@@ -267,7 +289,7 @@ void UpdateReservation(ReservationKey key, const base::FilePath& new_path) {
 void RevokeReservation(ReservationKey key) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   DCHECK(g_reservation_map != NULL);
-  DCHECK(ContainsKey(*g_reservation_map, key));
+  DCHECK(base::ContainsKey(*g_reservation_map, key));
   g_reservation_map->erase(key);
   if (g_reservation_map->size() == 0) {
     // No more reservations. Delete map.
@@ -289,10 +311,14 @@ DownloadItemObserver::DownloadItemObserver(DownloadItem* download_item)
       last_target_path_(download_item->GetTargetFilePath()) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   download_item_->AddObserver(this);
+  download_item_->SetUserData(&kUserDataKey, this);
 }
 
 DownloadItemObserver::~DownloadItemObserver() {
   download_item_->RemoveObserver(this);
+  // DownloadItemObserver is owned by DownloadItem. It should only be getting
+  // destroyed because it's being removed from the UserData pool. No need to
+  // call DownloadItem::RemoveUserData().
 }
 
 void DownloadItemObserver::OnDownloadUpdated(DownloadItem* download) {
@@ -323,7 +349,7 @@ void DownloadItemObserver::OnDownloadUpdated(DownloadItem* download) {
 
       BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE, base::Bind(
           &RevokeReservation, download));
-      delete this;
+      download->RemoveUserData(&kUserDataKey);
       break;
 
     case DownloadItem::MAX_DOWNLOAD_STATE:
@@ -337,8 +363,10 @@ void DownloadItemObserver::OnDownloadDestroyed(DownloadItem* download) {
   NOTREACHED();
   BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE, base::Bind(
       &RevokeReservation, download));
-  delete this;
 }
+
+// static
+const int DownloadItemObserver::kUserDataKey = 0;
 
 }  // namespace
 

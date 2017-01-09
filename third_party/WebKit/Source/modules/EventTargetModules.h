@@ -9,12 +9,4 @@
 #include "modules/EventModulesNames.h"
 #include "modules/EventTargetModulesNames.h"
 
-namespace blink {
-
-class IDBRequest;
-class MediaRecorder;
-class MediaStream;
-
-} // namespace blink
-
-#endif // EventTargetModules_h
+#endif  // EventTargetModules_h

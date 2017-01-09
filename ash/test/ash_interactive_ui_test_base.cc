@@ -18,7 +18,7 @@ AshInteractiveUITestBase::AshInteractiveUITestBase() {}
 AshInteractiveUITestBase::~AshInteractiveUITestBase() {}
 
 void AshInteractiveUITestBase::SetUp() {
-  gfx::GLSurfaceTestSupport::InitializeOneOff();
+  gl::GLSurfaceTestSupport::InitializeOneOff();
 
   ui::RegisterPathProvider();
   ui::ResourceBundle::InitSharedInstanceWithLocale(
@@ -29,14 +29,14 @@ void AshInteractiveUITestBase::SetUp() {
       resources_pack_path.Append(FILE_PATH_LITERAL("resources.pak"));
   ResourceBundle::GetSharedInstance().AddDataPackFromPath(
       resources_pack_path, ui::SCALE_FACTOR_NONE);
-  aura::Env::CreateInstance(true);
+  env_ = aura::Env::CreateInstance();
 
   test::AshTestBase::SetUp();
 }
 
 void AshInteractiveUITestBase::TearDown() {
   test::AshTestBase::TearDown();
-  aura::Env::DeleteInstance();
+  env_.reset();
 }
 
 }  // namespace test

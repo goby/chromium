@@ -5,14 +5,17 @@
 #ifndef NET_PROXY_DHCP_PROXY_SCRIPT_FETCHER_WIN_H_
 #define NET_PROXY_DHCP_PROXY_SCRIPT_FETCHER_WIN_H_
 
+#include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "net/base/net_export.h"
 #include "net/proxy/dhcp_proxy_script_fetcher.h"
 
 namespace base {
@@ -142,7 +145,8 @@ class NET_EXPORT_PRIVATE DhcpProxyScriptFetcherWin
   // Vector, in Windows' network adapter preference order, of
   // DhcpProxyScriptAdapterFetcher objects that are or were attempting
   // to fetch a PAC file based on DHCP configuration.
-  typedef ScopedVector<DhcpProxyScriptAdapterFetcher> FetcherVector;
+  using FetcherVector =
+      std::vector<std::unique_ptr<DhcpProxyScriptAdapterFetcher>>;
   FetcherVector fetchers_;
 
   // Number of fetchers we are waiting for.

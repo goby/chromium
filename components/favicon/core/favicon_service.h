@@ -5,10 +5,14 @@
 #ifndef COMPONENTS_FAVICON_CORE_FAVICON_SERVICE_H_
 #define COMPONENTS_FAVICON_CORE_FAVICON_SERVICE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon_base/favicon_callback.h"
@@ -32,7 +36,7 @@ class FaviconClient;
 class FaviconService : public KeyedService {
  public:
   // The FaviconClient must outlive the constructed FaviconService.
-  FaviconService(scoped_ptr<FaviconClient> favicon_client,
+  FaviconService(std::unique_ptr<FaviconClient> favicon_client,
                  history::HistoryService* history_service);
 
   ~FaviconService() override;
@@ -209,7 +213,7 @@ class FaviconService : public KeyedService {
   void ClearUnableToDownloadFavicons();
 
  private:
-  typedef uint32 MissingFaviconURLHash;
+  typedef uint32_t MissingFaviconURLHash;
 
   // Helper function for GetFaviconImageForPageURL(), GetRawFaviconForPageURL()
   // and GetFaviconForPageURL().
@@ -241,7 +245,7 @@ class FaviconService : public KeyedService {
           favicon_bitmap_results);
 
   base::hash_set<MissingFaviconURLHash> missing_favicon_urls_;
-  scoped_ptr<FaviconClient> favicon_client_;
+  std::unique_ptr<FaviconClient> favicon_client_;
   history::HistoryService* history_service_;
 
   DISALLOW_COPY_AND_ASSIGN(FaviconService);

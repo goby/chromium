@@ -4,10 +4,18 @@
 
 #include "media/capture/video/file_video_capture_device.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/location.h"
+#include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "media/base/video_capture_types.h"
+#include "base/strings/string_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "media/capture/video_capture_types.h"
 #include "media/filters/jpeg_parser.h"
 
 namespace media {
@@ -44,7 +52,7 @@ void ParseY4MRational(const base::StringPiece& token,
 // character, however all examples mentioned in the Y4M header description end
 // with a newline character instead. Also, some headers do _not_ specify pixel
 // format, in this case it means I420.
-// This code was inspired by third_party/libvpx_new/.../y4minput.* .
+// This code was inspired by third_party/libvpx/.../y4minput.* .
 void ParseY4MTags(const std::string& file_header,
                   media::VideoCaptureFormat* video_format) {
   media::VideoCaptureFormat format;
@@ -128,8 +136,8 @@ class Y4mFileParser final : public VideoFileParser {
   const uint8_t* GetNextFrame(int* frame_size) override;
 
  private:
-  scoped_ptr<base::File> file_;
-  scoped_ptr<uint8_t[]> video_frame_;
+  std::unique_ptr<base::File> file_;
+  std::unique_ptr<uint8_t[]> video_frame_;
 
   DISALLOW_COPY_AND_ASSIGN(Y4mFileParser);
 };
@@ -144,7 +152,7 @@ class MjpegFileParser final : public VideoFileParser {
   const uint8_t* GetNextFrame(int* frame_size) override;
 
  private:
-  scoped_ptr<base::MemoryMappedFile> mapped_file_;
+  std::unique_ptr<base::MemoryMappedFile> mapped_file_;
 
   DISALLOW_COPY_AND_ASSIGN(MjpegFileParser);
 };
@@ -260,17 +268,16 @@ const uint8_t* MjpegFileParser::GetNextFrame(int* frame_size) {
 bool FileVideoCaptureDevice::GetVideoCaptureFormat(
     const base::FilePath& file_path,
     media::VideoCaptureFormat* video_format) {
-  scoped_ptr<VideoFileParser> file_parser =
+  std::unique_ptr<VideoFileParser> file_parser =
       GetVideoFileParser(file_path, video_format);
   return file_parser != nullptr;
 }
 
 // static
-scoped_ptr<VideoFileParser>
-FileVideoCaptureDevice::GetVideoFileParser(
+std::unique_ptr<VideoFileParser> FileVideoCaptureDevice::GetVideoFileParser(
     const base::FilePath& file_path,
     media::VideoCaptureFormat* video_format) {
-  scoped_ptr<VideoFileParser> file_parser;
+  std::unique_ptr<VideoFileParser> file_parser;
   std::string file_name(file_path.value().begin(), file_path.value().end());
 
   if (base::EndsWith(file_name, "y4m",
@@ -281,13 +288,13 @@ FileVideoCaptureDevice::GetVideoFileParser(
     file_parser.reset(new MjpegFileParser(file_path));
   } else {
     LOG(ERROR) << "Unsupported file format.";
-    return file_parser.Pass();
+    return file_parser;
   }
 
   if (!file_parser->Initialize(video_format)) {
     file_parser.reset();
   }
-  return file_parser.Pass();
+  return file_parser;
 }
 
 FileVideoCaptureDevice::FileVideoCaptureDevice(const base::FilePath& file_path)
@@ -302,12 +309,12 @@ FileVideoCaptureDevice::~FileVideoCaptureDevice() {
 
 void FileVideoCaptureDevice::AllocateAndStart(
     const VideoCaptureParams& params,
-    scoped_ptr<VideoCaptureDevice::Client> client) {
+    std::unique_ptr<VideoCaptureDevice::Client> client) {
   DCHECK(thread_checker_.CalledOnValidThread());
   CHECK(!capture_thread_.IsRunning());
 
   capture_thread_.Start();
-  capture_thread_.message_loop()->PostTask(
+  capture_thread_.task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&FileVideoCaptureDevice::OnAllocateAndStart,
                  base::Unretained(this), params, base::Passed(&client)));
@@ -317,7 +324,7 @@ void FileVideoCaptureDevice::StopAndDeAllocate() {
   DCHECK(thread_checker_.CalledOnValidThread());
   CHECK(capture_thread_.IsRunning());
 
-  capture_thread_.message_loop()->PostTask(
+  capture_thread_.task_runner()->PostTask(
       FROM_HERE, base::Bind(&FileVideoCaptureDevice::OnStopAndDeAllocate,
                             base::Unretained(this)));
   capture_thread_.Stop();
@@ -325,10 +332,10 @@ void FileVideoCaptureDevice::StopAndDeAllocate() {
 
 void FileVideoCaptureDevice::OnAllocateAndStart(
     const VideoCaptureParams& params,
-    scoped_ptr<VideoCaptureDevice::Client> client) {
-  DCHECK_EQ(capture_thread_.message_loop(), base::MessageLoop::current());
+    std::unique_ptr<VideoCaptureDevice::Client> client) {
+  DCHECK(capture_thread_.task_runner()->BelongsToCurrentThread());
 
-  client_ = client.Pass();
+  client_ = std::move(client);
 
   DCHECK(!file_parser_);
   file_parser_ = GetVideoFileParser(file_path_, &capture_format_);
@@ -340,20 +347,20 @@ void FileVideoCaptureDevice::OnAllocateAndStart(
   DVLOG(1) << "Opened video file " << capture_format_.frame_size.ToString()
            << ", fps: " << capture_format_.frame_rate;
 
-  capture_thread_.message_loop()->PostTask(
+  capture_thread_.task_runner()->PostTask(
       FROM_HERE, base::Bind(&FileVideoCaptureDevice::OnCaptureTask,
                             base::Unretained(this)));
 }
 
 void FileVideoCaptureDevice::OnStopAndDeAllocate() {
-  DCHECK_EQ(capture_thread_.message_loop(), base::MessageLoop::current());
+  DCHECK(capture_thread_.task_runner()->BelongsToCurrentThread());
   file_parser_.reset();
   client_.reset();
   next_frame_time_ = base::TimeTicks();
 }
 
 void FileVideoCaptureDevice::OnCaptureTask() {
-  DCHECK_EQ(capture_thread_.message_loop(), base::MessageLoop::current());
+  DCHECK(capture_thread_.task_runner()->BelongsToCurrentThread());
   if (!client_)
     return;
 
@@ -363,8 +370,10 @@ void FileVideoCaptureDevice::OnCaptureTask() {
   DCHECK(frame_size);
   CHECK(frame_ptr);
   const base::TimeTicks current_time = base::TimeTicks::Now();
+  if (first_ref_time_.is_null())
+    first_ref_time_ = current_time;
   client_->OnIncomingCapturedData(frame_ptr, frame_size, capture_format_, 0,
-                                  current_time);
+                                  current_time, current_time - first_ref_time_);
   // Reschedule next CaptureTask.
   const base::TimeDelta frame_interval =
       base::TimeDelta::FromMicroseconds(1E6 / capture_format_.frame_rate);
@@ -377,7 +386,7 @@ void FileVideoCaptureDevice::OnCaptureTask() {
     if (next_frame_time_ < current_time)
       next_frame_time_ = current_time;
   }
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::Bind(&FileVideoCaptureDevice::OnCaptureTask,
                             base::Unretained(this)),
       next_frame_time_ - current_time);

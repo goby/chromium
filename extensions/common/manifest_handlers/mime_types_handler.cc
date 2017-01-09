@@ -4,7 +4,10 @@
 
 #include "extensions/common/manifest_handlers/mime_types_handler.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -100,7 +103,7 @@ bool MimeTypesHandlerParser::Parse(extensions::Extension* extension,
     return false;
   }
 
-  scoped_ptr<MimeTypesHandlerInfo> info(new MimeTypesHandlerInfo);
+  std::unique_ptr<MimeTypesHandlerInfo> info(new MimeTypesHandlerInfo);
   info->handler_.set_extension_id(extension->id());
   for (size_t i = 0; i < mime_types_value->GetSize(); ++i) {
     std::string filter;

@@ -5,13 +5,16 @@
 #include "chrome/browser/android/tab_state.h"
 
 #include <jni.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/pickle.h"
 #include "chrome/browser/android/tab_android.h"
@@ -22,11 +25,13 @@
 #include "components/sessions/core/session_command.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/restore_type.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/TabState_jni.h"
 
 using base::android::ConvertUTF16ToJavaString;
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 using content::NavigationController;
 using content::WebContents;
@@ -197,7 +202,7 @@ void UpgradeNavigationFromV1ToV2(
     if (iterator->ReadBool(&is_overriding_user_agent))
       v2_pickle.WriteBool(is_overriding_user_agent);
 
-    int64 timestamp_internal_value = 0;
+    int64_t timestamp_internal_value = 0;
     if (iterator->ReadInt64(&timestamp_internal_value))
       v2_pickle.WriteInt64(timestamp_internal_value);
 
@@ -426,7 +431,7 @@ WebContents* WebContentsState::RestoreContentsFromByteBuffer(
     return NULL;
 
   Profile* profile = ProfileManager::GetActiveUserProfile();
-  std::vector<scoped_ptr<content::NavigationEntry>> entries =
+  std::vector<std::unique_ptr<content::NavigationEntry>> entries =
       sessions::ContentSerializedNavigationBuilder::ToNavigationEntries(
           navigations, profile);
 
@@ -434,10 +439,9 @@ WebContents* WebContentsState::RestoreContentsFromByteBuffer(
     profile = profile->GetOffTheRecordProfile();
   WebContents::CreateParams params(profile);
   params.initially_hidden = initially_hidden;
-  scoped_ptr<WebContents> web_contents(WebContents::Create(params));
+  std::unique_ptr<WebContents> web_contents(WebContents::Create(params));
   web_contents->GetController().Restore(
-      current_entry_index, NavigationController::RESTORE_CURRENT_SESSION,
-      &entries);
+      current_entry_index, content::RestoreType::CURRENT_SESSION, &entries);
   return web_contents.release();
 }
 
@@ -475,10 +479,9 @@ ScopedJavaLocalRef<jobject>
         GURL(base::android::ConvertJavaStringToUTF8(env, referrer_url)),
         static_cast<blink::WebReferrerPolicy>(referrer_policy));
   }
-  scoped_ptr<content::NavigationEntry> entry(
+  std::unique_ptr<content::NavigationEntry> entry(
       content::NavigationController::CreateNavigationEntry(
-          GURL(base::android::ConvertJavaStringToUTF8(env, url)),
-          referrer,
+          GURL(base::android::ConvertJavaStringToUTF8(env, url)), referrer,
           ui::PAGE_TRANSITION_LINK,
           true,  // is_renderer_initiated
           "",    // extra_headers
@@ -567,10 +570,9 @@ static void CreateHistoricalTab(JNIEnv* env,
                                 const JavaParamRef<jclass>& clazz,
                                 const JavaParamRef<jobject>& state,
                                 jint saved_state_version) {
-  scoped_ptr<WebContents> web_contents(WebContents::FromJavaWebContents(
-      WebContentsState::RestoreContentsFromByteBuffer(env, clazz, state,
-                                                      saved_state_version, true)
-          .obj()));
+  std::unique_ptr<WebContents> web_contents(WebContents::FromJavaWebContents(
+      WebContentsState::RestoreContentsFromByteBuffer(
+          env, clazz, state, saved_state_version, true)));
   if (web_contents.get())
     TabAndroid::CreateHistoricalTabFromContents(web_contents.get());
 }

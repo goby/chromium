@@ -10,6 +10,7 @@
 #include "base/ios/ios_util.h"
 #include "base/location.h"
 #include "base/mac/foundation_util.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "ios/web/public/web_thread.h"
@@ -39,16 +40,10 @@ void GetSnapshotsPaths(std::vector<base::FilePath>* snapshotsPaths) {
   DCHECK(snapshotsPaths);
   base::FilePath snapshotsDir;
   PathService::Get(base::DIR_CACHE, &snapshotsDir);
-  snapshotsDir =
-      snapshotsDir.Append("Snapshots").Append(base::mac::BaseBundleID());
-  if (base::ios::IsRunningOnIOS8OrLater()) {
-    // On iOS8, the snapshots are located in a path with the bundle ID used
-    // twice.
-    snapshotsDir = snapshotsDir.Append(base::mac::BaseBundleID());
-  } else {
-    // On iOS7, the snapshots are located in the subfolder "Main".
-    snapshotsDir = snapshotsDir.Append("Main");
-  }
+  // Snapshots are located in a path with the bundle ID used twice.
+  snapshotsDir = snapshotsDir.Append("Snapshots")
+                     .Append(base::mac::BaseBundleID())
+                     .Append(base::mac::BaseBundleID());
   const char* retinaSuffix = "";
   CGFloat scale = [UIScreen mainScreen].scale;
   if (scale == 2) {

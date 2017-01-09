@@ -6,20 +6,24 @@
 #define EXTENSIONS_RENDERER_MODULE_SYSTEM_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "extensions/renderer/native_handler.h"
 #include "extensions/renderer/object_backed_native_handler.h"
+#include "extensions/renderer/script_injection_callback.h"
 #include "gin/modules/module_registry_observer.h"
 #include "v8/include/v8.h"
 
 namespace extensions {
 
 class ScriptContext;
+class SourceMap;
 
 // A module system for JS similar to node.js' require() function.
 // Each module has three variables in the global scope:
@@ -40,14 +44,6 @@ class ScriptContext;
 class ModuleSystem : public ObjectBackedNativeHandler,
                      public gin::ModuleRegistryObserver {
  public:
-  class SourceMap {
-   public:
-    virtual ~SourceMap() {}
-    virtual v8::Local<v8::Value> GetSource(v8::Isolate* isolate,
-                                           const std::string& name) = 0;
-    virtual bool Contains(const std::string& name) = 0;
-  };
-
   class ExceptionHandler {
    public:
     explicit ExceptionHandler(ScriptContext* context) : context_(context) {}
@@ -74,7 +70,7 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   };
 
   // |source_map| is a weak pointer.
-  ModuleSystem(ScriptContext* context, SourceMap* source_map);
+  ModuleSystem(ScriptContext* context, const SourceMap* source_map);
   ~ModuleSystem() override;
 
   // Require the specified module. This is the equivalent of calling
@@ -89,22 +85,35 @@ class ModuleSystem : public ObjectBackedNativeHandler,
 
   // Calls the specified method exported by the specified module. This is
   // equivalent to calling require('module_name').method_name() from JS.
-  v8::Local<v8::Value> CallModuleMethod(const std::string& module_name,
-                                        const std::string& method_name);
-  v8::Local<v8::Value> CallModuleMethod(
-      const std::string& module_name,
-      const std::string& method_name,
-      std::vector<v8::Local<v8::Value>>* args);
+  // DEPRECATED: see crbug.com/629431
+  // TODO(devlin): Remove these.
   v8::Local<v8::Value> CallModuleMethod(const std::string& module_name,
                                         const std::string& method_name,
                                         int argc,
                                         v8::Local<v8::Value> argv[]);
 
+  // Same as the above, but allows for blocking execution.
+  void CallModuleMethodSafe(const std::string& module_name,
+                            const std::string& method_name);
+  void CallModuleMethodSafe(const std::string& module_name,
+                            const std::string& method_name,
+                            std::vector<v8::Local<v8::Value>>* args);
+  void CallModuleMethodSafe(const std::string& module_name,
+                            const std::string& method_name,
+                            int argc,
+                            v8::Local<v8::Value> argv[]);
+  void CallModuleMethodSafe(
+      const std::string& module_name,
+      const std::string& method_name,
+      int argc,
+      v8::Local<v8::Value> argv[],
+      const ScriptInjectionCallback::CompleteCallback& callback);
+
   // Register |native_handler| as a potential target for requireNative(), so
   // calls to requireNative(|name|) from JS will return a new object created by
   // |native_handler|.
   void RegisterNativeHandler(const std::string& name,
-                             scoped_ptr<NativeHandler> native_handler);
+                             std::unique_ptr<NativeHandler> native_handler);
 
   // Causes requireNative(|name|) to look for its module in |source_map_|
   // instead of using a registered native handler. This can be used in unit
@@ -140,8 +149,8 @@ class ModuleSystem : public ObjectBackedNativeHandler,
                           const std::string& module_field);
 
   // Passes exceptions to |handler| rather than console::Fatal.
-  void SetExceptionHandlerForTest(scoped_ptr<ExceptionHandler> handler) {
-    exception_handler_ = handler.Pass();
+  void SetExceptionHandlerForTest(std::unique_ptr<ExceptionHandler> handler) {
+    exception_handler_ = std::move(handler);
   }
 
  protected:
@@ -150,7 +159,8 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   void Invalidate() override;
 
  private:
-  typedef std::map<std::string, scoped_ptr<NativeHandler>> NativeHandlerMap;
+  typedef std::map<std::string, std::unique_ptr<NativeHandler>>
+      NativeHandlerMap;
 
   // Retrieves the lazily defined field specified by |property|.
   static void LazyFieldGetter(v8::Local<v8::Name> property,
@@ -202,8 +212,9 @@ class ModuleSystem : public ObjectBackedNativeHandler,
 
   // Invoked when a module is loaded in response to a requireAsync call.
   // Resolves |resolver| with |value|.
-  void OnModuleLoaded(scoped_ptr<v8::Global<v8::Promise::Resolver>> resolver,
-                      v8::Local<v8::Value> value);
+  void OnModuleLoaded(
+      std::unique_ptr<v8::Global<v8::Promise::Resolver>> resolver,
+      v8::Local<v8::Value> value);
 
   // gin::ModuleRegistryObserver overrides.
   void OnDidAddPendingModule(
@@ -214,11 +225,15 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   // See |clobbered_native_handlers_|.
   void ClobberExistingNativeHandler(const std::string& name);
 
+  // Returns the v8::Function associated with the given module and method name.
+  v8::Local<v8::Function> GetModuleFunction(const std::string& module_name,
+                                            const std::string& method_name);
+
   ScriptContext* context_;
 
   // A map from module names to the JS source for that module. GetSource()
   // performs a lookup on this map.
-  SourceMap* source_map_;
+  const SourceMap* const source_map_;
 
   // A map from native handler names to native handlers.
   NativeHandlerMap native_handler_map_;
@@ -229,7 +244,7 @@ class ModuleSystem : public ObjectBackedNativeHandler,
 
   // Called when an exception is thrown but not caught in JS. Overridable by
   // tests.
-  scoped_ptr<ExceptionHandler> exception_handler_;
+  std::unique_ptr<ExceptionHandler> exception_handler_;
 
   // A set of native handlers that should actually be require()d as non-native
   // handlers. This is used for tests to mock out native handlers in JS.
@@ -239,7 +254,7 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   // registering a NativeHandler when one was already registered with the same
   // name, or due to OverrideNativeHandlerForTest. This is needed so that they
   // can be later Invalidated. It should only happen in tests.
-  std::vector<scoped_ptr<NativeHandler>> clobbered_native_handlers_;
+  std::vector<std::unique_ptr<NativeHandler>> clobbered_native_handlers_;
 
   base::WeakPtrFactory<ModuleSystem> weak_factory_;
 

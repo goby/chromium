@@ -5,24 +5,22 @@
 #ifndef CHROME_BROWSER_DEVTOOLS_DEVTOOLS_FILE_SYSTEM_INDEXER_H_
 #define CHROME_BROWSER_DEVTOOLS_DEVTOOLS_FILE_SYSTEM_INDEXER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/files/file_proxy.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-
-class Profile;
 
 namespace base {
 class FilePath;
 class FileEnumerator;
 class Time;
-}
-
-namespace content {
-class WebContents;
 }
 
 class DevToolsFileSystemIndexer
@@ -65,13 +63,13 @@ class DevToolsFileSystemIndexer
     TotalWorkCallback total_work_callback_;
     WorkedCallback worked_callback_;
     DoneCallback done_callback_;
-    scoped_ptr<base::FileEnumerator> file_enumerator_;
+    std::unique_ptr<base::FileEnumerator> file_enumerator_;
     typedef std::map<base::FilePath, base::Time> FilePathTimesMap;
     FilePathTimesMap file_path_times_;
     FilePathTimesMap::const_iterator indexing_it_;
     base::FileProxy current_file_;
-    int64 current_file_offset_;
-    typedef int32 Trigram;
+    int64_t current_file_offset_;
+    typedef int32_t Trigram;
     std::vector<Trigram> current_trigrams_;
     // The index in this vector is the trigram id.
     std::vector<bool> current_trigrams_set_;

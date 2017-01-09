@@ -4,14 +4,19 @@
 
 #include "extensions/browser/extension_throttle_manager.h"
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_util.h"
 #include "extensions/browser/extension_request_limiting_throttle.h"
 #include "extensions/common/constants.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 #include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source_type.h"
 #include "net/url_request/url_request.h"
 
 namespace extensions {
@@ -52,14 +57,14 @@ ExtensionThrottleManager::~ExtensionThrottleManager() {
   url_entries_.clear();
 }
 
-scoped_ptr<content::ResourceThrottle>
+std::unique_ptr<content::ResourceThrottle>
 ExtensionThrottleManager::MaybeCreateThrottle(const net::URLRequest* request) {
   if (request->first_party_for_cookies().scheme() !=
       extensions::kExtensionScheme) {
     return nullptr;
   }
-  return make_scoped_ptr(
-      new extensions::ExtensionRequestLimitingThrottle(request, this));
+  return base::MakeUnique<extensions::ExtensionRequestLimitingThrottle>(request,
+                                                                        this);
 }
 
 scoped_refptr<ExtensionThrottleEntryInterface>
@@ -101,7 +106,7 @@ ExtensionThrottleManager::RegisterRequestUrl(const GURL& url) {
     if (net::IsLocalhost(host)) {
       if (!logged_for_localhost_disabled_ && net::IsLocalhost(host)) {
         logged_for_localhost_disabled_ = true;
-        net_log_.AddEvent(net::NetLog::TYPE_THROTTLING_DISABLED_FOR_HOST,
+        net_log_.AddEvent(net::NetLogEventType::THROTTLING_DISABLED_FOR_HOST,
                           net::NetLog::StringCallback("host", &host));
       }
 
@@ -116,8 +121,8 @@ ExtensionThrottleManager::RegisterRequestUrl(const GURL& url) {
 }
 
 void ExtensionThrottleManager::SetBackoffPolicyForTests(
-    scoped_ptr<net::BackoffEntry::Policy> policy) {
-  backoff_policy_for_tests_ = policy.Pass();
+    std::unique_ptr<net::BackoffEntry::Policy> policy) {
+  backoff_policy_for_tests_ = std::move(policy);
 }
 
 void ExtensionThrottleManager::OverrideEntryForTests(
@@ -153,8 +158,8 @@ bool ExtensionThrottleManager::enable_thread_checks() const {
 
 void ExtensionThrottleManager::set_net_log(net::NetLog* net_log) {
   DCHECK(net_log);
-  net_log_ = net::BoundNetLog::Make(
-      net_log, net::NetLog::SOURCE_EXPONENTIAL_BACKOFF_THROTTLING);
+  net_log_ = net::NetLogWithSource::Make(
+      net_log, net::NetLogSourceType::EXPONENTIAL_BACKOFF_THROTTLING);
 }
 
 net::NetLog* ExtensionThrottleManager::net_log() const {

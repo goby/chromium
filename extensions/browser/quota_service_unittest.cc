@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/process/process.h"
-#include "base/stl_util.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "content/public/test/test_browser_thread.h"
 #include "extensions/browser/extension_function.h"
@@ -17,38 +21,36 @@ using content::BrowserThread;
 
 namespace extensions {
 
-typedef QuotaLimitHeuristic::Bucket Bucket;
-typedef QuotaLimitHeuristic::Config Config;
-typedef QuotaLimitHeuristic::BucketList BucketList;
-typedef QuotaService::TimedLimit TimedLimit;
+using Bucket = QuotaLimitHeuristic::Bucket;
+using Config = QuotaLimitHeuristic::Config;
+using BucketList = QuotaLimitHeuristic::BucketList;
+using TimedLimit = QuotaService::TimedLimit;
 
 namespace {
 
 const char kGenericName[] = "name";
 const Config kFrozenConfig = {0, TimeDelta::FromDays(0)};
 const Config k2PerMinute = {2, TimeDelta::FromMinutes(1)};
-const Config k20PerHour = {20, TimeDelta::FromHours(1)};
 const TimeTicks kStartTime = TimeTicks();
 const TimeTicks k1MinuteAfterStart = kStartTime + TimeDelta::FromMinutes(1);
 
 class Mapper : public QuotaLimitHeuristic::BucketMapper {
  public:
   Mapper() {}
-  ~Mapper() override { STLDeleteValues(&buckets_); }
+  ~Mapper() override {}
   void GetBucketsForArgs(const base::ListValue* args,
                          BucketList* buckets) override {
     for (size_t i = 0; i < args->GetSize(); i++) {
       int id;
       ASSERT_TRUE(args->GetInteger(i, &id));
       if (buckets_.find(id) == buckets_.end())
-        buckets_[id] = new Bucket();
-      buckets->push_back(buckets_[id]);
+        buckets_[id] = base::MakeUnique<Bucket>();
+      buckets->push_back(buckets_[id].get());
     }
   }
 
  private:
-  typedef std::map<int, Bucket*> BucketMap;
-  BucketMap buckets_;
+  std::map<int, std::unique_ptr<Bucket>> buckets_;
   DISALLOW_COPY_AND_ASSIGN(Mapper);
 };
 
@@ -63,11 +65,8 @@ class MockFunction : public ExtensionFunction {
   explicit MockFunction(const char* name) { set_name(name); }
 
   void SetArgs(const base::ListValue* args) override {}
-  std::string GetError() const override { return std::string(); }
-  void SetError(const std::string& error) override {}
   void Destruct() const override { delete this; }
   ResponseAction Run() override { return RespondLater(); }
-  void SendResponse(bool) override {}
 
  protected:
   ~MockFunction() override {}
@@ -79,7 +78,7 @@ class TimedLimitMockFunction : public MockFunction {
   void GetQuotaLimitHeuristics(
       QuotaLimitHeuristics* heuristics) const override {
     heuristics->push_back(
-        new TimedLimit(k2PerMinute, new Mapper(), kGenericName));
+        base::MakeUnique<TimedLimit>(k2PerMinute, new Mapper(), kGenericName));
   }
 
  private:
@@ -91,8 +90,8 @@ class FrozenMockFunction : public MockFunction {
   explicit FrozenMockFunction(const char* name) : MockFunction(name) {}
   void GetQuotaLimitHeuristics(
       QuotaLimitHeuristics* heuristics) const override {
-    heuristics->push_back(
-        new TimedLimit(kFrozenConfig, new Mapper(), kGenericName));
+    heuristics->push_back(base::MakeUnique<TimedLimit>(
+        kFrozenConfig, new Mapper(), kGenericName));
   }
 
  private:
@@ -110,7 +109,7 @@ class QuotaServiceTest : public testing::Test {
         ui_thread_(BrowserThread::UI, &loop_) {}
   void SetUp() override { service_.reset(new QuotaService()); }
   void TearDown() override {
-    loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     service_.reset();
   }
 
@@ -118,7 +117,7 @@ class QuotaServiceTest : public testing::Test {
   std::string extension_a_;
   std::string extension_b_;
   std::string extension_c_;
-  scoped_ptr<QuotaService> service_;
+  std::unique_ptr<QuotaService> service_;
   base::MessageLoop loop_;
   content::TestBrowserThread ui_thread_;
 };
@@ -178,14 +177,14 @@ TEST_F(QuotaServiceTest, NoHeuristic) {
 TEST_F(QuotaServiceTest, FrozenHeuristic) {
   scoped_refptr<MockFunction> f(new FrozenMockFunction("foo"));
   base::ListValue args;
-  args.Append(new base::FundamentalValue(1));
+  args.AppendInteger(1);
   EXPECT_NE("", service_->Assess(extension_a_, f.get(), &args, kStartTime));
 }
 
 TEST_F(QuotaServiceTest, SingleHeuristic) {
   scoped_refptr<MockFunction> f(new TimedLimitMockFunction("foo"));
   base::ListValue args;
-  args.Append(new base::FundamentalValue(1));
+  args.AppendInteger(1);
   EXPECT_EQ("", service_->Assess(extension_a_, f.get(), &args, kStartTime));
   EXPECT_EQ("",
             service_->Assess(extension_a_,
@@ -199,8 +198,8 @@ TEST_F(QuotaServiceTest, SingleHeuristic) {
                              kStartTime + TimeDelta::FromSeconds(15)));
 
   base::ListValue args2;
-  args2.Append(new base::FundamentalValue(1));
-  args2.Append(new base::FundamentalValue(2));
+  args2.AppendInteger(1);
+  args2.AppendInteger(2);
   EXPECT_EQ("", service_->Assess(extension_b_, f.get(), &args2, kStartTime));
   EXPECT_EQ("",
             service_->Assess(extension_b_,
@@ -224,7 +223,7 @@ TEST_F(QuotaServiceTest, SingleHeuristic) {
 
   // Test that items are independent.
   base::ListValue args3;
-  args3.Append(new base::FundamentalValue(3));
+  args3.AppendInteger(3);
   EXPECT_EQ("", service_->Assess(extension_c_, f.get(), &args, kStartTime));
   EXPECT_EQ("",
             service_->Assess(extension_c_,
@@ -259,8 +258,8 @@ TEST_F(QuotaServiceTest, MultipleFunctionsDontInterfere) {
 
   base::ListValue args_f;
   base::ListValue args_g;
-  args_f.Append(new base::FundamentalValue(1));
-  args_g.Append(new base::FundamentalValue(2));
+  args_f.AppendInteger(1);
+  args_g.AppendInteger(2);
 
   EXPECT_EQ("", service_->Assess(extension_a_, f.get(), &args_f, kStartTime));
   EXPECT_EQ("", service_->Assess(extension_a_, g.get(), &args_g, kStartTime));
@@ -289,7 +288,7 @@ TEST_F(QuotaServiceTest, MultipleFunctionsDontInterfere) {
 TEST_F(QuotaServiceTest, ViolatorsWillBeForgiven) {
   scoped_refptr<MockFunction> f(new TimedLimitMockFunction("foo"));
   base::ListValue arg;
-  arg.Append(new base::FundamentalValue(1));
+  arg.AppendInteger(1);
   EXPECT_EQ("", service_->Assess(extension_a_, f.get(), &arg, kStartTime));
   EXPECT_EQ("",
             service_->Assess(extension_a_,

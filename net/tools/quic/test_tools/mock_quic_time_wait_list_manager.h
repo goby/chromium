@@ -11,42 +11,48 @@
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace net {
-namespace tools {
 namespace test {
 
 class MockTimeWaitListManager : public QuicTimeWaitListManager {
  public:
   MockTimeWaitListManager(QuicPacketWriter* writer,
-                          QuicServerSessionVisitor* visitor,
-                          QuicConnectionHelperInterface* helper);
+                          Visitor* visitor,
+                          QuicConnectionHelperInterface* helper,
+                          QuicAlarmFactory* alarm_factory);
   ~MockTimeWaitListManager() override;
 
   MOCK_METHOD4(AddConnectionIdToTimeWait,
                void(QuicConnectionId connection_id,
                     QuicVersion version,
                     bool connection_rejected_statelessly,
-                    std::vector<QuicEncryptedPacket*>* termination_packets));
+                    std::vector<std::unique_ptr<QuicEncryptedPacket>>*
+                        termination_packets));
 
   void QuicTimeWaitListManager_AddConnectionIdToTimeWait(
       QuicConnectionId connection_id,
       QuicVersion version,
       bool connection_rejected_statelessly,
-      std::vector<QuicEncryptedPacket*>* termination_packets) {
+      std::vector<std::unique_ptr<QuicEncryptedPacket>>* termination_packets) {
     QuicTimeWaitListManager::AddConnectionIdToTimeWait(
         connection_id, version, connection_rejected_statelessly,
         termination_packets);
   }
 
   MOCK_METHOD5(ProcessPacket,
-               void(const IPEndPoint& server_address,
-                    const IPEndPoint& client_address,
+               void(const QuicSocketAddress& server_address,
+                    const QuicSocketAddress& client_address,
                     QuicConnectionId connection_id,
                     QuicPacketNumber packet_number,
                     const QuicEncryptedPacket& packet));
+
+  MOCK_METHOD4(SendVersionNegotiationPacket,
+               void(QuicConnectionId connection_id,
+                    const QuicVersionVector& supported_versions,
+                    const QuicSocketAddress& server_address,
+                    const QuicSocketAddress& client_address));
 };
 
 }  // namespace test
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_TEST_TOOLS_MOCK_QUIC_TIME_WAIT_LIST_MANAGER_H_

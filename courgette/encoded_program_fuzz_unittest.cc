@@ -10,11 +10,17 @@
 //
 // We try a lot of arbitrary modifications to the serialized form and make sure
 // that the outcome is not a crash.
+#include "courgette/encoded_program.h"
+
+#include <stddef.h>
+
+#include <memory>
 
 #include "base/test/test_suite.h"
-
+#include "courgette/assembly_program.h"
 #include "courgette/base_test_unittest.h"
 #include "courgette/courgette.h"
+#include "courgette/program_detector.h"
 #include "courgette/streams.h"
 
 class DecodeFuzzTest : public BaseTest {
@@ -35,27 +41,28 @@ class DecodeFuzzTest : public BaseTest {
 void DecodeFuzzTest::FuzzExe(const char* file_name) const {
   std::string file1 = FileContents(file_name);
 
-  const void* original_buffer = file1.c_str();
+  const uint8_t* original_buffer =
+      reinterpret_cast<const uint8_t*>(file1.data());
   size_t original_length = file1.length();
 
-  courgette::AssemblyProgram* program = NULL;
+  std::unique_ptr<courgette::AssemblyProgram> program;
   const courgette::Status parse_status =
       courgette::ParseDetectedExecutable(original_buffer, original_length,
                                          &program);
   EXPECT_EQ(courgette::C_OK, parse_status);
 
-  courgette::EncodedProgram* encoded = NULL;
-
-  const courgette::Status encode_status = Encode(program, &encoded);
+  std::unique_ptr<courgette::EncodedProgram> encoded;
+  const courgette::Status encode_status = Encode(*program, &encoded);
   EXPECT_EQ(courgette::C_OK, encode_status);
 
-  DeleteAssemblyProgram(program);
+  program.reset();
 
   courgette::SinkStreamSet sinks;
-  const courgette::Status write_status = WriteEncodedProgram(encoded, &sinks);
+  const courgette::Status write_status =
+      WriteEncodedProgram(encoded.get(), &sinks);
   EXPECT_EQ(courgette::C_OK, write_status);
 
-  DeleteEncodedProgram(encoded);
+  encoded.reset();
 
   courgette::SinkStream sink;
   bool can_collect = sinks.CopyTo(&sink);
@@ -168,7 +175,7 @@ void DecodeFuzzTest::FuzzBits(const std::string& base_buffer,
 
 bool DecodeFuzzTest::TryAssemble(const std::string& buffer,
                                  std::string* output) const {
-  courgette::EncodedProgram *encoded = NULL;
+  std::unique_ptr<courgette::EncodedProgram> encoded;
   bool result = false;
 
   courgette::SourceStreamSet sources;
@@ -178,7 +185,8 @@ bool DecodeFuzzTest::TryAssemble(const std::string& buffer,
         ReadEncodedProgram(&sources, &encoded);
     if (read_status == courgette::C_OK) {
       courgette::SinkStream assembled;
-      const courgette::Status assemble_status = Assemble(encoded, &assembled);
+      const courgette::Status assemble_status =
+          Assemble(encoded.get(), &assembled);
 
       if (assemble_status == courgette::C_OK) {
         const void* assembled_buffer = assembled.Buffer();
@@ -191,8 +199,6 @@ bool DecodeFuzzTest::TryAssemble(const std::string& buffer,
       }
     }
   }
-
-  DeleteEncodedProgram(encoded);
 
   return result;
 }

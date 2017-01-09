@@ -46,14 +46,10 @@ t.step(function() {
                     'openWindow() can not open an invalid url',
                     'openWindow() error is: TypeError',
                     'openWindow() can not open view-source scheme',
+                    'openWindow() error is: TypeError',
                     'openWindow() can not open file scheme',
-                    'openWindow() error is: SecurityError',
+                    'openWindow() error is: TypeError',
                     ];
-
-    // LayoutTests on Mac do not open focused windows.
-    var isMac = navigator.platform.indexOf('Mac') == 0;
-    if (isMac)
-      expected[10] = ' focused: false';
 
     function onMessage(e) {
       var message = e.data;
@@ -62,7 +58,7 @@ t.step(function() {
         if (message.type !== 'click')
           return;
         if (window.testRunner)
-          testRunner.simulateWebNotificationClick(message.title);
+          testRunner.simulateWebNotificationClick(message.title, -1 /* action_index */);
         return;
       }
 

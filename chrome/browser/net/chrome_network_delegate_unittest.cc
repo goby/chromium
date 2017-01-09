@@ -6,13 +6,16 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_member.h"
 #include "base/run_loop.h"
 #include "base/test/histogram_tester.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/net/safe_search_util.h"
@@ -25,40 +28,33 @@
 #include "components/data_usage/core/data_use_aggregator.h"
 #include "components/data_usage/core/data_use_amortizer.h"
 #include "components/data_usage/core/data_use_annotator.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/prefs/pref_member.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/features/features.h"
 #include "net/base/request_priority.h"
+#include "net/http/http_request_headers.h"
 #include "net/socket/socket_test_util.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/event_router_forwarder.h"
-#endif
-
-#if !defined(OS_IOS)
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #endif
 
 namespace {
 
-// This function requests a URL, and makes it return a known response. If
-// |from_user| is true, it attaches a ResourceRequestInfo to the URLRequest,
-// because requests from users have this info. If |from_user| is false, the
-// request is presumed to be from a service, and the service name is set in the
-// request's user data. (As an example suggestions service tag is attached). if
-// |redirect| is true, it adds necessary socket data to have it follow redirect
-// before getting the final response.
-scoped_ptr<net::URLRequest> RequestURL(
+// This function requests a URL, and makes it return a known response.
+// ResourceRequestInfo is attached to the URLRequest, to represent this request
+// as an user initiated.
+std::unique_ptr<net::URLRequest> RequestURL(
     net::URLRequestContext* context,
-    net::MockClientSocketFactory* socket_factory,
-    bool from_user,
-    bool redirect) {
+    net::MockClientSocketFactory* socket_factory) {
   net::MockRead redirect_mock_reads[] = {
       net::MockRead("HTTP/1.1 302 Found\r\n"
                     "Location: http://bar.com/\r\n\r\n"),
@@ -67,8 +63,6 @@ scoped_ptr<net::URLRequest> RequestURL(
   net::StaticSocketDataProvider redirect_socket_data_provider(
       redirect_mock_reads, arraysize(redirect_mock_reads), nullptr, 0);
 
-  if (redirect)
-    socket_factory->AddSocketDataProvider(&redirect_socket_data_provider);
   net::MockRead response_mock_reads[] = {
       net::MockRead("HTTP/1.1 200 OK\r\n\r\n"), net::MockRead("response body"),
       net::MockRead(net::SYNCHRONOUS, net::OK),
@@ -78,22 +72,16 @@ scoped_ptr<net::URLRequest> RequestURL(
   socket_factory->AddSocketDataProvider(&response_socket_data_provider);
   net::TestDelegate test_delegate;
   test_delegate.set_quit_on_complete(true);
-  scoped_ptr<net::URLRequest> request(context->CreateRequest(
+  std::unique_ptr<net::URLRequest> request(context->CreateRequest(
       GURL("http://example.com"), net::DEFAULT_PRIORITY, &test_delegate));
 
-  if (from_user) {
-    content::ResourceRequestInfo::AllocateForTesting(
-        request.get(), content::RESOURCE_TYPE_MAIN_FRAME, nullptr, -2, -2, -2,
-        true, false, true, true, false);
-  } else {
-    request->SetUserData(
-        data_use_measurement::DataUseUserData::kUserDataKey,
-        new data_use_measurement::DataUseUserData(
-            data_use_measurement::DataUseUserData::SUGGESTIONS));
-  }
+  content::ResourceRequestInfo::AllocateForTesting(
+      request.get(), content::RESOURCE_TYPE_MAIN_FRAME, nullptr, -2, -2, -2,
+      true, false, true, true, false);
+
   request->Start();
   base::RunLoop().RunUntilIdle();
-  return request.Pass();
+  return request;
 }
 
 // A fake DataUseAggregator for testing that only counts how many times its
@@ -102,8 +90,8 @@ class FakeDataUseAggregator : public data_usage::DataUseAggregator {
  public:
   FakeDataUseAggregator()
       : data_usage::DataUseAggregator(
-            scoped_ptr<data_usage::DataUseAnnotator>(),
-            scoped_ptr<data_usage::DataUseAmortizer>()),
+            std::unique_ptr<data_usage::DataUseAnnotator>(),
+            std::unique_ptr<data_usage::DataUseAmortizer>()),
         on_the_record_tx_bytes_(0),
         on_the_record_rx_bytes_(0),
         off_the_record_tx_bytes_(0),
@@ -141,14 +129,14 @@ class ChromeNetworkDelegateTest : public testing::Test {
   ChromeNetworkDelegateTest()
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
         context_(new net::TestURLRequestContext(true)) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     forwarder_ = new extensions::EventRouterForwarder();
 #endif
   }
 
   void SetUp() override {
     ChromeNetworkDelegate::InitializePrefsOnUIThread(
-        &enable_referrers_, nullptr, nullptr, nullptr,
+        &enable_referrers_, nullptr, nullptr, nullptr, nullptr,
         profile_.GetTestingPrefService());
     profile_manager_.reset(
         new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
@@ -172,7 +160,7 @@ class ChromeNetworkDelegateTest : public testing::Test {
   }
 
   extensions::EventRouterForwarder* forwarder() {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     return forwarder_.get();
 #else
     return nullptr;
@@ -180,116 +168,24 @@ class ChromeNetworkDelegateTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   content::TestBrowserThreadBundle thread_bundle_;
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<extensions::EventRouterForwarder> forwarder_;
 #endif
   TestingProfile profile_;
   BooleanPrefMember enable_referrers_;
-  scoped_ptr<ChromeNetworkDelegate> network_delegate_;
+  std::unique_ptr<ChromeNetworkDelegate> network_delegate_;
   net::MockClientSocketFactory socket_factory_;
-  scoped_ptr<net::TestURLRequestContext> context_;
+  std::unique_ptr<net::TestURLRequestContext> context_;
 };
 
-// This function tests data use measurement for requests by services. it makes a
-// query which is similar to a query of a service, so it should affect
-// DataUse.TrafficSize.System.Dimensions and DataUse.MessageSize.ServiceName
-// histograms. AppState and ConnectionType dimensions are always Foreground and
-// NotCellular respectively.
-#if !defined(OS_IOS)
-TEST_F(ChromeNetworkDelegateTest, DataUseMeasurementServiceTest) {
-  Initialize();
-  base::HistogramTester histogram_tester;
-
-  // A query from a service without redirection.
-  RequestURL(context(), socket_factory(), false, false);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Downstream.Foreground.NotCellular", 1);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Upstream.Foreground.NotCellular", 1);
-  // One upload and one download message, so totalCount should be 2.
-  histogram_tester.ExpectTotalCount("DataUse.MessageSize.Suggestions", 2);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Downstream.Foreground.NotCellular", 0);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Upstream.Foreground.NotCellular", 0);
-}
-
-// This function tests data use measurement for requests by user.The query from
-// a user should affect DataUse.TrafficSize.User.Dimensions histogram. AppState
-// and ConnectionType dimensions are always Foreground and NotCellular
-// respectively.
-TEST_F(ChromeNetworkDelegateTest, DataUseMeasurementUserTest) {
-  Initialize();
-  base::HistogramTester histogram_tester;
-
-  // A query from user without redirection.
-  RequestURL(context(), socket_factory(), true, false);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Downstream.Foreground.NotCellular", 1);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Upstream.Foreground.NotCellular", 1);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Downstream.Foreground.NotCellular", 0);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Upstream.Foreground.NotCellular", 0);
-  histogram_tester.ExpectTotalCount("DataUse.MessageSize.Suggestions", 0);
-}
-
-// This function tests data use measurement for requests by services in case the
-// request is redirected once. it makes a query which is similar to a query of a
-// service, so it should affect DataUse.TrafficSize.System.Dimensions and
-// DataUse.MessageSize.ServiceName histograms. AppState and ConnectionType
-// dimensions are always Foreground and NotCellular respectively.
-TEST_F(ChromeNetworkDelegateTest, DataUseMeasurementServiceTestWithRedirect) {
-  Initialize();
-  base::HistogramTester histogram_tester;
-
-  // A query from user with one redirection.
-  RequestURL(context(), socket_factory(), false, true);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Downstream.Foreground.NotCellular", 2);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Upstream.Foreground.NotCellular", 2);
-  // Two uploads and two downloads message, so totalCount should be 4.
-  histogram_tester.ExpectTotalCount("DataUse.MessageSize.Suggestions", 4);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Downstream.Foreground.NotCellular", 0);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Upstream.Foreground.NotCellular", 0);
-}
-
-// This function tests data use measurement for requests by user in case the
-// request is redirected once.The query from a user should affect
-// DataUse.TrafficSize.User.Dimensions histogram. AppState and ConnectionType
-// dimensions are always Foreground and NotCellular respectively.
-TEST_F(ChromeNetworkDelegateTest, DataUseMeasurementUserTestWithRedirect) {
-  Initialize();
-  base::HistogramTester histogram_tester;
-
-  // A query from user with one redirection.
-  RequestURL(context(), socket_factory(), true, true);
-
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Downstream.Foreground.NotCellular", 2);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.User.Upstream.Foreground.NotCellular", 2);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Downstream.Foreground.NotCellular", 0);
-  histogram_tester.ExpectTotalCount(
-      "DataUse.TrafficSize.System.Upstream.Foreground.NotCellular", 0);
-  histogram_tester.ExpectTotalCount("DataUse.MessageSize.Suggestions", 0);
-}
-
-#endif
-
-TEST_F(ChromeNetworkDelegateTest, DisableFirstPartyOnlyCookiesIffFlagDisabled) {
+TEST_F(ChromeNetworkDelegateTest, DisableSameSiteCookiesIffFlagDisabled) {
   Initialize();
   EXPECT_FALSE(network_delegate()->AreExperimentalCookieFeaturesEnabled());
 }
 
-TEST_F(ChromeNetworkDelegateTest, EnableFirstPartyOnlyCookiesIffFlagEnabled) {
+TEST_F(ChromeNetworkDelegateTest, EnableSameSiteCookiesIffFlagEnabled) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kEnableExperimentalWebPlatformFeatures);
   Initialize();
@@ -303,8 +199,8 @@ TEST_F(ChromeNetworkDelegateTest, ReportDataUseToAggregator) {
   chrome_network_delegate()->set_data_use_aggregator(
       &fake_aggregator, false /* is_data_usage_off_the_record */);
 
-  scoped_ptr<net::URLRequest> request =
-      RequestURL(context(), socket_factory(), true, false);
+  std::unique_ptr<net::URLRequest> request =
+      RequestURL(context(), socket_factory());
   EXPECT_EQ(request->GetTotalSentBytes(),
             fake_aggregator.on_the_record_tx_bytes());
   EXPECT_EQ(request->GetTotalReceivedBytes(),
@@ -319,8 +215,8 @@ TEST_F(ChromeNetworkDelegateTest, ReportOffTheRecordDataUseToAggregator) {
 
   chrome_network_delegate()->set_data_use_aggregator(
       &fake_aggregator, true /* is_data_usage_off_the_record */);
-  scoped_ptr<net::URLRequest> request =
-      RequestURL(context(), socket_factory(), true, false);
+  std::unique_ptr<net::URLRequest> request =
+      RequestURL(context(), socket_factory());
 
   EXPECT_EQ(0, fake_aggregator.on_the_record_tx_bytes());
   EXPECT_EQ(0, fake_aggregator.on_the_record_rx_bytes());
@@ -330,99 +226,194 @@ TEST_F(ChromeNetworkDelegateTest, ReportOffTheRecordDataUseToAggregator) {
             fake_aggregator.off_the_record_rx_bytes());
 }
 
-class ChromeNetworkDelegateSafeSearchTest : public testing::Test {
+class ChromeNetworkDelegatePolicyTest : public testing::Test {
  public:
-  ChromeNetworkDelegateSafeSearchTest()
+  ChromeNetworkDelegatePolicyTest()
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     forwarder_ = new extensions::EventRouterForwarder();
 #endif
   }
 
-  void SetUp() override {
-    ChromeNetworkDelegate::InitializePrefsOnUIThread(
-        &enable_referrers_,
-        NULL,
-        &force_google_safe_search_,
-        &force_youtube_safety_mode_,
-        profile_.GetTestingPrefService());
-  }
-
  protected:
-  scoped_ptr<net::NetworkDelegate> CreateNetworkDelegate() {
-    scoped_ptr<ChromeNetworkDelegate> network_delegate(
-        new ChromeNetworkDelegate(forwarder(), &enable_referrers_));
-    network_delegate->set_force_google_safe_search(&force_google_safe_search_);
-    network_delegate->set_force_youtube_safety_mode(
-        &force_youtube_safety_mode_);
-    return network_delegate.Pass();
-  }
+   void SetDelegate(net::NetworkDelegate* delegate) {
+     context_.set_network_delegate(delegate);
+   }
 
-  void SetSafeSearch(bool google_safe_search,
-                     bool youtube_safety_mode) {
-    force_google_safe_search_.SetValue(google_safe_search);
-    force_youtube_safety_mode_.SetValue(youtube_safety_mode);
-  }
-
-  void SetDelegate(net::NetworkDelegate* delegate) {
-    network_delegate_ = delegate;
-    context_.set_network_delegate(network_delegate_);
-  }
-
-  // Does a request to an arbitrary URL and verifies that the SafeSearch
-  // enforcement utility functions were called/not called as expected.
-  void QueryURL(bool expect_google_safe_search,
-                bool expect_youtube_safety_mode) {
-    safe_search_util::ClearForceGoogleSafeSearchCountForTesting();
-    safe_search_util::ClearForceYouTubeSafetyModeCountForTesting();
-
-    scoped_ptr<net::URLRequest> request(context_.CreateRequest(
-        GURL("http://anyurl.com"), net::DEFAULT_PRIORITY, &delegate_));
-
-    request->Start();
-    base::MessageLoop::current()->RunUntilIdle();
-
-    EXPECT_EQ(expect_google_safe_search ? 1 : 0,
-        safe_search_util::GetForceGoogleSafeSearchCountForTesting());
-    EXPECT_EQ(expect_youtube_safety_mode ? 1 : 0,
-        safe_search_util::GetForceYouTubeSafetyModeCountForTesting());
-  }
-
- private:
   extensions::EventRouterForwarder* forwarder() {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     return forwarder_.get();
 #else
-    return NULL;
+    return nullptr;
 #endif
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<extensions::EventRouterForwarder> forwarder_;
 #endif
   TestingProfile profile_;
   BooleanPrefMember enable_referrers_;
-  BooleanPrefMember force_google_safe_search_;
-  BooleanPrefMember force_youtube_safety_mode_;
-  scoped_ptr<net::URLRequest> request_;
   net::TestURLRequestContext context_;
-  net::NetworkDelegate* network_delegate_;
   net::TestDelegate delegate_;
+  DISALLOW_COPY_AND_ASSIGN(ChromeNetworkDelegatePolicyTest);
+};
+
+class ChromeNetworkDelegateSafeSearchTest :
+    public ChromeNetworkDelegatePolicyTest {
+ public:
+  void SetUp() override {
+    ChromeNetworkDelegate::InitializePrefsOnUIThread(
+        &enable_referrers_,
+        nullptr,
+        &force_google_safe_search_,
+        &force_youtube_restrict_,
+        nullptr,
+        profile_.GetTestingPrefService());
+  }
+
+ protected:
+  std::unique_ptr<net::NetworkDelegate> CreateNetworkDelegate() {
+    std::unique_ptr<ChromeNetworkDelegate> network_delegate(
+        new ChromeNetworkDelegate(forwarder(), &enable_referrers_));
+    network_delegate->set_force_google_safe_search(&force_google_safe_search_);
+    network_delegate->set_force_youtube_restrict(&force_youtube_restrict_);
+    return std::move(network_delegate);
+  }
+
+  void SetSafeSearch(bool google_safe_search, int youtube_restrict) {
+    force_google_safe_search_.SetValue(google_safe_search);
+    force_youtube_restrict_.SetValue(youtube_restrict);
+  }
+
+  // Does a request to an arbitrary URL and verifies that the SafeSearch
+  // enforcement utility functions were called/not called as expected.
+  void QueryURL(bool expect_google_safe_search, bool expect_youtube_restrict) {
+    safe_search_util::ClearForceGoogleSafeSearchCountForTesting();
+    safe_search_util::ClearForceYouTubeRestrictCountForTesting();
+
+    std::unique_ptr<net::URLRequest> request(context_.CreateRequest(
+        GURL("http://anyurl.com"), net::DEFAULT_PRIORITY, &delegate_));
+
+    request->Start();
+    base::RunLoop().RunUntilIdle();
+
+    EXPECT_EQ(expect_google_safe_search ? 1 : 0,
+              safe_search_util::GetForceGoogleSafeSearchCountForTesting());
+    EXPECT_EQ(expect_youtube_restrict ? 1 : 0,
+              safe_search_util::GetForceYouTubeRestrictCountForTesting());
+  }
+
+ private:
+  BooleanPrefMember force_google_safe_search_;
+  IntegerPrefMember force_youtube_restrict_;
 };
 
 TEST_F(ChromeNetworkDelegateSafeSearchTest, SafeSearch) {
-  scoped_ptr<net::NetworkDelegate> delegate(CreateNetworkDelegate());
+  std::unique_ptr<net::NetworkDelegate> delegate(CreateNetworkDelegate());
   SetDelegate(delegate.get());
 
-  // Loop over all combinations of the two policies.
-  for (int i = 0; i < 4; i++) {
-    bool google_safe_search = i % 2;
-    bool youtube_safety_mode = i / 2;
-    SetSafeSearch(google_safe_search, youtube_safety_mode);
+  static_assert(safe_search_util::YOUTUBE_RESTRICT_OFF      == 0 &&
+                safe_search_util::YOUTUBE_RESTRICT_MODERATE == 1 &&
+                safe_search_util::YOUTUBE_RESTRICT_STRICT   == 2 &&
+                safe_search_util::YOUTUBE_RESTRICT_COUNT    == 3,
+                "This test relies on mapping ints to enum values.");
 
-    QueryURL(google_safe_search, youtube_safety_mode);
+  // Loop over all combinations of the two policies.
+  for (int i = 0; i < 6; i++) {
+    bool google_safe_search = (i / 3) != 0;
+    int youtube_restrict = i % 3;
+    SetSafeSearch(google_safe_search, youtube_restrict);
+
+    QueryURL(google_safe_search, youtube_restrict != 0);
   }
+}
+
+class ChromeNetworkDelegateAllowedDomainsTest :
+    public ChromeNetworkDelegatePolicyTest {
+ public:
+
+  void SetUp() override {
+    ChromeNetworkDelegate::InitializePrefsOnUIThread(
+        &enable_referrers_,
+        nullptr,
+        nullptr,
+        nullptr,
+        &allowed_domains_for_apps_,
+        profile_.GetTestingPrefService());
+  }
+
+ protected:
+  std::unique_ptr<net::NetworkDelegate> CreateNetworkDelegate() {
+    std::unique_ptr<ChromeNetworkDelegate> network_delegate(
+        new ChromeNetworkDelegate(forwarder(), &enable_referrers_));
+    network_delegate->set_allowed_domains_for_apps(&allowed_domains_for_apps_);
+    return std::move(network_delegate);
+  }
+
+  // Will set the AllowedDomainsForApps policy to have the value of |allowed|.
+  // Will make a request to |url| and check the headers in request.
+  // If |expected| is passed as false, this routine verifies that no
+  // X-GoogApps-Allowed-Domains header is set. If |expected| is passed as true,
+  // this routine verifies that the X-GoogApps-Allowed-Domains header is set and
+  // the value is identical to |allowed|.
+  void CheckAllowedDomainsHeaders(const std::string& allowed,
+                                  const GURL& url,
+                                  bool expected) {
+    allowed_domains_for_apps_.SetValue(allowed);
+
+    std::unique_ptr<net::URLRequest> request(context_.CreateRequest(
+        url, net::DEFAULT_PRIORITY, &delegate_));
+
+    request->Start();
+    base::RunLoop().RunUntilIdle();
+
+    net::HttpRequestHeaders request_headers = request->extra_request_headers();
+
+    const char allowed_domains_header_name[] = "X-GoogApps-Allowed-Domains";
+    EXPECT_EQ(expected, request_headers.HasHeader(allowed_domains_header_name));
+
+    if (expected) {
+      std::string header_value;
+      request_headers.GetHeader(allowed_domains_header_name, &header_value);
+      EXPECT_EQ(allowed, header_value);
+    }
+  }
+
+ private:
+  StringPrefMember allowed_domains_for_apps_;
+};
+
+// Test the use case when the AllowedDomainsForApps policy is set and
+// a request is done to Google servers. We expect the request
+// headers to contain X-GoogApps-Allowed-Domains key and its value to be equal
+// to the value from the policy.
+TEST_F(ChromeNetworkDelegateAllowedDomainsTest, AllowedDomainsIncluded) {
+  std::unique_ptr<net::NetworkDelegate> delegate(CreateNetworkDelegate());
+  SetDelegate(delegate.get());
+
+  CheckAllowedDomainsHeaders("gmail.com,mit.edu", GURL("http://google.com"),
+                             true);
+}
+
+// Test the use case when the AllowedDomainsForApps policy is empty and
+// a request is done to Google servers. We expect the request
+// headers to not contain X-GoogApps-Allowed-Domains key because the policy
+// is not set.
+TEST_F(ChromeNetworkDelegateAllowedDomainsTest, AllowedDomainsEmpty) {
+  std::unique_ptr<net::NetworkDelegate> delegate(CreateNetworkDelegate());
+  SetDelegate(delegate.get());
+  CheckAllowedDomainsHeaders("", GURL("http://google.com"), false);
+}
+
+// Test the use case when the AllowedDomainsForApps policy is set and
+// a request is done to a non-Google domain. We expect the request
+// headers to not contain X-GoogApps-Allowed-Domains key because the
+// accessed URL is not from google.com domain.
+TEST_F(ChromeNetworkDelegateAllowedDomainsTest, AllowedDomainsNonGoogleUrl) {
+  std::unique_ptr<net::NetworkDelegate> delegate(CreateNetworkDelegate());
+  SetDelegate(delegate.get());
+  CheckAllowedDomainsHeaders("google.com", GURL("http://example.com"), false);
 }
 
 // Privacy Mode disables Channel Id if cookies are blocked (cr223191)
@@ -430,7 +421,7 @@ class ChromeNetworkDelegatePrivacyModeTest : public testing::Test {
  public:
   ChromeNetworkDelegatePrivacyModeTest()
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
         forwarder_(new extensions::EventRouterForwarder()),
 #endif
         cookie_settings_(CookieSettingsFactory::GetForProfile(&profile_).get()),
@@ -442,16 +433,16 @@ class ChromeNetworkDelegatePrivacyModeTest : public testing::Test {
 
   void SetUp() override {
     ChromeNetworkDelegate::InitializePrefsOnUIThread(
-        &enable_referrers_, NULL, NULL, NULL,
+        &enable_referrers_, nullptr, nullptr, nullptr, nullptr,
         profile_.GetTestingPrefService());
   }
 
  protected:
-  scoped_ptr<ChromeNetworkDelegate> CreateNetworkDelegate() {
-    scoped_ptr<ChromeNetworkDelegate> network_delegate(
+  std::unique_ptr<ChromeNetworkDelegate> CreateNetworkDelegate() {
+    std::unique_ptr<ChromeNetworkDelegate> network_delegate(
         new ChromeNetworkDelegate(forwarder(), &enable_referrers_));
     network_delegate->set_cookie_settings(cookie_settings_);
-    return network_delegate.Pass();
+    return network_delegate;
   }
 
   void SetDelegate(net::NetworkDelegate* delegate) {
@@ -461,7 +452,7 @@ class ChromeNetworkDelegatePrivacyModeTest : public testing::Test {
 
  protected:
   extensions::EventRouterForwarder* forwarder() {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     return forwarder_.get();
 #else
     return NULL;
@@ -469,13 +460,13 @@ class ChromeNetworkDelegatePrivacyModeTest : public testing::Test {
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<extensions::EventRouterForwarder> forwarder_;
 #endif
   TestingProfile profile_;
   content_settings::CookieSettings* cookie_settings_;
   BooleanPrefMember enable_referrers_;
-  scoped_ptr<net::URLRequest> request_;
+  std::unique_ptr<net::URLRequest> request_;
   net::TestURLRequestContext context_;
   net::NetworkDelegate* network_delegate_;
 
@@ -487,7 +478,7 @@ class ChromeNetworkDelegatePrivacyModeTest : public testing::Test {
 };
 
 TEST_F(ChromeNetworkDelegatePrivacyModeTest, DisablePrivacyIfCookiesAllowed) {
-  scoped_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
+  std::unique_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
   SetDelegate(delegate.get());
 
   EXPECT_FALSE(network_delegate_->CanEnablePrivacyMode(kAllowedSite,
@@ -496,22 +487,19 @@ TEST_F(ChromeNetworkDelegatePrivacyModeTest, DisablePrivacyIfCookiesAllowed) {
 
 
 TEST_F(ChromeNetworkDelegatePrivacyModeTest, EnablePrivacyIfCookiesBlocked) {
-  scoped_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
+  std::unique_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
   SetDelegate(delegate.get());
 
   EXPECT_FALSE(network_delegate_->CanEnablePrivacyMode(kBlockedSite,
                                                        kEmptyFirstPartySite));
 
-  cookie_settings_->SetCookieSetting(
-      ContentSettingsPattern::FromURL(kBlockedSite),
-      ContentSettingsPattern::Wildcard(),
-      CONTENT_SETTING_BLOCK);
+  cookie_settings_->SetCookieSetting(kBlockedSite, CONTENT_SETTING_BLOCK);
   EXPECT_TRUE(network_delegate_->CanEnablePrivacyMode(kBlockedSite,
                                                       kEmptyFirstPartySite));
 }
 
 TEST_F(ChromeNetworkDelegatePrivacyModeTest, EnablePrivacyIfThirdPartyBlocked) {
-  scoped_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
+  std::unique_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
   SetDelegate(delegate.get());
 
   EXPECT_FALSE(network_delegate_->CanEnablePrivacyMode(kAllowedSite,
@@ -527,16 +515,14 @@ TEST_F(ChromeNetworkDelegatePrivacyModeTest, EnablePrivacyIfThirdPartyBlocked) {
 
 TEST_F(ChromeNetworkDelegatePrivacyModeTest,
        DisablePrivacyIfOnlyFirstPartyBlocked) {
-  scoped_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
+  std::unique_ptr<ChromeNetworkDelegate> delegate(CreateNetworkDelegate());
   SetDelegate(delegate.get());
 
   EXPECT_FALSE(network_delegate_->CanEnablePrivacyMode(kAllowedSite,
                                                        kBlockedFirstPartySite));
 
-  cookie_settings_->SetCookieSetting(
-      ContentSettingsPattern::FromURL(kBlockedFirstPartySite),
-      ContentSettingsPattern::Wildcard(),
-      CONTENT_SETTING_BLOCK);
+  cookie_settings_->SetCookieSetting(kBlockedFirstPartySite,
+                                     CONTENT_SETTING_BLOCK);
   // Privacy mode is disabled as kAllowedSite is still getting cookies
   EXPECT_FALSE(network_delegate_->CanEnablePrivacyMode(kAllowedSite,
                                                        kBlockedFirstPartySite));

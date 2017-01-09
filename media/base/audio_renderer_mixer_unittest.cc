@@ -4,25 +4,36 @@
 
 // MSVC++ requires this to be set before any other includes to get M_PI.
 #define _USE_MATH_DEFINES
+
+#include "media/base/audio_renderer_mixer.h"
+
+#include <stddef.h>
+
 #include <cmath>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
-#include "media/base/audio_renderer_mixer.h"
 #include "media/base/audio_renderer_mixer_input.h"
+#include "media/base/audio_renderer_mixer_pool.h"
 #include "media/base/fake_audio_render_callback.h"
 #include "media/base/mock_audio_renderer_sink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+namespace {
+void LogUma(int value) {}
+}
+
 namespace media {
 
 // Parameters which control the many input case tests.
 const int kMixerInputs = 8;
+const int kOddMixerInputs = 7;
 const int kMixerCycles = 3;
 
 // Parameters used for testing.
@@ -34,32 +45,41 @@ const int kLowLatencyBufferSize = 256;
 // Number of full sine wave cycles for each Render() call.
 const int kSineCycles = 4;
 
-// Default device ID
-const std::string kDefaultDeviceId;
-const url::Origin kDefaultSecurityOrigin;
+// Input sample frequencies for testing.
+const int kTestInputLower = 44100;
+const int kTestInputHigher = 48000;
+const int kTestInput3Rates[] = {22050, 44100, 48000};
 
-// Tuple of <input sampling rate, output sampling rate, epsilon>.
-typedef std::tr1::tuple<int, int, double> AudioRendererMixerTestData;
+// Tuple of <input sampling rates, number of input sample rates,
+// output sampling rate, epsilon>.
+using AudioRendererMixerTestData =
+    std::tr1::tuple<const int* const, size_t, int, double>;
+
 class AudioRendererMixerTest
-    : public testing::TestWithParam<AudioRendererMixerTestData> {
+    : public testing::TestWithParam<AudioRendererMixerTestData>,
+      AudioRendererMixerPool {
  public:
   AudioRendererMixerTest()
-      : epsilon_(std::tr1::get<2>(GetParam())),
-        half_fill_(false) {
-    // Create input and output parameters based on test parameters.
-    input_parameters_ = AudioParameters(
-        AudioParameters::AUDIO_PCM_LINEAR, kChannelLayout,
-        std::tr1::get<0>(GetParam()), kBitsPerChannel, kHighLatencyBufferSize);
+      : epsilon_(std::tr1::get<3>(GetParam())), half_fill_(false) {
+    // Create input parameters based on test parameters.
+    const int* const sample_rates = std::tr1::get<0>(GetParam());
+    size_t sample_rates_count = std::tr1::get<1>(GetParam());
+    for (size_t i = 0; i < sample_rates_count; ++i)
+      input_parameters_.push_back(AudioParameters(
+          AudioParameters::AUDIO_PCM_LINEAR, kChannelLayout, sample_rates[i],
+          kBitsPerChannel, kHighLatencyBufferSize));
+
+    // Create output parameters based on test parameters.
     output_parameters_ = AudioParameters(
         AudioParameters::AUDIO_PCM_LOW_LATENCY, kChannelLayout,
-        std::tr1::get<1>(GetParam()), 16, kLowLatencyBufferSize);
+        std::tr1::get<2>(GetParam()), 16, kLowLatencyBufferSize);
 
     sink_ = new MockAudioRendererSink();
     EXPECT_CALL(*sink_.get(), Start());
     EXPECT_CALL(*sink_.get(), Stop());
 
-    mixer_.reset(new AudioRendererMixer(
-        input_parameters_, output_parameters_, sink_));
+    mixer_.reset(
+        new AudioRendererMixer(output_parameters_, sink_, base::Bind(&LogUma)));
     mixer_callback_ = sink_->callback();
 
     audio_bus_ = AudioBus::Create(output_parameters_);
@@ -71,40 +91,43 @@ class AudioRendererMixerTest
     expected_callback_.reset(new FakeAudioRenderCallback(step));
   }
 
-  AudioRendererMixer* GetMixer(const AudioParameters& params,
+  AudioRendererMixer* GetMixer(int owner_id,
+                               const AudioParameters& params,
+                               AudioLatency::LatencyType latency,
                                const std::string& device_id,
                                const url::Origin& security_origin,
-                               OutputDeviceStatus* device_status) {
+                               OutputDeviceStatus* device_status) final {
     return mixer_.get();
-  }
+  };
 
-  MOCK_METHOD3(RemoveMixer,
-               void(const AudioParameters&,
-                    const std::string&,
-                    const url::Origin&));
+  MOCK_METHOD1(ReturnMixer, void(AudioRendererMixer*));
 
-  void InitializeInputs(int count) {
-    mixer_inputs_.reserve(count);
-    fake_callbacks_.reserve(count);
+  MOCK_METHOD4(
+      GetOutputDeviceInfo,
+      OutputDeviceInfo(int, int, const std::string&, const url::Origin&));
 
-    // Setup FakeAudioRenderCallback step to compensate for resampling.
-    double scale_factor = input_parameters_.sample_rate() /
-        static_cast<double>(output_parameters_.sample_rate());
-    double step = kSineCycles / (scale_factor *
-        static_cast<double>(output_parameters_.frames_per_buffer()));
+  void InitializeInputs(int inputs_per_sample_rate) {
+    mixer_inputs_.reserve(inputs_per_sample_rate * input_parameters_.size());
+    fake_callbacks_.reserve(inputs_per_sample_rate * input_parameters_.size());
 
-    for (int i = 0; i < count; ++i) {
-      fake_callbacks_.push_back(new FakeAudioRenderCallback(step));
-      mixer_inputs_.push_back(new AudioRendererMixerInput(
-          base::Bind(&AudioRendererMixerTest::GetMixer, base::Unretained(this)),
-          base::Bind(&AudioRendererMixerTest::RemoveMixer,
-                     base::Unretained(this)),
-          kDefaultDeviceId, kDefaultSecurityOrigin));
-      mixer_inputs_[i]->Initialize(input_parameters_, fake_callbacks_[i]);
-      mixer_inputs_[i]->SetVolume(1.0f);
+    for (size_t i = 0, input = 0; i < input_parameters_.size(); ++i) {
+      // Setup FakeAudioRenderCallback step to compensate for resampling.
+      double scale_factor =
+          input_parameters_[i].sample_rate() /
+          static_cast<double>(output_parameters_.sample_rate());
+      double step =
+          kSineCycles /
+          (scale_factor *
+           static_cast<double>(output_parameters_.frames_per_buffer()));
+
+      for (int j = 0; j < inputs_per_sample_rate; ++j, ++input) {
+        fake_callbacks_.push_back(new FakeAudioRenderCallback(step));
+        mixer_inputs_.push_back(CreateMixerInput());
+        mixer_inputs_[input]->Initialize(input_parameters_[i],
+                                         fake_callbacks_[input]);
+        mixer_inputs_[input]->SetVolume(1.0f);
+      }
     }
-    EXPECT_CALL(*this, RemoveMixer(testing::_, testing::_, testing::_))
-        .Times(count);
   }
 
   bool ValidateAudioData(int index, int frames, float scale, double epsilon) {
@@ -112,9 +135,11 @@ class AudioRendererMixerTest
       for (int j = index; j < frames; j++) {
         double error = fabs(audio_bus_->channel(i)[j] -
             expected_audio_bus_->channel(i)[j] * scale);
-        if (error > epsilon) {
+        // The second comparison is for the case when scale is set to 0
+        // (and less that 1 in general)
+        if ((error > epsilon * scale) && (error > epsilon)) {
           EXPECT_NEAR(expected_audio_bus_->channel(i)[j] * scale,
-                      audio_bus_->channel(i)[j], epsilon)
+                      audio_bus_->channel(i)[j], epsilon * scale)
               << " i=" << i << ", j=" << j;
           return false;
         }
@@ -138,12 +163,14 @@ class AudioRendererMixerTest
     }
 
     // Render actual audio data.
-    int frames = mixer_callback_->Render(audio_bus_.get(), 0);
+    int frames = mixer_callback_->Render(
+        base::TimeDelta(), base::TimeTicks::Now(), 0, audio_bus_.get());
     if (frames != audio_bus_->frames())
       return false;
 
     // Render expected audio data (without scaling).
-    expected_callback_->Render(expected_audio_bus_.get(), 0);
+    expected_callback_->Render(base::TimeDelta(), base::TimeTicks::Now(), 0,
+                               expected_audio_bus_.get());
 
     if (half_fill_) {
       // In this case, just verify that every frame was initialized, this will
@@ -279,19 +306,53 @@ class AudioRendererMixerTest
     EXPECT_TRUE(RenderAndValidateAudioData(0.0f));
   }
 
+  // Verify output when mixer inputs in mixed post-Stop() and post-Play()
+  // states.
+  void MixedStopPlayTest(int inputs) {
+    InitializeInputs(inputs);
+
+    // Start() all inputs.
+    for (size_t i = 0; i < mixer_inputs_.size(); ++i)
+      mixer_inputs_[i]->Start();
+
+    // Stop() all even numbered mixer inputs and Play() all odd numbered inputs
+    // and ensure we get the right value.
+    for (size_t i = 1; i < mixer_inputs_.size(); i += 2) {
+      mixer_inputs_[i - 1]->Stop();
+      mixer_inputs_[i]->Play();
+    }
+
+    // Stop the last input in case the number of inputs is odd
+    if (mixer_inputs_.size() % 2)
+      mixer_inputs_.back()->Stop();
+
+    ASSERT_TRUE(RenderAndValidateAudioData(
+        std::max(1.f, static_cast<float>(floor(mixer_inputs_.size() / 2.f)))));
+
+    for (size_t i = 1; i < mixer_inputs_.size(); i += 2)
+      mixer_inputs_[i]->Stop();
+  }
+
+  scoped_refptr<AudioRendererMixerInput> CreateMixerInput() {
+    return new AudioRendererMixerInput(
+        this,
+        // Zero frame id, default device ID and security origin.
+        0, std::string(), url::Origin(), AudioLatency::LATENCY_PLAYBACK);
+  }
+
  protected:
   virtual ~AudioRendererMixerTest() {}
 
   scoped_refptr<MockAudioRendererSink> sink_;
-  scoped_ptr<AudioRendererMixer> mixer_;
+  std::unique_ptr<AudioRendererMixer> mixer_;
   AudioRendererSink::RenderCallback* mixer_callback_;
-  AudioParameters input_parameters_;
+  std::vector<AudioParameters> input_parameters_;
   AudioParameters output_parameters_;
-  scoped_ptr<AudioBus> audio_bus_;
-  scoped_ptr<AudioBus> expected_audio_bus_;
+  std::unique_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<AudioBus> expected_audio_bus_;
   std::vector< scoped_refptr<AudioRendererMixerInput> > mixer_inputs_;
   ScopedVector<FakeAudioRenderCallback> fake_callbacks_;
-  scoped_ptr<FakeAudioRenderCallback> expected_callback_;
+  std::unique_ptr<FakeAudioRenderCallback> expected_callback_;
   double epsilon_;
   bool half_fill_;
 
@@ -373,23 +434,13 @@ TEST_P(AudioRendererMixerTest, ManyInputStop) {
 
 // Test mixer with many inputs in mixed post-Stop() and post-Play() states.
 TEST_P(AudioRendererMixerTest, ManyInputMixedStopPlay) {
-  InitializeInputs(kMixerInputs);
+  MixedStopPlayTest(kMixerInputs);
+}
 
-  // Start() all inputs.
-  for (size_t i = 0; i < mixer_inputs_.size(); ++i)
-    mixer_inputs_[i]->Start();
-
-  // Stop() all even numbered mixer inputs and Play() all odd numbered inputs
-  // and ensure we get the right value.
-  for (size_t i = 1; i < mixer_inputs_.size(); i += 2) {
-    mixer_inputs_[i - 1]->Stop();
-    mixer_inputs_[i]->Play();
-  }
-  ASSERT_TRUE(RenderAndValidateAudioData(std::max(
-      mixer_inputs_.size() / 2, static_cast<size_t>(1))));
-
-  for (size_t i = 1; i < mixer_inputs_.size(); i += 2)
-    mixer_inputs_[i]->Stop();
+// Test mixer with many inputs in mixed post-Stop() and post-Play() states.
+TEST_P(AudioRendererMixerTest, ManyInputMixedStopPlayOdd) {
+  // Odd number of inputs per sample rate, to stop them unevenly.
+  MixedStopPlayTest(kOddMixerInputs);
 }
 
 TEST_P(AudioRendererMixerBehavioralTest, OnRenderError) {
@@ -421,18 +472,6 @@ TEST_P(AudioRendererMixerBehavioralTest, OnRenderErrorPausedInput) {
     mixer_inputs_[i]->Stop();
 }
 
-// Ensure constructing an AudioRendererMixerInput, but not initializing it does
-// not call RemoveMixer().
-TEST_P(AudioRendererMixerBehavioralTest, NoInitialize) {
-  EXPECT_CALL(*this, RemoveMixer(testing::_, testing::_, testing::_)).Times(0);
-  scoped_refptr<AudioRendererMixerInput> audio_renderer_mixer =
-      new AudioRendererMixerInput(
-          base::Bind(&AudioRendererMixerTest::GetMixer, base::Unretained(this)),
-          base::Bind(&AudioRendererMixerTest::RemoveMixer,
-                     base::Unretained(this)),
-          kDefaultDeviceId, kDefaultSecurityOrigin);
-}
-
 // Ensure the physical stream is paused after a certain amount of time with no
 // inputs playing.  The test will hang if the behavior is incorrect.
 TEST_P(AudioRendererMixerBehavioralTest, MixerPausesStream) {
@@ -441,7 +480,9 @@ TEST_P(AudioRendererMixerBehavioralTest, MixerPausesStream) {
   const base::TimeDelta kTestTimeout = 10 * kPauseTime;
   mixer_->set_pause_delay_for_testing(kPauseTime);
 
-  base::WaitableEvent pause_event(true, false);
+  base::WaitableEvent pause_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   EXPECT_CALL(*sink_.get(), Pause()).Times(2)
       .WillRepeatedly(SignalEvent(&pause_event));
   InitializeInputs(1);
@@ -450,7 +491,8 @@ TEST_P(AudioRendererMixerBehavioralTest, MixerPausesStream) {
   const base::TimeDelta kSleepTime = base::TimeDelta::FromMilliseconds(100);
   base::TimeTicks start_time = base::TimeTicks::Now();
   while (!pause_event.IsSignaled()) {
-    mixer_callback_->Render(audio_bus_.get(), 0);
+    mixer_callback_->Render(base::TimeDelta(), base::TimeTicks::Now(), 0,
+                            audio_bus_.get());
     base::PlatformThread::Sleep(kSleepTime);
     ASSERT_TRUE(base::TimeTicks::Now() - start_time < kTestTimeout);
   }
@@ -465,7 +507,8 @@ TEST_P(AudioRendererMixerBehavioralTest, MixerPausesStream) {
   // Ensure once the input is paused the sink eventually pauses.
   start_time = base::TimeTicks::Now();
   while (!pause_event.IsSignaled()) {
-    mixer_callback_->Render(audio_bus_.get(), 0);
+    mixer_callback_->Render(base::TimeDelta(), base::TimeTicks::Now(), 0,
+                            audio_bus_.get());
     base::PlatformThread::Sleep(kSleepTime);
     ASSERT_TRUE(base::TimeTicks::Now() - start_time < kTestTimeout);
   }
@@ -474,22 +517,46 @@ TEST_P(AudioRendererMixerBehavioralTest, MixerPausesStream) {
 }
 
 INSTANTIATE_TEST_CASE_P(
-    AudioRendererMixerTest, AudioRendererMixerTest, testing::Values(
-        // No resampling.
-        std::tr1::make_tuple(44100, 44100, 0.00000048),
+    AudioRendererMixerTest,
+    AudioRendererMixerTest,
+    testing::Values(
+        // No resampling, 1 input sample rate.
+        std::tr1::make_tuple(&kTestInputLower, 1, kTestInputLower, 0.00000048),
 
-        // Upsampling.
-        std::tr1::make_tuple(44100, 48000, 0.033),
+        // Upsampling, 1 input sample rate.
+        std::tr1::make_tuple(&kTestInputLower, 1, kTestInputHigher, 0.01),
 
-        // Downsampling.
-        std::tr1::make_tuple(48000, 41000, 0.042)));
+        // Downsampling, 1 input sample rate.
+        std::tr1::make_tuple(&kTestInputHigher, 1, kTestInputLower, 0.01),
+
+        // Downsampling, multuple input sample rates.
+        std::tr1::make_tuple(static_cast<const int* const>(kTestInput3Rates),
+                             arraysize(kTestInput3Rates),
+                             kTestInput3Rates[0],
+                             0.01),
+
+        // Upsampling, multiple sinput sample rates.
+        std::tr1::make_tuple(static_cast<const int* const>(kTestInput3Rates),
+                             arraysize(kTestInput3Rates),
+                             kTestInput3Rates[2],
+                             0.01),
+
+        // Both downsampling and upsampling, multiple input sample rates
+        std::tr1::make_tuple(static_cast<const int* const>(kTestInput3Rates),
+                             arraysize(kTestInput3Rates),
+                             kTestInput3Rates[1],
+                             0.01)));
 
 // Test cases for behavior which is independent of parameters.  Values() doesn't
 // support single item lists and we don't want these test cases to run for every
 // parameter set.
 INSTANTIATE_TEST_CASE_P(
-    AudioRendererMixerBehavioralTest, AudioRendererMixerBehavioralTest,
+    AudioRendererMixerBehavioralTest,
+    AudioRendererMixerBehavioralTest,
     testing::ValuesIn(std::vector<AudioRendererMixerTestData>(
-        1, std::tr1::make_tuple(44100, 44100, 0))));
-
+        1,
+        std::tr1::make_tuple(&kTestInputLower,
+                             1,
+                             kTestInputLower,
+                             0.00000048))));
 }  // namespace media

@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_SIGNIN_CORE_BROWSER_GAIA_COOKIE_MANAGER_SERVICE_H
-#define COMPONENTS_SIGNIN_CORE_BROWSER_GAIA_COOKIE_MANAGER_SERVICE_H
+#ifndef COMPONENTS_SIGNIN_CORE_BROWSER_GAIA_COOKIE_MANAGER_SERVICE_H_
+#define COMPONENTS_SIGNIN_CORE_BROWSER_GAIA_COOKIE_MANAGER_SERVICE_H_
 
 #include <deque>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
 #include "components/signin/core/browser/signin_client.h"
@@ -50,28 +56,38 @@ class GaiaCookieManagerService : public KeyedService,
 
     GaiaCookieRequestType request_type() const { return request_type_; }
     const std::string& account_id() const {return account_id_; }
+    const std::string& source() const {return source_; }
 
     static GaiaCookieRequest CreateAddAccountRequest(
-        const std::string& account_id);
-    static GaiaCookieRequest CreateLogOutRequest();
-    static GaiaCookieRequest CreateListAccountsRequest();
+        const std::string& account_id,
+        const std::string& source);
+    static GaiaCookieRequest CreateLogOutRequest(const std::string& source);
+    static GaiaCookieRequest CreateListAccountsRequest(
+        const std::string& source);
 
    private:
     GaiaCookieRequest(
         GaiaCookieRequestType request_type,
-        const std::string& account_id);
+        const std::string& account_id,
+        const std::string& source);
 
     GaiaCookieRequestType request_type_;
     std::string account_id_;
+    std::string source_;
   };
 
   class Observer {
    public:
     // Called whenever a merge session is completed.  The account that was
     // merged is given by |account_id|.  If |error| is equal to
-    // GoogleServiceAuthError::AuthErrorNone() then the merge succeeeded.
+    // GoogleServiceAuthError::AuthErrorNone() then the merge succeeded.
     virtual void OnAddAccountToCookieCompleted(
         const std::string& account_id,
+        const GoogleServiceAuthError& error) {}
+
+    // Called whenever a logout is completed. If |error| is equal to
+    // GoogleServiceAuthError::AuthErrorNone() then the logout succeeded.
+    virtual void OnLogOutAccountsFromCookieCompleted(
         const GoogleServiceAuthError& error) {}
 
     // Called whenever the GaiaCookieManagerService's list of GAIA accounts is
@@ -83,6 +99,7 @@ class GaiaCookieManagerService : public KeyedService,
     // is passed in |error|.
     virtual void OnGaiaAccountsInCookieUpdated(
         const std::vector<gaia::ListedAccount>& accounts,
+        const std::vector<gaia::ListedAccount>& signed_out_accounts,
         const GoogleServiceAuthError& error) {}
 
    protected:
@@ -102,7 +119,7 @@ class GaiaCookieManagerService : public KeyedService,
     // Maps tokens to the fetched result for that token.
     typedef std::map<std::string, std::string> ResultMap;
 
-    ExternalCcResultFetcher(GaiaCookieManagerService* helper);
+    explicit ExternalCcResultFetcher(GaiaCookieManagerService* helper);
     ~ExternalCcResultFetcher() override;
 
     // Gets the current value of the external connection check result string.
@@ -128,7 +145,7 @@ class GaiaCookieManagerService : public KeyedService,
         const GoogleServiceAuthError& error) override;
 
     // Creates and initializes a URL fetcher for doing a connection check.
-    scoped_ptr<net::URLFetcher> CreateFetcher(const GURL& url);
+    std::unique_ptr<net::URLFetcher> CreateFetcher(const GURL& url);
 
     // Overridden from URLFetcherDelgate.
     void OnURLFetchComplete(const net::URLFetcher* source) override;
@@ -159,19 +176,25 @@ class GaiaCookieManagerService : public KeyedService,
   void Init();
   void Shutdown() override;
 
-  void AddAccountToCookie(const std::string& account_id);
+  void AddAccountToCookie(const std::string& account_id,
+                          const std::string& source);
   void AddAccountToCookieWithToken(const std::string& account_id,
-                                   const std::string& access_token);
+                                   const std::string& access_token,
+                                   const std::string& source);
 
   // Returns if the listed accounts are up to date or not (ignore the out
   // parameter if return is false). The parameter will be assigned the current
   // cached accounts. If the accounts are not up to date, a ListAccounts fetch
   // is sent GAIA and Observer::OnGaiaAccountsInCookieUpdated will be called.
-  bool ListAccounts(std::vector<gaia::ListedAccount>* accounts);
+  // If either of |accounts| or |signed_out_accounts| is null, the corresponding
+  // accounts returned from /ListAccounts are ignored.
+  bool ListAccounts(std::vector<gaia::ListedAccount>* accounts,
+                    std::vector<gaia::ListedAccount>* signed_out_accounts,
+                    const std::string& source);
 
   // Triggers a ListAccounts fetch. This is public so that callers that know
   // that a check which GAIA should be done can force it.
-  void TriggerListAccounts();
+  void TriggerListAccounts(const std::string& source);
 
   // Forces the processing of OnCookieChanged. This is public so that callers
   // that know the GAIA APISID cookie might have changed can inform the
@@ -186,7 +209,7 @@ class GaiaCookieManagerService : public KeyedService,
   void CancelAll();
 
   // Signout all accounts.
-  void LogOutAllAccounts();
+  void LogOutAllAccounts(const std::string& source);
 
   // Call observers when merge session completes.  This public so that callers
   // that know that a given account is already in the cookie jar can simply
@@ -216,9 +239,19 @@ class GaiaCookieManagerService : public KeyedService,
     return signin_client_->GetURLRequestContext();
   }
 
+  // Returns the source value to use for GaiaFetcher requests.  This is
+  // virtual to allow tests and fake classes to override.
+  virtual std::string GetSourceForRequest(
+      const GaiaCookieManagerService::GaiaCookieRequest& request);
+
+  // Returns the default source value to use for GaiaFetcher requests.  This is
+  // virtual to allow tests and fake classes to override.
+  virtual std::string GetDefaultSourceForRequest();
+
   // Called when a cookie changes. If the cookie relates to a GAIA APISID
   // cookie, then we call ListAccounts and fire OnGaiaAccountsInCookieUpdated.
-  void OnCookieChanged(const net::CanonicalCookie& cookie, bool removed);
+  void OnCookieChanged(const net::CanonicalCookie& cookie,
+                       net::CookieStore::ChangeCause cause);
 
   // Overridden from UbertokenConsumer.
   void OnUbertokenSuccess(const std::string& token) override;
@@ -233,7 +266,8 @@ class GaiaCookieManagerService : public KeyedService,
   void OnLogOutFailure(const GoogleServiceAuthError& error) override;
 
   // Helper method for AddAccountToCookie* methods.
-  void AddAccountToCookieInternal(const std::string& account_id);
+  void AddAccountToCookieInternal(const std::string& account_id,
+                                  const std::string& source);
 
   // Starts the proess of fetching the uber token and performing a merge session
   // for the next account.  Virtual so that it can be overriden in tests.
@@ -253,8 +287,8 @@ class GaiaCookieManagerService : public KeyedService,
 
   OAuth2TokenService* token_service_;
   SigninClient* signin_client_;
-  scoped_ptr<GaiaAuthFetcher> gaia_auth_fetcher_;
-  scoped_ptr<UbertokenFetcher> uber_token_fetcher_;
+  std::unique_ptr<GaiaAuthFetcher> gaia_auth_fetcher_;
+  std::unique_ptr<UbertokenFetcher> uber_token_fetcher_;
   ExternalCcResultFetcher external_cc_result_fetcher_;
 
   // If the GaiaAuthFetcher or URLFetcher fails, retry with exponential backoff
@@ -270,7 +304,7 @@ class GaiaCookieManagerService : public KeyedService,
   std::string access_token_;
 
   // Subscription to be called whenever the GAIA cookies change.
-  scoped_ptr<SigninClient::CookieChangedSubscription>
+  std::unique_ptr<SigninClient::CookieChangedSubscription>
       cookie_changed_subscription_;
 
   // A worklist for this class. Stores any pending requests that couldn't be
@@ -289,10 +323,11 @@ class GaiaCookieManagerService : public KeyedService,
   bool external_cc_result_fetched_;
 
   std::vector<gaia::ListedAccount> listed_accounts_;
+  std::vector<gaia::ListedAccount> signed_out_accounts_;
 
   bool list_accounts_stale_;
 
   DISALLOW_COPY_AND_ASSIGN(GaiaCookieManagerService);
 };
 
-#endif  // COMPONENTS_SIGNIN_CORE_BROWSER_GAIA_COOKIE_MANAGER_SERVICE_H
+#endif  // COMPONENTS_SIGNIN_CORE_BROWSER_GAIA_COOKIE_MANAGER_SERVICE_H_

@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/accessibility/ax_node.h"
@@ -152,12 +154,12 @@ TEST(AXGeneratedTreeTest, SerializeGeneratedTrees) {
 
         // Start by serializing tree0 and unserializing it into a new
         // empty tree |dst_tree|.
-        scoped_ptr<AXTreeSource<const AXNode*, AXNodeData, AXTreeData> >
+        std::unique_ptr<AXTreeSource<const AXNode*, AXNodeData, AXTreeData>>
             tree0_source(tree0.CreateTreeSource());
         AXTreeSerializer<const AXNode*, AXNodeData, AXTreeData> serializer(
             tree0_source.get());
         AXTreeUpdate update0;
-        serializer.SerializeChanges(tree0.root(), &update0);
+        ASSERT_TRUE(serializer.SerializeChanges(tree0.root(), &update0));
 
         AXTree dst_tree;
         ASSERT_TRUE(dst_tree.Unserialize(update0));
@@ -167,14 +169,15 @@ TEST(AXGeneratedTreeTest, SerializeGeneratedTrees) {
 
         // Next, pretend that tree0 turned into tree1, and serialize
         // a sequence of updates to |dst_tree| to match.
-        scoped_ptr<AXTreeSource<const AXNode*, AXNodeData, AXTreeData> >
+        std::unique_ptr<AXTreeSource<const AXNode*, AXNodeData, AXTreeData>>
             tree1_source(tree1.CreateTreeSource());
         serializer.ChangeTreeSourceForTesting(tree1_source.get());
 
         for (int k_index = 0; k_index < tree_size; ++k_index) {
           int id = 1 + (k + k_index) % tree_size;
           AXTreeUpdate update;
-          serializer.SerializeChanges(tree1.GetFromId(id), &update);
+          ASSERT_TRUE(
+              serializer.SerializeChanges(tree1.GetFromId(id), &update));
           ASSERT_TRUE(dst_tree.Unserialize(update));
         }
 

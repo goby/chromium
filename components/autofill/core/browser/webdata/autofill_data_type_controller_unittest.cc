@@ -4,22 +4,24 @@
 
 #include "components/autofill/core/browser/webdata/autofill_data_type_controller.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/core/browser/webdata/autocomplete_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
-#include "components/sync_driver/data_type_controller_mock.h"
-#include "components/sync_driver/fake_sync_client.h"
+#include "components/sync/driver/data_type_controller_mock.h"
+#include "components/sync/driver/fake_sync_client.h"
+#include "components/sync/model/sync_error.h"
 #include "components/webdata_services/web_data_service_test_util.h"
-#include "sync/api/sync_error.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -44,6 +46,7 @@ class NoOpAutofillBackend : public AutofillWebDataBackend {
       autofill::AutofillWebDataServiceObserverOnDBThread* observer) override {}
   void RemoveExpiredFormElements() override {}
   void NotifyOfMultipleAutofillChanges() override {}
+  void NotifyThatSyncHasStarted(syncer::ModelType /* model_type */) override {}
 };
 
 // Fake WebDataService implementation that stubs out the database loading.
@@ -62,8 +65,12 @@ class FakeWebDataService : public AutofillWebDataService {
     StartSyncableService();
     is_database_loaded_ = true;
 
-    if (!db_loaded_callback_.is_null())
+    if (!db_loaded_callback_.is_null()) {
       db_loaded_callback_.Run();
+      // Clear the callback here or the WDS and DTC will have refs to each other
+      // and create a memory leak.
+      db_loaded_callback_ = base::Callback<void(void)>();
+    }
   }
 
   bool IsDatabaseLoaded() override { return is_database_loaded_; }
@@ -102,27 +109,21 @@ class FakeWebDataService : public AutofillWebDataService {
   DISALLOW_COPY_AND_ASSIGN(FakeWebDataService);
 };
 
-class SyncAutofillDataTypeControllerTest : public testing::Test,
-                                           public sync_driver::FakeSyncClient {
+class SyncAutofillDataTypeControllerTest : public testing::Test {
  public:
   SyncAutofillDataTypeControllerTest()
       : db_thread_("DB_Thread"),
-        last_start_result_(sync_driver::DataTypeController::OK),
+        last_start_result_(syncer::DataTypeController::OK),
         weak_ptr_factory_(this) {}
   ~SyncAutofillDataTypeControllerTest() override {}
-
-  // FakeSyncClient overrides.
-  scoped_refptr<autofill::AutofillWebDataService> GetWebDataService() override {
-    return web_data_service_;
-  }
 
   void SetUp() override {
     db_thread_.Start();
     web_data_service_ = new FakeWebDataService(
         base::ThreadTaskRunnerHandle::Get(), db_thread_.task_runner());
-    autofill_dtc_ = new AutofillDataTypeController(
-        base::ThreadTaskRunnerHandle::Get(), db_thread_.task_runner(),
-        base::Bind(&base::DoNothing), this);
+    autofill_dtc_ = base::MakeUnique<AutofillDataTypeController>(
+        db_thread_.task_runner(), base::Bind(&base::DoNothing), &sync_client_,
+        web_data_service_);
   }
 
   void TearDown() override {
@@ -137,14 +138,14 @@ class SyncAutofillDataTypeControllerTest : public testing::Test,
   }
 
   // Passed to AutofillDTC::Start().
-  void OnStartFinished(sync_driver::DataTypeController::ConfigureResult result,
+  void OnStartFinished(syncer::DataTypeController::ConfigureResult result,
                        const syncer::SyncMergeResult& local_merge_result,
                        const syncer::SyncMergeResult& syncer_merge_result) {
     last_start_result_ = result;
     last_start_error_ = local_merge_result.error();
   }
 
-  void OnLoadFinished(syncer::ModelType type, syncer::SyncError error) {
+  void OnLoadFinished(syncer::ModelType type, const syncer::SyncError& error) {
     EXPECT_FALSE(error.IsSet());
     EXPECT_EQ(type, syncer::AUTOFILL);
   }
@@ -159,11 +160,12 @@ class SyncAutofillDataTypeControllerTest : public testing::Test,
  protected:
   base::MessageLoop message_loop_;
   base::Thread db_thread_;
-  scoped_refptr<AutofillDataTypeController> autofill_dtc_;
+  syncer::FakeSyncClient sync_client_;
+  std::unique_ptr<AutofillDataTypeController> autofill_dtc_;
   scoped_refptr<FakeWebDataService> web_data_service_;
 
   // Stores arguments of most recent call of OnStartFinished().
-  sync_driver::DataTypeController::ConfigureResult last_start_result_;
+  syncer::DataTypeController::ConfigureResult last_start_result_;
   syncer::SyncError last_start_error_;
   base::WeakPtrFactory<SyncAutofillDataTypeControllerTest> weak_ptr_factory_;
 };
@@ -182,10 +184,9 @@ TEST_F(SyncAutofillDataTypeControllerTest, StartWDSReady) {
                  weak_ptr_factory_.GetWeakPtr()));
   BlockForDBThread();
 
-  EXPECT_EQ(sync_driver::DataTypeController::ASSOCIATION_FAILED,
-            last_start_result_);
+  EXPECT_EQ(syncer::DataTypeController::ASSOCIATION_FAILED, last_start_result_);
   EXPECT_TRUE(last_start_error_.IsSet());
-  EXPECT_EQ(sync_driver::DataTypeController::DISABLED, autofill_dtc_->state());
+  EXPECT_EQ(syncer::DataTypeController::DISABLED, autofill_dtc_->state());
 }
 
 // Start the autofill DTC without the WDS's database loaded, then
@@ -197,10 +198,9 @@ TEST_F(SyncAutofillDataTypeControllerTest, StartWDSNotReady) {
       base::Bind(&SyncAutofillDataTypeControllerTest::OnLoadFinished,
                  weak_ptr_factory_.GetWeakPtr()));
 
-  EXPECT_EQ(sync_driver::DataTypeController::OK, last_start_result_);
+  EXPECT_EQ(syncer::DataTypeController::OK, last_start_result_);
   EXPECT_FALSE(last_start_error_.IsSet());
-  EXPECT_EQ(sync_driver::DataTypeController::MODEL_STARTING,
-            autofill_dtc_->state());
+  EXPECT_EQ(syncer::DataTypeController::MODEL_STARTING, autofill_dtc_->state());
 
   web_data_service_->LoadDatabase();
 
@@ -209,11 +209,10 @@ TEST_F(SyncAutofillDataTypeControllerTest, StartWDSNotReady) {
                  weak_ptr_factory_.GetWeakPtr()));
   BlockForDBThread();
 
-  EXPECT_EQ(sync_driver::DataTypeController::ASSOCIATION_FAILED,
-            last_start_result_);
+  EXPECT_EQ(syncer::DataTypeController::ASSOCIATION_FAILED, last_start_result_);
   EXPECT_TRUE(last_start_error_.IsSet());
 
-  EXPECT_EQ(sync_driver::DataTypeController::DISABLED, autofill_dtc_->state());
+  EXPECT_EQ(syncer::DataTypeController::DISABLED, autofill_dtc_->state());
 }
 
 }  // namespace

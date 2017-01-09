@@ -4,8 +4,10 @@
 
 #include "chrome/browser/extensions/api/bookmark_manager_private/bookmark_manager_private_api.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -18,6 +20,7 @@
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 
 using bookmarks::BookmarkModel;
@@ -32,20 +35,20 @@ using bookmarks::BookmarkNode;
 IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_BookmarkManager) {
   // Add managed bookmarks.
   Profile* profile = browser()->profile();
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
   bookmarks::ManagedBookmarkService* managed =
       ManagedBookmarkServiceFactory::GetForProfile(profile);
   bookmarks::test::WaitForBookmarkModelToLoad(model);
 
   base::ListValue list;
-  base::DictionaryValue* node = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> node(new base::DictionaryValue());
   node->SetString("name", "Managed Bookmark");
   node->SetString("url", "http://www.chromium.org");
-  list.Append(node);
-  node = new base::DictionaryValue();
+  list.Append(std::move(node));
+  node.reset(new base::DictionaryValue());
   node->SetString("name", "Managed Folder");
   node->Set("children", new base::ListValue());
-  list.Append(node);
+  list.Append(std::move(node));
   profile->GetPrefs()->Set(bookmarks::prefs::kManagedBookmarks, list);
   ASSERT_EQ(2, managed->managed_node()->child_count());
 
@@ -58,7 +61,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, BookmarkManagerEditDisabled) {
 
   // Provide some testing data here, since bookmark editing will be disabled
   // within the extension.
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
   bookmarks::test::WaitForBookmarkModelToLoad(model);
   const BookmarkNode* bar = model->bookmark_bar_node();
   const BookmarkNode* folder =

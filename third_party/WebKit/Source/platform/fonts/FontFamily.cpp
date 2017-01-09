@@ -23,24 +23,23 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/fonts/FontFamily.h"
 
 namespace blink {
 
-bool operator==(const FontFamily& a, const FontFamily& b)
-{
-    if (a.family() != b.family())
-        return false;
-    const FontFamily* ap;
-    const FontFamily* bp;
-    for (ap = a.next(), bp = b.next(); ap != bp; ap = ap->next(), bp = bp->next()) {
-        if (!ap || !bp)
-            return false;
-        if (ap->family() != bp->family())
-            return false;
-    }
-    return true;
+bool operator==(const FontFamily& a, const FontFamily& b) {
+  if (a.family() != b.family())
+    return false;
+  const FontFamily* ap;
+  const FontFamily* bp;
+  for (ap = a.next(), bp = b.next(); ap != bp;
+       ap = ap->next(), bp = bp->next()) {
+    if (!ap || !bp)
+      return false;
+    if (ap->family() != bp->family())
+      return false;
+  }
+  return true;
 }
 
-} // namespace blink
+}  // namespace blink

@@ -4,8 +4,10 @@
 
 import("//build/config/ui.gni")
 
-source_set("browser") {
+static_library("browser") {
   sources = [
+    "language_model.cc",
+    "language_model.h",
     "language_state.cc",
     "language_state.h",
     "page_translated_details.h",
@@ -20,12 +22,18 @@ source_set("browser") {
     "translate_error_details.h",
     "translate_event_details.cc",
     "translate_event_details.h",
+    "translate_experiment.cc",
+    "translate_experiment.h",
     "translate_language_list.cc",
     "translate_language_list.h",
     "translate_manager.cc",
     "translate_manager.h",
     "translate_prefs.cc",
     "translate_prefs.h",
+    "translate_ranker.cc",
+    "translate_ranker.h",
+    "translate_ranker_metrics_provider.cc",
+    "translate_ranker_metrics_provider.h",
     "translate_script.cc",
     "translate_script.h",
     "translate_step.h",
@@ -40,13 +48,18 @@ source_set("browser") {
   deps = [
     "//base",
     "//base:i18n",
-    "//base:prefs",
     "//components/data_use_measurement/core",
+    "//components/keyed_service/core",
     "//components/language_usage_metrics",
+    "//components/metrics",
+    "//components/metrics/proto",
     "//components/pref_registry",
+    "//components/prefs",
     "//components/resources:components_resources",
     "//components/strings",
+    "//components/translate/core/browser/proto",
     "//components/translate/core/common",
+    "//components/variations",
     "//google_apis",
     "//net",
     "//third_party/icu",
@@ -73,18 +86,30 @@ source_set("browser") {
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "language_model_unittest.cc",
     "language_state_unittest.cc",
+    "mock_translate_driver.cc",
+    "mock_translate_driver.h",
     "translate_browser_metrics_unittest.cc",
     "translate_language_list_unittest.cc",
+    "translate_manager_unittest.cc",
     "translate_prefs_unittest.cc",
+    "translate_ranker_unittest.cc",
     "translate_script_unittest.cc",
+    "translate_ui_delegate_unittest.cc",
   ]
   deps = [
     ":browser",
     "//base",
-    "//base:prefs",
-    "//components/pref_registry:test_support",
+    "//components/infobars/core",
+    "//components/metrics/proto",
+    "//components/pref_registry:pref_registry",
+    "//components/prefs",
+    "//components/prefs:test_support",
+    "//components/sync_preferences:test_support",
+    "//components/translate/core/browser/proto",
     "//components/translate/core/common",
+    "//components/variations",
     "//net:test_support",
     "//testing/gtest",
   ]

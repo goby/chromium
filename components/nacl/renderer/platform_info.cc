@@ -5,6 +5,7 @@
 #include "base/cpu.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
@@ -74,7 +75,9 @@ std::string GetCpuFeatures() {
   // TODO: SSE 3
   else if (cpu.has_sse2()) features.push_back("+sse2");
 
-  // TODO: AES, POPCNT, LZCNT, ...
+  if (cpu.has_popcnt()) features.push_back("+popcnt");
+
+  // TODO: AES, LZCNT, ...
   return base::JoinString(features, ",");
 }
 

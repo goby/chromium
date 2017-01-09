@@ -26,6 +26,7 @@ function setAllEventsOccuredHandler(handler) {
 
 // Tells the C++ code we succeeded, which will generally exit the test.
 function reportTestSuccess() {
+  console.log('Test Success');
   window.domAutomationController.send('OK');
 }
 
@@ -38,6 +39,16 @@ function sendValueToTest(value) {
 function failTest(reason) {
   var error = new Error(reason);
   window.domAutomationController.send(error.stack);
+}
+
+// Called if getUserMedia fails.
+function printGetUserMediaError(error) {
+  var message = 'getUserMedia request unexpectedly failed:';
+  if (error.constraintName)
+    message += ' could not satisfy constraint ' + error.constraintName;
+  else
+    message += ' devices not working/user denied access.';
+  failTest(message);
 }
 
 function detectVideoPlaying(videoElementName, callback) {
@@ -80,9 +91,13 @@ function detectVideo(videoElementName, predicate, callback) {
     // Check that there is an old and a new picture with the same size to
     // compare and use the function |predicate| to detect the video state in
     // that case.
+    // There's a failure(?) mode here where the video generated claims to
+    // have size 2x2. Don't consider that a valid video.
     if (oldPixels.length == pixels.length &&
         predicate(pixels, oldPixels)) {
       console.log('Done looking at video in element ' + videoElementName);
+      console.log('DEBUG: video.width = ' + videoElement.videoWidth);
+      console.log('DEBUG: video.height = ' + videoElement.videoHeight);
       clearInterval(waitVideo);
       callback(videoElement.videoWidth, videoElement.videoHeight);
     }
@@ -91,6 +106,10 @@ function detectVideo(videoElementName, predicate, callback) {
     if (elapsedTime > 3000) {
       startTimeMs = new Date().getTime();
       console.log('Still waiting for video to satisfy ' + predicate.toString());
+      console.log('DEBUG: video.width = ' + videoElement.videoWidth);
+      console.log('DEBUG: video.height = ' + videoElement.videoHeight);
+      // clearInterval(waitVideo);
+      // callback(0, 0);
     }
   }, 200);
 }
@@ -244,19 +263,3 @@ function assertTrue(booleanExpression, description) {
   }
 }
 
-// Returns has-video-input-device to the test if there's a webcam available on
-// the system.
-function hasVideoInputDeviceOnSystem() {
-  MediaStreamTrack.getSources(function(devices) {
-    var hasVideoInputDevice = false;
-    devices.forEach(function(device) {
-      if (device.kind == 'video')
-        hasVideoInputDevice = true;
-    });
-
-    if (hasVideoInputDevice)
-      sendValueToTest('has-video-input-device');
-    else
-      sendValueToTest('no-video-input-devices');
-  });
-}

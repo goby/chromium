@@ -4,30 +4,29 @@
 
 #include "ui/views/widget/desktop_aura/x11_topmost_window_finder.h"
 
-#include <algorithm>
-#include <vector>
-#include <X11/extensions/shape.h>
 #include <X11/Xlib.h>
 #include <X11/Xregion.h>
+#include <X11/extensions/shape.h>
+#include <stddef.h>
+
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 // Get rid of X11 macros which conflict with gtest.
 #undef Bool
 #undef None
 
-#include "base/memory/scoped_ptr.h"
-#include "base/path_service.h"
+#include "base/macros.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
-#include "ui/base/resource/resource_bundle.h"
-#include "ui/base/ui_base_paths.h"
 #include "ui/events/platform/x11/x11_event_source.h"
 #include "ui/gfx/path.h"
 #include "ui/gfx/path_x11.h"
 #include "ui/gfx/x/x11_atom_cache.h"
-#include "ui/gl/test/gl_surface_test_support.h"
-#include "ui/views/test/views_test_base.h"
+#include "ui/views/test/views_interactive_ui_test_base.h"
 #include "ui/views/test/x11_property_change_waiter.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/desktop_aura/x11_desktop_handler.h"
@@ -42,7 +41,7 @@ class MinimizeWaiter : public X11PropertyChangeWaiter {
  public:
   explicit MinimizeWaiter(XID window)
       : X11PropertyChangeWaiter(window, "_NET_WM_STATE") {
-    const char* kAtomsToCache[] = { "_NET_WM_STATE_HIDDEN", NULL };
+    const char* const kAtomsToCache[] = {"_NET_WM_STATE_HIDDEN", nullptr};
     atom_cache_.reset(new ui::X11AtomCache(gfx::GetXDisplay(), kAtomsToCache));
   }
 
@@ -53,16 +52,14 @@ class MinimizeWaiter : public X11PropertyChangeWaiter {
   bool ShouldKeepOnWaiting(const ui::PlatformEvent& event) override {
     std::vector<Atom> wm_states;
     if (ui::GetAtomArrayProperty(xwindow(), "_NET_WM_STATE", &wm_states)) {
-      std::vector<Atom>::iterator it = std::find(
-          wm_states.begin(),
-          wm_states.end(),
-          atom_cache_->GetAtom("_NET_WM_STATE_HIDDEN"));
-      return it == wm_states.end();
+      auto it = std::find(wm_states.cbegin(), wm_states.cend(),
+                          atom_cache_->GetAtom("_NET_WM_STATE_HIDDEN"));
+      return it == wm_states.cend();
     }
     return true;
   }
 
-  scoped_ptr<ui::X11AtomCache> atom_cache_;
+  std::unique_ptr<ui::X11AtomCache> atom_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(MinimizeWaiter);
 };
@@ -83,7 +80,7 @@ class StackingClientListWaiter : public X11PropertyChangeWaiter {
   void Wait() override {
     // StackingClientListWaiter may be created after
     // _NET_CLIENT_LIST_STACKING already contains |expected_windows|.
-    if (!ShouldKeepOnWaiting(NULL))
+    if (!ShouldKeepOnWaiting(nullptr))
       return;
 
     X11PropertyChangeWaiter::Wait();
@@ -95,9 +92,8 @@ class StackingClientListWaiter : public X11PropertyChangeWaiter {
     std::vector<XID> stack;
     ui::GetXWindowStack(ui::GetX11RootWindow(), &stack);
     for (size_t i = 0; i < expected_windows_.size(); ++i) {
-      std::vector<XID>::iterator it = std::find(
-          stack.begin(), stack.end(), expected_windows_[i]);
-      if (it == stack.end())
+      auto it = std::find(stack.cbegin(), stack.cend(), expected_windows_[i]);
+      if (it == stack.cend())
         return true;
     }
     return false;
@@ -110,7 +106,7 @@ class StackingClientListWaiter : public X11PropertyChangeWaiter {
 
 }  // namespace
 
-class X11TopmostWindowFinderTest : public ViewsTestBase {
+class X11TopmostWindowFinderTest : public ViewsInteractiveUITestBase {
  public:
   X11TopmostWindowFinderTest() {
   }
@@ -119,8 +115,8 @@ class X11TopmostWindowFinderTest : public ViewsTestBase {
 
   // Creates and shows a Widget with |bounds|. The caller takes ownership of
   // the returned widget.
-  scoped_ptr<Widget> CreateAndShowWidget(const gfx::Rect& bounds) {
-    scoped_ptr<Widget> toplevel(new Widget);
+  std::unique_ptr<Widget> CreateAndShowWidget(const gfx::Rect& bounds) {
+    std::unique_ptr<Widget> toplevel(new Widget);
     Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
     params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.native_widget = new DesktopNativeWidgetAura(toplevel.get());
@@ -128,7 +124,7 @@ class X11TopmostWindowFinderTest : public ViewsTestBase {
     params.remove_standard_frame = true;
     toplevel->Init(params);
     toplevel->Show();
-    return toplevel.Pass();
+    return toplevel;
   }
 
   // Creates and shows an X window with |bounds|.
@@ -193,17 +189,9 @@ class X11TopmostWindowFinderTest : public ViewsTestBase {
                                            ignore);
   }
 
-  static void SetUpTestCase() {
-    gfx::GLSurfaceTestSupport::InitializeOneOff();
-    ui::RegisterPathProvider();
-    base::FilePath ui_test_pak_path;
-    ASSERT_TRUE(PathService::Get(ui::UI_TEST_PAK, &ui_test_pak_path));
-    ui::ResourceBundle::InitSharedInstanceWithPakPath(ui_test_pak_path);
-  }
-
-  // ViewsTestBase:
+  // ViewsInteractiveUITestBase:
   void SetUp() override {
-    ViewsTestBase::SetUp();
+    ViewsInteractiveUITestBase::SetUp();
 
     // Make X11 synchronous for our display connection. This does not force the
     // window manager to behave synchronously.
@@ -216,7 +204,7 @@ class X11TopmostWindowFinderTest : public ViewsTestBase {
 
   void TearDown() override {
     XSynchronize(xdisplay(), False);
-    ViewsTestBase::TearDown();
+    ViewsInteractiveUITestBase::TearDown();
   }
 
  private:
@@ -227,14 +215,14 @@ TEST_F(X11TopmostWindowFinderTest, Basic) {
   // Avoid positioning test windows at 0x0 because window managers often have a
   // panel/launcher along one of the screen edges and do not allow windows to
   // position themselves to overlap the panel/launcher.
-  scoped_ptr<Widget> widget1(
+  std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 200, 100)));
   aura::Window* window1 = widget1->GetNativeWindow();
   XID xid1 = window1->GetHost()->GetAcceleratedWidget();
 
   XID xid2 = CreateAndShowXWindow(gfx::Rect(200, 100, 100, 200));
 
-  scoped_ptr<Widget> widget3(
+  std::unique_ptr<Widget> widget3(
       CreateAndShowWidget(gfx::Rect(100, 190, 200, 110)));
   aura::Window* window3 = widget3->GetNativeWindow();
   XID xid3 = window3->GetHost()->GetAcceleratedWidget();
@@ -248,7 +236,7 @@ TEST_F(X11TopmostWindowFinderTest, Basic) {
   EXPECT_EQ(window1, FindTopmostLocalProcessWindowAt(150, 150));
 
   EXPECT_EQ(xid2, FindTopmostXWindowAt(250, 150));
-  EXPECT_EQ(NULL, FindTopmostLocalProcessWindowAt(250, 150));
+  EXPECT_FALSE(FindTopmostLocalProcessWindowAt(250, 150));
 
   EXPECT_EQ(xid3, FindTopmostXWindowAt(250, 250));
   EXPECT_EQ(window3, FindTopmostLocalProcessWindowAt(250, 250));
@@ -262,14 +250,12 @@ TEST_F(X11TopmostWindowFinderTest, Basic) {
   EXPECT_NE(xid1, FindTopmostXWindowAt(1000, 1000));
   EXPECT_NE(xid2, FindTopmostXWindowAt(1000, 1000));
   EXPECT_NE(xid3, FindTopmostXWindowAt(1000, 1000));
-  EXPECT_EQ(NULL, FindTopmostLocalProcessWindowAt(1000, 1000));
+  EXPECT_FALSE(FindTopmostLocalProcessWindowAt(1000, 1000));
 
   EXPECT_EQ(window1,
             FindTopmostLocalProcessWindowWithIgnore(150, 150, window3));
-  EXPECT_EQ(NULL,
-            FindTopmostLocalProcessWindowWithIgnore(250, 250, window3));
-  EXPECT_EQ(NULL,
-            FindTopmostLocalProcessWindowWithIgnore(150, 250, window3));
+  EXPECT_FALSE(FindTopmostLocalProcessWindowWithIgnore(250, 250, window3));
+  EXPECT_FALSE(FindTopmostLocalProcessWindowWithIgnore(150, 250, window3));
   EXPECT_EQ(window1,
             FindTopmostLocalProcessWindowWithIgnore(150, 195, window3));
 
@@ -278,7 +264,7 @@ TEST_F(X11TopmostWindowFinderTest, Basic) {
 
 // Test that the minimized state is properly handled.
 TEST_F(X11TopmostWindowFinderTest, Minimized) {
-  scoped_ptr<Widget> widget1(
+  std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 100, 100)));
   aura::Window* window1 = widget1->GetNativeWindow();
   XID xid1 = window1->GetHost()->GetAcceleratedWidget();
@@ -317,14 +303,13 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangular) {
   if (!ui::IsShapeExtensionAvailable())
     return;
 
-  scoped_ptr<Widget> widget1(
+  std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 100, 100)));
   XID xid1 = widget1->GetNativeWindow()->GetHost()->GetAcceleratedWidget();
-  SkRegion* skregion1 = new SkRegion;
+  auto skregion1 = base::MakeUnique<SkRegion>();
   skregion1->op(SkIRect::MakeXYWH(0, 10, 10, 90), SkRegion::kUnion_Op);
   skregion1->op(SkIRect::MakeXYWH(10, 0, 90, 100), SkRegion::kUnion_Op);
-  // Widget takes ownership of |skregion1|.
-  widget1->SetShape(skregion1);
+  widget1->SetShape(std::move(skregion1));
 
   SkRegion skregion2;
   skregion2.op(SkIRect::MakeXYWH(0, 10, 10, 90), SkRegion::kUnion_Op);
@@ -357,13 +342,13 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangularEmptyShape) {
   if (!ui::IsShapeExtensionAvailable())
     return;
 
-  scoped_ptr<Widget> widget1(
+  std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 100, 100)));
   XID xid1 = widget1->GetNativeWindow()->GetHost()->GetAcceleratedWidget();
-  SkRegion* skregion1 = new SkRegion;
+  auto skregion1 = base::MakeUnique<SkRegion>();
   skregion1->op(SkIRect::MakeXYWH(0, 0, 0, 0), SkRegion::kUnion_Op);
   // Widget takes ownership of |skregion1|.
-  widget1->SetShape(skregion1);
+  widget1->SetShape(std::move(skregion1));
 
   XID xids[] = { xid1 };
   StackingClientListWaiter stack_waiter(xids, arraysize(xids));
@@ -378,16 +363,15 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangularNullShape) {
   if (!ui::IsShapeExtensionAvailable())
     return;
 
-  scoped_ptr<Widget> widget1(
+  std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 100, 100)));
   XID xid1 = widget1->GetNativeWindow()->GetHost()->GetAcceleratedWidget();
-  SkRegion* skregion1 = new SkRegion;
+  auto skregion1 = base::MakeUnique<SkRegion>();
   skregion1->op(SkIRect::MakeXYWH(0, 0, 0, 0), SkRegion::kUnion_Op);
-  // Widget takes ownership of |skregion1|.
-  widget1->SetShape(skregion1);
+  widget1->SetShape(std::move(skregion1));
 
   // Remove the shape - this is now just a normal window.
-  widget1->SetShape(NULL);
+  widget1->SetShape(nullptr);
 
   XID xids[] = { xid1 };
   StackingClientListWaiter stack_waiter(xids, arraysize(xids));
@@ -415,7 +399,7 @@ TEST_F(X11TopmostWindowFinderTest, Menu) {
                                CWOverrideRedirect,
                                &swa);
   {
-    const char* kAtomsToCache[] = { "_NET_WM_WINDOW_TYPE_MENU", NULL };
+    const char* const kAtomsToCache[] = {"_NET_WM_WINDOW_TYPE_MENU", nullptr};
     ui::X11AtomCache atom_cache(gfx::GetXDisplay(), kAtomsToCache);
     ui::SetAtomProperty(menu_xid,
                         "_NET_WM_WINDOW_TYPE",

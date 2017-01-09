@@ -9,7 +9,6 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/win/win_util.h"
-#include "base/win/windows_version.h"
 #include "net/cert/x509_certificate.h"
 
 namespace net {
@@ -100,8 +99,8 @@ BOOL WINAPI InterceptedOpenStoreW(LPCSTR store_provider,
   // If the high word is all zeroes, then |store_provider| is a numeric ID.
   // Otherwise, it's a pointer to a null-terminated ASCII string. See the
   // documentation for CryptGetOIDFunctionAddress for more information.
-  uint32_t store_as_uint = reinterpret_cast<uint32_t>(store_provider);
-  if (store_as_uint > 0xFFFF || store_provider != CERT_STORE_PROV_SYSTEM_W ||
+  uintptr_t store_as_uintptr = reinterpret_cast<uintptr_t>(store_provider);
+  if (store_as_uintptr > 0xFFFF || store_provider != CERT_STORE_PROV_SYSTEM_W ||
       !g_capi_injector.Get().original_function)
     return FALSE;
 
@@ -148,7 +147,7 @@ bool TestRootCerts::Add(X509Certificate* certificate) {
       CERT_STORE_ADD_NEW, NULL);
   if (!ok) {
     // If the certificate is already added, return successfully.
-    return GetLastError() == CRYPT_E_EXISTS;
+    return GetLastError() == static_cast<DWORD>(CRYPT_E_EXISTS);
   }
 
   empty_ = false;
@@ -173,11 +172,11 @@ HCERTCHAINENGINE TestRootCerts::GetChainEngine() const {
   if (IsEmpty())
     return NULL;  // Default chain engine will suffice.
 
-  // Windows versions before 7 don't accept the struct size for later versions.
+  // Windows versions before 8 don't accept the struct size for later versions.
   // We report the size of the old struct since we don't need the new members.
   static const DWORD kSizeofCertChainEngineConfig =
-      SIZEOF_STRUCT_WITH_SPECIFIED_LAST_MEMBER(
-          CERT_CHAIN_ENGINE_CONFIG, CycleDetectionModulus);
+      SIZEOF_STRUCT_WITH_SPECIFIED_LAST_MEMBER(CERT_CHAIN_ENGINE_CONFIG,
+                                               hExclusiveTrustedPeople);
 
   // Each HCERTCHAINENGINE caches both the configured system stores and
   // information about each chain that has been built. In order to ensure

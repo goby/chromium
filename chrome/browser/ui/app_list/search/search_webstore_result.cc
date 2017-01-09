@@ -10,8 +10,8 @@
 #include "chrome/browser/ui/app_list/search/search_util.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "extensions/common/extension_urls.h"
-#include "grit/theme_resources.h"
 #include "net/base/url_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -58,8 +58,8 @@ void SearchWebstoreResult::Open(int event_flags) {
                        ui::DispositionFromEventFlags(event_flags));
 }
 
-scoped_ptr<SearchResult> SearchWebstoreResult::Duplicate() const {
-  return scoped_ptr<SearchResult>(
+std::unique_ptr<SearchResult> SearchWebstoreResult::Duplicate() const {
+  return std::unique_ptr<SearchResult>(
       new SearchWebstoreResult(profile_, controller_, query_));
 }
 

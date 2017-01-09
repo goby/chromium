@@ -4,13 +4,16 @@
 
 #include "ui/views/mus/surface_context_factory.h"
 
-#include "cc/output/output_surface.h"
+#include "base/memory/ptr_util.h"
 #include "cc/resources/shared_bitmap_manager.h"
 #include "cc/surfaces/surface_id_allocator.h"
-#include "components/mus/public/cpp/window.h"
-#include "mojo/application/public/interfaces/shell.mojom.h"
+#include "services/ui/public/cpp/context_provider.h"
+#include "services/ui/public/cpp/gpu/gpu.h"
+#include "services/ui/public/cpp/window.h"
+#include "services/ui/public/cpp/window_compositor_frame_sink.h"
 #include "ui/compositor/reflector.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/views/mus/native_widget_mus.h"
 
 namespace views {
 namespace {
@@ -26,26 +29,29 @@ class FakeReflector : public ui::Reflector {
 
 }  // namespace
 
-SurfaceContextFactory::SurfaceContextFactory(
-    mojo::Shell* shell,
-    mus::Window* window,
-    mus::mojom::SurfaceType surface_type)
-    : surface_binding_(shell, window, surface_type),
-      next_surface_id_namespace_(1u) {}
+SurfaceContextFactory::SurfaceContextFactory(ui::Gpu* gpu)
+    : next_sink_id_(1u), gpu_(gpu) {}
 
 SurfaceContextFactory::~SurfaceContextFactory() {}
 
-void SurfaceContextFactory::CreateOutputSurface(
+void SurfaceContextFactory::CreateCompositorFrameSink(
     base::WeakPtr<ui::Compositor> compositor) {
-  // NOTIMPLEMENTED();
-  compositor->SetOutputSurface(surface_binding_.CreateOutputSurface());
+  ui::Window* window = compositor->window();
+  NativeWidgetMus* native_widget = NativeWidgetMus::GetForWindow(window);
+  ui::mojom::CompositorFrameSinkType compositor_frame_sink_type =
+      native_widget->compositor_frame_sink_type();
+  auto compositor_frame_sink = window->RequestCompositorFrameSink(
+      compositor_frame_sink_type, make_scoped_refptr(new ui::ContextProvider(
+                                      gpu_->EstablishGpuChannelSync())),
+      gpu_->gpu_memory_buffer_manager());
+  compositor->SetCompositorFrameSink(std::move(compositor_frame_sink));
 }
 
-scoped_ptr<ui::Reflector> SurfaceContextFactory::CreateReflector(
+std::unique_ptr<ui::Reflector> SurfaceContextFactory::CreateReflector(
     ui::Compositor* mirroed_compositor,
     ui::Layer* mirroring_layer) {
   // NOTIMPLEMENTED();
-  return make_scoped_ptr(new FakeReflector);
+  return base::WrapUnique(new FakeReflector);
 }
 
 void SurfaceContextFactory::RemoveReflector(ui::Reflector* reflector) {
@@ -66,35 +72,37 @@ bool SurfaceContextFactory::DoesCreateTestContexts() {
   return false;
 }
 
-uint32 SurfaceContextFactory::GetImageTextureTarget(gfx::BufferFormat format,
-                                                    gfx::BufferUsage usage) {
+uint32_t SurfaceContextFactory::GetImageTextureTarget(gfx::BufferFormat format,
+                                                      gfx::BufferUsage usage) {
   // No GpuMemoryBuffer support, so just return GL_TEXTURE_2D.
   return GL_TEXTURE_2D;
 }
 
-cc::SharedBitmapManager* SurfaceContextFactory::GetSharedBitmapManager() {
-  // NOTIMPLEMENTED();
-  return nullptr;
-}
-
 gpu::GpuMemoryBufferManager*
 SurfaceContextFactory::GetGpuMemoryBufferManager() {
-  return &gpu_memory_buffer_manager_;
+  return gpu_->gpu_memory_buffer_manager();
 }
 
 cc::TaskGraphRunner* SurfaceContextFactory::GetTaskGraphRunner() {
   return raster_thread_helper_.task_graph_runner();
 }
 
-scoped_ptr<cc::SurfaceIdAllocator>
-SurfaceContextFactory::CreateSurfaceIdAllocator() {
-  return make_scoped_ptr(
-      new cc::SurfaceIdAllocator(next_surface_id_namespace_++));
+cc::FrameSinkId SurfaceContextFactory::AllocateFrameSinkId() {
+  return cc::FrameSinkId(0, next_sink_id_++);
+}
+
+cc::SurfaceManager* SurfaceContextFactory::GetSurfaceManager() {
+  return &surface_manager_;
+}
+
+void SurfaceContextFactory::SetDisplayVisible(ui::Compositor* compositor,
+                                              bool visible) {
+  // TODO(fsamuel): display[compositor]->SetVisible(visible);
 }
 
 void SurfaceContextFactory::ResizeDisplay(ui::Compositor* compositor,
                                           const gfx::Size& size) {
-  // NOTIMPLEMENTED();
+  // TODO(fsamuel): display[compositor]->Resize(size);
 }
 
 }  // namespace views

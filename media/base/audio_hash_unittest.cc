@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_hash.h"
 #include "media/base/fake_audio_render_callback.h"
@@ -27,22 +30,23 @@ class AudioHashTest : public testing::Test {
 
   void GenerateUniqueChannels(AudioBus* audio_bus) {
     // Use an AudioBus wrapper to avoid an extra memcpy when filling channels.
-    scoped_ptr<AudioBus> wrapped_bus = AudioBus::CreateWrapper(1);
+    std::unique_ptr<AudioBus> wrapped_bus = AudioBus::CreateWrapper(1);
     wrapped_bus->set_frames(audio_bus->frames());
 
     // Since FakeAudioRenderCallback generates only a single channel of unique
     // audio data, we need to fill each channel manually.
     for (int ch = 0; ch < audio_bus->channels(); ++ch) {
       wrapped_bus->SetChannelData(0, audio_bus->channel(ch));
-      fake_callback_.Render(wrapped_bus.get(), 0);
+      fake_callback_.Render(base::TimeDelta(), base::TimeTicks::Now(), 0,
+                            wrapped_bus.get());
     }
   }
 
   ~AudioHashTest() override {}
 
  protected:
-  scoped_ptr<AudioBus> bus_one_;
-  scoped_ptr<AudioBus> bus_two_;
+  std::unique_ptr<AudioBus> bus_one_;
+  std::unique_ptr<AudioBus> bus_two_;
   FakeAudioRenderCallback fake_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioHashTest);
@@ -80,7 +84,7 @@ TEST_F(AudioHashTest, ChannelOrder) {
 
   // Reverse channel order for the same sample data.
   const int channels = bus_one_->channels();
-  scoped_ptr<AudioBus> swapped_ch_bus = AudioBus::CreateWrapper(channels);
+  std::unique_ptr<AudioBus> swapped_ch_bus = AudioBus::CreateWrapper(channels);
   swapped_ch_bus->set_frames(bus_one_->frames());
   for (int i = channels - 1; i >= 0; --i)
     swapped_ch_bus->SetChannelData(channels - (i + 1), bus_one_->channel(i));
@@ -131,7 +135,7 @@ TEST_F(AudioHashTest, HashIgnoresUpdateOrder) {
   // Create a new bus representing the second half of |bus_one_|.
   const int half_frames = bus_one_->frames() / 2;
   const int channels = bus_one_->channels();
-  scoped_ptr<AudioBus> half_bus = AudioBus::CreateWrapper(channels);
+  std::unique_ptr<AudioBus> half_bus = AudioBus::CreateWrapper(channels);
   half_bus->set_frames(half_frames);
   for (int i = 0; i < channels; ++i)
     half_bus->SetChannelData(i, bus_one_->channel(i) + half_frames);

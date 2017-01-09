@@ -6,6 +6,7 @@
 #define MEDIA_AUDIO_FAKE_AUDIO_WORKER_H_
 
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "media/base/media_export.h"
 
@@ -14,7 +15,6 @@ class SingleThreadTaskRunner;
 }
 
 namespace media {
-class AudioBus;
 class AudioParameters;
 
 // A fake audio worker.  Using a provided message loop, FakeAudioWorker will

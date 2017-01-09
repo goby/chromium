@@ -5,6 +5,7 @@
 #ifndef ASH_SHELL_TOPLEVEL_WINDOW_H_
 #define ASH_SHELL_TOPLEVEL_WINDOW_H_
 
+#include "base/macros.h"
 #include "ui/views/widget/widget_delegate.h"
 
 namespace ash {
@@ -17,9 +18,9 @@ class ToplevelWindow : public views::WidgetDelegateView {
 
     bool can_resize;
     bool can_maximize;
+    bool use_saved_placement;
   };
-  static views::Widget* CreateToplevelWindow(
-      const CreateParams& params);
+  static views::Widget* CreateToplevelWindow(const CreateParams& params);
 
   // Clears saved show state and bounds used to position
   // a new window.
@@ -39,7 +40,6 @@ class ToplevelWindow : public views::WidgetDelegateView {
   bool GetSavedWindowPlacement(const views::Widget* widget,
                                gfx::Rect* bounds,
                                ui::WindowShowState* show_state) const override;
-  View* GetContentsView() override;
   bool CanResize() const override;
   bool CanMaximize() const override;
   bool CanMinimize() const override;

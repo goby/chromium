@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_PROFILES_AVATAR_MENU_ACTIONS_H_
 #define CHROME_BROWSER_PROFILES_AVATAR_MENU_ACTIONS_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "chrome/browser/profiles/avatar_menu.h"
@@ -23,7 +25,7 @@ class AvatarMenuActions {
   virtual void AddNewProfile(ProfileMetrics::ProfileAdd type) = 0;
 
   // Allows the user to edit the profile at the given index in the cache.
-  virtual void EditProfile(Profile* profile, size_t index) = 0;
+  virtual void EditProfile(Profile* profile) = 0;
 
   // Returns true if the add profile link should be shown.
   virtual bool ShouldShowAddNewProfileLink() const = 0;

@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/accelerators/accelerator_commands.h"
+#include "ash/common/accelerators/accelerator_commands.h"
 
+#include <memory>
+
+#include "ash/accelerators/accelerator_commands_aura.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
+#include "ash/wm/window_util.h"
 #include "ui/aura/window.h"
 
 // Note: The unit tests for |ToggleMaximized()| and
@@ -20,9 +25,9 @@ namespace accelerators {
 typedef test::AshTestBase AcceleratorCommandsTest;
 
 TEST_F(AcceleratorCommandsTest, ToggleMinimized) {
-  scoped_ptr<aura::Window> window1(
+  std::unique_ptr<aura::Window> window1(
       CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
-  scoped_ptr<aura::Window> window2(
+  std::unique_ptr<aura::Window> window2(
       CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
   wm::WindowState* window_state1 = wm::GetWindowState(window1.get());
   wm::WindowState* window_state2 = wm::GetWindowState(window2.get());
@@ -45,6 +50,19 @@ TEST_F(AcceleratorCommandsTest, ToggleMinimized) {
   EXPECT_FALSE(window_state1->IsMinimized());
   EXPECT_TRUE(window_state1->IsNormalStateType());
   EXPECT_TRUE(window_state1->IsActive());
+}
+
+TEST_F(AcceleratorCommandsTest, Unpin) {
+  std::unique_ptr<aura::Window> window1(
+      CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
+  wm::WindowState* window_state1 = wm::GetWindowState(window1.get());
+  window_state1->Activate();
+
+  wm::PinWindow(window1.get(), /* trusted */ false);
+  EXPECT_TRUE(window_state1->IsPinned());
+
+  Unpin();
+  EXPECT_FALSE(window_state1->IsPinned());
 }
 
 }  // namespace accelerators

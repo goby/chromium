@@ -4,7 +4,10 @@
 
 #include "chrome/browser/chromeos/policy/device_local_account_policy_provider.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
 #include "chrome/browser/chromeos/policy/device_local_account_external_data_manager.h"
@@ -16,17 +19,17 @@
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 
 namespace policy {
 
 DeviceLocalAccountPolicyProvider::DeviceLocalAccountPolicyProvider(
     const std::string& user_id,
     DeviceLocalAccountPolicyService* service,
-    scoped_ptr<PolicyMap> chrome_policy_overrides)
+    std::unique_ptr<PolicyMap> chrome_policy_overrides)
     : user_id_(user_id),
       service_(service),
-      chrome_policy_overrides_(chrome_policy_overrides.Pass()),
+      chrome_policy_overrides_(std::move(chrome_policy_overrides)),
       store_initialized_(false),
       waiting_for_policy_refresh_(false),
       weak_factory_(this) {
@@ -39,17 +42,17 @@ DeviceLocalAccountPolicyProvider::~DeviceLocalAccountPolicyProvider() {
 }
 
 // static
-scoped_ptr<DeviceLocalAccountPolicyProvider>
+std::unique_ptr<DeviceLocalAccountPolicyProvider>
 DeviceLocalAccountPolicyProvider::Create(
     const std::string& user_id,
     DeviceLocalAccountPolicyService* device_local_account_policy_service) {
   DeviceLocalAccount::Type type;
   if (!device_local_account_policy_service ||
       !IsDeviceLocalAccountUser(user_id, &type)) {
-    return scoped_ptr<DeviceLocalAccountPolicyProvider>();
+    return std::unique_ptr<DeviceLocalAccountPolicyProvider>();
   }
 
-  scoped_ptr<PolicyMap> chrome_policy_overrides;
+  std::unique_ptr<PolicyMap> chrome_policy_overrides;
   if (type == DeviceLocalAccount::TYPE_PUBLIC_SESSION) {
     chrome_policy_overrides.reset(new PolicyMap());
 
@@ -57,47 +60,36 @@ DeviceLocalAccountPolicyProvider::Create(
     // suspend while leaving the session running, which is not desirable for
     // public sessions.
     chrome_policy_overrides->Set(
-        key::kLidCloseAction,
-        POLICY_LEVEL_MANDATORY,
-        POLICY_SCOPE_MACHINE,
+        key::kLidCloseAction, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
         POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-        new base::FundamentalValue(
+        base::MakeUnique<base::FundamentalValue>(
             chromeos::PowerPolicyController::ACTION_STOP_SESSION),
-        NULL);
+        nullptr);
     // Force the |ShelfAutoHideBehavior| policy to |Never|, ensuring that the
     // ash shelf does not auto-hide.
     chrome_policy_overrides->Set(
-        key::kShelfAutoHideBehavior,
-        POLICY_LEVEL_MANDATORY,
-        POLICY_SCOPE_MACHINE,
-        POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-        new base::StringValue("Never"),
-        NULL);
+        key::kShelfAutoHideBehavior, POLICY_LEVEL_MANDATORY,
+        POLICY_SCOPE_MACHINE, POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
+        base::MakeUnique<base::StringValue>("Never"), nullptr);
     // Force the |ShowLogoutButtonInTray| policy to |true|, ensuring that a big,
     // red logout button is shown in the ash system tray.
     chrome_policy_overrides->Set(
-        key::kShowLogoutButtonInTray,
-        POLICY_LEVEL_MANDATORY,
-        POLICY_SCOPE_MACHINE,
-        POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-        new base::FundamentalValue(true),
-        NULL);
+        key::kShowLogoutButtonInTray, POLICY_LEVEL_MANDATORY,
+        POLICY_SCOPE_MACHINE, POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
+        base::MakeUnique<base::FundamentalValue>(true), nullptr);
     // Force the |FullscreenAllowed| policy to |false|, ensuring that the ash
     // shelf cannot be hidden by entering fullscreen mode.
     chrome_policy_overrides->Set(
-        key::kFullscreenAllowed,
-        POLICY_LEVEL_MANDATORY,
-        POLICY_SCOPE_MACHINE,
+        key::kFullscreenAllowed, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
         POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-        new base::FundamentalValue(false),
-        NULL);
+        base::MakeUnique<base::FundamentalValue>(false), nullptr);
   }
 
-  scoped_ptr<DeviceLocalAccountPolicyProvider> provider(
+  std::unique_ptr<DeviceLocalAccountPolicyProvider> provider(
       new DeviceLocalAccountPolicyProvider(user_id,
                                            device_local_account_policy_service,
-                                           chrome_policy_overrides.Pass()));
-  return provider.Pass();
+                                           std::move(chrome_policy_overrides)));
+  return provider;
 }
 
 bool DeviceLocalAccountPolicyProvider::IsInitializationComplete(
@@ -145,7 +137,7 @@ void DeviceLocalAccountPolicyProvider::ReportPolicyRefresh(bool success) {
 
 void DeviceLocalAccountPolicyProvider::UpdateFromBroker() {
   DeviceLocalAccountPolicyBroker* broker = GetBroker();
-  scoped_ptr<PolicyBundle> bundle(new PolicyBundle());
+  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle());
   if (broker) {
     store_initialized_ |= broker->core()->store()->is_initialized();
     if (!waiting_for_policy_refresh_) {
@@ -171,20 +163,14 @@ void DeviceLocalAccountPolicyProvider::UpdateFromBroker() {
   if (chrome_policy_overrides_) {
     PolicyMap& chrome_policy =
         bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()));
-    for (PolicyMap::const_iterator it(chrome_policy_overrides_->begin());
-         it != chrome_policy_overrides_->end();
-         ++it) {
-      const PolicyMap::Entry& entry = it->second;
-      chrome_policy.Set(it->first,
-                        entry.level,
-                        entry.scope,
-                        entry.source,
-                        entry.value->DeepCopy(),
-                        nullptr);
+    for (const auto& policy_override : *chrome_policy_overrides_) {
+      const PolicyMap::Entry& entry = policy_override.second;
+      chrome_policy.Set(policy_override.first, entry.level, entry.scope,
+                        entry.source, entry.value->CreateDeepCopy(), nullptr);
     }
   }
 
-  UpdatePolicy(bundle.Pass());
+  UpdatePolicy(std::move(bundle));
 }
 
 }  // namespace policy

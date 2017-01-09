@@ -118,6 +118,13 @@ tries to do these too often and gets confused:
 1.  Turn off "Refresh using native hooks or polling"
 1.  Click "Apply"
 
+Chromium uses C++11, so tell the indexer about it. Otherwise it will get
+confused about things like std::unique_ptr.
+
+1.  Open Window > Preferences > C/C++ > Build > Settings > Discovery >
+    CDT GCC Build-in Compiler Settings
+1.  In the text box entitled Command to get compiler specs append "-std=c++11"
+
 Create a single Eclipse project for everything:
 
 1.  From the File menu, select New > Project...
@@ -140,7 +147,7 @@ In the Project Explorer on the left side:
     *   Include only
     *   Files, all children (recursive)
     *   Name matches
-        `.*\.(c|cc|cpp|h|mm|inl|idl|js|json|css|html|gyp|gypi|grd|grdp|gn)`
+        `.*\.(c|cc|cpp|h|mm|inl|idl|js|json|css|html|gyp|gypi|grd|grdp|gn|gni|mojom)`
         regular expression
 1.  Add another filter:
     *   Exclude all
@@ -281,16 +288,13 @@ After fighting with with a number of approaches, I've found the below to work
 best for me.
 
 1.  From a shell in your src directory, run
-    `GYP_GENERATORS=ninja,eclipse build/gyp_chromium`
-    1.  This generates <project root>/out/Debug/eclipse-cdt-settings.xml which
+    `gn gen --ide=eclipse out/Debug_gn/' (replacing Debug_gn with the output directory you normally use when building).
+    1.  This generates <project root>/out/Debug_gn/eclipse-cdt-settings.xml which
         is used below.
     1.  This creates a single list of include directories and preprocessor
         definitions to be used for all source files, and so is a little
         inaccurate. Here are some tips for compensating for the limitations:
-        1.  Use `-R <target>` to restrict the output to considering only certain
-            targets (avoiding unnecessary includes that are likely to cause
-            trouble). Eg. for a blink project, use `-R blink`.
-        1.  If you care about blink, move 'third\_party/Webkit/Source' to the
+        1.  If you care about blink, move 'third\_party/WebKit/Source' to the
             top of the list to better resolve ambiguous include paths (eg.
             `config.h`).
 1.  Import paths and symbols

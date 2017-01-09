@@ -5,9 +5,12 @@
 #ifndef COMPONENTS_NACL_RENDERER_PNACL_TRANSLATION_RESOURCE_HOST_H_
 #define COMPONENTS_NACL_RENDERER_PNACL_TRANSLATION_RESOURCE_HOST_H_
 
+#include <stdint.h>
+
 #include <map>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "ipc/ipc_platform_file.h"
 #include "ipc/message_filter.h"
 #include "ppapi/c/pp_bool.h"
@@ -51,7 +54,7 @@ class PnaclTranslationResourceHost : public IPC::MessageFilter {
 
   // IPC::MessageFilter implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelClosing() override;
 

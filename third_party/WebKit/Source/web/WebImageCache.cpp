@@ -28,16 +28,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebImageCache.h"
 
 #include "platform/graphics/ImageDecodingStore.h"
 
 namespace blink {
 
-void WebImageCache::clear()
-{
-    ImageDecodingStore::instance().clear();
+void WebImageCache::clear() {
+  ImageDecodingStore::instance().clear();
 }
 
 }  // namespace blink

@@ -97,7 +97,7 @@ var elements;
 var imageWidth = 20;
 var imageHeight = 20;
 
-// Draw to an auxillary canvas.
+// Draw to an auxiliary canvas.
 var aCanvas = document.createElement("canvas");
 aCanvas.width = imageWidth;
 aCanvas.height = imageHeight;
@@ -154,7 +154,6 @@ function loaded() {
     if (imageLoaded && imageBitmapLoaded && blobLoaded) {
         // check all of these elements
         elements = [image, aCanvas, d, testBitmap, blob];
-
         // wait for callback to finish before each check to ensure synchronous behavior
         nextCheck(0);
     }
@@ -187,7 +186,13 @@ function nextCheck(elementIndex) {
         checkCrop(imageBitmaps.negativeCrop);
         checkEmpty(imageBitmaps.empty);
         checkEmpty(imageBitmaps.emptyTwo);
-        nextCheck(elementIndex + 1);
+        createImageBitmap(element, 0, 0, 0x8000, 0x8000).then(function() {
+            testFailed('Creating a huge ImageBitmap is resolved unexpectedly.');
+            finishJSTest();
+        }, function() {
+            testPassed('Creating a huge ImageBitmap is rejected as expected.');
+            nextCheck(elementIndex + 1);
+        });
     }, shouldNotBeCalled);
 }
 
@@ -407,6 +412,7 @@ function checkEmpty(imageBitmap) {
     shouldBeClear(11, 11);
     shouldBeClear(22, 22);
 }
+
 </script>
 </body>
 </html>

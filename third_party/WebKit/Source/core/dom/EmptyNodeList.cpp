@@ -29,7 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/dom/EmptyNodeList.h"
 
 #include "core/dom/Node.h"
@@ -37,22 +36,15 @@
 
 namespace blink {
 
-EmptyNodeList::~EmptyNodeList()
-{
-#if !ENABLE(OILPAN)
-    m_owner->nodeLists()->removeEmptyChildNodeList(this);
-#endif
+EmptyNodeList::~EmptyNodeList() {}
+
+Node* EmptyNodeList::virtualOwnerNode() const {
+  return &ownerNode();
 }
 
-Node* EmptyNodeList::virtualOwnerNode() const
-{
-    return &ownerNode();
+DEFINE_TRACE(EmptyNodeList) {
+  visitor->trace(m_owner);
+  NodeList::trace(visitor);
 }
 
-DEFINE_TRACE(EmptyNodeList)
-{
-    visitor->trace(m_owner);
-    NodeList::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

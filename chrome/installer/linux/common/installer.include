@@ -73,7 +73,7 @@ process_template() (
     -e "s#@@MAINTNAME@@#${MAINTNAME}#g" \
     -e "s#@@MAINTMAIL@@#${MAINTMAIL}#g" \
     -e "s#@@REPOCONFIG@@#${REPOCONFIG}#g" \
-    -e "s#@@SSLREPOCONFIG@@#${SSLREPOCONFIG}#g" \
+    -e "s#@@REPOCONFIGREGEX@@#${REPOCONFIGREGEX}#g" \
     -e "s#@@SHORTDESC@@#${SHORTDESC}#g" \
     -e "s#@@FULLDESC@@#${FULLDESC}#g" \
     -e "s#@@DEFAULT_FLAGS@@#${DEFAULT_FLAGS:-}#g" \
@@ -129,8 +129,6 @@ stage_install_common() {
   if [ -r "${BUILDDIR}/chrome_100_percent.pak" ]; then
     install -m 644 "${BUILDDIR}/chrome_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
     install -m 644 "${BUILDDIR}/chrome_200_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
-    install -m 644 "${BUILDDIR}/chrome_material_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
-    install -m 644 "${BUILDDIR}/chrome_material_200_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
   else
     install -m 644 "${BUILDDIR}/theme_resources_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
     install -m 644 "${BUILDDIR}/ui_resources_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
@@ -164,14 +162,11 @@ stage_install_common() {
     install -m 644 "${BUILDDIR}/libwidevinecdm.so" "${STAGEDIR}/${INSTALLDIR}/"
   fi
 
-  # Pepper Flash.
-  PEPPERFLASH_SRCDIR="${BUILDDIR}/PepperFlash"
-  PEPPERFLASH_DESTDIR="${STAGEDIR}/${INSTALLDIR}/PepperFlash"
-  install -m 755 -d "${PEPPERFLASH_DESTDIR}"
-  install -m 644 -s "${PEPPERFLASH_SRCDIR}/libpepflashplayer.so" \
-    "${PEPPERFLASH_DESTDIR}/"
-  install -m 644 "${PEPPERFLASH_SRCDIR}/manifest.json" \
-    "${PEPPERFLASH_DESTDIR}/"
+  # ANGLE
+  if [ "${CHANNEL}" != "stable" ]; then
+    install -m 644 "${BUILDDIR}/libGLESv2.so" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${BUILDDIR}/libEGL.so" "${STAGEDIR}/${INSTALLDIR}/"
+  fi
 
   # libc++
   if [ -f "${BUILDDIR}/lib/libc++.so" ]; then

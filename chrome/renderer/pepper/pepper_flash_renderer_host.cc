@@ -4,11 +4,14 @@
 
 #include "chrome/renderer/pepper/pepper_flash_renderer_host.h"
 
+#include <stddef.h>
+
 #include <map>
 #include <vector>
 
 #include "base/lazy_instance.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "components/pdf/renderer/pepper_pdf_host.h"
 #include "content/public/renderer/pepper_plugin_instance.h"
@@ -201,15 +204,14 @@ int32_t PepperFlashRendererHost::OnDrawGlyphs(
       params.glyph_indices.empty())
     return PP_ERROR_FAILED;
 
-  // Set up the typeface.
   int style = SkTypeface::kNormal;
   if (static_cast<PP_BrowserFont_Trusted_Weight>(params.font_desc.weight) >=
       PP_BROWSERFONT_TRUSTED_WEIGHT_BOLD)
     style |= SkTypeface::kBold;
   if (params.font_desc.italic)
     style |= SkTypeface::kItalic;
-  skia::RefPtr<SkTypeface> typeface = skia::AdoptRef(SkTypeface::CreateFromName(
-      params.font_desc.face.c_str(), static_cast<SkTypeface::Style>(style)));
+  sk_sp<SkTypeface> typeface(SkTypeface::MakeFromName(
+      params.font_desc.face.c_str(), SkFontStyle::FromOldStyle(style)));
   if (!typeface)
     return PP_ERROR_FAILED;
 
@@ -218,7 +220,6 @@ int32_t PepperFlashRendererHost::OnDrawGlyphs(
   if (enter.failed())
     return PP_ERROR_FAILED;
 
-  // Set up the canvas.
   PPB_ImageData_API* image = static_cast<PPB_ImageData_API*>(enter.object());
   SkCanvas* canvas = image->GetCanvas();
   bool needs_unmapping = false;
@@ -239,7 +240,6 @@ int32_t PepperFlashRendererHost::OnDrawGlyphs(
       SkIntToScalar(params.clip.point.y + params.clip.size.height)};
   canvas->clipRect(clip_rect);
 
-  // Convert & set the matrix.
   SkMatrix matrix;
   matrix.set(SkMatrix::kMScaleX, SkFloatToScalar(params.transformation[0][0]));
   matrix.set(SkMatrix::kMSkewX, SkFloatToScalar(params.transformation[0][1]));
@@ -258,7 +258,7 @@ int32_t PepperFlashRendererHost::OnDrawGlyphs(
   paint.setAntiAlias(true);
   paint.setHinting(SkPaint::kFull_Hinting);
   paint.setTextSize(SkIntToScalar(params.font_desc.size));
-  paint.setTypeface(typeface.get());  // Takes a ref and manages lifetime.
+  paint.setTypeface(std::move(typeface));
   if (params.allow_subpixel_aa) {
     paint.setSubpixelText(true);
     paint.setLCDRenderText(true);

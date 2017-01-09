@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <cmath>
 #include <limits>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/geometry/vector2d_f.h"
@@ -245,6 +247,47 @@ TEST(Vector2dTest, ClampVector2dF) {
   EXPECT_EQ(Vector2dF(7.5f, 9.5f).ToString(), a.ToString());
   a.SetToMin(Vector2dF(3.5f, 5.5f));
   EXPECT_EQ(Vector2dF(3.5f, 5.5f).ToString(), a.ToString());
+}
+
+TEST(Vector2dTest, IntegerOverflow) {
+  int int_max = std::numeric_limits<int>::max();
+  int int_min = std::numeric_limits<int>::min();
+
+  Vector2d max_vector(int_max, int_max);
+  Vector2d min_vector(int_min, int_min);
+  Vector2d test;
+
+  test = Vector2d();
+  test += Vector2d(int_max, int_max);
+  EXPECT_EQ(test, max_vector);
+
+  test = Vector2d();
+  test += Vector2d(int_min, int_min);
+  EXPECT_EQ(test, min_vector);
+
+  test = Vector2d(10, 20);
+  test += Vector2d(int_max, int_max);
+  EXPECT_EQ(test, max_vector);
+
+  test = Vector2d(-10, -20);
+  test += Vector2d(int_min, int_min);
+  EXPECT_EQ(test, min_vector);
+
+  test = Vector2d();
+  test -= Vector2d(int_max, int_max);
+  EXPECT_EQ(test, Vector2d(-int_max, -int_max));
+
+  test = Vector2d();
+  test -= Vector2d(int_min, int_min);
+  EXPECT_EQ(test, max_vector);
+
+  test = Vector2d(10, 20);
+  test -= Vector2d(int_min, int_min);
+  EXPECT_EQ(test, max_vector);
+
+  test = Vector2d(-10, -20);
+  test -= Vector2d(int_max, int_max);
+  EXPECT_EQ(test, min_vector);
 }
 
 }  // namespace gfx

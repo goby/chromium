@@ -4,16 +4,21 @@
 
 #include "gpu/command_buffer/client/mapped_memory.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <functional>
 
 #include "base/atomic_sequence_num.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
+#include "gpu/command_buffer/client/shared_memory_limits.h"
 #include "gpu/command_buffer/common/buffer.h"
 
 namespace gpu {
@@ -25,7 +30,7 @@ base::StaticAtomicSequenceNumber g_next_mapped_memory_manager_tracing_id;
 
 }  // namespace
 
-MemoryChunk::MemoryChunk(int32 shm_id,
+MemoryChunk::MemoryChunk(int32_t shm_id,
                          scoped_refptr<gpu::Buffer> shm,
                          CommandBufferHelper* helper)
     : shm_id_(shm_id),
@@ -40,7 +45,7 @@ MappedMemoryManager::MappedMemoryManager(CommandBufferHelper* helper,
       helper_(helper),
       allocated_memory_(0),
       max_free_bytes_(unused_memory_reclaim_limit),
-      max_allocated_bytes_(kNoLimit),
+      max_allocated_bytes_(SharedMemoryLimits::kNoLimit),
       tracing_id_(g_next_mapped_memory_manager_tracing_id.GetNext()) {
   // In certain cases, ThreadTaskRunnerHandle isn't set (Android Webview).
   // Don't register a dump provider in these cases.
@@ -61,8 +66,9 @@ MappedMemoryManager::~MappedMemoryManager() {
   }
 }
 
-void* MappedMemoryManager::Alloc(
-    unsigned int size, int32* shm_id, unsigned int* shm_offset) {
+void* MappedMemoryManager::Alloc(unsigned int size,
+                                 int32_t* shm_id,
+                                 unsigned int* shm_offset) {
   DCHECK(shm_id);
   DCHECK(shm_offset);
   if (size <= allocated_memory_) {
@@ -83,7 +89,7 @@ void* MappedMemoryManager::Alloc(
     // If there is a memory limit being enforced and total free
     // memory (allocated_memory_ - total_bytes_in_use) is larger than
     // the limit try waiting.
-    if (max_free_bytes_ != kNoLimit &&
+    if (max_free_bytes_ != SharedMemoryLimits::kNoLimit &&
         (allocated_memory_ - total_bytes_in_use) >= max_free_bytes_) {
       TRACE_EVENT0("gpu", "MappedMemoryManager::Alloc::wait");
       for (auto& chunk : chunks_) {
@@ -98,7 +104,7 @@ void* MappedMemoryManager::Alloc(
     }
   }
 
-  if (max_allocated_bytes_ != kNoLimit &&
+  if (max_allocated_bytes_ != SharedMemoryLimits::kNoLimit &&
       (allocated_memory_ + size) > max_allocated_bytes_) {
     return nullptr;
   }
@@ -108,7 +114,7 @@ void* MappedMemoryManager::Alloc(
   unsigned int chunk_size =
       ((size + chunk_size_multiple_ - 1) / chunk_size_multiple_) *
       chunk_size_multiple_;
-  int32 id = -1;
+  int32_t id = -1;
   scoped_refptr<gpu::Buffer> shm =
       cmd_buf->CreateTransferBuffer(chunk_size, &id);
   if (id  < 0)
@@ -116,7 +122,7 @@ void* MappedMemoryManager::Alloc(
   DCHECK(shm.get());
   MemoryChunk* mc = new MemoryChunk(id, shm, helper_);
   allocated_memory_ += mc->GetSize();
-  chunks_.push_back(make_scoped_ptr(mc));
+  chunks_.push_back(base::WrapUnique(mc));
   void* mem = mc->Alloc(size);
   DCHECK(mem);
   *shm_id = mc->shm_id();
@@ -134,7 +140,7 @@ void MappedMemoryManager::Free(void* pointer) {
   NOTREACHED();
 }
 
-void MappedMemoryManager::FreePendingToken(void* pointer, int32 token) {
+void MappedMemoryManager::FreePendingToken(void* pointer, int32_t token) {
   for (auto& chunk : chunks_) {
     if (chunk->IsInChunk(pointer)) {
       chunk->FreePendingToken(pointer, token);
@@ -163,21 +169,31 @@ void MappedMemoryManager::FreeUnused() {
 bool MappedMemoryManager::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
-  const uint64 tracing_process_id =
+  using base::trace_event::MemoryAllocatorDump;
+  using base::trace_event::MemoryDumpLevelOfDetail;
+
+  if (args.level_of_detail == MemoryDumpLevelOfDetail::BACKGROUND) {
+    std::string dump_name =
+        base::StringPrintf("gpu/mapped_memory/manager_%d", tracing_id_);
+    MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(dump_name);
+    dump->AddScalar(MemoryAllocatorDump::kNameSize,
+                    MemoryAllocatorDump::kUnitsBytes, allocated_memory_);
+
+    // Early out, no need for more detail in a BACKGROUND dump.
+    return true;
+  }
+
+  const uint64_t tracing_process_id =
       base::trace_event::MemoryDumpManager::GetInstance()
           ->GetTracingProcessId();
-
   for (const auto& chunk : chunks_) {
     std::string dump_name = base::StringPrintf(
         "gpu/mapped_memory/manager_%d/chunk_%d", tracing_id_, chunk->shm_id());
-    base::trace_event::MemoryAllocatorDump* dump =
-        pmd->CreateAllocatorDump(dump_name);
+    MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(dump_name);
 
-    dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
-                    base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                    chunk->GetSize());
-    dump->AddScalar("free_size",
-                    base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+    dump->AddScalar(MemoryAllocatorDump::kNameSize,
+                    MemoryAllocatorDump::kUnitsBytes, chunk->GetSize());
+    dump->AddScalar("free_size", MemoryAllocatorDump::kUnitsBytes,
                     chunk->GetFreeSize());
 
     auto guid = GetBufferGUIDForTracing(tracing_process_id, chunk->shm_id());

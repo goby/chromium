@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/ntp/favicon_webui_handler.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/strings/string_split.h"
@@ -20,7 +22,6 @@
 #include "content/public/browser/web_ui.h"
 #include "extensions/browser/extension_registry.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/color_analysis.h"
 #include "ui/gfx/favicon_size.h"
@@ -106,10 +107,10 @@ void FaviconWebUIHandler::HandleGetFaviconDominantColor(
     for (const auto& prepopulated_page : top_sites->GetPrepopulatedPages()) {
       if (url == prepopulated_page.most_visited.url) {
         base::StringValue dom_id_value(dom_id);
-        scoped_ptr<base::StringValue> color(
+        std::unique_ptr<base::StringValue> color(
             SkColorToCss(prepopulated_page.color));
-        web_ui()->CallJavascriptFunction("ntp.setFaviconDominantColor",
-                                         dom_id_value, *color);
+        web_ui()->CallJavascriptFunctionUnsafe("ntp.setFaviconDominantColor",
+                                               dom_id_value, *color);
         return;
       }
     }
@@ -129,7 +130,7 @@ void FaviconWebUIHandler::HandleGetFaviconDominantColor(
 void FaviconWebUIHandler::OnFaviconDataAvailable(
     int id,
     const favicon_base::FaviconRawBitmapResult& bitmap_result) {
-  scoped_ptr<base::StringValue> color_value;
+  std::unique_ptr<base::StringValue> color_value;
 
   if (bitmap_result.is_valid())
     color_value.reset(GetDominantColorCssString(bitmap_result.bitmap_data));
@@ -137,8 +138,8 @@ void FaviconWebUIHandler::OnFaviconDataAvailable(
     color_value.reset(new base::StringValue("#919191"));
 
   base::StringValue dom_id(dom_id_map_[id]);
-  web_ui()->CallJavascriptFunction("ntp.setFaviconDominantColor",
-                                   dom_id, *color_value);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.setFaviconDominantColor", dom_id,
+                                         *color_value);
   dom_id_map_.erase(id);
 }
 
@@ -165,9 +166,9 @@ void FaviconWebUIHandler::NotifyAppIconReady(const std::string& extension_id) {
     return;
   scoped_refptr<base::RefCountedStaticMemory> bits_mem(
       new base::RefCountedStaticMemory(&bits.front(), bits.size()));
-  scoped_ptr<base::StringValue> color_value(
+  std::unique_ptr<base::StringValue> color_value(
       GetDominantColorCssString(bits_mem));
   base::StringValue id(extension_id);
-  web_ui()->CallJavascriptFunction(
-      "ntp.setFaviconDominantColor", id, *color_value);
+  web_ui()->CallJavascriptFunctionUnsafe("ntp.setFaviconDominantColor", id,
+                                         *color_value);
 }

@@ -2,23 +2,35 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ios/web/web_state/web_state_impl.h"
+
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/base64.h"
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/mac/bind_objc_block.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/test/ios/wait_util.h"
 #include "base/values.h"
+#import "ios/web/public/java_script_dialog_presenter.h"
 #include "ios/web/public/load_committed_details.h"
 #include "ios/web/public/test/test_browser_state.h"
+#include "ios/web/public/test/web_test.h"
+#include "ios/web/public/web_state/context_menu_params.h"
 #include "ios/web/public/web_state/global_web_state_observer.h"
+#include "ios/web/public/web_state/web_state_delegate.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #include "ios/web/public/web_state/web_state_policy_decider.h"
 #include "ios/web/web_state/global_web_state_event_tracker.h"
-#include "ios/web/web_state/web_state_impl.h"
+#import "ios/web/web_state/ui/crw_web_controller.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
-#include "testing/platform_test.h"
 #include "url/gurl.h"
 
 using testing::_;
@@ -100,6 +112,95 @@ class TestGlobalWebStateObserver : public GlobalWebStateObserver {
   bool did_stop_loading_called_;
   bool page_loaded_called_with_success_;
   bool web_state_destroyed_called_;
+};
+
+// Test delegate to check that the WebStateDelegate methods are called as
+// expected.
+class TestWebStateDelegate : public WebStateDelegate {
+ public:
+  TestWebStateDelegate()
+      : load_progress_changed_called_(false),
+        handle_context_menu_called_(false),
+        get_java_script_dialog_presenter_called_(false) {}
+
+  // True if the WebStateDelegate LoadProgressChanged method has been called.
+  bool load_progress_changed_called() const {
+    return load_progress_changed_called_;
+  }
+
+  // True if the WebStateDelegate HandleContextMenu method has been called.
+  bool handle_context_menu_called() const {
+    return handle_context_menu_called_;
+  }
+
+  // True if the WebStateDelegate GetJavaScriptDialogPresenter method has been
+  // called.
+  bool get_java_script_dialog_presenter_called() const {
+    return get_java_script_dialog_presenter_called_;
+  }
+
+  void SetJavaScriptDialogPresenter(JavaScriptDialogPresenter* presenter) {
+    presenter_ = presenter;
+  }
+
+ private:
+  // WebStateDelegate implementation:
+  void LoadProgressChanged(WebState* source, double progress) override {
+    load_progress_changed_called_ = true;
+  }
+
+  bool HandleContextMenu(WebState* source,
+                         const ContextMenuParams& params) override {
+    handle_context_menu_called_ = true;
+    return NO;
+  }
+
+  JavaScriptDialogPresenter* GetJavaScriptDialogPresenter(
+      WebState* source) override {
+    get_java_script_dialog_presenter_called_ = true;
+    return presenter_;
+  }
+
+  bool load_progress_changed_called_;
+  bool handle_context_menu_called_;
+  bool get_java_script_dialog_presenter_called_;
+  JavaScriptDialogPresenter* presenter_;
+};
+
+// Test presenter to check that the JavaScriptDialogPresenter methods are called
+// as expected.
+class TestJavaScriptDialogPresenter : public JavaScriptDialogPresenter {
+ public:
+  TestJavaScriptDialogPresenter()
+      : cancel_dialogs_called_(false), run_java_script_dialog_called_(false) {}
+
+  // True if the JavaScriptDialogPresenter CancelDialogs method has been called.
+  bool cancel_dialogs_called() const { return cancel_dialogs_called_; }
+
+  // True if the JavaScriptDialogPresenter RunJavaScriptDialog method has been
+  // called.
+  bool run_java_script_dialog_called() const {
+    return run_java_script_dialog_called_;
+  }
+
+ private:
+  // JavaScriptDialogPresenter implementation:
+  void RunJavaScriptDialog(WebState* web_state,
+                           const GURL& origin_url,
+                           JavaScriptDialogType java_script_dialog_type,
+                           NSString* message_text,
+                           NSString* default_prompt_text,
+                           const DialogClosedCallback& callback) override {
+    run_java_script_dialog_called_ = true;
+    callback.Run(false, nil);
+  }
+
+  void CancelDialogs(WebState* web_state) override {
+    cancel_dialogs_called_ = true;
+  }
+
+  bool cancel_dialogs_called_;
+  bool run_java_script_dialog_called_;
 };
 
 // Test observer to check that the WebStateObserver methods are called as
@@ -220,16 +321,63 @@ bool HandleScriptCommand(bool* is_called,
   return should_handle;
 }
 
-class WebStateTest : public PlatformTest {
+class WebStateTest : public web::WebTest {
  protected:
   void SetUp() override {
     web_state_.reset(new WebStateImpl(&browser_state_));
-    web_state_->SetWebController(nil);
+  }
+
+  // Loads specified html page into WebState.
+  void LoadHtml(std::string html) {
+    web_state_->GetNavigationManagerImpl().InitializeSession(nil, nil, NO, 0);
+
+    // Use data: url for loading html page.
+    std::string encoded_html;
+    base::Base64Encode(html, &encoded_html);
+    GURL url("data:text/html;charset=utf8;base64," + encoded_html);
+    web::NavigationManager::WebLoadParams params(url);
+    web_state_->GetNavigationManager()->LoadURLWithParams(params);
+
+    // Trigger the load.
+    web_state_->SetWebUsageEnabled(true);
+    web_state_->GetView();
+
+    // Wait until load is completed.
+    EXPECT_TRUE(web_state_->IsLoading());
+    base::test::ios::WaitUntilCondition(^bool() {
+      return !web_state_->IsLoading();
+    });
   }
 
   web::TestBrowserState browser_state_;
-  scoped_ptr<WebStateImpl> web_state_;
+  std::unique_ptr<WebStateImpl> web_state_;
 };
+
+TEST_F(WebStateTest, WebUsageEnabled) {
+  // Default is false.
+  ASSERT_FALSE(web_state_->IsWebUsageEnabled());
+
+  web_state_->SetWebUsageEnabled(true);
+  EXPECT_TRUE(web_state_->IsWebUsageEnabled());
+  EXPECT_TRUE(web_state_->GetWebController().webUsageEnabled);
+
+  web_state_->SetWebUsageEnabled(false);
+  EXPECT_FALSE(web_state_->IsWebUsageEnabled());
+  EXPECT_FALSE(web_state_->GetWebController().webUsageEnabled);
+}
+
+TEST_F(WebStateTest, ShouldSuppressDialogs) {
+  // Default is false.
+  ASSERT_FALSE(web_state_->ShouldSuppressDialogs());
+
+  web_state_->SetShouldSuppressDialogs(true);
+  EXPECT_TRUE(web_state_->ShouldSuppressDialogs());
+  EXPECT_TRUE(web_state_->GetWebController().shouldSuppressDialogs);
+
+  web_state_->SetShouldSuppressDialogs(false);
+  EXPECT_FALSE(web_state_->ShouldSuppressDialogs());
+  EXPECT_FALSE(web_state_->GetWebController().shouldSuppressDialogs);
+}
 
 TEST_F(WebStateTest, ResponseHeaders) {
   GURL real_url("http://foo.com/bar");
@@ -291,7 +439,7 @@ TEST_F(WebStateTest, ResponseHeaderClearing) {
 }
 
 TEST_F(WebStateTest, ObserverTest) {
-  scoped_ptr<TestWebStateObserver> observer(
+  std::unique_ptr<TestWebStateObserver> observer(
       new TestWebStateObserver(web_state_.get()));
   EXPECT_EQ(web_state_.get(), observer->web_state());
 
@@ -341,9 +489,48 @@ TEST_F(WebStateTest, ObserverTest) {
   EXPECT_EQ(nullptr, observer->web_state());
 }
 
+// Tests that WebStateDelegate methods appropriately called.
+TEST_F(WebStateTest, DelegateTest) {
+  TestWebStateDelegate delegate;
+  web_state_->SetDelegate(&delegate);
+
+  // Test that LoadProgressChanged() is called.
+  EXPECT_FALSE(delegate.load_progress_changed_called());
+  web_state_->SendChangeLoadProgress(0.0);
+  EXPECT_TRUE(delegate.load_progress_changed_called());
+
+  // Test that HandleContextMenu() is called.
+  EXPECT_FALSE(delegate.handle_context_menu_called());
+  web::ContextMenuParams context_menu_params;
+  web_state_->HandleContextMenu(context_menu_params);
+  EXPECT_TRUE(delegate.handle_context_menu_called());
+
+  // Test that GetJavaScriptDialogPresenter() is called.
+  TestJavaScriptDialogPresenter presenter;
+  delegate.SetJavaScriptDialogPresenter(&presenter);
+
+  EXPECT_FALSE(delegate.get_java_script_dialog_presenter_called());
+  EXPECT_FALSE(presenter.run_java_script_dialog_called());
+  EXPECT_FALSE(presenter.cancel_dialogs_called());
+
+  __block bool callback_called = false;
+  web_state_->RunJavaScriptDialog(GURL(), JAVASCRIPT_DIALOG_TYPE_ALERT, @"",
+                                  nil, base::BindBlock(^(bool, NSString*) {
+                                    callback_called = true;
+                                  }));
+
+  EXPECT_TRUE(delegate.get_java_script_dialog_presenter_called());
+  EXPECT_TRUE(presenter.run_java_script_dialog_called());
+  EXPECT_TRUE(callback_called);
+
+  EXPECT_FALSE(presenter.cancel_dialogs_called());
+  web_state_->CancelDialogs();
+  EXPECT_TRUE(presenter.cancel_dialogs_called());
+}
+
 // Verifies that GlobalWebStateObservers are called when expected.
 TEST_F(WebStateTest, GlobalObserverTest) {
-  scoped_ptr<TestGlobalWebStateObserver> observer(
+  std::unique_ptr<TestGlobalWebStateObserver> observer(
       new TestGlobalWebStateObserver());
 
   // Test that NavigationItemsPruned() is called.
@@ -494,6 +681,64 @@ TEST_F(WebStateTest, ScriptCommand) {
   EXPECT_TRUE(is_called_2);
 
   web_state_->RemoveScriptCommandCallback(kPrefix2);
+}
+
+// Tests script execution with and without callback.
+TEST_F(WebStateTest, ScriptExecution) {
+  LoadHtml("<html></html>");
+
+  // Execute script without callback.
+  web_state_->ExecuteJavaScript(base::UTF8ToUTF16("window.foo = 'bar'"));
+
+  // Execute script with callback.
+  __block std::unique_ptr<base::Value> execution_result;
+  web_state_->ExecuteJavaScript(base::UTF8ToUTF16("window.foo"),
+                                base::BindBlock(^(const base::Value* value) {
+                                  ASSERT_TRUE(value);
+                                  execution_result = value->CreateDeepCopy();
+                                }));
+  base::test::ios::WaitUntilCondition(^bool() {
+    return execution_result.get();
+  });
+
+  std::string string_result;
+  execution_result->GetAsString(&string_result);
+  EXPECT_EQ("bar", string_result);
+}
+
+// Tests loading progress.
+TEST_F(WebStateTest, LoadingProgress) {
+  EXPECT_FLOAT_EQ(0.0, web_state_->GetLoadingProgress());
+  LoadHtml("<html></html>");
+  base::test::ios::WaitUntilCondition(^bool() {
+    return web_state_->GetLoadingProgress() == 1.0;
+  });
+}
+
+// Tests that page which overrides window.webkit object does not break the
+// messaging system.
+TEST_F(WebStateTest, OverridingWebKitObject) {
+  // Add a script command handler.
+  __block bool message_received = false;
+  const web::WebState::ScriptCommandCallback callback =
+      base::BindBlock(^bool(const base::DictionaryValue&, const GURL&, bool) {
+        message_received = true;
+        return true;
+      });
+  web_state_->AddScriptCommandCallback(callback, "test");
+
+  // Load the page which overrides window.webkit object and wait until the
+  // test message is received.
+  LoadHtml(
+      "<script>"
+      "  webkit = undefined;"
+      "  __gCrWeb.message.invokeOnHost({'command': 'test.webkit-overriding'});"
+      "</script>");
+
+  base::test::ios::WaitUntilCondition(^{
+    return message_received;
+  });
+  web_state_->RemoveScriptCommandCallback("test");
 }
 
 }  // namespace

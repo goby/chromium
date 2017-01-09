@@ -22,7 +22,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/TextDocument.h"
 
 #include "core/html/parser/TextDocumentParser.h"
@@ -30,15 +29,16 @@
 namespace blink {
 
 TextDocument::TextDocument(const DocumentInit& initializer)
-    : HTMLDocument(initializer)
-{
-    setCompatibilityMode(QuirksMode);
-    lockCompatibilityMode();
+    : HTMLDocument(initializer) {
+  setCompatibilityMode(QuirksMode);
+  lockCompatibilityMode();
+  UseCounter::count(*this, UseCounter::TextDocument);
+  if (!isInMainFrame())
+    UseCounter::count(*this, UseCounter::TextDocumentInFrame);
 }
 
-PassRefPtrWillBeRawPtr<DocumentParser> TextDocument::createParser()
-{
-    return TextDocumentParser::create(*this, parserSynchronizationPolicy());
+DocumentParser* TextDocument::createParser() {
+  return TextDocumentParser::create(*this, getParserSynchronizationPolicy());
 }
 
-}
+}  // namespace blink

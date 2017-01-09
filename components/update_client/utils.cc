@@ -4,11 +4,19 @@
 
 #include "components/update_client/utils.h"
 
+#include <stddef.h>
 #include <stdint.h>
-#include <cmath>
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <map>
+#include <vector>
+
+#include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/files/memory_mapped_file.h"
 #include "base/guid.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -16,15 +24,22 @@
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
 #include "base/win/windows_version.h"
+#include "build/build_config.h"
 #include "components/crx_file/id_util.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/update_client/configurator.h"
 #include "components/update_client/crx_update_item.h"
 #include "components/update_client/update_client.h"
+#include "components/update_client/update_client_errors.h"
 #include "components/update_client/update_query_params.h"
+#include "components/update_client/updater_state.h"
+#include "crypto/secure_hash.h"
+#include "crypto/sha2.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
+#include "url/gurl.h"
 
 namespace update_client {
 
@@ -56,17 +71,36 @@ std::string HexStringToID(const std::string& hexstr) {
   return id;
 }
 
+std::string GetOSVersion() {
+#if defined(OS_WIN)
+  const auto ver = base::win::OSInfo::GetInstance()->version_number();
+  return base::StringPrintf("%d.%d.%d.%d", ver.major, ver.minor, ver.build,
+                            ver.patch);
+#else
+  return base::SysInfo().OperatingSystemVersion();
+#endif
+}
+
+std::string GetServicePack() {
+#if defined(OS_WIN)
+  return base::win::OSInfo::GetInstance()->service_pack_str();
+#else
+  return std::string();
+#endif
+}
+
 }  // namespace
 
-std::string BuildProtocolRequest(const std::string& browser_version,
-                                 const std::string& channel,
-                                 const std::string& lang,
-                                 const std::string& os_long_name,
-                                 const std::string& request_body,
-                                 const std::string& additional_attributes) {
-  const std::string prod_id(
-      UpdateQueryParams::GetProdIdString(UpdateQueryParams::CHROME));
-
+std::string BuildProtocolRequest(
+    const std::string& prod_id,
+    const std::string& browser_version,
+    const std::string& channel,
+    const std::string& lang,
+    const std::string& os_long_name,
+    const std::string& download_preference,
+    const std::string& request_body,
+    const std::string& additional_attributes,
+    const std::unique_ptr<UpdaterState::Attributes>& updater_state_attributes) {
   std::string request(
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
       "<request protocol=\"3.0\" ");
@@ -80,11 +114,11 @@ std::string BuildProtocolRequest(const std::string& browser_version,
       "version=\"%s-%s\" prodversion=\"%s\" "
       "requestid=\"{%s}\" lang=\"%s\" updaterchannel=\"%s\" prodchannel=\"%s\" "
       "os=\"%s\" arch=\"%s\" nacl_arch=\"%s\"",
-      prod_id.c_str(),
-      browser_version.c_str(),            // "version"
+      prod_id.c_str(),                    // "version" is prefixed by prod_id.
+      browser_version.c_str(),
       browser_version.c_str(),            // "prodversion"
       base::GenerateGUID().c_str(),       // "requestid"
-      lang.c_str(),                       // "lang",
+      lang.c_str(),                       // "lang"
       channel.c_str(),                    // "updaterchannel"
       channel.c_str(),                    // "prodchannel"
       UpdateQueryParams::GetOS(),         // "os"
@@ -96,6 +130,16 @@ std::string BuildProtocolRequest(const std::string& browser_version,
   if (is_wow64)
     base::StringAppendF(&request, " wow64=\"1\"");
 #endif
+  if (!download_preference.empty())
+    base::StringAppendF(&request, " dlpref=\"%s\"",
+                        download_preference.c_str());
+  if (updater_state_attributes &&
+      updater_state_attributes->count(UpdaterState::kDomainJoined)) {
+    base::StringAppendF(
+        &request, " %s=\"%s\"",  // domainjoined
+        UpdaterState::kDomainJoined,
+        (*updater_state_attributes)[UpdaterState::kDomainJoined].c_str());
+  }
   base::StringAppendF(&request, ">");
 
   // HW platform information.
@@ -103,11 +147,31 @@ std::string BuildProtocolRequest(const std::string& browser_version,
                       GetPhysicalMemoryGB());  // "physmem" in GB.
 
   // OS version and platform information.
+  const std::string os_version = GetOSVersion();
+  const std::string os_sp = GetServicePack();
   base::StringAppendF(
-      &request, "<os platform=\"%s\" version=\"%s\" arch=\"%s\"/>",
+      &request, "<os platform=\"%s\" arch=\"%s\"",
       os_long_name.c_str(),                                    // "platform"
-      base::SysInfo().OperatingSystemVersion().c_str(),        // "version"
       base::SysInfo().OperatingSystemArchitecture().c_str());  // "arch"
+  if (!os_version.empty())
+    base::StringAppendF(&request, " version=\"%s\"", os_version.c_str());
+  if (!os_sp.empty())
+    base::StringAppendF(&request, " sp=\"%s\"", os_sp.c_str());
+  base::StringAppendF(&request, "/>");
+
+#if defined(GOOGLE_CHROME_BUILD)
+  // Updater state.
+  if (updater_state_attributes) {
+    base::StringAppendF(&request, "<updater");
+    for (const auto& attr : *updater_state_attributes) {
+      if (attr.first != UpdaterState::kDomainJoined) {
+        base::StringAppendF(&request, " %s=\"%s\"", attr.first.c_str(),
+                          attr.second.c_str());
+      }
+    }
+    base::StringAppendF(&request, "/>");
+  }
+#endif  // GOOGLE_CHROME_BUILD
 
   // The actual payload of the request.
   base::StringAppendF(&request, "%s</request>", request_body.c_str());
@@ -115,14 +179,18 @@ std::string BuildProtocolRequest(const std::string& browser_version,
   return request;
 }
 
-scoped_ptr<net::URLFetcher> SendProtocolRequest(
+std::unique_ptr<net::URLFetcher> SendProtocolRequest(
     const GURL& url,
     const std::string& protocol_request,
     net::URLFetcherDelegate* url_fetcher_delegate,
     net::URLRequestContextGetter* url_request_context_getter) {
-  scoped_ptr<net::URLFetcher> url_fetcher = net::URLFetcher::Create(
+  std::unique_ptr<net::URLFetcher> url_fetcher = net::URLFetcher::Create(
       0, url, net::URLFetcher::POST, url_fetcher_delegate);
+  if (!url_fetcher.get())
+    return url_fetcher;
 
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      url_fetcher.get(), data_use_measurement::DataUseUserData::UPDATE_CLIENT);
   url_fetcher->SetUploadData("application/xml", protocol_request);
   url_fetcher->SetRequestContext(url_request_context_getter);
   url_fetcher->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
@@ -190,6 +258,88 @@ std::string GetCrxComponentID(const CrxComponent& component) {
   CHECK_GE(component.pk_hash.size(), kCrxIdSize);
   return HexStringToID(base::ToLowerASCII(
       base::HexEncode(&component.pk_hash[0], kCrxIdSize)));
+}
+
+bool VerifyFileHash256(const base::FilePath& filepath,
+                       const std::string& expected_hash_str) {
+  std::vector<uint8_t> expected_hash;
+  if (!base::HexStringToBytes(expected_hash_str, &expected_hash) ||
+      expected_hash.size() != crypto::kSHA256Length) {
+    return false;
+  }
+
+  base::MemoryMappedFile mmfile;
+  if (!mmfile.Initialize(filepath))
+    return false;
+
+  uint8_t actual_hash[crypto::kSHA256Length] = {0};
+  std::unique_ptr<crypto::SecureHash> hasher(
+      crypto::SecureHash::Create(crypto::SecureHash::SHA256));
+  hasher->Update(mmfile.data(), mmfile.length());
+  hasher->Finish(actual_hash, sizeof(actual_hash));
+
+  return memcmp(actual_hash, &expected_hash[0], sizeof(actual_hash)) == 0;
+}
+
+bool IsValidBrand(const std::string& brand) {
+  const size_t kMaxBrandSize = 4;
+  if (!brand.empty() && brand.size() != kMaxBrandSize)
+    return false;
+
+  return std::find_if_not(brand.begin(), brand.end(), [](char ch) {
+           return base::IsAsciiAlpha(ch);
+         }) == brand.end();
+}
+
+// Helper function.
+// Returns true if |part| matches the expression
+// ^[<special_chars>a-zA-Z0-9]{min_length,max_length}$
+bool IsValidInstallerAttributePart(const std::string& part,
+                                   const std::string& special_chars,
+                                   size_t min_length,
+                                   size_t max_length) {
+  if (part.size() < min_length || part.size() > max_length)
+    return false;
+
+  return std::find_if_not(part.begin(), part.end(), [&special_chars](char ch) {
+           if (base::IsAsciiAlpha(ch) || base::IsAsciiDigit(ch))
+             return true;
+
+           for (auto c : special_chars) {
+             if (c == ch)
+               return true;
+           }
+
+           return false;
+         }) == part.end();
+}
+
+// Returns true if the |name| parameter matches ^[-_a-zA-Z0-9]{1,256}$ .
+bool IsValidInstallerAttributeName(const std::string& name) {
+  return IsValidInstallerAttributePart(name, "-_", 1, 256);
+}
+
+// Returns true if the |value| parameter matches ^[-.,;+_=a-zA-Z0-9]{0,256}$ .
+bool IsValidInstallerAttributeValue(const std::string& value) {
+  return IsValidInstallerAttributePart(value, "-.,;+_=", 0, 256);
+}
+
+bool IsValidInstallerAttribute(const InstallerAttribute& attr) {
+  return IsValidInstallerAttributeName(attr.first) &&
+         IsValidInstallerAttributeValue(attr.second);
+}
+
+void RemoveUnsecureUrls(std::vector<GURL>* urls) {
+  DCHECK(urls);
+  urls->erase(std::remove_if(
+                  urls->begin(), urls->end(),
+                  [](const GURL& url) { return !url.SchemeIsCryptographic(); }),
+              urls->end());
+}
+
+CrxInstaller::Result InstallFunctionWrapper(base::Callback<bool()> callback) {
+  return CrxInstaller::Result(callback.Run() ? InstallError::NONE
+                                             : InstallError::GENERIC_ERROR);
 }
 
 }  // namespace update_client

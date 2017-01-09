@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "content/renderer/browser_plugin/browser_plugin_manager.h"
-#include "base/memory/scoped_ptr.h"
+
+#include <memory>
+
 #include "content/common/browser_plugin/browser_plugin_constants.h"
 #include "content/common/browser_plugin/browser_plugin_messages.h"
 #include "content/common/frame_messages.h"
@@ -47,7 +49,7 @@ int BrowserPluginManager::GetNextInstanceID() {
 }
 
 void BrowserPluginManager::UpdateFocusState() {
-  IDMap<BrowserPlugin>::iterator iter(&instances_);
+  IDMap<BrowserPlugin*>::iterator iter(&instances_);
   while (!iter.IsAtEnd()) {
     iter.GetCurrentValue()->UpdateGuestFocusState(blink::WebFocusTypeNone);
     iter.Advance();
@@ -74,7 +76,7 @@ BrowserPlugin* BrowserPluginManager::CreateBrowserPlugin(
 
 void BrowserPluginManager::DidCommitCompositorFrame(
     int render_frame_routing_id) {
-  IDMap<BrowserPlugin>::iterator iter(&instances_);
+  IDMap<BrowserPlugin*>::iterator iter(&instances_);
   while (!iter.IsAtEnd()) {
     if (iter.GetCurrentValue()->render_frame_routing_id() ==
         render_frame_routing_id) {
@@ -96,35 +98,11 @@ bool BrowserPluginManager::OnControlMessageReceived(
   bool success = iter.ReadInt(&browser_plugin_instance_id);
   DCHECK(success);
   BrowserPlugin* plugin = GetBrowserPlugin(browser_plugin_instance_id);
-  if (plugin && plugin->OnMessageReceived(message))
-    return true;
-
-  // TODO(fsamuel): This is probably forcing the compositor to continue working
-  // even on display:none. We should optimize this.
-  if (message.type() == BrowserPluginMsg_CompositorFrameSwapped::ID) {
-    OnCompositorFrameSwappedPluginUnavailable(message);
-    return true;
-  }
-
-  return false;
+  return plugin && plugin->OnMessageReceived(message);
 }
 
 bool BrowserPluginManager::Send(IPC::Message* msg) {
   return RenderThreadImpl::current()->Send(msg);
-}
-
-void BrowserPluginManager::OnCompositorFrameSwappedPluginUnavailable(
-    const IPC::Message& message) {
-  BrowserPluginMsg_CompositorFrameSwapped::Param param;
-  if (!BrowserPluginMsg_CompositorFrameSwapped::Read(&message, &param))
-    return;
-
-  FrameHostMsg_CompositorFrameSwappedACK_Params params;
-  params.producing_host_id = base::get<1>(param).producing_host_id;
-  params.producing_route_id = base::get<1>(param).producing_route_id;
-  params.output_surface_id = base::get<1>(param).output_surface_id;
-  Send(new BrowserPluginHostMsg_CompositorFrameSwappedACK(
-      base::get<0>(param), params));
 }
 
 }  // namespace content

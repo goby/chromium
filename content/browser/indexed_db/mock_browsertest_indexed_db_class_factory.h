@@ -5,10 +5,12 @@
 #ifndef CONTENT_BROWSER_INDEXED_DB_MOCK_BROWSERTEST_INDEXED_DB_CLASS_FACTORY_H_
 #define CONTENT_BROWSER_INDEXED_DB_MOCK_BROWSERTEST_INDEXED_DB_CLASS_FACTORY_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_database.h"
@@ -16,6 +18,7 @@
 
 namespace content {
 
+class IndexedDBConnection;
 class LevelDBTransaction;
 class LevelDBDatabase;
 
@@ -38,21 +41,21 @@ class MockBrowserTestIndexedDBClassFactory : public IndexedDBClassFactory {
   MockBrowserTestIndexedDBClassFactory();
   ~MockBrowserTestIndexedDBClassFactory() override;
 
-  IndexedDBDatabase* CreateIndexedDBDatabase(
+  scoped_refptr<IndexedDBDatabase> CreateIndexedDBDatabase(
       const base::string16& name,
-      IndexedDBBackingStore* backing_store,
-      IndexedDBFactory* factory,
+      scoped_refptr<IndexedDBBackingStore> backing_store,
+      scoped_refptr<IndexedDBFactory> factory,
       const IndexedDBDatabase::Identifier& unique_identifier) override;
-  IndexedDBTransaction* CreateIndexedDBTransaction(
-      int64 id,
-      scoped_refptr<IndexedDBDatabaseCallbacks> callbacks,
-      const std::set<int64>& scope,
+  std::unique_ptr<IndexedDBTransaction> CreateIndexedDBTransaction(
+      int64_t id,
+      IndexedDBConnection* connection,
+      const std::set<int64_t>& scope,
       blink::WebIDBTransactionMode mode,
-      IndexedDBDatabase* db,
       IndexedDBBackingStore::Transaction* backing_store_transaction) override;
-  LevelDBTransaction* CreateLevelDBTransaction(LevelDBDatabase* db) override;
-  LevelDBIteratorImpl* CreateIteratorImpl(
-      scoped_ptr<leveldb::Iterator> iterator) override;
+  scoped_refptr<LevelDBTransaction> CreateLevelDBTransaction(
+      LevelDBDatabase* db) override;
+  std::unique_ptr<LevelDBIteratorImpl> CreateIteratorImpl(
+      std::unique_ptr<leveldb::Iterator> iterator) override;
 
   void FailOperation(FailClass failure_class,
                      FailMethod failure_method,

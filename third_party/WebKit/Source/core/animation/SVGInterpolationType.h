@@ -12,22 +12,34 @@ namespace blink {
 class SVGPropertyBase;
 
 class SVGInterpolationType : public InterpolationType {
-protected:
-    SVGInterpolationType(const QualifiedName& attribute)
-        : InterpolationType(PropertyHandle(attribute))
-    { }
+ protected:
+  SVGInterpolationType(const QualifiedName& attribute)
+      : InterpolationType(PropertyHandle(attribute)) {}
 
-    const QualifiedName& attribute() const { return property().svgAttribute(); }
+  const QualifiedName& attribute() const {
+    return getProperty().svgAttribute();
+  }
 
-    virtual PassOwnPtr<InterpolationValue> maybeConvertNeutral(const UnderlyingValue&, ConversionCheckers&) const = 0;
-    virtual PassOwnPtr<InterpolationValue> maybeConvertSVGValue(const SVGPropertyBase&) const = 0;
-    virtual PassRefPtrWillBeRawPtr<SVGPropertyBase> appliedSVGValue(const InterpolableValue&, const NonInterpolableValue*) const = 0;
+  virtual InterpolationValue maybeConvertNeutral(
+      const InterpolationValue& underlying,
+      ConversionCheckers&) const = 0;
+  virtual InterpolationValue maybeConvertSVGValue(
+      const SVGPropertyBase&) const = 0;
+  virtual SVGPropertyBase* appliedSVGValue(
+      const InterpolableValue&,
+      const NonInterpolableValue*) const = 0;
 
-    PassOwnPtr<InterpolationValue> maybeConvertSingle(const PropertySpecificKeyframe&, const InterpolationEnvironment&, const UnderlyingValue&, ConversionCheckers&) const override;
-    PassOwnPtr<InterpolationValue> maybeConvertUnderlyingValue(const InterpolationEnvironment&) const override;
-    void apply(const InterpolableValue&, const NonInterpolableValue*, InterpolationEnvironment&) const final;
+  InterpolationValue maybeConvertSingle(const PropertySpecificKeyframe&,
+                                        const InterpolationEnvironment&,
+                                        const InterpolationValue& underlying,
+                                        ConversionCheckers&) const override;
+  InterpolationValue maybeConvertUnderlyingValue(
+      const InterpolationEnvironment&) const override;
+  void apply(const InterpolableValue&,
+             const NonInterpolableValue*,
+             InterpolationEnvironment&) const override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGInterpolationType_h
+#endif  // SVGInterpolationType_h

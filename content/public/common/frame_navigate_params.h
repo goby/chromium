@@ -5,11 +5,14 @@
 #ifndef CONTENT_PUBLIC_COMMON_FRAME_NAVIGATE_PARAMS_H_
 #define CONTENT_PUBLIC_COMMON_FRAME_NAVIGATE_PARAMS_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "content/common/content_export.h"
 #include "content/public/common/referrer.h"
+#include "ipc/ipc_message_utils.h"
 #include "net/base/host_port_pair.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
@@ -17,15 +20,13 @@
 namespace content {
 
 // Struct used by WebContentsObserver.
-struct CONTENT_EXPORT FrameNavigateParams {
+// Note that we derived from IPC::NoParams here, because this struct is used in
+// an IPC struct as a parent. Deriving from NoParams allows us to by-pass the
+// out of line constructor checks in our clang plugins.
+struct CONTENT_EXPORT FrameNavigateParams : public IPC::NoParams {
   FrameNavigateParams();
+  FrameNavigateParams(const FrameNavigateParams& other);
   ~FrameNavigateParams();
-
-  // Page ID of this navigation. The renderer creates a new unique page ID
-  // anytime a new session history entry is created. This means you'll get new
-  // page IDs for user actions, and the old page IDs will be reloaded when
-  // iframes are loaded automatically.
-  int32 page_id;
 
   // The unique ID of the NavigationEntry for browser-initiated navigations.
   // This value was given to the render process in the HistoryNavigationParams
@@ -39,13 +40,13 @@ struct CONTENT_EXPORT FrameNavigateParams {
   // The item sequence number identifies each stop in the session history.  It
   // is unique within the renderer process and makes a best effort to be unique
   // across browser sessions (using a renderer process timestamp).
-  int64 item_sequence_number;
+  int64_t item_sequence_number;
 
   // The document sequence number is used to identify cross-document navigations
   // in session history.  It increments for each new document and is unique in
   // the same way as |item_sequence_number|.  In-page navigations get a new item
   // sequence number but the same document sequence number.
-  int64 document_sequence_number;
+  int64_t document_sequence_number;
 
   // URL of the page being loaded.
   GURL url;
@@ -73,10 +74,6 @@ struct CONTENT_EXPORT FrameNavigateParams {
   // Set to false if we want to update the session history but not update
   // the browser history.  E.g., on unreachable urls.
   bool should_update_history;
-
-  // See SearchableFormData for a description of these.
-  GURL searchable_form_url;
-  std::string searchable_form_encoding;
 
   // Contents MIME type of main frame.
   std::string contents_mime_type;

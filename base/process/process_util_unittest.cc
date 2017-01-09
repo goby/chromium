@@ -4,6 +4,9 @@
 
 #define _CRT_SECURE_NO_WARNINGS
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
 
 #include "base/command_line.h"
@@ -13,7 +16,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/kill.h"
@@ -57,7 +60,6 @@
 #if defined(OS_MACOSX)
 #include <mach/vm_param.h>
 #include <malloc/malloc.h>
-#include "base/mac/mac_util.h"
 #endif
 #if defined(OS_ANDROID)
 #include "third_party/lss/linux_syscall_support.h"
@@ -128,6 +130,8 @@ base::TerminationStatus WaitForChildTermination(base::ProcessHandle handle,
 
 }  // namespace
 
+const int kSuccess = 0;
+
 class ProcessUtilTest : public base::MultiProcessTest {
  public:
 #if defined(OS_POSIX)
@@ -151,7 +155,7 @@ std::string ProcessUtilTest::GetSignalFilePath(const char* filename) {
 }
 
 MULTIPROCESS_TEST_MAIN(SimpleChildProcess) {
-  return 0;
+  return kSuccess;
 }
 
 // TODO(viettrungluu): This should be in a "MultiProcessTestTest".
@@ -165,7 +169,7 @@ TEST_F(ProcessUtilTest, SpawnChild) {
 
 MULTIPROCESS_TEST_MAIN(SlowChildProcess) {
   WaitToDie(ProcessUtilTest::GetSignalFilePath(kSignalFileSlow).c_str());
-  return 0;
+  return kSuccess;
 }
 
 TEST_F(ProcessUtilTest, KillSlowChild) {
@@ -199,9 +203,46 @@ TEST_F(ProcessUtilTest, DISABLED_GetTerminationStatusExit) {
   base::TerminationStatus status =
       WaitForChildTermination(process.Handle(), &exit_code);
   EXPECT_EQ(base::TERMINATION_STATUS_NORMAL_TERMINATION, status);
-  EXPECT_EQ(0, exit_code);
+  EXPECT_EQ(kSuccess, exit_code);
   remove(signal_file.c_str());
 }
+
+// On Android SpawnProcess() doesn't use LaunchProcess() and doesn't support
+// LaunchOptions::current_directory.
+#if !defined(OS_ANDROID)
+MULTIPROCESS_TEST_MAIN(CheckCwdProcess) {
+  base::FilePath expected;
+  CHECK(base::GetTempDir(&expected));
+  expected = MakeAbsoluteFilePath(expected);
+  CHECK(!expected.empty());
+
+  base::FilePath actual;
+  CHECK(base::GetCurrentDirectory(&actual));
+  actual = MakeAbsoluteFilePath(actual);
+  CHECK(!actual.empty());
+
+  CHECK(expected == actual) << "Expected: " << expected.value()
+                            << "  Actual: " << actual.value();
+  return kSuccess;
+}
+
+TEST_F(ProcessUtilTest, CurrentDirectory) {
+  // TODO(rickyz): Add support for passing arguments to multiprocess children,
+  // then create a special directory for this test.
+  base::FilePath tmp_dir;
+  ASSERT_TRUE(base::GetTempDir(&tmp_dir));
+
+  base::LaunchOptions options;
+  options.current_directory = tmp_dir;
+
+  base::Process process(SpawnChildWithOptions("CheckCwdProcess", options));
+  ASSERT_TRUE(process.IsValid());
+
+  int exit_code = 42;
+  EXPECT_TRUE(process.WaitForExit(&exit_code));
+  EXPECT_EQ(kSuccess, exit_code);
+}
+#endif  // !defined(OS_ANDROID)
 
 #if defined(OS_WIN)
 // TODO(cpu): figure out how to test this in other platforms.
@@ -214,7 +255,7 @@ TEST_F(ProcessUtilTest, GetProcId) {
   EXPECT_NE(0ul, id2);
   EXPECT_NE(id1, id2);
 }
-#endif
+#endif  // defined(OS_WIN)
 
 #if !defined(OS_MACOSX)
 // This test is disabled on Mac, since it's flaky due to ReportCrash
@@ -278,7 +319,7 @@ TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusCrash) {
   EXPECT_EQ(base::TERMINATION_STATUS_PROCESS_CRASHED, status);
 
 #if defined(OS_WIN)
-  EXPECT_EQ(0xc0000005, exit_code);
+  EXPECT_EQ(static_cast<int>(0xc0000005), exit_code);
 #elif defined(OS_POSIX)
   int signaled = WIFSIGNALED(exit_code);
   EXPECT_NE(0, signaled);
@@ -312,7 +353,7 @@ MULTIPROCESS_TEST_MAIN(TerminatedChildProcess) {
   ::kill(getpid(), SIGTERM);
   return 1;
 }
-#endif
+#endif  // defined(OS_POSIX)
 
 TEST_F(ProcessUtilTest, GetTerminationStatusSigKill) {
   const std::string signal_file =
@@ -372,7 +413,7 @@ TEST_F(ProcessUtilTest, GetTerminationStatusSigTerm) {
   EXPECT_EQ(SIGTERM, signal);
   remove(signal_file.c_str());
 }
-#endif
+#endif  // defined(OS_POSIX)
 
 #if defined(OS_WIN)
 // TODO(estade): if possible, port this test.
@@ -423,7 +464,7 @@ MULTIPROCESS_TEST_MAIN(TriggerEventChildProcess) {
           kEventToTriggerHandleSwitch);
   CHECK(!handle_value_string.empty());
 
-  uint64 handle_value_uint64;
+  uint64_t handle_value_uint64;
   CHECK(base::StringToUint64(handle_value_string, &handle_value_uint64));
   // Give ownership of the handle to |event|.
   base::WaitableEvent event(base::win::ScopedHandle(
@@ -450,8 +491,9 @@ TEST_F(ProcessUtilTest, InheritSpecifiedHandles) {
   options.handles_to_inherit = &handles_to_inherit;
 
   base::CommandLine cmd_line = MakeCmdLine("TriggerEventChildProcess");
-  cmd_line.AppendSwitchASCII(kEventToTriggerHandleSwitch,
-      base::Uint64ToString(reinterpret_cast<uint64>(event.handle())));
+  cmd_line.AppendSwitchASCII(
+      kEventToTriggerHandleSwitch,
+      base::Uint64ToString(reinterpret_cast<uint64_t>(event.handle())));
 
   // This functionality actually requires Vista or later. Make sure that it
   // fails properly on XP.
@@ -478,9 +520,9 @@ int GetMaxFilesOpenInProcess() {
     return 0;
   }
 
-  // rlim_t is a uint64 - clip to maxint. We do this since FD #s are ints
+  // rlim_t is a uint64_t - clip to maxint. We do this since FD #s are ints
   // which are all 32 bits on the supported platforms.
-  rlim_t max_int = static_cast<rlim_t>(std::numeric_limits<int32>::max());
+  rlim_t max_int = static_cast<rlim_t>(std::numeric_limits<int32_t>::max());
   if (rlim.rlim_cur > max_int) {
     return max_int;
   }
@@ -529,10 +571,6 @@ int change_fdguard_np(int fd,
 // <http://crbug.com/338157>.  This function allows querying whether the file
 // descriptor is guarded before attempting to close it.
 bool CanGuardFd(int fd) {
-  // The syscall is first provided in 10.9/Mavericks.
-  if (!base::mac::IsOSMavericksOrLater())
-    return true;
-
   // Saves the original flags to reset later.
   int original_fdflags = 0;
 
@@ -554,7 +592,7 @@ bool CanGuardFd(int fd) {
 
   return true;
 }
-#endif  // OS_MACOSX
+#endif  // defined(OS_MACOSX)
 
 }  // namespace
 
@@ -631,21 +669,22 @@ int ProcessUtilTest::CountOpenFDsInChild() {
 #define MAYBE_FDRemapping DISABLED_FDRemapping
 #else
 #define MAYBE_FDRemapping FDRemapping
-#endif
+#endif  // defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
 TEST_F(ProcessUtilTest, MAYBE_FDRemapping) {
   int fds_before = CountOpenFDsInChild();
 
   // open some dummy fds to make sure they don't propagate over to the
   // child process.
   int dev_null = open("/dev/null", O_RDONLY);
+  DPCHECK(dev_null != -1);
   int sockets[2];
-  socketpair(AF_UNIX, SOCK_STREAM, 0, sockets);
+  int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, sockets);
+  DPCHECK(ret == 0);
 
   int fds_after = CountOpenFDsInChild();
 
   ASSERT_EQ(fds_after, fds_before);
 
-  int ret;
   ret = IGNORE_EINTR(close(sockets[0]));
   DPCHECK(ret == 0);
   ret = IGNORE_EINTR(close(sockets[1]));
@@ -675,7 +714,7 @@ std::string TestLaunchProcess(const std::vector<std::string>& args,
   options.clone_flags = clone_flags;
 #else
   CHECK_EQ(0, clone_flags);
-#endif  // OS_LINUX
+#endif  // defined(OS_LINUX)
   EXPECT_TRUE(base::LaunchProcess(args, options).IsValid());
   PCHECK(IGNORE_EINTR(close(fds[1])) == 0);
 
@@ -761,7 +800,7 @@ TEST_F(ProcessUtilTest, LaunchProcess) {
       "",
       TestLaunchProcess(
           print_env, env_changes, true /* clear_environ */, no_clone_flags));
-#endif
+#endif  // defined(OS_LINUX)
 }
 
 TEST_F(ProcessUtilTest, GetAppOutput) {
@@ -800,118 +839,6 @@ TEST_F(ProcessUtilTest, GetAppOutput) {
 #endif  // defined(OS_ANDROID)
 }
 
-// Flakes on Android, crbug.com/375840
-#if defined(OS_ANDROID)
-#define MAYBE_GetAppOutputRestricted DISABLED_GetAppOutputRestricted
-#else
-#define MAYBE_GetAppOutputRestricted GetAppOutputRestricted
-#endif
-TEST_F(ProcessUtilTest, MAYBE_GetAppOutputRestricted) {
-  // Unfortunately, since we can't rely on the path, we need to know where
-  // everything is. So let's use /bin/sh, which is on every POSIX system, and
-  // its built-ins.
-  std::vector<std::string> argv;
-  argv.push_back(std::string(kShellPath));  // argv[0]
-  argv.push_back("-c");  // argv[1]
-
-  // On success, should set |output|. We use |/bin/sh -c 'exit 0'| instead of
-  // |true| since the location of the latter may be |/bin| or |/usr/bin| (and we
-  // need absolute paths).
-  argv.push_back("exit 0");   // argv[2]; equivalent to "true"
-  std::string output = "abc";
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           100));
-  EXPECT_STREQ("", output.c_str());
-
-  argv[2] = "exit 1";  // equivalent to "false"
-  output = "before";
-  EXPECT_FALSE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                            100));
-  EXPECT_STREQ("", output.c_str());
-
-  // Amount of output exactly equal to space allowed.
-  argv[2] = "echo 123456789";  // (the sh built-in doesn't take "-n")
-  output.clear();
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           10));
-  EXPECT_STREQ("123456789\n", output.c_str());
-
-  // Amount of output greater than space allowed.
-  output.clear();
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           5));
-  EXPECT_STREQ("12345", output.c_str());
-
-  // Amount of output less than space allowed.
-  output.clear();
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           15));
-  EXPECT_STREQ("123456789\n", output.c_str());
-
-  // Zero space allowed.
-  output = "abc";
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           0));
-  EXPECT_STREQ("", output.c_str());
-}
-
-#if !defined(OS_MACOSX) && !defined(OS_OPENBSD)
-// TODO(benwells): GetAppOutputRestricted should terminate applications
-// with SIGPIPE when we have enough output. http://crbug.com/88502
-TEST_F(ProcessUtilTest, GetAppOutputRestrictedSIGPIPE) {
-  std::vector<std::string> argv;
-  std::string output;
-
-  argv.push_back(std::string(kShellPath));  // argv[0]
-  argv.push_back("-c");
-#if defined(OS_ANDROID)
-  argv.push_back("while echo 12345678901234567890; do :; done");
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           10));
-  EXPECT_STREQ("1234567890", output.c_str());
-#else
-  argv.push_back("yes");
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           10));
-  EXPECT_STREQ("y\ny\ny\ny\ny\n", output.c_str());
-#endif
-}
-#endif
-
-#if defined(ADDRESS_SANITIZER) && defined(OS_MACOSX) && \
-    defined(ARCH_CPU_64_BITS)
-// Times out under AddressSanitizer on 64-bit OS X, see
-// http://crbug.com/298197.
-#define MAYBE_GetAppOutputRestrictedNoZombies \
-    DISABLED_GetAppOutputRestrictedNoZombies
-#else
-#define MAYBE_GetAppOutputRestrictedNoZombies GetAppOutputRestrictedNoZombies
-#endif
-TEST_F(ProcessUtilTest, MAYBE_GetAppOutputRestrictedNoZombies) {
-  std::vector<std::string> argv;
-
-  argv.push_back(std::string(kShellPath));  // argv[0]
-  argv.push_back("-c");  // argv[1]
-  argv.push_back("echo 123456789012345678901234567890");  // argv[2]
-
-  // Run |GetAppOutputRestricted()| 300 (> default per-user processes on Mac OS
-  // 10.5) times with an output buffer big enough to capture all output.
-  for (int i = 0; i < 300; i++) {
-    std::string output;
-    EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                             100));
-    EXPECT_STREQ("123456789012345678901234567890\n", output.c_str());
-  }
-
-  // Ditto, but with an output buffer too small to capture all output.
-  for (int i = 0; i < 300; i++) {
-    std::string output;
-    EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                             10));
-    EXPECT_STREQ("1234567890", output.c_str());
-  }
-}
-
 TEST_F(ProcessUtilTest, GetAppOutputWithExitCode) {
   // Test getting output from a successful application.
   std::vector<std::string> argv;
@@ -923,7 +850,7 @@ TEST_F(ProcessUtilTest, GetAppOutputWithExitCode) {
   EXPECT_TRUE(base::GetAppOutputWithExitCode(base::CommandLine(argv), &output,
                                              &exit_code));
   EXPECT_STREQ("foo\n", output.c_str());
-  EXPECT_EQ(exit_code, 0);
+  EXPECT_EQ(exit_code, kSuccess);
 
   // Test getting output from an application which fails with a specific exit
   // code.
@@ -936,7 +863,8 @@ TEST_F(ProcessUtilTest, GetAppOutputWithExitCode) {
 }
 
 TEST_F(ProcessUtilTest, GetParentProcessId) {
-  base::ProcessId ppid = base::GetParentProcessId(base::GetCurrentProcId());
+  base::ProcessId ppid =
+      base::GetParentProcessId(base::GetCurrentProcessHandle());
   EXPECT_EQ(ppid, getppid());
 }
 
@@ -965,7 +893,7 @@ MULTIPROCESS_TEST_MAIN(process_util_test_never_die) {
   while (1) {
     sleep(500);
   }
-  return 0;
+  return kSuccess;
 }
 
 TEST_F(ProcessUtilTest, ImmediateTermination) {
@@ -980,7 +908,7 @@ TEST_F(ProcessUtilTest, ImmediateTermination) {
 }
 
 MULTIPROCESS_TEST_MAIN(process_util_test_die_immediately) {
-  return 0;
+  return kSuccess;
 }
 
 #if !defined(OS_ANDROID)
@@ -1030,8 +958,6 @@ TEST_F(ProcessUtilTest, PreExecHook) {
 #endif  // defined(OS_POSIX)
 
 #if defined(OS_LINUX)
-const int kSuccess = 0;
-
 MULTIPROCESS_TEST_MAIN(CheckPidProcess) {
   const pid_t kInitPid = 1;
   const pid_t pid = syscall(__NR_getpid);
@@ -1059,7 +985,7 @@ TEST_F(ProcessUtilTest, CloneFlags) {
   EXPECT_TRUE(process.WaitForExit(&exit_code));
   EXPECT_EQ(kSuccess, exit_code);
 }
-#endif
+#endif  // defined(CLONE_NEWUSER) && defined(CLONE_NEWPID)
 
 TEST(ForkWithFlagsTest, UpdatesPidCache) {
   // The libc clone function, which allows ForkWithFlags to keep the pid cache
@@ -1089,32 +1015,6 @@ TEST(ForkWithFlagsTest, UpdatesPidCache) {
   EXPECT_EQ(kSuccess, WEXITSTATUS(status));
 }
 
-MULTIPROCESS_TEST_MAIN(CheckCwdProcess) {
-  base::FilePath expected;
-  CHECK(base::GetTempDir(&expected));
-  base::FilePath actual;
-  CHECK(base::GetCurrentDirectory(&actual));
-  CHECK(actual == expected);
-  return kSuccess;
-}
-
-TEST_F(ProcessUtilTest, CurrentDirectory) {
-  // TODO(rickyz): Add support for passing arguments to multiprocess children,
-  // then create a special directory for this test.
-  base::FilePath tmp_dir;
-  ASSERT_TRUE(base::GetTempDir(&tmp_dir));
-
-  base::LaunchOptions options;
-  options.current_directory = tmp_dir;
-
-  base::Process process(SpawnChildWithOptions("CheckCwdProcess", options));
-  ASSERT_TRUE(process.IsValid());
-
-  int exit_code = 42;
-  EXPECT_TRUE(process.WaitForExit(&exit_code));
-  EXPECT_EQ(kSuccess, exit_code);
-}
-
 TEST_F(ProcessUtilTest, InvalidCurrentDirectory) {
   base::LaunchOptions options;
   options.current_directory = base::FilePath("/dev/null");
@@ -1126,4 +1026,4 @@ TEST_F(ProcessUtilTest, InvalidCurrentDirectory) {
   EXPECT_TRUE(process.WaitForExit(&exit_code));
   EXPECT_NE(kSuccess, exit_code);
 }
-#endif
+#endif  // defined(OS_LINUX)

@@ -5,12 +5,13 @@
 #ifndef COMPONENTS_PROXY_CONFIG_PREF_PROXY_CONFIG_TRACKER_IMPL_H_
 #define COMPONENTS_PROXY_CONFIG_PREF_PROXY_CONFIG_TRACKER_IMPL_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/threading/thread_checker.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/proxy_config/pref_proxy_config_tracker.h"
 #include "components/proxy_config/proxy_config_dictionary.h"
 #include "net/proxy/proxy_config.h"
@@ -60,7 +61,7 @@ class ProxyConfigServiceImpl : public net::ProxyConfigService,
   // Makes sure that the observer registration with the base service is set up.
   void RegisterObserver();
 
-  scoped_ptr<net::ProxyConfigService> base_service_;
+  std::unique_ptr<net::ProxyConfigService> base_service_;
   base::ObserverList<net::ProxyConfigService::Observer, true> observers_;
 
   // Tracks configuration state of |pref_config_|. |pref_config_| is valid only
@@ -94,8 +95,8 @@ class PROXY_CONFIG_EXPORT PrefProxyConfigTrackerImpl
   ~PrefProxyConfigTrackerImpl() override;
 
   // PrefProxyConfigTracker implementation:
-  scoped_ptr<net::ProxyConfigService> CreateTrackingProxyConfigService(
-      scoped_ptr<net::ProxyConfigService> base_service) override;
+  std::unique_ptr<net::ProxyConfigService> CreateTrackingProxyConfigService(
+      std::unique_ptr<net::ProxyConfigService> base_service) override;
 
   // Notifies the tracker that the pref service passed upon construction is
   // about to go away. This must be called from the UI thread.

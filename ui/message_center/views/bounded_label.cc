@@ -4,8 +4,11 @@
 
 #include "ui/message_center/views/bounded_label.h"
 
+#include <stddef.h>
+
 #include <limits>
 
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/canvas.h"
@@ -330,8 +333,8 @@ bool BoundedLabel::CanProcessEventsWithinSubtree() const {
   return label_->CanProcessEventsWithinSubtree();
 }
 
-void BoundedLabel::GetAccessibleState(ui::AXViewState* state) {
-  label_->GetAccessibleState(state);
+void BoundedLabel::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  label_->GetAccessibleNodeData(node_data);
 }
 
 void BoundedLabel::OnBoundsChanged(const gfx::Rect& previous_bounds) {

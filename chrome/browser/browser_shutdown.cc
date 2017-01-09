@@ -4,21 +4,22 @@
 
 #include "chrome/browser/browser_shutdown.h"
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -30,18 +31,25 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/switch_utils.h"
 #include "components/metrics/metrics_service.h"
-#include "components/tracing/tracing_switches.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/tracing_controller.h"
+#include "printing/features/features.h"
 
 #if defined(OS_WIN)
-#include "chrome/browser/browser_util_win.h"
 #include "chrome/browser/first_run/upgrade_util_win.h"
+#include "chrome/browser/win/browser_util.h"
 #endif
 
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 #include "chrome/browser/first_run/upgrade_util.h"
+#endif
+
+#if BUILDFLAG(ENABLE_BACKGROUND)
+#include "chrome/browser/background/background_mode_manager.h"
 #endif
 
 #if defined(ENABLE_RLZ)
@@ -52,7 +60,7 @@
 #include "chrome/browser/chromeos/boot_times_recorder.h"
 #endif
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/service_process/service_process_control.h"
 #endif
 
@@ -65,11 +73,6 @@ namespace {
 
 // Whether the browser is trying to quit (e.g., Quit chosen from menu).
 bool g_trying_to_quit = false;
-
-#if defined(OS_WIN)
-upgrade_util::RelaunchMode g_relaunch_mode =
-    upgrade_util::RELAUNCH_MODE_DEFAULT;
-#endif
 
 Time* g_shutdown_started = nullptr;
 ShutdownType g_shutdown_type = NOT_VALID;
@@ -151,7 +154,7 @@ bool ShutdownPreThreadsStop() {
   chromeos::BootTimesRecorder::Get()->AddLogoutTimeMarker(
       "BrowserShutdownStarted", false);
 #endif
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   // Shutdown the IPC channel to the service processes.
   ServiceProcessControl::GetInstance()->Disconnect();
 #endif  // ENABLE_PRINT_PREVIEW
@@ -168,31 +171,7 @@ bool ShutdownPreThreadsStop() {
   if (metrics)
     metrics->RecordCompletedSessionEnd();
 
-  if (g_shutdown_type > NOT_VALID && g_shutdown_num_processes > 0) {
-    // Record the shutdown info so that we can put it into a histogram at next
-    // startup.
-    prefs->SetInteger(prefs::kShutdownType, g_shutdown_type);
-    prefs->SetInteger(prefs::kShutdownNumProcesses, g_shutdown_num_processes);
-    prefs->SetInteger(prefs::kShutdownNumProcessesSlow,
-                      g_shutdown_num_processes_slow);
-  }
-
-  // Check local state for the restart flag so we can restart the session below.
-  bool restart_last_session = false;
-  if (prefs->HasPrefPath(prefs::kRestartLastSessionOnShutdown)) {
-    restart_last_session =
-        prefs->GetBoolean(prefs::kRestartLastSessionOnShutdown);
-    prefs->ClearPref(prefs::kRestartLastSessionOnShutdown);
-#if defined(OS_WIN)
-    if (restart_last_session) {
-      if (prefs->HasPrefPath(prefs::kRelaunchMode)) {
-        g_relaunch_mode = upgrade_util::RelaunchModeStringToEnum(
-            prefs->GetString(prefs::kRelaunchMode));
-        prefs->ClearPref(prefs::kRelaunchMode);
-      }
-    }
-#endif
-  }
+  bool restart_last_session = RecordShutdownInfoPrefs();
 
   prefs->CommitPendingWrite();
 
@@ -205,7 +184,28 @@ bool ShutdownPreThreadsStop() {
   return restart_last_session;
 }
 
-void ShutdownPostThreadsStop(bool restart_last_session) {
+bool RecordShutdownInfoPrefs() {
+  PrefService* prefs = g_browser_process->local_state();
+  if (g_shutdown_type > NOT_VALID && g_shutdown_num_processes > 0) {
+    // Record the shutdown info so that we can put it into a histogram at next
+    // startup.
+    prefs->SetInteger(prefs::kShutdownType, g_shutdown_type);
+    prefs->SetInteger(prefs::kShutdownNumProcesses, g_shutdown_num_processes);
+    prefs->SetInteger(prefs::kShutdownNumProcessesSlow,
+                      g_shutdown_num_processes_slow);
+  }
+
+  // Check local state for the restart flag so we can restart the session later.
+  bool restart_last_session = false;
+  if (prefs->HasPrefPath(prefs::kRestartLastSessionOnShutdown)) {
+    restart_last_session =
+        prefs->GetBoolean(prefs::kRestartLastSessionOnShutdown);
+    prefs->ClearPref(prefs::kRestartLastSessionOnShutdown);
+  }
+  return restart_last_session;
+}
+
+void ShutdownPostThreadsStop(int shutdown_flags) {
   delete g_browser_process;
   g_browser_process = NULL;
 
@@ -225,7 +225,7 @@ void ShutdownPostThreadsStop(bool restart_last_session) {
   }
 #endif
 
-  if (restart_last_session) {
+  if (shutdown_flags & RESTART_LAST_SESSION) {
 #if !defined(OS_CHROMEOS)
     // Make sure to relaunch the browser with the original command line plus
     // the Restore Last Session flag. Note that Chrome can be launched (ie.
@@ -235,7 +235,7 @@ void ShutdownPostThreadsStop(bool restart_last_session) {
     // 46182). We therefore use GetSwitches to copy the command line (it stops
     // at the switch argument terminator).
     base::CommandLine old_cl(*base::CommandLine::ForCurrentProcess());
-    scoped_ptr<base::CommandLine> new_cl(
+    std::unique_ptr<base::CommandLine> new_cl(
         new base::CommandLine(old_cl.GetProgram()));
     std::map<std::string, base::CommandLine::StringType> switches =
         old_cl.GetSwitches();
@@ -250,10 +250,10 @@ void ShutdownPostThreadsStop(bool restart_last_session) {
       else
         new_cl->AppendSwitch(it.first);
     }
+    if (shutdown_flags & RESTART_IN_BACKGROUND)
+      new_cl->AppendSwitch(switches::kNoStartupWindow);
 
-#if defined(OS_WIN)
-    upgrade_util::RelaunchChromeWithMode(*new_cl.get(), g_relaunch_mode);
-#elif defined(OS_POSIX)
+#if defined(OS_POSIX) || defined(OS_WIN)
     upgrade_util::RelaunchChromeBrowser(*new_cl.get());
 #endif  // defined(OS_WIN)
 
@@ -295,30 +295,33 @@ void ReadLastShutdownFile(ShutdownType type,
   if (type == NOT_VALID || shutdown_ms == 0 || num_procs == 0)
     return;
 
-  const char time_fmt[] = "Shutdown.%s.time";
-  const char time_per_fmt[] = "Shutdown.%s.time_per_process";
-  std::string time;
-  std::string time_per;
   if (type == WINDOW_CLOSE) {
-    time = base::StringPrintf(time_fmt, "window_close");
-    time_per = base::StringPrintf(time_per_fmt, "window_close");
+    // TODO(manzagop): turn down recording in M57 (once trendlines overlap).
+    UMA_HISTOGRAM_TIMES("Shutdown.window_close.time",
+                        TimeDelta::FromMilliseconds(shutdown_ms));
+    UMA_HISTOGRAM_MEDIUM_TIMES("Shutdown.window_close.time2",
+                               TimeDelta::FromMilliseconds(shutdown_ms));
+    UMA_HISTOGRAM_TIMES("Shutdown.window_close.time_per_process",
+                        TimeDelta::FromMilliseconds(shutdown_ms / num_procs));
   } else if (type == BROWSER_EXIT) {
-    time = base::StringPrintf(time_fmt, "browser_exit");
-    time_per = base::StringPrintf(time_per_fmt, "browser_exit");
+    // TODO(manzagop): turn down recording in M57 (once trendlines overlap).
+    UMA_HISTOGRAM_TIMES("Shutdown.browser_exit.time",
+                        TimeDelta::FromMilliseconds(shutdown_ms));
+    UMA_HISTOGRAM_MEDIUM_TIMES("Shutdown.browser_exit.time2",
+                               TimeDelta::FromMilliseconds(shutdown_ms));
+    UMA_HISTOGRAM_TIMES("Shutdown.browser_exit.time_per_process",
+                        TimeDelta::FromMilliseconds(shutdown_ms / num_procs));
   } else if (type == END_SESSION) {
-    time = base::StringPrintf(time_fmt, "end_session");
-    time_per = base::StringPrintf(time_per_fmt, "end_session");
+    // TODO(manzagop): turn down recording in M57 (once trendlines overlap).
+    UMA_HISTOGRAM_TIMES("Shutdown.end_session.time",
+                        TimeDelta::FromMilliseconds(shutdown_ms));
+    UMA_HISTOGRAM_MEDIUM_TIMES("Shutdown.end_session.time2",
+                               TimeDelta::FromMilliseconds(shutdown_ms));
+    UMA_HISTOGRAM_TIMES("Shutdown.end_session.time_per_process",
+                        TimeDelta::FromMilliseconds(shutdown_ms / num_procs));
   } else {
     NOTREACHED();
   }
-
-  if (time.empty())
-    return;
-
-  // TODO(erikkay): change these to UMA histograms after a bit more testing.
-  UMA_HISTOGRAM_TIMES(time.c_str(), TimeDelta::FromMilliseconds(shutdown_ms));
-  UMA_HISTOGRAM_TIMES(time_per.c_str(),
-                      TimeDelta::FromMilliseconds(shutdown_ms / num_procs));
   UMA_HISTOGRAM_COUNTS_100("Shutdown.renderers.total", num_procs);
   UMA_HISTOGRAM_COUNTS_100("Shutdown.renderers.slow", num_procs_slow);
 }
@@ -334,6 +337,8 @@ void ReadLastShutdownInfo() {
   prefs->SetInteger(prefs::kShutdownNumProcesses, 0);
   prefs->SetInteger(prefs::kShutdownNumProcessesSlow, 0);
 
+  UMA_HISTOGRAM_ENUMERATION("Shutdown.ShutdownType", type, kNumShutdownTypes);
+
   // Read and delete the file on the file thread.
   BrowserThread::PostTask(
       BrowserThread::FILE, FROM_HERE,
@@ -342,6 +347,24 @@ void ReadLastShutdownInfo() {
 
 void SetTryingToQuit(bool quitting) {
   g_trying_to_quit = quitting;
+
+  if (quitting)
+    return;
+
+  // Reset the restart-related preferences. They get set unconditionally through
+  // calls such as chrome::AttemptRestart(), and need to be reset if the restart
+  // attempt is cancelled.
+  PrefService* pref_service = g_browser_process->local_state();
+  if (pref_service) {
+#if !defined(OS_ANDROID)
+    pref_service->ClearPref(prefs::kWasRestarted);
+#endif  // !defined(OS_ANDROID)
+    pref_service->ClearPref(prefs::kRestartLastSessionOnShutdown);
+  }
+
+#if BUILDFLAG(ENABLE_BACKGROUND)
+  BackgroundModeManager::set_should_restart_in_background(false);
+#endif  // BUILDFLAG(ENABLE_BACKGROUND)
 }
 
 bool IsTryingToQuit() {

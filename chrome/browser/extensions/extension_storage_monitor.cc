@@ -5,8 +5,9 @@
 #include "chrome/browser/extensions/extension_storage_monitor.h"
 
 #include <map>
+#include <utility>
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -46,12 +47,10 @@ namespace {
 // The rate at which we would like to observe storage events.
 const int kStorageEventRateSec = 30;
 
-// Set the thresholds for the first notification. Ephemeral apps have a lower
-// threshold than installed extensions and apps. Once a threshold is exceeded,
+// Set the thresholds for the first notification. Once a threshold is exceeded,
 // it will be doubled to throttle notifications.
-const int64 kMBytes = 1024 * 1024;
-const int64 kEphemeralAppInitialThreshold = 250 * kMBytes;
-const int64 kExtensionInitialThreshold = 1000 * kMBytes;
+const int64_t kMBytes = 1024 * 1024;
+const int64_t kExtensionInitialThreshold = 1000 * kMBytes;
 
 // Notifications have an ID so that we can update them.
 const char kNotificationIdFormat[] = "ExtensionStorageMonitor-$1-$2";
@@ -85,11 +84,11 @@ const Extension* GetExtensionById(content::BrowserContext* context,
       extension_id, ExtensionRegistry::EVERYTHING);
 }
 
-void LogTemporaryStorageUsage(int64 usage,
+void LogTemporaryStorageUsage(int64_t usage,
                               storage::QuotaStatusCode status,
-                              int64 global_quota) {
+                              int64_t global_quota) {
   if (status == storage::kQuotaStatusOk) {
-    int64 per_app_quota =
+    int64_t per_app_quota =
         global_quota / storage::QuotaManager::kPerHostTemporaryPortion;
     // Note we use COUNTS_100 (instead of PERCENT) because this can potentially
     // exceed 100%.
@@ -119,7 +118,7 @@ class StorageEventObserver
       scoped_refptr<storage::QuotaManager> quota_manager,
       const std::string& extension_id,
       const GURL& site_url,
-      int64 next_threshold,
+      int64_t next_threshold,
       const base::TimeDelta& rate,
       bool should_uma) {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -146,7 +145,7 @@ class StorageEventObserver
 
   // Updates the threshold for an extension already being monitored.
   void UpdateThresholdForExtension(const std::string& extension_id,
-                                   int64 next_threshold) {
+                                   int64_t next_threshold) {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
     for (OriginStorageStateMap::iterator it = origin_state_map_.begin();
@@ -207,7 +206,7 @@ class StorageEventObserver
 
     // If |next_threshold| is -1, it signifies that we should not enforce (and
     // only track) storage for this extension.
-    int64 next_threshold;
+    int64_t next_threshold;
 
     bool should_uma;
 
@@ -277,7 +276,6 @@ ExtensionStorageMonitor::ExtensionStorageMonitor(
     content::BrowserContext* context)
     : enable_for_all_extensions_(false),
       initial_extension_threshold_(kExtensionInitialThreshold),
-      initial_ephemeral_threshold_(kEphemeralAppInitialThreshold),
       observer_rate_(base::TimeDelta::FromSeconds(kStorageEventRateSec)),
       context_(context),
       extension_prefs_(ExtensionPrefs::Get(context)),
@@ -297,14 +295,9 @@ void ExtensionStorageMonitor::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_PROFILE_DESTROYED: {
-      StopMonitoringAll();
-      break;
-    }
-    default:
-      NOTREACHED();
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_PROFILE_DESTROYED, type);
+
+  StopMonitoringAll();
 }
 
 void ExtensionStorageMonitor::OnExtensionLoaded(
@@ -324,11 +317,8 @@ void ExtensionStorageMonitor::OnExtensionWillBeInstalled(
     content::BrowserContext* browser_context,
     const Extension* extension,
     bool is_update,
-    bool from_ephemeral,
     const std::string& old_name) {
-  // If an ephemeral app was promoted to a regular installed app, we may need to
-  // increase its next threshold.
-  if (!from_ephemeral || !ShouldMonitorStorageFor(extension))
+  if (!ShouldMonitorStorageFor(extension))
     return;
 
   if (!enable_for_all_extensions_) {
@@ -339,7 +329,7 @@ void ExtensionStorageMonitor::OnExtensionWillBeInstalled(
     return;
   }
 
-  int64 next_threshold = GetNextStorageThresholdFromPrefs(extension->id());
+  int64_t next_threshold = GetNextStorageThresholdFromPrefs(extension->id());
   if (next_threshold <= initial_extension_threshold_) {
     // Clear the next threshold in the prefs. This effectively raises it to
     // |initial_extension_threshold_|. If the current threshold is already
@@ -386,8 +376,8 @@ std::string ExtensionStorageMonitor::GetNotificationId(
 
 void ExtensionStorageMonitor::OnStorageThresholdExceeded(
     const std::string& extension_id,
-    int64 next_threshold,
-    int64 current_usage) {
+    int64_t next_threshold,
+    int64_t current_usage) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   const Extension* extension = GetExtensionById(context_, extension_id);
@@ -408,10 +398,9 @@ void ExtensionStorageMonitor::OnStorageThresholdExceeded(
                  current_usage));
 }
 
-void ExtensionStorageMonitor::OnImageLoaded(
-    const std::string& extension_id,
-    int64 current_usage,
-    const gfx::Image& image) {
+void ExtensionStorageMonitor::OnImageLoaded(const std::string& extension_id,
+                                            int64_t current_usage,
+                                            const gfx::Image& image) {
   const Extension* extension = GetExtensionById(context_, extension_id);
   if (!extension)
     return;
@@ -438,7 +427,7 @@ void ExtensionStorageMonitor::OnImageLoaded(
                             : gfx::Image(util::GetDefaultExtensionIcon());
   }
 
-  scoped_ptr<message_center::Notification> notification;
+  std::unique_ptr<message_center::Notification> notification;
   notification.reset(new message_center::Notification(
       message_center::NOTIFICATION_TYPE_SIMPLE, notification_id,
       l10n_util::GetStringUTF16(IDS_EXTENSION_STORAGE_MONITOR_TITLE),
@@ -454,7 +443,8 @@ void ExtensionStorageMonitor::OnImageLoaded(
           base::Bind(&ExtensionStorageMonitor::OnNotificationButtonClick,
                      weak_ptr_factory_.GetWeakPtr(), extension_id))));
   notification->SetSystemPriority();
-  message_center::MessageCenter::Get()->AddNotification(notification.Pass());
+  message_center::MessageCenter::Get()->AddNotification(
+      std::move(notification));
 
   notified_extension_ids_.insert(extension_id);
 }
@@ -494,12 +484,8 @@ void ExtensionStorageMonitor::StartMonitoringStorage(
   if (!ShouldMonitorStorageFor(extension))
     return;
 
-  // First apply this feature only to experimental ephemeral apps. If it works
-  // well, roll it out to all extensions and apps.
-  bool should_enforce =
-      (enable_for_all_extensions_ ||
-       extension_prefs_->IsEphemeralApp(extension->id())) &&
-      IsStorageNotificationEnabled(extension->id());
+  bool should_enforce = (enable_for_all_extensions_) &&
+                        IsStorageNotificationEnabled(extension->id());
 
   bool for_metrics = ShouldGatherMetricsFor(extension);
 
@@ -610,22 +596,20 @@ void ExtensionStorageMonitor::ShowUninstallPrompt(
       UNINSTALL_SOURCE_STORAGE_THRESHOLD_EXCEEDED);
 }
 
-int64 ExtensionStorageMonitor::GetNextStorageThreshold(
+int64_t ExtensionStorageMonitor::GetNextStorageThreshold(
     const std::string& extension_id) const {
   int next_threshold = GetNextStorageThresholdFromPrefs(extension_id);
   if (next_threshold == 0) {
     // The next threshold is written to the prefs after the initial threshold is
     // exceeded.
-    next_threshold = extension_prefs_->IsEphemeralApp(extension_id)
-                         ? initial_ephemeral_threshold_
-                         : initial_extension_threshold_;
+    next_threshold = initial_extension_threshold_;
   }
   return next_threshold;
 }
 
 void ExtensionStorageMonitor::SetNextStorageThreshold(
     const std::string& extension_id,
-    int64 next_threshold) {
+    int64_t next_threshold) {
   extension_prefs_->UpdateExtensionPref(
       extension_id,
       kPrefNextStorageThreshold,
@@ -634,12 +618,12 @@ void ExtensionStorageMonitor::SetNextStorageThreshold(
           : NULL);
 }
 
-int64 ExtensionStorageMonitor::GetNextStorageThresholdFromPrefs(
+int64_t ExtensionStorageMonitor::GetNextStorageThresholdFromPrefs(
     const std::string& extension_id) const {
   std::string next_threshold_str;
   if (extension_prefs_->ReadPrefAsString(
           extension_id, kPrefNextStorageThreshold, &next_threshold_str)) {
-    int64 next_threshold;
+    int64_t next_threshold;
     if (base::StringToInt64(next_threshold_str, &next_threshold))
       return next_threshold;
   }

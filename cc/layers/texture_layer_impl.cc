@@ -4,10 +4,14 @@
 
 #include "cc/layers/texture_layer_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/strings/stringprintf.h"
-#include "cc/output/renderer.h"
+#include "cc/output/output_surface.h"
+#include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/texture_draw_quad.h"
 #include "cc/resources/platform_color.h"
 #include "cc/resources/scoped_resource.h"
@@ -38,7 +42,7 @@ TextureLayerImpl::~TextureLayerImpl() { FreeTextureMailbox(); }
 
 void TextureLayerImpl::SetTextureMailbox(
     const TextureMailbox& mailbox,
-    scoped_ptr<SingleReleaseCallbackImpl> release_callback) {
+    std::unique_ptr<SingleReleaseCallbackImpl> release_callback) {
   DCHECK_EQ(mailbox.IsValid(), !!release_callback);
   FreeTextureMailbox();
   texture_mailbox_ = mailbox;
@@ -48,9 +52,13 @@ void TextureLayerImpl::SetTextureMailbox(
   SetNeedsPushProperties();
 }
 
-scoped_ptr<LayerImpl> TextureLayerImpl::CreateLayerImpl(
+std::unique_ptr<LayerImpl> TextureLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   return TextureLayerImpl::Create(tree_impl, id());
+}
+
+bool TextureLayerImpl::IsSnapped() {
+  return true;
 }
 
 void TextureLayerImpl::PushPropertiesTo(LayerImpl* layer) {
@@ -106,12 +114,13 @@ bool TextureLayerImpl::WillDraw(DrawMode draw_mode,
     if (!texture_copy_->id()) {
       texture_copy_->Allocate(texture_mailbox_.size_in_pixels(),
                               ResourceProvider::TEXTURE_HINT_IMMUTABLE,
-                              resource_provider->best_texture_format());
+                              resource_provider->best_texture_format(),
+                              gfx::ColorSpace());
     }
 
     if (texture_copy_->id()) {
-      std::vector<uint8> swizzled;
-      uint8* pixels = texture_mailbox_.shared_bitmap()->pixels();
+      std::vector<uint8_t> swizzled;
+      uint8_t* pixels = texture_mailbox_.shared_bitmap()->pixels();
 
       if (!PlatformColor::SameComponentOrder(texture_copy_->format())) {
         // Swizzle colors. This is slow, but should be really uncommon.
@@ -128,6 +137,7 @@ bool TextureLayerImpl::WillDraw(DrawMode draw_mode,
 
       resource_provider->CopyToResource(texture_copy_->id(), pixels,
                                         texture_mailbox_.size_in_pixels());
+      resource_provider->GenerateSyncTokenForResource(texture_copy_->id());
 
       valid_texture_copy_ = true;
     }
@@ -159,22 +169,18 @@ void TextureLayerImpl::AppendQuads(RenderPass* render_pass,
   if (visible_quad_rect.IsEmpty())
     return;
 
+  if (!vertex_opacity_[0] && !vertex_opacity_[1] && !vertex_opacity_[2] &&
+      !vertex_opacity_[3])
+    return;
+
   TextureDrawQuad* quad =
       render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
   ResourceId id =
       valid_texture_copy_ ? texture_copy_->id() : external_texture_resource_;
-  quad->SetNew(shared_quad_state,
-               quad_rect,
-               opaque_rect,
-               visible_quad_rect,
-               id,
-               premultiplied_alpha_,
-               uv_top_left_,
-               uv_bottom_right_,
-               bg_color,
-               vertex_opacity_,
-               flipped_,
-               nearest_neighbor_);
+  quad->SetNew(shared_quad_state, quad_rect, opaque_rect, visible_quad_rect, id,
+               premultiplied_alpha_, uv_top_left_, uv_bottom_right_, bg_color,
+               vertex_opacity_, flipped_, nearest_neighbor_,
+               texture_mailbox_.secure_output_only());
   if (!valid_texture_copy_) {
     quad->set_resource_size_in_pixels(texture_mailbox_.size_in_pixels());
   }

@@ -5,14 +5,10 @@
 #ifndef NET_SSL_SSL_PLATFORM_KEY_H_
 #define NET_SSL_SSL_PLATFORM_KEY_H_
 
-#include "base/lazy_instance.h"
-#include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "net/base/net_export.h"
+#include <memory>
 
-namespace base {
-class SequencedTaskRunner;
-}
+#include "base/memory/ref_counted.h"
+#include "net/base/net_export.h"
 
 namespace net {
 

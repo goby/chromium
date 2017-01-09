@@ -5,9 +5,13 @@
 #ifndef CONTENT_PUBLIC_BROWSER_RESOURCE_DISPATCHER_HOST_H_
 #define CONTENT_PUBLIC_BROWSER_RESOURCE_DISPATCHER_HOST_H_
 
+#include <stdint.h>
+
+#include <memory>
+#include <string>
+
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
-#include "content/public/browser/download_interrupt_reasons.h"
+#include "content/common/content_export.h"
 
 namespace net {
 class URLRequest;
@@ -15,19 +19,45 @@ class URLRequest;
 
 namespace content {
 
-class DownloadItem;
 class ResourceContext;
 class ResourceDispatcherHostDelegate;
-struct DownloadSaveInfo;
-struct Referrer;
+class RenderFrameHost;
+
+// This callback is invoked when the interceptor finishes processing the
+// header.
+// Parameter 1 is a bool indicating success or failure.
+// Parameter 2 contains the error code in case of failure, else 0.
+typedef base::Callback<void(bool, int)> OnHeaderProcessedCallback;
+
+// This callback is registered by interceptors who are interested in being
+// notified of certain HTTP headers in outgoing requests. For e.g. Origin.
+// Parameter 1 contains the HTTP header.
+// Parameter 2 contains its value.
+// Parameter 3 contains the child process id.
+// Parameter 4 contains the current ResourceContext.
+// Parameter 5 contains the callback which needs to be invoked once the
+// interceptor finishes its processing.
+typedef base::Callback<void(const std::string&,
+                            const std::string&,
+                            int,
+                            ResourceContext*,
+                            OnHeaderProcessedCallback)>
+    InterceptorCallback;
 
 class CONTENT_EXPORT ResourceDispatcherHost {
  public:
-  typedef base::Callback<void(DownloadItem*, DownloadInterruptReason)>
-      DownloadStartedCallback;
-
   // Returns the singleton instance of the ResourceDispatcherHost.
   static ResourceDispatcherHost* Get();
+
+  // Causes all new requests for the root RenderFrameHost and its children to be
+  // blocked (not being started) until ResumeBlockedRequestsForFrameFromUI is
+  // called.
+  static void BlockRequestsForFrameFromUI(RenderFrameHost* root_frame_host);
+
+  // Resumes any blocked request for the specified root RenderFrameHost and
+  // child frame hosts.
+  static void ResumeBlockedRequestsForFrameFromUI(
+      RenderFrameHost* root_frame_host);
 
   // This does not take ownership of the delegate. It is expected that the
   // delegate have a longer lifetime than the ResourceDispatcherHost.
@@ -37,40 +67,19 @@ class CONTENT_EXPORT ResourceDispatcherHost {
   // dialog boxes.
   virtual void SetAllowCrossOriginAuthPrompt(bool value) = 0;
 
-  // Initiates a download by explicit request of the renderer (e.g. due to
-  // alt-clicking a link) or some other chrome subsystem.
-  // |is_content_initiated| is used to indicate that the request was generated
-  // from a web page, and hence may not be as trustworthy as a browser
-  // generated request.  If |download_id| is invalid, a download id will be
-  // automatically assigned to the request, otherwise the specified download id
-  // will be used.  (Note that this will result in re-use of an existing
-  // download item if the download id was already assigned.)  If the download
-  // is started, |started_callback| will be called on the UI thread with the
-  // DownloadItem; otherwise an interrupt reason will be returned.
-  virtual DownloadInterruptReason BeginDownload(
-      scoped_ptr<net::URLRequest> request,
-      const Referrer& referrer,
-      bool is_content_initiated,
-      ResourceContext* context,
-      int child_id,
-      int render_view_route_id,
-      int render_frame_route_id,
-      bool prefer_cache,
-      bool do_not_prompt_for_login,
-      scoped_ptr<DownloadSaveInfo> save_info,
-      uint32 download_id,
-      const DownloadStartedCallback& started_callback) = 0;
-
   // Clears the ResourceDispatcherHostLoginDelegate associated with the request.
   virtual void ClearLoginDelegateForRequest(net::URLRequest* request) = 0;
 
-  // Causes all new requests for the route identified by |child_id| and
-  // |route_id| to be blocked (not being started) until
-  // ResumeBlockedRequestsForRoute is called.
-  virtual void BlockRequestsForRoute(int child_id, int route_id) = 0;
-
-  // Resumes any blocked request for the specified route id.
-  virtual void ResumeBlockedRequestsForRoute(int child_id, int route_id) = 0;
+  // Registers the |interceptor| for the |http_header| passed in.
+  // The |starts_with| parameter is used to match the prefix of the
+  // |http_header| in the response and the interceptor will be invoked if there
+  // is a match. If the |starts_with| parameter is empty, the interceptor will
+  // be invoked for every occurrence of the |http_header|.
+  // Currently only HTTP header based interceptors are supported.
+  // At the moment we only support one interceptor per |http_header|.
+  virtual void RegisterInterceptor(const std::string& http_header,
+                                   const std::string& starts_with,
+                                   const InterceptorCallback& interceptor) = 0;
 
  protected:
   virtual ~ResourceDispatcherHost() {}

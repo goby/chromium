@@ -7,16 +7,19 @@
 // capturing so this implementation uses a Chromium thread for fetching frames
 // from V4L2.
 
-#ifndef MEDIA_VIDEO_CAPTURE_LINUX_VIDEO_CAPTURE_DEVICE_LINUX_H_
-#define MEDIA_VIDEO_CAPTURE_LINUX_VIDEO_CAPTURE_DEVICE_LINUX_H_
+#ifndef MEDIA_CAPTURE_VIDEO_LINUX_VIDEO_CAPTURE_DEVICE_LINUX_H_
+#define MEDIA_CAPTURE_VIDEO_LINUX_VIDEO_CAPTURE_DEVICE_LINUX_H_
+
+#include <stdint.h>
 
 #include <string>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
+#include "base/macros.h"
 #include "base/threading/thread.h"
-#include "media/base/video_capture_types.h"
 #include "media/capture/video/video_capture_device.h"
+#include "media/capture/video_capture_types.h"
 
 namespace media {
 
@@ -25,20 +28,26 @@ class V4L2CaptureDelegate;
 // Linux V4L2 implementation of VideoCaptureDevice.
 class VideoCaptureDeviceLinux : public VideoCaptureDevice {
  public:
-  static VideoPixelFormat V4l2FourCcToChromiumPixelFormat(
-      uint32 v4l2_fourcc);
+  static VideoPixelFormat V4l2FourCcToChromiumPixelFormat(uint32_t v4l2_fourcc);
   static std::list<uint32_t> GetListOfUsableFourCCs(bool favour_mjpeg);
 
-  explicit VideoCaptureDeviceLinux(const Name& device_name);
+  explicit VideoCaptureDeviceLinux(
+      const VideoCaptureDeviceDescriptor& device_descriptor);
   ~VideoCaptureDeviceLinux() override;
 
   // VideoCaptureDevice implementation.
   void AllocateAndStart(const VideoCaptureParams& params,
-                        scoped_ptr<Client> client) override;
+                        std::unique_ptr<Client> client) override;
   void StopAndDeAllocate() override;
+  void TakePhoto(TakePhotoCallback callback) override;
+  void GetPhotoCapabilities(GetPhotoCapabilitiesCallback callback) override;
+  void SetPhotoOptions(mojom::PhotoSettingsPtr settings,
+                       SetPhotoOptionsCallback callback) override;
 
  protected:
-  void SetRotation(int rotation);
+  virtual void SetRotation(int rotation);
+
+  const VideoCaptureDeviceDescriptor device_descriptor_;
 
  private:
   static int TranslatePowerLineFrequencyToV4L2(PowerLineFrequency frequency);
@@ -48,13 +57,14 @@ class VideoCaptureDeviceLinux : public VideoCaptureDevice {
   // VideoCaptureDeviceLinux lives but otherwise operating on |v4l2_thread_|.
   scoped_refptr<V4L2CaptureDelegate> capture_impl_;
 
-  base::Thread v4l2_thread_;  // Thread used for reading data from the device.
+  // Photo-related requests waiting for |v4l2_thread_| to be active.
+  std::list<base::Closure> photo_requests_queue_;
 
-  const Name device_name_;
+  base::Thread v4l2_thread_;  // Thread used for reading data from the device.
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceLinux);
 };
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_LINUX_VIDEO_CAPTURE_DEVICE_LINUX_H_
+#endif  // MEDIA_CAPTURE_VIDEO_LINUX_VIDEO_CAPTURE_DEVICE_LINUX_H_

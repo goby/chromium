@@ -5,15 +5,20 @@
 #ifndef CONTENT_BROWSER_WEB_CONTENTS_WEB_CONTENTS_VIEW_ANDROID_H_
 #define CONTENT_BROWSER_WEB_CONTENTS_WEB_CONTENTS_VIEW_ANDROID_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/public/browser/web_contents_view_delegate.h"
 #include "content/public/common/context_menu_params.h"
+#include "content/public/common/drop_data.h"
+#include "ui/android/view_android.h"
 #include "ui/gfx/geometry/rect_f.h"
 
 namespace content {
 class ContentViewCoreImpl;
+class SynchronousCompositorClient;
 class WebContentsImpl;
 
 // Android-specific implementation of the WebContentsView.
@@ -29,10 +34,19 @@ class WebContentsViewAndroid : public WebContentsView,
   // by the UI frontend.
   void SetContentViewCore(ContentViewCoreImpl* content_view_core);
 
+  void set_synchronous_compositor_client(SynchronousCompositorClient* client) {
+    synchronous_compositor_client_ = client;
+  }
+
+  SynchronousCompositorClient* synchronous_compositor_client() const {
+    return synchronous_compositor_client_;
+  }
+
   // WebContentsView implementation --------------------------------------------
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetContentNativeView() const override;
   gfx::NativeWindow GetTopLevelNativeWindow() const override;
+  void GetScreenInfo(ScreenInfo* screen_info) const override;
   void GetContainerBounds(gfx::Rect* out) const override;
   void SizeContents(const gfx::Size& size) override;
   void Focus() override;
@@ -69,10 +83,22 @@ class WebContentsViewAndroid : public WebContentsView,
                      blink::WebDragOperationsMask allowed_ops,
                      const gfx::ImageSkia& image,
                      const gfx::Vector2d& image_offset,
-                     const DragEventSourceInfo& event_info) override;
+                     const DragEventSourceInfo& event_info,
+                     RenderWidgetHostImpl* source_rwh) override;
   void UpdateDragCursor(blink::WebDragOperation operation) override;
   void GotFocus() override;
   void TakeFocus(bool reverse) override;
+
+  void OnDragEntered(const std::vector<DropData::Metadata>& metadata,
+                     const gfx::Point& location,
+                     const gfx::Point& screen_location);
+  void OnDragUpdated(const gfx::Point& location,
+                     const gfx::Point& screen_location);
+  void OnDragExited();
+  void OnPerformDrop(DropData* drop_data,
+                     const gfx::Point& location,
+                     const gfx::Point& screen_location);
+  void OnDragEnded();
 
  private:
   // The WebContents whose contents we display.
@@ -82,7 +108,13 @@ class WebContentsViewAndroid : public WebContentsView,
   ContentViewCoreImpl* content_view_core_;
 
   // Interface for extensions to WebContentsView. Used to show the context menu.
-  scoped_ptr<WebContentsViewDelegate> delegate_;
+  std::unique_ptr<WebContentsViewDelegate> delegate_;
+
+  // The native view associated with the contents of the web.
+  ui::ViewAndroid view_;
+
+  // Interface used to get notified of events from the synchronous compositor.
+  SynchronousCompositorClient* synchronous_compositor_client_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsViewAndroid);
 };

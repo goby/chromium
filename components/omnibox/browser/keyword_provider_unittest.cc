@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/omnibox/browser/keyword_provider.h"
+
+#include <stddef.h>
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"
-#include "components/omnibox/browser/keyword_provider.h"
 #include "components/omnibox/browser/mock_autocomplete_provider_client.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/search_engines/search_engines_switches.h"
@@ -57,7 +63,7 @@ class KeywordProviderTest : public testing::Test {
     // a DCHECK.
     field_trial_list_.reset();
     field_trial_list_.reset(new base::FieldTrialList(
-        new metrics::SHA1EntropyProvider("foo")));
+        base::MakeUnique<metrics::SHA1EntropyProvider>("foo")));
     variations::testing::ClearAllVariationParams();
   }
   ~KeywordProviderTest() override {}
@@ -78,9 +84,9 @@ class KeywordProviderTest : public testing::Test {
  protected:
   static const TemplateURLService::Initializer kTestData[];
 
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
   scoped_refptr<KeywordProvider> kw_provider_;
-  scoped_ptr<MockAutocompleteProviderClient> client_;
+  std::unique_ptr<MockAutocompleteProviderClient> client_;
 };
 
 // static
@@ -105,10 +111,10 @@ const TemplateURLService::Initializer KeywordProviderTest::kTestData[] = {
 };
 
 void KeywordProviderTest::SetUpClientAndKeywordProvider() {
-  scoped_ptr<TemplateURLService> template_url_service(
+  std::unique_ptr<TemplateURLService> template_url_service(
       new TemplateURLService(kTestData, arraysize(kTestData)));
   client_.reset(new MockAutocompleteProviderClient());
-  client_->set_template_url_service(template_url_service.Pass());
+  client_->set_template_url_service(std::move(template_url_service));
   kw_provider_ = new KeywordProvider(client_.get(), nullptr);
 }
 
@@ -371,12 +377,12 @@ TEST_F(KeywordProviderTest, URL) {
 TEST_F(KeywordProviderTest, Contents) {
   const MatchType<base::string16> kEmptyMatch = { base::string16(), false };
   TestData<base::string16> contents_cases[] = {
-    // No query input -> substitute "<enter query>" into contents.
+    // No query input -> substitute "<Type search term>" into contents.
     { ASCIIToUTF16("z"), 1,
-      { { ASCIIToUTF16("Search z for <enter query>"), true },
+      { { ASCIIToUTF16("<Type search term>"), true },
         kEmptyMatch, kEmptyMatch } },
     { ASCIIToUTF16("z    \t"), 1,
-      { { ASCIIToUTF16("Search z for <enter query>"), true },
+      { { ASCIIToUTF16("<Type search term>"), true },
         kEmptyMatch, kEmptyMatch } },
 
     // Exact keyword matches with remaining text should return nothing.
@@ -390,21 +396,25 @@ TEST_F(KeywordProviderTest, Contents) {
     // chrome/browser/extensions/api/omnibox/omnibox_apitest.cc's
     // in OmniboxApiTest's Basic test.
 
-    // Substitution should work with various locations of the "%s".
+    // There are two keywords that start with "aaa".  Suggestions will be
+    // disambiguated by the description.  We do not test the description value
+    // here because KeywordProvider doesn't set descriptions; these are
+    // populated later by AutocompleteController.
     { ASCIIToUTF16("aaa"), 2,
-      { { ASCIIToUTF16("Search aaaa for <enter query>"), false },
-        { ASCIIToUTF16("Search aaaaa for <enter query>"), false },
+      { { ASCIIToUTF16("<Type search term>"), false },
+        { ASCIIToUTF16("<Type search term>"), false },
         kEmptyMatch} },
+    // When there is a search string, simply display it.
     { ASCIIToUTF16("www.w w"), 2,
-      { { ASCIIToUTF16("Search www for w"), false },
-        { ASCIIToUTF16("Search weasel for w"), false },
+      { { ASCIIToUTF16("w"), false },
+        { ASCIIToUTF16("w"), false },
         kEmptyMatch } },
     // Also, check that tokenization only collapses whitespace between first
     // tokens and contents are not escaped or unescaped.
     { ASCIIToUTF16("a   1 2+ 3"), 3,
-      { { ASCIIToUTF16("Search aa for 1 2+ 3"), false },
-        { ASCIIToUTF16("Search ab for 1 2+ 3"), false },
-        { ASCIIToUTF16("Search aaaa for 1 2+ 3"), false } } },
+      { { ASCIIToUTF16("1 2+ 3"), false },
+        { ASCIIToUTF16("1 2+ 3"), false },
+        { ASCIIToUTF16("1 2+ 3"), false } } },
   };
 
   SetUpClientAndKeywordProvider();
@@ -419,8 +429,8 @@ TEST_F(KeywordProviderTest, AddKeyword) {
   base::string16 keyword(ASCIIToUTF16("foo"));
   data.SetKeyword(keyword);
   data.SetURL("http://www.google.com/foo?q={searchTerms}");
-  TemplateURL* template_url = new TemplateURL(data);
-  client_->GetTemplateURLService()->Add(template_url);
+  TemplateURL* template_url = client_->GetTemplateURLService()->Add(
+      base::MakeUnique<TemplateURL>(data));
   ASSERT_TRUE(
       template_url ==
       client_->GetTemplateURLService()->GetTemplateURLForKeyword(keyword));

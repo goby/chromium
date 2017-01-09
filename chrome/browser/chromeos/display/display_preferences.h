@@ -5,18 +5,16 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DISPLAY_DISPLAY_PREFERENCES_H_
 #define CHROME_BROWSER_CHROMEOS_DISPLAY_DISPLAY_PREFERENCES_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+#include <array>
+
 #include "third_party/cros_system_api/dbus/service_constants.h"
+#include "ui/display/display_layout.h"
 
 class PrefRegistrySimple;
 
-namespace ash {
-struct DisplayLayout;
-}
-
 namespace gfx {
-class Display;
-class Insets;
+class Point;
 }
 
 namespace chromeos {
@@ -33,21 +31,24 @@ void StoreDisplayPrefs();
 // current rotation of the internal display. Otherwise no data is stored.
 void StoreDisplayRotationPrefs(bool rotation_lock);
 
-// Sets the display layout for the current displays.
-void SetCurrentDisplayLayout(const ash::DisplayLayout& layout);
-
 // Load display preferences from Local Store. |first_run_after_boot| is used
 // determine if a certain preference should be applied at boot time or
 // restart.
 void LoadDisplayPreferences(bool first_run_after_boot);
 
 // Stores the display layout for given display pairs for tests.
-void StoreDisplayLayoutPrefForTest(int64 id1,
-                                   int64 id2,
-                                   const ash::DisplayLayout& layout);
+void StoreDisplayLayoutPrefForTest(const display::DisplayIdList& list,
+                                   const display::DisplayLayout& layout);
 
 // Stores the given |power_state| for tests.
 void StoreDisplayPowerStateForTest(DisplayPowerState power_state);
+
+// Parses the marshalled string data stored in local preferences for calibration
+// points and populates |point_pair_quad| using the unmarshalled data.
+// See TouchCalibrationData in Managed display info.
+bool ParseTouchCalibrationStringForTest(
+    const std::string& str,
+    std::array<std::pair<gfx::Point, gfx::Point>, 4>* point_pair_quad);
 
 }  // namespace chromeos
 

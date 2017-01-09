@@ -21,7 +21,7 @@ _NO_COMPRESS_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.wav', '.mp2',
                            '.mp3', '.ogg', '.aac', '.mpg', '.mpeg', '.mid',
                            '.midi', '.smf', '.jet', '.rtttl', '.imy', '.xmf',
                            '.mp4', '.m4a', '.m4v', '.3gp', '.3gpp', '.3g2',
-                           '.3gpp2', '.amr', '.awb', '.wma', '.wmv')
+                           '.3gpp2', '.amr', '.awb', '.wma', '.wmv', '.webm')
 
 
 def _ParseArgs(args):
@@ -50,27 +50,46 @@ def _ParseArgs(args):
                       help='GYP-list of native libraries to include. '
                            'Can be specified multiple times.',
                       default=[])
+  parser.add_argument('--secondary-native-libs',
+                      action='append',
+                      help='GYP-list of native libraries for secondary '
+                           'android-abi. Can be specified multiple times.',
+                      default=[])
   parser.add_argument('--android-abi',
                       help='Android architecture to use for native libraries')
+  parser.add_argument('--secondary-android-abi',
+                      help='The secondary Android architecture to use for'
+                           'secondary native libraries')
   parser.add_argument('--native-lib-placeholders',
                       help='GYP-list of native library placeholders to add.',
                       default='[]')
   parser.add_argument('--emma-device-jar',
                       help='Path to emma_device.jar to include.')
+  parser.add_argument('--uncompress-shared-libraries',
+                      action='store_true',
+                      help='Uncompress shared libraries')
   options = parser.parse_args(args)
-  options.assets = build_utils.ParseGypList(options.assets)
-  options.uncompressed_assets = build_utils.ParseGypList(
+  options.assets = build_utils.ParseGnList(options.assets)
+  options.uncompressed_assets = build_utils.ParseGnList(
       options.uncompressed_assets)
-  options.native_lib_placeholders = build_utils.ParseGypList(
+  options.native_lib_placeholders = build_utils.ParseGnList(
       options.native_lib_placeholders)
   all_libs = []
   for gyp_list in options.native_libs:
-    all_libs.extend(build_utils.ParseGypList(gyp_list))
+    all_libs.extend(build_utils.ParseGnList(gyp_list))
   options.native_libs = all_libs
+  secondary_libs = []
+  for gyp_list in options.secondary_native_libs:
+    secondary_libs.extend(build_utils.ParseGnList(gyp_list))
+  options.secondary_native_libs = secondary_libs
+
 
   if not options.android_abi and (options.native_libs or
                                   options.native_lib_placeholders):
     raise Exception('Must specify --android-abi with --native-libs')
+  if not options.secondary_android_abi and options.secondary_native_libs:
+    raise Exception('Must specify --secondary-android-abi with'
+                    ' --secondary-native-libs')
   return options
 
 
@@ -140,6 +159,22 @@ def _CreateAssetsList(path_tuples):
   return '\n'.join(dests) + '\n'
 
 
+def _AddNativeLibraries(out_apk, native_libs, android_abi, uncompress):
+  """Add native libraries to APK."""
+  for path in native_libs:
+    basename = os.path.basename(path)
+    apk_path = 'lib/%s/%s' % (android_abi, basename)
+
+    compress = None
+    if (uncompress and os.path.splitext(basename)[1] == '.so'):
+      compress = False
+
+    build_utils.AddToZipHermetic(out_apk,
+                                 apk_path,
+                                 src_path=path,
+                                 compress=compress)
+
+
 def main(args):
   args = build_utils.ExpandFileArgs(args)
   options = _ParseArgs(args)
@@ -147,13 +182,28 @@ def main(args):
   native_libs = sorted(options.native_libs)
 
   input_paths = [options.resource_apk, __file__] + native_libs
+  # Include native libs in the depfile_deps since GN doesn't know about the
+  # dependencies when is_component_build=true.
+  depfile_deps = list(native_libs)
+
+  secondary_native_libs = []
+  if options.secondary_native_libs:
+    secondary_native_libs = sorted(options.secondary_native_libs)
+    input_paths += secondary_native_libs
+    depfile_deps += secondary_native_libs
+
   if options.dex_file:
     input_paths.append(options.dex_file)
 
   if options.emma_device_jar:
     input_paths.append(options.emma_device_jar)
 
-  input_strings = [options.android_abi, options.native_lib_placeholders]
+  input_strings = [options.android_abi,
+                   options.native_lib_placeholders,
+                   options.uncompress_shared_libraries]
+
+  if options.secondary_android_abi:
+    input_strings.append(options.secondary_android_abi)
 
   _assets = _ExpandPaths(options.assets)
   _uncompressed_assets = _ExpandPaths(options.uncompressed_assets)
@@ -193,11 +243,7 @@ def main(args):
         _AddAssets(out_apk, _assets, disable_compression=False)
         _AddAssets(out_apk, _uncompressed_assets, disable_compression=True)
 
-        # 3. Resources
-        for info in resource_infos[1:]:
-          copy_resource(info)
-
-        # 4. Dex files
+        # 3. Dex files
         if options.dex_file and options.dex_file.endswith('.zip'):
           with zipfile.ZipFile(options.dex_file, 'r') as dex_zip:
             for dex in (d for d in dex_zip.namelist() if d.endswith('.dex')):
@@ -206,17 +252,27 @@ def main(args):
           build_utils.AddToZipHermetic(out_apk, 'classes.dex',
                                        src_path=options.dex_file)
 
-        # 5. Native libraries.
-        for path in native_libs:
-          basename = os.path.basename(path)
-          apk_path = 'lib/%s/%s' % (options.android_abi, basename)
-          build_utils.AddToZipHermetic(out_apk, apk_path, src_path=path)
+        # 4. Native libraries.
+        _AddNativeLibraries(out_apk,
+                            native_libs,
+                            options.android_abi,
+                            options.uncompress_shared_libraries)
+
+        if options.secondary_android_abi:
+          _AddNativeLibraries(out_apk,
+                              secondary_native_libs,
+                              options.secondary_android_abi,
+                              options.uncompress_shared_libraries)
 
         for name in sorted(options.native_lib_placeholders):
           # Empty libs files are ignored by md5check, but rezip requires them
           # to be empty in order to identify them as placeholders.
           apk_path = 'lib/%s/%s' % (options.android_abi, name)
           build_utils.AddToZipHermetic(out_apk, apk_path, data='')
+
+        # 5. Resources
+        for info in resource_infos[1:]:
+          copy_resource(info)
 
         # 6. Java resources. Used only when coverage is enabled, so order
         # doesn't matter).
@@ -247,7 +303,8 @@ def main(args):
       options,
       input_paths=input_paths,
       input_strings=input_strings,
-      output_paths=[options.output_apk])
+      output_paths=[options.output_apk],
+      depfile_deps=depfile_deps)
 
 
 if __name__ == '__main__':

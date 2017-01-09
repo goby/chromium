@@ -5,7 +5,10 @@
 #ifndef STORAGE_BROWSER_FILEAPI_ISOLATED_FILE_SYSTEM_BACKEND_H_
 #define STORAGE_BROWSER_FILEAPI_ISOLATED_FILE_SYSTEM_BACKEND_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "storage/browser/fileapi/file_system_backend.h"
 #include "storage/browser/fileapi/task_runner_bound_observer_list.h"
 
@@ -37,15 +40,15 @@ class IsolatedFileSystemBackend : public FileSystemBackend {
   bool SupportsStreaming(const FileSystemURL& url) const override;
   bool HasInplaceCopyImplementation(
       storage::FileSystemType type) const override;
-  scoped_ptr<storage::FileStreamReader> CreateFileStreamReader(
+  std::unique_ptr<storage::FileStreamReader> CreateFileStreamReader(
       const FileSystemURL& url,
-      int64 offset,
-      int64 max_bytes_to_read,
+      int64_t offset,
+      int64_t max_bytes_to_read,
       const base::Time& expected_modification_time,
       FileSystemContext* context) const override;
-  scoped_ptr<FileStreamWriter> CreateFileStreamWriter(
+  std::unique_ptr<FileStreamWriter> CreateFileStreamWriter(
       const FileSystemURL& url,
-      int64 offset,
+      int64_t offset,
       FileSystemContext* context) const override;
   FileSystemQuotaUtil* GetQuotaUtil() override;
   const UpdateObserverList* GetUpdateObservers(
@@ -64,9 +67,9 @@ class IsolatedFileSystemBackend : public FileSystemBackend {
   // As above but for platform webapps.
   const bool use_for_type_platform_app_;
 
-  scoped_ptr<AsyncFileUtilAdapter> isolated_file_util_;
-  scoped_ptr<AsyncFileUtilAdapter> dragged_file_util_;
-  scoped_ptr<AsyncFileUtilAdapter> transient_file_util_;
+  std::unique_ptr<AsyncFileUtilAdapter> isolated_file_util_;
+  std::unique_ptr<AsyncFileUtilAdapter> dragged_file_util_;
+  std::unique_ptr<AsyncFileUtilAdapter> transient_file_util_;
 };
 
 }  // namespace storage

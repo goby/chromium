@@ -32,30 +32,43 @@
 #define SVGTransformListTearOff_h
 
 #include "core/svg/SVGTransformList.h"
-#include "core/svg/SVGTransformTearOff.h"
 #include "core/svg/properties/SVGListPropertyTearOffHelper.h"
 
 namespace blink {
 
+class SVGMatrixTearOff;
+class SVGTransformTearOff;
+
 class SVGTransformListTearOff final
-    : public SVGListPropertyTearOffHelper<SVGTransformListTearOff, SVGTransformList>
-    , public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGTransformListTearOff> create(PassRefPtrWillBeRawPtr<SVGTransformList> target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName = QualifiedName::null())
-    {
-        return adoptRefWillBeNoop(new SVGTransformListTearOff(target, contextElement, propertyIsAnimVal, attributeName));
-    }
+    : public SVGListPropertyTearOffHelper<SVGTransformListTearOff,
+                                          SVGTransformList>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    ~SVGTransformListTearOff() override;
+ public:
+  static SVGTransformListTearOff* create(
+      SVGTransformList* target,
+      SVGElement* contextElement,
+      PropertyIsAnimValType propertyIsAnimVal,
+      const QualifiedName& attributeName = QualifiedName::null()) {
+    return new SVGTransformListTearOff(target, contextElement,
+                                       propertyIsAnimVal, attributeName);
+  }
 
-    PassRefPtrWillBeRawPtr<SVGTransformTearOff> createSVGTransformFromMatrix(PassRefPtrWillBeRawPtr<SVGMatrixTearOff>) const;
-    PassRefPtrWillBeRawPtr<SVGTransformTearOff> consolidate(ExceptionState&);
+  ~SVGTransformListTearOff() override;
 
-private:
-    SVGTransformListTearOff(PassRefPtrWillBeRawPtr<SVGTransformList>, SVGElement*, PropertyIsAnimValType, const QualifiedName&);
+  SVGTransformTearOff* createSVGTransformFromMatrix(SVGMatrixTearOff*) const;
+  SVGTransformTearOff* consolidate(ExceptionState&);
+
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+ private:
+  SVGTransformListTearOff(SVGTransformList*,
+                          SVGElement*,
+                          PropertyIsAnimValType,
+                          const QualifiedName&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGTransformListTearOff_h
+#endif  // SVGTransformListTearOff_h

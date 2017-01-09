@@ -6,25 +6,26 @@
 #define CHROME_BROWSER_PLUGINS_PLUGIN_FINDER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
+#include "chrome/common/features.h"
 #include "content/public/common/webplugininfo.h"
 
 namespace base {
 class DictionaryValue;
 }
 
-class GURL;
 class PluginMetadata;
 class PrefRegistrySimple;
 
-#if defined(ENABLE_PLUGIN_INSTALLATION)
+#if BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)
 class PluginInstaller;
 #endif
 
@@ -42,7 +43,7 @@ class PluginFinder {
 
   void ReinitializePlugins(const base::DictionaryValue* json_metadata);
 
-#if defined(ENABLE_PLUGIN_INSTALLATION)
+#if BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)
   // Finds a plugin for the given MIME type and language (specified as an IETF
   // language tag, i.e. en-US). If found, sets |installer| to the
   // corresponding PluginInstaller and |plugin_metadata| to a copy of the
@@ -50,27 +51,19 @@ class PluginFinder {
   bool FindPlugin(const std::string& mime_type,
                   const std::string& language,
                   PluginInstaller** installer,
-                  scoped_ptr<PluginMetadata>* plugin_metadata);
+                  std::unique_ptr<PluginMetadata>* plugin_metadata);
 
   // Finds the plugin with the given identifier. If found, sets |installer|
   // to the corresponding PluginInstaller and |plugin_metadata| to a copy
   // of the corresponding PluginMetadata. |installer| may be NULL.
-  bool FindPluginWithIdentifier(const std::string& identifier,
-                                PluginInstaller** installer,
-                                scoped_ptr<PluginMetadata>* plugin_metadata);
+  bool FindPluginWithIdentifier(
+      const std::string& identifier,
+      PluginInstaller** installer,
+      std::unique_ptr<PluginMetadata>* plugin_metadata);
 #endif
 
-  // Returns the plugin name with the given |identifier| or |identifier| if not
-  // found.
-  base::string16 FindPluginNameWithIdentifier(const std::string& identifier);
-
-  // Returns the plugin name with the given |mime_type| and |language| or
-  // |mime_type| if not found.
-  base::string16 FindPluginName(const std::string& mime_type,
-                                const std::string& language);
-
   // Gets plugin metadata using |plugin|.
-  scoped_ptr<PluginMetadata> GetPluginMetadata(
+  std::unique_ptr<PluginMetadata> GetPluginMetadata(
       const content::WebPluginInfo& plugin);
 
  private:
@@ -85,11 +78,11 @@ class PluginFinder {
   // Returns NULL if the plugin list couldn't be parsed.
   static base::DictionaryValue* LoadBuiltInPluginList();
 
-#if defined(ENABLE_PLUGIN_INSTALLATION)
-  std::map<std::string, PluginInstaller*> installers_;
+#if BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)
+  std::map<std::string, std::unique_ptr<PluginInstaller>> installers_;
 #endif
 
-  std::map<std::string, PluginMetadata*> identifier_plugin_;
+  std::map<std::string, std::unique_ptr<PluginMetadata>> identifier_plugin_;
 
   // Version of the metadata information. We use this to consolidate multiple
   // sources (baked into resource and fetched from a URL), making sure that we

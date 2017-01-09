@@ -4,68 +4,52 @@
 
 #include "chrome/browser/ui/views/location_bar/keyword_hint_view.h"
 
+#include <stddef.h>
+
 #include <vector>
 
-#include "base/logging.h"
-#include "base/strings/utf_string_conversions.h"
-#include "chrome/app/chrome_command_ids.h"
+#include "base/macros.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/location_bar/background_with_1_px_border.h"
-#include "chrome/browser/ui/views/location_bar/icon_label_bubble_view.h"
-#include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/search_engines/template_url_service.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
-#include "ui/base/resource/resource_bundle.h"
-#include "ui/gfx/canvas.h"
-#include "ui/gfx/color_palette.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/strings/grit/ui_strings.h"
-#include "ui/views/controls/image_view.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/label.h"
 
 namespace {
 
-// For MD, the tab key looks just like other omnibox chips.
-class TabKeyBubbleView : public IconLabelBubbleView {
+// This view sort of looks like a tab key.
+class TabKeyBubbleView : public views::Label {
  public:
-  TabKeyBubbleView(const gfx::FontList& font_list,
-                   SkColor text_color,
-                   SkColor background_color);
+  explicit TabKeyBubbleView(const gfx::FontList& font_list);
   ~TabKeyBubbleView() override;
 
  private:
-  // IconLabelBubbleView:
-  SkColor GetTextColor() const override;
-  SkColor GetBorderColor() const override;
-
-  SkColor text_color_;
+  // views::Label:
+  gfx::Size GetPreferredSize() const override;
 
   DISALLOW_COPY_AND_ASSIGN(TabKeyBubbleView);
 };
 
-TabKeyBubbleView::TabKeyBubbleView(const gfx::FontList& font_list,
-                                   SkColor text_color,
-                                   SkColor background_color)
-    : IconLabelBubbleView(0,
-                          font_list,
-                          gfx::kPlaceholderColor,
-                          background_color,
-                          false),
-      text_color_(text_color) {
-  SetLabel(l10n_util::GetStringUTF16(IDS_APP_TAB_KEY));
+TabKeyBubbleView::TabKeyBubbleView(const gfx::FontList& font_list)
+    : views::Label(l10n_util::GetStringUTF16(IDS_APP_TAB_KEY), font_list) {
+  SetBorder(views::CreateEmptyBorder(
+      gfx::Insets(GetLayoutConstant(LOCATION_BAR_BUBBLE_VERTICAL_PADDING), 0)));
 }
 
 TabKeyBubbleView::~TabKeyBubbleView() {}
 
-SkColor TabKeyBubbleView::GetTextColor() const {
-  return text_color_;
-}
-
-SkColor TabKeyBubbleView::GetBorderColor() const {
-  return text_color_;
+gfx::Size TabKeyBubbleView::GetPreferredSize() const {
+  gfx::Size size = views::Label::GetPreferredSize();
+  constexpr int kPaddingInsideBorder = 5;
+  // Even though the border is 1 px thick visibly, it takes 1 DIP logically.
+  size.Enlarge(2 * (kPaddingInsideBorder + 1), 0);
+  return size;
 }
 
 }  // namespace
@@ -83,16 +67,16 @@ KeywordHintView::KeywordHintView(Profile* profile,
       tab_key_height_(bubble_height) {
   leading_label_ =
       CreateLabel(font_list, text_color, background_color);
-  if (ui::MaterialDesignController::IsModeMaterial()) {
-    tab_key_view_ =
-        new TabKeyBubbleView(bubble_font_list, text_color, background_color);
-  } else {
-    views::ImageView* tab_image = new views::ImageView();
-    tab_image->SetImage(
-        ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-            IDR_OMNIBOX_KEYWORD_HINT_TAB));
-    tab_key_view_ = tab_image;
-  }
+  TabKeyBubbleView* tab_key = new TabKeyBubbleView(bubble_font_list);
+  tab_key->SetEnabledColor(text_color);
+  bool inverted = color_utils::IsDark(background_color);
+  SkColor tab_bg_color =
+      inverted ? SK_ColorWHITE : SkColorSetA(text_color, 0x13);
+  SkColor tab_border_color = inverted ? SK_ColorWHITE : text_color;
+  tab_key->SetBackgroundColor(tab_bg_color);
+  tab_key->set_background(
+      new BackgroundWith1PxBorder(tab_bg_color, tab_border_color));
+  tab_key_view_ = tab_key;
   AddChildView(tab_key_view_);
   trailing_label_ =
       CreateLabel(font_list, text_color, background_color);

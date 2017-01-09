@@ -14,10 +14,11 @@
 #ifndef CONTENT_BROWSER_BROWSER_PLUGIN_BROWSER_PLUGIN_EMBEDDER_H_
 #define CONTENT_BROWSER_BROWSER_PLUGIN_BROWSER_PLUGIN_EMBEDDER_H_
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "third_party/WebKit/public/web/WebDragOperation.h"
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
 
 struct BrowserPluginHostMsg_Attach_Params;
 
@@ -25,7 +26,6 @@ namespace content {
 
 class BrowserPluginGuest;
 class BrowserPluginGuestManager;
-class RenderWidgetHostImpl;
 struct NativeWebKeyboardEvent;
 
 class CONTENT_EXPORT BrowserPluginEmbedder : public WebContentsObserver {
@@ -38,7 +38,6 @@ class CONTENT_EXPORT BrowserPluginEmbedder : public WebContentsObserver {
   void DidSendScreenRects();
 
   // WebContentsObserver implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
   bool OnMessageReceived(const IPC::Message& message,
                          RenderFrameHost* render_frame_host) override;
 
@@ -67,6 +66,11 @@ class CONTENT_EXPORT BrowserPluginEmbedder : public WebContentsObserver {
   // operation, if there's any.
   void SystemDragEnded();
 
+  // The page wants to update the mouse cursor during a drag & drop
+  // operation. This update will be suppressed if the cursor is dragging over a
+  // guest.
+  bool OnUpdateDragCursor();
+
   // Used to handle special keyboard events.
   bool HandleKeyboardEvent(const NativeWebKeyboardEvent& event);
 
@@ -81,6 +85,10 @@ class CONTENT_EXPORT BrowserPluginEmbedder : public WebContentsObserver {
   // single BrowserPlugin in the embedder which takes up the full page, then it
   // is returned.
   BrowserPluginGuest* GetFullPageGuest();
+
+  // Polls all guests for this web contents and returns true if any of them
+  // were audible recently.
+  bool WereAnyGuestsRecentlyAudible();
 
  private:
   explicit BrowserPluginEmbedder(WebContentsImpl* web_contents);
@@ -106,12 +114,13 @@ class CONTENT_EXPORT BrowserPluginEmbedder : public WebContentsObserver {
                           WebContents* guest);
   static bool StopFindingInGuest(StopFindAction action, WebContents* guest);
 
+  static bool GuestRecentlyAudibleCallback(WebContents* guest);
+
   // Message handlers.
 
   void OnAttach(RenderFrameHost* render_frame_host,
                 int instance_id,
                 const BrowserPluginHostMsg_Attach_Params& params);
-  void OnUpdateDragCursor(bool* handled);
 
   // Used to correctly update the cursor when dragging over a guest, and to
   // handle a race condition when dropping onto the guest that started the drag

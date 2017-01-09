@@ -5,9 +5,6 @@
 #include "chrome/browser/chromeos/policy/policy_cert_service_factory.h"
 
 #include "base/memory/singleton.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service.h"
 #include "chrome/browser/chromeos/policy/policy_cert_verifier.h"
@@ -19,6 +16,9 @@
 #include "chrome/common/pref_names.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_manager.h"
 
 namespace policy {
@@ -30,13 +30,13 @@ PolicyCertService* PolicyCertServiceFactory::GetForProfile(Profile* profile) {
 }
 
 // static
-scoped_ptr<PolicyCertVerifier> PolicyCertServiceFactory::CreateForProfile(
+std::unique_ptr<PolicyCertVerifier> PolicyCertServiceFactory::CreateForProfile(
     Profile* profile) {
   DCHECK(!GetInstance()->GetServiceForBrowserContext(profile, false));
   PolicyCertService* service = static_cast<PolicyCertService*>(
       GetInstance()->GetServiceForBrowserContext(profile, true));
   if (!service)
-    return scoped_ptr<PolicyCertVerifier>();
+    return std::unique_ptr<PolicyCertVerifier>();
   return service->CreatePolicyCertVerifier();
 }
 
@@ -108,14 +108,14 @@ KeyedService* PolicyCertServiceFactory::BuildServiceInstanceFor(
   // TODO(joaodasilva): remove this, eventually.
   PrefService* prefs = profile->GetOriginalProfile()->GetPrefs();
   if (prefs->GetBoolean(prefs::kUsedPolicyCertificatesOnce)) {
-    SetUsedPolicyCertificates(user->email());
+    SetUsedPolicyCertificates(user->GetAccountId().GetUserEmail());
     prefs->ClearPref(prefs::kUsedPolicyCertificatesOnce);
 
     if (user_manager->GetLoggedInUsers().size() > 1u) {
       // This login should not have been allowed. After rebooting, local_state
       // will contain the updated list of users that used policy-pushed
       // certificates and this won't happen again.
-      // Note that a user becomes logged in before his profile is created.
+      // Note that a user becomes logged in before their profile is created.
       LOG(ERROR) << "Shutdown session because a tainted profile was added.";
       g_browser_process->local_state()->CommitPendingWrite();
       prefs->CommitPendingWrite();
@@ -128,7 +128,8 @@ KeyedService* PolicyCertServiceFactory::BuildServiceInstanceFor(
   if (!net_conf_updater)
     return NULL;
 
-  return new PolicyCertService(user->email(), net_conf_updater, user_manager);
+  return new PolicyCertService(user->GetAccountId().GetUserEmail(),
+                               net_conf_updater, user_manager);
 }
 
 content::BrowserContext* PolicyCertServiceFactory::GetBrowserContextToUse(

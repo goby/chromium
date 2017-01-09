@@ -4,9 +4,11 @@
 
 #include "chrome/renderer/security_filter_peer.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/child/fixed_received_data.h"
@@ -14,18 +16,18 @@
 #include "net/http/http_response_headers.h"
 #include "ui/base/l10n/l10n_util.h"
 
-SecurityFilterPeer::SecurityFilterPeer(content::RequestPeer* peer)
-    : original_peer_(peer) {
-}
+SecurityFilterPeer::SecurityFilterPeer(
+    std::unique_ptr<content::RequestPeer> peer)
+    : original_peer_(std::move(peer)) {}
 
 SecurityFilterPeer::~SecurityFilterPeer() {
 }
 
 // static
-SecurityFilterPeer*
+std::unique_ptr<content::RequestPeer>
 SecurityFilterPeer::CreateSecurityFilterPeerForDeniedRequest(
     content::ResourceType resource_type,
-    content::RequestPeer* peer,
+    std::unique_ptr<content::RequestPeer> peer,
     int os_error) {
   // Create a filter for SSL and CERT errors.
   switch (os_error) {
@@ -44,18 +46,20 @@ SecurityFilterPeer::CreateSecurityFilterPeerForDeniedRequest(
     case net::ERR_INSECURE_RESPONSE:
     case net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN:
       if (content::IsResourceTypeFrame(resource_type))
-        return CreateSecurityFilterPeerForFrame(peer, os_error);
+        return CreateSecurityFilterPeerForFrame(std::move(peer), os_error);
       // Any other content is entirely filtered-out.
-      return new ReplaceContentPeer(peer, std::string(), std::string());
+      return base::MakeUnique<ReplaceContentPeer>(std::move(peer),
+                                                  std::string(), std::string());
     default:
       // For other errors, we use our normal error handling.
-      return NULL;
+      return peer;
   }
 }
 
 // static
-SecurityFilterPeer* SecurityFilterPeer::CreateSecurityFilterPeerForFrame(
-    content::RequestPeer* peer,
+std::unique_ptr<content::RequestPeer>
+SecurityFilterPeer::CreateSecurityFilterPeerForFrame(
+    std::unique_ptr<content::RequestPeer> peer,
     int os_error) {
   // TODO(jcampan): use a different message when getting a phishing/malware
   // error.
@@ -64,10 +68,11 @@ SecurityFilterPeer* SecurityFilterPeer::CreateSecurityFilterPeerForFrame(
       "<body style='background-color:#990000;color:white;'>"
       "%s</body></html>",
       l10n_util::GetStringUTF8(IDS_UNSAFE_FRAME_MESSAGE).c_str());
-  return new ReplaceContentPeer(peer, "text/html", html);
+  return base::MakeUnique<ReplaceContentPeer>(std::move(peer), "text/html",
+                                              html);
 }
 
-void SecurityFilterPeer::OnUploadProgress(uint64 position, uint64 size) {
+void SecurityFilterPeer::OnUploadProgress(uint64_t position, uint64_t size) {
   original_peer_->OnUploadProgress(position, size);
 }
 
@@ -76,6 +81,10 @@ bool SecurityFilterPeer::OnReceivedRedirect(
     const content::ResourceResponseInfo& info) {
   NOTREACHED();
   return false;
+}
+
+void SecurityFilterPeer::OnTransferSizeUpdated(int transfer_size_diff) {
+  original_peer_->OnTransferSizeUpdated(transfer_size_diff);
 }
 
 // static
@@ -109,9 +118,9 @@ void ProcessResponseInfo(const content::ResourceResponseInfo& info_in,
 ////////////////////////////////////////////////////////////////////////////////
 // BufferedPeer
 
-BufferedPeer::BufferedPeer(content::RequestPeer* peer,
+BufferedPeer::BufferedPeer(std::unique_ptr<content::RequestPeer> peer,
                            const std::string& mime_type)
-    : SecurityFilterPeer(peer), mime_type_(mime_type) {}
+    : SecurityFilterPeer(std::move(peer)), mime_type_(mime_type) {}
 
 BufferedPeer::~BufferedPeer() {
 }
@@ -121,61 +130,44 @@ void BufferedPeer::OnReceivedResponse(
   ProcessResponseInfo(info, &response_info_, mime_type_);
 }
 
-void BufferedPeer::OnReceivedData(scoped_ptr<ReceivedData> data) {
+void BufferedPeer::OnReceivedData(std::unique_ptr<ReceivedData> data) {
   data_.append(data->payload(), data->length());
 }
 
 void BufferedPeer::OnCompletedRequest(int error_code,
                                       bool was_ignored_by_handler,
                                       bool stale_copy_in_cache,
-                                      const std::string& security_info,
                                       const base::TimeTicks& completion_time,
-                                      int64 total_transfer_size) {
-  // Make sure we delete ourselves at the end of this call.
-  scoped_ptr<BufferedPeer> this_deleter(this);
-
+                                      int64_t total_transfer_size,
+                                      int64_t encoded_body_size) {
   // Give sub-classes a chance at altering the data.
   if (error_code != net::OK || !DataReady()) {
     // Pretend we failed to load the resource.
-    original_peer_->OnReceivedCompletedResponse(
-        response_info_, nullptr, net::ERR_ABORTED, false, stale_copy_in_cache,
-        security_info, completion_time, total_transfer_size);
+    original_peer_->OnReceivedResponse(response_info_);
+    original_peer_->OnCompletedRequest(net::ERR_ABORTED, false,
+                                       stale_copy_in_cache, completion_time,
+                                       total_transfer_size, encoded_body_size);
     return;
   }
 
-  scoped_ptr<content::FixedReceivedData> data_to_pass(
-      data_.empty() ? nullptr : new content::FixedReceivedData(
-                                    data_.data(), data_.size(), -1));
-  original_peer_->OnReceivedCompletedResponse(
-      response_info_, data_to_pass.Pass(), error_code, was_ignored_by_handler,
-      stale_copy_in_cache, security_info, completion_time, total_transfer_size);
-}
-
-void BufferedPeer::OnReceivedCompletedResponse(
-    const content::ResourceResponseInfo& info,
-    scoped_ptr<ReceivedData> data,
-    int error_code,
-    bool was_ignored_by_handler,
-    bool stale_copy_in_cache,
-    const std::string& security_info,
-    const base::TimeTicks& completion_time,
-    int64 total_transfer_size) {
-  // Make sure we delete ourselves at the end of this call.
-  scoped_ptr<BufferedPeer> this_deleter(this);
-  original_peer_->OnReceivedCompletedResponse(
-      info, data.Pass(), error_code, was_ignored_by_handler,
-      stale_copy_in_cache, security_info, completion_time, total_transfer_size);
+  original_peer_->OnReceivedResponse(response_info_);
+  if (!data_.empty()) {
+    original_peer_->OnReceivedData(base::MakeUnique<content::FixedReceivedData>(
+        data_.data(), data_.size()));
+  }
+  original_peer_->OnCompletedRequest(error_code, was_ignored_by_handler,
+                                     stale_copy_in_cache, completion_time,
+                                     total_transfer_size, encoded_body_size);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // ReplaceContentPeer
 
-ReplaceContentPeer::ReplaceContentPeer(content::RequestPeer* peer,
-                                       const std::string& mime_type,
-                                       const std::string& data)
-    : SecurityFilterPeer(peer),
-      mime_type_(mime_type),
-      data_(data) {}
+ReplaceContentPeer::ReplaceContentPeer(
+    std::unique_ptr<content::RequestPeer> peer,
+    const std::string& mime_type,
+    const std::string& data)
+    : SecurityFilterPeer(std::move(peer)), mime_type_(mime_type), data_(data) {}
 
 ReplaceContentPeer::~ReplaceContentPeer() {
 }
@@ -185,7 +177,7 @@ void ReplaceContentPeer::OnReceivedResponse(
   // Ignore this, we'll serve some alternate content in OnCompletedRequest.
 }
 
-void ReplaceContentPeer::OnReceivedData(scoped_ptr<ReceivedData> data) {
+void ReplaceContentPeer::OnReceivedData(std::unique_ptr<ReceivedData> data) {
   // Ignore this, we'll serve some alternate content in OnCompletedRequest.
 }
 
@@ -193,38 +185,18 @@ void ReplaceContentPeer::OnCompletedRequest(
     int error_code,
     bool was_ignored_by_handler,
     bool stale_copy_in_cache,
-    const std::string& security_info,
     const base::TimeTicks& completion_time,
-    int64 total_transfer_size) {
-  // Make sure we delete ourselves at the end of this call.
-  scoped_ptr<ReplaceContentPeer> this_deleter(this);
-
+    int64_t total_transfer_size,
+    int64_t encoded_body_size) {
   content::ResourceResponseInfo info;
   ProcessResponseInfo(info, &info, mime_type_);
-  info.security_info = security_info;
   info.content_length = static_cast<int>(data_.size());
-
-  scoped_ptr<content::FixedReceivedData> data_to_pass(
-      data_.empty() ? nullptr : new content::FixedReceivedData(
-                                    data_.data(), data_.size(), -1));
-  original_peer_->OnReceivedCompletedResponse(
-      response_info_, data_to_pass.Pass(), net::OK, false, stale_copy_in_cache,
-      security_info, completion_time, total_transfer_size);
-}
-
-void ReplaceContentPeer::OnReceivedCompletedResponse(
-    const content::ResourceResponseInfo& info,
-    scoped_ptr<ReceivedData> data,
-    int error_code,
-    bool was_ignored_by_handler,
-    bool stale_copy_in_cache,
-    const std::string& security_info,
-    const base::TimeTicks& completion_time,
-    int64 total_transfer_size) {
-  // Make sure we delete ourselves at the end of this call.
-  scoped_ptr<ReplaceContentPeer> this_deleter(this);
-
-  original_peer_->OnReceivedCompletedResponse(
-      info, data.Pass(), error_code, was_ignored_by_handler,
-      stale_copy_in_cache, security_info, completion_time, total_transfer_size);
+  original_peer_->OnReceivedResponse(info);
+  if (!data_.empty()) {
+    original_peer_->OnReceivedData(base::MakeUnique<content::FixedReceivedData>(
+        data_.data(), data_.size()));
+  }
+  original_peer_->OnCompletedRequest(net::OK, false, stale_copy_in_cache,
+                                     completion_time, total_transfer_size,
+                                     encoded_body_size);
 }

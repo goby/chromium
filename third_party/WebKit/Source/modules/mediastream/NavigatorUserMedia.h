@@ -10,24 +10,26 @@
 
 namespace blink {
 
+class ExecutionContext;
 class Navigator;
 class MediaDevices;
 
-class NavigatorUserMedia final : public GarbageCollected<NavigatorUserMedia>, public HeapSupplement<Navigator> {
-    USING_GARBAGE_COLLECTED_MIXIN(NavigatorUserMedia)
-public:
-    static MediaDevices* mediaDevices(Navigator&);
-    DECLARE_VIRTUAL_TRACE();
+class NavigatorUserMedia final : public GarbageCollected<NavigatorUserMedia>,
+                                 public Supplement<Navigator> {
+  USING_GARBAGE_COLLECTED_MIXIN(NavigatorUserMedia)
+ public:
+  static MediaDevices* mediaDevices(Navigator&);
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    NavigatorUserMedia();
-    MediaDevices* getMediaDevices();
-    static const char* supplementName();
-    static NavigatorUserMedia& from(Navigator&);
+ private:
+  explicit NavigatorUserMedia(ExecutionContext*);
+  MediaDevices* getMediaDevices();
+  static const char* supplementName();
+  static NavigatorUserMedia& from(Navigator&);
 
-    Member<MediaDevices> m_mediaDevices;
+  Member<MediaDevices> m_mediaDevices;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

@@ -9,10 +9,13 @@
 
 #include "chrome/installer/util/browser_distribution.h"
 
+#include <utility>
+
 #include "base/atomicops.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
 #include "chrome/common/chrome_icon_resources_win.h"
@@ -52,14 +55,13 @@ BrowserDistribution::Type GetCurrentDistributionType() {
 
 BrowserDistribution::BrowserDistribution()
     : type_(CHROME_BROWSER),
-      app_reg_data_(make_scoped_ptr(
-          new NonUpdatingAppRegistrationData(L"Software\\Chromium"))) {
-}
+      app_reg_data_(base::MakeUnique<NonUpdatingAppRegistrationData>(
+          L"Software\\Chromium")) {}
 
 BrowserDistribution::BrowserDistribution(
-    Type type, scoped_ptr<AppRegistrationData> app_reg_data)
-    : type_(type), app_reg_data_(app_reg_data.Pass()) {
-}
+    Type type,
+    std::unique_ptr<AppRegistrationData> app_reg_data)
+    : type_(type), app_reg_data_(std::move(app_reg_data)) {}
 
 BrowserDistribution::~BrowserDistribution() {}
 
@@ -142,7 +144,7 @@ base::string16 BrowserDistribution::GetVersionKey() const {
 }
 
 void BrowserDistribution::DoPostUninstallOperations(
-    const Version& version, const base::FilePath& local_data_path,
+    const base::Version& version, const base::FilePath& local_data_path,
     const base::string16& distribution_data) {
 }
 
@@ -155,31 +157,14 @@ base::string16 BrowserDistribution::GetBaseAppName() {
 }
 
 base::string16 BrowserDistribution::GetDisplayName() {
-  return GetShortcutName(SHORTCUT_CHROME);
+  return GetShortcutName();
 }
 
-base::string16 BrowserDistribution::GetShortcutName(
-    ShortcutType shortcut_type) {
-  switch (shortcut_type) {
-    case SHORTCUT_CHROME_ALTERNATE:
-      // TODO(calamity): Change IDS_OEM_MAIN_SHORTCUT_NAME in
-      // chromium_strings.grd to "The Internet" (so that it doesn't collide with
-      // the value in google_chrome_strings.grd) then change this to
-      // installer::GetLocalizedString(IDS_OEM_MAIN_SHORTCUT_NAME_BASE)
-      return L"The Internet";
-    case SHORTCUT_APP_LAUNCHER:
-      return installer::GetLocalizedString(IDS_APP_LIST_SHORTCUT_NAME_BASE);
-    default:
-      DCHECK_EQ(shortcut_type, SHORTCUT_CHROME);
-      return GetBaseAppName();
-  }
+base::string16 BrowserDistribution::GetShortcutName() {
+  return GetBaseAppName();
 }
 
-int BrowserDistribution::GetIconIndex(ShortcutType shortcut_type) {
-  if (shortcut_type == SHORTCUT_APP_LAUNCHER)
-    return icon_resources::kAppLauncherIndex;
-  DCHECK(shortcut_type == SHORTCUT_CHROME ||
-         shortcut_type == SHORTCUT_CHROME_ALTERNATE) << shortcut_type;
+int BrowserDistribution::GetIconIndex() {
   return icon_resources::kApplicationIndex;
 }
 
@@ -193,8 +178,8 @@ base::string16 BrowserDistribution::GetStartMenuShortcutSubfolder(
     case SUBFOLDER_APPS:
       return installer::GetLocalizedString(IDS_APP_SHORTCUTS_SUBDIR_NAME_BASE);
     default:
-      DCHECK_EQ(subfolder_type, SUBFOLDER_CHROME);
-      return GetShortcutName(SHORTCUT_CHROME);
+      DCHECK_EQ(SUBFOLDER_CHROME, subfolder_type);
+      return GetShortcutName();
   }
 }
 

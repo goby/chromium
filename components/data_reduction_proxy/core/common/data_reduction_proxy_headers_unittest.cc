@@ -4,8 +4,14 @@
 
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
+#include "base/macros.h"
+#include "base/metrics/field_trial.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_creator.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_storage_delegate_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers_test_utils.h"
@@ -28,9 +34,133 @@ class DataReductionProxyHeadersTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<DataReductionProxyEventCreator> event_creator_;
-  scoped_ptr<TestDataReductionProxyEventStorageDelegate> storage_delegate_;
+  std::unique_ptr<DataReductionProxyEventCreator> event_creator_;
+  std::unique_ptr<TestDataReductionProxyEventStorageDelegate> storage_delegate_;
 };
+
+TEST_F(DataReductionProxyHeadersTest, IsEmptyImagePreview) {
+  const struct {
+    const char* headers;
+    bool expected_result;
+  } tests[] = {
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: foo\n",
+          false,
+      },
+      {
+          "HTTP/1.1 200 OK\n", false,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: empty-image\n",
+          true,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: empty-image;foo\n",
+          true,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: Empty-Image\n",
+          true,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: foo;empty-image\n",
+          false,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Another-Header: empty-image\n",
+          false,
+      },
+  };
+  for (size_t i = 0; i < arraysize(tests); ++i) {
+    std::string headers(tests[i].headers);
+    HeadersToRaw(&headers);
+    scoped_refptr<net::HttpResponseHeaders> parsed(
+        new net::HttpResponseHeaders(headers));
+    EXPECT_EQ(tests[i].expected_result, IsEmptyImagePreview(*parsed));
+  }
+}
+
+TEST_F(DataReductionProxyHeadersTest, IsEmptyImagePreviewValue) {
+  const struct {
+    const char* header;
+    bool expected_result;
+  } tests[] = {
+      {
+          "foo", false,
+      },
+      {
+          "", false,
+      },
+      {
+          "empty-image", true,
+      },
+      {
+          "empty-image;foo", true,
+      },
+      {
+          "Empty-Image", true,
+      },
+      {
+          "foo;empty-image", false,
+      },
+  };
+  for (size_t i = 0; i < arraysize(tests); ++i)
+    EXPECT_EQ(tests[i].expected_result, IsEmptyImagePreview(tests[i].header));
+}
+
+TEST_F(DataReductionProxyHeadersTest, IsLitePagePreview) {
+  const struct {
+    const char* headers;
+    bool expected_result;
+  } tests[] = {
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: foo\n",
+          false,
+      },
+      {
+          "HTTP/1.1 200 OK\n", false,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: lite-page\n",
+          true,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: lite-page;foo\n",
+          true,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: Lite-Page\n",
+          true,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy-Content-Transform: foo;lite-page\n",
+          false,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Another-Header: lite-page\n",
+          false,
+      },
+  };
+  for (size_t i = 0; i < arraysize(tests); ++i) {
+    std::string headers(tests[i].headers);
+    HeadersToRaw(&headers);
+    scoped_refptr<net::HttpResponseHeaders> parsed(
+        new net::HttpResponseHeaders(headers));
+    EXPECT_EQ(tests[i].expected_result, IsLitePagePreview(*parsed));
+  }
+}
 
 TEST_F(DataReductionProxyHeadersTest, GetDataReductionProxyActionValue) {
   const struct {
@@ -130,7 +260,7 @@ TEST_F(DataReductionProxyHeadersTest, GetProxyBypassInfo) {
   const struct {
      const char* headers;
      bool expected_result;
-     int64 expected_retry_delay;
+     int64_t expected_retry_delay;
      bool expected_bypass_all;
      bool expected_mark_proxies_as_bad;
   } tests[] = {
@@ -498,110 +628,146 @@ TEST_F(DataReductionProxyHeadersTest, HasDataReductionProxyViaHeader) {
 TEST_F(DataReductionProxyHeadersTest, GetDataReductionProxyBypassEventType) {
   const struct {
      const char* headers;
+     bool in_tamper_detection_experiment;
      DataReductionProxyBypassType expected_result;
   } tests[] = {
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: bypass=0\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MEDIUM,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: bypass=1\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_SHORT,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: bypass=59\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_SHORT,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: bypass=60\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MEDIUM,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: bypass=300\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MEDIUM,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: bypass=301\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_LONG,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: block-once\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_CURRENT,
-    },
-    { "HTTP/1.1 500 Internal Server Error\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_STATUS_500_HTTP_INTERNAL_SERVER_ERROR,
-    },
-    { "HTTP/1.1 501 Not Implemented\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MAX,
-    },
-    { "HTTP/1.1 502 Bad Gateway\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_STATUS_502_HTTP_BAD_GATEWAY,
-    },
-    { "HTTP/1.1 503 Service Unavailable\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_STATUS_503_HTTP_SERVICE_UNAVAILABLE,
-    },
-    { "HTTP/1.1 504 Gateway Timeout\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MAX,
-    },
-    { "HTTP/1.1 505 HTTP Version Not Supported\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MAX,
-    },
-    { "HTTP/1.1 304 Not Modified\n",
-        BYPASS_EVENT_TYPE_MAX,
-    },
-    { "HTTP/1.1 200 OK\n",
-        BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_OTHER,
-    },
-    { "HTTP/1.1 200 OK\n"
-      "Chrome-Proxy: bypass=59\n",
-      BYPASS_EVENT_TYPE_SHORT,
-    },
-    { "HTTP/1.1 502 Bad Gateway\n",
-        BYPASS_EVENT_TYPE_STATUS_502_HTTP_BAD_GATEWAY,
-    },
-    { "HTTP/1.1 502 Bad Gateway\n"
-      "Chrome-Proxy: bypass=59\n",
-      BYPASS_EVENT_TYPE_SHORT,
-    },
-    { "HTTP/1.1 502 Bad Gateway\n"
-      "Chrome-Proxy: bypass=59\n",
-      BYPASS_EVENT_TYPE_SHORT,
-    },
-    { "HTTP/1.1 414 Request-URI Too Long\n",
-        BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_4XX,
-    },
-    { "HTTP/1.1 414 Request-URI Too Long\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MAX,
-    },
-    { "HTTP/1.1 407 Proxy Authentication Required\n",
-        BYPASS_EVENT_TYPE_MALFORMED_407,
-    },
-    { "HTTP/1.1 407 Proxy Authentication Required\n"
-      "Proxy-Authenticate: Basic\n"
-      "Via: 1.1 Chrome-Compression-Proxy\n",
-      BYPASS_EVENT_TYPE_MAX,
-    }
-  };
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: bypass=0\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MEDIUM,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: bypass=1\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_SHORT,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: bypass=59\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_SHORT,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: bypass=60\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MEDIUM,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: bypass=300\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MEDIUM,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: bypass=301\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_LONG,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: block-once\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_CURRENT,
+      },
+      {
+          "HTTP/1.1 500 Internal Server Error\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_STATUS_500_HTTP_INTERNAL_SERVER_ERROR,
+      },
+      {
+          "HTTP/1.1 501 Not Implemented\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MAX,
+      },
+      {
+          "HTTP/1.1 502 Bad Gateway\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_STATUS_502_HTTP_BAD_GATEWAY,
+      },
+      {
+          "HTTP/1.1 503 Service Unavailable\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_STATUS_503_HTTP_SERVICE_UNAVAILABLE,
+      },
+      {
+          "HTTP/1.1 504 Gateway Timeout\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MAX,
+      },
+      {
+          "HTTP/1.1 505 HTTP Version Not Supported\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MAX,
+      },
+      {
+          "HTTP/1.1 304 Not Modified\n", false, BYPASS_EVENT_TYPE_MAX,
+      },
+      {
+          "HTTP/1.1 200 OK\n", false,
+          BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_OTHER,
+      },
+      {
+          "HTTP/1.1 200 OK\n"
+          "Chrome-Proxy: bypass=59\n",
+          false, BYPASS_EVENT_TYPE_SHORT,
+      },
+      {
+          "HTTP/1.1 502 Bad Gateway\n", false,
+          BYPASS_EVENT_TYPE_STATUS_502_HTTP_BAD_GATEWAY,
+      },
+      {
+          "HTTP/1.1 502 Bad Gateway\n"
+          "Chrome-Proxy: bypass=59\n",
+          false, BYPASS_EVENT_TYPE_SHORT,
+      },
+      {
+          "HTTP/1.1 502 Bad Gateway\n"
+          "Chrome-Proxy: bypass=59\n",
+          false, BYPASS_EVENT_TYPE_SHORT,
+      },
+      {
+          "HTTP/1.1 414 Request-URI Too Long\n", false,
+          BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_4XX,
+      },
+      {
+          "HTTP/1.1 414 Request-URI Too Long\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MAX,
+      },
+      {
+          "HTTP/1.1 407 Proxy Authentication Required\n", false,
+          BYPASS_EVENT_TYPE_MALFORMED_407,
+      },
+      {
+          "HTTP/1.1 407 Proxy Authentication Required\n"
+          "Proxy-Authenticate: Basic\n"
+          "Via: 1.1 Chrome-Compression-Proxy\n",
+          false, BYPASS_EVENT_TYPE_MAX,
+      },
+      {
+          "HTTP/1.1 200 OK\n", true, BYPASS_EVENT_TYPE_MAX,
+      },
+      {
+          "HTTP/1.1 414 Request-URI Too Long\n", true,
+          BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_4XX,
+      }};
   for (size_t i = 0; i < arraysize(tests); ++i) {
     std::string headers(tests[i].headers);
     HeadersToRaw(&headers);
     scoped_refptr<net::HttpResponseHeaders> parsed(
         new net::HttpResponseHeaders(headers));
     DataReductionProxyInfo chrome_proxy_info;
+
+    base::FieldTrialList trial_list(nullptr);
+    base::FieldTrialList::CreateFieldTrial(
+        "DataReductionProxyServerExperiments",
+        tests[i].in_tamper_detection_experiment ? "TamperDetection_Enabled"
+                                                : "TamperDetection_Disabled");
+
     EXPECT_EQ(tests[i].expected_result, GetDataReductionProxyBypassType(
                                             parsed.get(), &chrome_proxy_info));
   }

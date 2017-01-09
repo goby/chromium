@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event.h"
 #include "ui/events/event_target_iterator.h"
@@ -29,10 +31,10 @@ class EventProcessorTest : public testing::Test {
  protected:
   // testing::Test:
   void SetUp() override {
-    processor_.SetRoot(make_scoped_ptr(new TestEventTarget()));
+    processor_.SetRoot(base::MakeUnique<TestEventTarget>());
     processor_.Reset();
     root()->SetEventTargeter(
-        make_scoped_ptr(new TestEventTargeter(root(), false)));
+        base::MakeUnique<TestEventTargeter>(root(), false));
   }
 
   TestEventTarget* root() {
@@ -59,11 +61,11 @@ class EventProcessorTest : public testing::Test {
 };
 
 TEST_F(EventProcessorTest, Basic) {
-  scoped_ptr<TestEventTarget> child(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> child(new TestEventTarget());
   child->SetEventTargeter(
-      make_scoped_ptr(new TestEventTargeter(child.get(), false)));
+      base::MakeUnique<TestEventTargeter>(child.get(), false));
   SetTarget(child.get());
-  root()->AddChild(child.Pass());
+  root()->AddChild(std::move(child));
 
   MouseEvent mouse(ET_MOUSE_MOVED, gfx::Point(10, 10), gfx::Point(10, 10),
                    EventTimeForNow(), EF_NONE, EF_NONE);
@@ -119,26 +121,27 @@ class ReDispatchEventHandler : public TestEventHandler {
 // being processed by another event processor.
 TEST_F(EventProcessorTest, NestedEventProcessing) {
   // Add one child to the default event processor used in this test suite.
-  scoped_ptr<TestEventTarget> child(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> child(new TestEventTarget());
   SetTarget(child.get());
-  root()->AddChild(child.Pass());
+  root()->AddChild(std::move(child));
 
   // Define a second root target and child.
-  scoped_ptr<EventTarget> second_root_scoped(new TestEventTarget());
+  std::unique_ptr<EventTarget> second_root_scoped(new TestEventTarget());
   TestEventTarget* second_root =
       static_cast<TestEventTarget*>(second_root_scoped.get());
-  scoped_ptr<TestEventTarget> second_child(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> second_child(new TestEventTarget());
   second_root->SetEventTargeter(
-      make_scoped_ptr(new TestEventTargeter(second_child.get(), false)));
-  second_root->AddChild(second_child.Pass());
+      base::WrapUnique(new TestEventTargeter(second_child.get(), false)));
+  second_root->AddChild(std::move(second_child));
 
   // Define a second event processor which owns the second root.
-  scoped_ptr<TestEventProcessor> second_processor(new TestEventProcessor());
-  second_processor->SetRoot(second_root_scoped.Pass());
+  std::unique_ptr<TestEventProcessor> second_processor(
+      new TestEventProcessor());
+  second_processor->SetRoot(std::move(second_root_scoped));
 
   // Indicate that an event which is dispatched to the child target owned by the
   // first event processor should be handled by |target_handler| instead.
-  scoped_ptr<TestEventHandler> target_handler(
+  std::unique_ptr<TestEventHandler> target_handler(
       new ReDispatchEventHandler(second_processor.get(), root()->child_at(0)));
   ignore_result(root()->child_at(0)->SetTargetHandler(target_handler.get()));
 
@@ -173,10 +176,10 @@ TEST_F(EventProcessorTest, NestedEventProcessing) {
 // Verifies that OnEventProcessingFinished() is called when an event
 // has been handled.
 TEST_F(EventProcessorTest, OnEventProcessingFinished) {
-  scoped_ptr<TestEventTarget> child(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> child(new TestEventTarget());
   child->set_mark_events_as_handled(true);
   SetTarget(child.get());
-  root()->AddChild(child.Pass());
+  root()->AddChild(std::move(child));
 
   // Dispatch a mouse event. We expect the event to be seen by the target,
   // handled, and we expect OnEventProcessingFinished() to be invoked once.
@@ -194,9 +197,9 @@ TEST_F(EventProcessorTest, OnEventProcessingFinished) {
 // OnEventProcessingStarted() marks the event as handled. Also verifies that
 // OnEventProcessingFinished() is also called in either case.
 TEST_F(EventProcessorTest, OnEventProcessingStarted) {
-  scoped_ptr<TestEventTarget> child(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> child(new TestEventTarget());
   SetTarget(child.get());
-  root()->AddChild(child.Pass());
+  root()->AddChild(std::move(child));
 
   // Dispatch a mouse event. We expect the event to be seen by the target,
   // OnEventProcessingStarted() should be called once, and
@@ -232,14 +235,14 @@ TEST_F(EventProcessorTest, OnEventProcessingStarted) {
 // Tests that unhandled events are correctly dispatched to the next-best
 // target as decided by the TestEventTargeter.
 TEST_F(EventProcessorTest, DispatchToNextBestTarget) {
-  scoped_ptr<TestEventTarget> child(new TestEventTarget());
-  scoped_ptr<TestEventTarget> grandchild(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> child(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> grandchild(new TestEventTarget());
 
   // Install a TestEventTargeter which permits bubbling.
   root()->SetEventTargeter(
-      make_scoped_ptr(new TestEventTargeter(grandchild.get(), true)));
-  child->AddChild(grandchild.Pass());
-  root()->AddChild(child.Pass());
+      base::WrapUnique(new TestEventTargeter(grandchild.get(), true)));
+  child->AddChild(std::move(grandchild));
+  root()->AddChild(std::move(child));
 
   ASSERT_EQ(1u, root()->child_count());
   ASSERT_EQ(1u, root()->child_at(0)->child_count());
@@ -306,14 +309,14 @@ TEST_F(EventProcessorTest, DispatchToNextBestTarget) {
 // targets, pre-target handlers, and post-target handlers when
 // a TestEventTargeter is installed on the root target which permits bubbling.
 TEST_F(EventProcessorTest, HandlerSequence) {
-  scoped_ptr<TestEventTarget> child(new TestEventTarget());
-  scoped_ptr<TestEventTarget> grandchild(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> child(new TestEventTarget());
+  std::unique_ptr<TestEventTarget> grandchild(new TestEventTarget());
 
   // Install a TestEventTargeter which permits bubbling.
   root()->SetEventTargeter(
-      make_scoped_ptr(new TestEventTargeter(grandchild.get(), true)));
-  child->AddChild(grandchild.Pass());
-  root()->AddChild(child.Pass());
+      base::WrapUnique(new TestEventTargeter(grandchild.get(), true)));
+  child->AddChild(std::move(grandchild));
+  root()->AddChild(std::move(child));
 
   ASSERT_EQ(1u, root()->child_count());
   ASSERT_EQ(1u, root()->child_at(0)->child_count());

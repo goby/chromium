@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/autofill/info_bubble.h"
 
 #include "base/i18n/rtl.h"
+#include "base/macros.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -33,7 +34,7 @@ const int kInfoBubbleVerticalMargin = 12;
 class InfoBubbleFrame : public views::BubbleFrameView {
  public:
   explicit InfoBubbleFrame(const gfx::Insets& content_margins)
-      : views::BubbleFrameView(content_margins) {}
+      : views::BubbleFrameView(gfx::Insets(), content_margins) {}
   ~InfoBubbleFrame() override {}
 
   gfx::Rect GetAvailableScreenBounds(const gfx::Rect& rect) const override {
@@ -85,7 +86,7 @@ void InfoBubble::Show() {
   if (show_above_anchor_)
     set_arrow(views::BubbleBorder::vertical_mirror(arrow()));
 
-  widget_ = views::BubbleDelegateView::CreateBubble(this);
+  widget_ = views::BubbleDialogDelegateView::CreateBubble(this);
 
   if (align_to_anchor_edge_) {
     // The frame adjusts its arrow before the bubble's alignment can be changed.
@@ -122,7 +123,7 @@ views::NonClientFrameView* InfoBubble::CreateNonClientFrameView(
   DCHECK(!frame_);
   frame_ = new InfoBubbleFrame(margins());
   frame_->set_available_bounds(anchor_widget()->GetWindowBoundsInScreen());
-  frame_->SetBubbleBorder(scoped_ptr<views::BubbleBorder>(
+  frame_->SetBubbleBorder(std::unique_ptr<views::BubbleBorder>(
       new views::BubbleBorder(arrow(), shadow(), color())));
   return frame_;
 }
@@ -141,9 +142,13 @@ void InfoBubble::OnWidgetDestroyed(views::Widget* widget) {
 
 void InfoBubble::OnWidgetBoundsChanged(views::Widget* widget,
                                        const gfx::Rect& new_bounds) {
-  views::BubbleDelegateView::OnWidgetBoundsChanged(widget, new_bounds);
+  views::BubbleDialogDelegateView::OnWidgetBoundsChanged(widget, new_bounds);
   if (anchor_widget() == widget)
     frame_->set_available_bounds(widget->GetWindowBoundsInScreen());
+}
+
+int InfoBubble::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_NONE;
 }
 
 }  // namespace autofill

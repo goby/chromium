@@ -4,7 +4,8 @@
 
 #include "components/navigation_metrics/navigation_metrics.h"
 
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "url/gurl.h"
 
 namespace {
@@ -22,21 +23,23 @@ enum Scheme {
   SCHEME_ABOUT,
   SCHEME_CHROME,
   SCHEME_BLOB,
+  SCHEME_FILESYSTEM,
   SCHEME_MAX,
 };
 
 const char* const kSchemeNames[] = {
-  "unknown",
-  url::kHttpScheme,
-  url::kHttpsScheme,
-  url::kFileScheme,
-  url::kFtpScheme,
-  url::kDataScheme,
-  url::kJavaScriptScheme,
-  url::kAboutScheme,
-  "chrome",
-  url::kBlobScheme,
-  "max",
+    "unknown",
+    url::kHttpScheme,
+    url::kHttpsScheme,
+    url::kFileScheme,
+    url::kFtpScheme,
+    url::kDataScheme,
+    url::kJavaScriptScheme,
+    url::kAboutScheme,
+    "chrome",
+    url::kBlobScheme,
+    url::kFileSystemScheme,
+    "max",
 };
 
 static_assert(arraysize(kSchemeNames) == SCHEME_MAX + 1,
@@ -46,7 +49,10 @@ static_assert(arraysize(kSchemeNames) == SCHEME_MAX + 1,
 
 namespace navigation_metrics {
 
-void RecordMainFrameNavigation(const GURL& url, bool is_in_page) {
+void RecordMainFrameNavigation(const GURL& url,
+                               bool is_in_page,
+                               bool is_off_the_record,
+                               bool have_already_seen_origin) {
   Scheme scheme = SCHEME_UNKNOWN;
   for (int i = 1; i < SCHEME_MAX; ++i) {
     if (url.SchemeIs(kSchemeNames[i])) {
@@ -54,10 +60,21 @@ void RecordMainFrameNavigation(const GURL& url, bool is_in_page) {
       break;
     }
   }
+
+  if (!have_already_seen_origin) {
+    if (is_off_the_record) {
+      UMA_HISTOGRAM_ENUMERATION("Navigation.SchemePerUniqueOriginOTR", scheme,
+                                SCHEME_MAX);
+    } else {
+      UMA_HISTOGRAM_ENUMERATION("Navigation.SchemePerUniqueOrigin", scheme,
+                                SCHEME_MAX);
+    }
+  }
+
   UMA_HISTOGRAM_ENUMERATION("Navigation.MainFrameScheme", scheme, SCHEME_MAX);
   if (!is_in_page) {
-    UMA_HISTOGRAM_ENUMERATION(
-        "Navigation.MainFrameSchemeDifferentPage", scheme, SCHEME_MAX);
+    UMA_HISTOGRAM_ENUMERATION("Navigation.MainFrameSchemeDifferentPage", scheme,
+                              SCHEME_MAX);
   }
 }
 

@@ -28,39 +28,26 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "bindings/core/v8/ActiveDOMCallback.h"
 
-#include "core/dom/ActiveDOMObject.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/dom/SuspendableObject.h"
 #include "core/workers/WorkerGlobalScope.h"
 
 namespace blink {
 
 ActiveDOMCallback::ActiveDOMCallback(ExecutionContext* context)
-    : ContextLifecycleObserver(context)
-{
+    : m_context(context) {}
+
+ActiveDOMCallback::~ActiveDOMCallback() {}
+
+bool ActiveDOMCallback::canInvokeCallback() const {
+  return !m_context->activeDOMObjectsAreSuspended() &&
+         !m_context->isContextDestroyed();
 }
 
-ActiveDOMCallback::~ActiveDOMCallback()
-{
+DEFINE_TRACE(ActiveDOMCallback) {
+  visitor->trace(m_context);
 }
 
-bool ActiveDOMCallback::canInvokeCallback() const
-{
-    ExecutionContext* context = executionContext();
-    return context && !context->activeDOMObjectsAreSuspended() && !context->activeDOMObjectsAreStopped();
-}
-
-bool ActiveDOMCallback::isScriptControllerTerminating() const
-{
-    ExecutionContext* context = executionContext();
-    if (context && context->isWorkerGlobalScope()) {
-        WorkerScriptController* scriptController = toWorkerGlobalScope(context)->script();
-        if (!scriptController || scriptController->isExecutionForbidden() || scriptController->isExecutionTerminating())
-            return true;
-    }
-    return false;
-}
-
-} // namespace blink
+}  // namespace blink

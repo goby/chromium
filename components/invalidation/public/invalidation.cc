@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
@@ -22,11 +23,11 @@ const char kObjectIdKey[] = "objectId";
 const char kIsUnknownVersionKey[] = "isUnknownVersion";
 const char kVersionKey[] = "version";
 const char kPayloadKey[] = "payload";
-const int64 kInvalidVersion = -1;
+const int64_t kInvalidVersion = -1;
 }
 
 Invalidation Invalidation::Init(const invalidation::ObjectId& id,
-                                int64 version,
+                                int64_t version,
                                 const std::string& payload) {
   return Invalidation(id, false, version, payload, AckHandle::CreateUnique());
 }
@@ -43,7 +44,7 @@ Invalidation Invalidation::InitFromDroppedInvalidation(
       dropped.id_, true, kInvalidVersion, std::string(), dropped.ack_handle_);
 }
 
-scoped_ptr<Invalidation> Invalidation::InitFromValue(
+std::unique_ptr<Invalidation> Invalidation::InitFromValue(
     const base::DictionaryValue& value) {
   invalidation::ObjectId id;
 
@@ -51,40 +52,34 @@ scoped_ptr<Invalidation> Invalidation::InitFromValue(
   if (!value.GetDictionary(kObjectIdKey, &object_id_dict) ||
       !ObjectIdFromValue(*object_id_dict, &id)) {
     DLOG(WARNING) << "Failed to parse id";
-    return scoped_ptr<Invalidation>();
+    return nullptr;
   }
   bool is_unknown_version;
   if (!value.GetBoolean(kIsUnknownVersionKey, &is_unknown_version)) {
     DLOG(WARNING) << "Failed to parse is_unknown_version flag";
-    return scoped_ptr<Invalidation>();
+    return nullptr;
   }
   if (is_unknown_version) {
-    return scoped_ptr<Invalidation>(new Invalidation(
-        id,
-        true,
-        kInvalidVersion,
-        std::string(),
-        AckHandle::CreateUnique()));
+    return base::WrapUnique(new Invalidation(
+        id, true, kInvalidVersion, std::string(), AckHandle::CreateUnique()));
   }
-  int64 version = 0;
+  int64_t version = 0;
   std::string version_as_string;
   if (!value.GetString(kVersionKey, &version_as_string)
       || !base::StringToInt64(version_as_string, &version)) {
     DLOG(WARNING) << "Failed to parse version";
-    return scoped_ptr<Invalidation>();
+    return nullptr;
   }
   std::string payload;
   if (!value.GetString(kPayloadKey, &payload)) {
     DLOG(WARNING) << "Failed to parse payload";
-    return scoped_ptr<Invalidation>();
+    return nullptr;
   }
-  return scoped_ptr<Invalidation>(new Invalidation(
-      id,
-      false,
-      version,
-      payload,
-      AckHandle::CreateUnique()));
+  return base::WrapUnique(
+      new Invalidation(id, false, version, payload, AckHandle::CreateUnique()));
 }
+
+Invalidation::Invalidation(const Invalidation& other) = default;
 
 Invalidation::~Invalidation() {
 }
@@ -97,7 +92,7 @@ bool Invalidation::is_unknown_version() const {
   return is_unknown_version_;
 }
 
-int64 Invalidation::version() const {
+int64_t Invalidation::version() const {
   DCHECK(!is_unknown_version_);
   return version_;
 }
@@ -143,8 +138,8 @@ bool Invalidation::Equals(const Invalidation& other) const {
          version_ == other.version_ && payload_ == other.payload_;
 }
 
-scoped_ptr<base::DictionaryValue> Invalidation::ToValue() const {
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue> Invalidation::ToValue() const {
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   value->Set(kObjectIdKey, ObjectIdToValue(id_).release());
   if (is_unknown_version_) {
     value->SetBoolean(kIsUnknownVersionKey, true);
@@ -153,7 +148,7 @@ scoped_ptr<base::DictionaryValue> Invalidation::ToValue() const {
     value->SetString(kVersionKey, base::Int64ToString(version_));
     value->SetString(kPayloadKey, payload_);
   }
-  return value.Pass();
+  return value;
 }
 
 std::string Invalidation::ToString() const {
@@ -166,14 +161,13 @@ std::string Invalidation::ToString() const {
 
 Invalidation::Invalidation(const invalidation::ObjectId& id,
                            bool is_unknown_version,
-                           int64 version,
+                           int64_t version,
                            const std::string& payload,
                            AckHandle ack_handle)
     : id_(id),
       is_unknown_version_(is_unknown_version),
       version_(version),
       payload_(payload),
-      ack_handle_(ack_handle) {
-}
+      ack_handle_(ack_handle) {}
 
 }  // namespace syncer

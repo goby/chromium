@@ -4,14 +4,14 @@
 
 #include "cc/layers/picture_layer_impl.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "cc/debug/lap_timer.h"
-#include "cc/test/fake_display_list_raster_source.h"
+#include "cc/test/fake_compositor_frame_sink.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
-#include "cc/test/fake_output_surface.h"
 #include "cc/test/fake_picture_layer_impl.h"
-#include "cc/test/test_shared_bitmap_manager.h"
+#include "cc/test/fake_raster_source.h"
 #include "cc/test/test_task_graph_runner.h"
 #include "cc/tiles/tiling_set_raster_queue_all.h"
 #include "cc/trees/layer_tree_impl.h"
@@ -41,10 +41,9 @@ class PictureLayerImplPerfTest : public testing::Test {
  public:
   PictureLayerImplPerfTest()
       : task_runner_provider_(base::ThreadTaskRunnerHandle::Get()),
-        output_surface_(FakeOutputSurface::Create3d()),
+        compositor_frame_sink_(FakeCompositorFrameSink::Create3d()),
         host_impl_(LayerTreeSettings(),
                    &task_runner_provider_,
-                   &shared_bitmap_manager_,
                    &task_graph_runner_),
         timer_(kWarmupRuns,
                base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
@@ -52,23 +51,23 @@ class PictureLayerImplPerfTest : public testing::Test {
 
   void SetUp() override {
     host_impl_.SetVisible(true);
-    host_impl_.InitializeRenderer(output_surface_.get());
+    host_impl_.InitializeRenderer(compositor_frame_sink_.get());
   }
 
   void SetupPendingTree(const gfx::Size& layer_bounds) {
-    scoped_refptr<FakeDisplayListRasterSource> raster_source =
-        FakeDisplayListRasterSource::CreateFilled(layer_bounds);
+    scoped_refptr<FakeRasterSource> raster_source =
+        FakeRasterSource::CreateFilled(layer_bounds);
     host_impl_.CreatePendingTree();
     LayerTreeImpl* pending_tree = host_impl_.pending_tree();
-    pending_tree->DetachLayerTree();
+    pending_tree->DetachLayers();
 
-    scoped_ptr<FakePictureLayerImpl> pending_layer =
+    std::unique_ptr<FakePictureLayerImpl> pending_layer =
         FakePictureLayerImpl::CreateWithRasterSource(pending_tree, 7,
                                                      raster_source);
     pending_layer->SetDrawsContent(true);
-    pending_layer->SetHasRenderSurface(true);
-    pending_tree->SetRootLayer(std::move(pending_layer));
-    pending_tree->BuildPropertyTreesForTesting();
+    pending_layer->test_properties()->force_render_surface = true;
+    pending_tree->SetRootLayerForTesting(std::move(pending_layer));
+    pending_tree->BuildLayerListAndPropertyTreesForTesting();
 
     pending_layer_ = static_cast<FakePictureLayerImpl*>(
         host_impl_.pending_tree()->LayerById(7));
@@ -84,8 +83,9 @@ class PictureLayerImplPerfTest : public testing::Test {
     timer_.Reset();
     do {
       int count = num_tiles;
-      scoped_ptr<TilingSetRasterQueueAll> queue(new TilingSetRasterQueueAll(
-          pending_layer_->picture_layer_tiling_set(), false));
+      std::unique_ptr<TilingSetRasterQueueAll> queue(
+          new TilingSetRasterQueueAll(
+              pending_layer_->picture_layer_tiling_set(), false));
       while (count--) {
         ASSERT_TRUE(!queue->IsEmpty()) << "count: " << count;
         ASSERT_TRUE(queue->Top().tile()) << "count: " << count;
@@ -101,15 +101,19 @@ class PictureLayerImplPerfTest : public testing::Test {
   void RunRasterQueueConstructTest(const std::string& test_name,
                                    const gfx::Rect& viewport) {
     host_impl_.SetViewportSize(viewport.size());
-    pending_layer_->PushScrollOffsetFromMainThread(
-        gfx::ScrollOffset(viewport.x(), viewport.y()));
+    host_impl_.pending_tree()
+        ->property_trees()
+        ->scroll_tree.UpdateScrollOffsetBaseForTesting(
+            pending_layer_->id(),
+            gfx::ScrollOffset(viewport.x(), viewport.y()));
     bool update_lcd_text = false;
     host_impl_.pending_tree()->UpdateDrawProperties(update_lcd_text);
 
     timer_.Reset();
     do {
-      scoped_ptr<TilingSetRasterQueueAll> queue(new TilingSetRasterQueueAll(
-          pending_layer_->picture_layer_tiling_set(), false));
+      std::unique_ptr<TilingSetRasterQueueAll> queue(
+          new TilingSetRasterQueueAll(
+              pending_layer_->picture_layer_tiling_set(), false));
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -128,7 +132,7 @@ class PictureLayerImplPerfTest : public testing::Test {
     timer_.Reset();
     do {
       int count = num_tiles;
-      scoped_ptr<TilingSetEvictionQueue> queue(new TilingSetEvictionQueue(
+      std::unique_ptr<TilingSetEvictionQueue> queue(new TilingSetEvictionQueue(
           pending_layer_->picture_layer_tiling_set()));
       while (count--) {
         ASSERT_TRUE(!queue->IsEmpty()) << "count: " << count;
@@ -146,14 +150,17 @@ class PictureLayerImplPerfTest : public testing::Test {
   void RunEvictionQueueConstructTest(const std::string& test_name,
                                      const gfx::Rect& viewport) {
     host_impl_.SetViewportSize(viewport.size());
-    pending_layer_->PushScrollOffsetFromMainThread(
-        gfx::ScrollOffset(viewport.x(), viewport.y()));
+    host_impl_.pending_tree()
+        ->property_trees()
+        ->scroll_tree.UpdateScrollOffsetBaseForTesting(
+            pending_layer_->id(),
+            gfx::ScrollOffset(viewport.x(), viewport.y()));
     bool update_lcd_text = false;
     host_impl_.pending_tree()->UpdateDrawProperties(update_lcd_text);
 
     timer_.Reset();
     do {
-      scoped_ptr<TilingSetEvictionQueue> queue(new TilingSetEvictionQueue(
+      std::unique_ptr<TilingSetEvictionQueue> queue(new TilingSetEvictionQueue(
           pending_layer_->picture_layer_tiling_set()));
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
@@ -163,10 +170,9 @@ class PictureLayerImplPerfTest : public testing::Test {
   }
 
  protected:
-  TestSharedBitmapManager shared_bitmap_manager_;
   TestTaskGraphRunner task_graph_runner_;
   FakeImplTaskRunnerProvider task_runner_provider_;
-  scoped_ptr<OutputSurface> output_surface_;
+  std::unique_ptr<CompositorFrameSink> compositor_frame_sink_;
   FakeLayerTreeHostImpl host_impl_;
   FakePictureLayerImpl* pending_layer_;
   LapTimer timer_;

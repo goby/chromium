@@ -5,10 +5,12 @@
 #ifndef NET_COOKIES_PARSED_COOKIE_H_
 #define NET_COOKIES_PARSED_COOKIE_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/cookies/cookie_constants.h"
 
@@ -48,7 +50,7 @@ class NET_EXPORT ParsedCookie {
   const std::string& MaxAge() const { return pairs_[maxage_index_].second; }
   bool IsSecure() const { return secure_index_ != 0; }
   bool IsHttpOnly() const { return httponly_index_ != 0; }
-  bool IsFirstPartyOnly() const { return firstpartyonly_index_ != 0; }
+  CookieSameSite SameSite() const;
   CookiePriority Priority() const;
 
   // Returns the number of attributes, for example, returning 2 for:
@@ -68,7 +70,7 @@ class NET_EXPORT ParsedCookie {
   bool SetMaxAge(const std::string& maxage);
   bool SetIsSecure(bool is_secure);
   bool SetIsHttpOnly(bool is_http_only);
-  bool SetIsFirstPartyOnly(bool is_first_party_only);
+  bool SetSameSite(const std::string& same_site);
   bool SetPriority(const std::string& priority);
 
   // Returns the cookie description as it appears in a HTML response header.
@@ -82,7 +84,8 @@ class NET_EXPORT ParsedCookie {
   // returns as output arguments token_start and token_end to the start and end
   // positions of a cookie attribute token name parsed from the segment, and
   // updates the segment iterator to point to the next segment to be parsed.
-  // If no token is found, the function returns false.
+  // If no token is found, the function returns false and the segment iterator
+  // is set to end.
   static bool ParseToken(std::string::const_iterator* it,
                          const std::string::const_iterator& end,
                          std::string::const_iterator* token_start,
@@ -127,6 +130,10 @@ class NET_EXPORT ParsedCookie {
   // |index| refers to a position in |pairs_|.
   void ClearAttributePair(size_t index);
 
+  // Returns false if a 'SameSite' attribute is present, but has an unrecognized
+  // value. In particular, this includes attributes with empty values.
+  bool IsSameSiteAttributeValid() const;
+
   PairList pairs_;
   // These will default to 0, but that should never be valid since the
   // 0th index is the user supplied token/value, not an attribute.
@@ -138,7 +145,7 @@ class NET_EXPORT ParsedCookie {
   size_t maxage_index_;
   size_t secure_index_;
   size_t httponly_index_;
-  size_t firstpartyonly_index_;
+  size_t same_site_index_;
   size_t priority_index_;
 
   DISALLOW_COPY_AND_ASSIGN(ParsedCookie);
@@ -146,4 +153,4 @@ class NET_EXPORT ParsedCookie {
 
 }  // namespace net
 
-#endif  // NET_COOKIES_COOKIE_MONSTER_H_
+#endif  // NET_COOKIES_PARSED_COOKIE_H_

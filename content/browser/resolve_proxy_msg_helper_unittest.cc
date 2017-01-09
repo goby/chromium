@@ -4,8 +4,11 @@
 
 #include "content/browser/resolve_proxy_msg_helper.h"
 
-#include "content/browser/browser_thread_impl.h"
+#include <tuple>
+
+#include "base/memory/ptr_util.h"
 #include "content/common/view_messages.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "ipc/ipc_test_sink.h"
 #include "net/base/net_errors.h"
 #include "net/proxy/mock_proxy_resolver.h"
@@ -60,11 +63,10 @@ class ResolveProxyMsgHelperTest : public testing::Test, public IPC::Listener {
   ResolveProxyMsgHelperTest()
       : resolver_factory_(new net::MockAsyncProxyResolverFactory(false)),
         service_(
-            new net::ProxyService(make_scoped_ptr(new MockProxyConfigService),
-                                  make_scoped_ptr(resolver_factory_),
+            new net::ProxyService(base::WrapUnique(new MockProxyConfigService),
+                                  base::WrapUnique(resolver_factory_),
                                   NULL)),
-        helper_(new TestResolveProxyMsgHelper(service_.get(), this)),
-        io_thread_(BrowserThread::IO, &message_loop_) {
+        helper_(new TestResolveProxyMsgHelper(service_.get(), this)) {
     test_sink_.AddFilter(this);
   }
 
@@ -84,24 +86,22 @@ class ResolveProxyMsgHelperTest : public testing::Test, public IPC::Listener {
 
   net::MockAsyncProxyResolverFactory* resolver_factory_;
   net::MockAsyncProxyResolver resolver_;
-  scoped_ptr<net::ProxyService> service_;
+  std::unique_ptr<net::ProxyService> service_;
   scoped_refptr<ResolveProxyMsgHelper> helper_;
-  scoped_ptr<PendingResult> pending_result_;
+  std::unique_ptr<PendingResult> pending_result_;
 
  private:
   bool OnMessageReceived(const IPC::Message& msg) override {
-    base::TupleTypes<ViewHostMsg_ResolveProxy::ReplyParam>::ValueTuple
-        reply_data;
+    ViewHostMsg_ResolveProxy::ReplyParam reply_data;
     EXPECT_TRUE(ViewHostMsg_ResolveProxy::ReadReplyParam(&msg, &reply_data));
     DCHECK(!pending_result_.get());
     pending_result_.reset(
-        new PendingResult(base::get<0>(reply_data), base::get<1>(reply_data)));
+        new PendingResult(std::get<0>(reply_data), std::get<1>(reply_data)));
     test_sink_.ClearMessages();
     return true;
   }
 
-  base::MessageLoopForIO message_loop_;
-  BrowserThreadImpl io_thread_;
+  TestBrowserThreadBundle thread_bundle_;
   IPC::TestSink test_sink_;
 };
 
@@ -126,10 +126,10 @@ TEST_F(ResolveProxyMsgHelperTest, Sequential) {
   resolver_factory_->pending_requests()[0]->CompleteNowWithForwarder(
       net::OK, &resolver_);
 
-  ASSERT_EQ(1u, resolver_.pending_requests().size());
-  EXPECT_EQ(url1, resolver_.pending_requests()[0]->url());
-  resolver_.pending_requests()[0]->results()->UseNamedProxy("result1:80");
-  resolver_.pending_requests()[0]->CompleteNow(net::OK);
+  ASSERT_EQ(1u, resolver_.pending_jobs().size());
+  EXPECT_EQ(url1, resolver_.pending_jobs()[0]->url());
+  resolver_.pending_jobs()[0]->results()->UseNamedProxy("result1:80");
+  resolver_.pending_jobs()[0]->CompleteNow(net::OK);
 
   // Check result.
   EXPECT_EQ(true, pending_result()->result);
@@ -138,10 +138,10 @@ TEST_F(ResolveProxyMsgHelperTest, Sequential) {
 
   helper_->OnResolveProxy(url2, msg2);
 
-  ASSERT_EQ(1u, resolver_.pending_requests().size());
-  EXPECT_EQ(url2, resolver_.pending_requests()[0]->url());
-  resolver_.pending_requests()[0]->results()->UseNamedProxy("result2:80");
-  resolver_.pending_requests()[0]->CompleteNow(net::OK);
+  ASSERT_EQ(1u, resolver_.pending_jobs().size());
+  EXPECT_EQ(url2, resolver_.pending_jobs()[0]->url());
+  resolver_.pending_jobs()[0]->results()->UseNamedProxy("result2:80");
+  resolver_.pending_jobs()[0]->CompleteNow(net::OK);
 
   // Check result.
   EXPECT_EQ(true, pending_result()->result);
@@ -150,10 +150,10 @@ TEST_F(ResolveProxyMsgHelperTest, Sequential) {
 
   helper_->OnResolveProxy(url3, msg3);
 
-  ASSERT_EQ(1u, resolver_.pending_requests().size());
-  EXPECT_EQ(url3, resolver_.pending_requests()[0]->url());
-  resolver_.pending_requests()[0]->results()->UseNamedProxy("result3:80");
-  resolver_.pending_requests()[0]->CompleteNow(net::OK);
+  ASSERT_EQ(1u, resolver_.pending_jobs().size());
+  EXPECT_EQ(url3, resolver_.pending_jobs()[0]->url());
+  resolver_.pending_jobs()[0]->results()->UseNamedProxy("result3:80");
+  resolver_.pending_jobs()[0]->CompleteNow(net::OK);
 
   // Check result.
   EXPECT_EQ(true, pending_result()->result);
@@ -186,33 +186,33 @@ TEST_F(ResolveProxyMsgHelperTest, QueueRequests) {
 
   // ResolveProxyHelper only keeps 1 request outstanding in ProxyService
   // at a time.
-  ASSERT_EQ(1u, resolver_.pending_requests().size());
-  EXPECT_EQ(url1, resolver_.pending_requests()[0]->url());
+  ASSERT_EQ(1u, resolver_.pending_jobs().size());
+  EXPECT_EQ(url1, resolver_.pending_jobs()[0]->url());
 
-  resolver_.pending_requests()[0]->results()->UseNamedProxy("result1:80");
-  resolver_.pending_requests()[0]->CompleteNow(net::OK);
+  resolver_.pending_jobs()[0]->results()->UseNamedProxy("result1:80");
+  resolver_.pending_jobs()[0]->CompleteNow(net::OK);
 
   // Check result.
   EXPECT_EQ(true, pending_result()->result);
   EXPECT_EQ("PROXY result1:80", pending_result()->proxy_list);
   clear_pending_result();
 
-  ASSERT_EQ(1u, resolver_.pending_requests().size());
-  EXPECT_EQ(url2, resolver_.pending_requests()[0]->url());
+  ASSERT_EQ(1u, resolver_.pending_jobs().size());
+  EXPECT_EQ(url2, resolver_.pending_jobs()[0]->url());
 
-  resolver_.pending_requests()[0]->results()->UseNamedProxy("result2:80");
-  resolver_.pending_requests()[0]->CompleteNow(net::OK);
+  resolver_.pending_jobs()[0]->results()->UseNamedProxy("result2:80");
+  resolver_.pending_jobs()[0]->CompleteNow(net::OK);
 
   // Check result.
   EXPECT_EQ(true, pending_result()->result);
   EXPECT_EQ("PROXY result2:80", pending_result()->proxy_list);
   clear_pending_result();
 
-  ASSERT_EQ(1u, resolver_.pending_requests().size());
-  EXPECT_EQ(url3, resolver_.pending_requests()[0]->url());
+  ASSERT_EQ(1u, resolver_.pending_jobs().size());
+  EXPECT_EQ(url3, resolver_.pending_jobs()[0]->url());
 
-  resolver_.pending_requests()[0]->results()->UseNamedProxy("result3:80");
-  resolver_.pending_requests()[0]->CompleteNow(net::OK);
+  resolver_.pending_jobs()[0]->results()->UseNamedProxy("result3:80");
+  resolver_.pending_jobs()[0]->CompleteNow(net::OK);
 
   // Check result.
   EXPECT_EQ(true, pending_result()->result);
@@ -246,8 +246,8 @@ TEST_F(ResolveProxyMsgHelperTest, CancelPendingRequests) {
 
   // ResolveProxyHelper only keeps 1 request outstanding in ProxyService
   // at a time.
-  ASSERT_EQ(1u, resolver_.pending_requests().size());
-  EXPECT_EQ(url1, resolver_.pending_requests()[0]->url());
+  ASSERT_EQ(1u, resolver_.pending_jobs().size());
+  EXPECT_EQ(url1, resolver_.pending_jobs()[0]->url());
 
   // Delete the underlying ResolveProxyMsgHelper -- this should cancel all
   // the requests which are outstanding.
@@ -255,7 +255,7 @@ TEST_F(ResolveProxyMsgHelperTest, CancelPendingRequests) {
 
   // The pending requests sent to the proxy resolver should have been cancelled.
 
-  EXPECT_EQ(0u, resolver_.pending_requests().size());
+  EXPECT_EQ(0u, resolver_.pending_jobs().size());
 
   EXPECT_TRUE(pending_result() == NULL);
 

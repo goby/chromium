@@ -5,10 +5,11 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_DEVTOOLS_FRONTEND_H_
 #define CONTENT_SHELL_BROWSER_SHELL_DEVTOOLS_FRONTEND_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "content/public/browser/devtools_agent_host.h"
@@ -54,15 +55,14 @@ class ShellDevToolsFrontend : public WebContentsObserver,
   void AgentHostClosed(DevToolsAgentHost* agent_host, bool replaced) override;
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                const std::string& message) override;
-  base::DictionaryValue* preferences() { return &preferences_; }
+  void SetPreferences(const std::string& json);
+  virtual void HandleMessageFromDevToolsFrontend(const std::string& message);
 
  private:
   // WebContentsObserver overrides
   void RenderViewCreated(RenderViewHost* render_view_host) override;
   void DocumentAvailableInMainFrame() override;
   void WebContentsDestroyed() override;
-
-  void HandleMessageFromDevToolsFrontend(const std::string& message);
 
   // net::URLFetcherDelegate overrides.
   void OnURLFetchComplete(const net::URLFetcher* source) override;
@@ -73,7 +73,9 @@ class ShellDevToolsFrontend : public WebContentsObserver,
   Shell* frontend_shell_;
   WebContents* inspected_contents_;
   scoped_refptr<DevToolsAgentHost> agent_host_;
-  scoped_ptr<DevToolsFrontendHost> frontend_host_;
+  int inspect_element_at_x_;
+  int inspect_element_at_y_;
+  std::unique_ptr<DevToolsFrontendHost> frontend_host_;
   using PendingRequestsMap = std::map<const net::URLFetcher*, int>;
   PendingRequestsMap pending_requests_;
   base::DictionaryValue preferences_;

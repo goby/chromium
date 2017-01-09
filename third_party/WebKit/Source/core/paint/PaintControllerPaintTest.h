@@ -11,137 +11,140 @@
 #include "core/paint/PaintLayer.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsLayer.h"
+#include "platform/graphics/paint/CullRect.h"
+#include "platform/testing/RuntimeEnabledFeaturesTestHelpers.h"
 #include <gtest/gtest.h>
 
 namespace blink {
 
-class PaintControllerPaintTestBase : public RenderingTest {
-public:
-    PaintControllerPaintTestBase(bool enableSlimmingPaintV2)
-        : m_originalSlimmingPaintSynchronizedPaintingEnabled(RuntimeEnabledFeatures::slimmingPaintSynchronizedPaintingEnabled())
-        , m_originalSlimmingPaintOffsetCachingEnabled(RuntimeEnabledFeatures::slimmingPaintOffsetCachingEnabled())
-        , m_originalSlimmingPaintV2Enabled(RuntimeEnabledFeatures::slimmingPaintV2Enabled())
-        , m_enableSlimmingPaintV2(enableSlimmingPaintV2)
-    { }
+class PaintControllerPaintTestBase : private ScopedSlimmingPaintV2ForTest,
+                                     public RenderingTest {
+ public:
+  PaintControllerPaintTestBase(bool enableSlimmingPaintV2)
+      : ScopedSlimmingPaintV2ForTest(enableSlimmingPaintV2) {}
 
-protected:
-    LayoutView& layoutView() { return *document().layoutView(); }
-    PaintController& rootPaintController() { return *layoutView().layer()->graphicsLayerBacking()->paintController(); }
+ protected:
+  LayoutView& layoutView() { return *document().layoutView(); }
+  PaintController& rootPaintController() {
+    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+      return *document().view()->paintController();
+    return layoutView().layer()->graphicsLayerBacking()->getPaintController();
+  }
 
-    void SetUp() override
-    {
-        RenderingTest::SetUp();
-        enableCompositing();
-        GraphicsLayer::setDrawDebugRedFillForTesting(false);
-        RuntimeEnabledFeatures::setSlimmingPaintV2Enabled(m_enableSlimmingPaintV2);
+  void SetUp() override {
+    RenderingTest::SetUp();
+    enableCompositing();
+  }
+
+  bool paintWithoutCommit(const IntRect* interestRect = nullptr) {
+    document().view()->lifecycle().advanceTo(DocumentLifecycle::InPaint);
+    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
+      if (layoutView().layer()->needsRepaint()) {
+        GraphicsContext graphicsContext(rootPaintController());
+        document().view()->paint(graphicsContext,
+                                 CullRect(LayoutRect::infiniteIntRect()));
+        return true;
+      }
+      document().view()->lifecycle().advanceTo(DocumentLifecycle::PaintClean);
+      return false;
     }
-    void TearDown() override
-    {
-        RuntimeEnabledFeatures::setSlimmingPaintSynchronizedPaintingEnabled(m_originalSlimmingPaintSynchronizedPaintingEnabled);
-        RuntimeEnabledFeatures::setSlimmingPaintOffsetCachingEnabled(m_originalSlimmingPaintOffsetCachingEnabled);
-        RuntimeEnabledFeatures::setSlimmingPaintV2Enabled(m_originalSlimmingPaintV2Enabled);
-        GraphicsLayer::setDrawDebugRedFillForTesting(true);
+    // Only root graphics layer is supported.
+    if (!layoutView().layer()->graphicsLayerBacking()->paintWithoutCommit(
+            interestRect)) {
+      document().view()->lifecycle().advanceTo(DocumentLifecycle::PaintClean);
+      return false;
     }
+    return true;
+  }
 
-    // Expose some document lifecycle steps for checking new display items before commiting.
-    void updateLifecyclePhasesBeforePaint()
-    {
-        // This doesn't do all steps that FrameView does, but is enough for current tests.
-        FrameView* frameView = document().view();
-        frameView->updateLifecyclePhasesInternal(FrameView::OnlyUpToCompositingCleanPlusScrolling);
-        frameView->invalidateTreeIfNeededRecursive();
-        if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
-            document().view()->updatePaintProperties();
+  void commit() {
+    // Only root graphics layer is supported.
+    rootPaintController().commitNewDisplayItems();
+    document().view()->lifecycle().advanceTo(DocumentLifecycle::PaintClean);
+  }
+
+  void paint(const IntRect* interestRect = nullptr) {
+    // Only root graphics layer is supported.
+    if (paintWithoutCommit(interestRect))
+      commit();
+  }
+
+  bool displayItemListContains(const DisplayItemList& displayItemList,
+                               DisplayItemClient& client,
+                               DisplayItem::Type type) {
+    for (auto& item : displayItemList) {
+      if (item.client() == client && item.getType() == type)
+        return true;
     }
+    return false;
+  }
 
-    void updateLifecyclePhasesToPaintClean()
-    {
-        ASSERT(RuntimeEnabledFeatures::slimmingPaintSynchronizedPaintingEnabled());
-        updateLifecyclePhasesBeforePaint();
-        document().view()->synchronizedPaint();
-    }
-
-    void paint(const IntRect* interestRect = nullptr)
-    {
-        ASSERT(RuntimeEnabledFeatures::slimmingPaintSynchronizedPaintingEnabled());
-        // For v1, only root graphics layer is supported.
-        if (RuntimeEnabledFeatures::slimmingPaintV2Enabled() && !interestRect) {
-            document().view()->synchronizedPaint();
-        } else {
-            document().view()->lifecycle().advanceTo(DocumentLifecycle::InPaint);
-            GraphicsContext context(rootPaintController());
-            layoutView().layer()->graphicsLayerBacking()->paint(context, interestRect);
-            if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
-                document().view()->lifecycle().advanceTo(DocumentLifecycle::PaintClean);
-        }
-    }
-
-    void commit()
-    {
-        // Only root graphics layer is supported.
-        rootPaintController().commitNewDisplayItems();
-        document().view()->lifecycle().advanceTo(DocumentLifecycle::PaintClean);
-    }
-
-private:
-    bool m_originalSlimmingPaintSynchronizedPaintingEnabled;
-    bool m_originalSlimmingPaintOffsetCachingEnabled;
-    bool m_originalSlimmingPaintV2Enabled;
-    bool m_enableSlimmingPaintV2;
+  int numCachedNewItems() { return rootPaintController().m_numCachedNewItems; }
 };
 
 class PaintControllerPaintTest : public PaintControllerPaintTestBase {
-public:
-    PaintControllerPaintTest() : PaintControllerPaintTestBase(false) { }
+ public:
+  PaintControllerPaintTest() : PaintControllerPaintTestBase(false) {}
 };
 
-class PaintControllerPaintTestForSlimmingPaintV2 : public PaintControllerPaintTestBase {
-public:
-    PaintControllerPaintTestForSlimmingPaintV2() : PaintControllerPaintTestBase(true) { }
+class PaintControllerPaintTestForSlimmingPaintV2
+    : public PaintControllerPaintTestBase {
+ public:
+  PaintControllerPaintTestForSlimmingPaintV2()
+      : PaintControllerPaintTestBase(true) {}
 };
 
 class PaintControllerPaintTestForSlimmingPaintV1AndV2
-    : public PaintControllerPaintTestBase
-    , public testing::WithParamInterface<bool> {
-public:
-    PaintControllerPaintTestForSlimmingPaintV1AndV2() : PaintControllerPaintTestBase(GetParam()) { }
+    : public PaintControllerPaintTestBase,
+      public testing::WithParamInterface<bool> {
+ public:
+  PaintControllerPaintTestForSlimmingPaintV1AndV2()
+      : PaintControllerPaintTestBase(GetParam()) {}
 };
 
 class TestDisplayItem final : public DisplayItem {
-public:
-    TestDisplayItem(const DisplayItemClientWrapper& client, Type type) : DisplayItem(client, type, sizeof(*this)) { }
+ public:
+  TestDisplayItem(const DisplayItemClient& client, Type type)
+      : DisplayItem(client, type, sizeof(*this)) {}
 
-    void replay(GraphicsContext&) const final { ASSERT_NOT_REACHED(); }
-    void appendToWebDisplayItemList(const IntRect&, WebDisplayItemList*) const final { ASSERT_NOT_REACHED(); }
+  void replay(GraphicsContext&) const final { ASSERT_NOT_REACHED(); }
+  void appendToWebDisplayItemList(const IntRect&,
+                                  WebDisplayItemList*) const final {
+    ASSERT_NOT_REACHED();
+  }
 };
 
 #ifndef NDEBUG
-#define TRACE_DISPLAY_ITEMS(i, expected, actual) \
-    String trace = String::format("%d: ", (int)i) + "Expected: " + (expected).asDebugString() + " Actual: " + (actual).asDebugString(); \
-    SCOPED_TRACE(trace.utf8().data());
+#define TRACE_DISPLAY_ITEMS(i, expected, actual)                 \
+  String trace = String::format("%d: ", (int)i) + "Expected: " + \
+                 (expected).asDebugString() + " Actual: " +      \
+                 (actual).asDebugString();                       \
+  SCOPED_TRACE(trace.utf8().data());
 #else
 #define TRACE_DISPLAY_ITEMS(i, expected, actual)
 #endif
 
-#define EXPECT_DISPLAY_LIST(actual, expectedSize, ...) \
-    do { \
-        EXPECT_EQ((size_t)expectedSize, actual.size()); \
-        if (expectedSize != actual.size()) \
-            break; \
-        const TestDisplayItem expected[] = { __VA_ARGS__ }; \
-        for (size_t index = 0; index < std::min<size_t>(actual.size(), expectedSize); index++) { \
-            TRACE_DISPLAY_ITEMS(index, expected[index], actual[index]); \
-            EXPECT_EQ(expected[index].client(), actual[index].client()); \
-            EXPECT_EQ(expected[index].type(), actual[index].type()); \
-        } \
-    } while (false);
+#define EXPECT_DISPLAY_LIST(actual, expectedSize, ...)                     \
+  do {                                                                     \
+    EXPECT_EQ((size_t)expectedSize, actual.size());                        \
+    if (expectedSize != actual.size())                                     \
+      break;                                                               \
+    const TestDisplayItem expected[] = {__VA_ARGS__};                      \
+    for (size_t index = 0;                                                 \
+         index < std::min<size_t>(actual.size(), expectedSize); index++) { \
+      TRACE_DISPLAY_ITEMS(index, expected[index], actual[index]);          \
+      EXPECT_EQ(expected[index].client(), actual[index].client());         \
+      EXPECT_EQ(expected[index].getType(), actual[index].getType());       \
+    }                                                                      \
+  } while (false);
 
 // Shorter names for frequently used display item types in tests.
-const DisplayItem::Type backgroundType = DisplayItem::BoxDecorationBackground;
-const DisplayItem::Type cachedBackgroundType = DisplayItem::drawingTypeToCachedDrawingType(backgroundType);
-const DisplayItem::Type foregroundType = DisplayItem::paintPhaseToDrawingType(PaintPhaseForeground);
-const DisplayItem::Type cachedForegroundType = DisplayItem::drawingTypeToCachedDrawingType(foregroundType);
+const DisplayItem::Type backgroundType = DisplayItem::kBoxDecorationBackground;
+const DisplayItem::Type foregroundType =
+    DisplayItem::paintPhaseToDrawingType(PaintPhaseForeground);
+const DisplayItem::Type documentBackgroundType =
+    DisplayItem::kDocumentBackground;
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PaintControllerPaintTest_h
+#endif  // PaintControllerPaintTest_h

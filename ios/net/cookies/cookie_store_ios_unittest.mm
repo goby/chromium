@@ -6,8 +6,13 @@
 
 #import <Foundation/Foundation.h>
 
+#include <memory>
+
 #include "base/bind_helpers.h"
+#include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/cookies/cookie_store_unittest.h"
@@ -28,14 +33,13 @@ void ClearCookies() {
 namespace net {
 
 struct CookieStoreIOSTestTraits {
-  static net::CookieStore* Create() {
+  static std::unique_ptr<net::CookieStore> Create() {
     ClearCookies();
-    CookieStoreIOS* store = new CookieStoreIOS(nullptr);
+    std::unique_ptr<CookieStoreIOS> store(new CookieStoreIOS(nullptr));
     store->synchronization_state_ = CookieStoreIOS::SYNCHRONIZED;
-    return store;
+    return std::move(store);
   }
 
-  static const bool is_cookie_monster = false;
   static const bool supports_http_only = false;
   static const bool supports_non_dotted_domains = false;
   static const bool preserves_trailing_dots = false;
@@ -48,8 +52,8 @@ struct CookieStoreIOSTestTraits {
 };
 
 struct InactiveCookieStoreIOSTestTraits {
-  static scoped_refptr<net::CookieStore> Create() {
-    return new CookieStoreIOS(nullptr);
+  static std::unique_ptr<net::CookieStore> Create() {
+    return base::MakeUnique<CookieStoreIOS>(nullptr);
   }
 
   static const bool is_cookie_monster = false;
@@ -78,6 +82,8 @@ class RoundTripTestCookieStore : public net::CookieStore {
     CookieStoreIOS::SwitchSynchronizedStore(nullptr, store_.get());
   }
 
+  ~RoundTripTestCookieStore() override { store_->UnSynchronize(); }
+
   // Inherited CookieStore methods.
   void SetCookieWithOptionsAsync(const GURL& url,
                                  const std::string& cookie_line,
@@ -87,6 +93,27 @@ class RoundTripTestCookieStore : public net::CookieStore {
     store_->SetCookieWithOptionsAsync(url, cookie_line, options, callback);
   }
 
+  void SetCookieWithDetailsAsync(const GURL& url,
+                                 const std::string& name,
+                                 const std::string& value,
+                                 const std::string& domain,
+                                 const std::string& path,
+                                 base::Time creation_time,
+                                 base::Time expiration_time,
+                                 base::Time last_access_time,
+                                 bool secure,
+                                 bool http_only,
+                                 CookieSameSite same_site,
+                                 bool enforce_strict_secure,
+                                 CookiePriority priority,
+                                 const SetCookiesCallback& callback) override {
+    RoundTrip();
+    store_->SetCookieWithDetailsAsync(
+        url, name, value, domain, path, creation_time, expiration_time,
+        last_access_time, secure, http_only, same_site, enforce_strict_secure,
+        priority, callback);
+  }
+
   void GetCookiesWithOptionsAsync(const GURL& url,
                                   const net::CookieOptions& options,
                                   const GetCookiesCallback& callback) override {
@@ -94,11 +121,17 @@ class RoundTripTestCookieStore : public net::CookieStore {
     store_->GetCookiesWithOptionsAsync(url, options, callback);
   }
 
-  void GetAllCookiesForURLAsync(
+  void GetCookieListWithOptionsAsync(
       const GURL& url,
+      const net::CookieOptions& options,
       const GetCookieListCallback& callback) override {
     RoundTrip();
-    store_->GetAllCookiesForURLAsync(url, callback);
+    store_->GetCookieListWithOptionsAsync(url, options, callback);
+  }
+
+  void GetAllCookiesAsync(const GetCookieListCallback& callback) override {
+    RoundTrip();
+    store_->GetAllCookiesAsync(callback);
   }
 
   void DeleteCookieAsync(const GURL& url,
@@ -108,7 +141,12 @@ class RoundTripTestCookieStore : public net::CookieStore {
     store_->DeleteCookieAsync(url, cookie_name, callback);
   }
 
-  net::CookieMonster* GetCookieMonster() override { return nullptr; }
+  void DeleteCanonicalCookieAsync(
+      const CanonicalCookie& cookie,
+      const DeleteCallback& callback) override {
+    RoundTrip();
+    store_->DeleteCanonicalCookieAsync(cookie, callback);
+  }
 
   void DeleteAllCreatedBetweenAsync(const base::Time& delete_begin,
                                     const base::Time& delete_end,
@@ -117,14 +155,14 @@ class RoundTripTestCookieStore : public net::CookieStore {
     store_->DeleteAllCreatedBetweenAsync(delete_begin, delete_end, callback);
   }
 
-  void DeleteAllCreatedBetweenForHostAsync(
-      const base::Time delete_begin,
-      const base::Time delete_end,
-      const GURL& url,
+  void DeleteAllCreatedBetweenWithPredicateAsync(
+      const base::Time& delete_begin,
+      const base::Time& delete_end,
+      const CookiePredicate& predicate,
       const DeleteCallback& callback) override {
     RoundTrip();
-    store_->DeleteAllCreatedBetweenForHostAsync(delete_begin, delete_end, url,
-                                                callback);
+    store_->DeleteAllCreatedBetweenWithPredicateAsync(delete_begin, delete_end,
+                                                      predicate, callback);
   }
 
   void DeleteSessionCookiesAsync(const DeleteCallback& callback) override {
@@ -132,15 +170,21 @@ class RoundTripTestCookieStore : public net::CookieStore {
     store_->DeleteSessionCookiesAsync(callback);
   }
 
-  scoped_ptr<CookieStore::CookieChangedSubscription> AddCallbackForCookie(
+  void FlushStore(const base::Closure& callback) override {
+    RoundTrip();
+    store_->FlushStore(callback);
+  }
+
+  std::unique_ptr<CookieStore::CookieChangedSubscription> AddCallbackForCookie(
       const GURL& url,
       const std::string& name,
       const CookieChangedCallback& callback) override {
-    return scoped_ptr<CookieStore::CookieChangedSubscription>();
+    return std::unique_ptr<CookieStore::CookieChangedSubscription>();
   }
 
- protected:
-  ~RoundTripTestCookieStore() override { store_->UnSynchronize(); }
+  bool IsEphemeral() override {
+    return store_->IsEphemeral();
+  }
 
  private:
   void RoundTrip() {
@@ -152,16 +196,16 @@ class RoundTripTestCookieStore : public net::CookieStore {
     CookieStoreIOS::SwitchSynchronizedStore(dummy_store_.get(), store_.get());
   }
 
-  scoped_refptr<CookieStoreIOS> store_;
+  std::unique_ptr<CookieStoreIOS> store_;
   // |dummy_store_| is not directly used, but is needed to make |store_|
   // inactive.
-  scoped_refptr<CookieStoreIOS> dummy_store_;
+  std::unique_ptr<CookieStoreIOS> dummy_store_;
 };
 
 struct RoundTripTestCookieStoreTraits {
-  static scoped_refptr<net::CookieStore> Create() {
+  static std::unique_ptr<net::CookieStore> Create() {
     ClearCookies();
-    return new RoundTripTestCookieStore();
+    return base::MakeUnique<RoundTripTestCookieStore>();
   }
 
   static const bool is_cookie_monster = false;
@@ -205,25 +249,28 @@ class TestPersistentCookieStore
 
   // Runs the completion callback with a "a=b" cookie.
   void RunLoadedCallback() {
-    std::vector<net::CanonicalCookie*> cookies;
+    std::vector<std::unique_ptr<net::CanonicalCookie>> cookies;
     net::CookieOptions options;
     options.set_include_httponly();
-    cookies.push_back(net::CanonicalCookie::Create(kTestCookieURL, "a=b",
-                                                   base::Time::Now(), options));
+
+    std::unique_ptr<net::CanonicalCookie> cookie(net::CanonicalCookie::Create(
+        kTestCookieURL, "a=b", base::Time::Now(), options));
+    cookies.push_back(std::move(cookie));
+
     // Some canonical cookies cannot be converted into System cookies, for
     // example if value is not valid utf8. Such cookies are ignored.
-    net::CanonicalCookie* bad_canonical_cookie = new net::CanonicalCookie(
-        kTestCookieURL, "name", "\x81r\xe4\xbd\xa0\xe5\xa5\xbd", "domain",
-        "path/",
-        base::Time(),  // creation
-        base::Time(),  // expires
-        base::Time(),  // last_access
-        false,         // secure
-        false,         // httponly
-        false,         // first_party_only
-        net::COOKIE_PRIORITY_DEFAULT);
-    cookies.push_back(bad_canonical_cookie);
-    loaded_callback_.Run(cookies);
+    std::unique_ptr<net::CanonicalCookie> bad_canonical_cookie(
+        net::CanonicalCookie::Create(GURL("http://domain/"), "name",
+                                     "\x81r\xe4\xbd\xa0\xe5\xa5\xbd",
+                                     std::string(), "/path/",
+                                     base::Time(),  // creation
+                                     base::Time(),  // expires
+                                     false,         // secure
+                                     false,         // httponly
+                                     net::CookieSameSite::DEFAULT_MODE, false,
+                                     net::COOKIE_PRIORITY_DEFAULT));
+    cookies.push_back(std::move(bad_canonical_cookie));
+    loaded_callback_.Run(std::move(cookies));
   }
 
   bool flushed() { return flushed_; }
@@ -302,11 +349,11 @@ namespace {
 void RecordCookieChanges(std::vector<net::CanonicalCookie>* out_cookies,
                          std::vector<bool>* out_removes,
                          const net::CanonicalCookie& cookie,
-                         bool removed) {
+                         net::CookieStore::ChangeCause cause) {
   DCHECK(out_cookies);
   out_cookies->push_back(cookie);
   if (out_removes)
-    out_removes->push_back(removed);
+    out_removes->push_back(net::CookieStore::ChangeCauseIsDeletion(cause));
 }
 
 void IgnoreBoolean(bool ignored) {
@@ -323,9 +370,9 @@ class CookieStoreIOSWithBackend : public testing::Test {
       : kTestCookieURL("http://foo.google.com/bar"),
         kTestCookieURL2("http://foo.google.com/baz"),
         kTestCookieURL3("http://foo.google.com"),
-        kTestCookieURL4("http://bar.google.com/bar") {
-    backend_ = new TestPersistentCookieStore;
-    store_ = new net::CookieStoreIOS(backend_.get());
+        kTestCookieURL4("http://bar.google.com/bar"),
+        backend_(new TestPersistentCookieStore),
+        store_(new net::CookieStoreIOS(backend_.get())) {
     net::CookieStoreIOS::SetCookiePolicy(net::CookieStoreIOS::ALLOW);
     cookie_changed_callback_ = store_->AddCallbackForCookie(
         kTestCookieURL, "abc",
@@ -349,7 +396,7 @@ class CookieStoreIOSWithBackend : public testing::Test {
                                       base::Bind(&IgnoreBoolean));
     net::CookieStoreIOS::NotifySystemCookiesChanged();
     // Wait until the flush is posted.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SetSystemCookie(const GURL& url,
@@ -364,7 +411,7 @@ class CookieStoreIOSWithBackend : public testing::Test {
       NSHTTPCookieDomain : base::SysUTF8ToNSString(url.host()),
     }]];
     net::CookieStoreIOS::NotifySystemCookiesChanged();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void DeleteSystemCookie(const GURL& gurl, const std::string& name) {
@@ -379,7 +426,7 @@ class CookieStoreIOSWithBackend : public testing::Test {
       }
     }
     net::CookieStoreIOS::NotifySystemCookiesChanged();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  protected:
@@ -390,8 +437,8 @@ class CookieStoreIOSWithBackend : public testing::Test {
 
   base::MessageLoop loop_;
   scoped_refptr<TestPersistentCookieStore> backend_;
-  scoped_refptr<net::CookieStoreIOS> store_;
-  scoped_ptr<net::CookieStore::CookieChangedSubscription>
+  std::unique_ptr<net::CookieStoreIOS> store_;
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription>
       cookie_changed_callback_;
   std::vector<net::CanonicalCookie> cookies_changed_;
   std::vector<bool> cookies_removed_;
@@ -407,7 +454,7 @@ TEST_F(CookieStoreIOSWithBackend, SetCookieCallsHookWhenNotSynchronized) {
   EXPECT_EQ(0U, cookies_changed_.size());
   EXPECT_EQ(0U, cookies_removed_.size());
   backend_->RunLoadedCallback();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, cookies_changed_.size());
   EXPECT_EQ(1U, cookies_removed_.size());
   EXPECT_EQ("abc", cookies_changed_[0].Name());
@@ -433,7 +480,7 @@ TEST_F(CookieStoreIOSWithBackend, SetCookieCallsHookWhenSynchronized) {
   CookieStoreIOS::SwitchSynchronizedStore(nullptr, store_.get());
   GetCookies(base::Bind(&IgnoreString));
   backend_->RunLoadedCallback();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ClearCookies();
   SetCookie("abc=def");
   EXPECT_EQ(1U, cookies_changed_.size());
@@ -460,7 +507,7 @@ TEST_F(CookieStoreIOSWithBackend, DeleteCallsHook) {
   CookieStoreIOS::SwitchSynchronizedStore(nullptr, store_.get());
   GetCookies(base::Bind(&IgnoreString));
   backend_->RunLoadedCallback();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ClearCookies();
   SetCookie("abc=def");
   EXPECT_EQ(1U, cookies_changed_.size());
@@ -468,7 +515,7 @@ TEST_F(CookieStoreIOSWithBackend, DeleteCallsHook) {
   store_->DeleteCookieAsync(kTestCookieURL, "abc",
                             base::Bind(&IgnoreBoolean, false));
   CookieStoreIOS::NotifySystemCookiesChanged();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   store_->UnSynchronize();
 }
 
@@ -477,7 +524,7 @@ TEST_F(CookieStoreIOSWithBackend, SameValueDoesNotCallHook) {
   GetCookieCallback callback;
   GetCookies(base::Bind(&IgnoreString));
   backend_->RunLoadedCallback();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ClearCookies();
   SetCookie("abc=def");
   EXPECT_EQ(1U, cookies_changed_.size());
@@ -490,7 +537,7 @@ TEST(CookieStoreIOS, GetAllCookiesForURLAsync) {
   base::MessageLoop loop;
   const GURL kTestCookieURL("http://foo.google.com/bar");
   ClearCookies();
-  scoped_refptr<CookieStoreIOS> cookie_store(new CookieStoreIOS(nullptr));
+  std::unique_ptr<CookieStoreIOS> cookie_store(new CookieStoreIOS(nullptr));
   CookieStoreIOS::SwitchSynchronizedStore(nullptr, cookie_store.get());
   // Add a cookie.
   net::CookieOptions options;
@@ -504,7 +551,7 @@ TEST(CookieStoreIOS, GetAllCookiesForURLAsync) {
       [NSHTTPCookieStorage sharedHTTPCookieStorage];
   EXPECT_EQ(0u, [[system_store cookies] count]);
   // Flushing should not have any effect.
-  cookie_store->Flush(base::Closure());
+  cookie_store->FlushStore(base::Closure());
   // Check we can get the cookie even though cookies are disabled.
   GetAllCookiesCallback callback;
   cookie_store->GetAllCookiesForURLAsync(
@@ -568,7 +615,7 @@ TEST_F(CookieStoreIOSWithBackend, SynchronizingAfterPolicyChange) {
 // unsynchronized while synchronization is in progress).
 TEST_F(CookieStoreIOSWithBackend, SyncThenUnsync) {
   ClearCookies();
-  scoped_refptr<CookieStoreIOS> dummy_store = new CookieStoreIOS(nullptr);
+  std::unique_ptr<CookieStoreIOS> dummy_store(new CookieStoreIOS(nullptr));
   // Switch back and forth before synchronization can complete.
   CookieStoreIOS::SwitchSynchronizedStore(nullptr, store_.get());
   CookieStoreIOS::SwitchSynchronizedStore(store_.get(), dummy_store.get());
@@ -589,7 +636,7 @@ TEST_F(CookieStoreIOSWithBackend, SyncThenUnsync) {
 // and there are pending tasks).
 TEST_F(CookieStoreIOSWithBackend, SyncThenUnsyncWithPendingTasks) {
   ClearCookies();
-  scoped_refptr<CookieStoreIOS> dummy_store = new CookieStoreIOS(nullptr);
+  std::unique_ptr<CookieStoreIOS> dummy_store(new CookieStoreIOS(nullptr));
   // Start synchornization.
   CookieStoreIOS::SwitchSynchronizedStore(nullptr, store_.get());
   // Create a pending task while synchronization is in progress.
@@ -687,7 +734,7 @@ TEST_F(CookieStoreIOSWithBackend, FlushOnUnSynchronize) {
 }
 
 TEST_F(CookieStoreIOSWithBackend, FlushOnSwitch) {
-  scoped_refptr<CookieStoreIOS> dummy_store = new CookieStoreIOS(nullptr);
+  std::unique_ptr<CookieStoreIOS> dummy_store(new CookieStoreIOS(nullptr));
   CookieStoreIOS::SwitchSynchronizedStore(nullptr, store_.get());
   EXPECT_FALSE(backend_->flushed());
   CookieStoreIOS::SwitchSynchronizedStore(store_.get(), dummy_store.get());
@@ -714,7 +761,7 @@ TEST_F(CookieStoreIOSWithBackend, ManualFlush) {
   EXPECT_FALSE(backend_->flushed());
 
   // The store should be flushed even if it is not dirty.
-  store_->Flush(base::Closure());
+  store_->FlushStore(base::Closure());
   EXPECT_TRUE(backend_->flushed());
 
   store_->UnSynchronize();
@@ -758,7 +805,7 @@ TEST_F(CookieStoreIOSWithBackend, NotifyOnAdd) {
   backend_->RunLoadedCallback();
   std::vector<net::CanonicalCookie> cookies;
   std::vector<bool> removes;
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL, "abc",
           base::Bind(&RecordCookieChanges, &cookies, &removes));
@@ -785,7 +832,7 @@ TEST_F(CookieStoreIOSWithBackend, NotifyOnChange) {
   backend_->RunLoadedCallback();
   std::vector<net::CanonicalCookie> cookies;
   std::vector<bool> removes;
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL, "abc",
           base::Bind(&RecordCookieChanges, &cookies, &removes));
@@ -812,7 +859,7 @@ TEST_F(CookieStoreIOSWithBackend, NotifyOnDelete) {
   std::vector<net::CanonicalCookie> cookies;
   std::vector<bool> removes;
   SetSystemCookie(kTestCookieURL, "abc", "def");
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL, "abc",
           base::Bind(&RecordCookieChanges, &cookies, &removes));
@@ -833,7 +880,7 @@ TEST_F(CookieStoreIOSWithBackend, NoNotifyOnNoChange) {
   CookieStoreIOS::SwitchSynchronizedStore(nullptr, store_.get());
   backend_->RunLoadedCallback();
   std::vector<net::CanonicalCookie> cookies;
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL, "abc",
           base::Bind(&RecordCookieChanges, &cookies, nullptr));
@@ -853,19 +900,19 @@ TEST_F(CookieStoreIOSWithBackend, MultipleNotifies) {
   std::vector<net::CanonicalCookie> cookies2;
   std::vector<net::CanonicalCookie> cookies3;
   std::vector<net::CanonicalCookie> cookies4;
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL, "abc",
           base::Bind(&RecordCookieChanges, &cookies, nullptr));
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle2 =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle2 =
       store_->AddCallbackForCookie(
           kTestCookieURL2, "abc",
           base::Bind(&RecordCookieChanges, &cookies2, nullptr));
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle3 =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle3 =
       store_->AddCallbackForCookie(
           kTestCookieURL3, "abc",
           base::Bind(&RecordCookieChanges, &cookies3, nullptr));
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle4 =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle4 =
       store_->AddCallbackForCookie(
           kTestCookieURL4, "abc",
           base::Bind(&RecordCookieChanges, &cookies4, nullptr));
@@ -889,7 +936,7 @@ TEST_F(CookieStoreIOSWithBackend, LessSpecificNestedCookie) {
   backend_->RunLoadedCallback();
   std::vector<net::CanonicalCookie> cookies;
   SetSystemCookie(kTestCookieURL2, "abc", "def");
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL2, "abc",
           base::Bind(&RecordCookieChanges, &cookies, nullptr));
@@ -905,7 +952,7 @@ TEST_F(CookieStoreIOSWithBackend, MoreSpecificNestedCookie) {
   backend_->RunLoadedCallback();
   std::vector<net::CanonicalCookie> cookies;
   SetSystemCookie(kTestCookieURL3, "abc", "def");
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL2, "abc",
           base::Bind(&RecordCookieChanges, &cookies, nullptr));
@@ -921,7 +968,7 @@ TEST_F(CookieStoreIOSWithBackend, MoreSpecificNestedCookieWithSameValue) {
   backend_->RunLoadedCallback();
   std::vector<net::CanonicalCookie> cookies;
   SetSystemCookie(kTestCookieURL3, "abc", "def");
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL2, "abc",
           base::Bind(&RecordCookieChanges, &cookies, nullptr));
@@ -937,7 +984,7 @@ TEST_F(CookieStoreIOSWithBackend, RemoveCallback) {
   backend_->RunLoadedCallback();
   std::vector<net::CanonicalCookie> cookies;
   SetSystemCookie(kTestCookieURL, "abc", "def");
-  scoped_ptr<net::CookieStore::CookieChangedSubscription> handle =
+  std::unique_ptr<net::CookieStore::CookieChangedSubscription> handle =
       store_->AddCallbackForCookie(
           kTestCookieURL, "abc",
           base::Bind(&RecordCookieChanges, &cookies, nullptr));

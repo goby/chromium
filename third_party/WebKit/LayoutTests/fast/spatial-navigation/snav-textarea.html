@@ -37,16 +37,23 @@
       ["Down", "start"],
       ["Down", "start"],
       ["Down", "8"],
-      ["Up", "start"],
+      ["Up", "start"], // The caret is at the end of TEXTAREA.
+      ["Up", "start"], // The caret is before 'b' in TEXTAREA.
+      ["Up", "start"], // The caret is at the beginning of TEXTAREA.
       ["Up", "2"],
       ["Down", "start"],
       ["Right", "start"],
       ["Right", "start"],
       ["Right", "start"],
       ["Right", "start"],
-      ["Right", "start"],
+      ["Right", "start"], // The caret is at the end of TEXTAREA.
       ["Right", "6"],
+      ["Left", "start"], // The caret is at the end of TEXTAREA.
       ["Left", "start"],
+      ["Left", "start"],
+      ["Left", "start"],
+      ["Left", "start"],
+      ["Left", "start"], // The caret is at the beginning of TEXTAREA.
       ["Left", "4"],
       ["Right", "start"],
       ["DONE", "DONE"]
@@ -55,7 +62,7 @@
     if (window.testRunner) {
       testRunner.dumpAsText();
       testRunner.overridePreference("WebKitTabToLinksPreferenceKey", 1);
-      window.internals.settings.setSpatialNavigationEnabled(true);
+      testRunner.overridePreference("WebKitSpatialNavigationEnabled", 1);
       testRunner.waitUntilDone();
     }
 
@@ -78,8 +85,12 @@
 
       document.getElementById('start').value = "";
       var text = 'A text containing a space\nand a new line';
-      for (var i = 0; i < text.length; ++i)
-        eventSender.keyDown(text.charAt(i));
+      for (var i = 0; i < text.length; ++i) {
+        var key = text.charAt(i);
+        if (key == '\n')
+          key = 'Enter';
+        eventSender.keyDown(key);
+      }
       shouldBeEqualToString("document.getElementById('start').value", text);
 
       testRunner.notifyDone();

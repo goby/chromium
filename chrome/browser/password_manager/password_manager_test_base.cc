@@ -6,24 +6,20 @@
 
 #include <string>
 
-#include "base/command_line.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/passwords/passwords_model_delegate.h"
+#include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/infobars/core/confirm_infobar_delegate.h"
-#include "components/infobars/core/infobar.h"
-#include "components/infobars/core/infobar_manager.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/test_password_store.h"
-#include "components/password_manager/core/common/password_manager_switches.h"
+#include "components/password_manager/core/common/password_manager_features.h"
+#include "content/public/browser/navigation_details.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -35,6 +31,12 @@ NavigationObserver::NavigationObserver(content::WebContents* web_contents)
       message_loop_runner_(new content::MessageLoopRunner) {
 }
 NavigationObserver::~NavigationObserver() {
+}
+
+void NavigationObserver::DidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (quit_on_entry_committed_)
+    message_loop_runner_->Quit();
 }
 
 void NavigationObserver::DidFinishLoad(
@@ -49,134 +51,45 @@ void NavigationObserver::DidFinishLoad(
   }
 }
 
-void NavigationObserver::NavigationEntryCommitted(
-    const content::LoadCommittedDetails& load_details) {
-  if (quit_on_entry_committed_)
-    message_loop_runner_->Quit();
-}
-
 void NavigationObserver::Wait() {
   message_loop_runner_->Run();
 }
 
-PromptObserver::PromptObserver() {
-}
-PromptObserver::~PromptObserver() {
+BubbleObserver::BubbleObserver(content::WebContents* web_contents)
+    : passwords_ui_controller_(
+          ManagePasswordsUIController::FromWebContents(web_contents)) {}
+
+bool BubbleObserver::IsShowingSavePrompt() const {
+  return passwords_ui_controller_->GetState() ==
+      password_manager::ui::PENDING_PASSWORD_STATE;
 }
 
-bool PromptObserver::IsShowingUpdatePrompt() const {
-  // TODO(dvadym): Make this method pure virtual as soon as update UI is
-  // implemented for infobar. http://crbug.com/359315
-  return false;
+bool BubbleObserver::IsShowingUpdatePrompt() const {
+  return passwords_ui_controller_->GetState() ==
+      password_manager::ui::PENDING_PASSWORD_UPDATE_STATE;
 }
 
-void PromptObserver::Accept() const {
-  ASSERT_TRUE(IsShowingPrompt());
-  AcceptImpl();
+void BubbleObserver::Dismiss() const  {
+  passwords_ui_controller_->OnBubbleHidden();
+  // Navigate away to reset the state to inactive.
+  static_cast<content::WebContentsObserver*>(passwords_ui_controller_)
+      ->DidNavigateMainFrame(content::LoadCommittedDetails(),
+                             content::FrameNavigateParams());
+  ASSERT_EQ(password_manager::ui::INACTIVE_STATE,
+            passwords_ui_controller_->GetState());
 }
 
-void PromptObserver::AcceptUpdatePrompt(
+void BubbleObserver::AcceptSavePrompt() const {
+  ASSERT_TRUE(IsShowingSavePrompt());
+  passwords_ui_controller_->SavePassword();
+  EXPECT_FALSE(IsShowingSavePrompt());
+}
+
+void BubbleObserver::AcceptUpdatePrompt(
     const autofill::PasswordForm& form) const {
-  EXPECT_TRUE(IsShowingUpdatePrompt());
-  AcceptUpdatePromptImpl(form);
-}
-
-class InfoBarObserver : public PromptObserver,
-                        public infobars::InfoBarManager::Observer {
- public:
-  explicit InfoBarObserver(content::WebContents* web_contents)
-      : infobar_is_being_shown_(false),
-        infobar_service_(InfoBarService::FromWebContents(web_contents)) {
-    infobar_service_->AddObserver(this);
-  }
-
-  ~InfoBarObserver() override {
-    if (infobar_service_)
-      infobar_service_->RemoveObserver(this);
-  }
-
- private:
-  // PromptObserver:
-  bool IsShowingPrompt() const override { return infobar_is_being_shown_; }
-
-  void AcceptImpl() const override {
-    EXPECT_EQ(1u, infobar_service_->infobar_count());
-    if (!infobar_service_->infobar_count())
-      return;  // Let the test finish to gather possibly more diagnostics.
-
-    // ConfirmInfoBarDelegate::Accept returning true means the infobar is
-    // immediately closed. Checking the return value is preferred to testing
-    // IsShowingPrompt() here, for it avoids the delay until the closing
-    // notification is received.
-    EXPECT_TRUE(infobar_service_->infobar_at(0)
-                    ->delegate()
-                    ->AsConfirmInfoBarDelegate()
-                    ->Accept());
-  }
-
-  // infobars::InfoBarManager::Observer:
-  void OnInfoBarAdded(infobars::InfoBar* infobar) override {
-    infobar_is_being_shown_ = true;
-  }
-
-  void OnInfoBarRemoved(infobars::InfoBar* infobar, bool animate) override {
-    infobar_is_being_shown_ = false;
-  }
-
-  void OnManagerShuttingDown(infobars::InfoBarManager* manager) override {
-    ASSERT_EQ(infobar_service_, manager);
-    infobar_service_->RemoveObserver(this);
-    infobar_service_ = nullptr;
-  }
-
-  bool infobar_is_being_shown_;
-  InfoBarService* infobar_service_;
-
-  DISALLOW_COPY_AND_ASSIGN(InfoBarObserver);
-};
-
-class BubbleObserver : public PromptObserver {
- public:
-  explicit BubbleObserver(content::WebContents* web_contents)
-      : passwords_model_delegate_(
-            PasswordsModelDelegateFromWebContents(web_contents)) {}
-
-  ~BubbleObserver() override {}
-
- private:
-  // PromptObserver:
-  bool IsShowingPrompt() const override {
-    return passwords_model_delegate_->GetState() ==
-           password_manager::ui::PENDING_PASSWORD_STATE;
-  }
-
-  bool IsShowingUpdatePrompt() const override {
-    return passwords_model_delegate_->GetState() ==
-           password_manager::ui::PENDING_PASSWORD_UPDATE_STATE;
-  }
-
-  void AcceptImpl() const override {
-    passwords_model_delegate_->SavePassword();
-    EXPECT_FALSE(IsShowingPrompt());
-  }
-
-  void AcceptUpdatePromptImpl(
-      const autofill::PasswordForm& form) const override {
-    passwords_model_delegate_->UpdatePassword(form);
-    EXPECT_FALSE(IsShowingUpdatePrompt());
-  }
-  PasswordsModelDelegate* const passwords_model_delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(BubbleObserver);
-};
-
-scoped_ptr<PromptObserver> PromptObserver::Create(
-    content::WebContents* web_contents) {
-  if (ChromePasswordManagerClient::IsTheHotNewBubbleUIEnabled()) {
-    return scoped_ptr<PromptObserver>(new BubbleObserver(web_contents));
-  } else {
-    return scoped_ptr<PromptObserver>(new InfoBarObserver(web_contents));
-  }
+  ASSERT_TRUE(IsShowingUpdatePrompt());
+  passwords_ui_controller_->UpdatePassword(form);
+  EXPECT_FALSE(IsShowingUpdatePrompt());
 }
 
 PasswordManagerBrowserTestBase::PasswordManagerBrowserTestBase() {
@@ -195,8 +108,8 @@ void PasswordManagerBrowserTestBase::SetUpOnMainThread() {
       password_manager::BuildPasswordStore<
           content::BrowserContext, password_manager::TestPasswordStore>);
   ASSERT_TRUE(embedded_test_server()->Start());
-  ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
-      password_manager::switches::kEnableAutomaticPasswordSaving));
+  ASSERT_FALSE(base::FeatureList::IsEnabled(
+      password_manager::features::kEnableAutomaticPasswordSaving));
 }
 
 void PasswordManagerBrowserTestBase::TearDownOnMainThread() {
@@ -232,12 +145,12 @@ void PasswordManagerBrowserTestBase::VerifyPasswordIsSavedAndFilled(
   NavigateToFile(filename);
 
   NavigationObserver observer(WebContents());
-  scoped_ptr<PromptObserver> prompt_observer(
-      PromptObserver::Create(WebContents()));
+  std::unique_ptr<BubbleObserver> prompt_observer(
+      new BubbleObserver(WebContents()));
   ASSERT_TRUE(content::ExecuteScript(RenderViewHost(), submission_script));
   observer.Wait();
 
-  prompt_observer->Accept();
+  prompt_observer->AcceptSavePrompt();
 
   // Spin the message loop to make sure the password store had a chance to save
   // the password.
@@ -250,7 +163,7 @@ void PasswordManagerBrowserTestBase::VerifyPasswordIsSavedAndFilled(
   // Let the user interact with the page, so that DOM gets modification events,
   // needed for autofilling fields.
   content::SimulateMouseClickAt(
-      WebContents(), 0, blink::WebMouseEvent::ButtonLeft, gfx::Point(1, 1));
+      WebContents(), 0, blink::WebMouseEvent::Button::Left, gfx::Point(1, 1));
 
   // Wait until that interaction causes the password value to be revealed.
   WaitForElementValue(expected_element, expected_value);

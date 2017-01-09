@@ -5,13 +5,16 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_SSL_CONTEXT_HELPER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_SSL_CONTEXT_HELPER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/ssl/ssl_config_service.h"
 
 namespace net {
 class CertVerifier;
+class CTPolicyEnforcer;
+class CTVerifier;
 class TransportSecurityState;
 }
 
@@ -23,6 +26,8 @@ class SSLContextHelper : public base::RefCounted<SSLContextHelper> {
 
   net::CertVerifier* GetCertVerifier();
   net::TransportSecurityState* GetTransportSecurityState();
+  net::CTVerifier* GetCertTransparencyVerifier();
+  net::CTPolicyEnforcer* GetCTPolicyEnforcer();
   const net::SSLConfig& ssl_config() { return ssl_config_; }
 
  private:
@@ -31,10 +36,16 @@ class SSLContextHelper : public base::RefCounted<SSLContextHelper> {
   ~SSLContextHelper();
 
   // This is lazily created. Users should use GetCertVerifier to retrieve it.
-  scoped_ptr<net::CertVerifier> cert_verifier_;
+  std::unique_ptr<net::CertVerifier> cert_verifier_;
   // This is lazily created. Users should use GetTransportSecurityState to
   // retrieve it.
-  scoped_ptr<net::TransportSecurityState> transport_security_state_;
+  std::unique_ptr<net::TransportSecurityState> transport_security_state_;
+  // This is lazily created. Users should use GetCertTransparencyVerifier to
+  // retrieve it.
+  std::unique_ptr<net::CTVerifier> cert_transparency_verifier_;
+  // This is lazily created. Users should use GetCTPolicyEnforcer to
+  // retrieve it.
+  std::unique_ptr<net::CTPolicyEnforcer> ct_policy_enforcer_;
 
   // The default SSL configuration settings are used, as opposed to Chrome's SSL
   // settings.

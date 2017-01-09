@@ -5,6 +5,7 @@
 #include "ios/chrome/browser/crash_report/breakpad_helper.h"
 
 #import <Foundation/Foundation.h>
+#include <stddef.h>
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
@@ -24,6 +25,10 @@
 // http://code.google.com/p/google-breakpad/issues/detail?id=487
 // is fixed. For now, put it at the end to avoid compiler errors.
 #import "breakpad/src/client/ios/BreakpadController.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace breakpad_helper {
 
@@ -193,7 +198,6 @@ void AddReportParameter(NSString* key, NSString* value, bool async) {
     dispatch_semaphore_signal(semaphore);
   }];
   dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
-  dispatch_release(semaphore);
 }
 
 int GetCrashReportCount() {
@@ -204,7 +208,6 @@ int GetCrashReportCount() {
     dispatch_semaphore_signal(semaphore);
   }];
   dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
-  dispatch_release(semaphore);
   return outerCrashReportCount;
 }
 

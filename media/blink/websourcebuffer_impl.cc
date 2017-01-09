@@ -4,14 +4,19 @@
 
 #include "media/blink/websourcebuffer_impl.h"
 
+#include <stdint.h>
+
 #include <cmath>
 #include <limits>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/strings/string_number_conversions.h"
+#include "media/base/media_tracks.h"
 #include "media/base/timestamp_constants.h"
 #include "media/filters/chunk_demuxer.h"
+#include "third_party/WebKit/public/platform/WebMediaPlayer.h"
 #include "third_party/WebKit/public/platform/WebSourceBufferClient.h"
 
 namespace media {
@@ -21,11 +26,12 @@ static base::TimeDelta DoubleToTimeDelta(double time) {
   DCHECK_NE(time, -std::numeric_limits<double>::infinity());
 
   if (time == std::numeric_limits<double>::infinity())
-    return kInfiniteDuration();
+    return kInfiniteDuration;
 
   // Don't use base::TimeDelta::Max() here, as we want the largest finite time
   // delta.
-  base::TimeDelta max_time = base::TimeDelta::FromInternalValue(kint64max - 1);
+  base::TimeDelta max_time = base::TimeDelta::FromInternalValue(
+      std::numeric_limits<int64_t>::max() - 1);
   double max_time_in_seconds = max_time.InSecondsF();
 
   if (time >= max_time_in_seconds)
@@ -35,13 +41,16 @@ static base::TimeDelta DoubleToTimeDelta(double time) {
       time * base::Time::kMicrosecondsPerSecond);
 }
 
-WebSourceBufferImpl::WebSourceBufferImpl(
-    const std::string& id, ChunkDemuxer* demuxer)
+WebSourceBufferImpl::WebSourceBufferImpl(const std::string& id,
+                                         ChunkDemuxer* demuxer)
     : id_(id),
       demuxer_(demuxer),
       client_(NULL),
-      append_window_end_(kInfiniteDuration()) {
+      append_window_end_(kInfiniteDuration) {
   DCHECK(demuxer_);
+  demuxer_->SetTracksWatcher(
+      id, base::Bind(&WebSourceBufferImpl::InitSegmentReceived,
+                     base::Unretained(this)));
 }
 
 WebSourceBufferImpl::~WebSourceBufferImpl() {
@@ -82,6 +91,10 @@ blink::WebTimeRanges WebSourceBufferImpl::buffered() {
   return result;
 }
 
+double WebSourceBufferImpl::highestPresentationTimestamp() {
+  return demuxer_->GetHighestPresentationTimestamp(id_).InSecondsF();
+}
+
 bool WebSourceBufferImpl::evictCodedFrames(double currentPlaybackTime,
                                            size_t newDataSize) {
   return demuxer_->EvictCodedFrames(
@@ -90,16 +103,12 @@ bool WebSourceBufferImpl::evictCodedFrames(double currentPlaybackTime,
       newDataSize);
 }
 
-void WebSourceBufferImpl::append(
-    const unsigned char* data,
-    unsigned length,
-    double* timestamp_offset) {
+bool WebSourceBufferImpl::append(const unsigned char* data,
+                                 unsigned length,
+                                 double* timestamp_offset) {
   base::TimeDelta old_offset = timestamp_offset_;
-  demuxer_->AppendData(id_, data, length,
-                       append_window_start_, append_window_end_,
-                       &timestamp_offset_,
-                       base::Bind(&WebSourceBufferImpl::InitSegmentReceived,
-                                  base::Unretained(this)));
+  bool success = demuxer_->AppendData(id_, data, length, append_window_start_,
+                                      append_window_end_, &timestamp_offset_);
 
   // Coded frame processing may update the timestamp offset. If the caller
   // provides a non-NULL |timestamp_offset| and frame processing changes the
@@ -108,6 +117,8 @@ void WebSourceBufferImpl::append(
   // more than microsecond precision.
   if (timestamp_offset && old_offset != timestamp_offset_)
     *timestamp_offset = timestamp_offset_.InSecondsF();
+
+  return success;
 }
 
 void WebSourceBufferImpl::resetParserState() {
@@ -155,9 +166,38 @@ void WebSourceBufferImpl::removedFromMediaSource() {
   client_ = NULL;
 }
 
-void WebSourceBufferImpl::InitSegmentReceived() {
-  DVLOG(1) << __FUNCTION__;
-  client_->initializationSegmentReceived();
+blink::WebMediaPlayer::TrackType mediaTrackTypeToBlink(MediaTrack::Type type) {
+  switch (type) {
+    case MediaTrack::Audio:
+      return blink::WebMediaPlayer::AudioTrack;
+    case MediaTrack::Text:
+      return blink::WebMediaPlayer::TextTrack;
+    case MediaTrack::Video:
+      return blink::WebMediaPlayer::VideoTrack;
+  }
+  NOTREACHED();
+  return blink::WebMediaPlayer::AudioTrack;
+}
+
+void WebSourceBufferImpl::InitSegmentReceived(
+    std::unique_ptr<MediaTracks> tracks) {
+  DCHECK(tracks.get());
+  DVLOG(1) << __func__ << " tracks=" << tracks->tracks().size();
+
+  std::vector<blink::WebSourceBufferClient::MediaTrackInfo> trackInfoVector;
+  for (const auto& track : tracks->tracks()) {
+    blink::WebSourceBufferClient::MediaTrackInfo trackInfo;
+    trackInfo.trackType = mediaTrackTypeToBlink(track->type());
+    trackInfo.id = blink::WebString::fromUTF8(track->id());
+    trackInfo.byteStreamTrackID = blink::WebString::fromUTF8(
+        base::UintToString(track->bytestream_track_id()));
+    trackInfo.kind = blink::WebString::fromUTF8(track->kind());
+    trackInfo.label = blink::WebString::fromUTF8(track->label());
+    trackInfo.language = blink::WebString::fromUTF8(track->language());
+    trackInfoVector.push_back(trackInfo);
+  }
+
+  client_->initializationSegmentReceived(trackInfoVector);
 }
 
 }  // namespace media

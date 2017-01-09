@@ -21,20 +21,22 @@ import threading
 import time
 import urlparse
 
+from devil.android import forwarder
 from devil.android import ports
 
 from pylib import constants
-from pylib.forwarder import Forwarder
+from pylib.constants import host_paths
 
 
 # Path that are needed to import necessary modules when launching a testserver.
 os.environ['PYTHONPATH'] = os.environ.get('PYTHONPATH', '') + (':%s:%s:%s:%s:%s'
-    % (os.path.join(constants.DIR_SOURCE_ROOT, 'third_party'),
-       os.path.join(constants.DIR_SOURCE_ROOT, 'third_party', 'tlslite'),
-       os.path.join(constants.DIR_SOURCE_ROOT, 'third_party', 'pyftpdlib',
+    % (os.path.join(host_paths.DIR_SOURCE_ROOT, 'third_party'),
+       os.path.join(host_paths.DIR_SOURCE_ROOT, 'third_party', 'tlslite'),
+       os.path.join(host_paths.DIR_SOURCE_ROOT, 'third_party', 'pyftpdlib',
                     'src'),
-       os.path.join(constants.DIR_SOURCE_ROOT, 'net', 'tools', 'testserver'),
-       os.path.join(constants.DIR_SOURCE_ROOT, 'sync', 'tools', 'testserver')))
+       os.path.join(host_paths.DIR_SOURCE_ROOT, 'net', 'tools', 'testserver'),
+       os.path.join(host_paths.DIR_SOURCE_ROOT, 'components', 'sync', 'tools',
+                    'testserver')))
 
 
 SERVER_TYPES = {
@@ -216,9 +218,10 @@ class TestServerThread(threading.Thread):
     logging.info('Start running the thread!')
     self.wait_event.clear()
     self._GenerateCommandLineArguments()
-    command = constants.DIR_SOURCE_ROOT
+    command = host_paths.DIR_SOURCE_ROOT
     if self.arguments['server-type'] == 'sync':
-      command = [os.path.join(command, 'sync', 'tools', 'testserver',
+      command = [os.path.join(command, 'components', 'sync', 'tools',
+                              'testserver',
                               'sync_testserver.py')] + self.command_line
     else:
       command = [os.path.join(command, 'net', 'tools', 'testserver',
@@ -233,7 +236,7 @@ class TestServerThread(threading.Thread):
     # paths in the arguments are resolved correctly.
     self.process = subprocess.Popen(
         command, preexec_fn=self._CloseUnnecessaryFDsForTestServerProcess,
-        cwd=constants.DIR_SOURCE_ROOT)
+        cwd=host_paths.DIR_SOURCE_ROOT)
     if unbuf:
       os.environ['PYTHONUNBUFFERED'] = unbuf
     if self.process:
@@ -242,10 +245,10 @@ class TestServerThread(threading.Thread):
       else:
         self.is_ready = _CheckPortNotAvailable(self.host_port)
     if self.is_ready:
-      Forwarder.Map([(0, self.host_port)], self.device, self.tool)
+      forwarder.Forwarder.Map([(0, self.host_port)], self.device, self.tool)
       # Check whether the forwarder is ready on the device.
       self.is_ready = False
-      device_port = Forwarder.DevicePortForHostPort(self.host_port)
+      device_port = forwarder.Forwarder.DevicePortForHostPort(self.host_port)
       if device_port and _CheckDevicePortStatus(self.device, device_port):
         self.is_ready = True
         self.forwarder_device_port = device_port
@@ -255,7 +258,7 @@ class TestServerThread(threading.Thread):
     _WaitUntil(lambda: self.stop_flag, max_attempts=sys.maxint)
     if self.process.poll() is None:
       self.process.kill()
-    Forwarder.UnmapDevicePort(self.forwarder_device_port, self.device)
+    forwarder.Forwarder.UnmapDevicePort(self.forwarder_device_port, self.device)
     self.process = None
     self.is_ready = False
     if self.pipe_out:
@@ -318,7 +321,14 @@ class SpawningServerRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     logging.info(content_length)
     test_server_argument_json = self.rfile.read(content_length)
     logging.info(test_server_argument_json)
-    assert not self.server.test_server_instance
+    # There should only be one test server instance at a time. However it may
+    # be possible that a previous instance was not cleaned up properly
+    # (crbug.com/665686)
+    if self.server.test_server_instance:
+      port = self.server.test_server_instance.host_port
+      logging.info('Killing lingering test server instance on port: %d', port)
+      self.server.test_server_instance.Stop()
+      self.server.test_server_instance = None
     ready_event = threading.Event()
     self.server.test_server_instance = TestServerThread(
         ready_event,

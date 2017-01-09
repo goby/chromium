@@ -25,6 +25,11 @@ namespace merge_session_throttling_utils {
 // page load.
 using CompletionCallback = base::Closure;
 
+// Policy for when it is valid to attach a MergeSessionNavigationThrottle.
+// Namely, this will be false for unit tests, where the UserManager is not
+// initialized.
+bool ShouldAttachNavigationThrottle();
+
 // Checks if session is already merged. This is safe to call on all threads.
 bool AreAllSessionMergedAlready();
 
@@ -33,13 +38,17 @@ bool AreAllSessionMergedAlready();
 void BlockProfile(Profile* profile);
 void UnblockProfile(Profile* profile);
 
-// Whether requests from |web_contents| should currently be delayed. This
-// should be called on the UI thread.
-bool ShouldDelayRequest(content::WebContents* web_contents);
+// Whether requests from |web_contents| or |profile| should currently be
+// delayed. This should be called on the UI thread.
+bool ShouldDelayRequestForProfile(Profile* profile);
+bool ShouldDelayRequestForWebContents(content::WebContents* web_contents);
 
 // True if the load of |url| should be delayed. The function is safe to be
 // called on any thread.
 bool ShouldDelayUrl(const GURL& url);
+
+// True if session restore hasn't started or in progress.
+bool IsSessionRestorePending(Profile* profile);
 
 }  // namespace merge_session_throttling_utils
 

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -31,14 +32,13 @@ class TestDebugDaemonClient : public chromeos::FakeDebugDaemonClient {
   ~TestDebugDaemonClient() override {}
 
   void DumpDebugLogs(bool is_compressed,
-                     base::File file,
-                     scoped_refptr<base::TaskRunner> task_runner,
+                     int file_descriptor,
                      const GetDebugLogsCallback& callback) override {
-    base::File* file_param = new base::File(file.Pass());
-    task_runner->PostTaskAndReply(
-        FROM_HERE,
-        base::Bind(
-            &GenerateTestLogDumpFile, test_file_, base::Owned(file_param)),
+    // dup() is needed as the file descriptor will be closed on the client side.
+    base::File* file_param = new base::File(dup(file_descriptor));
+    content::BrowserThread::PostBlockingPoolTaskAndReply(
+        FROM_HERE, base::Bind(&GenerateTestLogDumpFile, test_file_,
+                              base::Owned(file_param)),
         base::Bind(callback, true));
   }
 
@@ -71,27 +71,27 @@ class LogPrivateApiTest : public ExtensionApiTest {
     base::FilePath tar_file_path =
         test_data_dir_.Append("log_private/dump_logs/system_logs.tar");
     chromeos::DBusThreadManager::GetSetterForTesting()->SetDebugDaemonClient(
-        scoped_ptr<chromeos::DebugDaemonClient>(
+        std::unique_ptr<chromeos::DebugDaemonClient>(
             new TestDebugDaemonClient(tar_file_path)));
     ExtensionApiTest::SetUpInProcessBrowserTestFixture();
   }
 
-  scoped_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
-    scoped_ptr<BasicHttpResponse> response(new BasicHttpResponse);
+  std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+    std::unique_ptr<BasicHttpResponse> response(new BasicHttpResponse);
     response->set_code(net::HTTP_OK);
     response->set_content(
         "<html><head><title>LogPrivateTest</title>"
         "</head><body>Hello!</body></html>");
-    return response.Pass();
+    return std::move(response);
   }
 };
 
 IN_PROC_BROWSER_TEST_F(LogPrivateApiTest, DumpLogsAndCaptureEvents) {
   // Setup dummy HTTP server.
   host_resolver()->AddRule("www.test.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&LogPrivateApiTest::HandleRequest, base::Unretained(this)));
+  ASSERT_TRUE(StartEmbeddedTestServer());
 
   ASSERT_TRUE(RunExtensionTest("log_private/dump_logs"));
 }

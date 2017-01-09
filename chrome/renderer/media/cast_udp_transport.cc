@@ -4,6 +4,10 @@
 
 #include "chrome/renderer/media/cast_udp_transport.h"
 
+#include <memory>
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/renderer/media/cast_session.h"
 
@@ -23,11 +27,11 @@ void CastUdpTransport::SetDestination(
   DVLOG(1) << "CastUdpTransport::SetDestination = "
            << remote_address.ToString();
   remote_address_ = remote_address;
-  cast_session_->StartUDP(remote_address,
-                          make_scoped_ptr(options_->DeepCopy()),
-                          error_callback);
+  cast_session_->StartUDP(
+      remote_address, base::WrapUnique(options_->DeepCopy()), error_callback);
 }
 
-void CastUdpTransport::SetOptions(scoped_ptr<base::DictionaryValue> options) {
-  options_.reset(options.release());
+void CastUdpTransport::SetOptions(
+    std::unique_ptr<base::DictionaryValue> options) {
+  options_ = std::move(options);
 }

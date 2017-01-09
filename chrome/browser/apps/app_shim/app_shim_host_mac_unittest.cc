@@ -4,9 +4,10 @@
 
 #include "chrome/browser/apps/app_shim/app_shim_host_mac.h"
 
+#include <tuple>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "chrome/common/mac/app_shim_messages.h"
 #include "ipc/ipc_message.h"
@@ -74,7 +75,7 @@ class AppShimHostTest : public testing::Test,
     EXPECT_EQ(AppShimMsg_LaunchApp_Done::ID, message->type());
     AppShimMsg_LaunchApp_Done::Param param;
     AppShimMsg_LaunchApp_Done::Read(message, &param);
-    return base::get<0>(param);
+    return std::get<0>(param);
   }
 
   void SimulateDisconnect() {
@@ -116,7 +117,7 @@ class AppShimHostTest : public testing::Test,
     host_.reset(new TestingAppShimHost());
   }
 
-  scoped_ptr<TestingAppShimHost> host_;
+  std::unique_ptr<TestingAppShimHost> host_;
 
   DISALLOW_COPY_AND_ASSIGN(AppShimHostTest);
 };

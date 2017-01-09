@@ -5,13 +5,21 @@
 #ifndef CONTENT_CHILD_SERVICE_WORKER_SERVICE_WORKER_NETWORK_PROVIDER_H_
 #define CONTENT_CHILD_SERVICE_WORKER_SERVICE_WORKER_NETWORK_PROVIDER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
+#include "content/common/service_worker/service_worker.mojom.h"
 #include "content/common/service_worker/service_worker_types.h"
-#include "third_party/WebKit/public/web/WebSandboxFlags.h"
+
+namespace blink {
+class WebLocalFrame;
+}  // namespace blink
 
 namespace content {
 
@@ -34,23 +42,26 @@ class CONTENT_EXPORT ServiceWorkerNetworkProvider
   // Ownership is transferred to the DocumentState.
   static void AttachToDocumentState(
       base::SupportsUserData* document_state,
-      scoped_ptr<ServiceWorkerNetworkProvider> network_provider);
+      std::unique_ptr<ServiceWorkerNetworkProvider> network_provider);
 
   static ServiceWorkerNetworkProvider* FromDocumentState(
       base::SupportsUserData* document_state);
 
-  static scoped_ptr<ServiceWorkerNetworkProvider> CreateForNavigation(
+  static std::unique_ptr<ServiceWorkerNetworkProvider> CreateForNavigation(
       int route_id,
       const RequestNavigationParams& request_params,
-      blink::WebSandboxFlags sandbox_flags,
+      blink::WebLocalFrame* frame,
       bool content_initiated);
 
   // PlzNavigate
   // The |browser_provider_id| is initialized by the browser for navigations.
   ServiceWorkerNetworkProvider(int route_id,
                                ServiceWorkerProviderType type,
-                               int browser_provider_id);
-  ServiceWorkerNetworkProvider(int route_id, ServiceWorkerProviderType type);
+                               int browser_provider_id,
+                               bool is_parent_frame_secure);
+  ServiceWorkerNetworkProvider(int route_id,
+                               ServiceWorkerProviderType type,
+                               bool is_parent_frame_secure);
   ServiceWorkerNetworkProvider();
   ~ServiceWorkerNetworkProvider() override;
 
@@ -60,13 +71,14 @@ class CONTENT_EXPORT ServiceWorkerNetworkProvider
   // This method is called for a provider that's associated with a
   // running service worker script. The version_id indicates which
   // ServiceWorkerVersion should be used.
-  void SetServiceWorkerVersionId(int64 version_id);
+  void SetServiceWorkerVersionId(int64_t version_id, int embedded_worker_id);
 
   bool IsControlledByServiceWorker() const;
 
  private:
   const int provider_id_;
   scoped_refptr<ServiceWorkerProviderContext> context_;
+  mojom::ServiceWorkerDispatcherHostAssociatedPtr dispatcher_host_;
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerNetworkProvider);
 };
 

@@ -8,7 +8,7 @@
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "content/public/browser/notification_observer.h"
@@ -27,7 +27,6 @@ class Extension;
 }
 
 namespace gfx {
-class Size;
 class Image;
 }
 
@@ -101,8 +100,8 @@ class IconImage : public content::NotificationObserver {
                const content::NotificationDetails& details) override;
 
   content::BrowserContext* browser_context_;
-  const Extension* extension_;
-  const ExtensionIconSet& icon_set_;
+  scoped_refptr<const Extension> extension_;
+  ExtensionIconSet icon_set_;
   const int resource_size_in_dip_;
 
   base::ObserverList<Observer> observers_;

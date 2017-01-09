@@ -6,12 +6,12 @@
 #define UI_MESSAGE_CENTER_VIEWS_TOAST_CONTENTS_VIEW_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/native_widget_types.h"
 #include "ui/message_center/views/message_center_controller.h"
 #include "ui/views/widget/widget_delegate.h"
 
@@ -26,9 +26,14 @@ class View;
 
 namespace message_center {
 
+namespace test {
+class MessagePopupCollectionTest;
+}
+
 class MessagePopupCollection;
 class MessageView;
 class Notification;
+class PopupAlignmentDelegate;
 
 // The widget host for a popup. Also implements MessageCenterController
 // which delegates over to MessagePopupCollection, but takes care about
@@ -42,6 +47,7 @@ class ToastContentsView : public views::WidgetDelegateView,
   static gfx::Size GetToastSizeForView(const views::View* view);
 
   ToastContentsView(const std::string& notification_id,
+                    PopupAlignmentDelegate* alignment_delegate,
                     base::WeakPtr<MessagePopupCollection> collection);
   ~ToastContentsView() override;
 
@@ -68,21 +74,23 @@ class ToastContentsView : public views::WidgetDelegateView,
   gfx::Point origin() { return origin_; }
   gfx::Rect bounds() { return gfx::Rect(origin_, preferred_size_); }
 
-  const std::string& id() { return id_; }
+  const std::string& id() const { return id_; }
 
   // Overridden from views::View:
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
   void Layout() override;
   gfx::Size GetPreferredSize() const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
  private:
+  friend class test::MessagePopupCollectionTest;
+
   // Overridden from MessageCenterController:
   void ClickOnNotification(const std::string& notification_id) override;
   void RemoveNotification(const std::string& notification_id,
                           bool by_user) override;
-  scoped_ptr<ui::MenuModel> CreateMenuModel(
+  std::unique_ptr<ui::MenuModel> CreateMenuModel(
       const NotifierId& notifier_id,
       const base::string16& display_source) override;
   bool HasClickedListener(const std::string& notification_id) override;
@@ -96,19 +104,22 @@ class ToastContentsView : public views::WidgetDelegateView,
   void AnimationCanceled(const gfx::Animation* animation) override;
 
   // Overridden from views::WidgetDelegate:
-  views::View* GetContentsView() override;
   void WindowClosing() override;
   void OnDisplayChanged() override;
   void OnWorkAreaChanged() override;
 
+  // Recalculates preferred size from underlying view and notifies about it.
+  void UpdatePreferredSize();
+
   // Initialization and update.
-  void CreateWidget(gfx::NativeView parent);
+  void CreateWidget(PopupAlignmentDelegate* alignment_delegate);
 
   // Immediately moves the toast without any sort of delay or animation.
   void SetBoundsInstantly(gfx::Rect new_bounds);
 
   // Given the bounds of a toast on the screen, compute the bouds for that
-  // toast in 'closed' state. The 'closed' state is used as origin/destination
+  // toast in 'closed' node_data. The 'closed' node_data is used as
+  // origin/destination
   // in reveal/closing animations.
   gfx::Rect GetClosedToastBounds(gfx::Rect bounds);
 
@@ -121,8 +132,8 @@ class ToastContentsView : public views::WidgetDelegateView,
   // Id if the corresponding Notification.
   std::string id_;
 
-  scoped_ptr<gfx::SlideAnimation> bounds_animation_;
-  scoped_ptr<gfx::SlideAnimation> fade_animation_;
+  std::unique_ptr<gfx::SlideAnimation> bounds_animation_;
+  std::unique_ptr<gfx::SlideAnimation> fade_animation_;
 
   gfx::Rect animated_bounds_start_;
   gfx::Rect animated_bounds_end_;

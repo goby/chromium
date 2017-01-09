@@ -10,17 +10,26 @@
 
 namespace chromecast {
 
-class TaskRunnerImpl;
-
 namespace media {
 
+class CastAudioMixer;
 class MediaPipelineBackend;
+class MediaPipelineBackendManager;
 struct MediaPipelineDeviceParams;
 
 class CastAudioManager : public ::media::AudioManagerBase {
  public:
-  explicit CastAudioManager(::media::AudioLogFactory* audio_log_factory);
-  ~CastAudioManager() override;
+  CastAudioManager(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+      ::media::AudioLogFactory* audio_log_factory,
+      MediaPipelineBackendManager* backend_manager);
+  CastAudioManager(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+      ::media::AudioLogFactory* audio_log_factory,
+      MediaPipelineBackendManager* backend_manager,
+      CastAudioMixer* audio_mixer);
 
   // AudioManager implementation.
   bool HasAudioOutputDevices() override;
@@ -30,28 +39,46 @@ class CastAudioManager : public ::media::AudioManagerBase {
       ::media::AudioDeviceNames* device_names) override;
   ::media::AudioParameters GetInputStreamParameters(
       const std::string& device_id) override;
+  const char* GetName() override;
 
-  // This must be called on cast media thread.
-  // See chromecast::media::MediaMessageLoop.
-  virtual scoped_ptr<MediaPipelineBackend> CreateMediaPipelineBackend(
+  // AudioManagerBase implementation
+  void ReleaseOutputStream(::media::AudioOutputStream* stream) override;
+
+  // This must be called on audio thread.
+  virtual std::unique_ptr<MediaPipelineBackend> CreateMediaPipelineBackend(
       const MediaPipelineDeviceParams& params);
+
+ protected:
+  ~CastAudioManager() override;
 
  private:
   // AudioManagerBase implementation.
   ::media::AudioOutputStream* MakeLinearOutputStream(
-      const ::media::AudioParameters& params) override;
+      const ::media::AudioParameters& params,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioOutputStream* MakeLowLatencyOutputStream(
       const ::media::AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioInputStream* MakeLinearInputStream(
       const ::media::AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioInputStream* MakeLowLatencyInputStream(
       const ::media::AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const ::media::AudioManager::LogCallback& log_callback) override;
   ::media::AudioParameters GetPreferredOutputStreamParameters(
       const std::string& output_device_id,
       const ::media::AudioParameters& input_params) override;
+
+  // Generates a CastAudioOutputStream for |mixer_|.
+  ::media::AudioOutputStream* MakeMixerOutputStream(
+      const ::media::AudioParameters& params);
+
+  MediaPipelineBackendManager* const backend_manager_;
+  std::unique_ptr<::media::AudioOutputStream> mixer_output_stream_;
+  std::unique_ptr<CastAudioMixer> mixer_;
 
   DISALLOW_COPY_AND_ASSIGN(CastAudioManager);
 };

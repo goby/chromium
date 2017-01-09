@@ -3,7 +3,10 @@
 // found in the LICENSE file.
 
 #include "cloud_print/virtual_driver/win/virtual_driver_consts.h"
+
 #include <windows.h>
+#include <stddef.h>
+
 #include "cloud_print/virtual_driver/win/virtual_driver_helpers.h"
 
 namespace cloud_print {
@@ -14,4 +17,3 @@ const wchar_t kGoogleUpdateProductId[] =
     L"{9B13FA92-1F73-4761-AB78-2C6ADAC3660D}";
 
 }  // namespace cloud_print
-

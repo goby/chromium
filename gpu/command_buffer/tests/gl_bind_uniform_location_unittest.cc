@@ -5,6 +5,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <GLES2/gl2extchromium.h>
+#include <stdint.h>
 
 #include "gpu/command_buffer/tests/gl_manager.h"
 #include "gpu/command_buffer/tests/gl_test_utils.h"
@@ -93,7 +94,7 @@ TEST_P(BindUniformLocationTest, Basic) {
 
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
-  static const uint8 expected[] = { 64, 128, 192, 255 };
+  static const uint8_t expected[] = {64, 128, 192, 255};
   EXPECT_TRUE(
       GLTestHelper::CheckPixels(0, 0, kResolution, kResolution, 1, expected));
 
@@ -260,7 +261,7 @@ TEST_P(BindUniformLocationTest, Compositor) {
 
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
-  static const uint8 expected[] = { 204, 204, 204, 204 };
+  static const uint8_t expected[] = {204, 204, 204, 204};
   EXPECT_TRUE(
       GLTestHelper::CheckPixels(0, 0, kResolution, kResolution, 1, expected));
 
@@ -358,6 +359,47 @@ TEST_P(BindUniformLocationTest, UnusedUniformUpdate) {
   // an error.
   glUniform1f(kUnboundLocation, 0.25f);
   EXPECT_EQ(static_cast<GLenum>(GL_INVALID_OPERATION), glGetError());
+}
+
+// Test for a bug where using a sampler caused GL error if the program had
+// uniforms that were optimized away by the driver. This was only a problem with
+// glBindUniformLocationCHROMIUM implementation. This could be reproed by
+// binding the sampler to a location higher than the amount of active uniforms.
+TEST_P(BindUniformLocationTest, UseSamplerWhenUnusedUniforms) {
+  enum {
+    kTexLocation = 54
+  };
+  // clang-format off
+  static const char* vertexShaderString = SHADER(
+      void main() {
+        gl_Position = vec4(0);
+      }
+  );
+  static const char* fragmentShaderString = SHADER(
+      uniform sampler2D tex;
+      void main() {
+        gl_FragColor = texture2D(tex, vec2(1));
+      }
+  );
+  // clang-format on
+  GLuint vs = GLTestHelper::CompileShader(GL_VERTEX_SHADER, vertexShaderString);
+  GLuint fs = GLTestHelper::CompileShader(GL_FRAGMENT_SHADER,
+                                          fragmentShaderString);
+
+  GLuint program = glCreateProgram();
+  glBindUniformLocationCHROMIUM(program, kTexLocation, "tex");
+
+  glAttachShader(program, vs);
+  glAttachShader(program, fs);
+
+  glLinkProgram(program);
+
+  GLint linked = 0;
+  glGetProgramiv(program, GL_LINK_STATUS, &linked);
+  EXPECT_NE(0, linked);
+  glUseProgram(program);
+  glUniform1i(kTexLocation, 0);
+  EXPECT_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
 }
 
 INSTANTIATE_TEST_CASE_P(WithAndWithoutShaderNameMapping,

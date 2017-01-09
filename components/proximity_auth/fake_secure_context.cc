@@ -4,11 +4,18 @@
 
 #include "components/proximity_auth/fake_secure_context.h"
 
+#include <stddef.h>
+
+#include "base/strings/string_util.h"
+
 namespace proximity_auth {
 
 namespace {
+
 const char kFakeEncodingSuffix[] = ", but encoded";
+const size_t kFakeEncodingSuffixLen = sizeof(kFakeEncodingSuffix) - 1;
 const char kChannelBindingData[] = "channel binding data";
+
 }  // namespace
 
 FakeSecureContext::FakeSecureContext()
@@ -31,15 +38,13 @@ void FakeSecureContext::Encode(const std::string& message,
 
 void FakeSecureContext::Decode(const std::string& encoded_message,
                                const MessageCallback& callback) {
-  size_t suffix_size = std::string(kFakeEncodingSuffix).size();
-  if (encoded_message.size() < suffix_size &&
-      encoded_message.substr(encoded_message.size() - suffix_size) !=
-          kFakeEncodingSuffix) {
+  if (!EndsWith(encoded_message, kFakeEncodingSuffix,
+                base::CompareCase::SENSITIVE)) {
     callback.Run(std::string());
   }
 
   std::string decoded_message = encoded_message;
-  decoded_message.erase(decoded_message.rfind(kFakeEncodingSuffix));
+  decoded_message.erase(decoded_message.size() - kFakeEncodingSuffixLen);
   callback.Run(decoded_message);
 }
 

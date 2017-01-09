@@ -8,14 +8,13 @@
 #include <string>
 #include <vector>
 
+#include "base/files/file_path.h"
 #include "base/native_library.h"
 #include "build/build_config.h"
 #include "ui/gl/gl_export.h"
 #include "ui/gl/gl_switches.h"
 
-namespace gfx {
-
-class GLContext;
+namespace gl {
 
 // The GL implementation currently in use.
 enum GLImplementation {
@@ -36,29 +35,15 @@ struct GL_EXPORT GLWindowSystemBindingInfo {
   bool direct_rendering;
 };
 
-void GL_EXPORT
-GetAllowedGLImplementations(std::vector<GLImplementation>* impls);
-
 #if defined(OS_WIN)
 typedef void* (WINAPI *GLGetProcAddressProc)(const char* name);
 #else
 typedef void* (*GLGetProcAddressProc)(const char* name);
 #endif
 
-// Initialize a particular GL implementation.
-GL_EXPORT bool InitializeStaticGLBindings(GLImplementation implementation);
-
-// Initialize function bindings that depend on the context for a GL
-// implementation.
-GL_EXPORT bool InitializeDynamicGLBindings(GLImplementation implementation,
-                                           GLContext* context);
-
-// Initialize Debug logging wrappers for GL bindings.
-void InitializeDebugGLBindings();
-
 // Initialize stub methods for drawing operations in the GL bindings. The
 // null draw bindings default to enabled, so that draw operations do nothing.
-void InitializeNullDrawGLBindings();
+GL_EXPORT void InitializeNullDrawGLBindings();
 
 // TODO(danakj): Remove this when all test suites are using null-draw.
 GL_EXPORT bool HasInitializedNullDrawGLBindings();
@@ -81,8 +66,6 @@ class GL_EXPORT DisableNullDrawGLBindings {
   bool initial_enabled_;
 };
 
-GL_EXPORT void ClearGLBindings();
-
 // Set the current GL implementation.
 GL_EXPORT void SetGLImplementation(GLImplementation implementation);
 
@@ -94,16 +77,16 @@ GL_EXPORT GLImplementation GetGLImplementation();
 GL_EXPORT bool HasDesktopGLFeatures();
 
 // Get the GL implementation with a given name.
-GLImplementation GetNamedGLImplementation(const std::string& name);
+GL_EXPORT GLImplementation GetNamedGLImplementation(const std::string& name);
 
 // Get the name of a GL implementation.
-const char* GetGLImplementationName(GLImplementation implementation);
+GL_EXPORT const char* GetGLImplementationName(GLImplementation implementation);
 
 // Add a native library to those searched for GL entry points.
-void AddGLNativeLibrary(base::NativeLibrary library);
+GL_EXPORT void AddGLNativeLibrary(base::NativeLibrary library);
 
 // Unloads all native libraries.
-void UnloadGLNativeLibraries();
+GL_EXPORT void UnloadGLNativeLibraries();
 
 // Set an additional function that will be called to find GL entry points.
 // Exported so that tests may set the function used in the mock implementation.
@@ -116,11 +99,7 @@ GL_EXPORT void SetGLGetProcAddressProc(GLGetProcAddressProc proc);
 // and when querying functions from the EGL library supplied by Android, it may
 // return a function that prints a log message about the function being
 // unsupported.
-void* GetGLProcAddress(const char* name);
-
-// Return information about the GL window system binding implementation (e.g.,
-// EGL, GLX, WGL). Returns true if the information was retrieved successfully.
-GL_EXPORT bool GetGLWindowSystemBindingInfo(GLWindowSystemBindingInfo* info);
+GL_EXPORT void* GetGLProcAddress(const char* name);
 
 // Helper for fetching the OpenGL extensions from the current context.
 // This helper abstracts over differences between the desktop OpenGL
@@ -135,6 +114,12 @@ GL_EXPORT std::string GetGLExtensionsFromCurrentContext();
 // be used in the function above.
 GL_EXPORT bool WillUseGLGetStringForExtensions();
 
-}  // namespace gfx
+// Helpers to load a library and log error on failure.
+GL_EXPORT base::NativeLibrary LoadLibraryAndPrintError(
+    const base::FilePath::CharType* filename);
+GL_EXPORT base::NativeLibrary LoadLibraryAndPrintError(
+    const base::FilePath& filename);
+
+}  // namespace gl
 
 #endif  // UI_GL_GL_IMPLEMENTATION_H_

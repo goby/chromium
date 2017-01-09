@@ -5,23 +5,30 @@
 #ifndef CONTENT_PUBLIC_BROWSER_NAVIGATION_CONTROLLER_H_
 #define CONTENT_PUBLIC_BROWSER_NAVIGATION_CONTROLLER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/global_request_id.h"
+#include "content/public/browser/reload_type.h"
+#include "content/public/browser/restore_type.h"
 #include "content/public/browser/session_storage_namespace.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/referrer.h"
+#include "content/public/common/resource_request_body.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
 namespace base {
 
-class RefCountedMemory;
+class RefCountedString;
 
 }  // namespace base
 
@@ -38,14 +45,6 @@ class WebContents;
 // exactly one NavigationController.
 class NavigationController {
  public:
-  enum ReloadType {
-    NO_RELOAD,                   // Normal load.
-    RELOAD,                      // Normal (cache-validating) reload.
-    RELOAD_IGNORING_CACHE,       // Reload bypassing the cache (shift-reload).
-    RELOAD_ORIGINAL_REQUEST_URL, // Reload using the original request URL.
-    RELOAD_DISABLE_LOFI_MODE     // Reload with Lo-Fi mode disabled.
-  };
-
   // Load type used in LoadURLParams.
   //
   // A Java counterpart will be generated for this enum.
@@ -56,9 +55,8 @@ class NavigationController {
     // For loads that do not fall into any types below.
     LOAD_TYPE_DEFAULT,
 
-    // An http post load request initiated from browser side.
-    // The post data is passed in |browser_initiated_post_data|.
-    LOAD_TYPE_BROWSER_INITIATED_HTTP_POST,
+    // An http post load request.  The post data is passed in |post_data|.
+    LOAD_TYPE_HTTP_POST,
 
     // Loads a 'data:' scheme URL with specified base URL and a history entry
     // URL. This is only safe to be used for browser-initiated data: URL
@@ -90,20 +88,10 @@ class NavigationController {
     // static constants.
   };
 
-  enum RestoreType {
-    // Indicates the restore is from the current session. For example, restoring
-    // a closed tab.
-    RESTORE_CURRENT_SESSION,
-
-    // Restore from the previous session.
-    RESTORE_LAST_SESSION_EXITED_CLEANLY,
-    RESTORE_LAST_SESSION_CRASHED,
-  };
-
   // Creates a navigation entry and translates the virtual url to a real one.
   // This is a general call; prefer LoadURL[FromRenderer]/TransferURL below.
   // Extra headers are separated by \n.
-  CONTENT_EXPORT static scoped_ptr<NavigationEntry> CreateNavigationEntry(
+  CONTENT_EXPORT static std::unique_ptr<NavigationEntry> CreateNavigationEntry(
       const GURL& url,
       const Referrer& referrer,
       ui::PageTransition transition,
@@ -161,10 +149,18 @@ class NavigationController {
     // data loads.
     GURL virtual_url_for_data_url;
 
-    // Used in LOAD_TYPE_BROWSER_INITIATED_HTTP_POST loads only. Carries the
-    // post data of the load. Ownership is transferred to NavigationController
-    // after LoadURLWithParams call.
-    scoped_refptr<base::RefCountedMemory> browser_initiated_post_data;
+#if defined(OS_ANDROID)
+    // Used in LOAD_TYPE_DATA loads only. The real data URI is represented
+    // as a string to circumvent the restriction on GURL size. This is only
+    // needed to pass URLs that exceed the IPC limit (kMaxURLChars). Short
+    // data: URLs can be passed in the |url| field.
+    scoped_refptr<base::RefCountedString> data_url_as_string;
+#endif
+
+    // Used in LOAD_TYPE_HTTP_POST loads only. Carries the post data of the
+    // load.  Ownership is transferred to NavigationController after
+    // LoadURLWithParams call.
+    scoped_refptr<ResourceRequestBody> post_data;
 
     // True if this URL should be able to access local resources.
     bool can_load_local_resources;
@@ -181,7 +177,7 @@ class NavigationController {
     // On Android, for a load triggered by an intent, the time Chrome received
     // the original intent that prompted the load (in milliseconds active time
     // since boot).
-    int64 intent_received_timestamp;
+    int64_t intent_received_timestamp;
 
     // When Chrome launches the intent chooser, user can select Chrome itself to
     // open the intent. In this case, we should carry over the user gesture.
@@ -195,6 +191,9 @@ class NavigationController {
     // The clearing is done asynchronously, and completes when this navigation
     // commits.
     bool should_clear_history_list;
+
+    // Indicates whether or not this navigation was initiated via context menu.
+    bool started_from_context_menu;
 
     explicit LoadURLParams(const GURL& url);
     ~LoadURLParams();
@@ -214,9 +213,8 @@ class NavigationController {
   // nullptr.
   virtual WebContents* GetWebContents() const = 0;
 
-  // Get/set the browser context for this controller. It can never be nullptr.
+  // Get the browser context for this controller. It can never be nullptr.
   virtual BrowserContext* GetBrowserContext() const = 0;
-  virtual void SetBrowserContext(BrowserContext* browser_context) = 0;
 
   // Initializes this NavigationController with the given saved navigations,
   // using |selected_navigation| as the currently loaded entry. Before this call
@@ -224,9 +222,10 @@ class NavigationController {
   // indicates where the restor comes from. This takes ownership of the
   // NavigationEntrys in |entries| and clears it out. This is used for session
   // restore.
-  virtual void Restore(int selected_navigation,
-                       RestoreType type,
-                       std::vector<scoped_ptr<NavigationEntry>>* entries) = 0;
+  virtual void Restore(
+      int selected_navigation,
+      RestoreType type,
+      std::vector<std::unique_ptr<NavigationEntry>>* entries) = 0;
 
   // Entries -------------------------------------------------------------------
 
@@ -315,7 +314,7 @@ class NavigationController {
   // represented as an entry, but should go away when the user navigates away
   // from them.
   // Note that adding a transient entry does not change the active contents.
-  virtual void SetTransientEntry(scoped_ptr<NavigationEntry> entry) = 0;
+  virtual void SetTransientEntry(std::unique_ptr<NavigationEntry> entry) = 0;
 
   // New navigations -----------------------------------------------------------
 
@@ -351,6 +350,13 @@ class NavigationController {
   // the offset is out of bounds.
   virtual void GoToOffset(int offset) = 0;
 
+  // Reloads the current entry under the specified ReloadType.
+  // TODO(toyoshim): Change all callers to use this new Reload(), and remove
+  // old Reload* methods below. One motivation of this change is Reload(bool)
+  // interface is just confusing because in some contexts, the bool could be to
+  // specify bypassing cache. http://crbug.com/670232
+  virtual void Reload(bool check_for_repost, ReloadType reload_type) = 0;
+
   // Reloads the current entry. If |check_for_repost| is true and the current
   // entry has POST data the user is prompted to see if they really want to
   // reload the page. In nearly all cases pass in true.  If a transient entry
@@ -358,7 +364,7 @@ class NavigationController {
   virtual void Reload(bool check_for_repost) = 0;
 
   // Like Reload(), but don't use caches (aka "shift-reload").
-  virtual void ReloadIgnoringCache(bool check_for_repost) = 0;
+  virtual void ReloadBypassingCache(bool check_for_repost) = 0;
 
   // Reloads the current entry using the original URL used to create it.  This
   // is used for cases where the user wants to refresh a page using a different
@@ -377,9 +383,7 @@ class NavigationController {
 
   // Random --------------------------------------------------------------------
 
-  // Session storage depends on dom_storage that depends on blink::WebString,
-  // which cannot be used on iOS.
-#if !defined(OS_IOS)
+  // Session storage depends on dom_storage that depends on blink::WebString.
   // Returns all the SessionStorageNamespace objects that this
   // NavigationController knows about, the map key is a StoragePartition id.
   virtual const SessionStorageNamespaceMap&
@@ -388,15 +392,6 @@ class NavigationController {
   // TODO(ajwong): Remove this once prerendering, instant, and session restore
   // are migrated.
   virtual SessionStorageNamespace* GetDefaultSessionStorageNamespace() = 0;
-#endif
-
-  // Sets the max restored page ID this NavigationController has seen, if it
-  // was restored from a previous session.
-  virtual void SetMaxRestoredPageID(int32 max_id) = 0;
-
-  // Returns the largest restored page ID seen in this navigation controller,
-  // if it was restored from a previous session.  (-1 otherwise)
-  virtual int32 GetMaxRestoredPageID() const = 0;
 
   // Returns true if a reload happens when activated (SetActive(true) is
   // invoked). This is true for session/tab restore, cloned tabs and tabs that

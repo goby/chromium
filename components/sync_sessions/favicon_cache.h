@@ -5,27 +5,30 @@
 #ifndef COMPONENTS_SYNC_SESSIONS_FAVICON_CACHE_H_
 #define COMPONENTS_SYNC_SESSIONS_FAVICON_CACHE_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/sessions/core/session_id.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/api/syncable_service.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/model/syncable_service.h"
 #include "url/gurl.h"
 
 namespace chrome {
@@ -40,7 +43,7 @@ namespace history {
 class HistoryService;
 }
 
-namespace browser_sync {
+namespace sync_sessions {
 
 enum IconSize {
   SIZE_INVALID,
@@ -66,8 +69,8 @@ class FaviconCache : public syncer::SyncableService,
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -105,7 +108,7 @@ class FaviconCache : public syncer::SyncableService,
   void OnReceivedSyncFavicon(const GURL& page_url,
                              const GURL& icon_url,
                              const std::string& icon_bytes,
-                             int64 visit_time_ms);
+                             int64_t visit_time_ms);
 
  private:
   friend class SyncFaviconCacheTest;
@@ -132,7 +135,7 @@ class FaviconCache : public syncer::SyncableService,
   // whether caller holds a sync transaction.
   void OnReceivedSyncFaviconImpl(const GURL& icon_url,
                                  const std::string& icon_bytes,
-                                 int64 visit_time_ms);
+                                 int64_t visit_time_ms);
 
   // Callback method to store a tab's favicon into its sync node once it becomes
   // available. Does nothing if no favicon data was available.
@@ -232,8 +235,8 @@ class FaviconCache : public syncer::SyncableService,
   // TODO(zea): consider creating a favicon handler here for fetching unsynced
   // favicons from the web.
 
-  scoped_ptr<syncer::SyncChangeProcessor> favicon_images_sync_processor_;
-  scoped_ptr<syncer::SyncChangeProcessor> favicon_tracking_sync_processor_;
+  std::unique_ptr<syncer::SyncChangeProcessor> favicon_images_sync_processor_;
+  std::unique_ptr<syncer::SyncChangeProcessor> favicon_tracking_sync_processor_;
 
   // Maximum number of favicons to sync. 0 means no limit.
   const size_t max_sync_favicon_limit_;
@@ -247,6 +250,6 @@ class FaviconCache : public syncer::SyncableService,
   DISALLOW_COPY_AND_ASSIGN(FaviconCache);
 };
 
-}  // namespace browser_sync
+}  // namespace sync_sessions
 
 #endif  // COMPONENTS_SYNC_SESSIONS_FAVICON_CACHE_H_

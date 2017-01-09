@@ -4,6 +4,8 @@
 
 #include "remoting/host/touch_injector_win.h"
 
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/native_library.h"
@@ -84,11 +86,11 @@ void ConvertToPointerTouchInfo(
 TouchInjectorWinDelegate::~TouchInjectorWinDelegate() {}
 
 // static.
-scoped_ptr<TouchInjectorWinDelegate> TouchInjectorWinDelegate::Create() {
+std::unique_ptr<TouchInjectorWinDelegate> TouchInjectorWinDelegate::Create() {
   base::ScopedNativeLibrary library(base::FilePath(L"User32.dll"));
   if (!library.is_valid()) {
     PLOG(INFO) << "Failed to get library module for touch injection functions.";
-    return scoped_ptr<TouchInjectorWinDelegate>();
+    return std::unique_ptr<TouchInjectorWinDelegate>();
   }
 
   InitializeTouchInjectionFunction init_func =
@@ -96,7 +98,7 @@ scoped_ptr<TouchInjectorWinDelegate> TouchInjectorWinDelegate::Create() {
           library.GetFunctionPointer("InitializeTouchInjection"));
   if (!init_func) {
     PLOG(INFO) << "Failed to get InitializeTouchInjection function handle.";
-    return scoped_ptr<TouchInjectorWinDelegate>();
+    return std::unique_ptr<TouchInjectorWinDelegate>();
   }
 
   InjectTouchInputFunction inject_touch_func =
@@ -104,12 +106,11 @@ scoped_ptr<TouchInjectorWinDelegate> TouchInjectorWinDelegate::Create() {
           library.GetFunctionPointer("InjectTouchInput"));
   if (!inject_touch_func) {
     PLOG(INFO) << "Failed to get InjectTouchInput.";
-    return scoped_ptr<TouchInjectorWinDelegate>();
+    return std::unique_ptr<TouchInjectorWinDelegate>();
   }
 
-  return scoped_ptr<TouchInjectorWinDelegate>(
-      new TouchInjectorWinDelegate(
-          library.Release(), init_func, inject_touch_func));
+  return std::unique_ptr<TouchInjectorWinDelegate>(new TouchInjectorWinDelegate(
+      library.Release(), init_func, inject_touch_func));
 }
 
 TouchInjectorWinDelegate::TouchInjectorWinDelegate(
@@ -188,8 +189,8 @@ void TouchInjectorWin::InjectTouchEvent(const TouchEvent& event) {
 }
 
 void TouchInjectorWin::SetInjectorDelegateForTest(
-    scoped_ptr<TouchInjectorWinDelegate> functions) {
-  delegate_ = functions.Pass();
+    std::unique_ptr<TouchInjectorWinDelegate> functions) {
+  delegate_ = std::move(functions);
 }
 
 void TouchInjectorWin::AddNewTouchPoints(const TouchEvent& event) {

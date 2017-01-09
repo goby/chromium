@@ -6,6 +6,7 @@
 #include "content/child/webthemeengine_impl_default.h"
 #include "content/renderer/render_view_impl.h"
 #include "third_party/WebKit/public/web/win/WebFontRendering.h"
+#include "third_party/skia/include/core/SkFontLCDConfig.h"
 #include "ui/gfx/font_render_params.h"
 
 using blink::WebFontRendering;
@@ -26,12 +27,17 @@ void RenderViewImpl::UpdateFontRenderingFromRendererPrefs() {
   blink::WebFontRendering::setStatusFontMetrics(
       prefs.status_font_family_name.c_str(), prefs.status_font_height);
 
-  blink::WebFontRendering::setLCDOrder(
+  SkFontLCDConfig::SetSubpixelOrder(
       gfx::FontRenderParams::SubpixelRenderingToSkiaLCDOrder(
           prefs.subpixel_rendering));
-  blink::WebFontRendering::setLCDOrientation(
+  SkFontLCDConfig::SetSubpixelOrientation(
       gfx::FontRenderParams::SubpixelRenderingToSkiaLCDOrientation(
           prefs.subpixel_rendering));
+
+  blink::WebFontRendering::setAntialiasedTextEnabled(
+      prefs.should_antialias_text);
+  blink::WebFontRendering::setLCDTextEnabled(prefs.subpixel_rendering
+      != gfx::FontRenderParams::SUBPIXEL_RENDERING_NONE);
 }
 
 void RenderViewImpl::UpdateThemePrefs() {

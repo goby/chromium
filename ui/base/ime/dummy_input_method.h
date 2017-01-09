@@ -5,6 +5,7 @@
 #ifndef UI_BASE_IME_DUMMY_INPUT_METHOD_H_
 #define UI_BASE_IME_DUMMY_INPUT_METHOD_H_
 
+#include "base/macros.h"
 #include "ui/base/ime/input_method.h"
 
 namespace ui {
@@ -30,7 +31,7 @@ class DummyInputMethod : public InputMethod {
   void OnCaretBoundsChanged(const TextInputClient* client) override;
   void CancelComposition(const TextInputClient* client) override;
   void OnInputLocaleChanged() override;
-  std::string GetInputLocale() override;
+  bool IsInputLocaleCJK() const override;
   TextInputType GetTextInputType() const override;
   TextInputMode GetTextInputMode() const override;
   int GetTextInputFlags() const override;
@@ -41,7 +42,11 @@ class DummyInputMethod : public InputMethod {
   void AddObserver(InputMethodObserver* observer) override;
   void RemoveObserver(InputMethodObserver* observer) override;
 
+  const std::vector<std::unique_ptr<KeyEvent>>& GetKeyEventsForTesting()
+      override;
+
  private:
+  std::vector<std::unique_ptr<KeyEvent>> key_events_for_testing_;
   DISALLOW_COPY_AND_ASSIGN(DummyInputMethod);
 };
 

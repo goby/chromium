@@ -7,11 +7,14 @@
 #include <iostream>
 
 #include "base/callback_helpers.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/sys_byteorder.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "blimp/common/proto/blimp_message.pb.h"
+#include "blimp/net/blimp_stats.h"
 #include "blimp/net/common.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -47,18 +50,21 @@ StreamPacketWriter::StreamPacketWriter(net::StreamSocket* socket)
 
 StreamPacketWriter::~StreamPacketWriter() {}
 
-void StreamPacketWriter::WritePacket(scoped_refptr<net::DrainableIOBuffer> data,
-                                     const net::CompletionCallback& callback) {
+void StreamPacketWriter::WritePacket(
+    const scoped_refptr<net::DrainableIOBuffer>& data,
+    const net::CompletionCallback& callback) {
   DCHECK_EQ(WriteState::IDLE, write_state_);
   DCHECK(data);
   CHECK(data->BytesRemaining());
 
   write_state_ = WriteState::HEADER;
   header_buffer_->SetOffset(0);
-  *reinterpret_cast<uint32*>(header_buffer_->data()) =
+  *reinterpret_cast<uint32_t*>(header_buffer_->data()) =
       base::HostToNet32(data->BytesRemaining());
   payload_buffer_ = data;
 
+  BlimpStats::GetInstance()->Add(BlimpStats::BYTES_SENT,
+                                 payload_buffer_->BytesRemaining());
   int result = DoWriteLoop(net::OK);
   if (result != net::ERR_IO_PENDING) {
     // Release the payload buffer, since the write operation has completed
@@ -66,8 +72,8 @@ void StreamPacketWriter::WritePacket(scoped_refptr<net::DrainableIOBuffer> data,
     payload_buffer_ = nullptr;
 
     // Adapt synchronous completion to an asynchronous style.
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback, result));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  base::Bind(callback, result));
   } else {
     callback_ = callback;
   }
@@ -105,10 +111,7 @@ int StreamPacketWriter::DoWriteHeader(int result) {
 
   header_buffer_->DidConsume(result);
   if (header_buffer_->BytesRemaining() > 0) {
-    return socket_->Write(header_buffer_.get(),
-                          header_buffer_->BytesRemaining(),
-                          base::Bind(&StreamPacketWriter::OnWriteComplete,
-                                     weak_factory_.GetWeakPtr()));
+    return DoWrite(header_buffer_.get(), header_buffer_->BytesRemaining());
   }
 
   write_state_ = WriteState::PAYLOAD;
@@ -121,10 +124,7 @@ int StreamPacketWriter::DoWritePayload(int result) {
 
   payload_buffer_->DidConsume(result);
   if (payload_buffer_->BytesRemaining() > 0) {
-    return socket_->Write(payload_buffer_.get(),
-                          payload_buffer_->BytesRemaining(),
-                          base::Bind(&StreamPacketWriter::OnWriteComplete,
-                                     weak_factory_.GetWeakPtr()));
+    return DoWrite(payload_buffer_.get(), payload_buffer_->BytesRemaining());
   }
 
   write_state_ = WriteState::IDLE;
@@ -134,17 +134,26 @@ int StreamPacketWriter::DoWritePayload(int result) {
 void StreamPacketWriter::OnWriteComplete(int result) {
   DCHECK_NE(net::ERR_IO_PENDING, result);
 
-  // If the write was succesful, then process the result.
-  if (result > 0) {
+  if (result == 0) {
+    // Convert EOF return value to ERR_CONNECTION_CLOSED.
+    result = net::ERR_CONNECTION_CLOSED;
+  } else if (result > 0) {
+    // Write was successful; get the next one started.
     result = DoWriteLoop(result);
+    if (result == net::ERR_IO_PENDING) {
+      return;
+    }
   }
 
-  // If the write finished, either successfully or by error, inform the
-  // caller.
-  if (result != net::ERR_IO_PENDING) {
-    payload_buffer_ = nullptr;
-    base::ResetAndReturn(&callback_).Run(result);
-  }
+  payload_buffer_ = nullptr;
+  base::ResetAndReturn(&callback_).Run(result);
+}
+
+int StreamPacketWriter::DoWrite(net::IOBuffer* buf, int buf_len) {
+  int result = socket_->Write(buf, buf_len,
+                              base::Bind(&StreamPacketWriter::OnWriteComplete,
+                                         weak_factory_.GetWeakPtr()));
+  return (result != 0 ? result : net::ERR_CONNECTION_CLOSED);
 }
 
 }  // namespace blimp

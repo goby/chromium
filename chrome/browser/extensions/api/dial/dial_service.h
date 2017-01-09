@@ -5,24 +5,23 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_DIAL_DIAL_SERVICE_H_
 #define CHROME_BROWSER_EXTENSIONS_API_DIAL_DIAL_SERVICE_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
-#include "net/log/net_log.h"
-#include "net/udp/udp_socket.h"
+#include "net/base/ip_address.h"
+#include "net/log/net_log_source.h"
+#include "net/socket/udp_socket.h"
 
 namespace net {
 class IPEndPoint;
-class IPAddress;
-class IOBuffer;
 class StringIOBuffer;
-struct NetworkInterface;
+class NetLog;
 }
 
 namespace extensions {
@@ -50,9 +49,6 @@ class DialDeviceData;
 // Calling Discover() again between T1 and Tf has no effect.
 //
 // All relevant constants are defined in dial_service.cc.
-//
-// TODO(mfoltz): Port this into net/.
-// See https://code.google.com/p/chromium/issues/detail?id=164473
 class DialService {
  public:
   enum DialServiceErrorCode {
@@ -98,8 +94,8 @@ class DialService {
 // associated with a single discovery cycle into its own |DiscoveryOperation|
 // object.  This would also simplify lifetime of the object w.r.t. DialRegistry;
 // the Registry would not need to create/destroy the Service on demand.
-class DialServiceImpl : public DialService,
-                        public base::SupportsWeakPtr<DialServiceImpl> {
+// DialServiceImpl lives on the IO thread.
+class DialServiceImpl : public DialService {
  public:
   explicit DialServiceImpl(net::NetLog* net_log);
   ~DialServiceImpl() override;
@@ -112,6 +108,7 @@ class DialServiceImpl : public DialService,
 
  private:
   // Represents a socket binding to a single network interface.
+  // DialSocket lives on the IO thread.
   class DialSocket {
    public:
     // TODO(imcheng): Consider writing a DialSocket::Delegate interface that
@@ -125,9 +122,9 @@ class DialServiceImpl : public DialService,
 
     // Creates a socket using |net_log| and |net_log_source| and binds it to
     // |bind_ip_address|.
-    bool CreateAndBindSocket(const net::IPAddressNumber& bind_ip_address,
+    bool CreateAndBindSocket(const net::IPAddress& bind_ip_address,
                              net::NetLog* net_log,
-                             net::NetLog::Source net_log_source);
+                             net::NetLogSource net_log_source);
 
     // Sends a single discovery request |send_buffer| to |send_address|
     // over the socket.
@@ -169,16 +166,13 @@ class DialServiceImpl : public DialService,
                               DialDeviceData* device);
 
     // The UDP socket.
-    scoped_ptr<net::UDPSocket> socket_;
+    std::unique_ptr<net::UDPSocket> socket_;
 
     // Buffer for socket reads.
     scoped_refptr<net::IOBufferWithSize> recv_buffer_;
 
     // The source of of the last socket read.
     net::IPEndPoint recv_address_;
-
-    // Thread checker.
-    base::ThreadChecker thread_checker_;
 
     // The callback to be invoked when a discovery request was made.
     base::Closure discovery_request_cb_;
@@ -213,15 +207,14 @@ class DialServiceImpl : public DialService,
   // |SendOneRequest()|, and start the timer to finish discovery if needed.
   // The (Address family, interface index) of each address in |ip_addresses|
   // must be unique. If |ip_address| is empty, calls |FinishDiscovery()|.
-  void DiscoverOnAddresses(
-      const std::vector<net::IPAddressNumber>& ip_addresses);
+  void DiscoverOnAddresses(const net::IPAddressList& ip_addresses);
 
   // Creates a DialSocket, binds it to |bind_ip_address| and if
   // successful, add the DialSocket to |dial_sockets_|.
-  void BindAndAddSocket(const net::IPAddressNumber& bind_ip_address);
+  void BindAndAddSocket(const net::IPAddress& bind_ip_address);
 
   // Creates a DialSocket with callbacks to this object.
-  scoped_ptr<DialSocket> CreateDialSocket();
+  std::unique_ptr<DialSocket> CreateDialSocket();
 
   // Sends a single discovery request to every socket that are currently open.
   void SendOneRequest();
@@ -244,13 +237,13 @@ class DialServiceImpl : public DialService,
 
   // DialSockets for each network interface whose ip address was
   // successfully bound.
-  std::vector<scoped_ptr<DialSocket>> dial_sockets_;
+  std::vector<std::unique_ptr<DialSocket>> dial_sockets_;
 
   // The NetLog for this service.
-  net::NetLog* net_log_;
+  net::NetLog* const net_log_;
 
   // The NetLog source for this service.
-  net::NetLog::Source net_log_source_;
+  net::NetLogSource net_log_source_;
 
   // The multicast address:port for search requests.
   net::IPEndPoint send_address_;
@@ -284,8 +277,7 @@ class DialServiceImpl : public DialService,
   // List of observers.
   base::ObserverList<Observer> observer_list_;
 
-  // Thread checker.
-  base::ThreadChecker thread_checker_;
+  base::WeakPtrFactory<DialServiceImpl> weak_factory_;
 
   friend class DialServiceTest;
   FRIEND_TEST_ALL_PREFIXES(DialServiceTest, TestSendMultipleRequests);

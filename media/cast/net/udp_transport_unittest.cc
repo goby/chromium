@@ -10,11 +10,12 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "media/cast/net/cast_transport_config.h"
 #include "media/cast/test/utility/net_utility.h"
-#include "net/base/net_util.h"
+#include "net/base/ip_address.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -25,7 +26,7 @@ class MockPacketReceiver {
   MockPacketReceiver(const base::Closure& callback)
       : packet_callback_(callback) {}
 
-  bool ReceivedPacket(scoped_ptr<Packet> packet) {
+  bool ReceivedPacket(std::unique_ptr<Packet> packet) {
     packet_ = std::string(packet->size(), '\0');
     std::copy(packet->begin(), packet->end(), packet_.begin());
     packet_callback_.Run();
@@ -59,21 +60,18 @@ TEST(UdpTransport, SendAndReceive) {
 
   net::IPEndPoint free_local_port1 = test::GetFreeLocalPort();
   net::IPEndPoint free_local_port2 = test::GetFreeLocalPort();
-  net::IPAddressNumber empty_addr_number;
-  net::ParseIPLiteralToNumber("0.0.0.0", &empty_addr_number);
 
   UdpTransport send_transport(NULL,
                               message_loop.task_runner(),
                               free_local_port1,
                               free_local_port2,
-                              65536,
                               base::Bind(&UpdateCastTransportStatus));
-  UdpTransport recv_transport(NULL,
-                              message_loop.task_runner(),
-                              free_local_port2,
-                              net::IPEndPoint(empty_addr_number, 0),
-                              65536,
-                              base::Bind(&UpdateCastTransportStatus));
+  send_transport.SetSendBufferSize(65536);
+  UdpTransport recv_transport(
+      NULL, message_loop.task_runner(), free_local_port2,
+      net::IPEndPoint(net::IPAddress::IPv4AllZeros(), 0),
+      base::Bind(&UpdateCastTransportStatus));
+  recv_transport.SetSendBufferSize(65536);
 
   Packet packet;
   packet.push_back('t');

@@ -4,6 +4,8 @@
 
 #include "components/web_contents_delegate_android/color_chooser_android.h"
 
+#include <stddef.h>
+
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "content/public/browser/android/content_view_core.h"
@@ -13,6 +15,7 @@
 #include "ui/android/window_android.h"
 
 using base::android::ConvertUTF16ToJavaString;
+using base::android::JavaRef;
 using content::ContentViewCore;
 
 namespace web_contents_delegate_android {
@@ -34,11 +37,7 @@ ColorChooserAndroid::ColorChooserAndroid(
       ScopedJavaLocalRef<jstring> label = ConvertUTF16ToJavaString(
           env, suggestion.label);
       Java_ColorChooserAndroid_addToColorSuggestionArray(
-          env,
-          suggestions_array.obj(),
-          i,
-          suggestion.color,
-          label.obj());
+          env, suggestions_array, i, suggestion.color, label);
     }
   }
 
@@ -49,15 +48,12 @@ ColorChooserAndroid::ColorChooserAndroid(
         content_view_core->GetJavaObject();
     if (!java_content_view_core.is_null()) {
       j_color_chooser_.Reset(Java_ColorChooserAndroid_createColorChooserAndroid(
-          env,
-          reinterpret_cast<intptr_t>(this),
-          java_content_view_core.obj(),
-          initial_color,
-          suggestions_array.obj()));
+          env, reinterpret_cast<intptr_t>(this), java_content_view_core,
+          initial_color, suggestions_array));
     }
   }
   if (j_color_chooser_.is_null())
-    OnColorChosen(env, j_color_chooser_.obj(), initial_color);
+    OnColorChosen(env, j_color_chooser_, initial_color);
 }
 
 ColorChooserAndroid::~ColorChooserAndroid() {
@@ -66,7 +62,7 @@ ColorChooserAndroid::~ColorChooserAndroid() {
 void ColorChooserAndroid::End() {
   if (!j_color_chooser_.is_null()) {
     JNIEnv* env = AttachCurrentThread();
-    Java_ColorChooserAndroid_closeColorChooser(env, j_color_chooser_.obj());
+    Java_ColorChooserAndroid_closeColorChooser(env, j_color_chooser_);
   }
 }
 
@@ -76,7 +72,9 @@ void ColorChooserAndroid::SetSelectedColor(SkColor color) {
   // we don't support that for now.
 }
 
-void ColorChooserAndroid::OnColorChosen(JNIEnv* env, jobject obj, jint color) {
+void ColorChooserAndroid::OnColorChosen(JNIEnv* env,
+                                        const JavaRef<jobject>& obj,
+                                        jint color) {
   web_contents_->DidChooseColorInColorChooser(color);
   web_contents_->DidEndColorChooser();
 }

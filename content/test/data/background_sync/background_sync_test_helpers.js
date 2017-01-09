@@ -31,7 +31,7 @@ function registerServiceWorker() {
     .catch(sendErrorToTest);
 }
 
-function registerOneShot(tag) {
+function register(tag) {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
       return swRegistration.sync.register(tag);
@@ -42,16 +42,16 @@ function registerOneShot(tag) {
     .catch(sendErrorToTest);
 }
 
-function registerOneShotFromServiceWorker(tag) {
+function registerFromServiceWorker(tag) {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
-      swRegistration.active.postMessage({action: 'registerOneShot', tag: tag});
+      swRegistration.active.postMessage({action: 'register', tag: tag});
       sendResultToTest('ok - ' + tag + ' register sent to SW');
     })
     .catch(sendErrorToTest);
 }
 
-function getRegistrationOneShot(tag) {
+function hasTag(tag) {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
       return swRegistration.sync.getTags();
@@ -67,17 +67,17 @@ function getRegistrationOneShot(tag) {
     .catch(sendErrorToTest);
 }
 
-function getRegistrationOneShotFromServiceWorker(tag) {
+function hasTagFromServiceWorker(tag) {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
       swRegistration.active.postMessage(
-          {action: 'getRegistrationOneShot', tag: tag});
-      sendResultToTest('ok - getRegistration sent to SW');
+          {action: 'hasTag', tag: tag});
+      sendResultToTest('ok - hasTag sent to SW');
     })
     .catch(sendErrorToTest);
 }
 
-function getRegistrationsOneShot(tag) {
+function getTags() {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
       return swRegistration.sync.getTags();
@@ -88,28 +88,30 @@ function getRegistrationsOneShot(tag) {
     .catch(sendErrorToTest);
 }
 
-function getRegistrationsOneShotFromServiceWorker() {
+function getTagsFromServiceWorker() {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
-      swRegistration.active.postMessage({action: 'getRegistrationsOneShot'});
-      sendResultToTest('ok - getRegistrations sent to SW');
+      swRegistration.active.postMessage({action: 'getTags'});
+      sendResultToTest('ok - getTags sent to SW');
     })
     .catch(sendErrorToTest);
 }
 
-function completeDelayedOneShot() {
+function completeDelayedSyncEvent() {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
-      swRegistration.active.postMessage({action: 'completeDelayedOneShot'});
+      swRegistration.active.postMessage({
+          action: 'completeDelayedSyncEvent'
+        });
       sendResultToTest('ok - delay completing');
     })
     .catch(sendErrorToTest);
 }
 
-function rejectDelayedOneShot() {
+function rejectDelayedSyncEvent() {
   navigator.serviceWorker.ready
     .then(function(swRegistration) {
-      swRegistration.active.postMessage({action: 'rejectDelayedOneShot'});
+      swRegistration.active.postMessage({action: 'rejectDelayedSyncEvent'});
       sendResultToTest('ok - delay rejecting');
     })
     .catch(sendErrorToTest);
@@ -124,7 +126,7 @@ function createFrame(url) {
   });
 }
 
-function registerOneShotFromLocalFrame(frame_url) {
+function registerFromLocalFrame(frame_url) {
   var frameWindow;
   return createFrame(frame_url)
     .then(function(frame) {
@@ -138,15 +140,9 @@ function registerOneShotFromLocalFrame(frame_url) {
       return frame_registration.sync.register('foo');
     })
     .then(function() {
-      sendResultToTest('error - iframe registered sync');
-    }, function(e) {
-      if (e.name != 'AbortError' || e.message !== 'Registration failed - not ' +
-          'called from a main frame.') {
-        sendErrorToTest(e);
-        return;
-      }
-      sendResultToTest('ok - iframe failed to register sync');
-    });
+      sendResultToTest('ok - iframe registered sync');
+    })
+    .catch(sendErrorToTest);
 }
 
 function receiveMessage() {
@@ -157,7 +153,7 @@ function receiveMessage() {
   });
 }
 
-function registerOneShotFromCrossOriginServiceWorker(cross_frame_url) {
+function registerFromCrossOriginFrame(cross_frame_url) {
   return createFrame(cross_frame_url)
     .then(function(frame) {
       return receiveMessage();
@@ -168,7 +164,7 @@ function registerOneShotFromCrossOriginServiceWorker(cross_frame_url) {
         sendResultToTest('failed - ' + message);
         return;
       }
-      sendResultToTest('ok - worker failed to register sync');
+      sendResultToTest('ok - frame failed to register sync');
     });
 }
 

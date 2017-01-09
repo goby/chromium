@@ -6,7 +6,7 @@
 
 #include "base/guid.h"
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/common/signin_pref_names.h"
 
 namespace {
@@ -30,6 +30,14 @@ std::string SigninClient::GetOrCreateScopedDeviceIdPref(PrefService* prefs) {
                      signin_scoped_device_id);
   }
   return signin_scoped_device_id;
+}
+
+void SigninClient::PreSignOut(const base::Callback<void()>& sign_out) {
+  sign_out.Run();
+}
+
+int SigninClient::number_of_request_context_pointer_changes() const {
+  return 0;
 }
 
 void SigninClient::SignOut() {

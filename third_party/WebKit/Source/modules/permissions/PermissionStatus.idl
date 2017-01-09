@@ -12,8 +12,8 @@ enum PermissionState {
 };
 
 [
-    ActiveDOMObject,
-    GarbageCollected,
+    ActiveScriptWrappable,
+    DependentLifetime,
     Exposed=(Window,Worker),
     RuntimeEnabled=Permissions,
 ] interface PermissionStatus : EventTarget {

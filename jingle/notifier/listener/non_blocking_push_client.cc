@@ -7,7 +7,8 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "jingle/notifier/listener/push_client_observer.h"
 
 namespace notifier {
@@ -55,7 +56,7 @@ class NonBlockingPushClient::Core
   const scoped_refptr<base::SingleThreadTaskRunner> delegate_task_runner_;
 
   const base::WeakPtr<NonBlockingPushClient> parent_push_client_;
-  scoped_ptr<PushClient> delegate_push_client_;
+  std::unique_ptr<PushClient> delegate_push_client_;
 
   DISALLOW_COPY_AND_ASSIGN(Core);
 };
@@ -160,7 +161,7 @@ NonBlockingPushClient::NonBlockingPushClient(
   delegate_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&NonBlockingPushClient::Core::CreateOnDelegateThread,
-                 core_.get(), create_blocking_push_client_callback));
+                 core_, create_blocking_push_client_callback));
 }
 
 NonBlockingPushClient::~NonBlockingPushClient() {
@@ -168,7 +169,7 @@ NonBlockingPushClient::~NonBlockingPushClient() {
   delegate_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&NonBlockingPushClient::Core::DestroyOnDelegateThread,
-                 core_.get()));
+                 core_));
 }
 
 void NonBlockingPushClient::AddObserver(PushClientObserver* observer) {
@@ -187,7 +188,7 @@ void NonBlockingPushClient::UpdateSubscriptions(
   delegate_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&NonBlockingPushClient::Core::UpdateSubscriptions,
-                 core_.get(), subscriptions));
+                 core_, subscriptions));
 }
 
 void NonBlockingPushClient::UpdateCredentials(
@@ -196,7 +197,7 @@ void NonBlockingPushClient::UpdateCredentials(
   delegate_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&NonBlockingPushClient::Core::UpdateCredentials,
-                 core_.get(), email, token));
+                 core_, email, token));
 }
 
 void NonBlockingPushClient::SendNotification(
@@ -204,7 +205,7 @@ void NonBlockingPushClient::SendNotification(
   DCHECK(thread_checker_.CalledOnValidThread());
   delegate_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NonBlockingPushClient::Core::SendNotification, core_.get(),
+      base::Bind(&NonBlockingPushClient::Core::SendNotification, core_,
                  notification));
 }
 
@@ -212,32 +213,33 @@ void NonBlockingPushClient::SendPing() {
   DCHECK(thread_checker_.CalledOnValidThread());
   delegate_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NonBlockingPushClient::Core::SendPing, core_.get()));
+      base::Bind(&NonBlockingPushClient::Core::SendPing, core_));
 }
 
 void NonBlockingPushClient::OnNotificationsEnabled() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(PushClientObserver, observers_,
-                    OnNotificationsEnabled());
+  for (auto& observer : observers_)
+    observer.OnNotificationsEnabled();
 }
 
 void NonBlockingPushClient::OnNotificationsDisabled(
     NotificationsDisabledReason reason) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(PushClientObserver, observers_,
-                    OnNotificationsDisabled(reason));
+  for (auto& observer : observers_)
+    observer.OnNotificationsDisabled(reason);
 }
 
 void NonBlockingPushClient::OnIncomingNotification(
     const Notification& notification) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(PushClientObserver, observers_,
-                    OnIncomingNotification(notification));
+  for (auto& observer : observers_)
+    observer.OnIncomingNotification(notification);
 }
 
 void NonBlockingPushClient::OnPingResponse() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(PushClientObserver, observers_, OnPingResponse());
+  for (auto& observer : observers_)
+    observer.OnPingResponse();
 }
 
 }  // namespace notifier

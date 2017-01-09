@@ -4,10 +4,12 @@
 
 #include "chrome/browser/policy/cloud/user_cloud_policy_invalidator.h"
 
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/invalidation/profile_invalidation_provider_factory.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
@@ -19,11 +21,12 @@ namespace policy {
 UserCloudPolicyInvalidator::UserCloudPolicyInvalidator(
     Profile* profile,
     CloudPolicyManager* policy_manager)
-    : CloudPolicyInvalidator(GetPolicyType(),
-                             policy_manager->core(),
-                             base::ThreadTaskRunnerHandle::Get(),
-                             scoped_ptr<base::Clock>(new base::DefaultClock()),
-                             0 /* highest_handled_invalidation_version */),
+    : CloudPolicyInvalidator(
+          GetPolicyType(),
+          policy_manager->core(),
+          base::ThreadTaskRunnerHandle::Get(),
+          std::unique_ptr<base::Clock>(new base::DefaultClock()),
+          0 /* highest_handled_invalidation_version */),
       profile_(profile) {
   DCHECK(profile);
 
@@ -46,8 +49,6 @@ UserCloudPolicyInvalidator::GetPolicyType() {
   return enterprise_management::DeviceRegisterRequest::USER;
 #elif defined(OS_ANDROID)
   return enterprise_management::DeviceRegisterRequest::ANDROID_BROWSER;
-#elif defined(OS_IOS)
-  return enterprise_management::DeviceRegisterRequest::IOS_BROWSER;
 #else
   return enterprise_management::DeviceRegisterRequest::BROWSER;
 #endif
@@ -63,7 +64,7 @@ void UserCloudPolicyInvalidator::Observe(
     const content::NotificationDetails& details) {
   // Initialize now that profile creation is complete and the invalidation
   // service can safely be initialized.
-  DCHECK(type == chrome::NOTIFICATION_PROFILE_ADDED);
+  DCHECK_EQ(chrome::NOTIFICATION_PROFILE_ADDED, type);
   invalidation::ProfileInvalidationProvider* invalidation_provider =
       invalidation::ProfileInvalidationProviderFactory::GetForProfile(profile_);
   if (invalidation_provider)

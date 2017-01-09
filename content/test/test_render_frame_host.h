@@ -5,9 +5,11 @@
 #ifndef CONTENT_TEST_TEST_RENDER_FRAME_HOST_H_
 #define CONTENT_TEST_TEST_RENDER_FRAME_HOST_H_
 
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/mock_render_process_host.h"
@@ -42,8 +44,8 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
                       RenderWidgetHostDelegate* rwh_delegate,
                       FrameTree* frame_tree,
                       FrameTreeNode* frame_tree_node,
-                      int32 routing_id,
-                      int32 widget_routing_id,
+                      int32_t routing_id,
+                      int32_t widget_routing_id,
                       int flags);
   ~TestRenderFrameHost() override;
 
@@ -54,34 +56,37 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   // RenderFrameHostTester implementation.
   void InitializeRenderFrameIfNeeded() override;
   TestRenderFrameHost* AppendChild(const std::string& frame_name) override;
+  void Detach() override;
   void SimulateNavigationStart(const GURL& url) override;
   void SimulateRedirect(const GURL& new_url) override;
   void SimulateNavigationCommit(const GURL& url) override;
   void SimulateNavigationError(const GURL& url, int error_code) override;
   void SimulateNavigationErrorPageCommit() override;
   void SimulateNavigationStop() override;
-  void SendNavigate(int page_id,
-                    int nav_entry_id,
+  void SendNavigate(int nav_entry_id,
                     bool did_create_new_entry,
                     const GURL& url) override;
-  void SendFailedNavigate(int page_id,
-                          int nav_entry_id,
+  void SendFailedNavigate(int nav_entry_id,
                           bool did_create_new_entry,
                           const GURL& url) override;
-  void SendNavigateWithTransition(int page_id,
-                                  int nav_entry_id,
+  void SendNavigateWithTransition(int nav_entry_id,
                                   bool did_create_new_entry,
                                   const GURL& url,
                                   ui::PageTransition transition) override;
   void SetContentsMimeType(const std::string& mime_type) override;
   void SendBeforeUnloadACK(bool proceed) override;
   void SimulateSwapOutACK() override;
+  void NavigateAndCommitRendererInitiated(bool did_create_new_entry,
+                                          const GURL& url) override;
+
+  void SendNavigateWithReplacement(int nav_entry_id,
+                                   bool did_create_new_entry,
+                                   const GURL& url);
 
   using ModificationCallback =
       base::Callback<void(FrameHostMsg_DidCommitProvisionalLoad_Params*)>;
 
   void SendNavigateWithModificationCallback(
-      int page_id,
       int nav_entry_id,
       bool did_create_new_entry,
       const GURL& url,
@@ -89,17 +94,14 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   void SendNavigateWithParams(
       FrameHostMsg_DidCommitProvisionalLoad_Params* params);
 
-  // Simulate a renderer-initiated navigation up until commit.
-  void NavigateAndCommitRendererInitiated(int page_id,
-                                          bool did_create_new_entry,
-                                          const GURL& url);
-
   // With the current navigation logic this method is a no-op.
   // PlzNavigate: this method simulates receiving a BeginNavigation IPC.
   void SendRendererInitiatedNavigationRequest(const GURL& url,
                                               bool has_user_gesture);
 
   void DidChangeOpener(int opener_routing_id);
+
+  void DidEnforceInsecureRequestPolicy(blink::WebInsecureRequestPolicy policy);
 
   // If set, navigations will appear to have cleared the history list in the
   // RenderFrame
@@ -122,21 +124,33 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   // redirect step is ignored.
   void PrepareForCommitWithServerRedirect(const GURL& redirect_url);
 
+  // If we are doing a cross-site navigation, this simulates the current
+  // RenderFrameHost notifying that BeforeUnload has executed so the pending
+  // RenderFrameHost is resumed and can navigate.
+  // PlzNavigate: This simulates a BeforeUnload ACK from the renderer, and the
+  // interaction with the IO thread up until the response is ready to commit.
+  void PrepareForCommitIfNecessary();
+
   // PlzNavigate
   void set_pending_commit(bool pending) { pending_commit_ = pending; }
   bool pending_commit() const { return pending_commit_; }
 
+  // Creates a WebBluetooth Service with a dummy InterfaceRequest.
+  WebBluetoothServiceImpl* CreateWebBluetoothServiceForTesting();
+
  private:
-  void SendNavigateWithParameters(int page_id,
-                                  int nav_entry_id,
+  void SendNavigateWithParameters(int nav_entry_id,
                                   bool did_create_new_entry,
+                                  bool should_replace_entry,
                                   const GURL& url,
                                   ui::PageTransition transition,
                                   int response_code,
                                   const ModificationCallback& callback);
 
   // Computes the page ID for a pending navigation in this RenderFrameHost;
-  int32 ComputeNextPageID();
+  int32_t ComputeNextPageID();
+
+  void SimulateWillStartRequest(ui::PageTransition transition);
 
   TestRenderFrameHostCreationObserver child_creation_observer_;
 
@@ -144,6 +158,9 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
 
   // See set_simulate_history_list_was_cleared() above.
   bool simulate_history_list_was_cleared_;
+
+  // The last commit was for an error page.
+  bool last_commit_was_error_page_;
 
   DISALLOW_COPY_AND_ASSIGN(TestRenderFrameHost);
 };

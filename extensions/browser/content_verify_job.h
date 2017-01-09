@@ -5,11 +5,14 @@
 #ifndef EXTENSIONS_BROWSER_CONTENT_VERIFY_JOB_H_
 #define EXTENSIONS_BROWSER_CONTENT_VERIFY_JOB_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 
 namespace base {
@@ -88,12 +91,12 @@ class ContentVerifyJob : public base::RefCountedThreadSafe<ContentVerifyJob> {
                              bool failed) = 0;
   };
 
+  // Note: having interleaved delegates is not supported.
   static void SetDelegateForTests(TestDelegate* delegate);
+
   static void SetObserverForTests(TestObserver* observer);
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(ContentVerifyJob);
-
   virtual ~ContentVerifyJob();
   friend class base::RefCountedThreadSafe<ContentVerifyJob>;
 
@@ -120,13 +123,13 @@ class ContentVerifyJob : public base::RefCountedThreadSafe<ContentVerifyJob> {
   std::string queue_;
 
   // The total bytes we've read.
-  int64 total_bytes_read_;
+  int64_t total_bytes_read_;
 
   // The index of the block we're currently on.
   int current_block_;
 
   // The hash we're building up for the bytes of |current_block_|.
-  scoped_ptr<crypto::SecureHash> current_hash_;
+  std::unique_ptr<crypto::SecureHash> current_hash_;
 
   // The number of bytes we've already input into |current_hash_|.
   int current_hash_byte_count_;
@@ -143,6 +146,8 @@ class ContentVerifyJob : public base::RefCountedThreadSafe<ContentVerifyJob> {
 
   // For ensuring methods on called on the right thread.
   base::ThreadChecker thread_checker_;
+
+  DISALLOW_COPY_AND_ASSIGN(ContentVerifyJob);
 };
 
 }  // namespace extensions

@@ -18,14 +18,17 @@ import android.view.ViewTreeObserver;
  *
  * By default, the View is inflated without being attached to the hierarchy, which allows
  * subclasses to read/modify the View "offscreen", via the method {@link #onFinishInflate()}.
- * Only when a new snapshot of the View is required, which happens when the method
- * {@link #invalidate()} is called, and the View is automatically detached from the
- * hierarchy after the snapshot is captured.
+ * When a new snapshot of the View is required, which is triggered when the method
+ * {@link #invalidate()} is called, the View is drawn and automatically detached from the
+ * hierarchy after the snapshot has been captured.  View drawing and capturing is done async,
+ * so when calling {@link #invalidate()} the caller may want to wait until onCaptureEnd has been
+ * called to make sure a new snapshot has been captured in cases where rendering an older snapshot
+ * for a frame or two would be problematic.  This can be done by overriding onCaptureEnd.
  *
  * There's also an option to not attach to the hierarchy at all, by overriding the method
- * {@link #shouldAttachView()} and making it return false (the default is yes). In this case
- * the changes to the View will always be "offscreen". By default, an unspecified value of
- * {@link View.MeasureSpec} will de used to determine the width and height of the View.
+ * {@link #shouldAttachView()} and making it return false (the default is true). In this case
+ * the changes to the View will always be "offscreen". By default an unspecified value of
+ * {@link View.MeasureSpec} will be used to determine the width and height of the View.
  * It's possible to specify custom size constraints by overriding the methods
  * {@link #getWidthMeasureSpec()} and {@link #getHeightMeasureSpec()}.
  */
@@ -65,6 +68,11 @@ public class ViewResourceInflater {
      * The inflated View.
      */
     private View mView;
+
+    /**
+     * Whether the View needs a layout update.
+     */
+    private boolean mNeedsLayoutUpdate;
 
     /**
      * Whether the View is invalided.
@@ -122,12 +130,23 @@ public class ViewResourceInflater {
         onFinishInflate();
 
         registerResource();
+
+        mNeedsLayoutUpdate = true;
     }
 
     /**
      * Invalidate the inflated View, causing a snapshot of the View to be captured.
      */
     public void invalidate() {
+        invalidate(false);
+    }
+
+    /**
+     * Invalidate the inflated View, causing a snapshot of the View to be captured.
+     *
+     * @param didViewSizeChange Whether the View's size has changed..
+     */
+    public void invalidate(boolean didViewSizeChange) {
         // View must be inflated at this point. If it's not, do it now.
         if (mView == null) {
             inflate();
@@ -135,23 +154,28 @@ public class ViewResourceInflater {
 
         mIsInvalidated = true;
 
-        // If the View is already attached, we don't need to do anything because the
-        // snapshot will be captured automatically when the View is drawn.
-        if (!mIsAttached) {
-            if (shouldAttachView()) {
-                // TODO(pedrosimonetti): investigate if complex views can be rendered offline.
-                // NOTE(pedrosimonetti): it seems that complex views don't get rendered
-                // properly if not attached to the hierarchy. The problem seem to be related
-                // to the use of the property "layout_gravity: end", possibly in combination
-                // of other things like elastic views (layout_weight: 1) and/or fading edges.
-                attachView();
-            } else {
-                // When the View is not attached, we need to manually layout the View
-                // and invalidate the resource in order to capture a new snapshot.
-                layout();
-                invalidateResource();
-            }
+        if (!mIsAttached && shouldAttachView()) {
+            // TODO(pedrosimonetti): investigate if complex views can be rendered offline.
+            // NOTE(pedrosimonetti): it seems that complex views don't get rendered
+            // properly if not attached to the hierarchy. The problem seem to be related
+            // to the use of the property "layout_gravity: end", possibly in combination
+            // of other things like elastic views (layout_weight: 1) and/or fading edges.
+            attachView();
         }
+
+        if (mIsAttached) {
+            // Update the View's layout params, which will trigger a re-layout.
+            if (didViewSizeChange || mNeedsLayoutUpdate) {
+                updateLayoutParams();
+            }
+        } else {
+            // When the View is not attached, we need to manually layout the View and
+            // invalidate the resource in order to capture a new snapshot.
+            layout();
+            invalidateResource();
+        }
+
+        mNeedsLayoutUpdate = false;
     }
 
     /**
@@ -242,10 +266,25 @@ public class ViewResourceInflater {
     }
 
     /**
+     * Lays out the View.
+     */
+    protected void layout() {
+        mView.measure(getWidthMeasureSpec(), getHeightMeasureSpec());
+        mView.layout(0, 0, getMeasuredWidth(), getMeasuredHeight());
+    }
+
+    /**
      * @return The View resource.
      */
     protected View getView() {
         return mView;
+    }
+
+    /**
+     * @return The Context used to inflate the View.
+     */
+    protected Context getContext() {
+        return mContext;
     }
 
     /**
@@ -283,14 +322,29 @@ public class ViewResourceInflater {
     }
 
     /**
-     * Layout the View. This is to be used when the View is not attached to the hierarchy.
+     * Lay out the view according to the current width and height measure specs.
      */
-    private void layout() {
+    private void updateLayoutParams() {
         // View must be inflated at this point.
         assert mView != null;
 
-        mView.measure(getWidthMeasureSpec(), getHeightMeasureSpec());
-        mView.layout(0, 0, getMeasuredWidth(), getMeasuredHeight());
+        // Update LayoutParams according to the current measure spec.
+        final int widthMeasureSpec = getWidthMeasureSpec();
+        int width = ViewGroup.LayoutParams.WRAP_CONTENT;
+        if (View.MeasureSpec.getMode(widthMeasureSpec) == View.MeasureSpec.EXACTLY) {
+            width = View.MeasureSpec.getSize(widthMeasureSpec);
+        }
+
+        final int heightMeasureSpec = getHeightMeasureSpec();
+        int height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        if (View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.EXACTLY) {
+            height = View.MeasureSpec.getSize(heightMeasureSpec);
+        }
+
+        ViewGroup.LayoutParams params = mView.getLayoutParams();
+        params.width = width;
+        params.height = height;
+        mView.setLayoutParams(params);
     }
 
     /**
@@ -351,26 +405,20 @@ public class ViewResourceInflater {
     /**
      * Called when a snapshot is captured.
      */
-    private void onCaptureEnd() {
+    protected void onCaptureEnd() {
         if (shouldDetachViewAfterCapturing()) {
             detachView();
         }
     }
 
     /**
-     * A custom {@link ViewTreeObserver.OnDrawListener} that calls the method {@link #onDraw()}.
+     * A custom {@link ViewTreeObserver.OnDrawListener} that invalidates the resource when
+     * the view is drawn.
      */
     private class ViewInflaterOnDrawListener implements ViewTreeObserver.OnDrawListener {
         @Override
         public void onDraw() {
-            ViewResourceInflater.this.onDraw();
+            invalidateResource();
         }
-    }
-
-    /**
-     * Called when the View is drawn,
-     */
-    private void onDraw() {
-        invalidateResource();
     }
 }

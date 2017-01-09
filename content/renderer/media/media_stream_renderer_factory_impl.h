@@ -5,6 +5,7 @@
 #ifndef CONTENT_RENDERER_MEDIA_MEDIA_STREAM_RENDERER_FACTORY_IMPL_H_
 #define CONTENT_RENDERER_MEDIA_MEDIA_STREAM_RENDERER_FACTORY_IMPL_H_
 
+#include "base/macros.h"
 #include "content/public/renderer/media_stream_renderer_factory.h"
 
 namespace content {
@@ -14,16 +15,17 @@ class MediaStreamRendererFactoryImpl : public MediaStreamRendererFactory {
   MediaStreamRendererFactoryImpl();
   ~MediaStreamRendererFactoryImpl() override;
 
-  scoped_refptr<VideoFrameProvider> GetVideoFrameProvider(
-      const GURL& url,
+  scoped_refptr<MediaStreamVideoRenderer> GetVideoRenderer(
+      const blink::WebMediaStream& web_stream,
       const base::Closure& error_cb,
-      const VideoFrameProvider::RepaintCB& repaint_cb,
+      const MediaStreamVideoRenderer::RepaintCB& repaint_cb,
+      const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
       const scoped_refptr<base::TaskRunner>& worker_task_runner,
       media::GpuVideoAcceleratorFactories* gpu_factories) override;
 
   scoped_refptr<MediaStreamAudioRenderer> GetAudioRenderer(
-      const GURL& url,
+      const blink::WebMediaStream& web_stream,
       int render_frame_id,
       const std::string& device_id,
       const url::Origin& security_origin) override;

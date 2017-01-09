@@ -5,13 +5,24 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_PTR_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_PTR_H_
 
+#include <stdint.h>
+
+#include <string>
+#include <utility>
+
+#include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/bindings/associated_group.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr_info.h"
 #include "mojo/public/cpp/bindings/associated_interface_request.h"
-#include "mojo/public/cpp/bindings/callback.h"
+#include "mojo/public/cpp/bindings/connection_error_callback.h"
 #include "mojo/public/cpp/bindings/lib/associated_interface_ptr_state.h"
+#include "mojo/public/cpp/bindings/lib/multiplex_router.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 
 namespace mojo {
 
@@ -19,8 +30,6 @@ namespace mojo {
 // InterfacePtr, except that it doesn't own a message pipe handle.
 template <typename Interface>
 class AssociatedInterfacePtr {
-  MOVE_ONLY_TYPE_WITH_MOVE_CONSTRUCTOR_FOR_CPP_03(AssociatedInterfacePtr)
-
  public:
   // Constructs an unbound AssociatedInterfacePtr.
   AssociatedInterfacePtr() {}
@@ -49,20 +58,26 @@ class AssociatedInterfacePtr {
   // Calling with an invalid |info| has the same effect as reset(). In this
   // case, the AssociatedInterfacePtr is not considered as bound.
   //
+  // |runner| must belong to the same thread. It will be used to dispatch all
+  // callbacks and connection error notification. It is useful when you attach
+  // multiple task runners to a single thread for the purposes of task
+  // scheduling.
+  //
   // NOTE: Please see the comments of
   // AssociatedGroup.CreateAssociatedInterface() about when you can use this
   // object to make calls.
-  void Bind(AssociatedInterfacePtrInfo<Interface> info) {
+  void Bind(AssociatedInterfacePtrInfo<Interface> info,
+            scoped_refptr<base::SingleThreadTaskRunner> runner =
+                base::ThreadTaskRunnerHandle::Get()) {
     reset();
 
-    bool is_local =
-        internal::AssociatedInterfacePtrInfoHelper::GetHandle(&info).is_local();
+    bool is_local = info.handle().is_local();
 
     DCHECK(is_local) << "The AssociatedInterfacePtrInfo is supposed to be used "
                         "at the other side of the message pipe.";
 
     if (info.is_valid() && is_local)
-      internal_state_.Bind(info.Pass());
+      internal_state_.Bind(std::move(info), std::move(runner));
   }
 
   bool is_bound() const { return internal_state_.is_bound(); }
@@ -76,10 +91,13 @@ class AssociatedInterfacePtr {
   // Returns the version number of the interface that the remote side supports.
   uint32_t version() const { return internal_state_.version(); }
 
+  // Returns the internal interface ID of this associated interface.
+  uint32_t interface_id() const { return internal_state_.interface_id(); }
+
   // Queries the max version that the remote side supports. On completion, the
   // result will be returned as the input of |callback|. The version number of
   // this object will also be updated.
-  void QueryVersion(const Callback<void(uint32_t)>& callback) {
+  void QueryVersion(const base::Callback<void(uint32_t)>& callback) {
     internal_state_.QueryVersion(callback);
   }
 
@@ -94,11 +112,24 @@ class AssociatedInterfacePtr {
     internal_state_.RequireVersion(version);
   }
 
+  // Sends a message on the underlying message pipe and runs the current
+  // message loop until its response is received. This can be used in tests to
+  // verify that no message was sent on a message pipe in response to some
+  // stimulus.
+  void FlushForTesting() { internal_state_.FlushForTesting(); }
+
   // Closes the associated interface (if any) and returns the pointer to the
   // unbound state.
   void reset() {
     State doomed;
     internal_state_.Swap(&doomed);
+  }
+
+  // Similar to the method above, but also specifies a disconnect reason.
+  void ResetWithReason(uint32_t custom_reason, const std::string& description) {
+    if (internal_state_.is_bound())
+      internal_state_.SendDisconnectReason(custom_reason, description);
+    reset();
   }
 
   // Indicates whether an error has been encountered. If true, method calls made
@@ -109,8 +140,13 @@ class AssociatedInterfacePtr {
   //
   // This method may only be called after the AssociatedInterfacePtr has been
   // bound.
-  void set_connection_error_handler(const Closure& error_handler) {
+  void set_connection_error_handler(const base::Closure& error_handler) {
     internal_state_.set_connection_error_handler(error_handler);
+  }
+
+  void set_connection_error_with_reason_handler(
+      const ConnectionErrorWithReasonCallback& error_handler) {
+    internal_state_.set_connection_error_with_reason_handler(error_handler);
   }
 
   // Unbinds and returns the associated interface pointer information which
@@ -131,7 +167,7 @@ class AssociatedInterfacePtr {
   // Returns the associated group that this object belongs to. Returns null if
   // the object is not bound.
   AssociatedGroup* associated_group() {
-    return internal_state_->associated_group();
+    return internal_state_.associated_group();
   }
 
   // DO NOT USE. Exposed only for internal use and for testing.
@@ -142,6 +178,7 @@ class AssociatedInterfacePtr {
   // Allow AssociatedInterfacePtr<> to be used in boolean expressions, but not
   // implicitly convertible to a real bool (which is dangerous).
  private:
+  // TODO(dcheng): Use an explicit conversion operator.
   typedef internal::AssociatedInterfacePtrState<Interface>
       AssociatedInterfacePtr::*Testable;
 
@@ -161,6 +198,8 @@ class AssociatedInterfacePtr {
 
   typedef internal::AssociatedInterfacePtrState<Interface> State;
   mutable State internal_state_;
+
+  DISALLOW_COPY_AND_ASSIGN(AssociatedInterfacePtr);
 };
 
 // Creates an associated interface. The output |ptr| should be used locally
@@ -175,14 +214,57 @@ class AssociatedInterfacePtr {
 template <typename Interface>
 AssociatedInterfaceRequest<Interface> GetProxy(
     AssociatedInterfacePtr<Interface>* ptr,
-    AssociatedGroup* group) {
+    AssociatedGroup* group,
+    scoped_refptr<base::SingleThreadTaskRunner> runner =
+        base::ThreadTaskRunnerHandle::Get()) {
   AssociatedInterfaceRequest<Interface> request;
   AssociatedInterfacePtrInfo<Interface> ptr_info;
   group->CreateAssociatedInterface(AssociatedGroup::WILL_PASS_REQUEST,
                                    &ptr_info, &request);
 
-  ptr->Bind(ptr_info.Pass());
-  return request.Pass();
+  ptr->Bind(std::move(ptr_info), std::move(runner));
+  return request;
+}
+
+// Creates an associated interface proxy in its own AssociatedGroup.
+template <typename Interface>
+AssociatedInterfaceRequest<Interface> GetProxyForTesting(
+    AssociatedInterfacePtr<Interface>* ptr,
+    scoped_refptr<base::SingleThreadTaskRunner> runner =
+        base::ThreadTaskRunnerHandle::Get()) {
+  MessagePipe pipe;
+  using internal::MultiplexRouter;
+  scoped_refptr<MultiplexRouter> router0 = new MultiplexRouter(
+      std::move(pipe.handle0), MultiplexRouter::MULTI_INTERFACE, true, runner);
+  scoped_refptr<MultiplexRouter> router1 = new MultiplexRouter(
+      std::move(pipe.handle1), MultiplexRouter::MULTI_INTERFACE, false, runner);
+
+  AssociatedInterfacePtrInfo<Interface> ptr_info;
+  AssociatedInterfaceRequest<Interface> request;
+  router1->CreateAssociatedGroup()->CreateAssociatedInterface(
+      AssociatedGroup::WILL_PASS_PTR, &ptr_info, &request);
+
+  // Emulate passing |ptr_info| across a pipe.
+  ScopedInterfaceEndpointHandle handle = ptr_info.PassHandle();
+  DCHECK(!handle.is_local());
+  ptr->Bind(AssociatedInterfacePtrInfo<Interface>(
+                router0->CreateLocalEndpointHandle(handle.release()),
+                ptr_info.version()),
+            std::move(runner));
+
+  return request;
+}
+
+// Creates an associated interface proxy which casts its messages into the void.
+template <typename Interface>
+void GetDummyProxyForTesting(AssociatedInterfacePtr<Interface>* proxy) {
+  MessagePipe pipe;
+  scoped_refptr<internal::MultiplexRouter> router =
+      new internal::MultiplexRouter(std::move(pipe.handle0),
+                                    internal::MultiplexRouter::MULTI_INTERFACE,
+                                    false, base::ThreadTaskRunnerHandle::Get());
+  std::unique_ptr<AssociatedGroup> group = router->CreateAssociatedGroup();
+  GetProxy(proxy, group.get());
 }
 
 }  // namespace mojo

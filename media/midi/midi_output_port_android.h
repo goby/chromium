@@ -6,12 +6,12 @@
 #define MEDIA_MIDI_MIDI_OUTPUT_PORT_ANDROID_H_
 
 #include <jni.h>
+#include <stdint.h>
 #include <vector>
 
 #include "base/android/scoped_java_ref.h"
 #include "base/time/time.h"
 
-namespace media {
 namespace midi {
 
 class MidiOutputPortAndroid final {
@@ -22,15 +22,12 @@ class MidiOutputPortAndroid final {
   // Returns the when the operation succeeds or the port is already open.
   bool Open();
   void Close();
-  void Send(const std::vector<uint8>& data);
-
-  static bool Register(JNIEnv* env);
+  void Send(const std::vector<uint8_t>& data);
 
  private:
   base::android::ScopedJavaGlobalRef<jobject> raw_port_;
 };
 
 }  // namespace midi
-}  // namespace media
 
 #endif  // MEDIA_MIDI_MIDI_OUTPUT_PORT_ANDROID_H_

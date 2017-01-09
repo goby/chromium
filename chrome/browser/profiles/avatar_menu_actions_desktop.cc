@@ -4,24 +4,11 @@
 
 #include "chrome/browser/profiles/avatar_menu_actions_desktop.h"
 
-#include "base/compiler_specific.h"
-#include "base/strings/string_number_conversions.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/profiles/profile_window.h"
-#include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
-#include "content/public/browser/site_instance.h"
-#include "google_apis/gaia/gaia_urls.h"
-#include "net/base/url_util.h"
 
 AvatarMenuActionsDesktop::AvatarMenuActionsDesktop() {
 }
@@ -40,19 +27,17 @@ void AvatarMenuActionsDesktop::AddNewProfile(ProfileMetrics::ProfileAdd type) {
 
   Browser* settings_browser = browser_;
   if (!settings_browser) {
-    const Browser::CreateParams params(ProfileManager::GetLastUsedProfile(),
-                                       chrome::GetActiveDesktop());
+    const Browser::CreateParams params(ProfileManager::GetLastUsedProfile());
     settings_browser = new Browser(params);
   }
   chrome::ShowSettingsSubPage(settings_browser, chrome::kCreateProfileSubPage);
   ProfileMetrics::LogProfileAddNewUser(type);
 }
 
-void AvatarMenuActionsDesktop::EditProfile(Profile* profile, size_t index) {
+void AvatarMenuActionsDesktop::EditProfile(Profile* profile) {
   Browser* settings_browser = browser_;
   if (!settings_browser) {
-    settings_browser = new Browser(
-        Browser::CreateParams(profile, chrome::GetActiveDesktop()));
+    settings_browser = new Browser(Browser::CreateParams(profile));
   }
   // TODO(davidben): The manageProfile page only allows editting the profile
   // associated with the browser it is opened in. AvatarMenuActionsDesktop
@@ -64,19 +49,11 @@ bool AvatarMenuActionsDesktop::ShouldShowAddNewProfileLink() const {
   // |browser_| can be NULL in unit_tests.
   if (browser_ && browser_->profile()->IsSupervised())
     return false;
-#if defined(OS_WIN)
-  return chrome::GetActiveDesktop() != chrome::HOST_DESKTOP_TYPE_ASH;
-#else
   return true;
-#endif
 }
 
 bool AvatarMenuActionsDesktop::ShouldShowEditProfileLink() const {
-#if defined(OS_WIN)
-  return chrome::GetActiveDesktop() != chrome::HOST_DESKTOP_TYPE_ASH;
-#else
   return true;
-#endif
 }
 
 void AvatarMenuActionsDesktop::ActiveBrowserChanged(Browser* browser) {

@@ -4,9 +4,12 @@
 
 #include "ui/events/ozone/evdev/event_factory_evdev.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/threading/worker_pool.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -82,7 +85,7 @@ class ProxyDeviceEventDispatcher : public DeviceEventDispatcherEvdev {
   }
 
   void DispatchKeyboardDevicesUpdated(
-      const std::vector<KeyboardDevice>& devices) override {
+      const std::vector<InputDevice>& devices) override {
     ui_thread_runner_->PostTask(
         FROM_HERE,
         base::Bind(&EventFactoryEvdev::DispatchKeyboardDevicesUpdated,
@@ -114,10 +117,42 @@ class ProxyDeviceEventDispatcher : public DeviceEventDispatcherEvdev {
                               event_factory_evdev_));
   }
 
+  void DispatchStylusStateChanged(StylusState stylus_state) override {
+    ui_thread_runner_->PostTask(
+        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchStylusStateChanged,
+                              event_factory_evdev_, stylus_state));
+  }
+
  private:
   scoped_refptr<base::SingleThreadTaskRunner> ui_thread_runner_;
   base::WeakPtr<EventFactoryEvdev> event_factory_evdev_;
 };
+
+template <typename T>
+gfx::PointF GetTransformedEventLocation(const T& params) {
+  float x = params.location.x();
+  float y = params.location.y();
+
+  // Transform the event to align touches to the image based on display mode.
+  DeviceDataManager::GetInstance()->ApplyTouchTransformer(params.device_id, &x,
+                                                          &y);
+  return gfx::PointF(x, y);
+}
+
+template <typename T>
+PointerDetails GetTransformedEventPointerDetails(const T& params) {
+  double radius_x = params.pointer_details.radius_x;
+  double radius_y = params.pointer_details.radius_y;
+  DeviceDataManager::GetInstance()->ApplyTouchRadiusScale(params.device_id,
+                                                          &radius_x);
+  DeviceDataManager::GetInstance()->ApplyTouchRadiusScale(params.device_id,
+                                                          &radius_y);
+
+  PointerDetails details = params.pointer_details;
+  details.radius_x = radius_x;
+  details.radius_y = radius_y;
+  return details;
+}
 
 }  // namespace
 
@@ -147,15 +182,16 @@ void EventFactoryEvdev::Init() {
   initialized_ = true;
 }
 
-scoped_ptr<SystemInputInjector> EventFactoryEvdev::CreateSystemInputInjector() {
+std::unique_ptr<SystemInputInjector>
+EventFactoryEvdev::CreateSystemInputInjector() {
   // Use forwarding dispatcher for the injector rather than dispatching
   // directly. We cannot assume it is safe to (re-)enter ui::Event dispatch
   // synchronously from the injection point.
-  scoped_ptr<DeviceEventDispatcherEvdev> proxy_dispatcher(
+  std::unique_ptr<DeviceEventDispatcherEvdev> proxy_dispatcher(
       new ProxyDeviceEventDispatcher(base::ThreadTaskRunnerHandle::Get(),
                                      weak_ptr_factory_.GetWeakPtr()));
-  return make_scoped_ptr(
-      new InputInjectorEvdev(proxy_dispatcher.Pass(), cursor_));
+  return base::MakeUnique<InputInjectorEvdev>(std::move(proxy_dispatcher),
+                                              cursor_);
 }
 
 void EventFactoryEvdev::DispatchKeyEvent(const KeyEventParams& params) {
@@ -169,13 +205,24 @@ void EventFactoryEvdev::DispatchMouseMoveEvent(
     const MouseMoveEventParams& params) {
   TRACE_EVENT1("evdev", "EventFactoryEvdev::DispatchMouseMoveEvent", "device",
                params.device_id);
+
+  gfx::PointF location = params.location;
+  PointerDetails details = params.pointer_details;
+
+  if (params.flags & EF_DIRECT_INPUT) {
+    details = GetTransformedEventPointerDetails(params);
+    cursor_->MoveCursorTo(GetTransformedEventLocation(params));
+    location = cursor_->GetLocation();
+  }
+
   MouseEvent event(ui::ET_MOUSE_MOVED, gfx::Point(), gfx::Point(),
-                   params.timestamp, modifiers_.GetModifierFlags(),
+                   params.timestamp,
+                   modifiers_.GetModifierFlags() | params.flags,
                    /* changed_button_flags */ 0);
-  event.set_location_f(params.location);
-  event.set_root_location_f(params.location);
+  event.set_location_f(location);
+  event.set_root_location_f(location);
   event.set_source_device_id(params.device_id);
-  event.set_pointer_details(params.pointer_details);
+  event.set_pointer_details(details);
   DispatchUiEvent(&event);
 }
 
@@ -183,6 +230,15 @@ void EventFactoryEvdev::DispatchMouseButtonEvent(
     const MouseButtonEventParams& params) {
   TRACE_EVENT1("evdev", "EventFactoryEvdev::DispatchMouseButtonEvent", "device",
                params.device_id);
+
+  gfx::PointF location = params.location;
+  PointerDetails details = params.pointer_details;
+
+  if (params.flags & EF_DIRECT_INPUT) {
+    details = GetTransformedEventPointerDetails(params);
+    cursor_->MoveCursorTo(GetTransformedEventLocation(params));
+    location = cursor_->GetLocation();
+  }
 
   // Mouse buttons can be remapped, touchpad taps & clicks cannot.
   unsigned int button = params.button;
@@ -222,12 +278,12 @@ void EventFactoryEvdev::DispatchMouseButtonEvent(
 
   MouseEvent event(params.down ? ui::ET_MOUSE_PRESSED : ui::ET_MOUSE_RELEASED,
                    gfx::Point(), gfx::Point(), params.timestamp,
-                   modifiers_.GetModifierFlags() | flag,
+                   modifiers_.GetModifierFlags() | flag | params.flags,
                    /* changed_button_flags */ flag);
-  event.set_location_f(params.location);
-  event.set_root_location_f(params.location);
+  event.set_location_f(location);
+  event.set_root_location_f(location);
   event.set_source_device_id(params.device_id);
-  event.set_pointer_details(params.pointer_details);
+  event.set_pointer_details(details);
   DispatchUiEvent(&event);
 }
 
@@ -248,6 +304,7 @@ void EventFactoryEvdev::DispatchPinchEvent(const PinchEventParams& params) {
   TRACE_EVENT1("evdev", "EventFactoryEvdev::DispatchPinchEvent", "device",
                params.device_id);
   GestureEventDetails details(params.type);
+  details.set_device_type(GestureDeviceType::DEVICE_TOUCHPAD);
   details.set_scale(params.scale);
   GestureEvent event(params.location.x(), params.location.y(), 0,
                      params.timestamp, details);
@@ -272,29 +329,20 @@ void EventFactoryEvdev::DispatchTouchEvent(const TouchEventParams& params) {
   TRACE_EVENT1("evdev", "EventFactoryEvdev::DispatchTouchEvent", "device",
                params.device_id);
 
-  float x = params.location.x();
-  float y = params.location.y();
-  double radius_x = params.radii.x();
-  double radius_y = params.radii.y();
-
-  // Transform the event to align touches to the image based on display mode.
-  DeviceDataManager::GetInstance()->ApplyTouchTransformer(params.device_id, &x,
-                                                          &y);
-  DeviceDataManager::GetInstance()->ApplyTouchRadiusScale(params.device_id,
-                                                          &radius_x);
-  DeviceDataManager::GetInstance()->ApplyTouchRadiusScale(params.device_id,
-                                                          &radius_y);
+  gfx::PointF location = GetTransformedEventLocation(params);
+  PointerDetails details = GetTransformedEventPointerDetails(params);
 
   // params.slot is guaranteed to be < kNumTouchEvdevSlots.
   int touch_id = touch_id_generator_.GetGeneratedID(
       params.device_id * kNumTouchEvdevSlots + params.slot);
-  TouchEvent touch_event(params.type, gfx::Point(),
-                         modifiers_.GetModifierFlags(), touch_id,
-                         params.timestamp, radius_x, radius_y,
-                         /* angle */ 0.f, params.pressure);
-  touch_event.set_location_f(gfx::PointF(x, y));
-  touch_event.set_root_location_f(gfx::PointF(x, y));
+  TouchEvent touch_event(
+      params.type, gfx::Point(), modifiers_.GetModifierFlags(), touch_id,
+      params.timestamp, /* radius_x */ 0.f, /* radius_y */ 0.f,
+      /* angle */ 0.f, /* force */ 0.f);
+  touch_event.set_location_f(location);
+  touch_event.set_root_location_f(location);
   touch_event.set_source_device_id(params.device_id);
+  touch_event.set_pointer_details(details);
   DispatchUiEvent(&touch_event);
 
   if (params.type == ET_TOUCH_RELEASED || params.type == ET_TOUCH_CANCELLED) {
@@ -309,7 +357,7 @@ void EventFactoryEvdev::DispatchUiEvent(Event* event) {
 }
 
 void EventFactoryEvdev::DispatchKeyboardDevicesUpdated(
-    const std::vector<KeyboardDevice>& devices) {
+    const std::vector<InputDevice>& devices) {
   TRACE_EVENT0("evdev", "EventFactoryEvdev::DispatchKeyboardDevicesUpdated");
   DeviceHotplugEventObserver* observer = DeviceDataManager::GetInstance();
   observer->OnKeyboardDevicesUpdated(devices);
@@ -347,6 +395,12 @@ void EventFactoryEvdev::DispatchDeviceListsComplete() {
   DeviceHotplugEventObserver* observer = DeviceDataManager::GetInstance();
   observer->OnDeviceListsComplete();
 }
+
+void EventFactoryEvdev::DispatchStylusStateChanged(StylusState stylus_state) {
+  TRACE_EVENT0("evdev", "EventFactoryEvdev::DispatchStylusStateChanged");
+  DeviceHotplugEventObserver* observer = DeviceDataManager::GetInstance();
+  observer->OnStylusStateChanged(stylus_state);
+};
 
 void EventFactoryEvdev::OnDeviceEvent(const DeviceEvent& event) {
   if (event.device_type() != DeviceEvent::INPUT)
@@ -386,7 +440,7 @@ void EventFactoryEvdev::WarpCursorTo(gfx::AcceleratedWidget widget,
       base::Bind(&EventFactoryEvdev::DispatchMouseMoveEvent,
                  weak_ptr_factory_.GetWeakPtr(),
                  MouseMoveEventParams(
-                     -1 /* device_id */, cursor_->GetLocation(),
+                     -1 /* device_id */, EF_NONE, cursor_->GetLocation(),
                      PointerDetails(EventPointerType::POINTER_TYPE_MOUSE),
                      EventTimeForNow())));
 }
@@ -397,18 +451,18 @@ int EventFactoryEvdev::NextDeviceId() {
 
 void EventFactoryEvdev::StartThread() {
   // Set up device factory.
-  scoped_ptr<DeviceEventDispatcherEvdev> proxy_dispatcher(
+  std::unique_ptr<DeviceEventDispatcherEvdev> proxy_dispatcher(
       new ProxyDeviceEventDispatcher(base::ThreadTaskRunnerHandle::Get(),
                                      weak_ptr_factory_.GetWeakPtr()));
-  thread_.Start(proxy_dispatcher.Pass(), cursor_,
+  thread_.Start(std::move(proxy_dispatcher), cursor_,
                 base::Bind(&EventFactoryEvdev::OnThreadStarted,
                            weak_ptr_factory_.GetWeakPtr()));
 }
 
 void EventFactoryEvdev::OnThreadStarted(
-    scoped_ptr<InputDeviceFactoryEvdevProxy> input_device_factory) {
+    std::unique_ptr<InputDeviceFactoryEvdevProxy> input_device_factory) {
   TRACE_EVENT0("evdev", "EventFactoryEvdev::OnThreadStarted");
-  input_device_factory_proxy_ = input_device_factory.Pass();
+  input_device_factory_proxy_ = std::move(input_device_factory);
 
   // Hook up device configuration.
   input_controller_.SetInputDeviceFactory(input_device_factory_proxy_.get());

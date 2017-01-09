@@ -4,10 +4,10 @@
 
 #include "chrome/browser/ui/views/autofill/tooltip_icon.h"
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ui/views/autofill/info_bubble.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icons_public.h"
 #include "ui/views/bubble/bubble_frame_view.h"
@@ -39,7 +39,7 @@ class TooltipBubble : public InfoBubble {
  protected:
   // InfoBubble:
   gfx::Rect GetAnchorRect() const override {
-    gfx::Rect bounds = views::BubbleDelegateView::GetAnchorRect();
+    gfx::Rect bounds = views::BubbleDialogDelegateView::GetAnchorRect();
     bounds.Inset(GetPreferredInsets(anchor()));
     return bounds;
   }
@@ -87,8 +87,8 @@ void TooltipIcon::OnGestureEvent(ui::GestureEvent* event) {
   }
 }
 
-void TooltipIcon::GetAccessibleState(ui::AXViewState* state) {
-  state->name = tooltip_;
+void TooltipIcon::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->SetName(tooltip_);
 }
 
 void TooltipIcon::MouseMovedOutOfHost() {
@@ -125,7 +125,7 @@ void TooltipIcon::ShowBubble() {
 
   if (mouse_inside_) {
     views::View* frame = bubble_->GetWidget()->non_client_view()->frame_view();
-    scoped_ptr<views::MouseWatcherHost> host(
+    std::unique_ptr<views::MouseWatcherHost> host(
         new views::MouseWatcherViewHost(frame, gfx::Insets()));
     mouse_watcher_.reset(new views::MouseWatcher(host.release(), this));
     mouse_watcher_->Start();

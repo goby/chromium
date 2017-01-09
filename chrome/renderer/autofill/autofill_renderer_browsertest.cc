@@ -2,18 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <tuple>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
-#include "base/strings/stringprintf.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/test/base/chrome_render_view_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/content/common/autofill_messages.h"
+#include "components/autofill/content/common/autofill_driver.mojom.h"
 #include "components/autofill/content/renderer/autofill_agent.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
+#include "content/public/renderer/render_view.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
@@ -37,31 +43,106 @@ using blink::WebVector;
 
 namespace autofill {
 
-typedef base::Tuple<int, autofill::FormData, autofill::FormFieldData,
-                    gfx::RectF> AutofillQueryParam;
+namespace {
+
+class FakeContentAutofillDriver : public mojom::AutofillDriver {
+ public:
+  FakeContentAutofillDriver() : called_field_change_(false) {}
+  ~FakeContentAutofillDriver() override {}
+
+  void BindRequest(mojom::AutofillDriverRequest request) {
+    bindings_.AddBinding(this, std::move(request));
+  }
+
+  bool called_field_change() const { return called_field_change_; }
+
+  const std::vector<FormData>* forms() const { return forms_.get(); }
+
+  void reset_forms() { return forms_.reset(); }
+
+ private:
+  // mojom::AutofillDriver:
+  void FirstUserGestureObserved() override {}
+
+  void FormsSeen(const std::vector<FormData>& forms,
+                 base::TimeTicks timestamp) override {
+    // FormsSeen() could be called multiple times and sometimes even with empty
+    // forms array for main frame, but we're interested in only the first time
+    // call.
+    if (!forms_)
+      forms_.reset(new std::vector<FormData>(forms));
+  }
+
+  void WillSubmitForm(const FormData& form,
+                      base::TimeTicks timestamp) override {}
+
+  void FormSubmitted(const FormData& form) override {}
+
+  void TextFieldDidChange(const FormData& form,
+                          const FormFieldData& field,
+                          base::TimeTicks timestamp) override {
+    called_field_change_ = true;
+  }
+
+  void QueryFormFieldAutofill(int32_t id,
+                              const FormData& form,
+                              const FormFieldData& field,
+                              const gfx::RectF& bounding_box) override {}
+
+  void HidePopup() override {}
+
+  void FocusNoLongerOnForm() override {}
+
+  void DidFillAutofillFormData(const FormData& form,
+                               base::TimeTicks timestamp) override {}
+
+  void DidPreviewAutofillFormData() override {}
+
+  void DidEndTextFieldEditing() override {}
+
+  void SetDataList(const std::vector<base::string16>& values,
+                   const std::vector<base::string16>& labels) override {}
+
+  // Records whether TextFieldDidChange() get called.
+  bool called_field_change_;
+  // Records data received via FormSeen() call.
+  std::unique_ptr<std::vector<FormData>> forms_;
+
+  mojo::BindingSet<mojom::AutofillDriver> bindings_;
+};
+
+}  // namespace
+
+using AutofillQueryParam =
+    std::tuple<int, autofill::FormData, autofill::FormFieldData, gfx::RectF>;
 
 class AutofillRendererTest : public ChromeRenderViewTest {
  public:
   AutofillRendererTest() {}
+
   ~AutofillRendererTest() override {}
 
  protected:
   void SetUp() override {
     ChromeRenderViewTest::SetUp();
 
-    // Don't want any delay for form state sync changes. This will still post a
-    // message so updates will get coalesced, but as soon as we spin the message
-    // loop, it will generate an update.
-    SendContentStateImmediately();
+    // We only use the fake driver for main frame
+    // because our test cases only involve the main frame.
+    service_manager::InterfaceProvider* remote_interfaces =
+        view_->GetMainRenderFrame()->GetRemoteInterfaces();
+    service_manager::InterfaceProvider::TestApi test_api(remote_interfaces);
+    test_api.SetBinderForName(
+        mojom::AutofillDriver::Name_,
+        base::Bind(&AutofillRendererTest::BindAutofillDriver,
+                   base::Unretained(this)));
   }
 
-  void SimulateRequestAutocompleteResult(
-      blink::WebFrame* invoking_frame,
-      const blink::WebFormElement::AutocompleteResult& result,
-      const base::string16& message) {
-    AutofillMsg_RequestAutocompleteResult msg(0, result, message, FormData());
-    content::RenderFrame::FromWebFrame(invoking_frame)->OnMessageReceived(msg);
+  void BindAutofillDriver(mojo::ScopedMessagePipeHandle handle) {
+    fake_driver_.BindRequest(
+        mojo::MakeRequest<mojom::AutofillDriver>(std::move(handle)));
   }
+
+  FakeContentAutofillDriver fake_driver_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AutofillRendererTest);
@@ -80,13 +161,11 @@ TEST_F(AutofillRendererTest, SendForms) {
            "  </select>"
            "</form>");
 
+  base::RunLoop run_loop;
+  run_loop.RunUntilIdle();
   // Verify that "FormsSeen" sends the expected number of fields.
-  const IPC::Message* message = render_thread_->sink().GetFirstMessageMatching(
-      AutofillHostMsg_FormsSeen::ID);
-  ASSERT_NE(nullptr, message);
-  AutofillHostMsg_FormsSeen::Param params;
-  AutofillHostMsg_FormsSeen::Read(message, &params);
-  std::vector<FormData> forms = base::get<0>(params);
+  ASSERT_TRUE(fake_driver_.forms());
+  std::vector<FormData> forms = *(fake_driver_.forms());
   ASSERT_EQ(1UL, forms.size());
   ASSERT_EQ(4UL, forms[0].fields.size());
 
@@ -118,7 +197,7 @@ TEST_F(AutofillRendererTest, SendForms) {
   expected.max_length = 0;
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[3]);
 
-  render_thread_->sink().ClearMessages();
+  fake_driver_.reset_forms();
 
   // Dynamically create a new form. A new message should be sent for it, but
   // not for the previous form.
@@ -143,13 +222,10 @@ TEST_F(AutofillRendererTest, SendForms) {
       "newForm.appendChild(newLastname);"
       "newForm.appendChild(newEmail);"
       "document.body.appendChild(newForm);");
-  msg_loop_.RunUntilIdle();
 
-  message = render_thread_->sink().GetFirstMessageMatching(
-      AutofillHostMsg_FormsSeen::ID);
-  ASSERT_NE(nullptr, message);
-  AutofillHostMsg_FormsSeen::Read(message, &params);
-  forms = base::get<0>(params);
+  WaitForAutofillDidAssociateFormControl();
+  ASSERT_TRUE(fake_driver_.forms());
+  forms = *(fake_driver_.forms());
   ASSERT_EQ(1UL, forms.size());
   ASSERT_EQ(3UL, forms[0].fields.size());
 
@@ -175,13 +251,11 @@ TEST_F(AutofillRendererTest, EnsureNoFormSeenIfTooFewFields) {
            "  <input type='text' id='middlename'/>"
            "</form>");
 
+  base::RunLoop run_loop;
+  run_loop.RunUntilIdle();
   // Verify that "FormsSeen" isn't sent, as there are too few fields.
-  const IPC::Message* message = render_thread_->sink().GetFirstMessageMatching(
-      AutofillHostMsg_FormsSeen::ID);
-  ASSERT_NE(nullptr, message);
-  AutofillHostMsg_FormsSeen::Param params;
-  AutofillHostMsg_FormsSeen::Read(message, &params);
-  const std::vector<FormData>& forms = base::get<0>(params);
+  ASSERT_TRUE(fake_driver_.forms());
+  const std::vector<FormData>& forms = *(fake_driver_.forms());
   ASSERT_EQ(0UL, forms.size());
 }
 
@@ -208,26 +282,21 @@ TEST_F(AutofillRendererTest, DynamicallyAddedUnownedFormElements) {
   ASSERT_TRUE(base::ReadFileToString(test_path, &html_data));
   LoadHTML(html_data.c_str());
 
+  base::RunLoop run_loop;
+  run_loop.RunUntilIdle();
   // Verify that "FormsSeen" sends the expected number of fields.
-  const IPC::Message* message = render_thread_->sink().GetFirstMessageMatching(
-      AutofillHostMsg_FormsSeen::ID);
-  ASSERT_NE(nullptr, message);
-  AutofillHostMsg_FormsSeen::Param params;
-  AutofillHostMsg_FormsSeen::Read(message, &params);
-  std::vector<FormData> forms = base::get<0>(params);
+  ASSERT_TRUE(fake_driver_.forms());
+  std::vector<FormData> forms = *(fake_driver_.forms());
   ASSERT_EQ(1UL, forms.size());
   ASSERT_EQ(7UL, forms[0].fields.size());
 
-  render_thread_->sink().ClearMessages();
+  fake_driver_.reset_forms();
 
   ExecuteJavaScriptForTests("AddFields()");
-  msg_loop_.RunUntilIdle();
 
-  message = render_thread_->sink().GetFirstMessageMatching(
-      AutofillHostMsg_FormsSeen::ID);
-  ASSERT_NE(nullptr, message);
-  AutofillHostMsg_FormsSeen::Read(message, &params);
-  forms = base::get<0>(params);
+  WaitForAutofillDidAssociateFormControl();
+  ASSERT_TRUE(fake_driver_.forms());
+  forms = *(fake_driver_.forms());
   ASSERT_EQ(1UL, forms.size());
   ASSERT_EQ(9UL, forms[0].fields.size());
 
@@ -259,95 +328,16 @@ TEST_F(AutofillRendererTest, IgnoreNonUserGestureTextFieldChanges) {
 
   // Not a user gesture, so no IPC message to browser.
   DisableUserGestureSimulationForAutofill();
+  ASSERT_FALSE(fake_driver_.called_field_change());
   full_name.setValue("Alice", true);
-  GetMainFrame()->toWebLocalFrame()->autofillClient()->textFieldDidChange(
-      full_name);
-  base::MessageLoop::current()->RunUntilIdle();
-  ASSERT_EQ(nullptr, render_thread_->sink().GetFirstMessageMatching(
-                         AutofillHostMsg_TextFieldDidChange::ID));
+  GetMainFrame()->autofillClient()->textFieldDidChange(full_name);
+  base::RunLoop().RunUntilIdle();
+  ASSERT_FALSE(fake_driver_.called_field_change());
 
   // A user gesture will send a message to the browser.
   EnableUserGestureSimulationForAutofill();
   SimulateUserInputChangeForElement(&full_name, "Alice");
-  ASSERT_NE(nullptr, render_thread_->sink().GetFirstMessageMatching(
-                         AutofillHostMsg_TextFieldDidChange::ID));
-}
-
-class RequestAutocompleteRendererTest : public AutofillRendererTest {
- public:
-  RequestAutocompleteRendererTest()
-      : invoking_frame_(NULL), sibling_frame_(NULL) {}
-  ~RequestAutocompleteRendererTest() override {}
-
- protected:
-  void SetUp() override {
-    AutofillRendererTest::SetUp();
-
-    // Bypass the HTTPS-only restriction to show requestAutocomplete.
-    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-    command_line->AppendSwitch(::switches::kReduceSecurityForTesting);
-
-    GURL url("data:text/html;charset=utf-8,"
-             "<form><input autocomplete=cc-number></form>");
-    const char kDoubleIframeHtml[] = "<iframe id=subframe src='%s'></iframe>"
-                                     "<iframe id=sibling></iframe>";
-    LoadHTML(base::StringPrintf(kDoubleIframeHtml, url.spec().c_str()).c_str());
-
-    WebElement subframe = GetMainFrame()->document().getElementById("subframe");
-    ASSERT_FALSE(subframe.isNull());
-    invoking_frame_ = WebLocalFrame::fromFrameOwnerElement(subframe);
-    ASSERT_TRUE(invoking_frame());
-    ASSERT_EQ(GetMainFrame(), invoking_frame()->parent());
-
-    WebElement sibling = GetMainFrame()->document().getElementById("sibling");
-    ASSERT_FALSE(sibling.isNull());
-    sibling_frame_ = WebLocalFrame::fromFrameOwnerElement(sibling);
-    ASSERT_TRUE(sibling_frame());
-
-    WebVector<WebFormElement> forms;
-    invoking_frame()->document().forms(forms);
-    ASSERT_EQ(1U, forms.size());
-    invoking_form_ = forms[0];
-    ASSERT_FALSE(invoking_form().isNull());
-
-    render_thread_->sink().ClearMessages();
-
-    // Invoke requestAutocomplete to show the dialog.
-    invoking_frame_->autofillClient()->didRequestAutocomplete(invoking_form());
-    ASSERT_TRUE(render_thread_->sink().GetFirstMessageMatching(
-        AutofillHostMsg_RequestAutocomplete::ID));
-
-    render_thread_->sink().ClearMessages();
-  }
-
-  void TearDown() override {
-    invoking_form_.reset();
-    AutofillRendererTest::TearDown();
-  }
-
-  void NavigateFrame(WebFrame* frame) {
-    frame->loadRequest(WebURLRequest(GURL("about:blank")));
-    ProcessPendingMessages();
-  }
-
-  const WebFormElement& invoking_form() const { return invoking_form_; }
-  WebLocalFrame* invoking_frame() { return invoking_frame_; }
-  WebFrame* sibling_frame() { return sibling_frame_; }
-
- protected:
-  WebFormElement invoking_form_;
-  WebLocalFrame* invoking_frame_;
-  WebFrame* sibling_frame_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(RequestAutocompleteRendererTest);
-};
-
-TEST_F(RequestAutocompleteRendererTest, InvokingTwiceOnlyShowsOnce) {
-  // Attempting to show the requestAutocomplete dialog again should be ignored.
-  invoking_frame_->autofillClient()->didRequestAutocomplete(invoking_form());
-  EXPECT_FALSE(render_thread_->sink().GetFirstMessageMatching(
-      AutofillHostMsg_RequestAutocomplete::ID));
+  ASSERT_TRUE(fake_driver_.called_field_change());
 }
 
 }  // namespace autofill

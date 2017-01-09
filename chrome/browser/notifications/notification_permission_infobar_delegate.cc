@@ -5,46 +5,36 @@
 #include "chrome/browser/notifications/notification_permission_infobar_delegate.h"
 
 #include "chrome/browser/android/android_theme_resources.h"
-#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/infobars/core/infobar.h"
-#include "components/url_formatter/elide_url.h"
-#include "net/base/escape.h"
-#include "ui/base/l10n/l10n_util.h"
 
-// static
-infobars::InfoBar* NotificationPermissionInfobarDelegate::Create(
-    InfoBarService* infobar_service,
+NotificationPermissionInfoBarDelegate::NotificationPermissionInfoBarDelegate(
+    const content::PermissionType& permission_type,
     const GURL& requesting_frame,
-    const std::string& display_languages,
-    const base::Callback<void(bool, bool)>& callback) {
-  return infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(
-          new NotificationPermissionInfobarDelegate(requesting_frame,
-                                                    display_languages,
-                                                    callback))));
+    bool user_gesture,
+    Profile* profile,
+    const PermissionSetCallback& callback)
+    : PermissionInfoBarDelegate(requesting_frame,
+                                permission_type,
+                                CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                user_gesture,
+                                profile,
+                                callback) {
+  DCHECK(permission_type == content::PermissionType::NOTIFICATIONS ||
+         permission_type == content::PermissionType::PUSH_MESSAGING);
 }
 
-NotificationPermissionInfobarDelegate::NotificationPermissionInfobarDelegate(
-    const GURL& requesting_frame,
-    const std::string& display_languages,
-    const base::Callback<void(bool, bool)>& callback)
-    : PermissionInfobarDelegate(requesting_frame,
-                                CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
-                                callback),
-      requesting_frame_(requesting_frame),
-      display_languages_(display_languages) {}
-
-NotificationPermissionInfobarDelegate::~NotificationPermissionInfobarDelegate()
+NotificationPermissionInfoBarDelegate::~NotificationPermissionInfoBarDelegate()
     {}
 
-int NotificationPermissionInfobarDelegate::GetIconId() const {
+infobars::InfoBarDelegate::InfoBarIdentifier
+NotificationPermissionInfoBarDelegate::GetIdentifier() const {
+  return NOTIFICATION_PERMISSION_INFOBAR_DELEGATE;
+}
+
+int NotificationPermissionInfoBarDelegate::GetIconId() const {
   return IDR_ANDROID_INFOBAR_NOTIFICATIONS;
 }
 
-base::string16 NotificationPermissionInfobarDelegate::GetMessageText() const {
-  return l10n_util::GetStringFUTF16(
-      IDS_NOTIFICATION_PERMISSIONS,
-      url_formatter::FormatUrlForSecurityDisplay(requesting_frame_.GetOrigin(),
-                                                 display_languages_));
+int NotificationPermissionInfoBarDelegate::GetMessageResourceId() const {
+  return IDS_NOTIFICATION_PERMISSIONS;
 }

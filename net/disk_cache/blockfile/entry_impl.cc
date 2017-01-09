@@ -4,7 +4,10 @@
 
 #include "net/disk_cache/blockfile/entry_impl.h"
 
+#include <limits>
+
 #include "base/hash.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "net/base/io_buffer.h"
@@ -16,6 +19,9 @@
 #include "net/disk_cache/blockfile/sparse_control.h"
 #include "net/disk_cache/cache_util.h"
 #include "net/disk_cache/net_log_parameters.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source_type.h"
 
 // Provide a BackendImpl object to macros from histogram_macros.h.
 #define CACHE_UMA_BACKEND_IMPL_OBJ backend_
@@ -35,11 +41,15 @@ class SyncCallback: public disk_cache::FileIOCallback {
  public:
   // |end_event_type| is the event type to log on completion.  Logs nothing on
   // discard, or when the NetLog is not set to log all events.
-  SyncCallback(disk_cache::EntryImpl* entry, net::IOBuffer* buffer,
+  SyncCallback(disk_cache::EntryImpl* entry,
+               net::IOBuffer* buffer,
                const net::CompletionCallback& callback,
-               net::NetLog::EventType end_event_type)
-      : entry_(entry), callback_(callback), buf_(buffer),
-        start_(TimeTicks::Now()), end_event_type_(end_event_type) {
+               net::NetLogEventType end_event_type)
+      : entry_(entry),
+        callback_(callback),
+        buf_(buffer),
+        start_(TimeTicks::Now()),
+        end_event_type_(end_event_type) {
     entry->AddRef();
     entry->IncrementIoCount();
   }
@@ -53,7 +63,7 @@ class SyncCallback: public disk_cache::FileIOCallback {
   net::CompletionCallback callback_;
   scoped_refptr<net::IOBuffer> buf_;
   TimeTicks start_;
-  const net::NetLog::EventType end_event_type_;
+  const net::NetLogEventType end_event_type_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncCallback);
 };
@@ -316,16 +326,15 @@ int EntryImpl::ReadDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
                             const CompletionCallback& callback) {
   if (net_log_.IsCapturing()) {
     net_log_.BeginEvent(
-        net::NetLog::TYPE_ENTRY_READ_DATA,
+        net::NetLogEventType::ENTRY_READ_DATA,
         CreateNetLogReadWriteDataCallback(index, offset, buf_len, false));
   }
 
   int result = InternalReadData(index, offset, buf, buf_len, callback);
 
   if (result != net::ERR_IO_PENDING && net_log_.IsCapturing()) {
-    net_log_.EndEvent(
-        net::NetLog::TYPE_ENTRY_READ_DATA,
-        CreateNetLogReadWriteCompleteCallback(result));
+    net_log_.EndEvent(net::NetLogEventType::ENTRY_READ_DATA,
+                      CreateNetLogReadWriteCompleteCallback(result));
   }
   return result;
 }
@@ -335,7 +344,7 @@ int EntryImpl::WriteDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
                              bool truncate) {
   if (net_log_.IsCapturing()) {
     net_log_.BeginEvent(
-        net::NetLog::TYPE_ENTRY_WRITE_DATA,
+        net::NetLogEventType::ENTRY_WRITE_DATA,
         CreateNetLogReadWriteDataCallback(index, offset, buf_len, truncate));
   }
 
@@ -343,14 +352,15 @@ int EntryImpl::WriteDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
                                  truncate);
 
   if (result != net::ERR_IO_PENDING && net_log_.IsCapturing()) {
-    net_log_.EndEvent(
-        net::NetLog::TYPE_ENTRY_WRITE_DATA,
-        CreateNetLogReadWriteCompleteCallback(result));
+    net_log_.EndEvent(net::NetLogEventType::ENTRY_WRITE_DATA,
+                      CreateNetLogReadWriteCompleteCallback(result));
   }
   return result;
 }
 
-int EntryImpl::ReadSparseDataImpl(int64 offset, IOBuffer* buf, int buf_len,
+int EntryImpl::ReadSparseDataImpl(int64_t offset,
+                                  IOBuffer* buf,
+                                  int buf_len,
                                   const CompletionCallback& callback) {
   DCHECK(node_.Data()->dirty || read_only_);
   int result = InitSparseData();
@@ -364,7 +374,9 @@ int EntryImpl::ReadSparseDataImpl(int64 offset, IOBuffer* buf, int buf_len,
   return result;
 }
 
-int EntryImpl::WriteSparseDataImpl(int64 offset, IOBuffer* buf, int buf_len,
+int EntryImpl::WriteSparseDataImpl(int64_t offset,
+                                   IOBuffer* buf,
+                                   int buf_len,
                                    const CompletionCallback& callback) {
   DCHECK(node_.Data()->dirty || read_only_);
   int result = InitSparseData();
@@ -378,7 +390,7 @@ int EntryImpl::WriteSparseDataImpl(int64 offset, IOBuffer* buf, int buf_len,
   return result;
 }
 
-int EntryImpl::GetAvailableRangeImpl(int64 offset, int len, int64* start) {
+int EntryImpl::GetAvailableRangeImpl(int64_t offset, int len, int64_t* start) {
   int result = InitSparseData();
   if (net::OK != result)
     return result;
@@ -398,12 +410,13 @@ int EntryImpl::ReadyForSparseIOImpl(const CompletionCallback& callback) {
   return sparse_->ReadyToUse(callback);
 }
 
-uint32 EntryImpl::GetHash() {
+uint32_t EntryImpl::GetHash() {
   return entry_.Data()->hash;
 }
 
-bool EntryImpl::CreateEntry(Addr node_address, const std::string& key,
-                            uint32 hash) {
+bool EntryImpl::CreateEntry(Addr node_address,
+                            const std::string& key,
+                            uint32_t hash) {
   Trace("Create entry In");
   EntryStore* entry_store = entry_.Data();
   RankingsNode* node = node_.Data();
@@ -417,7 +430,7 @@ bool EntryImpl::CreateEntry(Addr node_address, const std::string& key,
 
   entry_store->hash = hash;
   entry_store->creation_time = Time::Now().ToInternalValue();
-  entry_store->key_len = static_cast<int32>(key.size());
+  entry_store->key_len = static_cast<int32_t>(key.size());
   if (entry_store->key_len > kMaxInternalKeyLength) {
     Addr address(0);
     if (!CreateBlock(entry_store->key_len + 1, &address))
@@ -442,14 +455,14 @@ bool EntryImpl::CreateEntry(Addr node_address, const std::string& key,
     memcpy(entry_store->key, key.data(), key.size());
     entry_store->key[key.size()] = '\0';
   }
-  backend_->ModifyStorageSize(0, static_cast<int32>(key.size()));
-  CACHE_UMA(COUNTS, "KeySize", 0, static_cast<int32>(key.size()));
+  backend_->ModifyStorageSize(0, static_cast<int32_t>(key.size()));
+  CACHE_UMA(COUNTS, "KeySize", 0, static_cast<int32_t>(key.size()));
   node->dirty = backend_->GetCurrentEntryId();
   Log("Create Entry ");
   return true;
 }
 
-bool EntryImpl::IsSameEntry(const std::string& key, uint32 hash) {
+bool EntryImpl::IsSameEntry(const std::string& key, uint32_t hash) {
   if (entry_.Data()->hash != hash ||
       static_cast<size_t>(entry_.Data()->key_len) != key.size())
     return false;
@@ -458,7 +471,7 @@ bool EntryImpl::IsSameEntry(const std::string& key, uint32 hash) {
 }
 
 void EntryImpl::InternalDoom() {
-  net_log_.AddEvent(net::NetLog::TYPE_ENTRY_DOOM);
+  net_log_.AddEvent(net::NetLogEventType::ENTRY_DOOM);
   DCHECK(node_.HasData());
   if (!node_.Data()->dirty) {
     node_.Data()->dirty = backend_->GetCurrentEntryId();
@@ -546,7 +559,7 @@ bool EntryImpl::Update() {
   return true;
 }
 
-void EntryImpl::SetDirtyFlag(int32 current_id) {
+void EntryImpl::SetDirtyFlag(int32_t current_id) {
   DCHECK(node_.HasData());
   if (node_.Data()->dirty && current_id != node_.Data()->dirty)
     dirty_ = true;
@@ -555,7 +568,7 @@ void EntryImpl::SetDirtyFlag(int32 current_id) {
     dirty_ = true;
 }
 
-void EntryImpl::SetPointerForInvalidEntry(int32 new_id) {
+void EntryImpl::SetPointerForInvalidEntry(int32_t new_id) {
   node_.Data()->dirty = new_id;
   node_.Store();
 }
@@ -584,7 +597,7 @@ bool EntryImpl::SanityCheck() {
     return false;
 
   Addr next_addr(stored->next);
-  if (next_addr.is_initialized() && !next_addr.SanityCheckForEntryV2()) {
+  if (next_addr.is_initialized() && !next_addr.SanityCheckForEntry()) {
     STRESS_NOTREACHED();
     return false;
   }
@@ -598,7 +611,7 @@ bool EntryImpl::SanityCheck() {
       (stored->key_len > kMaxInternalKeyLength && !key_addr.is_initialized()))
     return false;
 
-  if (!key_addr.SanityCheckV2())
+  if (!key_addr.SanityCheck())
     return false;
 
   if (key_addr.is_initialized() &&
@@ -631,7 +644,7 @@ bool EntryImpl::DataSanityCheck() {
       return false;
     if (!data_size && data_addr.is_initialized())
       return false;
-    if (!data_addr.SanityCheckV2())
+    if (!data_addr.SanityCheck())
       return false;
     if (!data_size)
       continue;
@@ -656,7 +669,7 @@ void EntryImpl::FixForDelete() {
     if (data_addr.is_initialized()) {
       if ((data_size <= kMaxBlockSize && data_addr.is_separate_file()) ||
           (data_size > kMaxBlockSize && data_addr.is_block_file()) ||
-          !data_addr.SanityCheckV2()) {
+          !data_addr.SanityCheck()) {
         STRESS_NOTREACHED();
         // The address is weird so don't attempt to delete it.
         stored->data_addr[i] = 0;
@@ -723,14 +736,13 @@ void EntryImpl::ReportIOTime(Operation op, const base::TimeTicks& start) {
 
 void EntryImpl::BeginLogging(net::NetLog* net_log, bool created) {
   DCHECK(!net_log_.net_log());
-  net_log_ = net::BoundNetLog::Make(
-      net_log, net::NetLog::SOURCE_DISK_CACHE_ENTRY);
-  net_log_.BeginEvent(
-      net::NetLog::TYPE_DISK_CACHE_ENTRY_IMPL,
-      CreateNetLogEntryCreationCallback(this, created));
+  net_log_ = net::NetLogWithSource::Make(
+      net_log, net::NetLogSourceType::DISK_CACHE_ENTRY);
+  net_log_.BeginEvent(net::NetLogEventType::DISK_CACHE_ENTRY_IMPL,
+                      CreateNetLogEntryCreationCallback(this, created));
 }
 
-const net::BoundNetLog& EntryImpl::net_log() const {
+const net::NetLogWithSource& EntryImpl::net_log() const {
   return net_log_;
 }
 
@@ -800,7 +812,7 @@ Time EntryImpl::GetLastModified() const {
   return Time::FromInternalValue(node->Data()->last_modified);
 }
 
-int32 EntryImpl::GetDataSize(int index) const {
+int32_t EntryImpl::GetDataSize(int index) const {
   if (index < 0 || index >= kNumStreams)
     return 0;
 
@@ -851,7 +863,9 @@ int EntryImpl::WriteData(int index, int offset, IOBuffer* buf, int buf_len,
   return net::ERR_IO_PENDING;
 }
 
-int EntryImpl::ReadSparseData(int64 offset, IOBuffer* buf, int buf_len,
+int EntryImpl::ReadSparseData(int64_t offset,
+                              IOBuffer* buf,
+                              int buf_len,
                               const CompletionCallback& callback) {
   if (callback.is_null())
     return ReadSparseDataImpl(offset, buf, buf_len, callback);
@@ -863,7 +877,9 @@ int EntryImpl::ReadSparseData(int64 offset, IOBuffer* buf, int buf_len,
   return net::ERR_IO_PENDING;
 }
 
-int EntryImpl::WriteSparseData(int64 offset, IOBuffer* buf, int buf_len,
+int EntryImpl::WriteSparseData(int64_t offset,
+                               IOBuffer* buf,
+                               int buf_len,
                                const CompletionCallback& callback) {
   if (callback.is_null())
     return WriteSparseDataImpl(offset, buf, buf_len, callback);
@@ -875,7 +891,9 @@ int EntryImpl::WriteSparseData(int64 offset, IOBuffer* buf, int buf_len,
   return net::ERR_IO_PENDING;
 }
 
-int EntryImpl::GetAvailableRange(int64 offset, int len, int64* start,
+int EntryImpl::GetAvailableRange(int64_t offset,
+                                 int len,
+                                 int64_t* start,
                                  const CompletionCallback& callback) {
   if (!background_queue_.get())
     return net::ERR_UNEXPECTED;
@@ -888,7 +906,7 @@ bool EntryImpl::CouldBeSparse() const {
   if (sparse_.get())
     return true;
 
-  scoped_ptr<SparseControl> sparse;
+  std::unique_ptr<SparseControl> sparse;
   sparse.reset(new SparseControl(const_cast<EntryImpl*>(this)));
   return sparse->CouldBeSparse();
 }
@@ -937,7 +955,7 @@ EntryImpl::~EntryImpl() {
 #if defined(NET_BUILD_STRESS_CACHE)
     SanityCheck();
 #endif
-    net_log_.AddEvent(net::NetLog::TYPE_ENTRY_CLOSE);
+    net_log_.AddEvent(net::NetLogEventType::ENTRY_CLOSE);
     bool ret = true;
     for (int index = 0; index < kNumStreams; index++) {
       if (user_buffers_[index].get()) {
@@ -964,7 +982,7 @@ EntryImpl::~EntryImpl() {
   }
 
   Trace("~EntryImpl out 0x%p", reinterpret_cast<void*>(this));
-  net_log_.EndEvent(net::NetLog::TYPE_DISK_CACHE_ENTRY_IMPL);
+  net_log_.EndEvent(net::NetLogEventType::DISK_CACHE_ENTRY_IMPL);
   backend_->OnEntryDestroyEnd();
 }
 
@@ -1032,7 +1050,7 @@ int EntryImpl::InternalReadData(int index, int offset,
   SyncCallback* io_callback = NULL;
   if (!callback.is_null()) {
     io_callback = new SyncCallback(this, buf, callback,
-                                   net::NetLog::TYPE_ENTRY_READ_DATA);
+                                   net::NetLogEventType::ENTRY_READ_DATA);
   }
 
   TimeTicks start_async = TimeTicks::Now();
@@ -1077,7 +1095,7 @@ int EntryImpl::InternalWriteData(int index, int offset,
       offset + buf_len > max_file_size) {
     int size = offset + buf_len;
     if (size <= max_file_size)
-      size = kint32max;
+      size = std::numeric_limits<int32_t>::max();
     backend_->TooMuchStorageRequested(size);
     return net::ERR_FAILED;
   }
@@ -1136,7 +1154,7 @@ int EntryImpl::InternalWriteData(int index, int offset,
   SyncCallback* io_callback = NULL;
   if (!callback.is_null()) {
     io_callback = new SyncCallback(this, buf, callback,
-                                   net::NetLog::TYPE_ENTRY_WRITE_DATA);
+                                   net::NetLogEventType::ENTRY_WRITE_DATA);
   }
 
   TimeTicks start_async = TimeTicks::Now();
@@ -1491,7 +1509,7 @@ int EntryImpl::InitSparseData() {
     return net::OK;
 
   // Use a local variable so that sparse_ never goes from 'valid' to NULL.
-  scoped_ptr<SparseControl> sparse(new SparseControl(this));
+  std::unique_ptr<SparseControl> sparse(new SparseControl(this));
   int result = sparse->Init();
   if (net::OK == result)
     sparse_.swap(sparse);
@@ -1499,12 +1517,12 @@ int EntryImpl::InitSparseData() {
   return result;
 }
 
-void EntryImpl::SetEntryFlags(uint32 flags) {
+void EntryImpl::SetEntryFlags(uint32_t flags) {
   entry_.Data()->flags |= flags;
   entry_.set_modified();
 }
 
-uint32 EntryImpl::GetEntryFlags() {
+uint32_t EntryImpl::GetEntryFlags() {
   return entry_.Data()->flags;
 }
 

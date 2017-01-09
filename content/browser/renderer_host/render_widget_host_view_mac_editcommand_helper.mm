@@ -5,7 +5,9 @@
 #import "content/browser/renderer_host/render_widget_host_view_mac_editcommand_helper.h"
 
 #import <objc/runtime.h>
+#include <stddef.h>
 
+#include "base/macros.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #import "content/browser/renderer_host/render_widget_host_view_mac.h"
 
@@ -17,7 +19,7 @@ namespace {
 //
 // This needs to be kept in Sync with WEB_COMMAND list in the WebKit tree at:
 // WebKit/mac/WebView/WebHTMLView.mm .
-const char* kEditCommands[] = {
+const char* const kEditCommands[] = {
   "alignCenter",
   "alignJustified",
   "alignLeft",
@@ -105,7 +107,8 @@ const char* kEditCommands[] = {
   "underline",
   "unscript",
   "yank",
-  "yankAndSelect"};
+  "yankAndSelect"
+};
 
 
 // This function is installed via the objc runtime as the implementation of all

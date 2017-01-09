@@ -5,18 +5,20 @@
 #include "chrome/installer/setup/setup_util_unittest.h"
 
 #include <windows.h>
+#include <shlobj.h>
 
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_util.h"
+#include "base/test/histogram_tester.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
@@ -24,12 +26,12 @@
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
+#include "chrome/installer/setup/installer_state.h"
 #include "chrome/installer/setup/setup_constants.h"
 #include "chrome/installer/setup/setup_util.h"
 #include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_constants.h"
 #include "chrome/installer/util/installation_state.h"
-#include "chrome/installer/util/installer_state.h"
 #include "chrome/installer/util/updating_app_registration_data.h"
 #include "chrome/installer/util/util_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -58,7 +60,7 @@ bool CurrentProcessHasPrivilege(const wchar_t* privilege_name) {
   EXPECT_FALSE(::GetTokenInformation(token.Get(), TokenPrivileges, NULL, 0,
                                      &size));
 
-  scoped_ptr<BYTE[]> privileges_bytes(new BYTE[size]);
+  std::unique_ptr<BYTE[]> privileges_bytes(new BYTE[size]);
   TOKEN_PRIVILEGES* privileges =
       reinterpret_cast<TOKEN_PRIVILEGES*>(privileges_bytes.get());
 
@@ -72,7 +74,7 @@ bool CurrentProcessHasPrivilege(const wchar_t* privilege_name) {
   // anything longer will obviously not be equal to |privilege_name|.
   const DWORD desired_size = static_cast<DWORD>(wcslen(privilege_name));
   const DWORD buffer_size = desired_size + 1;
-  scoped_ptr<wchar_t[]> name_buffer(new wchar_t[buffer_size]);
+  std::unique_ptr<wchar_t[]> name_buffer(new wchar_t[buffer_size]);
   for (int i = privileges->PrivilegeCount - 1; i >= 0 ; --i) {
     LUID_AND_ATTRIBUTES& luid_and_att = privileges->Privileges[i];
     DWORD size = buffer_size;
@@ -92,37 +94,39 @@ TEST(SetupUtilTest, GetMaxVersionFromArchiveDirTest) {
   // Create a version dir
   base::ScopedTempDir test_dir;
   ASSERT_TRUE(test_dir.CreateUniqueTempDir());
-  base::FilePath chrome_dir = test_dir.path().AppendASCII("1.0.0.0");
+  base::FilePath chrome_dir = test_dir.GetPath().AppendASCII("1.0.0.0");
   base::CreateDirectory(chrome_dir);
   ASSERT_TRUE(base::PathExists(chrome_dir));
-  scoped_ptr<Version> version(
-      installer::GetMaxVersionFromArchiveDir(test_dir.path()));
+  std::unique_ptr<base::Version> version(
+      installer::GetMaxVersionFromArchiveDir(test_dir.GetPath()));
   ASSERT_EQ(version->GetString(), "1.0.0.0");
 
   base::DeleteFile(chrome_dir, true);
   ASSERT_FALSE(base::PathExists(chrome_dir)) << chrome_dir.value();
-  ASSERT_TRUE(installer::GetMaxVersionFromArchiveDir(test_dir.path()) == NULL);
+  ASSERT_TRUE(installer::GetMaxVersionFromArchiveDir(test_dir.GetPath()) ==
+              NULL);
 
-  chrome_dir = test_dir.path().AppendASCII("ABC");
+  chrome_dir = test_dir.GetPath().AppendASCII("ABC");
   base::CreateDirectory(chrome_dir);
   ASSERT_TRUE(base::PathExists(chrome_dir));
-  ASSERT_TRUE(installer::GetMaxVersionFromArchiveDir(test_dir.path()) == NULL);
+  ASSERT_TRUE(installer::GetMaxVersionFromArchiveDir(test_dir.GetPath()) ==
+              NULL);
 
-  chrome_dir = test_dir.path().AppendASCII("2.3.4.5");
+  chrome_dir = test_dir.GetPath().AppendASCII("2.3.4.5");
   base::CreateDirectory(chrome_dir);
   ASSERT_TRUE(base::PathExists(chrome_dir));
-  version.reset(installer::GetMaxVersionFromArchiveDir(test_dir.path()));
+  version.reset(installer::GetMaxVersionFromArchiveDir(test_dir.GetPath()));
   ASSERT_EQ(version->GetString(), "2.3.4.5");
 
   // Create multiple version dirs, ensure that we select the greatest.
-  chrome_dir = test_dir.path().AppendASCII("9.9.9.9");
+  chrome_dir = test_dir.GetPath().AppendASCII("9.9.9.9");
   base::CreateDirectory(chrome_dir);
   ASSERT_TRUE(base::PathExists(chrome_dir));
-  chrome_dir = test_dir.path().AppendASCII("1.1.1.1");
+  chrome_dir = test_dir.GetPath().AppendASCII("1.1.1.1");
   base::CreateDirectory(chrome_dir);
   ASSERT_TRUE(base::PathExists(chrome_dir));
 
-  version.reset(installer::GetMaxVersionFromArchiveDir(test_dir.path()));
+  version.reset(installer::GetMaxVersionFromArchiveDir(test_dir.GetPath()));
   ASSERT_EQ(version->GetString(), "9.9.9.9");
 }
 
@@ -130,7 +134,7 @@ TEST(SetupUtilTest, DeleteFileFromTempProcess) {
   base::ScopedTempDir test_dir;
   ASSERT_TRUE(test_dir.CreateUniqueTempDir());
   base::FilePath test_file;
-  base::CreateTemporaryFileInDir(test_dir.path(), &test_file);
+  base::CreateTemporaryFileInDir(test_dir.GetPath(), &test_file);
   ASSERT_TRUE(base::PathExists(test_file));
   base::WriteFile(test_file, "foo", 3);
   EXPECT_TRUE(installer::DeleteFileFromTempProcess(test_file, 0));
@@ -142,6 +146,12 @@ TEST(SetupUtilTest, DeleteFileFromTempProcess) {
 // at medium integrity).
 TEST(SetupUtilTest, ScopedTokenPrivilegeBasic) {
   ASSERT_FALSE(CurrentProcessHasPrivilege(kTestedPrivilege));
+
+  if (!::IsUserAnAdmin()) {
+    LOG(WARNING) << "Skipping SetupUtilTest.ScopedTokenPrivilegeBasic due to "
+                    "not running as admin.";
+    return;
+  }
 
   {
     installer::ScopedTokenPrivilege test_scoped_privilege(kTestedPrivilege);
@@ -156,6 +166,12 @@ TEST(SetupUtilTest, ScopedTokenPrivilegeBasic) {
 // at medium integrity).
 TEST(SetupUtilTest, ScopedTokenPrivilegeAlreadyEnabled) {
   ASSERT_FALSE(CurrentProcessHasPrivilege(kTestedPrivilege));
+
+  if (!::IsUserAnAdmin()) {
+    LOG(WARNING) << "Skipping SetupUtilTest.ScopedTokenPrivilegeAlreadyEnabled "
+                    "due to not running as admin.";
+    return;
+  }
 
   {
     installer::ScopedTokenPrivilege test_scoped_privilege(kTestedPrivilege);
@@ -190,7 +206,7 @@ class ScopedPriorityClass {
  public:
   // Applies |priority_class|, returning an instance if a change was made.
   // Otherwise, returns an empty scoped_ptr.
-  static scoped_ptr<ScopedPriorityClass> Create(DWORD priority_class);
+  static std::unique_ptr<ScopedPriorityClass> Create(DWORD priority_class);
   ~ScopedPriorityClass();
 
  private:
@@ -199,7 +215,7 @@ class ScopedPriorityClass {
   DISALLOW_COPY_AND_ASSIGN(ScopedPriorityClass);
 };
 
-scoped_ptr<ScopedPriorityClass> ScopedPriorityClass::Create(
+std::unique_ptr<ScopedPriorityClass> ScopedPriorityClass::Create(
     DWORD priority_class) {
   HANDLE this_process = ::GetCurrentProcess();
   DWORD original_priority_class = ::GetPriorityClass(this_process);
@@ -208,11 +224,11 @@ scoped_ptr<ScopedPriorityClass> ScopedPriorityClass::Create(
     BOOL result = ::SetPriorityClass(this_process, priority_class);
     EXPECT_NE(FALSE, result);
     if (result) {
-      return scoped_ptr<ScopedPriorityClass>(
+      return std::unique_ptr<ScopedPriorityClass>(
           new ScopedPriorityClass(original_priority_class));
     }
   }
-  return scoped_ptr<ScopedPriorityClass>();
+  return std::unique_ptr<ScopedPriorityClass>();
 }
 
 ScopedPriorityClass::ScopedPriorityClass(DWORD original_priority_class)
@@ -243,20 +259,44 @@ PriorityClassChangeResult RelaunchAndDoProcessPriorityAdjustment() {
 
 // Launching a subprocess at normal priority class is a noop.
 TEST(SetupUtilTest, AdjustFromNormalPriority) {
-  ASSERT_EQ(NORMAL_PRIORITY_CLASS, ::GetPriorityClass(::GetCurrentProcess()));
+  ASSERT_EQ(static_cast<DWORD>(NORMAL_PRIORITY_CLASS),
+            ::GetPriorityClass(::GetCurrentProcess()));
   EXPECT_EQ(PCCR_UNCHANGED, RelaunchAndDoProcessPriorityAdjustment());
 }
 
 // Launching a subprocess below normal priority class drops it to bg mode for
 // sufficiently recent operating systems.
 TEST(SetupUtilTest, AdjustFromBelowNormalPriority) {
-  scoped_ptr<ScopedPriorityClass> below_normal =
+  std::unique_ptr<ScopedPriorityClass> below_normal =
       ScopedPriorityClass::Create(BELOW_NORMAL_PRIORITY_CLASS);
   ASSERT_TRUE(below_normal);
   if (base::win::GetVersion() > base::win::VERSION_SERVER_2003)
     EXPECT_EQ(PCCR_CHANGED, RelaunchAndDoProcessPriorityAdjustment());
   else
     EXPECT_EQ(PCCR_UNCHANGED, RelaunchAndDoProcessPriorityAdjustment());
+}
+
+TEST(SetupUtilTest, RecordUnPackMetricsTest) {
+  base::HistogramTester histogram_tester;
+  std::string unpack_status_metrics_name =
+      std::string(installer::kUnPackStatusMetricsName) + "_SetupExePatch";
+  std::string ntstatus_metrics_name =
+      std::string(installer::kUnPackNTSTATUSMetricsName) + "_SetupExePatch";
+  histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 0);
+
+  RecordUnPackMetrics(UnPackStatus::UNPACK_NO_ERROR, 0,
+                      installer::UnPackConsumer::SETUP_EXE_PATCH);
+  histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 1);
+  histogram_tester.ExpectBucketCount(unpack_status_metrics_name, 0, 1);
+  histogram_tester.ExpectTotalCount(ntstatus_metrics_name, 1);
+  histogram_tester.ExpectBucketCount(ntstatus_metrics_name, 0, 1);
+
+  RecordUnPackMetrics(UnPackStatus::UNPACK_CLOSE_FILE_ERROR, 1,
+                      installer::UnPackConsumer::SETUP_EXE_PATCH);
+  histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 2);
+  histogram_tester.ExpectBucketCount(unpack_status_metrics_name, 10, 1);
+  histogram_tester.ExpectTotalCount(ntstatus_metrics_name, 2);
+  histogram_tester.ExpectBucketCount(ntstatus_metrics_name, 1, 1);
 }
 
 namespace {
@@ -274,9 +314,9 @@ class FindArchiveToPatchTest : public testing::Test {
       return static_cast<FakeProductState*>(const_cast<ProductState*>(product));
     }
 
-    void set_version(const Version& version) {
+    void set_version(const base::Version& version) {
       if (version.IsValid())
-        version_.reset(new Version(version));
+        version_.reset(new base::Version(version));
       else
         version_.reset();
     }
@@ -292,8 +332,8 @@ class FindArchiveToPatchTest : public testing::Test {
     ASSERT_TRUE(test_dir_.CreateUniqueTempDir());
     registry_override_manager_.OverrideRegistry(HKEY_CURRENT_USER);
     registry_override_manager_.OverrideRegistry(HKEY_LOCAL_MACHINE);
-    product_version_ = Version("30.0.1559.0");
-    max_version_ = Version("47.0.1559.0");
+    product_version_ = base::Version("30.0.1559.0");
+    max_version_ = base::Version("47.0.1559.0");
 
     // Install the product according to the version.
     original_state_.reset(new FakeInstallationState());
@@ -320,8 +360,8 @@ class FindArchiveToPatchTest : public testing::Test {
     original_state_.reset();
   }
 
-  base::FilePath GetArchivePath(const Version& version) const {
-    return test_dir_.path()
+  base::FilePath GetArchivePath(const base::Version& version) const {
+    return test_dir_.GetPath()
         .AppendASCII(version.GetString())
         .Append(installer::kInstallerDir)
         .Append(installer::kChromeArchive);
@@ -342,7 +382,7 @@ class FindArchiveToPatchTest : public testing::Test {
 
     product->set_version(product_version_);
     base::CommandLine uninstall_command(
-        test_dir_.path()
+        test_dir_.GetPath()
             .AppendASCII(product_version_.GetString())
             .Append(installer::kInstallerDir)
             .Append(installer::kSetupExe));
@@ -354,16 +394,16 @@ class FindArchiveToPatchTest : public testing::Test {
     FakeProductState::FromProductState(
         original_state_->GetNonVersionedProductState(kSystemInstall_,
                                                      kProductType_))
-        ->set_version(Version());
+        ->set_version(base::Version());
   }
 
   static const bool kSystemInstall_;
   static const BrowserDistribution::Type kProductType_;
   base::ScopedTempDir test_dir_;
-  Version product_version_;
-  Version max_version_;
-  scoped_ptr<FakeInstallationState> original_state_;
-  scoped_ptr<installer::InstallerState> installer_state_;
+  base::Version product_version_;
+  base::Version max_version_;
+  std::unique_ptr<FakeInstallationState> original_state_;
+  std::unique_ptr<installer::InstallerState> installer_state_;
 
  private:
   registry_util::RegistryOverrideManager registry_override_manager_;
@@ -599,14 +639,14 @@ TEST_F(DeleteRegistryKeyPartialTest, NonEmptyKeyWithPreserve) {
     RegKey key(root_, path_.c_str(), KEY_SET_VALUE);
     ASSERT_TRUE(key.Valid());
     ASSERT_EQ(ERROR_SUCCESS, key.WriteValue(nullptr, 5U));
-    ASSERT_EQ(
-        1, base::win::RegistryValueIterator(root_, path_.c_str()).ValueCount());
+    ASSERT_EQ(1u, base::win::RegistryValueIterator(root_, path_.c_str())
+                      .ValueCount());
     ASSERT_EQ(ERROR_SUCCESS, key.WriteValue(L"foo", L"bar"));
-    ASSERT_EQ(
-        2, base::win::RegistryValueIterator(root_, path_.c_str()).ValueCount());
+    ASSERT_EQ(2u, base::win::RegistryValueIterator(root_, path_.c_str())
+                      .ValueCount());
     ASSERT_EQ(ERROR_SUCCESS, key.WriteValue(L"baz", L"huh"));
-    ASSERT_EQ(
-        3, base::win::RegistryValueIterator(root_, path_.c_str()).ValueCount());
+    ASSERT_EQ(3u, base::win::RegistryValueIterator(root_, path_.c_str())
+                      .ValueCount());
   }
 
   ASSERT_TRUE(RegKey(root_, path_.c_str(), KEY_WRITE).Valid());
@@ -617,7 +657,7 @@ TEST_F(DeleteRegistryKeyPartialTest, NonEmptyKeyWithPreserve) {
   {
     base::win::RegistryKeyIterator it(root_, path_.c_str());
     ASSERT_EQ(to_preserve_.size(), it.SubkeyCount());
-    for (it; it.Valid(); ++it) {
+    for (; it.Valid(); ++it) {
       ASSERT_NE(to_preserve_.end(),
                 std::find_if(to_preserve_.begin(), to_preserve_.end(),
                              [&it](const base::string16& key_name) {
@@ -631,7 +671,7 @@ TEST_F(DeleteRegistryKeyPartialTest, NonEmptyKeyWithPreserve) {
   // Ensure that all values are absent.
   {
     base::win::RegistryValueIterator it(root_, path_.c_str());
-    ASSERT_EQ(0, it.ValueCount());
+    ASSERT_EQ(0u, it.ValueCount());
   }
 }
 

@@ -13,6 +13,7 @@ import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.NavigationEntry;
 import org.chromium.content_public.browser.NavigationHistory;
+import org.chromium.content_public.common.ResourceRequestBody;
 
 /**
  * The NavigationControllerImpl Java wrapper to allow communicating with the native
@@ -114,16 +115,9 @@ import org.chromium.content_public.browser.NavigationHistory;
     }
 
     @Override
-    public void reloadIgnoringCache(boolean checkForRepost) {
+    public void reloadBypassingCache(boolean checkForRepost) {
         if (mNativeNavigationControllerAndroid != 0) {
-            nativeReloadIgnoringCache(mNativeNavigationControllerAndroid, checkForRepost);
-        }
-    }
-
-    @Override
-    public void reloadDisableLoFi(boolean checkForRepost) {
-        if (mNativeNavigationControllerAndroid != 0) {
-            nativeReloadDisableLoFi(mNativeNavigationControllerAndroid, checkForRepost);
+            nativeReloadBypassingCache(mNativeNavigationControllerAndroid, checkForRepost);
         }
     }
 
@@ -150,8 +144,8 @@ import org.chromium.content_public.browser.NavigationHistory;
                     params.getReferrer() != null ? params.getReferrer().getPolicy() : 0,
                     params.getUserAgentOverrideOption(), params.getExtraHeadersString(),
                     params.getPostData(), params.getBaseUrl(), params.getVirtualUrlForDataUrl(),
-                    params.getCanLoadLocalResources(), params.getIsRendererInitiated(),
-                    params.getShouldReplaceCurrentEntry());
+                    params.getDataUrlAsString(), params.getCanLoadLocalResources(),
+                    params.getIsRendererInitiated(), params.getShouldReplaceCurrentEntry());
         }
     }
 
@@ -276,6 +270,18 @@ import org.chromium.content_public.browser.NavigationHistory;
                 replaceEntry);
     }
 
+    @Override
+    public String getEntryExtraData(int index, String key) {
+        if (mNativeNavigationControllerAndroid == 0) return null;
+        return nativeGetEntryExtraData(mNativeNavigationControllerAndroid, index, key);
+    }
+
+    @Override
+    public void setEntryExtraData(int index, String key, String value) {
+        if (mNativeNavigationControllerAndroid == 0) return;
+        nativeSetEntryExtraData(mNativeNavigationControllerAndroid, index, key, value);
+    }
+
     @CalledByNative
     private static void addToNavigationHistory(Object history, Object navigationEntry) {
         ((NavigationHistory) history).addEntry((NavigationEntry) navigationEntry);
@@ -303,14 +309,13 @@ import org.chromium.content_public.browser.NavigationHistory;
     private native void nativeContinuePendingReload(long nativeNavigationControllerAndroid);
     private native void nativeReload(long nativeNavigationControllerAndroid,
             boolean checkForRepost);
-    private native void nativeReloadIgnoringCache(long nativeNavigationControllerAndroid,
-            boolean checkForRepost);
-    private native void nativeReloadDisableLoFi(long nativeNavigationControllerAndroid,
+    private native void nativeReloadBypassingCache(long nativeNavigationControllerAndroid,
             boolean checkForRepost);
     private native void nativeLoadUrl(long nativeNavigationControllerAndroid, String url,
             int loadUrlType, int transitionType, String referrerUrl, int referrerPolicy,
-            int uaOverrideOption, String extraHeaders, byte[] postData, String baseUrlForDataUrl,
-            String virtualUrlForDataUrl, boolean canLoadLocalResources, boolean isRendererInitiated,
+            int uaOverrideOption, String extraHeaders, ResourceRequestBody postData,
+            String baseUrlForDataUrl, String virtualUrlForDataUrl, String dataUrlAsString,
+            boolean canLoadLocalResources, boolean isRendererInitiated,
             boolean shouldReplaceCurrentEntry);
     private native void nativeClearHistory(long nativeNavigationControllerAndroid);
     private native int nativeGetNavigationHistory(long nativeNavigationControllerAndroid,
@@ -336,4 +341,8 @@ import org.chromium.content_public.browser.NavigationHistory;
             long sourceNavigationControllerAndroid);
     private native void nativeCopyStateFromAndPrune(long nativeNavigationControllerAndroid,
             long sourceNavigationControllerAndroid, boolean replaceEntry);
+    private native String nativeGetEntryExtraData(
+            long nativeNavigationControllerAndroid, int index, String key);
+    private native void nativeSetEntryExtraData(
+            long nativeNavigationControllerAndroid, int index, String key, String value);
 }

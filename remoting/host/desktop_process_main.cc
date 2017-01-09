@@ -5,12 +5,19 @@
 // This file implements the Windows service controlling Me2Me host processes
 // running within user sessions.
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/named_platform_channel_pair.h"
+#include "mojo/edk/embedder/platform_channel_pair.h"
+#include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "remoting/base/auto_thread.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/host/desktop_process.h"
@@ -25,45 +32,61 @@ namespace remoting {
 int DesktopProcessMain() {
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
-  std::string channel_name =
-      command_line->GetSwitchValueASCII(kDaemonPipeSwitchName);
-
-  if (channel_name.empty())
-    return kUsageExitCode;
-
   base::MessageLoopForUI message_loop;
   base::RunLoop run_loop;
   scoped_refptr<AutoThreadTaskRunner> ui_task_runner =
       new AutoThreadTaskRunner(message_loop.task_runner(),
                                run_loop.QuitClosure());
 
+  // Launch the video capture thread.
+  scoped_refptr<AutoThreadTaskRunner> video_capture_task_runner =
+      AutoThread::Create("Video capture thread", ui_task_runner);
+
   // Launch the input thread.
   scoped_refptr<AutoThreadTaskRunner> input_task_runner =
       AutoThread::CreateWithType(
           "Input thread", ui_task_runner, base::MessageLoop::TYPE_IO);
 
-  DesktopProcess desktop_process(ui_task_runner,
-                                 input_task_runner,
-                                 channel_name);
+  // Launch the I/O thread.
+  scoped_refptr<AutoThreadTaskRunner> io_task_runner =
+      AutoThread::CreateWithType("I/O thread", ui_task_runner,
+                                 base::MessageLoop::TYPE_IO);
+
+  mojo::edk::ScopedIPCSupport ipc_support(io_task_runner->task_runner());
+  mojo::edk::ScopedPlatformHandle parent_pipe =
+      mojo::edk::PlatformChannelPair::PassClientHandleFromParentProcess(
+          *command_line);
+  if (!parent_pipe.is_valid()) {
+    parent_pipe =
+        mojo::edk::NamedPlatformChannelPair::PassClientHandleFromParentProcess(
+            *command_line);
+  }
+  if (!parent_pipe.is_valid()) {
+    return kInvalidCommandLineExitCode;
+  }
+  mojo::edk::SetParentPipeHandle(std::move(parent_pipe));
+  mojo::ScopedMessagePipeHandle message_pipe =
+      mojo::edk::CreateChildMessagePipe(
+          command_line->GetSwitchValueASCII(kMojoPipeToken));
+  DesktopProcess desktop_process(ui_task_runner, input_task_runner,
+                                 io_task_runner, std::move(message_pipe));
 
   // Create a platform-dependent environment factory.
-  scoped_ptr<DesktopEnvironmentFactory> desktop_environment_factory;
+  std::unique_ptr<DesktopEnvironmentFactory> desktop_environment_factory;
 #if defined(OS_WIN)
-  desktop_environment_factory.reset(
-      new SessionDesktopEnvironmentFactory(
-          ui_task_runner,
-          input_task_runner,
-          ui_task_runner,
-          base::Bind(&DesktopProcess::InjectSas,
-                     desktop_process.AsWeakPtr())));
+  desktop_environment_factory.reset(new SessionDesktopEnvironmentFactory(
+      ui_task_runner, video_capture_task_runner, input_task_runner,
+      ui_task_runner,
+      base::Bind(&DesktopProcess::InjectSas, desktop_process.AsWeakPtr()),
+      base::Bind(&DesktopProcess::LockWorkStation,
+                 desktop_process.AsWeakPtr())));
 #else  // !defined(OS_WIN)
   desktop_environment_factory.reset(new Me2MeDesktopEnvironmentFactory(
-      ui_task_runner,
-      input_task_runner,
+      ui_task_runner, video_capture_task_runner, input_task_runner,
       ui_task_runner));
 #endif  // !defined(OS_WIN)
 
-  if (!desktop_process.Start(desktop_environment_factory.Pass()))
+  if (!desktop_process.Start(std::move(desktop_environment_factory)))
     return kInitializationFailed;
 
   // Run the UI message loop.

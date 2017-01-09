@@ -5,10 +5,12 @@
 #include "sandbox/linux/suid/client/setuid_sandbox_host.h"
 
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -18,7 +20,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/launch.h"
@@ -27,13 +29,15 @@
 #include "sandbox/linux/suid/common/sandbox.h"
 #include "sandbox/linux/suid/common/suid_unsafe_environment_variables.h"
 
+namespace sandbox {
+
 namespace {
 
 // Set an environment variable that reflects the API version we expect from the
 // setuid sandbox. Old versions of the sandbox will ignore this.
 void SetSandboxAPIEnvironmentVariable(base::Environment* env) {
-  env->SetVar(sandbox::kSandboxEnvironmentApiRequest,
-              base::IntToString(sandbox::kSUIDSandboxApiNumber));
+  env->SetVar(kSandboxEnvironmentApiRequest,
+              base::IntToString(kSUIDSandboxApiNumber));
 }
 
 // Unset environment variables that are expected to be set by the setuid
@@ -42,11 +46,9 @@ void SetSandboxAPIEnvironmentVariable(base::Environment* env) {
 void UnsetExpectedEnvironmentVariables(base::EnvironmentMap* env_map) {
   DCHECK(env_map);
   const base::NativeEnvironmentString environment_vars[] = {
-      sandbox::kSandboxDescriptorEnvironmentVarName,
-      sandbox::kSandboxHelperPidEnvironmentVarName,
-      sandbox::kSandboxEnvironmentApiProvides,
-      sandbox::kSandboxPIDNSEnvironmentVarName,
-      sandbox::kSandboxNETNSEnvironmentVarName,
+      kSandboxDescriptorEnvironmentVarName, kSandboxHelperPidEnvironmentVarName,
+      kSandboxEnvironmentApiProvides,       kSandboxPIDNSEnvironmentVarName,
+      kSandboxNETNSEnvironmentVarName,
   };
 
   for (size_t i = 0; i < arraysize(environment_vars); ++i) {
@@ -62,7 +64,7 @@ void UnsetExpectedEnvironmentVariables(base::EnvironmentMap* env_map) {
 std::string* CreateSavedVariableName(const char* env_var) {
   char* const saved_env_var = SandboxSavedEnvironmentVariable(env_var);
   if (!saved_env_var)
-    return NULL;
+    return nullptr;
   std::string* saved_env_var_copy = new std::string(saved_env_var);
   // SandboxSavedEnvironmentVariable is the C function that we wrap and uses
   // malloc() to allocate memory.
@@ -77,8 +79,9 @@ void SaveSUIDUnsafeEnvironmentVariables(base::Environment* env) {
   for (unsigned i = 0; kSUIDUnsafeEnvironmentVariables[i]; ++i) {
     const char* env_var = kSUIDUnsafeEnvironmentVariables[i];
     // Get the saved environment variable corresponding to envvar.
-    scoped_ptr<std::string> saved_env_var(CreateSavedVariableName(env_var));
-    if (saved_env_var == NULL)
+    std::unique_ptr<std::string> saved_env_var(
+        CreateSavedVariableName(env_var));
+    if (!saved_env_var)
       continue;
 
     std::string value;
@@ -95,15 +98,13 @@ const char* GetDevelSandboxPath() {
 
 }  // namespace
 
-namespace sandbox {
-
 SetuidSandboxHost* SetuidSandboxHost::Create() {
-  base::Environment* environment(base::Environment::Create());
-  CHECK(environment);
-  return new SetuidSandboxHost(environment);
+  return new SetuidSandboxHost(base::Environment::Create());
 }
 
-SetuidSandboxHost::SetuidSandboxHost(base::Environment* env) : env_(env) {
+SetuidSandboxHost::SetuidSandboxHost(std::unique_ptr<base::Environment> env)
+    : env_(std::move(env)) {
+  DCHECK(env_);
 }
 
 SetuidSandboxHost::~SetuidSandboxHost() {
@@ -113,10 +114,7 @@ SetuidSandboxHost::~SetuidSandboxHost() {
 // the setuid sandbox. TODO(jln): fix this (crbug.com/245376).
 bool SetuidSandboxHost::IsDisabledViaEnvironment() {
   const char* devel_sandbox_path = GetDevelSandboxPath();
-  if (devel_sandbox_path && '\0' == *devel_sandbox_path) {
-    return true;
-  }
-  return false;
+  return devel_sandbox_path && (*devel_sandbox_path == '\0');
 }
 
 base::FilePath SetuidSandboxHost::GetSandboxBinaryPath() {
@@ -130,7 +128,7 @@ base::FilePath SetuidSandboxHost::GetSandboxBinaryPath() {
 
   // In user-managed builds, including development builds, an environment
   // variable is required to enable the sandbox. See
-  // http://code.google.com/p/chromium/wiki/LinuxSUIDSandboxDevelopment
+  // https://chromium.googlesource.com/chromium/src/+/master/docs/linux_suid_sandbox_development.md
   struct stat st;
   if (sandbox_binary.empty() && stat(base::kProcSelfExe, &st) == 0 &&
       st.st_uid == getuid()) {
@@ -149,8 +147,9 @@ void SetuidSandboxHost::PrependWrapper(base::CommandLine* cmd_line) {
   if (sandbox_binary.empty() || stat(sandbox_binary.c_str(), &st) != 0) {
     LOG(FATAL) << "The SUID sandbox helper binary is missing: "
                << sandbox_binary << " Aborting now. See "
-                                    "https://code.google.com/p/chromium/wiki/"
-                                    "LinuxSUIDSandboxDevelopment.";
+                                    "https://chromium.googlesource.com/"
+                                    "chromium/src/+/master/docs/"
+                                    "linux_suid_sandbox_development.md.";
   }
 
   if (access(sandbox_binary.c_str(), X_OK) != 0 || (st.st_uid != 0) ||

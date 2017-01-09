@@ -4,10 +4,11 @@
 
 #include "chrome/browser/ui/webui/quota_internals/quota_internals_types.h"
 
+#include <utility>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 
 namespace {
 
@@ -37,10 +38,10 @@ GlobalStorageInfo::GlobalStorageInfo(storage::StorageType type)
 
 GlobalStorageInfo::~GlobalStorageInfo() {}
 
-base::Value* GlobalStorageInfo::NewValue() const {
+std::unique_ptr<base::Value> GlobalStorageInfo::NewValue() const {
   // TODO(tzik): Add CreateLongIntegerValue to base/values.h and remove
   // all static_cast<double> in this file.
-  base::DictionaryValue* dict = new base::DictionaryValue;
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   dict->SetString("type", StorageTypeToString(type_));
   if (usage_ >= 0)
     dict->SetDouble("usage", static_cast<double>(usage_));
@@ -48,7 +49,7 @@ base::Value* GlobalStorageInfo::NewValue() const {
     dict->SetDouble("unlimitedUsage", static_cast<double>(unlimited_usage_));
   if (quota_ >= 0)
     dict->SetDouble("quota", static_cast<double>(quota_));
-  return dict;
+  return std::move(dict);
 }
 
 PerHostStorageInfo::PerHostStorageInfo(const std::string& host,
@@ -58,8 +59,8 @@ PerHostStorageInfo::PerHostStorageInfo(const std::string& host,
 
 PerHostStorageInfo::~PerHostStorageInfo() {}
 
-base::Value* PerHostStorageInfo::NewValue() const {
-  base::DictionaryValue* dict = new base::DictionaryValue;
+std::unique_ptr<base::Value> PerHostStorageInfo::NewValue() const {
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   DCHECK(!host_.empty());
   dict->SetString("host", host_);
   dict->SetString("type", StorageTypeToString(type_));
@@ -67,7 +68,7 @@ base::Value* PerHostStorageInfo::NewValue() const {
     dict->SetDouble("usage", static_cast<double>(usage_));
   if (quota_ >= 0)
     dict->SetDouble("quota", static_cast<double>(quota_));
-  return dict;
+  return std::move(dict);
 }
 
 PerOriginStorageInfo::PerOriginStorageInfo(const GURL& origin,
@@ -79,10 +80,13 @@ PerOriginStorageInfo::PerOriginStorageInfo(const GURL& origin,
       used_count_(-1) {
 }
 
+PerOriginStorageInfo::PerOriginStorageInfo(const PerOriginStorageInfo& other) =
+    default;
+
 PerOriginStorageInfo::~PerOriginStorageInfo() {}
 
-base::Value* PerOriginStorageInfo::NewValue() const {
-  base::DictionaryValue* dict = new base::DictionaryValue;
+std::unique_ptr<base::Value> PerOriginStorageInfo::NewValue() const {
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   DCHECK(!origin_.is_empty());
   DCHECK(!host_.empty());
   dict->SetString("origin", origin_.spec());
@@ -98,7 +102,7 @@ base::Value* PerOriginStorageInfo::NewValue() const {
     dict->SetDouble("lastModifiedTime",
                     last_modified_time_.ToDoubleT() * 1000.0);
   }
-  return dict;
+  return std::move(dict);
 }
 
 }  // namespace quota_internals

@@ -4,30 +4,28 @@
 
 #include "chrome/browser/chromeos/input_method/input_method_util.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <memory>
+#include <unordered_set>
 #include <utility>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/extension_constants.h"
-
 // TODO(nona): move this header from this file.
 #include "chrome/grit/generated_resources.h"
-
+#include "components/prefs/pref_service.h"
 #include "ui/base/ime/chromeos/component_extension_ime_manager.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
-
 // For SetHardwareKeyboardLayoutForTesting.
 #include "ui/base/ime/chromeos/fake_input_method_delegate.h"
 #include "ui/base/ime/chromeos/input_method_delegate.h"
-#include "ui/base/ime/chromeos/input_method_whitelist.h"
-
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -83,8 +81,8 @@ const struct {
 const char* const kEngineIdMigrationMap[][2] = {
     {"ime:jp:mozc_jp", "nacl_mozc_jp"},
     {"ime:jp:mozc_us", "nacl_mozc_us"},
-    {"ime:ko:hangul_2set", "hangul_2set"},
-    {"ime:ko:hangul", "hangul_2set"},
+    {"ime:ko:hangul_2set", "ko-t-i0-und"},
+    {"ime:ko:hangul", "ko-t-i0-und"},
     {"ime:zh-t:array", "zh-hant-t-i0-array-1992"},
     {"ime:zh-t:cangjie", "zh-hant-t-i0-cangjie-1987"},
     {"ime:zh-t:dayi", "zh-hant-t-i0-dayi-1988"},
@@ -204,6 +202,7 @@ const struct InputMethodNameMap {
 } kInputMethodNameMap[] = {
     {"__MSG_INPUTMETHOD_ARRAY__", IDS_IME_NAME_INPUTMETHOD_ARRAY},
     {"__MSG_INPUTMETHOD_CANGJIE__", IDS_IME_NAME_INPUTMETHOD_CANGJIE},
+    {"__MSG_INPUTMETHOD_CANTONESE__", IDS_IME_NAME_INPUTMETHOD_CANTONESE},
     {"__MSG_INPUTMETHOD_DAYI__", IDS_IME_NAME_INPUTMETHOD_DAYI},
     {"__MSG_INPUTMETHOD_HANGUL_2_SET__", IDS_IME_NAME_INPUTMETHOD_HANGUL_2_SET},
     {"__MSG_INPUTMETHOD_HANGUL_3_SET_390__",
@@ -393,7 +392,7 @@ std::string InputMethodUtil::GetLocalizedDisplayName(
     const InputMethodDescriptor& descriptor) const {
   // Localizes the input method name.
   const std::string& disp = descriptor.name();
-  if (disp.find("__MSG_") == 0) {
+  if (base::StartsWith(disp, "__MSG_", base::CompareCase::SENSITIVE)) {
     const InputMethodNameMap* map = kInputMethodNameMap;
     size_t map_size = arraysize(kInputMethodNameMap);
     std::string name = base::ToUpperASCII(disp);
@@ -689,9 +688,11 @@ bool InputMethodUtil::MigrateInputMethods(
   if (rewritten) {
     // Removes the duplicates.
     std::vector<std::string> new_ids;
+    std::unordered_set<std::string> ids_set;
     for (size_t i = 0; i < ids.size(); ++i) {
-      if (std::find(new_ids.begin(), new_ids.end(), ids[i]) == new_ids.end())
+      if (ids_set.find(ids[i]) == ids_set.end())
         new_ids.push_back(ids[i]);
+      ids_set.insert(ids[i]);
     }
     ids.swap(new_ids);
   }
@@ -710,9 +711,12 @@ void InputMethodUtil::UpdateHardwareLayoutCache() {
   hardware_layouts_ = cached_hardware_layouts_;
   MigrateInputMethods(&hardware_layouts_);
 
+  bool has_xkb = false;
   for (size_t i = 0; i < hardware_layouts_.size(); ++i) {
     if (IsLoginKeyboard(hardware_layouts_[i]))
       hardware_login_layouts_.push_back(hardware_layouts_[i]);
+    if (extension_ime_util::IsKeyboardLayoutExtension(hardware_layouts_[i]))
+      has_xkb = true;
   }
 
   if (hardware_login_layouts_.empty()) {
@@ -722,8 +726,20 @@ void InputMethodUtil::UpdateHardwareLayoutCache() {
     // So need to make sure |hardware_login_layouts_| is not empty, and
     // |hardware_layouts_| contains at least one login layout.
     std::string fallback_id = GetFallbackInputMethodDescriptor().id();
-    hardware_layouts_.insert(hardware_layouts_.begin(), fallback_id);
     hardware_login_layouts_.push_back(fallback_id);
+    // If has XKB input method, it means the XKB input method is
+    // non-login-able. Therefore, add the fallback to the hardware layouts.
+    // If has no XKB input method, then it is up to the VPD to set the correct
+    // hardware input methods.
+    // Examples:
+    // 1) Arabic transliteration input method cannot be used to input Latin
+    // characters. So the VPD should be "xkb:us::eng,t13n:ar".
+    // 2) Korean input method can be used to input Latin characters. So the
+    // VPD should be "ime:ko:hangul". See chrome-os-partner:48623.
+    // 3) Russian keyboard cannot be used to input Latin characters, but it is
+    // XKB input method. So the VPD can be "xkb:ru::rus".
+    if (hardware_layouts_.empty() || has_xkb)
+      hardware_layouts_.insert(hardware_layouts_.begin(), fallback_id);
   }
 }
 
@@ -787,9 +803,10 @@ void InputMethodUtil::ResetInputMethods(const InputMethodDescriptors& imes) {
   AppendInputMethods(imes);
 }
 
-void InputMethodUtil::InitXkbInputMethodsForTesting() {
+void InputMethodUtil::InitXkbInputMethodsForTesting(
+    const InputMethodDescriptors& imes) {
   cached_hardware_layouts_.clear();
-  ResetInputMethods(*(InputMethodWhitelist().GetSupportedInputMethods()));
+  ResetInputMethods(imes);
 }
 
 const InputMethodUtil::InputMethodIdToDescriptorMap&

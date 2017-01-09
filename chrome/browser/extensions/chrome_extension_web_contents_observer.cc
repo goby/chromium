@@ -5,6 +5,8 @@
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 
 #include "base/command_line.h"
+#include "base/metrics/field_trial.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/error_console/error_console.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/window_controller.h"
@@ -12,6 +14,7 @@
 #include "chrome/common/extensions/chrome_extension_messages.h"
 #include "chrome/common/extensions/extension_process_policy.h"
 #include "chrome/common/url_constants.h"
+#include "components/rappor/rappor_service_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/render_frame_host.h"
@@ -48,7 +51,7 @@ void ChromeExtensionWebContentsObserver::RenderViewCreated(
     return;
 
   int process_id = render_view_host->GetProcess()->GetID();
-  auto policy = content::ChildProcessSecurityPolicy::GetInstance();
+  auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
 
   // Components of chrome that are implemented as extensions or platform apps
   // are allowed to use chrome://resources/ and chrome://theme/ URLs.
@@ -107,7 +110,7 @@ void ChromeExtensionWebContentsObserver::OnDetailedConsoleMessageAdded(
     const base::string16& message,
     const base::string16& source,
     const StackTrace& stack_trace,
-    int32 severity_level) {
+    int32_t severity_level) {
   if (!IsSourceFromAnExtension(source))
     return;
 
@@ -116,7 +119,7 @@ void ChromeExtensionWebContentsObserver::OnDetailedConsoleMessageAdded(
     extension_id = GURL(source).host();
 
   ErrorConsole::Get(browser_context())
-      ->ReportError(scoped_ptr<ExtensionError>(new RuntimeError(
+      ->ReportError(std::unique_ptr<ExtensionError>(new RuntimeError(
           extension_id, browser_context()->IsOffTheRecord(), source, message,
           stack_trace, web_contents()->GetLastCommittedURL(),
           static_cast<logging::LogSeverity>(severity_level),
@@ -203,8 +206,25 @@ void ChromeExtensionWebContentsObserver::SetExtensionIsolationTrial(
             "SiteIsolationExtensionsActive", "FieldTrial");
       }
     } else {
-      ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-          "SiteIsolationExtensionsActive", "Default");
+      if (!base::FieldTrialList::FindFullName("SiteIsolationExtensions")
+               .empty()) {
+        // The field trial is active, but we are in a control group with oopifs
+        // disabled.
+        ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+            "SiteIsolationExtensionsActive", "Control");
+      } else {
+        // The field trial is not active for this version.
+        ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+            "SiteIsolationExtensionsActive", "Default");
+      }
+    }
+
+    if (rappor::RapporServiceImpl* rappor =
+            g_browser_process->rappor_service()) {
+      const std::string& extension_id =
+          parent_is_extension ? parent_url.host() : frame_url.host();
+      rappor->RecordSampleString("Extensions.AffectedByIsolateExtensions",
+                                 rappor::UMA_RAPPOR_TYPE, extension_id);
     }
   }
 }

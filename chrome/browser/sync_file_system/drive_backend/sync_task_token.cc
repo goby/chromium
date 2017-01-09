@@ -4,8 +4,11 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/sync_task_token.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_task_manager.h"
 #include "chrome/browser/sync_file_system/drive_backend/task_dependency_manager.h"
@@ -13,45 +16,39 @@
 namespace sync_file_system {
 namespace drive_backend {
 
-const int64 SyncTaskToken::kTestingTaskTokenID = -1;
-const int64 SyncTaskToken::kForegroundTaskTokenID = 0;
-const int64 SyncTaskToken::kMinimumBackgroundTaskTokenID = 1;
+const int64_t SyncTaskToken::kTestingTaskTokenID = -1;
+const int64_t SyncTaskToken::kForegroundTaskTokenID = 0;
+const int64_t SyncTaskToken::kMinimumBackgroundTaskTokenID = 1;
 
 // static
-scoped_ptr<SyncTaskToken> SyncTaskToken::CreateForTesting(
+std::unique_ptr<SyncTaskToken> SyncTaskToken::CreateForTesting(
     const SyncStatusCallback& callback) {
-  return make_scoped_ptr(new SyncTaskToken(
-      base::WeakPtr<SyncTaskManager>(),
-      base::ThreadTaskRunnerHandle::Get(),
-      kTestingTaskTokenID,
-      nullptr,  // task_blocker
-      callback));
+  return base::WrapUnique(new SyncTaskToken(base::WeakPtr<SyncTaskManager>(),
+                                            base::ThreadTaskRunnerHandle::Get(),
+                                            kTestingTaskTokenID,
+                                            nullptr,  // task_blocker
+                                            callback));
 }
 
 // static
-scoped_ptr<SyncTaskToken> SyncTaskToken::CreateForForegroundTask(
+std::unique_ptr<SyncTaskToken> SyncTaskToken::CreateForForegroundTask(
     const base::WeakPtr<SyncTaskManager>& manager,
     base::SequencedTaskRunner* task_runner) {
-  return make_scoped_ptr(new SyncTaskToken(
-      manager,
-      task_runner,
-      kForegroundTaskTokenID,
-      nullptr,  // task_blocker
-      SyncStatusCallback()));
+  return base::WrapUnique(new SyncTaskToken(manager, task_runner,
+                                            kForegroundTaskTokenID,
+                                            nullptr,  // task_blocker
+                                            SyncStatusCallback()));
 }
 
 // static
-scoped_ptr<SyncTaskToken> SyncTaskToken::CreateForBackgroundTask(
+std::unique_ptr<SyncTaskToken> SyncTaskToken::CreateForBackgroundTask(
     const base::WeakPtr<SyncTaskManager>& manager,
     base::SequencedTaskRunner* task_runner,
-    int64 token_id,
-    scoped_ptr<TaskBlocker> task_blocker) {
-  return make_scoped_ptr(new SyncTaskToken(
-      manager,
-      task_runner,
-      token_id,
-      task_blocker.Pass(),
-      SyncStatusCallback()));
+    int64_t token_id,
+    std::unique_ptr<TaskBlocker> task_blocker) {
+  return base::WrapUnique(new SyncTaskToken(manager, task_runner, token_id,
+                                            std::move(task_blocker),
+                                            SyncStatusCallback()));
 }
 
 void SyncTaskToken::UpdateTask(const tracked_objects::Location& location,
@@ -78,24 +75,22 @@ SyncTaskToken::~SyncTaskToken() {
 
     // Reinitializes the token.
     SyncTaskManager::NotifyTaskDone(
-        make_scoped_ptr(new SyncTaskToken(manager_,
-                                          task_runner_.get(),
-                                          token_id_,
-                                          task_blocker_.Pass(),
-                                          SyncStatusCallback())),
+        base::WrapUnique(new SyncTaskToken(manager_, task_runner_.get(),
+                                           token_id_, std::move(task_blocker_),
+                                           SyncStatusCallback())),
         SYNC_STATUS_OK);
   }
 }
 
 // static
 SyncStatusCallback SyncTaskToken::WrapToCallback(
-    scoped_ptr<SyncTaskToken> token) {
+    std::unique_ptr<SyncTaskToken> token) {
   return base::Bind(&SyncTaskManager::NotifyTaskDone, base::Passed(&token));
 }
 
 void SyncTaskToken::set_task_blocker(
-    scoped_ptr<TaskBlocker> task_blocker) {
-  task_blocker_ = task_blocker.Pass();
+    std::unique_ptr<TaskBlocker> task_blocker) {
+  task_blocker_ = std::move(task_blocker);
 }
 
 const TaskBlocker* SyncTaskToken::task_blocker() const {
@@ -133,26 +128,25 @@ void SyncTaskToken::RecordLog(const std::string& message) {
   task_log_->details.push_back(message);
 }
 
-void SyncTaskToken::SetTaskLog(scoped_ptr<TaskLogger::TaskLog> task_log) {
-  task_log_ = task_log.Pass();
+void SyncTaskToken::SetTaskLog(std::unique_ptr<TaskLogger::TaskLog> task_log) {
+  task_log_ = std::move(task_log);
 }
 
-scoped_ptr<TaskLogger::TaskLog> SyncTaskToken::PassTaskLog() {
-  return task_log_.Pass();
+std::unique_ptr<TaskLogger::TaskLog> SyncTaskToken::PassTaskLog() {
+  return std::move(task_log_);
 }
 
 SyncTaskToken::SyncTaskToken(
     const base::WeakPtr<SyncTaskManager>& manager,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-    int64 token_id,
-    scoped_ptr<TaskBlocker> task_blocker,
+    int64_t token_id,
+    std::unique_ptr<TaskBlocker> task_blocker,
     const SyncStatusCallback& callback)
     : manager_(manager),
       task_runner_(task_runner),
       token_id_(token_id),
       callback_(callback),
-      task_blocker_(task_blocker.Pass()) {
-}
+      task_blocker_(std::move(task_blocker)) {}
 
 }  // namespace drive_backend
 }  // namespace sync_file_system

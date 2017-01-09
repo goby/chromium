@@ -10,10 +10,9 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/feedback/system_logs/system_logs_fetcher_base.h"
-
-class Profile;
 
 namespace system_logs {
 
@@ -56,7 +55,7 @@ class DebugDaemonLogSource : public SystemLogsSource {
   // Sends the data to the callback_ when all the requests are completed
   void RequestCompleted();
 
-  scoped_ptr<SystemLogsResponse> response_;
+  std::unique_ptr<SystemLogsResponse> response_;
   SysLogsSourceCallback callback_;
   int num_pending_requests_;
   bool scrub_;

@@ -28,16 +28,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebScriptController.h"
 
 #include "bindings/core/v8/ScriptController.h"
 
 namespace blink {
 
-void WebScriptController::registerExtension(v8::Extension* extension)
-{
-    ScriptController::registerExtensionIfNeeded(extension);
+void WebScriptController::registerExtension(v8::Extension* extension) {
+  ScriptController::registerExtensionIfNeeded(extension);
 }
 
-} // namespace blink
+}  // namespace blink

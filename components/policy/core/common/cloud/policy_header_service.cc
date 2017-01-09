@@ -6,6 +6,7 @@
 
 #include "base/base64.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/policy_header_io_helper.h"
@@ -21,31 +22,26 @@ namespace policy {
 PolicyHeaderService::PolicyHeaderService(
     const std::string& server_url,
     const std::string& verification_key_hash,
-    CloudPolicyStore* user_policy_store,
-    CloudPolicyStore* device_policy_store)
+    CloudPolicyStore* user_policy_store)
     : server_url_(server_url),
       verification_key_hash_(verification_key_hash),
-      user_policy_store_(user_policy_store),
-      device_policy_store_(device_policy_store) {
+      user_policy_store_(user_policy_store) {
   user_policy_store_->AddObserver(this);
-  if (device_policy_store_)
-    device_policy_store_->AddObserver(this);
 }
 
 PolicyHeaderService::~PolicyHeaderService() {
   user_policy_store_->RemoveObserver(this);
-  if (device_policy_store_)
-    device_policy_store_->RemoveObserver(this);
 }
 
-scoped_ptr<PolicyHeaderIOHelper>
+std::unique_ptr<PolicyHeaderIOHelper>
 PolicyHeaderService::CreatePolicyHeaderIOHelper(
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   std::string initial_header_value = CreateHeaderValue();
-  scoped_ptr<PolicyHeaderIOHelper> helper = make_scoped_ptr(
-      new PolicyHeaderIOHelper(server_url_, initial_header_value, task_runner));
+  std::unique_ptr<PolicyHeaderIOHelper> helper =
+      base::MakeUnique<PolicyHeaderIOHelper>(server_url_, initial_header_value,
+                                             task_runner);
   helpers_.push_back(helper.get());
-  return helper.Pass();
+  return helper;
 }
 
 std::string PolicyHeaderService::CreateHeaderValue() {

@@ -4,17 +4,22 @@
 
 #include "chromeos/network/network_sms_handler.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <deque>
 #include <vector>
 
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/shill_device_client.h"
-#include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/gsm_sms_client.h"
 #include "chromeos/dbus/modem_messaging_client.h"
+#include "chromeos/dbus/shill_device_client.h"
+#include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/sms_client.h"
 #include "dbus/object_path.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -60,8 +65,8 @@ class NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler
 
  private:
   void ListCallback(const base::ListValue& message_list);
-  void SmsReceivedCallback(uint32 index, bool complete);
-  void GetCallback(uint32 index, const base::DictionaryValue& dictionary);
+  void SmsReceivedCallback(uint32_t index, bool complete);
+  void GetCallback(uint32_t index, const base::DictionaryValue& dictionary);
   void DeleteMessages();
   void MessageReceived(const base::DictionaryValue& dictionary);
 
@@ -69,7 +74,7 @@ class NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler
   std::string service_name_;
   dbus::ObjectPath object_path_;
   bool deleting_messages_;
-  std::vector<uint32> delete_queue_;
+  std::vector<uint32_t> delete_queue_;
   base::WeakPtrFactory<ModemManagerNetworkSmsDeviceHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ModemManagerNetworkSmsDeviceHandler);
@@ -116,7 +121,7 @@ void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::ListCallback(
     MessageReceived(*message);
     double index = 0;
     if (message->GetDoubleWithoutPathExpansion(kIndexKey, &index))
-      delete_queue_.push_back(static_cast<uint32>(index));
+      delete_queue_.push_back(static_cast<uint32_t>(index));
   }
   DeleteMessages();
 }
@@ -130,7 +135,7 @@ void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::DeleteMessages() {
     return;
   }
   deleting_messages_ = true;
-  uint32 index = delete_queue_.back();
+  uint32_t index = delete_queue_.back();
   delete_queue_.pop_back();
   DBusThreadManager::Get()->GetGsmSMSClient()->Delete(
       service_name_, object_path_, index,
@@ -139,10 +144,8 @@ void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::DeleteMessages() {
                  weak_ptr_factory_.GetWeakPtr()));
 }
 
-void NetworkSmsHandler::
-ModemManagerNetworkSmsDeviceHandler::SmsReceivedCallback(
-    uint32 index,
-    bool complete) {
+void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::
+    SmsReceivedCallback(uint32_t index, bool complete) {
   // Only handle complete messages.
   if (!complete)
     return;
@@ -154,7 +157,7 @@ ModemManagerNetworkSmsDeviceHandler::SmsReceivedCallback(
 }
 
 void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::GetCallback(
-    uint32 index,
+    uint32_t index,
     const base::DictionaryValue& dictionary) {
   MessageReceived(dictionary);
   delete_queue_.push_back(index);
@@ -351,16 +354,12 @@ void NetworkSmsHandler::Init() {
 void NetworkSmsHandler::RequestUpdate(bool request_existing) {
   // If we already received messages and |request_existing| is true, send
   // updates for existing messages.
-  for (ScopedVector<base::DictionaryValue>::iterator iter =
-           received_messages_.begin();
-       iter != received_messages_.end(); ++iter) {
-    base::DictionaryValue* message = *iter;
+  for (const auto& message : received_messages_) {
     NotifyMessageReceived(*message);
   }
   // Request updates from each device.
-  for (ScopedVector<NetworkSmsDeviceHandler>::iterator iter =
-           device_handlers_.begin(); iter != device_handlers_.end(); ++iter) {
-    (*iter)->RequestUpdate();
+  for (auto& handler : device_handlers_) {
+    handler->RequestUpdate();
   }
 }
 
@@ -386,15 +385,15 @@ void NetworkSmsHandler::OnPropertyChanged(const std::string& name,
 
 void NetworkSmsHandler::AddReceivedMessage(
     const base::DictionaryValue& message) {
-  base::DictionaryValue* new_message = message.DeepCopy();
   if (received_messages_.size() >= kMaxReceivedMessages)
     received_messages_.erase(received_messages_.begin());
-  received_messages_.push_back(new_message);
+  received_messages_.push_back(message.CreateDeepCopy());
 }
 
 void NetworkSmsHandler::NotifyMessageReceived(
     const base::DictionaryValue& message) {
-  FOR_EACH_OBSERVER(Observer, observers_, MessageReceived(message));
+  for (auto& observer : observers_)
+    observer.MessageReceived(message);
 }
 
 void NetworkSmsHandler::MessageReceived(const base::DictionaryValue& message) {
@@ -411,7 +410,7 @@ void NetworkSmsHandler::ManagerPropertiesCallback(
   }
   const base::Value* value;
   if (!properties.GetWithoutPathExpansion(shill::kDevicesProperty, &value) ||
-      value->GetType() != base::Value::TYPE_LIST) {
+      value->GetType() != base::Value::Type::LIST) {
     LOG(ERROR) << "NetworkSmsHandler: No list value for: "
                << shill::kDevicesProperty;
     return;
@@ -472,11 +471,11 @@ void NetworkSmsHandler::DevicePropertiesCallback(
   dbus::ObjectPath object_path(object_path_string);
   if (service_name == modemmanager::kModemManager1ServiceName) {
     device_handlers_.push_back(
-        new ModemManager1NetworkSmsDeviceHandler(
+        base::MakeUnique<ModemManager1NetworkSmsDeviceHandler>(
             this, service_name, object_path));
   } else {
     device_handlers_.push_back(
-        new ModemManagerNetworkSmsDeviceHandler(
+        base::MakeUnique<ModemManagerNetworkSmsDeviceHandler>(
             this, service_name, object_path));
   }
 }

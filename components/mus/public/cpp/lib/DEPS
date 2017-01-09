@@ -1,4 +1,0 @@
-include_rules = [
-  "+mojo/gles2",
-  "+mojo/gpu"
-]

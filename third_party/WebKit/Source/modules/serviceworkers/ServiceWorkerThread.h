@@ -33,26 +33,33 @@
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/workers/WorkerThread.h"
 #include "modules/ModulesExport.h"
+#include <memory>
 
 namespace blink {
 
 class WorkerThreadStartupData;
 
 class MODULES_EXPORT ServiceWorkerThread final : public WorkerThread {
-public:
-    static PassRefPtr<ServiceWorkerThread> create(PassRefPtr<WorkerLoaderProxy>, WorkerReportingProxy&);
-    ~ServiceWorkerThread() override;
+ public:
+  static std::unique_ptr<ServiceWorkerThread> create(
+      PassRefPtr<WorkerLoaderProxy>,
+      WorkerReportingProxy&);
+  ~ServiceWorkerThread() override;
 
-protected:
-    PassRefPtrWillBeRawPtr<WorkerGlobalScope> createWorkerGlobalScope(PassOwnPtr<WorkerThreadStartupData>) override;
-    WebThreadSupportingGC& backingThread() override;
+  WorkerBackingThread& workerBackingThread() override {
+    return *m_workerBackingThread;
+  }
+  void clearWorkerBackingThread() override;
 
-private:
-    ServiceWorkerThread(PassRefPtr<WorkerLoaderProxy>, WorkerReportingProxy&);
+ protected:
+  WorkerOrWorkletGlobalScope* createWorkerGlobalScope(
+      std::unique_ptr<WorkerThreadStartupData>) override;
 
-    OwnPtr<WebThreadSupportingGC> m_thread;
+ private:
+  ServiceWorkerThread(PassRefPtr<WorkerLoaderProxy>, WorkerReportingProxy&);
+  std::unique_ptr<WorkerBackingThread> m_workerBackingThread;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ServiceWorkerThread_h
+#endif  // ServiceWorkerThread_h

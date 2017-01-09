@@ -4,9 +4,12 @@
 
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_key_manager.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_tpm_key_manager.h"
@@ -34,11 +37,7 @@ const char kPermitTypeLicence[] = "licence";
 
 }  // namespace
 
-EasyUnlockKeyManager::EasyUnlockKeyManager()
-    : write_queue_deleter_(&write_operation_queue_),
-      read_queue_deleter_(&read_operation_queue_),
-      weak_ptr_factory_(this) {
-}
+EasyUnlockKeyManager::EasyUnlockKeyManager() : weak_ptr_factory_(this) {}
 
 EasyUnlockKeyManager::~EasyUnlockKeyManager() {
 }
@@ -85,24 +84,25 @@ void EasyUnlockKeyManager::RefreshKeysWithTpmKeyPresent(
   EasyUnlockTpmKeyManager* tpm_key_manager =
       EasyUnlockTpmKeyManagerFactory::GetInstance()->GetForUser(
           user_context.GetAccountId().GetUserEmail());
-  const std::string tpm_public_key = tpm_key_manager->GetPublicTpmKey(
-      user_context.GetAccountId().GetUserEmail());
+  const std::string tpm_public_key =
+      tpm_key_manager->GetPublicTpmKey(user_context.GetAccountId());
 
   EasyUnlockDeviceKeyDataList devices;
   if (!RemoteDeviceListToDeviceDataList(*remote_devices, &devices))
     devices.clear();
 
-  write_operation_queue_.push_back(new EasyUnlockRefreshKeysOperation(
-      user_context, tpm_public_key, devices,
-      base::Bind(&EasyUnlockKeyManager::OnKeysRefreshed,
-                 weak_ptr_factory_.GetWeakPtr(), callback)));
+  write_operation_queue_.push_back(
+      base::MakeUnique<EasyUnlockRefreshKeysOperation>(
+          user_context, tpm_public_key, devices,
+          base::Bind(&EasyUnlockKeyManager::OnKeysRefreshed,
+                     weak_ptr_factory_.GetWeakPtr(), callback)));
   RunNextOperation();
 }
 
 void EasyUnlockKeyManager::GetDeviceDataList(
     const UserContext& user_context,
     const GetDeviceDataListCallback& callback) {
-  read_operation_queue_.push_back(new EasyUnlockGetKeysOperation(
+  read_operation_queue_.push_back(base::MakeUnique<EasyUnlockGetKeysOperation>(
       user_context, base::Bind(&EasyUnlockKeyManager::OnKeysFetched,
                                weak_ptr_factory_.GetWeakPtr(), callback)));
   RunNextOperation();
@@ -110,20 +110,21 @@ void EasyUnlockKeyManager::GetDeviceDataList(
 
 // static
 void EasyUnlockKeyManager::DeviceDataToRemoteDeviceDictionary(
-    const std::string& user_id,
+    const AccountId& account_id,
     const EasyUnlockDeviceKeyData& data,
     base::DictionaryValue* dict) {
   dict->SetString(kKeyBluetoothAddress, data.bluetooth_address);
   dict->SetInteger(kKeyBluetoothType, static_cast<int>(data.bluetooth_type));
   dict->SetString(kKeyPsk, data.psk);
-  scoped_ptr<base::DictionaryValue> permit_record(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> permit_record(
+      new base::DictionaryValue);
   dict->Set(kKeyPermitRecord, permit_record.release());
   dict->SetString(kKeyPermitId, data.public_key);
   dict->SetString(kKeyPermitData, data.public_key);
   dict->SetString(kKeyPermitType, kPermitTypeLicence);
   dict->SetString(kKeyPermitPermitId,
                   base::StringPrintf(kPermitPermitIdFormat,
-                                     user_id.c_str()));
+                                     account_id.GetUserEmail().c_str()));
 }
 
 // static
@@ -161,15 +162,16 @@ bool EasyUnlockKeyManager::RemoteDeviceDictionaryToDeviceData(
 
 // static
 void EasyUnlockKeyManager::DeviceDataListToRemoteDeviceList(
-    const std::string& user_id,
+    const AccountId& account_id,
     const EasyUnlockDeviceKeyDataList& data_list,
     base::ListValue* device_list) {
   device_list->Clear();
   for (size_t i = 0; i < data_list.size(); ++i) {
-    scoped_ptr<base::DictionaryValue> device_dict(new base::DictionaryValue);
-    DeviceDataToRemoteDeviceDictionary(
-        user_id, data_list[i], device_dict.get());
-    device_list->Append(device_dict.release());
+    std::unique_ptr<base::DictionaryValue> device_dict(
+        new base::DictionaryValue);
+    DeviceDataToRemoteDeviceDictionary(account_id, data_list[i],
+                                       device_dict.get());
+    device_list->Append(std::move(device_dict));
   }
 }
 
@@ -206,11 +208,11 @@ void EasyUnlockKeyManager::RunNextOperation() {
     return;
 
   if (!write_operation_queue_.empty()) {
-    pending_write_operation_ = make_scoped_ptr(write_operation_queue_.front());
+    pending_write_operation_ = std::move(write_operation_queue_.front());
     write_operation_queue_.pop_front();
     pending_write_operation_->Start();
   } else if (!read_operation_queue_.empty()) {
-    pending_read_operation_ = make_scoped_ptr(read_operation_queue_.front());
+    pending_read_operation_ = std::move(read_operation_queue_.front());
     read_operation_queue_.pop_front();
     pending_read_operation_->Start();
   }

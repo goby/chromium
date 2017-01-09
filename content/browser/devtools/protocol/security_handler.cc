@@ -7,7 +7,10 @@
 #include <string>
 
 #include "content/browser/devtools/protocol/devtools_protocol_dispatcher.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/security_style_explanations.h"
+#include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 
@@ -20,17 +23,17 @@ typedef DevToolsProtocolClient::Response Response;
 namespace {
 
 std::string SecurityStyleToProtocolSecurityState(
-    SecurityStyle security_style) {
+    blink::WebSecurityStyle security_style) {
   switch (security_style) {
-    case SECURITY_STYLE_UNKNOWN:
+    case blink::WebSecurityStyleUnknown:
       return kSecurityStateUnknown;
-    case SECURITY_STYLE_UNAUTHENTICATED:
+    case blink::WebSecurityStyleUnauthenticated:
       return kSecurityStateNeutral;
-    case SECURITY_STYLE_AUTHENTICATION_BROKEN:
+    case blink::WebSecurityStyleAuthenticationBroken:
       return kSecurityStateInsecure;
-    case SECURITY_STYLE_WARNING:
+    case blink::WebSecurityStyleWarning:
       return kSecurityStateWarning;
-    case SECURITY_STYLE_AUTHENTICATED:
+    case blink::WebSecurityStyleAuthenticated:
       return kSecurityStateSecure;
     default:
       NOTREACHED();
@@ -44,11 +47,11 @@ void AddExplanations(
     std::vector<scoped_refptr<SecurityStateExplanation>>* explanations) {
   for (const auto& it : explanations_to_add) {
     scoped_refptr<SecurityStateExplanation> explanation =
-        SecurityStateExplanation::Create()->set_security_state(security_style)
-                                          ->set_summary(it.summary)
-                                          ->set_description(it.description);
-    if (it.cert_id > 0)
-      explanation->set_certificate_id(it.cert_id);
+        SecurityStateExplanation::Create()
+            ->set_security_state(security_style)
+            ->set_summary(it.summary)
+            ->set_description(it.description)
+            ->set_has_certificate(it.has_certificate);
     explanations->push_back(explanation);
   }
 }
@@ -63,7 +66,7 @@ SecurityHandler::SecurityHandler()
 SecurityHandler::~SecurityHandler() {
 }
 
-void SecurityHandler::SetClient(scoped_ptr<Client> client) {
+void SecurityHandler::SetClient(std::unique_ptr<Client> client) {
   client_.swap(client);
 }
 
@@ -72,13 +75,9 @@ void SecurityHandler::AttachToRenderFrameHost() {
   WebContents* web_contents = WebContents::FromRenderFrameHost(host_);
   WebContentsObserver::Observe(web_contents);
 
-  // Send an initial SecurityStyleChanged event.
+  // Send an initial DidChangeVisibleSecurityState event.
   DCHECK(enabled_);
-  SecurityStyleExplanations security_style_explanations;
-  SecurityStyle security_style =
-      web_contents->GetDelegate()->GetSecurityStyle(
-          web_contents, &security_style_explanations);
-  SecurityStyleChanged(security_style, security_style_explanations);
+  DidChangeVisibleSecurityState();
 }
 
 void SecurityHandler::SetRenderFrameHost(RenderFrameHost* host) {
@@ -87,10 +86,13 @@ void SecurityHandler::SetRenderFrameHost(RenderFrameHost* host) {
     AttachToRenderFrameHost();
 }
 
-void SecurityHandler::SecurityStyleChanged(
-    SecurityStyle security_style,
-    const SecurityStyleExplanations& security_style_explanations) {
+void SecurityHandler::DidChangeVisibleSecurityState() {
   DCHECK(enabled_);
+
+  SecurityStyleExplanations security_style_explanations;
+  blink::WebSecurityStyle security_style =
+      web_contents()->GetDelegate()->GetSecurityStyle(
+          web_contents(), &security_style_explanations);
 
   const std::string security_state =
       SecurityStyleToProtocolSecurityState(security_style);
@@ -105,13 +107,18 @@ void SecurityHandler::SecurityStyleChanged(
   AddExplanations(kSecurityStateSecure,
                   security_style_explanations.secure_explanations,
                   &explanations);
+  AddExplanations(kSecurityStateInfo,
+                  security_style_explanations.info_explanations, &explanations);
 
-  scoped_refptr<MixedContentStatus> mixed_content_status =
-      MixedContentStatus::Create()
-          ->set_ran_insecure_content(
-              security_style_explanations.ran_insecure_content)
-          ->set_displayed_insecure_content(
-              security_style_explanations.displayed_insecure_content)
+  scoped_refptr<InsecureContentStatus> insecure_content_status =
+      InsecureContentStatus::Create()
+          ->set_ran_mixed_content(security_style_explanations.ran_mixed_content)
+          ->set_displayed_mixed_content(
+              security_style_explanations.displayed_mixed_content)
+          ->set_ran_content_with_cert_errors(
+              security_style_explanations.ran_content_with_cert_errors)
+          ->set_displayed_content_with_cert_errors(
+              security_style_explanations.displayed_content_with_cert_errors)
           ->set_ran_insecure_content_style(SecurityStyleToProtocolSecurityState(
               security_style_explanations.ran_insecure_content_style))
           ->set_displayed_insecure_content_style(
@@ -124,7 +131,7 @@ void SecurityHandler::SecurityStyleChanged(
           ->set_security_state(security_state)
           ->set_scheme_is_cryptographic(
               security_style_explanations.scheme_is_cryptographic)
-          ->set_mixed_content_status(mixed_content_status)
+          ->set_insecure_content_status(insecure_content_status)
           ->set_explanations(explanations));
 }
 
@@ -139,6 +146,19 @@ Response SecurityHandler::Enable() {
 Response SecurityHandler::Disable() {
   enabled_ = false;
   WebContentsObserver::Observe(nullptr);
+  return Response::OK();
+}
+
+Response SecurityHandler::ShowCertificateViewer() {
+  if (!host_)
+    return Response::InternalError("Could not connect to view");
+  WebContents* web_contents = WebContents::FromRenderFrameHost(host_);
+  scoped_refptr<net::X509Certificate> certificate =
+      web_contents->GetController().GetVisibleEntry()->GetSSL().certificate;
+  if (!certificate)
+    return Response::InternalError("Could not find certificate");
+  web_contents->GetDelegate()->ShowCertificateViewerInDevTools(
+      web_contents, certificate);
   return Response::OK();
 }
 

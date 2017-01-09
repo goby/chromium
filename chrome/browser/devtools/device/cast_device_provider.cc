@@ -11,10 +11,13 @@
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/local_discovery/service_discovery_shared_client.h"
 #include "net/base/host_port_pair.h"
-#include "net/base/ip_address_number.h"
+#include "net/base/ip_address.h"
 
+using local_discovery::ServiceDescription;
+using local_discovery::ServiceDiscoveryDeviceLister;
 using local_discovery::ServiceDiscoverySharedClient;
 
 namespace {
@@ -23,17 +26,20 @@ const int kCastInspectPort = 9222;
 const char kCastServiceType[] = "_googlecast._tcp.local";
 const char kUnknownCastDevice[] = "Unknown Cast Device";
 
-typedef std::map<std::string, std::string> ServiceTxtRecordMap;
+using ServiceTxtRecordMap = std::map<std::string, std::string>;
 
 // Parses TXT record strings into a map. TXT key-value strings are assumed to
 // follow the form "$key(=$value)?", where $key must contain at least one
 // character, and $value may be empty.
-scoped_ptr<ServiceTxtRecordMap> ParseServiceTxtRecord(
+std::unique_ptr<ServiceTxtRecordMap> ParseServiceTxtRecord(
     const std::vector<std::string>& record) {
-  scoped_ptr<ServiceTxtRecordMap> record_map(new ServiceTxtRecordMap());
+  std::unique_ptr<ServiceTxtRecordMap> record_map(new ServiceTxtRecordMap());
   for (const auto& key_value_str : record) {
-    int index = key_value_str.find("=", 0);
-    if (index < 0 && key_value_str != "") {
+    if (key_value_str.empty())
+      continue;
+
+    size_t index = key_value_str.find("=", 0);
+    if (index == std::string::npos) {
       // Some strings may only define a key (no '=' in the key/value string).
       // The chosen behavior is to assume the value is the empty string.
       record_map->insert(std::make_pair(key_value_str, ""));
@@ -43,19 +49,19 @@ scoped_ptr<ServiceTxtRecordMap> ParseServiceTxtRecord(
       record_map->insert(std::make_pair(key, value));
     }
   }
-  return record_map.Pass();
+  return record_map;
 }
 
 AndroidDeviceManager::DeviceInfo ServiceDescriptionToDeviceInfo(
     const ServiceDescription& service_description) {
-  scoped_ptr<ServiceTxtRecordMap> record_map =
+  std::unique_ptr<ServiceTxtRecordMap> record_map =
       ParseServiceTxtRecord(service_description.metadata);
 
   AndroidDeviceManager::DeviceInfo device_info;
   device_info.connected = true;
-  const auto& search = record_map->find("md");
-  if (search != record_map->end() && search->second != "")
-    device_info.model = search->second;
+  const auto it = record_map->find("md");
+  if (it != record_map->end() && !it->second.empty())
+    device_info.model = it->second;
   else
     device_info.model = kUnknownCastDevice;
 
@@ -127,7 +133,7 @@ class CastDeviceProvider::DeviceListerDelegate
   // messages will be posted).
   scoped_refptr<base::SingleThreadTaskRunner> runner_;
   scoped_refptr<ServiceDiscoverySharedClient> service_discovery_client_;
-  scoped_ptr<ServiceDiscoveryDeviceLister> device_lister_;
+  std::unique_ptr<ServiceDiscoveryDeviceLister> device_lister_;
 };
 
 CastDeviceProvider::CastDeviceProvider() : weak_factory_(this) {}
@@ -171,29 +177,25 @@ void CastDeviceProvider::OnDeviceChanged(
           << service_description.service_name;
   if (service_description.service_type() != kCastServiceType)
     return;
-  net::IPAddressNumber ip_address = service_description.ip_address;
-  if (ip_address.size() != net::kIPv4AddressSize &&
-      ip_address.size() != net::kIPv6AddressSize) {
+  const net::IPAddress& ip_address = service_description.ip_address;
+  if (!ip_address.IsValid()) {
     // An invalid IP address is not queryable.
     return;
   }
-  std::string name = service_description.service_name;
-  std::string host = net::IPAddressToString(ip_address);
+  const std::string& name = service_description.service_name;
+  std::string host = ip_address.ToString();
   service_hostname_map_[name] = host;
   device_info_map_[host] = ServiceDescriptionToDeviceInfo(service_description);
 }
 
 void CastDeviceProvider::OnDeviceRemoved(const std::string& service_name) {
   VLOG(1) << "Device removed: " << service_name;
-  auto it_hostname = service_hostname_map_.find(service_name);
-  if (it_hostname == service_hostname_map_.end())
+  auto it = service_hostname_map_.find(service_name);
+  if (it == service_hostname_map_.end())
     return;
-  std::string hostname = it_hostname->second;
-  service_hostname_map_.erase(it_hostname);
-  auto it_device = device_info_map_.find(hostname);
-  if (it_device == device_info_map_.end())
-    return;
-  device_info_map_.erase(it_device);
+  const std::string& hostname = it->second;
+  device_info_map_.erase(hostname);
+  service_hostname_map_.erase(it);
 }
 
 void CastDeviceProvider::OnDeviceCacheFlushed() {

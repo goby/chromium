@@ -6,8 +6,8 @@
 
 #import <Cocoa/Cocoa.h>
 #import <IOKit/IOKitLib.h>
-
 #include <errno.h>
+#include <stddef.h>
 #include <string.h>
 #include <sys/utsname.h>
 #include <sys/xattr.h>
@@ -122,19 +122,6 @@ bool IsHiddenLoginItem(LSSharedFileListItemRef item) {
 
 }  // namespace
 
-std::string PathFromFSRef(const FSRef& ref) {
-  ScopedCFTypeRef<CFURLRef> url(
-      CFURLCreateFromFSRef(kCFAllocatorDefault, &ref));
-  NSString *path_string = [(NSURL *)url.get() path];
-  return [path_string fileSystemRepresentation];
-}
-
-bool FSRefFromPath(const std::string& path, FSRef* ref) {
-  OSStatus status = FSPathMakeRef((const UInt8*)path.c_str(),
-                                  ref, nil);
-  return status == noErr;
-}
-
 CGColorSpaceRef GetGenericRGBColorSpace() {
   // Leaked. That's OK, it's scoped to the lifetime of the application.
   static CGColorSpaceRef g_color_space_generic_rgb(
@@ -216,43 +203,6 @@ void SwitchFullScreenModes(FullScreenMode from_mode, FullScreenMode to_mode) {
   g_full_screen_requests[to_mode] =
       std::max(g_full_screen_requests[to_mode] + 1, 1);
   SetUIMode();
-}
-
-void SetCursorVisibility(bool visible) {
-  if (visible)
-    [NSCursor unhide];
-  else
-    [NSCursor hide];
-}
-
-void ActivateProcess(pid_t pid) {
-  ProcessSerialNumber process;
-  OSStatus status = GetProcessForPID(pid, &process);
-  if (status == noErr) {
-    SetFrontProcess(&process);
-  } else {
-    OSSTATUS_DLOG(WARNING, status) << "Unable to get process for pid " << pid;
-  }
-}
-
-bool AmIForeground() {
-  ProcessSerialNumber foreground_psn = { 0 };
-  OSErr err = GetFrontProcess(&foreground_psn);
-  if (err != noErr) {
-    OSSTATUS_DLOG(WARNING, err) << "GetFrontProcess";
-    return false;
-  }
-
-  ProcessSerialNumber my_psn = { 0, kCurrentProcess };
-
-  Boolean result = FALSE;
-  err = SameProcess(&foreground_psn, &my_psn, &result);
-  if (err != noErr) {
-    OSSTATUS_DLOG(WARNING, err) << "SameProcess";
-    return false;
-  }
-
-  return result;
 }
 
 bool SetFileBackupExclusion(const FilePath& file_path) {
@@ -346,11 +296,21 @@ bool WasLaunchedAsLoginOrResumeItem() {
   ProcessInfoRec info = {};
   info.processInfoLength = sizeof(info);
 
+// GetProcessInformation has been deprecated since macOS 10.9, but there is no
+// replacement that provides the information we need. See
+// https://crbug.com/650854.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
   if (GetProcessInformation(&psn, &info) == noErr) {
+#pragma clang diagnostic pop
     ProcessInfoRec parent_info = {};
     parent_info.processInfoLength = sizeof(parent_info);
-    if (GetProcessInformation(&info.processLauncher, &parent_info) == noErr)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    if (GetProcessInformation(&info.processLauncher, &parent_info) == noErr) {
+#pragma clang diagnostic pop
       return parent_info.processSignature == 'lgnw';
+    }
   }
   return false;
 }
@@ -358,7 +318,7 @@ bool WasLaunchedAsLoginOrResumeItem() {
 bool WasLaunchedAsLoginItemRestoreState() {
   // "Reopen windows..." option was added for Lion.  Prior OS versions should
   // not have this behavior.
-  if (IsOSSnowLeopard() || !WasLaunchedAsLoginOrResumeItem())
+  if (!WasLaunchedAsLoginOrResumeItem())
     return false;
 
   CFStringRef app = CFSTR("com.apple.loginwindow");
@@ -385,12 +345,7 @@ bool WasLaunchedAsHiddenLoginItem() {
 
   ScopedCFTypeRef<LSSharedFileListItemRef> item(GetLoginItemForApp());
   if (!item.get()) {
-    // Lion can launch items for the resume feature.  So log an error only for
-    // Snow Leopard or earlier.
-    if (IsOSSnowLeopard())
-      DLOG(ERROR) <<
-          "Process launched at Login but can't access Login Item List.";
-
+    // OS X can launch items for the resume feature.
     return false;
   }
   return IsHiddenLoginItem(item);
@@ -463,102 +418,21 @@ int MacOSXMinorVersionInternal() {
   // immediate death.
   CHECK(darwin_major_version >= 6);
   int mac_os_x_minor_version = darwin_major_version - 4;
-  DLOG_IF(WARNING, darwin_major_version > 15) << "Assuming Darwin "
+  DLOG_IF(WARNING, darwin_major_version > 16) << "Assuming Darwin "
       << base::IntToString(darwin_major_version) << " is Mac OS X 10."
       << base::IntToString(mac_os_x_minor_version);
 
   return mac_os_x_minor_version;
 }
 
-// Returns the running system's Mac OS X minor version. This is the |y| value
-// in 10.y or 10.y.z.
+}  // namespace
+
+namespace internal {
 int MacOSXMinorVersion() {
   static int mac_os_x_minor_version = MacOSXMinorVersionInternal();
   return mac_os_x_minor_version;
 }
-
-enum {
-  SNOW_LEOPARD_MINOR_VERSION = 6,
-  LION_MINOR_VERSION = 7,
-  MOUNTAIN_LION_MINOR_VERSION = 8,
-  MAVERICKS_MINOR_VERSION = 9,
-  YOSEMITE_MINOR_VERSION = 10,
-  EL_CAPITAN_MINOR_VERSION = 11,
-};
-
-}  // namespace
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_7)
-bool IsOSSnowLeopard() {
-  return MacOSXMinorVersion() == SNOW_LEOPARD_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_7)
-bool IsOSLion() {
-  return MacOSXMinorVersion() == LION_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_7)
-bool IsOSLionOrLater() {
-  return MacOSXMinorVersion() >= LION_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_8)
-bool IsOSMountainLion() {
-  return MacOSXMinorVersion() == MOUNTAIN_LION_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_8)
-bool IsOSMountainLionOrLater() {
-  return MacOSXMinorVersion() >= MOUNTAIN_LION_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_9)
-bool IsOSMavericks() {
-  return MacOSXMinorVersion() == MAVERICKS_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_9)
-bool IsOSMavericksOrLater() {
-  return MacOSXMinorVersion() >= MAVERICKS_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_10)
-bool IsOSYosemite() {
-  return MacOSXMinorVersion() == YOSEMITE_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_10)
-bool IsOSYosemiteOrLater() {
-  return MacOSXMinorVersion() >= YOSEMITE_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_11)
-bool IsOSElCapitan() {
-  return MacOSXMinorVersion() == EL_CAPITAN_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GE_10_11)
-bool IsOSElCapitanOrLater() {
-  return MacOSXMinorVersion() >= EL_CAPITAN_MINOR_VERSION;
-}
-#endif
-
-#if !defined(BASE_MAC_MAC_UTIL_H_INLINED_GT_10_11)
-bool IsOSLaterThanElCapitan_DontCallThis() {
-  return MacOSXMinorVersion() > EL_CAPITAN_MINOR_VERSION;
-}
-#endif
+}  // namespace internal
 
 std::string GetModelIdentifier() {
   std::string return_string;
@@ -582,15 +456,15 @@ std::string GetModelIdentifier() {
 
 bool ParseModelIdentifier(const std::string& ident,
                           std::string* type,
-                          int32* major,
-                          int32* minor) {
+                          int32_t* major,
+                          int32_t* minor) {
   size_t number_loc = ident.find_first_of("0123456789");
   if (number_loc == std::string::npos)
     return false;
   size_t comma_loc = ident.find(',', number_loc);
   if (comma_loc == std::string::npos)
     return false;
-  int32 major_tmp, minor_tmp;
+  int32_t major_tmp, minor_tmp;
   std::string::const_iterator begin = ident.begin();
   if (!StringToInt(
           StringPiece(begin + number_loc, begin + comma_loc), &major_tmp) ||

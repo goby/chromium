@@ -5,8 +5,8 @@
 import shutil
 
 from profile_creators import profile_generator
-from profile_creators import small_profile_extender
 from telemetry.page import page as page_module
+from telemetry.page import cache_temperature as cache_temperature_module
 from telemetry.page import shared_page_state
 from telemetry import story
 
@@ -20,6 +20,7 @@ class Typical25ProfileSharedState(shared_page_state.SharedDesktopPageState):
   def __init__(self, test, finder_options, story_set):
     super(Typical25ProfileSharedState, self).__init__(
         test, finder_options, story_set)
+    from profile_creators import small_profile_extender
     generator = profile_generator.ProfileGenerator(
         small_profile_extender.SmallProfileExtender,
         'small_profile')
@@ -39,28 +40,21 @@ class Typical25ProfileSharedState(shared_page_state.SharedDesktopPageState):
 class Typical25Page(page_module.Page):
 
   def __init__(self, url, page_set, run_no_page_interactions,
-      shared_page_state_class=shared_page_state.SharedDesktopPageState):
+      shared_page_state_class=shared_page_state.SharedDesktopPageState,
+      cache_temperature=None):
     super(Typical25Page, self).__init__(
         url=url, page_set=page_set,
-        shared_page_state_class=shared_page_state_class)
-    self.archive_data_file = 'data/typical_25.json'
+        shared_page_state_class=shared_page_state_class,
+        cache_temperature=cache_temperature)
     self._run_no_page_interactions = run_no_page_interactions
 
   def RunPageInteractions(self, action_runner):
     if self._run_no_page_interactions:
+      action_runner.WaitForJavaScriptCondition(
+          'performance.timing.loadEventStart > 0')
       return
     with action_runner.CreateGestureInteraction('ScrollAction'):
       action_runner.ScrollPage()
-
-
-class Typical25PageWithProfile(Typical25Page):
-  """A page from the typical 25 set backed by a profile."""
-
-  def __init__(self, url, page_set, run_no_page_interactions):
-    super(Typical25PageWithProfile, self).__init__(
-        url=url, page_set=page_set,
-        run_no_page_interactions=run_no_page_interactions,
-        shared_page_state_class=Typical25ProfileSharedState)
 
 
 class Typical25PageSet(story.StorySet):
@@ -68,10 +62,13 @@ class Typical25PageSet(story.StorySet):
   """ Pages designed to represent the median, not highly optimized web """
 
   def __init__(self, run_no_page_interactions=False,
-               page_class=Typical25Page):
+               page_class=Typical25Page,
+               cache_temperatures=None):
     super(Typical25PageSet, self).__init__(
       archive_data_file='data/typical_25.json',
       cloud_storage_bucket=story.PARTNER_BUCKET)
+    if cache_temperatures is None:
+      cache_temperatures = [cache_temperature_module.ANY]
 
     urls_list = [
       # Why: Alexa games #48
@@ -82,8 +79,6 @@ class Typical25PageSet(story.StorySet):
       'http://www.fifa.com/',
       # Why: Alexa shopping #41
       'http://www.gamestop.com/ps3',
-      # Why: Alexa shopping #25
-      'http://www.barnesandnoble.com/u/books-bestselling-books/379003057/',
       # Why: Alexa news #55
       ('http://www.economist.com/news/science-and-technology/21573529-small-'
        'models-cosmic-phenomena-are-shedding-light-real-thing-how-build'),
@@ -94,7 +89,6 @@ class Typical25PageSet(story.StorySet):
       'http://allrecipes.com/Recipe/Pull-Apart-Hot-Cross-Buns/Detail.aspx',
       'http://www.html5rocks.com/en/',
       'http://www.mlb.com/',
-      # pylint: disable=line-too-long
       'http://gawker.com/5939683/based-on-a-true-story-is-a-rotten-lie-i-hope-you-never-believe',
       'http://www.imdb.com/title/tt0910970/',
       'http://www.flickr.com/search/?q=monkeys&f=hp',
@@ -115,14 +109,6 @@ class Typical25PageSet(story.StorySet):
     ]
 
     for url in urls_list:
-      self.AddStory(
-        page_class(url, self, run_no_page_interactions))
-
-
-class Typical25PageSetWithProfile(Typical25PageSet):
-  """ Similar to Typical25PageSet, but with a non-empty profile. """
-
-  def __init__(self, run_no_page_interactions=False):
-    super(Typical25PageSetWithProfile, self).__init__(
-        run_no_page_interactions=run_no_page_interactions,
-        page_class=Typical25PageWithProfile)
+      for temp in cache_temperatures:
+        self.AddStory(page_class(
+          url, self, run_no_page_interactions, cache_temperature=temp))

@@ -6,7 +6,7 @@
 
 #include <cmath>
 
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/drive/file_system_core_util.h"
@@ -74,15 +74,15 @@ void JobEventRouter::OnJobDone(const drive::JobInfo& job_info,
 
   // Forget about the job.
   drive_jobs_.erase(job_info.job_id);
-  if (!drive_jobs_.size()) {
+  if (drive_jobs_.empty()) {
     num_completed_bytes_ = 0L;
     num_total_bytes_ = 0L;
   }
 }
 
 void JobEventRouter::UpdateBytes(const drive::JobInfo& job_info) {
-  int64 last_completed_bytes = 0;
-  int64 last_total_bytes = 0;
+  int64_t last_completed_bytes = 0;
+  int64_t last_total_bytes = 0;
   if (drive_jobs_.count(job_info.job_id)) {
     last_completed_bytes = drive_jobs_[job_info.job_id]->num_completed_bytes;
     last_total_bytes = drive_jobs_[job_info.job_id]->num_total_bytes;
@@ -130,9 +130,9 @@ void JobEventRouter::DispatchFileTransfersUpdateEventToExtension(
     const std::string& extension_id,
     const drive::JobInfo& job_info,
     const file_manager_private::TransferState& state,
-    const int64 num_total_jobs,
-    const int64 num_completed_bytes,
-    const int64 num_total_bytes) {
+    const int64_t num_total_jobs,
+    const int64_t num_completed_bytes,
+    const int64_t num_total_bytes) {
   file_manager_private::FileTransferStatus status;
 
   const GURL url =

@@ -4,7 +4,8 @@
 
 #import "crnet_consumer_app_delegate.h"
 
-#import "CrNet.h"
+#import <CrNet/CrNet.h>
+
 #include "base/format_macros.h"
 #import "crnet_consumer_view_controller.h"
 
@@ -45,8 +46,6 @@
     didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
   [CrNet setPartialUserAgent:@"Dummy/1.0"];
   [CrNet setQuicEnabled:YES];
-  // Always use QUIC if able.
-  [CrNet setAlternateProtocolThreshold:0.0];
   [CrNet setSDCHEnabled:YES withPrefStore:[self SDCHPrefStoreFileName]];
   [CrNet install];
   [CrNet startNetLogToFile:[self currentNetLogFileName] logBytes:NO];

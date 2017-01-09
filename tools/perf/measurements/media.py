@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 
 from metrics import cpu
 from metrics import media
@@ -10,7 +10,7 @@ from metrics import power
 from metrics import system_memory
 
 
-class Media(page_test.PageTest):
+class Media(legacy_page_test.LegacyPageTest):
   """The MediaMeasurement class gathers media-related metrics on a page set.
 
   Media metrics recorded are controlled by metrics/media.js.  At the end of the
@@ -41,7 +41,8 @@ class Media(page_test.PageTest):
     self._media_metric.Start(page, tab)
 
     # Reset to false for every page.
-    self._add_browser_metrics = (page.add_browser_metrics
+    self._add_browser_metrics = (
+        page.add_browser_metrics
         if hasattr(page, 'add_browser_metrics') else False)
 
     if self._add_browser_metrics:
@@ -69,4 +70,5 @@ class Media(page_test.PageTest):
       self._power_metric.AddResults(tab, results)
 
   def DidRunPage(self, platform):
+    del platform  # unused
     self._power_metric.Close()

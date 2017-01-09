@@ -5,8 +5,11 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_FILE_REF_HOST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_FILE_REF_HOST_H_
 
+#include <stdint.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/browser_ppapi_host.h"
 #include "ppapi/c/pp_file_info.h"
@@ -100,7 +103,7 @@ class CONTENT_EXPORT PepperFileRefHost
   int32_t OnGetAbsolutePath(ppapi::host::HostMessageContext* context);
 
   BrowserPpapiHost* host_;
-  scoped_ptr<PepperFileRefBackend> backend_;
+  std::unique_ptr<PepperFileRefBackend> backend_;
   base::WeakPtr<PepperFileSystemBrowserHost> file_system_host_;
   PP_FileSystemType fs_type_;
 

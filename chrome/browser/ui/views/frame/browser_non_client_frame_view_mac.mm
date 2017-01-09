@@ -5,11 +5,11 @@
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view_mac.h"
 
 #include "chrome/browser/themes/theme_properties.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/browser_view_layout.h"
-#include "chrome/browser/ui/views/layout_constants.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/theme_provider.h"
 #include "ui/gfx/canvas.h"
@@ -46,7 +46,7 @@ gfx::Rect BrowserNonClientFrameViewMac::GetBoundsForTabStrip(
   return bounds;
 }
 
-int BrowserNonClientFrameViewMac::GetTopInset() const {
+int BrowserNonClientFrameViewMac::GetTopInset(bool restored) const {
   return browser_view()->IsTabStripVisible() ? kTabstripTopInset : 0;
 }
 
@@ -122,7 +122,7 @@ void BrowserNonClientFrameViewMac::OnPaint(gfx::Canvas* canvas) {
 }
 
 // BrowserNonClientFrameView:
-void BrowserNonClientFrameViewMac::UpdateNewAvatarButtonImpl() {
+void BrowserNonClientFrameViewMac::UpdateProfileIcons() {
   NOTIMPLEMENTED();
 }
 
@@ -130,13 +130,10 @@ void BrowserNonClientFrameViewMac::UpdateNewAvatarButtonImpl() {
 // BrowserNonClientFrameViewMac, private:
 
 void BrowserNonClientFrameViewMac::PaintThemedFrame(gfx::Canvas* canvas) {
-  gfx::ImageSkia* image = GetFrameImage();
-  if (image)
-    canvas->TileImageInt(*image, 0, 0, width(), image->height());
-
-  gfx::ImageSkia* overlay = GetFrameOverlayImage();
-  if (overlay)
-    canvas->TileImageInt(*overlay, 0, 0, width(), overlay->height());
+  gfx::ImageSkia image = GetFrameImage();
+  canvas->TileImageInt(image, 0, 0, width(), image.height());
+  gfx::ImageSkia overlay = GetFrameOverlayImage();
+  canvas->TileImageInt(overlay, 0, 0, width(), overlay.height());
 }
 
 void BrowserNonClientFrameViewMac::PaintToolbarBackground(gfx::Canvas* canvas) {
@@ -144,15 +141,13 @@ void BrowserNonClientFrameViewMac::PaintToolbarBackground(gfx::Canvas* canvas) {
   if (bounds.IsEmpty())
     return;
 
-  ui::ThemeProvider* tp = GetThemeProvider();
+  const ui::ThemeProvider* tp = GetThemeProvider();
   gfx::ImageSkia* border = tp->GetImageSkiaNamed(IDR_TOOLBAR_SHADE_TOP);
-  const int top_inset =
-      GetLayoutConstant(TABSTRIP_TOOLBAR_OVERLAP) - border->height();
 
   const int x = bounds.x();
-  const int y = bounds.y() + top_inset;
+  const int y = bounds.y() - border->height();
   const int w = bounds.width();
-  const int h = bounds.height() - top_inset;
+  const int h = bounds.height() + border->height();
 
   // The tabstrip border image height is 2*scale pixels, but only the bottom 2
   // pixels contain the actual border (the rest is transparent). We can't draw
@@ -162,8 +157,8 @@ void BrowserNonClientFrameViewMac::PaintToolbarBackground(gfx::Canvas* canvas) {
 
   // Draw the toolbar fill.
   canvas->TileImageInt(*tp->GetImageSkiaNamed(IDR_THEME_TOOLBAR),
-                       x + GetThemeBackgroundXInset(), fill_y - GetTopInset(),
-                       x, fill_y, w, fill_height);
+                       x + GetThemeBackgroundXInset(),
+                       fill_y - GetTopInset(false), x, fill_y, w, fill_height);
 
   // Draw the tabstrip/toolbar separator.
   canvas->TileImageInt(*border, 0, 0, x, y, w, border->height());
@@ -172,5 +167,6 @@ void BrowserNonClientFrameViewMac::PaintToolbarBackground(gfx::Canvas* canvas) {
   canvas->FillRect(
       gfx::Rect(x, y + h - kClientEdgeThickness, w, kClientEdgeThickness),
       ThemeProperties::GetDefaultColor(
-          ThemeProperties::COLOR_TOOLBAR_SEPARATOR));
+          ThemeProperties::COLOR_TOOLBAR_BOTTOM_SEPARATOR,
+          browser_view()->IsIncognito()));
 }

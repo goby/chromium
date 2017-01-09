@@ -4,13 +4,14 @@
 
 #include "chrome/browser/predictors/predictor_database.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/metrics/histogram.h"
-#include "base/strings/stringprintf.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/predictors/autocomplete_action_predictor_table.h"
 #include "chrome/browser/predictors/resource_prefetch_predictor.h"
 #include "chrome/browser/predictors/resource_prefetch_predictor_tables.h"
@@ -53,7 +54,7 @@ class PredictorDatabaseInternal
 
   bool is_resource_prefetch_predictor_enabled_;
   base::FilePath db_path_;
-  scoped_ptr<sql::Connection> db_;
+  std::unique_ptr<sql::Connection> db_;
 
   // TODO(shishir): These tables may not need to be refcounted. Maybe move them
   // to using a WeakPtr instead.
@@ -70,6 +71,10 @@ PredictorDatabaseInternal::PredictorDatabaseInternal(Profile* profile)
       autocomplete_table_(new AutocompleteActionPredictorTable()),
       resource_prefetch_tables_(new ResourcePrefetchPredictorTables()) {
   db_->set_histogram_tag("Predictor");
+
+  // This db does not use [meta] table, store mmap status data elsewhere.
+  db_->set_mmap_alt_status();
+
   ResourcePrefetchPredictorConfig config;
   is_resource_prefetch_predictor_enabled_ =
       IsSpeculativeResourcePrefetchingEnabled(profile, &config);
@@ -114,7 +119,7 @@ void PredictorDatabaseInternal::LogDatabaseStats() {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::DB) ||
         !BrowserThread::IsMessageLoopValid(BrowserThread::DB));
 
-  int64 db_size;
+  int64_t db_size;
   bool success = base::GetFileSize(db_path_, &db_size);
   DCHECK(success) << "Failed to get file size for " << db_path_.value();
   UMA_HISTOGRAM_MEMORY_KB("PredictorDatabase.DatabaseSizeKB",

@@ -4,7 +4,11 @@
 
 #include "ppapi/nacl_irt/manifest_service.h"
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_sync_message_filter.h"
@@ -28,11 +32,9 @@ namespace ppapi {
 class ManifestMessageFilter : public IPC::SyncMessageFilter {
  public:
   ManifestMessageFilter(base::WaitableEvent* shutdown_event)
-      : SyncMessageFilter(shutdown_event,
-                          false /* is_channel_send_thread_safe */),
-        connected_event_(
-            true /* manual_reset */, false /* initially_signaled */) {
-  }
+      : SyncMessageFilter(shutdown_event),
+        connected_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                         base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   bool Send(IPC::Message* message) override {
     // Wait until set up is actually done.
@@ -42,8 +44,8 @@ class ManifestMessageFilter : public IPC::SyncMessageFilter {
 
   // When set up is done, OnFilterAdded is called on IO thread. Unblocks the
   // Send().
-  void OnFilterAdded(IPC::Sender* sender) override {
-    SyncMessageFilter::OnFilterAdded(sender);
+  void OnFilterAdded(IPC::Channel* channel) override {
+    SyncMessageFilter::OnFilterAdded(channel);
     connected_event_.Signal();
   }
 
@@ -98,11 +100,8 @@ bool ManifestService::OpenResource(const char* file, int* fd) {
   // inside NaClIPCAdapter.
   uint64_t file_token_lo = 0;
   uint64_t file_token_hi = 0;
-  if (!filter_->Send(new PpapiHostMsg_OpenResource(
-          file,
-          &ipc_fd,
-          &file_token_lo,
-          &file_token_hi))) {
+  if (!filter_->Send(new PpapiHostMsg_OpenResource(file, &file_token_lo,
+                                                   &file_token_hi, &ipc_fd))) {
     LOG(ERROR) << "ManifestService::OpenResource failed:" << file;
     *fd = -1;
     return false;

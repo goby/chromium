@@ -7,6 +7,7 @@
 
 #include <map>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "ui/base/models/simple_menu_model.h"
@@ -14,8 +15,6 @@
 namespace gfx {
 class Image;
 }
-
-class StatusIconMenuModelTest;
 
 // StatusIconMenuModel contains the state of the SimpleMenuModel as well as that
 // of its delegate. This is done so that we can easily identify when the menu
@@ -81,7 +80,7 @@ class StatusIconMenuModel
   bool IsCommandIdEnabled(int command_id) const override;
   bool IsCommandIdVisible(int command_id) const override;
   bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
+                                  ui::Accelerator* accelerator) const override;
   bool IsItemForCommandIdDynamic(int command_id) const override;
   base::string16 GetLabelForCommandId(int command_id) const override;
   base::string16 GetSublabelForCommandId(int command_id) const override;

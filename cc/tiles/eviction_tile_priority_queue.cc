@@ -4,6 +4,8 @@
 
 #include "cc/tiles/eviction_tile_priority_queue.h"
 
+#include "base/memory/ptr_util.h"
+
 namespace cc {
 
 namespace {
@@ -13,8 +15,9 @@ class EvictionOrderComparator {
   explicit EvictionOrderComparator(TreePriority tree_priority)
       : tree_priority_(tree_priority) {}
 
-  bool operator()(const scoped_ptr<TilingSetEvictionQueue>& a_queue,
-                  const scoped_ptr<TilingSetEvictionQueue>& b_queue) const {
+  bool operator()(
+      const std::unique_ptr<TilingSetEvictionQueue>& a_queue,
+      const std::unique_ptr<TilingSetEvictionQueue>& b_queue) const {
     // Note that in this function, we have to return true if and only if
     // b is strictly lower priority than a.
     const PrioritizedTile& a_tile = a_queue->Top();
@@ -64,12 +67,13 @@ class EvictionOrderComparator {
 void CreateTilingSetEvictionQueues(
     const std::vector<PictureLayerImpl*>& layers,
     TreePriority tree_priority,
-    std::vector<scoped_ptr<TilingSetEvictionQueue>>* queues) {
+    std::vector<std::unique_ptr<TilingSetEvictionQueue>>* queues) {
   DCHECK(queues->empty());
 
   for (auto* layer : layers) {
-    scoped_ptr<TilingSetEvictionQueue> tiling_set_queue = make_scoped_ptr(
-        new TilingSetEvictionQueue(layer->picture_layer_tiling_set()));
+    std::unique_ptr<TilingSetEvictionQueue> tiling_set_queue =
+        base::MakeUnique<TilingSetEvictionQueue>(
+            layer->picture_layer_tiling_set());
     // Queues will only contain non empty tiling sets.
     if (!tiling_set_queue->IsEmpty())
       queues->push_back(std::move(tiling_set_queue));
@@ -125,16 +129,16 @@ void EvictionTilePriorityQueue::Pop() {
   }
 }
 
-std::vector<scoped_ptr<TilingSetEvictionQueue>>&
+std::vector<std::unique_ptr<TilingSetEvictionQueue>>&
 EvictionTilePriorityQueue::GetNextQueues() {
   const EvictionTilePriorityQueue* const_this =
       static_cast<const EvictionTilePriorityQueue*>(this);
   const auto& const_queues = const_this->GetNextQueues();
-  return const_cast<std::vector<scoped_ptr<TilingSetEvictionQueue>>&>(
+  return const_cast<std::vector<std::unique_ptr<TilingSetEvictionQueue>>&>(
       const_queues);
 }
 
-const std::vector<scoped_ptr<TilingSetEvictionQueue>>&
+const std::vector<std::unique_ptr<TilingSetEvictionQueue>>&
 EvictionTilePriorityQueue::GetNextQueues() const {
   DCHECK(!IsEmpty());
 

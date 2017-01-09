@@ -4,8 +4,9 @@
 
 #include "chrome/common/extensions/manifest_handlers/theme_handler.h"
 
+#include <memory>
+
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/grit/generated_resources.h"
@@ -31,12 +32,12 @@ bool LoadImages(const base::DictionaryValue* theme_value,
       // The value may be a dictionary of scales and files paths.
       // Or the value may be a file path, in which case a scale
       // of 100% is assumed.
-      if (iter.value().IsType(base::Value::TYPE_DICTIONARY)) {
+      if (iter.value().IsType(base::Value::Type::DICTIONARY)) {
         const base::DictionaryValue* inner_value = NULL;
         if (iter.value().GetAsDictionary(&inner_value)) {
           for (base::DictionaryValue::Iterator inner_iter(*inner_value);
                !inner_iter.IsAtEnd(); inner_iter.Advance()) {
-            if (!inner_iter.value().IsType(base::Value::TYPE_STRING)) {
+            if (!inner_iter.value().IsType(base::Value::Type::STRING)) {
               *error = base::ASCIIToUTF16(errors::kInvalidThemeImages);
               return false;
             }
@@ -45,7 +46,7 @@ bool LoadImages(const base::DictionaryValue* theme_value,
           *error = base::ASCIIToUTF16(errors::kInvalidThemeImages);
           return false;
         }
-      } else if (!iter.value().IsType(base::Value::TYPE_STRING)) {
+      } else if (!iter.value().IsType(base::Value::Type::STRING)) {
         *error = base::ASCIIToUTF16(errors::kInvalidThemeImages);
         return false;
       }
@@ -174,7 +175,7 @@ bool ThemeHandler::Parse(Extension* extension, base::string16* error) {
     return false;
   }
 
-  scoped_ptr<ThemeInfo> theme_info(new ThemeInfo);
+  std::unique_ptr<ThemeInfo> theme_info(new ThemeInfo);
   if (!LoadImages(theme_value, error, theme_info.get()))
     return false;
   if (!LoadColors(theme_value, error, theme_info.get()))

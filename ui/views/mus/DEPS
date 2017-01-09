@@ -2,14 +2,14 @@ include_rules = [
   "+cc",
   "-cc/blink",
   "+components/font_service/public",
-  "+components/bitmap_uploader",
   "+components/gpu",
-  "+components/mus",
-  "+components/resource_provider",
-  "+mojo/application/public",
   "+mojo/cc",
+  "+mojo/common",
   "+mojo/converters",
   "+mojo/public",
+  "+services/catalog/public",
+  "+services/service_manager/public",
+  "+services/ui",
   "+skia",
   "+ui/aura",
   "+ui/base",
@@ -17,8 +17,17 @@ include_rules = [
   "+ui/events",
   "+ui/gfx",
   "+ui/gl",
+  "+ui/mojo/display",
   "+ui/mojo/ime",
-  "+ui/mojo/init",
   "+ui/platform_window",
   "+ui/wm",
 ]
+
+specific_include_rules = {
+  "views_mus_test_suite.cc": [
+    "+services/service_manager/background",
+  ],
+  "views_aura_mus_test_suite.cc": [
+    "+services/service_manager/background",
+  ],
+}

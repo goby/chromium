@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_EXTENSIONS_EXTENSION_ACTION_VIEW_CONTROLLER_H_
 #define CHROME_BROWSER_UI_EXTENSIONS_EXTENSION_ACTION_VIEW_CONTROLLER_H_
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/extension_action_icon_factory.h"
@@ -85,11 +86,7 @@ class ExtensionActionViewController
   ToolbarActionViewDelegate* view_delegate() { return view_delegate_; }
   bool is_showing_popup() const { return popup_host_ != nullptr; }
 
-  void set_icon_observer(ExtensionActionIconFactory::Observer* icon_observer) {
-    icon_observer_ = icon_observer;
-  }
-
-  scoped_ptr<IconWithBadgeImageSource> GetIconImageSourceForTesting(
+  std::unique_ptr<IconWithBadgeImageSource> GetIconImageSourceForTesting(
       content::WebContents* web_contents,
       const gfx::Size& size);
 
@@ -129,7 +126,7 @@ class ExtensionActionViewController
                            bool grant_tab_permissions);
 
   // Shows the popup with the given |host|.
-  void ShowPopup(scoped_ptr<extensions::ExtensionViewHost> host,
+  void ShowPopup(std::unique_ptr<extensions::ExtensionViewHost> host,
                  bool grant_tab_permissions,
                  PopupShowAction show_action);
 
@@ -137,9 +134,17 @@ class ExtensionActionViewController
   void OnPopupClosed();
 
   // Returns the image source for the icon.
-  scoped_ptr<IconWithBadgeImageSource> GetIconImageSource(
+  std::unique_ptr<IconWithBadgeImageSource> GetIconImageSource(
       content::WebContents* web_contents,
       const gfx::Size& size);
+
+  // Returns true if this extension has a page action and that page action wants
+  // to run on the given |web_contents|.
+  bool PageActionWantsToRun(content::WebContents* web_contents) const;
+
+  // Returns true if this extension has been blocked on the given
+  // |web_contents|.
+  bool HasBeenBlocked(content::WebContents* web_contents) const;
 
   // The extension associated with the action we're displaying.
   scoped_refptr<const extensions::Extension> extension_;
@@ -162,23 +167,19 @@ class ExtensionActionViewController
   extensions::ExtensionViewHost* popup_host_;
 
   // The context menu model for the extension.
-  scoped_ptr<extensions::ExtensionContextMenuModel> context_menu_model_;
+  std::unique_ptr<extensions::ExtensionContextMenuModel> context_menu_model_;
 
   // Our view delegate.
   ToolbarActionViewDelegate* view_delegate_;
 
   // The delegate to handle platform-specific implementations.
-  scoped_ptr<ExtensionActionPlatformDelegate> platform_delegate_;
+  std::unique_ptr<ExtensionActionPlatformDelegate> platform_delegate_;
 
   // The object that will be used to get the browser action icon for us.
   // It may load the icon asynchronously (in which case the initial icon
   // returned by the factory will be transparent), so we have to observe it for
   // updates to the icon.
   ExtensionActionIconFactory icon_factory_;
-
-  // An additional observer that we need to notify when the icon of the button
-  // has been updated.
-  ExtensionActionIconFactory::Observer* icon_observer_;
 
   // The associated ExtensionRegistry; cached for quick checking.
   extensions::ExtensionRegistry* extension_registry_;

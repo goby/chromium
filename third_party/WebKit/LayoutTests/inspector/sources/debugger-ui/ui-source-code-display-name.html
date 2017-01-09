@@ -7,27 +7,27 @@ function test()
 
     function createContentProvider(url)
     {
-        var contentProvider = new WebInspector.StaticContentProvider(WebInspector.resourceTypes.Script, "");
-        contentProvider.requestContent = function(callback)
+        var contentProvider = Common.StaticContentProvider.fromString(url, Common.resourceTypes.Script, "");
+        contentProvider.requestContent = function()
         {
             InspectorTest.addResult("Source requested for " + url);
-            callback("");
+            return Promise.resolve("");
         };
         return contentProvider;
     }
 
-    var workspace = new WebInspector.Workspace();
-    workspace.networkProject = new WebInspector.NetworkProject(InspectorTest.mainTarget, workspace, WebInspector.networkMapping);
+    var workspace = new Workspace.Workspace();
+    workspace.networkProject = new Bindings.NetworkProject(InspectorTest.mainTarget, workspace);
 
     function addNetworkFile(url)
     {
-        return workspace.networkProject.addFileForURL(url, createContentProvider(url));
+        return workspace.networkProject.addFile(createContentProvider(url), InspectorTest.mainFrame());
     }
 
     function dumpUISourceCodeDisplayName(url)
     {
         var uiSourceCode = addNetworkFile(url);
-        InspectorTest.addResult("UISourceCode display name for url \"" + url + "\" is \"" + WebInspector.TabbedEditorContainer.prototype._titleForFile(uiSourceCode) + "\".");
+        InspectorTest.addResult("UISourceCode display name for url \"" + url + "\" is \"" + Sources.TabbedEditorContainer.prototype._titleForFile(uiSourceCode) + "\".");
     }
 
     const baseURL = "http://localhost:8080/folder/";

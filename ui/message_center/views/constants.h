@@ -5,7 +5,8 @@
 #ifndef UI_MESSAGE_CENTER_VIEWS_CONSTANTS_H_
 #define UI_MESSAGE_CENTER_VIEWS_CONSTANTS_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/message_center/message_center_style.h"
@@ -19,8 +20,6 @@ const SkColor kRegularTextBackgroundColor = SK_ColorWHITE;
 const SkColor kDimTextBackgroundColor = SK_ColorWHITE;
 const SkColor kContextTextBackgroundColor = SK_ColorWHITE;
 
-const int kIconSize = message_center::kNotificationIconSize;
-const int kLegacyIconSize = 40;
 const int kTextBottomPadding = 12;
 const int kItemTitleToMessagePadding = 3;
 const int kButtonVecticalPadding = 0;

@@ -6,10 +6,11 @@
 #define EXTENSIONS_BROWSER_USER_SCRIPT_LOADER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -40,8 +41,8 @@ namespace extensions {
 class UserScriptLoader : public content::NotificationObserver {
  public:
   using LoadScriptsCallback =
-      base::Callback<void(scoped_ptr<UserScriptList>,
-                          scoped_ptr<base::SharedMemory>)>;
+      base::Callback<void(std::unique_ptr<UserScriptList>,
+                          std::unique_ptr<base::SharedMemory>)>;
   class Observer {
    public:
     virtual void OnScriptsLoaded(UserScriptLoader* loader) = 0;
@@ -57,20 +58,23 @@ class UserScriptLoader : public content::NotificationObserver {
   ~UserScriptLoader() override;
 
   // Add |scripts| to the set of scripts managed by this loader.
-  void AddScripts(const std::set<UserScript>& scripts);
+  void AddScripts(std::unique_ptr<UserScriptList> scripts);
 
   // Add |scripts| to the set of scripts managed by this loader.
   // The fetch of the content of the script starts URL request
   // to the associated render specified by
-  // |render_process_id, render_view_id|.
+  // |render_process_id, render_frame_id|.
   // TODO(hanxi): The renderer information doesn't really belong in this base
   // class, but it's not an easy fix.
-  virtual void AddScripts(const std::set<UserScript>& scripts,
+  virtual void AddScripts(std::unique_ptr<UserScriptList> scripts,
                           int render_process_id,
-                          int render_view_id);
+                          int render_frame_id);
 
-  // Remove |scripts| from the set of scripts managed by this loader.
-  void RemoveScripts(const std::set<UserScript>& scripts);
+  // Removes scripts with ids specified in |scripts| from the set of scripts
+  // managed by this loader.
+  // TODO(lazyboy): Likely we can make |scripts| a std::vector, but
+  // WebViewContentScriptManager makes this non-trivial.
+  void RemoveScripts(const std::set<UserScriptIDPair>& scripts);
 
   // Clears the set of scripts managed by this loader.
   void ClearScripts();
@@ -82,7 +86,7 @@ class UserScriptLoader : public content::NotificationObserver {
   bool scripts_ready() const { return shared_memory_.get() != NULL; }
 
   // Pickle user scripts and return pointer to the shared memory.
-  static scoped_ptr<base::SharedMemory> Serialize(
+  static std::unique_ptr<base::SharedMemory> Serialize(
       const extensions::UserScriptList& scripts);
 
   // Adds or removes observers.
@@ -91,7 +95,7 @@ class UserScriptLoader : public content::NotificationObserver {
 
  protected:
   // Allows the derived classes have different ways to load user scripts.
-  virtual void LoadScripts(scoped_ptr<UserScriptList> user_scripts,
+  virtual void LoadScripts(std::unique_ptr<UserScriptList> user_scripts,
                            const std::set<HostID>& changed_hosts,
                            const std::set<int>& added_script_ids,
                            LoadScriptsCallback callback) = 0;
@@ -118,8 +122,8 @@ class UserScriptLoader : public content::NotificationObserver {
   void AttemptLoad();
 
   // Called once we have finished loading the scripts on the file thread.
-  void OnScriptsLoaded(scoped_ptr<UserScriptList> user_scripts,
-                       scoped_ptr<base::SharedMemory> shared_memory);
+  void OnScriptsLoaded(std::unique_ptr<UserScriptList> user_scripts,
+                       std::unique_ptr<base::SharedMemory> shared_memory);
 
   // Sends the renderer process a new set of user scripts. If
   // |changed_hosts| is not empty, this signals that only the scripts from
@@ -131,22 +135,23 @@ class UserScriptLoader : public content::NotificationObserver {
 
   bool is_loading() const {
     // Ownership of |user_scripts_| is passed to the file thread when loading.
-    return user_scripts_.get() == NULL;
+    return user_scripts_.get() == nullptr;
   }
 
   // Manages our notification registrations.
   content::NotificationRegistrar registrar_;
 
   // Contains the scripts that were found the last time scripts were updated.
-  scoped_ptr<base::SharedMemory> shared_memory_;
+  std::unique_ptr<base::SharedMemory> shared_memory_;
 
   // List of scripts from currently-installed extensions we should load.
-  scoped_ptr<UserScriptList> user_scripts_;
+  std::unique_ptr<UserScriptList> user_scripts_;
 
-  // The mutually-exclusive sets of scripts that were added or removed since the
-  // last script load.
-  std::set<UserScript> added_scripts_;
-  std::set<UserScript> removed_scripts_;
+  // The mutually-exclusive information about sets of scripts that were added or
+  // removed since the last script load. These maps are keyed by script ids.
+  // Note that we only need HostID information for removal.
+  std::map<int, std::unique_ptr<UserScript>> added_scripts_map_;
+  std::set<UserScriptIDPair> removed_script_hosts_;
 
   // Indicates whether the the collection of scripts should be cleared before
   // additions and removals on the next script load.
@@ -163,9 +168,6 @@ class UserScriptLoader : public content::NotificationObserver {
   // that we're currently mid-load and then start over again once the load
   // finishes.  This boolean tracks whether another load is pending.
   bool pending_load_;
-
-  // Whether or not we are currently loading.
-  bool is_loading_;
 
   // The browser_context for which the scripts managed here are installed.
   content::BrowserContext* browser_context_;

@@ -5,7 +5,8 @@
 #ifndef CC_RASTER_SINGLE_THREAD_TASK_GRAPH_RUNNER_H_
 #define CC_RASTER_SINGLE_THREAD_TASK_GRAPH_RUNNER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/synchronization/condition_variable.h"
 #include "base/threading/simple_thread.h"
 #include "cc/raster/task_graph_runner.h"
@@ -26,7 +27,7 @@ class CC_EXPORT SingleThreadTaskGraphRunner
   ~SingleThreadTaskGraphRunner() override;
 
   // Overridden from TaskGraphRunner:
-  NamespaceToken GetNamespaceToken() override;
+  NamespaceToken GenerateNamespaceToken() override;
   void ScheduleTasks(NamespaceToken token, TaskGraph* graph) override;
   void WaitForTasksToFinishRunning(NamespaceToken token) override;
   void CollectCompletedTasks(NamespaceToken token,
@@ -40,9 +41,10 @@ class CC_EXPORT SingleThreadTaskGraphRunner
   void Shutdown();
 
  private:
-  void RunTaskWithLockAcquired();
+  // Returns true if there was a task to run.
+  bool RunTaskWithLockAcquired();
 
-  scoped_ptr<base::SimpleThread> thread_;
+  std::unique_ptr<base::SimpleThread> thread_;
 
   // Lock to exclusively access all the following members that are used to
   // implement the TaskRunner interfaces.

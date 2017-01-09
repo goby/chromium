@@ -82,7 +82,7 @@ cr.define('cr.ui', function() {
       buttonLayer.appendChild(this.actionNode_);
 
       var triggerIcon = this.ownerDocument.createElement('iron-icon');
-      triggerIcon.setAttribute('icon', 'arrow-drop-down');
+      triggerIcon.setAttribute('icon', 'files:arrow-drop-down');
       this.trigger_ = this.ownerDocument.createElement('div');
       this.trigger_.classList.add('trigger');
       this.trigger_.appendChild(triggerIcon);
@@ -123,15 +123,14 @@ cr.define('cr.ui', function() {
      * Handles the keydown event for the menu button.
      */
     handleKeyDown: function(e) {
-      switch (e.keyIdentifier) {
-        case 'Down':
-        case 'Up':
+      switch (e.key) {
+        case 'ArrowDown':
+        case 'ArrowUp':
           if (!this.isMenuShown())
             this.showMenu(false);
           e.preventDefault();
           break;
-        case 'Esc':
-        case 'U+001B': // Maybe this is remote desktop playing a prank?
+        case 'Escape': // Maybe this is remote desktop playing a prank?
           this.hideMenu();
           break;
       }

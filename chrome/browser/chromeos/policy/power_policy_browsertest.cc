@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
@@ -13,9 +14,12 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
@@ -38,21 +42,21 @@
 #include "chromeos/dbus/fake_session_manager_client.h"
 #include "chromeos/dbus/power_manager/policy.pb.h"
 #include "chromeos/dbus/power_policy_controller.h"
-#include "chromeos/login/user_names.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/policy_builder.h"
 #include "components/policy/core/common/external_data_fetcher.h"
 #include "components/policy/core/common/mock_policy_service.h"
 #include "components/policy/core/common/policy_service.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/user_names.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/power/power_api.h"
 #include "extensions/common/api/power.h"
-#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -183,7 +187,7 @@ void PowerPolicyBrowserTestBase::SetUpInProcessBrowserTestFixture() {
   DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
   power_manager_client_ = new chromeos::FakePowerManagerClient;
   dbus_setter()->SetPowerManagerClient(
-      scoped_ptr<chromeos::PowerManagerClient>(power_manager_client_));
+      std::unique_ptr<chromeos::PowerManagerClient>(power_manager_client_));
 
   // Initialize device policy.
   InstallOwnerKey();
@@ -196,7 +200,7 @@ void PowerPolicyBrowserTestBase::SetUpOnMainThread() {
   // Initialize user policy.
   InstallUserKey();
   user_policy_.policy_data().set_username(
-      chromeos::login::StubAccountId().GetUserEmail());
+      user_manager::StubAccountId().GetUserEmail());
 }
 
 void PowerPolicyBrowserTestBase::InstallUserKey() {
@@ -204,32 +208,31 @@ void PowerPolicyBrowserTestBase::InstallUserKey() {
   ASSERT_TRUE(PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &user_keys_dir));
   std::string sanitized_username =
       chromeos::CryptohomeClient::GetStubSanitizedUsername(
-          chromeos::login::StubAccountId().GetUserEmail());
+          cryptohome::Identification(user_manager::StubAccountId()));
   base::FilePath user_key_file =
       user_keys_dir.AppendASCII(sanitized_username)
                    .AppendASCII("policy.pub");
-  std::vector<uint8> user_key_bits;
-  ASSERT_TRUE(user_policy_.GetSigningKey()->ExportPublicKey(&user_key_bits));
+  std::string user_key_bits = user_policy_.GetPublicSigningKeyAsString();
+  ASSERT_FALSE(user_key_bits.empty());
   ASSERT_TRUE(base::CreateDirectory(user_key_file.DirName()));
-  ASSERT_EQ(base::WriteFile(
-                user_key_file,
-                reinterpret_cast<const char*>(user_key_bits.data()),
-                user_key_bits.size()),
-            static_cast<int>(user_key_bits.size()));
+  ASSERT_EQ(base::checked_cast<int>(user_key_bits.length()),
+            base::WriteFile(user_key_file, user_key_bits.data(),
+                            user_key_bits.length()));
 }
 
 void PowerPolicyBrowserTestBase::StoreAndReloadUserPolicy() {
   // Install the new user policy blob in session manager client.
   user_policy_.Build();
   session_manager_client()->set_user_policy(
-      user_policy_.policy_data().username(),
+      cryptohome::Identification(
+          AccountId::FromUserEmail(user_policy_.policy_data().username())),
       user_policy_.GetBlob());
 
   // Reload user policy from session manager client and wait for the update to
   // take effect.
   RunClosureAndWaitForUserPolicyUpdate(
-      base::Bind(&PowerPolicyBrowserTestBase::ReloadUserPolicy, this,
-                 browser()->profile()),
+      base::Bind(&PowerPolicyBrowserTestBase::ReloadUserPolicy,
+                 base::Unretained(this), browser()->profile()),
       browser()->profile());
 }
 
@@ -242,7 +245,8 @@ void PowerPolicyBrowserTestBase::
   // policy from session manager client and wait for a change in the login
   // profile's policy to be observed.
   RunClosureAndWaitForUserPolicyUpdate(
-      base::Bind(&PowerPolicyBrowserTestBase::RefreshDevicePolicy, this),
+      base::Bind(&PowerPolicyBrowserTestBase::RefreshDevicePolicy,
+                 base::Unretained(this)),
       profile);
 }
 
@@ -296,8 +300,8 @@ void PowerPolicyLoginScreenBrowserTest::SetUpOnMainThread() {
 }
 
 void PowerPolicyLoginScreenBrowserTest::TearDownOnMainThread() {
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-                                         base::Bind(&chrome::AttemptExit));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&chrome::AttemptExit));
   base::RunLoop().RunUntilIdle();
   PowerPolicyBrowserTestBase::TearDownOnMainThread();
 }

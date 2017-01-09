@@ -24,18 +24,19 @@ Du kan få flere oplysninger om privatliv i privatlivspolitikkerne for Google (h
 <translation id="1546934824884762070">Der opstod en uventet fejl. Rapportér dette problem til udviklerne.</translation>
 <translation id="1619813076098775562">Lukket forbindelse til Cast-enheden.</translation>
 <translation id="1643640058022401035">Hvis du forlader denne side, afsluttes din session med Chromoting.</translation>
-<translation id="1646994964686260497">Der er intet at oprette forbindelse til.</translation>
 <translation id="1654128982815600832">Aktiverer fjernforbindelserne for denne computer…</translation>
 <translation id="170207782578677537">Denne computer kunne ikke registreres.</translation>
 <translation id="1704090719919187045">Præferencer for Chromoting-host</translation>
-<translation id="1738759452976856405">Stop optagelse</translation>
+<translation id="1730409684442507495">• Forbedring af billedkvaliteten på computere samt af reaktionsevnen og batteriforbruget.
+• Forbedring af reaktionsevnen ved klik og træk-handlinger.
+• Forbedring af flere animationseffekter i brugerfladen.</translation>
 <translation id="174018511426417793">Du har ingen registrerede computere. Hvis du vil aktivere fjernforbindelser til en computer, skal du installere Chrome Fjernskrivebord på den pågældende computer og klikke på "<ph name="BUTTON_NAME" />".</translation>
 <translation id="1742469581923031760">Opretter forbindelse...</translation>
 <translation id="1770394049404108959">Jeg kan ikke åbne applikationen.</translation>
 <translation id="177096447311351977">Kanal-IP for klient: <ph name="CLIENT_GAIA_IDENTIFIER" /> ip='<ph name="CLIENT_IP_ADDRESS_AND_PORT" />' host_ip='<ph name="HOST_IP_ADDRESS_AND_PORT" />' channel='<ph name="CHANNEL_TYPE" />' connection='<ph name="CONNECTION_TYPE" />'.</translation>
 <translation id="1779766957982586368">Luk vindue</translation>
 <translation id="1841799852846221389">Deaktiverer fjernforbindelserne for denne computer…</translation>
-<translation id="189172778771606813">Luk sidemenuen</translation>
+<translation id="1897488610212723051">Slet</translation>
 <translation id="195619862187186579">Tastaturlayout</translation>
 <translation id="1996161829609978754">Chrome downloader installationsprogrammet Chromoting Host. Når overførslen er færdig, skal du køre installationsprogrammet, før du fortsætter.</translation>
 <translation id="2009755455353575666">Der kunne ikke etableres forbindelse</translation>
@@ -66,7 +67,6 @@ Du kan få flere oplysninger om privatliv i privatlivspolitikkerne for Google (h
 <translation id="2359808026110333948">Fortsæt</translation>
 <translation id="2366718077645204424">Værten kunne ikke nås. Dette skyldes sandsynligvis konfigurationen af det netværk, du bruger.</translation>
 <translation id="2370754117186920852"><ph name="OPTIONAL_OFFLINE_REASON" />  Sidst set online <ph name="RELATIVE_TIMESTAMP" />.</translation>
-<translation id="2498359688066513246">Hjælp og feedback</translation>
 <translation id="2499160551253595098">Hjælp os med at forbedre Chrome Fjernskrivebord ved at lade os indsamle brugsstatistikker og rapporter om nedbrud.</translation>
 <translation id="2512228156274966424">BEMÆRK! Du kan sikre, at alle tastaturgenveje er tilgængelige ved at konfigurere Chrome Fjernskrivebord til "Åbn som vindue".</translation>
 <translation id="2540992418118313681">Vil du dele denne computer, så en anden bruger kan se og styre den?</translation>
@@ -75,9 +75,7 @@ Du kan få flere oplysninger om privatliv i privatlivspolitikkerne for Google (h
 <translation id="2676780859508944670">Arbejder...</translation>
 <translation id="2699970397166997657">Chromoting</translation>
 <translation id="2747641796667576127">Softwareopdateringer udføres sædvanligvis automatisk, men de kan i sjældne tilfælde mislykkes. Det bør ikke tage mere end et par minutter at opdatere softwaren, og opdateringen kan udføres, mens du er forbundet til din computer via en fjernforbindelse.</translation>
-<translation id="2813770873348017932">Forbindelserne til fjerncomputeren er midlertidigt blokeret, fordi nogen forsøgte at få forbindelse til den med en ugyldig pinkode. Prøv igen senere.</translation>
 <translation id="2841013758207633010">Tid</translation>
-<translation id="2851674870054673688">Når personen indtaster koden, startes delingssessionen.</translation>
 <translation id="2851754573186462851">Chromium App Streaming</translation>
 <translation id="2855866366045322178">offline</translation>
 <translation id="2888969873284818612">Der opstod en netværksfejl. Vi genstarter appen, når din enhed er online igen.</translation>
@@ -105,6 +103,7 @@ Du kan få flere oplysninger om privatliv i privatlivspolitikkerne for Google (h
 <translation id="337167041784729019">Vis statistik</translation>
 <translation id="3385242214819933234">Ugyldig hostejer.</translation>
 <translation id="3403830762023901068">Politikindstillingerne tillader ikke, at denne computer deles som en Chromoting-host. Kontakt din systemadministrator for at få hjælp.</translation>
+<translation id="3423542133075182604">Fjernproces for sikkerhedsnøglen</translation>
 <translation id="3581045510967524389">Der kunne ikke oprettes forbindelse til netværket. Kontrollér, at din enhed er på nettet.</translation>
 <translation id="3596628256176442606">Denne tjeneste muliggør indgående forbindelser fra Chromoting-klienter.</translation>
 <translation id="3606997049964069799">Du er ikke logget ind på Chromium. Log ind, og prøv igen.</translation>
@@ -116,6 +115,7 @@ Du kan få flere oplysninger om privatliv i privatlivspolitikkerne for Google (h
 host</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
 <translation id="3884839335308961732">Bekræft din konto og pinkode nedenfor for at tillade adgang via Chrome Fjernskrivebord.</translation>
+<translation id="3897092660631435901">Menu</translation>
 <translation id="3905196214175737742">Ejerdomænet for hosten er ugyldigt.</translation>
 <translation id="3908017899227008678">Tilpas til vinduet</translation>
 <translation id="3931191050278863510">Hosten er stoppet.</translation>
@@ -123,17 +123,15 @@ host</translation>
 <translation id="3950820424414687140">Log ind</translation>
 <translation id="3989511127559254552">For at fortsætte skal du give udvidet adgangstilladelse til din computer. Du skal kun gøre dette én gang.</translation>
 <translation id="4006787130661126000">Du skal aktivere fjernforbindelserne, hvis du vil bruge Chrome Fjernskrivebord til at få adgang til denne computer.</translation>
-<translation id="401121182145179743">Du skal først konfigurere din computer til fjernadgang.</translation>
-<translation id="4028465833180158312">• Opdateringer af Material Design-grænsefladen.
-• Angivelser af tredjepartslicensering.
-• Der vises oplysninger for fjerncomputere, som er offline.</translation>
 <translation id="405887016757208221">Fjerncomputeren har ikke startet sessionen. Hvis problemet fortsætter, kan du prøve at konfigurere hosten igen.</translation>
 <translation id="4068946408131579958">Alle forbindelser</translation>
 <translation id="409800995205263688">BEMÆRK! Politikindstillingerne tillader kun forbindelser mellem computere inden for dit netværk.</translation>
 <translation id="4155497795971509630">Nogle obligatoriske komponenter mangler. Kontrollér, at du har installeret den nyeste version af softwaren, og prøv igen.</translation>
 <translation id="4156740505453712750">Beskyt adgangen til denne computer ved at vælge en pinkode på <ph name="BOLD_START" />mindst seks cifre<ph name="BOLD_END" />. Denne pinkode skal indtastes, når du opretter forbindelse fra et andet sted.</translation>
+<translation id="4156741816461781891">Logget ind som <ph name="EMAIL_ADDRESS" />.</translation>
 <translation id="4176825807642096119">Adgangskode</translation>
 <translation id="4207623512727273241">Kør installationsprogrammet, før du fortsætter.</translation>
+<translation id="4227991223508142681">Host-værktøj til oprettelse</translation>
 <translation id="4240294130679914010">Afinstallationsprogram til Chromoting-host</translation>
 <translation id="4277463233460010382">Denne computer er konfigureret til at tillade, at en eller flere klienter opretter forbindelse uden at angive en pinkode.</translation>
 <translation id="4277736576214464567">Adgangskoden er ugyldig. Prøv igen.</translation>
@@ -152,7 +150,7 @@ host</translation>
 <translation id="4573676252416618192">Host for Chrome
 Fjernskrivebord</translation>
 <translation id="4619978527973181021">Acceptér, og installer</translation>
-<translation id="4647791084836149355">Se udsigten gennem Cardboard</translation>
+<translation id="4703302905453407178">En nødvendig komponent er holdt op med at fungere. Sørg for at rapportere dette problem til udviklerne.</translation>
 <translation id="4703799847237267011">Din session med Chromoting er afsluttet.</translation>
 <translation id="4736223761657662401">Forbindelseshistorik</translation>
 <translation id="4741792197137897469">Godkendelsen mislykkedes. Log ind i Chrome igen.</translation>
@@ -166,18 +164,19 @@ Fjernskrivebord</translation>
 <translation id="4918086044614829423">Accepter</translation>
 <translation id="492843737083352574">Jeg har problemer med mit tastatur eller min mus.</translation>
 <translation id="4973800994433240357">Når du downloader installationsprogrammet til Chromoting-host, accepterer du automatisk Google <ph name="LINK_BEGIN" />Servicevilkår<ph name="LINK_END" />.</translation>
+<translation id="4985296110227979402">Du skal først konfigurere din computer til fjernadgang</translation>
 <translation id="5064360042339518108"><ph name="HOSTNAME" /> (offline)</translation>
 <translation id="5070121137485264635">Fjernværten kræver, at du bekræftes over for et tredjepartswebsite. Du skal give Chrome Fjernskrivebord yderligere tilladelser til at få adgang til denne adresse, før du kan fortsætte:</translation>
+<translation id="507204348399810022">Er du sikker på, at du vil deaktivere fjernforbindelserne til <ph name="HOSTNAME" />?</translation>
 <translation id="5156271271724754543">Indtast den samme pinkode i begge felter.</translation>
-<translation id="5168917394043976756">Åbn sidemenuen</translation>
 <translation id="5170982930780719864">Ugyldigt host-id.</translation>
 <translation id="518094545883702183">Disse oplysninger bruges kun til diagnosticering af det problem, du rapporterer, de er kun tilgængelige for personer, der undersøger din rapport, og de tilbageholdes i højst 30 dage.</translation>
 <translation id="5222676887888702881">Log ud</translation>
 <translation id="5254120496627797685">Hvis du forlader denne side, afsluttes din session med Chrome Fjernskrivebord.</translation>
 <translation id="5308380583665731573">Få forbindelse</translation>
+<translation id="533625276787323658">Der er intet at oprette forbindelse til</translation>
 <translation id="5363265567587775042">Bed den bruger, hvis computer du ønsker at få adgang til, om at klikke på "<ph name="SHARE" />" for at give dig adgangskoden.</translation>
 <translation id="5379087427956679853">Med Chrome Fjernskrivebord får du mulighed for sikkert at dele din computer via internettet. Begge brugere skal køre appen Chrome Fjernskrivebord, som kan findes på <ph name="URL" />.</translation>
-<translation id="5394895745784982830">Til Mac (OS X 10.6 og nyere)</translation>
 <translation id="5397086374758643919">Afinstallationsprogram til host for Chrome Fjernskrivebord</translation>
 <translation id="5419185025274123272">Applikationen kunne ikke nulstilles. Du kan stadig sende en fejlrapport.</translation>
 <translation id="544077782045763683">Hosten har lukket ned.</translation>
@@ -210,7 +209,6 @@ Fjernskrivebord</translation>
 <translation id="6284412385303060032">Hosten, der kører på loginskærmen for konsollen, er lukket ned for at understøtte curtain mode ved at skifte til en host, der kører i en brugerspecifik session.</translation>
 <translation id="629730747756840877">Konto</translation>
 <translation id="6304318647555713317">Klient</translation>
-<translation id="6324708100353784493">Du har aktiveret integrationstilstanden for Google Cardboard. Du kan bruge denne tilstand ved at indsætte din enhed i en Google Cardboard-kompatibel fremviser.</translation>
 <translation id="6381670701864002291">Noget andet.</translation>
 <translation id="6398765197997659313">Afslut fuld skærm</translation>
 <translation id="6441316101718669559">Skrivebordsintegration understøttes ikke på denne platform. Du kan fortsat bruge denne applikation, men brugeroplevelsen vil være forringet.</translation>
@@ -220,10 +218,12 @@ Fjernskrivebord</translation>
 <translation id="6542902059648396432">Rapportér et problem…</translation>
 <translation id="6550675742724504774">Valgmuligheder</translation>
 <translation id="6570205395680337606">Nulstil applikationen. Du vil miste alt arbejde, der ikke er gemt.</translation>
+<translation id="6572345186230665992">Til Mac (OS X Mavericks 10.9 og nyere)</translation>
 <translation id="6612717000975622067">Send Ctrl-Alt-Del</translation>
 <translation id="6640610550128933069">sidst online d. <ph name="DATE" /></translation>
 <translation id="6668065415969892472">Din pinkode er blevet opdateret.</translation>
 <translation id="6681800064886881394">Copyright © 2013 Google Inc. Alle rettigheder forbeholdes.</translation>
+<translation id="6705482892455291412">Når de indtaster koden, bliver du bedt om at acceptere forbindelsen og begynde delingssessionen.</translation>
 <translation id="6746493157771801606">Ryd historik</translation>
 <translation id="6748108480210050150">Fra</translation>
 <translation id="677755392401385740">Host er startet for bruger: <ph name="HOST_USERNAME" />.</translation>
@@ -231,11 +231,10 @@ Fjernskrivebord</translation>
 <translation id="6930242544192836755">Varighed</translation>
 <translation id="6939719207673461467">Vis/skjul tastatur.</translation>
 <translation id="6944854424004126054">Gendan vinduet</translation>
-<translation id="6962773374262604195">Til Windows (XP og nyere)</translation>
+<translation id="6963936880795878952">Forbindelserne til fjerncomputeren er midlertidigt blokerede, fordi nogen forsøgte at få forbindelse til den med en ugyldig pinkode. Prøv igen senere.</translation>
 <translation id="6965382102122355670">OK</translation>
 <translation id="6985691951107243942">Er du sikker på, at du vil deaktivere fjernforbindelserne til <ph name="HOSTNAME" />? Hvis du ombestemmer dig, skal du genaktivere forbindelserne på den computer.</translation>
 <translation id="6998989275928107238">Til</translation>
-<translation id="7017806586333792422">Start optagelse</translation>
 <translation id="7019153418965365059">Fejl – hosten genkendes ikke: <ph name="HOST_OFFLINE_REASON" />.</translation>
 <translation id="701976023053394610">Fjernsupport</translation>
 <translation id="7038683108611689168">Hjælp os med at forbedre Chromoting ved at lade os indsamle brugsstatistikker og rapporter om nedbrud.</translation>
@@ -259,9 +258,11 @@ Fjernskrivebord</translation>
 <translation id="7836926030608666805">Nogle obligatoriske komponenter mangler. Kontrollér, at du har den nyeste version af Chrome, og prøv igen.</translation>
 <translation id="7868137160098754906">Indtast din pinkode til fjerncomputeren.</translation>
 <translation id="7869445566579231750">Du har ikke tilladelse til at køre denne applikation.</translation>
+<translation id="7895403300744144251">Sikkerhedspolitikkerne på fjerncomputeren tillader ikke forbindelser fra din konto.</translation>
 <translation id="7948001860594368197">Valgmuligheder for skærm</translation>
 <translation id="7970576581263377361">Godkendelse mislykkedes. Log ind på Chromium igen.</translation>
 <translation id="7981525049612125370">Fjernsessionen er udløbet.</translation>
+<translation id="8041089156583427627">Send feedback</translation>
 <translation id="8041721485428375115">Når du downloader installationsprogrammet til host for Chrome Fjernskrivebord, accepterer du automatisk Google <ph name="LINK_BEGIN" />Servicevilkår<ph name="LINK_END" />.</translation>
 <translation id="8073845705237259513">Hvis du vil bruge Chrome Fjernskrivebord, skal du føje en Google-konto til din enhed.</translation>
 <translation id="80739703311984697">Fjernværten kræver, at du bekræftes over for et tredjepartswebsite. Du skal give Chromoting yderligere tilladelser til at få adgang til denne adresse, før du kan fortsætte:</translation>
@@ -285,9 +286,11 @@ Fjernskrivebord</translation>
 <translation id="8548209692293300397">Du har tidligere logget ind som <ph name="USER_NAME" /> (<ph name="USER_EMAIL" />). For at få adgang til dine computere på den pågældende konto skal du <ph name="LINK_BEGIN" />logge ind på Google Chrome<ph name="LINK_END" /> med denne konto og geninstallere Chrome Fjernskrivebord.</translation>
 <translation id="8642984861538780905">Rimelig</translation>
 <translation id="8712909229180978490">Jeg kan ikke se mine gemte filer online i Google Drev.</translation>
+<translation id="8743328882720071828">Vil du give <ph name="CLIENT_USERNAME" /> tilladelse til at se og styre din computer?</translation>
 <translation id="8759753423332885148">Få flere oplysninger.</translation>
 <translation id="8791202241915690908">Download installationsprogrammet til Chromoting-host</translation>
 <translation id="894763922177556086">God</translation>
+<translation id="895780780740011433">Til Windows 7 og nyere</translation>
 <translation id="897805526397249209">Hvis du vil aktivere fjernforbindelser til en anden computer, skal du installere Chromoting på den pågældende computer og klikke på "<ph name="BUTTON_NAME" />".</translation>
 <translation id="8998327464021325874">Administration af host for Chrome Fjernskrivebord</translation>
 <translation id="9016232822027372900">Opret forbindelse alligevel</translation>
@@ -297,6 +300,7 @@ Fjernskrivebord</translation>
 <translation id="9188433529406846933">Autoriser</translation>
 <translation id="9213184081240281106">Ugyldig hostkonfiguration.</translation>
 <translation id="951991426597076286">Afvis</translation>
+<translation id="962733587145768554">Vælg "<ph name="SHARE" />" i forbindelsesdialogboksen for at gennemføre processen.</translation>
 <translation id="979100198331752041">Chrome Fjernskrivebord på <ph name="HOSTNAME" /> er forældet og skal opdateres.</translation>
 <translation id="985602178874221306">Forfatterne til Chromium</translation>
 <translation id="992215271654996353"><ph name="HOSTNAME" /> (sidst online <ph name="DATE_OR_TIME" />)</translation>

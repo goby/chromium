@@ -5,12 +5,15 @@
 #include "ios/chrome/browser/component_updater/ios_component_updater_configurator.h"
 
 #include <string>
+#include <vector>
 
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/version.h"
 #include "components/component_updater/configurator_impl.h"
 #include "components/update_client/component_patcher_operation.h"
+#include "components/update_client/update_query_params.h"
 #include "ios/chrome/browser/application_context.h"
+#include "ios/chrome/browser/google/google_brand.h"
 #include "ios/chrome/common/channel_info.h"
 #include "ios/web/public/web_thread.h"
 
@@ -31,18 +34,25 @@ class IOSConfigurator : public update_client::Configurator {
   int UpdateDelay() const override;
   std::vector<GURL> UpdateUrl() const override;
   std::vector<GURL> PingUrl() const override;
+  std::string GetProdId() const override;
   base::Version GetBrowserVersion() const override;
   std::string GetChannel() const override;
+  std::string GetBrand() const override;
   std::string GetLang() const override;
   std::string GetOSLongName() const override;
   std::string ExtraRequestParams() const override;
+  std::string GetDownloadPreference() const override;
   net::URLRequestContextGetter* RequestContext() const override;
   scoped_refptr<update_client::OutOfProcessPatcher> CreateOutOfProcessPatcher()
       const override;
-  bool DeltasEnabled() const override;
-  bool UseBackgroundDownloader() const override;
+  bool EnabledDeltas() const override;
+  bool EnabledComponentUpdates() const override;
+  bool EnabledBackgroundDownloader() const override;
+  bool EnabledCupSigning() const override;
   scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner()
       const override;
+  PrefService* GetPrefService() const override;
+  bool IsPerUserInstall() const override;
 
  private:
   friend class base::RefCountedThreadSafe<IOSConfigurator>;
@@ -52,10 +62,13 @@ class IOSConfigurator : public update_client::Configurator {
   ~IOSConfigurator() override {}
 };
 
+// Allows the component updater to use non-encrypted communication with the
+// update backend. The security of the update checks is enforced using
+// a custom message signing protocol and it does not depend on using HTTPS.
 IOSConfigurator::IOSConfigurator(
     const base::CommandLine* cmdline,
     net::URLRequestContextGetter* url_request_getter)
-    : configurator_impl_(cmdline, url_request_getter) {}
+    : configurator_impl_(cmdline, url_request_getter, false) {}
 
 int IOSConfigurator::InitialDelay() const {
   return configurator_impl_.InitialDelay();
@@ -85,12 +98,23 @@ std::vector<GURL> IOSConfigurator::PingUrl() const {
   return configurator_impl_.PingUrl();
 }
 
+std::string IOSConfigurator::GetProdId() const {
+  return update_client::UpdateQueryParams::GetProdIdString(
+      update_client::UpdateQueryParams::ProdId::CHROME);
+}
+
 base::Version IOSConfigurator::GetBrowserVersion() const {
   return configurator_impl_.GetBrowserVersion();
 }
 
 std::string IOSConfigurator::GetChannel() const {
   return GetChannelString();
+}
+
+std::string IOSConfigurator::GetBrand() const {
+  std::string brand;
+  ios::google_brand::GetBrand(&brand);
+  return brand;
 }
 
 std::string IOSConfigurator::GetLang() const {
@@ -105,6 +129,10 @@ std::string IOSConfigurator::ExtraRequestParams() const {
   return configurator_impl_.ExtraRequestParams();
 }
 
+std::string IOSConfigurator::GetDownloadPreference() const {
+  return configurator_impl_.GetDownloadPreference();
+}
+
 net::URLRequestContextGetter* IOSConfigurator::RequestContext() const {
   return configurator_impl_.RequestContext();
 }
@@ -114,12 +142,20 @@ IOSConfigurator::CreateOutOfProcessPatcher() const {
   return nullptr;
 }
 
-bool IOSConfigurator::DeltasEnabled() const {
-  return configurator_impl_.DeltasEnabled();
+bool IOSConfigurator::EnabledDeltas() const {
+  return configurator_impl_.EnabledDeltas();
 }
 
-bool IOSConfigurator::UseBackgroundDownloader() const {
-  return configurator_impl_.UseBackgroundDownloader();
+bool IOSConfigurator::EnabledComponentUpdates() const {
+  return configurator_impl_.EnabledComponentUpdates();
+}
+
+bool IOSConfigurator::EnabledBackgroundDownloader() const {
+  return configurator_impl_.EnabledBackgroundDownloader();
+}
+
+bool IOSConfigurator::EnabledCupSigning() const {
+  return configurator_impl_.EnabledCupSigning();
 }
 
 scoped_refptr<base::SequencedTaskRunner>
@@ -128,6 +164,14 @@ IOSConfigurator::GetSequencedTaskRunner() const {
       ->GetSequencedTaskRunnerWithShutdownBehavior(
           web::WebThread::GetBlockingPool()->GetSequenceToken(),
           base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
+}
+
+PrefService* IOSConfigurator::GetPrefService() const {
+  return GetApplicationContext()->GetLocalState();
+}
+
+bool IOSConfigurator::IsPerUserInstall() const {
+  return true;
 }
 
 }  // namespace

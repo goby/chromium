@@ -4,16 +4,19 @@
 
 #include "components/proximity_auth/remote_device_life_cycle_impl.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
+#include "components/cryptauth/secure_message_delegate.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_connection.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_connection_finder.h"
 #include "components/proximity_auth/bluetooth_connection.h"
 #include "components/proximity_auth/bluetooth_connection_finder.h"
 #include "components/proximity_auth/bluetooth_throttler_impl.h"
-#include "components/proximity_auth/cryptauth/secure_message_delegate.h"
 #include "components/proximity_auth/device_to_device_authenticator.h"
 #include "components/proximity_auth/logging/logging.h"
 #include "components/proximity_auth/messenger_impl.h"
@@ -38,14 +41,14 @@ const int kAuthenticationRecoveryTimeSeconds = 10;
 }  // namespace
 
 RemoteDeviceLifeCycleImpl::RemoteDeviceLifeCycleImpl(
-    const RemoteDevice& remote_device,
+    const cryptauth::RemoteDevice& remote_device,
     ProximityAuthClient* proximity_auth_client)
     : remote_device_(remote_device),
       proximity_auth_client_(proximity_auth_client),
       state_(RemoteDeviceLifeCycle::State::STOPPED),
       observers_(base::ObserverList<Observer>::NOTIFY_EXISTING_ONLY),
       bluetooth_throttler_(new BluetoothThrottlerImpl(
-          make_scoped_ptr(new base::DefaultTickClock()))),
+          base::WrapUnique(new base::DefaultTickClock()))),
       weak_ptr_factory_(this) {}
 
 RemoteDeviceLifeCycleImpl::~RemoteDeviceLifeCycleImpl() {}
@@ -57,7 +60,7 @@ void RemoteDeviceLifeCycleImpl::Start() {
   FindConnection();
 }
 
-RemoteDevice RemoteDeviceLifeCycleImpl::GetRemoteDevice() const {
+cryptauth::RemoteDevice RemoteDeviceLifeCycleImpl::GetRemoteDevice() const {
   return remote_device_;
 }
 
@@ -77,24 +80,25 @@ void RemoteDeviceLifeCycleImpl::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-scoped_ptr<ConnectionFinder>
+std::unique_ptr<ConnectionFinder>
 RemoteDeviceLifeCycleImpl::CreateConnectionFinder() {
-  if (remote_device_.bluetooth_type == RemoteDevice::BLUETOOTH_LE) {
-    return make_scoped_ptr(new BluetoothLowEnergyConnectionFinder(
+  if (remote_device_.bluetooth_type == cryptauth::RemoteDevice::BLUETOOTH_LE) {
+    return base::MakeUnique<BluetoothLowEnergyConnectionFinder>(
         remote_device_, kBLESmartLockServiceUUID,
         BluetoothLowEnergyConnectionFinder::FinderStrategy::FIND_PAIRED_DEVICE,
-        nullptr, bluetooth_throttler_.get(), 3));
+        nullptr, bluetooth_throttler_.get(), 3);
   } else {
-    return make_scoped_ptr(new BluetoothConnectionFinder(
+    return base::MakeUnique<BluetoothConnectionFinder>(
         remote_device_, device::BluetoothUUID(kClassicBluetoothServiceUUID),
-        base::TimeDelta::FromSeconds(3)));
+        base::TimeDelta::FromSeconds(3));
   }
 }
 
-scoped_ptr<Authenticator> RemoteDeviceLifeCycleImpl::CreateAuthenticator() {
-  return make_scoped_ptr(new DeviceToDeviceAuthenticator(
+std::unique_ptr<Authenticator>
+RemoteDeviceLifeCycleImpl::CreateAuthenticator() {
+  return base::MakeUnique<DeviceToDeviceAuthenticator>(
       connection_.get(), remote_device_.user_id,
-      proximity_auth_client_->CreateSecureMessageDelegate()));
+      proximity_auth_client_->CreateSecureMessageDelegate());
 }
 
 void RemoteDeviceLifeCycleImpl::TransitionToState(
@@ -103,8 +107,8 @@ void RemoteDeviceLifeCycleImpl::TransitionToState(
                << " => " << static_cast<int>(new_state);
   RemoteDeviceLifeCycle::State old_state = state_;
   state_ = new_state;
-  FOR_EACH_OBSERVER(Observer, observers_,
-                    OnLifeCycleStateChanged(old_state, new_state));
+  for (auto& observer : observers_)
+    observer.OnLifeCycleStateChanged(old_state, new_state);
 }
 
 void RemoteDeviceLifeCycleImpl::FindConnection() {
@@ -116,9 +120,9 @@ void RemoteDeviceLifeCycleImpl::FindConnection() {
 }
 
 void RemoteDeviceLifeCycleImpl::OnConnectionFound(
-    scoped_ptr<Connection> connection) {
+    std::unique_ptr<Connection> connection) {
   DCHECK(state_ == RemoteDeviceLifeCycle::State::FINDING_CONNECTION);
-  connection_ = connection.Pass();
+  connection_ = std::move(connection);
   authenticator_ = CreateAuthenticator();
   authenticator_->Authenticate(
       base::Bind(&RemoteDeviceLifeCycleImpl::OnAuthenticationResult,
@@ -128,7 +132,7 @@ void RemoteDeviceLifeCycleImpl::OnConnectionFound(
 
 void RemoteDeviceLifeCycleImpl::OnAuthenticationResult(
     Authenticator::Result result,
-    scoped_ptr<SecureContext> secure_context) {
+    std::unique_ptr<SecureContext> secure_context) {
   DCHECK(state_ == RemoteDeviceLifeCycle::State::AUTHENTICATING);
   authenticator_.reset();
   if (result != Authenticator::Result::SUCCESS) {
@@ -146,7 +150,7 @@ void RemoteDeviceLifeCycleImpl::OnAuthenticationResult(
   // Create the MessengerImpl asynchronously. |messenger_| registers itself as
   // an observer of |connection_|, so creating it synchronously would trigger
   // |OnSendCompleted()| as an observer call for |messenger_|.
-  secure_context_ = secure_context.Pass();
+  secure_context_ = std::move(secure_context);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&RemoteDeviceLifeCycleImpl::CreateMessenger,
                             weak_ptr_factory_.GetWeakPtr()));
@@ -156,7 +160,7 @@ void RemoteDeviceLifeCycleImpl::CreateMessenger() {
   DCHECK(state_ == RemoteDeviceLifeCycle::State::AUTHENTICATING);
   DCHECK(secure_context_);
   messenger_.reset(
-      new MessengerImpl(connection_.Pass(), secure_context_.Pass()));
+      new MessengerImpl(std::move(connection_), std::move(secure_context_)));
   messenger_->AddObserver(this);
 
   TransitionToState(RemoteDeviceLifeCycle::State::SECURE_CHANNEL_ESTABLISHED);

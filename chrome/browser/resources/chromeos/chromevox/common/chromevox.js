@@ -150,7 +150,11 @@ cvox.ChromeVox.typingEcho = 0;
  */
 cvox.ChromeVox.keyEcho = {};
 /**
- * @type {Object<{x:number, y:number}>}
+ * @typedef {{x: number, y: number}}
+ */
+cvox.Point;
+/**
+ * @type {Object<string, cvox.Point>}
  */
 cvox.ChromeVox.position = {};
 /**
@@ -261,7 +265,7 @@ cvox.ChromeVox.isStickyModeOn = function() {
 /**
  * Shortcut for document.getElementById.
  * @param {string} id of the element.
- * @return {HTMLElement} with the id.
+ * @return {Element} with the id.
  */
 function $(id) {
   return document.getElementById(id);

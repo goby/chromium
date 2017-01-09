@@ -8,7 +8,7 @@
 #include <list>
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/font_list.h"
@@ -41,8 +41,11 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
     static RangeStyleInfo CreateForLink();
 
     // The font style that will be applied to the range. Should be a bitmask of
-    // values defined in gfx::Font::FontStyle (BOLD, ITALIC, UNDERLINE).
+    // values defined in gfx::Font::FontStyle (ITALIC, UNDERLINE).
     int font_style;
+
+    // The font weight to be applied to the range. Default is Weight::NORMAL.
+    gfx::Font::Weight weight;
 
     // The text color for the range. Default is SK_ColorTRANSPARENT, indicating
     // the theme's default color should be used.
@@ -64,6 +67,8 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
 
   // Sets the text to be displayed, and clears any previous styling.
   void SetText(const base::string16& text);
+
+  const base::string16& text() const { return text_; }
 
   // Sets the fonts used by all labels. Can be augemented by styling set by
   // AddStyleRange and SetDefaultStyle.

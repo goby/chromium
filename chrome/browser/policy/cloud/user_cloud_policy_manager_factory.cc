@@ -4,10 +4,13 @@
 
 #include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/policy/schema_registry_service.h"
 #include "chrome/browser/policy/schema_registry_service_factory.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -64,7 +67,7 @@ UserCloudPolicyManager* UserCloudPolicyManagerFactory::GetForBrowserContext(
 }
 
 // static
-scoped_ptr<UserCloudPolicyManager>
+std::unique_ptr<UserCloudPolicyManager>
 UserCloudPolicyManagerFactory::CreateForOriginalBrowserContext(
     content::BrowserContext* context,
     bool force_immediate_load,
@@ -74,7 +77,7 @@ UserCloudPolicyManagerFactory::CreateForOriginalBrowserContext(
   UserCloudPolicyManagerFactory* factory = GetInstance();
   // If there's a testing factory set, don't bother creating a new one.
   if (factory->testing_factory_ != NULL)
-    return scoped_ptr<UserCloudPolicyManager>();
+    return std::unique_ptr<UserCloudPolicyManager>();
   return factory->CreateManagerForOriginalBrowserContext(
       context,
       force_immediate_load,
@@ -127,7 +130,7 @@ UserCloudPolicyManagerFactory::GetManagerForBrowserContext(
   return it != manager_wrappers_.end() ? it->second->manager() : NULL;
 }
 
-scoped_ptr<UserCloudPolicyManager>
+std::unique_ptr<UserCloudPolicyManager>
 UserCloudPolicyManagerFactory::CreateManagerForOriginalBrowserContext(
     content::BrowserContext* context,
     bool force_immediate_load,
@@ -140,28 +143,23 @@ UserCloudPolicyManagerFactory::CreateManagerForOriginalBrowserContext(
   // Instead, instances are instantiated via CreateServiceNow().
   DCHECK(!testing_factory_);
 
-  scoped_ptr<UserCloudPolicyStore> store(
-      UserCloudPolicyStore::Create(context->GetPath(),
-                                   GetPolicyVerificationKey(),
-                                   background_task_runner));
+  std::unique_ptr<UserCloudPolicyStore> store(
+      UserCloudPolicyStore::Create(context->GetPath(), background_task_runner));
   if (force_immediate_load)
     store->LoadImmediately();
 
   const base::FilePath component_policy_cache_dir =
       context->GetPath().Append(kPolicy).Append(kComponentsDir);
 
-  scoped_ptr<UserCloudPolicyManager> manager;
+  std::unique_ptr<UserCloudPolicyManager> manager;
   manager.reset(new UserCloudPolicyManager(
-      store.Pass(),
-      component_policy_cache_dir,
-      scoped_ptr<CloudExternalDataManager>(),
-      base::ThreadTaskRunnerHandle::Get(),
-      file_task_runner,
-      io_task_runner));
+      std::move(store), component_policy_cache_dir,
+      std::unique_ptr<CloudExternalDataManager>(),
+      base::ThreadTaskRunnerHandle::Get(), file_task_runner, io_task_runner));
   manager->Init(
       SchemaRegistryServiceFactory::GetForContext(context)->registry());
   manager_wrappers_[context] = new ManagerWrapper(manager.get());
-  return manager.Pass();
+  return manager;
 }
 
 UserCloudPolicyManager*

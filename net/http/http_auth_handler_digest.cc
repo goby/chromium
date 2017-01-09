@@ -14,7 +14,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_string_util.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_auth_scheme.h"
@@ -93,16 +93,18 @@ void HttpAuthHandlerDigest::Factory::set_nonce_generator(
 int HttpAuthHandlerDigest::Factory::CreateAuthHandler(
     HttpAuthChallengeTokenizer* challenge,
     HttpAuth::Target target,
+    const SSLInfo& ssl_info,
     const GURL& origin,
     CreateReason reason,
     int digest_nonce_count,
-    const BoundNetLog& net_log,
-    scoped_ptr<HttpAuthHandler>* handler) {
+    const NetLogWithSource& net_log,
+    std::unique_ptr<HttpAuthHandler>* handler) {
   // TODO(cbentzel): Move towards model of parsing in the factory
   //                 method and only constructing when valid.
-  scoped_ptr<HttpAuthHandler> tmp_handler(
+  std::unique_ptr<HttpAuthHandler> tmp_handler(
       new HttpAuthHandlerDigest(digest_nonce_count, nonce_generator_.get()));
-  if (!tmp_handler->InitFromChallenge(challenge, target, origin, net_log))
+  if (!tmp_handler->InitFromChallenge(challenge, target, ssl_info, origin,
+                                      net_log))
     return ERR_INVALID_RESPONSE;
   handler->swap(tmp_handler);
   return OK;
@@ -135,7 +137,8 @@ HttpAuth::AuthorizationResult HttpAuthHandlerDigest::HandleAnotherChallenge(
       HttpAuth::AUTHORIZATION_RESULT_REJECT;
 }
 
-bool HttpAuthHandlerDigest::Init(HttpAuthChallengeTokenizer* challenge) {
+bool HttpAuthHandlerDigest::Init(HttpAuthChallengeTokenizer* challenge,
+                                 const SSLInfo& ssl_info) {
   return ParseChallenge(challenge);
 }
 

@@ -31,25 +31,39 @@
 #ifndef SVGAnimatedLengthList_h
 #define SVGAnimatedLengthList_h
 
+#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGLengthListTearOff.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
 
 namespace blink {
 
-// SVG Spec: http://www.w3.org/TR/SVG11/types.html#InterfaceSVGAnimatedLengthList
-class SVGAnimatedLengthList final : public SVGAnimatedProperty<SVGLengthList> {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedLengthList> create(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGLengthList> initialValue)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedLengthList(contextElement, attributeName, initialValue));
-    }
+// SVG Spec:
+// http://www.w3.org/TR/SVG11/types.html#InterfaceSVGAnimatedLengthList
+class SVGAnimatedLengthList final : public SVGAnimatedProperty<SVGLengthList>,
+                                    public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-protected:
-    SVGAnimatedLengthList(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGLengthList> initialValue)
-        : SVGAnimatedProperty<SVGLengthList>(contextElement, attributeName, initialValue) { }
+ public:
+  static SVGAnimatedLengthList* create(SVGElement* contextElement,
+                                       const QualifiedName& attributeName,
+                                       SVGLengthList* initialValue) {
+    return new SVGAnimatedLengthList(contextElement, attributeName,
+                                     initialValue);
+  }
+
+  DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
+    visitor->traceWrappers(contextElement());
+  }
+
+ protected:
+  SVGAnimatedLengthList(SVGElement* contextElement,
+                        const QualifiedName& attributeName,
+                        SVGLengthList* initialValue)
+      : SVGAnimatedProperty<SVGLengthList>(contextElement,
+                                           attributeName,
+                                           initialValue) {}
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

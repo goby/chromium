@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_FULLSCREEN_CONTROLLER_TEST_H_
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_FULLSCREEN_CONTROLLER_TEST_H_
 
+#include "base/macros.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
@@ -45,13 +46,8 @@ class FullscreenControllerTest : public InProcessBrowserTest {
   bool SendEscapeToFullscreenController();
   bool IsFullscreenForBrowser();
   bool IsWindowFullscreenForTabOrPending();
-  bool IsMouseLockPermissionRequested();
-  bool IsFullscreenPermissionRequested();
   ExclusiveAccessBubbleType GetExclusiveAccessBubbleType();
   bool IsFullscreenBubbleDisplayed();
-  bool IsFullscreenBubbleDisplayingButtons();
-  void AcceptCurrentFullscreenOrMouseLockRequest();
-  void DenyCurrentFullscreenOrMouseLockRequest();
   void GoBack();
   void Reload();
   void SetPrivilegedFullscreen(bool is_privileged);

@@ -2,16 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <map>
+#include <stdint.h>
 
-#include "mojo/application/public/cpp/application_connection.h"
-#include "mojo/application/public/cpp/application_delegate.h"
-#include "mojo/application/public/cpp/application_runner.h"
-#include "mojo/application/public/cpp/interface_factory.h"
-#include "mojo/public/c/system/main.h"
+#include <map>
+#include <utility>
+
+#include "base/macros.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "mojo/public/cpp/system/macros.h"
 #include "mojo/public/interfaces/bindings/tests/versioning_test_service.mojom.h"
+#include "services/service_manager/public/c/main.h"
+#include "services/service_manager/public/cpp/interface_factory.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "services/service_manager/public/cpp/service_runner.h"
 
 namespace mojo {
 namespace test {
@@ -25,14 +27,14 @@ struct EmployeeInfo {
   Array<uint8_t> finger_print;
 
  private:
-  MOJO_DISALLOW_COPY_AND_ASSIGN(EmployeeInfo);
+  DISALLOW_COPY_AND_ASSIGN(EmployeeInfo);
 };
 
 class HumanResourceDatabaseImpl : public HumanResourceDatabase {
  public:
   explicit HumanResourceDatabaseImpl(
       InterfaceRequest<HumanResourceDatabase> request)
-      : strong_binding_(this, request.Pass()) {
+      : strong_binding_(this, std::move(request)) {
     // Pretend that there is already some data in the system.
     EmployeeInfo* info = new EmployeeInfo();
     employees_[1] = info;
@@ -59,7 +61,7 @@ class HumanResourceDatabaseImpl : public HumanResourceDatabase {
     uint64_t id = employee->employee_id;
     if (employees_.find(id) == employees_.end())
       employees_[id] = new EmployeeInfo();
-    employees_[id]->employee = employee.Pass();
+    employees_[id]->employee = std::move(employee);
     callback.Run(true);
   }
 
@@ -82,7 +84,7 @@ class HumanResourceDatabaseImpl : public HumanResourceDatabase {
       callback.Run(false);
       return;
     }
-    employees_[id]->finger_print = finger_print.Pass();
+    employees_[id]->finger_print = std::move(finger_print);
     callback.Run(true);
   }
 
@@ -93,23 +95,23 @@ class HumanResourceDatabaseImpl : public HumanResourceDatabase {
 };
 
 class HumanResourceSystemServer
-    : public ApplicationDelegate,
+    : public service_manager::Service,
       public InterfaceFactory<HumanResourceDatabase> {
  public:
   HumanResourceSystemServer() {}
 
-  // ApplicationDelegate implementation.
-  bool ConfigureIncomingConnection(ApplicationConnection* connection) override {
-    connection->AddService<HumanResourceDatabase>(this);
+  // service_manager::Service implementation.
+  bool OnConnect(Connection* connection) override {
+    connection->AddInterface<HumanResourceDatabase>(this);
     return true;
   }
 
   // InterfaceFactory<HumanResourceDatabase> implementation.
-  void Create(ApplicationConnection* connection,
+  void Create(Connection* connection,
               InterfaceRequest<HumanResourceDatabase> request) override {
     // It will be deleted automatically when the underlying pipe encounters a
     // connection error.
-    new HumanResourceDatabaseImpl(request.Pass());
+    new HumanResourceDatabaseImpl(std::move(request));
   }
 };
 
@@ -117,9 +119,9 @@ class HumanResourceSystemServer
 }  // namespace test
 }  // namespace mojo
 
-MojoResult MojoMain(MojoHandle application_request) {
-  mojo::ApplicationRunner runner(
+MojoResult ServiceMain(MojoHandle request) {
+  mojo::ServiceRunner runner(
       new mojo::test::versioning::HumanResourceSystemServer());
 
-  return runner.Run(application_request);
+  return runner.Run(request);
 }

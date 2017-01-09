@@ -5,8 +5,10 @@
 #ifndef DEVICE_USB_USB_CONTEXT_H_
 #define DEVICE_USB_USB_CONTEXT_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 
 struct libusb_context;
@@ -21,20 +23,20 @@ typedef libusb_context* PlatformUsbContext;
 // Destructor must be called on FILE thread.
 class UsbContext : public base::RefCountedThreadSafe<UsbContext> {
  public:
+  explicit UsbContext(PlatformUsbContext context);
+
   PlatformUsbContext context() const { return context_; }
 
  protected:
-  friend class UsbServiceImpl;
   friend class base::RefCountedThreadSafe<UsbContext>;
 
-  explicit UsbContext(PlatformUsbContext context);
   virtual ~UsbContext();
 
  private:
   class UsbEventHandler;
 
   PlatformUsbContext context_;
-  scoped_ptr<UsbEventHandler> event_handler_;
+  std::unique_ptr<UsbEventHandler> event_handler_;
   base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(UsbContext);

@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <cmath>
+
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -11,8 +12,8 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_folder_button_cell.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_folder_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_unittest_helper.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #import "chrome/browser/ui/cocoa/view_resizer_pong.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -21,8 +22,8 @@
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #include "ui/base/cocoa/animation_utils.h"
-
-#include <cmath>
+#include "ui/base/cocoa/cocoa_base_utils.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 using base::ASCIIToUTF16;
 using bookmarks::BookmarkModel;
@@ -36,7 +37,7 @@ const int kLotsOfNodesCount = 150;
 void DeleteBookmark(BookmarkButton* button, Profile* profile) {
   const BookmarkNode* node = [button bookmarkNode];
   if (node) {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+    BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
     model->Remove(node);
   }
 }
@@ -147,7 +148,8 @@ class BookmarkBarFolderControllerTest : public CocoaProfileTest {
   }
 
   void CreateModel() {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(profile());
     const BookmarkNode* parent = model->bookmark_bar_node();
     const BookmarkNode* folderA = model->AddFolder(parent,
                                                    parent->child_count(),
@@ -170,12 +172,10 @@ class BookmarkBarFolderControllerTest : public CocoaProfileTest {
     model->AddURL(folderB, folderB->child_count(), ASCIIToUTF16("t"),
                   GURL("http://www.google.com/c"));
 
-    bar_.reset(
-      [[BookmarkBarControllerChildFolderRedirect alloc]
-          initWithBrowser:browser()
-             initialWidth:300
-                 delegate:nil
-           resizeDelegate:nil]);
+    bar_.reset([[BookmarkBarControllerChildFolderRedirect alloc]
+        initWithBrowser:browser()
+           initialWidth:300
+               delegate:nil]);
     [bar_ loaded:model];
     // Make parent frame for bookmark bar then open it.
     NSRect frame = [[test_window() contentView] frame];
@@ -191,14 +191,16 @@ class BookmarkBarFolderControllerTest : public CocoaProfileTest {
 
   // Remove the bookmark with the long title.
   void RemoveLongTitleNode() {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(profile());
     model->Remove(longTitleNode_);
   }
 
   // Add LOTS of nodes to our model if needed (e.g. scrolling).
   // Returns the number of nodes added.
   int AddLotsOfNodes() {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(profile());
     for (int i = 0; i < kLotsOfNodesCount; i++) {
       model->AddURL(folderA_, folderA_->child_count(),
                     ASCIIToUTF16("repeated title"),
@@ -270,8 +272,8 @@ TEST_F(BookmarkBarFolderControllerTest, BasicPosition) {
   NSPoint buttonOriginInWindow =
       [parentButton convertRect:[parentButton bounds]
                          toView:nil].origin;
-  NSPoint buttonOriginInScreen =
-      [[parentButton window] convertBaseToScreen:buttonOriginInWindow];
+  NSPoint buttonOriginInScreen = ui::ConvertPointFromWindowToScreen(
+      [parentButton window], buttonOriginInWindow);
   // Within margin
   EXPECT_LE(std::abs(pt.x - buttonOriginInScreen.x),
             bookmarks::kBookmarkMenuOverlap + 1);
@@ -300,7 +302,7 @@ TEST_F(BookmarkBarFolderControllerTest, BasicPosition) {
 // Confirm we grow right until end of screen, then start growing left
 // until end of screen again, then right.
 TEST_F(BookmarkBarFolderControllerTest, PositionRightLeftRight) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* parent = model->bookmark_bar_node();
   const BookmarkNode* folder = parent;
 
@@ -723,16 +725,15 @@ class BookmarkBarFolderControllerMenuTest : public CocoaProfileTest {
     parent_view_.reset([[NSView alloc] initWithFrame:parent_frame]);
     [parent_view_ setHidden:YES];
     bar_.reset([[BookmarkBarController alloc]
-                initWithBrowser:browser()
-                   initialWidth:NSWidth(parent_frame)
-                       delegate:nil
-                 resizeDelegate:resizeDelegate_.get()]);
+        initWithBrowser:browser()
+           initialWidth:NSWidth(parent_frame)
+               delegate:nil]);
     InstallAndToggleBar(bar_.get());
   }
 
   void InstallAndToggleBar(BookmarkBarController* bar) {
-    // Force loading of the nib.
-    [bar view];
+    // Forces loading of the nib.
+    [[bar controlledView] setResizeDelegate:resizeDelegate_];
     // Awkwardness to look like we've been installed.
     [parent_view_ addSubview:[bar view]];
     NSRect frame = [[[bar view] superview] frame];
@@ -750,7 +751,7 @@ class BookmarkBarFolderControllerMenuTest : public CocoaProfileTest {
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveBarBookmarkToFolder) {
   WithNoAnimation at_all;
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b "
       "2f2f3b ] 2f3b ] 3b 4f:[ 4f1f:[ 4f1f1b 4f1f2b 4f1f3b ] 4f2f:[ 4f2f1b "
@@ -823,7 +824,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveBarBookmarkToFolder) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragCopyBarBookmarkToFolder) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b "
       "2f2f3b ] 2f3b ] 3b 4f:[ 4f1f:[ 4f1f1b 4f1f2b 4f1f3b ] 4f2f:[ 4f2f1b "
@@ -887,7 +888,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragCopyBarBookmarkToFolder) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveBarBookmarkToSubfolder) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b "
       "2f2f3b ] 2f3b ] 3b 4f:[ 4f1f:[ 4f1f1b 4f1f2b 4f1f3b ] 4f2f:[ 4f2f1b "
@@ -952,7 +953,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveBarBookmarkToSubfolder) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveWithinFolder) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b "
       "2f2f3b ] 2f3b ] 3b 4f:[ 4f1f:[ 4f1f1b 4f1f2b 4f1f3b ] 4f2f:[ 4f2f1b "
@@ -1001,7 +1002,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveWithinFolder) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragParentOntoChild) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b "
       "2f2f3b ] 2f3b ] 3b 4f:[ 4f1f:[ 4f1f1b 4f1f2b 4f1f3b ] 4f2f:[ 4f2f1b "
@@ -1038,7 +1039,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragParentOntoChild) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveChildToParent) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b "
       "2f2f3b ] 2f3b ] 3b 4f:[ 4f1f:[ 4f1f1b 4f1f2b 4f1f3b ] 4f2f:[ 4f2f1b "
@@ -1090,7 +1091,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragMoveChildToParent) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragWindowResizing) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string(
       "a b:[ b1 b2 b3 ] reallyReallyLongBookmarkName c ");
@@ -1130,7 +1131,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragWindowResizing) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, MoveRemoveAddButtons) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2b 2f3b ] 3b 4b ");
   bookmarks::test::AddNodesFromModelString(model, root, model_string);
@@ -1193,7 +1194,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, MoveRemoveAddButtons) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, RemoveLastButtonOtherBookmarks) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* otherBookmarks = model->other_node();
 
   BookmarkButton* otherButton = [bar_ otherBookmarksButton];
@@ -1230,7 +1231,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, RemoveLastButtonOtherBookmarks) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, ControllerForNode) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2b ] 3b ");
   bookmarks::test::AddNodesFromModelString(model, root, model_string);
@@ -1265,7 +1266,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, ControllerForNode) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, MenuSizingAndScrollArrows) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2b 3b ");
   bookmarks::test::AddNodesFromModelString(model, root, model_string);
@@ -1287,8 +1288,10 @@ TEST_F(BookmarkBarFolderControllerMenuTest, MenuSizingAndScrollArrows) {
   EXPECT_TRUE(folderController);
   NSWindow* folderWindow = [folderController window];
   EXPECT_TRUE(folderWindow);
-  CGFloat expectedHeight = (CGFloat)bookmarks::kBookmarkFolderButtonHeight +
-      (2*bookmarks::kBookmarkVerticalPadding);
+  CGFloat expectedHeight =
+      (CGFloat)bookmarks::kBookmarkFolderButtonHeight +
+      bookmarks::kBookmarkTopVerticalPadding +
+      bookmarks::kBookmarkBottomVerticalPadding;
   NSRect windowFrame = [folderWindow frame];
   CGFloat windowHeight = NSHeight(windowFrame);
   EXPECT_CGFLOAT_EQ(expectedHeight, windowHeight);
@@ -1319,7 +1322,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, MenuSizingAndScrollArrows) {
   EXPECT_CGFLOAT_EQ(scrollerWidth, buttonWidth);
   CGFloat visibleWidth = NSWidth(visibleFrame);
   EXPECT_CGFLOAT_EQ(visibleWidth - widthDelta, buttonWidth);
-  EXPECT_LT(scrollerWidth, NSWidth([folderView frame]));
+  EXPECT_CGFLOAT_EQ(scrollerWidth, NSWidth([folderView frame]));
 
   // Add a wider bookmark and make sure the button widths match.
   int reallyWideButtonNumber = folder->child_count();
@@ -1360,7 +1363,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, MenuSizingAndScrollArrows) {
 
 // See http://crbug.com/46101
 TEST_F(BookmarkBarFolderControllerMenuTest, HoverThenDeleteBookmark) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const BookmarkNode* folder = model->AddFolder(root,
                                                 root->child_count(),
@@ -1428,7 +1431,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, HoverThenDeleteBookmark) {
 @end
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragBookmarkData) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b 2f2f3b ] "
                                  "2f3b ] 3b 4b ");
@@ -1490,7 +1493,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragBookmarkData) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DragBookmarkDataToTrash) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b 2f2f3b ] "
                                  "2f3b ] 3b 4b ");
@@ -1533,7 +1536,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DragBookmarkDataToTrash) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, AddURLs) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b 2f2f3b ] "
                                  "2f3b ] 3b 4b ");
@@ -1578,7 +1581,7 @@ TEST_F(BookmarkBarFolderControllerMenuTest, AddURLs) {
 }
 
 TEST_F(BookmarkBarFolderControllerMenuTest, DropPositionIndicator) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b 2f2f3b ] "
                                  "2f3b ] 3b 4b ");
@@ -1596,18 +1599,49 @@ TEST_F(BookmarkBarFolderControllerMenuTest, DropPositionIndicator) {
   EXPECT_TRUE(folder);
 
   // Test a series of points starting at the top of the folder.
-  const CGFloat yOffset = 0.5 * bookmarks::kBookmarkVerticalPadding;
+  const CGFloat yTopOffset = 0.5 * bookmarks::kBookmarkTopVerticalPadding;
+  const CGFloat yBottomOffset =
+      0.5 * bookmarks::kBookmarkBottomVerticalPadding;
   BookmarkButton* targetButton = [folder buttonWithTitleEqualTo:@"2f1b"];
   ASSERT_TRUE(targetButton);
   NSPoint targetPoint = [targetButton top];
   CGFloat pos = [folder indicatorPosForDragToPoint:targetPoint];
-  EXPECT_CGFLOAT_EQ(targetPoint.y + yOffset, pos);
+  EXPECT_CGFLOAT_EQ(targetPoint.y + yTopOffset, pos);
   pos = [folder indicatorPosForDragToPoint:[targetButton bottom]];
   targetButton = [folder buttonWithTitleEqualTo:@"2f2f"];
-  EXPECT_CGFLOAT_EQ([targetButton top].y + yOffset, pos);
+  EXPECT_CGFLOAT_EQ([targetButton top].y + yTopOffset, pos);
   pos = [folder indicatorPosForDragToPoint:NSMakePoint(10,0)];
   targetButton = [folder buttonWithTitleEqualTo:@"2f3b"];
-  EXPECT_CGFLOAT_EQ([targetButton bottom].y - yOffset, pos);
+  EXPECT_CGFLOAT_EQ([targetButton bottom].y - yBottomOffset, pos);
+}
+
+TEST_F(BookmarkBarFolderControllerMenuTest, FolderTooltips) {
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
+  const BookmarkNode* otherBookmarks = model->other_node();
+  model->AddFolder(otherBookmarks, otherBookmarks->child_count(),
+                   ASCIIToUTF16("short_name"));
+  model->AddFolder(
+      otherBookmarks, otherBookmarks->child_count(),
+      ASCIIToUTF16("reallyReallyLongBookmarkNamereallyReallyLongBookmarkNamerea"
+                   "llyReallyLongBookmarkNamereallyReallyLongBookmarkName"));
+  BookmarkButton* otherButton = [bar_ otherBookmarksButton];
+  ASSERT_TRUE(otherButton);
+
+  [[otherButton target] openBookmarkFolderFromButton:otherButton];
+  BookmarkBarFolderController* folder = [bar_ folderController];
+  EXPECT_TRUE(folder);
+
+  NSArray* buttons = [folder buttons];
+  EXPECT_EQ(2U, [buttons count]);
+
+  for (BookmarkButton* btn in buttons) {
+    if ([[btn cell] cellSize].width >
+        bookmarks::kBookmarkMenuButtonMaximumWidth) {
+      EXPECT_TRUE([btn toolTip]);
+    } else {
+      EXPECT_FALSE([btn toolTip]);
+    }
+  }
 }
 
 @interface BookmarkBarControllerNoDelete : BookmarkBarController
@@ -1628,16 +1662,15 @@ class BookmarkBarFolderControllerClosingTest : public
     ASSERT_TRUE(browser());
 
     bar_.reset([[BookmarkBarControllerNoDelete alloc]
-                initWithBrowser:browser()
-                   initialWidth:NSWidth([parent_view_ frame])
-                       delegate:nil
-                 resizeDelegate:resizeDelegate_.get()]);
+        initWithBrowser:browser()
+           initialWidth:NSWidth([parent_view_ frame])
+               delegate:nil]);
     InstallAndToggleBar(bar_.get());
   }
 };
 
 TEST_F(BookmarkBarFolderControllerClosingTest, DeleteClosesFolder) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* root = model->bookmark_bar_node();
   const std::string model_string("1b 2f:[ 2f1b 2f2f:[ 2f2f1b 2f2f2b ] "
                                  "2f3b ] 3b ");

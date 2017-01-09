@@ -47,9 +47,8 @@
 #define PR_SET_VMA 0x53564d41
 #endif
 
-// https://android.googlesource.com/platform/system/core/+/lollipop-release/libcutils/sched_policy.c
-#if !defined(PR_SET_TIMERSLACK_PID)
-#define PR_SET_TIMERSLACK_PID 41
+#ifndef PR_SET_PTRACER
+#define PR_SET_PTRACER 0x59616d61
 #endif
 
 #endif  // defined(OS_ANDROID)
@@ -95,6 +94,18 @@ inline bool IsArchitectureMips() {
 #endif
 }
 
+// Ubuntu's version of glibc has a race condition in sem_post that can cause
+// it to call futex(2) with bogus op arguments. To workaround this, we need
+// to allow those futex(2) calls to fail with EINVAL, instead of crashing the
+// process. See crbug.com/598471.
+inline bool IsBuggyGlibcSemPost() {
+#if defined(LIBC_GLIBC) && !defined(OS_CHROMEOS)
+  return true;
+#else
+  return false;
+#endif
+}
+
 }  // namespace.
 
 #define CASES SANDBOX_BPF_DSL_CASES
@@ -126,9 +137,9 @@ ResultExpr RestrictCloneToThreadsAndEPERMFork() {
       CLONE_SYSVSEM | CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID;
   const BoolExpr glibc_test = flags == kGlibcPthreadFlags;
 
-  const BoolExpr android_test = flags == kAndroidCloneMask ||
-                                flags == kObsoleteAndroidCloneMask ||
-                                flags == kGlibcPthreadFlags;
+  const BoolExpr android_test =
+      AnyOf(flags == kAndroidCloneMask, flags == kObsoleteAndroidCloneMask,
+            flags == kGlibcPthreadFlags);
 
   return If(IsAndroid() ? android_test : glibc_test, Allow())
       .ElseIf((flags & (CLONE_VM | CLONE_THREAD)) == 0, Error(EPERM))
@@ -140,11 +151,39 @@ ResultExpr RestrictPrctl() {
   // used by breakpad but not needed anymore.
   const Arg<int> option(0);
   return Switch(option)
-      .CASES((PR_GET_NAME, PR_SET_NAME, PR_GET_DUMPABLE, PR_SET_DUMPABLE),
-             Allow())
+      .CASES((PR_GET_NAME, PR_SET_NAME, PR_GET_DUMPABLE, PR_SET_DUMPABLE
 #if defined(OS_ANDROID)
-      .CASES((PR_SET_VMA, PR_SET_TIMERSLACK_PID), Allow())
-#endif
+              , PR_SET_VMA, PR_SET_PTRACER
+
+// Enable PR_SET_TIMERSLACK_PID, an Android custom prctl which is used in:
+// https://android.googlesource.com/platform/system/core/+/lollipop-release/libcutils/sched_policy.c.
+// Depending on the Android kernel version, this prctl may have different
+// values. Since we don't know the correct value for the running kernel, we must
+// allow them all.
+//
+// The effect is:
+// On 3.14 kernels, this allows PR_SET_TIMERSLACK_PID and 43 and 127 (invalid
+// prctls which will return EINVAL)
+// On 3.18 kernels, this allows PR_SET_TIMERSLACK_PID, PR_SET_THP_DISABLE, and
+// 127 (invalid).
+// On 4.1 kernels and up, this allows PR_SET_TIMERSLACK_PID, PR_SET_THP_DISABLE,
+// and PR_MPX_ENABLE_MANAGEMENT.
+
+// https://android.googlesource.com/kernel/common/+/android-3.14/include/uapi/linux/prctl.h
+#define PR_SET_TIMERSLACK_PID_1 41
+
+// https://android.googlesource.com/kernel/common/+/android-3.18/include/uapi/linux/prctl.h
+#define PR_SET_TIMERSLACK_PID_2 43
+
+// https://android.googlesource.com/kernel/common/+/android-4.1/include/uapi/linux/prctl.h and up
+#define PR_SET_TIMERSLACK_PID_3 127
+
+              , PR_SET_TIMERSLACK_PID_1
+              , PR_SET_TIMERSLACK_PID_2
+              , PR_SET_TIMERSLACK_PID_3
+#endif  // defined(OS_ANDROID)
+              ),
+             Allow())
       .Default(CrashSIGSYSPrctl());
 }
 
@@ -247,22 +286,17 @@ ResultExpr RestrictFutex() {
   const uint64_t kAllowedFutexFlags = FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME;
   const Arg<int> op(1);
   return Switch(op & ~kAllowedFutexFlags)
-      .CASES((FUTEX_WAIT,
-              FUTEX_WAKE,
-              FUTEX_REQUEUE,
-              FUTEX_CMP_REQUEUE,
-              FUTEX_WAKE_OP,
-              FUTEX_WAIT_BITSET,
-              FUTEX_WAKE_BITSET),
+      .CASES((FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE, FUTEX_CMP_REQUEUE,
+              FUTEX_WAKE_OP, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET),
              Allow())
-      .Default(CrashSIGSYSFutex());
+      .Default(IsBuggyGlibcSemPost() ? Error(EINVAL) : CrashSIGSYSFutex());
 }
 
 ResultExpr RestrictGetSetpriority(pid_t target_pid) {
   const Arg<int> which(0);
   const Arg<int> who(1);
   return If(which == PRIO_PROCESS,
-            If(who == 0 || who == target_pid, Allow()).Else(Error(EPERM)))
+            Switch(who).CASES((0, target_pid), Allow()).Default(Error(EPERM)))
       .Else(CrashSIGSYS());
 }
 
@@ -278,8 +312,9 @@ ResultExpr RestrictSchedTarget(pid_t target_pid, int sysno) {
     case __NR_sched_setparam:
     case __NR_sched_setscheduler: {
       const Arg<pid_t> pid(0);
-      return If(pid == 0 || pid == target_pid, Allow())
-          .Else(RewriteSchedSIGSYS());
+      return Switch(pid)
+          .CASES((0, target_pid), Allow())
+          .Default(RewriteSchedSIGSYS());
     }
     default:
       NOTREACHED();
@@ -289,7 +324,7 @@ ResultExpr RestrictSchedTarget(pid_t target_pid, int sysno) {
 
 ResultExpr RestrictPrlimit64(pid_t target_pid) {
   const Arg<pid_t> pid(0);
-  return If(pid == 0 || pid == target_pid, Allow()).Else(CrashSIGSYS());
+  return Switch(pid).CASES((0, target_pid), Allow()).Default(CrashSIGSYS());
 }
 
 ResultExpr RestrictGetrusage() {
@@ -301,14 +336,37 @@ ResultExpr RestrictGetrusage() {
 ResultExpr RestrictClockID() {
   static_assert(4 == sizeof(clockid_t), "clockid_t is not 32bit");
   const Arg<clockid_t> clockid(0);
-  return If(
-                 clockid == CLOCK_MONOTONIC ||
-                 clockid == CLOCK_MONOTONIC_COARSE ||
-                 clockid == CLOCK_PROCESS_CPUTIME_ID ||
-                 clockid == CLOCK_REALTIME ||
-                 clockid == CLOCK_REALTIME_COARSE ||
-                 clockid == CLOCK_THREAD_CPUTIME_ID,
-             Allow()).Else(CrashSIGSYS());
+  return Switch(clockid)
+      .CASES((
+#if defined(OS_ANDROID)
+              CLOCK_BOOTTIME,
+#endif
+              CLOCK_MONOTONIC,
+              CLOCK_MONOTONIC_COARSE,
+              CLOCK_PROCESS_CPUTIME_ID,
+              CLOCK_REALTIME,
+              CLOCK_REALTIME_COARSE,
+              CLOCK_THREAD_CPUTIME_ID),
+             Allow())
+      .Default(CrashSIGSYS());
+}
+
+#if !defined(GRND_NONBLOCK)
+#define GRND_NONBLOCK 1
+#endif
+
+ResultExpr RestrictGetRandom() {
+  const Arg<unsigned int> flags(2);
+  const unsigned int kGoodFlags = GRND_NONBLOCK;
+  return If((flags & ~kGoodFlags) == 0, Allow()).Else(CrashSIGSYS());
+}
+
+ResultExpr RestrictPrlimitToGetrlimit(pid_t target_pid) {
+  const Arg<pid_t> pid(0);
+  const Arg<uintptr_t> new_limit(2);
+  // Only allow 'get' operations, and only for the current process.
+  return If(AllOf(new_limit == 0, AnyOf(pid == 0, pid == target_pid)), Allow())
+      .Else(Error(EPERM));
 }
 
 }  // namespace sandbox.

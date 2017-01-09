@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILEAPI_EXTERNAL_FILE_URL_REQUEST_JOB_H_
 #define CHROME_BROWSER_CHROMEOS_FILEAPI_EXTERNAL_FILE_URL_REQUEST_JOB_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/drive/file_errors.h"
 #include "net/base/net_errors.h"
@@ -49,9 +51,10 @@ class ExternalFileURLRequestJob : public net::URLRequestJob {
   typedef base::Callback<void(
       net::Error,
       const scoped_refptr<storage::FileSystemContext>& file_system_context,
-      scoped_ptr<IsolatedFileSystemScope> isolated_file_system_scope,
+      std::unique_ptr<IsolatedFileSystemScope> isolated_file_system_scope,
       const storage::FileSystemURL& file_system_url,
-      const std::string& mime_type)> HelperCallback;
+      const std::string& mime_type)>
+      HelperCallback;
 
   ExternalFileURLRequestJob(void* profile_id,
                             net::URLRequest* request,
@@ -79,7 +82,7 @@ class ExternalFileURLRequestJob : public net::URLRequestJob {
   void OnHelperResultObtained(
       net::Error error,
       const scoped_refptr<storage::FileSystemContext>& file_system_context,
-      scoped_ptr<IsolatedFileSystemScope> isolated_file_system_scope,
+      std::unique_ptr<IsolatedFileSystemScope> isolated_file_system_scope,
       const storage::FileSystemURL& file_system_url,
       const std::string& mime_type);
 
@@ -98,13 +101,13 @@ class ExternalFileURLRequestJob : public net::URLRequestJob {
   // The range of the file to be returned.
   net::Error range_parse_result_;
   net::HttpByteRange byte_range_;
-  int64 remaining_bytes_;
+  int64_t remaining_bytes_;
 
   scoped_refptr<storage::FileSystemContext> file_system_context_;
-  scoped_ptr<IsolatedFileSystemScope> isolated_file_system_scope_;
+  std::unique_ptr<IsolatedFileSystemScope> isolated_file_system_scope_;
   storage::FileSystemURL file_system_url_;
   std::string mime_type_;
-  scoped_ptr<storage::FileStreamReader> stream_reader_;
+  std::unique_ptr<storage::FileStreamReader> stream_reader_;
   GURL redirect_url_;
 
   // This should remain the last member so it'll be destroyed first and

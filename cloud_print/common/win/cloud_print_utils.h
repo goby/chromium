@@ -27,4 +27,3 @@ void SetGoogleUpdateUsage(const base::string16& product_id);
 }  // namespace cloud_print
 
 #endif  // CLOUD_PRINT_COMMON_CLOUD_PRINT_UTILS_H_
-

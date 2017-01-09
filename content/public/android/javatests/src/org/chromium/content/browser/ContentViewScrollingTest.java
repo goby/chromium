@@ -5,16 +5,14 @@
 package org.chromium.content.browser;
 
 import android.content.res.Configuration;
-import android.graphics.Canvas;
 import android.os.SystemClock;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.View;
 
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.ContentViewCore.InternalAccessDelegate;
 import org.chromium.content.browser.test.util.Criteria;
@@ -42,20 +40,8 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
         private boolean mScrollChanged;
         private final Object mLock = new Object();
 
-
-
-        @Override
-        public boolean drawChild(Canvas canvas, View child, long drawingTime) {
-            return false;
-        }
-
         @Override
         public boolean super_onKeyUp(int keyCode, KeyEvent event) {
-            return false;
-        }
-
-        @Override
-        public boolean super_dispatchKeyEventPreIme(KeyEvent event) {
             return false;
         }
 
@@ -102,7 +88,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
 
     private void assertWaitForScroll(final boolean hugLeft, final boolean hugTop)
             throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 // Scrolling and flinging don't result in exact coordinates.
@@ -170,7 +156,6 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
 
         launchContentShellWithUrl(LARGE_PAGE);
         waitForActiveShellToBeDoneLoading();
-        assertWaitForPageScaleFactorMatch(2.0f);
 
         assertEquals(0, getContentViewCore().getNativeScrollXForTest());
         assertEquals(0, getContentViewCore().getNativeScrollYForTest());
@@ -178,6 +163,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
 
     @SmallTest
     @Feature({"Main"})
+    @RetryOnFailure
     public void testFling() throws Throwable {
         // Scaling the initial velocity by the device scale factor ensures that
         // it's of sufficient magnitude for all displays densities.
@@ -209,6 +195,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
     @SmallTest
     @RerunWithUpdatedContainerView
     @Feature({"Main"})
+    @RetryOnFailure
     public void testScrollTo() throws Throwable {
         // Vertical scroll to lower-left.
         scrollTo(0, 2500);
@@ -234,6 +221,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
     @SmallTest
     @RerunWithUpdatedContainerView
     @Feature({"Main"})
+    @RetryOnFailure
     public void testScrollBy() throws Throwable {
         scrollTo(0, 0);
         assertWaitForScroll(true, true);
@@ -263,55 +251,32 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
         assertWaitForScroll(false, false);
     }
 
-    /*
     @SmallTest
-    @RerunWithUpdatedContainerView
     @Feature({"Main"})
-    crbug.com/538781
-    */
-    @DisabledTest
     public void testJoystickScroll() throws Throwable {
         scrollTo(0, 0);
         assertWaitForScroll(true, true);
 
-        // No scroll
-        scrollWithJoystick(0f, 0f);
-        assertWaitForScroll(true, true);
-
-        // Verify no scrolling when X axis motion falls in deadzone.
-        // TODO(jdduke): Make the deadzone scroll checks non-racy.
-        scrollWithJoystick(0.2f, 0f);
-        assertWaitForScroll(true, true);
-
-        // Verify no scrolling when Y axis motion falls in deadzone.
-        scrollWithJoystick(0f, 0.2f);
-        assertWaitForScroll(true, true);
-
-        // Vertical scroll to lower-left.
-        scrollWithJoystick(0, 0.5f);
+        // Scroll with X axis in deadzone and the Y axis active.
+        // Only the Y axis should have an effect, arriving at lower-left.
+        scrollWithJoystick(0.1f, 1f);
         assertWaitForScroll(true, false);
-        // Send joystick event at origin to stop scrolling.
-        scrollWithJoystick(0f, 0f);
 
-        // Horizontal scroll to lower-right.
-        scrollWithJoystick(0.5f, 0);
+        // Scroll with Y axis in deadzone and the X axis active.
+        scrollWithJoystick(1f, -0.1f);
         assertWaitForScroll(false, false);
-        scrollWithJoystick(0f, 0f);
 
         // Vertical scroll to upper-right.
         scrollWithJoystick(0, -0.75f);
         assertWaitForScroll(false, true);
-        scrollWithJoystick(0f, 0f);
 
         // Horizontal scroll to top-left.
         scrollWithJoystick(-0.75f, 0);
         assertWaitForScroll(true, true);
-        scrollWithJoystick(0f, 0f);
 
         // Diagonal scroll to bottom-right.
         scrollWithJoystick(1f, 1f);
         assertWaitForScroll(false, false);
-        scrollWithJoystick(0f, 0f);
     }
 
     /**
@@ -321,6 +286,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
     @SmallTest
     @RerunWithUpdatedContainerView
     @Feature({"Main"})
+    @RetryOnFailure
     public void testOverScroll() throws Throwable {
         // Overscroll lower-left.
         scrollTo(-10000, 10000);
@@ -350,6 +316,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
     @SmallTest
     @RerunWithUpdatedContainerView
     @Feature({"Main"})
+    @RetryOnFailure
     public void testOnScrollChanged() throws Throwable {
         final int scrollToX = getContentViewCore().getNativeScrollXForTest() + 2500;
         final int scrollToY = getContentViewCore().getNativeScrollYForTest() + 2500;
@@ -362,7 +329,7 @@ public class ContentViewScrollingTest extends ContentShellTestBase {
         });
         scrollTo(scrollToX, scrollToY);
         assertWaitForScroll(false, false);
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return containerViewInternals.isScrollChanged();

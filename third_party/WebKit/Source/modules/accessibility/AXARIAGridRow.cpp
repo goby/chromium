@@ -26,44 +26,37 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/accessibility/AXARIAGridRow.h"
 
 #include "modules/accessibility/AXObjectCacheImpl.h"
 #include "modules/accessibility/AXTable.h"
 
-
 namespace blink {
 
-AXARIAGridRow::AXARIAGridRow(LayoutObject* layoutObject, AXObjectCacheImpl& axObjectCache)
-    : AXTableRow(layoutObject, axObjectCache)
-{
+AXARIAGridRow::AXARIAGridRow(LayoutObject* layoutObject,
+                             AXObjectCacheImpl& axObjectCache)
+    : AXTableRow(layoutObject, axObjectCache) {}
+
+AXARIAGridRow::~AXARIAGridRow() {}
+
+AXARIAGridRow* AXARIAGridRow::create(LayoutObject* layoutObject,
+                                     AXObjectCacheImpl& axObjectCache) {
+  return new AXARIAGridRow(layoutObject, axObjectCache);
 }
 
-AXARIAGridRow::~AXARIAGridRow()
-{
+bool AXARIAGridRow::isARIATreeGridRow() const {
+  AXObject* parent = parentTable();
+  if (!parent)
+    return false;
+
+  return parent->ariaRoleAttribute() == TreeGridRole;
 }
 
-AXARIAGridRow* AXARIAGridRow::create(LayoutObject* layoutObject, AXObjectCacheImpl& axObjectCache)
-{
-    return new AXARIAGridRow(layoutObject, axObjectCache);
+void AXARIAGridRow::headerObjectsForRow(AXObjectVector& headers) {
+  for (const auto& cell : children()) {
+    if (cell->roleValue() == RowHeaderRole)
+      headers.append(cell);
+  }
 }
 
-bool AXARIAGridRow::isARIATreeGridRow() const
-{
-    AXObject* parent = parentTable();
-    if (!parent)
-        return false;
-
-    return parent->ariaRoleAttribute() == TreeGridRole;
-}
-
-void AXARIAGridRow::headerObjectsForRow(AXObjectVector& headers)
-{
-    for (const auto& cell : children()) {
-        if (cell->roleValue() == RowHeaderRole)
-            headers.append(cell);
-    }
-}
-
-} // namespace blink
+}  // namespace blink

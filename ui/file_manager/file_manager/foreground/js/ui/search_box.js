@@ -7,11 +7,10 @@
  *
  * @param {!Element} element Root element of the search box.
  * @param {!Element} searchButton Search button.
- * @param {!Element} noResultMessage Message element for the empty result.
  * @extends {cr.EventTarget}
  * @constructor
  */
-function SearchBox(element, searchButton, noResultMessage) {
+function SearchBox(element, searchButton) {
   cr.EventTarget.call(this);
 
   /**
@@ -40,12 +39,6 @@ function SearchBox(element, searchButton, noResultMessage) {
   this.searchButtonToggleRipple_ =
       /** @type {!FilesToggleRipple} */ (queryRequiredElement(
           'files-toggle-ripple', this.searchButton));
-
-  /**
-   * No result message.
-   * @type {!Element}
-   */
-  this.noResultMessage = noResultMessage;
 
   /**
    * Text input of the search box.
@@ -236,10 +229,10 @@ SearchBox.prototype.onBlur_ = function() {
 SearchBox.prototype.onKeyDown_ = function(event) {
   event = /** @type {KeyboardEvent} */ (event);
   // Handle only Esc key now.
-  if (event.keyIdentifier != 'U+001B' /* Esc */ || this.inputElement.value)
+  if (event.key != 'Escape' || this.inputElement.value)
     return;
 
-  this.inputElement.tabIndex = '-1';  // Focus to default element after blur.
+  this.inputElement.tabIndex = -1;  // Focus to default element after blur.
   this.inputElement.blur();
 };
 
@@ -275,8 +268,8 @@ SearchBox.prototype.updateStyles_ = function() {
   var hasFocusOnInput = this.element.classList.contains('has-cursor');
 
   // See go/filesapp-tabindex for tabindexes.
-  this.inputElement.tabIndex = (hasText || hasFocusOnInput) ? '13' : '-1';
-  this.searchButton.tabIndex = (hasText || hasFocusOnInput) ? '-1' : '12';
+  this.inputElement.tabIndex = (hasText || hasFocusOnInput) ? 13 : -1;
+  this.searchButton.tabIndex = (hasText || hasFocusOnInput) ? -1 : 12;
 };
 
 /**

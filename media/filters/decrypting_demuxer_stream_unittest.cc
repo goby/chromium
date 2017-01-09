@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/gmock_callback_support.h"
@@ -26,8 +30,8 @@ using ::testing::StrictMock;
 namespace media {
 
 static const int kFakeBufferSize = 16;
-static const uint8 kFakeKeyId[] = { 0x4b, 0x65, 0x79, 0x20, 0x49, 0x44 };
-static const uint8 kFakeIv[DecryptConfig::kDecryptionKeySize] = { 0 };
+static const uint8_t kFakeKeyId[] = {0x4b, 0x65, 0x79, 0x20, 0x49, 0x44};
+static const uint8_t kFakeIv[DecryptConfig::kDecryptionKeySize] = {0};
 
 // Create a fake non-empty buffer in an encrypted stream. When |is_clear| is
 // true, the buffer is not encrypted (signaled by an empty IV).
@@ -36,10 +40,10 @@ static scoped_refptr<DecoderBuffer> CreateFakeEncryptedStreamBuffer(
   scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(kFakeBufferSize));
   std::string iv = is_clear ? std::string() :
       std::string(reinterpret_cast<const char*>(kFakeIv), arraysize(kFakeIv));
-  buffer->set_decrypt_config(scoped_ptr<DecryptConfig>(new DecryptConfig(
-      std::string(reinterpret_cast<const char*>(kFakeKeyId),
-                  arraysize(kFakeKeyId)),
-      iv, std::vector<SubsampleEntry>())));
+  buffer->set_decrypt_config(std::unique_ptr<DecryptConfig>(
+      new DecryptConfig(std::string(reinterpret_cast<const char*>(kFakeKeyId),
+                                    arraysize(kFakeKeyId)),
+                        iv, std::vector<SubsampleEntry>())));
   return buffer;
 }
 
@@ -49,10 +53,6 @@ namespace {
 
 ACTION_P(ReturnBuffer, buffer) {
   arg0.Run(buffer.get() ? DemuxerStream::kOk : DemuxerStream::kAborted, buffer);
-}
-
-MATCHER(IsEndOfStream, "end of stream") {
-  return arg->end_of_stream();
 }
 
 }  // namespace
@@ -67,7 +67,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
                        base::Unretained(this)))),
         cdm_context_(new StrictMock<MockCdmContext>()),
         decryptor_(new StrictMock<MockDecryptor>()),
-        is_cdm_set_(false),
+        is_initialized_(false),
         input_audio_stream_(
             new StrictMock<MockDemuxerStream>(DemuxerStream::AUDIO)),
         input_video_stream_(
@@ -77,53 +77,43 @@ class DecryptingDemuxerStreamTest : public testing::Test {
         decrypted_buffer_(new DecoderBuffer(kFakeBufferSize)) {}
 
   virtual ~DecryptingDemuxerStreamTest() {
-    if (is_cdm_set_)
+    if (is_initialized_)
       EXPECT_CALL(*decryptor_, CancelDecrypt(_));
     demuxer_stream_.reset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
+  }
+
+  void OnInitialized(PipelineStatus expected_status, PipelineStatus status) {
+    EXPECT_EQ(expected_status, status);
+    is_initialized_ = status == PIPELINE_OK;
   }
 
   void InitializeAudioAndExpectStatus(const AudioDecoderConfig& config,
-                                      PipelineStatus status) {
+                                      PipelineStatus expected_status) {
     input_audio_stream_->set_audio_decoder_config(config);
     demuxer_stream_->Initialize(
-        input_audio_stream_.get(),
-        base::Bind(&DecryptingDemuxerStreamTest::RequestCdmNotification,
-                   base::Unretained(this)),
-        NewExpectedStatusCB(status));
-    message_loop_.RunUntilIdle();
+        input_audio_stream_.get(), cdm_context_.get(),
+        base::Bind(&DecryptingDemuxerStreamTest::OnInitialized,
+                   base::Unretained(this), expected_status));
+    base::RunLoop().RunUntilIdle();
   }
 
   void InitializeVideoAndExpectStatus(const VideoDecoderConfig& config,
-                                      PipelineStatus status) {
+                                      PipelineStatus expected_status) {
     input_video_stream_->set_video_decoder_config(config);
     demuxer_stream_->Initialize(
-        input_video_stream_.get(),
-        base::Bind(&DecryptingDemuxerStreamTest::RequestCdmNotification,
-                   base::Unretained(this)),
-        NewExpectedStatusCB(status));
-    message_loop_.RunUntilIdle();
+        input_video_stream_.get(), cdm_context_.get(),
+        base::Bind(&DecryptingDemuxerStreamTest::OnInitialized,
+                   base::Unretained(this), expected_status));
+    base::RunLoop().RunUntilIdle();
   }
 
-  enum CdmType { NO_CDM, CDM_WITHOUT_DECRYPTOR, CDM_WITH_DECRYPTOR };
+  enum CdmType { CDM_WITHOUT_DECRYPTOR, CDM_WITH_DECRYPTOR };
 
   void SetCdmType(CdmType cdm_type) {
-    const bool has_cdm = cdm_type != NO_CDM;
     const bool has_decryptor = cdm_type == CDM_WITH_DECRYPTOR;
-
-    EXPECT_CALL(*this, RequestCdmNotification(_))
-        .WillOnce(
-            RunCallback<0>(has_cdm ? cdm_context_.get() : nullptr,
-                           base::Bind(&DecryptingDemuxerStreamTest::CdmSet,
-                                      base::Unretained(this))));
-
-    if (has_cdm) {
-      EXPECT_CALL(*cdm_context_, GetDecryptor())
-          .WillRepeatedly(Return(has_decryptor ? decryptor_.get() : nullptr));
-    }
-
-    EXPECT_CALL(*this, CdmSet(has_decryptor))
-        .WillOnce(SaveArg<0>(&is_cdm_set_));
+    EXPECT_CALL(*cdm_context_, GetDecryptor())
+        .WillRepeatedly(Return(has_decryptor ? decryptor_.get() : nullptr));
   }
 
   // The following functions are used to test stream-type-neutral logic in
@@ -138,7 +128,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
 
     AudioDecoderConfig input_config(kCodecVorbis, kSampleFormatPlanarF32,
                                     CHANNEL_LAYOUT_STEREO, 44100,
-                                    EmptyExtraData(), true);
+                                    EmptyExtraData(), AesCtrEncryptionScheme());
     InitializeAudioAndExpectStatus(input_config, PIPELINE_OK);
 
     const AudioDecoderConfig& output_config =
@@ -165,7 +155,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
 
     demuxer_stream_->Read(base::Bind(&DecryptingDemuxerStreamTest::BufferReady,
                                      base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void EnterClearReadingState() {
@@ -180,7 +170,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
         .WillOnce(SaveArg<1>(&decrypted_buffer));
     demuxer_stream_->Read(base::Bind(&DecryptingDemuxerStreamTest::BufferReady,
                                      base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     EXPECT_FALSE(decrypted_buffer->decrypt_config());
   }
@@ -203,7 +193,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
         .WillOnce(SaveArg<0>(&pending_demuxer_read_cb_));
     demuxer_stream_->Read(base::Bind(&DecryptingDemuxerStreamTest::BufferReady,
                                      base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     // Make sure the Read() triggers a Read() on the input demuxer stream.
     EXPECT_FALSE(pending_demuxer_read_cb_.is_null());
   }
@@ -218,7 +208,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
 
     demuxer_stream_->Read(base::Bind(&DecryptingDemuxerStreamTest::BufferReady,
                                      base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     // Make sure Read() triggers a Decrypt() on the decryptor.
     EXPECT_FALSE(pending_decrypt_cb_.is_null());
   }
@@ -232,7 +222,7 @@ class DecryptingDemuxerStreamTest : public testing::Test {
     EXPECT_CALL(*this, OnWaitingForDecryptionKey());
     demuxer_stream_->Read(base::Bind(&DecryptingDemuxerStreamTest::BufferReady,
                                      base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void AbortPendingDecryptCB() {
@@ -248,30 +238,26 @@ class DecryptingDemuxerStreamTest : public testing::Test {
   }
 
   void Reset() {
-    if (is_cdm_set_) {
-      EXPECT_CALL(*decryptor_, CancelDecrypt(Decryptor::kAudio))
-          .WillRepeatedly(InvokeWithoutArgs(
-              this, &DecryptingDemuxerStreamTest::AbortPendingDecryptCB));
-    }
+    EXPECT_CALL(*decryptor_, CancelDecrypt(Decryptor::kAudio))
+        .WillRepeatedly(InvokeWithoutArgs(
+            this, &DecryptingDemuxerStreamTest::AbortPendingDecryptCB));
 
     demuxer_stream_->Reset(NewExpectedClosure());
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
-  MOCK_METHOD1(RequestCdmNotification, void(const CdmReadyCB&));
   MOCK_METHOD2(BufferReady, void(DemuxerStream::Status,
                                  const scoped_refptr<DecoderBuffer>&));
-  MOCK_METHOD1(CdmSet, void(bool));
   MOCK_METHOD0(OnWaitingForDecryptionKey, void(void));
 
   base::MessageLoop message_loop_;
-  scoped_ptr<DecryptingDemuxerStream> demuxer_stream_;
-  scoped_ptr<StrictMock<MockCdmContext>> cdm_context_;
-  scoped_ptr<StrictMock<MockDecryptor>> decryptor_;
-  // Whether a valid Decryptor has been set in the |demuxer_stream_|.
-  bool is_cdm_set_;
-  scoped_ptr<StrictMock<MockDemuxerStream> > input_audio_stream_;
-  scoped_ptr<StrictMock<MockDemuxerStream> > input_video_stream_;
+  std::unique_ptr<DecryptingDemuxerStream> demuxer_stream_;
+  std::unique_ptr<StrictMock<MockCdmContext>> cdm_context_;
+  std::unique_ptr<StrictMock<MockDecryptor>> decryptor_;
+  // Whether the |demuxer_stream_| is successfully initialized.
+  bool is_initialized_;
+  std::unique_ptr<StrictMock<MockDemuxerStream>> input_audio_stream_;
+  std::unique_ptr<StrictMock<MockDemuxerStream>> input_video_stream_;
 
   DemuxerStream::ReadCB pending_demuxer_read_cb_;
   Decryptor::NewKeyCB key_added_cb_;
@@ -312,19 +298,11 @@ TEST_F(DecryptingDemuxerStreamTest, Initialize_NormalVideo) {
   ASSERT_EQ(input_config.extra_data(), output_config.extra_data());
 }
 
-TEST_F(DecryptingDemuxerStreamTest, Initialize_NoCdm) {
-  SetCdmType(NO_CDM);
-  AudioDecoderConfig input_config(kCodecVorbis, kSampleFormatPlanarF32,
-                                  CHANNEL_LAYOUT_STEREO, 44100,
-                                  EmptyExtraData(), true);
-  InitializeAudioAndExpectStatus(input_config, DECODER_ERROR_NOT_SUPPORTED);
-}
-
 TEST_F(DecryptingDemuxerStreamTest, Initialize_CdmWithoutDecryptor) {
   SetCdmType(CDM_WITHOUT_DECRYPTOR);
   AudioDecoderConfig input_config(kCodecVorbis, kSampleFormatPlanarF32,
                                   CHANNEL_LAYOUT_STEREO, 44100,
-                                  EmptyExtraData(), true);
+                                  EmptyExtraData(), AesCtrEncryptionScheme());
   InitializeAudioAndExpectStatus(input_config, DECODER_ERROR_NOT_SUPPORTED);
 }
 
@@ -375,12 +353,12 @@ TEST_F(DecryptingDemuxerStreamTest, KeyAdded_DuringWaitingForKey) {
       .WillRepeatedly(RunCallback<2>(Decryptor::kSuccess, decrypted_buffer_));
   EXPECT_CALL(*this, BufferReady(DemuxerStream::kOk, decrypted_buffer_));
   key_added_cb_.Run();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Test the case where the a key is added when the decryptor is in
 // kPendingDecrypt state.
-TEST_F(DecryptingDemuxerStreamTest, KeyAdded_DruingPendingDecrypt) {
+TEST_F(DecryptingDemuxerStreamTest, KeyAdded_DuringPendingDecrypt) {
   Initialize();
   EnterPendingDecryptState();
 
@@ -390,18 +368,7 @@ TEST_F(DecryptingDemuxerStreamTest, KeyAdded_DruingPendingDecrypt) {
   // The decrypt callback is returned after the correct decryption key is added.
   key_added_cb_.Run();
   base::ResetAndReturn(&pending_decrypt_cb_).Run(Decryptor::kNoKey, NULL);
-  message_loop_.RunUntilIdle();
-}
-
-// Test resetting in kDecryptorRequested state.
-TEST_F(DecryptingDemuxerStreamTest, Reset_DuringDecryptorRequested) {
-  // One for decryptor request, one for canceling request during Reset().
-  EXPECT_CALL(*this, RequestCdmNotification(_)).Times(2);
-  AudioDecoderConfig input_config(kCodecVorbis, kSampleFormatPlanarF32,
-                                  CHANNEL_LAYOUT_STEREO, 44100,
-                                  EmptyExtraData(), true);
-  InitializeAudioAndExpectStatus(input_config, PIPELINE_ERROR_ABORT);
-  Reset();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Test resetting in kIdle state but has not returned any buffer.
@@ -426,7 +393,7 @@ TEST_F(DecryptingDemuxerStreamTest, Reset_DuringPendingDemuxerRead) {
 
   Reset();
   SatisfyPendingDemuxerReadCB(DemuxerStream::kOk);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Test resetting in kPendingDecrypt state.
@@ -478,7 +445,7 @@ TEST_F(DecryptingDemuxerStreamTest, Reset_DuringAbortedDemuxerRead) {
 
   Reset();
   SatisfyPendingDemuxerReadCB(DemuxerStream::kAborted);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Test config change on the input demuxer stream.
@@ -487,7 +454,7 @@ TEST_F(DecryptingDemuxerStreamTest, DemuxerRead_ConfigChanged) {
 
   AudioDecoderConfig new_config(kCodecVorbis, kSampleFormatPlanarF32,
                                 CHANNEL_LAYOUT_STEREO, 88200, EmptyExtraData(),
-                                true);
+                                AesCtrEncryptionScheme());
   input_audio_stream_->set_audio_decoder_config(new_config);
 
   EXPECT_CALL(*input_audio_stream_, Read(_))
@@ -507,21 +474,11 @@ TEST_F(DecryptingDemuxerStreamTest, Reset_DuringConfigChangedDemuxerRead) {
 
   Reset();
   SatisfyPendingDemuxerReadCB(DemuxerStream::kConfigChanged);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // The following tests test destruction in various scenarios. The destruction
 // happens in DecryptingDemuxerStreamTest's dtor.
-
-// Test destruction in kDecryptorRequested state.
-TEST_F(DecryptingDemuxerStreamTest, Destroy_DuringDecryptorRequested) {
-  // One for decryptor request, one for canceling request during Reset().
-  EXPECT_CALL(*this, RequestCdmNotification(_)).Times(2);
-  AudioDecoderConfig input_config(kCodecVorbis, kSampleFormatPlanarF32,
-                                  CHANNEL_LAYOUT_STEREO, 44100,
-                                  EmptyExtraData(), true);
-  InitializeAudioAndExpectStatus(input_config, PIPELINE_ERROR_ABORT);
-}
 
 // Test destruction in kIdle state but has not returned any buffer.
 TEST_F(DecryptingDemuxerStreamTest, Destroy_DuringIdleAfterInitialization) {

@@ -5,9 +5,11 @@
 #ifndef CHROME_BROWSER_INVALIDATION_PROFILE_INVALIDATION_PROVIDER_FACTORY_H_
 #define CHROME_BROWSER_INVALIDATION_PROFILE_INVALIDATION_PROVIDER_FACTORY_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
+
+class Profile;
 
 namespace policy {
 class AffiliatedInvalidationServiceProviderImplTest;
@@ -16,12 +18,6 @@ class AffiliatedInvalidationServiceProviderImplTest;
 namespace user_prefs {
 class PrefRegistrySyncable;
 }
-
-namespace syncer {
-class Invalidator;
-}
-
-class Profile;
 
 namespace invalidation {
 

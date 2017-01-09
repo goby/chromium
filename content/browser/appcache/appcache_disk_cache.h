@@ -5,11 +5,13 @@
 #ifndef CONTENT_BROWSER_APPCACHE_APPCACHE_DISK_CACHE_H_
 #define CONTENT_BROWSER_APPCACHE_APPCACHE_DISK_CACHE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/appcache/appcache_response.h"
 #include "content/common/content_export.h"
 #include "net/disk_cache/disk_cache.h"
@@ -44,13 +46,13 @@ class CONTENT_EXPORT AppCacheDiskCache
   void Disable();
   bool is_disabled() const { return is_disabled_; }
 
-  int CreateEntry(int64 key,
+  int CreateEntry(int64_t key,
                   Entry** entry,
                   const net::CompletionCallback& callback) override;
-  int OpenEntry(int64 key,
+  int OpenEntry(int64_t key,
                 Entry** entry,
                 const net::CompletionCallback& callback) override;
-  int DoomEntry(int64 key, const net::CompletionCallback& callback) override;
+  int DoomEntry(int64_t key, const net::CompletionCallback& callback) override;
 
   void set_is_waiting_to_initialize(bool is_waiting_to_initialize) {
     is_waiting_to_initialize_ = is_waiting_to_initialize;
@@ -76,14 +78,18 @@ class CONTENT_EXPORT AppCacheDiskCache
   };
   struct PendingCall {
     PendingCallType call_type;
-    int64 key;
+    int64_t key;
     Entry** entry;
     net::CompletionCallback callback;
 
     PendingCall();
 
-    PendingCall(PendingCallType call_type, int64 key,
-                Entry** entry, const net::CompletionCallback& callback);
+    PendingCall(PendingCallType call_type,
+                int64_t key,
+                Entry** entry,
+                const net::CompletionCallback& callback);
+
+    PendingCall(const PendingCall& other);
 
     ~PendingCall();
   };
@@ -114,7 +120,7 @@ class CONTENT_EXPORT AppCacheDiskCache
   scoped_refptr<CreateBackendCallbackShim> create_backend_callback_;
   PendingCalls pending_calls_;
   OpenEntries open_entries_;
-  scoped_ptr<disk_cache::Backend> disk_cache_;
+  std::unique_ptr<disk_cache::Backend> disk_cache_;
 
   base::WeakPtrFactory<AppCacheDiskCache> weak_factory_;
 };

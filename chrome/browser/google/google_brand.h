@@ -12,9 +12,7 @@
 
 #include <string>
 
-#include "base/basictypes.h"
-
-class GURL;
+#include "base/macros.h"
 
 namespace google_brand {
 
@@ -47,6 +45,7 @@ class BrandForTesting {
 
  private:
   std::string brand_;
+
   DISALLOW_COPY_AND_ASSIGN(BrandForTesting);
 };
 

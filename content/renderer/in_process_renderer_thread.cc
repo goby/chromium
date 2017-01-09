@@ -4,11 +4,20 @@
 
 #include "content/renderer/in_process_renderer_thread.h"
 
+#include "build/build_config.h"
 #include "content/renderer/render_process.h"
 #include "content/renderer/render_process_impl.h"
 #include "content/renderer/render_thread_impl.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/jni_android.h"
+#endif
+
 namespace content {
+
+#if defined(OS_ANDROID)
+extern bool g_browser_main_loop_shutting_down;
+#endif
 
 InProcessRendererThread::InProcessRendererThread(
     const InProcessChildThreadParams& params)
@@ -16,15 +25,39 @@ InProcessRendererThread::InProcessRendererThread(
 }
 
 InProcessRendererThread::~InProcessRendererThread() {
+#if defined(OS_ANDROID)
+  // Don't allow the render thread to be shut down in single process mode on
+  // Android unless the browser is shutting down.
+  // Temporary CHECK() to debug http://crbug.com/514141
+  CHECK(g_browser_main_loop_shutting_down);
+#endif
+
   Stop();
 }
 
 void InProcessRendererThread::Init() {
+  // Call AttachCurrentThreadWithName, before any other AttachCurrentThread()
+  // calls. The latter causes Java VM to assign Thread-??? to the thread name.
+  // Please note calls to AttachCurrentThreadWithName after AttachCurrentThread
+  // will not change the thread name kept in Java VM.
+#if defined(OS_ANDROID)
+  base::android::AttachCurrentThreadWithName(thread_name());
+  // Make sure we aren't somehow reinitialising the inprocess renderer thread on
+  // Android. Temporary CHECK() to debug http://crbug.com/514141
+  CHECK(!render_process_);
+#endif
   render_process_.reset(new RenderProcessImpl());
   RenderThreadImpl::Create(params_);
 }
 
 void InProcessRendererThread::CleanUp() {
+#if defined(OS_ANDROID)
+  // Don't allow the render thread to be shut down in single process mode on
+  // Android unless the browser is shutting down.
+  // Temporary CHECK() to debug http://crbug.com/514141
+  CHECK(g_browser_main_loop_shutting_down);
+#endif
+
   render_process_.reset();
 
   // It's a little lame to manually set this flag.  But the single process

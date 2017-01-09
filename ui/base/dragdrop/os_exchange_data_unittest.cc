@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "net/base/filename_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -22,7 +25,7 @@ class OSExchangeDataTest : public PlatformTest {
 
  private:
   base::MessageLoopForUI message_loop_;
-  scoped_ptr<PlatformEventSource> event_source_;
+  std::unique_ptr<PlatformEventSource> event_source_;
 };
 
 TEST_F(OSExchangeDataTest, StringDataGetAndSet) {
@@ -32,7 +35,8 @@ TEST_F(OSExchangeDataTest, StringDataGetAndSet) {
   data.SetString(input);
   EXPECT_TRUE(data.HasString());
 
-  OSExchangeData data2(data.provider().Clone());
+  OSExchangeData data2(
+      std::unique_ptr<OSExchangeData::Provider>(data.provider().Clone()));
   base::string16 output;
   EXPECT_TRUE(data2.HasString());
   EXPECT_TRUE(data2.GetString(&output));
@@ -55,7 +59,8 @@ TEST_F(OSExchangeDataTest, TestURLExchangeFormats) {
   data.SetURL(url, url_title);
   EXPECT_TRUE(data.HasURL(OSExchangeData::DO_NOT_CONVERT_FILENAMES));
 
-  OSExchangeData data2(data.provider().Clone());
+  OSExchangeData data2(
+      std::unique_ptr<OSExchangeData::Provider>(data.provider().Clone()));
 
   // URL spec and title should match
   GURL output_url;
@@ -116,25 +121,15 @@ TEST_F(OSExchangeDataTest, TestFileToURLConversion) {
   }
 
   {
-// Filename to URL conversion is not implemented on ChromeOS or on non-X11 Linux
-// builds.
-#if defined(OS_CHROMEOS) || (defined(OS_LINUX) && !defined(USE_X11))
-    const bool expected_success = false;
-    const GURL expected_url;
-#else
-    const bool expected_success = true;
-    const GURL expected_url(net::FilePathToFileURL(current_directory));
-#endif
-    EXPECT_EQ(expected_success, data.HasURL(OSExchangeData::CONVERT_FILENAMES));
+    EXPECT_TRUE(data.HasURL(OSExchangeData::CONVERT_FILENAMES));
     GURL actual_url;
     base::string16 actual_title;
-    EXPECT_EQ(
-        expected_success,
-        data.GetURLAndTitle(
-            OSExchangeData::CONVERT_FILENAMES, &actual_url, &actual_title));
+    EXPECT_TRUE(data.GetURLAndTitle(OSExchangeData::CONVERT_FILENAMES,
+                                    &actual_url, &actual_title));
     // Some Mac OS versions return the URL in file://localhost form instead
     // of file:///, so we compare the url's path not its absolute string.
-    EXPECT_EQ(expected_url.path(), actual_url.path());
+    EXPECT_EQ(net::FilePathToFileURL(current_directory).path(),
+              actual_url.path());
     EXPECT_EQ(base::string16(), actual_title);
   }
   EXPECT_TRUE(data.HasFile());
@@ -153,7 +148,8 @@ TEST_F(OSExchangeDataTest, TestPickledData) {
   OSExchangeData data;
   data.SetPickledData(kTestFormat, saved_pickle);
 
-  OSExchangeData copy(data.provider().Clone());
+  OSExchangeData copy(
+      std::unique_ptr<OSExchangeData::Provider>(data.provider().Clone()));
   EXPECT_TRUE(copy.HasCustomFormat(kTestFormat));
 
   base::Pickle restored_pickle;
@@ -176,7 +172,8 @@ TEST_F(OSExchangeDataTest, TestHTML) {
       "</BODY>\n</HTML>");
   data.SetHtml(html, url);
 
-  OSExchangeData copy(data.provider().Clone());
+  OSExchangeData copy(
+      std::unique_ptr<OSExchangeData::Provider>(data.provider().Clone()));
   base::string16 read_html;
   EXPECT_TRUE(copy.GetHtml(&read_html, &url));
   EXPECT_EQ(html, read_html);

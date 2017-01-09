@@ -5,8 +5,10 @@
 #include "ppapi/proxy/ppb_graphics_3d_proxy.h"
 
 #include "base/numerics/safe_conversions.h"
+#include "build/build_config.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/common/command_buffer.h"
+#include "gpu/command_buffer/common/sync_token.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/proxy/enter_proxy.h"
 #include "ppapi/proxy/plugin_dispatcher.h"
@@ -26,8 +28,8 @@ namespace proxy {
 
 namespace {
 
-const int32 kCommandBufferSize = 1024 * 1024;
-const int32 kTransferBufferSize = 1024 * 1024;
+const int32_t kCommandBufferSize = 1024 * 1024;
+const int32_t kTransferBufferSize = 1024 * 1024;
 
 #if !defined(OS_NACL)
 base::SharedMemoryHandle TransportSHMHandle(
@@ -46,8 +48,8 @@ gpu::CommandBuffer::State GetErrorState() {
 
 }  // namespace
 
-Graphics3D::Graphics3D(const HostResource& resource)
-    : PPB_Graphics3D_Shared(resource) {
+Graphics3D::Graphics3D(const HostResource& resource, const gfx::Size& size)
+    : PPB_Graphics3D_Shared(resource, size) {
 }
 
 Graphics3D::~Graphics3D() {
@@ -57,7 +59,7 @@ Graphics3D::~Graphics3D() {
 bool Graphics3D::Init(gpu::gles2::GLES2Implementation* share_gles2,
                       const gpu::Capabilities& capabilities,
                       const SerializedHandle& shared_state,
-                      uint64_t command_buffer_id) {
+                      gpu::CommandBufferId command_buffer_id) {
   PluginDispatcher* dispatcher = PluginDispatcher::GetForResource(this);
   if (!dispatcher)
     return false;
@@ -99,17 +101,11 @@ gpu::CommandBuffer::State Graphics3D::WaitForGetOffsetInRange(int32_t start,
   return GetErrorState();
 }
 
-uint32_t Graphics3D::InsertSyncPoint() {
+void Graphics3D::EnsureWorkVisible() {
   NOTREACHED();
-  return 0;
 }
 
-uint32_t Graphics3D::InsertFutureSyncPoint() {
-  NOTREACHED();
-  return 0;
-}
-
-void Graphics3D::RetireSyncPoint(uint32_t sync_point) {
+void Graphics3D::TakeFrontBuffer() {
   NOTREACHED();
 }
 
@@ -121,10 +117,26 @@ gpu::GpuControl* Graphics3D::GetGpuControl() {
   return command_buffer_.get();
 }
 
-int32 Graphics3D::DoSwapBuffers() {
-  gles2_impl()->SwapBuffers();
+int32_t Graphics3D::DoSwapBuffers(const gpu::SyncToken& sync_token,
+                                  const gfx::Size& size) {
+  // A valid sync token would indicate a swap buffer already happened somehow.
+  DCHECK(!sync_token.HasData());
+
+  gpu::gles2::GLES2Implementation* gl = gles2_impl();
+  gl->SwapBuffers();
+
+  PluginDispatcher::GetForResource(this)->Send(
+      new PpapiHostMsg_PPBGraphics3D_TakeFrontBuffer(API_ID_PPB_GRAPHICS_3D,
+                                                     host_resource()));
+
+  const GLuint64 fence_sync = gl->InsertFenceSyncCHROMIUM();
+  gl->ShallowFlushCHROMIUM();
+
+  gpu::SyncToken new_sync_token;
+  gl->GenSyncTokenCHROMIUM(fence_sync, new_sync_token.GetData());
+
   IPC::Message* msg = new PpapiHostMsg_PPBGraphics3D_SwapBuffers(
-      API_ID_PPB_GRAPHICS_3D, host_resource());
+      API_ID_PPB_GRAPHICS_3D, host_resource(), new_sync_token, size);
   msg->set_unblock(true);
   PluginDispatcher::GetForResource(this)->Send(msg);
 
@@ -161,29 +173,48 @@ PP_Resource PPB_Graphics3D_Proxy::CreateProxyResource(
     share_gles2 = share_graphics->gles2_impl();
   }
 
+  gpu::gles2::ContextCreationAttribHelper attrib_helper;
   std::vector<int32_t> attribs;
   if (attrib_list) {
-    for (const int32_t* attr = attrib_list;
-         attr[0] != PP_GRAPHICS3DATTRIB_NONE;
+    for (const int32_t* attr = attrib_list; attr[0] != PP_GRAPHICS3DATTRIB_NONE;
          attr += 2) {
-      attribs.push_back(attr[0]);
-      attribs.push_back(attr[1]);
+      switch (attr[0]) {
+        case PP_GRAPHICS3DATTRIB_WIDTH:
+          attrib_helper.offscreen_framebuffer_size.set_width(attr[1]);
+          break;
+        case PP_GRAPHICS3DATTRIB_HEIGHT:
+          attrib_helper.offscreen_framebuffer_size.set_height(attr[1]);
+          break;
+        case PP_GRAPHICS3DATTRIB_GPU_PREFERENCE:
+          attrib_helper.gpu_preference =
+              (attr[1] == PP_GRAPHICS3DATTRIB_GPU_PREFERENCE_LOW_POWER)
+                  ? gl::PreferIntegratedGpu
+                  : gl::PreferDiscreteGpu;
+          break;
+        default:
+          attribs.push_back(attr[0]);
+          attribs.push_back(attr[1]);
+          break;
+      }
     }
+    attribs.push_back(PP_GRAPHICS3DATTRIB_NONE);
   }
-  attribs.push_back(PP_GRAPHICS3DATTRIB_NONE);
+  if (!attrib_helper.Parse(attribs))
+    return 0;
 
   HostResource result;
   gpu::Capabilities capabilities;
   ppapi::proxy::SerializedHandle shared_state;
-  uint64_t command_buffer_id = 0;
-  dispatcher->Send(new PpapiHostMsg_PPBGraphics3D_Create(API_ID_PPB_GRAPHICS_3D,
-        instance, share_host, attribs, &result, &capabilities, &shared_state,
-        &command_buffer_id));
+  gpu::CommandBufferId command_buffer_id;
+  dispatcher->Send(new PpapiHostMsg_PPBGraphics3D_Create(
+      API_ID_PPB_GRAPHICS_3D, instance, share_host, attrib_helper, &result,
+      &capabilities, &shared_state, &command_buffer_id));
 
   if (result.is_null())
     return 0;
 
-  scoped_refptr<Graphics3D> graphics_3d(new Graphics3D(result));
+  scoped_refptr<Graphics3D> graphics_3d(
+      new Graphics3D(result, attrib_helper.offscreen_framebuffer_size));
   if (!graphics_3d->Init(share_gles2, capabilities, shared_state,
                          command_buffer_id)) {
     return 0;
@@ -210,12 +241,10 @@ bool PPB_Graphics3D_Proxy::OnMessageReceived(const IPC::Message& msg) {
                         OnMsgDestroyTransferBuffer)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_SwapBuffers,
                         OnMsgSwapBuffers)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_InsertSyncPoint,
-                        OnMsgInsertSyncPoint)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_InsertFutureSyncPoint,
-                        OnMsgInsertFutureSyncPoint)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_RetireSyncPoint,
-                        OnMsgRetireSyncPoint)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_TakeFrontBuffer,
+                        OnMsgTakeFrontBuffer)
+    IPC_MESSAGE_HANDLER(PpapiHostMsg_PPBGraphics3D_EnsureWorkVisible,
+                        OnMsgEnsureWorkVisible)
 #endif  // !defined(OS_NACL)
 
     IPC_MESSAGE_HANDLER(PpapiMsg_PPBGraphics3D_SwapBuffersACK,
@@ -231,16 +260,12 @@ bool PPB_Graphics3D_Proxy::OnMessageReceived(const IPC::Message& msg) {
 void PPB_Graphics3D_Proxy::OnMsgCreate(
     PP_Instance instance,
     HostResource share_context,
-    const std::vector<int32_t>& attribs,
+    const gpu::gles2::ContextCreationAttribHelper& attrib_helper,
     HostResource* result,
     gpu::Capabilities* capabilities,
     SerializedHandle* shared_state,
-    uint64* command_buffer_id) {
+    gpu::CommandBufferId* command_buffer_id) {
   shared_state->set_null_shmem();
-  if (attribs.empty() ||
-      attribs.back() != PP_GRAPHICS3DATTRIB_NONE ||
-      !(attribs.size() & 1))
-    return;  // Bad message.
 
   thunk::EnterResourceCreation enter(instance);
 
@@ -249,22 +274,17 @@ void PPB_Graphics3D_Proxy::OnMsgCreate(
 
   base::SharedMemoryHandle handle = base::SharedMemory::NULLHandle();
   result->SetHostResource(
-      instance,
-      enter.functions()->CreateGraphics3DRaw(instance,
-                                             share_context.host_resource(),
-                                             &attribs.front(),
-                                             capabilities,
-                                             &handle,
-                                             command_buffer_id));
+      instance, enter.functions()->CreateGraphics3DRaw(
+                    instance, share_context.host_resource(), attrib_helper,
+                    capabilities, &handle, command_buffer_id));
   if (!result->is_null()) {
     shared_state->set_shmem(TransportSHMHandle(dispatcher(), handle),
                             sizeof(gpu::CommandBuffer::State));
   }
 }
 
-void PPB_Graphics3D_Proxy::OnMsgSetGetBuffer(
-    const HostResource& context,
-    int32 transfer_buffer_id) {
+void PPB_Graphics3D_Proxy::OnMsgSetGetBuffer(const HostResource& context,
+                                             int32_t transfer_buffer_id) {
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
   if (enter.succeeded())
     enter.object()->SetGetBuffer(transfer_buffer_id);
@@ -272,8 +292,8 @@ void PPB_Graphics3D_Proxy::OnMsgSetGetBuffer(
 
 void PPB_Graphics3D_Proxy::OnMsgWaitForTokenInRange(
     const HostResource& context,
-    int32 start,
-    int32 end,
+    int32_t start,
+    int32_t end,
     gpu::CommandBuffer::State* state,
     bool* success) {
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
@@ -287,8 +307,8 @@ void PPB_Graphics3D_Proxy::OnMsgWaitForTokenInRange(
 
 void PPB_Graphics3D_Proxy::OnMsgWaitForGetOffsetInRange(
     const HostResource& context,
-    int32 start,
-    int32 end,
+    int32_t start,
+    int32_t end,
     gpu::CommandBuffer::State* state,
     bool* success) {
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
@@ -301,7 +321,7 @@ void PPB_Graphics3D_Proxy::OnMsgWaitForGetOffsetInRange(
 }
 
 void PPB_Graphics3D_Proxy::OnMsgAsyncFlush(const HostResource& context,
-                                           int32 put_offset) {
+                                           int32_t put_offset) {
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
   if (enter.succeeded())
     enter.object()->Flush(put_offset);
@@ -309,8 +329,8 @@ void PPB_Graphics3D_Proxy::OnMsgAsyncFlush(const HostResource& context,
 
 void PPB_Graphics3D_Proxy::OnMsgCreateTransferBuffer(
     const HostResource& context,
-    uint32 size,
-    int32* id,
+    uint32_t size,
+    int32_t* id,
     SerializedHandle* transfer_buffer) {
   transfer_buffer->set_null_shmem();
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
@@ -332,42 +352,33 @@ void PPB_Graphics3D_Proxy::OnMsgCreateTransferBuffer(
 
 void PPB_Graphics3D_Proxy::OnMsgDestroyTransferBuffer(
     const HostResource& context,
-    int32 id) {
+    int32_t id) {
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
   if (enter.succeeded())
     enter.object()->DestroyTransferBuffer(id);
 }
 
-void PPB_Graphics3D_Proxy::OnMsgSwapBuffers(const HostResource& context) {
+void PPB_Graphics3D_Proxy::OnMsgSwapBuffers(const HostResource& context,
+                                            const gpu::SyncToken& sync_token,
+                                            const gfx::Size& size) {
   EnterHostFromHostResourceForceCallback<PPB_Graphics3D_API> enter(
       context, callback_factory_,
       &PPB_Graphics3D_Proxy::SendSwapBuffersACKToPlugin, context);
   if (enter.succeeded())
-    enter.SetResult(enter.object()->SwapBuffers(enter.callback()));
+    enter.SetResult(enter.object()->SwapBuffersWithSyncToken(
+        enter.callback(), sync_token, size));
 }
 
-void PPB_Graphics3D_Proxy::OnMsgInsertSyncPoint(const HostResource& context,
-                                                uint32* sync_point) {
-  *sync_point = 0;
+void PPB_Graphics3D_Proxy::OnMsgTakeFrontBuffer(const HostResource& context) {
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
   if (enter.succeeded())
-    *sync_point = enter.object()->InsertSyncPoint();
+    enter.object()->TakeFrontBuffer();
 }
 
-void PPB_Graphics3D_Proxy::OnMsgInsertFutureSyncPoint(
-    const HostResource& context,
-    uint32* sync_point) {
-  *sync_point = 0;
+void PPB_Graphics3D_Proxy::OnMsgEnsureWorkVisible(const HostResource& context) {
   EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
   if (enter.succeeded())
-    *sync_point = enter.object()->InsertFutureSyncPoint();
-}
-
-void PPB_Graphics3D_Proxy::OnMsgRetireSyncPoint(const HostResource& context,
-                                                uint32 sync_point) {
-  EnterHostFromHostResource<PPB_Graphics3D_API> enter(context);
-  if (enter.succeeded())
-    enter.object()->RetireSyncPoint(sync_point);
+    enter.object()->EnsureWorkVisible();
 }
 #endif  // !defined(OS_NACL)
 

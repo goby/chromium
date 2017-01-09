@@ -2,16 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "public/web/WebPluginScriptForbiddenScope.h"
 
 #include "platform/PluginScriptForbiddenScope.h"
 
 namespace blink {
 
-bool WebPluginScriptForbiddenScope::isForbidden()
-{
-    return PluginScriptForbiddenScope::isForbidden();
+bool WebPluginScriptForbiddenScope::isForbidden() {
+  return PluginScriptForbiddenScope::isForbidden();
 }
 
-} // namespace blink
+}  // namespace blink

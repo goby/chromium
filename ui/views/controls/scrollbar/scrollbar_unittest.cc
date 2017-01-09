@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/views/controls/scrollbar/native_scroll_bar.h"
-#include "ui/views/controls/scrollbar/native_scroll_bar_views.h"
+#include "build/build_config.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
+#include "ui/views/controls/scrollbar/scroll_bar_views.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget.h"
 
@@ -33,7 +33,7 @@ class TestScrollBarController : public views::ScrollBarController {
     return 10;
   }
 
-  // We save the last values in order to assert the corectness of the scroll
+  // We save the last values in order to assert the correctness of the scroll
   // operation.
   views::ScrollBar* last_source;
   bool last_is_positive;
@@ -45,18 +45,13 @@ class TestScrollBarController : public views::ScrollBarController {
 
 namespace views {
 
-class NativeScrollBarTest : public ViewsTestBase {
+class ScrollBarViewsTest : public ViewsTestBase {
  public:
-  NativeScrollBarTest() : widget_(NULL), scrollbar_(NULL) {}
+  ScrollBarViewsTest() : widget_(nullptr), scrollbar_(nullptr) {}
 
   void SetUp() override {
     ViewsTestBase::SetUp();
     controller_.reset(new TestScrollBarController());
-
-    ASSERT_FALSE(scrollbar_);
-    native_scrollbar_ = new NativeScrollBar(true);
-    native_scrollbar_->SetBounds(0, 0, 100, 100);
-    native_scrollbar_->set_controller(controller_.get());
 
     widget_ = new Widget;
     Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
@@ -64,12 +59,12 @@ class NativeScrollBarTest : public ViewsTestBase {
     widget_->Init(params);
     View* container = new View();
     widget_->SetContentsView(container);
-    container->AddChildView(native_scrollbar_);
 
-    scrollbar_ =
-        static_cast<NativeScrollBarViews*>(native_scrollbar_->native_wrapper_);
+    scrollbar_ = new ScrollBarViews(true);
     scrollbar_->SetBounds(0, 0, 100, 100);
-    scrollbar_->Update(100, 200, 0);
+    scrollbar_->Update(100, 1000, 0);
+    scrollbar_->set_controller(controller_.get());
+    container->AddChildView(scrollbar_);
 
     track_size_ = scrollbar_->GetTrackBounds().width();
   }
@@ -82,9 +77,6 @@ class NativeScrollBarTest : public ViewsTestBase {
  protected:
   Widget* widget_;
 
-  // This is the native scrollbar the Views one wraps around.
-  NativeScrollBar* native_scrollbar_;
-
   // This is the Views scrollbar.
   BaseScrollBar* scrollbar_;
 
@@ -92,7 +84,7 @@ class NativeScrollBarTest : public ViewsTestBase {
   // scroll to the middle.
   int track_size_;
 
-  scoped_ptr<TestScrollBarController> controller_;
+  std::unique_ptr<TestScrollBarController> controller_;
 };
 
 // TODO(dnicoara) Can't run the test on Windows since the scrollbar |Part|
@@ -105,65 +97,97 @@ class NativeScrollBarTest : public ViewsTestBase {
 #define MAYBE_ScrollBarFitsToBottom ScrollBarFitsToBottom
 #endif
 
-TEST_F(NativeScrollBarTest, MAYBE_Scrolling) {
-  EXPECT_EQ(scrollbar_->GetPosition(), 0);
-  EXPECT_EQ(scrollbar_->GetMaxPosition(), 100);
-  EXPECT_EQ(scrollbar_->GetMinPosition(), 0);
+TEST_F(ScrollBarViewsTest, MAYBE_Scrolling) {
+  EXPECT_EQ(0, scrollbar_->GetPosition());
+  EXPECT_EQ(900, scrollbar_->GetMaxPosition());
+  EXPECT_EQ(0, scrollbar_->GetMinPosition());
 
   // Scroll to middle.
-  scrollbar_->ScrollToThumbPosition(track_size_ / 4, false);
-  EXPECT_EQ(controller_->last_position, 50);
-  EXPECT_EQ(controller_->last_source, native_scrollbar_);
+  scrollbar_->ScrollToThumbPosition(track_size_ / 2, true);
+  EXPECT_EQ(450, controller_->last_position);
+  EXPECT_EQ(scrollbar_, controller_->last_source);
 
   // Scroll to the end.
-  scrollbar_->ScrollToThumbPosition(track_size_ / 2, false);
-  EXPECT_EQ(controller_->last_position, 100);
+  scrollbar_->ScrollToThumbPosition(track_size_, true);
+  EXPECT_EQ(900, controller_->last_position);
 
   // Overscroll. Last position should be the maximum position.
-  scrollbar_->ScrollToThumbPosition(track_size_, false);
-  EXPECT_EQ(controller_->last_position, 100);
+  scrollbar_->ScrollToThumbPosition(track_size_ + 100, true);
+  EXPECT_EQ(900, controller_->last_position);
 
   // Underscroll. Last position should be the minimum position.
   scrollbar_->ScrollToThumbPosition(-10, false);
-  EXPECT_EQ(controller_->last_position, 0);
+  EXPECT_EQ(0, controller_->last_position);
 
   // Test the different fixed scrolling amounts. Generally used by buttons,
   // or click on track.
   scrollbar_->ScrollToThumbPosition(0, false);
   scrollbar_->ScrollByAmount(BaseScrollBar::SCROLL_NEXT_LINE);
-  EXPECT_EQ(controller_->last_position, 10);
+  EXPECT_EQ(10, controller_->last_position);
 
   scrollbar_->ScrollByAmount(BaseScrollBar::SCROLL_PREV_LINE);
-  EXPECT_EQ(controller_->last_position, 0);
+  EXPECT_EQ(0, controller_->last_position);
 
   scrollbar_->ScrollByAmount(BaseScrollBar::SCROLL_NEXT_PAGE);
-  EXPECT_EQ(controller_->last_position, 20);
+  EXPECT_EQ(20, controller_->last_position);
 
   scrollbar_->ScrollByAmount(BaseScrollBar::SCROLL_PREV_PAGE);
-  EXPECT_EQ(controller_->last_position, 0);
+  EXPECT_EQ(0, controller_->last_position);
 }
 
-TEST_F(NativeScrollBarTest, MAYBE_ScrollBarFitsToBottom) {
-  scrollbar_->Update(100, 199, 0);
+TEST_F(ScrollBarViewsTest, MAYBE_ScrollBarFitsToBottom) {
+  scrollbar_->Update(100, 1999, 0);
   EXPECT_EQ(0, scrollbar_->GetPosition());
-  EXPECT_EQ(99, scrollbar_->GetMaxPosition());
+  EXPECT_EQ(1899, scrollbar_->GetMaxPosition());
   EXPECT_EQ(0, scrollbar_->GetMinPosition());
 
-  scrollbar_->Update(100, 199, 99);
+  // Scroll to the midpoint of the document.
+  scrollbar_->Update(100, 1999, 950);
+  EXPECT_EQ((scrollbar_->GetTrackBounds().width() -
+             scrollbar_->GetThumbSizeForTest()) /
+                2,
+            scrollbar_->GetPosition());
+
+  // Scroll to the end of the document.
+  scrollbar_->Update(100, 1999, 1899);
   EXPECT_EQ(
       scrollbar_->GetTrackBounds().width() - scrollbar_->GetThumbSizeForTest(),
       scrollbar_->GetPosition());
 }
 
-TEST_F(NativeScrollBarTest, ScrollToEndAfterShrinkAndExpand) {
+TEST_F(ScrollBarViewsTest, ScrollToEndAfterShrinkAndExpand) {
   // Scroll to the end of the content.
-  scrollbar_->Update(100, 101, 0);
+  scrollbar_->Update(100, 1001, 0);
   EXPECT_TRUE(scrollbar_->ScrollByContentsOffset(-1));
-  // Shrink and then re-exapnd the content.
-  scrollbar_->Update(100, 100, 0);
-  scrollbar_->Update(100, 101, 0);
+  // Shrink and then re-expand the content.
+  scrollbar_->Update(100, 1000, 0);
+  scrollbar_->Update(100, 1001, 0);
   // Ensure the scrollbar allows scrolling to the end.
   EXPECT_TRUE(scrollbar_->ScrollByContentsOffset(-1));
+}
+
+TEST_F(ScrollBarViewsTest, ThumbFullLengthOfTrack) {
+  // Shrink content so that it fits within the viewport.
+  scrollbar_->Update(100, 10, 0);
+  EXPECT_EQ(scrollbar_->GetTrackBounds().width(),
+            scrollbar_->GetThumbSizeForTest());
+  // Emulate a click on the full size scroll bar.
+  scrollbar_->ScrollToThumbPosition(0, false);
+  EXPECT_EQ(0, scrollbar_->GetPosition());
+  // Emulate a key down.
+  scrollbar_->ScrollByAmount(BaseScrollBar::SCROLL_NEXT_LINE);
+  EXPECT_EQ(0, scrollbar_->GetPosition());
+
+  // Expand content so that it fits *exactly* within the viewport.
+  scrollbar_->Update(100, 100, 0);
+  EXPECT_EQ(scrollbar_->GetTrackBounds().width(),
+            scrollbar_->GetThumbSizeForTest());
+  // Emulate a click on the full size scroll bar.
+  scrollbar_->ScrollToThumbPosition(0, false);
+  EXPECT_EQ(0, scrollbar_->GetPosition());
+  // Emulate a key down.
+  scrollbar_->ScrollByAmount(BaseScrollBar::SCROLL_NEXT_LINE);
+  EXPECT_EQ(0, scrollbar_->GetPosition());
 }
 
 }  // namespace views

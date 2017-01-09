@@ -5,12 +5,17 @@
 #ifndef COMPONENTS_HISTORY_CORE_BROWSER_WEB_HISTORY_SERVICE_H_
 #define COMPONENTS_HISTORY_CORE_BROWSER_WEB_HISTORY_SERVICE_H_
 
-#include <set>
+#include <stddef.h>
+
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/keyed_service/core/keyed_service.h"
 
@@ -22,10 +27,16 @@ namespace net {
 class URLRequestContextGetter;
 }
 
+namespace version_info {
+enum class Channel;
+}
+
 class OAuth2TokenService;
 class SigninManagerBase;
 
 namespace history {
+
+class WebHistoryServiceObserver;
 
 // Provides an API for querying Google servers for a signed-in user's
 // synced history visits. It is roughly analogous to HistoryService, and
@@ -52,6 +63,11 @@ class WebHistoryService : public KeyedService {
 
     virtual void SetPostData(const std::string& post_data) = 0;
 
+    virtual void SetPostDataAndType(const std::string& post_data,
+                                    const std::string& mime_type) = 0;
+
+    virtual void SetUserAgent(const std::string& user_agent) = 0;
+
     // Tells the request to begin.
     virtual void Start() = 0;
 
@@ -70,6 +86,11 @@ class WebHistoryService : public KeyedService {
   typedef base::Callback<void(bool success, bool new_enabled_value)>
       AudioWebHistoryCallback;
 
+  typedef base::Callback<void(bool success)> QueryWebAndAppActivityCallback;
+
+  typedef base::Callback<void(bool success)>
+      QueryOtherFormsOfBrowsingHistoryCallback;
+
   typedef base::Callback<void(Request*, bool success)> CompletionCallback;
 
   WebHistoryService(
@@ -78,13 +99,16 @@ class WebHistoryService : public KeyedService {
       const scoped_refptr<net::URLRequestContextGetter>& request_context);
   ~WebHistoryService() override;
 
+  void AddObserver(WebHistoryServiceObserver* observer);
+  void RemoveObserver(WebHistoryServiceObserver* observer);
+
   // Searches synced history for visits matching |text_query|. The timeframe to
   // search, along with other options, is specified in |options|. If
   // |text_query| is empty, all visits in the timeframe will be returned.
   // This method is the equivalent of HistoryService::QueryHistory.
   // The caller takes ownership of the returned Request. If it is destroyed, the
   // request is cancelled.
-  scoped_ptr<Request> QueryHistory(
+  std::unique_ptr<Request> QueryHistory(
       const base::string16& text_query,
       const QueryOptions& options,
       const QueryWebHistoryCallback& callback);
@@ -108,8 +132,17 @@ class WebHistoryService : public KeyedService {
   virtual void SetAudioHistoryEnabled(bool new_enabled_value,
                                       const AudioWebHistoryCallback& callback);
 
+  // Queries whether web and app activity is enabled on the server.
+  virtual void QueryWebAndAppActivity(
+      const QueryWebAndAppActivityCallback& callback);
+
   // Used for tests.
   size_t GetNumberOfPendingAudioHistoryRequests();
+
+  // Whether there are other forms of browsing history stored on the server.
+  void QueryOtherFormsOfBrowsingHistory(
+      version_info::Channel channel,
+      const QueryOtherFormsOfBrowsingHistoryCallback& callback);
 
  protected:
   // This function is pulled out for testing purposes. Caller takes ownership of
@@ -120,7 +153,7 @@ class WebHistoryService : public KeyedService {
   // Extracts a JSON-encoded HTTP response into a DictionaryValue.
   // If |request|'s HTTP response code indicates failure, or if the response
   // body is not JSON, a null pointer is returned.
-  static scoped_ptr<base::DictionaryValue> ReadResponse(Request* request);
+  static std::unique_ptr<base::DictionaryValue> ReadResponse(Request* request);
 
   // Called by |request| when a web history query has completed. Unpacks the
   // response and calls |callback|, which is the original callback that was
@@ -146,6 +179,22 @@ class WebHistoryService : public KeyedService {
     WebHistoryService::Request* request,
     bool success);
 
+  // Called by |request| when a web and app activity query has completed.
+  // Unpacks the response and calls |callback|, which is the original callback
+  // that was passed to QueryWebAndAppActivity().
+  void QueryWebAndAppActivityCompletionCallback(
+    const WebHistoryService::QueryWebAndAppActivityCallback& callback,
+    WebHistoryService::Request* request,
+    bool success);
+
+  // Called by |request| when a query for other forms of browsing history has
+  // completed. Unpacks the response and calls |callback|, which is the original
+  // callback that was passed to QueryOtherFormsOfBrowsingHistory().
+  void QueryOtherFormsOfBrowsingHistoryCompletionCallback(
+    const WebHistoryService::QueryWebAndAppActivityCallback& callback,
+    WebHistoryService::Request* request,
+    bool success);
+
  private:
   friend class WebHistoryServiceTest;
 
@@ -164,10 +213,23 @@ class WebHistoryService : public KeyedService {
 
   // Pending expiration requests to be canceled if not complete by profile
   // shutdown.
-  std::set<Request*> pending_expire_requests_;
+  std::map<Request*, std::unique_ptr<Request>> pending_expire_requests_;
 
   // Pending requests to be canceled if not complete by profile shutdown.
-  std::set<Request*> pending_audio_history_requests_;
+  std::map<Request*, std::unique_ptr<Request>> pending_audio_history_requests_;
+
+  // Pending web and app activity queries to be canceled if not complete by
+  // profile shutdown.
+  std::map<Request*, std::unique_ptr<Request>>
+      pending_web_and_app_activity_requests_;
+
+  // Pending queries for other forms of browsing history to be canceled if not
+  // complete by profile shutdown.
+  std::map<Request*, std::unique_ptr<Request>>
+      pending_other_forms_of_browsing_history_requests_;
+
+  // Observers.
+  base::ObserverList<WebHistoryServiceObserver, true> observer_list_;
 
   base::WeakPtrFactory<WebHistoryService> weak_ptr_factory_;
 

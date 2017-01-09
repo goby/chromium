@@ -4,35 +4,33 @@
 
 #include "cc/blink/web_layer_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/lazy_instance.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_checker.h"
 #include "base/trace_event/trace_event_impl.h"
-#include "cc/animation/animation.h"
 #include "cc/base/region.h"
 #include "cc/base/switches.h"
-#include "cc/blink/web_animation_impl.h"
 #include "cc/blink/web_blend_mode.h"
-#include "cc/blink/web_filter_operations_impl.h"
-#include "cc/blink/web_to_cc_animation_delegate_adapter.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_position_constraint.h"
-#include "cc/layers/layer_settings.h"
+#include "cc/trees/element_id.h"
 #include "cc/trees/layer_tree_host.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
 #include "third_party/WebKit/public/platform/WebLayerPositionConstraint.h"
 #include "third_party/WebKit/public/platform/WebLayerScrollClient.h"
+#include "third_party/WebKit/public/platform/WebLayerStickyPositionConstraint.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/vector2d_conversions.h"
 
-using cc::Animation;
 using cc::Layer;
 using blink::WebLayer;
 using blink::WebFloatPoint;
@@ -40,44 +38,25 @@ using blink::WebVector;
 using blink::WebRect;
 using blink::WebSize;
 using blink::WebColor;
-using blink::WebFilterOperations;
 
 namespace cc_blink {
-namespace {
-
-base::LazyInstance<cc::LayerSettings> g_layer_settings =
-    LAZY_INSTANCE_INITIALIZER;
-
-}  // namespace
 
 WebLayerImpl::WebLayerImpl()
-    : layer_(Layer::Create(LayerSettings())), contents_opaque_is_fixed_(false) {
-}
+    : layer_(Layer::Create()), contents_opaque_is_fixed_(false) {}
 
 WebLayerImpl::WebLayerImpl(scoped_refptr<Layer> layer)
     : layer_(layer), contents_opaque_is_fixed_(false) {
 }
 
 WebLayerImpl::~WebLayerImpl() {
-  if (animation_delegate_adapter_.get())
-    layer_->set_layer_animation_delegate(nullptr);
   layer_->SetLayerClient(nullptr);
-}
-
-// static
-void WebLayerImpl::SetLayerSettings(const cc::LayerSettings& settings) {
-  g_layer_settings.Get() = settings;
-}
-
-// static
-const cc::LayerSettings& WebLayerImpl::LayerSettings() {
-  return g_layer_settings.Get();
 }
 
 int WebLayerImpl::id() const {
   return layer_->id();
 }
 
+DISABLE_CFI_PERF
 void WebLayerImpl::invalidateRect(const blink::WebRect& rect) {
   layer_->SetNeedsDisplayRect(rect);
 }
@@ -126,11 +105,6 @@ bool WebLayerImpl::masksToBounds() const {
 void WebLayerImpl::setMaskLayer(WebLayer* maskLayer) {
   layer_->SetMaskLayer(
       maskLayer ? static_cast<WebLayerImpl*>(maskLayer)->layer() : 0);
-}
-
-void WebLayerImpl::setReplicaLayer(WebLayer* replica_layer) {
-  layer_->SetReplicaLayer(
-      replica_layer ? static_cast<WebLayerImpl*>(replica_layer)->layer() : 0);
 }
 
 void WebLayerImpl::setOpacity(float opacity) {
@@ -216,7 +190,7 @@ void WebLayerImpl::setRenderingContext(int context) {
 
 void WebLayerImpl::setUseParentBackfaceVisibility(
     bool use_parent_backface_visibility) {
-  layer_->set_use_parent_backface_visibility(use_parent_backface_visibility);
+  layer_->SetUseParentBackfaceVisibility(use_parent_backface_visibility);
 }
 
 void WebLayerImpl::setBackgroundColor(WebColor color) {
@@ -227,63 +201,24 @@ WebColor WebLayerImpl::backgroundColor() const {
   return layer_->background_color();
 }
 
-void WebLayerImpl::setFilters(const WebFilterOperations& filters) {
-  const WebFilterOperationsImpl& filters_impl =
-      static_cast<const WebFilterOperationsImpl&>(filters);
-  layer_->SetFilters(filters_impl.AsFilterOperations());
+void WebLayerImpl::setFilters(const cc::FilterOperations& filters) {
+  layer_->SetFilters(filters);
 }
 
-void WebLayerImpl::setBackgroundFilters(const WebFilterOperations& filters) {
-  const WebFilterOperationsImpl& filters_impl =
-      static_cast<const WebFilterOperationsImpl&>(filters);
-  layer_->SetBackgroundFilters(filters_impl.AsFilterOperations());
+void WebLayerImpl::setFiltersOrigin(const blink::WebFloatPoint& origin) {
+  layer_->SetFiltersOrigin(origin);
 }
 
-void WebLayerImpl::setAnimationDelegate(
-    blink::WebCompositorAnimationDelegate* delegate) {
-  animation_delegate_adapter_.reset(
-      new WebToCCAnimationDelegateAdapter(delegate));
-  layer_->set_layer_animation_delegate(animation_delegate_adapter_.get());
+void WebLayerImpl::setBackgroundFilters(const cc::FilterOperations& filters) {
+  layer_->SetBackgroundFilters(filters);
 }
 
-bool WebLayerImpl::addAnimation(blink::WebCompositorAnimation* animation) {
-  bool result = layer_->AddAnimation(
-      static_cast<WebCompositorAnimationImpl*>(animation)->PassAnimation());
-  delete animation;
-  return result;
-}
-
-void WebLayerImpl::removeAnimation(int animation_id) {
-  layer_->RemoveAnimation(animation_id);
-}
-
-void WebLayerImpl::removeAnimation(
-    int animation_id,
-    blink::WebCompositorAnimation::TargetProperty target_property) {
-  layer_->RemoveAnimation(
-      animation_id, static_cast<Animation::TargetProperty>(target_property));
-}
-
-void WebLayerImpl::pauseAnimation(int animation_id, double time_offset) {
-  layer_->PauseAnimation(animation_id, time_offset);
-}
-
-bool WebLayerImpl::hasActiveAnimation() {
-  return layer_->HasActiveAnimation();
-}
-
-void WebLayerImpl::setForceRenderSurface(bool force_render_surface) {
-  layer_->SetForceRenderSurface(force_render_surface);
+bool WebLayerImpl::hasTickingAnimationForTesting() {
+  return layer_->HasTickingAnimationForTesting();
 }
 
 void WebLayerImpl::setScrollPositionDouble(blink::WebDoublePoint position) {
   layer_->SetScrollOffset(gfx::ScrollOffset(position.x, position.y));
-}
-
-void WebLayerImpl::setScrollCompensationAdjustment(
-    blink::WebDoublePoint position) {
-  layer_->SetScrollCompensationAdjustment(
-      gfx::Vector2dF(position.x, position.y));
 }
 
 blink::WebDoublePoint WebLayerImpl::scrollPositionDouble() const {
@@ -315,25 +250,24 @@ bool WebLayerImpl::userScrollableVertical() const {
   return layer_->user_scrollable_vertical();
 }
 
-void WebLayerImpl::setHaveWheelEventHandlers(bool have_wheel_event_handlers) {
-  layer_->SetHaveWheelEventHandlers(have_wheel_event_handlers);
+void WebLayerImpl::addMainThreadScrollingReasons(
+    uint32_t main_thread_scrolling_reasons) {
+  // WebLayerImpl should only know about non-transient scrolling
+  // reasons. Transient scrolling reasons are computed per hit test.
+  DCHECK(main_thread_scrolling_reasons);
+  DCHECK(cc::MainThreadScrollingReason::MainThreadCanSetScrollReasons(
+      main_thread_scrolling_reasons));
+  layer_->AddMainThreadScrollingReasons(main_thread_scrolling_reasons);
 }
 
-bool WebLayerImpl::haveWheelEventHandlers() const {
-  return layer_->have_wheel_event_handlers();
+void WebLayerImpl::clearMainThreadScrollingReasons(
+    uint32_t main_thread_scrolling_reasons_to_clear) {
+  layer_->ClearMainThreadScrollingReasons(
+      main_thread_scrolling_reasons_to_clear);
 }
 
-void WebLayerImpl::setHaveScrollEventHandlers(bool have_scroll_event_handlers) {
-  layer_->SetHaveScrollEventHandlers(have_scroll_event_handlers);
-}
-
-bool WebLayerImpl::haveScrollEventHandlers() const {
-  return layer_->have_scroll_event_handlers();
-}
-
-void WebLayerImpl::setShouldScrollOnMainThread(
-    bool should_scroll_on_main_thread) {
-  layer_->SetShouldScrollOnMainThread(should_scroll_on_main_thread);
+uint32_t WebLayerImpl::mainThreadScrollingReasons() {
+  return layer_->main_thread_scrolling_reasons();
 }
 
 bool WebLayerImpl::shouldScrollOnMainThread() const {
@@ -365,31 +299,6 @@ WebVector<WebRect> WebLayerImpl::nonFastScrollableRegion() const {
   return result;
 }
 
-void WebLayerImpl::setFrameTimingRequests(
-    const WebVector<std::pair<int64_t, WebRect>>& requests) {
-  std::vector<cc::FrameTimingRequest> frame_timing_requests(requests.size());
-  for (size_t i = 0; i < requests.size(); ++i) {
-    frame_timing_requests[i] = cc::FrameTimingRequest(
-        requests[i].first, gfx::Rect(requests[i].second));
-  }
-  layer_->SetFrameTimingRequests(frame_timing_requests);
-}
-
-WebVector<std::pair<int64_t, WebRect>> WebLayerImpl::frameTimingRequests()
-    const {
-  const std::vector<cc::FrameTimingRequest>& frame_timing_requests =
-      layer_->FrameTimingRequests();
-
-  size_t num_requests = frame_timing_requests.size();
-
-  WebVector<std::pair<int64_t, WebRect>> result(num_requests);
-  for (size_t i = 0; i < num_requests; ++i) {
-    result[i] = std::make_pair(frame_timing_requests[i].id(),
-                               frame_timing_requests[i].rect());
-  }
-  return result;
-}
-
 void WebLayerImpl::setTouchEventHandlerRegion(const WebVector<WebRect>& rects) {
   cc::Region region;
   for (size_t i = 0; i < rects.size(); ++i)
@@ -413,28 +322,6 @@ WebVector<WebRect> WebLayerImpl::touchEventHandlerRegion() const {
     ++i;
   }
   return result;
-}
-
-static_assert(static_cast<ScrollBlocksOn>(blink::WebScrollBlocksOnNone) ==
-                  SCROLL_BLOCKS_ON_NONE,
-              "ScrollBlocksOn and WebScrollBlocksOn enums must match");
-static_assert(static_cast<ScrollBlocksOn>(blink::WebScrollBlocksOnStartTouch) ==
-                  SCROLL_BLOCKS_ON_START_TOUCH,
-              "ScrollBlocksOn and WebScrollBlocksOn enums must match");
-static_assert(static_cast<ScrollBlocksOn>(blink::WebScrollBlocksOnWheelEvent) ==
-                  SCROLL_BLOCKS_ON_WHEEL_EVENT,
-              "ScrollBlocksOn and WebScrollBlocksOn enums must match");
-static_assert(
-    static_cast<ScrollBlocksOn>(blink::WebScrollBlocksOnScrollEvent) ==
-        SCROLL_BLOCKS_ON_SCROLL_EVENT,
-    "ScrollBlocksOn and WebScrollBlocksOn enums must match");
-
-void WebLayerImpl::setScrollBlocksOn(blink::WebScrollBlocksOn blocks) {
-  layer_->SetScrollBlocksOn(static_cast<ScrollBlocksOn>(blocks));
-}
-
-blink::WebScrollBlocksOn WebLayerImpl::scrollBlocksOn() const {
-  return static_cast<blink::WebScrollBlocksOn>(layer_->scroll_blocks_on());
 }
 
 void WebLayerImpl::setIsContainerForFixedPositionLayers(bool enable) {
@@ -472,6 +359,57 @@ blink::WebLayerPositionConstraint WebLayerImpl::positionConstraint() const {
   return ToWebLayerPositionConstraint(layer_->position_constraint());
 }
 
+static blink::WebLayerStickyPositionConstraint
+ToWebLayerStickyPositionConstraint(
+    const cc::LayerStickyPositionConstraint& constraint) {
+  blink::WebLayerStickyPositionConstraint web_constraint;
+  web_constraint.isSticky = constraint.is_sticky;
+  web_constraint.isAnchoredLeft = constraint.is_anchored_left;
+  web_constraint.isAnchoredRight = constraint.is_anchored_right;
+  web_constraint.isAnchoredTop = constraint.is_anchored_top;
+  web_constraint.isAnchoredBottom = constraint.is_anchored_bottom;
+  web_constraint.leftOffset = constraint.left_offset;
+  web_constraint.rightOffset = constraint.right_offset;
+  web_constraint.topOffset = constraint.top_offset;
+  web_constraint.bottomOffset = constraint.bottom_offset;
+  web_constraint.parentRelativeStickyBoxOffset =
+      constraint.parent_relative_sticky_box_offset;
+  web_constraint.scrollContainerRelativeStickyBoxRect =
+      constraint.scroll_container_relative_sticky_box_rect;
+  web_constraint.scrollContainerRelativeContainingBlockRect =
+      constraint.scroll_container_relative_containing_block_rect;
+  return web_constraint;
+}
+static cc::LayerStickyPositionConstraint ToStickyPositionConstraint(
+    const blink::WebLayerStickyPositionConstraint& web_constraint) {
+  cc::LayerStickyPositionConstraint constraint;
+  constraint.is_sticky = web_constraint.isSticky;
+  constraint.is_anchored_left = web_constraint.isAnchoredLeft;
+  constraint.is_anchored_right = web_constraint.isAnchoredRight;
+  constraint.is_anchored_top = web_constraint.isAnchoredTop;
+  constraint.is_anchored_bottom = web_constraint.isAnchoredBottom;
+  constraint.left_offset = web_constraint.leftOffset;
+  constraint.right_offset = web_constraint.rightOffset;
+  constraint.top_offset = web_constraint.topOffset;
+  constraint.bottom_offset = web_constraint.bottomOffset;
+  constraint.parent_relative_sticky_box_offset =
+      web_constraint.parentRelativeStickyBoxOffset;
+  constraint.scroll_container_relative_sticky_box_rect =
+      web_constraint.scrollContainerRelativeStickyBoxRect;
+  constraint.scroll_container_relative_containing_block_rect =
+      web_constraint.scrollContainerRelativeContainingBlockRect;
+  return constraint;
+}
+void WebLayerImpl::setStickyPositionConstraint(
+    const blink::WebLayerStickyPositionConstraint& constraint) {
+  layer_->SetStickyPositionConstraint(ToStickyPositionConstraint(constraint));
+}
+blink::WebLayerStickyPositionConstraint WebLayerImpl::stickyPositionConstraint()
+    const {
+  return ToWebLayerStickyPositionConstraint(
+      layer_->sticky_position_constraint());
+}
+
 void WebLayerImpl::setScrollClient(blink::WebLayerScrollClient* scroll_client) {
   if (scroll_client) {
     layer_->set_did_scroll_callback(
@@ -482,16 +420,32 @@ void WebLayerImpl::setScrollClient(blink::WebLayerScrollClient* scroll_client) {
   }
 }
 
-bool WebLayerImpl::isOrphan() const {
-  return !layer_->layer_tree_host();
-}
-
 void WebLayerImpl::setLayerClient(cc::LayerClient* client) {
   layer_->SetLayerClient(client);
 }
 
 const cc::Layer* WebLayerImpl::ccLayer() const {
   return layer_.get();
+}
+
+cc::Layer* WebLayerImpl::ccLayer() {
+  return layer_.get();
+}
+
+void WebLayerImpl::setElementId(const cc::ElementId& id) {
+  layer_->SetElementId(id);
+}
+
+cc::ElementId WebLayerImpl::elementId() const {
+  return layer_->element_id();
+}
+
+void WebLayerImpl::setCompositorMutableProperties(uint32_t properties) {
+  layer_->SetMutableProperties(properties);
+}
+
+uint32_t WebLayerImpl::compositorMutableProperties() const {
+  return layer_->mutable_properties();
 }
 
 void WebLayerImpl::setScrollParent(blink::WebLayer* parent) {
@@ -514,6 +468,18 @@ Layer* WebLayerImpl::layer() const {
 
 void WebLayerImpl::SetContentsOpaqueIsFixed(bool fixed) {
   contents_opaque_is_fixed_ = fixed;
+}
+
+void WebLayerImpl::setHasWillChangeTransformHint(bool has_will_change) {
+  layer_->SetHasWillChangeTransformHint(has_will_change);
+}
+
+void WebLayerImpl::setPreferredRasterBounds(const WebSize& bounds) {
+  layer_->SetPreferredRasterBounds(bounds);
+}
+
+void WebLayerImpl::clearPreferredRasterBounds() {
+  layer_->ClearPreferredRasterBounds();
 }
 
 }  // namespace cc_blink

@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <gtest/gtest.h>
+#include "chromeos/process_proxy/process_output_watcher.h"
 
+#include <gtest/gtest.h>
+#include <stddef.h>
+
+#include <memory>
 #include <queue>
 #include <string>
 #include <vector>
@@ -17,7 +21,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread.h"
-#include "chromeos/process_proxy/process_output_watcher.h"
 
 namespace chromeos {
 
@@ -85,7 +88,7 @@ class ProcessWatcherExpectations {
   size_t received_from_out_;
 };
 
-void StopProcessOutputWatcher(scoped_ptr<ProcessOutputWatcher> watcher) {
+void StopProcessOutputWatcher(std::unique_ptr<ProcessOutputWatcher> watcher) {
   // Just deleting |watcher| if sufficient.
 }
 
@@ -104,7 +107,9 @@ class ProcessOutputWatcherTest : public testing::Test {
       output_watch_thread_->Stop();
   }
 
-  void OnRead(ProcessOutputType type, const std::string& output) {
+  void OnRead(ProcessOutputType type,
+              const std::string& output,
+              const base::Closure& ack_callback) {
     ASSERT_FALSE(failed_);
     // There may be an EXIT signal sent during test tear down (which is sent
     // by process output watcher when master end of test pseudo-terminal is
@@ -122,6 +127,9 @@ class ProcessOutputWatcherTest : public testing::Test {
                                             test_case_done_callback_);
       test_case_done_callback_.Reset();
     }
+
+    ASSERT_FALSE(ack_callback.is_null());
+    message_loop_.task_runner()->PostTask(FROM_HERE, ack_callback);
   }
 
  protected:
@@ -142,9 +150,10 @@ class ProcessOutputWatcherTest : public testing::Test {
     int pt_pipe[2];
     ASSERT_FALSE(HANDLE_EINTR(pipe(pt_pipe)));
 
-    scoped_ptr<ProcessOutputWatcher> crosh_watcher(new ProcessOutputWatcher(
-        pt_pipe[0],
-        base::Bind(&ProcessOutputWatcherTest::OnRead, base::Unretained(this))));
+    std::unique_ptr<ProcessOutputWatcher> crosh_watcher(
+        new ProcessOutputWatcher(pt_pipe[0],
+                                 base::Bind(&ProcessOutputWatcherTest::OnRead,
+                                            base::Unretained(this))));
 
     output_watch_thread_->task_runner()->PostTask(
         FROM_HERE, base::Bind(&ProcessOutputWatcher::Start,
@@ -182,7 +191,7 @@ class ProcessOutputWatcherTest : public testing::Test {
  private:
   base::Closure test_case_done_callback_;
   base::MessageLoop message_loop_;
-  scoped_ptr<base::Thread> output_watch_thread_;
+  std::unique_ptr<base::Thread> output_watch_thread_;
   bool output_watch_thread_started_;
   bool failed_;
   ProcessWatcherExpectations expectations_;

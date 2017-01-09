@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_CONTENTS_WEB_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_CONTENTS_WEB_VIEW_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/views/frame/web_contents_close_handler_delegate.h"
 #include "ui/compositor/layer_owner_delegate.h"
 #include "ui/views/controls/webview/webview.h"
@@ -37,6 +38,7 @@ class ContentsWebView
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
   void OnThemeChanged() override;
+  void RenderViewReady() override;
 
   // ui::LayerOwnerDelegate overrides:
   void OnLayerRecreated(ui::Layer* old_layer, ui::Layer* new_layer) override;
@@ -48,7 +50,7 @@ class ContentsWebView
  private:
   StatusBubbleViews* status_bubble_;
 
-  scoped_ptr<ui::LayerTreeOwner> cloned_layer_tree_;
+  std::unique_ptr<ui::LayerTreeOwner> cloned_layer_tree_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentsWebView);
 };

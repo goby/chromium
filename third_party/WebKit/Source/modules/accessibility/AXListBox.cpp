@@ -26,12 +26,10 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/accessibility/AXListBox.h"
 
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/HTMLSelectElement.h"
-#include "core/layout/LayoutListBox.h"
 #include "modules/accessibility/AXListBoxOption.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
 
@@ -39,65 +37,55 @@ namespace blink {
 
 using namespace HTMLNames;
 
-AXListBox::AXListBox(LayoutObject* layoutObject, AXObjectCacheImpl& axObjectCache)
-    : AXLayoutObject(layoutObject, axObjectCache)
-    , m_activeIndex(-1)
-{
-    activeIndexChanged();
+AXListBox::AXListBox(LayoutObject* layoutObject,
+                     AXObjectCacheImpl& axObjectCache)
+    : AXLayoutObject(layoutObject, axObjectCache), m_activeIndex(-1) {
+  activeIndexChanged();
 }
 
-AXListBox::~AXListBox()
-{
+AXListBox::~AXListBox() {}
+
+AXListBox* AXListBox::create(LayoutObject* layoutObject,
+                             AXObjectCacheImpl& axObjectCache) {
+  return new AXListBox(layoutObject, axObjectCache);
 }
 
-AXListBox* AXListBox::create(LayoutObject* layoutObject, AXObjectCacheImpl& axObjectCache)
-{
-    return new AXListBox(layoutObject, axObjectCache);
+AccessibilityRole AXListBox::determineAccessibilityRole() {
+  if ((m_ariaRole = determineAriaRoleAttribute()) != UnknownRole)
+    return m_ariaRole;
+
+  return ListBoxRole;
 }
 
-AccessibilityRole AXListBox::determineAccessibilityRole()
-{
-    if ((m_ariaRole = determineAriaRoleAttribute()) != UnknownRole)
-        return m_ariaRole;
-
-    return ListBoxRole;
-}
-
-AXObject* AXListBox::activeDescendant() const
-{
-    if (!isHTMLSelectElement(node()))
-        return nullptr;
-
-    HTMLSelectElement* select = toHTMLSelectElement(node());
-    int activeIndex = select->activeSelectionEndListIndex();
-    if (activeIndex >= 0 && activeIndex < static_cast<int>(select->length())) {
-        HTMLOptionElement* option = select->item(m_activeIndex);
-        return axObjectCache().get(option);
-    }
-
+AXObject* AXListBox::activeDescendant() {
+  if (!isHTMLSelectElement(getNode()))
     return nullptr;
+
+  HTMLSelectElement* select = toHTMLSelectElement(getNode());
+  int activeIndex = select->activeSelectionEndListIndex();
+  if (activeIndex >= 0 && activeIndex < static_cast<int>(select->length())) {
+    HTMLOptionElement* option = select->item(m_activeIndex);
+    return axObjectCache().get(option);
+  }
+
+  return nullptr;
 }
 
-void AXListBox::activeIndexChanged()
-{
-    if (!isHTMLSelectElement(node()))
-        return;
+void AXListBox::activeIndexChanged() {
+  if (!isHTMLSelectElement(getNode()))
+    return;
 
-    HTMLSelectElement* select = toHTMLSelectElement(node());
-    int activeIndex = select->activeSelectionEndListIndex();
-    if (activeIndex == m_activeIndex)
-        return;
+  HTMLSelectElement* select = toHTMLSelectElement(getNode());
+  int activeIndex = select->activeSelectionEndListIndex();
+  if (activeIndex == m_activeIndex)
+    return;
 
-    m_activeIndex = activeIndex;
-    if (!select->focused())
-        return;
+  m_activeIndex = activeIndex;
+  if (!select->isFocused())
+    return;
 
-    if (m_activeIndex >= 0 && m_activeIndex < static_cast<int>(select->length())) {
-        HTMLOptionElement* option = select->item(m_activeIndex);
-        axObjectCache().postNotification(option, AXObjectCacheImpl::AXFocusedUIElementChanged);
-    } else {
-        axObjectCache().postNotification(this, AXObjectCacheImpl::AXFocusedUIElementChanged);
-    }
+  axObjectCache().postNotification(
+      this, AXObjectCacheImpl::AXActiveDescendantChanged);
 }
 
-} // namespace blink
+}  // namespace blink

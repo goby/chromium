@@ -4,6 +4,8 @@
 
 #include "components/gcm_driver/gcm_account_mapper.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/guid.h"
 #include "base/time/clock.h"
@@ -146,6 +148,12 @@ void GCMAccountMapper::ShutdownHandler() {
   accounts_.clear();
   registration_id_.clear();
   dispatch_message_callback_.Reset();
+}
+
+void GCMAccountMapper::OnStoreReset() {
+  // TODO(crbug.com/661660): Tell server to remove the mapping. But can't use
+  // upstream GCM send for that since the store got reset.
+  ShutdownHandler();
 }
 
 void GCMAccountMapper::OnMessage(const std::string& app_id,
@@ -384,8 +392,8 @@ GCMAccountMapper::FindMappingByMessageId(const std::string& message_id) {
   return accounts_.end();
 }
 
-void GCMAccountMapper::SetClockForTesting(scoped_ptr<base::Clock> clock) {
-  clock_ = clock.Pass();
+void GCMAccountMapper::SetClockForTesting(std::unique_ptr<base::Clock> clock) {
+  clock_ = std::move(clock);
 }
 
 }  // namespace gcm

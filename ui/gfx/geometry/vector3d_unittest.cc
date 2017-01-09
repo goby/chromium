@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <cmath>
 #include <limits>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/vector3d_f.h"
 
@@ -224,6 +227,7 @@ TEST(Vector3dTest, CrossProduct) {
   };
 
   for (size_t i = 0; i < arraysize(tests); ++i) {
+    SCOPED_TRACE(i);
     Vector3dF actual = gfx::CrossProduct(tests[i].input1, tests[i].input2);
     EXPECT_EQ(tests[i].expected.ToString(), actual.ToString());
   }

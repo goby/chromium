@@ -6,8 +6,7 @@
 #define IOS_CHROME_BROWSER_INSTALLATION_NOTIFIER_H_
 
 #import <Foundation/Foundation.h>
-
-class GURL;
+#include <stdint.h>
 
 // Protocol used to mock the delayed dispatching for the unit tests.
 // Calls |block| after |delayInNSec|.

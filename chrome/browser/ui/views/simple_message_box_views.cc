@@ -4,14 +4,16 @@
 
 #include "chrome/browser/ui/simple_message_box.h"
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/simple_message_box_internal.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/startup_metric_utils/browser/startup_metric_utils.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/native_widget_types.h"
@@ -35,6 +37,7 @@ class SimpleMessageBoxViews : public views::DialogDelegate {
                         MessageBoxType type,
                         const base::string16& yes_text,
                         const base::string16& no_text,
+                        const base::string16& checkbox_text,
                         bool is_system_modal);
   ~SimpleMessageBoxViews() override;
 
@@ -63,46 +66,48 @@ class SimpleMessageBoxViews : public views::DialogDelegate {
   base::string16 yes_text_;
   base::string16 no_text_;
   MessageBoxResult* result_;
-  bool is_system_modal_;
   views::MessageBoxView* message_box_view_;
   base::Closure quit_runloop_;
+  bool is_system_modal_;
 
   DISALLOW_COPY_AND_ASSIGN(SimpleMessageBoxViews);
 };
 
+// The currently showing message box, if there is one. Used for tests.
+SimpleMessageBoxViews* g_current_message_box = nullptr;
+
 ////////////////////////////////////////////////////////////////////////////////
 // SimpleMessageBoxViews, public:
 
-SimpleMessageBoxViews::SimpleMessageBoxViews(const base::string16& title,
-                                             const base::string16& message,
-                                             MessageBoxType type,
-                                             const base::string16& yes_text,
-                                             const base::string16& no_text,
-                                             bool is_system_modal)
+SimpleMessageBoxViews::SimpleMessageBoxViews(
+    const base::string16& title,
+    const base::string16& message,
+    MessageBoxType type,
+    const base::string16& yes_text,
+    const base::string16& no_text,
+    const base::string16& checkbox_text,
+    bool is_system_modal)
     : window_title_(title),
       type_(type),
       yes_text_(yes_text),
       no_text_(no_text),
       result_(NULL),
-      is_system_modal_(is_system_modal),
       message_box_view_(new views::MessageBoxView(
-          views::MessageBoxView::InitParams(message))) {
+          views::MessageBoxView::InitParams(message))),
+      is_system_modal_(is_system_modal) {
   if (yes_text_.empty()) {
-    if (type_ == MESSAGE_BOX_TYPE_QUESTION)
-      yes_text_ =
-          l10n_util::GetStringUTF16(IDS_CONFIRM_MESSAGEBOX_YES_BUTTON_LABEL);
-    else if (type_ == MESSAGE_BOX_TYPE_OK_CANCEL)
-      yes_text_ = l10n_util::GetStringUTF16(IDS_OK);
-    else
-      yes_text_ = l10n_util::GetStringUTF16(IDS_OK);
+    yes_text_ =
+        type_ == MESSAGE_BOX_TYPE_QUESTION
+            ? l10n_util::GetStringUTF16(IDS_CONFIRM_MESSAGEBOX_YES_BUTTON_LABEL)
+            : l10n_util::GetStringUTF16(IDS_OK);
   }
 
-  if (no_text_.empty()) {
-    if (type_ == MESSAGE_BOX_TYPE_QUESTION)
-      no_text_ =
-          l10n_util::GetStringUTF16(IDS_CONFIRM_MESSAGEBOX_NO_BUTTON_LABEL);
-    else if (type_ == MESSAGE_BOX_TYPE_OK_CANCEL)
-      no_text_ = l10n_util::GetStringUTF16(IDS_CANCEL);
+  if (no_text_.empty() && type_ == MESSAGE_BOX_TYPE_QUESTION)
+    no_text_ = l10n_util::GetStringUTF16(IDS_CANCEL);
+
+  if (!checkbox_text.empty()) {
+    message_box_view_->SetCheckBoxLabel(checkbox_text);
+    message_box_view_->SetCheckBoxSelected(true);
   }
 }
 
@@ -110,6 +115,7 @@ SimpleMessageBoxViews::~SimpleMessageBoxViews() {
 }
 
 MessageBoxResult SimpleMessageBoxViews::RunDialogAndGetResult() {
+  g_current_message_box = this;
   MessageBoxResult result = MESSAGE_BOX_RESULT_NO;
   result_ = &result;
   // TODO(pkotwicz): Exit message loop when the dialog is closed by some other
@@ -119,14 +125,13 @@ MessageBoxResult SimpleMessageBoxViews::RunDialogAndGetResult() {
   base::RunLoop run_loop;
   quit_runloop_ = run_loop.QuitClosure();
   run_loop.Run();
+  g_current_message_box = nullptr;
   return result;
 }
 
 int SimpleMessageBoxViews::GetDialogButtons() const {
-  if (type_ == MESSAGE_BOX_TYPE_QUESTION ||
-      type_ == MESSAGE_BOX_TYPE_OK_CANCEL) {
+  if (type_ == MESSAGE_BOX_TYPE_QUESTION)
     return ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
-  }
 
   return ui::DIALOG_BUTTON_OK;
 }
@@ -145,7 +150,13 @@ bool SimpleMessageBoxViews::Cancel() {
 }
 
 bool SimpleMessageBoxViews::Accept() {
-  *result_ = MESSAGE_BOX_RESULT_YES;
+  if (!message_box_view_->HasCheckBox() ||
+      message_box_view_->IsCheckBoxSelected()) {
+    *result_ = MESSAGE_BOX_RESULT_YES;
+  } else {
+    *result_ = MESSAGE_BOX_RESULT_NO;
+  }
+
   Done();
   return true;
 }
@@ -186,14 +197,10 @@ void SimpleMessageBoxViews::Done() {
 UINT GetMessageBoxFlagsFromType(MessageBoxType type) {
   UINT flags = MB_SETFOREGROUND;
   switch (type) {
-    case MESSAGE_BOX_TYPE_INFORMATION:
-      return flags | MB_OK | MB_ICONINFORMATION;
     case MESSAGE_BOX_TYPE_WARNING:
       return flags | MB_OK | MB_ICONWARNING;
     case MESSAGE_BOX_TYPE_QUESTION:
       return flags | MB_YESNO | MB_ICONQUESTION;
-    case MESSAGE_BOX_TYPE_OK_CANCEL:
-      return flags | MB_OKCANCEL | MB_ICONWARNING;
   }
   NOTREACHED();
   return flags | MB_OK | MB_ICONWARNING;
@@ -205,7 +212,8 @@ MessageBoxResult ShowMessageBoxImpl(gfx::NativeWindow parent,
                                     const base::string16& message,
                                     MessageBoxType type,
                                     const base::string16& yes_text,
-                                    const base::string16& no_text) {
+                                    const base::string16& no_text,
+                                    const base::string16& checkbox_text) {
   startup_metric_utils::SetNonBrowserUIDisplayed();
   if (internal::g_should_skip_message_box_for_test)
     return MESSAGE_BOX_RESULT_YES;
@@ -217,6 +225,7 @@ MessageBoxResult ShowMessageBoxImpl(gfx::NativeWindow parent,
   if (!base::MessageLoopForUI::IsCurrent() ||
       !base::MessageLoopForUI::current()->is_running() ||
       !ResourceBundle::HasSharedInstance()) {
+    LOG_IF(ERROR, !checkbox_text.empty()) << "Dialog checkbox won't be shown";
     int result = ui::MessageBox(views::HWNDForNativeWindow(parent), message,
                                 title, GetMessageBoxFlagsFromType(type));
     return (result == IDYES || result == IDOK) ?
@@ -232,13 +241,8 @@ MessageBoxResult ShowMessageBoxImpl(gfx::NativeWindow parent,
 #endif
 
   SimpleMessageBoxViews* dialog =
-      new SimpleMessageBoxViews(title,
-                                message,
-                                type,
-                                yes_text,
-                                no_text,
-                                parent == NULL  // is_system_modal
-                                );
+      new SimpleMessageBoxViews(title, message, type, yes_text, no_text,
+                                checkbox_text, !parent /* is_system_modal */);
   constrained_window::CreateBrowserModalDialogViews(dialog, parent)->Show();
 
   // NOTE: |dialog| may have been deleted by the time |RunDialogAndGetResult()|
@@ -248,12 +252,39 @@ MessageBoxResult ShowMessageBoxImpl(gfx::NativeWindow parent,
 
 }  // namespace
 
-MessageBoxResult ShowMessageBox(gfx::NativeWindow parent,
-                                const base::string16& title,
-                                const base::string16& message,
-                                MessageBoxType type) {
-  return ShowMessageBoxImpl(
-      parent, title, message, type, base::string16(), base::string16());
+bool CloseMessageBoxForTest(bool accept) {
+  if (!g_current_message_box)
+    return false;
+
+  if (accept)
+    g_current_message_box->Accept();
+  else
+    g_current_message_box->Cancel();
+  return true;
+}
+
+void ShowWarningMessageBox(gfx::NativeWindow parent,
+                           const base::string16& title,
+                           const base::string16& message) {
+  ShowMessageBoxImpl(parent, title, message, MESSAGE_BOX_TYPE_WARNING,
+                     base::string16(), base::string16(), base::string16());
+}
+
+bool ShowWarningMessageBoxWithCheckbox(gfx::NativeWindow parent,
+                                       const base::string16& title,
+                                       const base::string16& message,
+                                       const base::string16& checkbox_text) {
+  return ShowMessageBoxImpl(parent, title, message, MESSAGE_BOX_TYPE_WARNING,
+                            base::string16(), base::string16(),
+                            checkbox_text) == MESSAGE_BOX_RESULT_YES;
+}
+
+MessageBoxResult ShowQuestionMessageBox(gfx::NativeWindow parent,
+                                        const base::string16& title,
+                                        const base::string16& message) {
+  return ShowMessageBoxImpl(parent, title, message, MESSAGE_BOX_TYPE_QUESTION,
+                            base::string16(), base::string16(),
+                            base::string16());
 }
 
 MessageBoxResult ShowMessageBoxWithButtonText(gfx::NativeWindow parent,
@@ -261,8 +292,8 @@ MessageBoxResult ShowMessageBoxWithButtonText(gfx::NativeWindow parent,
                                               const base::string16& message,
                                               const base::string16& yes_text,
                                               const base::string16& no_text) {
-  return ShowMessageBoxImpl(
-      parent, title, message, MESSAGE_BOX_TYPE_QUESTION, yes_text, no_text);
+  return ShowMessageBoxImpl(parent, title, message, MESSAGE_BOX_TYPE_QUESTION,
+                            yes_text, no_text, base::string16());
 }
 
 }  // namespace chrome

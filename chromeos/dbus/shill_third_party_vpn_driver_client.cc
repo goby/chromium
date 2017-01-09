@@ -4,7 +4,11 @@
 
 #include "chromeos/dbus/shill_third_party_vpn_driver_client.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "chromeos/dbus/shill_third_party_vpn_observer.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
@@ -23,7 +27,8 @@ const char* kSetParametersKeyList[] = {
     shill::kSubnetPrefixParameterThirdPartyVpn,
     shill::kMtuParameterThirdPartyVpn,
     shill::kDomainSearchParameterThirdPartyVpn,
-    shill::kDnsServersParameterThirdPartyVpn};
+    shill::kDnsServersParameterThirdPartyVpn,
+    shill::kReconnectParameterThirdPartyVpn};
 
 // The ShillThirdPartyVpnDriverClient implementation.
 class ShillThirdPartyVpnDriverClientImpl

@@ -4,6 +4,7 @@
 
 body {
   -webkit-user-select: none;
+  background-color: black;
   font-size: 84%;
   margin: 0;
 }
@@ -16,42 +17,67 @@ button:focus {
   outline: 1px solid rgb(77, 144, 254);
 }
 
-input[type='checkbox'] {
-  width: 15px;
-  height: 15px;
-  background: -webkit-image-set(
-      url(../../file_manager/foreground/images/common/checkbox_white_unchecked.png) 1x,
-      url(../../file_manager/foreground/images/common/2x/checkbox_white_unchecked.png) 2x)
-      -1px -1px;
-  -webkit-appearance: none;
-  display: inline-block;
-  margin: 1px 6px 1px 1px;
-  vertical-align: text-bottom;
+/* TODO(fukino): This style for the bubble is old. Apply new design and remove
+ * these styles. */
+.bubble {
+  background: #FFF;
+  border-radius: 2px;
+  cursor: default;
+  outline: 1px solid rgba(0, 0, 0, 0.2);
+  padding: 16px;
 }
 
-input[type='checkbox']:checked {
+.bubble .pointer {
   background: -webkit-image-set(
-      url(../../file_manager/foreground/images/common/checkbox_white_checked.png) 1x,
-      url(../../file_manager/foreground/images/common/2x/checkbox_white_checked.png) 2x)
-      -1px -1px;
+    url(../../file_manager/foreground/images/common/bubble_point_white.png) 1x,
+    url(../../file_manager/foreground/images/common/2x/bubble_point_white.png) 2x);
+  display: block;
+  height: 11px;
+  left: 24px;
+  margin: 0 0 0 -5px;
+  outline: none;
+  position: absolute;
+  width: 17px;
 }
 
-paper-ripple,
-paper-button::shadow paper-ripple {
+html[dir='rtl'] .bubble .pointer {
+  margin: 0 -5px 0 0;
+  left: auto;
+  right: 24px;
+}
+
+.bubble .pointer:not(.bottom) {
+  top: -11px;
+}
+
+.bubble .pointer.bottom {
+  transform: rotate(180deg);
+  bottom: -11px;
+}
+
+.bubble .close-x {
+  background: -webkit-image-set(
+    url(../../file_manager/foreground/images/common/close_x_gray.png) 1x,
+    url(../../file_manager/foreground/images/common/2x/close_x_gray.png) 2x);
+  height: 21px;
+  opacity: 0.3;
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  width: 21px;
+}
+
+html[dir='rtl'] .bubble .close-x {
+  right: auto;
+  left: 3px;
+}
+
+.bubble .close-x:hover {
+  opacity: 0.7;
+}
+
+paper-ripple {
   color: black;
-}
-
-files-toggle-ripple::shadow .ripple.activated {
-  opacity: 0.4;
-}
-
-/**
- * Default size of slider knob is large for Gallery. Overwrite it to make it
- * half of the original size.
- */
-paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
-  height: 50%;
-  width: 50%;
 }
 
 .gallery,
@@ -133,12 +159,6 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
   opacity: 0;
 }
 
-/* Full resolution image is invisible unless printing. */
-.gallery .image-container > canvas.fullres {
-  opacity: 0;
-  position: absolute;
-}
-
 @media print {
   /* Do not print anything but the image content. */
   .gallery > :not(.content) {
@@ -153,13 +173,8 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
     display: -webkit-box;
   }
 
-  /* Do not print the screen resolution image. */
-  .gallery .image-container > canvas.image {
-    display: none !important;
-  }
-
   /* Print the full resolution image instead. */
-  .gallery .image-container > canvas.fullres {
+  .gallery .image-container > .image {
     height: auto !important;
     max-height: 100%;
     max-width: 100%;
@@ -231,8 +246,16 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
   pointer-events: auto;
 }
 
+.gallery:not([tools]) > files-tooltip {
+  opacity: 0;
+}
+
 /* Hide immediately when entering the slideshow. */
 .gallery[tools][slideshow] > .toolbar {
+  transition-duration: 0ms;
+}
+
+.gallery[tools][slideshow] > files-tooltip {
   transition-duration: 0ms;
 }
 
@@ -330,6 +353,7 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
 
 #rename-input > input {
   color: white;
+  text-overflow: ellipsis;
 }
 
 /* Bubble */
@@ -340,6 +364,11 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
   left: 20px;
   position: absolute;
   width: 220px;
+}
+
+html[dir='rtl'] .gallery .toolbar .bubble {
+  left: auto;
+  right: 20px;
 }
 
 .gallery:not([editing]) .toolbar .bubble {
@@ -426,7 +455,7 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
 .gallery .image-wrapper {
   height: 100%;
   overflow: hidden;
-  position: relative;
+  position: absolute;
   width: 100%;
 }
 
@@ -445,6 +474,23 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
   to {
     opacity: 1;
   }
+}
+
+.gallery .ribbon-image > .indicator {
+  -webkit-transition: opacity 500ms ease-in;
+  background-image: -webkit-image-set(
+      url(../images/100/slide_view.png) 1x,
+      url(../images/200/slide_view.png) 2x);
+  background-position: center;
+  background-repeat: no-repeat;
+  height: 100%;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.gallery .ribbon-image > .indicator.loading {
+  opacity: 0.2;
 }
 
 .gallery .ribbon-image[selected] > .selection-frame {
@@ -505,21 +551,7 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
   -webkit-margin-start: 16px;
 }
 
-.edit-mode-toolbar .overwrite-original::shadow #checkboxContainer {
-  transform: scale(0.78, 0.78); /* Make box size to 14px. */
-}
-
-.edit-mode-toolbar .overwrite-original::shadow #ink {
-  left: -10px;
-  top: -10px;
-}
-
-.edit-mode-toolbar .overwrite-original::shadow #checkboxLabel {
-  padding-left: 6px;
-}
-
-.edit-mode-toolbar .overwrite-original[disabled]::shadow #checkbox,
-.edit-mode-toolbar .overwrite-original[disabled]::shadow #checkboxLabel {
+.edit-mode-toolbar .overwrite-original[disabled] {
   opacity: 0.2;
 }
 
@@ -588,7 +620,7 @@ paper-slider::shadow .expand:not(.pin) > #sliderKnob > #sliderKnobInner {
 
 .gallery > .toolbar paper-button:focus,
 .gallery > .toolbar button:focus {
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(255, 255, 255, 0.2);
 }
 
 .gallery > .toolbar button:focus {
@@ -714,6 +746,12 @@ button[disabled] {
       url(../images/200/crop.png) 2x);
 }
 
+.edit-main button.resize .icon {
+  background-image:  -webkit-image-set(
+      url(../images/100/resize.png) 1x,
+      url(../images/200/resize.png) 2x);
+}
+
 .edit-main button.exposure .icon {
   background-image: -webkit-image-set(
       url(../images/100/brightness.png) 1x,
@@ -756,6 +794,10 @@ button[disabled] {
   width: 100%;
 }
 
+.gallery[editor-mode="resize"] .edit-modal {
+  height: 56px;
+}
+
 .edit-modal-wrapper[hidden] {
   display: none;
 }
@@ -779,24 +821,29 @@ button[disabled] {
 
 .edit-modal-wrapper .container {
   justify-content: center;
+  left: 0;
+  position: absolute;
+  top: 0;
 }
 
 .edit-modal-wrapper .action-buttons {
   justify-content: flex-end;
-  left: 0;
-  position: absolute;
-  top: 0;
 }
 
 .edit-modal button.edit-toolbar {
   background: transparent;
   border: 0 none;
   border-image: none;
+  border-radius: 2px;
   box-sizing: border-box;
   color: white;
   min-width: 0;
   padding: 0;
   position: relative;
+}
+
+.edit-modal button.edit-toolbar:focus {
+  background-color: rgba(255, 255, 255, 0.12);
 }
 
 .edit-modal button.edit-toolbar .icon {
@@ -862,6 +909,10 @@ button[disabled] {
   display: flex;
 }
 
+.edit-modal .range:not(:last-child) {
+  -webkit-margin-end: 16px;
+}
+
 .edit-modal .range > .icon {
   -webkit-margin-end: 8px;
   display: block;
@@ -869,8 +920,8 @@ button[disabled] {
   width: 16px;
 }
 
-paper-slider::shadow paper-progress::shadow #progressContainer {
-  background-color: rgba(255, 255, 255, 0.2);
+paper-slider {
+  width: 172px;
 }
 
 .edit-modal .range.brightness > .icon {
@@ -966,6 +1017,44 @@ paper-slider::shadow paper-progress::shadow #progressContainer {
 
 .gallery .crop-frame .corner.bottom {
   bottom: -6px;
+}
+
+/* Input UI */
+.edit-modal .input {
+  align-items: flex-end;
+  display: flex;
+  width: 90px;
+}
+
+.edit-modal .input > .unit_label {
+  color: rgba(255, 255, 255, 0.54);
+  margin-bottom: 10px;
+}
+
+.edit-modal .lockicon {
+  background-repeat: no-repeat;
+  background-size: contain;
+  height: 16px;
+  margin: 16px;
+  margin-top: auto;
+  width: 16px;
+}
+
+.edit-modal .lockicon:focus {
+  outline: none;
+}
+
+.edit-modal .lockicon[locked] {
+  background-image: -webkit-image-set(
+      url(../images/100/ratio_locked.png) 1x,
+      url(../images/200/ratio_locked.png) 2x);
+}
+
+.edit-modal .lockicon:not([locked]) {
+  opacity: 0.54;
+  background-image: -webkit-image-set(
+      url(../images/100/ratio_unlocked.png) 1x,
+      url(../images/200/ratio_unlocked.png) 2x);
 }
 
 /* Prompt/notification panel */
@@ -1241,6 +1330,7 @@ files-toast {
 .thumbnail-view {
   display: block;
   height: 100%;
+  outline: none;
   overflow-y: scroll;
 }
 

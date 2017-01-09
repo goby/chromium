@@ -5,10 +5,10 @@
 #ifndef TOOLS_GN_TEMPLATE_H_
 #define TOOLS_GN_TEMPLATE_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 
 class BlockNode;
 class Err;
@@ -30,12 +30,15 @@ class Template : public base::RefCountedThreadSafe<Template> {
   Template(const Scope* scope, const FunctionCallNode* def);
 
   // Takes ownership of a previously-constructed closure.
-  Template(scoped_ptr<Scope> closure, const FunctionCallNode* def);
+  Template(std::unique_ptr<Scope> closure, const FunctionCallNode* def);
 
   // Invoke the template. The values correspond to the state of the code
-  // invoking the template.
+  // invoking the template. The template name needs to be supplied since the
+  // template object itself doesn't know what name the calling code is using
+  // to refer to it (this is used to set defaults).
   Value Invoke(Scope* scope,
                const FunctionCallNode* invocation,
+               const std::string& template_name,
                const std::vector<Value>& args,
                BlockNode* block,
                Err* err) const;
@@ -49,7 +52,7 @@ class Template : public base::RefCountedThreadSafe<Template> {
   Template();
   ~Template();
 
-  scoped_ptr<Scope> closure_;
+  std::unique_ptr<Scope> closure_;
   const FunctionCallNode* definition_;
 };
 

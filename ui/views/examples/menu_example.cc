@@ -6,6 +6,7 @@
 
 #include <set>
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/views/controls/button/menu_button.h"
@@ -30,8 +31,6 @@ class ExampleMenuModel : public ui::SimpleMenuModel,
   // ui::SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
  private:
@@ -50,7 +49,7 @@ class ExampleMenuModel : public ui::SimpleMenuModel,
     COMMAND_GO_HOME,
   };
 
-  scoped_ptr<ui::SimpleMenuModel> submenu_;
+  std::unique_ptr<ui::SimpleMenuModel> submenu_;
   std::set<int> checked_fruits_;
   int current_encoding_command_id_;
 
@@ -64,12 +63,14 @@ class ExampleMenuButton : public MenuButton, public MenuButtonListener {
 
  private:
   // MenuButtonListener:
-  void OnMenuButtonClicked(View* source, const gfx::Point& point) override;
+  void OnMenuButtonClicked(MenuButton* source,
+                           const gfx::Point& point,
+                           const ui::Event* event) override;
 
   ui::SimpleMenuModel* GetMenuModel();
 
-  scoped_ptr<ExampleMenuModel> menu_model_;
-  scoped_ptr<MenuRunner> menu_runner_;
+  std::unique_ptr<ExampleMenuModel> menu_model_;
+  std::unique_ptr<MenuRunner> menu_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ExampleMenuButton);
 };
@@ -114,13 +115,6 @@ bool ExampleMenuModel::IsCommandIdChecked(int command_id) const {
 bool ExampleMenuModel::IsCommandIdEnabled(int command_id) const {
   // All commands are enabled except for COMMAND_GO_HOME.
   return command_id != COMMAND_GO_HOME;
-}
-
-bool ExampleMenuModel::GetAcceleratorForCommandId(
-    int command_id,
-    ui::Accelerator* accelerator) {
-  // We don't use this in the example.
-  return false;
 }
 
 void ExampleMenuModel::ExecuteCommand(int command_id, int event_flags) {
@@ -177,24 +171,20 @@ void ExampleMenuModel::ExecuteCommand(int command_id, int event_flags) {
 // ExampleMenuButton -----------------------------------------------------------
 
 ExampleMenuButton::ExampleMenuButton(const base::string16& test)
-    : MenuButton(NULL, test, this, true) {
-}
+    : MenuButton(test, this, true) {}
 
 ExampleMenuButton::~ExampleMenuButton() {
 }
 
-void ExampleMenuButton::OnMenuButtonClicked(View* source,
-                                            const gfx::Point& point) {
-  menu_runner_.reset(new MenuRunner(GetMenuModel(), MenuRunner::HAS_MNEMONICS));
+void ExampleMenuButton::OnMenuButtonClicked(MenuButton* source,
+                                            const gfx::Point& point,
+                                            const ui::Event* event) {
+  menu_runner_.reset(new MenuRunner(
+      GetMenuModel(), MenuRunner::HAS_MNEMONICS | MenuRunner::ASYNC));
 
-  if (menu_runner_->RunMenuAt(source->GetWidget()->GetTopLevelWidget(),
-                              this,
-                              gfx::Rect(point, gfx::Size()),
-                              MENU_ANCHOR_TOPRIGHT,
-                              ui::MENU_SOURCE_NONE) ==
-      MenuRunner::MENU_DELETED) {
-    return;
-  }
+  menu_runner_->RunMenuAt(source->GetWidget()->GetTopLevelWidget(), this,
+                          gfx::Rect(point, gfx::Size()), MENU_ANCHOR_TOPRIGHT,
+                          ui::MENU_SOURCE_NONE);
 }
 
 ui::SimpleMenuModel* ExampleMenuButton::GetMenuModel() {

@@ -58,9 +58,11 @@
      * Selects the given value. If the `multi` property is true, then the selected state of the
      * `value` will be toggled; otherwise the `value` will be selected.
      *
-     * @param {string} value the value to select.
+     * @param {string|number} value the value to select.
      */
     select: function(value) {
+      // Cancel automatically focusing a default item if the menu received focus
+      // through a user action selecting a particular item.
       if (this._defaultFocusAsync) {
         this.cancelAsync(this._defaultFocusAsync);
         this._defaultFocusAsync = null;
@@ -109,7 +111,9 @@
       for (var i = 0, item; item = this.items[i]; i++) {
         var attr = this.attrForItemTitle || 'textContent';
         var title = item[attr] || item.getAttribute(attr);
-        if (title && title.trim().charAt(0).toLowerCase() === String.fromCharCode(event.keyCode).toLowerCase()) {
+
+        if (!item.hasAttribute('disabled') && title &&
+            title.trim().charAt(0).toLowerCase() === String.fromCharCode(event.keyCode).toLowerCase()) {
           this._setFocusedItem(item);
           break;
         }
@@ -118,21 +122,50 @@
 
     /**
      * Focuses the previous item (relative to the currently focused item) in the
-     * menu.
+     * menu, disabled items will be skipped.
+     * Loop until length + 1 to handle case of single item in menu.
      */
     _focusPrevious: function() {
       var length = this.items.length;
-      var index = (Number(this.indexOf(this.focusedItem)) - 1 + length) % length;
-      this._setFocusedItem(this.items[index]);
+      var curFocusIndex = Number(this.indexOf(this.focusedItem));
+
+      for (var i = 1; i < length + 1; i++) {
+        var item = this.items[(curFocusIndex - i + length) % length];
+        if (!item.hasAttribute('disabled')) {
+          var owner = Polymer.dom(item).getOwnerRoot() || document;
+          this._setFocusedItem(item);
+
+          // Focus might not have worked, if the element was hidden or not
+          // focusable. In that case, try again.
+          if (Polymer.dom(owner).activeElement == item) {
+            return;
+          }
+        }
+      }
     },
 
     /**
      * Focuses the next item (relative to the currently focused item) in the
-     * menu.
+     * menu, disabled items will be skipped.
+     * Loop until length + 1 to handle case of single item in menu.
      */
     _focusNext: function() {
-      var index = (Number(this.indexOf(this.focusedItem)) + 1) % this.items.length;
-      this._setFocusedItem(this.items[index]);
+      var length = this.items.length;
+      var curFocusIndex = Number(this.indexOf(this.focusedItem));
+
+      for (var i = 1; i < length + 1; i++) {
+        var item = this.items[(curFocusIndex + i) % length];
+        if (!item.hasAttribute('disabled')) {
+          var owner = Polymer.dom(item).getOwnerRoot() || document;
+          this._setFocusedItem(item);
+
+          // Focus might not have worked, if the element was hidden or not
+          // focusable. In that case, try again.
+          if (Polymer.dom(owner).activeElement == item) {
+            return;
+          }
+        }
+      }
     },
 
     /**
@@ -149,7 +182,6 @@
       } else {
         item.removeAttribute('aria-selected');
       }
-
       Polymer.IronSelectableBehavior._applySelection.apply(this, arguments);
     },
 
@@ -177,17 +209,8 @@
      * detail.
      */
     _onIronItemsChanged: function(event) {
-      var mutations = event.detail;
-      var mutation;
-      var index;
-
-      for (index = 0; index < mutations.length; ++index) {
-        mutation = mutations[index];
-
-        if (mutation.addedNodes.length) {
-          this._resetTabindices();
-          break;
-        }
+      if (event.detail.addedNodes.length) {
+        this._resetTabindices();
       }
     },
 
@@ -197,18 +220,18 @@
      * @param {CustomEvent} event A key combination event.
      */
     _onShiftTabDown: function(event) {
-      var oldTabIndex;
+      var oldTabIndex = this.getAttribute('tabindex');
 
       Polymer.IronMenuBehaviorImpl._shiftTabPressed = true;
 
-      oldTabIndex = this.getAttribute('tabindex');
+      this._setFocusedItem(null);
 
       this.setAttribute('tabindex', '-1');
 
       this.async(function() {
         this.setAttribute('tabindex', oldTabIndex);
         Polymer.IronMenuBehaviorImpl._shiftTabPressed = false;
-      // NOTE(cdata): polymer/polymer#1305
+        // NOTE(cdata): polymer/polymer#1305
       }, 1);
     },
 
@@ -219,23 +242,33 @@
      */
     _onFocus: function(event) {
       if (Polymer.IronMenuBehaviorImpl._shiftTabPressed) {
+        // do not focus the menu itself
         return;
       }
-      // do not focus the menu itself
-      this.blur();
+
+      // Do not focus the selected tab if the deepest target is part of the
+      // menu element's local DOM and is focusable.
+      var rootTarget = /** @type {?HTMLElement} */(
+          Polymer.dom(event).rootTarget);
+      if (rootTarget !== this && typeof rootTarget.tabIndex !== "undefined" && !this.isLightDescendant(rootTarget)) {
+        return;
+      }
+
       // clear the cached focus item
-      this._setFocusedItem(null);
       this._defaultFocusAsync = this.async(function() {
         // focus the selected item when the menu receives focus, or the first item
         // if no item is selected
         var selectedItem = this.multi ? (this.selectedItems && this.selectedItems[0]) : this.selectedItem;
+
+        this._setFocusedItem(null);
+
         if (selectedItem) {
           this._setFocusedItem(selectedItem);
-        } else {
-          this._setFocusedItem(this.items[0]);
+        } else if (this.items[0]) {
+          // We find the first none-disabled item (if one exists)
+          this._focusNext();
         }
-      // async 100ms to wait for `select` to get called from `_itemActivate`
-      }, 100);
+      });
     },
 
     /**
@@ -246,6 +279,7 @@
     _onUpKey: function(event) {
       // up and down arrows moves the focus
       this._focusPrevious();
+      event.detail.keyboardEvent.preventDefault();
     },
 
     /**
@@ -255,6 +289,7 @@
      */
     _onDownKey: function(event) {
       this._focusNext();
+      event.detail.keyboardEvent.preventDefault();
     },
 
     /**
@@ -273,12 +308,17 @@
      * @param {KeyboardEvent} event A keyboard event.
      */
     _onKeydown: function(event) {
-      if (this.keyboardEventMatchesKeys(event, 'up down esc')) {
-        return;
+      if (!this.keyboardEventMatchesKeys(event, 'up down esc')) {
+        // all other keys focus the menu item starting with that character
+        this._focusWithKeyboardEvent(event);
       }
+      event.stopPropagation();
+    },
 
-      // all other keys focus the menu item starting with that character
-      this._focusWithKeyboardEvent(event);
+    // override _activateHandler
+    _activateHandler: function(event) {
+      Polymer.IronSelectableBehavior._activateHandler.call(this, event);
+      event.stopPropagation();
     }
   };
 

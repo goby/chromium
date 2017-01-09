@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/common/service_process_util_posix.h"
-
 #include <signal.h>
 #include <unistd.h>
+
+#include <memory>
 
 #include "base/base_paths.h"
 #include "base/command_line.h"
@@ -15,6 +15,7 @@
 #include "base/threading/platform_thread.h"
 #include "chrome/common/auto_start_linux.h"
 #include "chrome/common/multi_process_lock.h"
+#include "chrome/common/service_process_util_posix.h"
 
 namespace {
 
@@ -50,18 +51,18 @@ bool ForceServiceProcessShutdown(const std::string& version,
 
 // Gets the name of the service process IPC channel.
 // Returns an absolute path as required.
-IPC::ChannelHandle GetServiceProcessChannel() {
+mojo::edk::NamedPlatformHandle GetServiceProcessChannel() {
   base::FilePath temp_dir;
   PathService::Get(base::DIR_TEMP, &temp_dir);
   std::string pipe_name = GetServiceProcessScopedVersionedName("_service_ipc");
   std::string pipe_path = temp_dir.Append(pipe_name).value();
-  return pipe_path;
+  return mojo::edk::NamedPlatformHandle(pipe_path);
 }
 
 
 
 bool CheckServiceProcessReady() {
-  scoped_ptr<MultiProcessLock> running_lock(TakeServiceRunningLock(false));
+  std::unique_ptr<MultiProcessLock> running_lock(TakeServiceRunningLock(false));
   return running_lock.get() == NULL;
 }
 

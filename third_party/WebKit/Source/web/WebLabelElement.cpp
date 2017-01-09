@@ -28,37 +28,32 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebLabelElement.h"
 
 #include "core/HTMLNames.h"
 #include "core/html/HTMLLabelElement.h"
+#include "core/html/LabelableElement.h"
 #include "public/platform/WebString.h"
 #include "wtf/PassRefPtr.h"
 
 namespace blink {
 
-WebElement WebLabelElement::correspondingControl()
-{
-    return WebElement(unwrap<HTMLLabelElement>()->control());
+WebElement WebLabelElement::correspondingControl() {
+  return WebElement(unwrap<HTMLLabelElement>()->control());
 }
 
-WebLabelElement::WebLabelElement(const PassRefPtrWillBeRawPtr<HTMLLabelElement>& elem)
-    : WebElement(elem)
-{
+WebLabelElement::WebLabelElement(HTMLLabelElement* elem) : WebElement(elem) {}
+
+DEFINE_WEB_NODE_TYPE_CASTS(WebLabelElement,
+                           isHTMLLabelElement(constUnwrap<Node>()));
+
+WebLabelElement& WebLabelElement::operator=(HTMLLabelElement* elem) {
+  m_private = elem;
+  return *this;
 }
 
-DEFINE_WEB_NODE_TYPE_CASTS(WebLabelElement, isHTMLLabelElement(constUnwrap<Node>()));
-
-WebLabelElement& WebLabelElement::operator=(const PassRefPtrWillBeRawPtr<HTMLLabelElement>& elem)
-{
-    m_private = elem;
-    return *this;
+WebLabelElement::operator HTMLLabelElement*() const {
+  return toHTMLLabelElement(m_private.get());
 }
 
-WebLabelElement::operator PassRefPtrWillBeRawPtr<HTMLLabelElement>() const
-{
-    return toHTMLLabelElement(m_private.get());
-}
-
-} // namespace blink
+}  // namespace blink

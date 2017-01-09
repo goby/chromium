@@ -1,3 +1,4 @@
+CONSOLE WARNING: line 18: The <keygen> element is deprecated and will be removed in M57, around March 2017. See https://www.chromestatus.com/features/5716060992962560 for more details.
 This test documents all properties on all element instances.
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -26,11 +27,15 @@ namespace http://www.w3.org/1999/xhtml
     property TEXT_NODE
     property accessKey
     property addEventListener
+    property after
     property animate
+    property append
     property appendChild
+    property assignedSlot
     property attachShadow
     property attributes
     property baseURI
+    property before
     property blur
     property childElementCount
     property childNodes
@@ -69,18 +74,22 @@ namespace http://www.w3.org/1999/xhtml
     property getElementsByClassName
     property getElementsByTagName
     property getElementsByTagNameNS
+    property getRootNode
     property hasAttribute
     property hasAttributeNS
     property hasAttributes
     property hasChildNodes
+    property hasPointerCapture
     property hidden
     property id
     property innerHTML
     property innerText
+    property inputMode
     property insertAdjacentElement
     property insertAdjacentHTML
     property insertAdjacentText
     property insertBefore
+    property isConnected
     property isContentEditable
     property isDefaultNamespace
     property isEqualNode
@@ -105,8 +114,7 @@ namespace http://www.w3.org/1999/xhtml
     property offsetTop
     property offsetWidth
     property onabort
-    property onautocomplete
-    property onautocompleteerror
+    property onauxclick
     property onbeforecopy
     property onbeforecut
     property onbeforepaste
@@ -134,6 +142,7 @@ namespace http://www.w3.org/1999/xhtml
     property onended
     property onerror
     property onfocus
+    property ongotpointercapture
     property oninput
     property oninvalid
     property onkeydown
@@ -143,6 +152,7 @@ namespace http://www.w3.org/1999/xhtml
     property onloadeddata
     property onloadedmetadata
     property onloadstart
+    property onlostpointercapture
     property onmousedown
     property onmouseenter
     property onmouseleave
@@ -155,6 +165,14 @@ namespace http://www.w3.org/1999/xhtml
     property onpause
     property onplay
     property onplaying
+    property onpointercancel
+    property onpointerdown
+    property onpointerenter
+    property onpointerleave
+    property onpointermove
+    property onpointerout
+    property onpointerover
+    property onpointerup
     property onprogress
     property onratechange
     property onreset
@@ -186,10 +204,12 @@ namespace http://www.w3.org/1999/xhtml
     property parentElement
     property parentNode
     property prefix
+    property prepend
     property previousElementSibling
     property previousSibling
     property querySelector
     property querySelectorAll
+    property releasePointerCapture
     property remove
     property removeAttribute
     property removeAttributeNS
@@ -197,6 +217,7 @@ namespace http://www.w3.org/1999/xhtml
     property removeChild
     property removeEventListener
     property replaceChild
+    property replaceWith
     property requestFullscreen
     property requestPointerLock
     property scroll
@@ -212,13 +233,17 @@ namespace http://www.w3.org/1999/xhtml
     property setAttributeNS
     property setAttributeNode
     property setAttributeNodeNS
+    property setPointerCapture
     property shadowRoot
+    property slot
     property spellcheck
     property style
+    property styleMap
     property tabIndex
     property tagName
     property textContent
     property title
+    property toString
     property translate
     property webkitMatchesSelector
     property webkitRequestFullScreen
@@ -240,7 +265,7 @@ html element a
     property ping
     property port
     property protocol
-    property referrerpolicy
+    property referrerPolicy
     property rel
     property rev
     property search
@@ -256,6 +281,7 @@ html element applet
 html element area
     property alt
     property coords
+    property download
     property hash
     property host
     property hostname
@@ -267,6 +293,8 @@ html element area
     property ping
     property port
     property protocol
+    property referrerPolicy
+    property rel
     property search
     property shape
     property target
@@ -288,12 +316,14 @@ html element audio
     property autoplay
     property buffered
     property canPlayType
+    property captureStream
     property controls
     property crossOrigin
     property currentSrc
     property currentTime
     property defaultMuted
     property defaultPlaybackRate
+    property disableRemotePlayback
     property duration
     property ended
     property error
@@ -303,10 +333,7 @@ html element audio
     property muted
     property networkState
     property onencrypted
-    property onwebkitkeyadded
-    property onwebkitkeyerror
-    property onwebkitkeymessage
-    property onwebkitneedkey
+    property onwaitingforkey
     property pause
     property paused
     property play
@@ -314,19 +341,18 @@ html element audio
     property played
     property preload
     property readyState
+    property remote
     property seekable
     property seeking
     property setMediaKeys
     property setSinkId
     property sinkId
     property src
+    property srcObject
     property textTracks
     property videoTracks
     property volume
-    property webkitAddKey
     property webkitAudioDecodedByteCount
-    property webkitCancelKeyRequest
-    property webkitGenerateKeyRequest
     property webkitVideoDecodedByteCount
 html element b
 html element base
@@ -381,10 +407,12 @@ html element button
     property value
     property willValidate
 html element canvas
+    property captureStream
     property getContext
     property height
     property toBlob
     property toDataURL
+    property transferControlToOffscreen
     property width
 html element caption
     property align
@@ -472,7 +500,6 @@ html element form
     property name
     property noValidate
     property reportValidity
-    property requestAutocomplete
     property reset
     property submit
     property target
@@ -530,8 +557,10 @@ html element i
 html element iframe
     property align
     property allowFullscreen
+    property allowPaymentRequest
     property contentDocument
     property contentWindow
+    property csp
     property frameBorder
     property getSVGDocument
     property height
@@ -539,7 +568,8 @@ html element iframe
     property marginHeight
     property marginWidth
     property name
-    property referrerpolicy
+    property permissions
+    property referrerPolicy
     property sandbox
     property scrolling
     property src
@@ -561,7 +591,7 @@ html element img
     property name
     property naturalHeight
     property naturalWidth
-    property referrerpolicy
+    property referrerPolicy
     property sizes
     property src
     property srcset
@@ -593,7 +623,6 @@ html element input
     property height
     property incremental
     property indeterminate
-    property inputMode
     property labels
     property list
     property max
@@ -671,7 +700,9 @@ html element link
     property integrity
     property media
     property rel
+    property relList
     property rev
+    property scope
     property sheet
     property sizes
     property target
@@ -737,6 +768,7 @@ html element object
     property codeBase
     property codeType
     property contentDocument
+    property contentWindow
     property data
     property declare
     property form
@@ -850,6 +882,7 @@ html element select
 html element shadow
     property getDistributedNodes
 html element slot
+    property assignedNodes
     property name
 html element small
 html element source
@@ -928,7 +961,6 @@ html element textarea
     property dirName
     property disabled
     property form
-    property inputMode
     property labels
     property maxLength
     property minLength
@@ -1030,12 +1062,14 @@ html element video
     property autoplay
     property buffered
     property canPlayType
+    property captureStream
     property controls
     property crossOrigin
     property currentSrc
     property currentTime
     property defaultMuted
     property defaultPlaybackRate
+    property disableRemotePlayback
     property duration
     property ended
     property error
@@ -1047,10 +1081,7 @@ html element video
     property muted
     property networkState
     property onencrypted
-    property onwebkitkeyadded
-    property onwebkitkeyerror
-    property onwebkitkeymessage
-    property onwebkitneedkey
+    property onwaitingforkey
     property pause
     property paused
     property play
@@ -1059,20 +1090,20 @@ html element video
     property poster
     property preload
     property readyState
+    property remote
     property seekable
     property seeking
     property setMediaKeys
     property setSinkId
     property sinkId
     property src
+    property srcObject
     property textTracks
     property videoHeight
     property videoTracks
     property videoWidth
     property volume
-    property webkitAddKey
     property webkitAudioDecodedByteCount
-    property webkitCancelKeyRequest
     property webkitDecodedFrameCount
     property webkitDisplayingFullscreen
     property webkitDroppedFrameCount
@@ -1080,7 +1111,6 @@ html element video
     property webkitEnterFullscreen
     property webkitExitFullScreen
     property webkitExitFullscreen
-    property webkitGenerateKeyRequest
     property webkitSupportsFullscreen
     property webkitVideoDecodedByteCount
     property width
@@ -1110,11 +1140,15 @@ namespace http://www.w3.org/2000/svg
     property TEXT_NODE
     property accessKey
     property addEventListener
+    property after
     property animate
+    property append
     property appendChild
+    property assignedSlot
     property attachShadow
     property attributes
     property baseURI
+    property before
     property blur
     property childElementCount
     property childNodes
@@ -1153,18 +1187,22 @@ namespace http://www.w3.org/2000/svg
     property getElementsByClassName
     property getElementsByTagName
     property getElementsByTagNameNS
+    property getRootNode
     property hasAttribute
     property hasAttributeNS
     property hasAttributes
     property hasChildNodes
+    property hasPointerCapture
     property hidden
     property id
     property innerHTML
     property innerText
+    property inputMode
     property insertAdjacentElement
     property insertAdjacentHTML
     property insertAdjacentText
     property insertBefore
+    property isConnected
     property isContentEditable
     property isDefaultNamespace
     property isEqualNode
@@ -1189,8 +1227,7 @@ namespace http://www.w3.org/2000/svg
     property offsetTop
     property offsetWidth
     property onabort
-    property onautocomplete
-    property onautocompleteerror
+    property onauxclick
     property onbeforecopy
     property onbeforecut
     property onbeforepaste
@@ -1218,6 +1255,7 @@ namespace http://www.w3.org/2000/svg
     property onended
     property onerror
     property onfocus
+    property ongotpointercapture
     property oninput
     property oninvalid
     property onkeydown
@@ -1227,6 +1265,7 @@ namespace http://www.w3.org/2000/svg
     property onloadeddata
     property onloadedmetadata
     property onloadstart
+    property onlostpointercapture
     property onmousedown
     property onmouseenter
     property onmouseleave
@@ -1239,6 +1278,14 @@ namespace http://www.w3.org/2000/svg
     property onpause
     property onplay
     property onplaying
+    property onpointercancel
+    property onpointerdown
+    property onpointerenter
+    property onpointerleave
+    property onpointermove
+    property onpointerout
+    property onpointerover
+    property onpointerup
     property onprogress
     property onratechange
     property onreset
@@ -1270,10 +1317,12 @@ namespace http://www.w3.org/2000/svg
     property parentElement
     property parentNode
     property prefix
+    property prepend
     property previousElementSibling
     property previousSibling
     property querySelector
     property querySelectorAll
+    property releasePointerCapture
     property remove
     property removeAttribute
     property removeAttributeNS
@@ -1281,6 +1330,7 @@ namespace http://www.w3.org/2000/svg
     property removeChild
     property removeEventListener
     property replaceChild
+    property replaceWith
     property requestFullscreen
     property requestPointerLock
     property scroll
@@ -1296,13 +1346,17 @@ namespace http://www.w3.org/2000/svg
     property setAttributeNS
     property setAttributeNode
     property setAttributeNodeNS
+    property setPointerCapture
     property shadowRoot
+    property slot
     property spellcheck
     property style
+    property styleMap
     property tabIndex
     property tagName
     property textContent
     property title
+    property toString
     property translate
     property webkitMatchesSelector
     property webkitRequestFullScreen
@@ -1324,7 +1378,7 @@ svg element a
     property ping
     property port
     property protocol
-    property referrerpolicy
+    property referrerPolicy
     property rel
     property rev
     property search

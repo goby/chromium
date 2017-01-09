@@ -5,6 +5,7 @@
 #ifndef PPAPI_SHARED_IMPL_PPAPI_CONSTANTS_H_
 #define PPAPI_SHARED_IMPL_PPAPI_CONSTANTS_H_
 
+#include "build/build_config.h"
 #include "ppapi/shared_impl/ppapi_shared_export.h"
 
 namespace ppapi {
@@ -21,6 +22,9 @@ const char kPowerSaverTestPluginName[] = "power_saver_test_plugin.plugin";
 #elif defined(OS_POSIX)
 const char kPowerSaverTestPluginName[] = "libpower_saver_test_plugin.so";
 #endif
+
+// Name of the root directory in the plugin private file system.
+const char kPluginPrivateRootName[] = "pluginprivate";
 
 }  // namespace ppapi
 

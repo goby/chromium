@@ -25,10 +25,10 @@ CopyTreeWorkItem::CopyTreeWorkItem(const base::FilePath& source_path,
       alternative_path_(alternative_path),
       copied_to_dest_path_(false),
       moved_to_backup_(false),
-      copied_to_alternate_path_(false) {
-}
+      copied_to_alternate_path_(false),
+      backup_path_created_(false) {}
 
-bool CopyTreeWorkItem::Do() {
+bool CopyTreeWorkItem::DoImpl() {
   if (!base::PathExists(source_path_)) {
     LOG(ERROR) << source_path_.value() << " does not exist";
     return false;
@@ -76,8 +76,10 @@ bool CopyTreeWorkItem::Do() {
                   << temp_dir_.value();
       return false;
     }
+    backup_path_created_ = true;
 
-    base::FilePath backup = backup_path_.path().Append(dest_path_.BaseName());
+    base::FilePath backup =
+        backup_path_.GetPath().Append(dest_path_.BaseName());
     if (base::Move(dest_path_, backup)) {
       moved_to_backup_ = true;
       VLOG(1) << "Moved destination " << dest_path_.value() <<
@@ -103,7 +105,7 @@ bool CopyTreeWorkItem::Do() {
   return true;
 }
 
-void CopyTreeWorkItem::Rollback() {
+void CopyTreeWorkItem::RollbackImpl() {
   // Normally the delete operations below should not fail unless some
   // programs like anti-virus are inspecting the files we just copied.
   // If this does happen sometimes, we may consider using Move instead of
@@ -113,7 +115,7 @@ void CopyTreeWorkItem::Rollback() {
     LOG(ERROR) << "Can not delete " << dest_path_.value();
   }
   if (moved_to_backup_) {
-    base::FilePath backup(backup_path_.path().Append(dest_path_.BaseName()));
+    base::FilePath backup(backup_path_.GetPath().Append(dest_path_.BaseName()));
     if (!base::Move(backup, dest_path_)) {
       PLOG(ERROR) << "failed move " << backup.value()
                   << " to " << dest_path_.value();

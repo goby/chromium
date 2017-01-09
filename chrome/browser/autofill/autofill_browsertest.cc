@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
@@ -16,6 +17,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -116,6 +118,7 @@ class AutofillTest : public InProcessBrowserTest {
             ->DriverForFrame(web_contents->GetMainFrame())
             ->autofill_manager();
     autofill_manager->client()->HideAutofillPopup();
+    test::ReenableSystemServices();
   }
 
   PersonalDataManager* personal_data_manager() {
@@ -175,10 +178,10 @@ class AutofillTest : public InProcessBrowserTest {
     GURL url = embedded_test_server()->GetURL("/autofill/" + filename);
     chrome::NavigateParams params(browser(), url,
                                   ui::PAGE_TRANSITION_LINK);
-    params.disposition = NEW_FOREGROUND_TAB;
+    params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
     ui_test_utils::NavigateToURL(&params);
 
-    scoped_ptr<WindowedPersonalDataManagerObserver> observer;
+    std::unique_ptr<WindowedPersonalDataManagerObserver> observer;
     if (expect_personal_data_change)
       observer.reset(new WindowedPersonalDataManagerObserver(browser()));
 
@@ -189,25 +192,13 @@ class AutofillTest : public InProcessBrowserTest {
       // triggered by user gestures are ignored.
       content::SimulateMouseClick(
           browser()->tab_strip_model()->GetActiveWebContents(), 0,
-          blink::WebMouseEvent::ButtonLeft);
+          blink::WebMouseEvent::Button::Left);
     }
     // We may not always be expecting changes in Personal data.
     if (observer.get())
       observer->Wait();
     else
       base::RunLoop().RunUntilIdle();
-  }
-
-  void SubmitCreditCard(const char* name,
-                        const char* number,
-                        const char* exp_month,
-                        const char* exp_year) {
-    FormMap data;
-    data["CREDIT_CARD_NAME"] = name;
-    data["CREDIT_CARD_NUMBER"] = number;
-    data["CREDIT_CARD_EXP_MONTH"] = exp_month;
-    data["CREDIT_CARD_EXP_4_DIGIT_YEAR"] = exp_year;
-    FillFormAndSubmit("autofill_creditcard_form.html", data);
   }
 
   // Aggregate profiles from forms into Autofill preferences. Returns the number
@@ -252,32 +243,9 @@ class AutofillTest : public InProcessBrowserTest {
     return parsed_profiles;
   }
 
-  void ExpectFieldValue(const std::string& field_name,
-                        const std::string& expected_value) {
-    std::string value;
-    ASSERT_TRUE(content::ExecuteScriptAndExtractString(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        "window.domAutomationController.send("
-        "    document.getElementById('" + field_name + "').value);",
-        &value));
-    EXPECT_EQ(expected_value, value);
-  }
-
   content::RenderViewHost* render_view_host() {
     return browser()->tab_strip_model()->GetActiveWebContents()->
         GetRenderViewHost();
-  }
-
-  void ExpectFilledTestForm() {
-    ExpectFieldValue("firstname", "Milton");
-    ExpectFieldValue("lastname", "Waddams");
-    ExpectFieldValue("address1", "4120 Freidrich Lane");
-    ExpectFieldValue("address2", "Basement");
-    ExpectFieldValue("city", "Austin");
-    ExpectFieldValue("state", "TX");
-    ExpectFieldValue("zip", "78744");
-    ExpectFieldValue("country", "US");
-    ExpectFieldValue("phone", "5125551234");
   }
 
  private:
@@ -397,7 +365,7 @@ IN_PROC_BROWSER_TEST_F(AutofillTest, FillProfileCrazyCharacters) {
 
   std::vector<CreditCard> cards;
   CreditCard card1;
-  card1.SetRawInfo(CREDIT_CARD_NAME,
+  card1.SetRawInfo(CREDIT_CARD_NAME_FULL,
                    WideToUTF16(L"\u751f\u6d3b\u5f88\u6709\u89c4\u5f8b "
                                L"\u4ee5\u73a9\u4e3a\u4e3b"));
   card1.SetRawInfo(CREDIT_CARD_NUMBER, WideToUTF16(L"6011111111111117"));
@@ -406,14 +374,14 @@ IN_PROC_BROWSER_TEST_F(AutofillTest, FillProfileCrazyCharacters) {
   cards.push_back(card1);
 
   CreditCard card2;
-  card2.SetRawInfo(CREDIT_CARD_NAME, WideToUTF16(L"John Williams"));
+  card2.SetRawInfo(CREDIT_CARD_NAME_FULL, WideToUTF16(L"John Williams"));
   card2.SetRawInfo(CREDIT_CARD_NUMBER, WideToUTF16(L"WokoAwesome12345"));
   card2.SetRawInfo(CREDIT_CARD_EXP_MONTH, WideToUTF16(L"10"));
   card2.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, WideToUTF16(L"2015"));
   cards.push_back(card2);
 
   CreditCard card3;
-  card3.SetRawInfo(CREDIT_CARD_NAME,
+  card3.SetRawInfo(CREDIT_CARD_NAME_FULL,
                    WideToUTF16(L"\u0623\u062d\u0645\u062f\u064a "
                                L"\u0646\u062c\u0627\u062f "
                                L"\u0644\u0645\u062d\u0627\u0648\u0644\u0647 "
@@ -429,7 +397,7 @@ IN_PROC_BROWSER_TEST_F(AutofillTest, FillProfileCrazyCharacters) {
   cards.push_back(card3);
 
   CreditCard card4;
-  card4.SetRawInfo(CREDIT_CARD_NAME,
+  card4.SetRawInfo(CREDIT_CARD_NAME_FULL,
                    WideToUTF16(L"\u039d\u03ad\u03b5\u03c2 "
                                L"\u03c3\u03c5\u03b3\u03c7\u03c9\u03bd\u03b5"
                                L"\u03cd\u03c3\u03b5\u03b9\u03c2 "

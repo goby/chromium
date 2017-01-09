@@ -5,21 +5,26 @@
 #import "ios/chrome/browser/metrics/previous_session_info.h"
 
 #include "base/logging.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/version_info/version_info.h"
+#import "ios/chrome/browser/metrics/previous_session_info_private.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
-
-// Key in the UserDefaults for a boolean value keeping track of memory warnings.
-NSString* const kDidSeeMemoryWarningShortlyBeforeTerminating =
-    @"DidSeeMemoryWarning";
 
 // Key in the NSUserDefaults for a string value that stores the version of the
 // last session.
 NSString* const kLastRanVersion = @"LastRanVersion";
 
 }  // namespace
+
+namespace previous_session_info_constants {
+NSString* const kDidSeeMemoryWarningShortlyBeforeTerminating =
+    @"DidSeeMemoryWarning";
+}  // namespace previous_session_info_constants
 
 @interface PreviousSessionInfo ()
 
@@ -49,7 +54,8 @@ static PreviousSessionInfo* gSharedInstance = nil;
     // Load the persisted information.
     NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
     gSharedInstance.didSeeMemoryWarningShortlyBeforeTerminating =
-        [defaults boolForKey:kDidSeeMemoryWarningShortlyBeforeTerminating];
+        [defaults boolForKey:previous_session_info_constants::
+                                 kDidSeeMemoryWarningShortlyBeforeTerminating];
     NSString* lastRanVersion = [defaults stringForKey:kLastRanVersion];
     NSString* currentVersion =
         base::SysUTF8ToNSString(version_info::GetVersionNumber());
@@ -60,7 +66,6 @@ static PreviousSessionInfo* gSharedInstance = nil;
 }
 
 + (void)resetSharedInstanceForTesting {
-  [gSharedInstance release];
   gSharedInstance = nil;
 }
 
@@ -77,7 +82,9 @@ static PreviousSessionInfo* gSharedInstance = nil;
   [defaults setObject:currentVersion forKey:kLastRanVersion];
 
   // Clear the memory warning flag.
-  [defaults removeObjectForKey:kDidSeeMemoryWarningShortlyBeforeTerminating];
+  [defaults
+      removeObjectForKey:previous_session_info_constants::
+                             kDidSeeMemoryWarningShortlyBeforeTerminating];
 
   // Save critical state information for crash detection.
   [defaults synchronize];
@@ -88,7 +95,9 @@ static PreviousSessionInfo* gSharedInstance = nil;
     return;
 
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-  [defaults setBool:YES forKey:kDidSeeMemoryWarningShortlyBeforeTerminating];
+  [defaults setBool:YES
+             forKey:previous_session_info_constants::
+                        kDidSeeMemoryWarningShortlyBeforeTerminating];
   // Save critical state information for crash detection.
   [defaults synchronize];
 }
@@ -98,7 +107,9 @@ static PreviousSessionInfo* gSharedInstance = nil;
     return;
 
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-  [defaults removeObjectForKey:kDidSeeMemoryWarningShortlyBeforeTerminating];
+  [defaults
+      removeObjectForKey:previous_session_info_constants::
+                             kDidSeeMemoryWarningShortlyBeforeTerminating];
   // Save critical state information for crash detection.
   [defaults synchronize];
 }

@@ -3,14 +3,13 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
-import("//chrome/version.gni")  # TODO layering violation!
+import("//chrome/process_version_rc_template.gni")
+import("//media/cdm/ppapi/cdm_paths.gni")
 import("//media/cdm/ppapi/ppapi_cdm_adapter.gni")
 import("//media/media_options.gni")
 
-# The GYP version supports build flags "use_fake_video_decoder" and
-# "use_vpx". These should be added here if necessary but its not clear if
-# they are required any more.
 shared_library("clearkeycdm") {
+  output_dir = "$root_out_dir/$clearkey_cdm_path"
   sources = [
     "cdm_file_io_test.cc",
     "cdm_file_io_test.h",
@@ -30,6 +29,7 @@ shared_library("clearkeycdm") {
     "//base",
     "//build/config/sanitizers:deps",
     "//media",  # For media::AudioTimestampHelper
+    "//media:cdm_api",  # For content_decryption_module.h
     "//media:shared_memory_support",  # For media::AudioBus.
     "//url",
   ]
@@ -45,12 +45,13 @@ shared_library("clearkeycdm") {
     deps += [ "//third_party/ffmpeg" ]
   }
 
-  # TODO(GYP) on Mac: 'DYLIB_INSTALL_NAME_BASE': '@loader_path',
+  if (is_mac) {
+    ldflags = [ "-Wl,-install_name,@loader_path/libclearkeycdm.dylib" ]
+  }
 }
 
-process_version("clearkeycdmadapter_resources") {
+process_version_rc_template("clearkeycdmadapter_resources") {
   visibility = [ ":*" ]
-  template_file = chrome_version_rc_template
   sources = [
     "//media/clearkeycdmadapter.ver",
     "external_clear_key/BRANDING",
@@ -59,11 +60,15 @@ process_version("clearkeycdmadapter_resources") {
 }
 
 ppapi_cdm_adapter("clearkeycdmadapter") {
+  output_dir = "$root_out_dir/$clearkey_cdm_path"
+
   # Check whether the plugin's origin URL is valid.
   defines = [ "CHECK_DOCUMENT_URL" ]
   deps = [
     ":clearkeycdm",
     ":clearkeycdmadapter_resources",
-    "//ppapi/cpp",
+    "//base",  # Required for the allocator implementation.
+    "//media:shared_memory_support",
+    "//ui/gfx/geometry",
   ]
 }

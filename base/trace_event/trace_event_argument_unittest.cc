@@ -4,8 +4,11 @@
 
 #include "base/trace_event/trace_event_argument.h"
 
+#include <stddef.h>
+
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -13,7 +16,7 @@ namespace base {
 namespace trace_event {
 
 TEST(TraceEventArgumentTest, FlatDictionary) {
-  scoped_refptr<TracedValue> value = new TracedValue();
+  std::unique_ptr<TracedValue> value(new TracedValue());
   value->SetInteger("int", 2014);
   value->SetDouble("double", 0.0);
   value->SetBoolean("bool", true);
@@ -26,7 +29,7 @@ TEST(TraceEventArgumentTest, FlatDictionary) {
 }
 
 TEST(TraceEventArgumentTest, NoDotPathExpansion) {
-  scoped_refptr<TracedValue> value = new TracedValue();
+  std::unique_ptr<TracedValue> value(new TracedValue());
   value->SetInteger("in.t", 2014);
   value->SetDouble("doub.le", 0.0);
   value->SetBoolean("bo.ol", true);
@@ -39,7 +42,7 @@ TEST(TraceEventArgumentTest, NoDotPathExpansion) {
 }
 
 TEST(TraceEventArgumentTest, Hierarchy) {
-  scoped_refptr<TracedValue> value = new TracedValue();
+  std::unique_ptr<TracedValue> value(new TracedValue());
   value->SetInteger("i0", 2014);
   value->BeginDictionary("dict1");
   value->SetInteger("i1", 2014);
@@ -75,7 +78,7 @@ TEST(TraceEventArgumentTest, LongStrings) {
     kLongString3[i] = 'a' + (i % 25);
   kLongString3[sizeof(kLongString3) - 1] = '\0';
 
-  scoped_refptr<TracedValue> value = new TracedValue();
+  std::unique_ptr<TracedValue> value(new TracedValue());
   value->SetString("a", "short");
   value->SetString("b", kLongString);
   value->BeginArray("c");
@@ -98,20 +101,20 @@ TEST(TraceEventArgumentTest, PassBaseValue) {
   FundamentalValue bool_value(true);
   FundamentalValue double_value(42.0f);
 
-  auto dict_value = make_scoped_ptr(new DictionaryValue);
+  auto dict_value = WrapUnique(new DictionaryValue);
   dict_value->SetBoolean("bool", true);
   dict_value->SetInteger("int", 42);
   dict_value->SetDouble("double", 42.0f);
   dict_value->SetString("string", std::string("a") + "b");
   dict_value->SetString("string", std::string("a") + "b");
 
-  auto list_value = make_scoped_ptr(new ListValue);
+  auto list_value = WrapUnique(new ListValue);
   list_value->AppendBoolean(false);
   list_value->AppendInteger(1);
   list_value->AppendString("in_list");
   list_value->Append(std::move(dict_value));
 
-  scoped_refptr<TracedValue> value = new TracedValue();
+  std::unique_ptr<TracedValue> value(new TracedValue());
   value->BeginDictionary("outer_dict");
   value->SetValue("inner_list", std::move(list_value));
   value->EndDictionary();
@@ -128,10 +131,10 @@ TEST(TraceEventArgumentTest, PassBaseValue) {
 }
 
 TEST(TraceEventArgumentTest, PassTracedValue) {
-  auto dict_value = make_scoped_refptr(new TracedValue);
+  auto dict_value = MakeUnique<TracedValue>();
   dict_value->SetInteger("a", 1);
 
-  auto nested_dict_value = make_scoped_refptr(new TracedValue);
+  auto nested_dict_value = MakeUnique<TracedValue>();
   nested_dict_value->SetInteger("b", 2);
   nested_dict_value->BeginArray("c");
   nested_dict_value->AppendString("foo");

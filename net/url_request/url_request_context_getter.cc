@@ -4,6 +4,7 @@
 
 #include "net/url_request/url_request_context_getter.h"
 
+#include "base/debug/leak_annotations.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "net/url_request/url_request_context.h"
@@ -41,10 +42,12 @@ void URLRequestContextGetter::OnDestruct() const {
         // aid in debugging.
         DLOG(WARNING) << "URLRequestContextGetter leaking due to no owning"
                       << " thread.";
+        // Let LSan know we know this is a leak. https://crbug.com/594130
+        ANNOTATE_LEAKING_OBJECT_PTR(this);
       }
     }
   }
-  // If no IO message loop proxy was available, we will just leak memory.
+  // If no IO task runner was available, we will just leak memory.
   // This is also true if the IO thread is gone.
 }
 
@@ -54,8 +57,8 @@ void URLRequestContextGetter::NotifyContextShuttingDown() {
   // Once shutdown starts, this must always return NULL.
   DCHECK(!GetURLRequestContext());
 
-  FOR_EACH_OBSERVER(URLRequestContextGetterObserver, observer_list_,
-                    OnContextShuttingDown());
+  for (auto& observer : observer_list_)
+    observer.OnContextShuttingDown();
 }
 
 TrivialURLRequestContextGetter::TrivialURLRequestContextGetter(

@@ -10,14 +10,13 @@
 
 #include "base/deferred_sequenced_task_runner.h"
 #include "base/macros.h"
+#include "build/build_config.h"
+#include "build/buildflag.h"
+#include "chrome/common/features.h"
 #include "components/bookmarks/browser/bookmark_client.h"
 
 class GURL;
 class Profile;
-
-namespace base {
-class ListValue;
-}
 
 namespace bookmarks {
 class BookmarkModel;
@@ -26,6 +25,12 @@ class BookmarkPermanentNode;
 class ManagedBookmarkService;
 }
 
+#if BUILDFLAG(ANDROID_JAVA_UI)
+namespace offline_pages {
+class OfflinePageBookmarkObserver;
+}
+#endif
+
 class ChromeBookmarkClient : public bookmarks::BookmarkClient {
  public:
   ChromeBookmarkClient(
@@ -33,22 +38,16 @@ class ChromeBookmarkClient : public bookmarks::BookmarkClient {
       bookmarks::ManagedBookmarkService* managed_bookmark_service);
   ~ChromeBookmarkClient() override;
 
-  void Init(bookmarks::BookmarkModel* model);
-
-  // KeyedService:
-  void Shutdown() override;
-
   // bookmarks::BookmarkClient:
+  void Init(bookmarks::BookmarkModel* model) override;
   bool PreferTouchIcon() override;
   base::CancelableTaskTracker::TaskId GetFaviconImageForPageURL(
       const GURL& page_url,
       favicon_base::IconType type,
       const favicon_base::FaviconImageCallback& callback,
       base::CancelableTaskTracker* tracker) override;
-  bool SupportsTypedCountForNodes() override;
-  void GetTypedCountForNodes(
-      const NodeSet& nodes,
-      NodeTypedCountPairs* node_typed_count_pairs) override;
+  bool SupportsTypedCountForUrls() override;
+  void GetTypedCountForUrls(UrlTypedCountMap* url_typed_count_map) override;
   bool IsPermanentNodeVisible(
       const bookmarks::BookmarkPermanentNode* node) override;
   void RecordAction(const base::UserMetricsAction& action) override;
@@ -65,6 +64,12 @@ class ChromeBookmarkClient : public bookmarks::BookmarkClient {
   // Pointer to the ManagedBookmarkService responsible for bookmark policy. May
   // be null during testing.
   bookmarks::ManagedBookmarkService* managed_bookmark_service_;
+
+#if BUILDFLAG(ANDROID_JAVA_UI)
+  // Owns the observer used by Offline Page listening to Bookmark Model events.
+  std::unique_ptr<offline_pages::OfflinePageBookmarkObserver>
+      offline_page_observer_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBookmarkClient);
 };

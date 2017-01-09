@@ -4,7 +4,10 @@
 
 #include "dbus/property.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/logging.h"
 
@@ -140,9 +143,8 @@ bool PropertySet::GetAndBlock(PropertyBase* property) {
   writer.AppendString(property->name());
 
   DCHECK(object_proxy_);
-  scoped_ptr<dbus::Response> response(
-      object_proxy_->CallMethodAndBlock(&method_call,
-                                        ObjectProxy::TIMEOUT_USE_DEFAULT));
+  std::unique_ptr<dbus::Response> response(object_proxy_->CallMethodAndBlock(
+      &method_call, ObjectProxy::TIMEOUT_USE_DEFAULT));
 
   if (!response.get()) {
     LOG(WARNING) << property->name() << ": GetAndBlock: failed.";
@@ -211,9 +213,8 @@ bool PropertySet::SetAndBlock(PropertyBase* property) {
   property->AppendSetValueToWriter(&writer);
 
   DCHECK(object_proxy_);
-  scoped_ptr<dbus::Response> response(
-      object_proxy_->CallMethodAndBlock(&method_call,
-                                        ObjectProxy::TIMEOUT_USE_DEFAULT));
+  std::unique_ptr<dbus::Response> response(object_proxy_->CallMethodAndBlock(
+      &method_call, ObjectProxy::TIMEOUT_USE_DEFAULT));
   if (response.get())
     return true;
   return false;
@@ -302,16 +303,16 @@ void PropertySet::NotifyPropertyChanged(const std::string& name) {
 //
 
 template <>
-Property<uint8>::Property() : value_(0) {
-}
+Property<uint8_t>::Property()
+    : value_(0) {}
 
 template <>
-bool Property<uint8>::PopValueFromReader(MessageReader* reader) {
+bool Property<uint8_t>::PopValueFromReader(MessageReader* reader) {
   return reader->PopVariantOfByte(&value_);
 }
 
 template <>
-void Property<uint8>::AppendSetValueToWriter(MessageWriter* writer) {
+void Property<uint8_t>::AppendSetValueToWriter(MessageWriter* writer) {
   writer->AppendVariantOfByte(set_value_);
 }
 
@@ -334,110 +335,110 @@ void Property<bool>::AppendSetValueToWriter(MessageWriter* writer) {
 }
 
 //
-// Property<int16> specialization.
+// Property<int16_t> specialization.
 //
 
 template <>
-Property<int16>::Property() : value_(0) {
-}
+Property<int16_t>::Property()
+    : value_(0) {}
 
 template <>
-bool Property<int16>::PopValueFromReader(MessageReader* reader) {
+bool Property<int16_t>::PopValueFromReader(MessageReader* reader) {
   return reader->PopVariantOfInt16(&value_);
 }
 
 template <>
-void Property<int16>::AppendSetValueToWriter(MessageWriter* writer) {
+void Property<int16_t>::AppendSetValueToWriter(MessageWriter* writer) {
   writer->AppendVariantOfInt16(set_value_);
 }
 
 //
-// Property<uint16> specialization.
+// Property<uint16_t> specialization.
 //
 
 template <>
-Property<uint16>::Property() : value_(0) {
-}
+Property<uint16_t>::Property()
+    : value_(0) {}
 
 template <>
-bool Property<uint16>::PopValueFromReader(MessageReader* reader) {
+bool Property<uint16_t>::PopValueFromReader(MessageReader* reader) {
   return reader->PopVariantOfUint16(&value_);
 }
 
 template <>
-void Property<uint16>::AppendSetValueToWriter(MessageWriter* writer) {
+void Property<uint16_t>::AppendSetValueToWriter(MessageWriter* writer) {
   writer->AppendVariantOfUint16(set_value_);
 }
 
 //
-// Property<int32> specialization.
+// Property<int32_t> specialization.
 //
 
 template <>
-Property<int32>::Property() : value_(0) {
-}
+Property<int32_t>::Property()
+    : value_(0) {}
 
 template <>
-bool Property<int32>::PopValueFromReader(MessageReader* reader) {
+bool Property<int32_t>::PopValueFromReader(MessageReader* reader) {
   return reader->PopVariantOfInt32(&value_);
 }
 
 template <>
-void Property<int32>::AppendSetValueToWriter(MessageWriter* writer) {
+void Property<int32_t>::AppendSetValueToWriter(MessageWriter* writer) {
   writer->AppendVariantOfInt32(set_value_);
 }
 
 //
-// Property<uint32> specialization.
+// Property<uint32_t> specialization.
 //
 
 template <>
-Property<uint32>::Property() : value_(0) {
-}
+Property<uint32_t>::Property()
+    : value_(0) {}
 
 template <>
-bool Property<uint32>::PopValueFromReader(MessageReader* reader) {
+bool Property<uint32_t>::PopValueFromReader(MessageReader* reader) {
   return reader->PopVariantOfUint32(&value_);
 }
 
 template <>
-void Property<uint32>::AppendSetValueToWriter(MessageWriter* writer) {
+void Property<uint32_t>::AppendSetValueToWriter(MessageWriter* writer) {
   writer->AppendVariantOfUint32(set_value_);
 }
 
 //
-// Property<int64> specialization.
+// Property<int64_t> specialization.
 //
 
 template <>
-Property<int64>::Property() : value_(0), set_value_(0) {
-}
+Property<int64_t>::Property()
+    : value_(0), set_value_(0) {}
 
 template <>
-bool Property<int64>::PopValueFromReader(MessageReader* reader) {
+bool Property<int64_t>::PopValueFromReader(MessageReader* reader) {
   return reader->PopVariantOfInt64(&value_);
 }
 
 template <>
-void Property<int64>::AppendSetValueToWriter(MessageWriter* writer) {
+void Property<int64_t>::AppendSetValueToWriter(MessageWriter* writer) {
   writer->AppendVariantOfInt64(set_value_);
 }
 
 //
-// Property<uint64> specialization.
+// Property<uint64_t> specialization.
 //
 
 template <>
-Property<uint64>::Property() : value_(0) {
-}
+Property<uint64_t>::Property()
+    : value_(0) {}
 
 template <>
-bool Property<uint64>::PopValueFromReader(MessageReader* reader) {
+bool Property<uint64_t>::PopValueFromReader(MessageReader* reader) {
   return reader->PopVariantOfUint64(&value_);
 }
 
 template <>
-void Property<uint64>::AppendSetValueToWriter(MessageWriter* writer) {
+void Property<uint64_t>::AppendSetValueToWriter(MessageWriter* writer) {
   writer->AppendVariantOfUint64(set_value_);
 }
 
@@ -536,17 +537,17 @@ void Property<std::vector<ObjectPath> >::AppendSetValueToWriter(
 }
 
 //
-// Property<std::vector<uint8> > specialization.
+// Property<std::vector<uint8_t> > specialization.
 //
 
 template <>
-bool Property<std::vector<uint8> >::PopValueFromReader(MessageReader* reader) {
+bool Property<std::vector<uint8_t>>::PopValueFromReader(MessageReader* reader) {
   MessageReader variant_reader(NULL);
   if (!reader->PopVariant(&variant_reader))
     return false;
 
   value_.clear();
-  const uint8* bytes = NULL;
+  const uint8_t* bytes = NULL;
   size_t length = 0;
   if (!variant_reader.PopArrayOfBytes(&bytes, &length))
     return false;
@@ -555,7 +556,7 @@ bool Property<std::vector<uint8> >::PopValueFromReader(MessageReader* reader) {
 }
 
 template <>
-void Property<std::vector<uint8> >::AppendSetValueToWriter(
+void Property<std::vector<uint8_t>>::AppendSetValueToWriter(
     MessageWriter* writer) {
   MessageWriter variant_writer(NULL);
   writer->OpenVariant("ay", &variant_writer);
@@ -629,7 +630,7 @@ bool Property<std::vector<std::pair<std::vector<uint8_t>, uint16_t>>>::
       return false;
 
     std::pair<std::vector<uint8_t>, uint16_t> entry;
-    const uint8* bytes = NULL;
+    const uint8_t* bytes = NULL;
     size_t length = 0;
     if (!struct_reader.PopArrayOfBytes(&bytes, &length))
       return false;
@@ -660,21 +661,151 @@ void Property<std::vector<std::pair<std::vector<uint8_t>, uint16_t>>>::
   writer->CloseContainer(&variant_writer);
 }
 
-template class Property<uint8>;
+//
+// Property<std::unordered_map<std::string, std::vector<uint8_t>>>
+// specialization.
+//
+
+template <>
+bool Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
+    PopValueFromReader(MessageReader* reader) {
+  MessageReader variant_reader(nullptr);
+  MessageReader dict_reader(nullptr);
+  if (!reader->PopVariant(&variant_reader) ||
+      !variant_reader.PopArray(&dict_reader))
+    return false;
+
+  value_.clear();
+  while (dict_reader.HasMoreData()) {
+    MessageReader entry_reader(nullptr);
+    if (!dict_reader.PopDictEntry(&entry_reader))
+      return false;
+
+    std::string key;
+    MessageReader value_varient_reader(nullptr);
+    if (!entry_reader.PopString(&key) ||
+        !entry_reader.PopVariant(&value_varient_reader))
+      return false;
+
+    const uint8_t* bytes = nullptr;
+    size_t length = 0;
+    if (!value_varient_reader.PopArrayOfBytes(&bytes, &length))
+      return false;
+
+    value_[key].assign(bytes, bytes + length);
+  }
+  return true;
+}
+
+template <>
+void Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
+    AppendSetValueToWriter(MessageWriter* writer) {
+  MessageWriter variant_writer(nullptr);
+  MessageWriter dict_writer(nullptr);
+
+  writer->OpenVariant("a{sv}", &variant_writer);
+  variant_writer.OpenArray("{sv}", &dict_writer);
+
+  for (const auto& pair : set_value_) {
+    MessageWriter entry_writer(nullptr);
+    dict_writer.OpenDictEntry(&entry_writer);
+
+    entry_writer.AppendString(pair.first);
+
+    MessageWriter value_varient_writer(nullptr);
+    entry_writer.OpenVariant("ay", &value_varient_writer);
+    value_varient_writer.AppendArrayOfBytes(pair.second.data(),
+                                            pair.second.size());
+    entry_writer.CloseContainer(&value_varient_writer);
+
+    dict_writer.CloseContainer(&entry_writer);
+  }
+
+  variant_writer.CloseContainer(&dict_writer);
+  writer->CloseContainer(&variant_writer);
+}
+
+//
+// Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>
+// specialization.
+//
+
+template <>
+bool Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
+    PopValueFromReader(MessageReader* reader) {
+  MessageReader variant_reader(nullptr);
+  MessageReader dict_reader(nullptr);
+  if (!reader->PopVariant(&variant_reader) ||
+      !variant_reader.PopArray(&dict_reader))
+    return false;
+
+  value_.clear();
+  while (dict_reader.HasMoreData()) {
+    MessageReader entry_reader(nullptr);
+    if (!dict_reader.PopDictEntry(&entry_reader))
+      return false;
+
+    uint16_t key;
+    MessageReader value_varient_reader(nullptr);
+    if (!entry_reader.PopUint16(&key) ||
+        !entry_reader.PopVariant(&value_varient_reader))
+      return false;
+
+    const uint8_t* bytes = nullptr;
+    size_t length = 0;
+    if (!value_varient_reader.PopArrayOfBytes(&bytes, &length))
+      return false;
+
+    value_[key].assign(bytes, bytes + length);
+  }
+  return true;
+}
+
+template <>
+void Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
+    AppendSetValueToWriter(MessageWriter* writer) {
+  MessageWriter variant_writer(nullptr);
+  MessageWriter dict_writer(nullptr);
+
+  writer->OpenVariant("a{qv}", &variant_writer);
+  variant_writer.OpenArray("{qv}", &dict_writer);
+
+  for (const auto& pair : set_value_) {
+    MessageWriter entry_writer(nullptr);
+    dict_writer.OpenDictEntry(&entry_writer);
+
+    entry_writer.AppendUint16(pair.first);
+
+    MessageWriter value_varient_writer(nullptr);
+    entry_writer.OpenVariant("ay", &value_varient_writer);
+    value_varient_writer.AppendArrayOfBytes(pair.second.data(),
+                                            pair.second.size());
+    entry_writer.CloseContainer(&value_varient_writer);
+
+    dict_writer.CloseContainer(&entry_writer);
+  }
+
+  variant_writer.CloseContainer(&dict_writer);
+  writer->CloseContainer(&variant_writer);
+}
+
+template class Property<uint8_t>;
 template class Property<bool>;
-template class Property<int16>;
-template class Property<uint16>;
-template class Property<int32>;
-template class Property<uint32>;
-template class Property<int64>;
-template class Property<uint64>;
+template class Property<int16_t>;
+template class Property<uint16_t>;
+template class Property<int32_t>;
+template class Property<uint32_t>;
+template class Property<int64_t>;
+template class Property<uint64_t>;
 template class Property<double>;
 template class Property<std::string>;
 template class Property<ObjectPath>;
 template class Property<std::vector<std::string> >;
 template class Property<std::vector<ObjectPath> >;
-template class Property<std::vector<uint8> >;
+template class Property<std::vector<uint8_t>>;
 template class Property<std::map<std::string, std::string>>;
 template class Property<std::vector<std::pair<std::vector<uint8_t>, uint16_t>>>;
+template class Property<std::unordered_map<std::string, std::vector<uint8_t>>>;
+template class Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>;
 
 }  // namespace dbus

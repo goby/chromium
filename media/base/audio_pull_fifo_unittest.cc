@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_pull_fifo.h"
@@ -27,11 +30,15 @@ class AudioPullFifoTest
     : public testing::TestWithParam<int> {
  public:
   AudioPullFifoTest()
-    : pull_fifo_(kChannels, kMaxFramesInFifo, base::Bind(
-          &AudioPullFifoTest::ProvideInput, base::Unretained(this))),
-      audio_bus_(AudioBus::Create(kChannels, kMaxFramesInFifo)),
-      fill_value_(0),
-      last_frame_delay_(-1) {}
+      : pull_fifo_(kChannels,
+                   kMaxFramesInFifo,
+                   base::Bind(&AudioPullFifoTest::ProvideInput,
+                              base::Unretained(this))),
+        audio_bus_(AudioBus::Create(kChannels, kMaxFramesInFifo)),
+        fill_value_(0),
+        last_frame_delay_(-1) {
+    EXPECT_EQ(kMaxFramesInFifo, pull_fifo_.SizeInFrames());
+  }
   virtual ~AudioPullFifoTest() {}
 
   void VerifyValue(const float data[], int size, float start_value) {
@@ -76,7 +83,7 @@ class AudioPullFifoTest
 
  protected:
   AudioPullFifo pull_fifo_;
-  scoped_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<AudioBus> audio_bus_;
   int fill_value_;
   int last_frame_delay_;
 

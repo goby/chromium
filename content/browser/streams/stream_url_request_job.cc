@@ -7,7 +7,7 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/streams/stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -23,13 +23,14 @@ StreamURLRequestJob::StreamURLRequestJob(
     net::URLRequest* request,
     net::NetworkDelegate* network_delegate,
     scoped_refptr<Stream> stream)
-    : net::URLRequestJob(request, network_delegate),
+    : net::URLRangeRequestJob(request, network_delegate),
       stream_(stream),
       headers_set_(false),
       pending_buffer_size_(0),
       total_bytes_read_(0),
       max_range_(0),
       request_failed_(false),
+      error_code_(net::OK),
       weak_factory_(this) {
   DCHECK(stream_.get());
   stream_->SetReadObserver(this);
@@ -92,12 +93,8 @@ void StreamURLRequestJob::Kill() {
 }
 
 int StreamURLRequestJob::ReadRawData(net::IOBuffer* buf, int buf_size) {
-  // TODO(ellyjones): This is not right. The old code returned true here, but
-  // ReadRawData's old contract was to return true only for synchronous
-  // successes, which had the effect of treating all errors as synchronous EOFs.
-  // See https://crbug.com/508957
   if (request_failed_)
-    return 0;
+    return error_code_;
 
   DCHECK(buf);
   int to_read = buf_size;
@@ -112,9 +109,10 @@ int StreamURLRequestJob::ReadRawData(net::IOBuffer* buf, int buf_size) {
   int bytes_read = 0;
   switch (stream_->ReadRawData(buf, to_read, &bytes_read)) {
     case Stream::STREAM_HAS_DATA:
-    case Stream::STREAM_COMPLETE:
       total_bytes_read_ += bytes_read;
       return bytes_read;
+    case Stream::STREAM_COMPLETE:
+      return stream_->GetStatus();
     case Stream::STREAM_EMPTY:
       pending_buffer_ = buf;
       pending_buffer_size_ = to_read;
@@ -147,31 +145,18 @@ int StreamURLRequestJob::GetResponseCode() const {
   return response_info_->headers->response_code();
 }
 
-void StreamURLRequestJob::SetExtraRequestHeaders(
-    const net::HttpRequestHeaders& headers) {
-  std::string range_header;
-  if (headers.GetHeader(net::HttpRequestHeaders::kRange, &range_header)) {
-    std::vector<net::HttpByteRange> ranges;
-    if (net::HttpUtil::ParseRangeHeader(range_header, &ranges)) {
-      if (ranges.size() == 1) {
-        // Streams don't support seeking, so a non-zero starting position
-        // doesn't make sense.
-        if (ranges[0].first_byte_position() == 0) {
-          max_range_ = ranges[0].last_byte_position() + 1;
-        } else {
-          NotifyFailure(net::ERR_METHOD_NOT_SUPPORTED);
-          return;
-        }
-      } else {
-        NotifyFailure(net::ERR_METHOD_NOT_SUPPORTED);
-        return;
-      }
-    }
-  }
-}
-
 void StreamURLRequestJob::DidStart() {
-  // We only support GET request.
+  if (range_parse_result() == net::OK && ranges().size() > 0) {
+    // Only one range is supported, and it must start at the first byte.
+    if (ranges().size() > 1 || ranges()[0].first_byte_position() != 0) {
+      NotifyFailure(net::ERR_METHOD_NOT_SUPPORTED);
+      return;
+    }
+
+    max_range_ = ranges()[0].last_byte_position() + 1;
+  }
+
+  // This class only supports GET requests.
   if (request()->method() != "GET") {
     NotifyFailure(net::ERR_METHOD_NOT_SUPPORTED);
     return;
@@ -182,6 +167,7 @@ void StreamURLRequestJob::DidStart() {
 
 void StreamURLRequestJob::NotifyFailure(int error_code) {
   request_failed_ = true;
+  error_code_ = error_code;
 
   // This method can only be called before headers are set.
   DCHECK(!headers_set_);

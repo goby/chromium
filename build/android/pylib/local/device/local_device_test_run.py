@@ -3,54 +3,55 @@
 # found in the LICENSE file.
 
 import fnmatch
-import functools
+import imp
 import logging
+import posixpath
+import signal
+import thread
+import threading
 
-from devil.android import device_errors
+from devil.utils import signal_handler
 from pylib import valgrind_tools
 from pylib.base import base_test_result
 from pylib.base import test_run
 from pylib.base import test_collection
+from pylib.local.device import local_device_environment
 
 
-def handle_shard_failures(f):
-  """A decorator that handles device failures for per-device functions.
-
-  Args:
-    f: the function being decorated. The function must take at least one
-      argument, and that argument must be the device.
-  """
-  return handle_shard_failures_with(None)(f)
+_SIGTERM_TEST_LOG = (
+  '  Suite execution terminated, probably due to swarming timeout.\n'
+  '  Your test may not have run.')
 
 
-def handle_shard_failures_with(on_failure):
-  """A decorator that handles device failures for per-device functions.
-
-  This calls on_failure in the event of a failure.
+def IncrementalInstall(device, apk_helper, installer_script):
+  """Performs an incremental install.
 
   Args:
-    f: the function being decorated. The function must take at least one
-      argument, and that argument must be the device.
-    on_failure: A binary function to call on failure.
+    device: Device to install on.
+    apk_helper: ApkHelper instance for the _incremental.apk.
+    installer_script: Path to the installer script for the incremental apk.
   """
-  def decorator(f):
-    @functools.wraps(f)
-    def wrapper(dev, *args, **kwargs):
-      try:
-        return f(dev, *args, **kwargs)
-      except device_errors.CommandFailedError:
-        logging.exception('Shard failed: %s(%s)', f.__name__, str(dev))
-      except device_errors.CommandTimeoutError:
-        logging.exception('Shard timed out: %s(%s)', f.__name__, str(dev))
-      except device_errors.DeviceUnreachableError:
-        logging.exception('Shard died: %s(%s)', f.__name__, str(dev))
-      if on_failure:
-        on_failure(dev, f.__name__)
-      return None
+  try:
+    install_wrapper = imp.load_source('install_wrapper', installer_script)
+  except IOError:
+    raise Exception('Incremental install script not found: %s\n' %
+                    installer_script)
+  params = install_wrapper.GetInstallParameters()
 
-    return wrapper
+  from incremental_install import installer
+  installer.Install(device, apk_helper, split_globs=params['splits'],
+                    native_libs=params['native_libs'],
+                    dex_files=params['dex_files'],
+                    permissions=None)  # Auto-grant permissions from manifest.
 
-  return decorator
+
+def SubstituteDeviceRoot(device_path, device_root):
+  if not device_path:
+    return device_root
+  elif isinstance(device_path, list):
+    return posixpath.join(*(p if p else device_root for p in device_path))
+  else:
+    return device_path
 
 
 class LocalDeviceTestRun(test_run.TestRun):
@@ -63,12 +64,18 @@ class LocalDeviceTestRun(test_run.TestRun):
   def RunTests(self):
     tests = self._GetTests()
 
-    @handle_shard_failures
+    exit_now = threading.Event()
+
+    @local_device_environment.handle_shard_failures
     def run_tests_on_device(dev, tests, results):
       for test in tests:
+        if exit_now.isSet():
+          thread.exit()
+
         result = None
+        rerun = None
         try:
-          result = self._RunTest(dev, test)
+          result, rerun = self._RunTest(dev, test)
           if isinstance(result, base_test_result.BaseTestResult):
             results.AddResult(result)
           elif isinstance(result, list):
@@ -78,74 +85,97 @@ class LocalDeviceTestRun(test_run.TestRun):
                 'Unexpected result type: %s' % type(result).__name__)
         except:
           if isinstance(tests, test_collection.TestCollection):
-            tests.add(test)
+            rerun = test
           raise
         finally:
           if isinstance(tests, test_collection.TestCollection):
+            if rerun:
+              tests.add(rerun)
             tests.test_completed()
-
 
       logging.info('Finished running tests on this device.')
 
-    tries = 0
-    results = base_test_result.TestRunResults()
-    all_fail_results = {}
-    while tries < self._env.max_tries and tests:
-      logging.info('STARTING TRY #%d/%d', tries + 1, self._env.max_tries)
-      logging.info('Will run %d tests on %d devices: %s',
-                   len(tests), len(self._env.devices),
-                   ', '.join(str(d) for d in self._env.devices))
-      for t in tests:
-        logging.debug('  %s', t)
+    class TestsTerminated(Exception):
+      pass
 
-      try_results = base_test_result.TestRunResults()
-      if self._ShouldShard():
-        tc = test_collection.TestCollection(self._CreateShards(tests))
-        self._env.parallel_devices.pMap(
-            run_tests_on_device, tc, try_results).pGet(None)
-      else:
-        self._env.parallel_devices.pMap(
-            run_tests_on_device, tests, try_results).pGet(None)
+    def stop_tests(_signum, _frame):
+      logging.critical('Received SIGTERM. Stopping test execution.')
+      exit_now.set()
+      raise TestsTerminated()
 
-      for result in try_results.GetAll():
-        if result.GetType() in (base_test_result.ResultType.PASS,
-                                base_test_result.ResultType.SKIP):
-          results.AddResult(result)
-        else:
-          all_fail_results[result.GetName()] = result
+    try:
+      with signal_handler.SignalHandler(signal.SIGTERM, stop_tests):
+        tries = 0
+        results = []
+        while tries < self._env.max_tries and tests:
+          logging.info('STARTING TRY #%d/%d', tries + 1, self._env.max_tries)
+          logging.info('Will run %d tests on %d devices: %s',
+                       len(tests), len(self._env.devices),
+                       ', '.join(str(d) for d in self._env.devices))
+          for t in tests:
+            logging.debug('  %s', t)
 
-      results_names = set(r.GetName() for r in results.GetAll())
+          try_results = base_test_result.TestRunResults()
+          test_names = (self._GetUniqueTestName(t) for t in tests)
+          try_results.AddResults(
+              base_test_result.BaseTestResult(
+                  t, base_test_result.ResultType.NOTRUN)
+              for t in test_names if not t.endswith('*'))
 
-      def has_test_result(name):
-        # When specifying a test filter, names can contain trailing wildcards.
-        # See local_device_gtest_run._ExtractTestsFromFilter()
-        if name.endswith('*'):
-          return any(fnmatch.fnmatch(n, name) for n in results_names)
-        return name in results_names
+          try:
+            if self._ShouldShard():
+              tc = test_collection.TestCollection(self._CreateShards(tests))
+              self._env.parallel_devices.pMap(
+                  run_tests_on_device, tc, try_results).pGet(None)
+            else:
+              self._env.parallel_devices.pMap(
+                  run_tests_on_device, tests, try_results).pGet(None)
+          except TestsTerminated:
+            for unknown_result in try_results.GetUnknown():
+              try_results.AddResult(
+                  base_test_result.BaseTestResult(
+                      unknown_result.GetName(),
+                      base_test_result.ResultType.TIMEOUT,
+                      log=_SIGTERM_TEST_LOG))
+            raise
+          finally:
+            results.append(try_results)
 
-      tests = [t for t in tests if not has_test_result(self._GetTestName(t))]
-      tries += 1
-      logging.info('FINISHED TRY #%d/%d', tries, self._env.max_tries)
-      if tests:
-        logging.info('%d failed tests remain.', len(tests))
-      else:
-        logging.info('All tests completed.')
+          tries += 1
+          tests = self._GetTestsToRetry(tests, try_results)
 
-    all_unknown_test_names = set(self._GetTestName(t) for t in tests)
-    all_failed_test_names = set(all_fail_results.iterkeys())
-
-    unknown_tests = all_unknown_test_names.difference(all_failed_test_names)
-    failed_tests = all_failed_test_names.intersection(all_unknown_test_names)
-
-    if unknown_tests:
-      results.AddResults(
-          base_test_result.BaseTestResult(
-              u, base_test_result.ResultType.UNKNOWN)
-          for u in unknown_tests)
-    if failed_tests:
-      results.AddResults(all_fail_results[f] for f in failed_tests)
+          logging.info('FINISHED TRY #%d/%d', tries, self._env.max_tries)
+          if tests:
+            logging.info('%d failed tests remain.', len(tests))
+          else:
+            logging.info('All tests completed.')
+    except TestsTerminated:
+      pass
 
     return results
+
+  def _GetTestsToRetry(self, tests, try_results):
+
+    def is_failure_result(test_result):
+      return (
+          test_result is None
+          or test_result.GetType() not in (
+              base_test_result.ResultType.PASS,
+              base_test_result.ResultType.SKIP))
+
+    all_test_results = {r.GetName(): r for r in try_results.GetAll()}
+
+    def test_failed(name):
+      # When specifying a test filter, names can contain trailing wildcards.
+      # See local_device_gtest_run._ExtractTestsFromFilter()
+      if name.endswith('*'):
+        return any(fnmatch.fnmatch(n, name) and is_failure_result(t)
+                   for n, t in all_test_results.iteritems())
+      return is_failure_result(all_test_results.get(name))
+
+    failed_tests = (t for t in tests if test_failed(self._GetUniqueTestName(t)))
+
+    return [t for t in failed_tests if self._ShouldRetry(t)]
 
   def GetTool(self, device):
     if not str(device) in self._tools:
@@ -156,9 +186,13 @@ class LocalDeviceTestRun(test_run.TestRun):
   def _CreateShards(self, tests):
     raise NotImplementedError
 
-  # pylint: disable=no-self-use
-  def _GetTestName(self, test):
+  def _GetUniqueTestName(self, test):
+    # pylint: disable=no-self-use
     return test
+
+  def _ShouldRetry(self, test):
+    # pylint: disable=no-self-use,unused-argument
+    return True
 
   def _GetTests(self):
     raise NotImplementedError
@@ -168,3 +202,7 @@ class LocalDeviceTestRun(test_run.TestRun):
 
   def _ShouldShard(self):
     raise NotImplementedError
+
+
+class NoTestsError(Exception):
+  """Error for when no tests are found."""

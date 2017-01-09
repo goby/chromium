@@ -14,7 +14,7 @@ InspectorTest.dumpSearchResults = function(searchResults)
 
     InspectorTest.addResult("Search results: ");
     for (var i = 0; i < searchResults.length; i++)
-        InspectorTest.addResult("url: " + searchResults[i].url + ", matchesCount: " + searchResults[i].matchesCount);
+        InspectorTest.addResult("url: " + searchResults[i].url.replace(/VM\d+/, "VMXX") + ", matchesCount: " + searchResults[i].matchesCount);
     InspectorTest.addResult("");
 };
 
@@ -29,7 +29,7 @@ InspectorTest.dumpSearchMatches = function(searchMatches)
 InspectorTest.runSearchAndDumpResults = function(scope, searchConfig, sortByURI, callback)
 {
     var searchResults = [];
-    var progress = new WebInspector.Progress();
+    var progress = new Common.Progress();
     scope.performSearch(searchConfig, progress, searchResultCallback, searchFinishedCallback);
 
     function searchResultCallback(searchResult)
@@ -41,7 +41,7 @@ InspectorTest.runSearchAndDumpResults = function(scope, searchConfig, sortByURI,
     {
         function comparator(searchResultA, searchResultB)
         {
-            return searchResultA.uiSourceCode.uri().compareTo(searchResultB.uiSourceCode.uri());
+            return searchResultA.uiSourceCode.url().compareTo(searchResultB.uiSourceCode.url());
         }
         if (sortByURI)
             searchResults.sort(comparator);
@@ -53,7 +53,7 @@ InspectorTest.runSearchAndDumpResults = function(scope, searchConfig, sortByURI,
 
             if (!searchMatches.length)
                 continue;
-            InspectorTest.addResult("Search result #" + (i + 1) + ": uiSourceCode.uri = " + uiSourceCode.uri());
+            InspectorTest.addResult("Search result #" + (i + 1) + ": uiSourceCode.url = " + uiSourceCode.url().replace(/VM\d+/, "VMXX"));
             for (var j = 0; j < searchMatches.length; ++j) {
                 var lineNumber = searchMatches[j].lineNumber;
                 var lineContent = searchMatches[j].lineContent;
@@ -81,7 +81,7 @@ InspectorTest.replaceAndDumpChange = function(sourceFrame, searchConfig, replace
     var oldLines = [];
     for (var i = 0; i < editor.linesCount; ++i)
         oldLines.push(editor.line(i));
-    var searchableView = WebInspector.panels.sources.sourcesView().searchableView();
+    var searchableView = UI.panels.sources.sourcesView().searchableView();
     searchableView.showSearchField();
 
     searchableView._caseSensitiveButton.setToggled(searchConfig.caseSensitive);

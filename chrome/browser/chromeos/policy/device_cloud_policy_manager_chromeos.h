@@ -5,14 +5,14 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_DEVICE_CLOUD_POLICY_MANAGER_CHROMEOS_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_DEVICE_CLOUD_POLICY_MANAGER_CHROMEOS_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "chrome/browser/chromeos/policy/server_backed_state_keys_broker.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
@@ -23,6 +23,9 @@ class SequencedTaskRunner;
 }
 
 namespace chromeos {
+
+class InstallAttributes;
+
 namespace attestation {
 class AttestationPolicyObserver;
 }
@@ -34,10 +37,13 @@ class PrefService;
 namespace policy {
 
 class DeviceCloudPolicyStoreChromeOS;
-class EnterpriseInstallAttributes;
+class ForwardingSchemaRegistry;
 class HeartbeatScheduler;
+class SchemaRegistry;
 class StatusUploader;
 class SystemLogUploader;
+
+enum class ZeroTouchEnrollmentMode { DISABLED, ENABLED, FORCED, HANDS_OFF };
 
 // CloudPolicyManager specialization for device policy on Chrome OS.
 class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
@@ -55,7 +61,7 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
   // |task_runner| is the runner for policy refresh, heartbeat, and status
   // upload tasks.
   DeviceCloudPolicyManagerChromeOS(
-      scoped_ptr<DeviceCloudPolicyStoreChromeOS> store,
+      std::unique_ptr<DeviceCloudPolicyStoreChromeOS> store,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
       ServerBackedStateKeysBroker* state_keys_broker);
   ~DeviceCloudPolicyManagerChromeOS() override;
@@ -74,17 +80,17 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
   bool IsRemoraRequisition() const;
   bool IsSharkRequisition() const;
 
+  // If set, the device will start the enterprise enrollment OOBE.
+  void SetDeviceEnrollmentAutoStart();
+
   // CloudPolicyManager:
   void Shutdown() override;
 
   // Pref registration helper.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  // Returns the device serial number, or an empty string if not available.
-  static std::string GetMachineID();
-
-  // Returns the machine model, or an empty string if not available.
-  static std::string GetMachineModel();
+  // Returns the mode for using zero-touch enrollment.
+  static ZeroTouchEnrollmentMode GetZeroTouchEnrollmentMode();
 
   // Returns the robot 'email address' associated with the device robot
   // account (sometimes called a service account) associated with this device
@@ -92,8 +98,8 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
   std::string GetRobotAccountId();
 
   // Starts the connection via |client_to_connect|.
-  void StartConnection(scoped_ptr<CloudPolicyClient> client_to_connect,
-                       EnterpriseInstallAttributes* install_attributes);
+  void StartConnection(std::unique_ptr<CloudPolicyClient> client_to_connect,
+                       chromeos::InstallAttributes* install_attributes);
 
   // Sends the unregister request. |callback| is invoked with a boolean
   // parameter indicating the result when done.
@@ -110,6 +116,20 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
   // policy server.
   StatusUploader* GetStatusUploader() const { return status_uploader_.get(); }
 
+  // Passes the pointer to the schema registry that corresponds to the signin
+  // profile.
+  //
+  // After this method is called, the component cloud policy manager becomes
+  // associated with this schema registry.
+  void SetSigninProfileSchemaRegistry(SchemaRegistry* schema_registry);
+
+  // Sets whether the component cloud policy service should be created.
+  // Defaults to true.
+  void set_is_component_policy_enabled_for_testing(
+      bool is_component_policy_enabled) {
+    is_component_policy_enabled_ = is_component_policy_enabled;
+  }
+
  private:
   // Saves the state keys received from |session_manager_client_|.
   void OnStateKeysUpdated();
@@ -125,19 +145,19 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
 
   // Points to the same object as the base CloudPolicyManager::store(), but with
   // actual device policy specific type.
-  scoped_ptr<DeviceCloudPolicyStoreChromeOS> device_store_;
+  std::unique_ptr<DeviceCloudPolicyStoreChromeOS> device_store_;
   ServerBackedStateKeysBroker* state_keys_broker_;
 
   // Helper object that handles updating the server with our current device
   // state.
-  scoped_ptr<StatusUploader> status_uploader_;
+  std::unique_ptr<StatusUploader> status_uploader_;
 
   // Helper object that handles uploading system logs to the server.
-  scoped_ptr<SystemLogUploader> syslog_uploader_;
+  std::unique_ptr<SystemLogUploader> syslog_uploader_;
 
   // Helper object that handles sending heartbeats over the GCM channel to
   // the server, to monitor connectivity.
-  scoped_ptr<HeartbeatScheduler> heartbeat_scheduler_;
+  std::unique_ptr<HeartbeatScheduler> heartbeat_scheduler_;
 
   // The TaskRunner used to do device status and log uploads.
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
@@ -147,8 +167,20 @@ class DeviceCloudPolicyManagerChromeOS : public CloudPolicyManager {
   // PrefService instance to read the policy refresh rate from.
   PrefService* local_state_;
 
-  scoped_ptr<chromeos::attestation::AttestationPolicyObserver>
+  std::unique_ptr<chromeos::attestation::AttestationPolicyObserver>
       attestation_policy_observer_;
+
+  // Wrapper schema registry that will track the signin profile schema registry
+  // once it is passed to this class.
+  std::unique_ptr<ForwardingSchemaRegistry>
+      signin_profile_forwarding_schema_registry_;
+
+  // Whether the component cloud policy service should be created.
+  // TODO(emaxx): Change the default to true once both the client and the
+  // DMServer are ready for handling policy fetches with the
+  // google/chromeos/signinextension type. See crbug.com/666720,
+  // crbug.com/644304 for reference.
+  bool is_component_policy_enabled_ = false;
 
   base::ObserverList<Observer, true> observers_;
 

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/notification_provider/notification_provider_api.h"
 
+#include <utility>
+
 #include "base/callback.h"
 #include "base/guid.h"
 #include "base/rand_util.h"
@@ -59,16 +61,16 @@ void NotificationProviderEventRouter::Create(
     const std::string& sender_id,
     const std::string& notification_id,
     const api::notifications::NotificationOptions& options) {
-  scoped_ptr<base::ListValue> args =
-      api::notification_provider::OnCreated::Create(
-          sender_id, notification_id, options);
+  std::unique_ptr<base::ListValue> args =
+      api::notification_provider::OnCreated::Create(sender_id, notification_id,
+                                                    options);
 
-  scoped_ptr<Event> event(new Event(
+  std::unique_ptr<Event> event(new Event(
       events::NOTIFICATION_PROVIDER_ON_CREATED,
-      api::notification_provider::OnCreated::kEventName, args.Pass()));
+      api::notification_provider::OnCreated::kEventName, std::move(args)));
 
   EventRouter::Get(profile_)
-      ->DispatchEventToExtension(notification_provider_id, event.Pass());
+      ->DispatchEventToExtension(notification_provider_id, std::move(event));
 }
 
 void NotificationProviderEventRouter::Update(
@@ -76,31 +78,31 @@ void NotificationProviderEventRouter::Update(
     const std::string& sender_id,
     const std::string& notification_id,
     const api::notifications::NotificationOptions& options) {
-  scoped_ptr<base::ListValue> args =
-      api::notification_provider::OnUpdated::Create(
-          sender_id, notification_id, options);
+  std::unique_ptr<base::ListValue> args =
+      api::notification_provider::OnUpdated::Create(sender_id, notification_id,
+                                                    options);
 
-  scoped_ptr<Event> event(new Event(
+  std::unique_ptr<Event> event(new Event(
       events::NOTIFICATION_PROVIDER_ON_UPDATED,
-      api::notification_provider::OnUpdated::kEventName, args.Pass()));
+      api::notification_provider::OnUpdated::kEventName, std::move(args)));
 
   EventRouter::Get(profile_)
-      ->DispatchEventToExtension(notification_provider_id, event.Pass());
+      ->DispatchEventToExtension(notification_provider_id, std::move(event));
 }
 
 void NotificationProviderEventRouter::Clear(
     const std::string& notification_provider_id,
     const std::string& sender_id,
     const std::string& notification_id) {
-  scoped_ptr<base::ListValue> args =
+  std::unique_ptr<base::ListValue> args =
       api::notification_provider::OnCleared::Create(sender_id, notification_id);
 
-  scoped_ptr<Event> event(new Event(
+  std::unique_ptr<Event> event(new Event(
       events::NOTIFICATION_PROVIDER_ON_CLEARED,
-      api::notification_provider::OnCleared::kEventName, args.Pass()));
+      api::notification_provider::OnCleared::kEventName, std::move(args)));
 
   EventRouter::Get(profile_)
-      ->DispatchEventToExtension(notification_provider_id, event.Pass());
+      ->DispatchEventToExtension(notification_provider_id, std::move(event));
 }
 
 NotificationProviderNotifyOnClearedFunction::
@@ -113,7 +115,7 @@ NotificationProviderNotifyOnClearedFunction::
 
 ExtensionFunction::ResponseAction
 NotificationProviderNotifyOnClearedFunction::Run() {
-  scoped_ptr<api::notification_provider::NotifyOnCleared::Params> params =
+  std::unique_ptr<api::notification_provider::NotifyOnCleared::Params> params =
       api::notification_provider::NotifyOnCleared::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -141,7 +143,7 @@ NotificationProviderNotifyOnClickedFunction::
 
 ExtensionFunction::ResponseAction
 NotificationProviderNotifyOnClickedFunction::Run() {
-  scoped_ptr<api::notification_provider::NotifyOnClicked::Params> params =
+  std::unique_ptr<api::notification_provider::NotifyOnClicked::Params> params =
       api::notification_provider::NotifyOnClicked::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -169,8 +171,10 @@ NotificationProviderNotifyOnButtonClickedFunction::
 
 ExtensionFunction::ResponseAction
 NotificationProviderNotifyOnButtonClickedFunction::Run() {
-  scoped_ptr<api::notification_provider::NotifyOnButtonClicked::Params> params =
-      api::notification_provider::NotifyOnButtonClicked::Params::Create(*args_);
+  std::unique_ptr<api::notification_provider::NotifyOnButtonClicked::Params>
+      params =
+          api::notification_provider::NotifyOnButtonClicked::Params::Create(
+              *args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   const Notification* notification =
@@ -197,7 +201,8 @@ NotificationProviderNotifyOnPermissionLevelChangedFunction::
 
 ExtensionFunction::ResponseAction
 NotificationProviderNotifyOnPermissionLevelChangedFunction::Run() {
-  scoped_ptr<api::notification_provider::NotifyOnPermissionLevelChanged::Params>
+  std::unique_ptr<
+      api::notification_provider::NotifyOnPermissionLevelChanged::Params>
       params = api::notification_provider::NotifyOnPermissionLevelChanged::
           Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
@@ -239,8 +244,9 @@ NotificationProviderNotifyOnShowSettingsFunction::
 
 ExtensionFunction::ResponseAction
 NotificationProviderNotifyOnShowSettingsFunction::Run() {
-  scoped_ptr<api::notification_provider::NotifyOnShowSettings::Params> params =
-      api::notification_provider::NotifyOnShowSettings::Params::Create(*args_);
+  std::unique_ptr<api::notification_provider::NotifyOnShowSettings::Params>
+      params = api::notification_provider::NotifyOnShowSettings::Params::Create(
+          *args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   bool has_advanced_settings;
@@ -295,7 +301,7 @@ NotificationProviderGetAllNotifiersFunction::
 
 ExtensionFunction::ResponseAction
 NotificationProviderGetAllNotifiersFunction::Run() {
-  std::vector<linked_ptr<api::notification_provider::Notifier> > notifiers;
+  std::vector<api::notification_provider::Notifier> notifiers;
 
   return RespondNow(ArgumentList(
       api::notification_provider::GetAllNotifiers::Results::Create(notifiers)));

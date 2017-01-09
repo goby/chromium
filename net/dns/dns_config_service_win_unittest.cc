@@ -4,9 +4,9 @@
 
 #include "net/dns/dns_config_service_win.h"
 
-#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/win/windows_version.h"
+#include "base/memory/free_deleter.h"
+#include "net/base/ip_address.h"
 #include "net/dns/dns_protocol.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -52,10 +52,10 @@ struct AdapterInfo {
   IF_OPER_STATUS oper_status;
   const WCHAR* dns_suffix;
   std::string dns_server_addresses[4];  // Empty string indicates end.
-  uint16 ports[4];
+  uint16_t ports[4];
 };
 
-scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> CreateAdapterAddresses(
+std::unique_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> CreateAdapterAddresses(
     const AdapterInfo* infos) {
   size_t num_adapters = 0;
   size_t num_addresses = 0;
@@ -69,7 +69,7 @@ scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> CreateAdapterAddresses(
   size_t heap_size = num_adapters * sizeof(IP_ADAPTER_ADDRESSES) +
                      num_addresses * (sizeof(IP_ADAPTER_DNS_SERVER_ADDRESS) +
                                       sizeof(struct sockaddr_storage));
-  scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> heap(
+  std::unique_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> heap(
       static_cast<IP_ADAPTER_ADDRESSES*>(malloc(heap_size)));
   CHECK(heap.get());
   memset(heap.get(), 0, heap_size);
@@ -97,8 +97,8 @@ scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> CreateAdapterAddresses(
         // Note that |address| is moving backwards.
         address = address->Next = address - 1;
       }
-      IPAddressNumber ip;
-      CHECK(ParseIPLiteralToNumber(info.dns_server_addresses[j], &ip));
+      IPAddress ip;
+      CHECK(ip.AssignFromIPLiteral(info.dns_server_addresses[j]));
       IPEndPoint ipe = IPEndPoint(ip, info.ports[j]);
       address->Address.lpSockaddr =
           reinterpret_cast<LPSOCKADDR>(storage + num_addresses);
@@ -108,7 +108,7 @@ scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> CreateAdapterAddresses(
     }
   }
 
-  return heap.Pass();
+  return heap;
 }
 
 TEST(DnsConfigServiceWinTest, ConvertAdapterAddresses) {
@@ -117,7 +117,7 @@ TEST(DnsConfigServiceWinTest, ConvertAdapterAddresses) {
     AdapterInfo input_adapters[4];        // |if_type| == 0 indicates end.
     std::string expected_nameservers[4];  // Empty string indicates end.
     std::string expected_suffix;
-    uint16 expected_ports[4];
+    uint16_t expected_ports[4];
   } cases[] = {
     {  // Ignore loopback and inactive adapters.
       {
@@ -174,9 +174,9 @@ TEST(DnsConfigServiceWinTest, ConvertAdapterAddresses) {
     // Default settings for the rest.
     std::vector<IPEndPoint> expected_nameservers;
     for (size_t j = 0; !t.expected_nameservers[j].empty(); ++j) {
-      IPAddressNumber ip;
-      ASSERT_TRUE(ParseIPLiteralToNumber(t.expected_nameservers[j], &ip));
-      uint16 port = t.expected_ports[j];
+      IPAddress ip;
+      ASSERT_TRUE(ip.AssignFromIPLiteral(t.expected_nameservers[j]));
+      uint16_t port = t.expected_ports[j];
       if (!port)
         port = dns_protocol::kDefaultPort;
       expected_nameservers.push_back(IPEndPoint(ip, port));
@@ -328,7 +328,6 @@ TEST(DnsConfigServiceWinTest, ConvertSuffixSearch) {
       { "a.b", "connection.suffix" },
     },
     {  // Devolution disabled when no explicit level.
-       // Windows XP and Vista use a default level = 2, but we don't.
       {
         { false },
         { false },
@@ -394,16 +393,11 @@ TEST(DnsConfigServiceWinTest, AppendToMultiLabelName) {
     { 0 },
   };
 
-  // The default setting was true pre-Vista.
-  bool default_value = (base::win::GetVersion() < base::win::VERSION_VISTA);
-
   const struct TestCase {
     internal::DnsSystemSettings::RegDword input;
     bool expected_output;
   } cases[] = {
-    { { true, 0 }, false },
-    { { true, 1 }, true },
-    { { false, 0 }, default_value },
+      {{true, 0}, false}, {{true, 1}, true}, {{false, 0}, false},
   };
 
   for (const auto& t : cases) {
@@ -449,4 +443,3 @@ TEST(DnsConfigServiceWinTest, HaveNRPT) {
 }  // namespace
 
 }  // namespace net
-

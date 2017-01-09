@@ -5,11 +5,13 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_LEVELDB_WRAPPER_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_LEVELDB_WRAPPER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "third_party/leveldatabase/src/include/leveldb/slice.h"
 
 namespace leveldb {
@@ -65,13 +67,13 @@ class LevelDBWrapper {
     void AdvanceIterators();
 
     LevelDBWrapper* db_;  // do not own
-    scoped_ptr<leveldb::Iterator> db_iterator_;
+    std::unique_ptr<leveldb::Iterator> db_iterator_;
     PendingOperationMap::iterator map_iterator_;
 
     DISALLOW_COPY_AND_ASSIGN(Iterator);
   };
 
-  explicit LevelDBWrapper(scoped_ptr<leveldb::DB> db);
+  explicit LevelDBWrapper(std::unique_ptr<leveldb::DB> db);
   ~LevelDBWrapper();
 
   // Wrapping methods of leveldb::WriteBatch
@@ -80,7 +82,7 @@ class LevelDBWrapper {
 
   // Wrapping methods of leveldb::DB
   leveldb::Status Get(const std::string& key, std::string* value);
-  scoped_ptr<Iterator> NewIterator();
+  std::unique_ptr<Iterator> NewIterator();
 
   // Commits pending transactions to |db_| and clears cached transactions.
   // Returns true if the commitment succeeds.
@@ -92,8 +94,8 @@ class LevelDBWrapper {
   // Returns the number of pending PUT/DELETE operations.
   // Each counter counts operations independently, so operations on a key
   // may be counted more than once.
-  int64 num_puts() { return num_puts_; }
-  int64 num_deletes() { return num_deletes_; }
+  int64_t num_puts() { return num_puts_; }
+  int64_t num_deletes() { return num_deletes_; }
 
   // TODO(peria): Rename this method to GetLevelDBForTesting, after removing
   // usages of drive_backend::MigrateDatabaseFromVxToVy() under
@@ -101,11 +103,11 @@ class LevelDBWrapper {
   leveldb::DB* GetLevelDB();
 
  private:
-  scoped_ptr<leveldb::DB> db_;
+  std::unique_ptr<leveldb::DB> db_;
 
   PendingOperationMap pending_;
-  int64 num_puts_;
-  int64 num_deletes_;
+  int64_t num_puts_;
+  int64_t num_deletes_;
 
   DISALLOW_COPY_AND_ASSIGN(LevelDBWrapper);
 };

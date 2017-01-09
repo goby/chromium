@@ -5,8 +5,8 @@
 #include "net/http/url_security_manager.h"
 
 #include <urlmon.h>
-#pragma comment(lib, "urlmon.lib")
 
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/scoped_comptr.h"

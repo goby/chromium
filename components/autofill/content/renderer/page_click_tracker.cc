@@ -10,13 +10,13 @@
 #include "components/autofill/core/common/autofill_util.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/WebPoint.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebFormControlElement.h"
 #include "third_party/WebKit/public/web/WebHitTestResult.h"
 #include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
 #include "third_party/WebKit/public/web/WebView.h"
@@ -88,7 +88,8 @@ void PageClickTracker::FocusChangeComplete() {
 }
 
 void PageClickTracker::DoFocusChangeComplete() {
-  WebElement focused_element = render_frame()->GetFocusedElement();
+  WebElement focused_element =
+      render_frame()->GetWebFrame()->document().focusedElement();
   if (focused_node_was_last_clicked_ && !focused_element.isNull()) {
     const WebFormControlElement control =
         GetTextFormControlElement(focused_element);
@@ -100,6 +101,10 @@ void PageClickTracker::DoFocusChangeComplete() {
 
   was_focused_before_now_ = true;
   focused_node_was_last_clicked_ = false;
+}
+
+void PageClickTracker::OnDestruct() {
+  delete this;
 }
 
 // PageClickTracker::Legacy ----------------------------------------------------

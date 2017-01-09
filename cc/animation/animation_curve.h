@@ -5,9 +5,10 @@
 #ifndef CC_ANIMATION_ANIMATION_CURVE_H_
 #define CC_ANIMATION_ANIMATION_CURVE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/time/time.h"
-#include "cc/base/cc_export.h"
+#include "cc/animation/animation_export.h"
 #include "cc/output/filter_operations.h"
 #include "ui/gfx/transform.h"
 
@@ -22,10 +23,9 @@ class FilterAnimationCurve;
 class FloatAnimationCurve;
 class ScrollOffsetAnimationCurve;
 class TransformAnimationCurve;
-class TransformOperations;
 
 // An animation curve is a function that returns a value given a time.
-class CC_EXPORT AnimationCurve {
+class CC_ANIMATION_EXPORT AnimationCurve {
  public:
   enum CurveType { COLOR, FLOAT, TRANSFORM, FILTER, SCROLL_OFFSET };
 
@@ -33,7 +33,7 @@ class CC_EXPORT AnimationCurve {
 
   virtual base::TimeDelta Duration() const = 0;
   virtual CurveType Type() const = 0;
-  virtual scoped_ptr<AnimationCurve> Clone() const = 0;
+  virtual std::unique_ptr<AnimationCurve> Clone() const = 0;
 
   const ColorAnimationCurve* ToColorAnimationCurve() const;
   const FloatAnimationCurve* ToFloatAnimationCurve() const;
@@ -44,7 +44,7 @@ class CC_EXPORT AnimationCurve {
   ScrollOffsetAnimationCurve* ToScrollOffsetAnimationCurve();
 };
 
-class CC_EXPORT ColorAnimationCurve : public AnimationCurve {
+class CC_ANIMATION_EXPORT ColorAnimationCurve : public AnimationCurve {
  public:
   ~ColorAnimationCurve() override {}
 
@@ -54,7 +54,7 @@ class CC_EXPORT ColorAnimationCurve : public AnimationCurve {
   CurveType Type() const override;
 };
 
-class CC_EXPORT FloatAnimationCurve : public AnimationCurve {
+class CC_ANIMATION_EXPORT FloatAnimationCurve : public AnimationCurve {
  public:
   ~FloatAnimationCurve() override {}
 
@@ -64,7 +64,7 @@ class CC_EXPORT FloatAnimationCurve : public AnimationCurve {
   CurveType Type() const override;
 };
 
-class CC_EXPORT TransformAnimationCurve : public AnimationCurve {
+class CC_ANIMATION_EXPORT TransformAnimationCurve : public AnimationCurve {
  public:
   ~TransformAnimationCurve() override {}
 
@@ -75,9 +75,6 @@ class CC_EXPORT TransformAnimationCurve : public AnimationCurve {
   // returns false.
   virtual bool AnimatedBoundsForBox(const gfx::BoxF& box,
                                     gfx::BoxF* bounds) const = 0;
-
-  // Returns true if this animation affects scale.
-  virtual bool AffectsScale() const = 0;
 
   // Returns true if this animation is a translation.
   virtual bool IsTranslation() const = 0;
@@ -101,7 +98,7 @@ class CC_EXPORT TransformAnimationCurve : public AnimationCurve {
   CurveType Type() const override;
 };
 
-class CC_EXPORT FilterAnimationCurve : public AnimationCurve {
+class CC_ANIMATION_EXPORT FilterAnimationCurve : public AnimationCurve {
  public:
   ~FilterAnimationCurve() override {}
 

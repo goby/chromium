@@ -27,84 +27,58 @@
 #define WebCompositorSupport_h
 
 #include "WebCommon.h"
-#include "WebCompositorAnimation.h"
-#include "WebCompositorAnimationCurve.h"
 #include "WebFloatPoint.h"
 #include "WebLayerTreeView.h"
-#include "WebScrollOffsetAnimationCurve.h"
 #include "WebScrollbar.h"
 #include "WebScrollbarThemePainter.h"
 
+#include <memory>
+
 namespace cc {
 class Layer;
+class TextureLayerClient;
 }
 
 namespace blink {
 
-class WebCompositorAnimationPlayer;
-class WebCompositorAnimationTimeline;
 class WebContentLayer;
 class WebContentLayerClient;
 class WebExternalTextureLayer;
-class WebExternalTextureLayerClient;
-class WebFilterAnimationCurve;
-class WebFilterOperations;
-class WebFloatAnimationCurve;
-class WebGraphicsContext3D;
 class WebImageLayer;
 class WebLayer;
 class WebScrollbarLayer;
 class WebScrollbarThemeGeometry;
-class WebTransformAnimationCurve;
-class WebTransformOperations;
 
 class WebCompositorSupport {
-public:
+ public:
+  // Layers -------------------------------------------------------
 
-    // Layers -------------------------------------------------------
+  virtual std::unique_ptr<WebLayer> createLayer() = 0;
 
-    virtual WebLayer* createLayer() { return nullptr; }
+  virtual std::unique_ptr<WebLayer> createLayerFromCCLayer(cc::Layer*) = 0;
 
-    virtual WebLayer* createLayerFromCCLayer(cc::Layer*) { return nullptr; }
+  virtual std::unique_ptr<WebContentLayer> createContentLayer(
+      WebContentLayerClient*) = 0;
 
-    virtual WebContentLayer* createContentLayer(WebContentLayerClient*) { return nullptr; }
+  virtual std::unique_ptr<WebExternalTextureLayer> createExternalTextureLayer(
+      cc::TextureLayerClient*) = 0;
 
-    virtual WebExternalTextureLayer* createExternalTextureLayer(WebExternalTextureLayerClient*) { return nullptr; }
+  virtual std::unique_ptr<WebImageLayer> createImageLayer() = 0;
 
-    virtual WebImageLayer* createImageLayer() { return nullptr; }
+  virtual std::unique_ptr<WebScrollbarLayer> createScrollbarLayer(
+      std::unique_ptr<WebScrollbar>,
+      WebScrollbarThemePainter,
+      std::unique_ptr<WebScrollbarThemeGeometry>) = 0;
 
-    // The ownership of the WebScrollbarThemeGeometry pointer is passed to Chromium.
-    virtual WebScrollbarLayer* createScrollbarLayer(WebScrollbar*, WebScrollbarThemePainter, WebScrollbarThemeGeometry*) { return nullptr; }
+  virtual std::unique_ptr<WebScrollbarLayer> createSolidColorScrollbarLayer(
+      WebScrollbar::Orientation,
+      int thumbThickness,
+      int trackStart,
+      bool isLeftSideVerticalScrollbar) = 0;
 
-    virtual WebScrollbarLayer* createSolidColorScrollbarLayer(WebScrollbar::Orientation, int thumbThickness, int trackStart, bool isLeftSideVerticalScrollbar) { return nullptr; }
-
-    // Animation ----------------------------------------------------
-
-    virtual WebCompositorAnimation* createAnimation(const WebCompositorAnimationCurve&, WebCompositorAnimation::TargetProperty, int groupId = 0, int animationId = 0) { return nullptr; }
-
-    virtual WebFilterAnimationCurve* createFilterAnimationCurve() { return nullptr; }
-
-    virtual WebFloatAnimationCurve* createFloatAnimationCurve() { return nullptr; }
-
-    virtual WebScrollOffsetAnimationCurve* createScrollOffsetAnimationCurve(
-        WebFloatPoint targetValue,
-        WebCompositorAnimationCurve::TimingFunctionType,
-        WebScrollOffsetAnimationCurve::ScrollDurationBehavior) { return nullptr; }
-
-    virtual WebTransformAnimationCurve* createTransformAnimationCurve() { return nullptr; }
-
-    virtual WebTransformOperations* createTransformOperations() { return nullptr; }
-
-    virtual WebFilterOperations* createFilterOperations() { return nullptr; }
-
-    virtual WebCompositorAnimationPlayer* createAnimationPlayer() { return nullptr; }
-
-    virtual WebCompositorAnimationTimeline* createAnimationTimeline() { return nullptr; }
-
-protected:
-    virtual ~WebCompositorSupport() { }
+ protected:
+  virtual ~WebCompositorSupport() {}
 };
-
 }
 
-#endif // WebCompositorSupport_h
+#endif  // WebCompositorSupport_h

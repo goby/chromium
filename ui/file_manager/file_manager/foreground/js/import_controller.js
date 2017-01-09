@@ -71,6 +71,13 @@ importer.ImportController =
    */
   this.lastActivityState_ = importer.ActivityState.HIDDEN;
 
+  /**
+   * Whether the window was opened by plugging a media device and user hadn't
+   * navigated to other directories.
+   * @private {boolean}
+   */
+  this.isRightAfterPluggingMedia_ = false;
+
   var listener = this.onScanEvent_.bind(this);
   this.scanner_.addObserver(listener);
   // Remove the observer when the foreground window is closed.
@@ -163,11 +170,7 @@ importer.ImportController.prototype.onVolumeUnmounted_ = function(volumeId) {
  * @private
  */
 importer.ImportController.prototype.onDirectoryChanged_ = function(event) {
-  if (!event.previousDirEntry &&
-      event.newDirEntry &&
-      importer.isMediaDirectory(event.newDirEntry, this.environment_)) {
-    this.commandWidget_.setDetailsVisible(true);
-  }
+  this.isRightAfterPluggingMedia_ = !event.previousDirEntry;
 
   this.scanManager_.reset();
   if (this.isCurrentDirectoryScannable_()) {
@@ -390,6 +393,10 @@ importer.ImportController.prototype.checkState_ = function(opt_scan) {
         this.updateUi_(
             importer.ActivityState.READY,  // to import...
             opt_scan);
+        if (this.isRightAfterPluggingMedia_) {
+          this.isRightAfterPluggingMedia_ = false;
+          this.commandWidget_.setDetailsVisible(true);
+        }
       }.bind(this))
       .catch(importer.getLogger().catcher('import-controller-check-state'));
 };
@@ -516,7 +523,8 @@ importer.ClickSource = {
 importer.RuntimeCommandWidget = function() {
 
   /** @private {HTMLElement} */
-  this.detailsPanel_ = document.getElementById('cloud-import-details');
+  this.detailsPanel_ = /** @type {HTMLElement} */(
+      document.getElementById('cloud-import-details'));
   this.detailsPanel_.addEventListener(
       'transitionend',
       this.onDetailsTransitionEnd_.bind(this),
@@ -604,8 +612,8 @@ importer.RuntimeCommandWidget = function() {
  * @private
  */
 importer.RuntimeCommandWidget.prototype.onKeyDown_ = function(event) {
-  switch (util.getKeyModifiers(event) + event.keyIdentifier) {
-    case 'U+001B':
+  switch (util.getKeyModifiers(event) + event.key) {
+    case 'Escape':
       this.setDetailsVisible(false);
   }
 };
@@ -754,8 +762,8 @@ importer.RuntimeCommandWidget.prototype.update =
 
       this.comboButton_.hidden = true;
 
-      this.toolbarIcon_.setAttribute('icon', 'cloud-off');
-      this.statusIcon_.setAttribute('icon', 'cloud-off');
+      this.toolbarIcon_.setAttribute('icon', 'files:cloud-off');
+      this.statusIcon_.setAttribute('icon', 'files:cloud-off');
 
       break;
 
@@ -775,8 +783,8 @@ importer.RuntimeCommandWidget.prototype.update =
       this.cancelButton_.hidden = false;
       this.progressContainer_.hidden = true;
 
-      this.toolbarIcon_.setAttribute('icon', 'autorenew');
-      this.statusIcon_.setAttribute('icon', 'autorenew');
+      this.toolbarIcon_.setAttribute('icon', 'files:autorenew');
+      this.statusIcon_.setAttribute('icon', 'files:autorenew');
 
       break;
 
@@ -794,8 +802,8 @@ importer.RuntimeCommandWidget.prototype.update =
       this.cancelButton_.hidden = true;
       this.progressContainer_.hidden = true;
 
-      this.toolbarIcon_.setAttribute('icon', 'cloud-off');
-      this.statusIcon_.setAttribute('icon', 'image:photo');
+      this.toolbarIcon_.setAttribute('icon', 'files:cloud-off');
+      this.statusIcon_.setAttribute('icon', 'files:photo');
       break;
 
     case importer.ActivityState.NO_MEDIA:
@@ -809,8 +817,8 @@ importer.RuntimeCommandWidget.prototype.update =
       this.cancelButton_.hidden = true;
       this.progressContainer_.hidden = true;
 
-      this.toolbarIcon_.setAttribute('icon', 'cloud-done');
-      this.statusIcon_.setAttribute('icon', 'cloud-done');
+      this.toolbarIcon_.setAttribute('icon', 'files:cloud-done');
+      this.statusIcon_.setAttribute('icon', 'files:cloud-done');
       break;
 
     case importer.ActivityState.READY:
@@ -828,8 +836,8 @@ importer.RuntimeCommandWidget.prototype.update =
       this.cancelButton_.hidden = true;
       this.progressContainer_.hidden = true;
 
-      this.toolbarIcon_.setAttribute('icon', 'cloud-upload');
-      this.statusIcon_.setAttribute('icon', 'image:photo');
+      this.toolbarIcon_.setAttribute('icon', 'files:cloud-upload');
+      this.statusIcon_.setAttribute('icon', 'files:photo');
       break;
 
     case importer.ActivityState.SCANNING:
@@ -850,8 +858,8 @@ importer.RuntimeCommandWidget.prototype.update =
       var stats = opt_scan.getStatistics();
       this.progressBar_.style.width = stats.progress + '%';
 
-      this.toolbarIcon_.setAttribute('icon', 'autorenew');
-      this.statusIcon_.setAttribute('icon', 'autorenew');
+      this.toolbarIcon_.setAttribute('icon', 'files:autorenew');
+      this.statusIcon_.setAttribute('icon', 'files:autorenew');
       break;
 
     default:

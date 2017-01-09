@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_vector.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/query_parser/query_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -121,15 +122,13 @@ TEST_F(QueryParserTest, ParseQueryNodesAndMatch) {
   };
   for (size_t i = 0; i < arraysize(data); ++i) {
     QueryParser parser;
-    ScopedVector<QueryNode> query_nodes;
+    query_parser::QueryNodeVector query_nodes;
     parser.ParseQueryNodes(base::UTF8ToUTF16(data[i].query),
-                           MatchingAlgorithm::DEFAULT,
-                           &query_nodes.get());
+                           MatchingAlgorithm::DEFAULT, &query_nodes);
     Snippet::MatchPositions match_positions;
     ASSERT_EQ(data[i].matches,
               parser.DoesQueryMatch(base::UTF8ToUTF16(data[i].text),
-                                    query_nodes.get(),
-                                    &match_positions));
+                                    query_nodes, &match_positions));
     size_t offset = 0;
     if (data[i].m1_start != 0 || data[i].m1_end != 0) {
       ASSERT_TRUE(match_positions.size() >= 1);

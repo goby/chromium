@@ -5,15 +5,12 @@
 #ifndef ASH_SYSTEM_CHROMEOS_ROTATION_TRAY_ROTATION_LOCK_H_
 #define ASH_SYSTEM_CHROMEOS_ROTATION_TRAY_ROTATION_LOCK_H_
 
+#include "ash/common/shell_observer.h"
+#include "ash/common/system/tray/tray_image_item.h"
 #include "ash/display/screen_orientation_controller_chromeos.h"
-#include "ash/shell_observer.h"
-#include "ash/system/tray/tray_image_item.h"
+#include "base/macros.h"
 
 namespace ash {
-
-namespace tray {
-class RotationLockDefaultView;
-}  // namespace tray
 
 // TrayRotationLock is a provider of views for the SystemTray. Both a tray view
 // and a default view are provided. Each view indicates the current state of
@@ -32,7 +29,7 @@ class ASH_EXPORT TrayRotationLock
   void OnRotationLockChanged(bool rotation_locked) override;
 
   // SystemTrayItem:
-  views::View* CreateDefaultView(user::LoginStatus status) override;
+  views::View* CreateDefaultView(LoginStatus status) override;
 
   // ShellObserver:
   void OnMaximizeModeStarted() override;

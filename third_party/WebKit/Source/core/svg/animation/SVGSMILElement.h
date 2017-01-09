@@ -31,7 +31,7 @@
 #include "core/svg/SVGElement.h"
 #include "core/svg/SVGTests.h"
 #include "core/svg/animation/SMILTime.h"
-#include "platform/heap/Heap.h"
+#include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
 
 namespace blink {
@@ -40,254 +40,270 @@ class ConditionEventListener;
 class SMILTimeContainer;
 class SVGSMILElement;
 
-template<typename T> class EventSender;
-typedef EventSender<SVGSMILElement> SMILEventSender;
-
 // This class implements SMIL interval timing model as needed for SVG animation.
 class CORE_EXPORT SVGSMILElement : public SVGElement, public SVGTests {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(SVGSMILElement);
-public:
-    SVGSMILElement(const QualifiedName&, Document&);
-    ~SVGSMILElement() override;
+  USING_GARBAGE_COLLECTED_MIXIN(SVGSMILElement);
 
-    void parseAttribute(const QualifiedName&, const AtomicString&, const AtomicString&) override;
-    void svgAttributeChanged(const QualifiedName&) override;
-    InsertionNotificationRequest insertedInto(ContainerNode*) override;
-    void removedFrom(ContainerNode*) override;
+ public:
+  SVGSMILElement(const QualifiedName&, Document&);
+  ~SVGSMILElement() override;
 
-    virtual bool hasValidAttributeType() = 0;
-    virtual bool hasValidAttributeName();
-    virtual void animationAttributeChanged() = 0;
+  void parseAttribute(const QualifiedName&,
+                      const AtomicString&,
+                      const AtomicString&) override;
+  void svgAttributeChanged(const QualifiedName&) override;
+  InsertionNotificationRequest insertedInto(ContainerNode*) override;
+  void removedFrom(ContainerNode*) override;
 
-    SMILTimeContainer* timeContainer() const { return m_timeContainer.get(); }
+  virtual bool hasValidTarget();
+  virtual void animationAttributeChanged() = 0;
 
-    SVGElement* targetElement() const { return m_targetElement; }
-    const QualifiedName& attributeName() const { return m_attributeName; }
+  SMILTimeContainer* timeContainer() const { return m_timeContainer.get(); }
 
-    void beginByLinkActivation();
+  SVGElement* targetElement() const { return m_targetElement; }
+  const QualifiedName& attributeName() const { return m_attributeName; }
 
-    enum Restart {
-        RestartAlways,
-        RestartWhenNotActive,
-        RestartNever
-    };
+  void beginByLinkActivation();
 
-    Restart restart() const;
+  enum Restart { RestartAlways, RestartWhenNotActive, RestartNever };
 
-    enum FillMode {
-        FillRemove,
-        FillFreeze
-    };
+  Restart getRestart() const;
 
-    FillMode fill() const;
+  enum FillMode { FillRemove, FillFreeze };
 
-    SMILTime dur() const;
-    SMILTime repeatDur() const;
-    SMILTime repeatCount() const;
-    SMILTime maxValue() const;
-    SMILTime minValue() const;
+  FillMode fill() const;
 
-    SMILTime elapsed() const;
+  SMILTime dur() const;
+  SMILTime repeatDur() const;
+  SMILTime repeatCount() const;
+  SMILTime maxValue() const;
+  SMILTime minValue() const;
 
-    SMILTime intervalBegin() const { return m_interval.begin; }
-    SMILTime previousIntervalBegin() const { return m_previousIntervalBegin; }
-    SMILTime simpleDuration() const;
+  SMILTime elapsed() const;
 
-    void seekToIntervalCorrespondingToTime(SMILTime elapsed);
-    bool progress(SMILTime elapsed, SVGSMILElement* resultsElement, bool seekToTime);
-    SMILTime nextProgressTime() const;
+  SMILTime intervalBegin() const { return m_interval.begin; }
+  SMILTime previousIntervalBegin() const { return m_previousIntervalBegin; }
+  SMILTime simpleDuration() const;
 
-    void reset();
+  void seekToIntervalCorrespondingToTime(SMILTime elapsed);
+  bool progress(SMILTime elapsed, bool seekToTime);
+  SMILTime nextProgressTime() const;
+  void updateAnimatedValue(SVGSMILElement* resultElement) {
+    updateAnimation(m_lastPercent, m_lastRepeat, resultElement);
+  }
 
-    static SMILTime parseClockValue(const String&);
-    static SMILTime parseOffsetValue(const String&);
+  void reset();
 
-    bool isContributing(SMILTime elapsed) const;
-    bool isFrozen() const;
+  static SMILTime parseClockValue(const String&);
+  static SMILTime parseOffsetValue(const String&);
 
-    unsigned documentOrderIndex() const { return m_documentOrderIndex; }
-    void setDocumentOrderIndex(unsigned index) { m_documentOrderIndex = index; }
+  bool isContributing(SMILTime elapsed) const;
+  bool isFrozen() const;
 
-    virtual void resetAnimatedType() = 0;
-    virtual void clearAnimatedType() = 0;
-    virtual void applyResultsToTarget() = 0;
+  unsigned documentOrderIndex() const { return m_documentOrderIndex; }
+  void setDocumentOrderIndex(unsigned index) { m_documentOrderIndex = index; }
 
-    void connectSyncBaseConditions();
-    void connectEventBaseConditions();
+  virtual void resetAnimatedType() = 0;
+  virtual void clearAnimatedType() = 0;
+  virtual void applyResultsToTarget() = 0;
 
-    void dispatchPendingEvent(SMILEventSender*);
-    void dispatchRepeatEvents(unsigned);
+  bool animatedTypeIsLocked() const { return m_animatedPropertyLocked; }
+  void lockAnimatedType() {
+    DCHECK(!m_animatedPropertyLocked);
+    m_animatedPropertyLocked = true;
+  }
+  void unlockAnimatedType() {
+    DCHECK(m_animatedPropertyLocked);
+    m_animatedPropertyLocked = false;
+  }
 
-    virtual bool isSVGDiscardElement() const { return false; }
+  void connectSyncBaseConditions();
+  void connectEventBaseConditions();
 
-    DECLARE_VIRTUAL_TRACE();
+  void scheduleEvent(const AtomicString& eventType);
+  void scheduleRepeatEvents(unsigned);
+  void dispatchPendingEvent(const AtomicString& eventType);
 
-protected:
-    void addBeginTime(SMILTime eventTime, SMILTime endTime, SMILTimeWithOrigin::Origin = SMILTimeWithOrigin::ParserOrigin);
-    void addEndTime(SMILTime eventTime, SMILTime endTime, SMILTimeWithOrigin::Origin = SMILTimeWithOrigin::ParserOrigin);
+  virtual bool isSVGDiscardElement() const { return false; }
 
-    void setInactive() { m_activeState = Inactive; }
+  DECLARE_VIRTUAL_TRACE();
 
-    // Sub-classes may need to take action when the target is changed.
-    virtual void setTargetElement(SVGElement*);
-    virtual void setAttributeName(const QualifiedName&);
+ protected:
+  void addBeginTime(
+      SMILTime eventTime,
+      SMILTime endTime,
+      SMILTimeWithOrigin::Origin = SMILTimeWithOrigin::ParserOrigin);
+  void addEndTime(
+      SMILTime eventTime,
+      SMILTime endTime,
+      SMILTimeWithOrigin::Origin = SMILTimeWithOrigin::ParserOrigin);
 
-    void schedule();
-    void unscheduleIfScheduled();
+  void setInactive() { m_activeState = Inactive; }
 
-private:
-    void buildPendingResource() override;
-    void clearResourceAndEventBaseReferences();
-    void clearConditions();
+  // Sub-classes may need to take action when the target is changed.
+  virtual void setTargetElement(SVGElement*);
+  virtual void setAttributeName(const QualifiedName&);
 
-    virtual void startedActiveInterval() = 0;
-    void endedActiveInterval();
-    virtual void updateAnimation(float percent, unsigned repeat, SVGSMILElement* resultElement) = 0;
+  void schedule();
+  void unscheduleIfScheduled();
 
-    bool layoutObjectIsNeeded(const ComputedStyle&) override { return false; }
+ private:
+  void buildPendingResource() override;
+  void clearResourceAndEventBaseReferences();
+  void clearConditions();
 
-    enum BeginOrEnd {
-        Begin,
-        End
-    };
+  virtual void startedActiveInterval() = 0;
+  void endedActiveInterval();
+  virtual void updateAnimation(float percent,
+                               unsigned repeat,
+                               SVGSMILElement* resultElement) = 0;
 
-    SMILTime findInstanceTime(BeginOrEnd, SMILTime minimumTime, bool equalsMinimumOK) const;
+  bool layoutObjectIsNeeded(const ComputedStyle&) override { return false; }
 
-    enum ResolveInterval {
-        FirstInterval,
-        NextInterval
-    };
+  enum BeginOrEnd { Begin, End };
 
-    SMILInterval resolveInterval(ResolveInterval) const;
-    void resolveFirstInterval();
-    bool resolveNextInterval();
-    SMILTime resolveActiveEnd(SMILTime resolvedBegin, SMILTime resolvedEnd) const;
-    SMILTime repeatingDuration() const;
+  SMILTime findInstanceTime(BeginOrEnd,
+                            SMILTime minimumTime,
+                            bool equalsMinimumOK) const;
 
-    enum RestartedInterval {
-        DidNotRestartInterval,
-        DidRestartInterval
-    };
+  enum ResolveInterval { FirstInterval, NextInterval };
 
-    RestartedInterval maybeRestartInterval(SMILTime elapsed);
-    void beginListChanged(SMILTime eventTime);
-    void endListChanged(SMILTime eventTime);
+  SMILInterval resolveInterval(ResolveInterval) const;
+  void resolveFirstInterval();
+  bool resolveNextInterval();
+  SMILTime resolveActiveEnd(SMILTime resolvedBegin, SMILTime resolvedEnd) const;
+  SMILTime repeatingDuration() const;
 
-    // This represents conditions on elements begin or end list that need to be resolved on runtime
-    // for example <animate begin="otherElement.begin + 8s; button.click" ... />
-    class Condition : public NoBaseWillBeGarbageCollectedFinalized<Condition> {
-    public:
-        enum Type {
-            EventBase,
-            Syncbase,
-            AccessKey
-        };
+  enum RestartedInterval { DidNotRestartInterval, DidRestartInterval };
 
-        Condition(Type, BeginOrEnd, const String& baseID, const String& name, SMILTime offset, int repeat = -1);
-        static PassOwnPtrWillBeRawPtr<Condition> create(Type type, BeginOrEnd beginOrEnd, const String& baseID, const String& name, SMILTime offset, int repeat = -1)
-        {
-            return adoptPtrWillBeNoop(new Condition(type, beginOrEnd, baseID, name, offset, repeat));
-        }
-        ~Condition();
-        DECLARE_TRACE();
+  RestartedInterval maybeRestartInterval(SMILTime elapsed);
+  void beginListChanged(SMILTime eventTime);
+  void endListChanged(SMILTime eventTime);
 
-        Type type() const { return m_type; }
-        BeginOrEnd beginOrEnd() const { return m_beginOrEnd; }
-        String baseID() const { return m_baseID; }
-        String name() const { return m_name; }
-        SMILTime offset() const { return m_offset; }
-        int repeat() const { return m_repeat; }
-        SVGSMILElement* syncBase() const { return m_syncBase.get(); }
-        void setSyncBase(SVGSMILElement* element) { m_syncBase = element; }
-        ConditionEventListener* eventListener() const { return m_eventListener.get(); }
-        void setEventListener(PassRefPtrWillBeRawPtr<ConditionEventListener>);
+  // This represents conditions on elements begin or end list that need to be
+  // resolved on runtime, for example
+  // <animate begin="otherElement.begin + 8s; button.click" ... />
+  class Condition : public GarbageCollectedFinalized<Condition> {
+   public:
+    enum Type { EventBase, Syncbase, AccessKey };
 
-    private:
-        Type m_type;
-        BeginOrEnd m_beginOrEnd;
-        String m_baseID;
-        String m_name;
-        SMILTime m_offset;
-        int m_repeat;
-        RefPtrWillBeMember<SVGSMILElement> m_syncBase;
-        RefPtrWillBeMember<ConditionEventListener> m_eventListener;
-    };
-    bool parseCondition(const String&, BeginOrEnd beginOrEnd);
-    void parseBeginOrEnd(const String&, BeginOrEnd beginOrEnd);
-    SVGElement* eventBaseFor(const Condition&);
+    Condition(Type,
+              BeginOrEnd,
+              const String& baseID,
+              const String& name,
+              SMILTime offset,
+              int repeat = -1);
+    static Condition* create(Type type,
+                             BeginOrEnd beginOrEnd,
+                             const String& baseID,
+                             const String& name,
+                             SMILTime offset,
+                             int repeat = -1) {
+      return new Condition(type, beginOrEnd, baseID, name, offset, repeat);
+    }
+    ~Condition();
+    DECLARE_TRACE();
 
-    void disconnectSyncBaseConditions();
-    void disconnectEventBaseConditions();
+    Type getType() const { return m_type; }
+    BeginOrEnd getBeginOrEnd() const { return m_beginOrEnd; }
+    String baseID() const { return m_baseID; }
+    String name() const { return m_name; }
+    SMILTime offset() const { return m_offset; }
+    int repeat() const { return m_repeat; }
+    SVGSMILElement* syncBase() const { return m_syncBase.get(); }
+    void setSyncBase(SVGSMILElement* element) { m_syncBase = element; }
+    ConditionEventListener* eventListener() const {
+      return m_eventListener.get();
+    }
+    void setEventListener(ConditionEventListener*);
 
-    // Event base timing
-    void handleConditionEvent(Event*, Condition*);
+   private:
+    Type m_type;
+    BeginOrEnd m_beginOrEnd;
+    String m_baseID;
+    String m_name;
+    SMILTime m_offset;
+    int m_repeat;
+    Member<SVGSMILElement> m_syncBase;
+    Member<ConditionEventListener> m_eventListener;
+  };
+  bool parseCondition(const String&, BeginOrEnd beginOrEnd);
+  void parseBeginOrEnd(const String&, BeginOrEnd beginOrEnd);
+  SVGElement* eventBaseFor(const Condition&);
 
-    void notifyDependentsIntervalChanged();
-    void createInstanceTimesFromSyncbase(SVGSMILElement* syncbase);
-    void addSyncBaseDependent(SVGSMILElement*);
-    void removeSyncBaseDependent(SVGSMILElement*);
+  void disconnectSyncBaseConditions();
+  void disconnectEventBaseConditions();
 
-    enum ActiveState {
-        Inactive,
-        Active,
-        Frozen
-    };
+  // Event base timing
+  void handleConditionEvent(Event*, Condition*);
 
-    QualifiedName m_attributeName;
+  void notifyDependentsIntervalChanged();
+  void createInstanceTimesFromSyncbase(SVGSMILElement* syncbase);
+  void addSyncBaseDependent(SVGSMILElement*);
+  void removeSyncBaseDependent(SVGSMILElement*);
 
-    ActiveState determineActiveState(SMILTime elapsed) const;
-    float calculateAnimationPercentAndRepeat(SMILTime elapsed, unsigned& repeat) const;
-    SMILTime calculateNextProgressTime(SMILTime elapsed) const;
+  enum ActiveState { Inactive, Active, Frozen };
 
-    RawPtrWillBeMember<SVGElement> m_targetElement;
+  QualifiedName m_attributeName;
 
-    WillBeHeapVector<OwnPtrWillBeMember<Condition>> m_conditions;
-    bool m_syncBaseConditionsConnected;
-    bool m_hasEndEventConditions;
+  ActiveState determineActiveState(SMILTime elapsed) const;
+  float calculateAnimationPercentAndRepeat(SMILTime elapsed,
+                                           unsigned& repeat) const;
+  SMILTime calculateNextProgressTime(SMILTime elapsed) const;
 
-    bool m_isWaitingForFirstInterval;
-    bool m_isScheduled;
+  Member<SVGElement> m_targetElement;
 
-    using TimeDependentSet = WillBeHeapHashSet<RawPtrWillBeMember<SVGSMILElement>>;
-    TimeDependentSet m_syncBaseDependents;
+  HeapVector<Member<Condition>> m_conditions;
+  bool m_syncBaseConditionsConnected;
+  bool m_hasEndEventConditions;
 
-    // Instance time lists
-    Vector<SMILTimeWithOrigin> m_beginTimes;
-    Vector<SMILTimeWithOrigin> m_endTimes;
+  bool m_isWaitingForFirstInterval;
+  bool m_isScheduled;
 
-    // This is the upcoming or current interval
-    SMILInterval m_interval;
+  using TimeDependentSet = HeapHashSet<Member<SVGSMILElement>>;
+  TimeDependentSet m_syncBaseDependents;
 
-    SMILTime m_previousIntervalBegin;
+  // Instance time lists
+  Vector<SMILTimeWithOrigin> m_beginTimes;
+  Vector<SMILTimeWithOrigin> m_endTimes;
 
-    ActiveState m_activeState;
-    float m_lastPercent;
-    unsigned m_lastRepeat;
+  // This is the upcoming or current interval
+  SMILInterval m_interval;
 
-    SMILTime m_nextProgressTime;
+  SMILTime m_previousIntervalBegin;
 
-    RefPtrWillBeMember<SMILTimeContainer> m_timeContainer;
-    unsigned m_documentOrderIndex;
+  ActiveState m_activeState;
+  float m_lastPercent;
+  unsigned m_lastRepeat;
 
-    Vector<unsigned> m_repeatEventCountList;
+  SMILTime m_nextProgressTime;
 
-    mutable SMILTime m_cachedDur;
-    mutable SMILTime m_cachedRepeatDur;
-    mutable SMILTime m_cachedRepeatCount;
-    mutable SMILTime m_cachedMin;
-    mutable SMILTime m_cachedMax;
+  Member<SMILTimeContainer> m_timeContainer;
+  unsigned m_documentOrderIndex;
 
-    friend class ConditionEventListener;
+  Vector<unsigned> m_repeatEventCountList;
+
+  mutable SMILTime m_cachedDur;
+  mutable SMILTime m_cachedRepeatDur;
+  mutable SMILTime m_cachedRepeatCount;
+  mutable SMILTime m_cachedMin;
+  mutable SMILTime m_cachedMax;
+
+  bool m_animatedPropertyLocked;
+
+  friend class ConditionEventListener;
 };
 
-inline bool isSVGSMILElement(const SVGElement& element)
-{
-    return element.hasTagName(SVGNames::setTag) || element.hasTagName(SVGNames::animateTag) || element.hasTagName(SVGNames::animateMotionTag)
-        || element.hasTagName(SVGNames::animateTransformTag) || element.hasTagName((SVGNames::discardTag));
+inline bool isSVGSMILElement(const SVGElement& element) {
+  return element.hasTagName(SVGNames::setTag) ||
+         element.hasTagName(SVGNames::animateTag) ||
+         element.hasTagName(SVGNames::animateMotionTag) ||
+         element.hasTagName(SVGNames::animateTransformTag) ||
+         element.hasTagName((SVGNames::discardTag));
 }
 
 DEFINE_SVGELEMENT_TYPE_CASTS_WITH_FUNCTION(SVGSMILElement);
 
-}
+}  // namespace blink
 
-#endif // SVGSMILElement_h
+#endif  // SVGSMILElement_h

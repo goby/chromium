@@ -5,17 +5,22 @@
 #include "ui/shell_dialogs/select_file_dialog_win.h"
 
 #include <shlobj.h>
+#include <stddef.h>
 
 #include <algorithm>
 #include <set>
+#include <tuple>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/i18n/case_conversion.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
-#include "base/tuple.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_comptr.h"
 #include "base/win/shortcut.h"
@@ -26,9 +31,7 @@
 #include "ui/base/win/open_file_name_win.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/shell_dialogs/base_shell_dialog_win.h"
-#include "ui/shell_dialogs/shell_dialogs_delegate.h"
 #include "ui/strings/grit/ui_strings.h"
-#include "win8/viewer/metro_viewer_process_host.h"
 
 namespace {
 
@@ -200,9 +203,10 @@ class SelectFileDialogImpl : public ui::SelectFileDialog,
           file_type_index(file_type_index),
           default_extension(default_extension),
           run_state(run_state),
-          ui_task_runner(base::MessageLoopForUI::current()->task_runner()),
+          ui_task_runner(base::ThreadTaskRunnerHandle::Get()),
           owner(owner),
           params(params) {
+      DCHECK(base::MessageLoopForUI::IsCurrent());
       if (file_types)
         this->file_types = *file_types;
     }
@@ -326,59 +330,6 @@ void SelectFileDialogImpl::SelectFileImpl(
     void* params) {
   has_multiple_file_type_choices_ =
       file_types ? file_types->extensions.size() > 1 : true;
-  // If the owning_window passed in is in metro then we need to forward the
-  // file open/save operations to metro.
-  if (GetShellDialogsDelegate() &&
-      GetShellDialogsDelegate()->IsWindowInMetro(owning_window)) {
-    if (type == SELECT_SAVEAS_FILE) {
-      win8::MetroViewerProcessHost::HandleSaveFile(
-          title,
-          default_path,
-          GetFilterForFileTypes(file_types),
-          file_type_index,
-          default_extension,
-          base::Bind(&ui::SelectFileDialog::Listener::FileSelected,
-                     base::Unretained(listener_)),
-          base::Bind(&ui::SelectFileDialog::Listener::FileSelectionCanceled,
-                     base::Unretained(listener_)));
-      return;
-    } else if (type == SELECT_OPEN_FILE) {
-      win8::MetroViewerProcessHost::HandleOpenFile(
-          title,
-          default_path,
-          GetFilterForFileTypes(file_types),
-          base::Bind(&ui::SelectFileDialog::Listener::FileSelected,
-                     base::Unretained(listener_)),
-          base::Bind(&ui::SelectFileDialog::Listener::FileSelectionCanceled,
-                     base::Unretained(listener_)));
-      return;
-    } else if (type == SELECT_OPEN_MULTI_FILE) {
-      win8::MetroViewerProcessHost::HandleOpenMultipleFiles(
-          title,
-          default_path,
-          GetFilterForFileTypes(file_types),
-          base::Bind(&ui::SelectFileDialog::Listener::MultiFilesSelected,
-                     base::Unretained(listener_)),
-          base::Bind(&ui::SelectFileDialog::Listener::FileSelectionCanceled,
-                     base::Unretained(listener_)));
-      return;
-    } else if (type == SELECT_FOLDER || type == SELECT_UPLOAD_FOLDER) {
-      base::string16 title_string = title;
-      if (type == SELECT_UPLOAD_FOLDER && title_string.empty()) {
-        // If it's for uploading don't use default dialog title to
-        // make sure we clearly tell it's for uploading.
-        title_string = l10n_util::GetStringUTF16(
-            IDS_SELECT_UPLOAD_FOLDER_DIALOG_TITLE);
-      }
-      win8::MetroViewerProcessHost::HandleSelectFolder(
-          title_string,
-          base::Bind(&ui::SelectFileDialog::Listener::FileSelected,
-                     base::Unretained(listener_)),
-          base::Bind(&ui::SelectFileDialog::Listener::FileSelectionCanceled,
-                     base::Unretained(listener_)));
-      return;
-    }
-  }
   HWND owner = owning_window && owning_window->GetRootWindow()
       ? owning_window->GetHost()->GetAcceleratedWidget() : NULL;
 
@@ -386,10 +337,9 @@ void SelectFileDialogImpl::SelectFileImpl(
                                      default_path, file_types, file_type_index,
                                      default_extension, BeginRun(owner),
                                      owner, params);
-  execute_params.run_state.dialog_thread->message_loop()->PostTask(
-      FROM_HERE,
-      base::Bind(&SelectFileDialogImpl::ExecuteSelectFile, this,
-                 execute_params));
+  execute_params.run_state.dialog_thread->task_runner()->PostTask(
+      FROM_HERE, base::Bind(&SelectFileDialogImpl::ExecuteSelectFile, this,
+                            execute_params));
 }
 
 bool SelectFileDialogImpl::HasMultipleFileTypeChoicesImpl() {
@@ -498,7 +448,6 @@ bool SelectFileDialogImpl::SaveFileAsWithFilter(
       filter.empty() ? NULL : filter.c_str();
   save_as.GetOPENFILENAME()->nFilterIndex = *index;
   save_as.GetOPENFILENAME()->lpstrDefExt = &def_ext[0];
-  save_as.MaybeInstallWindowPositionHookForSaveAsOnXP();
 
   if (!get_save_file_name_impl_.Run(save_as.GetOPENFILENAME()))
     return false;
@@ -510,12 +459,12 @@ bool SelectFileDialogImpl::SaveFileAsWithFilter(
   // Figure out what filter got selected. The filter index is 1-based.
   std::wstring filter_selected;
   if (*index > 0) {
-    std::vector<base::Tuple<base::string16, base::string16>> filters =
+    std::vector<std::tuple<base::string16, base::string16>> filters =
         ui::win::OpenFileName::GetFilters(save_as.GetOPENFILENAME());
     if (*index > filters.size())
       NOTREACHED() << "Invalid filter index.";
     else
-      filter_selected = base::get<1>(filters[*index - 1]);
+      filter_selected = std::get<1>(filters[*index - 1]);
   }
 
   // Get the extension that was suggested to the user (when the Save As dialog
@@ -737,7 +686,7 @@ std::wstring AppendExtensionIfNeeded(
   if (!(filter_selected.empty() || filter_selected == L"*.*") &&
       !base::win::RegKey(HKEY_CLASSES_ROOT, key.c_str(), KEY_READ).Valid() &&
       file_extension != suggested_ext) {
-    if (return_value[return_value.length() - 1] != L'.')
+    if (return_value.back() != L'.')
       return_value.append(L".");
     return_value.append(suggested_ext);
   }
@@ -759,9 +708,8 @@ SelectFileDialog* CreateWinSelectFileDialog(
       listener, policy, get_open_file_name_impl, get_save_file_name_impl);
 }
 
-SelectFileDialog* CreateDefaultWinSelectFileDialog(
-    SelectFileDialog::Listener* listener,
-    SelectFilePolicy* policy) {
+SelectFileDialog* CreateSelectFileDialog(SelectFileDialog::Listener* listener,
+                                         SelectFilePolicy* policy) {
   return CreateWinSelectFileDialog(listener,
                                    policy,
                                    base::Bind(&CallBuiltinGetOpenFileName),

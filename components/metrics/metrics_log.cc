@@ -4,26 +4,26 @@
 
 #include "components/metrics/metrics_log.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/base64.h"
-#include "base/basictypes.h"
 #include "base/build_time.h"
 #include "base/cpu.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/metrics_hashes.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
 #include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/sys_info.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/metrics/histogram_encoder.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_provider.h"
@@ -31,6 +31,8 @@
 #include "components/metrics/proto/histogram_event.pb.h"
 #include "components/metrics/proto/system_profile.pb.h"
 #include "components/metrics/proto/user_action_event.pb.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "components/variations/active_field_trials.h"
 
 #if defined(OS_ANDROID)
@@ -38,10 +40,7 @@
 #endif
 
 #if defined(OS_WIN)
-#include "base/win/metro.h"
-
-// http://blogs.msdn.com/oldnewthing/archive/2004/10/25/247180.aspx
-extern "C" IMAGE_DOS_HEADER __ImageBase;
+#include "base/win/current_module.h"
 #endif
 
 using base::SampleCountIterator;
@@ -76,7 +75,7 @@ void WriteFieldTrials(const std::vector<ActiveGroupId>& field_trial_ids,
 // Round a timestamp measured in seconds since epoch to one with a granularity
 // of an hour. This can be used before uploaded potentially sensitive
 // timestamps.
-int64 RoundSecondsToHour(int64 time_in_seconds) {
+int64_t RoundSecondsToHour(int64_t time_in_seconds) {
   return 3600 * (time_in_seconds / 3600);
 }
 
@@ -99,7 +98,7 @@ MetricsLog::MetricsLog(const std::string& client_id,
 
   uma_proto_.set_session_id(session_id);
 
-  const int32 product = client_->GetProduct();
+  const int32_t product = client_->GetProduct();
   // Only set the product if it differs from the default value.
   if (product != uma_proto_.product())
     uma_proto_.set_product(product);
@@ -118,9 +117,9 @@ MetricsLog::~MetricsLog() {
 
 // static
 void MetricsLog::RegisterPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterIntegerPref(prefs::kStabilityLaunchCount, 0);
   registry->RegisterIntegerPref(prefs::kStabilityCrashCount, 0);
   registry->RegisterIntegerPref(prefs::kStabilityIncompleteSessionEndCount, 0);
+  registry->RegisterIntegerPref(prefs::kStabilityLaunchCount, 0);
   registry->RegisterIntegerPref(prefs::kStabilityBreakpadRegistrationFail, 0);
   registry->RegisterIntegerPref(
       prefs::kStabilityBreakpadRegistrationSuccess, 0);
@@ -130,11 +129,14 @@ void MetricsLog::RegisterPrefs(PrefRegistrySimple* registry) {
                                std::string());
   registry->RegisterStringPref(prefs::kStabilitySavedSystemProfileHash,
                                std::string());
+  registry->RegisterIntegerPref(prefs::kStabilityDeferredCount, 0);
+  registry->RegisterIntegerPref(prefs::kStabilityDiscardCount, 0);
+  registry->RegisterIntegerPref(prefs::kStabilityVersionMismatchCount, 0);
 }
 
 // static
-uint64 MetricsLog::Hash(const std::string& value) {
-  uint64 hash = base::HashMetricName(value);
+uint64_t MetricsLog::Hash(const std::string& value) {
+  uint64_t hash = base::HashMetricName(value);
 
   // The following log is VERY helpful when folks add some named histogram into
   // the code, but forgot to update the descriptive list of histograms.  When
@@ -148,15 +150,15 @@ uint64 MetricsLog::Hash(const std::string& value) {
 }
 
 // static
-int64 MetricsLog::GetBuildTime() {
-  static int64 integral_build_time = 0;
+int64_t MetricsLog::GetBuildTime() {
+  static int64_t integral_build_time = 0;
   if (!integral_build_time)
-    integral_build_time = static_cast<int64>(base::GetBuildTime().ToTimeT());
+    integral_build_time = static_cast<int64_t>(base::GetBuildTime().ToTimeT());
   return integral_build_time;
 }
 
 // static
-int64 MetricsLog::GetCurrentTime() {
+int64_t MetricsLog::GetCurrentTime() {
   return (base::TimeTicks::Now() - base::TimeTicks()).InSeconds();
 }
 
@@ -204,37 +206,70 @@ void MetricsLog::RecordStabilityMetrics(
     metrics_providers[i]->ProvideStabilityMetrics(system_profile);
   }
 
-  // Omit some stats unless this is the initial stability log.
-  if (log_type() != INITIAL_STABILITY_LOG)
-    return;
+  SystemProfileProto::Stability* stability =
+      system_profile->mutable_stability();
 
   int incomplete_shutdown_count =
       pref->GetInteger(prefs::kStabilityIncompleteSessionEndCount);
-  pref->SetInteger(prefs::kStabilityIncompleteSessionEndCount, 0);
+  if (incomplete_shutdown_count) {
+    pref->SetInteger(prefs::kStabilityIncompleteSessionEndCount, 0);
+    stability->set_incomplete_shutdown_count(incomplete_shutdown_count);
+  }
+
   int breakpad_registration_success_count =
       pref->GetInteger(prefs::kStabilityBreakpadRegistrationSuccess);
-  pref->SetInteger(prefs::kStabilityBreakpadRegistrationSuccess, 0);
+  if (breakpad_registration_success_count) {
+    pref->SetInteger(prefs::kStabilityBreakpadRegistrationSuccess, 0);
+    stability->set_breakpad_registration_success_count(
+        breakpad_registration_success_count);
+  }
+
   int breakpad_registration_failure_count =
       pref->GetInteger(prefs::kStabilityBreakpadRegistrationFail);
-  pref->SetInteger(prefs::kStabilityBreakpadRegistrationFail, 0);
+  if (breakpad_registration_failure_count) {
+    pref->SetInteger(prefs::kStabilityBreakpadRegistrationFail, 0);
+    stability->set_breakpad_registration_failure_count(
+        breakpad_registration_failure_count);
+  }
+
   int debugger_present_count =
       pref->GetInteger(prefs::kStabilityDebuggerPresent);
-  pref->SetInteger(prefs::kStabilityDebuggerPresent, 0);
+  if (debugger_present_count) {
+    pref->SetInteger(prefs::kStabilityDebuggerPresent, 0);
+    stability->set_debugger_present_count(debugger_present_count);
+  }
+
   int debugger_not_present_count =
       pref->GetInteger(prefs::kStabilityDebuggerNotPresent);
-  pref->SetInteger(prefs::kStabilityDebuggerNotPresent, 0);
+  if (debugger_not_present_count) {
+    pref->SetInteger(prefs::kStabilityDebuggerNotPresent, 0);
+    stability->set_debugger_not_present_count(debugger_not_present_count);
+  }
 
-  // TODO(jar): The following are all optional, so we *could* optimize them for
-  // values of zero (and not include them).
-  SystemProfileProto::Stability* stability =
-      system_profile->mutable_stability();
-  stability->set_incomplete_shutdown_count(incomplete_shutdown_count);
-  stability->set_breakpad_registration_success_count(
-      breakpad_registration_success_count);
-  stability->set_breakpad_registration_failure_count(
-      breakpad_registration_failure_count);
-  stability->set_debugger_present_count(debugger_present_count);
-  stability->set_debugger_not_present_count(debugger_not_present_count);
+  // Note: only logging the following histograms for non-zero values.
+
+  int deferred_count = pref->GetInteger(prefs::kStabilityDeferredCount);
+  if (deferred_count) {
+    local_state_->SetInteger(prefs::kStabilityDeferredCount, 0);
+    UMA_STABILITY_HISTOGRAM_COUNTS_100(
+        "Stability.Internals.InitialStabilityLogDeferredCount", deferred_count);
+  }
+
+  int discard_count = local_state_->GetInteger(prefs::kStabilityDiscardCount);
+  if (discard_count) {
+    local_state_->SetInteger(prefs::kStabilityDiscardCount, 0);
+    UMA_STABILITY_HISTOGRAM_COUNTS_100("Stability.Internals.DataDiscardCount",
+                                       discard_count);
+  }
+
+  int version_mismatch_count =
+      local_state_->GetInteger(prefs::kStabilityVersionMismatchCount);
+  if (version_mismatch_count) {
+    local_state_->SetInteger(prefs::kStabilityVersionMismatchCount, 0);
+    UMA_STABILITY_HISTOGRAM_COUNTS_100(
+        "Stability.Internals.VersionMismatchCount",
+        version_mismatch_count);
+  }
 }
 
 void MetricsLog::RecordGeneralMetrics(
@@ -252,6 +287,30 @@ bool MetricsLog::HasEnvironment() const {
   return uma_proto()->system_profile().has_uma_enabled_date();
 }
 
+void MetricsLog::WriteMetricsEnableDefault(EnableMetricsDefault metrics_default,
+                                           SystemProfileProto* system_profile) {
+  if (client_->IsReportingPolicyManaged()) {
+    // If it's managed, then it must be reporting, otherwise we wouldn't be
+    // sending metrics.
+    system_profile->set_uma_default_state(
+        SystemProfileProto_UmaDefaultState_POLICY_FORCED_ENABLED);
+    return;
+  }
+
+  switch (metrics_default) {
+    case EnableMetricsDefault::DEFAULT_UNKNOWN:
+      // Don't set the field if it's unknown.
+      break;
+    case EnableMetricsDefault::OPT_IN:
+      system_profile->set_uma_default_state(
+          SystemProfileProto_UmaDefaultState_OPT_IN);
+      break;
+    case EnableMetricsDefault::OPT_OUT:
+      system_profile->set_uma_default_state(
+          SystemProfileProto_UmaDefaultState_OPT_OUT);
+  }
+}
+
 bool MetricsLog::HasStabilityMetrics() const {
   return uma_proto()->system_profile().stability().has_launch_count();
 }
@@ -262,9 +321,11 @@ bool MetricsLog::HasStabilityMetrics() const {
 // protobufs is complete.
 void MetricsLog::WriteRequiredStabilityAttributes(PrefService* pref) {
   int launch_count = pref->GetInteger(prefs::kStabilityLaunchCount);
-  pref->SetInteger(prefs::kStabilityLaunchCount, 0);
+  if (launch_count)
+    pref->SetInteger(prefs::kStabilityLaunchCount, 0);
   int crash_count = pref->GetInteger(prefs::kStabilityCrashCount);
-  pref->SetInteger(prefs::kStabilityCrashCount, 0);
+  if (crash_count)
+    pref->SetInteger(prefs::kStabilityCrashCount, 0);
 
   SystemProfileProto::Stability* stability =
       uma_proto()->mutable_system_profile()->mutable_stability();
@@ -283,22 +344,25 @@ void MetricsLog::WriteRealtimeStabilityAttributes(
   SystemProfileProto::Stability* stability =
       uma_proto()->mutable_system_profile()->mutable_stability();
 
-  const uint64 incremental_uptime_sec = incremental_uptime.InSeconds();
+  const uint64_t incremental_uptime_sec = incremental_uptime.InSeconds();
   if (incremental_uptime_sec)
     stability->set_incremental_uptime_sec(incremental_uptime_sec);
-  const uint64 uptime_sec = uptime.InSeconds();
+  const uint64_t uptime_sec = uptime.InSeconds();
   if (uptime_sec)
     stability->set_uptime_sec(uptime_sec);
 }
 
-void MetricsLog::RecordEnvironment(
+std::string MetricsLog::RecordEnvironment(
     const std::vector<MetricsProvider*>& metrics_providers,
     const std::vector<variations::ActiveGroupId>& synthetic_trials,
-    int64 install_date,
-    int64 metrics_reporting_enabled_date) {
+    int64_t install_date,
+    int64_t metrics_reporting_enabled_date) {
   DCHECK(!HasEnvironment());
 
   SystemProfileProto* system_profile = uma_proto()->mutable_system_profile();
+
+  WriteMetricsEnableDefault(client_->GetMetricsReportingDefaultState(),
+                            system_profile);
 
   std::string brand_code;
   if (client_->GetBrand(&brand_code))
@@ -322,21 +386,17 @@ void MetricsLog::RecordEnvironment(
   hardware->set_cpu_architecture(base::SysInfo::OperatingSystemArchitecture());
   hardware->set_system_ram_mb(base::SysInfo::AmountOfPhysicalMemoryMB());
 #if defined(OS_WIN)
-  hardware->set_dll_base(reinterpret_cast<uint64>(&__ImageBase));
+  hardware->set_dll_base(reinterpret_cast<uint64_t>(CURRENT_MODULE()));
 #endif
 
   SystemProfileProto::OS* os = system_profile->mutable_os();
+#if defined(OVERRIDE_OS_NAME_TO_BLIMP)
+  os->set_name("Blimp");
+#else
   std::string os_name = base::SysInfo::OperatingSystemName();
-#if defined(OS_WIN)
-  // TODO(mad): This only checks whether the main process is a Metro process at
-  // upload time; not whether the collected metrics were all gathered from
-  // Metro.  This is ok as an approximation for now, since users will rarely be
-  // switching from Metro to Desktop mode; but we should re-evaluate whether we
-  // can distinguish metrics more cleanly in the future: http://crbug.com/140568
-  if (base::win::IsMetroProcess())
-    os_name += " (Metro)";
-#endif
   os->set_name(os_name);
+#endif
+
   os->set_version(base::SysInfo::OperatingSystemVersion());
 #if defined(OS_ANDROID)
   os->set_fingerprint(
@@ -357,35 +417,44 @@ void MetricsLog::RecordEnvironment(
   for (size_t i = 0; i < metrics_providers.size(); ++i)
     metrics_providers[i]->ProvideSystemProfileMetrics(system_profile);
 
-  std::string serialied_system_profile;
+  std::string serialized_system_profile;
   std::string base64_system_profile;
-  if (system_profile->SerializeToString(&serialied_system_profile)) {
-    base::Base64Encode(serialied_system_profile, &base64_system_profile);
+  if (system_profile->SerializeToString(&serialized_system_profile)) {
+    // Persist the system profile to disk. In the event of an unclean shutdown,
+    // it will be used as part of the initial stability report.
+    base::Base64Encode(serialized_system_profile, &base64_system_profile);
     PrefService* local_state = local_state_;
     local_state->SetString(prefs::kStabilitySavedSystemProfile,
                            base64_system_profile);
     local_state->SetString(prefs::kStabilitySavedSystemProfileHash,
-                           ComputeSHA1(serialied_system_profile));
+                           ComputeSHA1(serialized_system_profile));
   }
+
+  return serialized_system_profile;
 }
 
-bool MetricsLog::LoadSavedEnvironmentFromPrefs() {
+bool MetricsLog::LoadSavedEnvironmentFromPrefs(std::string* app_version) {
+  DCHECK(app_version);
+  app_version->clear();
+
   PrefService* local_state = local_state_;
   const std::string base64_system_profile =
       local_state->GetString(prefs::kStabilitySavedSystemProfile);
   if (base64_system_profile.empty())
     return false;
-
   const std::string system_profile_hash =
       local_state->GetString(prefs::kStabilitySavedSystemProfileHash);
-  local_state->ClearPref(prefs::kStabilitySavedSystemProfile);
-  local_state->ClearPref(prefs::kStabilitySavedSystemProfileHash);
 
   SystemProfileProto* system_profile = uma_proto()->mutable_system_profile();
-  std::string serialied_system_profile;
-  return base::Base64Decode(base64_system_profile, &serialied_system_profile) &&
-         ComputeSHA1(serialied_system_profile) == system_profile_hash &&
-         system_profile->ParseFromString(serialied_system_profile);
+  std::string serialized_system_profile;
+
+  bool success =
+      base::Base64Decode(base64_system_profile, &serialized_system_profile) &&
+      ComputeSHA1(serialized_system_profile) == system_profile_hash &&
+      system_profile->ParseFromString(serialized_system_profile);
+  if (success)
+    *app_version = system_profile->app_version();
+  return success;
 }
 
 void MetricsLog::CloseLog() {

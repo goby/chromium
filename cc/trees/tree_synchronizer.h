@@ -5,13 +5,15 @@
 #ifndef CC_TREES_TREE_SYNCHRONIZER_H_
 #define CC_TREES_TREE_SYNCHRONIZER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 
 namespace cc {
 
 class LayerImpl;
+class LayerTree;
 class LayerTreeImpl;
 class Layer;
 
@@ -20,29 +22,17 @@ class CC_EXPORT TreeSynchronizer {
   // Accepts a Layer tree and returns a reference to a LayerImpl tree that
   // duplicates the structure of the Layer tree, reusing the LayerImpls in the
   // tree provided by old_layer_impl_root if possible.
-  static scoped_ptr<LayerImpl> SynchronizeTrees(
-      Layer* layer_root,
-      scoped_ptr<LayerImpl> old_layer_impl_root,
-      LayerTreeImpl* tree_impl);
-  static scoped_ptr<LayerImpl> SynchronizeTrees(
-      LayerImpl* layer_root,
-      scoped_ptr<LayerImpl> old_layer_impl_root,
-      LayerTreeImpl* tree_impl);
+  static void SynchronizeTrees(Layer* layer_root, LayerTreeImpl* tree_impl);
+  static void SynchronizeTrees(LayerTreeImpl* pending_tree,
+                               LayerTreeImpl* active_tree);
 
-  // Pushes properties from a Layer or LayerImpl tree to a structurally
-  // equivalent LayerImpl tree.
-  static void PushProperties(Layer* layer_root,
-                             LayerImpl* layer_impl_root);
-  static void PushProperties(LayerImpl* layer_root, LayerImpl* layer_impl_root);
+  static void PushLayerProperties(LayerTreeImpl* pending_tree,
+                                  LayerTreeImpl* active_tree);
+  static void PushLayerProperties(LayerTree* host_tree,
+                                  LayerTreeImpl* impl_tree);
 
  private:
   TreeSynchronizer();  // Not instantiable.
-
-  template <typename LayerType>
-  static void PushPropertiesInternal(
-      LayerType* layer,
-      LayerImpl* layer_impl,
-      int* num_dependents_need_push_properties_for_parent);
 
   DISALLOW_COPY_AND_ASSIGN(TreeSynchronizer);
 };

@@ -20,54 +20,119 @@ class ObjectProxyTest : public testing::Test {
     bus_options.bus_type = Bus::SESSION;
     bus_options.connection_type = Bus::PRIVATE;
     bus_ = new Bus(bus_options);
-
-    object_proxy_ = bus_->GetObjectProxy(
-        "org.chromium.TestService", ObjectPath("/org/chromium/TestObject"));
   }
 
   void TearDown() override { bus_->ShutdownAndBlock(); }
 
   base::MessageLoopForIO message_loop_;
   scoped_refptr<Bus> bus_;
-  ObjectProxy* object_proxy_;
 };
 
 // Used as a WaitForServiceToBeAvailableCallback.
-void OnServiceIsAvailable(scoped_ptr<base::RunLoop>* run_loop,
-                          bool service_is_available) {
-  EXPECT_TRUE(service_is_available);
-  ASSERT_TRUE(*run_loop);
-  (*run_loop)->Quit();
+void OnServiceIsAvailable(bool* dest_service_is_available,
+                          int* num_calls,
+                          bool src_service_is_available) {
+  *dest_service_is_available = src_service_is_available;
+  (*num_calls)++;
 }
 
-TEST_F(ObjectProxyTest, WaitForServiceToBeAvailable) {
-  scoped_ptr<base::RunLoop> run_loop;
+// Used as a callback for TestService::RequestOwnership().
+void OnOwnershipRequestDone(bool success) {
+  ASSERT_TRUE(success);
+}
 
-  // Callback is not yet called because the service is not available.
-  object_proxy_->WaitForServiceToBeAvailable(
-      base::Bind(&OnServiceIsAvailable, &run_loop));
-  base::RunLoop().RunUntilIdle();
+// Used as a callback for TestService::ReleaseOwnership().
+void OnOwnershipReleased() {}
 
-  // Start the service.
+TEST_F(ObjectProxyTest, WaitForServiceToBeAvailableRunOnce) {
   TestService::Options options;
   TestService test_service(options);
+  ObjectProxy* object_proxy = bus_->GetObjectProxy(
+      test_service.service_name(), ObjectPath("/org/chromium/TestObject"));
+
+  // The callback is not yet called because the service is not available.
+  int num_calls = 0;
+  bool service_is_available = false;
+  object_proxy->WaitForServiceToBeAvailable(
+      base::Bind(&OnServiceIsAvailable, &service_is_available, &num_calls));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0, num_calls);
+
+  // Start the service. The callback should be called asynchronously.
+  ASSERT_TRUE(test_service.StartService());
+  ASSERT_TRUE(test_service.WaitUntilServiceIsStarted());
+  ASSERT_TRUE(test_service.has_ownership());
+  num_calls = 0;
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1, num_calls);
+  EXPECT_TRUE(service_is_available);
+
+  // Release the service's ownership of its name. The callback should not be
+  // invoked again.
+  test_service.ReleaseOwnership(base::Bind(&OnOwnershipReleased));
+  num_calls = 0;
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0, num_calls);
+
+  // Take ownership of the name and check that the callback is not called.
+  test_service.RequestOwnership(base::Bind(&OnOwnershipRequestDone));
+  num_calls = 0;
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0, num_calls);
+}
+
+TEST_F(ObjectProxyTest, WaitForServiceToBeAvailableAlreadyRunning) {
+  TestService::Options options;
+  TestService test_service(options);
+  ObjectProxy* object_proxy = bus_->GetObjectProxy(
+      test_service.service_name(), ObjectPath("/org/chromium/TestObject"));
+
   ASSERT_TRUE(test_service.StartService());
   ASSERT_TRUE(test_service.WaitUntilServiceIsStarted());
   ASSERT_TRUE(test_service.has_ownership());
 
-  // Callback is called beacuse the service became available.
-  run_loop.reset(new base::RunLoop);
-  run_loop->Run();
+  // Since the service is already running, the callback should be invoked
+  // immediately (but asynchronously, rather than the callback being invoked
+  // directly within WaitForServiceToBeAvailable()).
+  int num_calls = 0;
+  bool service_is_available = false;
+  object_proxy->WaitForServiceToBeAvailable(
+      base::Bind(&OnServiceIsAvailable, &service_is_available, &num_calls));
+  EXPECT_EQ(0, num_calls);
 
-  // Callback is called because the service is already available.
-  run_loop.reset(new base::RunLoop);
-  object_proxy_->WaitForServiceToBeAvailable(
-      base::Bind(&OnServiceIsAvailable, &run_loop));
-  run_loop->Run();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1, num_calls);
+  EXPECT_TRUE(service_is_available);
+}
 
-  // Shut down the service.
-  test_service.ShutdownAndBlock();
-  test_service.Stop();
+TEST_F(ObjectProxyTest, WaitForServiceToBeAvailableMultipleCallbacks) {
+  TestService::Options options;
+  TestService test_service(options);
+  ObjectProxy* object_proxy = bus_->GetObjectProxy(
+      test_service.service_name(), ObjectPath("/org/chromium/TestObject"));
+
+  // Register two callbacks.
+  int num_calls_1 = 0, num_calls_2 = 0;
+  bool service_is_available_1 = false, service_is_available_2 = false;
+  object_proxy->WaitForServiceToBeAvailable(
+      base::Bind(&OnServiceIsAvailable, &service_is_available_1, &num_calls_1));
+  object_proxy->WaitForServiceToBeAvailable(
+      base::Bind(&OnServiceIsAvailable, &service_is_available_2, &num_calls_2));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0, num_calls_1);
+  EXPECT_EQ(0, num_calls_2);
+
+  // Start the service and confirm that both callbacks are invoked.
+  ASSERT_TRUE(test_service.StartService());
+  ASSERT_TRUE(test_service.WaitUntilServiceIsStarted());
+  ASSERT_TRUE(test_service.has_ownership());
+  num_calls_1 = 0;
+  num_calls_2 = 0;
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1, num_calls_1);
+  EXPECT_EQ(1, num_calls_2);
+  EXPECT_TRUE(service_is_available_1);
+  EXPECT_TRUE(service_is_available_2);
 }
 
 }  // namespace

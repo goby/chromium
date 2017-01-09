@@ -1,4 +1,3 @@
-CONSOLE WARNING: The XMLHttpRequest progress event property 'position' is deprecated. Please use 'loaded' instead.
 Verify that XMLHttpRequest.open resets received size.
 
 You should see PASSED once.

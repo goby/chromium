@@ -4,24 +4,21 @@
 
 #include "content/browser/android/content_video_view.h"
 
-#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
+#include "content/browser/android/content_view_core_impl.h"
 #include "content/browser/media/android/browser_media_player_manager.h"
-#include "content/browser/power_save_blocker_impl.h"
-#include "content/common/android/surface_texture_peer.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/common/content_switches.h"
 #include "jni/ContentVideoView_jni.h"
 
-#if !defined(USE_AURA)
-#include "content/browser/android/content_view_core_impl.h"
-#endif
-
 using base::android::AttachCurrentThread;
 using base::android::CheckException;
+using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
+using base::android::ScopedJavaLocalRef;
 using base::UserMetricsAction;
 using content::RecordAction;
 
@@ -51,12 +48,14 @@ ContentVideoView* ContentVideoView::GetInstance() {
   return g_content_video_view;
 }
 
-ContentVideoView::ContentVideoView(
-    BrowserMediaPlayerManager* manager)
-    : manager_(manager),
-      weak_factory_(this) {
+ContentVideoView::ContentVideoView(Client* client,
+                                   ContentViewCore* content_view_core,
+                                   const JavaRef<jobject>& video_embedder,
+                                   const gfx::Size& video_natural_size)
+    : client_(client), weak_factory_(this) {
   DCHECK(!g_content_video_view);
-  j_content_video_view_ = CreateJavaObject();
+  j_content_video_view_ =
+      CreateJavaObject(content_view_core, video_embedder, video_natural_size);
   g_content_video_view = this;
 }
 
@@ -65,8 +64,8 @@ ContentVideoView::~ContentVideoView() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
   if (!content_video_view.is_null()) {
-    Java_ContentVideoView_destroyContentVideoView(env,
-        content_video_view.obj(), true);
+    Java_ContentVideoView_destroyContentVideoView(env, content_video_view,
+                                                  true);
     j_content_video_view_.reset();
   }
   g_content_video_view = NULL;
@@ -76,7 +75,7 @@ void ContentVideoView::OpenVideo() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
   if (!content_video_view.is_null()) {
-    Java_ContentVideoView_openVideo(env, content_video_view.obj());
+    Java_ContentVideoView_openVideo(env, content_video_view);
   }
 }
 
@@ -84,8 +83,8 @@ void ContentVideoView::OnMediaPlayerError(int error_type) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
   if (!content_video_view.is_null()) {
-    Java_ContentVideoView_onMediaPlayerError(env, content_video_view.obj(),
-        error_type);
+    Java_ContentVideoView_onMediaPlayerError(env, content_video_view,
+                                             error_type);
   }
 }
 
@@ -93,33 +92,36 @@ void ContentVideoView::OnVideoSizeChanged(int width, int height) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
   if (!content_video_view.is_null()) {
-    Java_ContentVideoView_onVideoSizeChanged(env, content_video_view.obj(),
-        width, height);
+    Java_ContentVideoView_onVideoSizeChanged(env, content_video_view, width,
+                                             height);
   }
 }
 
-void ContentVideoView::OnBufferingUpdate(int percent) {
+void ContentVideoView::ExitFullscreen() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
-  if (!content_video_view.is_null()) {
-    Java_ContentVideoView_onBufferingUpdate(env, content_video_view.obj(),
-        percent);
-  }
-}
-
-void ContentVideoView::OnPlaybackComplete() {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
-  if (!content_video_view.is_null()) {
-    Java_ContentVideoView_onPlaybackComplete(env, content_video_view.obj());
-  }
-}
-
-void ContentVideoView::OnExitFullscreen() {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
+  bool release_media_player = false;
   if (!content_video_view.is_null())
-    Java_ContentVideoView_onExitFullscreen(env, content_video_view.obj());
+    Java_ContentVideoView_exitFullscreen(env, content_video_view,
+                                         release_media_player);
+}
+
+ScopedJavaLocalRef<jobject> ContentVideoView::GetJavaObject(JNIEnv* env) {
+  return j_content_video_view_.get(env);
+}
+
+void ContentVideoView::SetSurface(JNIEnv*,
+                                  const JavaParamRef<jobject>&,
+                                  const JavaParamRef<jobject>& surface) {
+  client_->SetVideoSurface(
+      gl::ScopedJavaSurface::AcquireExternalSurface(surface));
+}
+
+void ContentVideoView::DidExitFullscreen(JNIEnv*,
+                                         const JavaParamRef<jobject>&,
+                                         jboolean release_media_player) {
+  j_content_video_view_.reset();
+  client_->DidExitFullscreen(release_media_player);
 }
 
 void ContentVideoView::RecordFullscreenPlayback(JNIEnv*,
@@ -160,73 +162,22 @@ void ContentVideoView::RecordExitFullscreenPlayback(
   }
 }
 
-void ContentVideoView::UpdateMediaMetadata() {
+JavaObjectWeakGlobalRef ContentVideoView::CreateJavaObject(
+    ContentViewCore* content_view_core,
+    const JavaRef<jobject>& j_content_video_view_embedder,
+    const gfx::Size& video_natural_size) {
   JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> content_video_view = GetJavaObject(env);
-  if (content_video_view.is_null())
-    return;
-
-  media::MediaPlayerAndroid* player = manager_->GetFullscreenPlayer();
-  if (player && player->IsPlayerReady()) {
-    Java_ContentVideoView_onUpdateMediaMetadata(
-        env, content_video_view.obj(), player->GetVideoWidth(),
-        player->GetVideoHeight(),
-        static_cast<int>(player->GetDuration().InMilliseconds()),
-        player->CanPause(),player->CanSeekForward(), player->CanSeekBackward());
-  }
-}
-
-bool ContentVideoView::IsPlaying(JNIEnv*, const JavaParamRef<jobject>& obj) {
-  media::MediaPlayerAndroid* player = manager_->GetFullscreenPlayer();
-  return player ? player->IsPlaying() : false;
-}
-
-void ContentVideoView::ExitFullscreen(JNIEnv*,
-                                      const JavaParamRef<jobject>&,
-                                      jboolean release_media_player) {
-  j_content_video_view_.reset();
-  manager_->ExitFullscreen(release_media_player);
-}
-
-void ContentVideoView::SetSurface(JNIEnv* env,
-                                  const JavaParamRef<jobject>& obj,
-                                  const JavaParamRef<jobject>& surface) {
-  manager_->SetVideoSurface(
-      gfx::ScopedJavaSurface::AcquireExternalSurface(surface));
-}
-
-void ContentVideoView::RequestMediaMetadata(JNIEnv* env,
-                                            const JavaParamRef<jobject>& obj) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&ContentVideoView::UpdateMediaMetadata,
-                 weak_factory_.GetWeakPtr()));
-}
-
-ScopedJavaLocalRef<jobject> ContentVideoView::GetJavaObject(JNIEnv* env) {
-  return j_content_video_view_.get(env);
-}
-
-JavaObjectWeakGlobalRef ContentVideoView::CreateJavaObject() {
-
-  JNIEnv* env = AttachCurrentThread();
-  base::android::ScopedJavaLocalRef<jobject> j_content_view_core;
-
-  // TODO(mfomitchev): Support fullscreen video underlay on Android Aura.
-  // crbug.com/548024
-#if !defined(USE_AURA)
-  ContentViewCore* content_view_core = manager_->GetContentViewCore();
-  j_content_view_core = content_view_core->GetJavaObject();
-#endif
+  base::android::ScopedJavaLocalRef<jobject> j_content_view_core =
+      content_view_core->GetJavaObject();
 
   if (j_content_view_core.is_null())
     return JavaObjectWeakGlobalRef(env, nullptr);
 
   return JavaObjectWeakGlobalRef(
-      env,
-      Java_ContentVideoView_createContentVideoView(
-          env,
-          j_content_view_core.obj(),
-          reinterpret_cast<intptr_t>(this)).obj());
+      env, Java_ContentVideoView_createContentVideoView(
+               env, j_content_view_core, j_content_video_view_embedder,
+               reinterpret_cast<intptr_t>(this),
+               video_natural_size.width(), video_natural_size.height())
+               .obj());
 }
 }  // namespace content

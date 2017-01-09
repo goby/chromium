@@ -4,6 +4,8 @@
 
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 
+#include <utility>
+
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
@@ -16,19 +18,19 @@
 #include "components/leveldb_proto/proto_database_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 
 namespace dom_distiller {
 
 DomDistillerContextKeyedService::DomDistillerContextKeyedService(
-    scoped_ptr<DomDistillerStoreInterface> store,
-    scoped_ptr<DistillerFactory> distiller_factory,
-    scoped_ptr<DistillerPageFactory> distiller_page_factory,
-    scoped_ptr<DistilledPagePrefs> distilled_page_prefs)
-    : DomDistillerService(store.Pass(),
-                          distiller_factory.Pass(),
-                          distiller_page_factory.Pass(),
-                          distilled_page_prefs.Pass()) {
-}
+    std::unique_ptr<DomDistillerStoreInterface> store,
+    std::unique_ptr<DistillerFactory> distiller_factory,
+    std::unique_ptr<DistillerPageFactory> distiller_page_factory,
+    std::unique_ptr<DistilledPagePrefs> distilled_page_prefs)
+    : DomDistillerService(std::move(store),
+                          std::move(distiller_factory),
+                          std::move(distiller_page_factory),
+                          std::move(distilled_page_prefs)) {}
 
 // static
 DomDistillerServiceFactory* DomDistillerServiceFactory::GetInstance() {
@@ -54,22 +56,24 @@ KeyedService* DomDistillerServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
       content::BrowserThread::GetBlockingPool()->GetSequencedTaskRunner(
-          content::BrowserThread::GetBlockingPool()->GetSequenceToken());
+          base::SequencedWorkerPool::GetSequenceToken());
 
-  scoped_ptr<leveldb_proto::ProtoDatabaseImpl<ArticleEntry> > db(
+  std::unique_ptr<leveldb_proto::ProtoDatabaseImpl<ArticleEntry>> db(
       new leveldb_proto::ProtoDatabaseImpl<ArticleEntry>(
           background_task_runner));
 
   base::FilePath database_dir(
       profile->GetPath().Append(FILE_PATH_LITERAL("Articles")));
 
-  scoped_ptr<DomDistillerStore> dom_distiller_store(
-      new DomDistillerStore(db.Pass(), database_dir));
+  std::unique_ptr<DomDistillerStore> dom_distiller_store(
+      new DomDistillerStore(std::move(db), database_dir));
 
-  scoped_ptr<DistillerPageFactory> distiller_page_factory(
+  std::unique_ptr<DistillerPageFactory> distiller_page_factory(
       new DistillerPageWebContentsFactory(profile));
-  scoped_ptr<DistillerURLFetcherFactory> distiller_url_fetcher_factory(
-      new DistillerURLFetcherFactory(profile->GetRequestContext()));
+  std::unique_ptr<DistillerURLFetcherFactory> distiller_url_fetcher_factory(
+      new DistillerURLFetcherFactory(
+          content::BrowserContext::GetDefaultStoragePartition(profile)
+              ->GetURLRequestContext()));
 
   dom_distiller::proto::DomDistillerOptions options;
   if (VLOG_IS_ON(1)) {
@@ -81,16 +85,15 @@ KeyedService* DomDistillerServiceFactory::BuildServiceInstanceFor(
   // - "pagenum": detect anchors with numeric page numbers
   // Default is "next".
   options.set_pagination_algo("next");
-  scoped_ptr<DistillerFactory> distiller_factory(
-      new DistillerFactoryImpl(distiller_url_fetcher_factory.Pass(), options));
-  scoped_ptr<DistilledPagePrefs> distilled_page_prefs(
+  std::unique_ptr<DistillerFactory> distiller_factory(new DistillerFactoryImpl(
+      std::move(distiller_url_fetcher_factory), options));
+  std::unique_ptr<DistilledPagePrefs> distilled_page_prefs(
       new DistilledPagePrefs(Profile::FromBrowserContext(profile)->GetPrefs()));
 
   DomDistillerContextKeyedService* service =
-      new DomDistillerContextKeyedService(dom_distiller_store.Pass(),
-                                          distiller_factory.Pass(),
-                                          distiller_page_factory.Pass(),
-                                          distilled_page_prefs.Pass());
+      new DomDistillerContextKeyedService(
+          std::move(dom_distiller_store), std::move(distiller_factory),
+          std::move(distiller_page_factory), std::move(distilled_page_prefs));
 
   return service;
 }

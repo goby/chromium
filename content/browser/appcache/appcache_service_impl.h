@@ -5,12 +5,14 @@
 #ifndef CONTENT_BROWSER_APPCACHE_APPCACHE_SERVICE_IMPL_H_
 #define CONTENT_BROWSER_APPCACHE_APPCACHE_SERVICE_IMPL_H_
 
+#include <stdint.h>
+
 #include <map>
-#include <set>
+#include <memory>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -53,10 +55,10 @@ public:
 private:
   friend class AppCacheServiceImpl;
   friend class base::RefCounted<AppCacheStorageReference>;
-  AppCacheStorageReference(scoped_ptr<AppCacheStorage> storage);
+  AppCacheStorageReference(std::unique_ptr<AppCacheStorage> storage);
   ~AppCacheStorageReference();
 
-  scoped_ptr<AppCacheStorage> storage_;
+  std::unique_ptr<AppCacheStorage> storage_;
 };
 
 // Class that manages the application cache service. Sends notifications
@@ -68,12 +70,15 @@ class CONTENT_EXPORT AppCacheServiceImpl
 
   class CONTENT_EXPORT Observer {
    public:
+    // Called just prior to the instance being deleted.
+    virtual void OnServiceDestructionImminent(AppCacheServiceImpl* service) {}
+
     // An observer method to inform consumers of reinitialzation. Managing
     // the lifetime of the old storage instance is a delicate process.
     // Consumers can keep the old disabled instance alive by hanging on to the
     // ref provided.
     virtual void OnServiceReinitialized(
-        AppCacheStorageReference* old_storage_ref) = 0;
+        AppCacheStorageReference* old_storage_ref) {}
     virtual ~Observer() {}
   };
 
@@ -112,8 +117,9 @@ class CONTENT_EXPORT AppCacheServiceImpl
 
   // Checks the integrity of 'response_id' by reading the headers and data.
   // If it cannot be read, the cache group for 'manifest_url' is deleted.
-  void CheckAppCacheResponse(const GURL& manifest_url, int64 cache_id,
-                             int64 response_id);
+  void CheckAppCacheResponse(const GURL& manifest_url,
+                             int64_t cache_id,
+                             int64_t response_id);
 
   // Context for use during cache updates, should only be accessed
   // on the IO thread. We do NOT add a reference to the request context,
@@ -188,8 +194,9 @@ class CONTENT_EXPORT AppCacheServiceImpl
   class GetInfoHelper;
   class CheckResponseHelper;
 
-  typedef std::set<AsyncHelper*> PendingAsyncHelpers;
-  typedef std::map<int, AppCacheBackendImpl*> BackendMap;
+  using PendingAsyncHelpers =
+      std::map<AsyncHelper*, std::unique_ptr<AsyncHelper>>;
+  using BackendMap = std::map<int, AppCacheBackendImpl*>;
 
   void Reinitialize();
 
@@ -199,7 +206,7 @@ class CONTENT_EXPORT AppCacheServiceImpl
   AppCachePolicy* appcache_policy_;
   AppCacheQuotaClient* quota_client_;
   AppCacheExecutableHandlerFactory* handler_factory_;
-  scoped_ptr<AppCacheStorage> storage_;
+  std::unique_ptr<AppCacheStorage> storage_;
   scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy_;
   scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy_;
   PendingAsyncHelpers pending_helpers_;

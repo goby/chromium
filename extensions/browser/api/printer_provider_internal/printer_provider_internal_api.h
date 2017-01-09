@@ -16,7 +16,7 @@
 
 namespace base {
 class DictionaryValue;
-class ListValue;
+class RefCountedMemory;
 }
 
 namespace content {
@@ -153,7 +153,7 @@ class PrinterProviderInternalGetPrintDataFunction
   void OnBlob(const std::string& type,
               int size,
               const scoped_refptr<base::RefCountedMemory>& data,
-              scoped_ptr<content::BlobHandle> blob);
+              std::unique_ptr<content::BlobHandle> blob);
   DECLARE_EXTENSION_FUNCTION("printerProviderInternal.getPrintData",
                              PRINTERPROVIDERINTERNAL_GETPRINTDATA)
 

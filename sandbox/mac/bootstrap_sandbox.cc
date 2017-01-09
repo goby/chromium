@@ -5,11 +5,14 @@
 #include "sandbox/mac/bootstrap_sandbox.h"
 
 #include <servers/bootstrap.h>
+#include <stdint.h>
 #include <unistd.h>
 
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mach_logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "sandbox/mac/launchd_interception_server.h"
@@ -53,9 +56,9 @@ class ScopedCallMachMsgDestroy {
 }  // namespace
 
 // static
-scoped_ptr<BootstrapSandbox> BootstrapSandbox::Create() {
-  scoped_ptr<BootstrapSandbox> null;  // Used for early returns.
-  scoped_ptr<BootstrapSandbox> sandbox(new BootstrapSandbox());
+std::unique_ptr<BootstrapSandbox> BootstrapSandbox::Create() {
+  std::unique_ptr<BootstrapSandbox> null;  // Used for early returns.
+  std::unique_ptr<BootstrapSandbox> sandbox(new BootstrapSandbox());
   sandbox->launchd_server_.reset(new LaunchdInterceptionServer(sandbox.get()));
 
   // Check in with launchd to get the receive right for the server that is
@@ -66,7 +69,7 @@ scoped_ptr<BootstrapSandbox> BootstrapSandbox::Create() {
   if (kr != KERN_SUCCESS) {
     BOOTSTRAP_LOG(ERROR, kr)
         << "Failed to bootstrap_check_in the sandbox server.";
-    return null.Pass();
+    return null;
   }
   sandbox->check_in_port_.reset(port);
 
@@ -79,9 +82,9 @@ scoped_ptr<BootstrapSandbox> BootstrapSandbox::Create() {
 
   // Start the sandbox server.
   if (!sandbox->launchd_server_->Initialize(MACH_PORT_NULL))
-    return null.Pass();
+    return null;
 
-  return sandbox.Pass();
+  return sandbox;
 }
 
 // Warning: This function must be safe to call in
@@ -141,7 +144,8 @@ void BootstrapSandbox::RegisterSandboxPolicy(
   policies_.insert(std::make_pair(sandbox_policy_id, policy));
 }
 
-scoped_ptr<PreExecDelegate> BootstrapSandbox::NewClient(int sandbox_policy_id) {
+std::unique_ptr<PreExecDelegate> BootstrapSandbox::NewClient(
+    int sandbox_policy_id) {
   base::AutoLock lock(lock_);
 
   DCHECK(policies_.find(sandbox_policy_id) != policies_.end());
@@ -154,7 +158,7 @@ scoped_ptr<PreExecDelegate> BootstrapSandbox::NewClient(int sandbox_policy_id) {
   }
 
   awaiting_processes_[token] = sandbox_policy_id;
-  return make_scoped_ptr(new PreExecDelegate(server_bootstrap_name_, token));
+  return base::MakeUnique<PreExecDelegate>(server_bootstrap_name_, token);
 }
 
 void BootstrapSandbox::RevokeToken(uint64_t token) {
@@ -214,11 +218,7 @@ void BootstrapSandbox::HandleChildCheckIn() {
 
   // Call mach_msg_destroy to clean up the reply send-once right.
   ScopedCallMachMsgDestroy message_destroyer(&msg.request.header);
-
-  pid_t client_pid;
-  audit_token_to_au32(msg.trailer.msgh_audit, nullptr, nullptr, nullptr,
-      nullptr, nullptr, &client_pid, nullptr, nullptr);
-
+  pid_t client_pid = audit_token_to_pid(msg.trailer.msgh_audit);
   {
     base::AutoLock lock(lock_);
 

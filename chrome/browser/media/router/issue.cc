@@ -20,7 +20,7 @@ Issue::Issue(const std::string& title,
              const MediaRoute::Id& route_id,
              const Issue::Severity severity,
              bool is_blocking,
-             const std::string& help_url)
+             int help_page_id)
     : title_(title),
       message_(message),
       default_action_(default_action),
@@ -29,7 +29,7 @@ Issue::Issue(const std::string& title,
       severity_(severity),
       id_(base::GenerateGUID()),
       is_blocking_(is_blocking),
-      help_url_(GURL(help_url)) {
+      help_page_id_(help_page_id) {
   DCHECK(!title_.empty());
   DCHECK(severity_ != FATAL || is_blocking_) << "Severity is " << severity_;
 
@@ -37,6 +37,8 @@ Issue::Issue(const std::string& title,
   if (!secondary_actions_.empty())
     DCHECK_NE(default_action_.type(), secondary_actions_[0].type());
 }
+
+Issue::Issue(const Issue& other) = default;
 
 Issue::~Issue() {
 }

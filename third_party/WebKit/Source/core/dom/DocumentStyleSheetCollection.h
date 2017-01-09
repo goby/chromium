@@ -3,8 +3,10 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
  *           (C) 2006 Alexey Proskuryakov (ap@webkit.org)
- * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2012 Apple Inc. All rights reserved.
- * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2012 Apple Inc. All
+ * rights reserved.
+ * Copyright (C) 2008, 2009 Torch Mobile Inc. All rights reserved.
+ * (http://www.torchmobile.com/)
  * Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies)
  * Copyright (C) 2013 Google Inc. All rights reserved.
  *
@@ -29,37 +31,39 @@
 #define DocumentStyleSheetCollection_h
 
 #include "core/dom/TreeScopeStyleSheetCollection.h"
+#include "platform/heap/WrapperVisitor.h"
 
 namespace blink {
 
 class DocumentStyleSheetCollector;
 class StyleEngine;
 class TreeScope;
+class ViewportStyleResolver;
 
-class DocumentStyleSheetCollection final : public TreeScopeStyleSheetCollection {
-    WTF_MAKE_NONCOPYABLE(DocumentStyleSheetCollection);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(DocumentStyleSheetCollection);
-public:
-    static PassOwnPtrWillBeRawPtr<DocumentStyleSheetCollection> create(TreeScope& treeScope)
-    {
-        return adoptPtrWillBeNoop(new DocumentStyleSheetCollection(treeScope));
-    }
+class DocumentStyleSheetCollection final
+    : public TreeScopeStyleSheetCollection {
+  WTF_MAKE_NONCOPYABLE(DocumentStyleSheetCollection);
 
-    void updateActiveStyleSheets(StyleEngine&, StyleResolverUpdateMode);
-    void collectStyleSheets(StyleEngine&, DocumentStyleSheetCollector&);
+ public:
+  static DocumentStyleSheetCollection* create(TreeScope& treeScope) {
+    return new DocumentStyleSheetCollection(treeScope);
+  }
 
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        TreeScopeStyleSheetCollection::trace(visitor);
-    }
+  void updateActiveStyleSheets(StyleEngine&, StyleResolverUpdateMode);
+  void collectStyleSheets(StyleEngine&, DocumentStyleSheetCollector&);
+  void collectViewportRules(ViewportStyleResolver&);
 
-private:
-    explicit DocumentStyleSheetCollection(TreeScope&);
+  DEFINE_INLINE_VIRTUAL_TRACE() {
+    TreeScopeStyleSheetCollection::trace(visitor);
+  }
 
-    void collectStyleSheetsFromCandidates(StyleEngine&, DocumentStyleSheetCollector&);
+ private:
+  explicit DocumentStyleSheetCollection(TreeScope&);
+
+  void collectStyleSheetsFromCandidates(StyleEngine&,
+                                        DocumentStyleSheetCollector&);
 };
 
-}
+}  // namespace blink
 
 #endif
-

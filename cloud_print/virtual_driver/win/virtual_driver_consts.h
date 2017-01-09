@@ -14,4 +14,3 @@ extern const wchar_t kGoogleUpdateProductId[];
 }  // namespace cloud_print
 
 #endif  // CLOUD_PRINT_VIRTUAL_DRIVER_WIN_VIRTUAL_DRIVER_CONSTS_H_
-

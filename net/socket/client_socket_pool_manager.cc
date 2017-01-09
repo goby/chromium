@@ -4,9 +4,6 @@
 
 #include "net/socket/client_socket_pool_manager.h"
 
-#include <string>
-
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/load_flags.h"
@@ -15,6 +12,7 @@
 #include "net/http/http_stream_factory.h"
 #include "net/proxy/proxy_info.h"
 #include "net/socket/client_socket_handle.h"
+#include "net/socket/client_socket_pool.h"
 #include "net/socket/socks_client_socket_pool.h"
 #include "net/socket/ssl_client_socket_pool.h"
 #include "net/socket/transport_client_socket_pool.h"
@@ -77,7 +75,7 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
                          const SSLConfig& ssl_config_for_proxy,
                          bool force_tunnel,
                          PrivacyMode privacy_mode,
-                         const BoundNetLog& net_log,
+                         const NetLogWithSource& net_log,
                          int num_preconnect_streams,
                          ClientSocketHandle* socket_handle,
                          HttpNetworkSession::SocketPoolType socket_pool_type,
@@ -85,7 +83,7 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
                          const CompletionCallback& callback) {
   scoped_refptr<HttpProxySocketParams> http_proxy_params;
   scoped_refptr<SOCKSSocketParams> socks_params;
-  scoped_ptr<HostPortPair> proxy_host_port;
+  std::unique_ptr<HostPortPair> proxy_host_port;
 
   bool using_ssl = group_type == ClientSocketPoolManager::SSL_GROUP;
   HostPortPair origin_host_port = endpoint;
@@ -116,32 +114,7 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
     connection_group = "ftp/" + connection_group;
   }
   if (using_ssl) {
-    // All connections in a group should use the same SSLConfig settings.
-    // Encode version_max in the connection group's name, unless it's the
-    // default version_max. (We want the common case to use the shortest
-    // encoding). A version_max of TLS 1.1 is encoded as "ssl(max:3.2)/"
-    // rather than "tlsv1.1/" because the actual protocol version, which
-    // is selected by the server, may not be TLS 1.1. Do not encode
-    // version_min in the connection group's name because version_min
-    // should be the same for all connections, whereas version_max may
-    // change for version fallbacks.
     std::string prefix = "ssl/";
-    if (ssl_config_for_origin.version_max != kDefaultSSLVersionMax) {
-      switch (ssl_config_for_origin.version_max) {
-        case SSL_PROTOCOL_VERSION_TLS1_2:
-          prefix = "ssl(max:3.3)/";
-          break;
-        case SSL_PROTOCOL_VERSION_TLS1_1:
-          prefix = "ssl(max:3.2)/";
-          break;
-        case SSL_PROTOCOL_VERSION_TLS1:
-          prefix = "ssl(max:3.1)/";
-          break;
-        default:
-          CHECK(false);
-          break;
-      }
-    }
     // Place sockets with and without deprecated ciphers into separate
     // connection groups.
     if (ssl_config_for_origin.deprecated_cipher_suites_enabled)
@@ -149,7 +122,10 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
     connection_group = prefix + connection_group;
   }
 
-  bool ignore_limits = (request_load_flags & LOAD_IGNORE_LIMITS) != 0;
+  ClientSocketPool::RespectLimits respect_limits =
+      ClientSocketPool::RespectLimits::ENABLED;
+  if ((request_load_flags & LOAD_IGNORE_LIMITS) != 0)
+    respect_limits = ClientSocketPool::RespectLimits::DISABLED;
   if (!proxy_info.is_direct()) {
     ProxyServer proxy_server = proxy_info.proxy_server();
     proxy_host_port.reset(new HostPortPair(proxy_server.host_port_pair()));
@@ -157,7 +133,6 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
         new TransportSocketParams(
             *proxy_host_port,
             disable_resolver_cache,
-            ignore_limits,
             resolution_callback,
             TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT));
 
@@ -176,7 +151,6 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
                     TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT;
         proxy_tcp_params = new TransportSocketParams(*proxy_host_port,
                                                      disable_resolver_cache,
-                                                     ignore_limits,
                                                      resolution_callback,
                                                      combine_connect_and_write);
         // Set ssl_params, and unset proxy_tcp_params
@@ -230,7 +204,6 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
                   TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT;
       ssl_tcp_params = new TransportSocketParams(origin_host_port,
                                                  disable_resolver_cache,
-                                                 ignore_limits,
                                                  resolution_callback,
                                                  combine_connect_and_write);
     }
@@ -251,9 +224,8 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
       return OK;
     }
 
-    return socket_handle->Init(connection_group, ssl_params,
-                               request_priority, callback, ssl_pool,
-                               net_log);
+    return socket_handle->Init(connection_group, ssl_params, request_priority,
+                               respect_limits, callback, ssl_pool, net_log);
   }
 
   // Finally, get the connection started.
@@ -268,8 +240,8 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
     }
 
     return socket_handle->Init(connection_group, http_proxy_params,
-                               request_priority, callback,
-                               pool, net_log);
+                               request_priority, respect_limits, callback, pool,
+                               net_log);
   }
 
   if (proxy_info.is_socks()) {
@@ -281,9 +253,8 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
       return OK;
     }
 
-    return socket_handle->Init(connection_group, socks_params,
-                               request_priority, callback, pool,
-                               net_log);
+    return socket_handle->Init(connection_group, socks_params, request_priority,
+                               respect_limits, callback, pool, net_log);
   }
 
   DCHECK(proxy_info.is_direct());
@@ -291,7 +262,6 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
       new TransportSocketParams(
           origin_host_port,
           disable_resolver_cache,
-          ignore_limits,
           resolution_callback,
           TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT);
   TransportClientSocketPool* pool =
@@ -302,9 +272,8 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
     return OK;
   }
 
-  return socket_handle->Init(connection_group, tcp_params,
-                             request_priority, callback,
-                             pool, net_log);
+  return socket_handle->Init(connection_group, tcp_params, request_priority,
+                             respect_limits, callback, pool, net_log);
 }
 
 }  // namespace
@@ -386,7 +355,7 @@ int InitSocketHandleForHttpRequest(
     const SSLConfig& ssl_config_for_origin,
     const SSLConfig& ssl_config_for_proxy,
     PrivacyMode privacy_mode,
-    const BoundNetLog& net_log,
+    const NetLogWithSource& net_log,
     ClientSocketHandle* socket_handle,
     const OnHostResolutionCallback& resolution_callback,
     const CompletionCallback& callback) {
@@ -411,7 +380,7 @@ int InitSocketHandleForWebSocketRequest(
     const SSLConfig& ssl_config_for_origin,
     const SSLConfig& ssl_config_for_proxy,
     PrivacyMode privacy_mode,
-    const BoundNetLog& net_log,
+    const NetLogWithSource& net_log,
     ClientSocketHandle* socket_handle,
     const OnHostResolutionCallback& resolution_callback,
     const CompletionCallback& callback) {
@@ -424,16 +393,15 @@ int InitSocketHandleForWebSocketRequest(
       resolution_callback, callback);
 }
 
-int InitSocketHandleForRawConnect(
-    const HostPortPair& host_port_pair,
-    HttpNetworkSession* session,
-    const ProxyInfo& proxy_info,
-    const SSLConfig& ssl_config_for_origin,
-    const SSLConfig& ssl_config_for_proxy,
-    PrivacyMode privacy_mode,
-    const BoundNetLog& net_log,
-    ClientSocketHandle* socket_handle,
-    const CompletionCallback& callback) {
+int InitSocketHandleForRawConnect(const HostPortPair& host_port_pair,
+                                  HttpNetworkSession* session,
+                                  const ProxyInfo& proxy_info,
+                                  const SSLConfig& ssl_config_for_origin,
+                                  const SSLConfig& ssl_config_for_proxy,
+                                  PrivacyMode privacy_mode,
+                                  const NetLogWithSource& net_log,
+                                  ClientSocketHandle* socket_handle,
+                                  const CompletionCallback& callback) {
   DCHECK(socket_handle);
   HttpRequestHeaders request_extra_headers;
   int request_load_flags = 0;
@@ -453,7 +421,7 @@ int InitSocketHandleForTlsConnect(const HostPortPair& endpoint,
                                   const SSLConfig& ssl_config_for_origin,
                                   const SSLConfig& ssl_config_for_proxy,
                                   PrivacyMode privacy_mode,
-                                  const BoundNetLog& net_log,
+                                  const NetLogWithSource& net_log,
                                   ClientSocketHandle* socket_handle,
                                   const CompletionCallback& callback) {
   DCHECK(socket_handle);
@@ -481,7 +449,7 @@ int PreconnectSocketsForHttpRequest(
     const SSLConfig& ssl_config_for_origin,
     const SSLConfig& ssl_config_for_proxy,
     PrivacyMode privacy_mode,
-    const BoundNetLog& net_log,
+    const NetLogWithSource& net_log,
     int num_preconnect_streams) {
   return InitSocketPoolHelper(
       group_type, endpoint, request_extra_headers, request_load_flags,

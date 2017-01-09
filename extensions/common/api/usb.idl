@@ -18,10 +18,10 @@ namespace usb {
   enum RequestType {standard, class, vendor, reserved};
   enum TransferType {control, interrupt, isochronous, bulk};
 
-  // For isochronous mode, SynchronizationType and UsageType map to their
-  // namesakes within the USB specification.
+  // For interrupt and isochronous modes, SynchronizationType and UsageType map
+  // to their namesakes within the USB specification.
   enum SynchronizationType {asynchronous, adaptive, synchronous};
-  enum UsageType {data, feedback, explicitFeedback};
+  enum UsageType {data, feedback, explicitFeedback, periodic, notification};
 
   dictionary Device {
     // An opaque ID for the USB device. It remains unchanged until the device is
@@ -31,6 +31,8 @@ namespace usb {
     long vendorId;
     // The product ID.
     long productId;
+    // The device version (bcdDevice field).
+    long version;
     // The iProduct string read from the device, if available.
     DOMString productName;
     // The iManufacturer string read from the device, if available.
@@ -119,15 +121,16 @@ namespace usb {
     // The request type.
     RequestType requestType;
 
-    // The <code>bRequest</code> field, see <i>Universal Serial Bus Specification
-    // Revision 1.1</i> &sect; 9.3.
+    // The <code>bRequest</code> field, see <i>Universal Serial Bus
+    // Specification Revision 1.1</i> &sect; 9.3.
     long request;
     // The <code>wValue</code> field, see <i>Ibid</i>.
     long value;
     // The <code>wIndex</code> field, see <i>Ibid</i>.
     long index;
 
-    // The amount of data to receive (required only by input transfers).
+    // The maximum number of bytes to receive (required only by input
+    // transfers).
     long? length;
 
     // The data to transmit (required only by output transfers).
@@ -146,7 +149,8 @@ namespace usb {
     // be claimed.
     long endpoint;
 
-    // The amount of data to receive (required only by input transfers).
+    // The maximum number of bytes to receive (required only by input
+    // transfers).
     long? length;
 
     // The data to transmit (required only by output transfers).

@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2003, 2006, 2007, 2008, 2009, 2011, 2012 Apple Inc. All rights reserved.
+ * Copyright (C) 2003, 2006, 2007, 2008, 2009, 2011, 2012 Apple Inc. All rights
+ * reserved.
  *           (C) 2006 Graham Dennis (graham.dennis@gmail.com)
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,12 +29,15 @@
 #define Settings_h
 
 #include "bindings/core/v8/V8CacheOptions.h"
+#include "bindings/core/v8/V8CacheStrategiesForCacheStorage.h"
 #include "core/CoreExport.h"
 #include "core/SettingsMacros.h"
 #include "core/editing/EditingBehaviorTypes.h"
 #include "core/editing/SelectionStrategy.h"
+#include "core/events/AddEventListenerOptionsDefaults.h"
 #include "core/frame/SettingsDelegate.h"
 #include "core/html/track/TextTrackKindUserPreference.h"
+#include "core/loader/FrameLoaderTypes.h"
 #include "platform/Timer.h"
 #include "platform/fonts/GenericFontFamilySettings.h"
 #include "platform/geometry/IntSize.h"
@@ -41,54 +45,57 @@
 #include "platform/weborigin/KURL.h"
 #include "public/platform/PointerProperties.h"
 #include "public/platform/WebDisplayMode.h"
-#include "wtf/HashSet.h"
-#include "wtf/RefCounted.h"
+#include "public/platform/WebViewportStyle.h"
+#include <memory>
 
 namespace blink {
 
 class CORE_EXPORT Settings {
-    WTF_MAKE_NONCOPYABLE(Settings); USING_FAST_MALLOC(Settings);
-public:
-    static PassOwnPtr<Settings> create();
+  WTF_MAKE_NONCOPYABLE(Settings);
+  USING_FAST_MALLOC(Settings);
 
-    GenericFontFamilySettings& genericFontFamilySettings() { return m_genericFontFamilySettings; }
-    void notifyGenericFontFamilyChange() { invalidate(SettingsDelegate::FontFamilyChange); }
+ public:
+  static std::unique_ptr<Settings> create();
 
-    void setTextAutosizingEnabled(bool);
-    bool textAutosizingEnabled() const { return m_textAutosizingEnabled; }
+  GenericFontFamilySettings& genericFontFamilySettings() {
+    return m_genericFontFamilySettings;
+  }
+  void notifyGenericFontFamilyChange() {
+    invalidate(SettingsDelegate::FontFamilyChange);
+  }
 
-    // Only set by Layout Tests, and only used if textAutosizingEnabled() returns true.
-    void setTextAutosizingWindowSizeOverride(const IntSize&);
-    const IntSize& textAutosizingWindowSizeOverride() const { return m_textAutosizingWindowSizeOverride; }
+  void setTextAutosizingEnabled(bool);
+  bool textAutosizingEnabled() const { return m_textAutosizingEnabled; }
 
-    SETTINGS_GETTERS_AND_SETTERS
+  // Only set by Layout Tests, and only used if textAutosizingEnabled() returns
+  // true.
+  void setTextAutosizingWindowSizeOverride(const IntSize&);
+  const IntSize& textAutosizingWindowSizeOverride() const {
+    return m_textAutosizingWindowSizeOverride;
+  }
 
-    // FIXME: This does not belong here.
-    static void setMockScrollbarsEnabled(bool flag);
-    static bool mockScrollbarsEnabled();
+  SETTINGS_GETTERS_AND_SETTERS
 
-    // FIXME: naming_utilities.py isn't smart enough to handle OpenGL yet.
-    // It could handle "GL", but that seems a bit overly broad.
-    void setOpenGLMultisamplingEnabled(bool flag);
-    bool openGLMultisamplingEnabled() { return m_openGLMultisamplingEnabled; }
+  // FIXME: This does not belong here.
+  static void setMockScrollbarsEnabled(bool flag);
+  static bool mockScrollbarsEnabled();
 
-    void setDelegate(SettingsDelegate*);
+  void setDelegate(SettingsDelegate*);
 
-private:
-    Settings();
+ private:
+  Settings();
 
-    void invalidate(SettingsDelegate::ChangeType);
+  void invalidate(SettingsDelegate::ChangeType);
 
-    SettingsDelegate* m_delegate;
+  SettingsDelegate* m_delegate;
 
-    GenericFontFamilySettings m_genericFontFamilySettings;
-    bool m_openGLMultisamplingEnabled : 1;
-    IntSize m_textAutosizingWindowSizeOverride;
-    bool m_textAutosizingEnabled : 1;
+  GenericFontFamilySettings m_genericFontFamilySettings;
+  IntSize m_textAutosizingWindowSizeOverride;
+  bool m_textAutosizingEnabled : 1;
 
-    SETTINGS_MEMBER_VARIABLES
+  SETTINGS_MEMBER_VARIABLES
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // Settings_h
+#endif  // Settings_h

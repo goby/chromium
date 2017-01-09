@@ -50,14 +50,14 @@ class ArgumentPrinterTest(unittest.TestCase):
     def test_to_flag_string(self):
         options = self._create_options('vs7', 5, ['+foo', '-bar'], 'git')
         self.assertEqual('--filter=+foo,-bar --git-commit=git '
-                          '--min-confidence=5 --output=vs7',
-                          self._printer.to_flag_string(options))
+                         '--min-confidence=5 --output=vs7',
+                         self._printer.to_flag_string(options))
 
         # This is to check that --filter and --git-commit do not
         # show up when not user-specified.
         options = self._create_options()
         self.assertEqual('--min-confidence=3 --output=emacs',
-                          self._printer.to_flag_string(options))
+                         self._printer.to_flag_string(options))
 
 
 class ArgumentParserTest(LoggingTestCase):
@@ -66,7 +66,7 @@ class ArgumentParserTest(LoggingTestCase):
 
     class _MockStdErr(object):
 
-        def write(self, message):
+        def write(self, _):
             # We do not want the usage string or style categories
             # to print during unit tests, so print nothing.
             return
@@ -78,7 +78,6 @@ class ArgumentParserTest(LoggingTestCase):
 
     def _create_defaults(self):
         """Return a DefaultCommandOptionValues instance for testing."""
-        base_filter_rules = ["-", "+whitespace"]
         return DefaultCommandOptionValues(min_confidence=3,
                                           output_format="vs7")
 
@@ -86,7 +85,7 @@ class ArgumentParserTest(LoggingTestCase):
         """Return an ArgumentParser instance for testing."""
         default_options = self._create_defaults()
 
-        all_categories = ["build" ,"whitespace"]
+        all_categories = ["build", "whitespace"]
 
         mock_stderr = self._MockStdErr()
 
@@ -123,19 +122,19 @@ class ArgumentParserTest(LoggingTestCase):
         self.assertRaises(SystemExit, parse, ['--min-confidence=6'])
         self.assertLog(['ERROR: option --min-confidence: invalid integer: 6: '
                         'value must be between 1 and 5\n'])
-        parse(['--min-confidence=1']) # works
-        parse(['--min-confidence=5']) # works
+        parse(['--min-confidence=1'])  # works
+        parse(['--min-confidence=5'])  # works
 
         self.assertRaises(SystemExit, parse, ['--output=bad'])
         self.assertLog(['ERROR: option --output-format: invalid choice: '
                         "'bad' (choose from 'emacs', 'vs7')\n"])
-        parse(['--output=vs7']) # works
+        parse(['--output=vs7'])  # works
 
         # Pass a filter rule not beginning with + or -.
         self.assertRaises(SystemExit, parse, ['--filter=build'])
         self.assertLog(['ERROR: Invalid filter rule "build": '
                         'every rule must start with + or -.\n'])
-        parse(['--filter=+build']) # works
+        parse(['--filter=+build'])  # works
 
     def test_parse_default_arguments(self):
         parse = self._parse
@@ -155,39 +154,39 @@ class ArgumentParserTest(LoggingTestCase):
         parse = self._parse
 
         # Pass non-default explicit values.
-        (files, options) = parse(['--min-confidence=4'])
+        _, options = parse(['--min-confidence=4'])
         self.assertEqual(options.min_confidence, 4)
-        (files, options) = parse(['--output=emacs'])
+        _, options = parse(['--output=emacs'])
         self.assertEqual(options.output_format, 'emacs')
-        (files, options) = parse(['-g', 'commit'])
+        _, options = parse(['-g', 'commit'])
         self.assertEqual(options.git_commit, 'commit')
-        (files, options) = parse(['--git-commit=commit'])
+        _, options = parse(['--git-commit=commit'])
         self.assertEqual(options.git_commit, 'commit')
-        (files, options) = parse(['--git-diff=commit'])
+        _, options = parse(['--git-diff=commit'])
         self.assertEqual(options.git_commit, 'commit')
-        (files, options) = parse(['--verbose'])
+        _, options = parse(['--verbose'])
         self.assertTrue(options.is_verbose)
-        (files, options) = parse(['--diff-files', 'file.txt'])
+        _, options = parse(['--diff-files', 'file.txt'])
         self.assertTrue(options.diff_files)
 
         # Pass user_rules.
-        (files, options) = parse(['--filter=+build,-whitespace'])
+        _, options = parse(['--filter=+build,-whitespace'])
         self.assertEqual(options.filter_rules,
-                          ["+build", "-whitespace"])
+                         ["+build", "-whitespace"])
 
         # Pass spurious white space in user rules.
-        (files, options) = parse(['--filter=+build, -whitespace'])
+        _, options = parse(['--filter=+build, -whitespace'])
         self.assertEqual(options.filter_rules,
-                          ["+build", "-whitespace"])
+                         ["+build", "-whitespace"])
 
     def test_parse_files(self):
         parse = self._parse
 
-        (files, options) = parse(['foo.cpp'])
+        files, _ = parse(['foo.cpp'])
         self.assertEqual(files, ['foo.cpp'])
 
         # Pass multiple files.
-        (files, options) = parse(['--output=emacs', 'foo.cpp', 'bar.cpp'])
+        files, _ = parse(['--output=emacs', 'foo.cpp', 'bar.cpp'])
         self.assertEqual(files, ['foo.cpp', 'bar.cpp'])
 
 
@@ -207,12 +206,12 @@ class CommandOptionValuesTest(unittest.TestCase):
 
         # Check argument validation.
         self.assertRaises(ValueError, ProcessorOptions, output_format="bad")
-        ProcessorOptions(output_format="emacs") # No ValueError: works
-        ProcessorOptions(output_format="vs7") # works
+        ProcessorOptions(output_format="emacs")  # No ValueError: works
+        ProcessorOptions(output_format="vs7")  # works
         self.assertRaises(ValueError, ProcessorOptions, min_confidence=0)
         self.assertRaises(ValueError, ProcessorOptions, min_confidence=6)
-        ProcessorOptions(min_confidence=1) # works
-        ProcessorOptions(min_confidence=5) # works
+        ProcessorOptions(min_confidence=1)  # works
+        ProcessorOptions(min_confidence=5)  # works
 
         # Check attributes.
         options = ProcessorOptions(filter_rules=["+"],
@@ -255,4 +254,3 @@ class CommandOptionValuesTest(unittest.TestCase):
         # Thus, just check the distinguishing case to verify that the
         # code defines __ne__.
         self.assertFalse(ProcessorOptions().__ne__(ProcessorOptions()))
-

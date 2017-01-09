@@ -5,6 +5,10 @@
 #ifndef CHROME_BROWSER_ANDROID_SHORTCUT_INFO_H_
 #define CHROME_BROWSER_ANDROID_SHORTCUT_INFO_H_
 
+#include <stdint.h>
+
+#include <vector>
+
 #include "base/strings/string16.h"
 #include "content/public/common/manifest.h"
 #include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
@@ -24,10 +28,12 @@ struct ShortcutInfo {
     SOURCE_APP_BANNER = 2,
     SOURCE_BOOKMARK_NAVIGATOR_WIDGET = 3,
     SOURCE_BOOKMARK_SHORTCUT_WIDGET = 4,
-    SOURCE_COUNT = 5
+    SOURCE_NOTIFICATION = 5,
+    SOURCE_COUNT = 6
   };
 
   explicit ShortcutInfo(const GURL& shortcut_url);
+  ShortcutInfo(const ShortcutInfo& other);
   ~ShortcutInfo();
 
   // Updates the info based on the given |manifest|.
@@ -36,7 +42,9 @@ struct ShortcutInfo {
   // Updates the source of the shortcut.
   void UpdateSource(const Source source);
 
+  GURL manifest_url;
   GURL url;
+  GURL scope;
   base::string16 user_title;
   base::string16 name;
   base::string16 short_name;
@@ -45,7 +53,8 @@ struct ShortcutInfo {
   Source source;
   int64_t theme_color;
   int64_t background_color;
-  bool is_icon_generated;
+  GURL best_icon_url;
+  std::vector<std::string> icon_urls;
 };
 
 #endif  // CHROME_BROWSER_ANDROID_SHORTCUT_INFO_H_

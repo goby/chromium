@@ -5,6 +5,7 @@
 #ifndef UI_WM_CORE_DEFAULT_SCREEN_POSITION_CLIENT_H_
 #define UI_WM_CORE_DEFAULT_SCREEN_POSITION_CLIENT_H_
 
+#include "base/macros.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/wm/wm_export.h"
 
@@ -27,7 +28,7 @@ class WM_EXPORT DefaultScreenPositionClient
                                 gfx::Point* point) override;
   void SetBounds(aura::Window* window,
                  const gfx::Rect& bounds,
-                 const gfx::Display& display) override;
+                 const display::Display& display) override;
 
  protected:
   // Returns the origin of the host platform-window in system pixel coordinates.

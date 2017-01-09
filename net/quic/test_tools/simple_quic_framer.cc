@@ -4,27 +4,24 @@
 
 #include "net/quic/test_tools/simple_quic_framer.h"
 
-#include "base/stl_util.h"
-#include "net/quic/crypto/quic_decrypter.h"
-#include "net/quic/crypto/quic_encrypter.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "net/quic/core/crypto/quic_decrypter.h"
+#include "net/quic/core/crypto/quic_encrypter.h"
 
 using base::StringPiece;
 using std::string;
-using std::vector;
 
 namespace net {
 namespace test {
 
 class SimpleFramerVisitor : public QuicFramerVisitorInterface {
  public:
-  SimpleFramerVisitor()
-      : error_(QUIC_NO_ERROR) {
-  }
+  SimpleFramerVisitor() : error_(QUIC_NO_ERROR) {}
 
-  ~SimpleFramerVisitor() override {
-    STLDeleteElements(&stream_frames_);
-    STLDeleteElements(&stream_data_);
-  }
+  ~SimpleFramerVisitor() override {}
 
   void OnError(QuicFramer* framer) override { error_ = framer->error(); }
 
@@ -36,10 +33,8 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
   }
   void OnVersionNegotiationPacket(
       const QuicVersionNegotiationPacket& packet) override {
-    version_negotiation_packet_.reset(
-        new QuicVersionNegotiationPacket(packet));
+    version_negotiation_packet_.reset(new QuicVersionNegotiationPacket(packet));
   }
-  void OnRevivedPacket() override {}
 
   bool OnUnauthenticatedPublicHeader(
       const QuicPacketPublicHeader& header) override {
@@ -55,15 +50,14 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
     return true;
   }
 
-  void OnFecProtectedPayload(StringPiece payload) override {}
-
   bool OnStreamFrame(const QuicStreamFrame& frame) override {
     // Save a copy of the data so it is valid after the packet is processed.
     string* string_data = new string();
-    frame.data.AppendToString(string_data);
-    stream_data_.push_back(string_data);
+    StringPiece(frame.data_buffer, frame.data_length)
+        .AppendToString(string_data);
+    stream_data_.push_back(base::WrapUnique(string_data));
     // TODO(ianswett): A pointer isn't necessary with emplace_back.
-    stream_frames_.push_back(new QuicStreamFrame(
+    stream_frames_.push_back(base::MakeUnique<QuicStreamFrame>(
         frame.stream_id, frame.fin, frame.offset, StringPiece(*string_data)));
     return true;
   }
@@ -78,13 +72,14 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
     return true;
   }
 
-  bool OnPingFrame(const QuicPingFrame& frame) override {
-    ping_frames_.push_back(frame);
+  bool OnPaddingFrame(const QuicPaddingFrame& frame) override {
+    padding_frames_.push_back(frame);
     return true;
   }
 
-  void OnFecData(StringPiece redundancy) override {
-    fec_redundancy_ = redundancy.as_string();
+  bool OnPingFrame(const QuicPingFrame& frame) override {
+    ping_frames_.push_back(frame);
+    return true;
   }
 
   bool OnRstStreamFrame(const QuicRstStreamFrame& frame) override {
@@ -112,29 +107,31 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
     return true;
   }
 
+  bool OnPathCloseFrame(const QuicPathCloseFrame& frame) override {
+    path_close_frames_.push_back(frame);
+    return true;
+  }
+
   void OnPacketComplete() override {}
 
   const QuicPacketHeader& header() const { return header_; }
-  const vector<QuicAckFrame>& ack_frames() const { return ack_frames_; }
-  const vector<QuicConnectionCloseFrame>& connection_close_frames() const {
+  const std::vector<QuicAckFrame>& ack_frames() const { return ack_frames_; }
+  const std::vector<QuicConnectionCloseFrame>& connection_close_frames() const {
     return connection_close_frames_;
   }
-  const vector<QuicGoAwayFrame>& goaway_frames() const {
+  const std::vector<QuicGoAwayFrame>& goaway_frames() const {
     return goaway_frames_;
   }
-  const vector<QuicRstStreamFrame>& rst_stream_frames() const {
+  const std::vector<QuicRstStreamFrame>& rst_stream_frames() const {
     return rst_stream_frames_;
   }
-  const vector<QuicStreamFrame*>& stream_frames() const {
+  const std::vector<std::unique_ptr<QuicStreamFrame>>& stream_frames() const {
     return stream_frames_;
   }
-  const vector<QuicStopWaitingFrame>& stop_waiting_frames() const {
+  const std::vector<QuicStopWaitingFrame>& stop_waiting_frames() const {
     return stop_waiting_frames_;
   }
-  const vector<QuicPingFrame>& ping_frames() const {
-    return ping_frames_;
-  }
-  StringPiece fec_data() const { return fec_redundancy_; }
+  const std::vector<QuicPingFrame>& ping_frames() const { return ping_frames_; }
   const QuicVersionNegotiationPacket* version_negotiation_packet() const {
     return version_negotiation_packet_.get();
   }
@@ -143,35 +140,37 @@ class SimpleFramerVisitor : public QuicFramerVisitorInterface {
   QuicErrorCode error_;
   bool has_header_;
   QuicPacketHeader header_;
-  scoped_ptr<QuicVersionNegotiationPacket> version_negotiation_packet_;
-  scoped_ptr<QuicPublicResetPacket> public_reset_packet_;
-  string fec_redundancy_;
-  vector<QuicAckFrame> ack_frames_;
-  vector<QuicStopWaitingFrame> stop_waiting_frames_;
-  vector<QuicPingFrame> ping_frames_;
-  vector<QuicStreamFrame*> stream_frames_;
-  vector<QuicRstStreamFrame> rst_stream_frames_;
-  vector<QuicGoAwayFrame> goaway_frames_;
-  vector<QuicConnectionCloseFrame> connection_close_frames_;
-  vector<QuicWindowUpdateFrame> window_update_frames_;
-  vector<QuicBlockedFrame> blocked_frames_;
-  vector<string*> stream_data_;
+  std::unique_ptr<QuicVersionNegotiationPacket> version_negotiation_packet_;
+  std::unique_ptr<QuicPublicResetPacket> public_reset_packet_;
+  std::vector<QuicAckFrame> ack_frames_;
+  std::vector<QuicStopWaitingFrame> stop_waiting_frames_;
+  std::vector<QuicPaddingFrame> padding_frames_;
+  std::vector<QuicPingFrame> ping_frames_;
+  std::vector<std::unique_ptr<QuicStreamFrame>> stream_frames_;
+  std::vector<QuicRstStreamFrame> rst_stream_frames_;
+  std::vector<QuicGoAwayFrame> goaway_frames_;
+  std::vector<QuicConnectionCloseFrame> connection_close_frames_;
+  std::vector<QuicWindowUpdateFrame> window_update_frames_;
+  std::vector<QuicBlockedFrame> blocked_frames_;
+  std::vector<QuicPathCloseFrame> path_close_frames_;
+  std::vector<std::unique_ptr<string>> stream_data_;
 
   DISALLOW_COPY_AND_ASSIGN(SimpleFramerVisitor);
 };
 
 SimpleQuicFramer::SimpleQuicFramer()
-    : framer_(QuicSupportedVersions(),
+    : framer_(AllSupportedVersions(),
               QuicTime::Zero(),
-              Perspective::IS_SERVER) {
-}
+              Perspective::IS_SERVER) {}
 
 SimpleQuicFramer::SimpleQuicFramer(const QuicVersionVector& supported_versions)
-    : framer_(supported_versions, QuicTime::Zero(), Perspective::IS_SERVER) {
-}
+    : framer_(supported_versions, QuicTime::Zero(), Perspective::IS_SERVER) {}
 
-SimpleQuicFramer::~SimpleQuicFramer() {
-}
+SimpleQuicFramer::SimpleQuicFramer(const QuicVersionVector& supported_versions,
+                                   Perspective perspective)
+    : framer_(supported_versions, QuicTime::Zero(), perspective) {}
+
+SimpleQuicFramer::~SimpleQuicFramer() {}
 
 bool SimpleQuicFramer::ProcessPacket(const QuicEncryptedPacket& packet) {
   visitor_.reset(new SimpleFramerVisitor);
@@ -187,10 +186,6 @@ const QuicPacketHeader& SimpleQuicFramer::header() const {
   return visitor_->header();
 }
 
-StringPiece SimpleQuicFramer::fec_data() const {
-  return visitor_->fec_data();
-}
-
 const QuicVersionNegotiationPacket*
 SimpleQuicFramer::version_negotiation_packet() const {
   return visitor_->version_negotiation_packet();
@@ -201,42 +196,40 @@ QuicFramer* SimpleQuicFramer::framer() {
 }
 
 size_t SimpleQuicFramer::num_frames() const {
-  return ack_frames().size() +
-      goaway_frames().size() +
-      rst_stream_frames().size() +
-      stop_waiting_frames().size() +
-      stream_frames().size() +
-      ping_frames().size() +
-      connection_close_frames().size();
+  return ack_frames().size() + goaway_frames().size() +
+         rst_stream_frames().size() + stop_waiting_frames().size() +
+         stream_frames().size() + ping_frames().size() +
+         connection_close_frames().size();
 }
 
-const vector<QuicAckFrame>& SimpleQuicFramer::ack_frames() const {
+const std::vector<QuicAckFrame>& SimpleQuicFramer::ack_frames() const {
   return visitor_->ack_frames();
 }
 
-const vector<QuicStopWaitingFrame>&
-SimpleQuicFramer::stop_waiting_frames() const {
+const std::vector<QuicStopWaitingFrame>& SimpleQuicFramer::stop_waiting_frames()
+    const {
   return visitor_->stop_waiting_frames();
 }
 
-const vector<QuicPingFrame>& SimpleQuicFramer::ping_frames() const {
+const std::vector<QuicPingFrame>& SimpleQuicFramer::ping_frames() const {
   return visitor_->ping_frames();
 }
 
-const vector<QuicStreamFrame*>& SimpleQuicFramer::stream_frames() const {
+const std::vector<std::unique_ptr<QuicStreamFrame>>&
+SimpleQuicFramer::stream_frames() const {
   return visitor_->stream_frames();
 }
 
-const vector<QuicRstStreamFrame>& SimpleQuicFramer::rst_stream_frames() const {
+const std::vector<QuicRstStreamFrame>& SimpleQuicFramer::rst_stream_frames()
+    const {
   return visitor_->rst_stream_frames();
 }
 
-const vector<QuicGoAwayFrame>&
-SimpleQuicFramer::goaway_frames() const {
+const std::vector<QuicGoAwayFrame>& SimpleQuicFramer::goaway_frames() const {
   return visitor_->goaway_frames();
 }
 
-const vector<QuicConnectionCloseFrame>&
+const std::vector<QuicConnectionCloseFrame>&
 SimpleQuicFramer::connection_close_frames() const {
   return visitor_->connection_close_frames();
 }

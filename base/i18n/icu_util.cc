@@ -17,6 +17,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "build/build_config.h"
 #include "third_party/icu/source/common/unicode/putil.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
@@ -27,13 +28,13 @@
 #include "base/android/apk_assets.h"
 #endif
 
+#if defined(OS_IOS)
+#include "base/ios/ios_util.h"
+#endif
+
 #if defined(OS_MACOSX)
 #include "base/mac/foundation_util.h"
 #endif
-
-#define ICU_UTIL_DATA_FILE   0
-#define ICU_UTIL_DATA_SHARED 1
-#define ICU_UTIL_DATA_STATIC 2
 
 namespace base {
 namespace i18n {
@@ -47,15 +48,24 @@ namespace i18n {
 
 namespace {
 #if !defined(OS_NACL)
-#if !defined(NDEBUG)
+#if DCHECK_IS_ON()
 // Assert that we are not called more than once.  Even though calling this
 // function isn't harmful (ICU can handle it), being called twice probably
 // indicates a programming error.
 bool g_check_called_once = true;
 bool g_called_once = false;
-#endif  // !defined(NDEBUG)
+#endif  // DCHECK_IS_ON()
 
 #if ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE
+
+// To debug http://crbug.com/445616.
+int g_debug_icu_last_error;
+int g_debug_icu_load;
+int g_debug_icu_pf_error_details;
+int g_debug_icu_pf_last_error;
+#if defined(OS_WIN)
+wchar_t g_debug_icu_pf_filename[_MAX_PATH];
+#endif  // OS_WIN
 // Use an unversioned file name to simplify a icu version update down the road.
 // No need to change the filename in multiple places (gyp files, windows
 // build pkg configurations, etc). 'l' stands for Little Endian.
@@ -68,12 +78,6 @@ const char kAndroidAssetsIcuDataFileName[] = "assets/icudtl.dat";
 // File handle intentionally never closed. Not using File here because its
 // Windows implementation guards against two instances owning the same
 // PlatformFile (which we allow since we know it is never freed).
-const PlatformFile kInvalidPlatformFile =
-#if defined(OS_WIN)
-    INVALID_HANDLE_VALUE;
-#else
-    -1;
-#endif
 PlatformFile g_icudtl_pf = kInvalidPlatformFile;
 MemoryMappedFile* g_icudtl_mapped_file = nullptr;
 MemoryMappedFile::Region g_icudtl_region;
@@ -123,6 +127,12 @@ void LazyInitIcuDataFile() {
   ScopedCFTypeRef<CFStringRef> data_file_name(
       SysUTF8ToCFStringRef(kIcuDataFileName));
   FilePath data_path = mac::PathForFrameworkBundleResource(data_file_name);
+#if defined(OS_IOS)
+  FilePath override_data_path = base::ios::FilePathOfEmbeddedICU();
+  if (!override_data_path.empty()) {
+    data_path = override_data_path;
+  }
+#endif  // !defined(OS_IOS)
   if (data_path.empty()) {
     LOG(ERROR) << kIcuDataFileName << " not found in bundle";
     return;
@@ -130,9 +140,24 @@ void LazyInitIcuDataFile() {
 #endif  // !defined(OS_MACOSX)
   File file(data_path, File::FLAG_OPEN | File::FLAG_READ);
   if (file.IsValid()) {
+    // TODO(scottmg): http://crbug.com/445616.
+    g_debug_icu_pf_last_error = 0;
+    g_debug_icu_pf_error_details = 0;
+#if defined(OS_WIN)
+    g_debug_icu_pf_filename[0] = 0;
+#endif  // OS_WIN
+
     g_icudtl_pf = file.TakePlatformFile();
     g_icudtl_region = MemoryMappedFile::Region::kWholeFile;
   }
+#if defined(OS_WIN)
+  else {
+    // TODO(scottmg): http://crbug.com/445616.
+    g_debug_icu_pf_last_error = ::GetLastError();
+    g_debug_icu_pf_error_details = file.error_details();
+    wcscpy_s(g_debug_icu_pf_filename, data_path.value().c_str());
+  }
+#endif  // OS_WIN
 }
 
 bool InitializeICUWithFileDescriptorInternal(
@@ -140,22 +165,29 @@ bool InitializeICUWithFileDescriptorInternal(
     const MemoryMappedFile::Region& data_region) {
   // This can be called multiple times in tests.
   if (g_icudtl_mapped_file) {
+    g_debug_icu_load = 0;  // To debug http://crbug.com/445616.
     return true;
   }
   if (data_fd == kInvalidPlatformFile) {
+    g_debug_icu_load = 1;  // To debug http://crbug.com/445616.
     LOG(ERROR) << "Invalid file descriptor to ICU data received.";
     return false;
   }
 
-  scoped_ptr<MemoryMappedFile> icudtl_mapped_file(new MemoryMappedFile());
+  std::unique_ptr<MemoryMappedFile> icudtl_mapped_file(new MemoryMappedFile());
   if (!icudtl_mapped_file->Initialize(File(data_fd), data_region)) {
+    g_debug_icu_load = 2;  // To debug http://crbug.com/445616.
     LOG(ERROR) << "Couldn't mmap icu data file";
     return false;
   }
   g_icudtl_mapped_file = icudtl_mapped_file.release();
 
   UErrorCode err = U_ZERO_ERROR;
-  udata_setCommonData(const_cast<uint8*>(g_icudtl_mapped_file->data()), &err);
+  udata_setCommonData(const_cast<uint8_t*>(g_icudtl_mapped_file->data()), &err);
+  if (err != U_ZERO_ERROR) {
+    g_debug_icu_load = 3;  // To debug http://crbug.com/445616.
+    g_debug_icu_last_error = err;
+  }
   return err == U_ZERO_ERROR;
 }
 #endif  // ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE
@@ -169,7 +201,7 @@ bool InitializeICUWithFileDescriptorInternal(
 bool InitializeICUWithFileDescriptor(
     PlatformFile data_fd,
     const MemoryMappedFile::Region& data_region) {
-#if !defined(NDEBUG)
+#if DCHECK_IS_ON()
   DCHECK(!g_check_called_once || !g_called_once);
   g_called_once = true;
 #endif
@@ -183,20 +215,20 @@ PlatformFile GetIcuDataFileHandle(MemoryMappedFile::Region* out_region) {
 }
 #endif
 
-const uint8* GetRawIcuMemory() {
+const uint8_t* GetRawIcuMemory() {
   CHECK(g_icudtl_mapped_file);
   return g_icudtl_mapped_file->data();
 }
 
-bool InitializeICUFromRawMemory(const uint8* raw_memory) {
+bool InitializeICUFromRawMemory(const uint8_t* raw_memory) {
 #if !defined(COMPONENT_BUILD)
-#if !defined(NDEBUG)
+#if DCHECK_IS_ON()
   DCHECK(!g_check_called_once || !g_called_once);
   g_called_once = true;
 #endif
 
   UErrorCode err = U_ZERO_ERROR;
-  udata_setCommonData(const_cast<uint8*>(raw_memory), &err);
+  udata_setCommonData(const_cast<uint8_t*>(raw_memory), &err);
   return err == U_ZERO_ERROR;
 #else
   return true;
@@ -206,7 +238,7 @@ bool InitializeICUFromRawMemory(const uint8* raw_memory) {
 #endif  // ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE
 
 bool InitializeICU() {
-#if !defined(NDEBUG)
+#if DCHECK_IS_ON()
   DCHECK(!g_check_called_once || !g_called_once);
   g_called_once = true;
 #endif
@@ -246,6 +278,17 @@ bool InitializeICU() {
   result =
       InitializeICUWithFileDescriptorInternal(g_icudtl_pf, g_icudtl_region);
 #if defined(OS_WIN)
+  int debug_icu_load = g_debug_icu_load;
+  debug::Alias(&debug_icu_load);
+  int debug_icu_last_error = g_debug_icu_last_error;
+  debug::Alias(&debug_icu_last_error);
+  int debug_icu_pf_last_error = g_debug_icu_pf_last_error;
+  debug::Alias(&debug_icu_pf_last_error);
+  int debug_icu_pf_error_details = g_debug_icu_pf_error_details;
+  debug::Alias(&debug_icu_pf_error_details);
+  wchar_t debug_icu_pf_filename[_MAX_PATH] = {0};
+  wcscpy_s(debug_icu_pf_filename, g_debug_icu_pf_filename);
+  debug::Alias(&debug_icu_pf_filename);
   CHECK(result);  // TODO(scottmg): http://crbug.com/445616
 #endif
 #endif
@@ -257,14 +300,14 @@ bool InitializeICU() {
 // when requested.
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   if (result)
-    scoped_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
+    std::unique_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
 #endif
   return result;
 }
 #endif  // !defined(OS_NACL)
 
 void AllowMultipleInitializeCallsForTesting() {
-#if !defined(NDEBUG) && !defined(OS_NACL)
+#if DCHECK_IS_ON() && !defined(OS_NACL)
   g_check_called_once = false;
 #endif
 }

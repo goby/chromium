@@ -5,16 +5,13 @@
 #include "media/base/decoder_buffer_queue.h"
 
 #include "base/logging.h"
-#include "base/numerics/safe_conversions.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/timestamp_constants.h"
 
 namespace media {
 
 DecoderBufferQueue::DecoderBufferQueue()
-    : earliest_valid_timestamp_(kNoTimestamp()),
-      data_size_(0) {
-}
+    : earliest_valid_timestamp_(kNoTimestamp), data_size_(0) {}
 
 DecoderBufferQueue::~DecoderBufferQueue() {}
 
@@ -23,18 +20,16 @@ void DecoderBufferQueue::Push(const scoped_refptr<DecoderBuffer>& buffer) {
 
   queue_.push_back(buffer);
 
-  // TODO(damienv): Remove the cast here and in every place in this file
-  // when DecoderBuffer::data_size is modified to return a size_t.
-  data_size_ += base::checked_cast<size_t, int>(buffer->data_size());
+  data_size_ += buffer->data_size();
 
   // TODO(scherkus): FFmpeg returns some packets with no timestamp after
   // seeking. Fix and turn this into CHECK(). See http://crbug.com/162192
-  if (buffer->timestamp() == kNoTimestamp()) {
+  if (buffer->timestamp() == kNoTimestamp) {
     DVLOG(1) << "Buffer has no timestamp";
     return;
   }
 
-  if (earliest_valid_timestamp_ == kNoTimestamp()) {
+  if (earliest_valid_timestamp_ == kNoTimestamp) {
     earliest_valid_timestamp_ = buffer->timestamp();
   }
 
@@ -55,8 +50,7 @@ scoped_refptr<DecoderBuffer> DecoderBufferQueue::Pop() {
   scoped_refptr<DecoderBuffer> buffer = queue_.front();
   queue_.pop_front();
 
-  size_t buffer_data_size =
-      base::checked_cast<size_t, int>(buffer->data_size());
+  size_t buffer_data_size = buffer->data_size();
   DCHECK_LE(buffer_data_size, data_size_);
   data_size_ -= buffer_data_size;
 
@@ -72,7 +66,7 @@ void DecoderBufferQueue::Clear() {
   queue_.clear();
   data_size_ = 0;
   in_order_queue_.clear();
-  earliest_valid_timestamp_ = kNoTimestamp();
+  earliest_valid_timestamp_ = kNoTimestamp;
 }
 
 bool DecoderBufferQueue::IsEmpty() {

@@ -7,9 +7,18 @@ Release Notes
 The dates in the following release notes denote when Chrome and the NaCl SDK
 reached canary status. The stable release is typically 6 weeks later.
 
+Chrome/Pepper 49
+================
+
+* GCC-based newlib toolchains removed from the SDK.  These have been
+  superseded by the nacl-clang toolchain which also produces statically linked
+  architecture specific nexe files.
+* gtest/gmock no longer shipped as pre-built libraries.  This is in-line with
+  normal gtest/gmock usage guidelines.  Projects wishing to use gtest/gmock must
+  now add explicit include paths and compile gtest-all.cc locally.
 
 Chrome/Pepper 45 (10 July 2015)
-================================
+===============================
 
 Pepper
 ------
@@ -39,7 +48,7 @@ PNaCl
   browser (version ``Y``).
 * PNaCl's support for use of libstdc++ 4.6 as the C++ standard library is
   deprecated and will be removed in the next release. PNaCl has used libc++
-  (which is much more up-to-date, currently based on LLVM 3.6) as the default
+  (which is much more up to date, currently based on LLVM 3.6) as the default
   since Pepper 33.
 * PNaCl's experimental `Subzero translator`_ is available for x86-32 NaCl in
   Chrome version 43, behind a flag. To give it a try, run Chrome with the

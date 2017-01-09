@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_CAPTURE_SCREEN_CAPTURE_DEVICE_CORE_H_
-#define MEDIA_CAPTURE_SCREEN_CAPTURE_DEVICE_CORE_H_
+#ifndef MEDIA_CAPTURE_CONTENT_SCREEN_CAPTURE_DEVICE_CORE_H_
+#define MEDIA_CAPTURE_CONTENT_SCREEN_CAPTURE_DEVICE_CORE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "media/base/media_export.h"
+#include "media/capture/capture_export.h"
 #include "media/capture/content/thread_safe_capture_oracle.h"
 #include "media/capture/video/video_capture_device.h"
 
@@ -25,7 +26,7 @@ struct VideoCaptureParams;
 class ThreadSafeCaptureOracle;
 
 // Keeps track of the video capture source frames and executes copying.
-class MEDIA_EXPORT VideoCaptureMachine {
+class CAPTURE_EXPORT VideoCaptureMachine {
  public:
   VideoCaptureMachine();
   virtual ~VideoCaptureMachine();
@@ -36,6 +37,10 @@ class MEDIA_EXPORT VideoCaptureMachine {
                      const VideoCaptureParams& params,
                      const base::Callback<void(bool)> callback) = 0;
 
+  // Suspend/Resume frame delivery. Implementations of these are optional.
+  virtual void Suspend() {}
+  virtual void Resume() {}
+
   // Stops capturing.
   // |callback| is invoked after the capturing has stopped.
   virtual void Stop(const base::Closure& callback) = 0;
@@ -44,6 +49,18 @@ class MEDIA_EXPORT VideoCaptureMachine {
   // system utilization, and alter frame sizes and/or frame rates to mitigate
   // overloading or under-utilization.
   virtual bool IsAutoThrottlingEnabled() const;
+
+  // Called by ScreenCaptureDeviceCore when it failed to satisfy a "refresh
+  // frame" request by attempting to resurrect the last video frame from the
+  // buffer pool (this is referred to as the "passive" refresh approach).  The
+  // failure can happen for a number of reasons (e.g., the oracle decided to
+  // change resolution, or consumers of the last video frame are not yet
+  // finished with it).
+  //
+  // The implementation of this method should consult the oracle, using the
+  // kActiveRefreshRequest event type, to decide whether to initiate a new frame
+  // capture, and then do so if the oracle agrees.
+  virtual void MaybeCaptureForRefresh() = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureMachine);
@@ -59,20 +76,25 @@ class MEDIA_EXPORT VideoCaptureMachine {
 // (see notes at top of this file).  It times the start of successive captures
 // and facilitates the processing of each through the stages of the
 // pipeline.
-class MEDIA_EXPORT ScreenCaptureDeviceCore
+class CAPTURE_EXPORT ScreenCaptureDeviceCore
     : public base::SupportsWeakPtr<ScreenCaptureDeviceCore> {
  public:
-  ScreenCaptureDeviceCore(scoped_ptr<VideoCaptureMachine> capture_machine);
+  ScreenCaptureDeviceCore(std::unique_ptr<VideoCaptureMachine> capture_machine);
   virtual ~ScreenCaptureDeviceCore();
 
   // Asynchronous requests to change ScreenCaptureDeviceCore state.
   void AllocateAndStart(const VideoCaptureParams& params,
-                        scoped_ptr<VideoCaptureDevice::Client> client);
+                        std::unique_ptr<VideoCaptureDevice::Client> client);
+  void RequestRefreshFrame();
+  void Suspend();
+  void Resume();
   void StopAndDeAllocate();
+  void OnConsumerReportingUtilization(int frame_feedback_id,
+                                      double utilization);
 
  private:
   // Flag indicating current state.
-  enum State { kIdle, kCapturing, kError, kLastCaptureState };
+  enum State { kIdle, kCapturing, kSuspended, kError, kLastCaptureState };
 
   void TransitionStateTo(State next_state);
 
@@ -93,7 +115,7 @@ class MEDIA_EXPORT ScreenCaptureDeviceCore
   // Tracks the CaptureMachine that's doing work on our behalf
   // on the device thread or UI thread.
   // This value should never be dereferenced by this class.
-  scoped_ptr<VideoCaptureMachine> capture_machine_;
+  std::unique_ptr<VideoCaptureMachine> capture_machine_;
 
   // Our thread-safe capture oracle which serves as the gateway to the video
   // capture pipeline. Besides the VideoCaptureDevice itself, it is the only
@@ -105,4 +127,4 @@ class MEDIA_EXPORT ScreenCaptureDeviceCore
 
 }  // namespace media
 
-#endif  // MEDIA_CAPTURE_SCREEN_CAPTURE_DEVICE_CORE_H_
+#endif  // MEDIA_CAPTURE_CONTENT_SCREEN_CAPTURE_DEVICE_CORE_H_

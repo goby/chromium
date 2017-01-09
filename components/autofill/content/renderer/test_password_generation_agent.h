@@ -7,9 +7,9 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "components/autofill/content/renderer/password_generation_agent.h"
-#include "ipc/ipc_message.h"
 
 namespace autofill {
 
@@ -18,9 +18,6 @@ class TestPasswordGenerationAgent : public PasswordGenerationAgent {
   TestPasswordGenerationAgent(content::RenderFrame* render_frame,
                               PasswordAutofillAgent* password_agent);
   ~TestPasswordGenerationAgent() override;
-
-  // content::RenderFrameObserver implementation:
-  bool OnMessageReceived(const IPC::Message& message) override;
 
   // PasswordGenreationAgent implementation:
   // Always return true to allow loading of data URLs.

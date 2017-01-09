@@ -11,7 +11,7 @@
 
 // static
 bool ObsoleteSystem::IsObsoleteNowOrSoon() {
-  return base::mac::IsOSMountainLionOrEarlier();
+  return false;
 }
 
 // static
@@ -23,7 +23,7 @@ base::string16 ObsoleteSystem::LocalizedObsoleteString() {
 
 // static
 bool ObsoleteSystem::IsEndOfTheLine() {
-  return false;
+  return true;
 }
 
 // static

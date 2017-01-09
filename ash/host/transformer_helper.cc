@@ -4,6 +4,8 @@
 
 #include "ash/host/transformer_helper.h"
 
+#include <utility>
+
 #include "ash/host/ash_window_tree_host.h"
 #include "ash/host/root_window_transformer.h"
 #include "ui/aura/window.h"
@@ -57,8 +59,7 @@ class SimpleRootWindowTransformer : public RootWindowTransformer {
 }  // namespace
 
 TransformerHelper::TransformerHelper(AshWindowTreeHost* ash_host)
-    : ash_host_(ash_host) {
-}
+    : ash_host_(ash_host) {}
 
 TransformerHelper::~TransformerHelper() {}
 
@@ -71,21 +72,22 @@ gfx::Insets TransformerHelper::GetHostInsets() const {
 }
 
 void TransformerHelper::SetTransform(const gfx::Transform& transform) {
-  scoped_ptr<RootWindowTransformer> transformer(new SimpleRootWindowTransformer(
-      ash_host_->AsWindowTreeHost()->window(), transform));
-  SetRootWindowTransformer(transformer.Pass());
+  std::unique_ptr<RootWindowTransformer> transformer(
+      new SimpleRootWindowTransformer(ash_host_->AsWindowTreeHost()->window(),
+                                      transform));
+  SetRootWindowTransformer(std::move(transformer));
 }
 
 void TransformerHelper::SetRootWindowTransformer(
-    scoped_ptr<RootWindowTransformer> transformer) {
-  transformer_ = transformer.Pass();
+    std::unique_ptr<RootWindowTransformer> transformer) {
+  transformer_ = std::move(transformer);
   aura::WindowTreeHost* host = ash_host_->AsWindowTreeHost();
   aura::Window* window = host->window();
   window->SetTransform(transformer_->GetTransform());
   // If the layer is not animating, then we need to update the root window
   // size immediately.
   if (!window->layer()->GetAnimator()->is_animating())
-    host->UpdateRootWindowSize(host->GetBounds().size());
+    host->UpdateRootWindowSizeInPixels(host->GetBoundsInPixels().size());
 }
 
 gfx::Transform TransformerHelper::GetTransform() const {

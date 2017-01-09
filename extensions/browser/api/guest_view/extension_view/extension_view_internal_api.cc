@@ -4,6 +4,9 @@
 
 #include "extensions/browser/api/guest_view/extension_view/extension_view_internal_api.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/crx_file/id_util.h"
@@ -33,7 +36,7 @@ bool ExtensionViewInternalExtensionFunction::RunAsync() {
 // Checks the validity of |src|, including that it follows the chrome extension
 // scheme and that its extension ID is valid.
 // Returns true if |src| is valid.
-bool IsSrcValid(GURL src) {
+bool IsSrcValid(const GURL& src) {
   // Check if src is valid and matches the extension scheme.
   if (!src.is_valid() || !src.SchemeIs(kExtensionScheme))
     return false;
@@ -49,7 +52,7 @@ bool IsSrcValid(GURL src) {
 
 bool ExtensionViewInternalLoadSrcFunction::RunAsyncSafe(
     ExtensionViewGuest* guest) {
-  scoped_ptr<extensionview::LoadSrc::Params> params(
+  std::unique_ptr<extensionview::LoadSrc::Params> params(
       extensionview::LoadSrc::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   std::string src = params->src;
@@ -61,13 +64,13 @@ bool ExtensionViewInternalLoadSrcFunction::RunAsyncSafe(
     has_load_succeeded = guest->NavigateGuest(src, true /* force_navigation */);
 
   // Return whether load is successful.
-  SetResult(new base::FundamentalValue(has_load_succeeded));
+  SetResult(base::MakeUnique<base::FundamentalValue>(has_load_succeeded));
   SendResponse(true);
   return true;
 }
 
 bool ExtensionViewInternalParseSrcFunction::RunAsync() {
-  scoped_ptr<extensionview::ParseSrc::Params> params(
+  std::unique_ptr<extensionview::ParseSrc::Params> params(
       extensionview::ParseSrc::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   GURL url(params->src);
@@ -75,10 +78,10 @@ bool ExtensionViewInternalParseSrcFunction::RunAsync() {
 
   // Return whether the src is valid and the current extension ID to
   // the callback.
-  scoped_ptr<base::ListValue> result_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> result_list(new base::ListValue());
   result_list->AppendBoolean(is_src_valid);
   result_list->AppendString(url.host());
-  SetResultList(result_list.Pass());
+  SetResultList(std::move(result_list));
   SendResponse(true);
   return true;
 }

@@ -4,6 +4,8 @@
 
 #include "extensions/browser/verified_contents.h"
 
+#include <stddef.h>
+
 #include "base/base64url.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
@@ -18,14 +20,6 @@ using base::ListValue;
 using base::Value;
 
 namespace {
-
-// Note: this structure is an ASN.1 which encodes the algorithm used with its
-// parameters.  The signature algorithm is "RSA256" aka "RSASSA-PKCS-v1_5 using
-// SHA-256 hash algorithm". This is defined in PKCS #1 (RFC 3447).
-// It is encoding: { OID sha256WithRSAEncryption      PARAMETERS NULL }
-const uint8 kSignatureAlgorithm[15] = {0x30, 0x0d, 0x06, 0x09, 0x2a,
-                                       0x86, 0x48, 0x86, 0xf7, 0x0d,
-                                       0x01, 0x01, 0x0b, 0x05, 0x00};
 
 const char kBlockSizeKey[] = "block_size";
 const char kContentHashesKey[] = "content_hashes";
@@ -50,12 +44,12 @@ const char kWebstoreKId[] = "webstore";
 // Helper function to iterate over a list of dictionaries, returning the
 // dictionary that has |key| -> |value| in it, if any, or NULL.
 DictionaryValue* FindDictionaryWithValue(const ListValue* list,
-                                         std::string key,
-                                         std::string value) {
-  for (ListValue::const_iterator i = list->begin(); i != list->end(); ++i) {
-    if (!(*i)->IsType(Value::TYPE_DICTIONARY))
+                                         const std::string& key,
+                                         const std::string& value) {
+  for (const auto& i : *list) {
+    DictionaryValue* dictionary;
+    if (!i->GetAsDictionary(&dictionary))
       continue;
-    DictionaryValue* dictionary = static_cast<DictionaryValue*>(*i);
     std::string found_value;
     if (dictionary->GetString(key, &found_value) && found_value == value)
       return dictionary;
@@ -67,12 +61,12 @@ DictionaryValue* FindDictionaryWithValue(const ListValue* list,
 
 namespace extensions {
 
-VerifiedContents::VerifiedContents(const uint8* public_key, int public_key_size)
+VerifiedContents::VerifiedContents(const uint8_t* public_key,
+                                   int public_key_size)
     : public_key_(public_key),
       public_key_size_(public_key_size),
       valid_signature_(false),  // Guilty until proven innocent.
-      block_size_(0) {
-}
+      block_size_(0) {}
 
 VerifiedContents::~VerifiedContents() {
 }
@@ -102,8 +96,8 @@ bool VerifiedContents::InitFrom(const base::FilePath& path,
   if (!GetPayload(path, &payload, ignore_invalid_signature))
     return false;
 
-  scoped_ptr<base::Value> value(base::JSONReader::Read(payload));
-  if (!value.get() || !value->IsType(Value::TYPE_DICTIONARY))
+  std::unique_ptr<base::Value> value(base::JSONReader::Read(payload));
+  if (!value.get() || !value->IsType(Value::Type::DICTIONARY))
     return false;
   DictionaryValue* dictionary = static_cast<DictionaryValue*>(value.get());
 
@@ -241,8 +235,8 @@ bool VerifiedContents::GetPayload(const base::FilePath& path,
   std::string contents;
   if (!base::ReadFileToString(path, &contents))
     return false;
-  scoped_ptr<base::Value> value(base::JSONReader::Read(contents));
-  if (!value.get() || !value->IsType(Value::TYPE_LIST))
+  std::unique_ptr<base::Value> value(base::JSONReader::Read(contents));
+  if (!value.get() || !value->IsType(Value::Type::LIST))
     return false;
   ListValue* top_list = static_cast<ListValue*>(value.get());
 
@@ -306,26 +300,23 @@ bool VerifiedContents::VerifySignature(const std::string& protected_value,
                                        const std::string& signature_bytes) {
   crypto::SignatureVerifier signature_verifier;
   if (!signature_verifier.VerifyInit(
-          kSignatureAlgorithm,
-          sizeof(kSignatureAlgorithm),
-          reinterpret_cast<const uint8*>(signature_bytes.data()),
-          signature_bytes.size(),
-          public_key_,
-          public_key_size_)) {
+          crypto::SignatureVerifier::RSA_PKCS1_SHA256,
+          reinterpret_cast<const uint8_t*>(signature_bytes.data()),
+          signature_bytes.size(), public_key_, public_key_size_)) {
     VLOG(1) << "Could not verify signature - VerifyInit failure";
     return false;
   }
 
   signature_verifier.VerifyUpdate(
-      reinterpret_cast<const uint8*>(protected_value.data()),
+      reinterpret_cast<const uint8_t*>(protected_value.data()),
       protected_value.size());
 
   std::string dot(".");
-  signature_verifier.VerifyUpdate(reinterpret_cast<const uint8*>(dot.data()),
+  signature_verifier.VerifyUpdate(reinterpret_cast<const uint8_t*>(dot.data()),
                                   dot.size());
 
   signature_verifier.VerifyUpdate(
-      reinterpret_cast<const uint8*>(payload.data()), payload.size());
+      reinterpret_cast<const uint8_t*>(payload.data()), payload.size());
 
   if (!signature_verifier.VerifyFinal()) {
     VLOG(1) << "Could not verify signature - VerifyFinal failure";

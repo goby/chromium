@@ -9,11 +9,15 @@
 #include "cc/base/math_util.h"
 #include "cc/debug/traced_value.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace cc {
 
 RenderPassDrawQuad::RenderPassDrawQuad() {
 }
+
+RenderPassDrawQuad::RenderPassDrawQuad(const RenderPassDrawQuad& other) =
+    default;
 
 RenderPassDrawQuad::~RenderPassDrawQuad() {
 }
@@ -21,29 +25,21 @@ RenderPassDrawQuad::~RenderPassDrawQuad() {
 void RenderPassDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
                                 const gfx::Rect& rect,
                                 const gfx::Rect& visible_rect,
-                                RenderPassId render_pass_id,
+                                int render_pass_id,
                                 ResourceId mask_resource_id,
                                 const gfx::Vector2dF& mask_uv_scale,
                                 const gfx::Size& mask_texture_size,
                                 const FilterOperations& filters,
                                 const gfx::Vector2dF& filters_scale,
+                                const gfx::PointF& filters_origin,
                                 const FilterOperations& background_filters) {
-  DCHECK(render_pass_id.IsValid());
+  DCHECK(render_pass_id);
 
   gfx::Rect opaque_rect;
   bool needs_blending = false;
-  SetAll(shared_quad_state,
-         rect,
-         opaque_rect,
-         visible_rect,
-         needs_blending,
-         render_pass_id,
-         mask_resource_id,
-         mask_uv_scale,
-         mask_texture_size,
-         filters,
-         filters_scale,
-         background_filters);
+  SetAll(shared_quad_state, rect, opaque_rect, visible_rect, needs_blending,
+         render_pass_id, mask_resource_id, mask_uv_scale, mask_texture_size,
+         filters, filters_scale, filters_origin, background_filters);
 }
 
 void RenderPassDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
@@ -51,14 +47,15 @@ void RenderPassDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
                                 const gfx::Rect& opaque_rect,
                                 const gfx::Rect& visible_rect,
                                 bool needs_blending,
-                                RenderPassId render_pass_id,
+                                int render_pass_id,
                                 ResourceId mask_resource_id,
                                 const gfx::Vector2dF& mask_uv_scale,
                                 const gfx::Size& mask_texture_size,
                                 const FilterOperations& filters,
                                 const gfx::Vector2dF& filters_scale,
+                                const gfx::PointF& filters_origin,
                                 const FilterOperations& background_filters) {
-  DCHECK(render_pass_id.IsValid());
+  DCHECK(render_pass_id);
 
   DrawQuad::SetAll(shared_quad_state, DrawQuad::RENDER_PASS, rect, opaque_rect,
                    visible_rect, needs_blending);
@@ -69,15 +66,12 @@ void RenderPassDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
   this->mask_texture_size = mask_texture_size;
   this->filters = filters;
   this->filters_scale = filters_scale;
+  this->filters_origin = filters_origin;
   this->background_filters = background_filters;
 }
 
 gfx::RectF RenderPassDrawQuad::MaskUVRect() const {
-  gfx::RectF mask_uv_rect((mask_uv_scale.x() * rect.x()) / rect.width(),
-                          (mask_uv_scale.y() * rect.y()) / rect.height(),
-                          mask_uv_scale.x(),
-                          mask_uv_scale.y());
-  return mask_uv_rect;
+  return gfx::ScaleRect(gfx::RectF(rect), mask_uv_scale.x(), mask_uv_scale.y());
 }
 
 const RenderPassDrawQuad* RenderPassDrawQuad::MaterialCast(
@@ -88,7 +82,8 @@ const RenderPassDrawQuad* RenderPassDrawQuad::MaterialCast(
 
 void RenderPassDrawQuad::ExtendValue(
     base::trace_event::TracedValue* value) const {
-  TracedValue::SetIDRef(render_pass_id.AsTracingId(), value, "render_pass_id");
+  TracedValue::SetIDRef(reinterpret_cast<void*>(render_pass_id), value,
+                        "render_pass_id");
   value->SetInteger("mask_resource_id", resources.ids[kMaskResourceIdIndex]);
   MathUtil::AddToTracedValue("mask_texture_size", mask_texture_size, value);
   MathUtil::AddToTracedValue("mask_uv_scale", mask_uv_scale, value);

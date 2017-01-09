@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+#include <string.h>
+
 #include <string>
 
 #include "base/files/file_util.h"
@@ -22,22 +25,23 @@ using testing::Lt;
 
 namespace {
 
-const int64 kTestFileSize = 1 << 15;  // 32 kB
+const int64_t kTestFileSize = 1 << 15;  // 32 kB
 const int kTestPattern = 0x55555555;
 
 class ImageWriterUtilityTest : public testing::Test {
  protected:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &image_path_));
     ASSERT_TRUE(
-        base::CreateTemporaryFileInDir(temp_dir_.path(), &device_path_));
+        base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &image_path_));
+    ASSERT_TRUE(
+        base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &device_path_));
   }
 
   void TearDown() override {}
 
   void FillFile(const base::FilePath& path, int pattern) {
-    scoped_ptr<char[]> buffer(new char[kTestFileSize]);
+    std::unique_ptr<char[]> buffer(new char[kTestFileSize]);
     memset(buffer.get(), pattern, kTestFileSize);
 
     ASSERT_TRUE(base::WriteFile(path, buffer.get(), kTestFileSize));
@@ -55,7 +59,7 @@ class ImageWriterUtilityTest : public testing::Test {
 
 class MockHandler : public ImageWriterHandler {
  public:
-  MOCK_METHOD1(SendProgress, void(int64));
+  MOCK_METHOD1(SendProgress, void(int64_t));
   MOCK_METHOD1(SendFailed, void(const std::string& message));
   MOCK_METHOD0(SendSucceeded, void());
   MOCK_METHOD1(OnMessageReceived, bool(const IPC::Message& message));

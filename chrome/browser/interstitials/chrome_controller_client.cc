@@ -7,11 +7,14 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
-#include "base/prefs/pref_service.h"
 #include "base/process/launch.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/interstitials/chrome_metrics_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "components/safe_browsing_db/safe_browsing_prefs.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/web_contents.h"
@@ -25,8 +28,6 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/generated_resources.h"
-#include "ui/base/l10n/l10n_util.h"
 #endif
 
 #if defined(OS_WIN)
@@ -40,29 +41,18 @@ using content::Referrer;
 
 namespace {
 
-void LaunchDateAndTimeSettingsOnFile() {
+#if !defined(OS_CHROMEOS)
+void LaunchDateAndTimeSettingsOnFileThread() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
 // The code for each OS is completely separate, in order to avoid bugs like
-// https://crbug.com/430877 .
+// https://crbug.com/430877 . ChromeOS is handled on the UI thread.
 #if defined(OS_ANDROID)
   chrome::android::OpenDateAndTimeSettings();
 
-#elif defined(OS_CHROMEOS)
-  std::string sub_page =
-      std::string(chrome::kSearchSubPage) + "#" +
-      l10n_util::GetStringUTF8(IDS_OPTIONS_SETTINGS_SECTION_TITLE_DATETIME);
-  chrome::ShowSettingsSubPageForProfile(ProfileManager::GetActiveUserProfile(),
-                                        sub_page);
-
-#elif defined(OS_IOS)
-  // TODO(blundell): Remove this once iOS has its own version of this class.
-  // iOS does not have a way to launch the date and time settings.
-  NOTREACHED();
-
 #elif defined(OS_LINUX)
   struct ClockCommand {
-    const char* pathname;
-    const char* argument;
+    const char* const pathname;
+    const char* const argument;
   };
   static const ClockCommand kClockCommands[] = {
       // Unity
@@ -126,12 +116,16 @@ void LaunchDateAndTimeSettingsOnFile() {
 #endif
   // Don't add code here! (See the comment at the beginning of the function.)
 }
+#endif
 
 }  // namespace
 
 ChromeControllerClient::ChromeControllerClient(
-    content::WebContents* web_contents)
-    : web_contents_(web_contents), interstitial_page_(nullptr) {}
+    content::WebContents* web_contents,
+    std::unique_ptr<security_interstitials::MetricsHelper> metrics_helper)
+    : ControllerClient(std::move(metrics_helper)),
+      web_contents_(web_contents),
+      interstitial_page_(nullptr) {}
 
 ChromeControllerClient::~ChromeControllerClient() {}
 
@@ -150,18 +144,33 @@ bool ChromeControllerClient::CanLaunchDateAndTimeSettings() {
 }
 
 void ChromeControllerClient::LaunchDateAndTimeSettings() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+#if defined(OS_CHROMEOS)
+  chrome::ShowSettingsSubPageForProfile(ProfileManager::GetActiveUserProfile(),
+                                        chrome::kDateTimeSubPage);
+#else
   content::BrowserThread::PostTask(
       content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&LaunchDateAndTimeSettingsOnFile));
+      base::Bind(&LaunchDateAndTimeSettingsOnFileThread));
+#endif
 }
 
 void ChromeControllerClient::GoBack() {
-  DCHECK(interstitial_page_);
   interstitial_page_->DontProceed();
 }
 
+void ChromeControllerClient::Proceed() {
+  interstitial_page_->Proceed();
+}
+
+void ChromeControllerClient::Reload() {
+  web_contents_->GetController().Reload(true);
+}
+
 void ChromeControllerClient::OpenUrlInCurrentTab(const GURL& url) {
-  content::OpenURLParams params(url, Referrer(), CURRENT_TAB,
+  content::OpenURLParams params(url, Referrer(),
+                                WindowOpenDisposition::CURRENT_TAB,
                                 ui::PAGE_TRANSITION_LINK, false);
   web_contents_->OpenURL(params);
 }
@@ -177,5 +186,5 @@ PrefService* ChromeControllerClient::GetPrefService() {
 }
 
 const std::string ChromeControllerClient::GetExtendedReportingPrefName() {
-  return prefs::kSafeBrowsingExtendedReportingEnabled;
+  return safe_browsing::GetExtendedReportingPrefName(*GetPrefService());
 }

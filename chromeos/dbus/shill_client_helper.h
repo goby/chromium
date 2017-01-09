@@ -5,11 +5,11 @@
 #ifndef CHROMEOS_DBUS_SHILL_CLIENT_HELPER_H_
 #define CHROMEOS_DBUS_SHILL_CLIENT_HELPER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/values.h"
@@ -25,13 +25,9 @@ class DictionaryValue;
 
 namespace dbus {
 
-class Bus;
-class ErrorResponse;
 class MessageWriter;
 class MethodCall;
-class ObjectPath;
 class ObjectProxy;
-class Response;
 class Signal;
 
 }  // namespace dbus

@@ -4,16 +4,15 @@
 
 #include "ash/display/shared_display_edge_indicator.h"
 
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
-#include "ash/wm/coordinate_conversion.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/animation/throb_animation.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
@@ -24,8 +23,7 @@ const int kIndicatorAnimationDurationMs = 1000;
 
 class IndicatorView : public views::View {
  public:
-  IndicatorView() {
-  }
+  IndicatorView() {}
   ~IndicatorView() override {}
 
   void SetColor(SkColor color) {
@@ -57,7 +55,8 @@ views::Widget* CreateWidget(const gfx::Rect& bounds,
   widget->SetVisibilityChangedAnimationsEnabled(false);
   widget->GetNativeWindow()->SetName("SharedEdgeIndicator");
   widget->SetContentsView(contents_view);
-  gfx::Display display = Shell::GetScreen()->GetDisplayMatching(bounds);
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayMatching(bounds);
   aura::Window* window = widget->GetNativeWindow();
   aura::client::ScreenPositionClient* screen_position_client =
       aura::client::GetScreenPositionClient(window->GetRootWindow());
@@ -69,9 +68,7 @@ views::Widget* CreateWidget(const gfx::Rect& bounds,
 }  // namespace
 
 SharedDisplayEdgeIndicator::SharedDisplayEdgeIndicator()
-    : src_indicator_(NULL),
-      dst_indicator_(NULL) {
-}
+    : src_indicator_(NULL), dst_indicator_(NULL) {}
 
 SharedDisplayEdgeIndicator::~SharedDisplayEdgeIndicator() {
   Hide();
@@ -107,7 +104,6 @@ void SharedDisplayEdgeIndicator::AnimationProgressed(
     static_cast<IndicatorView*>(src_indicator_)->SetColor(color);
   if (dst_indicator_)
     static_cast<IndicatorView*>(dst_indicator_)->SetColor(color);
-
 }
 
 }  // namespace ash

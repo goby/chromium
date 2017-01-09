@@ -5,7 +5,9 @@
 #ifndef UI_BASE_IME_TEXT_INPUT_CLIENT_H_
 #define UI_BASE_IME_TEXT_INPUT_CLIENT_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/i18n/rtl.h"
 #include "base/strings/string16.h"
 #include "ui/base/ime/composition_text.h"
@@ -22,6 +24,7 @@ class Rect;
 namespace ui {
 
 class KeyEvent;
+enum class TextEditCommand;
 
 // An interface implemented by a View that needs text input support.
 class UI_BASE_IME_EXPORT TextInputClient {
@@ -67,6 +70,9 @@ class UI_BASE_IME_EXPORT TextInputClient {
   // TEXT_INPUT_MODE_DEFAULT at runtime.
   virtual ui::TextInputMode GetTextInputMode() const = 0;
 
+  // Returns the current text direction.
+  virtual base::i18n::TextDirection GetTextDirection() const = 0;
+
   // Returns the current text input flags, which is a bit map of
   // WebTextInputType defined in blink. This is valid only for web input fileds;
   // it will return TEXT_INPUT_FLAG_NONE for native input fields.
@@ -93,7 +99,7 @@ class UI_BASE_IME_EXPORT TextInputClient {
   // (Density Independent Pixel).
   // TODO(ime): Have a clear spec whether the returned value is DIP or not.
   // http://crbug.com/360334
-  virtual bool GetCompositionCharacterBounds(uint32 index,
+  virtual bool GetCompositionCharacterBounds(uint32_t index,
                                              gfx::Rect* rect) const = 0;
 
   // Returns true if there is composition text.
@@ -156,23 +162,23 @@ class UI_BASE_IME_EXPORT TextInputClient {
   // between browser and renderer.
   virtual void ExtendSelectionAndDelete(size_t before, size_t after) = 0;
 
-  // Ensure the caret is within |rect|.  |rect| is in screen coordinates and
+  // Ensure the caret is not in |rect|.  |rect| is in screen coordinates and
   // may extend beyond the bounds of this TextInputClient.
   // Note: On Windows, the returned value is supposed to be DIP (Density
   // Independent Pixel).
   // TODO(ime): Have a clear spec whether the returned value is DIP or not.
   // http://crbug.com/360334
-  virtual void EnsureCaretInRect(const gfx::Rect& rect) = 0;
+  virtual void EnsureCaretNotInRect(const gfx::Rect& rect) = 0;
 
-  // Returns true if |command_id| is currently allowed to be executed.
-  virtual bool IsEditCommandEnabled(int command_id) = 0;
+  // Returns true if |command| is currently allowed to be executed.
+  virtual bool IsTextEditCommandEnabled(TextEditCommand command) const = 0;
 
-  // Execute the command specified by |command_id| on the next key event.
-  // This allows a TextInputClient to be informed of a platform-independent edit
-  // command that has been derived from the key event currently being dispatched
-  // (but not yet sent to the TextInputClient). The edit command will take into
-  // account any OS-specific, or user-specified, keybindings that may be set up.
-  virtual void SetEditCommandForNextKeyEvent(int command_id) = 0;
+  // Execute |command| on the next key event. This allows a TextInputClient to
+  // be informed of a platform-independent edit command that has been derived
+  // from the key event currently being dispatched (but not yet sent to the
+  // TextInputClient). The edit command will take into account any OS-specific,
+  // or user-specified, keybindings that may be set up.
+  virtual void SetTextEditCommandForNextKeyEvent(TextEditCommand command) = 0;
 };
 
 }  // namespace ui

@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/buildflag_header.gni")
 import("//build/config/allocator.gni")
 import("//build/config/compiler/compiler.gni")
 
@@ -12,18 +13,22 @@ declare_args() {
   enable_debugallocation = is_debug
 }
 
-# Only executables and not libraries should depend on the allocator target;
-# only the application (the final executable) knows what allocator makes sense.
+# The Windows-only allocator shim is only enabled for Release static builds, and
+# is mutually exclusive with the generalized shim.
+win_use_allocator_shim = is_win && !is_component_build && !is_debug &&
+                         !use_experimental_allocator_shim && !is_asan
+
 # This "allocator" meta-target will forward to the default allocator according
 # to the build settings.
 group("allocator") {
   public_deps = []
+  deps = []
+
   if (use_allocator == "tcmalloc") {
-    public_deps += [ ":tcmalloc" ]
+    deps += [ ":tcmalloc" ]
   }
 
-  # This condition expresses the win_use_allocator_shim in the GYP build.
-  if (is_win && !is_component_build) {
+  if (win_use_allocator_shim) {
     public_deps += [ ":allocator_shim" ]
   }
 }
@@ -35,65 +40,65 @@ group("allocator") {
 # assumes that the library using it will eventually be linked with
 # //base/allocator in the default way. Clean this up and delete this.
 config("allocator_shim_define") {
-  if (is_win && !is_component_build) {
+  if (win_use_allocator_shim) {
     defines = [ "ALLOCATOR_SHIM" ]
   }
 }
 
 config("tcmalloc_flags") {
+  defines = []
   if (enable_debugallocation) {
-    defines = [
+    defines += [
       # Use debugallocation for Debug builds to catch problems early
       # and cleanly, http://crbug.com/30715 .
       "TCMALLOC_FOR_DEBUGALLOCATION",
     ]
   }
-}
+  if (use_experimental_allocator_shim) {
+    defines += [ "TCMALLOC_DONT_REPLACE_SYSTEM_ALLOC" ]
+  }
+  if (is_clang) {
+    cflags = [
+      # tcmalloc initializes some fields in the wrong order.
+      "-Wno-reorder",
 
-# This config and libc modification are only used on Windows.
-if (is_win) {
-  import("//build/config/win/visual_studio_version.gni")
+      # tcmalloc contains some unused local template specializations.
+      "-Wno-unused-function",
 
-  config("nocmt") {
-    ldflags = [
-      "/NODEFAULTLIB:libcmt",
-      "/NODEFAULTLIB:libcmtd",
+      # tcmalloc uses COMPILE_ASSERT without static_assert but with
+      # typedefs.
+      "-Wno-unused-local-typedefs",
+
+      # for magic2_ in debugallocation.cc (only built in Debug builds)
+      # typedefs.
+      "-Wno-unused-private-field",
     ]
-    libs = [ rebase_path("$target_gen_dir/allocator/libcmt.lib") ]
+  } else {
+    cflags = []
   }
 
-  if (!is_component_build) {
-    action("prep_libc") {
-      script = "prep_libc.py"
-      outputs = [
-        "$target_gen_dir/allocator/libcmt.lib",
-      ]
-      args = [
-        visual_studio_path + "/vc/lib",
-        rebase_path("$target_gen_dir/allocator"),
-        current_cpu,
+  if (is_linux || is_android) {
+    # We enable all warnings by default, but upstream disables a few.
+    # Keep "-Wno-*" flags in sync with upstream by comparing against:
+    # http://code.google.com/p/google-perftools/source/browse/trunk/Makefile.am
+    cflags += [
+      "-Wno-sign-compare",
+      "-Wno-unused-result",
+    ]
+  }
+}
 
-        # The environment file in the build directory. This is required because
-        # the Windows toolchain setup saves the VC paths and such so that
-        # running "mc.exe" will work with the configured toolchain. This file
-        # is in the root build dir.
-        "environment.$current_cpu",
-      ]
-    }
-
-    source_set("allocator_shim") {
-      sources = [
-        "allocator_shim_win.cc",
-      ]
-      configs -= [ "//build/config/compiler:chromium_code" ]
-      configs += [ "//build/config/compiler:no_chromium_code" ]
-
-      public_configs = [ ":nocmt" ]
-      deps = [
-        ":prep_libc",
-        "//base",
-      ]
-    }
+# This config is only used on Windows static release builds for the
+# allocator shim.
+if (win_use_allocator_shim) {
+  source_set("allocator_shim") {
+    sources = [
+      "allocator_shim_win.cc",
+      "allocator_shim_win.h",
+      "winheap_stubs_win.cc",
+      "winheap_stubs_win.h",
+    ]
+    configs += [ ":allocator_shim_define" ]
   }
 }
 
@@ -127,7 +132,6 @@ if (use_allocator == "tcmalloc") {
       "$tcmalloc_dir/src/base/atomicops-internals-x86.cc",
       "$tcmalloc_dir/src/base/atomicops-internals-x86.h",
       "$tcmalloc_dir/src/base/atomicops.h",
-      "$tcmalloc_dir/src/base/basictypes.h",
       "$tcmalloc_dir/src/base/commandlineflags.h",
       "$tcmalloc_dir/src/base/cycleclock.h",
 
@@ -218,35 +222,15 @@ if (use_allocator == "tcmalloc") {
       ":tcmalloc_flags",
     ]
 
+    # Thumb mode disabled due to bug in clang integrated assembler
+    # TODO(https://llvm.org/bugs/show_bug.cgi?id=31058)
+    configs -= [ "//build/config/compiler:compiler_arm_thumb" ]
+    configs += [ "//build/config/compiler:compiler_arm" ]
+
+    # TODO(crbug.com/633719) Make tcmalloc work with AFDO if possible.
+    configs -= [ "//build/config/compiler:afdo" ]
+
     deps = []
-
-    if (is_win) {
-      sources -= [
-        "$tcmalloc_dir/src/base/elf_mem_image.cc",
-        "$tcmalloc_dir/src/base/elf_mem_image.h",
-        "$tcmalloc_dir/src/base/linuxthreads.cc",
-        "$tcmalloc_dir/src/base/linuxthreads.h",
-        "$tcmalloc_dir/src/base/vdso_support.cc",
-        "$tcmalloc_dir/src/base/vdso_support.h",
-        "$tcmalloc_dir/src/maybe_threads.cc",
-        "$tcmalloc_dir/src/maybe_threads.h",
-        "$tcmalloc_dir/src/symbolize.h",
-        "$tcmalloc_dir/src/system-alloc.cc",
-        "$tcmalloc_dir/src/system-alloc.h",
-      ]
-
-      defines += [ "PERFTOOLS_DLL_DECL=" ]
-
-      configs -= [
-        # Tcmalloc defines this itself, and we don't want duplicate definition
-        # warnings.
-        "//build/config/win:nominmax",
-      ]
-
-      public_configs = [ ":nocmt" ]
-
-      deps += [ ":prep_libc" ]
-    }
 
     if (enable_profiling) {
       sources += [
@@ -268,15 +252,16 @@ if (use_allocator == "tcmalloc") {
         "$tcmalloc_dir/src/windows/port.h",
       ]
 
-      # We enable all warnings by default, but upstream disables a few.
-      # Keep "-Wno-*" flags in sync with upstream by comparing against:
-      # http://code.google.com/p/google-perftools/source/browse/trunk/Makefile.am
-      cflags = [
-        "-Wno-sign-compare",
-        "-Wno-unused-result",
-      ]
-
-      configs -= [ "//build/config/gcc:symbol_visibility_hidden" ]
+      # Compiling tcmalloc with -fvisibility=default is only necessary when
+      # not using the allocator shim, which provides the correct visibility
+      # annotations for those symbols which need to be exported (see
+      # //base/allocator/allocator_shim_override_glibc_weak_symbols.h and
+      # //base/allocator/allocator_shim_internals.h for the definition of
+      # SHIM_ALWAYS_EXPORT).
+      if (!use_experimental_allocator_shim) {
+        configs -= [ "//build/config/gcc:symbol_visibility_hidden" ]
+        configs += [ "//build/config/gcc:symbol_visibility_default" ]
+      }
 
       ldflags = [
         # Don't let linker rip this symbol out, otherwise the heap&cpu
@@ -298,21 +283,67 @@ if (use_allocator == "tcmalloc") {
     }
 
     deps += [ "//base/third_party/dynamic_annotations" ]
-
-    if (is_win) {
-      ldflags = [ "/ignore:4006:4221" ]
-    }
   }
-}  # !is_android
+}  # use_allocator == "tcmalloc"
 
-source_set("extension_thunks") {
-  visibility = [ "//base/*" ]
-  sources = [
-    "allocator_extension_thunks.cc",
-    "allocator_extension_thunks.h",
+buildflag_header("features") {
+  header = "features.h"
+  flags = [
+    "USE_EXPERIMENTAL_ALLOCATOR_SHIM=$use_experimental_allocator_shim",
+    "ENABLE_WIN_ALLOCATOR_SHIM_TESTS=($use_experimental_allocator_shim || $win_use_allocator_shim)",
   ]
-  if (is_android && !is_debug) {
-    configs -= [ "//build/config/compiler:default_optimization" ]
-    configs += [ "//build/config/compiler:optimize_max" ]
+}
+
+if (use_experimental_allocator_shim) {
+  # Used to shim malloc symbols on Android. see //base/allocator/README.md.
+  config("wrap_malloc_symbols") {
+    ldflags = [
+      "-Wl,-wrap,calloc",
+      "-Wl,-wrap,free",
+      "-Wl,-wrap,malloc",
+      "-Wl,-wrap,memalign",
+      "-Wl,-wrap,posix_memalign",
+      "-Wl,-wrap,pvalloc",
+      "-Wl,-wrap,realloc",
+      "-Wl,-wrap,valloc",
+    ]
+  }
+
+  source_set("unified_allocator_shim") {
+    # TODO(primiano): support other platforms, currently this works only on
+    # Linux/CrOS/Android. http://crbug.com/550886 .
+    configs += [ "//base:base_implementation" ]  # for BASE_EXPORT
+    visibility = [ "//base:base" ]
+    sources = [
+      "allocator_shim.cc",
+      "allocator_shim.h",
+      "allocator_shim_internals.h",
+      "allocator_shim_override_cpp_symbols.h",
+      "allocator_shim_override_libc_symbols.h",
+    ]
+    if (is_win) {
+      sources += [
+        "allocator_shim_default_dispatch_to_winheap.cc",
+        "allocator_shim_override_ucrt_symbols_win.h",
+        "winheap_stubs_win.cc",
+        "winheap_stubs_win.h",
+      ]
+    } else if (is_linux && use_allocator == "tcmalloc") {
+      sources += [
+        "allocator_shim_default_dispatch_to_tcmalloc.cc",
+        "allocator_shim_override_glibc_weak_symbols.h",
+      ]
+      deps = [
+        ":tcmalloc",
+      ]
+    } else if (is_linux && use_allocator == "none") {
+      sources += [ "allocator_shim_default_dispatch_to_glibc.cc" ]
+    } else if (is_android && use_allocator == "none") {
+      sources += [
+        "allocator_shim_default_dispatch_to_linker_wrapped_symbols.cc",
+        "allocator_shim_override_linker_wrapped_symbols.h",
+      ]
+      all_dependent_configs = [ ":wrap_malloc_symbols" ]
+    }
   }
 }

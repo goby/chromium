@@ -8,7 +8,7 @@
 // don't needs to know about the theming machinery.
 @implementation NSWindow (ThemeProvider)
 
-- (ThemeProvider*)themeProvider {
+- (const ThemeProvider*)themeProvider {
   return NULL;
 }
 
@@ -18,6 +18,18 @@
 
 - (NSPoint)themeImagePositionForAlignment:(ThemeImageAlignment)alignment {
   return NSZeroPoint;
+}
+
+- (BOOL)inIncognitoMode {
+  return NO;
+}
+
+- (BOOL)inIncognitoModeWithSystemTheme {
+  return NO;
+}
+
+- (BOOL)hasDarkTheme {
+  return NO;
 }
 
 @end

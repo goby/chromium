@@ -4,6 +4,8 @@
 
 #include "remoting/host/ipc_audio_capturer.h"
 
+#include <utility>
+
 #include "remoting/host/desktop_session_proxy.h"
 #include "remoting/proto/audio.pb.h"
 
@@ -27,8 +29,8 @@ bool IpcAudioCapturer::Start(const PacketCapturedCallback& callback) {
   return true;
 }
 
-void IpcAudioCapturer::OnAudioPacket(scoped_ptr<AudioPacket> packet) {
-  callback_.Run(packet.Pass());
+void IpcAudioCapturer::OnAudioPacket(std::unique_ptr<AudioPacket> packet) {
+  callback_.Run(std::move(packet));
 }
 
 }  // namespace remoting

@@ -10,6 +10,18 @@
 
 namespace ui {
 
+bool DefaultThemeProvider::UsingSystemTheme() const {
+  return true;
+}
+
+bool DefaultThemeProvider::InIncognitoMode() const {
+  return false;
+}
+
+bool DefaultThemeProvider::HasCustomColor(int id) const {
+  return false;
+}
+
 NSImage* DefaultThemeProvider::GetNSImageNamed(int id) const {
  return ResourceBundle::GetSharedInstance().
      GetNativeImageNamed(id).ToNSImage();
@@ -30,6 +42,10 @@ NSColor* DefaultThemeProvider::GetNSColorTint(int id) const {
 
 NSGradient* DefaultThemeProvider::GetNSGradient(int id) const {
   return nil;
+}
+
+bool DefaultThemeProvider::ShouldIncreaseContrast() const {
+  return false;
 }
 
 }  // namespace ui

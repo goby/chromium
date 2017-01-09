@@ -5,17 +5,14 @@
 #include "ui/wm/core/capture_controller.h"
 
 #include "base/logging.h"
-#include "base/path_service.h"
+#include "base/macros.h"
 #include "ui/aura/env.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
-#include "ui/base/resource/resource_bundle.h"
-#include "ui/base/ui_base_paths.h"
 #include "ui/events/event.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gl/test/gl_surface_test_support.h"
-#include "ui/views/test/views_test_base.h"
+#include "ui/views/test/views_interactive_ui_test_base.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/desktop_aura/desktop_screen_position_client.h"
@@ -27,21 +24,7 @@
 
 namespace views {
 
-class DesktopCaptureControllerTest : public ViewsTestBase {
- public:
-  DesktopCaptureControllerTest() {}
-  ~DesktopCaptureControllerTest() override {}
-
-  void SetUp() override {
-    gfx::GLSurfaceTestSupport::InitializeOneOff();
-    ui::RegisterPathProvider();
-    base::FilePath ui_test_pak_path;
-    ASSERT_TRUE(PathService::Get(ui::UI_TEST_PAK, &ui_test_pak_path));
-    ui::ResourceBundle::InitSharedInstanceWithPakPath(ui_test_pak_path);
-
-    ViewsTestBase::SetUp();
-  }
-};
+using DesktopCaptureControllerTest = ViewsInteractiveUITestBase;
 
 // This class provides functionality to verify whether the View instance
 // received the gesture event.
@@ -85,8 +68,8 @@ views::Widget* CreateWidget() {
 // creates two widgets, does a mouse press in one, sets capture in the other and
 // verifies state is reset in the first.
 TEST_F(DesktopCaptureControllerTest, ResetMouseHandlers) {
-  scoped_ptr<Widget> w1(CreateWidget());
-  scoped_ptr<Widget> w2(CreateWidget());
+  std::unique_ptr<Widget> w1(CreateWidget());
+  std::unique_ptr<Widget> w2(CreateWidget());
   ui::test::EventGenerator generator1(w1->GetNativeView()->GetRootWindow());
   generator1.MoveMouseToCenterOf(w1->GetNativeView());
   generator1.PressLeftButton();
@@ -110,15 +93,14 @@ TEST_F(DesktopCaptureControllerTest, ResetMouseHandlers) {
 // the window which had capture receives the gesture.
 // TODO(sky): move this test, it should be part of ScopedCaptureClient tests.
 TEST_F(DesktopCaptureControllerTest, CaptureWindowInputEventTest) {
-  scoped_ptr<aura::client::ScreenPositionClient> desktop_position_client1;
-  scoped_ptr<aura::client::ScreenPositionClient> desktop_position_client2;
+  std::unique_ptr<aura::client::ScreenPositionClient> desktop_position_client1;
+  std::unique_ptr<aura::client::ScreenPositionClient> desktop_position_client2;
 
-  scoped_ptr<Widget> widget1(new Widget());
+  std::unique_ptr<Widget> widget1(new Widget());
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
-  scoped_ptr<wm::ScopedCaptureClient> scoped_capture_client(
+  std::unique_ptr<wm::ScopedCaptureClient> scoped_capture_client(
       new wm::ScopedCaptureClient(params.context->GetRootWindow()));
-  aura::client::CaptureClient* capture_client =
-      scoped_capture_client->capture_client();
+  aura::client::CaptureClient* capture_client = wm::CaptureController::Get();
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.bounds = gfx::Rect(50, 50, 650, 650);
   widget1->Init(params);
@@ -136,7 +118,7 @@ TEST_F(DesktopCaptureControllerTest, CaptureWindowInputEventTest) {
   root1->AddChildView(v1);
   widget1->Show();
 
-  scoped_ptr<Widget> widget2(new Widget());
+  std::unique_ptr<Widget> widget2(new Widget());
 
   params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
@@ -159,18 +141,14 @@ TEST_F(DesktopCaptureControllerTest, CaptureWindowInputEventTest) {
 
   EXPECT_FALSE(widget1->GetNativeView()->HasCapture());
   EXPECT_FALSE(widget2->GetNativeView()->HasCapture());
-  EXPECT_EQ(reinterpret_cast<aura::Window*>(0),
-            capture_client->GetCaptureWindow());
+  EXPECT_EQ(nullptr, capture_client->GetCaptureWindow());
 
   widget1->GetNativeView()->SetCapture();
   EXPECT_TRUE(widget1->GetNativeView()->HasCapture());
   EXPECT_FALSE(widget2->GetNativeView()->HasCapture());
   EXPECT_EQ(capture_client->GetCaptureWindow(), widget1->GetNativeView());
 
-  ui::GestureEvent g1(80,
-                      80,
-                      0,
-                      base::TimeDelta(),
+  ui::GestureEvent g1(80, 80, 0, base::TimeTicks(),
                       ui::GestureEventDetails(ui::ET_GESTURE_LONG_PRESS));
   details = root1->OnEventFromSource(&g1);
   EXPECT_FALSE(details.dispatcher_destroyed);

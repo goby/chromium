@@ -6,10 +6,12 @@
 
 #include <numeric>
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/passwords/manage_passwords_bubble_model.h"
+#include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
 #include "chrome/grit/generated_resources.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/resources/grit/ui_resources.h"
@@ -64,65 +66,67 @@ void BuildColumnSetIfNeeded(views::GridLayout* layout, int column_set_id) {
   }
 }
 
-scoped_ptr<views::Label> GenerateUsernameLabel(
+std::unique_ptr<views::Label> GenerateUsernameLabel(
     const autofill::PasswordForm& form) {
-  scoped_ptr<views::Label> label(new views::Label(
-      form.username_value.empty()
-          ? l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_EMPTY_LOGIN)
-          : form.username_value));
+  std::unique_ptr<views::Label> label(
+      new views::Label(GetDisplayUsername(form)));
   label->SetFontList(ui::ResourceBundle::GetSharedInstance().GetFontList(
       ui::ResourceBundle::SmallFont));
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  return label.Pass();
+  return label;
 }
 
-scoped_ptr<views::Label> GeneratePasswordLabel(
+std::unique_ptr<views::Label> GeneratePasswordLabel(
     const autofill::PasswordForm& form) {
-  base::string16 text = form.federation_url.is_empty()
-      ? form.password_value
-      : l10n_util::GetStringFUTF16(
-            IDS_PASSWORDS_VIA_FEDERATION,
-            base::UTF8ToUTF16(form.federation_url.host()));
-  scoped_ptr<views::Label> label(new views::Label(text));
+  base::string16 text =
+      form.federation_origin.unique()
+          ? form.password_value
+          : l10n_util::GetStringFUTF16(
+                IDS_PASSWORDS_VIA_FEDERATION,
+                base::UTF8ToUTF16(form.federation_origin.host()));
+  std::unique_ptr<views::Label> label(new views::Label(text));
   label->SetFontList(ui::ResourceBundle::GetSharedInstance().GetFontList(
       ui::ResourceBundle::SmallFont));
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  if (form.federation_url.is_empty())
+  if (form.federation_origin.unique())
     label->SetObscured(true);
-  return label.Pass();
+  return label;
 }
 
-scoped_ptr<views::ImageButton> GenerateDeleteButton(
+std::unique_ptr<views::ImageButton> GenerateDeleteButton(
     views::ButtonListener* listener) {
   ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
-  scoped_ptr<views::ImageButton> button(new views::ImageButton(listener));
+  std::unique_ptr<views::ImageButton> button(new views::ImageButton(listener));
   button->SetImage(views::ImageButton::STATE_NORMAL,
                    rb->GetImageNamed(IDR_CLOSE_2).ToImageSkia());
   button->SetImage(views::ImageButton::STATE_HOVERED,
                    rb->GetImageNamed(IDR_CLOSE_2_H).ToImageSkia());
   button->SetImage(views::ImageButton::STATE_PRESSED,
                    rb->GetImageNamed(IDR_CLOSE_2_P).ToImageSkia());
-  return button.Pass();
+  button->SetFocusForPlatform();
+  button->SetTooltipText(
+      l10n_util::GetStringUTF16(IDS_MANAGE_PASSWORDS_DELETE));
+  return button;
 }
 
-scoped_ptr<views::Label> GenerateDeletedPasswordLabel() {
-  scoped_ptr<views::Label> text(new views::Label(
+std::unique_ptr<views::Label> GenerateDeletedPasswordLabel() {
+  std::unique_ptr<views::Label> text(new views::Label(
       l10n_util::GetStringUTF16(IDS_MANAGE_PASSWORDS_DELETED)));
   text->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   text->SetFontList(ui::ResourceBundle::GetSharedInstance().GetFontList(
       ui::ResourceBundle::SmallFont));
-  return text.Pass();
+  return text;
 }
 
-scoped_ptr<views::Link> GenerateUndoLink(views::LinkListener* listener) {
-  scoped_ptr<views::Link> undo_link(new views::Link(
-      l10n_util::GetStringUTF16(IDS_MANAGE_PASSWORDS_UNDO)));
+std::unique_ptr<views::Link> GenerateUndoLink(views::LinkListener* listener) {
+  std::unique_ptr<views::Link> undo_link(
+      new views::Link(l10n_util::GetStringUTF16(IDS_MANAGE_PASSWORDS_UNDO)));
   undo_link->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
   undo_link->set_listener(listener);
   undo_link->SetUnderline(false);
   undo_link->SetFontList(ui::ResourceBundle::GetSharedInstance().GetFontList(
       ui::ResourceBundle::SmallFont));
-  return undo_link.Pass();
+  return undo_link;
 }
 
 }  // namespace
@@ -191,9 +195,10 @@ int ManagePasswordItemsView::PasswordFormRow::GetFixedHeight(
     password_manager::ui::State state) {
   if (state != password_manager::ui::MANAGE_STATE)
     return 0;
-  scoped_ptr<views::ImageButton> delete_button(GenerateDeleteButton(nullptr));
-  scoped_ptr<views::Link> link(GenerateUndoLink(nullptr));
-  scoped_ptr<views::Label> label(GenerateDeletedPasswordLabel());
+  std::unique_ptr<views::ImageButton> delete_button(
+      GenerateDeleteButton(nullptr));
+  std::unique_ptr<views::Link> link(GenerateUndoLink(nullptr));
+  std::unique_ptr<views::Label> label(GenerateDeletedPasswordLabel());
   views::View* row_views[] = {delete_button.get(), link.get(), label.get()};
   return std::accumulate(row_views, row_views + arraysize(row_views), 0,
                          [](int max_height, const views::View* view) {
@@ -227,8 +232,8 @@ void ManagePasswordItemsView::PasswordFormRow::AddCredentialsRow(
 void ManagePasswordItemsView::PasswordFormRow::AddUndoRow(
     views::GridLayout* layout) {
   ResetControls();
-  scoped_ptr<views::Label> text = GenerateDeletedPasswordLabel();
-  scoped_ptr<views::Link> undo_link = GenerateUndoLink(this);
+  std::unique_ptr<views::Label> text = GenerateDeletedPasswordLabel();
+  std::unique_ptr<views::Link> undo_link = GenerateUndoLink(this);
   undo_link_ = undo_link.get();
   BuildColumnSetIfNeeded(layout, TWO_COLUMN_SET);
   layout->StartRow(0, TWO_COLUMN_SET);
@@ -262,13 +267,22 @@ void ManagePasswordItemsView::PasswordFormRow::ResetControls() {
 // ManagePasswordItemsView
 ManagePasswordItemsView::ManagePasswordItemsView(
     ManagePasswordsBubbleModel* manage_passwords_bubble_model,
-    const std::vector<const autofill::PasswordForm*>& password_forms)
+    const std::vector<autofill::PasswordForm>* password_forms)
     : model_(manage_passwords_bubble_model) {
   int fixed_height = PasswordFormRow::GetFixedHeight(model_->state());
-  for (const autofill::PasswordForm* password_form : password_forms) {
-    password_forms_rows_.push_back(
-        new PasswordFormRow(this, password_form, fixed_height));
+  for (const auto& password_form : *password_forms) {
+    password_forms_rows_.push_back(base::MakeUnique<PasswordFormRow>(
+        this, &password_form, fixed_height));
   }
+  AddRows();
+}
+
+ManagePasswordItemsView::ManagePasswordItemsView(
+    ManagePasswordsBubbleModel* manage_passwords_bubble_model,
+    const autofill::PasswordForm* password_form)
+    : model_(manage_passwords_bubble_model) {
+  password_forms_rows_.push_back(
+      base::MakeUnique<PasswordFormRow>(this, password_form, 0));
   AddRows();
 }
 
@@ -277,7 +291,7 @@ ManagePasswordItemsView::~ManagePasswordItemsView() = default;
 void ManagePasswordItemsView::AddRows() {
   views::GridLayout* layout = new views::GridLayout(this);
   SetLayoutManager(layout);
-  for (auto* row : password_forms_rows_) {
+  for (const std::unique_ptr<PasswordFormRow>& row : password_forms_rows_) {
     if (row != password_forms_rows_[0])
       layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
     row->AddRow(layout);

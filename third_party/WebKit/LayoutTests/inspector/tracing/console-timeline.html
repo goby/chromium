@@ -5,6 +5,8 @@
 <script src="../../http/tests/inspector/timeline-test.js"></script>
 <script>
 
+testRunner.setDumpConsoleMessages(false);
+
 function startStopTimeline()
 {
     console.timeStamp("timestamp 0");
@@ -77,8 +79,8 @@ function startTimeline()
 
 function test()
 {
-    var panel = WebInspector.panels.timeline;
-    panel._model._currentTarget = WebInspector.targetManager.mainTarget();
+    var panel = UI.panels.timeline;
+    panel._model._currentTarget = SDK.targetManager.mainTarget();
 
     InspectorTest.runTestSuite([
         function testStartStopTimeline(next)
@@ -147,104 +149,25 @@ function test()
 
         function testStartFromPanel(next)
         {
-            panel._model.addEventListener(WebInspector.TimelineModel.Events.RecordingStarted, recordingStarted);
-            panel._model.addEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
-            panel._toggleTimelineButtonClicked();
-
-            function recordingStarted()
-            {
-                panel._model.removeEventListener(WebInspector.TimelineModel.Events.RecordingStarted, recordingStarted);
-                InspectorTest.evaluateInPage("startStopTimeline()", step2);
-            }
-
-            function step2()
-            {
-                panel._toggleTimelineButtonClicked();
-            }
+            InspectorTest.evaluateWithTimeline("startStopTimeline()", finish)
 
             function finish()
             {
                 printTimelineAndTimestampEvents();
-                panel._model.removeEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
                 next();
             }
         },
 
         function testStopFromPanel(next)
         {
-            panel._model.addEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
-
-            InspectorTest.startTimeline(step1);
-
-            function step1()
-            {
-                InspectorTest.evaluateInPage("startTimeline()", step2);
-            }
-
-            function step2()
-            {
-                panel._toggleTimelineButtonClicked();
-            }
+            InspectorTest.evaluateWithTimeline("startTimeline()", finish)
 
             function finish()
             {
                 printTimelineAndTimestampEvents();
-                panel._model.removeEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
                 next();
             }
-       },
-
-        function testRacyStart(next)
-        {
-            panel._model.addEventListener(WebInspector.TimelineModel.Events.RecordingStarted, recordingStarted);
-            panel._model.addEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
-            panel._toggleTimelineButtonClicked();
-
-            function recordingStarted()
-            {
-                panel._model.removeEventListener(WebInspector.TimelineModel.Events.RecordingStarted, recordingStarted);
-                InspectorTest.evaluateInPage("startTimeline()", didEvaluate);
-            }
-
-            function didEvaluate()
-            {
-                panel._toggleTimelineButtonClicked();
-            }
-
-            function finish()
-            {
-                printTimelineAndTimestampEvents();
-                panel._model.removeEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
-                next();
-            }
-        },
-
-        function testRacyStart2(next)
-        {
-            panel._model.addEventListener(WebInspector.TimelineModel.Events.RecordingStarted, recordingStarted);
-            panel._model.addEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
-
-            panel._toggleTimelineButtonClicked();
-
-            function recordingStarted()
-            {
-                panel._model.removeEventListener(WebInspector.TimelineModel.Events.RecordingStarted, recordingStarted);
-                InspectorTest.evaluateInPage("startTimeline()", didEvaluate);
-            }
-
-            function didEvaluate()
-            {
-                // Fool listener order execution.
-                setTimeout(panel._toggleTimelineButtonClicked.bind(panel));
-            }
-
-            function finish()
-            {
-                panel._model.removeEventListener(WebInspector.TimelineModel.Events.RecordingStopped, finish);
-                printTimelineAndTimestampEvents();
-                next();
-            }
-        }
+       }
     ]);
 
     function printTimelineAndTimestampEvents() {
@@ -254,9 +177,9 @@ function test()
             {
                 thread.events().forEach(function(event)
                 {
-                   if (event.hasCategory(WebInspector.TimelineModel.Category.Console))
+                   if (event.hasCategory(TimelineModel.TimelineModel.Category.Console))
                        InspectorTest.addResult(event.name);
-                   else if (event.name === WebInspector.TimelineModel.RecordType.TimeStamp)
+                   else if (event.name === TimelineModel.TimelineModel.RecordType.TimeStamp)
                        InspectorTest.addResult(event.args["data"]["message"]);
                 });
             });

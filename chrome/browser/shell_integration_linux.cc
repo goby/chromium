@@ -5,6 +5,9 @@
 #include "chrome/browser/shell_integration_linux.h"
 
 #include <fcntl.h>
+#include <stddef.h>
+
+#include <memory>
 
 #if defined(USE_GLIB)
 #include <glib.h>
@@ -27,7 +30,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/i18n/file_util_icu.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/nix/xdg_util.h"
 #include "base/path_service.h"
@@ -45,20 +47,19 @@
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/features.h"
+#include "chrome/grit/chrome_unscaled_resources.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
-#include "grit/chrome_unscaled_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_family.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
 
-namespace {
+namespace shell_integration {
 
-// The Categories for the App Launcher desktop shortcut. Should be the same as
-// the Chrome desktop shortcut, so they are in the same sub-menu.
-const char kAppListCategories[] = "Network;WebBrowser;";
+namespace {
 
 // Helper to launch xdg scripts. We don't want them to ask any questions on the
 // terminal etc. The function returns true if the utility launches and exits
@@ -86,6 +87,193 @@ bool LaunchXdgUtility(const std::vector<std::string>& argv, int* exit_code) {
   return process.WaitForExit(exit_code);
 }
 
+const char kXdgSettings[] = "xdg-settings";
+const char kXdgSettingsDefaultBrowser[] = "default-web-browser";
+const char kXdgSettingsDefaultSchemeHandler[] = "default-url-scheme-handler";
+
+// Utility function to get the path to the version of a script shipped with
+// Chrome. |script| gives the name of the script. |chrome_version| returns the
+// path to the Chrome version of the script, and the return value of the
+// function is true if the function is successful and the Chrome version is
+// not the script found on the PATH.
+bool GetChromeVersionOfScript(const std::string& script,
+                              std::string* chrome_version) {
+  // Get the path to the Chrome version.
+  base::FilePath chrome_dir;
+  if (!PathService::Get(base::DIR_EXE, &chrome_dir))
+    return false;
+
+  base::FilePath chrome_version_path = chrome_dir.Append(script);
+  *chrome_version = chrome_version_path.value();
+
+  // Check if this is different to the one on path.
+  std::vector<std::string> argv;
+  argv.push_back("which");
+  argv.push_back(script);
+  std::string path_version;
+  if (base::GetAppOutput(base::CommandLine(argv), &path_version)) {
+    // Remove trailing newline
+    path_version.erase(path_version.length() - 1, 1);
+    base::FilePath path_version_path(path_version);
+    return (chrome_version_path != path_version_path);
+  }
+  return false;
+}
+
+// Value returned by xdg-settings if it can't understand our request.
+const int EXIT_XDG_SETTINGS_SYNTAX_ERROR = 1;
+
+// We delegate the difficulty of setting the default browser and default url
+// scheme handler in Linux desktop environments to an xdg utility, xdg-settings.
+
+// When calling this script we first try to use the script on PATH. If that
+// fails we then try to use the script that we have included. This gives
+// scripts on the system priority over ours, as distribution vendors may have
+// tweaked the script, but still allows our copy to be used if the script on the
+// system fails, as the system copy may be missing capabilities of the Chrome
+// copy.
+
+// If |protocol| is empty this function sets Chrome as the default browser,
+// otherwise it sets Chrome as the default handler application for |protocol|.
+bool SetDefaultWebClient(const std::string& protocol) {
+#if defined(OS_CHROMEOS)
+  return true;
+#else
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
+
+  std::vector<std::string> argv;
+  argv.push_back(kXdgSettings);
+  argv.push_back("set");
+  if (protocol.empty()) {
+    argv.push_back(kXdgSettingsDefaultBrowser);
+  } else {
+    argv.push_back(kXdgSettingsDefaultSchemeHandler);
+    argv.push_back(protocol);
+  }
+  argv.push_back(shell_integration_linux::GetDesktopName(env.get()));
+
+  int exit_code;
+  bool ran_ok = LaunchXdgUtility(argv, &exit_code);
+  if (ran_ok && exit_code == EXIT_XDG_SETTINGS_SYNTAX_ERROR) {
+    if (GetChromeVersionOfScript(kXdgSettings, &argv[0])) {
+      ran_ok = LaunchXdgUtility(argv, &exit_code);
+    }
+  }
+
+  return ran_ok && exit_code == EXIT_SUCCESS;
+#endif
+}
+
+// If |protocol| is empty this function checks if Chrome is the default browser,
+// otherwise it checks if Chrome is the default handler application for
+// |protocol|.
+DefaultWebClientState GetIsDefaultWebClient(const std::string& protocol) {
+#if defined(OS_CHROMEOS)
+  return UNKNOWN_DEFAULT;
+#else
+  base::ThreadRestrictions::AssertIOAllowed();
+
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
+
+  std::vector<std::string> argv;
+  argv.push_back(kXdgSettings);
+  argv.push_back("check");
+  if (protocol.empty()) {
+    argv.push_back(kXdgSettingsDefaultBrowser);
+  } else {
+    argv.push_back(kXdgSettingsDefaultSchemeHandler);
+    argv.push_back(protocol);
+  }
+  argv.push_back(shell_integration_linux::GetDesktopName(env.get()));
+
+  std::string reply;
+  int success_code;
+  bool ran_ok = base::GetAppOutputWithExitCode(base::CommandLine(argv), &reply,
+                                               &success_code);
+  if (ran_ok && success_code == EXIT_XDG_SETTINGS_SYNTAX_ERROR) {
+    if (GetChromeVersionOfScript(kXdgSettings, &argv[0])) {
+      ran_ok = base::GetAppOutputWithExitCode(base::CommandLine(argv), &reply,
+                                              &success_code);
+    }
+  }
+
+  if (!ran_ok || success_code != EXIT_SUCCESS) {
+    // xdg-settings failed: we can't determine or set the default browser.
+    return UNKNOWN_DEFAULT;
+  }
+
+  // Allow any reply that starts with "yes".
+  return base::StartsWith(reply, "yes", base::CompareCase::SENSITIVE)
+             ? IS_DEFAULT
+             : NOT_DEFAULT;
+#endif
+}
+
+// https://wiki.gnome.org/Projects/GnomeShell/ApplicationBased
+// The WM_CLASS property should be set to the same as the *.desktop file without
+// the .desktop extension.  We cannot simply use argv[0] in this case, because
+// on the stable channel, the executable name is google-chrome-stable, but the
+// desktop file is google-chrome.desktop.
+std::string GetDesktopBaseName(const std::string& desktop_file_name) {
+  static const char kDesktopExtension[] = ".desktop";
+  if (base::EndsWith(desktop_file_name, kDesktopExtension,
+                     base::CompareCase::SENSITIVE)) {
+    return desktop_file_name.substr(
+        0, desktop_file_name.length() - strlen(kDesktopExtension));
+  }
+  return desktop_file_name;
+}
+
+}  // namespace
+
+bool SetAsDefaultBrowser() {
+  return SetDefaultWebClient(std::string());
+}
+
+bool SetAsDefaultProtocolClient(const std::string& protocol) {
+  return SetDefaultWebClient(protocol);
+}
+
+DefaultWebClientSetPermission GetDefaultWebClientSetPermission() {
+  return SET_DEFAULT_UNATTENDED;
+}
+
+base::string16 GetApplicationNameForProtocol(const GURL& url) {
+  return base::ASCIIToUTF16("xdg-open");
+}
+
+DefaultWebClientState GetDefaultBrowser() {
+  return GetIsDefaultWebClient(std::string());
+}
+
+bool IsFirefoxDefaultBrowser() {
+  std::vector<std::string> argv;
+  argv.push_back(kXdgSettings);
+  argv.push_back("get");
+  argv.push_back(kXdgSettingsDefaultBrowser);
+
+  std::string browser;
+  // We don't care about the return value here.
+  base::GetAppOutput(base::CommandLine(argv), &browser);
+  return browser.find("irefox") != std::string::npos;
+}
+
+DefaultWebClientState IsDefaultProtocolClient(const std::string& protocol) {
+  return GetIsDefaultWebClient(protocol);
+}
+
+}  // namespace shell_integration
+
+namespace shell_integration_linux {
+
+namespace {
+
+#if BUILDFLAG(ENABLE_APP_LIST)
+// The Categories for the App Launcher desktop shortcut. Should be the same as
+// the Chrome desktop shortcut, so they are in the same sub-menu.
+const char kAppListCategories[] = "Network;WebBrowser;";
+#endif
+
 std::string CreateShortcutIcon(const gfx::ImageFamily& icon_images,
                                const base::FilePath& shortcut_filename) {
   if (icon_images.empty())
@@ -96,8 +284,8 @@ std::string CreateShortcutIcon(const gfx::ImageFamily& icon_images,
   if (!temp_dir.CreateUniqueTempDir())
     return std::string();
 
-  base::FilePath temp_file_path = temp_dir.path().Append(
-      shortcut_filename.ReplaceExtension("png"));
+  base::FilePath temp_file_path =
+      temp_dir.GetPath().Append(shortcut_filename.ReplaceExtension("png"));
   std::string icon_name = temp_file_path.BaseName().RemoveExtension().value();
 
   for (gfx::ImageFamily::const_iterator it = icon_images.begin();
@@ -132,7 +320,7 @@ std::string CreateShortcutIcon(const gfx::ImageFamily& icon_images,
     argv.push_back(temp_file_path.value());
     argv.push_back(icon_name);
     int exit_code;
-    if (!LaunchXdgUtility(argv, &exit_code) || exit_code) {
+    if (!shell_integration::LaunchXdgUtility(argv, &exit_code) || exit_code) {
       LOG(WARNING) << "Could not install icon " << icon_name << ".png at size "
                    << width << ".";
     }
@@ -166,7 +354,7 @@ bool CreateShortcutOnDesktop(const base::FilePath& shortcut_filename,
     // Delete the file. No shortuct is better than corrupted one. Use unlinkat
     // to make sure we're deleting the file in the directory we think we are.
     // Even if an attacker manager to put something other at
-    // |shortcut_filename| we'll just undo his action.
+    // |shortcut_filename| we'll just undo their action.
     unlinkat(desktop_fd, shortcut_filename.value().c_str(), 0);
   }
 
@@ -199,7 +387,7 @@ bool CreateShortcutInApplicationsMenu(const base::FilePath& shortcut_filename,
 
   base::FilePath temp_directory_path;
   if (!directory_filename.empty()) {
-    temp_directory_path = temp_dir.path().Append(directory_filename);
+    temp_directory_path = temp_dir.GetPath().Append(directory_filename);
 
     int bytes_written = base::WriteFile(temp_directory_path,
                                         directory_contents.data(),
@@ -209,7 +397,7 @@ bool CreateShortcutInApplicationsMenu(const base::FilePath& shortcut_filename,
       return false;
   }
 
-  base::FilePath temp_file_path = temp_dir.path().Append(shortcut_filename);
+  base::FilePath temp_file_path = temp_dir.GetPath().Append(shortcut_filename);
 
   int bytes_written = base::WriteFile(temp_file_path, contents.data(),
                                       contents.length());
@@ -231,7 +419,7 @@ bool CreateShortcutInApplicationsMenu(const base::FilePath& shortcut_filename,
     argv.push_back(temp_directory_path.value());
   argv.push_back(temp_file_path.value());
   int exit_code;
-  LaunchXdgUtility(argv, &exit_code);
+  shell_integration::LaunchXdgUtility(argv, &exit_code);
   return exit_code == 0;
 }
 
@@ -254,7 +442,7 @@ void DeleteShortcutInApplicationsMenu(
     argv.push_back(directory_filename.value());
   argv.push_back(shortcut_filename.value());
   int exit_code;
-  LaunchXdgUtility(argv, &exit_code);
+  shell_integration::LaunchXdgUtility(argv, &exit_code);
 }
 
 #if defined(USE_GLIB)
@@ -310,135 +498,15 @@ const char kDesktopEntry[] = "Desktop Entry";
 const char kXdgOpenShebang[] = "#!/usr/bin/env xdg-open";
 #endif
 
-const char kXdgSettings[] = "xdg-settings";
-const char kXdgSettingsDefaultBrowser[] = "default-web-browser";
-const char kXdgSettingsDefaultSchemeHandler[] = "default-url-scheme-handler";
-
 const char kDirectoryFilename[] = "chrome-apps.directory";
 
+#if BUILDFLAG(ENABLE_APP_LIST)
 #if defined(GOOGLE_CHROME_BUILD)
 const char kAppListDesktopName[] = "chrome-app-list";
 #else  // CHROMIUM_BUILD
 const char kAppListDesktopName[] = "chromium-app-list";
 #endif
-
-// Utility function to get the path to the version of a script shipped with
-// Chrome. |script| gives the name of the script. |chrome_version| returns the
-// path to the Chrome version of the script, and the return value of the
-// function is true if the function is successful and the Chrome version is
-// not the script found on the PATH.
-bool GetChromeVersionOfScript(const std::string& script,
-                              std::string* chrome_version) {
-  // Get the path to the Chrome version.
-  base::FilePath chrome_dir;
-  if (!PathService::Get(base::DIR_EXE, &chrome_dir))
-    return false;
-
-  base::FilePath chrome_version_path = chrome_dir.Append(script);
-  *chrome_version = chrome_version_path.value();
-
-  // Check if this is different to the one on path.
-  std::vector<std::string> argv;
-  argv.push_back("which");
-  argv.push_back(script);
-  std::string path_version;
-  if (base::GetAppOutput(base::CommandLine(argv), &path_version)) {
-    // Remove trailing newline
-    path_version.erase(path_version.length() - 1, 1);
-    base::FilePath path_version_path(path_version);
-    return (chrome_version_path != path_version_path);
-  }
-  return false;
-}
-
-// Value returned by xdg-settings if it can't understand our request.
-const int EXIT_XDG_SETTINGS_SYNTAX_ERROR = 1;
-
-// We delegate the difficulty of setting the default browser and default url
-// scheme handler in Linux desktop environments to an xdg utility, xdg-settings.
-
-// When calling this script we first try to use the script on PATH. If that
-// fails we then try to use the script that we have included. This gives
-// scripts on the system priority over ours, as distribution vendors may have
-// tweaked the script, but still allows our copy to be used if the script on the
-// system fails, as the system copy may be missing capabilities of the Chrome
-// copy.
-
-// If |protocol| is empty this function sets Chrome as the default browser,
-// otherwise it sets Chrome as the default handler application for |protocol|.
-bool SetDefaultWebClient(const std::string& protocol) {
-#if defined(OS_CHROMEOS)
-  return true;
-#else
-  scoped_ptr<base::Environment> env(base::Environment::Create());
-
-  std::vector<std::string> argv;
-  argv.push_back(kXdgSettings);
-  argv.push_back("set");
-  if (protocol.empty()) {
-    argv.push_back(kXdgSettingsDefaultBrowser);
-  } else {
-    argv.push_back(kXdgSettingsDefaultSchemeHandler);
-    argv.push_back(protocol);
-  }
-  argv.push_back(shell_integration_linux::GetDesktopName(env.get()));
-
-  int exit_code;
-  bool ran_ok = LaunchXdgUtility(argv, &exit_code);
-  if (ran_ok && exit_code == EXIT_XDG_SETTINGS_SYNTAX_ERROR) {
-    if (GetChromeVersionOfScript(kXdgSettings, &argv[0])) {
-      ran_ok = LaunchXdgUtility(argv, &exit_code);
-    }
-  }
-
-  return ran_ok && exit_code == EXIT_SUCCESS;
 #endif
-}
-
-// If |protocol| is empty this function checks if Chrome is the default browser,
-// otherwise it checks if Chrome is the default handler application for
-// |protocol|.
-ShellIntegration::DefaultWebClientState GetIsDefaultWebClient(
-    const std::string& protocol) {
-#if defined(OS_CHROMEOS)
-  return ShellIntegration::UNKNOWN_DEFAULT;
-#else
-  base::ThreadRestrictions::AssertIOAllowed();
-
-  scoped_ptr<base::Environment> env(base::Environment::Create());
-
-  std::vector<std::string> argv;
-  argv.push_back(kXdgSettings);
-  argv.push_back("check");
-  if (protocol.empty()) {
-    argv.push_back(kXdgSettingsDefaultBrowser);
-  } else {
-    argv.push_back(kXdgSettingsDefaultSchemeHandler);
-    argv.push_back(protocol);
-  }
-  argv.push_back(shell_integration_linux::GetDesktopName(env.get()));
-
-  std::string reply;
-  int success_code;
-  bool ran_ok = base::GetAppOutputWithExitCode(base::CommandLine(argv), &reply,
-                                               &success_code);
-  if (ran_ok && success_code == EXIT_XDG_SETTINGS_SYNTAX_ERROR) {
-    if (GetChromeVersionOfScript(kXdgSettings, &argv[0])) {
-      ran_ok = base::GetAppOutputWithExitCode(base::CommandLine(argv), &reply,
-                                              &success_code);
-    }
-  }
-
-  if (!ran_ok || success_code != EXIT_SUCCESS) {
-    // xdg-settings failed: we can't determine or set the default browser.
-    return ShellIntegration::UNKNOWN_DEFAULT;
-  }
-
-  // Allow any reply that starts with "yes".
-  return (reply.find("yes") == 0) ? ShellIntegration::IS_DEFAULT :
-                                    ShellIntegration::NOT_DEFAULT;
-#endif
-}
 
 // Get the value of NoDisplay from the [Desktop Entry] section of a .desktop
 // file, given in |shortcut_contents|. If the key is not found, returns false.
@@ -483,7 +551,7 @@ bool GetNoDisplayFromDesktopFile(const std::string& shortcut_contents) {
 // never happen.
 base::FilePath GetChromeExePath() {
   // Try to get the name of the wrapper script that launched Chrome.
-  scoped_ptr<base::Environment> environment(base::Environment::Create());
+  std::unique_ptr<base::Environment> environment(base::Environment::Create());
   std::string wrapper_script;
   if (environment->GetVar("CHROME_WRAPPER", &wrapper_script))
     return base::FilePath(wrapper_script);
@@ -495,56 +563,6 @@ base::FilePath GetChromeExePath() {
 }
 
 }  // namespace
-
-// static
-bool ShellIntegration::SetAsDefaultBrowser() {
-  return SetDefaultWebClient(std::string());
-}
-
-// static
-bool ShellIntegration::SetAsDefaultProtocolClient(
-    const std::string& protocol) {
-  return SetDefaultWebClient(protocol);
-}
-
-// static
-ShellIntegration::DefaultWebClientSetPermission
-ShellIntegration::CanSetAsDefaultBrowser() {
-  return SET_DEFAULT_UNATTENDED;
-}
-
-// static
-base::string16 ShellIntegration::GetApplicationNameForProtocol(
-    const GURL& url) {
-  return base::ASCIIToUTF16("xdg-open");
-}
-
-// static
-ShellIntegration::DefaultWebClientState
-ShellIntegration::GetDefaultBrowser() {
-  return GetIsDefaultWebClient(std::string());
-}
-
-// static
-bool ShellIntegration::IsFirefoxDefaultBrowser() {
-  std::vector<std::string> argv;
-  argv.push_back(kXdgSettings);
-  argv.push_back("get");
-  argv.push_back(kXdgSettingsDefaultBrowser);
-
-  std::string browser;
-  // We don't care about the return value here.
-  base::GetAppOutput(base::CommandLine(argv), &browser);
-  return browser.find("irefox") != std::string::npos;
-}
-
-// static
-ShellIntegration::DefaultWebClientState
-ShellIntegration::IsDefaultProtocolClient(const std::string& protocol) {
-  return GetIsDefaultWebClient(protocol);
-}
-
-namespace shell_integration_linux {
 
 base::FilePath GetDataWriteLocation(base::Environment* env) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
@@ -574,13 +592,48 @@ std::vector<base::FilePath> GetDataSearchLocations(base::Environment* env) {
   return search_paths;
 }
 
+namespace internal {
+
+std::string GetProgramClassName(const base::CommandLine& command_line,
+                                const std::string& desktop_file_name) {
+  std::string class_name =
+      shell_integration::GetDesktopBaseName(desktop_file_name);
+  std::string user_data_dir =
+      command_line.GetSwitchValueNative(switches::kUserDataDir);
+  // If the user launches with e.g. --user-data-dir=/tmp/my-user-data, set the
+  // class name to "Chrome (/tmp/my-user-data)".  The class name will show up in
+  // the alt-tab list in gnome-shell if you're running a binary that doesn't
+  // have a matching .desktop file.
+  return user_data_dir.empty()
+             ? class_name
+             : class_name + " (" + user_data_dir + ")";
+}
+
+std::string GetProgramClassClass(const base::CommandLine& command_line,
+                                 const std::string& desktop_file_name) {
+  if (command_line.HasSwitch(switches::kWmClass))
+    return command_line.GetSwitchValueASCII(switches::kWmClass);
+  std::string class_class =
+      shell_integration::GetDesktopBaseName(desktop_file_name);
+  if (!class_class.empty()) {
+    // Capitalize the first character like gtk does.
+    class_class[0] = base::ToUpperASCII(class_class[0]);
+  }
+  return class_class;
+}
+
+}  // namespace internal
+
 std::string GetProgramClassName() {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
-  std::string desktop_file(GetDesktopName(env.get()));
-  std::size_t last = desktop_file.find(".desktop");
-  if (last != std::string::npos)
-    return desktop_file.substr(0, last);
-  return desktop_file;
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
+  return internal::GetProgramClassName(*base::CommandLine::ForCurrentProcess(),
+                                       GetDesktopName(env.get()));
+}
+
+std::string GetProgramClassClass() {
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
+  return internal::GetProgramClassClass(*base::CommandLine::ForCurrentProcess(),
+                                        GetDesktopName(env.get()));
 }
 
 std::string GetDesktopName(base::Environment* env) {
@@ -755,9 +808,8 @@ std::string GetDesktopFileContents(
     const base::FilePath& profile_path,
     const std::string& categories,
     bool no_display) {
-  base::CommandLine cmd_line =
-      ShellIntegration::CommandLineArgsForLauncher(url, extension_id,
-                                                   profile_path);
+  base::CommandLine cmd_line = shell_integration::CommandLineArgsForLauncher(
+      url, extension_id, profile_path);
   cmd_line.SetProgram(chrome_exe_path);
   return GetDesktopFileContentsForCommand(cmd_line, app_name, url, title,
                                           icon_name, categories, no_display);
@@ -950,7 +1002,7 @@ bool CreateDesktopShortcut(
     case web_app::APP_MENU_LOCATION_SUBDIR_CHROMEAPPS:
       directory_filename = base::FilePath(kDirectoryFilename);
       directory_contents = GetDirectoryFileContents(
-          ShellIntegration::GetAppShortcutsSubdirName(), "");
+          shell_integration::GetAppShortcutsSubdirName(), "");
       break;
     default:
       NOTREACHED();
@@ -977,6 +1029,7 @@ bool CreateDesktopShortcut(
   return success;
 }
 
+#if BUILDFLAG(ENABLE_APP_LIST)
 bool CreateAppListDesktopShortcut(
     const std::string& wm_class,
     const std::string& title) {
@@ -1016,6 +1069,7 @@ bool CreateAppListDesktopShortcut(
   return CreateShortcutInApplicationsMenu(
       shortcut_filename, contents, base::FilePath(), "");
 }
+#endif
 
 void DeleteDesktopShortcuts(const base::FilePath& profile_path,
                             const std::string& extension_id) {
@@ -1037,7 +1091,7 @@ void DeleteDesktopShortcuts(const base::FilePath& profile_path,
 void DeleteAllDesktopShortcuts(const base::FilePath& profile_path) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
 
   // Delete shortcuts from Desktop.
   base::FilePath desktop_path;

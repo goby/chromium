@@ -16,10 +16,6 @@ PlayerUtils.registerDefaultEventListeners = function(player) {
   // event listeners to be named onEventName.
   var eventListenerMap = {
     'encrypted': 'onEncrypted',
-    'webkitneedkey': 'onWebkitNeedKey',
-    'webkitkeymessage': 'onWebkitKeyMessage',
-    'webkitkeyadded': 'onWebkitKeyAdded',
-    'webkitkeyerror': 'onWebkitKeyError'
   };
   for (eventName in eventListenerMap) {
     var eventListenerFunction = player[eventListenerMap[eventName]];
@@ -32,14 +28,24 @@ PlayerUtils.registerDefaultEventListeners = function(player) {
 
   player.video.addEventListener('error', function(error) {
     // This most likely happens on pipeline failures (e.g. when the CDM
-    // crashes).
+    // crashes). Don't report a failure if the test is checking that sessions
+    // are closed on a crash.
     Utils.timeLog('onHTMLElementError', error);
-    Utils.failTest(error);
+    if (player.testConfig.keySystem == CRASH_TEST_KEYSYSTEM) {
+      // On failure the session should have been closed, so verify.
+      player.session.closed.then(
+          function(result) {
+            Utils.setResultInTitle(EME_SESSION_CLOSED_AND_ERROR);
+          },
+          function(error) { Utils.failTest(error); });
+    } else {
+      Utils.failTest(error);
+    }
   });
 };
 
-// Register the necessary event handlers needed when playing encrypted content
-// using the unprefixed API. Returns a promise that resolves to the player.
+// Register the necessary event handlers needed when playing encrypted content.
+// Returns a promise that resolves to the player.
 PlayerUtils.registerEMEEventListeners = function(player) {
   player.video.addEventListener('encrypted', function(message) {
 
@@ -63,10 +69,10 @@ PlayerUtils.registerEMEEventListeners = function(player) {
     try {
       if (player.testConfig.sessionToLoad) {
         Utils.timeLog('Loading session: ' + player.testConfig.sessionToLoad);
-        var session =
+        player.session =
             message.target.mediaKeys.createSession('persistent-license');
-        addMediaKeySessionListeners(session);
-        session.load(player.testConfig.sessionToLoad)
+        addMediaKeySessionListeners(player.session);
+        player.session.load(player.testConfig.sessionToLoad)
             .then(
                 function(result) {
                   if (!result)
@@ -77,14 +83,13 @@ PlayerUtils.registerEMEEventListeners = function(player) {
         Utils.timeLog('Creating new media key session for initDataType: ' +
                       message.initDataType + ', initData: ' +
                       Utils.getHexString(new Uint8Array(message.initData)));
-        var session = message.target.mediaKeys.createSession();
-        addMediaKeySessionListeners(session);
-        session.generateRequest(message.initDataType, message.initData)
+        player.session = message.target.mediaKeys.createSession();
+        addMediaKeySessionListeners(player.session);
+        player.session.generateRequest(message.initDataType, message.initData)
             .catch(function(error) {
               // Ignore the error if a crash is expected. This ensures that
               // the decoder actually detects and reports the error.
-              if (this.testConfig.keySystem !=
-                  'org.chromium.externalclearkey.crash') {
+              if (this.testConfig.keySystem != CRASH_TEST_KEYSYSTEM) {
                 Utils.failTest(error, EME_GENERATEREQUEST_FAILED);
               }
             });
@@ -97,74 +102,78 @@ PlayerUtils.registerEMEEventListeners = function(player) {
   this.registerDefaultEventListeners(player);
   player.video.receivedKeyMessage = false;
   Utils.timeLog('Setting video media keys: ' + player.testConfig.keySystem);
-  var config = {};
-  if (player.testConfig.sessionToLoad) {
-    config = {
-        persistentState: "required",
-        sessionTypes: ["temporary", "persistent-license"]
-    };
+
+  var config = {
+    audioCapabilities: [],
+    videoCapabilities: [],
+    persistentState: 'optional',
+    sessionTypes: ['temporary'],
+  };
+
+  // requestMediaKeySystemAccess() requires at least one of 'audioCapabilities'
+  // or 'videoCapabilities' to be specified. It also requires only codecs
+  // specific to the capability, so unlike MSE cannot have both audio and
+  // video codecs in the contentType.
+  if (player.testConfig.mediaType == 'video/webm; codecs="vp8"' ||
+      player.testConfig.mediaType == 'video/webm; codecs="vp9"' ||
+      player.testConfig.mediaType == 'video/mp4; codecs="avc1.4D000C"') {
+    // Video only.
+    config.videoCapabilities = [{contentType: player.testConfig.mediaType}];
+  } else if (
+      player.testConfig.mediaType == 'audio/webm; codecs="vorbis"' ||
+      player.testConfig.mediaType == 'audio/webm; codecs="opus"' ||
+      player.testConfig.mediaType == 'audio/mp4; codecs="mp4a.40.2"') {
+    // Audio only.
+    config.audioCapabilities = [{contentType: player.testConfig.mediaType}];
+  } else if (
+      player.testConfig.mediaType == 'video/webm; codecs="vorbis, vp8"') {
+    // Both audio and video codecs specified.
+    config.audioCapabilities = [{contentType: 'audio/webm; codecs="vorbis"'}];
+    config.videoCapabilities = [{contentType: 'video/webm; codecs="vp8"'}];
+  } else if (player.testConfig.mediaType == 'video/webm; codecs="opus, vp9"') {
+    // Both audio and video codecs specified.
+    config.audioCapabilities = [{contentType: 'audio/webm; codecs="opus"'}];
+    config.videoCapabilities = [{contentType: 'video/webm; codecs="vp9"'}];
+  } else {
+    // Some tests (e.g. mse_different_containers.html) specify audio and
+    // video codecs seperately.
+    if (player.testConfig.videoFormat == 'ENCRYPTED_MP4' ||
+        player.testConfig.videoFormat == 'CLEAR_MP4') {
+      config.videoCapabilities =
+          [{contentType: 'video/mp4; codecs="avc1.4D000C"'}];
+    } else if (
+        player.testConfig.videoFormat == 'ENCRYPTED_WEBM' ||
+        player.testConfig.videoFormat == 'CLEAR_WEBM') {
+      config.videoCapabilities = [{contentType: 'video/webm; codecs="vp8"'}];
+    }
+    if (player.testConfig.audioFormat == 'ENCRYPTED_MP4' ||
+        player.testConfig.audioFormat == 'CLEAR_MP4') {
+      config.audioCapabilities =
+          [{contentType: 'audio/mp4; codecs="mp4a.40.2"'}];
+    } else if (
+        player.testConfig.audioFormat == 'ENCRYPTED_WEBM' ||
+        player.testConfig.audioFormat == 'CLEAR_WEBM') {
+      config.audioCapabilities = [{contentType: 'audio/webm; codecs="vorbis"'}];
+    }
   }
-  return navigator.requestMediaKeySystemAccess(
-      player.testConfig.keySystem, [config])
+
+  // The File IO test requires persistent state support.
+  if (player.testConfig.keySystem ==
+      'org.chromium.externalclearkey.fileiotest') {
+    config.persistentState = 'required';
+  } else if (player.testConfig.sessionToLoad) {
+    config.persistentState = 'required';
+    config.sessionTypes = ['temporary', 'persistent-license'];
+  }
+
+  return navigator
+      .requestMediaKeySystemAccess(player.testConfig.keySystem, [config])
       .then(function(access) { return access.createMediaKeys(); })
       .then(function(mediaKeys) {
         return player.video.setMediaKeys(mediaKeys);
       })
       .then(function(result) { return player; })
       .catch(function(error) { Utils.failTest(error, NOTSUPPORTEDERROR); });
-};
-
-// Register the necessary event handlers needed when playing encrypted content
-// using the prefixed API. Even though the prefixed API is all synchronous,
-// returns a promise that resolves to the player.
-PlayerUtils.registerPrefixedEMEEventListeners = function(player) {
- player.video.addEventListener('webkitneedkey', function(message) {
-    var initData = message.initData;
-    if (player.testConfig.sessionToLoad) {
-      Utils.timeLog('Loading session: ' + player.testConfig.sessionToLoad);
-      initData =
-          Utils.convertToUint8Array(PREFIXED_EME_API_LOAD_SESSION_HEADER +
-                                    player.testConfig.sessionToLoad);
-    }
-    Utils.timeLog(player.testConfig.keySystem +
-                  ' Generate key request, initData: ' +
-                  Utils.getHexString(initData));
-    try {
-      message.target.webkitGenerateKeyRequest(player.testConfig.keySystem,
-                                              initData);
-    } catch (e) {
-      Utils.failTest(e);
-    }
-  });
-
-  player.video.addEventListener('webkitkeyadded', function(message) {
-    Utils.timeLog('onWebkitKeyAdded', message);
-    message.target.receivedKeyAdded = true;
-  });
-
-  player.video.addEventListener('webkitkeyerror', function(error) {
-    Utils.timeLog('onWebkitKeyError',
-                  'KeySystem: ' + error.keySystem + ', sessionId: ' +
-                      error.sessionId + ', errorCode: ' + error.errorCode.code +
-                      ', systemCode: ' + error.systemCode);
-    Utils.failTest(error, PREFIXED_EME_ERROR_EVENT);
-  });
-
-  player.video.addEventListener('webkitkeymessage', function(message) {
-    Utils.timeLog('onWebkitKeyMessage', message);
-    message.target.receivedKeyMessage = true;
-    if (Utils.isRenewalMessagePrefixed(message.message)) {
-      Utils.timeLog('onWebkitKeyMessage - renewal', message);
-      message.target.receivedRenewalMessage = true;
-    }
-  });
-
-  // The prefixed API is all synchronous, so wrap the calls in a promise.
-  return new Promise(function(resolve, reject) {
-    PlayerUtils.registerDefaultEventListeners(player);
-    player.video.receivedKeyMessage = false;
-    resolve(player);
-  });
 };
 
 PlayerUtils.setVideoSource = function(player) {
@@ -177,6 +186,7 @@ PlayerUtils.setVideoSource = function(player) {
     Utils.timeLog('Loading media using src.');
     player.video.src = player.testConfig.mediaFile;
   }
+  Utils.timeLog('video.src has been set to ' + player.video.src);
 };
 
 // Initialize the player to play encrypted content. Returns a promise that
@@ -184,37 +194,28 @@ PlayerUtils.setVideoSource = function(player) {
 PlayerUtils.initEMEPlayer = function(player) {
   return player.registerEventListeners().then(function(result) {
     PlayerUtils.setVideoSource(player);
+    Utils.timeLog('initEMEPlayer() done');
     return player;
   });
 };
 
 // Return the appropriate player based on test configuration.
 PlayerUtils.createPlayer = function(video, testConfig) {
-  // Update keySystem if using prefixed Clear Key since it is not available as a
-  // separate key system to choose from; however it can be set in URL query.
-  var usePrefixedEME = testConfig.usePrefixedEME;
-  if (testConfig.keySystem == CLEARKEY && usePrefixedEME)
-    testConfig.keySystem = PREFIXED_CLEARKEY;
-
   function getPlayerType(keySystem) {
     switch (keySystem) {
       case WIDEVINE_KEYSYSTEM:
-        if (usePrefixedEME)
-          return PrefixedWidevinePlayer;
         return WidevinePlayer;
-      case PREFIXED_CLEARKEY:
-        return PrefixedClearKeyPlayer;
-      case EXTERNAL_CLEARKEY:
       case CLEARKEY:
-        if (usePrefixedEME)
-          return PrefixedClearKeyPlayer;
+      case EXTERNAL_CLEARKEY:
+      case EXTERNAL_CLEARKEY_RENEWAL:
+      case CRASH_TEST_KEYSYSTEM:
         return ClearKeyPlayer;
       case FILE_IO_TEST_KEYSYSTEM:
-        return FileIOTestPlayer;
+      case OUTPUT_PROTECTION_TEST_KEYSYSTEM:
+      case PLATFORM_VERIFICATION_TEST_KEYSYSTEM:
+        return UnitTestPlayer;
       default:
         Utils.timeLog(keySystem + ' is not a known key system');
-        if (usePrefixedEME)
-          return PrefixedClearKeyPlayer;
         return ClearKeyPlayer;
     }
   }

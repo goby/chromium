@@ -5,8 +5,11 @@
 #ifndef UI_GL_GL_IMAGE_H_
 #define UI_GL_GL_IMAGE_H_
 
+#include <stdint.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
@@ -29,9 +32,6 @@ namespace gl {
 class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
  public:
   GLImage() {}
-
-  // Destroys the image.
-  virtual void Destroy(bool have_context) = 0;
 
   // Get the size of the image.
   virtual gfx::Size GetSize() = 0;
@@ -65,11 +65,32 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
                                     const gfx::Rect& bounds_rect,
                                     const gfx::RectF& crop_rect) = 0;
 
+  // Flush any preceding rendering for the image.
+  virtual void Flush() = 0;
+
   // Dumps information about the memory backing the GLImage to a dump named
   // |dump_name|.
   virtual void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                             uint64_t process_tracing_id,
                             const std::string& dump_name) = 0;
+
+  // If this returns true, then the command buffer client has requested a
+  // CHROMIUM image with internalformat GL_RGB, but the platform only supports
+  // GL_RGBA. The client is responsible for implementing appropriate
+  // workarounds. The only support that the command buffer provides is format
+  // validation during calls to copyTexImage2D and copySubTexImage2D.
+  //
+  // This is a workaround that is not intended to become a permanent part of the
+  // GLImage API. Theoretically, when Apple fixes their drivers, this can be
+  // removed. https://crbug.com/581777#c36
+  virtual bool EmulatingRGB() const;
+
+  // An identifier for subclasses. Necessary for safe downcasting.
+  enum class Type {
+    NONE,
+    IOSURFACE
+  };
+  virtual Type GetType() const;
 
  protected:
   virtual ~GLImage() {}

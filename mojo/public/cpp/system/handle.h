@@ -5,12 +5,14 @@
 #ifndef MOJO_PUBLIC_CPP_SYSTEM_HANDLE_H_
 #define MOJO_PUBLIC_CPP_SYSTEM_HANDLE_H_
 
-#include <assert.h>
+#include <stdint.h>
 #include <limits>
 
+#include "base/compiler_specific.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "mojo/public/c/system/functions.h"
 #include "mojo/public/c/system/types.h"
-#include "mojo/public/cpp/system/macros.h"
 
 namespace mojo {
 
@@ -69,9 +71,9 @@ namespace mojo {
 // like the C++11 |unique_ptr|.
 template <class HandleType>
 class ScopedHandleBase {
-  MOJO_MOVE_ONLY_TYPE(ScopedHandleBase)
-
  public:
+  using RawHandleType = HandleType;
+
   ScopedHandleBase() {}
   explicit ScopedHandleBase(HandleType handle) : handle_(handle) {}
   ~ScopedHandleBase() { CloseIfNecessary(); }
@@ -91,6 +93,7 @@ class ScopedHandleBase {
   }
 
   const HandleType& get() const { return handle_; }
+  const HandleType* operator->() const { return &handle_; }
 
   template <typename PassedHandleType>
   static ScopedHandleBase<HandleType> From(
@@ -104,7 +107,7 @@ class ScopedHandleBase {
 
   void swap(ScopedHandleBase& other) { handle_.swap(other.handle_); }
 
-  HandleType release() MOJO_WARN_UNUSED_RESULT {
+  HandleType release() WARN_UNUSED_RESULT {
     HandleType rv;
     rv.swap(handle_);
     return rv;
@@ -117,16 +120,19 @@ class ScopedHandleBase {
 
   bool is_valid() const { return handle_.is_valid(); }
 
+  bool operator==(const ScopedHandleBase& other) const {
+    return handle_.value() == other.get().value();
+  }
+
  private:
   void CloseIfNecessary() {
-    if (!handle_.is_valid())
-      return;
-    MojoResult result = MojoClose(handle_.value());
-    MOJO_ALLOW_UNUSED_LOCAL(result);
-    assert(result == MOJO_RESULT_OK);
+    if (handle_.is_valid())
+      handle_.Close();
   }
 
   HandleType handle_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedHandleBase);
 };
 
 template <typename HandleType>
@@ -156,6 +162,13 @@ class Handle {
   const MojoHandle& value() const { return value_; }
   MojoHandle* mutable_value() { return &value_; }
   void set_value(MojoHandle value) { value_ = value; }
+
+  void Close() {
+    DCHECK(is_valid());
+    MojoResult result = MojoClose(value_);
+    ALLOW_UNUSED_LOCAL(result);
+    DCHECK_EQ(MOJO_RESULT_OK, result);
+  }
 
  private:
   MojoHandle value_;
@@ -283,6 +296,11 @@ inline MojoResult CloseRaw(Handle handle) {
 // Strict weak ordering, so that |Handle|s can be used as keys in |std::map|s,
 inline bool operator<(const Handle a, const Handle b) {
   return a.value() < b.value();
+}
+
+// Comparison, so that |Handle|s can be used as keys in hash maps.
+inline bool operator==(const Handle a, const Handle b) {
+  return a.value() == b.value();
 }
 
 }  // namespace mojo

@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/bookmarks_helper.h"
 #include "chrome/browser/sync/test/integration/migration_waiter.h"
@@ -13,7 +13,8 @@
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/translate/core/browser/translate_prefs.h"
 
 using bookmarks_helper::AddURL;
@@ -65,7 +66,6 @@ MigrationList MakeList(syncer::ModelType type1,
   return MakeList(MakeSet(type1), MakeSet(type2));
 }
 
-
 class MigrationTest : public SyncTest  {
  public:
   explicit MigrationTest(TestType test_type) : SyncTest(test_type) {}
@@ -90,9 +90,9 @@ class MigrationTest : public SyncTest  {
   syncer::ModelTypeSet GetPreferredDataTypes() {
     // ProfileSyncService must already have been created before we can call
     // GetPreferredDataTypes().
-    DCHECK(GetSyncService((0)));
+    DCHECK(GetSyncService(0));
     syncer::ModelTypeSet preferred_data_types =
-        GetSyncService((0))->GetPreferredDataTypes();
+        GetSyncService(0)->GetPreferredDataTypes();
     preferred_data_types.RemoveAll(syncer::ProxyTypes());
 
     // Supervised user data types will be "unready" during this test, so we
@@ -105,11 +105,15 @@ class MigrationTest : public SyncTest  {
     preferred_data_types.Remove(syncer::AUTOFILL_WALLET_DATA);
     preferred_data_types.Remove(syncer::AUTOFILL_WALLET_METADATA);
 
+    // Arc package will be unready during this test, so we should not request
+    // that it be migrated.
+    preferred_data_types.Remove(syncer::ARC_PACKAGE);
+
     // Make sure all clients have the same preferred data types.
     for (int i = 1; i < num_clients(); ++i) {
       const syncer::ModelTypeSet other_preferred_data_types =
-          GetSyncService((i))->GetPreferredDataTypes();
-      EXPECT_TRUE(preferred_data_types.Equals(other_preferred_data_types));
+          GetSyncService(i)->GetPreferredDataTypes();
+      EXPECT_EQ(other_preferred_data_types, preferred_data_types);
     }
     return preferred_data_types;
   }
@@ -155,9 +159,8 @@ class MigrationTest : public SyncTest  {
   // types.
   void AwaitMigration(syncer::ModelTypeSet migrate_types) {
     for (int i = 0; i < num_clients(); ++i) {
-      MigrationWaiter waiter(migrate_types, migration_watchers_[i]);
-      waiter.Wait();
-      ASSERT_FALSE(waiter.TimedOut());
+      ASSERT_TRUE(
+          MigrationWaiter(migrate_types, migration_watchers_[i]).Wait());
     }
   }
 
@@ -408,7 +411,7 @@ IN_PROC_BROWSER_TEST_F(MigrationTwoClientTest,
   // Pop off one so that we don't migrate all data types; the syncer
   // freaks out if we do that (see http://crbug.com/94882).
   ASSERT_GE(migration_list.size(), 2u);
-  ASSERT_FALSE(migration_list.back().Equals(MakeSet(syncer::NIGORI)));
+  ASSERT_NE(MakeSet(syncer::NIGORI), migration_list.back());
   migration_list.back() = MakeSet(syncer::NIGORI);
   RunTwoClientMigrationTest(migration_list, MODIFY_BOOKMARK);
 }

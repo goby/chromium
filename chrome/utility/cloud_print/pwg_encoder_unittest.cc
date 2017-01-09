@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/utility/cloud_print/pwg_encoder.h"
+
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sha1.h"
 #include "chrome/utility/cloud_print/bitmap_image.h"
-#include "chrome/utility/cloud_print/pwg_encoder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cloud_print {
@@ -24,13 +28,12 @@ const int kRasterWidth = 612;
 const int kRasterHeight = 792;
 const int kRasterDPI = 72;
 
-scoped_ptr<BitmapImage> MakeSampleBitmap() {
-  scoped_ptr<BitmapImage> bitmap_image(
-      new BitmapImage(gfx::Size(kRasterWidth, kRasterHeight),
-                      BitmapImage::RGBA));
+std::unique_ptr<BitmapImage> MakeSampleBitmap() {
+  std::unique_ptr<BitmapImage> bitmap_image(new BitmapImage(
+      gfx::Size(kRasterWidth, kRasterHeight), BitmapImage::RGBA));
 
-  uint32* bitmap_data = reinterpret_cast<uint32*>(
-      bitmap_image->pixel_data());
+  uint32_t* bitmap_data =
+      reinterpret_cast<uint32_t*>(bitmap_image->pixel_data());
 
   for (int i = 0; i < kRasterWidth * kRasterHeight; i++) {
     bitmap_data[i] = 0xFFFFFF;
@@ -40,7 +43,7 @@ scoped_ptr<BitmapImage> MakeSampleBitmap() {
   for (int i = 0; i < kRasterWidth; i++) {
     for (int j = 200; j < 300; j++) {
       int row_start = j * kRasterWidth;
-      uint32 red = (i * 255)/kRasterWidth;
+      uint32_t red = (i * 255) / kRasterWidth;
       bitmap_data[row_start + i] = red;
     }
   }
@@ -57,7 +60,7 @@ scoped_ptr<BitmapImage> MakeSampleBitmap() {
     }
   }
 
-  return bitmap_image.Pass();
+  return bitmap_image;
 }
 
 }  // namespace
@@ -65,7 +68,7 @@ scoped_ptr<BitmapImage> MakeSampleBitmap() {
 TEST(PwgRasterTest, CompareWithMaster) {
   std::string output;
   PwgEncoder encoder;
-  scoped_ptr<BitmapImage> image = MakeSampleBitmap();
+  std::unique_ptr<BitmapImage> image = MakeSampleBitmap();
   PwgHeaderInfo header_info;
   header_info.dpi = kRasterDPI;
   header_info.total_pages = 1;

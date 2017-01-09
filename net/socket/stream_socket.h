@@ -7,15 +7,22 @@
 
 #include <stdint.h>
 
-#include "net/log/net_log.h"
+#include "base/macros.h"
+#include "net/base/net_export.h"
 #include "net/socket/connection_attempts.h"
 #include "net/socket/next_proto.h"
 #include "net/socket/socket.h"
 
+namespace base {
+namespace trace_event {
+class ProcessMemoryDump;
+}
+}
+
 namespace net {
 
-class AddressList;
 class IPEndPoint;
+class NetLogWithSource;
 class SSLInfo;
 
 class NET_EXPORT_PRIVATE StreamSocket : public Socket {
@@ -65,7 +72,7 @@ class NET_EXPORT_PRIVATE StreamSocket : public Socket {
   virtual int GetLocalAddress(IPEndPoint* address) const = 0;
 
   // Gets the NetLog for this socket.
-  virtual const BoundNetLog& NetLog() const = 0;
+  virtual const NetLogWithSource& NetLog() const = 0;
 
   // Set the annotation to indicate this socket was created for speculative
   // reasons.  This call is generally forwarded to a basic TCPClientSocket*,
@@ -77,11 +84,6 @@ class NET_EXPORT_PRIVATE StreamSocket : public Socket {
   // layered on top of transport sockets should return if their own Read() or
   // Write() methods had been called, not the underlying transport's.
   virtual bool WasEverUsed() const = 0;
-
-  // TODO(jri): Clean up -- remove this method.
-  // Returns true if the underlying transport socket is using TCP FastOpen.
-  // TCP FastOpen is an experiment with sending data in the TCP SYN packet.
-  virtual bool UsingTCPFastOpen() const = 0;
 
   // TODO(jri): Clean up -- rename to a more general EnableAutoConnectOnWrite.
   // Enables use of TCP FastOpen for the underlying transport socket.
@@ -113,6 +115,13 @@ class NET_EXPORT_PRIVATE StreamSocket : public Socket {
   // 0 if the socket does not implement the function. The count is reset when
   // Disconnect() is called.
   virtual int64_t GetTotalReceivedBytes() const = 0;
+
+  // Dumps memory allocation stats. |parent_dump_absolute_name| is the name
+  // used by the parent MemoryAllocatorDump in the memory dump hierarchy.
+  // Default implementation does nothing.
+  virtual void DumpMemoryStats(
+      base::trace_event::ProcessMemoryDump* pmd,
+      const std::string& parent_dump_absolute_name) const {};
 
  protected:
   // The following class is only used to gather statistics about the history of

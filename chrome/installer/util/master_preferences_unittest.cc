@@ -4,19 +4,41 @@
 //
 // Unit tests for master preferences related methods.
 
+#include "chrome/installer/util/master_preferences.h"
+
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/environment.h"
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/path_service.h"
-#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/installer/util/master_preferences.h"
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "chrome/installer/util/util_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
+
+// A helper class to set the "GoogleUpdateIsMachine" environment variable.
+class ScopedGoogleUpdateIsMachine {
+ public:
+  explicit ScopedGoogleUpdateIsMachine(const char* value)
+      : env_(base::Environment::Create()) {
+    env_->SetVar("GoogleUpdateIsMachine", value);
+  }
+
+  ~ScopedGoogleUpdateIsMachine() {
+    env_->UnSetVar("GoogleUpdateIsMachine");
+  }
+
+ private:
+  std::unique_ptr<base::Environment> env_;
+};
+
 class MasterPreferencesTest : public testing::Test {
  protected:
   void SetUp() override {
@@ -68,8 +90,6 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
       "     \"system_level\": true,\n"
       "     \"verbose_logging\": true,\n"
       "     \"require_eula\": true,\n"
-      "     \"alternate_shortcut_text\": true,\n"
-      "     \"chrome_shortcut_icon_index\": 1,\n"
       "     \"ping_delay\": 40\n"
       "  },\n"
       "  \"blah\": {\n"
@@ -98,10 +118,9 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
       installer::master_preferences::kSystemLevel,
       installer::master_preferences::kVerboseLogging,
       installer::master_preferences::kRequireEula,
-      installer::master_preferences::kAltShortcutText,
   };
 
-  for (int i = 0; i < arraysize(expected_true); ++i) {
+  for (size_t i = 0; i < arraysize(expected_true); ++i) {
     bool value = false;
     EXPECT_TRUE(prefs.GetBool(expected_true[i], &value));
     EXPECT_TRUE(value) << expected_true[i];
@@ -113,11 +132,6 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
       &str_value));
   EXPECT_STREQ("c:\\foo", str_value.c_str());
 
-  int icon_index = 0;
-  EXPECT_TRUE(prefs.GetInt(
-      installer::master_preferences::kChromeShortcutIconIndex,
-      &icon_index));
-  EXPECT_EQ(icon_index, 1);
   int ping_delay = 90;
   EXPECT_TRUE(prefs.GetInt(installer::master_preferences::kDistroPingDelay,
                            &ping_delay));
@@ -133,8 +147,7 @@ TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
     "     \"import_bookmarks_from_file\": \"\",\n"
     "     \"do_not_create_desktop_shortcut\": true,\n"
     "     \"do_not_create_quick_launch_shortcut\": true,\n"
-    "     \"do_not_launch_chrome\": true,\n"
-    "     \"chrome_shortcut_icon_index\": \"bac\"\n"
+    "     \"do_not_launch_chrome\": true\n"
     "  }\n"
     "} \n";
 
@@ -152,7 +165,7 @@ TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
   };
 
   bool value = false;
-  for (int i = 0; i < arraysize(expected_bool); ++i) {
+  for (size_t i = 0; i < arraysize(expected_bool); ++i) {
     EXPECT_TRUE(prefs.GetBool(expected_bool[i].name, &value));
     EXPECT_EQ(value, expected_bool[i].expected_value) << expected_bool[i].name;
   }
@@ -165,7 +178,7 @@ TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
     installer::master_preferences::kMakeChromeDefaultForUser,
   };
 
-  for (int i = 0; i < arraysize(missing_bools); ++i) {
+  for (size_t i = 0; i < arraysize(missing_bools); ++i) {
     EXPECT_FALSE(prefs.GetBool(missing_bools[i], &value)) << missing_bools[i];
   }
 
@@ -173,12 +186,6 @@ TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
   EXPECT_FALSE(prefs.GetString(
       installer::master_preferences::kDistroImportBookmarksFromFilePref,
       &str_value));
-
-  int icon_index = 0;
-  EXPECT_FALSE(prefs.GetInt(
-      installer::master_preferences::kChromeShortcutIconIndex,
-      &icon_index));
-  EXPECT_EQ(icon_index, 0);
 
   int ping_delay = 90;
   EXPECT_FALSE(prefs.GetInt(
@@ -204,7 +211,7 @@ TEST_F(MasterPreferencesTest, FirstRunTabs) {
   installer::MasterPreferences prefs(prefs_file());
   typedef std::vector<std::string> TabsVector;
   TabsVector tabs = prefs.GetFirstRunTabs();
-  ASSERT_EQ(3, tabs.size());
+  ASSERT_EQ(3u, tabs.size());
   EXPECT_EQ("http://google.com/f1", tabs[0]);
   EXPECT_EQ("https://google.com/f2", tabs[1]);
   EXPECT_EQ("new_tab_page", tabs[2]);
@@ -277,7 +284,7 @@ TEST_F(MasterPreferencesTest, GetInstallPreferencesTest) {
 
   // Now check that prefs got merged correctly.
   bool value = false;
-  for (int i = 0; i < arraysize(expected_bool); ++i) {
+  for (size_t i = 0; i < arraysize(expected_bool); ++i) {
     EXPECT_TRUE(prefs.GetBool(expected_bool[i].name, &value));
     EXPECT_EQ(value, expected_bool[i].expected_value) << expected_bool[i].name;
   }
@@ -294,7 +301,7 @@ TEST_F(MasterPreferencesTest, GetInstallPreferencesTest) {
     { installer::master_preferences::kDoNotLaunchChrome, true },
   };
 
-  for (int i = 0; i < arraysize(expected_bool2); ++i) {
+  for (size_t i = 0; i < arraysize(expected_bool2); ++i) {
     EXPECT_TRUE(prefs2.GetBool(expected_bool2[i].name, &value));
     EXPECT_EQ(value, expected_bool2[i].expected_value)
         << expected_bool2[i].name;
@@ -417,4 +424,39 @@ TEST_F(MasterPreferencesTest, DontEnforceLegacyCreateAllShortcutsNotSpecified) {
     EXPECT_FALSE(do_not_create_desktop_shortcut);
     EXPECT_FALSE(do_not_create_quick_launch_shortcut);
     EXPECT_FALSE(do_not_create_taskbar_shortcut);
+}
+
+TEST_F(MasterPreferencesTest, GoogleUpdateIsMachine) {
+  {
+    ScopedGoogleUpdateIsMachine env_setter("0");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_FALSE(value);
+  }
+  {
+    ScopedGoogleUpdateIsMachine env_setter("1");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_TRUE(value);
+  }
+  {
+    ScopedGoogleUpdateIsMachine env_setter("1bridgetoofar");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_FALSE(value);
+  }
+  {
+    ScopedGoogleUpdateIsMachine env_setter("2");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_FALSE(value);
+  }
 }

@@ -23,6 +23,11 @@ struct FormData {
   // form elements.
   bool SameFormAs(const FormData& other) const;
 
+  // Note: operator==() performs a full-field-comparison(byte by byte), this is
+  // different from SameFormAs(), which ignores comparison for those "values" of
+  // all form fields, just like what FormFieldData::SameFieldAs() ignores.
+  bool operator==(const FormData& form) const;
+  bool operator!=(const FormData& form) const;
   // Allow FormData to be a key in STL containers.
   bool operator<(const FormData& form) const;
 
@@ -32,8 +37,10 @@ struct FormData {
   GURL origin;
   // The action target of the form.
   GURL action;
-  // true if this form is a form tag.
+  // True if this form is a form tag.
   bool is_form_tag;
+  // True if the form is made of unowned fields in a non checkout flow.
+  bool is_formless_checkout;
   // A vector of all the input fields in the form.
   std::vector<FormFieldData> fields;
 };

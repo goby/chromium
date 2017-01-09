@@ -12,6 +12,7 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_ANDROID)
@@ -28,7 +29,7 @@ TEST(DirReaderPosixUnittest, Read) {
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  const char* dir = temp_dir.path().value().c_str();
+  const char* dir = temp_dir.GetPath().value().c_str();
   ASSERT_TRUE(dir);
 
   const int prev_wd = open(".", O_RDONLY | O_DIRECTORY);

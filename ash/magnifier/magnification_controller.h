@@ -8,7 +8,7 @@
 #include "ash/ash_export.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 

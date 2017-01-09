@@ -6,11 +6,11 @@
 #define COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_WEBSITE_SETTINGS_REGISTRY_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/website_settings_info.h"
@@ -25,7 +25,29 @@ namespace content_settings {
 // const.
 class WebsiteSettingsRegistry {
  public:
-  using Map = std::map<ContentSettingsType, scoped_ptr<WebsiteSettingsInfo>>;
+  typedef uint32_t Platforms;
+  // TODO(lshang): Remove this enum when content settings can be registered from
+  // within the component in which they are used. When this is possible then
+  // ifdefs can be contained within each component.
+  enum Platform : Platforms {
+    PLATFORM_WINDOWS = 1 << 0,
+    PLATFORM_LINUX = 1 << 1,
+    PLATFORM_CHROMEOS = 1 << 2,
+    PLATFORM_MAC = 1 << 3,
+    PLATFORM_ANDROID = 1 << 4,
+    PLATFORM_IOS = 1 << 5,
+
+    // Settings only applied to win, mac, linux and chromeos.
+    DESKTOP =
+        PLATFORM_WINDOWS | PLATFORM_LINUX | PLATFORM_CHROMEOS | PLATFORM_MAC,
+
+    // Settings applied to all platforms, including win, mac, linux, chromeos,
+    // android, ios.
+    ALL_PLATFORMS = DESKTOP | PLATFORM_ANDROID | PLATFORM_IOS,
+  };
+
+  using Map =
+      std::map<ContentSettingsType, std::unique_ptr<WebsiteSettingsInfo>>;
   using const_iterator = MapValueIterator<typename Map::const_iterator,
                                           const WebsiteSettingsInfo*>;
 
@@ -40,13 +62,17 @@ class WebsiteSettingsRegistry {
   // Register a new website setting. This maps an origin to an arbitrary
   // base::Value. Returns a pointer to the registered WebsiteSettingsInfo which
   // is owned by the registry.
+  // A nullptr will be returned if registration fails (for example if
+  // |platforms| doesn't match the current platform).
   const WebsiteSettingsInfo* Register(
       ContentSettingsType type,
       const std::string& name,
-      scoped_ptr<base::Value> initial_default_value,
+      std::unique_ptr<base::Value> initial_default_value,
       WebsiteSettingsInfo::SyncStatus sync_status,
       WebsiteSettingsInfo::LossyStatus lossy_status,
-      WebsiteSettingsInfo::ScopingType scoping_type);
+      WebsiteSettingsInfo::ScopingType scoping_type,
+      Platforms platforms,
+      WebsiteSettingsInfo::IncognitoBehavior incognito_behavior);
 
   const_iterator begin() const;
   const_iterator end() const;

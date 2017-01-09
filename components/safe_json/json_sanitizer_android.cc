@@ -8,10 +8,13 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "jni/JsonSanitizer_jni.h"
+
+using base::android::JavaParamRef;
 
 namespace safe_json {
 
@@ -70,7 +73,7 @@ void JsonSanitizerAndroid::Sanitize(const std::string& unsafe_json) {
 
   // This will synchronously call either OnSuccess() or OnError().
   Java_JsonSanitizer_sanitize(env, reinterpret_cast<jlong>(this),
-                              unsafe_json_java.obj());
+                              unsafe_json_java);
 }
 
 void JsonSanitizerAndroid::OnSuccess(const std::string& json) {

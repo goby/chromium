@@ -5,7 +5,10 @@
 #ifndef CONTENT_RENDERER_PEPPER_PPB_AUDIO_IMPL_H_
 #define CONTENT_RENDERER_PEPPER_PPB_AUDIO_IMPL_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/shared_memory.h"
 #include "base/sync_socket.h"
@@ -46,6 +49,8 @@ class PPB_Audio_Impl : public ppapi::Resource,
   int32_t GetSyncSocket(int* sync_socket) override;
   int32_t GetSharedMemory(base::SharedMemory** shm,
                           uint32_t* shm_size) override;
+
+  void SetVolume(double volume);
 
  private:
   ~PPB_Audio_Impl() override;

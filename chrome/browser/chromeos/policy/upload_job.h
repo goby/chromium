@@ -6,10 +6,10 @@
 #define CHROME_BROWSER_CHROMEOS_POLICY_UPLOAD_JOB_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "url/gurl.h"
 
 namespace policy {
@@ -30,7 +30,6 @@ class UploadJob {
   // If the upload fails, the Delegate's OnFailure() method is invoked with
   // one of these error codes.
   enum ErrorCode {
-    CONTENT_ENCODING_ERROR = 0,  // Failed to encode content.
     NETWORK_ERROR = 1,           // Network failure.
     AUTHENTICATION_ERROR = 2,    // Authentication failure.
     SERVER_ERROR = 3             // Server returned error or malformed reply.
@@ -66,7 +65,7 @@ class UploadJob {
       const std::string& name,
       const std::string& filename,
       const std::map<std::string, std::string>& header_entries,
-      scoped_ptr<std::string> data) = 0;
+      std::unique_ptr<std::string> data) = 0;
 
   // Initiates the data upload . This method must only be called once.
   virtual void Start() = 0;

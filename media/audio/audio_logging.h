@@ -5,11 +5,12 @@
 #ifndef MEDIA_AUDIO_AUDIO_LOGGING_H_
 #define MEDIA_AUDIO_AUDIO_LOGGING_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 
 namespace media {
+
 class AudioParameters;
 
 // AudioLog logs state information about an active audio component.  Each method
@@ -48,6 +49,9 @@ class AudioLog {
   // new audio output device.
   virtual void OnSwitchOutputDevice(int component_id,
                                     const std::string& device_id) = 0;
+
+  // Called when an audio component wants to forward a log message.
+  virtual void OnLogMessage(int component_id, const std::string& message) = 0;
 };
 
 // AudioLogFactory dispenses AudioLog instances to owning classes for tracking
@@ -76,7 +80,8 @@ class AudioLogFactory {
   // Create a new AudioLog object for tracking the behavior for one or more
   // instances of the given component.  Each instance of an "owning" class must
   // create its own AudioLog.
-  virtual scoped_ptr<AudioLog> CreateAudioLog(AudioComponent component) = 0;
+  virtual std::unique_ptr<AudioLog> CreateAudioLog(
+      AudioComponent component) = 0;
 
  protected:
   virtual ~AudioLogFactory() {}

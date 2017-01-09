@@ -7,19 +7,18 @@
 
 #include "courgette/simple_delta.h"
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 
-#include "courgette/third_party/bsdiff.h"
+#include "courgette/third_party/bsdiff/bsdiff.h"
 
 namespace courgette {
 
 namespace {
 
-Status BSDiffStatusToStatus(BSDiffStatus status) {
+Status BSDiffStatusToStatus(bsdiff::BSDiffStatus status) {
   switch (status) {
-    case OK: return C_OK;
-    case CRC_ERROR: return C_BINARY_DIFF_CRC_ERROR;
+    case bsdiff::OK: return C_OK;
+    case bsdiff::CRC_ERROR: return C_BINARY_DIFF_CRC_ERROR;
     default: return C_GENERAL_ERROR;
   }
 }
@@ -28,14 +27,14 @@ Status BSDiffStatusToStatus(BSDiffStatus status) {
 
 Status ApplySimpleDelta(SourceStream* old, SourceStream* delta,
                         SinkStream* target) {
-  return BSDiffStatusToStatus(ApplyBinaryPatch(old, delta, target));
+  return BSDiffStatusToStatus(bsdiff::ApplyBinaryPatch(old, delta, target));
 }
 
 Status GenerateSimpleDelta(SourceStream* old, SourceStream* target,
                            SinkStream* delta) {
   VLOG(1) << "GenerateSimpleDelta " << old->Remaining()
           << " " << target->Remaining();
-  return BSDiffStatusToStatus(CreateBinaryPatch(old, target, delta));
+  return BSDiffStatusToStatus(bsdiff::CreateBinaryPatch(old, target, delta));
 }
 
 }  // namespace courgette

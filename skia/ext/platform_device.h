@@ -12,30 +12,28 @@
 #include <vector>
 #endif
 
-#include "skia/ext/platform_surface.h"
+#include "skia/ext/native_drawing_context.h"
 #include "third_party/skia/include/core/SkBitmapDevice.h"
 #include "third_party/skia/include/core/SkTypes.h"
 
 class SkMatrix;
-class SkPath;
-class SkRegion;
 
 namespace skia {
 
 class PlatformDevice;
+class ScopedPlatformPaint;
 
 // The following routines provide accessor points for the functionality
 // exported by the various PlatformDevice ports.  
 // All calls to PlatformDevice::* should be routed through these 
 // helper functions.
 
-// Bind a PlatformDevice instance, |platform_device| to |device|.  Subsequent
-// calls to the functions exported below will forward the request to the
-// corresponding method on the bound PlatformDevice instance.    If no
-// PlatformDevice has been bound to the SkBaseDevice passed, then the 
-// routines are NOPS.
-SK_API void SetPlatformDevice(SkBaseDevice* device,
-                              PlatformDevice* platform_device);
+// DEPRECATED
+// Bind a PlatformDevice instance, |platform_device|, to |device|.
+SK_API void SetPlatformDevice(SkBaseDevice* device, PlatformDevice* platform_device);
+
+// DEPRECATED
+// Retrieve the previous argument to SetPlatformDevice().
 SK_API PlatformDevice* GetPlatformDevice(SkBaseDevice* device);
 
 // A SkBitmapDevice is basically a wrapper around SkBitmap that provides a 
@@ -58,53 +56,18 @@ class SK_API PlatformDevice {
   // The CGContext that corresponds to the bitmap, used for CoreGraphics
   // operations drawing into the bitmap. This is possibly heavyweight, so it
   // should exist only during one pass of rendering.
-  virtual CGContextRef GetBitmapContext() = 0;
+  virtual CGContextRef GetBitmapContext(const SkMatrix& transform,
+                                        const SkIRect& clip_bounds) = 0;
 #endif
 
+ private:
   // The DC that corresponds to the bitmap, used for GDI operations drawing
   // into the bitmap. This is possibly heavyweight, so it should be existant
   // only during one pass of rendering.
-  virtual PlatformSurface BeginPlatformPaint();
+  virtual NativeDrawingContext BeginPlatformPaint(const SkMatrix& transform,
+                                                  const SkIRect& clip_bounds);
 
-  // Finish a previous call to beginPlatformPaint.
-  virtual void EndPlatformPaint();
-
-  // Returns true if GDI operations can be used for drawing into the bitmap.
-  virtual bool SupportsPlatformPaint();
-
-#if defined(OS_WIN)
-  // Loads a SkPath into the GDI context. The path can there after be used for
-  // clipping or as a stroke. Returns false if the path failed to be loaded.
-  static bool LoadPathToDC(HDC context, const SkPath& path);
-
-  // Loads a SkRegion into the GDI context.
-  static void LoadClippingRegionToDC(HDC context, const SkRegion& region,
-                                     const SkMatrix& transformation);
-
-  // Draws to the given screen DC, if the bitmap DC doesn't exist, this will
-  // temporarily create it. However, if you have created the bitmap DC, it will
-  // be more efficient if you don't free it until after this call so it doesn't
-  // have to be created twice.  If src_rect is null, then the entirety of the
-  // source device will be copied.
-  virtual void DrawToHDC(HDC, int x, int y, const RECT* src_rect);
-#endif
-
- protected:
-#if defined(OS_WIN)
-  // Arrays must be inside structures.
-  struct CubicPoints {
-    SkPoint p[4];
-  };
-  typedef std::vector<CubicPoints> CubicPath;
-  typedef std::vector<CubicPath> CubicPaths;
-
-  // Loads the specified Skia transform into the device context, excluding
-  // perspective (which GDI doesn't support).
-  static void LoadTransformToDC(HDC dc, const SkMatrix& matrix);
-
-  // Transforms SkPath's paths into a series of cubic path.
-  static bool SkPathToCubicPaths(CubicPaths* paths, const SkPath& skpath);
-#endif
+  friend class ScopedPlatformPaint;
 };
 
 }  // namespace skia

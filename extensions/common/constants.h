@@ -5,7 +5,6 @@
 #ifndef EXTENSIONS_COMMON_CONSTANTS_H_
 #define EXTENSIONS_COMMON_CONSTANTS_H_
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "ui/base/layout.h"
 
@@ -105,14 +104,27 @@ extern const char kAuthUserQueryKey[];
 extern const char kMimeTypeJpeg[];
 extern const char kMimeTypePng[];
 
+// TODO(lazyboy): This is a hack and it is copied from service_worker_types.cc,
+// which is not available to extensions/ code. Move the constant to
+// content/public/common.
+extern const int64_t kInvalidServiceWorkerVersionId;
+
 // The extension id of the Web Store component application.
 extern const char kWebStoreAppId[];
 
+// The key used for signing some pieces of data from the webstore.
+extern const uint8_t kWebstoreSignaturesPublicKey[];
+extern const int kWebstoreSignaturesPublicKeySize;
+
 // Enumeration of possible app launch sources.
+// This should be kept in sync with LaunchSource in
+// extensions/common/api/app_runtime.idl, and GetLaunchSourceEnum() in
+// extensions/browser/api/app_runtime/app_runtime_api.cc.
 // Note the enumeration is used in UMA histogram so entries
 // should not be re-ordered or removed.
 enum AppLaunchSource {
-  SOURCE_UNTRACKED = 0,
+  SOURCE_NONE,
+  SOURCE_UNTRACKED,
   SOURCE_APP_LAUNCHER,
   SOURCE_NEW_TAB_PAGE,
   SOURCE_RELOAD,
@@ -126,12 +138,12 @@ enum AppLaunchSource {
   SOURCE_KEYBOARD,
   SOURCE_EXTENSIONS_PAGE,
   SOURCE_MANAGEMENT_API,
-  SOURCE_EPHEMERAL_APP_UNUSED,
+  SOURCE_EPHEMERAL_APP_DEPRECATED,
   SOURCE_BACKGROUND,
   SOURCE_KIOSK,
   SOURCE_CHROME_INTERNAL,
   SOURCE_TEST,
-
+  SOURCE_INSTALLED_NOTIFICATION,
   NUM_APP_LAUNCH_SOURCES
 };
 
@@ -170,14 +182,15 @@ enum LaunchContainer {
 
 namespace extension_misc {
 
+// Matches chrome.tabs.TAB_ID_NONE.
+const int kUnknownTabId = -1;
+
 // Matches chrome.windows.WINDOW_ID_NONE.
 const int kUnknownWindowId = -1;
 
 // Matches chrome.windows.WINDOW_ID_CURRENT.
 const int kCurrentWindowId = -2;
 
-// NOTE: If you change this list, you should also change kExtensionIconSizes
-// in cc file.
 enum ExtensionIcons {
   EXTENSION_ICON_GIGANTOR = 512,
   EXTENSION_ICON_EXTRA_LARGE = 256,
@@ -185,14 +198,9 @@ enum ExtensionIcons {
   EXTENSION_ICON_MEDIUM = 48,
   EXTENSION_ICON_SMALL = 32,
   EXTENSION_ICON_SMALLISH = 24,
-  EXTENSION_ICON_ACTION = 19,
   EXTENSION_ICON_BITTY = 16,
   EXTENSION_ICON_INVALID = 0,
 };
-
-// List of sizes for extension icons that can be defined in the manifest.
-extern const int kExtensionIconSizes[];
-extern const size_t kNumExtensionIconSizes;
 
 // The extension id of the PDF extension.
 extern const char kPdfExtensionId[];

@@ -5,17 +5,15 @@
 #ifndef CRYPTO_ENCRYPTOR_H_
 #define CRYPTO_ENCRYPTOR_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "crypto/crypto_export.h"
-
-#if !defined(USE_OPENSSL)
-#include "crypto/scoped_nss_types.h"
-#endif
 
 namespace crypto {
 
@@ -47,13 +45,13 @@ class CRYPTO_EXPORT Encryptor {
 
    private:
     union {
-      uint32 components32[4];
-      uint64 components64[2];
+      uint32_t components32[4];
+      uint64_t components64[2];
     } counter_;
   };
 
   Encryptor();
-  virtual ~Encryptor();
+  ~Encryptor();
 
   // Initializes the encryptor using |key| and |iv|. Returns false if either the
   // key or the initialization vector cannot be used.
@@ -86,34 +84,10 @@ class CRYPTO_EXPORT Encryptor {
   // TODO(albertb): Support streaming encryption.
 
  private:
-  // Generates a mask using |counter_| to be used for encryption in CTR mode.
-  // Resulting mask will be written to |mask| with |mask_len| bytes.
-  //
-  // Make sure there's enough space in mask when calling this method.
-  // Reserve at least |plaintext_len| + 16 bytes for |mask|.
-  //
-  // The generated mask will always have at least |plaintext_len| bytes and
-  // will be a multiple of the counter length.
-  //
-  // This method is used only in CTR mode.
-  //
-  // Returns false if this call failed.
-  bool GenerateCounterMask(size_t plaintext_len,
-                           uint8* mask,
-                           size_t* mask_len);
-
-  // Mask the |plaintext| message using |mask|. The output will be written to
-  // |ciphertext|. |ciphertext| must have at least |plaintext_len| bytes.
-  void MaskMessage(const void* plaintext,
-                   size_t plaintext_len,
-                   const void* mask,
-                   void* ciphertext) const;
-
   SymmetricKey* key_;
   Mode mode_;
-  scoped_ptr<Counter> counter_;
+  std::unique_ptr<Counter> counter_;
 
-#if defined(USE_OPENSSL)
   bool Crypt(bool do_encrypt,  // Pass true to encrypt, false to decrypt.
              const base::StringPiece& input,
              std::string* output);
@@ -121,15 +95,6 @@ class CRYPTO_EXPORT Encryptor {
                 const base::StringPiece& input,
                 std::string* output);
   std::string iv_;
-#else
-  bool Crypt(PK11Context* context,
-             const base::StringPiece& input,
-             std::string* output);
-  bool CryptCTR(PK11Context* context,
-                const base::StringPiece& input,
-                std::string* output);
-  ScopedSECItem param_;
-#endif
 };
 
 }  // namespace crypto

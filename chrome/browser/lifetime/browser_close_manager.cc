@@ -4,19 +4,26 @@
 
 #include "chrome/browser/lifetime/browser_close_manager.h"
 
+#include <algorithm>
+#include <iterator>
+#include <vector>
+
+#include "build/build_config.h"
 #include "chrome/browser/background/background_mode_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/download/download_service.h"
 #include "chrome/browser/download/download_service_factory.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/features.h"
 #include "content/public/browser/web_contents.h"
 
 namespace {
@@ -27,8 +34,7 @@ void ShowInProgressDownloads(Profile* profile) {
   DownloadService* download_service =
       DownloadServiceFactory::GetForBrowserContext(profile);
   if (download_service->NonMaliciousDownloadCount() > 0) {
-    chrome::ScopedTabbedBrowserDisplayer displayer(profile,
-                                                   chrome::GetActiveDesktop());
+    chrome::ScopedTabbedBrowserDisplayer displayer(profile);
     chrome::ShowDownloads(displayer.browser());
   }
 }
@@ -55,8 +61,8 @@ void BrowserCloseManager::StartClosingBrowsers() {
 
 void BrowserCloseManager::CancelBrowserClose() {
   browser_shutdown::SetTryingToQuit(false);
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    it->ResetBeforeUnloadHandlers();
+  for (auto* browser : *BrowserList::GetInstance()) {
+    browser->ResetBeforeUnloadHandlers();
   }
 }
 
@@ -66,10 +72,10 @@ void BrowserCloseManager::TryToCloseBrowsers() {
   // stop closing. CallBeforeUnloadHandlers prompts the user and calls
   // OnBrowserReportCloseable with the result. If the user confirms the close,
   // this will trigger TryToCloseBrowsers to try again.
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    if (it->CallBeforeUnloadHandlers(
+  for (auto* browser : *BrowserList::GetInstance()) {
+    if (browser->CallBeforeUnloadHandlers(
             base::Bind(&BrowserCloseManager::OnBrowserReportCloseable, this))) {
-      current_browser_ = *it;
+      current_browser_ = browser;
       return;
     }
   }
@@ -109,8 +115,7 @@ void BrowserCloseManager::CheckForDownloadsInProgress() {
 void BrowserCloseManager::ConfirmCloseWithPendingDownloads(
     int download_count,
     const base::Callback<void(bool)>& callback) {
-  Browser* browser =
-      BrowserList::GetInstance(chrome::GetActiveDesktop())->GetLastActive();
+  Browser* browser = BrowserList::GetInstance()->GetLastActive();
   DCHECK(browser);
   browser->window()->ConfirmBrowserCloseWithPendingDownloads(
       download_count,
@@ -138,7 +143,7 @@ void BrowserCloseManager::OnReportDownloadsCancellable(bool proceed) {
 }
 
 void BrowserCloseManager::CloseBrowsers() {
-#if defined(ENABLE_SESSION_SERVICE)
+#if BUILDFLAG(ENABLE_SESSION_SERVICE)
   // Before we close the browsers shutdown all session services. That way an
   // exit can restore all browsers open before exiting.
   ProfileManager::ShutdownSessionServices();
@@ -150,16 +155,19 @@ void BrowserCloseManager::CloseBrowsers() {
       background_mode_manager->SuspendBackgroundMode();
   }
 
+  // Make a copy of the BrowserList to simplify the case where we need to
+  // destroy a Browser during the loop.
+  std::vector<Browser*> browser_list_copy;
+  std::copy(BrowserList::GetInstance()->begin(),
+            BrowserList::GetInstance()->end(),
+            std::back_inserter(browser_list_copy));
+
   bool session_ending =
       browser_shutdown::GetShutdownType() == browser_shutdown::END_SESSION;
-  for (scoped_ptr<chrome::BrowserIterator> it_ptr(
-           new chrome::BrowserIterator());
-       !it_ptr->done();) {
-    Browser* browser = **it_ptr;
+
+  for (auto* browser : browser_list_copy) {
     browser->window()->Close();
-    if (!session_ending) {
-      it_ptr->Next();
-    } else {
+    if (session_ending) {
       // This path is hit during logoff/power-down. In this case we won't get
       // a final message and so we force the browser to be deleted.
       // Close doesn't immediately destroy the browser
@@ -170,13 +178,12 @@ void BrowserCloseManager::CloseBrowsers() {
       while (browser->tab_strip_model()->count())
         delete browser->tab_strip_model()->GetWebContentsAt(0);
       browser->window()->DestroyBrowser();
-      it_ptr.reset(new chrome::BrowserIterator());
-      if (!it_ptr->done() && browser == **it_ptr) {
-        // Destroying the browser should have removed it from the browser list.
-        // We should never get here.
-        NOTREACHED();
-        return;
-      }
+      // Destroying the browser should have removed it from the browser list.
+      DCHECK(BrowserList::GetInstance()->end() ==
+             std::find(BrowserList::GetInstance()->begin(),
+                       BrowserList::GetInstance()->end(), browser));
     }
   }
+
+  g_browser_process->notification_ui_manager()->CancelAll();
 }

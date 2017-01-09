@@ -6,14 +6,14 @@
 #define CHROME_BROWSER_MEDIA_GALLERIES_GALLERY_WATCH_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
@@ -97,6 +97,7 @@ class GalleryWatchManager
 
   struct NotificationInfo {
     NotificationInfo();
+    NotificationInfo(const NotificationInfo& other);
     ~NotificationInfo();
 
     std::set<WatchOwner> owners;
@@ -109,7 +110,7 @@ class GalleryWatchManager
   typedef std::map<content::BrowserContext*, GalleryWatchManagerObserver*>
       ObserverMap;
   typedef std::map<content::BrowserContext*,
-                   scoped_ptr<KeyedServiceShutdownNotifier::Subscription>>
+                   std::unique_ptr<KeyedServiceShutdownNotifier::Subscription>>
       BrowserContextSubscriptionMap;
 
   // Ensure there is a subscription to shutdown notifications for
@@ -158,7 +159,7 @@ class GalleryWatchManager
   ObserverMap observers_;
 
   // Helper that does the watches on the FILE thread.
-  scoped_ptr<FileWatchManager> watch_manager_;
+  std::unique_ptr<FileWatchManager> watch_manager_;
 
   // Removes watches when a browser context is shut down as watches contain raw
   // pointers.

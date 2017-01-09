@@ -9,7 +9,9 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 #include "components/policy/core/common/async_policy_loader.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/policy_export.h"
@@ -45,7 +47,7 @@ class POLICY_EXPORT PolicyLoaderMac : public AsyncPolicyLoader {
 
   // AsyncPolicyLoader implementation.
   void InitOnBackgroundThread() override;
-  scoped_ptr<PolicyBundle> Load() override;
+  std::unique_ptr<PolicyBundle> Load() override;
   base::Time LastModificationTime() override;
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
@@ -72,7 +74,7 @@ class POLICY_EXPORT PolicyLoaderMac : public AsyncPolicyLoader {
                               const Schema& schema,
                               PolicyMap* policy);
 
-  scoped_ptr<MacPreferences> preferences_;
+  std::unique_ptr<MacPreferences> preferences_;
 
   // Path to the managed preferences file for the current user, if it could
   // be found. Updates of this file trigger a policy reload.

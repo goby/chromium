@@ -2,8 +2,7 @@
  * Copyright (C) 2006, 2007, 2008, 2009, 2010 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License as published by the Free Software Foundation; either
+ * modify it under the terms of the GNU Library General Publicw
  * version 2 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
@@ -18,7 +17,6 @@
  *
  */
 
-#include "config.h"
 #include "core/layout/LayoutSlider.h"
 
 #include "core/InputTypeNames.h"
@@ -29,56 +27,55 @@
 #include "core/layout/LayoutSliderThumb.h"
 #include "wtf/MathExtras.h"
 
-using namespace::std;
+using namespace ::std;
 
 namespace blink {
 
 const int LayoutSlider::defaultTrackLength = 129;
 
 LayoutSlider::LayoutSlider(HTMLInputElement* element)
-    : LayoutFlexibleBox(element)
-{
-    // We assume LayoutSlider works only with <input type=range>.
-    ASSERT(element->type() == InputTypeNames::range);
+    : LayoutFlexibleBox(element) {
+  // We assume LayoutSlider works only with <input type=range>.
+  ASSERT(element->type() == InputTypeNames::range);
 }
 
-LayoutSlider::~LayoutSlider()
-{
+LayoutSlider::~LayoutSlider() {}
+
+int LayoutSlider::baselinePosition(FontBaseline,
+                                   bool /*firstLine*/,
+                                   LineDirectionMode,
+                                   LinePositionMode linePositionMode) const {
+  ASSERT(linePositionMode == PositionOnContainingLine);
+  // FIXME: Patch this function for writing-mode.
+  return (size().height() + marginTop()).toInt();
 }
 
-int LayoutSlider::baselinePosition(FontBaseline, bool /*firstLine*/, LineDirectionMode, LinePositionMode linePositionMode) const
-{
-    ASSERT(linePositionMode == PositionOnContainingLine);
-    // FIXME: Patch this function for writing-mode.
-    return size().height() + marginTop();
+void LayoutSlider::computeIntrinsicLogicalWidths(
+    LayoutUnit& minLogicalWidth,
+    LayoutUnit& maxLogicalWidth) const {
+  maxLogicalWidth = LayoutUnit(defaultTrackLength * style()->effectiveZoom());
+  if (!style()->width().isPercentOrCalc())
+    minLogicalWidth = maxLogicalWidth;
 }
 
-void LayoutSlider::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
-{
-    maxLogicalWidth = defaultTrackLength * style()->effectiveZoom();
-    if (!style()->width().hasPercent())
-        minLogicalWidth = maxLogicalWidth;
+inline SliderThumbElement* LayoutSlider::sliderThumbElement() const {
+  return toSliderThumbElement(
+      toElement(node())->userAgentShadowRoot()->getElementById(
+          ShadowElementNames::sliderThumb()));
 }
 
-inline SliderThumbElement* LayoutSlider::sliderThumbElement() const
-{
-    return toSliderThumbElement(toElement(node())->userAgentShadowRoot()->getElementById(ShadowElementNames::sliderThumb()));
+void LayoutSlider::layout() {
+  // FIXME: Find a way to cascade appearance.
+  // http://webkit.org/b/62535
+  LayoutBox* thumbBox = sliderThumbElement()->layoutBox();
+  if (thumbBox && thumbBox->isSliderThumb())
+    toLayoutSliderThumb(thumbBox)->updateAppearance(styleRef());
+
+  LayoutFlexibleBox::layout();
 }
 
-void LayoutSlider::layout()
-{
-    // FIXME: Find a way to cascade appearance.
-    // http://webkit.org/b/62535
-    LayoutBox* thumbBox = sliderThumbElement()->layoutBox();
-    if (thumbBox && thumbBox->isSliderThumb())
-        toLayoutSliderThumb(thumbBox)->updateAppearance(styleRef());
-
-    LayoutFlexibleBox::layout();
+bool LayoutSlider::inDragMode() const {
+  return sliderThumbElement()->isActive();
 }
 
-bool LayoutSlider::inDragMode() const
-{
-    return sliderThumbElement()->active();
-}
-
-} // namespace blink
+}  // namespace blink

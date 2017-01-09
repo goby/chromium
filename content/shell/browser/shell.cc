@@ -4,15 +4,20 @@
 
 #include "content/shell/browser/shell.h"
 
+#include <stddef.h>
+
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -23,17 +28,18 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/renderer_preferences.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
-#include "content/shell/browser/blink_test_controller.h"
+#include "content/shell/browser/layout_test/blink_test_controller.h"
 #include "content/shell/browser/layout_test/layout_test_bluetooth_chooser_factory.h"
 #include "content/shell/browser/layout_test/layout_test_devtools_frontend.h"
 #include "content/shell/browser/layout_test/layout_test_javascript_dialog_manager.h"
-#include "content/shell/browser/notify_done_forwarder.h"
+#include "content/shell/browser/layout_test/secondary_test_window_observer.h"
 #include "content/shell/browser/shell_browser_main_parts.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_devtools_frontend.h"
 #include "content/shell/browser/shell_javascript_dialog_manager.h"
 #include "content/shell/common/shell_messages.h"
 #include "content/shell/common/shell_switches.h"
+#include "media/media_features.h"
 
 namespace content {
 
@@ -72,9 +78,7 @@ Shell::Shell(WebContents* web_contents)
       url_edit_view_(NULL),
 #endif
       headless_(false) {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kRunLayoutTest))
+  if (switches::IsRunLayoutTestSwitchPresent())
     headless_ = true;
   windows_.push_back(this);
 
@@ -114,13 +118,16 @@ Shell* Shell::CreateShell(WebContents* web_contents,
 
   shell->PlatformResizeSubViews();
 
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kRunLayoutTest)) {
+  // Note: Do not make RenderFrameHost or RenderViewHost specific state changes
+  // here, because they will be forgotten after a cross-process navigation. Use
+  // RenderFrameCreated or RenderViewCreated instead.
+  if (switches::IsRunLayoutTestSwitchPresent()) {
     web_contents->GetMutableRendererPrefs()->use_custom_colors = false;
     web_contents->GetRenderViewHost()->SyncRendererPrefs();
   }
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kForceWebRtcIPHandlingPolicy)) {
     web_contents->GetMutableRendererPrefs()->webrtc_ip_handling_policy =
         command_line->GetSwitchValueASCII(
@@ -137,7 +144,7 @@ void Shell::CloseAllWindows() {
   std::vector<Shell*> open_windows(windows_);
   for (size_t i = 0; i < open_windows.size(); ++i)
     open_windows[i]->Close();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   PlatformExit();
 }
 
@@ -170,7 +177,7 @@ gfx::Size Shell::AdjustWindowSize(const gfx::Size& initial_size) {
 
 Shell* Shell::CreateNewWindow(BrowserContext* browser_context,
                               const GURL& url,
-                              SiteInstance* site_instance,
+                              const scoped_refptr<SiteInstance>& site_instance,
                               const gfx::Size& initial_size) {
   WebContents::CreateParams create_params(browser_context, site_instance);
   create_params.initial_size = AdjustWindowSize(initial_size);
@@ -196,8 +203,40 @@ void Shell::LoadURLForFrame(const GURL& url, const std::string& frame_name) {
 
 void Shell::LoadDataWithBaseURL(const GURL& url, const std::string& data,
     const GURL& base_url) {
-  const GURL data_url = GURL("data:text/html;charset=utf-8," + data);
-  NavigationController::LoadURLParams params(data_url);
+  bool load_as_string = false;
+  LoadDataWithBaseURLInternal(url, data, base_url, load_as_string);
+}
+
+#if defined(OS_ANDROID)
+void Shell::LoadDataAsStringWithBaseURL(const GURL& url,
+                                        const std::string& data,
+                                        const GURL& base_url) {
+  bool load_as_string = true;
+  LoadDataWithBaseURLInternal(url, data, base_url, load_as_string);
+}
+#endif
+
+void Shell::LoadDataWithBaseURLInternal(const GURL& url,
+                                        const std::string& data,
+                                        const GURL& base_url,
+                                        bool load_as_string) {
+#if !defined(OS_ANDROID)
+  DCHECK(!load_as_string);  // Only supported on Android.
+#endif
+
+  NavigationController::LoadURLParams params(GURL::EmptyGURL());
+  const std::string data_url_header = "data:text/html;charset=utf-8,";
+  if (load_as_string) {
+    params.url = GURL(data_url_header);
+    std::string data_url_as_string = data_url_header + data;
+#if defined(OS_ANDROID)
+    params.data_url_as_string =
+        base::RefCountedString::TakeString(&data_url_as_string);
+#endif
+  } else {
+    params.url = GURL(data_url_header + data);
+  }
+
   params.load_type = NavigationController::LOAD_TYPE_DATA;
   params.base_url_for_data_url = base_url;
   params.virtual_url_for_data_url = url;
@@ -213,9 +252,8 @@ void Shell::AddNewContents(WebContents* source,
                            bool user_gesture,
                            bool* was_blocked) {
   CreateShell(new_contents, AdjustWindowSize(initial_rect.size()));
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kRunLayoutTest))
-    NotifyDoneForwarder::CreateForWebContents(new_contents);
+  if (switches::IsRunLayoutTestSwitchPresent())
+    SecondaryTestWindowObserver::CreateForWebContents(new_contents);
 }
 
 void Shell::GoBackOrForward(int offset) {
@@ -225,6 +263,11 @@ void Shell::GoBackOrForward(int offset) {
 
 void Shell::Reload() {
   web_contents_->GetController().Reload(false);
+  web_contents_->Focus();
+}
+
+void Shell::ReloadBypassingCache() {
+  web_contents_->GetController().ReloadBypassingCache(false);
   web_contents_->Focus();
 }
 
@@ -244,12 +287,14 @@ void Shell::UpdateNavigationControls(bool to_different_document) {
 }
 
 void Shell::ShowDevTools() {
-  InnerShowDevTools();
-}
+  if (!devtools_frontend_) {
+    devtools_frontend_ = ShellDevToolsFrontend::Show(web_contents());
+    devtools_observer_.reset(new DevToolsWebContentsObserver(
+        this, devtools_frontend_->frontend_shell()->web_contents()));
+  }
 
-void Shell::ShowDevToolsForElementAt(int x, int y) {
-  InnerShowDevTools();
-  devtools_frontend_->InspectElementAt(x, y);
+  devtools_frontend_->Activate();
+  devtools_frontend_->Focus();
 }
 
 void Shell::CloseDevTools() {
@@ -264,6 +309,69 @@ gfx::NativeView Shell::GetContentView() {
   if (!web_contents_)
     return NULL;
   return web_contents_->GetNativeView();
+}
+
+WebContents* Shell::OpenURLFromTab(WebContents* source,
+                                   const OpenURLParams& params) {
+  WebContents* target = nullptr;
+  switch (params.disposition) {
+    case WindowOpenDisposition::CURRENT_TAB:
+      target = source;
+      break;
+
+    // Normally, the difference between NEW_POPUP and NEW_WINDOW is that a popup
+    // should have no toolbar, no status bar, no menu bar, no scrollbars and be
+    // not resizable.  For simplicity and to enable new testing scenarios in
+    // content shell and layout tests, popups don't get special treatment below
+    // (i.e. they will have a toolbar and other things described here).
+    case WindowOpenDisposition::NEW_POPUP:
+    case WindowOpenDisposition::NEW_WINDOW: {
+      Shell* new_window =
+          Shell::CreateNewWindow(source->GetBrowserContext(),
+                                 GURL(),  // Don't load anything just yet.
+                                 params.source_site_instance,
+                                 gfx::Size());  // Use default size.
+      target = new_window->web_contents();
+      if (switches::IsRunLayoutTestSwitchPresent())
+        SecondaryTestWindowObserver::CreateForWebContents(target);
+      break;
+    }
+
+    // No tabs in content_shell:
+    case WindowOpenDisposition::SINGLETON_TAB:
+    case WindowOpenDisposition::NEW_FOREGROUND_TAB:
+    case WindowOpenDisposition::NEW_BACKGROUND_TAB:
+    // No incognito mode in content_shell:
+    case WindowOpenDisposition::OFF_THE_RECORD:
+    // TODO(lukasza): Investigate if some layout tests might need support for
+    // SAVE_TO_DISK disposition.  This would probably require that
+    // BlinkTestController always sets up and cleans up a temporary directory
+    // as the default downloads destinations for the duration of a test.
+    case WindowOpenDisposition::SAVE_TO_DISK:
+    // Ignoring requests with disposition == IGNORE_ACTION...
+    case WindowOpenDisposition::IGNORE_ACTION:
+    default:
+      return nullptr;
+  }
+
+  NavigationController::LoadURLParams load_url_params(params.url);
+  load_url_params.source_site_instance = params.source_site_instance;
+  load_url_params.transition_type = params.transition;
+  load_url_params.frame_tree_node_id = params.frame_tree_node_id;
+  load_url_params.referrer = params.referrer;
+  load_url_params.redirect_chain = params.redirect_chain;
+  load_url_params.extra_headers = params.extra_headers;
+  load_url_params.is_renderer_initiated = params.is_renderer_initiated;
+  load_url_params.should_replace_current_entry =
+      params.should_replace_current_entry;
+
+  if (params.uses_post) {
+    load_url_params.load_type = NavigationController::LOAD_TYPE_HTTP_POST;
+    load_url_params.post_data = params.post_data;
+  }
+
+  target->GetController().LoadURLWithParams(load_url_params);
+  return target;
 }
 
 void Shell::LoadingStateChanged(WebContents* source,
@@ -286,8 +394,7 @@ void Shell::ToggleFullscreenModeForTab(WebContents* web_contents,
 #if defined(OS_ANDROID)
   PlatformToggleFullscreenModeForTab(web_contents, enter_fullscreen);
 #endif
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kRunLayoutTest))
+  if (!switches::IsRunLayoutTestSwitchPresent())
     return;
   if (is_fullscreen_ != enter_fullscreen) {
     is_fullscreen_ = enter_fullscreen;
@@ -337,50 +444,40 @@ void Shell::DidNavigateMainFramePostCommit(WebContents* web_contents) {
 JavaScriptDialogManager* Shell::GetJavaScriptDialogManager(
     WebContents* source) {
   if (!dialog_manager_) {
-    const base::CommandLine& command_line =
-        *base::CommandLine::ForCurrentProcess();
-    dialog_manager_.reset(command_line.HasSwitch(switches::kRunLayoutTest)
-        ? new LayoutTestJavaScriptDialogManager
-        : new ShellJavaScriptDialogManager);
+    dialog_manager_.reset(switches::IsRunLayoutTestSwitchPresent()
+                              ? new LayoutTestJavaScriptDialogManager
+                              : new ShellJavaScriptDialogManager);
   }
   return dialog_manager_.get();
 }
 
-scoped_ptr<BluetoothChooser> Shell::RunBluetoothChooser(
-    WebContents* web_contents,
-    const BluetoothChooser::EventHandler& event_handler,
-    const GURL& origin) {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kRunLayoutTest)) {
-    return BlinkTestController::Get()->RunBluetoothChooser(
-        web_contents, event_handler, origin);
+std::unique_ptr<BluetoothChooser> Shell::RunBluetoothChooser(
+    RenderFrameHost* frame,
+    const BluetoothChooser::EventHandler& event_handler) {
+  if (switches::IsRunLayoutTestSwitchPresent()) {
+    return BlinkTestController::Get()->RunBluetoothChooser(frame,
+                                                           event_handler);
   }
   return nullptr;
 }
 
-bool Shell::AddMessageToConsole(WebContents* source,
-                                int32 level,
-                                const base::string16& message,
-                                int32 line_no,
-                                const base::string16& source_id) {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kRunLayoutTest);
+bool Shell::DidAddMessageToConsole(WebContents* source,
+                                   int32_t level,
+                                   const base::string16& message,
+                                   int32_t line_no,
+                                   const base::string16& source_id) {
+  return switches::IsRunLayoutTestSwitchPresent();
 }
 
-void Shell::RendererUnresponsive(WebContents* source) {
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kRunLayoutTest))
-    return;
-  BlinkTestController::Get()->RendererUnresponsive();
+void Shell::RendererUnresponsive(
+    WebContents* source,
+    const WebContentsUnresponsiveState& unresponsive_state) {
+  if (switches::IsRunLayoutTestSwitchPresent())
+    BlinkTestController::Get()->RendererUnresponsive();
 }
 
 void Shell::ActivateContents(WebContents* contents) {
   contents->GetRenderViewHost()->GetWidget()->Focus();
-}
-
-bool Shell::HandleContextMenu(const content::ContextMenuParams& params) {
-  return PlatformHandleContextMenu(params);
 }
 
 gfx::Size Shell::GetShellDefaultSize() {
@@ -404,17 +501,6 @@ gfx::Size Shell::GetShellDefaultSize() {
 void Shell::TitleWasSet(NavigationEntry* entry, bool explicit_set) {
   if (entry)
     PlatformSetTitle(entry->GetTitle());
-}
-
-void Shell::InnerShowDevTools() {
-  if (!devtools_frontend_) {
-    devtools_frontend_ = ShellDevToolsFrontend::Show(web_contents());
-    devtools_observer_.reset(new DevToolsWebContentsObserver(
-        this, devtools_frontend_->frontend_shell()->web_contents()));
-  }
-
-  devtools_frontend_->Activate();
-  devtools_frontend_->Focus();
 }
 
 void Shell::OnDevToolsWebContentsDestroyed() {

@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/logging.h"
 #include "net/base/net_export.h"
 #include "net/disk_cache/blockfile/disk_format_base.h"
 
@@ -31,7 +32,6 @@ const int kMaxBlockSize = 4096 * 4;
 const int16_t kMaxBlockFile = 255;
 const int kMaxNumBlocks = 4;
 const int16_t kFirstAdditionalBlockFile = 4;
-const size_t kFirstAdditionalBlockFileV3 = 7;
 
 // Defines a storage address for a cache record
 //
@@ -139,9 +139,11 @@ class NET_EXPORT_PRIVATE Addr {
         return 104;
       case BLOCK_EVICTED:
         return 48;
-      default:
+      case EXTERNAL:
+        NOTREACHED();
         return 0;
     }
+    return 0;
   }
 
   static FileType RequiredFileType(int size) {
@@ -161,10 +163,8 @@ class NET_EXPORT_PRIVATE Addr {
   }
 
   // Returns true if this address looks like a valid one.
-  bool SanityCheckV2() const;
-  bool SanityCheckV3() const;
-  bool SanityCheckForEntryV2() const;
-  bool SanityCheckForEntryV3() const;
+  bool SanityCheck() const;
+  bool SanityCheckForEntry() const;
   bool SanityCheckForRankings() const;
 
  private:

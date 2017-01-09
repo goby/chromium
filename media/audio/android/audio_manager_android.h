@@ -8,6 +8,7 @@
 #include <set>
 
 #include "base/android/jni_android.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "media/audio/audio_manager_base.h"
@@ -19,7 +20,12 @@ class OpenSLESOutputStream;
 // Android implemention of AudioManager.
 class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
  public:
-  explicit AudioManagerAndroid(AudioLogFactory* audio_log_factory);
+  AudioManagerAndroid(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+      AudioLogFactory* audio_log_factory);
+
+  void InitializeIfNeeded();
 
   // Implementation of AudioManager.
   bool HasAudioOutputDevices() override;
@@ -31,24 +37,32 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
 
   AudioOutputStream* MakeAudioOutputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
-  AudioInputStream* MakeAudioInputStream(const AudioParameters& params,
-                                         const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
+  AudioInputStream* MakeAudioInputStream(
+      const AudioParameters& params,
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   void ReleaseOutputStream(AudioOutputStream* stream) override;
   void ReleaseInputStream(AudioInputStream* stream) override;
+  const char* GetName() override;
 
   // Implementation of AudioManagerBase.
   AudioOutputStream* MakeLinearOutputStream(
-      const AudioParameters& params) override;
+      const AudioParameters& params,
+      const LogCallback& log_callback) override;
   AudioOutputStream* MakeLowLatencyOutputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLinearInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLowLatencyInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
 
   static bool RegisterAudioManager(JNIEnv* env);
 
@@ -69,9 +83,7 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
       const AudioParameters& input_params) override;
 
  private:
-  void InitializeOnAudioThread();
-  void ShutdownOnAudioThread();
-
+  jobject GetJavaAudioManager();
   bool HasNoAudioInputStreams();
   void SetCommunicationAudioModeOn(bool on);
   bool SetAudioDevice(const std::string& device_id);

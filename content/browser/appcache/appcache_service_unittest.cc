@@ -2,15 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/appcache/appcache_response.h"
 #include "content/browser/appcache/appcache_service_impl.h"
 #include "content/browser/appcache/mock_appcache_storage.h"
@@ -22,11 +25,11 @@
 namespace content {
 namespace {
 
-const int64 kMockGroupId = 1;
-const int64 kMockCacheId = 1;
-const int64 kMockResponseId = 1;
-const int64 kMissingCacheId = 5;
-const int64 kMissingResponseId = 5;
+const int64_t kMockGroupId = 1;
+const int64_t kMockCacheId = 1;
+const int64_t kMockResponseId = 1;
+const int64_t kMissingCacheId = 5;
+const int64_t kMissingResponseId = 5;
 const char kMockHeaders[] =
     "HTTP/1.0 200 OK\0Content-Length: 5\0\0";
 const char kMockBody[] = "Hello";
@@ -34,13 +37,17 @@ const int kMockBodySize = 5;
 
 class MockResponseReader : public AppCacheResponseReader {
  public:
-  MockResponseReader(int64 response_id,
-                     net::HttpResponseInfo* info, int info_size,
-                     const char* data, int data_size)
-      : AppCacheResponseReader(response_id, 0, NULL),
-        info_(info), info_size_(info_size),
-        data_(data), data_size_(data_size) {
-  }
+  MockResponseReader(int64_t response_id,
+                     net::HttpResponseInfo* info,
+                     int info_size,
+                     const char* data,
+                     int data_size)
+      : AppCacheResponseReader(response_id,
+                               base::WeakPtr<AppCacheDiskCacheInterface>()),
+        info_(info),
+        info_size_(info_size),
+        data_(data),
+        data_size_(data_size) {}
   void ReadInfo(HttpResponseInfoIOBuffer* info_buf,
                 const net::CompletionCallback& callback) override {
     info_buffer_ = info_buf;
@@ -75,7 +82,7 @@ class MockResponseReader : public AppCacheResponseReader {
                               weak_factory_.GetWeakPtr(), result));
   }
 
-  scoped_ptr<net::HttpResponseInfo> info_;
+  std::unique_ptr<net::HttpResponseInfo> info_;
   int info_size_;
   const char* data_;
   int data_size_;
@@ -120,7 +127,7 @@ class AppCacheServiceImplTest : public testing::Test {
   }
 
   void SetupMockGroup() {
-    scoped_ptr<net::HttpResponseInfo> info(MakeMockResponseInfo());
+    std::unique_ptr<net::HttpResponseInfo> info(MakeMockResponseInfo());
     const int kMockInfoSize = GetResponseInfoSize(info.get());
 
     // Create a mock group, cache, and entry and stuff them into mock storage.
@@ -175,7 +182,7 @@ class AppCacheServiceImplTest : public testing::Test {
   const GURL kOrigin;
   const GURL kManifestUrl;
 
-  scoped_ptr<AppCacheServiceImpl> service_;
+  std::unique_ptr<AppCacheServiceImpl> service_;
   int delete_result_;
   int delete_completion_count_;
   net::CompletionCallback deletion_callback_;
@@ -329,7 +336,7 @@ TEST_F(AppCacheServiceImplTest, ScheduleReinitialize) {
   const base::TimeDelta kOneHour(base::TimeDelta::FromHours(1));
 
   // Do things get initialized as expected?
-  scoped_ptr<AppCacheServiceImpl> service(new AppCacheServiceImpl(NULL));
+  std::unique_ptr<AppCacheServiceImpl> service(new AppCacheServiceImpl(NULL));
   EXPECT_TRUE(service->last_reinit_time_.is_null());
   EXPECT_FALSE(service->reinit_timer_.IsRunning());
   EXPECT_EQ(kNoDelay, service->next_reinit_delay_);

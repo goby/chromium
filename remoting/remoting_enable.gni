@@ -2,20 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# Keep in sync with remoting/remoting_enable.gypi.
-
 import("//build/config/ui.gni")
+
+declare_args() {
+  enable_remoting = !is_ios && !is_chromecast
+}
 
 enable_remoting_host = false
 enable_me2me_host = false
 
-# TODO(GYP) Make remoting hosts work on Windows and Mac.
-#if (is_win || is_mac) {
-#  enable_remoting_host = true
-#  enable_me2me_host = true
-#}
-
-if (is_linux && !is_chromeos && use_x11) {
+if (is_win || (is_linux && !is_chromeos && use_x11) || is_mac) {
   enable_remoting_host = true
   enable_me2me_host = true
 }

@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -13,7 +14,6 @@
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
@@ -28,6 +28,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/value_builder.h"
 
@@ -50,10 +51,11 @@ scoped_refptr<const Extension> CreateTestExtension(
     permissions.Append("tabCapture");
   return ExtensionBuilder()
       .SetManifest(DictionaryBuilder()
-          .Set("name", "Extension with ID " + id)
-          .Set("version", "1.0")
-          .Set("manifest_version", 2)
-          .Set("permissions", permissions))
+                       .Set("name", "Extension with ID " + id)
+                       .Set("version", "1.0")
+                       .Set("manifest_version", 2)
+                       .Set("permissions", permissions.Build())
+                       .Build())
       .SetID(id)
       .Build();
 }
@@ -108,8 +110,8 @@ class ActiveTabTest : public ChromeRenderViewHostTestHarness {
                  PermittedFeature feature,
                  int tab_id) {
     const PermissionsData* permissions_data = extension->permissions_data();
-    bool script = permissions_data->CanAccessPage(
-        extension.get(), url, tab_id, -1, NULL);
+    bool script =
+        permissions_data->CanAccessPage(extension.get(), url, tab_id, nullptr);
     bool capture = HasTabsPermission(extension, tab_id) &&
                    permissions_data->CanCaptureVisiblePage(tab_id, NULL);
     switch (feature) {

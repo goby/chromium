@@ -13,9 +13,14 @@
 // The "GGLA" brand is used to test the normal code flow of the code, and the
 // "TEST" brand is used to test the supplementary brand code code flow.
 
-#include "base/posix/eintr_wrapper.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/posix/eintr_wrapper.h"
+#include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -444,8 +449,7 @@ TEST_F(RlzLibTest, SendFinancialPing) {
   ASSERT_TRUE(io_thread.StartWithOptions(options));
 
   scoped_refptr<net::TestURLRequestContextGetter> context =
-      new net::TestURLRequestContextGetter(
-          io_thread.message_loop()->task_runner());
+      new net::TestURLRequestContextGetter(io_thread.task_runner());
   rlz_lib::SetURLRequestContext(context.get());
 
   URLRequestRAII set_context(context.get());
@@ -497,8 +501,7 @@ TEST_F(RlzLibTest, SendFinancialPingDuringShutdown) {
   ASSERT_TRUE(io_thread.StartWithOptions(options));
 
   scoped_refptr<net::TestURLRequestContextGetter> context =
-      new net::TestURLRequestContextGetter(
-          io_thread.message_loop()->task_runner());
+      new net::TestURLRequestContextGetter(io_thread.task_runner());
   rlz_lib::SetURLRequestContext(context.get());
 
   URLRequestRAII set_context(context.get());
@@ -510,7 +513,7 @@ TEST_F(RlzLibTest, SendFinancialPingDuringShutdown) {
   EXPECT_FALSE(rlz_lib::test::WasSendFinancialPingInterrupted());
 
   base::MessageLoop loop;
-  loop.PostTask(FROM_HERE, base::Bind(&ResetContext));
+  loop.task_runner()->PostTask(FROM_HERE, base::Bind(&ResetContext));
   std::string request;
   EXPECT_FALSE(rlz_lib::SendFinancialPing(rlz_lib::TOOLBAR_NOTIFIER, points,
       "swg", "GGLA", "SwgProductId1234", "en-UK", false,
@@ -571,7 +574,7 @@ TEST_F(RlzLibTest, ClearProductState) {
 #if defined(OS_WIN)
 template<class T>
 class typed_buffer_ptr {
-  scoped_ptr<char[]> buffer_;
+  std::unique_ptr<char[]> buffer_;
 
  public:
   typed_buffer_ptr() {
@@ -844,8 +847,8 @@ class ReadonlyRlzDirectoryTest : public RlzLibTestNoMachineState {
 void ReadonlyRlzDirectoryTest::SetUp() {
   RlzLibTestNoMachineState::SetUp();
   // Make the rlz directory non-writeable.
-  int chmod_result = chmod(m_rlz_test_helper_.temp_dir_.path().value().c_str(),
-                           0500);
+  int chmod_result =
+      chmod(m_rlz_test_helper_.temp_dir_.GetPath().value().c_str(), 0500);
   ASSERT_EQ(0, chmod_result);
 }
 

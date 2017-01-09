@@ -5,41 +5,23 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_NON_CLIENT_FRAME_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_NON_CLIENT_FRAME_VIEW_H_
 
-#include "chrome/browser/profiles/profile_info_cache_observer.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
+#include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
 #include "ui/views/window/non_client_view.h"
 
-#if defined(FRAME_AVATAR_BUTTON)
-#include "chrome/browser/ui/views/profiles/new_avatar_button.h"
-#endif
-
-#if defined(ENABLE_SUPERVISED_USERS)
-class SupervisedUserAvatarLabel;
-#endif
-class AvatarMenuButton;
 class BrowserFrame;
 class BrowserView;
 
 // A specialization of the NonClientFrameView object that provides additional
 // Browser-specific methods.
 class BrowserNonClientFrameView : public views::NonClientFrameView,
-                                  public ProfileInfoCacheObserver {
+                                  public ProfileAttributesStorage::Observer {
  public:
   BrowserNonClientFrameView(BrowserFrame* frame, BrowserView* browser_view);
   ~BrowserNonClientFrameView() override;
 
-  AvatarMenuButton* avatar_button() const { return avatar_button_; }
-
-#if defined(FRAME_AVATAR_BUTTON)
-  NewAvatarButton* new_avatar_button() const { return new_avatar_button_; }
-#endif
-
-#if defined(ENABLE_SUPERVISED_USERS)
-  SupervisedUserAvatarLabel* supervised_user_avatar_label() const {
-    return supervised_user_avatar_label_;
-  }
-
-  void OnThemeChanged() override;
-#endif
+  BrowserView* browser_view() const { return browser_view_; }
+  BrowserFrame* frame() const { return frame_; }
 
   // Called when BrowserView creates all it's child views.
   virtual void OnBrowserViewInitViewsComplete();
@@ -59,6 +41,13 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // Returns the amount that the theme background should be inset.
   virtual int GetThemeBackgroundXInset() const = 0;
 
+  // Retrieves the icon to use in the frame to indicate an incognito window.
+  gfx::ImageSkia GetIncognitoAvatarIcon() const;
+
+  // Returns COLOR_TOOLBAR_TOP_SEPARATOR[,_INACTIVE] depending on the activation
+  // state of the window.
+  SkColor GetToolbarTopSeparatorColor() const;
+
   // Updates the throbber.
   virtual void UpdateThrobber(bool running) = 0;
 
@@ -69,52 +58,62 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // Returns the location icon, if this frame has any.
   virtual views::View* GetLocationIconView() const;
 
+  // Returns the profile switcher button, if this frame has any.
+  virtual views::View* GetProfileSwitcherView() const;
+
   // Overriden from views::View.
   void VisibilityChanged(views::View* starting_from, bool is_visible) override;
-  void ChildPreferredSizeChanged(View* child) override;
 
  protected:
-  BrowserView* browser_view() const { return browser_view_; }
-  BrowserFrame* frame() const { return frame_; }
-
   // Whether the frame should be painted with theming.
   // By default, tabbed browser windows are themed but popup and app windows are
   // not.
   virtual bool ShouldPaintAsThemed() const;
 
   // Compute aspects of the frame needed to paint the frame background.
+  SkColor GetFrameColor(bool active) const;
+  gfx::ImageSkia GetFrameImage(bool active) const;
+  gfx::ImageSkia GetFrameOverlayImage(bool active) const;
+
+  // Convenience versions of the above which use ShouldPaintAsActive() for
+  // |active|.
   SkColor GetFrameColor() const;
-  gfx::ImageSkia* GetFrameImage() const;
-  gfx::ImageSkia* GetFrameOverlayImage() const;
-  int GetTopAreaHeight() const;
+  gfx::ImageSkia GetFrameImage() const;
+  gfx::ImageSkia GetFrameOverlayImage() const;
 
-  // Updates the avatar button using the old or new UI based on the BrowserView
-  // type, and the presence of the --enable-new-avatar-menu flag. Calls either
-  // UpdateOldAvatarButton() or UpdateNewAvatarButtonImpl() accordingly.
-  void UpdateAvatar();
+  // Updates the profile switcher button if one should exist. Otherwise, updates
+  // the icon that indicates incognito (or a teleported window in ChromeOS).
+  virtual void UpdateProfileIcons() = 0;
 
-  // Updates the title and icon of the old avatar button.
-  void UpdateOldAvatarButton();
+  // Updates the icon that indicates incognito/teleportation state.
+  void UpdateProfileIndicatorIcon();
 
-  // Updates the avatar button displayed in the caption area by calling
-  // UpdateNewAvatarButton() with an implementation specific |listener|
-  // and button |style|.
-  virtual void UpdateNewAvatarButtonImpl() = 0;
+  const views::View* profile_indicator_icon() const {
+    return profile_indicator_icon_;
+  }
+  views::View* profile_indicator_icon() {
+    return profile_indicator_icon_;
+  }
 
-#if defined(FRAME_AVATAR_BUTTON)
-  // Updates the title of the avatar button displayed in the caption area.
-  // The button uses |style| to match the browser window style and notifies
-  // |listener| when it is clicked.
-  void UpdateNewAvatarButton(views::ButtonListener* listener,
-                             const NewAvatarButton::AvatarButtonStyle style);
-#endif
+  // views::NonClientFrameView:
+  bool DoesIntersectRect(const views::View* target,
+                         const gfx::Rect& rect) const override;
 
  private:
-  // Overriden from ProfileInfoCacheObserver.
+  // views::NonClientFrameView:
+  void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) override;
+  void ActivationChanged(bool active) override;
+
+  // ProfileAttributesStorage::Observer:
   void OnProfileAdded(const base::FilePath& profile_path) override;
   void OnProfileWasRemoved(const base::FilePath& profile_path,
                            const base::string16& profile_name) override;
   void OnProfileAvatarChanged(const base::FilePath& profile_path) override;
+
+  // Gets a theme provider that should be non-null even before we're added to a
+  // view hierarchy.
+  const ui::ThemeProvider* GetThemeProviderForProfile() const;
 
   // Draws a taskbar icon if avatars are enabled, erases it otherwise.
   void UpdateTaskbarDecoration();
@@ -125,19 +124,11 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // The BrowserView hosted within this View.
   BrowserView* browser_view_;
 
-#if defined(ENABLE_SUPERVISED_USERS)
-  SupervisedUserAvatarLabel* supervised_user_avatar_label_;
-#endif
+  // On desktop, this is used to show an incognito icon. On CrOS, it's also used
+  // for teleported windows (in multi-profile mode).
+  ProfileIndicatorIcon* profile_indicator_icon_;
 
-#if defined(FRAME_AVATAR_BUTTON)
-  // Menu button that displays the name of the active or guest profile.
-  // May be null and will not be displayed for off the record profiles.
-  NewAvatarButton* new_avatar_button_;
-#endif
-
-  // Menu button that displays the incognito icon. May be null for some frame
-  // styles. TODO(anthonyvd): simplify/rename.
-  AvatarMenuButton* avatar_button_;
+  DISALLOW_COPY_AND_ASSIGN(BrowserNonClientFrameView);
 };
 
 namespace chrome {

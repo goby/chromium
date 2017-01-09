@@ -22,21 +22,24 @@ class ShellPermissionManager : public PermissionManager {
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       bool user_gesture,
-      const base::Callback<void(PermissionStatus)>& callback) override;
+      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
+      override;
   int RequestPermissions(
       const std::vector<PermissionType>& permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       bool user_gesture,
-      const base::Callback<void(
-          const std::vector<PermissionStatus>&)>& callback) override;
+      const base::Callback<
+          void(const std::vector<blink::mojom::PermissionStatus>&)>& callback)
+      override;
   void CancelPermissionRequest(int request_id) override;
   void ResetPermission(PermissionType permission,
                        const GURL& requesting_origin,
                        const GURL& embedding_origin) override;
-  PermissionStatus GetPermissionStatus(PermissionType permission,
-                                       const GURL& requesting_origin,
-                                       const GURL& embedding_origin) override;
+  blink::mojom::PermissionStatus GetPermissionStatus(
+      PermissionType permission,
+      const GURL& requesting_origin,
+      const GURL& embedding_origin) override;
   void RegisterPermissionUsage(PermissionType permission,
                                const GURL& requesting_origin,
                                const GURL& embedding_origin) override;
@@ -44,7 +47,8 @@ class ShellPermissionManager : public PermissionManager {
       PermissionType permission,
       const GURL& requesting_origin,
       const GURL& embedding_origin,
-      const base::Callback<void(PermissionStatus)>& callback) override;
+      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
+      override;
   void UnsubscribePermissionStatusChange(int subscription_id) override;
 
  private:

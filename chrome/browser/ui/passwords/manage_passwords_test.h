@@ -5,16 +5,19 @@
 #ifndef CHROME_BROWSER_UI_PASSWORDS_MANAGE_PASSWORDS_TEST_H_
 #define CHROME_BROWSER_UI_PASSWORDS_MANAGE_PASSWORDS_TEST_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/test/histogram_tester.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/fake_form_fetcher.h"
+#include "components/password_manager/core/browser/stub_password_manager_client.h"
+#include "components/password_manager/core/browser/stub_password_manager_driver.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-class GURL;
 class ManagePasswordsIconView;
 class PasswordsClientUIDelegate;
 
@@ -43,18 +46,12 @@ class ManagePasswordsTest : public InProcessBrowserTest {
   // Put the controller, icon, and bubble into a pending-password state.
   void SetupPendingPassword();
 
-  // Put the controller, icon, and bubble into a choosing credential state.
-  void SetupChooseCredentials(
-      ScopedVector<autofill::PasswordForm> local_credentials,
-      ScopedVector<autofill::PasswordForm> federated_credentials,
-      const GURL& origin);
-
   // Put the controller, icon, and bubble into an auto sign-in state.
   void SetupAutoSignin(
-      ScopedVector<autofill::PasswordForm> local_credentials);
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials);
 
   // Get samples for |histogram|.
-  scoped_ptr<base::HistogramSamples> GetSamples(const char* histogram);
+  std::unique_ptr<base::HistogramSamples> GetSamples(const char* histogram);
 
   autofill::PasswordForm* test_form() { return &test_form_; }
 
@@ -67,6 +64,9 @@ class ManagePasswordsTest : public InProcessBrowserTest {
  private:
   autofill::PasswordForm test_form_;
   base::HistogramTester histogram_tester_;
+  password_manager::StubPasswordManagerClient client_;
+  password_manager::StubPasswordManagerDriver driver_;
+  password_manager::FakeFormFetcher fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagePasswordsTest);
 };

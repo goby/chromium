@@ -5,13 +5,22 @@
 #ifndef CONTENT_BROWSER_BROWSER_MAIN_LOOP_H_
 #define CONTENT_BROWSER_BROWSER_MAIN_LOOP_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "content/browser/browser_process_sub_thread.h"
 #include "content/public/browser/browser_main_runner.h"
+#include "media/audio/audio_manager.h"
+
+#if defined(USE_AURA)
+namespace aura {
+class Env;
+}
+#endif
 
 namespace base {
 class CommandLine;
@@ -26,17 +35,31 @@ class TraceEventSystemStatsMonitor;
 }  // namespace trace_event
 }  // namespace base
 
-namespace IPC {
-class ScopedIPCSupport;
+namespace device {
+class TimeZoneMonitor;
 }
 
 namespace media {
-class AudioManager;
+#if defined(OS_WIN)
+class SystemMessageWindowWin;
+#elif defined(OS_LINUX) && defined(USE_UDEV)
+class DeviceMonitorLinux;
+#endif
 class UserInputMonitor;
+#if defined(OS_MACOSX)
+class DeviceMonitorMac;
+#endif
+}  // namespace media
+
 namespace midi {
 class MidiManager;
 }  // namespace midi
-}  // namespace media
+
+namespace mojo {
+namespace edk {
+class ScopedIPCSupport;
+}  // namespace edk
+}  // namespace mojo
 
 namespace net {
 class NetworkChangeNotifier;
@@ -49,25 +72,29 @@ class ClientNativePixmapFactory;
 #endif
 
 namespace content {
+class AudioDeviceThread;
 class BrowserMainParts;
 class BrowserOnlineStateObserver;
 class BrowserThreadImpl;
+class LoaderDelegateImpl;
 class MediaStreamManager;
-class MojoShellContext;
 class ResourceDispatcherHostImpl;
+class SaveFileManager;
+class ServiceManagerContext;
 class SpeechRecognitionManagerImpl;
 class StartupTaskRunner;
-class TimeZoneMonitor;
 struct MainFunctionParams;
 
 #if defined(OS_ANDROID)
 class ScreenOrientationDelegate;
-#elif defined(OS_LINUX)
-class DeviceMonitorLinux;
-#elif defined(OS_MACOSX)
-class DeviceMonitorMac;
 #elif defined(OS_WIN)
-class SystemMessageWindowWin;
+class ScreenOrientationDelegate;
+#endif
+
+#if defined(USE_X11) && !defined(OS_CHROMEOS)
+namespace internal {
+class GpuDataManagerVisualProxy;
+}
 #endif
 
 // Implements the main browser loop stages called from BrowserMainRunner.
@@ -115,7 +142,10 @@ class CONTENT_EXPORT BrowserMainLoop {
   media::UserInputMonitor* user_input_monitor() const {
     return user_input_monitor_.get();
   }
-  media::midi::MidiManager* midi_manager() const { return midi_manager_.get(); }
+  device::TimeZoneMonitor* time_zone_monitor() const {
+    return time_zone_monitor_.get();
+  }
+  midi::MidiManager* midi_manager() const { return midi_manager_.get(); }
   base::Thread* indexed_db_thread() const { return indexed_db_thread_.get(); }
 
   bool is_tracing_startup_for_duration() const {
@@ -129,7 +159,7 @@ class CONTENT_EXPORT BrowserMainLoop {
   void StopStartupTracingTimer();
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
-  DeviceMonitorMac* device_monitor_mac() const {
+  media::DeviceMonitorMac* device_monitor_mac() const {
     return device_monitor_mac_.get();
   }
 #endif
@@ -152,12 +182,16 @@ class CONTENT_EXPORT BrowserMainLoop {
 
   void MainMessageLoopRun();
 
+  void InitializeMojo();
   base::FilePath GetStartupTraceFileName(
       const base::CommandLine& command_line) const;
   void InitStartupTracingForDuration(const base::CommandLine& command_line);
   void EndStartupTracing();
 
+  void CreateAudioManager();
   bool UsingInProcessGpu() const;
+
+  void InitializeMemoryManagementComponent();
 
   // Quick reference for initialization order:
   // Constructor
@@ -173,6 +207,7 @@ class CONTENT_EXPORT BrowserMainLoop {
   //   PreCreateThreads()
   //   CreateThreads()
   //   BrowserThreadsStarted()
+  //   PreMainMessageLoopRun()
 
   // Members initialized on construction ---------------------------------------
   const MainFunctionParams& parameters_;
@@ -182,30 +217,34 @@ class CONTENT_EXPORT BrowserMainLoop {
   bool is_tracing_startup_for_duration_;
 
   // Members initialized in |MainMessageLoopStart()| ---------------------------
-  scoped_ptr<base::MessageLoop> main_message_loop_;
+  std::unique_ptr<base::MessageLoop> main_message_loop_;
 
   // Members initialized in |PostMainMessageLoopStart()| -----------------------
-  scoped_ptr<base::SystemMonitor> system_monitor_;
-  scoped_ptr<base::PowerMonitor> power_monitor_;
-  scoped_ptr<base::HighResolutionTimerManager> hi_res_timer_manager_;
-  scoped_ptr<net::NetworkChangeNotifier> network_change_notifier_;
+  std::unique_ptr<base::SystemMonitor> system_monitor_;
+  std::unique_ptr<base::PowerMonitor> power_monitor_;
+  std::unique_ptr<base::HighResolutionTimerManager> hi_res_timer_manager_;
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
 
   // Per-process listener for online state changes.
-  scoped_ptr<BrowserOnlineStateObserver> online_state_observer_;
+  std::unique_ptr<BrowserOnlineStateObserver> online_state_observer_;
 
-  scoped_ptr<base::trace_event::TraceEventSystemStatsMonitor>
+  std::unique_ptr<base::trace_event::TraceEventSystemStatsMonitor>
       system_stats_monitor_;
 
+#if defined(USE_AURA)
+  std::unique_ptr<aura::Env> env_;
+#endif
+
 #if defined(OS_WIN)
-  scoped_ptr<SystemMessageWindowWin> system_message_window_;
+  std::unique_ptr<ScreenOrientationDelegate> screen_orientation_delegate_;
 #endif
 
 #if defined(OS_ANDROID)
   // Android implementation of ScreenOrientationDelegate
-  scoped_ptr<ScreenOrientationDelegate> screen_orientation_delegate_;
+  std::unique_ptr<ScreenOrientationDelegate> screen_orientation_delegate_;
 #endif
 
-  scoped_ptr<MemoryObserver> memory_observer_;
+  std::unique_ptr<MemoryObserver> memory_observer_;
 
   // Members initialized in |InitStartupTracingForDuration()| ------------------
   base::FilePath startup_trace_file_;
@@ -216,51 +255,61 @@ class CONTENT_EXPORT BrowserMainLoop {
   // Members initialized in |Init()| -------------------------------------------
   // Destroy |parts_| before |main_message_loop_| (required) and before other
   // classes constructed in content (but after |main_thread_|).
-  scoped_ptr<BrowserMainParts> parts_;
+  std::unique_ptr<BrowserMainParts> parts_;
 
   // Members initialized in |InitializeMainThread()| ---------------------------
   // This must get destroyed before other threads that are created in |parts_|.
-  scoped_ptr<BrowserThreadImpl> main_thread_;
+  std::unique_ptr<BrowserThreadImpl> main_thread_;
 
   // Members initialized in |CreateStartupTasks()| -----------------------------
-  scoped_ptr<StartupTaskRunner> startup_task_runner_;
+  std::unique_ptr<StartupTaskRunner> startup_task_runner_;
 
   // Members initialized in |PreCreateThreads()| -------------------------------
   // Torn down in ShutdownThreadsAndCleanUp.
-  scoped_ptr<base::MemoryPressureMonitor> memory_pressure_monitor_;
+  std::unique_ptr<base::MemoryPressureMonitor> memory_pressure_monitor_;
+#if defined(USE_X11) && !(OS_CHROMEOS)
+  std::unique_ptr<internal::GpuDataManagerVisualProxy>
+      gpu_data_manager_visual_proxy_;
+#endif
 
   // Members initialized in |CreateThreads()| ----------------------------------
-  scoped_ptr<BrowserProcessSubThread> db_thread_;
-  scoped_ptr<BrowserProcessSubThread> file_user_blocking_thread_;
-  scoped_ptr<BrowserProcessSubThread> file_thread_;
-  scoped_ptr<BrowserProcessSubThread> process_launcher_thread_;
-  scoped_ptr<BrowserProcessSubThread> cache_thread_;
-  scoped_ptr<BrowserProcessSubThread> io_thread_;
+  std::unique_ptr<BrowserProcessSubThread> db_thread_;
+  std::unique_ptr<BrowserProcessSubThread> file_user_blocking_thread_;
+  std::unique_ptr<BrowserProcessSubThread> file_thread_;
+  std::unique_ptr<BrowserProcessSubThread> process_launcher_thread_;
+  std::unique_ptr<BrowserProcessSubThread> cache_thread_;
+  std::unique_ptr<BrowserProcessSubThread> io_thread_;
 
   // Members initialized in |BrowserThreadsStarted()| --------------------------
-  scoped_ptr<base::Thread> indexed_db_thread_;
-  scoped_ptr<MojoShellContext> mojo_shell_context_;
-  scoped_ptr<IPC::ScopedIPCSupport> mojo_ipc_support_;
+  std::unique_ptr<base::Thread> indexed_db_thread_;
+  std::unique_ptr<ServiceManagerContext> service_manager_context_;
+  std::unique_ptr<mojo::edk::ScopedIPCSupport> mojo_ipc_support_;
 
   // |user_input_monitor_| has to outlive |audio_manager_|, so declared first.
-  scoped_ptr<media::UserInputMonitor> user_input_monitor_;
-  scoped_ptr<media::AudioManager> audio_manager_;
+  std::unique_ptr<media::UserInputMonitor> user_input_monitor_;
+  // AudioThread needs to outlive |audio_manager_|.
+  std::unique_ptr<AudioDeviceThread> audio_thread_;
+  media::ScopedAudioManagerPtr audio_manager_;
 
-  scoped_ptr<media::midi::MidiManager> midi_manager_;
+  std::unique_ptr<midi::MidiManager> midi_manager_;
 
-#if defined(USE_UDEV)
-  scoped_ptr<DeviceMonitorLinux> device_monitor_linux_;
+#if defined(OS_WIN)
+  std::unique_ptr<media::SystemMessageWindowWin> system_message_window_;
+#elif defined(OS_LINUX) && defined(USE_UDEV)
+  std::unique_ptr<media::DeviceMonitorLinux> device_monitor_linux_;
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
-  scoped_ptr<DeviceMonitorMac> device_monitor_mac_;
+  std::unique_ptr<media::DeviceMonitorMac> device_monitor_mac_;
 #endif
 #if defined(USE_OZONE)
-  scoped_ptr<ui::ClientNativePixmapFactory> client_native_pixmap_factory_;
+  std::unique_ptr<ui::ClientNativePixmapFactory> client_native_pixmap_factory_;
 #endif
 
-  scoped_ptr<ResourceDispatcherHostImpl> resource_dispatcher_host_;
-  scoped_ptr<MediaStreamManager> media_stream_manager_;
-  scoped_ptr<SpeechRecognitionManagerImpl> speech_recognition_manager_;
-  scoped_ptr<TimeZoneMonitor> time_zone_monitor_;
+  std::unique_ptr<LoaderDelegateImpl> loader_delegate_;
+  std::unique_ptr<ResourceDispatcherHostImpl> resource_dispatcher_host_;
+  std::unique_ptr<MediaStreamManager> media_stream_manager_;
+  std::unique_ptr<SpeechRecognitionManagerImpl> speech_recognition_manager_;
+  std::unique_ptr<device::TimeZoneMonitor> time_zone_monitor_;
+  scoped_refptr<SaveFileManager> save_file_manager_;
 
   // DO NOT add members here. Add them to the right categories above.
 

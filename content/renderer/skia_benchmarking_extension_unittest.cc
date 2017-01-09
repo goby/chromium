@@ -4,6 +4,8 @@
 
 #include "content/renderer/skia_benchmarking_extension.h"
 
+#include <stddef.h>
+
 #include "base/values.h"
 #include "skia/ext/benchmarking_canvas.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -51,7 +53,7 @@ TEST(SkiaBenchmarkingExtensionTest, BenchmarkingCanvas) {
 
   // Draw a trivial scene.
   benchmarking_canvas.save();
-  benchmarking_canvas.clipRect(fullRect, SkRegion::kIntersect_Op, false);
+  benchmarking_canvas.clipRect(fullRect);
   benchmarking_canvas.setMatrix(trans);
   benchmarking_canvas.drawRect(fillRect, red_paint);
   benchmarking_canvas.restore();

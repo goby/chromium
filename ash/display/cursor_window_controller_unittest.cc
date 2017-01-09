@@ -6,15 +6,15 @@
 
 #include "ash/display/display_util.h"
 #include "ash/display/window_tree_host_manager.h"
-#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/display_manager_test_api.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/cursor.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gfx/display.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
 namespace ash {
@@ -44,7 +44,7 @@ class CursorWindowControllerTest : public test::AshTestBase {
     return cursor_window_controller_->GetCursorImageForTest();
   }
 
-  int64 GetCursorDisplayId() const {
+  int64_t GetCursorDisplayId() const {
     return cursor_window_controller_->display_.id();
   }
 
@@ -72,8 +72,8 @@ TEST_F(CursorWindowControllerTest, MoveToDifferentDisplay) {
 
   WindowTreeHostManager* window_tree_host_manager =
       Shell::GetInstance()->window_tree_host_manager();
-  int64 primary_display_id = window_tree_host_manager->GetPrimaryDisplayId();
-  int64 secondary_display_id = ScreenUtil::GetSecondaryDisplay().id();
+  int64_t primary_display_id = window_tree_host_manager->GetPrimaryDisplayId();
+  int64_t secondary_display_id = display_manager()->GetSecondaryDisplay().id();
   aura::Window* primary_root =
       window_tree_host_manager->GetRootWindowForDisplayId(primary_display_id);
   aura::Window* secondary_root =
@@ -102,7 +102,7 @@ TEST_F(CursorWindowControllerTest, MoveToDifferentDisplay) {
   // asynchronously. This is implemented in a platform specific way. Generate a
   // fake mouse move instead of waiting.
   gfx::Point new_cursor_position_in_host(20, 50);
-  secondary_root->GetHost()->ConvertPointToHost(&new_cursor_position_in_host);
+  secondary_root->GetHost()->ConvertDIPToPixels(&new_cursor_position_in_host);
   ui::test::EventGenerator secondary_generator(secondary_root);
   secondary_generator.MoveMouseToInHost(new_cursor_position_in_host);
 
@@ -154,17 +154,21 @@ TEST_F(CursorWindowControllerTest, VisibilityTest) {
 // the DSF becomes 1x as a result of zooming out.
 TEST_F(CursorWindowControllerTest, DSF) {
   UpdateDisplay("1000x500*2");
-  int64 primary_id = Shell::GetScreen()->GetPrimaryDisplay().id();
+  int64_t primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
 
-  test::ScopedSetInternalDisplayId set_internal(primary_id);
+  display::test::ScopedSetInternalDisplayId set_internal(display_manager(),
+                                                         primary_id);
   SetCursorCompositionEnabled(true);
-  ASSERT_EQ(2.0f,
-            Shell::GetScreen()->GetPrimaryDisplay().device_scale_factor());
+  ASSERT_EQ(
+      2.0f,
+      display::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor());
   EXPECT_TRUE(GetCursorImage().HasRepresentation(2.0f));
 
-  ASSERT_TRUE(SetDisplayUIScale(primary_id, 2.0f));
-  ASSERT_EQ(1.0f,
-            Shell::GetScreen()->GetPrimaryDisplay().device_scale_factor());
+  ASSERT_TRUE(display::test::DisplayManagerTestApi(display_manager())
+                  .SetDisplayUIScale(primary_id, 2.0f));
+  ASSERT_EQ(
+      1.0f,
+      display::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor());
   EXPECT_TRUE(GetCursorImage().HasRepresentation(2.0f));
 }
 #endif

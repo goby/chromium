@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_RENDERER_API_AUTOMATION_AUTOMATION_API_HELPER_H_
 #define EXTENSIONS_RENDERER_API_AUTOMATION_AUTOMATION_API_HELPER_H_
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "content/public/renderer/render_view_observer.h"
 
@@ -20,6 +21,7 @@ class AutomationApiHelper : public content::RenderViewObserver {
  private:
   // RenderViewObserver implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
+  void OnDestruct() override;
 
   void OnQuerySelector(int acc_obj_id,
                        int request_id,

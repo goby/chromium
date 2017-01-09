@@ -7,7 +7,6 @@
 
 #import <UIKit/UIKit.h>
 
-#include "ios/web/public/web_view_type.h"
 
 @class CRWWebViewScrollViewProxy;
 
@@ -22,9 +21,14 @@
 // The web view's frame rectangle.
 @property(readonly, assign) CGRect frame;
 
-// A Boolean value indicating whether web content can programmatically display
-// the keyboard.
-@property(nonatomic, assign) BOOL keyboardDisplayRequiresUserAction;
+// Adds a top padding to content view. Implementations of this protocol can
+// implement this method using UIScrollView.contentInset (where applicable) or
+// via resizing a subview's frame. Changing this property may impact performance
+// if implementation resizes its subview. Can be used as a workaround for
+// WKWebView bug, where UIScrollView.content inset does not work
+// (rdar://23584409). TODO(crbug.com/569349) remove this property once radar is
+// fixed.
+@property(nonatomic, assign) CGFloat topContentPadding;
 
 // Gives the embedder access to the web view's UIScrollView in a limited and
 // controlled manner.
@@ -33,8 +37,16 @@
 // Returns the webview's gesture recognizers.
 @property(nonatomic, readonly) NSArray* gestureRecognizers;
 
-// Retuns the type of the web view this proxy manages.
-@property(nonatomic, readonly) web::WebViewType webViewType;
+// Adds a webview gesture recognizers.
+- (void)addGestureRecognizer:(UIGestureRecognizer*)gestureRecognizer;
+
+// Removes a webview gesture recognizers.
+- (void)removeGestureRecognizer:(UIGestureRecognizer*)gestureRecognizer;
+
+// Whether or not the content view should use the content inset when setting
+// |topContentPadding|. Implementations may or may not respect the setting
+// of this property.
+@property(nonatomic, assign) BOOL shouldUseInsetForTopPadding;
 
 // Register the given insets for the given caller.
 - (void)registerInsets:(UIEdgeInsets)insets forCaller:(id)caller;
@@ -56,6 +68,9 @@
 #if defined(__IPHONE_9_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_9_0
 - (UITextInputAssistantItem*)inputAssistantItem;
 #endif
+
+// Wrapper around the becomeFirstResponder method of the webview.
+- (BOOL)becomeFirstResponder;
 
 @end
 

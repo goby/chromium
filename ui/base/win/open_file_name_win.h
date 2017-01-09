@@ -8,11 +8,11 @@
 #include <Windows.h>
 #include <Commdlg.h>
 
+#include <tuple>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "base/tuple.h"
 #include "ui/base/ui_base_export.h"
 
 namespace base {
@@ -34,17 +34,11 @@ class UI_BASE_EXPORT OpenFileName {
 
   // Initializes |lpstrFilter| from the label/pattern pairs in |filters|.
   void SetFilters(
-      const std::vector<base::Tuple<base::string16, base::string16>>& filters);
+      const std::vector<std::tuple<base::string16, base::string16>>& filters);
 
   // Sets |lpstrInitialDir| and |lpstrFile|.
   void SetInitialSelection(const base::FilePath& initial_directory,
                            const base::FilePath& initial_filename);
-
-  // The save as dialog on Windows XP remembers its last position, and if the
-  // screen resolution has changed it may be off screen. This method will check
-  // if we are running on XP and if so install a hook to reposition the dialog
-  // if necessary.
-  void MaybeInstallWindowPositionHookForSaveAsOnXP();
 
   // Returns the single selected file, or an empty path if there are more or
   // less than one results.
@@ -68,7 +62,7 @@ class UI_BASE_EXPORT OpenFileName {
 
   // Returns a vector of label/pattern pairs built from
   // |openfilename->lpstrFilter|.
-  static std::vector<base::Tuple<base::string16, base::string16>> GetFilters(
+  static std::vector<std::tuple<base::string16, base::string16>> GetFilters(
       const OPENFILENAME* openfilename);
 
  private:

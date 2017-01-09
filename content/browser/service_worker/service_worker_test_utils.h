@@ -7,9 +7,27 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/command_line.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/content_switches.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
+
+template <class TestClass>
+class MojoServiceWorkerTestP : public TestClass,
+                               public testing::WithParamInterface<bool> {
+ protected:
+  void SetUp() override {
+    if (!is_mojo_enabled()) {
+      base::CommandLine::ForCurrentProcess()->AppendSwitch(
+          switches::kDisableMojoServiceWorker);
+    }
+    TestClass::SetUp();
+  }
+
+  bool is_mojo_enabled() const { return GetParam(); }
+};
 
 template <typename Arg>
 void ReceiveResult(BrowserThread::ID run_quit_thread,
@@ -26,12 +44,14 @@ CreateReceiver(BrowserThread::ID run_quit_thread,
   return base::Bind(&ReceiveResult<Arg>, run_quit_thread, quit, out);
 }
 
-template <typename Arg> base::Callback<void(Arg)>
-CreateReceiverOnCurrentThread(Arg* out) {
+template <typename Arg>
+base::Callback<void(Arg)> CreateReceiverOnCurrentThread(
+    Arg* out,
+    const base::Closure& quit = base::Closure()) {
   BrowserThread::ID id;
   bool ret = BrowserThread::GetCurrentThreadIdentifier(&id);
   DCHECK(ret);
-  return base::Bind(&ReceiveResult<Arg>, id, base::Closure(), out);
+  return base::Bind(&ReceiveResult<Arg>, id, quit, out);
 }
 
 }  // namespace content

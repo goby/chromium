@@ -4,12 +4,14 @@
 
 #include "chromeos/cryptohome/system_salt_getter.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 
@@ -40,6 +42,24 @@ void SystemSaltGetter::GetSystemSalt(
                  callback));
 }
 
+void SystemSaltGetter::AddOnSystemSaltReady(const base::Closure& closure) {
+  if (!raw_salt_.empty()) {
+    closure.Run();
+    return;
+  }
+
+  on_system_salt_ready_.push_back(closure);
+}
+
+const SystemSaltGetter::RawSalt* SystemSaltGetter::GetRawSalt() const {
+  return raw_salt_.empty() ? nullptr : &raw_salt_;
+}
+
+void SystemSaltGetter::SetRawSaltForTesting(
+    const SystemSaltGetter::RawSalt& raw_salt) {
+  raw_salt_ = raw_salt;
+}
+
 void SystemSaltGetter::DidWaitForServiceToBeAvailable(
     const GetSystemSaltCallback& callback,
     bool service_is_available) {
@@ -54,15 +74,24 @@ void SystemSaltGetter::DidWaitForServiceToBeAvailable(
                  callback));
 }
 
-void SystemSaltGetter::DidGetSystemSalt(const GetSystemSaltCallback& callback,
-                                        DBusMethodCallStatus call_status,
-                                        const std::vector<uint8>& system_salt) {
+void SystemSaltGetter::DidGetSystemSalt(
+    const GetSystemSaltCallback& callback,
+    DBusMethodCallStatus call_status,
+    const std::vector<uint8_t>& system_salt) {
   if (call_status == DBUS_METHOD_CALL_SUCCESS &&
       !system_salt.empty() &&
-      system_salt.size() % 2 == 0U)
+      system_salt.size() % 2 == 0U) {
+      raw_salt_ = system_salt;
     system_salt_ = ConvertRawSaltToHexString(system_salt);
-  else
+
+    std::vector<base::Closure> callbacks;
+    callbacks.swap(on_system_salt_ready_);
+    for (const base::Closure& callback : callbacks) {
+      callback.Run();
+    }
+  } else {
     LOG(WARNING) << "System salt not available";
+  }
 
   callback.Run(system_salt_);
 }
@@ -94,7 +123,7 @@ SystemSaltGetter* SystemSaltGetter::Get() {
 
 // static
 std::string SystemSaltGetter::ConvertRawSaltToHexString(
-    const std::vector<uint8>& salt) {
+    const std::vector<uint8_t>& salt) {
   return base::ToLowerASCII(
       base::HexEncode(reinterpret_cast<const void*>(salt.data()), salt.size()));
 }

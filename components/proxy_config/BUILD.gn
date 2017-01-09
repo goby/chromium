@@ -2,7 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# GYP version: components/proxy_config.gypi:proxy_config
 component("proxy_config") {
   sources = [
     "pref_proxy_config_tracker.cc",
@@ -24,7 +23,7 @@ component("proxy_config") {
 
   deps = [
     "//base",
-    "//base:prefs",
+    "//components/prefs",
     "//net",
     "//url",
   ]
@@ -50,8 +49,8 @@ source_set("unit_tests") {
   deps = [
     ":proxy_config",
     "//base",
-    "//base:prefs_test_support",
     "//base/test:test_support",
+    "//components/prefs:test_support",
     "//net",
     "//testing/gmock",
     "//testing/gtest",

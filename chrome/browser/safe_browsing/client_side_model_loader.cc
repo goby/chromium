@@ -4,19 +4,23 @@
 
 #include "chrome/browser/safe_browsing/client_side_model_loader.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/location.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/safe_browsing/protocol_manager.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/safe_browsing/client_model.pb.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
-#include "chrome/common/safe_browsing/safebrowsing_messages.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/safe_browsing/common/safebrowsing_messages.h"
+#include "components/safe_browsing/common/safebrowsing_switches.h"
 #include "components/variations/variations_associated_data.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
@@ -114,6 +118,8 @@ void ModelLoader::StartFetch() {
   // This will save on the order of ~50KB/week/client of bandwidth.
   fetcher_ = net::URLFetcher::Create(0 /* ID used for testing */, url_,
                                      net::URLFetcher::GET, this);
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      fetcher_.get(), data_use_measurement::DataUseUserData::SAFE_BROWSING);
   fetcher_->SetRequestContext(request_context_getter_);
   fetcher_->Start();
 }
@@ -136,7 +142,7 @@ void ModelLoader::OnURLFetchComplete(const net::URLFetcher* source) {
       source->GetResponseHeaders()) {
     source->GetResponseHeaders()->GetMaxAgeValue(&max_age);
   }
-  scoped_ptr<ClientSideModel> model(new ClientSideModel());
+  std::unique_ptr<ClientSideModel> model(new ClientSideModel());
   ClientModelStatus model_status;
   if (!is_success || net::HTTP_OK != response_code) {
     model_status = MODEL_FETCH_FAILED;
@@ -187,11 +193,11 @@ void ModelLoader::EndFetch(ClientModelStatus status, base::TimeDelta max_age) {
   ScheduleFetch(delay_ms);
 }
 
-void ModelLoader::ScheduleFetch(int64 delay_ms) {
+void ModelLoader::ScheduleFetch(int64_t delay_ms) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kSbDisableAutoUpdate))
+          safe_browsing::switches::kSbDisableAutoUpdate))
     return;
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&ModelLoader::StartFetch, weak_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(delay_ms));

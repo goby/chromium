@@ -5,16 +5,20 @@
 #ifndef MEDIA_FORMATS_WEBM_WEBM_TRACKS_PARSER_H_
 #define MEDIA_FORMATS_WEBM_WEBM_TRACKS_PARSER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/media_log.h"
+#include "media/base/media_tracks.h"
 #include "media/base/text_track_config.h"
 #include "media/base/video_decoder_config.h"
 #include "media/formats/webm/webm_audio_client.h"
@@ -36,21 +40,21 @@ class MEDIA_EXPORT WebMTracksParser : public WebMParserClient {
   // Returns -1 if the parse fails.
   // Returns 0 if more data is needed.
   // Returns the number of bytes parsed on success.
-  int Parse(const uint8* buf, int size);
+  int Parse(const uint8_t* buf, int size);
 
-  int64 audio_track_num() const { return audio_track_num_; }
-  int64 video_track_num() const { return video_track_num_; }
+  int64_t audio_track_num() const { return audio_track_num_; }
+  int64_t video_track_num() const { return video_track_num_; }
 
   // If TrackEntry DefaultDuration field existed for the associated audio or
   // video track, returns that value converted from ns to base::TimeDelta with
   // precision not greater than |timecode_scale_in_us|. Defaults to
-  // kNoTimestamp().
+  // kNoTimestamp.
   base::TimeDelta GetAudioDefaultDuration(
       const double timecode_scale_in_us) const;
   base::TimeDelta GetVideoDefaultDuration(
       const double timecode_scale_in_us) const;
 
-  const std::set<int64>& ignored_tracks() const { return ignored_tracks_; }
+  const std::set<int64_t>& ignored_tracks() const { return ignored_tracks_; }
 
   const std::string& audio_encryption_key_id() const {
     return audio_encryption_key_id_;
@@ -74,33 +78,52 @@ class MEDIA_EXPORT WebMTracksParser : public WebMParserClient {
     return text_tracks_;
   }
 
+  int detected_audio_track_count() const { return detected_audio_track_count_; }
+
+  int detected_video_track_count() const { return detected_video_track_count_; }
+
+  int detected_text_track_count() const { return detected_text_track_count_; }
+
+  // Note: Calling media_tracks() method passes the ownership of the MediaTracks
+  // object from WebMTracksParser to the caller (which is typically
+  // WebMStreamParser object). So this method must be called only once, after
+  // track parsing has been completed.
+  std::unique_ptr<MediaTracks> media_tracks() {
+    CHECK(media_tracks_.get());
+    return std::move(media_tracks_);
+  }
+
  private:
+  void Reset();
+  void ResetTrackEntry();
+
   // WebMParserClient implementation.
   WebMParserClient* OnListStart(int id) override;
   bool OnListEnd(int id) override;
-  bool OnUInt(int id, int64 val) override;
+  bool OnUInt(int id, int64_t val) override;
   bool OnFloat(int id, double val) override;
-  bool OnBinary(int id, const uint8* data, int size) override;
+  bool OnBinary(int id, const uint8_t* data, int size) override;
   bool OnString(int id, const std::string& str) override;
 
-  int64 track_type_;
-  int64 track_num_;
+  bool reset_on_next_parse_;
+  int64_t track_type_;
+  int64_t track_num_;
   std::string track_name_;
   std::string track_language_;
   std::string codec_id_;
-  std::vector<uint8> codec_private_;
-  int64 seek_preroll_;
-  int64 codec_delay_;
-  int64 default_duration_;
-  scoped_ptr<WebMContentEncodingsClient> track_content_encodings_client_;
+  std::vector<uint8_t> codec_private_;
+  int64_t seek_preroll_;
+  int64_t codec_delay_;
+  int64_t default_duration_;
+  std::unique_ptr<WebMContentEncodingsClient> track_content_encodings_client_;
 
-  int64 audio_track_num_;
-  int64 audio_default_duration_;
-  int64 video_track_num_;
-  int64 video_default_duration_;
+  int64_t audio_track_num_;
+  int64_t audio_default_duration_;
+  int64_t video_track_num_;
+  int64_t video_default_duration_;
   bool ignore_text_tracks_;
   TextTracks text_tracks_;
-  std::set<int64> ignored_tracks_;
+  std::set<int64_t> ignored_tracks_;
   std::string audio_encryption_key_id_;
   std::string video_encryption_key_id_;
   scoped_refptr<MediaLog> media_log_;
@@ -110,6 +133,11 @@ class MEDIA_EXPORT WebMTracksParser : public WebMParserClient {
 
   WebMVideoClient video_client_;
   VideoDecoderConfig video_decoder_config_;
+
+  int detected_audio_track_count_;
+  int detected_video_track_count_;
+  int detected_text_track_count_;
+  std::unique_ptr<MediaTracks> media_tracks_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMTracksParser);
 };

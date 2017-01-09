@@ -4,12 +4,15 @@
 
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_create_keys_operation.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/base64url.h"
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_key_manager.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_types.h"
@@ -269,7 +272,7 @@ void EasyUnlockCreateKeysOperation::CreateKeyForDeviceAtIndex(size_t index) {
   crypto::RandBytes(base::WriteInto(&user_key, kUserKeyByteSize + 1),
                     kUserKeyByteSize);
 
-  scoped_ptr<crypto::SymmetricKey> session_key(
+  std::unique_ptr<crypto::SymmetricKey> session_key(
       crypto::SymmetricKey::GenerateRandomKey(crypto::SymmetricKey::AES,
                                               kSessionKeyByteSize * 8));
 
@@ -341,7 +344,7 @@ void EasyUnlockCreateKeysOperation::OnGetSystemSalt(
       kEasyUnlockKeyMetaNameBluetoothAddress, device->bluetooth_address));
   key_def.provider_data.push_back(cryptohome::KeyDefinition::ProviderData(
       kEasyUnlockKeyMetaNameBluetoothType,
-      static_cast<int64>(device->bluetooth_type)));
+      static_cast<int64_t>(device->bluetooth_type)));
   key_def.provider_data.push_back(cryptohome::KeyDefinition::ProviderData(
       kEasyUnlockKeyMetaNamePsk, device->psk));
   key_def.provider_data.push_back(cryptohome::KeyDefinition::ProviderData(
@@ -352,11 +355,9 @@ void EasyUnlockCreateKeysOperation::OnGetSystemSalt(
       kEasyUnlockKeyMetaNameWrappedSecret, device->wrapped_secret));
 
   // Add cryptohome key.
-  const std::string canonicalized =
-      gaia::CanonicalizeEmail(user_context_.GetAccountId().GetUserEmail());
-  cryptohome::Identification id(canonicalized);
+  const cryptohome::Identification id(user_context_.GetAccountId());
 
-  scoped_ptr<Key> auth_key(new Key(*user_context_.GetKey()));
+  std::unique_ptr<Key> auth_key(new Key(*user_context_.GetKey()));
   if (auth_key->GetKeyType() == Key::KEY_TYPE_PASSWORD_PLAIN)
     auth_key->Transform(Key::KEY_TYPE_SALTED_SHA256_TOP_HALF, system_salt);
 

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/time/time.h"
 #include "media/base/audio_converter.h"
 #include "media/base/fake_audio_render_callback.h"
@@ -18,8 +20,7 @@ class NullInputProvider : public AudioConverter::InputCallback {
   NullInputProvider() {}
   ~NullInputProvider() override {}
 
-  double ProvideInput(AudioBus* audio_bus,
-                      base::TimeDelta buffer_delay) override {
+  double ProvideInput(AudioBus* audio_bus, uint32_t frames_delayed) override {
     audio_bus->Zero();
     return 1;
   }
@@ -32,7 +33,7 @@ void RunConvertBenchmark(const AudioParameters& in_params,
   NullInputProvider fake_input1;
   NullInputProvider fake_input2;
   NullInputProvider fake_input3;
-  scoped_ptr<AudioBus> output_bus = AudioBus::Create(out_params);
+  std::unique_ptr<AudioBus> output_bus = AudioBus::Create(out_params);
 
   AudioConverter converter(in_params, out_params, !fifo);
   converter.AddInput(&fake_input1);

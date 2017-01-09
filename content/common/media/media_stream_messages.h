@@ -11,7 +11,7 @@
 #include "content/common/media/media_stream_options.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_platform_file.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 #undef IPC_MESSAGE_EXPORT
 #define IPC_MESSAGE_EXPORT CONTENT_EXPORT
@@ -26,18 +26,17 @@ IPC_ENUM_TRAITS_MAX_VALUE(content::VideoFacingMode,
 IPC_ENUM_TRAITS_MAX_VALUE(content::MediaStreamRequestResult,
                           content::NUM_MEDIA_REQUEST_RESULTS - 1)
 
-IPC_STRUCT_TRAITS_BEGIN(content::StreamOptions::Constraint)
-  IPC_STRUCT_TRAITS_MEMBER(name)
-  IPC_STRUCT_TRAITS_MEMBER(value)
+IPC_STRUCT_TRAITS_BEGIN(content::TrackControls)
+  IPC_STRUCT_TRAITS_MEMBER(requested)
+  IPC_STRUCT_TRAITS_MEMBER(stream_source)
+  IPC_STRUCT_TRAITS_MEMBER(device_id)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(content::StreamOptions)
-  IPC_STRUCT_TRAITS_MEMBER(audio_requested)
-  IPC_STRUCT_TRAITS_MEMBER(mandatory_audio)
-  IPC_STRUCT_TRAITS_MEMBER(optional_audio)
-  IPC_STRUCT_TRAITS_MEMBER(video_requested)
-  IPC_STRUCT_TRAITS_MEMBER(mandatory_video)
-  IPC_STRUCT_TRAITS_MEMBER(optional_video)
+IPC_STRUCT_TRAITS_BEGIN(content::StreamControls)
+  IPC_STRUCT_TRAITS_MEMBER(audio)
+  IPC_STRUCT_TRAITS_MEMBER(video)
+  IPC_STRUCT_TRAITS_MEMBER(hotword_enabled)
+  IPC_STRUCT_TRAITS_MEMBER(disable_local_echo)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(content::StreamDeviceInfo)
@@ -77,13 +76,6 @@ IPC_MESSAGE_ROUTED2(MediaStreamMsg_DeviceStopped,
                     std::string /* label */,
                     content::StreamDeviceInfo /* the device */)
 
-// The browser has enumerated devices. If no devices are found
-// |device_list| is empty.
-// Used by Pepper and WebRTC.
-IPC_MESSAGE_ROUTED2(MediaStreamMsg_DevicesEnumerated,
-                    int /* request id */,
-                    content::StreamDeviceInfoArray /* device_list */)
-
 // TODO(wjia): should DeviceOpen* messages be merged with
 // StreamGenerat* ones?
 // The browser has opened a device successfully.
@@ -102,8 +94,8 @@ IPC_MESSAGE_ROUTED1(MediaStreamMsg_DeviceOpenFailed,
 IPC_MESSAGE_CONTROL5(MediaStreamHostMsg_GenerateStream,
                      int /* render frame id */,
                      int /* request id */,
-                     content::StreamOptions /* components */,
-                     GURL /* security origin */,
+                     content::StreamControls /* controls */,
+                     url::Origin /* security origin */,
                      bool /* user_gesture */)
 
 // Request to cancel the request for a new media stream.
@@ -116,28 +108,27 @@ IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_StopStreamDevice,
                      int /* render frame id */,
                      std::string /*device_id*/)
 
-// Request to enumerate devices.
-// Used by Pepper and WebRTC.
-IPC_MESSAGE_CONTROL4(MediaStreamHostMsg_EnumerateDevices,
-                     int /* render frame id */,
-                     int /* request id */,
-                     content::MediaStreamType /* type */,
-                     GURL /* security origin */)
-
-// Request to stop enumerating devices.
-IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_CancelEnumerateDevices,
-                     int /* render frame id */,
-                     int /* request id */)
-
 // Request to open the device.
 IPC_MESSAGE_CONTROL5(MediaStreamHostMsg_OpenDevice,
                      int /* render frame id */,
                      int /* request id */,
                      std::string /* device_id */,
                      content::MediaStreamType /* type */,
-                     GURL /* security origin */)
+                     url::Origin /* security origin */)
 
 // Request to close a device.
 IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_CloseDevice,
                      int /* render frame id */,
                      std::string /*label*/)
+
+// Tell the browser process if the video capture is secure (i.e., all
+// connected video sinks meet the requirement of output protection.).
+// Note: the browser process only trusts the |is_sucure| value in this IPC
+// message if it's comimg from a trusted, whitelisted extension. Extensions run
+// in separate render processes. So it shouldn't be possible, for example, for
+// a user's visit to a malicious web page to compromise a render process running
+// a trusted extension to make it report falsehood in this IPC message.
+IPC_MESSAGE_CONTROL3(MediaStreamHostMsg_SetCapturingLinkSecured,
+                     int,                      /* session_id */
+                     content::MediaStreamType, /* type */
+                     bool /* is_secure */)

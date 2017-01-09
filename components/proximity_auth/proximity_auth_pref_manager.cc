@@ -4,14 +4,14 @@
 
 #include "components/proximity_auth/proximity_auth_pref_manager.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/values.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/proximity_auth/logging/logging.h"
 #include "components/proximity_auth/proximity_auth_pref_names.h"
 
@@ -52,7 +52,7 @@ std::string ProximityAuthPrefManager::GetDeviceAddress(
   for (base::DictionaryValue::Iterator it(*remote_ble_devices); !it.IsAtEnd();
        it.Advance()) {
     std::string value_string;
-    DCHECK(it.value().IsType(base::Value::TYPE_STRING));
+    DCHECK(it.value().IsType(base::Value::Type::STRING));
     if (it.value().GetAsString(&value_string) && value_string == public_key)
       return it.key();
   }
@@ -65,7 +65,7 @@ std::vector<std::string> ProximityAuthPrefManager::GetPublicKeys() const {
   for (base::DictionaryValue::Iterator it(*remote_ble_devices); !it.IsAtEnd();
        it.Advance()) {
     std::string value_string;
-    DCHECK(it.value().IsType(base::Value::TYPE_STRING));
+    DCHECK(it.value().IsType(base::Value::Type::STRING));
     it.value().GetAsString(&value_string);
     public_keys.push_back(value_string);
   }

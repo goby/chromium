@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+#include <utility>
+
 #include "base/barrier_closure.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/renderer_host/dip_util.h"
@@ -32,13 +37,12 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/base/layout.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/display/display_switches.h"
 #include "ui/gfx/geometry/size_conversions.h"
-#include "ui/gfx/switches.h"
 #include "ui/gl/gl_switches.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
-#include "ui/gfx/win/dpi.h"
 #endif
 
 namespace content {
@@ -271,9 +275,8 @@ class FakeFrameSubscriber : public RenderWidgetHostViewFrameSubscriber {
   DeliverFrameCallback callback_;
 };
 
-// Disable tests for Android and IOS as these platforms have incomplete
-// implementation.
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+// Disable tests for Android as it has an incomplete implementation.
+#if !defined(OS_ANDROID)
 
 // The CopyFromBackingStore() API should work on all platforms when compositing
 // is enabled.
@@ -327,24 +330,18 @@ IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTest,
 
 // Test basic frame subscription functionality.  We subscribe, and then run
 // until at least one DeliverFrameCallback has been invoked.
-// https://crbug.com/542896
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_FrameSubscriberTest DISABLED_FrameSubscriberTest
-#else
-#define MAYBE_FrameSubscriberTest FrameSubscriberTest
-#endif
 IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTest,
-                       MAYBE_FrameSubscriberTest) {
+                       FrameSubscriberTest) {
   SET_UP_SURFACE_OR_PASS_TEST(NULL);
   RenderWidgetHostViewBase* const view = GetRenderWidgetHostView();
 
   base::RunLoop run_loop;
-  scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber(
+  std::unique_ptr<RenderWidgetHostViewFrameSubscriber> subscriber(
       new FakeFrameSubscriber(base::Bind(
           &RenderWidgetHostViewBrowserTest::FrameDelivered,
           base::Unretained(this), base::ThreadTaskRunnerHandle::Get(),
           run_loop.QuitClosure())));
-  view->BeginFrameSubscription(subscriber.Pass());
+  view->BeginFrameSubscription(std::move(subscriber));
   run_loop.Run();
   view->EndFrameSubscription();
 
@@ -584,7 +581,7 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
     //      is allowed to transiently fail.  The purpose of these tests is to
     //      confirm correct cropping/scaling behavior; and not that every
     //      readback must succeed.  http://crbug.com/444237
-    uint32 last_frame_number = 0;
+    uint32_t last_frame_number = 0;
     do {
       // Wait for renderer to provide the next frame.
       while (!GetRenderWidgetHost()->ScheduleComposite())
@@ -702,16 +699,8 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
   std::string test_url_;
 };
 
-// https://crbug.com/542896
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_CopyFromCompositingSurface_Origin_Unscaled \
-  DISABLED_CopyFromCompositingSurface_Origin_Unscaled
-#else
-#define MAYBE_CopyFromCompositingSurface_Origin_Unscaled \
-  CopyFromCompositingSurface_Origin_Unscaled
-#endif
 IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
-                       MAYBE_CopyFromCompositingSurface_Origin_Unscaled) {
+                       CopyFromCompositingSurface_Origin_Unscaled) {
   gfx::Rect copy_rect(400, 300);
   gfx::Size output_size = copy_rect.size();
   gfx::Size html_rect_size(400, 300);
@@ -722,16 +711,8 @@ IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-// https://crbug.com/542896
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_CopyFromCompositingSurface_Origin_Scaled \
-  DISABLED_FrameSubscriberTestCopyFromCompositingSurface_Origin_Scaled
-#else
-#define MAYBE_CopyFromCompositingSurface_Origin_Scaled \
-  CopyFromCompositingSurface_Origin_Scaled
-#endif
 IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
-                       MAYBE_CopyFromCompositingSurface_Origin_Scaled) {
+                       CopyFromCompositingSurface_Origin_Scaled) {
   gfx::Rect copy_rect(400, 300);
   gfx::Size output_size(200, 100);
   gfx::Size html_rect_size(400, 300);
@@ -742,16 +723,8 @@ IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-// https://crbug.com/542896
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_CopyFromCompositingSurface_Cropped_Unscaled \
-  DISABLED_CopyFromCompositingSurface_Cropped_Unscaled
-#else
-#define MAYBE_CopyFromCompositingSurface_Cropped_Unscaled \
-  CopyFromCompositingSurface_Cropped_Unscaled
-#endif
 IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
-                       MAYBE_CopyFromCompositingSurface_Cropped_Unscaled) {
+                       CopyFromCompositingSurface_Cropped_Unscaled) {
   // Grab 60x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
   copy_rect = gfx::Rect(copy_rect.CenterPoint() - gfx::Vector2d(30, 30),
@@ -765,16 +738,8 @@ IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-// https://crbug.com/542896
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_CopyFromCompositingSurface_Cropped_Scaled \
-  DISABLED_CopyFromCompositingSurface_Cropped_Scaled
-#else
-#define MAYBE_CopyFromCompositingSurface_Cropped_Scaled \
-  CopyFromCompositingSurface_Cropped_Scaled
-#endif
 IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
-                       MAYBE_CopyFromCompositingSurface_Cropped_Scaled) {
+                       CopyFromCompositingSurface_Cropped_Scaled) {
   // Grab 60x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
   copy_rect = gfx::Rect(copy_rect.CenterPoint() - gfx::Vector2d(30, 30),
@@ -788,16 +753,8 @@ IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-// https://crbug.com/542896
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_CopyFromCompositingSurface_ForVideoFrame \
-  DISABLED_CopyFromCompositingSurface_ForVideoFrame
-#else
-#define MAYBE_CopyFromCompositingSurface_ForVideoFrame \
-  CopyFromCompositingSurface_ForVideoFrame
-#endif
 IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
-                       MAYBE_CopyFromCompositingSurface_ForVideoFrame) {
+                       CopyFromCompositingSurface_ForVideoFrame) {
   // Grab 90x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
   copy_rect = gfx::Rect(copy_rect.CenterPoint() - gfx::Vector2d(45, 30),
@@ -811,16 +768,8 @@ IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
                                 video_frame);
 }
 
-// https://crbug.com/542896
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_CopyFromCompositingSurface_ForVideoFrame_Scaled \
-  DISABLED_CopyFromCompositingSurface_ForVideoFrame_Scaled
-#else
-#define MAYBE_CopyFromCompositingSurface_ForVideoFrame_Scaled \
-  CopyFromCompositingSurface_ForVideoFrame_Scaled
-#endif
 IN_PROC_BROWSER_TEST_P(CompositingRenderWidgetHostViewBrowserTestTabCapture,
-                       MAYBE_CopyFromCompositingSurface_ForVideoFrame_Scaled) {
+                       CopyFromCompositingSurface_ForVideoFrame_Scaled) {
   // Grab 90x60 pixels from the center of the tab contents.
   gfx::Rect copy_rect(400, 300);
   copy_rect = gfx::Rect(copy_rect.CenterPoint() - gfx::Vector2d(45, 30),
@@ -871,8 +820,7 @@ class CompositingRenderWidgetHostViewBrowserTestTabCaptureHighDPI
 
 // NineImagePainter implementation crashes the process on Windows when this
 // content_browsertest forces a device scale factor.  http://crbug.com/399349
-// Disabled under MSAN.  http://crbug.com/542896
-#if defined(OS_WIN) || defined(MEMORY_SANITIZER)
+#if defined(OS_WIN)
 #define MAYBE_CopyToBitmap_EntireRegion DISABLED_CopyToBitmap_EntireRegion
 #define MAYBE_CopyToBitmap_CenterRegion DISABLED_CopyToBitmap_CenterRegion
 #define MAYBE_CopyToBitmap_ScaledResult DISABLED_CopyToBitmap_ScaledResult
@@ -1000,7 +948,7 @@ INSTANTIATE_TEST_CASE_P(
     CompositingRenderWidgetHostViewBrowserTestTabCaptureHighDPI,
     kTestCompositingModes);
 
-#endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
+#endif  // !defined(OS_ANDROID)
 
 }  // namespace
 }  // namespace content

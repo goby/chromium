@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_LAUNCHER_APPLICATION_MENU_ITEM_MODEL_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_LAUNCHER_APPLICATION_MENU_ITEM_MODEL_H_
 
-#include "ash/shelf/shelf_menu_model.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "ash/common/shelf/shelf_menu_model.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 
 class ChromeLauncherAppMenuItem;
@@ -30,8 +32,6 @@ class LauncherApplicationMenuItemModel : public ash::ShelfMenuModel,
   // Overridden from ui::SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
  private:

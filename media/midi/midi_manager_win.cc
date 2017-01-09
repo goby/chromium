@@ -19,6 +19,7 @@
 #define MMNOMCI
 #define MMNOMMIO
 #include <mmsystem.h>
+#include <stddef.h>
 
 #include <algorithm>
 #include <functional>
@@ -27,8 +28,10 @@
 
 #include "base/bind.h"
 #include "base/containers/hash_tables.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -38,14 +41,19 @@
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
 #include "base/win/message_window.h"
+#include "base/win/windows_version.h"
 #include "device/usb/usb_ids.h"
+#include "media/midi/message_util.h"
+#include "media/midi/midi_manager_winrt.h"
 #include "media/midi/midi_message_queue.h"
-#include "media/midi/midi_message_util.h"
 #include "media/midi/midi_port_info.h"
+#include "media/midi/midi_switches.h"
 
-namespace media {
 namespace midi {
 namespace {
+
+using mojom::PortState;
+using mojom::Result;
 
 static const size_t kBufferLength = 32 * 1024;
 
@@ -81,6 +89,10 @@ std::string MmversionToString(MMVERSION version) {
   return base::StringPrintf("%d.%d", HIBYTE(version), LOBYTE(version));
 }
 
+void CloseOutputPortOnTaskThread(HMIDIOUT midi_out_handle) {
+  midiOutClose(midi_out_handle);
+}
+
 class MIDIHDRDeleter {
  public:
   void operator()(MIDIHDR* header) {
@@ -93,31 +105,31 @@ class MIDIHDRDeleter {
   }
 };
 
-typedef scoped_ptr<MIDIHDR, MIDIHDRDeleter> ScopedMIDIHDR;
+using ScopedMIDIHDR = std::unique_ptr<MIDIHDR, MIDIHDRDeleter>;
 
 ScopedMIDIHDR CreateMIDIHDR(size_t size) {
   ScopedMIDIHDR header(new MIDIHDR);
   ZeroMemory(header.get(), sizeof(*header));
   header->lpData = new char[size];
   header->dwBufferLength = static_cast<DWORD>(size);
-  return header.Pass();
+  return header;
 }
 
 void SendShortMidiMessageInternal(HMIDIOUT midi_out_handle,
-                                  const std::vector<uint8>& message) {
+                                  const std::vector<uint8_t>& message) {
   DCHECK_LE(message.size(), static_cast<size_t>(3))
       << "A short MIDI message should be up to 3 bytes.";
 
   DWORD packed_message = 0;
   for (size_t i = 0; i < message.size(); ++i)
-    packed_message |= (static_cast<uint32>(message[i]) << (i * 8));
+    packed_message |= (static_cast<uint32_t>(message[i]) << (i * 8));
   MMRESULT result = midiOutShortMsg(midi_out_handle, packed_message);
   DLOG_IF(ERROR, result != MMSYSERR_NOERROR)
       << "Failed to output short message: " << GetOutErrorMessage(result);
 }
 
 void SendLongMidiMessageInternal(HMIDIOUT midi_out_handle,
-                                 const std::vector<uint8>& message) {
+                                 const std::vector<uint8_t>& message) {
   // Implementation note:
   // Sending a long MIDI message can be performed synchronously or
   // asynchronously depending on the driver. There are 2 options to support both
@@ -134,10 +146,12 @@ void SendLongMidiMessageInternal(HMIDIOUT midi_out_handle,
   // From an observation on Windows 7/8.1 with a USB-MIDI keyboard,
   // midiOutLongMsg() will be always blocked. Sending 64 bytes or less data
   // takes roughly 300 usecs. Sending 2048 bytes or more data takes roughly
-  // |message.size() / (75 * 1024)| secs in practice. Here we put 60 KB size
+  // |message.size() / (75 * 1024)| secs in practice. Here we put 256 KB size
   // limit on SysEx message, with hoping that midiOutLongMsg will be blocked at
-  // most 1 sec or so with a typical USB-MIDI device.
-  const size_t kSysExSizeLimit = 60 * 1024;
+  // most 4 sec or so with a typical USB-MIDI device.
+  // TODO(crbug.com/383578): This restriction should be removed once Web MIDI
+  // defines a standardized way to handle large sysex messages.
+  const size_t kSysExSizeLimit = 256 * 1024;
   if (message.size() >= kSysExSizeLimit) {
     DVLOG(1) << "Ingnoreing SysEx message due to the size limit"
              << ", size = " << message.size();
@@ -214,12 +228,12 @@ struct MidiDeviceInfo final {
   // of two MIDI devices.
   // TODO(toyoshim): Consider to calculate MIDIPort.id here and use it as the
   // key. See crbug.com/467448.  Then optimize the data for |MidiPortInfo|.
-  const uint16 manufacturer_id;
-  const uint16 product_id;
-  const uint32 driver_version;
+  const uint16_t manufacturer_id;
+  const uint16_t product_id;
+  const uint32_t driver_version;
   const base::string16 product_name;
-  const uint16 usb_vendor_id;
-  const uint16 usb_product_id;
+  const uint16_t usb_vendor_id;
+  const uint16_t usb_product_id;
   const bool is_usb_device;
   const bool is_software_synth;
 
@@ -268,22 +282,22 @@ struct MidiDeviceInfo final {
   static bool IsSoftwareSynth(const MIDIOUTCAPS2W& caps) {
     return caps.wTechnology == MOD_SWSYNTH;
   }
-  static uint16 ExtractUsbVendorIdIfExists(const MIDIINCAPS2W& caps) {
+  static uint16_t ExtractUsbVendorIdIfExists(const MIDIINCAPS2W& caps) {
     if (!IS_COMPATIBLE_USBAUDIO_MID(&caps.ManufacturerGuid))
       return 0;
     return EXTRACT_USBAUDIO_MID(&caps.ManufacturerGuid);
   }
-  static uint16 ExtractUsbVendorIdIfExists(const MIDIOUTCAPS2W& caps) {
+  static uint16_t ExtractUsbVendorIdIfExists(const MIDIOUTCAPS2W& caps) {
     if (!IS_COMPATIBLE_USBAUDIO_MID(&caps.ManufacturerGuid))
       return 0;
     return EXTRACT_USBAUDIO_MID(&caps.ManufacturerGuid);
   }
-  static uint16 ExtractUsbProductIdIfExists(const MIDIINCAPS2W& caps) {
+  static uint16_t ExtractUsbProductIdIfExists(const MIDIINCAPS2W& caps) {
     if (!IS_COMPATIBLE_USBAUDIO_PID(&caps.ProductGuid))
       return 0;
     return EXTRACT_USBAUDIO_PID(&caps.ProductGuid);
   }
-  static uint16 ExtractUsbProductIdIfExists(const MIDIOUTCAPS2W& caps) {
+  static uint16_t ExtractUsbProductIdIfExists(const MIDIOUTCAPS2W& caps) {
     if (!IS_COMPATIBLE_USBAUDIO_PID(&caps.ProductGuid))
       return 0;
     return EXTRACT_USBAUDIO_PID(&caps.ProductGuid);
@@ -311,10 +325,12 @@ bool IsUnsupportedDevice(const MidiDeviceInfo& info) {
           info.product_id == MM_MSFT_GENERIC_MIDISYNTH);
 }
 
-using PortNumberCache = base::hash_map<
-    MidiDeviceInfo,
-    std::priority_queue<uint32, std::vector<uint32>, std::greater<uint32>>,
-    MidiDeviceInfo::Hasher>;
+using PortNumberCache =
+    base::hash_map<MidiDeviceInfo,
+                   std::priority_queue<uint32_t,
+                                       std::vector<uint32_t>,
+                                       std::greater<uint32_t>>,
+                   MidiDeviceInfo::Hasher>;
 
 struct MidiInputDeviceState final
     : base::RefCountedThreadSafe<MidiInputDeviceState> {
@@ -333,12 +349,12 @@ struct MidiInputDeviceState final
   base::TimeTicks start_time;
   // 0-based port index.  We will try to reuse the previous port index when the
   // MIDI device is closed then reopened.
-  uint32 port_index;
+  uint32_t port_index;
   // A sequence number which represents how many times |port_index| is reused.
   // We can remove this field if we decide not to clear unsent events
   // when the device is disconnected.
   // See https://github.com/WebAudio/web-midi-api/issues/133
-  uint64 port_age;
+  uint64_t port_age;
   // True if |start_time| is initialized. This field is not used so far, but
   // kept for the debugging purpose.
   bool start_time_initialized;
@@ -361,12 +377,12 @@ struct MidiOutputDeviceState final
   HMIDIOUT midi_handle;
   // 0-based port index.  We will try to reuse the previous port index when the
   // MIDI device is closed then reopened.
-  uint32 port_index;
+  uint32_t port_index;
   // A sequence number which represents how many times |port_index| is reused.
   // We can remove this field if we decide not to clear unsent events
   // when the device is disconnected.
   // See https://github.com/WebAudio/web-midi-api/issues/133
-  uint64 port_age;
+  uint64_t port_age;
   // True if the device is already closed and |midi_handle| is considered to be
   // invalid.
   // TODO(toyoshim): Use std::atomic<bool> when it is allowed in Chromium
@@ -440,7 +456,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
           input_devices.push_back(it.first);
       }
       {
-        for (const auto handle : input_devices) {
+        for (auto* handle : input_devices) {
           MMRESULT result = midiInClose(handle);
           if (result == MIDIERR_STILLPLAYING) {
             result = midiInReset(handle);
@@ -461,7 +477,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
           output_devices.push_back(it.first);
       }
       {
-        for (const auto handle : output_devices) {
+        for (auto* handle : output_devices) {
           MMRESULT result = midiOutClose(handle);
           if (result == MIDIERR_STILLPLAYING) {
             result = midiOutReset(handle);
@@ -496,14 +512,14 @@ class MidiServiceWinImpl : public MidiServiceWin,
 
     UpdateDeviceList();
 
-    task_thread_.message_loop()->PostTask(
+    task_thread_.task_runner()->PostTask(
         FROM_HERE,
         base::Bind(&MidiServiceWinImpl::CompleteInitializationOnTaskThread,
                    base::Unretained(this), Result::OK));
   }
 
-  void SendMidiDataAsync(uint32 port_number,
-                         const std::vector<uint8>& data,
+  void SendMidiDataAsync(uint32_t port_number,
+                         const std::vector<uint8_t>& data,
                          base::TimeTicks time) final {
     if (destructor_started) {
       LOG(ERROR) << "ThreadSafeSendData failed because MidiServiceWinImpl is "
@@ -524,13 +540,13 @@ class MidiServiceWinImpl : public MidiServiceWin,
     }
     const auto now = base::TimeTicks::Now();
     if (now < time) {
-      sender_thread_.message_loop()->PostDelayedTask(
+      sender_thread_.task_runner()->PostDelayedTask(
           FROM_HERE, base::Bind(&MidiServiceWinImpl::SendOnSenderThread,
                                 base::Unretained(this), port_number,
                                 state->port_age, data, time),
           time - now);
     } else {
-      sender_thread_.message_loop()->PostTask(
+      sender_thread_.task_runner()->PostTask(
           FROM_HERE, base::Bind(&MidiServiceWinImpl::SendOnSenderThread,
                                 base::Unretained(this), port_number,
                                 state->port_age, data, time));
@@ -544,7 +560,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
       return;
 
     switch (device_type) {
-      case base::SystemMonitor::DEVTYPE_AUDIO_CAPTURE:
+      case base::SystemMonitor::DEVTYPE_AUDIO:
       case base::SystemMonitor::DEVTYPE_VIDEO_CAPTURE:
         // Add case of other unrelated device types here.
         return;
@@ -572,7 +588,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
   }
 
   scoped_refptr<MidiOutputDeviceState> GetOutputDeviceFromPort(
-      uint32 port_number) {
+      uint32_t port_number) {
     base::AutoLock auto_lock(output_ports_lock_);
     if (output_ports_.size() <= port_number)
       return nullptr;
@@ -580,7 +596,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
   }
 
   void UpdateDeviceList() {
-    task_thread_.message_loop()->PostTask(
+    task_thread_.task_runner()->PostTask(
         FROM_HERE, base::Bind(&MidiServiceWinImpl::UpdateDeviceListOnTaskThread,
                               base::Unretained(this)));
   }
@@ -635,12 +651,12 @@ class MidiServiceWinImpl : public MidiServiceWin,
     state->midi_header = CreateMIDIHDR(kBufferLength);
     const auto& state_device_info = state->device_info;
     bool add_new_port = false;
-    uint32 port_number = 0;
+    uint32_t port_number = 0;
     {
       base::AutoLock auto_lock(input_ports_lock_);
       const auto it = unused_input_ports_.find(state_device_info);
       if (it == unused_input_ports_.end()) {
-        port_number = static_cast<uint32>(input_ports_.size());
+        port_number = static_cast<uint32_t>(input_ports_.size());
         add_new_port = true;
         input_ports_.push_back(nullptr);
         input_ports_ages_.push_back(0);
@@ -660,7 +676,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
       input_ports_[port_number]->port_age = input_ports_ages_[port_number];
     }
     // Several initial startup tasks cannot be done in MIM_OPEN handler.
-    task_thread_.message_loop()->PostTask(
+    task_thread_.task_runner()->PostTask(
         FROM_HERE, base::Bind(&MidiServiceWinImpl::StartInputDeviceOnTaskThread,
                               base::Unretained(this), midi_in_handle));
     if (add_new_port) {
@@ -670,16 +686,16 @@ class MidiServiceWinImpl : public MidiServiceWin,
           GetManufacturerName(state_device_info),
           base::WideToUTF8(state_device_info.product_name),
           MmversionToString(state_device_info.driver_version),
-          MIDI_PORT_OPENED);
-      task_thread_.message_loop()->PostTask(
+          PortState::OPENED);
+      task_thread_.task_runner()->PostTask(
           FROM_HERE, base::Bind(&MidiServiceWinImpl::AddInputPortOnTaskThread,
                                 base::Unretained(this), port_info));
     } else {
-      task_thread_.message_loop()->PostTask(
+      task_thread_.task_runner()->PostTask(
           FROM_HERE,
           base::Bind(&MidiServiceWinImpl::SetInputPortStateOnTaskThread,
                      base::Unretained(this), port_number,
-                     MidiPortState::MIDI_PORT_CONNECTED));
+                     PortState::CONNECTED));
     }
   }
 
@@ -689,13 +705,14 @@ class MidiServiceWinImpl : public MidiServiceWin,
     auto state = GetInputDeviceFromHandle(midi_in_handle);
     if (!state)
       return;
-    const uint8 status_byte = static_cast<uint8>(param1 & 0xff);
-    const uint8 first_data_byte = static_cast<uint8>((param1 >> 8) & 0xff);
-    const uint8 second_data_byte = static_cast<uint8>((param1 >> 16) & 0xff);
+    const uint8_t status_byte = static_cast<uint8_t>(param1 & 0xff);
+    const uint8_t first_data_byte = static_cast<uint8_t>((param1 >> 8) & 0xff);
+    const uint8_t second_data_byte =
+        static_cast<uint8_t>((param1 >> 16) & 0xff);
     const DWORD elapsed_ms = param2;
-    const size_t len = GetMidiMessageLength(status_byte);
-    const uint8 kData[] = {status_byte, first_data_byte, second_data_byte};
-    std::vector<uint8> data;
+    const size_t len = GetMessageLength(status_byte);
+    const uint8_t kData[] = {status_byte, first_data_byte, second_data_byte};
+    std::vector<uint8_t> data;
     data.assign(kData, kData + len);
     DCHECK_LE(len, arraysize(kData));
     // MIM_DATA/MIM_LONGDATA message treats the time when midiInStart() is
@@ -704,7 +721,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
     // http://msdn.microsoft.com/en-us/library/windows/desktop/dd757286.aspx
     const base::TimeTicks event_time =
         state->start_time + base::TimeDelta::FromMilliseconds(elapsed_ms);
-    task_thread_.message_loop()->PostTask(
+    task_thread_.task_runner()->PostTask(
         FROM_HERE, base::Bind(&MidiServiceWinImpl::ReceiveMidiDataOnTaskThread,
                               base::Unretained(this), state->port_index, data,
                               event_time));
@@ -732,8 +749,8 @@ class MidiServiceWinImpl : public MidiServiceWin,
       return;
     }
     if (header->dwBytesRecorded > 0) {
-      const uint8* src = reinterpret_cast<const uint8*>(header->lpData);
-      std::vector<uint8> data;
+      const uint8_t* src = reinterpret_cast<const uint8_t*>(header->lpData);
+      std::vector<uint8_t> data;
       data.assign(src, src + header->dwBytesRecorded);
       // MIM_DATA/MIM_LONGDATA message treats the time when midiInStart() is
       // called as the origin of |elapsed_ms|.
@@ -741,7 +758,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
       // http://msdn.microsoft.com/en-us/library/windows/desktop/dd757286.aspx
       const base::TimeTicks event_time =
           state->start_time + base::TimeDelta::FromMilliseconds(elapsed_ms);
-      task_thread_.message_loop()->PostTask(
+      task_thread_.task_runner()->PostTask(
           FROM_HERE,
           base::Bind(&MidiServiceWinImpl::ReceiveMidiDataOnTaskThread,
                      base::Unretained(this), state->port_index, data,
@@ -757,7 +774,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
     auto state = GetInputDeviceFromHandle(midi_in_handle);
     if (!state)
       return;
-    const uint32 port_number = state->port_index;
+    const uint32_t port_number = state->port_index;
     const auto device_info(state->device_info);
     {
       base::AutoLock auto_lock(input_ports_lock_);
@@ -766,11 +783,11 @@ class MidiServiceWinImpl : public MidiServiceWin,
       input_ports_ages_[port_number] += 1;
       unused_input_ports_[device_info].push(port_number);
     }
-    task_thread_.message_loop()->PostTask(
+    task_thread_.task_runner()->PostTask(
         FROM_HERE,
         base::Bind(&MidiServiceWinImpl::SetInputPortStateOnTaskThread,
                    base::Unretained(this), port_number,
-                   MIDI_PORT_DISCONNECTED));
+                   PortState::DISCONNECTED));
   }
 
   static void CALLBACK
@@ -815,15 +832,18 @@ class MidiServiceWinImpl : public MidiServiceWin,
         make_scoped_refptr(new MidiOutputDeviceState(MidiDeviceInfo(caps)));
     state->midi_handle = midi_out_handle;
     const auto& state_device_info = state->device_info;
-    if (IsUnsupportedDevice(state_device_info))
+    if (IsUnsupportedDevice(state_device_info)) {
+      task_thread_.task_runner()->PostTask(
+          FROM_HERE, base::Bind(&CloseOutputPortOnTaskThread, midi_out_handle));
       return;
+    }
     bool add_new_port = false;
-    uint32 port_number = 0;
+    uint32_t port_number = 0;
     {
       base::AutoLock auto_lock(output_ports_lock_);
       const auto it = unused_output_ports_.find(state_device_info);
       if (it == unused_output_ports_.end()) {
-        port_number = static_cast<uint32>(output_ports_.size());
+        port_number = static_cast<uint32_t>(output_ports_.size());
         add_new_port = true;
         output_ports_.push_back(nullptr);
         output_ports_ages_.push_back(0);
@@ -847,15 +867,16 @@ class MidiServiceWinImpl : public MidiServiceWin,
           GetManufacturerName(state_device_info),
           base::WideToUTF8(state_device_info.product_name),
           MmversionToString(state_device_info.driver_version),
-          MIDI_PORT_OPENED);
-      task_thread_.message_loop()->PostTask(
+          PortState::OPENED);
+      task_thread_.task_runner()->PostTask(
           FROM_HERE, base::Bind(&MidiServiceWinImpl::AddOutputPortOnTaskThread,
                                 base::Unretained(this), port_info));
     } else {
-      task_thread_.message_loop()->PostTask(
+      task_thread_.task_runner()->PostTask(
           FROM_HERE,
           base::Bind(&MidiServiceWinImpl::SetOutputPortStateOnTaskThread,
-                     base::Unretained(this), port_number, MIDI_PORT_CONNECTED));
+                     base::Unretained(this), port_number,
+                     PortState::CONNECTED));
     }
   }
 
@@ -879,7 +900,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
     auto state = GetOutputDeviceFromHandle(midi_out_handle);
     if (!state)
       return;
-    const uint32 port_number = state->port_index;
+    const uint32_t port_number = state->port_index;
     const auto device_info(state->device_info);
     {
       base::AutoLock auto_lock(output_ports_lock_);
@@ -889,11 +910,11 @@ class MidiServiceWinImpl : public MidiServiceWin,
       unused_output_ports_[device_info].push(port_number);
       state->closed = true;
     }
-    task_thread_.message_loop()->PostTask(
+    task_thread_.task_runner()->PostTask(
         FROM_HERE,
         base::Bind(&MidiServiceWinImpl::SetOutputPortStateOnTaskThread,
                    base::Unretained(this), port_number,
-                   MIDI_PORT_DISCONNECTED));
+                   PortState::DISCONNECTED));
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -904,9 +925,9 @@ class MidiServiceWinImpl : public MidiServiceWin,
     DCHECK_EQ(sender_thread_.GetThreadId(), base::PlatformThread::CurrentId());
   }
 
-  void SendOnSenderThread(uint32 port_number,
-                          uint64 port_age,
-                          const std::vector<uint8>& data,
+  void SendOnSenderThread(uint32_t port_number,
+                          uint64_t port_age,
+                          const std::vector<uint8_t>& data,
                           base::TimeTicks time) {
     AssertOnSenderThread();
     if (destructor_started) {
@@ -935,7 +956,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
     // MIDI Running status must be filtered out.
     MidiMessageQueue message_queue(false);
     message_queue.Add(data);
-    std::vector<uint8> message;
+    std::vector<uint8_t> message;
     while (true) {
       if (destructor_started)
         break;
@@ -1048,8 +1069,8 @@ class MidiServiceWinImpl : public MidiServiceWin,
     delegate_->OnCompleteInitialization(result);
   }
 
-  void ReceiveMidiDataOnTaskThread(uint32 port_index,
-                                   std::vector<uint8> data,
+  void ReceiveMidiDataOnTaskThread(uint32_t port_index,
+                                   std::vector<uint8_t> data,
                                    base::TimeTicks time) {
     AssertOnTaskThread();
     delegate_->OnReceiveMidiData(port_index, data, time);
@@ -1065,12 +1086,12 @@ class MidiServiceWinImpl : public MidiServiceWin,
     delegate_->OnAddOutputPort(info);
   }
 
-  void SetInputPortStateOnTaskThread(uint32 port_index, MidiPortState state) {
+  void SetInputPortStateOnTaskThread(uint32_t port_index, PortState state) {
     AssertOnTaskThread();
     delegate_->OnSetInputPortState(port_index, state);
   }
 
-  void SetOutputPortStateOnTaskThread(uint32 port_index, MidiPortState state) {
+  void SetOutputPortStateOnTaskThread(uint32_t port_index, PortState state) {
     AssertOnTaskThread();
     delegate_->OnSetOutputPortState(port_index, state);
   }
@@ -1093,7 +1114,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
   PortNumberCache unused_input_ports_;  // GUARDED_BY(input_ports_lock_)
   std::vector<scoped_refptr<MidiInputDeviceState>>
       input_ports_;                       // GUARDED_BY(input_ports_lock_)
-  std::vector<uint64> input_ports_ages_;  // GUARDED_BY(input_ports_lock_)
+  std::vector<uint64_t> input_ports_ages_;  // GUARDED_BY(input_ports_lock_)
 
   base::Lock output_ports_lock_;
   base::hash_map<HMIDIOUT, scoped_refptr<MidiOutputDeviceState>>
@@ -1101,7 +1122,7 @@ class MidiServiceWinImpl : public MidiServiceWin,
   PortNumberCache unused_output_ports_;  // GUARDED_BY(output_ports_lock_)
   std::vector<scoped_refptr<MidiOutputDeviceState>>
       output_ports_;                       // GUARDED_BY(output_ports_lock_)
-  std::vector<uint64> output_ports_ages_;  // GUARDED_BY(output_ports_lock_)
+  std::vector<uint64_t> output_ports_ages_;  // GUARDED_BY(output_ports_lock_)
 
   // True if one thread reached MidiServiceWinImpl::~MidiServiceWinImpl(). Note
   // that MidiServiceWinImpl::~MidiServiceWinImpl() is blocked until
@@ -1133,8 +1154,8 @@ void MidiManagerWin::Finalize() {
 }
 
 void MidiManagerWin::DispatchSendMidiData(MidiManagerClient* client,
-                                          uint32 port_index,
-                                          const std::vector<uint8>& data,
+                                          uint32_t port_index,
+                                          const std::vector<uint8_t>& data,
                                           double timestamp) {
   if (!midi_service_)
     return;
@@ -1164,25 +1185,26 @@ void MidiManagerWin::OnAddOutputPort(MidiPortInfo info) {
   AddOutputPort(info);
 }
 
-void MidiManagerWin::OnSetInputPortState(uint32 port_index,
-                                         MidiPortState state) {
+void MidiManagerWin::OnSetInputPortState(uint32_t port_index, PortState state) {
   SetInputPortState(port_index, state);
 }
 
-void MidiManagerWin::OnSetOutputPortState(uint32 port_index,
-                                          MidiPortState state) {
+void MidiManagerWin::OnSetOutputPortState(uint32_t port_index,
+                                          PortState state) {
   SetOutputPortState(port_index, state);
 }
 
-void MidiManagerWin::OnReceiveMidiData(uint32 port_index,
-                                       const std::vector<uint8>& data,
+void MidiManagerWin::OnReceiveMidiData(uint32_t port_index,
+                                       const std::vector<uint8_t>& data,
                                        base::TimeTicks time) {
   ReceiveMidiData(port_index, &data[0], data.size(), time);
 }
 
 MidiManager* MidiManager::Create() {
+  if (base::FeatureList::IsEnabled(features::kMidiManagerWinrt) &&
+      base::win::GetVersion() >= base::win::VERSION_WIN10)
+    return new MidiManagerWinrt();
   return new MidiManagerWin();
 }
 
 }  // namespace midi
-}  // namespace media

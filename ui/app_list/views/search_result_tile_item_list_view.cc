@@ -4,6 +4,8 @@
 
 #include "ui/app_list/views/search_result_tile_item_list_view.h"
 
+#include <stddef.h>
+
 #include "base/i18n/rtl.h"
 #include "ui/app_list/app_list_constants.h"
 #include "ui/app_list/app_list_view_delegate.h"
@@ -17,8 +19,9 @@
 namespace {
 
 // Layout constants.
-const size_t kNumSearchResultTiles = 5;
-const int kTileSpacing = 7;
+const size_t kNumSearchResultTiles = 8;
+const int kHorizontalBorderSpacing = 1;
+const int kBetweenTileSpacing = 2;
 const int kTopBottomPadding = 8;
 
 }  // namespace
@@ -29,14 +32,16 @@ SearchResultTileItemListView::SearchResultTileItemListView(
     views::Textfield* search_box,
     AppListViewDelegate* view_delegate)
     : search_box_(search_box) {
-  SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kHorizontal, 0, 0, kTileSpacing));
+  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal,
+                                        kHorizontalBorderSpacing, 0,
+                                        kBetweenTileSpacing));
+
   for (size_t i = 0; i < kNumSearchResultTiles; ++i) {
     SearchResultTileItemView* tile_item =
         new SearchResultTileItemView(this, view_delegate);
     tile_item->SetParentBackgroundColor(kCardBackgroundColor);
-    tile_item->SetBorder(views::Border::CreateEmptyBorder(
-        kTopBottomPadding, 0, kTopBottomPadding, 0));
+    tile_item->SetBorder(
+        views::CreateEmptyBorder(kTopBottomPadding, 0, kTopBottomPadding, 0));
     tile_views_.push_back(tile_item);
     AddChildView(tile_item);
   }

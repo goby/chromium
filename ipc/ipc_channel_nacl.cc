@@ -13,14 +13,17 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/task_runner_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/simple_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/ipc_message_attachment_set.h"
+#include "ipc/ipc_platform_file_attachment_posix.h"
 #include "native_client/src/public/imc_syscalls.h"
 #include "native_client/src/public/imc_types.h"
 
@@ -76,7 +79,7 @@ class ChannelNacl::ReaderThreadRunner
   //                      above callbacks.
   ReaderThreadRunner(
       int pipe,
-      base::Callback<void(scoped_ptr<MessageContents>)> data_read_callback,
+      base::Callback<void(std::unique_ptr<MessageContents>)> data_read_callback,
       base::Callback<void()> failure_callback,
       scoped_refptr<base::SingleThreadTaskRunner> main_task_runner);
 
@@ -86,7 +89,7 @@ class ChannelNacl::ReaderThreadRunner
 
  private:
   int pipe_;
-  base::Callback<void (scoped_ptr<MessageContents>)> data_read_callback_;
+  base::Callback<void(std::unique_ptr<MessageContents>)> data_read_callback_;
   base::Callback<void ()> failure_callback_;
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
 
@@ -95,18 +98,17 @@ class ChannelNacl::ReaderThreadRunner
 
 ChannelNacl::ReaderThreadRunner::ReaderThreadRunner(
     int pipe,
-    base::Callback<void(scoped_ptr<MessageContents>)> data_read_callback,
+    base::Callback<void(std::unique_ptr<MessageContents>)> data_read_callback,
     base::Callback<void()> failure_callback,
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner)
     : pipe_(pipe),
       data_read_callback_(data_read_callback),
       failure_callback_(failure_callback),
-      main_task_runner_(main_task_runner) {
-}
+      main_task_runner_(main_task_runner) {}
 
 void ChannelNacl::ReaderThreadRunner::Run() {
   while (true) {
-    scoped_ptr<MessageContents> msg_contents(new MessageContents);
+    std::unique_ptr<MessageContents> msg_contents(new MessageContents);
     bool success = ReadDataOnReaderThread(pipe_, msg_contents.get());
     if (success) {
       main_task_runner_->PostTask(
@@ -128,13 +130,11 @@ ChannelNacl::ChannelNacl(const IPC::ChannelHandle& channel_handle,
       mode_(mode),
       waiting_connect_(true),
       pipe_(-1),
-      pipe_name_(channel_handle.name),
       weak_ptr_factory_(this) {
   if (!CreatePipe(channel_handle)) {
     // The pipe may have been closed already.
     const char *modestr = (mode_ & MODE_SERVER_FLAG) ? "server" : "client";
-    LOG(WARNING) << "Unable to create pipe named \"" << channel_handle.name
-                 << "\" in " << modestr << " mode";
+    LOG(WARNING) << "Unable to create pipe in " << modestr << " mode";
   }
 }
 
@@ -143,19 +143,11 @@ ChannelNacl::~ChannelNacl() {
   Close();
 }
 
-base::ProcessId ChannelNacl::GetPeerPID() const {
-  // This shouldn't actually get used in the untrusted side of the proxy, and we
-  // don't have the real pid anyway.
-  return -1;
-}
-
-base::ProcessId ChannelNacl::GetSelfPID() const {
-  return -1;
-}
-
 bool ChannelNacl::Connect() {
+  WillConnect();
+
   if (pipe_ == -1) {
-    DLOG(WARNING) << "Channel creation failed: " << pipe_name_;
+    DLOG(WARNING) << "Channel creation failed";
     return false;
   }
 
@@ -205,10 +197,10 @@ bool ChannelNacl::Send(Message* message) {
   DCHECK(!message->HasAttachments());
   DVLOG(2) << "sending message @" << message << " on channel @" << this
            << " with type " << message->type();
-  scoped_ptr<Message> message_ptr(message);
+  std::unique_ptr<Message> message_ptr(message);
 
 #ifdef IPC_MESSAGE_LOG_ENABLED
-  Logging::GetInstance()->OnSendMessage(message_ptr.get(), "");
+  Logging::GetInstance()->OnSendMessage(message_ptr.get());
 #endif  // IPC_MESSAGE_LOG_ENABLED
 
   TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
@@ -222,11 +214,7 @@ bool ChannelNacl::Send(Message* message) {
   return true;
 }
 
-AttachmentBroker* ChannelNacl::GetAttachmentBroker() {
-  return nullptr;
-}
-
-void ChannelNacl::DidRecvMsg(scoped_ptr<MessageContents> contents) {
+void ChannelNacl::DidRecvMsg(std::unique_ptr<MessageContents> contents) {
   // Close sets the pipe to -1. It's possible we'll get a buffer sent to us from
   // the reader thread after Close is called. If so, we ignore it.
   if (pipe_ == -1)
@@ -236,8 +224,11 @@ void ChannelNacl::DidRecvMsg(scoped_ptr<MessageContents> contents) {
   data->swap(contents->data);
   read_queue_.push_back(data);
 
-  input_fds_.insert(input_fds_.end(),
-                    contents->fds.begin(), contents->fds.end());
+  input_attachments_.reserve(contents->fds.size());
+  for (int fd : contents->fds) {
+    input_attachments_.push_back(
+        new internal::PlatformFileAttachment(base::ScopedFD(fd)));
+  }
   contents->fds.clear();
 
   // In POSIX, we would be told when there are bytes to read by implementing
@@ -285,16 +276,22 @@ bool ChannelNacl::ProcessOutgoingMessages() {
     linked_ptr<Message> msg = output_queue_.front();
     output_queue_.pop_front();
 
-    int fds[MessageAttachmentSet::kMaxDescriptorsPerMessage];
-    const size_t num_fds =
-        msg->attachment_set()->num_non_brokerable_attachments();
+    const size_t num_fds = msg->attachment_set()->size();
     DCHECK(num_fds <= MessageAttachmentSet::kMaxDescriptorsPerMessage);
-    msg->attachment_set()->PeekDescriptors(fds);
+    std::vector<int> fds;
+    fds.reserve(num_fds);
+    for (size_t i = 0; i < num_fds; i++) {
+      scoped_refptr<MessageAttachment> attachment =
+          msg->attachment_set()->GetAttachmentAt(i);
+      DCHECK_EQ(MessageAttachment::Type::PLATFORM_FILE, attachment->GetType());
+      fds.push_back(static_cast<internal::PlatformFileAttachment&>(*attachment)
+                        .TakePlatformFile());
+    }
 
     NaClAbiNaClImcMsgIoVec iov = {
       const_cast<void*>(msg->data()), msg->size()
     };
-    NaClAbiNaClImcMsgHdr msgh = { &iov, 1, fds, num_fds };
+    NaClAbiNaClImcMsgHdr msgh = {&iov, 1, fds.data(), num_fds};
     ssize_t bytes_written = imc_sendmsg(pipe_, &msgh, 0);
 
     DCHECK(bytes_written);  // The trusted side shouldn't return 0.
@@ -320,7 +317,7 @@ bool ChannelNacl::ProcessOutgoingMessages() {
 }
 
 void ChannelNacl::CallOnChannelConnected() {
-  listener()->OnChannelConnected(GetPeerPID());
+  listener()->OnChannelConnected(-1);
 }
 
 ChannelNacl::ReadState ChannelNacl::ReadData(
@@ -358,23 +355,22 @@ bool ChannelNacl::ShouldDispatchInputMessage(Message* msg) {
   return true;
 }
 
-bool ChannelNacl::GetNonBrokeredAttachments(Message* msg) {
+bool ChannelNacl::GetAttachments(Message* msg) {
   uint16_t header_fds = msg->header()->num_fds;
-  CHECK(header_fds == input_fds_.size());
+  CHECK(header_fds == input_attachments_.size());
   if (header_fds == 0)
     return true;  // Nothing to do.
 
-  // The shenaniganery below with &foo.front() requires input_fds_ to have
-  // contiguous underlying storage (such as a simple array or a std::vector).
-  // This is why the header warns not to make input_fds_ a deque<>.
-  msg->attachment_set()->AddDescriptorsToOwn(&input_fds_.front(), header_fds);
-  input_fds_.clear();
+  for (auto& attachment : input_attachments_) {
+    msg->attachment_set()->AddAttachment(std::move(attachment));
+  }
+  input_attachments_.clear();
   return true;
 }
 
 bool ChannelNacl::DidEmptyInputBuffers() {
-  // When the input data buffer is empty, the fds should be too.
-  return input_fds_.empty();
+  // When the input data buffer is empty, the attachments should be too.
+  return input_attachments_.empty();
 }
 
 void ChannelNacl::HandleInternalMessage(const Message& msg) {
@@ -383,23 +379,14 @@ void ChannelNacl::HandleInternalMessage(const Message& msg) {
   NOTREACHED();
 }
 
-base::ProcessId ChannelNacl::GetSenderPID() {
-  // The untrusted side of the IPC::Channel should never have to worry about
-  // sender's process id.
-  return base::kNullProcessId;
-}
-
-bool ChannelNacl::IsAttachmentBrokerEndpoint() {
-  return is_attachment_broker_endpoint();
-}
-
 // Channel's methods
 
 // static
-scoped_ptr<Channel> Channel::Create(const IPC::ChannelHandle& channel_handle,
-                                    Mode mode,
-                                    Listener* listener) {
-  return scoped_ptr<Channel>(new ChannelNacl(channel_handle, mode, listener));
+std::unique_ptr<Channel> Channel::Create(
+    const IPC::ChannelHandle& channel_handle,
+    Mode mode,
+    Listener* listener) {
+  return base::WrapUnique(new ChannelNacl(channel_handle, mode, listener));
 }
 
 }  // namespace IPC

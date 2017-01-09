@@ -33,41 +33,44 @@
 namespace blink {
 
 class CompositionEvent final : public UIEvent {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<CompositionEvent> create()
-    {
-        return adoptRefWillBeNoop(new CompositionEvent);
-    }
+  DEFINE_WRAPPERTYPEINFO();
 
-    static PassRefPtrWillBeRawPtr<CompositionEvent> create(const AtomicString& type, PassRefPtrWillBeRawPtr<AbstractView> view, const String& data)
-    {
-        return adoptRefWillBeNoop(new CompositionEvent(type, view, data));
-    }
+ public:
+  static CompositionEvent* create() { return new CompositionEvent; }
 
-    static PassRefPtrWillBeRawPtr<CompositionEvent> create(const AtomicString& type, const CompositionEventInit& initializer)
-    {
-        return adoptRefWillBeNoop(new CompositionEvent(type, initializer));
-    }
+  static CompositionEvent* create(const AtomicString& type,
+                                  AbstractView* view,
+                                  const String& data) {
+    return new CompositionEvent(type, view, data);
+  }
 
-    ~CompositionEvent() override;
+  static CompositionEvent* create(const AtomicString& type,
+                                  const CompositionEventInit& initializer) {
+    return new CompositionEvent(type, initializer);
+  }
 
-    void initCompositionEvent(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<AbstractView>, const String& data);
+  ~CompositionEvent() override;
 
-    String data() const { return m_data; }
+  void initCompositionEvent(const AtomicString& type,
+                            bool canBubble,
+                            bool cancelable,
+                            AbstractView*,
+                            const String& data);
 
-    const AtomicString& interfaceName() const override;
+  String data() const { return m_data; }
 
-    DECLARE_VIRTUAL_TRACE();
+  const AtomicString& interfaceName() const override;
 
-private:
-    CompositionEvent();
-    CompositionEvent(const AtomicString& type, PassRefPtrWillBeRawPtr<AbstractView>, const String&);
-    CompositionEvent(const AtomicString& type, const CompositionEventInit&);
+  DECLARE_VIRTUAL_TRACE();
 
-    String m_data;
+ private:
+  CompositionEvent();
+  CompositionEvent(const AtomicString& type, AbstractView*, const String&);
+  CompositionEvent(const AtomicString& type, const CompositionEventInit&);
+
+  String m_data;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CompositionEvent_h
+#endif  // CompositionEvent_h

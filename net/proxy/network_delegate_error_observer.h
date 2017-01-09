@@ -5,9 +5,12 @@
 #ifndef NET_PROXY_NETWORK_DELEGATE_ERROR_OBSERVER_H_
 #define NET_PROXY_NETWORK_DELEGATE_ERROR_OBSERVER_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "net/base/net_export.h"
 #include "net/proxy/proxy_resolver_error_observer.h"
 
 namespace base {
@@ -27,7 +30,7 @@ class NET_EXPORT_PRIVATE NetworkDelegateErrorObserver
                                base::SingleThreadTaskRunner* origin_runner);
   ~NetworkDelegateErrorObserver() override;
 
-  static scoped_ptr<ProxyResolverErrorObserver> Create(
+  static std::unique_ptr<ProxyResolverErrorObserver> Create(
       NetworkDelegate* network_delegate,
       const scoped_refptr<base::SingleThreadTaskRunner>& origin_runner);
 

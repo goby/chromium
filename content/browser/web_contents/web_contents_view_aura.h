@@ -5,18 +5,20 @@
 #ifndef CONTENT_BROWSER_WEB_CONTENTS_WEB_CONTENTS_VIEW_AURA_H_
 #define CONTENT_BROWSER_WEB_CONTENTS_WEB_CONTENTS_VIEW_AURA_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "content/browser/renderer_host/overscroll_controller_delegate.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/content_export.h"
+#include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_observer.h"
-#include "ui/wm/public/drag_drop_delegate.h"
 
 namespace aura {
 class Window;
@@ -32,14 +34,13 @@ class GestureNavSimple;
 class OverscrollNavigationOverlay;
 class RenderWidgetHostImpl;
 class RenderWidgetHostViewAura;
-class ShadowLayerDelegate;
 class TouchSelectionControllerClientAura;
 class WebContentsViewDelegate;
 class WebContentsImpl;
 class WebDragDestDelegate;
 
-class WebContentsViewAura
-    : public WebContentsView,
+class CONTENT_EXPORT WebContentsViewAura
+    : NON_EXPORTED_BASE(public WebContentsView),
       public RenderViewHostDelegateView,
       public OverscrollControllerDelegate,
       public aura::WindowDelegate,
@@ -49,6 +50,15 @@ class WebContentsViewAura
   WebContentsViewAura(WebContentsImpl* web_contents,
                       WebContentsViewDelegate* delegate);
 
+  // Allow the WebContentsViewDelegate to be set explicitly.
+  void SetDelegateForTesting(WebContentsViewDelegate* delegate);
+
+  // Set a flag to pass nullptr as the parent_view argument to
+  // RenderWidgetHostViewAura::InitAsChild().
+  void set_init_rwhv_with_null_parent_for_testing(bool set) {
+    init_rwhv_with_null_parent_for_testing_ = set;
+  }
+
  private:
   class WindowObserver;
 
@@ -56,7 +66,7 @@ class WebContentsViewAura
 
   void SizeChangedCommon(const gfx::Size& size);
 
-  void EndDrag(blink::WebDragOperationsMask ops);
+  void EndDrag(RenderWidgetHost* source_rwh, blink::WebDragOperationsMask ops);
 
   void InstallOverscrollControllerDelegate(RenderWidgetHostViewAura* view);
 
@@ -74,10 +84,14 @@ class WebContentsViewAura
   ui::TouchSelectionController* GetSelectionController() const;
   TouchSelectionControllerClientAura* GetSelectionControllerClient() const;
 
+  // Returns GetNativeView unless overridden for testing.
+  gfx::NativeView GetRenderWidgetHostViewParent() const;
+
   // Overridden from WebContentsView:
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetContentNativeView() const override;
   gfx::NativeWindow GetTopLevelNativeWindow() const override;
+  void GetScreenInfo(ScreenInfo* screen_info) const override;
   void GetContainerBounds(gfx::Rect* out) const override;
   void SizeContents(const gfx::Size& size) override;
   void Focus() override;
@@ -105,16 +119,23 @@ class WebContentsViewAura
                      blink::WebDragOperationsMask operations,
                      const gfx::ImageSkia& image,
                      const gfx::Vector2d& image_offset,
-                     const DragEventSourceInfo& event_info) override;
+                     const DragEventSourceInfo& event_info,
+                     RenderWidgetHostImpl* source_rwh) override;
   void UpdateDragCursor(blink::WebDragOperation operation) override;
   void GotFocus() override;
   void TakeFocus(bool reverse) override;
-  void ShowDisambiguationPopup(
-      const gfx::Rect& target_rect,
-      const SkBitmap& zoomed_bitmap,
-      const base::Callback<void(ui::GestureEvent*)>& gesture_cb,
-      const base::Callback<void(ui::MouseEvent*)>& mouse_cb) override;
-  void HideDisambiguationPopup() override;
+#if defined(USE_EXTERNAL_POPUP_MENU)
+  void ShowPopupMenu(RenderFrameHost* render_frame_host,
+                     const gfx::Rect& bounds,
+                     int item_height,
+                     double item_font_size,
+                     int selected_item,
+                     const std::vector<MenuItem>& items,
+                     bool right_aligned,
+                     bool allow_multiple_selection) override;
+
+  void HidePopupMenu() override;
+#endif
 
   // Overridden from OverscrollControllerDelegate:
   gfx::Rect GetVisibleBounds() const override;
@@ -156,30 +177,30 @@ class WebContentsViewAura
   // Overridden from aura::WindowObserver:
   void OnWindowVisibilityChanged(aura::Window* window, bool visible) override;
 
-  // Update the web contents visiblity.
-  void UpdateWebContentsVisibility(bool visible);
-
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest, EnableDisableOverscroll);
 
-  scoped_ptr<aura::Window> window_;
+  std::unique_ptr<aura::Window> window_;
 
-  scoped_ptr<WindowObserver> window_observer_;
+  std::unique_ptr<WindowObserver> window_observer_;
 
   // The WebContentsImpl whose contents we display.
   WebContentsImpl* web_contents_;
 
-  scoped_ptr<WebContentsViewDelegate> delegate_;
+  std::unique_ptr<WebContentsViewDelegate> delegate_;
 
   blink::WebDragOperationsMask current_drag_op_;
 
-  scoped_ptr<DropData> current_drop_data_;
+  std::unique_ptr<DropData> current_drop_data_;
 
   WebDragDestDelegate* drag_dest_delegate_;
 
-  // We keep track of the render view host we're dragging over.  If it changes
-  // during a drag, we need to re-send the DragEnter message.  WARNING:
-  // this pointer should never be dereferenced.  We only use it for comparing
-  // pointers.
+  // We keep track of the RenderWidgetHost we're dragging over. If it changes
+  // during a drag, we need to re-send the DragEnter message.
+  base::WeakPtr<RenderWidgetHostImpl> current_rwh_for_drag_;
+
+  // We also keep track of the RenderViewHost we're dragging over to avoid
+  // sending the drag exited message after leaving the current
+  // view. |current_rvh_for_drag_| should not be dereferenced.
   void* current_rvh_for_drag_;
 
   // The overscroll gesture currently in progress.
@@ -191,13 +212,11 @@ class WebContentsViewAura
 
   // This manages the overlay window that shows the screenshot during a history
   // navigation triggered by the overscroll gesture.
-  scoped_ptr<OverscrollNavigationOverlay> navigation_overlay_;
+  std::unique_ptr<OverscrollNavigationOverlay> navigation_overlay_;
 
-  scoped_ptr<GestureNavSimple> gesture_nav_simple_;
+  std::unique_ptr<GestureNavSimple> gesture_nav_simple_;
 
-  // On Windows we can run into problems if resources get released within the
-  // initialization phase while the content (and its dimensions) are not known.
-  bool is_or_was_visible_;
+  bool init_rwhv_with_null_parent_for_testing_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsViewAura);
 };

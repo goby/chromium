@@ -5,12 +5,15 @@
 #include "net/http/transport_security_state.h"
 
 #include <algorithm>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "base/base64.h"
 #include "base/build_time.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/sha1.h"
@@ -19,24 +22,56 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "crypto/sha2.h"
 #include "net/base/host_port_pair.h"
+#include "net/cert/ct_policy_status.h"
 #include "net/cert/x509_cert_types.h"
 #include "net/cert/x509_certificate.h"
 #include "net/dns/dns_util.h"
 #include "net/http/http_security_headers.h"
 #include "net/ssl/ssl_info.h"
-#include "url/gurl.h"
+
+#if !defined(OS_NACL)
+#include "base/metrics/field_trial.h"
+#endif
 
 namespace net {
 
 namespace {
 
+#include "net/http/transport_security_state_ct_policies.inc"
 #include "net/http/transport_security_state_static.h"
 
 const size_t kMaxHPKPReportCacheEntries = 50;
 const int kTimeToRememberHPKPReportsMins = 60;
 const size_t kReportCacheKeyLength = 16;
+
+// Override for ShouldRequireCT() for unit tests. Possible values:
+//  -1: Unless a delegate says otherwise, do not require CT.
+//   0: Use the default implementation (e.g. production)
+//   1: Unless a delegate says otherwise, require CT.
+int g_ct_required_for_testing = 0;
+
+// LessThan comparator for use with std::binary_search() in determining
+// whether a SHA-256 HashValue appears within a sorted array of
+// SHA256HashValues.
+struct SHA256ToHashValueComparator {
+  bool operator()(const SHA256HashValue& lhs, const HashValue& rhs) const {
+    DCHECK_EQ(HASH_VALUE_SHA256, rhs.tag);
+    return memcmp(lhs.data, rhs.data(), rhs.size()) < 0;
+  }
+
+  bool operator()(const HashValue& lhs, const SHA256HashValue& rhs) const {
+    DCHECK_EQ(HASH_VALUE_SHA256, lhs.tag);
+    return memcmp(lhs.data(), rhs.data, lhs.size()) < 0;
+  }
+};
+
+void RecordUMAForHPKPReportFailure(const GURL& report_uri, int net_error) {
+  UMA_HISTOGRAM_SPARSE_SLOWLY("Net.PublicKeyPinReportSendingFailure2",
+                              -net_error);
+}
 
 std::string TimeToISO8601(const base::Time& t) {
   base::Time::Exploded exploded;
@@ -47,18 +82,18 @@ std::string TimeToISO8601(const base::Time& t) {
       exploded.millisecond);
 }
 
-scoped_ptr<base::ListValue> GetPEMEncodedChainAsList(
+std::unique_ptr<base::ListValue> GetPEMEncodedChainAsList(
     const net::X509Certificate* cert_chain) {
   if (!cert_chain)
-    return make_scoped_ptr(new base::ListValue());
+    return base::MakeUnique<base::ListValue>();
 
-  scoped_ptr<base::ListValue> result(new base::ListValue());
+  std::unique_ptr<base::ListValue> result(new base::ListValue());
   std::vector<std::string> pem_encoded_chain;
   cert_chain->GetPEMEncodedChain(&pem_encoded_chain);
   for (const std::string& cert : pem_encoded_chain)
-    result->Append(make_scoped_ptr(new base::StringValue(cert)));
+    result->Append(base::MakeUnique<base::StringValue>(cert));
 
-  return result.Pass();
+  return result;
 }
 
 bool HashReportForCache(const base::DictionaryValue& report,
@@ -92,15 +127,16 @@ bool GetHPKPReport(const HostPortPair& host_port_pair,
   report.SetBoolean("include-subdomains", pkp_state.include_subdomains);
   report.SetString("noted-hostname", pkp_state.domain);
 
-  scoped_ptr<base::ListValue> served_certificate_chain_list =
+  std::unique_ptr<base::ListValue> served_certificate_chain_list =
       GetPEMEncodedChainAsList(served_certificate_chain);
-  scoped_ptr<base::ListValue> validated_certificate_chain_list =
+  std::unique_ptr<base::ListValue> validated_certificate_chain_list =
       GetPEMEncodedChainAsList(validated_certificate_chain);
-  report.Set("served-certificate-chain", served_certificate_chain_list.Pass());
+  report.Set("served-certificate-chain",
+             std::move(served_certificate_chain_list));
   report.Set("validated-certificate-chain",
-             validated_certificate_chain_list.Pass());
+             std::move(validated_certificate_chain_list));
 
-  scoped_ptr<base::ListValue> known_pin_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> known_pin_list(new base::ListValue());
   for (const auto& hash_value : pkp_state.spki_hashes) {
     std::string known_pin;
 
@@ -121,10 +157,10 @@ bool GetHPKPReport(const HostPortPair& host_port_pair,
     known_pin += "\"" + base64_value + "\"";
 
     known_pin_list->Append(
-        scoped_ptr<base::Value>(new base::StringValue(known_pin)));
+        std::unique_ptr<base::Value>(new base::StringValue(known_pin)));
   }
 
-  report.Set("known-pins", known_pin_list.Pass());
+  report.Set("known-pins", std::move(known_pin_list));
 
   // For the sent reports cache, do not include the effective expiration
   // date. The expiration date will likely change every time the user
@@ -176,10 +212,9 @@ std::string HashHost(const std::string& canonicalized_host) {
 // |a| or |b| is empty, returns false.
 bool HashesIntersect(const HashValueVector& a,
                      const HashValueVector& b) {
-  for (HashValueVector::const_iterator i = a.begin(); i != a.end(); ++i) {
-    HashValueVector::const_iterator j =
-        std::find_if(b.begin(), b.end(), HashValuesEqual(*i));
-    if (j != b.end())
+  for (const auto& hash : a) {
+    auto p = std::find(b.begin(), b.end(), hash);
+    if (p != b.end())
       return true;
   }
   return false;
@@ -222,7 +257,7 @@ std::string CanonicalizeHost(const std::string& host) {
 // BitReader is a class that allows a bytestring to be read bit-by-bit.
 class BitReader {
  public:
-  BitReader(const uint8* bytes, size_t num_bits)
+  BitReader(const uint8_t* bytes, size_t num_bits)
       : bytes_(bytes),
         num_bits_(num_bits),
         num_bytes_((num_bits + 7) / 8),
@@ -248,16 +283,16 @@ class BitReader {
   // Read sets the |num_bits| least-significant bits of |*out| to the value of
   // the next |num_bits| bits from the input. It returns false if there are
   // insufficient bits in the input or true otherwise.
-  bool Read(unsigned num_bits, uint32* out) {
+  bool Read(unsigned num_bits, uint32_t* out) {
     DCHECK_LE(num_bits, 32u);
 
-    uint32 ret = 0;
+    uint32_t ret = 0;
     for (unsigned i = 0; i < num_bits; ++i) {
       bool bit;
       if (!Next(&bit)) {
         return false;
       }
-      ret |= static_cast<uint32>(bit) << (num_bits - 1 - i);
+      ret |= static_cast<uint32_t>(bit) << (num_bits - 1 - i);
     }
 
     *out = ret;
@@ -299,13 +334,13 @@ class BitReader {
   }
 
  private:
-  const uint8* const bytes_;
+  const uint8_t* const bytes_;
   const size_t num_bits_;
   const size_t num_bytes_;
   // current_byte_index_ contains the current byte offset in |bytes_|.
   size_t current_byte_index_;
   // current_byte_ contains the current byte of the input.
-  uint8 current_byte_;
+  uint8_t current_byte_;
   // num_bits_used_ contains the number of bits of |current_byte_| that have
   // been read.
   unsigned num_bits_used_;
@@ -320,11 +355,11 @@ class BitReader {
 // The tree is decoded by walking rather than a table-driven approach.
 class HuffmanDecoder {
  public:
-  HuffmanDecoder(const uint8* tree, size_t tree_bytes)
+  HuffmanDecoder(const uint8_t* tree, size_t tree_bytes)
       : tree_(tree), tree_bytes_(tree_bytes) {}
 
   bool Decode(BitReader* reader, char* out) {
-    const uint8* current = &tree_[tree_bytes_ - 2];
+    const uint8_t* current = &tree_[tree_bytes_ - 2];
 
     for (;;) {
       bool bit;
@@ -332,7 +367,7 @@ class HuffmanDecoder {
         return false;
       }
 
-      uint8 b = current[bit];
+      uint8_t b = current[bit];
       if (b & 0x80) {
         *out = static_cast<char>(b & 0x7f);
         return true;
@@ -349,15 +384,14 @@ class HuffmanDecoder {
   }
 
  private:
-  const uint8* const tree_;
+  const uint8_t* const tree_;
   const size_t tree_bytes_;
 };
 
 // PreloadResult is the result of resolving a specific name in the preloaded
 // data.
 struct PreloadResult {
-  uint32 pinset_id;
-  uint32 domain_id;
+  uint32_t pinset_id;
   // hostname_offset contains the number of bytes from the start of the given
   // hostname where the name of the matching entry starts.
   size_t hostname_offset;
@@ -365,6 +399,11 @@ struct PreloadResult {
   bool pkp_include_subdomains;
   bool force_https;
   bool has_pins;
+  bool expect_ct;
+  uint32_t expect_ct_report_uri_id;
+  bool expect_staple;
+  bool expect_staple_include_subdomains;
+  uint32_t expect_staple_report_uri_id;
 };
 
 // DecodeHSTSPreloadRaw resolves |hostname| in the preloaded data. It returns
@@ -484,18 +523,42 @@ bool DecodeHSTSPreloadRaw(const std::string& search_hostname,
         tmp.pkp_include_subdomains = tmp.sts_include_subdomains;
 
         if (tmp.has_pins) {
+          // TODO(estark): This can be removed once the preload list
+          // format no longer includes |domain_id|.
+          // https://crbug.com/661206
+          uint32_t unused_domain_id;
           if (!reader.Read(4, &tmp.pinset_id) ||
-              !reader.Read(9, &tmp.domain_id) ||
+              !reader.Read(9, &unused_domain_id) ||
               (!tmp.sts_include_subdomains &&
                !reader.Next(&tmp.pkp_include_subdomains))) {
             return false;
           }
         }
 
+        if (!reader.Next(&tmp.expect_ct))
+          return false;
+
+        if (tmp.expect_ct) {
+          if (!reader.Read(4, &tmp.expect_ct_report_uri_id))
+            return false;
+        }
+
+        if (!reader.Next(&tmp.expect_staple))
+          return false;
+        tmp.expect_staple_include_subdomains = false;
+        if (tmp.expect_staple) {
+          if (!reader.Next(&tmp.expect_staple_include_subdomains))
+            return false;
+          if (!reader.Read(4, &tmp.expect_staple_report_uri_id))
+            return false;
+        }
+
         tmp.hostname_offset = hostname_offset;
 
         if (hostname_offset == 0 || hostname[hostname_offset - 1] == '.') {
-          *out_found = tmp.sts_include_subdomains || tmp.pkp_include_subdomains;
+          *out_found = tmp.sts_include_subdomains ||
+                       tmp.pkp_include_subdomains ||
+                       tmp.expect_staple_include_subdomains;
           *out = tmp;
 
           if (hostname_offset > 0) {
@@ -517,8 +580,8 @@ bool DecodeHSTSPreloadRaw(const std::string& search_hostname,
 
       if (is_first_offset) {
         // The first offset is backwards from the current position.
-        uint32 jump_delta_bits;
-        uint32 jump_delta;
+        uint32_t jump_delta_bits;
+        uint32_t jump_delta;
         if (!reader.Read(5, &jump_delta_bits) ||
             !reader.Read(jump_delta_bits, &jump_delta)) {
           return false;
@@ -532,18 +595,18 @@ bool DecodeHSTSPreloadRaw(const std::string& search_hostname,
         is_first_offset = false;
       } else {
         // Subsequent offsets are forward from the target of the first offset.
-        uint32 is_long_jump;
+        uint32_t is_long_jump;
         if (!reader.Read(1, &is_long_jump)) {
           return false;
         }
 
-        uint32 jump_delta;
+        uint32_t jump_delta;
         if (!is_long_jump) {
           if (!reader.Read(7, &jump_delta)) {
             return false;
           }
         } else {
-          uint32 jump_delta_bits;
+          uint32_t jump_delta_bits;
           if (!reader.Read(4, &jump_delta_bits) ||
               !reader.Read(jump_delta_bits + 8, &jump_delta)) {
             return false;
@@ -577,17 +640,93 @@ bool DecodeHSTSPreload(const std::string& hostname, PreloadResult* out) {
   return found;
 }
 
+// Serializes an OCSPVerifyResult::ResponseStatus to a string enum, suitable for
+// the |response-status| field in an Expect-Staple report.
+std::string SerializeExpectStapleResponseStatus(
+    OCSPVerifyResult::ResponseStatus status) {
+  switch (status) {
+    case OCSPVerifyResult::MISSING:
+      return "MISSING";
+    case OCSPVerifyResult::PROVIDED:
+      return "PROVIDED";
+    case OCSPVerifyResult::ERROR_RESPONSE:
+      return "ERROR_RESPONSE";
+    case OCSPVerifyResult::BAD_PRODUCED_AT:
+      return "BAD_PRODUCED_AT";
+    case OCSPVerifyResult::NO_MATCHING_RESPONSE:
+      return "NO_MATCHING_RESPONSE";
+    case OCSPVerifyResult::INVALID_DATE:
+      return "INVALID_DATE";
+    case OCSPVerifyResult::PARSE_RESPONSE_ERROR:
+      return "PARSE_RESPONSE_ERROR";
+    case OCSPVerifyResult::PARSE_RESPONSE_DATA_ERROR:
+      return "PARSE_RESPONSE_DATA_ERROR";
+  }
+  return std::string();
+}
+
+// Serializes an OCSPRevocationStatus to a string enum, suitable for the
+// |cert-status| field in an Expect-Staple report.
+std::string SerializeExpectStapleRevocationStatus(
+    const OCSPRevocationStatus& status) {
+  switch (status) {
+    case OCSPRevocationStatus::GOOD:
+      return "GOOD";
+    case OCSPRevocationStatus::REVOKED:
+      return "REVOKED";
+    case OCSPRevocationStatus::UNKNOWN:
+      return "UNKNOWN";
+  }
+  return std::string();
+}
+
+bool SerializeExpectStapleReport(const HostPortPair& host_port_pair,
+                                 const SSLInfo& ssl_info,
+                                 const std::string& ocsp_response,
+                                 std::string* out_serialized_report) {
+  DCHECK(ssl_info.is_issued_by_known_root);
+  base::DictionaryValue report;
+  report.SetString("date-time", TimeToISO8601(base::Time::Now()));
+  report.SetString("hostname", host_port_pair.host());
+  report.SetInteger("port", host_port_pair.port());
+  report.SetString("response-status",
+                   SerializeExpectStapleResponseStatus(
+                       ssl_info.ocsp_result.response_status));
+
+  if (!ocsp_response.empty()) {
+    std::string encoded_ocsp_response;
+    base::Base64Encode(ocsp_response, &encoded_ocsp_response);
+    report.SetString("ocsp-response", encoded_ocsp_response);
+  }
+  if (ssl_info.ocsp_result.response_status == OCSPVerifyResult::PROVIDED) {
+    report.SetString("cert-status",
+                     SerializeExpectStapleRevocationStatus(
+                         ssl_info.ocsp_result.revocation_status));
+  }
+
+  report.Set("served-certificate-chain",
+             GetPEMEncodedChainAsList(ssl_info.unverified_cert.get()));
+  report.Set("validated-certificate-chain",
+             GetPEMEncodedChainAsList(ssl_info.cert.get()));
+
+  if (!base::JSONWriter::Write(report, out_serialized_report))
+    return false;
+  return true;
+}
+
 }  // namespace
 
 TransportSecurityState::TransportSecurityState()
-    : delegate_(nullptr),
-      report_sender_(nullptr),
-      enable_static_pins_(true),
+    : enable_static_pins_(true),
+      enable_static_expect_ct_(true),
+      enable_static_expect_staple_(true),
+      enable_pkp_bypass_for_local_trust_anchors_(true),
       sent_reports_cache_(kMaxHPKPReportCacheEntries) {
 // Static pinning is only enabled for official builds to make sure that
 // others don't end up with pins that cannot be easily updated.
 #if !defined(OFFICIAL_BUILD) || defined(OS_ANDROID) || defined(OS_IOS)
   enable_static_pins_ = false;
+  enable_static_expect_ct_ = false;
 #endif
   DCHECK(CalledOnValidThread());
 }
@@ -619,7 +758,7 @@ bool TransportSecurityState::ShouldUpgradeToSSL(const std::string& host) {
   return false;
 }
 
-bool TransportSecurityState::CheckPublicKeyPins(
+TransportSecurityState::PKPStatus TransportSecurityState::CheckPublicKeyPins(
     const HostPortPair& host_port_pair,
     bool is_issued_by_known_root,
     const HashValueVector& public_key_hashes,
@@ -627,25 +766,58 @@ bool TransportSecurityState::CheckPublicKeyPins(
     const X509Certificate* validated_certificate_chain,
     const PublicKeyPinReportStatus report_status,
     std::string* pinning_failure_log) {
-  // Perform pin validation if, and only if, all these conditions obtain:
-  //
-  // * the server's certificate chain chains up to a known root (i.e. not a
-  //   user-installed trust anchor); and
-  // * the server actually has public key pins.
-  if (!is_issued_by_known_root || !HasPublicKeyPins(host_port_pair.host())) {
-    return true;
+  // Perform pin validation only if the server actually has public key pins.
+  if (!HasPublicKeyPins(host_port_pair.host())) {
+    return PKPStatus::OK;
   }
 
-  bool pins_are_valid = CheckPublicKeyPinsImpl(
-      host_port_pair, public_key_hashes, served_certificate_chain,
-      validated_certificate_chain, report_status, pinning_failure_log);
-  if (!pins_are_valid) {
-    LOG(ERROR) << *pinning_failure_log;
-    ReportUMAOnPinFailure(host_port_pair.host());
+  PKPStatus pin_validity = CheckPublicKeyPinsImpl(
+      host_port_pair, is_issued_by_known_root, public_key_hashes,
+      served_certificate_chain, validated_certificate_chain, report_status,
+      pinning_failure_log);
+
+  // Don't track statistics when a local trust anchor would override the pinning
+  // anyway.
+  if (!is_issued_by_known_root)
+    return pin_validity;
+
+  UMA_HISTOGRAM_BOOLEAN("Net.PublicKeyPinSuccess",
+                        pin_validity == PKPStatus::OK);
+  return pin_validity;
+}
+
+void TransportSecurityState::CheckExpectStaple(
+    const HostPortPair& host_port_pair,
+    const SSLInfo& ssl_info,
+    const std::string& ocsp_response) {
+  DCHECK(CalledOnValidThread());
+  if (!enable_static_expect_staple_ || !report_sender_ ||
+      !ssl_info.is_issued_by_known_root) {
+    return;
   }
 
-  UMA_HISTOGRAM_BOOLEAN("Net.PublicKeyPinSuccess", pins_are_valid);
-  return pins_are_valid;
+  // Determine if the host is on the Expect-Staple preload list. If the build is
+  // not timely (i.e. the preload list is not fresh), this will fail and return
+  // false.
+  ExpectStapleState expect_staple_state;
+  if (!GetStaticExpectStapleState(host_port_pair.host(), &expect_staple_state))
+    return;
+
+  // No report needed if a stapled OCSP response was provided.
+  if (ssl_info.ocsp_result.response_status == OCSPVerifyResult::PROVIDED &&
+      ssl_info.ocsp_result.revocation_status == OCSPRevocationStatus::GOOD) {
+    return;
+  }
+
+  std::string serialized_report;
+  if (!SerializeExpectStapleReport(host_port_pair, ssl_info, ocsp_response,
+                                   &serialized_report)) {
+    return;
+  }
+  report_sender_->Send(expect_staple_state.report_uri,
+                       "application/json; charset=utf-8", serialized_report,
+                       base::Closure(),
+                       base::Bind(RecordUMAForHPKPReportFailure));
 }
 
 bool TransportSecurityState::HasPublicKeyPins(const std::string& host) {
@@ -663,6 +835,83 @@ bool TransportSecurityState::HasPublicKeyPins(const std::string& host) {
   return false;
 }
 
+bool TransportSecurityState::ShouldRequireCT(
+    const std::string& hostname,
+    const X509Certificate* validated_certificate_chain,
+    const HashValueVector& public_key_hashes) {
+  using CTRequirementLevel = RequireCTDelegate::CTRequirementLevel;
+
+  CTRequirementLevel ct_required = CTRequirementLevel::DEFAULT;
+  if (require_ct_delegate_)
+    ct_required = require_ct_delegate_->IsCTRequiredForHost(hostname);
+  if (ct_required != CTRequirementLevel::DEFAULT)
+    return ct_required == CTRequirementLevel::REQUIRED;
+
+  // Allow unittests to override the default result.
+  if (g_ct_required_for_testing)
+    return g_ct_required_for_testing == 1;
+
+  // Until CT is required for all secure hosts on the Internet, this should
+  // remain false. It is provided to simplify the various short-circuit
+  // returns below.
+  bool default_response = false;
+
+// FieldTrials are not supported in Native Client apps.
+#if !defined(OS_NACL)
+  // Emergency escape valve; not to be activated until there's an actual
+  // emergency (e.g. a weird path-building bug due to a CA's failed
+  // disclosure of cross-signed sub-CAs).
+  std::string group_name =
+      base::FieldTrialList::FindFullName("EnforceCTForProblematicRoots");
+  if (base::StartsWith(group_name, "disabled",
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+    return default_response;
+  }
+#endif
+
+  const base::Time epoch = base::Time::UnixEpoch();
+  for (const auto& restricted_ca : kCTRequiredPolicies) {
+    if (epoch + restricted_ca.effective_date >
+        validated_certificate_chain->valid_start()) {
+      // The candidate cert is not subject to the CT policy, because it
+      // was issued before the effective CT date.
+      continue;
+    }
+
+    for (const auto& hash : public_key_hashes) {
+      if (hash.tag != HASH_VALUE_SHA256)
+        continue;
+
+      // Determine if |hash| is in the set of roots of |restricted_ca|.
+      if (!std::binary_search(restricted_ca.roots,
+                              restricted_ca.roots + restricted_ca.roots_length,
+                              hash, SHA256ToHashValueComparator())) {
+        continue;
+      }
+
+      // Found a match, indicating this certificate is potentially
+      // restricted. Determine if any of the hashes are on the exclusion
+      // list as exempt from the CT requirement.
+      for (const auto& sub_ca_hash : public_key_hashes) {
+        if (sub_ca_hash.tag != HASH_VALUE_SHA256)
+          continue;
+        if (std::binary_search(
+                restricted_ca.exceptions,
+                restricted_ca.exceptions + restricted_ca.exceptions_length,
+                sub_ca_hash, SHA256ToHashValueComparator())) {
+          // Found an excluded sub-CA; CT is not required.
+          return default_response;
+        }
+      }
+
+      // No exception found. This certificate must conform to the CT policy.
+      return true;
+    }
+  }
+
+  return default_response;
+}
+
 void TransportSecurityState::SetDelegate(
     TransportSecurityState::Delegate* delegate) {
   DCHECK(CalledOnValidThread());
@@ -670,9 +919,20 @@ void TransportSecurityState::SetDelegate(
 }
 
 void TransportSecurityState::SetReportSender(
-    TransportSecurityState::ReportSender* report_sender) {
+    TransportSecurityState::ReportSenderInterface* report_sender) {
   DCHECK(CalledOnValidThread());
   report_sender_ = report_sender;
+}
+
+void TransportSecurityState::SetExpectCTReporter(
+    ExpectCTReporter* expect_ct_reporter) {
+  DCHECK(CalledOnValidThread());
+  expect_ct_reporter_ = expect_ct_reporter;
+}
+
+void TransportSecurityState::SetRequireCTDelegate(RequireCTDelegate* delegate) {
+  DCHECK(CalledOnValidThread());
+  require_ct_delegate_ = delegate;
 }
 
 void TransportSecurityState::AddHSTSInternal(
@@ -707,6 +967,11 @@ void TransportSecurityState::AddHPKPInternal(const std::string& host,
   pkp_state.report_uri = report_uri;
 
   EnablePKPHost(host, pkp_state);
+}
+
+void TransportSecurityState::
+    SetEnablePublicKeyPinningBypassForLocalTrustAnchors(bool value) {
+  enable_pkp_bypass_for_local_trust_anchors_ = value;
 }
 
 void TransportSecurityState::EnableSTSHost(const std::string& host,
@@ -759,8 +1024,10 @@ void TransportSecurityState::EnablePKPHost(const std::string& host,
   DirtyNotify();
 }
 
-bool TransportSecurityState::CheckPinsAndMaybeSendReport(
+TransportSecurityState::PKPStatus
+TransportSecurityState::CheckPinsAndMaybeSendReport(
     const HostPortPair& host_port_pair,
+    bool is_issued_by_known_root,
     const TransportSecurityState::PKPState& pkp_state,
     const HashValueVector& hashes,
     const X509Certificate* served_certificate_chain,
@@ -768,26 +1035,30 @@ bool TransportSecurityState::CheckPinsAndMaybeSendReport(
     const TransportSecurityState::PublicKeyPinReportStatus report_status,
     std::string* failure_log) {
   if (pkp_state.CheckPublicKeyPins(hashes, failure_log))
-    return true;
+    return PKPStatus::OK;
+
+  // Don't report violations for certificates that chain to local roots.
+  if (!is_issued_by_known_root && enable_pkp_bypass_for_local_trust_anchors_)
+    return PKPStatus::BYPASSED;
 
   if (!report_sender_ ||
       report_status != TransportSecurityState::ENABLE_PIN_REPORTS ||
       pkp_state.report_uri.is_empty()) {
-    return false;
+    return PKPStatus::VIOLATED;
   }
 
   DCHECK(pkp_state.report_uri.is_valid());
   // Report URIs should not be used if they are the same host as the pin
   // and are HTTPS, to avoid going into a report-sending loop.
   if (!IsReportUriValidForHost(pkp_state.report_uri, host_port_pair.host()))
-    return false;
+    return PKPStatus::VIOLATED;
 
   std::string serialized_report;
   std::string report_cache_key;
   if (!GetHPKPReport(host_port_pair, pkp_state, served_certificate_chain,
                      validated_certificate_chain, &serialized_report,
                      &report_cache_key)) {
-    return false;
+    return PKPStatus::VIOLATED;
   }
 
   // Limit the rate at which duplicate reports are sent to the same
@@ -796,14 +1067,60 @@ bool TransportSecurityState::CheckPinsAndMaybeSendReport(
   // also prevents accidental loops (a.com triggers a report to b.com
   // which triggers a report to a.com). See section 2.1.4 of RFC 7469.
   if (sent_reports_cache_.Get(report_cache_key, base::TimeTicks::Now()))
-    return false;
+    return PKPStatus::VIOLATED;
   sent_reports_cache_.Put(
       report_cache_key, true, base::TimeTicks::Now(),
       base::TimeTicks::Now() +
           base::TimeDelta::FromMinutes(kTimeToRememberHPKPReportsMins));
 
-  report_sender_->Send(pkp_state.report_uri, serialized_report);
-  return false;
+  report_sender_->Send(pkp_state.report_uri, "application/json; charset=utf-8",
+                       serialized_report, base::Closure(),
+                       base::Bind(RecordUMAForHPKPReportFailure));
+  return PKPStatus::VIOLATED;
+}
+
+bool TransportSecurityState::GetStaticExpectCTState(
+    const std::string& host,
+    ExpectCTState* expect_ct_state) const {
+  DCHECK(CalledOnValidThread());
+
+  if (!IsBuildTimely())
+    return false;
+
+  PreloadResult result;
+  if (!DecodeHSTSPreload(host, &result))
+    return false;
+
+  if (!enable_static_expect_ct_ || !result.expect_ct)
+    return false;
+
+  expect_ct_state->domain = host.substr(result.hostname_offset);
+  expect_ct_state->report_uri =
+      GURL(kExpectCTReportURIs[result.expect_ct_report_uri_id]);
+  return true;
+}
+
+bool TransportSecurityState::GetStaticExpectStapleState(
+    const std::string& host,
+    ExpectStapleState* expect_staple_state) const {
+  DCHECK(CalledOnValidThread());
+
+  if (!IsBuildTimely())
+    return false;
+
+  PreloadResult result;
+  if (!DecodeHSTSPreload(host, &result))
+    return false;
+
+  if (!enable_static_expect_staple_ || !result.expect_staple)
+    return false;
+
+  expect_staple_state->domain = host.substr(result.hostname_offset);
+  expect_staple_state->include_subdomains =
+      result.expect_staple_include_subdomains;
+  expect_staple_state->report_uri =
+      GURL(kExpectStapleReportURIs[result.expect_staple_report_uri_id]);
+  return true;
 }
 
 bool TransportSecurityState::DeleteDynamicDataForHost(const std::string& host) {
@@ -968,49 +1285,94 @@ bool TransportSecurityState::ProcessHPKPReportOnlyHeader(
   pkp_state.report_uri = report_uri;
   pkp_state.domain = DNSDomainToString(CanonicalizeHost(host_port_pair.host()));
 
-  // Only perform pin validation if the cert chains up to a known root.
-  if (!ssl_info.is_issued_by_known_root)
-    return true;
-
   CheckPinsAndMaybeSendReport(
-      host_port_pair, pkp_state, ssl_info.public_key_hashes,
-      ssl_info.unverified_cert.get(), ssl_info.cert.get(), ENABLE_PIN_REPORTS,
-      &unused_failure_log);
+      host_port_pair, ssl_info.is_issued_by_known_root, pkp_state,
+      ssl_info.public_key_hashes, ssl_info.unverified_cert.get(),
+      ssl_info.cert.get(), ENABLE_PIN_REPORTS, &unused_failure_log);
   return true;
 }
 
-// static
-void TransportSecurityState::ReportUMAOnPinFailure(const std::string& host) {
-  PreloadResult result;
-  if (!DecodeHSTSPreload(host, &result) ||
-      !result.has_pins) {
+void TransportSecurityState::ProcessExpectCTHeader(
+    const std::string& value,
+    const HostPortPair& host_port_pair,
+    const SSLInfo& ssl_info) {
+  DCHECK(CalledOnValidThread());
+
+  // Records the result of processing an Expect-CT header. This enum is
+  // histogrammed, so do not reorder or remove values.
+  enum ExpectCTHeaderResult {
+    // An Expect-CT header was received, but it had the wrong value.
+    EXPECT_CT_HEADER_BAD_VALUE = 0,
+    // The Expect-CT header was ignored because the build was old.
+    EXPECT_CT_HEADER_BUILD_NOT_TIMELY = 1,
+    // The Expect-CT header was ignored because the certificate did not chain to
+    // a public root.
+    EXPECT_CT_HEADER_PRIVATE_ROOT = 2,
+    // The Expect-CT header was ignored because CT compliance details were
+    // unavailable.
+    EXPECT_CT_HEADER_COMPLIANCE_DETAILS_UNAVAILABLE = 3,
+    // The request satisified the Expect-CT compliance policy, so no action was
+    // taken.
+    EXPECT_CT_HEADER_COMPLIED = 4,
+    // The Expect-CT header was ignored because there was no corresponding
+    // preload list entry.
+    EXPECT_CT_HEADER_NOT_PRELOADED = 5,
+    // The Expect-CT header was processed successfully and passed on to the
+    // delegate to send a report.
+    EXPECT_CT_HEADER_PROCESSED = 6,
+    EXPECT_CT_HEADER_LAST = EXPECT_CT_HEADER_PROCESSED
+  };
+
+  ExpectCTHeaderResult result = EXPECT_CT_HEADER_PROCESSED;
+
+  if (!expect_ct_reporter_)
     return;
+
+  ExpectCTState state;
+  if (value != "preload") {
+    result = EXPECT_CT_HEADER_BAD_VALUE;
+  } else if (!IsBuildTimely()) {
+    result = EXPECT_CT_HEADER_BUILD_NOT_TIMELY;
+  } else if (!ssl_info.is_issued_by_known_root) {
+    result = EXPECT_CT_HEADER_PRIVATE_ROOT;
+  } else if (!ssl_info.ct_compliance_details_available) {
+    result = EXPECT_CT_HEADER_COMPLIANCE_DETAILS_UNAVAILABLE;
+  } else if (ssl_info.ct_cert_policy_compliance ==
+             ct::CertPolicyCompliance::CERT_POLICY_COMPLIES_VIA_SCTS) {
+    result = EXPECT_CT_HEADER_COMPLIED;
+  } else if (!GetStaticExpectCTState(host_port_pair.host(), &state)) {
+    result = EXPECT_CT_HEADER_NOT_PRELOADED;
   }
 
-  DCHECK(result.domain_id != DOMAIN_NOT_PINNED);
+  UMA_HISTOGRAM_ENUMERATION("Net.ExpectCTHeaderResult", result,
+                            EXPECT_CT_HEADER_LAST + 1);
+  if (result != EXPECT_CT_HEADER_PROCESSED)
+    return;
 
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
-      "Net.PublicKeyPinFailureDomain", result.domain_id);
+  expect_ct_reporter_->OnExpectCTFailed(host_port_pair, state.report_uri,
+                                        ssl_info);
+}
+
+// static
+void TransportSecurityState::SetShouldRequireCTForTesting(bool* required) {
+  if (!required) {
+    g_ct_required_for_testing = 0;
+    return;
+  }
+  g_ct_required_for_testing = *required ? 1 : -1;
 }
 
 // static
 bool TransportSecurityState::IsBuildTimely() {
-  // If the build metadata aren't embedded in the binary then we can't use the
-  // build time to determine if the build is timely, return true by default. If
-  // we're building an official build then keep using the build time, even if
-  // it's invalid it'd be a date in the past and this function will return
-  // false.
-#if defined(DONT_EMBED_BUILD_METADATA) && !defined(OFFICIAL_BUILD)
-  return true;
-#else
   const base::Time build_time = base::GetBuildTime();
   // We consider built-in information to be timely for 10 weeks.
   return (base::Time::Now() - build_time).InDays() < 70 /* 10 weeks */;
-#endif
 }
 
-bool TransportSecurityState::CheckPublicKeyPinsImpl(
+TransportSecurityState::PKPStatus
+TransportSecurityState::CheckPublicKeyPinsImpl(
     const HostPortPair& host_port_pair,
+    bool is_issued_by_known_root,
     const HashValueVector& hashes,
     const X509Certificate* served_certificate_chain,
     const X509Certificate* validated_certificate_chain,
@@ -1019,16 +1381,17 @@ bool TransportSecurityState::CheckPublicKeyPinsImpl(
   PKPState pkp_state;
   STSState unused;
 
-  if (!GetDynamicPKPState(host_port_pair.host(), &pkp_state) &&
-      !GetStaticDomainState(host_port_pair.host(), &unused, &pkp_state)) {
-    // HasPublicKeyPins should have returned true in order for this method
-    // to have been called, so if we fall through to here, it's an error.
-    return false;
-  }
+  bool found_state =
+      GetDynamicPKPState(host_port_pair.host(), &pkp_state) ||
+      GetStaticDomainState(host_port_pair.host(), &unused, &pkp_state);
 
+  // HasPublicKeyPins should have returned true in order for this method to have
+  // been called.
+  DCHECK(found_state);
   return CheckPinsAndMaybeSendReport(
-      host_port_pair, pkp_state, hashes, served_certificate_chain,
-      validated_certificate_chain, report_status, failure_log);
+      host_port_pair, is_issued_by_known_root, pkp_state, hashes,
+      served_certificate_chain, validated_certificate_chain, report_status,
+      failure_log);
 }
 
 bool TransportSecurityState::GetStaticDomainState(const std::string& host,
@@ -1084,6 +1447,25 @@ bool TransportSecurityState::GetStaticDomainState(const std::string& host,
   }
 
   return true;
+}
+
+bool TransportSecurityState::IsGooglePinnedHost(const std::string& host) const {
+  DCHECK(CalledOnValidThread());
+
+  if (!IsBuildTimely())
+    return false;
+
+  PreloadResult result;
+  if (!DecodeHSTSPreload(host, &result))
+    return false;
+
+  if (!result.has_pins)
+    return false;
+
+  if (result.pinset_id >= arraysize(kPinsets))
+    return false;
+
+  return kPinsets[result.pinset_id].accepted_pins == kGoogleAcceptableCerts;
 }
 
 bool TransportSecurityState::GetDynamicSTSState(const std::string& host,
@@ -1195,10 +1577,6 @@ bool TransportSecurityState::STSState::ShouldUpgradeToSSL() const {
   return upgrade_mode == MODE_FORCE_HTTPS;
 }
 
-bool TransportSecurityState::STSState::ShouldSSLErrorsBeFatal() const {
-  return true;
-}
-
 TransportSecurityState::STSStateIterator::STSStateIterator(
     const TransportSecurityState& state)
     : iterator_(state.enabled_sts_hosts_.begin()),
@@ -1211,8 +1589,19 @@ TransportSecurityState::STSStateIterator::~STSStateIterator() {
 TransportSecurityState::PKPState::PKPState() : include_subdomains(false) {
 }
 
+TransportSecurityState::PKPState::PKPState(const PKPState& other) = default;
+
 TransportSecurityState::PKPState::~PKPState() {
 }
+
+TransportSecurityState::ExpectCTState::ExpectCTState() {}
+
+TransportSecurityState::ExpectCTState::~ExpectCTState() {}
+
+TransportSecurityState::ExpectStapleState::ExpectStapleState()
+    : include_subdomains(false) {}
+
+TransportSecurityState::ExpectStapleState::~ExpectStapleState() {}
 
 bool TransportSecurityState::PKPState::CheckPublicKeyPins(
     const HashValueVector& hashes,
@@ -1251,10 +1640,6 @@ bool TransportSecurityState::PKPState::CheckPublicKeyPins(
 
 bool TransportSecurityState::PKPState::HasPublicKeyPins() const {
   return spki_hashes.size() > 0 || bad_spki_hashes.size() > 0;
-}
-
-bool TransportSecurityState::PKPState::ShouldSSLErrorsBeFatal() const {
-  return true;
 }
 
 TransportSecurityState::PKPStateIterator::PKPStateIterator(

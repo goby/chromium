@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/chromeos/events/keyboard_driven_event_rewriter.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,7 +26,7 @@ class KeyboardDrivenEventRewriterTest : public testing::Test {
                                         int ui_flags,
                                         ui::EventType ui_type) {
     ui::KeyEvent keyevent(ui_type, ui_keycode, ui_flags);
-    scoped_ptr<ui::Event> rewritten_event;
+    std::unique_ptr<ui::Event> rewritten_event;
     ui::EventRewriteStatus status =
         rewriter_.RewriteForTesting(keyevent, &rewritten_event);
     return base::StringPrintf(

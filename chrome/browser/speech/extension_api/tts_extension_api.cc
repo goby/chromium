@@ -4,9 +4,14 @@
 
 #include "chrome/browser/speech/extension_api/tts_extension_api.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/speech/extension_api/tts_engine_extension_api.h"
@@ -122,7 +127,7 @@ void TtsExtensionEventHandler::OnTtsEvent(Utterance* utterance,
   }
 
   const char *event_type_string = TtsEventTypeToString(event_type);
-  scoped_ptr<base::DictionaryValue> details(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> details(new base::DictionaryValue());
   if (char_index >= 0)
     details->SetInteger(constants::kCharIndexKey, char_index);
   details->SetString(constants::kEventTypeKey, event_type_string);
@@ -132,16 +137,16 @@ void TtsExtensionEventHandler::OnTtsEvent(Utterance* utterance,
   details->SetInteger(constants::kSrcIdKey, utterance->src_id());
   details->SetBoolean(constants::kIsFinalEventKey, utterance->finished());
 
-  scoped_ptr<base::ListValue> arguments(new base::ListValue());
+  std::unique_ptr<base::ListValue> arguments(new base::ListValue());
   arguments->Set(0, details.release());
 
-  scoped_ptr<extensions::Event> event(
+  std::unique_ptr<extensions::Event> event(
       new extensions::Event(::extensions::events::TTS_ON_EVENT,
-                            ::events::kOnEvent, arguments.Pass()));
+                            ::events::kOnEvent, std::move(arguments)));
   event->restrict_to_browser_context = utterance->browser_context();
   event->event_url = utterance->src_url();
   extensions::EventRouter::Get(utterance->browser_context())
-      ->DispatchEventToExtension(src_extension_id_, event.Pass());
+      ->DispatchEventToExtension(src_extension_id_, std::move(event));
 
   if (utterance->finished())
     delete this;
@@ -155,7 +160,7 @@ bool TtsSpeakFunction::RunAsync() {
     return false;
   }
 
-  scoped_ptr<base::DictionaryValue> options(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> options(new base::DictionaryValue());
   if (args_->GetSize() >= 2) {
     base::DictionaryValue* temp_options = NULL;
     if (args_->GetDictionary(1, &temp_options))
@@ -290,35 +295,35 @@ bool TtsSpeakFunction::RunAsync() {
   return true;
 }
 
-bool TtsStopSpeakingFunction::RunSync() {
+ExtensionFunction::ResponseAction TtsStopSpeakingFunction::Run() {
   TtsController::GetInstance()->Stop();
-  return true;
+  return RespondNow(NoArguments());
 }
 
-bool TtsPauseFunction::RunSync() {
+ExtensionFunction::ResponseAction TtsPauseFunction::Run() {
   TtsController::GetInstance()->Pause();
-  return true;
+  return RespondNow(NoArguments());
 }
 
-bool TtsResumeFunction::RunSync() {
+ExtensionFunction::ResponseAction TtsResumeFunction::Run() {
   TtsController::GetInstance()->Resume();
-  return true;
+  return RespondNow(NoArguments());
 }
 
-bool TtsIsSpeakingFunction::RunSync() {
-  SetResult(
-      new base::FundamentalValue(TtsController::GetInstance()->IsSpeaking()));
-  return true;
+ExtensionFunction::ResponseAction TtsIsSpeakingFunction::Run() {
+  return RespondNow(OneArgument(base::MakeUnique<base::FundamentalValue>(
+      TtsController::GetInstance()->IsSpeaking())));
 }
 
-bool TtsGetVoicesFunction::RunSync() {
+ExtensionFunction::ResponseAction TtsGetVoicesFunction::Run() {
   std::vector<VoiceData> voices;
-  TtsController::GetInstance()->GetVoices(GetProfile(), &voices);
+  TtsController::GetInstance()->GetVoices(browser_context(), &voices);
 
-  scoped_ptr<base::ListValue> result_voices(new base::ListValue());
+  std::unique_ptr<base::ListValue> result_voices(new base::ListValue());
   for (size_t i = 0; i < voices.size(); ++i) {
     const VoiceData& voice = voices[i];
-    base::DictionaryValue* result_voice = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> result_voice(
+        new base::DictionaryValue());
     result_voice->SetString(constants::kVoiceNameKey, voice.name);
     result_voice->SetBoolean(constants::kRemoteKey, voice.remote);
     if (!voice.lang.empty())
@@ -334,15 +339,14 @@ bool TtsGetVoicesFunction::RunSync() {
     for (std::set<TtsEventType>::iterator iter = voice.events.begin();
          iter != voice.events.end(); ++iter) {
       const char* event_name_constant = TtsEventTypeToString(*iter);
-      event_types->Append(new base::StringValue(event_name_constant));
+      event_types->AppendString(event_name_constant);
     }
     result_voice->Set(constants::kEventTypesKey, event_types);
 
-    result_voices->Append(result_voice);
+    result_voices->Append(std::move(result_voice));
   }
 
-  SetResult(result_voices.release());
-  return true;
+  return RespondNow(OneArgument(std::move(result_voices)));
 }
 
 TtsAPI::TtsAPI(content::BrowserContext* context) {

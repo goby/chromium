@@ -4,10 +4,13 @@
 
 #include "components/bookmarks/browser/bookmark_index.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -31,19 +34,19 @@ class BookmarkClientMock : public TestBookmarkClient {
   BookmarkClientMock(const std::map<GURL, int>& typed_count_map)
       : typed_count_map_(typed_count_map) {}
 
-  bool SupportsTypedCountForNodes() override { return true; }
+  bool SupportsTypedCountForUrls() override { return true; }
 
-  void GetTypedCountForNodes(
-      const NodeSet& nodes,
-      NodeTypedCountPairs* node_typed_count_pairs) override {
-    for (NodeSet::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
-      const BookmarkNode* node = *it;
-      std::map<GURL, int>::const_iterator found =
-          typed_count_map_.find(node->url());
+  void GetTypedCountForUrls(UrlTypedCountMap* url_typed_count_map) override {
+    for (auto& url_typed_count_pair : *url_typed_count_map) {
+      const GURL* url = url_typed_count_pair.first;
+      if (!url)
+        continue;
+
+      auto found = typed_count_map_.find(*url);
       if (found == typed_count_map_.end())
         continue;
 
-      node_typed_count_pairs->push_back(std::make_pair(node, found->second));
+      url_typed_count_pair.second = found->second;
     }
   }
 
@@ -55,7 +58,7 @@ class BookmarkClientMock : public TestBookmarkClient {
 
 class BookmarkIndexTest : public testing::Test {
  public:
-  BookmarkIndexTest() : model_(client_.CreateModel()) {}
+  BookmarkIndexTest() : model_(TestBookmarkClient::CreateModel()) {}
 
   typedef std::pair<std::string, std::string> TitleAndURL;
 
@@ -97,7 +100,8 @@ class BookmarkIndexTest : public testing::Test {
     for (size_t i = 0; i < expected_titles.size(); ++i) {
       bool found = false;
       for (size_t j = 0; j < matches.size(); ++j) {
-        if (ASCIIToUTF16(expected_titles[i]) == matches[j].node->GetTitle()) {
+        const base::string16& title = matches[j].node->GetTitledUrlNodeTitle();
+        if (ASCIIToUTF16(expected_titles[i]) == title) {
           matches.erase(matches.begin() + j);
           found = true;
           break;
@@ -135,8 +139,7 @@ class BookmarkIndexTest : public testing::Test {
   }
 
  protected:
-  TestBookmarkClient client_;
-  scoped_ptr<BookmarkModel> model_;
+  std::unique_ptr<BookmarkModel> model_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BookmarkIndexTest);
@@ -210,7 +213,7 @@ TEST_F(BookmarkIndexTest, GetBookmarksMatching) {
     ExpectMatches(data[i].query, query_parser::MatchingAlgorithm::DEFAULT,
                   expected);
 
-    model_ = client_.CreateModel();
+    model_ = TestBookmarkClient::CreateModel();
   }
 }
 
@@ -272,7 +275,7 @@ TEST_F(BookmarkIndexTest, GetBookmarksMatchingAlwaysPrefixSearch) {
                   query_parser::MatchingAlgorithm::ALWAYS_PREFIX_SEARCH,
                   expected);
 
-    model_ = client_.CreateModel();
+    model_ = TestBookmarkClient::CreateModel();
   }
 }
 
@@ -321,7 +324,7 @@ TEST_F(BookmarkIndexTest, GetBookmarksMatchingWithURLs) {
   };
 
   for (size_t i = 0; i < arraysize(data); ++i) {
-    model_ = client_.CreateModel();
+    model_ = TestBookmarkClient::CreateModel();
     std::vector<TitleAndURL> bookmarks;
     bookmarks.push_back(TitleAndURL(data[i].title, data[i].url));
     AddBookmarks(bookmarks);
@@ -359,7 +362,7 @@ TEST_F(BookmarkIndexTest, Normalization) {
     std::vector<BookmarkMatch> matches;
     model_->GetBookmarksMatching(UTF8ToUTF16(data[i].query), 10, &matches);
     EXPECT_EQ(1u, matches.size());
-    model_ = client_.CreateModel();
+    model_ = TestBookmarkClient::CreateModel();
   }
 }
 
@@ -396,7 +399,7 @@ TEST_F(BookmarkIndexTest, MatchPositionsTitles) {
     ExpectMatchPositions(matches[0].title_match_positions,
                          expected_title_matches);
 
-    model_ = client_.CreateModel();
+    model_ = TestBookmarkClient::CreateModel();
   }
 }
 
@@ -432,7 +435,7 @@ TEST_F(BookmarkIndexTest, MatchPositionsURLs) {
   };
 
   for (size_t i = 0; i < arraysize(data); ++i) {
-    model_ = client_.CreateModel();
+    model_ = TestBookmarkClient::CreateModel();
     std::vector<TitleAndURL> bookmarks;
     TitleAndURL bookmark("123456", data[i].url);
     bookmarks.push_back(bookmark);
@@ -525,11 +528,12 @@ TEST_F(BookmarkIndexTest, GetResultsSortedByTypedCount) {
   for (size_t i = 0; i < arraysize(data); ++i)
     typed_count_map.insert(std::make_pair(data[i].url, data[i].typed_count));
 
-  BookmarkClientMock client(typed_count_map);
-  scoped_ptr<BookmarkModel> model = client.CreateModel();
+  std::unique_ptr<BookmarkModel> model =
+      TestBookmarkClient::CreateModelWithClient(
+          base::MakeUnique<BookmarkClientMock>(typed_count_map));
 
   for (size_t i = 0; i < arraysize(data); ++i)
-    // Populate the BookmarkIndex.
+    // Populate the bookmark index.
     model->AddURL(
         model->other_node(), i, UTF8ToUTF16(data[i].title), data[i].url);
 
@@ -543,18 +547,18 @@ TEST_F(BookmarkIndexTest, GetResultsSortedByTypedCount) {
   // 3. Google Docs (docs.google.com) 50
   // 4. Google Maps (maps.google.com) 40
   ASSERT_EQ(4U, matches.size());
-  EXPECT_EQ(data[0].url, matches[0].node->url());
-  EXPECT_EQ(data[3].url, matches[1].node->url());
-  EXPECT_EQ(data[2].url, matches[2].node->url());
-  EXPECT_EQ(data[1].url, matches[3].node->url());
+  EXPECT_EQ(data[0].url, matches[0].node->GetTitledUrlNodeUrl());
+  EXPECT_EQ(data[3].url, matches[1].node->GetTitledUrlNodeUrl());
+  EXPECT_EQ(data[2].url, matches[2].node->GetTitledUrlNodeUrl());
+  EXPECT_EQ(data[1].url, matches[3].node->GetTitledUrlNodeUrl());
 
   matches.clear();
   // Select top two matches.
   model->GetBookmarksMatching(ASCIIToUTF16("google"), 2, &matches);
 
   ASSERT_EQ(2U, matches.size());
-  EXPECT_EQ(data[0].url, matches[0].node->url());
-  EXPECT_EQ(data[3].url, matches[1].node->url());
+  EXPECT_EQ(data[0].url, matches[0].node->GetTitledUrlNodeUrl());
+  EXPECT_EQ(data[3].url, matches[1].node->GetTitledUrlNodeUrl());
 }
 
 }  // namespace

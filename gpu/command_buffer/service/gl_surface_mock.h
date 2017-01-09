@@ -5,19 +5,21 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_GL_SURFACE_MOCK_H_
 #define GPU_COMMAND_BUFFER_SERVICE_GL_SURFACE_MOCK_H_
 
+#include "base/macros.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/gfx/swap_result.h"
 #include "ui/gl/gl_surface.h"
 
 namespace gpu {
 
-class GLSurfaceMock : public gfx::GLSurface {
+class GLSurfaceMock : public gl::GLSurface {
  public:
   GLSurfaceMock();
 
-  MOCK_METHOD0(Initialize, bool());
+  MOCK_METHOD1(Initialize, bool(gl::GLSurface::Format format));
   MOCK_METHOD0(Destroy, void());
-  MOCK_METHOD2(Resize, bool(const gfx::Size& size, float scale_factor));
+  MOCK_METHOD3(Resize,
+               bool(const gfx::Size& size, float scale_factor, bool alpha));
   MOCK_METHOD0(IsOffscreen, bool());
   MOCK_METHOD0(SwapBuffers, gfx::SwapResult());
   MOCK_METHOD4(PostSubBuffer,
@@ -25,14 +27,14 @@ class GLSurfaceMock : public gfx::GLSurface {
   MOCK_METHOD0(SupportsPostSubBuffer, bool());
   MOCK_METHOD0(GetSize, gfx::Size());
   MOCK_METHOD0(GetHandle, void*());
-  MOCK_METHOD0(GetBackingFrameBufferObject, unsigned int());
-  MOCK_METHOD1(OnMakeCurrent, bool(gfx::GLContext* context));
+  MOCK_METHOD0(GetBackingFramebufferObject, unsigned int());
+  MOCK_METHOD1(OnMakeCurrent, bool(gl::GLContext* context));
   MOCK_METHOD1(SetBackbufferAllocation, bool(bool allocated));
   MOCK_METHOD1(SetFrontbufferAllocation, void(bool allocated));
   MOCK_METHOD0(GetShareHandle, void*());
   MOCK_METHOD0(GetDisplay, void*());
   MOCK_METHOD0(GetConfig, void*());
-  MOCK_METHOD0(GetFormat, unsigned());
+  MOCK_METHOD0(GetFormat, GLSurface::Format());
 
  protected:
   virtual ~GLSurfaceMock();

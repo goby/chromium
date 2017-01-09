@@ -5,7 +5,6 @@
 #ifndef REMOTING_HOST_CLIENT_SESSION_CONTROL_H_
 #define REMOTING_HOST_CLIENT_SESSION_CONTROL_H_
 
-#include "base/basictypes.h"
 #include "remoting/protocol/errors.h"
 
 namespace webrtc {
@@ -33,9 +32,6 @@ class ClientSessionControl {
 
   // Disables or enables the remote input in the client session.
   virtual void SetDisableInputs(bool disable_inputs) = 0;
-
-  // Resets the video pipeline, including re-creating the capturer & encoder.
-  virtual void ResetVideoPipeline() = 0;
 };
 
 }  // namespace remoting

@@ -7,9 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_vector.h"
 #include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "components/autofill/core/browser/autofill_country.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/credit_card.h"
@@ -29,13 +27,15 @@ AutofillWebDataBackendImpl::AutofillWebDataBackendImpl(
     scoped_refptr<WebDatabaseBackend> web_database_backend,
     scoped_refptr<base::SingleThreadTaskRunner> ui_thread,
     scoped_refptr<base::SingleThreadTaskRunner> db_thread,
-    const base::Closure& on_changed_callback)
+    const base::Closure& on_changed_callback,
+    const base::Callback<void(syncer::ModelType)>& on_sync_started_callback)
     : base::RefCountedDeleteOnMessageLoop<AutofillWebDataBackendImpl>(
           db_thread),
       ui_thread_(ui_thread),
       db_thread_(db_thread),
       web_database_backend_(web_database_backend),
-      on_changed_callback_(on_changed_callback) {
+      on_changed_callback_(on_changed_callback),
+      on_sync_started_callback_(on_sync_started_callback) {
 }
 
 void AutofillWebDataBackendImpl::AddObserver(
@@ -69,11 +69,23 @@ void AutofillWebDataBackendImpl::NotifyOfMultipleAutofillChanges() {
   DCHECK(db_thread_->BelongsToCurrentThread());
 
   // DB thread notification.
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread, db_observer_list_,
-                    AutofillMultipleChanged());
+  for (auto& db_observer : db_observer_list_)
+    db_observer.AutofillMultipleChanged();
 
   // UI thread notification.
   ui_thread_->PostTask(FROM_HERE, on_changed_callback_);
+}
+
+void AutofillWebDataBackendImpl::NotifyThatSyncHasStarted(
+    syncer::ModelType model_type) {
+  DCHECK(db_thread_->BelongsToCurrentThread());
+
+  if (on_sync_started_callback_.is_null())
+    return;
+
+  // UI thread notification.
+  ui_thread_->PostTask(FROM_HERE,
+                       base::Bind(on_sync_started_callback_, model_type));
 }
 
 base::SupportsUserData* AutofillWebDataBackendImpl::GetDBUserData() {
@@ -100,24 +112,24 @@ WebDatabase::State AutofillWebDataBackendImpl::AddFormElements(
   // Post the notifications including the list of affected keys.
   // This is sent here so that work resulting from this notification will be
   // done on the DB thread, and not the UI thread.
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                    db_observer_list_,
-                    AutofillEntriesChanged(changes));
+  for (auto& db_observer : db_observer_list_)
+    db_observer.AutofillEntriesChanged(changes);
 
   return WebDatabase::COMMIT_NEEDED;
 }
 
-scoped_ptr<WDTypedResult>
+std::unique_ptr<WDTypedResult>
 AutofillWebDataBackendImpl::GetFormValuesForElementName(
-    const base::string16& name, const base::string16& prefix, int limit,
+    const base::string16& name,
+    const base::string16& prefix,
+    int limit,
     WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
   std::vector<base::string16> values;
   AutofillTable::FromWebDatabase(db)->GetFormValuesForElementName(
       name, prefix, &values, limit);
-  return scoped_ptr<WDTypedResult>(
-      new WDResult<std::vector<base::string16> >(AUTOFILL_VALUE_RESULT,
-                                                 values));
+  return std::unique_ptr<WDTypedResult>(
+      new WDResult<std::vector<base::string16>>(AUTOFILL_VALUE_RESULT, values));
 }
 
 WebDatabase::State AutofillWebDataBackendImpl::RemoveFormElementsAddedBetween(
@@ -133,9 +145,8 @@ WebDatabase::State AutofillWebDataBackendImpl::RemoveFormElementsAddedBetween(
       // Post the notifications including the list of affected keys.
       // This is sent here so that work resulting from this notification
       // will be done on the DB thread, and not the UI thread.
-      FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                        db_observer_list_,
-                        AutofillEntriesChanged(changes));
+      for (auto& db_observer : db_observer_list_)
+        db_observer.AutofillEntriesChanged(changes);
     }
     return WebDatabase::COMMIT_NEEDED;
   }
@@ -152,9 +163,8 @@ WebDatabase::State AutofillWebDataBackendImpl::RemoveFormValueForElementName(
         AutofillChange(AutofillChange::REMOVE, AutofillKey(name, value)));
 
     // Post the notifications including the list of affected keys.
-    FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                      db_observer_list_,
-                      AutofillEntriesChanged(changes));
+    for (auto& db_observer : db_observer_list_)
+      db_observer.AutofillEntriesChanged(changes);
 
     return WebDatabase::COMMIT_NEEDED;
   }
@@ -172,9 +182,8 @@ WebDatabase::State AutofillWebDataBackendImpl::AddAutofillProfile(
   // Send GUID-based notification.
   AutofillProfileChange change(
       AutofillProfileChange::ADD, profile.guid(), &profile);
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                    db_observer_list_,
-                    AutofillProfileChanged(change));
+  for (auto& db_observer : db_observer_list_)
+    db_observer.AutofillProfileChanged(change);
 
   return WebDatabase::COMMIT_NEEDED;
 }
@@ -185,7 +194,7 @@ WebDatabase::State AutofillWebDataBackendImpl::UpdateAutofillProfile(
   // Only perform the update if the profile exists.  It is currently
   // valid to try to update a missing profile.  We simply drop the write and
   // the caller will detect this on the next refresh.
-  scoped_ptr<AutofillProfile> original_profile =
+  std::unique_ptr<AutofillProfile> original_profile =
       AutofillTable::FromWebDatabase(db)->GetAutofillProfile(profile.guid());
   if (!original_profile) {
     return WebDatabase::COMMIT_NOT_NEEDED;
@@ -198,9 +207,8 @@ WebDatabase::State AutofillWebDataBackendImpl::UpdateAutofillProfile(
   // Send GUID-based notification.
   AutofillProfileChange change(
       AutofillProfileChange::UPDATE, profile.guid(), &profile);
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                    db_observer_list_,
-                    AutofillProfileChanged(change));
+  for (auto& db_observer : db_observer_list_)
+    db_observer.AutofillProfileChanged(change);
 
   return WebDatabase::COMMIT_NEEDED;
 }
@@ -208,7 +216,7 @@ WebDatabase::State AutofillWebDataBackendImpl::UpdateAutofillProfile(
 WebDatabase::State AutofillWebDataBackendImpl::RemoveAutofillProfile(
     const std::string& guid, WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
-  scoped_ptr<AutofillProfile> profile =
+  std::unique_ptr<AutofillProfile> profile =
       AutofillTable::FromWebDatabase(db)->GetAutofillProfile(guid);
   if (!profile) {
     NOTREACHED();
@@ -222,48 +230,41 @@ WebDatabase::State AutofillWebDataBackendImpl::RemoveAutofillProfile(
 
   // Send GUID-based notification.
   AutofillProfileChange change(AutofillProfileChange::REMOVE, guid, NULL);
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                    db_observer_list_,
-                    AutofillProfileChanged(change));
+  for (auto& db_observer : db_observer_list_)
+    db_observer.AutofillProfileChanged(change);
 
   return WebDatabase::COMMIT_NEEDED;
 }
 
-scoped_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetAutofillProfiles(
+std::unique_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetAutofillProfiles(
     WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
-  std::vector<AutofillProfile*> profiles;
+  std::vector<std::unique_ptr<AutofillProfile>> profiles;
   AutofillTable::FromWebDatabase(db)->GetAutofillProfiles(&profiles);
-  return scoped_ptr<WDTypedResult>(
-      new WDDestroyableResult<std::vector<AutofillProfile*> >(
-          AUTOFILL_PROFILES_RESULT,
-          profiles,
-          base::Bind(&AutofillWebDataBackendImpl::DestroyAutofillProfileResult,
-              base::Unretained(this))));
+  return std::unique_ptr<WDTypedResult>(
+      new WDResult<std::vector<std::unique_ptr<AutofillProfile>>>(
+          AUTOFILL_PROFILES_RESULT, std::move(profiles)));
 }
 
-scoped_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetServerProfiles(
+std::unique_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetServerProfiles(
     WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
-  std::vector<AutofillProfile*> profiles;
+  std::vector<std::unique_ptr<AutofillProfile>> profiles;
   AutofillTable::FromWebDatabase(db)->GetServerProfiles(&profiles);
-  return scoped_ptr<WDTypedResult>(
-      new WDDestroyableResult<std::vector<AutofillProfile*> >(
-          AUTOFILL_PROFILES_RESULT,
-          profiles,
-          base::Bind(&AutofillWebDataBackendImpl::DestroyAutofillProfileResult,
-              base::Unretained(this))));
+  return std::unique_ptr<WDTypedResult>(
+      new WDResult<std::vector<std::unique_ptr<AutofillProfile>>>(
+          AUTOFILL_PROFILES_RESULT, std::move(profiles)));
 }
 
-scoped_ptr<WDTypedResult>
-    AutofillWebDataBackendImpl::GetCountOfValuesContainedBetween(
-        const base::Time& begin,
-        const base::Time& end,
-        WebDatabase* db) {
+std::unique_ptr<WDTypedResult>
+AutofillWebDataBackendImpl::GetCountOfValuesContainedBetween(
+    const base::Time& begin,
+    const base::Time& end,
+    WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
   int value = AutofillTable::FromWebDatabase(db)
       ->GetCountOfValuesContainedBetween(begin, end);
-  return scoped_ptr<WDTypedResult>(
+  return std::unique_ptr<WDTypedResult>(
       new WDResult<int>(AUTOFILL_VALUE_RESULT, value));
 }
 
@@ -286,10 +287,10 @@ WebDatabase::State AutofillWebDataBackendImpl::AddCreditCard(
     return WebDatabase::COMMIT_NOT_NEEDED;
   }
 
-  FOR_EACH_OBSERVER(
-      AutofillWebDataServiceObserverOnDBThread, db_observer_list_,
-      CreditCardChanged(CreditCardChange(CreditCardChange::ADD,
-                                         credit_card.guid(), &credit_card)));
+  for (auto& db_observer : db_observer_list_) {
+    db_observer.CreditCardChanged(CreditCardChange(
+        CreditCardChange::ADD, credit_card.guid(), &credit_card));
+  }
   return WebDatabase::COMMIT_NEEDED;
 }
 
@@ -298,7 +299,7 @@ WebDatabase::State AutofillWebDataBackendImpl::UpdateCreditCard(
   DCHECK(db_thread_->BelongsToCurrentThread());
   // It is currently valid to try to update a missing profile.  We simply drop
   // the write and the caller will detect this on the next refresh.
-  scoped_ptr<CreditCard> original_credit_card =
+  std::unique_ptr<CreditCard> original_credit_card =
       AutofillTable::FromWebDatabase(db)->GetCreditCard(credit_card.guid());
   if (!original_credit_card)
     return WebDatabase::COMMIT_NOT_NEEDED;
@@ -308,10 +309,10 @@ WebDatabase::State AutofillWebDataBackendImpl::UpdateCreditCard(
     return WebDatabase::COMMIT_NOT_NEEDED;
   }
 
-  FOR_EACH_OBSERVER(
-      AutofillWebDataServiceObserverOnDBThread, db_observer_list_,
-      CreditCardChanged(CreditCardChange(CreditCardChange::UPDATE,
-                                         credit_card.guid(), &credit_card)));
+  for (auto& db_observer : db_observer_list_) {
+    db_observer.CreditCardChanged(CreditCardChange(
+        CreditCardChange::UPDATE, credit_card.guid(), &credit_card));
+  }
   return WebDatabase::COMMIT_NEEDED;
 }
 
@@ -323,36 +324,31 @@ WebDatabase::State AutofillWebDataBackendImpl::RemoveCreditCard(
     return WebDatabase::COMMIT_NOT_NEEDED;
   }
 
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread, db_observer_list_,
-                    CreditCardChanged(CreditCardChange(CreditCardChange::REMOVE,
-                                                       guid, nullptr)));
+  for (auto& db_observer : db_observer_list_) {
+    db_observer.CreditCardChanged(
+        CreditCardChange(CreditCardChange::REMOVE, guid, nullptr));
+  }
   return WebDatabase::COMMIT_NEEDED;
 }
 
-scoped_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetCreditCards(
+std::unique_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetCreditCards(
     WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
-  std::vector<CreditCard*> credit_cards;
+  std::vector<std::unique_ptr<CreditCard>> credit_cards;
   AutofillTable::FromWebDatabase(db)->GetCreditCards(&credit_cards);
-  return scoped_ptr<WDTypedResult>(
-      new WDDestroyableResult<std::vector<CreditCard*> >(
-          AUTOFILL_CREDITCARDS_RESULT,
-          credit_cards,
-        base::Bind(&AutofillWebDataBackendImpl::DestroyAutofillCreditCardResult,
-              base::Unretained(this))));
+  return std::unique_ptr<WDTypedResult>(
+      new WDResult<std::vector<std::unique_ptr<CreditCard>>>(
+          AUTOFILL_CREDITCARDS_RESULT, std::move(credit_cards)));
 }
 
-scoped_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetServerCreditCards(
+std::unique_ptr<WDTypedResult> AutofillWebDataBackendImpl::GetServerCreditCards(
     WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
-  std::vector<CreditCard*> credit_cards;
+  std::vector<std::unique_ptr<CreditCard>> credit_cards;
   AutofillTable::FromWebDatabase(db)->GetServerCreditCards(&credit_cards);
-  return scoped_ptr<WDTypedResult>(
-      new WDDestroyableResult<std::vector<CreditCard*> >(
-          AUTOFILL_CREDITCARDS_RESULT,
-          credit_cards,
-        base::Bind(&AutofillWebDataBackendImpl::DestroyAutofillCreditCardResult,
-              base::Unretained(this))));
+  return std::unique_ptr<WDTypedResult>(
+      new WDResult<std::vector<std::unique_ptr<CreditCard>>>(
+          AUTOFILL_CREDITCARDS_RESULT, std::move(credit_cards)));
 }
 
 WebDatabase::State AutofillWebDataBackendImpl::UnmaskServerCreditCard(
@@ -383,9 +379,10 @@ WebDatabase::State AutofillWebDataBackendImpl::UpdateServerCardUsageStats(
   if (!AutofillTable::FromWebDatabase(db)->UpdateServerCardUsageStats(card))
     return WebDatabase::COMMIT_NOT_NEEDED;
 
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread, db_observer_list_,
-                    CreditCardChanged(CreditCardChange(CreditCardChange::UPDATE,
-                                                       card.guid(), &card)));
+  for (auto& db_observer : db_observer_list_) {
+    db_observer.CreditCardChanged(
+        CreditCardChange(CreditCardChange::UPDATE, card.guid(), &card));
+  }
 
   return WebDatabase::COMMIT_NEEDED;
 }
@@ -399,10 +396,27 @@ WebDatabase::State AutofillWebDataBackendImpl::UpdateServerAddressUsageStats(
     return WebDatabase::COMMIT_NOT_NEEDED;
   }
 
-  FOR_EACH_OBSERVER(
-      AutofillWebDataServiceObserverOnDBThread, db_observer_list_,
-      AutofillProfileChanged(AutofillProfileChange(
-          AutofillProfileChange::UPDATE, profile.guid(), &profile)));
+  for (auto& db_observer : db_observer_list_) {
+    db_observer.AutofillProfileChanged(AutofillProfileChange(
+        AutofillProfileChange::UPDATE, profile.guid(), &profile));
+  }
+
+  return WebDatabase::COMMIT_NEEDED;
+}
+
+WebDatabase::State AutofillWebDataBackendImpl::UpdateServerCardBillingAddress(
+    const CreditCard& card,
+    WebDatabase* db) {
+  DCHECK(db_thread_->BelongsToCurrentThread());
+  if (!AutofillTable::FromWebDatabase(db)->UpdateServerCardBillingAddress(
+          card)) {
+    return WebDatabase::COMMIT_NOT_NEEDED;
+  }
+
+  for (auto& db_observer : db_observer_list_) {
+    db_observer.CreditCardChanged(
+        CreditCardChange(CreditCardChange::UPDATE, card.guid(), &card));
+  }
 
   return WebDatabase::COMMIT_NEEDED;
 }
@@ -431,16 +445,16 @@ WebDatabase::State
           &profile_guids,
           &credit_card_guids)) {
     for (const std::string& guid : profile_guids) {
-      FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                        db_observer_list_,
-                        AutofillProfileChanged(AutofillProfileChange(
-                            AutofillProfileChange::REMOVE, guid, nullptr)));
+      for (auto& db_observer : db_observer_list_) {
+        db_observer.AutofillProfileChanged(AutofillProfileChange(
+            AutofillProfileChange::REMOVE, guid, nullptr));
+      }
     }
     for (const std::string& guid : credit_card_guids) {
-      FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                        db_observer_list_,
-                        CreditCardChanged(CreditCardChange(
-                            CreditCardChange::REMOVE, guid, nullptr)));
+      for (auto& db_observer : db_observer_list_) {
+        db_observer.CreditCardChanged(
+            CreditCardChange(CreditCardChange::REMOVE, guid, nullptr));
+      }
     }
     // Note: It is the caller's responsibility to post notifications for any
     // changes, e.g. by calling the Refresh() method of PersonalDataManager.
@@ -454,17 +468,17 @@ WebDatabase::State AutofillWebDataBackendImpl::RemoveOriginURLsModifiedBetween(
     const base::Time& delete_end,
     WebDatabase* db) {
   DCHECK(db_thread_->BelongsToCurrentThread());
-  ScopedVector<AutofillProfile> profiles;
+  std::vector<std::unique_ptr<AutofillProfile>> profiles;
   if (!AutofillTable::FromWebDatabase(db)->RemoveOriginURLsModifiedBetween(
           delete_begin, delete_end, &profiles)) {
     return WebDatabase::COMMIT_NOT_NEEDED;
   }
 
-  for (const AutofillProfile* it : profiles) {
-    AutofillProfileChange change(AutofillProfileChange::UPDATE, it->guid(), it);
-    FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                      db_observer_list_,
-                      AutofillProfileChanged(change));
+  for (const auto& profile : profiles) {
+    AutofillProfileChange change(AutofillProfileChange::UPDATE, profile->guid(),
+                                 profile.get());
+    for (auto& db_observer : db_observer_list_)
+      db_observer.AutofillProfileChanged(change);
   }
   // Note: It is the caller's responsibility to post notifications for any
   // changes, e.g. by calling the Refresh() method of PersonalDataManager.
@@ -481,32 +495,12 @@ WebDatabase::State AutofillWebDataBackendImpl::RemoveExpiredFormElementsImpl(
       // Post the notifications including the list of affected keys.
       // This is sent here so that work resulting from this notification
       // will be done on the DB thread, and not the UI thread.
-      FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnDBThread,
-                        db_observer_list_,
-                        AutofillEntriesChanged(changes));
+      for (auto& db_observer : db_observer_list_)
+        db_observer.AutofillEntriesChanged(changes);
     }
     return WebDatabase::COMMIT_NEEDED;
   }
   return WebDatabase::COMMIT_NOT_NEEDED;
-}
-
-void AutofillWebDataBackendImpl::DestroyAutofillProfileResult(
-    const WDTypedResult* result) {
-  DCHECK(result->GetType() == AUTOFILL_PROFILES_RESULT);
-  const WDResult<std::vector<AutofillProfile*> >* r =
-      static_cast<const WDResult<std::vector<AutofillProfile*> >*>(result);
-  std::vector<AutofillProfile*> profiles = r->GetValue();
-  STLDeleteElements(&profiles);
-}
-
-void AutofillWebDataBackendImpl::DestroyAutofillCreditCardResult(
-      const WDTypedResult* result) {
-  DCHECK(result->GetType() == AUTOFILL_CREDITCARDS_RESULT);
-  const WDResult<std::vector<CreditCard*> >* r =
-      static_cast<const WDResult<std::vector<CreditCard*> >*>(result);
-
-  std::vector<CreditCard*> credit_cards = r->GetValue();
-  STLDeleteElements(&credit_cards);
 }
 
 }  // namespace autofill

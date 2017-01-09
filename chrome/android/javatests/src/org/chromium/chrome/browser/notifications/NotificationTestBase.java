@@ -9,25 +9,24 @@ import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 import android.app.Notification;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.preferences.website.ContentSetting;
-import org.chromium.chrome.browser.preferences.website.PushNotificationInfo;
-import org.chromium.chrome.test.ChromeActivityTestCaseBase;
-import org.chromium.chrome.test.util.TestHttpServerClient;
+import org.chromium.chrome.browser.preferences.website.NotificationInfo;
+import org.chromium.chrome.test.ChromeTabbedActivityTestBase;
 import org.chromium.chrome.test.util.browser.notifications.MockNotificationManagerProxy;
 import org.chromium.chrome.test.util.browser.notifications.MockNotificationManagerProxy.NotificationEntry;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Instrumentation tests for the Notification UI Manager implementation on Android.
+ * Base class for instrumentation tests using Web Notifications on Android.
  *
  * Web Notifications are only supported on Android JellyBean and beyond.
  */
-public class NotificationTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
+public class NotificationTestBase extends ChromeTabbedActivityTestBase {
     /** The maximum time to wait for a criteria to become valid. */
     private static final long MAX_TIME_TO_POLL_MS = scaleTimeout(6000);
 
@@ -35,16 +34,24 @@ public class NotificationTestBase extends ChromeActivityTestCaseBase<ChromeActiv
     private static final long POLLING_INTERVAL_MS = 50;
 
     private MockNotificationManagerProxy mMockNotificationManager;
+    private EmbeddedTestServer mTestServer;
 
-    protected NotificationTestBase() {
-        super(ChromeActivity.class);
+    @Override
+    protected void setUp() throws Exception {
+        super.setUp();
+        mTestServer = EmbeddedTestServer.createAndStartServer(getInstrumentation().getContext());
+    }
+
+    /** Returns the test server. */
+    protected EmbeddedTestServer getTestServer() {
+        return mTestServer;
     }
 
     /**
      * Returns the origin of the HTTP server the test is being ran on.
      */
-    protected static String getOrigin() {
-        return TestHttpServerClient.getUrl("");
+    protected String getOrigin() {
+        return mTestServer.getURL("/");
     }
 
     /**
@@ -58,9 +65,8 @@ public class NotificationTestBase extends ChromeActivityTestCaseBase<ChromeActiv
             @Override
             public void run() {
                 // The notification content setting does not consider the embedder origin.
-                PushNotificationInfo pushNotificationInfo =
-                        new PushNotificationInfo(origin, "", false);
-                pushNotificationInfo.setContentSetting(setting);
+                NotificationInfo notificationInfo = new NotificationInfo(origin, "", false);
+                notificationInfo.setContentSetting(setting);
             }
         });
 
@@ -83,7 +89,8 @@ public class NotificationTestBase extends ChromeActivityTestCaseBase<ChromeActiv
      * @param options Optional map of options to include when showing the notification.
      * @return The Android Notification object, as shown in the framework.
      */
-    protected Notification showAndGetNotification(String title, String options) throws Exception {
+    protected Notification showAndGetNotification(String title, String options)
+            throws InterruptedException, TimeoutException {
         runJavaScriptCodeInCurrentTab("showNotification(\"" + title + "\", " + options + ");");
         return waitForNotification().notification;
     }
@@ -94,7 +101,7 @@ public class NotificationTestBase extends ChromeActivityTestCaseBase<ChromeActiv
      *
      * @return The NotificationEntry object tracked by the MockNotificationManagerProxy.
      */
-    protected NotificationEntry waitForNotification() throws Exception {
+    protected NotificationEntry waitForNotification() throws InterruptedException {
         waitForNotificationManagerMutation();
         List<NotificationEntry> notifications = getNotificationEntries();
         assertEquals(1, notifications.size());
@@ -109,8 +116,8 @@ public class NotificationTestBase extends ChromeActivityTestCaseBase<ChromeActiv
      * Waits for a mutation to occur in the mocked notification manager. This indicates that Chrome
      * called into Android to notify or cancel a notification.
      */
-    protected void waitForNotificationManagerMutation() throws Exception {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+    protected void waitForNotificationManagerMutation() throws InterruptedException {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return mMockNotificationManager.getMutationCountAndDecrement() > 0;
@@ -120,17 +127,17 @@ public class NotificationTestBase extends ChromeActivityTestCaseBase<ChromeActiv
 
     @Override
     public void startMainActivity() throws InterruptedException {
-        // The NotificationUIManager must be overriden prior to the browser process starting.
+        // The NotificationPlatformBridge must be overriden prior to the browser process starting.
         mMockNotificationManager = new MockNotificationManagerProxy();
-        NotificationUIManager.overrideNotificationManagerForTesting(mMockNotificationManager);
+        NotificationPlatformBridge.overrideNotificationManagerForTesting(mMockNotificationManager);
 
         startMainActivityFromLauncher();
     }
 
     @Override
     protected void tearDown() throws Exception {
-        NotificationUIManager.overrideNotificationManagerForTesting(null);
-
+        NotificationPlatformBridge.overrideNotificationManagerForTesting(null);
+        mTestServer.stopAndDestroyServer();
         super.tearDown();
     }
 }

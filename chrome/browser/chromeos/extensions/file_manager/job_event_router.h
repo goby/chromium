@@ -5,11 +5,15 @@
 #ifndef CHROME_BROWSER_CHROMEOS_EXTENSIONS_FILE_MANAGER_JOB_EVENT_ROUTER_H_
 #define CHROME_BROWSER_CHROMEOS_EXTENSIONS_FILE_MANAGER_JOB_EVENT_ROUTER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -48,7 +52,7 @@ class JobEventRouter : public drive::JobListObserver {
       const std::string& extension_id,
       extensions::events::HistogramValue histogram_value,
       const std::string& event_name,
-      scoped_ptr<base::ListValue> event_args) = 0;
+      std::unique_ptr<base::ListValue> event_args) = 0;
 
  private:
   // Request sending transfer event with |job_info| and |state|.
@@ -70,9 +74,9 @@ class JobEventRouter : public drive::JobListObserver {
       const std::string& extension_id,
       const drive::JobInfo& job_info,
       const extensions::api::file_manager_private::TransferState& state,
-      const int64 num_total_jobs,
-      const int64 num_completed_bytes,
-      const int64 num_total_bytes);
+      const int64_t num_total_jobs,
+      const int64_t num_completed_bytes,
+      const int64_t num_total_bytes);
 
   // Delay time before sending progress events.
   base::TimeDelta event_delay_;
@@ -82,18 +86,18 @@ class JobEventRouter : public drive::JobListObserver {
 
   // Job info of pending event. |ScheduleDriveFileTransferEvent| registers
   // timeout callback to dispatch this.
-  scoped_ptr<drive::JobInfo> pending_job_info_;
+  std::unique_ptr<drive::JobInfo> pending_job_info_;
 
   // Transfer state of pending event.
   extensions::api::file_manager_private::TransferState pending_state_;
 
   // Computed bytes of tasks that have been processed. Once it completes all
   // tasks, it clears the variable.
-  int64 num_completed_bytes_;
+  int64_t num_completed_bytes_;
 
   // Total bytes of tasks that have been processed. Once it completes all tasks,
   // it clears the variable.
-  int64 num_total_bytes_;
+  int64_t num_total_bytes_;
 
   // Thread checker.
   base::ThreadChecker thread_checker_;

@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_CONTENT_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_CONTENT_LAYER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "cc/output/filter_operations.h"
 #include "chrome/browser/android/compositor/layer/layer.h"
 #include "ui/gfx/geometry/rect.h"
@@ -16,7 +17,6 @@ namespace cc {
 class Layer;
 }
 
-namespace chrome {
 namespace android {
 
 class TabContentManager;
@@ -69,6 +69,5 @@ class ContentLayer : public Layer {
 };
 
 }  //  namespace android
-}  //  namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_CONTENT_LAYER_H_

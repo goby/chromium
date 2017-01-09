@@ -4,11 +4,16 @@
 
 #include "ios/chrome/browser/open_from_clipboard/create_clipboard_recent_content.h"
 
+#include "base/memory/ptr_util.h"
 #import "components/open_from_clipboard/clipboard_recent_content_ios.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/common/app_group/app_group_constants.h"
 
-scoped_ptr<ClipboardRecentContent> CreateClipboardRecentContentIOS() {
-  return make_scoped_ptr(new ClipboardRecentContentIOS(
-      kChromeUIScheme, app_group::GetGroupUserDefaults()));
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
+std::unique_ptr<ClipboardRecentContent> CreateClipboardRecentContentIOS() {
+  return base::MakeUnique<ClipboardRecentContentIOS>(
+      kChromeUIScheme, app_group::GetGroupUserDefaults());
 }

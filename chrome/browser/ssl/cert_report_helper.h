@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "chrome/browser/interstitials/security_interstitial_page.h"
 #include "components/certificate_reporting/error_report.h"
 #include "net/ssl/ssl_info.h"
@@ -36,13 +37,14 @@ class CertReportHelper {
   static const char kFinchGroupDontShowDontSend[];
   static const char kFinchParamName[];
 
-  CertReportHelper(scoped_ptr<SSLCertReporter> ssl_cert_reporter,
+  CertReportHelper(std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
                    content::WebContents* web_contents,
                    const GURL& request_url,
                    const net::SSLInfo& ssl_info,
                    certificate_reporting::ErrorReport::InterstitialReason
                        interstitial_reason,
                    bool overridable,
+                   const base::Time& interstitial_time,
                    security_interstitials::MetricsHelper* metrics_helper);
 
   virtual ~CertReportHelper();
@@ -59,7 +61,7 @@ class CertReportHelper {
 
   // Allows tests to inject a mock reporter.
   void SetSSLCertReporterForTesting(
-      scoped_ptr<SSLCertReporter> ssl_cert_reporter);
+      std::unique_ptr<SSLCertReporter> ssl_cert_reporter);
 
  private:
   // Checks whether a checkbox should be shown on the page that allows
@@ -75,7 +77,7 @@ class CertReportHelper {
   bool IsPrefEnabled(const char* pref);
 
   // Handles reports of invalid SSL certificates.
-  scoped_ptr<SSLCertReporter> ssl_cert_reporter_;
+  std::unique_ptr<SSLCertReporter> ssl_cert_reporter_;
   // The WebContents for which this helper sends reports.
   content::WebContents* web_contents_;
   // The URL for which this helper sends reports.
@@ -87,6 +89,8 @@ class CertReportHelper {
   // True if the user was given the option to proceed through the
   // certificate chain error being reported.
   bool overridable_;
+  // The time at which the interstitial was constructed.
+  const base::Time interstitial_time_;
   // Helpful for recording metrics about cert reports.
   security_interstitials::MetricsHelper* metrics_helper_;
 

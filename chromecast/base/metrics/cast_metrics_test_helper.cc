@@ -4,6 +4,8 @@
 
 #include "chromecast/base/metrics/cast_metrics_test_helper.h"
 
+#include <string>
+
 #include "base/logging.h"
 #include "base/macros.h"
 #include "chromecast/base/metrics/cast_metrics_helper.h"
@@ -18,8 +20,9 @@ class CastMetricsHelperStub : public CastMetricsHelper {
   CastMetricsHelperStub();
   ~CastMetricsHelperStub() override;
 
-  void UpdateCurrentAppInfo(const std::string& app_id,
-                            const std::string& session_id) override;
+  void DidStartLoad(const std::string& app_id) override;
+  void DidCompleteLoad(const std::string& app_id,
+                       const std::string& session_id) override;
   void UpdateSDKInfo(const std::string& sdk_version) override;
   void LogMediaPlay() override;
   void LogMediaPause() override;
@@ -29,6 +32,7 @@ class CastMetricsHelperStub : public CastMetricsHelper {
   std::string GetMetricsNameWithAppName(
       const std::string& prefix, const std::string& suffix) const override;
   void SetMetricsSink(MetricsSink* delegate) override;
+  void RecordSimpleAction(const std::string& action) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CastMetricsHelperStub);
@@ -47,7 +51,10 @@ CastMetricsHelperStub::~CastMetricsHelperStub() {
   stub_instance_exists = false;
 }
 
-void CastMetricsHelperStub::UpdateCurrentAppInfo(
+void CastMetricsHelperStub::DidStartLoad(const std::string& app_id) {
+}
+
+void CastMetricsHelperStub::DidCompleteLoad(
     const std::string& app_id,
     const std::string& session_id) {
 }
@@ -78,6 +85,9 @@ void CastMetricsHelperStub::SetMetricsSink(MetricsSink* delegate) {
 }
 
 }  // namespace
+
+void CastMetricsHelperStub::RecordSimpleAction(const std::string& action) {
+}
 
 void InitializeMetricsHelperForTesting() {
   if (!stub_instance_exists) {

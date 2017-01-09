@@ -4,9 +4,11 @@
 
 #include "net/proxy/proxy_config.h"
 
+#include <utility>
+
 #include "base/logging.h"
-#include "base/strings/string_util.h"
 #include "base/strings/string_tokenizer.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "net/proxy/proxy_info.h"
 
@@ -39,6 +41,8 @@ ProxyConfig::ProxyRules::ProxyRules()
     : reverse_bypass(false),
       type(TYPE_NO_RULES) {
 }
+
+ProxyConfig::ProxyRules::ProxyRules(const ProxyRules& other) = default;
 
 ProxyConfig::ProxyRules::~ProxyRules() {
 }
@@ -231,8 +235,8 @@ void ProxyConfig::ClearAutomaticSettings() {
   pac_url_ = GURL();
 }
 
-scoped_ptr<base::DictionaryValue> ProxyConfig::ToValue() const {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue> ProxyConfig::ToValue() const {
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
   // Output the automatic settings.
   if (auto_detect_)
@@ -251,14 +255,15 @@ scoped_ptr<base::DictionaryValue> ProxyConfig::ToValue() const {
                             dict.get());
         break;
       case ProxyRules::TYPE_PROXY_PER_SCHEME: {
-        scoped_ptr<base::DictionaryValue> dict2(new base::DictionaryValue());
+        std::unique_ptr<base::DictionaryValue> dict2(
+            new base::DictionaryValue());
         AddProxyListToValue("http", proxy_rules_.proxies_for_http, dict2.get());
         AddProxyListToValue("https", proxy_rules_.proxies_for_https,
                             dict2.get());
         AddProxyListToValue("ftp", proxy_rules_.proxies_for_ftp, dict2.get());
         AddProxyListToValue("fallback", proxy_rules_.fallback_proxies,
                             dict2.get());
-        dict->Set("proxy_per_scheme", dict2.Pass());
+        dict->Set("proxy_per_scheme", std::move(dict2));
         break;
       }
       default:
@@ -276,7 +281,7 @@ scoped_ptr<base::DictionaryValue> ProxyConfig::ToValue() const {
       for (ProxyBypassRules::RuleList::const_iterator it =
               bypass.rules().begin();
            it != bypass.rules().end(); ++it) {
-        list->Append(new base::StringValue((*it)->ToString()));
+        list->AppendString((*it)->ToString());
       }
 
       dict->Set("bypass_list", list);
@@ -286,7 +291,7 @@ scoped_ptr<base::DictionaryValue> ProxyConfig::ToValue() const {
   // Output the source.
   dict->SetString("source", ProxyConfigSourceToString(source_));
 
-  return dict.Pass();
+  return dict;
 }
 
 }  // namespace net

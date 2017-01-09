@@ -5,9 +5,13 @@
 #ifndef CHROMEOS_DBUS_FAKE_CRYPTOHOME_CLIENT_H_
 #define CHROMEOS_DBUS_FAKE_CRYPTOHOME_CLIENT_H_
 
-#include <map>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <map>
+#include <string>
+#include <vector>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chromeos/dbus/cryptohome_client.h"
 
@@ -23,34 +27,40 @@ class CHROMEOS_EXPORT FakeCryptohomeClient : public CryptohomeClient {
       const AsyncCallStatusHandler& handler,
       const AsyncCallStatusWithDataHandler& data_handler) override;
   void ResetAsyncCallStatusHandlers() override;
+  void SetLowDiskSpaceHandler(const LowDiskSpaceHandler& handler) override;
   void WaitForServiceToBeAvailable(
       const WaitForServiceToBeAvailableCallback& callback) override;
   void IsMounted(const BoolDBusMethodCallback& callback) override;
   bool Unmount(bool* success) override;
-  void AsyncCheckKey(const std::string& username,
+  void AsyncCheckKey(const cryptohome::Identification& cryptohome_id,
                      const std::string& key,
                      const AsyncMethodCallback& callback) override;
-  void AsyncMigrateKey(const std::string& username,
+  void AsyncMigrateKey(const cryptohome::Identification& cryptohome_id,
                        const std::string& from_key,
                        const std::string& to_key,
                        const AsyncMethodCallback& callback) override;
-  void AsyncRemove(const std::string& username,
+  void AsyncRemove(const cryptohome::Identification& cryptohome_id,
                    const AsyncMethodCallback& callback) override;
+  void RenameCryptohome(const cryptohome::Identification& cryptohome_id_from,
+                        const cryptohome::Identification& cryptohome_id_to,
+                        const ProtobufMethodCallback& callback) override;
+  void GetAccountDiskUsage(const cryptohome::Identification& account_id,
+                           const ProtobufMethodCallback& callback) override;
   void GetSystemSalt(const GetSystemSaltCallback& callback) override;
-  void GetSanitizedUsername(const std::string& username,
+  void GetSanitizedUsername(const cryptohome::Identification& cryptohome_id,
                             const StringDBusMethodCallback& callback) override;
   std::string BlockingGetSanitizedUsername(
-      const std::string& username) override;
-  void AsyncMount(const std::string& username,
+      const cryptohome::Identification& cryptohome_id) override;
+  void AsyncMount(const cryptohome::Identification& cryptohome_id,
                   const std::string& key,
                   int flags,
                   const AsyncMethodCallback& callback) override;
-  void AsyncAddKey(const std::string& username,
+  void AsyncAddKey(const cryptohome::Identification& cryptohome_id,
                    const std::string& key,
                    const std::string& new_key,
                    const AsyncMethodCallback& callback) override;
   void AsyncMountGuest(const AsyncMethodCallback& callback) override;
-  void AsyncMountPublic(const std::string& public_mount_id,
+  void AsyncMountPublic(const cryptohome::Identification& public_mount_id,
                         int flags,
                         const AsyncMethodCallback& callback) override;
   void TpmIsReady(const BoolDBusMethodCallback& callback) override;
@@ -68,13 +78,13 @@ class CHROMEOS_EXPORT FakeCryptohomeClient : public CryptohomeClient {
   void Pkcs11GetTpmTokenInfo(
       const Pkcs11GetTpmTokenInfoCallback& callback) override;
   void Pkcs11GetTpmTokenInfoForUser(
-      const std::string& username,
+      const cryptohome::Identification& cryptohome_id,
       const Pkcs11GetTpmTokenInfoCallback& callback) override;
   bool InstallAttributesGet(const std::string& name,
-                            std::vector<uint8>* value,
+                            std::vector<uint8_t>* value,
                             bool* successful) override;
   bool InstallAttributesSet(const std::string& name,
-                            const std::vector<uint8>& value,
+                            const std::vector<uint8_t>& value,
                             bool* successful) override;
   bool InstallAttributesFinalize(bool* successful) override;
   void InstallAttributesIsReady(
@@ -94,36 +104,38 @@ class CHROMEOS_EXPORT FakeCryptohomeClient : public CryptohomeClient {
   void AsyncTpmAttestationCreateCertRequest(
       chromeos::attestation::PrivacyCAType pca_type,
       attestation::AttestationCertificateProfile certificate_profile,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& request_origin,
       const AsyncMethodCallback& callback) override;
   void AsyncTpmAttestationFinishCertRequest(
       const std::string& pca_response,
       attestation::AttestationKeyType key_type,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& key_name,
       const AsyncMethodCallback& callback) override;
   void TpmAttestationDoesKeyExist(
       attestation::AttestationKeyType key_type,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& key_name,
       const BoolDBusMethodCallback& callback) override;
   void TpmAttestationGetCertificate(
       attestation::AttestationKeyType key_type,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& key_name,
       const DataMethodCallback& callback) override;
-  void TpmAttestationGetPublicKey(attestation::AttestationKeyType key_type,
-                                  const std::string& user_id,
-                                  const std::string& key_name,
-                                  const DataMethodCallback& callback) override;
-  void TpmAttestationRegisterKey(attestation::AttestationKeyType key_type,
-                                 const std::string& user_id,
-                                 const std::string& key_name,
-                                 const AsyncMethodCallback& callback) override;
+  void TpmAttestationGetPublicKey(
+      attestation::AttestationKeyType key_type,
+      const cryptohome::Identification& cryptohome_id,
+      const std::string& key_name,
+      const DataMethodCallback& callback) override;
+  void TpmAttestationRegisterKey(
+      attestation::AttestationKeyType key_type,
+      const cryptohome::Identification& cryptohome_id,
+      const std::string& key_name,
+      const AsyncMethodCallback& callback) override;
   void TpmAttestationSignEnterpriseChallenge(
       attestation::AttestationKeyType key_type,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& key_name,
       const std::string& domain,
       const std::string& device_id,
@@ -132,46 +144,47 @@ class CHROMEOS_EXPORT FakeCryptohomeClient : public CryptohomeClient {
       const AsyncMethodCallback& callback) override;
   void TpmAttestationSignSimpleChallenge(
       attestation::AttestationKeyType key_type,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& key_name,
       const std::string& challenge,
       const AsyncMethodCallback& callback) override;
-  void TpmAttestationGetKeyPayload(attestation::AttestationKeyType key_type,
-                                   const std::string& user_id,
-                                   const std::string& key_name,
-                                   const DataMethodCallback& callback) override;
+  void TpmAttestationGetKeyPayload(
+      attestation::AttestationKeyType key_type,
+      const cryptohome::Identification& cryptohome_id,
+      const std::string& key_name,
+      const DataMethodCallback& callback) override;
   void TpmAttestationSetKeyPayload(
       attestation::AttestationKeyType key_type,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& key_name,
       const std::string& payload,
       const BoolDBusMethodCallback& callback) override;
   void TpmAttestationDeleteKeys(
       attestation::AttestationKeyType key_type,
-      const std::string& user_id,
+      const cryptohome::Identification& cryptohome_id,
       const std::string& key_prefix,
       const BoolDBusMethodCallback& callback) override;
-  void GetKeyDataEx(const cryptohome::AccountIdentifier& id,
+  void GetKeyDataEx(const cryptohome::Identification& cryptohome_id,
                     const cryptohome::AuthorizationRequest& auth,
                     const cryptohome::GetKeyDataRequest& request,
                     const ProtobufMethodCallback& callback) override;
-  void CheckKeyEx(const cryptohome::AccountIdentifier& id,
+  void CheckKeyEx(const cryptohome::Identification& cryptohome_id,
                   const cryptohome::AuthorizationRequest& auth,
                   const cryptohome::CheckKeyRequest& request,
                   const ProtobufMethodCallback& callback) override;
-  void MountEx(const cryptohome::AccountIdentifier& id,
+  void MountEx(const cryptohome::Identification& cryptohome_id,
                const cryptohome::AuthorizationRequest& auth,
                const cryptohome::MountRequest& request,
                const ProtobufMethodCallback& callback) override;
-  void AddKeyEx(const cryptohome::AccountIdentifier& id,
+  void AddKeyEx(const cryptohome::Identification& cryptohome_id,
                 const cryptohome::AuthorizationRequest& auth,
                 const cryptohome::AddKeyRequest& request,
                 const ProtobufMethodCallback& callback) override;
-  void UpdateKeyEx(const cryptohome::AccountIdentifier& id,
+  void UpdateKeyEx(const cryptohome::Identification& cryptohome_id,
                    const cryptohome::AuthorizationRequest& auth,
                    const cryptohome::UpdateKeyRequest& request,
                    const ProtobufMethodCallback& callback) override;
-  void RemoveKeyEx(const cryptohome::AccountIdentifier& id,
+  void RemoveKeyEx(const cryptohome::Identification& cryptohome_id,
                    const cryptohome::AuthorizationRequest& auth,
                    const cryptohome::RemoveKeyRequest& request,
                    const ProtobufMethodCallback& callback) override;
@@ -195,13 +208,13 @@ class CHROMEOS_EXPORT FakeCryptohomeClient : public CryptohomeClient {
   // Sets the system salt which will be returned from GetSystemSalt(). By
   // default, GetSystemSalt() returns the value generated by
   // GetStubSystemSalt().
-  void set_system_salt(const std::vector<uint8>& system_salt) {
+  void set_system_salt(const std::vector<uint8_t>& system_salt) {
     system_salt_ = system_salt;
   }
 
   // Returns the stub system salt as raw bytes. (not as a string encoded in the
   // format used by SystemSaltGetter::ConvertRawSaltToHexString()).
-  static std::vector<uint8> GetStubSystemSalt();
+  static std::vector<uint8_t> GetStubSystemSalt();
 
  private:
   void ReturnProtobufMethodCallback(
@@ -209,26 +222,32 @@ class CHROMEOS_EXPORT FakeCryptohomeClient : public CryptohomeClient {
       const ProtobufMethodCallback& callback);
 
   // Posts tasks which return fake results to the UI thread.
-  void ReturnAsyncMethodResult(const AsyncMethodCallback& callback,
-                               bool returns_data);
+  void ReturnAsyncMethodResult(const AsyncMethodCallback& callback);
 
-  // This method is used to implement ReturnAsyncMethodResult.
-  void ReturnAsyncMethodResultInternal(const AsyncMethodCallback& callback,
-                                       bool returns_data);
+  // Posts tasks which return fake data to the UI thread.
+  void ReturnAsyncMethodData(const AsyncMethodCallback& callback,
+                             const std::string& data);
+
+  // This method is used to implement ReturnAsyncMethodResult without data.
+  void ReturnAsyncMethodResultInternal(const AsyncMethodCallback& callback);
+
+  // This method is used to implement ReturnAsyncMethodResult with data.
+  void ReturnAsyncMethodDataInternal(const AsyncMethodCallback& callback,
+                                     const std::string& data);
 
   bool service_is_available_;
   int async_call_id_;
   AsyncCallStatusHandler async_call_status_handler_;
   AsyncCallStatusWithDataHandler async_call_status_data_handler_;
   bool unmount_result_;
-  std::vector<uint8> system_salt_;
+  std::vector<uint8_t> system_salt_;
 
   std::vector<WaitForServiceToBeAvailableCallback>
       pending_wait_for_service_to_be_available_callbacks_;
 
   // A stub store for InstallAttributes, mapping an attribute name to the
   // associated data blob. Used to implement InstallAttributesSet and -Get.
-  std::map<std::string, std::vector<uint8> > install_attrs_;
+  std::map<std::string, std::vector<uint8_t>> install_attrs_;
   bool locked_;
   base::WeakPtrFactory<FakeCryptohomeClient> weak_ptr_factory_;
 

@@ -3,18 +3,22 @@
 // found in the LICENSE file.
 
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/base/web_ui_browser_test.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
@@ -63,12 +67,14 @@ IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, HistoryOverride) {
 
   scoped_refptr<const extensions::Extension> extension =
       extensions::ExtensionBuilder()
-          .SetManifest(extensions::DictionaryBuilder()
-                           .Set("name", "History Override")
-                           .Set("version", "1")
-                           .Set("manifest_version", 2)
-                           .Set("permission",
-                                extensions::ListBuilder().Append("history")))
+          .SetManifest(
+              extensions::DictionaryBuilder()
+                  .Set("name", "History Override")
+                  .Set("version", "1")
+                  .Set("manifest_version", 2)
+                  .Set("permission",
+                       extensions::ListBuilder().Append("history").Build())
+                  .Build())
           .Build();
 
   ExtensionService* service = extensions::ExtensionSystem::Get(
@@ -81,19 +87,30 @@ IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, HistoryOverride) {
 }
 
 IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, EnableMdExtensionsHidesExtensions) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      ::switches::kEnableMaterialDesignExtensions);
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kMaterialDesignExtensions);
+
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIUberFrameURL));
   SelectTab();
   EXPECT_TRUE(GetJsBool("$('extensions').hidden"));
 }
 
 IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, EnableMdHistoryHidesHistory) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-    ::switches::kEnableMaterialDesignHistory);
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kMaterialDesignHistory);
+
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIUberFrameURL));
   SelectTab();
   EXPECT_TRUE(GetJsBool("$('history').hidden"));
+}
+
+IN_PROC_BROWSER_TEST_F(UberUIBrowserTest, EnableMdSettingsHidesSettings) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kMaterialDesignSettings);
+
+  ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIUberFrameURL));
+  SelectTab();
+  EXPECT_TRUE(GetJsBool("$('settings').hidden && $('help').hidden"));
 }
 
 IN_PROC_BROWSER_TEST_F(UberUIBrowserTest,

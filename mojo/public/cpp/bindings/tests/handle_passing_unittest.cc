@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+#include <utility>
+
 #include "base/message_loop/message_loop.h"
-#include "mojo/message_pump/message_pump_mojo.h"
+#include "base/run_loop.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
@@ -17,50 +20,58 @@ namespace {
 const char kText1[] = "hello";
 const char kText2[] = "world";
 
-class StringRecorder {
- public:
-  explicit StringRecorder(std::string* buf) : buf_(buf) {}
-  void Run(const String& a) const { *buf_ = a.To<std::string>(); }
+void RecordString(std::string* storage,
+                  const base::Closure& closure,
+                  const std::string& str) {
+  *storage = str;
+  closure.Run();
+}
 
- private:
-  std::string* buf_;
-};
+base::Callback<void(const std::string&)> MakeStringRecorder(
+    std::string* storage,
+    const base::Closure& closure) {
+  return base::Bind(&RecordString, storage, closure);
+}
 
 class ImportedInterfaceImpl : public imported::ImportedInterface {
  public:
-  explicit ImportedInterfaceImpl(
-      InterfaceRequest<imported::ImportedInterface> request)
-      : binding_(this, request.Pass()) {}
+  ImportedInterfaceImpl(
+      InterfaceRequest<imported::ImportedInterface> request,
+      const base::Closure& closure)
+      : binding_(this, std::move(request)), closure_(closure) {}
 
-  void DoSomething() override { do_something_count_++; }
+  void DoSomething() override {
+    do_something_count_++;
+    closure_.Run();
+  }
 
   static int do_something_count() { return do_something_count_; }
 
  private:
   static int do_something_count_;
   Binding<ImportedInterface> binding_;
+  base::Closure closure_;
 };
 int ImportedInterfaceImpl::do_something_count_ = 0;
 
 class SampleNamedObjectImpl : public sample::NamedObject {
  public:
-  explicit SampleNamedObjectImpl(InterfaceRequest<sample::NamedObject> request)
-      : binding_(this, request.Pass()) {}
-  void SetName(const mojo::String& name) override { name_ = name; }
+  SampleNamedObjectImpl() {}
 
-  void GetName(const mojo::Callback<void(mojo::String)>& callback) override {
+  void SetName(const std::string& name) override { name_ = name; }
+
+  void GetName(const GetNameCallback& callback) override {
     callback.Run(name_);
   }
 
  private:
   std::string name_;
-  StrongBinding<sample::NamedObject> binding_;
 };
 
 class SampleFactoryImpl : public sample::Factory {
  public:
   explicit SampleFactoryImpl(InterfaceRequest<sample::Factory> request)
-      : binding_(this, request.Pass()) {}
+      : binding_(this, std::move(request)) {}
 
   void DoStuff(sample::RequestPtr request,
                ScopedMessagePipeHandle pipe,
@@ -85,8 +96,8 @@ class SampleFactoryImpl : public sample::Factory {
 
     sample::ResponsePtr response(sample::Response::New());
     response->x = 2;
-    response->pipe = pipe0.Pass();
-    callback.Run(response.Pass(), text1);
+    response->pipe = std::move(pipe0);
+    callback.Run(std::move(response), text1);
 
     if (request->obj)
       request->obj->DoSomething();
@@ -98,6 +109,12 @@ class SampleFactoryImpl : public sample::Factory {
     // DidStuff2().
     ASSERT_TRUE(pipe.is_valid());
     uint32_t data_size = 0;
+
+    MojoHandleSignalsState state;
+    ASSERT_EQ(MOJO_RESULT_OK,
+              MojoWait(pipe.get().value(), MOJO_HANDLE_SIGNAL_READABLE,
+                       MOJO_DEADLINE_INDEFINITE, &state));
+    ASSERT_EQ(MOJO_HANDLE_SIGNAL_READABLE, state.satisfied_signals);
     ASSERT_EQ(MOJO_RESULT_OK,
               ReadDataRaw(
                   pipe.get(), nullptr, &data_size, MOJO_READ_DATA_FLAG_QUERY));
@@ -115,7 +132,8 @@ class SampleFactoryImpl : public sample::Factory {
   void CreateNamedObject(
       InterfaceRequest<sample::NamedObject> object_request) override {
     EXPECT_TRUE(object_request.is_pending());
-    new SampleNamedObjectImpl(object_request.Pass());
+    MakeStrongBinding(base::MakeUnique<SampleNamedObjectImpl>(),
+                      std::move(object_request));
   }
 
   // These aren't called or implemented, but exist here to test that the
@@ -123,12 +141,10 @@ class SampleFactoryImpl : public sample::Factory {
   // interfaces.
   void RequestImportedInterface(
       InterfaceRequest<imported::ImportedInterface> imported,
-      const mojo::Callback<void(InterfaceRequest<imported::ImportedInterface>)>&
-          callback) override {}
+      const RequestImportedInterfaceCallback& callback) override {}
   void TakeImportedInterface(
       imported::ImportedInterfacePtr imported,
-      const mojo::Callback<void(imported::ImportedInterfacePtr)>& callback)
-      override {}
+      const TakeImportedInterfaceCallback& callback) override {}
 
  private:
   ScopedMessagePipeHandle pipe1_;
@@ -137,44 +153,50 @@ class SampleFactoryImpl : public sample::Factory {
 
 class HandlePassingTest : public testing::Test {
  public:
-  HandlePassingTest() : loop_(common::MessagePumpMojo::Create()) {}
+  HandlePassingTest() {}
 
   void TearDown() override { PumpMessages(); }
 
-  void PumpMessages() { loop_.RunUntilIdle(); }
+  void PumpMessages() { base::RunLoop().RunUntilIdle(); }
 
  private:
   base::MessageLoop loop_;
 };
 
-struct DoStuffCallback {
-  DoStuffCallback(bool* got_response, std::string* got_text_reply)
-      : got_response(got_response), got_text_reply(got_text_reply) {}
+void DoStuff(bool* got_response,
+             std::string* got_text_reply,
+             const base::Closure& closure,
+             sample::ResponsePtr response,
+             const std::string& text_reply) {
+  *got_text_reply = text_reply;
 
-  void Run(sample::ResponsePtr response, const String& text_reply) const {
-    *got_text_reply = text_reply;
+  if (response->pipe.is_valid()) {
+    std::string text2;
+    EXPECT_TRUE(ReadTextMessage(response->pipe.get(), &text2));
 
-    if (response->pipe.is_valid()) {
-      std::string text2;
-      EXPECT_TRUE(ReadTextMessage(response->pipe.get(), &text2));
+    // Ensure that simply accessing response.pipe does not close it.
+    EXPECT_TRUE(response->pipe.is_valid());
 
-      // Ensure that simply accessing response.pipe does not close it.
-      EXPECT_TRUE(response->pipe.is_valid());
+    EXPECT_EQ(std::string(kText2), text2);
 
-      EXPECT_EQ(std::string(kText2), text2);
-
-      // Do some more tests of handle passing:
-      ScopedMessagePipeHandle p = response->pipe.Pass();
-      EXPECT_TRUE(p.is_valid());
-      EXPECT_FALSE(response->pipe.is_valid());
-    }
-
-    *got_response = true;
+    // Do some more tests of handle passing:
+    ScopedMessagePipeHandle p = std::move(response->pipe);
+    EXPECT_TRUE(p.is_valid());
+    EXPECT_FALSE(response->pipe.is_valid());
   }
 
-  bool* got_response;
-  std::string* got_text_reply;
-};
+  *got_response = true;
+  closure.Run();
+}
+
+void DoStuff2(bool* got_response,
+              std::string* got_text_reply,
+              const base::Closure& closure,
+              const std::string& text_reply) {
+  *got_response = true;
+  *got_text_reply = text_reply;
+  closure.Run();
+}
 
 TEST_F(HandlePassingTest, Basic) {
   sample::FactoryPtr factory;
@@ -187,24 +209,29 @@ TEST_F(HandlePassingTest, Basic) {
   EXPECT_TRUE(WriteTextMessage(pipe1.handle1.get(), kText2));
 
   imported::ImportedInterfacePtr imported;
-  ImportedInterfaceImpl imported_impl(GetProxy(&imported));
+  base::RunLoop run_loop;
+  ImportedInterfaceImpl imported_impl(GetProxy(&imported),
+                                      run_loop.QuitClosure());
 
   sample::RequestPtr request(sample::Request::New());
   request->x = 1;
-  request->pipe = pipe1.handle0.Pass();
-  request->obj = imported.Pass();
+  request->pipe = std::move(pipe1.handle0);
+  request->obj = std::move(imported);
   bool got_response = false;
   std::string got_text_reply;
-  DoStuffCallback cb(&got_response, &got_text_reply);
-  factory->DoStuff(request.Pass(), pipe0.handle0.Pass(), cb);
+  base::RunLoop run_loop2;
+  factory->DoStuff(std::move(request), std::move(pipe0.handle0),
+                   base::Bind(&DoStuff, &got_response, &got_text_reply,
+                              run_loop2.QuitClosure()));
 
-  EXPECT_FALSE(*cb.got_response);
+  EXPECT_FALSE(got_response);
   int count_before = ImportedInterfaceImpl::do_something_count();
 
-  PumpMessages();
+  run_loop.Run();
+  run_loop2.Run();
 
-  EXPECT_TRUE(*cb.got_response);
-  EXPECT_EQ(kText1, *cb.got_text_reply);
+  EXPECT_TRUE(got_response);
+  EXPECT_EQ(kText1, got_text_reply);
   EXPECT_EQ(1, ImportedInterfaceImpl::do_something_count() - count_before);
 }
 
@@ -216,28 +243,17 @@ TEST_F(HandlePassingTest, PassInvalid) {
   request->x = 1;
   bool got_response = false;
   std::string got_text_reply;
-  DoStuffCallback cb(&got_response, &got_text_reply);
-  factory->DoStuff(request.Pass(), ScopedMessagePipeHandle().Pass(), cb);
+  base::RunLoop run_loop;
+  factory->DoStuff(std::move(request), ScopedMessagePipeHandle(),
+                   base::Bind(&DoStuff, &got_response, &got_text_reply,
+                              run_loop.QuitClosure()));
 
-  EXPECT_FALSE(*cb.got_response);
+  EXPECT_FALSE(got_response);
 
-  PumpMessages();
+  run_loop.Run();
 
-  EXPECT_TRUE(*cb.got_response);
+  EXPECT_TRUE(got_response);
 }
-
-struct DoStuff2Callback {
-  DoStuff2Callback(bool* got_response, std::string* got_text_reply)
-      : got_response(got_response), got_text_reply(got_text_reply) {}
-
-  void Run(const String& text_reply) const {
-    *got_response = true;
-    *got_text_reply = text_reply;
-  }
-
-  bool* got_response;
-  std::string* got_text_reply;
-};
 
 // Verifies DataPipeConsumer can be passed and read from.
 TEST_F(HandlePassingTest, DataPipe) {
@@ -265,15 +281,17 @@ TEST_F(HandlePassingTest, DataPipe) {
 
   bool got_response = false;
   std::string got_text_reply;
-  DoStuff2Callback cb(&got_response, &got_text_reply);
-  factory->DoStuff2(consumer_handle.Pass(), cb);
+  base::RunLoop run_loop;
+  factory->DoStuff2(std::move(consumer_handle),
+                    base::Bind(&DoStuff2, &got_response, &got_text_reply,
+                               run_loop.QuitClosure()));
 
-  EXPECT_FALSE(*cb.got_response);
+  EXPECT_FALSE(got_response);
 
-  PumpMessages();
+  run_loop.Run();
 
-  EXPECT_TRUE(*cb.got_response);
-  EXPECT_EQ(expected_text_reply, *cb.got_text_reply);
+  EXPECT_TRUE(got_response);
+  EXPECT_EQ(expected_text_reply, got_text_reply);
 }
 
 TEST_F(HandlePassingTest, PipesAreClosed) {
@@ -286,35 +304,20 @@ TEST_F(HandlePassingTest, PipesAreClosed) {
   MojoHandle handle1_value = extra_pipe.handle1.get().value();
 
   {
-    Array<ScopedMessagePipeHandle> pipes(2);
-    pipes[0] = extra_pipe.handle0.Pass();
-    pipes[1] = extra_pipe.handle1.Pass();
+    std::vector<ScopedMessagePipeHandle> pipes(2);
+    pipes[0] = std::move(extra_pipe.handle0);
+    pipes[1] = std::move(extra_pipe.handle1);
 
     sample::RequestPtr request(sample::Request::New());
-    request->more_pipes = pipes.Pass();
+    request->more_pipes = std::move(pipes);
 
-    factory->DoStuff(request.Pass(), ScopedMessagePipeHandle(),
+    factory->DoStuff(std::move(request), ScopedMessagePipeHandle(),
                      sample::Factory::DoStuffCallback());
   }
 
   // We expect the pipes to have been closed.
   EXPECT_EQ(MOJO_RESULT_INVALID_ARGUMENT, MojoClose(handle0_value));
   EXPECT_EQ(MOJO_RESULT_INVALID_ARGUMENT, MojoClose(handle1_value));
-}
-
-TEST_F(HandlePassingTest, IsHandle) {
-  // Validate that mojo::internal::IsHandle<> works as expected since this.
-  // template is key to ensuring that we don't leak handles.
-  EXPECT_TRUE(internal::IsHandle<Handle>::value);
-  EXPECT_TRUE(internal::IsHandle<MessagePipeHandle>::value);
-  EXPECT_TRUE(internal::IsHandle<DataPipeConsumerHandle>::value);
-  EXPECT_TRUE(internal::IsHandle<DataPipeProducerHandle>::value);
-  EXPECT_TRUE(internal::IsHandle<SharedBufferHandle>::value);
-
-  // Basic sanity checks...
-  EXPECT_FALSE(internal::IsHandle<int>::value);
-  EXPECT_FALSE(internal::IsHandle<sample::FactoryPtr>::value);
-  EXPECT_FALSE(internal::IsHandle<String>::value);
 }
 
 TEST_F(HandlePassingTest, CreateNamedObject) {
@@ -326,7 +329,7 @@ TEST_F(HandlePassingTest, CreateNamedObject) {
 
   InterfaceRequest<sample::NamedObject> object1_request = GetProxy(&object1);
   EXPECT_TRUE(object1_request.is_pending());
-  factory->CreateNamedObject(object1_request.Pass());
+  factory->CreateNamedObject(std::move(object1_request));
   EXPECT_FALSE(object1_request.is_pending());  // We've passed the request.
 
   ASSERT_TRUE(object1);
@@ -336,13 +339,15 @@ TEST_F(HandlePassingTest, CreateNamedObject) {
   factory->CreateNamedObject(GetProxy(&object2));
   object2->SetName("object2");
 
+  base::RunLoop run_loop, run_loop2;
   std::string name1;
-  object1->GetName(StringRecorder(&name1));
+  object1->GetName(MakeStringRecorder(&name1, run_loop.QuitClosure()));
 
   std::string name2;
-  object2->GetName(StringRecorder(&name2));
+  object2->GetName(MakeStringRecorder(&name2, run_loop2.QuitClosure()));
 
-  PumpMessages();  // Yield for results.
+  run_loop.Run();
+  run_loop2.Run();
 
   EXPECT_EQ(std::string("object1"), name1);
   EXPECT_EQ(std::string("object2"), name2);

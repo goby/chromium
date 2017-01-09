@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/environment.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
+#include "media/audio/audio_device_description.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager_base.h"
 #include "media/audio/audio_unittest_util.h"
@@ -26,7 +31,7 @@ namespace media {
 
 ACTION_P4(CheckCountAndPostQuitTask, count, limit, loop, closure) {
   if (++*count >= limit) {
-    loop->PostTask(FROM_HERE, closure);
+    loop->task_runner()->PostTask(FROM_HERE, closure);
   }
 }
 
@@ -35,7 +40,7 @@ class MockAudioInputCallback : public AudioInputStream::AudioInputCallback {
   MOCK_METHOD4(OnData,
                void(AudioInputStream* stream,
                     const AudioBus* src,
-                    uint32 hardware_delay_bytes,
+                    uint32_t hardware_delay_bytes,
                     double volume));
   MOCK_METHOD1(OnError, void(AudioInputStream* stream));
 };
@@ -60,7 +65,7 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
   ~WriteToFileAudioSink() override {
     int bytes_written = 0;
     while (bytes_written < bytes_to_write_) {
-      const uint8* chunk;
+      const uint8_t* chunk;
       int chunk_size;
 
       // Stop writing if no more data is available.
@@ -78,10 +83,10 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
   // AudioInputStream::AudioInputCallback implementation.
   void OnData(AudioInputStream* stream,
               const AudioBus* src,
-              uint32 hardware_delay_bytes,
+              uint32_t hardware_delay_bytes,
               double volume) override {
     const int num_samples = src->frames() * src->channels();
-    scoped_ptr<int16> interleaved(new int16[num_samples]);
+    std::unique_ptr<int16_t> interleaved(new int16_t[num_samples]);
     const int bytes_per_sample = sizeof(*interleaved);
     src->ToInterleaved(src->frames(), bytes_per_sample, interleaved.get());
 
@@ -89,7 +94,7 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
     // fwrite() calls in the audio callback. The complete buffer will be
     // written to file in the destructor.
     const int size = bytes_per_sample * num_samples;
-    if (buffer_.Append((const uint8*)interleaved.get(), size)) {
+    if (buffer_.Append((const uint8_t*)interleaved.get(), size)) {
       bytes_to_write_ += size;
     }
   }
@@ -106,12 +111,16 @@ class MacAudioInputTest : public testing::Test {
  protected:
   MacAudioInputTest()
       : message_loop_(base::MessageLoop::TYPE_UI),
-        audio_manager_(AudioManager::CreateForTesting()) {
+        audio_manager_(
+            AudioManager::CreateForTesting(message_loop_.task_runner())) {
     // Wait for the AudioManager to finish any initialization on the audio loop.
     base::RunLoop().RunUntilIdle();
   }
 
-  ~MacAudioInputTest() override { base::RunLoop().RunUntilIdle(); }
+  ~MacAudioInputTest() override {
+    audio_manager_.reset();
+    base::RunLoop().RunUntilIdle();
+  }
 
   bool InputDevicesAvailable() {
     return audio_manager_->HasAudioInputDevices();
@@ -125,8 +134,9 @@ class MacAudioInputTest : public testing::Test {
     int samples_per_packet = fs / 100;
     AudioInputStream* ais = audio_manager_->MakeAudioInputStream(
         AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-        CHANNEL_LAYOUT_STEREO, fs, 16, samples_per_packet),
-        AudioManagerBase::kDefaultDeviceId);
+                        CHANNEL_LAYOUT_STEREO, fs, 16, samples_per_packet),
+        AudioDeviceDescription::kDefaultDeviceId,
+        base::Bind(&MacAudioInputTest::OnLogMessage, base::Unretained(this)));
     EXPECT_TRUE(ais);
     return ais;
   }
@@ -137,15 +147,19 @@ class MacAudioInputTest : public testing::Test {
     int fs = static_cast<int>(AUAudioInputStream::HardwareSampleRate());
     int samples_per_packet = fs / 100;
     AudioInputStream* ais = audio_manager_->MakeAudioInputStream(
-        AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-        channel_layout, fs, 16, samples_per_packet),
-        AudioManagerBase::kDefaultDeviceId);
+        AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
+                        fs, 16, samples_per_packet),
+        AudioDeviceDescription::kDefaultDeviceId,
+        base::Bind(&MacAudioInputTest::OnLogMessage, base::Unretained(this)));
     EXPECT_TRUE(ais);
     return ais;
   }
 
+  void OnLogMessage(const std::string& message) { log_message_ = message; }
+
   base::MessageLoop message_loop_;
-  scoped_ptr<AudioManager> audio_manager_;
+  ScopedAudioManagerPtr audio_manager_;
+  std::string log_message_;
 };
 
 // Test Create(), Close().
@@ -184,33 +198,6 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamOpenStartStopAndClose) {
   ais->Close();
 }
 
-// Test some additional calling sequences.
-TEST_F(MacAudioInputTest, AUAudioInputStreamMiscCallingSequences) {
-  ABORT_AUDIO_TEST_IF_NOT(InputDevicesAvailable());
-  AudioInputStream* ais = CreateDefaultAudioInputStream();
-  AUAudioInputStream* auais = static_cast<AUAudioInputStream*>(ais);
-
-  // Open(), Open() should fail the second time.
-  EXPECT_TRUE(ais->Open());
-  EXPECT_FALSE(ais->Open());
-
-  MockAudioInputCallback sink;
-
-  // Start(), Start() is a valid calling sequence (second call does nothing).
-  ais->Start(&sink);
-  EXPECT_TRUE(auais->started());
-  ais->Start(&sink);
-  EXPECT_TRUE(auais->started());
-
-  // Stop(), Stop() is a valid calling sequence (second call does nothing).
-  ais->Stop();
-  EXPECT_FALSE(auais->started());
-  ais->Stop();
-  EXPECT_FALSE(auais->started());
-
-  ais->Close();
-}
-
 // Verify that recording starts and stops correctly in mono using mocked sink.
 TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyMonoRecording) {
   ABORT_AUDIO_TEST_IF_NOT(InputDevicesAvailable());
@@ -235,6 +222,8 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyMonoRecording) {
   run_loop.Run();
   ais->Stop();
   ais->Close();
+
+  EXPECT_FALSE(log_message_.empty());
 }
 
 // Verify that recording starts and stops correctly in mono using mocked sink.
@@ -268,6 +257,8 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyStereoRecording) {
   run_loop.Run();
   ais->Stop();
   ais->Close();
+
+  EXPECT_FALSE(log_message_.empty());
 }
 
 // This test is intended for manual tests and should only be enabled

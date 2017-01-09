@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.compositor.layouts;
 
 import android.graphics.Rect;
 
-import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
 import org.chromium.ui.resources.ResourceManager;
 
 /**
@@ -40,26 +39,6 @@ public interface LayoutRenderHost {
     void onPhysicalBackingSizeChanged(int width, int height);
 
     /**
-     * Indicates that the amount the surface is overdrawing on the bottom has changed.
-     *
-     * This occurs when the surface is larger than the window viewport.
-     *
-     * @param overdrawHeight The overdraw amount.
-     */
-    void onOverdrawBottomHeightChanged(int overdrawHeight);
-
-    /**
-     * @see #onOverdrawBottomHeightChanged(int)
-     * @return The overdraw bottom height of the last frame rendered by the current tab.
-     */
-    int getCurrentOverdrawBottomHeight();
-
-    /**
-     * @return The number of actually drawn {@link LayoutTab}.
-     */
-    int getLayoutTabsDrawnCount();
-
-    /**
      * Pushes a debug rectangle that will be drawn.
      *
      * @param rect  The rect to be drawn.
@@ -73,31 +52,19 @@ public interface LayoutRenderHost {
     void loadPersitentTextureDataIfNeeded();
 
     /**
-     * @param rect Rect instance to be used to store the result and return. If null, it uses a new
-     *             Rect instance.
-     * @return The current visible viewport of the host (takes fullscreen into account).
-     */
-    Rect getVisibleViewport(Rect rect);
-
-    /**
      * @return The background color of the toolbar.
      */
-    int getTopControlsBackgroundColor();
+    int getBrowserControlsBackgroundColor();
 
     /**
      * @return The alpha value of the textbox in the toolbar.
      */
-    float getTopControlsUrlBarAlpha();
+    float getBrowserControlsUrlBarAlpha();
 
     /**
      * @return Whether or not the toolbar is currently being faked.
      */
-    boolean areTopControlsPermanentlyHidden();
-
-    /**
-     * @return The height of the top controls in pixels.
-     */
-    int getTopControlsHeightPixels();
+    boolean areBrowserControlsPermanentlyHidden();
 
     /**
      * @return The {@link ResourceManager}.

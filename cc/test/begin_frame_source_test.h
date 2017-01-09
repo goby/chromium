@@ -5,7 +5,6 @@
 #ifndef CC_TEST_BEGIN_FRAME_SOURCE_TEST_H_
 #define CC_TEST_BEGIN_FRAME_SOURCE_TEST_H_
 
-#include "base/basictypes.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/scheduler/begin_frame_source.h"
 #include "cc/test/begin_frame_args_test.h"
@@ -26,6 +25,18 @@
                   BEGINFRAME_FROM_HERE, frame_time, deadline, interval))) \
       .InSequence((obs).sequence)                                         \
       .WillOnce(::testing::SaveArg<0>(&((obs).last_begin_frame_args)))
+
+#define EXPECT_BEGIN_FRAME_USED_MISSED(obs, frame_time, deadline, interval)    \
+  EXPECT_CALL((obs), OnBeginFrame(CreateBeginFrameArgsForTesting(              \
+                         BEGINFRAME_FROM_HERE, frame_time, deadline, interval, \
+                         BeginFrameArgs::MISSED)))                             \
+      .InSequence((obs).sequence)                                              \
+      .WillOnce(::testing::SaveArg<0>(&((obs).last_begin_frame_args)))
+
+#define EXPECT_BEGIN_FRAME_SOURCE_PAUSED(obs, paused)         \
+  EXPECT_CALL((obs), OnBeginFrameSourcePausedChanged(paused)) \
+      .Times(1)                                               \
+      .InSequence((obs).sequence)
 
 // Macros to send BeginFrameArgs on a FakeBeginFrameSink (and verify resulting
 // observer behaviour).
@@ -53,7 +64,8 @@ namespace cc {
 class MockBeginFrameObserver : public BeginFrameObserver {
  public:
   MOCK_METHOD1(OnBeginFrame, void(const BeginFrameArgs&));
-  MOCK_CONST_METHOD0(LastUsedBeginFrameArgs, const BeginFrameArgs());
+  MOCK_CONST_METHOD0(LastUsedBeginFrameArgs, const BeginFrameArgs&());
+  MOCK_METHOD1(OnBeginFrameSourcePausedChanged, void(bool));
 
   virtual void AsValueInto(base::trace_event::TracedValue* dict) const;
 

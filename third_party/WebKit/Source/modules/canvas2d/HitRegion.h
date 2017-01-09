@@ -10,77 +10,74 @@
 #include "platform/graphics/Path.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
 
-class HitRegion final : public RefCountedWillBeGarbageCollectedFinalized<HitRegion> {
-public:
-    static PassRefPtrWillBeRawPtr<HitRegion> create(const Path& path, const HitRegionOptions& options)
-    {
-        return adoptRefWillBeNoop(new HitRegion(path, options));
-    }
+class HitRegion final : public GarbageCollectedFinalized<HitRegion> {
+ public:
+  static HitRegion* create(const Path& path, const HitRegionOptions& options) {
+    return new HitRegion(path, options);
+  }
 
-    virtual ~HitRegion() { }
+  virtual ~HitRegion() {}
 
-    void removePixels(const Path&);
+  void removePixels(const Path&);
 
-    bool contains(const FloatPoint&) const;
+  bool contains(const FloatPoint&) const;
 
-    const String& id() const { return m_id; }
-    const Path& path() const { return m_path; }
-    Element* control() const { return m_control.get(); }
-    WindRule fillRule() const { return m_fillRule; }
+  const String& id() const { return m_id; }
+  const Path& path() const { return m_path; }
+  Element* control() const { return m_control.get(); }
 
-    DECLARE_TRACE();
+  DECLARE_TRACE();
 
-private:
-    HitRegion(const Path&, const HitRegionOptions&);
+ private:
+  HitRegion(const Path&, const HitRegionOptions&);
 
-    String m_id;
-    RefPtrWillBeMember<Element> m_control;
-    Path m_path;
-    WindRule m_fillRule;
+  String m_id;
+  Member<Element> m_control;
+  Path m_path;
+  WindRule m_fillRule;
 };
 
-class HitRegionManager final : public GarbageCollectedFinalized<HitRegionManager> {
-    WTF_MAKE_NONCOPYABLE(HitRegionManager);
-public:
-    static HitRegionManager* create() { return new HitRegionManager; }
-    ~HitRegionManager() { }
+class HitRegionManager final : public GarbageCollected<HitRegionManager> {
+  WTF_MAKE_NONCOPYABLE(HitRegionManager);
 
-    void addHitRegion(PassRefPtrWillBeRawPtr<HitRegion>);
+ public:
+  static HitRegionManager* create() { return new HitRegionManager; }
 
-    void removeHitRegion(HitRegion*);
-    void removeHitRegionById(const String& id);
-    void removeHitRegionByControl(Element*);
-    void removeHitRegionsInRect(const FloatRect&, const AffineTransform&);
-    void removeAllHitRegions();
+  void addHitRegion(HitRegion*);
 
-    HitRegion* getHitRegionById(const String& id) const;
-    HitRegion* getHitRegionByControl(Element*) const;
-    HitRegion* getHitRegionAtPoint(const FloatPoint&) const;
+  void removeHitRegion(HitRegion*);
+  void removeHitRegionById(const String& id);
+  void removeHitRegionByControl(const Element*);
+  void removeHitRegionsInRect(const FloatRect&, const AffineTransform&);
+  void removeAllHitRegions();
 
-    unsigned getHitRegionsCount() const;
+  HitRegion* getHitRegionById(const String& id) const;
+  HitRegion* getHitRegionByControl(const Element*) const;
+  HitRegion* getHitRegionAtPoint(const FloatPoint&) const;
 
-    DECLARE_TRACE();
+  unsigned getHitRegionsCount() const;
 
-private:
-    HitRegionManager() { }
+  DECLARE_TRACE();
 
-    typedef WillBeHeapListHashSet<RefPtrWillBeMember<HitRegion>> HitRegionList;
-    typedef HitRegionList::const_reverse_iterator HitRegionIterator;
-    typedef WillBeHeapHashMap<String, RefPtrWillBeMember<HitRegion>> HitRegionIdMap;
-    typedef WillBeHeapHashMap<RefPtrWillBeMember<Element>, RefPtrWillBeMember<HitRegion>> HitRegionControlMap;
+ private:
+  HitRegionManager() {}
 
-    HitRegionList m_hitRegionList;
-    HitRegionIdMap m_hitRegionIdMap;
-    HitRegionControlMap m_hitRegionControlMap;
+  typedef HeapListHashSet<Member<HitRegion>> HitRegionList;
+  typedef HitRegionList::const_reverse_iterator HitRegionIterator;
+  typedef HeapHashMap<String, Member<HitRegion>> HitRegionIdMap;
+  typedef HeapHashMap<Member<const Element>, Member<HitRegion>>
+      HitRegionControlMap;
+
+  HitRegionList m_hitRegionList;
+  HitRegionIdMap m_hitRegionIdMap;
+  HitRegionControlMap m_hitRegionControlMap;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

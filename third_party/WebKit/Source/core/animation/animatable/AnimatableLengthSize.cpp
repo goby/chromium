@@ -28,23 +28,32 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/animation/animatable/AnimatableLengthSize.h"
 
 namespace blink {
 
-PassRefPtr<AnimatableValue> AnimatableLengthSize::interpolateTo(const AnimatableValue* value, double fraction) const
-{
-    const AnimatableLengthSize* lengthSize = toAnimatableLengthSize(value);
-    return AnimatableLengthSize::create(
-        AnimatableValue::interpolate(this->width(), lengthSize->width(), fraction),
-        AnimatableValue::interpolate(this->height(), lengthSize->height(), fraction));
+PassRefPtr<AnimatableValue> AnimatableLengthSize::interpolateTo(
+    const AnimatableValue* value,
+    double fraction) const {
+  const AnimatableLengthSize* lengthSize = toAnimatableLengthSize(value);
+  return AnimatableLengthSize::create(
+      AnimatableValue::interpolate(this->width(), lengthSize->width(),
+                                   fraction),
+      AnimatableValue::interpolate(this->height(), lengthSize->height(),
+                                   fraction));
 }
 
-bool AnimatableLengthSize::equalTo(const AnimatableValue* value) const
-{
-    const AnimatableLengthSize* lengthSize = toAnimatableLengthSize(value);
-    return width()->equals(lengthSize->width()) && height()->equals(lengthSize->height());
+bool AnimatableLengthSize::equalTo(const AnimatableValue* value) const {
+  const AnimatableLengthSize* lengthSize = toAnimatableLengthSize(value);
+  return width()->equals(lengthSize->width()) &&
+         height()->equals(lengthSize->height());
 }
 
+bool AnimatableLengthSize::usesDefaultInterpolationWith(
+    const AnimatableValue* other) const {
+  const AnimatableLengthSize* lengthSize = toAnimatableLengthSize(other);
+  return usesDefaultInterpolation(width(), lengthSize->width()) ||
+         usesDefaultInterpolation(height(), lengthSize->height());
 }
+
+}  // namespace blink

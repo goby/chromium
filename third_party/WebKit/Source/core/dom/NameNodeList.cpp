@@ -20,7 +20,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/dom/NameNodeList.h"
 
 #include "core/dom/Element.h"
@@ -32,21 +31,13 @@ namespace blink {
 using namespace HTMLNames;
 
 NameNodeList::NameNodeList(ContainerNode& rootNode, const AtomicString& name)
-    : LiveNodeList(rootNode, NameNodeListType, InvalidateOnNameAttrChange)
-    , m_name(name)
-{
+    : LiveNodeList(rootNode, NameNodeListType, InvalidateOnNameAttrChange),
+      m_name(name) {}
+
+NameNodeList::~NameNodeList() {}
+
+bool NameNodeList::elementMatches(const Element& element) const {
+  return element.getNameAttribute() == m_name;
 }
 
-NameNodeList::~NameNodeList()
-{
-#if !ENABLE(OILPAN)
-    ownerNode().nodeLists()->removeCache(this, NameNodeListType, m_name);
-#endif
-}
-
-bool NameNodeList::elementMatches(const Element& element) const
-{
-    return element.getNameAttribute() == m_name;
-}
-
-} // namespace blink
+}  // namespace blink

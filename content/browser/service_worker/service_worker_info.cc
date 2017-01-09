@@ -4,14 +4,17 @@
 
 #include "content/browser/service_worker/service_worker_info.h"
 
+#include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/common/service_worker/service_worker_types.h"
+#include "content/public/common/child_process_host.h"
 #include "ipc/ipc_message.h"
 
 namespace content {
 
 ServiceWorkerVersionInfo::ClientInfo::ClientInfo()
-    : ClientInfo(-1, MSG_ROUTING_NONE, SERVICE_WORKER_PROVIDER_UNKNOWN) {
-}
+    : ClientInfo(ChildProcessHost::kInvalidUniqueID,
+                 MSG_ROUTING_NONE,
+                 SERVICE_WORKER_PROVIDER_UNKNOWN) {}
 
 ServiceWorkerVersionInfo::ClientInfo::ClientInfo(int process_id,
                                                  int route_id,
@@ -23,57 +26,59 @@ ServiceWorkerVersionInfo::ClientInfo::~ClientInfo() {
 }
 
 ServiceWorkerVersionInfo::ServiceWorkerVersionInfo()
-    : running_status(ServiceWorkerVersion::STOPPED),
+    : running_status(EmbeddedWorkerStatus::STOPPED),
       status(ServiceWorkerVersion::NEW),
+      fetch_handler_existence(
+          ServiceWorkerVersion::FetchHandlerExistence::UNKNOWN),
       registration_id(kInvalidServiceWorkerRegistrationId),
       version_id(kInvalidServiceWorkerVersionId),
-      process_id(-1),
-      thread_id(-1),
-      devtools_agent_route_id(MSG_ROUTING_NONE) {
-}
+      process_id(ChildProcessHost::kInvalidUniqueID),
+      thread_id(kInvalidEmbeddedWorkerThreadId),
+      devtools_agent_route_id(MSG_ROUTING_NONE) {}
 
 ServiceWorkerVersionInfo::ServiceWorkerVersionInfo(
-    ServiceWorkerVersion::RunningStatus running_status,
+    EmbeddedWorkerStatus running_status,
     ServiceWorkerVersion::Status status,
+    ServiceWorkerVersion::FetchHandlerExistence fetch_handler_existence,
     const GURL& script_url,
-    int64 registration_id,
-    int64 version_id,
+    int64_t registration_id,
+    int64_t version_id,
     int process_id,
     int thread_id,
     int devtools_agent_route_id)
     : running_status(running_status),
       status(status),
+      fetch_handler_existence(fetch_handler_existence),
       script_url(script_url),
       registration_id(registration_id),
       version_id(version_id),
       process_id(process_id),
       thread_id(thread_id),
-      devtools_agent_route_id(devtools_agent_route_id) {
-}
+      devtools_agent_route_id(devtools_agent_route_id) {}
+
+ServiceWorkerVersionInfo::ServiceWorkerVersionInfo(
+    const ServiceWorkerVersionInfo& other) = default;
 
 ServiceWorkerVersionInfo::~ServiceWorkerVersionInfo() {}
 
 ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo()
     : registration_id(kInvalidServiceWorkerRegistrationId),
       delete_flag(IS_NOT_DELETED),
-      force_update_on_page_load(IS_NOT_FORCED),
       stored_version_size_bytes(0) {}
 
 ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
     const GURL& pattern,
-    int64 registration_id,
+    int64_t registration_id,
     DeleteFlag delete_flag)
     : pattern(pattern),
       registration_id(registration_id),
       delete_flag(delete_flag),
-      force_update_on_page_load(IS_NOT_FORCED),
       stored_version_size_bytes(0) {}
 
 ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
     const GURL& pattern,
-    int64 registration_id,
+    int64_t registration_id,
     DeleteFlag delete_flag,
-    ForceUpdateOnPageLoad force_update_on_page_load,
     const ServiceWorkerVersionInfo& active_version,
     const ServiceWorkerVersionInfo& waiting_version,
     const ServiceWorkerVersionInfo& installing_version,
@@ -81,11 +86,13 @@ ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
     : pattern(pattern),
       registration_id(registration_id),
       delete_flag(delete_flag),
-      force_update_on_page_load(force_update_on_page_load),
       active_version(active_version),
       waiting_version(waiting_version),
       installing_version(installing_version),
       stored_version_size_bytes(stored_version_size_bytes) {}
+
+ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
+    const ServiceWorkerRegistrationInfo& other) = default;
 
 ServiceWorkerRegistrationInfo::~ServiceWorkerRegistrationInfo() {}
 

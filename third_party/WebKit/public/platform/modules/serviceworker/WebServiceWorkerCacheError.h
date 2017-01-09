@@ -8,12 +8,15 @@
 namespace blink {
 
 enum WebServiceWorkerCacheError {
-    WebServiceWorkerCacheErrorNotImplemented,
-    WebServiceWorkerCacheErrorNotFound,
-    WebServiceWorkerCacheErrorExists,
-    WebServiceWorkerCacheErrorLast = WebServiceWorkerCacheErrorExists
+  WebServiceWorkerCacheErrorNotImplemented,
+  WebServiceWorkerCacheErrorNotFound,
+  WebServiceWorkerCacheErrorExists,
+  WebServiceWorkerCacheErrorQuotaExceeded,
+  WebServiceWorkerCacheErrorCacheNameNotFound,
+  WebServiceWorkerCacheErrorTooLarge,
+  WebServiceWorkerCacheErrorLast = WebServiceWorkerCacheErrorTooLarge
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebServiceWorkerCacheError_h
+#endif  // WebServiceWorkerCacheError_h

@@ -1,21 +1,19 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
+// Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef NET_HTTP_HTTP_AUTH_CONTROLLER_H_
 #define NET_HTTP_HTTP_AUTH_CONTROLLER_H_
 
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 #include "net/http/http_auth.h"
-#include "net/log/net_log.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -26,7 +24,9 @@ class HttpAuthHandler;
 class HttpAuthHandlerFactory;
 class HttpAuthCache;
 class HttpRequestHeaders;
+class NetLogWithSource;
 struct HttpRequestInfo;
+class SSLInfo;
 
 class NET_EXPORT_PRIVATE HttpAuthController
     : public base::RefCounted<HttpAuthController>,
@@ -45,7 +45,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // were necessary.
   virtual int MaybeGenerateAuthToken(const HttpRequestInfo* request,
                                      const CompletionCallback& callback,
-                                     const BoundNetLog& net_log);
+                                     const NetLogWithSource& net_log);
 
   // Adds either the proxy auth header, or the origin server auth header,
   // as specified by |target_|.
@@ -56,9 +56,10 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // |HandleAuthChallenge()| returns OK on success, or a network error code
   // otherwise. It may also populate |auth_info_|.
   virtual int HandleAuthChallenge(scoped_refptr<HttpResponseHeaders> headers,
+                                  const SSLInfo& ssl_info,
                                   bool do_not_send_server_auth,
                                   bool establishing_tunnel,
-                                  const BoundNetLog& net_log);
+                                  const NetLogWithSource& net_log);
 
   // Store the supplied credentials and prepare to restart the auth.
   virtual void ResetAuth(const AuthCredentials& credentials);
@@ -89,7 +90,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // Searches the auth cache for an entry that encompasses the request's path.
   // If such an entry is found, updates |identity_| and |handler_| with the
   // cache entry's data and returns true.
-  bool SelectPreemptiveAuth(const BoundNetLog& net_log);
+  bool SelectPreemptiveAuth(const NetLogWithSource& net_log);
 
   // Invalidates the current handler.  If |action| is
   // INVALIDATE_HANDLER_AND_CACHED_CREDENTIALS, then also invalidate
@@ -109,12 +110,12 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // URLRequestHttpJob can prompt for credentials.
   void PopulateAuthChallenge();
 
-  // If |result| indicates a permanent failure, disables the current
-  // auth scheme for this controller and returns true.  Returns false
-  // otherwise.
-  bool DisableOnAuthHandlerResult(int result);
+  // Handle the result of calling GenerateAuthToken on an HttpAuthHandler. The
+  // return value of this function should be used as the return value of the
+  // GenerateAuthToken operation.
+  int HandleGenerateTokenResult(int result);
 
-  void OnIOComplete(int result);
+  void OnGenerateAuthTokenDone(int result);
 
   // Indicates if this handler is for Proxy auth or Server auth.
   HttpAuth::Target target_;
@@ -132,7 +133,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // |handler_| encapsulates the logic for the particular auth-scheme.
   // This includes the challenge's parameters. If NULL, then there is no
   // associated auth handler.
-  scoped_ptr<HttpAuthHandler> handler_;
+  std::unique_ptr<HttpAuthHandler> handler_;
 
   // |identity_| holds the credentials that should be used by
   // the handler_ to generate challenge responses. This identity can come from

@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "chrome/browser/media_galleries/fileapi/iphoto_data_provider.h"
+#include "build/build_config.h"
 #include "chrome/browser/media_galleries/fileapi/itunes_data_provider.h"
 #include "chrome/browser/media_galleries/fileapi/media_file_system_backend.h"
 #include "chrome/browser/media_galleries/fileapi/picasa_data_provider.h"
@@ -117,45 +117,6 @@ bool ImportedMediaGalleryRegistry::RegisterITunesFilesystemOnUIThread(
   return result;
 }
 
-bool ImportedMediaGalleryRegistry::RegisterIPhotoFilesystemOnUIThread(
-    const std::string& fs_name, const base::FilePath& library_xml_path) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(!library_xml_path.empty());
-
-  bool result = false;
-
-  // TODO(gbillock): Investigate how to refactor this to reduce duplicated
-  // code.
-#if defined(OS_MACOSX)
-  base::FilePath root = ImportedRoot();
-  if (root.empty())
-    return false;
-  result = ExternalMountPoints::GetSystemInstance()->RegisterFileSystem(
-      fs_name,
-      storage::kFileSystemTypeIphoto,
-      storage::FileSystemMountOption(),
-      root.AppendASCII("iphoto"));
-  if (!result)
-    return result;
-
-  iphoto_fs_names_.insert(fs_name);
-
-  if (iphoto_fs_names_.size() == 1) {
-    MediaFileSystemBackend::MediaTaskRunner()->PostTask(
-        FROM_HERE,
-        Bind(&ImportedMediaGalleryRegistry::RegisterIPhotoFileSystem,
-             base::Unretained(this), library_xml_path));
-#ifndef NDEBUG
-    iphoto_xml_library_path_ = library_xml_path;
-  } else {
-    DCHECK_EQ(iphoto_xml_library_path_.value(), library_xml_path.value());
-#endif
-  }
-#endif  // defined(OS_MACOSX)
-
-  return result;
-}
-
 bool ImportedMediaGalleryRegistry::RevokeImportedFilesystemOnUIThread(
     const std::string& fs_name) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -182,18 +143,6 @@ bool ImportedMediaGalleryRegistry::RevokeImportedFilesystemOnUIThread(
   }
 #endif  // defined(OS_WIN) || defined(OS_MACOSX)
 
-#if defined(OS_MACOSX)
-  if (iphoto_fs_names_.erase(fs_name)) {
-    if (iphoto_fs_names_.empty()) {
-      MediaFileSystemBackend::MediaTaskRunner()->PostTask(
-          FROM_HERE,
-          Bind(&ImportedMediaGalleryRegistry::RevokeIPhotoFileSystem,
-               base::Unretained(this)));
-    }
-    return ExternalMountPoints::GetSystemInstance()->RevokeFileSystem(fs_name);
-  }
-#endif  // defined(OS_MACOSX)
-
   return false;
 }
 
@@ -206,7 +155,7 @@ base::FilePath ImportedMediaGalleryRegistry::ImportedRoot() {
 // static
 picasa::PicasaDataProvider*
 ImportedMediaGalleryRegistry::PicasaDataProvider() {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+  MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
   DCHECK(GetInstance()->picasa_data_provider_);
   return GetInstance()->picasa_data_provider_.get();
 }
@@ -214,21 +163,11 @@ ImportedMediaGalleryRegistry::PicasaDataProvider() {
 // static
 itunes::ITunesDataProvider*
 ImportedMediaGalleryRegistry::ITunesDataProvider() {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+  MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
   DCHECK(GetInstance()->itunes_data_provider_);
   return GetInstance()->itunes_data_provider_.get();
 }
 #endif  // defined(OS_WIN) || defined(OS_MACOSX)
-
-#if defined(OS_MACOSX)
-// static
-iphoto::IPhotoDataProvider*
-ImportedMediaGalleryRegistry::IPhotoDataProvider() {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
-  DCHECK(GetInstance()->iphoto_data_provider_);
-  return GetInstance()->iphoto_data_provider_.get();
-}
-#endif  // defined(OS_MACOSX)
 
 ImportedMediaGalleryRegistry::ImportedMediaGalleryRegistry() {}
 
@@ -239,50 +178,33 @@ ImportedMediaGalleryRegistry::~ImportedMediaGalleryRegistry() {
   DCHECK_EQ(0U, picasa_fs_names_.size());
   DCHECK_EQ(0U, itunes_fs_names_.size());
 #endif  // defined(OS_WIN) || defined(OS_MACOSX)
-#if defined(OS_MACOSX)
-  DCHECK_EQ(0U, iphoto_fs_names_.size());
-#endif  // defined(OS_MACOSX)
 }
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
 void ImportedMediaGalleryRegistry::RegisterPicasaFileSystem(
     const base::FilePath& database_path) {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+  MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
   DCHECK(!picasa_data_provider_);
   picasa_data_provider_.reset(new picasa::PicasaDataProvider(database_path));
 }
 
 void ImportedMediaGalleryRegistry::RevokePicasaFileSystem() {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+  MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
   DCHECK(picasa_data_provider_);
   picasa_data_provider_.reset();
 }
 
 void ImportedMediaGalleryRegistry::RegisterITunesFileSystem(
     const base::FilePath& xml_library_path) {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+  MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
   DCHECK(!itunes_data_provider_);
   itunes_data_provider_.reset(new itunes::ITunesDataProvider(xml_library_path));
 }
 
 void ImportedMediaGalleryRegistry::RevokeITunesFileSystem() {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+  MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
   DCHECK(itunes_data_provider_);
   itunes_data_provider_.reset();
 }
 #endif  // defined(OS_WIN) || defined(OS_MACOSX)
 
-#if defined(OS_MACOSX)
-void ImportedMediaGalleryRegistry::RegisterIPhotoFileSystem(
-    const base::FilePath& xml_library_path) {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
-  DCHECK(!iphoto_data_provider_);
-  iphoto_data_provider_.reset(new iphoto::IPhotoDataProvider(xml_library_path));
-}
-
-void ImportedMediaGalleryRegistry::RevokeIPhotoFileSystem() {
-  DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
-  DCHECK(iphoto_data_provider_);
-  iphoto_data_provider_.reset();
-}
-#endif  // defined(OS_MACOSX)

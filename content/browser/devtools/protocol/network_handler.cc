@@ -4,6 +4,8 @@
 
 #include "content/browser/devtools/protocol/network_handler.h"
 
+#include <stddef.h>
+
 #include "base/containers/hash_tables.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -11,15 +13,13 @@
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/cert_store.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/site_instance.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/content_client.h"
-#include "net/cert/x509_cert_types.h"
-#include "net/cert/x509_certificate.h"
 #include "net/cookies/cookie_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -28,7 +28,9 @@ namespace content {
 namespace devtools {
 namespace network {
 
+using Response = DevToolsProtocolClient::Response;
 using CookieListCallback = net::CookieStore::GetCookieListCallback;
+using SetCookieCallback = net::CookieStore::SetCookiesCallback;
 
 namespace {
 
@@ -83,6 +85,26 @@ void GetCookiesForURLOnUI(
                  callback));
 }
 
+void GetCookiesOnIO(ResourceContext* resource_context,
+                    net::URLRequestContextGetter* context_getter,
+                    const CookieListCallback& callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  net::URLRequestContext* request_context =
+      context_getter->GetURLRequestContext();
+  request_context->cookie_store()->GetAllCookiesAsync(
+      base::Bind(&GotCookiesForURLOnIO, callback));
+}
+
+void GetCookiesOnUI(ResourceContext* resource_context,
+                    net::URLRequestContextGetter* context_getter,
+                    const CookieListCallback& callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&GetCookiesOnIO, base::Unretained(resource_context),
+                 base::Unretained(context_getter), callback));
+}
+
 void DeletedCookieOnIO(const base::Closure& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   BrowserThread::PostTask(
@@ -122,17 +144,92 @@ void DeleteCookieOnUI(
                  callback));
 }
 
+void CookieSetOnIO(const SetCookieCallback& callback, bool success) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  BrowserThread::PostTask(
+      BrowserThread::UI,
+      FROM_HERE,
+      base::Bind(callback, success));
+}
+
+void SetCookieOnIO(
+    ResourceContext* resource_context,
+    net::URLRequestContextGetter* context_getter,
+    const GURL& url,
+    const std::string& name,
+    const std::string& value,
+    const std::string& domain,
+    const std::string& path,
+    bool secure,
+    bool http_only,
+    net::CookieSameSite same_site,
+    base::Time expires,
+    const SetCookieCallback& callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  net::URLRequestContext* request_context =
+      GetRequestContextOnIO(resource_context, context_getter, url);
+
+  bool are_experimental_cookie_features_enabled =
+      request_context->network_delegate()
+        ->AreExperimentalCookieFeaturesEnabled();
+
+  request_context->cookie_store()->SetCookieWithDetailsAsync(
+      url, name, value, domain, path,
+      base::Time(),
+      expires,
+      base::Time(),
+      secure,
+      http_only,
+      same_site,
+      are_experimental_cookie_features_enabled,
+      net::COOKIE_PRIORITY_DEFAULT,
+      base::Bind(&CookieSetOnIO, callback));
+}
+
+void SetCookieOnUI(
+    ResourceContext* resource_context,
+    net::URLRequestContextGetter* context_getter,
+    const GURL& url,
+    const std::string& name,
+    const std::string& value,
+    const std::string& domain,
+    const std::string& path,
+    bool secure,
+    bool http_only,
+    net::CookieSameSite same_site,
+    base::Time expires,
+    const SetCookieCallback& callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  BrowserThread::PostTask(
+      BrowserThread::IO,
+      FROM_HERE,
+      base::Bind(&SetCookieOnIO,
+                 base::Unretained(resource_context),
+                 base::Unretained(context_getter),
+                 url, name, value, domain, path, secure, http_only,
+                 same_site, expires, callback));
+}
+
 class GetCookiesCommand {
  public:
-  explicit GetCookiesCommand(
-      RenderFrameHostImpl* frame_host,
-      const CookieListCallback& callback)
-      : callback_(callback),
-        request_count_(0) {
+  GetCookiesCommand(RenderFrameHostImpl* frame_host,
+                    bool global,
+                    const CookieListCallback& callback)
+      : callback_(callback), request_count_(0) {
     CookieListCallback got_cookies_callback = base::Bind(
         &GetCookiesCommand::GotCookiesForURL, base::Unretained(this));
-    BrowserContext* browser_context =
-        frame_host->GetSiteInstance()->GetBrowserContext();
+
+    if (global) {
+      request_count_ = 1;
+      GetCookiesOnUI(frame_host->GetSiteInstance()
+                         ->GetBrowserContext()
+                         ->GetResourceContext(),
+                     frame_host->GetProcess()
+                         ->GetStoragePartition()
+                         ->GetURLRequestContext(),
+                     got_cookies_callback);
+      return;
+    }
 
     std::queue<FrameTreeNode*> queue;
     queue.push(frame_host->frame_tree_node());
@@ -143,11 +240,12 @@ class GetCookiesCommand {
       // Only traverse nodes with the same local root.
       if (node->current_frame_host()->IsCrossProcessSubframe())
         continue;
-      int process_id = node->current_frame_host()->GetProcess()->GetID();
       ++request_count_;
       GetCookiesForURLOnUI(
-          browser_context->GetResourceContext(),
-          browser_context->GetRequestContextForRenderProcess(process_id),
+          frame_host->GetSiteInstance()->GetBrowserContext()->
+              GetResourceContext(),
+          frame_host->GetProcess()->GetStoragePartition()->
+              GetURLRequestContext(),
           node->current_url(),
           got_cookies_callback);
 
@@ -188,7 +286,8 @@ class GetCookiesCommand {
 
 typedef DevToolsProtocolClient::Response Response;
 
-NetworkHandler::NetworkHandler() : host_(nullptr), weak_factory_(this) {
+NetworkHandler::NetworkHandler()
+    : host_(nullptr), enabled_(false), weak_factory_(this) {
 }
 
 NetworkHandler::~NetworkHandler() {
@@ -198,8 +297,19 @@ void NetworkHandler::SetRenderFrameHost(RenderFrameHostImpl* host) {
   host_ = host;
 }
 
-void NetworkHandler::SetClient(scoped_ptr<Client> client) {
+void NetworkHandler::SetClient(std::unique_ptr<Client> client) {
   client_.swap(client);
+}
+
+Response NetworkHandler::Enable(const int* max_total_size,
+                                const int* max_resource_size) {
+  enabled_ = true;
+  return Response::FallThrough();
+}
+
+Response NetworkHandler::Disable() {
+  enabled_ = false;
+  return Response::FallThrough();
 }
 
 Response NetworkHandler::ClearBrowserCache() {
@@ -214,15 +324,58 @@ Response NetworkHandler::ClearBrowserCookies() {
   return Response::OK();
 }
 
-Response NetworkHandler::GetCookies(DevToolsCommandId command_id) {
+Response NetworkHandler::GetCookies(DevToolsCommandId command_id,
+                                    const bool* global) {
   if (!host_)
     return Response::InternalError("Could not connect to view");
-  new GetCookiesCommand(
-      host_,
-      base::Bind(&NetworkHandler::SendGetCookiesResponse,
+  new GetCookiesCommand(host_, global ? *global : false,
+                        base::Bind(&NetworkHandler::SendGetCookiesResponse,
+                                   weak_factory_.GetWeakPtr(), command_id));
+  return Response::OK();
+}
+
+Response NetworkHandler::SetCookie(DevToolsCommandId command_id,
+    const std::string& url,
+    const std::string& name,
+    const std::string& value,
+    const std::string* domain,
+    const std::string* path,
+    bool* secure,
+    bool* http_only,
+    const std::string* same_site,
+    double* expires) {
+  if (!host_)
+    return Response::InternalError("Could not connect to view");
+
+  net::CookieSameSite same_site_enum = net::CookieSameSite::DEFAULT_MODE;
+  if (same_site && *same_site == kCookieSameSiteLax)
+    same_site_enum = net::CookieSameSite::LAX_MODE;
+  else if (same_site && *same_site == kCookieSameSiteStrict)
+    same_site_enum = net::CookieSameSite::STRICT_MODE;
+
+  base::Time expiration_date;
+  if (expires)
+    expiration_date = (*expires == 0)
+            ? base::Time::UnixEpoch()
+            : base::Time::FromDoubleT(*expires);
+
+  SetCookieOnUI(
+      host_->GetSiteInstance()->GetBrowserContext()->GetResourceContext(),
+      host_->GetProcess()->GetStoragePartition()->GetURLRequestContext(),
+      GURL(url), name, value,
+      domain ? *domain : std::string(), path ? *path : std::string(),
+      secure ? *secure : false, http_only ? *http_only : false,
+      same_site_enum, expiration_date,
+      base::Bind(&NetworkHandler::SendSetCookieResponse,
                  weak_factory_.GetWeakPtr(),
                  command_id));
   return Response::OK();
+}
+
+void NetworkHandler::SendSetCookieResponse(DevToolsCommandId command_id,
+    bool success) {
+  client_->SendSetCookieResponse(command_id,
+      SetCookieResponse::Create()->set_success(success));
 }
 
 void NetworkHandler::SendGetCookiesResponse(
@@ -231,7 +384,7 @@ void NetworkHandler::SendGetCookiesResponse(
   std::vector<scoped_refptr<Cookie>> cookies;
   for (size_t i = 0; i < cookie_list.size(); ++i) {
     const net::CanonicalCookie& cookie = cookie_list[i];
-    cookies.push_back(Cookie::Create()
+    scoped_refptr<Cookie> devtools_cookie = Cookie::Create()
          ->set_name(cookie.Name())
          ->set_value(cookie.Value())
          ->set_domain(cookie.Domain())
@@ -240,7 +393,19 @@ void NetworkHandler::SendGetCookiesResponse(
          ->set_size(cookie.Name().length() + cookie.Value().length())
          ->set_http_only(cookie.IsHttpOnly())
          ->set_secure(cookie.IsSecure())
-         ->set_session(!cookie.IsPersistent()));
+         ->set_session(!cookie.IsPersistent());
+
+    switch (cookie.SameSite()) {
+      case net::CookieSameSite::STRICT_MODE:
+        devtools_cookie->set_same_site(kCookieSameSiteStrict);
+        break;
+      case net::CookieSameSite::LAX_MODE:
+        devtools_cookie->set_same_site(kCookieSameSiteLax);
+        break;
+      case net::CookieSameSite::NO_RESTRICTION:
+        break;
+    }
+    cookies.push_back(devtools_cookie);
   }
   client_->SendGetCookiesResponse(command_id,
       GetCookiesResponse::Create()->set_cookies(cookies));
@@ -252,12 +417,9 @@ Response NetworkHandler::DeleteCookie(
     const std::string& url) {
   if (!host_)
     return Response::InternalError("Could not connect to view");
-  BrowserContext* browser_context =
-      host_->GetSiteInstance()->GetBrowserContext();
-  int process_id = host_->GetProcess()->GetID();
   DeleteCookieOnUI(
-      browser_context->GetResourceContext(),
-      browser_context->GetRequestContextForRenderProcess(process_id),
+      host_->GetSiteInstance()->GetBrowserContext()->GetResourceContext(),
+      host_->GetProcess()->GetStoragePartition()->GetURLRequestContext(),
       GURL(url),
       cookie_name,
       base::Bind(&NetworkHandler::SendDeleteCookieResponse,
@@ -277,51 +439,15 @@ Response NetworkHandler::CanEmulateNetworkConditions(bool* result) {
   return Response::OK();
 }
 
-Response NetworkHandler::EmulateNetworkConditions(bool offline,
-                                                  double latency,
-                                                  double download_throughput,
-                                                  double upload_throughput) {
+Response NetworkHandler::EmulateNetworkConditions(
+    bool offline,
+    double latency,
+    double download_throughput,
+    double upload_throughput,
+    const std::string* connection_type) {
   return Response::FallThrough();
 }
 
-Response NetworkHandler::GetCertificateDetails(
-    int certificate_id,
-    scoped_refptr<CertificateDetails>* result) {
-  scoped_refptr<net::X509Certificate> cert;
-  content::CertStore* cert_store = CertStore::GetInstance();
-  cert_store->RetrieveCert(certificate_id, &cert);
-  if (!cert.get())
-    return Response::InvalidParams("certificateId");
-
-  std::string name(cert->subject().GetDisplayName());
-  std::string issuer(cert->issuer().GetDisplayName());
-  base::Time valid_from = cert->valid_start();
-  base::Time valid_to = cert->valid_expiry();
-
-  std::vector<std::string> dns_names;
-  std::vector<std::string> ip_addrs;
-  cert->GetSubjectAltName(&dns_names, &ip_addrs);
-
-  *result = CertificateDetails::Create()
-                    ->set_subject(CertificateSubject::Create()
-                                  ->set_name(name)
-                                  ->set_san_dns_names(dns_names)
-                                  ->set_san_ip_addresses(ip_addrs))
-                    ->set_issuer(issuer)
-                    ->set_valid_from(valid_from.ToDoubleT())
-                    ->set_valid_to(valid_to.ToDoubleT());
-  return Response::OK();
-}
-
-Response NetworkHandler::ShowCertificateViewer(int certificate_id) {
-  if (!host_)
-    return Response::InternalError("Could not connect to view");
-  WebContents* web_contents = WebContents::FromRenderFrameHost(host_);
-  web_contents->GetDelegate()->ShowCertificateViewerInDevTools(
-      web_contents, certificate_id);
-  return Response::OK();
-}
-
-}  // namespace dom
+}  // namespace network
 }  // namespace devtools
 }  // namespace content

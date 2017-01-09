@@ -4,13 +4,17 @@
 
 #include "chromeos/network/network_state_handler.h"
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_device_client.h"
@@ -33,14 +37,13 @@ void ErrorCallbackFunction(const std::string& error_name,
   LOG(ERROR) << "Shill Error: " << error_name << " : " << error_message;
 }
 
-const std::string kShillManagerClientStubWifiDevice =
-    "/device/stub_wifi_device1";
-const std::string kShillManagerClientStubCellularDevice =
+const char kShillManagerClientStubWifiDevice[] = "/device/stub_wifi_device1";
+const char kShillManagerClientStubCellularDevice[] =
     "/device/stub_cellular_device1";
-const std::string kShillManagerClientStubDefaultService = "/service/eth1";
-const std::string kShillManagerClientStubDefaultWifi = "/service/wifi1";
-const std::string kShillManagerClientStubWifi2 = "/service/wifi2";
-const std::string kShillManagerClientStubCellular = "/service/cellular1";
+const char kShillManagerClientStubDefaultService[] = "/service/eth1";
+const char kShillManagerClientStubDefaultWifi[] = "/service/wifi1";
+const char kShillManagerClientStubWifi2[] = "/service/wifi2";
+const char kShillManagerClientStubCellular[] = "/service/cellular1";
 
 using chromeos::DeviceState;
 using chromeos::NetworkState;
@@ -184,7 +187,7 @@ class NetworkStateHandlerTest : public testing::Test {
     test_observer_.reset(new TestObserver(network_state_handler_.get()));
     network_state_handler_->AddObserver(test_observer_.get(), FROM_HERE);
     network_state_handler_->InitShillPropertyHandler();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     test_observer_->reset_change_counts();
   }
 
@@ -206,7 +209,7 @@ class NetworkStateHandlerTest : public testing::Test {
   }
 
   void SetupDefaultShillState() {
-    message_loop_.RunUntilIdle();  // Process any pending updates
+    base::RunLoop().RunUntilIdle();  // Process any pending updates
     device_test_ =
         DBusThreadManager::Get()->GetShillDeviceClient()->GetTestInterface();
     ASSERT_TRUE(device_test_);
@@ -251,9 +254,7 @@ class NetworkStateHandlerTest : public testing::Test {
                shill::kStateIdle);
   }
 
-  void UpdateManagerProperties() {
-    message_loop_.RunUntilIdle();
-  }
+  void UpdateManagerProperties() { base::RunLoop().RunUntilIdle(); }
 
   void SetServiceProperty(const std::string& service_path,
                           const std::string& key,
@@ -264,8 +265,8 @@ class NetworkStateHandlerTest : public testing::Test {
   }
 
   base::MessageLoopForUI message_loop_;
-  scoped_ptr<NetworkStateHandler> network_state_handler_;
-  scoped_ptr<TestObserver> test_observer_;
+  std::unique_ptr<NetworkStateHandler> network_state_handler_;
+  std::unique_ptr<TestObserver> test_observer_;
   ShillDeviceClient::TestInterface* device_test_;
   ShillManagerClient::TestInterface* manager_test_;
   ShillProfileClient::TestInterface* profile_test_;
@@ -323,7 +324,7 @@ TEST_F(NetworkStateHandlerTest, GetNetworkList) {
   profile_test_->AddProfile(profile, "" /* userhash */);
   EXPECT_TRUE(profile_test_->AddService(profile, wifi_favorite_path));
   UpdateManagerProperties();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(kNumShillManagerClientStubImplServices + 1,
             test_observer_->network_count());
 
@@ -404,7 +405,7 @@ TEST_F(NetworkStateHandlerTest, GetVisibleNetworks) {
                             shill::kTypeWifi,
                             shill::kStateIdle,
                             false /* add_to_visible */);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(kNumShillManagerClientStubImplServices + 1,
             test_observer_->network_count());
 
@@ -416,7 +417,7 @@ TEST_F(NetworkStateHandlerTest, GetVisibleNetworks) {
   // Change the visible state of a network.
   SetServiceProperty(kShillManagerClientStubWifi2, shill::kVisibleProperty,
                      base::FundamentalValue(false));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   network_state_handler_->GetVisibleNetworkList(&networks);
   EXPECT_EQ(kNumShillManagerClientStubImplServices - 1, networks.size());
 }
@@ -434,7 +435,7 @@ TEST_F(NetworkStateHandlerTest, TechnologyChanged) {
   // Run the message loop. An additional notification will be received when
   // Shill updates the enabled technologies. The state should remain AVAILABLE.
   test_observer_->reset_change_counts();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1u, test_observer_->device_list_changed_count());
   EXPECT_EQ(
       NetworkStateHandler::TECHNOLOGY_AVAILABLE,
@@ -452,7 +453,7 @@ TEST_F(NetworkStateHandlerTest, TechnologyChanged) {
 
   // Run the message loop. State should change to ENABLED.
   test_observer_->reset_change_counts();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1u, test_observer_->device_list_changed_count());
   EXPECT_EQ(
       NetworkStateHandler::TECHNOLOGY_ENABLED,
@@ -461,19 +462,19 @@ TEST_F(NetworkStateHandlerTest, TechnologyChanged) {
 
 TEST_F(NetworkStateHandlerTest, TechnologyState) {
   manager_test_->RemoveTechnology(shill::kTypeWimax);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(
       NetworkStateHandler::TECHNOLOGY_UNAVAILABLE,
       network_state_handler_->GetTechnologyState(NetworkTypePattern::Wimax()));
 
   manager_test_->AddTechnology(shill::kTypeWimax, false);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(
       NetworkStateHandler::TECHNOLOGY_AVAILABLE,
       network_state_handler_->GetTechnologyState(NetworkTypePattern::Wimax()));
 
   manager_test_->SetTechnologyInitializing(shill::kTypeWimax, true);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(
       NetworkStateHandler::TECHNOLOGY_UNINITIALIZED,
       network_state_handler_->GetTechnologyState(NetworkTypePattern::Wimax()));
@@ -481,13 +482,13 @@ TEST_F(NetworkStateHandlerTest, TechnologyState) {
   manager_test_->SetTechnologyInitializing(shill::kTypeWimax, false);
   network_state_handler_->SetTechnologyEnabled(
       NetworkTypePattern::Wimax(), true, network_handler::ErrorCallback());
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(
       NetworkStateHandler::TECHNOLOGY_ENABLED,
       network_state_handler_->GetTechnologyState(NetworkTypePattern::Wimax()));
 
   manager_test_->RemoveTechnology(shill::kTypeWimax);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(
       NetworkStateHandler::TECHNOLOGY_UNAVAILABLE,
       network_state_handler_->GetTechnologyState(NetworkTypePattern::Wimax()));
@@ -502,14 +503,14 @@ TEST_F(NetworkStateHandlerTest, ServicePropertyChanged) {
   EXPECT_EQ(1, test_observer_->PropertyUpdatesForService(eth1));
   base::StringValue security_class_value("TestSecurityClass");
   SetServiceProperty(eth1, shill::kSecurityClassProperty, security_class_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ethernet = network_state_handler_->GetNetworkState(eth1);
   EXPECT_EQ("TestSecurityClass", ethernet->security_class());
   EXPECT_EQ(2, test_observer_->PropertyUpdatesForService(eth1));
 
   // Changing a service to the existing value should not trigger an update.
   SetServiceProperty(eth1, shill::kSecurityClassProperty, security_class_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(2, test_observer_->PropertyUpdatesForService(eth1));
 }
 
@@ -548,7 +549,7 @@ TEST_F(NetworkStateHandlerTest, NetworkConnectionStateChanged) {
   base::StringValue connection_state_idle_value(shill::kStateIdle);
   service_test_->SetServiceProperty(eth1, shill::kStateProperty,
                                    connection_state_idle_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(shill::kStateIdle,
             test_observer_->NetworkConnectionStateForService(eth1));
   EXPECT_EQ(1, test_observer_->ConnectionStateChangesForService(eth1));
@@ -556,7 +557,7 @@ TEST_F(NetworkStateHandlerTest, NetworkConnectionStateChanged) {
   // signal the observer.
   service_test_->SetServiceProperty(eth1, shill::kStateProperty,
                                    connection_state_idle_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, test_observer_->ConnectionStateChangesForService(eth1));
 }
 
@@ -569,7 +570,7 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceDisconnected) {
   base::StringValue connection_state_idle_value(shill::kStateIdle);
   service_test_->SetServiceProperty(eth1, shill::kStateProperty,
                                     connection_state_idle_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Expect two changes: first when eth1 becomes disconnected, second when
   // wifi1 becomes the default.
   EXPECT_EQ(2u, test_observer_->default_network_change_count());
@@ -579,7 +580,7 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceDisconnected) {
   test_observer_->reset_change_counts();
   service_test_->SetServiceProperty(wifi1, shill::kStateProperty,
                                     connection_state_idle_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1u, test_observer_->default_network_change_count());
   EXPECT_EQ("", test_observer_->default_network());
 }
@@ -594,7 +595,7 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceConnected) {
                                     connection_state_idle_value);
   service_test_->SetServiceProperty(wifi1, shill::kStateProperty,
                                     connection_state_idle_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(std::string(), test_observer_->default_network());
 
   // Connect ethernet, should become the default network.
@@ -602,7 +603,7 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceConnected) {
   base::StringValue connection_state_ready_value(shill::kStateReady);
   service_test_->SetServiceProperty(eth1, shill::kStateProperty,
                                     connection_state_ready_value);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(eth1, test_observer_->default_network());
   EXPECT_EQ(shill::kStateReady,
             test_observer_->default_network_connection_state());
@@ -622,7 +623,7 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceChanged) {
                      base::StringValue(shill::kStateIdle));
   manager_test_->SetManagerProperty(shill::kDefaultServiceProperty,
                                     base::StringValue(wifi1));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(wifi1, test_observer_->default_network());
   EXPECT_EQ(1u, test_observer_->default_network_change_count());
 
@@ -631,7 +632,7 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceChanged) {
   test_observer_->reset_change_counts();
   service_test_->SetServiceProperty(wifi1, shill::kStateProperty,
                                     base::StringValue(shill::kStateReady));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(shill::kStateReady,
             test_observer_->default_network_connection_state());
   EXPECT_EQ(1u, test_observer_->default_network_change_count());
@@ -641,14 +642,14 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceChanged) {
   test_observer_->reset_change_counts();
   SetServiceProperty(wifi1, shill::kSecurityClassProperty,
                      base::StringValue("TestSecurityClass"));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1u, test_observer_->default_network_change_count());
 
   // No default network updates for signal strength changes.
   test_observer_->reset_change_counts();
   SetServiceProperty(wifi1, shill::kSignalStrengthProperty,
                      base::FundamentalValue(32));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0u, test_observer_->default_network_change_count());
 
   // Change the default network to a Connecting network, then set the
@@ -657,19 +658,19 @@ TEST_F(NetworkStateHandlerTest, DefaultServiceChanged) {
   test_observer_->reset_change_counts();
   SetServiceProperty(wifi1, shill::kStateProperty,
                      base::StringValue(shill::kStateIdle));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1u, test_observer_->default_network_change_count());
   EXPECT_EQ(std::string(), test_observer_->default_network());
 
   const std::string wifi2 = kShillManagerClientStubWifi2;
   manager_test_->SetManagerProperty(shill::kDefaultServiceProperty,
                                     base::StringValue(wifi2));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1u, test_observer_->default_network_change_count());
   // Change the connection state of the default network, observer should fire.
   SetServiceProperty(wifi2, shill::kStateProperty,
                      base::StringValue(shill::kStateReady));
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(wifi2, test_observer_->default_network());
   EXPECT_EQ(2u, test_observer_->default_network_change_count());
 }
@@ -680,7 +681,7 @@ TEST_F(NetworkStateHandlerTest, RequestUpdate) {
       kShillManagerClientStubDefaultWifi));
   network_state_handler_->RequestUpdateForNetwork(
       kShillManagerClientStubDefaultWifi);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(2, test_observer_->PropertyUpdatesForService(
       kShillManagerClientStubDefaultWifi));
 }
@@ -786,7 +787,7 @@ TEST_F(NetworkStateHandlerTest, IPConfigChanged) {
   base::DictionaryValue ip_config_properties;
   ip_config_test->AddIPConfig(kIPConfigPath, ip_config_properties);
   base::ListValue device_ip_configs;
-  device_ip_configs.Append(new base::StringValue(kIPConfigPath));
+  device_ip_configs.AppendString(kIPConfigPath);
   device_test_->SetDeviceProperty(
       kShillManagerClientStubWifiDevice, shill::kIPConfigsProperty,
       device_ip_configs);

@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/extensions/file_manager/device_event_router.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -78,7 +78,7 @@ void DeviceEventRouter::OnDiskRemoved(
     return;
 
   const std::string& device_path = disk.system_path_prefix();
-  if (!disk.mount_path().empty() &&
+  if (!disk.is_read_only() && disk.is_mounted() &&
       GetDeviceState(device_path) != DEVICE_HARD_UNPLUGGED_AND_REPORTED) {
     OnDeviceEvent(file_manager_private::DEVICE_EVENT_TYPE_HARD_UNPLUGGED,
                   device_path);

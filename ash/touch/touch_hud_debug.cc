@@ -4,7 +4,10 @@
 
 #include "ash/touch/touch_hud_debug.h"
 
-#include "ash/display/display_manager.h"
+#include <algorithm>
+#include <string>
+#include <vector>
+
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "base/json/json_string_value_serializer.h"
@@ -13,10 +16,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/display/display.h"
+#include "ui/display/manager/display_manager.h"
 #include "ui/events/event.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/display.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/transform.h"
@@ -28,25 +32,25 @@
 #include <X11/extensions/XInput2.h>
 #include <X11/Xlib.h>
 
-#include "ui/events/devices/x11/device_data_manager_x11.h"
+#include "ui/events/devices/x11/device_data_manager_x11.h"  // nogncheck
 #endif
 
 namespace ash {
 
 const int kPointRadius = 20;
 const SkColor kColors[] = {
-  SK_ColorYELLOW,
-  SK_ColorGREEN,
-  SK_ColorRED,
-  SK_ColorBLUE,
-  SK_ColorGRAY,
-  SK_ColorMAGENTA,
-  SK_ColorCYAN,
-  SK_ColorWHITE,
-  SK_ColorBLACK,
-  SkColorSetRGB(0xFF, 0x8C, 0x00),
-  SkColorSetRGB(0x8B, 0x45, 0x13),
-  SkColorSetRGB(0xFF, 0xDE, 0xAD),
+    SK_ColorYELLOW,
+    SK_ColorGREEN,
+    SK_ColorRED,
+    SK_ColorBLUE,
+    SK_ColorGRAY,
+    SK_ColorMAGENTA,
+    SK_ColorCYAN,
+    SK_ColorWHITE,
+    SK_ColorBLACK,
+    SkColorSetRGB(0xFF, 0x8C, 0x00),
+    SkColorSetRGB(0x8B, 0x45, 0x13),
+    SkColorSetRGB(0xFF, 0xDE, 0xAD),
 };
 const int kAlpha = 0x60;
 const int kMaxPaths = arraysize(kColors);
@@ -92,17 +96,17 @@ struct TouchPointLog {
       : id(touch.touch_id()),
         type(touch.type()),
         location(touch.root_location()),
-        timestamp(touch.time_stamp().InMillisecondsF()),
-        radius_x(touch.pointer_details().radius_x()),
-        radius_y(touch.pointer_details().radius_y()),
-        pressure(touch.pointer_details().force()),
+        timestamp((touch.time_stamp() - base::TimeTicks()).InMillisecondsF()),
+        radius_x(touch.pointer_details().radius_x),
+        radius_y(touch.pointer_details().radius_y),
+        pressure(touch.pointer_details().force),
         tracking_id(GetTrackingId(touch)),
         source_device(touch.source_device_id()) {}
 
   // Populates a dictionary value with all the information about the touch
   // point.
-  scoped_ptr<base::DictionaryValue> GetAsDictionary() const {
-    scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> GetAsDictionary() const {
+    std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
 
     value->SetInteger("id", id);
     value->SetString("type", std::string(GetTouchEventLabel(type)));
@@ -114,7 +118,7 @@ struct TouchPointLog {
     value->SetInteger("tracking_id", tracking_id);
     value->SetInteger("source_device", source_device);
 
-    return value.Pass();
+    return value;
   }
 
   int id;
@@ -138,8 +142,7 @@ class TouchTrace {
   typedef std::vector<TouchPointLog>::const_reverse_iterator
       const_reverse_iterator;
 
-  TouchTrace() {
-  }
+  TouchTrace() {}
 
   void AddTouchPoint(const ui::TouchEvent& touch) {
     log_.push_back(TouchPointLog(touch));
@@ -149,20 +152,18 @@ class TouchTrace {
 
   bool active() const {
     return !log_.empty() && log_.back().type != ui::ET_TOUCH_RELEASED &&
-        log_.back().type != ui::ET_TOUCH_CANCELLED;
+           log_.back().type != ui::ET_TOUCH_CANCELLED;
   }
 
   // Returns a list containing data from all events for the touch point.
-  scoped_ptr<base::ListValue> GetAsList() const {
-    scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::ListValue> GetAsList() const {
+    std::unique_ptr<base::ListValue> list(new base::ListValue());
     for (const_iterator i = log_.begin(); i != log_.end(); ++i)
-      list->Append((*i).GetAsDictionary().release());
-    return list.Pass();
+      list->Append((*i).GetAsDictionary());
+    return list;
   }
 
-  void Reset() {
-    log_.clear();
-  }
+  void Reset() { log_.clear(); }
 
  private:
   std::vector<TouchPointLog> log_;
@@ -173,8 +174,7 @@ class TouchTrace {
 // A TouchLog keeps track of all touch events of all touch points.
 class TouchLog {
  public:
-  TouchLog() : next_trace_index_(0) {
-  }
+  TouchLog() : next_trace_index_(0) {}
 
   void AddTouchPoint(const ui::TouchEvent& touch) {
     if (touch.type() == ui::ET_TOUCH_PRESSED)
@@ -188,22 +188,20 @@ class TouchLog {
       traces_[i].Reset();
   }
 
-  scoped_ptr<base::ListValue> GetAsList() const {
-    scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::ListValue> GetAsList() const {
+    std::unique_ptr<base::ListValue> list(new base::ListValue());
     for (int i = 0; i < kMaxPaths; ++i) {
       if (!traces_[i].log().empty())
-        list->Append(traces_[i].GetAsList().release());
+        list->Append(traces_[i].GetAsList());
     }
-    return list.Pass();
+    return list;
   }
 
   int GetTraceIndex(int touch_id) const {
     return touch_id_to_trace_index_.at(touch_id);
   }
 
-  const TouchTrace* traces() const {
-    return traces_;
-  }
+  const TouchTrace* traces() const { return traces_; }
 
  private:
   void StartTrace(const ui::TouchEvent& touch) {
@@ -239,10 +237,9 @@ class TouchLog {
 class TouchHudCanvas : public views::View {
  public:
   explicit TouchHudCanvas(const TouchLog& touch_log)
-      : touch_log_(touch_log),
-        scale_(1) {
+      : touch_log_(touch_log), scale_(1) {
     SetPaintToLayer(true);
-    SetFillsBoundsOpaquely(false);
+    layer()->SetFillsBoundsOpaquely(false);
 
     paint_.setStyle(SkPaint::kFill_Style);
   }
@@ -324,7 +321,7 @@ TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
       touch_log_(new TouchLog()),
       canvas_(NULL),
       label_container_(NULL) {
-  const gfx::Display& display =
+  const display::Display& display =
       Shell::GetInstance()->display_manager()->GetDisplayForId(display_id());
 
   views::View* content = widget()->GetContentsView();
@@ -336,8 +333,8 @@ TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
   canvas_->SetSize(display_size);
 
   label_container_ = new views::View;
-  label_container_->SetLayoutManager(new views::BoxLayout(
-      views::BoxLayout::kVertical, 0, 0, 0));
+  label_container_->SetLayoutManager(
+      new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0));
 
   for (int i = 0; i < kMaxTouchPoints; ++i) {
     touch_labels_[i] = new views::Label;
@@ -353,24 +350,23 @@ TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
   content->AddChildView(label_container_);
 }
 
-TouchHudDebug::~TouchHudDebug() {
-}
+TouchHudDebug::~TouchHudDebug() {}
 
 // static
-scoped_ptr<base::DictionaryValue> TouchHudDebug::GetAllAsDictionary() {
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue> TouchHudDebug::GetAllAsDictionary() {
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   aura::Window::Windows roots = Shell::GetInstance()->GetAllRootWindows();
   for (aura::Window::Windows::iterator iter = roots.begin();
-      iter != roots.end(); ++iter) {
+       iter != roots.end(); ++iter) {
     RootWindowController* controller = GetRootWindowController(*iter);
     TouchHudDebug* hud = controller->touch_hud_debug();
     if (hud) {
-      scoped_ptr<base::ListValue> list = hud->GetLogAsList();
+      std::unique_ptr<base::ListValue> list = hud->GetLogAsList();
       if (!list->empty())
         value->Set(base::Int64ToString(hud->display_id()), list.release());
     }
   }
-  return value.Pass();
+  return value;
 }
 
 void TouchHudDebug::ChangeToNextMode() {
@@ -387,7 +383,7 @@ void TouchHudDebug::ChangeToNextMode() {
   }
 }
 
-scoped_ptr<base::ListValue> TouchHudDebug::GetLogAsList() const {
+std::unique_ptr<base::ListValue> TouchHudDebug::GetLogAsList() const {
   return touch_log_->GetAsList();
 }
 
@@ -436,11 +432,9 @@ void TouchHudDebug::UpdateTouchPointLabel(int index) {
   DCHECK(point != trace.log().rend());
   gfx::Point touch_position = point->location;
 
-  std::string string = base::StringPrintf("%2d: %s %s (%.4f)",
-                                          index,
-                                          GetTouchEventLabel(touch_status),
-                                          touch_position.ToString().c_str(),
-                                          touch_radius);
+  std::string string = base::StringPrintf(
+      "%2d: %s %s (%.4f)", index, GetTouchEventLabel(touch_status),
+      touch_position.ToString().c_str(), touch_radius);
   touch_labels_[index]->SetText(base::UTF8ToUTF16(string));
 }
 
@@ -454,7 +448,7 @@ void TouchHudDebug::OnTouchEvent(ui::TouchEvent* event) {
   label_container_->SetSize(label_container_->GetPreferredSize());
 }
 
-void TouchHudDebug::OnDisplayMetricsChanged(const gfx::Display& display,
+void TouchHudDebug::OnDisplayMetricsChanged(const display::Display& display,
                                             uint32_t metrics) {
   TouchObserverHUD::OnDisplayMetricsChanged(display, metrics);
 

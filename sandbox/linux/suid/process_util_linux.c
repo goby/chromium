@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,6 +59,7 @@ bool AdjustOOMScore(pid_t process, int score) {
     fd = openat(dirfd, "oom_adj", O_WRONLY);
     if (fd < 0) {
       // Nope, that doesn't work either.
+      close(dirfd);
       return false;
     } else {
       // If we're using the old oom_adj file, the allowed range is now

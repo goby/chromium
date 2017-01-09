@@ -4,11 +4,14 @@
 
 #include "android_webview/browser/aw_content_browser_client.h"
 
+#include <utility>
+
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_browser_main_parts.h"
 #include "android_webview/browser/aw_contents_client_bridge_base.h"
 #include "android_webview/browser/aw_contents_io_thread_client.h"
 #include "android_webview/browser/aw_cookie_access_policy.h"
+#include "android_webview/browser/aw_devtools_manager_delegate.h"
 #include "android_webview/browser/aw_locale_manager.h"
 #include "android_webview/browser/aw_printing_message_filter.h"
 #include "android_webview/browser/aw_quota_permission_context.h"
@@ -17,18 +20,26 @@
 #include "android_webview/browser/net/aw_url_request_context_getter.h"
 #include "android_webview/browser/net_disk_cache_remover.h"
 #include "android_webview/browser/renderer_host/aw_resource_dispatcher_host_delegate.h"
+#include "android_webview/browser/tracing/aw_tracing_delegate.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_switches.h"
 #include "android_webview/common/render_view_messages.h"
 #include "android_webview/common/url_constants.h"
+#include "android_webview/grit/aw_resources.h"
 #include "base/android/locale_utils.h"
 #include "base/base_paths_android.h"
 #include "base/command_line.h"
+#include "base/files/scoped_file.h"
+#include "base/json/json_reader.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
+#include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/cdm/browser/cdm_message_filter_android.h"
+#include "components/crash/content/browser/crash_micro_dump_manager_android.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
-#include "content/public/browser/access_token_store.h"
+#include "components/spellcheck/spellcheck_build_features.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/navigation_handle.h"
@@ -38,15 +49,25 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/service_names.mojom.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/web_preferences.h"
+#include "device/geolocation/access_token_store.h"
+#include "device/geolocation/geolocation_delegate.h"
 #include "net/android/network_library.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_info.h"
+#include "services/service_manager/public/cpp/interface_registry.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/resource/resource_bundle_android.h"
 #include "ui/resources/grit/ui_resources.h"
 
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+#include "components/spellcheck/browser/spellcheck_message_filter_platform.h"
+#include "components/spellcheck/common/spellcheck_switches.h"
+#endif
+
+using content::BrowserThread;
 using content::ResourceType;
 
 namespace android_webview {
@@ -60,8 +81,16 @@ public:
   explicit AwContentsMessageFilter(int process_id);
 
   // BrowserMessageFilter methods.
+  void OverrideThreadForMessage(const IPC::Message& message,
+                                BrowserThread::ID* thread) override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
+  void OnShouldOverrideUrlLoading(int routing_id,
+                                  const base::string16& url,
+                                  bool has_user_gesture,
+                                  bool is_redirect,
+                                  bool is_main_frame,
+                                  bool* ignore_navigation);
   void OnSubFrameCreated(int parent_render_frame_id, int child_render_frame_id);
 
 private:
@@ -80,13 +109,45 @@ AwContentsMessageFilter::AwContentsMessageFilter(int process_id)
 AwContentsMessageFilter::~AwContentsMessageFilter() {
 }
 
+void AwContentsMessageFilter::OverrideThreadForMessage(
+    const IPC::Message& message,
+    BrowserThread::ID* thread) {
+  if (message.type() == AwViewHostMsg_ShouldOverrideUrlLoading::ID) {
+    *thread = BrowserThread::UI;
+  }
+}
+
 bool AwContentsMessageFilter::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(AwContentsMessageFilter, message)
+    IPC_MESSAGE_HANDLER(AwViewHostMsg_ShouldOverrideUrlLoading,
+                        OnShouldOverrideUrlLoading)
     IPC_MESSAGE_HANDLER(AwViewHostMsg_SubFrameCreated, OnSubFrameCreated)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
+}
+
+void AwContentsMessageFilter::OnShouldOverrideUrlLoading(
+    int render_frame_id,
+    const base::string16& url,
+    bool has_user_gesture,
+    bool is_redirect,
+    bool is_main_frame,
+    bool* ignore_navigation) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  *ignore_navigation = false;
+  AwContentsClientBridgeBase* client =
+      AwContentsClientBridgeBase::FromID(process_id_, render_frame_id);
+  if (client) {
+    *ignore_navigation = client->ShouldOverrideUrlLoading(
+        url, has_user_gesture, is_redirect, is_main_frame);
+    // If the shouldOverrideUrlLoading call caused a java exception we should
+    // always return immediately here!
+  } else {
+    LOG(WARNING) << "Failed to find the associated render view host for url: "
+                 << url;
+  }
 }
 
 void AwContentsMessageFilter::OnSubFrameCreated(int parent_render_frame_id,
@@ -95,41 +156,22 @@ void AwContentsMessageFilter::OnSubFrameCreated(int parent_render_frame_id,
       process_id_, parent_render_frame_id, child_render_frame_id);
 }
 
-class AwAccessTokenStore : public content::AccessTokenStore {
- public:
-  AwAccessTokenStore() { }
-
-  // content::AccessTokenStore implementation
-  void LoadAccessTokens(const LoadAccessTokensCallbackType& request) override {
-    AccessTokenStore::AccessTokenSet access_token_set;
-    // AccessTokenSet and net::URLRequestContextGetter not used on Android,
-    // but Run needs to be called to finish the geolocation setup.
-    request.Run(access_token_set, NULL);
-  }
-  void SaveAccessToken(const GURL& server_url,
-                       const base::string16& access_token) override {}
-
- private:
-  ~AwAccessTokenStore() override {}
-
-  DISALLOW_COPY_AND_ASSIGN(AwAccessTokenStore);
-};
-
 AwLocaleManager* g_locale_manager = NULL;
 
 }  // anonymous namespace
 
+// TODO(yirui): can use similar logic as in PrependToAcceptLanguagesIfNecessary
+// in chrome/browser/android/preferences/pref_service_bridge.cc
 // static
 std::string AwContentBrowserClient::GetAcceptLangsImpl() {
-  // Start with the current locale.
-  std::string langs = g_locale_manager->GetLocale();
+  // Start with the current locale(s) in BCP47 format.
+  std::string locales_string = g_locale_manager->GetLocaleList();
 
-  // If we're not en-US, add in en-US which will be
+  // If accept languages do not contain en-US, add in en-US which will be
   // used with a lower q-value.
-  if (base::ToLowerASCII(langs) != "en-us") {
-    langs += ",en-US";
-  }
-  return langs;
+  if (locales_string.find("en-US") == std::string::npos)
+    locales_string += ",en-US";
+  return locales_string;
 }
 
 // static
@@ -140,12 +182,6 @@ AwBrowserContext* AwContentBrowserClient::GetAwBrowserContext() {
 AwContentBrowserClient::AwContentBrowserClient(
     JniDependencyFactory* native_factory)
     : native_factory_(native_factory) {
-  base::FilePath user_data_dir;
-  if (!PathService::Get(base::DIR_ANDROID_APP_DATA, &user_data_dir)) {
-    NOTREACHED() << "Failed to get app data directory for Android WebView";
-  }
-  browser_context_.reset(
-      new AwBrowserContext(user_data_dir, native_factory_));
   g_locale_manager = native_factory->CreateAwLocaleManager();
 }
 
@@ -154,18 +190,19 @@ AwContentBrowserClient::~AwContentBrowserClient() {
   g_locale_manager = NULL;
 }
 
-void AwContentBrowserClient::AddCertificate(net::CertificateMimeType cert_type,
-                                            const void* cert_data,
-                                            size_t cert_size,
-                                            int render_process_id,
-                                            int render_frame_id) {
-  if (cert_size > 0)
-    net::android::StoreCertificate(cert_type, cert_data, cert_size);
+AwBrowserContext* AwContentBrowserClient::InitBrowserContext() {
+  base::FilePath user_data_dir;
+  if (!PathService::Get(base::DIR_ANDROID_APP_DATA, &user_data_dir)) {
+    NOTREACHED() << "Failed to get app data directory for Android WebView";
+  }
+  browser_context_.reset(
+      new AwBrowserContext(user_data_dir, native_factory_));
+  return browser_context_.get();
 }
 
 content::BrowserMainParts* AwContentBrowserClient::CreateBrowserMainParts(
     const content::MainFunctionParams& parameters) {
-  return new AwBrowserMainParts(browser_context_.get());
+  return new AwBrowserMainParts(this);
 }
 
 content::WebContentsViewDelegate*
@@ -185,30 +222,10 @@ void AwContentBrowserClient::RenderProcessWillLaunch(
   host->AddFilter(new AwContentsMessageFilter(host->GetID()));
   host->AddFilter(new cdm::CdmMessageFilterAndroid());
   host->AddFilter(new AwPrintingMessageFilter(host->GetID()));
-}
 
-net::URLRequestContextGetter* AwContentBrowserClient::CreateRequestContext(
-    content::BrowserContext* browser_context,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  DCHECK_EQ(browser_context_.get(), browser_context);
-  return browser_context_->CreateRequestContext(protocol_handlers,
-                                                request_interceptors.Pass());
-}
-
-net::URLRequestContextGetter*
-AwContentBrowserClient::CreateRequestContextForStoragePartition(
-    content::BrowserContext* browser_context,
-    const base::FilePath& partition_path,
-    bool in_memory,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  DCHECK_EQ(browser_context_.get(), browser_context);
-  // TODO(mkosiba,kinuko): request_interceptors should be hooked up in the
-  // downstream. (crbug.com/350286)
-  return browser_context_->CreateRequestContextForStoragePartition(
-      partition_path, in_memory, protocol_handlers,
-      request_interceptors.Pass());
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+  host->AddFilter(new SpellCheckMessageFilterPlatform(host->GetID()));
+#endif
 }
 
 bool AwContentBrowserClient::IsHandledURL(const GURL& url) {
@@ -256,19 +273,11 @@ void AwContentBrowserClient::AppendExtraCommandLineSwitches(
     // The only kind of a child process WebView can have is renderer.
     DCHECK_EQ(switches::kRendererProcess,
               command_line->GetSwitchValueASCII(switches::kProcessType));
-
-    const base::CommandLine& browser_command_line =
-        *base::CommandLine::ForCurrentProcess();
-    static const char* const kCommonSwitchNames[] = {
-      switches::kDisablePageVisibility,
-    };
-    command_line->CopySwitchesFrom(browser_command_line, kCommonSwitchNames,
-                                   arraysize(kCommonSwitchNames));
   }
 }
 
 std::string AwContentBrowserClient::GetApplicationLocale() {
-  return base::android::GetDefaultLocale();
+  return base::android::GetDefaultLocaleString();
 }
 
 std::string AwContentBrowserClient::GetAcceptLangs(
@@ -311,7 +320,7 @@ bool AwContentBrowserClient::AllowSetCookie(const GURL& url,
                                             content::ResourceContext* context,
                                             int render_process_id,
                                             int render_frame_id,
-                                            net::CookieOptions* options) {
+                                            const net::CookieOptions& options) {
   return AwCookieAccessPolicy::GetInstance()->AllowSetCookie(url,
                                                              first_party,
                                                              cookie_line,
@@ -319,17 +328,6 @@ bool AwContentBrowserClient::AllowSetCookie(const GURL& url,
                                                              render_process_id,
                                                              render_frame_id,
                                                              options);
-}
-
-bool AwContentBrowserClient::AllowWorkerDatabase(
-    const GURL& url,
-    const base::string16& name,
-    const base::string16& display_name,
-    unsigned long estimated_size,
-    content::ResourceContext* context,
-    const std::vector<std::pair<int, int> >& render_frames) {
-  // Android WebView does not yet support web workers.
-  return false;
 }
 
 void AwContentBrowserClient::AllowWorkerFileSystem(
@@ -364,8 +362,8 @@ void AwContentBrowserClient::AllowCertificateError(
     bool overridable,
     bool strict_enforcement,
     bool expired_previous_decision,
-    const base::Callback<void(bool)>& callback,
-    content::CertificateRequestResultType* result) {
+    const base::Callback<void(content::CertificateRequestResultType)>&
+        callback) {
   AwContentsClientBridgeBase* client =
       AwContentsClientBridgeBase::FromWebContents(web_contents);
   bool cancel_request = true;
@@ -376,17 +374,17 @@ void AwContentBrowserClient::AllowCertificateError(
                                   callback,
                                   &cancel_request);
   if (cancel_request)
-    *result = content::CERTIFICATE_REQUEST_RESULT_TYPE_DENY;
+    callback.Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_DENY);
 }
 
 void AwContentBrowserClient::SelectClientCertificate(
     content::WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
-    scoped_ptr<content::ClientCertificateDelegate> delegate) {
+    std::unique_ptr<content::ClientCertificateDelegate> delegate) {
   AwContentsClientBridgeBase* client =
       AwContentsClientBridgeBase::FromWebContents(web_contents);
   if (client)
-    client->SelectClientCertificate(cert_request_info, delegate.Pass());
+    client->SelectClientCertificate(cert_request_info, std::move(delegate));
 }
 
 bool AwContentBrowserClient::CanCreateWindow(
@@ -396,6 +394,7 @@ bool AwContentBrowserClient::CanCreateWindow(
     WindowContainerType container_type,
     const GURL& target_url,
     const content::Referrer& referrer,
+    const std::string& frame_name,
     WindowOpenDisposition disposition,
     const blink::WebWindowFeatures& features,
     bool user_gesture,
@@ -426,19 +425,8 @@ net::NetLog* AwContentBrowserClient::GetNetLog() {
   return browser_context_->GetAwURLRequestContext()->GetNetLog();
 }
 
-content::AccessTokenStore* AwContentBrowserClient::CreateAccessTokenStore() {
-  return new AwAccessTokenStore();
-}
-
-bool AwContentBrowserClient::IsFastShutdownPossible() {
-  NOTREACHED() << "Android WebView is single process, so IsFastShutdownPossible"
-               << " should never be called";
-  return false;
-}
-
 void AwContentBrowserClient::ClearCache(content::RenderFrameHost* rfh) {
-  RemoveHttpDiskCache(rfh->GetProcess()->GetBrowserContext(),
-                      rfh->GetProcess()->GetID());
+  RemoveHttpDiskCache(rfh->GetProcess());
 }
 
 void AwContentBrowserClient::ClearCookies(content::RenderFrameHost* rfh) {
@@ -474,6 +462,17 @@ bool AwContentBrowserClient::AllowPepperSocketAPI(
   return false;
 }
 
+bool AwContentBrowserClient::IsPepperVpnProviderAPIAllowed(
+    content::BrowserContext* browser_context,
+    const GURL& url) {
+  NOTREACHED() << "Android WebView does not support plugins";
+  return false;
+}
+
+content::TracingDelegate* AwContentBrowserClient::GetTracingDelegate() {
+  return new AwTracingDelegate();
+}
+
 void AwContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
       const base::CommandLine& command_line,
       int child_process_id,
@@ -483,16 +482,28 @@ void AwContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
       &(*regions)[kAndroidWebViewMainPakDescriptor]);
   mappings->Share(kAndroidWebViewMainPakDescriptor, fd);
 
+  fd = ui::GetCommonResourcesPackFd(
+      &(*regions)[kAndroidWebView100PercentPakDescriptor]);
+  mappings->Share(kAndroidWebView100PercentPakDescriptor, fd);
+
   fd = ui::GetLocalePackFd(&(*regions)[kAndroidWebViewLocalePakDescriptor]);
   mappings->Share(kAndroidWebViewLocalePakDescriptor, fd);
+
+  base::ScopedFD crash_signal_file =
+      breakpad::CrashMicroDumpManager::GetInstance()->CreateCrashInfoChannel(
+          child_process_id);
+  if (crash_signal_file.is_valid()) {
+    mappings->Transfer(kAndroidWebViewCrashSignalDescriptor,
+                       std::move(crash_signal_file));
+  }
 }
 
 void AwContentBrowserClient::OverrideWebkitPrefs(
     content::RenderViewHost* rvh,
     content::WebPreferences* web_prefs) {
   if (!preferences_populater_.get()) {
-    preferences_populater_ = make_scoped_ptr(native_factory_->
-        CreateWebPreferencesPopulater());
+    preferences_populater_ =
+        base::WrapUnique(native_factory_->CreateWebPreferencesPopulater());
   }
   preferences_populater_->PopulateFor(
       content::WebContents::FromRenderViewHost(rvh), web_prefs);
@@ -502,24 +513,44 @@ ScopedVector<content::NavigationThrottle>
 AwContentBrowserClient::CreateThrottlesForNavigation(
     content::NavigationHandle* navigation_handle) {
   ScopedVector<content::NavigationThrottle> throttles;
-  if (navigation_handle->IsInMainFrame() ||
-      (!navigation_handle->GetURL().SchemeIs(url::kHttpScheme) &&
-       !navigation_handle->GetURL().SchemeIs(url::kHttpsScheme) &&
-       !navigation_handle->GetURL().SchemeIs(url::kAboutScheme))) {
+  // We allow intercepting only navigations within main frames. This
+  // is used to post onPageStarted. We handle shouldOverrideUrlLoading
+  // via a sync IPC.
+  if (navigation_handle->IsInMainFrame()) {
     throttles.push_back(
         navigation_interception::InterceptNavigationDelegate::CreateThrottleFor(
-            navigation_handle)
-            .Pass());
+            navigation_handle));
   }
-  return throttles.Pass();
+  return throttles;
 }
 
-#if defined(VIDEO_HOLE)
-content::ExternalVideoSurfaceContainer*
-AwContentBrowserClient::OverrideCreateExternalVideoSurfaceContainer(
-    content::WebContents* web_contents) {
-  return native_factory_->CreateExternalVideoSurfaceContainer(web_contents);
+content::DevToolsManagerDelegate*
+AwContentBrowserClient::GetDevToolsManagerDelegate() {
+  return new AwDevToolsManagerDelegate();
 }
-#endif
+
+std::unique_ptr<base::Value>
+AwContentBrowserClient::GetServiceManifestOverlay(const std::string& name) {
+  int id = -1;
+  if (name == content::mojom::kBrowserServiceName)
+    id = IDR_AW_BROWSER_MANIFEST_OVERLAY;
+  else if (name == content::mojom::kRendererServiceName)
+    id = IDR_AW_RENDERER_MANIFEST_OVERLAY;
+  if (id == -1)
+    return nullptr;
+
+  base::StringPiece manifest_contents =
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
+          id, ui::ScaleFactor::SCALE_FACTOR_NONE);
+  return base::JSONReader::Read(manifest_contents);
+}
+
+void AwContentBrowserClient::RegisterRenderFrameMojoInterfaces(
+    service_manager::InterfaceRegistry* registry,
+    content::RenderFrameHost* render_frame_host) {
+  registry->AddInterface(
+      base::Bind(&autofill::ContentAutofillDriverFactory::BindAutofillDriver,
+                 render_frame_host));
+}
 
 }  // namespace android_webview

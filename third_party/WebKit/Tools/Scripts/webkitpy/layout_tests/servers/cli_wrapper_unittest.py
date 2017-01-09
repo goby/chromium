@@ -4,11 +4,11 @@
 
 import unittest
 
-from webkitpy.layout_tests.servers import server_base
 from webkitpy.layout_tests.servers import cli_wrapper
 
 
 class MockServer(object):
+
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs

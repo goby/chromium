@@ -23,8 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "modules/webgl/WebGLContextObject.h"
 
 #include "modules/webgl/WebGLRenderingContextBase.h"
@@ -32,38 +30,34 @@
 namespace blink {
 
 WebGLContextObject::WebGLContextObject(WebGLRenderingContextBase* context)
-    : WebGLObject(context)
-    , m_context(context)
-{
+    : WebGLObject(context), m_context(this, context) {}
+
+bool WebGLContextObject::validate(
+    const WebGLContextGroup*,
+    const WebGLRenderingContextBase* context) const {
+  // The contexts and context groups no longer maintain references to all
+  // the objects they ever created, so there's no way to invalidate them
+  // eagerly during context loss. The invalidation is discovered lazily.
+  return context == m_context &&
+         cachedNumberOfContextLosses() == context->numberOfContextLosses();
 }
 
-WebGLContextObject::~WebGLContextObject()
-{
-#if !ENABLE(OILPAN)
-    if (m_context)
-        m_context->removeContextObject(this);
-#endif
+uint32_t WebGLContextObject::currentNumberOfContextLosses() const {
+  return m_context->numberOfContextLosses();
 }
 
-void WebGLContextObject::detachContext()
-{
-    detach();
-    if (m_context) {
-        deleteObject(m_context->webContext());
-        m_context->removeContextObject(this);
-        m_context = nullptr;
-    }
+gpu::gles2::GLES2Interface* WebGLContextObject::getAGLInterface() const {
+  return m_context->contextGL();
 }
 
-WebGraphicsContext3D* WebGLContextObject::getAWebGraphicsContext3D() const
-{
-    return m_context ? m_context->webContext() : nullptr;
+DEFINE_TRACE(WebGLContextObject) {
+  visitor->trace(m_context);
+  WebGLObject::trace(visitor);
 }
 
-DEFINE_TRACE(WebGLContextObject)
-{
-    visitor->trace(m_context);
-    WebGLObject::trace(visitor);
+DEFINE_TRACE_WRAPPERS(WebGLContextObject) {
+  visitor->traceWrappers(m_context);
+  WebGLObject::traceWrappers(visitor);
 }
 
-} // namespace blink
+}  // namespace blink

@@ -4,12 +4,15 @@
 
 #include "ui/gfx/color_analysis.h"
 
+#include <limits.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkUnPreMultiply.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -186,7 +189,7 @@ SkColor FindClosestColor(const uint8_t* image,
   uint8_t in_g = SkColorGetG(color);
   uint8_t in_b = SkColorGetB(color);
   // Search using distance-squared to avoid expensive sqrt() operations.
-  int best_distance_squared = kint32max;
+  int best_distance_squared = std::numeric_limits<int32_t>::max();
   SkColor best_color = color;
   const uint8_t* byte = image;
   for (int i = 0; i < width * height; ++i) {
@@ -394,7 +397,7 @@ SkColor CalculateKMeanColorOfBitmap(const SkBitmap& bitmap,
   // above uses non-pre-multiplied alpha. Transform the bitmap before we
   // analyze it because the function reads each pixel multiple times.
   int pixel_count = bitmap.width() * bitmap.height();
-  scoped_ptr<uint32_t[]> image(new uint32_t[pixel_count]);
+  std::unique_ptr<uint32_t[]> image(new uint32_t[pixel_count]);
   UnPreMultiply(bitmap, image.get(), pixel_count);
 
   return CalculateKMeanColorOfBuffer(reinterpret_cast<uint8_t*>(image.get()),

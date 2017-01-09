@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/loader/CookieJar.h"
 
 #include "core/dom/Document.h"
@@ -40,43 +39,34 @@
 
 namespace blink {
 
-static WebCookieJar* toCookieJar(const Document* document)
-{
-    if (!document || !document->frame())
-        return 0;
-    return document->frame()->loader().client()->cookieJar();
+static WebCookieJar* toCookieJar(const Document* document) {
+  if (!document || !document->frame())
+    return 0;
+  return document->frame()->loader().client()->cookieJar();
 }
 
-String cookies(const Document* document, const KURL& url)
-{
-    WebCookieJar* cookieJar = toCookieJar(document);
-    if (!cookieJar)
-        return String();
-    return cookieJar->cookies(url, document->firstPartyForCookies());
+String cookies(const Document* document, const KURL& url) {
+  WebCookieJar* cookieJar = toCookieJar(document);
+  if (!cookieJar)
+    return String();
+  return cookieJar->cookies(url, document->firstPartyForCookies());
 }
 
-void setCookies(Document* document, const KURL& url, const String& cookieString)
-{
-    WebCookieJar* cookieJar = toCookieJar(document);
-    if (!cookieJar)
-        return;
-    cookieJar->setCookie(url, document->firstPartyForCookies(), cookieString);
+void setCookies(Document* document,
+                const KURL& url,
+                const String& cookieString) {
+  WebCookieJar* cookieJar = toCookieJar(document);
+  if (!cookieJar)
+    return;
+  cookieJar->setCookie(url, document->firstPartyForCookies(), cookieString);
 }
 
-bool cookiesEnabled(const Document* document)
-{
-    WebCookieJar* cookieJar = toCookieJar(document);
-    if (!cookieJar)
-        return false;
-    return cookieJar->cookiesEnabled(document->cookieURL(), document->firstPartyForCookies());
+bool cookiesEnabled(const Document* document) {
+  WebCookieJar* cookieJar = toCookieJar(document);
+  if (!cookieJar)
+    return false;
+  return cookieJar->cookiesEnabled(document->cookieURL(),
+                                   document->firstPartyForCookies());
 }
 
-String cookieRequestHeaderFieldValue(const Document* document, const KURL& url)
-{
-    WebCookieJar* cookieJar = toCookieJar(document);
-    if (!cookieJar)
-        return String();
-    return cookieJar->cookieRequestHeaderFieldValue(url, document->firstPartyForCookies());
-}
-
-} // namespace blink
+}  // namespace blink

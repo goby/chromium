@@ -6,9 +6,13 @@
 #define MEDIA_BASE_ANDROID_MEDIA_PLAYER_ANDROID_H_
 
 #include <jni.h>
+
+#include <memory>
 #include <string>
 
+#include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "media/base/android/media_player_listener.h"
@@ -35,7 +39,10 @@ class MEDIA_EXPORT MediaPlayerAndroid {
     MEDIA_ERROR_DECODE,
     MEDIA_ERROR_NOT_VALID_FOR_PROGRESSIVE_PLAYBACK,
     MEDIA_ERROR_INVALID_CODE,
+    MEDIA_ERROR_SERVER_DIED,
   };
+
+  static const double kDefaultVolumeMultiplier;
 
   // Callback when the player releases decoding resources.
   typedef base::Callback<void(int player_id)> OnDecoderResourcesReleasedCB;
@@ -45,7 +52,7 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   virtual void DeleteOnCorrectThread();
 
   // Passing an external java surface object to the player.
-  virtual void SetVideoSurface(gfx::ScopedJavaSurface surface) = 0;
+  virtual void SetVideoSurface(gl::ScopedJavaSurface surface) = 0;
 
   // Start playing the media.
   virtual void Start() = 0;
@@ -61,10 +68,17 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   // Release the player resources.
   virtual void Release() = 0;
 
-  // Set the player volume.
-  virtual void SetVolume(double volume) = 0;
+  // Set the player volume, and take effect immediately.
+  // The volume should be between 0.0 and 1.0.
+  void SetVolume(double volume);
+
+  // Set the player volume multiplier, and take effect immediately.
+  // The volume should be between 0.0 and 1.0.
+  void SetVolumeMultiplier(double volume_multiplier);
 
   // Get the media information from the player.
+  virtual bool HasVideo() const = 0;
+  virtual bool HasAudio() const = 0;
   virtual int GetVideoWidth() = 0;
   virtual int GetVideoHeight() = 0;
   virtual base::TimeDelta GetDuration() = 0;
@@ -82,7 +96,8 @@ class MEDIA_EXPORT MediaPlayerAndroid {
 
   // Requests playback permission from MediaPlayerManager.
   // Overridden in MediaCodecPlayer to pass data between threads.
-  virtual void RequestPermissionAndPostResult(base::TimeDelta duration) {}
+  virtual void RequestPermissionAndPostResult(base::TimeDelta duration,
+                                              bool has_audio) {}
 
   // Overridden in MediaCodecPlayer to pass data between threads.
   virtual void OnMediaMetadataChanged(base::TimeDelta duration,
@@ -99,7 +114,7 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   // Attach/Detaches |listener_| for listening to all the media events. If
   // |j_media_player| is NULL, |listener_| only listens to the system media
   // events. Otherwise, it also listens to the events from |j_media_player|.
-  void AttachListener(jobject j_media_player);
+  void AttachListener(const base::android::JavaRef<jobject>& j_media_player);
   void DetachListener();
 
  protected:
@@ -121,6 +136,9 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   virtual void OnSeekComplete();
   virtual void OnMediaPrepared();
 
+  double GetEffectiveVolume() const;
+  void UpdateEffectiveVolume();
+
   // When destroying a subclassed object on a non-UI thread
   // it is still required to destroy the |listener_| related stuff
   // on the UI thread.
@@ -133,10 +151,21 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   OnDecoderResourcesReleasedCB on_decoder_resources_released_cb_;
 
  private:
+  // Set the effective player volume, implemented by children classes.
+  virtual void UpdateEffectiveVolumeInternal(double effective_volume) = 0;
+
   friend class MediaPlayerListener;
 
   // Player ID assigned to this player.
   int player_id_;
+
+  // The player volume. Should be between 0.0 and 1.0.
+  double volume_;
+
+  // The player volume multiplier. Should be between 0.0 and 1.0.  This
+  // should be a cached version of the MediaSession volume multiplier,
+  // and should keep updated.
+  double volume_multiplier_;
 
   // Resource manager for all the media players.
   MediaPlayerManager* manager_;
@@ -145,7 +174,7 @@ class MEDIA_EXPORT MediaPlayerAndroid {
   GURL frame_url_;
 
   // Listener object that listens to all the media player events.
-  scoped_ptr<MediaPlayerListener> listener_;
+  std::unique_ptr<MediaPlayerListener> listener_;
 
   // Weak pointer passed to |listener_| for callbacks.
   // NOTE: Weak pointers must be invalidated before all other member variables.

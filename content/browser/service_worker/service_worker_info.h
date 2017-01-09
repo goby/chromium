@@ -5,14 +5,19 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_INFO_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_INFO_H_
 
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/content_export.h"
+#include "content/common/service_worker/service_worker_types.h"
 #include "url/gurl.h"
 
 namespace content {
+
+enum class EmbeddedWorkerStatus;
 
 struct CONTENT_EXPORT ServiceWorkerVersionInfo {
  public:
@@ -27,21 +32,26 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
   };
 
   ServiceWorkerVersionInfo();
-  ServiceWorkerVersionInfo(ServiceWorkerVersion::RunningStatus running_status,
-                           ServiceWorkerVersion::Status status,
-                           const GURL& script_url,
-                           int64 registration_id,
-                           int64 version_id,
-                           int process_id,
-                           int thread_id,
-                           int devtools_agent_route_id);
+  ServiceWorkerVersionInfo(
+      EmbeddedWorkerStatus running_status,
+      ServiceWorkerVersion::Status status,
+      ServiceWorkerVersion::FetchHandlerExistence fetch_handler_existence,
+      const GURL& script_url,
+      int64_t registration_id,
+      int64_t version_id,
+      int process_id,
+      int thread_id,
+      int devtools_agent_route_id);
+  ServiceWorkerVersionInfo(const ServiceWorkerVersionInfo& other);
   ~ServiceWorkerVersionInfo();
 
-  ServiceWorkerVersion::RunningStatus running_status;
+  EmbeddedWorkerStatus running_status;
   ServiceWorkerVersion::Status status;
+  ServiceWorkerVersion::FetchHandlerExistence fetch_handler_existence;
+  NavigationPreloadState navigation_preload_state;
   GURL script_url;
-  int64 registration_id;
-  int64 version_id;
+  int64_t registration_id;
+  int64_t version_id;
   int process_id;
   int thread_id;
   int devtools_agent_route_id;
@@ -53,26 +63,24 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
 struct CONTENT_EXPORT ServiceWorkerRegistrationInfo {
  public:
   enum DeleteFlag { IS_NOT_DELETED, IS_DELETED };
-  enum ForceUpdateOnPageLoad { IS_NOT_FORCED, IS_FORCED };
   ServiceWorkerRegistrationInfo();
   ServiceWorkerRegistrationInfo(const GURL& pattern,
-                                int64 registration_id,
+                                int64_t registration_id,
                                 DeleteFlag delete_flag);
   ServiceWorkerRegistrationInfo(
       const GURL& pattern,
-      int64 registration_id,
+      int64_t registration_id,
       DeleteFlag delete_flag,
-      ForceUpdateOnPageLoad force_update_on_page_load,
       const ServiceWorkerVersionInfo& active_version,
       const ServiceWorkerVersionInfo& waiting_version,
       const ServiceWorkerVersionInfo& installing_version,
       int64_t active_version_total_size_bytes);
+  ServiceWorkerRegistrationInfo(const ServiceWorkerRegistrationInfo& other);
   ~ServiceWorkerRegistrationInfo();
 
   GURL pattern;
-  int64 registration_id;
+  int64_t registration_id;
   DeleteFlag delete_flag;
-  ForceUpdateOnPageLoad force_update_on_page_load;
   ServiceWorkerVersionInfo active_version;
   ServiceWorkerVersionInfo waiting_version;
   ServiceWorkerVersionInfo installing_version;

@@ -5,119 +5,147 @@
 #ifndef REMOTING_PROTOCOL_WEBRTC_TRANSPORT_H_
 #define REMOTING_PROTOCOL_WEBRTC_TRANSPORT_H_
 
+#include <memory>
+#include <string>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
+#include "crypto/hmac.h"
 #include "remoting/protocol/transport.h"
 #include "remoting/protocol/webrtc_data_stream_adapter.h"
+#include "remoting/protocol/webrtc_dummy_video_encoder.h"
 #include "remoting/signaling/signal_strategy.h"
-#include "third_party/libjingle/source/talk/app/webrtc/peerconnectioninterface.h"
-
-namespace webrtc {
-class FakeAudioDeviceModule;
-}  // namespace webrtc
+#include "third_party/webrtc/api/peerconnectioninterface.h"
 
 namespace remoting {
 namespace protocol {
 
-class WebrtcTransport : public Transport,
-                        public webrtc::PeerConnectionObserver {
+class TransportContext;
+class MessagePipe;
+class WebrtcAudioModule;
+
+class WebrtcTransport : public Transport {
  public:
-  WebrtcTransport(
-      rtc::scoped_refptr<webrtc::PortAllocatorFactoryInterface>
-          port_allocator_factory,
-      TransportRole role,
-      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner);
+  class EventHandler {
+   public:
+    // Called after |peer_connection| has been created but before handshake. The
+    // handler should create data channels and media streams. Renegotiation will
+    // be required in two cases after this method returns:
+    //   1. When the first data channel is created, if it wasn't created by this
+    //      event handler.
+    //   2. Whenever a media stream is added or removed.
+    virtual void OnWebrtcTransportConnecting() = 0;
+
+    // Called when the transport is connected.
+    virtual void OnWebrtcTransportConnected() = 0;
+
+    // Called when there is an error connecting the session.
+    virtual void OnWebrtcTransportError(ErrorCode error) = 0;
+
+    // Called when a new data channel is created by the peer.
+    virtual void OnWebrtcTransportIncomingDataChannel(
+        const std::string& name,
+        std::unique_ptr<MessagePipe> pipe) = 0;
+
+    // Called when an incoming media stream is added or removed.
+    virtual void OnWebrtcTransportMediaStreamAdded(
+        scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
+    virtual void OnWebrtcTransportMediaStreamRemoved(
+        scoped_refptr<webrtc::MediaStreamInterface> stream) = 0;
+
+   protected:
+    virtual ~EventHandler() {}
+  };
+
+  WebrtcTransport(rtc::Thread* worker_thread,
+                  scoped_refptr<TransportContext> transport_context,
+                  EventHandler* event_handler);
   ~WebrtcTransport() override;
 
+  webrtc::PeerConnectionInterface* peer_connection();
+  webrtc::PeerConnectionFactoryInterface* peer_connection_factory();
+  WebrtcDummyVideoEncoderFactory* video_encoder_factory() {
+    return video_encoder_factory_;
+  }
+  WebrtcAudioModule* audio_module();
+
+  // Creates outgoing data channel. The channel is created in CONNECTING state.
+  // The caller must wait for OnMessagePipeOpen() notification before sending
+  // any messages.
+  std::unique_ptr<MessagePipe> CreateOutgoingChannel(const std::string& name);
+
   // Transport interface.
-  void Start(EventHandler* event_handler,
-             Authenticator* authenticator) override;
+  void Start(Authenticator* authenticator,
+             SendTransportInfoCallback send_transport_info_callback) override;
   bool ProcessTransportInfo(buzz::XmlElement* transport_info) override;
-  StreamChannelFactory* GetStreamChannelFactory() override;
-  StreamChannelFactory* GetMultiplexedChannelFactory() override;
+  void Close(ErrorCode error);
 
  private:
-  void DoStart(rtc::Thread* worker_thread);
+  // PeerConnectionWrapper is responsible for PeerConnection creation,
+  // ownership. It passes all events to the corresponding methods below. This is
+  // necessary to make it possible to close and destroy PeerConnection
+  // asynchronously, as it may be on stack when the transport is destroyed.
+  class PeerConnectionWrapper;
+  friend class PeerConnectionWrapper;
+
   void OnLocalSessionDescriptionCreated(
-      scoped_ptr<webrtc::SessionDescriptionInterface> description,
+      std::unique_ptr<webrtc::SessionDescriptionInterface> description,
       const std::string& error);
   void OnLocalDescriptionSet(bool success, const std::string& error);
-  void OnRemoteDescriptionSet(bool success, const std::string& error);
+  void OnRemoteDescriptionSet(bool send_answer,
+                              bool success,
+                              const std::string& error);
 
-  // webrtc::PeerConnectionObserver interface.
+  // PeerConnection event handlers, called by PeerConnectionWrapper.
   void OnSignalingChange(
-      webrtc::PeerConnectionInterface::SignalingState new_state) override;
-  void OnAddStream(webrtc::MediaStreamInterface* stream) override;
-  void OnRemoveStream(webrtc::MediaStreamInterface* stream) override;
-  void OnDataChannel(webrtc::DataChannelInterface* data_channel) override;
-  void OnRenegotiationNeeded() override;
+      webrtc::PeerConnectionInterface::SignalingState new_state);
+  void OnAddStream(
+      rtc::scoped_refptr<webrtc::MediaStreamInterface> stream);
+  void OnRemoveStream(
+      rtc::scoped_refptr<webrtc::MediaStreamInterface> stream);
+  void OnDataChannel(
+      rtc::scoped_refptr<webrtc::DataChannelInterface> data_channel);
+  void OnRenegotiationNeeded();
   void OnIceConnectionChange(
-      webrtc::PeerConnectionInterface::IceConnectionState new_state) override;
+      webrtc::PeerConnectionInterface::IceConnectionState new_state);
   void OnIceGatheringChange(
-      webrtc::PeerConnectionInterface::IceGatheringState new_state) override;
-  void OnIceCandidate(const webrtc::IceCandidateInterface* candidate) override;
+      webrtc::PeerConnectionInterface::IceGatheringState new_state);
+  void OnIceCandidate(const webrtc::IceCandidateInterface* candidate);
 
+  void RequestNegotiation();
+  void SendOffer();
   void EnsurePendingTransportInfoMessage();
   void SendTransportInfo();
   void AddPendingCandidatesIfPossible();
 
-  void Close(ErrorCode error);
-
   base::ThreadChecker thread_checker_;
 
-  rtc::scoped_refptr<webrtc::PortAllocatorFactoryInterface>
-      port_allocator_factory_;
-  TransportRole role_;
+  scoped_refptr<TransportContext> transport_context_;
   EventHandler* event_handler_ = nullptr;
-  scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner_;
+  SendTransportInfoCallback send_transport_info_callback_;
 
-  scoped_ptr<webrtc::FakeAudioDeviceModule> fake_audio_device_module_;
+  crypto::HMAC handshake_hmac_;
 
-  rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface>
-      peer_connection_factory_;
-  rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
+  std::unique_ptr<PeerConnectionWrapper> peer_connection_wrapper_;
 
-  scoped_ptr<buzz::XmlElement> pending_transport_info_message_;
+  WebrtcDummyVideoEncoderFactory* video_encoder_factory_;
+
+  bool negotiation_pending_ = false;
+
+  bool connected_ = false;
+
+  std::unique_ptr<buzz::XmlElement> pending_transport_info_message_;
   base::OneShotTimer transport_info_timer_;
 
   ScopedVector<webrtc::IceCandidateInterface> pending_incoming_candidates_;
 
-  std::list<rtc::scoped_refptr<webrtc::MediaStreamInterface>>
-      unclaimed_streams_;
-
-  WebrtcDataStreamAdapter data_stream_adapter_;
-
   base::WeakPtrFactory<WebrtcTransport> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WebrtcTransport);
-};
-
-class WebrtcTransportFactory : public TransportFactory {
- public:
-  WebrtcTransportFactory(
-      SignalStrategy* signal_strategy,
-      rtc::scoped_refptr<webrtc::PortAllocatorFactoryInterface>
-          port_allocator_factory,
-      TransportRole role);
-  ~WebrtcTransportFactory() override;
-
-  // TransportFactory interface.
-  scoped_ptr<Transport> CreateTransport() override;
-
- private:
-  SignalStrategy* signal_strategy_;
-  rtc::scoped_refptr<webrtc::PortAllocatorFactoryInterface>
-      port_allocator_factory_;
-  TransportRole role_;
-
-  base::Thread worker_thread_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebrtcTransportFactory);
 };
 
 }  // namespace protocol

@@ -5,16 +5,19 @@
 #ifndef CHROME_TEST_BASE_TESTING_PROFILE_H_
 #define CHROME_TEST_BASE_TESTING_PROFILE_H_
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/domain_reliability/clear_mode.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
+#include "extensions/features/features.h"
 
 class BrowserContextDependencyManager;
 class ExtensionSpecialStoragePolicy;
@@ -27,7 +30,7 @@ class ZoomLevelDelegate;
 }
 
 namespace net {
-class CookieMonster;
+class CookieStore;
 class URLRequestContextGetter;
 }
 
@@ -41,7 +44,7 @@ namespace storage {
 class SpecialStoragePolicy;
 }
 
-namespace syncable_prefs {
+namespace sync_preferences {
 class PrefServiceSyncable;
 class TestingPrefServiceSyncable;
 }
@@ -86,7 +89,7 @@ class TestingProfile : public Profile {
         BrowserContextKeyedServiceFactory* service_factory,
         BrowserContextKeyedServiceFactory::TestingFactoryFunction callback);
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     // Sets the ExtensionSpecialStoragePolicy to be returned by
     // GetExtensionSpecialStoragePolicy().
     void SetExtensionSpecialStoragePolicy(
@@ -97,7 +100,8 @@ class TestingProfile : public Profile {
     void SetPath(const base::FilePath& path);
 
     // Sets the PrefService to be used by this profile.
-    void SetPrefService(scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs);
+    void SetPrefService(
+        std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs);
 
     // Makes the Profile being built a guest profile.
     void SetGuestSession();
@@ -107,10 +111,14 @@ class TestingProfile : public Profile {
     void SetSupervisedUserId(const std::string& supervised_user_id);
 
     // Sets the PolicyService to be used by this profile.
-    void SetPolicyService(scoped_ptr<policy::PolicyService> policy_service);
+    void SetPolicyService(
+        std::unique_ptr<policy::PolicyService> policy_service);
+
+    // Sets the UserProfileName to be used by this profile.
+    void SetProfileName(const std::string& profile_name);
 
     // Creates the TestingProfile using previously-set settings.
-    scoped_ptr<TestingProfile> Build();
+    std::unique_ptr<TestingProfile> Build();
 
     // Build an incognito profile, owned by |original_profile|. Note: unless you
     // need to customize the Builder, or access TestingProfile member functions,
@@ -122,16 +130,17 @@ class TestingProfile : public Profile {
     bool build_called_;
 
     // Various staging variables where values are held until Build() is invoked.
-    scoped_ptr<syncable_prefs::PrefServiceSyncable> pref_service_;
-#if defined(ENABLE_EXTENSIONS)
+    std::unique_ptr<sync_preferences::PrefServiceSyncable> pref_service_;
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     scoped_refptr<ExtensionSpecialStoragePolicy> extension_policy_;
 #endif
     base::FilePath path_;
     Delegate* delegate_;
     bool guest_session_;
     std::string supervised_user_id_;
-    scoped_ptr<policy::PolicyService> policy_service_;
+    std::unique_ptr<policy::PolicyService> policy_service_;
     TestingFactories testing_factories_;
+    std::string profile_name_;
 
     DISALLOW_COPY_AND_ASSIGN(Builder);
   };
@@ -153,15 +162,16 @@ class TestingProfile : public Profile {
   // Callers should use Builder::Build() instead of invoking this constructor.
   TestingProfile(const base::FilePath& path,
                  Delegate* delegate,
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
                  scoped_refptr<ExtensionSpecialStoragePolicy> extension_policy,
 #endif
-                 scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs,
+                 std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs,
                  TestingProfile* parent,
                  bool guest_session,
                  const std::string& supervised_user_id,
-                 scoped_ptr<policy::PolicyService> policy_service,
-                 const TestingFactories& factories);
+                 std::unique_ptr<policy::PolicyService> policy_service,
+                 const TestingFactories& factories,
+                 const std::string& profile_name);
 
   ~TestingProfile() override;
 
@@ -199,28 +209,22 @@ class TestingProfile : public Profile {
   // Allow setting a profile as Guest after-the-fact to simplify some tests.
   void SetGuestSession(bool guest);
 
-  syncable_prefs::TestingPrefServiceSyncable* GetTestingPrefService();
+  sync_preferences::TestingPrefServiceSyncable* GetTestingPrefService();
 
   // Called on the parent of an incognito |profile|. Usually called from the
   // constructor of an incognito TestingProfile, but can also be used by tests
   // to provide an OffTheRecordProfileImpl instance.
-  void SetOffTheRecordProfile(scoped_ptr<Profile> profile);
+  void SetOffTheRecordProfile(std::unique_ptr<Profile> profile);
 
   void SetSupervisedUserId(const std::string& id);
 
   // content::BrowserContext
   base::FilePath GetPath() const override;
-  scoped_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
+  std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
   scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner() override;
   bool IsOffTheRecord() const override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
-  net::URLRequestContextGetter* GetRequestContext() override;
-  net::URLRequestContextGetter* CreateRequestContext(
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
-  net::URLRequestContextGetter* GetRequestContextForRenderProcess(
-      int renderer_child_id) override;
   content::ResourceContext* GetResourceContext() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
   storage::SpecialStoragePolicy* GetSpecialStoragePolicy() override;
@@ -228,6 +232,18 @@ class TestingProfile : public Profile {
   content::SSLHostStateDelegate* GetSSLHostStateDelegate() override;
   content::PermissionManager* GetPermissionManager() override;
   content::BackgroundSyncController* GetBackgroundSyncController() override;
+  net::URLRequestContextGetter* CreateRequestContext(
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::URLRequestInterceptorScopedVector request_interceptors) override;
+  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory,
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::URLRequestInterceptorScopedVector request_interceptors) override;
+  net::URLRequestContextGetter* CreateMediaRequestContext() override;
+  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory) override;
 
   TestingProfile* AsTestingProfile() override;
 
@@ -259,7 +275,7 @@ class TestingProfile : public Profile {
   bool IsSupervised() const override;
   bool IsChild() const override;
   bool IsLegacySupervised() const override;
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   void SetExtensionSpecialStoragePolicy(
       ExtensionSpecialStoragePolicy* extension_special_storage_policy);
 #endif
@@ -267,29 +283,18 @@ class TestingProfile : public Profile {
   // TODO(ajwong): Remove this API in favor of directly retrieving the
   // CookieStore from the StoragePartition after ExtensionURLRequestContext
   // has been removed.
-  net::CookieMonster* GetCookieMonster();
+  net::CookieStore* GetCookieStore();
 
   PrefService* GetPrefs() override;
   const PrefService* GetPrefs() const override;
   ChromeZoomLevelPrefs* GetZoomLevelPrefs() override;
-
-  net::URLRequestContextGetter* GetMediaRequestContext() override;
-  net::URLRequestContextGetter* GetMediaRequestContextForRenderProcess(
-      int renderer_child_id) override;
+  net::URLRequestContextGetter* GetRequestContext() override;
   net::URLRequestContextGetter* GetRequestContextForExtensions() override;
-  net::URLRequestContextGetter* GetMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
-  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
   net::SSLConfigService* GetSSLConfigService() override;
   void set_last_session_exited_cleanly(bool value) {
     last_session_exited_cleanly_ = value;
   }
-  bool IsSameProfile(Profile* p) override;
+  bool IsSameProfile(Profile* profile) override;
   base::Time GetStartTime() const override;
   base::FilePath last_selected_directory() override;
   void set_last_selected_directory(const base::FilePath& path) override;
@@ -333,9 +338,9 @@ class TestingProfile : public Profile {
 
  protected:
   base::Time start_time_;
-  scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs_;
+  std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs_;
   // ref only for right type, lifecycle is managed by prefs_
-  syncable_prefs::TestingPrefServiceSyncable* testing_prefs_;
+  sync_preferences::TestingPrefServiceSyncable* testing_prefs_;
 
  private:
   // Creates a temporary directory for use by this profile.
@@ -350,6 +355,10 @@ class TestingProfile : public Profile {
   // Creates a TestingPrefService and associates it with the TestingProfile.
   void CreateTestingPrefService();
 
+  // Creates a pref service that uses SupervisedUserPrefStore and associates
+  // it with the TestingProfile.
+  void CreatePrefServiceForSupervisedUser();
+
   // Initializes |prefs_| for an incognito profile, derived from
   // |original_profile_|.
   void CreateIncognitoPrefService();
@@ -363,7 +372,7 @@ class TestingProfile : public Profile {
   scoped_refptr<net::URLRequestContextGetter> extensions_request_context_;
 
   bool force_incognito_;
-  scoped_ptr<Profile> incognito_profile_;
+  std::unique_ptr<Profile> incognito_profile_;
   TestingProfile* original_profile_;
 
   bool guest_session_;
@@ -377,13 +386,13 @@ class TestingProfile : public Profile {
 
   base::FilePath last_selected_directory_;
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<ExtensionSpecialStoragePolicy>
       extension_special_storage_policy_;
 #endif
 
   // The proxy prefs tracker.
-  scoped_ptr<PrefProxyConfigTracker> pref_proxy_config_tracker_;
+  std::unique_ptr<PrefProxyConfigTracker> pref_proxy_config_tracker_;
 
   // The path to this profile. This will be valid in either of the two above
   // cases.
@@ -397,20 +406,18 @@ class TestingProfile : public Profile {
   BrowserContextDependencyManager* browser_context_dependency_manager_;
 
   // Owned, but must be deleted on the IO thread so not placing in a
-  // scoped_ptr<>.
+  // std::unique_ptr<>.
   content::MockResourceContext* resource_context_;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
-  scoped_ptr<policy::SchemaRegistryService> schema_registry_service_;
-#endif
-  scoped_ptr<policy::ProfilePolicyConnector> profile_policy_connector_;
+  std::unique_ptr<policy::SchemaRegistryService> schema_registry_service_;
+  std::unique_ptr<policy::ProfilePolicyConnector> profile_policy_connector_;
 
   // Weak pointer to a delegate for indicating that a profile was created.
   Delegate* delegate_;
 
   std::string profile_name_;
 
-  scoped_ptr<policy::PolicyService> policy_service_;
+  std::unique_ptr<policy::PolicyService> policy_service_;
 };
 
 #endif  // CHROME_TEST_BASE_TESTING_PROFILE_H_

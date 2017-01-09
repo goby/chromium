@@ -4,8 +4,10 @@
 
 #include "chrome/browser/chromeos/file_system_provider/request_manager.h"
 
+#include <utility>
+
 #include "base/files/file.h"
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/extensions/window_controller_list.h"
 #include "chrome/browser/profiles/profile.h"
@@ -38,21 +40,19 @@ RequestManager::RequestManager(
 
 RequestManager::~RequestManager() {
   // Abort all of the active requests.
-  RequestMap::iterator it = requests_.begin();
+  auto it = requests_.begin();
   while (it != requests_.end()) {
     const int request_id = it->first;
     ++it;
-    RejectRequest(request_id,
-                  scoped_ptr<RequestValue>(new RequestValue()),
+    RejectRequest(request_id, base::MakeUnique<RequestValue>(),
                   base::File::FILE_ERROR_ABORT);
   }
 
   DCHECK_EQ(0u, requests_.size());
-  STLDeleteValues(&requests_);
 }
 
 int RequestManager::CreateRequest(RequestType type,
-                                  scoped_ptr<HandlerInterface> handler) {
+                                  std::unique_ptr<HandlerInterface> handler) {
   // The request id is unique per request manager, so per service, thereof
   // per profile.
   int request_id = next_id_++;
@@ -67,41 +67,43 @@ int RequestManager::CreateRequest(RequestType type,
                            "type",
                            type);
 
-  Request* request = new Request;
-  request->handler = handler.Pass();
-  requests_[request_id] = request;
+  std::unique_ptr<Request> request = base::MakeUnique<Request>();
+  request->handler = std::move(handler);
+  requests_[request_id] = std::move(request);
   ResetTimer(request_id);
 
-  FOR_EACH_OBSERVER(Observer, observers_, OnRequestCreated(request_id, type));
+  for (auto& observer : observers_)
+    observer.OnRequestCreated(request_id, type);
 
   // Execute the request implementation. In case of an execution failure,
   // unregister and return 0. This may often happen, eg. if the providing
   // extension is not listening for the request event being sent.
   // In such case, we should abort as soon as possible.
-  if (!request->handler->Execute(request_id)) {
+  if (!requests_[request_id]->handler->Execute(request_id)) {
     DestroyRequest(request_id);
     return 0;
   }
 
-  FOR_EACH_OBSERVER(Observer, observers_, OnRequestExecuted(request_id));
+  for (auto& observer : observers_)
+    observer.OnRequestExecuted(request_id);
 
   return request_id;
 }
 
 base::File::Error RequestManager::FulfillRequest(
     int request_id,
-    scoped_ptr<RequestValue> response,
+    std::unique_ptr<RequestValue> response,
     bool has_more) {
   CHECK(response.get());
-  RequestMap::iterator request_it = requests_.find(request_id);
+  auto request_it = requests_.find(request_id);
   if (request_it == requests_.end())
     return base::File::FILE_ERROR_NOT_FOUND;
 
-  FOR_EACH_OBSERVER(Observer,
-                    observers_,
-                    OnRequestFulfilled(request_id, *response.get(), has_more));
+  for (auto& observer : observers_)
+    observer.OnRequestFulfilled(request_id, *response.get(), has_more);
 
-  request_it->second->handler->OnSuccess(request_id, response.Pass(), has_more);
+  request_it->second->handler->OnSuccess(request_id, std::move(response),
+                                         has_more);
 
   if (!has_more) {
     DestroyRequest(request_id);
@@ -116,17 +118,16 @@ base::File::Error RequestManager::FulfillRequest(
 
 base::File::Error RequestManager::RejectRequest(
     int request_id,
-    scoped_ptr<RequestValue> response,
+    std::unique_ptr<RequestValue> response,
     base::File::Error error) {
   CHECK(response.get());
-  RequestMap::iterator request_it = requests_.find(request_id);
+  auto request_it = requests_.find(request_id);
   if (request_it == requests_.end())
     return base::File::FILE_ERROR_NOT_FOUND;
 
-  FOR_EACH_OBSERVER(Observer,
-                    observers_,
-                    OnRequestRejected(request_id, *response.get(), error));
-  request_it->second->handler->OnError(request_id, response.Pass(), error);
+  for (auto& observer : observers_)
+    observer.OnRequestRejected(request_id, *response.get(), error);
+  request_it->second->handler->OnError(request_id, std::move(response), error);
   DestroyRequest(request_id);
 
   return base::File::FILE_OK;
@@ -139,8 +140,7 @@ void RequestManager::SetTimeoutForTesting(const base::TimeDelta& timeout) {
 std::vector<int> RequestManager::GetActiveRequestIds() const {
   std::vector<int> result;
 
-  for (RequestMap::const_iterator request_it = requests_.begin();
-       request_it != requests_.end();
+  for (auto request_it = requests_.begin(); request_it != requests_.end();
        ++request_it) {
     result.push_back(request_it->first);
   }
@@ -163,11 +163,11 @@ RequestManager::Request::Request() {}
 RequestManager::Request::~Request() {}
 
 void RequestManager::OnRequestTimeout(int request_id) {
-  FOR_EACH_OBSERVER(Observer, observers_, OnRequestTimeouted(request_id));
+  for (auto& observer : observers_)
+    observer.OnRequestTimeouted(request_id);
 
   if (!notification_manager_) {
-    RejectRequest(request_id,
-                  scoped_ptr<RequestValue>(new RequestValue()),
+    RejectRequest(request_id, base::MakeUnique<RequestValue>(),
                   base::File::FILE_ERROR_ABORT);
     return;
   }
@@ -185,7 +185,7 @@ void RequestManager::OnRequestTimeout(int request_id) {
 void RequestManager::OnUnresponsiveNotificationResult(
     int request_id,
     NotificationManagerInterface::NotificationResult result) {
-  RequestMap::iterator request_it = requests_.find(request_id);
+  auto request_it = requests_.find(request_id);
   if (request_it == requests_.end())
     return;
 
@@ -194,13 +194,12 @@ void RequestManager::OnUnresponsiveNotificationResult(
     return;
   }
 
-  RejectRequest(request_id,
-                scoped_ptr<RequestValue>(new RequestValue()),
+  RejectRequest(request_id, base::MakeUnique<RequestValue>(),
                 base::File::FILE_ERROR_ABORT);
 }
 
 void RequestManager::ResetTimer(int request_id) {
-  RequestMap::iterator request_it = requests_.find(request_id);
+  auto request_it = requests_.find(request_id);
   if (request_it == requests_.end())
     return;
 
@@ -226,7 +225,7 @@ bool RequestManager::IsInteractingWithUser() const {
   // which is at most once every 10 seconds per request (except tests).
   const extensions::WindowControllerList::ControllerList& windows =
       extensions::WindowControllerList::GetInstance()->windows();
-  for (const auto& window : windows) {
+  for (auto* window : windows) {
     const Browser* const browser = window->GetBrowser();
     if (!browser)
       continue;
@@ -236,8 +235,8 @@ bool RequestManager::IsInteractingWithUser() const {
       const content::WebContents* const web_contents =
           tabs->GetWebContentsAt(i);
       const GURL& url = web_contents->GetURL();
-      if (url.scheme() == extensions::kExtensionScheme &&
-          url.host() == extension_id_) {
+      if (url.SchemeIs(extensions::kExtensionScheme) &&
+          url.host_piece() == extension_id_) {
         return true;
       }
     }
@@ -247,17 +246,17 @@ bool RequestManager::IsInteractingWithUser() const {
 }
 
 void RequestManager::DestroyRequest(int request_id) {
-  RequestMap::iterator request_it = requests_.find(request_id);
+  auto request_it = requests_.find(request_id);
   if (request_it == requests_.end())
     return;
 
-  delete request_it->second;
   requests_.erase(request_it);
 
   if (notification_manager_)
     notification_manager_->HideUnresponsiveNotification(request_id);
 
-  FOR_EACH_OBSERVER(Observer, observers_, OnRequestDestroyed(request_id));
+  for (auto& observer : observers_)
+    observer.OnRequestDestroyed(request_id);
 
   TRACE_EVENT_ASYNC_END0(
       "file_system_provider", "RequestManager::Request", request_id);

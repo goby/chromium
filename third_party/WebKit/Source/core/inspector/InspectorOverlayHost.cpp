@@ -26,72 +26,24 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "core/inspector/InspectorOverlayHost.h"
 
 namespace blink {
 
-InspectorOverlayHost::InspectorOverlayHost()
-    : m_listener(nullptr)
-{
+InspectorOverlayHost::InspectorOverlayHost() : m_listener(nullptr) {}
+
+void InspectorOverlayHost::resume() {
+  if (m_listener)
+    m_listener->overlayResumed();
 }
 
-InspectorOverlayHost::~InspectorOverlayHost()
-{
+void InspectorOverlayHost::stepOver() {
+  if (m_listener)
+    m_listener->overlaySteppedOver();
 }
 
-void InspectorOverlayHost::resume()
-{
-    if (m_listener)
-        m_listener->overlayResumed();
+DEFINE_TRACE(InspectorOverlayHost) {
+  visitor->trace(m_listener);
 }
 
-void InspectorOverlayHost::stepOver()
-{
-    if (m_listener)
-        m_listener->overlaySteppedOver();
-}
-
-void InspectorOverlayHost::startPropertyChange(const String& anchorName)
-{
-    if (m_listener)
-        m_listener->overlayStartedPropertyChange(anchorName);
-}
-
-void InspectorOverlayHost::changeProperty(float delta)
-{
-    if (m_listener)
-        m_listener->overlayPropertyChanged(delta);
-}
-
-void InspectorOverlayHost::endPropertyChange()
-{
-    if (m_listener)
-        m_listener->overlayEndedPropertyChange();
-}
-
-void InspectorOverlayHost::clearSelection(bool commitChanges)
-{
-    if (m_listener)
-        m_listener->overlayClearSelection(commitChanges);
-}
-
-void InspectorOverlayHost::nextSelector()
-{
-    if (m_listener)
-        m_listener->overlayNextSelector();
-}
-
-void InspectorOverlayHost::previousSelector()
-{
-    if (m_listener)
-        m_listener->overlayPreviousSelector();
-}
-
-DEFINE_TRACE(InspectorOverlayHost)
-{
-    visitor->trace(m_listener);
-}
-
-} // namespace blink
+}  // namespace blink

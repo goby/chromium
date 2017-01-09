@@ -7,6 +7,7 @@
 #include <set>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/stl_util.h"
 #include "base/test/values_test_util.h"
@@ -38,7 +39,7 @@ class DeclarativeContentPageUrlConditionTrackerTest
 
     // ContentPredicateEvaluator::Delegate:
     void RequestEvaluation(content::WebContents* contents) override {
-      EXPECT_FALSE(ContainsKey(evaluation_requests_, contents));
+      EXPECT_FALSE(base::ContainsKey(evaluation_requests_, contents));
       evaluation_requests_.insert(contents);
     }
 
@@ -58,8 +59,9 @@ class DeclarativeContentPageUrlConditionTrackerTest
   }
 
   // Creates a predicate with appropriate expectations of success.
-  scoped_ptr<const ContentPredicate> CreatePredicate(const std::string& value) {
-    scoped_ptr<const ContentPredicate> predicate;
+  std::unique_ptr<const ContentPredicate> CreatePredicate(
+      const std::string& value) {
+    std::unique_ptr<const ContentPredicate> predicate;
     CreatePredicateImpl(value, &predicate);
     return predicate;
   }
@@ -76,7 +78,7 @@ class DeclarativeContentPageUrlConditionTrackerTest
   // This function exists to work around the gtest limitation that functions
   // with fatal assertions must return void.
   void CreatePredicateImpl(const std::string& value,
-                           scoped_ptr<const ContentPredicate>* predicate) {
+                           std::unique_ptr<const ContentPredicate>* predicate) {
     std::string error;
     *predicate = tracker_.CreatePredicate(
         nullptr,
@@ -92,11 +94,10 @@ class DeclarativeContentPageUrlConditionTrackerTest
 TEST(DeclarativeContentPageUrlPredicateTest, WrongPageUrlDatatype) {
   url_matcher::URLMatcher matcher;
   std::string error;
-  scoped_ptr<DeclarativeContentPageUrlPredicate> predicate =
-      DeclarativeContentPageUrlPredicate::Create(nullptr,
-                                                 matcher.condition_factory(),
-                                                 *base::test::ParseJson("[]"),
-                                                 &error);
+  std::unique_ptr<DeclarativeContentPageUrlPredicate> predicate =
+      DeclarativeContentPageUrlPredicate::Create(
+          nullptr, matcher.condition_factory(), *base::test::ParseJson("[]"),
+          &error);
   EXPECT_THAT(error, HasSubstr("invalid type"));
   EXPECT_FALSE(predicate);
 
@@ -106,12 +107,10 @@ TEST(DeclarativeContentPageUrlPredicateTest, WrongPageUrlDatatype) {
 TEST(DeclarativeContentPageUrlPredicateTest, PageUrlPredicate) {
   url_matcher::URLMatcher matcher;
   std::string error;
-  scoped_ptr<DeclarativeContentPageUrlPredicate> predicate =
+  std::unique_ptr<DeclarativeContentPageUrlPredicate> predicate =
       DeclarativeContentPageUrlPredicate::Create(
-          nullptr,
-          matcher.condition_factory(),
-          *base::test::ParseJson("{\"hostSuffix\": \"example.com\"}"),
-          &error);
+          nullptr, matcher.condition_factory(),
+          *base::test::ParseJson("{\"hostSuffix\": \"example.com\"}"), &error);
   EXPECT_EQ("", error);
   ASSERT_TRUE(predicate);
 
@@ -133,7 +132,7 @@ TEST(DeclarativeContentPageUrlPredicateTest, PageUrlPredicate) {
 // the matching WebContents.
 TEST_F(DeclarativeContentPageUrlConditionTrackerTest, AddAndRemovePredicates) {
   // Create four tabs.
-  std::vector<scoped_ptr<content::WebContents>> tabs;
+  std::vector<std::unique_ptr<content::WebContents>> tabs;
   for (int i = 0; i < 4; ++i) {
     tabs.push_back(MakeTab());
     delegate_.evaluation_requests().clear();
@@ -148,7 +147,7 @@ TEST_F(DeclarativeContentPageUrlConditionTrackerTest, AddAndRemovePredicates) {
   LoadURL(tabs[1].get(), GURL("http://test2/"));
   LoadURL(tabs[2].get(), GURL("http://test3/"));
 
-  std::vector<scoped_ptr<const ContentPredicate>> predicates;
+  std::vector<std::unique_ptr<const ContentPredicate>> predicates;
   std::string error;
   predicates.push_back(CreatePredicate("{\"hostPrefix\": \"test1\"}"));
   predicates.push_back(CreatePredicate("{\"hostPrefix\": \"test2\"}"));
@@ -200,7 +199,7 @@ TEST_F(DeclarativeContentPageUrlConditionTrackerTest, AddAndRemovePredicates) {
 // rules.
 TEST_F(DeclarativeContentPageUrlConditionTrackerTest, TrackWebContents) {
   std::string error;
-  scoped_ptr<const ContentPredicate> predicate =
+  std::unique_ptr<const ContentPredicate> predicate =
       CreatePredicate("{\"hostPrefix\": \"test1\"}");
 
   delegate_.evaluation_requests().clear();
@@ -210,7 +209,7 @@ TEST_F(DeclarativeContentPageUrlConditionTrackerTest, TrackWebContents) {
   tracker_.TrackPredicates(predicates);
   EXPECT_TRUE(delegate_.evaluation_requests().empty());
 
-  const scoped_ptr<content::WebContents> matching_tab = MakeTab();
+  const std::unique_ptr<content::WebContents> matching_tab = MakeTab();
   LoadURL(matching_tab.get(), GURL("http://test1/"));
 
   tracker_.TrackForWebContents(matching_tab.get());
@@ -218,7 +217,7 @@ TEST_F(DeclarativeContentPageUrlConditionTrackerTest, TrackWebContents) {
               UnorderedElementsAre(matching_tab.get()));
 
   delegate_.evaluation_requests().clear();
-  const scoped_ptr<content::WebContents> non_matching_tab = MakeTab();
+  const std::unique_ptr<content::WebContents> non_matching_tab = MakeTab();
   tracker_.TrackForWebContents(non_matching_tab.get());
   EXPECT_THAT(delegate_.evaluation_requests(),
               UnorderedElementsAre(non_matching_tab.get()));
@@ -234,7 +233,7 @@ TEST_F(DeclarativeContentPageUrlConditionTrackerTest, TrackWebContents) {
 TEST_F(DeclarativeContentPageUrlConditionTrackerTest,
        NotifyWebContentsNavigation) {
   std::string error;
-  scoped_ptr<const ContentPredicate> predicate =
+  std::unique_ptr<const ContentPredicate> predicate =
       CreatePredicate("{\"hostPrefix\": \"test1\"}");
 
   delegate_.evaluation_requests().clear();
@@ -244,7 +243,7 @@ TEST_F(DeclarativeContentPageUrlConditionTrackerTest,
   tracker_.TrackPredicates(predicates);
   EXPECT_TRUE(delegate_.evaluation_requests().empty());
 
-  const scoped_ptr<content::WebContents> tab = MakeTab();
+  const std::unique_ptr<content::WebContents> tab = MakeTab();
   tracker_.TrackForWebContents(tab.get());
   EXPECT_THAT(delegate_.evaluation_requests(),
               UnorderedElementsAre(tab.get()));

@@ -5,11 +5,14 @@
 #ifndef CHROME_TEST_BASE_CHROME_RENDER_VIEW_TEST_H_
 #define CHROME_TEST_BASE_CHROME_RENDER_VIEW_TEST_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "chrome/renderer/chrome_mock_render_thread.h"
 #include "content/public/test/render_view_test.h"
+#include "extensions/features/features.h"
+
+class ChromeContentRendererClient;
 
 namespace autofill {
 class AutofillAgent;
@@ -34,11 +37,26 @@ class ChromeRenderViewTest : public content::RenderViewTest {
   content::ContentBrowserClient* CreateContentBrowserClient() override;
   content::ContentRendererClient* CreateContentRendererClient() override;
 
+  // Called from SetUp(). Override to register mojo interfaces.
+  virtual void RegisterMainFrameRemoteInterfaces();
+
+  // Initializes commonly needed global state and renderer client parts.
+  // Use when overriding CreateContentRendererClient.
+  void InitChromeContentRendererClient(ChromeContentRendererClient* client);
+
   void EnableUserGestureSimulationForAutofill();
   void DisableUserGestureSimulationForAutofill();
+  void WaitForAutofillDidAssociateFormControl();
 
-#if defined(ENABLE_EXTENSIONS)
-  scoped_ptr<extensions::DispatcherDelegate> extension_dispatcher_delegate_;
+  // Tests which need to handle IPC's sent to the browser should override
+  // this method and return a subclass of ChromeMockRenderThread.
+  // The ChromeMockRenderThread pointer is owned by the ChromeRenderViewTest
+  // class.
+  virtual ChromeMockRenderThread* CreateMockRenderThread();
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  std::unique_ptr<extensions::DispatcherDelegate>
+      extension_dispatcher_delegate_;
 #endif
 
   autofill::TestPasswordAutofillAgent* password_autofill_agent_;

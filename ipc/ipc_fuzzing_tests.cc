@@ -6,13 +6,16 @@
 #include <stdio.h>
 
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
+#include "build/build_config.h"
 #include "ipc/ipc_test_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -242,7 +245,7 @@ class FuzzerClientListener : public SimpleListener {
 
  private:
   bool MsgHandlerInternal(uint32_t type_id) {
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     if (NULL == last_msg_)
       return false;
     if (FUZZER_ROUTING_ID != last_msg_->routing_id())
@@ -255,35 +258,25 @@ class FuzzerClientListener : public SimpleListener {
 
 // Runs the fuzzing server child mode. Returns when the preset number of
 // messages have been received.
-MULTIPROCESS_IPC_TEST_CLIENT_MAIN(FuzzServerClient) {
-  base::MessageLoopForIO main_message_loop;
+DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(FuzzServerClient) {
   FuzzerServerListener listener;
-  scoped_ptr<IPC::Channel> channel(IPC::Channel::CreateClient(
-      IPCTestBase::GetChannelName("FuzzServerClient"), &listener));
-  CHECK(channel->Connect());
-  listener.Init(channel.get());
-  base::MessageLoop::current()->Run();
-  return 0;
+  Connect(&listener);
+  listener.Init(channel());
+  base::RunLoop().Run();
+  Close();
 }
 
-class IPCFuzzingTest : public IPCTestBase {
-};
+using IPCFuzzingTest = IPCChannelMojoTestBase;
 
-#if defined(OS_ANDROID)
-#define MAYBE_SanityTest DISABLED_SanityTest
-#else
-#define MAYBE_SanityTest SanityTest
-#endif
 // This test makes sure that the FuzzerClientListener and FuzzerServerListener
 // are working properly by generating two well formed IPC calls.
-TEST_F(IPCFuzzingTest, MAYBE_SanityTest) {
+TEST_F(IPCFuzzingTest, SanityTest) {
   Init("FuzzServerClient");
 
   FuzzerClientListener listener;
   CreateChannel(&listener);
   listener.Init(channel());
   ASSERT_TRUE(ConnectChannel());
-  ASSERT_TRUE(StartClient());
 
   IPC::Message* msg = NULL;
   int value = 43;
@@ -299,24 +292,16 @@ TEST_F(IPCFuzzingTest, MAYBE_SanityTest) {
   DestroyChannel();
 }
 
-#if defined(OS_ANDROID)
-#define MAYBE_MsgBadPayloadShort DISABLED_MsgBadPayloadShort
-#else
-#define MAYBE_MsgBadPayloadShort MsgBadPayloadShort
-#endif
 // This test uses a payload that is smaller than expected. This generates an
-// error while unpacking the IPC buffer which in debug trigger an assertion and
-// in release is ignored (!). Right after we generate another valid IPC to make
-// sure framing is working properly.
-#if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
-TEST_F(IPCFuzzingTest, MAYBE_MsgBadPayloadShort) {
+// error while unpacking the IPC buffer. Right after we generate another valid
+// IPC to make sure framing is working properly.
+TEST_F(IPCFuzzingTest, MsgBadPayloadShort) {
   Init("FuzzServerClient");
 
   FuzzerClientListener listener;
   CreateChannel(&listener);
   listener.Init(channel());
   ASSERT_TRUE(ConnectChannel());
-  ASSERT_TRUE(StartClient());
 
   IPC::Message* msg = new IPC::Message(MSG_ROUTING_CONTROL, MsgClassIS::ID,
                                        IPC::Message::PRIORITY_NORMAL);
@@ -331,25 +316,18 @@ TEST_F(IPCFuzzingTest, MAYBE_MsgBadPayloadShort) {
   EXPECT_TRUE(WaitForClientShutdown());
   DestroyChannel();
 }
-#endif
 
-#if defined(OS_ANDROID)
-#define MAYBE_MsgBadPayloadArgs DISABLED_MsgBadPayloadArgs
-#else
-#define MAYBE_MsgBadPayloadArgs MsgBadPayloadArgs
-#endif
 // This test uses a payload that has too many arguments, but so the payload size
 // is big enough so the unpacking routine does not generate an error as in the
 // case of MsgBadPayloadShort test. This test does not pinpoint a flaw (per se)
 // as by design we don't carry type information on the IPC message.
-TEST_F(IPCFuzzingTest, MAYBE_MsgBadPayloadArgs) {
+TEST_F(IPCFuzzingTest, MsgBadPayloadArgs) {
   Init("FuzzServerClient");
 
   FuzzerClientListener listener;
   CreateChannel(&listener);
   listener.Init(channel());
   ASSERT_TRUE(ConnectChannel());
-  ASSERT_TRUE(StartClient());
 
   IPC::Message* msg = new IPC::Message(MSG_ROUTING_CONTROL, MsgClassSI::ID,
                                        IPC::Message::PRIORITY_NORMAL);

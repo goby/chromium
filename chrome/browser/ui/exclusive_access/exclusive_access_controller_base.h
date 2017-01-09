@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_EXCLUSIVE_ACCESS_CONTROLLER_BASE_H_
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_EXCLUSIVE_ACCESS_CONTROLLER_BASE_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
 #include "content/public/browser/notification_observer.h"
@@ -13,7 +13,6 @@
 
 class ExclusiveAccessManager;
 class GURL;
-class Profile;
 
 namespace content {
 class WebContents;
@@ -42,16 +41,6 @@ class ExclusiveAccessControllerBase : public content::NotificationObserver {
   // Called by Browser in response to call from ExclusiveAccessBubble.
   virtual void ExitExclusiveAccessToPreviousState() = 0;
 
-  // Called to indicate that the permission for this exclusive access has been
-  // granted if requested. Returns true if the exit bubble content should be
-  // updated.
-  virtual bool OnAcceptExclusiveAccessPermission() = 0;
-
-  // Called to indicate that the permission for the exclusive access has been
-  // denied if requested. Returns true if the exit bubble content should be
-  // updated.
-  virtual bool OnDenyExclusiveAccessPermission() = 0;
-
   // Called by ExclusiveAccessManager in response to calls from Browser.
   virtual void OnTabDeactivated(content::WebContents* web_contents);
   virtual void OnTabDetachedFromView(content::WebContents* web_contents);
@@ -65,6 +54,11 @@ class ExclusiveAccessControllerBase : public content::NotificationObserver {
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
+  // For recording UMA.
+  void RecordBubbleReshownUMA();
+  // Called when the exclusive access session ends.
+  void RecordExitingUMA();
+
  protected:
   void SetTabWithExclusiveAccess(content::WebContents* tab);
 
@@ -77,6 +71,10 @@ class ExclusiveAccessControllerBase : public content::NotificationObserver {
   // if necessary.
   virtual void NotifyTabExclusiveAccessLost() = 0;
 
+  // Records the BubbleReshowsPerSession data to the appropriate histogram for
+  // this controller.
+  virtual void RecordBubbleReshowsHistogram(int bubble_reshow_count) = 0;
+
  private:
   void UpdateNotificationRegistrations();
 
@@ -84,7 +82,10 @@ class ExclusiveAccessControllerBase : public content::NotificationObserver {
 
   content::NotificationRegistrar registrar_;
 
-  content::WebContents* tab_with_exclusive_access_;
+  content::WebContents* tab_with_exclusive_access_ = nullptr;
+
+  // The number of bubble re-shows for the current session (reset upon exiting).
+  int bubble_reshow_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(ExclusiveAccessControllerBase);
 };

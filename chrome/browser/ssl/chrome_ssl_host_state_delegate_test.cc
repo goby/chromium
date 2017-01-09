@@ -5,24 +5,31 @@
 #include "chrome/browser/ssl/chrome_ssl_host_state_delegate.h"
 
 #include <stdint.h>
+#include <utility>
 
+#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/simple_test_clock.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_remover.h"
+#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/browsing_data/browsing_data_remover_test_util.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/chrome_ssl_host_state_delegate_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/browsing_data/core/browsing_data_utils.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
 #include "content/public/browser/ssl_host_state_delegate.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
-#include "net/base/test_data_directory.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -44,6 +51,10 @@ scoped_refptr<net::X509Certificate> GetOkCert() {
 void SetFinchConfig(base::CommandLine* command_line, const std::string& group) {
   command_line->AppendSwitchASCII("--force-fieldtrials",
                                   "RevertCertificateErrorDecisions/" + group);
+}
+
+bool CStrStringMatcher(const char* a, const std::string& b) {
+  return a == b;
 }
 
 }  // namespace
@@ -165,11 +176,22 @@ IN_PROC_BROWSER_TEST_F(ChromeSSLHostStateDelegateTest, Clear) {
   // Simulate a user decision to allow an invalid certificate exception for
   // kWWWGoogleHost and for kExampleHost.
   state->AllowCert(kWWWGoogleHost, *cert, net::CERT_STATUS_DATE_INVALID);
+  state->AllowCert(kExampleHost, *cert, net::CERT_STATUS_DATE_INVALID);
 
-  // Do a full clear, then make sure that both kWWWGoogleHost, which had a
-  // decision made, and kExampleHost, which was untouched, are now in a denied
-  // state.
-  state->Clear();
+  EXPECT_TRUE(state->HasAllowException(kWWWGoogleHost));
+  EXPECT_TRUE(state->HasAllowException(kExampleHost));
+
+  // Clear data for kWWWGoogleHost. kExampleHost will not be modified.
+  state->Clear(
+      base::Bind(&CStrStringMatcher, base::Unretained(kWWWGoogleHost)));
+
+  EXPECT_FALSE(state->HasAllowException(kWWWGoogleHost));
+  EXPECT_TRUE(state->HasAllowException(kExampleHost));
+
+  // Do a full clear, then make sure that both kWWWGoogleHost and kExampleHost,
+  // which had a decision made, and kGoogleHost, which was untouched, are now
+  // in a denied state.
+  state->Clear(base::Callback<bool(const std::string&)>());
   EXPECT_FALSE(state->HasAllowException(kWWWGoogleHost));
   EXPECT_EQ(content::SSLHostStateDelegate::DENIED,
             state->QueryPolicy(kWWWGoogleHost, *cert,
@@ -177,6 +199,10 @@ IN_PROC_BROWSER_TEST_F(ChromeSSLHostStateDelegateTest, Clear) {
   EXPECT_FALSE(state->HasAllowException(kExampleHost));
   EXPECT_EQ(content::SSLHostStateDelegate::DENIED,
             state->QueryPolicy(kExampleHost, *cert,
+                               net::CERT_STATUS_DATE_INVALID, &unused_value));
+  EXPECT_FALSE(state->HasAllowException(kGoogleHost));
+  EXPECT_EQ(content::SSLHostStateDelegate::DENIED,
+            state->QueryPolicy(kGoogleHost, *cert,
                                net::CERT_STATUS_DATE_INVALID, &unused_value));
 }
 
@@ -190,21 +216,132 @@ IN_PROC_BROWSER_TEST_F(ChromeSSLHostStateDelegateTest,
   Profile* profile = Profile::FromBrowserContext(tab->GetBrowserContext());
   content::SSLHostStateDelegate* state = profile->GetSSLHostStateDelegate();
 
-  EXPECT_FALSE(state->DidHostRunInsecureContent("www.google.com", 42));
-  EXPECT_FALSE(state->DidHostRunInsecureContent("www.google.com", 191));
-  EXPECT_FALSE(state->DidHostRunInsecureContent("example.com", 42));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 42, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 191, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 42,
+      content::SSLHostStateDelegate::CERT_ERRORS_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 191,
+      content::SSLHostStateDelegate::CERT_ERRORS_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::CERT_ERRORS_CONTENT));
 
-  state->HostRanInsecureContent("www.google.com", 42);
+  // Mark a site as MIXED_CONTENT and check that only that host/child id
+  // is affected, and only for MIXED_CONTENT (not for
+  // CERT_ERRORS_CONTENT);
+  state->HostRanInsecureContent("www.google.com", 42,
+                                content::SSLHostStateDelegate::MIXED_CONTENT);
 
-  EXPECT_TRUE(state->DidHostRunInsecureContent("www.google.com", 42));
-  EXPECT_FALSE(state->DidHostRunInsecureContent("www.google.com", 191));
-  EXPECT_FALSE(state->DidHostRunInsecureContent("example.com", 42));
+  EXPECT_TRUE(state->DidHostRunInsecureContent(
+      "www.google.com", 42, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 42,
+      content::SSLHostStateDelegate::CERT_ERRORS_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 191, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::MIXED_CONTENT));
 
-  state->HostRanInsecureContent("example.com", 42);
+  // Mark another site as MIXED_CONTENT, and check that that host/child
+  // id is affected (for MIXED_CONTENT only), and that the previously
+  // host/child id is still marked as MIXED_CONTENT.
+  state->HostRanInsecureContent("example.com", 42,
+                                content::SSLHostStateDelegate::MIXED_CONTENT);
 
-  EXPECT_TRUE(state->DidHostRunInsecureContent("www.google.com", 42));
-  EXPECT_FALSE(state->DidHostRunInsecureContent("www.google.com", 191));
-  EXPECT_TRUE(state->DidHostRunInsecureContent("example.com", 42));
+  EXPECT_TRUE(state->DidHostRunInsecureContent(
+      "www.google.com", 42, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 191, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_TRUE(state->DidHostRunInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::CERT_ERRORS_CONTENT));
+
+  // Mark a MIXED_CONTENT host/child id as CERT_ERRORS_CONTENT also.
+  state->HostRanInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::CERT_ERRORS_CONTENT);
+
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 191, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_TRUE(state->DidHostRunInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::MIXED_CONTENT));
+  EXPECT_TRUE(state->DidHostRunInsecureContent(
+      "example.com", 42, content::SSLHostStateDelegate::CERT_ERRORS_CONTENT));
+
+  // Mark a non-MIXED_CONTENT host as CERT_ERRORS_CONTENT.
+  state->HostRanInsecureContent(
+      "www.google.com", 191,
+      content::SSLHostStateDelegate::CERT_ERRORS_CONTENT);
+
+  EXPECT_TRUE(state->DidHostRunInsecureContent(
+      "www.google.com", 191,
+      content::SSLHostStateDelegate::CERT_ERRORS_CONTENT));
+  EXPECT_FALSE(state->DidHostRunInsecureContent(
+      "www.google.com", 191, content::SSLHostStateDelegate::MIXED_CONTENT));
+}
+
+// Test the migration code needed as a result of changing how the content
+// setting is stored. We used to map the settings dictionary to the pattern
+// pair <origin, origin> but now we map it to <origin, wildcard>.
+IN_PROC_BROWSER_TEST_F(ChromeSSLHostStateDelegateTest, Migrate) {
+  scoped_refptr<net::X509Certificate> cert = GetOkCert();
+  content::WebContents* tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  Profile* profile = Profile::FromBrowserContext(tab->GetBrowserContext());
+  ChromeSSLHostStateDelegate* state =
+      ChromeSSLHostStateDelegateFactory::GetForProfile(profile);
+
+  // Simulate a user decision to allow an invalid certificate exception for
+  // kWWWGoogleHost and for kExampleHost.
+  state->AllowCert(kWWWGoogleHost, *cert, net::CERT_STATUS_DATE_INVALID);
+
+  // Move the new-format setting (<origin, wildcard>) to be an old-format one
+  // (<origin, origin>).
+  HostContentSettingsMap* map =
+      HostContentSettingsMapFactory::GetForProfile(profile);
+  GURL url(std::string("https://") + kWWWGoogleHost);
+  std::unique_ptr<base::Value> new_format =
+      map->GetWebsiteSetting(url, url, CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+                             std::string(), nullptr);
+  // Delete the new-format setting.
+  map->SetWebsiteSettingDefaultScope(url, GURL(),
+                                     CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+                                     std::string(), nullptr);
+
+  // No exception should exist.
+  EXPECT_FALSE(state->HasAllowException(kWWWGoogleHost));
+  // Create the old-format one.
+  map->SetWebsiteSettingCustomScope(
+      ContentSettingsPattern::FromURLNoWildcard(url),
+      ContentSettingsPattern::FromURLNoWildcard(url),
+      CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, std::string(),
+      std::move(new_format));
+
+  // Test that the old-format setting works.
+  EXPECT_TRUE(state->HasAllowException(kWWWGoogleHost));
+
+  // Trigger the migration code that happens on construction.
+  {
+    std::unique_ptr<ChromeSSLHostStateDelegate> temp_delegate(
+        new ChromeSSLHostStateDelegate(profile));
+  }
+
+  // Test that the new style setting still works.
+  EXPECT_TRUE(state->HasAllowException(kWWWGoogleHost));
+
+  // Check that the old-format setting is removed and only the new one exists.
+  ContentSettingsForOneType settings;
+  map->GetSettingsForOneType(CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+                             std::string(), &settings);
+  EXPECT_EQ(1u, settings.size());
+  EXPECT_EQ(ContentSettingsPattern::FromURLNoWildcard(url),
+            settings[0].primary_pattern);
+  EXPECT_EQ(ContentSettingsPattern::Wildcard(), settings[0].secondary_pattern);
 }
 
 class ForgetAtSessionEndSSLHostStateDelegateTest
@@ -297,7 +434,7 @@ IN_PROC_BROWSER_TEST_F(IncognitoSSLHostStateDelegateTest, PRE_AfterRestart) {
   // in the incognito profile.
   state->AllowCert(kWWWGoogleHost, *cert, net::CERT_STATUS_DATE_INVALID);
 
-  scoped_ptr<Profile> incognito(profile->CreateOffTheRecordProfile());
+  std::unique_ptr<Profile> incognito(profile->CreateOffTheRecordProfile());
   content::SSLHostStateDelegate* incognito_state =
       incognito->GetSSLHostStateDelegate();
 
@@ -337,7 +474,7 @@ IN_PROC_BROWSER_TEST_F(IncognitoSSLHostStateDelegateTest, AfterRestart) {
             state->QueryPolicy(kWWWGoogleHost, *cert,
                                net::CERT_STATUS_DATE_INVALID, &unused_value));
 
-  scoped_ptr<Profile> incognito(profile->CreateOffTheRecordProfile());
+  std::unique_ptr<Profile> incognito(profile->CreateOffTheRecordProfile());
   content::SSLHostStateDelegate* incognito_state =
       incognito->GetSSLHostStateDelegate();
 
@@ -380,7 +517,7 @@ IN_PROC_BROWSER_TEST_F(DefaultMemorySSLHostStateDelegateTest, AfterRestart) {
   base::SimpleTestClock* clock = new base::SimpleTestClock();
   ChromeSSLHostStateDelegate* chrome_state =
       static_cast<ChromeSSLHostStateDelegate*>(state);
-  chrome_state->SetClock(scoped_ptr<base::Clock>(clock));
+  chrome_state->SetClock(std::unique_ptr<base::Clock>(clock));
 
   // Start the clock at standard system time.
   clock->SetNow(base::Time::NowFromSystemTime());
@@ -429,7 +566,7 @@ IN_PROC_BROWSER_TEST_F(DefaultMemorySSLHostStateDelegateTest,
   base::SimpleTestClock* clock = new base::SimpleTestClock();
   ChromeSSLHostStateDelegate* chrome_state =
       static_cast<ChromeSSLHostStateDelegate*>(state);
-  chrome_state->SetClock(scoped_ptr<base::Clock>(clock));
+  chrome_state->SetClock(std::unique_ptr<base::Clock>(clock));
 
   // Start the clock at standard system time but do not advance at all to
   // emphasize that instant forget works.
@@ -479,11 +616,13 @@ class RemoveBrowsingHistorySSLHostStateDelegateTest
     : public ChromeSSLHostStateDelegateTest {
  public:
   void RemoveAndWait(Profile* profile) {
-    BrowsingDataRemover* remover = BrowsingDataRemover::CreateForPeriod(
-        profile, BrowsingDataRemover::LAST_HOUR);
+    BrowsingDataRemover* remover =
+        BrowsingDataRemoverFactory::GetForBrowserContext(profile);
     BrowsingDataRemoverCompletionObserver completion_observer(remover);
-    remover->Remove(BrowsingDataRemover::REMOVE_HISTORY,
-                    BrowsingDataHelper::UNPROTECTED_WEB);
+    remover->RemoveAndReply(
+        BrowsingDataRemover::Period(browsing_data::LAST_HOUR),
+        BrowsingDataRemover::REMOVE_HISTORY,
+        BrowsingDataHelper::UNPROTECTED_WEB, &completion_observer);
     completion_observer.BlockUntilCompletion();
   }
 };

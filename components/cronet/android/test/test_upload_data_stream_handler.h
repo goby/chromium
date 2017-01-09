@@ -7,11 +7,12 @@
 
 #include <jni.h>
 
+#include <memory>
+
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/threading/thread.h"
+#include "base/single_thread_task_runner.h"
 #include "net/base/io_buffer.h"
 #include "net/base/upload_data_stream.h"
 
@@ -24,9 +25,10 @@ namespace cronet {
 class TestUploadDataStreamHandler {
  public:
   TestUploadDataStreamHandler(
-      scoped_ptr<net::UploadDataStream> upload_data_stream,
+      std::unique_ptr<net::UploadDataStream> upload_data_stream,
       JNIEnv* env,
-      jobject jtest_upload_data_stream_handler);
+      jobject jtest_upload_data_stream_handler,
+      jlong jcontext_adapter);
 
   ~TestUploadDataStreamHandler();
 
@@ -85,9 +87,9 @@ class TestUploadDataStreamHandler {
 
   // Created and destroyed on the same Java thread. This is where methods of
   // net::UploadDataStream run on.
-  scoped_ptr<base::Thread> network_thread_;
+  scoped_refptr<base::SingleThreadTaskRunner> network_thread_;
   // Created on a Java thread. Accessed only on |network_thread_|.
-  scoped_ptr<net::UploadDataStream> upload_data_stream_;
+  std::unique_ptr<net::UploadDataStream> upload_data_stream_;
   // Created and accessed only on |network_thread_|.
   scoped_refptr<net::IOBufferWithSize> read_buffer_;
   // A Java reference pointer for calling methods on the Java

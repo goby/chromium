@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_SESSIONS_CORE_SERIALIZED_NAVIGATION_ENTRY_H_
 #define COMPONENTS_SESSIONS_CORE_SERIALIZED_NAVIGATION_ENTRY_H_
 
+#include <stdint.h>
+
+#include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/sessions/core/sessions_export.h"
@@ -47,8 +49,17 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
     STATE_BLOCKED = 2,
   };
 
+  // These must match the proto.  They are in priority order such that if a
+  // higher value is seen, it should overwrite a lower value.
+  enum PasswordState {
+    PASSWORD_STATE_UNKNOWN = 0,
+    NO_PASSWORD_FIELD = 1,
+    HAS_PASSWORD_FIELD = 2,
+  };
+
   // Creates an invalid (index < 0) SerializedNavigationEntry.
   SerializedNavigationEntry();
+  SerializedNavigationEntry(const SerializedNavigationEntry& other);
   ~SerializedNavigationEntry();
 
   // Construct a SerializedNavigationEntry for a particular index from a sync
@@ -89,16 +100,22 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
     return transition_type_;
   }
   bool has_post_data() const { return has_post_data_; }
-  int64 post_id() const { return post_id_; }
+  int64_t post_id() const { return post_id_; }
   const GURL& original_request_url() const { return original_request_url_; }
   bool is_overriding_user_agent() const { return is_overriding_user_agent_; }
   base::Time timestamp() const { return timestamp_; }
 
-  BlockedState blocked_state() { return blocked_state_; }
+  BlockedState blocked_state() const { return blocked_state_; }
   void set_blocked_state(BlockedState blocked_state) {
     blocked_state_ = blocked_state;
   }
-  std::set<std::string> content_pack_categories() {
+
+  PasswordState password_state() const { return password_state_; }
+  void set_password_state(PasswordState password_state) {
+    password_state_ = password_state;
+  }
+
+  std::set<std::string> content_pack_categories() const {
     return content_pack_categories_;
   }
   void set_content_pack_categories(
@@ -106,6 +123,10 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
     content_pack_categories_ = content_pack_categories;
   }
   const std::vector<GURL>& redirect_chain() const { return redirect_chain_; }
+
+  const std::map<std::string, std::string>& extended_info_map() const {
+    return extended_info_map_;
+  }
 
  private:
   friend class ContentSerializedNavigationBuilder;
@@ -126,7 +147,7 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
   std::string encoded_page_state_;
   ui::PageTransition transition_type_;
   bool has_post_data_;
-  int64 post_id_;
+  int64_t post_id_;
   GURL original_request_url_;
   bool is_overriding_user_agent_;
   base::Time timestamp_;
@@ -138,7 +159,12 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
 
   // Additional information.
   BlockedState blocked_state_;
+  PasswordState password_state_;
   std::set<std::string> content_pack_categories_;
+
+  // Provides storage for arbitrary key/value pairs used by features. This
+  // data is not synced.
+  std::map<std::string, std::string> extended_info_map_;
 };
 
 }  // namespace sessions

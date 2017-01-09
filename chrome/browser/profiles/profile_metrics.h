@@ -8,8 +8,8 @@
 #include <stddef.h>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 
 class Profile;
@@ -45,6 +45,8 @@ class ProfileMetrics {
     DELETE_PROFILE_USER_MANAGER_SHOW_WARNING,
     // Show the delete profile warning in the Settings page.
     DELETE_PROFILE_SETTINGS_SHOW_WARNING,
+    // Aborts profile deletion in an OnBeforeUnload event in any browser tab.
+    DELETE_PROFILE_ABORTED,
     NUM_DELETE_PROFILE_METRICS
   };
 
@@ -60,6 +62,7 @@ class ProfileMetrics {
     SWITCH_PROFILE_UNLOCK,   // User switches to locked profile via User Manager
     SWITCH_PROFILE_GUEST,    // User switches to guest profile
     SWITCH_PROFILE_CONTEXT_MENU,  // User switches profiles from context menu
+    SWITCH_PROFILE_DUPLICATE,     // User switches to existing duplicate profile
     NUM_PROFILE_OPEN_METRICS
   };
 
@@ -203,7 +206,7 @@ class ProfileMetrics {
   static bool CountProfileInformation(ProfileManager* manager,
                                       profile_metrics::Counts* counts);
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
   static void LogNumberOfProfileSwitches();
 #endif
 
@@ -217,7 +220,7 @@ class ProfileMetrics {
   static void LogProfileAvatarSelection(size_t icon_index);
   static void LogProfileDeleteUser(ProfileDelete metric);
   static void LogProfileOpenMethod(ProfileOpen metric);
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
   static void LogProfileSwitch(ProfileOpen metric,
                                ProfileManager* manager,
                                const base::FilePath& profile_path);

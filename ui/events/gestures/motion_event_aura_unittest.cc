@@ -15,8 +15,7 @@
 namespace {
 
 ui::TouchEvent TouchWithType(ui::EventType type, int id) {
-  return ui::TouchEvent(type, gfx::Point(0, 0), id,
-                        base::TimeDelta::FromMilliseconds(0));
+  return ui::TouchEvent(type, gfx::Point(0, 0), id, base::TimeTicks());
 }
 
 ui::TouchEvent TouchWithPosition(ui::EventType type,
@@ -25,8 +24,8 @@ ui::TouchEvent TouchWithPosition(ui::EventType type,
                                  float y,
                                  float raw_x,
                                  float raw_y) {
-  ui::TouchEvent event(type, gfx::Point(), 0, id,
-                       base::TimeDelta::FromMilliseconds(0), 0, 0, 0, 0);
+  ui::TouchEvent event(type, gfx::Point(), 0, id, base::TimeTicks(), 0, 0, 0,
+                       0);
   event.set_location_f(gfx::PointF(x, y));
   event.set_root_location_f(gfx::PointF(raw_x, raw_y));
   return event;
@@ -38,19 +37,17 @@ ui::TouchEvent TouchWithTapParams(ui::EventType type,
                                  float radius_y,
                                  float rotation_angle,
                                  float pressure) {
-  ui::TouchEvent event(type, gfx::Point(1, 1), 0, id,
-                       base::TimeDelta::FromMilliseconds(0), radius_x, radius_y,
-                       rotation_angle, pressure);
+  ui::TouchEvent event(type, gfx::Point(1, 1), 0, id, base::TimeTicks(),
+                       radius_x, radius_y, rotation_angle, pressure);
   return event;
-}
-
-ui::TouchEvent TouchWithTime(ui::EventType type, int id, int ms) {
-  return ui::TouchEvent(type, gfx::Point(0, 0), id,
-                        base::TimeDelta::FromMilliseconds(ms));
 }
 
 base::TimeTicks MsToTicks(int ms) {
   return base::TimeTicks() + base::TimeDelta::FromMilliseconds(ms);
+}
+
+ui::TouchEvent TouchWithTime(ui::EventType type, int id, int ms) {
+  return ui::TouchEvent(type, gfx::Point(0, 0), id, MsToTicks(ms));
 }
 
 }  // namespace
@@ -96,7 +93,7 @@ TEST(MotionEventAuraTest, PointerCountAndIds) {
 
   // Test cloning of pointer count and id information.
   // TODO(mustaq): Make a separate clone test, crbug.com/450655
-  scoped_ptr<MotionEvent> clone = event.Clone();
+  std::unique_ptr<MotionEvent> clone = event.Clone();
   EXPECT_EQ(2U, clone->GetPointerCount());
   EXPECT_EQ(ids[0], clone->GetPointerId(0));
   EXPECT_EQ(ids[2], clone->GetPointerId(1));
@@ -194,7 +191,7 @@ TEST(MotionEventAuraTest, PointerLocations) {
   EXPECT_FLOAT_EQ(raw_y, event.GetRawY(1));
 
   // Test cloning of pointer location information.
-  scoped_ptr<MotionEvent> clone = event.Clone();
+  std::unique_ptr<MotionEvent> clone = event.Clone();
   EXPECT_EQ(event.GetUniqueEventId(), clone->GetUniqueEventId());
   EXPECT_EQ(test::ToString(event), test::ToString(*clone));
   EXPECT_EQ(2U, clone->GetPointerCount());
@@ -255,6 +252,7 @@ TEST(MotionEventAuraTest, TapParams) {
   EXPECT_FLOAT_EQ(radius_y, event.GetTouchMinor(0) / 2);
   EXPECT_FLOAT_EQ(rotation_angle, event.GetOrientation(0) * 180 / M_PI + 90);
   EXPECT_FLOAT_EQ(pressure, event.GetPressure(0));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_FINGER, event.GetToolType(0));
 
   // Test case: radius_x < radius_y, rotation_angle < 90
   radius_x = 67.89f;
@@ -270,10 +268,11 @@ TEST(MotionEventAuraTest, TapParams) {
   EXPECT_FLOAT_EQ(radius_x, event.GetTouchMinor(1) / 2);
   EXPECT_FLOAT_EQ(rotation_angle, event.GetOrientation(1) * 180 / M_PI);
   EXPECT_FLOAT_EQ(pressure, event.GetPressure(1));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_FINGER, event.GetToolType(1));
 
   // Test cloning of tap params
   // TODO(mustaq): Make a separate clone test, crbug.com/450655
-  scoped_ptr<MotionEvent> clone = event.Clone();
+  std::unique_ptr<MotionEvent> clone = event.Clone();
   EXPECT_EQ(event.GetUniqueEventId(), clone->GetUniqueEventId());
   EXPECT_EQ(test::ToString(event), test::ToString(*clone));
   EXPECT_EQ(2U, clone->GetPointerCount());
@@ -281,6 +280,7 @@ TEST(MotionEventAuraTest, TapParams) {
   EXPECT_FLOAT_EQ(radius_x, clone->GetTouchMinor(1) / 2);
   EXPECT_FLOAT_EQ(rotation_angle, clone->GetOrientation(1) * 180 / M_PI);
   EXPECT_FLOAT_EQ(pressure, clone->GetPressure(1));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_FINGER, clone->GetToolType(1));
 
   // TODO(mustaq): The move test seems out-of-scope here, crbug.com/450655
   radius_x = 76.98f;
@@ -297,6 +297,7 @@ TEST(MotionEventAuraTest, TapParams) {
   EXPECT_FLOAT_EQ(radius_x, event.GetTouchMinor(1) / 2);
   EXPECT_FLOAT_EQ(rotation_angle, event.GetOrientation(1) * 180 / M_PI);
   EXPECT_FLOAT_EQ(pressure, event.GetPressure(1));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_FINGER, event.GetToolType(1));
 
   // Test case: radius_x > radius_y, rotation_angle > 90
   radius_x = 123.45f;
@@ -312,6 +313,7 @@ TEST(MotionEventAuraTest, TapParams) {
   EXPECT_FLOAT_EQ(radius_y, event.GetTouchMinor(2) / 2);
   EXPECT_FLOAT_EQ(rotation_angle, event.GetOrientation(2) * 180 / M_PI + 90);
   EXPECT_FLOAT_EQ(pressure, event.GetPressure(2));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_FINGER, event.GetToolType(2));
 
   // Test case: radius_x < radius_y, rotation_angle > 90
   radius_x = 67.89f;
@@ -327,6 +329,7 @@ TEST(MotionEventAuraTest, TapParams) {
   EXPECT_FLOAT_EQ(radius_x, event.GetTouchMinor(3) / 2);
   EXPECT_FLOAT_EQ(rotation_angle, event.GetOrientation(3) * 180 / M_PI + 180);
   EXPECT_FLOAT_EQ(pressure, event.GetPressure(3));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_FINGER, event.GetToolType(3));
 }
 
 TEST(MotionEventAuraTest, Timestamps) {
@@ -352,7 +355,7 @@ TEST(MotionEventAuraTest, Timestamps) {
   EXPECT_EQ(MsToTicks(times_in_ms[2]), event.GetEventTime());
 
   // Test cloning of timestamp information.
-  scoped_ptr<MotionEvent> clone = event.Clone();
+  std::unique_ptr<MotionEvent> clone = event.Clone();
   EXPECT_EQ(MsToTicks(times_in_ms[2]), clone->GetEventTime());
 }
 
@@ -373,7 +376,7 @@ TEST(MotionEventAuraTest, CachedAction) {
   EXPECT_EQ(2U, event.GetPointerCount());
 
   // Test cloning of CachedAction information.
-  scoped_ptr<MotionEvent> clone = event.Clone();
+  std::unique_ptr<MotionEvent> clone = event.Clone();
   EXPECT_EQ(MotionEvent::ACTION_POINTER_DOWN, clone->GetAction());
   EXPECT_EQ(1, clone->GetActionIndex());
 
@@ -413,20 +416,24 @@ TEST(MotionEventAuraTest, Cancel) {
   EXPECT_EQ(1, event.GetActionIndex());
   EXPECT_EQ(2U, event.GetPointerCount());
 
-  scoped_ptr<MotionEvent> cancel = event.Cancel();
+  std::unique_ptr<MotionEvent> cancel = event.Cancel();
   EXPECT_EQ(MotionEvent::ACTION_CANCEL, cancel->GetAction());
   EXPECT_EQ(2U, cancel->GetPointerCount());
 }
 
 TEST(MotionEventAuraTest, ToolType) {
   MotionEventAura event;
-
-  // For now, all pointers have an unknown tool type.
-  // TODO(jdduke): Expand this test when ui::TouchEvent identifies the source
-  // touch type, crbug.com/404128.
-  EXPECT_TRUE(event.OnTouch(TouchWithType(ET_TOUCH_PRESSED, 7)));
+  TouchEvent touch_event = TouchWithType(ET_TOUCH_PRESSED, 7);
+  EXPECT_TRUE(event.OnTouch(touch_event));
   ASSERT_EQ(1U, event.GetPointerCount());
-  EXPECT_EQ(MotionEvent::TOOL_TYPE_UNKNOWN, event.GetToolType(0));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_FINGER, event.GetToolType(0));
+
+  touch_event = TouchWithType(ET_TOUCH_RELEASED, 7);
+  PointerDetails pointer_details(EventPointerType::POINTER_TYPE_PEN, 5.0f, 5.0f,
+                                 1.0f, 0.0f, 0.0f);
+  touch_event.set_pointer_details(pointer_details);
+  EXPECT_TRUE(event.OnTouch(touch_event));
+  EXPECT_EQ(MotionEvent::TOOL_TYPE_STYLUS, event.GetToolType(0));
 }
 
 TEST(MotionEventAuraTest, Flags) {
@@ -439,13 +446,12 @@ TEST(MotionEventAuraTest, Flags) {
   EXPECT_EQ(EF_CONTROL_DOWN, event.GetFlags());
 
   TouchEvent press1 = TouchWithType(ET_TOUCH_PRESSED, ids[1]);
-  press1.set_flags(EF_CONTROL_DOWN | EF_CAPS_LOCK_DOWN);
+  press1.set_flags(EF_CONTROL_DOWN | EF_CAPS_LOCK_ON);
   EXPECT_TRUE(event.OnTouch(press1));
-  EXPECT_EQ(EF_CONTROL_DOWN | EF_CAPS_LOCK_DOWN, event.GetFlags());
+  EXPECT_EQ(EF_CONTROL_DOWN | EF_CAPS_LOCK_ON, event.GetFlags());
 }
 
-// Once crbug.com/446852 is fixed, we should ignore redundant presses.
-TEST(MotionEventAuraTest, DoesntIgnoreRedundantPresses) {
+TEST(MotionEventAuraTest, IgnoresRedundantPresses) {
   const int id = 7;
   const int position_1 = 10;
   const int position_2 = 23;
@@ -456,10 +462,10 @@ TEST(MotionEventAuraTest, DoesntIgnoreRedundantPresses) {
   EXPECT_TRUE(event.OnTouch(press1));
   TouchEvent press2 = TouchWithPosition(ET_TOUCH_PRESSED, id, position_2,
                                         position_2, position_2, position_2);
-  EXPECT_TRUE(event.OnTouch(press2));
+  EXPECT_FALSE(event.OnTouch(press2));
 
   EXPECT_EQ(1U, event.GetPointerCount());
-  EXPECT_FLOAT_EQ(position_2, event.GetX(0));
+  EXPECT_FLOAT_EQ(position_1, event.GetX(0));
 }
 
 TEST(MotionEventAuraTest, IgnoresEventsWithoutPress) {
@@ -472,7 +478,7 @@ TEST(MotionEventAuraTest, IgnoresStationaryMoves) {
   int id = 7;
   MotionEventAura event;
   EXPECT_TRUE(event.OnTouch(TouchWithType(ET_TOUCH_PRESSED, id)));
-  TouchEvent move0 = TouchWithPosition(ET_TOUCH_PRESSED, id, 10, 20, 10, 20);
+  TouchEvent move0 = TouchWithPosition(ET_TOUCH_MOVED, id, 10, 20, 10, 20);
   EXPECT_TRUE(event.OnTouch(move0));
 
   TouchEvent move1 = TouchWithPosition(ET_TOUCH_MOVED, id, 11, 21, 11, 21);

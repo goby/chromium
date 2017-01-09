@@ -7,11 +7,10 @@
 
 #include <queue>
 
-#include "mojo/public/cpp/system/macros.h"
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/message.h"
 
 namespace mojo {
-class Message;
-
 namespace test {
 
 // A queue for Message objects.
@@ -29,12 +28,14 @@ class MessageQueue {
   // ownership of its handles to the given |message|.
   void Pop(Message* message);
 
+  size_t size() const { return queue_.size(); }
+
  private:
   void Pop();
 
-  std::queue<Message*> queue_;
+  std::queue<Message> queue_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(MessageQueue);
+  DISALLOW_COPY_AND_ASSIGN(MessageQueue);
 };
 
 }  // namespace test

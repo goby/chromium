@@ -4,14 +4,17 @@
 
 package org.chromium.chrome.browser.webapps;
 
+import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
+
 import android.content.Intent;
 import android.net.Uri;
+import android.view.ViewGroup;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
-import org.chromium.chrome.test.MultiActivityTestBase;
-import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.TestWebContentsObserver;
@@ -28,6 +31,8 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
     static final String WEBAPP_ID = "webapp_id";
     static final String WEBAPP_NAME = "webapp name";
     static final String WEBAPP_SHORT_NAME = "webapp short name";
+
+    private static final long STARTUP_TIMEOUT = scaleTimeout(10000);
 
     // Empty 192x192 image generated with:
     // ShortcutHelper.encodeBitmapAsString(Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_4444));
@@ -88,10 +93,12 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
     protected void setUp() throws Exception {
         super.setUp();
 
-        // Register the webapp so when the data storage is opened, the test doesn't crash. There is
-        // no race condition with the retrival as AsyncTasks are run sequentially on the background
-        // thread.
-        WebappRegistry.registerWebapp(getInstrumentation().getTargetContext(), WEBAPP_ID);
+        // Register the webapp so when the data storage is opened, the test doesn't crash.
+        WebappRegistry.refreshSharedPrefsForTesting();
+        TestFetchStorageCallback callback = new TestFetchStorageCallback();
+        WebappRegistry.getInstance().register(WEBAPP_ID, callback);
+        callback.waitForCallback(0);
+        callback.getStorage().updateFromShortcutIntent(createIntent());
     }
 
     /**
@@ -126,15 +133,13 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
     protected void waitUntilIdle() {
         getInstrumentation().waitForIdleSync();
         try {
-            CriteriaHelper.pollForCriteria(new Criteria() {
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
                     @Override
                     public boolean isSatisfied() {
                         return getActivity().getActivityTab() != null
                                 && !getActivity().getActivityTab().isLoading();
                     }
-                },
-                MultiActivityTestBase.DEFAULT_MAX_TIME_TO_POLL_FOR_ACTIVITY_MS,
-                CriteriaHelper.DEFAULT_POLLING_INTERVAL);
+                }, STARTUP_TIMEOUT, CriteriaHelper.DEFAULT_POLLING_INTERVAL);
         } catch (InterruptedException exception) {
             fail();
         }
@@ -187,11 +192,30 @@ public abstract class WebappActivityTestBase extends ChromeActivityTestCaseBase<
      * Waits for the splash screen to be hidden.
      */
     protected void waitUntilSplashscreenHides() throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return !getActivity().isSplashScreenVisibleForTests();
             }
         });
+    }
+
+    protected ViewGroup waitUntilSplashScreenAppears() {
+        try {
+            CriteriaHelper.pollInstrumentationThread(new Criteria() {
+                @Override
+                public boolean isSatisfied() {
+                    return getActivity().getSplashScreenForTests() != null;
+                }
+            });
+        } catch (InterruptedException e) {
+            fail();
+        }
+
+        ViewGroup splashScreen = getActivity().getSplashScreenForTests();
+        if (splashScreen == null) {
+            fail("No splash screen available.");
+        }
+        return splashScreen;
     }
 }

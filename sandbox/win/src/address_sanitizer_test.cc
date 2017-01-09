@@ -4,6 +4,8 @@
 
 #include <stdio.h>
 
+#include <memory>
+
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -19,7 +21,7 @@ namespace sandbox {
 class AddressSanitizerTests : public ::testing::Test {
  public:
   void SetUp() override {
-    env_.reset(base::Environment::Create());
+    env_ = base::Environment::Create();
     had_asan_options_ = env_->GetVar("ASAN_OPTIONS", &old_asan_options_);
   }
 
@@ -31,7 +33,7 @@ class AddressSanitizerTests : public ::testing::Test {
   }
 
  protected:
-  scoped_ptr<base::Environment> env_;
+  std::unique_ptr<base::Environment> env_;
   bool had_asan_options_;
   std::string old_asan_options_;
 };
@@ -40,7 +42,7 @@ SBOX_TESTS_COMMAND int AddressSanitizerTests_Report(int argc, wchar_t** argv) {
   // AddressSanitizer should detect an out of bounds write (heap buffer
   // overflow) in this code.
   volatile int idx = 42;
-  int *blah = new int[42];
+  int* volatile blah = new int[42];
   blah[idx] = 42;
   delete [] blah;
   return SBOX_TEST_FAILED;
@@ -60,7 +62,8 @@ TEST_F(AddressSanitizerTests, TestAddressSanitizer) {
   base::ScopedTempDir temp_directory;
   base::FilePath temp_file_name;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
-  ASSERT_TRUE(CreateTemporaryFileInDir(temp_directory.path(), &temp_file_name));
+  ASSERT_TRUE(
+      CreateTemporaryFileInDir(temp_directory.GetPath(), &temp_file_name));
 
   SECURITY_ATTRIBUTES attrs = {};
   attrs.nLength = sizeof(attrs);
@@ -77,7 +80,7 @@ TEST_F(AddressSanitizerTests, TestAddressSanitizer) {
   base::FilePath exe;
   ASSERT_TRUE(PathService::Get(base::FILE_EXE, &exe));
   base::FilePath pdb_path = exe.DirName().Append(L"*.pdb");
-  ASSERT_TRUE(runner.AddFsRule(sandbox::TargetPolicy::FILES_ALLOW_READONLY,
+  ASSERT_TRUE(runner.AddFsRule(TargetPolicy::FILES_ALLOW_READONLY,
                                pdb_path.value().c_str()));
 
   env_->SetVar("ASAN_OPTIONS", "exitcode=123");
@@ -88,20 +91,19 @@ TEST_F(AddressSanitizerTests, TestAddressSanitizer) {
     std::string data;
     ASSERT_TRUE(base::ReadFileToString(base::FilePath(temp_file_name), &data));
     // Redirection uses a feature that was added in Windows Vista.
-    if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-      ASSERT_TRUE(
-          strstr(data.c_str(), "ERROR: AddressSanitizer: heap-buffer-overflow"))
-          << "There doesn't seem to be an ASan report:\n" << data;
-      ASSERT_TRUE(strstr(data.c_str(), "AddressSanitizerTests_Report"))
-          << "The ASan report doesn't appear to be symbolized:\n" << data;
-      ASSERT_TRUE(strstr(data.c_str(), strrchr(__FILE__, '\\')))
-          << "The stack trace doesn't have a correct filename:\n" << data;
-    } else {
-      LOG(WARNING) << "Pre-Vista versions are not supported.";
-    }
+    ASSERT_TRUE(
+        strstr(data.c_str(), "ERROR: AddressSanitizer: heap-buffer-overflow"))
+        << "There doesn't seem to be an ASan report:\n" << data;
+    ASSERT_TRUE(strstr(data.c_str(), "AddressSanitizerTests_Report"))
+        << "The ASan report doesn't appear to be symbolized:\n" << data;
+    std::string source_file_basename(__FILE__);
+    size_t last_slash = source_file_basename.find_last_of("/\\");
+    last_slash = last_slash == std::string::npos ? 0 : last_slash + 1;
+    ASSERT_TRUE(strstr(data.c_str(), &source_file_basename[last_slash]))
+        << "The stack trace doesn't have a correct filename:\n" << data;
   } else {
     LOG(WARNING) << "Not an AddressSanitizer build, skipping the run.";
   }
 }
 
-}
+}  // namespace sandbox

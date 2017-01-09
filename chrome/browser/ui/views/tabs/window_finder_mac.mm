@@ -4,11 +4,32 @@
 
 #include "chrome/browser/ui/views/tabs/window_finder.h"
 
-gfx::NativeWindow GetLocalProcessWindowAtPoint(
-    chrome::HostDesktopType host_desktop_type,
+#import <AppKit/AppKit.h>
+
+#include "ui/gfx/geometry/point.h"
+#import "ui/gfx/mac/coordinate_conversion.h"
+
+gfx::NativeWindow WindowFinder::GetLocalProcessWindowAtPoint(
     const gfx::Point& screen_point,
-    const std::set<gfx::NativeWindow>& ignore,
-    gfx::NativeWindow source) {
-  NOTIMPLEMENTED();
-  return NULL;
+    const std::set<gfx::NativeWindow>& ignore) {
+  const NSPoint ns_point = gfx::ScreenPointToNSPoint(screen_point);
+
+  // Note: [NSApp orderedWindows] doesn't include NSPanels.
+  for (NSWindow* window : [NSApp orderedWindows]) {
+    if (ignore.count(window))
+      continue;
+
+    if (![window isOnActiveSpace])
+      continue;
+
+    // NativeWidgetMac::Close() calls -orderOut: on NSWindows before actually
+    // closing them.
+    if (![window isVisible])
+      continue;
+
+    if (NSPointInRect(ns_point, [window frame]))
+      return window;
+  }
+
+  return nil;
 }

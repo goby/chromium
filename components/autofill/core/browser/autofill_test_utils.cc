@@ -4,21 +4,25 @@
 
 #include "components/autofill/core/browser/autofill_test_utils.h"
 
+#include <string>
+
 #include "base/guid.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/pref_service_factory.h"
-#include "base/prefs/testing_pref_store.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
+#include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
-#include "components/os_crypt/os_crypt.h"
+#include "components/os_crypt/os_crypt_mocker.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/pref_service_factory.h"
+#include "components/prefs/testing_pref_store.h"
 #include "components/signin/core/browser/account_fetcher_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/common/signin_pref_names.h"
@@ -28,26 +32,22 @@ using base::ASCIIToUTF16;
 namespace autofill {
 namespace test {
 
-namespace {
-
-const char kSettingsOrigin[] = "Chrome settings";
-
-}  // namespace
-
-scoped_ptr<PrefService> PrefServiceForTesting() {
+std::unique_ptr<PrefService> PrefServiceForTesting() {
   scoped_refptr<user_prefs::PrefRegistrySyncable> registry(
       new user_prefs::PrefRegistrySyncable());
   AutofillManager::RegisterProfilePrefs(registry.get());
 
-  // PDM depends on these prefs, which is normally registered in
+  // PDM depends on these prefs, which are normally registered in
   // SigninManagerFactory.
   registry->RegisterStringPref(::prefs::kGoogleServicesAccountId,
                                std::string());
-  registry->RegisterStringPref(::prefs::kGoogleServicesUsername,
+  registry->RegisterStringPref(::prefs::kGoogleServicesLastAccountId,
+                               std::string());
+  registry->RegisterStringPref(::prefs::kGoogleServicesLastUsername,
                                std::string());
   registry->RegisterStringPref(::prefs::kGoogleServicesUserAccountId,
                                std::string());
-  registry->RegisterStringPref(::prefs::kGoogleServicesLastUsername,
+  registry->RegisterStringPref(::prefs::kGoogleServicesUsername,
                                std::string());
 
   // PDM depends on these prefs, which are normally registered in
@@ -57,7 +57,7 @@ scoped_ptr<PrefService> PrefServiceForTesting() {
                                 AccountTrackerService::MIGRATION_NOT_STARTED);
   registry->RegisterInt64Pref(AccountFetcherService::kLastUpdatePref, 0);
 
-  base::PrefServiceFactory factory;
+  PrefServiceFactory factory;
   factory.set_user_prefs(make_scoped_refptr(new TestingPrefStore()));
   return factory.Create(registry.get());
 }
@@ -72,6 +72,33 @@ void CreateTestFormField(const char* label,
   field->value = ASCIIToUTF16(value);
   field->form_control_type = type;
   field->is_focusable = true;
+}
+
+void CreateTestSelectField(const char* label,
+                           const char* name,
+                           const char* value,
+                           const std::vector<const char*>& values,
+                           const std::vector<const char*>& contents,
+                           size_t select_size,
+                           FormFieldData* field) {
+  // Fill the base attributes.
+  CreateTestFormField(label, name, value, "select-one", field);
+
+  std::vector<base::string16> values16(select_size);
+  for (size_t i = 0; i < select_size; ++i)
+    values16[i] = base::UTF8ToUTF16(values[i]);
+
+  std::vector<base::string16> contents16(select_size);
+  for (size_t i = 0; i < select_size; ++i)
+    contents16[i] = base::UTF8ToUTF16(contents[i]);
+
+  field->option_values = values16;
+  field->option_contents = contents16;
+}
+
+void CreateTestSelectField(const std::vector<const char*>& values,
+                           FormFieldData* field) {
+  CreateTestSelectField("", "", "", values, values, values.size(), field);
 }
 
 void CreateTestAddressFormData(FormData* form) {
@@ -275,7 +302,7 @@ void SetProfileInfoWithGuid(AutofillProfile* profile,
 void SetCreditCardInfo(CreditCard* credit_card,
     const char* name_on_card, const char* card_number,
     const char* expiration_month, const char* expiration_year) {
-  check_and_set(credit_card, CREDIT_CARD_NAME, name_on_card);
+  check_and_set(credit_card, CREDIT_CARD_NAME_FULL, name_on_card);
   check_and_set(credit_card, CREDIT_CARD_NUMBER, card_number);
   check_and_set(credit_card, CREDIT_CARD_EXP_MONTH, expiration_month);
   check_and_set(credit_card, CREDIT_CARD_EXP_4_DIGIT_YEAR, expiration_year);
@@ -283,9 +310,11 @@ void SetCreditCardInfo(CreditCard* credit_card,
 
 void DisableSystemServices(PrefService* prefs) {
   // Use a mock Keychain rather than the OS one to store credit card data.
-#if defined(OS_MACOSX)
-  OSCrypt::UseMockKeychain(true);
-#endif  // defined(OS_MACOSX)
+  OSCryptMocker::SetUpWithSingleton();
+}
+
+void ReenableSystemServices() {
+  OSCryptMocker::TearDown();
 }
 
 void SetServerCreditCards(AutofillTable* table,
@@ -305,6 +334,36 @@ void SetServerCreditCards(AutofillTable* table,
 
     table->UnmaskServerCreditCard(card, card.number());
   }
+}
+
+void FillUploadField(AutofillUploadContents::Field* field,
+                     unsigned signature,
+                     const char* name,
+                     const char* control_type,
+                     const char* autocomplete,
+                     unsigned autofill_type,
+                     const char* css_classes) {
+  field->set_signature(signature);
+  if (name)
+    field->set_name(name);
+  if (control_type)
+    field->set_type(control_type);
+  if (autocomplete)
+    field->set_autocomplete(autocomplete);
+  field->set_autofill_type(autofill_type);
+  if (css_classes)
+    field->set_css_classes(css_classes);
+}
+
+void FillQueryField(AutofillQueryContents::Form::Field* field,
+                    unsigned signature,
+                    const char* name,
+                    const char* control_type) {
+  field->set_signature(signature);
+  if (name)
+    field->set_name(name);
+  if (control_type)
+    field->set_type(control_type);
 }
 
 }  // namespace test

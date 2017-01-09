@@ -5,11 +5,14 @@
 #ifndef EXTENSIONS_BROWSER_EXTENSION_HOST_H_
 #define EXTENSIONS_BROWSER_EXTENSION_HOST_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/timer/elapsed_timer.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -20,12 +23,9 @@
 #include "extensions/common/stack_frame.h"
 #include "extensions/common/view_type.h"
 
-class PrefsTabHelper;
-
 namespace content {
 class BrowserContext;
 class RenderProcessHost;
-class RenderWidgetHostView;
 class SiteInstance;
 }
 
@@ -34,7 +34,6 @@ class Extension;
 class ExtensionHostDelegate;
 class ExtensionHostObserver;
 class ExtensionHostQueue;
-class WindowController;
 
 // This class is the browser component of an extension component's RenderView.
 // It handles setting up the renderer process, if needed, with special
@@ -91,11 +90,11 @@ class ExtensionHost : public DeferredStartRenderHost,
 
   // Called by the ProcessManager when a network request is started by the
   // extension corresponding to this ExtensionHost.
-  void OnNetworkRequestStarted(uint64 request_id);
+  void OnNetworkRequestStarted(uint64_t request_id);
 
   // Called by the ProcessManager when a previously started network request is
   // finished.
-  void OnNetworkRequestDone(uint64 request_id);
+  void OnNetworkRequestDone(uint64_t request_id);
 
   // content::WebContentsObserver:
   bool OnMessageReceived(const IPC::Message& message,
@@ -162,7 +161,7 @@ class ExtensionHost : public DeferredStartRenderHost,
   void RecordStopLoadingUMA();
 
   // Delegate for functionality that cannot exist in the extensions module.
-  scoped_ptr<ExtensionHostDelegate> delegate_;
+  std::unique_ptr<ExtensionHostDelegate> delegate_;
 
   // The extension that we're hosting in this view.
   const Extension* extension_;
@@ -174,7 +173,7 @@ class ExtensionHost : public DeferredStartRenderHost,
   content::BrowserContext* browser_context_;
 
   // The host for our HTML content.
-  scoped_ptr<content::WebContents> host_contents_;
+  std::unique_ptr<content::WebContents> host_contents_;
 
   // A weak pointer to the current or pending RenderViewHost. We don't access
   // this through the host_contents because we want to deal with the pending
@@ -210,7 +209,7 @@ class ExtensionHost : public DeferredStartRenderHost,
 
   // Measures how long since the initial URL started loading. This timer is
   // started only once the ExtensionHost has exited the ExtensionHostQueue.
-  scoped_ptr<base::ElapsedTimer> load_start_;
+  std::unique_ptr<base::ElapsedTimer> load_start_;
 
   base::ObserverList<ExtensionHostObserver> observer_list_;
   base::ObserverList<DeferredStartRenderHostObserver>

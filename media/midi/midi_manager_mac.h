@@ -6,19 +6,19 @@
 #define MEDIA_MIDI_MIDI_MANAGER_MAC_H_
 
 #include <CoreMIDI/MIDIServices.h>
+#include <stdint.h>
 #include <map>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/threading/thread.h"
 #include "media/midi/midi_export.h"
 #include "media/midi/midi_manager.h"
 #include "media/midi/midi_port_info.h"
 
-namespace media {
 namespace midi {
 
 class MIDI_EXPORT MidiManagerMac final : public MidiManager {
@@ -30,8 +30,8 @@ class MIDI_EXPORT MidiManagerMac final : public MidiManager {
   void StartInitialization() override;
   void Finalize() override;
   void DispatchSendMidiData(MidiManagerClient* client,
-                            uint32 port_index,
-                            const std::vector<uint8>& data,
+                            uint32_t port_index,
+                            const std::vector<uint8_t>& data,
                             double timestamp) override;
 
  private:
@@ -61,18 +61,18 @@ class MIDI_EXPORT MidiManagerMac final : public MidiManager {
 
   // An internal callback that runs on MidiSendThread.
   void SendMidiData(MidiManagerClient* client,
-                    uint32 port_index,
-                    const std::vector<uint8>& data,
+                    uint32_t port_index,
+                    const std::vector<uint8_t>& data,
                     double timestamp);
 
   // CoreMIDI
   MIDIClientRef midi_client_;
   MIDIPortRef coremidi_input_;
   MIDIPortRef coremidi_output_;
-  std::vector<uint8> midi_buffer_;
+  std::vector<uint8_t> midi_buffer_;
 
   // Keeps track of the index (0-based) for each of our sources.
-  typedef std::map<MIDIEndpointRef, uint32> SourceMap;
+  typedef std::map<MIDIEndpointRef, uint32_t> SourceMap;
   SourceMap source_map_;
 
   // Keeps track of all destinations.
@@ -89,6 +89,5 @@ class MIDI_EXPORT MidiManagerMac final : public MidiManager {
 };
 
 }  // namespace midi
-}  // namespace media
 
 #endif  // MEDIA_MIDI_MIDI_MANAGER_MAC_H_

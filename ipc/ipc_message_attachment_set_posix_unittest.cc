@@ -7,9 +7,11 @@
 #include "ipc/ipc_message_attachment_set.h"
 
 #include <fcntl.h>
+#include <stddef.h>
 #include <unistd.h>
 
 #include "base/posix/eintr_wrapper.h"
+#include "build/build_config.h"
 #include "ipc/ipc_platform_file_attachment_posix.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -30,6 +32,12 @@ bool VerifyClosed(int fd) {
     return false;
   }
   return true;
+}
+
+int GetFdAt(MessageAttachmentSet* set, int id) {
+  return static_cast<internal::PlatformFileAttachment&>(
+             *set->GetAttachmentAt(id))
+      .TakePlatformFile();
 }
 
 // The MessageAttachmentSet will try and close some of the descriptor numbers
@@ -80,44 +88,6 @@ TEST(MessageAttachmentSet, MaxSize) {
   set->CommitAllDescriptors();
 }
 
-#if defined(OS_ANDROID)
-#define MAYBE_SetDescriptors DISABLED_SetDescriptors
-#else
-#define MAYBE_SetDescriptors SetDescriptors
-#endif
-TEST(MessageAttachmentSet, MAYBE_SetDescriptors) {
-  scoped_refptr<MessageAttachmentSet> set(new MessageAttachmentSet);
-
-  ASSERT_TRUE(set->empty());
-  set->AddDescriptorsToOwn(NULL, 0);
-  ASSERT_TRUE(set->empty());
-
-  const int fd = GetSafeFd();
-  static const int fds[] = {fd};
-  set->AddDescriptorsToOwn(fds, 1);
-  ASSERT_TRUE(!set->empty());
-  ASSERT_EQ(set->size(), 1u);
-
-  set->CommitAllDescriptors();
-
-  ASSERT_TRUE(VerifyClosed(fd));
-}
-
-TEST(MessageAttachmentSet, PeekDescriptors) {
-  scoped_refptr<MessageAttachmentSet> set(new MessageAttachmentSet);
-
-  set->PeekDescriptors(NULL);
-  ASSERT_TRUE(
-      set->AddAttachment(new internal::PlatformFileAttachment(kFDBase)));
-
-  int fds[1];
-  fds[0] = 0;
-  set->PeekDescriptors(fds);
-  ASSERT_EQ(fds[0], kFDBase);
-  set->CommitAllDescriptors();
-  ASSERT_TRUE(set->empty());
-}
-
 TEST(MessageAttachmentSet, WalkInOrder) {
   scoped_refptr<MessageAttachmentSet> set(new MessageAttachmentSet);
 
@@ -130,11 +100,9 @@ TEST(MessageAttachmentSet, WalkInOrder) {
   ASSERT_TRUE(
       set->AddAttachment(new internal::PlatformFileAttachment(kFDBase + 2)));
 
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(0)->TakePlatformFile(), kFDBase);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(1)->TakePlatformFile(),
-            kFDBase + 1);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(2)->TakePlatformFile(),
-            kFDBase + 2);
+  ASSERT_EQ(GetFdAt(set.get(), 0), kFDBase);
+  ASSERT_EQ(GetFdAt(set.get(), 1), kFDBase + 1);
+  ASSERT_EQ(GetFdAt(set.get(), 2), kFDBase + 2);
 
   set->CommitAllDescriptors();
 }
@@ -151,8 +119,8 @@ TEST(MessageAttachmentSet, WalkWrongOrder) {
   ASSERT_TRUE(
       set->AddAttachment(new internal::PlatformFileAttachment(kFDBase + 2)));
 
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(0)->TakePlatformFile(), kFDBase);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(2), nullptr);
+  ASSERT_EQ(GetFdAt(set.get(), 0), kFDBase);
+  ASSERT_FALSE(set->GetAttachmentAt(2));
 
   set->CommitAllDescriptors();
 }
@@ -169,21 +137,15 @@ TEST(MessageAttachmentSet, WalkCycle) {
   ASSERT_TRUE(
       set->AddAttachment(new internal::PlatformFileAttachment(kFDBase + 2)));
 
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(0)->TakePlatformFile(), kFDBase);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(1)->TakePlatformFile(),
-            kFDBase + 1);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(2)->TakePlatformFile(),
-            kFDBase + 2);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(0)->TakePlatformFile(), kFDBase);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(1)->TakePlatformFile(),
-            kFDBase + 1);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(2)->TakePlatformFile(),
-            kFDBase + 2);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(0)->TakePlatformFile(), kFDBase);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(1)->TakePlatformFile(),
-            kFDBase + 1);
-  ASSERT_EQ(set->GetNonBrokerableAttachmentAt(2)->TakePlatformFile(),
-            kFDBase + 2);
+  ASSERT_EQ(GetFdAt(set.get(), 0), kFDBase);
+  ASSERT_EQ(GetFdAt(set.get(), 1), kFDBase + 1);
+  ASSERT_EQ(GetFdAt(set.get(), 2), kFDBase + 2);
+  ASSERT_EQ(GetFdAt(set.get(), 0), kFDBase);
+  ASSERT_EQ(GetFdAt(set.get(), 1), kFDBase + 1);
+  ASSERT_EQ(GetFdAt(set.get(), 2), kFDBase + 2);
+  ASSERT_EQ(GetFdAt(set.get(), 0), kFDBase);
+  ASSERT_EQ(GetFdAt(set.get(), 1), kFDBase + 1);
+  ASSERT_EQ(GetFdAt(set.get(), 2), kFDBase + 2);
 
   set->CommitAllDescriptors();
 }

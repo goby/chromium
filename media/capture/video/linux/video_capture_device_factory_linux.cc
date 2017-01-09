@@ -6,16 +6,21 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#if defined(OS_OPENBSD)
-#include <sys/videoio.h>
-#else
-#include <linux/videodev2.h>
-#endif
+#include <stdint.h>
 #include <sys/ioctl.h>
 
 #include "base/files/file_enumerator.h"
 #include "base/files/scoped_file.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/strings/stringprintf.h"
+#include "build/build_config.h"
+
+#if defined(OS_OPENBSD)
+#include <sys/videoio.h>
+#else
+#include <linux/videodev2.h>
+#endif
+
 #if defined(OS_CHROMEOS)
 #include "media/capture/video/linux/video_capture_device_chromeos.h"
 #endif
@@ -23,37 +28,53 @@
 
 namespace media {
 
-static bool HasUsableFormats(int fd, uint32 capabilities) {
+// USB VID and PID are both 4 bytes long.
+static const size_t kVidPidSize = 4;
+
+// /sys/class/video4linux/video{N}/device is a symlink to the corresponding
+// USB device info directory.
+static const char kVidPathTemplate[] =
+    "/sys/class/video4linux/%s/device/../idVendor";
+static const char kPidPathTemplate[] =
+    "/sys/class/video4linux/%s/device/../idProduct";
+
+static bool ReadIdFile(const std::string& path, std::string* id) {
+  char id_buf[kVidPidSize];
+  FILE* file = fopen(path.c_str(), "rb");
+  if (!file)
+    return false;
+  const bool success = fread(id_buf, kVidPidSize, 1, file) == 1;
+  fclose(file);
+  if (!success)
+    return false;
+  id->append(id_buf, kVidPidSize);
+  return true;
+}
+
+static bool HasUsableFormats(int fd, uint32_t capabilities) {
+  if (!(capabilities & V4L2_CAP_VIDEO_CAPTURE))
+    return false;
+
   const std::list<uint32_t>& usable_fourccs =
       VideoCaptureDeviceLinux::GetListOfUsableFourCCs(false);
-
-  static const struct {
-    int capability;
-    v4l2_buf_type buf_type;
-  } kCapabilityAndBufferTypes[] = {
-      {V4L2_CAP_VIDEO_CAPTURE, V4L2_BUF_TYPE_VIDEO_CAPTURE},
-      {V4L2_CAP_VIDEO_CAPTURE_MPLANE, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE}};
-
-  for (const auto& capability_and_buffer_type : kCapabilityAndBufferTypes) {
-    v4l2_fmtdesc fmtdesc = {};
-    if (capabilities & capability_and_buffer_type.capability) {
-      fmtdesc.type = capability_and_buffer_type.buf_type;
-      for (; HANDLE_EINTR(ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc)) == 0;
-           ++fmtdesc.index) {
-        if (std::find(usable_fourccs.begin(), usable_fourccs.end(),
-                      fmtdesc.pixelformat) != usable_fourccs.end())
-          return true;
-      }
+  v4l2_fmtdesc fmtdesc = {};
+  fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  for (; HANDLE_EINTR(ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc)) == 0;
+       ++fmtdesc.index) {
+    if (std::find(usable_fourccs.begin(), usable_fourccs.end(),
+                  fmtdesc.pixelformat) != usable_fourccs.end()) {
+      return true;
     }
   }
+
   DLOG(ERROR) << "No usable formats found";
   return false;
 }
 
 static std::list<float> GetFrameRateList(int fd,
-                                         uint32 fourcc,
-                                         uint32 width,
-                                         uint32 height) {
+                                         uint32_t fourcc,
+                                         uint32_t width,
+                                         uint32_t height) {
   std::list<float> frame_rates;
 
   v4l2_frmivalenum frame_interval = {};
@@ -85,10 +106,9 @@ static std::list<float> GetFrameRateList(int fd,
 
 static void GetSupportedFormatsForV4L2BufferType(
     int fd,
-    v4l2_buf_type buf_type,
     media::VideoCaptureFormats* supported_formats) {
   v4l2_fmtdesc v4l2_format = {};
-  v4l2_format.type = buf_type;
+  v4l2_format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   for (; HANDLE_EINTR(ioctl(fd, VIDIOC_ENUM_FMT, &v4l2_format)) == 0;
        ++v4l2_format.index) {
     VideoCaptureFormat supported_format;
@@ -132,34 +152,37 @@ VideoCaptureDeviceFactoryLinux::VideoCaptureDeviceFactoryLinux(
 VideoCaptureDeviceFactoryLinux::~VideoCaptureDeviceFactoryLinux() {
 }
 
-scoped_ptr<VideoCaptureDevice> VideoCaptureDeviceFactoryLinux::Create(
-    const VideoCaptureDevice::Name& device_name) {
+std::unique_ptr<VideoCaptureDevice>
+VideoCaptureDeviceFactoryLinux::CreateDevice(
+    const VideoCaptureDeviceDescriptor& device_descriptor) {
   DCHECK(thread_checker_.CalledOnValidThread());
 #if defined(OS_CHROMEOS)
   VideoCaptureDeviceChromeOS* self =
-      new VideoCaptureDeviceChromeOS(ui_task_runner_, device_name);
+      new VideoCaptureDeviceChromeOS(ui_task_runner_, device_descriptor);
 #else
-  VideoCaptureDeviceLinux* self = new VideoCaptureDeviceLinux(device_name);
+  VideoCaptureDeviceLinux* self =
+      new VideoCaptureDeviceLinux(device_descriptor);
 #endif
   if (!self)
-    return scoped_ptr<VideoCaptureDevice>();
+    return std::unique_ptr<VideoCaptureDevice>();
   // Test opening the device driver. This is to make sure it is available.
   // We will reopen it again in our worker thread when someone
   // allocates the camera.
-  base::ScopedFD fd(HANDLE_EINTR(open(device_name.id().c_str(), O_RDONLY)));
+  base::ScopedFD fd(
+      HANDLE_EINTR(open(device_descriptor.device_id.c_str(), O_RDONLY)));
   if (!fd.is_valid()) {
     DLOG(ERROR) << "Cannot open device";
     delete self;
-    return scoped_ptr<VideoCaptureDevice>();
+    return std::unique_ptr<VideoCaptureDevice>();
   }
 
-  return scoped_ptr<VideoCaptureDevice>(self);
+  return std::unique_ptr<VideoCaptureDevice>(self);
 }
 
-void VideoCaptureDeviceFactoryLinux::GetDeviceNames(
-    VideoCaptureDevice::Names* const device_names) {
+void VideoCaptureDeviceFactoryLinux::GetDeviceDescriptors(
+    VideoCaptureDeviceDescriptors* device_descriptors) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(device_names->empty());
+  DCHECK(device_descriptors->empty());
   const base::FilePath path("/dev/");
   base::FileEnumerator enumerator(path, false, base::FileEnumerator::FILES,
                                   "video*");
@@ -178,40 +201,53 @@ void VideoCaptureDeviceFactoryLinux::GetDeviceNames(
     // http://crbug.com/139356.
     v4l2_capability cap;
     if ((HANDLE_EINTR(ioctl(fd.get(), VIDIOC_QUERYCAP, &cap)) == 0) &&
-        ((cap.capabilities & V4L2_CAP_VIDEO_CAPTURE ||
-          cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE) &&
-         !(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT) &&
-         !(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT_MPLANE)) &&
+        (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE &&
+         !(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT)) &&
         HasUsableFormats(fd.get(), cap.capabilities)) {
-      device_names->push_back(VideoCaptureDevice::Name(
-          reinterpret_cast<char*>(cap.card), unique_id,
-          (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE)
-              ? VideoCaptureDevice::Name::V4L2_MULTI_PLANE
-              : VideoCaptureDevice::Name::V4L2_SINGLE_PLANE));
+      const std::string model_id = GetDeviceModelId(unique_id);
+      device_descriptors->emplace_back(
+          reinterpret_cast<char*>(cap.card), unique_id, model_id,
+          VideoCaptureApi::LINUX_V4L2_SINGLE_PLANE);
     }
   }
 }
 
-void VideoCaptureDeviceFactoryLinux::GetDeviceSupportedFormats(
-    const VideoCaptureDevice::Name& device,
+void VideoCaptureDeviceFactoryLinux::GetSupportedFormats(
+    const VideoCaptureDeviceDescriptor& device,
     VideoCaptureFormats* supported_formats) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (device.id().empty())
+  if (device.device_id.empty())
     return;
-  base::ScopedFD fd(HANDLE_EINTR(open(device.id().c_str(), O_RDONLY)));
+  base::ScopedFD fd(HANDLE_EINTR(open(device.device_id.c_str(), O_RDONLY)));
   if (!fd.is_valid())  // Failed to open this device.
     return;
   supported_formats->clear();
 
-  DCHECK_NE(device.capture_api_type(),
-            VideoCaptureDevice::Name::API_TYPE_UNKNOWN);
-  const v4l2_buf_type buf_type =
-      (device.capture_api_type() == VideoCaptureDevice::Name::V4L2_MULTI_PLANE)
-          ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE
-          : V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  GetSupportedFormatsForV4L2BufferType(fd.get(), buf_type, supported_formats);
+  DCHECK_NE(device.capture_api, VideoCaptureApi::UNKNOWN);
+  GetSupportedFormatsForV4L2BufferType(fd.get(), supported_formats);
+}
 
-  return;
+std::string VideoCaptureDeviceFactoryLinux::GetDeviceModelId(
+    const std::string& device_id) {
+  // |unique_id| is of the form "/dev/video2".  |file_name| is "video2".
+  const std::string dev_dir = "/dev/";
+  DCHECK_EQ(0, device_id.compare(0, dev_dir.length(), dev_dir));
+  const std::string file_name =
+      device_id.substr(dev_dir.length(), device_id.length());
+
+  const std::string vidPath =
+      base::StringPrintf(kVidPathTemplate, file_name.c_str());
+  const std::string pidPath =
+      base::StringPrintf(kPidPathTemplate, file_name.c_str());
+
+  std::string usb_id;
+  if (!ReadIdFile(vidPath, &usb_id))
+    return "";
+  usb_id.append(":");
+  if (!ReadIdFile(pidPath, &usb_id))
+    return "";
+
+  return usb_id;
 }
 
 // static

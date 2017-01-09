@@ -15,7 +15,7 @@ function test()
     function testLoadForURL(url, headers, next)
     {
         InspectorTest.addResult("Loading resource from " + url);
-        WebInspector.ResourceLoader.load(url, headers, callback);
+        Host.ResourceLoader.load(url, headers, callback);
 
         function callback(statusCode, headers, content)
         {
@@ -30,7 +30,7 @@ function test()
             InspectorTest.addResult("Logged headers: " + headersArray.join(", "));
             InspectorTest.addResult("Content: \"" + content + "\"");
 
-            InspectorTest.runAfterPendingDispatches(next);
+            InspectorTest.deprecatedRunAfterPendingDispatches(next);
         }
     }
 

@@ -4,6 +4,9 @@
 
 #include "ui/events/ozone/evdev/event_converter_test_util.h"
 
+#include <stdint.h>
+
+#include "base/memory/ptr_util.h"
 #include "ui/events/ozone/device/device_manager.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 #include "ui/events/ozone/evdev/event_factory_evdev.h"
@@ -60,7 +63,7 @@ class TestDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
   }
 
   void DispatchKeyboardDevicesUpdated(
-      const std::vector<KeyboardDevice>& devices) override {
+      const std::vector<InputDevice>& devices) override {
     event_factory_evdev_->DispatchKeyboardDevicesUpdated(devices);
   }
   void DispatchTouchscreenDevicesUpdated(
@@ -77,6 +80,9 @@ class TestDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
   }
   void DispatchDeviceListsComplete() override {
     event_factory_evdev_->DispatchDeviceListsComplete();
+  }
+  void DispatchStylusStateChanged(StylusState stylus_state) override {
+    event_factory_evdev_->DispatchStylusStateChanged(stylus_state);
   }
 
  private:
@@ -105,22 +111,22 @@ class TestEventFactoryEvdev : public EventFactoryEvdev {
 
 }  // namespace
 
-scoped_ptr<DeviceEventDispatcherEvdev> CreateDeviceEventDispatcherEvdevForTest(
-    EventFactoryEvdev* event_factory) {
-  return make_scoped_ptr(new TestDeviceEventDispatcherEvdev(event_factory));
+std::unique_ptr<DeviceEventDispatcherEvdev>
+CreateDeviceEventDispatcherEvdevForTest(EventFactoryEvdev* event_factory) {
+  return base::MakeUnique<TestDeviceEventDispatcherEvdev>(event_factory);
 }
 
-scoped_ptr<DeviceManager> CreateDeviceManagerForTest() {
-  return make_scoped_ptr(new TestDeviceManager());
+std::unique_ptr<DeviceManager> CreateDeviceManagerForTest() {
+  return base::MakeUnique<TestDeviceManager>();
 }
 
-scoped_ptr<EventFactoryEvdev> CreateEventFactoryEvdevForTest(
+std::unique_ptr<EventFactoryEvdev> CreateEventFactoryEvdevForTest(
     CursorDelegateEvdev* cursor,
     DeviceManager* device_manager,
     KeyboardLayoutEngine* keyboard_layout_engine,
     const EventDispatchCallback& callback) {
-  return make_scoped_ptr(new TestEventFactoryEvdev(
-      cursor, device_manager, keyboard_layout_engine, callback));
+  return base::MakeUnique<TestEventFactoryEvdev>(
+      cursor, device_manager, keyboard_layout_engine, callback);
 }
 
 }  // namespace ui

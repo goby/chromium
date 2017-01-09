@@ -6,6 +6,7 @@
 #define NET_CERT_MOCK_CERT_VERIFIER_H_
 
 #include <list>
+#include <memory>
 
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_result.h"
@@ -25,15 +26,12 @@ class MockCertVerifier : public CertVerifier {
   ~MockCertVerifier() override;
 
   // CertVerifier implementation
-  int Verify(X509Certificate* cert,
-             const std::string& hostname,
-             const std::string& ocsp_response,
-             int flags,
+  int Verify(const RequestParams& params,
              CRLSet* crl_set,
              CertVerifyResult* verify_result,
              const CompletionCallback& callback,
-             scoped_ptr<Request>* out_req,
-             const BoundNetLog& net_log) override;
+             std::unique_ptr<Request>* out_req,
+             const NetLogWithSource& net_log) override;
 
   // Sets the default return value for Verify() for certificates/hosts that do
   // not have explicit results added via the AddResult*() methods.
@@ -45,13 +43,13 @@ class MockCertVerifier : public CertVerifier {
   // copying |verify_result| into the verified result.
   // Note: Only the primary certificate of |cert| is checked. Any intermediate
   // certificates will be ignored.
-  void AddResultForCert(X509Certificate* cert,
+  void AddResultForCert(scoped_refptr<X509Certificate> cert,
                         const CertVerifyResult& verify_result,
                         int rv);
 
   // Same as AddResultForCert(), but further restricts it to only return for
   // hostnames that match |host_pattern|.
-  void AddResultForCertAndHost(X509Certificate* cert,
+  void AddResultForCertAndHost(scoped_refptr<X509Certificate> cert,
                                const std::string& host_pattern,
                                const CertVerifyResult& verify_result,
                                int rv);

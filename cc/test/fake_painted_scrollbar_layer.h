@@ -5,7 +5,10 @@
 #ifndef CC_TEST_FAKE_PAINTED_SCROLLBAR_LAYER_H_
 #define CC_TEST_FAKE_PAINTED_SCROLLBAR_LAYER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "cc/layers/painted_scrollbar_layer.h"
 #include "cc/test/fake_scrollbar.h"
 
@@ -16,9 +19,15 @@ namespace cc {
 class FakePaintedScrollbarLayer : public PaintedScrollbarLayer {
  public:
   static scoped_refptr<FakePaintedScrollbarLayer> Create(
-      const LayerSettings& settings,
       bool paint_during_update,
       bool has_thumb,
+      int scrolling_layer_id);
+  static scoped_refptr<FakePaintedScrollbarLayer> Create(
+      bool paint_during_update,
+      bool has_thumb,
+      ScrollbarOrientation orientation,
+      bool is_left_side_vertical_scrollbar,
+      bool is_overlay,
       int scrolling_layer_id);
   int update_count() const { return update_count_; }
   void reset_update_count() { update_count_ = 0; }
@@ -27,7 +36,7 @@ class FakePaintedScrollbarLayer : public PaintedScrollbarLayer {
 
   void PushPropertiesTo(LayerImpl* layer) override;
 
-  scoped_ptr<base::AutoReset<bool>> IgnoreSetNeedsCommit();
+  std::unique_ptr<base::AutoReset<bool>> IgnoreSetNeedsCommit();
 
   size_t push_properties_count() const { return push_properties_count_; }
   void reset_push_properties_count() { push_properties_count_ = 0; }
@@ -46,8 +55,7 @@ class FakePaintedScrollbarLayer : public PaintedScrollbarLayer {
   using PaintedScrollbarLayer::UpdateThumbAndTrackGeometry;
 
  private:
-  FakePaintedScrollbarLayer(const LayerSettings& settings,
-                            FakeScrollbar* fake_scrollbar,
+  FakePaintedScrollbarLayer(FakeScrollbar* fake_scrollbar,
                             int scrolling_layer_id);
   ~FakePaintedScrollbarLayer() override;
 

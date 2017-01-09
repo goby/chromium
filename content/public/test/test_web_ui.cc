@@ -35,10 +35,6 @@ const base::string16& TestWebUI::GetOverriddenTitle() const {
   return temp_string_;
 }
 
-ui::PageTransition TestWebUI::GetLinkTransitionType() const {
-  return ui::PAGE_TRANSITION_LINK;
-}
-
 int TestWebUI::GetBindings() const {
   return 0;
 }
@@ -51,43 +47,58 @@ void TestWebUI::AddMessageHandler(WebUIMessageHandler* handler) {
   handlers_.push_back(handler);
 }
 
-void TestWebUI::CallJavascriptFunction(const std::string& function_name) {
+bool TestWebUI::CanCallJavascript() {
+  return true;
+}
+
+void TestWebUI::CallJavascriptFunctionUnsafe(const std::string& function_name) {
   call_data_.push_back(new CallData(function_name));
 }
 
-void TestWebUI::CallJavascriptFunction(const std::string& function_name,
-                                       const base::Value& arg1) {
+void TestWebUI::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg1) {
   call_data_.push_back(new CallData(function_name));
-  call_data_.back()->TakeAsArg1(arg1.DeepCopy());
+  call_data_.back()->TakeAsArg1(arg1.CreateDeepCopy());
 }
 
-void TestWebUI::CallJavascriptFunction(const std::string& function_name,
-                                       const base::Value& arg1,
-                                       const base::Value& arg2) {
+void TestWebUI::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg1,
+                                             const base::Value& arg2) {
   call_data_.push_back(new CallData(function_name));
-  call_data_.back()->TakeAsArg1(arg1.DeepCopy());
-  call_data_.back()->TakeAsArg2(arg2.DeepCopy());
+  call_data_.back()->TakeAsArg1(arg1.CreateDeepCopy());
+  call_data_.back()->TakeAsArg2(arg2.CreateDeepCopy());
 }
 
-void TestWebUI::CallJavascriptFunction(const std::string& function_name,
-                                       const base::Value& arg1,
-                                       const base::Value& arg2,
-                                       const base::Value& arg3) {
-  NOTREACHED();
+void TestWebUI::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg1,
+                                             const base::Value& arg2,
+                                             const base::Value& arg3) {
+  call_data_.push_back(new CallData(function_name));
+  call_data_.back()->TakeAsArg1(arg1.CreateDeepCopy());
+  call_data_.back()->TakeAsArg2(arg2.CreateDeepCopy());
+  call_data_.back()->TakeAsArg3(arg3.CreateDeepCopy());
 }
 
-void TestWebUI::CallJavascriptFunction(const std::string& function_name,
-                                       const base::Value& arg1,
-                                       const base::Value& arg2,
-                                       const base::Value& arg3,
-                                       const base::Value& arg4) {
-  NOTREACHED();
+void TestWebUI::CallJavascriptFunctionUnsafe(const std::string& function_name,
+                                             const base::Value& arg1,
+                                             const base::Value& arg2,
+                                             const base::Value& arg3,
+                                             const base::Value& arg4) {
+  call_data_.push_back(new CallData(function_name));
+  call_data_.back()->TakeAsArg1(arg1.CreateDeepCopy());
+  call_data_.back()->TakeAsArg2(arg2.CreateDeepCopy());
+  call_data_.back()->TakeAsArg3(arg3.CreateDeepCopy());
+  call_data_.back()->TakeAsArg4(arg4.CreateDeepCopy());
 }
 
-void TestWebUI::CallJavascriptFunction(
+void TestWebUI::CallJavascriptFunctionUnsafe(
     const std::string& function_name,
     const std::vector<const base::Value*>& args) {
   NOTREACHED();
+}
+
+ScopedVector<WebUIMessageHandler>* TestWebUI::GetHandlersForTesting() {
+  return &handlers_;
 }
 
 TestWebUI::CallData::CallData(const std::string& function_name)
@@ -97,12 +108,20 @@ TestWebUI::CallData::CallData(const std::string& function_name)
 TestWebUI::CallData::~CallData() {
 }
 
-void TestWebUI::CallData::TakeAsArg1(base::Value* arg) {
-  arg1_.reset(arg);
+void TestWebUI::CallData::TakeAsArg1(std::unique_ptr<base::Value> arg) {
+  arg1_ = std::move(arg);
 }
 
-void TestWebUI::CallData::TakeAsArg2(base::Value* arg) {
-  arg2_.reset(arg);
+void TestWebUI::CallData::TakeAsArg2(std::unique_ptr<base::Value> arg) {
+  arg2_ = std::move(arg);
+}
+
+void TestWebUI::CallData::TakeAsArg3(std::unique_ptr<base::Value> arg) {
+  arg3_ = std::move(arg);
+}
+
+void TestWebUI::CallData::TakeAsArg4(std::unique_ptr<base::Value> arg) {
+  arg4_ = std::move(arg);
 }
 
 }  // namespace content

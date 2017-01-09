@@ -4,16 +4,17 @@
 
 #include "components/dom_distiller/content/renderer/distiller_page_notifier_service_impl.h"
 
+#include <utility>
+
 #include "components/dom_distiller/content/renderer/distiller_js_render_frame_observer.h"
 #include "components/dom_distiller/content/renderer/distiller_native_javascript.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace dom_distiller {
 
 DistillerPageNotifierServiceImpl::DistillerPageNotifierServiceImpl(
-    DistillerJsRenderFrameObserver* observer,
-    mojo::InterfaceRequest<DistillerPageNotifierService> request)
-    : binding_(this, request.Pass()),
-      distiller_js_observer_(observer) {}
+    DistillerJsRenderFrameObserver* observer)
+    : distiller_js_observer_(observer) {}
 
 void DistillerPageNotifierServiceImpl::NotifyIsDistillerPage() {
   // TODO(mdjones): Send some form of unique ID so this call knows

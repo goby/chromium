@@ -28,46 +28,49 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/transforms/InterpolatedTransformOperation.h"
 
 #include "platform/transforms/IdentityTransformOperation.h"
 
 namespace blink {
 
-bool InterpolatedTransformOperation::operator==(const TransformOperation& o) const
-{
-    if (!isSameType(o))
-        return false;
-    const InterpolatedTransformOperation* t = static_cast<const InterpolatedTransformOperation*>(&o);
-    return progress == t->progress && from == t->from && to == t->to;
+bool InterpolatedTransformOperation::operator==(
+    const TransformOperation& o) const {
+  if (!isSameType(o))
+    return false;
+  const InterpolatedTransformOperation* t =
+      static_cast<const InterpolatedTransformOperation*>(&o);
+  return progress == t->progress && from == t->from && to == t->to;
 }
 
-void InterpolatedTransformOperation::apply(TransformationMatrix& transform, const FloatSize& borderBoxSize) const
-{
-    TransformationMatrix fromTransform;
-    TransformationMatrix toTransform;
-    from.apply(borderBoxSize, fromTransform);
-    to.apply(borderBoxSize, toTransform);
+void InterpolatedTransformOperation::apply(
+    TransformationMatrix& transform,
+    const FloatSize& borderBoxSize) const {
+  TransformationMatrix fromTransform;
+  TransformationMatrix toTransform;
+  from.apply(borderBoxSize, fromTransform);
+  to.apply(borderBoxSize, toTransform);
 
-    toTransform.blend(fromTransform, progress);
-    transform.multiply(toTransform);
+  toTransform.blend(fromTransform, progress);
+  transform.multiply(toTransform);
 }
 
-PassRefPtr<TransformOperation> InterpolatedTransformOperation::blend(const TransformOperation* from, double progress, bool blendToIdentity)
-{
-    if (from && !from->isSameType(*this))
-        return this;
+PassRefPtr<TransformOperation> InterpolatedTransformOperation::blend(
+    const TransformOperation* from,
+    double progress,
+    bool blendToIdentity) {
+  if (from && !from->isSameType(*this))
+    return this;
 
-    TransformOperations thisOperations;
-    thisOperations.operations().append(this);
-    TransformOperations fromOperations;
-    if (blendToIdentity)
-        fromOperations.operations().append(IdentityTransformOperation::create());
-    else
-        fromOperations.operations().append(const_cast<TransformOperation*>(from));
-    return InterpolatedTransformOperation::create(thisOperations, fromOperations, progress);
+  TransformOperations thisOperations;
+  thisOperations.operations().append(this);
+  TransformOperations fromOperations;
+  if (blendToIdentity)
+    fromOperations.operations().append(IdentityTransformOperation::create());
+  else
+    fromOperations.operations().append(const_cast<TransformOperation*>(from));
+  return InterpolatedTransformOperation::create(thisOperations, fromOperations,
+                                                progress);
 }
 
-} // namespace blink
-
+}  // namespace blink

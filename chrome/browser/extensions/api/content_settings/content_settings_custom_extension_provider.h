@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/extensions/api/content_settings/content_settings_store.h"
 #include "components/content_settings/core/browser/content_settings_observable_provider.h"
@@ -24,7 +25,7 @@ class CustomExtensionProvider : public ObservableProvider,
   ~CustomExtensionProvider() override;
 
   // ProviderInterface methods:
-  scoped_ptr<RuleIterator> GetRuleIterator(
+  std::unique_ptr<RuleIterator> GetRuleIterator(
       ContentSettingsType content_type,
       const ResourceIdentifier& resource_identifier,
       bool incognito) const override;

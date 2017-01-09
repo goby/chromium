@@ -29,43 +29,47 @@
 #include "core/dom/NodeFilter.h"
 #include "core/dom/NodeIteratorBase.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
 class ExceptionState;
 
-class TreeWalker final : public RefCountedWillBeGarbageCollected<TreeWalker>, public ScriptWrappable, public NodeIteratorBase {
-    DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(TreeWalker);
-public:
-    static PassRefPtrWillBeRawPtr<TreeWalker> create(PassRefPtrWillBeRawPtr<Node> rootNode, unsigned whatToShow, PassRefPtrWillBeRawPtr<NodeFilter> filter)
-    {
-        return adoptRefWillBeNoop(new TreeWalker(rootNode, whatToShow, filter));
-    }
+class TreeWalker final : public GarbageCollected<TreeWalker>,
+                         public ScriptWrappable,
+                         public NodeIteratorBase {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(TreeWalker);
 
-    Node* currentNode() const { return m_current.get(); }
-    void setCurrentNode(PassRefPtrWillBeRawPtr<Node>);
+ public:
+  static TreeWalker* create(Node* rootNode,
+                            unsigned whatToShow,
+                            NodeFilter* filter) {
+    return new TreeWalker(rootNode, whatToShow, filter);
+  }
 
-    Node* parentNode(ExceptionState&);
-    Node* firstChild(ExceptionState&);
-    Node* lastChild(ExceptionState&);
-    Node* previousSibling(ExceptionState&);
-    Node* nextSibling(ExceptionState&);
-    Node* previousNode(ExceptionState&);
-    Node* nextNode(ExceptionState&);
+  Node* currentNode() const { return m_current.get(); }
+  void setCurrentNode(Node*);
 
-    DECLARE_TRACE();
+  Node* parentNode(ExceptionState&);
+  Node* firstChild(ExceptionState&);
+  Node* lastChild(ExceptionState&);
+  Node* previousSibling(ExceptionState&);
+  Node* nextSibling(ExceptionState&);
+  Node* previousNode(ExceptionState&);
+  Node* nextNode(ExceptionState&);
 
-private:
-    TreeWalker(PassRefPtrWillBeRawPtr<Node>, unsigned whatToShow, PassRefPtrWillBeRawPtr<NodeFilter>);
+  DECLARE_TRACE();
 
-    Node* setCurrent(PassRefPtrWillBeRawPtr<Node>);
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
-    RefPtrWillBeMember<Node> m_current;
+ private:
+  TreeWalker(Node*, unsigned whatToShow, NodeFilter*);
+
+  Node* setCurrent(Node*);
+
+  Member<Node> m_current;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // TreeWalker_h
+#endif  // TreeWalker_h

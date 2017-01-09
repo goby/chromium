@@ -5,44 +5,46 @@
 #include "printing/printing_context_win.h"
 
 #include <algorithm>
+#include <vector>
 
 #include "base/bind.h"
+#include "base/memory/free_deleter.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "printing/backend/print_backend.h"
 #include "printing/backend/win_helper.h"
+#include "printing/features/features.h"
 #include "printing/print_settings_initializer_win.h"
 #include "printing/printed_document.h"
 #include "printing/printing_context_system_dialog_win.h"
 #include "printing/printing_utils.h"
 #include "printing/units.h"
 #include "skia/ext/skia_utils_win.h"
-#include "ui/aura/remote_window_tree_host_win.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
 
 namespace printing {
 
 namespace {
 
-void AssingResult(PrintingContext::Result* out, PrintingContext::Result in) {
+void AssignResult(PrintingContext::Result* out, PrintingContext::Result in) {
   *out = in;
 }
 
 }  // namespace
 
 // static
-scoped_ptr<PrintingContext> PrintingContext::Create(Delegate* delegate) {
-#if defined(ENABLE_BASIC_PRINTING)
-  return make_scoped_ptr<PrintingContext>(
-      new PrintingContextSytemDialogWin(delegate));
-#else   // ENABLE_BASIC_PRINTING
-  return make_scoped_ptr<PrintingContext>(new PrintingContextWin(delegate));
-#endif  // EENABLE_BASIC_PRINTING
+std::unique_ptr<PrintingContext> PrintingContext::Create(Delegate* delegate) {
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
+  return base::WrapUnique(new PrintingContextSystemDialogWin(delegate));
+#else
+  return base::WrapUnique(new PrintingContextWin(delegate));
+#endif
 }
 
 PrintingContextWin::PrintingContextWin(Delegate* delegate)
-    : PrintingContext(delegate), context_(NULL) {
-}
+    : PrintingContext(delegate), context_(nullptr) {}
 
 PrintingContextWin::~PrintingContextWin() {
   ReleaseContext();
@@ -59,14 +61,14 @@ void PrintingContextWin::AskUserForSettings(
 PrintingContext::Result PrintingContextWin::UseDefaultSettings() {
   DCHECK(!in_print_job_);
 
-  scoped_refptr<PrintBackend> backend = PrintBackend::CreateInstance(NULL);
+  scoped_refptr<PrintBackend> backend = PrintBackend::CreateInstance(nullptr);
   base::string16 default_printer =
       base::UTF8ToWide(backend->GetDefaultPrinterName());
   if (!default_printer.empty()) {
     ScopedPrinterHandle printer;
     if (printer.OpenPrinter(default_printer.c_str())) {
-      scoped_ptr<DEVMODE, base::FreeDeleter> dev_mode =
-          CreateDevMode(printer.Get(), NULL);
+      std::unique_ptr<DEVMODE, base::FreeDeleter> dev_mode =
+          CreateDevMode(printer.Get(), nullptr);
       if (InitializeSettings(default_printer, dev_mode.get()) == OK)
         return OK;
     }
@@ -77,26 +79,25 @@ PrintingContext::Result PrintingContextWin::UseDefaultSettings() {
   // No default printer configured, do we have any printers at all?
   DWORD bytes_needed = 0;
   DWORD count_returned = 0;
-  (void)::EnumPrinters(PRINTER_ENUM_LOCAL|PRINTER_ENUM_CONNECTIONS,
-                       NULL, 2, NULL, 0, &bytes_needed, &count_returned);
+  (void)::EnumPrinters(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, nullptr,
+                       2, nullptr, 0, &bytes_needed, &count_returned);
   if (bytes_needed) {
     DCHECK_GE(bytes_needed, count_returned * sizeof(PRINTER_INFO_2));
-    scoped_ptr<BYTE[]> printer_info_buffer(new BYTE[bytes_needed]);
-    BOOL ret = ::EnumPrinters(PRINTER_ENUM_LOCAL|PRINTER_ENUM_CONNECTIONS,
-                              NULL, 2, printer_info_buffer.get(),
-                              bytes_needed, &bytes_needed,
-                              &count_returned);
+    std::vector<BYTE> printer_info_buffer(bytes_needed);
+    BOOL ret = ::EnumPrinters(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS,
+                              nullptr, 2, printer_info_buffer.data(),
+                              bytes_needed, &bytes_needed, &count_returned);
     if (ret && count_returned) {  // have printers
       // Open the first successfully found printer.
       const PRINTER_INFO_2* info_2 =
-          reinterpret_cast<PRINTER_INFO_2*>(printer_info_buffer.get());
+          reinterpret_cast<PRINTER_INFO_2*>(printer_info_buffer.data());
       const PRINTER_INFO_2* info_2_end = info_2 + count_returned;
       for (; info_2 < info_2_end; ++info_2) {
         ScopedPrinterHandle printer;
         if (!printer.OpenPrinter(info_2->pPrinterName))
           continue;
-        scoped_ptr<DEVMODE, base::FreeDeleter> dev_mode =
-            CreateDevMode(printer.Get(), NULL);
+        std::unique_ptr<DEVMODE, base::FreeDeleter> dev_mode =
+            CreateDevMode(printer.Get(), nullptr);
         if (InitializeSettings(info_2->pPrinterName, dev_mode.get()) == OK)
           return OK;
       }
@@ -151,7 +152,7 @@ PrintingContext::Result PrintingContextWin::UpdatePrinterSettings(
 
   // Make printer changes local to Chrome.
   // See MSDN documentation regarding DocumentProperties.
-  scoped_ptr<DEVMODE, base::FreeDeleter> scoped_dev_mode =
+  std::unique_ptr<DEVMODE, base::FreeDeleter> scoped_dev_mode =
       CreateDevModeWithColor(printer.Get(), settings_.device_name(),
                              settings_.color() != GRAY);
   if (!scoped_dev_mode)
@@ -208,16 +209,15 @@ PrintingContext::Result PrintingContextWin::UpdatePrinterSettings(
   if (show_system_dialog) {
     PrintingContext::Result result = PrintingContext::FAILED;
     AskUserForSettings(page_count, false, false,
-                       base::Bind(&AssingResult, &result));
+                       base::Bind(&AssignResult, &result));
     return result;
-  } else {
-    scoped_dev_mode = CreateDevMode(printer.Get(), scoped_dev_mode.get());
   }
   // Set printer then refresh printer settings.
+  scoped_dev_mode = CreateDevMode(printer.Get(), scoped_dev_mode.get());
   return InitializeSettings(settings_.device_name(), scoped_dev_mode.get());
 }
 
-PrintingContext::Result PrintingContextWin::InitWithSettings(
+PrintingContext::Result PrintingContextWin::InitWithSettingsForTest(
     const PrintSettings& settings) {
   DCHECK(!in_print_job_);
 
@@ -228,8 +228,8 @@ PrintingContext::Result PrintingContextWin::InitWithSettings(
   if (!printer.OpenPrinter(settings_.device_name().c_str()))
     return FAILED;
 
-  scoped_ptr<DEVMODE, base::FreeDeleter> dev_mode =
-      CreateDevMode(printer.Get(), NULL);
+  std::unique_ptr<DEVMODE, base::FreeDeleter> dev_mode =
+      CreateDevMode(printer.Get(), nullptr);
 
   return InitializeSettings(settings_.device_name(), dev_mode.get());
 }
@@ -320,11 +320,11 @@ void PrintingContextWin::Cancel() {
 void PrintingContextWin::ReleaseContext() {
   if (context_) {
     DeleteDC(context_);
-    context_ = NULL;
+    context_ = nullptr;
   }
 }
 
-gfx::NativeDrawingContext PrintingContextWin::context() const {
+skia::NativeDrawingContext PrintingContextWin::context() const {
   return context_;
 }
 
@@ -345,7 +345,7 @@ PrintingContext::Result PrintingContextWin::InitializeSettings(
     return OnError();
 
   ReleaseContext();
-  context_ = CreateDC(L"WINSPOOL", device_name.c_str(), NULL, dev_mode);
+  context_ = CreateDC(L"WINSPOOL", device_name.c_str(), nullptr, dev_mode);
   if (!context_)
     return OnError();
 
@@ -360,11 +360,11 @@ PrintingContext::Result PrintingContextWin::InitializeSettings(
 }
 
 HWND PrintingContextWin::GetRootWindow(gfx::NativeView view) {
-  HWND window = NULL;
+  HWND window = nullptr;
   if (view && view->GetHost())
     window = view->GetHost()->GetAcceleratedWidget();
   if (!window) {
-    // TODO(maruel):  crbug.com/1214347 Get the right browser window instead.
+    // TODO(maruel):  b/1214347 Get the right browser window instead.
     return GetDesktopWindow();
   }
   return window;

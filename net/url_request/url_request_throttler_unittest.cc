@@ -2,14 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "net/url_request/url_request_throttler_manager.h"
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/pickle.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "base/test/histogram_tester.h"
 #include "base/time/time.h"
 #include "net/base/load_flags.h"
@@ -18,6 +16,7 @@
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_test_util.h"
+#include "net/url_request/url_request_throttler_manager.h"
 #include "net/url_request/url_request_throttler_test_support.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -66,10 +65,6 @@ class MockURLRequestThrottlerEntry : public URLRequestThrottlerEntry {
   }
 
   BackoffEntry* GetBackoffEntry() override { return &backoff_entry_; }
-
-  static bool ExplicitUserRequest(int load_flags) {
-    return URLRequestThrottlerEntry::ExplicitUserRequest(load_flags);
-  }
 
   void ResetToBlank(const TimeTicks& time_now) {
     fake_clock_.set_now(time_now);
@@ -174,7 +169,7 @@ class URLRequestThrottlerEntryTest : public testing::Test {
   scoped_refptr<MockURLRequestThrottlerEntry> entry_;
 
   TestURLRequestContext context_;
-  scoped_ptr<URLRequest> request_;
+  std::unique_ptr<URLRequest> request_;
 };
 
 void URLRequestThrottlerEntryTest::SetUp() {
@@ -195,11 +190,7 @@ TEST_F(URLRequestThrottlerEntryTest, InterfaceDuringExponentialBackoff) {
       entry_->ImplGetTimeNow() + TimeDelta::FromMilliseconds(1));
   EXPECT_TRUE(entry_->ShouldRejectRequest(*request_));
 
-  // Also end-to-end test the load flags exceptions.
-  request_->SetLoadFlags(LOAD_MAYBE_USER_GESTURE);
-  EXPECT_FALSE(entry_->ShouldRejectRequest(*request_));
-
-  histogram_tester.ExpectBucketCount(kRequestThrottledHistogramName, 0, 1);
+  histogram_tester.ExpectBucketCount(kRequestThrottledHistogramName, 0, 0);
   histogram_tester.ExpectBucketCount(kRequestThrottledHistogramName, 1, 1);
 }
 
@@ -314,14 +305,6 @@ TEST_F(URLRequestThrottlerEntryTest, SlidingWindow) {
   EXPECT_EQ(time_4, entry_->sliding_window_release_time());
 }
 
-TEST_F(URLRequestThrottlerEntryTest, ExplicitUserRequest) {
-  ASSERT_FALSE(MockURLRequestThrottlerEntry::ExplicitUserRequest(0));
-  ASSERT_TRUE(MockURLRequestThrottlerEntry::ExplicitUserRequest(
-      LOAD_MAYBE_USER_GESTURE));
-  ASSERT_FALSE(MockURLRequestThrottlerEntry::ExplicitUserRequest(
-      ~LOAD_MAYBE_USER_GESTURE));
-}
-
 class URLRequestThrottlerManagerTest : public testing::Test {
  protected:
   URLRequestThrottlerManagerTest()
@@ -355,7 +338,7 @@ class URLRequestThrottlerManagerTest : public testing::Test {
 
   // context_ must be declared before request_.
   TestURLRequestContext context_;
-  scoped_ptr<URLRequest> request_;
+  std::unique_ptr<URLRequest> request_;
 };
 
 TEST_F(URLRequestThrottlerManagerTest, IsUrlStandardised) {

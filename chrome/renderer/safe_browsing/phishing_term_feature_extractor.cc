@@ -6,6 +6,8 @@
 
 #include <list>
 #include <map>
+#include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
@@ -13,11 +15,10 @@
 #include "base/i18n/case_conversion.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/renderer/safe_browsing/feature_extractor_clock.h"
 #include "chrome/renderer/safe_browsing/features.h"
@@ -58,7 +59,7 @@ struct PhishingTermFeatureExtractor::ExtractionState {
   std::list<size_t> previous_word_sizes;
 
   // An iterator for word breaking.
-  scoped_ptr<base::i18n::BreakIterator> iterator;
+  std::unique_ptr<base::i18n::BreakIterator> iterator;
 
   // The time at which we started feature extraction for the current page.
   base::TimeTicks start_time;
@@ -69,13 +70,11 @@ struct PhishingTermFeatureExtractor::ExtractionState {
   ExtractionState(const base::string16& text, base::TimeTicks start_time_ticks)
       : start_time(start_time_ticks),
         num_iterations(0) {
-
-    scoped_ptr<base::i18n::BreakIterator> i(
-        new base::i18n::BreakIterator(
-            text, base::i18n::BreakIterator::BREAK_WORD));
+    std::unique_ptr<base::i18n::BreakIterator> i(new base::i18n::BreakIterator(
+        text, base::i18n::BreakIterator::BREAK_WORD));
 
     if (i->Init()) {
-      iterator = i.Pass();
+      iterator = std::move(i);
     } else {
       DLOG(ERROR) << "failed to open iterator";
     }
@@ -84,9 +83,9 @@ struct PhishingTermFeatureExtractor::ExtractionState {
 
 PhishingTermFeatureExtractor::PhishingTermFeatureExtractor(
     const base::hash_set<std::string>* page_term_hashes,
-    const base::hash_set<uint32>* page_word_hashes,
+    const base::hash_set<uint32_t>* page_word_hashes,
     size_t max_words_per_term,
-    uint32 murmurhash3_seed,
+    uint32_t murmurhash3_seed,
     size_t max_shingles_per_page,
     size_t shingle_size,
     FeatureExtractorClock* clock)
@@ -110,7 +109,7 @@ PhishingTermFeatureExtractor::~PhishingTermFeatureExtractor() {
 void PhishingTermFeatureExtractor::ExtractFeatures(
     const base::string16* page_text,
     FeatureMap* features,
-    std::set<uint32>* shingle_hashes,
+    std::set<uint32_t>* shingle_hashes,
     const DoneCallback& done_callback) {
   // The RenderView should have called CancelPendingExtraction() before
   // starting a new extraction, so DCHECK this.
@@ -208,12 +207,12 @@ void PhishingTermFeatureExtractor::HandleWord(
   // Check if the size of shingle hashes is over the limit.
   if (shingle_hashes_->size() > max_shingles_per_page_) {
     // Pop the largest one.
-    std::set<uint32>::iterator it = shingle_hashes_->end();
+    std::set<uint32_t>::iterator it = shingle_hashes_->end();
     shingle_hashes_->erase(--it);
   }
 
   // Next, extract page terms.
-  uint32 word_hash = MurmurHash3String(word_lower, murmurhash3_seed_);
+  uint32_t word_hash = MurmurHash3String(word_lower, murmurhash3_seed_);
 
   // Quick out if the word is not part of any term, which is the common case.
   if (page_word_hashes_->find(word_hash) == page_word_hashes_->end()) {

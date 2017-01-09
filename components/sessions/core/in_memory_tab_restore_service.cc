@@ -4,6 +4,7 @@
 
 #include "components/sessions/core/in_memory_tab_restore_service.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -11,9 +12,9 @@
 namespace sessions {
 
 InMemoryTabRestoreService::InMemoryTabRestoreService(
-    scoped_ptr<TabRestoreServiceClient> client,
+    std::unique_ptr<TabRestoreServiceClient> client,
     TabRestoreService::TimeFactory* time_factory)
-    : client_(client.Pass()),
+    : client_(std::move(client)),
       helper_(this, NULL, client_.get(), time_factory) {}
 
 InMemoryTabRestoreService::~InMemoryTabRestoreService() {}
@@ -50,22 +51,20 @@ const TabRestoreService::Entries& InMemoryTabRestoreService::entries() const {
 }
 
 std::vector<LiveTab*> InMemoryTabRestoreService::RestoreMostRecentEntry(
-    LiveTabContext* context,
-    int host_desktop_type) {
-  return helper_.RestoreMostRecentEntry(context, host_desktop_type);
+    LiveTabContext* context) {
+  return helper_.RestoreMostRecentEntry(context);
 }
 
-TabRestoreService::Tab* InMemoryTabRestoreService::RemoveTabEntryById(
-    SessionID::id_type id) {
+std::unique_ptr<TabRestoreService::Tab>
+InMemoryTabRestoreService::RemoveTabEntryById(SessionID::id_type id) {
   return helper_.RemoveTabEntryById(id);
 }
 
 std::vector<LiveTab*> InMemoryTabRestoreService::RestoreEntryById(
     LiveTabContext* context,
     SessionID::id_type id,
-    int host_desktop_type,
     WindowOpenDisposition disposition) {
-  return helper_.RestoreEntryById(context, id, host_desktop_type, disposition);
+  return helper_.RestoreEntryById(context, id, disposition);
 }
 
 void InMemoryTabRestoreService::LoadTabsFromLastSession() {
@@ -80,6 +79,10 @@ bool InMemoryTabRestoreService::IsLoaded() const {
 
 void InMemoryTabRestoreService::DeleteLastSession() {
   // See comment above.
+}
+
+bool InMemoryTabRestoreService::IsRestoring() const {
+  return helper_.IsRestoring();
 }
 
 void InMemoryTabRestoreService::Shutdown() {

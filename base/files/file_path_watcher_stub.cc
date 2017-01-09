@@ -21,8 +21,6 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
 
   void Cancel() override {}
 
-  void CancelOnMessageLoopThread() override {}
-
  protected:
   ~FilePathWatcherImpl() override {}
 };
@@ -30,6 +28,7 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
 }  // namespace
 
 FilePathWatcher::FilePathWatcher() {
+  sequence_checker_.DetachFromSequence();
   impl_ = new FilePathWatcherImpl();
 }
 

@@ -2,15 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_SPDY_HPACK_HEADER_TABLE_H_
-#define NET_SPDY_HPACK_HEADER_TABLE_H_
+#ifndef NET_SPDY_HPACK_HPACK_HEADER_TABLE_H_
+#define NET_SPDY_HPACK_HPACK_HEADER_TABLE_H_
 
 #include <cstddef>
 #include <deque>
-#include <set>
+#include <memory>
+#include <unordered_map>
+#include <unordered_set>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
+#include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 #include "net/spdy/hpack/hpack_entry.h"
 
@@ -27,6 +29,28 @@ class NET_EXPORT_PRIVATE HpackHeaderTable {
  public:
   friend class test::HpackHeaderTablePeer;
 
+  // Debug visitor my be used to extract debug/internal information
+  // about the HpackHeaderTable as it operates.
+  //
+  // Most HpackHeaderTable implementations do not need to bother with
+  // this interface at all.
+  class DebugVisitorInterface {
+   public:
+    virtual ~DebugVisitorInterface() {}
+
+    // |OnNewEntry()| and |OnUseEntry()| can be used together to
+    // gather data about the distribution of time intervals between
+    // creation and reference of entries in the dynamic table.  The
+    // data is desired to sanity check a proposed extension to HPACK
+    // for QUIC that would eliminate inter-stream head of line
+    // blocking (due to standard HPACK).  The visitor should return
+    // the current time from |OnNewEntry()|, which will be passed
+    // to |OnUseEntry()| each time that particular entry is used to
+    // emit an indexed representation.
+    virtual int64_t OnNewEntry(const HpackEntry& entry) = 0;
+    virtual void OnUseEntry(const HpackEntry& entry) = 0;
+  };
+
   // HpackHeaderTable takes advantage of the deque property that references
   // remain valid, so long as insertions & deletions are at the head & tail.
   // If this changes (eg we start to drop entries from the middle of the table),
@@ -34,15 +58,18 @@ class NET_EXPORT_PRIVATE HpackHeaderTable {
   // extended to map to list iterators.
   typedef std::deque<HpackEntry> EntryTable;
 
-  // Implements a total ordering of HpackEntry on name(), value(), then index
-  // ascending. Note that index may change over the lifetime of an HpackEntry,
-  // but the relative index order of two entries will not. This comparator is
-  // composed with the 'lookup' HpackEntry constructor to allow for efficient
-  // lower-bounding of matching entries.
-  struct NET_EXPORT_PRIVATE EntryComparator {
+  struct NET_EXPORT_PRIVATE EntryHasher {
+    size_t operator()(const HpackEntry* entry) const;
+  };
+  struct NET_EXPORT_PRIVATE EntriesEq {
     bool operator()(const HpackEntry* lhs, const HpackEntry* rhs) const;
   };
-  typedef std::set<HpackEntry*, EntryComparator> OrderedEntrySet;
+
+  using UnorderedEntrySet =
+      std::unordered_set<HpackEntry*, EntryHasher, EntriesEq>;
+  using NameToEntryMap = std::unordered_map<base::StringPiece,
+                                            const HpackEntry*,
+                                            base::StringPieceHash>;
 
   HpackHeaderTable();
 
@@ -94,6 +121,10 @@ class NET_EXPORT_PRIVATE HpackHeaderTable {
 
   void DebugLogTableState() const;
 
+  void set_debug_visitor(std::unique_ptr<DebugVisitorInterface> visitor) {
+    debug_visitor_ = std::move(visitor);
+  }
+
  private:
   // Returns number of evictions required to enter |name| & |value|.
   size_t EvictionCountForEntry(base::StringPiece name,
@@ -110,8 +141,18 @@ class NET_EXPORT_PRIVATE HpackHeaderTable {
   const EntryTable& static_entries_;
   EntryTable dynamic_entries_;
 
-  const OrderedEntrySet& static_index_;
-  OrderedEntrySet dynamic_index_;
+  // Tracks the unique HpackEntry for a given header name and value.
+  const UnorderedEntrySet& static_index_;
+
+  // Tracks the first static entry for each name in the static table.
+  const NameToEntryMap& static_name_index_;
+
+  // Tracks the most recently inserted HpackEntry for a given header name and
+  // value.
+  UnorderedEntrySet dynamic_index_;
+
+  // Tracks the most recently inserted HpackEntry for a given header name.
+  NameToEntryMap dynamic_name_index_;
 
   // Last acknowledged value for SETTINGS_HEADER_TABLE_SIZE.
   size_t settings_size_bound_;
@@ -125,9 +166,11 @@ class NET_EXPORT_PRIVATE HpackHeaderTable {
   // IndexOf() for determination of an HpackEntry's table index.
   size_t total_insertions_;
 
+  std::unique_ptr<DebugVisitorInterface> debug_visitor_;
+
   DISALLOW_COPY_AND_ASSIGN(HpackHeaderTable);
 };
 
 }  // namespace net
 
-#endif  // NET_SPDY_HPACK_HEADER_TABLE_H_
+#endif  // NET_SPDY_HPACK_HPACK_HEADER_TABLE_H_

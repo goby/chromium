@@ -4,17 +4,17 @@
 
 #include "ash/display/mirror_window_controller.h"
 
+#include <utility>
+
 #if defined(USE_X11)
-#include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
+#include <X11/Xlib.h>
 
 // Xlib.h defines RootWindow.
 #undef RootWindow
 #endif
 
 #include "ash/display/cursor_window_controller.h"
-#include "ash/display/display_info.h"
-#include "ash/display/display_manager.h"
 #include "ash/display/root_window_transformers.h"
 #include "ash/display/screen_position_controller.h"
 #include "ash/display/window_tree_host_manager.h"
@@ -24,6 +24,7 @@
 #include "ash/root_window_settings.h"
 #include "ash/shell.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_delegate.h"
@@ -31,30 +32,20 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/layout.h"
 #include "ui/compositor/reflector.h"
+#include "ui/display/display_layout.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/manager/managed_display_info.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/native_widget_types.h"
 
 #if defined(USE_X11)
-#include "ui/gfx/x/x11_types.h"
+#include "ui/aura/window_tree_host_x11.h"
+#include "ui/gfx/x/x11_types.h"  // nogncheck
 #endif
 
 namespace ash {
 namespace {
-
-#if defined(USE_X11)
-// Mirror window shouldn't handle input events.
-void DisableInput(XID window) {
-  long event_mask = ExposureMask | VisibilityChangeMask |
-      StructureNotifyMask | PropertyChangeMask;
-  XSelectInput(gfx::GetXDisplay(), window, event_mask);
-  unsigned char mask[XIMaskLen(XI_LASTEVENT)] = {0};
-  XIEventMask evmask;
-  evmask.deviceid = XIAllDevices;
-  evmask.mask_len = sizeof(mask);
-  evmask.mask = mask;
-  XISelectEvents(gfx::GetXDisplay(), window, &evmask, 1);
-}
-#endif
 
 // ScreenPositionClient for mirroring windows.
 class MirroringScreenPositionClient
@@ -67,7 +58,8 @@ class MirroringScreenPositionClient
                             gfx::Point* point) override {
     const aura::Window* root = window->GetRootWindow();
     aura::Window::ConvertPointToTarget(window, root, point);
-    const gfx::Display& display = controller_->GetDisplayForRootWindow(root);
+    const display::Display& display =
+        controller_->GetDisplayForRootWindow(root);
     const gfx::Point display_origin = display.bounds().origin();
     point->Offset(display_origin.x(), display_origin.y());
   }
@@ -75,7 +67,8 @@ class MirroringScreenPositionClient
   void ConvertPointFromScreen(const aura::Window* window,
                               gfx::Point* point) override {
     const aura::Window* root = window->GetRootWindow();
-    const gfx::Display& display = controller_->GetDisplayForRootWindow(root);
+    const display::Display& display =
+        controller_->GetDisplayForRootWindow(root);
     const gfx::Point display_origin = display.bounds().origin();
     point->Offset(-display_origin.x(), -display_origin.y());
     aura::Window::ConvertPointToTarget(root, window, point);
@@ -91,7 +84,7 @@ class MirroringScreenPositionClient
 
   void SetBounds(aura::Window* window,
                  const gfx::Rect& bounds,
-                 const gfx::Display& display) override {
+                 const display::Display& display) override {
     NOTREACHED();
   }
 
@@ -101,31 +94,33 @@ class MirroringScreenPositionClient
   DISALLOW_COPY_AND_ASSIGN(MirroringScreenPositionClient);
 };
 
+// A trivial CaptureClient that does nothing. That is, calls to set/release
+// capture are dropped.
 class NoneCaptureClient : public aura::client::CaptureClient {
  public:
   NoneCaptureClient() {}
   ~NoneCaptureClient() override {}
 
  private:
-  // Does a capture on the |window|.
+  // aura::client::CaptureClient:
   void SetCapture(aura::Window* window) override {}
-
-  // Releases a capture from the |window|.
   void ReleaseCapture(aura::Window* window) override {}
-
-  // Returns the current capture window.
-  aura::Window* GetCaptureWindow() override { return NULL; }
-  aura::Window* GetGlobalCaptureWindow() override { return NULL; }
+  aura::Window* GetCaptureWindow() override { return nullptr; }
+  aura::Window* GetGlobalCaptureWindow() override { return nullptr; }
+  void AddObserver(aura::client::CaptureClientObserver* observer) override {}
+  void RemoveObserver(aura::client::CaptureClientObserver* observer) override {}
 
   DISALLOW_COPY_AND_ASSIGN(NoneCaptureClient);
 };
 
-DisplayManager::MultiDisplayMode GetCurrentMultiDisplayMode() {
-  DisplayManager* display_manager = Shell::GetInstance()->display_manager();
+display::DisplayManager::MultiDisplayMode GetCurrentMultiDisplayMode() {
+  display::DisplayManager* display_manager =
+      Shell::GetInstance()->display_manager();
   return display_manager->IsInUnifiedMode()
-             ? DisplayManager::UNIFIED
-             : (display_manager->IsInMirrorMode() ? DisplayManager::MIRRORING
-                                                  : DisplayManager::EXTENDED);
+             ? display::DisplayManager::UNIFIED
+             : (display_manager->IsInMirrorMode()
+                    ? display::DisplayManager::MIRRORING
+                    : display::DisplayManager::EXTENDED);
 }
 
 }  // namespace
@@ -133,20 +128,17 @@ DisplayManager::MultiDisplayMode GetCurrentMultiDisplayMode() {
 struct MirrorWindowController::MirroringHostInfo {
   MirroringHostInfo();
   ~MirroringHostInfo();
-  scoped_ptr<AshWindowTreeHost> ash_host;
+  std::unique_ptr<AshWindowTreeHost> ash_host;
   gfx::Size mirror_window_host_size;
   aura::Window* mirror_window = nullptr;
 };
 
-MirrorWindowController::MirroringHostInfo::MirroringHostInfo() {
-}
-MirrorWindowController::MirroringHostInfo::~MirroringHostInfo() {
-}
+MirrorWindowController::MirroringHostInfo::MirroringHostInfo() {}
+MirrorWindowController::MirroringHostInfo::~MirroringHostInfo() {}
 
 MirrorWindowController::MirrorWindowController()
-    : multi_display_mode_(DisplayManager::EXTENDED),
-      screen_position_client_(new MirroringScreenPositionClient(this)) {
-}
+    : multi_display_mode_(display::DisplayManager::EXTENDED),
+      screen_position_client_(new MirroringScreenPositionClient(this)) {}
 
 MirrorWindowController::~MirrorWindowController() {
   // Make sure the root window gets deleted before cursor_window_delegate.
@@ -154,22 +146,24 @@ MirrorWindowController::~MirrorWindowController() {
 }
 
 void MirrorWindowController::UpdateWindow(
-    const std::vector<DisplayInfo>& display_info_list) {
+    const std::vector<display::ManagedDisplayInfo>& display_info_list) {
   static int mirror_host_count = 0;
-  DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  const gfx::Display& primary = Shell::GetScreen()->GetPrimaryDisplay();
-  const DisplayInfo& source_display_info =
+  display::DisplayManager* display_manager =
+      Shell::GetInstance()->display_manager();
+  const display::Display& primary =
+      display::Screen::GetScreen()->GetPrimaryDisplay();
+  const display::ManagedDisplayInfo& source_display_info =
       display_manager->GetDisplayInfo(primary.id());
 
   multi_display_mode_ = GetCurrentMultiDisplayMode();
 
-  for (const DisplayInfo& display_info : display_info_list) {
-    scoped_ptr<RootWindowTransformer> transformer;
+  for (const display::ManagedDisplayInfo& display_info : display_info_list) {
+    std::unique_ptr<RootWindowTransformer> transformer;
     if (display_manager->IsInMirrorMode()) {
       transformer.reset(CreateRootWindowTransformerForMirroredDisplay(
           source_display_info, display_info));
     } else if (display_manager->IsInUnifiedMode()) {
-      gfx::Display display =
+      display::Display display =
           display_manager->GetMirroringDisplayById(display_info.id());
       transformer.reset(CreateRootWindowTransformerForUnifiedDesktop(
           primary.bounds(), display));
@@ -192,17 +186,17 @@ void MirrorWindowController::UpdateWindow(
           base::StringPrintf("MirrorRootWindow-%d", mirror_host_count++));
       host->compositor()->SetBackgroundColor(SK_ColorBLACK);
       // No need to remove the observer because the WindowTreeHostManager
-      // outlives
-      // the
-      // host.
+      // outlives the host.
       host->AddObserver(Shell::GetInstance()->window_tree_host_manager());
       host->AddObserver(this);
       // TODO(oshima): TouchHUD is using idkey.
       InitRootWindowSettings(host->window())->display_id = display_info.id();
       host->InitHost();
 #if defined(USE_X11)
-      if (!display_manager->IsInUnifiedMode())
-        DisableInput(host->GetAcceleratedWidget());
+      if (!display_manager->IsInUnifiedMode()) {
+        // Mirror window shouldn't handle input events.
+        static_cast<aura::WindowTreeHostX11*>(host)->DisableInput();
+      }
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -212,7 +206,7 @@ void MirrorWindowController::UpdateWindow(
             Shell::GetInstance()
                 ->window_tree_host_manager()
                 ->GetAshWindowTreeHostForDisplayId(
-                    Shell::GetScreen()->GetPrimaryDisplay().id());
+                    display::Screen::GetScreen()->GetPrimaryDisplay().id());
         unified_ash_host->RegisterMirroringHost(host_info->ash_host.get());
         aura::client::SetScreenPositionClient(host->window(),
                                               screen_position_client_.get());
@@ -226,7 +220,7 @@ void MirrorWindowController::UpdateWindow(
           new aura::Window(nullptr);
       mirror_window->Init(ui::LAYER_SOLID_COLOR);
       host->window()->AddChild(mirror_window);
-      host_info->ash_host->SetRootWindowTransformer(transformer.Pass());
+      host_info->ash_host->SetRootWindowTransformer(std::move(transformer));
       mirror_window->SetBounds(host->window()->bounds());
       mirror_window->Show();
       if (reflector_) {
@@ -242,8 +236,8 @@ void MirrorWindowController::UpdateWindow(
           mirroring_host_info_map_[display_info.id()]->ash_host.get();
       aura::WindowTreeHost* host = ash_host->AsWindowTreeHost();
       GetRootWindowSettings(host->window())->display_id = display_info.id();
-      ash_host->SetRootWindowTransformer(transformer.Pass());
-      host->SetBounds(display_info.bounds_in_native());
+      ash_host->SetRootWindowTransformer(std::move(transformer));
+      host->SetBoundsInPixels(display_info.bounds_in_native());
     }
   }
 
@@ -252,7 +246,7 @@ void MirrorWindowController::UpdateWindow(
     for (MirroringHostInfoMap::iterator iter = mirroring_host_info_map_.begin();
          iter != mirroring_host_info_map_.end();) {
       if (std::find_if(display_info_list.begin(), display_info_list.end(),
-                       [iter](const DisplayInfo& info) {
+                       [iter](const display::ManagedDisplayInfo& info) {
                          return info.id() == iter->first;
                        }) == display_info_list.end()) {
         CloseAndDeleteHost(iter->second, true);
@@ -265,17 +259,19 @@ void MirrorWindowController::UpdateWindow(
 }
 
 void MirrorWindowController::UpdateWindow() {
-  if (!mirroring_host_info_map_.size())
+  if (mirroring_host_info_map_.empty())
     return;
-  DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  std::vector<DisplayInfo> display_info_list;
+  display::DisplayManager* display_manager =
+      Shell::GetInstance()->display_manager();
+  std::vector<display::ManagedDisplayInfo> display_info_list;
   for (auto& pair : mirroring_host_info_map_)
     display_info_list.push_back(display_manager->GetDisplayInfo(pair.first));
   UpdateWindow(display_info_list);
 }
 
 void MirrorWindowController::CloseIfNotNecessary() {
-  DisplayManager::MultiDisplayMode new_mode = GetCurrentMultiDisplayMode();
+  display::DisplayManager::MultiDisplayMode new_mode =
+      GetCurrentMultiDisplayMode();
   if (multi_display_mode_ != new_mode)
     Close(true);
   multi_display_mode_ = new_mode;
@@ -297,9 +293,9 @@ void MirrorWindowController::OnHostResized(const aura::WindowTreeHost* host) {
   for (auto& pair : mirroring_host_info_map_) {
     MirroringHostInfo* info = pair.second;
     if (info->ash_host->AsWindowTreeHost() == host) {
-      if (info->mirror_window_host_size == host->GetBounds().size())
+      if (info->mirror_window_host_size == host->GetBoundsInPixels().size())
         return;
-      info->mirror_window_host_size = host->GetBounds().size();
+      info->mirror_window_host_size = host->GetBoundsInPixels().size();
       reflector_->OnMirroringCompositorResized();
       // No need to update the transformer as new transformer is already set
       // in UpdateWindow.
@@ -313,7 +309,8 @@ void MirrorWindowController::OnHostResized(const aura::WindowTreeHost* host) {
 }
 
 aura::Window* MirrorWindowController::GetWindow() {
-  DisplayManager* display_manager = Shell::GetInstance()->display_manager();
+  display::DisplayManager* display_manager =
+      Shell::GetInstance()->display_manager();
   if (!display_manager->IsInMirrorMode() || mirroring_host_info_map_.empty())
     return nullptr;
   DCHECK_EQ(1U, mirroring_host_info_map_.size());
@@ -322,29 +319,28 @@ aura::Window* MirrorWindowController::GetWindow() {
       ->window();
 }
 
-gfx::Display MirrorWindowController::GetDisplayForRootWindow(
+display::Display MirrorWindowController::GetDisplayForRootWindow(
     const aura::Window* root) const {
   for (const auto& pair : mirroring_host_info_map_) {
     if (pair.second->ash_host->AsWindowTreeHost()->window() == root) {
       // Sanity check to catch an error early.
-      int64 id = pair.first;
-      const DisplayManager::DisplayList& list =
-          Shell::GetInstance()
-              ->display_manager()
-              ->software_mirroring_display_list();
+      int64_t id = pair.first;
+      const display::Displays& list = Shell::GetInstance()
+                                          ->display_manager()
+                                          ->software_mirroring_display_list();
       auto iter = std::find_if(
           list.begin(), list.end(),
-          [id](const gfx::Display& display) { return display.id() == id; });
+          [id](const display::Display& display) { return display.id() == id; });
       DCHECK(iter != list.end());
       if (iter != list.end())
         return *iter;
     }
   }
-  return gfx::Display();
+  return display::Display();
 }
 
 AshWindowTreeHost* MirrorWindowController::GetAshWindowTreeHostForDisplayId(
-    int64 id) {
+    int64_t id) {
   CHECK_EQ(1u, mirroring_host_info_map_.count(id));
   return mirroring_host_info_map_[id]->ash_host.get();
 }
@@ -376,7 +372,7 @@ void MirrorWindowController::CloseAndDeleteHost(MirroringHostInfo* host_info,
   // was deleted as a result of input event (e.g. shortcut), so don't delete
   // now.
   if (delay_host_deletion)
-    base::MessageLoop::current()->DeleteSoon(FROM_HERE, host_info);
+    base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, host_info);
   else
     delete host_info;
 }

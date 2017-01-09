@@ -29,6 +29,13 @@ class AtkUtilAuraLinux {
 
  private:
   friend struct base::DefaultSingletonTraits<AtkUtilAuraLinux>;
+
+  void CheckIfAccessibilityIsEnabledOnFileThread();
+  void FinishAccessibilityInitOnUIThread();
+
+#if defined(USE_GCONF)
+  bool is_enabled_;
+#endif
 };
 
 }  // namespace ui

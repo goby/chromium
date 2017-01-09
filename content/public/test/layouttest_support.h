@@ -5,6 +5,9 @@
 #ifndef CONTENT_PUBLIC_TEST_LAYOUTTEST_SUPPORT_H_
 #define CONTENT_PUBLIC_TEST_LAYOUTTEST_SUPPORT_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,23 +18,24 @@
 class GURL;
 
 namespace blink {
-class WebBatteryStatus;
 class WebDeviceMotionData;
 class WebDeviceOrientationData;
-class WebGamepad;
-class WebGamepads;
-class WebLayer;
+class WebInputEvent;
+class WebLocalFrame;
 struct WebSize;
 class WebView;
+class WebWidget;
 class WebURLResponse;
 }
 
-namespace device {
-class BluetoothAdapter;
+namespace gfx {
+class ICCProfile;
 }
 
 namespace test_runner {
-class WebTestProxyBase;
+class WebFrameTestProxyBase;
+class WebViewTestProxyBase;
+class WebWidgetTestProxyBase;
 }
 
 namespace content {
@@ -50,12 +54,42 @@ void EnableBrowserLayoutTestMode();
 // Turn a renderer into layout test mode.
 void EnableRendererLayoutTestMode();
 
-// Enable injecting of a WebTestProxy between WebViews and RenderViews.
-// |callback| is invoked with a pointer to WebTestProxyBase for each created
-// WebTestProxy.
+// "Casts" |render_view| to |WebViewTestProxyBase|.  Caller has to ensure that
+// prior to construction of |render_view|, EnableWebTestProxyCreation was
+// called.
+test_runner::WebViewTestProxyBase* GetWebViewTestProxyBase(
+    RenderView* render_view);
+
+// "Casts" |render_frame| to |WebFrameTestProxyBase|.  Caller has to ensure
+// that prior to construction of |render_frame|, EnableTestProxyCreation
+// was called.
+test_runner::WebFrameTestProxyBase* GetWebFrameTestProxyBase(
+    RenderFrame* render_frame);
+
+// Gets WebWidgetTestProxyBase associated with |frame| (either the view's widget
+// or the local root's frame widget).  Caller has to ensure that prior to
+// construction of |render_frame|, EnableTestProxyCreation was called.
+test_runner::WebWidgetTestProxyBase* GetWebWidgetTestProxyBase(
+    blink::WebLocalFrame* frame);
+
+// Enable injecting of a WebViewTestProxy between WebViews and RenderViews,
+// WebWidgetTestProxy between WebWidgets and RenderWidgets and WebFrameTestProxy
+// between WebFrames and RenderFrames.
+// |view_proxy_creation_callback| is invoked after creating WebViewTestProxy.
+// |widget_proxy_creation_callback| is invoked after creating
+// WebWidgetTestProxy.
+// |frame_proxy_creation_callback| is called after creating WebFrameTestProxy.
+using ViewProxyCreationCallback =
+    base::Callback<void(RenderView*, test_runner::WebViewTestProxyBase*)>;
+using WidgetProxyCreationCallback =
+    base::Callback<void(blink::WebWidget*,
+                        test_runner::WebWidgetTestProxyBase*)>;
+using FrameProxyCreationCallback =
+    base::Callback<void(RenderFrame*, test_runner::WebFrameTestProxyBase*)>;
 void EnableWebTestProxyCreation(
-    const base::Callback<void(RenderView*, test_runner::WebTestProxyBase*)>&
-        callback);
+    const ViewProxyCreationCallback& view_proxy_creation_callback,
+    const WidgetProxyCreationCallback& widget_proxy_creation_callback,
+    const FrameProxyCreationCallback& frame_proxy_creation_callback);
 
 typedef base::Callback<void(const blink::WebURLResponse& response,
                             const std::string& data)> FetchManifestCallback;
@@ -63,7 +97,7 @@ void FetchManifest(blink::WebView* view, const GURL& url,
                    const FetchManifestCallback&);
 
 // Sets gamepad provider to be used for layout tests.
-void SetMockGamepadProvider(scoped_ptr<RendererGamepadProvider> provider);
+void SetMockGamepadProvider(std::unique_ptr<RendererGamepadProvider> provider);
 
 // Sets a double that should be used when registering
 // a listener through BlinkPlatformImpl::setDeviceLightListener().
@@ -76,9 +110,6 @@ void SetMockDeviceMotionData(const blink::WebDeviceMotionData& data);
 // Sets WebDeviceOrientationData that should be used when registering
 // a listener through BlinkPlatformImpl::setDeviceOrientationListener().
 void SetMockDeviceOrientationData(const blink::WebDeviceOrientationData& data);
-
-// Notifies blink that battery status has changed.
-void MockBatteryStatusChanged(const blink::WebBatteryStatus& status);
 
 // Returns the length of the local session history of a render view.
 int GetLocalSessionHistoryLength(RenderView* render_view);
@@ -98,23 +129,27 @@ void ForceResizeRenderView(RenderView* render_view,
 // Set the device scale factor and force the compositor to resize.
 void SetDeviceScaleFactor(RenderView* render_view, float factor);
 
+// Get the window to viewport scale.
+float GetWindowToViewportScale(RenderView* render_view);
+
+// Converts |event| from screen coordinates to coordinates used by the widget
+// associated with the |web_widget_test_proxy_base|.  Returns nullptr if no
+// transformation was necessary (e.g. for a keyboard event OR if widget requires
+// no scaling and has coordinates starting at (0,0)).
+std::unique_ptr<blink::WebInputEvent> TransformScreenToWidgetCoordinates(
+    test_runner::WebWidgetTestProxyBase* web_widget_test_proxy_base,
+    const blink::WebInputEvent& event);
+
+// Get the ICC profile for a given name string. This is not in the ICCProfile
+// class to avoid bloating the shipping build.
+gfx::ICCProfile GetTestingICCProfile(const std::string& name);
+
 // Set the device color profile associated with the profile |name|.
-void SetDeviceColorProfile(RenderView* render_view, const std::string& name);
+void SetDeviceColorProfile(
+    RenderView* render_view, const gfx::ICCProfile& icc_profile);
 
-// Change the bluetooth test adapter while running a layout test.
-void SetBluetoothAdapter(int render_process_id,
-                         scoped_refptr<device::BluetoothAdapter> adapter);
-
-// Enables mock geofencing service while running a layout test.
-// |service_available| indicates if the mock service should mock geofencing
-// being available or not.
-void SetGeofencingMockProvider(bool service_available);
-
-// Disables mock geofencing service while running a layout test.
-void ClearGeofencingMockProvider();
-
-// Set the mock geofencing position while running a layout test.
-void SetGeofencingMockPosition(double latitude, double longitude);
+// Sets the scan duration to 0.
+void SetTestBluetoothScanDuration();
 
 // Enables or disables synchronous resize mode. When enabled, all window-sizing
 // machinery is short-circuited inside the renderer. This mode is necessary for
@@ -133,6 +168,13 @@ void DisableAutoResizeMode(RenderView* render_view,
 // Provides a text dump of the contents of the given page state.
 std::string DumpBackForwardList(std::vector<PageState>& page_state,
                                 size_t current_index);
+
+// Run all pending idle tasks immediately, and then invoke callback.
+void SchedulerRunIdleTasks(const base::Closure& callback);
+
+// Causes the RenderWidget corresponding to |render_frame| to update its
+// TextInputState.
+void ForceTextInputStateUpdateForRenderFrame(RenderFrame* render_frame);
 
 }  // namespace content
 

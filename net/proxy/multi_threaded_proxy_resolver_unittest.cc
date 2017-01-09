@@ -4,8 +4,10 @@
 
 #include "net/proxy/multi_threaded_proxy_resolver.h"
 
+#include <utility>
 #include <vector>
 
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -17,15 +19,21 @@
 #include "base/threading/platform_thread.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
 #include "net/log/test_net_log_entry.h"
 #include "net/log/test_net_log_util.h"
 #include "net/proxy/mock_proxy_resolver.h"
 #include "net/proxy/proxy_info.h"
 #include "net/proxy/proxy_resolver_factory.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 using base::ASCIIToUTF16;
 
@@ -45,9 +53,9 @@ class MockProxyResolver : public ProxyResolver {
   int GetProxyForURL(const GURL& query_url,
                      ProxyInfo* results,
                      const CompletionCallback& callback,
-                     RequestHandle* request,
-                     const BoundNetLog& net_log) override {
-    if (resolve_latency_ != base::TimeDelta())
+                     std::unique_ptr<Request>* request,
+                     const NetLogWithSource& net_log) override {
+    if (!resolve_latency_.is_zero())
       base::PlatformThread::Sleep(resolve_latency_);
 
     CheckIsOnWorkerThread();
@@ -56,19 +64,12 @@ class MockProxyResolver : public ProxyResolver {
     EXPECT_TRUE(request == NULL);
 
     // Write something into |net_log| (doesn't really have any meaning.)
-    net_log.BeginEvent(NetLog::TYPE_PAC_JAVASCRIPT_ALERT);
+    net_log.BeginEvent(NetLogEventType::PAC_JAVASCRIPT_ALERT);
 
     results->UseNamedProxy(query_url.host());
 
     // Return a success code which represents the request's order.
     return request_count_++;
-  }
-
-  void CancelRequest(RequestHandle request) override { NOTREACHED(); }
-
-  LoadState GetLoadState(RequestHandle request) const override {
-    NOTREACHED();
-    return LOAD_STATE_IDLE;
   }
 
   int request_count() const { return request_count_; }
@@ -97,9 +98,10 @@ class BlockableProxyResolver : public MockProxyResolver {
  public:
   BlockableProxyResolver()
       : should_block_(false),
-        unblocked_(true, true),
-        blocked_(true, false) {
-  }
+        unblocked_(base::WaitableEvent::ResetPolicy::MANUAL,
+                   base::WaitableEvent::InitialState::SIGNALED),
+        blocked_(base::WaitableEvent::ResetPolicy::MANUAL,
+                 base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   void Block() {
     should_block_ = true;
@@ -119,8 +121,8 @@ class BlockableProxyResolver : public MockProxyResolver {
   int GetProxyForURL(const GURL& query_url,
                      ProxyInfo* results,
                      const CompletionCallback& callback,
-                     RequestHandle* request,
-                     const BoundNetLog& net_log) override {
+                     std::unique_ptr<Request>* request,
+                     const NetLogWithSource& net_log) override {
     if (should_block_) {
       blocked_.Signal();
       unblocked_.Wait();
@@ -145,9 +147,9 @@ class BlockableProxyResolverFactory : public ProxyResolverFactory {
 
   int CreateProxyResolver(
       const scoped_refptr<ProxyResolverScriptData>& script_data,
-      scoped_ptr<ProxyResolver>* result,
+      std::unique_ptr<ProxyResolver>* result,
       const CompletionCallback& callback,
-      scoped_ptr<Request>* request) override {
+      std::unique_ptr<Request>* request) override {
     BlockableProxyResolver* resolver = new BlockableProxyResolver;
     result->reset(resolver);
     base::AutoLock l(lock_);
@@ -177,34 +179,34 @@ class SingleShotMultiThreadedProxyResolverFactory
  public:
   SingleShotMultiThreadedProxyResolverFactory(
       size_t max_num_threads,
-      scoped_ptr<ProxyResolverFactory> factory)
+      std::unique_ptr<ProxyResolverFactory> factory)
       : MultiThreadedProxyResolverFactory(max_num_threads, false),
-        factory_(factory.Pass()) {}
+        factory_(std::move(factory)) {}
 
-  scoped_ptr<ProxyResolverFactory> CreateProxyResolverFactory() override {
+  std::unique_ptr<ProxyResolverFactory> CreateProxyResolverFactory() override {
     DCHECK(factory_);
-    return factory_.Pass();
+    return std::move(factory_);
   }
 
  private:
-  scoped_ptr<ProxyResolverFactory> factory_;
+  std::unique_ptr<ProxyResolverFactory> factory_;
 };
 
 class MultiThreadedProxyResolverTest : public testing::Test {
  public:
   void Init(size_t num_threads) {
-    scoped_ptr<BlockableProxyResolverFactory> factory_owner(
+    std::unique_ptr<BlockableProxyResolverFactory> factory_owner(
         new BlockableProxyResolverFactory);
     factory_ = factory_owner.get();
     resolver_factory_.reset(new SingleShotMultiThreadedProxyResolverFactory(
-        num_threads, factory_owner.Pass()));
+        num_threads, std::move(factory_owner)));
     TestCompletionCallback ready_callback;
-    scoped_ptr<ProxyResolverFactory::Request> request;
+    std::unique_ptr<ProxyResolverFactory::Request> request;
     resolver_factory_->CreateProxyResolver(
         ProxyResolverScriptData::FromUTF8("pac script bytes"), &resolver_,
         ready_callback.callback(), &request);
     EXPECT_TRUE(request);
-    ASSERT_EQ(OK, ready_callback.WaitForResult());
+    ASSERT_THAT(ready_callback.WaitForResult(), IsOk());
 
     // Verify that the script data reaches the synchronous resolver factory.
     ASSERT_EQ(1u, factory_->script_data().size());
@@ -225,18 +227,12 @@ class MultiThreadedProxyResolverTest : public testing::Test {
 
  private:
   BlockableProxyResolverFactory* factory_ = nullptr;
-  scoped_ptr<ProxyResolverFactory> factory_owner_;
-  scoped_ptr<MultiThreadedProxyResolverFactory> resolver_factory_;
-  scoped_ptr<ProxyResolver> resolver_;
+  std::unique_ptr<ProxyResolverFactory> factory_owner_;
+  std::unique_ptr<MultiThreadedProxyResolverFactory> resolver_factory_;
+  std::unique_ptr<ProxyResolver> resolver_;
 };
 
-// Flaky on Android. See http://crbug.com/547786
-#if defined(OS_ANDROID)
-#define MAYBE_SingleThread_Basic DISABLED_SingleThread_Basic
-#else
-#define MAYBE_SingleThread_Basic SingleThread_Basic
-#endif
-TEST_F(MultiThreadedProxyResolverTest, MAYBE_SingleThread_Basic) {
+TEST_F(MultiThreadedProxyResolverTest, SingleThread_Basic) {
   const size_t kNumThreads = 1u;
   ASSERT_NO_FATAL_FAILURE(Init(kNumThreads));
 
@@ -247,7 +243,7 @@ TEST_F(MultiThreadedProxyResolverTest, MAYBE_SingleThread_Basic) {
   ProxyInfo results0;
   rv = resolver().GetProxyForURL(GURL("http://request0"), &results0,
                                  callback0.callback(), NULL, log0.bound());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Wait for request 0 to finish.
   rv = callback0.WaitForResult();
@@ -262,27 +258,30 @@ TEST_F(MultiThreadedProxyResolverTest, MAYBE_SingleThread_Basic) {
   log0.GetEntries(&entries0);
 
   ASSERT_EQ(2u, entries0.size());
-  EXPECT_EQ(NetLog::TYPE_SUBMITTED_TO_RESOLVER_THREAD, entries0[0].type);
+  EXPECT_EQ(NetLogEventType::SUBMITTED_TO_RESOLVER_THREAD, entries0[0].type);
 
   // Start 3 more requests (request1 to request3).
 
   TestCompletionCallback callback1;
   ProxyInfo results1;
-  rv = resolver().GetProxyForURL(GURL("http://request1"), &results1,
-                                 callback1.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request1"), &results1,
+                                callback1.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   TestCompletionCallback callback2;
   ProxyInfo results2;
-  rv = resolver().GetProxyForURL(GURL("http://request2"), &results2,
-                                 callback2.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request2"), &results2,
+                                callback2.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   TestCompletionCallback callback3;
   ProxyInfo results3;
-  rv = resolver().GetProxyForURL(GURL("http://request3"), &results3,
-                                 callback3.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request3"), &results3,
+                                callback3.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Wait for the requests to finish (they must finish in the order they were
   // started, which is what we check for from their magic return value)
@@ -313,13 +312,13 @@ TEST_F(MultiThreadedProxyResolverTest,
   factory().resolvers()[0]->Block();
 
   // Start request 0.
-  ProxyResolver::RequestHandle request0;
+  std::unique_ptr<ProxyResolver::Request> request0;
   TestCompletionCallback callback0;
   ProxyInfo results0;
   BoundTestNetLog log0;
   rv = resolver().GetProxyForURL(GURL("http://request0"), &results0,
                                  callback0.callback(), &request0, log0.bound());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Start 2 more requests (request1 and request2).
 
@@ -328,15 +327,15 @@ TEST_F(MultiThreadedProxyResolverTest,
   BoundTestNetLog log1;
   rv = resolver().GetProxyForURL(GURL("http://request1"), &results1,
                                  callback1.callback(), NULL, log1.bound());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
-  ProxyResolver::RequestHandle request2;
+  std::unique_ptr<ProxyResolver::Request> request2;
   TestCompletionCallback callback2;
   ProxyInfo results2;
   BoundTestNetLog log2;
   rv = resolver().GetProxyForURL(GURL("http://request2"), &results2,
                                  callback2.callback(), &request2, log2.bound());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Unblock the worker thread so the requests can continue running.
   factory().resolvers()[0]->WaitUntilBlocked();
@@ -352,8 +351,7 @@ TEST_F(MultiThreadedProxyResolverTest,
   log0.GetEntries(&entries0);
 
   ASSERT_EQ(2u, entries0.size());
-  EXPECT_EQ(NetLog::TYPE_SUBMITTED_TO_RESOLVER_THREAD,
-            entries0[0].type);
+  EXPECT_EQ(NetLogEventType::SUBMITTED_TO_RESOLVER_THREAD, entries0[0].type);
 
   // Check that request 1 completed as expected.
   EXPECT_EQ(1, callback1.WaitForResult());
@@ -364,11 +362,9 @@ TEST_F(MultiThreadedProxyResolverTest,
 
   ASSERT_EQ(4u, entries1.size());
   EXPECT_TRUE(LogContainsBeginEvent(
-      entries1, 0,
-      NetLog::TYPE_WAITING_FOR_PROXY_RESOLVER_THREAD));
+      entries1, 0, NetLogEventType::WAITING_FOR_PROXY_RESOLVER_THREAD));
   EXPECT_TRUE(LogContainsEndEvent(
-      entries1, 1,
-      NetLog::TYPE_WAITING_FOR_PROXY_RESOLVER_THREAD));
+      entries1, 1, NetLogEventType::WAITING_FOR_PROXY_RESOLVER_THREAD));
 
   // Check that request 2 completed as expected.
   EXPECT_EQ(2, callback2.WaitForResult());
@@ -379,11 +375,9 @@ TEST_F(MultiThreadedProxyResolverTest,
 
   ASSERT_EQ(4u, entries2.size());
   EXPECT_TRUE(LogContainsBeginEvent(
-      entries2, 0,
-      NetLog::TYPE_WAITING_FOR_PROXY_RESOLVER_THREAD));
+      entries2, 0, NetLogEventType::WAITING_FOR_PROXY_RESOLVER_THREAD));
   EXPECT_TRUE(LogContainsEndEvent(
-      entries2, 1,
-      NetLog::TYPE_WAITING_FOR_PROXY_RESOLVER_THREAD));
+      entries2, 1, NetLogEventType::WAITING_FOR_PROXY_RESOLVER_THREAD));
 }
 
 // Cancel a request which is in progress, and then cancel a request which
@@ -398,13 +392,13 @@ TEST_F(MultiThreadedProxyResolverTest, SingleThread_CancelRequest) {
   factory().resolvers()[0]->Block();
 
   // Start request 0.
-  ProxyResolver::RequestHandle request0;
+  std::unique_ptr<ProxyResolver::Request> request0;
   TestCompletionCallback callback0;
   ProxyInfo results0;
-  rv =
-      resolver().GetProxyForURL(GURL("http://request0"), &results0,
-                                callback0.callback(), &request0, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv = resolver().GetProxyForURL(GURL("http://request0"), &results0,
+                                 callback0.callback(), &request0,
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Wait until requests 0 reaches the worker thread.
   factory().resolvers()[0]->WaitUntilBlocked();
@@ -413,27 +407,29 @@ TEST_F(MultiThreadedProxyResolverTest, SingleThread_CancelRequest) {
 
   TestCompletionCallback callback1;
   ProxyInfo results1;
-  rv = resolver().GetProxyForURL(GURL("http://request1"), &results1,
-                                 callback1.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request1"), &results1,
+                                callback1.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
-  ProxyResolver::RequestHandle request2;
+  std::unique_ptr<ProxyResolver::Request> request2;
   TestCompletionCallback callback2;
   ProxyInfo results2;
-  rv =
-      resolver().GetProxyForURL(GURL("http://request2"), &results2,
-                                callback2.callback(), &request2, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv = resolver().GetProxyForURL(GURL("http://request2"), &results2,
+                                 callback2.callback(), &request2,
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   TestCompletionCallback callback3;
   ProxyInfo results3;
-  rv = resolver().GetProxyForURL(GURL("http://request3"), &results3,
-                                 callback3.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request3"), &results3,
+                                callback3.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Cancel request0 (inprogress) and request2 (pending).
-  resolver().CancelRequest(request0);
-  resolver().CancelRequest(request2);
+  request0.reset();
+  request2.reset();
 
   // Unblock the worker thread so the requests can continue running.
   factory().resolvers()[0]->Unblock();
@@ -472,21 +468,24 @@ TEST_F(MultiThreadedProxyResolverTest, SingleThread_CancelRequestByDeleting) {
 
   TestCompletionCallback callback0;
   ProxyInfo results0;
-  rv = resolver().GetProxyForURL(GURL("http://request0"), &results0,
-                                 callback0.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request0"), &results0,
+                                callback0.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   TestCompletionCallback callback1;
   ProxyInfo results1;
-  rv = resolver().GetProxyForURL(GURL("http://request1"), &results1,
-                                 callback1.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request1"), &results1,
+                                callback1.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   TestCompletionCallback callback2;
   ProxyInfo results2;
-  rv = resolver().GetProxyForURL(GURL("http://request2"), &results2,
-                                 callback2.callback(), NULL, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv =
+      resolver().GetProxyForURL(GURL("http://request2"), &results2,
+                                callback2.callback(), NULL, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Wait until request 0 reaches the worker thread.
   factory().resolvers()[0]->WaitUntilBlocked();
@@ -505,7 +504,7 @@ TEST_F(MultiThreadedProxyResolverTest, SingleThread_CancelRequestByDeleting) {
   ClearResolver();
 
   // Give any posted tasks a chance to run (in case there is badness).
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Check that none of the outstanding requests were completed.
   EXPECT_FALSE(callback0.have_result());
@@ -527,14 +526,14 @@ TEST_F(MultiThreadedProxyResolverTest, ThreeThreads_Basic) {
   int rv;
   TestCompletionCallback callback[kNumRequests];
   ProxyInfo results[kNumRequests];
-  ProxyResolver::RequestHandle request[kNumRequests];
+  std::unique_ptr<ProxyResolver::Request> request[kNumRequests];
 
   // Start request 0 -- this should run on thread 0 as there is nothing else
   // going on right now.
   rv = resolver().GetProxyForURL(GURL("http://request0"), &results[0],
                                  callback[0].callback(), &request[0],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Wait for request 0 to finish.
   rv = callback[0].WaitForResult();
@@ -543,20 +542,20 @@ TEST_F(MultiThreadedProxyResolverTest, ThreeThreads_Basic) {
   ASSERT_EQ(1u, factory().resolvers().size());
   EXPECT_EQ(1, factory().resolvers()[0]->request_count());
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // We now block the first resolver to ensure a request is sent to the second
   // thread.
   factory().resolvers()[0]->Block();
   rv = resolver().GetProxyForURL(GURL("http://request1"), &results[1],
                                  callback[1].callback(), &request[1],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   factory().resolvers()[0]->WaitUntilBlocked();
   rv = resolver().GetProxyForURL(GURL("http://request2"), &results[2],
                                  callback[2].callback(), &request[2],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(0, callback[2].WaitForResult());
   ASSERT_EQ(2u, factory().resolvers().size());
 
@@ -565,13 +564,13 @@ TEST_F(MultiThreadedProxyResolverTest, ThreeThreads_Basic) {
   factory().resolvers()[1]->Block();
   rv = resolver().GetProxyForURL(GURL("http://request3"), &results[3],
                                  callback[3].callback(), &request[3],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   factory().resolvers()[1]->WaitUntilBlocked();
   rv = resolver().GetProxyForURL(GURL("http://request4"), &results[4],
                                  callback[4].callback(), &request[4],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(0, callback[4].WaitForResult());
 
   // We should now have a total of 3 threads, each with its own ProxyResolver
@@ -592,18 +591,18 @@ TEST_F(MultiThreadedProxyResolverTest, ThreeThreads_Basic) {
   // the first request.
   rv = resolver().GetProxyForURL(GURL("http://request5"), &results[5],
                                  callback[5].callback(), &request[5],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   rv = resolver().GetProxyForURL(GURL("http://request6"), &results[6],
                                  callback[6].callback(), &request[6],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   rv = resolver().GetProxyForURL(GURL("http://request7"), &results[7],
                                  callback[7].callback(), &request[7],
-                                 BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  resolver().CancelRequest(request[5]);
-  resolver().CancelRequest(request[6]);
+                                 NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  request[5].reset();
+  request[6].reset();
 
   EXPECT_EQ(2, callback[7].WaitForResult());
 
@@ -639,7 +638,7 @@ TEST_F(MultiThreadedProxyResolverTest, OneThreadBlocked) {
   const int kNumRequests = 4;
   TestCompletionCallback callback[kNumRequests];
   ProxyInfo results[kNumRequests];
-  ProxyResolver::RequestHandle request[kNumRequests];
+  std::unique_ptr<ProxyResolver::Request> request[kNumRequests];
 
   // Start a request that will block the first thread.
 
@@ -647,9 +646,9 @@ TEST_F(MultiThreadedProxyResolverTest, OneThreadBlocked) {
 
   rv = resolver().GetProxyForURL(GURL("http://request0"), &results[0],
                                  callback[0].callback(), &request[0],
-                                 BoundNetLog());
+                                 NetLogWithSource());
 
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   factory().resolvers()[0]->WaitUntilBlocked();
 
   // Start 3 more requests -- they should all be serviced by thread #2
@@ -658,8 +657,8 @@ TEST_F(MultiThreadedProxyResolverTest, OneThreadBlocked) {
   for (int i = 1; i < kNumRequests; ++i) {
     rv = resolver().GetProxyForURL(
         GURL(base::StringPrintf("http://request%d", i)), &results[i],
-        callback[i].callback(), &request[i], BoundNetLog());
-    EXPECT_EQ(ERR_IO_PENDING, rv);
+        callback[i].callback(), &request[i], NetLogWithSource());
+    EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   }
 
   // Wait for the three requests to complete (they should complete in FIFO
@@ -686,9 +685,9 @@ class FailingProxyResolverFactory : public ProxyResolverFactory {
   // ProxyResolverFactory override.
   int CreateProxyResolver(
       const scoped_refptr<ProxyResolverScriptData>& script_data,
-      scoped_ptr<ProxyResolver>* result,
+      std::unique_ptr<ProxyResolver>* result,
       const CompletionCallback& callback,
-      scoped_ptr<Request>* request) override {
+      std::unique_ptr<Request>* request) override {
     return ERR_PAC_SCRIPT_FAILED;
   }
 };
@@ -698,16 +697,16 @@ class FailingProxyResolverFactory : public ProxyResolverFactory {
 TEST_F(MultiThreadedProxyResolverTest, ProxyResolverFactoryError) {
   const size_t kNumThreads = 1u;
   SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-      kNumThreads, make_scoped_ptr(new FailingProxyResolverFactory));
+      kNumThreads, base::WrapUnique(new FailingProxyResolverFactory));
   TestCompletionCallback ready_callback;
-  scoped_ptr<ProxyResolverFactory::Request> request;
-  scoped_ptr<ProxyResolver> resolver;
+  std::unique_ptr<ProxyResolverFactory::Request> request;
+  std::unique_ptr<ProxyResolver> resolver;
   EXPECT_EQ(ERR_IO_PENDING,
             resolver_factory.CreateProxyResolver(
                 ProxyResolverScriptData::FromUTF8("pac script bytes"),
                 &resolver, ready_callback.callback(), &request));
   EXPECT_TRUE(request);
-  EXPECT_EQ(ERR_PAC_SCRIPT_FAILED, ready_callback.WaitForResult());
+  EXPECT_THAT(ready_callback.WaitForResult(), IsError(ERR_PAC_SCRIPT_FAILED));
   EXPECT_FALSE(resolver);
 }
 
@@ -720,9 +719,9 @@ TEST_F(MultiThreadedProxyResolverTest, CancelCreate) {
   const size_t kNumThreads = 1u;
   {
     SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-        kNumThreads, make_scoped_ptr(new BlockableProxyResolverFactory));
-    scoped_ptr<ProxyResolverFactory::Request> request;
-    scoped_ptr<ProxyResolver> resolver;
+        kNumThreads, base::WrapUnique(new BlockableProxyResolverFactory));
+    std::unique_ptr<ProxyResolverFactory::Request> request;
+    std::unique_ptr<ProxyResolver> resolver;
     EXPECT_EQ(ERR_IO_PENDING,
               resolver_factory.CreateProxyResolver(
                   ProxyResolverScriptData::FromUTF8("pac script bytes"),
@@ -737,7 +736,7 @@ TEST_F(MultiThreadedProxyResolverTest, CancelCreate) {
 }
 
 void DeleteRequest(const CompletionCallback& callback,
-                   scoped_ptr<ProxyResolverFactory::Request>* request,
+                   std::unique_ptr<ProxyResolverFactory::Request>* request,
                    int result) {
   callback.Run(result);
   request->reset();
@@ -747,9 +746,9 @@ void DeleteRequest(const CompletionCallback& callback,
 TEST_F(MultiThreadedProxyResolverTest, DeleteRequestInFactoryCallback) {
   const size_t kNumThreads = 1u;
   SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-      kNumThreads, make_scoped_ptr(new BlockableProxyResolverFactory));
-  scoped_ptr<ProxyResolverFactory::Request> request;
-  scoped_ptr<ProxyResolver> resolver;
+      kNumThreads, base::WrapUnique(new BlockableProxyResolverFactory));
+  std::unique_ptr<ProxyResolverFactory::Request> request;
+  std::unique_ptr<ProxyResolver> resolver;
   TestCompletionCallback callback;
   EXPECT_EQ(ERR_IO_PENDING,
             resolver_factory.CreateProxyResolver(
@@ -758,17 +757,17 @@ TEST_F(MultiThreadedProxyResolverTest, DeleteRequestInFactoryCallback) {
                                       base::Unretained(&request)),
                 &request));
   EXPECT_TRUE(request);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 }
 
 // Test that deleting the factory with a request in-progress works correctly.
 TEST_F(MultiThreadedProxyResolverTest, DestroyFactoryWithRequestsInProgress) {
   const size_t kNumThreads = 1u;
-  scoped_ptr<ProxyResolverFactory::Request> request;
-  scoped_ptr<ProxyResolver> resolver;
+  std::unique_ptr<ProxyResolverFactory::Request> request;
+  std::unique_ptr<ProxyResolver> resolver;
   {
     SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-        kNumThreads, make_scoped_ptr(new BlockableProxyResolverFactory));
+        kNumThreads, base::WrapUnique(new BlockableProxyResolverFactory));
     EXPECT_EQ(ERR_IO_PENDING,
               resolver_factory.CreateProxyResolver(
                   ProxyResolverScriptData::FromUTF8("pac script bytes"),

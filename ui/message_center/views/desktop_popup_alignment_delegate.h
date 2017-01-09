@@ -5,12 +5,14 @@
 #ifndef UI_MESSAGE_CENTER_VIEWS_DESKTOP_POPUP_ALIGNMENT_DELEGATE_H_
 #define UI_MESSAGE_CENTER_VIEWS_DESKTOP_POPUP_ALIGNMENT_DELEGATE_H_
 
+#include <stdint.h>
+
 #include "base/macros.h"
-#include "ui/gfx/display_observer.h"
+#include "ui/display/display_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/message_center/views/popup_alignment_delegate.h"
 
-namespace gfx {
+namespace display {
 class Screen;
 }
 
@@ -22,20 +24,23 @@ class MessagePopupCollectionTest;
 // The PopupAlignmentDelegate for non-ash Windows/Linux desktop.
 class MESSAGE_CENTER_EXPORT DesktopPopupAlignmentDelegate
     : public PopupAlignmentDelegate,
-      public gfx::DisplayObserver {
+      public display::DisplayObserver {
  public:
   DesktopPopupAlignmentDelegate();
   ~DesktopPopupAlignmentDelegate() override;
 
-  void StartObserving(gfx::Screen* screen);
+  void StartObserving(display::Screen* screen);
 
   // Overridden from PopupAlignmentDelegate:
   int GetToastOriginX(const gfx::Rect& toast_bounds) const override;
   int GetBaseLine() const override;
-  int GetWorkAreaBottom() const override;
+  gfx::Rect GetWorkArea() const override;
   bool IsTopDown() const override;
   bool IsFromLeft() const override;
-  void RecomputeAlignment(const gfx::Display& display) override;
+  void RecomputeAlignment(const display::Display& display) override;
+  void ConfigureWidgetInitParamsForContainer(
+      views::Widget* widget,
+      views::Widget::InitParams* init_params) override;
 
  private:
   friend class test::MessagePopupCollectionTest;
@@ -47,15 +52,17 @@ class MESSAGE_CENTER_EXPORT DesktopPopupAlignmentDelegate
     POPUP_ALIGNMENT_RIGHT = 1 << 3,
   };
 
-  // Overridden from gfx::DisplayObserver:
-  void OnDisplayAdded(const gfx::Display& new_display) override;
-  void OnDisplayRemoved(const gfx::Display& old_display) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  void UpdatePrimaryDisplay();
+
+  // Overridden from display::DisplayObserver:
+  void OnDisplayAdded(const display::Display& new_display) override;
+  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
 
   int32_t alignment_;
-  int64_t display_id_;
-  gfx::Screen* screen_;
+  int64_t primary_display_id_;
+  display::Screen* screen_;
   gfx::Rect work_area_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopPopupAlignmentDelegate);

@@ -26,54 +26,55 @@
 #ifndef WebGLContextGroup_h
 #define WebGLContextGroup_h
 
+#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/webgl/WebGLRenderingContextBase.h"
 #include "wtf/HashSet.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefCounted.h"
 
 namespace blink {
-class WebGraphicsContext3D;
-}
-
-namespace blink {
-
-class WebGLSharedObject;
-class WebGLRenderingContextBase;
 
 typedef int ExceptionCode;
 
-class WebGLContextGroup final : public RefCounted<WebGLContextGroup> {
-public:
-    static PassRefPtr<WebGLContextGroup> create();
-    ~WebGLContextGroup();
+class WebGLContextGroup final : public GarbageCollected<WebGLContextGroup>,
+                                public TraceWrapperBase {
+  WTF_MAKE_NONCOPYABLE(WebGLContextGroup);
 
-    void addContext(WebGLRenderingContextBase*);
-    void removeContext(WebGLRenderingContextBase*);
+ public:
+  WebGLContextGroup();
 
-    void addObject(WebGLSharedObject*);
-    void removeObject(WebGLSharedObject*);
+  void addContext(WebGLRenderingContextBase*);
 
-    WebGraphicsContext3D* getAWebGraphicsContext3D();
+  // There's no point in having a removeContext method any more now that
+  // the context group is GarbageCollected. The only time it would be
+  // called would be during WebGLRenderingContext destruction, and at that
+  // time, the context is not allowed to refer back to the context group
+  // since both are on the Oilpan heap.
 
-    void loseContextGroup(WebGLRenderingContextBase::LostContextMode, WebGLRenderingContextBase::AutoRecoveryMethod);
+  gpu::gles2::GLES2Interface* getAGLInterface();
 
-private:
-    friend class WebGLObject;
+  void loseContextGroup(WebGLRenderingContextBase::LostContextMode,
+                        WebGLRenderingContextBase::AutoRecoveryMethod);
 
-    WebGLContextGroup();
+  // This counter gets incremented every time context loss is
+  // triggered. Because there's no longer any explicit enumeration of
+  // the objects in a given context group upon context loss, each
+  // object needs to keep track of the context loss count when it was
+  // created, in order to validate itself.
+  uint32_t numberOfContextLosses() const;
 
-    void detachAndRemoveAllObjects();
+  DEFINE_INLINE_TRACE() { visitor->trace(m_contexts); }
 
-    // FIXME: Oilpan: this object is not on the heap, but keeps untraced
-    // pointers to on-heap objects in the two hash sets below.
-    // The objects are responsible for managing their
-    // registration with WebGLContextGroup, and vice versa, the
-    // WebGLContextGroup takes care of detaching the group objects if
-    // the set of WebGLRenderingContextBase contexts becomes empty.
-    HashSet<RawPtrWillBeUntracedMember<WebGLRenderingContextBase>> m_contexts;
-    HashSet<UntracedMember<WebGLSharedObject>> m_groupObjects;
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+ private:
+  friend class WebGLObject;
+
+  uint32_t m_numberOfContextLosses;
+
+  HeapHashSet<TraceWrapperMember<WebGLRenderingContextBase>> m_contexts;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebGLContextGroup_h
+#endif  // WebGLContextGroup_h

@@ -28,491 +28,809 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/loader/FrameFetchContext.h"
 
+#include "core/dom/Document.h"
 #include "core/fetch/FetchInitiatorInfo.h"
+#include "core/fetch/UniqueIdentifier.h"
 #include "core/frame/FrameHost.h"
 #include "core/frame/FrameOwner.h"
+#include "core/frame/FrameTypes.h"
 #include "core/frame/FrameView.h"
 #include "core/frame/Settings.h"
-#include "core/html/HTMLDocument.h"
+#include "core/html/HTMLIFrameElement.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/EmptyClients.h"
 #include "core/page/Page.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/network/ResourceRequest.h"
 #include "platform/weborigin/KURL.h"
+#include "public/platform/WebAddressSpace.h"
+#include "public/platform/WebCachePolicy.h"
+#include "public/platform/WebInsecureRequestPolicy.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include <memory>
 
 namespace blink {
 
 class StubFrameLoaderClientWithParent final : public EmptyFrameLoaderClient {
-public:
-    static PassOwnPtrWillBeRawPtr<StubFrameLoaderClientWithParent> create(Frame* parent)
-    {
-        return adoptPtrWillBeNoop(new StubFrameLoaderClientWithParent(parent));
-    }
+ public:
+  static StubFrameLoaderClientWithParent* create(Frame* parent) {
+    return new StubFrameLoaderClientWithParent(parent);
+  }
 
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        visitor->trace(m_parent);
-        EmptyFrameLoaderClient::trace(visitor);
-    }
+  DEFINE_INLINE_VIRTUAL_TRACE() {
+    visitor->trace(m_parent);
+    EmptyFrameLoaderClient::trace(visitor);
+  }
 
-    Frame* parent() const override { return m_parent.get(); }
+  Frame* parent() const override { return m_parent.get(); }
 
-private:
-    explicit StubFrameLoaderClientWithParent(Frame* parent)
-        : m_parent(parent)
-    {
-    }
+ private:
+  explicit StubFrameLoaderClientWithParent(Frame* parent) : m_parent(parent) {}
 
-    RawPtrWillBeMember<Frame> m_parent;
+  Member<Frame> m_parent;
 };
 
-class StubFrameOwner : public NoBaseWillBeGarbageCollectedFinalized<StubFrameOwner>, public FrameOwner {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(StubFrameOwner);
-public:
-    static PassOwnPtrWillBeRawPtr<StubFrameOwner> create()
-    {
-        return adoptPtrWillBeNoop(new StubFrameOwner);
-    }
-
-    DEFINE_INLINE_VIRTUAL_TRACE() { FrameOwner::trace(visitor); }
-
-    bool isLocal() const override { return false; }
-    SandboxFlags sandboxFlags() const override { return SandboxNone; }
-    void dispatchLoad() override { }
-    void renderFallbackContent() override { }
-    ScrollbarMode scrollingMode() const override { return ScrollbarAuto; }
-    int marginWidth() const override { return -1; }
-    int marginHeight() const override { return -1; }
+class MockFrameLoaderClient : public EmptyFrameLoaderClient {
+ public:
+  MockFrameLoaderClient() : EmptyFrameLoaderClient() {}
+  MOCK_METHOD1(didDisplayContentWithCertificateErrors, void(const KURL&));
+  MOCK_METHOD2(dispatchDidLoadResourceFromMemoryCache,
+               void(const ResourceRequest&, const ResourceResponse&));
 };
 
 class FrameFetchContextTest : public ::testing::Test {
-protected:
-    void SetUp() override
-    {
-        dummyPageHolder = DummyPageHolder::create(IntSize(500, 500));
-        dummyPageHolder->page().setDeviceScaleFactor(1.0);
-        documentLoader = DocumentLoader::create(&dummyPageHolder->frame(), ResourceRequest("http://www.example.com"), SubstituteData());
-        document = toHTMLDocument(&dummyPageHolder->document());
-        fetchContext = static_cast<FrameFetchContext*>(&documentLoader->fetcher()->context());
-        owner = StubFrameOwner::create();
-        FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
+ protected:
+  void SetUp() override {
+    dummyPageHolder = DummyPageHolder::create(IntSize(500, 500));
+    dummyPageHolder->page().setDeviceScaleFactor(1.0);
+    documentLoader = DocumentLoader::create(
+        &dummyPageHolder->frame(), ResourceRequest("http://www.example.com"),
+        SubstituteData(), ClientRedirectPolicy::NotClientRedirect);
+    document = &dummyPageHolder->document();
+    fetchContext =
+        static_cast<FrameFetchContext*>(&documentLoader->fetcher()->context());
+    owner = DummyFrameOwner::create();
+    FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
+  }
+
+  void TearDown() override {
+    documentLoader->detachFromFrame();
+    documentLoader.clear();
+
+    if (childFrame) {
+      childDocumentLoader->detachFromFrame();
+      childDocumentLoader.clear();
+      childFrame->detach(FrameDetachType::Remove);
     }
+  }
 
-    void TearDown() override
-    {
-        documentLoader->detachFromFrame();
-        documentLoader.clear();
+  FrameFetchContext* createChildFrame() {
+    childClient = StubFrameLoaderClientWithParent::create(document->frame());
+    childFrame = LocalFrame::create(childClient.get(),
+                                    document->frame()->host(), owner.get());
+    childFrame->setView(FrameView::create(*childFrame, IntSize(500, 500)));
+    childFrame->init();
+    childDocumentLoader = DocumentLoader::create(
+        childFrame.get(), ResourceRequest("http://www.example.com"),
+        SubstituteData(), ClientRedirectPolicy::NotClientRedirect);
+    childDocument = childFrame->document();
+    FrameFetchContext* childFetchContext = static_cast<FrameFetchContext*>(
+        &childDocumentLoader->fetcher()->context());
+    FrameFetchContext::provideDocumentToContext(*childFetchContext,
+                                                childDocument.get());
+    return childFetchContext;
+  }
 
-        if (childFrame) {
-            childDocumentLoader->detachFromFrame();
-            childDocumentLoader.clear();
-            childFrame->detach(FrameDetachType::Remove);
-        }
-    }
+  std::unique_ptr<DummyPageHolder> dummyPageHolder;
+  // We don't use the DocumentLoader directly in any tests, but need to keep it
+  // around as long as the ResourceFetcher and Document live due to indirect
+  // usage.
+  Persistent<DocumentLoader> documentLoader;
+  Persistent<Document> document;
+  Persistent<FrameFetchContext> fetchContext;
 
-    FrameFetchContext* createChildFrame()
-    {
-        childClient = StubFrameLoaderClientWithParent::create(document->frame());
-        childFrame = LocalFrame::create(childClient.get(), document->frame()->host(), owner.get());
-        childFrame->setView(FrameView::create(childFrame.get(), IntSize(500, 500)));
-        childFrame->init();
-        childDocumentLoader = DocumentLoader::create(childFrame.get(), ResourceRequest("http://www.example.com"), SubstituteData());
-        childDocument = childFrame->document();
-        FrameFetchContext* childFetchContext = static_cast<FrameFetchContext*>(&childDocumentLoader->fetcher()->context());
-        FrameFetchContext::provideDocumentToContext(*childFetchContext, childDocument.get());
-        return childFetchContext;
-    }
-
-    OwnPtr<DummyPageHolder> dummyPageHolder;
-    // We don't use the DocumentLoader directly in any tests, but need to keep it around as long
-    // as the ResourceFetcher and Document live due to indirect usage.
-    RefPtrWillBePersistent<DocumentLoader> documentLoader;
-    RefPtrWillBePersistent<Document> document;
-    Persistent<FrameFetchContext> fetchContext;
-
-    OwnPtrWillBePersistent<StubFrameLoaderClientWithParent> childClient;
-    RefPtrWillBePersistent<LocalFrame> childFrame;
-    RefPtrWillBePersistent<DocumentLoader> childDocumentLoader;
-    RefPtrWillBePersistent<Document> childDocument;
-    OwnPtrWillBePersistent<StubFrameOwner> owner;
+  Persistent<StubFrameLoaderClientWithParent> childClient;
+  Persistent<LocalFrame> childFrame;
+  Persistent<DocumentLoader> childDocumentLoader;
+  Persistent<Document> childDocument;
+  Persistent<DummyFrameOwner> owner;
 };
 
-class FrameFetchContextUpgradeTest : public FrameFetchContextTest {
-public:
-    FrameFetchContextUpgradeTest()
-        : exampleOrigin(SecurityOrigin::create(KURL(ParsedURLString, "https://example.test/")))
-        , secureOrigin(SecurityOrigin::create(KURL(ParsedURLString, "https://secureorigin.test/image.png")))
-    {
-    }
+// This test class sets up a mock frame loader client.
+class FrameFetchContextMockedFrameLoaderClientTest
+    : public FrameFetchContextTest {
+ protected:
+  void SetUp() override {
+    url = KURL(KURL(), "https://example.test/foo");
+    mainResourceUrl = KURL(KURL(), "https://www.example.test");
+    client = new testing::NiceMock<MockFrameLoaderClient>();
+    dummyPageHolder =
+        DummyPageHolder::create(IntSize(500, 500), nullptr, client);
+    dummyPageHolder->page().setDeviceScaleFactor(1.0);
+    documentLoader = DocumentLoader::create(
+        &dummyPageHolder->frame(), ResourceRequest(mainResourceUrl),
+        SubstituteData(), ClientRedirectPolicy::NotClientRedirect);
+    document = &dummyPageHolder->document();
+    document->setURL(mainResourceUrl);
+    fetchContext =
+        static_cast<FrameFetchContext*>(&documentLoader->fetcher()->context());
+    owner = DummyFrameOwner::create();
+    FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
+  }
 
-protected:
-    void expectUpgrade(const char* input, const char* expected)
-    {
-        expectUpgrade(input, WebURLRequest::RequestContextScript, WebURLRequest::FrameTypeNone, expected);
-    }
+  KURL url;
+  KURL mainResourceUrl;
 
-    void expectUpgrade(const char* input, WebURLRequest::RequestContext requestContext, WebURLRequest::FrameType frameType, const char* expected)
-    {
-        KURL inputURL(ParsedURLString, input);
-        KURL expectedURL(ParsedURLString, expected);
-
-        FetchRequest fetchRequest = FetchRequest(ResourceRequest(inputURL), FetchInitiatorInfo());
-        fetchRequest.mutableResourceRequest().setRequestContext(requestContext);
-        fetchRequest.mutableResourceRequest().setFrameType(frameType);
-
-        fetchContext->upgradeInsecureRequest(fetchRequest);
-
-        EXPECT_STREQ(expectedURL.string().utf8().data(), fetchRequest.resourceRequest().url().string().utf8().data());
-        EXPECT_EQ(expectedURL.protocol(), fetchRequest.resourceRequest().url().protocol());
-        EXPECT_EQ(expectedURL.host(), fetchRequest.resourceRequest().url().host());
-        EXPECT_EQ(expectedURL.port(), fetchRequest.resourceRequest().url().port());
-        EXPECT_EQ(expectedURL.hasPort(), fetchRequest.resourceRequest().url().hasPort());
-        EXPECT_EQ(expectedURL.path(), fetchRequest.resourceRequest().url().path());
-    }
-
-    void expectHTTPSHeader(const char* input, WebURLRequest::FrameType frameType, bool shouldPrefer)
-    {
-        KURL inputURL(ParsedURLString, input);
-
-        FetchRequest fetchRequest = FetchRequest(ResourceRequest(inputURL), FetchInitiatorInfo());
-        fetchRequest.mutableResourceRequest().setRequestContext(WebURLRequest::RequestContextScript);
-        fetchRequest.mutableResourceRequest().setFrameType(frameType);
-
-        fetchContext->upgradeInsecureRequest(fetchRequest);
-
-        EXPECT_STREQ(shouldPrefer ? "1" : "",
-            fetchRequest.resourceRequest().httpHeaderField("Upgrade-Insecure-Requests").utf8().data());
-    }
-
-    RefPtr<SecurityOrigin> exampleOrigin;
-    RefPtr<SecurityOrigin> secureOrigin;
+  Persistent<testing::NiceMock<MockFrameLoaderClient>> client;
 };
 
-TEST_F(FrameFetchContextUpgradeTest, UpgradeInsecureResourceRequests)
-{
-    struct TestCase {
-        const char* original;
-        const char* upgraded;
-    } tests[] = {
-        { "http://example.test/image.png", "https://example.test/image.png" },
-        { "http://example.test:80/image.png", "https://example.test:443/image.png" },
-        { "http://example.test:1212/image.png", "https://example.test:1212/image.png" },
+class FrameFetchContextModifyRequestTest : public FrameFetchContextTest {
+ public:
+  FrameFetchContextModifyRequestTest()
+      : exampleOrigin(SecurityOrigin::create(
+            KURL(ParsedURLString, "https://example.test/"))),
+        secureOrigin(SecurityOrigin::create(
+            KURL(ParsedURLString, "https://secureorigin.test/image.png"))) {}
 
-        { "https://example.test/image.png", "https://example.test/image.png" },
-        { "https://example.test:80/image.png", "https://example.test:80/image.png" },
-        { "https://example.test:1212/image.png", "https://example.test:1212/image.png" },
+ protected:
+  void expectUpgrade(const char* input, const char* expected) {
+    expectUpgrade(input, WebURLRequest::RequestContextScript,
+                  WebURLRequest::FrameTypeNone, expected);
+  }
 
-        { "ftp://example.test/image.png", "ftp://example.test/image.png" },
-        { "ftp://example.test:21/image.png", "ftp://example.test:21/image.png" },
-        { "ftp://example.test:1212/image.png", "ftp://example.test:1212/image.png" },
-    };
+  void expectUpgrade(const char* input,
+                     WebURLRequest::RequestContext requestContext,
+                     WebURLRequest::FrameType frameType,
+                     const char* expected) {
+    KURL inputURL(ParsedURLString, input);
+    KURL expectedURL(ParsedURLString, expected);
 
-    FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
-    document->setInsecureRequestsPolicy(SecurityContext::InsecureRequestsUpgrade);
+    FetchRequest fetchRequest =
+        FetchRequest(ResourceRequest(inputURL), FetchInitiatorInfo());
+    fetchRequest.mutableResourceRequest().setRequestContext(requestContext);
+    fetchRequest.mutableResourceRequest().setFrameType(frameType);
 
-    for (const auto& test : tests) {
-        document->insecureNavigationsToUpgrade()->clear();
+    fetchContext->modifyRequestForCSP(fetchRequest.mutableResourceRequest());
 
-        // We always upgrade for FrameTypeNone and FrameTypeNested.
-        expectUpgrade(test.original, WebURLRequest::RequestContextScript, WebURLRequest::FrameTypeNone, test.upgraded);
-        expectUpgrade(test.original, WebURLRequest::RequestContextScript, WebURLRequest::FrameTypeNested, test.upgraded);
+    EXPECT_EQ(expectedURL.getString(),
+              fetchRequest.resourceRequest().url().getString());
+    EXPECT_EQ(expectedURL.protocol(),
+              fetchRequest.resourceRequest().url().protocol());
+    EXPECT_EQ(expectedURL.host(), fetchRequest.resourceRequest().url().host());
+    EXPECT_EQ(expectedURL.port(), fetchRequest.resourceRequest().url().port());
+    EXPECT_EQ(expectedURL.hasPort(),
+              fetchRequest.resourceRequest().url().hasPort());
+    EXPECT_EQ(expectedURL.path(), fetchRequest.resourceRequest().url().path());
+  }
 
-        // We do not upgrade for FrameTypeTopLevel or FrameTypeAuxiliary...
-        expectUpgrade(test.original, WebURLRequest::RequestContextScript, WebURLRequest::FrameTypeTopLevel, test.original);
-        expectUpgrade(test.original, WebURLRequest::RequestContextScript, WebURLRequest::FrameTypeAuxiliary, test.original);
+  void expectUpgradeInsecureRequestHeader(const char* input,
+                                          WebURLRequest::FrameType frameType,
+                                          bool shouldPrefer) {
+    KURL inputURL(ParsedURLString, input);
 
-        // unless the request context is RequestContextForm.
-        expectUpgrade(test.original, WebURLRequest::RequestContextForm, WebURLRequest::FrameTypeTopLevel, test.upgraded);
-        expectUpgrade(test.original, WebURLRequest::RequestContextForm, WebURLRequest::FrameTypeAuxiliary, test.upgraded);
+    FetchRequest fetchRequest =
+        FetchRequest(ResourceRequest(inputURL), FetchInitiatorInfo());
+    fetchRequest.mutableResourceRequest().setRequestContext(
+        WebURLRequest::RequestContextScript);
+    fetchRequest.mutableResourceRequest().setFrameType(frameType);
 
-        // Or unless the host of the resource is in the document's InsecureNavigationsSet:
-        document->addInsecureNavigationUpgrade(exampleOrigin->host().impl()->hash());
-        expectUpgrade(test.original, WebURLRequest::RequestContextScript, WebURLRequest::FrameTypeTopLevel, test.upgraded);
-        expectUpgrade(test.original, WebURLRequest::RequestContextScript, WebURLRequest::FrameTypeAuxiliary, test.upgraded);
+    fetchContext->modifyRequestForCSP(fetchRequest.mutableResourceRequest());
+
+    EXPECT_EQ(shouldPrefer ? String("1") : String(),
+              fetchRequest.resourceRequest().httpHeaderField(
+                  HTTPNames::Upgrade_Insecure_Requests));
+
+    // Calling modifyRequestForCSP more than once shouldn't affect the
+    // header.
+    if (shouldPrefer) {
+      fetchContext->modifyRequestForCSP(fetchRequest.mutableResourceRequest());
+      EXPECT_EQ("1", fetchRequest.resourceRequest().httpHeaderField(
+                         HTTPNames::Upgrade_Insecure_Requests));
     }
+  }
+
+  void expectSetEmbeddingCSPRequestHeader(
+      const char* input,
+      WebURLRequest::FrameType frameType,
+      const AtomicString& expectedEmbeddingCSP) {
+    KURL inputURL(ParsedURLString, input);
+
+    FetchRequest fetchRequest =
+        FetchRequest(ResourceRequest(inputURL), FetchInitiatorInfo());
+    fetchRequest.mutableResourceRequest().setRequestContext(
+        WebURLRequest::RequestContextScript);
+    fetchRequest.mutableResourceRequest().setFrameType(frameType);
+
+    fetchContext->modifyRequestForCSP(fetchRequest.mutableResourceRequest());
+
+    EXPECT_EQ(expectedEmbeddingCSP,
+              fetchRequest.resourceRequest().httpHeaderField(
+                  HTTPNames::Embedding_CSP));
+  }
+
+  void setFrameOwnerBasedOnFrameType(WebURLRequest::FrameType frameType,
+                                     HTMLIFrameElement* iframe,
+                                     const AtomicString& potentialValue) {
+    if (frameType != WebURLRequest::FrameTypeNested) {
+      document->frame()->setOwner(nullptr);
+      return;
+    }
+
+    iframe->setAttribute(HTMLNames::cspAttr, potentialValue);
+    document->frame()->setOwner(iframe);
+  }
+
+  RefPtr<SecurityOrigin> exampleOrigin;
+  RefPtr<SecurityOrigin> secureOrigin;
+};
+
+TEST_F(FrameFetchContextModifyRequestTest, UpgradeInsecureResourceRequests) {
+  struct TestCase {
+    const char* original;
+    const char* upgraded;
+  } tests[] = {
+      {"http://example.test/image.png", "https://example.test/image.png"},
+      {"http://example.test:80/image.png",
+       "https://example.test:443/image.png"},
+      {"http://example.test:1212/image.png",
+       "https://example.test:1212/image.png"},
+
+      {"https://example.test/image.png", "https://example.test/image.png"},
+      {"https://example.test:80/image.png",
+       "https://example.test:80/image.png"},
+      {"https://example.test:1212/image.png",
+       "https://example.test:1212/image.png"},
+
+      {"ftp://example.test/image.png", "ftp://example.test/image.png"},
+      {"ftp://example.test:21/image.png", "ftp://example.test:21/image.png"},
+      {"ftp://example.test:1212/image.png",
+       "ftp://example.test:1212/image.png"},
+  };
+
+  FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
+  document->setInsecureRequestPolicy(kUpgradeInsecureRequests);
+
+  for (const auto& test : tests) {
+    document->insecureNavigationsToUpgrade()->clear();
+
+    // We always upgrade for FrameTypeNone and FrameTypeNested.
+    expectUpgrade(test.original, WebURLRequest::RequestContextScript,
+                  WebURLRequest::FrameTypeNone, test.upgraded);
+    expectUpgrade(test.original, WebURLRequest::RequestContextScript,
+                  WebURLRequest::FrameTypeNested, test.upgraded);
+
+    // We do not upgrade for FrameTypeTopLevel or FrameTypeAuxiliary...
+    expectUpgrade(test.original, WebURLRequest::RequestContextScript,
+                  WebURLRequest::FrameTypeTopLevel, test.original);
+    expectUpgrade(test.original, WebURLRequest::RequestContextScript,
+                  WebURLRequest::FrameTypeAuxiliary, test.original);
+
+    // unless the request context is RequestContextForm.
+    expectUpgrade(test.original, WebURLRequest::RequestContextForm,
+                  WebURLRequest::FrameTypeTopLevel, test.upgraded);
+    expectUpgrade(test.original, WebURLRequest::RequestContextForm,
+                  WebURLRequest::FrameTypeAuxiliary, test.upgraded);
+
+    // Or unless the host of the resource is in the document's
+    // InsecureNavigationsSet:
+    document->addInsecureNavigationUpgrade(
+        exampleOrigin->host().impl()->hash());
+    expectUpgrade(test.original, WebURLRequest::RequestContextScript,
+                  WebURLRequest::FrameTypeTopLevel, test.upgraded);
+    expectUpgrade(test.original, WebURLRequest::RequestContextScript,
+                  WebURLRequest::FrameTypeAuxiliary, test.upgraded);
+  }
 }
 
-TEST_F(FrameFetchContextUpgradeTest, DoNotUpgradeInsecureResourceRequests)
-{
-    FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
-    document->setSecurityOrigin(secureOrigin);
-    document->setInsecureRequestsPolicy(SecurityContext::InsecureRequestsDoNotUpgrade);
+TEST_F(FrameFetchContextModifyRequestTest,
+       DoNotUpgradeInsecureResourceRequests) {
+  FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
+  document->setSecurityOrigin(secureOrigin);
+  document->setInsecureRequestPolicy(kLeaveInsecureRequestsAlone);
 
-    expectUpgrade("http://example.test/image.png", "http://example.test/image.png");
-    expectUpgrade("http://example.test:80/image.png", "http://example.test:80/image.png");
-    expectUpgrade("http://example.test:1212/image.png", "http://example.test:1212/image.png");
+  expectUpgrade("http://example.test/image.png",
+                "http://example.test/image.png");
+  expectUpgrade("http://example.test:80/image.png",
+                "http://example.test:80/image.png");
+  expectUpgrade("http://example.test:1212/image.png",
+                "http://example.test:1212/image.png");
 
-    expectUpgrade("https://example.test/image.png", "https://example.test/image.png");
-    expectUpgrade("https://example.test:80/image.png", "https://example.test:80/image.png");
-    expectUpgrade("https://example.test:1212/image.png", "https://example.test:1212/image.png");
+  expectUpgrade("https://example.test/image.png",
+                "https://example.test/image.png");
+  expectUpgrade("https://example.test:80/image.png",
+                "https://example.test:80/image.png");
+  expectUpgrade("https://example.test:1212/image.png",
+                "https://example.test:1212/image.png");
 
-    expectUpgrade("ftp://example.test/image.png", "ftp://example.test/image.png");
-    expectUpgrade("ftp://example.test:21/image.png", "ftp://example.test:21/image.png");
-    expectUpgrade("ftp://example.test:1212/image.png", "ftp://example.test:1212/image.png");
+  expectUpgrade("ftp://example.test/image.png", "ftp://example.test/image.png");
+  expectUpgrade("ftp://example.test:21/image.png",
+                "ftp://example.test:21/image.png");
+  expectUpgrade("ftp://example.test:1212/image.png",
+                "ftp://example.test:1212/image.png");
 }
 
-TEST_F(FrameFetchContextUpgradeTest, SendHTTPSHeader)
-{
-    struct TestCase {
-        const char* toRequest;
-        WebURLRequest::FrameType frameType;
-        bool shouldPrefer;
-    } tests[] = {
-        { "http://example.test/page.html", WebURLRequest::FrameTypeAuxiliary, true },
-        { "http://example.test/page.html", WebURLRequest::FrameTypeNested, true },
-        { "http://example.test/page.html", WebURLRequest::FrameTypeNone, false },
-        { "http://example.test/page.html", WebURLRequest::FrameTypeTopLevel, true },
-        { "https://example.test/page.html", WebURLRequest::FrameTypeAuxiliary, true },
-        { "https://example.test/page.html", WebURLRequest::FrameTypeNested, true },
-        { "https://example.test/page.html", WebURLRequest::FrameTypeNone, false },
-        { "https://example.test/page.html", WebURLRequest::FrameTypeTopLevel, true }
-    };
+TEST_F(FrameFetchContextModifyRequestTest, SendUpgradeInsecureRequestHeader) {
+  struct TestCase {
+    const char* toRequest;
+    WebURLRequest::FrameType frameType;
+    bool shouldPrefer;
+  } tests[] = {
+      {"http://example.test/page.html", WebURLRequest::FrameTypeAuxiliary,
+       true},
+      {"http://example.test/page.html", WebURLRequest::FrameTypeNested, true},
+      {"http://example.test/page.html", WebURLRequest::FrameTypeNone, false},
+      {"http://example.test/page.html", WebURLRequest::FrameTypeTopLevel, true},
+      {"https://example.test/page.html", WebURLRequest::FrameTypeAuxiliary,
+       true},
+      {"https://example.test/page.html", WebURLRequest::FrameTypeNested, true},
+      {"https://example.test/page.html", WebURLRequest::FrameTypeNone, false},
+      {"https://example.test/page.html", WebURLRequest::FrameTypeTopLevel,
+       true}};
 
-    // This should work correctly both when the FrameFetchContext has a Document, and
-    // when it doesn't (e.g. during main frame navigations), so run through the tests
-    // both before and after providing a document to the context.
-    for (const auto& test : tests) {
-        document->setInsecureRequestsPolicy(SecurityContext::InsecureRequestsDoNotUpgrade);
-        expectHTTPSHeader(test.toRequest, test.frameType, test.shouldPrefer);
+  // This should work correctly both when the FrameFetchContext has a Document,
+  // and when it doesn't (e.g. during main frame navigations), so run through
+  // the tests both before and after providing a document to the context.
+  for (const auto& test : tests) {
+    document->setInsecureRequestPolicy(kLeaveInsecureRequestsAlone);
+    expectUpgradeInsecureRequestHeader(test.toRequest, test.frameType,
+                                       test.shouldPrefer);
 
-        document->setInsecureRequestsPolicy(SecurityContext::InsecureRequestsUpgrade);
-        expectHTTPSHeader(test.toRequest, test.frameType, test.shouldPrefer);
-    }
+    document->setInsecureRequestPolicy(kUpgradeInsecureRequests);
+    expectUpgradeInsecureRequestHeader(test.toRequest, test.frameType,
+                                       test.shouldPrefer);
+  }
 
-    FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
+  FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
 
-    for (const auto& test : tests) {
-        document->setInsecureRequestsPolicy(SecurityContext::InsecureRequestsDoNotUpgrade);
-        expectHTTPSHeader(test.toRequest, test.frameType, test.shouldPrefer);
+  for (const auto& test : tests) {
+    document->setInsecureRequestPolicy(kLeaveInsecureRequestsAlone);
+    expectUpgradeInsecureRequestHeader(test.toRequest, test.frameType,
+                                       test.shouldPrefer);
 
-        document->setInsecureRequestsPolicy(SecurityContext::InsecureRequestsUpgrade);
-        expectHTTPSHeader(test.toRequest, test.frameType, test.shouldPrefer);
-    }
+    document->setInsecureRequestPolicy(kUpgradeInsecureRequests);
+    expectUpgradeInsecureRequestHeader(test.toRequest, test.frameType,
+                                       test.shouldPrefer);
+  }
+}
+
+TEST_F(FrameFetchContextModifyRequestTest, SendEmbeddingCSPHeader) {
+  struct TestCase {
+    const char* toRequest;
+    WebURLRequest::FrameType frameType;
+  } tests[] = {
+      {"https://example.test/page.html", WebURLRequest::FrameTypeAuxiliary},
+      {"https://example.test/page.html", WebURLRequest::FrameTypeNested},
+      {"https://example.test/page.html", WebURLRequest::FrameTypeNone},
+      {"https://example.test/page.html", WebURLRequest::FrameTypeTopLevel}};
+
+  HTMLIFrameElement* iframe = HTMLIFrameElement::create(*document);
+  const AtomicString& requiredCSP = AtomicString("default-src 'none'");
+  const AtomicString& anotherRequiredCSP = AtomicString("default-src 'self'");
+
+  for (const auto& test : tests) {
+    setFrameOwnerBasedOnFrameType(test.frameType, iframe, requiredCSP);
+    expectSetEmbeddingCSPRequestHeader(
+        test.toRequest, test.frameType,
+        test.frameType == WebURLRequest::FrameTypeNested ? requiredCSP
+                                                         : nullAtom);
+
+    setFrameOwnerBasedOnFrameType(test.frameType, iframe, anotherRequiredCSP);
+    expectSetEmbeddingCSPRequestHeader(
+        test.toRequest, test.frameType,
+        test.frameType == WebURLRequest::FrameTypeNested ? anotherRequiredCSP
+                                                         : nullAtom);
+  }
 }
 
 class FrameFetchContextHintsTest : public FrameFetchContextTest {
-public:
-    FrameFetchContextHintsTest() { }
+ public:
+  FrameFetchContextHintsTest() {}
 
-protected:
-    void expectHeader(const char* input, const char* headerName, bool isPresent, const char* headerValue, float width = 0)
-    {
-        KURL inputURL(ParsedURLString, input);
-        FetchRequest fetchRequest = FetchRequest(ResourceRequest(inputURL), FetchInitiatorInfo());
-        if (width > 0) {
-            FetchRequest::ResourceWidth resourceWidth;
-            resourceWidth.width = width;
-            resourceWidth.isSet = true;
-            fetchRequest.setResourceWidth(resourceWidth);
-        }
-        fetchContext->addClientHintsIfNecessary(fetchRequest);
-
-        EXPECT_STREQ(isPresent ? headerValue : "",
-            fetchRequest.resourceRequest().httpHeaderField(headerName).utf8().data());
+ protected:
+  void expectHeader(const char* input,
+                    const char* headerName,
+                    bool isPresent,
+                    const char* headerValue,
+                    float width = 0) {
+    KURL inputURL(ParsedURLString, input);
+    FetchRequest fetchRequest =
+        FetchRequest(ResourceRequest(inputURL), FetchInitiatorInfo());
+    if (width > 0) {
+      FetchRequest::ResourceWidth resourceWidth;
+      resourceWidth.width = width;
+      resourceWidth.isSet = true;
+      fetchRequest.setResourceWidth(resourceWidth);
     }
+    fetchContext->addClientHintsIfNecessary(fetchRequest);
+
+    EXPECT_EQ(isPresent ? String(headerValue) : String(),
+              fetchRequest.resourceRequest().httpHeaderField(headerName));
+  }
 };
 
-TEST_F(FrameFetchContextHintsTest, MonitorDPRHints)
-{
-    expectHeader("http://www.example.com/1.gif", "DPR", false, "");
-    ClientHintsPreferences preferences;
-    preferences.setShouldSendDPR(true);
-    document->clientHintsPreferences().updateFrom(preferences);
-    expectHeader("http://www.example.com/1.gif", "DPR", true, "1");
-    dummyPageHolder->page().setDeviceScaleFactor(2.5);
-    expectHeader("http://www.example.com/1.gif", "DPR", true, "2.5");
-    expectHeader("http://www.example.com/1.gif", "Width", false, "");
-    expectHeader("http://www.example.com/1.gif", "Viewport-Width", false, "");
+TEST_F(FrameFetchContextHintsTest, MonitorDPRHints) {
+  expectHeader("http://www.example.com/1.gif", "DPR", false, "");
+  ClientHintsPreferences preferences;
+  preferences.setShouldSendDPR(true);
+  document->clientHintsPreferences().updateFrom(preferences);
+  expectHeader("http://www.example.com/1.gif", "DPR", true, "1");
+  dummyPageHolder->page().setDeviceScaleFactor(2.5);
+  expectHeader("http://www.example.com/1.gif", "DPR", true, "2.5");
+  expectHeader("http://www.example.com/1.gif", "Width", false, "");
+  expectHeader("http://www.example.com/1.gif", "Viewport-Width", false, "");
 }
 
-TEST_F(FrameFetchContextHintsTest, MonitorResourceWidthHints)
-{
-    expectHeader("http://www.example.com/1.gif", "Width", false, "");
-    ClientHintsPreferences preferences;
-    preferences.setShouldSendResourceWidth(true);
-    document->clientHintsPreferences().updateFrom(preferences);
-    expectHeader("http://www.example.com/1.gif", "Width", true, "500", 500);
-    expectHeader("http://www.example.com/1.gif", "Width", true, "667", 666.6666);
-    expectHeader("http://www.example.com/1.gif", "DPR", false, "");
-    dummyPageHolder->page().setDeviceScaleFactor(2.5);
-    expectHeader("http://www.example.com/1.gif", "Width", true, "1250", 500);
-    expectHeader("http://www.example.com/1.gif", "Width", true, "1667", 666.6666);
+TEST_F(FrameFetchContextHintsTest, MonitorResourceWidthHints) {
+  expectHeader("http://www.example.com/1.gif", "Width", false, "");
+  ClientHintsPreferences preferences;
+  preferences.setShouldSendResourceWidth(true);
+  document->clientHintsPreferences().updateFrom(preferences);
+  expectHeader("http://www.example.com/1.gif", "Width", true, "500", 500);
+  expectHeader("http://www.example.com/1.gif", "Width", true, "667", 666.6666);
+  expectHeader("http://www.example.com/1.gif", "DPR", false, "");
+  dummyPageHolder->page().setDeviceScaleFactor(2.5);
+  expectHeader("http://www.example.com/1.gif", "Width", true, "1250", 500);
+  expectHeader("http://www.example.com/1.gif", "Width", true, "1667", 666.6666);
 }
 
-TEST_F(FrameFetchContextHintsTest, MonitorViewportWidthHints)
-{
-    expectHeader("http://www.example.com/1.gif", "Viewport-Width", false, "");
-    ClientHintsPreferences preferences;
-    preferences.setShouldSendViewportWidth(true);
-    document->clientHintsPreferences().updateFrom(preferences);
-    expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "500");
-    dummyPageHolder->frameView().setLayoutSizeFixedToFrameSize(false);
-    dummyPageHolder->frameView().setLayoutSize(IntSize(800, 800));
-    expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "800");
-    expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "800", 666.6666);
-    expectHeader("http://www.example.com/1.gif", "DPR", false, "");
+TEST_F(FrameFetchContextHintsTest, MonitorViewportWidthHints) {
+  expectHeader("http://www.example.com/1.gif", "Viewport-Width", false, "");
+  ClientHintsPreferences preferences;
+  preferences.setShouldSendViewportWidth(true);
+  document->clientHintsPreferences().updateFrom(preferences);
+  expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "500");
+  dummyPageHolder->frameView().setLayoutSizeFixedToFrameSize(false);
+  dummyPageHolder->frameView().setLayoutSize(IntSize(800, 800));
+  expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "800");
+  expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "800",
+               666.6666);
+  expectHeader("http://www.example.com/1.gif", "DPR", false, "");
 }
 
-TEST_F(FrameFetchContextHintsTest, MonitorAllHints)
-{
-    expectHeader("http://www.example.com/1.gif", "DPR", false, "");
-    expectHeader("http://www.example.com/1.gif", "Viewport-Width", false, "");
-    expectHeader("http://www.example.com/1.gif", "Width", false, "");
+TEST_F(FrameFetchContextHintsTest, MonitorAllHints) {
+  expectHeader("http://www.example.com/1.gif", "DPR", false, "");
+  expectHeader("http://www.example.com/1.gif", "Viewport-Width", false, "");
+  expectHeader("http://www.example.com/1.gif", "Width", false, "");
 
-    ClientHintsPreferences preferences;
-    preferences.setShouldSendDPR(true);
-    preferences.setShouldSendResourceWidth(true);
-    preferences.setShouldSendViewportWidth(true);
-    document->clientHintsPreferences().updateFrom(preferences);
-    expectHeader("http://www.example.com/1.gif", "DPR", true, "1");
-    expectHeader("http://www.example.com/1.gif", "Width", true, "400", 400);
-    expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "500");
+  ClientHintsPreferences preferences;
+  preferences.setShouldSendDPR(true);
+  preferences.setShouldSendResourceWidth(true);
+  preferences.setShouldSendViewportWidth(true);
+  document->clientHintsPreferences().updateFrom(preferences);
+  expectHeader("http://www.example.com/1.gif", "DPR", true, "1");
+  expectHeader("http://www.example.com/1.gif", "Width", true, "400", 400);
+  expectHeader("http://www.example.com/1.gif", "Viewport-Width", true, "500");
 }
 
-TEST_F(FrameFetchContextTest, MainResource)
-{
-    // Default case
-    ResourceRequest request("http://www.example.com");
-    EXPECT_EQ(UseProtocolCachePolicy, fetchContext->resourceRequestCachePolicy(request, Resource::MainResource));
+TEST_F(FrameFetchContextTest, MainResource) {
+  // Default case
+  ResourceRequest request("http://www.example.com");
+  EXPECT_EQ(WebCachePolicy::UseProtocolCachePolicy,
+            fetchContext->resourceRequestCachePolicy(
+                request, Resource::MainResource, FetchRequest::NoDefer));
 
-    // Post
-    ResourceRequest postRequest("http://www.example.com");
-    postRequest.setHTTPMethod("POST");
-    EXPECT_EQ(ReloadIgnoringCacheData, fetchContext->resourceRequestCachePolicy(postRequest, Resource::MainResource));
+  // Post
+  ResourceRequest postRequest("http://www.example.com");
+  postRequest.setHTTPMethod("POST");
+  EXPECT_EQ(WebCachePolicy::ValidatingCacheData,
+            fetchContext->resourceRequestCachePolicy(
+                postRequest, Resource::MainResource, FetchRequest::NoDefer));
 
-    // Re-post
-    document->frame()->loader().setLoadType(FrameLoadTypeBackForward);
-    EXPECT_EQ(ReturnCacheDataDontLoad, fetchContext->resourceRequestCachePolicy(postRequest, Resource::MainResource));
+  // Re-post
+  document->frame()->loader().setLoadType(FrameLoadTypeBackForward);
+  EXPECT_EQ(WebCachePolicy::ReturnCacheDataDontLoad,
+            fetchContext->resourceRequestCachePolicy(
+                postRequest, Resource::MainResource, FetchRequest::NoDefer));
 
-    // Enconding overriden
-    document->frame()->loader().setLoadType(FrameLoadTypeStandard);
-    document->frame()->host()->setOverrideEncoding("foo");
-    EXPECT_EQ(ReturnCacheDataElseLoad, fetchContext->resourceRequestCachePolicy(request, Resource::MainResource));
-    document->frame()->host()->setOverrideEncoding(AtomicString());
+  // FrameLoadTypeReloadMainResource
+  document->frame()->loader().setLoadType(FrameLoadTypeReloadMainResource);
+  EXPECT_EQ(WebCachePolicy::ValidatingCacheData,
+            fetchContext->resourceRequestCachePolicy(
+                request, Resource::MainResource, FetchRequest::NoDefer));
 
-    // FrameLoadTypeSame
-    document->frame()->loader().setLoadType(FrameLoadTypeSame);
-    EXPECT_EQ(ReloadIgnoringCacheData, fetchContext->resourceRequestCachePolicy(request, Resource::MainResource));
+  // Conditional request
+  document->frame()->loader().setLoadType(FrameLoadTypeStandard);
+  ResourceRequest conditional("http://www.example.com");
+  conditional.setHTTPHeaderField(HTTPNames::If_Modified_Since, "foo");
+  EXPECT_EQ(WebCachePolicy::ValidatingCacheData,
+            fetchContext->resourceRequestCachePolicy(
+                conditional, Resource::MainResource, FetchRequest::NoDefer));
 
-    // Conditional request
-    document->frame()->loader().setLoadType(FrameLoadTypeStandard);
-    ResourceRequest conditional("http://www.example.com");
-    conditional.setHTTPHeaderField("If-Modified-Since", "foo");
-    EXPECT_EQ(ReloadIgnoringCacheData, fetchContext->resourceRequestCachePolicy(conditional, Resource::MainResource));
+  // Set up a child frame
+  FrameFetchContext* childFetchContext = createChildFrame();
 
-    // Set up a child frame
-    FrameFetchContext* childFetchContext = createChildFrame();
+  // Child frame as part of back/forward
+  document->frame()->loader().setLoadType(FrameLoadTypeBackForward);
+  EXPECT_EQ(WebCachePolicy::ReturnCacheDataElseLoad,
+            childFetchContext->resourceRequestCachePolicy(
+                request, Resource::MainResource, FetchRequest::NoDefer));
 
-    // Child frame as part of back/forward
-    document->frame()->loader().setLoadType(FrameLoadTypeBackForward);
-    EXPECT_EQ(ReturnCacheDataElseLoad, childFetchContext->resourceRequestCachePolicy(request, Resource::MainResource));
+  // Child frame as part of reload
+  document->frame()->loader().setLoadType(FrameLoadTypeReload);
+  EXPECT_EQ(WebCachePolicy::ValidatingCacheData,
+            childFetchContext->resourceRequestCachePolicy(
+                request, Resource::MainResource, FetchRequest::NoDefer));
 
-    // Child frame as part of reload
-    document->frame()->loader().setLoadType(FrameLoadTypeReload);
-    EXPECT_EQ(ReloadIgnoringCacheData, childFetchContext->resourceRequestCachePolicy(request, Resource::MainResource));
-
-    // Child frame as part of end to end reload
-    document->frame()->loader().setLoadType(FrameLoadTypeReloadFromOrigin);
-    EXPECT_EQ(ReloadBypassingCache, childFetchContext->resourceRequestCachePolicy(request, Resource::MainResource));
+  // Child frame as part of reload bypassing cache
+  document->frame()->loader().setLoadType(FrameLoadTypeReloadBypassingCache);
+  EXPECT_EQ(WebCachePolicy::BypassingCache,
+            childFetchContext->resourceRequestCachePolicy(
+                request, Resource::MainResource, FetchRequest::NoDefer));
 }
 
-TEST_F(FrameFetchContextTest, ModifyPriorityForExperiments)
-{
-    Settings* settings = document->frame()->settings();
-    FetchRequest request(ResourceRequest("http://www.example.com"), FetchInitiatorInfo());
+TEST_F(FrameFetchContextTest, PopulateRequestData) {
+  struct TestCase {
+    const char* documentURL;
+    bool documentSandboxed;
+    const char* requestorOrigin;  // "" => unique origin
+    WebURLRequest::FrameType frameType;
+    const char* serializedOrigin;  // "" => unique origin
+  } cases[] = {
+      // No document origin => unique request origin
+      {"", false, "", WebURLRequest::FrameTypeNone, "null"},
+      {"", true, "", WebURLRequest::FrameTypeNone, "null"},
 
-    FetchRequest preloadRequest(ResourceRequest("http://www.example.com"), FetchInitiatorInfo());
-    preloadRequest.setForPreload(true);
+      // Document origin => request origin
+      {"http://example.test", false, "", WebURLRequest::FrameTypeNone,
+       "http://example.test"},
+      {"http://example.test", true, "", WebURLRequest::FrameTypeNone,
+       "http://example.test"},
 
-    FetchRequest deferredRequest(ResourceRequest("http://www.example.com"), FetchInitiatorInfo());
-    deferredRequest.setDefer(FetchRequest::LazyLoad);
+      // If the request already has a requestor origin, then
+      // 'populateRequestData' leaves it alone:
+      {"http://example.test", false, "http://not-example.test",
+       WebURLRequest::FrameTypeNone, "http://not-example.test"},
+      {"http://example.test", true, "http://not-example.test",
+       WebURLRequest::FrameTypeNone, "http://not-example.test"},
 
-    // Start with all experiments disabled.
-    settings->setFEtchIncreaseAsyncScriptPriority(false);
-    settings->setFEtchIncreaseFontPriority(false);
-    settings->setFEtchDeferLateScripts(false);
-    settings->setFEtchIncreasePriorities(false);
+      // If the request's frame type is not 'none', then 'populateRequestData'
+      // leaves it alone:
+      {"http://example.test", false, "", WebURLRequest::FrameTypeTopLevel, ""},
+      {"http://example.test", false, "", WebURLRequest::FrameTypeAuxiliary, ""},
+      {"http://example.test", false, "", WebURLRequest::FrameTypeNested, ""},
+  };
 
-    // Base case, no priority change. Note that this triggers m_imageFetched, which will matter for setFetchDeferLateScripts() case below.
-    EXPECT_EQ(ResourceLoadPriorityVeryLow, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryLow, Resource::Image, request, ResourcePriority::NotVisible));
+  for (const auto& test : cases) {
+    SCOPED_TRACE(::testing::Message() << test.documentURL << " => "
+                                      << test.serializedOrigin);
+    // Set up a new document to ensure sandbox flags are cleared:
+    dummyPageHolder = DummyPageHolder::create(IntSize(500, 500));
+    dummyPageHolder->page().setDeviceScaleFactor(1.0);
+    document = &dummyPageHolder->document();
+    FrameFetchContext::provideDocumentToContext(*fetchContext, document.get());
 
-    // Image visibility should increase priority
-    EXPECT_EQ(ResourceLoadPriorityLow, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryLow, Resource::Image, request, ResourcePriority::Visible));
+    // Setup the test:
+    document->setURL(KURL(ParsedURLString, test.documentURL));
+    document->setSecurityOrigin(SecurityOrigin::create(document->url()));
 
-    // Font priority with and without fetchIncreaseFontPriority()
-    EXPECT_EQ(ResourceLoadPriorityMedium, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Font, request, ResourcePriority::NotVisible));
-    settings->setFEtchIncreaseFontPriority(true);
-    EXPECT_EQ(ResourceLoadPriorityHigh, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Font, request, ResourcePriority::NotVisible));
+    if (test.documentSandboxed)
+      document->enforceSandboxFlags(SandboxOrigin);
 
-    // Basic script cases
-    EXPECT_EQ(ResourceLoadPriorityMedium, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, request, ResourcePriority::NotVisible));
-    EXPECT_EQ(ResourceLoadPriorityMedium, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, preloadRequest, ResourcePriority::NotVisible));
+    ResourceRequest request("http://example.test/");
+    request.setFrameType(test.frameType);
+    if (strlen(test.requestorOrigin) > 0) {
+      request.setRequestorOrigin(
+          SecurityOrigin::create(KURL(ParsedURLString, test.requestorOrigin)));
+    }
 
-    // Enable deferring late scripts. Preload priority should drop.
-    settings->setFEtchDeferLateScripts(true);
-    EXPECT_EQ(ResourceLoadPriorityLow, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, preloadRequest, ResourcePriority::NotVisible));
+    // Compare the populated |requestorOrigin| against |test.serializedOrigin|
+    fetchContext->populateRequestData(request);
+    if (strlen(test.serializedOrigin) == 0) {
+      EXPECT_TRUE(request.requestorOrigin()->isUnique());
+    } else {
+      EXPECT_EQ(String(test.serializedOrigin),
+                request.requestorOrigin()->toString());
+    }
 
-    // Enable increasing priority of async scripts.
-    EXPECT_EQ(ResourceLoadPriorityLow, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, deferredRequest, ResourcePriority::NotVisible));
-    settings->setFEtchIncreaseAsyncScriptPriority(true);
-    EXPECT_EQ(ResourceLoadPriorityMedium, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, deferredRequest, ResourcePriority::NotVisible));
-
-    // Enable increased priorities for the remainder.
-    settings->setFEtchIncreasePriorities(true);
-
-    // Re-test image priority based on visibility with increased priorities
-    EXPECT_EQ(ResourceLoadPriorityLow, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryLow, Resource::Image, request, ResourcePriority::NotVisible));
-    EXPECT_EQ(ResourceLoadPriorityHigh, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryLow, Resource::Image, request, ResourcePriority::Visible));
-
-    // Re-test font priority with increased prioriries
-    settings->setFEtchIncreaseFontPriority(false);
-    EXPECT_EQ(ResourceLoadPriorityHigh, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Font, request, ResourcePriority::NotVisible));
-    settings->setFEtchIncreaseFontPriority(true);
-    EXPECT_EQ(ResourceLoadPriorityVeryHigh, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Font, request, ResourcePriority::NotVisible));
-
-    // Re-test basic script cases and deferring late script case with increased prioriries
-    settings->setFEtchDeferLateScripts(false);
-    EXPECT_EQ(ResourceLoadPriorityVeryHigh, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, request, ResourcePriority::NotVisible));
-    EXPECT_EQ(ResourceLoadPriorityHigh, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, preloadRequest, ResourcePriority::NotVisible));
-
-    // Re-test deferring late scripts.
-    settings->setFEtchDeferLateScripts(true);
-    EXPECT_EQ(ResourceLoadPriorityMedium, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, preloadRequest, ResourcePriority::NotVisible));
-
-    // Re-test increasing priority of async scripts. Should ignore general incraesed priorities.
-    settings->setFEtchIncreaseAsyncScriptPriority(false);
-    EXPECT_EQ(ResourceLoadPriorityLow, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, deferredRequest, ResourcePriority::NotVisible));
-    settings->setFEtchIncreaseAsyncScriptPriority(true);
-    EXPECT_EQ(ResourceLoadPriorityMedium, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, deferredRequest, ResourcePriority::NotVisible));
-
-    // Ensure we don't go out of bounds
-    settings->setFEtchIncreasePriorities(true);
-    EXPECT_EQ(ResourceLoadPriorityVeryHigh, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryHigh, Resource::Script, request, ResourcePriority::NotVisible));
-    settings->setFEtchIncreasePriorities(false);
-    settings->setFEtchDeferLateScripts(true);
-    EXPECT_EQ(ResourceLoadPriorityVeryLow, fetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryLow, Resource::Script, preloadRequest, ResourcePriority::NotVisible));
+    EXPECT_EQ(document->firstPartyForCookies(), request.firstPartyForCookies());
+  }
 }
 
-TEST_F(FrameFetchContextTest, ModifyPriorityForLowPriorityIframes)
-{
-    Settings* settings = document->frame()->settings();
-    settings->setLowPriorityIframes(false);
-    FetchRequest request(ResourceRequest("http://www.example.com"), FetchInitiatorInfo());
-    FrameFetchContext* childFetchContext = createChildFrame();
+TEST_F(FrameFetchContextTest, ModifyPriorityForLowPriorityIframes) {
+  Settings* settings = document->frame()->settings();
+  settings->setLowPriorityIframes(false);
+  FetchRequest request(ResourceRequest("http://www.example.com"),
+                       FetchInitiatorInfo());
+  FrameFetchContext* childFetchContext = createChildFrame();
 
-    // No low priority iframes, expect default values.
-    EXPECT_EQ(ResourceLoadPriorityVeryHigh, childFetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryHigh, Resource::MainResource, request, ResourcePriority::NotVisible));
-    EXPECT_EQ(ResourceLoadPriorityMedium, childFetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, request, ResourcePriority::NotVisible));
+  // No low priority iframes, expect default values.
+  EXPECT_EQ(ResourceLoadPriorityVeryHigh,
+            childFetchContext->modifyPriorityForExperiments(
+                ResourceLoadPriorityVeryHigh));
+  EXPECT_EQ(ResourceLoadPriorityMedium,
+            childFetchContext->modifyPriorityForExperiments(
+                ResourceLoadPriorityMedium));
 
-    // Low priority iframes enabled, everything should be low priority
-    settings->setLowPriorityIframes(true);
-    EXPECT_EQ(ResourceLoadPriorityVeryLow, childFetchContext->modifyPriorityForExperiments(ResourceLoadPriorityVeryHigh, Resource::MainResource, request, ResourcePriority::NotVisible));
-    EXPECT_EQ(ResourceLoadPriorityVeryLow, childFetchContext->modifyPriorityForExperiments(ResourceLoadPriorityMedium, Resource::Script, request, ResourcePriority::NotVisible));
+  // Low priority iframes enabled, everything should be low priority
+  settings->setLowPriorityIframes(true);
+  EXPECT_EQ(ResourceLoadPriorityVeryLow,
+            childFetchContext->modifyPriorityForExperiments(
+                ResourceLoadPriorityVeryHigh));
+  EXPECT_EQ(ResourceLoadPriorityVeryLow,
+            childFetchContext->modifyPriorityForExperiments(
+                ResourceLoadPriorityMedium));
 }
 
-} // namespace
+TEST_F(FrameFetchContextTest, EnableDataSaver) {
+  Settings* settings = document->frame()->settings();
+  settings->setDataSaverEnabled(true);
+  ResourceRequest resourceRequest("http://www.example.com");
+  fetchContext->addAdditionalRequestHeaders(resourceRequest, FetchMainResource);
+  EXPECT_EQ("on", resourceRequest.httpHeaderField("Save-Data"));
+
+  // Subsequent call to addAdditionalRequestHeaders should not append to the
+  // save-data header.
+  fetchContext->addAdditionalRequestHeaders(resourceRequest, FetchMainResource);
+  EXPECT_EQ("on", resourceRequest.httpHeaderField("Save-Data"));
+}
+
+TEST_F(FrameFetchContextTest, DisabledDataSaver) {
+  ResourceRequest resourceRequest("http://www.example.com");
+  fetchContext->addAdditionalRequestHeaders(resourceRequest, FetchMainResource);
+  EXPECT_EQ(String(), resourceRequest.httpHeaderField("Save-Data"));
+}
+
+// Tests that the embedder gets correct notification when a resource is loaded
+// from the memory cache.
+TEST_F(FrameFetchContextMockedFrameLoaderClientTest,
+       DispatchDidLoadResourceFromMemoryCache) {
+  ResourceRequest resourceRequest(url);
+  Resource* resource = ImageResource::create(resourceRequest);
+  EXPECT_CALL(
+      *client,
+      dispatchDidLoadResourceFromMemoryCache(
+          testing::AllOf(testing::Property(&ResourceRequest::url, url),
+                         testing::Property(&ResourceRequest::frameType,
+                                           WebURLRequest::FrameTypeNone),
+                         testing::Property(&ResourceRequest::requestContext,
+                                           WebURLRequest::RequestContextImage)),
+          ResourceResponse()));
+  fetchContext->dispatchDidLoadResourceFromMemoryCache(
+      createUniqueIdentifier(), resource, WebURLRequest::FrameTypeNone,
+      WebURLRequest::RequestContextImage);
+}
+
+// Tests that when a resource with certificate errors is loaded from the memory
+// cache, the embedder is notified.
+TEST_F(FrameFetchContextMockedFrameLoaderClientTest,
+       MemoryCacheCertificateError) {
+  ResourceRequest resourceRequest(url);
+  ResourceResponse response;
+  response.setURL(url);
+  response.setHasMajorCertificateErrors(true);
+  Resource* resource = ImageResource::create(resourceRequest);
+  resource->setResponse(response);
+  EXPECT_CALL(*client, didDisplayContentWithCertificateErrors(url));
+  fetchContext->dispatchDidLoadResourceFromMemoryCache(
+      createUniqueIdentifier(), resource, WebURLRequest::FrameTypeNone,
+      WebURLRequest::RequestContextImage);
+}
+
+TEST_F(FrameFetchContextTest, SetIsExternalRequestForPublicDocument) {
+  EXPECT_EQ(WebAddressSpacePublic, document->addressSpace());
+
+  struct TestCase {
+    const char* url;
+    bool isExternalExpectation;
+  } cases[] = {
+      {"data:text/html,whatever", false},  {"file:///etc/passwd", false},
+      {"blob:http://example.com/", false},
+
+      {"http://example.com/", false},      {"https://example.com/", false},
+
+      {"http://192.168.1.1:8000/", true},  {"http://10.1.1.1:8000/", true},
+
+      {"http://localhost/", true},         {"http://127.0.0.1/", true},
+      {"http://127.0.0.1:8000/", true}};
+  RuntimeEnabledFeatures::setCorsRFC1918Enabled(false);
+  for (const auto& test : cases) {
+    SCOPED_TRACE(test.url);
+    ResourceRequest mainRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(mainRequest, FetchMainResource);
+    EXPECT_FALSE(mainRequest.isExternalRequest());
+
+    ResourceRequest subRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(subRequest, FetchSubresource);
+    EXPECT_FALSE(subRequest.isExternalRequest());
+  }
+
+  RuntimeEnabledFeatures::setCorsRFC1918Enabled(true);
+  for (const auto& test : cases) {
+    SCOPED_TRACE(test.url);
+    ResourceRequest mainRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(mainRequest, FetchMainResource);
+    EXPECT_EQ(test.isExternalExpectation, mainRequest.isExternalRequest());
+
+    ResourceRequest subRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(subRequest, FetchSubresource);
+    EXPECT_EQ(test.isExternalExpectation, subRequest.isExternalRequest());
+  }
+}
+
+TEST_F(FrameFetchContextTest, SetIsExternalRequestForPrivateDocument) {
+  document->setAddressSpace(WebAddressSpacePrivate);
+  EXPECT_EQ(WebAddressSpacePrivate, document->addressSpace());
+
+  struct TestCase {
+    const char* url;
+    bool isExternalExpectation;
+  } cases[] = {
+      {"data:text/html,whatever", false},  {"file:///etc/passwd", false},
+      {"blob:http://example.com/", false},
+
+      {"http://example.com/", false},      {"https://example.com/", false},
+
+      {"http://192.168.1.1:8000/", false}, {"http://10.1.1.1:8000/", false},
+
+      {"http://localhost/", true},         {"http://127.0.0.1/", true},
+      {"http://127.0.0.1:8000/", true}};
+  RuntimeEnabledFeatures::setCorsRFC1918Enabled(false);
+  for (const auto& test : cases) {
+    SCOPED_TRACE(test.url);
+    ResourceRequest mainRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(mainRequest, FetchMainResource);
+    EXPECT_FALSE(mainRequest.isExternalRequest());
+
+    ResourceRequest subRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(subRequest, FetchSubresource);
+    EXPECT_FALSE(subRequest.isExternalRequest());
+  }
+
+  RuntimeEnabledFeatures::setCorsRFC1918Enabled(true);
+  for (const auto& test : cases) {
+    SCOPED_TRACE(test.url);
+    ResourceRequest mainRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(mainRequest, FetchMainResource);
+    EXPECT_EQ(test.isExternalExpectation, mainRequest.isExternalRequest());
+
+    ResourceRequest subRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(subRequest, FetchSubresource);
+    EXPECT_EQ(test.isExternalExpectation, subRequest.isExternalRequest());
+  }
+}
+
+TEST_F(FrameFetchContextTest, SetIsExternalRequestForLocalDocument) {
+  document->setAddressSpace(WebAddressSpaceLocal);
+  EXPECT_EQ(WebAddressSpaceLocal, document->addressSpace());
+
+  struct TestCase {
+    const char* url;
+    bool isExternalExpectation;
+  } cases[] = {
+      {"data:text/html,whatever", false},  {"file:///etc/passwd", false},
+      {"blob:http://example.com/", false},
+
+      {"http://example.com/", false},      {"https://example.com/", false},
+
+      {"http://192.168.1.1:8000/", false}, {"http://10.1.1.1:8000/", false},
+
+      {"http://localhost/", false},        {"http://127.0.0.1/", false},
+      {"http://127.0.0.1:8000/", false}};
+
+  RuntimeEnabledFeatures::setCorsRFC1918Enabled(false);
+  for (const auto& test : cases) {
+    ResourceRequest mainRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(mainRequest, FetchMainResource);
+    EXPECT_FALSE(mainRequest.isExternalRequest());
+
+    ResourceRequest subRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(subRequest, FetchSubresource);
+    EXPECT_FALSE(subRequest.isExternalRequest());
+  }
+
+  RuntimeEnabledFeatures::setCorsRFC1918Enabled(true);
+  for (const auto& test : cases) {
+    ResourceRequest mainRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(mainRequest, FetchMainResource);
+    EXPECT_EQ(test.isExternalExpectation, mainRequest.isExternalRequest());
+
+    ResourceRequest subRequest(test.url);
+    fetchContext->addAdditionalRequestHeaders(subRequest, FetchSubresource);
+    EXPECT_EQ(test.isExternalExpectation, subRequest.isExternalRequest());
+  }
+}
+
+}  // namespace blink

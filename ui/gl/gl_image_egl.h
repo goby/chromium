@@ -5,8 +5,10 @@
 #ifndef UI_GL_GL_IMAGE_EGL_H_
 #define UI_GL_GL_IMAGE_EGL_H_
 
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_export.h"
 #include "ui/gl/gl_image.h"
 
 namespace gl {
@@ -18,7 +20,6 @@ class GL_EXPORT GLImageEGL : public GLImage {
   bool Initialize(EGLenum target, EGLClientBuffer buffer, const EGLint* attrs);
 
   // Overridden from GLImage:
-  void Destroy(bool have_context) override;
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
   bool BindTexImage(unsigned target) override;
@@ -32,6 +33,7 @@ class GL_EXPORT GLImageEGL : public GLImage {
                             gfx::OverlayTransform transform,
                             const gfx::Rect& bounds_rect,
                             const gfx::RectF& crop_rect) override;
+  void Flush() override {}
 
  protected:
   ~GLImageEGL() override;

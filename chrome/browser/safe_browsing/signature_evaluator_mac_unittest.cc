@@ -5,6 +5,8 @@
 #include "chrome/browser/safe_browsing/signature_evaluator_mac.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <stdint.h>
+#include <string.h>
 #include <sys/xattr.h>
 
 #include <string>
@@ -13,7 +15,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
@@ -62,7 +63,7 @@ class MacSignatureEvaluatorTest : public testing::Test {
 
   bool SetupXattrs(const base::FilePath& path) {
     char sentinel = 'A';
-    for (const auto& xattr : xattrs) {
+    for (auto* xattr : xattrs) {
       std::vector<uint8_t> buf(10);
       memset(&buf[0], sentinel++, buf.size());
       if (setxattr(path.value().c_str(), xattr, &buf[0], buf.size(), 0, 0) != 0)
@@ -174,11 +175,6 @@ TEST_F(MacSignatureEvaluatorTest, ModifiedMainExecTest32) {
 }
 
 TEST_F(MacSignatureEvaluatorTest, ModifiedMainExecTest64) {
-  // Snow Leopard does not know about the 64-bit slice so this test is
-  // irrelevant.
-  if (!base::mac::IsOSLionOrLater())
-    return;
-
   // Now to a test modified, signed bundle.
   base::FilePath path = testdata_path_.AppendASCII("modified-main-exec64.app");
 
@@ -251,7 +247,7 @@ TEST_F(MacSignatureEvaluatorTest, ModifiedBundleTest) {
 
   base::FilePath orig_path = testdata_path_.AppendASCII("modified-bundle.app");
   base::FilePath copied_path =
-      temp_dir_.path().AppendASCII("modified-bundle.app");
+      temp_dir_.GetPath().AppendASCII("modified-bundle.app");
   CHECK(base::CopyDirectory(orig_path, copied_path, true));
 
   // Setup the extended attributes, which don't persist in the git repo.
@@ -326,7 +322,7 @@ TEST_F(MacSignatureEvaluatorTest, ModifiedBundleTest) {
   EXPECT_EQ(6, mainmenunib->signature().xattr_size());
   // Manually convert the global xattrs array to a vector
   std::vector<std::string> xattrs_known;
-  for (const auto& xattr : xattrs)
+  for (auto* xattr : xattrs)
     xattrs_known.push_back(xattr);
 
   std::vector<std::string> xattrs_seen;

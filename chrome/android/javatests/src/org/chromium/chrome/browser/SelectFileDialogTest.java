@@ -13,6 +13,7 @@ import android.test.suitebuilder.annotation.MediumTest;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
 import org.chromium.content.browser.ContentViewCore;
@@ -102,14 +103,15 @@ public class SelectFileDialogTest extends ChromeActivityTestCaseBase<ChromeActiv
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
     @MediumTest
     @Feature({"TextInput", "Main"})
+    @RetryOnFailure
     public void testSelectFileAndCancelRequest() throws Throwable {
         DOMUtils.clickNode(this, mContentViewCore, "input_file");
-        CriteriaHelper.pollForCriteria(new IntentSentCriteria());
+        CriteriaHelper.pollInstrumentationThread(new IntentSentCriteria());
         assertEquals(Intent.ACTION_CHOOSER, mActivityWindowAndroidForTest.lastIntent.getAction());
         resetActivityWindowAndroidForTest();
 
         DOMUtils.clickNode(this, mContentViewCore, "input_file_multiple");
-        CriteriaHelper.pollForCriteria(new IntentSentCriteria());
+        CriteriaHelper.pollInstrumentationThread(new IntentSentCriteria());
         assertEquals(Intent.ACTION_CHOOSER, mActivityWindowAndroidForTest.lastIntent.getAction());
         Intent contentIntent = (Intent)
                 mActivityWindowAndroidForTest.lastIntent.getParcelableExtra(Intent.EXTRA_INTENT);
@@ -120,13 +122,13 @@ public class SelectFileDialogTest extends ChromeActivityTestCaseBase<ChromeActiv
         resetActivityWindowAndroidForTest();
 
         DOMUtils.clickNode(this, mContentViewCore, "input_image");
-        CriteriaHelper.pollForCriteria(new IntentSentCriteria());
+        CriteriaHelper.pollInstrumentationThread(new IntentSentCriteria());
         assertEquals(MediaStore.ACTION_IMAGE_CAPTURE,
                 mActivityWindowAndroidForTest.lastIntent.getAction());
         resetActivityWindowAndroidForTest();
 
         DOMUtils.clickNode(this, mContentViewCore, "input_audio");
-        CriteriaHelper.pollForCriteria(new IntentSentCriteria());
+        CriteriaHelper.pollInstrumentationThread(new IntentSentCriteria());
         assertEquals(MediaStore.Audio.Media.RECORD_SOUND_ACTION,
                 mActivityWindowAndroidForTest.lastIntent.getAction());
         resetActivityWindowAndroidForTest();

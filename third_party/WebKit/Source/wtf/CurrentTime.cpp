@@ -28,43 +28,35 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "wtf/CurrentTime.h"
+
+#include "base/time/time.h"
 
 namespace WTF {
 
-static TimeFunction currentTimeFunction;
-static TimeFunction monotonicallyIncreasingTimeFunction;
-static TimeFunction systemTraceTimeFunction;
+static TimeFunction mockTimeFunctionForTesting = nullptr;
 
-void setCurrentTimeFunction(TimeFunction func)
-{
-    currentTimeFunction = func;
+double currentTime() {
+  if (mockTimeFunctionForTesting)
+    return mockTimeFunctionForTesting();
+  return base::Time::Now().ToDoubleT();
 }
 
-void setMonotonicallyIncreasingTimeFunction(TimeFunction func)
-{
-    monotonicallyIncreasingTimeFunction = func;
+double monotonicallyIncreasingTime() {
+  if (mockTimeFunctionForTesting)
+    return mockTimeFunctionForTesting();
+  return base::TimeTicks::Now().ToInternalValue() /
+         static_cast<double>(base::Time::kMicrosecondsPerSecond);
 }
 
-void setSystemTraceTimeFunction(TimeFunction func)
-{
-    systemTraceTimeFunction = func;
+TimeFunction setTimeFunctionsForTesting(TimeFunction newFunction) {
+  TimeFunction oldFunction = mockTimeFunctionForTesting;
+  mockTimeFunctionForTesting = newFunction;
+  return oldFunction;
 }
 
-double currentTime()
-{
-    return (*currentTimeFunction)();
+TimeFunction getTimeFunctionForTesting() {
+  return mockTimeFunctionForTesting;
 }
 
-double monotonicallyIncreasingTime()
-{
-    return (*monotonicallyIncreasingTimeFunction)();
-}
-
-double systemTraceTime()
-{
-    return (*systemTraceTimeFunction)();
-}
-
-} // namespace WTF
+}  // namespace WTF

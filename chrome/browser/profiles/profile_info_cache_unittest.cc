@@ -4,14 +4,19 @@
 
 #include "chrome/browser/profiles/profile_info_cache_unittest.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_avatar_downloader.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
@@ -21,8 +26,9 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/signin/core/common/profile_management_switches.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -125,7 +131,7 @@ TEST_F(ProfileInfoCacheTest, AddProfiles) {
   EXPECT_EQ(0u, GetCache()->GetNumberOfProfiles());
 
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  for (uint32 i = 0; i < 4; ++i) {
+  for (uint32_t i = 0; i < 4; ++i) {
     base::FilePath profile_path =
         GetProfilePath(base::StringPrintf("path_%ud", i));
     base::string16 profile_name =
@@ -158,7 +164,7 @@ TEST_F(ProfileInfoCacheTest, AddProfiles) {
   ResetCache();
 
   EXPECT_EQ(4u, GetCache()->GetNumberOfProfiles());
-  for (uint32 i = 0; i < 4; ++i) {
+  for (uint32_t i = 0; i < 4; ++i) {
     base::FilePath profile_path =
           GetProfilePath(base::StringPrintf("path_%ud", i));
     EXPECT_EQ(i, GetCache()->GetIndexOfProfileWithPath(profile_path));
@@ -486,7 +492,7 @@ TEST_F(ProfileInfoCacheTest, CreateSupervisedTestingProfile) {
   testing_profile_manager_.CreateTestingProfile("default");
   base::string16 supervised_user_name = ASCIIToUTF16("Supervised User");
   testing_profile_manager_.CreateTestingProfile(
-      "test1", scoped_ptr<syncable_prefs::PrefServiceSyncable>(),
+      "test1", std::unique_ptr<sync_preferences::PrefServiceSyncable>(),
       supervised_user_name, 0, "TEST_ID", TestingProfile::TestingFactories());
   for (size_t i = 0; i < GetCache()->GetNumberOfProfiles(); i++) {
     bool is_supervised =
@@ -548,8 +554,85 @@ TEST_F(ProfileInfoCacheTest, AddStubProfile) {
     ASSERT_FALSE(names[i].empty());
 }
 
+TEST_F(ProfileInfoCacheTest, EntriesInAttributesStorage) {
+  EXPECT_EQ(0u, GetCache()->GetNumberOfProfiles());
+
+  // Add some profiles with and without a '.' in their paths.
+  const struct {
+    const char* profile_path;
+    const char* profile_name;
+  } kTestCases[] = {
+    { "path.test0", "name_0" },
+    { "path_test1", "name_1" },
+    { "path.test2", "name_2" },
+    { "path_test3", "name_3" },
+  };
+
+  // Profiles are added and removed using all combinations of the old and the
+  // new interfaces. The content of |profile_attributes_entries_| in
+  // ProfileAttributesStorage is checked after each insert and delete operation.
+
+  // Add profiles.
+  for (size_t i = 0; i < arraysize(kTestCases); ++i) {
+    base::FilePath profile_path = GetProfilePath(kTestCases[i].profile_path);
+    base::string16 profile_name = ASCIIToUTF16(kTestCases[i].profile_name);
+
+    ASSERT_EQ(0u, GetCache()->profile_attributes_entries_.count(
+                      profile_path.value()));
+
+    // Use ProfileInfoCache in profiles 0 and 2, and ProfileAttributesStorage in
+    // profiles 1 and 3.
+    if (i | 1u) {
+      GetCache()->AddProfileToCache(profile_path, profile_name, std::string(),
+                                    base::string16(), i, "");
+    } else {
+      GetCache()->AddProfile(profile_path, profile_name, std::string(),
+                             base::string16(), i, "");
+    }
+
+    ASSERT_EQ(i + 1, GetCache()->GetNumberOfProfiles());
+    ASSERT_EQ(i + 1, GetCache()->profile_attributes_entries_.size());
+
+    ASSERT_EQ(1u, GetCache()->profile_attributes_entries_.count(
+                      profile_path.value()));
+    // TODO(anthonyvd) : check that the entry in |profile_attributes_entries_|
+    // is null before GetProfileAttributesWithPath is run. Currently this is
+    // impossible to check because GetProfileAttributesWithPath is called during
+    // profile creation.
+
+    ProfileAttributesEntry* entry = nullptr;
+    GetCache()->GetProfileAttributesWithPath(profile_path, &entry);
+    EXPECT_EQ(
+        entry,
+        GetCache()->profile_attributes_entries_[profile_path.value()].get());
+  }
+
+  // Remove profiles.
+  for (size_t i = 0; i < arraysize(kTestCases); ++i) {
+    base::FilePath profile_path = GetProfilePath(kTestCases[i].profile_path);
+    ASSERT_EQ(1u, GetCache()->profile_attributes_entries_.count(
+                      profile_path.value()));
+
+    // Use ProfileInfoCache in profiles 0 and 1, and ProfileAttributesStorage in
+    // profiles 2 and 3.
+    if (i | 2u)
+      GetCache()->DeleteProfileFromCache(profile_path);
+    else
+      GetCache()->RemoveProfile(profile_path);
+
+    ASSERT_EQ(0u, GetCache()->profile_attributes_entries_.count(
+                      profile_path.value()));
+
+    ProfileAttributesEntry* entry = nullptr;
+    EXPECT_FALSE(GetCache()->GetProfileAttributesWithPath(profile_path,
+                                                          &entry));
+    ASSERT_EQ(0u, GetCache()->profile_attributes_entries_.count(
+                      profile_path.value()));
+  }
+}
+
 // High res avatar downloading is only supported on desktop.
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 TEST_F(ProfileInfoCacheTest, DownloadHighResAvatarTest) {
   // The TestingProfileManager's ProfileInfoCache doesn't download avatars.
   ProfileInfoCache profile_info_cache(g_browser_process->local_state(),
@@ -580,8 +663,10 @@ TEST_F(ProfileInfoCacheTest, DownloadHighResAvatarTest) {
 
   // Simulate downloading a high-res avatar.
   ProfileAvatarDownloader avatar_downloader(
-      kIconIndex, profile_info_cache.GetPathOfProfileAtIndex(0),
-      &profile_info_cache);
+      kIconIndex,
+      base::Bind(&ProfileInfoCache::SaveAvatarImageAtPath,
+                 base::Unretained(&profile_info_cache),
+                 profile_info_cache.GetPathOfProfileAtIndex(0)));
 
   // Put a real bitmap into "bitmap".  2x2 bitmap of green 32 bit pixels.
   SkBitmap bitmap;
@@ -600,7 +685,7 @@ TEST_F(ProfileInfoCacheTest, DownloadHighResAvatarTest) {
   // The file should have been cached and saved.
   EXPECT_EQ(1U, profile_info_cache.cached_avatar_images_.size());
   EXPECT_TRUE(profile_info_cache.GetHighResAvatarOfProfileAtIndex(0));
-  EXPECT_EQ(profile_info_cache.cached_avatar_images_[file_name],
+  EXPECT_EQ(profile_info_cache.cached_avatar_images_[file_name].get(),
       profile_info_cache.GetHighResAvatarOfProfileAtIndex(0));
 
   // Make sure everything has completed, and the file has been written to disk.
@@ -609,7 +694,7 @@ TEST_F(ProfileInfoCacheTest, DownloadHighResAvatarTest) {
   // Clean up.
   EXPECT_NE(std::string::npos, icon_path.MaybeAsASCII().find(file_name));
   EXPECT_TRUE(base::PathExists(icon_path));
-  EXPECT_TRUE(base::DeleteFile(icon_path, true));
+  EXPECT_TRUE(base::DeleteFile(icon_path, false));
   EXPECT_FALSE(base::PathExists(icon_path));
 }
 
@@ -685,7 +770,7 @@ TEST_F(ProfileInfoCacheTest, MigrateLegacyProfileNamesWithNewAvatarMenu) {
 }
 #endif
 
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
 TEST_F(ProfileInfoCacheTest,
        DontMigrateLegacyProfileNamesWithoutNewAvatarMenu) {
   EXPECT_EQ(0U, GetCache()->GetNumberOfProfiles());

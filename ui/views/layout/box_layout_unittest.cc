@@ -4,6 +4,8 @@
 
 #include "ui/views/layout/box_layout.h"
 
+#include <stddef.h>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/views/test/test_views.h"
 #include "ui/views/view.h"
@@ -16,7 +18,7 @@ class BoxLayoutTest : public testing::Test {
  public:
   void SetUp() override { host_.reset(new View); }
 
-  scoped_ptr<View> host_;
+  std::unique_ptr<View> host_;
 };
 
 }  // namespace
@@ -153,7 +155,7 @@ TEST_F(BoxLayoutTest, UseHeightForWidth) {
   View* v1 = new StaticSizedView(gfx::Size(20, 10));
   host_->AddChildView(v1);
   ProportionallySizedView* v2 = new ProportionallySizedView(2);
-  v2->set_preferred_width(10);
+  v2->SetPreferredWidth(10);
   host_->AddChildView(v2);
   EXPECT_EQ(gfx::Size(20, 50), layout->GetPreferredSize(host_.get()));
 

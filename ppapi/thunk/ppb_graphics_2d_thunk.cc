@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// From ppb_graphics_2d.idl modified Wed May 15 13:57:07 2013.
+// From ppb_graphics_2d.idl modified Fri Apr 15 15:37:20 2016.
 
+#include <stdint.h>
 #include <string.h>
 
 #include "ppapi/c/pp_completion_callback.h"
@@ -101,23 +102,29 @@ float GetScale(PP_Resource resource) {
   return enter.object()->GetScale();
 }
 
-const PPB_Graphics2D_1_0 g_ppb_graphics2d_thunk_1_0 = {&Create,
-                                                       &IsGraphics2D,
-                                                       &Describe,
-                                                       &PaintImageData,
-                                                       &Scroll,
-                                                       &ReplaceContents,
-                                                       &Flush};
+PP_Bool SetLayerTransform(PP_Resource resource,
+                          float scale,
+                          const struct PP_Point* origin,
+                          const struct PP_Point* translate) {
+  VLOG(4) << "PPB_Graphics2D::SetLayerTransform()";
+  EnterResource<PPB_Graphics2D_API> enter(resource, true);
+  if (enter.failed())
+    return PP_FALSE;
+  return enter.object()->SetLayerTransform(scale, origin, translate);
+}
 
-const PPB_Graphics2D_1_1 g_ppb_graphics2d_thunk_1_1 = {&Create,
-                                                       &IsGraphics2D,
-                                                       &Describe,
-                                                       &PaintImageData,
-                                                       &Scroll,
-                                                       &ReplaceContents,
-                                                       &Flush,
-                                                       &SetScale,
-                                                       &GetScale};
+const PPB_Graphics2D_1_0 g_ppb_graphics2d_thunk_1_0 = {
+    &Create, &IsGraphics2D,    &Describe, &PaintImageData,
+    &Scroll, &ReplaceContents, &Flush};
+
+const PPB_Graphics2D_1_1 g_ppb_graphics2d_thunk_1_1 = {
+    &Create,          &IsGraphics2D, &Describe, &PaintImageData, &Scroll,
+    &ReplaceContents, &Flush,        &SetScale, &GetScale};
+
+const PPB_Graphics2D_1_2 g_ppb_graphics2d_thunk_1_2 = {
+    &Create,   &IsGraphics2D,     &Describe, &PaintImageData,
+    &Scroll,   &ReplaceContents,  &Flush,    &SetScale,
+    &GetScale, &SetLayerTransform};
 
 }  // namespace
 
@@ -127,6 +134,10 @@ PPAPI_THUNK_EXPORT const PPB_Graphics2D_1_0* GetPPB_Graphics2D_1_0_Thunk() {
 
 PPAPI_THUNK_EXPORT const PPB_Graphics2D_1_1* GetPPB_Graphics2D_1_1_Thunk() {
   return &g_ppb_graphics2d_thunk_1_1;
+}
+
+PPAPI_THUNK_EXPORT const PPB_Graphics2D_1_2* GetPPB_Graphics2D_1_2_Thunk() {
+  return &g_ppb_graphics2d_thunk_1_2;
 }
 
 }  // namespace thunk

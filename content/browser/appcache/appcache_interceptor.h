@@ -5,7 +5,9 @@
 #ifndef CONTENT_BROWSER_APPCACHE_APPCACHE_INTERCEPTOR_H_
 #define CONTENT_BROWSER_APPCACHE_APPCACHE_INTERCEPTOR_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/public/common/resource_type.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -17,8 +19,10 @@ class URLRequest;
 }
 
 namespace content {
+class AppCacheHost;
 class AppCacheRequestHandler;
 class AppCacheServiceImpl;
+class ResourceRequesterInfo;
 
 // An interceptor to hijack requests and potentially service them out of
 // the appcache.
@@ -32,10 +36,17 @@ class CONTENT_EXPORT AppCacheInterceptor : public net::URLRequestInterceptor {
                                   ResourceType resource_type,
                                   bool should_reset_appcache);
 
+  // PlzNavigate
+  // Must be called to make a request eligible for retrieval from an appcache.
+  static void SetExtraRequestInfoForHost(net::URLRequest* request,
+                                         AppCacheHost* host,
+                                         ResourceType resource_type,
+                                         bool should_reset_appcache);
+
   // May be called after response headers are complete to retrieve extra
   // info about the response.
   static void GetExtraResponseInfo(net::URLRequest* request,
-                                   int64* cache_id,
+                                   int64_t* cache_id,
                                    GURL* manifest_url);
 
   // Methods to support cross site navigations.
@@ -43,7 +54,8 @@ class CONTENT_EXPORT AppCacheInterceptor : public net::URLRequestInterceptor {
                                           int old_process_id);
   static void CompleteCrossSiteTransfer(net::URLRequest* request,
                                         int new_process_id,
-                                        int new_host_id);
+                                        int new_host_id,
+                                        ResourceRequesterInfo* requester_info);
   static void MaybeCompleteCrossSiteTransferInOldProcess(
       net::URLRequest* request,
       int old_process_id);

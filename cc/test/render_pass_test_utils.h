@@ -5,6 +5,8 @@
 #ifndef CC_TEST_RENDER_PASS_TEST_UTILS_H_
 #define CC_TEST_RENDER_PASS_TEST_UTILS_H_
 
+#include <stdint.h>
+
 #include "cc/output/filter_operations.h"
 #include "cc/quads/render_pass.h"
 #include "cc/resources/resource_provider.h"
@@ -23,7 +25,7 @@ class RenderPass;
 // Adds a new render pass with the provided properties to the given
 // render pass list.
 RenderPass* AddRenderPass(RenderPassList* pass_list,
-                          RenderPassId id,
+                          int render_pass_id,
                           const gfx::Rect& output_rect,
                           const gfx::Transform& root_transform);
 
@@ -52,12 +54,12 @@ void AddRenderPassQuad(RenderPass* to_pass,
                        ResourceId mask_resource_id,
                        const FilterOperations& filters,
                        gfx::Transform transform,
-                       SkXfermode::Mode blend_mode);
+                       SkBlendMode blend_mode);
 
 void AddOneOfEveryQuadType(RenderPass* to_pass,
                            ResourceProvider* resource_provider,
-                           RenderPassId child_pass,
-                           uint32_t* sync_point_for_mailbox_texture);
+                           int child_pass_id,
+                           gpu::SyncToken* sync_token_for_mailbox_texture);
 
 }  // namespace cc
 

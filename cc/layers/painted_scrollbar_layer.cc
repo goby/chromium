@@ -7,16 +7,14 @@
 #include <algorithm>
 
 #include "base/auto_reset.h"
-#include "base/basictypes.h"
-#include "base/trace_event/trace_event.h"
 #include "cc/base/math_util.h"
+#include "cc/input/main_thread_scrolling_reason.h"
 #include "cc/layers/painted_scrollbar_layer_impl.h"
 #include "cc/resources/ui_resource_bitmap.h"
 #include "cc/trees/draw_property_utils.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "skia/ext/platform_canvas.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkSize.h"
@@ -25,25 +23,24 @@
 
 namespace cc {
 
-scoped_ptr<LayerImpl> PaintedScrollbarLayer::CreateLayerImpl(
+std::unique_ptr<LayerImpl> PaintedScrollbarLayer::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   return PaintedScrollbarLayerImpl::Create(
-      tree_impl, id(), scrollbar_->Orientation());
+      tree_impl, id(), scrollbar_->Orientation(),
+      scrollbar_->IsLeftSideVerticalScrollbar(), scrollbar_->IsOverlay());
 }
 
 scoped_refptr<PaintedScrollbarLayer> PaintedScrollbarLayer::Create(
-    const LayerSettings& settings,
-    scoped_ptr<Scrollbar> scrollbar,
+    std::unique_ptr<Scrollbar> scrollbar,
     int scroll_layer_id) {
-  return make_scoped_refptr(new PaintedScrollbarLayer(
-      settings, std::move(scrollbar), scroll_layer_id));
+  return make_scoped_refptr(
+      new PaintedScrollbarLayer(std::move(scrollbar), scroll_layer_id));
 }
 
-PaintedScrollbarLayer::PaintedScrollbarLayer(const LayerSettings& settings,
-                                             scoped_ptr<Scrollbar> scrollbar,
-                                             int scroll_layer_id)
-    : Layer(settings),
-      scrollbar_(std::move(scrollbar)),
+PaintedScrollbarLayer::PaintedScrollbarLayer(
+    std::unique_ptr<Scrollbar> scrollbar,
+    int scroll_layer_id)
+    : scrollbar_(std::move(scrollbar)),
       scroll_layer_id_(scroll_layer_id),
       internal_contents_scale_(1.f),
       thumb_thickness_(scrollbar_->ThumbThickness()),
@@ -52,7 +49,8 @@ PaintedScrollbarLayer::PaintedScrollbarLayer(const LayerSettings& settings,
       has_thumb_(scrollbar_->HasThumb()),
       thumb_opacity_(scrollbar_->ThumbOpacity()) {
   if (!scrollbar_->IsOverlay())
-    SetShouldScrollOnMainThread(true);
+    AddMainThreadScrollingReasons(
+        MainThreadScrollingReason::kScrollbarScrolling);
 }
 
 PaintedScrollbarLayer::~PaintedScrollbarLayer() {}
@@ -73,28 +71,12 @@ bool PaintedScrollbarLayer::OpacityCanAnimateOnImplThread() const {
   return scrollbar_->IsOverlay();
 }
 
+bool PaintedScrollbarLayer::AlwaysUseActiveTreeOpacity() const {
+  return true;
+}
+
 ScrollbarOrientation PaintedScrollbarLayer::orientation() const {
   return scrollbar_->Orientation();
-}
-
-int PaintedScrollbarLayer::MaxTextureSize() {
-  DCHECK(layer_tree_host());
-  return layer_tree_host()->GetRendererCapabilities().max_texture_size;
-}
-
-float PaintedScrollbarLayer::ClampScaleToMaxTextureSize(float scale) {
-  // If the scaled bounds() is bigger than the max texture size of the
-  // device, we need to clamp it by rescaling, since this is used
-  // below to set the texture size.
-  gfx::Size scaled_bounds = gfx::ScaleToCeiledSize(bounds(), scale);
-  if (scaled_bounds.width() > MaxTextureSize() ||
-      scaled_bounds.height() > MaxTextureSize()) {
-    if (bounds().width() > bounds().height())
-      return (MaxTextureSize() - 1) / static_cast<float>(bounds().width());
-    else
-      return (MaxTextureSize() - 1) / static_cast<float>(bounds().height());
-  }
-  return scale;
 }
 
 void PaintedScrollbarLayer::PushPropertiesTo(LayerImpl* layer) {
@@ -152,7 +134,7 @@ gfx::Rect PaintedScrollbarLayer::ScrollbarLayerRectToContentRect(
     const gfx::Rect& layer_rect) const {
   // Don't intersect with the bounds as in LayerRectToContentRect() because
   // layer_rect here might be in coordinates of the containing layer.
-  gfx::Rect expanded_rect = gfx::ScaleToEnclosingRect(
+  gfx::Rect expanded_rect = gfx::ScaleToEnclosingRectSafe(
       layer_rect, internal_contents_scale_, internal_contents_scale_);
   // We should never return a rect bigger than the content bounds.
   gfx::Size clamped_size = expanded_rect.size();
@@ -188,21 +170,20 @@ void PaintedScrollbarLayer::UpdateThumbAndTrackGeometry() {
 }
 
 void PaintedScrollbarLayer::UpdateInternalContentScale() {
-  float scale = layer_tree_host()->device_scale_factor();
+  float scale = GetLayerTree()->device_scale_factor();
   if (layer_tree_host()
-          ->settings()
+          ->GetSettings()
           .layer_transforms_should_scale_layer_contents) {
     gfx::Transform transform;
-    transform = DrawTransformFromPropertyTrees(
-        this, layer_tree_host()->property_trees()->transform_tree);
+    transform = draw_property_utils::ScreenSpaceTransform(
+        this, GetLayerTree()->property_trees()->transform_tree);
 
     gfx::Vector2dF transform_scales =
         MathUtil::ComputeTransform2dScaleComponents(transform, scale);
     scale = std::max(transform_scales.x(), transform_scales.y());
   }
   bool changed = false;
-  changed |= UpdateProperty(ClampScaleToMaxTextureSize(scale),
-                            &internal_contents_scale_);
+  changed |= UpdateProperty(scale, &internal_contents_scale_);
   changed |=
       UpdateProperty(gfx::ScaleToCeiledSize(bounds(), internal_contents_scale_),
                      &internal_content_bounds_);
@@ -244,12 +225,12 @@ bool PaintedScrollbarLayer::Update() {
     updated = true;
   }
 
-  if (update_rect_.IsEmpty() && track_resource_)
+  if (update_rect().IsEmpty() && track_resource_)
     return updated;
 
   if (!track_resource_ || scrollbar_->NeedsPaintPart(TRACK)) {
     track_resource_ = ScopedUIResource::Create(
-        layer_tree_host(),
+        layer_tree_host()->GetUIResourceManager(),
         RasterizeScrollbarPart(track_layer_rect, scaled_track_rect, TRACK));
   }
 
@@ -261,7 +242,7 @@ bool PaintedScrollbarLayer::Update() {
         scaled_thumb_rect.size() !=
             thumb_resource_->GetBitmap(0, false).GetSize()) {
       thumb_resource_ = ScopedUIResource::Create(
-          layer_tree_host(),
+          layer_tree_host()->GetUIResourceManager(),
           RasterizeScrollbarPart(thumb_layer_rect, scaled_thumb_rect, THUMB));
     }
     thumb_opacity_ = scrollbar_->ThumbOpacity();
@@ -297,7 +278,7 @@ UIResourceBitmap PaintedScrollbarLayer::RasterizeScrollbarPart(
   SkRect layer_skrect = RectToSkRect(layer_rect);
   SkPaint paint;
   paint.setAntiAlias(false);
-  paint.setXfermodeMode(SkXfermode::kClear_Mode);
+  paint.setBlendMode(SkBlendMode::kClear);
   skcanvas.drawRect(layer_skrect, paint);
   skcanvas.clipRect(layer_skrect);
 

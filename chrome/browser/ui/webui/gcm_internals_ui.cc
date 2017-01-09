@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
@@ -18,11 +19,11 @@
 #include "components/gcm_driver/gcm_internals_constants.h"
 #include "components/gcm_driver/gcm_internals_helper.h"
 #include "components/gcm_driver/gcm_profile_service.h"
+#include "components/grit/components_resources.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/components_resources.h"
 
 namespace {
 
@@ -70,7 +71,8 @@ void GcmInternalsUIMessageHandler::ReturnResults(
   base::DictionaryValue results;
   gcm_driver::SetGCMInternalsInfo(stats, profile_service, profile->GetPrefs(),
                                   &results);
-  web_ui()->CallJavascriptFunction(gcm_driver::kSetGcmInternalsInfo, results);
+  web_ui()->CallJavascriptFunctionUnsafe(gcm_driver::kSetGcmInternalsInfo,
+                                         results);
 }
 
 void GcmInternalsUIMessageHandler::RequestAllInfo(
@@ -85,6 +87,9 @@ void GcmInternalsUIMessageHandler::RequestAllInfo(
     return;
   }
 
+  gcm::GCMDriver::ClearActivityLogs clear_activity_logs =
+      clear_logs ? gcm::GCMDriver::CLEAR_LOGS : gcm::GCMDriver::KEEP_LOGS;
+
   Profile* profile = Profile::FromWebUI(web_ui());
   gcm::GCMProfileService* profile_service =
     gcm::GCMProfileServiceFactory::GetForProfile(profile);
@@ -95,7 +100,7 @@ void GcmInternalsUIMessageHandler::RequestAllInfo(
     profile_service->driver()->GetGCMStatistics(
         base::Bind(&GcmInternalsUIMessageHandler::RequestGCMStatisticsFinished,
                    weak_ptr_factory_.GetWeakPtr()),
-        clear_logs);
+        clear_activity_logs);
   }
 }
 
@@ -163,6 +168,7 @@ GCMInternalsUI::GCMInternalsUI(content::WebUI* web_ui)
   html_source->AddResourcePath(gcm_driver::kGcmInternalsJS,
                                IDR_GCM_DRIVER_GCM_INTERNALS_JS);
   html_source->SetDefaultResource(IDR_GCM_DRIVER_GCM_INTERNALS_HTML);
+  html_source->DisableI18nAndUseGzipForAllPaths();
 
   Profile* profile = Profile::FromWebUI(web_ui);
   content::WebUIDataSource::Add(profile, html_source);

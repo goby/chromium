@@ -5,6 +5,8 @@
 #include "remoting/host/desktop_resizer.h"
 
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 
 namespace remoting {
 
@@ -48,8 +50,8 @@ void DesktopResizerOzone::SetResolution(const ScreenResolution& resolution) {
 void DesktopResizerOzone::RestoreResolution(const ScreenResolution& original) {
 }
 
-scoped_ptr<DesktopResizer> DesktopResizer::Create() {
-  return make_scoped_ptr(new DesktopResizerOzone);
+std::unique_ptr<DesktopResizer> DesktopResizer::Create() {
+  return base::WrapUnique(new DesktopResizerOzone);
 }
 
 }  // namespace remoting

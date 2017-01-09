@@ -10,14 +10,12 @@
 // Avoid including <openssl/evp.h>
 typedef struct evp_pkey_st EVP_PKEY;
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
 
 class GURL;
 
 namespace net {
-
-class X509Certificate;
 
 // OpenSSLPrivateKeyStore provides an interface for storing
 // public/private key pairs to system storage on platforms where

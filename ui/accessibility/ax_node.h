@@ -5,13 +5,11 @@
 #ifndef UI_ACCESSIBILITY_AX_NODE_H_
 #define UI_ACCESSIBILITY_AX_NODE_H_
 
+#include <stdint.h>
+
 #include <vector>
 
 #include "ui/accessibility/ax_node_data.h"
-
-namespace gfx {
-class Rect;
-}
 
 namespace ui {
 
@@ -21,11 +19,11 @@ class AX_EXPORT AXNode {
   // The constructor requires a parent, id, and index in parent, but
   // the data is not required. After initialization, only index_in_parent
   // is allowed to change, the others are guaranteed to never change.
-  AXNode(AXNode* parent, int32 id, int32 index_in_parent);
+  AXNode(AXNode* parent, int32_t id, int32_t index_in_parent);
   virtual ~AXNode();
 
   // Accessors.
-  int32 id() const { return data_.id; }
+  int32_t id() const { return data_.id; }
   AXNode* parent() const { return parent_; }
   int child_count() const { return static_cast<int>(children_.size()); }
   const AXNodeData& data() const { return data_; }
@@ -42,7 +40,13 @@ class AX_EXPORT AXNode {
   // Update this node's location. This is separate from SetData just because
   // changing only the location is common and should be more efficient than
   // re-copying all of the data.
-  void SetLocation(const gfx::Rect& new_location);
+  //
+  // The node's location is stored as a relative bounding box, the ID of
+  // the element it's relative to, and an optional transformation matrix.
+  // See ax_node_data.h for details.
+  void SetLocation(int offset_container_id,
+                   const gfx::RectF& location,
+                   gfx::Transform* transform);
 
   // Set the index in parent, for example if siblings were inserted or deleted.
   void SetIndexInParent(int index_in_parent);
@@ -61,7 +65,16 @@ class AX_EXPORT AXNode {
   // Return true if this object is equal to or a descendant of |ancestor|.
   bool IsDescendantOf(AXNode* ancestor);
 
+  // Gets the text offsets where new lines start either from the node's data or
+  // by computing them and caching the result.
+  std::vector<int> GetOrComputeLineStartOffsets();
+
  private:
+  // Computes the text offset where each line starts by traversing all child
+  // leaf nodes.
+  void ComputeLineStartOffsets(std::vector<int>* line_offsets,
+                               int* start_offset) const;
+
   int index_in_parent_;
   AXNode* parent_;
   std::vector<AXNode*> children_;

@@ -4,13 +4,17 @@
 
 #include "chrome/browser/extensions/api/braille_display_private/braille_controller_brlapi.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/extensions/api/braille_display_private/brlapi_connection.h"
 #include "chrome/browser/extensions/api/braille_display_private/brlapi_keycode_map.h"
@@ -26,10 +30,10 @@ namespace braille_display_private {
 namespace {
 // Delay between detecting a directory update and trying to connect
 // to the brlapi.
-const int64 kConnectionDelayMs = 500;
+const int64_t kConnectionDelayMs = 500;
 // How long to periodically retry connecting after a brltty restart.
 // Some displays are slow to connect.
-const int64 kConnectRetryTimeout = 20000;
+const int64_t kConnectRetryTimeout = 20000;
 }  // namespace
 
 BrailleController::BrailleController() {
@@ -78,34 +82,46 @@ void BrailleControllerImpl::TryLoadLibBrlApi() {
   LOG(WARNING) << "Couldn't load libbrlapi: " << strerror(errno);
 }
 
-scoped_ptr<DisplayState> BrailleControllerImpl::GetDisplayState() {
+std::unique_ptr<DisplayState> BrailleControllerImpl::GetDisplayState() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   StartConnecting();
-  scoped_ptr<DisplayState> display_state(new DisplayState);
+  std::unique_ptr<DisplayState> display_state(new DisplayState);
   if (connection_.get() && connection_->Connected()) {
-    size_t size;
-    if (!connection_->GetDisplaySize(&size)) {
+    unsigned int columns = 0;
+    unsigned int rows = 0;
+    if (!connection_->GetDisplaySize(&columns, &rows)) {
       Disconnect();
-    } else if (size > 0) {  // size == 0 means no display present.
+    } else if (rows * columns > 0) {
+      // rows * columns == 0 means no display present.
       display_state->available = true;
-      display_state->text_cell_count.reset(new int(size));
+      display_state->text_column_count.reset(new int(columns));
+      display_state->text_row_count.reset(new int(rows));
     }
   }
-  return display_state.Pass();
+  return display_state;
 }
 
-void BrailleControllerImpl::WriteDots(const std::vector<char>& cells) {
+void BrailleControllerImpl::WriteDots(const std::vector<char>& cells,
+                                      unsigned int cells_cols,
+                                      unsigned int cells_rows) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (connection_ && connection_->Connected()) {
-    size_t size;
-    if (!connection_->GetDisplaySize(&size)) {
+    // Row count and column count of current display.
+    unsigned int columns = 0;
+    unsigned int rows = 0;
+    if (!connection_->GetDisplaySize(&columns, &rows)) {
       Disconnect();
     }
-    std::vector<unsigned char> sizedCells(size);
-    std::memcpy(&sizedCells[0], cells.data(), std::min(cells.size(), size));
-    if (size > cells.size())
-      std::fill(sizedCells.begin() + cells.size(), sizedCells.end(), 0);
-    if (!connection_->WriteDots(&sizedCells[0]))
+    std::vector<unsigned char> sized_cells(rows * columns, 0);
+    unsigned int row_limit = std::min(rows, cells_rows);
+    unsigned int col_limit = std::min(columns, cells_cols);
+    for (unsigned int row = 0; row < row_limit; row++) {
+      for (unsigned int col = 0; col < col_limit; col++) {
+        sized_cells[row * columns + col] = cells[row * cells_cols + col];
+      }
+    }
+
+    if (!connection_->WriteDots(sized_cells))
       Disconnect();
   }
 }
@@ -257,10 +273,12 @@ void BrailleControllerImpl::Disconnect() {
   if (!connection_ || !connection_->Connected())
     return;
   connection_->Disconnect();
-  DispatchOnDisplayStateChanged(scoped_ptr<DisplayState>(new DisplayState()));
+  DispatchOnDisplayStateChanged(
+      std::unique_ptr<DisplayState>(new DisplayState()));
 }
 
-scoped_ptr<BrlapiConnection> BrailleControllerImpl::CreateBrlapiConnection() {
+std::unique_ptr<BrlapiConnection>
+BrailleControllerImpl::CreateBrlapiConnection() {
   DCHECK(libbrlapi_loader_.loaded());
   return BrlapiConnection::Create(&libbrlapi_loader_);
 }
@@ -281,13 +299,13 @@ void BrailleControllerImpl::DispatchKeys() {
     } else if (result == 0) {  // No more data.
       return;
     }
-    scoped_ptr<KeyEvent> event = BrlapiKeyCodeToEvent(code);
+    std::unique_ptr<KeyEvent> event = BrlapiKeyCodeToEvent(code);
     if (event)
-      DispatchKeyEvent(event.Pass());
+      DispatchKeyEvent(std::move(event));
   }
 }
 
-void BrailleControllerImpl::DispatchKeyEvent(scoped_ptr<KeyEvent> event) {
+void BrailleControllerImpl::DispatchKeyEvent(std::unique_ptr<KeyEvent> event) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
                             base::Bind(
@@ -297,11 +315,12 @@ void BrailleControllerImpl::DispatchKeyEvent(scoped_ptr<KeyEvent> event) {
     return;
   }
   VLOG(1) << "Dispatching key event: " << *event->ToValue();
-  FOR_EACH_OBSERVER(BrailleObserver, observers_, OnBrailleKeyEvent(*event));
+  for (auto& observer : observers_)
+    observer.OnBrailleKeyEvent(*event);
 }
 
 void BrailleControllerImpl::DispatchOnDisplayStateChanged(
-    scoped_ptr<DisplayState> new_state) {
+    std::unique_ptr<DisplayState> new_state) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     if (!BrowserThread::PostTask(
             BrowserThread::UI, FROM_HERE,
@@ -312,8 +331,8 @@ void BrailleControllerImpl::DispatchOnDisplayStateChanged(
     }
     return;
   }
-  FOR_EACH_OBSERVER(BrailleObserver, observers_,
-                    OnBrailleDisplayStateChanged(*new_state));
+  for (auto& observer : observers_)
+    observer.OnBrailleDisplayStateChanged(*new_state);
 }
 
 }  // namespace braille_display_private

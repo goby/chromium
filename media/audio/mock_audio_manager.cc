@@ -6,13 +6,13 @@
 
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
 MockAudioManager::MockAudioManager(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner)
-    : task_runner_(task_runner) {}
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    : AudioManager(task_runner, task_runner) {}
 
 MockAudioManager::~MockAudioManager() {
 }
@@ -44,7 +44,8 @@ void MockAudioManager::GetAudioOutputDeviceNames(
 
 media::AudioOutputStream* MockAudioManager::MakeAudioOutputStream(
     const media::AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   NOTREACHED();
   return NULL;
 }
@@ -58,18 +59,10 @@ media::AudioOutputStream* MockAudioManager::MakeAudioOutputStreamProxy(
 
 media::AudioInputStream* MockAudioManager::MakeAudioInputStream(
     const media::AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   NOTREACHED();
   return NULL;
-}
-
-scoped_refptr<base::SingleThreadTaskRunner> MockAudioManager::GetTaskRunner() {
-  return task_runner_;
-}
-
-scoped_refptr<base::SingleThreadTaskRunner>
-MockAudioManager::GetWorkerTaskRunner() {
-  return task_runner_;
 }
 
 void MockAudioManager::AddOutputDeviceChangeListener(
@@ -99,11 +92,21 @@ std::string MockAudioManager::GetAssociatedOutputDeviceID(
   return std::string();
 }
 
-scoped_ptr<AudioLog> MockAudioManager::CreateAudioLog(
-    AudioLogFactory::AudioComponent component) {
-  return scoped_ptr<AudioLog>();
+std::string MockAudioManager::GetGroupIDOutput(const std::string& output_id) {
+  return "";
 }
 
-void MockAudioManager::SetHasKeyboardMic() {}
+std::string MockAudioManager::GetGroupIDInput(const std::string& input_id) {
+  return "";
+}
+
+std::unique_ptr<AudioLog> MockAudioManager::CreateAudioLog(
+    AudioLogFactory::AudioComponent component) {
+  return nullptr;
+}
+
+const char* MockAudioManager::GetName() {
+  return nullptr;
+}
 
 }  // namespace media.

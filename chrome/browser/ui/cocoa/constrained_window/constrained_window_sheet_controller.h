@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_UI_COCOA_CONSTRAINED_WINDOW_CONSTRAINED_WINDOW_SHEET_CONTROLLER_H_
 
 #import <Cocoa/Cocoa.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace web_modal {
 class WebContentsModalDialogHost;
@@ -28,9 +29,13 @@ class WebContentsModalDialogHostCocoa;
   base::scoped_nsobject<NSWindow> parentWindow_;
   base::scoped_nsobject<NSView> activeView_;
 
+  // Flag to prevent the sheet from updating its position if it's hidden during
+  // fullscreen. Otherwise, we will get janky movements during the animation.
+  BOOL isSheetHiddenForFullscreen_;
+
   // Class that bridges the cross-platform web_modal APIs to the Cocoa sheet
   // controller.
-  scoped_ptr<WebContentsModalDialogHostCocoa> dialogHost_;
+  std::unique_ptr<WebContentsModalDialogHostCocoa> dialogHost_;
 }
 
 @property(readonly, nonatomic)
@@ -54,8 +59,15 @@ class WebContentsModalDialogHostCocoa;
 - (void)showSheet:(id<ConstrainedWindowSheet>)sheet
     forParentView:(NSView*)parentView;
 
-// Hides a sheet over the active view.
-- (void)hideSheet;
+// Hides |sheet| over the active view.
+- (void)hideSheet:(id<ConstrainedWindowSheet>)sheet;
+
+// Hides and unhides the sheet at the beginning and end of fullscreen
+// transition. |hideSheetForFullscreenTransition| gets called at the beginning
+// of the transition and |unhideSheetForFullscreenTransition| gets called at
+// the end.
+- (void)hideSheetForFullscreenTransition;
+- (void)unhideSheetForFullscreenTransition;
 
 // Calculates the position of the sheet for the given window size.
 - (NSPoint)originForSheet:(id<ConstrainedWindowSheet>)sheet

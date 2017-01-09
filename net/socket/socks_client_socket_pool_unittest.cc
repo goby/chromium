@@ -6,16 +6,24 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/run_loop.h"
 #include "base/time/time.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/load_timing_info_test_util.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/socket_test_util.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 namespace net {
 
@@ -31,7 +39,7 @@ void TestLoadTimingInfo(const ClientSocketHandle& handle) {
   EXPECT_TRUE(handle.GetLoadTimingInfo(false, &load_timing_info));
 
   // None of these tests use a NetLog.
-  EXPECT_EQ(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
+  EXPECT_EQ(NetLogSource::kInvalidId, load_timing_info.socket_log_id);
 
   EXPECT_FALSE(load_timing_info.socket_reused);
 
@@ -43,7 +51,7 @@ void TestLoadTimingInfo(const ClientSocketHandle& handle) {
 
 scoped_refptr<TransportSocketParams> CreateProxyHostParams() {
   return new TransportSocketParams(
-      HostPortPair("proxy", 80), false, false, OnHostResolutionCallback(),
+      HostPortPair("proxy", 80), false, OnHostResolutionCallback(),
       TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT);
 }
 
@@ -83,9 +91,9 @@ class SOCKSClientSocketPoolTest : public testing::Test {
     SocketDataProvider* data_provider() { return data_.get(); }
 
    private:
-    scoped_ptr<StaticSocketDataProvider> data_;
-    scoped_ptr<MockWrite[]> writes_;
-    scoped_ptr<MockRead[]> reads_;
+    std::unique_ptr<StaticSocketDataProvider> data_;
+    std::unique_ptr<MockWrite[]> writes_;
+    std::unique_ptr<MockRead[]> reads_;
   };
 
   SOCKSClientSocketPoolTest()
@@ -96,20 +104,22 @@ class SOCKSClientSocketPoolTest : public testing::Test {
               kMaxSocketsPerGroup,
               &host_resolver_,
               &transport_socket_pool_,
+              NULL,
               NULL) {}
 
   ~SOCKSClientSocketPoolTest() override {}
 
   int StartRequestV5(const std::string& group_name, RequestPriority priority) {
     return test_base_.StartRequestUsingPool(
-        &pool_, group_name, priority, CreateSOCKSv5Params());
+        &pool_, group_name, priority, ClientSocketPool::RespectLimits::ENABLED,
+        CreateSOCKSv5Params());
   }
 
   int GetOrderOfRequest(size_t index) const {
     return test_base_.GetOrderOfRequest(index);
   }
 
-  std::vector<scoped_ptr<TestSocketRequest>>* requests() {
+  std::vector<std::unique_ptr<TestSocketRequest>>* requests() {
     return test_base_.requests();
   }
 
@@ -127,9 +137,10 @@ TEST_F(SOCKSClientSocketPoolTest, Simple) {
   transport_client_socket_factory_.AddSocketDataProvider(data.data_provider());
 
   ClientSocketHandle handle;
-  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW, CompletionCallback(),
-                       &pool_, BoundNetLog());
-  EXPECT_EQ(OK, rv);
+  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       CompletionCallback(), &pool_, NetLogWithSource());
+  EXPECT_THAT(rv, IsOk());
   EXPECT_TRUE(handle.is_initialized());
   EXPECT_TRUE(handle.socket());
   TestLoadTimingInfo(handle);
@@ -148,7 +159,8 @@ TEST_F(SOCKSClientSocketPoolTest, SetSocketRequestPriorityOnInit) {
     ClientSocketHandle handle;
     EXPECT_EQ(OK,
               handle.Init("a", CreateSOCKSv5Params(), priority,
-                          CompletionCallback(), &pool_, BoundNetLog()));
+                          ClientSocketPool::RespectLimits::ENABLED,
+                          CompletionCallback(), &pool_, NetLogWithSource()));
     EXPECT_EQ(priority, transport_socket_pool_.last_request_priority());
     handle.socket()->Disconnect();
   }
@@ -167,7 +179,8 @@ TEST_F(SOCKSClientSocketPoolTest, SetResolvePriorityOnInit) {
     ClientSocketHandle handle;
     EXPECT_EQ(ERR_IO_PENDING,
               handle.Init("a", CreateSOCKSv4Params(), priority,
-                          CompletionCallback(), &pool_, BoundNetLog()));
+                          ClientSocketPool::RespectLimits::ENABLED,
+                          CompletionCallback(), &pool_, NetLogWithSource()));
     EXPECT_EQ(priority, transport_socket_pool_.last_request_priority());
     EXPECT_EQ(priority, host_resolver_.last_request_priority());
     EXPECT_TRUE(handle.socket() == NULL);
@@ -180,13 +193,14 @@ TEST_F(SOCKSClientSocketPoolTest, Async) {
 
   TestCompletionCallback callback;
   ClientSocketHandle handle;
-  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW, callback.callback(),
-                       &pool_, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback.callback(), &pool_, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_TRUE(handle.is_initialized());
   EXPECT_TRUE(handle.socket());
   TestLoadTimingInfo(handle);
@@ -199,9 +213,10 @@ TEST_F(SOCKSClientSocketPoolTest, TransportConnectError) {
   transport_client_socket_factory_.AddSocketDataProvider(&socket_data);
 
   ClientSocketHandle handle;
-  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW, CompletionCallback(),
-                       &pool_, BoundNetLog());
-  EXPECT_EQ(ERR_PROXY_CONNECTION_FAILED, rv);
+  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       CompletionCallback(), &pool_, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_PROXY_CONNECTION_FAILED));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
 }
@@ -213,13 +228,14 @@ TEST_F(SOCKSClientSocketPoolTest, AsyncTransportConnectError) {
 
   TestCompletionCallback callback;
   ClientSocketHandle handle;
-  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW, callback.callback(),
-                       &pool_, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback.callback(), &pool_, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
 
-  EXPECT_EQ(ERR_PROXY_CONNECTION_FAILED, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_PROXY_CONNECTION_FAILED));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
 }
@@ -235,9 +251,10 @@ TEST_F(SOCKSClientSocketPoolTest, SOCKSConnectError) {
 
   ClientSocketHandle handle;
   EXPECT_EQ(0, transport_socket_pool_.release_count());
-  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW, CompletionCallback(),
-                       &pool_, BoundNetLog());
-  EXPECT_EQ(ERR_SOCKS_CONNECTION_FAILED, rv);
+  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       CompletionCallback(), &pool_, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_SOCKS_CONNECTION_FAILED));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
   EXPECT_EQ(1, transport_socket_pool_.release_count());
@@ -255,13 +272,14 @@ TEST_F(SOCKSClientSocketPoolTest, AsyncSOCKSConnectError) {
   TestCompletionCallback callback;
   ClientSocketHandle handle;
   EXPECT_EQ(0, transport_socket_pool_.release_count());
-  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW, callback.callback(),
-                       &pool_, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  int rv = handle.Init("a", CreateSOCKSv5Params(), LOW,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback.callback(), &pool_, NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
 
-  EXPECT_EQ(ERR_SOCKS_CONNECTION_FAILED, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_SOCKS_CONNECTION_FAILED));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
   EXPECT_EQ(1, transport_socket_pool_.release_count());
@@ -277,10 +295,10 @@ TEST_F(SOCKSClientSocketPoolTest, CancelDuringTransportConnect) {
 
   EXPECT_EQ(0, transport_socket_pool_.cancel_count());
   int rv = StartRequestV5("a", LOW);
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   rv = StartRequestV5("a", LOW);
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   pool_.CancelRequest("a", (*requests())[0]->handle());
   pool_.CancelRequest("a", (*requests())[1]->handle());
@@ -288,7 +306,7 @@ TEST_F(SOCKSClientSocketPoolTest, CancelDuringTransportConnect) {
   EXPECT_EQ(0, transport_socket_pool_.cancel_count());
 
   // Now wait for the TCP sockets to connect.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(1));
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(2));
@@ -312,10 +330,10 @@ TEST_F(SOCKSClientSocketPoolTest, CancelDuringSOCKSConnect) {
   EXPECT_EQ(0, transport_socket_pool_.cancel_count());
   EXPECT_EQ(0, transport_socket_pool_.release_count());
   int rv = StartRequestV5("a", LOW);
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   rv = StartRequestV5("a", LOW);
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   pool_.CancelRequest("a", (*requests())[0]->handle());
   pool_.CancelRequest("a", (*requests())[1]->handle());
@@ -324,7 +342,7 @@ TEST_F(SOCKSClientSocketPoolTest, CancelDuringSOCKSConnect) {
   EXPECT_EQ(0, transport_socket_pool_.release_count());
 
   // Now wait for the async data to reach the SOCKS connect jobs.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(1));
   EXPECT_EQ(ClientSocketPoolTest::kRequestNotFound, GetOrderOfRequest(2));

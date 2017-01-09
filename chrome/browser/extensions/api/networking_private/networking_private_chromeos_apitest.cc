@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/net/network_portal_detector_test_impl.h"
@@ -14,6 +16,7 @@
 #include "chrome/browser/extensions/api/networking_private/networking_private_ui_delegate_chromeos.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_device_client.h"
@@ -21,7 +24,6 @@
 #include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/shill_profile_client.h"
 #include "chromeos/dbus/shill_service_client.h"
-#include "chromeos/login/user_names.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/onc/onc_utils.h"
@@ -32,8 +34,10 @@
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/policy/policy_constants.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_names.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
@@ -43,7 +47,6 @@
 #include "extensions/browser/api/networking_private/networking_private_delegate_factory.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/common/switches.h"
-#include "policy/policy_constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -140,7 +143,8 @@ class TestListener : public content::NotificationObserver {
   void Observe(int type,
                const content::NotificationSource& /* source */,
                const content::NotificationDetails& details) override {
-    const std::string& message = *content::Details<std::string>(details).ptr();
+    const std::string& message =
+        content::Details<std::pair<std::string, bool*>>(details).ptr()->first;
     if (message == message_)
       callback_.Run();
   }
@@ -193,8 +197,10 @@ class NetworkingPrivateChromeOSApiTest : public ExtensionApiTest {
 
     // TODO(pneubeck): Remove the following hack, once the NetworkingPrivateAPI
     // uses the ProfileHelper to obtain the userhash crbug/238623.
-    const std::string login_user = chromeos::login::CanonicalizeUserID(
-        command_line->GetSwitchValueNative(chromeos::switches::kLoginUser));
+    const cryptohome::Identification login_user =
+        cryptohome::Identification::FromString(
+            user_manager::CanonicalizeUserID(command_line->GetSwitchValueNative(
+                chromeos::switches::kLoginUser)));
     const std::string sanitized_user =
         CryptohomeClient::GetStubSanitizedUsername(login_user);
     command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
@@ -207,7 +213,8 @@ class NetworkingPrivateChromeOSApiTest : public ExtensionApiTest {
     CHECK(user);
     std::string userhash;
     DBusThreadManager::Get()->GetCryptohomeClient()->GetSanitizedUsername(
-        user->email(), base::Bind(&AssignString, &userhash_));
+        cryptohome::Identification(user->GetAccountId()),
+        base::Bind(&AssignString, &userhash_));
     content::RunAllPendingInMessageLoop();
     CHECK(!userhash_.empty());
   }
@@ -260,15 +267,15 @@ class NetworkingPrivateChromeOSApiTest : public ExtensionApiTest {
                               state, true /* add_to_visible */);
   }
 
-  static scoped_ptr<KeyedService> CreateNetworkingPrivateServiceClient(
+  static std::unique_ptr<KeyedService> CreateNetworkingPrivateServiceClient(
       content::BrowserContext* context) {
-    scoped_ptr<CryptoVerifyStub> crypto_verify(new CryptoVerifyStub);
-    scoped_ptr<NetworkingPrivateDelegate> result(
-        new NetworkingPrivateChromeOS(context, crypto_verify.Pass()));
-    scoped_ptr<NetworkingPrivateDelegate::UIDelegate> ui_delegate(
+    std::unique_ptr<CryptoVerifyStub> crypto_verify(new CryptoVerifyStub);
+    std::unique_ptr<NetworkingPrivateDelegate> result(
+        new NetworkingPrivateChromeOS(context, std::move(crypto_verify)));
+    std::unique_ptr<NetworkingPrivateDelegate::UIDelegate> ui_delegate(
         new UIDelegateStub);
-    result->set_ui_delegate(ui_delegate.Pass());
-    return result.Pass();
+    result->set_ui_delegate(std::move(ui_delegate));
+    return std::move(result);
   }
 
   void SetUpOnMainThread() override {
@@ -337,6 +344,9 @@ class NetworkingPrivateChromeOSApiTest : public ExtensionApiTest {
     service_test_->SetServiceProperty(kWifi1ServicePath,
                                       shill::kSecurityClassProperty,
                                       base::StringValue(shill::kSecurityWep));
+    service_test_->SetServiceProperty(kWifi1ServicePath,
+                                      shill::kWifiBSsid,
+                                      base::StringValue("00:01:02:03:04:05"));
     service_test_->SetServiceProperty(kWifi1ServicePath,
                                       shill::kSignalStrengthProperty,
                                       base::FundamentalValue(40));
@@ -585,10 +595,10 @@ IN_PROC_BROWSER_TEST_F(NetworkingPrivateChromeOSApiTest, GetManagedProperties) {
       "}";
 
   policy::PolicyMap policy;
-  policy.Set(policy::key::kOpenNetworkConfiguration,
-             policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-             policy::POLICY_SOURCE_CLOUD,
-             new base::StringValue(user_policy_blob), nullptr);
+  policy.Set(
+      policy::key::kOpenNetworkConfiguration, policy::POLICY_LEVEL_MANDATORY,
+      policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
+      base::WrapUnique(new base::StringValue(user_policy_blob)), nullptr);
   provider_.UpdateChromePolicy(policy);
 
   content::RunAllPendingInMessageLoop();

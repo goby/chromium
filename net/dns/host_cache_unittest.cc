@@ -4,6 +4,10 @@
 
 #include "net/dns/host_cache.h"
 
+#include <string>
+
+#include "base/bind.h"
+#include "base/callback.h"
 #include "base/format_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
@@ -20,6 +24,10 @@ const int kMaxCacheEntries = 10;
 // Builds a key for |hostname|, defaulting the address family to unspecified.
 HostCache::Key Key(const std::string& hostname) {
   return HostCache::Key(hostname, ADDRESS_FAMILY_UNSPECIFIED, 0);
+}
+
+bool FoobarIndexIsOdd(const std::string& foobarx_com) {
+  return (foobarx_com[6] - '0') % 2 == 1;
 }
 
 }  // namespace
@@ -42,7 +50,7 @@ TEST(HostCacheTest, Basic) {
   EXPECT_FALSE(cache.Lookup(key1, now));
   cache.Set(key1, entry, now, kTTL);
   EXPECT_TRUE(cache.Lookup(key1, now));
-  EXPECT_TRUE(cache.Lookup(key1, now)->error == entry.error);
+  EXPECT_TRUE(cache.Lookup(key1, now)->error() == entry.error());
 
   EXPECT_EQ(1U, cache.size());
 
@@ -253,9 +261,9 @@ TEST(HostCacheTest, HostResolverFlagsArePartOfKey) {
 }
 
 TEST(HostCacheTest, NoCache) {
-  // Disable caching.
   const base::TimeDelta kTTL = base::TimeDelta::FromSeconds(10);
 
+  // Disable caching.
   HostCache cache(0);
   EXPECT_TRUE(cache.caching_is_disabled());
 
@@ -294,6 +302,190 @@ TEST(HostCacheTest, Clear) {
   cache.clear();
 
   EXPECT_EQ(0u, cache.size());
+}
+
+TEST(HostCacheTest, ClearForHosts) {
+  const base::TimeDelta kTTL = base::TimeDelta::FromSeconds(10);
+
+  HostCache cache(kMaxCacheEntries);
+
+  // Set t=0.
+  base::TimeTicks now;
+
+  HostCache::Entry entry = HostCache::Entry(OK, AddressList());
+
+  EXPECT_EQ(0u, cache.size());
+
+  // Add several entries.
+  cache.Set(Key("foobar1.com"), entry, now, kTTL);
+  cache.Set(Key("foobar2.com"), entry, now, kTTL);
+  cache.Set(Key("foobar3.com"), entry, now, kTTL);
+  cache.Set(Key("foobar4.com"), entry, now, kTTL);
+  cache.Set(Key("foobar5.com"), entry, now, kTTL);
+
+  EXPECT_EQ(5u, cache.size());
+
+  // Clear the hosts matching a certain predicate, such as the number being odd.
+  cache.ClearForHosts(base::Bind(&FoobarIndexIsOdd));
+
+  EXPECT_EQ(2u, cache.size());
+  EXPECT_TRUE(cache.Lookup(Key("foobar2.com"), now));
+  EXPECT_TRUE(cache.Lookup(Key("foobar4.com"), now));
+
+  // Passing null callback will delete all hosts.
+  cache.ClearForHosts(base::Callback<bool(const std::string&)>());
+
+  EXPECT_EQ(0u, cache.size());
+}
+
+// Try to add too many entries to cache; it should evict the one with the oldest
+// expiration time.
+TEST(HostCacheTest, Evict) {
+  HostCache cache(2);
+
+  base::TimeTicks now;
+
+  HostCache::Key key1 = Key("foobar.com");
+  HostCache::Key key2 = Key("foobar2.com");
+  HostCache::Key key3 = Key("foobar3.com");
+  HostCache::Entry entry = HostCache::Entry(OK, AddressList());
+
+  EXPECT_EQ(0u, cache.size());
+  EXPECT_FALSE(cache.Lookup(key1, now));
+  EXPECT_FALSE(cache.Lookup(key2, now));
+  EXPECT_FALSE(cache.Lookup(key3, now));
+
+  // |key1| expires in 10 seconds, but |key2| in just 5.
+  cache.Set(key1, entry, now, base::TimeDelta::FromSeconds(10));
+  cache.Set(key2, entry, now, base::TimeDelta::FromSeconds(5));
+  EXPECT_EQ(2u, cache.size());
+  EXPECT_TRUE(cache.Lookup(key1, now));
+  EXPECT_TRUE(cache.Lookup(key2, now));
+  EXPECT_FALSE(cache.Lookup(key3, now));
+
+  // |key2| should be chosen for eviction, since it expires sooner.
+  cache.Set(key3, entry, now, base::TimeDelta::FromSeconds(10));
+  EXPECT_EQ(2u, cache.size());
+  EXPECT_TRUE(cache.Lookup(key1, now));
+  EXPECT_FALSE(cache.Lookup(key2, now));
+  EXPECT_TRUE(cache.Lookup(key3, now));
+}
+
+void TestEvictionCallback(int* evict_count,
+                          HostCache::Key* key_out,
+                          const HostCache::Key& key,
+                          const HostCache::Entry& entry) {
+  ++*evict_count;
+  *key_out = key;
+}
+
+// Try to add too many entries to cache; it should evict the one with the oldest
+// expiration time.
+TEST(HostCacheTest, EvictWithCallback) {
+  HostCache cache(2);
+
+  int evict_count = 0;
+  HostCache::Key evicted_key = Key("nothingevicted.com");
+  cache.set_eviction_callback(
+      base::Bind(&TestEvictionCallback, &evict_count, &evicted_key));
+
+  base::TimeTicks now;
+
+  HostCache::Key key1 = Key("foobar.com");
+  HostCache::Key key2 = Key("foobar2.com");
+  HostCache::Key key3 = Key("foobar3.com");
+  HostCache::Entry entry = HostCache::Entry(OK, AddressList());
+
+  EXPECT_EQ(0u, cache.size());
+  EXPECT_FALSE(cache.Lookup(key1, now));
+  EXPECT_FALSE(cache.Lookup(key2, now));
+  EXPECT_FALSE(cache.Lookup(key3, now));
+
+  // |key1| expires in 10 seconds, but |key2| in just 5.
+  cache.Set(key1, entry, now, base::TimeDelta::FromSeconds(10));
+  cache.Set(key2, entry, now, base::TimeDelta::FromSeconds(5));
+  EXPECT_EQ(2u, cache.size());
+  EXPECT_TRUE(cache.Lookup(key1, now));
+  EXPECT_TRUE(cache.Lookup(key2, now));
+  EXPECT_FALSE(cache.Lookup(key3, now));
+
+  EXPECT_EQ(0, evict_count);
+
+  // |key2| should be chosen for eviction, since it expires sooner.
+  cache.Set(key3, entry, now, base::TimeDelta::FromSeconds(10));
+  EXPECT_EQ(2u, cache.size());
+  EXPECT_TRUE(cache.Lookup(key1, now));
+  EXPECT_FALSE(cache.Lookup(key2, now));
+  EXPECT_TRUE(cache.Lookup(key3, now));
+
+  EXPECT_EQ(1, evict_count);
+  EXPECT_EQ(key2.hostname, evicted_key.hostname);
+}
+
+// Try to retrieve stale entries from the cache. They should be returned by
+// |LookupStale()| but not |Lookup()|, with correct |EntryStaleness| data.
+TEST(HostCacheTest, Stale) {
+  const base::TimeDelta kTTL = base::TimeDelta::FromSeconds(10);
+
+  HostCache cache(kMaxCacheEntries);
+
+  // Start at t=0.
+  base::TimeTicks now;
+  HostCache::EntryStaleness stale;
+
+  HostCache::Key key = Key("foobar.com");
+  HostCache::Entry entry = HostCache::Entry(OK, AddressList());
+
+  EXPECT_EQ(0U, cache.size());
+
+  // Add an entry for "foobar.com" at t=0.
+  EXPECT_FALSE(cache.Lookup(key, now));
+  EXPECT_FALSE(cache.LookupStale(key, now, &stale));
+  cache.Set(key, entry, now, kTTL);
+  EXPECT_TRUE(cache.Lookup(key, now));
+  EXPECT_TRUE(cache.LookupStale(key, now, &stale));
+  EXPECT_FALSE(stale.is_stale());
+  EXPECT_EQ(0, stale.stale_hits);
+
+  EXPECT_EQ(1U, cache.size());
+
+  // Advance to t=5.
+  now += base::TimeDelta::FromSeconds(5);
+
+  EXPECT_TRUE(cache.Lookup(key, now));
+  EXPECT_TRUE(cache.LookupStale(key, now, &stale));
+  EXPECT_FALSE(stale.is_stale());
+  EXPECT_EQ(0, stale.stale_hits);
+
+  // Advance to t=15.
+  now += base::TimeDelta::FromSeconds(10);
+
+  EXPECT_FALSE(cache.Lookup(key, now));
+  EXPECT_TRUE(cache.LookupStale(key, now, &stale));
+  EXPECT_TRUE(stale.is_stale());
+  EXPECT_EQ(base::TimeDelta::FromSeconds(5), stale.expired_by);
+  EXPECT_EQ(0, stale.network_changes);
+  EXPECT_EQ(1, stale.stale_hits);
+
+  // Advance to t=20.
+  now += base::TimeDelta::FromSeconds(5);
+
+  EXPECT_FALSE(cache.Lookup(key, now));
+  EXPECT_TRUE(cache.LookupStale(key, now, &stale));
+  EXPECT_TRUE(stale.is_stale());
+  EXPECT_EQ(base::TimeDelta::FromSeconds(10), stale.expired_by);
+  EXPECT_EQ(0, stale.network_changes);
+  EXPECT_EQ(2, stale.stale_hits);
+
+  // Simulate network change.
+  cache.OnNetworkChange();
+
+  EXPECT_FALSE(cache.Lookup(key, now));
+  EXPECT_TRUE(cache.LookupStale(key, now, &stale));
+  EXPECT_TRUE(stale.is_stale());
+  EXPECT_EQ(base::TimeDelta::FromSeconds(10), stale.expired_by);
+  EXPECT_EQ(1, stale.network_changes);
+  EXPECT_EQ(3, stale.stale_hits);
 }
 
 // Tests the less than and equal operators for HostCache::Key work.

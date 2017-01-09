@@ -18,6 +18,7 @@ namespace chrome_pdf {
 class PDFiumRange {
  public:
   PDFiumRange(PDFiumPage* page, int char_index, int char_count);
+  PDFiumRange(const PDFiumRange& that);
   ~PDFiumRange();
 
   // Update how many characters are in the selection.  Could be negative if
@@ -34,13 +35,13 @@ class PDFiumRange {
                                        int rotation);
 
   // Gets the string of characters in this range.
-  base::string16 GetText();
+  base::string16 GetText() const;
 
  private:
   PDFiumPage* page_;
   // Index of first character.
   int char_index_;
-  // How many characters are part of this range (negative if  backwards).
+  // How many characters are part of this range (negative if backwards).
   int char_count_;
 
   // Cache of ScreenRect, and the associated variables used when caching it.

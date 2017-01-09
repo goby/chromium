@@ -5,30 +5,36 @@
 #ifndef CONTENT_PUBLIC_RENDERER_RENDER_FRAME_H_
 #define CONTENT_PUBLIC_RENDERER_RENDER_FRAME_H_
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "content/public/common/console_message_level.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
+#include "ppapi/features/features.h"
+#include "third_party/WebKit/public/platform/WebPageVisibilityState.h"
 #include "third_party/WebKit/public/web/WebNavigationPolicy.h"
 
-class GURL;
-
 namespace blink {
-class WebElement;
 class WebFrame;
 class WebLocalFrame;
-class WebNode;
 class WebPlugin;
 class WebURLRequest;
-class WebURLResponse;
 struct WebPluginParams;
 }
 
 namespace gfx {
 class Range;
+class Size;
+}
+
+namespace service_manager {
+class InterfaceRegistry;
+class InterfaceProvider;
 }
 
 namespace url {
@@ -42,10 +48,12 @@ class Isolate;
 }
 
 namespace content {
+class AssociatedInterfaceProvider;
+class AssociatedInterfaceRegistry;
 class ContextMenuClient;
 class PluginInstanceThrottler;
+class RenderAccessibility;
 class RenderView;
-class ServiceRegistry;
 struct ContextMenuParams;
 struct WebPluginInfo;
 struct WebPreferences;
@@ -56,6 +64,29 @@ struct WebPreferences;
 class CONTENT_EXPORT RenderFrame : public IPC::Listener,
                                    public IPC::Sender {
  public:
+  // These numeric values are used in UMA logs; do not change them.
+  enum PeripheralContentStatus {
+    // Content is peripheral because it doesn't meet any of the below criteria.
+    CONTENT_STATUS_PERIPHERAL = 0,
+    // Content is essential because it's same-origin with the top-level frame.
+    CONTENT_STATUS_ESSENTIAL_SAME_ORIGIN = 1,
+    // Content is essential even though it's cross-origin, because it's large.
+    CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_BIG = 2,
+    // Content is essential because there's large content from the same origin.
+    CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_WHITELISTED = 3,
+    // Content is essential because it's tiny in size.
+    CONTENT_STATUS_ESSENTIAL_CROSS_ORIGIN_TINY = 4,
+    // Content is essential because it has an unknown size.
+    CONTENT_STATUS_ESSENTIAL_UNKNOWN_SIZE = 5,
+    // Must be last.
+    CONTENT_STATUS_NUM_ITEMS
+  };
+
+  enum RecordPeripheralDecision {
+    DONT_RECORD_DECISION = 0,
+    RECORD_DECISION = 1
+  };
+
   // Returns the RenderFrame given a WebFrame.
   static RenderFrame* FromWebFrame(blink::WebFrame* web_frame);
 
@@ -65,17 +96,16 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   // Returns the RenderView associated with this frame.
   virtual RenderView* GetRenderView() = 0;
 
+  // Return the RenderAccessibility associated with this frame.
+  virtual RenderAccessibility* GetRenderAccessibility() = 0;
+
   // Get the routing ID of the frame.
   virtual int GetRoutingID() = 0;
 
   // Returns the associated WebFrame.
   virtual blink::WebLocalFrame* GetWebFrame() = 0;
 
-  // Gets the focused element. If no such element exists then
-  // the element will be Null.
-  virtual blink::WebElement GetFocusedElement() const = 0;
-
-   // Gets WebKit related preferences associated with this frame.
+  // Gets WebKit related preferences associated with this frame.
   virtual WebPreferences& GetWebkitPreferences() = 0;
 
   // Shows a context menu with the given information. The given client will
@@ -96,16 +126,13 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   // menu is closed.
   virtual void CancelContextMenu(int request_id) = 0;
 
-  // Gets the node that the context menu was pressed over.
-  virtual blink::WebNode GetContextMenuNode() const = 0;
-
   // Create a new NPAPI/Pepper plugin depending on |info|. Returns NULL if no
   // plugin was found. |throttler| may be empty.
   virtual blink::WebPlugin* CreatePlugin(
       blink::WebFrame* frame,
       const WebPluginInfo& info,
       const blink::WebPluginParams& params,
-      scoped_ptr<PluginInstanceThrottler> throttler) = 0;
+      std::unique_ptr<PluginInstanceThrottler> throttler) = 0;
 
   // The client should handle the navigation externally.
   virtual void LoadURLExternally(const blink::WebURLRequest& request,
@@ -120,10 +147,24 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   // Return true if this frame is hidden.
   virtual bool IsHidden() = 0;
 
-  // Returns the ServiceRegistry for this frame.
-  virtual ServiceRegistry* GetServiceRegistry() = 0;
+  // Returns the InterfaceRegistry that this process uses to expose interfaces
+  // to the application running in this frame.
+  virtual service_manager::InterfaceRegistry* GetInterfaceRegistry() = 0;
 
-#if defined(ENABLE_PLUGINS)
+  // Returns the InterfaceProvider that this process can use to bind
+  // interfaces exposed to it by the application running in this frame.
+  virtual service_manager::InterfaceProvider* GetRemoteInterfaces() = 0;
+
+  // Returns the AssociatedInterfaceRegistry this frame can use to expose
+  // frame-specific Channel-associated interfaces to the remote RenderFrameHost.
+  virtual AssociatedInterfaceRegistry* GetAssociatedInterfaceRegistry() = 0;
+
+  // Returns the AssociatedInterfaceProvider this frame can use to access
+  // frame-specific Channel-assocaited interfaces from the remote
+  // RenderFrameHost.
+  virtual AssociatedInterfaceProvider* GetRemoteAssociatedInterfaces() = 0;
+
+#if BUILDFLAG(ENABLE_PLUGINS)
   // Registers a plugin that has been marked peripheral. If the origin
   // whitelist is later updated and includes |content_origin|, then
   // |unthrottle_callback| will be called.
@@ -131,7 +172,7 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
       const url::Origin& content_origin,
       const base::Closure& unthrottle_callback) = 0;
 
-  // Returns true if this plugin should have power saver enabled.
+  // Returns the peripheral content heuristic decision.
   //
   // Power Saver is enabled for plugin content that are cross-origin and
   // heuristically determined to be not essential to the web page content.
@@ -146,19 +187,21 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   //
   // |content_origin| is the origin of the plugin content.
   //
-  // |width| and |height| are zoom and device scale independent logical pixels.
-  //
-  // |cross_origin_main_content| may be NULL. It is set to true if the
-  // plugin content is cross-origin but still the "main attraction" of the page.
-  virtual bool ShouldThrottleContent(const url::Origin& main_frame_origin,
-                                     const url::Origin& content_origin,
-                                     int width,
-                                     int height,
-                                     bool* cross_origin_main_content) const = 0;
+  // |unobscured_size| are zoom and device scale independent logical pixels.
+  virtual PeripheralContentStatus GetPeripheralContentStatus(
+      const url::Origin& main_frame_origin,
+      const url::Origin& content_origin,
+      const gfx::Size& unobscured_size,
+      RecordPeripheralDecision record_decision) const = 0;
 
   // Whitelists a |content_origin| so its content will never be throttled in
   // this RenderFrame. Whitelist is cleared by top level navigation.
   virtual void WhitelistContentOrigin(const url::Origin& content_origin) = 0;
+
+  // Used by plugins that load data in this RenderFrame to update the loading
+  // notifications.
+  virtual void DidStartLoading() = 0;
+  virtual void DidStopLoading() = 0;
 #endif
 
   // Returns true if this frame is a FTP directory listing.
@@ -191,6 +234,13 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
 
   // Whether or not this frame is currently pasting.
   virtual bool IsPasting() const = 0;
+
+  // Returns the current visibility of the frame.
+  virtual blink::WebPageVisibilityState GetVisibilityState() const = 0;
+
+  // If PlzNavigate is enabled, returns true in between teh time that Blink
+  // requests navigation until the browser responds with the result.
+  virtual bool IsBrowserSideNavigationPending() = 0;
 
  protected:
   ~RenderFrame() override {}

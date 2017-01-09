@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_DATABASE_MESSAGE_FILTER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_DATABASE_MESSAGE_FILTER_H_
 
+#include <stdint.h>
+
 #include "base/containers/hash_tables.h"
 #include "base/strings/string16.h"
 #include "content/public/browser/browser_message_filter.h"
@@ -12,6 +14,10 @@
 #include "storage/browser/database/database_tracker.h"
 #include "storage/common/database/database_connections.h"
 #include "storage/common/quota/quota_types.h"
+
+namespace url {
+class Origin;
+}  // namespace url
 
 namespace content {
 
@@ -46,38 +52,38 @@ class DatabaseMessageFilter : public BrowserMessageFilter,
                             const bool& sync_dir,
                             IPC::Message* reply_msg);
   void OnDatabaseGetFileAttributes(const base::string16& vfs_file_name,
-                                   int32* attributes);
+                                   int32_t* attributes);
   void OnDatabaseGetFileSize(const base::string16& vfs_file_name,
-                             int64* size);
+                             int64_t* size);
   void OnDatabaseSetFileSize(const base::string16& vfs_file_name,
-                             int64 size,
+                             int64_t size,
                              bool* success);
 
   // Quota message handler (io thread)
-  void OnDatabaseGetSpaceAvailable(const std::string& origin_identifier,
+  void OnDatabaseGetSpaceAvailable(const url::Origin& origin,
                                    IPC::Message* reply_msg);
   void OnDatabaseGetUsageAndQuota(IPC::Message* reply_msg,
                                   storage::QuotaStatusCode status,
-                                  int64 usage,
-                                  int64 quota);
+                                  int64_t usage,
+                                  int64_t quota);
 
   // Database tracker message handlers (file thread)
-  void OnDatabaseOpened(const std::string& origin_identifier,
+  void OnDatabaseOpened(const url::Origin& origin,
                         const base::string16& database_name,
                         const base::string16& description,
-                        int64 estimated_size);
-  void OnDatabaseModified(const std::string& origin_identifier,
+                        int64_t estimated_size);
+  void OnDatabaseModified(const url::Origin& origin,
                           const base::string16& database_name);
-  void OnDatabaseClosed(const std::string& origin_identifier,
+  void OnDatabaseClosed(const url::Origin& origin,
                         const base::string16& database_name);
-  void OnHandleSqliteError(const std::string& origin_identifier,
+  void OnHandleSqliteError(const url::Origin& origin,
                            const base::string16& database_name,
                            int error);
 
   // DatabaseTracker::Observer callbacks (file thread)
   void OnDatabaseSizeChanged(const std::string& origin_identifier,
                              const base::string16& database_name,
-                             int64 database_size) override;
+                             int64_t database_size) override;
   void OnDatabaseScheduledForDeletion(
       const std::string& origin_identifier,
       const base::string16& database_name) override;

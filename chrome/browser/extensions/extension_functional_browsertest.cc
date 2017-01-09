@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include "build/build_config.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -27,19 +30,17 @@ class ExtensionFunctionalTest : public ExtensionBrowserTest {
 
     base::FilePath path = test_data_dir_.AppendASCII(filename);
 
-    extensions::TestExtensionRegistryObserver extension_observer(registry);
+    TestExtensionRegistryObserver extension_observer(registry);
 
-    scoped_refptr<extensions::CrxInstaller> installer(
-        extensions::CrxInstaller::CreateSilent(service));
+    scoped_refptr<CrxInstaller> installer(CrxInstaller::CreateSilent(service));
     installer->set_is_gallery_install(false);
     installer->set_allow_silent_install(true);
     installer->set_install_source(Manifest::INTERNAL);
     installer->set_off_store_install_allow_reason(
-        extensions::CrxInstaller::OffStoreInstallAllowedInTest);
+        CrxInstaller::OffStoreInstallAllowedInTest);
 
-    observer_->Watch(
-        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-        content::Source<extensions::CrxInstaller>(installer.get()));
+    observer_->Watch(NOTIFICATION_CRX_INSTALLER_DONE,
+                     content::Source<CrxInstaller>(installer.get()));
 
     installer->InstallCrx(path);
     observer_->Wait();
@@ -74,8 +75,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionFunctionalTest,
   EXPECT_FALSE(util::IsIncognitoEnabled(last_loaded_extension_id(), profile()));
 }
 
-// Failing on XP: http://crbug.com/389545
-#if defined(OS_WIN)
+// Failing on Linux: http://crbug.com/654945
+#if defined(OS_LINUX)
 #define MAYBE_TestSetExtensionsState DISABLED_TestSetExtensionsState
 #else
 #define MAYBE_TestSetExtensionsState TestSetExtensionsState
@@ -105,4 +106,5 @@ IN_PROC_BROWSER_TEST_F(ExtensionFunctionalTest, MAYBE_TestSetExtensionsState) {
   util::SetIsIncognitoEnabled(last_loaded_extension_id(), profile(), false);
   EXPECT_FALSE(util::IsIncognitoEnabled(last_loaded_extension_id(), profile()));
 }
+
 }  // namespace extensions

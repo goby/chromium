@@ -5,25 +5,47 @@
 #ifndef CONTENT_PUBLIC_COMMON_PLATFORM_NOTIFICATION_DATA_H_
 #define CONTENT_PUBLIC_COMMON_PLATFORM_NOTIFICATION_DATA_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
+#include "base/strings/nullable_string16.h"
 #include "base/strings/string16.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "url/gurl.h"
 
 namespace content {
 
-// A notification action (button); corresponds to Blink WebNotificationAction.
+enum PlatformNotificationActionType {
+  PLATFORM_NOTIFICATION_ACTION_TYPE_BUTTON = 0,
+  PLATFORM_NOTIFICATION_ACTION_TYPE_TEXT,
+};
+
+// A notification action (button or text input); corresponds to Blink
+// WebNotificationAction.
 struct CONTENT_EXPORT PlatformNotificationAction {
   PlatformNotificationAction();
+  PlatformNotificationAction(const PlatformNotificationAction& other);
   ~PlatformNotificationAction();
+
+  // Type of the action (button or text input).
+  PlatformNotificationActionType type =
+      PLATFORM_NOTIFICATION_ACTION_TYPE_BUTTON;
 
   // Action name that the author can use to distinguish them.
   std::string action;
 
   // Title of the button.
   base::string16 title;
+
+  // URL of the icon for the button. May be empty if no url was specified.
+  GURL icon;
+
+  // Optional text to use as placeholder for text inputs. May be null if it was
+  // not specified.
+  base::NullableString16 placeholder;
 };
 
 // Structure representing the information associated with a Web Notification.
@@ -31,6 +53,7 @@ struct CONTENT_EXPORT PlatformNotificationAction {
 // synchronized with the WebNotificationData structure defined in the Blink API.
 struct CONTENT_EXPORT PlatformNotificationData {
   PlatformNotificationData();
+  PlatformNotificationData(const PlatformNotificationData& other);
   ~PlatformNotificationData();
 
   // The maximum size of developer-provided data to be stored in the |data|
@@ -61,12 +84,27 @@ struct CONTENT_EXPORT PlatformNotificationData {
   // tag will replace the first displayed notification.
   std::string tag;
 
+  // URL of the image contents of the notification. May be empty if no url was
+  // specified.
+  GURL image;
+
   // URL of the icon which is to be displayed with the notification.
   GURL icon;
+
+  // URL of the badge for representing the notification. May be empty if no url
+  // was specified.
+  GURL badge;
 
   // Vibration pattern for the notification, following the syntax of the
   // Vibration API. https://www.w3.org/TR/vibration/
   std::vector<int> vibration_pattern;
+
+  // The time at which the event the notification represents took place.
+  base::Time timestamp;
+
+  // Whether default notification indicators (sound, vibration, light) should
+  // be played again if the notification is replacing an older notification.
+  bool renotify = false;
 
   // Whether default notification indicators (sound, vibration, light) should
   // be suppressed.

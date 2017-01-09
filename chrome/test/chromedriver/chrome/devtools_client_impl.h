@@ -7,15 +7,16 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
 #include "chrome/test/chromedriver/net/sync_websocket_factory.h"
+#include "chrome/test/chromedriver/net/timeout.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -33,7 +34,7 @@ struct InspectorEvent {
   InspectorEvent();
   ~InspectorEvent();
   std::string method;
-  scoped_ptr<base::DictionaryValue> params;
+  std::unique_ptr<base::DictionaryValue> params;
 };
 
 struct InspectorCommandResponse {
@@ -41,7 +42,7 @@ struct InspectorCommandResponse {
   ~InspectorCommandResponse();
   int id;
   std::string error;
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
 };
 
 }  // namespace internal
@@ -87,16 +88,28 @@ class DevToolsClientImpl : public DevToolsClient {
   Status SendCommand(
       const std::string& method,
       const base::DictionaryValue& params) override;
+  Status SendCommandWithTimeout(
+      const std::string& method,
+      const base::DictionaryValue& params,
+      const Timeout* timeout) override;
   Status SendAsyncCommand(
       const std::string& method,
       const base::DictionaryValue& params) override;
   Status SendCommandAndGetResult(
       const std::string& method,
       const base::DictionaryValue& params,
-      scoped_ptr<base::DictionaryValue>* result) override;
+      std::unique_ptr<base::DictionaryValue>* result) override;
+  Status SendCommandAndGetResultWithTimeout(
+      const std::string& method,
+      const base::DictionaryValue& params,
+      const Timeout* timeout,
+      std::unique_ptr<base::DictionaryValue>* result) override;
+  Status SendCommandAndIgnoreResponse(
+      const std::string& method,
+      const base::DictionaryValue& params) override;
   void AddListener(DevToolsEventListener* listener) override;
   Status HandleEventsUntil(const ConditionalFunc& conditional_func,
-                           const base::TimeDelta& timeout) override;
+                           const Timeout& timeout) override;
   Status HandleReceivedEvents() override;
 
  private:
@@ -118,15 +131,18 @@ class DevToolsClientImpl : public DevToolsClient {
     ResponseState state;
     std::string method;
     internal::InspectorCommandResponse response;
+    Timeout command_timeout;
   };
   typedef std::map<int, linked_ptr<ResponseInfo> > ResponseInfoMap;
 
   Status SendCommandInternal(
       const std::string& method,
       const base::DictionaryValue& params,
-      scoped_ptr<base::DictionaryValue>* result,
-      bool wait_for_response);
-  Status ProcessNextMessage(int expected_id, const base::TimeDelta& timeout);
+      std::unique_ptr<base::DictionaryValue>* result,
+      bool expect_response,
+      bool wait_for_response,
+      const Timeout* timeout);
+  Status ProcessNextMessage(int expected_id, const Timeout& timeout);
   Status ProcessEvent(const internal::InspectorEvent& event);
   Status ProcessCommandResponse(
       const internal::InspectorCommandResponse& response);
@@ -134,7 +150,7 @@ class DevToolsClientImpl : public DevToolsClient {
   Status EnsureListenersNotifiedOfEvent();
   Status EnsureListenersNotifiedOfCommandResponse();
 
-  scoped_ptr<SyncWebSocket> socket_;
+  std::unique_ptr<SyncWebSocket> socket_;
   GURL url_;
   bool crashed_;
   const std::string id_;

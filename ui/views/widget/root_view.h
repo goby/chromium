@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "ui/events/event_processor.h"
 #include "ui/views/focus/focus_manager.h"
@@ -104,7 +105,6 @@ class VIEWS_EXPORT RootView : public View,
   const Widget* GetWidget() const override;
   Widget* GetWidget() override;
   bool IsDrawn() const override;
-  void Layout() override;
   const char* GetClassName() const override;
   void SchedulePaintInRect(const gfx::Rect& rect) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
@@ -115,7 +115,7 @@ class VIEWS_EXPORT RootView : public View,
   void OnMouseExited(const ui::MouseEvent& event) override;
   bool OnMouseWheel(const ui::MouseWheelEvent& event) override;
   void SetMouseHandler(View* new_mouse_handler) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void UpdateParentLayer() override;
 
  protected:
@@ -206,8 +206,8 @@ class VIEWS_EXPORT RootView : public View,
   //                   its place.
   bool gesture_handler_set_before_processing_;
 
-  scoped_ptr<internal::PreEventDispatchHandler> pre_dispatch_handler_;
-  scoped_ptr<internal::PostEventDispatchHandler> post_dispatch_handler_;
+  std::unique_ptr<internal::PreEventDispatchHandler> pre_dispatch_handler_;
+  std::unique_ptr<internal::PostEventDispatchHandler> post_dispatch_handler_;
 
   // Focus ---------------------------------------------------------------------
 

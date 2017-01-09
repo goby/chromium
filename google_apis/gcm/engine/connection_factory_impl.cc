@@ -4,19 +4,21 @@
 
 #include "google_apis/gcm/engine/connection_factory_impl.h"
 
+#include <string>
+
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/profiler/scoped_tracker.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gcm/engine/connection_handler_impl.h"
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
 #include "google_apis/gcm/protocol/mcs.pb.h"
-#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_request_headers.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_source_type.h"
 #include "net/proxy/proxy_info.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/client_socket_pool_manager.h"
@@ -52,22 +54,22 @@ ConnectionFactoryImpl::ConnectionFactoryImpl(
     net::HttpNetworkSession* http_network_session,
     net::NetLog* net_log,
     GCMStatsRecorder* recorder)
-  : mcs_endpoints_(mcs_endpoints),
-    next_endpoint_(0),
-    last_successful_endpoint_(0),
-    backoff_policy_(backoff_policy),
-    gcm_network_session_(gcm_network_session),
-    http_network_session_(http_network_session),
-    bound_net_log_(
-        net::BoundNetLog::Make(net_log, net::NetLog::SOURCE_SOCKET)),
-    pac_request_(NULL),
-    connecting_(false),
-    waiting_for_backoff_(false),
-    waiting_for_network_online_(false),
-    logging_in_(false),
-    recorder_(recorder),
-    listener_(NULL),
-    weak_ptr_factory_(this) {
+    : mcs_endpoints_(mcs_endpoints),
+      next_endpoint_(0),
+      last_successful_endpoint_(0),
+      backoff_policy_(backoff_policy),
+      gcm_network_session_(gcm_network_session),
+      http_network_session_(http_network_session),
+      net_log_(
+          net::NetLogWithSource::Make(net_log, net::NetLogSourceType::SOCKET)),
+      pac_request_(NULL),
+      connecting_(false),
+      waiting_for_backoff_(false),
+      waiting_for_network_online_(false),
+      logging_in_(false),
+      recorder_(recorder),
+      listener_(NULL),
+      weak_ptr_factory_(this) {
   DCHECK_GE(mcs_endpoints_.size(), 1U);
   DCHECK(!http_network_session_ ||
          (gcm_network_session_ != http_network_session_));
@@ -107,11 +109,10 @@ ConnectionHandler* ConnectionFactoryImpl::GetConnectionHandler() const {
 void ConnectionFactoryImpl::Connect() {
   if (!connection_handler_) {
     connection_handler_ = CreateConnectionHandler(
-        base::TimeDelta::FromMilliseconds(kReadTimeoutMs),
-        read_callback_,
+        base::TimeDelta::FromMilliseconds(kReadTimeoutMs), read_callback_,
         write_callback_,
         base::Bind(&ConnectionFactoryImpl::ConnectionHandlerCallback,
-                   weak_ptr_factory_.GetWeakPtr())).Pass();
+                   weak_ptr_factory_.GetWeakPtr()));
   }
 
   if (connecting_ || waiting_for_backoff_)
@@ -121,6 +122,10 @@ void ConnectionFactoryImpl::Connect() {
     return;  // Already connected.
 
   ConnectWithBackoff();
+}
+
+ConnectionEventTracker* ConnectionFactoryImpl::GetEventTrackerForTesting() {
+  return &event_tracker_;
 }
 
 void ConnectionFactoryImpl::ConnectWithBackoff() {
@@ -203,6 +208,10 @@ void ConnectionFactoryImpl::SignalConnectionReset(
     // |last_login_time_| will be reset below, before attempting the new
     // connection.
   }
+
+  if (logging_in_)
+    event_tracker_.ConnectionLoginFailed();
+  event_tracker_.EndConnectionAttempt();
 
   CloseSocket();
   DCHECK(!IsEndpointReachable());
@@ -295,6 +304,11 @@ net::IPEndPoint ConnectionFactoryImpl::GetPeerIP() {
 }
 
 void ConnectionFactoryImpl::ConnectImpl() {
+  event_tracker_.StartConnectionAttempt();
+  StartConnection();
+}
+
+void ConnectionFactoryImpl::StartConnection() {
   DCHECK(!IsEndpointReachable());
   // TODO(zea): Make this a dcheck again. crbug.com/462319
   CHECK(!socket_handle_.socket());
@@ -308,13 +322,13 @@ void ConnectionFactoryImpl::ConnectImpl() {
   RebuildNetworkSessionAuthCache();
   int status = gcm_network_session_->proxy_service()->ResolveProxy(
       current_endpoint,
-      net::LOAD_NORMAL,
+      std::string(),
       &proxy_info_,
       base::Bind(&ConnectionFactoryImpl::OnProxyResolveDone,
                  weak_ptr_factory_.GetWeakPtr()),
       &pac_request_,
       NULL,
-      bound_net_log_);
+      net_log_);
   if (status != net::ERR_IO_PENDING)
     OnProxyResolveDone(status);
 }
@@ -325,26 +339,25 @@ void ConnectionFactoryImpl::InitHandler() {
   if (!request_builder_.is_null()) {
     request_builder_.Run(&login_request);
     DCHECK(login_request.IsInitialized());
+    event_tracker_.WriteToLoginRequest(&login_request);
   }
 
   connection_handler_->Init(login_request, socket_handle_.socket());
 }
 
-scoped_ptr<net::BackoffEntry> ConnectionFactoryImpl::CreateBackoffEntry(
+std::unique_ptr<net::BackoffEntry> ConnectionFactoryImpl::CreateBackoffEntry(
     const net::BackoffEntry::Policy* const policy) {
-  return scoped_ptr<net::BackoffEntry>(new net::BackoffEntry(policy));
+  return std::unique_ptr<net::BackoffEntry>(new net::BackoffEntry(policy));
 }
 
-scoped_ptr<ConnectionHandler> ConnectionFactoryImpl::CreateConnectionHandler(
+std::unique_ptr<ConnectionHandler>
+ConnectionFactoryImpl::CreateConnectionHandler(
     base::TimeDelta read_timeout,
     const ConnectionHandler::ProtoReceivedCallback& read_callback,
     const ConnectionHandler::ProtoSentCallback& write_callback,
     const ConnectionHandler::ConnectionChangedCallback& connection_callback) {
-  return make_scoped_ptr<ConnectionHandler>(
-      new ConnectionHandlerImpl(read_timeout,
-                                read_callback,
-                                write_callback,
-                                connection_callback));
+  return base::WrapUnique<ConnectionHandler>(new ConnectionHandlerImpl(
+      read_timeout, read_callback, write_callback, connection_callback));
 }
 
 base::TimeTicks ConnectionFactoryImpl::NowTicks() {
@@ -371,6 +384,9 @@ void ConnectionFactoryImpl::OnConnectDone(int result) {
     CloseSocket();
     backoff_entry_->InformOfRequest(false);
     UMA_HISTOGRAM_SPARSE_SLOWLY("GCM.ConnectionFailureErrorCode", result);
+
+    event_tracker_.ConnectionAttemptFailed(result);
+    event_tracker_.EndConnectionAttempt();
 
     // If there are other endpoints available, use the next endpoint on the
     // subsequent retry.
@@ -420,6 +436,8 @@ void ConnectionFactoryImpl::ConnectionHandlerCallback(int result) {
   backoff_entry_->Reset();
   logging_in_ = false;
 
+  event_tracker_.ConnectionAttemptSucceeded();
+
   if (listener_)
     listener_->OnConnected(GetCurrentEndpoint(), GetPeerIP());
 }
@@ -463,7 +481,7 @@ void ConnectionFactoryImpl::OnProxyResolveDone(int status) {
       ssl_config,
       ssl_config,
       net::PRIVACY_MODE_DISABLED,
-      bound_net_log_,
+      net_log_,
       &socket_handle_,
       base::Bind(&ConnectionFactoryImpl::OnConnectDone,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -531,12 +549,10 @@ int ConnectionFactoryImpl::ReconsiderProxyAfterError(int error) {
   }
 
   int status = gcm_network_session_->proxy_service()->ReconsiderProxyAfterError(
-      GetCurrentEndpoint(), net::LOAD_NORMAL, error, &proxy_info_,
+      GetCurrentEndpoint(), std::string(), error, &proxy_info_,
       base::Bind(&ConnectionFactoryImpl::OnProxyResolveDone,
                  weak_ptr_factory_.GetWeakPtr()),
-      &pac_request_,
-      NULL,
-      bound_net_log_);
+      &pac_request_, NULL, net_log_);
   if (status == net::OK || status == net::ERR_IO_PENDING) {
     CloseSocket();
   } else {

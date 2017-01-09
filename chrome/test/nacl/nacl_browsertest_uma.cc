@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/test/histogram_tester.h"
+#include "build/build_config.h"
+#include "chrome/browser/metrics/subprocess_metrics_provider.h"
 #include "chrome/test/nacl/nacl_browsertest_util.h"
 #include "components/nacl/browser/nacl_browser.h"
 #include "components/nacl/renderer/platform_info.h"
@@ -44,6 +46,23 @@ void CheckPNaClLoadUMAs(base::HistogramTester& histograms,
                               1);
 }
 
+bool IsSubzeroSupportedForArch() {
+  const char* arch = nacl::GetSandboxArch();
+  if (strcmp(arch, "x86-32") == 0)
+    return true;
+  if (strcmp(arch, "x86-64") == 0)
+    return true;
+  if (strcmp(arch, "arm") == 0)
+    return true;
+  return false;
+}
+
+void FetchHistogramsFromChildProcesses() {
+  // Support both traditional IPC and new "shared memory" channels.
+  content::FetchHistogramsFromChildProcesses();
+  SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
+}
+
 NACL_BROWSER_TEST_F(NaClBrowserTest, SuccessfulLoadUMA, {
   base::HistogramTester histograms;
   // Load a NaCl module to generate UMA data.
@@ -51,7 +70,7 @@ NACL_BROWSER_TEST_F(NaClBrowserTest, SuccessfulLoadUMA, {
 
   // Make sure histograms from child processes have been accumulated in the
   // browser brocess.
-  content::FetchHistogramsFromChildProcesses();
+  FetchHistogramsFromChildProcesses();
 
   // Did the plugin report success?
   histograms.ExpectUniqueSample("NaCl.LoadStatus.Plugin",
@@ -105,7 +124,7 @@ NACL_BROWSER_TEST_F(NaClBrowserTest, SuccessfulLoadUMA, {
 // Test that a successful load adds stats to Subzero buckets.
 IN_PROC_BROWSER_TEST_F(NaClBrowserTestPnaclSubzero, SuccessfulLoadUMA) {
   // Only test where Subzero is supported.
-  if (strcmp(nacl::GetSandboxArch(), "x86-32") != 0)
+  if (!IsSubzeroSupportedForArch())
     return;
 
   base::HistogramTester histograms;
@@ -114,7 +133,7 @@ IN_PROC_BROWSER_TEST_F(NaClBrowserTestPnaclSubzero, SuccessfulLoadUMA) {
 
   // Make sure histograms from child processes have been accumulated in the
   // browser brocess.
-  content::FetchHistogramsFromChildProcesses();
+  FetchHistogramsFromChildProcesses();
 
   // Did the plugin report success?
   histograms.ExpectUniqueSample("NaCl.LoadStatus.Plugin",
@@ -150,7 +169,7 @@ IN_PROC_BROWSER_TEST_F(NaClBrowserTestNewlibVcacheExtension,
 
   // Make sure histograms from child processes have been accumulated in the
   // browser brocess.
-  content::FetchHistogramsFromChildProcesses();
+  FetchHistogramsFromChildProcesses();
   // Should have received 2 validation queries (one for IRT and one for NEXE),
   // and responded with a miss.
   histograms.ExpectBucketCount("NaCl.ValidationCache.Query",
@@ -163,7 +182,7 @@ IN_PROC_BROWSER_TEST_F(NaClBrowserTestNewlibVcacheExtension,
 
   // Load it again to hit the cache.
   RunNaClIntegrationTest(full_url, true);
-  content::FetchHistogramsFromChildProcesses();
+  FetchHistogramsFromChildProcesses();
   // Should have received 2 more validation queries later (IRT and NEXE),
   // and responded with a hit.
   histograms.ExpectBucketCount("NaCl.ValidationCache.Query",
@@ -241,13 +260,13 @@ IN_PROC_BROWSER_TEST_F(NaClBrowserTestGLibcVcacheExtension,
 // This includes pnacl-llc.nexe, pnacl-ld.nexe, and possibly pnacl-sz.nexe.
 IN_PROC_BROWSER_TEST_F(NaClBrowserTestPnacl,
                        ValidationCacheOfTranslatorNexes) {
-  bool uses_subzero_with_o0 = (strcmp(nacl::GetSandboxArch(), "x86-32") == 0);
+  const bool uses_subzero_with_o0 = IsSubzeroSupportedForArch();
   base::HistogramBase::Count subzero_o0_count = (uses_subzero_with_o0 ? 1 : 0);
   base::HistogramTester histograms;
   // Run a load test w/ one pexe cache identity.
   RunLoadTest(FILE_PATH_LITERAL("pnacl_options.html?use_nmf=o_0"));
 
-  content::FetchHistogramsFromChildProcesses();
+  FetchHistogramsFromChildProcesses();
   // Should have received 5 validation queries:
   // - Three for the IRT: the app and both of the translator nexes use it.
   // - Two for the two PNaCl translator nexes.

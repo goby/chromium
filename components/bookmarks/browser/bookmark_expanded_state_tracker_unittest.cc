@@ -5,15 +5,18 @@
 #include "components/bookmarks/browser/bookmark_expanded_state_tracker.h"
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace bookmarks {
@@ -30,8 +33,7 @@ class BookmarkExpandedStateTrackerTest : public testing::Test {
 
   base::MessageLoop message_loop_;
   TestingPrefServiceSimple prefs_;
-  TestBookmarkClient client_;
-  scoped_ptr<BookmarkModel> model_;
+  std::unique_ptr<BookmarkModel> model_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkExpandedStateTrackerTest);
 };
@@ -44,8 +46,8 @@ void BookmarkExpandedStateTrackerTest::SetUp() {
   prefs_.registry()->RegisterListPref(prefs::kBookmarkEditorExpandedNodes,
                                       new base::ListValue);
   prefs_.registry()->RegisterListPref(prefs::kManagedBookmarks);
-  model_.reset(new BookmarkModel(&client_));
-  model_->Load(&prefs_, std::string(), base::FilePath(),
+  model_.reset(new BookmarkModel(base::MakeUnique<TestBookmarkClient>()));
+  model_->Load(&prefs_, base::FilePath(),
                base::ThreadTaskRunnerHandle::Get(),
                base::ThreadTaskRunnerHandle::Get());
   test::WaitForBookmarkModelToLoad(model_.get());
@@ -53,7 +55,7 @@ void BookmarkExpandedStateTrackerTest::SetUp() {
 
 void BookmarkExpandedStateTrackerTest::TearDown() {
   model_.reset();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Various assertions for SetExpandedNodes.

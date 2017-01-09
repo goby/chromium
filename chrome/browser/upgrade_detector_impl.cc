@@ -4,27 +4,31 @@
 
 #include "chrome/browser/upgrade_detector_impl.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/build_time.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
 #include "base/process/launch.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/network_time/network_time_tracker.h"
+#include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -54,7 +58,7 @@ const int kNotifyCycleTimeMs = 20 * 60 * 1000;  // 20 minutes.
 const int kNotifyCycleTimeForTestingMs = 500;  // Half a second.
 
 // The number of days after which we identify a build/install as outdated.
-const uint64 kOutdatedBuildAgeInDays = 12 * 7;
+const uint64_t kOutdatedBuildAgeInDays = 12 * 7;
 
 // Return the string that was passed as a value for the
 // kCheckForUpdateIntervalSec switch.
@@ -151,10 +155,10 @@ void DetectUpdatability(const base::Closure& callback_task,
 
 // Gets the currently installed version. On Windows, if |critical_update| is not
 // NULL, also retrieves the critical update version info if available.
-base::Version GetCurrentlyInstalledVersionImpl(Version* critical_update) {
+base::Version GetCurrentlyInstalledVersionImpl(base::Version* critical_update) {
   base::ThreadRestrictions::AssertIOAllowed();
 
-  Version installed_version;
+  base::Version installed_version;
 #if defined(OS_WIN)
   // Get the version of the currently *installed* instance of Chrome,
   // which might be newer than the *running* instance if we have been
@@ -170,8 +174,8 @@ base::Version GetCurrentlyInstalledVersionImpl(Version* critical_update) {
                                           critical_update);
   }
 #elif defined(OS_MACOSX)
-  installed_version =
-      Version(base::UTF16ToASCII(keystone_glue::CurrentlyInstalledVersion()));
+  installed_version = base::Version(
+      base::UTF16ToASCII(keystone_glue::CurrentlyInstalledVersion()));
 #elif defined(OS_POSIX)
   // POSIX but not Mac OS X: Linux, etc.
   base::CommandLine command_line(*base::CommandLine::ForCurrentProcess());
@@ -183,7 +187,7 @@ base::Version GetCurrentlyInstalledVersionImpl(Version* critical_update) {
   }
   base::TrimWhitespaceASCII(reply, base::TRIM_ALL, &reply);
 
-  installed_version = Version(reply);
+  installed_version = base::Version(reply);
 #endif
   return installed_version;
 }
@@ -313,12 +317,12 @@ void UpgradeDetectorImpl::DetectUpgradeTask(
     base::WeakPtr<UpgradeDetectorImpl> upgrade_detector) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
-  Version critical_update;
-  Version installed_version =
+  base::Version critical_update;
+  base::Version installed_version =
       GetCurrentlyInstalledVersionImpl(&critical_update);
 
   // Get the version of the currently *running* instance of Chrome.
-  Version running_version(version_info::GetVersionNumber());
+  base::Version running_version(version_info::GetVersionNumber());
   if (!running_version.IsValid()) {
     NOTREACHED();
     return;
@@ -390,6 +394,12 @@ void UpgradeDetectorImpl::CheckForUpgrade() {
 }
 
 bool UpgradeDetectorImpl::DetectOutdatedInstall() {
+  constexpr base::Feature kOutdatedBuildDetector =
+      { "OutdatedBuildDetector", base::FEATURE_ENABLED_BY_DEFAULT };
+
+  if (!base::FeatureList::IsEnabled(kOutdatedBuildDetector))
+    return false;
+
   // Don't show the bubble if we have a brand code that is NOT organic, unless
   // an outdated build is being simulated by command line switches.
   static bool simulate_outdated = SimulatingOutdated();
@@ -407,8 +417,9 @@ bool UpgradeDetectorImpl::DetectOutdatedInstall() {
 
   base::Time network_time;
   base::TimeDelta uncertainty;
-  if (!g_browser_process->network_time_tracker()->GetNetworkTime(
-          base::TimeTicks::Now(), &network_time, &uncertainty)) {
+  if (g_browser_process->network_time_tracker()->GetNetworkTime(&network_time,
+                                                                &uncertainty) !=
+      network_time::NetworkTimeTracker::NETWORK_TIME_AVAILABLE) {
     // When network time has not been initialized yet, simply rely on the
     // machine's current time.
     network_time = base::Time::Now();

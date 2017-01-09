@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -52,13 +57,14 @@ const char* kParameterKeys[] = {shill::kAddressParameterThirdPartyVpn,
                                 shill::kBroadcastAddressParameterThirdPartyVpn,
                                 shill::kDomainSearchParameterThirdPartyVpn};
 
-void DoNothingFailureCallback(const std::string& error_name,
-                              scoped_ptr<base::DictionaryValue> error_data) {
+void DoNothingFailureCallback(
+    const std::string& error_name,
+    std::unique_ptr<base::DictionaryValue> error_data) {
   EXPECT_EQ(true, false);
 }
 
-void DoNothingSuccessCallback(const std::string& service_path) {
-}
+void DoNothingSuccessCallback(const std::string& service_path,
+                              const std::string& guid) {}
 
 }  // namespace
 
@@ -114,11 +120,22 @@ class VpnProviderApiTest : public ExtensionApiTest,
   VpnProviderApiTest() {}
   ~VpnProviderApiTest() override {}
 
+  void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
+    NetworkHandler::Get()->network_configuration_handler()->AddObserver(this);
+  }
+
+  void TearDownOnMainThread() override {
+    ExtensionApiTest::TearDownOnMainThread();
+    NetworkHandler::Get()->network_configuration_handler()->RemoveObserver(
+        this);
+  }
+
   void SetUpInProcessBrowserTestFixture() override {
     ExtensionApiTest::SetUpInProcessBrowserTestFixture();
     test_client_ = new TestShillThirdPartyVpnDriverClient();
     DBusThreadManager::GetSetterForTesting()->SetShillThirdPartyVpnDriverClient(
-        make_scoped_ptr(test_client_));
+        base::WrapUnique(test_client_));
   }
 
   void AddNetworkProfileForUser() {
@@ -131,7 +148,6 @@ class VpnProviderApiTest : public ExtensionApiTest,
   }
 
   void LoadVpnExtension() {
-    NetworkHandler::Get()->network_configuration_handler()->AddObserver(this);
     extension_ = LoadExtension(test_data_dir_.AppendASCII("vpn_provider"));
     extension_id_ = extension_->id();
     service_ = VpnServiceFactory::GetForBrowserContext(profile());

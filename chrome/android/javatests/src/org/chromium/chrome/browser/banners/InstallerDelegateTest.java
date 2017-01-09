@@ -6,11 +6,11 @@ package org.chromium.chrome.browser.banners;
 
 import android.content.pm.PackageInfo;
 import android.os.HandlerThread;
-import android.test.FlakyTest;
 import android.test.InstrumentationTestCase;
 import android.test.mock.MockPackageManager;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 
@@ -91,18 +91,10 @@ public class InstallerDelegateTest extends InstrumentationTestCase
     private void startMonitoring() throws InterruptedException {
         mTestDelegate.start();
         mInstallStarted = true;
-
-        // Wait until we know that the Thread is running the InstallerDelegate task.
-        CriteriaHelper.pollForCriteria(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return mTestDelegate.isRunning();
-            }
-        });
     }
 
     private void checkResults(boolean expectedResult) throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return !mTestDelegate.isRunning() && mResultFinished;
@@ -159,9 +151,8 @@ public class InstallerDelegateTest extends InstrumentationTestCase
     /**
      * Makes sure that the runnable isn't called until returning from start().
      */
-    /* Appears to be flaky crbug.com/542627 */
-    @FlakyTest
     @SmallTest
+    @RetryOnFailure
     public void testRunnableRaceCondition() throws InterruptedException {
         mPackageManager.isInstalled = true;
         mTestDelegate.setTimingForTests(1, 5000);

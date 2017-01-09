@@ -8,11 +8,13 @@
 #ifndef CHROME_INSTALLER_UTIL_MASTER_PREFERENCES_H_
 #define CHROME_INSTALLER_UTIL_MASTER_PREFERENCES_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 
 namespace base {
 class DictionaryValue;
@@ -35,8 +37,6 @@ const char kDefaultMasterPrefs[] = "master_preferences";
 //
 // {
 //   "distribution": {
-//      "alternate_shortcut_text": false,
-//      "chrome_shortcut_icon_index": 0,
 //      "create_all_shortcuts": true,
 //      "import_bookmarks": false,
 //      "import_bookmarks_from_file": "c:\\path",
@@ -208,7 +208,7 @@ class MasterPreferences {
   // copied over to profile preferences.
   std::string ExtractPrefString(const std::string& name) const;
 
-  scoped_ptr<base::DictionaryValue> master_dictionary_;
+  std::unique_ptr<base::DictionaryValue> master_dictionary_;
   base::DictionaryValue* distribution_;
   bool preferences_read_from_file_;
   bool chrome_;

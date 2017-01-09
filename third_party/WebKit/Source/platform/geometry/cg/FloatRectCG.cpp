@@ -24,20 +24,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/geometry/FloatRect.h"
 
 #include <ApplicationServices/ApplicationServices.h>
 
 namespace blink {
 
-FloatRect::FloatRect(const CGRect& r) : m_location(r.origin), m_size(r.size)
-{
+FloatRect::FloatRect(const CGRect& r) : m_location(r.origin), m_size(r.size) {}
+
+FloatRect::operator CGRect() const {
+  return CGRectMake(x(), y(), width(), height());
 }
 
-FloatRect::operator CGRect() const
-{
-    return CGRectMake(x(), y(), width(), height());
-}
-
-}
+}  // namespace blink

@@ -5,13 +5,15 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_P2P_SOCKET_HOST_TCP_H_
 #define CONTENT_BROWSER_RENDERER_HOST_P2P_SOCKET_HOST_TCP_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "content/browser/renderer_host/p2p/socket_host.h"
 #include "content/common/p2p_socket_type.h"
 #include "net/base/completion_callback.h"
@@ -35,16 +37,18 @@ class CONTENT_EXPORT P2PSocketHostTcpBase : public P2PSocketHost {
   ~P2PSocketHostTcpBase() override;
 
   bool InitAccepted(const net::IPEndPoint& remote_address,
-                    net::StreamSocket* socket);
+                    std::unique_ptr<net::StreamSocket> socket);
 
   // P2PSocketHost overrides.
   bool Init(const net::IPEndPoint& local_address,
+            uint16_t min_port,
+            uint16_t max_port,
             const P2PHostAndIPEndPoint& remote_address) override;
   void Send(const net::IPEndPoint& to,
             const std::vector<char>& data,
             const rtc::PacketOptions& options,
-            uint64 packet_id) override;
-  P2PSocketHost* AcceptIncomingTcpConnection(
+            uint64_t packet_id) override;
+  std::unique_ptr<P2PSocketHost> AcceptIncomingTcpConnection(
       const net::IPEndPoint& remote_address,
       int id) override;
   bool SetOption(P2PSocketOption option, int value) override;
@@ -85,7 +89,7 @@ class CONTENT_EXPORT P2PSocketHostTcpBase : public P2PSocketHost {
 
   P2PHostAndIPEndPoint remote_address_;
 
-  scoped_ptr<net::StreamSocket> socket_;
+  std::unique_ptr<net::StreamSocket> socket_;
   scoped_refptr<net::GrowableIOBuffer> read_buffer_;
   std::queue<scoped_refptr<net::DrainableIOBuffer> > write_queue_;
   scoped_refptr<net::DrainableIOBuffer> write_buffer_;

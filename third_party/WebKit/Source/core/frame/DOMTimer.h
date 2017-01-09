@@ -32,54 +32,65 @@
 #include "core/frame/SuspendableTimer.h"
 #include "platform/UserGestureIndicator.h"
 #include "platform/heap/Handle.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
 
 class ExecutionContext;
 
-class CORE_EXPORT DOMTimer final : public RefCountedWillBeGarbageCollectedFinalized<DOMTimer>, public SuspendableTimer {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(DOMTimer);
-public:
-    // Creates a new timer owned by the ExecutionContext, starts it and returns its ID.
-    static int install(ExecutionContext*, PassOwnPtrWillBeRawPtr<ScheduledAction>, int timeout, bool singleShot);
-    static void removeByID(ExecutionContext*, int timeoutID);
+class CORE_EXPORT DOMTimer final : public GarbageCollectedFinalized<DOMTimer>,
+                                   public SuspendableTimer {
+  USING_GARBAGE_COLLECTED_MIXIN(DOMTimer);
 
-    ~DOMTimer() override;
+ public:
+  // Creates a new timer owned by the ExecutionContext, starts it and returns
+  // its ID.
+  static int install(ExecutionContext*,
+                     ScheduledAction*,
+                     int timeout,
+                     bool singleShot);
+  static void removeByID(ExecutionContext*, int timeoutID);
 
-    // ActiveDOMObject
-    void stop() override;
+  ~DOMTimer() override;
 
-    // Eager finalization is needed to promptly stop this Timer object.
-    // Otherwise timer events might fire at an object that's slated for destruction
-    // (when lazily swept), but some of its members (m_action) may already have
-    // been finalized & must not be accessed.
-    EAGERLY_FINALIZE();
-    DECLARE_VIRTUAL_TRACE();
+  // SuspendableObject
+  void contextDestroyed() override;
 
-    void disposeTimer();
+  // Eager finalization is needed to promptly stop this Timer object.
+  // Otherwise timer events might fire at an object that's slated for
+  // destruction (when lazily swept), but some of its members (m_action) may
+  // already have been finalized & must not be accessed.
+  EAGERLY_FINALIZE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    friend class DOMTimerCoordinator; // For create().
+  void stop() override;
 
-    static PassRefPtrWillBeRawPtr<DOMTimer> create(ExecutionContext* context, PassOwnPtrWillBeRawPtr<ScheduledAction> action, int timeout, bool singleShot, int timeoutID)
-    {
-        return adoptRefWillBeNoop(new DOMTimer(context, action, timeout, singleShot, timeoutID));
-    }
+ private:
+  friend class DOMTimerCoordinator;  // For create().
 
-    DOMTimer(ExecutionContext*, PassOwnPtrWillBeRawPtr<ScheduledAction>, int interval, bool singleShot, int timeoutID);
-    void fired() override;
+  static DOMTimer* create(ExecutionContext* context,
+                          ScheduledAction* action,
+                          int timeout,
+                          bool singleShot,
+                          int timeoutID) {
+    return new DOMTimer(context, action, timeout, singleShot, timeoutID);
+  }
 
-    WebTaskRunner* timerTaskRunner() override;
+  DOMTimer(ExecutionContext*,
+           ScheduledAction*,
+           int interval,
+           bool singleShot,
+           int timeoutID);
+  void fired() override;
 
-    int m_timeoutID;
-    int m_nestingLevel;
-    OwnPtrWillBeMember<ScheduledAction> m_action;
-    RefPtr<UserGestureToken> m_userGestureToken;
+  WebTaskRunner* timerTaskRunner() const override;
+
+  int m_timeoutID;
+  int m_nestingLevel;
+  Member<ScheduledAction> m_action;
+  RefPtr<UserGestureToken> m_userGestureToken;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DOMTimer_h
+#endif  // DOMTimer_h

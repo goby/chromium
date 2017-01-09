@@ -6,9 +6,11 @@
 #define UI_BASE_WIN_HWND_SUBCLASS_H_
 
 #include <windows.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/base/ui_base_export.h"
 #include "ui/base/view_prop.h"
 

@@ -4,11 +4,17 @@
 
 #include "blimp/net/tcp_engine_transport.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/callback.h"
 #include "base/callback_helpers.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "blimp/net/stream_socket_connection.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "blimp/net/message_port.h"
+#include "blimp/net/tcp_connection.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
 
@@ -16,7 +22,7 @@ namespace blimp {
 
 TCPEngineTransport::TCPEngineTransport(const net::IPEndPoint& address,
                                        net::NetLog* net_log)
-    : address_(address), net_log_(net_log) {}
+    : address_(address), net_log_(net_log), weak_factory_(this) {}
 
 TCPEngineTransport::~TCPEngineTransport() {}
 
@@ -26,49 +32,48 @@ void TCPEngineTransport::Connect(const net::CompletionCallback& callback) {
 
   if (!server_socket_) {
     server_socket_.reset(
-        new net::TCPServerSocket(net_log_, net::NetLog::Source()));
+        new net::TCPServerSocket(net_log_, net::NetLogSource()));
     int result = server_socket_->Listen(address_, 5);
     if (result != net::OK) {
       server_socket_.reset();
-      base::MessageLoop::current()->PostTask(FROM_HERE,
-                                             base::Bind(callback, result));
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::Bind(callback, result));
       return;
     }
   }
 
   net::CompletionCallback accept_callback = base::Bind(
-      &TCPEngineTransport::OnTCPConnectAccepted, base::Unretained(this));
+      &TCPEngineTransport::OnTCPConnectAccepted, weak_factory_.GetWeakPtr());
 
+  connect_callback_ = callback;
   int result = server_socket_->Accept(&accepted_socket_, accept_callback);
   if (result == net::ERR_IO_PENDING) {
-    connect_callback_ = callback;
     return;
   }
 
-  if (result != net::OK) {
-    // TODO(haibinlu): investigate when we can keep using this server socket.
-    server_socket_.reset();
-  }
-
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-                                         base::Bind(callback, result));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&TCPEngineTransport::OnTCPConnectAccepted,
+                            weak_factory_.GetWeakPtr(), result));
 }
 
-scoped_ptr<BlimpConnection> TCPEngineTransport::TakeConnection() {
+std::unique_ptr<MessagePort> TCPEngineTransport::TakeMessagePort() {
   DCHECK(connect_callback_.is_null());
   DCHECK(accepted_socket_);
-  return make_scoped_ptr(
-      new StreamSocketConnection(std::move(accepted_socket_)));
+  return MessagePort::CreateForStreamSocketWithCompression(
+      std::move(accepted_socket_));
 }
 
-const std::string TCPEngineTransport::GetName() const {
+std::unique_ptr<BlimpConnection> TCPEngineTransport::MakeConnection() {
+  return base::MakeUnique<TCPConnection>(TakeMessagePort());
+}
+
+const char* TCPEngineTransport::GetName() const {
   return "TCP";
 }
 
-int TCPEngineTransport::GetLocalAddressForTesting(
-    net::IPEndPoint* address) const {
+void TCPEngineTransport::GetLocalAddress(net::IPEndPoint* address) const {
   DCHECK(server_socket_);
-  return server_socket_->GetLocalAddress(address);
+  server_socket_->GetLocalAddress(address);
 }
 
 void TCPEngineTransport::OnTCPConnectAccepted(int result) {

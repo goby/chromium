@@ -4,13 +4,17 @@
 
 #include "chrome/browser/ui/views/toolbar/app_menu.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 #include <cmath>
 #include <set>
 
-#include "base/metrics/histogram.h"
-#include "base/strings/string_number_conversions.h"
+#include "base/i18n/number_formatting.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_stats.h"
@@ -18,6 +22,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
@@ -25,10 +30,11 @@
 #include "chrome/browser/ui/views/toolbar/app_menu_observer.h"
 #include "chrome/browser/ui/views/toolbar/extension_toolbar_menu_view.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
-#include "components/ui/zoom/page_zoom.h"
-#include "components/ui/zoom/zoom_controller.h"
-#include "components/ui/zoom/zoom_event_manager.h"
+#include "components/zoom/page_zoom.h"
+#include "components/zoom/zoom_controller.h"
+#include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -37,9 +43,9 @@
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/common/feature_switch.h"
-#include "grit/theme_resources.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPaint.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -47,6 +53,7 @@
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia_source.h"
+#include "ui/gfx/scoped_canvas.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/views/background.h"
@@ -117,6 +124,11 @@ class FullscreenButton : public ImageButton {
     return pref;
   }
 
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    ImageButton::GetAccessibleNodeData(node_data);
+    node_data->role = ui::AX_ROLE_MENU_ITEM;
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(FullscreenButton);
 };
@@ -127,27 +139,17 @@ class FullscreenButton : public ImageButton {
 class InMenuButtonBackground : public views::Background {
  public:
   enum ButtonType {
-    LEFT_BUTTON,
-    CENTER_BUTTON,
-    RIGHT_BUTTON,
-    SINGLE_BUTTON,
+    // A rectangular button with no drawn border.
+    NO_BORDER,
+
+    // A rectangular button with a border drawn along the leading (left) side.
+    LEADING_BORDER,
+
+    // A button with no drawn border and a rounded background.
+    ROUNDED_BUTTON,
   };
 
-  explicit InMenuButtonBackground(ButtonType type)
-      : type_(type), left_button_(NULL), right_button_(NULL) {}
-
-  // Used when the type is CENTER_BUTTON to determine if the left/right edge
-  // needs to be rendered selected.
-  void SetOtherButtons(const CustomButton* left_button,
-                       const CustomButton* right_button) {
-    if (base::i18n::IsRTL()) {
-      left_button_ = right_button;
-      right_button_ = left_button;
-    } else {
-      left_button_ = left_button;
-      right_button_ = right_button;
-    }
-  }
+  explicit InMenuButtonBackground(ButtonType type) : type_(type) {}
 
   // Overridden from views::Background.
   void Paint(gfx::Canvas* canvas, View* view) const override {
@@ -156,15 +158,19 @@ class InMenuButtonBackground : public views::Background {
         button ? button->state() : views::Button::STATE_NORMAL;
     int h = view->height();
 
-    // Normal buttons get a border drawn on the right side and the rest gets
-    // filled in. The left button however does not get a line to combine
-    // buttons.
-    if (type_ != RIGHT_BUTTON) {
+    // Draw leading border if desired.
+    gfx::Rect bounds(view->GetLocalBounds());
+    if (type_ == LEADING_BORDER) {
+      // We need to flip the canvas for RTL iff the button is not auto-flipping
+      // already, so we end up flipping exactly once.
+      gfx::ScopedRTLFlipCanvas scoped_canvas(
+          canvas, view->width(), !view->flip_canvas_on_paint_for_rtl_ui());
       canvas->FillRect(gfx::Rect(0, 0, 1, h),
                        BorderColor(view, views::Button::STATE_NORMAL));
+      bounds.Inset(gfx::Insets(0, 1, 0, 0));
     }
 
-    gfx::Rect bounds(view->GetLocalBounds());
+    // Fill in background for state.
     bounds.set_x(view->GetMirroredXForRect(bounds));
     DrawBackground(canvas, view, bounds, state);
   }
@@ -189,14 +195,12 @@ class InMenuButtonBackground : public views::Background {
                                  views::Button::ButtonState state) {
     const ui::NativeTheme* theme = view->GetNativeTheme();
     switch (state) {
-      case views::Button::STATE_HOVERED:
-        // Hovered should be handled in DrawBackground.
-        NOTREACHED();
-        return theme->GetSystemColor(
-            ui::NativeTheme::kColorId_HoverMenuItemBackgroundColor);
       case views::Button::STATE_PRESSED:
         return theme->GetSystemColor(
             ui::NativeTheme::kColorId_FocusedMenuItemBackgroundColor);
+      case views::Button::STATE_HOVERED:
+        // Hovered should be handled in DrawBackground.
+        NOTREACHED();
       default:
         return theme->GetSystemColor(
             ui::NativeTheme::kColorId_MenuBackgroundColor);
@@ -209,31 +213,19 @@ class InMenuButtonBackground : public views::Background {
                       views::Button::ButtonState state) const {
     if (state == views::Button::STATE_HOVERED ||
         state == views::Button::STATE_PRESSED) {
+      ui::NativeTheme::ExtraParams params;
+      if (type_ == ROUNDED_BUTTON) {
+        // Consistent with a hover corner radius (kInkDropSmallCornerRadius).
+        const int kBackgroundCornerRadius = 2;
+        params.menu_item.corner_radius = kBackgroundCornerRadius;
+      }
       view->GetNativeTheme()->Paint(canvas->sk_canvas(),
                                     ui::NativeTheme::kMenuItemBackground,
-                                    ui::NativeTheme::kHovered,
-                                    bounds,
-                                    ui::NativeTheme::ExtraParams());
+                                    ui::NativeTheme::kHovered, bounds, params);
     }
-  }
-
-  ButtonType TypeAdjustedForRTL() const {
-    if (!base::i18n::IsRTL())
-      return type_;
-
-    switch (type_) {
-      case LEFT_BUTTON:   return RIGHT_BUTTON;
-      case RIGHT_BUTTON:  return LEFT_BUTTON;
-      default:            break;
-    }
-    return type_;
   }
 
   const ButtonType type_;
-
-  // See description above setter for details.
-  const CustomButton* left_button_;
-  const CustomButton* right_button_;
 
   DISALLOW_COPY_AND_ASSIGN(InMenuButtonBackground);
 };
@@ -264,25 +256,25 @@ class InMenuButton : public LabelButton {
   ~InMenuButton() override {}
 
   void Init(InMenuButtonBackground::ButtonType type) {
-    SetFocusable(true);
-    set_request_focus_on_press(false);
+    // An InMenuButton should always be focusable regardless of the platform.
+    // Hence we don't use SetFocusForPlatform().
+    SetFocusBehavior(FocusBehavior::ALWAYS);
     SetHorizontalAlignment(gfx::ALIGN_CENTER);
 
     in_menu_background_ = new InMenuButtonBackground(type);
     set_background(in_menu_background_);
-    SetBorder(views::Border::CreateEmptyBorder(0, kHorizontalPadding, 0,
-                                               kHorizontalPadding));
+    SetBorder(
+        views::CreateEmptyBorder(0, kHorizontalPadding, 0, kHorizontalPadding));
+    SetFontList(MenuConfig::instance().font_list);
   }
 
-  void SetOtherButtons(const InMenuButton* left, const InMenuButton* right) {
-    in_menu_background_->SetOtherButtons(left, right);
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    LabelButton::GetAccessibleNodeData(node_data);
+    node_data->role = ui::AX_ROLE_MENU_ITEM;
   }
 
   // views::LabelButton
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override {
-    const MenuConfig& menu_config = MenuConfig::instance(theme);
-    SetFontList(menu_config.font_list);
-
     if (theme) {
       SetTextColor(
           views::Button::STATE_DISABLED,
@@ -405,10 +397,10 @@ class HoveredImageSource : public gfx::ImageSkiaSource {
     white.eraseARGB(0, 0, 0, 0);
     bitmap.lockPixels();
     for (int y = 0; y < bitmap.height(); ++y) {
-      uint32* image_row = bitmap.getAddr32(0, y);
-      uint32* dst_row = white.getAddr32(0, y);
+      uint32_t* image_row = bitmap.getAddr32(0, y);
+      uint32_t* dst_row = white.getAddr32(0, y);
       for (int x = 0; x < bitmap.width(); ++x) {
-        uint32 image_pixel = image_row[x];
+        uint32_t image_pixel = image_row[x];
         // Fill the non transparent pixels with |color_|.
         dst_row[x] = (image_pixel & 0xFF000000) == 0x0 ? 0x0 : color_;
       }
@@ -436,13 +428,12 @@ class AppMenu::CutCopyPasteView : public AppMenuView {
                    int copy_index,
                    int paste_index)
       : AppMenuView(menu, menu_model) {
-    InMenuButton* cut = CreateAndConfigureButton(
-        IDS_CUT, InMenuButtonBackground::LEFT_BUTTON, cut_index);
-    InMenuButton* copy = CreateAndConfigureButton(
-        IDS_COPY, InMenuButtonBackground::CENTER_BUTTON, copy_index);
-    InMenuButton* paste = CreateAndConfigureButton(
-        IDS_PASTE, InMenuButtonBackground::CENTER_BUTTON, paste_index);
-    copy->SetOtherButtons(cut, paste);
+    CreateAndConfigureButton(IDS_CUT, InMenuButtonBackground::LEADING_BORDER,
+                             cut_index);
+    CreateAndConfigureButton(IDS_COPY, InMenuButtonBackground::LEADING_BORDER,
+                             copy_index);
+    CreateAndConfigureButton(IDS_PASTE, InMenuButtonBackground::LEADING_BORDER,
+                             paste_index);
   }
 
   // Overridden from View.
@@ -498,50 +489,47 @@ class AppMenu::ZoomView : public AppMenuView {
         zoom_label_max_width_(0),
         zoom_label_max_width_valid_(false) {
     browser_zoom_subscription_ =
-        ui_zoom::ZoomEventManager::GetForBrowserContext(
-            menu->browser_->profile())
+        zoom::ZoomEventManager::GetForBrowserContext(menu->browser_->profile())
             ->AddZoomLevelChangedCallback(
                 base::Bind(&AppMenu::ZoomView::OnZoomLevelChanged,
                            base::Unretained(this)));
 
     decrement_button_ = CreateButtonWithAccName(
-        IDS_ZOOM_MINUS2, InMenuButtonBackground::LEFT_BUTTON,
+        IDS_ZOOM_MINUS2, InMenuButtonBackground::LEADING_BORDER,
         decrement_index, IDS_ACCNAME_ZOOM_MINUS2);
 
-    zoom_label_ = new Label(
-        l10n_util::GetStringFUTF16Int(IDS_ZOOM_PERCENT, 100));
+    zoom_label_ = new Label(base::FormatPercent(100));
     zoom_label_->SetAutoColorReadabilityEnabled(false);
     zoom_label_->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
 
     InMenuButtonBackground* center_bg =
-        new InMenuButtonBackground(InMenuButtonBackground::RIGHT_BUTTON);
+        new InMenuButtonBackground(InMenuButtonBackground::NO_BORDER);
     zoom_label_->set_background(center_bg);
 
     AddChildView(zoom_label_);
     zoom_label_max_width_valid_ = false;
 
     increment_button_ = CreateButtonWithAccName(
-        IDS_ZOOM_PLUS2, InMenuButtonBackground::RIGHT_BUTTON,
-        increment_index, IDS_ACCNAME_ZOOM_PLUS2);
-
-    center_bg->SetOtherButtons(decrement_button_, increment_button_);
+        IDS_ZOOM_PLUS2, InMenuButtonBackground::NO_BORDER, increment_index,
+        IDS_ACCNAME_ZOOM_PLUS2);
 
     fullscreen_button_ = new FullscreenButton(this);
     // all buttons on menu should must be a custom button in order for
-    // the keyboard nativigation work.
+    // the keyboard navigation work.
     DCHECK(CustomButton::AsCustomButton(fullscreen_button_));
     gfx::ImageSkia* full_screen_image =
         ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
             IDR_FULLSCREEN_MENU_BUTTON);
     fullscreen_button_->SetImage(ImageButton::STATE_NORMAL, full_screen_image);
 
-    fullscreen_button_->SetFocusable(true);
-    fullscreen_button_->set_request_focus_on_press(false);
+    // Since |fullscreen_button_| will reside in a menu, make it ALWAYS
+    // focusable regardless of the platform.
+    fullscreen_button_->SetFocusBehavior(FocusBehavior::ALWAYS);
     fullscreen_button_->set_tag(fullscreen_index);
     fullscreen_button_->SetImageAlignment(
         ImageButton::ALIGN_CENTER, ImageButton::ALIGN_MIDDLE);
     fullscreen_button_->set_background(
-        new InMenuButtonBackground(InMenuButtonBackground::SINGLE_BUTTON));
+        new InMenuButtonBackground(InMenuButtonBackground::LEADING_BORDER));
     fullscreen_button_->SetAccessibleName(GetAccessibleNameForAppMenuItem(
         menu_model, fullscreen_index, IDS_ACCNAME_FULLSCREEN));
     AddChildView(fullscreen_button_);
@@ -596,10 +584,9 @@ class AppMenu::ZoomView : public AppMenuView {
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override {
     AppMenuView::OnNativeThemeChanged(theme);
 
-    const MenuConfig& menu_config = MenuConfig::instance(theme);
-    zoom_label_->SetBorder(views::Border::CreateEmptyBorder(
+    zoom_label_->SetBorder(views::CreateEmptyBorder(
         0, kZoomLabelHorizontalPadding, 0, kZoomLabelHorizontalPadding));
-    zoom_label_->SetFontList(menu_config.font_list);
+    zoom_label_->SetFontList(MenuConfig::instance().font_list);
     zoom_label_max_width_valid_ = false;
 
     if (theme) {
@@ -630,31 +617,30 @@ class AppMenu::ZoomView : public AppMenuView {
     }
   }
 
-  // Overridden from AppMenuObserver.
-  void AppMenuDestroyed() override { AppMenuView::AppMenuDestroyed(); }
-
  private:
+  content::WebContents* GetActiveWebContents() const {
+    return menu() ?
+        menu()->browser_->tab_strip_model()->GetActiveWebContents() :
+        nullptr;
+  }
+
   void OnZoomLevelChanged(const content::HostZoomMap::ZoomLevelChange& change) {
     UpdateZoomControls();
   }
 
   void UpdateZoomControls() {
-    WebContents* selected_tab =
-        menu()->browser_->tab_strip_model()->GetActiveWebContents();
+    WebContents* contents = GetActiveWebContents();
     int zoom = 100;
-    if (selected_tab) {
-      auto zoom_controller =
-          ui_zoom::ZoomController::FromWebContents(selected_tab);
+    if (contents) {
+      auto* zoom_controller = zoom::ZoomController::FromWebContents(contents);
       if (zoom_controller)
         zoom = zoom_controller->GetZoomPercent();
       increment_button_->SetEnabled(zoom <
-                                    selected_tab->GetMaximumZoomPercent());
+                                    contents->GetMaximumZoomPercent());
       decrement_button_->SetEnabled(zoom >
-                                    selected_tab->GetMinimumZoomPercent());
+                                    contents->GetMinimumZoomPercent());
     }
-    zoom_label_->SetText(
-        l10n_util::GetStringFUTF16Int(IDS_ZOOM_PERCENT, zoom));
-
+    zoom_label_->SetText(base::FormatPercent(zoom));
     zoom_label_max_width_valid_ = false;
   }
 
@@ -668,25 +654,22 @@ class AppMenu::ZoomView : public AppMenuView {
 
       int max_w = 0;
 
-      WebContents* selected_tab =
-          menu()->browser_->tab_strip_model()->GetActiveWebContents();
+      WebContents* selected_tab = GetActiveWebContents();
       if (selected_tab) {
-        auto zoom_controller =
-            ui_zoom::ZoomController::FromWebContents(selected_tab);
+        auto* zoom_controller =
+            zoom::ZoomController::FromWebContents(selected_tab);
         DCHECK(zoom_controller);
         // Enumerate all zoom factors that can be used in PageZoom::Zoom.
-        std::vector<double> zoom_factors = ui_zoom::PageZoom::PresetZoomFactors(
+        std::vector<double> zoom_factors = zoom::PageZoom::PresetZoomFactors(
             zoom_controller->GetZoomPercent());
         for (auto zoom : zoom_factors) {
           int w = gfx::GetStringWidth(
-              l10n_util::GetStringFUTF16Int(IDS_ZOOM_PERCENT,
-                                            static_cast<int>(zoom * 100 + 0.5)),
+              base::FormatPercent(static_cast<int>(std::round(zoom * 100))),
               font_list);
           max_w = std::max(w, max_w);
         }
       } else {
-        max_w = gfx::GetStringWidth(
-            l10n_util::GetStringFUTF16Int(IDS_ZOOM_PERCENT, 100), font_list);
+        max_w = gfx::GetStringWidth(base::FormatPercent(100), font_list);
       }
       zoom_label_max_width_ = max_w + border_width;
 
@@ -698,7 +681,8 @@ class AppMenu::ZoomView : public AppMenuView {
   // Index of the fullscreen menu item in the model.
   const int fullscreen_index_;
 
-  scoped_ptr<content::HostZoomMap::Subscription> browser_zoom_subscription_;
+  std::unique_ptr<content::HostZoomMap::Subscription>
+      browser_zoom_subscription_;
   content::NotificationRegistrar registrar_;
 
   // Button for incrementing the zoom.
@@ -744,12 +728,6 @@ class AppMenu::RecentTabsMenuModelDelegate : public ui::MenuModelDelegate {
 
   const gfx::FontList* GetLabelFontListAt(int index) const {
     return model_->GetLabelFontListAt(index);
-  }
-
-  bool GetShouldUseDisabledEmphasizedForegroundColor(int index) const {
-    // The items for which we get a font list, should be shown in the bolded
-    // color.
-    return GetLabelFontListAt(index) ? true : false;
   }
 
   // ui::MenuModelDelegate implementation:
@@ -818,12 +796,13 @@ AppMenu::AppMenu(Browser* browser, int run_flags)
 
 AppMenu::~AppMenu() {
   if (bookmark_menu_delegate_.get()) {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(
-        browser_->profile());
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(browser_->profile());
     if (model)
       model->RemoveObserver(this);
   }
-  FOR_EACH_OBSERVER(AppMenuObserver, observer_list_, AppMenuDestroyed());
+  for (AppMenuObserver& observer : observer_list_)
+    observer.AppMenuDestroyed();
 }
 
 void AppMenu::Init(ui::MenuModel* model) {
@@ -833,7 +812,7 @@ void AppMenu::Init(ui::MenuModel* model) {
                                // so we get the taller menu style.
   PopulateMenu(root_, model);
 
-  int32 types = views::MenuRunner::HAS_MNEMONICS;
+  int32_t types = views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::ASYNC;
   if (for_drop()) {
     // We add NESTED_DRAG since currently the only operation to open the app
     // menu for is an extension action drag, which is controlled by the child
@@ -848,22 +827,8 @@ void AppMenu::RunMenu(views::MenuButton* host) {
   views::View::ConvertPointToScreen(host, &screen_loc);
   gfx::Rect bounds(screen_loc, host->size());
   content::RecordAction(UserMetricsAction("ShowAppMenu"));
-  if (menu_runner_->RunMenuAt(host->GetWidget(),
-                              host,
-                              bounds,
-                              views::MENU_ANCHOR_TOPRIGHT,
-                              ui::MENU_SOURCE_NONE) ==
-      views::MenuRunner::MENU_DELETED)
-    return;
-  if (bookmark_menu_delegate_.get()) {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(
-        browser_->profile());
-    if (model)
-      model->RemoveObserver(this);
-  }
-  if (selected_menu_model_) {
-    selected_menu_model_->ActivatedAt(selected_index_);
-  }
+  menu_runner_->RunMenuAt(host->GetWidget(), host, bounds,
+                          views::MENU_ANCHOR_TOPRIGHT, ui::MENU_SOURCE_NONE);
 }
 
 void AppMenu::CloseMenu() {
@@ -891,14 +856,8 @@ const gfx::FontList* AppMenu::GetLabelFontList(int command_id) const {
   return NULL;
 }
 
-bool AppMenu::GetShouldUseDisabledEmphasizedForegroundColor(
-    int command_id) const {
-  if (IsRecentTabsCommand(command_id)) {
-    return recent_tabs_menu_model_delegate_->
-        GetShouldUseDisabledEmphasizedForegroundColor(
-            ModelIndexFromCommandId(command_id));
-  }
-  return false;
+bool AppMenu::GetShouldUseNormalForegroundColor(int command_id) const {
+  return IsRecentTabsCommand(command_id);
 }
 
 base::string16 AppMenu::GetTooltipText(int command_id,
@@ -1084,6 +1043,18 @@ bool AppMenu::ShouldCloseOnDragComplete() {
   return false;
 }
 
+void AppMenu::OnMenuClosed(views::MenuItemView* menu,
+                           views::MenuRunner::RunResult result) {
+  if (bookmark_menu_delegate_.get()) {
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(browser_->profile());
+    if (model)
+      model->RemoveObserver(this);
+  }
+  if (selected_menu_model_)
+    selected_menu_model_->ActivatedAt(selected_index_);
+}
+
 void AppMenu::BookmarkModelChanged() {
   DCHECK(bookmark_menu_delegate_.get());
   if (!bookmark_menu_delegate_->is_mutating_model())
@@ -1093,16 +1064,12 @@ void AppMenu::BookmarkModelChanged() {
 void AppMenu::Observe(int type,
                       const content::NotificationSource& source,
                       const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED:
-      // A change in the global errors list can add or remove items from the
-      // menu. Close the menu to avoid have a stale menu on-screen.
-      if (root_)
-        root_->Cancel();
-      break;
-    default:
-      NOTREACHED();
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED, type);
+
+  // A change in the global errors list can add or remove items from the
+  // menu. Close the menu to avoid have a stale menu on-screen.
+  if (root_)
+    root_->Cancel();
 }
 
 void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
@@ -1115,7 +1082,7 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
 
     if (model->GetCommandIdAt(i) == IDC_EDIT_MENU ||
         model->GetCommandIdAt(i) == IDC_ZOOM_MENU) {
-      const MenuConfig& config = item->GetMenuConfig();
+      const MenuConfig& config = views::MenuConfig::instance();
       int top_margin = config.item_top_margin + config.separator_height / 2;
       int bottom_margin =
           config.item_bottom_margin + config.separator_height / 2;
@@ -1134,13 +1101,15 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
 
     switch (model->GetCommandIdAt(i)) {
       case IDC_EXTENSIONS_OVERFLOW_MENU: {
-        scoped_ptr<ExtensionToolbarMenuView> extension_toolbar(
-            new ExtensionToolbarMenuView(browser_, this));
+        std::unique_ptr<ExtensionToolbarMenuView> extension_toolbar(
+            new ExtensionToolbarMenuView(browser_, this, item));
+        for (int i = 0; i < extension_toolbar->contents()->child_count(); ++i) {
+          View* action_view = extension_toolbar->contents()->child_at(i);
+          action_view->set_background(new InMenuButtonBackground(
+              InMenuButtonBackground::ROUNDED_BUTTON));
+        }
         extension_toolbar_ = extension_toolbar.get();
-        if (extension_toolbar->ShouldShow())
-          item->AddChildView(extension_toolbar.release());
-        else
-          item->SetVisible(false);
+        item->AddChildView(extension_toolbar.release());
         break;
       }
 
@@ -1248,7 +1217,7 @@ void AppMenu::CreateBookmarkMenu() {
     return;  // Already created the menu.
 
   BookmarkModel* model =
-      BookmarkModelFactory::GetForProfile(browser_->profile());
+      BookmarkModelFactory::GetForBrowserContext(browser_->profile());
   if (!model->loaded())
     return;
 
@@ -1264,7 +1233,7 @@ void AppMenu::CreateBookmarkMenu() {
                                 model->bookmark_bar_node(),
                                 0,
                                 BookmarkMenuDelegate::SHOW_PERMANENT_FOLDERS,
-                                BOOKMARK_LAUNCH_LOCATION_WRENCH_MENU);
+                                BOOKMARK_LAUNCH_LOCATION_APP_MENU);
 }
 
 int AppMenu::ModelIndexFromCommandId(int command_id) const {

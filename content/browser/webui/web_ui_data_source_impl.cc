@@ -4,15 +4,21 @@
 
 #include "content/browser/webui/web_ui_data_source_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "base/bind.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "content/grit/content_resources.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
-#include "mojo/public/js/constants.h"
+#include "ui/base/template_expressions.h"
 #include "ui/base/webui/jstemplate_builder.h"
 #include "ui/base/webui/web_ui_util.h"
 
@@ -29,12 +35,19 @@ void WebUIDataSource::Add(BrowserContext* browser_context,
   URLDataManager::AddWebUIDataSource(browser_context, source);
 }
 
+// static
+void WebUIDataSource::Update(BrowserContext* browser_context,
+                             const std::string& source_name,
+                             std::unique_ptr<base::DictionaryValue> update) {
+  URLDataManager::UpdateWebUIDataSource(browser_context, source_name,
+                                        std::move(update));
+}
+
 // Internal class to hide the fact that WebUIDataSourceImpl implements
 // URLDataSource.
 class WebUIDataSourceImpl::InternalDataSource : public URLDataSource {
  public:
-  InternalDataSource(WebUIDataSourceImpl* parent) : parent_(parent) {
-  }
+  explicit InternalDataSource(WebUIDataSourceImpl* parent) : parent_(parent) {}
 
   ~InternalDataSource() override {}
 
@@ -45,11 +58,9 @@ class WebUIDataSourceImpl::InternalDataSource : public URLDataSource {
   }
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const ResourceRequestInfo::WebContentsGetter& wc_getter,
       const URLDataSource::GotDataCallback& callback) override {
-    return parent_->StartDataRequest(path, render_process_id, render_frame_id,
-                                     callback);
+    return parent_->StartDataRequest(path, wc_getter, callback);
   }
   bool ShouldReplaceExistingSource() const override {
     return parent_->replace_existing_source_;
@@ -58,18 +69,27 @@ class WebUIDataSourceImpl::InternalDataSource : public URLDataSource {
   bool ShouldAddContentSecurityPolicy() const override {
     return parent_->add_csp_;
   }
+  std::string GetContentSecurityPolicyScriptSrc() const override {
+    if (parent_->script_src_set_)
+      return parent_->script_src_;
+    return URLDataSource::GetContentSecurityPolicyScriptSrc();
+  }
   std::string GetContentSecurityPolicyObjectSrc() const override {
     if (parent_->object_src_set_)
       return parent_->object_src_;
     return URLDataSource::GetContentSecurityPolicyObjectSrc();
   }
-  std::string GetContentSecurityPolicyFrameSrc() const override {
+  std::string GetContentSecurityPolicyChildSrc() const override {
     if (parent_->frame_src_set_)
       return parent_->frame_src_;
-    return URLDataSource::GetContentSecurityPolicyFrameSrc();
+    return URLDataSource::GetContentSecurityPolicyChildSrc();
   }
   bool ShouldDenyXFrameOptions() const override {
     return parent_->deny_xframe_options_;
+  }
+  bool IsGzipped(const std::string& path) const override {
+    return parent_->use_gzip_for_all_paths_ &&
+        parent_->excluded_paths_.find(path) == parent_->excluded_paths_.end();
   }
 
  private:
@@ -77,49 +97,75 @@ class WebUIDataSourceImpl::InternalDataSource : public URLDataSource {
 };
 
 WebUIDataSourceImpl::WebUIDataSourceImpl(const std::string& source_name)
-    : URLDataSourceImpl(
-          source_name,
-          new InternalDataSource(this)),
+    : URLDataSourceImpl(source_name, new InternalDataSource(this)),
       source_name_(source_name),
       default_resource_(-1),
       add_csp_(true),
+      script_src_set_(false),
       object_src_set_(false),
       frame_src_set_(false),
       deny_xframe_options_(true),
-      disable_set_font_strings_(false),
-      replace_existing_source_(true) {
-}
+      add_load_time_data_defaults_(true),
+      replace_existing_source_(true),
+      use_gzip_for_all_paths_(false) {}
 
 WebUIDataSourceImpl::~WebUIDataSourceImpl() {
 }
 
 void WebUIDataSourceImpl::AddString(const std::string& name,
                                     const base::string16& value) {
+  // TODO(dschuyler): Share only one copy of these strings.
   localized_strings_.SetString(name, value);
+  replacements_[name] = base::UTF16ToUTF8(value);
 }
 
 void WebUIDataSourceImpl::AddString(const std::string& name,
                                     const std::string& value) {
   localized_strings_.SetString(name, value);
+  replacements_[name] = value;
 }
 
 void WebUIDataSourceImpl::AddLocalizedString(const std::string& name,
                                              int ids) {
   localized_strings_.SetString(
       name, GetContentClient()->GetLocalizedString(ids));
+  replacements_[name] =
+      base::UTF16ToUTF8(GetContentClient()->GetLocalizedString(ids));
 }
 
 void WebUIDataSourceImpl::AddLocalizedStrings(
     const base::DictionaryValue& localized_strings) {
   localized_strings_.MergeDictionary(&localized_strings);
+
+  for (base::DictionaryValue::Iterator it(localized_strings); !it.IsAtEnd();
+       it.Advance()) {
+    if (it.value().IsType(base::Value::Type::STRING)) {
+      std::string value;
+      it.value().GetAsString(&value);
+      replacements_[it.key()] = value;
+    }
+  }
 }
 
 void WebUIDataSourceImpl::AddBoolean(const std::string& name, bool value) {
   localized_strings_.SetBoolean(name, value);
+  // TODO(dschuyler): Change name of |localized_strings_| to |load_time_data_|
+  // or similar. These values haven't been found as strings for
+  // localization. The boolean values are not added to |replacements_|
+  // for the same reason, that they are used as flags, rather than string
+  // replacements.
+}
+
+void WebUIDataSourceImpl::AddInteger(const std::string& name, int32_t value) {
+  localized_strings_.SetInteger(name, value);
 }
 
 void WebUIDataSourceImpl::SetJsonPath(const std::string& path) {
+  DCHECK(json_path_.empty());
+  DCHECK(!path.empty());
+
   json_path_ = path;
+  ExcludePathFromGzip(json_path_);
 }
 
 void WebUIDataSourceImpl::AddResourcePath(const std::string &path,
@@ -136,30 +182,26 @@ void WebUIDataSourceImpl::SetRequestFilter(
   filter_callback_ = callback;
 }
 
-void WebUIDataSourceImpl::AddMojoResources() {
-  static const struct {
-    const char* path;
-    int id;
-  } resources[] = {
-      {mojo::kBindingsModuleName, IDR_MOJO_BINDINGS_JS},
-      {mojo::kBufferModuleName, IDR_MOJO_BUFFER_JS},
-      {mojo::kCodecModuleName, IDR_MOJO_CODEC_JS},
-      {mojo::kConnectionModuleName, IDR_MOJO_CONNECTION_JS},
-      {mojo::kConnectorModuleName, IDR_MOJO_CONNECTOR_JS},
-      {mojo::kRouterModuleName, IDR_MOJO_ROUTER_JS},
-      {mojo::kUnicodeModuleName, IDR_MOJO_UNICODE_JS},
-      {mojo::kValidatorModuleName, IDR_MOJO_VALIDATOR_JS},
-  };
-  for (size_t i = 0; i < arraysize(resources); ++i)
-    AddResourcePath(resources[i].path, resources[i].id);
-}
-
 void WebUIDataSourceImpl::DisableReplaceExistingSource() {
   replace_existing_source_ = false;
 }
 
+void WebUIDataSourceImpl::ExcludePathFromGzip(const std::string& path) {
+  excluded_paths_.insert(path);
+}
+
+bool WebUIDataSourceImpl::IsWebUIDataSourceImpl() const {
+  return true;
+}
+
 void WebUIDataSourceImpl::DisableContentSecurityPolicy() {
   add_csp_ = false;
+}
+
+void WebUIDataSourceImpl::OverrideContentSecurityPolicyScriptSrc(
+    const std::string& data) {
+  script_src_set_ = true;
+  script_src_ = data;
 }
 
 void WebUIDataSourceImpl::OverrideContentSecurityPolicyObjectSrc(
@@ -168,7 +210,7 @@ void WebUIDataSourceImpl::OverrideContentSecurityPolicyObjectSrc(
   object_src_ = data;
 }
 
-void WebUIDataSourceImpl::OverrideContentSecurityPolicyFrameSrc(
+void WebUIDataSourceImpl::OverrideContentSecurityPolicyChildSrc(
     const std::string& data) {
   frame_src_set_ = true;
   frame_src_ = data;
@@ -178,24 +220,31 @@ void WebUIDataSourceImpl::DisableDenyXFrameOptions() {
   deny_xframe_options_ = false;
 }
 
+void WebUIDataSourceImpl::DisableI18nAndUseGzipForAllPaths() {
+  use_gzip_for_all_paths_ = true;
+}
+
 std::string WebUIDataSourceImpl::GetSource() const {
   return source_name_;
 }
 
 std::string WebUIDataSourceImpl::GetMimeType(const std::string& path) const {
-  if (base::EndsWith(path, ".css", base::CompareCase::INSENSITIVE_ASCII))
+  // Remove the query string for to determine the mime type.
+  std::string file_path = path.substr(0, path.find_first_of('?'));
+
+  if (base::EndsWith(file_path, ".css", base::CompareCase::INSENSITIVE_ASCII))
     return "text/css";
 
-  if (base::EndsWith(path, ".js", base::CompareCase::INSENSITIVE_ASCII))
+  if (base::EndsWith(file_path, ".js", base::CompareCase::INSENSITIVE_ASCII))
     return "application/javascript";
 
-  if (base::EndsWith(path, ".json", base::CompareCase::INSENSITIVE_ASCII))
+  if (base::EndsWith(file_path, ".json", base::CompareCase::INSENSITIVE_ASCII))
     return "application/json";
 
-  if (base::EndsWith(path, ".pdf", base::CompareCase::INSENSITIVE_ASCII))
+  if (base::EndsWith(file_path, ".pdf", base::CompareCase::INSENSITIVE_ASCII))
     return "application/pdf";
 
-  if (base::EndsWith(path, ".svg", base::CompareCase::INSENSITIVE_ASCII))
+  if (base::EndsWith(file_path, ".svg", base::CompareCase::INSENSITIVE_ASCII))
     return "image/svg+xml";
 
   return "text/html";
@@ -203,12 +252,19 @@ std::string WebUIDataSourceImpl::GetMimeType(const std::string& path) const {
 
 void WebUIDataSourceImpl::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const ResourceRequestInfo::WebContentsGetter& wc_getter,
     const URLDataSource::GotDataCallback& callback) {
   if (!filter_callback_.is_null() &&
       filter_callback_.Run(path, callback)) {
     return;
+  }
+
+  if (add_load_time_data_defaults_) {
+    std::string locale = GetContentClient()->browser()->GetApplicationLocale();
+    base::DictionaryValue defaults;
+    webui::SetLoadTimeDataDefaults(locale, &defaults);
+    AddLocalizedStrings(defaults);
+    add_load_time_data_defaults_ = false;
   }
 
   if (!json_path_.empty() && path == json_path_) {
@@ -218,30 +274,34 @@ void WebUIDataSourceImpl::StartDataRequest(
 
   int resource_id = default_resource_;
   std::map<std::string, int>::iterator result;
-  result = path_to_idr_map_.find(path);
+  // Remove the query string for named resource lookups.
+  std::string file_path = path.substr(0, path.find_first_of('?'));
+  result = path_to_idr_map_.find(file_path);
   if (result != path_to_idr_map_.end())
     resource_id = result->second;
   DCHECK_NE(resource_id, -1);
-  SendFromResourceBundle(callback, resource_id);
+  scoped_refptr<base::RefCountedMemory> response(
+      GetContentClient()->GetDataResourceBytes(resource_id));
+
+  // TODO(dschuyler): improve filtering of which resource to run template
+  // expansion upon. TODO(dbeam): make a streaming filter that works on gzipped
+  // content.
+  if (response.get() && GetMimeType(path) == "text/html" &&
+      !source()->IsGzipped(path)) {
+    std::string replaced = ui::ReplaceTemplateExpressions(
+        base::StringPiece(response->front_as<char>(), response->size()),
+        replacements_);
+    response = base::RefCountedString::TakeString(&replaced);
+  }
+
+  callback.Run(response.get());
 }
 
 void WebUIDataSourceImpl::SendLocalizedStringsAsJSON(
     const URLDataSource::GotDataCallback& callback) {
   std::string template_data;
-  if (!disable_set_font_strings_) {
-    std::string locale = GetContentClient()->browser()->GetApplicationLocale();
-    webui::SetLoadTimeDataDefaults(locale, &localized_strings_);
-  }
-
   webui::AppendJsonJS(&localized_strings_, &template_data);
   callback.Run(base::RefCountedString::TakeString(&template_data));
-}
-
-void WebUIDataSourceImpl::SendFromResourceBundle(
-    const URLDataSource::GotDataCallback& callback, int idr) {
-  scoped_refptr<base::RefCountedStaticMemory> response(
-      GetContentClient()->GetDataResourceBytes(idr));
-  callback.Run(response.get());
 }
 
 }  // namespace content

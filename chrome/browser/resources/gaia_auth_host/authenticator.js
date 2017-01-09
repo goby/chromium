@@ -31,6 +31,8 @@ cr.define('cr.login', function() {
   var GAPS_COOKIE = 'GAPS';
   var SERVICE_ID = 'chromeoslogin';
   var EMBEDDED_SETUP_CHROMEOS_ENDPOINT = 'embedded/setup/chromeos';
+  var SAML_REDIRECTION_PATH = 'samlredirect';
+  var BLANK_PAGE_URL = 'about:blank';
 
   /**
    * The source URL parameter for the constrained signin flow.
@@ -84,6 +86,7 @@ cr.define('cr.login', function() {
     'enterpriseDomain',    // Domain in which hosting device is (or should be)
                            // enrolled.
     'emailDomain',         // Value used to prefill domain for email.
+    'chromeType',          // Type of Chrome OS device, e.g. "chromebox".
     'clientVersion',       // Version of the Chrome build.
     'platformVersion',     // Version of the OS build.
     'releaseChannel',      // Installation channel.
@@ -119,6 +122,7 @@ cr.define('cr.login', function() {
     this.webview_ = typeof webview == 'string' ? $(webview) : webview;
     assert(this.webview_);
 
+    this.isLoaded_ = false;
     this.email_ = null;
     this.password_ = null;
     this.gaiaId_ = null,
@@ -127,6 +131,7 @@ cr.define('cr.login', function() {
     this.skipForNow_ = false;
     this.authFlow = AuthFlow.DEFAULT;
     this.authDomain = '';
+    this.videoEnabled = false;
     this.idpOrigin_ = null;
     this.continueUrl_ = null;
     this.continueUrlWithoutParams_ = null;
@@ -137,6 +142,7 @@ cr.define('cr.login', function() {
     this.gapsCookie_ = null;
     this.gapsCookieSent_ = false;
     this.newGapsCookie_ = null;
+    this.readyFired_ = false;
 
     this.useEafe_ = false;
     this.clientId_ = null;
@@ -154,6 +160,12 @@ cr.define('cr.login', function() {
     this.samlHandler_.addEventListener(
         'authPageLoaded',
         this.onAuthPageLoaded_.bind(this));
+    this.samlHandler_.addEventListener(
+        'videoEnabled',
+        this.onVideoEnabled_.bind(this));
+    this.samlHandler_.addEventListener(
+        'apiPasswordAdded',
+        this.onSamlApiPasswordAdded_.bind(this));
 
     this.webview_.addEventListener('droplink', this.onDropLink_.bind(this));
     this.webview_.addEventListener(
@@ -188,7 +200,8 @@ cr.define('cr.login', function() {
    * Reinitializes authentication parameters so that a failed login attempt
    * would not result in an infinite loop.
    */
-  Authenticator.prototype.clearCredentials_ = function() {
+  Authenticator.prototype.resetStates = function() {
+    this.isLoaded_ = false;
     this.email_ = null;
     this.gaiaId_ = null;
     this.password_ = null;
@@ -196,12 +209,22 @@ cr.define('cr.login', function() {
     this.gapsCookie_ = null;
     this.gapsCookieSent_ = false;
     this.newGapsCookie_ = null;
+    this.readyFired_ = false;
     this.chooseWhatToSync_ = false;
     this.skipForNow_ = false;
     this.sessionIndex_ = null;
     this.trusted_ = true;
     this.authFlow = AuthFlow.DEFAULT;
     this.samlHandler_.reset();
+    this.videoEnabled = false;
+  };
+
+  /**
+   * Resets the webview to the blank page.
+   */
+  Authenticator.prototype.resetWebview = function() {
+    if (this.webview_.src && this.webview_.src != BLANK_PAGE_URL)
+      this.webview_.src = BLANK_PAGE_URL;
   };
 
   /**
@@ -211,7 +234,7 @@ cr.define('cr.login', function() {
    */
   Authenticator.prototype.load = function(authMode, data) {
     this.authMode = authMode;
-    this.clearCredentials_();
+    this.resetStates();
     // gaiaUrl parameter is used for testing. Once defined, it is never changed.
     this.idpOrigin_ = data.gaiaUrl || IDP_ORIGIN;
     this.continueUrl_ = data.continueUrl || CONTINUE_URL;
@@ -232,7 +255,7 @@ cr.define('cr.login', function() {
     // Don't block insecure content for desktop flow because it lands on
     // http. Otherwise, block insecure content as long as gaia is https.
     this.samlHandler_.blockInsecureContent = authMode != AuthMode.DESKTOP &&
-        this.idpOrigin_.indexOf('https://') == 0;
+        this.idpOrigin_.startsWith('https://');
     this.needPassword = !('needPassword' in data) || data.needPassword;
 
     if (this.isNewGaiaFlow) {
@@ -252,17 +275,31 @@ cr.define('cr.login', function() {
     }
 
     this.webview_.src = this.reloadUrl_;
+    this.isLoaded_ = true;
   };
 
   /**
    * Reloads the authenticator component.
    */
   Authenticator.prototype.reload = function() {
-    this.clearCredentials_();
+    this.resetStates();
     this.webview_.src = this.reloadUrl_;
+    this.isLoaded_ = true;
   };
 
   Authenticator.prototype.constructInitialFrameUrl_ = function(data) {
+    if (data.doSamlRedirect) {
+      var url = this.idpOrigin_ + SAML_REDIRECTION_PATH;
+      url = appendParam(url, 'domain', data.enterpriseDomain);
+      url = appendParam(url, 'continue', data.gaiaUrl +
+          'o/oauth2/programmatic_auth?hl=' + data.hl +
+          '&scope=https%3A%2F%2Fwww.google.com%2Faccounts%2FOAuthLogin&' +
+          'client_id=' + encodeURIComponent(data.clientId) +
+          '&access_type=offline');
+
+      return url;
+    }
+
     var path = data.gaiaPath;
     if (!path && this.isNewGaiaFlow)
       path = EMBEDDED_SETUP_CHROMEOS_ENDPOINT;
@@ -310,6 +347,18 @@ cr.define('cr.login', function() {
   };
 
   /**
+   * Dispatches the 'ready' event if it hasn't been dispatched already for the
+   * current content.
+   * @private
+   */
+  Authenticator.prototype.fireReadyEvent_ = function() {
+    if (!this.readyFired_) {
+      this.dispatchEvent(new Event('ready'));
+      this.readyFired_ = true;
+    }
+  };
+
+  /**
    * Invoked when a main frame request in the webview has completed.
    * @private
    */
@@ -325,7 +374,7 @@ cr.define('cr.login', function() {
       return;
     }
 
-    if (currentUrl.indexOf('https') != 0)
+    if (!currentUrl.startsWith('https'))
       this.trusted_ = false;
 
     if (this.isConstrainedWindow_) {
@@ -422,11 +471,11 @@ cr.define('cr.login', function() {
       } else if (
           this.isNewGaiaFlow && headerName == SET_COOKIE_HEADER) {
         var headerValue = header.value;
-        if (headerValue.indexOf(OAUTH_CODE_COOKIE + '=', 0) == 0) {
+        if (headerValue.startsWith(OAUTH_CODE_COOKIE + '=')) {
           this.oauthCode_ =
               headerValue.substring(OAUTH_CODE_COOKIE.length + 1).split(';')[0];
         }
-        if (headerValue.indexOf(GAPS_COOKIE + '=', 0) == 0) {
+        if (headerValue.startsWith(GAPS_COOKIE + '=')) {
           this.newGapsCookie_ =
               headerValue.substring(GAPS_COOKIE.length + 1).split(';')[0];
         }
@@ -447,7 +496,7 @@ cr.define('cr.login', function() {
     var cookies = header_value.split(/\s*;\s*/);
     var found = false;
     for (var i = 0; i < cookies.length; ++i) {
-      if (cookies[i].indexOf(cookie_name + '=', 0) == 0) {
+      if (cookies[i].startsWith(cookie_name + '=')) {
         found = true;
         cookies[i] = cookie_name + '=' + cookie_value;
         break;
@@ -622,6 +671,14 @@ cr.define('cr.login', function() {
       // password when it is available but not a mandatory requirement.
       console.warn('Authenticator: No password scraped for SAML.');
     } else if (this.needPassword) {
+      if (this.samlHandler_.scrapedPasswordCount == 1) {
+        // If we scraped exactly one password, we complete the authentication
+        // right away.
+        this.password_ = this.samlHandler_.firstScrapedPassword;
+        this.onAuthCompleted_();
+        return;
+      }
+
       if (this.confirmPasswordCallback) {
         // Confirm scraped password. The flow follows in
         // verifyConfirmedPassword.
@@ -631,6 +688,16 @@ cr.define('cr.login', function() {
       }
     }
 
+    this.onAuthCompleted_();
+  };
+
+  /**
+   * Invoked to complete the authentication using the password the user enters
+   * manually for non-principals API SAML IdPs that we couldn't scrape their
+   * password input.
+   */
+  Authenticator.prototype.completeAuthWithManualPassword = function(password) {
+    this.password_ = password;
     this.onAuthCompleted_();
   };
 
@@ -658,7 +725,7 @@ cr.define('cr.login', function() {
             gapsCookie: this.newGapsCookie_ || this.gapsCookie_ || '',
           }
         }));
-    this.clearCredentials_();
+    this.resetStates();
   };
 
   /**
@@ -666,11 +733,13 @@ cr.define('cr.login', function() {
    * @private
    */
   Authenticator.prototype.onInsecureContentBlocked_ = function(e) {
-    if (this.insecureContentBlockedCallback) {
+    if (!this.isLoaded_)
+      return;
+
+    if (this.insecureContentBlockedCallback)
       this.insecureContentBlockedCallback(e.detail.url);
-    } else {
+    else
       console.error('Authenticator: Insecure content blocked.');
-    }
   };
 
   /**
@@ -678,11 +747,36 @@ cr.define('cr.login', function() {
    * @private
    */
   Authenticator.prototype.onAuthPageLoaded_ = function(e) {
+    if (!this.isLoaded_)
+      return;
+
     if (!e.detail.isSAMLPage)
       return;
 
     this.authDomain = this.samlHandler_.authDomain;
     this.authFlow = AuthFlow.SAML;
+
+    this.fireReadyEvent_();
+  };
+
+  /**
+   * Invoked when |samlHandler_| fires 'videoEnabled' event.
+   * @private
+   */
+  Authenticator.prototype.onVideoEnabled_ = function(e) {
+    this.videoEnabled = true;
+  };
+
+  /**
+   * Invoked when |samlHandler_| fires 'apiPasswordAdded' event.
+   * @private
+   */
+  Authenticator.prototype.onSamlApiPasswordAdded_ = function(e) {
+    // Saml API 'add' password might be received after the 'loadcommit' event.
+    // In such case, maybeCompleteAuth_ should be attempted again if oauth code
+    // is available.
+    if (this.oauthCode_)
+      this.maybeCompleteAuth_();
   };
 
   /**
@@ -723,9 +817,11 @@ cr.define('cr.login', function() {
 
       this.webview_.contentWindow.postMessage(msg, currentUrl);
 
-      this.dispatchEvent(new Event('ready'));
+      this.fireReadyEvent_();
       // Focus webview after dispatching event when webview is already visible.
       this.webview_.focus();
+    } else if (currentUrl == BLANK_PAGE_URL) {
+      this.fireReadyEvent_();
     }
   };
 
@@ -735,8 +831,7 @@ cr.define('cr.login', function() {
    */
   Authenticator.prototype.onLoadAbort_ = function(e) {
     this.dispatchEvent(new CustomEvent('loadAbort',
-        {detail: {error: e.reason,
-                  src: this.webview_.src}}));
+        {detail: {error: e.reason, src: e.url}}));
   };
 
   /**
@@ -792,6 +887,12 @@ cr.define('cr.login', function() {
    * @type {string}
    */
   cr.defineProperty(Authenticator, 'authDomain');
+
+  /**
+   * True if the page has requested media access.
+   * @type {boolean}
+   */
+  cr.defineProperty(Authenticator, 'videoEnabled');
 
   Authenticator.AuthFlow = AuthFlow;
   Authenticator.AuthMode = AuthMode;

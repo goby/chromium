@@ -4,8 +4,14 @@
 
 #include "device/bluetooth/dbus/fake_bluetooth_gatt_descriptor_client.h"
 
+#include <vector>
+
 #include "base/bind.h"
+#include "base/callback.h"
+#include "base/callback_forward.h"
 #include "base/logging.h"
+#include "dbus/bus.h"
+#include "dbus/property.h"
 #include "device/bluetooth/dbus/bluetooth_gatt_characteristic_client.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -109,7 +115,7 @@ void FakeBluetoothGattDescriptorClient::ReadValue(
     uint8_t value_byte = chrc_props->notifying.value() ? 0x01 : 0x00;
     const std::vector<uint8_t>& cur_value = properties->value.value();
 
-    if (!cur_value.size() || cur_value[0] != value_byte) {
+    if (cur_value.empty() || cur_value[0] != value_byte) {
       std::vector<uint8_t> value = {value_byte, 0x00};
       properties->value.ReplaceValue(value);
     }
@@ -120,7 +126,7 @@ void FakeBluetoothGattDescriptorClient::ReadValue(
 
 void FakeBluetoothGattDescriptorClient::WriteValue(
     const dbus::ObjectPath& object_path,
-    const std::vector<uint8>& value,
+    const std::vector<uint8_t>& value,
     const base::Closure& callback,
     const ErrorCallback& error_callback) {
   if (properties_.find(object_path) == properties_.end()) {
@@ -130,7 +136,7 @@ void FakeBluetoothGattDescriptorClient::WriteValue(
 
   // Since the only fake descriptor is "Client Characteristic Configuration"
   // and BlueZ doesn't allow writing to it, return failure.
-  error_callback.Run("org.bluez.Error.NotPermitted",
+  error_callback.Run(bluetooth_gatt_service::kErrorWriteNotPermitted,
                      "Writing to the Client Characteristic Configuration "
                      "descriptor not allowed");
 }
@@ -190,20 +196,20 @@ void FakeBluetoothGattDescriptorClient::OnPropertyChanged(
   VLOG(2) << "Descriptor property changed: " << object_path.value() << ": "
           << property_name;
 
-  FOR_EACH_OBSERVER(BluetoothGattDescriptorClient::Observer, observers_,
-                    GattDescriptorPropertyChanged(object_path, property_name));
+  for (auto& observer : observers_)
+    observer.GattDescriptorPropertyChanged(object_path, property_name);
 }
 
 void FakeBluetoothGattDescriptorClient::NotifyDescriptorAdded(
     const dbus::ObjectPath& object_path) {
-  FOR_EACH_OBSERVER(BluetoothGattDescriptorClient::Observer, observers_,
-                    GattDescriptorAdded(object_path));
+  for (auto& observer : observers_)
+    observer.GattDescriptorAdded(object_path);
 }
 
 void FakeBluetoothGattDescriptorClient::NotifyDescriptorRemoved(
     const dbus::ObjectPath& object_path) {
-  FOR_EACH_OBSERVER(BluetoothGattDescriptorClient::Observer, observers_,
-                    GattDescriptorRemoved(object_path));
+  for (auto& observer : observers_)
+    observer.GattDescriptorRemoved(object_path);
 }
 
 }  // namespace bluez

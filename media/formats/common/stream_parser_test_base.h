@@ -5,7 +5,12 @@
 #ifndef MEDIA_FORMATS_COMMON_STREAM_PARSER_TEST_BASE_H_
 #define MEDIA_FORMATS_COMMON_STREAM_PARSER_TEST_BASE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/stream_parser.h"
 #include "media/base/stream_parser_buffer.h"
@@ -17,7 +22,7 @@ namespace media {
 // Test helper for verifying StreamParser behavior.
 class StreamParserTestBase {
  public:
-  explicit StreamParserTestBase(scoped_ptr<StreamParser> stream_parser);
+  explicit StreamParserTestBase(std::unique_ptr<StreamParser> stream_parser);
   virtual ~StreamParserTestBase();
 
  protected:
@@ -41,7 +46,7 @@ class StreamParserTestBase {
 
   // Similar to ParseFile() except parses the given |data| in a single append of
   // size |length|.
-  std::string ParseData(const uint8* data, size_t length);
+  std::string ParseData(const uint8_t* data, size_t length);
 
   // The last AudioDecoderConfig handed to OnNewConfig().
   const AudioDecoderConfig& last_audio_config() const {
@@ -49,21 +54,21 @@ class StreamParserTestBase {
   }
 
  private:
-  bool AppendDataInPieces(const uint8* data, size_t length, size_t piece_size);
+  bool AppendDataInPieces(const uint8_t* data,
+                          size_t length,
+                          size_t piece_size);
   void OnInitDone(const StreamParser::InitParameters& params);
-  bool OnNewConfig(const AudioDecoderConfig& audio_config,
-                   const VideoDecoderConfig& video_config,
+  bool OnNewConfig(std::unique_ptr<MediaTracks> tracks,
                    const StreamParser::TextTrackConfigMap& text_config);
-  bool OnNewBuffers(const StreamParser::BufferQueue& audio_buffers,
-                    const StreamParser::BufferQueue& video_buffers,
-                    const StreamParser::TextBufferQueueMap& text_map);
-  void OnKeyNeeded(EmeInitDataType type, const std::vector<uint8>& init_data);
+  bool OnNewBuffers(const StreamParser::BufferQueueMap& buffer_queue_map);
+  void OnKeyNeeded(EmeInitDataType type, const std::vector<uint8_t>& init_data);
   void OnNewSegment();
   void OnEndOfSegment();
 
-  scoped_ptr<StreamParser> parser_;
+  std::unique_ptr<StreamParser> parser_;
   std::stringstream results_stream_;
   AudioDecoderConfig last_audio_config_;
+  StreamParser::TrackId audio_track_id_;
 
   DISALLOW_COPY_AND_ASSIGN(StreamParserTestBase);
 };

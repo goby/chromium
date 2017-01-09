@@ -37,7 +37,7 @@ src:*/usr/*
 
 #############################################################################
 # Undefined arithmetic that can be safely ignored.
-src:*/third_party/WebKit/Source/wtf/SaturatedArithmetic.h
+src:*/base/numerics/saturated_arithmetic.h
 src:*/ppapi/shared_impl/id_assignment.h
 
 #############################################################################
@@ -69,3 +69,9 @@ fun:*re2*RegexpD*
 #############################################################################
 # Harmless float division by zero.
 fun:*RendererFrameManager*CullUnlockedFrames*
+
+#############################################################################
+# libc++ __tree and map are not UBSAN clean
+# https://llvm.org/bugs/show_bug.cgi?id=19302
+src:*/third_party/libc\+\+/trunk/include/__tree
+src:*/third_party/libc\+\+/trunk/include/map

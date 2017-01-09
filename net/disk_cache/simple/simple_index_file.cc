@@ -4,6 +4,7 @@
 
 #include "net/disk_cache/simple/simple_index_file.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/files/file.h"
@@ -32,9 +33,9 @@ namespace {
 const int kEntryFilesHashLength = 16;
 const int kEntryFilesSuffixLength = 2;
 
-const uint64 kMaxEntiresInIndex = 100000000;
+const uint64_t kMaxEntriesInIndex = 100000000;
 
-uint32 CalculatePickleCRC(const base::Pickle& pickle) {
+uint32_t CalculatePickleCRC(const base::Pickle& pickle) {
   return crc32(crc32(0, Z_NULL, 0),
                reinterpret_cast<const Bytef*>(pickle.payload()),
                pickle.payload_size());
@@ -49,24 +50,56 @@ enum IndexFileState {
   INDEX_STATE_MAX = 4,
 };
 
+enum StaleIndexQuality {
+  STALE_INDEX_OK = 0,
+  STALE_INDEX_MISSED_ENTRIES = 1,
+  STALE_INDEX_EXTRA_ENTRIES = 2,
+  STALE_INDEX_BOTH_MISSED_AND_EXTRA_ENTRIES = 3,
+  STALE_INDEX_MAX = 4,
+};
+
 void UmaRecordIndexFileState(IndexFileState state, net::CacheType cache_type) {
   SIMPLE_CACHE_UMA(ENUMERATION,
                    "IndexFileStateOnLoad", cache_type, state, INDEX_STATE_MAX);
 }
 
-// Used in histograms. Please only add new values at the end.
-enum IndexInitMethod {
-  INITIALIZE_METHOD_RECOVERED = 0,
-  INITIALIZE_METHOD_LOADED = 1,
-  INITIALIZE_METHOD_NEWCACHE = 2,
-  INITIALIZE_METHOD_MAX = 3,
-};
-
-void UmaRecordIndexInitMethod(IndexInitMethod method,
+void UmaRecordIndexInitMethod(SimpleIndex::IndexInitMethod method,
                               net::CacheType cache_type) {
-  SIMPLE_CACHE_UMA(ENUMERATION,
-                   "IndexInitializeMethod", cache_type,
-                   method, INITIALIZE_METHOD_MAX);
+  SIMPLE_CACHE_UMA(ENUMERATION, "IndexInitializeMethod", cache_type, method,
+                   SimpleIndex::INITIALIZE_METHOD_MAX);
+}
+
+void UmaRecordIndexWriteReason(SimpleIndex::IndexWriteToDiskReason reason,
+                               net::CacheType cache_type) {
+  SIMPLE_CACHE_UMA(ENUMERATION, "IndexWriteReason", cache_type, reason,
+                   SimpleIndex::INDEX_WRITE_REASON_MAX);
+}
+
+void UmaRecordIndexWriteReasonAtLoad(SimpleIndex::IndexWriteToDiskReason reason,
+                                     net::CacheType cache_type) {
+  SIMPLE_CACHE_UMA(ENUMERATION, "IndexWriteReasonAtLoad", cache_type, reason,
+                   SimpleIndex::INDEX_WRITE_REASON_MAX);
+}
+
+void UmaRecordStaleIndexQuality(int missed_entry_count,
+                                int extra_entry_count,
+                                net::CacheType cache_type) {
+  SIMPLE_CACHE_UMA(CUSTOM_COUNTS, "StaleIndexMissedEntryCount", cache_type,
+                   missed_entry_count, 1, 100, 5);
+  SIMPLE_CACHE_UMA(CUSTOM_COUNTS, "StaleIndexExtraEntryCount", cache_type,
+                   extra_entry_count, 1, 100, 5);
+
+  StaleIndexQuality quality;
+  if (missed_entry_count > 0 && extra_entry_count > 0)
+    quality = STALE_INDEX_BOTH_MISSED_AND_EXTRA_ENTRIES;
+  else if (missed_entry_count > 0)
+    quality = STALE_INDEX_MISSED_ENTRIES;
+  else if (extra_entry_count > 0)
+    quality = STALE_INDEX_EXTRA_ENTRIES;
+  else
+    quality = STALE_INDEX_OK;
+  SIMPLE_CACHE_UMA(ENUMERATION, "StaleIndexQuality", cache_type, quality,
+                   STALE_INDEX_MAX);
 }
 
 bool WritePickleFile(base::Pickle* pickle, const base::FilePath& file_name) {
@@ -98,7 +131,7 @@ void ProcessEntryFile(SimpleIndex::EntrySet* entries,
     return;
   const base::StringPiece hash_string(
       file_name.begin(), file_name.begin() + kEntryFilesHashLength);
-  uint64 hash_key = 0;
+  uint64_t hash_key = 0;
   if (!simple_util::GetEntryHashKeyFromHexString(hash_string, &hash_key)) {
     LOG(WARNING) << "Invalid entry hash key filename while restoring index from"
                  << " disk: " << file_name;
@@ -119,30 +152,33 @@ void ProcessEntryFile(SimpleIndex::EntrySet* entries,
   if (last_used_time.is_null())
     last_used_time = file_info.last_modified;
 
-  int64 file_size = file_info.size;
   SimpleIndex::EntrySet::iterator it = entries->find(hash_key);
+  base::CheckedNumeric<uint32_t> total_entry_size = file_info.size;
+
   if (it == entries->end()) {
     SimpleIndex::InsertInEntrySet(
-        hash_key,
-        EntryMetadata(last_used_time, file_size),
+        hash_key, EntryMetadata(last_used_time, total_entry_size.ValueOrDie()),
         entries);
   } else {
     // Summing up the total size of the entry through all the *_[0-1] files
-    it->second.SetEntrySize(it->second.GetEntrySize() + file_size);
+    total_entry_size += it->second.GetEntrySize();
+    it->second.SetEntrySize(total_entry_size.ValueOrDie());
   }
 }
 
 }  // namespace
 
-SimpleIndexLoadResult::SimpleIndexLoadResult() : did_load(false),
-                                                 flush_required(false) {
-}
+SimpleIndexLoadResult::SimpleIndexLoadResult()
+    : did_load(false),
+      index_write_reason(SimpleIndex::INDEX_WRITE_REASON_MAX),
+      flush_required(false) {}
 
 SimpleIndexLoadResult::~SimpleIndexLoadResult() {
 }
 
 void SimpleIndexLoadResult::Reset() {
   did_load = false;
+  index_write_reason = SimpleIndex::INDEX_WRITE_REASON_MAX;
   flush_required = false;
   entries.clear();
 }
@@ -157,22 +193,27 @@ const char SimpleIndexFile::kTempIndexFileName[] = "temp-index";
 SimpleIndexFile::IndexMetadata::IndexMetadata()
     : magic_number_(kSimpleIndexMagicNumber),
       version_(kSimpleVersion),
-      number_of_entries_(0),
+      reason_(SimpleIndex::INDEX_WRITE_REASON_MAX),
+      entry_count_(0),
       cache_size_(0) {}
 
 SimpleIndexFile::IndexMetadata::IndexMetadata(
-    uint64 number_of_entries, uint64 cache_size)
+    SimpleIndex::IndexWriteToDiskReason reason,
+    uint64_t entry_count,
+    uint64_t cache_size)
     : magic_number_(kSimpleIndexMagicNumber),
       version_(kSimpleVersion),
-      number_of_entries_(number_of_entries),
+      reason_(reason),
+      entry_count_(entry_count),
       cache_size_(cache_size) {}
 
 void SimpleIndexFile::IndexMetadata::Serialize(base::Pickle* pickle) const {
   DCHECK(pickle);
   pickle->WriteUInt64(magic_number_);
   pickle->WriteUInt32(version_);
-  pickle->WriteUInt64(number_of_entries_);
+  pickle->WriteUInt64(entry_count_);
   pickle->WriteUInt64(cache_size_);
+  pickle->WriteUInt32(static_cast<uint32_t>(reason_));
 }
 
 // static
@@ -187,17 +228,26 @@ bool SimpleIndexFile::SerializeFinalData(base::Time cache_modified,
 
 bool SimpleIndexFile::IndexMetadata::Deserialize(base::PickleIterator* it) {
   DCHECK(it);
-  return it->ReadUInt64(&magic_number_) &&
-      it->ReadUInt32(&version_) &&
-      it->ReadUInt64(&number_of_entries_)&&
-      it->ReadUInt64(&cache_size_);
+
+  bool v6_format_index_read_results =
+      it->ReadUInt64(&magic_number_) && it->ReadUInt32(&version_) &&
+      it->ReadUInt64(&entry_count_) && it->ReadUInt64(&cache_size_);
+  if (!v6_format_index_read_results)
+    return false;
+  if (version_ >= 7) {
+    uint32_t tmp_reason;
+    if (!it->ReadUInt32(&tmp_reason))
+      return false;
+    reason_ = static_cast<SimpleIndex::IndexWriteToDiskReason>(tmp_reason);
+  }
+  return true;
 }
 
 void SimpleIndexFile::SyncWriteToDisk(net::CacheType cache_type,
                                       const base::FilePath& cache_directory,
                                       const base::FilePath& index_filename,
                                       const base::FilePath& temp_index_filename,
-                                      scoped_ptr<base::Pickle> pickle,
+                                      std::unique_ptr<base::Pickle> pickle,
                                       const base::TimeTicks& start_time,
                                       bool app_on_background) {
   DCHECK_EQ(index_filename.DirName().value(),
@@ -244,9 +294,16 @@ void SimpleIndexFile::SyncWriteToDisk(net::CacheType cache_type,
 }
 
 bool SimpleIndexFile::IndexMetadata::CheckIndexMetadata() {
-  return number_of_entries_ <= kMaxEntiresInIndex &&
-      magic_number_ == kSimpleIndexMagicNumber &&
-      version_ == kSimpleVersion;
+  if (entry_count_ > kMaxEntriesInIndex ||
+      magic_number_ != kSimpleIndexMagicNumber) {
+    return false;
+  }
+
+  static_assert(kSimpleVersion == 7, "index metadata reader out of date");
+  // No |reason_| is saved in the version 6 file format.
+  if (version_ == 6)
+    return reason_ == SimpleIndex::INDEX_WRITE_REASON_MAX;
+  return version_ == 7 && reason_ < SimpleIndex::INDEX_WRITE_REASON_MAX;
 }
 
 SimpleIndexFile::SimpleIndexFile(
@@ -276,13 +333,15 @@ void SimpleIndexFile::LoadIndexEntries(base::Time cache_last_modified,
   worker_pool_->PostTaskAndReply(FROM_HERE, task, callback);
 }
 
-void SimpleIndexFile::WriteToDisk(const SimpleIndex::EntrySet& entry_set,
-                                  uint64 cache_size,
+void SimpleIndexFile::WriteToDisk(SimpleIndex::IndexWriteToDiskReason reason,
+                                  const SimpleIndex::EntrySet& entry_set,
+                                  uint64_t cache_size,
                                   const base::TimeTicks& start,
                                   bool app_on_background,
                                   const base::Closure& callback) {
-  IndexMetadata index_metadata(entry_set.size(), cache_size);
-  scoped_ptr<base::Pickle> pickle = Serialize(index_metadata, entry_set);
+  UmaRecordIndexWriteReason(reason, cache_type_);
+  IndexMetadata index_metadata(reason, entry_set.size(), cache_size);
+  std::unique_ptr<base::Pickle> pickle = Serialize(index_metadata, entry_set);
   base::Closure task =
       base::Bind(&SimpleIndexFile::SyncWriteToDisk,
                  cache_type_, cache_directory_, index_file_, temp_index_file_,
@@ -311,6 +370,11 @@ void SimpleIndexFile::SyncLoadIndexEntries(
       UmaRecordIndexFileState(INDEX_STATE_CORRUPT, cache_type);
   } else {
     if (cache_last_modified <= last_cache_seen_by_index) {
+      if (out_result->index_write_reason !=
+          SimpleIndex::INDEX_WRITE_REASON_MAX) {
+        UmaRecordIndexWriteReasonAtLoad(out_result->index_write_reason,
+                                        cache_type);
+      }
       base::Time latest_dir_mtime;
       simple_util::GetMTime(cache_directory, &latest_dir_mtime);
       if (LegacyIsIndexFileStale(latest_dir_mtime, index_file_path)) {
@@ -319,13 +383,16 @@ void SimpleIndexFile::SyncLoadIndexEntries(
       } else {
         UmaRecordIndexFileState(INDEX_STATE_FRESH, cache_type);
       }
-      UmaRecordIndexInitMethod(INITIALIZE_METHOD_LOADED, cache_type);
+      out_result->init_method = SimpleIndex::INITIALIZE_METHOD_LOADED;
+      UmaRecordIndexInitMethod(out_result->init_method, cache_type);
       return;
     }
     UmaRecordIndexFileState(INDEX_STATE_STALE, cache_type);
   }
 
   // Reconstruct the index by scanning the disk for entries.
+  SimpleIndex::EntrySet entries_from_stale_index;
+  entries_from_stale_index.swap(out_result->entries);
   const base::TimeTicks start = base::TimeTicks::Now();
   SyncRestoreFromDisk(cache_directory, index_file_path, out_result);
   SIMPLE_CACHE_UMA(MEDIUM_TIMES, "IndexRestoreTime", cache_type,
@@ -333,13 +400,27 @@ void SimpleIndexFile::SyncLoadIndexEntries(
   SIMPLE_CACHE_UMA(COUNTS, "IndexEntriesRestored", cache_type,
                    out_result->entries.size());
   if (index_file_existed) {
-    UmaRecordIndexInitMethod(INITIALIZE_METHOD_RECOVERED, cache_type);
+    out_result->init_method = SimpleIndex::INITIALIZE_METHOD_RECOVERED;
+
+    int missed_entry_count = 0;
+    for (const auto& i : out_result->entries) {
+      if (entries_from_stale_index.count(i.first) == 0)
+        ++missed_entry_count;
+    }
+    int extra_entry_count = 0;
+    for (const auto& i : entries_from_stale_index) {
+      if (out_result->entries.count(i.first) == 0)
+        ++extra_entry_count;
+    }
+    UmaRecordStaleIndexQuality(missed_entry_count, extra_entry_count,
+                               cache_type);
   } else {
-    UmaRecordIndexInitMethod(INITIALIZE_METHOD_NEWCACHE, cache_type);
+    out_result->init_method = SimpleIndex::INITIALIZE_METHOD_NEWCACHE;
     SIMPLE_CACHE_UMA(COUNTS,
                      "IndexCreatedEntryCount", cache_type,
                      out_result->entries.size());
   }
+  UmaRecordIndexInitMethod(out_result->init_method, cache_type);
 }
 
 // static
@@ -354,7 +435,7 @@ void SimpleIndexFile::SyncLoadFromDisk(const base::FilePath& index_filename,
     return;
 
   base::MemoryMappedFile index_file_map;
-  if (!index_file_map.Initialize(file.Pass())) {
+  if (!index_file_map.Initialize(std::move(file))) {
     simple_util::SimpleCacheDeleteFile(index_filename);
     return;
   }
@@ -370,10 +451,10 @@ void SimpleIndexFile::SyncLoadFromDisk(const base::FilePath& index_filename,
 }
 
 // static
-scoped_ptr<base::Pickle> SimpleIndexFile::Serialize(
+std::unique_ptr<base::Pickle> SimpleIndexFile::Serialize(
     const SimpleIndexFile::IndexMetadata& index_metadata,
     const SimpleIndex::EntrySet& entries) {
-  scoped_ptr<base::Pickle> pickle(
+  std::unique_ptr<base::Pickle> pickle(
       new base::Pickle(sizeof(SimpleIndexFile::PickleHeader)));
 
   index_metadata.Serialize(pickle.get());
@@ -382,7 +463,7 @@ scoped_ptr<base::Pickle> SimpleIndexFile::Serialize(
     pickle->WriteUInt64(it->first);
     it->second.Serialize(pickle.get());
   }
-  return pickle.Pass();
+  return pickle;
 }
 
 // static
@@ -403,8 +484,8 @@ void SimpleIndexFile::Deserialize(const char* data, int data_len,
   base::PickleIterator pickle_it(pickle);
   SimpleIndexFile::PickleHeader* header_p =
       pickle.headerT<SimpleIndexFile::PickleHeader>();
-  const uint32 crc_read = header_p->crc;
-  const uint32 crc_calculated = CalculatePickleCRC(pickle);
+  const uint32_t crc_read = header_p->crc;
+  const uint32_t crc_calculated = CalculatePickleCRC(pickle);
 
   if (crc_read != crc_calculated) {
     LOG(WARNING) << "Invalid CRC in Simple Index file.";
@@ -422,12 +503,9 @@ void SimpleIndexFile::Deserialize(const char* data, int data_len,
     return;
   }
 
-#if !defined(OS_WIN)
-  // TODO(gavinp): Consider using std::unordered_map.
-  entries->resize(index_metadata.GetNumberOfEntries() + kExtraSizeForMerge);
-#endif
-  while (entries->size() < index_metadata.GetNumberOfEntries()) {
-    uint64 hash_key;
+  entries->reserve(index_metadata.entry_count() + kExtraSizeForMerge);
+  while (entries->size() < index_metadata.entry_count()) {
+    uint64_t hash_key;
     EntryMetadata entry_metadata;
     if (!pickle_it.ReadUInt64(&hash_key) ||
         !entry_metadata.Deserialize(&pickle_it)) {
@@ -438,7 +516,7 @@ void SimpleIndexFile::Deserialize(const char* data, int data_len,
     SimpleIndex::InsertInEntrySet(hash_key, entry_metadata, entries);
   }
 
-  int64 cache_last_modified;
+  int64_t cache_last_modified;
   if (!pickle_it.ReadInt64(&cache_last_modified)) {
     entries->clear();
     return;
@@ -446,6 +524,7 @@ void SimpleIndexFile::Deserialize(const char* data, int data_len,
   DCHECK(out_cache_last_modified);
   *out_cache_last_modified = base::Time::FromInternalValue(cache_last_modified);
 
+  out_result->index_write_reason = index_metadata.reason();
   out_result->did_load = true;
 }
 

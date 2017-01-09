@@ -5,8 +5,10 @@
 #ifndef CONTENT_RENDERER_PEPPER_RESOURCE_CREATION_IMPL_H_
 #define CONTENT_RENDERER_PEPPER_RESOURCE_CREATION_IMPL_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ppapi/thunk/resource_creation_api.h"
 
 namespace content {
@@ -55,10 +57,10 @@ class ResourceCreationImpl : public ppapi::thunk::ResourceCreationAPI {
   PP_Resource CreateGraphics3DRaw(
       PP_Instance instance,
       PP_Resource share_context,
-      const int32_t* attrib_list,
+      const gpu::gles2::ContextCreationAttribHelper& attrib_helper,
       gpu::Capabilities* capabilities,
       base::SharedMemoryHandle* shared_state,
-      uint64_t* command_buffer_id) override;
+      gpu::CommandBufferId* command_buffer_id) override;
   PP_Resource CreateHostResolver(PP_Instance instance) override;
   PP_Resource CreateHostResolverPrivate(PP_Instance instance) override;
   PP_Resource CreateImageData(PP_Instance instance,
@@ -130,6 +132,7 @@ class ResourceCreationImpl : public ppapi::thunk::ResourceCreationAPI {
   PP_Resource CreateVideoDestination(PP_Instance instance) override;
   PP_Resource CreateVideoEncoder(PP_Instance instance) override;
   PP_Resource CreateVideoSource(PP_Instance instance) override;
+  PP_Resource CreateVpnProvider(PP_Instance instance) override;
   PP_Resource CreateWheelInputEvent(PP_Instance instance,
                                     PP_TimeTicks time_stamp,
                                     uint32_t modifiers,

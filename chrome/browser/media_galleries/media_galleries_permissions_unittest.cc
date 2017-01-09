@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/extension_prefs_unittest.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -50,7 +54,7 @@ class MediaGalleriesPermissionsTest : public extensions::ExtensionPrefsTest {
     gallery_prefs_->SetExtensionPrefsForTesting(prefs());
     Verify();
     prefs_.pref_service()->CommitPendingWrite();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     storage_monitor::TestStorageMonitor::Destroy();
 
@@ -150,8 +154,8 @@ class MediaGalleriesPermissionsTest : public extensions::ExtensionPrefsTest {
   EnsureMediaDirectoriesExists ensure_media_directories_exists_;
   content::TestBrowserThread file_thread_;
 
-  scoped_ptr<TestingProfile> profile_;
-  scoped_ptr<MediaGalleriesPreferences> gallery_prefs_;
+  std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<MediaGalleriesPreferences> gallery_prefs_;
 };
 
 TEST_F(MediaGalleriesPermissionsTest, MediaGalleries) {}

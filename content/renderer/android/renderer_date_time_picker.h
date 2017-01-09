@@ -5,11 +5,9 @@
 #ifndef CONTENT_RENDERER_ANDROID_RENDERER_DATE_TIME_PICKER_H_
 #define CONTENT_RENDERER_ANDROID_RENDERER_DATE_TIME_PICKER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "content/public/renderer/render_view_observer.h"
 #include "third_party/WebKit/public/web/WebDateTimeChooserParams.h"
-
-struct ViewHostMsg_DateTimeDialogValue_Params;
 
 namespace blink {
 class WebDateTimeChooserCompletion;
@@ -34,6 +32,7 @@ class RendererDateTimePicker : public RenderViewObserver {
 
   // RenderViewObserver
   bool OnMessageReceived(const IPC::Message& message) override;
+  void OnDestruct() override;
 
   blink::WebDateTimeChooserParams chooser_params_;
   blink::WebDateTimeChooserCompletion* chooser_completion_;  // Not owned by us

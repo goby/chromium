@@ -5,15 +5,17 @@
 #ifndef COMPONENTS_BOOKMARKS_BROWSER_BOOKMARK_MODEL_H_
 #define COMPONENTS_BOOKMARKS_BROWSER_BOOKMARK_MODEL_H_
 
+#include <stddef.h>
 #include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
@@ -71,7 +73,7 @@ class BookmarkModel : public BookmarkUndoProvider,
     base::string16 title;
   };
 
-  explicit BookmarkModel(BookmarkClient* client);
+  explicit BookmarkModel(std::unique_ptr<BookmarkClient> client);
   ~BookmarkModel() override;
 
   // KeyedService:
@@ -82,7 +84,6 @@ class BookmarkModel : public BookmarkUndoProvider,
   // All load operations will be executed on |io_task_runner| and the completion
   // callback will be called from |ui_task_runner|.
   void Load(PrefService* pref_service,
-            const std::string& accept_languages,
             const base::FilePath& profile_path,
             const scoped_refptr<base::SequencedTaskRunner>& io_task_runner,
             const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner);
@@ -111,10 +112,6 @@ class BookmarkModel : public BookmarkUndoProvider,
   bool is_permanent_node(const BookmarkNode* node) const {
     return node && (node == &root_ || node->parent() == &root_);
   }
-
-  // Returns the parent the last node was added to. This never returns NULL
-  // (as long as the model is loaded).
-  const BookmarkNode* GetParentForNewNodes();
 
   void AddObserver(BookmarkModelObserver* observer);
   void RemoveObserver(BookmarkModelObserver* observer);
@@ -309,7 +306,7 @@ class BookmarkModel : public BookmarkUndoProvider,
                          const GURL& icon_url);
 
   // Returns the client used by this BookmarkModel.
-  BookmarkClient* client() const { return client_; }
+  BookmarkClient* client() const { return client_.get(); }
 
   void SetUndoDelegate(BookmarkUndoDelegate* undo_delegate);
 
@@ -331,7 +328,7 @@ class BookmarkModel : public BookmarkUndoProvider,
   // BookmarkUndoProvider:
   void RestoreRemovedNode(const BookmarkNode* parent,
                           int index,
-                          scoped_ptr<BookmarkNode> node) override;
+                          std::unique_ptr<BookmarkNode> node) override;
 
   // Notifies the observers for adding every descedent of |node|.
   void NotifyNodeAddedForAllDescendents(const BookmarkNode* node);
@@ -348,17 +345,18 @@ class BookmarkModel : public BookmarkUndoProvider,
 
   // Invoked when loading is finished. Sets |loaded_| and notifies observers.
   // BookmarkModel takes ownership of |details|.
-  void DoneLoading(scoped_ptr<BookmarkLoadDetails> details);
+  void DoneLoading(std::unique_ptr<BookmarkLoadDetails> details);
 
   // Populates |nodes_ordered_by_url_set_| from root.
   void PopulateNodesByURL(BookmarkNode* node);
 
-  // Removes the node from its parent, but does not delete it. No notifications
+  // Removes the node from its parent and returns it. No notifications
   // are sent. |removed_urls| is populated with the urls which no longer have
   // any bookmarks associated with them.
   // This method should be called after acquiring |url_lock_|.
-  void RemoveNodeAndGetRemovedUrls(BookmarkNode* node,
-                                   std::set<GURL>* removed_urls);
+  std::unique_ptr<BookmarkNode> RemoveNodeAndGetRemovedUrls(
+      BookmarkNode* node,
+      std::set<GURL>* removed_urls);
 
   // Removes the node from its parent, sends notification, and deletes it.
   // type specifies how the node should be removed.
@@ -371,7 +369,7 @@ class BookmarkModel : public BookmarkUndoProvider,
   // observers.
   BookmarkNode* AddNode(BookmarkNode* parent,
                         int index,
-                        BookmarkNode* node);
+                        std::unique_ptr<BookmarkNode> node);
 
   // Adds the |node| to |nodes_ordered_by_url_set_| and |index_|.
   void AddNodeToInternalMaps(BookmarkNode* node);
@@ -415,12 +413,11 @@ class BookmarkModel : public BookmarkUndoProvider,
 
   // Creates and returns a new BookmarkLoadDetails. It's up to the caller to
   // delete the returned object.
-  scoped_ptr<BookmarkLoadDetails> CreateLoadDetails(
-      const std::string& accept_languages);
+  std::unique_ptr<BookmarkLoadDetails> CreateLoadDetails();
 
   BookmarkUndoDelegate* undo_delegate() const;
 
-  BookmarkClient* const client_;
+  std::unique_ptr<BookmarkClient> client_;
 
   // Whether the initial set of data has been loaded.
   bool loaded_;
@@ -451,21 +448,21 @@ class BookmarkModel : public BookmarkUndoProvider,
   base::CancelableTaskTracker cancelable_task_tracker_;
 
   // Reads/writes bookmarks to disk.
-  scoped_ptr<BookmarkStorage> store_;
+  std::unique_ptr<BookmarkStorage> store_;
 
-  scoped_ptr<BookmarkIndex> index_;
+  std::unique_ptr<BookmarkIndex> index_;
 
   base::WaitableEvent loaded_signal_;
 
   // See description of IsDoingExtensiveChanges above.
   int extensive_changes_;
 
-  scoped_ptr<BookmarkExpandedStateTracker> expanded_state_tracker_;
+  std::unique_ptr<BookmarkExpandedStateTracker> expanded_state_tracker_;
 
   std::set<std::string> non_cloned_keys_;
 
   BookmarkUndoDelegate* undo_delegate_;
-  scoped_ptr<BookmarkUndoDelegate> empty_undo_delegate_;
+  std::unique_ptr<BookmarkUndoDelegate> empty_undo_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkModel);
 };

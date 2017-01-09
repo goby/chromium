@@ -4,16 +4,22 @@
 
 module mojo.test;
 
+import "mojo/public/interfaces/bindings/tests/ping_service.mojom";
+
 interface FooInterface {};
 
 struct StructContainsAssociated {
-  associated FooInterface foo_interface;
+  associated FooInterface? foo_interface;
   associated FooInterface& foo_request;
+  array<associated FooInterface> foo_interfaces;
+  array<associated FooInterface&> foo_requests;
 };
 
 union UnionContainsAssociated {
   associated FooInterface foo_interface;
   associated FooInterface& foo_request;
+  array<associated FooInterface> foo_interfaces;
+  array<associated FooInterface&> foo_requests;
 };
 
 interface InterfacePassesAssociated {
@@ -37,4 +43,8 @@ interface IntegerSender {
 interface IntegerSenderConnection {
   GetSender(associated IntegerSender& sender);
   AsyncGetSender() => (associated IntegerSender sender);
+};
+
+interface AssociatedPingProvider {
+  GetPing(associated PingService& request);
 };

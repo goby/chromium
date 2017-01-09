@@ -5,8 +5,10 @@
 #ifndef UI_VIEWS_ACCESSIBLE_PANE_VIEW_H_
 #define UI_VIEWS_ACCESSIBLE_PANE_VIEW_H_
 
+#include <memory>
+
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/views/focus/focus_manager.h"
@@ -43,7 +45,7 @@ class VIEWS_EXPORT AccessiblePaneView : public View,
   FocusTraversable* GetPaneFocusTraversable() override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   void SetVisible(bool flag) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void RequestFocus() override;
 
   // Overridden from FocusChangeListener:
@@ -105,7 +107,7 @@ class VIEWS_EXPORT AccessiblePaneView : public View,
   // Our custom focus search implementation that traps focus in this
   // pane and traverses all views that are focusable for accessibility,
   // not just those that are normally focusable.
-  scoped_ptr<FocusSearch> focus_search_;
+  std::unique_ptr<FocusSearch> focus_search_;
 
   // Registered accelerators
   ui::Accelerator home_key_;

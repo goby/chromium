@@ -5,6 +5,8 @@
 #include "sandbox/mac/launchd_interception_server.h"
 
 #include <servers/bootstrap.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
@@ -30,6 +32,7 @@ LaunchdInterceptionServer::LaunchdInterceptionServer(
 }
 
 LaunchdInterceptionServer::~LaunchdInterceptionServer() {
+  message_server_->Shutdown();
 }
 
 bool LaunchdInterceptionServer::Initialize(mach_port_t server_receive_right) {
@@ -51,7 +54,7 @@ bool LaunchdInterceptionServer::Initialize(mach_port_t server_receive_right) {
   }
   sandbox_send_port_.reset(sandbox_port_.get());
 
-  if (base::mac::IsOSYosemiteOrLater()) {
+  if (base::mac::IsAtLeastOS10_10()) {
     message_server_.reset(new XPCMessageServer(this, server_receive_right));
     xpc_launchd_ = true;
   } else {

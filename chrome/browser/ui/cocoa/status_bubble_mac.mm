@@ -9,19 +9,19 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/debug/stack_trace.h"
-#include "base/mac/mac_util.h"
 #include "base/mac/scoped_block.h"
 #include "base/mac/sdk_forward_declarations.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #import "chrome/browser/ui/cocoa/bubble_view.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/url_formatter/url_formatter.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSBezierPath+RoundRect.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSColor+Luminance.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/cocoa/window_size_constants.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/point.h"
@@ -46,8 +46,8 @@ const int kTextPadding = 3;
 const CGFloat kBubbleOpacity = 1.0;
 
 // Delay before showing or hiding the bubble after a SetStatus or SetURL call.
-const int64 kShowDelayMS = 80;
-const int64 kHideDelayMS = 250;
+const int64_t kShowDelayMS = 80;
+const int64_t kHideDelayMS = 250;
 
 // How long each fade should last.
 const NSTimeInterval kShowFadeInDurationSeconds = 0.120;
@@ -64,14 +64,15 @@ const CGFloat kExpansionDurationSeconds = 0.125;
 
 }  // namespace
 
-@interface StatusBubbleAnimationDelegate : NSObject {
+@interface StatusBubbleAnimationDelegate : NSObject <CAAnimationDelegate> {
  @private
   base::mac::ScopedBlock<void (^)(void)> completionHandler_;
 }
 
 - (id)initWithCompletionHandler:(void (^)(void))completionHandler;
 
-// CAAnimation delegate method
+// CAAnimation delegate methods
+- (void)animationDidStart:(CAAnimation*)animation;
 - (void)animationDidStop:(CAAnimation*)animation finished:(BOOL)finished;
 @end
 
@@ -85,6 +86,9 @@ const CGFloat kExpansionDurationSeconds = 0.125;
   return self;
 }
 
+- (void)animationDidStart:(CAAnimation*)theAnimation {
+  // CAAnimationDelegate method added on OSX 10.12.
+}
 - (void)animationDidStop:(CAAnimation*)animation finished:(BOOL)finished {
   completionHandler_.get()();
 }
@@ -201,9 +205,8 @@ void StatusBubbleMac::SetStatus(const base::string16& status) {
   SetText(status, false);
 }
 
-void StatusBubbleMac::SetURL(const GURL& url, const std::string& languages) {
+void StatusBubbleMac::SetURL(const GURL& url) {
   url_ = url;
-  languages_ = languages;
 
   CGFloat bubble_width = NSWidth([window_ frame]);
   if (state_ == kBubbleHidden) {
@@ -235,9 +238,9 @@ void StatusBubbleMac::SetURL(const GURL& url, const std::string& languages) {
   gfx::FontList font_list_chr(
       gfx::Font(gfx::PlatformFont::CreateFromNativeFont(font)));
 
-  base::string16 original_url_text = url_formatter::FormatUrl(url, languages);
+  base::string16 original_url_text = url_formatter::FormatUrl(url);
   base::string16 status =
-      url_formatter::ElideUrl(url, font_list_chr, text_width, languages);
+      url_formatter::ElideUrl(url, font_list_chr, text_width);
 
   SetText(status, true);
 
@@ -254,9 +257,9 @@ void StatusBubbleMac::SetURL(const GURL& url, const std::string& languages) {
   if (is_expanded_ && !url.is_empty()) {
     ExpandBubble();
   } else if (original_url_text.length() > status.length()) {
-    base::MessageLoop::current()->PostDelayedTask(FROM_HERE,
-        base::Bind(&StatusBubbleMac::ExpandBubble,
-                   expand_timer_factory_.GetWeakPtr()),
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE, base::Bind(&StatusBubbleMac::ExpandBubble,
+                              expand_timer_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(kExpandHoverDelayMS));
   }
 }
@@ -363,7 +366,8 @@ void StatusBubbleMac::SetFrameAvoidingMouse(
 
   // To start, assume default positioning in the lower left corner.
   // The window_frame position is in global (screen) coordinates.
-  window_frame.origin = [parent_ convertBaseToScreen:base_rect.origin];
+  window_frame.origin =
+      ui::ConvertPointFromWindowToScreen(parent_, base_rect.origin);
 
   // Get the cursor position relative to the top right corner of the bubble.
   gfx::Point relative_pos(mouse_pos.x() - NSMaxX(window_frame),
@@ -595,7 +599,7 @@ void StatusBubbleMac::AnimateWindowAlpha(CGFloat alpha,
       }];
 }
 
-void StatusBubbleMac::StartTimer(int64 delay_ms) {
+void StatusBubbleMac::StartTimer(int64_t delay_ms) {
   DCHECK([NSThread isMainThread]);
   DCHECK(state_ == kBubbleShowingTimer || state_ == kBubbleHidingTimer);
 
@@ -607,7 +611,8 @@ void StatusBubbleMac::StartTimer(int64 delay_ms) {
   // There can only be one running timer.
   CancelTimer();
 
-  base::MessageLoop::current()->PostDelayedTask(FROM_HERE,
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE,
       base::Bind(&StatusBubbleMac::TimerFired, timer_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(delay_ms));
 }
@@ -707,7 +712,7 @@ void StatusBubbleMac::ExpandBubble() {
   gfx::FontList font_list_chr(
       gfx::Font(gfx::PlatformFont::CreateFromNativeFont(font)));
   base::string16 expanded_url = url_formatter::ElideUrl(
-      url_, font_list_chr, max_bubble_width, languages_);
+      url_, font_list_chr, max_bubble_width);
 
   // Scale width from gfx::Font in view coordinates to window coordinates.
   int required_width_for_string =
@@ -749,12 +754,11 @@ void StatusBubbleMac::ExpandBubble() {
     return;
 
   // Get the current corner flags and see what needs to change based on the
-  // expansion. This is only needed on Lion, which has rounded window bottoms.
-  if (base::mac::IsOSLionOrLater()) {
-    unsigned long corner_flags = [[window_ contentView] cornerFlags];
-    corner_flags |= OSDependentCornerFlags(actual_window_frame);
-    [[window_ contentView] setCornerFlags:corner_flags];
-  }
+  // expansion.
+  unsigned long corner_flags = [[window_ contentView] cornerFlags];
+  corner_flags |= OSDependentCornerFlags(actual_window_frame);
+  [[window_ contentView] setCornerFlags:corner_flags];
+
 
   [NSAnimationContext beginGrouping];
   [[NSAnimationContext currentContext] setDuration:kExpansionDurationSeconds];
@@ -811,7 +815,7 @@ NSRect StatusBubbleMac::CalculateWindowFrame(bool expanded_width) {
   NSRect screenRect;
   if ([delegate_ respondsToSelector:@selector(statusBubbleBaseFrame)]) {
     screenRect = [delegate_ statusBubbleBaseFrame];
-    screenRect.origin = [parent_ convertBaseToScreen:screenRect.origin];
+    screenRect = [parent_ convertRectToScreen:screenRect];
   } else {
     screenRect = [parent_ frame];
   }
@@ -832,26 +836,24 @@ NSRect StatusBubbleMac::CalculateWindowFrame(bool expanded_width) {
 unsigned long StatusBubbleMac::OSDependentCornerFlags(NSRect window_frame) {
   unsigned long corner_flags = 0;
 
-  if (base::mac::IsOSLionOrLater()) {
-    NSRect parent_frame = [parent_ frame];
+  NSRect parent_frame = [parent_ frame];
 
-    // Round the bottom corners when they're right up against the
-    // corresponding edge of the parent window, or when below the parent
-    // window.
-    if (NSMinY(window_frame) <= NSMinY(parent_frame)) {
-      if (NSMinX(window_frame) == NSMinX(parent_frame)) {
-        corner_flags |= kRoundedBottomLeftCorner;
-      }
-
-      if (NSMaxX(window_frame) == NSMaxX(parent_frame)) {
-        corner_flags |= kRoundedBottomRightCorner;
-      }
+  // Round the bottom corners when they're right up against the
+  // corresponding edge of the parent window, or when below the parent
+  // window.
+  if (NSMinY(window_frame) <= NSMinY(parent_frame)) {
+    if (NSMinX(window_frame) == NSMinX(parent_frame)) {
+      corner_flags |= kRoundedBottomLeftCorner;
     }
 
-    // Round the top corners when the bubble is below the parent window.
-    if (NSMinY(window_frame) < NSMinY(parent_frame)) {
-      corner_flags |= kRoundedTopLeftCorner | kRoundedTopRightCorner;
+    if (NSMaxX(window_frame) == NSMaxX(parent_frame)) {
+      corner_flags |= kRoundedBottomRightCorner;
     }
+  }
+
+  // Round the top corners when the bubble is below the parent window.
+  if (NSMinY(window_frame) < NSMinY(parent_frame)) {
+    corner_flags |= kRoundedTopLeftCorner | kRoundedTopRightCorner;
   }
 
   return corner_flags;

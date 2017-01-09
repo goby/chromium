@@ -4,10 +4,15 @@
 
 #include "storage/browser/fileapi/quota/quota_backend_impl.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "storage/browser/fileapi/file_system_usage_cache.h"
 #include "storage/browser/fileapi/obfuscated_file_util.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
@@ -28,9 +33,9 @@ const char kOrigin[] = "http://example.com";
 
 bool DidReserveQuota(bool accepted,
                      base::File::Error* error_out,
-                     int64* delta_out,
+                     int64_t* delta_out,
                      base::File::Error error,
-                     int64 delta) {
+                     int64_t delta) {
   DCHECK(error_out);
   DCHECK(delta_out);
   *error_out = error;
@@ -56,7 +61,7 @@ class MockQuotaManagerProxy : public storage::QuotaManagerProxy {
   void NotifyStorageModified(storage::QuotaClient::ID client_id,
                              const GURL& origin,
                              storage::StorageType type,
-                             int64 delta) override {
+                             int64_t delta) override {
     ++storage_modified_count_;
     usage_ += delta;
     ASSERT_LE(usage_, quota_);
@@ -70,17 +75,17 @@ class MockQuotaManagerProxy : public storage::QuotaManagerProxy {
   }
 
   int storage_modified_count() { return storage_modified_count_; }
-  int64 usage() { return usage_; }
-  void set_usage(int64 usage) { usage_ = usage; }
-  void set_quota(int64 quota) { quota_ = quota; }
+  int64_t usage() { return usage_; }
+  void set_usage(int64_t usage) { usage_ = usage; }
+  void set_quota(int64_t quota) { quota_ = quota; }
 
  protected:
   ~MockQuotaManagerProxy() override {}
 
  private:
   int storage_modified_count_;
-  int64 usage_;
-  int64 quota_;
+  int64_t usage_;
+  int64_t quota_;
 
   DISALLOW_COPY_AND_ASSIGN(MockQuotaManagerProxy);
 };
@@ -97,7 +102,7 @@ class QuotaBackendImplTest : public testing::Test {
     ASSERT_TRUE(data_dir_.CreateUniqueTempDir());
     in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
     file_util_.reset(ObfuscatedFileUtil::CreateForTesting(
-        NULL, data_dir_.path(), in_memory_env_.get(), file_task_runner()));
+        NULL, data_dir_.GetPath(), in_memory_env_.get(), file_task_runner()));
     backend_.reset(new QuotaBackendImpl(file_task_runner(),
                                         file_util_.get(),
                                         &file_system_usage_cache_,
@@ -108,7 +113,7 @@ class QuotaBackendImplTest : public testing::Test {
     backend_.reset();
     quota_manager_proxy_ = NULL;
     file_util_.reset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  protected:
@@ -144,11 +149,11 @@ class QuotaBackendImplTest : public testing::Test {
 
   base::MessageLoop message_loop_;
   base::ScopedTempDir data_dir_;
-  scoped_ptr<leveldb::Env> in_memory_env_;
-  scoped_ptr<ObfuscatedFileUtil> file_util_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<ObfuscatedFileUtil> file_util_;
   FileSystemUsageCache file_system_usage_cache_;
   scoped_refptr<MockQuotaManagerProxy> quota_manager_proxy_;
-  scoped_ptr<QuotaBackendImpl> backend_;
+  std::unique_ptr<QuotaBackendImpl> backend_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(QuotaBackendImplTest);
@@ -159,9 +164,9 @@ TEST_F(QuotaBackendImplTest, ReserveQuota_Basic) {
   InitializeForOriginAndType(GURL(kOrigin), type);
   quota_manager_proxy_->set_quota(10000);
 
-  int64 delta = 0;
+  int64_t delta = 0;
 
-  const int64 kDelta1 = 1000;
+  const int64_t kDelta1 = 1000;
   base::File::Error error = base::File::FILE_ERROR_FAILED;
   backend_->ReserveQuota(GURL(kOrigin), type, kDelta1,
                          base::Bind(&DidReserveQuota, true, &error, &delta));
@@ -169,7 +174,7 @@ TEST_F(QuotaBackendImplTest, ReserveQuota_Basic) {
   EXPECT_EQ(kDelta1, delta);
   EXPECT_EQ(kDelta1, quota_manager_proxy_->usage());
 
-  const int64 kDelta2 = -300;
+  const int64_t kDelta2 = -300;
   error = base::File::FILE_ERROR_FAILED;
   backend_->ReserveQuota(GURL(kOrigin), type, kDelta2,
                          base::Bind(&DidReserveQuota, true, &error, &delta));
@@ -185,9 +190,9 @@ TEST_F(QuotaBackendImplTest, ReserveQuota_NoSpace) {
   InitializeForOriginAndType(GURL(kOrigin), type);
   quota_manager_proxy_->set_quota(100);
 
-  int64 delta = 0;
+  int64_t delta = 0;
 
-  const int64 kDelta = 1000;
+  const int64_t kDelta = 1000;
   base::File::Error error = base::File::FILE_ERROR_FAILED;
   backend_->ReserveQuota(GURL(kOrigin), type, kDelta,
                          base::Bind(&DidReserveQuota, true, &error, &delta));
@@ -203,9 +208,9 @@ TEST_F(QuotaBackendImplTest, ReserveQuota_Revert) {
   InitializeForOriginAndType(GURL(kOrigin), type);
   quota_manager_proxy_->set_quota(10000);
 
-  int64 delta = 0;
+  int64_t delta = 0;
 
-  const int64 kDelta = 1000;
+  const int64_t kDelta = 1000;
   base::File::Error error = base::File::FILE_ERROR_FAILED;
   backend_->ReserveQuota(GURL(kOrigin), type, kDelta,
                          base::Bind(&DidReserveQuota, false, &error, &delta));
@@ -219,11 +224,11 @@ TEST_F(QuotaBackendImplTest, ReserveQuota_Revert) {
 TEST_F(QuotaBackendImplTest, ReleaseReservedQuota) {
   storage::FileSystemType type = storage::kFileSystemTypeTemporary;
   InitializeForOriginAndType(GURL(kOrigin), type);
-  const int64 kInitialUsage = 2000;
+  const int64_t kInitialUsage = 2000;
   quota_manager_proxy_->set_usage(kInitialUsage);
   quota_manager_proxy_->set_quota(10000);
 
-  const int64 kSize = 1000;
+  const int64_t kSize = 1000;
   backend_->ReleaseReservedQuota(GURL(kOrigin), type, kSize);
   EXPECT_EQ(kInitialUsage - kSize, quota_manager_proxy_->usage());
 
@@ -236,14 +241,14 @@ TEST_F(QuotaBackendImplTest, CommitQuotaUsage) {
   quota_manager_proxy_->set_quota(10000);
   base::FilePath path = GetUsageCachePath(GURL(kOrigin), type);
 
-  const int64 kDelta1 = 1000;
+  const int64_t kDelta1 = 1000;
   backend_->CommitQuotaUsage(GURL(kOrigin), type, kDelta1);
   EXPECT_EQ(kDelta1, quota_manager_proxy_->usage());
-  int64 usage = 0;
+  int64_t usage = 0;
   EXPECT_TRUE(file_system_usage_cache_.GetUsage(path, &usage));
   EXPECT_EQ(kDelta1, usage);
 
-  const int64 kDelta2 = -300;
+  const int64_t kDelta2 = -300;
   backend_->CommitQuotaUsage(GURL(kOrigin), type, kDelta2);
   EXPECT_EQ(kDelta1 + kDelta2, quota_manager_proxy_->usage());
   usage = 0;
@@ -259,7 +264,7 @@ TEST_F(QuotaBackendImplTest, DirtyCount) {
   base::FilePath path = GetUsageCachePath(GURL(kOrigin), type);
 
   backend_->IncrementDirtyCount(GURL(kOrigin), type);
-  uint32 dirty = 0;
+  uint32_t dirty = 0;
   ASSERT_TRUE(file_system_usage_cache_.GetDirty(path, &dirty));
   EXPECT_EQ(1u, dirty);
 

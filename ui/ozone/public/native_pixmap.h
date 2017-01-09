@@ -6,8 +6,9 @@
 #define UI_OZONE_PUBLIC_NATIVE_PIXMAP_H_
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "ui/gfx/native_pixmap_handle_ozone.h"
+#include "ui/gfx/native_pixmap_handle.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/overlay_transform.h"
 
@@ -25,18 +26,21 @@ class NativePixmap : public base::RefCountedThreadSafe<NativePixmap> {
   NativePixmap() {}
 
   virtual void* /* EGLClientBuffer */ GetEGLClientBuffer() const = 0;
-  virtual int GetDmaBufFd() const = 0;
-  virtual int GetDmaBufPitch() const = 0;
+  virtual bool AreDmaBufFdsValid() const = 0;
+  virtual size_t GetDmaBufFdCount() const = 0;
+  virtual int GetDmaBufFd(size_t plane) const = 0;
+  virtual int GetDmaBufPitch(size_t plane) const = 0;
+  virtual int GetDmaBufOffset(size_t plane) const = 0;
+  virtual uint64_t GetDmaBufModifier(size_t plane) const = 0;
   virtual gfx::BufferFormat GetBufferFormat() const = 0;
   virtual gfx::Size GetBufferSize() const = 0;
 
   // Sets the overlay plane to switch to at the next page flip.
-  // |w| specifies the screen to display this overlay plane on.
+  // |widget| specifies the screen to display this overlay plane on.
   // |plane_z_order| specifies the stacking order of the plane relative to the
   // main framebuffer located at index 0.
-  // |plane_transform| specifies how the buffer is to be transformed during.
+  // |plane_transform| specifies how the buffer is to be transformed during
   // composition.
-  // |buffer| to be presented by the overlay.
   // |display_bounds| specify where it is supposed to be on the screen.
   // |crop_rect| specifies the region within the buffer to be placed
   // inside |display_bounds|. This is specified in texture coordinates, in the
@@ -57,9 +61,6 @@ class NativePixmap : public base::RefCountedThreadSafe<NativePixmap> {
   // Set callback function for the pixmap used for post processing.
   virtual void SetProcessingCallback(
       const ProcessingCallback& processing_callback) = 0;
-  virtual scoped_refptr<NativePixmap> GetProcessedPixmap(
-      gfx::Size target_size,
-      gfx::BufferFormat target_format) = 0;
 
   // Export the buffer for sharing across processes.
   // Any file descriptors in the exported handle are owned by the caller.

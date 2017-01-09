@@ -2,17 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/renderer/pepper/plugin_instance_throttler_impl.h"
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
-#include "content/renderer/pepper/plugin_instance_throttler_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/web/WebPluginParams.h"
 #include "ui/gfx/canvas.h"
 #include "url/gurl.h"
@@ -36,7 +38,8 @@ class PluginInstanceThrottlerImplTest
   }
 
   void SetUp() override {
-    throttler_.reset(new PluginInstanceThrottlerImpl);
+    throttler_.reset(
+        new PluginInstanceThrottlerImpl(RenderFrame::DONT_RECORD_DECISION));
     throttler_->Initialize(nullptr, url::Origin(GURL("http://example.com")),
                            "Shockwave Flash", gfx::Size(100, 100));
     throttler_->AddObserver(this);
@@ -72,7 +75,7 @@ class PluginInstanceThrottlerImplTest
   // PluginInstanceThrottlerImpl::Observer
   void OnThrottleStateChange() override { ++change_callback_calls_; }
 
-  scoped_ptr<PluginInstanceThrottlerImpl> throttler_;
+  std::unique_ptr<PluginInstanceThrottlerImpl> throttler_;
 
   int change_callback_calls_;
 
@@ -102,12 +105,12 @@ TEST_F(PluginInstanceThrottlerImplTest, ThrottleByKeyframe) {
   SkBitmap interesting_bitmap = skia::ReadPixels(canvas.sk_canvas());
 
   // Don't throttle for a boring frame.
-  throttler()->OnImageFlush(&boring_bitmap);
+  throttler()->OnImageFlush(boring_bitmap);
   EXPECT_FALSE(throttler()->IsThrottled());
   EXPECT_EQ(0, change_callback_calls());
 
   // Throttle after an interesting frame.
-  throttler()->OnImageFlush(&interesting_bitmap);
+  throttler()->OnImageFlush(interesting_bitmap);
   EXPECT_TRUE(throttler()->IsThrottled());
   EXPECT_EQ(1, change_callback_calls());
 }
@@ -120,7 +123,7 @@ TEST_F(PluginInstanceThrottlerImplTest, MaximumKeyframesAnalyzed) {
 
   // Throttle after tons of boring bitmaps.
   for (int i = 0; i < kMaximumFramesToExamine; ++i) {
-    throttler()->OnImageFlush(&boring_bitmap);
+    throttler()->OnImageFlush(boring_bitmap);
   }
   EXPECT_TRUE(throttler()->IsThrottled());
   EXPECT_EQ(1, change_callback_calls());

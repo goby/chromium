@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/testing/LayerRectList.h"
 
 #include "core/dom/ClientRect.h"
@@ -37,31 +36,30 @@
 
 namespace blink {
 
-LayerRectList::LayerRectList()
-{
+LayerRectList::LayerRectList() {}
+
+unsigned LayerRectList::length() const {
+  return m_list.size();
 }
 
-unsigned LayerRectList::length() const
-{
-    return m_list.size();
+LayerRect* LayerRectList::item(unsigned index) {
+  if (index >= m_list.size())
+    return 0;
+
+  return m_list[index].get();
 }
 
-LayerRect* LayerRectList::item(unsigned index)
-{
-    if (index >= m_list.size())
-        return 0;
-
-    return m_list[index].get();
+void LayerRectList::append(Node* layerRootNode,
+                           const String& layerType,
+                           int layerOffsetX,
+                           int layerOffsetY,
+                           ClientRect* layerRelativeRect) {
+  m_list.append(LayerRect::create(layerRootNode, layerType, layerOffsetX,
+                                  layerOffsetY, layerRelativeRect));
 }
 
-void LayerRectList::append(PassRefPtrWillBeRawPtr<Node> layerRootNode, const String& layerType, int layerOffsetX, int layerOffsetY, ClientRect* layerRelativeRect)
-{
-    m_list.append(LayerRect::create(layerRootNode, layerType, layerOffsetX, layerOffsetY, layerRelativeRect));
+DEFINE_TRACE(LayerRectList) {
+  visitor->trace(m_list);
 }
 
-DEFINE_TRACE(LayerRectList)
-{
-    visitor->trace(m_list);
-}
-
-} // namespace blink
+}  // namespace blink

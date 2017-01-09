@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/common/extensions/api/autofill_private.h"
@@ -41,19 +42,29 @@ class AutofillPrivateApiTest : public ExtensionApiTest {
 
 }  // namespace
 
-IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, SaveAddress) {
+// TODO(hcarmona): Investigate converting these tests to unittests.
+
+// TODO(crbug.com/643097) Disabled for flakiness.
+IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, DISABLED_SaveAddress) {
   EXPECT_TRUE(RunAutofillSubtest("saveAddress")) << message_;
+}
+
+// TODO(crbug.com/643097) Disabled for flakiness.
+IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, DISABLED_GetCountryList) {
+  EXPECT_TRUE(RunAutofillSubtest("getCountryList")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, GetAddressComponents) {
   EXPECT_TRUE(RunAutofillSubtest("getAddressComponents")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, SaveCreditCard) {
+// TODO(crbug.com/643097) Disabled for flakiness.
+IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, DISABLED_SaveCreditCard) {
   EXPECT_TRUE(RunAutofillSubtest("saveCreditCard")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, RemoveEntry) {
+// TODO(crbug.com/643097) Disabled for flakiness.
+IN_PROC_BROWSER_TEST_F(AutofillPrivateApiTest, DISABLED_RemoveEntry) {
   EXPECT_TRUE(RunAutofillSubtest("removeEntry")) << message_;
 }
 

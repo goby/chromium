@@ -5,19 +5,20 @@
 #ifndef CHROME_BROWSER_GEOLOCATION_CHROME_ACCESS_TOKEN_STORE_H_
 #define CHROME_BROWSER_GEOLOCATION_CHROME_ACCESS_TOKEN_STORE_H_
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "content/public/browser/access_token_store.h"
+#include "device/geolocation/access_token_store.h"
 
 class PrefRegistrySimple;
 
 // Creates a new access token store backed by the global chome prefs.
-class ChromeAccessTokenStore : public content::AccessTokenStore {
+class ChromeAccessTokenStore : public device::AccessTokenStore {
  public:
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
   ChromeAccessTokenStore();
 
-  void LoadAccessTokens(const LoadAccessTokensCallbackType& request) override;
+  void LoadAccessTokens(const LoadAccessTokensCallback& request) override;
 
  private:
   ~ChromeAccessTokenStore() override;

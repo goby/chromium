@@ -18,9 +18,8 @@ void GetServiceWorkerHeaderMapFromWebRequest(
     const blink::WebServiceWorkerRequest& web_request,
     ServiceWorkerHeaderMap* headers);
 
-void GetServiceWorkerHeaderMapFromWebResponse(
-    const blink::WebServiceWorkerResponse& web_response,
-    ServiceWorkerHeaderMap* headers);
+ServiceWorkerResponse GetServiceWorkerResponseFromWebResponse(
+    const blink::WebServiceWorkerResponse& web_response);
 
 }  // namespace content
 

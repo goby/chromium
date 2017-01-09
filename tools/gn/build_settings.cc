@@ -4,11 +4,12 @@
 
 #include "tools/gn/build_settings.h"
 
+#include <utility>
+
 #include "base/files/file_util.h"
 #include "tools/gn/filesystem_utils.h"
 
-BuildSettings::BuildSettings()
-    : check_for_bad_items_(true) {
+BuildSettings::BuildSettings() {
 }
 
 BuildSettings::BuildSettings(const BuildSettings& other)
@@ -18,8 +19,7 @@ BuildSettings::BuildSettings(const BuildSettings& other)
       python_path_(other.python_path_),
       build_config_file_(other.build_config_file_),
       build_dir_(other.build_dir_),
-      build_args_(other.build_args_),
-      check_for_bad_items_(true) {
+      build_args_(other.build_args_) {
 }
 
 BuildSettings::~BuildSettings() {
@@ -57,8 +57,8 @@ base::FilePath BuildSettings::GetFullPathSecondary(
   return dir.Resolve(secondary_source_path_).NormalizePathSeparatorsTo('/');
 }
 
-void BuildSettings::ItemDefined(scoped_ptr<Item> item) const {
+void BuildSettings::ItemDefined(std::unique_ptr<Item> item) const {
   DCHECK(item);
   if (!item_defined_callback_.is_null())
-    item_defined_callback_.Run(item.Pass());
+    item_defined_callback_.Run(std::move(item));
 }

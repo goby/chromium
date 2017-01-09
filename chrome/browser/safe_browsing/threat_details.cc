@@ -6,25 +6,32 @@
 
 #include "chrome/browser/safe_browsing/threat_details.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <unordered_set>
+
 #include "base/bind.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/threat_details_cache.h"
 #include "chrome/browser/safe_browsing/threat_details_history.h"
-#include "chrome/common/safe_browsing/safebrowsing_messages.h"
+#include "components/safe_browsing/common/safebrowsing_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "net/url_request/url_request_context_getter.h"
 
 using content::BrowserThread;
 using content::NavigationEntry;
+using content::RenderFrameHost;
 using content::WebContents;
 
 // Keep in sync with KMaxNodes in renderer/safe_browsing/threat_dom_details
-static const uint32 kMaxDomNodes = 500;
+static const uint32_t kMaxDomNodes = 500;
 
 namespace safe_browsing {
 
@@ -32,6 +39,24 @@ namespace safe_browsing {
 ThreatDetailsFactory* ThreatDetails::factory_ = NULL;
 
 namespace {
+
+typedef std::unordered_set<std::string> StringSet;
+// A set of HTTPS headers that are allowed to be collected. Contains both
+// request and response headers. All entries in this list should be lower-case
+// to support case-insensitive comparison.
+struct WhitelistedHttpsHeadersTraits :
+    base::DefaultLazyInstanceTraits<StringSet> {
+  static StringSet* New(void* instance) {
+    StringSet* headers = base::DefaultLazyInstanceTraits<StringSet>::New(
+        instance);
+    headers->insert({"google-creative-id", "google-lineitem-id", "referer",
+        "content-type", "content-length", "date", "server", "cache-control",
+        "pragma", "expires"});
+    return headers;
+  }
+};
+base::LazyInstance<StringSet, WhitelistedHttpsHeadersTraits>
+    g_https_headers_whitelist = LAZY_INSTANCE_INITIALIZER;
 
 // Helper function that converts SBThreatType to
 // ClientSafeBrowsingReportRequest::ReportType.
@@ -55,6 +80,47 @@ ClientSafeBrowsingReportRequest::ReportType GetReportTypeFromSBThreatType(
   }
 }
 
+// Clears the specified HTTPS resource of any sensitive data, only retaining
+// data that is whitelisted for collection.
+void ClearHttpsResource(ClientSafeBrowsingReportRequest::Resource* resource) {
+  // Make a copy of the original resource to retain all data.
+  ClientSafeBrowsingReportRequest::Resource orig_resource(*resource);
+
+  // Clear the request headers and copy over any whitelisted ones.
+  resource->clear_request();
+  for (int i = 0; i < orig_resource.request().headers_size(); ++i) {
+    ClientSafeBrowsingReportRequest::HTTPHeader* orig_header = orig_resource
+        .mutable_request()->mutable_headers(i);
+    if (g_https_headers_whitelist.Get().count(
+        base::ToLowerASCII(orig_header->name())) > 0) {
+      resource->mutable_request()->add_headers()->Swap(orig_header);
+    }
+  }
+  // Also copy some other request fields.
+  resource->mutable_request()->mutable_bodydigest()->swap(
+      *orig_resource.mutable_request()->mutable_bodydigest());
+  resource->mutable_request()->set_bodylength(
+      orig_resource.request().bodylength());
+
+  // ...repeat for response headers.
+  resource->clear_response();
+  for (int i = 0; i < orig_resource.response().headers_size(); ++i) {
+    ClientSafeBrowsingReportRequest::HTTPHeader* orig_header = orig_resource
+        .mutable_response()->mutable_headers(i);
+    if (g_https_headers_whitelist.Get().count(
+        base::ToLowerASCII(orig_header->name())) > 0) {
+      resource->mutable_response()->add_headers()->Swap(orig_header);
+    }
+  }
+  // Also copy some other response fields.
+  resource->mutable_response()->mutable_bodydigest()->swap(
+      *orig_resource.mutable_response()->mutable_bodydigest());
+  resource->mutable_response()->set_bodylength(
+      orig_resource.response().bodylength());
+  resource->mutable_response()->mutable_remote_ip()->swap(
+      *orig_resource.mutable_response()->mutable_remote_ip());
+}
+
 }  // namespace
 
 // The default ThreatDetailsFactory.  Global, made a singleton so we
@@ -64,7 +130,7 @@ class ThreatDetailsFactoryImpl : public ThreatDetailsFactory {
   ThreatDetails* CreateThreatDetails(
       SafeBrowsingUIManager* ui_manager,
       WebContents* web_contents,
-      const SafeBrowsingUIManager::UnsafeResource& unsafe_resource) override {
+      const security_interstitials::UnsafeResource& unsafe_resource) override {
     return new ThreatDetails(ui_manager, web_contents, unsafe_resource);
   }
 
@@ -109,9 +175,10 @@ ThreatDetails::ThreatDetails(SafeBrowsingUIManager* ui_manager,
 
 ThreatDetails::~ThreatDetails() {}
 
-bool ThreatDetails::OnMessageReceived(const IPC::Message& message) {
+bool ThreatDetails::OnMessageReceived(const IPC::Message& message,
+                                      RenderFrameHost* render_frame_host) {
   bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(ThreatDetails, message)
+  IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(ThreatDetails, message, render_frame_host)
     IPC_MESSAGE_HANDLER(SafeBrowsingHostMsg_ThreatDOMDetails,
                         OnReceivedThreatDOMDetails)
     IPC_MESSAGE_UNHANDLED(handled = false)
@@ -168,7 +235,15 @@ void ThreatDetails::AddUrl(const GURL& url,
          it != children->end(); ++it) {
       ClientSafeBrowsingReportRequest::Resource* child_resource =
           FindOrCreateResource(*it);
-      url_resource->add_child_ids(child_resource->id());
+      bool duplicate_child = false;
+      for (auto child_id : url_resource->child_ids()) {
+        if (child_id == child_resource->id()) {
+          duplicate_child = true;
+          break;
+        }
+      }
+      if (!duplicate_child)
+        url_resource->add_child_ids(child_resource->id());
     }
   }
 }
@@ -182,21 +257,20 @@ void ThreatDetails::StartCollection() {
     report_->set_type(GetReportTypeFromSBThreatType(resource_.threat_type));
   }
 
-  GURL page_url = web_contents()->GetURL();
-  if (IsReportableUrl(page_url))
-    report_->set_page_url(page_url.spec());
-
   GURL referrer_url;
-  NavigationEntry* nav_entry = web_contents()->GetController().GetActiveEntry();
+  NavigationEntry* nav_entry = resource_.GetNavigationEntryForResource();
   if (nav_entry) {
-    referrer_url = nav_entry->GetReferrer().url;
-    if (IsReportableUrl(referrer_url)) {
-      report_->set_referrer_url(referrer_url.spec());
-    }
-  }
+    GURL page_url = nav_entry->GetURL();
+    if (IsReportableUrl(page_url))
+      report_->set_page_url(page_url.spec());
 
-  // Add the nodes, starting from the page url.
-  AddUrl(page_url, GURL(), std::string(), NULL);
+    referrer_url = nav_entry->GetReferrer().url;
+    if (IsReportableUrl(referrer_url))
+      report_->set_referrer_url(referrer_url.spec());
+
+    // Add the nodes, starting from the page url.
+    AddUrl(page_url, GURL(), std::string(), NULL);
+  }
 
   // Add the resource_url and its original url, if non-empty and different.
   if (!resource_.original_url.is_empty() &&
@@ -224,7 +298,7 @@ void ThreatDetails::StartCollection() {
   }
 
   // Add the referrer url.
-  if (nav_entry && !referrer_url.is_empty())
+  if (!referrer_url.is_empty())
     AddUrl(referrer_url, GURL(), std::string(), NULL);
 
   if (!resource_.IsMainPageLoadBlocked()) {
@@ -232,8 +306,8 @@ void ThreatDetails::StartCollection() {
     // OnReceivedThreatDOMDetails will be called when the renderer replies.
     // TODO(mattm): In theory, if the user proceeds through the warning DOM
     // detail collection could be started once the page loads.
-    content::RenderViewHost* view = web_contents()->GetRenderViewHost();
-    view->Send(new SafeBrowsingMsg_GetThreatDOMDetails(view->GetRoutingID()));
+    web_contents()->SendToAllFrames(
+        new SafeBrowsingMsg_GetThreatDOMDetails(MSG_ROUTING_NONE));
   }
 }
 
@@ -321,11 +395,10 @@ void ThreatDetails::OnCacheCollectionReady() {
     pb_resource->CopyFrom(*(it->second));
     const GURL url(pb_resource->url());
     if (url.SchemeIs("https")) {
-      // Don't report headers of HTTPS requests since they may contain private
-      // cookies.  We still retain the full URL.
+      // Sanitize the HTTPS resource by clearing out private data (like cookie
+      // headers).
       DVLOG(1) << "Clearing out HTTPS resource: " << pb_resource->url();
-      pb_resource->clear_request();
-      pb_resource->clear_response();
+      ClearHttpsResource(pb_resource);
       // Keep id, parent_id, child_ids, and tag_name.
     }
   }

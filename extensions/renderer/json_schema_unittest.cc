@@ -25,7 +25,7 @@ class JsonSchemaTest : public ModuleSystemTest {
 
  protected:
   void TestFunction(const std::string& test_name) {
-    env()->module_system()->CallModuleMethod("json_schema_test", test_name);
+    env()->module_system()->CallModuleMethodSafe("json_schema_test", test_name);
   }
 
  private:
@@ -79,7 +79,7 @@ TEST_F(JsonSchemaTest, TestType) {
   {
     // Create an ArrayBuffer in another v8 context and pass it to the test
     // through a global.
-    scoped_ptr<ModuleSystemTestEnvironment> other_env(CreateEnvironment());
+    std::unique_ptr<ModuleSystemTestEnvironment> other_env(CreateEnvironment());
     v8::Context::Scope scope(other_env->context()->v8_context());
     v8::Local<v8::ArrayBuffer> array_buffer(
         v8::ArrayBuffer::New(env()->isolate(), 1));

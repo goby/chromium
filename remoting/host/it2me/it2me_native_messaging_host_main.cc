@@ -4,12 +4,15 @@
 
 #include "remoting/host/it2me/it2me_native_messaging_host_main.h"
 
+#include <utility>
+
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/i18n/icu_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "net/socket/ssl_server_socket.h"
+#include "build/build_config.h"
+#include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/base/breakpad.h"
 #include "remoting/host/chromoting_host_context.h"
 #include "remoting/host/host_exit_codes.h"
@@ -33,6 +36,9 @@
 
 #if defined(OS_WIN)
 #include <commctrl.h>
+
+#include "remoting/host/switches.h"
+#include "remoting/host/win/elevation_helpers.h"
 #endif  // defined(OS_WIN)
 
 namespace remoting {
@@ -49,9 +55,10 @@ int StartIt2MeNativeMessagingHost() {
   // Initialize Breakpad as early as possible. On Mac the command-line needs to
   // be initialized first, so that the preference for crash-reporting can be
   // looked up in the config file.
-  if (IsUsageStatsAllowed()) {
-    InitializeCrashReporting();
-  }
+  // TODO(nicholss): Commenting out Breakpad. See crbug.com/637884
+  // if (IsUsageStatsAllowed()) {
+  //   InitializeCrashReporting();
+  // }
 #endif  // defined(REMOTING_ENABLE_BREAKPAD)
 
 #if defined(OS_WIN)
@@ -81,32 +88,77 @@ int StartIt2MeNativeMessagingHost() {
   base::GetLinuxDistro();
 #endif  // OS_LINUX
 
-  // Enable support for SSL server sockets, which must be done while still
-  // single-threaded.
-  net::EnableSSLServerSockets();
+  base::File read_file;
+  base::File write_file;
+  bool needs_elevation = false;
 
 #if defined(OS_WIN)
-  // GetStdHandle() returns pseudo-handles for stdin and stdout even if
-  // the hosting executable specifies "Windows" subsystem. However the returned
-  // handles are invalid in that case unless standard input and output are
-  // redirected to a pipe or file.
-  base::File read_file(GetStdHandle(STD_INPUT_HANDLE));
-  base::File write_file(GetStdHandle(STD_OUTPUT_HANDLE));
 
-  // After the native messaging channel starts the native messaging reader
-  // will keep doing blocking read operations on the input named pipe.
-  // If any other thread tries to perform any operation on STDIN, it will also
-  // block because the input named pipe is synchronous (non-overlapped).
-  // It is pretty common for a DLL to query the device info (GetFileType) of
-  // the STD* handles at startup. So any LoadLibrary request can potentially
-  // be blocked. To prevent that from happening we close STDIN and STDOUT
-  // handles as soon as we retrieve the corresponding file handles.
-  SetStdHandle(STD_INPUT_HANDLE, nullptr);
-  SetStdHandle(STD_OUTPUT_HANDLE, nullptr);
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+
+  if (command_line->HasSwitch(kElevateSwitchName)) {
+#if defined(OFFICIAL_BUILD)
+    // Unofficial builds won't have 'UiAccess' since it requires signing.
+    if (!CurrentProcessHasUiAccess()) {
+      LOG(ERROR) << "UiAccess permission missing from elevated It2Me process.";
+    }
+#endif  // defined(OFFICIAL_BUILD)
+
+    // The UiAccess binary should always have the "input" and "output" switches
+    // specified, they represent the name of the named pipes that should be used
+    // in place of stdin and stdout.
+    DCHECK(command_line->HasSwitch(kInputSwitchName));
+    DCHECK(command_line->HasSwitch(kOutputSwitchName));
+
+    // presubmit: allow wstring
+    std::wstring input_pipe_name =
+        command_line->GetSwitchValueNative(kInputSwitchName);
+    // presubmit: allow wstring
+    std::wstring output_pipe_name =
+        command_line->GetSwitchValueNative(kOutputSwitchName);
+
+    // A NULL SECURITY_ATTRIBUTES signifies that the handle can't be inherited.
+    read_file =
+        base::File(CreateFile(input_pipe_name.c_str(), GENERIC_READ, 0, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    if (!read_file.IsValid()) {
+      PLOG(ERROR) << "CreateFile failed on '" << input_pipe_name << "'";
+      return kInitializationFailed;
+    }
+
+    write_file = base::File(CreateFile(output_pipe_name.c_str(), GENERIC_WRITE,
+                                       0, nullptr, OPEN_EXISTING,
+                                       FILE_ATTRIBUTE_NORMAL, nullptr));
+    if (!write_file.IsValid()) {
+      PLOG(ERROR) << "CreateFile failed on '" << output_pipe_name << "'";
+      return kInitializationFailed;
+    }
+  } else {
+    needs_elevation = true;
+
+    // GetStdHandle() returns pseudo-handles for stdin and stdout even if
+    // the hosting executable specifies "Windows" subsystem. However the
+    // returned  handles are invalid in that case unless standard input and
+    // output are redirected to a pipe or file.
+    read_file = base::File(GetStdHandle(STD_INPUT_HANDLE));
+    write_file = base::File(GetStdHandle(STD_OUTPUT_HANDLE));
+
+    // After the native messaging channel starts the native messaging reader
+    // will keep doing blocking read operations on the input named pipe.
+    // If any other thread tries to perform any operation on STDIN, it will also
+    // block because the input named pipe is synchronous (non-overlapped).
+    // It is pretty common for a DLL to query the device info (GetFileType) of
+    // the STD* handles at startup. So any LoadLibrary request can potentially
+    // be blocked. To prevent that from happening we close STDIN and STDOUT
+    // handles as soon as we retrieve the corresponding file handles.
+    SetStdHandle(STD_INPUT_HANDLE, nullptr);
+    SetStdHandle(STD_OUTPUT_HANDLE, nullptr);
+  }
 #elif defined(OS_POSIX)
   // The files are automatically closed.
-  base::File read_file(STDIN_FILENO);
-  base::File write_file(STDOUT_FILENO);
+  read_file = base::File(STDIN_FILENO);
+  write_file = base::File(STDOUT_FILENO);
 #else
 #error Not implemented.
 #endif
@@ -114,24 +166,25 @@ int StartIt2MeNativeMessagingHost() {
   base::MessageLoopForUI message_loop;
   base::RunLoop run_loop;
 
-  scoped_ptr<It2MeHostFactory> factory(new It2MeHostFactory());
+  std::unique_ptr<It2MeHostFactory> factory(new It2MeHostFactory());
 
-  scoped_ptr<NativeMessagingPipe> native_messaging_pipe(
+  std::unique_ptr<NativeMessagingPipe> native_messaging_pipe(
       new NativeMessagingPipe());
 
   // Set up the native messaging channel.
-  scoped_ptr<extensions::NativeMessagingChannel> channel(
-      new PipeMessagingChannel(read_file.Pass(), write_file.Pass()));
+  std::unique_ptr<extensions::NativeMessagingChannel> channel(
+      new PipeMessagingChannel(std::move(read_file), std::move(write_file)));
 
-  scoped_ptr<ChromotingHostContext> context =
+  std::unique_ptr<ChromotingHostContext> context =
       ChromotingHostContext::Create(new remoting::AutoThreadTaskRunner(
           message_loop.task_runner(), run_loop.QuitClosure()));
-  scoped_ptr<extensions::NativeMessageHost> host(
-      new It2MeNativeMessagingHost(context.Pass(), factory.Pass()));
+  std::unique_ptr<extensions::NativeMessageHost> host(
+      new It2MeNativeMessagingHost(needs_elevation, /*policy_service=*/nullptr,
+                                   std::move(context), std::move(factory)));
 
   host->Start(native_messaging_pipe.get());
 
-  native_messaging_pipe->Start(host.Pass(), channel.Pass());
+  native_messaging_pipe->Start(std::move(host), std::move(channel));
 
   // Run the loop until channel is alive.
   run_loop.Run();

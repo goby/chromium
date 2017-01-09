@@ -4,6 +4,7 @@
 
 #include "base/files/file_path.h"
 #include "base/path_service.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
 #include "extensions/browser/component_extension_resource_manager.h"
 #include "extensions/browser/extensions_browser_client.h"
@@ -38,7 +39,7 @@ TEST_F(ChromeComponentExtensionResourceManagerTest,
 
   // Load the manifest data.
   std::string error;
-  scoped_ptr<base::DictionaryValue> manifest(file_util::LoadManifest(
+  std::unique_ptr<base::DictionaryValue> manifest(file_util::LoadManifest(
       test_path, FILE_PATH_LITERAL("app.json"), &error));
   ASSERT_TRUE(manifest.get()) << error;
 

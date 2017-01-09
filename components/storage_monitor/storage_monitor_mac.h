@@ -6,9 +6,12 @@
 #define COMPONENTS_STORAGE_MONITOR_STORAGE_MONITOR_MAC_H_
 
 #include <DiskArbitration/DiskArbitration.h>
+
 #include <map>
+#include <memory>
 
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/storage_monitor/storage_monitor.h"
 
@@ -49,7 +52,7 @@ class StorageMonitorMac : public StorageMonitor,
   static void DiskDisappearedCallback(DADiskRef disk, void* context);
   static void DiskDescriptionChangedCallback(DADiskRef disk,
                                              CFArrayRef keys,
-                                             void *context);
+                                             void* context);
   void GetDiskInfoAndUpdate(DADiskRef disk, UpdateType update_type);
 
   bool ShouldPostNotificationForDisk(const StorageInfo& info) const;
@@ -64,7 +67,7 @@ class StorageMonitorMac : public StorageMonitor,
 
   int pending_disk_updates_;
 
-  scoped_ptr<ImageCaptureDeviceManager> image_capture_device_manager_;
+  std::unique_ptr<ImageCaptureDeviceManager> image_capture_device_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(StorageMonitorMac);
 };

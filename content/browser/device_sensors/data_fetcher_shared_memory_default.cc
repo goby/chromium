@@ -5,7 +5,7 @@
 #include "content/browser/device_sensors/data_fetcher_shared_memory.h"
 
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 
 namespace {
 
@@ -43,12 +43,7 @@ bool SetLightBuffer(content::DeviceLightHardwareBuffer* buffer,
 
 namespace content {
 
-DataFetcherSharedMemory::DataFetcherSharedMemory()
-    : motion_buffer_(nullptr),
-      orientation_buffer_(nullptr),
-      orientation_absolute_buffer_(nullptr),
-      light_buffer_(nullptr) {
-}
+DataFetcherSharedMemory::DataFetcherSharedMemory() {}
 
 DataFetcherSharedMemory::~DataFetcherSharedMemory() {
 }

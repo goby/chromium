@@ -11,7 +11,10 @@ it depends. Based on android_webview/tools/webview_licenses.py.
 
 import optparse
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import textwrap
 
 REPOSITORY_ROOT = os.path.abspath(os.path.join(
@@ -19,6 +22,15 @@ REPOSITORY_ROOT = os.path.abspath(os.path.join(
 
 sys.path.append(os.path.join(REPOSITORY_ROOT, 'tools'))
 import licenses
+
+third_party_dirs = [
+  'base/third_party/libevent',
+  'third_party/ashmem',
+  'third_party/boringssl',
+  'third_party/modp_b64',
+  'third_party/zlib',
+]
+
 
 def _ReadFile(path):
   """Reads a file from disk.
@@ -35,30 +47,43 @@ def GenerateLicense():
   Returns:
     The contents of the LICENSE file.
   """
-  # TODO(mef): Generate list of third_party libraries using checkdeps.
-  third_party_dirs = [
-    "libevent",
-    "ashmem",
-    "zlib",
-    "modp_b64",
-    "boringssl"
-  ]
-
   # Start with Chromium's LICENSE file
   content = [_ReadFile('LICENSE')]
 
   # Add necessary third_party.
   for directory in sorted(third_party_dirs):
-    metadata = licenses.ParseDir("third_party/" + directory, REPOSITORY_ROOT,
+    metadata = licenses.ParseDir(directory, REPOSITORY_ROOT,
                                  require_license_file=True)
-    content.append("-" * 20)
-    content.append(directory)
-    content.append("-" * 20)
+    content.append('-' * 20)
+    content.append(directory.split("/")[-1])
+    content.append('-' * 20)
     license_file = metadata['License File']
     if license_file and license_file != licenses.NOT_SHIPPED:
       content.append(_ReadFile(license_file))
 
   return '\n'.join(content)
+
+
+def FindThirdPartyDeps(gn_path, gn_out_dir):
+  # Generate gn project in temp directory and use it to find dependencies.
+  # Current gn directory cannot ba used because gn doesn't allow recursive
+  # invocations due to potential side effects.
+  try:
+    tmp_dir = tempfile.mkdtemp(dir = gn_out_dir)
+    shutil.copy(gn_out_dir + "/args.gn", tmp_dir)
+    subprocess.check_output([gn_path, "gen", tmp_dir])
+    gn_deps = subprocess.check_output([gn_path, "desc", tmp_dir,
+                                    "//net", "deps", "--as=buildfile", "--all"])
+  finally:
+    if os.path.exists(tmp_dir):
+      shutil.rmtree(tmp_dir)
+
+  third_party_deps = []
+  for build_dep in gn_deps.split():
+    if ("third_party" in build_dep and build_dep.endswith("/BUILD.gn")):
+      third_party_deps.append(build_dep.replace("/BUILD.gn", ""))
+  third_party_deps.sort()
+  return third_party_deps
 
 
 def main():
@@ -70,18 +95,26 @@ def main():
 
   parser = optparse.OptionParser(formatter=FormatterWithNewLines(),
                                  usage='%prog command [options]')
+  parser.add_option('--gn', help='Use gn deps to find third party dependencies',
+                    action='store_true')
+  parser.add_option('--gn-path', default='gn',
+                    help='Path to gn executable (default: %(default)s)')
   parser.description = (__doc__ +
                        '\nCommands:\n' \
                        '  license [filename]\n' \
                        '    Generate Cronet LICENSE to filename or stdout.\n')
-  (_, args) = parser.parse_args()
+  (flags, args) = parser.parse_args()
+
+  if flags.gn:
+    global third_party_dirs
+    third_party_dirs = FindThirdPartyDeps(flags.gn_path, os.getcwd())
+
   if not args:
     parser.print_help()
     return 1
 
   if args[0] == 'license':
     if len(args) > 1:
-      print 'Saving license to %s' % args[1]
       f = open(args[1], "w")
       try:
         f.write(GenerateLicense())

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string.h>
+
 #include "base/files/file_util.h"
 #include "chrome/browser/extensions/api/image_writer_private/destroy_partitions_operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
@@ -24,12 +26,12 @@ DestroyPartitionsOperation::DestroyPartitionsOperation(
 DestroyPartitionsOperation::~DestroyPartitionsOperation() {}
 
 void DestroyPartitionsOperation::StartImpl() {
-  if (!base::CreateTemporaryFileInDir(temp_dir_.path(), &image_path_)) {
+  if (!base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &image_path_)) {
     Error(error::kTempFileError);
     return;
   }
 
-  scoped_ptr<char[]> buffer(new char[kPartitionTableSize]);
+  std::unique_ptr<char[]> buffer(new char[kPartitionTableSize]);
   memset(buffer.get(), 0, kPartitionTableSize);
 
   if (base::WriteFile(image_path_, buffer.get(), kPartitionTableSize) !=

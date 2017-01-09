@@ -6,13 +6,14 @@
 #define CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_NOTIFICATION_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/file_system_provider/notification_manager_interface.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_info.h"
-#include "chrome/browser/extensions/app_icon_loader.h"
+#include "chrome/browser/ui/app_icon_loader.h"
 
 class Profile;
 
@@ -32,7 +33,7 @@ namespace file_system_provider {
 // up to one notification. If more than one request is unresponsive, then
 // all of them will be aborted when clicking on the notification button.
 class NotificationManager : public NotificationManagerInterface,
-                            public extensions::AppIconLoader::Delegate {
+                            public AppIconLoaderDelegate {
  public:
   NotificationManager(Profile* profile,
                       const ProvidedFileSystemInfo& file_system_info);
@@ -50,14 +51,15 @@ class NotificationManager : public NotificationManagerInterface,
   // Invoked when the notification got closed either by user or by system.
   void OnClose();
 
-  // extensions::AppIconLoader::Delegate overrides:
-  void SetAppImage(const std::string& id, const gfx::ImageSkia& image) override;
+  // AppIconLoaderDelegate overrides:
+  void OnAppImageUpdated(const std::string& id,
+                         const gfx::ImageSkia& image) override;
 
  private:
   typedef std::map<int, NotificationCallback> CallbackMap;
 
   // Creates a notification object for the actual state of the manager.
-  scoped_ptr<message_center::Notification> CreateNotification();
+  std::unique_ptr<message_center::Notification> CreateNotification();
 
   // Handles a notification result by calling all registered callbacks and
   // clearing the list.
@@ -66,8 +68,8 @@ class NotificationManager : public NotificationManagerInterface,
   Profile* profile_;
   ProvidedFileSystemInfo file_system_info_;
   CallbackMap callbacks_;
-  scoped_ptr<extensions::AppIconLoader> icon_loader_;
-  scoped_ptr<gfx::Image> extension_icon_;
+  std::unique_ptr<AppIconLoader> icon_loader_;
+  std::unique_ptr<gfx::Image> extension_icon_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationManager);
 };

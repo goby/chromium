@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
 
@@ -93,4 +94,3 @@ class NET_EXPORT_PRIVATE SerialWorker
 }  // namespace net
 
 #endif  // NET_DNS_SERIAL_WORKER_H_
-

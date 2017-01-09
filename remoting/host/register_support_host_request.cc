@@ -4,6 +4,8 @@
 
 #include "remoting/host/register_support_host_request.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
@@ -63,7 +65,7 @@ void RegisterSupportHostRequest::OnSignalStrategyStateChange(
 
     request_ = iq_sender_->SendIq(
         buzz::STR_SET, directory_bot_jid_,
-        CreateRegistrationRequest(signal_strategy_->GetLocalJid()).Pass(),
+        CreateRegistrationRequest(signal_strategy_->GetLocalJid()),
         base::Bind(&RegisterSupportHostRequest::ProcessResponse,
                    base::Unretained(this)));
   } else if (state == SignalStrategy::DISCONNECTED) {
@@ -79,24 +81,24 @@ bool RegisterSupportHostRequest::OnSignalStrategyIncomingStanza(
   return false;
 }
 
-scoped_ptr<XmlElement> RegisterSupportHostRequest::CreateRegistrationRequest(
-    const std::string& jid) {
-  scoped_ptr<XmlElement> query(new XmlElement(
-      QName(kChromotingXmlNamespace, kRegisterQueryTag)));
+std::unique_ptr<XmlElement>
+RegisterSupportHostRequest::CreateRegistrationRequest(const std::string& jid) {
+  std::unique_ptr<XmlElement> query(
+      new XmlElement(QName(kChromotingXmlNamespace, kRegisterQueryTag)));
   XmlElement* public_key = new XmlElement(
       QName(kChromotingXmlNamespace, kPublicKeyTag));
   public_key->AddText(key_pair_->GetPublicKey());
   query->AddElement(public_key);
   query->AddElement(CreateSignature(jid).release());
-  return query.Pass();
+  return query;
 }
 
-scoped_ptr<XmlElement> RegisterSupportHostRequest::CreateSignature(
+std::unique_ptr<XmlElement> RegisterSupportHostRequest::CreateSignature(
     const std::string& jid) {
-  scoped_ptr<XmlElement> signature_tag(new XmlElement(
-      QName(kChromotingXmlNamespace, kSignatureTag)));
+  std::unique_ptr<XmlElement> signature_tag(
+      new XmlElement(QName(kChromotingXmlNamespace, kSignatureTag)));
 
-  int64 time = static_cast<int64>(base::Time::Now().ToDoubleT());
+  int64_t time = static_cast<int64_t>(base::Time::Now().ToDoubleT());
   std::string time_str(base::Int64ToString(time));
   signature_tag->AddAttr(
       QName(kChromotingXmlNamespace, kSignatureTimeAttr), time_str);
@@ -105,7 +107,7 @@ scoped_ptr<XmlElement> RegisterSupportHostRequest::CreateSignature(
   std::string signature(key_pair_->SignMessage(message));
   signature_tag->AddText(signature);
 
-  return signature_tag.Pass();
+  return signature_tag;
 }
 
 void RegisterSupportHostRequest::ParseResponse(const XmlElement* response,

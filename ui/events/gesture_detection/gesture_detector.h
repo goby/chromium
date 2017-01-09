@@ -5,8 +5,10 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_GESTURE_DETECTOR_H_
 #define UI_EVENTS_GESTURE_DETECTION_GESTURE_DETECTOR_H_
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/events/gesture_detection/gesture_detection_export.h"
 #include "ui/events/gesture_detection/velocity_tracker_state.h"
 
@@ -24,6 +26,7 @@ class GESTURE_DETECTION_EXPORT GestureDetector {
  public:
   struct GESTURE_DETECTION_EXPORT Config {
     Config();
+    Config(const Config& other);
     ~Config();
 
     base::TimeDelta longpress_timeout;
@@ -96,6 +99,14 @@ class GESTURE_DETECTION_EXPORT GestureDetector {
   void set_longpress_enabled(bool enabled) { longpress_enabled_ = enabled; }
   void set_showpress_enabled(bool enabled) { showpress_enabled_ = enabled; }
 
+  // Returns the event storing the initial position of the pointer with given
+  // pointer ID. This returns nullptr if the source event isn't
+  // current_down_event_ or secondary_pointer_down_event_.
+  const MotionEvent* GetSourcePointerDownEvent(
+      const MotionEvent& current_down_event,
+      const MotionEvent& secondary_pointer_down_event,
+      const int pointer_id);
+
  private:
   void Init(const Config& config);
   void OnShowPressTimeout();
@@ -107,9 +118,10 @@ class GESTURE_DETECTION_EXPORT GestureDetector {
                      const MotionEvent& first_up,
                      const MotionEvent& second_down) const;
   bool HandleSwipeIfNeeded(const MotionEvent& up, float vx, float vy);
+  bool IsWithinTouchSlop(const MotionEvent& ev);
 
   class TimeoutGestureHandler;
-  scoped_ptr<TimeoutGestureHandler> timeout_handler_;
+  std::unique_ptr<TimeoutGestureHandler> timeout_handler_;
   GestureListener* const listener_;
   DoubleTapListener* double_tap_listener_;
 
@@ -127,13 +139,13 @@ class GESTURE_DETECTION_EXPORT GestureDetector {
 
   bool still_down_;
   bool defer_confirm_single_tap_;
-  bool always_in_tap_region_;
+  bool all_pointers_within_slop_regions_;
   bool always_in_bigger_tap_region_;
   bool two_finger_tap_allowed_for_gesture_;
 
-  scoped_ptr<MotionEvent> current_down_event_;
-  scoped_ptr<MotionEvent> previous_up_event_;
-  scoped_ptr<MotionEvent> secondary_pointer_down_event_;
+  std::unique_ptr<MotionEvent> current_down_event_;
+  std::unique_ptr<MotionEvent> previous_up_event_;
+  std::unique_ptr<MotionEvent> secondary_pointer_down_event_;
 
   // True when the user is still touching for the second tap (down, move, and
   // up events). Can only be true if there is a double tap listener attached.
@@ -144,6 +156,10 @@ class GESTURE_DETECTION_EXPORT GestureDetector {
   // corresponding ACTION_UP yields a valid tap and double-tap detection is
   // disabled.
   bool is_down_candidate_for_repeated_single_tap_;
+
+  // Stores the maximum number of pointers that have been down simultaneously
+  // during the current touch sequence.
+  int maximum_pointer_count_;
 
   // The number of repeated taps in the current sequence, i.e., for the initial
   // tap this is 0, for the first *repeated* tap 1, etc...

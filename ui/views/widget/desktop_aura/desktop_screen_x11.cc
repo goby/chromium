@@ -16,14 +16,17 @@
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/layout.h"
+#include "ui/display/display.h"
+#include "ui/display/display_finder.h"
+#include "ui/display/screen.h"
 #include "ui/display/util/display_util.h"
 #include "ui/display/util/x11/edid_parser_x11.h"
 #include "ui/events/platform/platform_event_source.h"
-#include "ui/gfx/display.h"
+#include "ui/events/platform/x11/x11_event_source.h"
+#include "ui/gfx/font_render_params.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/native_widget_types.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/x/x11_types.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
@@ -32,15 +35,23 @@
 
 namespace {
 
+const char* const kAtomsToCache[] = {
+  "_NET_WORKAREA",
+  nullptr
+};
+
 // The delay to perform configuration after RRNotify.  See the comment
 // in |Dispatch()|.
-const int64 kConfigureDelayMs = 500;
+const int64_t kConfigureDelayMs = 500;
 
 double GetDeviceScaleFactor() {
   float device_scale_factor = 1.0f;
-  if (views::LinuxUI::instance())
+  if (views::LinuxUI::instance()) {
     device_scale_factor =
       views::LinuxUI::instance()->GetDeviceScaleFactor();
+  } else if (display::Display::HasForceDeviceScaleFactor()) {
+    device_scale_factor = display::Display::GetForcedDeviceScaleFactor();
+  }
   return device_scale_factor;
 }
 
@@ -52,7 +63,7 @@ gfx::Point DIPToPixelPoint(const gfx::Point& dip_point) {
   return gfx::ScaleToFlooredPoint(dip_point, GetDeviceScaleFactor());
 }
 
-std::vector<gfx::Display> GetFallbackDisplayList() {
+std::vector<display::Display> GetFallbackDisplayList() {
   ::XDisplay* display = gfx::GetXDisplay();
   ::Screen* screen = DefaultScreenOfDisplay(display);
   int width = WidthOfScreen(screen);
@@ -60,15 +71,15 @@ std::vector<gfx::Display> GetFallbackDisplayList() {
   gfx::Size physical_size(WidthMMOfScreen(screen), HeightMMOfScreen(screen));
 
   gfx::Rect bounds_in_pixels(0, 0, width, height);
-  gfx::Display gfx_display(0, bounds_in_pixels);
-  if (!gfx::Display::HasForceDeviceScaleFactor() &&
-      !ui::IsDisplaySizeBlackListed(physical_size)) {
+  display::Display gfx_display(0, bounds_in_pixels);
+  if (!display::Display::HasForceDeviceScaleFactor() &&
+      !display::IsDisplaySizeBlackListed(physical_size)) {
     const float device_scale_factor = GetDeviceScaleFactor();
     DCHECK_LE(1.0f, device_scale_factor);
     gfx_display.SetScaleAndBounds(device_scale_factor, bounds_in_pixels);
   }
 
-  return std::vector<gfx::Display>(1, gfx_display);
+  return std::vector<display::Display>(1, gfx_display);
 }
 
 }  // namespace
@@ -82,7 +93,9 @@ DesktopScreenX11::DesktopScreenX11()
     : xdisplay_(gfx::GetXDisplay()),
       x_root_window_(DefaultRootWindow(xdisplay_)),
       has_xrandr_(false),
-      xrandr_event_base_(0) {
+      xrandr_event_base_(0),
+      primary_display_index_(0),
+      atom_cache_(xdisplay_, kAtomsToCache) {
   // We only support 1.3+. There were library changes before this and we should
   // use the new interface instead of the 1.2 one.
   int randr_version_major = 0;
@@ -104,9 +117,9 @@ DesktopScreenX11::DesktopScreenX11()
                    RROutputChangeNotifyMask |
                    RRCrtcChangeNotifyMask);
 
-    displays_ = BuildDisplaysFromXRandRInfo();
+    SetDisplaysInternal(BuildDisplaysFromXRandRInfo());
   } else {
-    displays_ = GetFallbackDisplayList();
+    SetDisplaysInternal(GetFallbackDisplayList());
   }
 }
 
@@ -116,31 +129,29 @@ DesktopScreenX11::~DesktopScreenX11() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// DesktopScreenX11, gfx::Screen implementation:
+// DesktopScreenX11, display::Screen implementation:
 
 gfx::Point DesktopScreenX11::GetCursorScreenPoint() {
   TRACE_EVENT0("views", "DesktopScreenX11::GetCursorScreenPoint()");
 
-  XDisplay* display = gfx::GetXDisplay();
+  if (ui::X11EventSource::HasInstance()) {
+    auto point = ui::X11EventSource::GetInstance()
+                     ->GetRootCursorLocationFromCurrentEvent();
+    if (point)
+      return PixelToDIPPoint(point.value());
+  }
 
   ::Window root, child;
   int root_x, root_y, win_x, win_y;
   unsigned int mask;
-  XQueryPointer(display,
-                DefaultRootWindow(display),
-                &root,
-                &child,
-                &root_x,
-                &root_y,
-                &win_x,
-                &win_y,
-                &mask);
+  XQueryPointer(xdisplay_, x_root_window_, &root, &child, &root_x, &root_y,
+                &win_x, &win_y, &mask);
 
   return PixelToDIPPoint(gfx::Point(root_x, root_y));
 }
 
-gfx::NativeWindow DesktopScreenX11::GetWindowUnderCursor() {
-  return GetWindowAtScreenPoint(GetCursorScreenPoint());
+bool DesktopScreenX11::IsWindowUnderCursor(gfx::NativeWindow window) {
+  return GetWindowAtScreenPoint(GetCursorScreenPoint()) == window;
 }
 
 gfx::NativeWindow DesktopScreenX11::GetWindowAtScreenPoint(
@@ -154,11 +165,11 @@ int DesktopScreenX11::GetNumDisplays() const {
   return displays_.size();
 }
 
-std::vector<gfx::Display> DesktopScreenX11::GetAllDisplays() const {
+const std::vector<display::Display>& DesktopScreenX11::GetAllDisplays() const {
   return displays_;
 }
 
-gfx::Display DesktopScreenX11::GetDisplayNearestWindow(
+display::Display DesktopScreenX11::GetDisplayNearestWindow(
     gfx::NativeView window) const {
   if (!window)
     return GetPrimaryDisplay();
@@ -183,22 +194,23 @@ gfx::Display DesktopScreenX11::GetDisplayNearestWindow(
   return GetPrimaryDisplay();
 }
 
-gfx::Display DesktopScreenX11::GetDisplayNearestPoint(
+display::Display DesktopScreenX11::GetDisplayNearestPoint(
     const gfx::Point& point) const {
-  for (std::vector<gfx::Display>::const_iterator it = displays_.begin();
+  if (displays_.size() <= 1)
+    return GetPrimaryDisplay();
+  for (std::vector<display::Display>::const_iterator it = displays_.begin();
        it != displays_.end(); ++it) {
     if (it->bounds().Contains(point))
       return *it;
   }
-
-  return GetPrimaryDisplay();
+  return *FindDisplayNearestPoint(displays_, point);
 }
 
-gfx::Display DesktopScreenX11::GetDisplayMatching(
+display::Display DesktopScreenX11::GetDisplayMatching(
     const gfx::Rect& match_rect) const {
   int max_area = 0;
-  const gfx::Display* matching = NULL;
-  for (std::vector<gfx::Display>::const_iterator it = displays_.begin();
+  const display::Display* matching = NULL;
+  for (std::vector<display::Display>::const_iterator it = displays_.begin();
        it != displays_.end(); ++it) {
     gfx::Rect intersect = gfx::IntersectRects(it->bounds(), match_rect);
     int area = intersect.width() * intersect.height();
@@ -211,28 +223,34 @@ gfx::Display DesktopScreenX11::GetDisplayMatching(
   return matching ? *matching : GetPrimaryDisplay();
 }
 
-gfx::Display DesktopScreenX11::GetPrimaryDisplay() const {
-  return displays_.front();
+display::Display DesktopScreenX11::GetPrimaryDisplay() const {
+  DCHECK(!displays_.empty());
+  return displays_[primary_display_index_];
 }
 
-void DesktopScreenX11::AddObserver(gfx::DisplayObserver* observer) {
+void DesktopScreenX11::AddObserver(display::DisplayObserver* observer) {
   change_notifier_.AddObserver(observer);
 }
 
-void DesktopScreenX11::RemoveObserver(gfx::DisplayObserver* observer) {
+void DesktopScreenX11::RemoveObserver(display::DisplayObserver* observer) {
   change_notifier_.RemoveObserver(observer);
 }
 
 bool DesktopScreenX11::CanDispatchEvent(const ui::PlatformEvent& event) {
   return event->type - xrandr_event_base_ == RRScreenChangeNotify ||
-         event->type - xrandr_event_base_ == RRNotify;
+         event->type - xrandr_event_base_ == RRNotify ||
+         (event->type == PropertyNotify &&
+          event->xproperty.window == x_root_window_ &&
+          event->xproperty.atom == atom_cache_.GetAtom("_NET_WORKAREA"));
 }
 
 uint32_t DesktopScreenX11::DispatchEvent(const ui::PlatformEvent& event) {
   if (event->type - xrandr_event_base_ == RRScreenChangeNotify) {
     // Pass the event through to xlib.
     XRRUpdateConfiguration(event);
-  } else if (event->type - xrandr_event_base_ == RRNotify) {
+  } else if (event->type - xrandr_event_base_ == RRNotify ||
+             (event->type == PropertyNotify &&
+              event->xproperty.atom == atom_cache_.GetAtom("_NET_WORKAREA"))) {
     // There's some sort of observer dispatch going on here, but I don't think
     // it's the screen's?
     if (configure_timer_.get() && configure_timer_->IsRunning()) {
@@ -252,20 +270,28 @@ uint32_t DesktopScreenX11::DispatchEvent(const ui::PlatformEvent& event) {
   return ui::POST_DISPATCH_NONE;
 }
 
+// static
+void DesktopScreenX11::UpdateDeviceScaleFactorForTest() {
+  DesktopScreenX11* screen =
+      static_cast<DesktopScreenX11*>(display::Screen::GetScreen());
+  screen->ConfigureTimerFired();
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // DesktopScreenX11, private:
 
 DesktopScreenX11::DesktopScreenX11(
-    const std::vector<gfx::Display>& test_displays)
+    const std::vector<display::Display>& test_displays)
     : xdisplay_(gfx::GetXDisplay()),
       x_root_window_(DefaultRootWindow(xdisplay_)),
       has_xrandr_(false),
       xrandr_event_base_(0),
-      displays_(test_displays) {
-}
+      displays_(test_displays),
+      primary_display_index_(0),
+      atom_cache_(xdisplay_, kAtomsToCache) {}
 
-std::vector<gfx::Display> DesktopScreenX11::BuildDisplaysFromXRandRInfo() {
-  std::vector<gfx::Display> displays;
+std::vector<display::Display> DesktopScreenX11::BuildDisplaysFromXRandRInfo() {
+  std::vector<display::Display> displays;
   gfx::XScopedPtr<
       XRRScreenResources,
       gfx::XObjectDeleter<XRRScreenResources, void, XRRFreeScreenResources>>
@@ -274,6 +300,9 @@ std::vector<gfx::Display> DesktopScreenX11::BuildDisplaysFromXRandRInfo() {
     LOG(ERROR) << "XRandR returned no displays. Falling back to Root Window.";
     return GetFallbackDisplayList();
   }
+
+  primary_display_index_ = 0;
+  RROutput primary_display_id = XRRGetOutputPrimary(xdisplay_, x_root_window_);
 
   bool has_work_area = false;
   gfx::Rect work_area_in_pixels;
@@ -297,28 +326,33 @@ std::vector<gfx::Display> DesktopScreenX11::BuildDisplaysFromXRandRInfo() {
     if (!is_connected)
       continue;
 
+    bool is_primary_display = output_id == primary_display_id;
+
     if (output_info->crtc) {
       gfx::XScopedPtr<XRRCrtcInfo,
                       gfx::XObjectDeleter<XRRCrtcInfo, void, XRRFreeCrtcInfo>>
           crtc(XRRGetCrtcInfo(xdisplay_, resources.get(), output_info->crtc));
 
-      int64 display_id = -1;
-      if (!ui::GetDisplayId(output_id, static_cast<uint8>(i), &display_id)) {
+      int64_t display_id = -1;
+      if (!display::EDIDParserX11(output_id).GetDisplayId(
+              static_cast<uint8_t>(i), &display_id)) {
         // It isn't ideal, but if we can't parse the EDID data, fallback on the
         // display number.
         display_id = i;
       }
 
       gfx::Rect crtc_bounds(crtc->x, crtc->y, crtc->width, crtc->height);
-      gfx::Display display(display_id, crtc_bounds);
+      display::Display display(display_id, crtc_bounds);
 
-      if (!gfx::Display::HasForceDeviceScaleFactor()) {
+      if (!display::Display::HasForceDeviceScaleFactor()) {
         display.SetScaleAndBounds(device_scale_factor, crtc_bounds);
       }
 
       if (has_work_area) {
         gfx::Rect intersection_in_pixels = crtc_bounds;
-        intersection_in_pixels.Intersect(work_area_in_pixels);
+        if (is_primary_display) {
+          intersection_in_pixels.Intersect(work_area_in_pixels);
+        }
         // SetScaleAndBounds() above does the conversion from pixels to DIP for
         // us, but set_work_area does not, so we need to do it here.
         display.set_work_area(gfx::Rect(
@@ -330,18 +364,21 @@ std::vector<gfx::Display> DesktopScreenX11::BuildDisplaysFromXRandRInfo() {
 
       switch (crtc->rotation) {
         case RR_Rotate_0:
-          display.set_rotation(gfx::Display::ROTATE_0);
+          display.set_rotation(display::Display::ROTATE_0);
           break;
         case RR_Rotate_90:
-          display.set_rotation(gfx::Display::ROTATE_90);
+          display.set_rotation(display::Display::ROTATE_90);
           break;
         case RR_Rotate_180:
-          display.set_rotation(gfx::Display::ROTATE_180);
+          display.set_rotation(display::Display::ROTATE_180);
           break;
         case RR_Rotate_270:
-          display.set_rotation(gfx::Display::ROTATE_270);
+          display.set_rotation(display::Display::ROTATE_270);
           break;
       }
+
+      if (is_primary_display)
+        primary_display_index_ = displays.size();
 
       displays.push_back(display);
     }
@@ -354,15 +391,21 @@ std::vector<gfx::Display> DesktopScreenX11::BuildDisplaysFromXRandRInfo() {
 }
 
 void DesktopScreenX11::ConfigureTimerFired() {
-  std::vector<gfx::Display> old_displays = displays_;
-  displays_ = BuildDisplaysFromXRandRInfo();
-
+  std::vector<display::Display> old_displays = displays_;
+  SetDisplaysInternal(BuildDisplaysFromXRandRInfo());
   change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
+}
+
+void DesktopScreenX11::SetDisplaysInternal(
+    const std::vector<display::Display>& displays) {
+  displays_ = displays;
+  gfx::SetFontRenderParamsDeviceScaleFactor(
+      GetPrimaryDisplay().device_scale_factor());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-gfx::Screen* CreateDesktopScreen() {
+display::Screen* CreateDesktopScreen() {
   return new DesktopScreenX11;
 }
 

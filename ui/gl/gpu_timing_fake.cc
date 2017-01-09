@@ -8,7 +8,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_mock.h"
 
-namespace gfx {
+namespace gl {
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -16,6 +16,9 @@ using ::testing::AtMost;
 using ::testing::Exactly;
 using ::testing::Invoke;
 using ::testing::NotNull;
+using ::testing::DoAll;
+using ::testing::Return;
+using ::testing::SetArgPointee;
 
 int64_t GPUTimingFake::fake_cpu_time_ = 0;
 
@@ -75,11 +78,13 @@ void GPUTimingFake::ExpectNoDisjointCalls(MockGLInterface& gl) {
   EXPECT_CALL(gl, GetIntegerv(GL_GPU_DISJOINT_EXT, _)).Times(Exactly(0));
 }
 
-void GPUTimingFake::ExpectGPUTimeStampQuery(
-    MockGLInterface& gl, bool elapsed_query) {
+void GPUTimingFake::ExpectGPUTimeStampQuery(MockGLInterface& gl,
+                                            bool elapsed_query) {
   EXPECT_CALL(gl, GenQueries(1, NotNull())).Times(Exactly(1))
       .WillRepeatedly(Invoke(this, &GPUTimingFake::FakeGLGenQueries));
 
+  EXPECT_CALL(gl, GetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, NotNull()))
+      .WillRepeatedly(DoAll(SetArgPointee<2>(64), Return()));
   if (!elapsed_query) {
     // Time Stamp based queries.
     EXPECT_CALL(gl, GetInteger64v(GL_TIMESTAMP, _))
@@ -121,6 +126,9 @@ void GPUTimingFake::ExpectGPUTimerQuery(
 
   if (!elapsed_query) {
     // Time Stamp based queries.
+    EXPECT_CALL(gl, GetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, NotNull()))
+        .WillRepeatedly(DoAll(SetArgPointee<2>(64), Return()));
+
     EXPECT_CALL(gl, GetInteger64v(GL_TIMESTAMP, _))
         .WillRepeatedly(
             Invoke(this, &GPUTimingFake::FakeGLGetInteger64v));
@@ -287,4 +295,4 @@ GLenum GPUTimingFake::FakeGLGetError() {
   return GL_NO_ERROR;
 }
 
-}  // namespace gfx
+}  // namespace gl

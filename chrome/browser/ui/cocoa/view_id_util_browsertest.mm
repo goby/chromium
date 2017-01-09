@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/devtools/devtools_window_testing.h"
@@ -21,13 +19,14 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
+#include "components/prefs/pref_service.h"
 #include "extensions/common/switches.h"
 
 using bookmarks::BookmarkModel;
 using content::OpenURLParams;
 using content::Referrer;
 
-// Basic sanity check of ViewID use on the mac.
+// Basic sanity check of ViewID use on the Mac.
 class ViewIDTest : public InProcessBrowserTest {
  public:
   ViewIDTest() : root_window_(nil) {
@@ -57,7 +56,7 @@ class ViewIDTest : public InProcessBrowserTest {
 
     // Create a bookmark to test VIEW_ID_BOOKMARK_BAR_ELEMENT
     BookmarkModel* bookmark_model =
-        BookmarkModelFactory::GetForProfile(browser()->profile());
+        BookmarkModelFactory::GetForBrowserContext(browser()->profile());
     if (bookmark_model) {
       if (!bookmark_model->loaded())
         bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
@@ -69,13 +68,18 @@ class ViewIDTest : public InProcessBrowserTest {
 
     for (int i = VIEW_ID_TOOLBAR; i < VIEW_ID_PREDEFINED_COUNT; ++i) {
       // Mac implementation does not support following ids yet.
+      // TODO(palmer): crbug.com/536257: Enable VIEW_ID_LOCATION_ICON.
       if (i == VIEW_ID_STAR_BUTTON ||
           i == VIEW_ID_CONTENTS_SPLIT ||
           i == VIEW_ID_BROWSER_ACTION ||
           i == VIEW_ID_FEEDBACK_BUTTON ||
           i == VIEW_ID_SCRIPT_BUBBLE ||
           i == VIEW_ID_SAVE_CREDIT_CARD_BUTTON ||
-          i == VIEW_ID_TRANSLATE_BUTTON) {
+          i == VIEW_ID_TRANSLATE_BUTTON ||
+          i == VIEW_ID_LOCATION_ICON ||
+          i == VIEW_ID_FIND_IN_PAGE_PREVIOUS_BUTTON ||
+          i == VIEW_ID_FIND_IN_PAGE_NEXT_BUTTON ||
+          i == VIEW_ID_FIND_IN_PAGE_CLOSE_BUTTON) {
         continue;
       }
 
@@ -100,8 +104,7 @@ IN_PROC_BROWSER_TEST_F(ViewIDTest, Basic) {
 // Flaky on Mac: http://crbug.com/90557.
 IN_PROC_BROWSER_TEST_F(ViewIDTest, DISABLED_Fullscreen) {
   browser()->exclusive_access_manager()->context()->EnterFullscreen(
-      GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_BROWSER_FULLSCREEN_EXIT_INSTRUCTION,
-      false);
+      GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_BROWSER_FULLSCREEN_EXIT_INSTRUCTION);
   ASSERT_NO_FATAL_FAILURE(DoTest());
 }
 
@@ -112,21 +115,17 @@ IN_PROC_BROWSER_TEST_F(ViewIDTest, Tab) {
   // Open 9 new tabs.
   for (int i = 1; i <= 9; ++i) {
     CheckViewID(static_cast<ViewID>(VIEW_ID_TAB_0 + i), false);
-    browser()->OpenURL(OpenURLParams(GURL(url::kAboutBlankURL),
-                                     Referrer(),
-                                     NEW_BACKGROUND_TAB,
-                                     ui::PAGE_TRANSITION_TYPED,
-                                     false));
+    browser()->OpenURL(OpenURLParams(GURL(url::kAboutBlankURL), Referrer(),
+                                     WindowOpenDisposition::NEW_BACKGROUND_TAB,
+                                     ui::PAGE_TRANSITION_TYPED, false));
     CheckViewID(static_cast<ViewID>(VIEW_ID_TAB_0 + i), true);
     // VIEW_ID_TAB_LAST should always be available.
     CheckViewID(VIEW_ID_TAB_LAST, true);
   }
 
   // Open the 11th tab.
-  browser()->OpenURL(OpenURLParams(GURL(url::kAboutBlankURL),
-                                   Referrer(),
-                                   NEW_BACKGROUND_TAB,
-                                   ui::PAGE_TRANSITION_TYPED,
-                                   false));
+  browser()->OpenURL(OpenURLParams(GURL(url::kAboutBlankURL), Referrer(),
+                                   WindowOpenDisposition::NEW_BACKGROUND_TAB,
+                                   ui::PAGE_TRANSITION_TYPED, false));
   CheckViewID(VIEW_ID_TAB_LAST, true);
 }

@@ -9,28 +9,26 @@
 #include <string>
 #include <vector>
 
-#include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/lock.h"
-#include "base/timer/timer.h"
-#include "content/public/browser/utility_process_host.h"
-#include "content/public/browser/utility_process_host_client.h"
 
 class SkBitmap;
 
-// This is a helper class for decoding images safely in a utility process. To
+// This is a helper class for decoding images safely in a sandboxed service. To
 // use this, call ImageDecoder::Start(...) or
 // ImageDecoder::StartWithOptions(...) on any thread.
 //
-// Internally, most of the work happens on the IO thread, and then
-// the callback (ImageRequest::OnImageDecoded or
-// ImageRequest::OnDecodeImageFailed) is posted back to the |task_runner_|
-// associated with the ImageRequest.
-// The Cancel() method runs on whichever thread called it. |map_lock_| is used
-// to protect the data that is accessed from multiple threads.
-class ImageDecoder : public content::UtilityProcessHostClient {
+// ImageRequest::OnImageDecoded or ImageRequest::OnDecodeImageFailed is posted
+// back to the |task_runner_| associated with the ImageRequest.
+//
+// The Cancel() method runs on whichever thread called it.
+//
+// TODO(rockot): Use of this class should be replaced with direct image_decoder
+// client library usage.
+class ImageDecoder {
  public:
   // ImageRequest objects needs to be created and destroyed on the same
   // SequencedTaskRunner.
@@ -48,8 +46,9 @@ class ImageDecoder : public content::UtilityProcessHostClient {
     }
 
    protected:
-    // Creates an ImageRequest that runs on the thread creating it.
+    // Creates an ImageRequest that runs on the thread which created it.
     ImageRequest();
+
     // Explicitly pass in |task_runner| if the current thread is part of a
     // thread pool.
     explicit ImageRequest(
@@ -68,16 +67,28 @@ class ImageDecoder : public content::UtilityProcessHostClient {
     DEFAULT_CODEC = 0,  // Uses WebKit image decoding (via WebImage).
 #if defined(OS_CHROMEOS)
     ROBUST_JPEG_CODEC,  // Restrict decoding to robust jpeg codec.
+    ROBUST_PNG_CODEC,  // Restrict decoding to robust PNG codec.
 #endif  // defined(OS_CHROMEOS)
   };
 
+  ImageDecoder();
+  ~ImageDecoder();
+
   // Calls StartWithOptions() with ImageCodec::DEFAULT_CODEC and
   // shrink_to_fit = false.
+  static void Start(ImageRequest* image_request,
+                    std::vector<uint8_t> image_data);
+  // Deprecated. Use std::vector<uint8_t> version to avoid an extra copy.
   static void Start(ImageRequest* image_request,
                     const std::string& image_data);
 
   // Starts asynchronous image decoding. Once finished, the callback will be
   // posted back to image_request's |task_runner_|.
+  static void StartWithOptions(ImageRequest* image_request,
+                               std::vector<uint8_t> image_data,
+                               ImageCodec image_codec,
+                               bool shrink_to_fit);
+  // Deprecated. Use std::vector<uint8_t> version to avoid an extra copy.
   static void StartWithOptions(ImageRequest* image_request,
                                const std::string& image_data,
                                ImageCodec image_codec,
@@ -88,53 +99,18 @@ class ImageDecoder : public content::UtilityProcessHostClient {
   static void Cancel(ImageRequest* image_request);
 
  private:
-  friend struct base::DefaultLazyInstanceTraits<ImageDecoder>;
-
   using RequestMap = std::map<int, ImageRequest*>;
 
-  ImageDecoder();
-  // It's a reference counted object, so destructor is private.
-  ~ImageDecoder() override;
-
-  // Sends a request to the sandboxed process to decode the image. Starts
-  // batch mode if necessary. If the utility process fails to start,
-  // an OnDecodeImageFailed task is posted to image_request's |task_runner_|.
-  void DecodeImageInSandbox(int request_id,
-                            const std::vector<unsigned char>& image_data,
-                            ImageCodec image_codec,
-                            bool shrink_to_fit);
-
   void StartWithOptionsImpl(ImageRequest* image_request,
-                            const std::string& image_data,
+                            std::vector<uint8_t> image_data,
                             ImageCodec image_codec,
                             bool shrink_to_fit);
+
   void CancelImpl(ImageRequest* image_request);
-
-  // Starts UtilityProcessHost in batch mode and starts |batch_mode_timer_|.
-  // If the utility process fails to start, the method resets
-  // |utility_process_host_| and returns.
-  void StartBatchMode();
-
-  // Stops batch mode if no requests have come in since
-  // |kBatchModeTimeoutSeconds|.
-  void StopBatchMode();
-
-  // Fails all outstanding requests.
-  void FailAllRequests();
-
-  // Overidden from UtilityProcessHostClient.
-  void OnProcessCrashed(int exit_code) override;
-  void OnProcessLaunchFailed() override;
-  bool OnMessageReceived(const IPC::Message& message) override;
 
   // IPC message handlers.
   void OnDecodeImageSucceeded(const SkBitmap& decoded_image, int request_id);
   void OnDecodeImageFailed(int request_id);
-
-  // For the ImageRequest identified by |request_id|, call its OnImageDecoded()
-  // or OnDecodeImageFailed() method on its task runner thread.
-  void RunOnImageDecoded(const SkBitmap& decoded_image, int request_id);
-  void RunOnDecodeImageFailed(int request_id);
 
   // id to use for the next Start() request that comes in.
   int image_request_id_counter_;
@@ -144,13 +120,6 @@ class ImageDecoder : public content::UtilityProcessHostClient {
 
   // Protects |image_request_id_map_| and |image_request_id_counter_|.
   base::Lock map_lock_;
-
-  // The UtilityProcessHost requests are sent to.
-  base::WeakPtr<content::UtilityProcessHost> utility_process_host_;
-
-  // Calls StopBatchMode() after |kBatchModeTimeoutSeconds| have elapsed,
-  // unless a new decoding request resets the timer.
-  scoped_ptr<base::DelayTimer> batch_mode_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageDecoder);
 };

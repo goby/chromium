@@ -5,19 +5,33 @@
 #ifndef CONTENT_PUBLIC_BROWSER_BROWSER_CONTEXT_H_
 #define CONTENT_PUBLIC_BROWSER_BROWSER_CONTEXT_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <map>
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/linked_ptr.h"
+#include "base/memory/scoped_vector.h"
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/zoom_level_delegate.h"
+#include "content/public/common/push_event_payload.h"
 #include "content/public/common/push_messaging_status.h"
+#include "net/url_request/url_request_interceptor.h"
+#include "net/url_request/url_request_job_factory.h"
 
 class GURL;
 
 namespace base {
 class FilePath;
 class Time;
+}
+
+namespace service_manager {
+class Connector;
 }
 
 namespace storage {
@@ -39,13 +53,23 @@ class BlobHandle;
 class BrowserPluginGuestManager;
 class DownloadManager;
 class DownloadManagerDelegate;
-class IndexedDBContext;
 class PermissionManager;
 class PushMessagingService;
 class ResourceContext;
+class ServiceManagerConnection;
 class SiteInstance;
 class StoragePartition;
 class SSLHostStateDelegate;
+
+// A mapping from the scheme name to the protocol handler that services its
+// content.
+typedef std::map<
+  std::string, linked_ptr<net::URLRequestJobFactory::ProtocolHandler> >
+    ProtocolHandlerMap;
+
+// A scoped vector of protocol interceptors.
+typedef ScopedVector<net::URLRequestInterceptor>
+    URLRequestInterceptorScopedVector;
 
 // This class holds the context needed for a browsing session.
 // It lives on the UI thread. All these methods must only be called on the UI
@@ -76,15 +100,13 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // ownership of the pointer.
   static void GarbageCollectStoragePartitions(
       BrowserContext* browser_context,
-      scoped_ptr<base::hash_set<base::FilePath> > active_paths,
+      std::unique_ptr<base::hash_set<base::FilePath>> active_paths,
       const base::Closure& done);
 
-  // DON'T USE THIS. GetDefaultStoragePartition() is going away.
-  // Use GetStoragePartition() instead. Ask ajwong@ if you have problems.
   static content::StoragePartition* GetDefaultStoragePartition(
       BrowserContext* browser_context);
 
-  typedef base::Callback<void(scoped_ptr<BlobHandle>)> BlobCallback;
+  typedef base::Callback<void(std::unique_ptr<BlobHandle>)> BlobCallback;
 
   // |callback| returns a nullptr scoped_ptr on failure.
   static void CreateMemoryBackedBlob(BrowserContext* browser_context,
@@ -104,8 +126,8 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   static void DeliverPushMessage(
       BrowserContext* browser_context,
       const GURL& origin,
-      int64 service_worker_registration_id,
-      const std::string& data,
+      int64_t service_worker_registration_id,
+      const PushEventPayload& payload,
       const base::Callback<void(PushDeliveryStatus)>& callback);
 
   static void NotifyWillBeDestroyed(BrowserContext* browser_context);
@@ -124,11 +146,42 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   static void SetDownloadManagerForTesting(BrowserContext* browser_context,
                                            DownloadManager* download_manager);
 
+  // Makes the Service Manager aware of this BrowserContext, and assigns a user
+  // ID number to it. Should be called for each BrowserContext created.
+  static void Initialize(BrowserContext* browser_context,
+                         const base::FilePath& path);
+
+  // Returns a Service User ID associated with this BrowserContext. This ID is
+  // not persistent across runs. See
+  // services/service_manager/public/interfaces/connector.mojom. By default,
+  // this user id is randomly generated when Initialize() is called.
+  static const std::string& GetServiceUserIdFor(
+      BrowserContext* browser_context);
+
+  // Returns the BrowserContext associated with |user_id|, or nullptr if no
+  // BrowserContext exists for that |user_id|.
+  static BrowserContext* GetBrowserContextForServiceUserId(
+      const std::string& user_id);
+
+  // Returns a Connector associated with this BrowserContext, which can be used
+  // to connect to service instances bound as this user.
+  static service_manager::Connector* GetConnectorFor(
+      BrowserContext* browser_context);
+  static ServiceManagerConnection* GetServiceManagerConnectionFor(
+      BrowserContext* browser_context);
+
   ~BrowserContext() override;
+
+  // Shuts down the storage partitions associated to this browser context.
+  // This must be called before the browser context is actually destroyed
+  // and before a clean-up task for its corresponding IO thread residents (e.g.
+  // ResourceContext) is posted, so that the classes that hung on
+  // StoragePartition can have time to do necessary cleanups on IO thread.
+  void ShutdownStoragePartitions();
 
   // Creates a delegate to initialize a HostZoomMap and persist its information.
   // This is called during creation of each StoragePartition.
-  virtual scoped_ptr<ZoomLevelDelegate> CreateZoomLevelDelegate(
+  virtual std::unique_ptr<ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) = 0;
 
   // Returns the path of the directory where this context's data is stored.
@@ -136,33 +189,6 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
 
   // Return whether this context is incognito. Default is false.
   virtual bool IsOffTheRecord() const = 0;
-
-  // Returns the request context information associated with this context.  Call
-  // this only on the UI thread, since it can send notifications that should
-  // happen on the UI thread.
-  // TODO(creis): Remove this version in favor of the one below.
-  virtual net::URLRequestContextGetter* GetRequestContext() = 0;
-
-  // Returns the request context appropriate for the given renderer. If the
-  // renderer process doesn't have an associated installed app, or if the
-  // installed app doesn't have isolated storage, this is equivalent to calling
-  // GetRequestContext().
-  virtual net::URLRequestContextGetter* GetRequestContextForRenderProcess(
-      int renderer_child_id) = 0;
-
-  // Returns the default request context for media resources associated with
-  // this context.
-  // TODO(creis): Remove this version in favor of the one below.
-  virtual net::URLRequestContextGetter* GetMediaRequestContext() = 0;
-
-  // Returns the request context for media resources associated with this
-  // context and renderer process.
-  virtual net::URLRequestContextGetter* GetMediaRequestContextForRenderProcess(
-      int renderer_child_id) = 0;
-  virtual net::URLRequestContextGetter*
-      GetMediaRequestContextForStoragePartition(
-          const base::FilePath& partition_path,
-          bool in_memory) = 0;
 
   // Returns the resource context.
   virtual ResourceContext* GetResourceContext() = 0;
@@ -194,6 +220,30 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // Returns the BackgroundSyncController associated with that context if any,
   // nullptr otherwise.
   virtual BackgroundSyncController* GetBackgroundSyncController() = 0;
+
+  // Creates the main net::URLRequestContextGetter. It's called only once.
+  virtual net::URLRequestContextGetter* CreateRequestContext(
+      ProtocolHandlerMap* protocol_handlers,
+      URLRequestInterceptorScopedVector request_interceptors) = 0;
+
+  // Creates the net::URLRequestContextGetter for a StoragePartition. It's
+  // called only once per partition_path.
+  virtual net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory,
+      ProtocolHandlerMap* protocol_handlers,
+      URLRequestInterceptorScopedVector request_interceptors) = 0;
+
+  // Creates the main net::URLRequestContextGetter for media resources. It's
+  // called only once.
+  virtual net::URLRequestContextGetter* CreateMediaRequestContext() = 0;
+
+  // Creates the media net::URLRequestContextGetter for a StoragePartition. It's
+  // called only once per partition_path.
+  virtual net::URLRequestContextGetter*
+      CreateMediaRequestContextForStoragePartition(
+          const base::FilePath& partition_path,
+          bool in_memory) = 0;
 };
 
 }  // namespace content

@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_NACL_BROWSER_PNACL_HOST_H_
 #define COMPONENTS_NACL_BROWSER_PNACL_HOST_H_
 
-#include <map>
+#include <stddef.h>
 
-#include "base/callback_forward.h"
+#include <map>
+#include <memory>
+
+#include "base/callback.h"
 #include "base/files/file.h"
-#include "base/memory/singleton.h"
-#include "base/memory/weak_ptr.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "components/nacl/browser/nacl_file_host.h"
 #include "components/nacl/common/pnacl_types.h"
@@ -34,10 +36,17 @@ class PnaclHost {
   typedef base::Callback<void(base::File)> TempFileCallback;
   typedef base::Callback<void(const base::File&, bool is_hit)> NexeFdCallback;
 
+  // Gets the PnaclHost singleton instance (creating it if necessary).
+  // PnaclHost is a singleton because there is only one translation cache, and
+  // so that the BrowsingDataRemover can clear it even if no translation has
+  // ever been started.
   static PnaclHost* GetInstance();
 
-  PnaclHost();
-  ~PnaclHost();
+  // The PnaclHost instance is intentionally leaked on shutdown. DeInitIfSafe()
+  // attempts to cleanup |disk_cache_| earlier, but if it fails to do so in
+  // time, it will be too late when AtExitManager kicks in anway so subscribing
+  // to it is useless.
+  ~PnaclHost() = delete;
 
   // Initialize cache backend. GetNexeFd will also initialize the backend if
   // necessary, but calling Init ahead of time will minimize the latency.
@@ -62,8 +71,8 @@ class PnaclHost {
   // TranslationFinished after it finishes translation to allow the nexe to be
   // stored in the cache.
   // The returned temp fd may be closed at any time by PnaclHost, so it should
-  // be duplicated (e.g. with IPC::GetFileHandleForProcess) before the callback
-  // returns.
+  // be duplicated (e.g. with IPC::GetPlatformFileForTransit) before the
+  // callback returns.
   // If |is_incognito| is true, the nexe will not be stored
   // in the cache, but the renderer is still expected to call
   // TranslationFinished.
@@ -95,16 +104,15 @@ class PnaclHost {
                                            const base::Closure& callback);
 
   // Return the number of tracked translations or FD requests currently pending.
-  size_t pending_translations() { return pending_translations_.size(); }
+  size_t pending_translations() {
+    DCHECK(thread_checker_.CalledOnValidThread());
+    return pending_translations_.size();
+  }
 
  private:
-  // PnaclHost is a singleton because there is only one translation cache, and
-  // so that the BrowsingDataRemover can clear it even if no translation has
-  // ever been started.
-  friend struct base::DefaultSingletonTraits<PnaclHost>;
   friend class FileProxy;
-  friend class pnacl::PnaclHostTest;
-  friend class pnacl::PnaclHostTestDisk;
+  friend class PnaclHostTest;
+  friend class PnaclHostTestDisk;
   enum CacheState {
     CacheUninitialized,
     CacheInitializing,
@@ -113,6 +121,7 @@ class PnaclHost {
   class PendingTranslation {
    public:
     PendingTranslation();
+    PendingTranslation(const PendingTranslation& other);
     ~PendingTranslation();
     base::ProcessHandle process_handle;
     int render_view_id;
@@ -129,6 +138,9 @@ class PnaclHost {
 
   typedef std::pair<int, int> TranslationID;
   typedef std::map<TranslationID, PendingTranslation> PendingTranslationMap;
+
+  PnaclHost();
+
   static bool TranslationMayBeCached(
       const PendingTranslationMap::iterator& entry);
 
@@ -150,7 +162,7 @@ class PnaclHost {
   // GetNexeFd miss path
   void ReturnMiss(const PendingTranslationMap::iterator& entry);
   static scoped_refptr<net::DrainableIOBuffer> CopyFileToBuffer(
-      scoped_ptr<base::File> file);
+      std::unique_ptr<base::File> file);
   void StoreTranslatedNexe(TranslationID id,
                            scoped_refptr<net::DrainableIOBuffer>);
   void OnTranslatedNexeStored(const TranslationID& id, int net_error);
@@ -158,7 +170,7 @@ class PnaclHost {
 
   // GetNexeFd hit path
   void OnBufferCopiedToTempFile(const TranslationID& id,
-                                scoped_ptr<base::File> file,
+                                std::unique_ptr<base::File> file,
                                 int file_error);
 
   void OnEntriesDoomed(const base::Closure& callback, int net_error);
@@ -167,13 +179,12 @@ class PnaclHost {
 
   // Operations which are pending with the cache backend, which we should
   // wait for before destroying it (see comment on DeInitIfSafe).
-  int pending_backend_operations_;
-  CacheState cache_state_;
+  int pending_backend_operations_ = 0;
+  CacheState cache_state_ = CacheUninitialized;
   base::FilePath temp_dir_;
-  scoped_ptr<pnacl::PnaclTranslationCache> disk_cache_;
+  std::unique_ptr<PnaclTranslationCache> disk_cache_;
   PendingTranslationMap pending_translations_;
   base::ThreadChecker thread_checker_;
-  base::WeakPtrFactory<PnaclHost> weak_factory_;
   DISALLOW_COPY_AND_ASSIGN(PnaclHost);
 };
 

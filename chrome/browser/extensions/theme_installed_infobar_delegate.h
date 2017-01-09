@@ -13,7 +13,6 @@
 #include "content/public/browser/notification_registrar.h"
 
 class ExtensionService;
-class InfoBarService;
 class Profile;
 class ThemeService;
 
@@ -43,7 +42,7 @@ class ThemeInstalledInfoBarDelegate : public ConfirmInfoBarDelegate,
 
   // ConfirmInfoBarDelegate:
   Type GetInfoBarType() const override;
-  int GetIconId() const override;
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   gfx::VectorIconId GetVectorIconId() const override;
   ThemeInstalledInfoBarDelegate* AsThemePreviewInfobarDelegate() override;
   base::string16 GetMessageText() const override;

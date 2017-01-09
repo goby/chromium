@@ -5,18 +5,18 @@
 #ifndef CHROME_BROWSER_APPS_APP_SHIM_APP_SHIM_HOST_MAC_H_
 #define CHROME_BROWSER_APPS_APP_SHIM_APP_SHIM_HOST_MAC_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "chrome/browser/apps/app_shim/app_shim_handler_mac.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 
 namespace IPC {
-struct ChannelHandle;
 class ChannelProxy;
 class Message;
 }  // namespace IPC
@@ -36,7 +36,7 @@ class AppShimHost : public IPC::Listener,
   // Creates a new server-side IPC channel at |handle|, which should contain a
   // file descriptor of a channel created by an UnixDomainSocketAcceptor,
   // and begins listening for messages on it.
-  void ServeChannel(const IPC::ChannelHandle& handle);
+  void ServeChannel(mojo::edk::ScopedPlatformHandle handle);
 
  protected:
   // IPC::Listener implementation.
@@ -77,7 +77,7 @@ class AppShimHost : public IPC::Listener,
   // Closes the channel and destroys the AppShimHost.
   void Close();
 
-  scoped_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<IPC::ChannelProxy> channel_;
   std::string app_id_;
   base::FilePath profile_path_;
   bool initial_launch_finished_;

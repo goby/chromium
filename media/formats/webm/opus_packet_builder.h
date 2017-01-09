@@ -5,9 +5,12 @@
 #ifndef MEDIA_FORMATS_WEBM_OPUS_PACKET_BUILDER_H_
 #define MEDIA_FORMATS_WEBM_OPUS_PACKET_BUILDER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 
 namespace media {

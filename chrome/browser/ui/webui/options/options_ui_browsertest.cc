@@ -4,10 +4,10 @@
 
 #include "chrome/browser/ui/webui/options/options_ui_browsertest.h"
 
-#include "base/prefs/pref_service.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -19,8 +19,10 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -31,13 +33,13 @@
 #if !defined(OS_CHROMEOS)
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/run_loop.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -112,7 +114,8 @@ void OptionsUIBrowserTest::NavigateToSettings() {
 void OptionsUIBrowserTest::NavigateToSettingsSubpage(
     const std::string& sub_page) {
   const GURL& url = chrome::GetSettingsUrl(sub_page);
-  ui_test_utils::NavigateToURLWithDisposition(browser(), url, CURRENT_TAB, 0);
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), url, WindowOpenDisposition::CURRENT_TAB, 0);
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -132,7 +135,7 @@ void OptionsUIBrowserTest::NavigateToSettingsSubpage(
   // However, it is safe to subscribe afterwards, because the event will always
   // be posted asynchronously to the message loop.
   scoped_refptr<MessageLoopRunner> message_loop_runner(new MessageLoopRunner);
-  scoped_ptr<OptionsUI::OnFinishedLoadingCallbackList::Subscription>
+  std::unique_ptr<OptionsUI::OnFinishedLoadingCallbackList::Subscription>
       subscription = options_ui->RegisterOnFinishedLoadingCallback(
           message_loop_runner->QuitClosure());
   message_loop_runner->Run();
@@ -224,12 +227,12 @@ IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, MAYBE_VerifyManagedSignout) {
   EXPECT_TRUE(result);
 
   base::FilePath profile_dir = browser()->profile()->GetPath();
-  ProfileInfoCache& profile_info_cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
+  ProfileAttributesStorage& storage =
+      g_browser_process->profile_manager()->GetProfileAttributesStorage();
+  ProfileAttributesEntry* entry;
 
   EXPECT_TRUE(DirectoryExists(profile_dir));
-  EXPECT_TRUE(profile_info_cache.GetIndexOfProfileWithPath(profile_dir) !=
-              std::string::npos);
+  EXPECT_TRUE(storage.GetProfileAttributesWithPath(profile_dir, &entry));
 
   // TODO(kaliamoorthi): Get the macos problem fixed and remove this code.
   // Deleting the Profile also destroys all browser windows of that Profile.
@@ -243,8 +246,7 @@ IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, MAYBE_VerifyManagedSignout) {
       browser()->tab_strip_model()->GetActiveWebContents(),
       "$('disconnect-managed-profile-ok').click();"));
 
-  EXPECT_TRUE(profile_info_cache.GetIndexOfProfileWithPath(profile_dir) ==
-              std::string::npos);
+  EXPECT_TRUE(storage.GetProfileAttributesWithPath(profile_dir, &entry));
 
   wait_for_browser_closed.Wait();
 }
@@ -298,7 +300,7 @@ IN_PROC_BROWSER_TEST_F(OptionsUIBrowserTest, NavigateBackFromOverlayDialog) {
 
   // Go back to the settings page.
   content::TestNavigationObserver observer(contents);
-  chrome::GoBack(browser(), CURRENT_TAB);
+  chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
   observer.Wait();
 
   // Verify that the settings page lists one profile.

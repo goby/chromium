@@ -4,6 +4,9 @@
 
 #include "extensions/browser/extension_protocols.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -14,11 +17,13 @@
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -30,6 +35,8 @@
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_request_info.h"
+#include "content/public/common/browser_side_navigation_policy.h"
+#include "content/public/common/resource_type.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
 #include "extensions/browser/content_verifier.h"
@@ -65,6 +72,8 @@ using extensions::SharedModuleInfo;
 
 namespace extensions {
 namespace {
+
+ExtensionProtocolTestHandler* g_test_handler = nullptr;
 
 class GeneratedBackgroundPageJob : public net::URLRequestSimpleJob {
  public:
@@ -143,13 +152,11 @@ void ReadResourceFilePathAndLastModifiedTime(
   base::Time dir_creation_time = GetFileCreationTime(directory);
   UMA_HISTOGRAM_TIMES("Extensions.ResourceDirectoryTimestampQueryLatency",
                       query_timer.Elapsed());
-  int64 delta_seconds = (*last_modified_time - dir_creation_time).InSeconds();
+  int64_t delta_seconds = (*last_modified_time - dir_creation_time).InSeconds();
   if (delta_seconds >= 0) {
     UMA_HISTOGRAM_CUSTOM_COUNTS("Extensions.ResourceLastModifiedDelta",
-                                delta_seconds,
-                                0,
-                                base::TimeDelta::FromDays(30).InSeconds(),
-                                50);
+                                delta_seconds, 1,
+                                base::TimeDelta::FromDays(30).InSeconds(), 50);
   } else {
     UMA_HISTOGRAM_CUSTOM_COUNTS("Extensions.ResourceLastModifiedNegativeDelta",
                                 -delta_seconds,
@@ -232,7 +239,7 @@ class URLRequestExtensionJob : public net::URLRequestFileJob {
     URLRequestFileJob::SetExtraRequestHeaders(headers);
   }
 
-  void OnSeekComplete(int64 result) override {
+  void OnSeekComplete(int64_t result) override {
     DCHECK_EQ(seek_position_, 0);
     seek_position_ = result;
     // TODO(asargent) - we'll need to add proper support for range headers.
@@ -278,10 +285,10 @@ class URLRequestExtensionJob : public net::URLRequestFileJob {
 
   scoped_refptr<ContentVerifyJob> verify_job_;
 
-  scoped_ptr<base::ElapsedTimer> request_timer_;
+  std::unique_ptr<base::ElapsedTimer> request_timer_;
 
   // The position we seeked to in the file.
-  int64 seek_position_;
+  int64_t seek_position_;
 
   // The number of bytes of content we read from the file.
   int bytes_read_;
@@ -325,9 +332,17 @@ bool AllowExtensionResourceLoad(net::URLRequest* request,
 
   // We have seen crashes where info is NULL: crbug.com/52374.
   if (!info) {
-    LOG(ERROR) << "Allowing load of " << request->url().spec()
-               << "from unknown origin. Could not find user data for "
-               << "request.";
+    // SeviceWorker net requests created through ServiceWorkerWriteToCacheJob
+    // do not have ResourceRequestInfo associated with them. So skip logging
+    // spurious errors below.
+    // TODO(falken): Either consider attaching ResourceRequestInfo to these or
+    // finish refactoring ServiceWorkerWriteToCacheJob so that it doesn't spawn
+    // a new URLRequest.
+    if (!ResourceRequestInfo::OriginatedFromServiceWorker(request)) {
+      LOG(ERROR) << "Allowing load of " << request->url().spec()
+                 << "from unknown origin. Could not find user data for "
+                 << "request.";
+    }
     return true;
   }
 
@@ -351,6 +366,14 @@ bool AllowExtensionResourceLoad(net::URLRequest* request,
   // request.
   if (extension_info_map->process_map().Contains(
       request->url().host(), info->GetChildID())) {
+    return true;
+  }
+
+  // PlzNavigate: frame navigations to extensions have already been checked in
+  // the ExtensionNavigationThrottle.
+  if (info->GetChildID() == -1 &&
+      content::IsResourceTypeFrame(info->GetResourceType()) &&
+      content::IsBrowserSideNavigationEnabled()) {
     return true;
   }
 
@@ -406,11 +429,10 @@ ExtensionProtocolHandler::MaybeCreateJob(
   const Extension* extension =
       extension_info_map_->extensions().GetByID(extension_id);
 
-  // TODO(mpcomplete): better error code.
   if (!AllowExtensionResourceLoad(
           request, is_incognito_, extension, extension_info_map_)) {
-    return new net::URLRequestErrorJob(
-        request, network_delegate, net::ERR_ADDRESS_UNREACHABLE);
+    return new net::URLRequestErrorJob(request, network_delegate,
+                                       net::ERR_BLOCKED_BY_CLIENT);
   }
 
   // If this is a disabled extension only allow the icon to load.
@@ -479,6 +501,12 @@ ExtensionProtocolHandler::MaybeCreateJob(
   base::FilePath relative_path =
       extensions::file_util::ExtensionURLToRelativeFilePath(request->url());
 
+  // Do not allow requests for resources in the _metadata folder, since any
+  // files there are internal implementation details that should not be
+  // considered part of the extension.
+  if (base::FilePath(kMetadataFolder).IsParent(relative_path))
+    return nullptr;
+
   // Handle shared resources (extension A loading resources out of extension B).
   if (SharedModuleInfo::IsImportedPath(path)) {
     std::string new_extension_id;
@@ -497,6 +525,14 @@ ExtensionProtocolHandler::MaybeCreateJob(
       return NULL;
     }
   }
+
+  if (g_test_handler) {
+    net::URLRequestJob* test_job =
+        g_test_handler->Run(request, network_delegate, relative_path);
+    if (test_job)
+      return test_job;
+  }
+
   ContentVerifyJob* verify_job = NULL;
   ContentVerifier* verifier = extension_info_map_->content_verifier();
   if (verifier) {
@@ -557,11 +593,15 @@ net::HttpResponseHeaders* BuildHttpHeaders(
   return new net::HttpResponseHeaders(raw_headers);
 }
 
-scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+std::unique_ptr<net::URLRequestJobFactory::ProtocolHandler>
 CreateExtensionProtocolHandler(bool is_incognito,
                                extensions::InfoMap* extension_info_map) {
-  return make_scoped_ptr(
-      new ExtensionProtocolHandler(is_incognito, extension_info_map));
+  return base::MakeUnique<ExtensionProtocolHandler>(is_incognito,
+                                                    extension_info_map);
+}
+
+void SetExtensionProtocolTestHandler(ExtensionProtocolTestHandler* handler) {
+  g_test_handler = handler;
 }
 
 }  // namespace extensions

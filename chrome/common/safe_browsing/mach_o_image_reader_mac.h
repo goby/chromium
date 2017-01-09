@@ -6,13 +6,14 @@
 #define CHROME_COMMON_SAFE_BROWSING_MACH_O_IMAGE_READER_MAC_H_
 
 #include <mach-o/loader.h>
+#include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 
 namespace safe_browsing {
@@ -28,6 +29,7 @@ class MachOImageReader {
   // Represents a Mach-O load command, including all of its data.
   struct LoadCommand {
     LoadCommand();
+    LoadCommand(const LoadCommand& other);
     ~LoadCommand();
 
     uint32_t cmd() const {
@@ -90,7 +92,7 @@ class MachOImageReader {
   bool GetCodeSignatureInfo(std::vector<uint8_t>* info);
 
  private:
-  scoped_ptr<ByteSlice> data_;
+  std::unique_ptr<ByteSlice> data_;
 
   bool is_fat_;
   ScopedVector<MachOImageReader> fat_images_;

@@ -7,7 +7,6 @@
 # Chrome Application dir entries, sorted alphabetically.
 #
 chrome.exe: %(ChromeDir)s\
-wow_helper.exe: %(ChromeDir)s\
 #
 # Chrome version dir assembly manifest.
 # The name of this file must match the name of the version dir, so we cannot
@@ -20,7 +19,6 @@ wow_helper.exe: %(ChromeDir)s\
 #
 chrome.dll: %(VersionDir)s\
 chrome_100_percent.pak: %(VersionDir)s\
-chrome_material_100_percent.pak: %(VersionDir)s\
 chrome_child.dll: %(VersionDir)s\
 chrome_elf.dll: %(VersionDir)s\
 chrome_watcher.dll: %(VersionDir)s\
@@ -30,7 +28,6 @@ kasko.dll: %(VersionDir)s\
 icudt.dll: %(VersionDir)s\
 icudtl.dat: %(VersionDir)s\
 libEGL.dll: %(VersionDir)s\
-libexif.dll: %(VersionDir)s\
 libGLESv2.dll: %(VersionDir)s\
 nacl64.exe: %(VersionDir)s\
 nacl_irt_x86_32.nexe: %(VersionDir)s\
@@ -39,7 +36,6 @@ natives_blob.bin: %(VersionDir)s\
 resources.pak: %(VersionDir)s\
 snapshot_blob.bin: %(VersionDir)s\
 syzyasan_rtl.dll: %(VersionDir)s\
-xinput1_3.dll: %(VersionDir)s\
 #
 # Sub directories living in the version dir
 #
@@ -49,28 +45,28 @@ Extensions\*.*: %(VersionDir)s\Extensions\
 locales\*.dll: %(VersionDir)s\Locales
 locales\*.pak: %(VersionDir)s\Locales
 
+#
+# VisualElements sub-dir.
+#
+# All or none of the following files need to be present as the creation of
+# VisualElementsManifest.xml is based on the existence of
+# %(VersionDir)\VisualElements.
+Logo.png: %(VersionDir)s\VisualElements\
+LogoCanary.png: %(VersionDir)s\VisualElements\
+SmallLogo.png: %(VersionDir)s\VisualElements\
+SmallLogoCanary.png: %(VersionDir)s\VisualElements\
+
 [HIDPI]
 chrome_200_percent.pak: %(VersionDir)s\
-chrome_material_200_percent.pak: %(VersionDir)s\
 
 [TOUCH]
 
 [GOOGLE_CHROME]
-delegate_execute.exe: %(VersionDir)s\
-metro_driver.dll: %(VersionDir)s\
-SecondaryTile.png: %(VersionDir)s\
-widevinecdmadapter.dll: %(VersionDir)s\
 #
-# Pepper Flash sub-dir.
+# Widevine CDM sub-dir
 #
-PepperFlash\manifest.json: %(VersionDir)s\PepperFlash\
-PepperFlash\pepflashplayer.dll: %(VersionDir)s\PepperFlash\
-#
-# Win8 sub-dir.
-#
-# All or none of the following 3 files need to be present as the creation of
-# VisualElementsManifest.xml is based on the existence of
-# %(VersionDir)\VisualElements. On a similar note, no other files should be
-# packaged in this directory.
-Logo.png: %(VersionDir)s\VisualElements\
-SmallLogo.png: %(VersionDir)s\VisualElements\
+WidevineCdm\manifest.json: %(VersionDir)s\WidevineCdm\
+WidevineCdm\_platform_specific\win_x86\widevinecdm.dll: %(VersionDir)s\WidevineCdm\_platform_specific\win_x86\
+WidevineCdm\_platform_specific\win_x86\widevinecdmadapter.dll: %(VersionDir)s\WidevineCdm\_platform_specific\win_x86\
+WidevineCdm\_platform_specific\win_x64\widevinecdm.dll: %(VersionDir)s\WidevineCdm\_platform_specific\win_x64\
+WidevineCdm\_platform_specific\win_x64\widevinecdmadapter.dll: %(VersionDir)s\WidevineCdm\_platform_specific\win_x64\

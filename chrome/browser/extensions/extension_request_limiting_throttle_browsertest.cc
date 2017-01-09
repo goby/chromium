@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -23,13 +25,13 @@ namespace extensions {
 
 namespace {
 
-scoped_ptr<net::test_server::HttpResponse> HandleRequest(
+std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
     bool set_cache_header_redirect_page,
     bool set_cache_header_test_throttle_page,
     const net::test_server::HttpRequest& request) {
   if (base::StartsWith(request.relative_url, "/redirect",
                        base::CompareCase::SENSITIVE)) {
-    scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
         new net::test_server::BasicHttpResponse());
     http_response->set_code(net::HTTP_FOUND);
     http_response->set_content("Redirecting...");
@@ -37,23 +39,23 @@ scoped_ptr<net::test_server::HttpResponse> HandleRequest(
     http_response->AddCustomHeader("Location", "/test_throttle");
     if (set_cache_header_redirect_page)
       http_response->AddCustomHeader("Cache-Control", "max-age=3600");
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   if (base::StartsWith(request.relative_url, "/test_throttle",
                        base::CompareCase::SENSITIVE)) {
-    scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
         new net::test_server::BasicHttpResponse());
     http_response->set_code(net::HTTP_SERVICE_UNAVAILABLE);
     http_response->set_content("The server is overloaded right now.");
     http_response->set_content_type("text/plain");
     if (set_cache_header_test_throttle_page)
       http_response->AddCustomHeader("Cache-Control", "max-age=3600");
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   // Unhandled requests result in the Embedded test server sending a 404.
-  return scoped_ptr<net::test_server::BasicHttpResponse>();
+  return std::unique_ptr<net::test_server::BasicHttpResponse>();
 }
 
 }  // namespace
@@ -73,38 +75,39 @@ class ExtensionRequestLimitingThrottleBrowserTest
       // checking of the net::LOAD_MAYBE_USER_GESTURE load flag in the manager
       // in order to test the throttling logic.
       manager->SetIgnoreUserGestureLoadFlagForTests(true);
-      scoped_ptr<
-          net::BackoffEntry::Policy> policy(new net::BackoffEntry::Policy{
-          // Number of initial errors (in sequence) to ignore before applying
-          // exponential back-off rules.
-          1,
+      std::unique_ptr<net::BackoffEntry::Policy> policy(
+          new net::BackoffEntry::Policy{
+              // Number of initial errors (in sequence) to ignore before
+              // applying
+              // exponential back-off rules.
+              1,
 
-          // Initial delay for exponential back-off in ms.
-          10 * 60 * 1000,
+              // Initial delay for exponential back-off in ms.
+              10 * 60 * 1000,
 
-          // Factor by which the waiting time will be multiplied.
-          10,
+              // Factor by which the waiting time will be multiplied.
+              10,
 
-          // Fuzzing percentage. ex: 10% will spread requests randomly
-          // between 90%-100% of the calculated time.
-          0.1,
+              // Fuzzing percentage. ex: 10% will spread requests randomly
+              // between 90%-100% of the calculated time.
+              0.1,
 
-          // Maximum amount of time we are willing to delay our request in ms.
-          15 * 60 * 1000,
+              // Maximum amount of time we are willing to delay our request in
+              // ms.
+              15 * 60 * 1000,
 
-          // Time to keep an entry from being discarded even when it
-          // has no significant state, -1 to never discard.
-          -1,
+              // Time to keep an entry from being discarded even when it
+              // has no significant state, -1 to never discard.
+              -1,
 
-          // Don't use initial delay unless the last request was an error.
-          false,
-      });
-      manager->SetBackoffPolicyForTests(policy.Pass());
+              // Don't use initial delay unless the last request was an error.
+              false,
+          });
+      manager->SetBackoffPolicyForTests(std::move(policy));
     }
     // Requests to 127.0.0.1 bypass throttling, so set up a host resolver rule
     // to use a fake domain.
     host_resolver()->AddRule("www.example.com", "127.0.0.1");
-    ASSERT_TRUE(embedded_test_server()->Start());
     extension_ =
         LoadExtension(test_data_dir_.AppendASCII("extension_throttle"));
     ASSERT_TRUE(extension_);
@@ -137,6 +140,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionRequestLimitingThrottleBrowserTest,
                        ThrottleRequest) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleRequest, false, false));
+  ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(
       RunTest("test_request_eventually_throttled.html",
               base::StringPrintf("http://www.example.com:%d/test_throttle",
@@ -149,6 +153,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionRequestLimitingThrottleBrowserTest,
                        DoNotThrottleCachedResponse) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleRequest, false, true));
+  ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(
       RunTest("test_request_not_throttled.html",
               base::StringPrintf("http://www.example.com:%d/test_throttle",
@@ -160,6 +165,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionRequestLimitingThrottleBrowserTest,
                        ThrottleRequest_Redirect) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleRequest, false, false));
+  ASSERT_TRUE(embedded_test_server()->Start());
   // Issue a bunch of requests to a url which gets redirected to a new url that
   // generates 503.
   ASSERT_NO_FATAL_FAILURE(
@@ -181,6 +187,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionRequestLimitingThrottleBrowserTest,
                        DoNotThrottleCachedResponse_Redirect) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleRequest, true, true));
+  ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(
       RunTest("test_request_not_throttled.html",
               base::StringPrintf("http://www.example.com:%d/redirect",
@@ -194,6 +201,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionRequestLimitingThrottleBrowserTest,
                        ThrottleRequest_RedirectCached) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleRequest, true, false));
+  ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(
       RunTest("test_request_eventually_throttled.html",
               base::StringPrintf("http://www.example.com:%d/redirect",
@@ -213,6 +221,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionRequestLimitingThrottleBrowserTest,
                        DoNotThrottleCachedResponse_NonRedirectCached) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleRequest, false, true));
+  ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(
       RunTest("test_request_not_throttled.html",
               base::StringPrintf("http://www.example.com:%d/redirect",
@@ -231,6 +240,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionRequestLimitingThrottleCommandLineBrowserTest,
                        ThrottleRequestDisabled) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleRequest, false, false));
+  ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_NO_FATAL_FAILURE(
       RunTest("test_request_not_throttled.html",
               base::StringPrintf("http://www.example.com:%d/test_throttle",

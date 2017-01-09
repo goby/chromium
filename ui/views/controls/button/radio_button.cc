@@ -5,9 +5,12 @@
 #include "ui/views/controls/button/radio_button.h"
 
 #include "base/logging.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/event_utils.h"
+#include "ui/gfx/canvas.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/vector_icons_public.h"
 #include "ui/resources/grit/ui_resources.h"
 #include "ui/views/resources/grit/views_resources.h"
 #include "ui/views/widget/widget.h"
@@ -21,84 +24,56 @@ RadioButton::RadioButton(const base::string16& label, int group_id)
     : Checkbox(label) {
   SetGroup(group_id);
 
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  if (!UseMd()) {
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+    // Unchecked/Unfocused images.
+    SetCustomImage(false, false, STATE_NORMAL,
+                   *rb.GetImageSkiaNamed(IDR_RADIO));
+    SetCustomImage(false, false, STATE_HOVERED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_HOVER));
+    SetCustomImage(false, false, STATE_PRESSED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_PRESSED));
+    SetCustomImage(false, false, STATE_DISABLED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_DISABLED));
 
-  // Unchecked/Unfocused images.
-  SetCustomImage(false, false, STATE_NORMAL,
-                 *rb.GetImageSkiaNamed(IDR_RADIO));
-  SetCustomImage(false, false, STATE_HOVERED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_HOVER));
-  SetCustomImage(false, false, STATE_PRESSED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_PRESSED));
-  SetCustomImage(false, false, STATE_DISABLED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_DISABLED));
+    // Checked/Unfocused images.
+    SetCustomImage(true, false, STATE_NORMAL,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED));
+    SetCustomImage(true, false, STATE_HOVERED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED_HOVER));
+    SetCustomImage(true, false, STATE_PRESSED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED_PRESSED));
+    SetCustomImage(true, false, STATE_DISABLED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED_DISABLED));
 
-  // Checked/Unfocused images.
-  SetCustomImage(true, false, STATE_NORMAL,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED));
-  SetCustomImage(true, false, STATE_HOVERED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED_HOVER));
-  SetCustomImage(true, false, STATE_PRESSED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED_PRESSED));
-  SetCustomImage(true, false, STATE_DISABLED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_CHECKED_DISABLED));
+    // Unchecked/Focused images.
+    SetCustomImage(false, true, STATE_NORMAL,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED));
+    SetCustomImage(false, true, STATE_HOVERED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_HOVER));
+    SetCustomImage(false, true, STATE_PRESSED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_PRESSED));
 
-  // Unchecked/Focused images.
-  SetCustomImage(false, true, STATE_NORMAL,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED));
-  SetCustomImage(false, true, STATE_HOVERED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_HOVER));
-  SetCustomImage(false, true, STATE_PRESSED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_PRESSED));
-
-  // Checked/Focused images.
-  SetCustomImage(true, true, STATE_NORMAL,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_CHECKED));
-  SetCustomImage(true, true, STATE_HOVERED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_CHECKED_HOVER));
-  SetCustomImage(true, true, STATE_PRESSED,
-                 *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_CHECKED_PRESSED));
+    // Checked/Focused images.
+    SetCustomImage(true, true, STATE_NORMAL,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_CHECKED));
+    SetCustomImage(true, true, STATE_HOVERED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_CHECKED_HOVER));
+    SetCustomImage(true, true, STATE_PRESSED,
+                   *rb.GetImageSkiaNamed(IDR_RADIO_FOCUSED_CHECKED_PRESSED));
+  }
 }
 
 RadioButton::~RadioButton() {
-}
-
-void RadioButton::SetChecked(bool checked) {
-  if (checked == RadioButton::checked())
-    return;
-  if (checked) {
-    // We can't just get the root view here because sometimes the radio
-    // button isn't attached to a root view (e.g., if it's part of a tab page
-    // that is currently not active).
-    View* container = parent();
-    while (container && container->parent())
-      container = container->parent();
-    if (container) {
-      Views other;
-      container->GetViewsInGroup(GetGroup(), &other);
-      for (Views::iterator i(other.begin()); i != other.end(); ++i) {
-        if (*i != this) {
-          if (strcmp((*i)->GetClassName(), kViewClassName)) {
-            NOTREACHED() << "radio-button-nt has same group as other non "
-                            "radio-button-nt views.";
-            continue;
-          }
-          RadioButton* peer = static_cast<RadioButton*>(*i);
-          peer->SetChecked(false);
-        }
-      }
-    }
-  }
-  Checkbox::SetChecked(checked);
 }
 
 const char* RadioButton::GetClassName() const {
   return kViewClassName;
 }
 
-void RadioButton::GetAccessibleState(ui::AXViewState* state) {
-  Checkbox::GetAccessibleState(state);
-  state->role = ui::AX_ROLE_RADIO_BUTTON;
+void RadioButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  Checkbox::GetAccessibleNodeData(node_data);
+  node_data->role = ui::AX_ROLE_RADIO_BUTTON;
 }
 
 View* RadioButton::GetSelectedViewForGroup(int group) {
@@ -141,6 +116,45 @@ void RadioButton::NotifyClick(const ui::Event& event) {
 
 ui::NativeTheme::Part RadioButton::GetThemePart() const {
   return ui::NativeTheme::kRadio;
+}
+
+void RadioButton::SetChecked(bool checked) {
+  if (checked == RadioButton::checked())
+    return;
+  if (checked) {
+    // We can't just get the root view here because sometimes the radio
+    // button isn't attached to a root view (e.g., if it's part of a tab page
+    // that is currently not active).
+    View* container = parent();
+    while (container && container->parent())
+      container = container->parent();
+    if (container) {
+      Views other;
+      container->GetViewsInGroup(GetGroup(), &other);
+      for (Views::iterator i(other.begin()); i != other.end(); ++i) {
+        if (*i != this) {
+          if (strcmp((*i)->GetClassName(), kViewClassName)) {
+            NOTREACHED() << "radio-button-nt has same group as other non "
+                            "radio-button-nt views.";
+            continue;
+          }
+          RadioButton* peer = static_cast<RadioButton*>(*i);
+          peer->SetChecked(false);
+        }
+      }
+    }
+  }
+  Checkbox::SetChecked(checked);
+}
+
+void RadioButton::PaintFocusRing(gfx::Canvas* canvas, const SkPaint& paint) {
+  canvas->DrawCircle(gfx::RectF(image()->bounds()).CenterPoint(),
+                     image()->width() / 2, paint);
+}
+
+gfx::VectorIconId RadioButton::GetVectorIconId() const {
+  return checked() ? gfx::VectorIconId::RADIO_BUTTON_ACTIVE
+                   : gfx::VectorIconId::RADIO_BUTTON_NORMAL;
 }
 
 }  // namespace views

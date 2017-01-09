@@ -2,18 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/http/http_response_headers.h"
+
 #include <stdint.h>
 
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/pickle.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "net/http/http_byte_range.h"
-#include "net/http/http_response_headers.h"
+#include "net/log/net_log_capture_mode.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -457,7 +459,7 @@ TEST(HttpResponseHeadersTest, EnumerateHeader_Coalesced) {
   HeadersToRaw(&headers);
   scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
 
-  void* iter = NULL;
+  size_t iter = 0;
   std::string value;
   EXPECT_TRUE(parsed->EnumerateHeader(&iter, "cache-control", &value));
   EXPECT_EQ("private", value);
@@ -478,7 +480,7 @@ TEST(HttpResponseHeadersTest, EnumerateHeader_Challenge) {
   HeadersToRaw(&headers);
   scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
 
-  void* iter = NULL;
+  size_t iter = 0;
   std::string value;
   EXPECT_TRUE(parsed->EnumerateHeader(&iter, "WWW-Authenticate", &value));
   EXPECT_EQ("Digest realm=foobar, nonce=x, domain=y", value);
@@ -531,6 +533,71 @@ TEST(HttpResponseHeadersTest, DefaultDateToGMT) {
   // used "UTC" which is equivalent to GMT.
   if (parsed->GetExpiresValue(&value))
     EXPECT_EQ(expected_value, value);
+}
+
+TEST(HttpResponseHeadersTest, GetAgeValue10) {
+  std::string headers =
+      "HTTP/1.1 200 OK\n"
+      "Age: 10\n";
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  base::TimeDelta age;
+  ASSERT_TRUE(parsed->GetAgeValue(&age));
+  EXPECT_EQ(10, age.InSeconds());
+}
+
+TEST(HttpResponseHeadersTest, GetAgeValue0) {
+  std::string headers =
+      "HTTP/1.1 200 OK\n"
+      "Age: 0\n";
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  base::TimeDelta age;
+  ASSERT_TRUE(parsed->GetAgeValue(&age));
+  EXPECT_EQ(0, age.InSeconds());
+}
+
+TEST(HttpResponseHeadersTest, GetAgeValueBogus) {
+  std::string headers =
+      "HTTP/1.1 200 OK\n"
+      "Age: donkey\n";
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  base::TimeDelta age;
+  ASSERT_FALSE(parsed->GetAgeValue(&age));
+}
+
+TEST(HttpResponseHeadersTest, GetAgeValueNegative) {
+  std::string headers =
+      "HTTP/1.1 200 OK\n"
+      "Age: -10\n";
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  base::TimeDelta age;
+  ASSERT_FALSE(parsed->GetAgeValue(&age));
+}
+
+TEST(HttpResponseHeadersTest, GetAgeValueLeadingPlus) {
+  std::string headers =
+      "HTTP/1.1 200 OK\n"
+      "Age: +10\n";
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  base::TimeDelta age;
+  ASSERT_FALSE(parsed->GetAgeValue(&age));
+}
+
+TEST(HttpResponseHeadersTest, GetAgeValueOverflow) {
+  std::string headers =
+      "HTTP/1.1 200 OK\n"
+      "Age: 999999999999999999999999999999999999999999\n";
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  base::TimeDelta age;
+  ASSERT_TRUE(parsed->GetAgeValue(&age));
+
+  // Should have saturated to 2^32 - 1.
+  EXPECT_EQ(static_cast<int64_t>(0xFFFFFFFFL), age.InSeconds());
 }
 
 struct ContentTypeTestData {
@@ -1055,7 +1122,7 @@ TEST_P(EnumerateHeaderLinesTest, EnumerateHeaderLines) {
 
   std::string name, value, lines;
 
-  void* iter = NULL;
+  size_t iter = 0;
   while (parsed->EnumerateHeaderLines(&iter, &name, &value)) {
     lines.append(name);
     lines.append(": ");
@@ -1634,6 +1701,40 @@ INSTANTIATE_TEST_CASE_P(HttpResponseHeaders,
                         HasStrongValidatorsTest,
                         testing::ValuesIn(strong_validators_tests));
 
+TEST(HttpResponseHeadersTest, HasValidatorsNone) {
+  std::string headers("HTTP/1.1 200 OK");
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  EXPECT_FALSE(parsed->HasValidators());
+}
+
+TEST(HttpResponseHeadersTest, HasValidatorsEtag) {
+  std::string headers(
+      "HTTP/1.1 200 OK\n"
+      "etag: \"anything\"");
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  EXPECT_TRUE(parsed->HasValidators());
+}
+
+TEST(HttpResponseHeadersTest, HasValidatorsLastModified) {
+  std::string headers(
+      "HTTP/1.1 200 OK\n"
+      "Last-Modified: Wed, 28 Nov 2007 00:40:10 GMT");
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  EXPECT_TRUE(parsed->HasValidators());
+}
+
+TEST(HttpResponseHeadersTest, HasValidatorsWeakEtag) {
+  std::string headers(
+      "HTTP/1.1 200 OK\n"
+      "etag: W/\"anything\"");
+  HeadersToRaw(&headers);
+  scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
+  EXPECT_TRUE(parsed->HasValidators());
+}
+
 struct AddHeaderTestData {
   const char* orig_headers;
   const char* new_header;
@@ -1988,7 +2089,7 @@ TEST(HttpResponseHeadersTest, ToNetLogParamAndBackAgain) {
   HeadersToRaw(&headers);
   scoped_refptr<HttpResponseHeaders> parsed(new HttpResponseHeaders(headers));
 
-  scoped_ptr<base::Value> event_param(parsed->NetLogCallback(
+  std::unique_ptr<base::Value> event_param(parsed->NetLogCallback(
       NetLogCaptureMode::IncludeCookiesAndCredentials()));
   scoped_refptr<HttpResponseHeaders> recreated;
 

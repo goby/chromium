@@ -8,31 +8,46 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/field_trial.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/metrics/persistent_histogram_allocator.h"
+#include "base/metrics/persistent_memory_allocator.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/browser/histogram_message_filter.h"
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/memory/memory_message_filter.h"
 #include "content/browser/profiler_message_filter.h"
+#include "content/browser/service_manager/service_manager_context.h"
 #include "content/browser/tracing/trace_message_filter.h"
 #include "content/common/child_process_host_impl.h"
 #include "content/common/child_process_messages.h"
+#include "content/common/service_manager/child_connection.h"
 #include "content/public/browser/browser_child_process_host_delegate.h"
 #include "content/public/browser/browser_child_process_observer.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/common/connection_filter.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/mojo_channel_switches.h"
 #include "content/public/common/process_type.h"
 #include "content/public/common/result_codes.h"
-#include "ipc/attachment_broker.h"
-#include "ipc/attachment_broker_privileged.h"
-#include "third_party/mojo/src/mojo/edk/embedder/embedder.h"
+#include "content/public/common/service_manager_connection.h"
+#include "device/power_monitor/power_monitor_message_broadcaster.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "services/service_manager/public/cpp/interface_registry.h"
 
 #if defined(OS_MACOSX)
 #include "content/browser/mach_broker_mac.h"
@@ -48,36 +63,60 @@ base::LazyInstance<base::ObserverList<BrowserChildProcessObserver>>
     g_observers = LAZY_INSTANCE_INITIALIZER;
 
 void NotifyProcessLaunchedAndConnected(const ChildProcessData& data) {
-  FOR_EACH_OBSERVER(BrowserChildProcessObserver, g_observers.Get(),
-                    BrowserChildProcessLaunchedAndConnected(data));
+  for (auto& observer : g_observers.Get())
+    observer.BrowserChildProcessLaunchedAndConnected(data);
 }
 
 void NotifyProcessHostConnected(const ChildProcessData& data) {
-  FOR_EACH_OBSERVER(BrowserChildProcessObserver, g_observers.Get(),
-                    BrowserChildProcessHostConnected(data));
+  for (auto& observer : g_observers.Get())
+    observer.BrowserChildProcessHostConnected(data);
 }
 
 void NotifyProcessHostDisconnected(const ChildProcessData& data) {
-  FOR_EACH_OBSERVER(BrowserChildProcessObserver, g_observers.Get(),
-                    BrowserChildProcessHostDisconnected(data));
+  for (auto& observer : g_observers.Get())
+    observer.BrowserChildProcessHostDisconnected(data);
 }
 
 void NotifyProcessCrashed(const ChildProcessData& data, int exit_code) {
-  FOR_EACH_OBSERVER(BrowserChildProcessObserver, g_observers.Get(),
-                    BrowserChildProcessCrashed(data, exit_code));
+  for (auto& observer : g_observers.Get())
+    observer.BrowserChildProcessCrashed(data, exit_code);
 }
 
 void NotifyProcessKilled(const ChildProcessData& data, int exit_code) {
-  FOR_EACH_OBSERVER(BrowserChildProcessObserver, g_observers.Get(),
-                    BrowserChildProcessKilled(data, exit_code));
+  for (auto& observer : g_observers.Get())
+    observer.BrowserChildProcessKilled(data, exit_code);
 }
+
+class ConnectionFilterImpl : public ConnectionFilter {
+ public:
+  ConnectionFilterImpl() {}
+
+ private:
+  // ConnectionFilter:
+  bool OnConnect(const service_manager::Identity& remote_identity,
+                 service_manager::InterfaceRegistry* registry,
+                 service_manager::Connector* connector) override {
+    registry->AddInterface(
+        base::Bind(&device::PowerMonitorMessageBroadcaster::Create));
+    return true;
+  }
+
+  DISALLOW_COPY_AND_ASSIGN(ConnectionFilterImpl);
+};
 
 }  // namespace
 
 BrowserChildProcessHost* BrowserChildProcessHost::Create(
     content::ProcessType process_type,
     BrowserChildProcessHostDelegate* delegate) {
-  return new BrowserChildProcessHostImpl(process_type, delegate);
+  return Create(process_type, delegate, std::string());
+}
+
+BrowserChildProcessHost* BrowserChildProcessHost::Create(
+    content::ProcessType process_type,
+    BrowserChildProcessHostDelegate* delegate,
+    const std::string& service_name) {
+  return new BrowserChildProcessHostImpl(process_type, delegate, service_name);
 }
 
 BrowserChildProcessHost* BrowserChildProcessHost::FromID(int child_process_id) {
@@ -119,40 +158,50 @@ void BrowserChildProcessHostImpl::RemoveObserver(
 
 BrowserChildProcessHostImpl::BrowserChildProcessHostImpl(
     content::ProcessType process_type,
-    BrowserChildProcessHostDelegate* delegate)
+    BrowserChildProcessHostDelegate* delegate,
+    const std::string& service_name)
     : data_(process_type),
       delegate_(delegate),
-      power_monitor_message_broadcaster_(this),
-      is_channel_connected_(false) {
+      child_token_(mojo::edk::GenerateRandomToken()),
+      is_channel_connected_(false),
+      notify_child_disconnected_(false),
+      weak_factory_(this) {
   data_.id = ChildProcessHostImpl::GenerateChildProcessUniqueId();
-
-#if USE_ATTACHMENT_BROKER
-  // Construct the privileged attachment broker early in the life cycle of a
-  // child process. This ensures that when a test is being run in one of the
-  // single process modes, the global attachment broker is the privileged
-  // attachment broker, rather than an unprivileged attachment broker.
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  IPC::AttachmentBrokerPrivileged::CreateBrokerIfNeeded(
-      MachBroker::GetInstance());
-#else
-  IPC::AttachmentBrokerPrivileged::CreateBrokerIfNeeded();
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
-#endif  // USE_ATTACHMENT_BROKER
 
   child_process_host_.reset(ChildProcessHost::Create(this));
   AddFilter(new TraceMessageFilter(data_.id));
   AddFilter(new ProfilerMessageFilter(process_type));
   AddFilter(new HistogramMessageFilter);
-  AddFilter(new MemoryMessageFilter);
+  AddFilter(new MemoryMessageFilter(this, process_type));
 
   g_child_process_list.Get().push_back(this);
   GetContentClient()->browser()->BrowserChildProcessHostCreated(this);
 
-  power_monitor_message_broadcaster_.Init();
+  if (!service_name.empty()) {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    child_connection_.reset(new ChildConnection(
+        service_name, base::StringPrintf("%d", data_.id), child_token_,
+        ServiceManagerContext::GetConnectorForIOThread(),
+        base::ThreadTaskRunnerHandle::Get()));
+  }
+
+  // May be null during test execution.
+  if (ServiceManagerConnection::GetForProcess()) {
+    ServiceManagerConnection::GetForProcess()->AddConnectionFilter(
+        base::MakeUnique<ConnectionFilterImpl>());
+  }
+
+  // Create a persistent memory segment for subprocess histograms.
+  CreateMetricsAllocator();
 }
 
 BrowserChildProcessHostImpl::~BrowserChildProcessHostImpl() {
   g_child_process_list.Get().remove(this);
+
+  if (notify_child_disconnected_) {
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            base::Bind(&NotifyProcessHostDisconnected, data_));
+  }
 }
 
 // static
@@ -167,6 +216,16 @@ void BrowserChildProcessHostImpl::TerminateAll() {
   }
 }
 
+// static
+void BrowserChildProcessHostImpl::CopyFeatureAndFieldTrialFlags(
+    base::CommandLine* cmd_line) {
+  // If we run base::FieldTrials, we want to pass to their state to the
+  // child process so that it can act in accordance with each state.
+  base::FieldTrialList::CopyFieldTrialStateToFlags(
+      switches::kFieldTrialHandle, switches::kEnableFeatures,
+      switches::kDisableFeatures, cmd_line);
+}
+
 void BrowserChildProcessHostImpl::Launch(
     SandboxedProcessLauncherDelegate* delegate,
     base::CommandLine* cmd_line,
@@ -178,7 +237,7 @@ void BrowserChildProcessHostImpl::Launch(
 
   const base::CommandLine& browser_command_line =
       *base::CommandLine::ForCurrentProcess();
-  static const char* kForwardSwitches[] = {
+  static const char* const kForwardSwitches[] = {
     switches::kDisableLogging,
     switches::kEnableLogging,
     switches::kIPCConnectionTimeout,
@@ -186,16 +245,21 @@ void BrowserChildProcessHostImpl::Launch(
     switches::kTraceToConsole,
     switches::kV,
     switches::kVModule,
-    "use-new-edk",  // TODO(use_chrome_edk): temporary.
   };
   cmd_line->CopySwitchesFrom(browser_command_line, kForwardSwitches,
                              arraysize(kForwardSwitches));
 
+  if (child_connection_) {
+    cmd_line->AppendSwitchASCII(switches::kServiceRequestChannelToken,
+                                child_connection_->service_token());
+  }
+
+  notify_child_disconnected_ = true;
   child_process_.reset(new ChildProcessLauncher(
-      delegate,
-      cmd_line,
-      data_.id,
-      this,
+      delegate, cmd_line, data_.id, this, child_token_,
+      base::Bind(&BrowserChildProcessHostImpl::OnMojoError,
+                 weak_factory_.GetWeakPtr(),
+                 base::ThreadTaskRunnerHandle::Get()),
       terminate_on_shutdown));
 }
 
@@ -218,6 +282,11 @@ const base::Process& BrowserChildProcessHostImpl::GetProcess() const {
   return child_process_->GetProcess();
 }
 
+std::unique_ptr<base::SharedPersistentMemoryAllocator>
+BrowserChildProcessHostImpl::TakeMetricsAllocator() {
+  return std::move(metrics_allocator_);
+}
+
 void BrowserChildProcessHostImpl::SetName(const base::string16& name) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   data_.name = name;
@@ -226,11 +295,6 @@ void BrowserChildProcessHostImpl::SetName(const base::string16& name) {
 void BrowserChildProcessHostImpl::SetHandle(base::ProcessHandle handle) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   data_.handle = handle;
-}
-
-ServiceRegistry* BrowserChildProcessHostImpl::GetServiceRegistry() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return delegate_->GetServiceRegistry();
 }
 
 void BrowserChildProcessHostImpl::ForceShutdown() {
@@ -247,11 +311,13 @@ void BrowserChildProcessHostImpl::AddFilter(BrowserMessageFilter* filter) {
   child_process_host_->AddFilter(filter->GetFilter());
 }
 
-void BrowserChildProcessHostImpl::NotifyProcessInstanceCreated(
-    const ChildProcessData& data) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  FOR_EACH_OBSERVER(BrowserChildProcessObserver, g_observers.Get(),
-                    BrowserChildProcessInstanceCreated(data));
+service_manager::InterfaceProvider*
+BrowserChildProcessHostImpl::GetRemoteInterfaces() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (!child_connection_)
+    return nullptr;
+
+  return child_connection_->GetRemoteInterfaces();
 }
 
 void BrowserChildProcessHostImpl::HistogramBadMessageTerminated(
@@ -274,10 +340,11 @@ bool BrowserChildProcessHostImpl::OnMessageReceived(
   return delegate_->OnMessageReceived(message);
 }
 
-void BrowserChildProcessHostImpl::OnChannelConnected(int32 peer_pid) {
+void BrowserChildProcessHostImpl::OnChannelConnected(int32_t peer_pid) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   is_channel_connected_ = true;
+  notify_child_disconnected_ = true;
 
 #if defined(OS_WIN)
   // From this point onward, the exit of the child process is detected by an
@@ -291,6 +358,7 @@ void BrowserChildProcessHostImpl::OnChannelConnected(int32 peer_pid) {
   delegate_->OnChannelConnected(peer_pid);
 
   if (IsProcessLaunched()) {
+    ShareMetricsAllocatorToProcess();
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
                             base::Bind(&NotifyProcessLaunchedAndConnected,
                                        data_));
@@ -303,13 +371,17 @@ void BrowserChildProcessHostImpl::OnChannelError() {
 
 void BrowserChildProcessHostImpl::OnBadMessageReceived(
     const IPC::Message& message) {
+  TerminateOnBadMessageReceived(message.type());
+}
+
+void BrowserChildProcessHostImpl::TerminateOnBadMessageReceived(uint32_t type) {
   HistogramBadMessageTerminated(data_.process_type);
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableKillAfterBadIPC)) {
     return;
   }
   LOG(ERROR) << "Terminating child process for bad IPC message of type "
-      << message.type();
+             << type;
 
   // Create a memory dump. This will contain enough stack frames to work out
   // what the bad message was.
@@ -381,8 +453,6 @@ void BrowserChildProcessHostImpl::OnChildDisconnected() {
     }
 #endif
   }
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&NotifyProcessHostDisconnected, data_));
   delete delegate_;  // Will delete us
 }
 
@@ -390,8 +460,78 @@ bool BrowserChildProcessHostImpl::Send(IPC::Message* message) {
   return child_process_host_->Send(message);
 }
 
-void BrowserChildProcessHostImpl::OnProcessLaunchFailed() {
-  delegate_->OnProcessLaunchFailed();
+void BrowserChildProcessHostImpl::CreateMetricsAllocator() {
+  // Create a persistent memory segment for subprocess histograms only if
+  // they're active in the browser.
+  // TODO(bcwhite): Remove this once persistence is always enabled.
+  if (!base::GlobalHistogramAllocator::Get())
+    return;
+
+  // Determine the correct parameters based on the process type.
+  size_t memory_size;
+  base::StringPiece metrics_name;
+  switch (data_.process_type) {
+    case PROCESS_TYPE_UTILITY:
+      memory_size = 100 << 10;  // 100 KiB
+      metrics_name = "UtilityMetrics";
+      break;
+
+    case PROCESS_TYPE_ZYGOTE:
+      memory_size = 100 << 10;  // 100 KiB
+      metrics_name = "ZygoteMetrics";
+      break;
+
+    case PROCESS_TYPE_SANDBOX_HELPER:
+      memory_size = 100 << 10;  // 100 KiB
+      metrics_name = "SandboxHelperMetrics";
+      break;
+
+    case PROCESS_TYPE_GPU:
+      memory_size = 100 << 10;  // 100 KiB
+      metrics_name = "GpuMetrics";
+      break;
+
+    case PROCESS_TYPE_PPAPI_PLUGIN:
+      memory_size = 100 << 10;  // 100 KiB
+      metrics_name = "PpapiPluginMetrics";
+      break;
+
+    case PROCESS_TYPE_PPAPI_BROKER:
+      memory_size = 100 << 10;  // 100 KiB
+      metrics_name = "PpapiBrokerMetrics";
+      break;
+
+    default:
+      UMA_HISTOGRAM_ENUMERATION(
+          "UMA.SubprocessMetricsProvider.UntrackedProcesses",
+          data_.process_type, PROCESS_TYPE_CONTENT_END);
+      return;
+  }
+
+  // Create the shared memory segment and attach an allocator to it.
+  // Mapping the memory shouldn't fail but be safe if it does; everything
+  // will continue to work but just as if persistence weren't available.
+  std::unique_ptr<base::SharedMemory> shm(new base::SharedMemory());
+  if (!shm->CreateAndMapAnonymous(memory_size))
+    return;
+  metrics_allocator_.reset(new base::SharedPersistentMemoryAllocator(
+      std::move(shm), static_cast<uint64_t>(data_.id), metrics_name,
+      /*readonly=*/false));
+}
+
+void BrowserChildProcessHostImpl::ShareMetricsAllocatorToProcess() {
+  if (metrics_allocator_) {
+    base::SharedMemoryHandle shm_handle;
+    metrics_allocator_->shared_memory()->ShareToProcess(data_.handle,
+                                                        &shm_handle);
+    Send(new ChildProcessMsg_SetHistogramMemory(
+        shm_handle, metrics_allocator_->shared_memory()->mapped_size()));
+  }
+}
+
+void BrowserChildProcessHostImpl::OnProcessLaunchFailed(int error_code) {
+  delegate_->OnProcessLaunchFailed(error_code);
+  notify_child_disconnected_ = false;
   delete delegate_;  // Will delete us
 }
 
@@ -400,22 +540,6 @@ void BrowserChildProcessHostImpl::OnProcessLaunched() {
 
   const base::Process& process = child_process_->GetProcess();
   DCHECK(process.IsValid());
-
-#if defined(OS_WIN)
-  // TODO(jam): enable on POSIX
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch("use-new-edk")) {
-    mojo::embedder::ScopedPlatformHandle client_pipe =
-        mojo::embedder::ChildProcessLaunched(process.Handle());
-    Send(new ChildProcessMsg_SetMojoParentPipeHandle(
-        IPC::GetFileHandleForProcess(
-#if defined(OS_WIN)
-                                     client_pipe.release().handle,
-#else
-                                     client_pipe.release().fd,
-#endif
-                                     process.Handle(), true)));
-  }
-#endif
 
 #if defined(OS_WIN)
   // Start a WaitableEventWatcher that will invoke OnProcessExitedEarly if the
@@ -431,6 +555,7 @@ void BrowserChildProcessHostImpl::OnProcessLaunched() {
   delegate_->OnProcessLaunched();
 
   if (is_channel_connected_) {
+    ShareMetricsAllocatorToProcess();
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
                             base::Bind(&NotifyProcessLaunchedAndConnected,
                                        data_));
@@ -441,6 +566,34 @@ bool BrowserChildProcessHostImpl::IsProcessLaunched() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   return child_process_.get() && child_process_->GetProcess().IsValid();
+}
+
+// static
+void BrowserChildProcessHostImpl::OnMojoError(
+    base::WeakPtr<BrowserChildProcessHostImpl> process,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    const std::string& error) {
+  if (!task_runner->BelongsToCurrentThread()) {
+    task_runner->PostTask(
+        FROM_HERE, base::Bind(&BrowserChildProcessHostImpl::OnMojoError,
+                              process, task_runner, error));
+    return;
+  }
+  if (!process)
+    return;
+  HistogramBadMessageTerminated(process->data_.process_type);
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableKillAfterBadIPC)) {
+    return;
+  }
+  LOG(ERROR) << "Terminating child process for bad Mojo message: " << error;
+
+  // Create a memory dump with the error message aliased. This will make it easy
+  // to determine details about what interface call failed.
+  base::debug::Alias(&error);
+  base::debug::DumpWithoutCrashing();
+  process->child_process_->GetProcess().Terminate(
+      RESULT_CODE_KILLED_BAD_MESSAGE, false);
 }
 
 #if defined(OS_WIN)

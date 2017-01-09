@@ -5,14 +5,15 @@
 #ifndef CHROME_TEST_CHROMEDRIVER_SERVER_HTTP_HANDLER_H_
 #define CHROME_TEST_CHROMEDRIVER_SERVER_HTTP_HANDLER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "chrome/test/chromedriver/command.h"
@@ -49,6 +50,7 @@ struct CommandMapping {
   CommandMapping(HttpMethod method,
                  const std::string& path_pattern,
                  const Command& command);
+  CommandMapping(const CommandMapping& other);
   ~CommandMapping();
 
   HttpMethod method;
@@ -56,7 +58,7 @@ struct CommandMapping {
   Command command;
 };
 
-typedef base::Callback<void(scoped_ptr<net::HttpServerResponseInfo>)>
+typedef base::Callback<void(std::unique_ptr<net::HttpServerResponseInfo>)>
     HttpResponseSenderFunc;
 
 class HttpHandler {
@@ -66,7 +68,7 @@ class HttpHandler {
               const scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
               const std::string& url_base,
               int adb_port,
-              scoped_ptr<PortServer> port_server);
+              std::unique_ptr<PortServer> port_server);
   ~HttpHandler();
 
   void Handle(const net::HttpServerRequestInfo& request,
@@ -91,12 +93,19 @@ class HttpHandler {
   void PrepareResponse(const std::string& trimmed_path,
                        const HttpResponseSenderFunc& send_response_func,
                        const Status& status,
-                       scoped_ptr<base::Value> value,
-                       const std::string& session_id);
-  scoped_ptr<net::HttpServerResponseInfo> PrepareResponseHelper(
+                       std::unique_ptr<base::Value> value,
+                       const std::string& session_id,
+                       bool w3c_compliant);
+  std::unique_ptr<net::HttpServerResponseInfo> PrepareLegacyResponse(
       const std::string& trimmed_path,
       const Status& status,
-      scoped_ptr<base::Value> value,
+      std::unique_ptr<base::Value> value,
+      const std::string& session_id);
+
+  std::unique_ptr<net::HttpServerResponseInfo> PrepareStandardResponse(
+      const std::string& trimmed_path,
+      const Status& status,
+      std::unique_ptr<base::Value> value,
       const std::string& session_id);
 
   base::ThreadChecker thread_checker_;
@@ -106,11 +115,11 @@ class HttpHandler {
   scoped_refptr<URLRequestContextGetter> context_getter_;
   SyncWebSocketFactory socket_factory_;
   SessionThreadMap session_thread_map_;
-  scoped_ptr<CommandMap> command_map_;
-  scoped_ptr<Adb> adb_;
-  scoped_ptr<DeviceManager> device_manager_;
-  scoped_ptr<PortServer> port_server_;
-  scoped_ptr<PortManager> port_manager_;
+  std::unique_ptr<CommandMap> command_map_;
+  std::unique_ptr<Adb> adb_;
+  std::unique_ptr<DeviceManager> device_manager_;
+  std::unique_ptr<PortServer> port_server_;
+  std::unique_ptr<PortManager> port_manager_;
 
   base::WeakPtrFactory<HttpHandler> weak_ptr_factory_;
 

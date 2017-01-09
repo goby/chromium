@@ -7,21 +7,19 @@
 
 #include <map>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/non_thread_safe.h"
 #include "content/public/child/worker_thread.h"
 #include "third_party/WebKit/public/platform/WebFileSystem.h"
 
 namespace base {
-class WaitableEvent;
 class SingleThreadTaskRunner;
 }
 
 namespace blink {
 class WebURL;
-class WebFileWriter;
 class WebFileWriterClient;
 }
 

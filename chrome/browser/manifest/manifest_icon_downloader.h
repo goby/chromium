@@ -7,9 +7,10 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "third_party/skia/include/core/SkBitmap.h"
+#include "base/macros.h"
+
+class SkBitmap;
 
 namespace content {
 class WebContents;

@@ -4,6 +4,8 @@
 
 #include "components/drive/drive_app_registry.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <set>
 #include <utility>
@@ -69,6 +71,8 @@ DriveAppInfo::DriveAppInfo(
       is_removable(is_removable) {
 }
 
+DriveAppInfo::DriveAppInfo(const DriveAppInfo& other) = default;
+
 DriveAppInfo::~DriveAppInfo() {
 }
 
@@ -133,7 +137,7 @@ void DriveAppRegistry::Update() {
 
 void DriveAppRegistry::UpdateAfterGetAppList(
     google_apis::DriveApiErrorCode gdata_error,
-    scoped_ptr<google_apis::AppList> app_list) {
+    std::unique_ptr<google_apis::AppList> app_list) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   DCHECK(is_updating_);
@@ -185,9 +189,8 @@ void DriveAppRegistry::UpdateFromAppList(const google_apis::AppList& app_list) {
     AddAppSelectorList(app.secondary_file_extensions(), id, &extension_map_);
   }
 
-  FOR_EACH_OBSERVER(DriveAppRegistryObserver,
-                    observers_,
-                    OnDriveAppRegistryUpdated());
+  for (auto& observer : observers_)
+    observer.OnDriveAppRegistryUpdated();
 }
 
 void DriveAppRegistry::AddObserver(DriveAppRegistryObserver* observer) {

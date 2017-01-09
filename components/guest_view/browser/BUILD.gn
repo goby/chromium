@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("browser") {
+static_library("browser") {
   output_name = "guest_view_browser"
   sources = [
     "//components/guest_view/browser/guest_view.h",
@@ -19,18 +19,20 @@ source_set("browser") {
     "//components/guest_view/browser/guest_view_message_filter.h",
   ]
 
-  deps = [
+  public_deps = [
     "//base",
     "//components/guest_view/common",
-    "//components/ui/zoom",
+  ]
+  deps = [
+    "//components/zoom",
     "//content/public/browser",
     "//content/public/common",
     "//ipc",
-    "//third_party/WebKit/public:blink",
+    "//url",
   ]
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
   sources = [
     "//components/guest_view/browser/test_guest_view_manager.cc",

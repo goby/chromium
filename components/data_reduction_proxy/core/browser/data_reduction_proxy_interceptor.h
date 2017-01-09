@@ -5,7 +5,10 @@
 #ifndef COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_INTERCEPTOR_H_
 #define COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_INTERCEPTOR_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "base/threading/thread_checker.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "net/url_request/url_request_interceptor.h"
 
@@ -81,7 +84,9 @@ class DataReductionProxyInterceptor : public net::URLRequestInterceptor {
   // Object responsible for identifying cases when a response should cause the
   // data reduction proxy to be bypassed, and for triggering proxy bypasses in
   // these cases.
-  scoped_ptr<DataReductionProxyBypassProtocol> bypass_protocol_;
+  std::unique_ptr<DataReductionProxyBypassProtocol> bypass_protocol_;
+
+  base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(DataReductionProxyInterceptor);
 };

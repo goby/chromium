@@ -5,10 +5,16 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_SYNC_READER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_SYNC_READER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+#include <memory>
+
+#include "base/macros.h"
 #include "base/process/process.h"
 #include "base/sync_socket.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "media/audio/audio_output_controller.h"
 #include "media/base/audio_bus.h"
 
@@ -28,40 +34,48 @@ namespace content {
 // process.
 class AudioSyncReader : public media::AudioOutputController::SyncReader {
  public:
-  AudioSyncReader(base::SharedMemory* shared_memory,
-                  const media::AudioParameters& params);
-
   ~AudioSyncReader() override;
 
+  // Returns null on failure.
+  static std::unique_ptr<AudioSyncReader> Create(
+      const media::AudioParameters& params);
+
+  base::SharedMemory* shared_memory() const { return shared_memory_.get(); }
+  base::CancelableSyncSocket* foreign_socket() const {
+    return foreign_socket_.get();
+  }
+
   // media::AudioOutputController::SyncReader implementations.
-  void UpdatePendingBytes(uint32 bytes) override;
+  void RequestMoreData(base::TimeDelta delay,
+                       base::TimeTicks delay_timestamp,
+                       int prior_frames_skipped) override;
   void Read(media::AudioBus* dest) override;
   void Close() override;
 
-  bool Init();
-  bool PrepareForeignSocket(base::ProcessHandle process_handle,
-                            base::SyncSocket::TransitDescriptor* descriptor);
-
  private:
+  AudioSyncReader(const media::AudioParameters& params,
+                  std::unique_ptr<base::SharedMemory> shared_memory,
+                  std::unique_ptr<base::CancelableSyncSocket> socket,
+                  std::unique_ptr<base::CancelableSyncSocket> foreign_socket);
+
   // Blocks until data is ready for reading or a timeout expires.  Returns false
   // if an error or timeout occurs.
   bool WaitUntilDataIsReady();
 
-  const base::SharedMemory* const shared_memory_;
+  std::unique_ptr<base::SharedMemory> shared_memory_;
 
   // Mutes all incoming samples. This is used to prevent audible sound
   // during automated testing.
   const bool mute_audio_;
 
   // Socket for transmitting audio data.
-  scoped_ptr<base::CancelableSyncSocket> socket_;
+  std::unique_ptr<base::CancelableSyncSocket> socket_;
 
-  // Socket to be used by the renderer. The reference is released after
-  // PrepareForeignSocketHandle() is called and ran successfully.
-  scoped_ptr<base::CancelableSyncSocket> foreign_socket_;
+  // Socket to be used by the renderer.
+  std::unique_ptr<base::CancelableSyncSocket> foreign_socket_;
 
   // Shared memory wrapper used for transferring audio data to Read() callers.
-  scoped_ptr<media::AudioBus> output_bus_;
+  std::unique_ptr<media::AudioBus> output_bus_;
 
   // Maximum amount of audio data which can be transferred in one Read() call.
   const int packet_size_;
@@ -70,6 +84,7 @@ class AudioSyncReader : public media::AudioOutputController::SyncReader {
   // report a UMA stat during destruction.
   size_t renderer_callback_count_;
   size_t renderer_missed_callback_count_;
+  size_t trailing_renderer_missed_callback_count_;
 
   // The maximum amount of time to wait for data from the renderer.  Calculated
   // from the parameters given at construction.
@@ -77,7 +92,7 @@ class AudioSyncReader : public media::AudioOutputController::SyncReader {
 
   // The index of the audio buffer we're expecting to be sent from the renderer;
   // used to block with timeout for audio data.
-  uint32 buffer_index_;
+  uint32_t buffer_index_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioSyncReader);
 };

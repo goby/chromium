@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
@@ -28,7 +29,7 @@ class ConnectionTimeObserverTest : public ::testing::Test {
   std::map<protocol::ConnectionToHost::State, base::TimeTicks> test_map_;
 
   // Observes and saves the times when the chromoting connection state changes.
-  scoped_ptr<ConnectionTimeObserver> connection_time_observer_;
+  std::unique_ptr<ConnectionTimeObserver> connection_time_observer_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ConnectionTimeObserverTest);

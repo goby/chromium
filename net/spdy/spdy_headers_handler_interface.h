@@ -5,28 +5,40 @@
 #ifndef NET_SPDY_SPDY_HEADERS_HANDLER_INTERFACE_H_
 #define NET_SPDY_SPDY_HEADERS_HANDLER_INTERFACE_H_
 
+#include <stddef.h>
+
 #include "base/strings/string_piece.h"
+#include "net/base/net_export.h"
 
 namespace net {
 
 // This interface defines how an object that accepts header data should behave.
 // It is used by both SpdyHeadersBlockParser and HpackDecoder.
-class SpdyHeadersHandlerInterface {
+class NET_EXPORT_PRIVATE SpdyHeadersHandlerInterface {
  public:
   virtual ~SpdyHeadersHandlerInterface() {}
 
   // A callback method which notifies when the parser starts handling a new
-  // header block fragment.
+  // header block. Will only be called once per block, even if it extends into
+  // CONTINUATION frames.
   virtual void OnHeaderBlockStart() = 0;
 
   // A callback method which notifies on a header key value pair. Multiple
   // values for a given key will be emitted as multiple calls to OnHeader.
   virtual void OnHeader(base::StringPiece key, base::StringPiece value) = 0;
 
+  // TODO(yasong): deprecate this method with
+  // --gfe2_reloadable_flag_log_compressed_size.
   // A callback method which notifies when the parser finishes handling a
-  // header block fragment. Also indicates the total number of bytes in this
-  // block.
-  virtual void OnHeaderBlockEnd(size_t header_bytes_parsed) = 0;
+  // header block (i.e. the containing frame has the END_HEADERS flag set).
+  // Also indicates the total number of bytes in this block.
+  virtual void OnHeaderBlockEnd(size_t uncompressed_header_bytes) = 0;
+
+  // A callback method which notifies when the parser finishes handling a
+  // header block (i.e. the containing frame has the END_HEADERS flag set).
+  // Also indicates the total number of bytes in this block.
+  virtual void OnHeaderBlockEnd(size_t uncompressed_header_bytes,
+                                size_t compressed_header_bytes) = 0;
 };
 
 }  // namespace net

@@ -4,18 +4,19 @@
 
 #include "chrome/browser/ui/webui/chromeos/first_run/first_run_ui.h"
 
-#include "ash/shell.h"
+#include "ash/common/shelf/wm_shelf.h"
+#include "ash/common/wm_shell.h"
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/chromeos/first_run/first_run_handler.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "grit/browser_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
 
@@ -61,10 +62,12 @@ void SetLocalizedStrings(base::DictionaryValue* localized_strings) {
       "transitionsEnabled",
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           chromeos::switches::kEnableFirstRunUITransitions));
+  ash::WmShelf* shelf =
+      ash::WmShelf::ForWindow(ash::WmShell::Get()->GetPrimaryRootWindow());
   std::string shelf_alignment;
-  ash::Shell* shell = ash::Shell::GetInstance();
-  switch (shell->GetShelfAlignment(shell->GetPrimaryRootWindow())) {
+  switch (shelf->alignment()) {
     case ash::SHELF_ALIGNMENT_BOTTOM:
+    case ash::SHELF_ALIGNMENT_BOTTOM_LOCKED:
       shelf_alignment = kShelfAlignmentBottom;
       break;
     case ash::SHELF_ALIGNMENT_LEFT:
@@ -73,8 +76,6 @@ void SetLocalizedStrings(base::DictionaryValue* localized_strings) {
     case ash::SHELF_ALIGNMENT_RIGHT:
       shelf_alignment = kShelfAlignmentRight;
       break;
-    default:
-      NOTREACHED() << "Unsupported shelf alignment";
   }
   localized_strings->SetString("shelfAlignment", shelf_alignment);
 }

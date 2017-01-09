@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_CHROMEOS_SYSTEM_TIMEZONE_UTIL_H_
 #define CHROME_BROWSER_CHROMEOS_SYSTEM_TIMEZONE_UTIL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/strings/string16.h"
 
 namespace base {
 class ListValue;
@@ -17,8 +19,11 @@ struct TimeZoneResponseData;
 
 namespace system {
 
+// Gets the current timezone's display name.
+base::string16 GetCurrentTimezoneName();
+
 // Creates a list of pairs of each timezone's ID and name.
-scoped_ptr<base::ListValue> GetTimezoneList();
+std::unique_ptr<base::ListValue> GetTimezoneList();
 
 // Returns true if device is managed and has SystemTimezonePolicy set.
 bool HasSystemTimezonePolicy();

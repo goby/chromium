@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "ash/wm/system_modal_container_event_filter.h"
-
+#include "ash/common/wm_shell.h"
 #include "ash/wm/system_modal_container_event_filter_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/events/event.h"
@@ -12,20 +12,14 @@ namespace ash {
 
 SystemModalContainerEventFilter::SystemModalContainerEventFilter(
     SystemModalContainerEventFilterDelegate* delegate)
-    : delegate_(delegate) {
-}
+    : delegate_(delegate) {}
 
-SystemModalContainerEventFilter::~SystemModalContainerEventFilter() {
-}
+SystemModalContainerEventFilter::~SystemModalContainerEventFilter() {}
 
-void SystemModalContainerEventFilter::OnKeyEvent(ui::KeyEvent* event) {
-  aura::Window* target = static_cast<aura::Window*>(event->target());
-  if (!delegate_->CanWindowReceiveEvents(target))
-    event->StopPropagation();
-}
-
-void SystemModalContainerEventFilter::OnMouseEvent(
-    ui::MouseEvent* event) {
+void SystemModalContainerEventFilter::OnEvent(ui::Event* event) {
+  // Only filter modal events if a modal window is open.
+  if (!WmShell::Get()->IsSystemModalWindowOpen())
+    return;
   aura::Window* target = static_cast<aura::Window*>(event->target());
   if (!delegate_->CanWindowReceiveEvents(target))
     event->StopPropagation();

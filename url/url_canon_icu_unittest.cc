@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/icu/source/common/unicode/ucnv.h"
@@ -11,8 +13,6 @@
 #include "url/url_test_utils.h"
 
 namespace url {
-
-using test_utils::WStringToUTF16;
 
 namespace {
 
@@ -62,7 +62,8 @@ TEST(URLCanonIcuTest, ICUCharsetConverter) {
     std::string str;
     StdStringCanonOutput output(&str);
 
-    base::string16 input_str(WStringToUTF16(icu_cases[i].input));
+    base::string16 input_str(
+        test_utils::TruncateWStringToUTF16(icu_cases[i].input));
     int input_len = static_cast<int>(input_str.length());
     converter.ConvertFromUTF16(input_str.c_str(), input_len, &output);
     output.Complete();
@@ -132,7 +133,8 @@ TEST(URLCanonIcuTest, QueryWithConverter) {
     }
 
     if (query_cases[i].input16) {
-      base::string16 input16(WStringToUTF16(query_cases[i].input16));
+      base::string16 input16(
+          test_utils::TruncateWStringToUTF16(query_cases[i].input16));
       int len = static_cast<int>(input16.length());
       Component in_comp(0, len);
       std::string out_str;

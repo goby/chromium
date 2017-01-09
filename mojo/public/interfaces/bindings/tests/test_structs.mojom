@@ -20,6 +20,9 @@ struct RectPair {
 struct EmptyStruct {
 };
 
+[Native]
+struct UnmappedNativeStruct;
+
 // Used to verify that struct fields which don't specify a default are
 // initialized to: false for bool, 0 for numbers, and null for strings,
 // handles, and structs. The "?" nullable suffix shouldn't have any
@@ -97,7 +100,6 @@ struct ScopedConstants {
     E3 = E2,
     E4,
   };
-  const int32 TEN_TOO = EType.E2;
   EType f0 = E0; // 0
   EType f1 = E1; // 1
   EType f2 = E2; // 10
@@ -111,7 +113,8 @@ struct ScopedConstants {
 // decoded successfully.
 
 struct MapKeyTypes {
-  map<bool, bool> f0;
+  // TODO(yzshen): WTF::HashMap doesn't support bool as key.
+  // map<bool, bool> f0;
   map<int8, int8> f1;
   map<uint8, uint8> f2;
   map<int16, int16> f3;
@@ -123,6 +126,8 @@ struct MapKeyTypes {
   map<float, float> f9;
   map<double, double> f10;
   map<string, string> f11;
+  // TODO(tibell): JS/Java don't support struct as key.
+  // map<Rect, Rect> f12;
 };
 
 // Used to verify that various map value types can be encoded and decoded
@@ -153,6 +158,8 @@ struct ArrayValueTypes {
   array<int64> f3;
   array<float> f4;
   array<double> f5;
+  array<SomeInterface> f6;
+  array<SomeInterface&> f7;
 };
 
 // Used to verify that various float and double values can be encoded and
@@ -364,7 +371,7 @@ struct ContainsInterface {
   SomeInterface some_interface;
 };
 
-// Regression: Verify that a field can be called |other|.
+// Verify that a field can be called |other|.
 
 struct ContainsOther {
   int32 other;
@@ -374,4 +381,24 @@ struct ContainsOther {
 
 struct ContainsInterfaceRequest {
   SomeInterface& request;
+};
+
+// Used to verify that boolean fields are correctly serialized/deserialized.
+
+struct SingleBoolStruct {
+  bool value;
+};
+
+// Used to verify that structs containing typemapped types can be hashed (if the
+// typemapped type itself is hashable).
+
+struct ContainsHashable {
+  TypemappedRect rect;
+};
+
+// Used to test that nested structs can be hashed. The nested struct mustn't be
+// nullable.
+
+struct SimpleNestedStruct {
+  ContainsOther nested;
 };

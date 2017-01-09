@@ -5,15 +5,17 @@
 #include "chrome/browser/ui/webui/voice_search_ui.h"
 
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/files/file_enumerator.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
@@ -26,10 +28,14 @@
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/plugin_service.h"
@@ -41,8 +47,7 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
-#include "grit/browser_resources.h"
-#include "grit/components_strings.h"
+#include "extensions/features/features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "v8/include/v8.h"
 
@@ -76,10 +81,10 @@ content::WebUIDataSource* CreateVoiceSearchUiHtmlSource() {
 void AddPair16(base::ListValue* list,
                const base::string16& key,
                const base::string16& value) {
-  scoped_ptr<base::DictionaryValue> results(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> results(new base::DictionaryValue());
   results->SetString("key", key);
   results->SetString("value", value);
-  list->Append(results.release());
+  list->Append(std::move(results));
 }
 
 void AddPair(base::ListValue* list,
@@ -155,18 +160,19 @@ class VoiceSearchDomHandler : public WebUIMessageHandler {
     PopulatePageInformation();
   }
 
-  void ReturnVoiceSearchInfo(scoped_ptr<base::ListValue> info) {
+  void ReturnVoiceSearchInfo(std::unique_ptr<base::ListValue> info) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
     DCHECK(info);
     base::DictionaryValue voiceSearchInfo;
     voiceSearchInfo.Set("voiceSearchInfo", info.release());
-    web_ui()->CallJavascriptFunction("returnVoiceSearchInfo", voiceSearchInfo);
+    web_ui()->CallJavascriptFunctionUnsafe("returnVoiceSearchInfo",
+                                           voiceSearchInfo);
   }
 
   // Fill in the data to be displayed on the page.
   void PopulatePageInformation() {
     // Store Key-Value pairs of about-information.
-    scoped_ptr<base::ListValue> list(new base::ListValue());
+    std::unique_ptr<base::ListValue> list(new base::ListValue());
 
     // Populate information.
     AddOperatingSystemInfo(list.get());
@@ -197,15 +203,11 @@ class VoiceSearchDomHandler : public WebUIMessageHandler {
     }
     base::ListValue* raw_list = list.get();
     content::BrowserThread::PostTask(
-        content::BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(
-            &AddSharedModulePlatformsOnFileThread,
-            raw_list,
-            path,
-            base::Bind(&VoiceSearchDomHandler::ReturnVoiceSearchInfo,
-                       weak_factory_.GetWeakPtr(),
-                       base::Passed(list.Pass()))));
+        content::BrowserThread::FILE, FROM_HERE,
+        base::Bind(&AddSharedModulePlatformsOnFileThread, raw_list, path,
+                   base::Bind(&VoiceSearchDomHandler::ReturnVoiceSearchInfo,
+                              weak_factory_.GetWeakPtr(),
+                              base::Passed(std::move(list)))));
   }
 
   // Adds information regarding the system and chrome version info to list.
@@ -259,7 +261,7 @@ class VoiceSearchDomHandler : public WebUIMessageHandler {
     // platforms. ENABLE_EXTENSIONS covers those platforms and hey would not
     // allow Hotwording anyways since it is an extension.
     std::string nacl_enabled = "not available";
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     nacl_enabled = "No";
     // Determine if NaCl is available.
     base::FilePath path;
@@ -380,7 +382,7 @@ class VoiceSearchDomHandler : public WebUIMessageHandler {
 
   // Adds information specific to voice search in the app launcher to the list.
   void AddAppListInfo(base::ListValue* list) {
-#if defined (ENABLE_APP_LIST)
+#if BUILDFLAG(ENABLE_APP_LIST)
     std::string state = "No Start Page Service";
     app_list::StartPageService* start_page_service =
         app_list::StartPageService::Get(profile_);

@@ -7,7 +7,6 @@
 // NOTE: This IDL is dependent on bluetooth.idl.
 
 [implemented_in = "extensions/browser/api/bluetooth/bluetooth_private_api.h"]
-
 namespace bluetoothPrivate {
   // Events that can occur during pairing. The method used for pairing varies
   // depending on the capability of the two devices.
@@ -45,16 +44,23 @@ namespace bluetoothPrivate {
 
   // Results for connect(). See function declaration for details.
   enum ConnectResultType {
-    success,
-    unknownError,
-    inProgress,
     alreadyConnected,
-    failed,
-    authFailed,
+    attributeLengthInvalid,
     authCanceled,
+    authFailed,
     authRejected,
     authTimeout,
-    unsupportedDevice
+    connectionCongested,
+    failed,
+    inProgress,
+    insufficientEncryption,
+    offsetInvalid,
+    readNotPermitted,
+    requestNotSupported,
+    success,
+    unknownError,
+    unsupportedDevice,
+    writeNotPermitted
   };
 
   // Valid pairing responses.

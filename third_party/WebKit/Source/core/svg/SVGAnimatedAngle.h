@@ -31,42 +31,46 @@
 #ifndef SVGAnimatedAngle_h
 #define SVGAnimatedAngle_h
 
+#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGAngleTearOff.h"
 #include "core/svg/SVGAnimatedEnumeration.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class SVGMarkerElement;
+class SVGAnimatedAngle final : public SVGAnimatedProperty<SVGAngle>,
+                               public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-class SVGAnimatedAngle final : public SVGAnimatedProperty<SVGAngle> {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedAngle> create(SVGMarkerElement* contextElement)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedAngle(contextElement));
-    }
+ public:
+  static SVGAnimatedAngle* create(SVGElement* contextElement) {
+    return new SVGAnimatedAngle(contextElement);
+  }
 
-    ~SVGAnimatedAngle() override;
+  ~SVGAnimatedAngle() override;
 
-    SVGAnimatedEnumeration<SVGMarkerOrientType>* orientType() { return m_orientType.get(); }
+  SVGAnimatedEnumeration<SVGMarkerOrientType>* orientType() {
+    return m_orientType.get();
+  }
 
-    // SVGAnimatedPropertyBase:
+  // SVGAnimatedPropertyBase:
+  bool needsSynchronizeAttribute() override;
+  void synchronizeAttribute() override;
 
-    void synchronizeAttribute() override;
+  void setAnimatedValue(SVGPropertyBase*) override;
+  void animationEnded() override;
 
-    void setAnimatedValue(PassRefPtrWillBeRawPtr<SVGPropertyBase>) override;
-    void animationEnded() override;
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
-protected:
-    explicit SVGAnimatedAngle(SVGMarkerElement* contextElement);
+ protected:
+  explicit SVGAnimatedAngle(SVGElement* contextElement);
 
-private:
-    RefPtrWillBeMember<SVGAnimatedEnumeration<SVGMarkerOrientType>> m_orientType;
+ private:
+  Member<SVGAnimatedEnumeration<SVGMarkerOrientType>> m_orientType;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGAnimatedAngle_h
+#endif  // SVGAnimatedAngle_h

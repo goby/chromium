@@ -7,9 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
@@ -101,14 +102,14 @@ class SpawnerCommunicator : public URLRequest::Delegate {
                                              std::string* data_received);
 
   // URLRequest::Delegate methods. Called on the IO thread.
-  void OnResponseStarted(URLRequest* request) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnReadCompleted(URLRequest* request, int num_bytes) override;
 
   // Reads Result from the response. Called on the IO thread.
   void ReadResult(URLRequest* request);
 
   // Called on the IO thread upon completion of the spawner command.
-  void OnSpawnerCommandCompleted(URLRequest* request);
+  void OnSpawnerCommandCompleted(URLRequest* request, int net_error);
 
   // Callback on the IO thread for time-out task of request with id |id|.
   void OnTimeout(int id);
@@ -126,16 +127,16 @@ class SpawnerCommunicator : public URLRequest::Delegate {
   const uint16_t port_;
 
   // Helper to add |port_| to the list of the globally explicitly allowed ports.
-  scoped_ptr<ScopedPortException> allowed_port_;
+  std::unique_ptr<ScopedPortException> allowed_port_;
 
   // The next ID to use for |cur_request_| (monotonically increasing).
   int next_id_;
 
   // Request context used by |cur_request_|.
-  scoped_ptr<URLRequestContext> context_;
+  std::unique_ptr<URLRequestContext> context_;
 
   // The current (in progress) request, or NULL.
-  scoped_ptr<URLRequest> cur_request_;
+  std::unique_ptr<URLRequest> cur_request_;
 
   // Only gets/sets |is_running_| on user's thread to avoid race-condition.
   bool is_running_;

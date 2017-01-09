@@ -8,7 +8,7 @@
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/controls/button/checkbox.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/button/radio_button.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -35,7 +35,6 @@ class WidgetsWindow : public views::WidgetDelegateView {
   gfx::Size GetPreferredSize() const override;
 
   // Overridden from views::WidgetDelegate:
-  views::View* GetContentsView() override;
   base::string16 GetWindowTitle() const override;
   bool CanResize() const override;
 
@@ -53,28 +52,31 @@ class WidgetsWindow : public views::WidgetDelegateView {
 };
 
 WidgetsWindow::WidgetsWindow()
-    : button_(new views::LabelButton(NULL, base::ASCIIToUTF16("Button"))),
+    : button_(
+          views::MdTextButton::Create(nullptr, base::ASCIIToUTF16("Button"))),
       disabled_button_(
-          new views::LabelButton(NULL, base::ASCIIToUTF16("Disabled button"))),
+          views::MdTextButton::Create(nullptr,
+                                      base::ASCIIToUTF16("Disabled button"))),
       checkbox_(new views::Checkbox(base::ASCIIToUTF16("Checkbox"))),
-      checkbox_disabled_(new views::Checkbox(
-          base::ASCIIToUTF16("Checkbox disabled"))),
-      checkbox_checked_(new views::Checkbox(
-          base::ASCIIToUTF16("Checkbox checked"))),
-      checkbox_checked_disabled_(new views::Checkbox(
-          base::ASCIIToUTF16("Checkbox checked disabled"))),
-      radio_button_(new views::RadioButton(
-          base::ASCIIToUTF16("Radio button"), 0)),
-      radio_button_disabled_(new views::RadioButton(
-          base::ASCIIToUTF16("Radio button disabled"), 0)),
-      radio_button_selected_(new views::RadioButton(
-          base::ASCIIToUTF16("Radio button selected"), 0)),
+      checkbox_disabled_(
+          new views::Checkbox(base::ASCIIToUTF16("Checkbox disabled"))),
+      checkbox_checked_(
+          new views::Checkbox(base::ASCIIToUTF16("Checkbox checked"))),
+      checkbox_checked_disabled_(
+          new views::Checkbox(base::ASCIIToUTF16("Checkbox checked disabled"))),
+      radio_button_(
+          new views::RadioButton(base::ASCIIToUTF16("Radio button"), 0)),
+      radio_button_disabled_(
+          new views::RadioButton(base::ASCIIToUTF16("Radio button disabled"),
+                                 0)),
+      radio_button_selected_(
+          new views::RadioButton(base::ASCIIToUTF16("Radio button selected"),
+                                 0)),
       radio_button_selected_disabled_(new views::RadioButton(
-          base::ASCIIToUTF16("Radio button selected disabled"), 1)) {
-  button_->SetStyle(views::Button::STYLE_BUTTON);
+          base::ASCIIToUTF16("Radio button selected disabled"),
+          1)) {
   AddChildView(button_);
   disabled_button_->SetEnabled(false);
-  disabled_button_->SetStyle(views::Button::STYLE_BUTTON);
   AddChildView(disabled_button_);
   AddChildView(checkbox_);
   checkbox_disabled_->SetEnabled(false);
@@ -94,8 +96,7 @@ WidgetsWindow::WidgetsWindow()
   AddChildView(radio_button_selected_disabled_);
 }
 
-WidgetsWindow::~WidgetsWindow() {
-}
+WidgetsWindow::~WidgetsWindow() {}
 
 void WidgetsWindow::OnPaint(gfx::Canvas* canvas) {
   canvas->FillRect(GetLocalBounds(), SK_ColorWHITE);
@@ -117,10 +118,6 @@ gfx::Size WidgetsWindow::GetPreferredSize() const {
   return gfx::Size(kWindowWidth, kWindowHeight);
 }
 
-views::View* WidgetsWindow::GetContentsView() {
-  return this;
-}
-
 base::string16 WidgetsWindow::GetWindowTitle() const {
   return base::ASCIIToUTF16("Examples: Widgets");
 }
@@ -136,9 +133,8 @@ namespace shell {
 
 void CreateWidgetsWindow() {
   gfx::Rect bounds(kWindowLeft, kWindowTop, kWindowWidth, kWindowHeight);
-  views::Widget* widget =
-      views::Widget::CreateWindowWithContextAndBounds(
-          new WidgetsWindow, Shell::GetPrimaryRootWindow(), bounds);
+  views::Widget* widget = views::Widget::CreateWindowWithContextAndBounds(
+      new WidgetsWindow, Shell::GetPrimaryRootWindow(), bounds);
   widget->GetNativeView()->SetName("WidgetsWindow");
   widget->Show();
 }

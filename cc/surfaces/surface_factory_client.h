@@ -6,12 +6,13 @@
 #define CC_SURFACES_SURFACE_FACTORY_CLIENT_H_
 
 #include "cc/resources/returned_resource.h"
+#include "cc/surfaces/local_frame_id.h"
 #include "cc/surfaces/surfaces_export.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace cc {
 
 class BeginFrameSource;
-struct SurfaceId;
 
 class CC_SURFACES_EXPORT SurfaceFactoryClient {
  public:
@@ -19,14 +20,11 @@ class CC_SURFACES_EXPORT SurfaceFactoryClient {
 
   virtual void ReturnResources(const ReturnedResourceArray& resources) = 0;
 
-  // This allows the SurfaceFactory to tell it's client what BeginFrameSource
-  // to use for a given surface_id.
-  // If there are multiple active surface_ids, it is the client's
-  // responsibility to pick or distribute the correct BeginFrameSource.
-  // If surface_id is null, then all BeginFrameSources previously
-  // set by this function should be invalidated.
-  virtual void SetBeginFrameSource(SurfaceId surface_id,
-                                   BeginFrameSource* begin_frame_source) = 0;
+  virtual void WillDrawSurface(const LocalFrameId& local_frame_id,
+                               const gfx::Rect& damage_rect) {}
+
+  // This allows the SurfaceFactory to pass a BeginFrameSource to use.
+  virtual void SetBeginFrameSource(BeginFrameSource* begin_frame_source) = 0;
 };
 
 }  // namespace cc

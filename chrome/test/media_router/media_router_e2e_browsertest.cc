@@ -7,12 +7,11 @@
 #include <vector>
 #include "base/command_line.h"
 #include "base/stl_util.h"
-#include "base/strings/stringprintf.h"
 #include "chrome/browser/media/router/media_router.h"
 #include "chrome/browser/media/router/media_router_factory.h"
-#include "chrome/browser/media/router/media_router_mojo_impl.h"
 #include "chrome/browser/media/router/media_source.h"
 #include "chrome/browser/media/router/media_source_helper.h"
+#include "chrome/browser/media/router/route_request_result.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -71,11 +70,9 @@ void MediaRouterE2EBrowserTest::TearDownOnMainThread() {
 }
 
 void MediaRouterE2EBrowserTest::OnRouteResponseReceived(
-    const MediaRoute* route,
-    const std::string& presentation_id,
-    const std::string& error) {
-  ASSERT_TRUE(route);
-  route_id_ = route->media_route_id();
+    const RouteRequestResult& result) {
+  ASSERT_TRUE(result.route());
+  route_id_ = result.route()->media_route_id();
 }
 
 void MediaRouterE2EBrowserTest::CreateMediaRoute(
@@ -83,7 +80,7 @@ void MediaRouterE2EBrowserTest::CreateMediaRoute(
     const GURL& origin,
     content::WebContents* web_contents) {
   DCHECK(media_router_);
-  observer_.reset(new TestMediaSinksObserver(media_router_, source));
+  observer_.reset(new TestMediaSinksObserver(media_router_, source, origin));
   observer_->Init();
 
   DVLOG(1) << "Receiver name: " << receiver();
@@ -103,7 +100,8 @@ void MediaRouterE2EBrowserTest::CreateMediaRoute(
       base::Bind(&MediaRouterE2EBrowserTest::OnRouteResponseReceived,
                  base::Unretained(this)));
   media_router_->CreateRoute(source.id(), sink.id(), origin, web_contents,
-                             route_response_callbacks);
+                             route_response_callbacks, base::TimeDelta(),
+                             is_incognito());
 
   // Wait for the route request to be fulfilled (and route to be started).
   ASSERT_TRUE(ConditionalWait(
@@ -114,12 +112,11 @@ void MediaRouterE2EBrowserTest::CreateMediaRoute(
 
 void MediaRouterE2EBrowserTest::StopMediaRoute() {
   ASSERT_FALSE(route_id_.empty());
-
-  media_router_->CloseRoute(route_id_);
+  media_router_->TerminateRoute(route_id_);
 }
 
 bool MediaRouterE2EBrowserTest::IsSinkDiscovered() const {
-  return ContainsKey(observer_->sink_map, receiver());
+  return base::ContainsKey(observer_->sink_map, receiver());
 }
 
 bool MediaRouterE2EBrowserTest::IsRouteCreated() const {
@@ -160,7 +157,7 @@ IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest, MANUAL_TabMirroring) {
 
 IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest, MANUAL_CastApp) {
   // Wait for 30 seconds to make sure the route is stable.
-  CreateMediaRoute(MediaSourceForPresentationUrl(kCastAppPresentationUrl),
+  CreateMediaRoute(MediaSourceForPresentationUrl(GURL(kCastAppPresentationUrl)),
                    GURL(kOriginUrl), nullptr);
   Wait(base::TimeDelta::FromSeconds(30));
 

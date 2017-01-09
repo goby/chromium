@@ -35,101 +35,172 @@ class DataTransfer;
 class EventDispatcher;
 
 class CORE_EXPORT MouseEvent : public MouseRelatedEvent {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<MouseEvent> create()
-    {
-        return adoptRefWillBeNoop(new MouseEvent);
-    }
+  DEFINE_WRAPPERTYPEINFO();
 
-    // TODO(mustaq): Should replace most/all of these params with a MouseEventInit.
-    static PassRefPtrWillBeRawPtr<MouseEvent> create(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<AbstractView>,
-        int detail, int screenX, int screenY, int windowX, int windowY,
-        int movementX, int movementY, PlatformEvent::Modifiers,
-        short button, unsigned short buttons,
-        PassRefPtrWillBeRawPtr<EventTarget> relatedTarget,
-        double platformTimeStamp,
-        PlatformMouseEvent::SyntheticEventType = PlatformMouseEvent::RealOrIndistinguishable);
+ public:
+  static MouseEvent* create() { return new MouseEvent; }
 
-    static PassRefPtrWillBeRawPtr<MouseEvent> create(const AtomicString& eventType, PassRefPtrWillBeRawPtr<AbstractView>, const PlatformMouseEvent&, int detail, PassRefPtrWillBeRawPtr<Node> relatedTarget);
+  // TODO(mustaq): Should replace most/all of these params with a
+  // MouseEventInit.
+  static MouseEvent* create(const AtomicString& type,
+                            bool canBubble,
+                            bool cancelable,
+                            AbstractView*,
+                            int detail,
+                            int screenX,
+                            int screenY,
+                            int windowX,
+                            int windowY,
+                            int movementX,
+                            int movementY,
+                            PlatformEvent::Modifiers,
+                            short button,
+                            unsigned short buttons,
+                            EventTarget* relatedTarget,
+                            double platformTimeStamp,
+                            PlatformMouseEvent::SyntheticEventType,
+                            const String& region,
+                            const PlatformMouseEvent*);
 
-    static PassRefPtrWillBeRawPtr<MouseEvent> create(ScriptState*, const AtomicString& eventType, const MouseEventInit&);
+  static MouseEvent* create(const AtomicString& eventType,
+                            AbstractView*,
+                            const PlatformMouseEvent&,
+                            int detail,
+                            Node* relatedTarget);
 
-    static PassRefPtrWillBeRawPtr<MouseEvent> create(const AtomicString& eventType, PassRefPtrWillBeRawPtr<AbstractView>, PassRefPtrWillBeRawPtr<Event> underlyingEvent, SimulatedClickCreationScope);
+  static MouseEvent* create(ScriptState*,
+                            const AtomicString& eventType,
+                            const MouseEventInit&);
 
-    ~MouseEvent() override;
+  static MouseEvent* create(const AtomicString& eventType,
+                            AbstractView*,
+                            Event* underlyingEvent,
+                            SimulatedClickCreationScope);
 
-    static unsigned short platformModifiersToButtons(unsigned modifiers);
+  ~MouseEvent() override;
 
-    void initMouseEvent(ScriptState*, const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<AbstractView>,
-        int detail, int screenX, int screenY, int clientX, int clientY,
-        bool ctrlKey, bool altKey, bool shiftKey, bool metaKey,
-        short button, PassRefPtrWillBeRawPtr<EventTarget> relatedTarget, unsigned short buttons = 0);
+  static unsigned short platformModifiersToButtons(unsigned modifiers);
 
-    // WinIE uses 1,4,2 for left/middle/right but not for click (just for mousedown/up, maybe others),
-    // but we will match the standard DOM.
-    short button() const { return m_button == -1 ? 0 : m_button; }
-    unsigned short buttons() const { return m_buttons; }
-    bool buttonDown() const { return m_button != -1; }
-    EventTarget* relatedTarget() const { return m_relatedTarget.get(); }
-    void setRelatedTarget(PassRefPtrWillBeRawPtr<EventTarget> relatedTarget) { m_relatedTarget = relatedTarget; }
-    PlatformMouseEvent::SyntheticEventType syntheticEventType() const { return m_syntheticEventType; }
+  void initMouseEvent(ScriptState*,
+                      const AtomicString& type,
+                      bool canBubble,
+                      bool cancelable,
+                      AbstractView*,
+                      int detail,
+                      int screenX,
+                      int screenY,
+                      int clientX,
+                      int clientY,
+                      bool ctrlKey,
+                      bool altKey,
+                      bool shiftKey,
+                      bool metaKey,
+                      short button,
+                      EventTarget* relatedTarget,
+                      unsigned short buttons = 0);
 
-    Node* toElement() const;
-    Node* fromElement() const;
+  // WinIE uses 1,4,2 for left/middle/right but not for click (just for
+  // mousedown/up, maybe others), but we will match the standard DOM.
+  virtual short button() const { return m_button == -1 ? 0 : m_button; }
+  unsigned short buttons() const { return m_buttons; }
+  bool buttonDown() const { return m_button != -1; }
+  EventTarget* relatedTarget() const { return m_relatedTarget.get(); }
+  void setRelatedTarget(EventTarget* relatedTarget) {
+    m_relatedTarget = relatedTarget;
+  }
+  PlatformMouseEvent::SyntheticEventType getSyntheticEventType() const {
+    return m_syntheticEventType;
+  }
+  const String& region() const { return m_region; }
+  void setRegion(const String& region) { m_region = region; }
 
-    virtual DataTransfer* dataTransfer() const { return nullptr; }
+  Node* toElement() const;
+  Node* fromElement() const;
 
-    bool fromTouch() const { return m_syntheticEventType == PlatformMouseEvent::FromTouch; }
+  virtual DataTransfer* getDataTransfer() const { return nullptr; }
 
-    const AtomicString& interfaceName() const override;
+  bool fromTouch() const {
+    return m_syntheticEventType == PlatformMouseEvent::FromTouch;
+  }
 
-    bool isMouseEvent() const override;
-    int which() const final;
+  const AtomicString& interfaceName() const override;
 
-    PassRefPtrWillBeRawPtr<EventDispatchMediator> createMediator() override;
+  bool isMouseEvent() const override;
+  int which() const final;
 
-    DECLARE_VIRTUAL_TRACE();
+  EventDispatchMediator* createMediator() override;
 
-protected:
-    MouseEvent(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<AbstractView>,
-        int detail, int screenX, int screenY, int windowX, int windowY,
-        int movementX, int movementY,
-        PlatformEvent::Modifiers, short button, unsigned short buttons,
-        PassRefPtrWillBeRawPtr<EventTarget> relatedTarget,
-        double platformTimeStamp,
-        PlatformMouseEvent::SyntheticEventType);
+  int clickCount() { return detail(); }
 
-    MouseEvent(const AtomicString& type, const MouseEventInit&);
+  const PlatformMouseEvent* mouseEvent() const { return m_mouseEvent.get(); }
 
-    MouseEvent();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    friend class MouseEventDispatchMediator;
-    void initMouseEventInternal(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<AbstractView>,
-        int detail, int screenX, int screenY, int clientX, int clientY,
-        PlatformEvent::Modifiers,
-        short button, PassRefPtrWillBeRawPtr<EventTarget> relatedTarget, InputDeviceCapabilities* sourceCapabilities, unsigned short buttons = 0);
+ protected:
+  MouseEvent(const AtomicString& type,
+             bool canBubble,
+             bool cancelable,
+             AbstractView*,
+             int detail,
+             int screenX,
+             int screenY,
+             int windowX,
+             int windowY,
+             int movementX,
+             int movementY,
+             PlatformEvent::Modifiers,
+             short button,
+             unsigned short buttons,
+             EventTarget* relatedTarget,
+             double platformTimeStamp,
+             PlatformMouseEvent::SyntheticEventType,
+             const String& region,
+             const PlatformMouseEvent*);
 
-    short m_button;
-    unsigned short m_buttons;
-    RefPtrWillBeMember<EventTarget> m_relatedTarget;
-    PlatformMouseEvent::SyntheticEventType m_syntheticEventType;
+  MouseEvent(const AtomicString& type, const MouseEventInit&);
+
+  MouseEvent();
+
+  short rawButton() const { return m_button; }
+
+ private:
+  friend class MouseEventDispatchMediator;
+  void initMouseEventInternal(const AtomicString& type,
+                              bool canBubble,
+                              bool cancelable,
+                              AbstractView*,
+                              int detail,
+                              int screenX,
+                              int screenY,
+                              int clientX,
+                              int clientY,
+                              PlatformEvent::Modifiers,
+                              short button,
+                              EventTarget* relatedTarget,
+                              InputDeviceCapabilities* sourceCapabilities,
+                              unsigned short buttons = 0);
+
+  short m_button;
+  unsigned short m_buttons;
+  Member<EventTarget> m_relatedTarget;
+  PlatformMouseEvent::SyntheticEventType m_syntheticEventType;
+  String m_region;
+  std::unique_ptr<PlatformMouseEvent> m_mouseEvent;
 };
 
 class MouseEventDispatchMediator final : public EventDispatchMediator {
-public:
-    static PassRefPtrWillBeRawPtr<MouseEventDispatchMediator> create(PassRefPtrWillBeRawPtr<MouseEvent>);
+ public:
+  static MouseEventDispatchMediator* create(MouseEvent*);
 
-private:
-    explicit MouseEventDispatchMediator(PassRefPtrWillBeRawPtr<MouseEvent>);
-    MouseEvent& event() const;
+ private:
+  explicit MouseEventDispatchMediator(MouseEvent*);
+  MouseEvent& event() const;
 
-    bool dispatchEvent(EventDispatcher&) const override;
+  DispatchEventResult dispatchEvent(EventDispatcher&) const override;
 };
 
 DEFINE_EVENT_TYPE_CASTS(MouseEvent);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // MouseEvent_h
+#endif  // MouseEvent_h

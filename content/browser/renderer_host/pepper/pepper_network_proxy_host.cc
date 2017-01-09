@@ -10,9 +10,10 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/socket_permission_request.h"
-#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_info.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -58,6 +59,9 @@ PepperNetworkProxyHost::~PepperNetworkProxyHost() {
 
 PepperNetworkProxyHost::UIThreadData::UIThreadData() : is_allowed(false) {}
 
+PepperNetworkProxyHost::UIThreadData::UIThreadData(const UIThreadData& other) =
+    default;
+
 PepperNetworkProxyHost::UIThreadData::~UIThreadData() {}
 
 // static
@@ -67,13 +71,9 @@ PepperNetworkProxyHost::GetUIThreadDataOnUIThread(int render_process_id,
                                                   bool is_external_plugin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   PepperNetworkProxyHost::UIThreadData result;
-  RenderProcessHost* render_process_host =
-      RenderProcessHost::FromID(render_process_id);
-  if (render_process_host && render_process_host->GetBrowserContext()) {
-    result.context_getter =
-        render_process_host->GetBrowserContext()
-            ->GetRequestContextForRenderProcess(render_process_id);
-  }
+  RenderProcessHost* rph = RenderProcessHost::FromID(render_process_id);
+  if (rph)
+    result.context_getter = rph->GetStoragePartition()->GetURLRequestContext();
 
   SocketPermissionRequest request(
       content::SocketPermissionRequest::RESOLVE_PROXY, std::string(), 0);
@@ -145,13 +145,9 @@ void PepperNetworkProxyHost::TryToSendUnsentRequests() {
                      weak_factory_.GetWeakPtr(),
                      request.reply_context,
                      base::Owned(proxy_info));
-      int result = proxy_service_->ResolveProxy(request.url,
-                                                net::LOAD_NORMAL,
-                                                proxy_info,
-                                                callback,
-                                                &pending_request,
-                                                NULL,
-                                                net::BoundNetLog());
+      int result = proxy_service_->ResolveProxy(
+          request.url, std::string(), proxy_info, callback, &pending_request,
+          NULL, net::NetLogWithSource());
       pending_requests_.push(pending_request);
       // If it was handled synchronously, we must run the callback now;
       // proxy_service_ won't run it for us in this case.

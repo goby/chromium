@@ -6,10 +6,10 @@
 #define CHROME_BROWSER_AUTOFILL_RISK_UTIL_H_
 
 #include <stdint.h>
+
 #include <string>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace content {
 class WebContents;
@@ -17,7 +17,7 @@ class WebContents;
 
 namespace autofill {
 
-void LoadRiskData(uint64 obfuscated_gaia_id,
+void LoadRiskData(uint64_t obfuscated_gaia_id,
                   content::WebContents* web_contents,
                   const base::Callback<void(const std::string&)>& callback);
 

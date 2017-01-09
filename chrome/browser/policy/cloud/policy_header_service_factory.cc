@@ -4,7 +4,11 @@
 
 #include "chrome/browser/policy/cloud/policy_header_service_factory.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <utility>
+
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -16,7 +20,6 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
-#include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_factory_chromeos.h"
 #else
@@ -30,8 +33,9 @@ namespace {
 
 class PolicyHeaderServiceWrapper : public KeyedService {
  public:
-  explicit PolicyHeaderServiceWrapper(scoped_ptr<PolicyHeaderService> service)
-      : policy_header_service_(service.Pass()) {}
+  explicit PolicyHeaderServiceWrapper(
+      std::unique_ptr<PolicyHeaderService> service)
+      : policy_header_service_(std::move(service)) {}
 
   PolicyHeaderService* policy_header_service() const {
     return policy_header_service_.get();
@@ -44,7 +48,7 @@ class PolicyHeaderServiceWrapper : public KeyedService {
   }
 
  private:
-  scoped_ptr<PolicyHeaderService> policy_header_service_;
+  std::unique_ptr<PolicyHeaderService> policy_header_service_;
 };
 
 }  // namespace
@@ -98,17 +102,12 @@ KeyedService* PolicyHeaderServiceFactory::BuildServiceInstanceFor(
   if (!manager)
     return NULL;
   CloudPolicyStore* user_store = manager->core()->store();
-  CloudPolicyStore* device_store = NULL;
-#if defined(OS_CHROMEOS)
-  device_store = connector->GetDeviceCloudPolicyManager()->core()->store();
-#endif
 
-  scoped_ptr<PolicyHeaderService> service = make_scoped_ptr(
-      new PolicyHeaderService(device_management_service->GetServerUrl(),
-                              kPolicyVerificationKeyHash,
-                              user_store,
-                              device_store));
-  return new PolicyHeaderServiceWrapper(service.Pass());
+  std::unique_ptr<PolicyHeaderService> service =
+      base::MakeUnique<PolicyHeaderService>(
+          device_management_service->GetServerUrl(), kPolicyVerificationKeyHash,
+          user_store);
+  return new PolicyHeaderServiceWrapper(std::move(service));
 }
 
 // static

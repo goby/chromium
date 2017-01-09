@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "ash/test/ash_test_base.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/screens/user_selection_screen.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller.h"
@@ -75,10 +78,10 @@ class SigninPrepareUserListTest : public ash::test::AshTestBase,
 
   FakeChromeUserManager* fake_user_manager_;
   ScopedUserManagerEnabler user_manager_enabler_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   std::map<std::string, proximity_auth::ScreenlockBridge::LockHandler::AuthType>
       user_auth_type_map;
-  scoped_ptr<MultiProfileUserController> controller_;
+  std::unique_ptr<MultiProfileUserController> controller_;
 
   DISALLOW_COPY_AND_ASSIGN(SigninPrepareUserListTest);
 };
@@ -91,7 +94,7 @@ TEST_F(SigninPrepareUserListTest, AlwaysKeepOwnerInList) {
           true /* is signin to add */);
 
   EXPECT_EQ(kMaxUsers, users_to_send.size());
-  EXPECT_EQ(kOwner, users_to_send.back()->email());
+  EXPECT_EQ(kOwner, users_to_send.back()->GetAccountId().GetUserEmail());
 
   fake_user_manager_->RemoveUserFromList(
       AccountId::FromUserEmail("a16@gmail.com"));
@@ -102,8 +105,10 @@ TEST_F(SigninPrepareUserListTest, AlwaysKeepOwnerInList) {
       true /* is signin to add */);
 
   EXPECT_EQ(kMaxUsers, users_to_send.size());
-  EXPECT_EQ("a18@gmail.com", users_to_send.back()->email());
-  EXPECT_EQ(kOwner, users_to_send[kMaxUsers-2]->email());
+  EXPECT_EQ("a18@gmail.com",
+            users_to_send.back()->GetAccountId().GetUserEmail());
+  EXPECT_EQ(kOwner,
+            users_to_send[kMaxUsers - 2]->GetAccountId().GetUserEmail());
 }
 
 TEST_F(SigninPrepareUserListTest, PublicAccounts) {
@@ -113,14 +118,16 @@ TEST_F(SigninPrepareUserListTest, PublicAccounts) {
           true /* is signin to add */);
 
   EXPECT_EQ(kMaxUsers, users_to_send.size());
-  EXPECT_EQ("a0@gmail.com", users_to_send.front()->email());
+  EXPECT_EQ("a0@gmail.com",
+            users_to_send.front()->GetAccountId().GetUserEmail());
 
   users_to_send = UserSelectionScreen::PrepareUserListForSending(
       fake_user_manager_->GetUsers(), AccountId::FromUserEmail(kOwner),
       false /* is signin to add */);
 
   EXPECT_EQ(kMaxUsers, users_to_send.size());
-  EXPECT_EQ("public0@gmail.com", users_to_send.front()->email());
+  EXPECT_EQ("public0@gmail.com",
+            users_to_send.front()->GetAccountId().GetUserEmail());
 }
 
 }  // namespace chromeos

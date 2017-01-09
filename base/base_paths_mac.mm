@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #import <Foundation/Foundation.h>
 #include <mach-o/dyld.h>
+#include <stdint.h>
 
 #include "base/base_paths.h"
 #include "base/compiler_specific.h"
@@ -17,6 +18,7 @@
 #include "base/mac/foundation_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 
 namespace {
@@ -38,6 +40,8 @@ void GetNSExecutablePath(base::FilePath* path) {
   // FilePath::DirName() work incorrectly, convert it to absolute path so that
   // paths such as DIR_SOURCE_ROOT can work, since we expect absolute paths to
   // be returned here.
+  // TODO(bauerb): http://crbug.com/259796, http://crbug.com/373477
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   *path = base::MakeAbsoluteFilePath(base::FilePath(executable_path));
 }
 

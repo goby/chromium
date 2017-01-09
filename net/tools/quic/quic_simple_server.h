@@ -5,24 +5,27 @@
 // A toy server, which listens on a specified address for QUIC traffic and
 // handles incoming responses.
 
-#ifndef NET_QUIC_TOOLS_QUIC_SIMPLE_SERVER_H_
-#define NET_QUIC_TOOLS_QUIC_SIMPLE_SERVER_H_
+#ifndef NET_TOOLS_QUIC_QUIC_SIMPLE_SERVER_H_
+#define NET_TOOLS_QUIC_QUIC_SIMPLE_SERVER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/log/net_log.h"
-#include "net/quic/crypto/quic_crypto_server_config.h"
-#include "net/quic/quic_clock.h"
-#include "net/quic/quic_config.h"
-#include "net/quic/quic_connection_helper.h"
+#include "net/quic/chromium/quic_chromium_alarm_factory.h"
+#include "net/quic/chromium/quic_chromium_connection_helper.h"
+#include "net/quic/core/crypto/quic_crypto_server_config.h"
+#include "net/quic/core/quic_config.h"
+#include "net/quic/core/quic_version_manager.h"
+#include "net/quic/platform/impl/quic_chromium_clock.h"
+#include "net/tools/quic/quic_http_response_cache.h"
 
 namespace net {
 
 class UDPServerSocket;
 
-namespace tools {
 
 class QuicDispatcher;
 
@@ -32,9 +35,12 @@ class QuicSimpleServerPeer;
 
 class QuicSimpleServer {
  public:
-  QuicSimpleServer(ProofSource* proof_source,
-                   const QuicConfig& config,
-                   const QuicVersionVector& supported_versions);
+  QuicSimpleServer(
+      std::unique_ptr<ProofSource> proof_source,
+      const QuicConfig& config,
+      const QuicCryptoServerConfig::ConfigOptions& crypto_config_options,
+      const QuicVersionVector& supported_versions,
+      QuicHttpResponseCache* response_cache);
 
   virtual ~QuicSimpleServer();
 
@@ -52,11 +58,9 @@ class QuicSimpleServer {
   // continues the read loop.
   void OnReadComplete(int result);
 
-  void SetStrikeRegisterNoStartupPeriod() {
-    crypto_config_.set_strike_register_no_startup_period();
-  }
-
   QuicDispatcher* dispatcher() { return dispatcher_.get(); }
+
+  IPEndPoint server_address() const { return server_address_; }
 
  private:
   friend class test::QuicSimpleServerPeer;
@@ -64,29 +68,31 @@ class QuicSimpleServer {
   // Initialize the internal state of the server.
   void Initialize();
 
+  QuicVersionManager version_manager_;
+
   // Accepts data from the framer and demuxes clients to sessions.
-  scoped_ptr<QuicDispatcher> dispatcher_;
+  std::unique_ptr<QuicDispatcher> dispatcher_;
 
   // Used by the helper_ to time alarms.
-  QuicClock clock_;
+  QuicChromiumClock clock_;
 
-  // Used to manage the message loop.
-  QuicConnectionHelper helper_;
+  // Used to manage the message loop. Owned by dispatcher_.
+  QuicChromiumConnectionHelper* helper_;
+
+  // Used to manage the message loop. Owned by dispatcher_.
+  QuicChromiumAlarmFactory* alarm_factory_;
 
   // Listening socket. Also used for outbound client communication.
-  scoped_ptr<UDPServerSocket> socket_;
+  std::unique_ptr<UDPServerSocket> socket_;
 
   // config_ contains non-crypto parameters that are negotiated in the crypto
   // handshake.
   QuicConfig config_;
+  // crypto_config_ contains crypto parameters that are negotiated in the crypto
+  // handshake.
+  QuicCryptoServerConfig::ConfigOptions crypto_config_options_;
   // crypto_config_ contains crypto parameters for the handshake.
   QuicCryptoServerConfig crypto_config_;
-
-  // This vector contains QUIC versions which we currently support.
-  // This should be ordered such that the highest supported version is the first
-  // element, with subsequent elements in descending order (versions can be
-  // skipped as necessary).
-  QuicVersionVector supported_versions_;
 
   // The address that the server listens on.
   IPEndPoint server_address_;
@@ -108,12 +114,13 @@ class QuicSimpleServer {
   // The log to use for the socket.
   NetLog net_log_;
 
+  QuicHttpResponseCache* response_cache_;
+
   base::WeakPtrFactory<QuicSimpleServer> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicSimpleServer);
 };
 
-}  // namespace tools
 }  // namespace net
 
-#endif  // NET_QUIC_TOOLS_QUIC_SIMPLE_SERVER_H_
+#endif  // NET_TOOLS_QUIC_QUIC_SIMPLE_SERVER_H_

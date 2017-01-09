@@ -6,37 +6,48 @@ cr.define('downloads', function() {
   var Toolbar = Polymer({
     is: 'downloads-toolbar',
 
-    attached: function() {
-      // isRTL() only works after i18n_template.js runs to set <html dir>.
-      this.overflowAlign_ = isRTL() ? 'left' : 'right';
-
-      /** @private {!SearchFieldDelegate} */
-      this.searchFieldDelegate_ = new ToolbarSearchFieldDelegate(this);
-      this.$['search-input'].setDelegate(this.searchFieldDelegate_);
-    },
-
     properties: {
       downloadsShowing: {
         reflectToAttribute: true,
         type: Boolean,
         value: false,
-        observer: 'onDownloadsShowingChange_',
+        observer: 'downloadsShowingChanged_',
       },
 
-      overflowAlign_: {
-        type: String,
-        value: 'right',
+      spinnerActive: {
+        type: Boolean,
+        notify: true,
       },
+    },
+
+    listeners: {
+      'paper-dropdown-close': 'onPaperDropdownClose_',
+      'paper-dropdown-open': 'onPaperDropdownOpen_',
     },
 
     /** @return {boolean} Whether removal can be undone. */
     canUndo: function() {
-      return this.$['search-input'] != this.shadowRoot.activeElement;
+      return !this.$.toolbar.getSearchField().isSearchFocused();
     },
 
     /** @return {boolean} Whether "Clear all" should be allowed. */
     canClearAll: function() {
-      return !this.$['search-input'].getValue() && this.downloadsShowing;
+      return !this.$.toolbar.getSearchField().getValue() &&
+          this.downloadsShowing;
+    },
+
+    onFindCommand: function() {
+      this.$.toolbar.getSearchField().showAndFocus();
+    },
+
+    /** @private */
+    closeMoreActions_: function() {
+      this.$.more.close();
+    },
+
+    /** @private */
+    downloadsShowingChanged_: function() {
+      this.updateClearAll_();
     },
 
     /** @private */
@@ -46,13 +57,38 @@ cr.define('downloads', function() {
     },
 
     /** @private */
-    onDownloadsShowingChange_: function() {
-      this.updateClearAll_();
+    onPaperDropdownClose_: function() {
+      window.removeEventListener('resize', assert(this.boundClose_));
     },
 
-    /** @param {string} searchTerm */
-    onSearchTermSearch: function(searchTerm) {
-      downloads.ActionService.getInstance().search(searchTerm);
+    /**
+     * @param {!Event} e
+     * @private
+     */
+    onItemBlur_: function(e) {
+      var menu = /** @type {PaperMenuElement} */(this.$$('paper-menu'));
+      if (menu.items.indexOf(e.relatedTarget) >= 0)
+        return;
+
+      this.$.more.restoreFocusOnClose = false;
+      this.closeMoreActions_();
+      this.$.more.restoreFocusOnClose = true;
+    },
+
+    /** @private */
+    onPaperDropdownOpen_: function() {
+      this.boundClose_ = this.boundClose_ || this.closeMoreActions_.bind(this);
+      window.addEventListener('resize', this.boundClose_);
+    },
+
+    /**
+     * @param {!CustomEvent} event
+     * @private
+     */
+    onSearchChanged_: function(event) {
+      var actionService = downloads.ActionService.getInstance();
+      if (actionService.search(/** @type {string} */ (event.detail)))
+        this.spinnerActive = actionService.isSearching();
       this.updateClearAll_();
     },
 
@@ -63,34 +99,9 @@ cr.define('downloads', function() {
 
     /** @private */
     updateClearAll_: function() {
-      this.$$('#actions .clear-all').hidden = !this.canClearAll();
       this.$$('paper-menu .clear-all').hidden = !this.canClearAll();
     },
   });
 
-  /**
-   * @constructor
-   * @implements {SearchFieldDelegate}
-   */
-  // TODO(devlin): This is a bit excessive, and it would be better to just have
-  // Toolbar implement SearchFieldDelegate. But for now, we don't know how to
-  // make that happen with closure compiler.
-  function ToolbarSearchFieldDelegate(toolbar) {
-    this.toolbar_ = toolbar;
-  }
-
-  ToolbarSearchFieldDelegate.prototype = {
-    /** @override */
-    onSearchTermSearch: function(searchTerm) {
-      this.toolbar_.onSearchTermSearch(searchTerm);
-    }
-  };
-
   return {Toolbar: Toolbar};
 });
-
-// TODO(dbeam): https://github.com/PolymerElements/iron-dropdown/pull/16/files
-/** @suppress {checkTypes} */
-(function() {
-Polymer.IronDropdownScrollManager.pushScrollLock = function() {};
-})();

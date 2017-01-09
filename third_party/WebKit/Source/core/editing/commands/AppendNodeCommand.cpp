@@ -23,46 +23,41 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/editing/commands/AppendNodeCommand.h"
 
 #include "bindings/core/v8/ExceptionState.h"
+#include "core/editing/EditingUtilities.h"
 
 namespace blink {
 
-AppendNodeCommand::AppendNodeCommand(PassRefPtrWillBeRawPtr<ContainerNode> parent, PassRefPtrWillBeRawPtr<Node> node)
-    : SimpleEditCommand(parent->document())
-    , m_parent(parent)
-    , m_node(node)
-{
-    ASSERT(m_parent);
-    ASSERT(m_node);
-    ASSERT(!m_node->parentNode());
+AppendNodeCommand::AppendNodeCommand(ContainerNode* parent, Node* node)
+    : SimpleEditCommand(parent->document()), m_parent(parent), m_node(node) {
+  DCHECK(m_parent);
+  DCHECK(m_node);
+  DCHECK(!m_node->parentNode()) << m_node;
 
-    ASSERT(m_parent->hasEditableStyle() || !m_parent->inActiveDocument());
+  DCHECK(hasEditableStyle(*m_parent) || !m_parent->inActiveDocument())
+      << m_parent;
 }
 
-void AppendNodeCommand::doApply()
-{
-    if (!m_parent->hasEditableStyle() && m_parent->inActiveDocument())
-        return;
+void AppendNodeCommand::doApply(EditingState*) {
+  if (!hasEditableStyle(*m_parent) && m_parent->inActiveDocument())
+    return;
 
-    m_parent->appendChild(m_node.get(), IGNORE_EXCEPTION);
+  m_parent->appendChild(m_node.get(), IGNORE_EXCEPTION);
 }
 
-void AppendNodeCommand::doUnapply()
-{
-    if (!m_parent->hasEditableStyle())
-        return;
+void AppendNodeCommand::doUnapply() {
+  if (!hasEditableStyle(*m_parent))
+    return;
 
-    m_node->remove(IGNORE_EXCEPTION);
+  m_node->remove(IGNORE_EXCEPTION);
 }
 
-DEFINE_TRACE(AppendNodeCommand)
-{
-    visitor->trace(m_parent);
-    visitor->trace(m_node);
-    SimpleEditCommand::trace(visitor);
+DEFINE_TRACE(AppendNodeCommand) {
+  visitor->trace(m_parent);
+  visitor->trace(m_node);
+  SimpleEditCommand::trace(visitor);
 }
 
-} // namespace blink
+}  // namespace blink

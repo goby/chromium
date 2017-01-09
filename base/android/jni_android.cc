@@ -4,13 +4,17 @@
 
 #include "base/android/jni_android.h"
 
+#include <stddef.h>
+
 #include <map>
 
 #include "base/android/build_info.h"
 #include "base/android/jni_string.h"
 #include "base/android/jni_utils.h"
+#include "base/debug/debugging_flags.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/threading/thread_local.h"
 
 namespace {
 using base::android::GetClass;
@@ -23,6 +27,11 @@ JavaVM* g_jvm = NULL;
 base::LazyInstance<base::android::ScopedJavaGlobalRef<jobject> >::Leaky
     g_class_loader = LAZY_INSTANCE_INITIALIZER;
 jmethodID g_class_loader_load_class_method_id = 0;
+
+#if BUILDFLAG(ENABLE_PROFILING) && HAVE_TRACE_STACK_FRAME_POINTERS
+base::LazyInstance<base::ThreadLocalPointer<void>>::Leaky
+    g_stack_frame_pointer = LAZY_INSTANCE_INITIALIZER;
+#endif
 
 }  // namespace
 
@@ -117,7 +126,9 @@ ScopedJavaLocalRef<jclass> GetClass(JNIEnv* env, const char* class_name) {
   } else {
     clazz = env->FindClass(class_name);
   }
-  CHECK(!ClearException(env) && clazz) << "Failed to find class " << class_name;
+  if (ClearException(env) || !clazz) {
+    LOG(FATAL) << "Failed to find class " << class_name;
+  }
   return ScopedJavaLocalRef<jclass>(env, clazz);
 }
 
@@ -154,10 +165,11 @@ jmethodID MethodID::Get(JNIEnv* env,
   jmethodID id = type == TYPE_STATIC ?
       env->GetStaticMethodID(clazz, method_name, jni_signature) :
       env->GetMethodID(clazz, method_name, jni_signature);
-  CHECK(base::android::ClearException(env) || id) <<
-      "Failed to find " <<
-      (type == TYPE_STATIC ? "static " : "") <<
-      "method " << method_name << " " << jni_signature;
+  if (base::android::ClearException(env) || !id) {
+    LOG(FATAL) << "Failed to find " <<
+        (type == TYPE_STATIC ? "static " : "") <<
+        "method " << method_name << " " << jni_signature;
+  }
   return id;
 }
 
@@ -228,7 +240,7 @@ void CheckException(JNIEnv* env) {
   }
 
   // Now, feel good about it and die.
-  CHECK(false) << "Please include Java exception stack in crash report";
+  LOG(FATAL) << "Please include Java exception stack in crash report";
 }
 
 std::string GetJavaExceptionInfo(JNIEnv* env, jthrowable java_throwable) {
@@ -277,6 +289,22 @@ std::string GetJavaExceptionInfo(JNIEnv* env, jthrowable java_throwable) {
   return ConvertJavaStringToUTF8(exception_string);
 }
 
+#if BUILDFLAG(ENABLE_PROFILING) && HAVE_TRACE_STACK_FRAME_POINTERS
+
+JNIStackFrameSaver::JNIStackFrameSaver(void* current_fp) {
+  previous_fp_ = g_stack_frame_pointer.Pointer()->Get();
+  g_stack_frame_pointer.Pointer()->Set(current_fp);
+}
+
+JNIStackFrameSaver::~JNIStackFrameSaver() {
+  g_stack_frame_pointer.Pointer()->Set(previous_fp_);
+}
+
+void* JNIStackFrameSaver::SavedFrame() {
+  return g_stack_frame_pointer.Pointer()->Get();
+}
+
+#endif  // ENABLE_PROFILING && HAVE_TRACE_STACK_FRAME_POINTERS
 
 }  // namespace android
 }  // namespace base

@@ -4,7 +4,7 @@
 
 #include "ui/app_list/views/top_icon_animation_view.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/app_list/app_list_constants.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/image/image_skia_operations.h"
@@ -27,7 +27,7 @@ TopIconAnimationView::TopIconAnimationView(const gfx::ImageSkia& icon,
   AddChildView(icon_);
 
   SetPaintToLayer(true);
-  SetFillsBoundsOpaquely(false);
+  layer()->SetFillsBoundsOpaquely(false);
 }
 
 TopIconAnimationView::~TopIconAnimationView() {
@@ -82,9 +82,8 @@ void TopIconAnimationView::Layout() {
 
 void TopIconAnimationView::OnImplicitAnimationsCompleted() {
   SetVisible(false);
-  FOR_EACH_OBSERVER(TopIconAnimationObserver,
-                    observers_,
-                    OnTopIconAnimationsComplete());
+  for (auto& observer : observers_)
+    observer.OnTopIconAnimationsComplete();
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 

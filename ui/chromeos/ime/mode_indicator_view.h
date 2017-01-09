@@ -5,12 +5,13 @@
 #ifndef UI_CHROMEOS_IME_MODE_INDICATOR_VIEW_H_
 #define UI_CHROMEOS_IME_MODE_INDICATOR_VIEW_H_
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/timer/timer.h"
 #include "ui/chromeos/ui_chromeos_export.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
-#include "ui/views/bubble/bubble_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 
 namespace views {
 class Label;
@@ -20,7 +21,8 @@ class Widget;
 namespace ui {
 namespace ime {
 
-class UI_CHROMEOS_EXPORT ModeIndicatorView : public views::BubbleDelegateView {
+class UI_CHROMEOS_EXPORT ModeIndicatorView
+    : public views::BubbleDialogDelegateView {
  public:
   ModeIndicatorView(gfx::NativeView parent,
                     const gfx::Rect& cursor_bounds,
@@ -30,14 +32,13 @@ class UI_CHROMEOS_EXPORT ModeIndicatorView : public views::BubbleDelegateView {
   // Show the mode indicator then hide with fading animation.
   void ShowAndFadeOut();
 
-  // views::BubbleDelegateView override:
+  // views::BubbleDialogDelegateView override:
   gfx::Size GetPreferredSize() const override;
-
- protected:
-  // views::BubbleDelegateView override:
   const char* GetClassName() const override;
+  int GetDialogButtons() const override;
   void Init() override;
 
+ protected:
   // views::WidgetDelegateView overrides:
   views::NonClientFrameView* CreateNonClientFrameView(
       views::Widget* widget) override;

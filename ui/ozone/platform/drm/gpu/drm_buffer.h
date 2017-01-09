@@ -5,11 +5,16 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_DRM_BUFFER_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_DRM_BUFFER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/macros.h"
-#include "skia/ext/refptr.h"
-#include "third_party/skia/include/core/SkSurface.h"
-#include "ui/ozone/ozone_export.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/ozone/platform/drm/gpu/scanout_buffer.h"
+
+class SkCanvas;
+struct SkImageInfo;
+class SkSurface;
 
 namespace ui {
 
@@ -18,7 +23,7 @@ class DrmDevice;
 // Wrapper for a DRM allocated buffer. Keeps track of the native properties of
 // the buffer and wraps the pixel memory into a SkSurface which can be used to
 // draw into using Skia.
-class OZONE_EXPORT DrmBuffer : public ScanoutBuffer {
+class DrmBuffer : public ScanoutBuffer {
  public:
   DrmBuffer(const scoped_refptr<DrmDevice>& drm);
 
@@ -35,6 +40,7 @@ class OZONE_EXPORT DrmBuffer : public ScanoutBuffer {
   uint32_t GetFramebufferPixelFormat() const override;
   uint32_t GetHandle() const override;
   gfx::Size GetSize() const override;
+  const DrmDevice* GetDrmDevice() const override;
   bool RequiresGlFinish() const override;
 
  protected:
@@ -62,7 +68,7 @@ class OZONE_EXPORT DrmBuffer : public ScanoutBuffer {
   uint32_t fb_pixel_format_ = 0;
 
   // Wrapper around the native pixel memory.
-  skia::RefPtr<SkSurface> surface_;
+  sk_sp<SkSurface> surface_;
 
   DISALLOW_COPY_AND_ASSIGN(DrmBuffer);
 };

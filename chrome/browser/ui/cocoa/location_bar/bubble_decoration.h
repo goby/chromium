@@ -9,6 +9,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/cocoa/location_bar/location_bar_decoration.h"
 #import "ui/base/cocoa/appkit_utils.h"
 
@@ -22,19 +23,25 @@ class BubbleDecoration : public LocationBarDecoration {
 
   // Setup the drawing parameters.
   NSImage* GetImage();
+  virtual NSColor* GetBackgroundBorderColor() = 0;
   void SetImage(NSImage* image);
   void SetLabel(NSString* label);
   void SetTextColor(NSColor* text_color);
+  void SetFont(NSFont* font);
+  void SetRetinaBaselineOffset(CGFloat offset);
   virtual ui::NinePartImageIds GetBubbleImageIds() = 0;
 
   // Implement |LocationBarDecoration|.
-  void DrawInFrame(NSRect frame, NSView* control_view) override;
-  void DrawWithBackgroundInFrame(NSRect background_frame,
-                                 NSRect frame,
-                                 NSView* control_view) override;
   CGFloat GetWidthForSpace(CGFloat width) override;
+  NSRect GetBackgroundFrame(NSRect frame) override;
+  void DrawInFrame(NSRect frame, NSView* control_view) override;
+  NSFont* GetFont() const override;
 
  protected:
+  // Returns the amount of padding between the divider and the omnibox text.
+  // Returns 0 in non-MD since there's no divider.
+  CGFloat DividerPadding() const;
+
   // Helper returning bubble width for the given |image| and |label|
   // assuming |font_| (for sizing text).  Arguments can be nil.
   CGFloat GetWidthForImageAndLabel(NSImage* image, NSString* label);
@@ -43,10 +50,8 @@ class BubbleDecoration : public LocationBarDecoration {
   // from.  |frame| is the decoration's frame in the containing cell.
   NSRect GetImageRectInFrame(NSRect frame);
 
- private:
-  friend class SelectedKeywordDecorationTest;
-  FRIEND_TEST_ALL_PREFIXES(SelectedKeywordDecorationTest,
-                           UsesPartialKeywordIfNarrow);
+  // Returns the text color when the theme is dark.
+  virtual NSColor* GetDarkModeTextColor();
 
   // Image drawn in the left side of the bubble.
   base::scoped_nsobject<NSImage> image_;
@@ -56,6 +61,14 @@ class BubbleDecoration : public LocationBarDecoration {
 
   // Contains attribute for drawing |label_|.
   base::scoped_nsobject<NSMutableDictionary> attributes_;
+
+ private:
+  friend class SelectedKeywordDecorationTest;
+  FRIEND_TEST_ALL_PREFIXES(SelectedKeywordDecorationTest,
+                           UsesPartialKeywordIfNarrow);
+
+  // Contains any Retina-only baseline adjustment for |label_|.
+  CGFloat retina_baseline_offset_;
 
   DISALLOW_COPY_AND_ASSIGN(BubbleDecoration);
 };

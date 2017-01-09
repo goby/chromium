@@ -8,6 +8,8 @@ component("sql") {
   sources = [
     "connection.cc",
     "connection.h",
+    "connection_memory_dump_provider.cc",
+    "connection_memory_dump_provider.h",
     "error_delegate_util.cc",
     "error_delegate_util.h",
     "init_status.h",
@@ -35,13 +37,13 @@ component("sql") {
   ]
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
   sources = [
     "test/error_callback_support.cc",
     "test/error_callback_support.h",
-    "test/scoped_error_ignorer.cc",
-    "test/scoped_error_ignorer.h",
+    "test/scoped_error_expecter.cc",
+    "test/scoped_error_expecter.h",
     "test/test_helpers.cc",
     "test/test_helpers.h",
   ]
@@ -67,12 +69,14 @@ source_set("redirection_header") {
   ]
 }
 
-# TODO(GYP): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("sql_unittests_run") {
+bundle_data("sql_unittests_bundle_data") {
   testonly = true
-  deps = [
-    ":sql_unittests",
+  sources = [
+    "test/data/recovery_387868",
+  ]
+  outputs = [
+    "{{bundle_resources_dir}}/" +
+        "{{source_root_relative_dir}}/{{source_file_part}}",
   ]
 }
 
@@ -104,34 +108,10 @@ test("sql_unittests") {
   deps = [
     ":redirection_header",
     ":sql",
+    ":sql_unittests_bundle_data",
     ":test_support",
-    "//base/allocator",
     "//base/test:test_support",
     "//testing/gtest",
     "//third_party/sqlite",
   ]
-
-  if (is_android) {
-    isolate_file = "sql_unittests.isolate"
-  }
-
-  # TODO(GYP)
-  #['OS == "android"', {
-  #  'dependencies': [
-  #    '../testing/android/native_test.gyp:native_test_native_code',
-  #  ],
-  #}],
-}
-
-if (is_android) {
-  #TODO(GYP)
-  #'target_name': 'sql_unittests_apk',
-  #'type': 'none',
-  #'dependencies': [
-  #  'sql_unittests',
-  #],
-  #'variables': {
-  #  'test_suite_name': 'sql_unittests',
-  #},
-  #'includes': [ '../build/apk_test.gypi' ],
 }

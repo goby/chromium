@@ -10,6 +10,10 @@
 #include "base/mac/scoped_nsobject.h"
 #include "net/base/net_errors.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 namespace {
@@ -148,23 +152,26 @@ NSError* NetErrorFromError(NSError* error) {
   DCHECK(error);
   NSError* underlying_error =
       base::ios::GetFinalUnderlyingErrorFromError(error);
-  NSError* translated_error = error;
+
+  NSInteger net_error_code = net::ERR_FAILED;
   if ([underlying_error.domain isEqualToString:NSURLErrorDomain] ||
       [underlying_error.domain
           isEqualToString:static_cast<NSString*>(kCFErrorDomainCFNetwork)]) {
     // Attempt to translate NSURL and CFNetwork error codes into their
     // corresponding net error codes.
-    NSInteger net_error_code = net::OK;
-    if (GetNetErrorFromIOSErrorCode(underlying_error.code, &net_error_code)) {
-      NSString* net_error_domain =
-          [NSString stringWithUTF8String:net::kErrorDomain];
-      NSError* net_error = [NSError errorWithDomain:net_error_domain
-                                               code:net_error_code
-                                           userInfo:nil];
-      translated_error =
-          base::ios::ErrorWithAppendedUnderlyingError(error, net_error);
-    }
+    GetNetErrorFromIOSErrorCode(underlying_error.code, &net_error_code);
   }
-  return translated_error;
+  return NetErrorFromError(error, net_error_code);
 }
+
+NSError* NetErrorFromError(NSError* error, NSInteger net_error_code) {
+  DCHECK(error);
+  NSString* net_error_domain =
+      [NSString stringWithUTF8String:net::kErrorDomain];
+  NSError* net_error = [NSError errorWithDomain:net_error_domain
+                                           code:net_error_code
+                                       userInfo:nil];
+  return base::ios::ErrorWithAppendedUnderlyingError(error, net_error);
+}
+
 }  // namespace web

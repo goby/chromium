@@ -4,9 +4,9 @@
 
 #include "net/quic/test_tools/quic_stream_sequencer_peer.h"
 
-#include "net/quic/quic_stream_sequencer.h"
+#include "net/quic/core/quic_stream_sequencer.h"
+#include "net/quic/test_tools/quic_stream_sequencer_buffer_peer.h"
 
-using std::map;
 using std::string;
 
 namespace net {
@@ -15,23 +15,20 @@ namespace test {
 // static
 size_t QuicStreamSequencerPeer::GetNumBufferedBytes(
     QuicStreamSequencer* sequencer) {
-  return sequencer->buffered_frames_->BytesBuffered();
-}
-
-// static
-bool QuicStreamSequencerPeer::FrameOverlapsBufferedData(
-    QuicFrameList* buffer,
-    const QuicStreamFrame& frame) {
-  list<QuicFrameList::FrameData>::iterator it =
-      buffer->FindInsertionPoint(frame.offset, frame.data.length());
-  return buffer->FrameOverlapsBufferedData(frame.offset, frame.data.length(),
-                                           it);
+  return sequencer->buffered_frames_.BytesBuffered();
 }
 
 // static
 QuicStreamOffset QuicStreamSequencerPeer::GetCloseOffset(
     QuicStreamSequencer* sequencer) {
   return sequencer->close_offset_;
+}
+
+// static
+bool QuicStreamSequencerPeer::IsUnderlyingBufferAllocated(
+    QuicStreamSequencer* sequencer) {
+  QuicStreamSequencerBufferPeer buffer_peer(&(sequencer->buffered_frames_));
+  return buffer_peer.IsBufferAllocated();
 }
 
 }  // namespace test

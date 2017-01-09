@@ -18,9 +18,7 @@ XPCMessageServer::XPCMessageServer(MessageDemuxer* demuxer,
                                    mach_port_t server_receive_right)
     : demuxer_(demuxer),
       server_port_(server_receive_right),
-      reply_message_(NULL) {
-  CHECK(InitializeXPC());
-}
+      reply_message_(NULL) {}
 
 XPCMessageServer::~XPCMessageServer() {
 }
@@ -48,13 +46,14 @@ bool XPCMessageServer::Initialize() {
   return true;
 }
 
+void XPCMessageServer::Shutdown() {
+  dispatch_source_.reset();
+}
+
 pid_t XPCMessageServer::GetMessageSenderPID(IPCMessage request) {
   audit_token_t token;
   xpc_dictionary_get_audit_token(request.xpc, &token);
-  // TODO(rsesek): In the 10.7 SDK, there's audit_token_to_pid().
-  pid_t sender_pid;
-  audit_token_to_au32(token,
-      NULL, NULL, NULL, NULL, NULL, &sender_pid, NULL, NULL);
+  pid_t sender_pid = audit_token_to_pid(token);
   return sender_pid;
 }
 

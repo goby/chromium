@@ -3,7 +3,7 @@ Short Name: closure-compiler
 URL: http://github.com/google/closure-compiler
 Version: v20150729-236-gad656a1
 Date: 2015/08/26 08:46
-Revision: 53f3d8a41579c002ec656bb645ce5d54470f6e0b
+Revision: 1827c478053b125ddb6d18404a749e0c3b53725b
 License: Apache 2.0
 License File: LICENSE
 Security Critical: no
@@ -14,9 +14,9 @@ potentially dangerous operations, helping you to produce JavaScript that is less
 buggy and easier to maintain.
 
 Local modifications:
-- The compiler is run via a custom mechanism (see: runner/) that sets the
-  compiler to "IDE mode" (single-file checks, doesn't stop on first error).
-- Chrome-specific coding conventions to understand cr.addSingletonGetter().
+- A custom runner (see: runner/) to continue on errors, understand and enforce
+  Chrome-specific code, and do checks only (i.e. throw away output).  See:
+  --enable-chrome-pass in runner.jar's arguments.
 - third_party/closure_compiler/runner/src/com/google/javascript/jscomp/ChromePass.java
   Added pass to handle namespace definition with cr.define(), object chain
   creation with cr.exportPath(), property definition with

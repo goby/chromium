@@ -4,15 +4,20 @@
 
 #include "chrome/browser/file_select_helper.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/worker_pool.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -25,6 +30,8 @@
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -43,7 +50,8 @@
 #endif
 
 #if defined(FULL_SAFE_BROWSING)
-#include "chrome/browser/safe_browsing/unverified_download_policy.h"
+#include "chrome/browser/safe_browsing/download_protection_service.h"
+#include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #endif
 
 using content::BrowserThread;
@@ -77,29 +85,62 @@ void DeleteFiles(const std::vector<base::FilePath>& paths) {
 
 bool IsValidProfile(Profile* profile) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  // No profile manager in unit tests.
+  if (!g_browser_process->profile_manager())
+    return true;
   return g_browser_process->profile_manager()->IsValidProfile(profile);
 }
+
+#if defined(FULL_SAFE_BROWSING)
+
+bool IsDownloadAllowedBySafeBrowsing(
+    safe_browsing::DownloadProtectionService::DownloadCheckResult result) {
+  using Result = safe_browsing::DownloadProtectionService::DownloadCheckResult;
+  switch (result) {
+    // Only allow downloads that are marked as SAFE or UNKNOWN by SafeBrowsing.
+    // All other types are going to be blocked. UNKNOWN could be the result of a
+    // failed safe browsing ping.
+    case Result::UNKNOWN:
+    case Result::SAFE:
+      return true;
+
+    case Result::DANGEROUS:
+    case Result::UNCOMMON:
+    case Result::DANGEROUS_HOST:
+    case Result::POTENTIALLY_UNWANTED:
+      return false;
+  }
+  NOTREACHED();
+  return false;
+}
+
+void InterpretSafeBrowsingVerdict(
+    const base::Callback<void(bool)>& recipient,
+    safe_browsing::DownloadProtectionService::DownloadCheckResult result) {
+  recipient.Run(IsDownloadAllowedBySafeBrowsing(result));
+}
+
+#endif
 
 }  // namespace
 
 struct FileSelectHelper::ActiveDirectoryEnumeration {
   ActiveDirectoryEnumeration() : rvh_(NULL) {}
 
-  scoped_ptr<DirectoryListerDispatchDelegate> delegate_;
-  scoped_ptr<net::DirectoryLister> lister_;
+  std::unique_ptr<DirectoryListerDispatchDelegate> delegate_;
+  std::unique_ptr<net::DirectoryLister> lister_;
   RenderViewHost* rvh_;
   std::vector<base::FilePath> results_;
 };
 
 FileSelectHelper::FileSelectHelper(Profile* profile)
     : profile_(profile),
-      render_view_host_(NULL),
-      web_contents_(NULL),
+      render_frame_host_(nullptr),
+      web_contents_(nullptr),
       select_file_dialog_(),
       select_file_types_(),
       dialog_type_(ui::SelectFileDialog::SELECT_OPEN_FILE),
-      dialog_mode_(FileChooserParams::Open) {
-}
+      dialog_mode_(FileChooserParams::Open) {}
 
 FileSelectHelper::~FileSelectHelper() {
   // There may be pending file dialogs, we need to tell them that we've gone
@@ -136,31 +177,36 @@ void FileSelectHelper::FileSelectedWithExtraInfo(
     const ui::SelectedFileInfo& file,
     int index,
     void* params) {
-  if (IsValidProfile(profile_))
-    profile_->set_last_selected_directory(file.file_path.DirName());
+  if (IsValidProfile(profile_)) {
+    base::FilePath path = file.file_path;
+    if (dialog_mode_ != FileChooserParams::UploadFolder)
+      path = path.DirName();
+    profile_->set_last_selected_directory(path);
+  }
 
-  if (!render_view_host_) {
+  if (!render_frame_host_) {
     RunFileChooserEnd();
     return;
   }
 
   const base::FilePath& path = file.local_path;
   if (dialog_type_ == ui::SelectFileDialog::SELECT_UPLOAD_FOLDER) {
-    StartNewEnumeration(path, kFileSelectEnumerationId, render_view_host_);
+    StartNewEnumeration(path, kFileSelectEnumerationId,
+                        render_frame_host_->GetRenderViewHost());
     return;
   }
 
   std::vector<ui::SelectedFileInfo> files;
   files.push_back(file);
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MACOSX)
   content::BrowserThread::PostTask(
       content::BrowserThread::FILE_USER_BLOCKING,
       FROM_HERE,
       base::Bind(&FileSelectHelper::ProcessSelectedFilesMac, this, files));
 #else
-  NotifyRenderViewHostAndEnd(files);
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+  NotifyRenderFrameHostAndEnd(files);
+#endif  // defined(OS_MACOSX)
 }
 
 void FileSelectHelper::MultiFilesSelected(
@@ -175,32 +221,36 @@ void FileSelectHelper::MultiFilesSelected(
 void FileSelectHelper::MultiFilesSelectedWithExtraInfo(
     const std::vector<ui::SelectedFileInfo>& files,
     void* params) {
-  if (!files.empty() && IsValidProfile(profile_))
-    profile_->set_last_selected_directory(files[0].file_path.DirName());
-
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+  if (!files.empty() && IsValidProfile(profile_)) {
+    base::FilePath path = files[0].file_path;
+    if (dialog_mode_ != FileChooserParams::UploadFolder)
+      path = path.DirName();
+    profile_->set_last_selected_directory(path);
+  }
+#if defined(OS_MACOSX)
   content::BrowserThread::PostTask(
       content::BrowserThread::FILE_USER_BLOCKING,
       FROM_HERE,
       base::Bind(&FileSelectHelper::ProcessSelectedFilesMac, this, files));
 #else
-  NotifyRenderViewHostAndEnd(files);
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+  NotifyRenderFrameHostAndEnd(files);
+#endif  // defined(OS_MACOSX)
 }
 
 void FileSelectHelper::FileSelectionCanceled(void* params) {
-  NotifyRenderViewHostAndEnd(std::vector<ui::SelectedFileInfo>());
+  NotifyRenderFrameHostAndEnd(std::vector<ui::SelectedFileInfo>());
 }
 
 void FileSelectHelper::StartNewEnumeration(const base::FilePath& path,
                                            int request_id,
                                            RenderViewHost* render_view_host) {
-  scoped_ptr<ActiveDirectoryEnumeration> entry(new ActiveDirectoryEnumeration);
+  std::unique_ptr<ActiveDirectoryEnumeration> entry(
+      new ActiveDirectoryEnumeration);
   entry->rvh_ = render_view_host;
   entry->delegate_.reset(new DirectoryListerDispatchDelegate(this, request_id));
   entry->lister_.reset(new net::DirectoryLister(
       path, net::DirectoryLister::NO_SORT_RECURSIVE, entry->delegate_.get()));
-  if (!entry->lister_->Start()) {
+  if (!entry->lister_->Start(base::WorkerPool::GetTaskRunner(true).get())) {
     if (request_id == kFileSelectEnumerationId)
       FileSelectionCanceled(NULL);
     else
@@ -225,7 +275,8 @@ void FileSelectHelper::OnListFile(
 
 void FileSelectHelper::OnListDone(int id, int error) {
   // This entry needs to be cleaned up when this function is done.
-  scoped_ptr<ActiveDirectoryEnumeration> entry(directory_enumerations_[id]);
+  std::unique_ptr<ActiveDirectoryEnumeration> entry(
+      directory_enumerations_[id]);
   directory_enumerations_.erase(id);
   if (!entry->rvh_)
     return;
@@ -238,16 +289,16 @@ void FileSelectHelper::OnListDone(int id, int error) {
       FilePathListToSelectedFileInfoList(entry->results_);
 
   if (id == kFileSelectEnumerationId) {
-    NotifyRenderViewHostAndEnd(selected_files);
+    NotifyRenderFrameHostAndEnd(selected_files);
   } else {
     entry->rvh_->DirectoryEnumerationFinished(id, entry->results_);
     EnumerateDirectoryEnd();
   }
 }
 
-void FileSelectHelper::NotifyRenderViewHostAndEnd(
+void FileSelectHelper::NotifyRenderFrameHostAndEnd(
     const std::vector<ui::SelectedFileInfo>& files) {
-  if (!render_view_host_) {
+  if (!render_frame_host_) {
     RunFileChooserEnd();
     return;
   }
@@ -260,16 +311,15 @@ void FileSelectHelper::NotifyRenderViewHostAndEnd(
     }
     // Converts |files| into FileChooserFileInfo with handling of non-native
     // files.
+    content::SiteInstance* site_instance =
+        render_frame_host_->GetSiteInstance();
     storage::FileSystemContext* file_system_context =
-        content::BrowserContext::GetStoragePartition(
-            profile_, render_view_host_->GetSiteInstance())->
-                GetFileSystemContext();
+        content::BrowserContext::GetStoragePartition(profile_, site_instance)
+            ->GetFileSystemContext();
     file_manager::util::ConvertSelectedFileInfoListToFileChooserFileInfoList(
-        file_system_context,
-        web_contents_->GetSiteInstance()->GetSiteURL(),
-        files,
+        file_system_context, site_instance->GetSiteURL(), files,
         base::Bind(
-            &FileSelectHelper::NotifyRenderViewHostAndEndAfterConversion,
+            &FileSelectHelper::NotifyRenderFrameHostAndEndAfterConversion,
             this));
     return;
   }
@@ -283,13 +333,13 @@ void FileSelectHelper::NotifyRenderViewHostAndEnd(
     chooser_files.push_back(chooser_file);
   }
 
-  NotifyRenderViewHostAndEndAfterConversion(chooser_files);
+  NotifyRenderFrameHostAndEndAfterConversion(chooser_files);
 }
 
-void FileSelectHelper::NotifyRenderViewHostAndEndAfterConversion(
+void FileSelectHelper::NotifyRenderFrameHostAndEndAfterConversion(
     const std::vector<content::FileChooserFileInfo>& list) {
-  if (render_view_host_)
-    render_view_host_->FilesSelectedInChooser(list, dialog_mode_);
+  if (render_frame_host_)
+    render_frame_host_->FilesSelectedInChooser(list, dialog_mode_);
 
   // No members should be accessed from here on.
   RunFileChooserEnd();
@@ -302,7 +352,7 @@ void FileSelectHelper::DeleteTemporaryFiles() {
   temporary_files_.clear();
 }
 
-void FileSelectHelper::CleanUpOnRenderViewHostChange() {
+void FileSelectHelper::CleanUp() {
   if (!temporary_files_.empty()) {
     DeleteTemporaryFiles();
 
@@ -312,16 +362,16 @@ void FileSelectHelper::CleanUpOnRenderViewHostChange() {
   }
 }
 
-scoped_ptr<ui::SelectFileDialog::FileTypeInfo>
+std::unique_ptr<ui::SelectFileDialog::FileTypeInfo>
 FileSelectHelper::GetFileTypesFromAcceptType(
     const std::vector<base::string16>& accept_types) {
-  scoped_ptr<ui::SelectFileDialog::FileTypeInfo> base_file_type(
+  std::unique_ptr<ui::SelectFileDialog::FileTypeInfo> base_file_type(
       new ui::SelectFileDialog::FileTypeInfo());
   if (accept_types.empty())
-    return base_file_type.Pass();
+    return base_file_type;
 
   // Create FileTypeInfo and pre-allocate for the first extension list.
-  scoped_ptr<ui::SelectFileDialog::FileTypeInfo> file_type(
+  std::unique_ptr<ui::SelectFileDialog::FileTypeInfo> file_type(
       new ui::SelectFileDialog::FileTypeInfo(*base_file_type));
   file_type->include_all_files = true;
   file_type->extensions.resize(1);
@@ -359,7 +409,7 @@ FileSelectHelper::GetFileTypesFromAcceptType(
 
   // If no valid extension is added, bail out.
   if (valid_type_count == 0)
-    return base_file_type.Pass();
+    return base_file_type;
 
   // Use a generic description "Custom Files" if either of the following is
   // true:
@@ -377,19 +427,20 @@ FileSelectHelper::GetFileTypesFromAcceptType(
         l10n_util::GetStringUTF16(description_id));
   }
 
-  return file_type.Pass();
+  return file_type;
 }
 
 // static
-void FileSelectHelper::RunFileChooser(content::WebContents* tab,
-                                      const FileChooserParams& params) {
-  Profile* profile = Profile::FromBrowserContext(tab->GetBrowserContext());
+void FileSelectHelper::RunFileChooser(
+    content::RenderFrameHost* render_frame_host,
+    const FileChooserParams& params) {
+  Profile* profile = Profile::FromBrowserContext(
+      render_frame_host->GetProcess()->GetBrowserContext());
   // FileSelectHelper will keep itself alive until it sends the result message.
   scoped_refptr<FileSelectHelper> file_select_helper(
       new FileSelectHelper(profile));
   file_select_helper->RunFileChooser(
-      tab->GetRenderViewHost(), tab,
-      make_scoped_ptr(new content::FileChooserParams(params)));
+      render_frame_host, base::MakeUnique<content::FileChooserParams>(params));
 }
 
 // static
@@ -404,10 +455,10 @@ void FileSelectHelper::EnumerateDirectory(content::WebContents* tab,
       request_id, tab->GetRenderViewHost(), path);
 }
 
-void FileSelectHelper::RunFileChooser(RenderViewHost* render_view_host,
-                                      content::WebContents* web_contents,
-                                      scoped_ptr<FileChooserParams> params) {
-  DCHECK(!render_view_host_);
+void FileSelectHelper::RunFileChooser(
+    content::RenderFrameHost* render_frame_host,
+    std::unique_ptr<FileChooserParams> params) {
+  DCHECK(!render_frame_host_);
   DCHECK(!web_contents_);
   DCHECK(params->default_file_name.empty() ||
          params->mode == FileChooserParams::Save)
@@ -416,13 +467,14 @@ void FileSelectHelper::RunFileChooser(RenderViewHost* render_view_host,
   DCHECK(params->default_file_name == params->default_file_name.BaseName())
       << "The default_file_name parameter should not contain path separators";
 
-  render_view_host_ = render_view_host;
-  web_contents_ = web_contents;
+  render_frame_host_ = render_frame_host;
+  web_contents_ = WebContents::FromRenderFrameHost(render_frame_host);
   notification_registrar_.RemoveAll();
   content::WebContentsObserver::Observe(web_contents_);
   notification_registrar_.Add(
       this, content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED,
-      content::Source<RenderWidgetHost>(render_view_host_->GetWidget()));
+      content::Source<RenderWidgetHost>(
+          render_frame_host_->GetRenderViewHost()->GetWidget()));
 
   BrowserThread::PostTask(
       BrowserThread::FILE, FROM_HERE,
@@ -438,9 +490,11 @@ void FileSelectHelper::RunFileChooser(RenderViewHost* render_view_host,
 }
 
 void FileSelectHelper::GetFileTypesOnFileThread(
-    scoped_ptr<FileChooserParams> params) {
+    std::unique_ptr<FileChooserParams> params) {
   select_file_types_ = GetFileTypesFromAcceptType(params->accept_types);
-  select_file_types_->support_drive = !params->need_local_path;
+  select_file_types_->allowed_paths =
+      params->need_local_path ? ui::SelectFileDialog::FileTypeInfo::NATIVE_PATH
+                              : ui::SelectFileDialog::FileTypeInfo::ANY_PATH;
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
@@ -449,48 +503,67 @@ void FileSelectHelper::GetFileTypesOnFileThread(
 }
 
 void FileSelectHelper::GetSanitizedFilenameOnUIThread(
-    scoped_ptr<FileChooserParams> params) {
+    std::unique_ptr<FileChooserParams> params) {
   base::FilePath default_file_path = profile_->last_selected_directory().Append(
       GetSanitizedFileName(params->default_file_name));
-
 #if defined(FULL_SAFE_BROWSING)
-  // Note that FileChooserParams::requestor is not considered a trusted field
-  // since it's provided by the renderer and not validated browserside.
-  if (params->mode == FileChooserParams::Save &&
-      !params->default_file_name.empty()) {
-    GURL requestor = params->requestor;
-    safe_browsing::CheckUnverifiedDownloadPolicy(
-        requestor, default_file_path,
-        base::Bind(&FileSelectHelper::ApplyUnverifiedDownloadPolicy, this,
-                   default_file_path, base::Passed(&params)));
-    return;
-  }
+  CheckDownloadRequestWithSafeBrowsing(default_file_path, std::move(params));
+#else
+  RunFileChooserOnUIThread(default_file_path, std::move(params));
 #endif
-
-  RunFileChooserOnUIThread(default_file_path, params.Pass());
 }
 
 #if defined(FULL_SAFE_BROWSING)
-void FileSelectHelper::ApplyUnverifiedDownloadPolicy(
-    const base::FilePath& default_path,
-    scoped_ptr<FileChooserParams> params,
-    safe_browsing::UnverifiedDownloadPolicy policy) {
-  DCHECK(params);
-  if (policy == safe_browsing::UnverifiedDownloadPolicy::DISALLOWED) {
-    NotifyRenderViewHostAndEnd(std::vector<ui::SelectedFileInfo>());
+void FileSelectHelper::CheckDownloadRequestWithSafeBrowsing(
+    const base::FilePath& default_file_path,
+    std::unique_ptr<FileChooserParams> params) {
+  safe_browsing::SafeBrowsingService* sb_service =
+      g_browser_process->safe_browsing_service();
+
+  if (!sb_service || !sb_service->download_protection_service() ||
+      !sb_service->download_protection_service()->enabled()) {
+    RunFileChooserOnUIThread(default_file_path, std::move(params));
     return;
   }
 
-  RunFileChooserOnUIThread(default_path, params.Pass());
+  std::vector<base::FilePath::StringType> alternate_extensions;
+  if (select_file_types_) {
+    for (const auto& extensions_list : select_file_types_->extensions) {
+      for (const auto& extension_in_list : extensions_list) {
+        base::FilePath::StringType extension =
+            default_file_path.ReplaceExtension(extension_in_list)
+                .FinalExtension();
+        alternate_extensions.push_back(extension);
+      }
+    }
+  }
+
+  GURL requestor_url = params->requestor;
+  sb_service->download_protection_service()->CheckPPAPIDownloadRequest(
+      requestor_url, default_file_path, alternate_extensions, profile_,
+      base::Bind(&InterpretSafeBrowsingVerdict,
+                 base::Bind(&FileSelectHelper::ProceedWithSafeBrowsingVerdict,
+                            this, default_file_path, base::Passed(&params))));
+}
+
+void FileSelectHelper::ProceedWithSafeBrowsingVerdict(
+    const base::FilePath& default_file_path,
+    std::unique_ptr<content::FileChooserParams> params,
+    bool allowed_by_safe_browsing) {
+  if (!allowed_by_safe_browsing) {
+    NotifyRenderFrameHostAndEnd(std::vector<ui::SelectedFileInfo>());
+    return;
+  }
+  RunFileChooserOnUIThread(default_file_path, std::move(params));
 }
 #endif
 
 void FileSelectHelper::RunFileChooserOnUIThread(
     const base::FilePath& default_file_path,
-    scoped_ptr<FileChooserParams> params) {
+    std::unique_ptr<FileChooserParams> params) {
   DCHECK(params);
-  if (!render_view_host_ || !web_contents_ || !IsValidProfile(profile_) ||
-      !render_view_host_->GetWidget()->GetView()) {
+  if (!render_frame_host_ || !web_contents_ || !IsValidProfile(profile_) ||
+      !web_contents_->GetNativeView()) {
     // If the renderer was destroyed before we started, just cancel the
     // operation.
     RunFileChooserEnd();
@@ -522,8 +595,8 @@ void FileSelectHelper::RunFileChooserOnUIThread(
       NOTREACHED();
   }
 
-  gfx::NativeWindow owning_window = platform_util::GetTopLevel(
-      render_view_host_->GetWidget()->GetView()->GetNativeView());
+  gfx::NativeWindow owning_window =
+      platform_util::GetTopLevel(web_contents_->GetNativeView());
 
 #if defined(OS_ANDROID)
   // Android needs the original MIME types and an additional capture value.
@@ -557,15 +630,14 @@ void FileSelectHelper::RunFileChooserEnd() {
   if (!temporary_files_.empty())
     return;
 
-  render_view_host_ = NULL;
-  web_contents_ = NULL;
+  render_frame_host_ = nullptr;
+  web_contents_ = nullptr;
   Release();
 }
 
 void FileSelectHelper::EnumerateDirectory(int request_id,
                                           RenderViewHost* render_view_host,
                                           const base::FilePath& path) {
-
   // Because this class returns notifications to the RenderViewHost, it is
   // difficult for callers to know how long to keep a reference to this
   // instance. We AddRef() here to keep the instance alive after we return
@@ -585,26 +657,27 @@ void FileSelectHelper::EnumerateDirectoryEnd() {
 void FileSelectHelper::Observe(int type,
                                const content::NotificationSource& source,
                                const content::NotificationDetails& details) {
-  switch (type) {
-    case content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED: {
-      DCHECK(content::Source<RenderWidgetHost>(source).ptr() ==
-             render_view_host_->GetWidget());
-      render_view_host_ = NULL;
-      break;
-    }
-    default:
-      NOTREACHED();
-  }
+  DCHECK_EQ(content::NOTIFICATION_RENDER_WIDGET_HOST_DESTROYED, type);
+  render_frame_host_ = nullptr;
 }
 
-void FileSelectHelper::RenderViewHostChanged(RenderViewHost* old_host,
-                                             RenderViewHost* new_host) {
-  CleanUpOnRenderViewHostChange();
+void FileSelectHelper::RenderFrameHostChanged(
+    content::RenderFrameHost* old_host,
+    content::RenderFrameHost* new_host) {
+  if (old_host == render_frame_host_)
+    render_frame_host_ = nullptr;
+}
+
+void FileSelectHelper::RenderFrameDeleted(
+    content::RenderFrameHost* render_frame_host) {
+  if (render_frame_host == render_frame_host_)
+    render_frame_host_ = nullptr;
 }
 
 void FileSelectHelper::WebContentsDestroyed() {
+  render_frame_host_ = nullptr;
   web_contents_ = nullptr;
-  CleanUpOnRenderViewHostChange();
+  CleanUp();
 }
 
 // static

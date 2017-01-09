@@ -9,7 +9,7 @@
 Polymer({
   is: 'network-proxy',
 
-  behaviors: [CrPolicyNetworkBehavior],
+  behaviors: [CrPolicyNetworkBehavior, I18nBehavior, PrefsBehavior],
 
   properties: {
     /**
@@ -19,15 +19,13 @@ Polymer({
      */
     networkProperties: {
       type: Object,
-      observer: 'networkPropertiesChanged_'
+      observer: 'networkPropertiesChanged_',
     },
 
-    /**
-     * Whether or not the proxy values can be edited.
-     */
+    /** Whether or not the proxy values can be edited. */
     editable: {
       type: Boolean,
-      value: false
+      value: false,
     },
 
     /**
@@ -36,29 +34,36 @@ Polymer({
      */
     proxy: {
       type: Object,
-      value: function() { return this.createDefaultProxySettings_(); }
+      value: function() {
+        return this.createDefaultProxySettings_();
+      },
     },
 
-    /**
-     * The Web Proxy Auto Discovery URL extracted from networkProperties.
-     */
+    /** The Web Proxy Auto Discovery URL extracted from networkProperties. */
     WPAD: {
       type: String,
-      value: ''
+      value: '',
     },
 
     /**
-     * Whetner or not to use the same manual proxy for all protocols.
+     * Whether or not to use the same manual proxy for all protocols.
+     * @private
      */
-    useSameProxy: {
+    useSameProxy_: {
       type: Boolean,
       value: false,
-      observer: 'useSameProxyChanged_'
+      observer: 'useSameProxyChanged_',
     },
+
+    /**
+     * Reflects prefs.settings.use_shared_proxies for data binding.
+     * @private
+     */
+    useSharedProxies_: Boolean,
 
     /**
      * Array of proxy configuration types.
-     * @type {!Array<string>}
+     * @private {!Array<string>}
      * @const
      */
     proxyTypes_: {
@@ -67,90 +72,148 @@ Polymer({
         CrOnc.ProxySettingsType.DIRECT,
         CrOnc.ProxySettingsType.PAC,
         CrOnc.ProxySettingsType.WPAD,
-        CrOnc.ProxySettingsType.MANUAL
+        CrOnc.ProxySettingsType.MANUAL,
       ],
       readOnly: true
     },
 
     /**
      * Object providing proxy type values for data binding.
-     * @type {!Object}
+     * @private {!Object}
      * @const
      */
-    ProxySettingsType: {
+    ProxySettingsType_: {
       type: Object,
       value: {
         DIRECT: CrOnc.ProxySettingsType.DIRECT,
         PAC: CrOnc.ProxySettingsType.PAC,
         MANUAL: CrOnc.ProxySettingsType.MANUAL,
-        WPAD: CrOnc.ProxySettingsType.WPAD
+        WPAD: CrOnc.ProxySettingsType.WPAD,
       },
-      readOnly: true
+      readOnly: true,
     },
   },
+
+  observers: [
+    'useSharedProxiesChanged_(prefs.settings.use_shared_proxies.value)',
+  ],
 
   /**
    * Saved Manual properties so that switching to another type does not loose
    * any set properties while the UI is open.
-   * @type {!CrOnc.ManualProxySettings|undefined}
+   * @private {!CrOnc.ManualProxySettings|undefined}
    */
   savedManual_: undefined,
 
   /**
    * Saved ExcludeDomains properties so that switching to a non-Manual type does
    * not loose any set exclusions while the UI is open.
-   * @type {!Array<string>|undefined}
+   * @private {!Array<string>|undefined}
    */
   savedExcludeDomains_: undefined,
 
   /**
-   * Polymer networkProperties changed method.
+   * Set to true the first time we receive a manual proxy. Used to set the
+   * initial |useSameProxy_| value.
+   * @private {boolean}
    */
+  receivedManualProxy_: false,
+
+  /** @private */
   networkPropertiesChanged_: function() {
+    this.updateProxy_();
+  },
+
+  /** @private */
+  updateProxy_: function() {
     if (!this.networkProperties)
       return;
 
     /** @type {!CrOnc.ProxySettings} */
     var proxy = this.createDefaultProxySettings_();
+
+    // For shared networks with unmanaged proxy settings, ignore any saved
+    // proxy settings (use the default values).
+    if (this.isShared_()) {
+      let property = this.getProxySettingsTypeProperty_();
+      if (!this.isControlled(property) && !this.useSharedProxies_) {
+        this.setProxyAsync_(proxy);
+        return;  // Proxy settings will be ignored.
+      }
+    }
+
     /** @type {!chrome.networkingPrivate.ManagedProxySettings|undefined} */
     var proxySettings = this.networkProperties.ProxySettings;
     if (proxySettings) {
-      proxy.Type = /** @type {!CrOnc.ProxySettingsType} */(
+      proxy.Type = /** @type {!CrOnc.ProxySettingsType} */ (
           CrOnc.getActiveValue(proxySettings.Type));
       if (proxySettings.Manual) {
-        proxy.Manual.HTTPProxy = /** @type {!CrOnc.ProxyLocation|undefined} */(
+        proxy.Manual.HTTPProxy = /** @type {!CrOnc.ProxyLocation|undefined} */ (
             CrOnc.getSimpleActiveProperties(proxySettings.Manual.HTTPProxy));
         proxy.Manual.SecureHTTPProxy =
-            /** @type {!CrOnc.ProxyLocation|undefined} */(
+            /** @type {!CrOnc.ProxyLocation|undefined} */ (
                 CrOnc.getSimpleActiveProperties(
                     proxySettings.Manual.SecureHTTPProxy));
-        proxy.Manual.FTPProxy = /** @type {!CrOnc.ProxyLocation|undefined} */(
+        proxy.Manual.FTPProxy = /** @type {!CrOnc.ProxyLocation|undefined} */ (
             CrOnc.getSimpleActiveProperties(proxySettings.Manual.FTPProxy));
-        proxy.Manual.SOCKS = /** @type {!CrOnc.ProxyLocation|undefined} */(
+        proxy.Manual.SOCKS = /** @type {!CrOnc.ProxyLocation|undefined} */ (
             CrOnc.getSimpleActiveProperties(proxySettings.Manual.SOCKS));
+        if (!this.receivedManualProxy_) {
+          let json_http = JSON.stringify(proxy.Manual.HTTPProxy);
+          this.useSameProxy_ =
+              json_http == JSON.stringify(proxy.Manual.SecureHTTPProxy) &&
+              json_http == JSON.stringify(proxy.Manual.FTPProxy) &&
+              json_http == JSON.stringify(proxy.Manual.SOCKS);
+          this.receivedManualProxy_ = true;
+        }
       }
       if (proxySettings.ExcludeDomains) {
-        proxy.ExcludeDomains = /** @type {!Array<string>|undefined} */(
+        proxy.ExcludeDomains = /** @type {!Array<string>|undefined} */ (
             CrOnc.getActiveValue(proxySettings.ExcludeDomains));
       }
-      proxy.PAC = /** @type {string|undefined} */(
+      proxy.PAC = /** @type {string|undefined} */ (
           CrOnc.getActiveValue(proxySettings.PAC));
     }
     // Use saved ExcludeDomanains and Manual if not defined.
     proxy.ExcludeDomains = proxy.ExcludeDomains || this.savedExcludeDomains_;
     proxy.Manual = proxy.Manual || this.savedManual_;
 
-    this.set('proxy', proxy);
-    this.$.selectType.value = proxy.Type;
-
     // Set the Web Proxy Auto Discovery URL.
     var ipv4 =
         CrOnc.getIPConfigForType(this.networkProperties, CrOnc.IPType.IPV4);
     this.WPAD = (ipv4 && ipv4.WebProxyAutoDiscoveryUrl) || '';
+
+    this.setProxyAsync_(proxy);
+  },
+
+  /**
+   * @param {!CrOnc.ProxySettings} proxy
+   * @private
+   */
+  setProxyAsync_: function(proxy) {
+    // Set this.proxy after dom-repeat has been stamped.
+    this.async(function() {
+      this.proxy = proxy;
+    }.bind(this));
+  },
+
+  /** @private */
+  useSameProxyChanged_: function() {
+    if (!this.receivedManualProxy_)
+      return;
+    this.sendProxyChange_();
+  },
+
+  /** @private */
+  useSharedProxiesChanged_: function() {
+    let pref = this.getPref('settings.use_shared_proxies');
+    this.useSharedProxies_ = !!pref && !!pref.value;
+    this.updateProxy_();
   },
 
   /**
    * @return {CrOnc.ProxySettings} An empty/default proxy settings object.
+   * @private
    */
   createDefaultProxySettings_: function() {
     return {
@@ -167,45 +230,49 @@ Polymer({
   },
 
   /**
-   * Polymer useSameProxy changed method.
-   */
-  useSameProxyChanged_: function() {
-    this.sendProxyChange_();
-  },
-
-  /**
    * Called when the proxy changes in the UI.
+   * @private
    */
   sendProxyChange_: function() {
     if (this.proxy.Type == CrOnc.ProxySettingsType.MANUAL) {
-      if (this.useSameProxy) {
-        var defaultProxy = this.proxy.Manual.HTTPProxy;
-        this.set('proxy.Manual.SecureHTTPProxy',
-                 Object.assign({}, defaultProxy));
-        this.set('proxy.Manual.FTPProxy', Object.assign({}, defaultProxy));
-        this.set('proxy.Manual.SOCKS', Object.assign({}, defaultProxy));
+      var proxy =
+          /** @type {!CrOnc.ProxySettings} */ (Object.assign({}, this.proxy));
+      var defaultProxy = proxy.Manual.HTTPProxy;
+      if (!defaultProxy || !defaultProxy.Host)
+        return;
+      if (this.useSameProxy_ || !proxy.Manual.SecureHTTPProxy) {
+        proxy.Manual.SecureHTTPProxy = /** @type {!CrOnc.ProxyLocation} */ (
+            Object.assign({}, defaultProxy));
       }
-      this.savedManual_ = this.proxy.Manual;
-      this.savedExcludeDomains_ = this.proxy.ExcludeDomains;
+      if (this.useSameProxy_ || !proxy.Manual.FTPProxy) {
+        proxy.Manual.FTPProxy = /** @type {!CrOnc.ProxyLocation} */ (
+            Object.assign({}, defaultProxy));
+      }
+      if (this.useSameProxy_ || !proxy.Manual.SOCKS) {
+        proxy.Manual.SOCKS = /** @type {!CrOnc.ProxyLocation} */ (
+            Object.assign({}, defaultProxy));
+      }
+      this.savedManual_ = Object.assign({}, proxy.Manual);
+      this.savedExcludeDomains_ = proxy.ExcludeDomains;
+      this.proxy = proxy;
+    } else if (this.proxy.Type == CrOnc.ProxySettingsType.PAC) {
+      if (!this.proxy.PAC)
+        return;
     }
-    this.fire('proxy-change', {
-      field: 'ProxySettings',
-      value: this.proxy
-    });
+    this.fire('proxy-change', {field: 'ProxySettings', value: this.proxy});
   },
 
   /**
    * Event triggered when the selected proxy type changes.
-   * @param {Event} event The select node change event.
+   * @param {!Event} event
    * @private
    */
   onTypeChange_: function(event) {
-    var type = this.proxyTypes_[event.target.selectedIndex];
+    let target = /** @type {!HTMLSelectElement} */ (event.target);
+    var type = /** @type {chrome.networkingPrivate.ProxySettingsType} */ (
+        target.value);
     this.set('proxy.Type', type);
-    if (type != CrOnc.ProxySettingsType.MANUAL ||
-        this.savedManual_) {
-      this.sendProxyChange_();
-    }
+    this.sendProxyChange_();
   },
 
   /**
@@ -246,30 +313,83 @@ Polymer({
    * @return {string} The description for |proxyType|.
    * @private
    */
-  proxyTypeDesc_: function(proxyType) {
-    // TODO(stevenjb): Translate.
+  getProxyTypeDesc_: function(proxyType) {
     if (proxyType == CrOnc.ProxySettingsType.MANUAL)
-      return 'Manual proxy configuration';
+      return this.i18n('networkProxyTypeManual');
     if (proxyType == CrOnc.ProxySettingsType.PAC)
-      return 'Automatic proxy configuration';
+      return this.i18n('networkProxyTypePac');
     if (proxyType == CrOnc.ProxySettingsType.WPAD)
-      return 'Web proxy autodiscovery';
-    return 'Direct Internet connection';
+      return this.i18n('networkProxyTypeWpad');
+    return this.i18n('networkProxyTypeDirect');
   },
 
   /**
-   * @param {boolean} editable
-   * @param {!CrOnc.NetworkProperties} networkProperties
-   * @param {string} key
-   * @return {boolean} Whether the property is editable.
+   * @return {!CrOnc.ManagedProperty|undefined}
    * @private
    */
-  isPropertyEditable_: function(editable, networkProperties, key) {
-    if (!editable)
-      return false;
-    var property = /** @type {!CrOnc.ManagedProperty|undefined} */(
-        this.get(key, networkProperties));
-    return !this.isNetworkPolicyEnforced(property);
+  getProxySettingsTypeProperty_: function() {
+    return /** @type {!CrOnc.ManagedProperty|undefined} */ (
+        this.get('ProxySettings.Type', this.networkProperties));
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowNetworkPolicyIndicator_: function() {
+    let property = this.getProxySettingsTypeProperty_();
+    return !!property && !this.isExtensionControlled(property) &&
+        this.isNetworkPolicyEnforced(property);
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowExtensionIndicator_: function() {
+    let property = this.getProxySettingsTypeProperty_();
+    return !!property && this.isExtensionControlled(property);
+  },
+
+  /**
+   * @param {!CrOnc.ManagedProperty} property
+   * @return {boolean}
+   * @private
+   */
+  shouldShowAllowShared_: function(property) {
+    return !this.isControlled(property) && this.isShared_();
+  },
+
+  /**
+   * @param {!CrOnc.ManagedProperty|undefined} property
+   * @return {boolean} Whether the property setting is enforced.
+   * @private
+   */
+  isEditable_: function(property) {
+    return this.editable && !this.isNetworkPolicyEnforced(property) &&
+        !this.isExtensionControlled(property) &&
+        (!this.isShared_() || this.useSharedProxies_);
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  isShared_: function() {
+    return this.networkProperties.Source == 'Device' ||
+        this.networkProperties.Source == 'DevicePolicy';
+  },
+
+  /**
+   * Used to check the editable state for proxy related UI that may or may
+   * not be directly controlled by a policy. We use the enforced state of the
+   * 'ProxySettings.Type' property for these controls.
+   * @return {boolean} Whether the proxy control is editable.
+   * @private
+   */
+  isProxyEditable_: function() {
+    let property = this.getProxySettingsTypeProperty_();
+    return !property || this.isEditable_(property);
   },
 
   /**
@@ -280,5 +400,36 @@ Polymer({
    */
   matches_: function(property, value) {
     return property == value;
-  }
+  },
+
+  /**
+   * Handles the change event for the shared proxy checkbox. Shows a
+   * confirmation dialog.
+   * @param {Event} event
+   * @private
+   */
+  onAllowSharedProxiesChange_: function(event) {
+    this.$.confirmAllowSharedDialog.showModal();
+  },
+
+  /**
+   * Handles the shared proxy confirmation dialog 'Confirm' button.
+   * @private
+   */
+  onAllowSharedDialogConfirm_: function() {
+    /** @type {!SettingsCheckboxElement} */ (this.$.allowShared)
+        .sendPrefChange();
+    this.$.confirmAllowSharedDialog.close();
+  },
+
+  /**
+   * Handles the shared proxy confirmation dialog 'Cancel' button or a cancel
+   * event.
+   * @private
+   */
+  onAllowSharedDialogCancel_: function() {
+    /** @type {!SettingsCheckboxElement} */ (this.$.allowShared)
+        .resetToPrefValue();
+    this.$.confirmAllowSharedDialog.close();
+  },
 });

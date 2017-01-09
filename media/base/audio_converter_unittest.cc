@@ -5,12 +5,16 @@
 // MSVC++ requires this to be set before any other includes to get M_PI.
 #define _USE_MATH_DEFINES
 
-#include <cmath>
+#include "media/base/audio_converter.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <cmath>
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string_number_conversions.h"
-#include "media/base/audio_converter.h"
 #include "media/base/fake_audio_render_callback.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -111,7 +115,8 @@ class AudioConverterTest
     converter_->Convert(audio_bus_.get());
 
     // Render expected audio data.
-    expected_callback_->Render(expected_audio_bus_.get(), 0);
+    expected_callback_->Render(base::TimeDelta(), base::TimeTicks::Now(), 0,
+                               expected_audio_bus_.get());
 
     // Zero out unused channels in the expected AudioBus just as AudioConverter
     // would during channel mixing.
@@ -168,23 +173,23 @@ class AudioConverterTest
   virtual ~AudioConverterTest() {}
 
   // Converter under test.
-  scoped_ptr<AudioConverter> converter_;
+  std::unique_ptr<AudioConverter> converter_;
 
   // Input and output parameters used for AudioConverter construction.
   AudioParameters input_parameters_;
   AudioParameters output_parameters_;
 
   // Destination AudioBus for AudioConverter output.
-  scoped_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<AudioBus> audio_bus_;
 
   // AudioBus containing expected results for comparison with |audio_bus_|.
-  scoped_ptr<AudioBus> expected_audio_bus_;
+  std::unique_ptr<AudioBus> expected_audio_bus_;
 
   // Vector of all input callbacks used to drive AudioConverter::Convert().
   ScopedVector<FakeAudioRenderCallback> fake_callbacks_;
 
   // Parallel input callback which generates the expected output.
-  scoped_ptr<FakeAudioRenderCallback> expected_callback_;
+  std::unique_ptr<FakeAudioRenderCallback> expected_callback_;
 
   // Epsilon value with which to perform comparisons between |audio_bus_| and
   // |expected_audio_bus_|.
@@ -208,25 +213,24 @@ TEST(AudioConverterTest, AudioDelayAndDiscreteChannelCount) {
 
   AudioConverter converter(input_parameters, output_parameters, false);
   FakeAudioRenderCallback callback(0.2);
-  scoped_ptr<AudioBus> audio_bus = AudioBus::Create(output_parameters);
+  std::unique_ptr<AudioBus> audio_bus = AudioBus::Create(output_parameters);
   converter.AddInput(&callback);
   converter.Convert(audio_bus.get());
 
-  // Calculate the expected buffer delay for given AudioParameters.
-  double input_sample_rate = input_parameters.sample_rate();
-  int fill_count =
-      (output_parameters.frames_per_buffer() * input_sample_rate /
-       output_parameters.sample_rate()) / input_parameters.frames_per_buffer();
+  // double input_sample_rate = input_parameters.sample_rate();
+  // int fill_count =
+  //     (output_parameters.frames_per_buffer() * input_sample_rate /
+  //      output_parameters.sample_rate()) /
+  //      input_parameters.frames_per_buffer();
+  //
+  // This magic number is the accumulated MultiChannelResampler delay after
+  // |fill_count| (4) callbacks to provide input. The number of frames delayed
+  // is an implementation detail of the SincResampler chunk size (480 for the
+  // first two callbacks, 512 for the last two callbacks). See
+  // SincResampler.ChunkSize().
+  int kExpectedDelay = 992;
 
-  base::TimeDelta input_frame_duration = base::TimeDelta::FromMicroseconds(
-      base::Time::kMicrosecondsPerSecond / input_sample_rate);
-
-  int expected_last_delay_milliseconds =
-      fill_count * input_parameters.frames_per_buffer() *
-      input_frame_duration.InMillisecondsF();
-
-  EXPECT_EQ(expected_last_delay_milliseconds,
-            callback.last_audio_delay_milliseconds());
+  EXPECT_EQ(kExpectedDelay, callback.last_frames_delayed());
   EXPECT_EQ(input_parameters.channels(), callback.last_channel_count());
 }
 

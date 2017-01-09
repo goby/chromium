@@ -5,53 +5,59 @@
 #ifndef SkPictureBuilder_h
 #define SkPictureBuilder_h
 
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/graphics/GraphicsContext.h"
-#include "platform/graphics/paint/PaintController.h"
-#include "wtf/Allocator.h"
+#include "platform/PlatformExport.h"
+#include "platform/geometry/FloatRect.h"
+#include "platform/graphics/paint/DisplayItemClient.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
+
+class SkMetaData;
+class SkPicture;
 
 namespace blink {
 
+class GraphicsContext;
+class PaintController;
+
 // When slimming paint ships we can remove this SkPicture abstraction and
 // rely on PaintController here.
-class SkPictureBuilder final {
-    WTF_MAKE_NONCOPYABLE(SkPictureBuilder);
-    STACK_ALLOCATED();
-public:
-    SkPictureBuilder(const FloatRect& bounds, SkMetaData* metaData = 0, GraphicsContext* containingContext = 0)
-        : m_bounds(bounds)
-    {
-        GraphicsContext::DisabledMode disabledMode = GraphicsContext::NothingDisabled;
-        if (containingContext && containingContext->contextDisabled())
-            disabledMode = GraphicsContext::FullyDisabled;
+class PLATFORM_EXPORT SkPictureBuilder final : public DisplayItemClient {
+  WTF_MAKE_NONCOPYABLE(SkPictureBuilder);
 
-        m_paintController = PaintController::create();
-        m_context = adoptPtr(new GraphicsContext(*m_paintController, disabledMode, metaData));
+ public:
+  // Constructs a new builder with the given bounds for the resulting recorded
+  // picture. If |metadata| is specified, that metadata is propagated to the
+  // builder's internal canvas. If |containingContext| is specified, the device
+  // scale factor, printing, and disabled state are propagated to the builder's
+  // internal context.
+  // If a PaintController is passed, it is used as the PaintController for
+  // painting the picture (and hence we can use its cache). Otherwise, a new
+  // PaintController is used for the duration of the picture building, which
+  // therefore has no caching.
+  SkPictureBuilder(const FloatRect& bounds,
+                   SkMetaData* = nullptr,
+                   GraphicsContext* containingContext = nullptr,
+                   PaintController* = nullptr);
+  ~SkPictureBuilder();
 
-        if (containingContext) {
-            m_context->setDeviceScaleFactor(containingContext->deviceScaleFactor());
-            m_context->setPrinting(containingContext->printing());
-        }
-    }
+  GraphicsContext& context() { return *m_context; }
 
-    GraphicsContext& context() { return *m_context; }
+  // Returns a picture capturing all drawing performed on the builder's context
+  // since construction.
+  sk_sp<SkPicture> endRecording();
 
-    PassRefPtr<const SkPicture> endRecording()
-    {
-        m_context->beginRecording(m_bounds);
-        m_paintController->commitNewDisplayItems();
-        m_paintController->paintArtifact().replay(*m_context);
-        return m_context->endRecording();
-    }
+  // DisplayItemClient methods
+  String debugName() const final { return "SkPictureBuilder"; }
+  LayoutRect visualRect() const final { return LayoutRect(); }
 
-private:
-    OwnPtr<PaintController> m_paintController;
-    OwnPtr<GraphicsContext> m_context;
-    FloatRect m_bounds;
+ private:
+  PaintController* m_paintController;
+  std::unique_ptr<PaintController> m_paintControllerPtr;
+  std::unique_ptr<GraphicsContext> m_context;
+  FloatRect m_bounds;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SkPictureBuilder_h
+#endif  // SkPictureBuilder_h

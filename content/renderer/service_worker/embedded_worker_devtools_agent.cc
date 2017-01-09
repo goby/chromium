@@ -6,7 +6,6 @@
 
 #include "content/common/devtools_messages.h"
 #include "content/renderer/render_thread_impl.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebEmbeddedWorker.h"
 
@@ -58,8 +57,12 @@ void EmbeddedWorkerDevToolsAgent::OnDetach() {
 
 void EmbeddedWorkerDevToolsAgent::OnDispatchOnInspectorBackend(
     int session_id,
+    int call_id,
+    const std::string& method,
     const std::string& message) {
-  webworker_->dispatchDevToolsMessage(session_id, WebString::fromUTF8(message));
+  webworker_->dispatchDevToolsMessage(session_id, call_id,
+                                      WebString::fromUTF8(method),
+                                      WebString::fromUTF8(message));
 }
 
 }  // namespace content

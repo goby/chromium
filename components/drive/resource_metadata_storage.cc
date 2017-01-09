@@ -4,16 +4,21 @@
 
 #include "components/drive/resource_metadata_storage.h"
 
+#include <stddef.h>
+
 #include <map>
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/containers/hash_tables.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "components/drive/drive.pb.h"
@@ -188,8 +193,9 @@ void RecordCheckValidityFailure(CheckValidityFailureReason reason) {
 
 }  // namespace
 
-ResourceMetadataStorage::Iterator::Iterator(scoped_ptr<leveldb::Iterator> it)
-  : it_(it.Pass()) {
+ResourceMetadataStorage::Iterator::Iterator(
+    std::unique_ptr<leveldb::Iterator> it)
+    : it_(std::move(it)) {
   base::ThreadRestrictions::AssertIOAllowed();
   DCHECK(it_);
 
@@ -270,7 +276,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
   options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   if (!leveldb::DB::Open(options, resource_map_path.AsUTF8Unsafe(), &db).ok())
     return false;
-  scoped_ptr<leveldb::DB> resource_map(db);
+  std::unique_ptr<leveldb::DB> resource_map(db);
 
   // Check DB version.
   std::string serialized_header;
@@ -288,7 +294,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     // Delete unused ID entries to fix crbug.com/374648.
     std::set<std::string> used_ids;
 
-    scoped_ptr<leveldb::Iterator> it(
+    std::unique_ptr<leveldb::Iterator> it(
         resource_map->NewIterator(leveldb::ReadOptions()));
     it->Seek(leveldb::Slice(GetHeaderDBKey()));
     it->Next();
@@ -316,7 +322,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
   } else if (header.version() < 11) {  // Cache entries can be reused.
     leveldb::ReadOptions options;
     options.verify_checksums = true;
-    scoped_ptr<leveldb::Iterator> it(resource_map->NewIterator(options));
+    std::unique_ptr<leveldb::Iterator> it(resource_map->NewIterator(options));
 
     leveldb::WriteBatch batch;
     // First, remove all entries.
@@ -367,7 +373,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
   } else if (header.version() < 12) {  // Cache and ID map entries are reusable.
     leveldb::ReadOptions options;
     options.verify_checksums = true;
-    scoped_ptr<leveldb::Iterator> it(resource_map->NewIterator(options));
+    std::unique_ptr<leveldb::Iterator> it(resource_map->NewIterator(options));
 
     // First, get the set of local IDs associated with cache entries.
     std::set<std::string> cached_entry_ids;
@@ -436,7 +442,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
   } else if (header.version() < 13) {  // Reuse all entries.
     leveldb::ReadOptions options;
     options.verify_checksums = true;
-    scoped_ptr<leveldb::Iterator> it(resource_map->NewIterator(options));
+    std::unique_ptr<leveldb::Iterator> it(resource_map->NewIterator(options));
 
     // First, get local ID to resource ID map.
     std::map<std::string, std::string> local_id_to_resource_id;
@@ -624,10 +630,28 @@ bool ResourceMetadataStorage::Initialize() {
     }
   }
 
+  // Update local resouces if 'starred' property has not been initialized.
+  if (resource_map_) {
+    ResourceMetadataHeader header;
+    if (GetHeader(&header) != FILE_ERROR_OK)
+      return false;
+
+    if (!header.starred_property_initialized()) {
+      // largest changestamp == 0 means data in DB is obsolete.
+      // So data for all entries will be reloaded.
+      header.set_largest_changestamp(0);
+      header.set_starred_property_initialized(true);
+      FileError error = PutHeader(header);
+
+      if (error != FILE_ERROR_OK)
+        return false;
+    }
+  }
+
   UMA_HISTOGRAM_ENUMERATION("Drive.MetadataDBInitResult",
                             init_result,
                             DB_INIT_MAX_VALUE);
-  return resource_map_;
+  return !!resource_map_;
 }
 
 void ResourceMetadataStorage::RecoverCacheInfoFromTrashedResourceMap(
@@ -659,7 +683,7 @@ void ResourceMetadataStorage::RecoverCacheInfoFromTrashedResourceMap(
     LOG(ERROR) << "Failed to open trashed DB: " << status.ToString();
     return;
   }
-  scoped_ptr<leveldb::DB> resource_map(db);
+  std::unique_ptr<leveldb::DB> resource_map(db);
 
   // Check DB version.
   std::string serialized_header;
@@ -674,7 +698,7 @@ void ResourceMetadataStorage::RecoverCacheInfoFromTrashedResourceMap(
   }
 
   // Collect cache entries.
-  scoped_ptr<leveldb::Iterator> it(
+  std::unique_ptr<leveldb::Iterator> it(
       resource_map->NewIterator(leveldb::ReadOptions()));
   for (it->SeekToFirst(); it->Valid(); it->Next()) {
     if (!IsChildEntryKey(it->key()) &&
@@ -693,7 +717,7 @@ void ResourceMetadataStorage::RecoverCacheInfoFromTrashedResourceMap(
 }
 
 FileError ResourceMetadataStorage::SetLargestChangestamp(
-    int64 largest_changestamp) {
+    int64_t largest_changestamp) {
   base::ThreadRestrictions::AssertIOAllowed();
 
   ResourceMetadataHeader header;
@@ -707,7 +731,7 @@ FileError ResourceMetadataStorage::SetLargestChangestamp(
 }
 
 FileError ResourceMetadataStorage::GetLargestChangestamp(
-    int64* largest_changestamp) {
+    int64_t* largest_changestamp) {
   base::ThreadRestrictions::AssertIOAllowed();
   ResourceMetadataHeader header;
   FileError error = GetHeader(&header);
@@ -814,13 +838,13 @@ FileError ResourceMetadataStorage::RemoveEntry(const std::string& id) {
   return LevelDBStatusToFileError(status);
 }
 
-scoped_ptr<ResourceMetadataStorage::Iterator>
+std::unique_ptr<ResourceMetadataStorage::Iterator>
 ResourceMetadataStorage::GetIterator() {
   base::ThreadRestrictions::AssertIOAllowed();
 
-  scoped_ptr<leveldb::Iterator> it(
+  std::unique_ptr<leveldb::Iterator> it(
       resource_map_->NewIterator(leveldb::ReadOptions()));
-  return make_scoped_ptr(new Iterator(it.Pass()));
+  return base::MakeUnique<Iterator>(std::move(it));
 }
 
 FileError ResourceMetadataStorage::GetChild(const std::string& parent_id,
@@ -845,7 +869,7 @@ FileError ResourceMetadataStorage::GetChildren(
   DCHECK(!parent_id.empty());
 
   // Iterate over all entries with keys starting with |parent_id|.
-  scoped_ptr<leveldb::Iterator> it(
+  std::unique_ptr<leveldb::Iterator> it(
       resource_map_->NewIterator(leveldb::ReadOptions()));
   for (it->Seek(parent_id);
        it->Valid() && it->key().starts_with(leveldb::Slice(parent_id));
@@ -934,7 +958,7 @@ bool ResourceMetadataStorage::CheckValidity() {
   leveldb::ReadOptions options;
   options.verify_checksums = true;
 
-  scoped_ptr<leveldb::Iterator> it(resource_map_->NewIterator(options));
+  std::unique_ptr<leveldb::Iterator> it(resource_map_->NewIterator(options));
   it->SeekToFirst();
 
   // DB is organized like this:

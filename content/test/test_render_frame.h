@@ -5,6 +5,7 @@
 #ifndef CONTENT_TEST_TEST_RENDER_FRAME_H_
 #define CONTENT_TEST_TEST_RENDER_FRAME_H_
 
+#include "base/macros.h"
 #include "content/renderer/render_frame_impl.h"
 
 namespace blink {
@@ -13,7 +14,6 @@ class WebHistoryItem;
 
 namespace content {
 
-class RenderViewImpl;
 struct CommonNavigationParams;
 struct RequestNavigationParams;
 struct StartNavigationParams;
@@ -37,12 +37,16 @@ class TestRenderFrame : public RenderFrameImpl {
                const FrameReplicationState& replicated_frame_state);
   void SetEditableSelectionOffsets(int start, int end);
   void ExtendSelectionAndDelete(int before, int after);
+  void DeleteSurroundingText(int before, int after);
   void Unselect();
   void SetAccessibilityMode(AccessibilityMode new_mode);
   void SetCompositionFromExistingText(
       int start,
       int end,
       const std::vector<blink::WebCompositionUnderline>& underlines);
+
+  blink::WebNavigationPolicy decidePolicyForNavigation(
+    const blink::WebFrameClient::NavigationPolicyInfo& info) override;
 
  private:
   explicit TestRenderFrame(const RenderFrameImpl::CreateParams& params);

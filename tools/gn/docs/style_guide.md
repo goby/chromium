@@ -18,7 +18,7 @@ changes are more focused.
     more important targets will be first, and unit tests will follow the
     corresponding target. If there's no clear ordering, consider
     alphabetical order.
-  * Test support libraries should be source sets named "test\_support".
+  * Test support libraries should be static libraries named "test\_support".
     So "//ui/compositor:test\_support". Test support libraries should
     include as public deps the non-test-support version of the library
     so tests need only depend on the test\_support target (rather than
@@ -53,7 +53,7 @@ Naming advice
 Example for the `src/foo/BUILD.gn` file:
 
 ```
-# Copyright 2013 The Chromium Authors. All rights reserved.
+# Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -96,48 +96,20 @@ Conditions should be written to minimize the number of conditional blocks.
 
 ## Formatting and indenting
 
-  * Indents are two spaces, both for indented blocks and wrapped lines.
+GN contains a built-in code formatter which defines the formatting style.
+Some additional notes:
+
   * Variables are `lower_case_with_underscores`
-  * Complicated conditions and if statements should generally follow the
-    Google C++ style guide for formatting.
   * Comments should be complete sentences with periods at the end.
-  * End-of-line-comments should have two spaces separating them and the
-    code.
   * Compiler flags and such should always be commented with what they do
     and why the flag is needed.
-  * Try to keep lines under 80 columns. If a file name or similar string
-    puts you beyond 80 with reasonable indenting, it's OK, but most
-    things can be wrapped nicely under that for the code review tool.
-
-### List formatting
-
-```
-  deps = [
-    "afile.cc",
-    "bar.cc",  # Note trailing comma on last element.
-  ]
-```
-
-Alphabetize the list elements unless there is a more obvious ordering.
-In some cases, it makes more sense to put more than one list member on a
-line if they clearly go together (for example, two short compiler flags
-that must go next to each other).
-
-Prefer use the multi-line style for lists of more than one elements.
-Lists with single-elements can be written on one line if desired:
-
-```
-  all_dependent_configs = [ ":foo_config" ]  # No trailing comma.
-```
 
 ### Sources
 
-  * Sources should always be alphabetized within a given list.
-  * List sources only once. It is OK to conditionally include sources
-    rather than listing them all at the top and then conditionally
-    excluding them when they don't apply. Conditional inclusion is often
-    clearer since a file is only listed once and it's easier to reason
-    about when reading.
+Prefer to list sources only once. It is OK to conditionally include sources
+rather than listing them all at the top and then conditionally excluding them
+when they don't apply. Conditional inclusion is often clearer since a file is
+only listed once and it's easier to reason about when reading.
 
 ```
   sources = [
@@ -178,7 +150,135 @@ import("//foo/bar/baz.gni")  # Even if this file is in the foo/bar directory
 
 ## Usage
 
-Use `source_set` rather than `static_library` unless you have a reason
-to do otherwise. A static library is a standalone library which can be
-slow to generate. A source set just links all the object files from that
-target into the targets depending on it, which saves the "lib" step.
+### Source sets versus static libraries
+
+Source sets and static libraries can be used interchangeably in most cases. If
+you're unsure what to use, a source set is almost never wrong and is less likely
+to cause problems.
+
+Static libraries follow different linking rules. When a static library is
+included in a link, only the object files that contain unresolved symbols will
+be brought into the build. Source sets result in every object file being added
+to the link line of the final binary.
+
+  * If you're eventually linking code into a component, shared library, or
+    loadable module, you normally need to use source sets. This is because
+    object files with no symbols referenced from within the shared library will
+    not be linked into the final library at all. This omission will happen even
+    if that object file has a symbol marked for export that targets dependant
+    on that shared library need. This will result in undefined symbols when
+    linking later targets.
+
+  * Unit tests (and anything else with static initializers with side effects)
+    must use source sets. The gtest TEST macros create static initializers
+    that register the test. But since no code references symbols in the object
+    file, linking a test into a static library and then into a test executable
+    means the tests will get stripped.
+
+  * Static libraries involve duplicating all of the data in the object files
+    that comprise it. This takes more disk space and for certain very large
+    libraries in configurations with very large object files can cause
+    internal limits on the size of static libraries to be exceeded. Source
+    sets do not have this limitation. Some targets switch between source sets
+    and static libraries depending on the build configuration to avoid this
+    problem.
+
+  * Source sets can have no sources, while static libraries will give strange
+    platform-specific errors if they have no sources. If a target has only
+    headers (for include checking purposes) or conditionally has no sources on
+    sone platforms, use a source set.
+
+  * In cases where a lot of the symbols are not needed for a particular link
+    (this especially happens when linking test binaries), putting that code in
+    a static library can dramatically increase linking performance. This is
+    because the object files not needed for the link are never considered in
+    the first place, rather than forcing the linker to strip the unused code
+    in a later pass when nothing references it.
+
+### Loadable modules versus shared libraries versus components
+
+A component is a Chrome primitive (rather than a built-in GN concept) that
+expands either to a shared library or a static library / source set depending
+on the value of the `is_component_build` variable. This allows release builds
+to be linked statically in a large binary, but for developers to use shared
+libraries for most operations.
+
+A shared library will be listed on the link line of dependant targets and will
+be loaded automatically by the operating system when the application starts
+and symbols automatically resolved. A loadable module will not be linked
+directly and the application must manually load it.
+
+On Windows and Linux shared libraries and loadable modules result in the same
+type of file (`.dll` and `.so`, respectively). The only difference is in how
+they are linked to dependant targets. On these platforms, having a `deps`
+dependency on a loadable module is the same as having a `data_deps`
+(non-linked) dependency on a shared library.
+
+On Mac, these targets have different formats: a shared library will generate a
+`.dylib` file and a loadable module will generate a `.so` file.
+
+Use loadable modules for things like plugins. Shared libraries should be
+seldom-used outside of components because most Chrome code is shipped to the
+end-user as a small number of large binaries. In the case of plugin-like
+libraries, it's good practice to use both a loadable module for the target type
+(even for platforms where it doesn't matter) and data deps for targets that
+depend on it so it's clear from both places that how the library will be linked
+and loaded.
+
+## Build arguments
+
+### Scope
+
+Build arguments should be scoped to a unit of behavior, e.g. enabling a feature.
+Typically an argument would be declared in an imported file to share it with
+the subset of the build that could make use of it.
+
+Chrome has many legacy flags in `//build/config/features.gni`,
+`//build/config/ui.gni`. These locations are deprecated. Feature flags should
+go along with the code for the feature. Many browser-level features can go
+somewhere in `//chrome/` without lower-level code knowing about it. Some
+UI environment flags can go into `//ui/`, and many flags can also go with
+the corresponding code in `//components/`. You can write a `.gni` file in
+components and have build files in chrome or content import it if necessary.
+
+The way to think about things in the `//build` directory is that this is
+DEPSed into various projects like V8 and WebRTC. Build flags specific to
+code outside of the build directory shouldn't be in the build directory, and
+V8 shouldn't get feature defines for Chrome features.
+
+New feature defines should use the buildflag system. See
+`//build/buildflag_header.gni` which allows preprocessor defines to be
+modularized without many of the disadvantages that made us use global defines
+in the past.
+
+### Type
+
+Arguments support all the [GN language types](language.md#Language).
+
+In the vast majority of cases `boolean` is the preferred type, since most
+arguments are enabling or disabling features or includes.
+
+`String`s are typically used for filepaths. They are also used for enumerated
+types, though `integer`s are sometimes used as well.
+
+### Naming conventions
+
+While there are no hard and fast rules around argument naming there are
+many common conventions. If you ever want to see the current list of argument
+names and default values for your current checkout use
+`gn args out/Debug --list --short`.
+
+`use_foo` - indicates dependencies or major codepaths to include (e.g.
+`use_open_ssl`, `use_ozone`, `use_cups`)
+
+`enable_foo` - indicates feature or tools to be enabled (e.g.
+`enable_google_now`, `enable_nacl`, `enable_remoting`, `enable_pdf`)
+
+`disable_foo` - _NOT_ recommended, use `enable_foo` instead with swapped default
+value
+
+`is_foo` - usually a global state descriptor (e.g. `is_chrome_branded`,
+`is_desktop_linux`); poor choice for non-globals
+
+`foo_use_bar` - prefixes can be used to indicate a limited scope for an argument
+(e.g. `rtc_use_h264`, `v8_use_snapshot`)

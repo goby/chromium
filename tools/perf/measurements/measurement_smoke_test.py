@@ -10,7 +10,7 @@ import unittest
 from telemetry import benchmark as benchmark_module
 from telemetry.core import discover
 from telemetry.internal.browser import browser_options
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.testing import options_for_unittests
 from telemetry.web_perf import timeline_based_measurement
 
@@ -22,9 +22,9 @@ def _GetAllPossiblePageTestInstances():
   benchmarks_dir = os.path.join(top_level_dir, 'benchmarks')
 
   # Get all page test instances from measurement classes that are directly
-  # constructable
+  # constructible
   all_measurement_classes = discover.DiscoverClasses(
-      measurements_dir, top_level_dir, page_test.PageTest,
+      measurements_dir, top_level_dir, legacy_page_test.LegacyPageTest,
       index_by_class_name=True, directly_constructable=True).values()
   for measurement_class in all_measurement_classes:
     page_test_instances.append(measurement_class())
@@ -45,8 +45,8 @@ def _GetAllPossiblePageTestInstances():
       benchmark_module.AddCommandLineArgs(parser)
       benchmark_class.SetArgumentDefaults(parser)
     except Exception:
-      logging.error('Exception raised when processing benchmark %s'
-          % benchmark_class)
+      logging.error('Exception raised when processing benchmark %s',
+                    benchmark_class)
       raise
     options.MergeDefaultValues(parser.get_default_values())
     pt = benchmark_class().CreatePageTest(options)
@@ -58,5 +58,6 @@ def _GetAllPossiblePageTestInstances():
 
 class MeasurementSmokeTest(unittest.TestCase):
   # Simple smoke test to make sure that all page_test are constructible.
+
   def testAllMeasurementInstance(self):
     _GetAllPossiblePageTestInstances()

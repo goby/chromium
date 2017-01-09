@@ -4,9 +4,12 @@
 
 #include "chrome/common/extensions/manifest_handlers/automation.h"
 
+#include <memory>
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/api/manifest_types.h"
-#include "chrome/grit/generated_resources.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/manifest_constants.h"
@@ -17,7 +20,6 @@
 #include "extensions/common/url_pattern.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_utils.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace extensions {
 
@@ -39,8 +41,8 @@ using api::manifest_types::Automation;
 class AutomationManifestPermission : public ManifestPermission {
  public:
   explicit AutomationManifestPermission(
-      scoped_ptr<const AutomationInfo> automation_info)
-      : automation_info_(automation_info.Pass()) {}
+      std::unique_ptr<const AutomationInfo> automation_info)
+      : automation_info_(std::move(automation_info)) {}
 
   // extensions::ManifestPermission overrides.
   std::string name() const override;
@@ -51,7 +53,7 @@ class AutomationManifestPermission : public ManifestPermission {
 
   bool FromValue(const base::Value* value) override;
 
-  scoped_ptr<base::Value> ToValue() const override;
+  std::unique_ptr<base::Value> ToValue() const override;
 
   ManifestPermission* Diff(const ManifestPermission* rhs) const override;
 
@@ -60,7 +62,7 @@ class AutomationManifestPermission : public ManifestPermission {
   ManifestPermission* Intersect(const ManifestPermission* rhs) const override;
 
  private:
-  scoped_ptr<const AutomationInfo> automation_info_;
+  std::unique_ptr<const AutomationInfo> automation_info_;
 };
 
 std::string AutomationManifestPermission::name() const {
@@ -89,12 +91,11 @@ PermissionIDSet AutomationManifestPermission::GetPermissions() const {
         automation_info_->matches, &regular_hosts, &permissions);
     std::set<std::string> hosts =
         permission_message_util::GetDistinctHosts(regular_hosts, true, true);
-    if (!hosts.empty()) {
-      permission_message_util::AddHostPermissions(
-          &permissions, hosts, automation_info_->interact
-                                   ? permission_message_util::kReadWrite
-                                   : permission_message_util::kReadOnly);
-    }
+    APIPermission::ID permission_id = automation_info_->interact
+                                          ? APIPermission::kHostReadWrite
+                                          : APIPermission::kHostReadOnly;
+    for (const auto& host : hosts)
+      permissions.insert(permission_id, base::UTF8ToUTF16(host));
   }
   return permissions;
 }
@@ -107,8 +108,8 @@ bool AutomationManifestPermission::FromValue(const base::Value* value) {
   return error.empty();
 }
 
-scoped_ptr<base::Value> AutomationManifestPermission::ToValue() const {
-  return AutomationInfo::ToValue(*automation_info_).Pass();
+std::unique_ptr<base::Value> AutomationManifestPermission::ToValue() const {
+  return AutomationInfo::ToValue(*automation_info_);
 }
 
 ManifestPermission* AutomationManifestPermission::Diff(
@@ -122,7 +123,7 @@ ManifestPermission* AutomationManifestPermission::Diff(
   URLPatternSet matches = URLPatternSet::CreateDifference(
       automation_info_->matches, other->automation_info_->matches);
   return new AutomationManifestPermission(
-      make_scoped_ptr(new const AutomationInfo(desktop, matches, interact)));
+      base::WrapUnique(new const AutomationInfo(desktop, matches, interact)));
 }
 
 ManifestPermission* AutomationManifestPermission::Union(
@@ -136,7 +137,7 @@ ManifestPermission* AutomationManifestPermission::Union(
   URLPatternSet matches = URLPatternSet::CreateUnion(
       automation_info_->matches, other->automation_info_->matches);
   return new AutomationManifestPermission(
-      make_scoped_ptr(new const AutomationInfo(desktop, matches, interact)));
+      base::WrapUnique(new const AutomationInfo(desktop, matches, interact)));
 }
 
 ManifestPermission* AutomationManifestPermission::Intersect(
@@ -150,7 +151,7 @@ ManifestPermission* AutomationManifestPermission::Intersect(
   URLPatternSet matches = URLPatternSet::CreateIntersection(
       automation_info_->matches, other->automation_info_->matches);
   return new AutomationManifestPermission(
-      make_scoped_ptr(new const AutomationInfo(desktop, matches, interact)));
+      base::WrapUnique(new const AutomationInfo(desktop, matches, interact)));
 }
 
 AutomationHandler::AutomationHandler() {
@@ -163,7 +164,7 @@ bool AutomationHandler::Parse(Extension* extension, base::string16* error) {
   const base::Value* automation = NULL;
   CHECK(extension->manifest()->Get(keys::kAutomation, &automation));
   std::vector<InstallWarning> install_warnings;
-  scoped_ptr<AutomationInfo> info =
+  std::unique_ptr<AutomationInfo> info =
       AutomationInfo::FromValue(*automation, &install_warnings, error);
   if (!error->empty())
     return false;
@@ -183,7 +184,7 @@ const std::vector<std::string> AutomationHandler::Keys() const {
 
 ManifestPermission* AutomationHandler::CreatePermission() {
   return new AutomationManifestPermission(
-      make_scoped_ptr(new const AutomationInfo));
+      base::WrapUnique(new const AutomationInfo));
 }
 
 ManifestPermission* AutomationHandler::CreateInitialRequiredPermission(
@@ -191,8 +192,8 @@ ManifestPermission* AutomationHandler::CreateInitialRequiredPermission(
   const AutomationInfo* info = AutomationInfo::Get(extension);
   if (info) {
     return new AutomationManifestPermission(
-        make_scoped_ptr(new const AutomationInfo(
-            info->desktop, info->matches, info->interact)));
+        base::WrapUnique(new const AutomationInfo(info->desktop, info->matches,
+                                                  info->interact)));
   }
   return NULL;
 }
@@ -204,18 +205,18 @@ const AutomationInfo* AutomationInfo::Get(const Extension* extension) {
 }
 
 // static
-scoped_ptr<AutomationInfo> AutomationInfo::FromValue(
+std::unique_ptr<AutomationInfo> AutomationInfo::FromValue(
     const base::Value& value,
     std::vector<InstallWarning>* install_warnings,
     base::string16* error) {
-  scoped_ptr<Automation> automation = Automation::FromValue(value, error);
+  std::unique_ptr<Automation> automation = Automation::FromValue(value, error);
   if (!automation)
-    return scoped_ptr<AutomationInfo>();
+    return std::unique_ptr<AutomationInfo>();
 
   if (automation->as_boolean) {
     if (*automation->as_boolean)
-      return make_scoped_ptr(new AutomationInfo());
-    return scoped_ptr<AutomationInfo>();
+      return base::WrapUnique(new AutomationInfo());
+    return std::unique_ptr<AutomationInfo>();
   }
   const Automation::Object& automation_object = *automation->as_object;
 
@@ -271,41 +272,40 @@ scoped_ptr<AutomationInfo> AutomationInfo::FromValue(
         InstallWarning(automation_errors::kErrorNoMatchesProvided));
   }
 
-  return make_scoped_ptr(new AutomationInfo(desktop, matches, interact));
+  return base::WrapUnique(new AutomationInfo(desktop, matches, interact));
 }
 
 // static
-scoped_ptr<base::Value> AutomationInfo::ToValue(const AutomationInfo& info) {
-  return AsManifestType(info)->ToValue().Pass();
-}
-
-// static
-scoped_ptr<Automation> AutomationInfo::AsManifestType(
+std::unique_ptr<base::Value> AutomationInfo::ToValue(
     const AutomationInfo& info) {
-  scoped_ptr<Automation> automation(new Automation);
+  return AsManifestType(info)->ToValue();
+}
+
+// static
+std::unique_ptr<Automation> AutomationInfo::AsManifestType(
+    const AutomationInfo& info) {
+  std::unique_ptr<Automation> automation(new Automation);
   if (!info.desktop && !info.interact && info.matches.size() == 0) {
     automation->as_boolean.reset(new bool(true));
-    return automation.Pass();
+    return automation;
   }
 
   Automation::Object* as_object = new Automation::Object;
   as_object->desktop.reset(new bool(info.desktop));
   as_object->interact.reset(new bool(info.interact));
-  if (info.matches.size() > 0) {
-    as_object->matches.reset(info.matches.ToStringVector().release());
-  }
+  if (info.matches.size() > 0)
+    as_object->matches = info.matches.ToStringVector();
   automation->as_object.reset(as_object);
-  return automation.Pass();
+  return automation;
 }
 
 AutomationInfo::AutomationInfo() : desktop(false), interact(false) {
 }
 
 AutomationInfo::AutomationInfo(bool desktop,
-                               const URLPatternSet matches,
+                               const URLPatternSet& matches,
                                bool interact)
-    : desktop(desktop), matches(matches), interact(interact) {
-}
+    : desktop(desktop), matches(matches), interact(interact) {}
 
 AutomationInfo::~AutomationInfo() {
 }

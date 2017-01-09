@@ -3,10 +3,11 @@
      Use of this source code is governed by a BSD-style license that can be
      found in the LICENSE file. -->
 
-<view xmlns:android="http://schemas.android.com/apk/res/android"
-    class="org.chromium.chrome.browser.snackbar.SnackbarManager$WindowDismissalAwareLayout"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/snackbar"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:layout_gravity="bottom|start"
     android:minHeight="@dimen/snackbar_min_height"
     android:orientation="horizontal" >
 
@@ -15,6 +16,7 @@
         android:layout_height="24dp"
         android:layout_gravity="center_vertical"
         android:layout_marginStart="12dp"
+        android:layout_marginEnd="-12dp"
         android:scaleType="fitCenter"
         android:visibility="visible"
         android:contentDescription="@null"/>
@@ -45,4 +47,4 @@
         android:textSize="14sp"
         style="@style/ButtonCompatBorderless" />
 
-</view>
+</LinearLayout>

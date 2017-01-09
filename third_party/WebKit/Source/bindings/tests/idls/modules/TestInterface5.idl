@@ -32,10 +32,11 @@
 // Also used as a target by TestObject
 
 enum TestEnumModules { "EnumModulesValue1", "EnumModulesValue2" };
+callback VoidCallbackFunctionModules = void ();
 
 [
-    ActiveDOMObject,
-    Conditional=CONDITION,
+    ActiveScriptWrappable,
+    DependentLifetime,
     Custom=LegacyCallAsFunction,
     DoNotCheckConstants,
     ImplementedAs=TestInterface5Implementation,
@@ -91,6 +92,10 @@ enum TestEnumModules { "EnumModulesValue1", "EnumModulesValue2" };
     // Union types
     void voidMethodBooleanOrDOMStringArg((boolean or DOMString) arg);
     void voidMethodDoubleOrDOMStringArg((double or DOMString) arg);
+
+    // Callback functions
+    void voidMethodVoidExperimentalCallbackFunction(VoidExperimentalCallbackFunction arg);
+    void voidMethodVoidCallbackFunctionModulesArg(VoidCallbackFunctionModules arg);
 
     iterable<any>;
 };

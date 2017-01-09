@@ -95,6 +95,8 @@ class Command(object):
   EXECUTE_SQL = (_Method.POST, '/session/:sessionId/execute_sql')
   GET_LOCATION = (_Method.GET, '/session/:sessionId/location')
   SET_LOCATION = (_Method.POST, '/session/:sessionId/location')
+  GET_NETWORK_CONNECTION = (
+     _Method.GET, '/session/:sessionId/network_connection')
   GET_NETWORK_CONDITIONS = (
       _Method.GET, '/session/:sessionId/chromium/network_conditions')
   SET_NETWORK_CONDITIONS = (
@@ -126,6 +128,8 @@ class Command(object):
       _Method.GET, '/session/:sessionId/session_storage/size')
   GET_SCREEN_ORIENTATION = (_Method.GET, '/session/:sessionId/orientation')
   SET_SCREEN_ORIENTATION = (_Method.POST, '/session/:sessionId/orientation')
+  DELETE_SCREEN_ORIENTATION = (
+      _Method.DELETE, '/session/:sessionId/orientation')
   MOUSE_CLICK = (_Method.POST, '/session/:sessionId/click')
   MOUSE_DOUBLE_CLICK = (_Method.POST, '/session/:sessionId/doubleclick')
   MOUSE_BUTTON_DOWN = (_Method.POST, '/session/:sessionId/buttondown')
@@ -146,6 +150,8 @@ class Command(object):
   SET_AUTO_REPORTING = (_Method.POST, '/session/:sessionId/autoreport')
   GET_SESSION_LOGS = (_Method.POST, '/logs')
   STATUS = (_Method.GET, '/status')
+  SET_NETWORK_CONNECTION = (
+      _Method.POST, '/session/:sessionId/network_connection')
 
   # Custom Chrome commands.
   IS_LOADING = (_Method.GET, '/session/:sessionId/is_loading')
@@ -178,7 +184,8 @@ class CommandExecutor(object):
     if response.status == 303:
       self._http_client.request(_Method.GET, response.getheader('location'))
       response = self._http_client.getresponse()
-    if response.status != 200:
+    result = json.loads(response.read())
+    if response.status != 200 and 'error' not in result:
       raise RuntimeError('Server returned error: ' + response.reason)
 
-    return json.loads(response.read())
+    return result

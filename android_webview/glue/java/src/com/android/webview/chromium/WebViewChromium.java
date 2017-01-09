@@ -6,7 +6,6 @@ package com.android.webview.chromium;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
-import android.app.assist.AssistStructure.ViewNode;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
@@ -25,6 +24,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.print.PrintDocumentAdapter;
 import android.util.Log;
+import android.view.DragEvent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -54,23 +54,18 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsStatics;
 import org.chromium.android_webview.AwPrintDocumentAdapter;
 import org.chromium.android_webview.AwSettings;
+import org.chromium.android_webview.ResourcesContextWrapperFactory;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.content.browser.SmartClipProvider;
-import org.chromium.content_public.browser.AccessibilitySnapshotCallback;
-import org.chromium.content_public.browser.AccessibilitySnapshotNode;
 import org.chromium.content_public.browser.NavigationHistory;
 
 import java.io.BufferedWriter;
 import java.io.File;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.Iterator;
 import java.util.Map;
-import java.util.Queue;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 
 /**
  * This class is the delegate to which WebViewProxy forwards all API calls.
@@ -83,39 +78,6 @@ import java.util.concurrent.TimeUnit;
 @SuppressWarnings("deprecation")
 class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate,
                                  WebViewProvider.ViewDelegate, SmartClipProvider {
-    private class WebViewChromiumRunQueue {
-        public WebViewChromiumRunQueue() {
-            mQueue = new ConcurrentLinkedQueue<Runnable>();
-        }
-
-        public void addTask(Runnable task) {
-            mQueue.add(task);
-            if (mFactory.hasStarted()) {
-                ThreadUtils.runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        drainQueue();
-                    }
-                });
-            }
-        }
-
-        public void drainQueue() {
-            if (mQueue == null || mQueue.isEmpty()) {
-                return;
-            }
-
-            Runnable task = mQueue.poll();
-            while (task != null) {
-                task.run();
-                task = mQueue.poll();
-            }
-        }
-
-        private Queue<Runnable> mQueue;
-    }
-
-    private WebViewChromiumRunQueue mRunQueue;
 
     private static final String TAG = WebViewChromium.class.getSimpleName();
 
@@ -141,6 +103,8 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
 
     private WebViewChromiumFactoryProvider mFactory;
 
+    private final boolean mShouldDisableThreadChecking;
+
     private static boolean sRecordWholeDocumentEnabledByApi = false;
     static void enableSlowWholeDocumentDraw() {
         sRecordWholeDocumentEnabledByApi = true;
@@ -149,14 +113,15 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     // This does not touch any global / non-threadsafe state, but note that
     // init is ofter called right after and is NOT threadsafe.
     public WebViewChromium(WebViewChromiumFactoryProvider factory, WebView webView,
-            WebView.PrivateAccess webViewPrivate) {
+            WebView.PrivateAccess webViewPrivate, boolean shouldDisableThreadChecking) {
+        WebViewChromiumFactoryProvider.checkStorageIsNotDeviceProtected(webView.getContext());
         mWebView = webView;
         mWebViewPrivate = webViewPrivate;
         mHitTestResult = new WebView.HitTestResult();
         mContext = ResourcesContextWrapperFactory.get(mWebView.getContext());
         mAppTargetSdkVersion = mContext.getApplicationInfo().targetSdkVersion;
         mFactory = factory;
-        mRunQueue = new WebViewChromiumRunQueue();
+        mShouldDisableThreadChecking = shouldDisableThreadChecking;
         factory.getWebViewDelegate().addWebViewAssetPath(mWebView.getContext());
     }
 
@@ -165,34 +130,6 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         AwContents childContents =
                 child == null ? null : ((WebViewChromium) child.getWebViewProvider()).mAwContents;
         parentContents.supplyContentsForPopup(childContents);
-    }
-
-    private <T> T runBlockingFuture(FutureTask<T> task) {
-        if (!mFactory.hasStarted()) throw new RuntimeException("Must be started before we block!");
-        if (ThreadUtils.runningOnUiThread()) {
-            throw new IllegalStateException("This method should only be called off the UI thread");
-        }
-        mRunQueue.addTask(task);
-        try {
-            return task.get(4, TimeUnit.SECONDS);
-        } catch (java.util.concurrent.TimeoutException e) {
-            throw new RuntimeException("Probable deadlock detected due to WebView API being called "
-                            + "on incorrect thread while the UI thread is blocked.", e);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    // We have a 4 second timeout to try to detect deadlocks to detect and aid in debuggin
-    // deadlocks.
-    // Do not call this method while on the UI thread!
-    private void runVoidTaskOnUiThreadBlocking(Runnable r) {
-        FutureTask<Void> task = new FutureTask<Void>(r, null);
-        runBlockingFuture(task);
-    }
-
-    private <T> T runOnUiThreadBlocking(Callable<T> c) {
-        return runBlockingFuture(new FutureTask<T>(c));
     }
 
     // WebViewProvider methods --------------------------------------------------------------------
@@ -233,11 +170,16 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         final boolean isAccessFromFileURLsGrantedByDefault =
                 mAppTargetSdkVersion < Build.VERSION_CODES.JELLY_BEAN;
         final boolean areLegacyQuirksEnabled = mAppTargetSdkVersion < Build.VERSION_CODES.KITKAT;
+        final boolean allowEmptyDocumentPersistence = mAppTargetSdkVersion <= Build.VERSION_CODES.M;
+        final boolean allowGeolocationOnInsecureOrigins =
+                mAppTargetSdkVersion <= Build.VERSION_CODES.M;
 
         mContentsClientAdapter =
                 new WebViewContentsClientAdapter(mWebView, mContext, mFactory.getWebViewDelegate());
-        mWebSettings = new ContentSettingsAdapter(new AwSettings(
-                mContext, isAccessFromFileURLsGrantedByDefault, areLegacyQuirksEnabled));
+        mWebSettings = new ContentSettingsAdapter(
+                new AwSettings(mContext, isAccessFromFileURLsGrantedByDefault,
+                        areLegacyQuirksEnabled, allowEmptyDocumentPersistence,
+                        allowGeolocationOnInsecureOrigins));
 
         if (mAppTargetSdkVersion < Build.VERSION_CODES.LOLLIPOP) {
             // Prior to Lollipop we always allowed third party cookies and mixed content.
@@ -246,7 +188,9 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             mWebSettings.getAwSettings().setZeroLayoutHeightDisablesViewportQuirk(true);
         }
 
-        mRunQueue.addTask(new Runnable() {
+        if (mShouldDisableThreadChecking) disableThreadChecking();
+
+        mFactory.addTask(new Runnable() {
             @Override
             public void run() {
                 initForReal();
@@ -261,13 +205,29 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         });
     }
 
+    // This is a workaround for https://crbug.com/622151.
+    // In HTC's email app, InputConnection.setComposingText() will call WebView.evaluateJavaScript,
+    // and thread assertion will occur. We turn off WebView thread assertion for this app.
+    private void disableThreadChecking() {
+        try {
+            Class<?> webViewClass = Class.forName("android.webkit.WebView");
+            Field field = webViewClass.getDeclaredField("sEnforceThreadChecking");
+            field.setAccessible(true);
+            field.setBoolean(null, false);
+            field.setAccessible(false);
+        } catch (ClassNotFoundException | NoSuchFieldException | IllegalAccessException
+                | IllegalArgumentException e) {
+            Log.w(TAG, "Failed to disable thread checking.");
+        }
+    }
+
     private void initForReal() {
         AwContentsStatics.setRecordFullDocument(sRecordWholeDocumentEnabledByApi
                 || mAppTargetSdkVersion < Build.VERSION_CODES.LOLLIPOP);
 
-        mAwContents = new AwContents(mFactory.getBrowserContext(), mWebView, mContext,
-                new InternalAccessAdapter(), new WebViewNativeGLDelegate(), mContentsClientAdapter,
-                mWebSettings.getAwSettings());
+        mAwContents = new AwContents(mFactory.getBrowserContextOnUiThread(), mWebView, mContext,
+                new InternalAccessAdapter(), new WebViewNativeDrawGLFunctorFactory(),
+                mContentsClientAdapter, mWebSettings.getAwSettings());
 
         if (mAppTargetSdkVersion >= Build.VERSION_CODES.KITKAT) {
             // On KK and above, favicons are automatically downloaded as the method
@@ -283,10 +243,6 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
 
         // TODO: This assumes AwContents ignores second Paint param.
         mAwContents.setLayerType(mWebView.getLayerType(), null);
-    }
-
-    void startYourEngine() {
-        mRunQueue.drainQueue();
     }
 
     private RuntimeException createThreadException() {
@@ -319,7 +275,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void setHorizontalScrollbarOverlay(final boolean overlay) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     setHorizontalScrollbarOverlay(overlay);
@@ -333,7 +289,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void setVerticalScrollbarOverlay(final boolean overlay) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     setVerticalScrollbarOverlay(overlay);
@@ -348,7 +304,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean overlayHorizontalScrollbar() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return overlayHorizontalScrollbar();
@@ -363,7 +319,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean overlayVerticalScrollbar() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return overlayVerticalScrollbar();
@@ -384,7 +340,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public SslCertificate getCertificate() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            SslCertificate ret = runOnUiThreadBlocking(new Callable<SslCertificate>() {
+            SslCertificate ret = mFactory.runOnUiThreadBlocking(new Callable<SslCertificate>() {
                 @Override
                 public SslCertificate call() {
                     return getCertificate();
@@ -409,7 +365,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void setHttpAuthUsernamePassword(
             final String host, final String realm, final String username, final String password) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     setHttpAuthUsernamePassword(host, realm, username, password);
@@ -417,14 +373,15 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             });
             return;
         }
-        mAwContents.setHttpAuthUsernamePassword(host, realm, username, password);
+        ((WebViewDatabaseAdapter) mFactory.getWebViewDatabase(mContext))
+                .setHttpAuthUsernamePassword(host, realm, username, password);
     }
 
     @Override
     public String[] getHttpAuthUsernamePassword(final String host, final String realm) {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            String[] ret = runOnUiThreadBlocking(new Callable<String[]>() {
+            String[] ret = mFactory.runOnUiThreadBlocking(new Callable<String[]>() {
                 @Override
                 public String[] call() {
                     return getHttpAuthUsernamePassword(host, realm);
@@ -432,13 +389,14 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             });
             return ret;
         }
-        return mAwContents.getHttpAuthUsernamePassword(host, realm);
+        return ((WebViewDatabaseAdapter) mFactory.getWebViewDatabase(mContext))
+                .getHttpAuthUsernamePassword(host, realm);
     }
 
     @Override
     public void destroy() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     destroy();
@@ -450,15 +408,11 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         // Make sure that we do not trigger any callbacks after destruction
         mContentsClientAdapter.setWebChromeClient(null);
         mContentsClientAdapter.setWebViewClient(null);
-        mContentsClientAdapter.setPictureListener(null);
+        mContentsClientAdapter.setPictureListener(null, true);
         mContentsClientAdapter.setFindListener(null);
         mContentsClientAdapter.setDownloadListener(null);
 
         mAwContents.destroy();
-        if (mGLfunctor != null) {
-            mGLfunctor.destroy();
-            mGLfunctor = null;
-        }
     }
 
     @Override
@@ -466,7 +420,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         // Note that this purely toggles the JS navigator.online property.
         // It does not in affect chromium or network stack state in any way.
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     setNetworkAvailable(networkUp);
@@ -481,12 +435,13 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public WebBackForwardList saveState(final Bundle outState) {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            WebBackForwardList ret = runOnUiThreadBlocking(new Callable<WebBackForwardList>() {
-                @Override
-                public WebBackForwardList call() {
-                    return saveState(outState);
-                }
-            });
+            WebBackForwardList ret =
+                    mFactory.runOnUiThreadBlocking(new Callable<WebBackForwardList>() {
+                        @Override
+                        public WebBackForwardList call() {
+                            return saveState(outState);
+                        }
+                    });
             return ret;
         }
         if (outState == null) return null;
@@ -510,12 +465,13 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public WebBackForwardList restoreState(final Bundle inState) {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            WebBackForwardList ret = runOnUiThreadBlocking(new Callable<WebBackForwardList>() {
-                @Override
-                public WebBackForwardList call() {
-                    return restoreState(inState);
-                }
-            });
+            WebBackForwardList ret =
+                    mFactory.runOnUiThreadBlocking(new Callable<WebBackForwardList>() {
+                        @Override
+                        public WebBackForwardList call() {
+                            return restoreState(inState);
+                        }
+                    });
             return ret;
         }
         if (inState == null) return null;
@@ -529,7 +485,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (checkNeedsPost()) {
             // Disallowed in WebView API for apps targetting a new SDK
             assert mAppTargetSdkVersion < Build.VERSION_CODES.JELLY_BEAN_MR2;
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     mAwContents.loadUrl(url, additionalHttpHeaders);
@@ -546,7 +502,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (checkNeedsPost()) {
             // Disallowed in WebView API for apps targetting a new SDK
             assert mAppTargetSdkVersion < Build.VERSION_CODES.JELLY_BEAN_MR2;
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     mAwContents.loadUrl(url);
@@ -563,7 +519,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (checkNeedsPost()) {
             // Disallowed in WebView API for apps targetting a new SDK
             assert mAppTargetSdkVersion < Build.VERSION_CODES.JELLY_BEAN_MR2;
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     mAwContents.postUrl(url, postData);
@@ -580,7 +536,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (checkNeedsPost()) {
             // Disallowed in WebView API for apps targetting a new SDK
             assert mAppTargetSdkVersion < Build.VERSION_CODES.JELLY_BEAN_MR2;
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     mAwContents.loadData(data, mimeType, encoding);
@@ -598,7 +554,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (checkNeedsPost()) {
             // Disallowed in WebView API for apps targetting a new SDK
             assert mAppTargetSdkVersion < Build.VERSION_CODES.JELLY_BEAN_MR2;
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     mAwContents.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
@@ -609,9 +565,21 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         mAwContents.loadDataWithBaseURL(baseUrl, data, mimeType, encoding, historyUrl);
     }
 
-    public void evaluateJavaScript(String script, ValueCallback<String> resultCallback) {
-        checkThread();
-        mAwContents.evaluateJavaScript(script, resultCallback);
+    @Override
+    public void evaluateJavaScript(
+            final String script, final ValueCallback<String> resultCallback) {
+        if (mShouldDisableThreadChecking && checkNeedsPost()) {
+            // This is a workaround for https://crbug.com/622151.
+            mFactory.addTask(new Runnable() {
+                @Override
+                public void run() {
+                    mAwContents.evaluateJavaScript(script, resultCallback);
+                }
+            });
+        } else {
+            checkThread();
+            mAwContents.evaluateJavaScript(script, resultCallback);
+        }
     }
 
     @Override
@@ -623,7 +591,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void saveWebArchive(final String basename, final boolean autoname,
             final ValueCallback<String> callback) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     saveWebArchive(basename, autoname, callback);
@@ -637,7 +605,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void stopLoading() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     stopLoading();
@@ -652,7 +620,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void reload() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     reload();
@@ -667,7 +635,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean canGoBack() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            Boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return canGoBack();
@@ -681,7 +649,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void goBack() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     goBack();
@@ -696,7 +664,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean canGoForward() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            Boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return canGoForward();
@@ -710,7 +678,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void goForward() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     goForward();
@@ -725,7 +693,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean canGoBackOrForward(final int steps) {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            Boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return canGoBackOrForward(steps);
@@ -739,7 +707,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void goBackOrForward(final int steps) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     goBackOrForward(steps);
@@ -760,7 +728,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean pageUp(final boolean top) {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            Boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return pageUp(top);
@@ -775,7 +743,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean pageDown(final boolean bottom) {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            Boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return pageDown(bottom);
@@ -790,7 +758,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void insertVisualStateCallback(
             final long requestId, final VisualStateCallback callback) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     insertVisualStateCallback(requestId, callback);
@@ -810,7 +778,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void clearView() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     clearView();
@@ -825,7 +793,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public Picture capturePicture() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Picture ret = runOnUiThreadBlocking(new Callable<Picture>() {
+            Picture ret = mFactory.runOnUiThreadBlocking(new Callable<Picture>() {
                 @Override
                 public Picture call() {
                     return capturePicture();
@@ -852,7 +820,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void invokeZoomPicker() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     invokeZoomPicker();
@@ -868,7 +836,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
             WebView.HitTestResult ret =
-                    runOnUiThreadBlocking(new Callable<WebView.HitTestResult>() {
+                    mFactory.runOnUiThreadBlocking(new Callable<WebView.HitTestResult>() {
                         @Override
                         public WebView.HitTestResult call() {
                             return getHitTestResult();
@@ -885,7 +853,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void requestFocusNodeHref(final Message hrefMsg) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     requestFocusNodeHref(hrefMsg);
@@ -899,7 +867,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void requestImageRef(final Message msg) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     requestImageRef(msg);
@@ -914,7 +882,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public String getUrl() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            String ret = runOnUiThreadBlocking(new Callable<String>() {
+            String ret = mFactory.runOnUiThreadBlocking(new Callable<String>() {
                 @Override
                 public String call() {
                     return getUrl();
@@ -929,7 +897,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public String getOriginalUrl() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            String ret = runOnUiThreadBlocking(new Callable<String>() {
+            String ret = mFactory.runOnUiThreadBlocking(new Callable<String>() {
                 @Override
                 public String call() {
                     return getOriginalUrl();
@@ -944,7 +912,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public String getTitle() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            String ret = runOnUiThreadBlocking(new Callable<String>() {
+            String ret = mFactory.runOnUiThreadBlocking(new Callable<String>() {
                 @Override
                 public String call() {
                     return getTitle();
@@ -959,7 +927,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public Bitmap getFavicon() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Bitmap ret = runOnUiThreadBlocking(new Callable<Bitmap>() {
+            Bitmap ret = mFactory.runOnUiThreadBlocking(new Callable<Bitmap>() {
                 @Override
                 public Bitmap call() {
                     return getFavicon();
@@ -1000,7 +968,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void pauseTimers() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     pauseTimers();
@@ -1014,7 +982,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void resumeTimers() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     resumeTimers();
@@ -1028,7 +996,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onPause() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onPause();
@@ -1042,7 +1010,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onResume() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onResume();
@@ -1057,7 +1025,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean isPaused() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            Boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            Boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return isPaused();
@@ -1076,7 +1044,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void clearCache(final boolean includeDiskFiles) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     clearCache(includeDiskFiles);
@@ -1093,7 +1061,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void clearFormData() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     clearFormData();
@@ -1107,7 +1075,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void clearHistory() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     clearHistory();
@@ -1121,7 +1089,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void clearSslPreferences() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     clearSslPreferences();
@@ -1136,12 +1104,13 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public WebBackForwardList copyBackForwardList() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            WebBackForwardList ret = runOnUiThreadBlocking(new Callable<WebBackForwardList>() {
-                @Override
-                public WebBackForwardList call() {
-                    return copyBackForwardList();
-                }
-            });
+            WebBackForwardList ret =
+                    mFactory.runOnUiThreadBlocking(new Callable<WebBackForwardList>() {
+                        @Override
+                        public WebBackForwardList call() {
+                            return copyBackForwardList();
+                        }
+                    });
             return ret;
         }
         // mAwContents.getNavigationHistory() can be null here if mAwContents has been destroyed,
@@ -1159,7 +1128,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void findNext(final boolean forwards) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     findNext(forwards);
@@ -1179,7 +1148,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void findAllAsync(final String searchString) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     findAllAsync(searchString);
@@ -1223,7 +1192,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void notifyFindDialogDismissed() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     notifyFindDialogDismissed();
@@ -1237,7 +1206,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void clearMatches() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     clearMatches();
@@ -1251,7 +1220,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void documentHasImages(final Message response) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     documentHasImages(response);
@@ -1267,6 +1236,11 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         mContentsClientAdapter.setWebViewClient(client);
     }
 
+    // TODO(ntfschr): add @Override once the next Android is released (http://crbug.com/627248)
+    public WebViewClient getWebViewClient() {
+        return mContentsClientAdapter.getWebViewClient();
+    }
+
     @Override
     public void setDownloadListener(DownloadListener listener) {
         mContentsClientAdapter.setDownloadListener(listener);
@@ -1276,6 +1250,11 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void setWebChromeClient(WebChromeClient client) {
         mWebSettings.getAwSettings().setFullscreenSupported(doesSupportFullscreen(client));
         mContentsClientAdapter.setWebChromeClient(client);
+    }
+
+    // TODO(ntfschr): add @Override once the next Android is released (http://crbug.com/627248)
+    public WebChromeClient getWebChromeClient() {
+        return mContentsClientAdapter.getWebChromeClient();
     }
 
     /**
@@ -1319,7 +1298,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @SuppressWarnings("deprecation")
     public void setPictureListener(final WebView.PictureListener listener) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     setPictureListener(listener);
@@ -1327,15 +1306,15 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             });
             return;
         }
-        mContentsClientAdapter.setPictureListener(listener);
-        mAwContents.enableOnNewPicture(
-                listener != null, mAppTargetSdkVersion >= Build.VERSION_CODES.JELLY_BEAN_MR2);
+        boolean invalidateOnly = mAppTargetSdkVersion >= Build.VERSION_CODES.JELLY_BEAN_MR2;
+        mContentsClientAdapter.setPictureListener(listener, invalidateOnly);
+        mAwContents.enableOnNewPicture(listener != null, invalidateOnly);
     }
 
     @Override
     public void addJavascriptInterface(final Object obj, final String interfaceName) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     addJavascriptInterface(obj, interfaceName);
@@ -1349,7 +1328,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void removeJavascriptInterface(final String interfaceName) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     removeJavascriptInterface(interfaceName);
@@ -1364,7 +1343,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public WebMessagePort[] createWebMessageChannel() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            WebMessagePort[] ret = runOnUiThreadBlocking(new Callable<WebMessagePort[]>() {
+            WebMessagePort[] ret = mFactory.runOnUiThreadBlocking(new Callable<WebMessagePort[]>() {
                 @Override
                 public WebMessagePort[] call() {
                     return createWebMessageChannel();
@@ -1372,14 +1351,14 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             });
             return ret;
         }
-        return WebMessagePortAdapter.fromAwMessagePorts(mAwContents.createMessageChannel());
+        return WebMessagePortAdapter.fromMessagePorts(mAwContents.createMessageChannel());
     }
 
     @Override
     @TargetApi(Build.VERSION_CODES.M)
     public void postMessageToMainFrame(final WebMessage message, final Uri targetOrigin) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     postMessageToMainFrame(message, targetOrigin);
@@ -1388,7 +1367,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             return;
         }
         mAwContents.postMessageToFrame(null, message.getData(), targetOrigin.toString(),
-                WebMessagePortAdapter.toAwMessagePorts(message.getPorts()));
+                WebMessagePortAdapter.toMessagePorts(message.getPorts()));
     }
 
     @Override
@@ -1404,7 +1383,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void flingScroll(final int vx, final int vy) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     flingScroll(vx, vy);
@@ -1448,7 +1427,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean zoomIn() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return zoomIn();
@@ -1463,7 +1442,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean zoomOut() {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return zoomOut();
@@ -1518,7 +1497,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean shouldDelayChildPressedState() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return shouldDelayChildPressedState();
@@ -1534,7 +1513,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
             AccessibilityNodeProvider ret =
-                    runOnUiThreadBlocking(new Callable<AccessibilityNodeProvider>() {
+                    mFactory.runOnUiThreadBlocking(new Callable<AccessibilityNodeProvider>() {
                         @Override
                         public AccessibilityNodeProvider call() {
                             return getAccessibilityNodeProvider();
@@ -1550,7 +1529,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void onProvideVirtualStructure(final ViewStructure structure) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            runVoidTaskOnUiThreadBlocking(new Runnable() {
+            mFactory.runVoidTaskOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
                     onProvideVirtualStructure(structure);
@@ -1558,56 +1537,14 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             });
             return;
         }
-        structure.setChildCount(1);
-        final ViewStructure viewRoot = structure.asyncNewChild(0);
-        mAwContents.requestAccessibilitySnapshot(new AccessibilitySnapshotCallback() {
-            @Override
-            public void onAccessibilitySnapshot(AccessibilitySnapshotNode root) {
-                viewRoot.setHint(AwContentsStatics.getProductVersion());
-                if (root == null) {
-                    viewRoot.setClassName("android.webkit.WebView");
-                    viewRoot.asyncCommit();
-                    return;
-                }
-                createAssistStructure(viewRoot, root, 0, 0);
-            }
-        });
-    }
-
-    // When creating the Assist structure, the left and top are relative to the parent node, and
-    // scroll offsets are not needed.
-    @TargetApi(Build.VERSION_CODES.M)
-    private void createAssistStructure(ViewStructure viewNode, AccessibilitySnapshotNode node,
-            int parentX, int parentY) {
-        viewNode.setClassName(node.className);
-        if (node.hasSelection) {
-            viewNode.setText(node.text, node.startSelection, node.endSelection);
-        } else {
-            viewNode.setText(node.text);
-        }
-        // Do not pass scroll information.
-        viewNode.setDimens(node.x - parentX, node.y - parentY, 0, 0, node.width, node.height);
-        viewNode.setChildCount(node.children.size());
-        if (node.hasStyle) {
-            int style = (node.bold ? ViewNode.TEXT_STYLE_BOLD : 0)
-                    | (node.italic ? ViewNode.TEXT_STYLE_ITALIC : 0)
-                    | (node.underline ? ViewNode.TEXT_STYLE_UNDERLINE : 0)
-                    | (node.lineThrough ? ViewNode.TEXT_STYLE_STRIKE_THRU : 0);
-            viewNode.setTextStyle(node.textSize, node.color, node.bgcolor, style);
-        }
-        final Iterator<AccessibilitySnapshotNode> children = node.children.listIterator();
-        int i = 0;
-        while (children.hasNext()) {
-            createAssistStructure(viewNode.asyncNewChild(i++), children.next(), node.x, node.y);
-        }
-        viewNode.asyncCommit();
+        mAwContents.onProvideVirtualStructure(structure);
     }
 
     @Override
     public void onInitializeAccessibilityNodeInfo(final AccessibilityNodeInfo info) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            runVoidTaskOnUiThreadBlocking(new Runnable() {
+            mFactory.runVoidTaskOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
                     onInitializeAccessibilityNodeInfo(info);
@@ -1622,7 +1559,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void onInitializeAccessibilityEvent(final AccessibilityEvent event) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            runVoidTaskOnUiThreadBlocking(new Runnable() {
+            mFactory.runVoidTaskOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
                     onInitializeAccessibilityEvent(event);
@@ -1637,7 +1574,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean performAccessibilityAction(final int action, final Bundle arguments) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return performAccessibilityAction(action, arguments);
@@ -1660,7 +1597,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (mAwContents == null) return;
 
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     setOverScrollMode(mode);
@@ -1674,7 +1611,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void setScrollBarStyle(final int style) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     setScrollBarStyle(style);
@@ -1698,7 +1635,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void onOverScrolled(final int scrollX, final int scrollY,
             final boolean clampedX, final boolean clampedY) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onOverScrolled(scrollX, scrollY, clampedX, clampedY);
@@ -1712,7 +1649,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onWindowVisibilityChanged(final int visibility) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onWindowVisibilityChanged(visibility);
@@ -1728,7 +1665,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void onDraw(final Canvas canvas) {
         mFactory.startYourEngines(true);
         if (checkNeedsPost()) {
-            runVoidTaskOnUiThreadBlocking(new Runnable() {
+            mFactory.runVoidTaskOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
                     onDraw(canvas);
@@ -1748,7 +1685,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         checkThread();
         mWebViewPrivate.super_setLayoutParams(layoutParams);
         if (checkNeedsPost()) {
-            runVoidTaskOnUiThreadBlocking(new Runnable() {
+            mFactory.runVoidTaskOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
                     mAwContents.setLayoutParams(layoutParams);
@@ -1763,7 +1700,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     // crbug.com/543272.
     public void onActivityResult(final int requestCode, final int resultCode, final Intent data) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onActivityResult(requestCode, resultCode, data);
@@ -1783,7 +1720,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onConfigurationChanged(final Configuration newConfig) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onConfigurationChanged(newConfig);
@@ -1792,6 +1729,22 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             return;
         }
         mAwContents.onConfigurationChanged(newConfig);
+    }
+
+    //TODO(hush): add override after release.
+    //@Override
+    public boolean onDragEvent(final DragEvent event) {
+        mFactory.startYourEngines(false);
+        if (checkNeedsPost()) {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    return onDragEvent(event);
+                }
+            });
+            return ret;
+        }
+        return mAwContents.onDragEvent(event);
     }
 
     @Override
@@ -1807,7 +1760,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean onKeyMultiple(final int keyCode, final int repeatCount, final KeyEvent event) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return onKeyMultiple(keyCode, repeatCount, event);
@@ -1822,7 +1775,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean onKeyDown(final int keyCode, final KeyEvent event) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return onKeyDown(keyCode, event);
@@ -1837,7 +1790,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean onKeyUp(final int keyCode, final KeyEvent event) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return onKeyUp(keyCode, event);
@@ -1861,7 +1814,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onDetachedFromWindow() {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onDetachedFromWindow();
@@ -1880,7 +1833,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (mAwContents == null) return;
 
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onVisibilityChanged(changedView, visibility);
@@ -1894,7 +1847,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onWindowFocusChanged(final boolean hasWindowFocus) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onWindowFocusChanged(hasWindowFocus);
@@ -1909,7 +1862,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void onFocusChanged(
             final boolean focused, final int direction, final Rect previouslyFocusedRect) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onFocusChanged(focused, direction, previouslyFocusedRect);
@@ -1928,7 +1881,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onSizeChanged(final int w, final int h, final int ow, final int oh) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onSizeChanged(w, h, ow, oh);
@@ -1942,7 +1895,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     @Override
     public void onScrollChanged(final int l, final int t, final int oldl, final int oldt) {
         if (checkNeedsPost()) {
-            mRunQueue.addTask(new Runnable() {
+            mFactory.addTask(new Runnable() {
                 @Override
                 public void run() {
                     onScrollChanged(l, t, oldl, oldt);
@@ -1957,7 +1910,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean dispatchKeyEvent(final KeyEvent event) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return dispatchKeyEvent(event);
@@ -1972,7 +1925,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean onTouchEvent(final MotionEvent ev) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return onTouchEvent(ev);
@@ -1987,7 +1940,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean onHoverEvent(final MotionEvent event) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return onHoverEvent(event);
@@ -2002,7 +1955,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean onGenericMotionEvent(final MotionEvent event) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return onGenericMotionEvent(event);
@@ -2023,7 +1976,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public boolean requestFocus(final int direction, final Rect previouslyFocusedRect) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return requestFocus(direction, previouslyFocusedRect);
@@ -2040,7 +1993,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void onMeasure(final int widthMeasureSpec, final int heightMeasureSpec) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            runVoidTaskOnUiThreadBlocking(new Runnable() {
+            mFactory.runVoidTaskOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
                     onMeasure(widthMeasureSpec, heightMeasureSpec);
@@ -2056,7 +2009,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             final View child, final Rect rect, final boolean immediate) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            boolean ret = runOnUiThreadBlocking(new Callable<Boolean>() {
+            boolean ret = mFactory.runOnUiThreadBlocking(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return requestChildRectangleOnScreen(child, rect, immediate);
@@ -2099,6 +2052,18 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         mAwContents.setLayerType(layerType, paint);
     }
 
+    // Overrides method added to WebViewProvider.ViewDelegate interface
+    // (not called in M and below)
+    public Handler getHandler(Handler originalHandler) {
+        return originalHandler;
+    }
+
+    // Overrides method added to WebViewProvider.ViewDelegate interface
+    // (not called in M and below)
+    public View findFocus(View originalFocusedView) {
+        return originalFocusedView;
+    }
+
     // Remove from superclass
     public void preDispatchDraw(Canvas canvas) {
         // TODO(leandrogracia): remove this method from WebViewProvider if we think
@@ -2119,7 +2084,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public int computeHorizontalScrollRange() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            int ret = runOnUiThreadBlocking(new Callable<Integer>() {
+            int ret = mFactory.runOnUiThreadBlocking(new Callable<Integer>() {
                 @Override
                 public Integer call() {
                     return computeHorizontalScrollRange();
@@ -2134,7 +2099,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public int computeHorizontalScrollOffset() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            int ret = runOnUiThreadBlocking(new Callable<Integer>() {
+            int ret = mFactory.runOnUiThreadBlocking(new Callable<Integer>() {
                 @Override
                 public Integer call() {
                     return computeHorizontalScrollOffset();
@@ -2149,7 +2114,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public int computeVerticalScrollRange() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            int ret = runOnUiThreadBlocking(new Callable<Integer>() {
+            int ret = mFactory.runOnUiThreadBlocking(new Callable<Integer>() {
                 @Override
                 public Integer call() {
                     return computeVerticalScrollRange();
@@ -2164,7 +2129,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public int computeVerticalScrollOffset() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            int ret = runOnUiThreadBlocking(new Callable<Integer>() {
+            int ret = mFactory.runOnUiThreadBlocking(new Callable<Integer>() {
                 @Override
                 public Integer call() {
                     return computeVerticalScrollOffset();
@@ -2179,7 +2144,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public int computeVerticalScrollExtent() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            int ret = runOnUiThreadBlocking(new Callable<Integer>() {
+            int ret = mFactory.runOnUiThreadBlocking(new Callable<Integer>() {
                 @Override
                 public Integer call() {
                     return computeVerticalScrollExtent();
@@ -2194,7 +2159,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void computeScroll() {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            runVoidTaskOnUiThreadBlocking(new Runnable() {
+            mFactory.runVoidTaskOnUiThreadBlocking(new Runnable() {
                 @Override
                 public void run() {
                     computeScroll();
@@ -2210,41 +2175,20 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         checkThread();
         return new AwPrintDocumentAdapter(mAwContents.getPdfExporter(), documentName);
     }
-
-    // AwContents.NativeGLDelegate implementation --------------------------------------
-    private class WebViewNativeGLDelegate implements AwContents.NativeGLDelegate {
+    // AwContents.NativeDrawGLFunctorFactory implementation ----------------------------------
+    private class WebViewNativeDrawGLFunctorFactory
+            implements AwContents.NativeDrawGLFunctorFactory {
         @Override
-        public boolean requestDrawGL(Canvas canvas, boolean waitForCompletion, View containerView) {
-            if (mGLfunctor == null) {
-                mGLfunctor = new DrawGLFunctor(
-                        mAwContents.getAwDrawGLViewContext(), mFactory.getWebViewDelegate());
-            }
-            return mGLfunctor.requestDrawGL(canvas, containerView, waitForCompletion);
-        }
-
-        @Override
-        public void detachGLFunctor() {
-            if (mGLfunctor != null) {
-                mGLfunctor.detach();
-            }
+        public AwContents.NativeDrawGLFunctor createFunctor(long context) {
+            return new DrawGLFunctor(context, mFactory.getWebViewDelegate());
         }
     }
 
     // AwContents.InternalAccessDelegate implementation --------------------------------------
     private class InternalAccessAdapter implements AwContents.InternalAccessDelegate {
         @Override
-        public boolean drawChild(Canvas arg0, View arg1, long arg2) {
-            return false;
-        }
-
-        @Override
         public boolean super_onKeyUp(int arg0, KeyEvent arg1) {
             // Intentional no-op
-            return false;
-        }
-
-        @Override
-        public boolean super_dispatchKeyEventPreIme(KeyEvent arg0) {
             return false;
         }
 

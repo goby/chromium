@@ -4,11 +4,12 @@
 
 #include "content/browser/device_sensors/sensor_manager_android.h"
 
+#include <memory>
+
 #include "base/android/jni_android.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/message_loop/message_loop.h"
 #include "content/browser/device_sensors/device_sensors_consts.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -61,11 +62,11 @@ class AndroidSensorManagerTest : public testing::Test {
     ASSERT_TRUE(buffer->data.hasGamma);
   }
 
-  scoped_ptr<DeviceLightHardwareBuffer> light_buffer_;
-  scoped_ptr<DeviceMotionHardwareBuffer> motion_buffer_;
-  scoped_ptr<DeviceOrientationHardwareBuffer> orientation_buffer_;
-  scoped_ptr<DeviceOrientationHardwareBuffer> orientation_absolute_buffer_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  std::unique_ptr<DeviceLightHardwareBuffer> light_buffer_;
+  std::unique_ptr<DeviceMotionHardwareBuffer> motion_buffer_;
+  std::unique_ptr<DeviceOrientationHardwareBuffer> orientation_buffer_;
+  std::unique_ptr<DeviceOrientationHardwareBuffer> orientation_absolute_buffer_;
+  base::MessageLoop message_loop_;
 };
 
 TEST_F(AndroidSensorManagerTest, ThreeDeviceMotionSensorsActive) {
@@ -102,7 +103,7 @@ TEST_F(AndroidSensorManagerTest, ThreeDeviceMotionSensorsActive) {
   ASSERT_TRUE(motion_buffer_->data.hasRotationRateBeta);
   ASSERT_EQ(9, motion_buffer_->data.rotationRateGamma);
   ASSERT_TRUE(motion_buffer_->data.hasRotationRateGamma);
-  ASSERT_EQ(kInertialSensorIntervalMicroseconds / 1000.,
+  ASSERT_EQ(kDeviceSensorIntervalMicroseconds / 1000.,
             motion_buffer_->data.interval);
 
   sensorManager.StopFetchingDeviceMotionData();
@@ -122,7 +123,7 @@ TEST_F(AndroidSensorManagerTest, TwoDeviceMotionSensorsActive) {
 
   sensorManager.GotAccelerationIncludingGravity(nullptr, nullptr, 1, 2, 3);
   ASSERT_TRUE(motion_buffer_->data.allAvailableSensorsAreActive);
-  ASSERT_EQ(kInertialSensorIntervalMicroseconds / 1000.,
+  ASSERT_EQ(kDeviceSensorIntervalMicroseconds / 1000.,
             motion_buffer_->data.interval);
 
   sensorManager.StopFetchingDeviceMotionData();
@@ -136,7 +137,7 @@ TEST_F(AndroidSensorManagerTest, ZeroDeviceMotionSensorsActive) {
 
   sensorManager.StartFetchingDeviceMotionData(motion_buffer_.get());
   ASSERT_TRUE(motion_buffer_->data.allAvailableSensorsAreActive);
-  ASSERT_EQ(kInertialSensorIntervalMicroseconds / 1000.,
+  ASSERT_EQ(kDeviceSensorIntervalMicroseconds / 1000.,
             motion_buffer_->data.interval);
 
   sensorManager.StopFetchingDeviceMotionData();

@@ -2,18 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/blink/resource_multibuffer_data_provider.h"
+
+#include <stdint.h>
 #include <algorithm>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/format_macros.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/media_log.h"
 #include "media/base/seekable_buffer.h"
-#include "media/blink/mock_webframeclient.h"
-#include "media/blink/mock_weburlloader.h"
-#include "media/blink/resource_multibuffer_data_provider.h"
+#include "media/blink/mock_webassociatedurlloader.h"
 #include "media/blink/url_index.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
@@ -22,6 +26,7 @@
 #include "third_party/WebKit/public/platform/WebURLError.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
+#include "third_party/WebKit/public/web/WebFrameClient.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
@@ -41,6 +46,7 @@ namespace media {
 
 const char kHttpUrl[] = "http://test";
 const char kHttpRedirect[] = "http://test/ing";
+const char kEtag[] = "\"arglebargle glopy-glyf?\"";
 
 const int kDataSize = 1024;
 const int kHttpOK = 200;
@@ -49,7 +55,11 @@ const int kHttpPartialContent = 206;
 enum NetworkState { NONE, LOADED, LOADING };
 
 // Predicate that tests that request disallows compressed data.
-static bool CorrectAcceptEncoding(const blink::WebURLRequest& request) {
+static bool CorrectAcceptEncodingAndEtag(const blink::WebURLRequest& request) {
+  std::string etag =
+      request.httpHeaderField(WebString::fromUTF8("If-Match")).utf8();
+  EXPECT_EQ(etag, kEtag);
+
   std::string value =
       request.httpHeaderField(
                  WebString::fromUTF8(net::HttpRequestHeaders::kAcceptEncoding))
@@ -61,11 +71,11 @@ static bool CorrectAcceptEncoding(const blink::WebURLRequest& request) {
 class ResourceMultiBufferDataProviderTest : public testing::Test {
  public:
   ResourceMultiBufferDataProviderTest()
-      : view_(WebView::create(nullptr)),
-        frame_(WebLocalFrame::create(blink::WebTreeScopeType::Document,
-                                     &client_)) {
-    view_->setMainFrame(frame_);
-    url_index_.reset(new UrlIndex(frame_, 0));
+      : view_(WebView::create(nullptr, blink::WebPageVisibilityStateVisible)) {
+    WebLocalFrame* frame =
+        WebLocalFrame::create(blink::WebTreeScopeType::Document, &client_);
+    view_->setMainFrame(frame);
+    url_index_.reset(new UrlIndex(frame, 0));
 
     for (int i = 0; i < kDataSize; ++i) {
       data_[i] = i;
@@ -74,12 +84,12 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
 
   virtual ~ResourceMultiBufferDataProviderTest() {
     view_->close();
-    frame_->close();
   }
 
   void Initialize(const char* url, int first_position) {
     gurl_ = GURL(url);
     url_data_ = url_index_->GetByUrl(gurl_, UrlData::CORS_UNSPECIFIED);
+    url_data_->set_etag(kEtag);
     DCHECK(url_data_);
     DCHECK(url_data_->frame());
     url_data_->OnRedirect(
@@ -88,32 +98,34 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
 
     first_position_ = first_position;
 
-    scoped_ptr<ResourceMultiBufferDataProvider> loader(
+    std::unique_ptr<ResourceMultiBufferDataProvider> loader(
         new ResourceMultiBufferDataProvider(url_data_.get(), first_position_));
     loader_ = loader.get();
-    url_data_->multibuffer()->AddProvider(loader.Pass());
+    url_data_->multibuffer()->AddProvider(std::move(loader));
 
     // |test_loader_| will be used when Start() is called.
-    url_loader_ = new NiceMock<MockWebURLLoader>();
-    loader_->test_loader_ = scoped_ptr<blink::WebURLLoader>(url_loader_);
+    url_loader_ = new NiceMock<MockWebAssociatedURLLoader>();
+    loader_->test_loader_ =
+        std::unique_ptr<blink::WebAssociatedURLLoader>(url_loader_);
   }
 
   void Start() {
     InSequence s;
-    EXPECT_CALL(*url_loader_,
-                loadAsynchronously(Truly(CorrectAcceptEncoding), loader_));
+    EXPECT_CALL(
+        *url_loader_,
+        loadAsynchronously(Truly(CorrectAcceptEncodingAndEtag), loader_));
 
     loader_->Start();
   }
 
-  void FullResponse(int64 instance_size, bool ok = true) {
+  void FullResponse(int64_t instance_size, bool ok = true) {
     WebURLResponse response(gurl_);
     response.setHTTPHeaderField(
         WebString::fromUTF8("Content-Length"),
         WebString::fromUTF8(base::StringPrintf("%" PRId64, instance_size)));
     response.setExpectedContentLength(instance_size);
     response.setHTTPStatusCode(kHttpOK);
-    loader_->didReceiveResponse(url_loader_, response);
+    loader_->didReceiveResponse(response);
 
     if (ok) {
       EXPECT_EQ(instance_size, url_data_->length());
@@ -122,15 +134,15 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
     EXPECT_FALSE(url_data_->range_supported());
   }
 
-  void PartialResponse(int64 first_position,
-                       int64 last_position,
-                       int64 instance_size) {
+  void PartialResponse(int64_t first_position,
+                       int64_t last_position,
+                       int64_t instance_size) {
     PartialResponse(first_position, last_position, instance_size, false, true);
   }
 
-  void PartialResponse(int64 first_position,
-                       int64 last_position,
-                       int64 instance_size,
+  void PartialResponse(int64_t first_position,
+                       int64_t last_position,
+                       int64_t instance_size,
                        bool chunked,
                        bool accept_ranges) {
     WebURLResponse response(gurl_);
@@ -142,7 +154,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
                                first_position, last_position, instance_size)));
 
     // HTTP 1.1 doesn't permit Content-Length with Transfer-Encoding: chunked.
-    int64 content_length = -1;
+    int64_t content_length = -1;
     if (chunked) {
       response.setHTTPHeaderField(WebString::fromUTF8("Transfer-Encoding"),
                                   WebString::fromUTF8("chunked"));
@@ -158,7 +170,7 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
     }
 
     response.setHTTPStatusCode(kHttpPartialContent);
-    loader_->didReceiveResponse(url_loader_, response);
+    loader_->didReceiveResponse(response);
 
     EXPECT_EQ(instance_size, url_data_->length());
 
@@ -175,9 +187,9 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
         .WillOnce(
             Invoke(this, &ResourceMultiBufferDataProviderTest::SetUrlData));
 
-    loader_->willFollowRedirect(url_loader_, newRequest, redirectResponse);
+    loader_->willFollowRedirect(newRequest, redirectResponse);
 
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void StopWhenLoad() {
@@ -189,21 +201,20 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
 
   // Helper method to write to |loader_| from |data_|.
   void WriteLoader(int position, int size) {
-    loader_->didReceiveData(
-        url_loader_, reinterpret_cast<char*>(data_ + position), size, size);
+    loader_->didReceiveData(reinterpret_cast<char*>(data_ + position), size);
   }
 
   void WriteData(int size) {
-    scoped_ptr<char[]> data(new char[size]);
-    loader_->didReceiveData(url_loader_, data.get(), size, size);
+    std::unique_ptr<char[]> data(new char[size]);
+    loader_->didReceiveData(data.get(), size);
   }
 
   // Verifies that data in buffer[0...size] is equal to data_[pos...pos+size].
-  void VerifyBuffer(uint8* buffer, int pos, int size) {
+  void VerifyBuffer(uint8_t* buffer, int pos, int size) {
     EXPECT_EQ(0, memcmp(buffer, data_ + pos, size));
   }
 
-  bool HasActiveLoader() { return loader_->active_loader_; }
+  bool HasActiveLoader() { return loader_->active_loader_ != nullptr; }
   MOCK_METHOD1(RedirectCallback, void(const scoped_refptr<UrlData>&));
 
   void SetUrlData(const scoped_refptr<UrlData>& new_url_data) {
@@ -212,22 +223,21 @@ class ResourceMultiBufferDataProviderTest : public testing::Test {
 
  protected:
   GURL gurl_;
-  int64 first_position_;
+  int64_t first_position_;
 
-  scoped_ptr<UrlIndex> url_index_;
+  std::unique_ptr<UrlIndex> url_index_;
   scoped_refptr<UrlData> url_data_;
   scoped_refptr<UrlData> redirected_to_;
   // The loader is owned by the UrlData above.
   ResourceMultiBufferDataProvider* loader_;
-  NiceMock<MockWebURLLoader>* url_loader_;
+  NiceMock<MockWebAssociatedURLLoader>* url_loader_;
 
-  MockWebFrameClient client_;
+  blink::WebFrameClient client_;
   WebView* view_;
-  WebLocalFrame* frame_;
 
   base::MessageLoop message_loop_;
 
-  uint8 data_[kDataSize];
+  uint8_t data_[kDataSize];
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ResourceMultiBufferDataProviderTest);
@@ -249,8 +259,7 @@ TEST_F(ResourceMultiBufferDataProviderTest, BadHttpResponse) {
   WebURLResponse response(gurl_);
   response.setHTTPStatusCode(404);
   response.setHTTPStatusText("Not Found\n");
-  loader_->didReceiveResponse(url_loader_, response);
-  StopWhenLoad();
+  loader_->didReceiveResponse(response);
 }
 
 // Tests that partial content is requested but not fulfilled.
@@ -258,7 +267,6 @@ TEST_F(ResourceMultiBufferDataProviderTest, NotPartialResponse) {
   Initialize(kHttpUrl, 100);
   Start();
   FullResponse(1024, false);
-  StopWhenLoad();
 }
 
 // Tests that a 200 response is received.
@@ -314,8 +322,7 @@ TEST_F(ResourceMultiBufferDataProviderTest, InvalidPartialResponse) {
                                              1, 10, 1024)));
   response.setExpectedContentLength(10);
   response.setHTTPStatusCode(kHttpPartialContent);
-  loader_->didReceiveResponse(url_loader_, response);
-  StopWhenLoad();
+  loader_->didReceiveResponse(response);
 }
 
 TEST_F(ResourceMultiBufferDataProviderTest, TestRedirects) {

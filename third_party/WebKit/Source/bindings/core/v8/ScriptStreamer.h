@@ -6,10 +6,10 @@
 #define ScriptStreamer_h
 
 #include "core/CoreExport.h"
-#include "core/dom/PendingScript.h"
 #include "platform/heap/Handle.h"
-#include "wtf/RefCounted.h"
-
+#include "wtf/Noncopyable.h"
+#include "wtf/text/WTFString.h"
+#include <memory>
 #include <v8.h>
 
 namespace blink {
@@ -17,7 +17,6 @@ namespace blink {
 class PendingScript;
 class Resource;
 class ScriptResource;
-class ScriptResourceClient;
 class ScriptState;
 class Settings;
 class SourceStream;
@@ -30,130 +29,149 @@ class WebTaskRunner;
 // streaming. It is possible, though, that Document and the PendingScript are
 // destroyed while the streaming is in progress, and ScriptStreamer handles it
 // gracefully.
-class CORE_EXPORT ScriptStreamer final : public RefCountedWillBeRefCountedGarbageCollected<ScriptStreamer> {
-    WTF_MAKE_NONCOPYABLE(ScriptStreamer);
-public:
-    static PassRefPtrWillBeRawPtr<ScriptStreamer> create(ScriptResource* resource, PendingScript::Type scriptType, ScriptState* scriptState, v8::ScriptCompiler::CompileOptions compileOptions, WebTaskRunner* loadingTaskRunner)
-    {
-        return adoptRefWillBeNoop(new ScriptStreamer(resource, scriptType, scriptState, compileOptions, loadingTaskRunner));
-    }
+class CORE_EXPORT ScriptStreamer final
+    : public GarbageCollectedFinalized<ScriptStreamer> {
+  WTF_MAKE_NONCOPYABLE(ScriptStreamer);
 
-    ~ScriptStreamer();
-    DECLARE_TRACE();
+ public:
+  enum Type { ParsingBlocking, Deferred, Async };
 
-    // Launches a task (on a background thread) which will stream the given
-    // PendingScript into V8 as it loads.
-    static void startStreaming(PendingScript&, PendingScript::Type, Settings*, ScriptState*, WebTaskRunner*);
+  ~ScriptStreamer();
+  DECLARE_TRACE();
 
-    // Returns false if we cannot stream the given encoding.
-    static bool convertEncoding(const char* encodingName, v8::ScriptCompiler::StreamedSource::Encoding*);
+  // Launches a task (on a background thread) which will stream the given
+  // PendingScript into V8 as it loads.
+  static void startStreaming(PendingScript*,
+                             Type,
+                             Settings*,
+                             ScriptState*,
+                             WebTaskRunner*);
 
-    bool isFinished() const;
+  // Returns false if we cannot stream the given encoding.
+  static bool convertEncoding(const char* encodingName,
+                              v8::ScriptCompiler::StreamedSource::Encoding*);
 
-    v8::ScriptCompiler::StreamedSource* source() { return m_source.get(); }
-    ScriptResource* resource() const { return m_resource; }
+  bool isFinished() const;
 
-    // Called when the script is not needed any more (e.g., loading was
-    // cancelled). After calling cancel, PendingScript can drop its reference to
-    // ScriptStreamer, and ScriptStreamer takes care of eventually deleting
-    // itself (after the V8 side has finished too).
-    void cancel();
+  v8::ScriptCompiler::StreamedSource* source() { return m_source.get(); }
+  ScriptResource* resource() const { return m_resource; }
 
-    // When the streaming is suppressed, the data is not given to V8, but
-    // ScriptStreamer still watches the resource load and notifies the upper
-    // layers when loading is finished. It is used in situations when we have
-    // started streaming but then we detect we don't want to stream (e.g., when
-    // we have the code cache for the script) and we still want to parse and
-    // execute it when it has finished loading.
-    void suppressStreaming();
-    bool streamingSuppressed() const { return m_streamingSuppressed; }
+  // Called when the script is not needed any more (e.g., loading was
+  // cancelled). After calling cancel, PendingScript can drop its reference to
+  // ScriptStreamer, and ScriptStreamer takes care of eventually deleting
+  // itself (after the V8 side has finished too).
+  void cancel();
 
-    v8::ScriptCompiler::CompileOptions compileOptions() const
-    {
-        return m_compileOptions;
-    }
+  // When the streaming is suppressed, the data is not given to V8, but
+  // ScriptStreamer still watches the resource load and notifies the upper
+  // layers when loading is finished. It is used in situations when we have
+  // started streaming but then we detect we don't want to stream (e.g., when
+  // we have the code cache for the script) and we still want to parse and
+  // execute it when it has finished loading.
+  void suppressStreaming();
+  bool streamingSuppressed() const { return m_streamingSuppressed; }
 
-    void addClient(ScriptResourceClient* client)
-    {
-        ASSERT(!m_client);
-        m_client = client;
-        notifyFinishedToClient();
-    }
+  v8::ScriptCompiler::CompileOptions compileOptions() const {
+    return m_compileOptions;
+  }
 
-    void removeClient(ScriptResourceClient* client)
-    {
-        ASSERT(m_client == client);
-        m_client = 0;
-    }
+  // Called by PendingScript when data arrives from the network.
+  void notifyAppendData(ScriptResource*);
+  void notifyFinished(Resource*);
 
-    // Called by PendingScript when data arrives from the network.
-    void notifyAppendData(ScriptResource*);
-    void notifyFinished(Resource*);
+  // Called by ScriptStreamingTask when it has streamed all data to V8 and V8
+  // has processed it.
+  void streamingCompleteOnBackgroundThread();
 
-    // Called by ScriptStreamingTask when it has streamed all data to V8 and V8
-    // has processed it.
-    void streamingCompleteOnBackgroundThread();
+  v8::ScriptCompiler::StreamedSource::Encoding encoding() const {
+    return m_encoding;
+  }
 
-    v8::ScriptCompiler::StreamedSource::Encoding encoding() const { return m_encoding; }
+  const String& scriptURLString() const { return m_scriptURLString; }
+  unsigned long scriptResourceIdentifier() const {
+    return m_scriptResourceIdentifier;
+  }
 
-    static void setSmallScriptThresholdForTesting(size_t threshold)
-    {
-        kSmallScriptThreshold = threshold;
-    }
+  static void setSmallScriptThresholdForTesting(size_t threshold) {
+    s_smallScriptThreshold = threshold;
+  }
 
-    static size_t smallScriptThreshold() { return kSmallScriptThreshold; }
+  static size_t smallScriptThreshold() { return s_smallScriptThreshold; }
 
-private:
-    // Scripts whose first data chunk is smaller than this constant won't be
-    // streamed. Non-const for testing.
-    static size_t kSmallScriptThreshold;
+ private:
+  // Scripts whose first data chunk is smaller than this constant won't be
+  // streamed. Non-const for testing.
+  static size_t s_smallScriptThreshold;
 
-    ScriptStreamer(ScriptResource*, PendingScript::Type, ScriptState*, v8::ScriptCompiler::CompileOptions, WebTaskRunner*);
+  static ScriptStreamer* create(
+      PendingScript* script,
+      Type scriptType,
+      ScriptState* scriptState,
+      v8::ScriptCompiler::CompileOptions compileOptions,
+      WebTaskRunner* loadingTaskRunner) {
+    return new ScriptStreamer(script, scriptType, scriptState, compileOptions,
+                              loadingTaskRunner);
+  }
+  ScriptStreamer(PendingScript*,
+                 Type,
+                 ScriptState*,
+                 v8::ScriptCompiler::CompileOptions,
+                 WebTaskRunner*);
 
-    void streamingComplete();
-    void notifyFinishedToClient();
+  void streamingComplete();
+  void notifyFinishedToClient();
 
-    static bool startStreamingInternal(PendingScript&, PendingScript::Type, Settings*, ScriptState*, WebTaskRunner*);
+  static bool startStreamingInternal(PendingScript*,
+                                     Type,
+                                     Settings*,
+                                     ScriptState*,
+                                     WebTaskRunner*);
 
-    // This pointer is weak. If PendingScript and its Resource are deleted
-    // before ScriptStreamer, PendingScript will notify ScriptStreamer of its
-    // deletion by calling cancel().
-    RawPtrWillBeMember<ScriptResource> m_resource;
-    // Whether ScriptStreamer is detached from the Resource. In those cases, the
-    // script data is not needed any more, and the client won't get notified
-    // when the loading and streaming are done.
-    bool m_detached;
+  Member<PendingScript> m_pendingScript;
+  // This pointer is weak. If PendingScript and its Resource are deleted
+  // before ScriptStreamer, PendingScript will notify ScriptStreamer of its
+  // deletion by calling cancel().
+  Member<ScriptResource> m_resource;
+  // Whether ScriptStreamer is detached from the Resource. In those cases, the
+  // script data is not needed any more, and the client won't get notified
+  // when the loading and streaming are done.
+  bool m_detached;
 
-    SourceStream* m_stream;
-    OwnPtr<v8::ScriptCompiler::StreamedSource> m_source;
-    ScriptResourceClient* m_client;
-    bool m_loadingFinished; // Whether loading from the network is done.
-    // Whether the V8 side processing is done. Will be used by the main thread
-    // and the streamer thread; guarded by m_mutex.
-    bool m_parsingFinished;
-    // Whether we have received enough data to start the streaming.
-    bool m_haveEnoughDataForStreaming;
+  SourceStream* m_stream;
+  std::unique_ptr<v8::ScriptCompiler::StreamedSource> m_source;
+  bool m_loadingFinished;  // Whether loading from the network is done.
+  // Whether the V8 side processing is done. Will be used by the main thread
+  // and the streamer thread; guarded by m_mutex.
+  bool m_parsingFinished;
+  // Whether we have received enough data to start the streaming.
+  bool m_haveEnoughDataForStreaming;
 
-    // Whether the script source code should be retrieved from the Resource
-    // instead of the ScriptStreamer; guarded by m_mutex.
-    bool m_streamingSuppressed;
+  // Whether the script source code should be retrieved from the Resource
+  // instead of the ScriptStreamer; guarded by m_mutex.
+  bool m_streamingSuppressed;
 
-    // What kind of cached data V8 produces during streaming.
-    v8::ScriptCompiler::CompileOptions m_compileOptions;
+  // What kind of cached data V8 produces during streaming.
+  v8::ScriptCompiler::CompileOptions m_compileOptions;
 
-    RefPtr<ScriptState> m_scriptState;
+  RefPtr<ScriptState> m_scriptState;
 
-    // For recording metrics for different types of scripts separately.
-    PendingScript::Type m_scriptType;
+  // For recording metrics for different types of scripts separately.
+  Type m_scriptType;
 
-    mutable Mutex m_mutex;
+  // Keep the script URL string for event tracing.
+  const String m_scriptURLString;
 
-    // Encoding of the streamed script. Saved for sanity checking purposes.
-    v8::ScriptCompiler::StreamedSource::Encoding m_encoding;
+  // Keep the script resource dentifier for event tracing.
+  const unsigned long m_scriptResourceIdentifier;
 
-    OwnPtr<WebTaskRunner> m_loadingTaskRunner;
+  mutable Mutex m_mutex;
+
+  // Encoding of the streamed script. Saved for sanity checking purposes.
+  v8::ScriptCompiler::StreamedSource::Encoding m_encoding;
+
+  std::unique_ptr<WebTaskRunner> m_loadingTaskRunner;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ScriptStreamer_h
+#endif  // ScriptStreamer_h

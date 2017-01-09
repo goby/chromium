@@ -31,86 +31,58 @@
 #ifndef ResourceOwner_h
 #define ResourceOwner_h
 
-#include "core/fetch/ResourcePtr.h"
+#include "core/fetch/Resource.h"
+#include "platform/heap/Handle.h"
 
 namespace blink {
 
+template <class R, class C>
+class GC_PLUGIN_IGNORE("https://crbug.com/652966") ResourceOwner;
 
-template<class R, class C = typename R::ClientType>
+template <class R, class C = typename R::ClientType>
 class ResourceOwner : public C {
-public:
-    typedef R ResourceType;
+  USING_PRE_FINALIZER(ResourceOwner, clearResource);
 
-    virtual ~ResourceOwner();
-    ResourceType* resource() const { return m_resource.get(); }
+ public:
+  using ResourceType = R;
+  ~ResourceOwner() override {}
+  ResourceType* resource() const { return m_resource; }
 
-protected:
-    ResourceOwner();
-    ResourceOwner(const ResourceOwner& other) { setResource(other.resource()); }
-    explicit ResourceOwner(const ResourcePtr<ResourceType>&);
+  DEFINE_INLINE_TRACE() {
+    visitor->trace(m_resource);
+    C::trace(visitor);
+  }
 
-    void setResource(const ResourcePtr<ResourceType>&);
-    void clearResource();
+ protected:
+  ResourceOwner() { ThreadState::current()->registerPreFinalizer(this); }
 
-    ResourceOwner& operator=(const ResourceOwner& other);
+  void setResource(
+      ResourceType*,
+      Resource::PreloadReferencePolicy = Resource::MarkAsReferenced);
+  void clearResource() { setResource(nullptr); }
 
-private:
-    ResourcePtr<ResourceType> m_resource;
+ private:
+  Member<ResourceType> m_resource;
 };
 
-template<class R, class C>
-inline ResourceOwner<R, C>::ResourceOwner()
-{
+template <class R, class C>
+inline void ResourceOwner<R, C>::setResource(
+    R* newResource,
+    Resource::PreloadReferencePolicy preloadReferencePolicy) {
+  if (newResource == m_resource)
+    return;
+
+  // Some ResourceClient implementations reenter this so
+  // we need to prevent double removal.
+  if (ResourceType* oldResource = m_resource.release())
+    oldResource->removeClient(this);
+
+  if (newResource) {
+    m_resource = newResource;
+    m_resource->addClient(this, preloadReferencePolicy);
+  }
 }
 
-template<class R, class C>
-inline ResourceOwner<R, C>::~ResourceOwner()
-{
-    clearResource();
-}
-
-template<class R, class C>
-inline ResourceOwner<R, C>::ResourceOwner(const ResourcePtr<R>& resource)
-    : m_resource(resource)
-{
-    if (m_resource)
-        m_resource->addClient(this);
-}
-
-template<class R, class C>
-inline void ResourceOwner<R, C>::setResource(const ResourcePtr<R>& newResource)
-{
-    if (newResource == m_resource)
-        return;
-
-    // Some ResourceClient implementations reenter this so
-    // we need to prevent double removal.
-    if (ResourcePtr<ResourceType> oldResource = m_resource) {
-        m_resource.clear();
-        oldResource->removeClient(this);
-    }
-
-    if (newResource) {
-        m_resource = newResource;
-        m_resource->addClient(this);
-    }
-}
-
-template<class R, class C>
-inline void ResourceOwner<R, C>::clearResource()
-{
-    setResource(0);
-}
-
-template<class R, class C>
-inline ResourceOwner<R, C>& ResourceOwner<R, C>::operator=(const ResourceOwner<R, C>& other)
-{
-    if (this == &other)
-        return *this;
-    setResource(other.resource());
-    return *this;
-}
-
-} // namespace blink
+}  // namespace blink
 
 #endif

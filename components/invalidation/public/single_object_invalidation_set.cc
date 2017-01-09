@@ -11,6 +11,9 @@ namespace syncer {
 
 SingleObjectInvalidationSet::SingleObjectInvalidationSet() {}
 
+SingleObjectInvalidationSet::SingleObjectInvalidationSet(
+    const SingleObjectInvalidationSet& other) = default;
+
 SingleObjectInvalidationSet::~SingleObjectInvalidationSet() {}
 
 void SingleObjectInvalidationSet::Insert(const Invalidation& invalidation) {
@@ -85,13 +88,13 @@ const Invalidation& SingleObjectInvalidationSet::back() const {
   return *invalidations_.rbegin();
 }
 
-scoped_ptr<base::ListValue> SingleObjectInvalidationSet::ToValue() const {
-  scoped_ptr<base::ListValue> value(new base::ListValue);
+std::unique_ptr<base::ListValue> SingleObjectInvalidationSet::ToValue() const {
+  std::unique_ptr<base::ListValue> value(new base::ListValue);
   for (InvalidationsSet::const_iterator it = invalidations_.begin();
        it != invalidations_.end(); ++it) {
-    value->Append(it->ToValue().release());
+    value->Append(it->ToValue());
   }
-  return value.Pass();
+  return value;
 }
 
 bool SingleObjectInvalidationSet::ResetFromValue(
@@ -102,7 +105,8 @@ bool SingleObjectInvalidationSet::ResetFromValue(
       DLOG(WARNING) << "Could not find invalidation at index " << i;
       return false;
     }
-    scoped_ptr<Invalidation> invalidation = Invalidation::InitFromValue(*dict);
+    std::unique_ptr<Invalidation> invalidation =
+        Invalidation::InitFromValue(*dict);
     if (!invalidation) {
       DLOG(WARNING) << "Failed to parse invalidation at index " << i;
       return false;

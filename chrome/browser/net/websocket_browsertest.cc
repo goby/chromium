@@ -4,12 +4,13 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/login/login_prompt.h"
-#include "chrome/browser/ui/login/login_prompt_test_utils.h"
+#include "chrome/browser/ui/login/login_handler.h"
+#include "chrome/browser/ui/login/login_handler_test_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -19,9 +20,9 @@
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
-#include "net/base/test_data_directory.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/test_data_directory.h"
 #include "url/gurl.h"
 
 namespace {
@@ -72,7 +73,7 @@ class WebSocketBrowserTest : public InProcessBrowserTest {
 
  private:
   typedef net::SpawnedTestServer::SSLOptions SSLOptions;
-  scoped_ptr<content::TitleWatcher> watcher_;
+  std::unique_ptr<content::TitleWatcher> watcher_;
 
   DISALLOW_COPY_AND_ASSIGN(WebSocketBrowserTest);
 };
@@ -168,7 +169,16 @@ IN_PROC_BROWSER_TEST_F(WebSocketBrowserTest, SecureWebSocketSplitRecords) {
   EXPECT_EQ("PASS", WaitAndGetTitle());
 }
 
-IN_PROC_BROWSER_TEST_F(WebSocketBrowserTest, SendCloseFrameWhenTabIsClosed) {
+// Flaky failing on Win10 only.  http://crbug.com/616958
+#if defined(OS_WIN)
+#define MAYBE_SendCloseFrameWhenTabIsClosed \
+    DISABLED_SendCloseFrameWhenTabIsClosed
+#else
+#define MAYBE_SendCloseFrameWhenTabIsClosed SendCloseFrameWhenTabIsClosed
+#endif
+
+IN_PROC_BROWSER_TEST_F(WebSocketBrowserTest,
+                       MAYBE_SendCloseFrameWhenTabIsClosed) {
   // Launch a WebSocket server.
   ASSERT_TRUE(ws_server_.Start());
 

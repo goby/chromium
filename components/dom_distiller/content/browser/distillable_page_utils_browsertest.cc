@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/dom_distiller/content/browser/distillable_page_utils.h"
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "components/dom_distiller/content/browser/distillable_page_utils.h"
+#include "build/build_config.h"
 #include "components/dom_distiller/content/browser/distiller_javascript_utils.h"
 #include "components/dom_distiller/core/distillable_page_detector.h"
 #include "components/dom_distiller/core/page_features.h"
@@ -129,7 +133,7 @@ IN_PROC_BROWSER_TEST_F(DomDistillerDistillablePageUtilsTest,
 
 IN_PROC_BROWSER_TEST_F(DomDistillerDistillablePageUtilsTest,
                        TestIsDistillablePage) {
-  scoped_ptr<AdaBoostProto> proto(new AdaBoostProto);
+  std::unique_ptr<AdaBoostProto> proto(new AdaBoostProto);
   proto->set_num_features(kDerivedFeaturesCount);
   proto->set_num_stumps(1);
 
@@ -137,8 +141,8 @@ IN_PROC_BROWSER_TEST_F(DomDistillerDistillablePageUtilsTest,
   stump->set_feature_number(0);
   stump->set_weight(1);
   stump->set_split(-1);
-  scoped_ptr<DistillablePageDetector> detector(
-      new DistillablePageDetector(proto.Pass()));
+  std::unique_ptr<DistillablePageDetector> detector(
+      new DistillablePageDetector(std::move(proto)));
   EXPECT_DOUBLE_EQ(0.5, detector->GetThreshold());
   // The first value of the first feature is either 0 or 1. Since the stump's
   // split is -1, the stump weight will be applied to any set of derived
@@ -154,15 +158,15 @@ IN_PROC_BROWSER_TEST_F(DomDistillerDistillablePageUtilsTest,
 
 IN_PROC_BROWSER_TEST_F(DomDistillerDistillablePageUtilsTest,
                        TestIsNotDistillablePage) {
-  scoped_ptr<AdaBoostProto> proto(new AdaBoostProto);
+  std::unique_ptr<AdaBoostProto> proto(new AdaBoostProto);
   proto->set_num_features(kDerivedFeaturesCount);
   proto->set_num_stumps(1);
   StumpProto* stump = proto->add_stump();
   stump->set_feature_number(0);
   stump->set_weight(-1);
   stump->set_split(-1);
-  scoped_ptr<DistillablePageDetector> detector(
-      new DistillablePageDetector(proto.Pass()));
+  std::unique_ptr<DistillablePageDetector> detector(
+      new DistillablePageDetector(std::move(proto)));
   EXPECT_DOUBLE_EQ(-0.5, detector->GetThreshold());
   // The first value of the first feature is either 0 or 1. Since the stump's
   // split is -1, the stump weight will be applied to any set of derived

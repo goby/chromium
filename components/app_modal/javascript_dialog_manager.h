@@ -5,8 +5,11 @@
 #ifndef COMPONENTS_APP_MODAL_JAVASCRIPT_DIALOG_MANAGER_H_
 #define COMPONENTS_APP_MODAL_JAVASCRIPT_DIALOG_MANAGER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "base/time/time.h"
 #include "components/app_modal/javascript_app_modal_dialog.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 
@@ -26,13 +29,35 @@ class JavaScriptDialogManager : public content::JavaScriptDialogManager {
   // Sets the JavaScriptNativeDialogFactory used to create platform specific
   // dialog window instances.
   void SetNativeDialogFactory(
-      scoped_ptr<JavaScriptNativeDialogFactory> factory);
+      std::unique_ptr<JavaScriptNativeDialogFactory> factory);
 
   // JavaScript dialogs may be opened by an extensions/app, thus they need
   // access to extensions functionality. This sets a client interface to
   // access //extensions.
   void SetExtensionsClient(
-      scoped_ptr<JavaScriptDialogExtensionsClient> extensions_client);
+      std::unique_ptr<JavaScriptDialogExtensionsClient> extensions_client);
+
+  // Gets the title for a dialog.
+  base::string16 GetTitle(content::WebContents* web_contents,
+                          const GURL& origin_url);
+
+  // JavaScriptDialogManager:
+  void RunJavaScriptDialog(content::WebContents* web_contents,
+                           const GURL& origin_url,
+                           content::JavaScriptMessageType message_type,
+                           const base::string16& message_text,
+                           const base::string16& default_prompt_text,
+                           const DialogClosedCallback& callback,
+                           bool* did_suppress_message) override;
+  void RunBeforeUnloadDialog(content::WebContents* web_contents,
+                             bool is_reload,
+                             const DialogClosedCallback& callback) override;
+  bool HandleJavaScriptDialog(content::WebContents* web_contents,
+                              bool accept,
+                              const base::string16* prompt_override) override;
+  void CancelDialogs(content::WebContents* web_contents,
+                     bool suppress_callbacks,
+                     bool reset_state) override;
 
  private:
   friend struct base::DefaultSingletonTraits<JavaScriptDialogManager>;
@@ -40,30 +65,11 @@ class JavaScriptDialogManager : public content::JavaScriptDialogManager {
   JavaScriptDialogManager();
   ~JavaScriptDialogManager() override;
 
-  // JavaScriptDialogManager:
-  void RunJavaScriptDialog(content::WebContents* web_contents,
-                           const GURL& origin_url,
-                           const std::string& accept_lang,
-                           content::JavaScriptMessageType message_type,
-                           const base::string16& message_text,
-                           const base::string16& default_prompt_text,
-                           const DialogClosedCallback& callback,
-                           bool* did_suppress_message) override;
-  void RunBeforeUnloadDialog(content::WebContents* web_contents,
-                             const base::string16& message_text,
-                             bool is_reload,
-                             const DialogClosedCallback& callback) override;
-  bool HandleJavaScriptDialog(content::WebContents* web_contents,
-                              bool accept,
-                              const base::string16* prompt_override) override;
-  void CancelActiveAndPendingDialogs(
-      content::WebContents* web_contents) override;
-  void ResetDialogState(content::WebContents* web_contents) override;
-
-  base::string16 GetTitle(content::WebContents* web_contents,
-                          const GURL& origin_url,
-                          const std::string& accept_lang,
-                          bool is_alert);
+  // Wrapper around OnDialogClosed; logs UMA stats before continuing on.
+  void OnBeforeUnloadDialogClosed(content::WebContents* web_contents,
+                                  DialogClosedCallback callback,
+                                  bool success,
+                                  const base::string16& user_input);
 
   // Wrapper around a DialogClosedCallback so that we can intercept it before
   // passing it onto the original callback.
@@ -76,8 +82,13 @@ class JavaScriptDialogManager : public content::JavaScriptDialogManager {
   // is a void* because the pointer is just a cookie and is never dereferenced.
   JavaScriptAppModalDialog::ExtraDataMap javascript_dialog_extra_data_;
 
-  scoped_ptr<JavaScriptNativeDialogFactory> native_dialog_factory_;
-  scoped_ptr<JavaScriptDialogExtensionsClient> extensions_client_;
+  std::unique_ptr<JavaScriptNativeDialogFactory> native_dialog_factory_;
+  std::unique_ptr<JavaScriptDialogExtensionsClient> extensions_client_;
+
+  // Record a single create and close timestamp to track the time between
+  // dialogs. (Since Javascript dialogs are modal, this is even accurate!)
+  base::TimeTicks last_close_time_;
+  base::TimeTicks last_creation_time_;
 
   DISALLOW_COPY_AND_ASSIGN(JavaScriptDialogManager);
 };

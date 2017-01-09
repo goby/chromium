@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/views/frame/taskbar_decorator.h"
+#include "chrome/browser/ui/views/frame/taskbar_decorator_win.h"
 
 #include <shobjidl.h>
 
@@ -12,7 +12,6 @@
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "content/public/browser/browser_thread.h"
 #include "skia/ext/image_operations.h"
 #include "skia/ext/platform_canvas.h"
@@ -31,7 +30,7 @@ namespace {
 //
 // Docs for TaskbarList::SetOverlayIcon() say it does nothing if the HWND is not
 // valid.
-void SetOverlayIcon(HWND hwnd, scoped_ptr<SkBitmap> bitmap) {
+void SetOverlayIcon(HWND hwnd, std::unique_ptr<SkBitmap> bitmap) {
   base::win::ScopedComPtr<ITaskbarList3> taskbar;
   HRESULT result = taskbar.CreateInstance(CLSID_TaskbarList, nullptr,
                                           CLSCTX_INPROC_SERVER);
@@ -59,20 +58,17 @@ void SetOverlayIcon(HWND hwnd, scoped_ptr<SkBitmap> bitmap) {
     SkCanvas offscreen_canvas(offscreen_bitmap);
     offscreen_canvas.clear(SK_ColorTRANSPARENT);
     offscreen_canvas.drawBitmap(sk_icon, 0, kOverlayIconSize - resized_height);
-    icon.Set(IconUtil::CreateHICONFromSkBitmap(offscreen_bitmap));
-    if (!icon.Get())
+    icon = IconUtil::CreateHICONFromSkBitmap(offscreen_bitmap);
+    if (!icon.is_valid())
       return;
   }
-  taskbar->SetOverlayIcon(hwnd, icon, L"");
+  taskbar->SetOverlayIcon(hwnd, icon.get(), L"");
 }
 
 }  // namespace
 
 void DrawTaskbarDecoration(gfx::NativeWindow window, const gfx::Image* image) {
-  // HOST_DESKTOP_TYPE_ASH doesn't use the taskbar.
-  if (base::win::GetVersion() < base::win::VERSION_WIN7 ||
-      chrome::GetHostDesktopTypeForNativeWindow(window) !=
-      chrome::HOST_DESKTOP_TYPE_NATIVE)
+  if (base::win::GetVersion() < base::win::VERSION_WIN7)
     return;
 
   HWND hwnd = views::HWNDForNativeWindow(window);
@@ -84,7 +80,7 @@ void DrawTaskbarDecoration(gfx::NativeWindow window, const gfx::Image* image) {
 
   // Copy the image since we're going to use it on a separate thread and
   // gfx::Image isn't thread safe.
-  scoped_ptr<SkBitmap> bitmap;
+  std::unique_ptr<SkBitmap> bitmap;
   if (image) {
     bitmap.reset(new SkBitmap(
         profiles::GetAvatarIconAsSquare(*image->ToSkBitmap(), 1)));

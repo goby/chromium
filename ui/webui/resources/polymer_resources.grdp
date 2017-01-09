@@ -4,7 +4,7 @@
   Please use 'src/tools/polymer/polymer_grdp_to_txt.py' and
   'src/tools/polymer/txt_to_polymer_grdp.py' to modify it, if possible.
 
-  'polymer_grdp_to_txt.py' converts 'polymer_resources.grdp' to a plane list of
+  'polymer_grdp_to_txt.py' converts 'polymer_resources.grdp' to a plain list of
   used Polymer components:
     ...
     iron-iron-iconset/iron-iconset-extracted.js
@@ -20,8 +20,20 @@
 -->
 <grit-part>
   <!-- Polymer 1.0 -->
+  <structure name="IDR_POLYMER_1_0_APP_LAYOUT_APP_DRAWER_APP_DRAWER_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/app-layout/app-drawer/app-drawer-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_APP_LAYOUT_APP_DRAWER_APP_DRAWER_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/app-layout/app-drawer/app-drawer.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_FONT_ROBOTO_ROBOTO_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/font-roboto/roboto.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_A11Y_ANNOUNCER_IRON_A11Y_ANNOUNCER_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-a11y-announcer/iron-a11y-announcer-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_A11Y_ANNOUNCER_IRON_A11Y_ANNOUNCER_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-a11y-announcer/iron-a11y-announcer.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_A11Y_KEYS_BEHAVIOR_IRON_A11Y_KEYS_BEHAVIOR_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-a11y-keys-behavior/iron-a11y-keys-behavior-extracted.js"
@@ -34,6 +46,12 @@
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_A11Y_KEYS_IRON_A11Y_KEYS_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-a11y-keys/iron-a11y-keys.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_AUTOGROW_TEXTAREA_IRON_AUTOGROW_TEXTAREA_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-autogrow-textarea/iron-autogrow-textarea-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_AUTOGROW_TEXTAREA_IRON_AUTOGROW_TEXTAREA_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-autogrow-textarea/iron-autogrow-textarea.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_BEHAVIORS_IRON_BUTTON_STATE_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-behaviors/iron-button-state-extracted.js"
@@ -77,11 +95,20 @@
   <structure name="IDR_POLYMER_1_0_IRON_FIT_BEHAVIOR_IRON_FIT_BEHAVIOR_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-fit-behavior/iron-fit-behavior.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_FLEX_LAYOUT_CLASSES_IRON_FLEX_LAYOUT_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-flex-layout/classes/iron-flex-layout-extracted.js"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_FLEX_LAYOUT_CLASSES_IRON_FLEX_LAYOUT_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-flex-layout/classes/iron-flex-layout.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_FLEX_LAYOUT_CLASSES_IRON_SHADOW_FLEX_LAYOUT_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-flex-layout/classes/iron-shadow-flex-layout-extracted.js"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_FLEX_LAYOUT_CLASSES_IRON_SHADOW_FLEX_LAYOUT_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-flex-layout/classes/iron-shadow-flex-layout.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_FLEX_LAYOUT_IRON_FLEX_LAYOUT_CLASSES_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-flex-layout/iron-flex-layout-classes.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_FLEX_LAYOUT_IRON_FLEX_LAYOUT_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-flex-layout/iron-flex-layout.html"
@@ -119,6 +146,9 @@
   <structure name="IDR_POLYMER_1_0_IRON_ICONS_NOTIFICATION_ICONS_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-icons/notification-icons.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_ICONS_PLACES_ICONS_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-icons/places-icons.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_ICONS_SOCIAL_ICONS_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-icons/social-icons.html"
              type="chrome_html" />
@@ -139,6 +169,18 @@
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_LIST_IRON_LIST_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-list/iron-list.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_LOCATION_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-location-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_LOCATION_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-location.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_QUERY_PARAMS_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-query-params-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_QUERY_PARAMS_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-query-params.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_MEDIA_QUERY_IRON_MEDIA_QUERY_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-media-query/iron-media-query-extracted.js"
@@ -200,6 +242,18 @@
   <structure name="IDR_POLYMER_1_0_IRON_RESIZABLE_BEHAVIOR_IRON_RESIZABLE_BEHAVIOR_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-resizable-behavior/iron-resizable-behavior.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_SCROLL_TARGET_BEHAVIOR_IRON_SCROLL_TARGET_BEHAVIOR_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-scroll-target-behavior/iron-scroll-target-behavior-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_SCROLL_TARGET_BEHAVIOR_IRON_SCROLL_TARGET_BEHAVIOR_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-scroll-target-behavior/iron-scroll-target-behavior.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_SCROLL_THRESHOLD_IRON_SCROLL_THRESHOLD_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-scroll-threshold/iron-scroll-threshold-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_SCROLL_THRESHOLD_IRON_SCROLL_THRESHOLD_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-scroll-threshold/iron-scroll-threshold.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_SELECTOR_IRON_MULTI_SELECTABLE_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-selector/iron-multi-selectable-extracted.js"
              type="chrome_html" />
@@ -224,14 +278,17 @@
   <structure name="IDR_POLYMER_1_0_IRON_SELECTOR_IRON_SELECTOR_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-selector/iron-selector.html"
              type="chrome_html" />
-  <structure name="IDR_POLYMER_1_0_IRON_TEST_HELPERS_IRON_TEST_HELPERS_EXTRACTED_JS"
-             file="../../../third_party/polymer/v1_0/components-chromium/iron-test-helpers/iron-test-helpers-extracted.js"
-             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_TEST_HELPERS_IRON_TEST_HELPERS_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-test-helpers/iron-test-helpers.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_TEST_HELPERS_MOCK_INTERACTIONS_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-test-helpers/mock-interactions.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_TEST_HELPERS_MOCK_INTERACTIONS_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-test-helpers/mock-interactions.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_TEST_HELPERS_TEST_HELPERS_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-test-helpers/test-helpers.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_TEST_HELPERS_TEST_HELPERS_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-test-helpers/test-helpers.js"
@@ -266,11 +323,23 @@
   <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_OPAQUE_ANIMATION_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/opaque-animation.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SCALE_DOWN_ANIMATION_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/scale-down-animation-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SCALE_DOWN_ANIMATION_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/scale-down-animation.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_DOWN_ANIMATION_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-down-animation-extracted.js"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_DOWN_ANIMATION_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-down-animation.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_FROM_BOTTOM_ANIMATION_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-from-bottom-animation-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_FROM_BOTTOM_ANIMATION_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-from-bottom-animation.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_FROM_LEFT_ANIMATION_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-from-left-animation-extracted.js"
@@ -283,6 +352,12 @@
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_FROM_RIGHT_ANIMATION_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-from-right-animation.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_FROM_TOP_ANIMATION_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-from-top-animation-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_FROM_TOP_ANIMATION_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-from-top-animation.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_NEON_ANIMATION_ANIMATIONS_SLIDE_LEFT_ANIMATION_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/neon-animation/animations/slide-left-animation-extracted.js"
@@ -383,12 +458,6 @@
   <structure name="IDR_POLYMER_1_0_PAPER_BUTTON_PAPER_BUTTON_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-button/paper-button.html"
              type="chrome_html" />
-  <structure name="IDR_POLYMER_1_0_PAPER_CARD_PAPER_CARD_EXTRACTED_JS"
-             file="../../../third_party/polymer/v1_0/components-chromium/paper-card/paper-card-extracted.js"
-             type="chrome_html" />
-  <structure name="IDR_POLYMER_1_0_PAPER_CARD_PAPER_CARD_HTML"
-             file="../../../third_party/polymer/v1_0/components-chromium/paper-card/paper-card.html"
-             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_CHECKBOX_PAPER_CHECKBOX_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-checkbox/paper-checkbox-extracted.js"
              type="chrome_html" />
@@ -422,8 +491,20 @@
   <structure name="IDR_POLYMER_1_0_PAPER_DROPDOWN_MENU_PAPER_DROPDOWN_MENU_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-dropdown-menu/paper-dropdown-menu-extracted.js"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_DROPDOWN_MENU_PAPER_DROPDOWN_MENU_ICONS_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-dropdown-menu/paper-dropdown-menu-icons.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_DROPDOWN_MENU_PAPER_DROPDOWN_MENU_SHARED_STYLES_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-dropdown-menu/paper-dropdown-menu-shared-styles.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_DROPDOWN_MENU_PAPER_DROPDOWN_MENU_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-dropdown-menu/paper-dropdown-menu.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_DROPDOWN_MENU_PAPER_DROPDOWN_MENU_LIGHT_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-dropdown-menu/paper-dropdown-menu-light.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_DROPDOWN_MENU_PAPER_DROPDOWN_MENU_LIGHT_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-dropdown-menu/paper-dropdown-menu-light-extracted.js"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_FAB_PAPER_FAB_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-fab/paper-fab-extracted.js"
@@ -434,9 +515,6 @@
   <structure name="IDR_POLYMER_1_0_PAPER_HEADER_PANEL_PAPER_HEADER_PANEL_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-header-panel/paper-header-panel-extracted.js"
              type="chrome_html" />
-  <structure name="IDR_POLYMER_1_0_PAPER_HEADER_PANEL_PAPER_HEADER_PANEL_CSS"
-             file="../../../third_party/polymer/v1_0/components-chromium/paper-header-panel/paper-header-panel.css"
-             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_HEADER_PANEL_PAPER_HEADER_PANEL_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-header-panel/paper-header-panel.html"
              type="chrome_html" />
@@ -445,6 +523,12 @@
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_LIGHT_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button-light-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_LIGHT_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button-light.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_INPUT_PAPER_INPUT_ADDON_BEHAVIOR_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-input/paper-input-addon-behavior-extracted.js"
@@ -482,6 +566,12 @@
   <structure name="IDR_POLYMER_1_0_PAPER_INPUT_PAPER_INPUT_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-input/paper-input.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_INPUT_PAPER_TEXTAREA_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-input/paper-textarea-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_INPUT_PAPER_TEXTAREA_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-input/paper-textarea.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_ITEM_PAPER_ICON_ITEM_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-item/paper-icon-item-extracted.js"
              type="chrome_html" />
@@ -509,8 +599,17 @@
   <structure name="IDR_POLYMER_1_0_PAPER_ITEM_PAPER_ITEM_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-item/paper-item.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_LISTBOX_PAPER_LISTBOX_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-listbox/paper-listbox-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_LISTBOX_PAPER_LISTBOX_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-listbox/paper-listbox.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_MATERIAL_PAPER_MATERIAL_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-material/paper-material-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_MATERIAL_PAPER_MATERIAL_SHARED_STYLES_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-material/paper-material-shared-styles.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_MATERIAL_PAPER_MATERIAL_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-material/paper-material.html"
@@ -572,8 +671,20 @@
   <structure name="IDR_POLYMER_1_0_PAPER_SLIDER_PAPER_SLIDER_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-slider/paper-slider.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_SPINNER_PAPER_SPINNER_BEHAVIOR_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-spinner/paper-spinner-behavior-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_SPINNER_PAPER_SPINNER_BEHAVIOR_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-spinner/paper-spinner-behavior.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_SPINNER_PAPER_SPINNER_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-spinner/paper-spinner-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_SPINNER_PAPER_SPINNER_LITE_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-spinner/paper-spinner-lite-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_SPINNER_PAPER_SPINNER_LITE_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-spinner/paper-spinner-lite.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_SPINNER_PAPER_SPINNER_STYLES_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-spinner/paper-spinner-styles.html"

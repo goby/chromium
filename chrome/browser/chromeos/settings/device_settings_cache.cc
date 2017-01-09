@@ -8,11 +8,11 @@
 
 #include "base/base64.h"
 #include "base/bind.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/common/pref_names.h"
-#include "policy/proto/device_management_backend.pb.h"
+#include "components/policy/proto/device_management_backend.pb.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 
 namespace em = enterprise_management;
 

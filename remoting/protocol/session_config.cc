@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 
 namespace remoting {
 namespace protocol {
@@ -70,19 +71,18 @@ bool ChannelConfig::operator==(const ChannelConfig& b) const {
 }
 
 // static
-scoped_ptr<SessionConfig> SessionConfig::SelectCommon(
+std::unique_ptr<SessionConfig> SessionConfig::SelectCommon(
     const CandidateSessionConfig* client_config,
     const CandidateSessionConfig* host_config) {
-
   // Use WebRTC if both host and client support it.
   if (client_config->webrtc_supported() && host_config->webrtc_supported())
-    return make_scoped_ptr(new SessionConfig(Protocol::WEBRTC));
+    return base::WrapUnique(new SessionConfig(Protocol::WEBRTC));
 
   // Reject connection if ICE is not supported by either of the peers.
   if (!host_config->ice_supported() || !client_config->ice_supported())
     return nullptr;
 
-  scoped_ptr<SessionConfig> result(new SessionConfig(Protocol::ICE));
+  std::unique_ptr<SessionConfig> result(new SessionConfig(Protocol::ICE));
   ChannelConfig control_config;
   ChannelConfig event_config;
   ChannelConfig video_config;
@@ -117,14 +117,14 @@ scoped_ptr<SessionConfig> SessionConfig::SelectCommon(
 }
 
 // static
-scoped_ptr<SessionConfig> SessionConfig::GetFinalConfig(
+std::unique_ptr<SessionConfig> SessionConfig::GetFinalConfig(
     const CandidateSessionConfig* candidate_config) {
   if (candidate_config->webrtc_supported()) {
     if (candidate_config->ice_supported()) {
       LOG(ERROR) << "Received candidate config is ambiguous.";
       return nullptr;
     }
-    return make_scoped_ptr(new SessionConfig(Protocol::WEBRTC));
+    return base::WrapUnique(new SessionConfig(Protocol::WEBRTC));
   }
 
   if (!candidate_config->ice_supported())
@@ -137,7 +137,7 @@ scoped_ptr<SessionConfig> SessionConfig::GetFinalConfig(
     return nullptr;
   }
 
-  scoped_ptr<SessionConfig> result(new SessionConfig(Protocol::ICE));
+  std::unique_ptr<SessionConfig> result(new SessionConfig(Protocol::ICE));
   result->control_config_ = candidate_config->control_configs().front();
   result->event_config_ = candidate_config->event_configs().front();
   result->video_config_ = candidate_config->video_configs().front();
@@ -147,33 +147,41 @@ scoped_ptr<SessionConfig> SessionConfig::GetFinalConfig(
 }
 
 // static
-scoped_ptr<SessionConfig> SessionConfig::ForTest() {
-  scoped_ptr<SessionConfig> result(new SessionConfig(Protocol::ICE));
-  result->control_config_ = ChannelConfig(ChannelConfig::TRANSPORT_MUX_STREAM,
-                                          kControlStreamVersion,
-                                          ChannelConfig::CODEC_UNDEFINED);
-  result->event_config_ = ChannelConfig(ChannelConfig::TRANSPORT_MUX_STREAM,
-                                        kDefaultStreamVersion,
-                                        ChannelConfig::CODEC_UNDEFINED);
-  result->video_config_ = ChannelConfig(ChannelConfig::TRANSPORT_STREAM,
-                                        kDefaultStreamVersion,
-                                        ChannelConfig::CODEC_VP8);
-  result->audio_config_ = ChannelConfig(ChannelConfig::TRANSPORT_NONE,
-                                        kDefaultStreamVersion,
-                                        ChannelConfig::CODEC_UNDEFINED);
-  return result.Pass();
+std::unique_ptr<SessionConfig> SessionConfig::ForTest() {
+  std::unique_ptr<SessionConfig> result(new SessionConfig(Protocol::ICE));
+  result->control_config_ =
+      ChannelConfig(ChannelConfig::TRANSPORT_MUX_STREAM, kControlStreamVersion,
+                    ChannelConfig::CODEC_UNDEFINED);
+  result->event_config_ =
+      ChannelConfig(ChannelConfig::TRANSPORT_MUX_STREAM, kDefaultStreamVersion,
+                    ChannelConfig::CODEC_UNDEFINED);
+  result->video_config_ =
+      ChannelConfig(ChannelConfig::TRANSPORT_STREAM, kDefaultStreamVersion,
+                    ChannelConfig::CODEC_VP8);
+  result->audio_config_ =
+      ChannelConfig(ChannelConfig::TRANSPORT_MUX_STREAM, kDefaultStreamVersion,
+                    ChannelConfig::CODEC_OPUS);
+  return result;
 }
 
-scoped_ptr<SessionConfig> SessionConfig::ForTestWithVerbatimVideo() {
-  scoped_ptr<SessionConfig> result = ForTest();
+std::unique_ptr<SessionConfig> SessionConfig::ForTestWithAudio() {
+  std::unique_ptr<SessionConfig> result(ForTest());
+  result->audio_config_ = ChannelConfig(ChannelConfig::TRANSPORT_STREAM,
+                                        kDefaultStreamVersion,
+                                        ChannelConfig::CODEC_OPUS);
+  return result;
+}
+
+std::unique_ptr<SessionConfig> SessionConfig::ForTestWithVerbatimVideo() {
+  std::unique_ptr<SessionConfig> result = ForTest();
   result->video_config_ = ChannelConfig(ChannelConfig::TRANSPORT_STREAM,
                                         kDefaultStreamVersion,
                                         ChannelConfig::CODEC_VERBATIM);
-  return result.Pass();
+  return result;
 }
 
-scoped_ptr<SessionConfig> SessionConfig::ForTestWithWebrtc() {
-  return make_scoped_ptr(new SessionConfig(Protocol::WEBRTC));
+std::unique_ptr<SessionConfig> SessionConfig::ForTestWithWebrtc() {
+  return base::WrapUnique(new SessionConfig(Protocol::WEBRTC));
 }
 
 const ChannelConfig& SessionConfig::control_config() const {
@@ -218,19 +226,19 @@ bool CandidateSessionConfig::IsSupported(const SessionConfig& config) const {
   return false;
 }
 
-scoped_ptr<CandidateSessionConfig> CandidateSessionConfig::Clone() const {
-  return make_scoped_ptr(new CandidateSessionConfig(*this));
+std::unique_ptr<CandidateSessionConfig> CandidateSessionConfig::Clone() const {
+  return base::WrapUnique(new CandidateSessionConfig(*this));
 }
 
 // static
-scoped_ptr<CandidateSessionConfig> CandidateSessionConfig::CreateEmpty() {
-  return make_scoped_ptr(new CandidateSessionConfig());
+std::unique_ptr<CandidateSessionConfig> CandidateSessionConfig::CreateEmpty() {
+  return base::WrapUnique(new CandidateSessionConfig());
 }
 
 // static
-scoped_ptr<CandidateSessionConfig> CandidateSessionConfig::CreateFrom(
+std::unique_ptr<CandidateSessionConfig> CandidateSessionConfig::CreateFrom(
     const SessionConfig& config) {
-  scoped_ptr<CandidateSessionConfig> result = CreateEmpty();
+  std::unique_ptr<CandidateSessionConfig> result = CreateEmpty();
 
   switch (config.protocol()) {
     case SessionConfig::Protocol::WEBRTC:
@@ -248,12 +256,13 @@ scoped_ptr<CandidateSessionConfig> CandidateSessionConfig::CreateFrom(
       break;
   }
 
-  return result.Pass();
+  return result;
 }
 
 // static
-scoped_ptr<CandidateSessionConfig> CandidateSessionConfig::CreateDefault() {
-  scoped_ptr<CandidateSessionConfig> result = CreateEmpty();
+std::unique_ptr<CandidateSessionConfig>
+CandidateSessionConfig::CreateDefault() {
+  std::unique_ptr<CandidateSessionConfig> result = CreateEmpty();
 
   result->set_ice_supported(true);
 
@@ -286,7 +295,7 @@ scoped_ptr<CandidateSessionConfig> CandidateSessionConfig::CreateDefault() {
                     ChannelConfig::CODEC_OPUS));
   result->mutable_audio_configs()->push_back(ChannelConfig::None());
 
-  return result.Pass();
+  return result;
 }
 
 void CandidateSessionConfig::DisableAudioChannel() {

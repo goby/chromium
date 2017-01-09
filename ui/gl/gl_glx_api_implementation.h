@@ -14,15 +14,14 @@
 namespace base {
 class CommandLine;
 }
-namespace gfx {
+namespace gl {
 
-class GLContext;
 struct GLWindowSystemBindingInfo;
 
-void InitializeStaticGLBindingsGLX();
-void InitializeDebugGLBindingsGLX();
-void ClearGLBindingsGLX();
-bool GetGLWindowSystemBindingInfoGLX(GLWindowSystemBindingInfo* info);
+GL_EXPORT void InitializeStaticGLBindingsGLX();
+GL_EXPORT void InitializeDebugGLBindingsGLX();
+GL_EXPORT void ClearBindingsGLX();
+GL_EXPORT bool GetGLWindowSystemBindingInfoGLX(GLWindowSystemBindingInfo* info);
 
 class GL_EXPORT GLXApiBase : public GLXApi {
  public:
@@ -69,7 +68,7 @@ class GL_EXPORT TraceGLXApi : public GLXApi {
   GLXApi* glx_api_;
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_GLX_API_IMPLEMENTATION_H_
 

@@ -4,6 +4,8 @@
 
 #include "components/history/core/browser/history_database.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 #include <set>
 #include <string>
@@ -13,11 +15,12 @@
 #include "base/command_line.h"
 #include "base/containers/hash_tables.h"
 #include "base/files/file_util.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/history/core/browser/url_utils.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
@@ -33,7 +36,7 @@ namespace {
 // Current version number. We write databases at the "current" version number,
 // but any previous version that can read the "compatible" one can make do with
 // our database without *too* many bad effects.
-const int kCurrentVersionNumber = 29;
+const int kCurrentVersionNumber = 32;
 const int kCompatibleVersionNumber = 16;
 const char kEarlyExpirationThresholdKey[] = "early_expiration_threshold";
 const int kMaxHostsInMemory = 10000;
@@ -52,9 +55,6 @@ HistoryDatabase::~HistoryDatabase() {
 
 sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
   db_.set_histogram_tag("History");
-
-  // Set the exceptional sqlite error handler.
-  db_.set_error_callback(error_callback_);
 
   // Set the database page size to something a little larger to give us
   // better performance (we're typically seek rather than bandwidth limited).
@@ -115,7 +115,7 @@ sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
 void HistoryDatabase::ComputeDatabaseMetrics(
     const base::FilePath& history_name) {
   base::TimeTicks start_time = base::TimeTicks::Now();
-  int64 file_size = 0;
+  int64_t file_size = 0;
   if (!base::GetFileSize(history_name, &file_size))
     return;
   int file_mb = static_cast<int>(file_size / (1024 * 1024));
@@ -193,13 +193,24 @@ void HistoryDatabase::ComputeDatabaseMetrics(
   }
 }
 
-TopHostsList HistoryDatabase::TopHosts(int num_hosts) {
+TopHostsList HistoryDatabase::TopHosts(size_t num_hosts) {
   base::Time one_month_ago =
       std::max(base::Time::Now() - base::TimeDelta::FromDays(30), base::Time());
 
   sql::Statement url_sql(db_.GetUniqueStatement(
-      "SELECT url, visit_count FROM urls WHERE last_visit_time > ?"));
+      "SELECT u.url, u.visit_count "
+      "FROM urls u JOIN visits v ON u.id = v.url "
+      "WHERE last_visit_time > ? "
+      "AND (v.transition & ?) != 0 "              // CHAIN_END
+      "AND (transition & ?) NOT IN (?, ?, ?)"));  // NO SUBFRAME or
+                                                  // KEYWORD_GENERATED
+
   url_sql.BindInt64(0, one_month_ago.ToInternalValue());
+  url_sql.BindInt(1, ui::PAGE_TRANSITION_CHAIN_END);
+  url_sql.BindInt(2, ui::PAGE_TRANSITION_CORE_MASK);
+  url_sql.BindInt(3, ui::PAGE_TRANSITION_AUTO_SUBFRAME);
+  url_sql.BindInt(4, ui::PAGE_TRANSITION_MANUAL_SUBFRAME);
+  url_sql.BindInt(5, ui::PAGE_TRANSITION_KEYWORD_GENERATED);
 
   // Collect a map from host to visit count.
   base::hash_map<std::string, int> host_count;
@@ -208,7 +219,7 @@ TopHostsList HistoryDatabase::TopHosts(int num_hosts) {
     if (!(url.is_valid() && (url.SchemeIsHTTPOrHTTPS() || url.SchemeIs("ftp"))))
       continue;
 
-    int64 visit_count = url_sql.ColumnInt64(1);
+    int64_t visit_count = url_sql.ColumnInt64(1);
     host_count[HostForTopHosts(url)] += visit_count;
 
     // kMaxHostsInMemory is well above typical values for
@@ -224,9 +235,8 @@ TopHostsList HistoryDatabase::TopHosts(int num_hosts) {
   IntermediateList top_hosts;
   for (const auto& it : host_count)
     top_hosts.push_back(std::make_pair(-it.second, it.first));
-  IntermediateList::size_type middle_index = std::min(
-      base::saturated_cast<IntermediateList::size_type, int>(num_hosts),
-      top_hosts.size());
+  IntermediateList::size_type middle_index =
+      std::min(num_hosts, top_hosts.size());
   auto middle = std::min(top_hosts.end(), top_hosts.begin() + middle_index);
   std::partial_sort(top_hosts.begin(), middle, top_hosts.end());
 
@@ -257,7 +267,13 @@ void HistoryDatabase::CommitTransaction() {
 }
 
 void HistoryDatabase::RollbackTransaction() {
-  db_.RollbackTransaction();
+  // If Init() returns with a failure status, the Transaction created there will
+  // be destructed and rolled back. HistoryBackend might try to kill the
+  // database after that, at which point it will try to roll back a non-existing
+  // transaction. This will crash on a DCHECK. So transaction_nesting() is
+  // checked first.
+  if (db_.transaction_nesting())
+    db_.RollbackTransaction();
 }
 
 bool HistoryDatabase::RecreateAllTablesButURL() {
@@ -294,6 +310,11 @@ bool HistoryDatabase::Raze() {
   return db_.Raze();
 }
 
+std::string HistoryDatabase::GetDiagnosticInfo(int extended_error,
+                                               sql::Statement* statement) {
+  return db_.GetDiagnosticInfo(extended_error, statement);
+}
+
 bool HistoryDatabase::SetSegmentID(VisitID visit_id, SegmentID segment_id) {
   sql::Statement s(db_.GetCachedStatement(SQL_FROM_HERE,
       "UPDATE visits SET segment_id = ? WHERE id = ?"));
@@ -322,7 +343,7 @@ base::Time HistoryDatabase::GetEarlyExpirationThreshold() {
   if (!cached_early_expiration_threshold_.is_null())
     return cached_early_expiration_threshold_;
 
-  int64 threshold;
+  int64_t threshold;
   if (!meta_table_.GetValue(kEarlyExpirationThresholdKey, &threshold)) {
     // Set to a very early non-zero time, so it's before all history, but not
     // zero to avoid re-retrieval.
@@ -482,6 +503,33 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
   if (cur_version == 28) {
     if (!MigrateMimeType()) {
       LOG(WARNING) << "Unable to migrate history to version 29";
+      return sql::INIT_FAILURE;
+    }
+    cur_version++;
+    meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 29) {
+    if (!MigrateHashHttpMethodAndGenerateGuids()) {
+      LOG(WARNING) << "Unable to migrate history to version 30";
+      return sql::INIT_FAILURE;
+    }
+    cur_version++;
+    meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 30) {
+    if (!MigrateDownloadTabUrl()) {
+      LOG(WARNING) << "Unable to migrate history to version 31";
+      return sql::INIT_FAILURE;
+    }
+    cur_version++;
+    meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 31) {
+    if (!MigrateDownloadSiteInstanceUrl()) {
+      LOG(WARNING) << "Unable to migrate history to version 32";
       return sql::INIT_FAILURE;
     }
     cur_version++;

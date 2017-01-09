@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/wm/wm_export.h"
 
@@ -15,14 +16,6 @@ class Window;
 }
 namespace base {
 class TimeDelta;
-}
-namespace gfx {
-class Rect;
-}
-namespace ui {
-class ImplicitAnimationObserver;
-class Layer;
-class LayerAnimationSequence;
 }
 
 namespace wm {

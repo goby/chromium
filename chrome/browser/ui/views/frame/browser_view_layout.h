@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_VIEW_LAYOUT_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_VIEW_LAYOUT_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/layout/layout_manager.h"
 
@@ -18,7 +19,6 @@ class BrowserViewLayoutDelegate;
 class ContentsLayoutManager;
 class ImmersiveModeController;
 class InfoBarContainerView;
-class TabContentsContainer;
 class TabStrip;
 
 namespace gfx {
@@ -28,7 +28,6 @@ class Size;
 
 namespace views {
 class ClientView;
-class SingleSplitView;
 }
 
 namespace web_modal {
@@ -125,7 +124,7 @@ class BrowserViewLayout : public views::LayoutManager {
   bool InfobarVisible() const;
 
   // The delegate interface. May be a mock in tests.
-  scoped_ptr<BrowserViewLayoutDelegate> delegate_;
+  std::unique_ptr<BrowserViewLayoutDelegate> delegate_;
 
   // The browser from the owning BrowserView.
   Browser* browser_;
@@ -154,7 +153,7 @@ class BrowserViewLayout : public views::LayoutManager {
   gfx::Rect vertical_layout_rect_;
 
   // The host for use in positioning the web contents modal dialog.
-  scoped_ptr<WebContentsModalDialogHostViews> dialog_host_;
+  std::unique_ptr<WebContentsModalDialogHostViews> dialog_host_;
 
   // The latest dialog bounds applied during a layout pass.
   gfx::Rect latest_dialog_bounds_;

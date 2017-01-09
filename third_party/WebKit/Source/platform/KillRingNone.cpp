@@ -23,30 +23,20 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/KillRing.h"
 
 namespace blink {
 
-void KillRing::append(const String&)
-{
+void KillRing::append(const String&) {}
+
+void KillRing::prepend(const String&) {}
+
+String KillRing::yank() {
+  return String();
 }
 
-void KillRing::prepend(const String&)
-{
-}
+void KillRing::startNewSequence() {}
 
-String KillRing::yank()
-{
-    return String();
-}
+void KillRing::setToYankedState() {}
 
-void KillRing::startNewSequence()
-{
-}
-
-void KillRing::setToYankedState()
-{
-}
-
-} // namespace blink
+}  // namespace blink

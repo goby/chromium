@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//cc/cc.gni")
 import("//third_party/protobuf/proto_library.gni")
 
 # Use a group here to allow external targets to depend on "cc/proto" instead of
@@ -13,7 +14,7 @@ group("proto") {
   ]
 }
 
-component("cc_proto") {
+cc_component("cc_proto") {
   # Only expose the target to the "proto" group.
   visibility = [ ":proto" ]
 
@@ -29,28 +30,30 @@ proto_library("proto_internal") {
   sources = [
     # TODO(dtrainor): Move protos to their correct packages once it's possible
     # to include protos from other directories/targets (crbug.com/542423).
+    "client_state_update.proto",
     "compositor_message.proto",
     "display_item.proto",
     "layer.proto",
     "layer_position_constraint.proto",
-    "layer_tree_debug_state.proto",
-    "managed_memory_policy.proto",
-    "memory_allocation.proto",
+    "layer_selection_bound.proto",
+    "layer_sticky_position_constraint.proto",
+    "layer_tree.proto",
+    "layer_tree_host.proto",
     "point.proto",
     "point3f.proto",
     "pointf.proto",
-    "property_tree.proto",
     "rect.proto",
     "rectf.proto",
     "region.proto",
-    "renderer_settings.proto",
     "scroll_offset.proto",
     "size.proto",
     "sizef.proto",
+    "skclipop.proto",
     "skregion.proto",
     "skrrect.proto",
     "skxfermode.proto",
     "transform.proto",
+    "vector2d.proto",
     "vector2df.proto",
   ]
 
@@ -60,7 +63,7 @@ proto_library("proto_internal") {
 
   cc_generator_options = "dllexport_decl=CC_PROTO_EXPORT:"
   cc_include = "cc/proto/cc_proto_export.h"
-
+  component_build_force_source_set = true
   defines = [ "CC_PROTO_IMPLEMENTATION" ]
 
   # Warn if clang creates exit destructors.

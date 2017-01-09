@@ -7,12 +7,14 @@
 #include "components/storage_monitor/storage_monitor_linux.h"
 
 #include <mntent.h>
+#include <stdint.h>
 #include <stdio.h>
-
+#include <limits>
 #include <list>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
@@ -22,7 +24,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/storage_monitor/media_storage_util.h"
-#include "components/storage_monitor/media_transfer_protocol_device_observer_linux.h"
 #include "components/storage_monitor/removable_device_constants.h"
 #include "components/storage_monitor/storage_info.h"
 #include "components/storage_monitor/udev_util_linux.h"
@@ -97,8 +98,8 @@ class ScopedGetDeviceInfoResultRecorder {
 
 // Returns the storage partition size of the device specified by |device_path|.
 // If the requested information is unavailable, returns 0.
-uint64 GetDeviceStorageSize(const base::FilePath& device_path,
-                            struct udev_device* device) {
+uint64_t GetDeviceStorageSize(const base::FilePath& device_path,
+                              struct udev_device* device) {
   // sysfs provides the device size in units of 512-byte blocks.
   const std::string partition_size =
       device::UdevDeviceGetSysattrValue(device, kSizeSysAttr);
@@ -109,30 +110,31 @@ uint64 GetDeviceStorageSize(const base::FilePath& device_path,
       "RemovableDeviceNotificationsLinux.device_partition_size_available",
       !partition_size.empty());
 
-  uint64 total_size_in_bytes = 0;
+  uint64_t total_size_in_bytes = 0;
   if (!base::StringToUint64(partition_size, &total_size_in_bytes))
     return 0;
-  return (total_size_in_bytes <= kuint64max / 512) ?
-      total_size_in_bytes * 512 : 0;
+  return (total_size_in_bytes <= std::numeric_limits<uint64_t>::max() / 512)
+             ? total_size_in_bytes * 512
+             : 0;
 }
 
 // Gets the device information using udev library.
-scoped_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
-                                      const base::FilePath& mount_point) {
+std::unique_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
+                                           const base::FilePath& mount_point) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   DCHECK(!device_path.empty());
 
-  scoped_ptr<StorageInfo> storage_info;
+  std::unique_ptr<StorageInfo> storage_info;
 
   ScopedGetDeviceInfoResultRecorder results_recorder;
 
   device::ScopedUdevPtr udev_obj(device::udev_new());
   if (!udev_obj.get())
-    return storage_info.Pass();
+    return storage_info;
 
   struct stat device_stat;
   if (stat(device_path.value().c_str(), &device_stat) < 0)
-    return storage_info.Pass();
+    return storage_info;
 
   char device_type;
   if (S_ISCHR(device_stat.st_mode))
@@ -140,13 +142,13 @@ scoped_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
   else if (S_ISBLK(device_stat.st_mode))
     device_type = 'b';
   else
-    return storage_info.Pass();  // Not a supported type.
+    return storage_info;  // Not a supported type.
 
   device::ScopedUdevDevicePtr device(
       device::udev_device_new_from_devnum(udev_obj.get(), device_type,
                                           device_stat.st_rdev));
   if (!device.get())
-    return storage_info.Pass();
+    return storage_info;
 
   base::string16 volume_label = base::UTF8ToUTF16(
       device::UdevDeviceGetPropertyValue(device.get(), kLabel));
@@ -192,7 +194,7 @@ scoped_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
       vendor_name,
       model_name,
       GetDeviceStorageSize(device_path, device.get())));
-  return storage_info.Pass();
+  return storage_info;
 }
 
 MtabWatcherLinux* CreateMtabWatcherLinuxOnFileThread(
@@ -223,7 +225,7 @@ StorageMonitor::EjectStatus EjectPathOnFileThread(
   if (!process.WaitForExitWithTimeout(base::TimeDelta::FromMilliseconds(3000),
                                       &exit_code)) {
     process.Terminate(-1, false);
-    base::EnsureProcessTerminated(process.Pass());
+    base::EnsureProcessTerminated(std::move(process));
     return StorageMonitor::EJECT_FAILURE;
   }
 
@@ -261,16 +263,6 @@ void StorageMonitorLinux::Init() {
                  weak_ptr_factory_.GetWeakPtr()),
       base::Bind(&StorageMonitorLinux::OnMtabWatcherCreated,
                  weak_ptr_factory_.GetWeakPtr()));
-
-  if (!media_transfer_protocol_manager_) {
-    media_transfer_protocol_manager_.reset(
-        device::MediaTransferProtocolManager::Initialize(
-            BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE)));
-  }
-
-  media_transfer_protocol_device_observer_.reset(
-      new MediaTransferProtocolDeviceObserverLinux(
-          receiver(), media_transfer_protocol_manager_.get()));
 }
 
 bool StorageMonitorLinux::GetStorageInfoForPath(
@@ -279,19 +271,12 @@ bool StorageMonitorLinux::GetStorageInfoForPath(
   DCHECK(device_info);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  // TODO(thestig) |media_transfer_protocol_device_observer_| should always be
-  // valid.
-  if (media_transfer_protocol_device_observer_ &&
-      media_transfer_protocol_device_observer_->GetStorageInfoForPath(
-          path, device_info)) {
-    return true;
-  }
-
   if (!path.IsAbsolute())
     return false;
 
   base::FilePath current = path;
-  while (!ContainsKey(mount_info_map_, current) && current != current.DirName())
+  while (!base::ContainsKey(mount_info_map_, current) &&
+         current != current.DirName())
     current = current.DirName();
 
   MountMap::const_iterator mount_info = mount_info_map_.find(current);
@@ -301,20 +286,9 @@ bool StorageMonitorLinux::GetStorageInfoForPath(
   return true;
 }
 
-device::MediaTransferProtocolManager*
-StorageMonitorLinux::media_transfer_protocol_manager() {
-  return media_transfer_protocol_manager_.get();
-}
-
 void StorageMonitorLinux::SetGetDeviceInfoCallbackForTest(
     const GetDeviceInfoCallback& get_device_info_callback) {
   get_device_info_callback_ = get_device_info_callback;
-}
-
-void StorageMonitorLinux::SetMediaTransferProtocolManagerForTest(
-    device::MediaTransferProtocolManager* test_manager) {
-  DCHECK(!media_transfer_protocol_manager_);
-  media_transfer_protocol_manager_.reset(test_manager);
 }
 
 void StorageMonitorLinux::EjectDevice(
@@ -326,10 +300,7 @@ void StorageMonitorLinux::EjectDevice(
     return;
   }
 
-  if (type == StorageInfo::MTP_OR_PTP) {
-    media_transfer_protocol_device_observer_->EjectDevice(device_id, callback);
-    return;
-  }
+  DCHECK_NE(type, StorageInfo::MTP_OR_PTP);
 
   // Find the mount point for the given device ID.
   base::FilePath path;
@@ -465,7 +436,7 @@ void StorageMonitorLinux::UpdateMtab(const MountPointDeviceMap& new_mtab) {
 bool StorageMonitorLinux::IsDeviceAlreadyMounted(
     const base::FilePath& mount_device) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return ContainsKey(mount_priority_map_, mount_device);
+  return base::ContainsKey(mount_priority_map_, mount_device);
 }
 
 void StorageMonitorLinux::HandleDeviceMountedMultipleTimes(
@@ -481,8 +452,9 @@ void StorageMonitorLinux::HandleDeviceMountedMultipleTimes(
       mount_info_map_.find(other_mount_point)->second;
 }
 
-void StorageMonitorLinux::AddNewMount(const base::FilePath& mount_device,
-                                      scoped_ptr<StorageInfo> storage_info) {
+void StorageMonitorLinux::AddNewMount(
+    const base::FilePath& mount_device,
+    std::unique_ptr<StorageInfo> storage_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (!storage_info)

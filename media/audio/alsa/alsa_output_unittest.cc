@@ -2,12 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/simple_test_tick_clock.h"
+#include "base/test/test_message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "media/audio/alsa/alsa_output.h"
 #include "media/audio/alsa/alsa_wrapper.h"
 #include "media/audio/alsa/audio_manager_alsa.h"
 #include "media/audio/fake_audio_log_factory.h"
 #include "media/audio/mock_audio_source_callback.h"
+#include "media/base/audio_timestamp_helper.h"
 #include "media/base/data_buffer.h"
 #include "media/base/seekable_buffer.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -69,17 +79,24 @@ class MockAlsaWrapper : public AlsaWrapper {
 
 class MockAudioManagerAlsa : public AudioManagerAlsa {
  public:
-  MockAudioManagerAlsa() : AudioManagerAlsa(&fake_audio_log_factory_) {}
+  MockAudioManagerAlsa()
+      : AudioManagerAlsa(base::ThreadTaskRunnerHandle::Get(),
+                         base::ThreadTaskRunnerHandle::Get(),
+                         &fake_audio_log_factory_) {}
   MOCK_METHOD0(Init, void());
   MOCK_METHOD0(HasAudioOutputDevices, bool());
   MOCK_METHOD0(HasAudioInputDevices, bool());
-  MOCK_METHOD1(MakeLinearOutputStream, AudioOutputStream*(
-      const AudioParameters& params));
-  MOCK_METHOD2(MakeLowLatencyOutputStream, AudioOutputStream*(
-      const AudioParameters& params,
-      const std::string& device_id));
-  MOCK_METHOD2(MakeLowLatencyInputStream, AudioInputStream*(
-      const AudioParameters& params, const std::string& device_id));
+  MOCK_METHOD2(MakeLinearOutputStream,
+               AudioOutputStream*(const AudioParameters& params,
+                                  const LogCallback& log_callback));
+  MOCK_METHOD3(MakeLowLatencyOutputStream,
+               AudioOutputStream*(const AudioParameters& params,
+                                  const std::string& device_id,
+                                  const LogCallback& log_callback));
+  MOCK_METHOD3(MakeLowLatencyInputStream,
+               AudioInputStream*(const AudioParameters& params,
+                                 const std::string& device_id,
+                                 const LogCallback& log_callback));
 
   // We need to override this function in order to skip the checking the number
   // of active output streams. It is because the number of active streams
@@ -88,12 +105,6 @@ class MockAudioManagerAlsa : public AudioManagerAlsa {
   void ReleaseOutputStream(AudioOutputStream* stream) override {
     DCHECK(stream);
     delete stream;
-  }
-
-  // We don't mock this method since all tests will do the same thing
-  // and use the current task runner.
-  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() override {
-    return base::MessageLoop::current()->task_runner();
   }
 
  private:
@@ -114,7 +125,7 @@ class AlsaPcmOutputStreamTest : public testing::Test {
   }
 
   AlsaPcmOutputStream* CreateStream(ChannelLayout layout,
-                                    int32 samples_per_packet) {
+                                    int32_t samples_per_packet) {
     AudioParameters params(kTestFormat, layout, kTestSampleRate,
                            kTestBitsPerSample, samples_per_packet);
     return new AlsaPcmOutputStream(kTestDeviceName,
@@ -137,9 +148,9 @@ class AlsaPcmOutputStreamTest : public testing::Test {
   // in all tests that use buffer_ without opening the stream.
   void InitBuffer(AlsaPcmOutputStream* test_stream) {
     DCHECK(test_stream);
-    packet_ = new media::DataBuffer(kTestPacketSize);
+    packet_ = new DataBuffer(kTestPacketSize);
     packet_->set_data_size(kTestPacketSize);
-    test_stream->buffer_.reset(new media::SeekableBuffer(0, kTestPacketSize));
+    test_stream->buffer_.reset(new SeekableBuffer(0, kTestPacketSize));
     test_stream->buffer_->Append(packet_.get());
   }
 
@@ -150,7 +161,7 @@ class AlsaPcmOutputStreamTest : public testing::Test {
   static const AudioParameters::Format kTestFormat;
   static const char kTestDeviceName[];
   static const char kDummyMessage[];
-  static const uint32 kTestFramesPerPacket;
+  static const uint32_t kTestFramesPerPacket;
   static const int kTestPacketSize;
   static const int kTestFailedErrno;
   static snd_pcm_t* const kFakeHandle;
@@ -165,10 +176,11 @@ class AlsaPcmOutputStreamTest : public testing::Test {
   static void* kFakeHints[];
   static char kGenericSurround50[];
 
+  base::TestMessageLoop message_loop_;
   StrictMock<MockAlsaWrapper> mock_alsa_wrapper_;
-  scoped_ptr<StrictMock<MockAudioManagerAlsa> > mock_manager_;
-  base::MessageLoop message_loop_;
-  scoped_refptr<media::DataBuffer> packet_;
+  std::unique_ptr<StrictMock<MockAudioManagerAlsa>, AudioManagerDeleter>
+      mock_manager_;
+  scoped_refptr<DataBuffer> packet_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AlsaPcmOutputStreamTest);
@@ -186,7 +198,7 @@ const AudioParameters::Format AlsaPcmOutputStreamTest::kTestFormat =
     AudioParameters::AUDIO_PCM_LINEAR;
 const char AlsaPcmOutputStreamTest::kTestDeviceName[] = "TestDevice";
 const char AlsaPcmOutputStreamTest::kDummyMessage[] = "dummy";
-const uint32 AlsaPcmOutputStreamTest::kTestFramesPerPacket = 1000;
+const uint32_t AlsaPcmOutputStreamTest::kTestFramesPerPacket = 1000;
 const int AlsaPcmOutputStreamTest::kTestPacketSize =
     AlsaPcmOutputStreamTest::kTestFramesPerPacket *
     AlsaPcmOutputStreamTest::kTestBytesPerFrame;
@@ -207,7 +219,7 @@ char AlsaPcmOutputStreamTest::kGenericSurround50[] = "surround50";
 
 // Custom action to clear a memory buffer.
 ACTION(ClearBuffer) {
-  arg0->Zero();
+  arg3->Zero();
 }
 
 TEST_F(AlsaPcmOutputStreamTest, ConstructedState) {
@@ -273,8 +285,9 @@ TEST_F(AlsaPcmOutputStreamTest, LatencyFloor) {
 
   // Test that having more packets ends up with a latency based on packet size.
   const int kOverMinLatencyPacketSize = kPacketFramesInMinLatency + 1;
-  int64 expected_micros = AlsaPcmOutputStream::FramesToTimeDelta(
-      kOverMinLatencyPacketSize * 2, kTestSampleRate).InMicroseconds();
+  int64_t expected_micros = AudioTimestampHelper::FramesToTime(
+                                kOverMinLatencyPacketSize * 2, kTestSampleRate)
+                                .InMicroseconds();
 
   EXPECT_CALL(mock_alsa_wrapper_, PcmOpen(_, _, _, _))
       .WillOnce(DoAll(SetArgumentPointee<0>(kFakeHandle), Return(0)));
@@ -302,8 +315,9 @@ TEST_F(AlsaPcmOutputStreamTest, LatencyFloor) {
 }
 
 TEST_F(AlsaPcmOutputStreamTest, OpenClose) {
-  int64 expected_micros = AlsaPcmOutputStream::FramesToTimeDelta(
-      2 * kTestFramesPerPacket, kTestSampleRate).InMicroseconds();
+  int64_t expected_micros = AudioTimestampHelper::FramesToTime(
+                                2 * kTestFramesPerPacket, kTestSampleRate)
+                                .InMicroseconds();
 
   // Open() call opens the playback device, sets the parameters, posts a task
   // with the resulting configuration data, and transitions the object state to
@@ -409,6 +423,9 @@ TEST_F(AlsaPcmOutputStreamTest, StartStop) {
   // Open the stream.
   AlsaPcmOutputStream* test_stream = CreateStream(kTestChannelLayout);
   ASSERT_TRUE(test_stream->Open());
+  base::SimpleTestTickClock* const tick_clock = new base::SimpleTestTickClock();
+  tick_clock->SetNowTicks(base::TimeTicks::Now());
+  test_stream->SetTickClockForTesting(base::WrapUnique(tick_clock));
 
   // Expect Device setup.
   EXPECT_CALL(mock_alsa_wrapper_, PcmDrop(kFakeHandle))
@@ -422,7 +439,8 @@ TEST_F(AlsaPcmOutputStreamTest, StartStop) {
       .WillRepeatedly(Return(SND_PCM_STATE_RUNNING));
   EXPECT_CALL(mock_alsa_wrapper_, PcmDelay(kFakeHandle, _))
       .WillRepeatedly(DoAll(SetArgumentPointee<1>(0), Return(0)));
-  EXPECT_CALL(mock_callback, OnMoreData(_, _))
+  EXPECT_CALL(mock_callback,
+              OnMoreData(base::TimeDelta(), tick_clock->NowTicks(), 0, _))
       .WillRepeatedly(DoAll(ClearBuffer(), Return(kTestFramesPerPacket)));
   EXPECT_CALL(mock_alsa_wrapper_, PcmWritei(kFakeHandle, _, _))
       .WillRepeatedly(Return(kTestFramesPerPacket));
@@ -437,7 +455,7 @@ TEST_F(AlsaPcmOutputStreamTest, StartStop) {
   // call Stop() immediately after to ensure we don't run the message loop
   // forever.
   test_stream->Stop();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_CALL(mock_alsa_wrapper_, PcmClose(kFakeHandle))
       .WillOnce(Return(0));
@@ -573,6 +591,9 @@ TEST_F(AlsaPcmOutputStreamTest, WritePacket_StopStream) {
 
 TEST_F(AlsaPcmOutputStreamTest, BufferPacket) {
   AlsaPcmOutputStream* test_stream = CreateStream(kTestChannelLayout);
+  base::SimpleTestTickClock* const tick_clock = new base::SimpleTestTickClock();
+  tick_clock->SetNowTicks(base::TimeTicks::Now());
+  test_stream->SetTickClockForTesting(base::WrapUnique(tick_clock));
   InitBuffer(test_stream);
   test_stream->buffer_->Clear();
 
@@ -585,7 +606,8 @@ TEST_F(AlsaPcmOutputStreamTest, BufferPacket) {
       .WillRepeatedly(Return(0));  // Buffer is full.
 
   // Return a partially filled packet.
-  EXPECT_CALL(mock_callback, OnMoreData(_, _))
+  EXPECT_CALL(mock_callback,
+              OnMoreData(base::TimeDelta(), tick_clock->NowTicks(), 0, _))
       .WillOnce(DoAll(ClearBuffer(), Return(kTestFramesPerPacket / 2)));
 
   bool source_exhausted;
@@ -600,6 +622,9 @@ TEST_F(AlsaPcmOutputStreamTest, BufferPacket) {
 
 TEST_F(AlsaPcmOutputStreamTest, BufferPacket_Negative) {
   AlsaPcmOutputStream* test_stream = CreateStream(kTestChannelLayout);
+  base::SimpleTestTickClock* const tick_clock = new base::SimpleTestTickClock();
+  tick_clock->SetNowTicks(base::TimeTicks::Now());
+  test_stream->SetTickClockForTesting(base::WrapUnique(tick_clock));
   InitBuffer(test_stream);
   test_stream->buffer_->Clear();
 
@@ -611,7 +636,8 @@ TEST_F(AlsaPcmOutputStreamTest, BufferPacket_Negative) {
       .WillOnce(DoAll(SetArgumentPointee<1>(-1), Return(0)));
   EXPECT_CALL(mock_alsa_wrapper_, PcmAvailUpdate(_))
       .WillRepeatedly(Return(0));  // Buffer is full.
-  EXPECT_CALL(mock_callback, OnMoreData(_, _))
+  EXPECT_CALL(mock_callback,
+              OnMoreData(base::TimeDelta(), tick_clock->NowTicks(), 0, _))
       .WillOnce(DoAll(ClearBuffer(), Return(kTestFramesPerPacket / 2)));
 
   bool source_exhausted;
@@ -626,6 +652,9 @@ TEST_F(AlsaPcmOutputStreamTest, BufferPacket_Negative) {
 
 TEST_F(AlsaPcmOutputStreamTest, BufferPacket_Underrun) {
   AlsaPcmOutputStream* test_stream = CreateStream(kTestChannelLayout);
+  base::SimpleTestTickClock* const tick_clock = new base::SimpleTestTickClock();
+  tick_clock->SetNowTicks(base::TimeTicks::Now());
+  test_stream->SetTickClockForTesting(base::WrapUnique(tick_clock));
   InitBuffer(test_stream);
   test_stream->buffer_->Clear();
 
@@ -635,7 +664,8 @@ TEST_F(AlsaPcmOutputStreamTest, BufferPacket_Underrun) {
       .WillOnce(Return(SND_PCM_STATE_XRUN));
   EXPECT_CALL(mock_alsa_wrapper_, PcmAvailUpdate(_))
       .WillRepeatedly(Return(0));  // Buffer is full.
-  EXPECT_CALL(mock_callback, OnMoreData(_, 0))
+  EXPECT_CALL(mock_callback,
+              OnMoreData(base::TimeDelta(), tick_clock->NowTicks(), 0, _))
       .WillOnce(DoAll(ClearBuffer(), Return(kTestFramesPerPacket / 2)));
 
   bool source_exhausted;

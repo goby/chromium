@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_AUTOFILL_PASSWORD_GENERATION_POPUP_VIEW_VIEWS_H_
 #define CHROME_BROWSER_UI_VIEWS_AUTOFILL_PASSWORD_GENERATION_POPUP_VIEW_VIEWS_H_
 
+#include "base/macros.h"
 #include "chrome/browser/ui/autofill/password_generation_popup_view.h"
 #include "chrome/browser/ui/views/autofill/autofill_popup_base_view.h"
 #include "ui/gfx/font_list.h"
@@ -12,7 +13,6 @@
 
 namespace views {
 class StyledLabel;
-class View;
 }
 
 namespace autofill {
@@ -47,7 +47,7 @@ class PasswordGenerationPopupViewViews : public AutofillPopupBaseView,
   // views:Views implementation.
   void Layout() override;
   void OnPaint(gfx::Canvas* canvas) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // views::StyledLabelListener implementation
   void StyledLabelLinkClicked(views::StyledLabel* label,

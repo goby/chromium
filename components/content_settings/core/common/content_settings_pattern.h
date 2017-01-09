@@ -53,8 +53,22 @@ class ContentSettingsPattern {
     DISJOINT_ORDER_PRE = 2,
   };
 
+  // This enum is used to back an UMA histogram, the order of existing values
+  // should not be changed. New values should only append before SCHEME_MAX.
+  // Also keep it consistent with kSchemeNames in content_settings_pattern.cc.
+  enum SchemeType {
+    SCHEME_WILDCARD,
+    SCHEME_OTHER,
+    SCHEME_HTTP,
+    SCHEME_HTTPS,
+    SCHEME_FILE,
+    SCHEME_CHROMEEXTENSION,
+    SCHEME_MAX,
+  };
+
   struct PatternParts {
     PatternParts();
+    PatternParts(const PatternParts& other);
     ~PatternParts();
 
     // Lowercase string of the URL scheme to match. This string is empty if the
@@ -128,6 +142,7 @@ class ContentSettingsPattern {
 
   // Returns a pattern that matches the scheme and host of this URL, as well as
   // all subdomains and ports.
+  // TODO(lshang): Remove this when crbug.com/604612 is done.
   static ContentSettingsPattern FromURL(const GURL& url);
 
   // Returns a pattern that matches exactly this URL.
@@ -143,6 +158,13 @@ class ContentSettingsPattern {
   //   - a.b.c.d (matches an exact IPv4 ip)
   //   - [a:b:c:d:e:f:g:h] (matches an exact IPv6 ip)
   static ContentSettingsPattern FromString(const std::string& pattern_spec);
+
+  // Migrate domain scoped settings generated using FromURL() to be origin
+  // scoped. Return false if domain_pattern is not generated using FromURL().
+  // TODO(lshang): Remove this when migration is done. https://crbug.com/604612
+  static bool MigrateFromDomainToOrigin(
+      const ContentSettingsPattern& domain_pattern,
+      ContentSettingsPattern* origin_pattern);
 
   // Sets the scheme that doesn't support domain wildcard and port.
   // Needs to be called by the embedder before using ContentSettingsPattern.
@@ -168,6 +190,13 @@ class ContentSettingsPattern {
 
   // Returns a std::string representation of this pattern.
   std::string ToString() const;
+
+  // Returns scheme type of pattern.
+  ContentSettingsPattern::SchemeType GetScheme() const;
+
+  // True if this pattern has a non-empty path.  Can only be used for patterns
+  // with file: schemes.
+  bool HasPath() const;
 
   // Compares the pattern with a given |other| pattern and returns the
   // |Relation| of the two patterns.
@@ -201,6 +230,10 @@ class ContentSettingsPattern {
       const ContentSettingsPattern::PatternParts& other_parts);
 
   static Relation ComparePort(
+      const ContentSettingsPattern::PatternParts& parts,
+      const ContentSettingsPattern::PatternParts& other_parts);
+
+  static Relation ComparePath(
       const ContentSettingsPattern::PatternParts& parts,
       const ContentSettingsPattern::PatternParts& other_parts);
 

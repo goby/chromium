@@ -45,19 +45,17 @@ extern const char
     kDailyOriginalContentLengthWithDataReductionProxyEnabledUnknown[];
 extern const char kDataReductionProxy[];
 extern const char kDataReductionProxyConfig[];
-extern const char kDataReductionProxyEnabled[];
 extern const char kDataUsageReportingEnabled[];
 extern const char kDataReductionProxyWasEnabledBefore[];
+extern const char kDataReductionProxyLastEnabledTime[];
 extern const char kHttpOriginalContentLength[];
 extern const char kHttpReceivedContentLength[];
 extern const char kLoFiImplicitOptOutEpoch[];
-extern const char kLoFiSnackbarsShownPerSession[];
+extern const char kLoFiUIShownPerSession[];
 extern const char kLoFiLoadImagesPerSession[];
 extern const char kLoFiConsecutiveSessionDisables[];
 extern const char kLoFiWasUsedThisSession[];
 extern const char kSimulatedConfigRetrieveTime[];
-extern const char kStatisticsPrefsMigrated[];
-extern const char kUpdateDailyReceivedContentLengths[];
 
 }  // namespace prefs
 }  // namespace data_reduction_proxy

@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include "media/base/audio_bus.h"
@@ -39,8 +42,8 @@ class AudioShifterTest :
     input_rate_ = rate;
   }
 
-  scoped_ptr<AudioBus> CreateTestInput() {
-    scoped_ptr<AudioBus> input(AudioBus::Create(2, input_size_));
+  std::unique_ptr<AudioBus> CreateTestInput() {
+    std::unique_ptr<AudioBus> input(AudioBus::Create(2, input_size_));
     for (size_t i = 0; i < input_size_; i++) {
       input->channel(0)[i] = input->channel(1)[i] = input_sample_n_;
       input_sample_n_++;
@@ -50,7 +53,7 @@ class AudioShifterTest :
       tag_input_ = false;
       expect_smooth_output_ = false;
     }
-    return input.Pass();
+    return input;
   }
 
   void SetupOutput(int size, base::TimeDelta rate) {
@@ -144,8 +147,8 @@ class AudioShifterTest :
   base::TimeTicks time_to_push_;
   base::TimeTicks time_to_pull_;
   base::TimeTicks now_;
-  scoped_ptr<AudioBus> test_input_;
-  scoped_ptr<AudioBus> test_output_;
+  std::unique_ptr<AudioBus> test_input_;
+  std::unique_ptr<AudioBus> test_output_;
   std::vector<base::TimeTicks> silent_outputs_;
   std::vector<base::TimeTicks> skip_outputs_;
   std::vector<base::TimeTicks> marker_outputs_;
@@ -163,7 +166,7 @@ TEST_P(AudioShifterTest, TestSync) {
 
 TEST_P(AudioShifterTest, TestSyncWithPush) {
   // Push some extra audio.
-  shifter_.Push(CreateTestInput().Pass(), now_ - base::TimeDelta(input_rate_));
+  shifter_.Push(CreateTestInput(), now_ - base::TimeDelta(input_rate_));
   RunAndCheckSync(1000);
   EXPECT_LE(skip_outputs_.size(), 2UL);
 }

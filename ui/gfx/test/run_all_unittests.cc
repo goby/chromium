@@ -8,6 +8,7 @@
 #include "base/path_service.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
@@ -25,6 +26,10 @@
 #include <windows.h>
 #include <winuser.h>
 #include "ui/gfx/win/direct_write.h"
+#endif
+
+#if !defined(OS_IOS)
+#include "mojo/edk/embedder/embedder.h"  // nogncheck
 #endif
 
 namespace {
@@ -57,17 +62,15 @@ class GfxTestSuite : public base::TestSuite {
 
 #if defined(OS_WIN)
     gfx::win::MaybeInitializeDirectWrite();
-    if (gfx::win::IsDirectWriteEnabled()) {
-      // Force antialiasing to true if DirectWrite is enabled for font metrics.
-      // With antialiasing off, Skia returns GDI compatible metrics which are
-      // larger by 1-2 points which cause some tests to fail.
-      // TODO(ananta): Investigate and fix.
-      BOOL antialiasing = TRUE;
-      SystemParametersInfo(SPI_GETFONTSMOOTHING, 0, &antialiasing, 0);
-      if (!antialiasing) {
-        SystemParametersInfo(SPI_SETFONTSMOOTHING, TRUE, NULL, 0);
-        reset_antialiasing_on_shutdown_ = true;
-      }
+    // Force antialiasing to true if DirectWrite is enabled for font metrics.
+    // With antialiasing off, Skia returns GDI compatible metrics which are
+    // larger by 1-2 points which cause some tests to fail.
+    // TODO(ananta): Investigate and fix.
+    BOOL antialiasing = TRUE;
+    SystemParametersInfo(SPI_GETFONTSMOOTHING, 0, &antialiasing, 0);
+    if (!antialiasing) {
+      SystemParametersInfo(SPI_SETFONTSMOOTHING, TRUE, NULL, 0);
+      reset_antialiasing_on_shutdown_ = true;
     }
 #endif
   }
@@ -94,6 +97,10 @@ class GfxTestSuite : public base::TestSuite {
 
 int main(int argc, char** argv) {
   GfxTestSuite test_suite(argc, argv);
+
+#if !defined(OS_IOS)
+  mojo::edk::Init();
+#endif
 
   return base::LaunchUnitTests(
       argc,

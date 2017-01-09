@@ -5,7 +5,6 @@
 #ifndef MEDIA_BASE_VIDEO_RENDERER_SINK_H_
 #define MEDIA_BASE_VIDEO_RENDERER_SINK_H_
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
@@ -54,16 +53,13 @@ class MEDIA_EXPORT VideoRendererSink {
   // liberally if no new frames are expected.
   virtual void Stop() = 0;
 
-  // Instead of using a callback driven rendering path, allow clients to paint
-  // frames as they see fit without regard for the compositor.
-  // TODO(dalecurtis): This should be nuked once experiments show the new path
-  // is amazing and the old path is not! http://crbug.com/439548
-  virtual void PaintFrameUsingOldRenderingPath(
-      const scoped_refptr<VideoFrame>& frame) = 0;
-
-  // TODO(dalecurtis): We may need OnSizeChanged() and OnOpacityChanged()
-  // methods on this interface if background rendering is handled inside of
-  // the media layer instead of by VideoFrameCompositor.
+  // Instead of using a callback driven rendering path, allow clients to paint a
+  // single frame as they see fit without regard for the compositor; this is
+  // useful for painting poster images or hole frames without having to issue a
+  // Start() -> Render() -> Stop(). Clients are free to mix usage of Render()
+  // based painting and PaintSingleFrame().
+  virtual void PaintSingleFrame(const scoped_refptr<VideoFrame>& frame,
+                                bool repaint_duplicate_frame = false) = 0;
 
   virtual ~VideoRendererSink() {}
 };

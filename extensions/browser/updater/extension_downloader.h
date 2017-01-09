@@ -7,15 +7,14 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/version.h"
 #include "extensions/browser/updater/extension_downloader_delegate.h"
@@ -46,6 +45,7 @@ struct UpdateDetails {
 };
 
 class ExtensionCache;
+class ExtensionDownloaderTestDelegate;
 class ExtensionUpdaterTest;
 
 // A class that checks for updates of a given list of extensions, and downloads
@@ -57,8 +57,9 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
  public:
   // A closure which constructs a new ExtensionDownloader to be owned by the
   // caller.
-  typedef base::Callback<scoped_ptr<ExtensionDownloader>(
-      ExtensionDownloaderDelegate* delegate)> Factory;
+  typedef base::Callback<std::unique_ptr<ExtensionDownloader>(
+      ExtensionDownloaderDelegate* delegate)>
+      Factory;
 
   // |delegate| is stored as a raw pointer and must outlive the
   // ExtensionDownloader.
@@ -79,9 +80,12 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
   // In that case, no callbacks will be performed on the |delegate_|.
   // The |request_id| is passed on as is to the various |delegate_| callbacks.
   // This is used for example by ExtensionUpdater to keep track of when
-  // potentially concurrent update checks complete.
+  // potentially concurrent update checks complete. The |is_corrupt_reinstall|
+  // parameter is used to indicate in the request that we detected corruption in
+  // the local copy of the extension and we want to perform a reinstall of it.
   bool AddPendingExtension(const std::string& id,
                            const GURL& update_url,
+                           bool is_corrupt_reinstall,
                            int request_id);
 
   // Schedules a fetch of the manifest of all the extensions added with
@@ -96,7 +100,7 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
   // Sets an IdentityProvider to be used for OAuth2 authentication on protected
   // Webstore downloads.
   void SetWebstoreIdentityProvider(
-      scoped_ptr<IdentityProvider> identity_provider);
+      std::unique_ptr<IdentityProvider> identity_provider);
 
   void set_brand_code(const std::string& brand_code) {
     brand_code_ = brand_code;
@@ -110,9 +114,9 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
     ping_enabled_domain_ = domain;
   }
 
-  void set_enable_extra_update_metrics(bool enable) {
-    enable_extra_update_metrics_ = enable;
-  }
+  // Sets a test delegate to use by any instances of this class. The |delegate|
+  // should outlive all instances.
+  static void set_test_delegate(ExtensionDownloaderTestDelegate* delegate);
 
   // These are needed for unit testing, to help identify the correct mock
   // URLFetcher objects.
@@ -176,19 +180,30 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
     int oauth2_attempt_count;
   };
 
+  // Parameters for special cases that aren't used for most requests.
+  struct ExtraParams {
+    // Additional data to be passed up in the update request.
+    std::string update_url_data;
+
+    // Indicates whether this extension is being reinstalled due to corruption.
+    bool is_corrupt_reinstall;
+
+    ExtraParams();
+  };
+
   // Helper for AddExtension() and AddPendingExtension().
   bool AddExtensionData(const std::string& id,
                         const base::Version& version,
                         Manifest::Type extension_type,
                         const GURL& extension_update_url,
-                        const std::string& update_url_data,
+                        const ExtraParams& extra,
                         int request_id);
 
   // Adds all recorded stats taken so far to histogram counts.
   void ReportStats() const;
 
   // Begins an update check.
-  void StartUpdateCheck(scoped_ptr<ManifestFetchData> fetch_data);
+  void StartUpdateCheck(std::unique_ptr<ManifestFetchData> fetch_data);
 
   // Called by RequestQueue when a new manifest fetch request is started.
   void CreateManifestFetcher();
@@ -215,7 +230,7 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
                         std::vector<int>* result);
 
   // Begins (or queues up) download of an updated extension.
-  void FetchUpdatedExtension(scoped_ptr<ExtensionFetch> fetch_data);
+  void FetchUpdatedExtension(std::unique_ptr<ExtensionFetch> fetch_data);
 
   // Called by RequestQueue when a new extension fetch request is started.
   void CreateExtensionFetcher();
@@ -242,14 +257,16 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
   void DoStartAllPending();
 
   // Notify delegate and remove ping results.
-  void NotifyDelegateDownloadFinished(scoped_ptr<ExtensionFetch> fetch_data,
-                                      bool from_cache,
-                                      const base::FilePath& crx_path,
-                                      bool file_ownership_passed);
+  void NotifyDelegateDownloadFinished(
+      std::unique_ptr<ExtensionFetch> fetch_data,
+      bool from_cache,
+      const base::FilePath& crx_path,
+      bool file_ownership_passed);
 
   // Cached extension installation completed. If it was not successful, we will
   // try to download it from the web store using already fetched manifest.
-  void CacheInstallDone(scoped_ptr<ExtensionFetch> fetch_data, bool installed);
+  void CacheInstallDone(std::unique_ptr<ExtensionFetch> fetch_data,
+                        bool installed);
 
   // Potentially updates an ExtensionFetch's authentication state and returns
   // |true| if the fetch should be retried. Returns |false| if the failure was
@@ -282,13 +299,13 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
   // extensions grouped together in one batch to avoid running into the limits
   // on the length of http GET requests, so there might be multiple
   // ManifestFetchData* objects with the same base_url.
-  typedef std::map<std::pair<int, GURL>,
-                   std::vector<linked_ptr<ManifestFetchData>>> FetchMap;
+  using FetchMap = std::map<std::pair<int, GURL>,
+                            std::vector<std::unique_ptr<ManifestFetchData>>>;
   FetchMap fetches_preparing_;
 
   // Outstanding url fetch requests for manifests and updates.
-  scoped_ptr<net::URLFetcher> manifest_fetcher_;
-  scoped_ptr<net::URLFetcher> extension_fetcher_;
+  std::unique_ptr<net::URLFetcher> manifest_fetcher_;
+  std::unique_ptr<net::URLFetcher> extension_fetcher_;
 
   // Pending manifests and extensions to be fetched when the appropriate fetcher
   // is available.
@@ -303,14 +320,14 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
 
   // An IdentityProvider which may be used for authentication on protected
   // download requests. May be NULL.
-  scoped_ptr<IdentityProvider> identity_provider_;
+  std::unique_ptr<IdentityProvider> identity_provider_;
 
   // A Webstore download-scoped access token for the |identity_provider_|'s
   // active account, if any.
   std::string access_token_;
 
   // A pending token fetch request.
-  scoped_ptr<OAuth2TokenService::Request> access_token_request_;
+  std::unique_ptr<OAuth2TokenService::Request> access_token_request_;
 
   // Brand code to include with manifest fetch queries if sending ping data.
   std::string brand_code_;
@@ -321,10 +338,6 @@ class ExtensionDownloader : public net::URLFetcherDelegate,
   // Domain to enable ping data. Ping data will be sent with manifest fetches
   // to update URLs which match this domain. Defaults to empty (no domain).
   std::string ping_enabled_domain_;
-
-  // Indicates whether or not extra metrics should be included with ping data.
-  // Defaults to |false|.
-  bool enable_extra_update_metrics_;
 
   // Used to create WeakPtrs to |this|.
   base::WeakPtrFactory<ExtensionDownloader> weak_ptr_factory_;

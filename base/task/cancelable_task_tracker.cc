@@ -4,6 +4,8 @@
 
 #include "base/task/cancelable_task_tracker.h"
 
+#include <stddef.h>
+
 #include <utility>
 
 #include "base/bind.h"
@@ -14,7 +16,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/cancellation_flag.h"
 #include "base/task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 using base::Bind;
 using base::CancellationFlag;
@@ -92,7 +94,7 @@ CancelableTaskTracker::TaskId CancelableTaskTracker::PostTaskAndReply(
   CancellationFlag* flag = new CancellationFlag();
 
   TaskId id = next_id_;
-  next_id_++;  // int64 is big enough that we ignore the potential overflow.
+  next_id_++;  // int64_t is big enough that we ignore the potential overflow.
 
   const Closure& untrack_closure =
       Bind(&CancelableTaskTracker::Untrack, weak_factory_.GetWeakPtr(), id);
@@ -117,7 +119,7 @@ CancelableTaskTracker::TaskId CancelableTaskTracker::NewTrackedTaskId(
   DCHECK(base::ThreadTaskRunnerHandle::IsSet());
 
   TaskId id = next_id_;
-  next_id_++;  // int64 is big enough that we ignore the potential overflow.
+  next_id_++;  // int64_t is big enough that we ignore the potential overflow.
 
   // Will be deleted by |untrack_and_delete_flag| after Untrack().
   CancellationFlag* flag = new CancellationFlag();
@@ -129,9 +131,10 @@ CancelableTaskTracker::TaskId CancelableTaskTracker::NewTrackedTaskId(
 
   // Will always run |untrack_and_delete_flag| on current MessageLoop.
   base::ScopedClosureRunner* untrack_and_delete_flag_runner =
-      new base::ScopedClosureRunner(Bind(&RunOrPostToTaskRunner,
-                                         base::ThreadTaskRunnerHandle::Get(),
-                                         untrack_and_delete_flag));
+      new base::ScopedClosureRunner(
+          Bind(&RunOrPostToTaskRunner,
+               RetainedRef(base::ThreadTaskRunnerHandle::Get()),
+               untrack_and_delete_flag));
 
   *is_canceled_cb =
       Bind(&IsCanceled, flag, base::Owned(untrack_and_delete_flag_runner));

@@ -4,7 +4,10 @@
 
 #include "chrome/service/service_utility_process_host.h"
 
+#include <stdint.h>
+
 #include <queue>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -13,18 +16,27 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/process/launch.h"
+#include "base/single_thread_task_runner.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task_runner_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/win/win_util.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_utility_printing_messages.h"
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/mojo_channel_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/sandbox_init.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
-#include "ipc/ipc_switches.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/named_platform_channel_pair.h"
+#include "mojo/edk/embedder/platform_channel_pair.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "printing/emf_win.h"
 #include "sandbox/win/src/sandbox_policy.h"
 #include "sandbox/win/src/sandbox_types.h"
@@ -63,9 +75,10 @@ class ServiceSandboxedProcessLauncherDelegate
   ServiceSandboxedProcessLauncherDelegate() {}
 
   bool PreSpawnTarget(sandbox::TargetPolicy* policy) override {
-    // Service process may run as windows service and it fails to create a
-    // window station.
-    return policy->SetAlternateDesktop(false) == sandbox::SBOX_ALL_OK;
+    // Ignore result of SetAlternateDesktop. Service process may run as windows
+    // service and it fails to create a window station.
+    base::IgnoreResult(policy->SetAlternateDesktop(false));
+    return true;
   }
 
  private:
@@ -85,8 +98,8 @@ class ServiceUtilityProcessHost::PdfToEmfState {
     if (!temp_dir_.CreateUniqueTempDir())
       return false;
     return host_->Send(new ChromeUtilityMsg_RenderPDFPagesToMetafiles(
-        IPC::TakeFileHandleForProcess(pdf_file.Pass(), host_->handle()),
-        conversion_settings));
+        IPC::TakePlatformFileForTransit(std::move(pdf_file)),
+        conversion_settings, false /* print_text_with_gdi */));
   }
 
   void GetMorePages() {
@@ -97,8 +110,8 @@ class ServiceUtilityProcessHost::PdfToEmfState {
       emf_files_.push(CreateTempFile());
       host_->Send(new ChromeUtilityMsg_RenderPDFPagesToMetafiles_GetPage(
           current_page_++,
-          IPC::GetFileHandleForProcess(
-              emf_files_.back().GetPlatformFile(), host_->handle(), false)));
+          IPC::GetPlatformFileForTransit(
+              emf_files_.back().GetPlatformFile(), false)));
     }
   }
 
@@ -117,9 +130,9 @@ class ServiceUtilityProcessHost::PdfToEmfState {
     DCHECK(!emf_files_.empty());
     base::File file;
     if (!emf_files_.empty())
-      file = emf_files_.front().Pass();
+      file = std::move(emf_files_.front());
     emf_files_.pop();
-    return file.Pass();
+    return file;
   }
 
   void set_page_count(int page_count) { page_count_ = page_count; }
@@ -132,7 +145,7 @@ class ServiceUtilityProcessHost::PdfToEmfState {
 
   base::File CreateTempFile() {
     base::FilePath path;
-    if (!base::CreateTemporaryFileInDir(temp_dir_.path(), &path))
+    if (!base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &path))
       return base::File();
     return base::File(path,
                       base::File::FLAG_CREATE_ALWAYS |
@@ -156,6 +169,7 @@ ServiceUtilityProcessHost::ServiceUtilityProcessHost(
     : client_(client),
       client_task_runner_(client_task_runner),
       waiting_for_reply_(false),
+      mojo_child_token_(mojo::edk::GenerateRandomToken()),
       weak_ptr_factory_(this) {
   child_process_host_.reset(ChildProcessHost::Create(this));
 }
@@ -170,7 +184,8 @@ bool ServiceUtilityProcessHost::StartRenderPDFPagesToMetafile(
     const printing::PdfRenderSettings& render_settings) {
   ReportUmaEvent(SERVICE_UTILITY_METAFILE_REQUEST);
   start_time_ = base::Time::Now();
-  base::File pdf_file(pdf_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
+  base::File pdf_file(pdf_path, base::File::FLAG_OPEN | base::File::FLAG_READ |
+                                    base::File::FLAG_DELETE_ON_CLOSE);
   if (!pdf_file.IsValid() || !StartProcess(false))
     return false;
 
@@ -178,7 +193,7 @@ bool ServiceUtilityProcessHost::StartRenderPDFPagesToMetafile(
   waiting_for_reply_ = true;
 
   pdf_to_emf_state_.reset(new PdfToEmfState(this));
-  return pdf_to_emf_state_->Start(pdf_file.Pass(), render_settings);
+  return pdf_to_emf_state_->Start(std::move(pdf_file), render_settings);
 }
 
 bool ServiceUtilityProcessHost::StartGetPrinterCapsAndDefaults(
@@ -205,8 +220,9 @@ bool ServiceUtilityProcessHost::StartGetPrinterSemanticCapsAndDefaults(
 }
 
 bool ServiceUtilityProcessHost::StartProcess(bool no_sandbox) {
-  std::string channel_id = child_process_host_->CreateChannel();
-  if (channel_id.empty())
+  std::string mojo_channel_token =
+      child_process_host_->CreateChannelMojo(mojo_child_token_);
+  if (mojo_channel_token.empty())
     return false;
 
   base::FilePath exe_path = GetUtilityProcessCmd();
@@ -217,8 +233,9 @@ bool ServiceUtilityProcessHost::StartProcess(bool no_sandbox) {
 
   base::CommandLine cmd_line(exe_path);
   cmd_line.AppendSwitchASCII(switches::kProcessType, switches::kUtilityProcess);
-  cmd_line.AppendSwitchASCII(switches::kProcessChannelID, channel_id);
+  cmd_line.AppendSwitchASCII(switches::kMojoChannelToken, mojo_channel_token);
   cmd_line.AppendSwitch(switches::kLang);
+  cmd_line.AppendArg(switches::kPrefetchArgumentOther);
 
   if (Launch(&cmd_line, no_sandbox)) {
     ReportUmaEvent(SERVICE_UTILITY_STARTED);
@@ -230,14 +247,45 @@ bool ServiceUtilityProcessHost::StartProcess(bool no_sandbox) {
 
 bool ServiceUtilityProcessHost::Launch(base::CommandLine* cmd_line,
                                        bool no_sandbox) {
+  mojo::edk::ScopedPlatformHandle parent_handle;
+  bool success = false;
   if (no_sandbox) {
+    mojo::edk::NamedPlatformChannelPair named_pair;
+    parent_handle = named_pair.PassServerHandle();
+    named_pair.PrepareToPassClientHandleToChildProcess(cmd_line);
+
     cmd_line->AppendSwitch(switches::kNoSandbox);
     process_ = base::LaunchProcess(*cmd_line, base::LaunchOptions());
+    success = process_.IsValid();
   } else {
+    mojo::edk::PlatformChannelPair channel_pair;
+    parent_handle = channel_pair.PassServerHandle();
+    mojo::edk::ScopedPlatformHandle client_handle =
+        channel_pair.PassClientHandle();
+    base::HandlesToInheritVector handles;
+    handles.push_back(client_handle.get().handle);
+    cmd_line->AppendSwitchASCII(
+        mojo::edk::PlatformChannelPair::kMojoPlatformChannelHandleSwitch,
+        base::UintToString(base::win::HandleToUint32(handles[0])));
+
     ServiceSandboxedProcessLauncherDelegate delegate;
-    process_ = content::StartSandboxedProcess(&delegate, cmd_line);
+    base::Process process;
+    sandbox::ResultCode result = content::StartSandboxedProcess(
+        &delegate, cmd_line, handles, &process);
+    if (result == sandbox::SBOX_ALL_OK) {
+      process_ = std::move(process);
+      success = true;
+    }
   }
-  return process_.IsValid();
+
+  if (success) {
+    mojo::edk::ChildProcessLaunched(process_.Handle(),
+                                    std::move(parent_handle),
+                                    mojo_child_token_);
+  } else {
+    mojo::edk::ChildProcessLaunchFailed(mojo_child_token_);
+  }
+  return success;
 }
 
 bool ServiceUtilityProcessHost::Send(IPC::Message* msg) {
@@ -248,12 +296,7 @@ bool ServiceUtilityProcessHost::Send(IPC::Message* msg) {
 }
 
 base::FilePath ServiceUtilityProcessHost::GetUtilityProcessCmd() {
-#if defined(OS_LINUX)
-  int flags = ChildProcessHost::CHILD_ALLOW_SELF;
-#else
-  int flags = ChildProcessHost::CHILD_NORMAL;
-#endif
-  return ChildProcessHost::GetChildPath(flags);
+  return ChildProcessHost::GetChildPath(ChildProcessHost::CHILD_NORMAL);
 }
 
 void ServiceUtilityProcessHost::OnChildDisconnected() {
@@ -403,7 +446,7 @@ void ServiceUtilityProcessHost::OnGetPrinterSemanticCapsAndDefaultsFailed(
 bool ServiceUtilityProcessHost::Client::MetafileAvailable(float scale_factor,
                                                           base::File file) {
   file.Seek(base::File::FROM_BEGIN, 0);
-  int64 size = file.GetLength();
+  int64_t size = file.GetLength();
   if (size <= 0) {
     OnRenderPDFPagesToMetafileDone(false);
     return false;

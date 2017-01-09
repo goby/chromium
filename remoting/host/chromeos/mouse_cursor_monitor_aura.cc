@@ -4,6 +4,8 @@
 
 #include "remoting/host/chromeos/mouse_cursor_monitor_aura.h"
 
+#include <utility>
+
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/callback.h"
@@ -64,7 +66,7 @@ void MouseCursorMonitorAura::Capture() {
 }
 
 void MouseCursorMonitorAura::NotifyCursorChanged(const ui::Cursor& cursor) {
-  scoped_ptr<SkBitmap> cursor_bitmap(new SkBitmap());
+  std::unique_ptr<SkBitmap> cursor_bitmap(new SkBitmap());
   gfx::Point cursor_hotspot;
 
   if (cursor.native_type() == ui::kCursorNone) {
@@ -94,9 +96,9 @@ void MouseCursorMonitorAura::NotifyCursorChanged(const ui::Cursor& cursor) {
     cursor_hotspot.SetPoint(0, 0);
   }
 
-  scoped_ptr<webrtc::DesktopFrame> image(
-      SkiaBitmapDesktopFrame::Create(cursor_bitmap.Pass()));
-  scoped_ptr<webrtc::MouseCursor> cursor_shape(new webrtc::MouseCursor(
+  std::unique_ptr<webrtc::DesktopFrame> image(
+      SkiaBitmapDesktopFrame::Create(std::move(cursor_bitmap)));
+  std::unique_ptr<webrtc::MouseCursor> cursor_shape(new webrtc::MouseCursor(
       image.release(),
       webrtc::DesktopVector(cursor_hotspot.x(), cursor_hotspot.y())));
 

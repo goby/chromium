@@ -6,13 +6,12 @@
 #define EXTENSIONS_BROWSER_CONTENT_VERIFIER_IO_DATA_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/files/file_path.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/version.h"
 
 namespace extensions {
@@ -23,17 +22,18 @@ class ContentVerifierIOData
     : public base::RefCountedThreadSafe<ContentVerifierIOData> {
  public:
   struct ExtensionData {
-    scoped_ptr<std::set<base::FilePath>> browser_image_paths;
+    std::unique_ptr<std::set<base::FilePath>> browser_image_paths;
     base::Version version;
 
-    ExtensionData(scoped_ptr<std::set<base::FilePath>> browser_image_paths,
+    ExtensionData(std::unique_ptr<std::set<base::FilePath>> browser_image_paths,
                   const base::Version& version);
     ~ExtensionData();
   };
 
   ContentVerifierIOData();
 
-  void AddData(const std::string& extension_id, scoped_ptr<ExtensionData> data);
+  void AddData(const std::string& extension_id,
+               std::unique_ptr<ExtensionData> data);
   void RemoveData(const std::string& extension_id);
   void Clear();
 
@@ -45,7 +45,7 @@ class ContentVerifierIOData
   friend class base::RefCountedThreadSafe<ContentVerifierIOData>;
   virtual ~ContentVerifierIOData();
 
-  std::map<std::string, linked_ptr<ExtensionData> > data_map_;
+  std::map<std::string, std::unique_ptr<ExtensionData>> data_map_;
 };
 
 }  // namespace extensions

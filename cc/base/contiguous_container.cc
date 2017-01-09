@@ -4,6 +4,9 @@
 
 #include "cc/base/contiguous_container.h"
 
+#include <stddef.h>
+
+#include <algorithm>
 #include <utility>
 
 namespace cc {
@@ -14,18 +17,22 @@ static const unsigned kDefaultInitialBufferSize = 32;
 
 class ContiguousContainerBase::Buffer {
  public:
-  explicit Buffer(size_t buffer_size)
-      : data_(new char[buffer_size]), end_(begin()), capacity_(buffer_size) {}
+  explicit Buffer(size_t buffer_size) : end_(nullptr), capacity_(buffer_size) {}
 
   ~Buffer() {}
 
   size_t Capacity() const { return capacity_; }
   size_t UsedCapacity() const { return end_ - begin(); }
   size_t UnusedCapacity() const { return Capacity() - UsedCapacity(); }
+  size_t MemoryUsage() const { return begin() ? capacity_ : 0; }
   bool empty() const { return UsedCapacity() == 0; }
 
   void* Allocate(size_t object_size) {
     DCHECK_GE(UnusedCapacity(), object_size);
+    if (!data_) {
+      data_.reset(new char[capacity_]);
+      end_ = begin();
+    }
     void* result = end_;
     end_ += object_size;
     return result;
@@ -38,11 +45,11 @@ class ContiguousContainerBase::Buffer {
   }
 
  private:
-  char* begin() { return &data_[0]; }
-  const char* begin() const { return &data_[0]; }
+  char* begin() { return data_.get(); }
+  const char* begin() const { return data_.get(); }
 
   // begin() <= end_ <= begin() + capacity_
-  scoped_ptr<char[]> data_;
+  std::unique_ptr<char[]> data_;
   char* end_;
   size_t capacity_;
 };
@@ -74,7 +81,10 @@ size_t ContiguousContainerBase::UsedCapacityInBytes() const {
 }
 
 size_t ContiguousContainerBase::MemoryUsageInBytes() const {
-  return sizeof(*this) + GetCapacityInBytes() +
+  size_t memory_usage = 0;
+  for (const auto& buffer : buffers_)
+    memory_usage += buffer->MemoryUsage();
+  return sizeof(*this) + memory_usage +
          elements_.capacity() * sizeof(elements_[0]);
 }
 
@@ -134,7 +144,7 @@ ContiguousContainerBase::Buffer*
 ContiguousContainerBase::AllocateNewBufferForNextAllocation(
     size_t buffer_size) {
   DCHECK(buffers_.empty() || end_index_ == buffers_.size() - 1);
-  scoped_ptr<Buffer> new_buffer(new Buffer(buffer_size));
+  std::unique_ptr<Buffer> new_buffer(new Buffer(buffer_size));
   Buffer* buffer_to_return = new_buffer.get();
   buffers_.push_back(std::move(new_buffer));
   end_index_ = buffers_.size() - 1;

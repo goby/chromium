@@ -4,13 +4,13 @@
 
 #include "chrome/browser/sync/test/integration/wifi_credentials_helper_chromeos.h"
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -19,13 +19,13 @@
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
 #include "components/onc/onc_constants.h"
-#include "components/wifi_sync/network_state_helper_chromeos.h"
-#include "components/wifi_sync/wifi_credential_syncable_service_factory.h"
+#include "components/sync_wifi/network_state_helper_chromeos.h"
+#include "components/sync_wifi/wifi_credential_syncable_service_factory.h"
 #include "content/public/browser/browser_context.h"
 
-using wifi_sync::WifiCredential;
+using sync_wifi::WifiCredential;
 
-using WifiCredentialSet = wifi_sync::WifiCredential::CredentialSet;
+using WifiCredentialSet = sync_wifi::WifiCredential::CredentialSet;
 
 namespace wifi_credentials_helper {
 
@@ -36,7 +36,7 @@ const char kProfilePrefix[] = "/profile/";
 void LogCreateConfigurationFailure(
     const std::string& debug_hint,
     const std::string& /* network_config_error_message */,
-    scoped_ptr<base::DictionaryValue> /* network_config_error_data */) {
+    std::unique_ptr<base::DictionaryValue> /* network_config_error_data */) {
   LOG(FATAL) << debug_hint;
 }
 
@@ -78,7 +78,7 @@ GetManagedNetworkConfigurationHandler() {
 namespace chromeos {
 
 void SetUpChromeOs() {
-  wifi_sync::WifiCredentialSyncableServiceFactory::GetInstance()
+  sync_wifi::WifiCredentialSyncableServiceFactory::GetInstance()
       ->set_ignore_login_state_for_test(true);
 }
 
@@ -102,25 +102,23 @@ void AddWifiCredentialToProfileChromeOs(
     const content::BrowserContext* browser_context,
     const WifiCredential& credential) {
   DCHECK(browser_context);
-  scoped_ptr<base::DictionaryValue> onc_properties =
+  std::unique_ptr<base::DictionaryValue> onc_properties =
       credential.ToOncProperties();
   CHECK(onc_properties) << "Failed to generate ONC properties for "
                         << credential.ToString();
-  GetManagedNetworkConfigurationHandler()
-      ->CreateConfiguration(
-          ChromeOsUserHashForBrowserContext(*browser_context),
-          *onc_properties,
-          ::chromeos::network_handler::StringResultCallback(),
-          base::Bind(LogCreateConfigurationFailure,
-                     base::StringPrintf("Failed to add credential %s",
-                                        credential.ToString().c_str())));
-  base::MessageLoop::current()->RunUntilIdle();
+  GetManagedNetworkConfigurationHandler()->CreateConfiguration(
+      ChromeOsUserHashForBrowserContext(*browser_context), *onc_properties,
+      ::chromeos::network_handler::ServiceResultCallback(),
+      base::Bind(LogCreateConfigurationFailure,
+                 base::StringPrintf("Failed to add credential %s",
+                                    credential.ToString().c_str())));
+  base::RunLoop().RunUntilIdle();
 }
 
 WifiCredentialSet GetWifiCredentialsForProfileChromeOs(
     const content::BrowserContext* browser_context) {
   DCHECK(browser_context);
-  return wifi_sync::GetWifiCredentialsForShillProfile(
+  return sync_wifi::GetWifiCredentialsForShillProfile(
       GetNetworkStateHandler(),
       ShillProfilePathForBrowserContext(*browser_context));
 }

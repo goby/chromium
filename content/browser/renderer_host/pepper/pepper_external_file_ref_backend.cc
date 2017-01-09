@@ -4,6 +4,8 @@
 
 #include "content/browser/renderer_host/pepper/pepper_external_file_ref_backend.h"
 
+#include <string.h>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util_proxy.h"
 #include "content/browser/child_process_security_policy_impl.h"
@@ -25,8 +27,7 @@ PepperExternalFileRefBackend::PepperExternalFileRefBackend(
       path_(path),
       render_process_id_(render_process_id),
       weak_factory_(this) {
-  task_runner_ =
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE);
+  task_runner_ = BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE);
 }
 
 PepperExternalFileRefBackend::~PepperExternalFileRefBackend() {}

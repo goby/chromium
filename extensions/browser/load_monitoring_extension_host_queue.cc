@@ -5,11 +5,14 @@
 #include "extensions/browser/load_monitoring_extension_host_queue.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_observer.h"
@@ -18,10 +21,10 @@
 namespace extensions {
 
 LoadMonitoringExtensionHostQueue::LoadMonitoringExtensionHostQueue(
-    scoped_ptr<ExtensionHostQueue> delegate,
+    std::unique_ptr<ExtensionHostQueue> delegate,
     base::TimeDelta monitor_time,
     const FinishedCallback& finished_callback)
-    : delegate_(delegate.Pass()),
+    : delegate_(std::move(delegate)),
       monitor_time_(monitor_time),
       finished_callback_(finished_callback),
       started_(false),
@@ -29,15 +32,13 @@ LoadMonitoringExtensionHostQueue::LoadMonitoringExtensionHostQueue(
       num_loaded_(0u),
       max_awaiting_loading_(0u),
       max_active_loading_(0u),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 LoadMonitoringExtensionHostQueue::LoadMonitoringExtensionHostQueue(
-    scoped_ptr<ExtensionHostQueue> delegate)
-    : LoadMonitoringExtensionHostQueue(delegate.Pass(),
+    std::unique_ptr<ExtensionHostQueue> delegate)
+    : LoadMonitoringExtensionHostQueue(std::move(delegate),
                                        base::TimeDelta::FromMinutes(1),
-                                       FinishedCallback()) {
-}
+                                       FinishedCallback()) {}
 
 LoadMonitoringExtensionHostQueue::~LoadMonitoringExtensionHostQueue() {
 }
@@ -47,7 +48,7 @@ void LoadMonitoringExtensionHostQueue::StartMonitoring() {
     return;
   }
   started_ = true;
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::Bind(&LoadMonitoringExtensionHostQueue::FinishMonitoring,
                             weak_ptr_factory_.GetWeakPtr()),
       monitor_time_);

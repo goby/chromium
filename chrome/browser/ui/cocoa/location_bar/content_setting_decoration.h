@@ -5,14 +5,18 @@
 #ifndef CHROME_BROWSER_UI_COCOA_LOCATION_BAR_CONTENT_SETTING_DECORATION_H_
 #define CHROME_BROWSER_UI_COCOA_LOCATION_BAR_CONTENT_SETTING_DECORATION_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #import "chrome/browser/ui/cocoa/location_bar/image_decoration.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 
 // ContentSettingDecoration is used to display the content settings
-// images on the current page.
+// images on the current page. For example, the decoration animates into and out
+// of view when a page attempts to show a popup and the popup blocker is on.
 
 @class ContentSettingAnimationState;
+@class ContentSettingBubbleController;
 class ContentSettingImageModel;
 class LocationBarViewMac;
 class Profile;
@@ -55,7 +59,7 @@ class ContentSettingDecoration : public ImageDecoration {
   // Measure the width of the animated text.
   CGFloat MeasureTextWidth();
 
-  scoped_ptr<ContentSettingImageModel> content_setting_image_model_;
+  std::unique_ptr<ContentSettingImageModel> content_setting_image_model_;
 
   LocationBarViewMac* owner_;  // weak
   Profile* profile_;  // weak
@@ -66,6 +70,9 @@ class ContentSettingDecoration : public ImageDecoration {
   base::scoped_nsobject<ContentSettingAnimationState> animation_;
   CGFloat text_width_;
   base::scoped_nsobject<NSAttributedString> animated_text_;
+
+  // The window of the content setting bubble.
+  base::scoped_nsobject<NSWindow> bubbleWindow_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingDecoration);
 };

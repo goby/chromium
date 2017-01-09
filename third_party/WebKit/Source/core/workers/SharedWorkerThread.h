@@ -33,27 +33,38 @@
 #include "core/CoreExport.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/workers/WorkerThread.h"
+#include <memory>
 
 namespace blink {
 
 class WorkerThreadStartupData;
 
 class CORE_EXPORT SharedWorkerThread : public WorkerThread {
-public:
-    static PassRefPtr<SharedWorkerThread> create(const String& name, PassRefPtr<WorkerLoaderProxy>, WorkerReportingProxy&);
-    ~SharedWorkerThread() override;
+ public:
+  static std::unique_ptr<SharedWorkerThread> create(
+      const String& name,
+      PassRefPtr<WorkerLoaderProxy>,
+      WorkerReportingProxy&);
+  ~SharedWorkerThread() override;
 
-protected:
-    PassRefPtrWillBeRawPtr<WorkerGlobalScope> createWorkerGlobalScope(PassOwnPtr<WorkerThreadStartupData>) override;
-    WebThreadSupportingGC& backingThread() override;
+  WorkerBackingThread& workerBackingThread() override {
+    return *m_workerBackingThread;
+  }
+  void clearWorkerBackingThread() override;
 
-private:
-    SharedWorkerThread(const String& name, PassRefPtr<WorkerLoaderProxy>, WorkerReportingProxy&);
+ protected:
+  WorkerOrWorkletGlobalScope* createWorkerGlobalScope(
+      std::unique_ptr<WorkerThreadStartupData>) override;
 
-    String m_name;
-    OwnPtr<WebThreadSupportingGC> m_thread;
+ private:
+  SharedWorkerThread(const String& name,
+                     PassRefPtr<WorkerLoaderProxy>,
+                     WorkerReportingProxy&);
+
+  std::unique_ptr<WorkerBackingThread> m_workerBackingThread;
+  String m_name;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SharedWorkerThread_h
+#endif  // SharedWorkerThread_h

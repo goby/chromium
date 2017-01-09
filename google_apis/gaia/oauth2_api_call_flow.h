@@ -5,15 +5,13 @@
 #ifndef GOOGLE_APIS_GAIA_OAUTH2_API_CALL_FLOW_H_
 #define GOOGLE_APIS_GAIA_OAUTH2_API_CALL_FLOW_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
-
-class GoogleServiceAuthError;
-class OAuth2MintTokenFlowTest;
 
 namespace net {
 class URLFetcher;
@@ -69,7 +67,7 @@ class OAuth2ApiCallFlow : public net::URLFetcherDelegate {
   // Template method CreateApiCallUrl is used to get the URL.
   // Template method CreateApiCallBody is used to get the body.
   // The URLFether's method will be GET if body is empty, POST otherwise.
-  scoped_ptr<net::URLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::URLFetcher> CreateURLFetcher(
       net::URLRequestContextGetter* context,
       const std::string& access_token);
 
@@ -78,7 +76,7 @@ class OAuth2ApiCallFlow : public net::URLFetcherDelegate {
   void EndApiCall(const net::URLFetcher* source);
 
   State state_;
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(OAuth2ApiCallFlow);
 };

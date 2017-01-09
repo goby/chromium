@@ -4,7 +4,12 @@
 
 #include "content/test/test_navigation_url_loader.h"
 
+#include <utility>
+
 #include "content/browser/loader/navigation_url_loader_delegate.h"
+#include "content/public/browser/global_request_id.h"
+#include "content/public/browser/navigation_data.h"
+#include "content/public/browser/ssl_status.h"
 #include "content/public/browser/stream_handle.h"
 #include "content/public/common/resource_response.h"
 #include "net/url_request/redirect_info.h"
@@ -12,15 +17,19 @@
 namespace content {
 
 TestNavigationURLLoader::TestNavigationURLLoader(
-    scoped_ptr<NavigationRequestInfo> request_info,
+    std::unique_ptr<NavigationRequestInfo> request_info,
     NavigationURLLoaderDelegate* delegate)
-    : request_info_(request_info.Pass()),
+    : request_info_(std::move(request_info)),
       delegate_(delegate),
-      redirect_count_(0) {
-}
+      redirect_count_(0),
+      response_proceeded_(false) {}
 
 void TestNavigationURLLoader::FollowRedirect() {
   redirect_count_++;
+}
+
+void TestNavigationURLLoader::ProceedWithResponse() {
+  response_proceeded_ = true;
 }
 
 void TestNavigationURLLoader::SimulateServerRedirect(const GURL& redirect_url) {
@@ -45,8 +54,11 @@ void TestNavigationURLLoader::CallOnRequestRedirected(
 
 void TestNavigationURLLoader::CallOnResponseStarted(
     const scoped_refptr<ResourceResponse>& response,
-    scoped_ptr<StreamHandle> body) {
-  delegate_->OnResponseStarted(response, body.Pass());
+    std::unique_ptr<StreamHandle> body,
+    std::unique_ptr<NavigationData> navigation_data) {
+  delegate_->OnResponseStarted(response, std::move(body), SSLStatus(),
+                               std::move(navigation_data), GlobalRequestID(),
+                               false, false);
 }
 
 TestNavigationURLLoader::~TestNavigationURLLoader() {}

@@ -4,16 +4,18 @@
 
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
 
-#include "base/basictypes.h"
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/string_split.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/messaging/native_messaging_host_manifest.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/browser_thread.h"
@@ -26,12 +28,6 @@
 namespace extensions {
 
 namespace {
-
-#if defined(OS_WIN)
-// Name of the command line switch used to pass handle of the native view to
-// the native messaging host.
-const char kParentWindowSwitchName[] = "parent-window";
-#endif  // defined(OS_WIN)
 
 // Default implementation on NativeProcessLauncher interface.
 class NativeProcessLauncherImpl : public NativeProcessLauncher {
@@ -75,8 +71,10 @@ class NativeProcessLauncherImpl : public NativeProcessLauncher {
 
     bool allow_user_level_hosts_;
 
+#if defined(OS_WIN)
     // Handle of the native window corresponding to the extension.
     intptr_t window_handle_;
+#endif // OS_WIN
 
     DISALLOW_COPY_AND_ASSIGN(Core);
   };
@@ -89,9 +87,11 @@ class NativeProcessLauncherImpl : public NativeProcessLauncher {
 NativeProcessLauncherImpl::Core::Core(bool allow_user_level_hosts,
                                       intptr_t window_handle)
     : detached_(false),
-      allow_user_level_hosts_(allow_user_level_hosts),
-      window_handle_(window_handle) {
-}
+      allow_user_level_hosts_(allow_user_level_hosts)
+#if defined(OS_WIN)
+      , window_handle_(window_handle)
+#endif // OS_WIN
+{}
 
 NativeProcessLauncherImpl::Core::~Core() {
   DCHECK(detached_);
@@ -133,7 +133,7 @@ void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
     return;
   }
 
-  scoped_ptr<NativeMessagingHostManifest> manifest =
+  std::unique_ptr<NativeMessagingHostManifest> manifest =
       NativeMessagingHostManifest::Load(manifest_path, &error_message);
 
   if (!manifest) {
@@ -183,13 +183,16 @@ void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
   }
 
   base::CommandLine command_line(host_path);
+  // Note: The origin must be the first argument, so do not use AppendSwitch*
+  // hereafter because CommandLine inserts these switches before the other
+  // arguments.
   command_line.AppendArg(origin.spec());
 
   // Pass handle of the native view window to the native messaging host. This
   // way the host will be able to create properly focused UI windows.
 #if defined(OS_WIN)
-  command_line.AppendSwitchASCII(kParentWindowSwitchName,
-                                 base::Int64ToString(window_handle_));
+  command_line.AppendArg(
+      base::StringPrintf("--parent-window=%d", window_handle_));
 #endif  // !defined(OS_WIN)
 
   base::Process process;
@@ -197,7 +200,8 @@ void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
   base::File write_file;
   if (NativeProcessLauncher::LaunchNativeProcess(
           command_line, &process, &read_file, &write_file)) {
-    PostResult(callback, process.Pass(), read_file.Pass(), write_file.Pass());
+    PostResult(callback, std::move(process), std::move(read_file),
+               std::move(write_file));
   } else {
     PostErrorResult(callback, RESULT_FAILED_TO_START);
   }
@@ -213,7 +217,8 @@ void NativeProcessLauncherImpl::Core::CallCallbackOnIOThread(
   if (detached_)
     return;
 
-  callback.Run(result, process.Pass(), read_file.Pass(), write_file.Pass());
+  callback.Run(result, std::move(process), std::move(read_file),
+               std::move(write_file));
 }
 
 void NativeProcessLauncherImpl::Core::PostErrorResult(
@@ -257,7 +262,7 @@ void NativeProcessLauncherImpl::Launch(const GURL& origin,
 }  // namespace
 
 // static
-scoped_ptr<NativeProcessLauncher> NativeProcessLauncher::CreateDefault(
+std::unique_ptr<NativeProcessLauncher> NativeProcessLauncher::CreateDefault(
     bool allow_user_level_hosts,
     gfx::NativeView native_view) {
   intptr_t window_handle = 0;
@@ -265,7 +270,7 @@ scoped_ptr<NativeProcessLauncher> NativeProcessLauncher::CreateDefault(
   window_handle = reinterpret_cast<intptr_t>(
       views::HWNDForNativeView(native_view));
 #endif
-  return scoped_ptr<NativeProcessLauncher>(
+  return std::unique_ptr<NativeProcessLauncher>(
       new NativeProcessLauncherImpl(allow_user_level_hosts, window_handle));
 }
 

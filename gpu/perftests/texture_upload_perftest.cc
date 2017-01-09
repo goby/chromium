@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #include "base/containers/small_map.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "gpu/perftests/measurements.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -22,6 +25,7 @@
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/gpu_timing.h"
+#include "ui/gl/init/gl_factory.h"
 #include "ui/gl/scoped_make_current.h"
 
 #if defined(USE_OZONE)
@@ -81,7 +85,7 @@ GLuint LoadShader(const GLenum type, const char* const src) {
     GLint len = 0;
     glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
     if (len > 1) {
-      scoped_ptr<char[]> error_log(new char[len]);
+      std::unique_ptr<char[]> error_log(new char[len]);
       glGetShaderInfoLog(shader, len, NULL, error_log.get());
       LOG(ERROR) << "Error compiling shader: " << error_log.get();
     }
@@ -116,7 +120,7 @@ GLenum GLFormatToStorageFormat(GLenum format) {
 void GenerateTextureData(const gfx::Size& size,
                          int bytes_per_pixel,
                          const int seed,
-                         std::vector<uint8>* const pixels) {
+                         std::vector<uint8_t>* const pixels) {
   // Row bytes has to be multiple of 4 (GL_PACK_ALIGNMENT defaults to 4).
   int stride = ((size.width() * bytes_per_pixel) + 3) & ~0x3;
   pixels->resize(size.height() * stride);
@@ -135,8 +139,8 @@ void GenerateTextureData(const gfx::Size& size,
 // RGBA buffer.
 bool CompareBufferToRGBABuffer(GLenum format,
                                const gfx::Size& size,
-                               const std::vector<uint8>& pixels,
-                               const std::vector<uint8>& rgba) {
+                               const std::vector<uint8_t>& pixels,
+                               const std::vector<uint8_t>& rgba) {
   int bytes_per_pixel = GLFormatBytePerPixel(format);
   int pixels_stride = ((size.width() * bytes_per_pixel) + 3) & ~0x3;
   int rgba_stride = size.width() * GLFormatBytePerPixel(GL_RGBA);
@@ -144,7 +148,7 @@ bool CompareBufferToRGBABuffer(GLenum format,
     for (int x = 0; x < size.width(); ++x) {
       int rgba_index = y * rgba_stride + x * GLFormatBytePerPixel(GL_RGBA);
       int pixels_index = y * pixels_stride + x * bytes_per_pixel;
-      uint8 expected[4] = {0};
+      uint8_t expected[4] = {0};
       switch (format) {
         case GL_LUMINANCE:  // (L_t, L_t, L_t, 1)
           expected[1] = pixels[pixels_index];
@@ -180,13 +184,13 @@ class TextureUploadPerfTest : public testing::Test {
     // thread.
     base::MessageLoopForUI main_loop;
 #endif
-    static bool gl_initialized = gfx::GLSurface::InitializeOneOff();
+    static bool gl_initialized = gl::init::InitializeGLOneOff();
     DCHECK(gl_initialized);
     // Initialize an offscreen surface and a gl context.
-    surface_ = gfx::GLSurface::CreateOffscreenGLSurface(gfx::Size());
-    gl_context_ = gfx::GLContext::CreateGLContext(NULL,  // share_group
-                                                  surface_.get(),
-                                                  gfx::PreferIntegratedGpu);
+    surface_ = gl::init::CreateOffscreenGLSurface(gfx::Size());
+    gl_context_ =
+        gl::init::CreateGLContext(nullptr,  // share_group
+                                  surface_.get(), gl::GLContextAttribs());
     ui::ScopedMakeCurrent smc(gl_context_.get(), surface_.get());
     glGenTextures(1, &color_texture_);
     glBindTexture(GL_TEXTURE_2D, color_texture_);
@@ -218,7 +222,7 @@ class TextureUploadPerfTest : public testing::Test {
     // used to draw a quad on the offscreen surface.
     vertex_shader_ = LoadShader(GL_VERTEX_SHADER, kVertexShader);
 
-    bool is_gles = gfx::GetGLImplementation() == gfx::kGLImplementationEGLGLES2;
+    bool is_gles = gl_context_->GetVersionInfo()->is_es;
     fragment_shader_ = LoadShader(
         GL_FRAGMENT_SHADER,
         base::StringPrintf("%s%s", is_gles ? kShaderDefaultFloatPrecision : "",
@@ -330,7 +334,7 @@ class TextureUploadPerfTest : public testing::Test {
 
   void UploadTexture(GLuint texture_id,
                      const gfx::Size& size,
-                     const std::vector<uint8>& pixels,
+                     const std::vector<uint8_t>& pixels,
                      GLenum format,
                      const bool subimage) {
     if (subimage) {
@@ -350,7 +354,7 @@ class TextureUploadPerfTest : public testing::Test {
   // time elapsed in milliseconds.
   std::vector<Measurement> UploadAndDraw(GLuint texture_id,
                                          const gfx::Size& size,
-                                         const std::vector<uint8>& pixels,
+                                         const std::vector<uint8_t>& pixels,
                                          const GLenum format,
                                          const bool subimage) {
     MeasurementTimers tex_timers(gpu_timing_client_.get());
@@ -370,13 +374,13 @@ class TextureUploadPerfTest : public testing::Test {
     CheckNoGlError("glFinish");
     finish_timers.Record();
 
-    std::vector<uint8> pixels_rendered(size.GetArea() * 4);
+    std::vector<uint8_t> pixels_rendered(size.GetArea() * 4);
     glReadPixels(0, 0, size.width(), size.height(), GL_RGBA, GL_UNSIGNED_BYTE,
                  &pixels_rendered[0]);
     CheckNoGlError("glReadPixels");
     EXPECT_TRUE(
         CompareBufferToRGBABuffer(format, size, pixels, pixels_rendered))
-        << "Format is: " << gfx::GLEnums::GetStringEnum(format);
+        << "Format is: " << gl::GLEnums::GetStringEnum(format);
 
     std::vector<Measurement> measurements;
     bool gpu_timer_errors =
@@ -396,7 +400,7 @@ class TextureUploadPerfTest : public testing::Test {
   void RunUploadAndDrawMultipleTimes(const gfx::Size& size,
                                      const GLenum format,
                                      const bool subimage) {
-    std::vector<uint8> pixels;
+    std::vector<uint8_t> pixels;
     base::SmallMap<std::map<std::string, Measurement>>
         aggregates;  // indexed by name
     int successful_runs = 0;
@@ -404,7 +408,7 @@ class TextureUploadPerfTest : public testing::Test {
     for (int i = 0; i < kUploadPerfWarmupRuns + kUploadPerfTestRuns; ++i) {
       GenerateTextureData(size, GLFormatBytePerPixel(format), i + 1, &pixels);
       auto run = UploadAndDraw(texture_id, size, pixels, format, subimage);
-      if (i < kUploadPerfWarmupRuns || !run.size()) {
+      if (i < kUploadPerfWarmupRuns || run.empty()) {
         continue;
       }
       successful_runs++;
@@ -417,7 +421,7 @@ class TextureUploadPerfTest : public testing::Test {
     glDeleteTextures(1, &texture_id);
 
     std::string graph_name = base::StringPrintf(
-        "%d_%s", size.width(), gfx::GLEnums::GetStringEnum(format).c_str());
+        "%d_%s", size.width(), gl::GLEnums::GetStringEnum(format).c_str());
     if (subimage) {
       graph_name += "_sub";
     }
@@ -433,9 +437,9 @@ class TextureUploadPerfTest : public testing::Test {
   }
 
   const gfx::Size fbo_size_;  // for the fbo
-  scoped_refptr<gfx::GLContext> gl_context_;
-  scoped_refptr<gfx::GLSurface> surface_;
-  scoped_refptr<gfx::GPUTimingClient> gpu_timing_client_;
+  scoped_refptr<gl::GLContext> gl_context_;
+  scoped_refptr<gl::GLSurface> surface_;
+  scoped_refptr<gl::GPUTimingClient> gpu_timing_client_;
 
   GLuint color_texture_ = 0;
   GLuint framebuffer_object_ = 0;
@@ -496,7 +500,7 @@ TEST_F(TextureUploadPerfTest, upload) {
 TEST_F(TextureUploadPerfTest, renaming) {
   gfx::Size texture_size(fbo_size_.width() / 2, fbo_size_.height() / 2);
 
-  std::vector<uint8> pixels[4];
+  std::vector<uint8_t> pixels[4];
   for (int i = 0; i < 4; ++i) {
     GenerateTextureData(texture_size, 4, i + 1, &pixels[i]);
   }
@@ -533,7 +537,7 @@ TEST_F(TextureUploadPerfTest, renaming) {
   glDeleteTextures(1, &texture_id);
 
   for (int i = 0; i < 4; ++i) {
-    std::vector<uint8> pixels_rendered(texture_size.GetArea() * 4);
+    std::vector<uint8_t> pixels_rendered(texture_size.GetArea() * 4);
     glReadPixels(texture_size.width() * positions[i].x(),
                  texture_size.height() * positions[i].y(), texture_size.width(),
                  texture_size.height(), GL_RGBA, GL_UNSIGNED_BYTE,

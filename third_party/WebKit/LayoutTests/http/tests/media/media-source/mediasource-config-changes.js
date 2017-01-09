@@ -64,14 +64,25 @@ function mediaSourceConfigChangeTest(directory, idA, idB, description)
                 test.waitForExpectedEvents(function()
                 {
                     // Truncate the presentation to a duration of 2 seconds.
-                    assert_false(sourceBuffer.updating, "sourceBuffer.updating");
+                    // First, explicitly remove the media beyond 2 seconds.
+                    assert_false(sourceBuffer.updating, "sourceBuffer.updating before range removal");
+                    sourceBuffer.remove(2, mediaSource.duration);
 
-                    mediaSource.duration = 2;
-
-                    assert_true(sourceBuffer.updating, "sourceBuffer.updating");
+                    assert_true(sourceBuffer.updating, "sourceBuffer.updating during range removal");
                     test.expectEvent(sourceBuffer, "updatestart");
                     test.expectEvent(sourceBuffer, "update");
                     test.expectEvent(sourceBuffer, "updateend");
+                });
+
+                test.waitForExpectedEvents(function()
+                {
+                    // Complete the truncation of presentation to 2 second
+                    // duration.
+                    assert_false(sourceBuffer.updating, "sourceBuffer.updating prior to duration reduction");
+                    mediaSource.duration = 2;
+                    assert_false(sourceBuffer.updating, "sourceBuffer.updating synchronously after duration reduction");
+
+                    test.expectEvent(mediaElement, "durationchange");
                 });
 
                 test.waitForExpectedEvents(function()
@@ -88,6 +99,12 @@ function mediaSourceConfigChangeTest(directory, idA, idB, description)
                 });
 
                 test.waitForExpectedEvents(function() {
+                    // TODO(wolenetz): Remove this hacky console warning once
+                    // desktop and android expectations match. It allows a
+                    // passing platform-specific expectation to override a
+                    // failing non-platform-specific expectation.
+                    console.warn('Ignore this warning. See https://crbug.com/568704#c2');
+
                     test.done();
                 });
             });

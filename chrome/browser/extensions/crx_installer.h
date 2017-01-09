@@ -10,6 +10,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/version.h"
@@ -18,11 +19,11 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "components/sync/model/string_ordinal.h"
 #include "extensions/browser/install_flag.h"
 #include "extensions/browser/sandboxed_unpacker.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
-#include "sync/api/string_ordinal.h"
 
 class ExtensionService;
 class ExtensionServiceTest;
@@ -36,7 +37,6 @@ class SequencedTaskRunner;
 namespace extensions {
 class CrxInstallError;
 class ExtensionUpdaterTest;
-class RequirementsChecker;
 
 // This class installs a crx file into a profile.
 //
@@ -66,9 +66,7 @@ class RequirementsChecker;
 // terminating during the install. We can't listen for the app termination
 // notification here in this class because it can be destroyed on any thread
 // and won't safely be able to clean up UI thread notification listeners.
-class CrxInstaller
-    : public SandboxedUnpackerClient,
-      public ExtensionInstallPrompt::Delegate {
+class CrxInstaller : public SandboxedUnpackerClient {
  public:
   // Used in histograms; do not change order.
   enum OffStoreInstallAllowReason {
@@ -87,13 +85,13 @@ class CrxInstaller
   // Same as above, but use |client| to generate a confirmation prompt.
   static scoped_refptr<CrxInstaller> Create(
       ExtensionService* service,
-      scoped_ptr<ExtensionInstallPrompt> client);
+      std::unique_ptr<ExtensionInstallPrompt> client);
 
   // Same as the previous method, except use the |approval| to bypass the
   // prompt. Note that the caller retains ownership of |approval|.
   static scoped_refptr<CrxInstaller> Create(
       ExtensionService* service,
-      scoped_ptr<ExtensionInstallPrompt> client,
+      std::unique_ptr<ExtensionInstallPrompt> client,
       const WebstoreInstaller::Approval* approval);
 
   // Install the crx in |source_file|.
@@ -107,9 +105,7 @@ class CrxInstaller
   // Convert the specified web app into an extension and install it.
   void InstallWebApp(const WebApplicationInfo& web_app);
 
-  // Overridden from ExtensionInstallPrompt::Delegate:
-  void InstallUIProceed() override;
-  void InstallUIAbort(bool user_initiated) override;
+  void OnInstallPromptDone(ExtensionInstallPrompt::Result result);
 
   int creation_flags() const { return creation_flags_; }
   void set_creation_flags(int val) { creation_flags_ = val; }
@@ -198,9 +194,6 @@ class CrxInstaller
   void set_install_immediately(bool val) {
     set_install_flag(kInstallFlagInstallImmediately, val);
   }
-  void set_is_ephemeral(bool val) {
-    set_install_flag(kInstallFlagIsEphemeral, val);
-  }
   void set_do_not_sync(bool val) {
     set_install_flag(kInstallFlagDoNotSync, val);
   }
@@ -221,7 +214,7 @@ class CrxInstaller
   friend class ExtensionCrxInstallerTest;
 
   CrxInstaller(base::WeakPtr<ExtensionService> service_weak,
-               scoped_ptr<ExtensionInstallPrompt> client,
+               std::unique_ptr<ExtensionInstallPrompt> client,
                const WebstoreInstaller::Approval* approval);
   ~CrxInstaller() override;
 
@@ -256,6 +249,10 @@ class CrxInstaller
 
   // Runs on the UI thread. Confirms the installation to the ExtensionService.
   void ConfirmInstall();
+
+  // Runs on the UI thread. Updates the creation flags for the extension and
+  // calls CompleteInstall().
+  void UpdateCreationFlagsAndCompleteInstall();
 
   // Runs on File thread. Install the unpacked extension into the profile and
   // notify the frontend.
@@ -323,7 +320,7 @@ class CrxInstaller
   // A parsed copy of the expected manifest, before any transformations like
   // localization have taken place. If |approved_| is true, then the
   // extension's manifest must match this for the install to proceed.
-  scoped_ptr<Manifest> expected_manifest_;
+  std::unique_ptr<Manifest> expected_manifest_;
 
   // The level of checking when comparing the actual manifest against
   // the |expected_manifest_|.
@@ -363,14 +360,14 @@ class CrxInstaller
 
   // A parsed copy of the unmodified original manifest, before any
   // transformations like localization have taken place.
-  scoped_ptr<Manifest> original_manifest_;
+  std::unique_ptr<Manifest> original_manifest_;
 
   // If valid, contains the current version of the extension we're
   // installing (for upgrades).
   base::Version current_version_;
 
   // The icon we will display in the installation UI, if any.
-  scoped_ptr<SkBitmap> install_icon_;
+  std::unique_ptr<SkBitmap> install_icon_;
 
   // The temp directory extension resources were unpacked to. We own this and
   // must delete it when we are done with it.
@@ -381,7 +378,7 @@ class CrxInstaller
 
   // The client we will work with to do the installation. This can be NULL, in
   // which case the install is silent.
-  scoped_ptr<ExtensionInstallPrompt> client_;
+  std::unique_ptr<ExtensionInstallPrompt> client_;
 
   // The root of the unpacked extension directory. This is a subdirectory of
   // temp_dir_, so we don't have to delete it explicitly.

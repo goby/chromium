@@ -2,22 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/renderer_host/input/gesture_event_queue.h"
+
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "content/browser/renderer_host/input/gesture_event_queue.h"
 #include "content/browser/renderer_host/input/touchpad_tap_suppression_controller.h"
 #include "content/common/input/input_event_ack_state.h"
 #include "content/common/input/synthetic_web_input_event_builders.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 
 using base::TimeDelta;
 using blink::WebGestureDevice;
@@ -52,7 +56,8 @@ class GestureEventQueueTest : public testing::Test,
       const GestureEventWithLatencyInfo& event) override {
     ++sent_gesture_event_count_;
     if (sync_ack_result_) {
-      scoped_ptr<InputEventAckState> ack_result = sync_ack_result_.Pass();
+      std::unique_ptr<InputEventAckState> ack_result =
+          std::move(sync_ack_result_);
       SendInputEventACK(event.event.type, *ack_result);
     }
   }
@@ -62,7 +67,7 @@ class GestureEventQueueTest : public testing::Test,
     ++acked_gesture_event_count_;
     last_acked_event_ = event.event;
     if (sync_followup_event_) {
-      auto sync_followup_event = sync_followup_event_.Pass();
+      auto sync_followup_event = std::move(sync_followup_event_);
       SimulateGestureEvent(*sync_followup_event);
     }
   }
@@ -121,9 +126,7 @@ class GestureEventQueueTest : public testing::Test,
     queue()->ProcessGestureAck(ack, type, ui::LatencyInfo());
   }
 
-  void RunUntilIdle() {
-    base::MessageLoop::current()->RunUntilIdle();
-  }
+  void RunUntilIdle() { base::RunLoop().RunUntilIdle(); }
 
   size_t GetAndResetSentGestureEventCount() {
     size_t count = sent_gesture_event_count_;
@@ -187,12 +190,12 @@ class GestureEventQueueTest : public testing::Test,
   }
 
  private:
-  scoped_ptr<GestureEventQueue> queue_;
+  std::unique_ptr<GestureEventQueue> queue_;
   size_t acked_gesture_event_count_;
   size_t sent_gesture_event_count_;
   WebGestureEvent last_acked_event_;
-  scoped_ptr<InputEventAckState> sync_ack_result_;
-  scoped_ptr<WebGestureEvent> sync_followup_event_;
+  std::unique_ptr<InputEventAckState> sync_ack_result_;
+  std::unique_ptr<WebGestureEvent> sync_followup_event_;
   base::MessageLoopForUI message_loop_;
 };
 
@@ -870,7 +873,7 @@ TEST_F(GestureEventQueueTest, SimpleSyncAck) {
 
 // Tests an event with an synchronous ack which enqueues an additional event.
 TEST_F(GestureEventQueueTest, SyncAckQueuesEvent) {
-  scoped_ptr<WebGestureEvent> queued_event;
+  std::unique_ptr<WebGestureEvent> queued_event;
   set_synchronous_ack(INPUT_EVENT_ACK_STATE_CONSUMED);
   set_sync_followup_event(WebInputEvent::GestureShowPress,
                           blink::WebGestureDeviceTouchscreen);
@@ -1089,7 +1092,7 @@ TEST_F(GestureEventQueueTest, DebounceDefersFollowingGestureEvents) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMilliseconds(5));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // The deferred events are correctly queued in coalescing queue.
   EXPECT_EQ(0U, GetAndResetSentGestureEventCount());
@@ -1150,6 +1153,31 @@ TEST_F(GestureEventQueueTest, DebounceDropsDeferredEvents) {
     WebGestureEvent merged_event = GestureEventQueueEventAt(i);
     EXPECT_EQ(expected[i], merged_event.type);
   }
+}
+
+TEST_F(GestureEventQueueTest, CoalescesSyntheticScrollBeginEndEvents) {
+  // Test coalescing of only GestureScrollBegin/End events.
+  SimulateGestureEvent(WebInputEvent::GestureScrollUpdate,
+                       blink::WebGestureDeviceTouchpad);
+  EXPECT_EQ(1U, GetAndResetSentGestureEventCount());
+  EXPECT_EQ(1U, GestureEventQueueSize());
+
+  WebGestureEvent synthetic_end = SyntheticWebGestureEventBuilder::Build(
+      WebInputEvent::GestureScrollEnd, blink::WebGestureDeviceTouchpad);
+  synthetic_end.data.scrollEnd.synthetic = true;
+
+  SimulateGestureEvent(synthetic_end);
+  EXPECT_EQ(0U, GetAndResetSentGestureEventCount());
+  EXPECT_EQ(2U, GestureEventQueueSize());
+
+  // Synthetic begin will remove the unsent synthetic end.
+  WebGestureEvent synthetic_begin = SyntheticWebGestureEventBuilder::Build(
+      WebInputEvent::GestureScrollBegin, blink::WebGestureDeviceTouchpad);
+  synthetic_begin.data.scrollBegin.synthetic = true;
+
+  SimulateGestureEvent(synthetic_begin);
+  EXPECT_EQ(0U, GetAndResetSentGestureEventCount());
+  EXPECT_EQ(1U, GestureEventQueueSize());
 }
 
 }  // namespace content

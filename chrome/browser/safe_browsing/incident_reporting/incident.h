@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_INCIDENT_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace safe_browsing {
 
@@ -27,8 +28,16 @@ enum class IncidentType : int32_t {
   OMNIBOX_INTERACTION = 4,
   VARIATIONS_SEED_SIGNATURE = 5,
   RESOURCE_REQUEST = 6,
+  SUSPICIOUS_MODULE = 7,
   // Values for new incident types go here.
-  NUM_TYPES = 7
+  NUM_TYPES = 8
+};
+
+// The level of consent required by the incident to be associated with a
+// profile.
+enum class MinimumProfileConsent {
+  SAFE_BROWSING_ENABLED = 0,
+  SAFE_BROWSING_EXTENDED_REPORTING_ENABLED = 1,
 };
 
 // An abstract incident. Subclasses provide type-specific functionality to
@@ -49,7 +58,11 @@ class Incident {
   virtual uint32_t ComputeDigest() const = 0;
 
   // Returns the incident's payload.
-  virtual scoped_ptr<ClientIncidentReport_IncidentData> TakePayload();
+  virtual std::unique_ptr<ClientIncidentReport_IncidentData> TakePayload();
+
+  // Returns the minimum level of consent required for reporting of the
+  // incident.
+  virtual MinimumProfileConsent GetMinimumProfileConsent() const;
 
  protected:
   // Constructs the payload with an empty protobuf, setting its incident time to
@@ -62,7 +75,7 @@ class Incident {
   const ClientIncidentReport_IncidentData* payload() const;
 
  private:
-  scoped_ptr<ClientIncidentReport_IncidentData> payload_;
+  std::unique_ptr<ClientIncidentReport_IncidentData> payload_;
 
   DISALLOW_COPY_AND_ASSIGN(Incident);
 };

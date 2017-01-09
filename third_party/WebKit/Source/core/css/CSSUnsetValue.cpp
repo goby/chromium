@@ -2,16 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/css/CSSUnsetValue.h"
 
+#include "core/css/CSSValuePool.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-String CSSUnsetValue::customCSSText() const
-{
-    return "unset";
+CSSUnsetValue* CSSUnsetValue::create() {
+  return cssValuePool().unsetValue();
 }
 
-} // namespace blink
+String CSSUnsetValue::customCSSText() const {
+  return "unset";
+}
+
+}  // namespace blink

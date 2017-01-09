@@ -2,22 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/policy/remote_commands/device_command_screenshot_job.h"
+
 #include <map>
+#include <utility>
 #include <vector>
 
 #include "ash/test/ash_test_base.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "chrome/browser/chromeos/policy/remote_commands/device_command_screenshot_job.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -45,7 +49,7 @@ em::RemoteCommand GenerateScreenshotCommandProto(
   em::RemoteCommand command_proto;
   command_proto.set_type(
       enterprise_management::RemoteCommand_Type_DEVICE_SCREENSHOT);
-  command_proto.set_unique_id(unique_id);
+  command_proto.set_command_id(unique_id);
   command_proto.set_age_of_command(age_of_command.InMilliseconds());
   std::string payload;
   base::DictionaryValue root_dict;
@@ -62,14 +66,14 @@ class MockUploadJob : public policy::UploadJob {
   // respective |error_code|.
   MockUploadJob(const GURL& upload_url,
                 UploadJob::Delegate* delegate,
-                scoped_ptr<UploadJob::ErrorCode> error_code);
+                std::unique_ptr<UploadJob::ErrorCode> error_code);
   ~MockUploadJob() override;
 
   // policy::UploadJob:
   void AddDataSegment(const std::string& name,
                       const std::string& filename,
                       const std::map<std::string, std::string>& header_entries,
-                      scoped_ptr<std::string> data) override;
+                      std::unique_ptr<std::string> data) override;
   void Start() override;
 
   const GURL& GetUploadUrl() const;
@@ -77,17 +81,16 @@ class MockUploadJob : public policy::UploadJob {
  protected:
   const GURL upload_url_;
   UploadJob::Delegate* delegate_;
-  scoped_ptr<UploadJob::ErrorCode> error_code_;
+  std::unique_ptr<UploadJob::ErrorCode> error_code_;
   bool add_datasegment_succeeds_;
 };
 
 MockUploadJob::MockUploadJob(const GURL& upload_url,
                              UploadJob::Delegate* delegate,
-                             scoped_ptr<UploadJob::ErrorCode> error_code)
+                             std::unique_ptr<UploadJob::ErrorCode> error_code)
     : upload_url_(upload_url),
       delegate_(delegate),
-      error_code_(error_code.Pass()) {
-}
+      error_code_(std::move(error_code)) {}
 
 MockUploadJob::~MockUploadJob() {
 }
@@ -96,8 +99,7 @@ void MockUploadJob::AddDataSegment(
     const std::string& name,
     const std::string& filename,
     const std::map<std::string, std::string>& header_entries,
-    scoped_ptr<std::string> data) {
-}
+    std::unique_ptr<std::string> data) {}
 
 void MockUploadJob::Start() {
   DCHECK(delegate_);
@@ -137,8 +139,9 @@ scoped_refptr<base::RefCountedBytes> GenerateTestPNG(const int& width,
 
 class MockScreenshotDelegate : public DeviceCommandScreenshotJob::Delegate {
  public:
-  MockScreenshotDelegate(scoped_ptr<UploadJob::ErrorCode> upload_job_error_code,
-                         bool screenshot_allowed);
+  MockScreenshotDelegate(
+      std::unique_ptr<UploadJob::ErrorCode> upload_job_error_code,
+      bool screenshot_allowed);
   ~MockScreenshotDelegate() override;
 
   bool IsScreenshotAllowed() override;
@@ -146,20 +149,19 @@ class MockScreenshotDelegate : public DeviceCommandScreenshotJob::Delegate {
       gfx::NativeWindow window,
       const gfx::Rect& source_rect,
       const ui::GrabWindowSnapshotAsyncPNGCallback& callback) override;
-  scoped_ptr<UploadJob> CreateUploadJob(const GURL&,
-                                        UploadJob::Delegate*) override;
+  std::unique_ptr<UploadJob> CreateUploadJob(const GURL&,
+                                             UploadJob::Delegate*) override;
 
  private:
-  scoped_ptr<UploadJob::ErrorCode> upload_job_error_code_;
+  std::unique_ptr<UploadJob::ErrorCode> upload_job_error_code_;
   bool screenshot_allowed_;
 };
 
 MockScreenshotDelegate::MockScreenshotDelegate(
-    scoped_ptr<UploadJob::ErrorCode> upload_job_error_code,
+    std::unique_ptr<UploadJob::ErrorCode> upload_job_error_code,
     bool screenshot_allowed)
-    : upload_job_error_code_(upload_job_error_code.Pass()),
-      screenshot_allowed_(screenshot_allowed) {
-}
+    : upload_job_error_code_(std::move(upload_job_error_code)),
+      screenshot_allowed_(screenshot_allowed) {}
 
 MockScreenshotDelegate::~MockScreenshotDelegate() {
 }
@@ -180,11 +182,11 @@ void MockScreenshotDelegate::TakeSnapshot(
                                                 base::Bind(callback, test_png));
 }
 
-scoped_ptr<UploadJob> MockScreenshotDelegate::CreateUploadJob(
+std::unique_ptr<UploadJob> MockScreenshotDelegate::CreateUploadJob(
     const GURL& upload_url,
     UploadJob::Delegate* delegate) {
-  return make_scoped_ptr(
-      new MockUploadJob(upload_url, delegate, upload_job_error_code_.Pass()));
+  return base::MakeUnique<MockUploadJob>(upload_url, delegate,
+                                         std::move(upload_job_error_code_));
 }
 
 }  // namespace
@@ -256,7 +258,7 @@ void DeviceCommandScreenshotTest::VerifyResults(
     std::string expected_payload) {
   EXPECT_EQ(expected_status, job->status());
   if (job->status() == RemoteCommandJob::SUCCEEDED) {
-    scoped_ptr<std::string> payload = job->GetResultPayload();
+    std::unique_ptr<std::string> payload = job->GetResultPayload();
     EXPECT_TRUE(payload);
     EXPECT_EQ(expected_payload, *payload);
   }
@@ -264,8 +266,8 @@ void DeviceCommandScreenshotTest::VerifyResults(
 }
 
 TEST_F(DeviceCommandScreenshotTest, Success) {
-  scoped_ptr<RemoteCommandJob> job(new DeviceCommandScreenshotJob(
-      make_scoped_ptr(new MockScreenshotDelegate(nullptr, true))));
+  std::unique_ptr<RemoteCommandJob> job(new DeviceCommandScreenshotJob(
+      base::MakeUnique<MockScreenshotDelegate>(nullptr, true)));
   InitializeScreenshotJob(job.get(), kUniqueID, test_start_time_,
                           kMockUploadUrl);
   bool success = job->Run(
@@ -279,8 +281,8 @@ TEST_F(DeviceCommandScreenshotTest, Success) {
 }
 
 TEST_F(DeviceCommandScreenshotTest, FailureUserInput) {
-  scoped_ptr<RemoteCommandJob> job(new DeviceCommandScreenshotJob(
-      make_scoped_ptr(new MockScreenshotDelegate(nullptr, false))));
+  std::unique_ptr<RemoteCommandJob> job(new DeviceCommandScreenshotJob(
+      base::MakeUnique<MockScreenshotDelegate>(nullptr, false)));
   InitializeScreenshotJob(job.get(), kUniqueID, test_start_time_,
                           kMockUploadUrl);
   bool success =
@@ -296,10 +298,10 @@ TEST_F(DeviceCommandScreenshotTest, FailureUserInput) {
 
 TEST_F(DeviceCommandScreenshotTest, Failure) {
   using ErrorCode = UploadJob::ErrorCode;
-  scoped_ptr<ErrorCode> error_code(
+  std::unique_ptr<ErrorCode> error_code(
       new ErrorCode(UploadJob::AUTHENTICATION_ERROR));
-  scoped_ptr<RemoteCommandJob> job(new DeviceCommandScreenshotJob(
-      make_scoped_ptr(new MockScreenshotDelegate(error_code.Pass(), true))));
+  std::unique_ptr<RemoteCommandJob> job(new DeviceCommandScreenshotJob(
+      base::MakeUnique<MockScreenshotDelegate>(std::move(error_code), true)));
   InitializeScreenshotJob(job.get(), kUniqueID, test_start_time_,
                           kMockUploadUrl);
   bool success = job->Run(

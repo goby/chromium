@@ -6,22 +6,25 @@
 #define CHROME_BROWSER_THEMES_THEME_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
+#include "build/build_config.h"
+#include "chrome/common/features.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "extensions/features/features.h"
 #include "ui/base/theme_provider.h"
 
 class CustomThemeSupplier;
-class BrowserThemePack;
 class ThemeSyncableService;
 class Profile;
 
@@ -58,39 +61,15 @@ extern "C" NSString* const kBrowserThemeDidChangeNotification;
 
 class ThemeService : public base::NonThreadSafe,
                      public content::NotificationObserver,
-                     public KeyedService,
-                     public ui::ThemeProvider {
+                     public KeyedService {
  public:
   // Public constants used in ThemeService and its subclasses:
-  static const char* kDefaultThemeID;
+  static const char kDefaultThemeID[];
 
   ThemeService();
   ~ThemeService() override;
 
   virtual void Init(Profile* profile);
-
-  // Returns a cross platform image for an id.
-  //
-  // TODO(erg): Make this part of the ui::ThemeProvider and the main way to get
-  // theme properties out of the theme provider since it's cross platform.
-  virtual gfx::Image GetImageNamed(int id) const;
-
-  // Overridden from ui::ThemeProvider:
-  bool UsingSystemTheme() const override;
-  gfx::ImageSkia* GetImageSkiaNamed(int id) const override;
-  SkColor GetColor(int id) const override;
-  int GetDisplayProperty(int id) const override;
-  bool ShouldUseNativeFrame() const override;
-  bool HasCustomImage(int id) const override;
-  base::RefCountedMemory* GetRawData(int id, ui::ScaleFactor scale_factor)
-      const override;
-#if defined(OS_MACOSX)
-  NSImage* GetNSImageNamed(int id) const override;
-  NSColor* GetNSImageColorNamed(int id) const override;
-  NSColor* GetNSColor(int id) const override;
-  NSColor* GetNSColorTint(int id) const override;
-  NSGradient* GetNSGradient(int id) const override;
-#endif
 
   // KeyedService:
   void Shutdown() override;
@@ -120,6 +99,10 @@ class ThemeService : public base::NonThreadSafe,
   // if we're using the GTK theme.
   virtual bool UsingDefaultTheme() const;
 
+  // Whether we are using the system theme. On GTK, the system theme is the GTK
+  // theme, not the "Classic" theme.
+  virtual bool UsingSystemTheme() const;
+
   // Gets the id of the last installed theme. (The theme may have been further
   // locally customized.)
   virtual std::string GetThemeID() const;
@@ -141,8 +124,10 @@ class ThemeService : public base::NonThreadSafe,
   // owned by |this| object.
   virtual ThemeSyncableService* GetThemeSyncableService() const;
 
-  // Save the images to be written to disk, mapping file path to id.
-  typedef std::map<base::FilePath, int> ImagesDiskCache;
+  // Gets the ThemeProvider for |profile|. This will be different for an
+  // incognito profile and its original profile, even though both profiles use
+  // the same ThemeService.
+  static const ui::ThemeProvider& GetThemeProviderForProfile(Profile* profile);
 
  protected:
   // Set a custom default theme instead of the normal default theme.
@@ -152,8 +137,12 @@ class ThemeService : public base::NonThreadSafe,
   // Returns true if the ThemeService should use the system theme on startup.
   virtual bool ShouldInitWithSystemTheme() const;
 
+  // Returns the color to use for |id| and |incognito| if the theme service does
+  // not provide an override.
+  virtual SkColor GetDefaultColor(int id, bool incognito) const;
+
   // Get the specified tint - |id| is one of the TINT_* enum values.
-  color_utils::HSL GetTint(int id) const;
+  color_utils::HSL GetTint(int id, bool incognito) const;
 
   // Clears all the override fields and saves the dictionary.
   virtual void ClearAllThemeData();
@@ -173,6 +162,11 @@ class ThemeService : public base::NonThreadSafe,
   // from ClearAllThemeData().
   virtual void FreePlatformCaches();
 
+  // Implementation for ui::ThemeProvider (see block of functions in private
+  // section).
+  virtual bool ShouldUseNativeFrame() const;
+  bool HasCustomImage(int id) const;
+
   Profile* profile() const { return profile_; }
 
   void set_ready() { ready_ = true; }
@@ -187,7 +181,78 @@ class ThemeService : public base::NonThreadSafe,
   bool ready_;
 
  private:
+  // This class implements ui::ThemeProvider on behalf of ThemeService and keeps
+  // track of the incognito state of the calling code.
+  class BrowserThemeProvider : public ui::ThemeProvider {
+   public:
+    BrowserThemeProvider(const ThemeService& theme_service, bool incognito);
+    ~BrowserThemeProvider() override;
+
+    // Overridden from ui::ThemeProvider:
+    gfx::ImageSkia* GetImageSkiaNamed(int id) const override;
+    SkColor GetColor(int original_id) const override;
+    color_utils::HSL GetTint(int original_id) const override;
+    int GetDisplayProperty(int id) const override;
+    bool ShouldUseNativeFrame() const override;
+    bool HasCustomImage(int id) const override;
+    base::RefCountedMemory* GetRawData(int id, ui::ScaleFactor scale_factor)
+        const override;
+#if defined(OS_MACOSX)
+    bool UsingSystemTheme() const override;
+    bool InIncognitoMode() const override;
+    bool HasCustomColor(int id) const override;
+    NSImage* GetNSImageNamed(int id) const override;
+    NSColor* GetNSImageColorNamed(int id) const override;
+    NSColor* GetNSColor(int id) const override;
+    NSColor* GetNSColorTint(int id) const override;
+    NSGradient* GetNSGradient(int id) const override;
+    bool ShouldIncreaseContrast() const override;
+#endif
+
+   private:
+    const ThemeService& theme_service_;
+    bool incognito_;
+
+    DISALLOW_COPY_AND_ASSIGN(BrowserThemeProvider);
+  };
+  friend class BrowserThemeProvider;
   friend class theme_service_internal::ThemeServiceTest;
+
+  // Key for cache of separator colors; pair is <tab color, frame color>.
+  using SeparatorColorKey = std::pair<SkColor, SkColor>;
+  using SeparatorColorCache = std::map<SeparatorColorKey, SkColor>;
+
+  // Computes the "toolbar top separator" color.  This color is drawn atop the
+  // frame to separate it from tabs, the toolbar, and the new tab button, as
+  // well as atop background tabs to separate them from other tabs or the
+  // toolbar.  We use semitransparent black or white so as to darken or lighten
+  // the frame, with the goal of contrasting with both the frame color and the
+  // active tab (i.e. toolbar) color.  (It's too difficult to try to find colors
+  // that will contrast with both of these as well as the background tab color,
+  // and contrasting with the foreground tab is the most important).
+  static SkColor GetSeparatorColor(SkColor tab_color, SkColor frame_color);
+
+  // These methods provide the implementation for ui::ThemeProvider (exposed
+  // via BrowserThemeProvider).
+  gfx::ImageSkia* GetImageSkiaNamed(int id, bool incognito) const;
+  SkColor GetColor(int id, bool incognito) const;
+  int GetDisplayProperty(int id) const;
+  base::RefCountedMemory* GetRawData(int id,
+                                     ui::ScaleFactor scale_factor) const;
+#if defined(OS_MACOSX)
+  NSImage* GetNSImageNamed(int id, bool incognito) const;
+  NSColor* GetNSImageColorNamed(int id, bool incognito) const;
+  bool HasCustomColor(int id) const;
+  NSColor* GetNSColor(int id, bool incognito) const;
+  NSColor* GetNSColorTint(int id) const;
+  NSGradient* GetNSGradient(int id) const;
+#endif
+
+  // Returns a cross platform image for an id.
+  //
+  // TODO(erg): Make this part of the ui::ThemeProvider and the main way to get
+  // theme properties out of the theme provider since it's cross platform.
+  gfx::Image GetImageNamed(int id, bool incognito) const;
 
   // Called when the extension service is ready.
   void OnExtensionServiceReady();
@@ -210,7 +275,7 @@ class ThemeService : public base::NonThreadSafe,
   // case we don't have a theme pack).
   void BuildFromExtension(const extensions::Extension* extension);
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // Returns true if the profile belongs to a supervised user.
   bool IsSupervisedUser() const;
 
@@ -247,14 +312,21 @@ class ThemeService : public base::NonThreadSafe,
   // The number of infobars currently displayed.
   int number_of_infobars_;
 
+  // A cache of already-computed values for COLOR_TOOLBAR_TOP_SEPARATOR, which
+  // can be expensive to compute.
+  mutable SeparatorColorCache separator_color_cache_;
+
   content::NotificationRegistrar registrar_;
 
-  scoped_ptr<ThemeSyncableService> theme_syncable_service_;
+  std::unique_ptr<ThemeSyncableService> theme_syncable_service_;
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   class ThemeObserver;
-  scoped_ptr<ThemeObserver> theme_observer_;
+  std::unique_ptr<ThemeObserver> theme_observer_;
 #endif
+
+  BrowserThemeProvider original_theme_provider_;
+  BrowserThemeProvider incognito_theme_provider_;
 
   base::WeakPtrFactory<ThemeService> weak_ptr_factory_;
 

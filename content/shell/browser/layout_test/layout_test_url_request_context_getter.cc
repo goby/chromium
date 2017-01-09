@@ -4,8 +4,11 @@
 
 #include "content/shell/browser/layout_test/layout_test_url_request_context_getter.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/shell/browser/shell_network_delegate.h"
 #include "net/proxy/proxy_service.h"
@@ -15,17 +18,17 @@ namespace content {
 LayoutTestURLRequestContextGetter::LayoutTestURLRequestContextGetter(
     bool ignore_certificate_errors,
     const base::FilePath& base_path,
-    base::MessageLoop* io_loop,
-    base::MessageLoop* file_loop,
+    scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
     ProtocolHandlerMap* protocol_handlers,
     URLRequestInterceptorScopedVector request_interceptors,
     net::NetLog* net_log)
     : ShellURLRequestContextGetter(ignore_certificate_errors,
                                    base_path,
-                                   io_loop,
-                                   file_loop,
+                                   std::move(io_task_runner),
+                                   std::move(file_task_runner),
                                    protocol_handlers,
-                                   request_interceptors.Pass(),
+                                   std::move(request_interceptors),
                                    net_log) {
   // Must first be created on the UI thread.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -34,18 +37,18 @@ LayoutTestURLRequestContextGetter::LayoutTestURLRequestContextGetter(
 LayoutTestURLRequestContextGetter::~LayoutTestURLRequestContextGetter() {
 }
 
-scoped_ptr<net::NetworkDelegate>
+std::unique_ptr<net::NetworkDelegate>
 LayoutTestURLRequestContextGetter::CreateNetworkDelegate() {
-  ShellNetworkDelegate::SetAcceptAllCookies(false);
-  return make_scoped_ptr(new ShellNetworkDelegate);
+  ShellNetworkDelegate::SetBlockThirdPartyCookies(true);
+  return base::WrapUnique(new ShellNetworkDelegate);
 }
 
-scoped_ptr<net::ProxyConfigService>
+std::unique_ptr<net::ProxyConfigService>
 LayoutTestURLRequestContextGetter::GetProxyConfigService() {
   return nullptr;
 }
 
-scoped_ptr<net::ProxyService>
+std::unique_ptr<net::ProxyService>
 LayoutTestURLRequestContextGetter::GetProxyService() {
   return net::ProxyService::CreateDirect();
 }

@@ -7,11 +7,13 @@
 #include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
 #include "jni/ViewConfigurationHelper_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::GetApplicationContext;
+using base::android::JavaParamRef;
 
 namespace gfx {
 
@@ -22,13 +24,11 @@ struct ViewConfigurationData {
       : double_tap_timeout_in_ms_(0),
         long_press_timeout_in_ms_(0),
         tap_timeout_in_ms_(0),
-        scroll_friction_(1.f),
         max_fling_velocity_in_dips_s_(0),
         min_fling_velocity_in_dips_s_(0),
         touch_slop_in_dips_(0),
         double_tap_slop_in_dips_(0),
-        min_scaling_span_in_dips_(0),
-        min_scaling_touch_major_in_dips_(0) {
+        min_scaling_span_in_dips_(0) {
     JNIEnv* env = AttachCurrentThread();
     j_view_configuration_helper_.Reset(
         Java_ViewConfigurationHelper_createWithListener(
@@ -39,15 +39,17 @@ struct ViewConfigurationData {
     long_press_timeout_in_ms_ =
         Java_ViewConfigurationHelper_getLongPressTimeout(env);
     tap_timeout_in_ms_ = Java_ViewConfigurationHelper_getTapTimeout(env);
-    scroll_friction_ = Java_ViewConfigurationHelper_getScrollFriction(env);
 
-    jobject obj = j_view_configuration_helper_.obj();
-    Update(Java_ViewConfigurationHelper_getMaximumFlingVelocity(env, obj),
-           Java_ViewConfigurationHelper_getMinimumFlingVelocity(env, obj),
-           Java_ViewConfigurationHelper_getTouchSlop(env, obj),
-           Java_ViewConfigurationHelper_getDoubleTapSlop(env, obj),
-           Java_ViewConfigurationHelper_getMinScalingSpan(env, obj),
-           Java_ViewConfigurationHelper_getMinScalingTouchMajor(env, obj));
+    Update(Java_ViewConfigurationHelper_getMaximumFlingVelocity(
+               env, j_view_configuration_helper_),
+           Java_ViewConfigurationHelper_getMinimumFlingVelocity(
+               env, j_view_configuration_helper_),
+           Java_ViewConfigurationHelper_getTouchSlop(
+               env, j_view_configuration_helper_),
+           Java_ViewConfigurationHelper_getDoubleTapSlop(
+               env, j_view_configuration_helper_),
+           Java_ViewConfigurationHelper_getMinScalingSpan(
+               env, j_view_configuration_helper_));
   }
 
   ~ViewConfigurationData() {}
@@ -56,17 +58,15 @@ struct ViewConfigurationData {
                           float minimum_fling_velocity,
                           float touch_slop,
                           float double_tap_slop,
-                          float min_scaling_span,
-                          float min_scaling_touch_major) {
+                          float min_scaling_span) {
     base::AutoLock autolock(lock_);
     Update(maximum_fling_velocity, minimum_fling_velocity, touch_slop,
-           double_tap_slop, min_scaling_span, min_scaling_touch_major);
+           double_tap_slop, min_scaling_span);
   }
 
   int double_tap_timeout_in_ms() const { return double_tap_timeout_in_ms_; }
   int long_press_timeout_in_ms() const { return long_press_timeout_in_ms_; }
   int tap_timeout_in_ms() const { return tap_timeout_in_ms_; }
-  float scroll_friction() const { return scroll_friction_; }
 
   int max_fling_velocity_in_dips_s() {
     base::AutoLock autolock(lock_);
@@ -93,25 +93,18 @@ struct ViewConfigurationData {
     return min_scaling_span_in_dips_;
   }
 
-  int min_scaling_touch_major_in_dips() {
-    base::AutoLock autolock(lock_);
-    return min_scaling_touch_major_in_dips_;
-  }
-
  private:
   void Update(float maximum_fling_velocity,
               float minimum_fling_velocity,
               float touch_slop,
               float double_tap_slop,
-              float min_scaling_span,
-              float min_scaling_touch_major) {
+              float min_scaling_span) {
     DCHECK_LE(minimum_fling_velocity, maximum_fling_velocity);
     max_fling_velocity_in_dips_s_ = maximum_fling_velocity;
     min_fling_velocity_in_dips_s_ = minimum_fling_velocity;
     touch_slop_in_dips_ = touch_slop;
     double_tap_slop_in_dips_ = double_tap_slop;
     min_scaling_span_in_dips_ = min_scaling_span;
-    min_scaling_touch_major_in_dips_ = min_scaling_touch_major;
   }
 
   base::Lock lock_;
@@ -122,7 +115,6 @@ struct ViewConfigurationData {
   int double_tap_timeout_in_ms_;
   int long_press_timeout_in_ms_;
   int tap_timeout_in_ms_;
-  float scroll_friction_;
 
   // These values may vary as view-specific parameters change, so read/write
   // access must be synchronized.
@@ -131,7 +123,6 @@ struct ViewConfigurationData {
   int touch_slop_in_dips_;
   int double_tap_slop_in_dips_;
   int min_scaling_span_in_dips_;
-  int min_scaling_touch_major_in_dips_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ViewConfigurationData);
@@ -149,11 +140,10 @@ static void UpdateSharedViewConfiguration(JNIEnv* env,
                                           jfloat minimum_fling_velocity,
                                           jfloat touch_slop,
                                           jfloat double_tap_slop,
-                                          jfloat min_scaling_span,
-                                          jfloat min_scaling_touch_major) {
+                                          jfloat min_scaling_span) {
   g_view_configuration.Get().SynchronizedUpdate(
       maximum_fling_velocity, minimum_fling_velocity, touch_slop,
-      double_tap_slop, min_scaling_span, min_scaling_touch_major);
+      double_tap_slop, min_scaling_span);
 }
 
 int ViewConfiguration::GetDoubleTapTimeoutInMs() {
@@ -166,10 +156,6 @@ int ViewConfiguration::GetLongPressTimeoutInMs() {
 
 int ViewConfiguration::GetTapTimeoutInMs() {
   return g_view_configuration.Get().tap_timeout_in_ms();
-}
-
-float ViewConfiguration::GetScrollFriction() {
-  return g_view_configuration.Get().scroll_friction();
 }
 
 int ViewConfiguration::GetMaximumFlingVelocityInDipsPerSecond() {
@@ -190,10 +176,6 @@ int ViewConfiguration::GetDoubleTapSlopInDips() {
 
 int ViewConfiguration::GetMinScalingSpanInDips() {
   return g_view_configuration.Get().min_scaling_span_in_dips();
-}
-
-int ViewConfiguration::GetMinScalingTouchMajorInDips() {
-  return g_view_configuration.Get().min_scaling_touch_major_in_dips();
 }
 
 bool ViewConfiguration::RegisterViewConfiguration(JNIEnv* env) {

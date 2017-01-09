@@ -6,8 +6,9 @@
 #define CHROME_BROWSER_GLOBAL_KEYBOARD_SHORTCUTS_MAC_H_
 
 #include <Carbon/Carbon.h>  // For unichar.
+#include <stddef.h>
 
-#include "base/basictypes.h"
+#include <vector>
 
 @class NSEvent;
 
@@ -79,10 +80,9 @@ int CommandForKeyEvent(NSEvent* event);
 unichar KeyCharacterForEvent(NSEvent* event);
 
 // For testing purposes.
-const KeyboardShortcutData* GetWindowKeyboardShortcutTable(size_t* num_entries);
-const KeyboardShortcutData*
-    GetDelayedWindowKeyboardShortcutTable(size_t* num_entries);
-const KeyboardShortcutData*
-    GetBrowserKeyboardShortcutTable(size_t* num_entries);
+const std::vector<KeyboardShortcutData>& GetWindowKeyboardShortcutTable();
+const std::vector<KeyboardShortcutData>&
+GetDelayedWindowKeyboardShortcutTable();
+const std::vector<KeyboardShortcutData>& GetBrowserKeyboardShortcutTable();
 
 #endif  // #ifndef CHROME_BROWSER_GLOBAL_KEYBOARD_SHORTCUTS_MAC_H_

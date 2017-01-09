@@ -4,7 +4,10 @@
 
 #include "extensions/browser/api/usb/usb_event_router.h"
 
-#include "device/core/device_client.h"
+#include <memory>
+#include <utility>
+
+#include "device/base/device_client.h"
 #include "device/usb/usb_device.h"
 #include "extensions/browser/api/device_permissions_manager.h"
 #include "extensions/browser/api/usb/usb_guid_map.h"
@@ -31,11 +34,10 @@ bool WillDispatchDeviceEvent(scoped_refptr<UsbDevice> device,
                              Event* event,
                              const base::DictionaryValue* listener_filter) {
   // Check install-time and optional permissions.
-  UsbDevicePermission::CheckParam param(
-      device->vendor_id(), device->product_id(),
-      UsbDevicePermissionData::UNSPECIFIED_INTERFACE);
+  std::unique_ptr<UsbDevicePermission::CheckParam> param =
+      UsbDevicePermission::CheckParam::ForUsbDevice(extension, device.get());
   if (extension->permissions_data()->CheckAPIPermissionWithParam(
-          APIPermission::kUsbDevice, &param)) {
+          APIPermission::kUsbDevice, param.get())) {
     return true;
   }
 
@@ -103,7 +105,7 @@ void UsbEventRouter::DispatchEvent(const std::string& event_name,
     usb::Device device_obj;
     UsbGuidMap::Get(browser_context_)->GetApiDevice(device, &device_obj);
 
-    scoped_ptr<Event> event;
+    std::unique_ptr<Event> event;
     if (event_name == usb::OnDeviceAdded::kEventName) {
       event.reset(new Event(events::USB_ON_DEVICE_ADDED,
                             usb::OnDeviceAdded::kEventName,
@@ -117,7 +119,7 @@ void UsbEventRouter::DispatchEvent(const std::string& event_name,
 
     event->will_dispatch_callback =
         base::Bind(&WillDispatchDeviceEvent, device);
-    event_router->BroadcastEvent(event.Pass());
+    event_router->BroadcastEvent(std::move(event));
   }
 }
 

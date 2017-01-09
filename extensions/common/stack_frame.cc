@@ -7,7 +7,7 @@
 #include <string>
 
 #include "base/strings/utf_string_conversions.h"
-#include "third_party/re2/re2/re2.h"
+#include "third_party/re2/src/re2/re2.h"
 
 namespace extensions {
 
@@ -25,16 +25,15 @@ StackFrame::StackFrame(const StackFrame& frame)
       function(frame.function) {
 }
 
-StackFrame::StackFrame(size_t line_number,
-                       size_t column_number,
+StackFrame::StackFrame(uint32_t line_number,
+                       uint32_t column_number,
                        const base::string16& source,
                        const base::string16& function)
     : line_number(line_number),
       column_number(column_number),
       source(source),
       function(function.empty() ? base::UTF8ToUTF16(kAnonymousFunction)
-                   : function) {
-}
+                                : function) {}
 
 StackFrame::~StackFrame() {
 }
@@ -46,7 +45,7 @@ StackFrame::~StackFrame() {
 // (We have to recognize two formats because V8 will report stack traces in
 // both ways. If we reconcile this, we can clean this up.)
 // static
-scoped_ptr<StackFrame> StackFrame::CreateFromText(
+std::unique_ptr<StackFrame> StackFrame::CreateFromText(
     const base::string16& frame_text) {
   // We need to use utf8 for re2 matching.
   std::string text = base::UTF16ToUTF8(frame_text);
@@ -61,13 +60,11 @@ scoped_ptr<StackFrame> StackFrame::CreateFromText(
       !re2::RE2::FullMatch(text,
                            "([^\\(\\)]+):(\\d+):(\\d+)",
                            &source, &line, &column)) {
-    return scoped_ptr<StackFrame>();
+    return std::unique_ptr<StackFrame>();
   }
 
-  return scoped_ptr<StackFrame>(new StackFrame(line,
-                                               column,
-                                               base::UTF8ToUTF16(source),
-                                               base::UTF8ToUTF16(function)));
+  return std::unique_ptr<StackFrame>(new StackFrame(
+      line, column, base::UTF8ToUTF16(source), base::UTF8ToUTF16(function)));
 }
 
 bool StackFrame::operator==(const StackFrame& rhs) const {

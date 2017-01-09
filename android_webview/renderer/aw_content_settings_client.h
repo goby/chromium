@@ -5,6 +5,7 @@
 #ifndef ANDROID_WEBVIEW_RENDERER_AW_CONTENT_SETTINGS_CLIENT_H_
 #define ANDROID_WEBVIEW_RENDERER_AW_CONTENT_SETTINGS_CLIENT_H_
 
+#include "base/macros.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "third_party/WebKit/public/web/WebContentSettingsClient.h"
 
@@ -19,15 +20,14 @@ class AwContentSettingsClient : public content::RenderFrameObserver,
  private:
   ~AwContentSettingsClient() override;
 
+  // content::RenderFrameObserver implementation.
+  void OnDestruct() override;
+
   // blink::WebContentSettingsClient implementation.
-  virtual bool allowDisplayingInsecureContent(
+  bool allowRunningInsecureContent(
       bool enabled_per_settings,
       const blink::WebSecurityOrigin& origin,
-      const blink::WebURL& url);
-  virtual bool allowRunningInsecureContent(
-      bool enabled_per_settings,
-      const blink::WebSecurityOrigin& origin,
-      const blink::WebURL& url);
+      const blink::WebURL& url) override;
 
   DISALLOW_COPY_AND_ASSIGN(AwContentSettingsClient);
 };

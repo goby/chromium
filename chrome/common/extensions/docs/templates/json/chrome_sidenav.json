@@ -266,38 +266,6 @@
             "href": "/multidevice/webview/tipsandtricks"
           }
         ]
-      },
-      {
-        "title": "Chrome for iOS",
-        "href": "/multidevice/ios/overview",
-        "items": [
-          {
-            "title": "Overview",
-            "href": "/multidevice/ios/overview"
-          },
-          {
-            "title": "Opening Links in Chrome",
-            "href": "/multidevice/ios/links"
-          },
-          {
-            "title": "Case Studies",
-            "href": "/multidevice/ios/case-studies",
-            "items": [
-              {
-                "title": "Case Studies",
-                "href": "/multidevice/ios/case-studies"
-              },
-              {
-                "title": "Pocket",
-                "href": "/multidevice/ios/pocket"
-              },
-              {
-                "title": "Feedly",
-                "href": "/multidevice/ios/feedly"
-              }
-            ]
-          }
-        ]
       }
     ]
   },
@@ -315,6 +283,10 @@
               {
                 "title": "What Are Chrome Apps?",
                 "href": "/apps/about_apps"
+              },
+              {
+                "title": "Transition Overview",
+                "href": "/apps/migration"
               },
               {
                 "title": "Create Your First App",
@@ -1012,10 +984,6 @@
                 "href": "/webstore/identify_user"
               },
               {
-                "title": "Checking for Payment",
-                "href": "/webstore/check_for_payment"
-              },
-              {
                 "title": "One-Time Payments",
                 "href": "/webstore/one_time_payments"
               },
@@ -1048,6 +1016,10 @@
               {
                 "title": "Program Policies",
                 "href": "/webstore/program_policies"
+              },
+              {
+                "title": "User Data FAQ",
+                "href": "/webstore/user_data"
               },
               {
                 "title": "Terms of Service",

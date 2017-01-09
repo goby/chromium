@@ -70,8 +70,8 @@ function TestStream(stream) {
 function testThroughWebRTC(stream) {
   capture_stream = stream;
   console.log("Testing through webrtc.");
-  var sender = new webkitRTCPeerConnection(null);
-  var receiver = new webkitRTCPeerConnection(null);
+  var sender = new RTCPeerConnection();
+  var receiver = new RTCPeerConnection();
   sender.onicecandidate = function (event) {
     if (event.candidate) {
       receiver.addIceCandidate(new RTCIceCandidate(event.candidate));
@@ -92,7 +92,9 @@ function testThroughWebRTC(stream) {
     receiver.createAnswer(function (receiver_description) {
       receiver.setLocalDescription(receiver_description);
       sender.setRemoteDescription(receiver_description);
+    }, function() {
     });
+  }, function() {
   });
 }
 

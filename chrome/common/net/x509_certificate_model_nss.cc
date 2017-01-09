@@ -12,6 +12,11 @@
 #include <pk11pub.h>  // PK11_FindKeyByAnyCert
 #include <seccomon.h>  // SECItem
 #include <sechash.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <memory>
 
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
@@ -91,14 +96,15 @@ struct NSSCMSMessageDeleter {
     NSS_CMSMessage_Destroy(x);
   }
 };
-typedef scoped_ptr<NSSCMSMessage, NSSCMSMessageDeleter> ScopedNSSCMSMessage;
+typedef std::unique_ptr<NSSCMSMessage, NSSCMSMessageDeleter>
+    ScopedNSSCMSMessage;
 
 struct FreeNSSCMSSignedData {
   inline void operator()(NSSCMSSignedData* x) const {
     NSS_CMSSignedData_Destroy(x);
   }
 };
-typedef scoped_ptr<NSSCMSSignedData, FreeNSSCMSSignedData>
+typedef std::unique_ptr<NSSCMSSignedData, FreeNSSCMSSignedData>
     ScopedNSSCMSSignedData;
 
 }  // namespace
@@ -126,7 +132,7 @@ string GetVersion(X509Certificate::OSCertHandle cert_handle) {
   unsigned long version = 0;
   if (cert_handle->version.len == 0 ||
       SEC_ASN1DecodeInteger(&cert_handle->version, &version) == SECSuccess) {
-    return base::Uint64ToString(base::strict_cast<uint64>(version + 1));
+    return base::Uint64ToString(base::strict_cast<uint64_t>(version + 1));
   }
   return std::string();
 }

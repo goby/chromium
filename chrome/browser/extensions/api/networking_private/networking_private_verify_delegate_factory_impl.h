@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_VERIFY_DELEGATE_FACTORY_IMPL_H_
 #define CHROME_BROWSER_EXTENSIONS_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_VERIFY_DELEGATE_FACTORY_IMPL_H_
 
+#include "base/macros.h"
 #include "extensions/browser/api/networking_private/networking_private_delegate_factory.h"
 
 namespace extensions {
@@ -15,7 +16,7 @@ class NetworkingPrivateVerifyDelegateFactoryImpl
   NetworkingPrivateVerifyDelegateFactoryImpl();
   ~NetworkingPrivateVerifyDelegateFactoryImpl() override;
 
-  scoped_ptr<NetworkingPrivateDelegate::VerifyDelegate> CreateDelegate()
+  std::unique_ptr<NetworkingPrivateDelegate::VerifyDelegate> CreateDelegate()
       override;
 
  private:

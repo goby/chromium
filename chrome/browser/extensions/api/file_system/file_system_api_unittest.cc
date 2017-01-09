@@ -4,24 +4,29 @@
 
 #include "chrome/browser/extensions/api/file_system/file_system_api.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/testing_pref_service.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "components/prefs/testing_pref_service.h"
+#include "components/user_manager/user.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
@@ -52,24 +57,22 @@ void CheckExtensions(const std::vector<base::FilePath::StringType>& expected,
   }
 }
 
-AcceptOption* BuildAcceptOption(const std::string& description,
-                                const std::string& mime_types,
-                                const std::string& extensions) {
-  AcceptOption* option = new AcceptOption();
+AcceptOption BuildAcceptOption(const std::string& description,
+                               const std::string& mime_types,
+                               const std::string& extensions) {
+  AcceptOption option;
 
   if (!description.empty())
-    option->description.reset(new std::string(description));
+    option.description.reset(new std::string(description));
 
   if (!mime_types.empty()) {
-    option->mime_types.reset(new std::vector<std::string>(
-        base::SplitString(mime_types, ",",
-                          base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)));
+    option.mime_types.reset(new std::vector<std::string>(base::SplitString(
+        mime_types, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)));
   }
 
   if (!extensions.empty()) {
-    option->extensions.reset(new std::vector<std::string>(
-        base::SplitString(extensions, ",",
-                          base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)));
+    option.extensions.reset(new std::vector<std::string>(base::SplitString(
+        extensions, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)));
   }
 
   return option;
@@ -175,10 +178,11 @@ class FileSystemApiConsentProviderTest : public testing::Test {
 
  protected:
   base::WeakPtr<Volume> volume_;
-  scoped_ptr<TestingPrefServiceSimple> testing_pref_service_;
+  std::unique_ptr<TestingPrefServiceSimple> testing_pref_service_;
   chromeos::FakeChromeUserManager*
       user_manager_;  // Owned by the scope enabler.
-  scoped_ptr<chromeos::ScopedUserManagerEnabler> scoped_user_manager_enabler_;
+  std::unique_ptr<chromeos::ScopedUserManagerEnabler>
+      scoped_user_manager_enabler_;
   content::TestBrowserThreadBundle thread_bundle_;
 };
 #endif
@@ -194,9 +198,9 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionFileTypeInfoTest) {
 
   // Test grouping of multiple types.
   file_type_info = ui::SelectFileDialog::FileTypeInfo();
-  std::vector<linked_ptr<AcceptOption> > options;
-  options.push_back(linked_ptr<AcceptOption>(BuildAcceptOption(
-      std::string(), "application/x-chrome-extension", "jso")));
+  std::vector<AcceptOption> options;
+  options.push_back(BuildAcceptOption(std::string(),
+                                      "application/x-chrome-extension", "jso"));
   acceptsAllTypes = false;
   FileSystemChooseEntryFunction::BuildFileTypeInfo(&file_type_info,
       base::FilePath::StringType(), &options, &acceptsAllTypes);
@@ -214,8 +218,8 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionFileTypeInfoTest) {
   // Test that not satisfying the extension will force all types.
   file_type_info = ui::SelectFileDialog::FileTypeInfo();
   options.clear();
-  options.push_back(linked_ptr<AcceptOption>(BuildAcceptOption(
-      std::string(), std::string(), "unrelated")));
+  options.push_back(
+      BuildAcceptOption(std::string(), std::string(), "unrelated"));
   acceptsAllTypes = false;
   FileSystemChooseEntryFunction::BuildFileTypeInfo(&file_type_info,
       ToStringType(".jso"), &options, &acceptsAllTypes);
@@ -224,10 +228,8 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionFileTypeInfoTest) {
   // Test multiple list entries, all containing their own types.
   file_type_info = ui::SelectFileDialog::FileTypeInfo();
   options.clear();
-  options.push_back(linked_ptr<AcceptOption>(
-      BuildAcceptOption(std::string(), std::string(), "jso,js")));
-  options.push_back(linked_ptr<AcceptOption>(
-      BuildAcceptOption(std::string(), std::string(), "cpp,cc")));
+  options.push_back(BuildAcceptOption(std::string(), std::string(), "jso,js"));
+  options.push_back(BuildAcceptOption(std::string(), std::string(), "cpp,cc"));
   acceptsAllTypes = false;
   FileSystemChooseEntryFunction::BuildFileTypeInfo(&file_type_info,
       base::FilePath::StringType(), &options, &acceptsAllTypes);
@@ -246,8 +248,7 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionFileTypeInfoTest) {
   // Test accept type that causes description override.
   file_type_info = ui::SelectFileDialog::FileTypeInfo();
   options.clear();
-  options.push_back(linked_ptr<AcceptOption>(
-      BuildAcceptOption(std::string(), "image/*", "html")));
+  options.push_back(BuildAcceptOption(std::string(), "image/*", "html"));
   acceptsAllTypes = false;
   FileSystemChooseEntryFunction::BuildFileTypeInfo(&file_type_info,
       base::FilePath::StringType(), &options, &acceptsAllTypes);
@@ -259,8 +260,8 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionFileTypeInfoTest) {
   // still present the default.
   file_type_info = ui::SelectFileDialog::FileTypeInfo();
   options.clear();
-  options.push_back(linked_ptr<AcceptOption>(BuildAcceptOption(
-      std::string(), "image/*,audio/*,video/*", std::string())));
+  options.push_back(BuildAcceptOption(std::string(), "image/*,audio/*,video/*",
+                                      std::string()));
   acceptsAllTypes = false;
   FileSystemChooseEntryFunction::BuildFileTypeInfo(&file_type_info,
       base::FilePath::StringType(), &options, &acceptsAllTypes);
@@ -270,8 +271,8 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionFileTypeInfoTest) {
   // Test explicit description override.
   file_type_info = ui::SelectFileDialog::FileTypeInfo();
   options.clear();
-  options.push_back(linked_ptr<AcceptOption>(
-      BuildAcceptOption("File Types 101", "image/jpeg", std::string())));
+  options.push_back(
+      BuildAcceptOption("File Types 101", "image/jpeg", std::string()));
   acceptsAllTypes = false;
   FileSystemChooseEntryFunction::BuildFileTypeInfo(&file_type_info,
       base::FilePath::StringType(), &options, &acceptsAllTypes);
@@ -316,7 +317,8 @@ TEST_F(FileSystemApiConsentProviderTest, ForNonKioskApps) {
   // Component apps are not granted unless they are whitelisted.
   {
     scoped_refptr<Extension> component_extension(
-        test_util::BuildApp(ExtensionBuilder().SetLocation(Manifest::COMPONENT))
+        test_util::BuildApp(
+            std::move(ExtensionBuilder().SetLocation(Manifest::COMPONENT)))
             .Build());
     TestingConsentProviderDelegate delegate;
     ConsentProvider provider(&delegate);
@@ -327,7 +329,8 @@ TEST_F(FileSystemApiConsentProviderTest, ForNonKioskApps) {
   // user.
   {
     scoped_refptr<Extension> whitelisted_component_extension(
-        test_util::BuildApp(ExtensionBuilder().SetLocation(Manifest::COMPONENT))
+        test_util::BuildApp(
+            std::move(ExtensionBuilder().SetLocation(Manifest::COMPONENT)))
             .Build());
     TestingConsentProviderDelegate delegate;
     delegate.SetComponentWhitelist(whitelisted_component_extension->id());
@@ -361,10 +364,11 @@ TEST_F(FileSystemApiConsentProviderTest, ForKioskApps) {
   // instantly without asking for user consent, but with a notification.
   {
     scoped_refptr<Extension> auto_launch_kiosk_app(
-        test_util::BuildApp(ExtensionBuilder().Pass())
+        test_util::BuildApp(ExtensionBuilder())
             .MergeManifest(DictionaryBuilder()
                                .SetBoolean("kiosk_enabled", true)
-                               .SetBoolean("kiosk_only", true))
+                               .SetBoolean("kiosk_only", true)
+                               .Build())
             .Build());
     user_manager_->AddKioskAppUser(
         AccountId::FromUserEmail(auto_launch_kiosk_app->id()));
@@ -390,13 +394,16 @@ TEST_F(FileSystemApiConsentProviderTest, ForKioskApps) {
   // Non-component apps in manual-launch kiosk mode will be granted access after
   // receiving approval from the user.
   scoped_refptr<Extension> manual_launch_kiosk_app(
-      test_util::BuildApp(ExtensionBuilder().Pass())
+      test_util::BuildApp(ExtensionBuilder())
           .MergeManifest(DictionaryBuilder()
                              .SetBoolean("kiosk_enabled", true)
-                             .SetBoolean("kiosk_only", true))
+                             .SetBoolean("kiosk_only", true)
+                             .Build())
           .Build());
-  user_manager_->KioskAppLoggedIn(
-      AccountId::FromUserEmail(manual_launch_kiosk_app->id()));
+  user_manager::User* const manual_kiosk_app_user =
+      user_manager_->AddKioskAppUser(
+          AccountId::FromUserEmail(manual_launch_kiosk_app->id()));
+  user_manager_->KioskAppLoggedIn(manual_kiosk_app_user);
   {
     TestingConsentProviderDelegate delegate;
     delegate.SetDialogButton(ui::DIALOG_BUTTON_OK);

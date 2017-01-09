@@ -35,87 +35,104 @@
 #include "platform/PlatformExport.h"
 #include "platform/audio/AudioDestinationConsumer.h"
 #include "public/platform/WebMediaConstraints.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
-#include "wtf/RefCounted.h"
+#include "wtf/Allocator.h"
 #include "wtf/ThreadingPrimitives.h"
 #include "wtf/Vector.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
-class PLATFORM_EXPORT MediaStreamSource final : public GarbageCollectedFinalized<MediaStreamSource> {
-public:
-    class PLATFORM_EXPORT Observer : public GarbageCollectedMixin {
-    public:
-        virtual ~Observer() { }
-        virtual void sourceChangedState() = 0;
-    };
+class PLATFORM_EXPORT MediaStreamSource final
+    : public GarbageCollectedFinalized<MediaStreamSource> {
+ public:
+  class PLATFORM_EXPORT Observer : public GarbageCollectedMixin {
+   public:
+    virtual ~Observer() {}
+    virtual void sourceChangedState() = 0;
+  };
 
-    class ExtraData {
-    public:
-        virtual ~ExtraData() { }
-    };
+  class ExtraData {
+    USING_FAST_MALLOC(ExtraData);
 
-    enum Type {
-        TypeAudio,
-        TypeVideo
-    };
+   public:
+    virtual ~ExtraData() {}
+  };
 
-    enum ReadyState {
-        ReadyStateLive = 0,
-        ReadyStateMuted = 1,
-        ReadyStateEnded = 2
-    };
+  enum StreamType { TypeAudio, TypeVideo };
 
-    static MediaStreamSource* create(const String& id, Type, const String& name, bool remote, bool readonly, ReadyState = ReadyStateLive, bool requiresConsumer = false);
+  enum ReadyState {
+    ReadyStateLive = 0,
+    ReadyStateMuted = 1,
+    ReadyStateEnded = 2
+  };
 
-    const String& id() const { return m_id; }
-    Type type() const { return m_type; }
-    const String& name() const { return m_name; }
-    bool remote() const { return m_remote; }
-    bool readonly() const { return m_readonly; }
+  static MediaStreamSource* create(const String& id,
+                                   StreamType,
+                                   const String& name,
+                                   bool remote,
+                                   ReadyState = ReadyStateLive,
+                                   bool requiresConsumer = false);
 
-    void setReadyState(ReadyState);
-    ReadyState readyState() const { return m_readyState; }
+  const String& id() const { return m_id; }
+  StreamType type() const { return m_type; }
+  const String& name() const { return m_name; }
+  bool remote() const { return m_remote; }
 
-    void addObserver(Observer*);
+  void setReadyState(ReadyState);
+  ReadyState getReadyState() const { return m_readyState; }
 
-    ExtraData* extraData() const { return m_extraData.get(); }
-    void setExtraData(PassOwnPtr<ExtraData> extraData) { m_extraData = extraData; }
+  void addObserver(Observer*);
 
-    void setConstraints(WebMediaConstraints constraints) { m_constraints = constraints; }
-    WebMediaConstraints constraints() { return m_constraints; }
+  ExtraData* getExtraData() const { return m_extraData.get(); }
+  void setExtraData(std::unique_ptr<ExtraData> extraData) {
+    m_extraData = std::move(extraData);
+  }
 
-    void setAudioFormat(size_t numberOfChannels, float sampleRate);
-    void consumeAudio(AudioBus*, size_t numberOfFrames);
+  void setConstraints(WebMediaConstraints constraints) {
+    m_constraints = constraints;
+  }
+  WebMediaConstraints constraints() { return m_constraints; }
 
-    bool requiresAudioConsumer() const { return m_requiresConsumer; }
-    void addAudioConsumer(AudioDestinationConsumer*);
-    bool removeAudioConsumer(AudioDestinationConsumer*);
-    const HeapHashSet<Member<AudioDestinationConsumer>>& audioConsumers() { return m_audioConsumers; }
+  void setAudioFormat(size_t numberOfChannels, float sampleRate);
+  void consumeAudio(AudioBus*, size_t numberOfFrames);
 
-    DECLARE_TRACE();
+  bool requiresAudioConsumer() const { return m_requiresConsumer; }
+  void addAudioConsumer(AudioDestinationConsumer*);
+  bool removeAudioConsumer(AudioDestinationConsumer*);
+  const HeapHashSet<Member<AudioDestinationConsumer>>& audioConsumers() {
+    return m_audioConsumers;
+  }
 
-private:
-    MediaStreamSource(const String& id, Type, const String& name, bool remote, bool readonly, ReadyState, bool requiresConsumer);
+  // |m_extraData| may hold pointers to GC objects, and it may touch them in
+  // destruction.  So this class is eagerly finalized to finalize |m_extraData|
+  // promptly.
+  EAGERLY_FINALIZE();
+  DECLARE_TRACE();
 
-    String m_id;
-    Type m_type;
-    String m_name;
-    bool m_remote;
-    bool m_readonly;
-    ReadyState m_readyState;
-    bool m_requiresConsumer;
-    HeapHashSet<WeakMember<Observer>> m_observers;
-    Mutex m_audioConsumersLock;
-    HeapHashSet<Member<AudioDestinationConsumer>> m_audioConsumers;
-    OwnPtr<ExtraData> m_extraData;
-    WebMediaConstraints m_constraints;
+ private:
+  MediaStreamSource(const String& id,
+                    StreamType,
+                    const String& name,
+                    bool remote,
+                    ReadyState,
+                    bool requiresConsumer);
+
+  String m_id;
+  StreamType m_type;
+  String m_name;
+  bool m_remote;
+  ReadyState m_readyState;
+  bool m_requiresConsumer;
+  HeapHashSet<WeakMember<Observer>> m_observers;
+  Mutex m_audioConsumersLock;
+  HeapHashSet<Member<AudioDestinationConsumer>> m_audioConsumers;
+  std::unique_ptr<ExtraData> m_extraData;
+  WebMediaConstraints m_constraints;
 };
 
 typedef HeapVector<Member<MediaStreamSource>> MediaStreamSourceVector;
 
-} // namespace blink
+}  // namespace blink
 
-#endif // MediaStreamSource_h
+#endif  // MediaStreamSource_h

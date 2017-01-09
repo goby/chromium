@@ -7,32 +7,43 @@
 
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptWrappable.h"
+#include "modules/bluetooth/BluetoothDevice.h"
 #include "platform/heap/Handle.h"
+#include <memory>
 
 namespace blink {
 
-class BluetoothUUIDs;
 class RequestDeviceOptions;
 class ScriptPromise;
 class ScriptState;
 
-class Bluetooth
-    : public GarbageCollected<Bluetooth>
-    , public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static Bluetooth* create()
-    {
-        return new Bluetooth();
-    }
+class Bluetooth : public GarbageCollected<Bluetooth>, public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    // BluetoothDiscovery interface
-    ScriptPromise requestDevice(ScriptState*, const RequestDeviceOptions&, ExceptionState&);
+ public:
+  static Bluetooth* create() { return new Bluetooth(); }
 
-    DEFINE_INLINE_TRACE() { }
+  // BluetoothDiscovery interface
+  ScriptPromise requestDevice(ScriptState*,
+                              const RequestDeviceOptions&,
+                              ExceptionState&);
 
+  // Interface required by Garbage Collection:
+  DECLARE_VIRTUAL_TRACE();
+
+ private:
+  friend class RequestDeviceCallback;
+
+  BluetoothDevice* getBluetoothDeviceRepresentingDevice(
+      std::unique_ptr<WebBluetoothDeviceInit>,
+      ScriptPromiseResolver*);
+
+  // Map of device ids to BluetoothDevice objects.
+  // Ensures only one BluetoothDevice instance represents each
+  // Bluetooth device inside a single global object.
+  HeapHashMap<String, Member<BluetoothDevice>> m_deviceInstanceMap;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // Bluetooth_h
+#endif  // Bluetooth_h

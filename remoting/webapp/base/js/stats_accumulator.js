@@ -16,6 +16,8 @@
 /** @suppress {duplicate} */
 var remoting = remoting || {};
 
+(function() {
+
 /**
  * @constructor
  */
@@ -35,11 +37,28 @@ remoting.StatsAccumulator = function() {
 };
 
 /**
- * Adds values to this object.
+ * @param {Object<number>} stats
+ * @return {boolean} true if there is any non-zero value in stats, false
+ *     otherwise.
+ */
+function hasValidField(stats) {
+  for (var key in stats) {
+    if (stats[key] !== 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Adds values to this object. Do nothing if newValues has no valid field.
  *
  * @param {Object<number>} newValues
  */
 remoting.StatsAccumulator.prototype.add = function(newValues) {
+  if (!hasValidField(newValues)) {
+    return;
+  }
   for (var key in newValues) {
     this.getValueList(key).push(newValues[key]);
   }
@@ -94,6 +113,26 @@ remoting.StatsAccumulator.prototype.calcMean = function(key) {
 };
 
 /**
+ * Finds the max of the values for a given key.
+ *
+ * @param {string} key
+ * @return {number} the max of the values for that key
+ */
+remoting.StatsAccumulator.prototype.calcMax = function(key) {
+  /**
+   * @param {Array<number>} values
+   * @return {number}
+   */
+  var calcMax = function(values) {
+    if (!values || !values.length) {
+      return 0;
+    }
+    return Math.max.apply(null, values);
+  };
+  return this.map(key, calcMax);
+};
+
+/**
  * Applies a given map to the list of values for a given key.
  *
  * @param {string} key
@@ -131,15 +170,17 @@ remoting.StatsAccumulator.prototype.getPerfStats = function() {
   var stats = new remoting.ClientSession.PerfStats();
   stats.videoBandwidth = this.calcMean('videoBandwidth');
   stats.captureLatency = this.calcMean('captureLatency');
+  stats.maxCaptureLatency = this.calcMax('maxCaptureLatency');
   stats.encodeLatency = this.calcMean('encodeLatency');
+  stats.maxEncodeLatency = this.calcMax('maxEncodeLatency');
   stats.decodeLatency = this.calcMean('decodeLatency');
+  stats.maxDecodeLatency = this.calcMax('maxDecodeLatency');
   stats.renderLatency = this.calcMean('renderLatency');
+  stats.maxRenderLatency = this.calcMax('maxRenderLatency');
   stats.roundtripLatency = this.calcMean('roundtripLatency');
+  stats.maxRoundtripLatency = this.calcMax('maxRoundtripLatency');
 
-  for (var key in stats) {
-    if (stats[key] !== 0) {
-      return stats;
-    }
-  }
-  return null;
+  return hasValidField(stats) ? stats : null;
 };
+
+})();

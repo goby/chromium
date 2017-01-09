@@ -28,17 +28,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebCustomElement.h"
 
-#include "core/dom/custom/CustomElement.h"
+#include "core/dom/custom/V0CustomElement.h"
 #include "public/platform/WebString.h"
 
 namespace blink {
 
-void WebCustomElement::addEmbedderCustomElementName(const WebString& name)
-{
-    CustomElement::addEmbedderCustomElementName(name);
+void WebCustomElement::addEmbedderCustomElementName(const WebString& name) {
+  V0CustomElement::addEmbedderCustomElementName(name);
 }
 
-} // namespace blink
+}  // namespace blink

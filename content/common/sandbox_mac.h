@@ -8,9 +8,9 @@
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/public/common/sandbox_type.h"
 
@@ -50,9 +50,6 @@ class CONTENT_EXPORT SandboxCompiler {
   bool CompileAndApplyProfile(std::string* error);
 
  private:
-  // Frees all of the system resources allocated for the sandbox.
-  void FreeSandboxResources(void* profile, void* params, char* error);
-
   // Storage of the key/value pairs of strings that are used in the sandbox
   // profile.
   std::map<std::string, std::string> params_map_;

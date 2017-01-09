@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/memory_pressure/direct_memory_pressure_calculator.h"
+#include "components/memory_pressure/direct_memory_pressure_calculator_win.h"
 
+#include "base/logging.h"
+#include "base/process/process_metrics.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace memory_pressure {
 
+#if defined(MEMORY_PRESSURE_IS_POLLING)
+
 namespace {
 
-static const int kKBperMB = 1024;
+const int kKBperMB = 1024;
 
 }  // namespace
 
@@ -171,5 +175,7 @@ TEST_F(DirectMemoryPressureCalculatorTest,
 
   ASSERT_NO_FATAL_FAILURE(CalculateCurrentPressureLevelTest(&calc));
 }
+
+#endif  // defined(MEMORY_PRESSURE_IS_POLLING)
 
 }  // namespace memory_pressure

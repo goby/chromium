@@ -1,19 +1,18 @@
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
+      "drawsContent": true
+    },
+    {
+      "name": "LayoutBlockFlow (positioned) DIV id='composited-layer' class='final-drop-shadow'",
+      "position": [100, 100],
+      "bounds": [100, 100],
+      "contentsOpaque": true,
       "drawsContent": true,
-      "children": [
-        {
-          "position": [30, 30],
-          "transformOrigin": [120, 120],
-          "bounds": [250, 250],
-          "drawsContent": true,
-          "backgroundColor": "#008000"
-        }
-      ]
+      "backgroundColor": "#008000"
     }
   ]
 }

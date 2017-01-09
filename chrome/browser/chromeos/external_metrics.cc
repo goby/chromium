@@ -4,11 +4,13 @@
 
 #include "chrome/browser/chromeos/external_metrics.h"
 
+#include <stddef.h>
+
 #include <map>
 #include <string>
 
 #include "base/bind.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/metrics/statistics_recorder.h"
 #include "chrome/browser/browser_process.h"
@@ -29,7 +31,7 @@ namespace {
 bool CheckValues(const std::string& name,
                  int minimum,
                  int maximum,
-                 size_t bucket_count) {
+                 uint32_t bucket_count) {
   if (!base::Histogram::InspectConstructionArguments(
       name, &minimum, &maximum, &bucket_count))
     return false;

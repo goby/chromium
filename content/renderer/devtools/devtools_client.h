@@ -5,10 +5,12 @@
 #ifndef CONTENT_RENDERER_DEVTOOLS_DEVTOOLS_CLIENT_H_
 #define CONTENT_RENDERER_DEVTOOLS_DEVTOOLS_CLIENT_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "third_party/WebKit/public/web/WebDevToolsFrontendClient.h"
 
@@ -36,6 +38,7 @@ class CONTENT_EXPORT DevToolsClient
  private:
   // RenderFrameObserver overrides.
   void DidClearWindowObject() override;
+  void OnDestruct() override;
 
   // WebDevToolsFrontendClient implementation.
   void sendMessageToEmbedder(const blink::WebString&) override;
@@ -43,10 +46,10 @@ class CONTENT_EXPORT DevToolsClient
   bool isUnderTest() override;
 
   void OnDispatchOnInspectorFrontend(const std::string& message,
-                                     uint32 total_size);
+                                     uint32_t total_size);
 
-  scoped_ptr<blink::WebDevToolsFrontend> web_tools_frontend_;
   std::string compatibility_script_;
+  std::unique_ptr<blink::WebDevToolsFrontend> web_tools_frontend_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsClient);
 };

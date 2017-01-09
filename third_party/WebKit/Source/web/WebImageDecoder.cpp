@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebImageDecoder.h"
 
 #include "platform/SharedBuffer.h"
@@ -38,77 +37,70 @@
 #include "public/platform/WebData.h"
 #include "public/platform/WebImage.h"
 #include "public/platform/WebSize.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 
 namespace blink {
 
-void WebImageDecoder::reset()
-{
-    delete m_private;
+void WebImageDecoder::reset() {
+  delete m_private;
 }
 
-void WebImageDecoder::init(Type type)
-{
-    size_t maxDecodedBytes = Platform::current()->maxDecodedImageBytes();
+void WebImageDecoder::init(Type type) {
+  size_t maxDecodedBytes = Platform::current()->maxDecodedImageBytes();
 
-    switch (type) {
+  switch (type) {
     case TypeBMP:
-        m_private = new BMPImageDecoder(ImageDecoder::AlphaPremultiplied, ImageDecoder::GammaAndColorProfileApplied, maxDecodedBytes);
-        break;
+      m_private = new BMPImageDecoder(
+          ImageDecoder::AlphaPremultiplied,
+          ColorBehavior::transformToTargetForTesting(), maxDecodedBytes);
+      break;
     case TypeICO:
-        m_private = new ICOImageDecoder(ImageDecoder::AlphaPremultiplied, ImageDecoder::GammaAndColorProfileApplied, maxDecodedBytes);
-        break;
-    }
+      m_private = new ICOImageDecoder(
+          ImageDecoder::AlphaPremultiplied,
+          ColorBehavior::transformToTargetForTesting(), maxDecodedBytes);
+      break;
+  }
 }
 
-void WebImageDecoder::setData(const WebData& data, bool allDataReceived)
-{
-    ASSERT(m_private);
-    m_private->setData(PassRefPtr<SharedBuffer>(data).get(), allDataReceived);
+void WebImageDecoder::setData(const WebData& data, bool allDataReceived) {
+  DCHECK(m_private);
+  m_private->setData(PassRefPtr<SharedBuffer>(data).get(), allDataReceived);
 }
 
-bool WebImageDecoder::isFailed() const
-{
-    ASSERT(m_private);
-    return m_private->failed();
+bool WebImageDecoder::isFailed() const {
+  DCHECK(m_private);
+  return m_private->failed();
 }
 
-bool WebImageDecoder::isSizeAvailable() const
-{
-    ASSERT(m_private);
-    return m_private->isSizeAvailable();
+bool WebImageDecoder::isSizeAvailable() const {
+  DCHECK(m_private);
+  return m_private->isSizeAvailable();
 }
 
-WebSize WebImageDecoder::size() const
-{
-    ASSERT(m_private);
-    return m_private->size();
+WebSize WebImageDecoder::size() const {
+  DCHECK(m_private);
+  return m_private->size();
 }
 
-size_t WebImageDecoder::frameCount() const
-{
-    ASSERT(m_private);
-    return m_private->frameCount();
+size_t WebImageDecoder::frameCount() const {
+  DCHECK(m_private);
+  return m_private->frameCount();
 }
 
-bool WebImageDecoder::isFrameCompleteAtIndex(int index) const
-{
-    ASSERT(m_private);
-    ImageFrame* const frameBuffer = m_private->frameBufferAtIndex(index);
-    if (!frameBuffer)
-        return false;
-    return frameBuffer->status() == ImageFrame::FrameComplete;
+bool WebImageDecoder::isFrameCompleteAtIndex(int index) const {
+  DCHECK(m_private);
+  ImageFrame* const frameBuffer = m_private->frameBufferAtIndex(index);
+  if (!frameBuffer)
+    return false;
+  return frameBuffer->getStatus() == ImageFrame::FrameComplete;
 }
 
-WebImage WebImageDecoder::getFrameAtIndex(int index = 0) const
-{
-    ASSERT(m_private);
-    ImageFrame* const frameBuffer = m_private->frameBufferAtIndex(index);
-    if (!frameBuffer)
-        return WebImage();
-    return WebImage(frameBuffer->bitmap());
+WebImage WebImageDecoder::getFrameAtIndex(int index = 0) const {
+  DCHECK(m_private);
+  ImageFrame* const frameBuffer = m_private->frameBufferAtIndex(index);
+  if (!frameBuffer)
+    return WebImage();
+  return WebImage(frameBuffer->bitmap());
 }
 
-} // namespace blink
+}  // namespace blink

@@ -4,8 +4,12 @@
 
 #include "chrome/browser/ui/ash/launcher/launcher_favicon_loader.h"
 
-#include "ash/shelf/shelf_constants.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "ash/common/shelf/shelf_constants.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -86,7 +90,7 @@ class LauncherFaviconLoaderBrowsertest
   }
 
   bool WaitForContentsLoaded() {
-    const int64 max_seconds = 10;
+    const int64_t max_seconds = 10;
     base::Time start_time = base::Time::Now();
     while (!(contents_observer_->loaded() &&
              contents_observer_->got_favicons())) {
@@ -101,7 +105,7 @@ class LauncherFaviconLoaderBrowsertest
   }
 
   bool WaitForFaviconUpdated() {
-    const int64 max_seconds = 10;
+    const int64_t max_seconds = 10;
     base::Time start_time = base::Time::Now();
     while (favicon_loader_->HasPendingDownloads()) {
       content::RunAllPendingInMessageLoop();
@@ -119,8 +123,8 @@ class LauncherFaviconLoaderBrowsertest
   }
 
   bool favicon_updated_;
-  scoped_ptr<ContentsObserver> contents_observer_;
-  scoped_ptr<LauncherFaviconLoader> favicon_loader_;
+  std::unique_ptr<ContentsObserver> contents_observer_;
+  std::unique_ptr<LauncherFaviconLoader> favicon_loader_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(LauncherFaviconLoaderBrowsertest);
@@ -154,8 +158,8 @@ IN_PROC_BROWSER_TEST_F(LauncherFaviconLoaderBrowsertest, ManyLauncherIcons) {
 
   EXPECT_FALSE(favicon_loader_->GetFavicon().empty());
   // When multiple favicons are present, the correctly sized icon should be
-  // chosen. The icons are sized assuming ash::kShelfSize < 128.
-  EXPECT_GT(128, ash::kShelfSize);
+  // chosen. The icons are sized assuming ash::SHELF_SIZE < 128.
+  EXPECT_GT(128, ash::GetShelfConstant(ash::SHELF_SIZE));
   EXPECT_EQ(48, favicon_loader_->GetFavicon().height());
 }
 

@@ -4,7 +4,10 @@
 
 #include "chrome/browser/extensions/api/bookmarks/bookmark_api_helpers.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -40,7 +43,7 @@ class ExtensionBookmarksTest : public testing::Test {
 
   void SetUp() override {
     profile_.CreateBookmarkModel(false);
-    model_ = BookmarkModelFactory::GetForProfile(&profile_);
+    model_ = BookmarkModelFactory::GetForBrowserContext(&profile_);
     managed_ = ManagedBookmarkServiceFactory::GetForProfile(&profile_);
     bookmarks::test::WaitForBookmarkModelToLoad(model_);
 
@@ -72,58 +75,46 @@ class ExtensionBookmarksTest : public testing::Test {
 };
 
 TEST_F(ExtensionBookmarksTest, GetFullTreeFromRoot) {
-  scoped_ptr<BookmarkTreeNode> tree(
-      GetBookmarkTreeNode(managed_,
-                          model_->other_node(),
-                          true,    // Recurse.
-                          false));  // Not only folders.
-  ASSERT_EQ(3U, tree->children->size());
+  BookmarkTreeNode tree = GetBookmarkTreeNode(managed_, model_->other_node(),
+                                              true,    // Recurse.
+                                              false);  // Not only folders.
+  ASSERT_EQ(3U, tree.children->size());
 }
 
 TEST_F(ExtensionBookmarksTest, GetFoldersOnlyFromRoot) {
-  scoped_ptr<BookmarkTreeNode> tree(
-      GetBookmarkTreeNode(managed_,
-                          model_->other_node(),
-                          true,   // Recurse.
-                          true));  // Only folders.
-  ASSERT_EQ(1U, tree->children->size());
+  BookmarkTreeNode tree = GetBookmarkTreeNode(managed_, model_->other_node(),
+                                              true,   // Recurse.
+                                              true);  // Only folders.
+  ASSERT_EQ(1U, tree.children->size());
 }
 
 TEST_F(ExtensionBookmarksTest, GetSubtree) {
-  scoped_ptr<BookmarkTreeNode> tree(
-      GetBookmarkTreeNode(managed_,
-                          folder_,
-                          true,    // Recurse.
-                          false));  // Not only folders.
-  ASSERT_EQ(4U, tree->children->size());
-  linked_ptr<BookmarkTreeNode> digg = tree->children->at(1);
-  ASSERT_TRUE(digg.get());
-  ASSERT_EQ("Digg", digg->title);
+  BookmarkTreeNode tree = GetBookmarkTreeNode(managed_, folder_,
+                                              true,    // Recurse.
+                                              false);  // Not only folders.
+  ASSERT_EQ(4U, tree.children->size());
+  const BookmarkTreeNode& digg = tree.children->at(1);
+  ASSERT_EQ("Digg", digg.title);
 }
 
 TEST_F(ExtensionBookmarksTest, GetSubtreeFoldersOnly) {
-  scoped_ptr<BookmarkTreeNode> tree(
-      GetBookmarkTreeNode(managed_,
-                          folder_,
-                          true,   // Recurse.
-                          true));  // Only folders.
-  ASSERT_EQ(2U, tree->children->size());
-  linked_ptr<BookmarkTreeNode> inner_folder = tree->children->at(1);
-  ASSERT_TRUE(inner_folder.get());
-  ASSERT_EQ("inner folder 1", inner_folder->title);
+  BookmarkTreeNode tree = GetBookmarkTreeNode(managed_, folder_,
+                                              true,   // Recurse.
+                                              true);  // Only folders.
+  ASSERT_EQ(2U, tree.children->size());
+  const BookmarkTreeNode& inner_folder = tree.children->at(1);
+  ASSERT_EQ("inner folder 1", inner_folder.title);
 }
 
 TEST_F(ExtensionBookmarksTest, GetModifiableNode) {
-  scoped_ptr<BookmarkTreeNode> tree(
-      GetBookmarkTreeNode(managed_,
-                          node_,
-                          false,    // Recurse.
-                          false));  // Only folders.
-  EXPECT_EQ("Digg", tree->title);
-  ASSERT_TRUE(tree->url);
-  EXPECT_EQ("http://www.reddit.com/", *tree->url);
+  BookmarkTreeNode tree = GetBookmarkTreeNode(managed_, node_,
+                                              false,   // Recurse.
+                                              false);  // Only folders.
+  EXPECT_EQ("Digg", tree.title);
+  ASSERT_TRUE(tree.url);
+  EXPECT_EQ("http://www.reddit.com/", *tree.url);
   EXPECT_EQ(api::bookmarks::BOOKMARK_TREE_NODE_UNMODIFIABLE_NONE,
-            tree->unmodifiable);
+            tree.unmodifiable);
 }
 
 TEST_F(ExtensionBookmarksTest, GetManagedNode) {
@@ -132,19 +123,17 @@ TEST_F(ExtensionBookmarksTest, GetManagedNode) {
                      0,
                      base::ASCIIToUTF16("Chromium"),
                      GURL("http://www.chromium.org/"));
-  scoped_ptr<BookmarkTreeNode> tree(
-      GetBookmarkTreeNode(managed_,
-                          managed_bookmark,
-                          false,    // Recurse.
-                          false));  // Only folders.
-  EXPECT_EQ("Chromium", tree->title);
-  EXPECT_EQ("http://www.chromium.org/", *tree->url);
+  BookmarkTreeNode tree = GetBookmarkTreeNode(managed_, managed_bookmark,
+                                              false,   // Recurse.
+                                              false);  // Only folders.
+  EXPECT_EQ("Chromium", tree.title);
+  EXPECT_EQ("http://www.chromium.org/", *tree.url);
   EXPECT_EQ(api::bookmarks::BOOKMARK_TREE_NODE_UNMODIFIABLE_MANAGED,
-            tree->unmodifiable);
+            tree.unmodifiable);
 }
 
 TEST_F(ExtensionBookmarksTest, RemoveNodeInvalidId) {
-  int64 invalid_id = model_->next_node_id();
+  int64_t invalid_id = model_->next_node_id();
   std::string error;
   EXPECT_FALSE(RemoveNode(model_, managed_, invalid_id, true, &error));
   EXPECT_EQ(keys::kNoNodeError, error);

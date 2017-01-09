@@ -3,8 +3,8 @@ include_rules = [
   "+components/bookmarks/test",
   "+components/favicon/core",
   "+components/history/core/browser",
-  "+components/sync_driver",
+  "+components/prefs",
+  "+components/sync",
   "+components/undo",
-  "+sync",
   "+ui/gfx",
 ]

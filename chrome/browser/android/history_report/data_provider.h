@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_ANDROID_HISTORY_REPORT_DATA_PROVIDER_H_
 #define CHROME_BROWSER_ANDROID_HISTORY_REPORT_DATA_PROVIDER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 
 class Profile;
@@ -35,8 +38,9 @@ class DataProvider {
   ~DataProvider();
 
   // Provides up to limit delta file entries with sequence number > last_seq_no.
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > Query(int64 last_seq_no,
-                                                         int32 limit);
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> Query(
+      int64_t last_seq_no,
+      int32_t limit);
   void StartVisitMigrationToUsageBuffer(
       UsageReportsBufferService* buffer_service);
 

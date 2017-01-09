@@ -9,6 +9,7 @@
 #include <queue>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/threading/non_thread_safe.h"
@@ -44,6 +45,10 @@ class FakeSignalStrategy : public SignalStrategy,
 
   void SetLocalJid(const std::string& jid);
 
+  // Simulate IQ messages re-ordering by swapping the delivery order of
+  // next pair of messages.
+  void SimulateMessageReordering();
+
   // SignalStrategy interface.
   void Connect() override;
   void Disconnect() override;
@@ -52,20 +57,21 @@ class FakeSignalStrategy : public SignalStrategy,
   std::string GetLocalJid() const override;
   void AddListener(Listener* listener) override;
   void RemoveListener(Listener* listener) override;
-  bool SendStanza(scoped_ptr<buzz::XmlElement> stanza) override;
+  bool SendStanza(std::unique_ptr<buzz::XmlElement> stanza) override;
   std::string GetNextId() override;
 
  private:
-  typedef base::Callback<void(scoped_ptr<buzz::XmlElement> message)>
+  typedef base::Callback<void(std::unique_ptr<buzz::XmlElement> message)>
       PeerCallback;
 
   static void DeliverMessageOnThread(
       scoped_refptr<base::SingleThreadTaskRunner> thread,
       base::WeakPtr<FakeSignalStrategy> target,
-      scoped_ptr<buzz::XmlElement> stanza);
+      std::unique_ptr<buzz::XmlElement> stanza);
 
   // Called by the |peer_|. Takes ownership of |stanza|.
-  void OnIncomingMessage(scoped_ptr<buzz::XmlElement> stanza);
+  void OnIncomingMessage(std::unique_ptr<buzz::XmlElement> stanza);
+  void NotifyListeners(std::unique_ptr<buzz::XmlElement> stanza);
   void SetPeerCallback(const PeerCallback& peer_callback);
 
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
@@ -77,6 +83,9 @@ class FakeSignalStrategy : public SignalStrategy,
   int last_id_;
 
   base::TimeDelta send_delay_;
+
+  bool simulate_reorder_ = false;
+  std::unique_ptr<buzz::XmlElement> pending_stanza_;
 
   // All received messages, includes thouse still in |pending_messages_|.
   std::list<buzz::XmlElement*> received_messages_;

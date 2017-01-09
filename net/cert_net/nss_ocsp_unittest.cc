@@ -5,14 +5,15 @@
 #include "net/cert_net/nss_ocsp.h"
 
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_proc.h"
@@ -21,12 +22,19 @@
 #include "net/cert/multi_threaded_cert_verifier.h"
 #include "net/cert/test_root_certs.h"
 #include "net/cert/x509_certificate.h"
+#include "net/log/net_log_with_source.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/gtest_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/url_request/url_request_filter.h"
 #include "net/url_request/url_request_interceptor.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 namespace net {
 
@@ -86,12 +94,12 @@ class NssHttpTest : public ::testing::Test {
 
     // Ownership of |handler| is transferred to the URLRequestFilter, but
     // hold onto the original pointer in order to access |request_count()|.
-    scoped_ptr<AiaResponseHandler> handler(
+    std::unique_ptr<AiaResponseHandler> handler(
         new AiaResponseHandler(kAiaHeaders, file_contents));
     handler_ = handler.get();
 
-    URLRequestFilter::GetInstance()->AddHostnameInterceptor(
-        "http", kAiaHost, handler.Pass());
+    URLRequestFilter::GetInstance()->AddHostnameInterceptor("http", kAiaHost,
+                                                            std::move(handler));
 
     SetURLRequestContextForNSSHttpIO(&context_);
     EnsureNSSHttpIOInit();
@@ -119,7 +127,7 @@ class NssHttpTest : public ::testing::Test {
   TestURLRequestContext context_;
   AiaResponseHandler* handler_;
   scoped_refptr<CertVerifyProc> verify_proc_;
-  scoped_ptr<CertVerifier> verifier_;
+  std::unique_ptr<CertVerifier> verifier_;
 };
 
 // Tests that when using NSS to verify certificates, and IO is enabled,
@@ -138,17 +146,19 @@ TEST_F(NssHttpTest, TestAia) {
 
   CertVerifyResult verify_result;
   TestCompletionCallback test_callback;
-  scoped_ptr<CertVerifier::Request> request;
+  std::unique_ptr<CertVerifier::Request> request;
 
   int flags = CertVerifier::VERIFY_CERT_IO_ENABLED;
   int error = verifier()->Verify(
-      test_cert.get(), "aia-host.invalid", std::string(), flags, NULL,
-      &verify_result, test_callback.callback(), &request, BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, error);
+      CertVerifier::RequestParams(test_cert, "aia-host.invalid", flags,
+                                  std::string(), CertificateList()),
+      nullptr, &verify_result, test_callback.callback(), &request,
+      NetLogWithSource());
+  ASSERT_THAT(error, IsError(ERR_IO_PENDING));
 
   error = test_callback.WaitForResult();
 
-  EXPECT_EQ(OK, error);
+  EXPECT_THAT(error, IsOk());
 
   // Ensure that NSS made an AIA request for the missing intermediate.
   EXPECT_LT(0, request_count());

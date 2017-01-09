@@ -6,6 +6,7 @@
 #include <string>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/values.h"
 #include "base/version.h"
@@ -13,8 +14,9 @@
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/test_browser_thread.h"
+#include "extensions/browser/external_install_info.h"
 #include "extensions/browser/external_provider_interface.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/extension.h"
@@ -69,35 +71,27 @@ class MockExternalPolicyProviderVisitor
     EXPECT_TRUE(expected_extensions_.empty());
   }
 
-  bool OnExternalExtensionFileFound(const std::string& id,
-                                    const Version* version,
-                                    const base::FilePath& path,
-                                    Manifest::Location unused,
-                                    int unused2,
-                                    bool unused3,
-                                    bool unused4) override {
+  bool OnExternalExtensionFileFound(
+      const extensions::ExternalInstallInfoFile& info) override {
     ADD_FAILURE() << "There should be no external extensions from files.";
     return false;
   }
 
-  bool OnExternalExtensionUpdateUrlFound(const std::string& id,
-                                         const std::string& install_parameter,
-                                         const GURL& update_url,
-                                         Manifest::Location location,
-                                         int unused1,
-                                         bool unused2) override {
+  bool OnExternalExtensionUpdateUrlFound(
+      const extensions::ExternalInstallInfoUpdateUrl& info,
+      bool is_initial_load) override {
     // Extension has the correct location.
-    EXPECT_EQ(Manifest::EXTERNAL_POLICY_DOWNLOAD, location);
+    EXPECT_EQ(Manifest::EXTERNAL_POLICY_DOWNLOAD, info.download_location);
 
     // Provider returns the correct location when asked.
     Manifest::Location location1;
-    scoped_ptr<Version> version1;
-    provider_->GetExtensionDetails(id, &location1, &version1);
+    std::unique_ptr<base::Version> version1;
+    provider_->GetExtensionDetails(info.extension_id, &location1, &version1);
     EXPECT_EQ(Manifest::EXTERNAL_POLICY_DOWNLOAD, location1);
     EXPECT_FALSE(version1.get());
 
     // Remove the extension from our list.
-    EXPECT_EQ(1U, expected_extensions_.erase(id));
+    EXPECT_EQ(1U, expected_extensions_.erase(info.extension_id));
     return true;
   }
 
@@ -107,12 +101,22 @@ class MockExternalPolicyProviderVisitor
     EXPECT_TRUE(provider->IsReady());
   }
 
+  void OnExternalProviderUpdateComplete(
+      const ExternalProviderInterface* provider,
+      const std::vector<std::unique_ptr<ExternalInstallInfoUpdateUrl>>&
+          update_url_extensions,
+      const std::vector<std::unique_ptr<ExternalInstallInfoFile>>&
+          file_extensions,
+      const std::set<std::string>& removed_extensions) override {
+    ADD_FAILURE() << "Only win registry provider is expected to call this.";
+  }
+
  private:
   std::set<std::string> expected_extensions_;
 
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
 
-  scoped_ptr<ExternalProviderImpl> provider_;
+  std::unique_ptr<ExternalProviderImpl> provider_;
 
   DISALLOW_COPY_AND_ASSIGN(MockExternalPolicyProviderVisitor);
 };

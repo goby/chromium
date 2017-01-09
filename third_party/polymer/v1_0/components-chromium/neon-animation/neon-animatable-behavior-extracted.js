@@ -36,21 +36,10 @@
 
     _entryAnimationChanged: function() {
       this.animationConfig = this.animationConfig || {};
-      if (this.entryAnimation !== 'fade-in-animation') {
-        // insert polyfill hack
-        this.animationConfig['entry'] = [{
-          name: 'opaque-animation',
-          node: this
-        }, {
-          name: this.entryAnimation,
-          node: this
-        }];
-      } else {
-        this.animationConfig['entry'] = [{
-          name: this.entryAnimation,
-          node: this
-        }];
-      }
+      this.animationConfig['entry'] = [{
+        name: this.entryAnimation,
+        node: this
+      }];
     },
 
     _exitAnimationChanged: function() {
@@ -79,6 +68,11 @@
     _getAnimationConfigRecursive: function(type, map, allConfigs) {
       if (!this.animationConfig) {
         return;
+      }
+
+      if(this.animationConfig.value && typeof this.animationConfig.value === 'function') {
+      	this._warn(this._logf('playAnimation', "Please put 'animationConfig' inside of your components 'properties' object instead of outside of it."));
+      	return;
       }
 
       // type is optional
@@ -127,7 +121,7 @@
      * or a map of animation type to array of configuration objects.
      */
     getAnimationConfig: function(type) {
-      var map = [];
+      var map = {};
       var allConfigs = [];
       this._getAnimationConfigRecursive(type, map, allConfigs);
       // append the configurations saved in the map to the array

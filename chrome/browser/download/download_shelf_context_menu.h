@@ -5,17 +5,15 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_DOWNLOAD_SHELF_CONTEXT_MENU_H_
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_SHELF_CONTEXT_MENU_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "chrome/browser/download/download_commands.h"
 #include "content/public/browser/download_item.h"
 #include "ui/base/models/simple_menu_model.h"
-
-namespace content {
-class PageNavigator;
-}
 
 // This class is responsible for the download shelf context menu. Platform
 // specific subclasses are responsible for creating and running the menu.
@@ -41,8 +39,6 @@ class DownloadShelfContextMenu : public ui::SimpleMenuModel::Delegate,
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdVisible(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   bool IsItemForCommandIdDynamic(int command_id) const override;
   base::string16 GetLabelForCommandId(int command_id) const override;
 
@@ -63,20 +59,16 @@ class DownloadShelfContextMenu : public ui::SimpleMenuModel::Delegate,
 
   // We show slightly different menus if the download is in progress vs. if the
   // download has finished.
-  scoped_ptr<ui::SimpleMenuModel> in_progress_download_menu_model_;
-  scoped_ptr<ui::SimpleMenuModel> in_progress_download_paused_menu_model_;
-  scoped_ptr<ui::SimpleMenuModel> finished_download_menu_model_;
-  scoped_ptr<ui::SimpleMenuModel> interrupted_download_menu_model_;
-  scoped_ptr<ui::SimpleMenuModel> maybe_malicious_download_menu_model_;
-  scoped_ptr<ui::SimpleMenuModel> malicious_download_menu_model_;
+  std::unique_ptr<ui::SimpleMenuModel> in_progress_download_menu_model_;
+  std::unique_ptr<ui::SimpleMenuModel> in_progress_download_paused_menu_model_;
+  std::unique_ptr<ui::SimpleMenuModel> finished_download_menu_model_;
+  std::unique_ptr<ui::SimpleMenuModel> interrupted_download_menu_model_;
+  std::unique_ptr<ui::SimpleMenuModel> maybe_malicious_download_menu_model_;
+  std::unique_ptr<ui::SimpleMenuModel> malicious_download_menu_model_;
 
   // Information source.
   content::DownloadItem* download_item_;
-  scoped_ptr<DownloadCommands> download_commands_;
-
-#if defined(OS_WIN)
-  bool is_adobe_pdf_reader_up_to_date_;
-#endif
+  std::unique_ptr<DownloadCommands> download_commands_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadShelfContextMenu);
 };

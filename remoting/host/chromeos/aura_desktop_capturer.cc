@@ -4,6 +4,8 @@
 
 #include "remoting/host/chromeos/aura_desktop_capturer.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "cc/output/copy_output_request.h"
 #include "cc/output/copy_output_result.h"
@@ -18,11 +20,9 @@
 namespace remoting {
 
 AuraDesktopCapturer::AuraDesktopCapturer()
-    : callback_(nullptr), desktop_window_(nullptr), weak_factory_(this) {
-}
+    : callback_(nullptr), desktop_window_(nullptr), weak_factory_(this) {}
 
-AuraDesktopCapturer::~AuraDesktopCapturer() {
-}
+AuraDesktopCapturer::~AuraDesktopCapturer() {}
 
 void AuraDesktopCapturer::Start(webrtc::DesktopCapturer::Callback* callback) {
 #if defined(USE_ASH)
@@ -39,32 +39,31 @@ void AuraDesktopCapturer::Start(webrtc::DesktopCapturer::Callback* callback) {
   DCHECK(callback_);
 }
 
-void AuraDesktopCapturer::Capture(const webrtc::DesktopRegion&) {
-  scoped_ptr<cc::CopyOutputRequest> request =
-      cc::CopyOutputRequest::CreateBitmapRequest(
-          base::Bind(
-              &AuraDesktopCapturer::OnFrameCaptured,
-              weak_factory_.GetWeakPtr()));
+void AuraDesktopCapturer::CaptureFrame() {
+  std::unique_ptr<cc::CopyOutputRequest> request =
+      cc::CopyOutputRequest::CreateBitmapRequest(base::Bind(
+          &AuraDesktopCapturer::OnFrameCaptured, weak_factory_.GetWeakPtr()));
 
   gfx::Rect window_rect(desktop_window_->bounds().size());
 
   request->set_area(window_rect);
-  desktop_window_->layer()->RequestCopyOfOutput(request.Pass());
+  desktop_window_->layer()->RequestCopyOfOutput(std::move(request));
 }
 
 void AuraDesktopCapturer::OnFrameCaptured(
-    scoped_ptr<cc::CopyOutputResult> result) {
+    std::unique_ptr<cc::CopyOutputResult> result) {
   if (result->IsEmpty()) {
-    callback_->OnCaptureCompleted(nullptr);
+    callback_->OnCaptureResult(DesktopCapturer::Result::ERROR_TEMPORARY,
+                               nullptr);
     return;
   }
 
   DCHECK(result->HasBitmap());
 
-  scoped_ptr<SkBitmap> bitmap = result->TakeBitmap();
+  std::unique_ptr<SkBitmap> bitmap = result->TakeBitmap();
 
-  scoped_ptr<webrtc::DesktopFrame> frame(
-      SkiaBitmapDesktopFrame::Create(bitmap.Pass()));
+  std::unique_ptr<webrtc::DesktopFrame> frame(
+      SkiaBitmapDesktopFrame::Create(std::move(bitmap)));
 
   // |VideoFramePump| will not encode the frame if |updated_region| is empty.
   const webrtc::DesktopRect& rect = webrtc::DesktopRect::MakeWH(
@@ -74,7 +73,19 @@ void AuraDesktopCapturer::OnFrameCaptured(
   // See cc::Layer::contents_scale_(x|y)() and frame->set_depi().
   frame->mutable_updated_region()->SetRect(rect);
 
-  callback_->OnCaptureCompleted(frame.release());
+  callback_->OnCaptureResult(DesktopCapturer::Result::SUCCESS,
+                             std::move(frame));
+}
+
+bool AuraDesktopCapturer::GetSourceList(SourceList* sources) {
+  // TODO(zijiehe): Implement screen enumeration.
+  sources->push_back({0});
+  return true;
+}
+
+bool AuraDesktopCapturer::SelectSource(SourceId id) {
+  // TODO(zijiehe): Implement screen selection.
+  return true;
 }
 
 }  // namespace remoting

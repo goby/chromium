@@ -4,6 +4,7 @@
 
 #include "base/process/memory.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 
 namespace base {
@@ -16,6 +17,10 @@ void EnableTerminationOnHeapCorruption() {
 
 bool AdjustOOMScore(ProcessId process, int score) {
   return false;
+}
+
+void TerminateBecauseOutOfMemory(size_t size) {
+  abort();
 }
 
 // UncheckedMalloc and Calloc exist so that platforms making use of

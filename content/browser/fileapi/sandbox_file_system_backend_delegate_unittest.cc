@@ -4,11 +4,11 @@
 
 #include "storage/browser/fileapi/sandbox_file_system_backend_delegate.h"
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/test/test_file_system_options.h"
 #include "storage/browser/fileapi/file_system_url.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -36,7 +36,7 @@ class SandboxFileSystemBackendDelegateTest : public testing::Test {
     ASSERT_TRUE(data_dir_.CreateUniqueTempDir());
     delegate_.reset(new storage::SandboxFileSystemBackendDelegate(
         NULL /* quota_manager_proxy */,
-        base::ThreadTaskRunnerHandle::Get().get(), data_dir_.path(),
+        base::ThreadTaskRunnerHandle::Get().get(), data_dir_.GetPath(),
         NULL /* special_storage_policy */, CreateAllowFileAccessOptions()));
   }
 
@@ -46,7 +46,7 @@ class SandboxFileSystemBackendDelegateTest : public testing::Test {
 
   base::ScopedTempDir data_dir_;
   base::MessageLoop message_loop_;
-  scoped_ptr<storage::SandboxFileSystemBackendDelegate> delegate_;
+  std::unique_ptr<storage::SandboxFileSystemBackendDelegate> delegate_;
 };
 
 TEST_F(SandboxFileSystemBackendDelegateTest, IsAccessValid) {

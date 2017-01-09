@@ -6,14 +6,15 @@
 #define PRINTING_PRINTED_DOCUMENT_H_
 
 #include <map>
+#include <memory>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
 #include "printing/print_settings.h"
-#include "ui/gfx/native_widget_types.h"
+#include "skia/ext/native_drawing_context.h"
 
 namespace base {
 class RefCountedMemory;
@@ -46,7 +47,7 @@ class PRINTING_EXPORT PrintedDocument
   // Sets a page's data. 0-based. Takes metafile ownership.
   // Note: locks for a short amount of time.
   void SetPage(int page_number,
-               scoped_ptr<MetafilePlayer> metafile,
+               std::unique_ptr<MetafilePlayer> metafile,
 #if defined(OS_WIN)
                float shrink,
 #endif  // OS_WIN
@@ -62,7 +63,7 @@ class PRINTING_EXPORT PrintedDocument
   // Note: locks for a short amount of time in debug only.
 #if defined(OS_WIN) || defined(OS_MACOSX) && !defined(USE_AURA)
   void RenderPrintedPage(const PrintedPage& page,
-                         gfx::NativeDrawingContext context) const;
+                         skia::NativeDrawingContext context) const;
 #elif defined(OS_POSIX)
   void RenderPrintedPage(const PrintedPage& page,
                          PrintingContext* context) const;

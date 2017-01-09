@@ -5,6 +5,8 @@
 #include "chrome/browser/chromeos/file_system_provider/fileapi/file_stream_reader.h"
 
 #include "base/files/file.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/chromeos/file_system_provider/abort_callback.h"
@@ -23,7 +25,7 @@ namespace file_system_provider {
 
 // Converts net::CompletionCallback to net::Int64CompletionCallback.
 void Int64ToIntCompletionCallback(net::CompletionCallback callback,
-                                  int64 result) {
+                                  int64_t result) {
   callback.Run(static_cast<int>(result));
 }
 
@@ -65,7 +67,7 @@ class FileStreamReader::OperationRunner
   // file has not been changed while reading. Must be called on UI thread.
   void ReadFileOnUIThread(
       scoped_refptr<net::IOBuffer> buffer,
-      int64 offset,
+      int64_t offset,
       int length,
       const ProvidedFileSystemInterface::ReadChunkReceivedCallback& callback) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -100,10 +102,9 @@ class FileStreamReader::OperationRunner
     // If the file system got unmounted, then abort the get length operation.
     if (!file_system_.get()) {
       BrowserThread::PostTask(
-          BrowserThread::IO,
-          FROM_HERE,
+          BrowserThread::IO, FROM_HERE,
           base::Bind(callback,
-                     base::Passed(make_scoped_ptr<EntryMetadata>(NULL)),
+                     base::Passed(base::WrapUnique<EntryMetadata>(NULL)),
                      base::File::FILE_ERROR_ABORT));
       return;
     }
@@ -157,7 +158,7 @@ class FileStreamReader::OperationRunner
   // Forwards a metadata to the IO thread.
   void OnGetMetadataCompletedOnUIThread(
       const ProvidedFileSystemInterface::GetMetadataCallback& callback,
-      scoped_ptr<EntryMetadata> metadata,
+      std::unique_ptr<EntryMetadata> metadata,
       base::File::Error result) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     abort_callback_ = AbortCallback();
@@ -188,7 +189,7 @@ class FileStreamReader::OperationRunner
   AbortCallback abort_callback_;
   base::WeakPtr<ProvidedFileSystemInterface> file_system_;
   base::FilePath file_path_;
-  scoped_ptr<ScopedFileOpener> file_opener_;
+  std::unique_ptr<ScopedFileOpener> file_opener_;
   int file_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(OperationRunner);
@@ -196,7 +197,7 @@ class FileStreamReader::OperationRunner
 
 FileStreamReader::FileStreamReader(storage::FileSystemContext* context,
                                    const storage::FileSystemURL& url,
-                                   int64 initial_offset,
+                                   int64_t initial_offset,
                                    const base::Time& expected_modification_time)
     : url_(url),
       current_offset_(initial_offset),
@@ -204,8 +205,7 @@ FileStreamReader::FileStreamReader(storage::FileSystemContext* context,
       expected_modification_time_(expected_modification_time),
       runner_(new OperationRunner),
       state_(NOT_INITIALIZED),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 FileStreamReader::~FileStreamReader() {
   // FileStreamReader doesn't have a Cancel() method like in FileStreamWriter.
@@ -270,7 +270,7 @@ void FileStreamReader::OnOpenFileCompleted(
 void FileStreamReader::OnInitializeCompleted(
     const base::Closure& pending_closure,
     const net::Int64CompletionCallback& error_callback,
-    scoped_ptr<EntryMetadata> metadata,
+    std::unique_ptr<EntryMetadata> metadata,
     base::File::Error result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK_EQ(INITIALIZING, state_);
@@ -353,7 +353,7 @@ void FileStreamReader::OnReadCompleted(net::CompletionCallback callback,
       "file_system_provider", "FileStreamReader::Read", this);
 }
 
-int64 FileStreamReader::GetLength(
+int64_t FileStreamReader::GetLength(
     const net::Int64CompletionCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
@@ -450,7 +450,7 @@ void FileStreamReader::OnReadChunkReceived(
 
 void FileStreamReader::OnGetMetadataForGetLengthReceived(
     const net::Int64CompletionCallback& callback,
-    scoped_ptr<EntryMetadata> metadata,
+    std::unique_ptr<EntryMetadata> metadata,
     base::File::Error result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK_EQ(INITIALIZED, state_);

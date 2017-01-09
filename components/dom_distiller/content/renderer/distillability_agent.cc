@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/dom_distiller/content/common/distiller_messages.h"
 #include "components/dom_distiller/content/renderer/distillability_agent.h"
+
+#include "base/metrics/histogram_macros.h"
+#include "base/strings/string_util.h"
+#include "components/dom_distiller/content/common/distillability_service.mojom.h"
 #include "components/dom_distiller/core/distillable_page_detector.h"
 #include "components/dom_distiller/core/experiments.h"
 #include "components/dom_distiller/core/page_features.h"
 #include "components/dom_distiller/core/url_utils.h"
 #include "content/public/renderer/render_frame.h"
-
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/WebKit/public/platform/WebDistillability.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
@@ -20,6 +23,19 @@ namespace dom_distiller {
 using namespace blink;
 
 namespace {
+
+const char* const kBlacklist[] = {
+  "www.reddit.com"
+};
+
+enum RejectionBuckets {
+  NOT_ARTICLE = 0,
+  MOBILE_FRIENDLY,
+  BLACKLISTED,
+  TOO_SHORT,
+  NOT_REJECTED,
+  REJECTION_BUCKET_BOUNDARY
+};
 
 // Returns whether it is necessary to send updates back to the browser.
 // The number of updates can be from 0 to 2. See the tests in
@@ -48,18 +64,25 @@ bool IsLast(bool is_loaded) {
   return true;
 }
 
+bool IsBlacklisted(const GURL& url) {
+  for (size_t i = 0; i < arraysize(kBlacklist); ++i) {
+    if (base::LowerCaseEqualsASCII(url.host(), kBlacklist[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool IsDistillablePageAdaboost(WebDocument& doc,
-                               const DistillablePageDetector* detector) {
+                               const DistillablePageDetector* detector,
+                               const DistillablePageDetector* long_page,
+                               bool is_last) {
   WebDistillabilityFeatures features = doc.distillabilityFeatures();
   GURL parsed_url(doc.url());
   if (!parsed_url.is_valid()) {
     return false;
   }
-  // The adaboost model is only applied to non-mobile pages.
-  if (features.isMobileFriendly) {
-    return false;
-  }
-  return detector->Classify(CalculateDerivedFeatures(
+  std::vector<double> derived = CalculateDerivedFeatures(
     features.openGraph,
     parsed_url,
     features.elementCount,
@@ -68,18 +91,82 @@ bool IsDistillablePageAdaboost(WebDocument& doc,
     features.mozScore,
     features.mozScoreAllSqrt,
     features.mozScoreAllLinear
-  ));
+  );
+  double score = detector->Score(derived) - detector->GetThreshold();
+  double long_score = long_page->Score(derived) - long_page->GetThreshold();
+  bool distillable = score > 0;
+  bool long_article = long_score > 0;
+  bool blacklisted = IsBlacklisted(parsed_url);
+
+  if (!features.isMobileFriendly) {
+    int score_int = std::round(score * 100);
+    if (score > 0) {
+      UMA_HISTOGRAM_COUNTS_1000("DomDistiller.DistillabilityScoreNMF.Positive",
+          score_int);
+    } else {
+      UMA_HISTOGRAM_COUNTS_1000("DomDistiller.DistillabilityScoreNMF.Negative",
+          -score_int);
+    }
+    if (distillable) {
+      // The long-article model is trained with pages that are
+      // non-mobile-friendly, and distillable (deemed by the first model), so
+      // only record on that type of pages.
+      int long_score_int = std::round(long_score * 100);
+      if (long_score > 0) {
+        UMA_HISTOGRAM_COUNTS_1000("DomDistiller.LongArticleScoreNMF.Positive",
+            long_score_int);
+      } else {
+        UMA_HISTOGRAM_COUNTS_1000("DomDistiller.LongArticleScoreNMF.Negative",
+            -long_score_int);
+      }
+    }
+  }
+
+  int bucket = static_cast<unsigned>(features.isMobileFriendly) |
+      (static_cast<unsigned>(distillable) << 1);
+  if (is_last) {
+    UMA_HISTOGRAM_ENUMERATION("DomDistiller.PageDistillableAfterLoading",
+        bucket, 4);
+  } else {
+    UMA_HISTOGRAM_ENUMERATION("DomDistiller.PageDistillableAfterParsing",
+        bucket, 4);
+    if (!distillable) {
+      UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
+          NOT_ARTICLE, REJECTION_BUCKET_BOUNDARY);
+    } else if (features.isMobileFriendly) {
+      UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
+          MOBILE_FRIENDLY, REJECTION_BUCKET_BOUNDARY);
+    } else if (blacklisted) {
+      UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
+          BLACKLISTED, REJECTION_BUCKET_BOUNDARY);
+    } else if (!long_article) {
+      UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
+          TOO_SHORT, REJECTION_BUCKET_BOUNDARY);
+    } else {
+      UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
+          NOT_REJECTED, REJECTION_BUCKET_BOUNDARY);
+    }
+  }
+
+  if (blacklisted) {
+    return false;
+  }
+  if (features.isMobileFriendly) {
+    return false;
+  }
+  return distillable && long_article;
 }
 
-bool IsDistillablePage(WebDocument& doc) {
+bool IsDistillablePage(WebDocument& doc, bool is_last) {
   switch (GetDistillerHeuristicsType()) {
     case DistillerHeuristicsType::ALWAYS_TRUE:
       return true;
     case DistillerHeuristicsType::OG_ARTICLE:
       return doc.distillabilityFeatures().openGraph;
     case DistillerHeuristicsType::ADABOOST_MODEL:
-      return IsDistillablePageAdaboost(
-          doc, DistillablePageDetector::GetNewModel());
+      return IsDistillablePageAdaboost(doc,
+          DistillablePageDetector::GetNewModel(),
+          DistillablePageDetector::GetLongPageModel(), is_last);
     case DistillerHeuristicsType::NONE:
     default:
       return false;
@@ -110,11 +197,20 @@ void DistillabilityAgent::DidMeaningfulLayout(
   bool is_loaded = layout_type == WebMeaningfulLayout::FinishedLoading;
   if (!NeedToUpdate(is_loaded)) return;
 
-  Send(new FrameHostMsg_Distillability(routing_id(),
-      IsDistillablePage(doc), IsLast(is_loaded)));
+  bool is_last = IsLast(is_loaded);
+  // Connect to Mojo service on browser to notify page distillability.
+  mojom::DistillabilityServicePtr distillability_service;
+  render_frame()->GetRemoteInterfaces()->GetInterface(
+      &distillability_service);
+  DCHECK(distillability_service);
+  distillability_service->NotifyIsDistillable(
+      IsDistillablePage(doc, is_last), is_last);
 }
 
-
 DistillabilityAgent::~DistillabilityAgent() {}
+
+void DistillabilityAgent::OnDestruct() {
+  delete this;
+}
 
 }  // namespace dom_distiller

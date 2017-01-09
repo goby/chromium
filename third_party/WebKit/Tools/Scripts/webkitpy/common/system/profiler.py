@@ -26,14 +26,12 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import re
 import itertools
 
-_log = logging.getLogger(__name__)
-
 
 class ProfilerFactory(object):
+
     @classmethod
     def create_profiler(cls, host, executable_path, output_dir, profiler_name=None, identifier=None):
         profilers = cls.profilers_for_platform(host.platform)
@@ -84,11 +82,13 @@ class Profiler(object):
 
 
 class SingleFileOutputProfiler(Profiler):
+
     def __init__(self, host, executable_path, output_dir, output_suffix, identifier=None):
         super(SingleFileOutputProfiler, self).__init__(host, executable_path, output_dir, identifier)
         # FIXME: Currently all reports are kept as test.*, until we fix that, search up to 1000 names before giving up.
-        self._output_path = self._host.workspace.find_unused_filename(self._output_dir, self._identifier, output_suffix, search_limit=1000)
-        assert(self._output_path)
+        self._output_path = self._host.workspace.find_unused_filename(
+            self._output_dir, self._identifier, output_suffix, search_limit=1000)
+        assert self._output_path
 
 
 class GooglePProf(SingleFileOutputProfiler):
@@ -112,7 +112,7 @@ class GooglePProf(SingleFileOutputProfiler):
 
     def profile_after_exit(self):
         # google-pprof doesn't check its arguments, so we have to.
-        if not (self._host.filesystem.exists(self._output_path)):
+        if not self._host.filesystem.exists(self._output_path):
             print "Failed to gather profile, %s does not exist." % self._output_path
             return
 
@@ -139,7 +139,7 @@ class Perf(SingleFileOutputProfiler):
         return 'perf'
 
     def attach_to_pid(self, pid):
-        assert(not self._perf_process and not self._pid_being_profiled)
+        assert not self._perf_process and not self._pid_being_profiled
         self._pid_being_profiled = pid
         cmd = [self._perf_path(), "record", "--call-graph", "--pid", pid, "--output", self._output_path]
         self._perf_process = self._host.executive.popen(cmd)
@@ -200,11 +200,11 @@ class IProfiler(SingleFileOutputProfiler):
         # from the basename of the file, with no control over the extension.
         fs = self._host.filesystem
         cmd = ["iprofiler", "-timeprofiler", "-a", pid,
-                "-d", fs.dirname(self._output_path), "-o", fs.splitext(fs.basename(self._output_path))[0]]
+               "-d", fs.dirname(self._output_path), "-o", fs.splitext(fs.basename(self._output_path))[0]]
         # FIXME: Consider capturing instead of letting instruments spam to stderr directly.
         self._profiler_process = self._host.executive.popen(cmd)
 
     def profile_after_exit(self):
-        # It seems like a nicer user experiance to wait on the profiler to exit to prevent
+        # It seems like a nicer user experience to wait on the profiler to exit to prevent
         # it from spewing to stderr at odd times.
         self._profiler_process.wait()

@@ -28,21 +28,27 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/svg/properties/SVGPropertyTearOff.h"
 
+#include "bindings/core/v8/ExceptionMessages.h"
+#include "bindings/core/v8/ExceptionState.h"
+#include "core/dom/ExceptionCode.h"
 #include "core/svg/SVGElement.h"
 
 namespace blink {
 
-void SVGPropertyTearOffBase::commitChange()
-{
-    ASSERT(!isImmutable());
-    if (!contextElement() || isAnimVal())
-        return;
-    ASSERT(m_attributeName != QualifiedName::null());
-    contextElement()->invalidateSVGAttributes();
-    contextElement()->svgAttributeChanged(m_attributeName);
+void SVGPropertyTearOffBase::throwReadOnly(ExceptionState& exceptionState) {
+  exceptionState.throwDOMException(NoModificationAllowedError,
+                                   ExceptionMessages::readOnly());
 }
 
-} // namespace blink
+void SVGPropertyTearOffBase::commitChange() {
+  DCHECK(!isImmutable());
+  if (!contextElement() || isAnimVal())
+    return;
+  DCHECK(m_attributeName != QualifiedName::null());
+  contextElement()->invalidateSVGAttributes();
+  contextElement()->svgAttributeBaseValChanged(m_attributeName);
+}
+
+}  // namespace blink

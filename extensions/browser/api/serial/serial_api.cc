@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/values.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "device/serial/serial_device_enumerator.h"
 #include "extensions/browser/api/serial/serial_connection.h"
@@ -42,7 +43,7 @@ const char kErrorSerialConnectionNotFound[] = "Serial connection not found.";
 const char kErrorGetControlSignalsFailed[] = "Failed to get control signals.";
 
 template <class T>
-void SetDefaultScopedPtrValue(scoped_ptr<T>& ptr, const T& value) {
+void SetDefaultScopedPtrValue(std::unique_ptr<T>& ptr, const T& value) {
   if (!ptr.get())
     ptr.reset(new T(value));
 }
@@ -85,14 +86,11 @@ bool SerialGetDevicesFunction::Prepare() {
 void SerialGetDevicesFunction::Work() {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
-// TODO(moshayedi): crbug.com/549257. Add USB support for Aura on Android.
-#if !defined(OS_ANDROID)
-  scoped_ptr<device::SerialDeviceEnumerator> enumerator =
+  std::unique_ptr<device::SerialDeviceEnumerator> enumerator =
       device::SerialDeviceEnumerator::Create();
   mojo::Array<device::serial::DeviceInfoPtr> devices = enumerator->GetDevices();
   results_ = serial::GetDevices::Results::Create(
-      devices.To<std::vector<linked_ptr<serial::DeviceInfo> > >());
-#endif
+      devices.To<std::vector<serial::DeviceInfo>>());
 }
 
 SerialConnectFunction::SerialConnectFunction() {
@@ -133,7 +131,7 @@ bool SerialConnectFunction::Prepare() {
 void SerialConnectFunction::AsyncWorkStart() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   connection_ = CreateSerialConnection(params_->path, extension_->id());
-  connection_->Open(*params_->options.get(),
+  connection_->Open(*params_->options,
                     base::Bind(&SerialConnectFunction::OnConnected, this));
 }
 
@@ -352,7 +350,7 @@ bool SerialGetConnectionsFunction::Prepare() {
 }
 
 void SerialGetConnectionsFunction::Work() {
-  std::vector<linked_ptr<serial::ConnectionInfo> > infos;
+  std::vector<serial::ConnectionInfo> infos;
   const base::hash_set<int>* connection_ids =
       manager_->GetResourceIds(extension_->id());
   if (connection_ids) {
@@ -362,10 +360,10 @@ void SerialGetConnectionsFunction::Work() {
       int connection_id = *it;
       SerialConnection* connection = GetSerialConnection(connection_id);
       if (connection) {
-        linked_ptr<serial::ConnectionInfo> info(new serial::ConnectionInfo());
-        info->connection_id = connection_id;
-        connection->GetInfo(info.get());
-        infos.push_back(info);
+        serial::ConnectionInfo info;
+        info.connection_id = connection_id;
+        connection->GetInfo(&info);
+        infos.push_back(std::move(info));
       }
     }
   }
@@ -479,19 +477,18 @@ void SerialClearBreakFunction::Work() {
 namespace mojo {
 
 // static
-linked_ptr<extensions::api::serial::DeviceInfo> TypeConverter<
-    linked_ptr<extensions::api::serial::DeviceInfo>,
+extensions::api::serial::DeviceInfo TypeConverter<
+    extensions::api::serial::DeviceInfo,
     device::serial::DeviceInfoPtr>::Convert(const device::serial::DeviceInfoPtr&
                                                 device) {
-  linked_ptr<extensions::api::serial::DeviceInfo> info(
-      new extensions::api::serial::DeviceInfo);
-  info->path = device->path;
+  extensions::api::serial::DeviceInfo info;
+  info.path = device->path;
   if (device->has_vendor_id)
-    info->vendor_id.reset(new int(static_cast<int>(device->vendor_id)));
+    info.vendor_id.reset(new int(static_cast<int>(device->vendor_id)));
   if (device->has_product_id)
-    info->product_id.reset(new int(static_cast<int>(device->product_id)));
+    info.product_id.reset(new int(static_cast<int>(device->product_id)));
   if (device->display_name)
-    info->display_name.reset(new std::string(device->display_name));
+    info.display_name.reset(new std::string(device->display_name.value()));
   return info;
 }
 

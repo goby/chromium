@@ -32,9 +32,14 @@ AudioOutputDispatcherImpl::AudioOutputDispatcherImpl(
       audio_stream_id_(0) {}
 
 AudioOutputDispatcherImpl::~AudioOutputDispatcherImpl() {
-  DCHECK_EQ(idle_proxies_, 0u);
-  DCHECK(proxy_to_physical_map_.empty());
-  DCHECK(idle_streams_.empty());
+  // There must be no idle proxy streams.
+  CHECK_EQ(idle_proxies_, 0u);
+
+  // There must be no active proxy streams.
+  CHECK(proxy_to_physical_map_.empty());
+
+  // All idle physical streams must have been closed during shutdown.
+  CHECK(idle_streams_.empty());
 }
 
 bool AudioOutputDispatcherImpl::OpenStream() {
@@ -127,6 +132,12 @@ void AudioOutputDispatcherImpl::Shutdown() {
   // No AudioOutputProxy objects should hold a reference to us when we get
   // to this stage.
   DCHECK(HasOneRef()) << "Only the AudioManager should hold a reference";
+
+  LOG_IF(WARNING, idle_proxies_ > 0u) << "Idle proxy streams during shutdown: "
+                                      << idle_proxies_;
+  LOG_IF(WARNING, !proxy_to_physical_map_.empty())
+      << "Active proxy streams during shutdown: "
+      << proxy_to_physical_map_.size();
 }
 
 bool AudioOutputDispatcherImpl::HasOutputProxies() const {
@@ -135,8 +146,12 @@ bool AudioOutputDispatcherImpl::HasOutputProxies() const {
 
 bool AudioOutputDispatcherImpl::CreateAndOpenStream() {
   DCHECK(task_runner_->BelongsToCurrentThread());
+
+  const int stream_id = audio_stream_id_++;
   AudioOutputStream* stream = audio_manager_->MakeAudioOutputStream(
-      params_, device_id_);
+      params_, device_id_,
+      base::Bind(&AudioLog::OnLogMessage, base::Unretained(audio_log_.get()),
+                 stream_id));
   if (!stream)
     return false;
 
@@ -145,7 +160,6 @@ bool AudioOutputDispatcherImpl::CreateAndOpenStream() {
     return false;
   }
 
-  const int stream_id = audio_stream_id_++;
   audio_stream_ids_[stream] = stream_id;
   audio_log_->OnCreated(
       stream_id, params_, device_id_);

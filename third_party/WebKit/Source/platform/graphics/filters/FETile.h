@@ -28,21 +28,23 @@
 namespace blink {
 
 class PLATFORM_EXPORT FETile final : public FilterEffect {
-public:
-    static PassRefPtrWillBeRawPtr<FETile> create(Filter*);
+ public:
+  static FETile* create(Filter*);
 
-    FloatRect mapPaintRect(const FloatRect&, bool forward = true) final;
+  TextStream& externalRepresentation(TextStream&, int indention) const override;
 
-    FilterEffectType filterEffectType() const override { return FilterEffectTypeTile; }
+ private:
+  FETile(Filter*);
 
-    TextStream& externalRepresentation(TextStream&, int indention) const override;
+  FilterEffectType getFilterEffectType() const override {
+    return FilterEffectTypeTile;
+  }
 
-private:
-    FETile(Filter*);
+  FloatRect mapInputs(const FloatRect&) const final;
 
-    PassRefPtr<SkImageFilter> createImageFilter(SkiaImageFilterBuilder&) override;
+  sk_sp<SkImageFilter> createImageFilter() override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // FETile_h
+#endif  // FETile_h

@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_DESKTOP_BROWSER_FRAME_AURA_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_DESKTOP_BROWSER_FRAME_AURA_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/ui/views/frame/native_browser_frame.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
@@ -49,6 +50,10 @@ class DesktopBrowserFrameAura : public views::DesktopNativeWidgetAura,
   bool ShouldSaveWindowPlacement() const override;
   void GetWindowPlacement(gfx::Rect* bounds,
                           ui::WindowShowState* show_state) const override;
+  bool PreHandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
 
  private:
   // The BrowserView is our ClientView. This is a pointer to it.
@@ -58,7 +63,7 @@ class DesktopBrowserFrameAura : public views::DesktopNativeWidgetAura,
   // Owned by the RootWindow.
   BrowserDesktopWindowTreeHost* browser_desktop_window_tree_host_;
 
-  scoped_ptr<wm::VisibilityController> visibility_controller_;
+  std::unique_ptr<wm::VisibilityController> visibility_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopBrowserFrameAura);
 };

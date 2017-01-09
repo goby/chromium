@@ -4,6 +4,8 @@
 
 #include "components/undo/undo_manager.h"
 
+#include <utility>
+
 #include "base/auto_reset.h"
 #include "base/logging.h"
 #include "components/undo/undo_manager_observer.h"
@@ -28,7 +30,7 @@ UndoGroup::UndoGroup()
 UndoGroup::~UndoGroup() {
 }
 
-void UndoGroup::AddOperation(scoped_ptr<UndoOperation> operation) {
+void UndoGroup::AddOperation(std::unique_ptr<UndoOperation> operation) {
   if (operations_.empty()) {
     set_undo_label_id(operation->GetUndoLabelId());
     set_redo_label_id(operation->GetRedoLabelId());
@@ -80,7 +82,7 @@ base::string16 UndoManager::GetRedoLabel() const {
                             : redo_actions_.back()->get_redo_label_id());
 }
 
-void UndoManager::AddUndoOperation(scoped_ptr<UndoOperation> operation) {
+void UndoManager::AddUndoOperation(std::unique_ptr<UndoOperation> operation) {
   if (IsUndoTrakingSuspended()) {
     RemoveAllOperations();
     operation.reset();
@@ -88,10 +90,10 @@ void UndoManager::AddUndoOperation(scoped_ptr<UndoOperation> operation) {
   }
 
   if (group_actions_count_) {
-    pending_grouped_action_->AddOperation(operation.Pass());
+    pending_grouped_action_->AddOperation(std::move(operation));
   } else {
     UndoGroup* new_action = new UndoGroup();
-    new_action->AddOperation(operation.Pass());
+    new_action->AddOperation(std::move(operation));
     AddUndoGroup(new_action);
   }
 }
@@ -187,7 +189,7 @@ void UndoManager::Undo(bool* performing_indicator,
     return;
 
   base::AutoReset<bool> incoming_changes(performing_indicator, true);
-  scoped_ptr<UndoGroup> action(active_undo_group->back());
+  std::unique_ptr<UndoGroup> action(active_undo_group->back());
   base::AutoReset<UndoGroup*> action_context(&undo_in_progress_action_,
       action.get());
   active_undo_group->weak_erase(
@@ -201,8 +203,8 @@ void UndoManager::Undo(bool* performing_indicator,
 }
 
 void UndoManager::NotifyOnUndoManagerStateChange() {
-  FOR_EACH_OBSERVER(
-      UndoManagerObserver, observers_, OnUndoManagerStateChange());
+  for (auto& observer : observers_)
+    observer.OnUndoManagerStateChange();
 }
 
 void UndoManager::AddUndoGroup(UndoGroup* new_undo_group) {

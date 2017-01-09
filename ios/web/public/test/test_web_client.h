@@ -9,8 +9,9 @@
 
 #include "base/compiler_specific.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #include "ios/web/public/web_client.h"
+#include "net/ssl/ssl_info.h"
+#include "url/gurl.h"
 
 namespace web {
 
@@ -19,24 +20,40 @@ class TestWebClient : public web::WebClient {
  public:
   TestWebClient();
   ~TestWebClient() override;
-  // WebClient implementation.
-  std::string GetUserAgent(bool is_desktop_user_agent) const override;
-  NSString* GetEarlyPageScript(web::WebViewType web_view_type) const override;
-  bool WebViewsNeedActiveStateManager() const override;
 
-  // Changes the user agent for testing purposes. Passing true
-  // for |is_desktop_user_agent| affects the result of GetUserAgent(true) call.
-  // Passing false affects the result of GetUserAgent(false).
-  void SetUserAgent(const std::string& user_agent, bool is_desktop_user_agent);
+  // WebClient implementation.
+  void AddAdditionalSchemes(std::vector<url::SchemeWithType>*) const override;
+  // Returns true for kTestWebUIScheme URL scheme.
+  bool IsAppSpecificURL(const GURL& url) const override;
+  base::RefCountedMemory* GetDataResourceBytes(int id) const override;
+  NSString* GetEarlyPageScript() const override;
+  void AllowCertificateError(WebState*,
+                             int cert_error,
+                             const net::SSLInfo&,
+                             const GURL&,
+                             bool overridable,
+                             const base::Callback<void(bool)>&) override;
 
   // Changes Early Page Script for testing purposes.
-  void SetEarlyPageScript(NSString* page_script,
-                          web::WebViewType web_view_type);
+  void SetEarlyPageScript(NSString* page_script);
+
+  // Accessors for last arguments passed to AllowCertificateError.
+  int last_cert_error_code() const { return last_cert_error_code_; };
+  const net::SSLInfo& last_cert_error_ssl_info() const {
+    return last_cert_error_ssl_info_;
+  }
+  const GURL& last_cert_error_request_url() const {
+    return last_cert_error_request_url_;
+  }
+  bool last_cert_error_overridable() { return last_cert_error_overridable_; }
 
  private:
-  std::string user_agent_;
-  std::string desktop_user_agent_;
-  base::scoped_nsobject<NSMutableDictionary> early_page_scripts_;
+  base::scoped_nsobject<NSString> early_page_script_;
+  // Last arguments passed to AllowCertificateError.
+  int last_cert_error_code_;
+  net::SSLInfo last_cert_error_ssl_info_;
+  GURL last_cert_error_request_url_;
+  bool last_cert_error_overridable_;
 };
 
 }  // namespace web

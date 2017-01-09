@@ -6,14 +6,12 @@
 #define IOS_WEB_PUBLIC_WEB_VIEW_CREATION_UTIL_H_
 
 #import <CoreGraphics/CoreGraphics.h>
+#import <Foundation/Foundation.h>
 
 @class WKWebView;
 
 namespace web {
 class BrowserState;
-
-// Returns true if WKWebView is supported on current OS/platform/arch.
-bool IsWKWebViewSupported();
 
 // Returns a new WKWebView for displaying regular web content.
 // WKWebViewConfiguration object for resulting web view will be obtained from
@@ -23,8 +21,7 @@ bool IsWKWebViewSupported();
 // 1) |browser_state| is not null.
 // 2) web::BrowsingDataPartition is synchronized.
 //
-// Note: Callers are responsible for releasing the returned WKWebView.
-WKWebView* CreateWKWebView(CGRect frame, BrowserState* browser_state);
+WKWebView* BuildWKWebView(CGRect frame, BrowserState* browser_state);
 
 }  // web
 

@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/common/system/tray/system_tray.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray.h"
 #include "base/command_line.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/login_wizard.h"
@@ -20,11 +23,10 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
-#include "chrome/test/base/tracing.h"
 #include "chromeos/chromeos_switches.h"
-#include "chromeos/login/user_names.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/user_names.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_system.h"
@@ -56,8 +58,8 @@ class LoginGuestTest : public InProcessBrowserTest {
     command_line->AppendSwitch(switches::kGuestSession);
     command_line->AppendSwitch(::switches::kIncognito);
     command_line->AppendSwitchASCII(switches::kLoginProfile, "hash");
-    command_line->AppendSwitchASCII(switches::kLoginUser,
-                                    login::GuestAccountId().GetUserEmail());
+    command_line->AppendSwitchASCII(
+        switches::kLoginUser, user_manager::GuestAccountId().GetUserEmail());
   }
 };
 
@@ -75,11 +77,14 @@ class LoginSigninTest : public InProcessBrowserTest {
     command_line->AppendSwitch(switches::kForceLoginManagerInTests);
   }
 
+  void TearDownOnMainThread() override {
+    // Close the login manager, which otherwise holds a KeepAlive that is not
+    // cleared in time by the end of the test.
+    LoginDisplayHost::default_host()->Finalize();
+  }
+
   void SetUpOnMainThread() override {
     LoginDisplayHostImpl::DisableRestrictiveProxyCheckForTest();
-
-    ASSERT_TRUE(tracing::BeginTracingWithWatch(
-        "ui", "ui", "ShowLoginWebUI", 1));
   }
 };
 
@@ -161,8 +166,8 @@ class LoginTest : public LoginManagerTest {
 
     StartGaiaAuthOffline();
 
-    UserContext user_context(AccountId::FromUserEmail(kTestUser));
-    user_context.SetGaiaID(kGaiaId);
+    UserContext user_context(
+        AccountId::FromUserEmailGaiaId(kTestUser, kGaiaId));
     user_context.SetKey(Key(kPassword));
     SetExpectedCredentials(user_context);
   }
@@ -228,18 +233,18 @@ IN_PROC_BROWSER_TEST_F(LoginCursorTest, CursorHidden) {
   EXPECT_TRUE(ui_test_utils::SendMouseMoveSync(gfx::Point()));
   EXPECT_TRUE(ash::Shell::GetInstance()->cursor_manager()->IsCursorVisible());
 
-  base::MessageLoop::current()->DeleteSoon(
-      FROM_HERE, LoginDisplayHostImpl::default_host());
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(
+      FROM_HERE, LoginDisplayHost::default_host());
 
   TestSystemTrayIsVisible();
 }
 
 // Verifies that the webui for login comes up successfully.
 IN_PROC_BROWSER_TEST_F(LoginSigninTest, WebUIVisible) {
-  base::TimeDelta no_timeout;
-  EXPECT_TRUE(tracing::WaitForWatchEvent(no_timeout));
-  std::string json_events;
-  ASSERT_TRUE(tracing::EndTracing(&json_events));
+  content::WindowedNotificationObserver(
+      chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
+      content::NotificationService::AllSources())
+      .Wait();
 }
 
 

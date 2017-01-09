@@ -6,16 +6,15 @@
 #define COMPONENTS_JSON_SCHEMA_JSON_SCHEMA_VALIDATOR_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace base {
 class DictionaryValue;
 class ListValue;
-class StringValue;
 class Value;
 }
 
@@ -52,7 +51,7 @@ class Value;
 //   if present, "additionalProperties" is to be a schema against which all
 //   additional properties will be validated.
 // - regular expression supports all syntaxes that re2 accepts.
-//   See https://code.google.com/p/re2/wiki/Syntax for details.
+//   See https://github.com/google/re2/blob/master/doc/syntax.txt for details.
 //==============================================================================
 class JSONSchemaValidator {
  public:
@@ -116,16 +115,14 @@ class JSONSchemaValidator {
   // correctness of regular expressions used in "pattern" and
   // "patternProperties" and in Validate() invalid regular expression don't
   // accept any strings.
-  static scoped_ptr<base::DictionaryValue> IsValidSchema(
+  static std::unique_ptr<base::DictionaryValue> IsValidSchema(
       const std::string& schema,
       std::string* error);
 
   // Same as above but with |options|, which is a bitwise-OR combination of the
   // Options above.
-  static scoped_ptr<base::DictionaryValue> IsValidSchema(
-      const std::string& schema,
-      int options,
-      std::string* error);
+  static std::unique_ptr<base::DictionaryValue>
+  IsValidSchema(const std::string& schema, int options, std::string* error);
 
   // Creates a validator for the specified schema.
   //

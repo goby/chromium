@@ -5,9 +5,13 @@
 #ifndef COMPONENTS_AUTOFILL_CONTENT_RENDERER_FORM_AUTOFILL_UTIL_H_
 #define COMPONENTS_AUTOFILL_CONTENT_RENDERER_FORM_AUTOFILL_UTIL_H_
 
+#include <stddef.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
+#include "components/autofill/content/renderer/password_form_conversion_utils.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/password_form_field_prediction_map.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
@@ -54,6 +58,26 @@ enum ExtractMask {
 // Google code project settings.
 // Copied to components/autofill/ios/browser/resources/autofill_controller.js.
 extern const size_t kMaxParseableFields;
+
+// Create an instance of ScopedLayoutPreventer to stop form_util code from
+// triggering layout as a side-effect. For example, when creating a
+// FormFieldData, a call to WebNode::isFocusable is normally made, which may
+// trigger a layout computation. When an instance of ScopedLayoutPreventer is
+// alive, that call will not be made. On destruction, this class allows
+// layout-triggering calls again. It is not thread safe and multiple instances
+// should not be created at the same time in the same process.
+class ScopedLayoutPreventer {
+ public:
+  ScopedLayoutPreventer();
+  ~ScopedLayoutPreventer();
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ScopedLayoutPreventer);
+};
+
+// Helper function that strips any authentication data, as well as query and
+// ref portions of URL
+GURL StripAuthAndParams(const GURL& gurl);
 
 // Extract FormData from the form element and return whether the operation was
 // successful.
@@ -124,9 +148,12 @@ std::vector<blink::WebFormControlElement> ExtractAutofillableElementsInForm(
     const blink::WebFormElement& form_element);
 
 // Fills out a FormField object from a given WebFormControlElement.
-// |extract_mask|: See the enum ExtractMask above for details.
+// |extract_mask|: See the enum ExtractMask above for details. Field properties
+// will be copied from |field_value_and_properties_map|, if the argument is not
+// null and has entry for |element| (see properties in FieldPropertiesFlags).
 void WebFormControlElementToFormField(
     const blink::WebFormControlElement& element,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
     FormFieldData* field);
 
@@ -134,10 +161,13 @@ void WebFormControlElementToFormField(
 // If |field| is non-NULL, also fills |field| with the FormField object
 // corresponding to the |form_control_element|. |extract_mask| controls what
 // data is extracted. Returns true if |form| is filled out.  Also returns false
-// if there are no fields or too many fields in the |form|.
+// if there are no fields or too many fields in the |form|. Field properties
+// will be copied from |field_value_and_properties_map|, if the argument is not
+// null and has entry for |element| (see properties in FieldPropertiesFlags).
 bool WebFormElementToFormData(
     const blink::WebFormElement& form_element,
     const blink::WebFormControlElement& form_control_element,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
     FormData* form,
     FormFieldData* field);
@@ -173,12 +203,15 @@ bool UnownedCheckoutFormElementsAndFieldSetsToFormData(
     FormFieldData* field);
 
 // Same as above, but without the requirement that the elements only be
-// related to checkout.
+// related to checkout. Field properties of |control_elements| will be copied
+// from |field_value_and_properties_map|, if the argument is not null and has
+// corresponding entries (see properties in FieldPropertiesFlags).
 bool UnownedPasswordFormElementsAndFieldSetsToFormData(
     const std::vector<blink::WebElement>& fieldsets,
     const std::vector<blink::WebFormControlElement>& control_elements,
     const blink::WebFormControlElement* element,
     const blink::WebDocument& document,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
     FormData* form,
     FormFieldData* field);

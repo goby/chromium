@@ -28,8 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "core/css/CSSPropertySourceData.h"
 
 #include "wtf/StaticConstructors.h"
@@ -38,53 +36,34 @@
 
 namespace blink {
 
-SourceRange::SourceRange()
-    : start(0)
-    , end(0)
-{
-}
+SourceRange::SourceRange() : start(0), end(0) {}
 
 SourceRange::SourceRange(unsigned start, unsigned end)
-    : start(start)
-    , end(end)
-{
+    : start(start), end(end) {}
+
+unsigned SourceRange::length() const {
+  return end - start;
 }
 
-unsigned SourceRange::length() const
-{
-    return end - start;
-}
-
-CSSPropertySourceData::CSSPropertySourceData(const String& name, const String& value, bool important, bool disabled, bool parsedOk, const SourceRange& range)
-    : name(name)
-    , value(value)
-    , important(important)
-    , disabled(disabled)
-    , parsedOk(parsedOk)
-    , range(range)
-{
-}
+CSSPropertySourceData::CSSPropertySourceData(const String& name,
+                                             const String& value,
+                                             bool important,
+                                             bool disabled,
+                                             bool parsedOk,
+                                             const SourceRange& range)
+    : name(name),
+      value(value),
+      important(important),
+      disabled(disabled),
+      parsedOk(parsedOk),
+      range(range) {}
 
 CSSPropertySourceData::CSSPropertySourceData(const CSSPropertySourceData& other)
-    : name(other.name)
-    , value(other.value)
-    , important(other.important)
-    , disabled(other.disabled)
-    , parsedOk(other.parsedOk)
-    , range(other.range)
-{
-}
+    : name(other.name),
+      value(other.value),
+      important(other.important),
+      disabled(other.disabled),
+      parsedOk(other.parsedOk),
+      range(other.range) {}
 
-DEFINE_TRACE(CSSRuleSourceData)
-{
-#if ENABLE(OILPAN)
-    visitor->trace(ruleHeaderRange);
-    visitor->trace(ruleBodyRange);
-    visitor->trace(selectorRanges);
-    visitor->trace(styleSourceData);
-    visitor->trace(childRules);
-    visitor->trace(mediaSourceData);
-#endif
-}
-
-} // namespace blink
+}  // namespace blink

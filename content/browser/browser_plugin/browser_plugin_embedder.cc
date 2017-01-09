@@ -50,7 +50,7 @@ void BrowserPluginEmbedder::DragLeftGuest(BrowserPluginGuest* guest) {
 bool BrowserPluginEmbedder::NotifyScreenInfoChanged(
     WebContents* guest_web_contents) {
   if (guest_web_contents->GetRenderViewHost()) {
-    auto render_widget_host = RenderWidgetHostImpl::From(
+    auto* render_widget_host = RenderWidgetHostImpl::From(
         guest_web_contents->GetRenderViewHost()->GetWidget());
     render_widget_host->NotifyScreenInfoChanged();
   }
@@ -105,9 +105,7 @@ void BrowserPluginEmbedder::ClearGuestDragStateIfApplicable() {
 // static
 bool BrowserPluginEmbedder::DidSendScreenRectsCallback(
    WebContents* guest_web_contents) {
-  RenderWidgetHostImpl::From(
-      guest_web_contents->GetRenderViewHost()->GetWidget())
-      ->SendScreenRects();
+  static_cast<WebContentsImpl*>(guest_web_contents)->SendScreenRects();
   // Not handled => Iterate over all guests.
   return false;
 }
@@ -118,10 +116,6 @@ void BrowserPluginEmbedder::DidSendScreenRects() {
       base::Bind(&BrowserPluginEmbedder::DidSendScreenRectsCallback));
 }
 
-bool BrowserPluginEmbedder::OnMessageReceived(const IPC::Message& message) {
-  return OnMessageReceived(message, nullptr);
-}
-
 bool BrowserPluginEmbedder::OnMessageReceived(
     const IPC::Message& message,
     RenderFrameHost* render_frame_host) {
@@ -129,8 +123,6 @@ bool BrowserPluginEmbedder::OnMessageReceived(
   IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(BrowserPluginEmbedder, message,
                                    render_frame_host)
     IPC_MESSAGE_HANDLER(BrowserPluginHostMsg_Attach, OnAttach)
-    IPC_MESSAGE_HANDLER_GENERIC(DragHostMsg_UpdateDragCursor,
-                                OnUpdateDragCursor(&handled));
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -158,8 +150,8 @@ void BrowserPluginEmbedder::SystemDragEnded() {
   ClearGuestDragStateIfApplicable();
 }
 
-void BrowserPluginEmbedder::OnUpdateDragCursor(bool* handled) {
-  *handled = !!guest_dragging_over_;
+bool BrowserPluginEmbedder::OnUpdateDragCursor() {
+  return !!guest_dragging_over_;
 }
 
 void BrowserPluginEmbedder::OnAttach(
@@ -218,6 +210,17 @@ BrowserPluginGuest* BrowserPluginEmbedder::GetFullPageGuest() {
   if (!guest_contents)
     return nullptr;
   return guest_contents->GetBrowserPluginGuest();
+}
+
+// static
+bool BrowserPluginEmbedder::GuestRecentlyAudibleCallback(WebContents* guest) {
+  return guest->WasRecentlyAudible();
+}
+
+bool BrowserPluginEmbedder::WereAnyGuestsRecentlyAudible() {
+  return GetBrowserPluginGuestManager()->ForEachGuest(
+      web_contents(),
+      base::Bind(&BrowserPluginEmbedder::GuestRecentlyAudibleCallback));
 }
 
 // static

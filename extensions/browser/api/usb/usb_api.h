@@ -5,11 +5,15 @@
 #ifndef EXTENSIONS_BROWSER_API_USB_USB_API_H_
 #define EXTENSIONS_BROWSER_API_USB_USB_API_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "device/usb/usb_device.h"
 #include "device/usb/usb_device_filter.h"
 #include "device/usb/usb_device_handle.h"
@@ -21,10 +25,8 @@
 namespace extensions {
 
 class DevicePermissionEntry;
-class DevicePermissions;
 class DevicePermissionsPrompt;
 class DevicePermissionsManager;
-class UsbDeviceResource;
 
 class UsbPermissionCheckingFunction : public UIThreadExtensionFunction {
  protected:
@@ -79,7 +81,7 @@ class UsbFindDevicesFunction : public UIThreadExtensionFunction {
 
   uint16_t vendor_id_;
   uint16_t product_id_;
-  scoped_ptr<base::ListValue> result_;
+  std::unique_ptr<base::ListValue> result_;
   base::Closure barrier_;
 
   DISALLOW_COPY_AND_ASSIGN(UsbFindDevicesFunction);
@@ -121,7 +123,7 @@ class UsbGetUserSelectedDevicesFunction : public UIThreadExtensionFunction {
   void OnDevicesChosen(
       const std::vector<scoped_refptr<device::UsbDevice>>& devices);
 
-  scoped_ptr<DevicePermissionsPrompt> prompt_;
+  std::unique_ptr<DevicePermissionsPrompt> prompt_;
 
   DISALLOW_COPY_AND_ASSIGN(UsbGetUserSelectedDevicesFunction);
 };
@@ -241,7 +243,7 @@ class UsbClaimInterfaceFunction : public UsbConnectionFunction {
 
   UsbClaimInterfaceFunction();
 
- protected:
+ private:
   ~UsbClaimInterfaceFunction() override;
 
   // ExtensionFunction:
@@ -263,6 +265,8 @@ class UsbReleaseInterfaceFunction : public UsbConnectionFunction {
 
   // ExtensionFunction:
   ResponseAction Run() override;
+
+  void OnComplete(bool success);
 
   DISALLOW_COPY_AND_ASSIGN(UsbReleaseInterfaceFunction);
 };
@@ -330,7 +334,7 @@ class UsbInterruptTransferFunction : public UsbTransferFunction {
   DISALLOW_COPY_AND_ASSIGN(UsbInterruptTransferFunction);
 };
 
-class UsbIsochronousTransferFunction : public UsbTransferFunction {
+class UsbIsochronousTransferFunction : public UsbConnectionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("usb.isochronousTransfer", USB_ISOCHRONOUSTRANSFER)
 
@@ -341,6 +345,10 @@ class UsbIsochronousTransferFunction : public UsbTransferFunction {
 
   // ExtensionFunction:
   ResponseAction Run() override;
+
+  void OnCompleted(
+      scoped_refptr<net::IOBuffer> data,
+      const std::vector<device::UsbDeviceHandle::IsochronousPacket>& packets);
 
   DISALLOW_COPY_AND_ASSIGN(UsbIsochronousTransferFunction);
 };
@@ -359,7 +367,7 @@ class UsbResetDeviceFunction : public UsbConnectionFunction {
 
   void OnComplete(bool success);
 
-  scoped_ptr<extensions::api::usb::ResetDevice::Params> parameters_;
+  std::unique_ptr<extensions::api::usb::ResetDevice::Params> parameters_;
 
   DISALLOW_COPY_AND_ASSIGN(UsbResetDeviceFunction);
 };

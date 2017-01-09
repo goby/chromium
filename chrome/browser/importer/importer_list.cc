@@ -4,7 +4,10 @@
 
 #include "chrome/browser/importer/importer_list.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
+#include "build/build_config.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/common/importer/firefox_importer_utils.h"
 #include "chrome/common/importer/importer_bridge.h"
@@ -63,7 +66,7 @@ void DetectBuiltinWindowsProfiles(
 #if defined(OS_MACOSX)
 void DetectSafariProfiles(std::vector<importer::SourceProfile>* profiles) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  uint16 items = importer::NONE;
+  uint16_t items = importer::NONE;
   if (!SafariImporterCanImport(base::mac::GetUserLibraryPath(), &items))
     return;
 
@@ -128,7 +131,7 @@ std::vector<importer::SourceProfile> DetectSourceProfilesWorker(
   // The first run import will automatically take settings from the first
   // profile detected, which should be the user's current default.
 #if defined(OS_WIN)
-  if (ShellIntegration::IsFirefoxDefaultBrowser()) {
+  if (shell_integration::IsFirefoxDefaultBrowser()) {
     DetectFirefoxProfiles(locale, &profiles);
     DetectBuiltinWindowsProfiles(&profiles);
   } else {
@@ -136,7 +139,7 @@ std::vector<importer::SourceProfile> DetectSourceProfilesWorker(
     DetectFirefoxProfiles(locale, &profiles);
   }
 #elif defined(OS_MACOSX)
-  if (ShellIntegration::IsFirefoxDefaultBrowser()) {
+  if (shell_integration::IsFirefoxDefaultBrowser()) {
     DetectFirefoxProfiles(locale, &profiles);
     DetectSafariProfiles(&profiles);
   } else {

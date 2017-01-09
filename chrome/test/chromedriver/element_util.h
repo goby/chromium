@@ -5,14 +5,13 @@
 #ifndef CHROME_TEST_CHROMEDRIVER_ELEMENT_UTIL_H_
 #define CHROME_TEST_CHROMEDRIVER_ELEMENT_UTIL_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "chrome/test/chromedriver/basic_types.h"
 
 namespace base {
 class DictionaryValue;
-class ListValue;
 class Value;
 }
 
@@ -20,24 +19,23 @@ struct Session;
 class Status;
 class WebView;
 
-base::DictionaryValue* CreateElement(const std::string& element_id);
+std::unique_ptr<base::DictionaryValue> CreateElement(
+    const std::string& element_id);
 
-base::Value* CreateValueFrom(const WebPoint& point);
+std::unique_ptr<base::DictionaryValue> CreateValueFrom(const WebPoint& point);
 
 // |root_element_id| could be null when no root element is given.
-Status FindElement(
-    int interval_ms,
-    bool only_one,
-    const std::string* root_element_id,
-    Session* session,
-    WebView* web_view,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value);
+Status FindElement(int interval_ms,
+                   bool only_one,
+                   const std::string* root_element_id,
+                   Session* session,
+                   WebView* web_view,
+                   const base::DictionaryValue& params,
+                   std::unique_ptr<base::Value>* value);
 
-Status GetActiveElement(
-    Session* session,
-    WebView* web_view,
-    scoped_ptr<base::Value>* value);
+Status GetActiveElement(Session* session,
+                        WebView* web_view,
+                        std::unique_ptr<base::Value>* value);
 
 Status IsElementFocused(
     Session* session,
@@ -45,12 +43,11 @@ Status IsElementFocused(
     const std::string& element_id,
     bool* is_focused);
 
-Status GetElementAttribute(
-    Session* session,
-    WebView* web_view,
-    const std::string& element_id,
-    const std::string& attribute_name,
-    scoped_ptr<base::Value>* value);
+Status GetElementAttribute(Session* session,
+                           WebView* web_view,
+                           const std::string& element_id,
+                           const std::string& attribute_name,
+                           std::unique_ptr<base::Value>* value);
 
 Status IsElementAttributeEqualToIgnoreCase(
     Session* session,

@@ -4,13 +4,15 @@
 
 #include "components/proximity_auth/bluetooth_connection.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/logging/logging.h"
-#include "components/proximity_auth/remote_device.h"
 #include "components/proximity_auth/wire_message.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_device.h"
@@ -21,10 +23,10 @@ namespace {
 const int kReceiveBufferSizeBytes = 1024;
 }
 
-BluetoothConnection::BluetoothConnection(const RemoteDevice& remote_device,
-                                         const device::BluetoothUUID& uuid)
-    : Connection(remote_device), uuid_(uuid), weak_ptr_factory_(this) {
-}
+BluetoothConnection::BluetoothConnection(
+    const cryptauth::RemoteDevice& remote_device,
+    const device::BluetoothUUID& uuid)
+    : Connection(remote_device), uuid_(uuid), weak_ptr_factory_(this) {}
 
 BluetoothConnection::~BluetoothConnection() {
   if (status() != DISCONNECTED)
@@ -70,7 +72,8 @@ void BluetoothConnection::Disconnect() {
   }
 }
 
-void BluetoothConnection::SendMessageImpl(scoped_ptr<WireMessage> message) {
+void BluetoothConnection::SendMessageImpl(
+    std::unique_ptr<WireMessage> message) {
   DCHECK_EQ(status(), CONNECTED);
 
   // Serialize the message.
@@ -80,7 +83,7 @@ void BluetoothConnection::SendMessageImpl(scoped_ptr<WireMessage> message) {
   memcpy(buffer->data(), serialized_message.c_str(), message_length);
 
   // Send it.
-  pending_message_ = message.Pass();
+  pending_message_ = std::move(message);
   base::WeakPtr<BluetoothConnection> weak_this = weak_ptr_factory_.GetWeakPtr();
   socket_->Send(buffer,
                 message_length,

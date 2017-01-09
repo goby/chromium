@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_EASY_UNLOCK_EASY_UNLOCK_GET_KEYS_OPERATION_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_EASY_UNLOCK_EASY_UNLOCK_GET_KEYS_OPERATION_H_
 
+#include <stddef.h>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -24,10 +26,19 @@ class EasyUnlockGetKeysOperation {
                              const GetKeysCallback& callback);
   ~EasyUnlockGetKeysOperation();
 
+  // Starts the operation. If the cryptohome service is not yet available, the
+  // request will be deferred until it is ready.
   void Start();
 
  private:
+  // Called once when the cryptohome service is available.
+  void OnCryptohomeAvailable(bool available);
+
+  // Asynchronously requests data for |key_index_| from cryptohome.
   void GetKeyData();
+
+  // Callback for GetKeyData(). Updates |devices_|, increments |key_index_|, and
+  // calls GetKeyData() again.
   void OnGetKeyData(
       bool success,
       cryptohome::MountError return_code,

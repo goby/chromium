@@ -20,7 +20,6 @@
  *
  */
 
-#include "config.h"
 #include "core/html/HTMLMenuElement.h"
 
 #include "core/HTMLNames.h"
@@ -30,10 +29,8 @@ namespace blink {
 using namespace HTMLNames;
 
 inline HTMLMenuElement::HTMLMenuElement(Document& document)
-    : HTMLElement(menuTag, document)
-{
-}
+    : HTMLElement(menuTag, document) {}
 
 DEFINE_NODE_FACTORY(HTMLMenuElement)
 
-}
+}  // namespace blink

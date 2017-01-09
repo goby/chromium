@@ -5,18 +5,16 @@
 #ifndef REMOTING_TEST_HOST_LIST_FETCHER_H_
 #define REMOTING_TEST_HOST_LIST_FETCHER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "remoting/test/host_info.h"
 
-namespace net {
-class UrlFetcher;
-}
 namespace remoting {
 class URLRequestContextGetter;
 }
@@ -28,6 +26,8 @@ namespace test {
 // unittests for this class to set fake response data for these URLs.
 const char kHostListProdRequestUrl[] = "https://www.googleapis.com/"
     "chromoting/v1/@me/hosts";
+const char kHostListTestRequestUrl[] =
+    "https://www-googleapis-test.sandbox.google.com/chromoting/v1/@me/hosts";
 
 // Requests a host list from the directory service for an access token.
 // Destroying the RemoteHostInfoFetcher while a request is outstanding
@@ -47,6 +47,7 @@ class HostListFetcher : public net::URLFetcherDelegate {
   // Makes a service call to retrieve a hostlist. The
   // callback will be called once the HTTP request has completed.
   virtual void RetrieveHostlist(const std::string& access_token,
+                                const std::string& target_url,
                                 const HostlistCallback& callback);
 
  private:
@@ -57,7 +58,7 @@ class HostListFetcher : public net::URLFetcherDelegate {
   void OnURLFetchComplete(const net::URLFetcher* source) override;
 
   // Holds the URLFetcher for the Host List request.
-  scoped_ptr<net::URLFetcher> request_;
+  std::unique_ptr<net::URLFetcher> request_;
 
   // Provides application-specific context for the network request.
   scoped_refptr<remoting::URLRequestContextGetter> request_context_getter_;

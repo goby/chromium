@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/i18n/rtl.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/ui_base_ime_export.h"
@@ -229,8 +229,8 @@ class UI_BASE_IME_EXPORT IMM32Manager {
   // Returns the current input language id.
   LANGID input_language_id() const { return input_language_id_; }
 
-  // Returns BCP-47 tag name of the current input language.
-  std::string GetInputLanguageName() const;
+  // Returns whether the system's input language is CJK.
+  bool IsInputLanguageCJK() const;
 
   // Sets conversion status corresponding to |input_mode|.
   virtual void SetTextInputMode(HWND window_handle, TextInputMode input_mode);

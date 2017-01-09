@@ -24,62 +24,88 @@
  *
  */
 
-#include "config.h"
 #include "core/dom/SecurityContext.h"
 
 #include "core/frame/csp/ContentSecurityPolicy.h"
+#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/weborigin/SecurityOrigin.h"
 
 namespace blink {
 
 SecurityContext::SecurityContext()
-    : m_haveInitializedSecurityOrigin(false)
-    , m_sandboxFlags(SandboxNone)
-    , m_hostedInReservedIPRange(false)
-    , m_insecureRequestsPolicy(InsecureRequestsDoNotUpgrade)
-{
+    : m_sandboxFlags(SandboxNone),
+      m_addressSpace(WebAddressSpacePublic),
+      m_insecureRequestPolicy(kLeaveInsecureRequestsAlone) {}
+
+SecurityContext::~SecurityContext() {}
+
+DEFINE_TRACE(SecurityContext) {
+  visitor->trace(m_contentSecurityPolicy);
 }
 
-SecurityContext::~SecurityContext()
-{
+void SecurityContext::setSecurityOrigin(
+    PassRefPtr<SecurityOrigin> securityOrigin) {
+  m_securityOrigin = securityOrigin;
 }
 
-DEFINE_TRACE(SecurityContext)
-{
-    visitor->trace(m_contentSecurityPolicy);
+void SecurityContext::setContentSecurityPolicy(
+    ContentSecurityPolicy* contentSecurityPolicy) {
+  m_contentSecurityPolicy = contentSecurityPolicy;
 }
 
-void SecurityContext::setSecurityOrigin(PassRefPtr<SecurityOrigin> securityOrigin)
-{
-    m_securityOrigin = securityOrigin;
-    m_haveInitializedSecurityOrigin = true;
+void SecurityContext::enforceSandboxFlags(SandboxFlags mask) {
+  applySandboxFlags(mask);
 }
 
-void SecurityContext::setContentSecurityPolicy(PassRefPtrWillBeRawPtr<ContentSecurityPolicy> contentSecurityPolicy)
-{
-    m_contentSecurityPolicy = contentSecurityPolicy;
+void SecurityContext::applySandboxFlags(SandboxFlags mask) {
+  m_sandboxFlags |= mask;
+
+  if (isSandboxed(SandboxOrigin) && getSecurityOrigin() &&
+      !getSecurityOrigin()->isUnique()) {
+    setSecurityOrigin(SecurityOrigin::createUnique());
+    didUpdateSecurityOrigin();
+  }
 }
 
-bool SecurityContext::isSecureTransitionTo(const KURL& url) const
-{
-    // If we haven't initialized our security origin by now, this is probably
-    // a new window created via the API (i.e., that lacks an origin and lacks
-    // a place to inherit the origin from).
-    if (!haveInitializedSecurityOrigin())
-        return true;
+String SecurityContext::addressSpaceForBindings() const {
+  switch (m_addressSpace) {
+    case WebAddressSpacePublic:
+      return "public";
 
-    RefPtr<SecurityOrigin> other = SecurityOrigin::create(url);
-    return securityOrigin()->canAccess(other.get());
+    case WebAddressSpacePrivate:
+      return "private";
+
+    case WebAddressSpaceLocal:
+      return "local";
+  }
+  NOTREACHED();
+  return "public";
 }
 
-void SecurityContext::enforceSandboxFlags(SandboxFlags mask)
-{
-    m_sandboxFlags |= mask;
+// Enforces the given suborigin as part of the security origin for this
+// security context. |name| must not be empty, although it may be null. A null
+// name represents a lack of a suborigin.
+// See: https://w3c.github.io/webappsec-suborigins/index.html
+void SecurityContext::enforceSuborigin(const Suborigin& suborigin) {
+  if (!RuntimeEnabledFeatures::suboriginsEnabled())
+    return;
 
-    if (isSandboxed(SandboxOrigin) && securityOrigin() && !securityOrigin()->isUnique()) {
-        setSecurityOrigin(SecurityOrigin::createUnique());
-        didUpdateSecurityOrigin();
-    }
+  DCHECK(!suborigin.name().isEmpty());
+  DCHECK(RuntimeEnabledFeatures::suboriginsEnabled());
+  DCHECK(m_securityOrigin.get());
+  DCHECK(!m_securityOrigin->hasSuborigin() ||
+         m_securityOrigin->suborigin()->name() == suborigin.name());
+  m_securityOrigin->addSuborigin(suborigin);
+  didUpdateSecurityOrigin();
 }
 
+void SecurityContext::setFeaturePolicyFromHeader(
+    const WebParsedFeaturePolicy& parsedHeader,
+    FeaturePolicy* parentFeaturePolicy) {
+  DCHECK(!m_featurePolicy);
+  m_featurePolicy = FeaturePolicy::createFromParentPolicy(parentFeaturePolicy,
+                                                          m_securityOrigin);
+  m_featurePolicy->setHeaderPolicy(parsedHeader);
 }
+
+}  // namespace blink

@@ -6,12 +6,10 @@
 
 namespace skia {
 
-PlatformSurface PlatformDevice::BeginPlatformPaint() {
+NativeDrawingContext PlatformDevice::BeginPlatformPaint(
+    const SkMatrix& transform,
+    const SkIRect& clip_bounds) {
   return NULL;
-}
-
-void PlatformDevice::EndPlatformPaint() {
-  // We don't need to do anything on Linux here.
 }
 
 }  // namespace skia

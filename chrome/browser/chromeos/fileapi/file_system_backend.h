@@ -5,13 +5,16 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILEAPI_FILE_SYSTEM_BACKEND_H_
 #define CHROME_BROWSER_CHROMEOS_FILEAPI_FILE_SYSTEM_BACKEND_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "storage/browser/fileapi/file_system_backend.h"
 #include "storage/browser/fileapi/task_runner_bound_observer_list.h"
 #include "storage/common/fileapi/file_system_types.h"
@@ -64,15 +67,12 @@ class FileSystemBackend : public storage::ExternalFileSystemBackend {
  public:
   using storage::FileSystemBackend::OpenFileSystemCallback;
 
-  // FileSystemBackend will take an ownership of a |mount_points|
-  // reference. On the other hand, |system_mount_points| will be kept as a raw
-  // pointer and it should outlive FileSystemBackend instance.
-  // The ownerships of |drive_delegate| and |file_system_provider_delegate| are
-  // also taken.
+  // |system_mount_points| should outlive FileSystemBackend instance.
   FileSystemBackend(
-      FileSystemBackendDelegate* drive_delegate,
-      FileSystemBackendDelegate* file_system_provider_delegate,
-      FileSystemBackendDelegate* mtp_delegate,
+      std::unique_ptr<FileSystemBackendDelegate> drive_delegate,
+      std::unique_ptr<FileSystemBackendDelegate> file_system_provider_delegate,
+      std::unique_ptr<FileSystemBackendDelegate> mtp_delegate,
+      std::unique_ptr<FileSystemBackendDelegate> arc_content_delegate,
       scoped_refptr<storage::ExternalMountPoints> mount_points,
       storage::ExternalMountPoints* system_mount_points);
   ~FileSystemBackend() override;
@@ -106,15 +106,15 @@ class FileSystemBackend : public storage::ExternalFileSystemBackend {
   bool SupportsStreaming(const storage::FileSystemURL& url) const override;
   bool HasInplaceCopyImplementation(
       storage::FileSystemType type) const override;
-  scoped_ptr<storage::FileStreamReader> CreateFileStreamReader(
+  std::unique_ptr<storage::FileStreamReader> CreateFileStreamReader(
       const storage::FileSystemURL& path,
-      int64 offset,
-      int64 max_bytes_to_read,
+      int64_t offset,
+      int64_t max_bytes_to_read,
       const base::Time& expected_modification_time,
       storage::FileSystemContext* context) const override;
-  scoped_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
+  std::unique_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
       const storage::FileSystemURL& url,
-      int64 offset,
+      int64_t offset,
       storage::FileSystemContext* context) const override;
   storage::FileSystemQuotaUtil* GetQuotaUtil() override;
   const storage::UpdateObserverList* GetUpdateObservers(
@@ -140,17 +140,20 @@ class FileSystemBackend : public storage::ExternalFileSystemBackend {
       const base::FilePath& entry_path) const override;
 
  private:
-  scoped_ptr<FileAccessPermissions> file_access_permissions_;
-  scoped_ptr<storage::AsyncFileUtil> local_file_util_;
+  std::unique_ptr<FileAccessPermissions> file_access_permissions_;
+  std::unique_ptr<storage::AsyncFileUtil> local_file_util_;
 
   // The delegate instance for the drive file system related operations.
-  scoped_ptr<FileSystemBackendDelegate> drive_delegate_;
+  std::unique_ptr<FileSystemBackendDelegate> drive_delegate_;
 
   // The delegate instance for the provided file system related operations.
-  scoped_ptr<FileSystemBackendDelegate> file_system_provider_delegate_;
+  std::unique_ptr<FileSystemBackendDelegate> file_system_provider_delegate_;
 
   // The delegate instance for the MTP file system related operations.
-  scoped_ptr<FileSystemBackendDelegate> mtp_delegate_;
+  std::unique_ptr<FileSystemBackendDelegate> mtp_delegate_;
+
+  // The delegate instance for the ARC content file system related operations.
+  std::unique_ptr<FileSystemBackendDelegate> arc_content_delegate_;
 
   // Mount points specific to the owning context (i.e. per-profile mount
   // points).

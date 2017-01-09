@@ -4,15 +4,18 @@
 
 #include "content/renderer/media/android/renderer_media_player_manager.h"
 
+#include "base/command_line.h"
 #include "content/common/media/media_player_messages_android.h"
 #include "content/public/common/renderer_preferences.h"
 #include "content/renderer/media/android/webmediaplayer_android.h"
-#include "content/renderer/media/cdm/renderer_cdm_manager.h"
 #include "content/renderer/render_view_impl.h"
-#include "media/base/cdm_context.h"
+#include "media/base/media_switches.h"
+#include "third_party/WebKit/public/platform/modules/remoteplayback/WebRemotePlaybackAvailability.h"
 #include "ui/gfx/geometry/rect_f.h"
 
 namespace content {
+
+using ::blink::WebRemotePlaybackAvailability;
 
 RendererMediaPlayerManager::RendererMediaPlayerManager(
     RenderFrame* render_frame)
@@ -41,14 +44,16 @@ bool RendererMediaPlayerManager::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_MediaVideoSizeChanged,
                         OnVideoSizeChanged)
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_MediaTimeUpdate, OnTimeUpdate)
-    IPC_MESSAGE_HANDLER(MediaPlayerMsg_WaitingForDecryptionKey,
-                        OnWaitingForDecryptionKey)
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_MediaPlayerReleased,
                         OnMediaPlayerReleased)
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_ConnectedToRemoteDevice,
                         OnConnectedToRemoteDevice)
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_DisconnectedFromRemoteDevice,
                         OnDisconnectedFromRemoteDevice)
+    IPC_MESSAGE_HANDLER(MediaPlayerMsg_CancelledRemotePlaybackRequest,
+                        OnCancelledRemotePlaybackRequest)
+    IPC_MESSAGE_HANDLER(MediaPlayerMsg_RemotePlaybackStarted,
+                        OnRemotePlaybackStarted)
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_DidExitFullscreen, OnDidExitFullscreen)
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_DidMediaPlayerPlay, OnPlayerPlay)
     IPC_MESSAGE_HANDLER(MediaPlayerMsg_DidMediaPlayerPause, OnPlayerPause)
@@ -59,26 +64,22 @@ bool RendererMediaPlayerManager::OnMessageReceived(const IPC::Message& msg) {
   return handled;
 }
 
-void RendererMediaPlayerManager::WasHidden() {
-  ReleaseVideoResources();
-}
-
 void RendererMediaPlayerManager::Initialize(
     MediaPlayerHostMsg_Initialize_Type type,
     int player_id,
     const GURL& url,
     const GURL& first_party_for_cookies,
-    int demuxer_client_id,
     const GURL& frame_url,
-    bool allow_credentials) {
+    bool allow_credentials,
+    int delegate_id) {
   MediaPlayerHostMsg_Initialize_Params media_player_params;
   media_player_params.type = type;
   media_player_params.player_id = player_id;
-  media_player_params.demuxer_client_id = demuxer_client_id;
   media_player_params.url = url;
   media_player_params.first_party_for_cookies = first_party_for_cookies;
   media_player_params.frame_url = frame_url;
   media_player_params.allow_credentials = allow_credentials;
+  media_player_params.delegate_id = delegate_id;
 
   Send(new MediaPlayerHostMsg_Initialize(routing_id(), media_player_params));
 }
@@ -108,8 +109,8 @@ void RendererMediaPlayerManager::SetPoster(int player_id, const GURL& poster) {
   Send(new MediaPlayerHostMsg_SetPoster(routing_id(), player_id, poster));
 }
 
-void RendererMediaPlayerManager::ReleaseResources(int player_id) {
-  Send(new MediaPlayerHostMsg_Release(routing_id(), player_id));
+void RendererMediaPlayerManager::SuspendAndReleaseResources(int player_id) {
+  Send(new MediaPlayerHostMsg_SuspendAndRelease(routing_id(), player_id));
 }
 
 void RendererMediaPlayerManager::DestroyPlayer(int player_id) {
@@ -125,26 +126,31 @@ void RendererMediaPlayerManager::RequestRemotePlaybackControl(int player_id) {
                                                            player_id));
 }
 
+void RendererMediaPlayerManager::RequestRemotePlaybackStop(int player_id) {
+  Send(new MediaPlayerHostMsg_RequestRemotePlaybackStop(routing_id(),
+                                                        player_id));
+}
+
 void RendererMediaPlayerManager::OnMediaMetadataChanged(
     int player_id,
     base::TimeDelta duration,
     int width,
     int height,
     bool success) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnMediaMetadataChanged(duration, width, height, success);
 }
 
 void RendererMediaPlayerManager::OnMediaPlaybackCompleted(int player_id) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnPlaybackComplete();
 }
 
 void RendererMediaPlayerManager::OnMediaBufferingUpdate(int player_id,
                                                         int percent) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnBufferingUpdate(percent);
 }
@@ -152,7 +158,7 @@ void RendererMediaPlayerManager::OnMediaBufferingUpdate(int player_id,
 void RendererMediaPlayerManager::OnSeekRequest(
     int player_id,
     const base::TimeDelta& time_to_seek) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnSeekRequest(time_to_seek);
 }
@@ -160,13 +166,13 @@ void RendererMediaPlayerManager::OnSeekRequest(
 void RendererMediaPlayerManager::OnSeekCompleted(
     int player_id,
     const base::TimeDelta& current_time) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnSeekComplete(current_time);
 }
 
 void RendererMediaPlayerManager::OnMediaError(int player_id, int error) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnMediaError(error);
 }
@@ -174,7 +180,7 @@ void RendererMediaPlayerManager::OnMediaError(int player_id, int error) {
 void RendererMediaPlayerManager::OnVideoSizeChanged(int player_id,
                                                     int width,
                                                     int height) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnVideoSizeChanged(width, height);
 }
@@ -183,76 +189,76 @@ void RendererMediaPlayerManager::OnTimeUpdate(
     int player_id,
     base::TimeDelta current_timestamp,
     base::TimeTicks current_time_ticks) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnTimeUpdate(current_timestamp, current_time_ticks);
 }
 
-void RendererMediaPlayerManager::OnWaitingForDecryptionKey(int player_id) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
-  if (player)
-    player->OnWaitingForDecryptionKey();
-}
-
 void RendererMediaPlayerManager::OnMediaPlayerReleased(int player_id) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnPlayerReleased();
 }
 
 void RendererMediaPlayerManager::OnConnectedToRemoteDevice(int player_id,
     const std::string& remote_playback_message) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnConnectedToRemoteDevice(remote_playback_message);
 }
 
 void RendererMediaPlayerManager::OnDisconnectedFromRemoteDevice(int player_id) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnDisconnectedFromRemoteDevice();
 }
 
+void RendererMediaPlayerManager::OnCancelledRemotePlaybackRequest(
+    int player_id) {
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
+  if (player)
+    player->OnCancelledRemotePlaybackRequest();
+}
+
+void RendererMediaPlayerManager::OnRemotePlaybackStarted(
+    int player_id) {
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
+  if (player)
+    player->OnRemotePlaybackStarted();
+}
+
 void RendererMediaPlayerManager::OnDidExitFullscreen(int player_id) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnDidExitFullscreen();
 }
 
 void RendererMediaPlayerManager::OnPlayerPlay(int player_id) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnMediaPlayerPlay();
 }
 
 void RendererMediaPlayerManager::OnPlayerPause(int player_id) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
     player->OnMediaPlayerPause();
 }
 
 void RendererMediaPlayerManager::OnRemoteRouteAvailabilityChanged(
     int player_id,
-    bool routes_available) {
-  WebMediaPlayerAndroid* player = GetMediaPlayer(player_id);
+    blink::WebRemotePlaybackAvailability availability) {
+  media::RendererMediaPlayerInterface* player = GetMediaPlayer(player_id);
   if (player)
-    player->OnRemoteRouteAvailabilityChanged(routes_available);
+    player->OnRemoteRouteAvailabilityChanged(availability);
 }
 
 void RendererMediaPlayerManager::EnterFullscreen(int player_id) {
   Send(new MediaPlayerHostMsg_EnterFullscreen(routing_id(), player_id));
 }
 
-void RendererMediaPlayerManager::SetCdm(int player_id, int cdm_id) {
-  if (cdm_id == media::CdmContext::kInvalidCdmId) {
-    NOTREACHED();
-    return;
-  }
-  Send(new MediaPlayerHostMsg_SetCdm(routing_id(), player_id, cdm_id));
-}
-
 int RendererMediaPlayerManager::RegisterMediaPlayer(
-    WebMediaPlayerAndroid* player) {
+    media::RendererMediaPlayerInterface* player) {
   media_players_[next_media_player_id_] = player;
   return next_media_player_id_++;
 }
@@ -261,68 +267,17 @@ void RendererMediaPlayerManager::UnregisterMediaPlayer(int player_id) {
   media_players_.erase(player_id);
 }
 
-void RendererMediaPlayerManager::ReleaseVideoResources() {
-  std::map<int, WebMediaPlayerAndroid*>::iterator player_it;
-  for (player_it = media_players_.begin(); player_it != media_players_.end();
-       ++player_it) {
-    WebMediaPlayerAndroid* player = player_it->second;
-
-    // Do not release if an audio track is still playing
-    if (player && (player->paused() || player->hasVideo()))
-      player->ReleaseMediaResources();
-  }
-}
-
-WebMediaPlayerAndroid* RendererMediaPlayerManager::GetMediaPlayer(
+media::RendererMediaPlayerInterface* RendererMediaPlayerManager::GetMediaPlayer(
     int player_id) {
-  std::map<int, WebMediaPlayerAndroid*>::iterator iter =
+  std::map<int, media::RendererMediaPlayerInterface*>::iterator iter =
       media_players_.find(player_id);
   if (iter != media_players_.end())
     return iter->second;
   return NULL;
 }
 
-#if defined(VIDEO_HOLE)
-void RendererMediaPlayerManager::RequestExternalSurface(
-    int player_id,
-    const gfx::RectF& geometry) {
-  Send(new MediaPlayerHostMsg_NotifyExternalSurface(
-      routing_id(), player_id, true, geometry));
+void RendererMediaPlayerManager::OnDestruct() {
+  delete this;
 }
-
-void RendererMediaPlayerManager::DidCommitCompositorFrame() {
-  std::map<int, gfx::RectF> geometry_change;
-  RetrieveGeometryChanges(&geometry_change);
-  for (std::map<int, gfx::RectF>::iterator it = geometry_change.begin();
-       it != geometry_change.end();
-       ++it) {
-    Send(new MediaPlayerHostMsg_NotifyExternalSurface(
-        routing_id(), it->first, false, it->second));
-  }
-}
-
-void RendererMediaPlayerManager::RetrieveGeometryChanges(
-    std::map<int, gfx::RectF>* changes) {
-  DCHECK(changes->empty());
-  for (std::map<int, WebMediaPlayerAndroid*>::iterator player_it =
-           media_players_.begin();
-       player_it != media_players_.end();
-       ++player_it) {
-    WebMediaPlayerAndroid* player = player_it->second;
-
-    if (player && player->hasVideo()) {
-      if (player->UpdateBoundaryRectangle())
-        (*changes)[player_it->first] = player->GetBoundaryRectangle();
-    }
-  }
-}
-
-bool
-RendererMediaPlayerManager::ShouldUseVideoOverlayForEmbeddedEncryptedVideo() {
-  const RendererPreferences& prefs = static_cast<RenderFrameImpl*>(
-      render_frame())->render_view()->renderer_preferences();
-  return prefs.use_video_overlay_for_embedded_encrypted_video;
-}
-#endif  // defined(VIDEO_HOLE)
 
 }  // namespace content

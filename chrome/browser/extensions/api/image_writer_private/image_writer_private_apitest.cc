@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/file_system/file_system_api.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/removable_storage_provider.h"
@@ -31,32 +32,30 @@ class ImageWriterPrivateApiTest : public ExtensionApiTest {
 
     scoped_refptr<StorageDeviceList> device_list(new StorageDeviceList);
 
-    RemovableStorageDevice* expected1 = new RemovableStorageDevice();
-    expected1->vendor = "Vendor 1";
-    expected1->model = "Model 1";
-    expected1->capacity = image_writer::kTestFileSize;
-    expected1->removable = true;
+    RemovableStorageDevice expected1;
+    expected1.vendor = "Vendor 1";
+    expected1.model = "Model 1";
+    expected1.capacity = image_writer::kTestFileSize;
+    expected1.removable = true;
 #if defined(OS_WIN)
-    expected1->storage_unit_id = test_utils_.GetDevicePath().AsUTF8Unsafe();
+    expected1.storage_unit_id = test_utils_.GetDevicePath().AsUTF8Unsafe();
 #else
-    expected1->storage_unit_id = test_utils_.GetDevicePath().value();
+    expected1.storage_unit_id = test_utils_.GetDevicePath().value();
 #endif
 
-    RemovableStorageDevice* expected2 = new RemovableStorageDevice();
-    expected2->vendor = "Vendor 2";
-    expected2->model = "Model 2";
-    expected2->capacity = image_writer::kTestFileSize << 2;
-    expected2->removable = false;
+    RemovableStorageDevice expected2;
+    expected2.vendor = "Vendor 2";
+    expected2.model = "Model 2";
+    expected2.capacity = image_writer::kTestFileSize << 2;
+    expected2.removable = false;
 #if defined(OS_WIN)
-    expected2->storage_unit_id = test_utils_.GetDevicePath().AsUTF8Unsafe();
+    expected2.storage_unit_id = test_utils_.GetDevicePath().AsUTF8Unsafe();
 #else
-    expected2->storage_unit_id = test_utils_.GetDevicePath().value();
+    expected2.storage_unit_id = test_utils_.GetDevicePath().value();
 #endif
 
-    linked_ptr<RemovableStorageDevice> device1(expected1);
-    device_list->data.push_back(device1);
-    linked_ptr<RemovableStorageDevice> device2(expected2);
-    device_list->data.push_back(device2);
+    device_list->data.push_back(std::move(expected1));
+    device_list->data.push_back(std::move(expected2));
 
     RemovableStorageProvider::SetDeviceListForTesting(device_list);
   }
@@ -116,9 +115,11 @@ IN_PROC_BROWSER_TEST_F(ImageWriterPrivateApiTest, TestWriteFromFile) {
 
 #if !defined(OS_CHROMEOS)
   test_utils_.GetUtilityClient()->SetWriteCallback(base::Bind(
-      &ImageWriterPrivateApiTest::ImageWriterUtilityClientCall, this));
+      &ImageWriterPrivateApiTest::ImageWriterUtilityClientCall,
+      base::Unretained(this)));
   test_utils_.GetUtilityClient()->SetVerifyCallback(base::Bind(
-      &ImageWriterPrivateApiTest::ImageWriterUtilityClientCall, this));
+      &ImageWriterPrivateApiTest::ImageWriterUtilityClientCall,
+      base::Unretained(this)));
 #endif
 
   ASSERT_TRUE(RunPlatformAppTest("image_writer_private/write_from_file"))

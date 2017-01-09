@@ -6,9 +6,10 @@
 #define UI_BASE_CURSOR_CURSOR_LOADER_H_
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/base/ui_base_export.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -16,14 +17,12 @@ namespace ui {
 
 class UI_BASE_EXPORT CursorLoader {
  public:
-  CursorLoader() : scale_(1.f), rotation_(gfx::Display::ROTATE_0) {}
+  CursorLoader() : scale_(1.f), rotation_(display::Display::ROTATE_0) {}
   virtual ~CursorLoader() {}
 
-  gfx::Display::Rotation rotation() const {
-    return rotation_;
-  }
+  display::Display::Rotation rotation() const { return rotation_; }
 
-  void set_rotation(gfx::Display::Rotation rotation) {
+  void set_rotation(display::Display::Rotation rotation) {
     rotation_ = rotation;
   }
 
@@ -66,7 +65,7 @@ class UI_BASE_EXPORT CursorLoader {
   float scale_;
 
   // The current rotation of the mouse cursor icon.
-  gfx::Display::Rotation rotation_;
+  display::Display::Rotation rotation_;
 
   DISALLOW_COPY_AND_ASSIGN(CursorLoader);
 };

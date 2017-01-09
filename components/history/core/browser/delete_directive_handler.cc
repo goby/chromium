@@ -4,6 +4,10 @@
 
 #include "components/history/core/browser/delete_directive_handler.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/json/json_writer.h"
 #include "base/rand_util.h"
 #include "base/time/time.h"
@@ -11,10 +15,10 @@
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_service.h"
-#include "sync/api/sync_change.h"
-#include "sync/protocol/history_delete_directive_specifics.pb.h"
-#include "sync/protocol/proto_value_conversions.h"
-#include "sync/protocol/sync.pb.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/protocol/history_delete_directive_specifics.pb.h"
+#include "components/sync/protocol/proto_value_conversions.h"
+#include "components/sync/protocol/sync.pb.h"
 
 namespace {
 
@@ -29,7 +33,7 @@ std::string RandASCIIString(size_t length) {
 
 std::string DeleteDirectiveToString(
     const sync_pb::HistoryDeleteDirectiveSpecifics& delete_directive) {
-  scoped_ptr<base::DictionaryValue> value(
+  std::unique_ptr<base::DictionaryValue> value(
       syncer::HistoryDeleteDirectiveSpecificsToValue(delete_directive));
   std::string str;
   base::JSONWriter::Write(*value, &str);
@@ -51,12 +55,12 @@ bool TimeRangeLessThan(const syncer::SyncData& data1,
 }
 
 // Converts a Unix timestamp in microseconds to a base::Time value.
-base::Time UnixUsecToTime(int64 usec) {
+base::Time UnixUsecToTime(int64_t usec) {
   return base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(usec);
 }
 
 // Converts a base::Time value to a Unix timestamp in microseconds.
-int64 TimeToUnixUsec(base::Time time) {
+int64_t TimeToUnixUsec(base::Time time) {
   DCHECK(!time.is_null());
   return (time - base::Time::UnixEpoch()).InMicroseconds();
 }
@@ -292,13 +296,13 @@ DeleteDirectiveHandler::~DeleteDirectiveHandler() {
 void DeleteDirectiveHandler::Start(
     HistoryService* history_service,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  sync_processor_ = sync_processor.Pass();
+  sync_processor_ = std::move(sync_processor);
   if (!initial_sync_data.empty()) {
     // Drop processed delete directives during startup.
     history_service->ScheduleDBTask(
-        scoped_ptr<HistoryDBTask>(
+        std::unique_ptr<HistoryDBTask>(
             new DeleteDirectiveTask(weak_ptr_factory_.GetWeakPtr(),
                                     initial_sync_data, DROP_AFTER_PROCESSING)),
         &internal_tracker_);
@@ -311,21 +315,21 @@ void DeleteDirectiveHandler::Stop() {
 }
 
 bool DeleteDirectiveHandler::CreateDeleteDirectives(
-    const std::set<int64>& global_ids,
+    const std::set<int64_t>& global_ids,
     base::Time begin_time,
     base::Time end_time) {
   base::Time now = base::Time::Now();
   sync_pb::HistoryDeleteDirectiveSpecifics delete_directive;
 
   // Delete directives require a non-null begin time, so use 1 if it's null.
-  int64 begin_time_usecs =
+  int64_t begin_time_usecs =
       begin_time.is_null() ? 0 : TimeToUnixUsec(begin_time);
 
   // Determine the actual end time -- it should not be null or in the future.
   // TODO(dubroy): Use sane time (crbug.com/146090) here when it's available.
   base::Time end = (end_time.is_null() || end_time > now) ? now : end_time;
   // -1 because end time in delete directives is inclusive.
-  int64 end_time_usecs = TimeToUnixUsec(end) - 1;
+  int64_t end_time_usecs = TimeToUnixUsec(end) - 1;
 
   if (global_ids.empty()) {
     sync_pb::TimeRangeDirective* time_range_directive =
@@ -333,7 +337,7 @@ bool DeleteDirectiveHandler::CreateDeleteDirectives(
     time_range_directive->set_start_time_usec(begin_time_usecs);
     time_range_directive->set_end_time_usec(end_time_usecs);
   } else {
-    for (std::set<int64>::const_iterator it = global_ids.begin();
+    for (std::set<int64_t>::const_iterator it = global_ids.begin();
          it != global_ids.end(); ++it) {
       sync_pb::GlobalIdDirective* global_id_directive =
           delete_directive.mutable_global_id_directive();
@@ -403,7 +407,7 @@ syncer::SyncError DeleteDirectiveHandler::ProcessSyncChanges(
     // redelivered delete directives to avoid processing them again and again
     // in one chrome session.
     history_service->ScheduleDBTask(
-        scoped_ptr<HistoryDBTask>(
+        std::unique_ptr<HistoryDBTask>(
             new DeleteDirectiveTask(weak_ptr_factory_.GetWeakPtr(),
                                     delete_directives, KEEP_AFTER_PROCESSING)),
         &internal_tracker_);

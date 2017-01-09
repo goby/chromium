@@ -6,12 +6,13 @@
 #define CHROME_BROWSER_INSTALL_VERIFICATION_WIN_MODULE_LIST_H_
 
 #include <Windows.h>
+#include <stddef.h>
 
+#include <memory>
 #include <set>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 struct ModuleInfo;
 
@@ -25,7 +26,7 @@ class ModuleList {
   // AddRef'd HMODULEs will be inserted in the returned ModuleList.
   //
   // This method _always_ returns a valid ModuleList instance.
-  static scoped_ptr<ModuleList> FromLoadedModuleSnapshot(
+  static std::unique_ptr<ModuleList> FromLoadedModuleSnapshot(
       const std::vector<HMODULE>& snapshot);
 
   // Retrieves name and address information for the module list.

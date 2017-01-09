@@ -4,10 +4,10 @@
 
 #include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 
-#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
@@ -25,15 +25,18 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
+#include "components/bookmarks/browser/bookmark_utils.h"
+#include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/url_formatter/url_formatter.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/features/features.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_set.h"
@@ -47,7 +50,7 @@
 
 #if defined(OS_WIN)
 #include "chrome/grit/theme_resources.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #endif
 
@@ -124,7 +127,7 @@ class OpenURLIterator {
   DISALLOW_COPY_AND_ASSIGN(OpenURLIterator);
 };
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
 bool ShouldOpenAll(gfx::NativeWindow parent,
                    const std::vector<const BookmarkNode*>& nodes) {
   int child_count = 0;
@@ -137,11 +140,11 @@ bool ShouldOpenAll(gfx::NativeWindow parent,
   if (child_count < num_bookmark_urls_before_prompting)
     return true;
 
-  return ShowMessageBox(parent,
-      l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-      l10n_util::GetStringFUTF16(IDS_BOOKMARK_BAR_SHOULD_OPEN_ALL,
-                                 base::IntToString16(child_count)),
-      MESSAGE_BOX_TYPE_QUESTION) == MESSAGE_BOX_RESULT_YES;
+  return ShowQuestionMessageBox(
+             parent, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
+             l10n_util::GetStringFUTF16(IDS_BOOKMARK_BAR_SHOULD_OPEN_ALL,
+                                        base::IntToString16(child_count))) ==
+         MESSAGE_BOX_RESULT_YES;
 }
 #endif
 
@@ -157,7 +160,7 @@ int ChildURLCountTotal(const BookmarkNode* node) {
   return result;
 }
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
 // Returns in |urls|, the url and title pairs for each open tab in browser.
 void GetURLsForOpenTabs(Browser* browser,
                         std::vector<std::pair<GURL, base::string16> >* urls) {
@@ -172,7 +175,7 @@ void GetURLsForOpenTabs(Browser* browser,
 
 }  // namespace
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
 void OpenAll(gfx::NativeWindow parent,
              content::PageNavigator* navigator,
              const std::vector<const BookmarkNode*>& nodes,
@@ -195,7 +198,7 @@ void OpenAll(gfx::NativeWindow parent,
     // When |initial_disposition| is OFF_THE_RECORD, a node which can't be
     // opened in incognito window, it is detected using |browser_context|, is
     // not opened.
-    if (initial_disposition == OFF_THE_RECORD &&
+    if (initial_disposition == WindowOpenDisposition::OFF_THE_RECORD &&
         !IsURLAllowedInIncognito(*url, browser_context))
       continue;
 
@@ -205,7 +208,7 @@ void OpenAll(gfx::NativeWindow parent,
 
     if (!opened_first_url) {
       opened_first_url = true;
-      disposition = NEW_BACKGROUND_TAB;
+      disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
       // We opened the first URL which may have opened a new window or clobbered
       // the current page, reset the navigator just to be sure. |opened_tab| may
       // be NULL in tests.
@@ -228,19 +231,20 @@ void OpenAll(gfx::NativeWindow parent,
 bool ConfirmDeleteBookmarkNode(const BookmarkNode* node,
                                gfx::NativeWindow window) {
   DCHECK(node && node->is_folder() && !node->empty());
-  return ShowMessageBox(window,
-      l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-      l10n_util::GetStringFUTF16Int(IDS_BOOKMARK_EDITOR_CONFIRM_DELETE,
-                                    ChildURLCountTotal(node)),
-      MESSAGE_BOX_TYPE_QUESTION) == MESSAGE_BOX_RESULT_YES;
+  return ShowQuestionMessageBox(
+             window, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
+             l10n_util::GetPluralStringFUTF16(
+                 IDS_BOOKMARK_EDITOR_CONFIRM_DELETE,
+                 ChildURLCountTotal(node))) ==
+         MESSAGE_BOX_RESULT_YES;
 }
 
 void ShowBookmarkAllTabsDialog(Browser* browser) {
   Profile* profile = browser->profile();
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
   DCHECK(model && model->loaded());
 
-  const BookmarkNode* parent = model->GetParentForNewNodes();
+  const BookmarkNode* parent = GetParentForNewNodes(model);
   BookmarkEditor::EditDetails details =
       BookmarkEditor::EditDetails::AddFolder(parent, parent->child_count());
   GetURLsForOpenTabs(browser, &(details.urls));
@@ -266,6 +270,6 @@ bool HasBookmarkURLsAllowedInIncognitoMode(
   }
   return false;
 }
-#endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
+#endif  // !defined(OS_ANDROID)
 
 }  // namespace chrome

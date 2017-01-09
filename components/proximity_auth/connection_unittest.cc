@@ -4,8 +4,10 @@
 
 #include "components/proximity_auth/connection.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/connection_observer.h"
-#include "components/proximity_auth/remote_device.h"
 #include "components/proximity_auth/wire_message.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,7 +24,7 @@ namespace {
 
 class MockConnection : public Connection {
  public:
-  MockConnection() : Connection(RemoteDevice()) {}
+  MockConnection() : Connection(cryptauth::RemoteDevice()) {}
   ~MockConnection() {}
 
   MOCK_METHOD1(SetPaused, void(bool paused));
@@ -35,13 +37,13 @@ class MockConnection : public Connection {
 
   // Gmock only supports copyable types, so create simple wrapper methods for
   // ease of mocking.
-  void SendMessageImpl(scoped_ptr<WireMessage> message) override {
+  void SendMessageImpl(std::unique_ptr<WireMessage> message) override {
     SendMessageImplProxy(message.get());
   }
 
-  scoped_ptr<WireMessage> DeserializeWireMessage(
+  std::unique_ptr<WireMessage> DeserializeWireMessage(
       bool* is_incomplete_message) override {
-    return make_scoped_ptr(DeserializeWireMessageProxy(is_incomplete_message));
+    return base::WrapUnique(DeserializeWireMessageProxy(is_incomplete_message));
   }
 
   using Connection::status;
@@ -104,17 +106,17 @@ TEST(ProximityAuthConnectionTest, SendMessage_FailsWhenNotConnected) {
   connection.SetStatus(Connection::IN_PROGRESS);
 
   EXPECT_CALL(connection, SendMessageImplProxy(_)).Times(0);
-  connection.SendMessage(scoped_ptr<WireMessage>());
+  connection.SendMessage(std::unique_ptr<WireMessage>());
 }
 
 TEST(ProximityAuthConnectionTest,
      SendMessage_FailsWhenAnotherMessageSendIsInProgress) {
   NiceMock<MockConnection> connection;
   connection.SetStatus(Connection::CONNECTED);
-  connection.SendMessage(scoped_ptr<WireMessage>());
+  connection.SendMessage(std::unique_ptr<WireMessage>());
 
   EXPECT_CALL(connection, SendMessageImplProxy(_)).Times(0);
-  connection.SendMessage(scoped_ptr<WireMessage>());
+  connection.SendMessage(std::unique_ptr<WireMessage>());
 }
 
 TEST(ProximityAuthConnectionTest, SendMessage_SucceedsWhenConnected) {
@@ -122,18 +124,18 @@ TEST(ProximityAuthConnectionTest, SendMessage_SucceedsWhenConnected) {
   connection.SetStatus(Connection::CONNECTED);
 
   EXPECT_CALL(connection, SendMessageImplProxy(_));
-  connection.SendMessage(scoped_ptr<WireMessage>());
+  connection.SendMessage(std::unique_ptr<WireMessage>());
 }
 
 TEST(ProximityAuthConnectionTest,
      SendMessage_SucceedsAfterPreviousMessageSendCompletes) {
   NiceMock<MockConnection> connection;
   connection.SetStatus(Connection::CONNECTED);
-  connection.SendMessage(scoped_ptr<WireMessage>());
+  connection.SendMessage(std::unique_ptr<WireMessage>());
   connection.OnDidSendMessage(TestWireMessage(), true /* success */);
 
   EXPECT_CALL(connection, SendMessageImplProxy(_));
-  connection.SendMessage(scoped_ptr<WireMessage>());
+  connection.SendMessage(std::unique_ptr<WireMessage>());
 }
 
 TEST(ProximityAuthConnectionTest, SetStatus_NotifiesObserversOfStatusChange) {
@@ -165,7 +167,7 @@ TEST(ProximityAuthConnectionTest,
      OnDidSendMessage_NotifiesObserversIfMessageSendInProgress) {
   NiceMock<MockConnection> connection;
   connection.SetStatus(Connection::CONNECTED);
-  connection.SendMessage(scoped_ptr<WireMessage>());
+  connection.SendMessage(std::unique_ptr<WireMessage>());
 
   StrictMock<MockConnectionObserver> observer;
   connection.AddObserver(&observer);
@@ -222,8 +224,7 @@ TEST(ProximityAuthConnectionTest,
   connection.AddObserver(&observer);
 
   ON_CALL(connection, DeserializeWireMessageProxy(_))
-      .WillByDefault(DoAll(SetArgPointee<0>(true),
-                           Return(static_cast<WireMessage*>(NULL))));
+      .WillByDefault(DoAll(SetArgPointee<0>(true), Return(nullptr)));
   EXPECT_CALL(observer, OnMessageReceived(_, _)).Times(0);
   connection.OnBytesReceived(std::string());
 }
@@ -237,8 +238,7 @@ TEST(ProximityAuthConnectionTest,
   connection.AddObserver(&observer);
 
   ON_CALL(connection, DeserializeWireMessageProxy(_))
-      .WillByDefault(DoAll(SetArgPointee<0>(false),
-                           Return(static_cast<WireMessage*>(NULL))));
+      .WillByDefault(DoAll(SetArgPointee<0>(false), Return(nullptr)));
   EXPECT_CALL(observer, OnMessageReceived(_, _)).Times(0);
   connection.OnBytesReceived(std::string());
 }

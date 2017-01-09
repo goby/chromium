@@ -2,18 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/session/session_state_delegate.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/test/test_session_state_delegate.h"
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm_shell.h"
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
-#include "ash/test/test_session_state_delegate.h"
 #include "ash/test/test_shell_delegate.h"
 #include "ash/wm/lock_state_controller.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
+#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
-#include "ui/aura/client/window_tree_client.h"
+#include "ui/aura/client/window_parenting_client.h"
+#include "ui/views/test/widget_test.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
@@ -67,7 +71,7 @@ class LockScreenSessionStateDelegate : public TestSessionStateDelegate {
     lock_screen_widget_->GetNativeView()->Focus();
   }
 
-  scoped_ptr<views::Widget> lock_screen_widget_;
+  std::unique_ptr<views::Widget> lock_screen_widget_;
 
   DISALLOW_COPY_AND_ASSIGN(LockScreenSessionStateDelegate);
 };
@@ -116,8 +120,6 @@ class LockScreenAshFocusRulesTest : public AshTestBase {
     return window;
   }
 
-  Shell* shell() const { return Shell::GetInstance(); }
-
  private:
   aura::Window* CreateWindowInContainer(int container_id) {
     aura::Window* root_window = Shell::GetPrimaryRootWindow();
@@ -131,8 +133,10 @@ class LockScreenAshFocusRulesTest : public AshTestBase {
     aura::client::ParentWindowWithContext(window, container,
                                           gfx::Rect(0, 0, 400, 400));
 
-    window->SetProperty(aura::client::kCanMaximizeKey, true);
-    window->SetProperty(aura::client::kCanMinimizeKey, true);
+    window->SetProperty(aura::client::kResizeBehaviorKey,
+                        ui::mojom::kResizeBehaviorCanMaximize |
+                            ui::mojom::kResizeBehaviorCanMinimize |
+                            ui::mojom::kResizeBehaviorCanResize);
     return window;
   }
 
@@ -144,8 +148,8 @@ class LockScreenAshFocusRulesTest : public AshTestBase {
 // Verifies focus is returned (after unlocking the screen) to the most recent
 // window that had it before locking the screen.
 TEST_F(LockScreenAshFocusRulesTest, RegainFocusAfterUnlock) {
-  scoped_ptr<aura::Window> normal_window(CreateWindowInDefaultContainer());
-  scoped_ptr<aura::Window> always_on_top_window(
+  std::unique_ptr<aura::Window> normal_window(CreateWindowInDefaultContainer());
+  std::unique_ptr<aura::Window> always_on_top_window(
       CreateWindowInAlwaysOnTopContainer());
 
   wm::ActivateWindow(always_on_top_window.get());
@@ -167,7 +171,7 @@ TEST_F(LockScreenAshFocusRulesTest, RegainFocusAfterUnlock) {
 
   BlockUserSession(BLOCKED_BY_LOCK_SCREEN);
 
-  EXPECT_TRUE(shell()->session_state_delegate()->IsScreenLocked());
+  EXPECT_TRUE(WmShell::Get()->GetSessionStateDelegate()->IsScreenLocked());
   EXPECT_FALSE(normal_window->HasFocus());
   EXPECT_FALSE(always_on_top_window->HasFocus());
   EXPECT_FALSE(normal_window_state->IsMinimized());
@@ -177,13 +181,31 @@ TEST_F(LockScreenAshFocusRulesTest, RegainFocusAfterUnlock) {
 
   UnblockUserSession();
 
-  EXPECT_FALSE(shell()->session_state_delegate()->IsScreenLocked());
+  EXPECT_FALSE(WmShell::Get()->GetSessionStateDelegate()->IsScreenLocked());
   EXPECT_FALSE(normal_window_state->IsMinimized());
   EXPECT_FALSE(always_on_top_window_state->IsMinimized());
   EXPECT_TRUE(normal_window_state->CanActivate());
   EXPECT_TRUE(always_on_top_window_state->CanActivate());
   EXPECT_FALSE(always_on_top_window->HasFocus());
   EXPECT_TRUE(normal_window->HasFocus());
+}
+
+// Tests that if a widget has a view which should be initially focused, this
+// view doesn't get focused if the widget shows behind the lock screen.
+TEST_F(LockScreenAshFocusRulesTest, PreventFocusChangeWithLockScreenPresent) {
+  BlockUserSession(BLOCKED_BY_LOCK_SCREEN);
+  EXPECT_TRUE(WmShell::Get()->GetSessionStateDelegate()->IsScreenLocked());
+
+  views::test::TestInitialFocusWidgetDelegate delegate(CurrentContext());
+  EXPECT_FALSE(delegate.view()->HasFocus());
+  delegate.GetWidget()->Show();
+  EXPECT_FALSE(delegate.GetWidget()->IsActive());
+  EXPECT_FALSE(delegate.view()->HasFocus());
+
+  UnblockUserSession();
+  EXPECT_FALSE(WmShell::Get()->GetSessionStateDelegate()->IsScreenLocked());
+  EXPECT_TRUE(delegate.GetWidget()->IsActive());
+  EXPECT_TRUE(delegate.view()->HasFocus());
 }
 
 }  // namespace test

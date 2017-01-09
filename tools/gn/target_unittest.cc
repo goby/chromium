@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "tools/gn/target.h"
+
+#include <utility>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "tools/gn/build_settings.h"
 #include "tools/gn/config.h"
 #include "tools/gn/scheduler.h"
 #include "tools/gn/settings.h"
-#include "tools/gn/target.h"
 #include "tools/gn/test_with_scope.h"
 #include "tools/gn/toolchain.h"
 
@@ -35,7 +38,7 @@ TEST(Target, LibInheritance) {
   TestWithScope setup;
   Err err;
 
-  const std::string lib("foo");
+  const LibFile lib("foo");
   const SourceDir libdir("/foo_dir/");
 
   // Leaf target with ldflags set.
@@ -52,7 +55,7 @@ TEST(Target, LibInheritance) {
 
   // Shared library target should inherit the libs from the static library
   // and its own. Its own flag should be before the inherited one.
-  const std::string second_lib("bar");
+  const LibFile second_lib("bar");
   const SourceDir second_libdir("/bar_dir/");
   TestTarget shared(setup, "//foo:shared", Target::SHARED_LIBRARY);
   shared.config_values().libs().push_back(second_lib);
@@ -180,7 +183,13 @@ TEST(Target, InheritCompleteStaticLib) {
   TestTarget a(setup, "//foo:a", Target::EXECUTABLE);
   TestTarget b(setup, "//foo:b", Target::STATIC_LIBRARY);
   b.set_complete_static_lib(true);
+
+  const LibFile lib("foo");
+  const SourceDir lib_dir("/foo_dir/");
   TestTarget c(setup, "//foo:c", Target::SOURCE_SET);
+  c.config_values().libs().push_back(lib);
+  c.config_values().lib_dirs().push_back(lib_dir);
+
   a.public_deps().push_back(LabelTargetPair(&b));
   b.public_deps().push_back(LabelTargetPair(&c));
 
@@ -196,42 +205,74 @@ TEST(Target, InheritCompleteStaticLib) {
   // A should have B in its inherited libs, but not any others (the complete
   // static library will include the source set).
   std::vector<const Target*> a_inherited = a.inherited_libraries().GetOrdered();
-  EXPECT_EQ(1u, a_inherited.size());
+  ASSERT_EQ(1u, a_inherited.size());
   EXPECT_EQ(&b, a_inherited[0]);
+
+  // A should inherit the libs and lib_dirs from the C.
+  ASSERT_EQ(1u, a.all_libs().size());
+  EXPECT_EQ(lib, a.all_libs()[0]);
+  ASSERT_EQ(1u, a.all_lib_dirs().size());
+  EXPECT_EQ(lib_dir, a.all_lib_dirs()[0]);
 }
 
-TEST(Target, InheritCompleteStaticLibNoDirectStaticLibDeps) {
+TEST(Target, InheritCompleteStaticLibStaticLibDeps) {
   TestWithScope setup;
   Err err;
 
   // Create a dependency chain:
-  //   A (complete static lib) -> B (static lib)
-  TestTarget a(setup, "//foo:a", Target::STATIC_LIBRARY);
-  a.set_complete_static_lib(true);
+  //   A (executable) -> B (complete static lib) -> C (static lib)
+  TestTarget a(setup, "//foo:a", Target::EXECUTABLE);
   TestTarget b(setup, "//foo:b", Target::STATIC_LIBRARY);
-
-  a.public_deps().push_back(LabelTargetPair(&b));
-  ASSERT_TRUE(b.OnResolved(&err));
-  ASSERT_FALSE(a.OnResolved(&err));
-}
-
-TEST(Target, InheritCompleteStaticLibNoIheritedStaticLibDeps) {
-  TestWithScope setup;
-  Err err;
-
-  // Create a dependency chain:
-  //   A (complete static lib) -> B (source set) -> C (static lib)
-  TestTarget a(setup, "//foo:a", Target::STATIC_LIBRARY);
-  a.set_complete_static_lib(true);
-  TestTarget b(setup, "//foo:b", Target::SOURCE_SET);
+  b.set_complete_static_lib(true);
   TestTarget c(setup, "//foo:c", Target::STATIC_LIBRARY);
-
   a.public_deps().push_back(LabelTargetPair(&b));
   b.public_deps().push_back(LabelTargetPair(&c));
 
   ASSERT_TRUE(c.OnResolved(&err));
   ASSERT_TRUE(b.OnResolved(&err));
-  ASSERT_FALSE(a.OnResolved(&err));
+  ASSERT_TRUE(a.OnResolved(&err));
+
+  // B should have C in its inherited libs.
+  std::vector<const Target*> b_inherited = b.inherited_libraries().GetOrdered();
+  ASSERT_EQ(1u, b_inherited.size());
+  EXPECT_EQ(&c, b_inherited[0]);
+
+  // A should have B in its inherited libs, but not any others (the complete
+  // static library will include the static library).
+  std::vector<const Target*> a_inherited = a.inherited_libraries().GetOrdered();
+  ASSERT_EQ(1u, a_inherited.size());
+  EXPECT_EQ(&b, a_inherited[0]);
+}
+
+TEST(Target, InheritCompleteStaticLibInheritedCompleteStaticLibDeps) {
+  TestWithScope setup;
+  Err err;
+
+  // Create a dependency chain:
+  //   A (executable) -> B (complete static lib) -> C (complete static lib)
+  TestTarget a(setup, "//foo:a", Target::EXECUTABLE);
+  TestTarget b(setup, "//foo:b", Target::STATIC_LIBRARY);
+  b.set_complete_static_lib(true);
+  TestTarget c(setup, "//foo:c", Target::STATIC_LIBRARY);
+  c.set_complete_static_lib(true);
+
+  a.private_deps().push_back(LabelTargetPair(&b));
+  b.private_deps().push_back(LabelTargetPair(&c));
+
+  ASSERT_TRUE(c.OnResolved(&err));
+  ASSERT_TRUE(b.OnResolved(&err));
+  ASSERT_TRUE(a.OnResolved(&err));
+
+  // B should have C in its inherited libs.
+  std::vector<const Target*> b_inherited = b.inherited_libraries().GetOrdered();
+  ASSERT_EQ(1u, b_inherited.size());
+  EXPECT_EQ(&c, b_inherited[0]);
+
+  // A should have B and C in its inherited libs.
+  std::vector<const Target*> a_inherited = a.inherited_libraries().GetOrdered();
+  ASSERT_EQ(2u, a_inherited.size());
+  EXPECT_EQ(&b, a_inherited[0]);
+  EXPECT_EQ(&c, a_inherited[1]);
 }
 
 TEST(Target, NoActionDepPropgation) {
@@ -267,30 +308,32 @@ TEST(Target, GetComputedOutputName) {
   // no prefix) or output name.
   TestTarget basic(setup, "//foo:bar", Target::EXECUTABLE);
   ASSERT_TRUE(basic.OnResolved(&err));
-  EXPECT_EQ("bar", basic.GetComputedOutputName(false));
-  EXPECT_EQ("bar", basic.GetComputedOutputName(true));
+  EXPECT_EQ("bar", basic.GetComputedOutputName());
 
   // Target with no prefix but an output name.
   TestTarget with_name(setup, "//foo:bar", Target::EXECUTABLE);
   with_name.set_output_name("myoutput");
   ASSERT_TRUE(with_name.OnResolved(&err));
-  EXPECT_EQ("myoutput", with_name.GetComputedOutputName(false));
-  EXPECT_EQ("myoutput", with_name.GetComputedOutputName(true));
+  EXPECT_EQ("myoutput", with_name.GetComputedOutputName());
 
   // Target with a "lib" prefix (the static library tool in the TestWithScope
   // should specify a "lib" output prefix).
   TestTarget with_prefix(setup, "//foo:bar", Target::STATIC_LIBRARY);
   ASSERT_TRUE(with_prefix.OnResolved(&err));
-  EXPECT_EQ("bar", with_prefix.GetComputedOutputName(false));
-  EXPECT_EQ("libbar", with_prefix.GetComputedOutputName(true));
+  EXPECT_EQ("libbar", with_prefix.GetComputedOutputName());
 
   // Target with a "lib" prefix that already has it applied. The prefix should
   // not duplicate something already in the target name.
   TestTarget dup_prefix(setup, "//foo:bar", Target::STATIC_LIBRARY);
   dup_prefix.set_output_name("libbar");
   ASSERT_TRUE(dup_prefix.OnResolved(&err));
-  EXPECT_EQ("libbar", dup_prefix.GetComputedOutputName(false));
-  EXPECT_EQ("libbar", dup_prefix.GetComputedOutputName(true));
+  EXPECT_EQ("libbar", dup_prefix.GetComputedOutputName());
+
+  // Target with an output prefix override should not have a prefix.
+  TestTarget override_prefix(setup, "//foo:bar", Target::SHARED_LIBRARY);
+  override_prefix.set_output_prefix_override(true);
+  ASSERT_TRUE(dup_prefix.OnResolved(&err));
+  EXPECT_EQ("bar", override_prefix.GetComputedOutputName());
 }
 
 // Test visibility failure case.
@@ -386,6 +429,8 @@ TEST(Target, PublicConfigs) {
 
   Label pub_config_label(SourceDir("//a/"), "pubconfig");
   Config pub_config(setup.settings(), pub_config_label);
+  LibFile lib_name("testlib");
+  pub_config.own_values().libs().push_back(lib_name);
   ASSERT_TRUE(pub_config.OnResolved(&err));
 
   // This is the destination target that has a public config.
@@ -406,10 +451,80 @@ TEST(Target, PublicConfigs) {
   ASSERT_EQ(1u, dep_on_pub.configs().size());
   EXPECT_EQ(&pub_config, dep_on_pub.configs()[0].ptr);
 
+  // Libs have special handling, check that they were forwarded from the
+  // public config to all_libs.
+  ASSERT_EQ(1u, dep_on_pub.all_libs().size());
+  ASSERT_EQ(lib_name, dep_on_pub.all_libs()[0]);
+
   // This target has a private dependency on dest for forwards configs.
   TestTarget forward(setup, "//a:f", Target::SOURCE_SET);
   forward.private_deps().push_back(LabelTargetPair(&dest));
   ASSERT_TRUE(forward.OnResolved(&err));
+}
+
+// Tests that configs are ordered properly between local and pulled ones.
+TEST(Target, ConfigOrdering) {
+  TestWithScope setup;
+  Err err;
+
+  // Make Dep1. It has all_dependent_configs and public_configs.
+  TestTarget dep1(setup, "//:dep1", Target::SOURCE_SET);
+  Label dep1_all_config_label(SourceDir("//"), "dep1_all_config");
+  Config dep1_all_config(setup.settings(), dep1_all_config_label);
+  ASSERT_TRUE(dep1_all_config.OnResolved(&err));
+  dep1.all_dependent_configs().push_back(LabelConfigPair(&dep1_all_config));
+
+  Label dep1_public_config_label(SourceDir("//"), "dep1_public_config");
+  Config dep1_public_config(setup.settings(), dep1_public_config_label);
+  ASSERT_TRUE(dep1_public_config.OnResolved(&err));
+  dep1.public_configs().push_back(LabelConfigPair(&dep1_public_config));
+  ASSERT_TRUE(dep1.OnResolved(&err));
+
+  // Make Dep2 with the same structure.
+  TestTarget dep2(setup, "//:dep2", Target::SOURCE_SET);
+  Label dep2_all_config_label(SourceDir("//"), "dep2_all_config");
+  Config dep2_all_config(setup.settings(), dep2_all_config_label);
+  ASSERT_TRUE(dep2_all_config.OnResolved(&err));
+  dep2.all_dependent_configs().push_back(LabelConfigPair(&dep2_all_config));
+
+  Label dep2_public_config_label(SourceDir("//"), "dep2_public_config");
+  Config dep2_public_config(setup.settings(), dep2_public_config_label);
+  ASSERT_TRUE(dep2_public_config.OnResolved(&err));
+  dep2.public_configs().push_back(LabelConfigPair(&dep2_public_config));
+  ASSERT_TRUE(dep2.OnResolved(&err));
+
+  // This target depends on both previous targets.
+  TestTarget target(setup, "//:foo", Target::SOURCE_SET);
+  target.private_deps().push_back(LabelTargetPair(&dep1));
+  target.private_deps().push_back(LabelTargetPair(&dep2));
+
+  // It also has a private and public config.
+  Label public_config_label(SourceDir("//"), "public");
+  Config public_config(setup.settings(), public_config_label);
+  ASSERT_TRUE(public_config.OnResolved(&err));
+  target.public_configs().push_back(LabelConfigPair(&public_config));
+
+  Label private_config_label(SourceDir("//"), "private");
+  Config private_config(setup.settings(), private_config_label);
+  ASSERT_TRUE(private_config.OnResolved(&err));
+  target.configs().push_back(LabelConfigPair(&private_config));
+
+  // Resolve to get the computed list of configs applying.
+  ASSERT_TRUE(target.OnResolved(&err));
+  const auto& computed = target.configs();
+
+  // Order should be:
+  // 1. local private
+  // 2. local public
+  // 3. inherited all dependent
+  // 4. inherited public
+  ASSERT_EQ(6u, computed.size());
+  EXPECT_EQ(private_config_label, computed[0].label);
+  EXPECT_EQ(public_config_label, computed[1].label);
+  EXPECT_EQ(dep1_all_config_label, computed[2].label);
+  EXPECT_EQ(dep2_all_config_label, computed[3].label);
+  EXPECT_EQ(dep1_public_config_label, computed[4].label);
+  EXPECT_EQ(dep2_public_config_label, computed[5].label);
 }
 
 // Tests that different link/depend outputs work for solink tools.
@@ -419,7 +534,7 @@ TEST(Target, LinkAndDepOutputs) {
 
   Toolchain toolchain(setup.settings(), Label(SourceDir("//tc/"), "tc"));
 
-  scoped_ptr<Tool> solink_tool(new Tool());
+  std::unique_ptr<Tool> solink_tool(new Tool());
   solink_tool->set_output_prefix("lib");
   solink_tool->set_default_output_extension(".so");
 
@@ -438,7 +553,7 @@ TEST(Target, LinkAndDepOutputs) {
   solink_tool->set_outputs(SubstitutionList::MakeForTest(
       kLinkPattern, kDependPattern));
 
-  toolchain.SetTool(Toolchain::TYPE_SOLINK, solink_tool.Pass());
+  toolchain.SetTool(Toolchain::TYPE_SOLINK, std::move(solink_tool));
 
   Target target(setup.settings(), Label(SourceDir("//a/"), "a"));
   target.set_output_type(Target::SHARED_LIBRARY);
@@ -447,6 +562,54 @@ TEST(Target, LinkAndDepOutputs) {
 
   EXPECT_EQ("./liba.so", target.link_output_file().value());
   EXPECT_EQ("./liba.so.TOC", target.dependency_output_file().value());
+
+  ASSERT_EQ(1u, target.runtime_outputs().size());
+  EXPECT_EQ("./liba.so", target.runtime_outputs()[0].value());
+}
+
+// Tests that runtime_outputs works without an explicit link_output for
+// solink tools.
+TEST(Target, RuntimeOuputs) {
+  TestWithScope setup;
+  Err err;
+
+  Toolchain toolchain(setup.settings(), Label(SourceDir("//tc/"), "tc"));
+
+  std::unique_ptr<Tool> solink_tool(new Tool());
+  solink_tool->set_output_prefix("");
+  solink_tool->set_default_output_extension(".dll");
+
+  // Say the linker makes a DLL< an import library, and a symbol file we want
+  // to treat as a runtime output.
+  const char kLibPattern[] =
+      "{{root_out_dir}}/{{target_output_name}}{{output_extension}}.lib";
+  const char kDllPattern[] =
+      "{{root_out_dir}}/{{target_output_name}}{{output_extension}}";
+  const char kPdbPattern[] =
+      "{{root_out_dir}}/{{target_output_name}}.pdb";
+  SubstitutionPattern pdb_pattern =
+      SubstitutionPattern::MakeForTest(kPdbPattern);
+
+  solink_tool->set_outputs(
+      SubstitutionList::MakeForTest(kLibPattern, kDllPattern, kPdbPattern));
+
+  // Say we only want the DLL and symbol file treaded as runtime outputs.
+  solink_tool->set_runtime_outputs(SubstitutionList::MakeForTest(
+      kDllPattern, kPdbPattern));
+
+  toolchain.SetTool(Toolchain::TYPE_SOLINK, std::move(solink_tool));
+
+  Target target(setup.settings(), Label(SourceDir("//a/"), "a"));
+  target.set_output_type(Target::SHARED_LIBRARY);
+  target.SetToolchain(&toolchain);
+  ASSERT_TRUE(target.OnResolved(&err));
+
+  EXPECT_EQ("./a.dll.lib", target.link_output_file().value());
+  EXPECT_EQ("./a.dll.lib", target.dependency_output_file().value());
+
+  ASSERT_EQ(2u, target.runtime_outputs().size());
+  EXPECT_EQ("./a.dll", target.runtime_outputs()[0].value());
+  EXPECT_EQ("./a.pdb", target.runtime_outputs()[1].value());
 }
 
 // Shared libraries should be inherited across public shared liobrary
@@ -577,6 +740,78 @@ TEST(Target, WriteFileGeneratedInputs) {
   EXPECT_TRUE(scheduler.GetUnknownGeneratedInputs().empty());
 }
 
+TEST(Target, WriteRuntimeDepsGeneratedInputs) {
+  Scheduler scheduler;
+  TestWithScope setup;
+  Err err;
+
+  SourceFile source_file("//out/Debug/generated.runtime_deps");
+  OutputFile output_file(setup.build_settings(), source_file);
+
+  TestTarget generator(setup, "//foo:generator", Target::EXECUTABLE);
+  generator.set_write_runtime_deps_output(output_file);
+  g_scheduler->AddWriteRuntimeDepsTarget(&generator);
+
+  TestTarget middle_data_dep(setup, "//foo:middle", Target::EXECUTABLE);
+  middle_data_dep.data_deps().push_back(LabelTargetPair(&generator));
+
+  // This target has a generated input and no dependency makes it.
+  TestTarget dep_missing(setup, "//foo:no_dep", Target::EXECUTABLE);
+  dep_missing.sources().push_back(source_file);
+  EXPECT_TRUE(dep_missing.OnResolved(&err));
+  AssertSchedulerHasOneUnknownFileMatching(&dep_missing, source_file);
+  scheduler.ClearUnknownGeneratedInputsAndWrittenFiles();
+
+  // This target has a generated file and we've directly dependended on it.
+  TestTarget dep_present(setup, "//foo:with_dep", Target::EXECUTABLE);
+  dep_present.sources().push_back(source_file);
+  dep_present.private_deps().push_back(LabelTargetPair(&generator));
+  EXPECT_TRUE(dep_present.OnResolved(&err));
+  EXPECT_TRUE(scheduler.GetUnknownGeneratedInputs().empty());
+
+  // This target has a generated file and we've indirectly dependended on it
+  // via data_deps.
+  TestTarget dep_indirect(setup, "//foo:with_dep", Target::EXECUTABLE);
+  dep_indirect.sources().push_back(source_file);
+  dep_indirect.data_deps().push_back(LabelTargetPair(&middle_data_dep));
+  EXPECT_TRUE(dep_indirect.OnResolved(&err));
+  AssertSchedulerHasOneUnknownFileMatching(&dep_indirect, source_file);
+  scheduler.ClearUnknownGeneratedInputsAndWrittenFiles();
+
+  // This target has a generated file and we've directly dependended on it
+  // via data_deps.
+  TestTarget data_dep_present(setup, "//foo:with_dep", Target::EXECUTABLE);
+  data_dep_present.sources().push_back(source_file);
+  data_dep_present.data_deps().push_back(LabelTargetPair(&generator));
+  EXPECT_TRUE(data_dep_present.OnResolved(&err));
+  EXPECT_TRUE(scheduler.GetUnknownGeneratedInputs().empty());
+}
+
+// Tests that intermediate object files generated by binary targets are also
+// considered generated for the purposes of input checking. Above, we tested
+// the failure cases for generated inputs, so here only test .o files that are
+// present.
+TEST(Target, ObjectGeneratedInputs) {
+  Scheduler scheduler;
+  TestWithScope setup;
+  Err err;
+
+  // This target compiles the source.
+  SourceFile source_file("//source.cc");
+  TestTarget source_generator(setup, "//:source_target", Target::SOURCE_SET);
+  source_generator.sources().push_back(source_file);
+  EXPECT_TRUE(source_generator.OnResolved(&err));
+
+  // This is the object file that the test toolchain generates for the source.
+  SourceFile object_file("//out/Debug/obj/source_target.source.o");
+
+  TestTarget final_target(setup, "//:final", Target::ACTION);
+  final_target.inputs().push_back(object_file);
+  EXPECT_TRUE(final_target.OnResolved(&err));
+
+  AssertSchedulerHasOneUnknownFileMatching(&final_target, object_file);
+}
+
 TEST(Target, ResolvePrecompiledHeaders) {
   TestWithScope setup;
   Err err;
@@ -632,4 +867,130 @@ TEST(Target, ResolvePrecompiledHeaders) {
       "  header: pch2.h\n"
       "  source: //pcs2.cc",
       err.help_text());
+}
+
+TEST(Target, AssertNoDeps) {
+  TestWithScope setup;
+  Err err;
+
+  // A target.
+  TestTarget a(setup, "//a", Target::SHARED_LIBRARY);
+  ASSERT_TRUE(a.OnResolved(&err));
+
+  // B depends on A and has an assert_no_deps for a random dir.
+  TestTarget b(setup, "//b", Target::SHARED_LIBRARY);
+  b.private_deps().push_back(LabelTargetPair(&a));
+  b.assert_no_deps().push_back(LabelPattern(
+      LabelPattern::RECURSIVE_DIRECTORY, SourceDir("//disallowed/"),
+      std::string(), Label()));
+  ASSERT_TRUE(b.OnResolved(&err));
+
+  LabelPattern disallow_a(LabelPattern::RECURSIVE_DIRECTORY, SourceDir("//a/"),
+                          std::string(), Label());
+
+  // C depends on B and disallows depending on A. This should fail.
+  TestTarget c(setup, "//c", Target::EXECUTABLE);
+  c.private_deps().push_back(LabelTargetPair(&b));
+  c.assert_no_deps().push_back(disallow_a);
+  ASSERT_FALSE(c.OnResolved(&err));
+
+  // Validate the error message has the proper path.
+  EXPECT_EQ(
+      "//c:c has an assert_no_deps entry:\n"
+      "  //a/*\n"
+      "which fails for the dependency path:\n"
+      "  //c:c ->\n"
+      "  //b:b ->\n"
+      "  //a:a",
+      err.help_text());
+  err = Err();
+
+  // Add an intermediate executable with: exe -> b -> a
+  TestTarget exe(setup, "//exe", Target::EXECUTABLE);
+  exe.private_deps().push_back(LabelTargetPair(&b));
+  ASSERT_TRUE(exe.OnResolved(&err));
+
+  // D depends on the executable and disallows depending on A. Since there is
+  // an intermediate executable, this should be OK.
+  TestTarget d(setup, "//d", Target::EXECUTABLE);
+  d.private_deps().push_back(LabelTargetPair(&exe));
+  d.assert_no_deps().push_back(disallow_a);
+  ASSERT_TRUE(d.OnResolved(&err));
+
+  // A2 disallows depending on anything in its own directory, but the
+  // assertions should not match the target itself so this should be OK.
+  TestTarget a2(setup, "//a:a2", Target::EXECUTABLE);
+  a2.assert_no_deps().push_back(disallow_a);
+  ASSERT_TRUE(a2.OnResolved(&err));
+}
+
+TEST(Target, PullRecursiveBundleData) {
+  TestWithScope setup;
+  Err err;
+
+  // We have the following dependency graph:
+  // A (create_bundle) -> B (bundle_data)
+  //                  \-> C (create_bundle) -> D (bundle_data)
+  //                  \-> E (group) -> F (bundle_data)
+  //                               \-> B (bundle_data)
+  TestTarget a(setup, "//foo:a", Target::CREATE_BUNDLE);
+  TestTarget b(setup, "//foo:b", Target::BUNDLE_DATA);
+  TestTarget c(setup, "//foo:c", Target::CREATE_BUNDLE);
+  TestTarget d(setup, "//foo:d", Target::BUNDLE_DATA);
+  TestTarget e(setup, "//foo:e", Target::GROUP);
+  TestTarget f(setup, "//foo:f", Target::BUNDLE_DATA);
+  a.public_deps().push_back(LabelTargetPair(&b));
+  a.public_deps().push_back(LabelTargetPair(&c));
+  a.public_deps().push_back(LabelTargetPair(&e));
+  c.public_deps().push_back(LabelTargetPair(&d));
+  e.public_deps().push_back(LabelTargetPair(&f));
+  e.public_deps().push_back(LabelTargetPair(&b));
+
+  b.sources().push_back(SourceFile("//foo/b1.txt"));
+  b.sources().push_back(SourceFile("//foo/b2.txt"));
+  b.action_values().outputs() = SubstitutionList::MakeForTest(
+      "{{bundle_resources_dir}}/{{source_file_part}}");
+  ASSERT_TRUE(b.OnResolved(&err));
+
+  d.sources().push_back(SourceFile("//foo/d.txt"));
+  d.action_values().outputs() = SubstitutionList::MakeForTest(
+      "{{bundle_resources_dir}}/{{source_file_part}}");
+  ASSERT_TRUE(d.OnResolved(&err));
+
+  f.sources().push_back(SourceFile("//foo/f1.txt"));
+  f.sources().push_back(SourceFile("//foo/f2.txt"));
+  f.sources().push_back(SourceFile("//foo/f3.txt"));
+  f.sources().push_back(
+      SourceFile("//foo/Foo.xcassets/foo.imageset/Contents.json"));
+  f.sources().push_back(
+      SourceFile("//foo/Foo.xcassets/foo.imageset/FooEmpty-29.png"));
+  f.sources().push_back(
+      SourceFile("//foo/Foo.xcassets/foo.imageset/FooEmpty-29@2x.png"));
+  f.sources().push_back(
+      SourceFile("//foo/Foo.xcassets/foo.imageset/FooEmpty-29@3x.png"));
+  f.action_values().outputs() = SubstitutionList::MakeForTest(
+      "{{bundle_resources_dir}}/{{source_file_part}}");
+  ASSERT_TRUE(f.OnResolved(&err));
+
+  ASSERT_TRUE(e.OnResolved(&err));
+  ASSERT_TRUE(c.OnResolved(&err));
+  ASSERT_TRUE(a.OnResolved(&err));
+
+  // A gets its data from B and F.
+  ASSERT_EQ(a.bundle_data().file_rules().size(), 2u);
+  ASSERT_EQ(a.bundle_data().file_rules()[0].sources().size(), 2u);
+  ASSERT_EQ(a.bundle_data().file_rules()[1].sources().size(), 3u);
+  ASSERT_EQ(a.bundle_data().assets_catalog_sources().size(), 1u);
+  ASSERT_EQ(a.bundle_data().bundle_deps().size(), 2u);
+
+  // C gets its data from D.
+  ASSERT_EQ(c.bundle_data().file_rules().size(), 1u);
+  ASSERT_EQ(c.bundle_data().file_rules()[0].sources().size(), 1u);
+  ASSERT_EQ(c.bundle_data().bundle_deps().size(), 1u);
+
+  // E does not have any bundle_data information but gets a list of
+  // bundle_deps to propagate them during target resolution.
+  ASSERT_TRUE(e.bundle_data().file_rules().empty());
+  ASSERT_TRUE(e.bundle_data().assets_catalog_sources().empty());
+  ASSERT_EQ(e.bundle_data().bundle_deps().size(), 2u);
 }

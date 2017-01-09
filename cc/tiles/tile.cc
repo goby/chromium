@@ -4,9 +4,12 @@
 
 #include "cc/tiles/tile.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/numerics/safe_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/base/math_util.h"
 #include "cc/debug/traced_value.h"
@@ -22,7 +25,7 @@ Tile::Tile(TileManager* tile_manager,
     : tile_manager_(tile_manager),
       content_rect_(info.content_rect),
       enclosing_layer_rect_(info.enclosing_layer_rect),
-      contents_scale_(info.contents_scale),
+      raster_scales_(info.raster_scales),
       layer_id_(layer_id),
       source_frame_number_(source_frame_number),
       flags_(flags),
@@ -30,6 +33,7 @@ Tile::Tile(TileManager* tile_manager,
       tiling_j_index_(info.tiling_j_index),
       required_for_activation_(false),
       required_for_draw_(false),
+      is_solid_color_analysis_performed_(false),
       id_(tile_manager->GetUniqueTileId()),
       invalidated_id_(0),
       scheduled_priority_(0) {}
@@ -43,7 +47,13 @@ Tile::~Tile() {
 void Tile::AsValueInto(base::trace_event::TracedValue* value) const {
   TracedValue::MakeDictIntoImplicitSnapshotWithCategory(
       TRACE_DISABLED_BY_DEFAULT("cc.debug"), value, "cc::Tile", this);
-  value->SetDouble("contents_scale", contents_scale_);
+  // TODO(vmpstr): Update tracing to use x/y scales.
+  value->SetDouble("contents_scale", contents_scale_key());
+
+  value->BeginArray("raster_scales");
+  value->AppendDouble(raster_scales_.width());
+  value->AppendDouble(raster_scales_.height());
+  value->EndArray();
 
   MathUtil::AddToTracedValue("content_rect", content_rect_, value);
 

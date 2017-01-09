@@ -11,7 +11,8 @@
 #include "base/files/file_path.h"
 #include "base/hash.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_math.h"
 #include "base/path_service.h"
 #include "base/process/process_metrics.h"
@@ -19,16 +20,19 @@
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/common/child_process_messages.h"
-#include "content/common/gpu/client/gpu_memory_buffer_impl_shared_memory.h"
 #include "content/public/common/child_process_host_delegate.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
-#include "ipc/attachment_broker.h"
-#include "ipc/attachment_broker_privileged.h"
+#include "ipc/ipc.mojom.h"
 #include "ipc/ipc_channel.h"
+#include "ipc/ipc_channel_mojo.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/message_filter.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 #if defined(OS_LINUX)
 #include "base/linux_util.h"
@@ -47,8 +51,8 @@ namespace content {
 
 int ChildProcessHost::kInvalidUniqueID = -1;
 
-uint64 ChildProcessHost::kBrowserTracingProcessId =
-    std::numeric_limits<uint64>::max();
+uint64_t ChildProcessHost::kBrowserTracingProcessId =
+    std::numeric_limits<uint64_t>::max();
 
 // static
 ChildProcessHost* ChildProcessHost::Create(ChildProcessHostDelegate* delegate) {
@@ -85,26 +89,15 @@ ChildProcessHostImpl::ChildProcessHostImpl(ChildProcessHostDelegate* delegate)
 #if defined(OS_WIN)
   AddFilter(new FontCacheDispatcher());
 #endif
-
-#if USE_ATTACHMENT_BROKER
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // On Mac, the privileged AttachmentBroker needs a reference to the Mach port
-  // Provider, which is only available in the chrome/ module. The attachment
-  // broker must already be created.
-  DCHECK(IPC::AttachmentBroker::GetGlobal());
-#else
-  // Construct the privileged attachment broker early in the life cycle of a
-  // child process.
-  IPC::AttachmentBrokerPrivileged::CreateBrokerIfNeeded();
-#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
-#endif  // USE_ATTACHMENT_BROKER
 }
 
 ChildProcessHostImpl::~ChildProcessHostImpl() {
-#if USE_ATTACHMENT_BROKER
-  IPC::AttachmentBroker::GetGlobal()->DeregisterCommunicationChannel(
-      channel_.get());
-#endif
+  // If a channel was never created than it wasn't registered and the filters
+  // weren't notified. For the sake of symmetry don't call the matching teardown
+  // functions. This is analogous to how RenderProcessHostImpl handles things.
+  if (!channel_)
+    return;
+
   for (size_t i = 0; i < filters_.size(); ++i) {
     filters_[i]->OnChannelClosing();
     filters_[i]->OnFilterRemoved();
@@ -118,19 +111,52 @@ void ChildProcessHostImpl::AddFilter(IPC::MessageFilter* filter) {
     filter->OnFilterAdded(channel_.get());
 }
 
+service_manager::InterfaceProvider*
+ChildProcessHostImpl::GetRemoteInterfaces() {
+  return delegate_->GetRemoteInterfaces();
+}
+
 void ChildProcessHostImpl::ForceShutdown() {
   Send(new ChildProcessMsg_Shutdown());
 }
 
-std::string ChildProcessHostImpl::CreateChannel() {
-  channel_id_ = IPC::Channel::GenerateVerifiedChannelID(std::string());
-  channel_ = IPC::Channel::CreateServer(channel_id_, this);
-  if (!channel_->Connect())
+std::string ChildProcessHostImpl::CreateChannelMojo(
+    const std::string& child_token) {
+  DCHECK(channel_id_.empty());
+  channel_id_ = mojo::edk::GenerateRandomToken();
+  mojo::ScopedMessagePipeHandle host_handle =
+      mojo::edk::CreateParentMessagePipe(channel_id_, child_token);
+  channel_ = IPC::ChannelMojo::Create(std::move(host_handle),
+                                      IPC::Channel::MODE_SERVER, this);
+  if (!channel_ || !InitChannel())
     return std::string();
-#if USE_ATTACHMENT_BROKER
-  IPC::AttachmentBroker::GetGlobal()->RegisterCommunicationChannel(
-      channel_.get());
-#endif
+
+  return channel_id_;
+}
+
+void ChildProcessHostImpl::CreateChannelMojo() {
+  // TODO(rockot): Remove |channel_id_| once this is the only code path by which
+  // the Channel is created. For now it serves to at least mutually exclude
+  // different CreateChannel* calls.
+  DCHECK(channel_id_.empty());
+  channel_id_ = "ChannelMojo";
+
+  service_manager::InterfaceProvider* remote_interfaces = GetRemoteInterfaces();
+  DCHECK(remote_interfaces);
+
+  IPC::mojom::ChannelBootstrapPtr bootstrap;
+  remote_interfaces->GetInterface(&bootstrap);
+  channel_ = IPC::ChannelMojo::Create(bootstrap.PassInterface().PassHandle(),
+                                      IPC::Channel::MODE_SERVER, this);
+  DCHECK(channel_);
+
+  bool initialized = InitChannel();
+  DCHECK(initialized);
+}
+
+bool ChildProcessHostImpl::InitChannel() {
+  if (!channel_->Connect())
+    return false;
 
   for (size_t i = 0; i < filters_.size(); ++i)
     filters_[i]->OnFilterAdded(channel_.get());
@@ -143,18 +169,12 @@ std::string ChildProcessHostImpl::CreateChannel() {
 
   opening_channel_ = true;
 
-  return channel_id_;
+  return true;
 }
 
 bool ChildProcessHostImpl::IsChannelOpening() {
   return opening_channel_;
 }
-
-#if defined(OS_POSIX)
-base::ScopedFD ChildProcessHostImpl::TakeClientFileDescriptor() {
-  return channel_->TakeClientFileDescriptor();
-}
-#endif
 
 bool ChildProcessHostImpl::Send(IPC::Message* message) {
   if (!channel_) {
@@ -162,18 +182,6 @@ bool ChildProcessHostImpl::Send(IPC::Message* message) {
     return false;
   }
   return channel_->Send(message);
-}
-
-void ChildProcessHostImpl::AllocateSharedMemory(
-      size_t buffer_size, base::ProcessHandle child_process_handle,
-      base::SharedMemoryHandle* shared_memory_handle) {
-  base::SharedMemory shared_buf;
-  if (!shared_buf.CreateAnonymous(buffer_size)) {
-    *shared_memory_handle = base::SharedMemory::NULLHandle();
-    NOTREACHED() << "Cannot create shared memory buffer";
-    return;
-  }
-  shared_buf.GiveToProcess(child_process_handle, shared_memory_handle);
 }
 
 int ChildProcessHostImpl::GenerateChildProcessUniqueId() {
@@ -190,7 +198,7 @@ int ChildProcessHostImpl::GenerateChildProcessUniqueId() {
   return id;
 }
 
-uint64 ChildProcessHostImpl::ChildProcessUniqueIdToTracingProcessId(
+uint64_t ChildProcessHostImpl::ChildProcessUniqueIdToTracingProcessId(
     int child_process_id) {
   // In single process mode, all the children are hosted in the same process,
   // therefore the generated memory dump guids should not be conditioned by the
@@ -203,7 +211,7 @@ uint64 ChildProcessHostImpl::ChildProcessUniqueIdToTracingProcessId(
 
   // The hash value is incremented so that the tracing id is never equal to
   // MemoryDumpManager::kInvalidTracingProcessId.
-  return static_cast<uint64>(
+  return static_cast<uint64_t>(
              base::Hash(reinterpret_cast<const char*>(&child_process_id),
                         sizeof(child_process_id))) +
          1;
@@ -234,16 +242,6 @@ bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
     IPC_BEGIN_MESSAGE_MAP(ChildProcessHostImpl, msg)
       IPC_MESSAGE_HANDLER(ChildProcessHostMsg_ShutdownRequest,
                           OnShutdownRequest)
-      // NB: The SyncAllocateSharedMemory, SyncAllocateGpuMemoryBuffer, and
-      // DeletedGpuMemoryBuffer IPCs are handled here for non-renderer child
-      // processes. For renderer processes, they are handled in
-      // RenderMessageFilter.
-      IPC_MESSAGE_HANDLER(ChildProcessHostMsg_SyncAllocateSharedMemory,
-                          OnAllocateSharedMemory)
-      IPC_MESSAGE_HANDLER(ChildProcessHostMsg_SyncAllocateGpuMemoryBuffer,
-                          OnAllocateGpuMemoryBuffer)
-      IPC_MESSAGE_HANDLER(ChildProcessHostMsg_DeletedGpuMemoryBuffer,
-                          OnDeletedGpuMemoryBuffer)
       IPC_MESSAGE_UNHANDLED(handled = false)
     IPC_END_MESSAGE_MAP()
 
@@ -253,12 +251,12 @@ bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
 
 #ifdef IPC_MESSAGE_LOG_ENABLED
   if (logger->Enabled())
-    logger->OnPostDispatchMessage(msg, channel_id_);
+    logger->OnPostDispatchMessage(msg);
 #endif
   return handled;
 }
 
-void ChildProcessHostImpl::OnChannelConnected(int32 peer_pid) {
+void ChildProcessHostImpl::OnChannelConnected(int32_t peer_pid) {
   if (!peer_process_.IsValid()) {
     peer_process_ = base::Process::OpenWithExtraPrivileges(peer_pid);
     if (!peer_process_.IsValid())
@@ -286,40 +284,9 @@ void ChildProcessHostImpl::OnBadMessageReceived(const IPC::Message& message) {
   delegate_->OnBadMessageReceived(message);
 }
 
-void ChildProcessHostImpl::OnAllocateSharedMemory(
-    uint32 buffer_size,
-    base::SharedMemoryHandle* handle) {
-  AllocateSharedMemory(buffer_size, peer_process_.Handle(), handle);
-}
-
 void ChildProcessHostImpl::OnShutdownRequest() {
   if (delegate_->CanShutdown())
     Send(new ChildProcessMsg_Shutdown());
-}
-
-void ChildProcessHostImpl::OnAllocateGpuMemoryBuffer(
-    gfx::GpuMemoryBufferId id,
-    uint32 width,
-    uint32 height,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    gfx::GpuMemoryBufferHandle* handle) {
-  // TODO(reveman): Add support for other types of GpuMemoryBuffers.
-
-  // AllocateForChildProcess() will check if |width| and |height| are valid
-  // and handle failure in a controlled way when not. We just need to make
-  // sure |usage| is supported here.
-  if (GpuMemoryBufferImplSharedMemory::IsUsageSupported(usage)) {
-    *handle = GpuMemoryBufferImplSharedMemory::AllocateForChildProcess(
-        id, gfx::Size(width, height), format, peer_process_.Handle());
-  }
-}
-
-void ChildProcessHostImpl::OnDeletedGpuMemoryBuffer(
-    gfx::GpuMemoryBufferId id,
-    const gpu::SyncToken& sync_token) {
-  // Note: Nothing to do here as ownership of shared memory backed
-  // GpuMemoryBuffers is passed with IPC.
 }
 
 }  // namespace content

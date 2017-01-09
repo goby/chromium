@@ -6,34 +6,35 @@
 #define WebGLSync_h
 
 #include "modules/webgl/WebGLSharedObject.h"
-#include "public/platform/WebGraphicsContext3D.h"
+#include "third_party/khronos/GLES2/gl2.h"
 
 namespace blink {
 
 class WebGL2RenderingContextBase;
 
 class WebGLSync : public WebGLSharedObject {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    ~WebGLSync() override;
+  DEFINE_WRAPPERTYPEINFO();
 
-    WGC3Dsync object() const { return m_object; }
+ public:
+  ~WebGLSync() override;
 
-protected:
-    WebGLSync(WebGL2RenderingContextBase*, WGC3Dsync, GLenum objectType);
+  GLsync object() const { return m_object; }
 
-    bool hasObject() const override { return m_object != 0; }
-    void deleteObjectImpl(WebGraphicsContext3D*) override;
+ protected:
+  WebGLSync(WebGL2RenderingContextBase*, GLsync, GLenum objectType);
 
-    GLenum objectType() const { return m_objectType; }
+  bool hasObject() const override { return m_object != nullptr; }
+  void deleteObjectImpl(gpu::gles2::GLES2Interface*) override;
 
-private:
-    bool isSync() const override { return true; }
+  GLenum objectType() const { return m_objectType; }
 
-    WGC3Dsync m_object;
-    GLenum m_objectType;
+ private:
+  bool isSync() const override { return true; }
+
+  GLsync m_object;
+  GLenum m_objectType;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebGLSync_h
+#endif  // WebGLSync_h

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/app_list/search/webstore/webstore_result.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/bind.h"
@@ -20,12 +22,10 @@
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/extension_util.h"
-#include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
-#include "grit/theme_resources.h"
 #include "net/base/url_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -47,7 +47,7 @@ WebstoreResult::WebstoreResult(Profile* profile,
       install_tracker_(NULL),
       extension_registry_(NULL),
       weak_factory_(this) {
-  set_id(extensions::Extension::GetBaseURLFromExtensionId(app_id_).spec());
+  set_id(GetResultIdFromExtensionId(app_id));
 
   SetDefaultDetails();
 
@@ -69,6 +69,12 @@ WebstoreResult::WebstoreResult(Profile* profile,
 WebstoreResult::~WebstoreResult() {
   StopObservingInstall();
   StopObservingRegistry();
+}
+
+// static
+std::string WebstoreResult::GetResultIdFromExtensionId(
+    const std::string& extension_id) {
+  return extension_urls::GetWebstoreItemDetailURLPrefix() + extension_id;
 }
 
 void WebstoreResult::Open(int event_flags) {
@@ -95,8 +101,8 @@ void WebstoreResult::InvokeAction(int action_index, int event_flags) {
   StartInstall();
 }
 
-scoped_ptr<SearchResult> WebstoreResult::Duplicate() const {
-  scoped_ptr<SearchResult> copy(new WebstoreResult(
+std::unique_ptr<SearchResult> WebstoreResult::Duplicate() const {
+  std::unique_ptr<SearchResult> copy(new WebstoreResult(
       profile_, app_id_, icon_url_, is_paid_, item_type_, controller_));
   copy->set_title(title());
   copy->set_title_tags(title_tags());
@@ -127,7 +133,8 @@ void WebstoreResult::UpdateActions() {
 
   const bool is_otr = profile_->IsOffTheRecord();
   const bool is_installed =
-      extensions::util::IsExtensionInstalledPermanently(app_id_, profile_);
+      extension_registry_->GetExtensionById(
+          app_id_, extensions::ExtensionRegistry::EVERYTHING) != nullptr;
 
   if (!is_otr && !is_installed && !is_installing()) {
     actions.push_back(Action(
@@ -228,8 +235,8 @@ void WebstoreResult::OnExtensionInstalled(
   SetIsInstalling(false);
   UpdateActions();
 
-  if (extensions::util::IsExtensionInstalledPermanently(extension->id(),
-                                                        profile_)) {
+  if (extension_registry_->GetExtensionById(
+          app_id_, extensions::ExtensionRegistry::EVERYTHING)) {
     NotifyItemInstalled();
   }
 }

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
@@ -15,11 +16,11 @@
 #include "base/strings/pattern.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/test_completion_callback.h"
 #include "net/dns/host_cache.h"
 
@@ -45,52 +46,88 @@ int ParseAddressList(const std::string& host_list,
   addrlist->set_canonical_name(canonical_name);
   for (const base::StringPiece& address : base::SplitStringPiece(
            host_list, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
-    IPAddressNumber ip_number;
-    if (!ParseIPLiteralToNumber(address, &ip_number)) {
+    IPAddress ip_address;
+    if (!ip_address.AssignFromIPLiteral(address)) {
       LOG(WARNING) << "Not a supported IP literal: " << address.as_string();
       return ERR_UNEXPECTED;
     }
-    addrlist->push_back(IPEndPoint(ip_number, 0));
+    addrlist->push_back(IPEndPoint(ip_address, 0));
   }
   return OK;
 }
 
-struct MockHostResolverBase::Request {
-  Request(const RequestInfo& req_info,
-          AddressList* addr,
-          const CompletionCallback& cb)
-      : info(req_info), addresses(addr), callback(cb) {}
-  RequestInfo info;
-  AddressList* addresses;
-  CompletionCallback callback;
+class MockHostResolverBase::RequestImpl : public HostResolver::Request {
+ public:
+  RequestImpl(const RequestInfo& req_info,
+              AddressList* addr,
+              const CompletionCallback& cb,
+              MockHostResolverBase* resolver,
+              size_t id)
+      : info_(req_info),
+        addresses_(addr),
+        callback_(cb),
+        resolver_(resolver),
+        id_(id) {}
+
+  ~RequestImpl() override {
+    if (resolver_)
+      resolver_->DetachRequest(id_);
+  }
+
+  void ChangeRequestPriority(RequestPriority priority) override {}
+
+  void OnResolveCompleted(MockHostResolverBase* resolver, int error) {
+    DCHECK_EQ(resolver_, resolver);
+    resolver_ = nullptr;
+    addresses_ = nullptr;
+    base::ResetAndReturn(&callback_).Run(error);
+  }
+
+  RequestInfo info() { return info_; }
+
+  AddressList* addresses() { return addresses_; }
+
+ private:
+  RequestInfo info_;
+  AddressList* addresses_;
+  CompletionCallback callback_;
+  MockHostResolverBase* resolver_;
+  size_t id_;
+
+  DISALLOW_COPY_AND_ASSIGN(RequestImpl);
 };
 
 MockHostResolverBase::~MockHostResolverBase() {
-  STLDeleteValues(&requests_);
+  DCHECK(requests_.empty());
 }
 
 int MockHostResolverBase::Resolve(const RequestInfo& info,
                                   RequestPriority priority,
                                   AddressList* addresses,
                                   const CompletionCallback& callback,
-                                  RequestHandle* handle,
-                                  const BoundNetLog& net_log) {
+                                  std::unique_ptr<Request>* request,
+                                  const NetLogWithSource& net_log) {
   DCHECK(CalledOnValidThread());
+  DCHECK(request);
   last_request_priority_ = priority;
   num_resolve_++;
   size_t id = next_request_id_++;
   int rv = ResolveFromIPLiteralOrCache(info, addresses);
-  if (rv != ERR_DNS_CACHE_MISS) {
+  if (rv != ERR_DNS_CACHE_MISS)
     return rv;
-  }
-  if (synchronous_mode_) {
-    return ResolveProc(id, info, addresses);
-  }
+
+  // Just like the real resolver, refuse to do anything with invalid hostnames.
+  if (!IsValidDNSDomain(info.hostname()))
+    return ERR_NAME_NOT_RESOLVED;
+
+  if (synchronous_mode_)
+    return ResolveProc(info, addresses);
+
   // Store the request for asynchronous resolution
-  Request* req = new Request(info, addresses, callback);
-  requests_[id] = req;
-  if (handle)
-    *handle = reinterpret_cast<RequestHandle>(id);
+  std::unique_ptr<RequestImpl> req(
+      new RequestImpl(info, addresses, callback, this, id));
+  requests_[id] = req.get();
+  *request = std::move(req);
 
   if (!ondemand_mode_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -103,7 +140,7 @@ int MockHostResolverBase::Resolve(const RequestInfo& info,
 
 int MockHostResolverBase::ResolveFromCache(const RequestInfo& info,
                                            AddressList* addresses,
-                                           const BoundNetLog& net_log) {
+                                           const NetLogWithSource& net_log) {
   num_resolve_from_cache_++;
   DCHECK(CalledOnValidThread());
   next_request_id_++;
@@ -111,17 +148,10 @@ int MockHostResolverBase::ResolveFromCache(const RequestInfo& info,
   return rv;
 }
 
-void MockHostResolverBase::CancelRequest(RequestHandle handle) {
-  DCHECK(CalledOnValidThread());
-  size_t id = reinterpret_cast<size_t>(handle);
+void MockHostResolverBase::DetachRequest(size_t id) {
   RequestMap::iterator it = requests_.find(id);
-  if (it != requests_.end()) {
-    scoped_ptr<Request> req(it->second);
-    requests_.erase(it);
-  } else {
-    NOTREACHED() << "CancelRequest must NOT be called after request is "
-        "complete or canceled.";
-  }
+  CHECK(it != requests_.end());
+  requests_.erase(it);
 }
 
 HostCache* MockHostResolverBase::GetHostCache() {
@@ -155,15 +185,15 @@ MockHostResolverBase::MockHostResolverBase(bool use_caching)
 
 int MockHostResolverBase::ResolveFromIPLiteralOrCache(const RequestInfo& info,
                                                       AddressList* addresses) {
-  IPAddressNumber ip;
-  if (ParseIPLiteralToNumber(info.hostname(), &ip)) {
+  IPAddress ip_address;
+  if (ip_address.AssignFromIPLiteral(info.hostname())) {
     // This matches the behavior HostResolverImpl.
     if (info.address_family() != ADDRESS_FAMILY_UNSPECIFIED &&
-        info.address_family() != GetAddressFamily(ip)) {
+        info.address_family() != GetAddressFamily(ip_address)) {
       return ERR_NAME_NOT_RESOLVED;
     }
 
-    *addresses = AddressList::CreateFromIPAddress(ip, info.port());
+    *addresses = AddressList::CreateFromIPAddress(ip_address, info.port());
     if (info.host_resolver_flags() & HOST_RESOLVER_CANONNAME)
       addresses->SetDefaultCanonicalName();
     return OK;
@@ -175,23 +205,19 @@ int MockHostResolverBase::ResolveFromIPLiteralOrCache(const RequestInfo& info,
                        info.host_resolver_flags());
     const HostCache::Entry* entry = cache_->Lookup(key, base::TimeTicks::Now());
     if (entry) {
-      rv = entry->error;
+      rv = entry->error();
       if (rv == OK)
-        *addresses = AddressList::CopyWithPort(entry->addrlist, info.port());
+        *addresses = AddressList::CopyWithPort(entry->addresses(), info.port());
     }
   }
   return rv;
 }
 
-int MockHostResolverBase::ResolveProc(size_t id,
-                                      const RequestInfo& info,
+int MockHostResolverBase::ResolveProc(const RequestInfo& info,
                                       AddressList* addresses) {
   AddressList addr;
-  int rv = rules_->Resolve(info.hostname(),
-                           info.address_family(),
-                           info.host_resolver_flags(),
-                           &addr,
-                           NULL);
+  int rv = rules_->Resolve(info.hostname(), info.address_family(),
+                           info.host_resolver_flags(), &addr, nullptr);
   if (cache_.get()) {
     HostCache::Key key(info.hostname(),
                        info.address_family(),
@@ -212,11 +238,11 @@ void MockHostResolverBase::ResolveNow(size_t id) {
   if (it == requests_.end())
     return;  // was canceled
 
-  scoped_ptr<Request> req(it->second);
+  RequestImpl* req = it->second;
   requests_.erase(it);
-  int rv = ResolveProc(id, req->info, req->addresses);
-  if (!req->callback.is_null())
-    req->callback.Run(rv);
+
+  int error = ResolveProc(req->info(), req->addresses());
+  req->OnResolveCompleted(this, error);
 }
 
 //-----------------------------------------------------------------------------
@@ -285,8 +311,8 @@ void RuleBasedHostResolverProc::AddIPLiteralRule(
     const std::string& canonical_name) {
   // Literals are always resolved to themselves by HostResolverImpl,
   // consequently we do not support remapping them.
-  IPAddressNumber ip_number;
-  DCHECK(!ParseIPLiteralToNumber(host_pattern, &ip_number));
+  IPAddress ip_address;
+  DCHECK(!ip_address.AssignFromIPLiteral(host_pattern));
   HostResolverFlags flags = HOST_RESOLVER_LOOPBACK_ONLY |
       HOST_RESOLVER_DEFAULT_FAMILY_SET_DUE_TO_NO_IPV6;
   if (!canonical_name.empty())
@@ -425,14 +451,14 @@ int HangingHostResolver::Resolve(const RequestInfo& info,
                                  RequestPriority priority,
                                  AddressList* addresses,
                                  const CompletionCallback& callback,
-                                 RequestHandle* out_req,
-                                 const BoundNetLog& net_log) {
+                                 std::unique_ptr<Request>* request,
+                                 const NetLogWithSource& net_log) {
   return ERR_IO_PENDING;
 }
 
 int HangingHostResolver::ResolveFromCache(const RequestInfo& info,
                                           AddressList* addresses,
-                                          const BoundNetLog& net_log) {
+                                          const NetLogWithSource& net_log) {
   return ERR_DNS_CACHE_MISS;
 }
 

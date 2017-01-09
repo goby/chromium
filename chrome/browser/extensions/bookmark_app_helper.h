@@ -6,12 +6,12 @@
 #define CHROME_BROWSER_EXTENSIONS_BOOKMARK_APP_HELPER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/common/web_application_info.h"
 #include "content/public/browser/notification_observer.h"
@@ -115,7 +115,8 @@ class BookmarkAppHelper : public content::NotificationObserver {
   // Called by the WebContents when the manifest has been downloaded. If there
   // is no manifest, or the WebContents is destroyed before the manifest could
   // be downloaded, this is called with an empty manifest.
-  void OnDidGetManifest(const content::Manifest& manifest);
+  void OnDidGetManifest(const GURL& manifest_url,
+                        const content::Manifest& manifest);
 
   // Performs post icon download tasks including installing the bookmark app.
   void OnIconsDownloaded(bool success,
@@ -149,7 +150,7 @@ class BookmarkAppHelper : public content::NotificationObserver {
 
   // Downloads icons from the given WebApplicationInfo using the given
   // WebContents.
-  scoped_ptr<FaviconDownloader> favicon_downloader_;
+  std::unique_ptr<FaviconDownloader> favicon_downloader_;
 
   // Used to install the created bookmark app.
   scoped_refptr<extensions::CrxInstaller> crx_installer_;

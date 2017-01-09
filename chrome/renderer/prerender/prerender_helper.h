@@ -6,7 +6,9 @@
 #define CHROME_RENDERER_PRERENDER_PRERENDER_HELPER_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/time/time.h"
+#include "chrome/common/prerender_types.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
 
@@ -18,17 +20,29 @@ class PrerenderHelper
     : public content::RenderFrameObserver,
       public content::RenderFrameObserverTracker<PrerenderHelper> {
  public:
-  explicit PrerenderHelper(content::RenderFrame* render_frame);
+  PrerenderHelper(content::RenderFrame* render_frame,
+                  PrerenderMode prerender_mode);
+
+  // Must be called on a sub-frame. Inherits the prerender mode from the main
+  // frame.
+  explicit PrerenderHelper(content::RenderFrame* sub_frame);
+
   ~PrerenderHelper() override;
 
   // Returns true if |render_view| is currently prerendering.
   static bool IsPrerendering(const content::RenderFrame* render_frame);
 
- private:
-  // RenderViewObserver implementation
-  bool OnMessageReceived(const IPC::Message& message) override;
+  static PrerenderMode GetPrerenderMode(
+      const content::RenderFrame* render_frame);
 
-  void OnSetIsPrerendering(bool is_prerendering);
+ private:
+  // RenderFrameObserver implementation.
+  bool OnMessageReceived(const IPC::Message& message) override;
+  void OnDestruct() override;
+
+  void OnSetIsPrerendering(PrerenderMode mode);
+
+  PrerenderMode prerender_mode_;
 
   DISALLOW_COPY_AND_ASSIGN(PrerenderHelper);
 };

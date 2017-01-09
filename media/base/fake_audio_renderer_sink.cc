@@ -7,15 +7,24 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/single_thread_task_runner.h"
-#include "media/base/fake_output_device.h"
 
 namespace media {
 
 FakeAudioRendererSink::FakeAudioRendererSink()
+    : FakeAudioRendererSink(
+          AudioParameters(AudioParameters::AUDIO_FAKE,
+                          CHANNEL_LAYOUT_STEREO,
+                          AudioParameters::kTelephoneSampleRate,
+                          16,
+                          1)) {}
+
+FakeAudioRendererSink::FakeAudioRendererSink(
+    const AudioParameters& hardware_params)
     : state_(kUninitialized),
-      callback_(NULL),
-      output_device_(new FakeOutputDevice) {}
+      callback_(nullptr),
+      output_device_info_(std::string(),
+                          OUTPUT_DEVICE_STATUS_OK,
+                          hardware_params) {}
 
 FakeAudioRendererSink::~FakeAudioRendererSink() {
   DCHECK(!callback_);
@@ -56,16 +65,22 @@ bool FakeAudioRendererSink::SetVolume(double volume) {
   return true;
 }
 
-OutputDevice* FakeAudioRendererSink::GetOutputDevice() {
-  return output_device_.get();
+OutputDeviceInfo FakeAudioRendererSink::GetOutputDeviceInfo() {
+  return output_device_info_;
 }
 
-bool FakeAudioRendererSink::Render(AudioBus* dest, int audio_delay_milliseconds,
+bool FakeAudioRendererSink::CurrentThreadIsRenderingThread() {
+  NOTIMPLEMENTED();
+  return false;
+}
+
+bool FakeAudioRendererSink::Render(AudioBus* dest,
+                                   base::TimeDelta delay,
                                    int* frames_written) {
   if (state_ != kPlaying)
     return false;
 
-  *frames_written = callback_->Render(dest, audio_delay_milliseconds);
+  *frames_written = callback_->Render(delay, base::TimeTicks::Now(), 0, dest);
   return true;
 }
 
@@ -86,8 +101,8 @@ void FakeAudioRendererSink::ChangeState(State new_state) {
     "kStopped"
   };
 
-  DVLOG(1) << __FUNCTION__ << " : "
-           << kStateNames[state_] << " -> " << kStateNames[new_state];
+  DVLOG(1) << __func__ << " : " << kStateNames[state_] << " -> "
+           << kStateNames[new_state];
   state_ = new_state;
 }
 

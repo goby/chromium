@@ -4,11 +4,14 @@
 
 #include "chrome/browser/ui/ash/chrome_keyboard_ui.h"
 
+#include <utility>
+
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
+#include "base/macros.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -85,20 +88,37 @@ class AshKeyboardControllerObserver
       return;
     }
 
-    scoped_ptr<base::ListValue> event_args(new base::ListValue());
-    scoped_ptr<base::DictionaryValue> new_bounds(new base::DictionaryValue());
+    std::unique_ptr<base::ListValue> event_args(new base::ListValue());
+    std::unique_ptr<base::DictionaryValue> new_bounds(
+        new base::DictionaryValue());
     new_bounds->SetInteger("left", bounds.x());
     new_bounds->SetInteger("top", bounds.y());
     new_bounds->SetInteger("width", bounds.width());
     new_bounds->SetInteger("height", bounds.height());
-    event_args->Append(new_bounds.release());
+    event_args->Append(std::move(new_bounds));
 
-    scoped_ptr<extensions::Event> event(new extensions::Event(
+    std::unique_ptr<extensions::Event> event(new extensions::Event(
         extensions::events::VIRTUAL_KEYBOARD_PRIVATE_ON_BOUNDS_CHANGED,
         virtual_keyboard_private::OnBoundsChanged::kEventName,
-        event_args.Pass()));
+        std::move(event_args)));
     event->restrict_to_browser_context = context_;
-    router->BroadcastEvent(event.Pass());
+    router->BroadcastEvent(std::move(event));
+  }
+
+  void OnKeyboardClosed() override {
+    extensions::EventRouter* router = extensions::EventRouter::Get(context_);
+
+    if (!router->HasEventListener(
+            virtual_keyboard_private::OnKeyboardClosed::kEventName)) {
+      return;
+    }
+
+    std::unique_ptr<extensions::Event> event(new extensions::Event(
+        extensions::events::VIRTUAL_KEYBOARD_PRIVATE_ON_KEYBOARD_CLOSED,
+        virtual_keyboard_private::OnKeyboardClosed::kEventName,
+        base::WrapUnique(new base::ListValue())));
+    event->restrict_to_browser_context = context_;
+    router->BroadcastEvent(std::move(event));
   }
 
  private:
@@ -140,7 +160,7 @@ void ChromeKeyboardUI::RequestAudioInput(
 }
 
 void ChromeKeyboardUI::SetupWebContents(content::WebContents* contents) {
-  extensions::SetViewType(contents, extensions::VIEW_TYPE_VIRTUAL_KEYBOARD);
+  extensions::SetViewType(contents, extensions::VIEW_TYPE_COMPONENT);
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
       contents);
   Observe(contents);
@@ -170,11 +190,6 @@ void ChromeKeyboardUI::RenderViewCreated(
 }
 
 void ChromeKeyboardUI::ShowKeyboardContainer(aura::Window* container) {
-  // TODO(bshe): Implement logic to decide which root window should display
-  // virtual keyboard. http://crbug.com/303429
-  if (container->GetRootWindow() != ash::Shell::GetPrimaryRootWindow())
-    NOTIMPLEMENTED();
-
   KeyboardUIContent::ShowKeyboardContainer(container);
 }
 
@@ -207,17 +222,19 @@ void ChromeKeyboardUI::SetUpdateInputType(ui::TextInputType type) {
     return;
   }
 
-  scoped_ptr<base::ListValue> event_args(new base::ListValue());
-  scoped_ptr<base::DictionaryValue> input_context(new base::DictionaryValue());
+  std::unique_ptr<base::ListValue> event_args(new base::ListValue());
+  std::unique_ptr<base::DictionaryValue> input_context(
+      new base::DictionaryValue());
   input_context->SetString("type",
                            virtual_keyboard_private::ToString(
                                TextInputTypeToGeneratedInputTypeEnum(type)));
-  event_args->Append(input_context.release());
+  event_args->Append(std::move(input_context));
 
-  scoped_ptr<extensions::Event> event(new extensions::Event(
+  std::unique_ptr<extensions::Event> event(new extensions::Event(
       extensions::events::VIRTUAL_KEYBOARD_PRIVATE_ON_TEXT_INPUT_BOX_FOCUSED,
       virtual_keyboard_private::OnTextInputBoxFocused::kEventName,
-      event_args.Pass()));
+      std::move(event_args)));
   event->restrict_to_browser_context = browser_context();
-  router->DispatchEventToExtension(kVirtualKeyboardExtensionID, event.Pass());
+  router->DispatchEventToExtension(kVirtualKeyboardExtensionID,
+                                   std::move(event));
 }

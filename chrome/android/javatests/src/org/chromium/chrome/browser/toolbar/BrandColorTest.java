@@ -11,23 +11,32 @@ import android.test.suitebuilder.annotation.SmallTest;
 import android.text.TextUtils;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.ObserverList.RewindableIterator;
 import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tab.TabTestUtils;
 import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
+import org.chromium.chrome.test.util.ChromeRestriction;
 import org.chromium.chrome.test.util.DisableInTabbedMode;
 import org.chromium.content.browser.InterstitialPageDelegateAndroid;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 
+import java.util.concurrent.Callable;
+
 /**
  * Contains tests for the brand color feature.
  */
+@RetryOnFailure
 public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
 
     public BrandColorTest() {
@@ -64,7 +73,7 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private void checkForBrandColor(final int brandColor) {
         try {
-            CriteriaHelper.pollForUIThreadCriteria(new Criteria(
+            CriteriaHelper.pollUiThread(new Criteria(
                     "The toolbar background doesn't contain the right color") {
                 @Override
                 public boolean isSatisfied() {
@@ -73,26 +82,25 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
                             == mToolbar.getBackgroundDrawable().getColor();
                 }
             });
-            CriteriaHelper.pollForUIThreadCriteria(new Criteria(
-                    "The overlay drawable doesn't contain the right color") {
-                @Override
-                public boolean isSatisfied() {
-                    return mToolbar.getOverlayDrawable().getColor() == brandColor;
-                }
-            });
+            CriteriaHelper.pollUiThread(
+                    Criteria.equals(brandColor, new Callable<Integer>() {
+                        @Override
+                        public Integer call() {
+                            return mToolbar.getOverlayDrawable().getColor();
+                        }
+                    }));
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
                     && !SysUtils.isLowEndDevice()) {
                 final int expectedStatusBarColor = brandColor == mDefaultColor
                         ? Color.BLACK
                         : ColorUtils.getDarkenedColorForStatusBar(brandColor);
-                CriteriaHelper.pollForUIThreadCriteria(new Criteria(
-                        "The status bar is not set to the right color") {
-                    @Override
-                    public boolean isSatisfied() {
-                        return expectedStatusBarColor
-                                == getActivity().getWindow().getStatusBarColor();
-                    }
-                });
+                CriteriaHelper.pollUiThread(
+                        Criteria.equals(expectedStatusBarColor, new Callable<Integer>() {
+                            @Override
+                            public Integer call() {
+                                return getActivity().getWindow().getStatusBarColor();
+                            }
+                        }));
             }
 
         } catch (InterruptedException e) {
@@ -114,7 +122,7 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
      * Test for having default primary color working correctly.
      */
     @SmallTest
-    @Restriction(Restriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     @Feature({"Omnibox"})
     public void testNoBrandColor() throws InterruptedException {
         startMainActivityWithURL(getUrlWithBrandColor(""));
@@ -125,7 +133,7 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
      * Test for adding a brand color for a url.
      */
     @SmallTest
-    @Restriction(Restriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     @Feature({"Omnibox"})
     public void testBrandColorNoAlpha() throws InterruptedException {
         startMainActivityWithURL(getUrlWithBrandColor(BRAND_COLOR_1));
@@ -133,18 +141,43 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
     }
 
     /**
+     * Test for immediately setting the brand color.
+     */
+    @SmallTest
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
+    @Feature({"Omnibox"})
+    public void testImmediateColorChange() throws InterruptedException {
+        startMainActivityWithURL(getUrlWithBrandColor(BRAND_COLOR_1));
+        checkForBrandColor(Color.parseColor(BRAND_COLOR_1));
+
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                getActivity().getToolbarManager().updatePrimaryColor(mDefaultColor, false);
+                // Since the color should change instantly, there is no need to use the criteria
+                // helper.
+                assertEquals(mToolbarDataProvider.getPrimaryColor(),
+                        mToolbar.getBackgroundDrawable().getColor());
+            }
+        });
+    }
+
+    /**
      * Test to make sure onLoadStarted doesn't reset the brand color.
      */
     @SmallTest
-    @Restriction(Restriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     @Feature({"Omnibox"})
     public void testBrandColorWithLoadStarted() throws InterruptedException {
         startMainActivityWithURL(getUrlWithBrandColor(BRAND_COLOR_1));
         ThreadUtils.postOnUiThread(new Runnable() {
             @Override
             public void run() {
-                getActivity().getActivityTab()
-                        .getTabWebContentsDelegateAndroid().onLoadStarted(true);
+                Tab tab = getActivity().getActivityTab();
+                RewindableIterator<TabObserver> observers = TabTestUtils.getTabObservers(tab);
+                while (observers.hasNext()) {
+                    observers.next().onLoadStarted(tab, true);
+                }
             }
         });
         checkForBrandColor(Color.parseColor(BRAND_COLOR_1));
@@ -154,7 +187,7 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
      * Test for checking navigating to new brand color updates correctly.
      */
     @SmallTest
-    @Restriction(Restriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     @Feature({"Omnibox"})
     public void testNavigatingToNewBrandColor() throws InterruptedException {
         startMainActivityWithURL(getUrlWithBrandColor(BRAND_COLOR_1));
@@ -168,7 +201,7 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
      * back again.
      */
     @SmallTest
-    @Restriction(Restriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     @Feature({"Omnibox"})
     public void testNavigatingToBrandColorAndBack() throws InterruptedException {
         startMainActivityWithURL("about:blank");
@@ -199,7 +232,7 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
      * TODO(aurimas): investigate why this test is crasing in tabbed mode.
      */
     @SmallTest
-    @Restriction(Restriction.RESTRICTION_TYPE_PHONE)
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     @DisableInTabbedMode
     @Feature({"Omnibox"})
     public void testBrandColorInterstitial() throws InterruptedException {
@@ -215,7 +248,7 @@ public class BrandColorTest extends ChromeActivityTestCaseBase<ChromeActivity> {
                         brandColorUrl, delegate.getNative());
             }
         });
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return getActivity().getActivityTab().isShowingInterstitialPage();

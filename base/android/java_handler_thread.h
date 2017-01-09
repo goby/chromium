@@ -7,13 +7,13 @@
 
 #include <jni.h>
 
+#include <memory>
+
 #include "base/android/scoped_java_ref.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace base {
 
 class MessageLoop;
-class WaitableEvent;
 
 namespace android {
 
@@ -40,10 +40,15 @@ class BASE_EXPORT JavaHandlerThread {
                   const JavaParamRef<jobject>& obj,
                   jlong event);
 
+  virtual void StartMessageLoop();
+  virtual void StopMessageLoop();
+
   static bool RegisterBindings(JNIEnv* env);
 
+ protected:
+  std::unique_ptr<base::MessageLoop> message_loop_;
+
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
   ScopedJavaGlobalRef<jobject> java_thread_;
 };
 

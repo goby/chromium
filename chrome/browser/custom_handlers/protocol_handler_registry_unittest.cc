@@ -4,19 +4,24 @@
 
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
@@ -36,12 +41,12 @@ void AssertInterceptedIO(
     net::URLRequestJobFactory* interceptor) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   net::URLRequestContext context;
-  scoped_ptr<net::URLRequest> request(context.CreateRequest(
-      url, net::DEFAULT_PRIORITY, NULL));
-  scoped_refptr<net::URLRequestJob> job =
+  std::unique_ptr<net::URLRequest> request(
+      context.CreateRequest(url, net::DEFAULT_PRIORITY, nullptr));
+  std::unique_ptr<net::URLRequestJob> job(
       interceptor->MaybeCreateJobWithProtocolHandler(
-          url.scheme(), request.get(), context.network_delegate());
-  ASSERT_TRUE(job.get() != NULL);
+          url.scheme(), request.get(), context.network_delegate()));
+  ASSERT_TRUE(job.get());
 }
 
 void AssertIntercepted(
@@ -53,7 +58,7 @@ void AssertIntercepted(
                           base::Bind(AssertInterceptedIO,
                                      url,
                                      base::Unretained(interceptor)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // FakeURLRequestJobFactory returns NULL for all job creation requests and false
@@ -97,10 +102,10 @@ void AssertWillHandleIO(
     bool expected,
     ProtocolHandlerRegistry::JobInterceptorFactory* interceptor) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  interceptor->Chain(scoped_ptr<net::URLRequestJobFactory>(
+  interceptor->Chain(std::unique_ptr<net::URLRequestJobFactory>(
       new FakeURLRequestJobFactory()));
   ASSERT_EQ(expected, interceptor->IsHandledProtocol(scheme));
-  interceptor->Chain(scoped_ptr<net::URLRequestJobFactory>());
+  interceptor->Chain(std::unique_ptr<net::URLRequestJobFactory>());
 }
 
 void AssertWillHandle(
@@ -114,24 +119,53 @@ void AssertWillHandle(
                                      scheme,
                                      expected,
                                      base::Unretained(interceptor)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
-base::DictionaryValue* GetProtocolHandlerValue(std::string protocol,
-                                               std::string url) {
-  base::DictionaryValue* value = new base::DictionaryValue();
+std::unique_ptr<base::DictionaryValue> GetProtocolHandlerValue(
+    const std::string& protocol,
+    const std::string& url) {
+  auto value = base::MakeUnique<base::DictionaryValue>();
   value->SetString("protocol", protocol);
   value->SetString("url", url);
   return value;
 }
 
-base::DictionaryValue* GetProtocolHandlerValueWithDefault(std::string protocol,
-                                                          std::string url,
-                                                          bool is_default) {
-  base::DictionaryValue* value = GetProtocolHandlerValue(protocol, url);
+std::unique_ptr<base::DictionaryValue> GetProtocolHandlerValueWithDefault(
+    const std::string& protocol,
+    const std::string& url,
+    bool is_default) {
+  std::unique_ptr<base::DictionaryValue> value =
+      GetProtocolHandlerValue(protocol, url);
   value->SetBoolean("default", is_default);
   return value;
 }
+
+class FakeProtocolClientWorker
+    : public shell_integration::DefaultProtocolClientWorker {
+ public:
+  FakeProtocolClientWorker(
+      const shell_integration::DefaultWebClientWorkerCallback& callback,
+      const std::string& protocol,
+      bool force_failure)
+      : shell_integration::DefaultProtocolClientWorker(callback, protocol),
+        force_failure_(force_failure) {}
+
+ private:
+  ~FakeProtocolClientWorker() override = default;
+
+  shell_integration::DefaultWebClientState CheckIsDefaultImpl() override {
+    return force_failure_ ? shell_integration::NOT_DEFAULT
+                          : shell_integration::IS_DEFAULT;
+  }
+
+  void SetAsDefaultImpl(const base::Closure& on_finished_callback) override {
+    on_finished_callback.Run();
+  }
+
+ private:
+  bool force_failure_;
+};
 
 class FakeDelegate : public ProtocolHandlerRegistry::Delegate {
  public:
@@ -147,19 +181,16 @@ class FakeDelegate : public ProtocolHandlerRegistry::Delegate {
     registered_protocols_.erase(protocol);
   }
 
-  ShellIntegration::DefaultProtocolClientWorker* CreateShellWorker(
-      ShellIntegration::DefaultWebClientObserver* observer,
-      const std::string& protocol) override;
-
-  ProtocolHandlerRegistry::DefaultClientObserver* CreateShellObserver(
-      ProtocolHandlerRegistry* registry) override;
-
-  void RegisterWithOSAsDefaultClient(const std::string& protocol,
-                                     ProtocolHandlerRegistry* reg) override {
-    ProtocolHandlerRegistry::Delegate::RegisterWithOSAsDefaultClient(protocol,
-                                                                     reg);
-    ASSERT_FALSE(IsFakeRegisteredWithOS(protocol));
+  scoped_refptr<shell_integration::DefaultProtocolClientWorker>
+  CreateShellWorker(
+      const shell_integration::DefaultWebClientWorkerCallback& callback,
+      const std::string& protocol) override {
+    return new FakeProtocolClientWorker(callback, protocol, force_os_failure_);
   }
+
+  void RegisterWithOSAsDefaultClient(
+      const std::string& protocol,
+      ProtocolHandlerRegistry* registry) override;
 
   bool IsExternalHandlerRegistered(const std::string& protocol) override {
     return registered_protocols_.find(protocol) != registered_protocols_.end();
@@ -190,74 +221,28 @@ class FakeDelegate : public ProtocolHandlerRegistry::Delegate {
   bool force_os_failure_;
 };
 
-class FakeClientObserver
-    : public ProtocolHandlerRegistry::DefaultClientObserver {
- public:
-  FakeClientObserver(ProtocolHandlerRegistry* registry,
-                     FakeDelegate* registry_delegate)
-      : ProtocolHandlerRegistry::DefaultClientObserver(registry),
-        delegate_(registry_delegate) {}
-
-  void SetDefaultWebClientUIState(
-      ShellIntegration::DefaultWebClientUIState state) override {
-    ProtocolHandlerRegistry::DefaultClientObserver::SetDefaultWebClientUIState(
-        state);
-    if (state == ShellIntegration::STATE_IS_DEFAULT) {
-      delegate_->FakeRegisterWithOS(worker_->protocol());
-    }
-    if (state != ShellIntegration::STATE_PROCESSING) {
-      base::MessageLoop::current()->QuitWhenIdle();
-    }
-  }
-
- private:
-  FakeDelegate* delegate_;
-};
-
-class FakeProtocolClientWorker
-    : public ShellIntegration::DefaultProtocolClientWorker {
- public:
-  FakeProtocolClientWorker(ShellIntegration::DefaultWebClientObserver* observer,
+void OnShellWorkerFinished(ProtocolHandlerRegistry* registry,
+                           FakeDelegate* delegate,
                            const std::string& protocol,
-                           bool force_failure)
-      : ShellIntegration::DefaultProtocolClientWorker(observer, protocol),
-        force_failure_(force_failure) {}
-
- private:
-  ~FakeProtocolClientWorker() override {}
-
-  void CheckIsDefault() override {
-    ShellIntegration::DefaultWebClientState state =
-        ShellIntegration::IS_DEFAULT;
-    if (force_failure_)
-      state = ShellIntegration::NOT_DEFAULT;
-
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(&FakeProtocolClientWorker::OnCheckIsDefaultComplete, this,
-                   state));
+                           shell_integration::DefaultWebClientState state) {
+  registry->GetDefaultWebClientCallback(protocol).Run(state);
+  if (state == shell_integration::IS_DEFAULT) {
+    delegate->FakeRegisterWithOS(protocol);
   }
 
-  void SetAsDefault(bool interactive_permitted) override {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(&FakeProtocolClientWorker::OnSetAsDefaultAttemptComplete,
-                   this, AttemptResult::SUCCESS));
-  }
-
- private:
-  bool force_failure_;
-};
-
-ProtocolHandlerRegistry::DefaultClientObserver*
-    FakeDelegate::CreateShellObserver(ProtocolHandlerRegistry* registry) {
-  return new FakeClientObserver(registry, this);
+  base::MessageLoop::current()->QuitWhenIdle();
 }
 
-ShellIntegration::DefaultProtocolClientWorker* FakeDelegate::CreateShellWorker(
-    ShellIntegration::DefaultWebClientObserver* observer,
-    const std::string& protocol) {
-  return new FakeProtocolClientWorker(observer, protocol, force_os_failure_);
+void FakeDelegate::RegisterWithOSAsDefaultClient(
+    const std::string& protocol,
+    ProtocolHandlerRegistry* registry) {
+  // The worker pointer is reference counted. While it is running, the
+  // message loops of the FILE and UI thread will hold references to it
+  // and it will be automatically freed once all its tasks have finished.
+  CreateShellWorker(base::Bind(OnShellWorkerFinished, registry, this, protocol),
+                    protocol)
+      ->StartSetAsDefault();
+  ASSERT_FALSE(IsFakeRegisteredWithOS(protocol));
 }
 
 class NotificationCounter : public content::NotificationObserver {
@@ -326,8 +311,8 @@ class TestMessageLoop : public base::MessageLoop {
       case base::MessageLoop::TYPE_IO:
         return BrowserThread::CurrentlyOn(BrowserThread::IO);
 #if defined(OS_ANDROID)
-      case base::MessageLoop::TYPE_JAVA: // fall-through
-#endif // defined(OS_ANDROID)
+      case base::MessageLoop::TYPE_JAVA:  // fall-through
+#endif  // defined(OS_ANDROID)
       case base::MessageLoop::TYPE_CUSTOM:
       case base::MessageLoop::TYPE_DEFAULT:
         return !BrowserThread::CurrentlyOn(BrowserThread::UI) &&
@@ -430,9 +415,9 @@ class ProtocolHandlerRegistryTest : public testing::Test {
   content::TestBrowserThread file_thread_;
   content::TestBrowserThread io_thread_;
 
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   FakeDelegate* delegate_;  // Registry assumes ownership of delegate_.
-  scoped_ptr<ProtocolHandlerRegistry> registry_;
+  std::unique_ptr<ProtocolHandlerRegistry> registry_;
   ProtocolHandler test_protocol_handler_;
 };
 
@@ -746,7 +731,7 @@ TEST_F(ProtocolHandlerRegistryTest, TestDisablePreventsHandling) {
 
 // TODO(smckay): This is much more appropriately an integration
 // test. Make that so, then update the
-// ShellIntegretion{Delegate,Observer,Worker} test classes we use to fully
+// ShellIntegretion{Delegate,Callback,Worker} test classes we use to fully
 // isolate this test from the FILE thread.
 TEST_F(ProtocolHandlerRegistryTest, TestOSRegistration) {
   ProtocolHandler ph_do1 = CreateProtocolHandler("do", "test1");
@@ -758,7 +743,7 @@ TEST_F(ProtocolHandlerRegistryTest, TestOSRegistration) {
 
   registry()->OnAcceptRegisterProtocolHandler(ph_do1);
   registry()->OnDenyRegisterProtocolHandler(ph_dont);
-  base::MessageLoop::current()->Run();  // FILE thread needs to run.
+  base::RunLoop().Run();  // FILE thread needs to run.
   ASSERT_TRUE(delegate()->IsFakeRegisteredWithOS("do"));
   ASSERT_FALSE(delegate()->IsFakeRegisteredWithOS("dont"));
 
@@ -778,7 +763,7 @@ TEST_F(ProtocolHandlerRegistryTest, TestOSRegistration) {
 
 // TODO(smckay): This is much more appropriately an integration
 // test. Make that so, then update the
-// ShellIntegretion{Delegate,Observer,Worker} test classes we use to fully
+// ShellIntegretion{Delegate,Callback,Worker} test classes we use to fully
 // isolate this test from the FILE thread.
 TEST_F(ProtocolHandlerRegistryTest, MAYBE_TestOSRegistrationFailure) {
   ProtocolHandler ph_do = CreateProtocolHandler("do", "test1");
@@ -788,10 +773,10 @@ TEST_F(ProtocolHandlerRegistryTest, MAYBE_TestOSRegistrationFailure) {
   ASSERT_FALSE(registry()->IsHandledProtocol("dont"));
 
   registry()->OnAcceptRegisterProtocolHandler(ph_do);
-  base::MessageLoop::current()->Run();  // FILE thread needs to run.
+  base::RunLoop().Run();  // FILE thread needs to run.
   delegate()->set_force_os_failure(true);
   registry()->OnAcceptRegisterProtocolHandler(ph_dont);
-  base::MessageLoop::current()->Run();  // FILE thread needs to run.
+  base::RunLoop().Run();  // FILE thread needs to run.
   ASSERT_TRUE(registry()->IsHandledProtocol("do"));
   ASSERT_EQ(static_cast<size_t>(1), registry()->GetHandlersFor("do").size());
   ASSERT_FALSE(registry()->IsHandledProtocol("dont"));
@@ -803,7 +788,7 @@ TEST_F(ProtocolHandlerRegistryTest, TestMaybeCreateTaskWorksFromIOThread) {
   registry()->OnAcceptRegisterProtocolHandler(ph1);
   GURL url("mailto:someone@something.com");
 
-  scoped_ptr<net::URLRequestJobFactory> interceptor(
+  std::unique_ptr<net::URLRequestJobFactory> interceptor(
       registry()->CreateJobInterceptorFactory());
   AssertIntercepted(url, interceptor.get());
 }
@@ -814,7 +799,7 @@ TEST_F(ProtocolHandlerRegistryTest,
   ProtocolHandler ph1 = CreateProtocolHandler(scheme, "test1");
   registry()->OnAcceptRegisterProtocolHandler(ph1);
 
-  scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory> interceptor(
+  std::unique_ptr<ProtocolHandlerRegistry::JobInterceptorFactory> interceptor(
       registry()->CreateJobInterceptorFactory());
   AssertWillHandle(scheme, true, interceptor.get());
 }
@@ -861,7 +846,7 @@ TEST_F(ProtocolHandlerRegistryTest, TestClearDefaultGetsPropagatedToIO) {
   registry()->OnAcceptRegisterProtocolHandler(ph1);
   registry()->ClearDefault(scheme);
 
-  scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory> interceptor(
+  std::unique_ptr<ProtocolHandlerRegistry::JobInterceptorFactory> interceptor(
       registry()->CreateJobInterceptorFactory());
   AssertWillHandle(scheme, false, interceptor.get());
 }
@@ -871,7 +856,7 @@ TEST_F(ProtocolHandlerRegistryTest, TestLoadEnabledGetsPropogatedToIO) {
   ProtocolHandler ph1 = CreateProtocolHandler(mailto, "MailtoHandler");
   registry()->OnAcceptRegisterProtocolHandler(ph1);
 
-  scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory> interceptor(
+  std::unique_ptr<ProtocolHandlerRegistry::JobInterceptorFactory> interceptor(
       registry()->CreateJobInterceptorFactory());
   AssertWillHandle(mailto, true, interceptor.get());
   registry()->Disable();

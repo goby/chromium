@@ -42,7 +42,7 @@ function test()
 
     function step2()
     {
-        InspectorTest.runAfterPendingDispatches(step3);
+        InspectorTest.deprecatedRunAfterPendingDispatches(step3);
     }
 
     function step3()
@@ -52,15 +52,26 @@ function test()
             InspectorTest.addResult("PASS: selected node  with id '" + id + "'");
         else
             InspectorTest.addResult("FAIL: unexpected selection " + id);
-        InspectorTest.evaluateInConsole("inspect(el2)", step4);
+        // Frame was changed to the iframe. Moving back to the top frame.
+        InspectorTest.evaluateInConsole("inspect(window.frameElement.parentElement)", step4);
     }
 
     function step4()
     {
-        InspectorTest.runAfterPendingDispatches(step5);
+        InspectorTest.deprecatedRunAfterPendingDispatches(step5);
     }
 
     function step5()
+    {
+        InspectorTest.evaluateInConsole("inspect(el2)", step6);
+    }
+
+    function step6()
+    {
+        InspectorTest.deprecatedRunAfterPendingDispatches(step7);
+    }
+
+    function step7()
     {
         var id = selectedNodeId();
         if (id === "iframe-div")

@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_FULLSCREEN_CONTROLLER_STATE_TEST_H_
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_FULLSCREEN_CONTROLLER_STATE_TEST_H_
 
+#include <memory>
 #include <sstream>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "build/build_config.h"
 
 class Browser;
@@ -33,14 +33,9 @@ class FullscreenControllerStateTest {
   // Events names for FullscreenController methods.
   enum Event {
     TOGGLE_FULLSCREEN,         // ToggleBrowserFullscreenMode()
-    TOGGLE_FULLSCREEN_CHROME,  // ToggleBrowserFullscreenWithToolbar()
     TAB_FULLSCREEN_TRUE,       // ToggleFullscreenModeForTab(, true)
     TAB_FULLSCREEN_FALSE,      // ToggleFullscreenModeForTab(, false)
-    METRO_SNAP_TRUE,           // SetMetroSnapMode(true)
-    METRO_SNAP_FALSE,          // SetMetroSnapMode(false)
     BUBBLE_EXIT_LINK,          // ExitTabOrBrowserFullscreenToPreviousState()
-    BUBBLE_ALLOW,              // OnAcceptFullscreenPermission()
-    BUBBLE_DENY,               // OnDenyFullscreenPermission()
     WINDOW_CHANGE,             // ChangeWindowFullscreenState()
     NUM_EVENTS,
     EVENT_INVALID,
@@ -52,24 +47,15 @@ class FullscreenControllerStateTest {
     // The window is not in fullscreen.
     STATE_NORMAL,
     // User-initiated fullscreen.
-    STATE_BROWSER_FULLSCREEN_NO_CHROME,
-    // Mac User-initiated 'Lion Fullscreen' with browser chrome. OSX 10.7+ only.
-    STATE_BROWSER_FULLSCREEN_WITH_CHROME,
-    // Windows 8 Metro Snap mode, which puts the window at 20% screen-width.
-    // No TO_ state for Metro, as the windows implementation is only reentrant.
-    STATE_METRO_SNAP,
+    STATE_BROWSER_FULLSCREEN,
     // HTML5 tab-initiated fullscreen.
     STATE_TAB_FULLSCREEN,
     // Both tab and browser fullscreen.
     STATE_TAB_BROWSER_FULLSCREEN,
-    // Both tab and browser fullscreen, displayed without chrome, but exits tab
-    // fullscreen to STATE_BROWSER_FULLSCREEN_WITH_CHROME.
-    STATE_TAB_BROWSER_FULLSCREEN_CHROME,
     // TO_ states are asynchronous states waiting for window state change
     // before transitioning to their named state.
     STATE_TO_NORMAL,
-    STATE_TO_BROWSER_FULLSCREEN_NO_CHROME,
-    STATE_TO_BROWSER_FULLSCREEN_WITH_CHROME,
+    STATE_TO_BROWSER_FULLSCREEN,
     STATE_TO_TAB_FULLSCREEN,
     NUM_STATES,
     STATE_INVALID,
@@ -142,10 +128,8 @@ class FullscreenControllerStateTest {
         enum_prefix##_TRUE, \
         enum_prefix##_NO_EXPECTATION \
       }
-  EXPECTATION_ENUM(FullscreenWithToolbarExpectation, FULLSCREEN_WITH_CHROME);
   EXPECTATION_ENUM(FullscreenForBrowserExpectation, FULLSCREEN_FOR_BROWSER);
   EXPECTATION_ENUM(FullscreenForTabExpectation, FULLSCREEN_FOR_TAB);
-  EXPECTATION_ENUM(InMetroSnapExpectation, IN_METRO_SNAP);
 
   // Generated information about the transitions between states.
   struct StateTransitionInfo {
@@ -178,10 +162,8 @@ class FullscreenControllerStateTest {
 
   // Checks that window state matches the expected controller state.
   virtual void VerifyWindowStateExpectations(
-      FullscreenWithToolbarExpectation fullscreen_with_toolbar,
       FullscreenForBrowserExpectation fullscreen_for_browser,
-      FullscreenForTabExpectation fullscreen_for_tab,
-      InMetroSnapExpectation in_metro_snap);
+      FullscreenForTabExpectation fullscreen_for_tab);
 
   virtual Browser* GetBrowser() = 0;
   FullscreenController* GetFullscreenController();
@@ -198,7 +180,8 @@ class FullscreenControllerStateTest {
   State last_notification_received_state_;
 
   // Listens for the NOTIFICATION_FULLSCREEN_CHANGED notification.
-  scoped_ptr<FullscreenNotificationObserver> fullscreen_notification_observer_;
+  std::unique_ptr<FullscreenNotificationObserver>
+      fullscreen_notification_observer_;
 
   // Human defined |State| that results given each [state][event] pair.
   State transition_table_[NUM_STATES][NUM_EVENTS];

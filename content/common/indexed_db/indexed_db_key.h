@@ -5,18 +5,15 @@
 #ifndef CONTENT_COMMON_INDEXED_DB_INDEXED_DB_KEY_H_
 #define CONTENT_COMMON_INDEXED_DB_INDEXED_DB_KEY_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
-
-namespace blink {
-class WebIDBKey;
-}
 
 namespace content {
 
@@ -75,6 +72,9 @@ class CONTENT_EXPORT IndexedDBKey {
 
   size_t size_estimate_;
 };
+
+// An index id, and corresponding set of keys to insert.
+using IndexedDBIndexKeys = std::pair<int64_t, std::vector<IndexedDBKey>>;
 
 }  // namespace content
 

@@ -6,15 +6,16 @@
 
 #include <algorithm>
 
+#include "base/memory/ptr_util.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/log_manager.h"
-#include "components/sync_driver/sync_service.h"
+#include "components/sync/driver/sync_service.h"
 
 namespace password_manager_util {
 
 password_manager::PasswordSyncState GetPasswordSyncState(
-    const sync_driver::SyncService* sync_service) {
-  if (sync_service && sync_service->HasSyncSetupCompleted() &&
+    const syncer::SyncService* sync_service) {
+  if (sync_service && sync_service->IsFirstSetupComplete() &&
       sync_service->IsSyncActive() &&
       sync_service->GetActiveDataTypes().Has(syncer::PASSWORDS)) {
     return sync_service->IsUsingSecondaryPassphrase()
@@ -60,27 +61,33 @@ void FindDuplicates(
 }
 
 void TrimUsernameOnlyCredentials(
-    ScopedVector<autofill::PasswordForm>* android_credentials) {
-  ScopedVector<autofill::PasswordForm> result;
-  for (auto& form : *android_credentials) {
-    if (form->scheme == autofill::PasswordForm::SCHEME_USERNAME_ONLY) {
-      if (form->federation_url.is_empty())
-        continue;
-      else
-        form->skip_zero_click = true;
-    }
-    result.push_back(form);
-    form = nullptr;
-  }
-  android_credentials->swap(result);
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* android_credentials) {
+  // Remove username-only credentials which are not federated.
+  android_credentials->erase(
+      std::remove_if(
+          android_credentials->begin(), android_credentials->end(),
+          [](const std::unique_ptr<autofill::PasswordForm>& form) {
+            return form->scheme ==
+                       autofill::PasswordForm::SCHEME_USERNAME_ONLY &&
+                   form->federation_origin.unique();
+          }),
+      android_credentials->end());
+
+  // Set "skip_zero_click" on federated credentials.
+  std::for_each(
+      android_credentials->begin(), android_credentials->end(),
+      [](const std::unique_ptr<autofill::PasswordForm>& form) {
+        if (form->scheme == autofill::PasswordForm::SCHEME_USERNAME_ONLY)
+          form->skip_zero_click = true;
+      });
 }
 
-std::vector<scoped_ptr<autofill::PasswordForm>> ConvertScopedVector(
+std::vector<std::unique_ptr<autofill::PasswordForm>> ConvertScopedVector(
     ScopedVector<autofill::PasswordForm> old_vector) {
-  std::vector<scoped_ptr<autofill::PasswordForm>> new_vector;
+  std::vector<std::unique_ptr<autofill::PasswordForm>> new_vector;
   new_vector.reserve(old_vector.size());
   for (auto* form : old_vector) {
-    new_vector.push_back(make_scoped_ptr(form));
+    new_vector.push_back(base::WrapUnique(form));
   }
   old_vector.weak_clear();  // All owned by |new_vector| by now.
   return new_vector;

@@ -7,18 +7,18 @@
 
 #include <list>
 
-#include "base/basictypes.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
 
 namespace android_webview {
 
-class SharedRendererState;
+class RenderThreadManager;
 
 class GLViewRendererManager {
  public:
-  typedef SharedRendererState* RendererType;
+  typedef RenderThreadManager* RendererType;
 
  private:
   typedef std::list<RendererType> ListType;

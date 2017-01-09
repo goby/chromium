@@ -5,12 +5,15 @@
 #ifndef CONTENT_BROWSER_DOM_STORAGE_SESSION_STORAGE_DATABASE_H_
 #define CONTENT_BROWSER_DOM_STORAGE_SESSION_STORAGE_DATABASE_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "content/common/content_export.h"
 #include "content/common/dom_storage/dom_storage_types.h"
@@ -23,6 +26,12 @@ class DB;
 struct ReadOptions;
 class WriteBatch;
 }  // namespace leveldb
+
+namespace base {
+namespace trace_event {
+class ProcessMemoryDump;
+}
+}
 
 namespace content {
 
@@ -71,6 +80,9 @@ class CONTENT_EXPORT SessionStorageDatabase :
   // Reads the namespace IDs and origins present in the database.
   bool ReadNamespacesAndOrigins(
       std::map<std::string, std::vector<GURL> >* namespaces_and_origins);
+
+  // Adds memory statistics to |pmd| for chrome://tracing.
+  void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd);
 
  private:
   friend class base::RefCountedThreadSafe<SessionStorageDatabase>;
@@ -158,7 +170,7 @@ class CONTENT_EXPORT SessionStorageDatabase :
                         const DOMStorageValuesMap& values,
                         leveldb::WriteBatch* batch);
 
-  bool GetMapRefCount(const std::string& map_id, int64* ref_count);
+  bool GetMapRefCount(const std::string& map_id, int64_t* ref_count);
   bool IncreaseMapRefCount(const std::string& map_id,
                            leveldb::WriteBatch* batch);
   // Decreases the ref count of a map by |decrease|. If the ref count goes to 0,
@@ -188,7 +200,7 @@ class CONTENT_EXPORT SessionStorageDatabase :
   static std::string MapKey(const std::string& map_id, const std::string& key);
   static const char* NextMapIdKey();
 
-  scoped_ptr<leveldb::DB> db_;
+  std::unique_ptr<leveldb::DB> db_;
   base::FilePath file_path_;
 
   // For protecting the database opening code. Also guards the variables below.

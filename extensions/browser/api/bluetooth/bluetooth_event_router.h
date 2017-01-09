@@ -8,6 +8,7 @@
 #include <map>
 
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
@@ -73,7 +74,7 @@ class BluetoothEventRouter : public device::BluetoothAdapter::Observer,
   // Callback is called, if the filter was successfully updated.
   // |error_callback| is called, if filter update failed.
   void SetDiscoveryFilter(
-      scoped_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
+      std::unique_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
       device::BluetoothAdapter* adapter,
       const std::string& extension_id,
       const base::Closure& callback,
@@ -137,8 +138,9 @@ class BluetoothEventRouter : public device::BluetoothAdapter::Observer,
                                  const base::Closure& error_callback);
   void AddPairingDelegateImpl(const std::string& extension_id);
 
-  void OnAdapterInitialized(const base::Closure& callback,
-                            scoped_refptr<device::BluetoothAdapter> adapter);
+  void OnAdapterInitialized(
+      const device::BluetoothAdapterFactory::AdapterCallback& callback,
+      scoped_refptr<device::BluetoothAdapter> adapter);
   void MaybeReleaseAdapter();
   void DispatchAdapterStateEvent();
   void DispatchDeviceEvent(events::HistogramValue histogram_value,
@@ -149,7 +151,7 @@ class BluetoothEventRouter : public device::BluetoothAdapter::Observer,
   void OnStartDiscoverySession(
       const std::string& extension_id,
       const base::Closure& callback,
-      scoped_ptr<device::BluetoothDiscoverySession> discovery_session);
+      std::unique_ptr<device::BluetoothDiscoverySession> discovery_session);
 
   void OnSetDiscoveryFilter(const std::string& extension_id,
                             const base::Closure& callback);

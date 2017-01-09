@@ -11,9 +11,7 @@ namespace media {
 namespace mp2t {
 
 EsParser::TimingDesc::TimingDesc()
-    : dts(kNoDecodeTimestamp()),
-      pts(kNoTimestamp()) {
-}
+    : dts(kNoDecodeTimestamp()), pts(kNoTimestamp) {}
 
 EsParser::TimingDesc::TimingDesc(
     DecodeTimestamp dts_in, base::TimeDelta pts_in)
@@ -28,17 +26,18 @@ EsParser::EsParser()
 EsParser::~EsParser() {
 }
 
-bool EsParser::Parse(const uint8* buf, int size,
+bool EsParser::Parse(const uint8_t* buf,
+                     int size,
                      base::TimeDelta pts,
                      DecodeTimestamp dts) {
   DCHECK(buf);
   DCHECK_GT(size, 0);
 
-  if (pts != kNoTimestamp()) {
+  if (pts != kNoTimestamp) {
     // Link the end of the byte queue with the incoming timing descriptor.
     TimingDesc timing_desc(dts, pts);
     timing_desc_list_.push_back(
-        std::pair<int64, TimingDesc>(es_queue_->tail(), timing_desc));
+        std::pair<int64_t, TimingDesc>(es_queue_->tail(), timing_desc));
   }
 
   // Add the incoming bytes to the ES queue.
@@ -52,7 +51,7 @@ void EsParser::Reset() {
   ResetInternal();
 }
 
-EsParser::TimingDesc EsParser::GetTimingDescriptor(int64 es_byte_count) {
+EsParser::TimingDesc EsParser::GetTimingDescriptor(int64_t es_byte_count) {
   TimingDesc timing_desc;
   while (!timing_desc_list_.empty() &&
          timing_desc_list_.front().first <= es_byte_count) {

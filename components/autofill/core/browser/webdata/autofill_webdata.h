@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "components/webdata/common/web_data_service_base.h"
 
@@ -18,7 +17,6 @@ class Time;
 
 }  // namespace base
 
-class Profile;
 class WebDataServiceConsumer;
 
 namespace autofill {
@@ -62,7 +60,7 @@ class AutofillWebData {
   virtual void UpdateAutofillProfile(const AutofillProfile& profile) = 0;
 
   // Schedules a task to remove an Autofill profile from the web database.
-  // |guid| is the identifer of the profile to remove.
+  // |guid| is the identifier of the profile to remove.
   virtual void RemoveAutofillProfile(const std::string& guid) = 0;
 
   // Initiates the request for local/server Autofill profiles.  The method
@@ -93,7 +91,7 @@ class AutofillWebData {
   virtual void UpdateCreditCard(const CreditCard& credit_card) = 0;
 
   // Schedules a task to remove a credit card from the web database.
-  // |guid| is identifer of the credit card to remove.
+  // |guid| is identifier of the credit card to remove.
   virtual void RemoveCreditCard(const std::string& guid) = 0;
 
   // Initiates the request for local/server credit cards.  The method
@@ -116,6 +114,10 @@ class AutofillWebData {
 
   // Updates the use count and last use date for a server address.
   virtual void UpdateServerAddressUsageStats(const AutofillProfile& profile)
+      = 0;
+
+  // Updates the billing address for a server card (masked or not).
+  virtual void UpdateServerCardBillingAddress(const CreditCard& credit_card)
       = 0;
 
   // Removes Autofill records from the database.

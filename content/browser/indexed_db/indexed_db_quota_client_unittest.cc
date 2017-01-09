@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <map>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_quota_client.h"
@@ -17,7 +22,6 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "storage/common/database/database_identifier.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 // Declared to shorten the line lengths.
@@ -44,8 +48,8 @@ class IndexedDBQuotaClientTest : public testing::Test {
 
     scoped_refptr<storage::QuotaManager> quota_manager =
         new MockQuotaManager(false /*in_memory*/, browser_context_->GetPath(),
-                             base::MessageLoop::current()->task_runner(),
-                             base::MessageLoop::current()->task_runner(),
+                             base::ThreadTaskRunnerHandle::Get(),
+                             base::ThreadTaskRunnerHandle::Get(),
                              browser_context_->GetSpecialStoragePolicy());
 
     idb_context_ =
@@ -53,7 +57,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
                                  browser_context_->GetSpecialStoragePolicy(),
                                  quota_manager->proxy(),
                                  task_runner_.get());
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     setup_temp_dir();
   }
 
@@ -62,7 +66,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
   void setup_temp_dir() {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     base::FilePath indexeddb_dir =
-        temp_dir_.path().Append(IndexedDBContextImpl::kIndexedDBDirectory);
+        temp_dir_.GetPath().Append(IndexedDBContextImpl::kIndexedDBDirectory);
     ASSERT_TRUE(base::CreateDirectory(indexeddb_dir));
     idb_context()->set_data_path_for_testing(indexeddb_dir);
   }
@@ -71,12 +75,12 @@ class IndexedDBQuotaClientTest : public testing::Test {
     FlushIndexedDBTaskRunner();
     idb_context_ = NULL;
     browser_context_.reset();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
-  int64 GetOriginUsage(storage::QuotaClient* client,
-                       const GURL& origin,
-                       storage::StorageType type) {
+  int64_t GetOriginUsage(storage::QuotaClient* client,
+                         const GURL& origin,
+                         storage::StorageType type) {
     usage_ = -1;
     client->GetOriginUsage(
         origin,
@@ -84,7 +88,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
         base::Bind(&IndexedDBQuotaClientTest::OnGetOriginUsageComplete,
                    weak_factory_.GetWeakPtr()));
     FlushIndexedDBTaskRunner();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_GT(usage_, -1);
     return usage_;
   }
@@ -97,7 +101,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
         base::Bind(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
                    weak_factory_.GetWeakPtr()));
     FlushIndexedDBTaskRunner();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     return origins_;
   }
 
@@ -111,7 +115,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
         base::Bind(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
                    weak_factory_.GetWeakPtr()));
     FlushIndexedDBTaskRunner();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     return origins_;
   }
 
@@ -124,7 +128,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
         base::Bind(&IndexedDBQuotaClientTest::OnDeleteOriginComplete,
                    weak_factory_.GetWeakPtr()));
     FlushIndexedDBTaskRunner();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     return delete_status_;
   }
 
@@ -136,8 +140,8 @@ class IndexedDBQuotaClientTest : public testing::Test {
   }
 
   void AddFakeIndexedDB(const GURL& origin, int size) {
-    base::FilePath file_path_origin = idb_context()->GetFilePathForTesting(
-        storage::GetIdentifierFromOrigin(origin));
+    base::FilePath file_path_origin =
+        idb_context()->GetFilePathForTesting(origin);
     if (!base::CreateDirectory(file_path_origin)) {
       LOG(ERROR) << "failed to base::CreateDirectory "
                  << file_path_origin.value();
@@ -148,7 +152,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
   }
 
  private:
-  void OnGetOriginUsageComplete(int64 usage) { usage_ = usage; }
+  void OnGetOriginUsageComplete(int64_t usage) { usage_ = usage; }
 
   void OnGetOriginsComplete(const std::set<GURL>& origins) {
     origins_ = origins;
@@ -159,12 +163,12 @@ class IndexedDBQuotaClientTest : public testing::Test {
   }
 
   base::ScopedTempDir temp_dir_;
-  int64 usage_;
+  int64_t usage_;
   std::set<GURL> origins_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
   scoped_refptr<IndexedDBContextImpl> idb_context_;
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
   storage::QuotaStatusCode delete_status_;
   base::WeakPtrFactory<IndexedDBQuotaClientTest> weak_factory_;
 

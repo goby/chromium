@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.contextmenu;
 import android.app.Activity;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
-import android.view.HapticFeedbackConstants;
 import android.view.MenuItem;
 import android.view.MenuItem.OnMenuItemClickListener;
 import android.view.View;
@@ -15,17 +14,17 @@ import android.view.View.OnCreateContextMenuListener;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.share.ShareHelper;
 import org.chromium.content.browser.ContentViewCore;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.base.WindowAndroid.OnCloseContextMenuListener;
 
 /**
  * A helper class that handles generating context menus for {@link ContentViewCore}s.
  */
 public class ContextMenuHelper implements OnCreateContextMenuListener, OnMenuItemClickListener {
-    private static final String DATA_REDUCTION_PROXY_PASSTHROUGH_HEADER =
-            "Chrome-Proxy: pass-through\r\n";
-
     private long mNativeContextMenuHelper;
 
     private ContextMenuPopulator mPopulator;
@@ -61,20 +60,32 @@ public class ContextMenuHelper implements OnCreateContextMenuListener, OnMenuIte
      */
     @CalledByNative
     private void showContextMenu(ContentViewCore contentViewCore, ContextMenuParams params) {
-        final View view = contentViewCore.getContainerView();
+        View view = contentViewCore.getContainerView();
+        final WindowAndroid windowAndroid = contentViewCore.getWindowAndroid();
 
-        if (!shouldShowMenu(params)
-                || view == null
-                || view.getVisibility() != View.VISIBLE
-                || view.getParent() == null) {
+        if (view == null || view.getVisibility() != View.VISIBLE || view.getParent() == null
+                || windowAndroid == null) {
             return;
         }
 
         mCurrentContextMenuParams = params;
 
-        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
         view.setOnCreateContextMenuListener(this);
-        view.showContextMenu();
+        if (view.showContextMenu()) {
+            WebContents webContents = contentViewCore.getWebContents();
+            RecordHistogram.recordBooleanHistogram(
+                    "ContextMenu.Shown", webContents != null);
+
+            windowAndroid.addContextMenuCloseListener(new OnCloseContextMenuListener() {
+                @Override
+                public void onContextMenuClosed() {
+                    if (mNativeContextMenuHelper == 0) return;
+
+                    nativeOnContextMenuClosed(mNativeContextMenuHelper);
+                    windowAndroid.removeContextMenuCloseListener(this);
+                }
+            });
+        }
     }
 
     /**
@@ -83,8 +94,7 @@ public class ContextMenuHelper implements OnCreateContextMenuListener, OnMenuIte
      */
     public void startContextMenuDownload(boolean isLink, boolean isDataReductionProxyEnabled) {
         if (mNativeContextMenuHelper != 0) {
-            nativeOnStartDownload(mNativeContextMenuHelper, isLink,
-                    isDataReductionProxyEnabled ? DATA_REDUCTION_PROXY_PASSTHROUGH_HEADER : null);
+            nativeOnStartDownload(mNativeContextMenuHelper, isLink, isDataReductionProxyEnabled);
         }
     }
 
@@ -115,8 +125,6 @@ public class ContextMenuHelper implements OnCreateContextMenuListener, OnMenuIte
 
     @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) {
-        if (!shouldShowMenu(mCurrentContextMenuParams)) return;
-
         assert mPopulator != null;
         mPopulator.buildContextMenu(menu, v.getContext(), mCurrentContextMenuParams);
 
@@ -138,12 +146,9 @@ public class ContextMenuHelper implements OnCreateContextMenuListener, OnMenuIte
         return mPopulator;
     }
 
-    private boolean shouldShowMenu(ContextMenuParams params) {
-        return (mPopulator != null && mPopulator.shouldShowContextMenu(params));
-    }
-
     private native void nativeOnStartDownload(
-            long nativeContextMenuHelper, boolean isLink, String headers);
+            long nativeContextMenuHelper, boolean isLink, boolean isDataReductionProxyEnabled);
     private native void nativeSearchForImage(long nativeContextMenuHelper);
     private native void nativeShareImage(long nativeContextMenuHelper);
+    private native void nativeOnContextMenuClosed(long nativeContextMenuHelper);
 }

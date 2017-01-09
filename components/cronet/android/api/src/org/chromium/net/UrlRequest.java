@@ -4,83 +4,23 @@
 
 package org.chromium.net;
 
-import android.support.annotation.IntDef;
-import android.util.Pair;
-
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.concurrent.Executor;
 
 /**
  * Controls an HTTP request (GET, PUT, POST etc).
- * Created using {@link UrlRequest.Builder}.
- * Note: All methods must be called on the {@link Executor} passed in during creation.
+ * Created by {@link UrlRequest.Builder}, which can be obtained by calling
+ * {@link CronetEngine#newUrlRequestBuilder}.
+ * Note: All methods must be called on the {@link Executor} passed to
+ * {@link CronetEngine#newUrlRequestBuilder}.
  */
-public interface UrlRequest {
+public abstract class UrlRequest {
     /**
      * Builder for {@link UrlRequest}s. Allows configuring requests before constructing them
-     * with {@link Builder#build}.
+     * with {@link Builder#build}. The builder can be created by calling
+     * {@link CronetEngine#newUrlRequestBuilder}.
      */
-    public static final class Builder {
-        // All fields are temporary storage of UrlRequest configuration to be
-        // copied to built UrlRequests.
-
-        // CronetEngine to execute request.
-        final CronetEngine mCronetEngine;
-        // URL to request.
-        final String mUrl;
-        // Callback to receive progress callbacks.
-        final Callback mCallback;
-        // Executor to invoke callback on.
-        final Executor mExecutor;
-        // HTTP method (e.g. GET, POST etc).
-        String mMethod;
-        // List of request headers, stored as header field name and value pairs.
-        final ArrayList<Pair<String, String>> mRequestHeaders =
-                new ArrayList<Pair<String, String>>();
-        // Disable the cache for just this request.
-        boolean mDisableCache;
-        // Priority of request.
-        int mPriority = REQUEST_PRIORITY_MEDIUM;
-        // If request is an upload, this provides the request body data.
-        UploadDataProvider mUploadDataProvider;
-        // Executor to call upload data provider back on.
-        Executor mUploadDataProviderExecutor;
-
-        /**
-         * Creates a builder for {@link UrlRequest} objects. All callbacks for
-         * generated {@link UrlRequest} objects will be invoked on
-         * {@code executor}'s thread. {@code executor} must not run tasks on the
-         * current thread to prevent blocking networking operations and causing
-         * exceptions during shutdown.
-         *
-         * @param url {@link java.net.URL} for the generated requests.
-         * @param callback callback object that gets invoked on different events.
-         * @param executor {@link Executor} on which all callbacks will be invoked.
-         * @param cronetEngine {@link CronetEngine} used to execute this request.
-         */
-        public Builder(
-                String url, Callback callback, Executor executor, CronetEngine cronetEngine) {
-            if (url == null) {
-                throw new NullPointerException("URL is required.");
-            }
-            if (callback == null) {
-                throw new NullPointerException("Callback is required.");
-            }
-            if (executor == null) {
-                throw new NullPointerException("Executor is required.");
-            }
-            if (cronetEngine == null) {
-                throw new NullPointerException("CronetEngine is required.");
-            }
-            mUrl = url;
-            mCallback = callback;
-            mExecutor = executor;
-            mCronetEngine = cronetEngine;
-        }
-
+    public abstract static class Builder {
         /**
          * Sets the HTTP method verb to use for this request.
          *
@@ -90,13 +30,7 @@ public interface UrlRequest {
          * @param method "GET", "HEAD", "DELETE", "POST" or "PUT".
          * @return the builder to facilitate chaining.
          */
-        public Builder setHttpMethod(String method) {
-            if (method == null) {
-                throw new NullPointerException("Method is required.");
-            }
-            mMethod = method;
-            return this;
-        }
+        public abstract Builder setHttpMethod(String method);
 
         /**
          * Adds a request header.
@@ -105,35 +39,14 @@ public interface UrlRequest {
          * @param value header value.
          * @return the builder to facilitate chaining.
          */
-        public Builder addHeader(String header, String value) {
-            if (header == null) {
-                throw new NullPointerException("Invalid header name.");
-            }
-            if (value == null) {
-                throw new NullPointerException("Invalid header value.");
-            }
-            mRequestHeaders.add(Pair.create(header, value));
-            return this;
-        }
+        public abstract Builder addHeader(String header, String value);
 
         /**
          * Disables cache for the request. If context is not set up to use cache,
          * this call has no effect.
          * @return the builder to facilitate chaining.
          */
-        public Builder disableCache() {
-            mDisableCache = true;
-            return this;
-        }
-
-        /** @deprecated not really deprecated but hidden. */
-        @IntDef({
-                REQUEST_PRIORITY_IDLE, REQUEST_PRIORITY_LOWEST, REQUEST_PRIORITY_LOW,
-                REQUEST_PRIORITY_MEDIUM, REQUEST_PRIORITY_HIGHEST,
-        })
-        @Retention(RetentionPolicy.SOURCE)
-        @SuppressWarnings("DepAnn")
-        public @interface RequestPriority {}
+        public abstract Builder disableCache();
 
         /**
          * Lowest request priority. Passed to {@link #setPriority}.
@@ -148,7 +61,8 @@ public interface UrlRequest {
          */
         public static final int REQUEST_PRIORITY_LOW = 2;
         /**
-         * Medium request priority. Passed to {@link #setPriority}.
+         * Medium request priority. Passed to {@link #setPriority}. This is the
+         * default priority given to the request.
          */
         public static final int REQUEST_PRIORITY_MEDIUM = 3;
         /**
@@ -159,16 +73,14 @@ public interface UrlRequest {
         /**
          * Sets priority of the request which should be one of the
          * {@link #REQUEST_PRIORITY_IDLE REQUEST_PRIORITY_*} values.
-         * Defaults to {@link #REQUEST_PRIORITY_MEDIUM}
+         * The request is given {@link #REQUEST_PRIORITY_MEDIUM} priority if
+         * this method is not called.
          *
          * @param priority priority of the request which should be one of the
          *         {@link #REQUEST_PRIORITY_IDLE REQUEST_PRIORITY_*} values.
          * @return the builder to facilitate chaining.
          */
-        public Builder setPriority(@RequestPriority int priority) {
-            mPriority = priority;
-            return this;
-        }
+        public abstract Builder setPriority(int priority);
 
         /**
          * Sets upload data provider. Switches method to "POST" if not
@@ -181,21 +93,20 @@ public interface UrlRequest {
          *     {@code Executor} the request itself is using.
          * @return the builder to facilitate chaining.
          */
-        public Builder setUploadDataProvider(
-                UploadDataProvider uploadDataProvider, Executor executor) {
-            if (uploadDataProvider == null) {
-                throw new NullPointerException("Invalid UploadDataProvider.");
-            }
-            if (executor == null) {
-                throw new NullPointerException("Invalid UploadDataProvider Executor.");
-            }
-            if (mMethod == null) {
-                mMethod = "POST";
-            }
-            mUploadDataProvider = uploadDataProvider;
-            mUploadDataProviderExecutor = executor;
-            return this;
-        }
+        public abstract Builder setUploadDataProvider(
+                UploadDataProvider uploadDataProvider, Executor executor);
+
+        /**
+         * Marks that the executors this request will use to notify callbacks (for
+         * {@code UploadDataProvider}s and {@code UrlRequest.Callback}s) is intentionally performing
+         * inline execution, like Guava's directExecutor or
+         * {@link java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy}.
+         *
+         * <p><b>Warning:</b> This option makes it easy to accidentally block the network thread.
+         * It should not be used if your callbacks perform disk I/O, acquire locks, or call into
+         * other code you don't carefully control and audit.
+         */
+        public abstract Builder allowDirectExecutor();
 
         /**
          * Creates a {@link UrlRequest} using configuration within this
@@ -205,36 +116,20 @@ public interface UrlRequest {
          * @return constructed {@link UrlRequest} using configuration within
          *         this {@link Builder}.
          */
-        public UrlRequest build() {
-            final UrlRequest request =
-                    mCronetEngine.createRequest(mUrl, mCallback, mExecutor, mPriority);
-            if (mMethod != null) {
-                request.setHttpMethod(mMethod);
-            }
-            if (mDisableCache) {
-                request.disableCache();
-            }
-            for (Pair<String, String> header : mRequestHeaders) {
-                request.addHeader(header.first, header.second);
-            }
-            if (mUploadDataProvider != null) {
-                request.setUploadDataProvider(mUploadDataProvider, mUploadDataProviderExecutor);
-            }
-            return request;
-        }
+        public abstract UrlRequest build();
     }
 
     /**
      * Users of Cronet extend this class to receive callbacks indicating the
      * progress of a {@link UrlRequest} being processed. An instance of this class
-     * is passed in to {@link UrlRequest.Builder#UrlRequest.Builder UrlRequest.Builder()}
-     * when constructing the {@code UrlRequest}.
+     * is passed in to {@link UrlRequest.Builder}'s constructor when
+     * constructing the {@code UrlRequest}.
      * <p>
      * Note:  All methods will be invoked on the thread of the
      * {@link java.util.concurrent.Executor} used during construction of the
      * {@code UrlRequest}.
      */
-    public abstract class Callback {
+    public abstract static class Callback {
         /**
          * Invoked whenever a redirect is encountered. This will only be invoked
          * between the call to {@link UrlRequest#start} and
@@ -248,9 +143,12 @@ public interface UrlRequest {
          * @param request Request being redirected.
          * @param info Response information.
          * @param newLocationUrl Location where request is redirected.
+         * @throws Exception if an error occurs while processing a redirect. {@link #onFailed}
+         *         will be called with the thrown exception set as the cause of the
+         *         {@link CallbackException}.
          */
         public abstract void onRedirectReceived(
-                UrlRequest request, UrlResponseInfo info, String newLocationUrl);
+                UrlRequest request, UrlResponseInfo info, String newLocationUrl) throws Exception;
 
         /**
          * Invoked when the final set of headers, after all redirects, is received.
@@ -265,8 +163,12 @@ public interface UrlRequest {
          *
          * @param request Request that started to get response.
          * @param info Response information.
+         * @throws Exception if an error occurs while processing response start. {@link #onFailed}
+         *         will be called with the thrown exception set as the cause of the
+         *         {@link CallbackException}.
          */
-        public abstract void onResponseStarted(UrlRequest request, UrlResponseInfo info);
+        public abstract void onResponseStarted(UrlRequest request, UrlResponseInfo info)
+                throws Exception;
 
         /**
          * Invoked whenever part of the response body has been read. Only part of
@@ -286,9 +188,12 @@ public interface UrlRequest {
          *         {@link UrlRequest#read UrlRequest.read()}, now containing the
          *         received data. The buffer's position is updated to the end of
          *         the received data. The buffer's limit is not changed.
+         * @throws Exception if an error occurs while processing a read completion.
+         *         {@link #onFailed} will be called with the thrown exception set as the cause of
+         *         the {@link CallbackException}.
          */
         public abstract void onReadCompleted(
-                UrlRequest request, UrlResponseInfo info, ByteBuffer byteBuffer);
+                UrlRequest request, UrlResponseInfo info, ByteBuffer byteBuffer) throws Exception;
 
         /**
          * Invoked when request is completed successfully. Once invoked, no other
@@ -309,8 +214,11 @@ public interface UrlRequest {
          *         received.
          * @param error information about error.
          */
-        public abstract void onFailed(
-                UrlRequest request, UrlResponseInfo info, UrlRequestException error);
+        public void onFailed(UrlRequest request, UrlResponseInfo info, CronetException error) {
+            // TODO(mef): Remove fallback to legacy api and make this method abstract
+            // after complete transition to CronetException.
+            onFailed(request, info, new UrlRequestException(error));
+        }
 
         /**
          * Invoked if request was canceled via {@link UrlRequest#cancel}. Once
@@ -322,23 +230,22 @@ public interface UrlRequest {
          *         received.
          */
         public void onCanceled(UrlRequest request, UrlResponseInfo info) {}
+
+        /**
+         * @deprecated Use {@code onFailed} instead.
+         * {@hide This method will be removed after complete transition to CronetException}.
+         */
+        @Deprecated
+        // TODO(mef): Remove this after complete transition to CronetException.
+        public void onFailed(UrlRequest request, UrlResponseInfo info, UrlRequestException error) {
+            assert false;
+        }
     }
 
     /**
      * Request status values returned by {@link #getStatus}.
      */
     public static class Status {
-        /** @deprecated not really deprecated but hidden. */
-        @IntDef({
-                INVALID, IDLE, WAITING_FOR_STALLED_SOCKET_POOL, WAITING_FOR_AVAILABLE_SOCKET,
-                WAITING_FOR_DELEGATE, WAITING_FOR_CACHE, DOWNLOADING_PROXY_SCRIPT,
-                RESOLVING_PROXY_FOR_URL, RESOLVING_HOST_IN_PROXY_SCRIPT, ESTABLISHING_PROXY_TUNNEL,
-                RESOLVING_HOST, CONNECTING, SSL_HANDSHAKE, SENDING_REQUEST, WAITING_FOR_RESPONSE,
-                READING_RESPONSE,
-        })
-        @Retention(RetentionPolicy.SOURCE)
-        @SuppressWarnings("DepAnn")
-        public @interface StatusValues {}
 
         /**
          * This state indicates that the request is completed, canceled, or is not
@@ -443,152 +350,34 @@ public interface UrlRequest {
         public static final int READING_RESPONSE = 14;
 
         private Status() {}
-
-        /**
-         * Convert a {@link LoadState} static int to one of values listed above.
-         */
-        @StatusValues
-        static int convertLoadState(int loadState) {
-            assert loadState >= LoadState.IDLE && loadState <= LoadState.READING_RESPONSE;
-            switch (loadState) {
-                case (LoadState.IDLE):
-                    return IDLE;
-
-                case (LoadState.WAITING_FOR_STALLED_SOCKET_POOL):
-                    return WAITING_FOR_STALLED_SOCKET_POOL;
-
-                case (LoadState.WAITING_FOR_AVAILABLE_SOCKET):
-                    return WAITING_FOR_AVAILABLE_SOCKET;
-
-                case (LoadState.WAITING_FOR_DELEGATE):
-                    return WAITING_FOR_DELEGATE;
-
-                case (LoadState.WAITING_FOR_CACHE):
-                    return WAITING_FOR_CACHE;
-
-                case (LoadState.DOWNLOADING_PROXY_SCRIPT):
-                    return DOWNLOADING_PROXY_SCRIPT;
-
-                case (LoadState.RESOLVING_PROXY_FOR_URL):
-                    return RESOLVING_PROXY_FOR_URL;
-
-                case (LoadState.RESOLVING_HOST_IN_PROXY_SCRIPT):
-                    return RESOLVING_HOST_IN_PROXY_SCRIPT;
-
-                case (LoadState.ESTABLISHING_PROXY_TUNNEL):
-                    return ESTABLISHING_PROXY_TUNNEL;
-
-                case (LoadState.RESOLVING_HOST):
-                    return RESOLVING_HOST;
-
-                case (LoadState.CONNECTING):
-                    return CONNECTING;
-
-                case (LoadState.SSL_HANDSHAKE):
-                    return SSL_HANDSHAKE;
-
-                case (LoadState.SENDING_REQUEST):
-                    return SENDING_REQUEST;
-
-                case (LoadState.WAITING_FOR_RESPONSE):
-                    return WAITING_FOR_RESPONSE;
-
-                case (LoadState.READING_RESPONSE):
-                    return READING_RESPONSE;
-
-                default:
-                    // A load state is retrieved but there is no corresponding
-                    // request status. This most likely means that the mapping is
-                    // incorrect.
-                    throw new IllegalArgumentException("No request status found.");
-            }
-        }
     }
 
     /**
      * Listener class used with {@link #getStatus} to receive the status of a
      * {@link UrlRequest}.
      */
-    public abstract class StatusListener {
+    public abstract static class StatusListener {
         /**
          * Invoked on {@link UrlRequest}'s {@link Executor}'s thread when request
          * status is obtained.
          * @param status integer representing the status of the request. It is
          *         one of the values defined in {@link Status}.
          */
-        public abstract void onStatus(@Status.StatusValues int status);
+        public abstract void onStatus(int status);
     }
-
-    /**
-     * Sets the HTTP method verb to use for this request. Must be done before
-     * request has started.
-     *
-     * <p>The default when this method is not called is "GET" if the request has
-     * no body or "POST" if it does.
-     *
-     * @param method "GET", "HEAD", "DELETE", "POST" or "PUT".
-     * @deprecated Use {@link Builder#setHttpMethod}.
-     */
-    @Deprecated public void setHttpMethod(String method);
-
-    /**
-     * Adds a request header. Must be done before request has started.
-     *
-     * @param header header name.
-     * @param value header value.
-     * @deprecated Use {@link Builder#setPriority}.
-     */
-    @Deprecated public void addHeader(String header, String value);
-
-    /**
-     * Sets upload data provider. Must be done before request has started. May only be
-     * invoked once per request. Switches method to "POST" if not explicitly
-     * set. Starting the request will throw an exception if a Content-Type
-     * header is not set.
-     *
-     * @param uploadDataProvider responsible for providing the upload data.
-     * @param executor All {@code uploadDataProvider} methods will be invoked
-     *     using this {@code Executor}. May optionally be the same
-     *     {@code Executor} the request itself is using.
-     * @deprecated Use {@link Builder#setUploadDataProvider}.
-     */
-    @Deprecated
-    public void setUploadDataProvider(UploadDataProvider uploadDataProvider, Executor executor);
 
     /**
      * Starts the request, all callbacks go to {@link Callback}. May only be called
      * once. May not be called if {@link #cancel} has been called.
      */
-    public void start();
+    public abstract void start();
 
     /**
      * Follows a pending redirect. Must only be called at most once for each
      * invocation of {@link Callback#onRedirectReceived
      * onRedirectReceived()}.
      */
-    public void followRedirect();
-
-    /**
-     * Attempts to read part of the response body into the provided buffer.
-     * Must only be called at most once in response to each invocation of the
-     * {@link Callback#onResponseStarted onResponseStarted()} and {@link
-     * Callback#onReadCompleted onReadCompleted()} methods of the {@link
-     * Callback}. Each call will result in an asynchronous call to
-     * either the {@link Callback Callback's}
-     * {@link Callback#onReadCompleted onReadCompleted()} method if data
-     * is read, its {@link Callback#onSucceeded onSucceeded()} method if
-     * there's no more data to read, or its {@link Callback#onFailed
-     * onFailed()} method if there's an error.
-     *
-     * @param buffer {@link ByteBuffer} to write response body to. Must be a
-     *     direct ByteBuffer. The embedder must not read or modify buffer's
-     *     position, limit, or data between its position and capacity until the
-     *     request calls back into the {@link Callback}.
-     * @deprecated Use readNew() instead though note that it updates the
-     *     buffer's position not limit.
-     */
-    // TODO(pauljensen): Switch all callers to call readNew().
-    @Deprecated public void read(ByteBuffer buffer);
+    public abstract void followRedirect();
 
     /**
      * Attempts to read part of the response body into the provided buffer.
@@ -607,8 +396,7 @@ public interface UrlRequest {
      *     position, limit, or data between its position and limit until the
      *     request calls back into the {@link Callback}.
      */
-    // TODO(pauljensen): Rename to read() once original read() is removed.
-    public void readNew(ByteBuffer buffer);
+    public abstract void read(ByteBuffer buffer);
 
     /**
      * Cancels the request. Can be called at any time.
@@ -622,25 +410,15 @@ public interface UrlRequest {
      * {@code cancel()} is called. Otherwise, at most one callback method may be
      * invoked after {@code cancel()} has completed.
      */
-    public void cancel();
+    public abstract void cancel();
 
     /**
      * Returns {@code true} if the request was successfully started and is now
-     * done (completed, canceled, or failed).
+     * finished (completed, canceled, or failed).
      * @return {@code true} if the request was successfully started and is now
-     *         done (completed, canceled, or failed).
+     *         finished (completed, canceled, or failed).
      */
-    public boolean isDone();
-
-    /**
-     * Disables cache for the request. If context is not set up to use cache,
-     * this call has no effect.
-     * @deprecated Use {@link Builder#disableCache}.
-     */
-    // TODO(pauljensen): When all callers shifted to Builder.disableCache(),
-    // remove this method and instead add constructor argument and make
-    // CronetUrlRequest.mDisableCache final.
-    @Deprecated public void disableCache();
+    public abstract boolean isDone();
 
     /**
      * Queries the status of the request.
@@ -649,10 +427,9 @@ public interface UrlRequest {
      *         back on the {@link Executor} passed in when the request was
      *         created.
      */
-    public void getStatus(final StatusListener listener);
+    public abstract void getStatus(final StatusListener listener);
 
     // Note:  There are deliberately no accessors for the results of the request
     // here. Having none removes any ambiguity over when they are populated,
     // particularly in the redirect case.
 }
-

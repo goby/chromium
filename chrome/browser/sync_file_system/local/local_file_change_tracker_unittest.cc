@@ -4,39 +4,43 @@
 
 #include "chrome/browser/sync_file_system/local/local_file_change_tracker.h"
 
+#include <stdint.h>
+
 #include <deque>
+#include <memory>
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_context.h"
 #include "chrome/browser/sync_file_system/local/sync_file_system_backend.h"
 #include "chrome/browser/sync_file_system/sync_status_code.h"
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
 #include "content/public/test/mock_blob_url_request_context.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
 #include "third_party/leveldatabase/src/include/leveldb/env.h"
 
+using content::MockBlobURLRequestContext;
+using content::ScopedTextBlob;
 using storage::FileSystemContext;
 using storage::FileSystemURL;
 using storage::FileSystemURLSet;
-using content::MockBlobURLRequestContext;
-using content::ScopedTextBlob;
 
 namespace sync_file_system {
 
 class LocalFileChangeTrackerTest : public testing::Test {
  public:
   LocalFileChangeTrackerTest()
-      : in_memory_env_(leveldb::NewMemEnv(leveldb::Env::Default())),
+      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
+        in_memory_env_(leveldb::NewMemEnv(leveldb::Env::Default())),
         file_system_(GURL("http://example.com"),
                      in_memory_env_.get(),
                      base::ThreadTaskRunnerHandle::Get().get(),
@@ -47,21 +51,19 @@ class LocalFileChangeTrackerTest : public testing::Test {
 
     ASSERT_TRUE(base_dir_.CreateUniqueTempDir());
     sync_context_ =
-        new LocalFileSyncContext(base_dir_.path(),
-                                 in_memory_env_.get(),
+        new LocalFileSyncContext(base_dir_.GetPath(), in_memory_env_.get(),
                                  base::ThreadTaskRunnerHandle::Get().get(),
                                  base::ThreadTaskRunnerHandle::Get().get());
     ASSERT_EQ(
-        sync_file_system::SYNC_STATUS_OK,
+        SYNC_STATUS_OK,
         file_system_.MaybeInitializeFileSystemContext(sync_context_.get()));
   }
 
   void TearDown() override {
-    if (sync_context_.get())
-      sync_context_->ShutdownOnUIThread();
+    sync_context_->ShutdownOnUIThread();
     sync_context_ = nullptr;
 
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     file_system_.TearDown();
     // Make sure we don't leave the external filesystem.
     // (CannedSyncableFileSystem::TearDown does not do this as there may be
@@ -110,9 +112,9 @@ class LocalFileChangeTrackerTest : public testing::Test {
     change_tracker()->GetAllChangedURLs(urls);
   }
 
-  base::MessageLoopForIO message_loop_;
+  content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir base_dir_;
-  scoped_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
   CannedSyncableFileSystem file_system_;
 
  private:
@@ -175,14 +177,14 @@ TEST_F(LocalFileChangeTrackerTest, GetChanges) {
   file_system_.GetChangedURLsInTracker(&urls);
 
   EXPECT_EQ(5U, urls.size());
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath1)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath2)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath3)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath4)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath5)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath1)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath2)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath3)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath4)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath5)));
 
   // Changes for kPath0 must have been offset and removed.
-  EXPECT_FALSE(ContainsKey(urls, URL(kPath0)));
+  EXPECT_FALSE(base::ContainsKey(urls, URL(kPath0)));
 
   // GetNextChangedURLs only returns up to max_urls (i.e. 3) urls.
   std::deque<FileSystemURL> urls_to_process;
@@ -248,19 +250,19 @@ TEST_F(LocalFileChangeTrackerTest, GetChanges) {
 
   VerifyAndClearChange(URL(kPath1),
                FileChange(FileChange::FILE_CHANGE_DELETE,
-                          sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                          SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath2),
                FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                          sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                          SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath3),
                FileChange(FileChange::FILE_CHANGE_DELETE,
-                          sync_file_system::SYNC_FILE_TYPE_FILE));
+                          SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath4),
                FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                          sync_file_system::SYNC_FILE_TYPE_FILE));
+                          SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath5),
                FileChange(FileChange::FILE_CHANGE_DELETE,
-                          sync_file_system::SYNC_FILE_TYPE_FILE));
+                          SYNC_FILE_TYPE_FILE));
 }
 
 TEST_F(LocalFileChangeTrackerTest, RestoreCreateAndModifyChanges) {
@@ -294,9 +296,9 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCreateAndModifyChanges) {
             file_system_.TruncateFile(URL(kPath3), 1));  // Modifies the file.
   EXPECT_EQ(base::File::FILE_OK,
             file_system_.CreateFile(URL(kPath4)));    // Creates another file.
-  EXPECT_EQ(static_cast<int64>(kData.size()),         // Modifies the file.
-            file_system_.Write(&url_request_context,
-                               URL(kPath4), blob.GetBlobDataHandle()));
+  EXPECT_EQ(static_cast<int64_t>(kData.size()),       // Modifies the file.
+            file_system_.Write(&url_request_context, URL(kPath4),
+                               blob.GetBlobDataHandle()));
 
   // Verify the changes.
   file_system_.GetChangedURLsInTracker(&urls);
@@ -317,19 +319,19 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCreateAndModifyChanges) {
 
   VerifyAndClearChange(URL(kPath0),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath1),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                                  SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath2),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                                  SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath3),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath4),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
 }
 
 TEST_F(LocalFileChangeTrackerTest, RestoreRemoveChanges) {
@@ -390,22 +392,22 @@ TEST_F(LocalFileChangeTrackerTest, RestoreRemoveChanges) {
 
   VerifyAndClearChange(URL(kPath0),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath1),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath2),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath3),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath4),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath5),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
 }
 
 TEST_F(LocalFileChangeTrackerTest, RestoreCopyChanges) {
@@ -445,8 +447,8 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCopyChanges) {
             file_system_.TruncateFile(URL(kPath3), 1));  // Modifies the file.
   EXPECT_EQ(base::File::FILE_OK,
             file_system_.CreateFile(URL(kPath4)));    // Creates another file.
-  EXPECT_EQ(static_cast<int64>(kData.size()),
-            file_system_.Write(&url_request_context,   // Modifies the file.
+  EXPECT_EQ(static_cast<int64_t>(kData.size()),
+            file_system_.Write(&url_request_context,  // Modifies the file.
                                URL(kPath4), blob.GetBlobDataHandle()));
 
   // Verify we have 5 changes for preparation.
@@ -484,19 +486,19 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCopyChanges) {
 
   VerifyAndClearChange(URL(kPath0Copy),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath1Copy),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                                  SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath2Copy),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                                  SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath3Copy),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath4Copy),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
 }
 
 TEST_F(LocalFileChangeTrackerTest, RestoreMoveChanges) {
@@ -569,28 +571,28 @@ TEST_F(LocalFileChangeTrackerTest, RestoreMoveChanges) {
 
   VerifyAndClearChange(URL(kPath0),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath1),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath3),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
-                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+                                  SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath5),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath6),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                                  SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath7),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
   VerifyAndClearChange(URL(kPath8),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_DIRECTORY));
+                                  SYNC_FILE_TYPE_DIRECTORY));
   VerifyAndClearChange(URL(kPath9),
                        FileChange(FileChange::FILE_CHANGE_ADD_OR_UPDATE,
-                                  sync_file_system::SYNC_FILE_TYPE_FILE));
+                                  SYNC_FILE_TYPE_FILE));
 }
 
 TEST_F(LocalFileChangeTrackerTest, NextChangedURLsWithRecursiveCopy) {
@@ -667,8 +669,8 @@ TEST_F(LocalFileChangeTrackerTest, NextChangedURLsWithRecursiveRemove) {
   ASSERT_EQ(2U, urls.size());
 
   // The exact order of recursive removal cannot be determined.
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath1)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath2)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath1)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath2)));
 }
 
 TEST_F(LocalFileChangeTrackerTest, ResetForFileSystem) {
@@ -691,10 +693,10 @@ TEST_F(LocalFileChangeTrackerTest, ResetForFileSystem) {
   FileSystemURLSet urls;
   GetAllChangedURLs(&urls);
   EXPECT_EQ(4u, urls.size());
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath0)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath1)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath2)));
-  EXPECT_TRUE(ContainsKey(urls, URL(kPath3)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath0)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath1)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath2)));
+  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath3)));
 
   // Reset all changes for the file system.
   change_tracker()->ResetForFileSystem(

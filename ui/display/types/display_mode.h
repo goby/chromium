@@ -5,6 +5,8 @@
 #ifndef UI_DISPLAY_TYPES_DISPLAY_MODE_H_
 #define UI_DISPLAY_TYPES_DISPLAY_MODE_H_
 
+#include <memory>
+#include <ostream>
 #include <string>
 
 #include "base/macros.h"
@@ -19,6 +21,7 @@ class DISPLAY_TYPES_EXPORT DisplayMode {
  public:
   DisplayMode(const gfx::Size& size, bool interlaced, float refresh_rate);
   virtual ~DisplayMode();
+  virtual std::unique_ptr<DisplayMode> Clone() const;
 
   const gfx::Size& size() const { return size_; }
   bool is_interlaced() const { return is_interlaced_; }
@@ -33,6 +36,9 @@ class DISPLAY_TYPES_EXPORT DisplayMode {
 
   DISALLOW_COPY_AND_ASSIGN(DisplayMode);
 };
+
+// Used to by gtest to print readable errors.
+DISPLAY_TYPES_EXPORT void PrintTo(const DisplayMode& mode, std::ostream* os);
 
 }  // namespace ui
 

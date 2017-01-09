@@ -4,9 +4,10 @@
 
 #include "chrome/browser/chromeos/login/screens/network_screen.h"
 
+#include <utility>
+
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -19,6 +20,7 @@
 #include "chrome/browser/chromeos/login/screens/network_view.h"
 #include "chrome/browser/chromeos/login/ui/input_events_blocker.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
+#include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util.h"
 #include "chrome/common/pref_names.h"
@@ -26,6 +28,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -76,11 +79,6 @@ NetworkScreen::~NetworkScreen() {
 ////////////////////////////////////////////////////////////////////////////////
 // NetworkScreen, NetworkModel implementation:
 
-void NetworkScreen::PrepareToShow() {
-  if (view_)
-    view_->PrepareToShow();
-}
-
 void NetworkScreen::Show() {
   Refresh();
 
@@ -116,6 +114,9 @@ void NetworkScreen::OnViewDestroyed(NetworkView* view) {
   if (view_ == view) {
     view_ = nullptr;
     timezone_subscription_.reset();
+    // Ownership of NetworkScreen is complicated; ensure that we remove
+    // this as a NetworkStateHandler observer when the view is destroyed.
+    UnsubscribeNetworkNotification();
   }
 }
 
@@ -151,7 +152,8 @@ const base::ListValue* NetworkScreen::GetLanguageList() const {
 }
 
 void NetworkScreen::UpdateLanguageList() {
-  ScheduleResolveLanguageList(scoped_ptr<locale_util::LanguageSwitchResult>());
+  ScheduleResolveLanguageList(
+      std::unique_ptr<locale_util::LanguageSwitchResult>());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -229,11 +231,11 @@ void NetworkScreen::GetConnectedWifiNetwork(std::string* out_onc_spec) {
 }
 
 void NetworkScreen::CreateAndConnectNetworkFromOnc(
-    const std::string& onc_spec) {
+    const std::string& onc_spec,
+    const base::Closure& success_callback,
+    const base::Closure& failed_callback) {
   network_state_helper_->CreateAndConnectNetworkFromOnc(
-      onc_spec, base::Bind(&base::DoNothing),
-      base::Bind(&NetworkScreen::OnConnectNetworkFromOncFailed,
-                 base::Unretained(this)));
+      onc_spec, success_callback, failed_callback);
 }
 
 void NetworkScreen::AddObserver(Observer* observer) {
@@ -362,6 +364,11 @@ void NetworkScreen::StopWaitingForConnection(const base::string16& network_id) {
     view_->ShowConnectingStatus(false, network_id_);
 
   GetContextEditor().SetBoolean(kContextKeyContinueButtonEnabled, is_connected);
+  if (is_connected &&
+      policy::DeviceCloudPolicyManagerChromeOS::GetZeroTouchEnrollmentMode() ==
+          policy::ZeroTouchEnrollmentMode::HANDS_OFF) {
+    OnContinueButtonPressed();
+  }
 }
 
 void NetworkScreen::WaitForConnection(const base::string16& network_id) {
@@ -404,27 +411,28 @@ void NetworkScreen::OnLanguageChangedCallback(
     g_browser_process->local_state()->SetString(prefs::kApplicationLocale,
                                                 selected_language_code_);
   }
-  ScheduleResolveLanguageList(scoped_ptr<locale_util::LanguageSwitchResult>(
-      new locale_util::LanguageSwitchResult(result)));
+  ScheduleResolveLanguageList(
+      std::unique_ptr<locale_util::LanguageSwitchResult>(
+          new locale_util::LanguageSwitchResult(result)));
 
   AccessibilityManager::Get()->OnLocaleChanged();
   SetInputMethod(input_method);
 }
 
 void NetworkScreen::ScheduleResolveLanguageList(
-    scoped_ptr<locale_util::LanguageSwitchResult> language_switch_result) {
+    std::unique_ptr<locale_util::LanguageSwitchResult> language_switch_result) {
   UILanguageListResolvedCallback callback = base::Bind(
       &NetworkScreen::OnLanguageListResolved, weak_factory_.GetWeakPtr());
-  ResolveUILanguageList(language_switch_result.Pass(), callback);
+  ResolveUILanguageList(std::move(language_switch_result), callback);
 }
 
 void NetworkScreen::OnLanguageListResolved(
-    scoped_ptr<base::ListValue> new_language_list,
+    std::unique_ptr<base::ListValue> new_language_list,
     const std::string& new_language_list_locale,
     const std::string& new_selected_language) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  language_list_.reset(new_language_list.release());
+  language_list_ = std::move(new_language_list);
   language_list_locale_ = new_language_list_locale;
   selected_language_code_ = new_selected_language;
 
@@ -432,22 +440,14 @@ void NetworkScreen::OnLanguageListResolved(
                                               selected_language_code_);
   if (view_)
     view_->ReloadLocalizedContent();
-  FOR_EACH_OBSERVER(Observer, observers_, OnLanguageListReloaded());
+  for (auto& observer : observers_)
+    observer.OnLanguageListReloaded();
 }
 
 void NetworkScreen::OnSystemTimezoneChanged() {
   std::string current_timezone_id;
   CrosSettings::Get()->GetString(kSystemTimezone, &current_timezone_id);
   GetContextEditor().SetString(kContextKeyTimezone, current_timezone_id);
-}
-
-void NetworkScreen::OnConnectNetworkFromOncFailed() {
-  if (!network_state_helper_->IsConnected() && view_) {
-    // Show error bubble.
-    view_->ShowError(l10n_util::GetStringFUTF16(
-        IDS_NETWORK_SELECTION_ERROR,
-        l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_OS_NAME)));
-  }
 }
 
 }  // namespace chromeos

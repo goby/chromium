@@ -5,11 +5,11 @@
 #ifndef REMOTING_HOST_GCD_REST_CLIENT_H_
 #define REMOTING_HOST_GCD_REST_CLIENT_H_
 
+#include <memory>
 #include <queue>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/clock.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "remoting/base/url_request_context_getter.h"
@@ -45,15 +45,15 @@ class GcdRestClient : public net::URLFetcherDelegate {
 
   // Tests whether is object is currently running a request.  Only one
   // request at a time may be pending.
-  bool HasPendingRequest() { return url_fetcher_; }
+  bool HasPendingRequest() { return !!url_fetcher_; }
 
   // Sends a 'patchState' request to the GCD API.  Constructs and
   // sends an appropriate JSON message M where |patch_details| becomes
   // the value of M.patches[0].patch.
-  void PatchState(scoped_ptr<base::DictionaryValue> patch_details,
+  void PatchState(std::unique_ptr<base::DictionaryValue> patch_details,
                   const GcdRestClient::ResultCallback& callback);
 
-  void SetClockForTest(scoped_ptr<base::Clock> clock) { clock_ = clock.Pass(); }
+  void SetClockForTest(std::unique_ptr<base::Clock> clock);
 
  private:
   void OnTokenReceived(OAuthTokenGetter::Status status,
@@ -68,8 +68,8 @@ class GcdRestClient : public net::URLFetcherDelegate {
   std::string gcd_device_id_;
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
   OAuthTokenGetter* token_getter_;
-  scoped_ptr<base::Clock> clock_;
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<base::Clock> clock_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   ResultCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(GcdRestClient);

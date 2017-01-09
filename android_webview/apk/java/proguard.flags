@@ -1,17 +1,10 @@
 # Don't rename anything, it makes stack traces unintelligible. We only allow the
 # obfuscation pass to run so that we can discard attributes like local variable
-# tables.
--keepnames class *** { *; }
-
-# Keep source file and line number information for stack traces.
--keepattributes SourceFile,LineNumberTable
-
-# Keep all runtime visible annotations.
--keepattributes RuntimeVisibleAnnotations
-
-# Disable optimization as this causes proguard to remove seemingly random stuff,
-# including things explicitly kept in this configuration.
--dontoptimize
+# tables. However, we don't want to lose out on optimizations, so although they
+# can occasionally make the stack trace a bit stranger with inlining, it won't
+# make a big difference for the users seeing the stacktraces. We can always use
+# build/android/stacktrace/java_deobfuscate.py to fix the stacktrace up for us.
+-keepnames,allowoptimization class *** { *; }
 
 # Keep the factory and its public members; it's the main entry point used by the
 # framework.
@@ -19,23 +12,14 @@
     public *;
 }
 
-# Keep JNI interfaces.
--keepclasseswithmembers class com.android.webview.chromium.**,org.chromium.** {
-  @**.AccessedByNative <fields>;
-}
--keepclasseswithmembers class com.android.webview.chromium.**,org.chromium.** {
-  @**.CalledByNative <methods>;
-}
--keepclasseswithmembers class com.android.webview.chromium.**,org.chromium.** {
-  @**.CalledByNativeUnchecked <methods>;
-}
--keepclasseswithmembers class com.android.webview.chromium.**,org.chromium.** {
-  native <methods>;
+-keep class com.android.webview.chromium.WebViewDatabaseAdapter {
+  public *;
 }
 
-# Keep things explicitly marked as used by reflection
--keepclasseswithmembers class com.android.webview.chromium.**,org.chromium.** {
-  @**.UsedByReflection *;
+# This is the main entry point for APIs. It is kept to make developing with
+# unreleased Android easier.
+-keep class com.android.webview.chromium.WebViewChromium {
+  public *;
 }
 
 # Linker dynamically casts to $TestRunner when running tests. We don't run these
@@ -63,27 +47,16 @@
   void onHideCustomView();
 }
 
+-keep class org.chromium.android_webview.AwBrowserProcess {
+    java.nio.channels.FileLock sExclusiveFileLock;
+}
+
 # Accessed via reflection but not present in all builds
--keep class com.android.webview.chromium.Drp {
-  public java.lang.String KEY;
+-keep class com.android.webview.chromium.PlatformServiceBridgeGoogle {
+  void setMetricsSettingListener(...);
+  PlatformServiceBridgeGoogle(...);
 }
--dontnote com.android.webview.chromium.Drp
-
-# Keep framework support for SmartClip.
--keep class com.android.webview.chromium.WebViewChromium {
-  public void extractSmartClipData(int,int,int,int);
-  public void setSmartClipResultHandler(android.os.Handler);
-}
-
-# AwDebug is accessed by reflection.
--keep class org.chromium.android_webview.AwDebug {
-  public static boolean dumpWithoutCrashing(...);
-}
-
-#TODO(hush): remove after N release. crbug.com/543272
--keep class com.android.webview.chromium.WebViewChromium {
-  public void onActivityResult(int,int,android.content.Intent);
-}
+-dontnote com.android.webview.chromium.PlatformServiceBridgeGoogle
 
 #TODO(hush): remove after N release. crbug.com/546762
 -keep class com.android.webview.chromium.ContentSettingsAdapter {
@@ -91,15 +64,5 @@
   public int getDisabledActionModeMenuItems();
 }
 
-# Ignore notes and warnings about the support library, which uses reflection and
-# may reference classes no longer in the SDK.
--dontnote android.support.**
--dontwarn android.support.**
-
-# Keep all enum values and valueOf methods. See
-# http://proguard.sourceforge.net/index.html#manual/examples.html
-# for the reason for this. Also, see http://crbug.com/248037.
--keepclassmembers enum * {
-    public static **[] values();
-    public static ** valueOf(java.lang.String);
-}
+# We strip some unused resources when preprocessing the GMS client libs.
+-dontwarn com.google.android.gms.R**

@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
 #include "gpu/config/gpu_blacklist.h"
+
+#include <memory>
+
 #include "gpu/config/gpu_control_list_jsons.h"
 #include "gpu/config/gpu_feature_type.h"
 #include "gpu/config/gpu_info.h"
@@ -46,7 +48,7 @@ class GpuBlacklistTest : public testing::Test {
         "  ]\n"
         "}";
 
-    scoped_ptr<GpuBlacklist> blacklist(GpuBlacklist::Create());
+    std::unique_ptr<GpuBlacklist> blacklist(GpuBlacklist::Create());
     EXPECT_TRUE(blacklist->LoadList(json, GpuBlacklist::kAllOs));
     std::set<int> type = blacklist->MakeDecision(
         GpuBlacklist::kOsMacosx, kOsVersion, gpu_info());
@@ -74,9 +76,16 @@ class GpuBlacklistTest : public testing::Test {
 };
 
 TEST_F(GpuBlacklistTest, CurrentBlacklistValidation) {
-  scoped_ptr<GpuBlacklist> blacklist(GpuBlacklist::Create());
+  std::unique_ptr<GpuBlacklist> blacklist(GpuBlacklist::Create());
   EXPECT_TRUE(blacklist->LoadList(
       kSoftwareRenderingListJson, GpuBlacklist::kAllOs));
+}
+
+TEST_F(GpuBlacklistTest, DuplicatedIDValidation) {
+  std::unique_ptr<GpuBlacklist> blacklist(GpuBlacklist::Create());
+  EXPECT_TRUE(blacklist->LoadList(
+      kSoftwareRenderingListJson, GpuBlacklist::kAllOs));
+  EXPECT_FALSE(blacklist->has_duplicated_entry_id());
 }
 
 #define GPU_BLACKLIST_FEATURE_TEST(test_name, feature_name, feature_type) \
@@ -123,5 +132,13 @@ GPU_BLACKLIST_FEATURE_TEST(PanelFitting,
 GPU_BLACKLIST_FEATURE_TEST(GpuRasterization,
                            "gpu_rasterization",
                            GPU_FEATURE_TYPE_GPU_RASTERIZATION)
+
+GPU_BLACKLIST_FEATURE_TEST(AcceleratedVpxDecode,
+                           "accelerated_vpx_decode",
+                           GPU_FEATURE_TYPE_ACCELERATED_VPX_DECODE)
+
+GPU_BLACKLIST_FEATURE_TEST(WebGL2,
+                           "webgl2",
+                           GPU_FEATURE_TYPE_WEBGL2)
 
 }  // namespace gpu

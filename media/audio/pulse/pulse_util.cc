@@ -4,10 +4,13 @@
 
 #include "media/audio/pulse/pulse_util.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
-#include "base/time/time.h"
-#include "media/audio/audio_manager_base.h"
-#include "media/audio/audio_parameters.h"
+#include "base/macros.h"
+#include "media/audio/audio_device_description.h"
+#include "media/base/audio_parameters.h"
+#include "media/base/audio_timestamp_helper.h"
 
 namespace media {
 
@@ -133,20 +136,26 @@ void WaitForOperationCompletion(pa_threaded_mainloop* pa_mainloop,
   pa_operation_unref(operation);
 }
 
-int GetHardwareLatencyInBytes(pa_stream* stream,
-                              int sample_rate,
-                              int bytes_per_frame) {
+base::TimeDelta GetHardwareLatency(pa_stream* stream) {
   DCHECK(stream);
   int negative = 0;
   pa_usec_t latency_micros = 0;
   if (pa_stream_get_latency(stream, &latency_micros, &negative) != 0)
-    return 0;
+    return base::TimeDelta();
 
   if (negative)
-    return 0;
+    return base::TimeDelta();
 
-  return latency_micros * sample_rate * bytes_per_frame /
-      base::Time::kMicrosecondsPerSecond;
+  return base::TimeDelta::FromMicroseconds(latency_micros);
+}
+
+int GetHardwareLatencyInBytes(pa_stream* stream,
+                              int sample_rate,
+                              int bytes_per_frame) {
+  DCHECK(stream);
+  return AudioTimestampHelper::TimeToFrames(GetHardwareLatency(stream),
+                                            sample_rate) *
+         bytes_per_frame;
 }
 
 // Helper macro for CreateInput/OutputStream() to avoid code spam and
@@ -209,11 +218,10 @@ bool CreateInputStream(pa_threaded_mainloop* mainloop,
               PA_STREAM_START_CORKED;
   RETURN_ON_FAILURE(
       pa_stream_connect_record(
-          *stream,
-          device_id == AudioManagerBase::kDefaultDeviceId ?
-              NULL : device_id.c_str(),
-          &buffer_attributes,
-          static_cast<pa_stream_flags_t>(flags)) == 0,
+          *stream, device_id == AudioDeviceDescription::kDefaultDeviceId
+                       ? NULL
+                       : device_id.c_str(),
+          &buffer_attributes, static_cast<pa_stream_flags_t>(flags)) == 0,
       "pa_stream_connect_record FAILED ");
 
   // Wait for the stream to be ready.
@@ -268,8 +276,8 @@ bool CreateOutputStream(pa_threaded_mainloop** mainloop,
   // otherwise pa_threaded_mainloop_wait() will hang indefinitely.
   while (true) {
     pa_context_state_t context_state = pa_context_get_state(*context);
-    RETURN_ON_FAILURE(
-        PA_CONTEXT_IS_GOOD(context_state), "Invalid PulseAudio context state.");
+    RETURN_ON_FAILURE(PA_CONTEXT_IS_GOOD(context_state),
+                      "Invalid PulseAudio context state.");
     if (context_state == PA_CONTEXT_READY)
       break;
     pa_threaded_mainloop_wait(*mainloop);
@@ -277,8 +285,7 @@ bool CreateOutputStream(pa_threaded_mainloop** mainloop,
 
   // Set sample specifications.
   pa_sample_spec sample_specifications;
-  sample_specifications.format = BitsToPASampleFormat(
-      params.bits_per_sample());
+  sample_specifications.format = PA_SAMPLE_FLOAT32;
   sample_specifications.rate = params.sample_rate();
   sample_specifications.channels = params.channels();
 
@@ -329,16 +336,15 @@ bool CreateOutputStream(pa_threaded_mainloop** mainloop,
   // and error.
   RETURN_ON_FAILURE(
       pa_stream_connect_playback(
-          *stream,
-          device_id == AudioManagerBase::kDefaultDeviceId ?
-              NULL : device_id.c_str(),
+          *stream, device_id == AudioDeviceDescription::kDefaultDeviceId
+                       ? NULL
+                       : device_id.c_str(),
           &pa_buffer_attributes,
           static_cast<pa_stream_flags_t>(
               PA_STREAM_INTERPOLATE_TIMING | PA_STREAM_ADJUST_LATENCY |
               PA_STREAM_AUTO_TIMING_UPDATE | PA_STREAM_NOT_MONOTONIC |
               PA_STREAM_START_CORKED),
-          NULL,
-          NULL) == 0,
+          NULL, NULL) == 0,
       "pa_stream_connect_playback FAILED ");
 
   // Wait for the stream to be ready.

@@ -2,8 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/environment.h"
+#include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "ui/base/ui_base_switches.h"
@@ -42,7 +47,7 @@ class ScopedLocale {
 
   ~ScopedLocale() {
 #if defined(OS_LINUX)
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     if (old_locale_) {
       env->SetVar("LC_ALL", old_locale_);
     } else {

@@ -18,7 +18,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/svg/SVGTextElement.h"
 
 #include "core/layout/svg/LayoutSVGText.h"
@@ -26,15 +25,12 @@
 namespace blink {
 
 inline SVGTextElement::SVGTextElement(Document& doc)
-    : SVGTextPositioningElement(SVGNames::textTag, doc)
-{
-}
+    : SVGTextPositioningElement(SVGNames::textTag, doc) {}
 
 DEFINE_NODE_FACTORY(SVGTextElement)
 
-LayoutObject* SVGTextElement::createLayoutObject(const ComputedStyle&)
-{
-    return new LayoutSVGText(this);
+LayoutObject* SVGTextElement::createLayoutObject(const ComputedStyle&) {
+  return new LayoutSVGText(this);
 }
 
-}
+}  // namespace blink

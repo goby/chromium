@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/shadow/DetailsMarkerControl.h"
 
 #include "core/HTMLNames.h"
@@ -40,23 +39,19 @@ namespace blink {
 using namespace HTMLNames;
 
 DetailsMarkerControl::DetailsMarkerControl(Document& document)
-    : HTMLDivElement(document)
-{
+    : HTMLDivElement(document) {}
+
+LayoutObject* DetailsMarkerControl::createLayoutObject(const ComputedStyle&) {
+  return new LayoutDetailsMarker(this);
 }
 
-LayoutObject* DetailsMarkerControl::createLayoutObject(const ComputedStyle&)
-{
-    return new LayoutDetailsMarker(this);
+bool DetailsMarkerControl::layoutObjectIsNeeded(const ComputedStyle& style) {
+  return summaryElement()->isMainSummary() &&
+         HTMLDivElement::layoutObjectIsNeeded(style);
 }
 
-bool DetailsMarkerControl::layoutObjectIsNeeded(const ComputedStyle& style)
-{
-    return summaryElement()->isMainSummary() && HTMLDivElement::layoutObjectIsNeeded(style);
+HTMLSummaryElement* DetailsMarkerControl::summaryElement() {
+  return toHTMLSummaryElement(ownerShadowHost());
 }
 
-HTMLSummaryElement* DetailsMarkerControl::summaryElement()
-{
-    return toHTMLSummaryElement(shadowHost());
-}
-
-}
+}  // namespace blink

@@ -6,12 +6,12 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/aura/window.h"
 #include "ui/views/accessibility/ax_aura_obj_cache.h"
 #include "ui/views/accessibility/ax_window_obj_wrapper.h"
 
-AXRootObjWrapper::AXRootObjWrapper(int32 id)
+AXRootObjWrapper::AXRootObjWrapper(int32_t id)
     : id_(id), alert_window_(new aura::Window(NULL)) {
   alert_window_->Init(ui::LAYER_NOT_DRAWN);
 }
@@ -46,6 +46,8 @@ views::AXAuraObjWrapper* AXRootObjWrapper::GetParent() {
 void AXRootObjWrapper::GetChildren(
     std::vector<views::AXAuraObjWrapper*>* out_children) {
   views::AXAuraObjCache::GetInstance()->GetTopLevelWindows(out_children);
+  out_children->push_back(
+      views::AXAuraObjCache::GetInstance()->GetOrCreate(alert_window_));
 }
 
 void AXRootObjWrapper::Serialize(ui::AXNodeData* out_node_data) {
@@ -55,6 +57,6 @@ void AXRootObjWrapper::Serialize(ui::AXNodeData* out_node_data) {
   out_node_data->state = 0;
 }
 
-int32 AXRootObjWrapper::GetID() {
+int32_t AXRootObjWrapper::GetID() {
   return id_;
 }

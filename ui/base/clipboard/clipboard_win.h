@@ -5,9 +5,23 @@
 #ifndef UI_BASE_CLIPBOARD_CLIPBOARD_WIN_H_
 #define UI_BASE_CLIPBOARD_CLIPBOARD_WIN_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/base/clipboard/clipboard.h"
 
-#include "base/memory/scoped_ptr.h"
+namespace base {
+namespace win {
+class MessageWindow;
+}
+}
+
+namespace gfx {
+class Size;
+}
 
 namespace ui {
 
@@ -19,7 +33,7 @@ class ClipboardWin : public Clipboard {
   ~ClipboardWin() override;
 
   // Clipboard overrides:
-  uint64 GetSequenceNumber(ClipboardType type) const override;
+  uint64_t GetSequenceNumber(ClipboardType type) const override;
   bool IsFormatAvailable(const FormatType& format,
                          ClipboardType type) const override;
   void Clear(ClipboardType type) override;
@@ -31,8 +45,8 @@ class ClipboardWin : public Clipboard {
   void ReadHTML(ClipboardType type,
                 base::string16* markup,
                 std::string* src_url,
-                uint32* fragment_start,
-                uint32* fragment_end) const override;
+                uint32_t* fragment_start,
+                uint32_t* fragment_end) const override;
   void ReadRTF(ClipboardType type, std::string* result) const override;
   SkBitmap ReadImage(ClipboardType type) const override;
   void ReadCustomData(ClipboardType clipboard_type,
@@ -67,7 +81,7 @@ class ClipboardWin : public Clipboard {
   HWND GetClipboardWindow() const;
 
   // Mark this as mutable so const methods can still do lazy initialization.
-  mutable scoped_ptr<base::win::MessageWindow> clipboard_owner_;
+  mutable std::unique_ptr<base::win::MessageWindow> clipboard_owner_;
 
   DISALLOW_COPY_AND_ASSIGN(ClipboardWin);
 };

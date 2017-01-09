@@ -5,7 +5,9 @@
 #include "components/rappor/log_uploader.h"
 
 #include "base/compiler_specific.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,12 +21,12 @@ const char kTestMimeType[] = "text/plain";
 
 class TestLogUploader : public LogUploader {
  public:
-  TestLogUploader(net::URLRequestContextGetter* request_context) :
+  explicit TestLogUploader(net::URLRequestContextGetter* request_context) :
       LogUploader(GURL(kTestServerURL), kTestMimeType, request_context) {
     Start();
   }
 
-  base::TimeDelta last_interval_set() const { return last_interval_set_; };
+  base::TimeDelta last_interval_set() const { return last_interval_set_; }
 
   void StartUpload() {
     last_interval_set_ = base::TimeDelta();
@@ -37,7 +39,7 @@ class TestLogUploader : public LogUploader {
 
  protected:
   bool IsUploadScheduled() const override {
-    return last_interval_set() != base::TimeDelta();
+    return !last_interval_set().is_zero();
   }
 
   // Schedules a future call to StartScheduledUpload if one isn't already
@@ -49,6 +51,7 @@ class TestLogUploader : public LogUploader {
 
   base::TimeDelta last_interval_set_;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(TestLogUploader);
 };
 
@@ -67,6 +70,7 @@ class LogUploaderTest : public testing::Test {
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   net::FakeURLFetcherFactory factory_;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(LogUploaderTest);
 };
 
@@ -79,7 +83,7 @@ TEST_F(LogUploaderTest, Success) {
                            net::URLRequestStatus::SUCCESS);
 
   uploader.QueueLog("log1");
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Log should be discarded instead of retransmitted.
   EXPECT_EQ(uploader.last_interval_set(), base::TimeDelta());
 }
@@ -93,7 +97,7 @@ TEST_F(LogUploaderTest, Rejection) {
                            net::URLRequestStatus::SUCCESS);
 
   uploader.QueueLog("log1");
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Log should be discarded instead of retransmitted.
   EXPECT_EQ(uploader.last_interval_set(), base::TimeDelta());
 }
@@ -107,7 +111,7 @@ TEST_F(LogUploaderTest, Failure) {
                            net::URLRequestStatus::SUCCESS);
 
   uploader.QueueLog("log1");
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Log should be scheduled for retransmission.
   base::TimeDelta error_interval = uploader.last_interval_set();
   EXPECT_GT(error_interval, base::TimeDelta());
@@ -119,7 +123,7 @@ TEST_F(LogUploaderTest, Failure) {
   // A second failure should lead to a longer interval, and the log should
   // be discarded due to full queue.
   uploader.StartUpload();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_GT(uploader.last_interval_set(), error_interval);
 
   factory_.SetFakeResponse(GURL(kTestServerURL),
@@ -130,13 +134,13 @@ TEST_F(LogUploaderTest, Failure) {
   // A success should revert to base interval while queue is not empty.
   for (int i = 0; i < 9; i++) {
     uploader.StartUpload();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_LT(uploader.last_interval_set(), error_interval);
   }
 
   // Queue should be empty.
   uploader.StartUpload();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(uploader.last_interval_set(), base::TimeDelta());
 }
 

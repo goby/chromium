@@ -4,9 +4,11 @@
 
 #include "jingle/notifier/listener/xmpp_push_client.h"
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "jingle/notifier/base/fake_base_task.h"
 #include "jingle/notifier/base/notifier_options.h"
 #include "jingle/notifier/listener/push_client_observer.h"
@@ -47,7 +49,7 @@ class XmppPushClientTest : public testing::Test {
 
   void TearDown() override {
     // Clear out any messages posted by XmppPushClient.
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     xmpp_push_client_->RemoveObserver(&mock_observer_);
     xmpp_push_client_.reset();
   }
@@ -56,7 +58,7 @@ class XmppPushClientTest : public testing::Test {
   base::MessageLoopForIO message_loop_;
   NotifierOptions notifier_options_;
   StrictMock<MockObserver> mock_observer_;
-  scoped_ptr<XmppPushClient> xmpp_push_client_;
+  std::unique_ptr<XmppPushClient> xmpp_push_client_;
   FakeBaseTask fake_base_task_;
 };
 

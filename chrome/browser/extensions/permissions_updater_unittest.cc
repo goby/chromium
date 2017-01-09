@@ -2,17 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/permissions_updater.h"
+
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/extensions/permissions_updater.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension_test_util.h"
 #include "chrome/test/base/testing_profile.h"
@@ -36,8 +39,8 @@ namespace extensions {
 namespace {
 
 scoped_refptr<const Extension> CreateExtensionWithOptionalPermissions(
-    scoped_ptr<base::Value> optional_permissions,
-    scoped_ptr<base::Value> permissions,
+    std::unique_ptr<base::Value> optional_permissions,
+    std::unique_ptr<base::Value> permissions,
     const std::string& name) {
   return ExtensionBuilder()
       .SetLocation(Manifest::INTERNAL)
@@ -47,8 +50,9 @@ scoped_refptr<const Extension> CreateExtensionWithOptionalPermissions(
               .Set("description", "foo")
               .Set("manifest_version", 2)
               .Set("version", "0.1.2.3")
-              .Set("permissions", permissions.Pass())
-              .Set("optional_permissions", optional_permissions.Pass()))
+              .Set("permissions", std::move(permissions))
+              .Set("optional_permissions", std::move(optional_permissions))
+              .Build())
       .SetID(crx_file::id_util::GenerateId(name))
       .Build();
 }
@@ -106,7 +110,7 @@ class PermissionsUpdaterListener : public content::NotificationObserver {
   bool waiting_;
   content::NotificationRegistrar registrar_;
   scoped_refptr<const Extension> extension_;
-  scoped_ptr<const PermissionSet> permissions_;
+  std::unique_ptr<const PermissionSet> permissions_;
   UpdatedExtensionPermissionsInfo::Reason reason_;
 };
 
@@ -155,8 +159,8 @@ TEST_F(PermissionsUpdaterTest, AddAndRemovePermissions) {
             extension->permissions_data()->active_permissions());
 
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile_.get());
-  scoped_ptr<const PermissionSet> active_permissions;
-  scoped_ptr<const PermissionSet> granted_permissions;
+  std::unique_ptr<const PermissionSet> active_permissions;
+  std::unique_ptr<const PermissionSet> granted_permissions;
 
   // Add a few permissions.
   APIPermissionSet apis;
@@ -181,14 +185,13 @@ TEST_F(PermissionsUpdaterTest, AddAndRemovePermissions) {
 
   // Make sure the extension's active permissions reflect the change.
   active_permissions = PermissionSet::CreateUnion(default_permissions, delta);
-  ASSERT_EQ(*active_permissions.get(),
+  ASSERT_EQ(*active_permissions,
             extension->permissions_data()->active_permissions());
 
   // Verify that the new granted and active permissions were also stored
   // in the extension preferences. In this case, the granted permissions should
   // be equal to the active permissions.
-  ASSERT_EQ(*active_permissions.get(),
-            *prefs->GetActivePermissions(extension->id()));
+  ASSERT_EQ(*active_permissions, *prefs->GetActivePermissions(extension->id()));
   granted_permissions = active_permissions->Clone();
   ASSERT_EQ(*granted_permissions,
             *prefs->GetGrantedPermissions(extension->id()));
@@ -235,16 +238,16 @@ TEST_F(PermissionsUpdaterTest, RevokingPermissions) {
   auto api_permission_set = [](APIPermission::ID id) {
     APIPermissionSet apis;
     apis.insert(id);
-    return make_scoped_ptr(new PermissionSet(apis, ManifestPermissionSet(),
-                                             URLPatternSet(), URLPatternSet()));
+    return base::MakeUnique<PermissionSet>(apis, ManifestPermissionSet(),
+                                           URLPatternSet(), URLPatternSet());
   };
 
   auto url_permission_set = [](const GURL& url) {
     URLPatternSet set;
     URLPattern pattern(URLPattern::SCHEME_ALL, url.spec());
     set.AddPattern(pattern);
-    return make_scoped_ptr(new PermissionSet(
-        APIPermissionSet(), ManifestPermissionSet(), set, URLPatternSet()));
+    return base::MakeUnique<PermissionSet>(
+        APIPermissionSet(), ManifestPermissionSet(), set, URLPatternSet());
   };
 
   {
@@ -269,7 +272,7 @@ TEST_F(PermissionsUpdaterTest, RevokingPermissions) {
     // its granted permissions (stored in prefs). And, the permission should
     // be revokable.
     EXPECT_TRUE(permissions->HasAPIPermission(APIPermission::kCookie));
-    scoped_ptr<const PermissionSet> granted_permissions =
+    std::unique_ptr<const PermissionSet> granted_permissions =
         prefs->GetGrantedPermissions(extension->id());
     EXPECT_TRUE(granted_permissions->HasAPIPermission(APIPermission::kCookie));
     EXPECT_TRUE(updater.GetRevokablePermissions(extension.get())

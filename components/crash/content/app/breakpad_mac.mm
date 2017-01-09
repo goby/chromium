@@ -6,10 +6,11 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
+#include <stddef.h>
+#include <string.h>
 
 #include "base/auto_reset.h"
 #include "base/base_switches.h"
-#import "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
@@ -21,6 +22,7 @@
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #import "base/mac/scoped_nsautorelease_pool.h"
+#include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
@@ -239,7 +241,7 @@ void InitCrashReporter(const std::string& process_type) {
   // Temporarily run Breakpad in-process on 10.10 and later because APIs that
   // it depends on got broken (http://crbug.com/386208).
   // This can catch crashes in the browser process only.
-  if (is_browser && base::mac::IsOSYosemiteOrLater()) {
+  if (is_browser && base::mac::IsAtLeastOS10_10()) {
     [breakpad_config setObject:[NSNumber numberWithBool:YES]
                         forKey:@BREAKPAD_IN_PROCESS];
   }

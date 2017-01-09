@@ -5,11 +5,13 @@
 #ifndef EXTENSIONS_BROWSER_EXTENSIONS_BROWSER_CLIENT_H_
 #define EXTENSIONS_BROWSER_EXTENSIONS_BROWSER_CLIENT_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
+#include "content/public/browser/bluetooth_chooser.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 #include "extensions/browser/extension_prefs_observer.h"
 #include "extensions/common/view_type.h"
@@ -42,17 +44,20 @@ class UpdateClient;
 
 namespace extensions {
 
-class ApiActivityMonitor;
 class ComponentExtensionResourceManager;
 class Extension;
 class ExtensionCache;
 class ExtensionError;
 class ExtensionHostDelegate;
 class ExtensionPrefsObserver;
+class ExtensionApiFrameIdMap;
+class ExtensionApiFrameIdMapHelper;
+class ExtensionNavigationUIData;
 class ExtensionSystem;
 class ExtensionSystemProvider;
 class ExtensionWebContentsObserver;
 class InfoMap;
+class KioskDelegate;
 class ProcessManagerDelegate;
 class RuntimeAPIDelegate;
 
@@ -154,7 +159,8 @@ class ExtensionsBrowserClient {
   virtual ProcessManagerDelegate* GetProcessManagerDelegate() const = 0;
 
   // Creates a new ExtensionHostDelegate instance.
-  virtual scoped_ptr<ExtensionHostDelegate> CreateExtensionHostDelegate() = 0;
+  virtual std::unique_ptr<ExtensionHostDelegate>
+  CreateExtensionHostDelegate() = 0;
 
   // Returns true if the client version has updated since the last run. Called
   // once each time the extensions system is loaded per browser_context. The
@@ -172,11 +178,6 @@ class ExtensionsBrowserClient {
   // Return true if the user is logged in as a public session.
   virtual bool IsLoggedInAsPublicAccount() = 0;
 
-  // Returns the embedder's ApiActivityMonitor for |context|. Returns NULL if
-  // the embedder does not monitor extension API activity.
-  virtual ApiActivityMonitor* GetApiActivityMonitor(
-      content::BrowserContext* context) = 0;
-
   // Returns the factory that provides an ExtensionSystem to be returned from
   // ExtensionSystem::Get.
   virtual ExtensionSystemProvider* GetExtensionSystemFactory() = 0;
@@ -192,7 +193,7 @@ class ExtensionsBrowserClient {
   // Creates a RuntimeAPIDelegate responsible for handling extensions
   // management-related events such as update and installation on behalf of the
   // core runtime API implementation.
-  virtual scoped_ptr<RuntimeAPIDelegate> CreateRuntimeAPIDelegate(
+  virtual std::unique_ptr<RuntimeAPIDelegate> CreateRuntimeAPIDelegate(
       content::BrowserContext* context) const = 0;
 
   // Returns the manager of resource bundles used in extensions. Returns NULL if
@@ -202,9 +203,10 @@ class ExtensionsBrowserClient {
 
   // Propagate a event to all the renderers in every browser context. The
   // implementation must be safe to call from any thread.
-  virtual void BroadcastEventToRenderers(events::HistogramValue histogram_value,
-                                         const std::string& event_name,
-                                         scoped_ptr<base::ListValue> args) = 0;
+  virtual void BroadcastEventToRenderers(
+      events::HistogramValue histogram_value,
+      const std::string& event_name,
+      std::unique_ptr<base::ListValue> args) = 0;
 
   // Returns the embedder's net::NetLog.
   virtual net::NetLog* GetNetLog() = 0;
@@ -223,7 +225,7 @@ class ExtensionsBrowserClient {
 
   // Embedders can override this function to handle extension errors.
   virtual void ReportError(content::BrowserContext* context,
-                           scoped_ptr<ExtensionError> error);
+                           std::unique_ptr<ExtensionError> error);
 
   // Returns the ExtensionWebContentsObserver for the given |web_contents|.
   virtual ExtensionWebContentsObserver* GetExtensionWebContentsObserver(
@@ -244,6 +246,22 @@ class ExtensionsBrowserClient {
   // Returns a new UpdateClient.
   virtual scoped_refptr<update_client::UpdateClient> CreateUpdateClient(
       content::BrowserContext* context);
+
+  virtual std::unique_ptr<ExtensionApiFrameIdMapHelper>
+  CreateExtensionApiFrameIdMapHelper(ExtensionApiFrameIdMap* map);
+
+  virtual std::unique_ptr<content::BluetoothChooser> CreateBluetoothChooser(
+      content::RenderFrameHost* frame,
+      const content::BluetoothChooser::EventHandler& event_handler);
+
+  // Returns true if activity logging is enabled for the given |context|.
+  virtual bool IsActivityLoggingEnabled(content::BrowserContext* context);
+
+  virtual ExtensionNavigationUIData* GetExtensionNavigationUIData(
+      net::URLRequest* request);
+
+  // Returns a delegate that provides kiosk mode functionality.
+  virtual KioskDelegate* GetKioskDelegate() = 0;
 
   // Returns the single instance of |this|.
   static ExtensionsBrowserClient* Get();

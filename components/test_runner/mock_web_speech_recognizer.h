@@ -8,8 +8,8 @@
 #include <deque>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "components/test_runner/web_task.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "third_party/WebKit/public/web/WebSpeechRecognizer.h"
 
 namespace blink {
@@ -47,13 +47,16 @@ class MockWebSpeechRecognizer : public blink::WebSpeechRecognizer {
   // Methods accessed from Task objects:
   blink::WebSpeechRecognizerClient* Client() { return client_; }
   blink::WebSpeechRecognitionHandle& Handle() { return handle_; }
-  WebTaskList* mutable_task_list() { return &task_list_; }
+
+  void SetClientContext(const blink::WebSpeechRecognitionHandle&,
+                        blink::WebSpeechRecognizerClient*);
 
   class Task {
    public:
     Task(MockWebSpeechRecognizer* recognizer) : recognizer_(recognizer) {}
     virtual ~Task() {}
     virtual void run() = 0;
+    virtual bool isNewContextTask() const;
 
    protected:
     MockWebSpeechRecognizer* recognizer_;
@@ -65,8 +68,9 @@ class MockWebSpeechRecognizer : public blink::WebSpeechRecognizer {
  private:
   void StartTaskQueue();
   void ClearTaskQueue();
+  void PostRunTaskFromQueue();
+  void RunTaskFromQueue();
 
-  WebTaskList task_list_;
   blink::WebSpeechRecognitionHandle handle_;
   blink::WebSpeechRecognizerClient* client_;
   std::vector<blink::WebString> mock_transcripts_;
@@ -79,16 +83,7 @@ class MockWebSpeechRecognizer : public blink::WebSpeechRecognizer {
 
   WebTestDelegate* delegate_;
 
-  // Task for stepping the queue.
-  class StepTask : public WebMethodTask<MockWebSpeechRecognizer> {
-   public:
-    StepTask(MockWebSpeechRecognizer* object)
-        : WebMethodTask<MockWebSpeechRecognizer>(object) {}
-    void RunIfValid() override;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(StepTask);
-  };
+  base::WeakPtrFactory<MockWebSpeechRecognizer> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MockWebSpeechRecognizer);
 };

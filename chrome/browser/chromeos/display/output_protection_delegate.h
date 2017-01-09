@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DISPLAY_OUTPUT_PROTECTION_DELEGATE_H_
 #define CHROME_BROWSER_CHROMEOS_DISPLAY_OUTPUT_PROTECTION_DELEGATE_H_
 
+#include <stdint.h>
+
 #include "base/memory/weak_ptr.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
-#include "ui/display/chromeos/display_configurator.h"
+#include "ui/display/manager/chromeos/display_configurator.h"
 
 namespace chromeos {
 
@@ -53,7 +55,7 @@ class OutputProtectionDelegate : public aura::WindowObserver {
   ui::DisplayConfigurator::ContentProtectionClientId client_id_;
 
   // The display id which the renderer currently uses.
-  int64 display_id_;
+  int64_t display_id_;
 
   // The last desired method mask. Will enable this mask on new display if
   // renderer changes display.

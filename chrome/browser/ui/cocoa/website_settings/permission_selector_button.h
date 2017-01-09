@@ -7,16 +7,19 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/website_settings/permission_menu_model.h"
 #include "components/content_settings/core/common/content_settings.h"
 
 @class MenuController;
 
+class Profile;
+
 @interface PermissionSelectorButton : NSPopUpButton {
  @private
-  scoped_ptr<PermissionMenuModel> menuModel_;
+  std::unique_ptr<PermissionMenuModel> menuModel_;
   base::scoped_nsobject<MenuController> menuController_;
 }
 
@@ -24,11 +27,13 @@
 - (id)initWithPermissionInfo:
           (const WebsiteSettingsUI::PermissionInfo&)permissionInfo
                       forURL:(const GURL&)url
-                withCallback:(PermissionMenuModel::ChangeCallback)callback;
+                withCallback:(PermissionMenuModel::ChangeCallback)callback
+                     profile:(Profile*)profile;
 
 // Returns the largest possible size given all of the items in the menu.
 - (CGFloat)maxTitleWidthForContentSettingsType:(ContentSettingsType)type
-                            withDefaultSetting:(ContentSetting)defaultSetting;
+                            withDefaultSetting:(ContentSetting)defaultSetting
+                                       profile:(Profile*)profile;
 
 @end
 

@@ -5,13 +5,14 @@
 #include "jingle/notifier/base/xmpp_connection.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_pump_default.h"
+#include "base/run_loop.h"
 #include "jingle/glue/mock_task.h"
 #include "jingle/glue/task_pump.h"
 #include "jingle/notifier/base/weak_xmpp_client.h"
@@ -76,8 +77,8 @@ class XmppConnectionTest : public testing::Test {
  protected:
   XmppConnectionTest()
       : mock_pre_xmpp_auth_(new MockPreXmppAuth()) {
-    scoped_ptr<base::MessagePump> pump(new base::MessagePumpDefault());
-    message_loop_.reset(new base::MessageLoop(pump.Pass()));
+    std::unique_ptr<base::MessagePump> pump(new base::MessagePumpDefault());
+    message_loop_.reset(new base::MessageLoop(std::move(pump)));
 
     url_request_context_getter_ = new net::TestURLRequestContextGetter(
         message_loop_->task_runner());
@@ -87,13 +88,13 @@ class XmppConnectionTest : public testing::Test {
 
   void TearDown() override {
     // Clear out any messages posted by XmppConnection's destructor.
-    message_loop_->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   // Needed by XmppConnection.
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
   MockXmppConnectionDelegate mock_xmpp_connection_delegate_;
-  scoped_ptr<MockPreXmppAuth> mock_pre_xmpp_auth_;
+  std::unique_ptr<MockPreXmppAuth> mock_pre_xmpp_auth_;
   scoped_refptr<net::TestURLRequestContextGetter> url_request_context_getter_;
 };
 
@@ -117,7 +118,7 @@ TEST_F(XmppConnectionTest, ImmediateFailure) {
 
   // We need to do this *before* |xmpp_connection| gets destroyed or
   // our delegate won't be called.
-  message_loop_->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(XmppConnectionTest, PreAuthFailure) {
@@ -136,7 +137,7 @@ TEST_F(XmppConnectionTest, PreAuthFailure) {
 
   // We need to do this *before* |xmpp_connection| gets destroyed or
   // our delegate won't be called.
-  message_loop_->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(XmppConnectionTest, FailureAfterPreAuth) {
@@ -155,7 +156,7 @@ TEST_F(XmppConnectionTest, FailureAfterPreAuth) {
 
   // We need to do this *before* |xmpp_connection| gets destroyed or
   // our delegate won't be called.
-  message_loop_->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(XmppConnectionTest, RaisedError) {
@@ -252,7 +253,7 @@ TEST_F(XmppConnectionTest, TasksDontRunAfterXmppConnectionDestructor) {
   }
 
   // This should destroy |task_pump|, but |task| still shouldn't run.
-  message_loop_->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace notifier

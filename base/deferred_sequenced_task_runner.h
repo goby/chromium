@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/lock.h"
@@ -24,7 +24,7 @@ namespace base {
 class BASE_EXPORT DeferredSequencedTaskRunner : public SequencedTaskRunner {
  public:
   explicit DeferredSequencedTaskRunner(
-      const scoped_refptr<SequencedTaskRunner>& target_runner);
+      scoped_refptr<SequencedTaskRunner> target_runner);
 
   // TaskRunner implementation
   bool PostDelayedTask(const tracked_objects::Location& from_here,
@@ -46,6 +46,7 @@ class BASE_EXPORT DeferredSequencedTaskRunner : public SequencedTaskRunner {
  private:
   struct DeferredTask  {
     DeferredTask();
+    DeferredTask(const DeferredTask& other);
     ~DeferredTask();
 
     tracked_objects::Location posted_from;

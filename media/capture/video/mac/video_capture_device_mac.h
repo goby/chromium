@@ -2,26 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// MacOSX implementation of generic VideoCaptureDevice, using either QTKit or
-// AVFoundation as native capture API. QTKit is available in all OSX versions,
-// although namely deprecated in 10.9, and AVFoundation is available in versions
-// 10.7 (Lion) and later.
+// MacOSX implementation of generic VideoCaptureDevice, using AVFoundation as
+// native capture API. AVFoundation is available in versions 10.7 (Lion) and
+// later.
 
-#ifndef MEDIA_VIDEO_CAPTURE_MAC_VIDEO_CAPTURE_DEVICE_MAC_H_
-#define MEDIA_VIDEO_CAPTURE_MAC_VIDEO_CAPTURE_DEVICE_MAC_H_
+#ifndef MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_MAC_H_
+#define MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_MAC_H_
 
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "media/base/video_capture_types.h"
 #include "media/capture/video/video_capture_device.h"
+#include "media/capture/video_capture_types.h"
 
-@protocol PlatformVideoCapturingMac;
+@class VideoCaptureDeviceAVFoundation;
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -32,7 +33,7 @@ class Location;
 }  // namespace tracked_objects
 
 // Small class to bundle device name and connection type into a dictionary.
-MEDIA_EXPORT
+CAPTURE_EXPORT
 @interface DeviceNameAndTransportType : NSObject {
  @private
   base::scoped_nsobject<NSString> deviceName_;
@@ -49,33 +50,38 @@ MEDIA_EXPORT
 
 namespace media {
 
-enum {
-  // Unknown transport type, addition to the kIOAudioDeviceTransportType*
-  // family for QTKit devices where this attribute isn't published.
-  kIOAudioDeviceTransportTypeUnknown = 'unkn'
-};
-
 // Called by VideoCaptureManager to open, close and start, stop Mac video
 // capture devices.
 class VideoCaptureDeviceMac : public VideoCaptureDevice {
  public:
-  explicit VideoCaptureDeviceMac(const Name& device_name);
+  explicit VideoCaptureDeviceMac(
+      const VideoCaptureDeviceDescriptor& device_descriptor);
   ~VideoCaptureDeviceMac() override;
 
   // VideoCaptureDevice implementation.
-  void AllocateAndStart(const VideoCaptureParams& params,
-                        scoped_ptr<VideoCaptureDevice::Client> client) override;
+  void AllocateAndStart(
+      const VideoCaptureParams& params,
+      std::unique_ptr<VideoCaptureDevice::Client> client) override;
   void StopAndDeAllocate() override;
+  void TakePhoto(TakePhotoCallback callback) override;
 
-  bool Init(VideoCaptureDevice::Name::CaptureApiType capture_api_type);
+  bool Init(VideoCaptureApi capture_api_type);
 
-  // Called to deliver captured video frames.
-  void ReceiveFrame(const uint8* video_frame,
+  // Called to deliver captured video frames.  It's safe to call this method
+  // from any thread, including those controlled by AVFoundation.
+  void ReceiveFrame(const uint8_t* video_frame,
                     int video_frame_length,
                     const VideoCaptureFormat& frame_format,
                     int aspect_numerator,
                     int aspect_denominator,
                     base::TimeDelta timestamp);
+
+  // Callbacks with the result of a still image capture, or in case of error,
+  // respectively. It's safe to call these methods from any thread.
+  void OnPhotoTaken(const uint8_t* image_data,
+                    size_t image_length,
+                    const std::string& mime_type);
+  void OnPhotoError();
 
   // Forwarder to VideoCaptureDevice::Client::OnError().
   void ReceiveError(const tracked_objects::Location& from_here,
@@ -83,6 +89,10 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
 
   // Forwarder to VideoCaptureDevice::Client::OnLog().
   void LogMessage(const std::string& message);
+
+  static std::string GetDeviceModelId(const std::string& device_id,
+                                      VideoCaptureApi capture_api,
+                                      VideoCaptureTransportType transport_type);
 
  private:
   void SetErrorState(const tracked_objects::Location& from_here,
@@ -92,25 +102,19 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   // Flag indicating the internal state.
   enum InternalState { kNotInitialized, kIdle, kCapturing, kError };
 
-  Name device_name_;
-  scoped_ptr<VideoCaptureDevice::Client> client_;
+  VideoCaptureDeviceDescriptor device_descriptor_;
+  std::unique_ptr<VideoCaptureDevice::Client> client_;
 
   VideoCaptureFormat capture_format_;
-  // These variables control the two-step configure-start process for QTKit HD:
-  // the device is first started with no configuration and the captured frames
-  // are inspected to check if the camera really supports HD. AVFoundation does
-  // not need this process so |final_resolution_selected_| is false then.
-  bool final_resolution_selected_;
-  bool tried_to_square_pixels_;
 
   // Only read and write state_ from inside this loop.
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   InternalState state_;
 
-  id<PlatformVideoCapturingMac> capture_device_;
+  base::scoped_nsobject<VideoCaptureDeviceAVFoundation> capture_device_;
 
-  base::TimeDelta first_timestamp_;
-  base::TimeTicks first_aligned_timestamp_;
+  // To hold on to the TakePhotoCallback while the picture is being taken.
+  std::unique_ptr<TakePhotoCallback> photo_callback_;
 
   // Used with Bind and PostTask to ensure that methods aren't called after the
   // VideoCaptureDeviceMac is destroyed.
@@ -122,4 +126,4 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_MAC_VIDEO_CAPTURE_DEVICE_MAC_H_
+#endif  // MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_MAC_H_

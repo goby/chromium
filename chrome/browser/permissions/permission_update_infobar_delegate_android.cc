@@ -4,20 +4,23 @@
 
 #include "chrome/browser/permissions/permission_update_infobar_delegate_android.h"
 
+#include <memory>
+
 #include "base/android/jni_array.h"
 #include "base/callback_helpers.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/android/preferences/pref_service_bridge.h"
+#include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/infobars/core/infobar.h"
 #include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/PermissionUpdateInfoBarDelegate_jni.h"
 #include "ui/android/window_android.h"
 #include "ui/base/l10n/l10n_util.h"
+
+using base::android::JavaParamRef;
 
 // static
 infobars::InfoBar* PermissionUpdateInfoBarDelegate::Create(
@@ -44,17 +47,15 @@ infobars::InfoBar* PermissionUpdateInfoBarDelegate::Create(
         !window_android->HasPermission(android_permission)) {
       permissions.push_back(android_permission);
 
-      switch (content_settings_type) {
-        case CONTENT_SETTINGS_TYPE_GEOLOCATION:
+      if (content_settings_type == CONTENT_SETTINGS_TYPE_GEOLOCATION) {
           message_id = IDS_INFOBAR_MISSING_LOCATION_PERMISSION_TEXT;
-          break;
-        case CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC:
+      } else if (content_settings_type ==
+                 CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC) {
           message_id = IDS_INFOBAR_MISSING_MICROPHONE_PERMISSION_TEXT;
-          break;
-        case CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA:
+      } else if (content_settings_type ==
+                 CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA) {
           message_id = IDS_INFOBAR_MISSING_CAMERA_PERMISSION_TEXT;
-          break;
-        default:
+      } else {
           NOTREACHED();
           message_id = IDS_INFOBAR_MISSING_MULTIPLE_PERMISSIONS_TEXT;
       }
@@ -81,8 +82,9 @@ infobars::InfoBar* PermissionUpdateInfoBarDelegate::Create(
   }
 
   return infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(new PermissionUpdateInfoBarDelegate(
-          web_contents, android_permissions, permission_msg_id, callback))));
+      std::unique_ptr<ConfirmInfoBarDelegate>(
+          new PermissionUpdateInfoBarDelegate(web_contents, android_permissions,
+                                              permission_msg_id, callback))));
 }
 
 // static
@@ -119,7 +121,9 @@ bool PermissionUpdateInfoBarDelegate::RegisterPermissionUpdateInfoBarDelegate(
 }
 
 void PermissionUpdateInfoBarDelegate::OnPermissionResult(
-    JNIEnv* env, jobject obj, jboolean all_permissions_granted) {
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean all_permissions_granted) {
   base::ResetAndReturn(&callback_).Run(all_permissions_granted);
   infobar()->RemoveSelf();
 }
@@ -135,19 +139,22 @@ PermissionUpdateInfoBarDelegate::PermissionUpdateInfoBarDelegate(
       callback_(callback) {
   JNIEnv* env = base::android::AttachCurrentThread();
   java_delegate_.Reset(Java_PermissionUpdateInfoBarDelegate_create(
-      env,
-      reinterpret_cast<intptr_t>(this),
-      web_contents->GetJavaWebContents().obj(),
-      base::android::ToJavaArrayOfStrings(env, android_permissions_).obj()));
+      env, reinterpret_cast<intptr_t>(this), web_contents->GetJavaWebContents(),
+      base::android::ToJavaArrayOfStrings(env, android_permissions_)));
 }
 
 PermissionUpdateInfoBarDelegate::~PermissionUpdateInfoBarDelegate() {
   Java_PermissionUpdateInfoBarDelegate_onNativeDestroyed(
-      base::android::AttachCurrentThread(), java_delegate_.obj());
+      base::android::AttachCurrentThread(), java_delegate_);
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+PermissionUpdateInfoBarDelegate::GetIdentifier() const {
+  return PERMISSION_UPDATE_INFOBAR_DELEGATE;
 }
 
 int PermissionUpdateInfoBarDelegate::GetIconId() const {
-  return IDR_INFOBAR_WARNING;
+  return IDR_ANDROID_INFOBAR_WARNING;
 }
 
 base::string16 PermissionUpdateInfoBarDelegate::GetMessageText() const {
@@ -166,7 +173,7 @@ base::string16 PermissionUpdateInfoBarDelegate::GetButtonLabel(
 
 bool PermissionUpdateInfoBarDelegate::Accept() {
   Java_PermissionUpdateInfoBarDelegate_requestPermissions(
-      base::android::AttachCurrentThread(), java_delegate_.obj());
+      base::android::AttachCurrentThread(), java_delegate_);
   return false;
 }
 

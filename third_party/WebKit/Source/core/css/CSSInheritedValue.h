@@ -27,27 +27,25 @@
 namespace blink {
 
 class CSSInheritedValue : public CSSValue {
-public:
-    static PassRefPtrWillBeRawPtr<CSSInheritedValue> create()
-    {
-        return adoptRefWillBeNoop(new CSSInheritedValue);
-    }
+ public:
+  static CSSInheritedValue* create();
 
-    String customCSSText() const;
+  String customCSSText() const;
 
-    bool equals(const CSSInheritedValue&) const { return true; }
+  bool equals(const CSSInheritedValue&) const { return true; }
 
-    DEFINE_INLINE_TRACE_AFTER_DISPATCH() { CSSValue::traceAfterDispatch(visitor); }
+  DEFINE_INLINE_TRACE_AFTER_DISPATCH() {
+    CSSValue::traceAfterDispatch(visitor);
+  }
 
-private:
-    CSSInheritedValue()
-        : CSSValue(InheritedClass)
-    {
-    }
+ private:
+  friend class CSSValuePool;
+
+  CSSInheritedValue() : CSSValue(InheritedClass) {}
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSInheritedValue, isInheritedValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSInheritedValue_h
+#endif  // CSSInheritedValue_h

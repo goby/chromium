@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #include "extensions/browser/api/display_source/display_source_api.h"
+
+#include <utility>
+
 #include "extensions/browser/api/display_source/display_source_connection_delegate_factory.h"
 #include "extensions/common/api/display_source.h"
 
@@ -41,9 +44,9 @@ DisplaySourceGetAvailableSinksFunction::Run() {
 
 void DisplaySourceGetAvailableSinksFunction::OnGetSinksCompleted(
     const DisplaySourceSinkInfoList& sinks) {
-  scoped_ptr<base::ListValue> result =
+  std::unique_ptr<base::ListValue> result =
       api::display_source::GetAvailableSinks::Results::Create(sinks);
-  Respond(ArgumentList(result.Pass()));
+  Respond(ArgumentList(std::move(result)));
 }
 
 void DisplaySourceGetAvailableSinksFunction::OnGetSinksFailed(
@@ -59,7 +62,7 @@ DisplaySourceRequestAuthenticationFunction::
 
 ExtensionFunction::ResponseAction
 DisplaySourceRequestAuthenticationFunction::Run() {
-  scoped_ptr<api::display_source::RequestAuthentication::Params> params(
+  std::unique_ptr<api::display_source::RequestAuthentication::Params> params(
       api::display_source::RequestAuthentication::Params::Create(*args_));
   if (!params) {
     return RespondNow(Error(kErrorInvalidArguments));
@@ -84,9 +87,9 @@ DisplaySourceRequestAuthenticationFunction::Run() {
 
 void DisplaySourceRequestAuthenticationFunction::OnRequestAuthCompleted(
     const DisplaySourceAuthInfo& auth_info) {
-  scoped_ptr<base::ListValue> result =
+  std::unique_ptr<base::ListValue> result =
       api::display_source::RequestAuthentication::Results::Create(auth_info);
-  Respond(ArgumentList(result.Pass()));
+  Respond(ArgumentList(std::move(result)));
 }
 
 void DisplaySourceRequestAuthenticationFunction::OnRequestAuthFailed(

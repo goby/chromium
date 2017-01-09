@@ -4,8 +4,9 @@
 
 #include "chrome/browser/safe_browsing/safe_browsing_util.h"
 
+#include <utility>
+
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "chrome/browser/safe_browsing/chunk.pb.h"
 #include "components/google/core/browser/google_util.h"
 
@@ -13,7 +14,7 @@ namespace safe_browsing {
 
 // SBChunkData -----------------------------------------------------------------
 
-// TODO(shess): Right now this contains a scoped_ptr<ChunkData> so that the
+// TODO(shess): Right now this contains a std::unique_ptr<ChunkData> so that the
 // proto buffer isn't copied all over the place, then these are contained in a
 // ScopedVector for purposes of passing things around between tasks.  This seems
 // convoluted.  Maybe it would make sense to have an overall container class
@@ -22,8 +23,8 @@ namespace safe_browsing {
 SBChunkData::SBChunkData() {
 }
 
-SBChunkData::SBChunkData(scoped_ptr<ChunkData> data)
-    : chunk_data_(data.Pass()) {
+SBChunkData::SBChunkData(std::unique_ptr<ChunkData> data)
+    : chunk_data_(std::move(data)) {
   DCHECK(chunk_data_.get());
 }
 
@@ -31,7 +32,7 @@ SBChunkData::~SBChunkData() {
 }
 
 bool SBChunkData::ParseFrom(const unsigned char* data, size_t length) {
-  scoped_ptr<ChunkData> chunk(new ChunkData());
+  std::unique_ptr<ChunkData> chunk(new ChunkData());
   if (!chunk->ParseFromArray(data, length))
     return false;
 
@@ -128,6 +129,8 @@ SBListChunkRanges::SBListChunkRanges(const std::string& n)
 // SBChunkDelete ---------------------------------------------------------------
 
 SBChunkDelete::SBChunkDelete() : is_sub_del(false) {}
+
+SBChunkDelete::SBChunkDelete(const SBChunkDelete& other) = default;
 
 SBChunkDelete::~SBChunkDelete() {}
 

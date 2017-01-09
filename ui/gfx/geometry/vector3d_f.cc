@@ -14,24 +14,6 @@ const float kRadiansToDegrees = 180.0f / 3.14159265f;
 
 namespace gfx {
 
-Vector3dF::Vector3dF()
-    : x_(0),
-      y_(0),
-      z_(0) {
-}
-
-Vector3dF::Vector3dF(float x, float y, float z)
-    : x_(x),
-      y_(y),
-      z_(z) {
-}
-
-Vector3dF::Vector3dF(const Vector2dF& other)
-    : x_(other.x()),
-      y_(other.y()),
-      z_(0) {
-}
-
 std::string Vector3dF::ToString() const {
   return base::StringPrintf("[%f %f %f]", x_, y_, z_);
 }
@@ -68,9 +50,12 @@ void Vector3dF::Scale(float x_scale, float y_scale, float z_scale) {
 }
 
 void Vector3dF::Cross(const Vector3dF& other) {
-  float x = y_ * other.z() - z_ * other.y();
-  float y = z_ * other.x() - x_ * other.z();
-  float z = x_ * other.y() - y_ * other.x();
+  double dx = x_;
+  double dy = y_;
+  double dz = z_;
+  float x = static_cast<float>(dy * other.z() - dz * other.y());
+  float y = static_cast<float>(dz * other.x() - dx * other.z());
+  float z = static_cast<float>(dx * other.y() - dy * other.x());
   x_ = x;
   y_ = y;
   z_ = z;

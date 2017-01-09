@@ -4,18 +4,27 @@
 
 #include "components/nacl/loader/nonsfi/nonsfi_listener.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/file_descriptor_posix.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "base/posix/global_descriptors.h"
 #include "base/rand_util.h"
+#include "base/run_loop.h"
+#include "build/build_config.h"
 #include "components/nacl/common/nacl_messages.h"
 #include "components/nacl/common/nacl_types.h"
 #include "components/nacl/loader/nacl_trusted_listener.h"
 #include "components/nacl/loader/nonsfi/nonsfi_main.h"
+#include "content/public/common/content_descriptors.h"
+#include "content/public/common/mojo_channel_switches.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_handle.h"
-#include "ipc/ipc_switches.h"
 #include "ipc/ipc_sync_channel.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "native_client/src/public/nonsfi/irt_random.h"
 #include "ppapi/nacl_irt/irt_manifest.h"
 #include "ppapi/nacl_irt/plugin_startup.h"
@@ -27,26 +36,42 @@
 namespace nacl {
 namespace nonsfi {
 
-NonSfiListener::NonSfiListener() : io_thread_("NaCl_IOThread"),
-                                   shutdown_event_(true, false),
-                                   key_fd_map_(new std::map<std::string, int>) {
+NonSfiListener::NonSfiListener()
+    : io_thread_("NaCl_IOThread"),
+      shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
+      key_fd_map_(new std::map<std::string, int>) {
   io_thread_.StartWithOptions(
       base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
+
+  mojo_ipc_support_ =
+      base::MakeUnique<mojo::edk::ScopedIPCSupport>(io_thread_.task_runner());
+  mojo::edk::ScopedPlatformHandle platform_channel(
+      mojo::edk::PlatformHandle(
+          base::GlobalDescriptors::GetInstance()->Get(kMojoIPCChannel)));
+  DCHECK(platform_channel.is_valid());
+  mojo::edk::SetParentPipeHandle(std::move(platform_channel));
 }
 
 NonSfiListener::~NonSfiListener() {
 }
 
 void NonSfiListener::Listen() {
+  mojo::ScopedMessagePipeHandle handle(
+      mojo::edk::CreateChildMessagePipe(
+          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+              switches::kMojoChannelToken)));
+  DCHECK(handle.is_valid());
+  IPC::ChannelHandle channel_handle = IPC::ChannelHandle(handle.release());
+
   channel_ = IPC::SyncChannel::Create(
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kProcessChannelID),
+      channel_handle,
       IPC::Channel::MODE_CLIENT,
       this,  // As a Listener.
       io_thread_.task_runner().get(),
       true,  // Create pipe now.
       &shutdown_event_);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 bool NonSfiListener::OnMessageReceived(const IPC::Message& msg) {
@@ -77,9 +102,6 @@ void NonSfiListener::OnStart(const nacl::NaClStartParams& params) {
   // Random number source initialization.
   nonsfi_set_urandom_fd(base::GetUrandomFD());
 
-  // In Non-SFI mode, PPAPI proxy must be enabled.
-  CHECK(params.enable_ipc_proxy);
-
   // In Non-SFI mode, we neither intercept nor rewrite the message using
   // NaClIPCAdapter, and the channels are connected between the plugin and
   // the hosts directly. So, the IPC::Channel instances will be created in
@@ -87,15 +109,15 @@ void NonSfiListener::OnStart(const nacl::NaClStartParams& params) {
   // plugin's main thread. We just pass the FDs to plugin side.
   // The FDs are created in the browser process. Following check can fail
   // if the preparation for sending NaClProcessMsg_Start were incomplete.
-  CHECK_NE(params.ppapi_browser_channel_handle.socket.fd, -1);
-  CHECK_NE(params.ppapi_renderer_channel_handle.socket.fd, -1);
-  CHECK_NE(params.trusted_service_channel_handle.socket.fd, -1);
-  CHECK_NE(params.manifest_service_channel_handle.socket.fd, -1);
+  CHECK(params.ppapi_browser_channel_handle.is_mojo_channel_handle());
+  CHECK(params.ppapi_renderer_channel_handle.is_mojo_channel_handle());
+  CHECK(params.trusted_service_channel_handle.is_mojo_channel_handle());
+  CHECK(params.manifest_service_channel_handle.is_mojo_channel_handle());
 
-  ppapi::SetIPCFileDescriptors(
-      params.ppapi_browser_channel_handle.socket.fd,
-      params.ppapi_renderer_channel_handle.socket.fd,
-      params.manifest_service_channel_handle.socket.fd);
+  ppapi::SetIPCChannelHandles(
+      params.ppapi_browser_channel_handle,
+      params.ppapi_renderer_channel_handle,
+      params.manifest_service_channel_handle);
   ppapi::StartUpPlugin();
 
   // TODO(teravest): Do we plan on using this renderer handle for nexe loading
@@ -114,7 +136,6 @@ void NonSfiListener::OnStart(const nacl::NaClStartParams& params) {
   CHECK(!params.enable_debug_stub);
   CHECK(params.debug_stub_server_bound_socket.fd == -1);
 
-  CHECK(params.imc_bootstrap_handle == IPC::InvalidPlatformFileForTransit());
   CHECK(params.irt_handle == IPC::InvalidPlatformFileForTransit());
   CHECK(params.debug_stub_server_bound_socket ==
         IPC::InvalidPlatformFileForTransit());

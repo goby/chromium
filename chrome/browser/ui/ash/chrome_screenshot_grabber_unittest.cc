@@ -4,28 +4,28 @@
 
 #include "chrome/browser/ui/ash/chrome_screenshot_grabber.h"
 
-#include "ash/accelerators/accelerator_controller.h"
+#include "ash/common/accelerators/accelerator_controller.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/login/users/mock_user_manager.h"
+#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "chromeos/login/login_state.h"
 #include "content/public/test/test_utils.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/snapshot/screenshot_grabber.h"
-
-#if defined(OS_CHROMEOS)
-#include "chromeos/login/login_state.h"
-#endif
 
 namespace ash {
 namespace test {
@@ -89,12 +89,12 @@ class ChromeScreenshotGrabberTest : public AshTestBase,
     return chrome_screenshot_grabber_->screenshot_grabber_.get();
   }
 
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   TestingProfile* profile_;
   bool running_;
   bool screenshot_complete_;
   ScreenshotGrabberObserver::Result screenshot_result_;
-  scoped_ptr<ChromeScreenshotGrabber> chrome_screenshot_grabber_;
+  std::unique_ptr<ChromeScreenshotGrabber> chrome_screenshot_grabber_;
   base::FilePath screenshot_path_;
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
 
@@ -102,41 +102,38 @@ class ChromeScreenshotGrabberTest : public AshTestBase,
   DISALLOW_COPY_AND_ASSIGN(ChromeScreenshotGrabberTest);
 };
 
-TEST_F(ChromeScreenshotGrabberTest, TakeScreenshot) {
-#if defined(OS_CHROMEOS)
+// Flaky on "Linux ChromiumOS Tests (dbg)(1)". See http://crbug.com/645864.
+TEST_F(ChromeScreenshotGrabberTest, DISABLED_TakeScreenshot) {
   // Note that within the test framework the LoginState object will always
   // claim that the user did log in.
   ASSERT_FALSE(chromeos::LoginState::IsInitialized());
   chromeos::LoginState::Initialize();
-#endif
+  chromeos::ScopedUserManagerEnabler scoped_enabler(
+      new chromeos::MockUserManager());
   base::ScopedTempDir directory;
   ASSERT_TRUE(directory.CreateUniqueTempDir());
   EXPECT_TRUE(chrome_screenshot_grabber()->CanTakeScreenshot());
 
   screenshot_grabber()->TakeScreenshot(
       Shell::GetPrimaryRootWindow(), gfx::Rect(0, 0, 100, 100),
-      directory.path().AppendASCII("Screenshot.png"));
+      directory.GetPath().AppendASCII("Screenshot.png"));
 
   EXPECT_FALSE(screenshot_grabber()->CanTakeScreenshot());
 
   Wait();
 
-#if defined(OS_CHROMEOS)
   // Screenshot notifications on Windows not yet turned on.
   EXPECT_TRUE(g_browser_process->notification_ui_manager()->FindById(
                   std::string("screenshot"),
                   NotificationUIManager::GetProfileID(profile_)) != NULL);
   g_browser_process->notification_ui_manager()->CancelAll();
-#endif
 
   EXPECT_EQ(ScreenshotGrabberObserver::SCREENSHOT_SUCCESS, screenshot_result_);
 
   if (ScreenshotGrabberObserver::SCREENSHOT_SUCCESS == screenshot_result_)
     EXPECT_TRUE(base::PathExists(screenshot_path_));
 
-#if defined(OS_CHROMEOS)
   chromeos::LoginState::Shutdown();
-#endif
 }
 
 }  // namespace test

@@ -4,19 +4,21 @@
 
 #include "chrome/browser/intranet_redirect_detector.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -46,7 +48,6 @@ IntranetRedirectDetector::IntranetRedirectDetector()
 
 IntranetRedirectDetector::~IntranetRedirectDetector() {
   net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
-  STLDeleteElements(&fetchers_);
 }
 
 // static
@@ -66,7 +67,7 @@ void IntranetRedirectDetector::FinishSleep() {
   in_sleep_ = false;
 
   // If another fetch operation is still running, cancel it.
-  STLDeleteElements(&fetchers_);
+  fetchers_.clear();
   resulting_origins_.clear();
 
   const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
@@ -83,27 +84,27 @@ void IntranetRedirectDetector::FinishSleep() {
     for (int j = 0; j < num_chars; ++j)
       url_string += ('a' + base::RandInt(0, 'z' - 'a'));
     GURL random_url(url_string + '/');
-    net::URLFetcher* fetcher =
-        net::URLFetcher::Create(random_url, net::URLFetcher::HEAD, this)
-            .release();
+    std::unique_ptr<net::URLFetcher> fetcher =
+        net::URLFetcher::Create(random_url, net::URLFetcher::HEAD, this);
     // We don't want these fetches to affect existing state in the profile.
     fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE |
                           net::LOAD_DO_NOT_SAVE_COOKIES |
-                          net::LOAD_DO_NOT_SEND_COOKIES);
+                          net::LOAD_DO_NOT_SEND_COOKIES |
+                          net::LOAD_DO_NOT_SEND_AUTH_DATA);
     fetcher->SetRequestContext(g_browser_process->system_request_context());
     fetcher->Start();
-    fetchers_.insert(fetcher);
+    net::URLFetcher* fetcher_ptr = fetcher.get();
+    fetchers_[fetcher_ptr] = std::move(fetcher);
   }
 }
 
 void IntranetRedirectDetector::OnURLFetchComplete(
     const net::URLFetcher* source) {
   // Delete the fetcher on this function's exit.
-  Fetchers::iterator fetcher = fetchers_.find(
-      const_cast<net::URLFetcher*>(source));
-  DCHECK(fetcher != fetchers_.end());
-  scoped_ptr<net::URLFetcher> clean_up_fetcher(*fetcher);
-  fetchers_.erase(fetcher);
+  auto it = fetchers_.find(const_cast<net::URLFetcher*>(source));
+  DCHECK(it != fetchers_.end());
+  std::unique_ptr<net::URLFetcher> fetcher = std::move(it->second);
+  fetchers_.erase(it);
 
   // If any two fetches result in the same domain/host, we set the redirect
   // origin to that; otherwise we set it to nothing.
@@ -130,7 +131,6 @@ void IntranetRedirectDetector::OnURLFetchComplete(
       if (!fetchers_.empty()) {
         // Cancel remaining fetch, we don't need it.
         DCHECK(fetchers_.size() == 1);
-        delete (*fetchers_.begin());
         fetchers_.clear();
       }
     }

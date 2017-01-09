@@ -4,6 +4,7 @@
     <title>Test Custom Oscillator at Very Low Frequency</title>
     <script src="../resources/js-test.js"></script>
     <script src="resources/compatibility.js"></script>
+    <script src="resources/audit-util.js"></script>
     <script src="resources/audio-testing.js"></script>
   </head>
 
@@ -52,7 +53,9 @@
 
         var snr = 10 * Math.log10(signal / noise);
 
-        Should("SNR of " + desiredFrequencyHz + " Hz sine wave", snr).beGreaterThanOrEqualTo(snrThreshold);
+        Should("SNR of " + desiredFrequencyHz + " Hz sine wave", snr, {
+          brief: true
+        }).beGreaterThanOrEqualTo(snrThreshold);
         testPassed("PeriodicWave coefficients that must be ignored were correctly ignored.");
       }
 

@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -38,12 +38,12 @@ const char kDuplicateRuleId[] = "Duplicate rule ID: %s";
 const char kErrorCannotRemoveManifestRules[] =
     "Rules declared in the 'event_rules' manifest field cannot be removed";
 
-scoped_ptr<base::Value> RulesToValue(
+std::unique_ptr<base::Value> RulesToValue(
     const std::vector<linked_ptr<api::events::Rule>>& rules) {
-  scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   for (size_t i = 0; i < rules.size(); ++i)
-    list->Append(rules[i]->ToValue().release());
-  return list.Pass();
+    list->Append(rules[i]->ToValue());
+  return std::move(list);
 }
 
 std::vector<linked_ptr<api::events::Rule>> RulesFromValue(
@@ -297,9 +297,8 @@ size_t RulesRegistry::GetNumberOfUsedRuleIdentifiersForTesting() const {
   return entry_count;
 }
 
-void RulesRegistry::DeserializeAndAddRules(
-    const std::string& extension_id,
-    scoped_ptr<base::Value> rules) {
+void RulesRegistry::DeserializeAndAddRules(const std::string& extension_id,
+                                           std::unique_ptr<base::Value> rules) {
   DCHECK_CURRENTLY_ON(owner_thread());
 
   std::string error =
@@ -310,10 +309,10 @@ void RulesRegistry::DeserializeAndAddRules(
 
 void RulesRegistry::ReportInternalError(const std::string& extension_id,
                                         const std::string& error) {
-  scoped_ptr<ExtensionError> error_instance(new InternalError(
+  std::unique_ptr<ExtensionError> error_instance(new InternalError(
       extension_id, base::ASCIIToUTF16(error), logging::LOG_ERROR));
   ExtensionsBrowserClient::Get()->ReportError(browser_context_,
-                                              error_instance.Pass());
+                                              std::move(error_instance));
 }
 
 RulesRegistry::~RulesRegistry() {
@@ -333,7 +332,7 @@ void RulesRegistry::MarkReady(base::Time storage_init_time) {
 void RulesRegistry::ProcessChangedRules(const std::string& extension_id) {
   DCHECK_CURRENTLY_ON(owner_thread());
 
-  DCHECK(ContainsKey(process_changed_rules_requested_, extension_id));
+  DCHECK(base::ContainsKey(process_changed_rules_requested_, extension_id));
   process_changed_rules_requested_[extension_id] = NOT_SCHEDULED_FOR_PROCESSING;
 
   std::vector<linked_ptr<api::events::Rule>> new_rules;

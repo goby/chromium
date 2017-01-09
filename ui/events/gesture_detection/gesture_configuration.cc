@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
 
 namespace ui {
@@ -34,7 +35,7 @@ GestureConfiguration::GestureConfiguration()
       fling_max_tap_gap_time_in_ms_(200),
       stylus_scale_enabled_(false),
       gesture_begin_end_types_enabled_(false),
-      long_press_time_in_ms_(1000),
+      long_press_time_in_ms_(500),
       max_distance_between_taps_for_double_tap_(20),
       max_tap_count_(3),
       max_distance_for_two_finger_tap_in_pixels_(300),
@@ -52,8 +53,6 @@ GestureConfiguration::GestureConfiguration()
       // If this is too small, we currently can get single finger pinch zoom.
       // See crbug.com/357237 for details.
       min_scaling_span_in_pixels_(125),
-      // The default value of min_scaling_touch_major_ is 2 * default_radius_.
-      min_scaling_touch_major_(50),
       min_swipe_velocity_(20),
       // TODO(jdduke): Disable and remove entirely when issues with intermittent
       // scroll end detection on the Pixel are resolved, crbug.com/353702.

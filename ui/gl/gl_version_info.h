@@ -7,10 +7,11 @@
 
 #include <set>
 #include <string>
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "ui/gl/gl_export.h"
 
-namespace gfx {
+namespace gl {
 
 struct GL_EXPORT GLVersionInfo {
   GLVersionInfo(const char* version_str, const char* renderer_str,
@@ -38,37 +39,37 @@ struct GL_EXPORT GLVersionInfo {
     return is_es || is_desktop_core_profile;
   }
 
-  bool IsES3Capable() const {
-    if (IsAtLeastGLES(3, 0) || IsAtLeastGL(4, 2))
-      return true;
-#if defined(OS_MACOSX)
-    // TODO(zmo): For experimentation purpose on MacOSX with core profile,
-    // allow 3.2 or plus for now.
-    if (IsAtLeastGL(3, 2))
-      return true;
-#endif
-    return false;
+  bool SupportsFixedType() const {
+    return is_es || IsAtLeastGL(4, 1);
   }
 
   static void ParseVersionString(const char* version_str,
                                  unsigned* major_version,
                                  unsigned* minor_version,
                                  bool* is_es,
+                                 bool* is_es2,
                                  bool* is_es3);
 
   bool is_es;
   bool is_angle;
+  bool is_mesa;
   unsigned major_version;
   unsigned minor_version;
+  bool is_es2;
   bool is_es3;
   bool is_desktop_core_profile;
+  bool is_es3_capable;
 
  private:
-  GLVersionInfo(const char* version_str, const char* renderer_str);
+  GLVersionInfo();
+  void Initialize(const char* version_str,
+                  const char* renderer_str,
+                  const std::set<std::string>& extensions);
+  bool IsES3Capable(const std::set<std::string>& extensions) const;
 
   DISALLOW_COPY_AND_ASSIGN(GLVersionInfo);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif // UI_GL_GL_VERSION_INFO_H_

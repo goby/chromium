@@ -2,26 +2,45 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/css/CSSURIValue.h"
 
 #include "core/css/CSSMarkup.h"
-#include "wtf/text/WTFString.h"
+#include "core/dom/Document.h"
+#include "core/svg/SVGElementProxy.h"
+#include "core/svg/SVGURIReference.h"
 
 namespace blink {
 
-CSSURIValue::CSSURIValue(const String& str)
-    : CSSValue(URIClass)
-    , m_string(str) { }
+CSSURIValue::CSSURIValue(const String& urlString)
+    : CSSValue(URIClass), m_url(urlString) {}
 
-String CSSURIValue::customCSSText() const
-{
-    return serializeURI(m_string);
+CSSURIValue::~CSSURIValue() {}
+
+SVGElementProxy& CSSURIValue::ensureElementProxy(Document& document) const {
+  if (m_proxy)
+    return *m_proxy;
+  SVGURLReferenceResolver resolver(m_url, document);
+  AtomicString fragmentId = resolver.fragmentIdentifier();
+  if (resolver.isLocal()) {
+    m_proxy = SVGElementProxy::create(fragmentId);
+  } else {
+    m_proxy =
+        SVGElementProxy::create(resolver.absoluteUrl().getString(), fragmentId);
+  }
+  return *m_proxy;
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSURIValue)
-{
-    CSSValue::traceAfterDispatch(visitor);
+String CSSURIValue::customCSSText() const {
+  return serializeURI(m_url);
 }
 
-} // namespace blink
+bool CSSURIValue::equals(const CSSURIValue& other) const {
+  return m_url == other.m_url;
+}
+
+DEFINE_TRACE_AFTER_DISPATCH(CSSURIValue) {
+  visitor->trace(m_proxy);
+  CSSValue::traceAfterDispatch(visitor);
+}
+
+}  // namespace blink

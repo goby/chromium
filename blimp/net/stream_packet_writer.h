@@ -35,7 +35,7 @@ class BLIMP_NET_EXPORT StreamPacketWriter : public PacketWriter {
   ~StreamPacketWriter() override;
 
   // PacketWriter implementation.
-  void WritePacket(scoped_refptr<net::DrainableIOBuffer> data,
+  void WritePacket(const scoped_refptr<net::DrainableIOBuffer>& data,
                    const net::CompletionCallback& callback) override;
 
  private:
@@ -59,6 +59,13 @@ class BLIMP_NET_EXPORT StreamPacketWriter : public PacketWriter {
   // Callback function to be invoked on asynchronous write completion.
   // Invokes |callback_| on packet write completion or on error.
   void OnWriteComplete(int result);
+
+  // Executes a socket write.
+  // Returns a positive value indicating the number of bytes written
+  // on success.
+  // Returns a negative net::Error value if the socket was closed or an error
+  // occurred.
+  int DoWrite(net::IOBuffer* buf, int buf_len);
 
   WriteState write_state_;
 

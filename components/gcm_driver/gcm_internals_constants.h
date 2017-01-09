@@ -30,6 +30,8 @@ extern const char kGcmClientCreated[];
 extern const char kGcmClientState[];
 extern const char kGcmEnabled[];
 extern const char kIsRecording[];
+extern const char kLastCheckin[];
+extern const char kNextCheckin[];
 extern const char kProfileServiceCreated[];
 extern const char kReceiveInfo[];
 extern const char kRegisteredAppIds[];
@@ -37,6 +39,7 @@ extern const char kRegistrationInfo[];
 extern const char kResendQueueSize[];
 extern const char kSendInfo[];
 extern const char kSendQueueSize[];
+extern const char kDecryptionFailureInfo[];
 
 }  // namespace gcm_driver
 

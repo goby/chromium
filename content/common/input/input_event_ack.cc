@@ -4,43 +4,55 @@
 
 #include "content/common/input/input_event_ack.h"
 
+#include <utility>
+
 namespace content {
 
 InputEventAck::InputEventAck(
+    InputEventAckSource source,
     blink::WebInputEvent::Type type,
     InputEventAckState state,
     const ui::LatencyInfo& latency,
-    scoped_ptr<content::DidOverscrollParams> overscroll,
-    uint32 unique_touch_event_id)
-    : type(type),
+    std::unique_ptr<ui::DidOverscrollParams> overscroll,
+    uint32_t unique_touch_event_id)
+    : source(source),
+      type(type),
       state(state),
       latency(latency),
-      overscroll(overscroll.Pass()),
-      unique_touch_event_id(unique_touch_event_id) {
-}
+      overscroll(std::move(overscroll)),
+      unique_touch_event_id(unique_touch_event_id) {}
 
-InputEventAck::InputEventAck(blink::WebInputEvent::Type type,
+InputEventAck::InputEventAck(InputEventAckSource source,
+                             blink::WebInputEvent::Type type,
                              InputEventAckState state,
                              const ui::LatencyInfo& latency,
-                             uint32 unique_touch_event_id)
-    : InputEventAck(type, state, latency, nullptr, unique_touch_event_id) {
-}
+                             uint32_t unique_touch_event_id)
+    : InputEventAck(source,
+                    type,
+                    state,
+                    latency,
+                    nullptr,
+                    unique_touch_event_id) {}
 
-InputEventAck::InputEventAck(blink::WebInputEvent::Type type,
+InputEventAck::InputEventAck(InputEventAckSource source,
+                             blink::WebInputEvent::Type type,
                              InputEventAckState state,
-                             uint32 unique_touch_event_id)
-    : InputEventAck(type, state, ui::LatencyInfo(), unique_touch_event_id) {
-}
+                             uint32_t unique_touch_event_id)
+    : InputEventAck(source,
+                    type,
+                    state,
+                    ui::LatencyInfo(),
+                    unique_touch_event_id) {}
 
-InputEventAck::InputEventAck(blink::WebInputEvent::Type type,
+InputEventAck::InputEventAck(InputEventAckSource source,
+                             blink::WebInputEvent::Type type,
                              InputEventAckState state)
-    : InputEventAck(type, state, 0) {
-}
+    : InputEventAck(source, type, state, 0) {}
 
 InputEventAck::InputEventAck()
-    : InputEventAck(blink::WebInputEvent::Undefined,
-                    INPUT_EVENT_ACK_STATE_UNKNOWN) {
-}
+    : InputEventAck(InputEventAckSource::UNKNOWN,
+                    blink::WebInputEvent::Undefined,
+                    INPUT_EVENT_ACK_STATE_UNKNOWN) {}
 
 InputEventAck::~InputEventAck() {
 }

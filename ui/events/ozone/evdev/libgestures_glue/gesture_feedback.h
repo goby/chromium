@@ -26,7 +26,7 @@ const char kInputEventsLogFile[] =
 
 class GesturePropertyProvider;
 
-typedef base::Callback<void(scoped_ptr<std::vector<base::FilePath>>)>
+typedef base::Callback<void(std::unique_ptr<std::vector<base::FilePath>>)>
     GetTouchEventLogReply;
 
 // Utility functions for generating gesture related logs. These logs will be
@@ -35,10 +35,11 @@ void DumpTouchDeviceStatus(GesturePropertyProvider* provider,
                            std::string* status);
 
 void DumpTouchEventLog(
-    std::map<base::FilePath, EventConverterEvdev*>& converter,
+    const std::map<base::FilePath, std::unique_ptr<EventConverterEvdev>>&
+        converter,
     GesturePropertyProvider* provider,
     const base::FilePath& out_dir,
-    scoped_ptr<std::vector<base::FilePath>> log_paths,
+    std::unique_ptr<std::vector<base::FilePath>> log_paths,
     const GetTouchEventLogReply& reply);
 
 }  // namespace ui

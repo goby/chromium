@@ -255,7 +255,16 @@ h6 {
   color: #55F;
 }
 
+video::-webkit-media-controls-fullscreen-button {
+  display: none;
+}
+
 #closeReaderView {
+  /*
+  TODO(mdjones): Remove the "display: none;" style when the Reader Mode bar
+                 behaves like the toolbar when scrolling.
+  */
+  display: none;
   flex: 0 0 auto;
   font-family: 'Roboto', sans-serif;
   font-weight: 700;
@@ -266,27 +275,6 @@ h6 {
   text-decoration: none;
   text-transform: uppercase;
   width: 100%;
-}
-
-@media print {
-  #closeReaderView {
-    display: none;
-  }
-  #feedbackContainer {
-    display: none;
-  }
-
-  /* Remove backgrounds and custom colors. */
-  .light, .dark, .sepia {
-      color: #000 !important;
-      background-color: #fff !important;
-  }
-
-  /* If the transition duration is unchanged, the above color changes
-  happen after the document is ready for print. */
-  body {
-      transition-duration: unset !important;
-  }
 }
 
 #content {
@@ -353,7 +341,7 @@ video {
 img {
   display: block;
   height: auto;
-  margin: 0.6rem auto 0.4rem 0;
+  margin: 0.6rem auto 0.4rem auto;
 }
 
 /* TODO(nyquist): set these classes directly in the dom distiller. */

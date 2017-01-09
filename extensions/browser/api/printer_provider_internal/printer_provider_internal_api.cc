@@ -4,7 +4,9 @@
 
 #include "extensions/browser/api/printer_provider_internal/printer_provider_internal_api.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -12,7 +14,6 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "content/public/browser/blob_handle.h"
 #include "content/public/browser/browser_context.h"
@@ -66,33 +67,32 @@ void PrinterProviderInternalAPI::NotifyGetPrintersResult(
     const Extension* extension,
     int request_id,
     const PrinterProviderInternalAPIObserver::PrinterInfoVector& printers) {
-  FOR_EACH_OBSERVER(PrinterProviderInternalAPIObserver, observers_,
-                    OnGetPrintersResult(extension, request_id, printers));
+  for (auto& observer : observers_)
+    observer.OnGetPrintersResult(extension, request_id, printers);
 }
 
 void PrinterProviderInternalAPI::NotifyGetCapabilityResult(
     const Extension* extension,
     int request_id,
     const base::DictionaryValue& capability) {
-  FOR_EACH_OBSERVER(PrinterProviderInternalAPIObserver, observers_,
-                    OnGetCapabilityResult(extension, request_id, capability));
+  for (auto& observer : observers_)
+    observer.OnGetCapabilityResult(extension, request_id, capability);
 }
 
 void PrinterProviderInternalAPI::NotifyPrintResult(
     const Extension* extension,
     int request_id,
     api::printer_provider_internal::PrintError error) {
-  FOR_EACH_OBSERVER(PrinterProviderInternalAPIObserver, observers_,
-                    OnPrintResult(extension, request_id, error));
+  for (auto& observer : observers_)
+    observer.OnPrintResult(extension, request_id, error);
 }
 
 void PrinterProviderInternalAPI::NotifyGetUsbPrinterInfoResult(
     const Extension* extension,
     int request_id,
     const api::printer_provider::PrinterInfo* printer_info) {
-  FOR_EACH_OBSERVER(
-      PrinterProviderInternalAPIObserver, observers_,
-      OnGetUsbPrinterInfoResult(extension, request_id, printer_info));
+  for (auto& observer : observers_)
+    observer.OnGetUsbPrinterInfoResult(extension, request_id, printer_info);
 }
 
 PrinterProviderInternalReportPrintResultFunction::
@@ -105,7 +105,7 @@ PrinterProviderInternalReportPrintResultFunction::
 
 ExtensionFunction::ResponseAction
 PrinterProviderInternalReportPrintResultFunction::Run() {
-  scoped_ptr<internal_api::ReportPrintResult::Params> params(
+  std::unique_ptr<internal_api::ReportPrintResult::Params> params(
       internal_api::ReportPrintResult::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -125,7 +125,7 @@ PrinterProviderInternalReportPrinterCapabilityFunction::
 
 ExtensionFunction::ResponseAction
 PrinterProviderInternalReportPrinterCapabilityFunction::Run() {
-  scoped_ptr<internal_api::ReportPrinterCapability::Params> params(
+  std::unique_ptr<internal_api::ReportPrinterCapability::Params> params(
       internal_api::ReportPrinterCapability::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -153,7 +153,7 @@ PrinterProviderInternalReportPrintersFunction::
 
 ExtensionFunction::ResponseAction
 PrinterProviderInternalReportPrintersFunction::Run() {
-  scoped_ptr<internal_api::ReportPrinters::Params> params(
+  std::unique_ptr<internal_api::ReportPrinters::Params> params(
       internal_api::ReportPrinters::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -183,7 +183,7 @@ PrinterProviderInternalGetPrintDataFunction::
 
 ExtensionFunction::ResponseAction
 PrinterProviderInternalGetPrintDataFunction::Run() {
-  scoped_ptr<internal_api::GetPrintData::Params> params(
+  std::unique_ptr<internal_api::GetPrintData::Params> params(
       internal_api::GetPrintData::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -220,10 +220,9 @@ void PrinterProviderInternalGetPrintDataFunction::OnBlob(
     const std::string& type,
     int size,
     const scoped_refptr<base::RefCountedMemory>& data,
-    scoped_ptr<content::BlobHandle> blob) {
+    std::unique_ptr<content::BlobHandle> blob) {
   if (!blob) {
-    SetError("Unable to create the blob.");
-    SendResponse(false);
+    Respond(Error("Unable to create the blob."));
     return;
   }
 
@@ -238,11 +237,10 @@ void PrinterProviderInternalGetPrintDataFunction::OnBlob(
   extensions::BlobHolder* holder =
       extensions::BlobHolder::FromRenderProcessHost(
           render_frame_host()->GetProcess());
-  holder->HoldBlobReference(blob.Pass());
+  holder->HoldBlobReference(std::move(blob));
 
-  results_ = internal_api::GetPrintData::Results::Create(info);
   SetTransferredBlobUUIDs(uuids);
-  SendResponse(true);
+  Respond(ArgumentList(internal_api::GetPrintData::Results::Create(info)));
 }
 
 PrinterProviderInternalReportUsbPrinterInfoFunction::
@@ -255,7 +253,7 @@ PrinterProviderInternalReportUsbPrinterInfoFunction::
 
 ExtensionFunction::ResponseAction
 PrinterProviderInternalReportUsbPrinterInfoFunction::Run() {
-  scoped_ptr<internal_api::ReportUsbPrinterInfo::Params> params(
+  std::unique_ptr<internal_api::ReportUsbPrinterInfo::Params> params(
       internal_api::ReportUsbPrinterInfo::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 

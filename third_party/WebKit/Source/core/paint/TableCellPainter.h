@@ -17,34 +17,38 @@ class LayoutPoint;
 class LayoutRect;
 class LayoutTableCell;
 class LayoutObject;
-class ComputedStyle;
 
 class TableCellPainter {
-    STACK_ALLOCATED();
-public:
-    TableCellPainter(const LayoutTableCell& layoutTableCell) : m_layoutTableCell(layoutTableCell) { }
+  STACK_ALLOCATED();
 
-    void paint(const PaintInfo&, const LayoutPoint&);
+ public:
+  TableCellPainter(const LayoutTableCell& layoutTableCell)
+      : m_layoutTableCell(layoutTableCell) {}
 
-    void paintCollapsedBorders(const PaintInfo&, const LayoutPoint&, const CollapsedBorderValue&);
-    void paintBackgroundsBehindCell(const PaintInfo&, const LayoutPoint&, const LayoutObject* backgroundObject, DisplayItem::Type);
-    void paintBoxDecorationBackground(const PaintInfo&, const LayoutPoint& paintOffset);
-    void paintMask(const PaintInfo&, const LayoutPoint& paintOffset);
+  void paint(const PaintInfo&, const LayoutPoint&);
 
-    enum PaintBoundOffsetBehavior { AddOffsetFromParent, DoNotAddOffsetFromParent };
-    // Returns the bonds of the table cell for painting, offset by paintOffset, and if desired, the offset from the cell
-    // to its parent.
-    LayoutRect paintBounds(const LayoutPoint& paintOffset, PaintBoundOffsetBehavior);
+  void paintCollapsedBorders(const PaintInfo&,
+                             const LayoutPoint&,
+                             const CollapsedBorderValue&);
+  void paintContainerBackgroundBehindCell(const PaintInfo&,
+                                          const LayoutPoint&,
+                                          const LayoutObject& backgroundObject,
+                                          DisplayItem::Type);
+  void paintBoxDecorationBackground(const PaintInfo&,
+                                    const LayoutPoint& paintOffset);
+  void paintMask(const PaintInfo&, const LayoutPoint& paintOffset);
 
-private:
-    const CollapsedBorderValue& cachedCollapsedLeftBorder(const ComputedStyle&) const;
-    const CollapsedBorderValue& cachedCollapsedRightBorder(const ComputedStyle&) const;
-    const CollapsedBorderValue& cachedCollapsedTopBorder(const ComputedStyle&) const;
-    const CollapsedBorderValue& cachedCollapsedBottomBorder(const ComputedStyle&) const;
+ private:
+  const DisplayItemClient& displayItemClientForBorders() const;
+  LayoutRect paintRectNotIncludingVisualOverflow(
+      const LayoutPoint& paintOffset);
+  void paintBackground(const PaintInfo&,
+                       const LayoutRect&,
+                       const LayoutObject& backgroundObject);
 
-    const LayoutTableCell& m_layoutTableCell;
+  const LayoutTableCell& m_layoutTableCell;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // TableCellPainter_h
+#endif  // TableCellPainter_h

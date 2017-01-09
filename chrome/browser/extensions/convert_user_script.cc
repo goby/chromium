@@ -4,7 +4,11 @@
 
 #include "chrome/browser/extensions/convert_user_script.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
@@ -64,7 +68,7 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   }
 
   // Create the manifest
-  scoped_ptr<base::DictionaryValue> root(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> root(new base::DictionaryValue);
   std::string script_name;
   if (!script.name().empty() && !script.name_space().empty())
     script_name = script.name_space() + "/" + script.name();
@@ -80,7 +84,7 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   char raw[crypto::kSHA256Length] = {0};
   std::string key;
   crypto::SHA256HashString(script_name, raw, crypto::kSHA256Length);
-  base::Base64Encode(std::string(raw, crypto::kSHA256Length), &key);
+  base::Base64Encode(base::StringPiece(raw, crypto::kSHA256Length), &key);
 
   // The script may not have a name field, but we need one for an extension. If
   // it is missing, use the filename of the original URL.
@@ -101,7 +105,7 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   root->SetBoolean(keys::kConvertedFromUserScript, true);
 
   base::ListValue* js_files = new base::ListValue();
-  js_files->Append(new base::StringValue("script.js"));
+  js_files->AppendString("script.js");
 
   // If the script provides its own match patterns, we use those. Otherwise, we
   // generate some using the include globs.
@@ -109,12 +113,12 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   if (!script.url_patterns().is_empty()) {
     for (URLPatternSet::const_iterator i = script.url_patterns().begin();
          i != script.url_patterns().end(); ++i) {
-      matches->Append(new base::StringValue(i->GetAsString()));
+      matches->AppendString(i->GetAsString());
     }
   } else {
     // TODO(aa): Derive tighter matches where possible.
-    matches->Append(new base::StringValue("http://*/*"));
-    matches->Append(new base::StringValue("https://*/*"));
+    matches->AppendString("http://*/*");
+    matches->AppendString("https://*/*");
   }
 
   // Read the exclude matches, if any are present.
@@ -123,19 +127,20 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
     for (URLPatternSet::const_iterator i =
          script.exclude_url_patterns().begin();
          i != script.exclude_url_patterns().end(); ++i) {
-      exclude_matches->Append(new base::StringValue(i->GetAsString()));
+      exclude_matches->AppendString(i->GetAsString());
     }
   }
 
   base::ListValue* includes = new base::ListValue();
   for (size_t i = 0; i < script.globs().size(); ++i)
-    includes->Append(new base::StringValue(script.globs().at(i)));
+    includes->AppendString(script.globs().at(i));
 
   base::ListValue* excludes = new base::ListValue();
   for (size_t i = 0; i < script.exclude_globs().size(); ++i)
-    excludes->Append(new base::StringValue(script.exclude_globs().at(i)));
+    excludes->AppendString(script.exclude_globs().at(i));
 
-  base::DictionaryValue* content_script = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> content_script(
+      new base::DictionaryValue());
   content_script->Set(keys::kMatches, matches);
   content_script->Set(keys::kExcludeMatches, exclude_matches);
   content_script->Set(keys::kIncludeGlobs, includes);
@@ -151,11 +156,11 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
     content_script->SetString(keys::kRunAt, values::kRunAtDocumentIdle);
 
   base::ListValue* content_scripts = new base::ListValue();
-  content_scripts->Append(content_script);
+  content_scripts->Append(std::move(content_script));
 
   root->Set(keys::kContentScripts, content_scripts);
 
-  base::FilePath manifest_path = temp_dir.path().Append(kManifestFilename);
+  base::FilePath manifest_path = temp_dir.GetPath().Append(kManifestFilename);
   JSONFileValueSerializer serializer(manifest_path);
   if (!serializer.Serialize(*root)) {
     *error = base::ASCIIToUTF16("Could not write JSON.");
@@ -164,7 +169,7 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
 
   // Write the script file.
   if (!base::CopyFile(user_script_path,
-                      temp_dir.path().AppendASCII("script.js"))) {
+                      temp_dir.GetPath().AppendASCII("script.js"))) {
     *error = base::ASCIIToUTF16("Could not copy script file.");
     return NULL;
   }
@@ -172,12 +177,9 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   // TODO(rdevlin.cronin): Continue removing std::string errors and replacing
   // with base::string16
   std::string utf8_error;
-  scoped_refptr<Extension> extension = Extension::Create(
-      temp_dir.path(),
-      Manifest::INTERNAL,
-      *root,
-      Extension::NO_FLAGS,
-      &utf8_error);
+  scoped_refptr<Extension> extension =
+      Extension::Create(temp_dir.GetPath(), Manifest::INTERNAL, *root,
+                        Extension::NO_FLAGS, &utf8_error);
   *error = base::UTF8ToUTF16(utf8_error);
   if (!extension.get()) {
     NOTREACHED() << "Could not init extension " << *error;

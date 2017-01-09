@@ -6,11 +6,13 @@
 #define SANDBOX_MAC_MACH_MESSAGE_SERVER_H_
 
 #include <mach/mach.h>
+#include <stddef.h>
+
+#include <memory>
 
 #include "base/mac/dispatch_source_mach.h"
 #include "base/mac/scoped_mach_port.h"
 #include "base/mac/scoped_mach_vm.h"
-#include "base/memory/scoped_ptr.h"
 #include "sandbox/mac/message_server.h"
 
 namespace sandbox {
@@ -33,6 +35,7 @@ class MachMessageServer : public MessageServer {
 
   // MessageServer:
   bool Initialize() override;
+  void Shutdown() override;
   pid_t GetMessageSenderPID(IPCMessage request) override;
   IPCMessage CreateReply(IPCMessage request) override;
   bool SendReply(IPCMessage reply) override;
@@ -61,7 +64,7 @@ class MachMessageServer : public MessageServer {
   base::mac::ScopedMachVM reply_buffer_;
 
   // MACH_RECV dispatch source that handles the |server_port_|.
-  scoped_ptr<base::DispatchSourceMach> dispatch_source_;
+  std::unique_ptr<base::DispatchSourceMach> dispatch_source_;
 
   // Whether or not ForwardMessage() was called during ReceiveMessage().
   bool did_forward_message_;

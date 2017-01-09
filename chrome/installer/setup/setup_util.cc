@@ -7,32 +7,41 @@
 #include "chrome/installer/setup/setup_util.h"
 
 #include <windows.h>
+#include <stddef.h>
 
 #include <algorithm>
 #include <iterator>
 #include <set>
+#include <string>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/cpu.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/metrics/histogram.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/version.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
+#include "chrome/installer/setup/installer_state.h"
 #include "chrome/installer/setup/setup_constants.h"
+#include "chrome/installer/setup/user_hive_visitor.h"
 #include "chrome/installer/util/app_registration_data.h"
 #include "chrome/installer/util/google_update_constants.h"
 #include "chrome/installer/util/installation_state.h"
-#include "chrome/installer/util/installer_state.h"
+#include "chrome/installer/util/master_preferences.h"
+#include "chrome/installer/util/master_preferences_constants.h"
 #include "chrome/installer/util/util_constants.h"
 #include "courgette/courgette.h"
-#include "courgette/third_party/bsdiff.h"
-#include "third_party/bspatch/mbspatch.h"
+#include "courgette/third_party/bsdiff/bsdiff.h"
 
 namespace installer {
 
@@ -45,7 +54,68 @@ bool SupportsSingleInstall(BrowserDistribution::Type type) {
           type == BrowserDistribution::CHROME_FRAME);
 }
 
+// Returns true if the "lastrun" value in |root|\|key_path| (a path to Chrome's
+// ClientState key for a user) indicates that Chrome has been used within the
+// last 28 days.
+bool IsActivelyUsedIn(HKEY root, const wchar_t* key_path) {
+  // This duplicates some logic in GoogleUpdateSettings::GetLastRunTime, which
+  // is suitable for use from the context of Chrome but not from the installer
+  // because it was implemented with the assumption that
+  // BrowserDistribution::GetDistribution() will always be the right thing.
+  // This is true in Chrome, but not in the installer in a multi-install world.
+  // Once multi-install goes away, this assumption will once again become true
+  // for the installer, and this new code here can then be deleted.
+  VLOG(1) << "IsActivelyUsedIn probing " << root << "\\" << key_path;
+  base::win::RegKey key;
+  LONG result = key.Open(root, key_path, KEY_WOW64_32KEY | KEY_QUERY_VALUE);
+  if (result != ERROR_SUCCESS) {
+    ::SetLastError(result);
+    PLOG_IF(ERROR, result != ERROR_FILE_NOT_FOUND) << "Failed opening " << root
+                                                   << "\\" << key_path;
+    return false;
+  }
+  base::string16 last_run_time_string;
+  result =
+      key.ReadValue(google_update::kRegLastRunTimeField, &last_run_time_string);
+  if (result != ERROR_SUCCESS) {
+    ::SetLastError(result);
+    PLOG_IF(ERROR, result != ERROR_FILE_NOT_FOUND)
+        << "Failed reading " << root << "\\" << key_path << "@"
+        << google_update::kRegLastRunTimeField;
+    return false;
+  }
+  int64_t last_run_time_value = 0;
+  if (!base::StringToInt64(last_run_time_string, &last_run_time_value))
+    return false;
+  base::Time last_run_time = base::Time::FromInternalValue(last_run_time_value);
+  int days_ago_last_run =
+      (base::Time::NowFromSystemTime() - last_run_time).InDays();
+  VLOG(1) << "Found a user that last ran Chrome " << days_ago_last_run
+          << " days ago.";
+  return days_ago_last_run <= 28;
+}
+
+// A visitor for user hives, run by VisitUserHives. |client_state_path| is the
+// path to Chrome's ClientState key. |is_used| is set to true if Chrome has been
+// used within the last 28 days based on the contents of |user_hive|, in which
+// case |false| is returned to halt the hive visits. |user_sid| and |user_hive|
+// are provided by VisitUserHives.
+bool OnUserHive(const base::string16& client_state_path,
+                bool* is_used,
+                const wchar_t* user_sid,
+                base::win::RegKey* user_hive) {
+  // Continue the iteration if this hive isn't owned by an active Chrome user.
+  if (!IsActivelyUsedIn(user_hive->Handle(), client_state_path.c_str()))
+    return true;
+  // Stop the iteration.
+  *is_used = true;
+  return false;
+}
+
 }  // namespace
+
+const char kUnPackStatusMetricsName[] = "Setup.Install.LzmaUnPackStatus";
+const char kUnPackNTSTATUSMetricsName[] = "Setup.Install.LzmaUnPackNTSTATUS";
 
 int CourgettePatchFiles(const base::FilePath& src,
                         const base::FilePath& patch,
@@ -82,8 +152,8 @@ int BsdiffPatchFiles(const base::FilePath& src,
   if (src.empty() || patch.empty() || dest.empty())
     return installer::PATCH_INVALID_ARGUMENTS;
 
-  const int patch_status = courgette::ApplyBinaryPatch(src, patch, dest);
-  const int exit_code = patch_status != OK ?
+  const int patch_status = bsdiff::ApplyBinaryPatch(src, patch, dest);
+  const int exit_code = patch_status != bsdiff::OK ?
                         patch_status + kBsdiffErrorOffset : 0;
 
   LOG_IF(ERROR, exit_code)
@@ -94,22 +164,22 @@ int BsdiffPatchFiles(const base::FilePath& src,
   return exit_code;
 }
 
-Version* GetMaxVersionFromArchiveDir(const base::FilePath& chrome_path) {
+base::Version* GetMaxVersionFromArchiveDir(const base::FilePath& chrome_path) {
   VLOG(1) << "Looking for Chrome version folder under " << chrome_path.value();
   base::FileEnumerator version_enum(chrome_path, false,
       base::FileEnumerator::DIRECTORIES);
   // TODO(tommi): The version directory really should match the version of
   // setup.exe.  To begin with, we should at least DCHECK that that's true.
 
-  scoped_ptr<Version> max_version(new Version("0.0.0.0"));
+  std::unique_ptr<base::Version> max_version(new base::Version("0.0.0.0"));
   bool version_found = false;
 
   while (!version_enum.Next().empty()) {
     base::FileEnumerator::FileInfo find_data = version_enum.GetInfo();
     VLOG(1) << "directory found: " << find_data.GetName().value();
 
-    scoped_ptr<Version> found_version(
-        new Version(base::UTF16ToASCII(find_data.GetName().value())));
+    std::unique_ptr<base::Version> found_version(
+        new base::Version(base::UTF16ToASCII(find_data.GetName().value())));
     if (found_version->IsValid() &&
         found_version->CompareTo(*max_version.get()) > 0) {
       max_version.reset(found_version.release());
@@ -142,7 +212,7 @@ base::FilePath FindArchiveToPatch(const InstallationState& original_state,
     if (base::PathExists(patch_source))
       return patch_source;
   }
-  scoped_ptr<Version> version(
+  std::unique_ptr<base::Version> version(
       installer::GetMaxVersionFromArchiveDir(installer_state.target_path()));
   if (version) {
     patch_source = installer_state.GetInstallerDirectory(*version)
@@ -154,7 +224,7 @@ base::FilePath FindArchiveToPatch(const InstallationState& original_state,
 }
 
 bool DeleteFileFromTempProcess(const base::FilePath& path,
-                               uint32 delay_before_delete_ms) {
+                               uint32_t delay_before_delete_ms) {
   static const wchar_t kRunDll32Path[] =
       L"%SystemRoot%\\System32\\rundll32.exe";
   wchar_t rundll32[MAX_PATH];
@@ -536,6 +606,58 @@ base::string16 GuidToSquid(const base::string16& guid) {
   std::reverse_copy(input + 32, input + 34, output);
   std::reverse_copy(input + 34, input + 36, output);
   return squid;
+}
+
+bool IsDowngradeAllowed(const MasterPreferences& prefs) {
+  bool allow_downgrade = false;
+  return prefs.GetBool(master_preferences::kAllowDowngrade, &allow_downgrade) &&
+         allow_downgrade;
+}
+
+bool IsChromeActivelyUsed(const InstallerState& installer_state) {
+  BrowserDistribution* chrome_dist =
+      BrowserDistribution::GetSpecificDistribution(
+          BrowserDistribution::CHROME_BROWSER);
+  if (!installer_state.system_install()) {
+    return IsActivelyUsedIn(HKEY_CURRENT_USER,
+                            chrome_dist->GetStateKey().c_str());
+  }
+  bool is_used = false;
+  VisitUserHives(base::Bind(&OnUserHive, chrome_dist->GetStateKey(),
+                            base::Unretained(&is_used)));
+  return is_used;
+}
+
+void RecordUnPackMetrics(UnPackStatus unpack_status,
+                         int32_t status,
+                         UnPackConsumer consumer) {
+  std::string consumer_name = "";
+
+  switch (consumer) {
+    case UnPackConsumer::CHROME_ARCHIVE_PATCH:
+      consumer_name = "ChromeArchivePatch";
+      break;
+    case UnPackConsumer::COMPRESSED_CHROME_ARCHIVE:
+      consumer_name = "CompressedChromeArchive";
+      break;
+    case UnPackConsumer::SETUP_EXE_PATCH:
+      consumer_name = "SetupExePatch";
+      break;
+    case UnPackConsumer::UNCOMPRESSED_CHROME_ARCHIVE:
+      consumer_name = "UncompressedChromeArchive";
+      break;
+  }
+
+  base::LinearHistogram::FactoryGet(
+      std::string(kUnPackStatusMetricsName) + "_" + consumer_name, 1,
+      UNPACK_STATUS_COUNT, UNPACK_STATUS_COUNT + 1,
+      base::HistogramBase::kUmaTargetedHistogramFlag)
+      ->Add(unpack_status);
+
+  base::SparseHistogram::FactoryGet(
+      std::string(kUnPackNTSTATUSMetricsName) + "_" + consumer_name,
+      base::HistogramBase::kUmaTargetedHistogramFlag)
+      ->Add(status);
 }
 
 ScopedTokenPrivilege::ScopedTokenPrivilege(const wchar_t* privilege_name)

@@ -5,7 +5,9 @@
 #include "chrome/browser/extensions/extension_management_test_util.h"
 
 #include <string>
+#include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "components/crx_file/id_util.h"
 #include "components/policy/core/common/configuration_policy_provider.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
@@ -13,7 +15,7 @@
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 
 namespace extensions {
 
@@ -59,9 +61,9 @@ void ExtensionManagementPrefUpdaterBase::SetBlacklistedByDefault(bool value) {
 
 void ExtensionManagementPrefUpdaterBase::
     ClearInstallationModesForIndividualExtensions() {
-  for (base::DictionaryValue::Iterator it(*pref_.get()); !it.IsAtEnd();
+  for (base::DictionaryValue::Iterator it(*pref_); !it.IsAtEnd();
        it.Advance()) {
-    DCHECK(it.value().IsType(base::Value::TYPE_DICTIONARY));
+    DCHECK(it.value().IsType(base::Value::Type::DICTIONARY));
     if (it.key() != schema::kWildcard) {
       DCHECK(crx_file::id_util::IdIsValid(it.key()));
       pref_->Remove(make_path(it.key(), schema::kInstallationMode), nullptr);
@@ -214,9 +216,9 @@ void ExtensionManagementPrefUpdaterBase::SetPref(base::DictionaryValue* pref) {
   pref_.reset(pref);
 }
 
-scoped_ptr<base::DictionaryValue>
+std::unique_ptr<base::DictionaryValue>
 ExtensionManagementPrefUpdaterBase::TakePref() {
-  return pref_.Pass();
+  return std::move(pref_);
 }
 
 void ExtensionManagementPrefUpdaterBase::ClearList(const std::string& path) {
@@ -231,7 +233,8 @@ void ExtensionManagementPrefUpdaterBase::AddStringToList(
     list_value = new base::ListValue();
     pref_->Set(path, list_value);
   }
-  CHECK(list_value->AppendIfNotPresent(new base::StringValue(str)));
+  CHECK(
+      list_value->AppendIfNotPresent(base::MakeUnique<base::StringValue>(str)));
 }
 
 void ExtensionManagementPrefUpdaterBase::RemoveStringFromList(
@@ -260,12 +263,13 @@ ExtensionManagementPolicyUpdater::ExtensionManagementPolicyUpdater(
 }
 
 ExtensionManagementPolicyUpdater::~ExtensionManagementPolicyUpdater() {
-  policies_->Get(policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME,
-                                         std::string()))
+  policies_
+      ->Get(
+          policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME, std::string()))
       .Set(policy::key::kExtensionSettings, policy::POLICY_LEVEL_MANDATORY,
-           policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-           TakePref().release(), nullptr);
-  provider_->UpdatePolicy(policies_.Pass());
+           policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD, TakePref(),
+           nullptr);
+  provider_->UpdatePolicy(std::move(policies_));
 }
 
 }  // namespace extensions

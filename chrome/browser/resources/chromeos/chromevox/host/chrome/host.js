@@ -19,7 +19,6 @@ goog.require('cvox.ChromeVoxKbHandler');
 goog.require('cvox.ExtensionBridge');
 goog.require('cvox.HostFactory');
 goog.require('cvox.InitialSpeech');
-goog.require('cvox.PdfProcessor');
 goog.require('cvox.SearchLoader');
 goog.require('cvox.TraverseMath');
 
@@ -128,6 +127,10 @@ cvox.ChromeHost.prototype.init = function() {
       cvox.ChromeVoxUserCommands.commands[cmd](msg);
     } else if (message == 'SYSTEM_COMMAND') {
       if (cmd == 'killChromeVox') {
+        var reStr = msg['excludeUrlRegExp'];
+        if (reStr && new RegExp(reStr).test(location.href)) {
+          return;
+        }
         this.killChromeVox();
       }
     }
@@ -153,8 +156,6 @@ cvox.ChromeHost.prototype.reinit = function() {
 
 /** @override */
 cvox.ChromeHost.prototype.onPageLoad = function() {
-  cvox.PdfProcessor.processEmbeddedPdfs();
-
   cvox.ExtensionBridge.addDisconnectListener(goog.bind(function() {
     cvox.ChromeVox.isActive = false;
     cvox.ChromeVoxEventWatcher.cleanup(window);

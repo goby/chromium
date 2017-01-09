@@ -23,29 +23,25 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
-#if OS(MACOSX)
 #include "platform/SecureTextInput.h"
 
+#if OS(MACOSX)
 #import <Carbon/Carbon.h>
 
 namespace blink {
 
-void enableSecureTextInput()
-{
-    if (IsSecureEventInputEnabled())
-        return;
-    EnableSecureEventInput();
+void enableSecureTextInput() {
+  if (IsSecureEventInputEnabled())
+    return;
+  EnableSecureEventInput();
 }
 
-void disableSecureTextInput()
-{
-    if (!IsSecureEventInputEnabled())
-        return;
-    DisableSecureEventInput();
+void disableSecureTextInput() {
+  if (!IsSecureEventInputEnabled())
+    return;
+  DisableSecureEventInput();
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // OS(MACOSX)
+#endif  // OS(MACOSX)

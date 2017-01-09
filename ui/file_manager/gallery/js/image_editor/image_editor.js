@@ -49,7 +49,6 @@ function ImageEditor(
   this.viewport_ = viewport;
 
   this.imageView_ = imageView;
-  this.imageView_.addContentCallback(this.onContentUpdate_.bind(this));
 
   this.buffer_ = new ImageBuffer();
   this.buffer_.addOverlay(this.imageView_);
@@ -191,7 +190,7 @@ ImageEditor.prototype.recordToolUse = function(name) {
  * Content update handler.
  * @private
  */
-ImageEditor.prototype.onContentUpdate_ = function() {
+ImageEditor.prototype.calculateModeApplicativity_ = function() {
   for (var i = 0; i != this.modes_.length; i++) {
     var mode = this.modes_[i];
     ImageUtil.setAttribute(assert(mode.button_), 'disabled',
@@ -225,7 +224,7 @@ ImageEditor.prototype.openSession = function(
         item.setAsOriginal();
 
         self.commandQueue_ = new CommandQueue(
-            self.container_.ownerDocument, assert(self.imageView_.getCanvas()),
+            self.container_.ownerDocument, assert(self.imageView_.getImage()),
             saveFunction);
         self.commandQueue_.attachUI(
             self.getImageView(), self.getPrompt(), self.filesToast_,
@@ -302,6 +301,7 @@ ImageEditor.prototype.undo = function() {
   this.leaveModeInternal_(false, false /* not to switch mode */);
   this.commandQueue_.undo();
   this.updateUndoRedo();
+  this.calculateModeApplicativity_();
 };
 
 /**
@@ -314,6 +314,7 @@ ImageEditor.prototype.redo = function() {
   this.leaveModeInternal_(false, false /* not to switch mode */);
   this.commandQueue_.redo();
   this.updateUndoRedo();
+  this.calculateModeApplicativity_();
 };
 
 /**
@@ -327,10 +328,10 @@ ImageEditor.prototype.updateUndoRedo = function() {
 };
 
 /**
- * @return {HTMLCanvasElement} The current image canvas.
+ * @return {HTMLCanvasElement|HTMLImageElement} The current image.
  */
-ImageEditor.prototype.getCanvas = function() {
-  return this.getImageView().getCanvas();
+ImageEditor.prototype.getImage = function() {
+  return this.getImageView().getImage();
 };
 
 /**
@@ -518,6 +519,11 @@ ImageEditor.Mode.prototype.markUpdated = function() {
 ImageEditor.Mode.prototype.isUpdated = function() { return this.updated_; };
 
 /**
+ * @return {boolean} True if a key event should be consumed by the mode.
+ */
+ImageEditor.Mode.prototype.isConsumingKeyEvents = function() { return false; };
+
+/**
  * Resets the mode to a clean state.
  */
 ImageEditor.Mode.prototype.reset = function() {
@@ -613,6 +619,7 @@ ImageEditor.prototype.enterMode = function(mode) {
 ImageEditor.prototype.setUpMode_ = function(mode) {
   this.currentTool_ = mode.button_;
   this.currentMode_ = mode;
+  this.rootContainer_.setAttribute('editor-mode', mode.name);
 
   // Activate toggle ripple if button is toggleable.
   var filesToggleRipple =
@@ -636,6 +643,7 @@ ImageEditor.prototype.setUpMode_ = function(mode) {
 
   this.currentMode_.setUp();
 
+  this.calculateModeApplicativity_();
   if (this.currentMode_.instant) {  // Instant tool.
     this.leaveModeInternal_(true, false /* not to switch mode */);
     return;
@@ -677,7 +685,19 @@ ImageEditor.prototype.leaveModeInternal_ = function(commit, leaveToSwitchMode) {
   if (!this.currentMode_)
     return;
 
+  // If the current mode is 'Resize', and commit is required,
+  // leaving mode should be stopped when an input value is not valid.
+  if(commit && this.currentMode_.name === 'resize') {
+    var resizeMode = /** @type {!ImageEditor.Mode.Resize} */
+                              (this.currentMode_);
+    if(!resizeMode.isInputValid()) {
+      resizeMode.showAlertDialog();
+      return;
+    }
+  }
+
   this.modeToolbar_.show(false);
+  this.rootContainer_.removeAttribute('editor-mode');
 
   // If it leaves to switch mode, do not restore screen size since the next mode
   // might change screen size. We should avoid to show intermediate animation
@@ -746,47 +766,50 @@ ImageEditor.prototype.enterModeByName_ = function(name) {
  * @return {boolean} True if handled.
  */
 ImageEditor.prototype.onKeyDown = function(event) {
-  switch (util.getKeyModifiers(event) + event.keyIdentifier) {
-    case 'U+001B': // Escape
+  if (this.currentMode_ && this.currentMode_.isConsumingKeyEvents())
+    return false;
+
+  switch (util.getKeyModifiers(event) + event.key) {
+    case 'Escape':
     case 'Enter':
       if (this.getMode()) {
-        this.leaveModeInternal_(event.keyIdentifier === 'Enter',
+        this.leaveModeInternal_(event.key === 'Enter',
             false /* not to switch mode */);
         return true;
       }
       break;
 
-    case 'Ctrl-U+005A':  // Ctrl+Z
+    case 'Ctrl-z':  // Ctrl+Z
       if (this.commandQueue_.canUndo()) {
         this.undo();
         return true;
       }
       break;
 
-    case 'Ctrl-U+0059':  // Ctrl+Y
+    case 'Ctrl-y':  // Ctrl+Y
       if (this.commandQueue_.canRedo()) {
         this.redo();
         return true;
       }
       break;
 
-    case 'U+0041':  // 'a'
+    case 'a':
       this.enterModeByName_('autofix');
       return true;
 
-    case 'U+0042':  // 'b'
+    case 'b':
       this.enterModeByName_('exposure');
       return true;
 
-    case 'U+0043':  // 'c'
+    case 'c':
       this.enterModeByName_('crop');
       return true;
 
-    case 'U+004C':  // 'l'
+    case 'l':
       this.enterModeByName_('rotate_left');
       return true;
 
-    case 'U+0052':  // 'r'
+    case 'r':
       this.enterModeByName_('rotate_right');
       return true;
   }
@@ -807,6 +830,13 @@ ImageEditor.prototype.onDoubleTap_ = function(x, y) {
     else if (action === ImageBuffer.DoubleTapAction.CANCEL)
       this.leaveModeInternal_(false, false /* not to switch mode */);
   }
+};
+
+/**
+ * Called when the user starts editing image.
+ */
+ImageEditor.prototype.onStartEditing = function() {
+  this.calculateModeApplicativity_();
 };
 
 /**
@@ -1112,7 +1142,14 @@ ImageEditor.Toolbar = function(
    */
   this.updateCallback_ = opt_updateCallback || null;
 
-  // Create action buttons.
+  /**
+   * @private {!HTMLElement}
+   */
+  this.container_ = /** @type {!HTMLElement} */ (document.createElement('div'));
+  this.container_.classList.add('container');
+  this.wrapper_.appendChild(this.container_);
+
+    // Create action buttons.
   if (opt_showActionButtons) {
     var actionButtonsLayer = document.createElement('div');
     actionButtonsLayer.classList.add('action-buttons');
@@ -1129,13 +1166,6 @@ ImageEditor.Toolbar = function(
 
     this.wrapper_.appendChild(actionButtonsLayer);
   }
-
-  /**
-   * @private {!HTMLElement}
-   */
-  this.container_ = /** @type {!HTMLElement} */ (document.createElement('div'));
-  this.container_.classList.add('container');
-  this.wrapper_.appendChild(this.container_);
 };
 
 ImageEditor.Toolbar.prototype.__proto__ = cr.EventTarget.prototype;
@@ -1264,7 +1294,7 @@ ImageEditor.Toolbar.createButton_ = function(
   button.addEventListener('keydown', function(event) {
     // Stop propagation of Enter key event to prevent it from being captured by
     // image editor.
-    if (event.keyIdentifier === 'Enter')
+    if (event.key === 'Enter')
       event.stopPropagation();
   });
 
@@ -1286,6 +1316,53 @@ ImageEditor.Toolbar.prototype.addButton = function(
       title, type, handler, opt_class);
   this.add(button);
   return button;
+};
+
+/**
+ * Add a input field.
+ *
+ * @param {string} name Input name
+ * @param {string} title Input title
+ * @param {function(Event)} handler onInput and onChange handler
+ * @param {string|number} value Default value
+ * @param {string=} opt_unit Unit for an input field
+ * @return {!HTMLElement} Input Element
+ */
+ImageEditor.Toolbar.prototype.addInput = function(
+    name, title, handler, value, opt_unit) {
+
+  var input = /** @type {!HTMLElement} */ (document.createElement('div'));
+  input.classList.add('input', name);
+
+  var text = document.createElement('paper-input');
+  text.setAttribute('label', strf(title));
+  text.classList.add('text', name);
+  text.value = value;
+
+  // We should listen to not only 'change' event, but also 'input' because we
+  // want to update values as soon as the user types characters.
+  text.addEventListener('input', handler, false);
+  text.addEventListener('change', handler, false);
+  input.appendChild(text);
+
+  if(opt_unit) {
+    var unit_label = document.createElement('span');
+    unit_label.textContent = opt_unit;
+    unit_label.classList.add('unit_label');
+    input.appendChild(unit_label);
+  }
+
+  input.name = name;
+  input.getValue = function(text) {
+    return text.value;
+  }.bind(this, text);
+  input.setValue = function(text, value) {
+    text.value = value;
+  }.bind(this, text);
+
+  this.add(input);
+
+  return input;
 };
 
 /**
@@ -1334,7 +1411,7 @@ ImageEditor.Toolbar.prototype.addRange = function(
   // Swallow the left and right keys, so they are not handled by other
   // listeners.
   range.addEventListener('keydown', function(e) {
-    if (e.keyIdentifier === 'Left' || e.keyIdentifier === 'Right')
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
       e.stopPropagation();
   });
 
@@ -1377,6 +1454,14 @@ ImageEditor.Toolbar.prototype.show = function(on) {
     return;  // Do not show empty toolbar;
 
   this.wrapper_.hidden = !on;
+
+  // Focus the first input on the toolbar.
+  if (on) {
+    var input = this.container_.querySelector(
+       'button, paper-button, input, paper-input, paper-slider');
+    if (input)
+      input.focus();
+  }
 };
 
 /** A prompt panel for the editor.

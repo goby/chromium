@@ -4,6 +4,7 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 
+#include "base/command_line.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_unittest_base.h"
@@ -14,7 +15,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_mock.h"
 
-using ::gfx::MockGLInterface;
+using ::gl::MockGLInterface;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
@@ -33,7 +34,21 @@ class GLES2DecoderTest1 : public GLES2DecoderTestBase {
   GLES2DecoderTest1() { }
 };
 
+class GLES3DecoderTest1 : public GLES2DecoderTest1 {
+ public:
+  GLES3DecoderTest1() { shader_language_version_ = 300; }
+ protected:
+  void SetUp() override {
+    InitState init;
+    init.gl_version = "OpenGL ES 3.0";
+    init.bind_generates_resource = true;
+    init.context_type = CONTEXT_TYPE_OPENGLES3;
+    InitDecoder(init);
+  }
+};
+
 INSTANTIATE_TEST_CASE_P(Service, GLES2DecoderTest1, ::testing::Bool());
+INSTANTIATE_TEST_CASE_P(Service, GLES3DecoderTest1, ::testing::Bool());
 
 template <>
 void GLES2DecoderTestBase::SpecializedSetup<cmds::GenerateMipmap, 0>(
@@ -172,6 +187,18 @@ void GLES2DecoderTestBase::SpecializedSetup<cmds::GetProgramiv, 0>(
         .RetiresOnSaturation();
     EXPECT_CALL(*gl_, GetError())
         .WillOnce(Return(GL_NO_ERROR))
+        .RetiresOnSaturation();
+  }
+}
+
+template <>
+void GLES2DecoderTestBase::
+    SpecializedSetup<cmds::GenTransformFeedbacksImmediate, 0>(bool valid) {
+  if (valid) {
+    // Transform feedbacks are per-context, not per-group, so they get cleaned
+    // up at the end of the test.
+    EXPECT_CALL(*gl_, DeleteTransformFeedbacks(_, _))
+        .Times(1)
         .RetiresOnSaturation();
   }
 }

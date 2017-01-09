@@ -5,14 +5,17 @@
 #ifndef IOS_CHROME_BROWSER_METRICS_IOS_CHROME_METRICS_SERVICES_MANAGER_CLIENT_H_
 #define IOS_CHROME_BROWSER_METRICS_IOS_CHROME_METRICS_SERVICES_MANAGER_CLIENT_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "base/metrics/field_trial.h"
 #include "base/threading/thread_checker.h"
 #include "components/metrics_services_manager/metrics_services_manager_client.h"
 
 class PrefService;
 
 namespace metrics {
+class EnabledStateProvider;
 class MetricsStateManager;
 }
 
@@ -25,11 +28,20 @@ class IOSChromeMetricsServicesManagerClient
   ~IOSChromeMetricsServicesManagerClient() override;
 
  private:
+  // This is defined as a member class to get access to
+  // IOSChromeMetricsServiceAccessor through
+  // IOSChromeMetricsServicesManagerClient's friendship.
+  class IOSChromeEnabledStateProvider;
+
   // metrics_services_manager::MetricsServicesManagerClient:
-  scoped_ptr<rappor::RapporService> CreateRapporService() override;
-  scoped_ptr<variations::VariationsService> CreateVariationsService() override;
-  scoped_ptr<metrics::MetricsServiceClient> CreateMetricsServiceClient()
+  std::unique_ptr<rappor::RapporServiceImpl> CreateRapporServiceImpl() override;
+  std::unique_ptr<variations::VariationsService> CreateVariationsService()
       override;
+  std::unique_ptr<metrics::MetricsServiceClient> CreateMetricsServiceClient()
+      override;
+  std::unique_ptr<const base::FieldTrial::EntropyProvider>
+  CreateEntropyProvider() override;
+
   net::URLRequestContextGetter* GetURLRequestContext() override;
   bool IsSafeBrowsingEnabled(const base::Closure& on_update_callback) override;
   bool IsMetricsReportingEnabled() override;
@@ -40,7 +52,11 @@ class IOSChromeMetricsServicesManagerClient
   metrics::MetricsStateManager* GetMetricsStateManager();
 
   // MetricsStateManager which is passed as a parameter to service constructors.
-  scoped_ptr<metrics::MetricsStateManager> metrics_state_manager_;
+  std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager_;
+
+  // EnabledStateProvider to communicate if the client has consented to metrics
+  // reporting, and if it's enabled.
+  std::unique_ptr<metrics::EnabledStateProvider> enabled_state_provider_;
 
   // Ensures that all functions are called from the same thread.
   base::ThreadChecker thread_checker_;

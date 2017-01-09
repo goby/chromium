@@ -5,7 +5,12 @@
 #ifndef MEDIA_CAST_SENDER_EXTERNAL_VIDEO_ENCODER_H_
 #define MEDIA_CAST_SENDER_EXTERNAL_VIDEO_ENCODER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/sender/size_adaptable_video_encoder_base.h"
@@ -23,13 +28,13 @@ class ExternalVideoEncoder : public VideoEncoder {
  public:
   // Returns true if the current platform and system configuration supports
   // using ExternalVideoEncoder with the given |video_config|.
-  static bool IsSupported(const VideoSenderConfig& video_config);
+  static bool IsSupported(const FrameSenderConfig& video_config);
 
   ExternalVideoEncoder(
       const scoped_refptr<CastEnvironment>& cast_environment,
-      const VideoSenderConfig& video_config,
+      const FrameSenderConfig& video_config,
       const gfx::Size& frame_size,
-      uint32 first_frame_id,
+      FrameId first_frame_id,
       const StatusChangeCallback& status_change_cb,
       const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
       const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb);
@@ -51,11 +56,11 @@ class ExternalVideoEncoder : public VideoEncoder {
   // VEAClientImpl to own and interface with a new |vea|.  Upon return,
   // |client_| holds a reference to the new VEAClientImpl.
   void OnCreateVideoEncodeAccelerator(
-      const VideoSenderConfig& video_config,
-      uint32 first_frame_id,
+      const FrameSenderConfig& video_config,
+      FrameId first_frame_id,
       const StatusChangeCallback& status_change_cb,
       scoped_refptr<base::SingleThreadTaskRunner> encoder_task_runner,
-      scoped_ptr<media::VideoEncodeAccelerator> vea);
+      std::unique_ptr<media::VideoEncodeAccelerator> vea);
 
   const scoped_refptr<CastEnvironment> cast_environment_;
   const CreateVideoEncodeMemoryCallback create_video_encode_memory_cb_;
@@ -81,7 +86,7 @@ class SizeAdaptableExternalVideoEncoder : public SizeAdaptableVideoEncoderBase {
  public:
   SizeAdaptableExternalVideoEncoder(
       const scoped_refptr<CastEnvironment>& cast_environment,
-      const VideoSenderConfig& video_config,
+      const FrameSenderConfig& video_config,
       const StatusChangeCallback& status_change_cb,
       const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
       const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb);
@@ -89,7 +94,7 @@ class SizeAdaptableExternalVideoEncoder : public SizeAdaptableVideoEncoderBase {
   ~SizeAdaptableExternalVideoEncoder() final;
 
  protected:
-  scoped_ptr<VideoEncoder> CreateEncoder() final;
+  std::unique_ptr<VideoEncoder> CreateEncoder() final;
 
  private:
   // Special callbacks needed by media::cast::ExternalVideoEncoder.
@@ -149,7 +154,7 @@ class QuantizerEstimator {
   // A cache of a subset of rows of pixels from the last frame examined.  This
   // is used to compute the entropy of the difference between frames, which in
   // turn is used to compute the entropy and quantizer.
-  scoped_ptr<uint8[]> last_frame_pixel_buffer_;
+  std::unique_ptr<uint8_t[]> last_frame_pixel_buffer_;
   gfx::Size last_frame_size_;
 
   DISALLOW_COPY_AND_ASSIGN(QuantizerEstimator);

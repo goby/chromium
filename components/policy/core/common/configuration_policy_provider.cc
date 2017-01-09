@@ -42,14 +42,13 @@ bool ConfigurationPolicyProvider::IsInitializationComplete(
 }
 
 void ConfigurationPolicyProvider::UpdatePolicy(
-    scoped_ptr<PolicyBundle> bundle) {
+    std::unique_ptr<PolicyBundle> bundle) {
   if (bundle.get())
     policy_bundle_.Swap(bundle.get());
   else
     policy_bundle_.Clear();
-  FOR_EACH_OBSERVER(ConfigurationPolicyProvider::Observer,
-                    observer_list_,
-                    OnUpdatePolicy(this));
+  for (auto& observer : observer_list_)
+    observer.OnUpdatePolicy(this);
 }
 
 SchemaRegistry* ConfigurationPolicyProvider::schema_registry() const {

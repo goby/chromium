@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,49 +6,34 @@
 
 namespace net {
 
-NextProtoVector NextProtosDefaults() {
-  NextProtoVector next_protos;
-  next_protos.push_back(kProtoHTTP2);
-  next_protos.push_back(kProtoSPDY31);
-  next_protos.push_back(kProtoHTTP11);
-  return next_protos;
-}
-
-NextProtoVector NextProtosWithSpdyAndQuic(bool spdy_enabled,
-                                          bool quic_enabled) {
-  NextProtoVector next_protos;
-  if (quic_enabled)
-    next_protos.push_back(kProtoQUIC1SPDY3);
-  if (spdy_enabled) {
-    next_protos.push_back(kProtoHTTP2);
-    next_protos.push_back(kProtoSPDY31);
+NextProto NextProtoFromString(base::StringPiece proto_string) {
+  if (proto_string == "http1.1" || proto_string == "http/1.1")
+    return kProtoHTTP11;
+  // "npn-h2" and "npn-spdy/3.1" are accepted here so that persisted
+  // settings with the old string can be loaded from disk.
+  // TODO(bnc):  Remove around 2016 December.
+  if (proto_string == "h2" || proto_string == "npn-h2" ||
+      proto_string == "npn-spdy/3.1") {
+    return kProtoHTTP2;
   }
-  next_protos.push_back(kProtoHTTP11);
-  return next_protos;
+  if (proto_string == "quic")
+    return kProtoQUIC;
+
+  return kProtoUnknown;
 }
 
-NextProtoVector NextProtosSpdy31() {
-  NextProtoVector next_protos;
-  next_protos.push_back(kProtoQUIC1SPDY3);
-  next_protos.push_back(kProtoSPDY31);
-  next_protos.push_back(kProtoHTTP11);
-  return next_protos;
-}
-
-bool NextProtoIsSPDY(NextProto next_proto) {
-  return next_proto >= kProtoSPDYMinimumVersion &&
-         next_proto <= kProtoSPDYMaximumVersion;
-}
-
-void DisableHTTP2(NextProtoVector* next_protos) {
-  for (NextProtoVector::iterator it = next_protos->begin();
-       it != next_protos->end();) {
-    if (*it == kProtoHTTP2) {
-      it = next_protos->erase(it);
-      continue;
-    }
-    ++it;
+const char* NextProtoToString(NextProto next_proto) {
+  switch (next_proto) {
+    case kProtoHTTP11:
+      return "http/1.1";
+    case kProtoHTTP2:
+      return "h2";
+    case kProtoQUIC:
+      return "quic";
+    case kProtoUnknown:
+      break;
   }
+  return "unknown";
 }
 
 }  // namespace net

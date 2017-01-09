@@ -1,19 +1,18 @@
 Item 1
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
+      "drawsContent": true
+    },
+    {
+      "name": "LayoutBlockFlow DIV id='composited-container'",
+      "position": [8, 8],
+      "bounds": [784, 0],
       "drawsContent": true,
-      "children": [
-        {
-          "position": [8, 8],
-          "bounds": [784, 0],
-          "drawsContent": true,
-          "backfaceVisibility": "hidden"
-        }
-      ]
+      "backfaceVisibility": "hidden"
     }
   ]
 }

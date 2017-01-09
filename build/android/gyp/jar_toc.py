@@ -53,11 +53,13 @@ def CallJavap(classpath, classes):
 def ExtractToc(disassembled_classes):
   # javap output is structured by indent (2-space) levels.
   good_patterns = [
-      '^[^ ]', # This includes all class/function/member signatures.
+      '^[^ ]', # This includes all class signatures.
       '^  SourceFile:',
       '^  minor version:',
       '^  major version:',
       '^  Constant value:',
+      '^  public ',
+      '^  protected ',
       ]
   bad_patterns = [
       '^const #', # Matches the constant pool (i.e. literals used in the class).
@@ -105,17 +107,10 @@ def main():
 
   options, _ = parser.parse_args()
 
-  if options.depfile:
-    build_utils.WriteDepfile(
-        options.depfile,
-        build_utils.GetPythonDependencies())
-
   DoJarToc(options)
 
   if options.depfile:
-    build_utils.WriteDepfile(
-        options.depfile,
-        build_utils.GetPythonDependencies())
+    build_utils.WriteDepfile(options.depfile, options.toc_path)
 
   if options.stamp:
     build_utils.Touch(options.stamp)

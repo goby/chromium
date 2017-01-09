@@ -29,208 +29,93 @@
  */
 
 /**
- * @constructor
- * @implements {WebInspector.CSSSourceMapping}
- * @param {!WebInspector.CSSStyleModel} cssModel
- * @param {!WebInspector.NetworkMapping} networkMapping
- * @param {!WebInspector.NetworkProject} networkProject
+ * @unrestricted
  */
-WebInspector.SASSSourceMapping = function(cssModel, networkMapping, networkProject)
-{
+Bindings.SASSSourceMapping = class {
+  /**
+   * @param {!SDK.CSSModel} cssModel
+   * @param {!Workspace.Workspace} workspace
+   * @param {!Bindings.NetworkProject} networkProject
+   */
+  constructor(cssModel, workspace, networkProject) {
     this._cssModel = cssModel;
     this._networkProject = networkProject;
-    this._reset();
-    WebInspector.moduleSetting("cssSourceMapsEnabled").addChangeListener(this._toggleSourceMapSupport, this);
-    this._cssModel.addEventListener(WebInspector.CSSStyleModel.Events.StyleSheetChanged, this._styleSheetChanged, this);
-    cssModel.target().resourceTreeModel.addEventListener(WebInspector.ResourceTreeModel.EventTypes.MainFrameNavigated, this._reset, this);
-    this._networkMapping = networkMapping;
-}
+    this._workspace = workspace;
+    this._eventListeners = [
+      this._cssModel.addEventListener(SDK.CSSModel.Events.SourceMapAttached, this._sourceMapAttached, this),
+      this._cssModel.addEventListener(SDK.CSSModel.Events.SourceMapDetached, this._sourceMapDetached, this),
+      this._cssModel.addEventListener(SDK.CSSModel.Events.SourceMapChanged, this._sourceMapChanged, this)
+    ];
+  }
 
-WebInspector.SASSSourceMapping.prototype = {
-    /**
-     * @param {!WebInspector.Event} event
-     */
-    _styleSheetChanged: function(event)
-    {
-        var id = /** @type {!CSSAgent.StyleSheetId} */ (event.data.styleSheetId);
-        var header = this._cssModel.styleSheetHeaderForId(id);
-        if (!header)
-            return;
-        this.removeHeader(header);
-        this.addHeader(header);
-    },
-
-    /**
-     * @param {!WebInspector.Event} event
-     */
-    _toggleSourceMapSupport: function(event)
-    {
-        var enabled = /** @type {boolean} */ (event.data);
-        var headers = this._cssModel.styleSheetHeaders();
-        for (var i = 0; i < headers.length; ++i) {
-            if (enabled)
-                this.addHeader(headers[i]);
-            else
-                this.removeHeader(headers[i]);
-        }
-    },
-
-    /**
-     * @param {!WebInspector.CSSStyleSheetHeader} header
-     */
-    addHeader: function(header)
-    {
-        if (!header.sourceMapURL || !header.sourceURL || !WebInspector.moduleSetting("cssSourceMapsEnabled").get())
-            return;
-        var completeSourceMapURL = WebInspector.ParsedURL.completeURL(header.sourceURL, header.sourceMapURL);
-        if (!completeSourceMapURL)
-            return;
-        this._loadSourceMap(completeSourceMapURL, header.sourceURL, sourceMapLoaded.bind(this));
-
-        /**
-         * @param {?WebInspector.SourceMap} sourceMap
-         * @this {WebInspector.SASSSourceMapping}
-         */
-        function sourceMapLoaded(sourceMap)
-        {
-            if (sourceMap)
-                this._sourceMapByStyleSheetURL[header.sourceURL] = sourceMap;
-            else
-                delete this._sourceMapByStyleSheetURL[header.sourceURL];
-            WebInspector.cssWorkspaceBinding.pushSourceMapping(header, this);
-        }
-
-    },
-
-    /**
-     * @param {!WebInspector.CSSStyleSheetHeader} header
-     */
-    removeHeader: function(header)
-    {
-        if (!header.sourceURL)
-            return;
-        delete this._sourceMapByStyleSheetURL[header.sourceURL];
-        WebInspector.cssWorkspaceBinding.updateLocations(header);
-    },
-
-    /**
-     * @param {string} completeSourceMapURL
-     * @param {string} sourceURL
-     * @param {function(?WebInspector.SourceMap)} callback
-     */
-    _loadSourceMap: function(completeSourceMapURL, sourceURL, callback)
-    {
-        var sourceMap = this._sourceMapByURL[completeSourceMapURL];
-        if (sourceMap) {
-            callback(sourceMap);
-            return;
-        }
-
-        var pendingCallbacks = this._pendingSourceMapLoadingCallbacks[completeSourceMapURL];
-        if (pendingCallbacks) {
-            pendingCallbacks.push(callback);
-            return;
-        }
-
-        pendingCallbacks = [callback];
-        this._pendingSourceMapLoadingCallbacks[completeSourceMapURL] = pendingCallbacks;
-
-        WebInspector.SourceMap.load(completeSourceMapURL, sourceURL, sourceMapLoaded.bind(this));
-
-        /**
-         * @param {?WebInspector.SourceMap} sourceMap
-         * @this {WebInspector.SASSSourceMapping}
-         */
-        function sourceMapLoaded(sourceMap)
-        {
-            var callbacks = this._pendingSourceMapLoadingCallbacks[completeSourceMapURL];
-            delete this._pendingSourceMapLoadingCallbacks[completeSourceMapURL];
-
-            if (sourceMap)
-                this._sourceMapByURL[completeSourceMapURL] = sourceMap;
-            else
-                delete this._sourceMapByURL[completeSourceMapURL];
-
-            // Then report sources.
-            var sources = sourceMap ? sourceMap.sources() : [];
-            for (var i = 0; i < sources.length; ++i) {
-                var sassURL = sources[i];
-                if (!this._networkMapping.hasMappingForURL(sassURL)) {
-                    var contentProvider = sourceMap.sourceContentProvider(sassURL, WebInspector.resourceTypes.SourceMapStyleSheet);
-                    this._networkProject.addFileForURL(sassURL, contentProvider);
-                }
-            }
-
-            for (var i = 0; callbacks && i < callbacks.length; ++i)
-                callbacks[i](sourceMap);
-        }
-    },
-
-    /**
-     * @override
-     * @param {!WebInspector.CSSLocation} rawLocation
-     * @return {?WebInspector.UILocation}
-     */
-    rawLocationToUILocation: function(rawLocation)
-    {
-        var sourceMap = this._sourceMapByStyleSheetURL[rawLocation.url];
-        if (!sourceMap)
-            return null;
-        var entry = sourceMap.findEntry(rawLocation.lineNumber, rawLocation.columnNumber);
-        if (!entry || !entry.sourceURL)
-            return null;
-        var uiSourceCode = this._networkMapping.uiSourceCodeForURL(entry.sourceURL, rawLocation.target());
-        if (!uiSourceCode)
-            return null;
-        return uiSourceCode.uiLocation(entry.sourceLineNumber, entry.sourceColumnNumber);
-    },
-
-    /**
-     * @override
-     * @param {!WebInspector.UISourceCode} uiSourceCode
-     * @param {number} lineNumber
-     * @param {number} columnNumber
-     * @return {?WebInspector.CSSLocation}
-     */
-    uiLocationToRawLocation: function(uiSourceCode, lineNumber, columnNumber)
-    {
-        return null;
-    },
-
-    /**
-     * @override
-     * @return {boolean}
-     */
-    isIdentity: function()
-    {
-        return false;
-    },
-
-    /**
-     * @override
-     * @param {!WebInspector.UISourceCode} uiSourceCode
-     * @param {number} lineNumber
-     * @return {boolean}
-     */
-    uiLineHasMapping: function(uiSourceCode, lineNumber)
-    {
-        return true;
-    },
-
-    /**
-     * @return {!WebInspector.Target}
-     */
-    target: function()
-    {
-        return this._cssModel.target();
-    },
-
-    _reset: function()
-    {
-        /** @type {!Object.<string, !Array.<function(?WebInspector.SourceMap)>>} */
-        this._pendingSourceMapLoadingCallbacks = {};
-        /** @type {!Object.<string, !WebInspector.SourceMap>} */
-        this._sourceMapByURL = {};
-        this._sourceMapByStyleSheetURL = {};
+  /**
+   * @param {!Common.Event} event
+   */
+  _sourceMapAttached(event) {
+    var header = /** @type {!SDK.CSSStyleSheetHeader} */ (event.data);
+    var sourceMap = this._cssModel.sourceMapForHeader(header);
+    for (var sassURL of sourceMap.sourceURLs()) {
+      var contentProvider = sourceMap.sourceContentProvider(sassURL, Common.resourceTypes.SourceMapStyleSheet);
+      var embeddedContent = sourceMap.embeddedContentByURL(sassURL);
+      var embeddedContentLength = typeof embeddedContent === 'string' ? embeddedContent.length : null;
+      this._networkProject.addFile(
+          contentProvider, SDK.ResourceTreeFrame.fromStyleSheet(header), false, embeddedContentLength);
     }
-}
+    Bindings.cssWorkspaceBinding.updateLocations(header);
+  }
+
+  /**
+   * @param {!Common.Event} event
+   */
+  _sourceMapDetached(event) {
+    var header = /** @type {!SDK.CSSStyleSheetHeader} */ (event.data);
+    Bindings.cssWorkspaceBinding.updateLocations(header);
+  }
+
+  /**
+   * @param {!Common.Event} event
+   */
+  _sourceMapChanged(event) {
+    var sourceMap = /** @type {!SDK.SourceMap} */ (event.data.sourceMap);
+    var newSources = /** @type {!Map<string, string>} */ (event.data.newSources);
+    var headers = this._cssModel.headersForSourceMap(sourceMap);
+    var handledUISourceCodes = new Set();
+    for (var header of headers) {
+      Bindings.cssWorkspaceBinding.updateLocations(header);
+      for (var sourceURL of newSources.keys()) {
+        var uiSourceCode = Bindings.NetworkProject.uiSourceCodeForStyleURL(this._workspace, sourceURL, header);
+        if (!uiSourceCode) {
+          console.error('Failed to update source for ' + sourceURL);
+          continue;
+        }
+        if (handledUISourceCodes.has(uiSourceCode))
+          continue;
+        handledUISourceCodes.add(uiSourceCode);
+        var sassText = /** @type {string} */ (newSources.get(sourceURL));
+        uiSourceCode.setWorkingCopy(sassText);
+      }
+    }
+  }
+
+  /**
+   * @param {!SDK.CSSLocation} rawLocation
+   * @return {?Workspace.UILocation}
+   */
+  rawLocationToUILocation(rawLocation) {
+    var sourceMap = this._cssModel.sourceMapForHeader(rawLocation.header());
+    if (!sourceMap)
+      return null;
+    var entry = sourceMap.findEntry(rawLocation.lineNumber, rawLocation.columnNumber);
+    if (!entry || !entry.sourceURL)
+      return null;
+    var uiSourceCode =
+        Bindings.NetworkProject.uiSourceCodeForStyleURL(this._workspace, entry.sourceURL, rawLocation.header());
+    if (!uiSourceCode)
+      return null;
+    return uiSourceCode.uiLocation(entry.sourceLineNumber || 0, entry.sourceColumnNumber);
+  }
+
+  dispose() {
+    Common.EventTarget.removeEventListeners(this._eventListeners);
+  }
+};

@@ -6,6 +6,7 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "components/nacl/browser/nacl_broker_service_win.h"
 #include "components/nacl/browser/nacl_browser.h"
 #include "components/nacl/common/nacl_cmd_line.h"
@@ -16,8 +17,9 @@
 #include "content/public/browser/child_process_data.h"
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/mojo_channel_switches.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
-#include "ipc/ipc_switches.h"
+#include "mojo/edk/embedder/embedder.h"
 
 namespace {
 // NOTE: changes to this class need to be reviewed by the security team.
@@ -39,17 +41,22 @@ class NaClBrokerSandboxedProcessLauncherDelegate
 namespace nacl {
 
 NaClBrokerHost::NaClBrokerHost() : is_terminating_(false) {
-  process_.reset(content::BrowserChildProcessHost::Create(
-      static_cast<content::ProcessType>(PROCESS_TYPE_NACL_BROKER), this));
 }
 
 NaClBrokerHost::~NaClBrokerHost() {
 }
 
 bool NaClBrokerHost::Init() {
+  const std::string mojo_child_token = mojo::edk::GenerateRandomToken();
+  DCHECK(!process_);
+  process_.reset(content::BrowserChildProcessHost::Create(
+      static_cast<content::ProcessType>(PROCESS_TYPE_NACL_BROKER), this,
+      mojo_child_token));
+
   // Create the channel that will be used for communicating with the broker.
-  std::string channel_id = process_->GetHost()->CreateChannel();
-  if (channel_id.empty())
+  const std::string mojo_channel_token =
+      process_->GetHost()->CreateChannelMojo(mojo_child_token);
+  if (mojo_channel_token.empty())
     return false;
 
   // Create the path to the nacl broker/loader executable.
@@ -62,12 +69,11 @@ bool NaClBrokerHost::Init() {
 
   cmd_line->AppendSwitchASCII(switches::kProcessType,
                               switches::kNaClBrokerProcess);
-  cmd_line->AppendSwitchASCII(switches::kProcessChannelID, channel_id);
+  cmd_line->AppendSwitchASCII(switches::kMojoChannelToken, mojo_channel_token);
   if (NaClBrowser::GetDelegate()->DialogsAreSuppressed())
     cmd_line->AppendSwitch(switches::kNoErrorDialogs);
 
-  process_->Launch(new NaClBrokerSandboxedProcessLauncherDelegate,
-                   cmd_line,
+  process_->Launch(new NaClBrokerSandboxedProcessLauncherDelegate, cmd_line,
                    true);
   return true;
 }
@@ -83,18 +89,20 @@ bool NaClBrokerHost::OnMessageReceived(const IPC::Message& msg) {
   return handled;
 }
 
-bool NaClBrokerHost::LaunchLoader(const std::string& loader_channel_id) {
+bool NaClBrokerHost::LaunchLoader(const std::string& loader_channel_token) {
   return process_->Send(
-      new NaClProcessMsg_LaunchLoaderThroughBroker(loader_channel_id));
+      new NaClProcessMsg_LaunchLoaderThroughBroker(loader_channel_token));
 }
 
-void NaClBrokerHost::OnLoaderLaunched(const std::string& loader_channel_id,
+void NaClBrokerHost::OnLoaderLaunched(const std::string& loader_channel_token,
                                       base::ProcessHandle handle) {
-  NaClBrokerService::GetInstance()->OnLoaderLaunched(loader_channel_id, handle);
+  NaClBrokerService::GetInstance()->OnLoaderLaunched(loader_channel_token,
+                                                     handle);
 }
 
 bool NaClBrokerHost::LaunchDebugExceptionHandler(
-    int32 pid, base::ProcessHandle process_handle,
+    int32_t pid,
+    base::ProcessHandle process_handle,
     const std::string& startup_info) {
   base::ProcessHandle broker_process = process_->GetData().handle;
   base::ProcessHandle handle_in_broker_process;
@@ -106,7 +114,8 @@ bool NaClBrokerHost::LaunchDebugExceptionHandler(
       pid, handle_in_broker_process, startup_info));
 }
 
-void NaClBrokerHost::OnDebugExceptionHandlerLaunched(int32 pid, bool success) {
+void NaClBrokerHost::OnDebugExceptionHandlerLaunched(int32_t pid,
+                                                     bool success) {
   NaClBrokerService::GetInstance()->OnDebugExceptionHandlerLaunched(pid,
                                                                     success);
 }

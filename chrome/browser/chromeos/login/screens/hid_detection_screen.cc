@@ -4,8 +4,10 @@
 
 #include "chrome/browser/chromeos/login/screens/hid_detection_screen.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
@@ -27,10 +29,10 @@ const char kBTPairingState[] = "pairing";
 // Standard length of pincode for pairing BT keyboards.
 const int kPincodeLength = 6;
 
-bool DeviceIsPointing(device::BluetoothDevice::DeviceType device_type) {
-  return device_type == device::BluetoothDevice::DEVICE_MOUSE ||
-         device_type == device::BluetoothDevice::DEVICE_KEYBOARD_MOUSE_COMBO ||
-         device_type == device::BluetoothDevice::DEVICE_TABLET;
+bool DeviceIsPointing(device::BluetoothDeviceType device_type) {
+  return device_type == device::BluetoothDeviceType::MOUSE ||
+         device_type == device::BluetoothDeviceType::KEYBOARD_MOUSE_COMBO ||
+         device_type == device::BluetoothDeviceType::TABLET;
 }
 
 bool DeviceIsPointing(const device::InputServiceLinux::InputDeviceInfo& info) {
@@ -38,9 +40,9 @@ bool DeviceIsPointing(const device::InputServiceLinux::InputDeviceInfo& info) {
          info.is_tablet;
 }
 
-bool DeviceIsKeyboard(device::BluetoothDevice::DeviceType device_type) {
-  return device_type == device::BluetoothDevice::DEVICE_KEYBOARD ||
-         device_type == device::BluetoothDevice::DEVICE_KEYBOARD_MOUSE_COMBO;
+bool DeviceIsKeyboard(device::BluetoothDeviceType device_type) {
+  return device_type == device::BluetoothDeviceType::KEYBOARD ||
+         device_type == device::BluetoothDeviceType::KEYBOARD_MOUSE_COMBO;
 }
 
 }  // namespace
@@ -74,11 +76,6 @@ HIDDetectionScreen::~HIDDetectionScreen() {
                              base::Bind(&base::DoNothing));
   if (adapter_.get())
     adapter_->RemoveObserver(this);
-}
-
-void HIDDetectionScreen::PrepareToShow() {
-  if (view_)
-    view_->PrepareToShow();
 }
 
 void HIDDetectionScreen::Show() {
@@ -163,37 +160,37 @@ void HIDDetectionScreen::OnViewDestroyed(HIDDetectionView* view) {
 
 void HIDDetectionScreen::RequestPinCode(device::BluetoothDevice* device) {
   VLOG(1) << "RequestPinCode id = " << device->GetDeviceID()
-          << " name = " << device->GetName();
+          << " name = " << device->GetNameForDisplay();
   device->CancelPairing();
 }
 
 void HIDDetectionScreen::RequestPasskey(device::BluetoothDevice* device) {
   VLOG(1) << "RequestPassKey id = " << device->GetDeviceID()
-          << " name = " << device->GetName();
+          << " name = " << device->GetNameForDisplay();
   device->CancelPairing();
 }
 
 void HIDDetectionScreen::DisplayPinCode(device::BluetoothDevice* device,
                                         const std::string& pincode) {
   VLOG(1) << "DisplayPinCode id = " << device->GetDeviceID()
-          << " name = " << device->GetName();
+          << " name = " << device->GetNameForDisplay();
   GetContextEditor().SetString(kContextKeyPinCode, pincode);
-  SetKeyboardDeviceName_(base::UTF16ToUTF8(device->GetName()));
+  SetKeyboardDeviceName_(base::UTF16ToUTF8(device->GetNameForDisplay()));
   SendKeyboardDeviceNotification();
 }
 
-void HIDDetectionScreen::DisplayPasskey(
-    device::BluetoothDevice* device, uint32 passkey) {
+void HIDDetectionScreen::DisplayPasskey(device::BluetoothDevice* device,
+                                        uint32_t passkey) {
   VLOG(1) << "DisplayPassKey id = " << device->GetDeviceID()
-          << " name = " << device->GetName();
+          << " name = " << device->GetNameForDisplay();
   std::string pincode = base::UintToString(passkey);
   pincode = std::string(kPincodeLength - pincode.length(), '0').append(pincode);
   // No differences in UI for passkey and pincode authentication calls.
   DisplayPinCode(device, pincode);
 }
 
-void HIDDetectionScreen::KeysEntered(
-    device::BluetoothDevice* device, uint32 entered) {
+void HIDDetectionScreen::KeysEntered(device::BluetoothDevice* device,
+                                     uint32_t entered) {
   VLOG(1) << "Number of keys entered " << entered;
   GetContextEditor()
       .SetBoolean(kContextKeyNumKeysEnteredExpected, true)
@@ -201,8 +198,8 @@ void HIDDetectionScreen::KeysEntered(
   SendKeyboardDeviceNotification();
 }
 
-void HIDDetectionScreen::ConfirmPasskey(
-    device::BluetoothDevice* device, uint32 passkey) {
+void HIDDetectionScreen::ConfirmPasskey(device::BluetoothDevice* device,
+                                        uint32_t passkey) {
   VLOG(1) << "Confirm Passkey";
   device->CancelPairing();
 }
@@ -256,19 +253,18 @@ void HIDDetectionScreen::ConnectBTDevice(device::BluetoothDevice* device) {
                       device->IsConnecting();
   if (!device->IsPairable() || device_busy)
     return;
-  device::BluetoothDevice::DeviceType device_type = device->GetDeviceType();
+  device::BluetoothDeviceType device_type = device->GetDeviceType();
 
-  if (device_type == device::BluetoothDevice::DEVICE_MOUSE ||
-      device_type == device::BluetoothDevice::DEVICE_TABLET) {
+  if (device_type == device::BluetoothDeviceType::MOUSE ||
+      device_type == device::BluetoothDeviceType::TABLET) {
     if (mouse_is_pairing_)
       return;
     mouse_is_pairing_ = true;
-  } else if (device_type == device::BluetoothDevice::DEVICE_KEYBOARD) {
+  } else if (device_type == device::BluetoothDeviceType::KEYBOARD) {
     if (keyboard_is_pairing_)
       return;
     keyboard_is_pairing_ = true;
-  } else if (device_type ==
-      device::BluetoothDevice::DEVICE_KEYBOARD_MOUSE_COMBO) {
+  } else if (device_type == device::BluetoothDeviceType::KEYBOARD_MOUSE_COMBO) {
     if (mouse_is_pairing_ && keyboard_is_pairing_)
       return;
     mouse_is_pairing_ = true;
@@ -282,8 +278,7 @@ void HIDDetectionScreen::ConnectBTDevice(device::BluetoothDevice* device) {
                        device->GetAddress(), device_type));
 }
 
-void HIDDetectionScreen::BTConnected(
-    device::BluetoothDevice::DeviceType device_type) {
+void HIDDetectionScreen::BTConnected(device::BluetoothDeviceType device_type) {
   if (DeviceIsPointing(device_type))
     mouse_is_pairing_ = false;
   if (DeviceIsKeyboard(device_type)) {
@@ -297,7 +292,7 @@ void HIDDetectionScreen::BTConnected(
 
 void HIDDetectionScreen::BTConnectError(
     const std::string& address,
-    device::BluetoothDevice::DeviceType device_type,
+    device::BluetoothDeviceType device_type,
     device::BluetoothDevice::ConnectErrorCode error_code) {
   LOG(WARNING) << "BTConnectError while connecting " << address
                << " error code = " << error_code;
@@ -372,24 +367,24 @@ void HIDDetectionScreen::SetKeyboardDeviceName_(const std::string& name) {
 
 void HIDDetectionScreen::DeviceAdded(
     device::BluetoothAdapter* adapter, device::BluetoothDevice* device) {
-  VLOG(1) << "BT input device added id = " << device->GetDeviceID() <<
-      " name = " << device->GetName();
+  VLOG(1) << "BT input device added id = " << device->GetDeviceID()
+          << " name = " << device->GetNameForDisplay();
   TryPairingAsPointingDevice(device);
   TryPairingAsKeyboardDevice(device);
 }
 
 void HIDDetectionScreen::DeviceChanged(
     device::BluetoothAdapter* adapter, device::BluetoothDevice* device) {
-  VLOG(1) << "BT device changed id = " << device->GetDeviceID() << " name = " <<
-      device->GetName();
+  VLOG(1) << "BT device changed id = " << device->GetDeviceID()
+          << " name = " << device->GetNameForDisplay();
   TryPairingAsPointingDevice(device);
   TryPairingAsKeyboardDevice(device);
 }
 
 void HIDDetectionScreen::DeviceRemoved(
     device::BluetoothAdapter* adapter, device::BluetoothDevice* device) {
-  VLOG(1) << "BT device removed id = " << device->GetDeviceID() << " name = " <<
-      device->GetName();
+  VLOG(1) << "BT device removed id = " << device->GetDeviceID()
+          << " name = " << device->GetNameForDisplay();
 }
 
 void HIDDetectionScreen::OnInputDeviceAdded(
@@ -531,9 +526,9 @@ void HIDDetectionScreen::UpdateBTDevices() {
 }
 
 void HIDDetectionScreen::OnStartDiscoverySession(
-    scoped_ptr<device::BluetoothDiscoverySession> discovery_session) {
+    std::unique_ptr<device::BluetoothDiscoverySession> discovery_session) {
   VLOG(1) << "BT Discovery session started";
-  discovery_session_ = discovery_session.Pass();
+  discovery_session_ = std::move(discovery_session);
   UpdateDevices();
 }
 

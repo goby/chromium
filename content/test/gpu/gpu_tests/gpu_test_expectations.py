@@ -4,8 +4,8 @@
 
 from gpu_tests import test_expectations
 
-ANGLE_CONDITIONS = ['d3d9', 'd3d11', 'opengl']
-
+ANGLE_CONDITIONS = ['d3d9', 'd3d11', 'opengl', 'no_angle']
+CMD_DECODER_CONDITIONS = ['passthrough', 'no_passthrough']
 GPU_CONDITIONS = ['amd', 'arm', 'broadcom', 'hisilicon', 'intel', 'imagination',
                   'nvidia', 'qualcomm', 'vivante']
 
@@ -15,6 +15,7 @@ class GpuExpectation(test_expectations.Expectation):
     self.gpu_conditions = []
     self.device_id_conditions = []
     self.angle_conditions = []
+    self.cmd_decoder_conditions = []
     self.max_num_retries = max_num_retries
     assert self.max_num_retries == 0 or expectation == 'flaky'
     super(GpuExpectation, self).__init__(
@@ -28,7 +29,9 @@ class GpuExpectation(test_expectations.Expectation):
       qualcomm, vivante
 
     ANGLE renderer:
-      d3d9, d3d11, opengl
+      d3d9, d3d11, opengl, no_angle
+      no_angle can be used to avoid conflicts between expectations for
+      ANGLE and expectations not for ANGLE
 
     Specific GPUs can be listed as a tuple with vendor name and device ID.
     Examples: ('nvidia', 0x1234), ('arm', 'Mali-T604')
@@ -41,7 +44,22 @@ class GpuExpectation(test_expectations.Expectation):
     if isinstance(condition, tuple):
       c0 = condition[0].lower()
       if c0 in GPU_CONDITIONS:
-        self.device_id_conditions.append((c0, condition[1]))
+        device = condition[1]
+        if isinstance(device, str):
+          # If the device is parseable as an int, that's not allowed.
+          # It's too easy to make a mistake specifying the device ID
+          # as a string instead of an int.
+          was_int = False
+          try:
+            int(device, 0)
+            was_int = True
+          except Exception:
+            pass
+          if was_int:
+            raise ValueError(
+              'Device id %s should have been specified as an integer' %
+              condition[1])
+        self.device_id_conditions.append((c0, device))
       else:
         raise ValueError('Unknown expectation condition: "%s"' % c0)
     else:
@@ -50,12 +68,17 @@ class GpuExpectation(test_expectations.Expectation):
         self.gpu_conditions.append(cl)
       elif cl in ANGLE_CONDITIONS:
         self.angle_conditions.append(cl)
+      elif cl in CMD_DECODER_CONDITIONS:
+        self.cmd_decoder_conditions.append(cl)
       else:
         # Delegate to superclass.
         super(GpuExpectation, self).ParseCondition(condition)
 
 
 class GpuTestExpectations(test_expectations.TestExpectations):
+  def __init__(self, url_prefixes=None):
+    super(GpuTestExpectations, self).__init__(url_prefixes=url_prefixes)
+
   def CreateExpectation(self, expectation, pattern, conditions=None,
                         bug=None):
     return GpuExpectation(expectation, pattern, conditions, bug)
@@ -92,8 +115,12 @@ class GpuTestExpectations(test_expectations.TestExpectations):
       angle_matches = (
         (not expectation.angle_conditions) or
         angle_renderer in expectation.angle_conditions)
+      cmd_decoder = self._GetCommandDecoder(gpu_info)
+      cmd_decoder_matches = (
+        (not expectation.cmd_decoder_conditions) or
+        cmd_decoder in expectation.cmd_decoder_conditions)
 
-    return gpu_matches and angle_matches
+    return gpu_matches and angle_matches and cmd_decoder_matches
 
   def _GetGpuVendorString(self, gpu_info):
     if gpu_info:
@@ -121,11 +148,17 @@ class GpuTestExpectations(test_expectations.TestExpectations):
   def _GetANGLERenderer(self, gpu_info):
     if gpu_info and gpu_info.aux_attributes:
       gl_renderer = gpu_info.aux_attributes.get('gl_renderer')
-      if gl_renderer:
+      if gl_renderer and 'ANGLE' in gl_renderer:
         if 'Direct3D11' in gl_renderer:
           return 'd3d11'
         elif 'Direct3D9' in gl_renderer:
           return 'd3d9'
         elif 'OpenGL' in gl_renderer:
           return 'opengl'
-    return ''
+    return 'no_angle'
+
+  def _GetCommandDecoder(self, gpu_info):
+    if gpu_info and gpu_info.aux_attributes and \
+        gpu_info.aux_attributes.get('passthrough_cmd_decoder', False):
+      return 'passthrough'
+    return 'no_passthrough'

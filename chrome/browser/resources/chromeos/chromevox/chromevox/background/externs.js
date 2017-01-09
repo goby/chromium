@@ -5,6 +5,7 @@
 // Common external variables when compiling ChromeVox background code
 
 var localStorage = {};
+var sessionStorage = {};
 
 /**
  * @type {Object}
@@ -20,6 +21,13 @@ chrome.accessibilityPrivate.setAccessibilityEnabled = function(on) {};
  * @param {boolean} on
  */
 chrome.accessibilityPrivate.setNativeAccessibilityEnabled = function(on) {
+};
+
+/**
+ * @param {boolean} enabled
+ * @param {boolean} capture
+ */
+chrome.accessibilityPrivate.setKeyboardListener = function(enabled, capture) {
 };
 
 /**
@@ -61,7 +69,5 @@ chrome.accessibilityPrivate.onControlHover;
 /** @type ChromeEvent */
 chrome.accessibilityPrivate.onTextChanged;
 
-/** @type ChromeEvent */
-chrome.accessibilityPrivate.onChromeVoxLoadStateChanged;
-/** @type {function()} */
-chrome.accessibilityPrivate.onChromeVoxLoadStateChanged.destroy_;
+/** @type {ChromeEvent|!Object} */
+chrome.accessibilityPrivate.onAccessibilityGesture;

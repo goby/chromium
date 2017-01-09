@@ -7,19 +7,18 @@
 #include <new>
 
 #include <process.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
 #include "base/win/windows_version.h"
 #include "sandbox/win/src/crosscall_client.h"
 #include "sandbox/win/src/handle_closer_agent.h"
-#include "sandbox/win/src/handle_interception.h"
 #include "sandbox/win/src/ipc_tags.h"
 #include "sandbox/win/src/process_mitigations.h"
 #include "sandbox/win/src/restricted_token_utils.h"
 #include "sandbox/win/src/sandbox.h"
+#include "sandbox/win/src/sandbox_nt_util.h"
 #include "sandbox/win/src/sandbox_types.h"
 #include "sandbox/win/src/sharedmem_ipc_client.h"
-#include "sandbox/win/src/sandbox_nt_util.h"
 
 namespace {
 
@@ -76,26 +75,23 @@ bool WarmupWindowsLocales() {
   // warmup all of these functions, but let's not assume that.
   ::GetUserDefaultLangID();
   ::GetUserDefaultLCID();
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-    static GetUserDefaultLocaleNameFunction GetUserDefaultLocaleName_func =
-        NULL;
-    if (!GetUserDefaultLocaleName_func) {
-      HMODULE kernel32_dll = ::GetModuleHandle(kKernel32DllName);
-      if (!kernel32_dll) {
-        return false;
-      }
-      GetUserDefaultLocaleName_func =
-          reinterpret_cast<GetUserDefaultLocaleNameFunction>(
-              GetProcAddress(kernel32_dll, "GetUserDefaultLocaleName"));
-      if (!GetUserDefaultLocaleName_func) {
-        return false;
-      }
+  static GetUserDefaultLocaleNameFunction GetUserDefaultLocaleName_func =
+      NULL;
+  if (!GetUserDefaultLocaleName_func) {
+    HMODULE kernel32_dll = ::GetModuleHandle(kKernel32DllName);
+    if (!kernel32_dll) {
+      return false;
     }
-    wchar_t localeName[LOCALE_NAME_MAX_LENGTH] = {0};
-    return (0 != GetUserDefaultLocaleName_func(
-                     localeName, LOCALE_NAME_MAX_LENGTH * sizeof(wchar_t)));
+    GetUserDefaultLocaleName_func =
+        reinterpret_cast<GetUserDefaultLocaleNameFunction>(
+            GetProcAddress(kernel32_dll, "GetUserDefaultLocaleName"));
+    if (!GetUserDefaultLocaleName_func) {
+      return false;
+    }
   }
-  return true;
+  wchar_t localeName[LOCALE_NAME_MAX_LENGTH] = {0};
+  return (0 != GetUserDefaultLocaleName_func(
+                    localeName, LOCALE_NAME_MAX_LENGTH * sizeof(wchar_t)));
 }
 
 // Used as storage for g_target_services, because other allocation facilities
@@ -168,8 +164,8 @@ bool TargetServicesBase::TestIPCPing(int version) {
   CrossCallReturn answer = {0};
 
   if (1 == version) {
-    uint32 tick1 = ::GetTickCount();
-    uint32 cookie = 717115;
+    uint32_t tick1 = ::GetTickCount();
+    uint32_t cookie = 717115;
     ResultCode code = CrossCall(ipc, IPC_PING1_TAG, cookie, &answer);
 
     if (SBOX_ALL_OK != code) {
@@ -182,7 +178,7 @@ bool TargetServicesBase::TestIPCPing(int version) {
     }
     // We test the first extended answer to be within the bounds of the tick
     // count only if there was no tick count wraparound.
-    uint32 tick2 = ::GetTickCount();
+    uint32_t tick2 = ::GetTickCount();
     if (tick2 >= tick1) {
       if ((answer.extended[0].unsigned_int < tick1) ||
           (answer.extended[0].unsigned_int > tick2)) {
@@ -194,7 +190,7 @@ bool TargetServicesBase::TestIPCPing(int version) {
       return false;
     }
   } else if (2 == version) {
-    uint32 cookie = 717111;
+    uint32_t cookie = 717111;
     InOutCountedBuffer counted_buffer(&cookie, sizeof(cookie));
     ResultCode code = CrossCall(ipc, IPC_PING2_TAG, counted_buffer, &answer);
 
@@ -246,16 +242,6 @@ void ProcessState::SetRevertedToSelf() {
 
 void ProcessState::SetCsrssConnected(bool csrss_connected) {
   csrss_connected_ = csrss_connected;
-}
-
-
-ResultCode TargetServicesBase::DuplicateHandle(HANDLE source_handle,
-                                               DWORD target_process_id,
-                                               HANDLE* target_handle,
-                                               DWORD desired_access,
-                                               DWORD options) {
-  return sandbox::DuplicateHandleProxy(source_handle, target_process_id,
-                                       target_handle, desired_access, options);
 }
 
 }  // namespace sandbox

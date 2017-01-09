@@ -14,10 +14,6 @@
 #include "third_party/pdfium/public/fpdf_formfill.h"
 #include "third_party/pdfium/public/fpdf_text.h"
 
-namespace base {
-class Value;
-}
-
 namespace chrome_pdf {
 
 class PDFiumEngine;
@@ -29,7 +25,9 @@ class PDFiumPage {
              int i,
              const pp::Rect& r,
              bool available);
+  PDFiumPage(const PDFiumPage& that);
   ~PDFiumPage();
+
   // Unloads the PDFium data for this page from memory.
   void Unload();
   // Gets the FPDF_PAGE for this page, loading and parsing it if necessary.
@@ -42,8 +40,17 @@ class PDFiumPage {
   // Returns FPDF_TEXTPAGE for the page, loading and parsing it if necessary.
   FPDF_TEXTPAGE GetTextPage();
 
-  // Returns a DictionaryValue version of the page.
-  base::Value* GetAccessibleContentAsValue(int rotation);
+  // Given a start char index, find the longest continuous run of text that's
+  // in a single direction and with the same style and font size. Return the
+  // length of that sequence and its font size and bounding box.
+  void GetTextRunInfo(int start_char_index,
+                      uint32_t* out_len,
+                      double* out_font_size,
+                      pp::FloatRect* out_bounds);
+  // Get a unicode character from the page.
+  uint32_t GetCharUnicode(int char_index);
+  // Get the bounds of a character in page pixels.
+  pp::FloatRect GetCharBounds(int char_index);
 
   enum Area {
     NONSELECTABLE_AREA,
@@ -79,7 +86,7 @@ class PDFiumPage {
                         double top,
                         double right,
                         double bottom,
-                        int rotation);
+                        int rotation) const;
 
   int index() const { return index_; }
   pp::Rect rect() const { return rect_; }
@@ -102,15 +109,9 @@ class PDFiumPage {
   void CalculateLinks();
   // Returns link type and target associated with a link. Returns
   // NONSELECTABLE_AREA if link detection failed.
-  Area GetLinkTarget(FPDF_LINK link, LinkTarget* target);
+  Area GetLinkTarget(FPDF_LINK link, LinkTarget* target) const;
   // Returns target associated with a destination.
-  Area GetDestinationTarget(FPDF_DEST destination, LinkTarget* target);
-  // Returns the text in the supplied box as a Value Node
-  base::Value* GetTextBoxAsValue(double page_height, double left, double top,
-                                 double right, double bottom, int rotation);
-  // Helper functions for JSON generation
-  base::Value* CreateTextNode(const std::string& text);
-  base::Value* CreateURLNode(const std::string& text, const std::string& url);
+  Area GetDestinationTarget(FPDF_DEST destination, LinkTarget* target) const;
 
   class ScopedLoadCounter {
    public:
@@ -123,6 +124,7 @@ class PDFiumPage {
 
   struct Link {
     Link();
+    Link(const Link& that);
     ~Link();
 
     std::string url;

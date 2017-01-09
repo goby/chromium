@@ -7,14 +7,20 @@
 
 #include <stdint.h>
 
+#include <string>
+
+#include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/bindings_export.h"
+#include "mojo/public/cpp/bindings/lib/serialization_context.h"
 #include "mojo/public/cpp/bindings/message.h"
-#include "mojo/public/cpp/system/macros.h"
 
 namespace mojo {
 namespace internal {
 
 // Handlers for request messages defined in interface_control_messages.mojom.
-class ControlMessageHandler : public MessageReceiverWithResponderStatus {
+class MOJO_CPP_BINDINGS_EXPORT ControlMessageHandler
+    : NON_EXPORTED_BASE(public MessageReceiverWithResponderStatus) {
  public:
   static bool IsControlMessage(const Message* message);
 
@@ -27,13 +33,25 @@ class ControlMessageHandler : public MessageReceiverWithResponderStatus {
   bool AcceptWithResponder(Message* message,
                            MessageReceiverWithStatus* responder) override;
 
+  uint32_t disconnect_custom_reason() const {
+    return disconnect_custom_reason_;
+  }
+
+  const std::string& disconnect_description() const {
+    return disconnect_description_;
+  }
+
  private:
   bool Run(Message* message, MessageReceiverWithStatus* responder);
   bool RunOrClosePipe(Message* message);
 
   uint32_t interface_version_;
+  SerializationContext context_;
 
-  MOJO_DISALLOW_COPY_AND_ASSIGN(ControlMessageHandler);
+  uint32_t disconnect_custom_reason_ = 0;
+  std::string disconnect_description_;
+
+  DISALLOW_COPY_AND_ASSIGN(ControlMessageHandler);
 };
 
 }  // namespace internal

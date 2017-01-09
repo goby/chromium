@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "tools/gn/command_format.h"
+
+#include <stddef.h>
+
 #include <sstream>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "tools/gn/commands.h"
@@ -21,43 +26,50 @@ namespace commands {
 
 const char kSwitchDryRun[] = "dry-run";
 const char kSwitchDumpTree[] = "dump-tree";
-const char kSwitchInPlace[] = "in-place";
 const char kSwitchStdin[] = "stdin";
 
 const char kFormat[] = "format";
 const char kFormat_HelpShort[] =
     "format: Format .gn file.";
 const char kFormat_Help[] =
-    "gn format [--dump-tree] [--in-place] [--stdin] BUILD.gn\n"
-    "\n"
-    "  Formats .gn file to a standard format.\n"
-    "\n"
-    "Arguments\n"
-    "  --dry-run\n"
-    "      Does not change or output anything, but sets the process exit code\n"
-    "      based on whether output would be different than what's on disk.\n"
-    "      This is useful for presubmit/lint-type checks.\n"
-    "      - Exit code 0: successful format, matches on disk.\n"
-    "      - Exit code 1: general failure (parse error, etc.)\n"
-    "      - Exit code 2: successful format, but differs from on disk.\n"
-    "\n"
-    "  --dump-tree\n"
-    "      For debugging only, dumps the parse tree.\n"
-    "\n"
-    "  --in-place\n"
-    "      Instead of writing the formatted file to stdout, replace the input\n"
-    "      file with the formatted output. If no reformatting is required,\n"
-    "      the input file will not be touched, and nothing printed.\n"
-    "\n"
-    "  --stdin\n"
-    "      Read input from stdin (and write to stdout). Not compatible with\n"
-    "      --in-place of course.\n"
-    "\n"
-    "Examples\n"
-    "  gn format //some/BUILD.gn\n"
-    "  gn format some\\BUILD.gn\n"
-    "  gn format /abspath/some/BUILD.gn\n"
-    "  gn format --stdin\n";
+    R"(gn format [--dump-tree] (--stdin | <build_file>)
+
+  Formats .gn file to a standard format.
+
+  The contents of some lists ('sources', 'deps', etc.) will be sorted to a
+  canonical order. To suppress this, you can add a comment of the form "#
+  NOSORT" immediately preceeding the assignment. e.g.
+
+  # NOSORT
+  sources = [
+    "z.cc",
+    "a.cc",
+  ]
+
+Arguments
+
+  --dry-run
+      Does not change or output anything, but sets the process exit code based
+      on whether output would be different than what's on disk. This is useful
+      for presubmit/lint-type checks.
+      - Exit code 0: successful format, matches on disk.
+      - Exit code 1: general failure (parse error, etc.)
+      - Exit code 2: successful format, but differs from on disk.
+
+  --dump-tree
+      For debugging, dumps the parse tree to stdout and does not update the
+      file or print formatted output.
+
+  --stdin
+      Read input from stdin and write to stdout rather than update a file
+      in-place.
+
+Examples
+  gn format //some/BUILD.gn
+  gn format some\\BUILD.gn
+  gn format /abspath/some/BUILD.gn
+  gn format --stdin
+)";
 
 namespace {
 
@@ -168,7 +180,7 @@ class Printer {
   // bracket.
   template <class PARSENODE>  // Just for const covariance.
   void Sequence(SequenceStyle style,
-                const std::vector<PARSENODE*>& list,
+                const std::vector<std::unique_ptr<PARSENODE>>& list,
                 const ParseNode* end,
                 bool force_multiline);
 
@@ -181,7 +193,7 @@ class Printer {
   void InitializeSub(Printer* sub);
 
   template <class PARSENODE>
-  bool ListWillBeMultiline(const std::vector<PARSENODE*>& list,
+  bool ListWillBeMultiline(const std::vector<std::unique_ptr<PARSENODE>>& list,
                            const ParseNode* end);
 
   std::string output_;           // Output buffer.
@@ -312,6 +324,12 @@ void Printer::AnnotatePreferredMultilineAssignment(const BinaryOpNode* binop) {
 }
 
 void Printer::SortIfSourcesOrDeps(const BinaryOpNode* binop) {
+  if (binop->comments() && !binop->comments()->before().empty() &&
+      binop->comments()->before()[0].value().as_string() == "# NOSORT") {
+    // Allow disabling of sort for specific actions that might be
+    // order-sensitive.
+    return;
+  }
   const IdentifierNode* ident = binop->left()->AsIdentifier();
   const ListNode* list = binop->right()->AsList();
   if ((binop->op().value() == "=" || binop->op().value() == "+=" ||
@@ -366,7 +384,7 @@ void Printer::Block(const ParseNode* root) {
 
   size_t i = 0;
   for (const auto& stmt : block->statements()) {
-    Expr(stmt, kPrecedenceLowest, std::string());
+    Expr(stmt.get(), kPrecedenceLowest, std::string());
     Newline();
     if (stmt->comments()) {
       // Why are before() not printed here too? before() are handled inside
@@ -380,8 +398,8 @@ void Printer::Block(const ParseNode* root) {
       }
     }
     if (i < block->statements().size() - 1 &&
-        (ShouldAddBlankLineInBetween(block->statements()[i],
-                                     block->statements()[i + 1]))) {
+        (ShouldAddBlankLineInBetween(block->statements()[i].get(),
+                                     block->statements()[i + 1].get()))) {
       Newline();
     }
     ++i;
@@ -488,17 +506,28 @@ int Printer::Expr(const ParseNode* root,
     bool is_assignment = binop->op().value() == "=" ||
                          binop->op().value() == "+=" ||
                          binop->op().value() == "-=";
-    // A sort of funny special case for the long lists that are common in .gn
-    // files, don't indent them + 4, even though they're just continuations when
-    // they're simple lists like "x = [ a, b, c, ... ]"
-    const ListNode* right_as_list = binop->right()->AsList();
-    int indent_column =
-        (is_assignment &&
-         (!right_as_list || (!right_as_list->prefer_multiline() &&
-                             !ListWillBeMultiline(right_as_list->contents(),
-                                                  right_as_list->End()))))
-            ? margin() + kIndentSize * 2
-            : start_column;
+
+    int indent_column = start_column;
+    if (is_assignment) {
+      // Default to a double-indent for wrapped assignments.
+      indent_column = margin() + kIndentSize * 2;
+
+      // A special case for the long lists and scope assignments that are
+      // common in .gn files, don't indent them + 4, even though they're just
+      // continuations when they're simple lists like "x = [ a, b, c, ... ]" or
+      // scopes like "x = { a = 1 b = 2 }". Put back to "normal" indenting.
+      const ListNode* right_as_list = binop->right()->AsList();
+      if (right_as_list) {
+        if (right_as_list->prefer_multiline() ||
+            ListWillBeMultiline(right_as_list->contents(),
+                                right_as_list->End()))
+          indent_column = start_column;
+      } else {
+        const BlockNode* right_as_block = binop->right()->AsBlock();
+        if (right_as_block)
+          indent_column = start_column;
+      }
+    }
     if (stack_.back().continuation_requires_indent)
       indent_column += kIndentSize * 2;
 
@@ -629,7 +658,7 @@ int Printer::Expr(const ParseNode* root,
 
 template <class PARSENODE>
 void Printer::Sequence(SequenceStyle style,
-                       const std::vector<PARSENODE*>& list,
+                       const std::vector<std::unique_ptr<PARSENODE>>& list,
                        const ParseNode* end,
                        bool force_multiline) {
   if (style == kSequenceStyleList)
@@ -646,7 +675,7 @@ void Printer::Sequence(SequenceStyle style,
     // No elements, and not forcing newlines, print nothing.
   } else if (list.size() == 1 && !force_multiline) {
     Print(" ");
-    Expr(list[0], kPrecedenceLowest, std::string());
+    Expr(list[0].get(), kPrecedenceLowest, std::string());
     CHECK(!list[0]->comments() || list[0]->comments()->after().empty());
     Print(" ");
   } else {
@@ -668,11 +697,11 @@ void Printer::Sequence(SequenceStyle style,
       bool body_of_list = i < list.size() - 1 || style == kSequenceStyleList;
       bool want_comma =
           body_of_list && (style == kSequenceStyleList && !x->AsBlockComment());
-      Expr(x, kPrecedenceLowest, want_comma ? "," : std::string());
+      Expr(x.get(), kPrecedenceLowest, want_comma ? "," : std::string());
       CHECK(!x->comments() || x->comments()->after().empty());
       if (body_of_list) {
         if (i < list.size() - 1 &&
-            ShouldAddBlankLineInBetween(list[i], list[i + 1]))
+            ShouldAddBlankLineInBetween(list[i].get(), list[i + 1].get()))
           Newline();
       }
       ++i;
@@ -715,10 +744,10 @@ int Printer::FunctionCall(const FunctionCallNode* func_call,
   bool have_block = func_call->block() != nullptr;
   bool force_multiline = false;
 
-  const std::vector<const ParseNode*>& list = func_call->args()->contents();
+  const auto& list = func_call->args()->contents();
   const ParseNode* end = func_call->args()->End();
 
-  if (end && end->comments() && !end->comments()->before().empty())
+  if (end->comments() && !end->comments()->before().empty())
     force_multiline = true;
 
   // If there's before line comments, make sure we have a place to put them.
@@ -748,7 +777,7 @@ int Printer::FunctionCall(const FunctionCallNode* func_call,
       IndentState(CurrentColumn(), continuation_requires_indent, false));
   int penalty_one_line = 0;
   for (size_t i = 0; i < list.size(); ++i) {
-    penalty_one_line += sub1.Expr(list[i], kPrecedenceLowest,
+    penalty_one_line += sub1.Expr(list[i].get(), kPrecedenceLowest,
                                   i < list.size() - 1 ? ", " : std::string());
   }
   sub1.Print(terminator);
@@ -766,8 +795,9 @@ int Printer::FunctionCall(const FunctionCallNode* func_call,
       IndentState(CurrentColumn(), continuation_requires_indent, false));
   int penalty_multiline_start_same_line = 0;
   for (size_t i = 0; i < list.size(); ++i) {
-    penalty_multiline_start_same_line += sub2.Expr(
-        list[i], kPrecedenceLowest, i < list.size() - 1 ? "," : std::string());
+    penalty_multiline_start_same_line +=
+        sub2.Expr(list[i].get(), kPrecedenceLowest,
+                  i < list.size() - 1 ? "," : std::string());
     if (i < list.size() - 1) {
       sub2.Newline();
     }
@@ -788,8 +818,9 @@ int Printer::FunctionCall(const FunctionCallNode* func_call,
           std::abs(sub3.CurrentColumn() - start_column) *
           kPenaltyHorizontalSeparation;
     }
-    penalty_multiline_start_next_line += sub3.Expr(
-        list[i], kPrecedenceLowest, i < list.size() - 1 ? "," : std::string());
+    penalty_multiline_start_next_line +=
+        sub3.Expr(list[i].get(), kPrecedenceLowest,
+                  i < list.size() - 1 ? "," : std::string());
     if (i < list.size() - 1) {
       sub3.Newline();
     }
@@ -833,7 +864,7 @@ int Printer::FunctionCall(const FunctionCallNode* func_call,
           Newline();
       }
       bool want_comma = i < list.size() - 1 && !x->AsBlockComment();
-      Expr(x, kPrecedenceLowest, want_comma ? "," : std::string());
+      Expr(x.get(), kPrecedenceLowest, want_comma ? "," : std::string());
       CHECK(!x->comments() || x->comments()->after().empty());
       if (i < list.size() - 1) {
         if (!want_comma)
@@ -881,8 +912,9 @@ void Printer::InitializeSub(Printer* sub) {
 }
 
 template <class PARSENODE>
-bool Printer::ListWillBeMultiline(const std::vector<PARSENODE*>& list,
-                                  const ParseNode* end) {
+bool Printer::ListWillBeMultiline(
+    const std::vector<std::unique_ptr<PARSENODE>>& list,
+    const ParseNode* end) {
   if (list.size() > 1)
     return true;
 
@@ -902,11 +934,7 @@ void DoFormat(const ParseNode* root, bool dump_tree, std::string* output) {
   if (dump_tree) {
     std::ostringstream os;
     root->Print(os, 0);
-    printf("----------------------\n");
-    printf("-- PARSE TREE --------\n");
-    printf("----------------------\n");
     printf("%s", os.str().c_str());
-    printf("----------------------\n");
   }
   Printer pr;
   pr.Block(root);
@@ -963,7 +991,7 @@ bool FormatStringToString(const std::string& input,
   }
 
   // Parse.
-  scoped_ptr<ParseNode> parse_node = Parser::Parse(tokens, &err);
+  std::unique_ptr<ParseNode> parse_node = Parser::Parse(tokens, &err);
   if (err.has_error()) {
     err.PrintToStdout();
     return false;
@@ -980,13 +1008,10 @@ int RunFormat(const std::vector<std::string>& args) {
       base::CommandLine::ForCurrentProcess()->HasSwitch(kSwitchDumpTree);
   bool from_stdin =
       base::CommandLine::ForCurrentProcess()->HasSwitch(kSwitchStdin);
-  bool in_place =
-    base::CommandLine::ForCurrentProcess()->HasSwitch(kSwitchInPlace);
 
   if (dry_run) {
     // --dry-run only works with an actual file to compare to.
     from_stdin = false;
-    in_place = true;
   }
 
   if (from_stdin) {
@@ -999,7 +1024,8 @@ int RunFormat(const std::vector<std::string>& args) {
     std::string output;
     if (!FormatStringToString(input, dump_tree, &output))
       return 1;
-    printf("%s", output.c_str());
+    if (!dump_tree)
+      printf("%s", output.c_str());
     return 0;
   }
 
@@ -1025,7 +1051,8 @@ int RunFormat(const std::vector<std::string>& args) {
 
   std::string output_string;
   if (FormatFileToString(&setup, file, dump_tree, &output_string)) {
-    if (in_place) {
+    if (!dump_tree) {
+      // Update the file in-place.
       base::FilePath to_write = setup.build_settings().GetFullPath(file);
       std::string original_contents;
       if (!base::ReadFileToString(to_write, &original_contents)) {
@@ -1047,8 +1074,6 @@ int RunFormat(const std::vector<std::string>& args) {
         }
         printf("Wrote formatted to '%s'.\n", to_write.AsUTF8Unsafe().c_str());
       }
-    } else {
-      printf("%s", output_string.c_str());
     }
   }
 

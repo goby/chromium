@@ -2,15 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <deque>
+#include "remoting/codec/codec_test.h"
+
+#include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
+
+#include <deque>
+#include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/video_frame.h"
 #include "remoting/base/util.h"
-#include "remoting/codec/codec_test.h"
 #include "remoting/codec/video_decoder.h"
 #include "remoting/codec/video_encoder.h"
 #include "remoting/proto/video.pb.h"
@@ -71,7 +77,7 @@ class VideoDecoderTester {
            frame_->size().width() * frame_->size().height() * kBytesPerPixel);
   }
 
-  void ReceivedPacket(scoped_ptr<VideoPacket> packet) {
+  void ReceivedPacket(std::unique_ptr<VideoPacket> packet) {
     ASSERT_TRUE(decoder_->DecodePacket(*packet, frame_.get()));
   }
 
@@ -161,7 +167,7 @@ class VideoDecoderTester {
   bool strict_;
   DesktopRegion expected_region_;
   VideoDecoder* decoder_;
-  scoped_ptr<DesktopFrame> frame_;
+  std::unique_ptr<DesktopFrame> frame_;
   DesktopFrame* expected_frame_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoDecoderTester);
@@ -177,11 +183,11 @@ class VideoEncoderTester {
     EXPECT_GT(data_available_, 0);
   }
 
-  void DataAvailable(scoped_ptr<VideoPacket> packet) {
+  void DataAvailable(std::unique_ptr<VideoPacket> packet) {
     ++data_available_;
     // Send the message to the VideoDecoderTester.
     if (decoder_tester_) {
-      decoder_tester_->ReceivedPacket(packet.Pass());
+      decoder_tester_->ReceivedPacket(std::move(packet));
     }
   }
 
@@ -196,8 +202,8 @@ class VideoEncoderTester {
   DISALLOW_COPY_AND_ASSIGN(VideoEncoderTester);
 };
 
-scoped_ptr<DesktopFrame> PrepareFrame(const DesktopSize& size) {
-  scoped_ptr<DesktopFrame> frame(new BasicDesktopFrame(size));
+std::unique_ptr<DesktopFrame> PrepareFrame(const DesktopSize& size) {
+  std::unique_ptr<DesktopFrame> frame(new BasicDesktopFrame(size));
 
   srand(0);
   int memory_size = size.width() * size.height() * kBytesPerPixel;
@@ -205,7 +211,7 @@ scoped_ptr<DesktopFrame> PrepareFrame(const DesktopSize& size) {
     frame->data()[i] = rand() % 256;
   }
 
-  return frame.Pass();
+  return frame;
 }
 
 static void TestEncodingRects(VideoEncoder* encoder,
@@ -213,8 +219,7 @@ static void TestEncodingRects(VideoEncoder* encoder,
                               DesktopFrame* frame,
                               const DesktopRegion& region) {
   *frame->mutable_updated_region() = region;
-  scoped_ptr<VideoPacket> packet = encoder->Encode(*frame);
-  tester->DataAvailable(packet.Pass());
+  tester->DataAvailable(encoder->Encode(*frame));
 }
 
 void TestVideoEncoder(VideoEncoder* encoder, bool strict) {
@@ -225,7 +230,7 @@ void TestVideoEncoder(VideoEncoder* encoder, bool strict) {
   for (size_t xi = 0; xi < arraysize(kSizes); ++xi) {
     for (size_t yi = 0; yi < arraysize(kSizes); ++yi) {
       DesktopSize size(kSizes[xi], kSizes[yi]);
-      scoped_ptr<DesktopFrame> frame = PrepareFrame(size);
+      std::unique_ptr<DesktopFrame> frame = PrepareFrame(size);
       for (const DesktopRegion& region : MakeTestRegionLists(size)) {
         TestEncodingRects(encoder, &tester, frame.get(), region);
       }
@@ -241,7 +246,7 @@ void TestVideoEncoder(VideoEncoder* encoder, bool strict) {
 void TestVideoEncoderEmptyFrames(VideoEncoder* encoder,
                                  int max_topoff_frames) {
   const DesktopSize kSize(100, 100);
-  scoped_ptr<DesktopFrame> frame(PrepareFrame(kSize));
+  std::unique_ptr<DesktopFrame> frame(PrepareFrame(kSize));
 
   frame->mutable_updated_region()->SetRect(
       webrtc::DesktopRect::MakeSize(kSize));
@@ -283,8 +288,7 @@ static void TestEncodeDecodeRects(VideoEncoder* encoder,
     }
   }
 
-  scoped_ptr<VideoPacket> packet = encoder->Encode(*frame);
-  encoder_tester->DataAvailable(packet.Pass());
+  encoder_tester->DataAvailable(encoder->Encode(*frame));
   decoder_tester->VerifyResults();
   decoder_tester->Reset();
 }
@@ -296,7 +300,7 @@ void TestVideoEncoderDecoder(VideoEncoder* encoder,
 
   VideoEncoderTester encoder_tester;
 
-  scoped_ptr<DesktopFrame> frame = PrepareFrame(kSize);
+  std::unique_ptr<DesktopFrame> frame = PrepareFrame(kSize);
 
   VideoDecoderTester decoder_tester(decoder, kSize);
   decoder_tester.set_strict(strict);
@@ -327,63 +331,16 @@ void TestVideoEncoderDecoderGradient(VideoEncoder* encoder,
                                      const DesktopSize& screen_size,
                                      double max_error_limit,
                                      double mean_error_limit) {
-  scoped_ptr<BasicDesktopFrame> frame(
-      new BasicDesktopFrame(screen_size));
+  std::unique_ptr<BasicDesktopFrame> frame(new BasicDesktopFrame(screen_size));
   FillWithGradient(frame.get());
   frame->mutable_updated_region()->SetRect(DesktopRect::MakeSize(screen_size));
 
   VideoDecoderTester decoder_tester(decoder, screen_size);
   decoder_tester.set_expected_frame(frame.get());
   decoder_tester.AddRegion(frame->updated_region());
-
-  scoped_ptr<VideoPacket> packet = encoder->Encode(*frame);
-  decoder_tester.ReceivedPacket(packet.Pass());
+  decoder_tester.ReceivedPacket(encoder->Encode(*frame));
 
   decoder_tester.VerifyResultsApprox(max_error_limit, mean_error_limit);
-}
-
-float MeasureVideoEncoderFpsWithSize(VideoEncoder* encoder,
-                                     const DesktopSize& size) {
-  scoped_ptr<DesktopFrame> frame(PrepareFrame(size));
-  frame->mutable_updated_region()->SetRect(DesktopRect::MakeSize(size));
-  std::list<DesktopFrame*> frames;
-  frames.push_back(frame.get());
-  return MeasureVideoEncoderFpsWithFrames(encoder, frames);
-}
-
-float MeasureVideoEncoderFpsWithFrames(VideoEncoder* encoder,
-                                       const std::list<DesktopFrame*>& frames) {
-  const base::TimeDelta kTestTime = base::TimeDelta::FromSeconds(1);
-
-  // Encode some frames to "warm up" the encoder (i.e. to let it set up initial
-  // structures, establish a stable working set, etc), then encode at least
-  // kMinimumFrameCount frames to measure the encoder's performance.
-  const int kWarmUpFrameCount = 10;
-  const int kMinimumFrameCount = 10;
-  base::TimeTicks start_time;
-  base::TimeDelta elapsed;
-  std::list<DesktopFrame*> test_frames;
-  int frame_count;
-  for (frame_count = 0;
-       (frame_count < kMinimumFrameCount + kWarmUpFrameCount ||
-            elapsed < kTestTime);
-       ++frame_count) {
-    if (frame_count == kWarmUpFrameCount) {
-      start_time = base::TimeTicks::Now();
-    }
-
-    if (test_frames.empty()) {
-      test_frames = frames;
-    }
-    scoped_ptr<VideoPacket> packet = encoder->Encode(*test_frames.front());
-    test_frames.pop_front();
-
-    if (frame_count >= kWarmUpFrameCount) {
-      elapsed = base::TimeTicks::Now() - start_time;
-    }
-  }
-
-  return (frame_count * base::TimeDelta::FromSeconds(1)) / elapsed;
 }
 
 }  // namespace remoting

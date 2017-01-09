@@ -4,7 +4,9 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/strings/stringprintf.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/image_writer_private/image_writer_utility_client.h"
 #include "chrome/common/extensions/chrome_utility_extensions_messages.h"
@@ -83,7 +85,7 @@ void ImageWriterUtilityClient::Shutdown() {
 
   // Clear handlers to not hold any reference to the caller.
   success_callback_ = base::Closure();
-  progress_callback_ = base::Callback<void(int64)>();
+  progress_callback_ = base::Callback<void(int64_t)>();
   error_callback_ = base::Callback<void(const std::string&)>();
   cancel_callback_ = base::Closure();
 }
@@ -91,7 +93,7 @@ void ImageWriterUtilityClient::Shutdown() {
 void ImageWriterUtilityClient::StartHost() {
   if (!utility_process_host_) {
     scoped_refptr<base::SequencedTaskRunner> task_runner =
-        base::MessageLoop::current()->task_runner();
+        base::ThreadTaskRunnerHandle::Get();
     utility_process_host_ = content::UtilityProcessHost::Create(
                                 this, task_runner.get())->AsWeakPtr();
     utility_process_host_->SetName(l10n_util::GetStringUTF16(
@@ -108,12 +110,18 @@ void ImageWriterUtilityClient::StartHost() {
 
 void ImageWriterUtilityClient::OnProcessCrashed(int exit_code) {
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(error_callback_, "Utility process crashed."));
+      FROM_HERE,
+      base::Bind(error_callback_,
+                 base::StringPrintf("Utility process crashed with code %08x.",
+                                    exit_code)));
 }
 
-void ImageWriterUtilityClient::OnProcessLaunchFailed() {
+void ImageWriterUtilityClient::OnProcessLaunchFailed(int error_code) {
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(error_callback_, "Process launch failed."));
+      FROM_HERE,
+      base::Bind(error_callback_,
+                 base::StringPrintf("Process launch failed with code %08x.",
+                                    error_code)));
 }
 
 bool ImageWriterUtilityClient::OnMessageReceived(const IPC::Message& message) {
@@ -154,7 +162,7 @@ void ImageWriterUtilityClient::OnWriteImageFailed(const std::string& message) {
   }
 }
 
-void ImageWriterUtilityClient::OnWriteImageProgress(int64 progress) {
+void ImageWriterUtilityClient::OnWriteImageProgress(int64_t progress) {
   if (!progress_callback_.is_null()) {
     task_runner_->PostTask(FROM_HERE, base::Bind(progress_callback_, progress));
   }

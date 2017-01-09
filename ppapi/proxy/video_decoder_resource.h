@@ -5,11 +5,14 @@
 #ifndef PPAPI_PROXY_VIDEO_DECODER_RESOURCE_H_
 #define PPAPI_PROXY_VIDEO_DECODER_RESOURCE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "ppapi/proxy/connection.h"
 #include "ppapi/proxy/plugin_resource.h"
@@ -27,7 +30,6 @@ class GLES2Implementation;
 
 namespace ppapi {
 
-class PPB_Graphics3D_Shared;
 class TrackedCallback;
 
 namespace proxy {
@@ -82,12 +84,12 @@ class PPAPI_PROXY_EXPORT VideoDecoderResource
  private:
   // Struct to hold a shared memory buffer.
   struct ShmBuffer {
-    ShmBuffer(scoped_ptr<base::SharedMemory> shm,
+    ShmBuffer(std::unique_ptr<base::SharedMemory> shm,
               uint32_t size,
               uint32_t shm_id);
     ~ShmBuffer();
 
-    const scoped_ptr<base::SharedMemory> shm;
+    const std::unique_ptr<base::SharedMemory> shm;
     void* addr;
     // Index into shm_buffers_ vector, used as an id. This should map 1:1 to
     // the index on the host side of the proxy.

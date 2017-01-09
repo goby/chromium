@@ -83,7 +83,7 @@ extern "C" void  hb_free_impl(void *ptr);
 #define unlikely(expr) (expr)
 #endif
 
-#ifndef __GNUC__
+#if !defined(__GNUC__) && !defined(__clang__)
 #undef __attribute__
 #define __attribute__(x)
 #endif
@@ -169,6 +169,7 @@ extern "C" void  hb_free_impl(void *ptr);
 #  if defined(_WIN32_WCE)
      /* Some things not defined on Windows CE. */
 #    define strdup _strdup
+#    define vsnprintf _vsnprintf
 #    define getenv(Name) NULL
 #    if _WIN32_WCE < 0x800
 #      define setlocale(Category, Locale) "C"
@@ -179,6 +180,9 @@ static int errno = 0; /* Use something better? */
 #  endif
 #  if defined(_MSC_VER) && _MSC_VER < 1900
 #    define snprintf _snprintf
+#  elif defined(_MSC_VER) && _MSC_VER >= 1900
+#    /* Covers VC++ Error for strdup being a deprecated POSIX name and to instead use _strdup instead */
+#    define strdup _strdup
 #  endif
 #endif
 
@@ -608,6 +612,15 @@ static inline unsigned char TOLOWER (unsigned char c)
 /* Debug */
 
 
+/* HB_NDEBUG disables some sanity checks that are very safe to disable and
+ * should be disabled in production systems.  If NDEBUG is defined, enable
+ * HB_NDEBUG; but if it's desirable that normal assert()s (which are very
+ * light-weight) to be enabled, then HB_DEBUG can be defined to disable
+ * the costlier checks. */
+#ifdef NDEBUG
+#define HB_NDEBUG
+#endif
+
 #ifndef HB_DEBUG
 #define HB_DEBUG 0
 #endif
@@ -1002,5 +1015,7 @@ hb_options (void)
   return _hb_options.opts;
 }
 
+/* Size signifying variable-sized array */
+#define VAR 1
 
 #endif /* HB_PRIVATE_HH */

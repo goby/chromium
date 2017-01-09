@@ -3,8 +3,10 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
@@ -15,7 +17,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -82,7 +83,7 @@ class BookmarkBrowsertest : public InProcessBrowserTest {
 
   BookmarkModel* WaitForBookmarkModel(Profile* profile) {
     BookmarkModel* bookmark_model =
-        BookmarkModelFactory::GetForProfile(profile);
+        BookmarkModelFactory::GetForBrowserContext(profile);
     bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
     return bookmark_model;
   }

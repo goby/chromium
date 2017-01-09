@@ -27,7 +27,7 @@ MoveTreeWorkItem::MoveTreeWorkItem(const base::FilePath& source_path,
       duplicate_option_(duplicate_option) {
 }
 
-bool MoveTreeWorkItem::Do() {
+bool MoveTreeWorkItem::DoImpl() {
   if (!base::PathExists(source_path_)) {
     LOG(ERROR) << source_path_.value() << " does not exist";
     return false;
@@ -48,7 +48,8 @@ bool MoveTreeWorkItem::Do() {
                   << temp_dir_.value();
       return false;
     }
-    base::FilePath backup = backup_path_.path().Append(dest_path_.BaseName());
+    base::FilePath backup =
+        backup_path_.GetPath().Append(dest_path_.BaseName());
 
     if (duplicate_option_ == CHECK_DUPLICATES) {
       if (installer::IsIdenticalFileHierarchy(source_path_, dest_path_)) {
@@ -99,20 +100,24 @@ bool MoveTreeWorkItem::Do() {
   return true;
 }
 
-void MoveTreeWorkItem::Rollback() {
+void MoveTreeWorkItem::RollbackImpl() {
   if (moved_to_dest_path_ && !base::Move(dest_path_, source_path_)) {
     PLOG(ERROR) << "Can not move " << dest_path_.value()
                 << " to " << source_path_.value();
   }
 
-  base::FilePath backup = backup_path_.path().Append(dest_path_.BaseName());
-  if (moved_to_backup_ && !base::Move(backup, dest_path_)) {
-    PLOG(ERROR) << "failed move " << backup.value()
-                << " to " << dest_path_.value();
-  }
+  if (moved_to_backup_ || source_moved_to_backup_) {
+    base::FilePath backup =
+        backup_path_.GetPath().Append(dest_path_.BaseName());
 
-  if (source_moved_to_backup_ && !base::Move(backup, source_path_)) {
-    PLOG(ERROR) << "Can not restore " << backup.value()
-                << " to " << source_path_.value();
+    if (moved_to_backup_ && !base::Move(backup, dest_path_)) {
+      PLOG(ERROR) << "failed move " << backup.value() << " to "
+                  << dest_path_.value();
+    }
+
+    if (source_moved_to_backup_ && !base::Move(backup, source_path_)) {
+      PLOG(ERROR) << "Can not restore " << backup.value() << " to "
+                  << source_path_.value();
+    }
   }
 }

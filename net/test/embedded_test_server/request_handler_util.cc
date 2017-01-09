@@ -5,12 +5,15 @@
 #include "net/test/embedded_test_server/request_handler_util.h"
 
 #include <stdlib.h>
+
 #include <ctime>
 #include <sstream>
+#include <utility>
 
 #include "base/base64.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
@@ -26,7 +29,8 @@ namespace test_server {
 namespace {
 
 const UnescapeRule::Type kUnescapeAll =
-    UnescapeRule::SPACES | UnescapeRule::URL_SPECIAL_CHARS |
+    UnescapeRule::SPACES | UnescapeRule::PATH_SEPARATORS |
+    UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
     UnescapeRule::SPOOFING_AND_CONTROL_CHARS |
     UnescapeRule::REPLACE_PLUS_WITH_SPACE;
 
@@ -37,6 +41,10 @@ std::string GetContentType(const base::FilePath& path) {
     return "application/octet-stream";
   if (path.MatchesExtension(FILE_PATH_LITERAL(".gif")))
     return "image/gif";
+  if (path.MatchesExtension(FILE_PATH_LITERAL(".gzip")) ||
+      path.MatchesExtension(FILE_PATH_LITERAL(".gz"))) {
+    return "application/x-gzip";
+  }
   if (path.MatchesExtension(FILE_PATH_LITERAL(".jpeg")) ||
       path.MatchesExtension(FILE_PATH_LITERAL(".jpg"))) {
     return "image/jpeg";
@@ -69,7 +77,7 @@ bool ShouldHandle(const HttpRequest& request, const std::string& path_prefix) {
                           base::CompareCase::SENSITIVE);
 }
 
-scoped_ptr<HttpResponse> HandlePrefixedRequest(
+std::unique_ptr<HttpResponse> HandlePrefixedRequest(
     const std::string& prefix,
     const EmbeddedTestServer::HandleRequestCallback& handler,
     const HttpRequest& request) {
@@ -112,8 +120,9 @@ void GetFilePathWithReplacements(const std::string& original_file_path,
 }
 
 // Handles |request| by serving a file from under |server_root|.
-scoped_ptr<HttpResponse> HandleFileRequest(const base::FilePath& server_root,
-                                           const HttpRequest& request) {
+std::unique_ptr<HttpResponse> HandleFileRequest(
+    const base::FilePath& server_root,
+    const HttpRequest& request) {
   // This is a test-only server. Ignore I/O thread restrictions.
   // TODO(svaldez): Figure out why thread is I/O restricted in the first place.
   base::ThreadRestrictions::ScopedAllowIO allow_io;
@@ -133,25 +142,25 @@ scoped_ptr<HttpResponse> HandleFileRequest(const base::FilePath& server_root,
 
   RequestQuery query = ParseQuery(request_url);
 
-  scoped_ptr<BasicHttpResponse> failed_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> failed_response(new BasicHttpResponse);
   failed_response->set_code(HTTP_NOT_FOUND);
 
   if (query.find("expected_body") != query.end()) {
     if (request.content.find(query["expected_body"].front()) ==
         std::string::npos) {
-      return failed_response.Pass();
+      return std::move(failed_response);
     }
   }
 
   if (query.find("expected_headers") != query.end()) {
     for (const auto& header : query["expected_headers"]) {
       if (header.find(":") == std::string::npos)
-        return failed_response.Pass();
+        return std::move(failed_response);
       std::string key = header.substr(0, header.find(":"));
       std::string value = header.substr(header.find(":") + 1);
       if (request.headers.find(key) == request.headers.end() ||
           request.headers.at(key) != value) {
-        return failed_response.Pass();
+        return std::move(failed_response);
       }
     }
   }
@@ -173,7 +182,7 @@ scoped_ptr<HttpResponse> HandleFileRequest(const base::FilePath& server_root,
   if (query.find("replace_text") != query.end()) {
     for (const auto& replacement : query["replace_text"]) {
       if (replacement.find(":") == std::string::npos)
-        return failed_response.Pass();
+        return std::move(failed_response);
       std::string find;
       std::string with;
       base::Base64Decode(replacement.substr(0, replacement.find(":")), &find);
@@ -191,11 +200,10 @@ scoped_ptr<HttpResponse> HandleFileRequest(const base::FilePath& server_root,
     if (!base::ReadFileToString(headers_path, &headers_contents))
       return nullptr;
 
-    return make_scoped_ptr(
-        new RawHttpResponse(headers_contents, file_contents));
+    return base::MakeUnique<RawHttpResponse>(headers_contents, file_contents);
   }
 
-  scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
   http_response->set_code(HTTP_OK);
 
   if (request.headers.find("Range") != request.headers.end()) {
@@ -221,7 +229,7 @@ scoped_ptr<HttpResponse> HandleFileRequest(const base::FilePath& server_root,
   http_response->AddCustomHeader("Accept-Ranges", "bytes");
   http_response->AddCustomHeader("ETag", "'" + file_path.MaybeAsASCII() + "'");
   http_response->set_content(file_contents);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 }  // namespace test_server

@@ -31,6 +31,12 @@
           "width": {"type": "integer", "description": "Width in pixels."},
           "height": {"type": "integer", "description": "Height in pixels."}
         }
+      },
+      {
+        "id": "Gesture",
+        "type": "string",
+        "enum": [ "click", "swipeLeft1", "swipeUp1", "swipeRight1", "swipeDown1", "swipeLeft2", "swipeUp2", "swipeRight2", "swipeDown2", "swipeLeft3", "swipeUp3", "swipeRight3", "swipeDown3", "swipeLeft4", "swipeUp4", "swipeRight4", "swipeDown4" ],
+        "description": "Accessibility gestures fired by the touch exploration controller."
       }
     ],
     "functions": [
@@ -58,6 +64,24 @@
             "description": "Array of rectangles to draw the accessibility focus ring around."
           }
         ]
+      },
+      {
+        "name": "setKeyboardListener",
+        "type": "function",
+        "description": "Sets the calling extension as a listener of all keyboard events optionally allowing the calling extension to capture/swallow the key event via DOM apis. Returns false via callback when unable to set the listener.",
+        "parameters": [
+          {
+            "type": "boolean",
+            "name": "enabled",
+            "description": "True if the caller wants to listen to key events; false to stop listening to events. Note that there is only ever one extension listening to key events."
+          },
+          {
+            "type": "boolean",
+
+            "name": "capture",
+            "description": "True if key events should be swallowed natively and not propagated if preventDefault() gets called by the extension's background page."
+          }
+        ]
       }
     ],
     "events": [
@@ -65,6 +89,17 @@
         "name": "onIntroduceChromeVox",
         "type": "function",
         "description": "Fired whenever ChromeVox should output introduction."
+      },
+      {
+        "name": "onAccessibilityGesture",
+        "type": "function",
+        "description": "Fired when an accessibility gesture is detected by the touch exploration controller.",
+        "parameters": [
+          {
+            "name": "gesture",
+            "$ref": "Gesture"
+          }
+        ]
       }
     ]
   }

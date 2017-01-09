@@ -4,18 +4,21 @@
 
 #include "content/renderer/media/android/media_info_loader.h"
 
+#include <utility>
+
 #include "base/bits.h"
 #include "base/callback_helpers.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "third_party/WebKit/public/platform/WebURLError.h"
-#include "third_party/WebKit/public/platform/WebURLLoader.h"
+#include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
+#include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 
+using blink::WebAssociatedURLLoader;
+using blink::WebAssociatedURLLoaderOptions;
 using blink::WebFrame;
 using blink::WebURLError;
-using blink::WebURLLoader;
-using blink::WebURLLoaderOptions;
 using blink::WebURLRequest;
 using blink::WebURLResponse;
 
@@ -57,22 +60,22 @@ void MediaInfoLoader::Start(blink::WebFrame* frame) {
   // worse than the previous request+cancel code.  See http://crbug.com/400788
   request.addHTTPHeaderField("Range", "bytes=0-1");
 
-  scoped_ptr<WebURLLoader> loader;
+  std::unique_ptr<WebAssociatedURLLoader> loader;
   if (test_loader_) {
-    loader = test_loader_.Pass();
+    loader = std::move(test_loader_);
   } else {
-    WebURLLoaderOptions options;
+    WebAssociatedURLLoaderOptions options;
     if (cors_mode_ == blink::WebMediaPlayer::CORSModeUnspecified) {
       options.allowCredentials = true;
       options.crossOriginRequestPolicy =
-          WebURLLoaderOptions::CrossOriginRequestPolicyAllow;
+          WebAssociatedURLLoaderOptions::CrossOriginRequestPolicyAllow;
       allow_stored_credentials_ = true;
     } else {
       options.exposeAllResponseHeaders = true;
       // The author header set is empty, no preflight should go ahead.
-      options.preflightPolicy = WebURLLoaderOptions::PreventPreflight;
-      options.crossOriginRequestPolicy =
-          WebURLLoaderOptions::CrossOriginRequestPolicyUseAccessControl;
+      options.preflightPolicy = WebAssociatedURLLoaderOptions::PreventPreflight;
+      options.crossOriginRequestPolicy = WebAssociatedURLLoaderOptions::
+          CrossOriginRequestPolicyUseAccessControl;
       if (cors_mode_ == blink::WebMediaPlayer::CORSModeUseCredentials) {
         options.allowCredentials = true;
         allow_stored_credentials_ = true;
@@ -83,22 +86,18 @@ void MediaInfoLoader::Start(blink::WebFrame* frame) {
 
   // Start the resource loading.
   loader->loadAsynchronously(request, this);
-  active_loader_.reset(new media::ActiveLoader(loader.Pass()));
+  active_loader_.reset(new media::ActiveLoader(std::move(loader)));
 }
 
 /////////////////////////////////////////////////////////////////////////////
-// blink::WebURLLoaderClient implementation.
-void MediaInfoLoader::willSendRequest(
-    WebURLLoader* loader,
-    WebURLRequest& newRequest,
+// blink::WebAssociatedURLLoaderClient implementation.
+bool MediaInfoLoader::willFollowRedirect(
+    const WebURLRequest& newRequest,
     const WebURLResponse& redirectResponse) {
   // The load may have been stopped and |ready_cb| is destroyed.
   // In this case we shouldn't do anything.
-  if (ready_cb_.is_null()) {
-    // Set the url in the request to an invalid value (empty url).
-    newRequest.setURL(blink::WebURL());
-    return;
-  }
+  if (ready_cb_.is_null())
+    return false;
 
   // Only allow |single_origin_| if we haven't seen a different origin yet.
   if (single_origin_)
@@ -107,17 +106,17 @@ void MediaInfoLoader::willSendRequest(
   url_ = newRequest.url();
   first_party_url_ = newRequest.firstPartyForCookies();
   allow_stored_credentials_ = newRequest.allowStoredCredentials();
+
+  return true;
 }
 
 void MediaInfoLoader::didSendData(
-    WebURLLoader* loader,
     unsigned long long bytes_sent,
     unsigned long long total_bytes_to_be_sent) {
   NOTIMPLEMENTED();
 }
 
 void MediaInfoLoader::didReceiveResponse(
-    WebURLLoader* loader,
     const WebURLResponse& response) {
   DVLOG(1) << "didReceiveResponse: HTTP/"
            << (response.httpVersion() == WebURLResponse::HTTPVersion_0_9
@@ -143,38 +142,25 @@ void MediaInfoLoader::didReceiveResponse(
   DidBecomeReady(kFailed);
 }
 
-void MediaInfoLoader::didReceiveData(
-    WebURLLoader* loader,
-    const char* data,
-    int data_length,
-    int encoded_data_length) {
+void MediaInfoLoader::didReceiveData(const char* data, int data_length) {
   // Ignored.
 }
 
-void MediaInfoLoader::didDownloadData(
-    blink::WebURLLoader* loader,
-    int dataLength,
-    int encodedDataLength) {
+void MediaInfoLoader::didDownloadData(int dataLength) {
   NOTIMPLEMENTED();
 }
 
-void MediaInfoLoader::didReceiveCachedMetadata(
-    WebURLLoader* loader,
-    const char* data,
-    int data_length) {
+void MediaInfoLoader::didReceiveCachedMetadata(const char* data,
+                                               int data_length) {
   NOTIMPLEMENTED();
 }
 
-void MediaInfoLoader::didFinishLoading(
-    WebURLLoader* loader,
-    double finishTime,
-    int64_t total_encoded_data_length) {
+void MediaInfoLoader::didFinishLoading(double finishTime) {
   DCHECK(active_loader_.get());
   DidBecomeReady(kOk);
 }
 
 void MediaInfoLoader::didFail(
-    WebURLLoader* loader,
     const WebURLError& error) {
   DVLOG(1) << "didFail: reason=" << error.reason
            << ", isCancellation=" << error.isCancellation

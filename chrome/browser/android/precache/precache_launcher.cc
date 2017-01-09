@@ -10,15 +10,16 @@
 #include "base/android/jni_weak_ref.h"
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/precache/precache_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "components/precache/content/precache_manager.h"
+#include "components/prefs/pref_service.h"
 #include "jni/PrecacheLauncher_jni.h"
 
 using base::android::AttachCurrentThread;
+using base::android::JavaParamRef;
 using precache::PrecacheManager;
 
 namespace {
@@ -76,7 +77,7 @@ void PrecacheLauncher::Cancel(JNIEnv* env, const JavaParamRef<jobject>& obj) {
 void PrecacheLauncher::OnPrecacheCompleted(bool try_again_soon) {
   JNIEnv* env = AttachCurrentThread();
   Java_PrecacheLauncher_onPrecacheCompletedCallback(
-      env, weak_java_precache_launcher_.get(env).obj(),
+      env, weak_java_precache_launcher_.get(env),
       try_again_soon ? JNI_TRUE : JNI_FALSE);
 }
 

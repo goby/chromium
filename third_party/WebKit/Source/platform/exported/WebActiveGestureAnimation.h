@@ -27,38 +27,49 @@
 #define WebActiveGestureAnimation_h
 
 #include "platform/PlatformExport.h"
+#include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
 class WebGestureCurve;
 class WebGestureCurveTarget;
 
-// Implements a gesture animation (fling scroll, etc.) using a curve with a generic interface
-// to define the animation parameters as a function of time, and applies the animation
-// to a target, again via a generic interface. It is assumed that animate() is called
-// on a more-or-less regular basis by the owner.
+// Implements a gesture animation (fling scroll, etc.) using a curve with a
+// generic interface to define the animation parameters as a function of time,
+// and applies the animation to a target, again via a generic interface. It is
+// assumed that animate() is called on a more-or-less regular basis by the
+// owner.
 class PLATFORM_EXPORT WebActiveGestureAnimation {
-    WTF_MAKE_NONCOPYABLE(WebActiveGestureAnimation);
-public:
-    static PassOwnPtr<WebActiveGestureAnimation> createAtAnimationStart(PassOwnPtr<WebGestureCurve>, WebGestureCurveTarget*);
-    static PassOwnPtr<WebActiveGestureAnimation> createWithTimeOffset(PassOwnPtr<WebGestureCurve>, WebGestureCurveTarget*, double startTime);
-    ~WebActiveGestureAnimation();
+  USING_FAST_MALLOC(WebActiveGestureAnimation);
+  WTF_MAKE_NONCOPYABLE(WebActiveGestureAnimation);
 
-    bool animate(double time);
+ public:
+  static std::unique_ptr<WebActiveGestureAnimation> createAtAnimationStart(
+      std::unique_ptr<WebGestureCurve>,
+      WebGestureCurveTarget*);
+  static std::unique_ptr<WebActiveGestureAnimation> createWithTimeOffset(
+      std::unique_ptr<WebGestureCurve>,
+      WebGestureCurveTarget*,
+      double startTime);
+  ~WebActiveGestureAnimation();
 
-private:
-    // Assumes a valid WebGestureCurveTarget that outlives the animation.
-    WebActiveGestureAnimation(PassOwnPtr<WebGestureCurve>, WebGestureCurveTarget*, double startTime, bool waitingForFirstTick);
+  bool animate(double time);
 
-    double m_startTime;
-    bool m_waitingForFirstTick;
-    OwnPtr<WebGestureCurve> m_curve;
-    WebGestureCurveTarget* m_target;
+ private:
+  // Assumes a valid WebGestureCurveTarget that outlives the animation.
+  WebActiveGestureAnimation(std::unique_ptr<WebGestureCurve>,
+                            WebGestureCurveTarget*,
+                            double startTime,
+                            bool waitingForFirstTick);
+
+  double m_startTime;
+  bool m_waitingForFirstTick;
+  std::unique_ptr<WebGestureCurve> m_curve;
+  WebGestureCurveTarget* m_target;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

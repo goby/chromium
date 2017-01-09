@@ -9,6 +9,7 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_ACTIVITY_LOG_PRIVATE_ACTIVITY_LOG_PRIVATE_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_ACTIVITY_LOG_PRIVATE_ACTIVITY_LOG_PRIVATE_API_H_
 
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "chrome/browser/extensions/activity_log/activity_actions.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
@@ -75,12 +76,12 @@ class ActivityLogPrivateGetExtensionActivitiesFunction
 
  private:
   void OnLookupCompleted(
-      scoped_ptr<std::vector<scoped_refptr<Action> > > activities);
+      std::unique_ptr<std::vector<scoped_refptr<Action>>> activities);
 };
 
 // The implementation of activityLogPrivate.deleteActivities
 class ActivityLogPrivateDeleteActivitiesFunction
-    : public ChromeAsyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteActivities",
                              ACTIVITYLOGPRIVATE_DELETEACTIVITIES)
@@ -89,12 +90,12 @@ class ActivityLogPrivateDeleteActivitiesFunction
   ~ActivityLogPrivateDeleteActivitiesFunction() override {}
 
   // ExtensionFunction:
-  bool RunAsync() override;
+  ResponseAction Run() override;
 };
 
 // The implementation of activityLogPrivate.deleteDatabase
 class ActivityLogPrivateDeleteDatabaseFunction
-    : public ChromeAsyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteDatabase",
                              ACTIVITYLOGPRIVATE_DELETEDATABASE)
@@ -103,12 +104,11 @@ class ActivityLogPrivateDeleteDatabaseFunction
   ~ActivityLogPrivateDeleteDatabaseFunction() override {}
 
   // ExtensionFunction:
-  bool RunAsync() override;
+  ResponseAction Run() override;
 };
 
 // The implementation of activityLogPrivate.deleteUrls
-class ActivityLogPrivateDeleteUrlsFunction
-    : public ChromeAsyncExtensionFunction {
+class ActivityLogPrivateDeleteUrlsFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteUrls",
                              ACTIVITYLOGPRIVATE_DELETEURLS)
@@ -117,7 +117,7 @@ class ActivityLogPrivateDeleteUrlsFunction
   ~ActivityLogPrivateDeleteUrlsFunction() override {}
 
   // ExtensionFunction:
-  bool RunAsync() override;
+  ResponseAction Run() override;
 };
 
 }  // namespace extensions

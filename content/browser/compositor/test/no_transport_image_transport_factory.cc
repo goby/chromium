@@ -4,10 +4,12 @@
 
 #include "content/browser/compositor/test/no_transport_image_transport_factory.h"
 
+#include <utility>
+
+#include "build/build_config.h"
 #include "cc/output/context_provider.h"
 #include "cc/surfaces/surface_manager.h"
-#include "content/browser/gpu/compositor_util.h"
-#include "content/common/gpu/client/gl_helper.h"
+#include "components/display_compositor/gl_helper.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/test/in_process_context_factory.h"
@@ -15,51 +17,32 @@
 namespace content {
 
 NoTransportImageTransportFactory::NoTransportImageTransportFactory()
-    : surface_manager_(UseSurfacesEnabled() ? new cc::SurfaceManager : nullptr),
+    : surface_manager_(new cc::SurfaceManager),
       // The context factory created here is for unit tests, thus passing in
       // true in constructor.
       context_factory_(
-          new ui::InProcessContextFactory(true, surface_manager_.get())) {
-}
+          new ui::InProcessContextFactory(true, surface_manager_.get())) {}
 
 NoTransportImageTransportFactory::~NoTransportImageTransportFactory() {
-  scoped_ptr<GLHelper> lost_gl_helper = gl_helper_.Pass();
-  FOR_EACH_OBSERVER(
-      ImageTransportFactoryObserver, observer_list_, OnLostResources());
+  std::unique_ptr<display_compositor::GLHelper> lost_gl_helper =
+      std::move(gl_helper_);
+  context_factory_->SendOnLostResources();
 }
 
 ui::ContextFactory* NoTransportImageTransportFactory::GetContextFactory() {
   return context_factory_.get();
 }
 
-cc::SurfaceManager* NoTransportImageTransportFactory::GetSurfaceManager() {
-  return surface_manager_.get();
-}
-
-GLHelper* NoTransportImageTransportFactory::GetGLHelper() {
+display_compositor::GLHelper* NoTransportImageTransportFactory::GetGLHelper() {
   if (!gl_helper_) {
     context_provider_ = context_factory_->SharedMainThreadContextProvider();
-    gl_helper_.reset(new GLHelper(context_provider_->ContextGL(),
-                                  context_provider_->ContextSupport()));
+    gl_helper_.reset(new display_compositor::GLHelper(
+        context_provider_->ContextGL(), context_provider_->ContextSupport()));
   }
   return gl_helper_.get();
 }
 
-void NoTransportImageTransportFactory::AddObserver(
-    ImageTransportFactoryObserver* observer) {
-  observer_list_.AddObserver(observer);
-}
-
-void NoTransportImageTransportFactory::RemoveObserver(
-    ImageTransportFactoryObserver* observer) {
-  observer_list_.RemoveObserver(observer);
-}
-
-#if defined(OS_MACOSX)
-bool NoTransportImageTransportFactory::
-    SurfaceShouldNotShowFramesAfterSuspendForRecycle(int surface_id) const {
-  return false;
-}
-#endif
+void NoTransportImageTransportFactory::SetGpuChannelEstablishFactory(
+    gpu::GpuChannelEstablishFactory* factory) {}
 
 }  // namespace content

@@ -4,10 +4,14 @@
 
 #include "remoting/host/local_input_monitor.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/non_thread_safe.h"
@@ -66,7 +70,7 @@ class LocalInputMonitorWin : public base::NonThreadSafe,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
 
     // Used to receive raw input.
-    scoped_ptr<base::win::MessageWindow> window_;
+    std::unique_ptr<base::win::MessageWindow> window_;
 
     // Points to the object receiving mouse event notifications.
     base::WeakPtr<ClientSessionControl> client_session_control_;
@@ -165,20 +169,20 @@ LRESULT LocalInputMonitorWin::Core::OnInput(HRAWINPUT input_handle) {
                                 nullptr,
                                 &size,
                                 sizeof(RAWINPUTHEADER));
-  if (result == -1) {
+  if (result == static_cast<UINT>(-1)) {
     PLOG(ERROR) << "GetRawInputData() failed";
     return 0;
   }
 
   // Retrieve the input record itself.
-  scoped_ptr<uint8[]> buffer(new uint8[size]);
+  std::unique_ptr<uint8_t[]> buffer(new uint8_t[size]);
   RAWINPUT* input = reinterpret_cast<RAWINPUT*>(buffer.get());
   result = GetRawInputData(input_handle,
                            RID_INPUT,
                            buffer.get(),
                            &size,
                            sizeof(RAWINPUTHEADER));
-  if (result == -1) {
+  if (result == static_cast<UINT>(-1)) {
     PLOG(ERROR) << "GetRawInputData() failed";
     return 0;
   }
@@ -232,12 +236,12 @@ bool LocalInputMonitorWin::Core::HandleMessage(
 
 }  // namespace
 
-scoped_ptr<LocalInputMonitor> LocalInputMonitor::Create(
+std::unique_ptr<LocalInputMonitor> LocalInputMonitor::Create(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     base::WeakPtr<ClientSessionControl> client_session_control) {
-  return make_scoped_ptr(new LocalInputMonitorWin(
+  return base::WrapUnique(new LocalInputMonitorWin(
       caller_task_runner, ui_task_runner, client_session_control));
 }
 

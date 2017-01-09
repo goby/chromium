@@ -5,8 +5,10 @@
 #ifndef GPU_COMMAND_BUFFER_CLIENT_GPU_MEMORY_BUFFER_MANAGER_H_
 #define GPU_COMMAND_BUFFER_CLIENT_GPU_MEMORY_BUFFER_MANAGER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "gpu/gpu_export.h"
+#include "gpu/ipc/common/surface_handle.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
@@ -17,30 +19,24 @@ struct SyncToken;
 class GPU_EXPORT GpuMemoryBufferManager {
  public:
   GpuMemoryBufferManager();
+  virtual ~GpuMemoryBufferManager();
 
-  // Allocates a GpuMemoryBuffer that can be shared with another process.
-  virtual scoped_ptr<gfx::GpuMemoryBuffer> AllocateGpuMemoryBuffer(
+  // Creates a GpuMemoryBuffer that can be shared with another process.
+  virtual std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBuffer(
       const gfx::Size& size,
       gfx::BufferFormat format,
-      gfx::BufferUsage usage) = 0;
+      gfx::BufferUsage usage,
+      gpu::SurfaceHandle surface_handle) = 0;
 
   // Creates a GpuMemoryBuffer from existing handle.
-  virtual scoped_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBufferFromHandle(
+  virtual std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBufferFromHandle(
       const gfx::GpuMemoryBufferHandle& handle,
       const gfx::Size& size,
       gfx::BufferFormat format) = 0;
 
-  // Returns a GpuMemoryBuffer instance given a ClientBuffer. Returns NULL on
-  // failure.
-  virtual gfx::GpuMemoryBuffer* GpuMemoryBufferFromClientBuffer(
-      ClientBuffer buffer) = 0;
-
   // Associates destruction sync point with |buffer|.
   virtual void SetDestructionSyncToken(gfx::GpuMemoryBuffer* buffer,
                                        const gpu::SyncToken& sync_token) = 0;
-
- protected:
-  virtual ~GpuMemoryBufferManager();
 };
 
 }  // namespace gpu

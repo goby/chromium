@@ -6,8 +6,12 @@
 
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "remoting/proto/video.pb.h"
+#include "remoting/protocol/message_pipe.h"
+#include "remoting/protocol/message_serialization.h"
 #include "remoting/protocol/p2p_datagram_socket.h"
 #include "remoting/protocol/p2p_stream_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,15 +23,14 @@ StreamConnectionTester::StreamConnectionTester(P2PStreamSocket* client_socket,
                                                P2PStreamSocket* host_socket,
                                                int message_size,
                                                int message_count)
-    : message_loop_(base::MessageLoop::current()),
+    : task_runner_(base::ThreadTaskRunnerHandle::Get()),
       host_socket_(host_socket),
       client_socket_(client_socket),
       message_size_(message_size),
       test_data_size_(message_size * message_count),
       done_(false),
       write_errors_(0),
-      read_errors_(0) {
-}
+      read_errors_(0) {}
 
 StreamConnectionTester::~StreamConnectionTester() {
 }
@@ -53,7 +56,7 @@ void StreamConnectionTester::CheckResults() {
 
 void StreamConnectionTester::Done() {
   done_ = true;
-  message_loop_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+  task_runner_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
 }
 
 void StreamConnectionTester::InitBuffers() {
@@ -134,7 +137,7 @@ DatagramConnectionTester::DatagramConnectionTester(
     int message_size,
     int message_count,
     int delay_ms)
-    : message_loop_(base::MessageLoop::current()),
+    : task_runner_(base::ThreadTaskRunnerHandle::Get()),
       host_socket_(host_socket),
       client_socket_(client_socket),
       message_size_(message_size),
@@ -171,7 +174,7 @@ void DatagramConnectionTester::CheckResults() {
 
 void DatagramConnectionTester::Done() {
   done_ = true;
-  message_loop_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+  task_runner_->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
 }
 
 void DatagramConnectionTester::DoWrite() {
@@ -206,7 +209,7 @@ void DatagramConnectionTester::HandleWriteResult(int result) {
   } else if (result > 0) {
     EXPECT_EQ(message_size_, result);
     packets_sent_++;
-    message_loop_->PostDelayedTask(
+    task_runner_->PostDelayedTask(
         FROM_HERE,
         base::Bind(&DatagramConnectionTester::DoWrite, base::Unretained(this)),
         base::TimeDelta::FromMilliseconds(delay_ms_));
@@ -255,6 +258,53 @@ void DatagramConnectionTester::HandleReadResult(int result) {
       }
     }
   }
+}
+
+MessagePipeConnectionTester::MessagePipeConnectionTester(
+    MessagePipe* client_pipe,
+    MessagePipe* host_pipe,
+    int message_size,
+    int message_count)
+    : host_pipe_(host_pipe),
+      client_pipe_(client_pipe),
+      message_size_(message_size),
+      message_count_(message_count) {}
+MessagePipeConnectionTester::~MessagePipeConnectionTester() {}
+
+void MessagePipeConnectionTester::RunAndCheckResults() {
+  host_pipe_->Start(this);
+}
+
+void MessagePipeConnectionTester::OnMessagePipeOpen() {
+  for (int i = 0; i < message_count_; ++i) {
+    std::unique_ptr<VideoPacket> message(new VideoPacket());
+    message->mutable_data()->resize(message_size_);
+    for (int p = 0; p < message_size_; ++p) {
+      message->mutable_data()[0] = static_cast<char>(i + p);
+    }
+    client_pipe_->Send(message.get(), base::Closure());
+    sent_messages_.push_back(std::move(message));
+  }
+
+  run_loop_.Run();
+
+  ASSERT_EQ(sent_messages_.size(), received_messages_.size());
+  for (size_t i = 0; i < sent_messages_.size(); ++i) {
+    EXPECT_TRUE(sent_messages_[i]->data() == received_messages_[i]->data());
+  }
+}
+
+void MessagePipeConnectionTester::OnMessageReceived(
+    std::unique_ptr<CompoundBuffer> message) {
+  received_messages_.push_back(ParseMessage<VideoPacket>(message.get()));
+  if (received_messages_.size() >= sent_messages_.size()) {
+    run_loop_.Quit();
+  }
+}
+
+void MessagePipeConnectionTester::OnMessagePipeClosed() {
+  run_loop_.Quit();
+  FAIL();
 }
 
 }  // namespace protocol

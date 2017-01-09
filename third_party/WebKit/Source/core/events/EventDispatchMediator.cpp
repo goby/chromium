@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/events/EventDispatchMediator.h"
 
 #include "core/events/Event.h"
@@ -36,25 +35,20 @@
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<EventDispatchMediator> EventDispatchMediator::create(PassRefPtrWillBeRawPtr<Event> event)
-{
-    return adoptRefWillBeNoop(new EventDispatchMediator(event));
+EventDispatchMediator* EventDispatchMediator::create(Event* event) {
+  return new EventDispatchMediator(event);
 }
 
-EventDispatchMediator::EventDispatchMediator(PassRefPtrWillBeRawPtr<Event> event)
-    : m_event(event)
-{
+EventDispatchMediator::EventDispatchMediator(Event* event) : m_event(event) {}
+
+DEFINE_TRACE(EventDispatchMediator) {
+  visitor->trace(m_event);
 }
 
-DEFINE_TRACE(EventDispatchMediator)
-{
-    visitor->trace(m_event);
+DispatchEventResult EventDispatchMediator::dispatchEvent(
+    EventDispatcher& dispatcher) const {
+  DCHECK_EQ(m_event.get(), &dispatcher.event());
+  return dispatcher.dispatch();
 }
 
-bool EventDispatchMediator::dispatchEvent(EventDispatcher& dispatcher) const
-{
-    ASSERT(m_event.get() == &dispatcher.event());
-    return dispatcher.dispatch();
-}
-
-} // namespace blink
+}  // namespace blink

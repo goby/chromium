@@ -15,27 +15,27 @@
 namespace net {
 
 ElementsUploadDataStream::ElementsUploadDataStream(
-    std::vector<scoped_ptr<UploadElementReader>> element_readers,
+    std::vector<std::unique_ptr<UploadElementReader>> element_readers,
     int64_t identifier)
     : UploadDataStream(false, identifier),
       element_readers_(std::move(element_readers)),
       element_index_(0),
-      read_failed_(false),
+      read_error_(OK),
       weak_ptr_factory_(this) {}
 
 ElementsUploadDataStream::~ElementsUploadDataStream() {
 }
 
-scoped_ptr<UploadDataStream> ElementsUploadDataStream::CreateWithReader(
-    scoped_ptr<UploadElementReader> reader,
+std::unique_ptr<UploadDataStream> ElementsUploadDataStream::CreateWithReader(
+    std::unique_ptr<UploadElementReader> reader,
     int64_t identifier) {
-  std::vector<scoped_ptr<UploadElementReader>> readers;
+  std::vector<std::unique_ptr<UploadElementReader>> readers;
   readers.push_back(std::move(reader));
-  return scoped_ptr<UploadDataStream>(
+  return std::unique_ptr<UploadDataStream>(
       new ElementsUploadDataStream(std::move(readers), identifier));
 }
 
-int ElementsUploadDataStream::InitInternal() {
+int ElementsUploadDataStream::InitInternal(const NetLogWithSource& net_log) {
   return InitElements(0);
 }
 
@@ -47,21 +47,21 @@ int ElementsUploadDataStream::ReadInternal(
 }
 
 bool ElementsUploadDataStream::IsInMemory() const {
-  for (const scoped_ptr<UploadElementReader>& it : element_readers_) {
+  for (const std::unique_ptr<UploadElementReader>& it : element_readers_) {
     if (!it->IsInMemory())
       return false;
   }
   return true;
 }
 
-const std::vector<scoped_ptr<UploadElementReader>>*
+const std::vector<std::unique_ptr<UploadElementReader>>*
 ElementsUploadDataStream::GetElementReaders() const {
   return &element_readers_;
 }
 
 void ElementsUploadDataStream::ResetInternal() {
   weak_ptr_factory_.InvalidateWeakPtrs();
-  read_failed_ = false;
+  read_error_ = OK;
   element_index_ = 0;
 }
 
@@ -82,7 +82,7 @@ int ElementsUploadDataStream::InitElements(size_t start_index) {
   }
 
   uint64_t total_size = 0;
-  for (const scoped_ptr<UploadElementReader>& it : element_readers_) {
+  for (const std::unique_ptr<UploadElementReader>& it : element_readers_) {
     total_size += it->GetContentLength();
   }
   SetSize(total_size);
@@ -103,7 +103,7 @@ void ElementsUploadDataStream::OnInitElementCompleted(size_t index,
 
 int ElementsUploadDataStream::ReadElements(
     const scoped_refptr<DrainableIOBuffer>& buf) {
-  while (!read_failed_ && element_index_ < element_readers_.size()) {
+  while (read_error_ == OK && element_index_ < element_readers_.size()) {
     UploadElementReader* reader = element_readers_[element_index_].get();
 
     if (reader->BytesRemaining() == 0) {
@@ -125,18 +125,10 @@ int ElementsUploadDataStream::ReadElements(
     ProcessReadResult(buf, result);
   }
 
-  if (read_failed_) {
-    // If an error occured during read operation, then pad with zero.
-    // Otherwise the server will hang waiting for the rest of the data.
-    int num_bytes_to_fill =
-        static_cast<int>(std::min(static_cast<uint64_t>(buf->BytesRemaining()),
-                                  size() - position() - buf->BytesConsumed()));
-    DCHECK_GE(num_bytes_to_fill, 0);
-    memset(buf->data(), 0, num_bytes_to_fill);
-    buf->DidConsume(num_bytes_to_fill);
-  }
+  if (buf->BytesConsumed() > 0)
+    return buf->BytesConsumed();
 
-  return buf->BytesConsumed();
+  return read_error_;
 }
 
 void ElementsUploadDataStream::OnReadElementCompleted(
@@ -153,12 +145,12 @@ void ElementsUploadDataStream::ProcessReadResult(
     const scoped_refptr<DrainableIOBuffer>& buf,
     int result) {
   DCHECK_NE(ERR_IO_PENDING, result);
-  DCHECK(!read_failed_);
+  DCHECK(!read_error_);
 
   if (result >= 0) {
     buf->DidConsume(result);
   } else {
-    read_failed_ = true;
+    read_error_ = result;
   }
 }
 

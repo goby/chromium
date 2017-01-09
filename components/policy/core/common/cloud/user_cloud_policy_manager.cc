@@ -4,8 +4,11 @@
 
 #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
@@ -13,6 +16,7 @@
 #include "components/policy/core/common/cloud/user_cloud_policy_store.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/policy/policy_constants.h"
 #include "net/url_request/url_request_context_getter.h"
 
 namespace em = enterprise_management;
@@ -20,9 +24,9 @@ namespace em = enterprise_management;
 namespace policy {
 
 UserCloudPolicyManager::UserCloudPolicyManager(
-    scoped_ptr<UserCloudPolicyStore> store,
+    std::unique_ptr<UserCloudPolicyStore> store,
     const base::FilePath& component_policy_cache_path,
-    scoped_ptr<CloudExternalDataManager> external_data_manager,
+    std::unique_ptr<CloudExternalDataManager> external_data_manager,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& file_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& io_task_runner)
@@ -32,10 +36,9 @@ UserCloudPolicyManager::UserCloudPolicyManager(
                          task_runner,
                          file_task_runner,
                          io_task_runner),
-      store_(store.Pass()),
+      store_(std::move(store)),
       component_policy_cache_path_(component_policy_cache_path),
-      external_data_manager_(external_data_manager.Pass()) {
-}
+      external_data_manager_(std::move(external_data_manager)) {}
 
 UserCloudPolicyManager::~UserCloudPolicyManager() {}
 
@@ -52,10 +55,11 @@ void UserCloudPolicyManager::SetSigninUsername(const std::string& username) {
 void UserCloudPolicyManager::Connect(
     PrefService* local_state,
     scoped_refptr<net::URLRequestContextGetter> request_context,
-    scoped_ptr<CloudPolicyClient> client) {
-  CreateComponentCloudPolicyService(component_policy_cache_path_,
-                                    request_context, client.get());
-  core()->Connect(client.Pass());
+    std::unique_ptr<CloudPolicyClient> client) {
+  CreateComponentCloudPolicyService(
+      dm_protocol::kChromeExtensionPolicyType, component_policy_cache_path_,
+      request_context, client.get(), schema_registry());
+  core()->Connect(std::move(client));
   core()->StartRefreshScheduler();
   core()->TrackRefreshDelayPref(local_state,
                                 policy_prefs::kUserPolicyRefreshRate);
@@ -64,17 +68,14 @@ void UserCloudPolicyManager::Connect(
 }
 
 // static
-scoped_ptr<CloudPolicyClient>
+std::unique_ptr<CloudPolicyClient>
 UserCloudPolicyManager::CreateCloudPolicyClient(
     DeviceManagementService* device_management_service,
     scoped_refptr<net::URLRequestContextGetter> request_context) {
-  return make_scoped_ptr(
-      new CloudPolicyClient(
-          std::string(),
-          std::string(),
-          kPolicyVerificationKeyHash,
-          device_management_service,
-          request_context)).Pass();
+  return base::MakeUnique<CloudPolicyClient>(
+      std::string() /* machine_id */, std::string() /* machine_model */,
+      device_management_service, request_context,
+      nullptr /* signing_service */);
 }
 
 void UserCloudPolicyManager::DisconnectAndRemovePolicy() {
@@ -95,6 +96,25 @@ void UserCloudPolicyManager::DisconnectAndRemovePolicy() {
 
 bool UserCloudPolicyManager::IsClientRegistered() const {
   return client() && client()->is_registered();
+}
+
+void UserCloudPolicyManager::GetChromePolicy(PolicyMap* policy_map) {
+  CloudPolicyManager::GetChromePolicy(policy_map);
+
+  // If the store has a verified policy blob received from the server then apply
+  // the defaults for policies that haven't been configured by the administrator
+  // given that this is an enterprise user.
+  // TODO(treib,atwilson): We should just call SetEnterpriseUsersDefaults here,
+  // see crbug.com/640950.
+  if (store()->has_policy() &&
+      !policy_map->Get(key::kNTPContentSuggestionsEnabled)) {
+    policy_map->Set(key::kNTPContentSuggestionsEnabled,
+                    POLICY_LEVEL_MANDATORY,
+                    POLICY_SCOPE_USER,
+                    POLICY_SOURCE_ENTERPRISE_DEFAULT,
+                    base::MakeUnique<base::FundamentalValue>(false),
+                    nullptr /* external_data_fetcher */);
+  }
 }
 
 }  // namespace policy

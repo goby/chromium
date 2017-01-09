@@ -4,6 +4,8 @@
 
 #include "components/omnibox/browser/autocomplete_classifier.h"
 
+#include <utility>
+
 #include "base/auto_reset.h"
 #include "build/build_config.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
@@ -27,6 +29,8 @@ const int AutocompleteClassifier::kDefaultOmniboxProviders =
 #else
     // "URL from clipboard" can only be used on iOS.
     AutocompleteProvider::TYPE_CLIPBOARD_URL |
+    // Physical Web omnibox results are only implemented on iOS.
+    AutocompleteProvider::TYPE_PHYSICAL_WEB |
 #endif
     AutocompleteProvider::TYPE_BOOKMARK |
     AutocompleteProvider::TYPE_HISTORY_QUICK |
@@ -34,16 +38,19 @@ const int AutocompleteClassifier::kDefaultOmniboxProviders =
     AutocompleteProvider::TYPE_SEARCH;
 
 AutocompleteClassifier::AutocompleteClassifier(
-    scoped_ptr<AutocompleteController> controller,
-    scoped_ptr<AutocompleteSchemeClassifier> scheme_classifier)
-    : controller_(controller.Pass()),
-      scheme_classifier_(scheme_classifier.Pass()),
-      inside_classify_(false) {
-}
+    std::unique_ptr<AutocompleteController> controller,
+    std::unique_ptr<AutocompleteSchemeClassifier> scheme_classifier)
+    : controller_(std::move(controller)),
+      scheme_classifier_(std::move(scheme_classifier)),
+      inside_classify_(false) {}
 
 AutocompleteClassifier::~AutocompleteClassifier() {
   // We should only reach here after Shutdown() has been called.
   DCHECK(!controller_.get());
+}
+
+void AutocompleteClassifier::Shutdown() {
+  controller_.reset();
 }
 
 void AutocompleteClassifier::Classify(
@@ -71,8 +78,4 @@ void AutocompleteClassifier::Classify(
   *match = *result.default_match();
   if (alternate_nav_url)
     *alternate_nav_url = result.alternate_nav_url();
-}
-
-void AutocompleteClassifier::Shutdown() {
-  controller_.reset();
 }

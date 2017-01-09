@@ -4,7 +4,10 @@
 
 #include "google_apis/drive/files_list_request_runner.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "google_apis/drive/drive_api_error_codes.h"
@@ -32,15 +35,17 @@ CancelCallback FilesListRequestRunner::CreateAndStartWithSizeBackoff(
   UMA_HISTOGRAM_COUNTS_1000("Drive.FilesListRequestRunner.MaxResults",
                             max_results);
   base::Closure* const cancel_callback = new base::Closure;
-  drive::FilesListRequest* const request = new drive::FilesListRequest(
-      request_sender_, url_generator_,
-      base::Bind(&FilesListRequestRunner::OnCompleted,
-                 weak_ptr_factory_.GetWeakPtr(), max_results, q, fields,
-                 callback, base::Owned(cancel_callback)));
+  std::unique_ptr<drive::FilesListRequest> request =
+      base::MakeUnique<drive::FilesListRequest>(
+          request_sender_, url_generator_,
+          base::Bind(&FilesListRequestRunner::OnCompleted,
+                     weak_ptr_factory_.GetWeakPtr(), max_results, q, fields,
+                     callback, base::Owned(cancel_callback)));
   request->set_max_results(max_results);
   request->set_q(q);
   request->set_fields(fields);
-  *cancel_callback = request_sender_->StartRequestWithAuthRetry(request);
+  *cancel_callback =
+      request_sender_->StartRequestWithAuthRetry(std::move(request));
 
   // The cancellation callback is owned by the completion callback, so it must
   // not be used after |callback| is called.
@@ -61,7 +66,7 @@ void FilesListRequestRunner::OnCompleted(int max_results,
                                          const FileListCallback& callback,
                                          CancelCallback* cancel_callback,
                                          DriveApiErrorCode error,
-                                         scoped_ptr<FileList> entry) {
+                                         std::unique_ptr<FileList> entry) {
   if (!request_completed_callback_for_testing_.is_null())
     request_completed_callback_for_testing_.Run();
 
@@ -73,7 +78,7 @@ void FilesListRequestRunner::OnCompleted(int max_results,
     return;
   }
 
-  callback.Run(error, entry.Pass());
+  callback.Run(error, std::move(entry));
 }
 
 void FilesListRequestRunner::SetRequestCompletedCallbackForTesting(

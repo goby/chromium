@@ -4,17 +4,21 @@
 
 #include "chrome/browser/extensions/extension_service_test_base.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_error_reporter.h"
 #include "chrome/browser/extensions/extension_garbage_collector_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/shared_module_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -23,8 +27,8 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/pref_service_mock_factory.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_mock_factory.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
@@ -41,22 +45,22 @@ namespace {
 const int kThreadOptions = content::TestBrowserThreadBundle::IO_MAINLOOP;
 
 // Create a testing profile according to |params|.
-scoped_ptr<TestingProfile> BuildTestingProfile(
+std::unique_ptr<TestingProfile> BuildTestingProfile(
     const ExtensionServiceTestBase::ExtensionServiceInitParams& params) {
   TestingProfile::Builder profile_builder;
   // Create a PrefService that only contains user defined preference values.
-  syncable_prefs::PrefServiceMockFactory factory;
+  sync_preferences::PrefServiceMockFactory factory;
   // If pref_file is empty, TestingProfile automatically creates
-  // syncable_prefs::TestingPrefServiceSyncable instance.
+  // sync_preferences::TestingPrefServiceSyncable instance.
   if (!params.pref_file.empty()) {
     factory.SetUserPrefsFile(params.pref_file,
                              base::ThreadTaskRunnerHandle::Get().get());
     scoped_refptr<user_prefs::PrefRegistrySyncable> registry(
         new user_prefs::PrefRegistrySyncable);
-    scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs(
+    std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs(
         factory.CreateSyncable(registry.get()));
     chrome::RegisterUserProfilePrefs(registry.get());
-    profile_builder.SetPrefService(prefs.Pass());
+    profile_builder.SetPrefService(std::move(prefs));
   }
 
   if (params.profile_is_supervised)
@@ -74,6 +78,10 @@ ExtensionServiceTestBase::ExtensionServiceInitParams::
       is_first_run(true),
       profile_is_supervised(false) {
 }
+
+ExtensionServiceTestBase::ExtensionServiceInitParams::
+    ExtensionServiceInitParams(const ExtensionServiceInitParams& other) =
+        default;
 
 ExtensionServiceTestBase::ExtensionServiceTestBase()
     : thread_bundle_(new content::TestBrowserThreadBundle(kThreadOptions)),
@@ -104,7 +112,7 @@ ExtensionServiceTestBase::ExtensionServiceInitParams
 ExtensionServiceTestBase::CreateDefaultInitParams() {
   ExtensionServiceInitParams params;
   EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
-  base::FilePath path = temp_dir_.path();
+  base::FilePath path = temp_dir_.GetPath();
   path = path.Append(FILE_PATH_LITERAL("TestingExtensionsPath"));
   EXPECT_TRUE(base::DeleteFile(path, true));
   base::File::Error error = base::File::FILE_OK;
@@ -144,7 +152,7 @@ void ExtensionServiceTestBase::InitializeInstalledExtensionService(
     const base::FilePath& prefs_file,
     const base::FilePath& source_install_dir) {
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-  base::FilePath path = temp_dir_.path();
+  base::FilePath path = temp_dir_.GetPath();
 
   path = path.Append(FILE_PATH_LITERAL("TestingExtensionsPath"));
   ASSERT_TRUE(base::DeleteFile(path, true));
@@ -311,7 +319,6 @@ void ExtensionServiceTestBase::CreateExtensionService(
       base::ThreadTaskRunnerHandle::Get().get());
   service_->set_extensions_enabled(true);
   service_->set_show_extensions_prompts(false);
-  service_->set_install_updates_when_idle_for_test(false);
   service_->component_loader()->set_ignore_whitelist_for_testing(true);
 
   // When we start up, we want to make sure there is no external provider,
@@ -320,6 +327,9 @@ void ExtensionServiceTestBase::CreateExtensionService(
   // interfere with the tests. Those tests that need an external provider
   // will register one specifically.
   service_->ClearProvidersForTesting();
+
+  service_->RegisterInstallGate(ExtensionPrefs::DELAY_REASON_WAIT_FOR_IMPORTS,
+                                service_->shared_module_service());
 
 #if defined(OS_CHROMEOS)
   InstallLimiter::Get(profile_.get())->DisableForTest();

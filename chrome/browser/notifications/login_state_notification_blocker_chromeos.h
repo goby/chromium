@@ -5,7 +5,8 @@
 #ifndef CHROME_BROWSER_NOTIFICATIONS_LOGIN_STATE_NOTIFICATION_BLOCKER_CHROMEOS_H_
 #define CHROME_BROWSER_NOTIFICATIONS_LOGIN_STATE_NOTIFICATION_BLOCKER_CHROMEOS_H_
 
-#include "ash/shell_observer.h"
+#include "ash/common/shell_observer.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
 #include "chromeos/login/login_state.h"
 #include "ui/message_center/notification_blocker.h"
@@ -30,7 +31,7 @@ class LoginStateNotificationBlockerChromeOS
  private:
   // message_center::NotificationBlocker overrides:
   bool ShouldShowNotificationAsPopup(
-      const message_center::NotifierId& notifier_id) const override;
+      const message_center::Notification& notification) const override;
 
   // ash::ShellObserver overrides:
   void OnLockStateChanged(bool locked) override;

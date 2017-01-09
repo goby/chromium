@@ -5,21 +5,22 @@
 #ifndef NET_TOOLS_QUIC_TEST_TOOLS_SERVER_THREAD_H_
 #define NET_TOOLS_QUIC_TEST_TOOLS_SERVER_THREAD_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/threading/simple_thread.h"
-#include "net/base/ip_endpoint.h"
-#include "net/quic/quic_config.h"
+#include "net/quic/core/quic_config.h"
+#include "net/quic/platform/api/quic_mutex.h"
+#include "net/quic/platform/api/quic_socket_address.h"
 #include "net/tools/quic/quic_server.h"
 
 namespace net {
-namespace tools {
 namespace test {
 
 // Simple wrapper class to run QuicServer in a dedicated thread.
 class ServerThread : public base::SimpleThread {
  public:
-  ServerThread(QuicServer* server,
-               const IPEndPoint& address,
-               bool strike_register_no_startup_period);
+  ServerThread(QuicServer* server, const QuicSocketAddress& address);
 
   ~ServerThread() override;
 
@@ -29,6 +30,9 @@ class ServerThread : public base::SimpleThread {
 
   // Runs the event loop. Will initialize if necessary.
   void Run() override;
+
+  // Schedules the given action for execution in the event loop.
+  void Schedule(std::function<void()> action);
 
   // Waits for the handshake to be confirmed for the first session created.
   void WaitForCryptoHandshakeConfirmed();
@@ -55,6 +59,7 @@ class ServerThread : public base::SimpleThread {
 
  private:
   void MaybeNotifyOfHandshakeConfirmation();
+  void ExecuteScheduledActions();
 
   base::WaitableEvent confirmed_;  // Notified when the first handshake is
                                    // confirmed.
@@ -63,18 +68,21 @@ class ServerThread : public base::SimpleThread {
   base::WaitableEvent resume_;     // Notified when the server should resume.
   base::WaitableEvent quit_;       // Notified when the server should quit.
 
-  scoped_ptr<QuicServer> server_;
-  IPEndPoint address_;
+  std::unique_ptr<QuicServer> server_;
+  QuicSocketAddress address_;
   base::Lock port_lock_;
   int port_;
 
   bool initialized_;
 
+  QuicMutex scheduled_actions_lock_;
+  std::deque<std::function<void()>> scheduled_actions_
+      GUARDED_BY(scheduled_actions_lock_);
+
   DISALLOW_COPY_AND_ASSIGN(ServerThread);
 };
 
 }  // namespace test
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_TEST_TOOLS_SERVER_THREAD_H_

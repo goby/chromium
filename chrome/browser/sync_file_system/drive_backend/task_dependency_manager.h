@@ -5,13 +5,16 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_TASK_DEPENDENCY_MANAGER_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_TASK_DEPENDENCY_MANAGER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/sync_file_system/subtree_set.h"
 
 namespace sync_file_system {
@@ -22,7 +25,7 @@ struct TaskBlocker {
   std::string app_id;
   std::vector<base::FilePath> paths;
   std::vector<std::string> file_ids;
-  std::vector<int64> tracker_ids;
+  std::vector<int64_t> tracker_ids;
 
   TaskBlocker();
   ~TaskBlocker();
@@ -53,7 +56,7 @@ class TaskDependencyManager {
   bool running_exclusive_task_;
   std::map<std::string, SubtreeSet> paths_by_app_id_;
   std::set<std::string> file_ids_;
-  std::set<int64> tracker_ids_;
+  std::set<int64_t> tracker_ids_;
 
   DISALLOW_COPY_AND_ASSIGN(TaskDependencyManager);
 };

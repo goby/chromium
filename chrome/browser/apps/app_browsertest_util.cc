@@ -4,9 +4,11 @@
 
 #include "chrome/browser/apps/app_browsertest_util.h"
 
+#include <memory>
+#include <string>
+
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/apps/scoped_keep_alive.h"
 #include "chrome/browser/extensions/api/tabs/tabs_api.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
@@ -14,6 +16,7 @@
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/notification_types.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/app_window/app_window_contents.h"
@@ -23,6 +26,12 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/switches.h"
 #include "extensions/test/extension_test_message_listener.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/media/router/media_routes_observer.h"
+#include "chrome/browser/ui/ash/cast_config_client_media_router.h"
+#include "testing/gmock/include/gmock/gmock.h"
+#endif
 
 using content::WebContents;
 
@@ -47,6 +56,27 @@ void PlatformAppBrowserTest::SetUpCommandLine(base::CommandLine* command_line) {
   // Make event pages get suspended quicker.
   ProcessManager::SetEventPageIdleTimeForTesting(1000);
   ProcessManager::SetEventPageSuspendingTimeForTesting(1000);
+}
+
+void PlatformAppBrowserTest::SetUpInProcessBrowserTestFixture() {
+  ExtensionApiTest::SetUpInProcessBrowserTestFixture();
+#if defined(OS_CHROMEOS)
+  // Mock the Media Router in extension api tests. Several of the
+  // PlatformAppBrowserTest suites call RunAllPendingInMessageLoop() when there
+  // are mojo messages that will call back into Profile creation through the
+  // media router.
+  ON_CALL(media_router_, RegisterMediaSinksObserver(testing::_))
+      .WillByDefault(testing::Return(true));
+
+  CastConfigClientMediaRouter::SetMediaRouterForTest(&media_router_);
+#endif
+}
+
+void PlatformAppBrowserTest::TearDownInProcessBrowserTestFixture() {
+#if defined(OS_CHROMEOS)
+  CastConfigClientMediaRouter::SetMediaRouterForTest(nullptr);
+#endif
+  ExtensionApiTest::TearDownInProcessBrowserTestFixture();
 }
 
 // static
@@ -122,16 +152,16 @@ const Extension* PlatformAppBrowserTest::InstallAndLaunchPlatformApp(
 }
 
 void PlatformAppBrowserTest::LaunchPlatformApp(const Extension* extension) {
-  OpenApplication(AppLaunchParams(browser()->profile(), extension,
-                                  LAUNCH_CONTAINER_NONE, NEW_WINDOW,
-                                  extensions::SOURCE_TEST));
+  OpenApplication(AppLaunchParams(
+      browser()->profile(), extension, LAUNCH_CONTAINER_NONE,
+      WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_TEST));
 }
 
 void PlatformAppBrowserTest::LaunchHostedApp(const Extension* extension) {
-  AppLaunchParams launch_params(browser()->profile(), extension,
-                                NEW_FOREGROUND_TAB,
-                                extensions::SOURCE_COMMAND_LINE);
-  OpenApplication(launch_params);
+  OpenApplication(CreateAppLaunchParamsUserContainer(
+      browser()->profile(), extension,
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      extensions::SOURCE_COMMAND_LINE));
 }
 
 WebContents* PlatformAppBrowserTest::GetFirstAppWindowWebContents() {
@@ -164,10 +194,9 @@ size_t PlatformAppBrowserTest::RunGetWindowsFunctionForExtension(
     const Extension* extension) {
   scoped_refptr<WindowsGetAllFunction> function = new WindowsGetAllFunction();
   function->set_extension(extension);
-  scoped_ptr<base::ListValue> result(utils::ToList(
-      utils::RunFunctionAndReturnSingleResult(function.get(),
-                                              "[]",
-                                              browser())));
+  std::unique_ptr<base::ListValue> result(
+      utils::ToList(utils::RunFunctionAndReturnSingleResult(function.get(),
+                                                            "[]", browser())));
   return result->GetSize();
 }
 
@@ -181,7 +210,7 @@ bool PlatformAppBrowserTest::RunGetWindowFunctionForExtension(
           base::StringPrintf("[%u]", window_id),
           browser(),
           utils::NONE);
-  return function->GetResultList() != NULL;
+  return *function->response_type() == ExtensionFunction::SUCCEEDED;
 }
 
 size_t PlatformAppBrowserTest::GetAppWindowCount() {
@@ -195,18 +224,24 @@ size_t PlatformAppBrowserTest::GetAppWindowCountForApp(
       .size();
 }
 
-AppWindow* PlatformAppBrowserTest::CreateAppWindow(const Extension* extension) {
-  return CreateAppWindowFromParams(extension, AppWindow::CreateParams());
+AppWindow* PlatformAppBrowserTest::CreateAppWindow(
+    content::BrowserContext* context,
+    const Extension* extension) {
+  return CreateAppWindowFromParams(context, extension,
+                                   AppWindow::CreateParams());
 }
 
 AppWindow* PlatformAppBrowserTest::CreateAppWindowFromParams(
+    content::BrowserContext* context,
     const Extension* extension,
     const AppWindow::CreateParams& params) {
-  AppWindow* window =
-      new AppWindow(browser()->profile(),
-                    new ChromeAppDelegate(make_scoped_ptr(new ScopedKeepAlive)),
-                    extension);
-  window->Init(GURL(std::string()), new AppWindowContentsImpl(window), params);
+  AppWindow* window = new AppWindow(browser()->profile(),
+                                    new ChromeAppDelegate(true), extension);
+  ProcessManager* process_manager = ProcessManager::Get(context);
+  ExtensionHost* background_host =
+      process_manager->GetBackgroundHostForExtension(extension->id());
+  window->Init(GURL(std::string()), new AppWindowContentsImpl(window),
+               background_host->host_contents()->GetMainFrame(), params);
   return window;
 }
 

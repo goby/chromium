@@ -16,27 +16,46 @@
 #include "content/public/browser/browser_thread.h"
 #include "url/gurl.h"
 
-const int kSitelistFormatVersion = 2;
+const int kLegacyWhitelistFormatVersion = 2;
+const int kWhitelistFormatVersion = 1;
 
 const char kEntryPointUrlKey[] = "entry_point_url";
 const char kHostnameHashesKey[] = "hostname_hashes";
-const char kSitelistFormatVersionKey[] = "version";
+const char kLegacyWhitelistFormatVersionKey[] = "version";
+const char kSitelistFormatVersionKey[] = "sitelist_version";
 const char kWhitelistKey[] = "whitelist";
 
 namespace {
 
-scoped_ptr<base::Value> ReadFileOnBlockingThread(const base::FilePath& path) {
+std::unique_ptr<base::Value> ReadFileOnBlockingThread(
+    const base::FilePath& path) {
   SCOPED_UMA_HISTOGRAM_TIMER("ManagedUsers.Whitelist.ReadDuration");
   JSONFileValueDeserializer deserializer(path);
   int error_code;
   std::string error_msg;
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       deserializer.Deserialize(&error_code, &error_msg);
   if (!value) {
     LOG(ERROR) << "Couldn't load site list " << path.value() << ": "
                << error_msg;
   }
-  return value.Pass();
+  return value;
+}
+
+std::vector<std::string> ConvertListValues(const base::ListValue* list_values) {
+  std::vector<std::string> converted;
+  if (list_values) {
+    for (const auto& entry : *list_values) {
+      std::string entry_string;
+      if (!entry->GetAsString(&entry_string)) {
+        LOG(ERROR) << "Invalid whitelist entry";
+        continue;
+      }
+
+      converted.push_back(entry_string);
+    }
+  }
+  return converted;
 }
 
 }  // namespace
@@ -48,10 +67,13 @@ SupervisedUserSiteList::HostnameHash::HostnameHash(
 }
 
 SupervisedUserSiteList::HostnameHash::HostnameHash(
-    const std::vector<uint8>& bytes) {
+    const std::vector<uint8_t>& bytes) {
   CHECK_GE(bytes.size(), base::kSHA1Length);
   std::copy(bytes.begin(), bytes.end(), bytes_.begin());
 }
+
+SupervisedUserSiteList::HostnameHash::HostnameHash(const HostnameHash& other) =
+    default;
 
 bool SupervisedUserSiteList::HostnameHash::operator==(
     const HostnameHash& rhs) const {
@@ -63,7 +85,9 @@ size_t SupervisedUserSiteList::HostnameHash::hash() const {
   return *reinterpret_cast<const size_t*>(bytes_.data());
 }
 
-void SupervisedUserSiteList::Load(const base::string16& title,
+void SupervisedUserSiteList::Load(const std::string& id,
+                                  const base::string16& title,
+                                  const base::FilePath& large_icon_path,
                                   const base::FilePath& path,
                                   const LoadedCallback& callback) {
   base::PostTaskAndReplyWithResult(
@@ -72,46 +96,46 @@ void SupervisedUserSiteList::Load(const base::string16& title,
               base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN)
           .get(),
       FROM_HERE, base::Bind(&ReadFileOnBlockingThread, path),
-      base::Bind(&SupervisedUserSiteList::OnJsonLoaded, title, path,
-                 base::TimeTicks::Now(), callback));
+      base::Bind(&SupervisedUserSiteList::OnJsonLoaded, id, title,
+                 large_icon_path, path, base::TimeTicks::Now(), callback));
 }
 
 SupervisedUserSiteList::SupervisedUserSiteList(
+    const std::string& id,
     const base::string16& title,
     const GURL& entry_point,
+    const base::FilePath& large_icon_path,
     const base::ListValue* patterns,
     const base::ListValue* hostname_hashes)
-    : title_(title), entry_point_(entry_point) {
-  if (patterns) {
-    for (const base::Value* entry : *patterns) {
-      std::string pattern;
-      if (!entry->GetAsString(&pattern)) {
-        LOG(ERROR) << "Invalid whitelist entry";
-        continue;
-      }
+    : SupervisedUserSiteList(id,
+                             title,
+                             entry_point,
+                             large_icon_path,
+                             ConvertListValues(patterns),
+                             ConvertListValues(hostname_hashes)) {}
 
-      patterns_.push_back(pattern);
+SupervisedUserSiteList::SupervisedUserSiteList(
+    const std::string& id,
+    const base::string16& title,
+    const GURL& entry_point,
+    const base::FilePath& large_icon_path,
+    const std::vector<std::string>& patterns,
+    const std::vector<std::string>& hostname_hashes)
+    : id_(id),
+      title_(title),
+      entry_point_(entry_point),
+      large_icon_path_(large_icon_path),
+      patterns_(patterns) {
+  for (const std::string& hostname_hash : hostname_hashes) {
+    std::vector<uint8_t> hash_bytes;
+    if (hostname_hash.size() != 2 * base::kSHA1Length ||
+        !base::HexStringToBytes(hostname_hash, &hash_bytes)) {
+      LOG(ERROR) << "Invalid hostname_hashes entry";
+      continue;
     }
+    DCHECK_EQ(base::kSHA1Length, hash_bytes.size());
+    hostname_hashes_.push_back(HostnameHash(hash_bytes));
   }
-
-  if (hostname_hashes) {
-    for (const base::Value* entry : *hostname_hashes) {
-      // |hash_str| should be a hex-encoded SHA1 hash string.
-      std::string hash_str;
-      std::vector<uint8> hash_bytes;
-      if (!entry->GetAsString(&hash_str) ||
-          hash_str.size() != 2 * base::kSHA1Length ||
-          !base::HexStringToBytes(hash_str, &hash_bytes)) {
-        LOG(ERROR) << "Invalid hostname_hashes entry";
-        continue;
-      }
-      DCHECK_EQ(base::kSHA1Length, hash_bytes.size());
-      hostname_hashes_.push_back(HostnameHash(hash_bytes));
-    }
-  }
-
-  if (patterns_.empty() && hostname_hashes_.empty())
-    LOG(WARNING) << "Site list is empty!";
 }
 
 SupervisedUserSiteList::~SupervisedUserSiteList() {
@@ -119,11 +143,13 @@ SupervisedUserSiteList::~SupervisedUserSiteList() {
 
 // static
 void SupervisedUserSiteList::OnJsonLoaded(
+    const std::string& id,
     const base::string16& title,
+    const base::FilePath& large_icon_path,
     const base::FilePath& path,
     base::TimeTicks start_time,
     const SupervisedUserSiteList::LoadedCallback& callback,
-    scoped_ptr<base::Value> value) {
+    std::unique_ptr<base::Value> value) {
   if (!value)
     return;
 
@@ -134,18 +160,27 @@ void SupervisedUserSiteList::OnJsonLoaded(
 
   base::DictionaryValue* dict = nullptr;
   if (!value->GetAsDictionary(&dict)) {
-    LOG(ERROR) << "Site list " << path.value() << " is invalid";
+    LOG(ERROR) << "Whitelist " << path.value() << " is invalid";
     return;
   }
 
   int version = 0;
   if (!dict->GetInteger(kSitelistFormatVersionKey, &version)) {
-    LOG(ERROR) << "Site list " << path.value() << " has invalid version";
-    return;
-  }
-  if (version != kSitelistFormatVersion) {
-    LOG(ERROR) << "Site list " << path.value() << " has wrong version "
-               << version << ", expected " << kSitelistFormatVersion;
+    // TODO(bauerb): Remove this code once all whitelists have been updated to
+    // the new version.
+    if (!dict->GetInteger(kLegacyWhitelistFormatVersionKey, &version)) {
+      LOG(ERROR) << "Whitelist " << path.value() << " has invalid or missing "
+                 << "version";
+      return;
+    }
+    if (version != kLegacyWhitelistFormatVersion) {
+      LOG(ERROR) << "Whitelist " << path.value() << " has wrong legacy version "
+                 << version << ", expected " << kLegacyWhitelistFormatVersion;
+      return;
+    }
+  } else if (version != kWhitelistFormatVersion) {
+    LOG(ERROR) << "Whitelist " << path.value() << " has wrong version "
+               << version << ", expected " << kWhitelistFormatVersion;
     return;
   }
 
@@ -158,6 +193,7 @@ void SupervisedUserSiteList::OnJsonLoaded(
   base::ListValue* hostname_hashes = nullptr;
   dict->GetList(kHostnameHashesKey, &hostname_hashes);
 
-  callback.Run(make_scoped_refptr(new SupervisedUserSiteList(
-      title, GURL(entry_point_url), patterns, hostname_hashes)));
+  callback.Run(make_scoped_refptr(
+      new SupervisedUserSiteList(id, title, GURL(entry_point_url),
+                                 large_icon_path, patterns, hostname_hashes)));
 }

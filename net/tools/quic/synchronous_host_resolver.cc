@@ -6,18 +6,20 @@
 
 #include "base/at_exit.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/simple_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
 #include "net/dns/host_resolver_impl.h"
-#include "net/dns/single_request_host_resolver.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 
 namespace net {
 
-namespace tools {
 
 namespace {
 
@@ -59,23 +61,22 @@ void ResolverThread::Run() {
   net::HostResolver::Options options;
   options.max_concurrent_resolves = 6;
   options.max_retry_attempts = 3u;
-  scoped_ptr<net::HostResolverImpl> resolver_impl(
+  std::unique_ptr<net::HostResolverImpl> resolver(
       new net::HostResolverImpl(options, &net_log));
-  SingleRequestHostResolver resolver(resolver_impl.get());
 
+  std::unique_ptr<net::HostResolver::Request> request;
   HostPortPair host_port_pair(host_, 80);
-  rv_ = resolver.Resolve(
-      HostResolver::RequestInfo(host_port_pair), DEFAULT_PRIORITY,
-      addresses_,
-      base::Bind(&ResolverThread::OnResolutionComplete,
-                 weak_factory_.GetWeakPtr()),
-      BoundNetLog());
+  rv_ = resolver->Resolve(HostResolver::RequestInfo(host_port_pair),
+                          DEFAULT_PRIORITY, addresses_,
+                          base::Bind(&ResolverThread::OnResolutionComplete,
+                                     weak_factory_.GetWeakPtr()),
+                          &request, NetLogWithSource());
 
   if (rv_ != ERR_IO_PENDING)
     return;
 
   // Run the mesage loop until OnResolutionComplete quits it.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 int ResolverThread::Resolve(const std::string& host, AddressList* addresses) {
@@ -101,5 +102,4 @@ int SynchronousHostResolver::Resolve(const std::string& host,
   return resolver.Resolve(host, addresses);
 }
 
-}  // namespace tools
 }  // namespace net

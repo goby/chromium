@@ -2,192 +2,213 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ref_counted.h"
+#include <memory>
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "components/arc/arc_bridge_service_impl.h"
-#include "components/arc/common/arc_host_messages.h"
-#include "ipc/ipc_channel.h"
-#include "ipc/ipc_channel_proxy.h"
+#include "components/arc/test/fake_arc_session.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace arc {
 
 namespace {
 
-// A fake sender that can connect to a specified IPC::ChannelHandle.
-class IPCSenderFake : public IPC::Listener, public IPC::Sender {
- public:
-  explicit IPCSenderFake(
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner)
-      : ipc_task_runner_(ipc_task_runner) {}
-  ~IPCSenderFake() override {}
-
-  // Connects as a client to the specified |handle|.
-  bool Connect(const IPC::ChannelHandle& handle) {
-    ipc_channel_ = IPC::ChannelProxy::Create(handle, IPC::Channel::MODE_CLIENT,
-                                             this, ipc_task_runner_.get());
-    return ipc_channel_;
-  }
-
-  bool Send(IPC::Message* msg) override { return ipc_channel_->Send(msg); }
-
-  bool OnMessageReceived(const IPC::Message& message) override { return true; }
-
- private:
-  // Task runner on which ipc operations are performed.
-  scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner_;
-
-  // The channel through which messages are sent.
-  scoped_ptr<IPC::ChannelProxy> ipc_channel_;
-
-  DISALLOW_COPY_AND_ASSIGN(IPCSenderFake);
-};
+class DummyObserver : public ArcBridgeService::Observer {};
 
 }  // namespace
 
-class ArcBridgeTest : public testing::Test, public ArcBridgeService::Observer {
+// TODO(hidehiko): ArcBridgeTest gets complicated and has stale code.
+// Simplify the code.
+class ArcBridgeTest : public testing::Test,
+                      public ArcBridgeService::Observer {
  public:
-  ArcBridgeTest() : ready_(false) {}
-  ~ArcBridgeTest() override {}
+  ArcBridgeTest() = default;
 
-  void OnStateChanged(ArcBridgeService::State state) override {
-    state_ = state;
-    switch (state) {
-      case ArcBridgeService::State::READY:
-        ready_ = true;
-        break;
-
-      case ArcBridgeService::State::STOPPED:
-        message_loop_.PostTask(FROM_HERE, message_loop_.QuitWhenIdleClosure());
-        break;
-
-      default:
-        break;
-    }
+  void OnBridgeReady() override {
+    state_ = ArcBridgeService::State::READY;
+    ready_ = true;
   }
 
-  void OnInstanceBootPhase(InstanceBootPhase boot_phase) override {
-    boot_phase_ = boot_phase;
+  void OnBridgeStopped(ArcBridgeService::StopReason stop_reason) override {
+    // The instance is already destructed in ArcBridgeServiceImpl::OnStopped().
+    state_ = ArcBridgeService::State::STOPPED;
+    stop_reason_ = stop_reason;
+    message_loop_.task_runner()->PostTask(FROM_HERE,
+                                          message_loop_.QuitWhenIdleClosure());
   }
 
   bool ready() const { return ready_; }
-  InstanceBootPhase boot_phase() const { return boot_phase_; }
   ArcBridgeService::State state() const { return state_; }
+  FakeArcSession* arc_session() const {
+    return static_cast<FakeArcSession*>(service_->GetArcSessionForTesting());
+  }
 
  protected:
-  scoped_ptr<IPCSenderFake> fake_sender_;
+  std::unique_ptr<ArcBridgeServiceImpl> service_;
+  ArcBridgeService::StopReason stop_reason_;
 
-  scoped_ptr<ArcBridgeServiceImpl> service_;
+  static std::unique_ptr<ArcSession> CreateSuspendedArcSession() {
+    auto arc_session = base::MakeUnique<FakeArcSession>();
+    arc_session->SuspendBoot();
+    return std::move(arc_session);
+  }
+
+  static std::unique_ptr<ArcSession> CreateBootFailureArcSession(
+      ArcBridgeService::StopReason reason) {
+    auto arc_session = base::MakeUnique<FakeArcSession>();
+    arc_session->EnableBootFailureEmulation(reason);
+    return std::move(arc_session);
+  }
 
  private:
   void SetUp() override {
     chromeos::DBusThreadManager::Initialize();
 
     ready_ = false;
-    boot_phase_ = InstanceBootPhase::NOT_RUNNING;
+    state_ = ArcBridgeService::State::STOPPED;
+    stop_reason_ = ArcBridgeService::StopReason::SHUTDOWN;
 
-    ipc_thread_.reset(new base::Thread("IPC thread"));
-    ipc_thread_->StartWithOptions(
-        base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
-    service_.reset(new ArcBridgeServiceImpl(ipc_thread_->task_runner(),
-                                            message_loop_.task_runner()));
-
+    // We inject FakeArcSession here so we do not need task_runner.
+    service_.reset(new ArcBridgeServiceImpl(nullptr));
+    service_->SetArcSessionFactoryForTesting(
+        base::Bind(FakeArcSession::Create));
     service_->AddObserver(this);
-
-    IPC::ChannelHandle handle(IPC::Channel::GenerateUniqueRandomChannelID());
-    // Testing code does not do all the steps that are done by regular
-    // connection. In particular, it does not need to create a directory for
-    // the socket, so manually set the state to CONNECTING.
-    service_->SetState(ArcBridgeService::State::CONNECTING);
-    // Connect directly to the specified channel instead of going through
-    // D-Bus, since it is not available for tests.
-    EXPECT_TRUE(service_->Connect(handle, IPC::Channel::MODE_SERVER));
-    // Testing code does also not send D-Bus messages, so set the state to
-    // STARTING.
-    service_->SetState(ArcBridgeService::State::STARTING);
-    fake_sender_.reset(new IPCSenderFake(ipc_thread_->task_runner()));
-    EXPECT_TRUE(fake_sender_);
-    EXPECT_TRUE(fake_sender_->Connect(handle));
   }
 
   void TearDown() override {
-    fake_sender_.reset();
     service_->RemoveObserver(this);
     service_.reset();
-    ipc_thread_.reset();
 
     chromeos::DBusThreadManager::Shutdown();
   }
 
-  bool ready_;
-  InstanceBootPhase boot_phase_;
+  bool ready_ = false;
   ArcBridgeService::State state_;
   base::MessageLoopForUI message_loop_;
 
-  // Thread in which IPC messaging is performed.
-  scoped_ptr<base::Thread> ipc_thread_;
-
   DISALLOW_COPY_AND_ASSIGN(ArcBridgeTest);
-};
-
-// Shuts down the instance reports booted.
-class ScopedShutdownWhenBooted : public ArcBridgeService::Observer {
- public:
-  ScopedShutdownWhenBooted(ArcBridgeService* service) : service_(service) {
-    service_->AddObserver(this);
-  }
-
-  ~ScopedShutdownWhenBooted() override { service_->RemoveObserver(this); }
-
-  void OnInstanceBootPhase(InstanceBootPhase boot_phase) override {
-    if (boot_phase == InstanceBootPhase::BOOT_COMPLETED) {
-      service_->Shutdown();
-    }
-  }
-
- private:
-  ArcBridgeService* service_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedShutdownWhenBooted);
 };
 
 // Exercises the basic functionality of the ARC Bridge Service.  A message from
 // within the instance should cause the observer to be notified.
 TEST_F(ArcBridgeTest, Basic) {
   ASSERT_FALSE(ready());
-  ASSERT_EQ(ArcBridgeService::State::STARTING, state());
-
-  ScopedShutdownWhenBooted shutdown(service_.get());
-
-  ASSERT_TRUE(fake_sender_->Send(new ArcInstanceHostMsg_InstanceBootPhase(
-      InstanceBootPhase::BRIDGE_READY)));
-  ASSERT_TRUE(fake_sender_->Send(new ArcInstanceHostMsg_InstanceBootPhase(
-      InstanceBootPhase::BOOT_COMPLETED)));
-
-  base::RunLoop run_loop;
-  run_loop.Run();
-
-  EXPECT_TRUE(ready());
   ASSERT_EQ(ArcBridgeService::State::STOPPED, state());
-  ASSERT_EQ(InstanceBootPhase::BOOT_COMPLETED, boot_phase());
+
+  service_->RequestStart();
+  ASSERT_EQ(ArcBridgeService::State::READY, state());
+
+  service_->RequestStop();
+  ASSERT_EQ(ArcBridgeService::State::STOPPED, state());
 }
 
 // If the ArcBridgeService is shut down, it should be stopped, even
 // mid-startup.
-TEST_F(ArcBridgeTest, ShutdownMidStartup) {
+TEST_F(ArcBridgeTest, StopMidStartup) {
   ASSERT_FALSE(ready());
 
-  ASSERT_EQ(ArcBridgeService::State::STARTING, state());
-  service_->Shutdown();
-  // Some machines can reach the STOPPED state immediately.
-  ASSERT_TRUE(state() == ArcBridgeService::State::STOPPING ||
-              state() == ArcBridgeService::State::STOPPED);
+  service_->SetArcSessionFactoryForTesting(
+      base::Bind(ArcBridgeTest::CreateSuspendedArcSession));
+  service_->RequestStart();
+  ASSERT_FALSE(service_->stopped());
+  ASSERT_FALSE(service_->ready());
 
-  base::RunLoop run_loop;
-  run_loop.Run();
-
+  service_->RequestStop();
   ASSERT_EQ(ArcBridgeService::State::STOPPED, state());
+}
+
+// If the boot procedure is failed, then restarting mechanism should not
+// triggered.
+TEST_F(ArcBridgeTest, BootFailure) {
+  ASSERT_TRUE(service_->stopped());
+
+  service_->SetArcSessionFactoryForTesting(
+      base::Bind(ArcBridgeTest::CreateBootFailureArcSession,
+                 ArcBridgeService::StopReason::GENERIC_BOOT_FAILURE));
+  service_->RequestStart();
+  EXPECT_EQ(ArcBridgeService::StopReason::GENERIC_BOOT_FAILURE, stop_reason_);
+  ASSERT_TRUE(service_->stopped());
+}
+
+// If the instance is stopped, it should be re-started.
+TEST_F(ArcBridgeTest, Restart) {
+  ASSERT_FALSE(ready());
+
+  service_->RequestStart();
+  ASSERT_EQ(ArcBridgeService::State::READY, state());
+
+  // Simulate a connection loss.
+  service_->DisableReconnectDelayForTesting();
+  ASSERT_TRUE(arc_session());
+  arc_session()->StopWithReason(ArcBridgeService::StopReason::CRASH);
+  ASSERT_TRUE(service_->ready());
+
+  service_->RequestStop();
+  ASSERT_EQ(ArcBridgeService::State::STOPPED, state());
+}
+
+// Makes sure OnBridgeStopped is called on stop.
+TEST_F(ArcBridgeTest, OnBridgeStopped) {
+  ASSERT_FALSE(ready());
+
+  service_->DisableReconnectDelayForTesting();
+  service_->RequestStart();
+  ASSERT_EQ(ArcBridgeService::State::READY, state());
+
+  // Simulate boot failure.
+  ASSERT_TRUE(arc_session());
+  arc_session()->StopWithReason(
+      ArcBridgeService::StopReason::GENERIC_BOOT_FAILURE);
+  EXPECT_EQ(ArcBridgeService::StopReason::GENERIC_BOOT_FAILURE, stop_reason_);
+  ASSERT_TRUE(service_->ready());
+
+  // Simulate crash.
+  ASSERT_TRUE(arc_session());
+  arc_session()->StopWithReason(ArcBridgeService::StopReason::CRASH);
+  EXPECT_EQ(ArcBridgeService::StopReason::CRASH, stop_reason_);
+  ASSERT_TRUE(service_->ready());
+
+  // Graceful stop.
+  service_->RequestStop();
+  ASSERT_EQ(ArcBridgeService::StopReason::SHUTDOWN, stop_reason_);
+  ASSERT_EQ(ArcBridgeService::State::STOPPED, state());
+}
+
+TEST_F(ArcBridgeTest, Shutdown) {
+  ASSERT_FALSE(ready());
+
+  service_->DisableReconnectDelayForTesting();
+  service_->RequestStart();
+  ASSERT_EQ(ArcBridgeService::State::READY, state());
+
+  // Simulate shutdown.
+  service_->OnShutdown();
+  ASSERT_EQ(ArcBridgeService::StopReason::SHUTDOWN, stop_reason_);
+  ASSERT_EQ(ArcBridgeService::State::STOPPED, state());
+}
+
+// Removing the same observer more than once should be okay.
+TEST_F(ArcBridgeTest, RemoveObserverTwice) {
+  ASSERT_FALSE(ready());
+  auto dummy_observer = base::MakeUnique<DummyObserver>();
+  service_->AddObserver(dummy_observer.get());
+  // Call RemoveObserver() twice.
+  service_->RemoveObserver(dummy_observer.get());
+  service_->RemoveObserver(dummy_observer.get());
+}
+
+// Removing an unknown observer should be allowed.
+TEST_F(ArcBridgeTest, RemoveUnknownObserver) {
+  ASSERT_FALSE(ready());
+  auto dummy_observer = base::MakeUnique<DummyObserver>();
+  service_->RemoveObserver(dummy_observer.get());
 }
 
 }  // namespace arc

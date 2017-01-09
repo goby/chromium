@@ -4,27 +4,30 @@
 
 #include "chrome/browser/profiles/profile_info_cache.h"
 
+#include <algorithm>
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/i18n/case_conversion.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/macros.h"
 #include "base/profiler/scoped_tracker.h"
-#include "base/rand_util.h"
 #include "base/stl_util.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_avatar_downloader.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -32,7 +35,7 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_util.h"
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #endif
 
@@ -65,34 +68,11 @@ const char kStatsPasswordsKey[] = "stats_passwords";
 const char kStatsBookmarksKey[] = "stats_bookmarks";
 const char kStatsSettingsKey[] = "stats_settings";
 
-// First eight are generic icons, which use IDS_NUMBERED_PROFILE_NAME.
-const int kDefaultNames[] = {
-  IDS_DEFAULT_AVATAR_NAME_8,
-  IDS_DEFAULT_AVATAR_NAME_9,
-  IDS_DEFAULT_AVATAR_NAME_10,
-  IDS_DEFAULT_AVATAR_NAME_11,
-  IDS_DEFAULT_AVATAR_NAME_12,
-  IDS_DEFAULT_AVATAR_NAME_13,
-  IDS_DEFAULT_AVATAR_NAME_14,
-  IDS_DEFAULT_AVATAR_NAME_15,
-  IDS_DEFAULT_AVATAR_NAME_16,
-  IDS_DEFAULT_AVATAR_NAME_17,
-  IDS_DEFAULT_AVATAR_NAME_18,
-  IDS_DEFAULT_AVATAR_NAME_19,
-  IDS_DEFAULT_AVATAR_NAME_20,
-  IDS_DEFAULT_AVATAR_NAME_21,
-  IDS_DEFAULT_AVATAR_NAME_22,
-  IDS_DEFAULT_AVATAR_NAME_23,
-  IDS_DEFAULT_AVATAR_NAME_24,
-  IDS_DEFAULT_AVATAR_NAME_25,
-  IDS_DEFAULT_AVATAR_NAME_26
-};
-
 typedef std::vector<unsigned char> ImageData;
 
 // Writes |data| to disk and takes ownership of the pointer. On successful
 // completion, it runs |callback|.
-void SaveBitmap(scoped_ptr<ImageData> data,
+void SaveBitmap(std::unique_ptr<ImageData> data,
                 const base::FilePath& image_path,
                 const base::Closure& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
@@ -157,8 +137,7 @@ void DeleteBitmap(const base::FilePath& image_path) {
 
 ProfileInfoCache::ProfileInfoCache(PrefService* prefs,
                                    const base::FilePath& user_data_dir)
-    : prefs_(prefs),
-      user_data_dir_(user_data_dir),
+    : ProfileAttributesStorage(prefs, user_data_dir),
       disable_avatar_download_for_testing_(false) {
   // Populate the cache
   DictionaryPrefUpdate update(prefs_, prefs::kProfileInfoCache);
@@ -170,6 +149,8 @@ ProfileInfoCache::ProfileInfoCache(PrefService* prefs,
     base::string16 name;
     info->GetString(kNameKey, &name);
     sorted_keys_.insert(FindPositionForProfile(it.key(), name), it.key());
+    profile_attributes_entries_[user_data_dir_.AppendASCII(it.key()).value()] =
+        std::unique_ptr<ProfileAttributesEntry>(nullptr);
 
     bool using_default_name;
     if (!info->GetBoolean(kIsUsingDefaultNameKey, &using_default_name)) {
@@ -193,11 +174,6 @@ ProfileInfoCache::ProfileInfoCache(PrefService* prefs,
 }
 
 ProfileInfoCache::~ProfileInfoCache() {
-  STLDeleteContainerPairSecondPointers(
-      cached_avatar_images_.begin(), cached_avatar_images_.end());
-  STLDeleteContainerPairSecondPointers(
-      avatar_images_downloads_in_progress_.begin(),
-      avatar_images_downloads_in_progress_.end());
 }
 
 void ProfileInfoCache::AddProfileToCache(
@@ -211,7 +187,7 @@ void ProfileInfoCache::AddProfileToCache(
   DictionaryPrefUpdate update(prefs_, prefs::kProfileInfoCache);
   base::DictionaryValue* cache = update.Get();
 
-  scoped_ptr<base::DictionaryValue> info(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> info(new base::DictionaryValue);
   info->SetString(kNameKey, name);
   info->SetString(kGAIAIdKey, gaia_id);
   info->SetString(kUserNameKey, user_name);
@@ -228,13 +204,14 @@ void ProfileInfoCache::AddProfileToCache(
   cache->SetWithoutPathExpansion(key, info.release());
 
   sorted_keys_.insert(FindPositionForProfile(key, name), key);
+  profile_attributes_entries_[user_data_dir_.AppendASCII(key).value()] =
+      std::unique_ptr<ProfileAttributesEntry>();
 
   if (!disable_avatar_download_for_testing_)
     DownloadHighResAvatarIfNeeded(icon_index, profile_path);
 
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileAdded(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileAdded(profile_path);
 }
 
 void ProfileInfoCache::AddObserver(ProfileInfoCacheObserver* obs) {
@@ -254,20 +231,18 @@ void ProfileInfoCache::DeleteProfileFromCache(
   }
   base::string16 name = GetNameOfProfileAtIndex(profile_index);
 
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileWillBeRemoved(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileWillBeRemoved(profile_path);
 
   DictionaryPrefUpdate update(prefs_, prefs::kProfileInfoCache);
   base::DictionaryValue* cache = update.Get();
   std::string key = CacheKeyFromProfilePath(profile_path);
   cache->Remove(key, NULL);
   sorted_keys_.erase(std::find(sorted_keys_.begin(), sorted_keys_.end(), key));
-  profile_attributes_entries_.erase(profile_path);
+  profile_attributes_entries_.erase(profile_path.value());
 
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileWasRemoved(profile_path, name));
+  for (auto& observer : observer_list_)
+    observer.OnProfileWasRemoved(profile_path, name);
 }
 
 size_t ProfileInfoCache::GetNumberOfProfiles() const {
@@ -335,7 +310,7 @@ const gfx::Image& ProfileInfoCache::GetAvatarIconOfProfileAtIndex(
       return *image;
   }
 
-#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
   // Use the high resolution version of the avatar if it exists. Mobile and
   // ChromeOS don't need the high resolution version so no need to fetch it.
   const gfx::Image* image = GetHighResAvatarOfProfileAtIndex(index);
@@ -426,7 +401,7 @@ bool ProfileInfoCache::ProfileIsSupervisedAtIndex(size_t index) const {
 }
 
 bool ProfileInfoCache::ProfileIsChildAtIndex(size_t index) const {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   return GetSupervisedUserIdOfProfileAtIndex(index) ==
       supervised_users::kChildAccountSUID;
 #else
@@ -558,7 +533,7 @@ void ProfileInfoCache::SetProfileActiveTimeAtIndex(size_t index) {
     return;
   }
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetDouble(kActiveTimeKey, base::Time::Now().ToDoubleT());
   // This takes ownership of |info|.
@@ -567,7 +542,7 @@ void ProfileInfoCache::SetProfileActiveTimeAtIndex(size_t index) {
 
 void ProfileInfoCache::SetNameOfProfileAtIndex(size_t index,
                                                const base::string16& name) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   base::string16 current_name;
   info->GetString(kNameKey, &current_name);
@@ -585,9 +560,8 @@ void ProfileInfoCache::SetNameOfProfileAtIndex(size_t index,
   UpdateSortForProfileIndex(index);
 
   if (old_display_name != new_display_name) {
-    FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                      observer_list_,
-                      OnProfileNameChanged(profile_path, old_display_name));
+    for (auto& observer : observer_list_)
+      observer.OnProfileNameChanged(profile_path, old_display_name);
   }
 }
 
@@ -596,7 +570,7 @@ void ProfileInfoCache::SetShortcutNameOfProfileAtIndex(
     const base::string16& shortcut_name) {
   if (shortcut_name == GetShortcutNameOfProfileAtIndex(index))
     return;
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kShortcutNameKey, shortcut_name);
   // This takes ownership of |info|.
@@ -613,7 +587,7 @@ void ProfileInfoCache::SetAuthInfoOfProfileAtIndex(
     return;
   }
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
 
   info->SetString(kGAIAIdKey, gaia_id);
@@ -623,14 +597,13 @@ void ProfileInfoCache::SetAuthInfoOfProfileAtIndex(
   SetInfoForProfileAtIndex(index, info.release());
 
   base::FilePath profile_path = GetPathOfProfileAtIndex(index);
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileAuthInfoChanged(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileAuthInfoChanged(profile_path);
 }
 
 void ProfileInfoCache::SetAvatarIconOfProfileAtIndex(size_t index,
                                                      size_t icon_index) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kAvatarIconKey,
       profiles::GetDefaultAvatarIconUrl(icon_index));
@@ -642,25 +615,23 @@ void ProfileInfoCache::SetAvatarIconOfProfileAtIndex(size_t index,
   if (!disable_avatar_download_for_testing_)
     DownloadHighResAvatarIfNeeded(icon_index, profile_path);
 
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileAvatarChanged(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileAvatarChanged(profile_path);
 }
 
 void ProfileInfoCache::SetIsOmittedProfileAtIndex(size_t index,
                                                   bool is_omitted) {
   if (IsOmittedProfileAtIndex(index) == is_omitted)
     return;
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kIsOmittedFromProfileListKey, is_omitted);
   // This takes ownership of |info|.
   SetInfoForProfileAtIndex(index, info.release());
 
   base::FilePath profile_path = GetPathOfProfileAtIndex(index);
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileIsOmittedChanged(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileIsOmittedChanged(profile_path);
 }
 
 void ProfileInfoCache::SetSupervisedUserIdOfProfileAtIndex(
@@ -668,22 +639,21 @@ void ProfileInfoCache::SetSupervisedUserIdOfProfileAtIndex(
     const std::string& id) {
   if (GetSupervisedUserIdOfProfileAtIndex(index) == id)
     return;
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kSupervisedUserId, id);
   // This takes ownership of |info|.
   SetInfoForProfileAtIndex(index, info.release());
 
   base::FilePath profile_path = GetPathOfProfileAtIndex(index);
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileSupervisedUserIdChanged(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileSupervisedUserIdChanged(profile_path);
 }
 
 void ProfileInfoCache::SetLocalAuthCredentialsOfProfileAtIndex(
     size_t index,
     const std::string& credentials) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kAuthCredentialsKey, credentials);
   // This takes ownership of |info|.
@@ -693,7 +663,7 @@ void ProfileInfoCache::SetLocalAuthCredentialsOfProfileAtIndex(
 void ProfileInfoCache::SetPasswordChangeDetectionTokenAtIndex(
     size_t index,
     const std::string& token) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kPasswordTokenKey, token);
   // This takes ownership of |info|.
@@ -705,7 +675,7 @@ void ProfileInfoCache::SetBackgroundStatusOfProfileAtIndex(
     bool running_background_apps) {
   if (GetBackgroundStatusOfProfileAtIndex(index) == running_background_apps)
     return;
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kBackgroundAppsKey, running_background_apps);
   // This takes ownership of |info|.
@@ -718,7 +688,7 @@ void ProfileInfoCache::SetGAIANameOfProfileAtIndex(size_t index,
     return;
 
   base::string16 old_display_name = GetNameOfProfileAtIndex(index);
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kGAIANameKey, name);
   // This takes ownership of |info|.
@@ -728,9 +698,8 @@ void ProfileInfoCache::SetGAIANameOfProfileAtIndex(size_t index,
   UpdateSortForProfileIndex(index);
 
   if (old_display_name != new_display_name) {
-    FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                      observer_list_,
-                      OnProfileNameChanged(profile_path, old_display_name));
+    for (auto& observer : observer_list_)
+      observer.OnProfileNameChanged(profile_path, old_display_name);
   }
 }
 
@@ -741,7 +710,7 @@ void ProfileInfoCache::SetGAIAGivenNameOfProfileAtIndex(
     return;
 
   base::string16 old_display_name = GetNameOfProfileAtIndex(index);
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kGAIAGivenNameKey, name);
   // This takes ownership of |info|.
@@ -751,9 +720,8 @@ void ProfileInfoCache::SetGAIAGivenNameOfProfileAtIndex(
   UpdateSortForProfileIndex(index);
 
   if (old_display_name != new_display_name) {
-    FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                      observer_list_,
-                      OnProfileNameChanged(profile_path, old_display_name));
+    for (auto& observer : observer_list_)
+      observer.OnProfileNameChanged(profile_path, old_display_name);
   }
 }
 
@@ -763,12 +731,7 @@ void ProfileInfoCache::SetGAIAPictureOfProfileAtIndex(size_t index,
   std::string key = CacheKeyFromProfilePath(path);
 
   // Delete the old bitmap from cache.
-  std::map<std::string, gfx::Image*>::iterator it =
-      cached_avatar_images_.find(key);
-  if (it != cached_avatar_images_.end()) {
-    delete it->second;
-    cached_avatar_images_.erase(it);
-  }
+  cached_avatar_images_.erase(key);
 
   std::string old_file_name;
   GetInfoForProfileAtIndex(index)->GetString(
@@ -788,32 +751,30 @@ void ProfileInfoCache::SetGAIAPictureOfProfileAtIndex(size_t index,
         old_file_name.empty() ? profiles::kGAIAPictureFileName : old_file_name;
     base::FilePath image_path = path.AppendASCII(new_file_name);
     SaveAvatarImageAtPath(
-        image, key, image_path, GetPathOfProfileAtIndex(index));
+        GetPathOfProfileAtIndex(index), image, key, image_path);
   }
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetString(kGAIAPictureFileNameKey, new_file_name);
   // This takes ownership of |info|.
   SetInfoForProfileAtIndex(index, info.release());
 
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileAvatarChanged(path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileAvatarChanged(path);
 }
 
 void ProfileInfoCache::SetIsUsingGAIAPictureOfProfileAtIndex(size_t index,
                                                              bool value) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kUseGAIAPictureKey, value);
   // This takes ownership of |info|.
   SetInfoForProfileAtIndex(index, info.release());
 
   base::FilePath profile_path = GetPathOfProfileAtIndex(index);
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileAvatarChanged(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileAvatarChanged(profile_path);
 }
 
 void ProfileInfoCache::SetProfileSigninRequiredAtIndex(size_t index,
@@ -821,23 +782,22 @@ void ProfileInfoCache::SetProfileSigninRequiredAtIndex(size_t index,
   if (value == ProfileIsSigninRequiredAtIndex(index))
     return;
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kSigninRequiredKey, value);
   // This takes ownership of |info|.
   SetInfoForProfileAtIndex(index, info.release());
 
   base::FilePath profile_path = GetPathOfProfileAtIndex(index);
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileSigninRequiredChanged(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileSigninRequiredChanged(profile_path);
 }
 
 void ProfileInfoCache::SetProfileIsEphemeralAtIndex(size_t index, bool value) {
   if (value == ProfileIsEphemeralAtIndex(index))
     return;
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kProfileIsEphemeral, value);
   // This takes ownership of |info|.
@@ -851,7 +811,7 @@ void ProfileInfoCache::SetProfileIsUsingDefaultNameAtIndex(
 
   base::string16 old_display_name = GetNameOfProfileAtIndex(index);
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kIsUsingDefaultNameKey, value);
   // This takes ownership of |info|.
@@ -861,9 +821,8 @@ void ProfileInfoCache::SetProfileIsUsingDefaultNameAtIndex(
   const base::FilePath profile_path = GetPathOfProfileAtIndex(index);
 
   if (old_display_name != new_display_name) {
-    FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                      observer_list_,
-                      OnProfileNameChanged(profile_path, old_display_name));
+    for (auto& observer : observer_list_)
+      observer.OnProfileNameChanged(profile_path, old_display_name);
   }
 }
 
@@ -872,7 +831,7 @@ void ProfileInfoCache::SetProfileIsUsingDefaultAvatarAtIndex(
   if (value == ProfileIsUsingDefaultAvatarAtIndex(index))
     return;
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kIsUsingDefaultAvatarKey, value);
   // This takes ownership of |info|.
@@ -883,88 +842,16 @@ void ProfileInfoCache::SetProfileIsAuthErrorAtIndex(size_t index, bool value) {
   if (value == ProfileIsAuthErrorAtIndex(index))
     return;
 
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kIsAuthErrorKey, value);
   // This takes ownership of |info|.
   SetInfoForProfileAtIndex(index, info.release());
 }
 
-bool ProfileInfoCache::IsDefaultProfileName(const base::string16& name) const {
-  // Check if it's a "First user" old-style name.
-  if (name == l10n_util::GetStringUTF16(IDS_DEFAULT_PROFILE_NAME) ||
-      name == l10n_util::GetStringUTF16(IDS_LEGACY_DEFAULT_PROFILE_NAME))
-    return true;
-
-  // Check if it's one of the old-style profile names.
-  for (size_t i = 0; i < arraysize(kDefaultNames); ++i) {
-    if (name == l10n_util::GetStringUTF16(kDefaultNames[i]))
-      return true;
-  }
-
-  // Check whether it's one of the "Person %d" style names.
-  std::string default_name_format = l10n_util::GetStringFUTF8(
-      IDS_NEW_NUMBERED_PROFILE_NAME, base::ASCIIToUTF16("%d"));
-
-  int generic_profile_number;  // Unused. Just a placeholder for sscanf.
-  int assignments = sscanf(base::UTF16ToUTF8(name).c_str(),
-                           default_name_format.c_str(),
-                           &generic_profile_number);
-  // Unless it matched the format, this is a custom name.
-  return assignments == 1;
-}
-
-base::string16 ProfileInfoCache::ChooseNameForNewProfile(
-    size_t icon_index) const {
-  base::string16 name;
-  for (int name_index = 1; ; ++name_index) {
-#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID) && !defined(OS_IOS)
-    name = l10n_util::GetStringFUTF16Int(IDS_NEW_NUMBERED_PROFILE_NAME,
-                                         name_index);
-#else
-   if (icon_index < profiles::GetGenericAvatarIconCount()) {
-      name = l10n_util::GetStringFUTF16Int(IDS_NUMBERED_PROFILE_NAME,
-                                           name_index);
-    } else {
-      name = l10n_util::GetStringUTF16(
-          kDefaultNames[icon_index - profiles::GetGenericAvatarIconCount()]);
-      if (name_index > 1)
-        name.append(base::UTF8ToUTF16(base::IntToString(name_index)));
-    }
-#endif
-
-    // Loop through previously named profiles to ensure we're not duplicating.
-    bool name_found = false;
-    for (size_t i = 0; i < GetNumberOfProfiles(); ++i) {
-      if (GetNameOfProfileAtIndex(i) == name) {
-        name_found = true;
-        break;
-      }
-    }
-    if (!name_found)
-      return name;
-  }
-}
-
-size_t ProfileInfoCache::ChooseAvatarIconIndexForNewProfile() const {
-  size_t icon_index = 0;
-  // Try to find a unique, non-generic icon.
-  if (ChooseAvatarIconIndexForNewProfile(false, true, &icon_index))
-    return icon_index;
-  // Try to find any unique icon.
-  if (ChooseAvatarIconIndexForNewProfile(true, true, &icon_index))
-    return icon_index;
-  // Settle for any random icon, even if it's not unique.
-  if (ChooseAvatarIconIndexForNewProfile(true, false, &icon_index))
-    return icon_index;
-
-  NOTREACHED();
-  return 0;
-}
-
 void ProfileInfoCache::SetStatsBrowsingHistoryOfProfileAtIndex(size_t index,
                                                                int value) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetInteger(kStatsBrowsingHistoryKey, value);
   // This takes ownership of |info|.
@@ -973,7 +860,7 @@ void ProfileInfoCache::SetStatsBrowsingHistoryOfProfileAtIndex(size_t index,
 
 void ProfileInfoCache::SetStatsPasswordsOfProfileAtIndex(size_t index,
                                                          int value) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetInteger(kStatsPasswordsKey, value);
   // This takes ownership of |info|.
@@ -982,7 +869,7 @@ void ProfileInfoCache::SetStatsPasswordsOfProfileAtIndex(size_t index,
 
 void ProfileInfoCache::SetStatsBookmarksOfProfileAtIndex(size_t index,
                                                          int value) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetInteger(kStatsBookmarksKey, value);
   // This takes ownership of |info|.
@@ -991,7 +878,7 @@ void ProfileInfoCache::SetStatsBookmarksOfProfileAtIndex(size_t index,
 
 void ProfileInfoCache::SetStatsSettingsOfProfileAtIndex(size_t index,
                                                         int value) {
-  scoped_ptr<base::DictionaryValue> info(
+  std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetInteger(kStatsSettingsKey, value);
   // This takes ownership of |info|.
@@ -1011,7 +898,7 @@ void ProfileInfoCache::DownloadHighResAvatarIfNeeded(
     size_t icon_index,
     const base::FilePath& profile_path) {
   // Downloading is only supported on desktop.
-#if defined(OS_ANDROID) || defined(OS_IOS) || defined(OS_CHROMEOS)
+#if defined(OS_ANDROID) || defined(OS_CHROMEOS)
   return;
 #endif
   DCHECK(!disable_avatar_download_for_testing_);
@@ -1034,13 +921,13 @@ void ProfileInfoCache::DownloadHighResAvatarIfNeeded(
 }
 
 void ProfileInfoCache::SaveAvatarImageAtPath(
+    const base::FilePath& profile_path,
     const gfx::Image* image,
     const std::string& key,
-    const base::FilePath& image_path,
-    const base::FilePath& profile_path) {
-  cached_avatar_images_[key] = new gfx::Image(*image);
+    const base::FilePath& image_path) {
+  cached_avatar_images_[key].reset(new gfx::Image(*image));
 
-  scoped_ptr<ImageData> data(new ImageData);
+  std::unique_ptr<ImageData> data(new ImageData);
   scoped_refptr<base::RefCountedMemory> png_data = image->As1xPNGBytes();
   data->assign(png_data->front(), png_data->front() + png_data->size());
 
@@ -1051,11 +938,11 @@ void ProfileInfoCache::SaveAvatarImageAtPath(
     // We mustn't delete the avatar downloader right here, since we're being
     // called by it.
     BrowserThread::DeleteSoon(BrowserThread::UI, FROM_HERE,
-                              downloader_iter->second);
+                              downloader_iter->second.release());
     avatar_images_downloads_in_progress_.erase(downloader_iter);
   }
 
-  if (!data->size()) {
+  if (data->empty()) {
     LOG(ERROR) << "Failed to PNG encode the image.";
   } else {
     base::Closure callback = base::Bind(&ProfileInfoCache::OnAvatarPictureSaved,
@@ -1107,38 +994,6 @@ std::vector<std::string>::iterator ProfileInfoCache::FindPositionForProfile(
   return sorted_keys_.end();
 }
 
-bool ProfileInfoCache::IconIndexIsUnique(size_t icon_index) const {
-  for (size_t i = 0; i < GetNumberOfProfiles(); ++i) {
-    if (GetAvatarIconIndexOfProfileAtIndex(i) == icon_index)
-      return false;
-  }
-  return true;
-}
-
-bool ProfileInfoCache::ChooseAvatarIconIndexForNewProfile(
-    bool allow_generic_icon,
-    bool must_be_unique,
-    size_t* out_icon_index) const {
-#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID) && !defined(OS_IOS)
-  // Always allow the generic icon when displaying the new avatar menu.
-  allow_generic_icon = true;
-#endif
-  size_t start = allow_generic_icon ? 0 : profiles::GetGenericAvatarIconCount();
-  size_t end = profiles::GetDefaultAvatarIconCount();
-  size_t count = end - start;
-
-  int rand = base::RandInt(0, count);
-  for (size_t i = 0; i < count; ++i) {
-    size_t icon_index = start + (rand + i) %  count;
-    if (!must_be_unique || IconIndexIsUnique(icon_index)) {
-      *out_icon_index = icon_index;
-      return true;
-    }
-  }
-
-  return false;
-}
-
 void ProfileInfoCache::UpdateSortForProfileIndex(size_t index) {
   base::string16 name = GetNameOfProfileAtIndex(index);
 
@@ -1174,7 +1029,7 @@ void ProfileInfoCache::DownloadHighResAvatar(
     size_t icon_index,
     const base::FilePath& profile_path) {
   // Downloading is only supported on desktop.
-#if defined(OS_ANDROID) || defined(OS_IOS) || defined(OS_CHROMEOS)
+#if defined(OS_ANDROID) || defined(OS_CHROMEOS)
   return;
 #endif
   // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/461175
@@ -1195,20 +1050,23 @@ void ProfileInfoCache::DownloadHighResAvatar(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "461175 ProfileInfoCache::DownloadHighResAvatar::MakeDownloader"));
   // Start the download for this file. The cache takes ownership of the
-  // |avatar_downloader|, which will be deleted when the download completes, or
+  // avatar downloader, which will be deleted when the download completes, or
   // if that never happens, when the ProfileInfoCache is destroyed.
-  ProfileAvatarDownloader* avatar_downloader = new ProfileAvatarDownloader(
-      icon_index,
-      profile_path,
-      this);
-  avatar_images_downloads_in_progress_[file_name] = avatar_downloader;
+  std::unique_ptr<ProfileAvatarDownloader>& current_downloader =
+      avatar_images_downloads_in_progress_[file_name];
+  current_downloader.reset(
+      new ProfileAvatarDownloader(
+          icon_index,
+          base::Bind(&ProfileInfoCache::SaveAvatarImageAtPath,
+                     base::Unretained(this),
+                     profile_path)));
 
   // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/461175
   // is fixed.
   tracked_objects::ScopedTracker tracking_profile3(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "461175 ProfileInfoCache::DownloadHighResAvatar::StartDownload"));
-  avatar_downloader->Start();
+  current_downloader->Start();
 }
 
 const gfx::Image* ProfileInfoCache::LoadAvatarPictureFromPath(
@@ -1219,7 +1077,7 @@ const gfx::Image* ProfileInfoCache::LoadAvatarPictureFromPath(
   if (cached_avatar_images_.count(key)) {
     if (cached_avatar_images_[key]->IsEmpty())
       return NULL;
-    return cached_avatar_images_[key];
+    return cached_avatar_images_[key].get();
   }
 
   // Don't download the image if downloading is disabled for tests.
@@ -1251,7 +1109,6 @@ void ProfileInfoCache::OnAvatarPictureLoaded(const base::FilePath& profile_path,
           "461175 ProfileInfoCache::OnAvatarPictureLoaded::Start"));
 
   cached_avatar_images_loading_[key] = false;
-  delete cached_avatar_images_[key];
 
   if (*image) {
     // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/461175
@@ -1259,7 +1116,7 @@ void ProfileInfoCache::OnAvatarPictureLoaded(const base::FilePath& profile_path,
     tracked_objects::ScopedTracker tracking_profile2(
         FROM_HERE_WITH_EXPLICIT_FUNCTION(
             "461175 ProfileInfoCache::OnAvatarPictureLoaded::SetImage"));
-    cached_avatar_images_[key] = *image;
+    cached_avatar_images_[key].reset(*image);
   } else {
     // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/461175
     // is fixed.
@@ -1267,7 +1124,7 @@ void ProfileInfoCache::OnAvatarPictureLoaded(const base::FilePath& profile_path,
         FROM_HERE_WITH_EXPLICIT_FUNCTION(
             "461175 ProfileInfoCache::OnAvatarPictureLoaded::MakeEmptyImage"));
     // Place an empty image in the cache to avoid reloading it again.
-    cached_avatar_images_[key] = new gfx::Image();
+    cached_avatar_images_[key].reset(new gfx::Image());
   }
   // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/461175
   // is fixed.
@@ -1276,9 +1133,8 @@ void ProfileInfoCache::OnAvatarPictureLoaded(const base::FilePath& profile_path,
           "461175 ProfileInfoCache::OnAvatarPictureLoaded::DeleteImage"));
   delete image;
 
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-                    observer_list_,
-                    OnProfileHighResAvatarLoaded(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileHighResAvatarLoaded(profile_path);
 }
 
 void ProfileInfoCache::OnAvatarPictureSaved(
@@ -1286,14 +1142,13 @@ void ProfileInfoCache::OnAvatarPictureSaved(
       const base::FilePath& profile_path) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  FOR_EACH_OBSERVER(ProfileInfoCacheObserver,
-      observer_list_,
-      OnProfileHighResAvatarLoaded(profile_path));
+  for (auto& observer : observer_list_)
+    observer.OnProfileHighResAvatarLoaded(profile_path);
 }
 
 void ProfileInfoCache::MigrateLegacyProfileNamesAndDownloadAvatars() {
   // Only do this on desktop platforms.
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   // Migrate any legacy profile names ("First user", "Default Profile") to
   // new style default names ("Person 1"). The problem here is that every
   // time you rename a profile, the ProfileInfoCache sorts itself, so
@@ -1359,21 +1214,18 @@ ProfileInfoCache::GetAllProfilesAttributes() {
 
 bool ProfileInfoCache::GetProfileAttributesWithPath(
     const base::FilePath& path, ProfileAttributesEntry** entry) {
-  if (GetNumberOfProfiles() == 0)
+  const auto entry_iter = profile_attributes_entries_.find(path.value());
+  if (entry_iter == profile_attributes_entries_.end())
     return false;
 
-  if (GetIndexOfProfileWithPath(path) == std::string::npos)
-    return false;
-
-  if (profile_attributes_entries_.find(path) ==
-      profile_attributes_entries_.end()) {
+  std::unique_ptr<ProfileAttributesEntry>& current_entry = entry_iter->second;
+  if (!current_entry) {
     // The profile info is in the cache but its entry isn't created yet, insert
     // it in the map.
-    scoped_ptr<ProfileAttributesEntry> new_entry(new ProfileAttributesEntry());
-    profile_attributes_entries_.add(path, new_entry.Pass());
-    profile_attributes_entries_.get(path)->Initialize(this, path);
+    current_entry.reset(new ProfileAttributesEntry());
+    current_entry->Initialize(this, path);
   }
 
-  *entry = profile_attributes_entries_.get(path);
+  *entry = current_entry.get();
   return true;
 }

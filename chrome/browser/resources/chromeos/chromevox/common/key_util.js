@@ -118,7 +118,8 @@ cvox.KeyUtil.keyEventToKeySequence = function(keyEvent) {
       util.prevKeySequence &&
       keySequence.equals(util.prevKeySequence)) {
     var prevTime = util.modeKeyPressTime;
-    if (prevTime > 0 && currTime - prevTime < 300) {  // Double tap
+    var delta = currTime - prevTime;
+    if (prevTime > 0 && delta > 100 && delta < 300) {  // Double tap
       keySequence = util.prevKeySequence;
       keySequence.doubleTap = true;
       util.prevKeySequence = null;
@@ -337,6 +338,7 @@ cvox.KeyUtil.getReadableNameForKeyCode = function(keyCode) {
   } else if (keyCode >= 48 && keyCode <= 90) {
     return String.fromCharCode(keyCode);
   }
+  return '';
 };
 
 /**
@@ -470,7 +472,7 @@ cvox.KeyUtil.keySequenceToString = function(
 
   if (keySequence.cvoxModifier || keySequence.prefixKey) {
     if (str != '') {
-      str = 'Cvox+' + str;
+      str = 'ChromeVox+' + str;
     } else {
       str = 'Cvox';
     }

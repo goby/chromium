@@ -5,9 +5,12 @@
 #ifndef MEDIA_CDM_PPAPI_EXTERNAL_CLEAR_KEY_FFMPEG_CDM_VIDEO_DECODER_H_
 #define MEDIA_CDM_PPAPI_EXTERNAL_CLEAR_KEY_FFMPEG_CDM_VIDEO_DECODER_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/cdm/ppapi/external_clear_key/cdm_video_decoder.h"
 #include "media/cdm/ppapi/external_clear_key/clear_key_cdm_common.h"
 #include "media/ffmpeg/ffmpeg_deleters.h"
@@ -45,8 +48,8 @@ class FFmpegCdmVideoDecoder : public CdmVideoDecoder {
   void ReleaseFFmpegResources();
 
   // FFmpeg structures owned by this object.
-  scoped_ptr<AVCodecContext, ScopedPtrAVFreeContext> codec_context_;
-  scoped_ptr<AVFrame, ScopedPtrAVFreeFrame> av_frame_;
+  std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext> codec_context_;
+  std::unique_ptr<AVFrame, ScopedPtrAVFreeFrame> av_frame_;
 
   bool is_initialized_;
 

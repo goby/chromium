@@ -6,9 +6,11 @@
 #define CONTENT_BROWSER_SHARED_WORKER_SHARED_WORKER_HOST_H_
 
 #include <list>
+#include <memory>
+#include <utility>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
@@ -55,18 +57,19 @@ class SharedWorkerHost {
   void DocumentDetached(SharedWorkerMessageFilter* filter,
                         unsigned long long document_id);
 
+  // Removes the references to shared workers from the all documents in the
+  // renderer frame. And shuts down any shared workers that are no longer
+  // referenced by active documents.
+  void RenderFrameDetached(int render_process_id, int render_frame_id);
+
   void WorkerContextClosed();
   void WorkerReadyForInspection();
   void WorkerScriptLoaded();
   void WorkerScriptLoadFailed();
   void WorkerConnected(int message_port_id);
   void WorkerContextDestroyed();
-  void AllowDatabase(const GURL& url,
-                     const base::string16& name,
-                     const base::string16& display_name,
-                     unsigned long estimated_size,
-                     bool* result);
-  void AllowFileSystem(const GURL& url, scoped_ptr<IPC::Message> reply_msg);
+  void AllowFileSystem(const GURL& url,
+                       std::unique_ptr<IPC::Message> reply_msg);
   void AllowIndexedDB(const GURL& url,
                       const base::string16& name,
                       bool* result);
@@ -85,7 +88,7 @@ class SharedWorkerHost {
   }
   int process_id() const { return worker_process_id_; }
   int worker_route_id() const { return worker_route_id_; }
-  bool closed() const { return closed_; }
+  bool IsAvailable() const;
 
  private:
   // Unique identifier for a worker client.
@@ -100,11 +103,11 @@ class SharedWorkerHost {
 
    private:
     SharedWorkerMessageFilter* filter_;
-    int route_id_;
+    const int route_id_;
     int message_port_id_;
   };
 
-  typedef std::list<FilterInfo> FilterList;
+  using FilterList = std::list<FilterInfo>;
 
   // Relays |message| to the SharedWorker. Takes care of parsing the message if
   // it contains a message port and sending it a valid route id.
@@ -119,14 +122,15 @@ class SharedWorkerHost {
   void SetMessagePortID(SharedWorkerMessageFilter* filter,
                         int route_id,
                         int message_port_id);
-  void AllowFileSystemResponse(scoped_ptr<IPC::Message> reply_msg,
+  void AllowFileSystemResponse(std::unique_ptr<IPC::Message> reply_msg,
                                bool allowed);
-  scoped_ptr<SharedWorkerInstance> instance_;
+  std::unique_ptr<SharedWorkerInstance> instance_;
   scoped_refptr<WorkerDocumentSet> worker_document_set_;
   FilterList filters_;
   SharedWorkerMessageFilter* container_render_filter_;
-  int worker_process_id_;
-  int worker_route_id_;
+  const int worker_process_id_;
+  const int worker_route_id_;
+  bool termination_message_sent_;
   bool closed_;
   const base::TimeTicks creation_time_;
 

@@ -4,6 +4,8 @@
 
 #include "ppapi/proxy/video_capture_resource.h"
 
+#include <stddef.h>
+
 #include "ppapi/c/dev/ppp_video_capture_dev.h"
 #include "ppapi/proxy/dispatch_reply_message.h"
 #include "ppapi/proxy/plugin_dispatcher.h"
@@ -152,7 +154,7 @@ void VideoCaptureResource::OnPluginMsgOnDeviceInfo(
 
   PluginResourceTracker* tracker =
       PluginGlobals::Get()->plugin_resource_tracker();
-  scoped_ptr<PP_Resource[]> resources(new PP_Resource[buffers.size()]);
+  std::unique_ptr<PP_Resource[]> resources(new PP_Resource[buffers.size()]);
   for (size_t i = 0; i < buffers.size(); ++i) {
     // We assume that the browser created a new set of resources.
     DCHECK(!tracker->PluginResourceForHostResource(buffers[i]));

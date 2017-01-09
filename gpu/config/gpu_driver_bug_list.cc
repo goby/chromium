@@ -4,7 +4,6 @@
 
 #include "gpu/config/gpu_driver_bug_list.h"
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "gpu/config/gpu_driver_bug_workaround_type.h"
 #include "gpu/config/gpu_switches.h"
@@ -86,14 +85,6 @@ void GpuDriverBugList::AppendWorkaroundsFromCommandLine(
         case FORCE_INTEGRATED_GPU:
           workarounds->erase(FORCE_DISCRETE_GPU);
           workarounds->insert(FORCE_INTEGRATED_GPU);
-          break;
-        case MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_512:
-        case MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_1024:
-        case MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_4096:
-          workarounds->erase(MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_512);
-          workarounds->erase(MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_1024);
-          workarounds->erase(MAX_CUBE_MAP_TEXTURE_SIZE_LIMIT_4096);
-          workarounds->insert(kFeatureList[i].type);
           break;
         default:
           workarounds->insert(kFeatureList[i].type);

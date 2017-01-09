@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -22,15 +25,16 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/chromeos_switches.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_manager_base.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/test/download_test_observer.h"
-#include "grit/theme_resources.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/url_request/url_request_slow_download_job.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -101,7 +105,7 @@ class MessageCenterChangeObserver
   }
 
  private:
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(MessageCenterChangeObserver);
 };
@@ -272,12 +276,6 @@ class DownloadNotificationTestBase : public InProcessBrowserTest {
  public:
   ~DownloadNotificationTestBase() override {}
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    // TODO(yoshiki): Remove this after the download notification launches.
-    command_line->AppendSwitchASCII(switches::kEnableDownloadNotification,
-                                    "enabled");
-  }
-
   void SetUpOnMainThread() override {
     ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -287,31 +285,23 @@ class DownloadNotificationTestBase : public InProcessBrowserTest {
 
     GetMessageCenter()->DisableTimersForTest();
 
-    // Set up the temporary download folder.
-    ASSERT_TRUE(CreateAndSetDownloadsDirectory(browser()));
+    ASSERT_TRUE(downloads_directory_.CreateUniqueTempDir());
+    ASSERT_TRUE(SetDownloadsDirectory(browser()));
   }
 
  protected:
-  // Must be called after browser creation.  Creates a temporary
-  // directory for downloads that is auto-deleted on destruction.
-  // Returning false indicates a failure of the function, and should be asserted
-  // in the caller.
-  bool CreateAndSetDownloadsDirectory(Browser* browser) {
+  // Must be called after browser creation. Assumes that |downloads_directory_|
+  // is created and sets its path to be used for downloads by |browser|.
+  // Returning false indicates a failure of the function, and should be
+  // asserted in the caller.
+  bool SetDownloadsDirectory(Browser* browser) {
     if (!browser)
       return false;
 
-    if (!downloads_directory_.path().empty())
-      return true;  // already created
-
-    if (!downloads_directory_.CreateUniqueTempDir())
-      return false;
-
     browser->profile()->GetPrefs()->SetFilePath(
-        prefs::kDownloadDefaultDirectory,
-        downloads_directory_.path());
+        prefs::kDownloadDefaultDirectory, downloads_directory_.GetPath());
     browser->profile()->GetPrefs()->SetFilePath(
-        prefs::kSaveFileDefaultDirectory,
-        downloads_directory_.path());
+        prefs::kSaveFileDefaultDirectory, downloads_directory_.GetPath());
 
     return true;
   }
@@ -336,12 +326,12 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
   void SetUpOnMainThread() override {
     Profile* profile = browser()->profile();
 
-    scoped_ptr<TestChromeDownloadManagerDelegate> test_delegate;
+    std::unique_ptr<TestChromeDownloadManagerDelegate> test_delegate;
     test_delegate.reset(new TestChromeDownloadManagerDelegate(profile));
     test_delegate->GetDownloadIdReceiverCallback().Run(
         content::DownloadItem::kInvalidId + 1);
     DownloadServiceFactory::GetForBrowserContext(profile)
-        ->SetDownloadManagerDelegateForTesting(test_delegate.Pass());
+        ->SetDownloadManagerDelegateForTesting(std::move(test_delegate));
 
     DownloadNotificationTestBase::SetUpOnMainThread();
   }
@@ -356,13 +346,14 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
     incognito_browser_ = CreateIncognitoBrowser();
     Profile* incognito_profile = incognito_browser_->profile();
 
-    ASSERT_TRUE(CreateAndSetDownloadsDirectory(incognito_browser_));
+    ASSERT_TRUE(SetDownloadsDirectory(incognito_browser_));
 
-    scoped_ptr<TestChromeDownloadManagerDelegate> incognito_test_delegate;
+    std::unique_ptr<TestChromeDownloadManagerDelegate> incognito_test_delegate;
     incognito_test_delegate.reset(
         new TestChromeDownloadManagerDelegate(incognito_profile));
     DownloadServiceFactory::GetForBrowserContext(incognito_profile)
-        ->SetDownloadManagerDelegateForTesting(incognito_test_delegate.Pass());
+        ->SetDownloadManagerDelegateForTesting(
+            std::move(incognito_test_delegate));
   }
 
   TestChromeDownloadManagerDelegate* GetIncognitoDownloadManagerDelegate()
@@ -674,7 +665,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, InterruptDownload) {
   // Installs observers before requesting.
   NotificationUpdateObserver
       download_notification_update_observer(notification_id());
-  content::DownloadTestObserverTerminal download_terminal_observer(
+  content::DownloadTestObserverInterrupted download_terminal_observer(
       GetDownloadManager(browser()),
       1u, /* wait_count */
       content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
@@ -728,7 +719,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
 
   // Installs observers before requesting the completion.
   NotificationAddObserver download_notification_add_observer;
-  content::DownloadTestObserverTerminal download_terminal_observer(
+  content::DownloadTestObserverInterrupted download_terminal_observer(
       download_manager,
       1u, /* wait_count */
       content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
@@ -820,7 +811,7 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, DownloadMultipleFiles) {
   EXPECT_EQ(2u, visible_notifications.size());
 
   std::string notification_id2;
-  for (auto notification : visible_notifications) {
+  for (auto* notification : visible_notifications) {
     if (notification->id() == notification_id1) {
       continue;
     } else if (notification->type() ==
@@ -1075,14 +1066,8 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, IncognitoDownloadFile) {
   chrome::CloseWindow(incognito_browser());
 }
 
-// TODO(yoshiki): Disabled due to crbug.com/560329
-#if defined(OS_CHROMEOS)
-#define MAYBE_SimultaneousIncognitoAndNormalDownloads DISABLED_SimultaneousIncognitoAndNormalDownloads
-#else
-#define MAYBE_SimultaneousIncognitoAndNormalDownloads SimultaneousIncognitoAndNormalDownloads
-#endif
 IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
-                       MAYBE_SimultaneousIncognitoAndNormalDownloads) {
+                       SimultaneousIncognitoAndNormalDownloads) {
   PrepareIncognitoBrowser();
 
   GURL url_incognito(net::URLRequestSlowDownloadJob::kUnknownSizeUrl);
@@ -1127,8 +1112,10 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   // Confirms the types of download notifications are correct.
   EXPECT_EQ(message_center::NOTIFICATION_TYPE_PROGRESS,
             GetNotification(notification_id1)->type());
+  EXPECT_EQ(-1, GetNotification(notification_id1)->progress());
   EXPECT_EQ(message_center::NOTIFICATION_TYPE_PROGRESS,
             GetNotification(notification_id2)->type());
+  EXPECT_LE(0, GetNotification(notification_id2)->progress());
 
   EXPECT_TRUE(download_incognito->GetBrowserContext()->IsOffTheRecord());
   EXPECT_FALSE(download_normal->GetBrowserContext()->IsOffTheRecord());
@@ -1148,10 +1135,8 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest,
   // Confirms the types of download notifications are correct.
   EXPECT_EQ(message_center::NOTIFICATION_TYPE_BASE_FORMAT,
             GetNotification(notification_id1)->type());
-  EXPECT_EQ(-1, GetNotification(notification_id1)->progress());
   EXPECT_EQ(message_center::NOTIFICATION_TYPE_BASE_FORMAT,
             GetNotification(notification_id2)->type());
-  EXPECT_LE(0, GetNotification(notification_id1)->progress());
 
   chrome::CloseWindow(incognito_browser());
 }
@@ -1201,10 +1186,12 @@ class MultiProfileDownloadNotificationTest
     user_manager::UserManager* const user_manager =
         user_manager::UserManager::Get();
     if (log_in)
-      user_manager->UserLoggedIn(AccountId::FromUserEmail(info.email),
-                                 info.hash, false);
-    user_manager->SaveUserDisplayName(AccountId::FromUserEmail(info.email),
-                                      base::UTF8ToUTF16(info.display_name));
+      user_manager->UserLoggedIn(
+          AccountId::FromUserEmailGaiaId(info.email, info.gaia_id), info.hash,
+          false);
+    user_manager->SaveUserDisplayName(
+        AccountId::FromUserEmailGaiaId(info.email, info.gaia_id),
+        base::UTF8ToUTF16(info.display_name));
     SigninManagerFactory::GetForProfile(
         chromeos::ProfileHelper::GetProfileByUserIdHash(info.hash))
             ->SetAuthenticatedAccountInfo(info.gaia_id, info.email);

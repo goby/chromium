@@ -5,26 +5,24 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_PROFILES_NEW_AVATAR_BUTTON_H_
 #define CHROME_BROWSER_UI_VIEWS_PROFILES_NEW_AVATAR_BUTTON_H_
 
-#include "chrome/browser/profiles/profile_info_cache_observer.h"
-#include "components/signin/core/browser/signin_error_controller.h"
+#include "base/macros.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
+#include "chrome/browser/ui/avatar_button_error_controller.h"
+#include "chrome/browser/ui/avatar_button_error_controller_delegate.h"
+#include "chrome/browser/ui/views/profiles/avatar_button_style.h"
 #include "ui/views/controls/button/label_button.h"
 
-class Browser;
+class AvatarButtonDelegate;
+class Profile;
 
 // Avatar button that displays the active profile's name in the caption area.
 class NewAvatarButton : public views::LabelButton,
-                        public ProfileInfoCacheObserver,
-                        public SigninErrorController::Observer {
+                        public AvatarButtonErrorControllerDelegate,
+                        public ProfileAttributesStorage::Observer {
  public:
-  // Different button styles that can be applied.
-  enum AvatarButtonStyle {
-    THEMED_BUTTON,   // Used in a themed browser window.
-    NATIVE_BUTTON,    // Used in a native aero or metro window.
-  };
-
-  NewAvatarButton(views::ButtonListener* listener,
+  NewAvatarButton(AvatarButtonDelegate* delegate,
                   AvatarButtonStyle button_style,
-                  Browser* browser);
+                  Profile* profile);
   ~NewAvatarButton() override;
 
   // Views::LabelButton
@@ -37,7 +35,10 @@ class NewAvatarButton : public views::LabelButton,
  private:
   friend class ProfileChooserViewExtensionsTest;
 
-  // ProfileInfoCacheObserver:
+  // AvatarButtonErrorControllerDelegate:
+  void OnAvatarErrorChanged() override;
+
+  // ProfileAttributesStorage::Observer:
   void OnProfileAdded(const base::FilePath& profile_path) override;
   void OnProfileWasRemoved(const base::FilePath& profile_path,
                            const base::string16& profile_name) override;
@@ -46,18 +47,13 @@ class NewAvatarButton : public views::LabelButton,
   void OnProfileSupervisedUserIdChanged(
       const base::FilePath& profile_path) override;
 
-  // SigninErrorController::Observer:
-  void OnErrorChanged() override;
-
-  // Called when the profile info cache has changed, which means we might
-  // have to update the icon/text of the button.
+  // Called when the profile info cache or signin/sync error has changed, which
+  // means we might have to update the icon/text of the button.
   void Update();
 
-  Browser* browser_;
-
-  // Whether the signed in profile has an authentication error. Used to display
-  // an error icon next to the button text.
-  bool has_auth_error_;
+  AvatarButtonDelegate* delegate_;
+  AvatarButtonErrorController error_controller_;
+  Profile* profile_;
 
   // The icon displayed instead of the profile name in the local profile case.
   // Different assets are used depending on the OS version.

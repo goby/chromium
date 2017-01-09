@@ -7,18 +7,19 @@
 #include <dirent.h>
 #include <stdio.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/strings/string_util.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "net/tools/epoll_server/epoll_server.h"
+#include "net/tools/quic/test_tools/quic_client_peer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using net::EpollServer;
 using net::test::CryptoTestUtils;
 
 namespace net {
-namespace tools {
 namespace test {
 namespace {
 
@@ -38,11 +39,12 @@ int NumOpenFDs() {
 
 // Creates a new QuicClient and Initializes it. Caller is responsible for
 // deletion.
-QuicClient* CreateAndInitializeQuicClient(EpollServer* eps, uint16 port) {
-  IPEndPoint server_address(IPEndPoint(net::test::Loopback4(), port));
+QuicClient* CreateAndInitializeQuicClient(EpollServer* eps, uint16_t port) {
+  QuicSocketAddress server_address(
+      QuicSocketAddress(QuicIpAddress::Loopback4(), port));
   QuicServerId server_id("hostname", server_address.port(),
                          PRIVACY_MODE_DISABLED);
-  QuicVersionVector versions = QuicSupportedVersions();
+  QuicVersionVector versions = AllSupportedVersions();
   QuicClient* client =
       new QuicClient(server_address, server_id, versions, eps,
                      CryptoTestUtils::ProofVerifierForTesting());
@@ -53,7 +55,7 @@ QuicClient* CreateAndInitializeQuicClient(EpollServer* eps, uint16 port) {
 TEST(QuicClientTest, DoNotLeakFDs) {
   // Create a ProofVerifier before counting the number of open FDs to work
   // around some ASAN weirdness.
-  delete CryptoTestUtils::ProofVerifierForTesting();
+  CryptoTestUtils::ProofVerifierForTesting().reset();
 
   // Make sure that the QuicClient doesn't leak FDs. Doing so could cause port
   // exhaustion in long running processes which repeatedly create clients.
@@ -66,7 +68,7 @@ TEST(QuicClientTest, DoNotLeakFDs) {
   // in additional FDs being opened.
   const int kNumClients = 50;
   for (int i = 0; i < kNumClients; ++i) {
-    scoped_ptr<QuicClient> client(
+    std::unique_ptr<QuicClient> client(
         CreateAndInitializeQuicClient(&eps, net::test::kTestPort + i));
 
     // Initializing the client will create a new FD.
@@ -77,7 +79,30 @@ TEST(QuicClientTest, DoNotLeakFDs) {
   EXPECT_EQ(number_of_open_fds, NumOpenFDs());
 }
 
+TEST(QuicClientTest, CreateAndCleanUpUDPSockets) {
+  // Create a ProofVerifier before counting the number of open FDs to work
+  // around some ASAN weirdness.
+  CryptoTestUtils::ProofVerifierForTesting().reset();
+
+  EpollServer eps;
+  int number_of_open_fds = NumOpenFDs();
+
+  std::unique_ptr<QuicClient> client(
+      CreateAndInitializeQuicClient(&eps, net::test::kTestPort));
+  EXPECT_EQ(number_of_open_fds + 1, NumOpenFDs());
+  // Create more UDP sockets.
+  EXPECT_TRUE(QuicClientPeer::CreateUDPSocketAndBind(client.get()));
+  EXPECT_EQ(number_of_open_fds + 2, NumOpenFDs());
+  EXPECT_TRUE(QuicClientPeer::CreateUDPSocketAndBind(client.get()));
+  EXPECT_EQ(number_of_open_fds + 3, NumOpenFDs());
+
+  // Clean up UDP sockets.
+  QuicClientPeer::CleanUpUDPSocket(client.get(), client->GetLatestFD());
+  EXPECT_EQ(number_of_open_fds + 2, NumOpenFDs());
+  QuicClientPeer::CleanUpUDPSocket(client.get(), client->GetLatestFD());
+  EXPECT_EQ(number_of_open_fds + 1, NumOpenFDs());
+}
+
 }  // namespace
 }  // namespace test
-}  // namespace tools
 }  // namespace net

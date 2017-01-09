@@ -5,11 +5,12 @@
 #ifndef JINGLE_NOTIFIER_COMMUNICATOR_LOGIN_H_
 #define JINGLE_NOTIFIER_COMMUNICATOR_LOGIN_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -20,7 +21,6 @@
 #include "webrtc/libjingle/xmpp/xmppengine.h"
 
 namespace buzz {
-class XmppClient;
 class XmppClientSettings;
 class XmppTaskParentInterface;
 }  // namespace buzz
@@ -117,7 +117,7 @@ class Login : public net::NetworkChangeNotifier::IPAddressObserver,
 
   Delegate* const delegate_;
   LoginSettings login_settings_;
-  scoped_ptr<SingleLoginAttempt> single_attempt_;
+  std::unique_ptr<SingleLoginAttempt> single_attempt_;
 
   // reconnection state.
   base::TimeDelta reconnect_interval_;

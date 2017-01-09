@@ -33,46 +33,53 @@
 
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
 class Node;
 class QualifiedName;
-template <typename NodeType> class StaticNodeTypeList;
-typedef StaticNodeTypeList<Node> StaticNodeList;
+template <typename NodeType>
+class StaticNodeTypeList;
+using StaticNodeList = StaticNodeTypeList<Node>;
 
-class MutationRecord : public RefCountedWillBeGarbageCollectedFinalized<MutationRecord>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<MutationRecord> createChildList(PassRefPtrWillBeRawPtr<Node> target, PassRefPtrWillBeRawPtr<StaticNodeList> added, PassRefPtrWillBeRawPtr<StaticNodeList> removed, PassRefPtrWillBeRawPtr<Node> previousSibling, PassRefPtrWillBeRawPtr<Node> nextSibling);
-    static PassRefPtrWillBeRawPtr<MutationRecord> createAttributes(PassRefPtrWillBeRawPtr<Node> target, const QualifiedName&, const AtomicString& oldValue);
-    static PassRefPtrWillBeRawPtr<MutationRecord> createCharacterData(PassRefPtrWillBeRawPtr<Node> target, const String& oldValue);
-    static PassRefPtrWillBeRawPtr<MutationRecord> createWithNullOldValue(PassRefPtrWillBeRawPtr<MutationRecord>);
+class MutationRecord : public GarbageCollectedFinalized<MutationRecord>,
+                       public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    MutationRecord() { }
+ public:
+  static MutationRecord* createChildList(Node* target,
+                                         StaticNodeList* added,
+                                         StaticNodeList* removed,
+                                         Node* previousSibling,
+                                         Node* nextSibling);
+  static MutationRecord* createAttributes(Node* target,
+                                          const QualifiedName&,
+                                          const AtomicString& oldValue);
+  static MutationRecord* createCharacterData(Node* target,
+                                             const String& oldValue);
+  static MutationRecord* createWithNullOldValue(MutationRecord*);
 
-    virtual ~MutationRecord();
+  MutationRecord() {}
 
-    virtual const AtomicString& type() = 0;
-    virtual Node* target() = 0;
+  virtual ~MutationRecord();
 
-    virtual StaticNodeList* addedNodes() = 0;
-    virtual StaticNodeList* removedNodes() = 0;
-    virtual Node* previousSibling() { return 0; }
-    virtual Node* nextSibling() { return 0; }
+  virtual const AtomicString& type() = 0;
+  virtual Node* target() = 0;
 
-    virtual const AtomicString& attributeName() { return nullAtom; }
-    virtual const AtomicString& attributeNamespace() { return nullAtom; }
+  virtual StaticNodeList* addedNodes() = 0;
+  virtual StaticNodeList* removedNodes() = 0;
+  virtual Node* previousSibling() { return 0; }
+  virtual Node* nextSibling() { return 0; }
 
-    virtual String oldValue() { return String(); }
+  virtual const AtomicString& attributeName() { return nullAtom; }
+  virtual const AtomicString& attributeNamespace() { return nullAtom; }
 
-    DEFINE_INLINE_VIRTUAL_TRACE() { }
+  virtual String oldValue() { return String(); }
 
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // MutationRecord_h
+#endif  // MutationRecord_h

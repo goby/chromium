@@ -6,9 +6,12 @@
 #define REMOTING_HOST_WIN_HOST_SERVICE_H_
 
 #include <windows.h>
+#include <stdint.h>
 
 #include <list>
+#include <memory>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
@@ -47,7 +50,7 @@ class HostService : public WtsTerminalMonitor {
   ~HostService() override;
 
   // Notifies the service of changes in session state.
-  void OnSessionChange(uint32 event, uint32 session_id);
+  void OnSessionChange(uint32_t event, uint32_t session_id);
 
   // Creates the process launcher.
   void CreateLauncher(scoped_refptr<AutoThreadTaskRunner> task_runner);
@@ -91,7 +94,7 @@ class HostService : public WtsTerminalMonitor {
 
     // Specifies ID of the attached session or |kInvalidSession| if no session
     // is attached to the WTS terminal.
-    uint32 session_id;
+    uint32_t session_id;
 
     // Points to the observer receiving notifications about the WTS terminal
     // identified by |terminal_id|.
@@ -101,7 +104,7 @@ class HostService : public WtsTerminalMonitor {
   // The list of observers receiving session notifications.
   std::list<RegisteredObserver> observers_;
 
-  scoped_ptr<DaemonProcess> daemon_process_;
+  std::unique_ptr<DaemonProcess> daemon_process_;
 
   // Service message loop. |main_task_runner_| must be valid as long as the
   // Control+C or service notification handler is registered.

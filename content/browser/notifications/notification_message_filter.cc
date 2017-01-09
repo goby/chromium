@@ -4,11 +4,16 @@
 
 #include "content/browser/notifications/notification_message_filter.h"
 
+#include <utility>
+
 #include "base/callback.h"
+#include "base/command_line.h"
+#include "base/feature_list.h"
 #include "content/browser/bad_message.h"
+#include "content/browser/notifications/notification_id_generator.h"
 #include "content/browser/notifications/page_notification_delegate.h"
 #include "content/browser/notifications/platform_notification_context_impl.h"
-#include "content/common/notification_constants.h"
+#include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/common/platform_notification_messages.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -18,6 +23,9 @@
 #include "content/public/browser/platform_notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
+#include "third_party/WebKit/public/platform/modules/notifications/WebNotificationConstants.h"
 
 namespace content {
 
@@ -37,10 +45,39 @@ PlatformNotificationData SanitizeNotificationData(
   }
 
   // Ensure there aren't more actions than supported.
-  if (sanitized_data.actions.size() > kPlatformNotificationMaxActions)
-    sanitized_data.actions.resize(kPlatformNotificationMaxActions);
+  if (sanitized_data.actions.size() > blink::kWebNotificationMaxActions)
+    sanitized_data.actions.resize(blink::kWebNotificationMaxActions);
 
   return sanitized_data;
+}
+
+// Returns true when |resources| looks ok, false otherwise.
+bool ValidateNotificationResources(const NotificationResources& resources) {
+  if (!resources.image.drawsNothing() &&
+      !base::FeatureList::IsEnabled(features::kNotificationContentImage)) {
+    return false;
+  }
+  if (resources.image.width() > blink::kWebNotificationMaxImageWidthPx ||
+      resources.image.height() > blink::kWebNotificationMaxImageHeightPx) {
+    return false;
+  }
+  if (resources.notification_icon.width() >
+          blink::kWebNotificationMaxIconSizePx ||
+      resources.notification_icon.height() >
+          blink::kWebNotificationMaxIconSizePx) {
+    return false;
+  }
+  if (resources.badge.width() > blink::kWebNotificationMaxBadgeSizePx ||
+      resources.badge.height() > blink::kWebNotificationMaxBadgeSizePx) {
+    return false;
+  }
+  for (const auto& action_icon : resources.action_icons) {
+    if (action_icon.width() > blink::kWebNotificationMaxActionIconSizePx ||
+        action_icon.height() > blink::kWebNotificationMaxActionIconSizePx) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -49,19 +86,21 @@ NotificationMessageFilter::NotificationMessageFilter(
     int process_id,
     PlatformNotificationContextImpl* notification_context,
     ResourceContext* resource_context,
+    const scoped_refptr<ServiceWorkerContextWrapper>& service_worker_context,
     BrowserContext* browser_context)
     : BrowserMessageFilter(PlatformNotificationMsgStart),
       process_id_(process_id),
       notification_context_(notification_context),
       resource_context_(resource_context),
+      service_worker_context_(service_worker_context),
       browser_context_(browser_context),
       weak_factory_io_(this) {}
 
 NotificationMessageFilter::~NotificationMessageFilter() {}
 
-void NotificationMessageFilter::DidCloseNotification(int notification_id) {
+void NotificationMessageFilter::DidCloseNotification(
+    const std::string& notification_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
   close_closures_.erase(notification_id);
 }
 
@@ -72,8 +111,6 @@ void NotificationMessageFilter::OnDestruct() const {
 bool NotificationMessageFilter::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(NotificationMessageFilter, message)
-    IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_CheckPermission,
-                        OnCheckNotificationPermission)
     IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_Show,
                         OnShowPlatformNotification)
     IPC_MESSAGE_HANDLER(PlatformNotificationHostMsg_ShowPersistent,
@@ -91,30 +128,26 @@ bool NotificationMessageFilter::OnMessageReceived(const IPC::Message& message) {
 }
 
 void NotificationMessageFilter::OverrideThreadForMessage(
-    const IPC::Message& message, content::BrowserThread::ID* thread) {
+    const IPC::Message& message,
+    content::BrowserThread::ID* thread) {
   if (message.type() == PlatformNotificationHostMsg_Show::ID ||
       message.type() == PlatformNotificationHostMsg_Close::ID)
     *thread = BrowserThread::UI;
 }
 
-void NotificationMessageFilter::OnCheckNotificationPermission(
-    const GURL& origin, blink::WebNotificationPermission* permission) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  *permission = GetPermissionForOriginOnIO(origin);
-}
-
 void NotificationMessageFilter::OnShowPlatformNotification(
-    int notification_id,
+    int non_persistent_notification_id,
     const GURL& origin,
-    const SkBitmap& icon,
-    const PlatformNotificationData& notification_data) {
+    const PlatformNotificationData& notification_data,
+    const NotificationResources& notification_resources) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!RenderProcessHost::FromID(process_id_))
     return;
 
-  scoped_ptr<DesktopNotificationDelegate> delegate(
-      new PageNotificationDelegate(process_id_, notification_id));
+  if (!ValidateNotificationResources(notification_resources)) {
+    bad_message::ReceivedBadMessage(this, bad_message::NMF_INVALID_ARGUMENT);
+    return;
+  }
 
   PlatformNotificationService* service =
       GetContentClient()->browser()->GetPlatformNotificationService();
@@ -123,10 +156,20 @@ void NotificationMessageFilter::OnShowPlatformNotification(
   if (!VerifyNotificationPermissionGranted(service, origin))
     return;
 
+  std::string notification_id =
+      GetNotificationIdGenerator()->GenerateForNonPersistentNotification(
+          origin, notification_data.tag, non_persistent_notification_id,
+          process_id_);
+
+  std::unique_ptr<DesktopNotificationDelegate> delegate(
+      new PageNotificationDelegate(process_id_, non_persistent_notification_id,
+                                   notification_id));
+
   base::Closure close_closure;
-  service->DisplayNotification(browser_context_, origin, icon,
+  service->DisplayNotification(browser_context_, notification_id, origin,
                                SanitizeNotificationData(notification_data),
-                               delegate.Pass(), &close_closure);
+                               notification_resources, std::move(delegate),
+                               &close_closure);
 
   if (!close_closure.is_null())
     close_closures_[notification_id] = close_closure;
@@ -134,14 +177,19 @@ void NotificationMessageFilter::OnShowPlatformNotification(
 
 void NotificationMessageFilter::OnShowPersistentNotification(
     int request_id,
-    int64 service_worker_registration_id,
+    int64_t service_worker_registration_id,
     const GURL& origin,
-    const SkBitmap& icon,
-    const PlatformNotificationData& notification_data) {
+    const PlatformNotificationData& notification_data,
+    const NotificationResources& notification_resources) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (GetPermissionForOriginOnIO(origin) !=
-      blink::WebNotificationPermissionAllowed) {
+      blink::mojom::PermissionStatus::GRANTED) {
     bad_message::ReceivedBadMessage(this, bad_message::NMF_NO_PERMISSION_SHOW);
+    return;
+  }
+
+  if (!ValidateNotificationResources(notification_resources)) {
+    bad_message::ReceivedBadMessage(this, bad_message::NMF_INVALID_ARGUMENT);
     return;
   }
 
@@ -153,38 +201,66 @@ void NotificationMessageFilter::OnShowPersistentNotification(
       SanitizeNotificationData(notification_data);
   database_data.notification_data = sanitized_notification_data;
 
-  // TODO(peter): Significantly reduce the amount of information we need to
-  // retain outside of the database for displaying notifications.
   notification_context_->WriteNotificationData(
       origin, database_data,
       base::Bind(&NotificationMessageFilter::DidWritePersistentNotificationData,
-                 weak_factory_io_.GetWeakPtr(), request_id, origin, icon,
-                 sanitized_notification_data));
+                 weak_factory_io_.GetWeakPtr(), request_id,
+                 service_worker_registration_id, origin,
+                 sanitized_notification_data, notification_resources));
 }
 
 void NotificationMessageFilter::DidWritePersistentNotificationData(
     int request_id,
+    int64_t service_worker_registration_id,
     const GURL& origin,
-    const SkBitmap& icon,
     const PlatformNotificationData& notification_data,
+    const NotificationResources& notification_resources,
     bool success,
-    int64_t persistent_notification_id) {
+    const std::string& notification_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  if (success) {
-    PlatformNotificationService* service =
-        GetContentClient()->browser()->GetPlatformNotificationService();
-    DCHECK(service);
-
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(&PlatformNotificationService::DisplayPersistentNotification,
-                   base::Unretained(service),  // The service is a singleton.
-                   browser_context_, persistent_notification_id, origin, icon,
-                   notification_data));
+  if (!success) {
+    Send(new PlatformNotificationMsg_DidShowPersistent(request_id, false));
+    return;
   }
 
-  Send(new PlatformNotificationMsg_DidShowPersistent(request_id, success));
+  // Get the service worker scope.
+  service_worker_context_->FindReadyRegistrationForId(
+      service_worker_registration_id, origin,
+      base::Bind(&NotificationMessageFilter::DidFindServiceWorkerRegistration,
+                 weak_factory_io_.GetWeakPtr(), request_id, origin,
+                 notification_data, notification_resources, notification_id));
+}
+
+void NotificationMessageFilter::DidFindServiceWorkerRegistration(
+    int request_id,
+    const GURL& origin,
+    const PlatformNotificationData& notification_data,
+    const NotificationResources& notification_resources,
+    const std::string& notification_id,
+    content::ServiceWorkerStatusCode service_worker_status,
+    scoped_refptr<content::ServiceWorkerRegistration> registration) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  if (service_worker_status != SERVICE_WORKER_OK) {
+    Send(new PlatformNotificationMsg_DidShowPersistent(request_id, false));
+    LOG(ERROR) << "Registration not found for " << origin.spec();
+    // TODO(peter): Add UMA to track how often this occurs.
+    return;
+  }
+
+  PlatformNotificationService* service =
+      GetContentClient()->browser()->GetPlatformNotificationService();
+  DCHECK(service);
+
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(&PlatformNotificationService::DisplayPersistentNotification,
+                 base::Unretained(service),  // The service is a singleton.
+                 browser_context_, notification_id, registration->pattern(),
+                 origin, notification_data, notification_resources));
+
+  Send(new PlatformNotificationMsg_DidShowPersistent(request_id, true));
 }
 
 void NotificationMessageFilter::OnGetNotifications(
@@ -194,7 +270,7 @@ void NotificationMessageFilter::OnGetNotifications(
     const std::string& filter_tag) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (GetPermissionForOriginOnIO(origin) !=
-      blink::WebNotificationPermissionAllowed) {
+      blink::mojom::PermissionStatus::GRANTED) {
     // No permission has been granted for the given origin. It is harmless to
     // try to get notifications without permission, so return an empty vector
     // indicating that no (accessible) notifications exist at this time.
@@ -231,10 +307,16 @@ void NotificationMessageFilter::DidGetNotifications(
 }
 
 void NotificationMessageFilter::OnClosePlatformNotification(
-    int notification_id) {
+    const GURL& origin,
+    const std::string& tag,
+    int non_persistent_notification_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!RenderProcessHost::FromID(process_id_))
     return;
+
+  std::string notification_id =
+      GetNotificationIdGenerator()->GenerateForNonPersistentNotification(
+          origin, tag, non_persistent_notification_id, process_id_);
 
   if (!close_closures_.count(notification_id))
     return;
@@ -245,10 +327,11 @@ void NotificationMessageFilter::OnClosePlatformNotification(
 
 void NotificationMessageFilter::OnClosePersistentNotification(
     const GURL& origin,
-    int64_t persistent_notification_id) {
+    const std::string& tag,
+    const std::string& notification_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (GetPermissionForOriginOnIO(origin) !=
-      blink::WebNotificationPermissionAllowed) {
+      blink::mojom::PermissionStatus::GRANTED) {
     bad_message::ReceivedBadMessage(this, bad_message::NMF_NO_PERMISSION_CLOSE);
     return;
   }
@@ -263,10 +346,10 @@ void NotificationMessageFilter::OnClosePersistentNotification(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&PlatformNotificationService::ClosePersistentNotification,
                  base::Unretained(service),  // The service is a singleton.
-                 browser_context_, persistent_notification_id));
+                 browser_context_, notification_id));
 
   notification_context_->DeleteNotificationData(
-      persistent_notification_id, origin,
+      notification_id, origin,
       base::Bind(
           &NotificationMessageFilter::DidDeletePersistentNotificationData,
           weak_factory_io_.GetWeakPtr()));
@@ -279,7 +362,7 @@ void NotificationMessageFilter::DidDeletePersistentNotificationData(
   // has been closed.
 }
 
-blink::WebNotificationPermission
+blink::mojom::PermissionStatus
 NotificationMessageFilter::GetPermissionForOriginOnIO(
     const GURL& origin) const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -287,7 +370,7 @@ NotificationMessageFilter::GetPermissionForOriginOnIO(
   PlatformNotificationService* service =
       GetContentClient()->browser()->GetPlatformNotificationService();
   if (!service)
-    return blink::WebNotificationPermissionDenied;
+    return blink::mojom::PermissionStatus::DENIED;
 
   return service->CheckPermissionOnIOThread(resource_context_, origin,
                                             process_id_);
@@ -298,14 +381,19 @@ bool NotificationMessageFilter::VerifyNotificationPermissionGranted(
     const GURL& origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  blink::WebNotificationPermission permission =
+  blink::mojom::PermissionStatus permission_status =
       service->CheckPermissionOnUIThread(browser_context_, origin, process_id_);
 
-  if (permission == blink::WebNotificationPermissionAllowed)
+  if (permission_status == blink::mojom::PermissionStatus::GRANTED)
     return true;
 
   bad_message::ReceivedBadMessage(this, bad_message::NMF_NO_PERMISSION_VERIFY);
   return false;
+}
+
+NotificationIdGenerator* NotificationMessageFilter::GetNotificationIdGenerator()
+    const {
+  return notification_context_->notification_id_generator();
 }
 
 }  // namespace content

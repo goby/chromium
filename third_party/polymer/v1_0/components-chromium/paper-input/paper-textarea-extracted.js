@@ -2,7 +2,8 @@ Polymer({
     is: 'paper-textarea',
 
     behaviors: [
-      Polymer.PaperInputBehavior
+      Polymer.PaperInputBehavior,
+      Polymer.IronFormElementBehavior
     ],
 
     properties: {
@@ -48,5 +49,9 @@ Polymer({
 
     _ariaDescribedByChanged: function(ariaDescribedBy) {
       this.$.input.textarea.setAttribute('aria-describedby', ariaDescribedBy);
-    }
+    },
+
+    get _focusableElement() {
+      return this.$.input.textarea;
+    },
   });

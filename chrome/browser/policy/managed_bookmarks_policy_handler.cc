@@ -4,14 +4,16 @@
 
 #include "chrome/browser/policy/managed_bookmarks_policy_handler.h"
 
-#include "base/prefs/pref_value_map.h"
+#include <utility>
+
 #include "base/values.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/managed/managed_bookmarks_tracker.h"
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/policy_map.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
 #include "components/url_formatter/url_fixer.h"
-#include "policy/policy_constants.h"
 #include "url/gurl.h"
 
 using bookmarks::ManagedBookmarksTracker;
@@ -30,7 +32,7 @@ ManagedBookmarksPolicyHandler::~ManagedBookmarksPolicyHandler() {}
 void ManagedBookmarksPolicyHandler::ApplyPolicySettings(
     const PolicyMap& policies,
     PrefValueMap* prefs) {
-  scoped_ptr<base::Value> value;
+  std::unique_ptr<base::Value> value;
   if (!CheckAndGetValue(policies, NULL, &value))
     return;
 
@@ -38,8 +40,27 @@ void ManagedBookmarksPolicyHandler::ApplyPolicySettings(
   if (!value || !value->GetAsList(&list))
     return;
 
+  prefs->SetString(bookmarks::prefs::kManagedBookmarksFolderName,
+                   GetFolderName(*list));
   FilterBookmarks(list);
-  prefs->SetValue(bookmarks::prefs::kManagedBookmarks, value.Pass());
+  prefs->SetValue(bookmarks::prefs::kManagedBookmarks, std::move(value));
+}
+
+std::string
+ManagedBookmarksPolicyHandler::GetFolderName(const base::ListValue& list) {
+  // Iterate over the list, and try to find the FolderName.
+  for (const auto& el : list) {
+    const base::DictionaryValue* dict = NULL;
+    if (!el || !el->GetAsDictionary(&dict)) continue;
+
+    std::string name;
+    if (dict->GetString(ManagedBookmarksTracker::kFolderName, &name)) {
+      return name;
+    }
+  }
+
+  // FolderName not present.
+  return std::string();
 }
 
 void ManagedBookmarksPolicyHandler::FilterBookmarks(base::ListValue* list) {

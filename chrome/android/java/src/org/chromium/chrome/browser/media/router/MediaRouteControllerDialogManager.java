@@ -6,9 +6,11 @@ package org.chromium.chrome.browser.media.router;
 
 import android.content.Context;
 import android.content.DialogInterface;
+import android.os.Handler;
 import android.support.v4.app.DialogFragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v7.app.MediaRouteControllerDialogFragment;
+import android.support.v7.media.MediaRouteSelector;
 import android.support.v7.media.MediaRouter;
 
 import org.chromium.chrome.browser.media.router.cast.MediaSource;
@@ -37,38 +39,64 @@ public class MediaRouteControllerDialogManager extends BaseMediaRouteDialogManag
         mMediaRouteId = mediaRouteId;
     }
 
+    /**
+     * Fragment implementation for MediaRouteControllerDialogManager.
+     */
+    public static class Fragment extends MediaRouteControllerDialogFragment {
+        private final Handler mHandler = new Handler();
+        private final SystemVisibilitySaver mVisibilitySaver = new SystemVisibilitySaver();
+        private BaseMediaRouteDialogManager mManager = null;
+        private MediaRouter.Callback mCallback = null;
+
+        public Fragment() {
+            mHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    Fragment.this.dismiss();
+                }
+            });
+        }
+
+        public Fragment(BaseMediaRouteDialogManager manager, MediaRouter.Callback callback) {
+            mManager = manager;
+            mCallback = callback;
+        }
+
+        @Override
+        public void onStart() {
+            mVisibilitySaver.saveSystemVisibility(getActivity());
+            super.onStart();
+        }
+
+        @Override
+        public void onStop() {
+            super.onStop();
+            mVisibilitySaver.restoreSystemVisibility(getActivity());
+        }
+
+        @Override
+        public void onDismiss(DialogInterface dialog) {
+            super.onDismiss(dialog);
+            if (mManager == null) return;
+
+            mManager.delegate().onDialogCancelled();
+            mManager.androidMediaRouter().removeCallback(mCallback);
+            mManager.mDialogFragment = null;
+        }
+    };
+
     @Override
     protected DialogFragment openDialogInternal(FragmentManager fm) {
         if (fm.findFragmentByTag(DIALOG_FRAGMENT_TAG) != null) return null;
 
-        MediaRouteControllerDialogFragment fragment = new MediaRouteControllerDialogFragment() {
-            final SystemVisibilitySaver mVisibilitySaver = new SystemVisibilitySaver();
+        Fragment fragment = new Fragment(this, mCallback);
+        MediaRouteSelector selector = mediaSource().buildRouteSelector();
+        if (selector == null) return null;
 
-            @Override
-            public void onStart() {
-                mVisibilitySaver.saveSystemVisibility(getActivity());
-                super.onStart();
-            }
-
-            @Override
-            public void onStop() {
-                super.onStop();
-                mVisibilitySaver.restoreSystemVisibility(getActivity());
-            }
-
-            @Override
-            public void onDismiss(DialogInterface dialog) {
-                delegate().onDialogCancelled();
-                androidMediaRouter().removeCallback(mCallback);
-                mDialogFragment = null;
-                super.onDismiss(dialog);
-            }
-        };
+        androidMediaRouter().addCallback(selector, mCallback);
 
         fragment.show(fm, DIALOG_FRAGMENT_TAG);
         fm.executePendingTransactions();
-
-        androidMediaRouter().addCallback(mediaSource().buildRouteSelector(), mCallback);
 
         return fragment;
     }

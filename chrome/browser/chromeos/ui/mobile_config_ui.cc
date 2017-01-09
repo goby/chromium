@@ -9,7 +9,6 @@
 #include "base/logging.h"
 #include "chrome/browser/chromeos/mobile_config.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 
@@ -34,8 +33,7 @@ bool DisplayConfigDialog() {
   }
   // The mobile device will be managed by the primary user.
   chrome::ScopedTabbedBrowserDisplayer displayer(
-      ProfileManager::GetPrimaryUserProfile(),
-      chrome::HOST_DESKTOP_TYPE_ASH);
+      ProfileManager::GetPrimaryUserProfile());
   chrome::ShowSingletonTab(displayer.browser(), GURL(setup_url));
   return true;
 }

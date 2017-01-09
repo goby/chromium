@@ -4,6 +4,7 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/metadata_db_migration_util.h"
 
+#include <memory>
 #include <string>
 
 #include "base/files/scoped_temp_dir.h"
@@ -28,7 +29,8 @@ namespace {
 void VerifyKeyAndValue(const std::string& key,
                        const std::string& expect_val,
                        leveldb::DB* db) {
-  scoped_ptr<leveldb::Iterator> itr(db->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> itr(
+      db->NewIterator(leveldb::ReadOptions()));
 
   itr->Seek(key);
   EXPECT_TRUE(itr->Valid());
@@ -36,7 +38,8 @@ void VerifyKeyAndValue(const std::string& key,
 }
 
 void VerifyNotExist(const std::string& key, leveldb::DB* db) {
-  scoped_ptr<leveldb::Iterator> itr(db->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> itr(
+      db->NewIterator(leveldb::ReadOptions()));
 
   itr->Seek(key);
   EXPECT_TRUE(!itr->Valid() ||
@@ -75,11 +78,11 @@ TEST(DriveMetadataDBMigrationUtilTest, RollbackFromV4ToV3) {
     leveldb::Options options;
     options.create_if_missing = true;
     std::string db_dir =
-        storage::FilePathToString(base_dir.path().Append(kDatabaseName));
+        storage::FilePathToString(base_dir.GetPath().Append(kDatabaseName));
     leveldb::Status status = leveldb::DB::Open(options, db_dir, &db_ptr);
     ASSERT_TRUE(status.ok());
   }
-  scoped_ptr<leveldb::DB> db(db_ptr);
+  std::unique_ptr<leveldb::DB> db(db_ptr);
 
   // Setup the database with the schema version 4, without IDs.
   leveldb::WriteBatch batch;

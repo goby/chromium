@@ -9,6 +9,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "components/autofill/core/browser/autofill_popup_delegate.h"
@@ -21,6 +22,7 @@ namespace autofill {
 
 class AutofillDriver;
 class AutofillManager;
+class CreditCard;
 
 // TODO(csharp): A lot of the logic in this class is copied from autofillagent.
 // Once Autofill is moved out of WebKit this class should be the only home for
@@ -79,9 +81,6 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   // values or settings.
   void Reset();
 
-  // The renderer sent an IPC acknowledging an earlier ping IPC.
-  void OnPingAck();
-
  protected:
   base::WeakPtr<AutofillExternalDelegate> GetWeakPtr();
 
@@ -90,9 +89,7 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
                            FillCreditCardForm);
 
   // Called when a credit card is scanned using device camera.
-  void OnCreditCardScanned(const base::string16& card_number,
-                           int expiration_month,
-                           int expiration_year);
+  void OnCreditCardScanned(const CreditCard& card);
 
   // Fills the form with the Autofill data corresponding to |unique_id|.
   // If |is_preview| is true then this is just a preview to show the user what
@@ -100,8 +97,12 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   // this data.
   void FillAutofillFormData(int unique_id, bool is_preview);
 
-  // Handle applying any Autofill warnings to the Autofill popup.
-  void ApplyAutofillWarnings(std::vector<Suggestion>* suggestions);
+  // Will remove Autofill warnings from |suggestions| if there are also
+  // autocomplete entries in the vector. Note: at this point, it is assumed that
+  // if there are Autofill warnings, they will be at the head of the vector and
+  // any entry that is not an Autofill warning is considered an Autocomplete
+  // entry.
+  void PossiblyRemoveAutofillWarnings(std::vector<Suggestion>* suggestions);
 
   // Handle applying any Autofill option listings to the Autofill popup.
   // This function should only get called when there is at least one
@@ -132,7 +133,7 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
   gfx::RectF element_bounds_;
 
   // Does the popup include any Autofill profile or credit card suggestions?
-  bool has_suggestion_;
+  bool has_autofill_suggestions_;
 
   // Have we already shown Autofill suggestions for the field the user is
   // currently editing?  Used to keep track of state for metrics logging.
@@ -140,6 +141,9 @@ class AutofillExternalDelegate : public AutofillPopupDelegate {
 
   // FIXME
   bool should_show_scan_credit_card_;
+
+  // Whether the credit card signin promo should be shown to the user.
+  bool should_show_cc_signin_promo_;
 
   // Whether the access Address Book prompt has ever been shown for the current
   // |query_form_|. This variable is only used on OSX.

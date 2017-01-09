@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/files/file.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/file_system_provider/notification_manager_interface.h"
@@ -94,11 +97,11 @@ class AbortOnUnresponsivePerformer : public Observer {
     DCHECK(file_system);
     file_system->GetRequestManager()->SetTimeoutForTesting(base::TimeDelta());
 
-    scoped_ptr<NotificationButtonClicker> clicker(
+    std::unique_ptr<NotificationButtonClicker> clicker(
         new NotificationButtonClicker(file_system->GetFileSystemInfo()));
 
     file_system->GetRequestManager()->AddObserver(clicker.get());
-    clickers_.push_back(clicker.Pass());
+    clickers_.push_back(std::move(clicker));
   }
 
   void OnProvidedFileSystemUnmount(

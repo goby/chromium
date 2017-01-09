@@ -8,16 +8,25 @@
 
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/prefs/pref_service.h"
 #include "base/win/registry.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+
+#if defined(GOOGLE_CHROME_BUILD)
+#define PRODUCT_NAME L"Google\\Chrome"
+#elif defined(CHROMIUM_BUILD)
+#define PRODUCT_NAME L"Chromium"
+#else
+#error Unknown branding
+#endif
 
 // The registry path where the TriggeredReset values get set. Note that this
-// uses the same path for both SxS (Canary) and non-SxS Chrome.
+// uses the same path for both SxS (Canary) and non-SxS Chrome. This is
+// intended to allow third parties to use the API without needing to be
+// aware of and maintain changes to Chrome's channel logic.
 const wchar_t kTriggeredResetRegistryPath[] =
-    L"Software\\" PRODUCT_STRING_PATH L"\\TriggeredReset";
+    L"Software\\" PRODUCT_NAME L"\\TriggeredReset";
 
 const wchar_t kTriggeredResetToolName[] = L"ToolName";
 const wchar_t kTriggeredResetTimestamp[] = L"Timestamp";
@@ -25,11 +34,11 @@ const wchar_t kTriggeredResetTimestamp[] = L"Timestamp";
 namespace {
 
 const char kTriggeredResetFieldTrialName[] = "TriggeredResetFieldTrial";
-const char kTriggeredResetOnGroup[] = "On";
+const char kTriggeredResetOffGroup[] = "Off";
 
-bool IsInTriggeredResetFieldTrial() {
+bool IsDisabledByFieldTrial() {
   return base::FieldTrialList::FindFullName(kTriggeredResetFieldTrialName) ==
-         kTriggeredResetOnGroup;
+         kTriggeredResetOffGroup;
 }
 
 }  // namespace
@@ -39,8 +48,7 @@ void TriggeredProfileResetter::Activate() {
 
   // System profiles don't contain user settings and bail out if we're not in
   // the field trial.
-  if (!profile_ || profile_->IsSystemProfile() ||
-      !IsInTriggeredResetFieldTrial()) {
+  if (!profile_ || profile_->IsSystemProfile() || IsDisabledByFieldTrial()) {
     UMA_HISTOGRAM_BOOLEAN("Profile.TriggeredReset", false);
     return;
   }
@@ -60,7 +68,7 @@ void TriggeredProfileResetter::Activate() {
   // in this profile. If different, reset the profile and persist the new
   // time.
   PrefService* pref_service = profile_->GetPrefs();
-  const int64 preference_timestamp =
+  const int64_t preference_timestamp =
       pref_service->GetInt64(prefs::kLastProfileResetTimestamp);
 
   if (profile_->IsNewProfile()) {

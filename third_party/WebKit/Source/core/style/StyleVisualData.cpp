@@ -19,7 +19,6 @@
  *
  */
 
-#include "config.h"
 #include "core/style/StyleVisualData.h"
 
 #include "core/style/ComputedStyle.h"
@@ -27,23 +26,17 @@
 namespace blink {
 
 StyleVisualData::StyleVisualData()
-    : hasAutoClip(true)
-    , textDecoration(ComputedStyle::initialTextDecoration())
-    , m_zoom(ComputedStyle::initialZoom())
-{
-}
+    : hasAutoClip(true),
+      textDecoration(ComputedStyle::initialTextDecoration()),
+      m_zoom(ComputedStyle::initialZoom()) {}
 
-StyleVisualData::~StyleVisualData()
-{
-}
+StyleVisualData::~StyleVisualData() {}
 
 StyleVisualData::StyleVisualData(const StyleVisualData& o)
-    : RefCounted<StyleVisualData>()
-    , clip(o.clip)
-    , hasAutoClip(o.hasAutoClip)
-    , textDecoration(o.textDecoration)
-    , m_zoom(ComputedStyle::initialZoom())
-{
-}
+    : RefCounted<StyleVisualData>(),
+      clip(o.clip),
+      hasAutoClip(o.hasAutoClip),
+      textDecoration(o.textDecoration),
+      m_zoom(ComputedStyle::initialZoom()) {}
 
-} // namespace blink
+}  // namespace blink

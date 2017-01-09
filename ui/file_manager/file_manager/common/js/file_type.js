@@ -48,6 +48,11 @@ FileType.types = [
     pattern: /\.tiff?$/i,
     mimePattern: /image\/tiff/i
   },
+  {
+    type: 'image', name: 'IMAGE_FILE_TYPE', subtype: 'SVG',
+    pattern: /\.svg$/i,
+    mimePattern: /image\/svg\+xml/i
+  },
 
   // Raw
   {
@@ -220,6 +225,10 @@ FileType.types = [
     // (gmap/map) in other parts to be consistent with other file type.
     type: 'hosted', icon: 'gmap', name: 'GMAP_DOCUMENT_FILE_TYPE',
     subtype: 'map', pattern: /\.gmaps$/i
+  },
+  {
+    type: 'hosted', icon: 'gsite', name: 'GSITE_DOCUMENT_FILE_TYPE',
+    subtype: 'site', pattern: /\.gsite$/i
   },
 
   // Others

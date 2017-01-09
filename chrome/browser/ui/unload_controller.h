@@ -8,6 +8,7 @@
 #include <set>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "content/public/browser/notification_observer.h"
@@ -37,11 +38,11 @@ class UnloadController : public content::NotificationObserver,
   bool CanCloseContents(content::WebContents* contents);
 
   // Returns true if we need to run unload events for the |contents|.
-  static bool ShouldRunUnloadEventsHelper(content::WebContents* contents);
+  bool ShouldRunUnloadEventsHelper(content::WebContents* contents);
 
   // Helper function to run beforeunload listeners on a WebContents.
   // Returns true if |contents| beforeunload listeners were invoked.
-  static bool RunUnloadEventsHelper(content::WebContents* contents);
+  bool RunUnloadEventsHelper(content::WebContents* contents);
 
   // Called when a BeforeUnload handler is fired for |contents|. |proceed|
   // indicates the user's response to the Y/N BeforeUnload handler dialog. If
@@ -91,7 +92,8 @@ class UnloadController : public content::NotificationObserver,
                const content::NotificationDetails& details) override;
 
   // Overridden from TabStripModelObserver:
-  void TabInsertedAt(content::WebContents* contents,
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     content::WebContents* contents,
                      int index,
                      bool foreground) override;
   void TabDetachedAt(content::WebContents* contents, int index) override;

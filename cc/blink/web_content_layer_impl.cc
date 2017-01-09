@@ -4,7 +4,10 @@
 
 #include "cc/blink/web_content_layer_impl.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "cc/base/switches.h"
 #include "cc/blink/web_display_item_list_impl.h"
 #include "cc/layers/picture_layer.h"
@@ -14,7 +17,7 @@
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 
 using cc::PictureLayer;
 
@@ -32,12 +35,18 @@ PaintingControlToWeb(
   switch (painting_control) {
     case cc::ContentLayerClient::PAINTING_BEHAVIOR_NORMAL:
       return blink::WebContentLayerClient::PaintDefaultBehavior;
+    case cc::ContentLayerClient::PAINTING_BEHAVIOR_NORMAL_FOR_TEST:
+      return blink::WebContentLayerClient::PaintDefaultBehaviorForTest;
     case cc::ContentLayerClient::DISPLAY_LIST_CONSTRUCTION_DISABLED:
       return blink::WebContentLayerClient::DisplayListConstructionDisabled;
     case cc::ContentLayerClient::DISPLAY_LIST_CACHING_DISABLED:
       return blink::WebContentLayerClient::DisplayListCachingDisabled;
     case cc::ContentLayerClient::DISPLAY_LIST_PAINTING_DISABLED:
       return blink::WebContentLayerClient::DisplayListPaintingDisabled;
+    case cc::ContentLayerClient::SUBSEQUENCE_CACHING_DISABLED:
+      return blink::WebContentLayerClient::SubsequenceCachingDisabled;
+    case cc::ContentLayerClient::PARTIAL_INVALIDATION:
+      return blink::WebContentLayerClient::PartialInvalidation;
   }
   NOTREACHED();
   return blink::WebContentLayerClient::PaintDefaultBehavior;
@@ -45,8 +54,7 @@ PaintingControlToWeb(
 
 WebContentLayerImpl::WebContentLayerImpl(blink::WebContentLayerClient* client)
     : client_(client) {
-  layer_ = make_scoped_ptr(new WebLayerImpl(
-      PictureLayer::Create(WebLayerImpl::LayerSettings(), this)));
+  layer_ = base::MakeUnique<WebLayerImpl>(PictureLayer::Create(this));
   layer_->layer()->SetIsDrawable(true);
 }
 
@@ -69,7 +77,7 @@ WebContentLayerImpl::PaintContentsToDisplayList(
   settings.use_cached_picture = UseCachedPictureRaster();
 
   scoped_refptr<cc::DisplayItemList> display_list =
-      cc::DisplayItemList::Create(PaintableRegion(), settings);
+      cc::DisplayItemList::Create(settings);
   if (client_) {
     WebDisplayItemListImpl list(display_list.get());
     client_->paintContents(&list, PaintingControlToWeb(painting_control));

@@ -23,45 +23,40 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/geolocation/Coordinates.h"
 
 namespace blink {
 
-double Coordinates::altitude(bool& isNull) const
-{
-    if (m_canProvideAltitude)
-        return m_altitude;
+double Coordinates::altitude(bool& isNull) const {
+  if (m_canProvideAltitude)
+    return m_altitude;
 
-    isNull = true;
-    return 0;
+  isNull = true;
+  return 0;
 }
 
-double Coordinates::altitudeAccuracy(bool& isNull) const
-{
-    if (m_canProvideAltitudeAccuracy)
-        return m_altitudeAccuracy;
+double Coordinates::altitudeAccuracy(bool& isNull) const {
+  if (m_canProvideAltitudeAccuracy)
+    return m_altitudeAccuracy;
 
-    isNull = true;
-    return 0;
+  isNull = true;
+  return 0;
 }
 
-double Coordinates::heading(bool& isNull) const
-{
-    if (m_canProvideHeading)
-        return m_heading;
+double Coordinates::heading(bool& isNull) const {
+  if (m_canProvideHeading)
+    return m_heading;
 
-    isNull = true;
-    return 0;
+  isNull = true;
+  return 0;
 }
 
-double Coordinates::speed(bool& isNull) const
-{
-    if (m_canProvideSpeed)
-        return m_speed;
+double Coordinates::speed(bool& isNull) const {
+  if (m_canProvideSpeed)
+    return m_speed;
 
-    isNull = true;
-    return 0;
+  isNull = true;
+  return 0;
 }
 
-} // namespace blink
+}  // namespace blink

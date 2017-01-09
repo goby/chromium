@@ -4,6 +4,8 @@
 
 #include "chrome/browser/guest_view/extension_options/chrome_extension_options_guest_delegate.h"
 
+#include <utility>
+
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -26,9 +28,9 @@ bool ChromeExtensionOptionsGuestDelegate::HandleContextMenu(
       extension_options_guest()->web_contents());
   DCHECK(menu_delegate);
 
-  scoped_ptr<RenderViewContextMenuBase> menu = menu_delegate->BuildMenu(
+  std::unique_ptr<RenderViewContextMenuBase> menu = menu_delegate->BuildMenu(
       extension_options_guest()->web_contents(), params);
-  menu_delegate->ShowMenu(menu.Pass());
+  menu_delegate->ShowMenu(std::move(menu));
   return true;
 }
 

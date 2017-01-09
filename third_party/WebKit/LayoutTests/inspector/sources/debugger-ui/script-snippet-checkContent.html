@@ -16,11 +16,11 @@ function test()
 
     window.confirm = confirmOverride;
 
-    WebInspector.scriptSnippetModel.project().createFile("", null, "", onCreated.bind(this));
+    Snippets.scriptSnippetModel.project().createFile("", null, "", onCreated.bind(this));
     function onCreated(usc)
     {
         uiSourceCode = usc;
-        uiSourceCode.requestContent(onContentAvailable);
+        uiSourceCode.requestContent().then(onContentAvailable);
     }
 
     function onContentAvailable()

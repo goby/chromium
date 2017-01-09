@@ -6,6 +6,7 @@
 
 #include <math.h>
 #include <algorithm>
+#include <utility>
 
 #include "base/files/file_util.h"
 #include "content/public/browser/browser_thread.h"
@@ -120,15 +121,14 @@ void CustomizationWallpaperDownloader::Retry() {
 
 void CustomizationWallpaperDownloader::Start() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  scoped_ptr<bool> success(new bool(false));
+  std::unique_ptr<bool> success(new bool(false));
 
   base::Closure mkdir_closure = base::Bind(&CreateWallpaperDirectory,
                                            wallpaper_dir_,
                                            base::Unretained(success.get()));
   base::Closure on_created_closure =
       base::Bind(&CustomizationWallpaperDownloader::OnWallpaperDirectoryCreated,
-                 weak_factory_.GetWeakPtr(),
-                 base::Passed(success.Pass()));
+                 weak_factory_.GetWeakPtr(), base::Passed(std::move(success)));
   if (!content::BrowserThread::PostBlockingPoolTaskAndReply(
           FROM_HERE, mkdir_closure, on_created_closure)) {
     LOG(WARNING) << "Failed to start Customized Wallpaper download.";
@@ -136,7 +136,7 @@ void CustomizationWallpaperDownloader::Start() {
 }
 
 void CustomizationWallpaperDownloader::OnWallpaperDirectoryCreated(
-    scoped_ptr<bool> success) {
+    std::unique_ptr<bool> success) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (*success)
     StartRequest();
@@ -168,7 +168,7 @@ void CustomizationWallpaperDownloader::OnURLFetchComplete(
   url_fetcher_->GetResponseAsFilePath(true, &response_path);
   url_fetcher_.reset();
 
-  scoped_ptr<bool> success(new bool(false));
+  std::unique_ptr<bool> success(new bool(false));
 
   base::Closure rename_closure = base::Bind(&RenameTemporaryFile,
                                             response_path,
@@ -176,8 +176,7 @@ void CustomizationWallpaperDownloader::OnURLFetchComplete(
                                             base::Unretained(success.get()));
   base::Closure on_rename_closure =
       base::Bind(&CustomizationWallpaperDownloader::OnTemporaryFileRenamed,
-                 weak_factory_.GetWeakPtr(),
-                 base::Passed(success.Pass()));
+                 weak_factory_.GetWeakPtr(), base::Passed(std::move(success)));
   if (!content::BrowserThread::PostBlockingPoolTaskAndReply(
           FROM_HERE, rename_closure, on_rename_closure)) {
     LOG(WARNING)
@@ -187,7 +186,7 @@ void CustomizationWallpaperDownloader::OnURLFetchComplete(
 }
 
 void CustomizationWallpaperDownloader::OnTemporaryFileRenamed(
-    scoped_ptr<bool> success) {
+    std::unique_ptr<bool> success) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   on_wallpaper_fetch_completed_.Run(*success, wallpaper_url_);
 }

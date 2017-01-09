@@ -10,8 +10,10 @@ Loaded modules:
     extensions
     host
     main
+    persistence
     platform
     sdk
+    services
     ui
     workspace
 
@@ -25,8 +27,10 @@ Loaded modules:
     extensions
     host
     main
+    persistence
     platform
     sdk
+    services
     ui
     workspace
 
@@ -37,15 +41,21 @@ Loaded modules:
     common
     components
     components_lazy
+    diff
     elements
     emulation
     extensions
     host
     main
     network
+    persistence
     platform
     sdk
+    services
+    snippets
     source_frame
+    sources
+    text_editor
     ui
     ui_lazy
     workspace
@@ -64,11 +74,14 @@ Loaded modules:
     host
     main
     network
+    persistence
     platform
     sdk
+    services
     snippets
     source_frame
     sources
+    text_editor
     ui
     ui_lazy
     workspace
@@ -87,11 +100,14 @@ Loaded modules:
     host
     main
     network
+    persistence
     platform
     sdk
+    services
     snippets
     source_frame
     sources
+    text_editor
     ui
     ui_lazy
     workspace

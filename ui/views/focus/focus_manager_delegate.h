@@ -9,7 +9,6 @@
 
 namespace ui {
 class Accelerator;
-class AcceleratorTarget;
 }
 
 namespace views {
@@ -26,12 +25,6 @@ class VIEWS_EXPORT FocusManagerDelegate {
   // target, and so on.
   // Returns true if an accelerator was activated.
   virtual bool ProcessAccelerator(const ui::Accelerator& accelerator) = 0;
-
-  // Returns the AcceleratorTarget that should be activated for the specified
-  // keyboard accelerator, or NULL if no view is registered for that keyboard
-  // accelerator.
-  virtual ui::AcceleratorTarget* GetCurrentTargetForAccelerator(
-      const ui::Accelerator& accelerator) const = 0;
 };
 
 }  // namespace views

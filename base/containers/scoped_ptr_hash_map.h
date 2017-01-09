@@ -5,18 +5,21 @@
 #ifndef BASE_CONTAINERS_SCOPED_PTR_HASH_MAP_H_
 #define BASE_CONTAINERS_SCOPED_PTR_HASH_MAP_H_
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <utility>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/stl_util.h"
+#include "base/macros.h"
 
 namespace base {
 
-// This type acts like a hash_map<K, scoped_ptr<V, D> >, based on top of
+// Deprecated. Use std::unordered_map instead. https://crbug.com/579229
+//
+// This type acts like a hash_map<K, std::unique_ptr<V, D> >, based on top of
 // base::hash_map. The ScopedPtrHashMap has ownership of all values in the data
 // structure.
 template <typename Key, typename ScopedPtr>
@@ -125,9 +128,9 @@ class ScopedPtrHashMap {
   inline void clear() {
     auto it = data_.begin();
     while (it != data_.end()) {
-      // NOTE: Like STLDeleteContainerPointers, deleting behind the iterator.
-      // Deleting the value does not always invalidate the iterator, but it may
-      // do so if the key is a pointer into the value object.
+      // NOTE: Deleting behind the iterator. Deleting the value does not always
+      // invalidate the iterator, but it may do so if the key is a pointer into
+      // the value object.
       auto temp = it;
       ++it;
       // Let ScopedPtr decide how to delete.

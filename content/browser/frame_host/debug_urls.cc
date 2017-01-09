@@ -21,14 +21,21 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/url_constants.h"
+#include "ppapi/features/features.h"
 #include "ppapi/proxy/ppapi_messages.h"
+#include "third_party/kasko/kasko_features.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/browser/ppapi_plugin_process_host.h"
 #endif
 
 namespace content {
+
+class ScopedAllowWaitForDebugURL {
+ private:
+  base::ThreadRestrictions::ScopedAllowWait wait;
+};
 
 namespace {
 
@@ -42,15 +49,15 @@ const char kAsanCorruptHeapBlock[] = "/browser-corrupt-heap-block";
 const char kAsanCorruptHeap[] = "/browser-corrupt-heap";
 #endif
 
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
 // Define the Kasko debug URLs.
 const char kKaskoCrashDomain[] = "kasko";
 const char kKaskoSendReport[] = "/send-report";
 #endif
 
 void HandlePpapiFlashDebugURL(const GURL& url) {
-#if defined(ENABLE_PLUGINS)
-  bool crash = url == GURL(kChromeUIPpapiFlashCrashURL);
+#if BUILDFLAG(ENABLE_PLUGINS)
+  bool crash = url == kChromeUIPpapiFlashCrashURL;
 
   std::vector<PpapiPluginProcessHost*> hosts;
   PpapiPluginProcessHost::FindByName(
@@ -66,22 +73,37 @@ void HandlePpapiFlashDebugURL(const GURL& url) {
 }
 
 bool IsKaskoDebugURL(const GURL& url) {
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
   return (url.is_valid() && url.SchemeIs(kChromeUIScheme) &&
           url.DomainIs(kKaskoCrashDomain) &&
-          url.path() == kKaskoSendReport);
+          url.path_piece() == kKaskoSendReport);
 #else
   return false;
 #endif
 }
 
 void HandleKaskoDebugURL() {
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
+  // Signature of the exported crash key setting function.
+  using SetCrashKeyValueImplPtr = void(__cdecl *)(const wchar_t*,
+                                                  const wchar_t*);
   // Signature of an enhanced crash reporting function.
-  typedef void(__cdecl * ReportCrashWithProtobufPtr)(EXCEPTION_POINTERS*,
+  using ReportCrashWithProtobufPtr = void(__cdecl *)(EXCEPTION_POINTERS*,
                                                      const char*);
 
   HMODULE exe_hmodule = ::GetModuleHandle(NULL);
+
+  // First, set a crash key using the exported function reserved for Kasko
+  // clients (SyzyASAN for now).
+  SetCrashKeyValueImplPtr set_crash_key_value_impl =
+      reinterpret_cast<SetCrashKeyValueImplPtr>(
+          ::GetProcAddress(exe_hmodule, "SetCrashKeyValueImpl"));
+  if (set_crash_key_value_impl)
+    set_crash_key_value_impl(L"kasko-set-crash-key-value-impl", L"true");
+  else
+    NOTREACHED();
+
+  // Next, invoke a crash report via Kasko.
   ReportCrashWithProtobufPtr report_crash_with_protobuf =
       reinterpret_cast<ReportCrashWithProtobufPtr>(
           ::GetProcAddress(exe_hmodule, "ReportCrashWithProtobuf"));
@@ -106,14 +128,17 @@ bool IsAsanDebugURL(const GURL& url) {
     return false;
   }
 
-  if (url.path() == kAsanHeapOverflow || url.path() == kAsanHeapUnderflow ||
-      url.path() == kAsanUseAfterFree) {
+  if (url.path_piece() == kAsanHeapOverflow ||
+      url.path_piece() == kAsanHeapUnderflow ||
+      url.path_piece() == kAsanUseAfterFree) {
     return true;
   }
 
 #if defined(SYZYASAN)
-  if (url.path() == kAsanCorruptHeapBlock || url.path() == kAsanCorruptHeap)
+  if (url.path_piece() == kAsanCorruptHeapBlock ||
+      url.path_piece() == kAsanCorruptHeap) {
     return true;
+  }
 #endif
 
   return false;
@@ -124,21 +149,21 @@ bool HandleAsanDebugURL(const GURL& url) {
   if (!base::debug::IsBinaryInstrumented())
     return false;
 
-  if (url.path() == kAsanCorruptHeapBlock) {
+  if (url.path_piece() == kAsanCorruptHeapBlock) {
     base::debug::AsanCorruptHeapBlock();
     return true;
-  } else if (url.path() == kAsanCorruptHeap) {
+  } else if (url.path_piece() == kAsanCorruptHeap) {
     base::debug::AsanCorruptHeap();
     return true;
   }
 #endif
 
 #if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
-  if (url.path() == kAsanHeapOverflow) {
+  if (url.path_piece() == kAsanHeapOverflow) {
     base::debug::AsanHeapOverflow();
-  } else if (url.path() == kAsanHeapUnderflow) {
+  } else if (url.path_piece() == kAsanHeapUnderflow) {
     base::debug::AsanHeapUnderflow();
-  } else if (url.path() == kAsanUseAfterFree) {
+  } else if (url.path_piece() == kAsanUseAfterFree) {
     base::debug::AsanHeapUseAfterFree();
   } else {
     return false;
@@ -148,13 +173,14 @@ bool HandleAsanDebugURL(const GURL& url) {
   return true;
 }
 
+void HangCurrentThread() {
+  ScopedAllowWaitForDebugURL allow_wait;
+  base::WaitableEvent(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED)
+      .Wait();
+}
 
 }  // namespace
-
-class ScopedAllowWaitForDebugURL {
- private:
-  base::ThreadRestrictions::ScopedAllowWait wait;
-};
 
 bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
   // Ensure that the user explicitly navigated to this URL, unless
@@ -176,41 +202,48 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
     return true;
   }
 
-  if (url == GURL(kChromeUIBrowserCrashURL)) {
+  if (url == kChromeUIBrowserCrashURL) {
     // Induce an intentional crash in the browser process.
     CHECK(false);
     return true;
   }
 
-  if (url == GURL(kChromeUIBrowserUIHang)) {
-    ScopedAllowWaitForDebugURL allow_wait;
-    base::WaitableEvent(false, false).Wait();
+  if (url == kChromeUIBrowserUIHang) {
+    HangCurrentThread();
     return true;
   }
 
-  if (url == GURL(kChromeUIGpuCleanURL)) {
+  if (url == kChromeUIDelayedBrowserUIHang) {
+    // Webdriver-safe url to hang the ui thread. Webdriver waits for the onload
+    // event in javascript which needs a little more time to fire.
+    BrowserThread::PostDelayedTask(BrowserThread::UI, FROM_HERE,
+                                   base::Bind(&HangCurrentThread),
+                                   base::TimeDelta::FromSeconds(2));
+    return true;
+  }
+
+  if (url == kChromeUIGpuCleanURL) {
     GpuProcessHostUIShim* shim = GpuProcessHostUIShim::GetOneInstance();
     if (shim)
       shim->SimulateRemoveAllContext();
     return true;
   }
 
-  if (url == GURL(kChromeUIGpuCrashURL)) {
+  if (url == kChromeUIGpuCrashURL) {
     GpuProcessHostUIShim* shim = GpuProcessHostUIShim::GetOneInstance();
     if (shim)
       shim->SimulateCrash();
     return true;
   }
 
-  if (url == GURL(kChromeUIGpuHangURL)) {
+  if (url == kChromeUIGpuHangURL) {
     GpuProcessHostUIShim* shim = GpuProcessHostUIShim::GetOneInstance();
     if (shim)
       shim->SimulateHang();
     return true;
   }
 
-  if (url == GURL(kChromeUIPpapiFlashCrashURL) ||
-      url == GURL(kChromeUIPpapiFlashHangURL)) {
+  if (url == kChromeUIPpapiFlashCrashURL || url == kChromeUIPpapiFlashHangURL) {
     BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
                             base::Bind(&HandlePpapiFlashDebugURL, url));
     return true;
@@ -226,12 +259,13 @@ bool IsRendererDebugURL(const GURL& url) {
   if (url.SchemeIs(url::kJavaScriptScheme))
     return true;
 
-  return url == GURL(kChromeUIBadCastCrashURL) ||
-         url == GURL(kChromeUICrashURL) ||
-         url == GURL(kChromeUIDumpURL) ||
-         url == GURL(kChromeUIKillURL) ||
-         url == GURL(kChromeUIHangURL) ||
-         url == GURL(kChromeUIShorthangURL);
+  return url == kChromeUIBadCastCrashURL ||
+         url == kChromeUICrashURL ||
+         url == kChromeUIDumpURL ||
+         url == kChromeUIKillURL ||
+         url == kChromeUIHangURL ||
+         url == kChromeUIShorthangURL ||
+         url == kChromeUIMemoryExhaustURL;
 }
 
 }  // namespace content

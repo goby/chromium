@@ -4,8 +4,15 @@
 
 #include "extensions/browser/api/webcam_private/visca_webcam.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/macros.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 
 using content::BrowserThread;
@@ -254,7 +261,7 @@ void ViscaWebcam::OnReceiveCompleted(const CommandCompleteCallback& callback,
   // Success case. If waiting for more data, then loop until encounter the
   // terminator.
   if (data_buffer_.back() != kViscaTerminator) {
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&ViscaWebcam::ReceiveLoop,
                               weak_ptr_factory_.GetWeakPtr(), callback));
     return;
@@ -273,7 +280,7 @@ void ViscaWebcam::OnReceiveCompleted(const CommandCompleteCallback& callback,
                  kViscaResponseNetworkChange) {
     callback.Run(true, response);
   } else {
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&ViscaWebcam::ReceiveLoop,
                               weak_ptr_factory_.GetWeakPtr(), callback));
   }
@@ -484,8 +491,8 @@ void ViscaWebcam::Reset(bool pan,
 }
 
 void ViscaWebcam::OpenForTesting(
-    scoped_ptr<SerialConnection> serial_connection) {
-  serial_connection_ = serial_connection.Pass();
+    std::unique_ptr<SerialConnection> serial_connection) {
+  serial_connection_ = std::move(serial_connection);
 }
 
 SerialConnection* ViscaWebcam::GetSerialConnectionForTesting() {

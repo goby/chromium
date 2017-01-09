@@ -409,7 +409,13 @@ function SlideMode(container, content, topToolbar, bottomToolbar, prompt,
    * @private
    * @const
    */
-  this.editBarMode_ = util.createChild(this.container_, 'edit-modal');
+  this.editBarMode_ =
+      /** @type {!HTMLElement} */ (document.createElement('div'));
+  this.editBarMode_.className = 'edit-modal';
+  // Edit modal bar should be inserted before the bottom toolbar to make the tab
+  // order and visual position consistent.
+  this.container_.insertBefore(
+      this.editBarMode_, document.querySelector('#bottom-toolbar'));
 
   /**
    * @type {!HTMLElement}
@@ -474,6 +480,7 @@ function SlideMode(container, content, topToolbar, bottomToolbar, prompt,
 SlideMode.EDITOR_MODES = [
   new ImageEditor.Mode.InstantAutofix(),
   new ImageEditor.Mode.Crop(),
+  new ImageEditor.Mode.Resize(),
   new ImageEditor.Mode.Exposure(),
   new ImageEditor.Mode.OneClick(
       'rotate_left', 'GALLERY_ROTATE_LEFT', new Command.Rotate(-1)),
@@ -873,6 +880,8 @@ SlideMode.prototype.onSplice_ = function(event) {
         this.printButton_.disabled = true;
         this.editButton_.disabled = true;
         this.errorBanner_.show('GALLERY_NO_IMAGES');
+        if (this.isEditing())
+          this.toggleEditor();
       }.bind(this));
       return;
     }
@@ -883,9 +892,12 @@ SlideMode.prototype.onSplice_ = function(event) {
     if (!displayedItemNotRemvoed) {
       // There is the next item, select it. Otherwise, select the last item.
       var nextIndex = Math.min(event.index, this.dataModel_.length - 1);
-      // To force to dispatch a selection change event, clear selection before.
-      this.selectionModel_.clear();
+      // To force to dispatch a selection change event, unselect all before.
+      this.selectionModel_.unselectAll();
       this.select(nextIndex);
+      // If the removed image was edit, leave the editing mode.
+      if (this.isEditing())
+        this.toggleEditor();
     }
   }.bind(this), 0);
 };
@@ -919,12 +931,15 @@ SlideMode.prototype.getNextSelectedIndex_ = function(direction) {
 
 /**
  * Advance the selection based on the pressed key ID.
- * @param {string} keyID Key identifier.
+ * @param {string} keyID Key of the KeyboardEvent.
  */
 SlideMode.prototype.advanceWithKeyboard = function(keyID) {
-  var prev = (keyID === 'Up' ||
-              keyID === 'Left' ||
-              keyID === 'MediaPreviousTrack');
+  if (this.getItemCount_() === 0)
+    return;
+
+  var prev = (keyID === 'ArrowUp' ||
+              keyID === 'ArrowLeft' ||
+              keyID === 'MediaTrackPrevious');
   this.advanceManually(prev ? -1 : 1);
 };
 
@@ -1036,9 +1051,9 @@ SlideMode.prototype.itemLoaded_ = function(
         toMillions(metadata.size));
   }
 
-  var canvas = this.imageView_.getCanvas();
+  var image = this.imageView_.getImage();
   ImageUtil.metrics.recordSmallCount(ImageUtil.getMetricName('Size.MPix'),
-      toMillions(canvas.width * canvas.height));
+      toMillions(image.width * image.height));
 
   var extIndex = entry.name.lastIndexOf('.');
   var ext = extIndex < 0 ? '' :
@@ -1137,26 +1152,26 @@ SlideMode.prototype.onDocumentClick_ = function(event) {
  * @return {boolean} True if handled.
  */
 SlideMode.prototype.onKeyDown = function(event) {
-  var keyID = util.getKeyModifiers(event) + event.keyIdentifier;
+  var keyID = util.getKeyModifiers(event) + event.key;
 
   if (this.isSlideshowOn_()) {
     switch (keyID) {
-      case 'U+001B':  // Escape
+      case 'Escape':
       case 'MediaStop':
         this.stopSlideshow_(event);
         break;
 
-      case 'U+0020':  // Space pauses/resumes the slideshow.
+      case ' ':  // Space pauses/resumes the slideshow.
       case 'MediaPlayPause':
         this.toggleSlideshowPause_();
         break;
 
-      case 'Up':
-      case 'Down':
-      case 'Left':
-      case 'Right':
-      case 'MediaNextTrack':
-      case 'MediaPreviousTrack':
+      case 'ArrowUp':
+      case 'ArrowDown':
+      case 'ArrowLeft':
+      case 'ArrowRight':
+      case 'MediaTrackNex':
+      case 'MediaTrackPrevious':
         this.advanceWithKeyboard(keyID);
         break;
     }
@@ -1165,12 +1180,12 @@ SlideMode.prototype.onKeyDown = function(event) {
 
   // Handles shortcut keys common for both modes (editing and not-editing).
   switch (keyID) {
-    case 'Ctrl-U+0050':  // Ctrl+'p' prints the current image.
+    case 'Ctrl-p':  // Ctrl+'p' prints the current image.
       if (!this.printButton_.disabled)
         this.print_();
       return true;
 
-    case 'U+0045':  // 'e' toggles the editor.
+    case 'e':  // 'e' toggles the editor.
       if (!this.editButton_.disabled)
         this.toggleEditor(event);
       return true;
@@ -1181,7 +1196,7 @@ SlideMode.prototype.onKeyDown = function(event) {
     if (this.editor_.onKeyDown(event))
       return true;
 
-    if (keyID === 'U+001B') { // Escape
+    if (keyID === 'Escape') { // Escape
       this.toggleEditor(event);
       return true;
     }
@@ -1191,7 +1206,7 @@ SlideMode.prototype.onKeyDown = function(event) {
 
   // Handles shortcut keys for not-editing mode.
   switch (keyID) {
-    case 'U+001B':  // Escape
+    case 'Escape':
       if (this.viewport_.isZoomed()) {
         this.viewport_.resetView();
         this.touchHandlers_.stopOperation();
@@ -1208,10 +1223,10 @@ SlideMode.prototype.onKeyDown = function(event) {
       this.selectLast();
       return true;
 
-    case 'Up':
-    case 'Down':
-    case 'Left':
-    case 'Right':
+    case 'ArrowUp':
+    case 'ArrowDown':
+    case 'ArrowLeft':
+    case 'ArrowRight':
       if (this.viewport_.isZoomed()) {
         var delta = SlideMode.KEY_OFFSET_MAP[keyID];
         this.viewport_.setOffset(
@@ -1226,24 +1241,24 @@ SlideMode.prototype.onKeyDown = function(event) {
       }
       return true;
 
-    case 'MediaNextTrack':
-    case 'MediaPreviousTrack':
+    case 'MediaTrackNext':
+    case 'MediaTrackPrevious':
       this.advanceWithKeyboard(keyID);
       return true;
 
-    case 'Ctrl-U+00BB':  // Ctrl+'=' zoom in.
+    case 'Ctrl-=':  // Ctrl+'=' zoom in.
       this.viewport_.zoomIn();
       this.touchHandlers_.stopOperation();
       this.imageView_.applyViewportChange();
       return true;
 
-    case 'Ctrl-U+00BD':  // Ctrl+'-' zoom out.
+    case 'Ctrl--':  // Ctrl+'-' zoom out.
       this.viewport_.zoomOut();
       this.touchHandlers_.stopOperation();
       this.imageView_.applyViewportChange();
       return true;
 
-    case 'Ctrl-U+0030': // Ctrl+'0' zoom reset.
+    case 'Ctrl-0': // Ctrl+'0' zoom reset.
       this.viewport_.setZoom(1.0);
       this.touchHandlers_.stopOperation();
       this.imageView_.applyViewportChange();
@@ -1294,7 +1309,7 @@ SlideMode.prototype.saveCurrentImage_ = function(item, callback) {
   var savedPromise = this.dataModel_.saveItem(
       this.volumeManager_,
       item,
-      this.imageView_.getCanvas(),
+      ImageUtil.ensureCanvas(this.imageView_.getImage()),
       this.overwriteOriginalCheckbox_.checked);
 
   savedPromise.then(function() {
@@ -1638,6 +1653,7 @@ SlideMode.prototype.toggleEditor = function(opt_event) {
     }.bind(this));
 
     this.setSubMode_(Gallery.SubMode.EDIT);
+    this.editor_.onStartEditing();
   } else {
     this.editor_.getPrompt().hide();
     this.editor_.leaveMode(false /* not to switch mode */);
@@ -1691,6 +1707,7 @@ SlideMode.prototype.setOverwriteBubbleCount_ = function(value) {
  * @private
  */
 SlideMode.prototype.print_ = function() {
+  this.stopEditing_();
   cr.dispatchSimpleEvent(this, 'useraction');
   window.print();
 };
@@ -1821,6 +1838,13 @@ function TouchHandler(targetElement, slideMode) {
   this.touchStarted_ = false;
 
   /**
+   * Whether the element is being clicked now or not.
+   * @type {boolean}
+   * @private
+   */
+  this.clickStarted_ = false;
+
+  /**
    * The swipe action that should happen only once in an operation is already
    * done or not.
    * @type {boolean}
@@ -1857,11 +1881,22 @@ function TouchHandler(targetElement, slideMode) {
    */
   this.lastZoom_ = 1.0;
 
+  /**
+   * @type {number}
+   * @private
+   */
+  this.mouseWheelZoomOperationId_ = 0;
+
   targetElement.addEventListener('touchstart', this.onTouchStart_.bind(this));
   var onTouchEventBound = this.onTouchEvent_.bind(this);
   targetElement.ownerDocument.addEventListener('touchmove', onTouchEventBound);
   targetElement.ownerDocument.addEventListener('touchend', onTouchEventBound);
 
+  targetElement.addEventListener('mousedown', this.onMouseDown_.bind(this));
+  targetElement.ownerDocument.addEventListener('mousemove',
+      this.onMouseMove_.bind(this));
+  targetElement.ownerDocument.addEventListener('mouseup',
+      this.onMouseUp_.bind(this));
   targetElement.addEventListener('mousewheel', this.onMouseWheel_.bind(this));
 }
 
@@ -2037,18 +2072,82 @@ TouchHandler.prototype.onTouchEvent_ = function(event) {
 };
 
 /**
+ * Zoom magnification of one scroll event.
+ * @private {number}
+ * @const
+ */
+TouchHandler.WHEEL_ZOOM_FACTOR = 1.05;
+
+/**
  * Handles mouse wheel events.
  * @param {!Event} event Wheel event.
  * @private
  */
 TouchHandler.prototype.onMouseWheel_ = function(event) {
   var event = assertInstanceof(event, MouseEvent);
+  if (!this.enabled_)
+    return;
+
+  this.stopOperation();
+
   var viewport = this.slideMode_.getViewport();
-  if (!this.enabled_ || !viewport.isZoomed())
+  var zoom = viewport.getZoom();
+  if (event.wheelDeltaY > 0) {
+    zoom *= TouchHandler.WHEEL_ZOOM_FACTOR;
+  } else {
+    zoom /= TouchHandler.WHEEL_ZOOM_FACTOR;
+  }
+
+  // Request animation frame not to set zoom more than once in a frame. This is
+  // a fix for https://crbug.com/591033
+  requestAnimationFrame(function(operationId) {
+    if (this.mouseWheelZoomOperationId_ !== operationId)
+      return;
+
+    viewport.setZoom(zoom);
+    this.slideMode_.applyViewportChange();
+  }.bind(this, ++this.mouseWheelZoomOperationId_));
+};
+
+/**
+ * Handles mouse down events.
+ * @param {!Event} event Wheel event.
+ * @private
+ */
+TouchHandler.prototype.onMouseDown_ = function(event) {
+  var event = assertInstanceof(event, MouseEvent);
+  var viewport = this.slideMode_.getViewport();
+  if (!this.enabled_ || event.button !== 0)
+    return;
+  this.clickStarted_ = true;
+};
+
+/**
+ * Handles mouse move events.
+ * @param {!Event} event Wheel event.
+ * @private
+ */
+TouchHandler.prototype.onMouseMove_ = function(event) {
+  var event = assertInstanceof(event, MouseEvent);
+  var viewport = this.slideMode_.getViewport();
+  if (!this.enabled_ || !this.clickStarted_)
     return;
   this.stopOperation();
   viewport.setOffset(
-      viewport.getOffsetX() + event.wheelDeltaX,
-      viewport.getOffsetY() + event.wheelDeltaY);
-  this.slideMode_.applyViewportChange();
+      viewport.getOffsetX() +
+          (/** @type {{movementX: number}} */(event)).movementX,
+      viewport.getOffsetY() +
+          (/** @type {{movementY: number}} */(event)).movementY);
+  this.slideMode_.imageView_.applyViewportChange();
+};
+
+/**
+ * Handles mouse up events.
+ * @param {!Event} event Wheel event.
+ * @private
+ */
+TouchHandler.prototype.onMouseUp_ = function(event) {
+  if (event.button !== 0)
+    return;
+  this.clickStarted_ = false;
 };

@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DRIVE_FILEAPI_WEBKIT_FILE_STREAM_READER_IMPL_H_
 #define CHROME_BROWSER_CHROMEOS_DRIVE_FILEAPI_WEBKIT_FILE_STREAM_READER_IMPL_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/drive/drive_file_stream_reader.h"
@@ -36,7 +39,7 @@ class WebkitFileStreamReaderImpl : public storage::FileStreamReader {
       const DriveFileStreamReader::FileSystemGetter& file_system_getter,
       base::SequencedTaskRunner* file_task_runner,
       const base::FilePath& drive_file_path,
-      int64 offset,
+      int64_t offset,
       const base::Time& expected_modification_time);
   ~WebkitFileStreamReaderImpl() override;
 
@@ -44,16 +47,15 @@ class WebkitFileStreamReaderImpl : public storage::FileStreamReader {
   int Read(net::IOBuffer* buffer,
            int buffer_length,
            const net::CompletionCallback& callback) override;
-  int64 GetLength(const net::Int64CompletionCallback& callback) override;
+  int64_t GetLength(const net::Int64CompletionCallback& callback) override;
 
  private:
   // Called upon the initialization completion of |stream_reader_|.
   // Processes the result of the initialization with checking last
   // modified time, and calls |callback| with net::Error code as its result.
-  void OnStreamReaderInitialized(
-      const net::CompletionCallback& callback,
-      int error,
-      scoped_ptr<ResourceEntry> entry);
+  void OnStreamReaderInitialized(const net::CompletionCallback& callback,
+                                 int error,
+                                 std::unique_ptr<ResourceEntry> entry);
 
   // Part of Read(). Called after all the initialization process is completed.
   void ReadAfterStreamReaderInitialized(
@@ -68,13 +70,13 @@ class WebkitFileStreamReaderImpl : public storage::FileStreamReader {
       const net::Int64CompletionCallback& callback,
       int initialization_result);
 
-  scoped_ptr<DriveFileStreamReader> stream_reader_;
+  std::unique_ptr<DriveFileStreamReader> stream_reader_;
   const base::FilePath drive_file_path_;
-  const int64 offset_;
+  const int64_t offset_;
   const base::Time expected_modification_time_;
 
   // This is available only after initialize is done.
-  int64 file_size_;
+  int64_t file_size_;
 
   // This should remain the last member so it'll be destroyed first and
   // invalidate its weak pointers before other members are destroyed.

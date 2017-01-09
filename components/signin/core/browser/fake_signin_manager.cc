@@ -5,7 +5,8 @@
 #include "components/signin/core/browser/fake_signin_manager.h"
 
 #include "base/callback_helpers.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/signin_metrics.h"
 
@@ -15,6 +16,10 @@ FakeSigninManagerBase::FakeSigninManagerBase(
     : SigninManagerBase(client, account_tracker_service) {}
 
 FakeSigninManagerBase::~FakeSigninManagerBase() {}
+
+void FakeSigninManagerBase::SignIn(const std::string& account_id) {
+  SetAuthenticatedAccountId(account_id);
+}
 
 #if !defined(OS_CHROMEOS)
 
@@ -41,6 +46,9 @@ void FakeSigninManager::StartSignInWithRefreshToken(
   set_password(password);
   username_ = username;
 
+  possibly_invalid_gaia_id_.assign(gaia_id);
+  possibly_invalid_email_.assign(username);
+
   if (!oauth_fetched_callback.is_null())
     oauth_fetched_callback.Run(refresh_token);
 }
@@ -48,9 +56,10 @@ void FakeSigninManager::StartSignInWithRefreshToken(
 void FakeSigninManager::CompletePendingSignin() {
   SetAuthenticatedAccountId(GetAccountIdForAuthInProgress());
   set_auth_in_progress(std::string());
-  FOR_EACH_OBSERVER(
-      SigninManagerBase::Observer, observer_list_,
-      GoogleSigninSucceeded(authenticated_account_id_, username_, password_));
+  for (auto& observer : observer_list_) {
+    observer.GoogleSigninSucceeded(authenticated_account_id_, username_,
+                                   password_);
+  }
 }
 
 void FakeSigninManager::SignIn(const std::string& gaia_id,
@@ -63,16 +72,18 @@ void FakeSigninManager::SignIn(const std::string& gaia_id,
 
 void FakeSigninManager::ForceSignOut() {
   prohibit_signout_ = false;
-  SignOut(signin_metrics::SIGNOUT_TEST);
+  SignOut(signin_metrics::SIGNOUT_TEST,
+          signin_metrics::SignoutDelete::IGNORE_METRIC);
 }
 
 void FakeSigninManager::FailSignin(const GoogleServiceAuthError& error) {
-  FOR_EACH_OBSERVER(SigninManagerBase::Observer, observer_list_,
-                    GoogleSigninFailed(error));
+  for (auto& observer : observer_list_)
+    observer.GoogleSigninFailed(error);
 }
 
 void FakeSigninManager::SignOut(
-    signin_metrics::ProfileSignout signout_source_metric) {
+    signin_metrics::ProfileSignout signout_source_metric,
+    signin_metrics::SignoutDelete signout_delete_metric) {
   if (IsSignoutProhibited())
     return;
   set_auth_in_progress(std::string());
@@ -81,8 +92,8 @@ void FakeSigninManager::SignOut(
   const std::string username = GetAuthenticatedAccountInfo().email;
   authenticated_account_id_.clear();
 
-  FOR_EACH_OBSERVER(SigninManagerBase::Observer, observer_list_,
-                    GoogleSignedOut(account_id, username));
+  for (auto& observer : observer_list_)
+    observer.GoogleSignedOut(account_id, username);
 }
 
 #endif  // !defined (OS_CHROMEOS)

@@ -33,6 +33,7 @@ For Chromium contributors that have different nicks on other domains.
 | feng              | feng            | fqian           |
 | fmeawad           | fmeawad-cr      | fmeawad         |
 | gab               | gabc            | gab             |
+| gsathya           | gsathya         | gunasekaran     |
 | hans              | hwennborg       | hwennborg       |
 | haven             | periodic        | haven           |
 | ian               | ifette          | ifette          |
@@ -58,6 +59,7 @@ For Chromium contributors that have different nicks on other domains.
 | kuchhal           | kuchhal         | rahulk          |
 | levin             | dave\_levin     | levin           |
 | lfg               | lfg\_           | lfg             |
+| littledan         | littledan       | dehrenberg      |
 | luken             | luken_chromium  | luken           |
 | mark              | markmentovai    | mmentovai       |
 | mattm             | mattm\_c, mattm\_g | mattm           |
@@ -65,16 +67,18 @@ For Chromium contributors that have different nicks on other domains.
 | mmeade            | mmeade          | mmeade          |
 | mednik            | mednik          | mednik          |
 | mgaba             | mgaba           | mgaba           |
+| mlamouri          | mounir          | mlamouri        |
 | mlinck            | dullb0yj4ck     | mlinck          |
 | msw               | msw\_           | msw             |
 | nick              | nickcarter      | ncarter         |
 | oleg              |                 | olege           |
-| ortuno            | gortuno         | ortuno          |
+| ortuno            | ortuno          | ortuno          |
 | pam               | pamg            | pamg            |
 | paulirish         | paul\_irish      | paulirish       |
 | patrick           | pjohnson        | pjohnson        |
 | peter             | beverloo        | beverloo        |
 | phajdan.jr        | phajdan-jr      | phajdan         |
+| pwnall            | pwnall          | costan          |
 | rch               | RyanHamilton    | rch             |
 | rdevlin.cronin    | rdcronin        | rdcronin        |
 | reillyg           | reillyeon       | reillyg         |
@@ -85,6 +89,7 @@ For Chromium contributors that have different nicks on other domains.
 | satish            | satish\_        | satish          |
 | scheglov          |                 | scheglov        |
 | scottbyer         | sbyer           | scottbyer       |
+| sdy               | sdy, sidney, Sidnicious | sdy     |
 | shans             |                 | shanestephens   |
 | shrike            | shrike          | shrike          |
 | smut              | Sana            | smut            |

@@ -4,6 +4,9 @@
 
 #include "extensions/browser/guest_view/extension_view/extension_view_guest.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "components/crx_file/id_util.h"
 #include "components/guest_view/browser/guest_view_event.h"
 #include "content/public/browser/render_process_host.h"
@@ -15,6 +18,7 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/strings/grit/extensions_strings.h"
+#include "url/origin.h"
 
 using content::WebContents;
 using guest_view::GuestViewBase;
@@ -43,8 +47,8 @@ bool ExtensionViewGuest::NavigateGuest(const std::string& src,
 
   // If the URL is not valid, about:blank, or the same origin as the extension,
   // then navigate to about:blank.
-  bool url_not_allowed = (url != GURL(url::kAboutBlankURL)) &&
-      (url.GetOrigin() != extension_url_.GetOrigin());
+  bool url_not_allowed =
+      url != url::kAboutBlankURL && !url::IsSameOriginWith(url, extension_url_);
   if (!url.is_valid() || url_not_allowed)
     return NavigateGuest(url::kAboutBlankURL, true /* force_navigation */);
 
@@ -87,11 +91,9 @@ void ExtensionViewGuest::CreateWebContents(
     return;
   }
 
-  content::SiteInstance* view_site_instance =
-      content::SiteInstance::CreateForURL(browser_context(),
-                                          extension_url_);
-
-  WebContents::CreateParams params(browser_context(), view_site_instance);
+  WebContents::CreateParams params(
+      browser_context(),
+      content::SiteInstance::CreateForURL(browser_context(), extension_url_));
   params.guest_delegate = this;
   callback.Run(WebContents::Create(params));
 }
@@ -124,16 +126,16 @@ void ExtensionViewGuest::DidCommitProvisionalLoadForFrame(
 
   url_ = url;
 
-  scoped_ptr<base::DictionaryValue> args(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
   args->SetString(guest_view::kUrl, url_.spec());
-  DispatchEventToView(
-      new GuestViewEvent(extensionview::kEventLoadCommit, args.Pass()));
+  DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+      extensionview::kEventLoadCommit, std::move(args)));
 }
 
 void ExtensionViewGuest::DidNavigateMainFrame(
     const content::LoadCommittedDetails& details,
     const content::FrameNavigateParams& params) {
-  if (attached() && (params.url.GetOrigin() != url_.GetOrigin())) {
+  if (attached() && !url::IsSameOriginWith(params.url, url_)) {
     bad_message::ReceivedBadMessage(web_contents()->GetRenderProcessHost(),
                                     bad_message::EVG_BAD_ORIGIN);
   }

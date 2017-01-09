@@ -4,6 +4,9 @@
 
 #include "chromeos/settings/timezone_settings.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
@@ -11,10 +14,10 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/sys_info.h"
@@ -220,7 +223,8 @@ std::string GetTimezoneIDAsString() {
 
   std::string timezone(buf, len);
   // Remove kTimezoneFilesDir from the beginning.
-  if (timezone.find(kTimezoneFilesDir) != 0) {
+  if (!base::StartsWith(timezone, kTimezoneFilesDir,
+                        base::CompareCase::SENSITIVE)) {
     LOG(ERROR) << "GetTimezoneID: Timezone symlink is wrong "
                << timezone;
     return std::string();
@@ -275,7 +279,8 @@ class TimezoneSettingsBaseImpl : public chromeos::system::TimezoneSettings {
   void SetTimezoneFromID(const base::string16& timezone_id) override;
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
-  const std::vector<icu::TimeZone*>& GetTimezoneList() const override;
+  const std::vector<std::unique_ptr<icu::TimeZone>>& GetTimezoneList()
+      const override;
 
  protected:
   TimezoneSettingsBaseImpl();
@@ -291,8 +296,8 @@ class TimezoneSettingsBaseImpl : public chromeos::system::TimezoneSettings {
       const icu::TimeZone& timezone) const;
 
   base::ObserverList<Observer> observers_;
-  std::vector<icu::TimeZone*> timezones_;
-  scoped_ptr<icu::TimeZone> timezone_;
+  std::vector<std::unique_ptr<icu::TimeZone>> timezones_;
+  std::unique_ptr<icu::TimeZone> timezone_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TimezoneSettingsBaseImpl);
@@ -331,7 +336,6 @@ class TimezoneSettingsStubImpl : public TimezoneSettingsBaseImpl {
 };
 
 TimezoneSettingsBaseImpl::~TimezoneSettingsBaseImpl() {
-  STLDeleteElements(&timezones_);
 }
 
 const icu::TimeZone& TimezoneSettingsBaseImpl::GetTimezone() {
@@ -344,7 +348,7 @@ base::string16 TimezoneSettingsBaseImpl::GetCurrentTimezoneID() {
 
 void TimezoneSettingsBaseImpl::SetTimezoneFromID(
     const base::string16& timezone_id) {
-  scoped_ptr<icu::TimeZone> timezone(icu::TimeZone::createTimeZone(
+  std::unique_ptr<icu::TimeZone> timezone(icu::TimeZone::createTimeZone(
       icu::UnicodeString(timezone_id.c_str(), timezone_id.size())));
   SetTimezone(*timezone);
 }
@@ -357,15 +361,15 @@ void TimezoneSettingsBaseImpl::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-const std::vector<icu::TimeZone*>&
+const std::vector<std::unique_ptr<icu::TimeZone>>&
 TimezoneSettingsBaseImpl::GetTimezoneList() const {
   return timezones_;
 }
 
 TimezoneSettingsBaseImpl::TimezoneSettingsBaseImpl() {
   for (size_t i = 0; i < arraysize(kTimeZones); ++i) {
-    timezones_.push_back(icu::TimeZone::createTimeZone(
-        icu::UnicodeString(kTimeZones[i], -1, US_INV)));
+    timezones_.push_back(base::WrapUnique(icu::TimeZone::createTimeZone(
+        icu::UnicodeString(kTimeZones[i], -1, US_INV))));
   }
 }
 
@@ -389,7 +393,8 @@ void TimezoneSettingsImpl::SetTimezone(const icu::TimeZone& timezone) {
   base::WorkerPool::GetTaskRunner(true /* task is slow */)->
       PostTask(FROM_HERE, base::Bind(&SetTimezoneIDFromString, id));
   icu::TimeZone::setDefault(*known_timezone);
-  FOR_EACH_OBSERVER(Observer, observers_, TimezoneChanged(*known_timezone));
+  for (auto& observer : observers_)
+    observer.TimezoneChanged(*known_timezone);
 }
 
 // static
@@ -436,7 +441,8 @@ void TimezoneSettingsStubImpl::SetTimezone(const icu::TimeZone& timezone) {
   VLOG(1) << "Setting timezone to " << id;
   timezone_.reset(known_timezone->clone());
   icu::TimeZone::setDefault(*known_timezone);
-  FOR_EACH_OBSERVER(Observer, observers_, TimezoneChanged(*known_timezone));
+  for (auto& observer : observers_)
+    observer.TimezoneChanged(*known_timezone);
 }
 
 // static

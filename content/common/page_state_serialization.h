@@ -5,10 +5,15 @@
 #ifndef CONTENT_COMMON_PAGE_STATE_SERIALIZATION_H_
 #define CONTENT_COMMON_PAGE_STATE_SERIALIZATION_H_
 
+#include <stdint.h>
+
+#include <string>
 #include <vector>
 
 #include "base/strings/nullable_string16.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
+#include "content/common/resource_request_body_impl.h"
 #include "third_party/WebKit/public/platform/WebHTTPBody.h"
 #include "third_party/WebKit/public/platform/WebHistoryScrollRestorationType.h"
 #include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
@@ -18,26 +23,10 @@
 
 namespace content {
 
-struct CONTENT_EXPORT ExplodedHttpBodyElement {
-  blink::WebHTTPBody::Element::Type type;
-  std::string data;
-  base::NullableString16 file_path;
-  GURL filesystem_url;
-  int64 file_start;
-  int64 file_length;
-  double file_modification_time;
-  std::string blob_uuid;
-
-  ExplodedHttpBodyElement();
-  ~ExplodedHttpBodyElement();
-};
-
 struct CONTENT_EXPORT ExplodedHttpBody {
   base::NullableString16 http_content_type;
-  std::vector<ExplodedHttpBodyElement> elements;
-  int64 identifier;
+  scoped_refptr<ResourceRequestBodyImpl> request_body;
   bool contains_passwords;
-  bool is_null;
 
   ExplodedHttpBody();
   ~ExplodedHttpBody();
@@ -52,8 +41,8 @@ struct CONTENT_EXPORT ExplodedFrameState {
   blink::WebHistoryScrollRestorationType scroll_restoration_type;
   gfx::PointF visual_viewport_scroll_offset;
   gfx::Point scroll_offset;
-  int64 item_sequence_number;
-  int64 document_sequence_number;
+  int64_t item_sequence_number;
+  int64_t document_sequence_number;
   double page_scale_factor;
   blink::WebReferrerPolicy referrer_policy;
   ExplodedHttpBody http_body;
@@ -69,9 +58,10 @@ private:
 };
 
 struct CONTENT_EXPORT ExplodedPageState {
-  // TODO(creis): Move referenced_files to ExplodedFrameState.
-  // It currently contains a list from all frames, but cannot be deserialized
-  // into the files referenced by each frame.  See http://crbug.com/441966.
+  // TODO(creis, lukasza): Instead of storing them in |referenced_files|,
+  // extract referenced files from ExplodedHttpBody.  |referenced_files|
+  // currently contains a list from all frames, but cannot be deserialized into
+  // the files referenced by each frame.  See http://crbug.com/441966.
   std::vector<base::NullableString16> referenced_files;
   ExplodedFrameState top;
 
@@ -81,7 +71,7 @@ struct CONTENT_EXPORT ExplodedPageState {
 
 CONTENT_EXPORT bool DecodePageState(const std::string& encoded,
                                     ExplodedPageState* exploded);
-CONTENT_EXPORT bool EncodePageState(const ExplodedPageState& exploded,
+CONTENT_EXPORT void EncodePageState(const ExplodedPageState& exploded,
                                     std::string* encoded);
 
 #if defined(OS_ANDROID)
@@ -89,6 +79,17 @@ CONTENT_EXPORT bool DecodePageStateWithDeviceScaleFactorForTesting(
     const std::string& encoded,
     float device_scale_factor,
     ExplodedPageState* exploded);
+
+// Converts results of EncodeResourceRequestBody (passed in as a pair of |data|
+// + |size|) back into a ResourceRequestBodyImpl.  Returns nullptr if the
+// decoding fails (e.g. if |data| is malformed).
+scoped_refptr<ResourceRequestBodyImpl> DecodeResourceRequestBody(
+    const char* data,
+    size_t size);
+
+// Encodes |resource_request_body| into |encoded|.
+std::string EncodeResourceRequestBody(
+    const ResourceRequestBodyImpl& resource_request_body);
 #endif
 
 }  // namespace content

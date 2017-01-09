@@ -6,17 +6,24 @@
 
 #include <OpenGL/CGLRenderers.h>
 #include <OpenGL/CGLTypes.h>
+
+#include <memory>
 #include <vector>
 
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gpu_switching_manager.h"
+#include "ui/gl/scoped_cgl.h"
+#include "ui/gl/yuv_to_rgb_converter.h"
 
-namespace gfx {
+namespace gl {
 
 namespace {
 
@@ -84,11 +91,17 @@ GLContextCGL::GLContextCGL(GLShareGroup* share_group)
 }
 
 bool GLContextCGL::Initialize(GLSurface* compatible_surface,
-                              GpuPreference gpu_preference) {
+                              const GLContextAttribs& attribs) {
   DCHECK(compatible_surface);
 
-  gpu_preference = ui::GpuSwitchingManager::GetInstance()->AdjustGpuPreference(
-      gpu_preference);
+  // webgl_compatibility_context and disabling bind_generates_resource are not
+  // supported.
+  DCHECK(!attribs.webgl_compatibility_context &&
+         attribs.bind_generates_resource);
+
+  GpuPreference gpu_preference =
+      ui::GpuSwitchingManager::GetInstance()->AdjustGpuPreference(
+          attribs.gpu_preference);
 
   GLContextCGL* share_context = share_group() ?
       static_cast<GLContextCGL*>(share_group()->GetContext()) : nullptr;
@@ -135,11 +148,15 @@ bool GLContextCGL::Initialize(GLSurface* compatible_surface,
 }
 
 void GLContextCGL::Destroy() {
+  if (yuv_to_rgb_converter_) {
+    ScopedCGLSetCurrentContext(static_cast<CGLContextObj>(context_));
+    yuv_to_rgb_converter_.reset();
+  }
   if (discrete_pixelformat_) {
     if (base::MessageLoop::current() != nullptr) {
       // Delay releasing the pixel format for 10 seconds to reduce the number of
       // unnecessary GPU switches.
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&CGLReleasePixelFormat, discrete_pixelformat_),
           base::TimeDelta::FromSeconds(10));
     } else {
@@ -194,6 +211,12 @@ bool GLContextCGL::ForceGpuSwitchIfNeeded() {
   return true;
 }
 
+YUVToRGBConverter* GLContextCGL::GetYUVToRGBConverter() {
+  if (!yuv_to_rgb_converter_)
+    yuv_to_rgb_converter_.reset(new YUVToRGBConverter(*GetVersionInfo()));
+  return yuv_to_rgb_converter_.get();
+}
+
 bool GLContextCGL::MakeCurrent(GLSurface* surface) {
   DCHECK(context_);
 
@@ -216,9 +239,7 @@ bool GLContextCGL::MakeCurrent(GLSurface* surface) {
   SetRealGLApi();
 
   SetCurrent(surface);
-  if (!InitializeDynamicBindings()) {
-    return false;
-  }
+  InitializeDynamicBindings();
 
   if (!surface->OnMakeCurrent(this)) {
     LOG(ERROR) << "Unable to make gl context current.";
@@ -272,4 +293,4 @@ GpuPreference GLContextCGL::GetGpuPreference() {
   return gpu_preference_;
 }
 
-}  // namespace gfx
+}  // namespace gl

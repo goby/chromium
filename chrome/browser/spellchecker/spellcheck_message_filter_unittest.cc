@@ -2,13 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <tuple>
+
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 #include "chrome/browser/spellchecker/spellcheck_message_filter.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
-#include "chrome/common/spellcheck_marker.h"
-#include "chrome/common/spellcheck_messages.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/spellcheck/common/spellcheck_marker.h"
+#include "components/spellcheck/common/spellcheck_messages.h"
+#include "components/spellcheck/spellcheck_build_features.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -28,7 +35,7 @@ class TestingSpellCheckMessageFilter : public SpellCheckMessageFilter {
     return spellcheck_.get();
   }
 
-#if !defined(USE_BROWSER_SPELLCHECKER)
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
   void OnTextCheckComplete(int route_id,
                            int identifier,
                            const std::vector<SpellCheckMarker>& markers,
@@ -47,17 +54,17 @@ class TestingSpellCheckMessageFilter : public SpellCheckMessageFilter {
 
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile profile_;
-  scoped_ptr<SpellcheckService> spellcheck_;
+  std::unique_ptr<SpellcheckService> spellcheck_;
 
   DISALLOW_COPY_AND_ASSIGN(TestingSpellCheckMessageFilter);
 };
 
 TEST(SpellCheckMessageFilterTest, TestOverrideThread) {
-  static const uint32 kSpellcheckMessages[] = {
+  static const uint32_t kSpellcheckMessages[] = {
     SpellCheckHostMsg_RequestDictionary::ID,
     SpellCheckHostMsg_NotifyChecked::ID,
     SpellCheckHostMsg_RespondDocumentMarkers::ID,
-#if !defined(USE_BROWSER_SPELLCHECKER)
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
     SpellCheckHostMsg_CallSpellingService::ID,
 #endif
   };
@@ -74,7 +81,7 @@ TEST(SpellCheckMessageFilterTest, TestOverrideThread) {
   }
 }
 
-#if !defined(USE_BROWSER_SPELLCHECKER)
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 TEST(SpellCheckMessageFilterTest, OnTextCheckCompleteTestCustomDictionary) {
   static const std::string kCustomWord = "Helllo";
   static const int kRouteId = 0;
@@ -104,10 +111,10 @@ TEST(SpellCheckMessageFilterTest, OnTextCheckCompleteTestCustomDictionary) {
   SpellCheckMsg_RespondSpellingService::Param params;
   bool ok = SpellCheckMsg_RespondSpellingService::Read(
       filter->sent_messages[0], &params);
-  int sent_identifier = base::get<0>(params);
-  bool sent_success = base::get<1>(params);
-  base::string16 sent_text = base::get<2>(params);
-  std::vector<SpellCheckResult> sent_results = base::get<3>(params);
+  int sent_identifier = std::get<0>(params);
+  bool sent_success = std::get<1>(params);
+  base::string16 sent_text = std::get<2>(params);
+  std::vector<SpellCheckResult> sent_results = std::get<3>(params);
   EXPECT_TRUE(ok);
   EXPECT_EQ(kCallbackId, sent_identifier);
   EXPECT_EQ(kSuccess, sent_success);
@@ -135,8 +142,8 @@ TEST(SpellCheckMessageFilterTest, OnTextCheckCompleteTest) {
   SpellCheckMsg_RespondSpellingService::Param params;
   bool ok = SpellCheckMsg_RespondSpellingService::Read(
       filter->sent_messages[0], & params);
-  base::string16 sent_text = base::get<2>(params);
-  std::vector<SpellCheckResult> sent_results = base::get<3>(params);
+  base::string16 sent_text = std::get<2>(params);
+  std::vector<SpellCheckResult> sent_results = std::get<3>(params);
   EXPECT_TRUE(ok);
   EXPECT_EQ(static_cast<size_t>(2), sent_results.size());
 }

@@ -4,23 +4,30 @@
 
 #include "net/spdy/spdy_test_utils.h"
 
+#include <algorithm>
 #include <cstring>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_byteorder.h"
 #include "net/http/transport_security_state.h"
+#include "net/spdy/spdy_flags.h"
 #include "net/ssl/ssl_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
 namespace test {
 
-std::string HexDumpWithMarks(const unsigned char* data, int length,
-                             const bool* marks, int mark_length) {
+using std::string;
+
+string HexDumpWithMarks(const unsigned char* data,
+                        int length,
+                        const bool* marks,
+                        int mark_length) {
   static const char kHexChars[] = "0123456789abcdef";
   static const int kColumns = 4;
 
@@ -31,7 +38,7 @@ std::string HexDumpWithMarks(const unsigned char* data, int length,
     mark_length = std::min(mark_length, kSizeLimit);
   }
 
-  std::string hex;
+  string hex;
   for (const unsigned char* row = data; length > 0;
        row += kColumns, length -= kColumns) {
     for (const unsigned char *p = row; p < row + 4; ++p) {
@@ -57,15 +64,14 @@ std::string HexDumpWithMarks(const unsigned char* data, int length,
   return hex;
 }
 
-void CompareCharArraysWithHexError(
-    const std::string& description,
-    const unsigned char* actual,
-    const int actual_len,
-    const unsigned char* expected,
-    const int expected_len) {
+void CompareCharArraysWithHexError(const string& description,
+                                   const unsigned char* actual,
+                                   const int actual_len,
+                                   const unsigned char* expected,
+                                   const int expected_len) {
   const int min_len = std::min(actual_len, expected_len);
   const int max_len = std::max(actual_len, expected_len);
-  scoped_ptr<bool[]> marks(new bool[max_len]);
+  std::unique_ptr<bool[]> marks(new bool[max_len]);
   bool identical = (actual_len == expected_len);
   for (int i = 0; i < min_len; ++i) {
     if (actual[i] != expected[i]) {
@@ -88,51 +94,21 @@ void CompareCharArraysWithHexError(
       << HexDumpWithMarks(actual, actual_len, marks.get(), max_len);
 }
 
-void SetFrameFlags(SpdyFrame* frame,
-                   uint8 flags,
-                   SpdyMajorVersion spdy_version) {
-  switch (spdy_version) {
-    case SPDY2:
-    case SPDY3:
-    case HTTP2:
-      frame->data()[4] = flags;
-      break;
-    default:
-      LOG(FATAL) << "Unsupported SPDY version.";
+void SetFrameFlags(SpdySerializedFrame* frame, uint8_t flags) {
+  frame->data()[4] = flags;
+}
+
+void SetFrameLength(SpdySerializedFrame* frame, size_t length) {
+  CHECK_GT(1u << 14, length);
+  {
+    int32_t wire_length = base::HostToNet32(length);
+    memcpy(frame->data(), reinterpret_cast<char*>(&wire_length) + 1, 3);
   }
 }
 
-void SetFrameLength(SpdyFrame* frame,
-                    size_t length,
-                    SpdyMajorVersion spdy_version) {
-  switch (spdy_version) {
-    case SPDY2:
-    case SPDY3:
-      CHECK_EQ(0u, length & ~kLengthMask);
-      {
-        int32 wire_length = base::HostToNet32(length);
-        // The length field in SPDY 2 and 3 is a 24-bit (3B) integer starting at
-        // offset 5.
-        memcpy(frame->data() + 5, reinterpret_cast<char*>(&wire_length) + 1, 3);
-      }
-      break;
-    case HTTP2:
-      CHECK_GT(1u<<14, length);
-      {
-        int32 wire_length = base::HostToNet32(length);
-        memcpy(frame->data(),
-               reinterpret_cast<char*>(&wire_length) + 1,
-               3);
-      }
-      break;
-    default:
-      LOG(FATAL) << "Unsupported SPDY version.";
-  }
-}
-
-std::string a2b_hex(const char* hex_data) {
-  std::vector<uint8> output;
-  std::string result;
+string a2b_hex(const char* hex_data) {
+  std::vector<uint8_t> output;
+  string result;
   if (base::HexStringToBytes(hex_data, &output))
     result.assign(reinterpret_cast<const char*>(&output[0]), output.size());
   return result;
@@ -144,28 +120,64 @@ HashValue GetTestHashValue(uint8_t label) {
   return hash_value;
 }
 
-std::string GetTestPin(uint8_t label) {
+string GetTestPin(uint8_t label) {
   HashValue hash_value = GetTestHashValue(label);
-  std::string base64;
+  string base64;
   base::Base64Encode(base::StringPiece(
       reinterpret_cast<char*>(hash_value.data()), hash_value.size()), &base64);
 
-  return std::string("pin-sha256=\"") + base64 + "\"";
+  return string("pin-sha256=\"") + base64 + "\"";
 }
 
 void AddPin(TransportSecurityState* state,
-            const std::string& host,
+            const string& host,
             uint8_t primary_label,
             uint8_t backup_label) {
-  std::string primary_pin = GetTestPin(primary_label);
-  std::string backup_pin = GetTestPin(backup_label);
-  std::string header = "max-age = 10000; " + primary_pin + "; " + backup_pin;
+  string primary_pin = GetTestPin(primary_label);
+  string backup_pin = GetTestPin(backup_label);
+  string header = "max-age = 10000; " + primary_pin + "; " + backup_pin;
 
   // Construct a fake SSLInfo that will pass AddHPKPHeader's checks.
   SSLInfo ssl_info;
   ssl_info.is_issued_by_known_root = true;
   ssl_info.public_key_hashes.push_back(GetTestHashValue(primary_label));
   EXPECT_TRUE(state->AddHPKPHeader(host, header, ssl_info));
+}
+
+void TestHeadersHandler::OnHeaderBlockStart() {
+  block_.clear();
+}
+
+void TestHeadersHandler::OnHeader(base::StringPiece name,
+                                  base::StringPiece value) {
+  block_.AppendValueOrAddHeader(name, value);
+}
+
+void TestHeadersHandler::OnHeaderBlockEnd(size_t header_bytes_parsed) {
+  header_bytes_parsed_ = header_bytes_parsed;
+}
+
+void TestHeadersHandler::OnHeaderBlockEnd(
+    size_t header_bytes_parsed,
+    size_t /* compressed_header_bytes_parsed */) {
+  header_bytes_parsed_ = header_bytes_parsed;
+}
+
+TestServerPushDelegate::TestServerPushDelegate() {}
+
+TestServerPushDelegate::~TestServerPushDelegate() {}
+
+void TestServerPushDelegate::OnPush(
+    std::unique_ptr<ServerPushHelper> push_helper) {
+  push_helpers[push_helper->GetURL()] = std::move(push_helper);
+}
+
+bool TestServerPushDelegate::CancelPush(GURL url) {
+  auto itr = push_helpers.find(url);
+  DCHECK(itr != push_helpers.end());
+  itr->second->Cancel();
+  push_helpers.erase(itr);
+  return true;
 }
 
 }  // namespace test

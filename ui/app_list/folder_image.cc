@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "ui/app_list/app_list_constants.h"
 #include "ui/app_list/app_list_item.h"
 #include "ui/app_list/app_list_item_list.h"
@@ -222,7 +223,8 @@ void FolderImage::RedrawIconAndNotify() {
   icon_ =
       gfx::ImageSkia(new FolderImageSource(top_icons, icon_size), icon_size);
 
-  FOR_EACH_OBSERVER(FolderImageObserver, observers_, OnFolderImageUpdated());
+  for (auto& observer : observers_)
+    observer.OnFolderImageUpdated();
 }
 
 }  // namespace app_list

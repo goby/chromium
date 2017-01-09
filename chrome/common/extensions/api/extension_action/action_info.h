@@ -5,6 +5,7 @@
 #ifndef CHROME_COMMON_EXTENSIONS_API_EXTENSION_ACTION_ACTION_INFO_H_
 #define CHROME_COMMON_EXTENSIONS_API_EXTENSION_ACTION_ACTION_INFO_H_
 
+#include <memory>
 #include <string>
 
 #include "base/strings/string16.h"
@@ -22,6 +23,7 @@ class Extension;
 
 struct ActionInfo {
   ActionInfo();
+  ActionInfo(const ActionInfo& other);
   ~ActionInfo();
 
   // The types of extension actions.
@@ -32,9 +34,9 @@ struct ActionInfo {
   };
 
   // Loads an ActionInfo from the given DictionaryValue.
-  static scoped_ptr<ActionInfo> Load(const Extension* extension,
-                                     const base::DictionaryValue* dict,
-                                     base::string16* error);
+  static std::unique_ptr<ActionInfo> Load(const Extension* extension,
+                                          const base::DictionaryValue* dict,
+                                          base::string16* error);
 
   // Returns the extension's browser action, if any.
   static const ActionInfo* GetBrowserActionInfo(const Extension* extension);
@@ -65,6 +67,8 @@ struct ActionInfo {
   GURL default_popup_url;
   // action id -- only used with legacy page actions API.
   std::string id;
+  // Whether or not this action was synthesized to force visibility.
+  bool synthesized;
 };
 
 }  // namespace extensions

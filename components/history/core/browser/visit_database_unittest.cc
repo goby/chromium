@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <set>
 #include <vector>
 
@@ -28,7 +30,8 @@ bool IsVisitInfoEqual(const VisitRow& a,
          a.url_id == b.url_id &&
          a.visit_time == b.visit_time &&
          a.referring_visit == b.referring_visit &&
-         a.transition == b.transition;
+         ui::PageTransitionTypeIncludingQualifiersIs(a.transition,
+                                                     b.transition);
 }
 
 }  // namespace
@@ -45,7 +48,7 @@ class VisitDatabaseTest : public PlatformTest,
   void SetUp() override {
     PlatformTest::SetUp();
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    base::FilePath db_file = temp_dir_.path().AppendASCII("VisitTest.db");
+    base::FilePath db_file = temp_dir_.GetPath().AppendASCII("VisitTest.db");
 
     EXPECT_TRUE(db_.Open(db_file));
 

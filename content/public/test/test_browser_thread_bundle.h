@@ -5,10 +5,13 @@
 // TestBrowserThreadBundle is a convenience class for creating a set of
 // TestBrowserThreads in unit tests.  For most tests, it is sufficient to
 // just instantiate the TestBrowserThreadBundle as a member variable.
+// It is a good idea to put the TestBrowserThreadBundle as the first member
+// variable in test classes, so it is destroyed last, and the test threads
+// always exist from the perspective of other classes.
 //
 // By default, all of the created TestBrowserThreads will be backed by a single
 // shared MessageLoop. If a test truly needs separate threads, it can do
-// so by passing the appropriate combination of RealThreadsMask values during
+// so by passing the appropriate combination of option values during
 // the TestBrowserThreadBundle construction.
 //
 // The TestBrowserThreadBundle will attempt to drain the MessageLoop on
@@ -28,11 +31,23 @@
 // Some tests using the IO thread expect a MessageLoopForIO. Passing
 // IO_MAINLOOP will use a MessageLoopForIO for the main MessageLoop.
 // Most of the time, this avoids needing to use a REAL_IO_THREAD.
+//
+// For some tests it is important to emulate real browser startup. During real
+// browser startup some initialization is done (e.g. creation of thread objects)
+// between creating the main thread message loop, which is bound to the existing
+// main thread, and starting the other threads. Passing DONT_START_THREADS to
+// constructor will delay staring these other threads until the test explicitly
+// calls Start().
+//
+// DONT_START_THREADS should only be used when the options specify at least
+// one real thread other than the main thread.
 
 #ifndef CONTENT_PUBLIC_TEST_TEST_BROWSER_THREAD_BUNDLE_H_
 #define CONTENT_PUBLIC_TEST_TEST_BROWSER_THREAD_BUNDLE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 
 namespace base {
 class MessageLoop;
@@ -52,28 +67,33 @@ class TestBrowserThreadBundle {
     IO_MAINLOOP = 0x01,
     REAL_DB_THREAD = 0x02,
     REAL_FILE_THREAD = 0x08,
-    REAL_FILE_USER_BLOCKING_THREAD = 0x10,
-    REAL_PROCESS_LAUNCHER_THREAD = 0x20,
-    REAL_CACHE_THREAD = 0x40,
-    REAL_IO_THREAD = 0x80,
+    REAL_IO_THREAD = 0x10,
+    DONT_START_THREADS = 0x20,
   };
 
   TestBrowserThreadBundle();
   explicit TestBrowserThreadBundle(int options);
 
+  // Start the real threads; should only be called from other classes if the
+  // DONT_START_THREADS option was used when the bundle was created.
+  void Start();
+
   ~TestBrowserThreadBundle();
 
  private:
-  void Init(int options);
+  void Init();
 
-  scoped_ptr<base::MessageLoop> message_loop_;
-  scoped_ptr<TestBrowserThread> ui_thread_;
-  scoped_ptr<TestBrowserThread> db_thread_;
-  scoped_ptr<TestBrowserThread> file_thread_;
-  scoped_ptr<TestBrowserThread> file_user_blocking_thread_;
-  scoped_ptr<TestBrowserThread> process_launcher_thread_;
-  scoped_ptr<TestBrowserThread> cache_thread_;
-  scoped_ptr<TestBrowserThread> io_thread_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<TestBrowserThread> ui_thread_;
+  std::unique_ptr<TestBrowserThread> db_thread_;
+  std::unique_ptr<TestBrowserThread> file_thread_;
+  std::unique_ptr<TestBrowserThread> file_user_blocking_thread_;
+  std::unique_ptr<TestBrowserThread> process_launcher_thread_;
+  std::unique_ptr<TestBrowserThread> cache_thread_;
+  std::unique_ptr<TestBrowserThread> io_thread_;
+
+  int options_;
+  bool threads_started_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserThreadBundle);
 };

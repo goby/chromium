@@ -11,13 +11,12 @@
 group("tests") {
   testonly = true
   deps = [
-    # TODO(use_chrome_edk): remove "2"
-    "test:js_integration_tests2",
-    "test:js_unittests2",
+    "test:js_integration_tests",
+    "test:js_unittests",
   ]
 }
 
-source_set("js") {
+component("js") {
   sources = [
     "core.cc",
     "core.h",
@@ -26,6 +25,7 @@ source_set("js") {
     "handle.cc",
     "handle.h",
     "handle_close_observer.h",
+    "js_export.h",
     "mojo_runner_delegate.cc",
     "mojo_runner_delegate.h",
     "support.cc",
@@ -43,21 +43,7 @@ source_set("js") {
   ]
 
   deps = [
-    "//mojo/public/cpp/environment",
     "//mojo/public/cpp/system",
   ]
-}
-
-source_set("js_unittests") {
-  testonly = true
-  sources = [
-    "handle_unittest.cc",
-  ]
-
-  deps = [
-    "//mojo/edk/js",
-    "//mojo/edk/test:test_support",
-    "//mojo/public/cpp/system",
-    "//testing/gtest",
-  ]
+  defines = [ "MOJO_JS_IMPLEMENTATION" ]
 }

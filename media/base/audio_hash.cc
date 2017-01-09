@@ -5,9 +5,11 @@
 // MSVC++ requires this to be set before any other includes to get M_PI.
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <sstream>
 
 #include "media/base/audio_hash.h"
 
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/audio_bus.h"
 
@@ -21,12 +23,13 @@ AudioHash::AudioHash()
 AudioHash::~AudioHash() {}
 
 void AudioHash::Update(const AudioBus* audio_bus, int frames) {
-  // Use uint32 to ensure overflow is a defined operation.
-  for (uint32 ch = 0; ch < static_cast<uint32>(audio_bus->channels()); ++ch) {
+  // Use uint32_t to ensure overflow is a defined operation.
+  for (uint32_t ch = 0; ch < static_cast<uint32_t>(audio_bus->channels());
+       ++ch) {
     const float* channel = audio_bus->channel(ch);
-    for (uint32 i = 0; i < static_cast<uint32>(frames); ++i) {
-      const uint32 kSampleIndex = sample_count_ + i;
-      const uint32 kHashIndex =
+    for (uint32_t i = 0; i < static_cast<uint32_t>(frames); ++i) {
+      const uint32_t kSampleIndex = sample_count_ + i;
+      const uint32_t kHashIndex =
           (kSampleIndex * (ch + 1)) % arraysize(audio_hash_);
 
       // Mix in a sine wave with the result so we ensure that sequences of empty
@@ -40,7 +43,7 @@ void AudioHash::Update(const AudioBus* audio_bus, int frames) {
     }
   }
 
-  sample_count_ += static_cast<uint32>(frames);
+  sample_count_ += static_cast<uint32_t>(frames);
 }
 
 std::string AudioHash::ToString() const {
@@ -48,6 +51,19 @@ std::string AudioHash::ToString() const {
   for (size_t i = 0; i < arraysize(audio_hash_); ++i)
     result += base::StringPrintf("%.2f,", audio_hash_[i]);
   return result;
+}
+
+bool AudioHash::IsEquivalent(const std::string& other, double tolerance) const {
+  float other_hash;
+  char comma;
+
+  std::stringstream is(other);
+  for (size_t i = 0; i < arraysize(audio_hash_); ++i) {
+    is >> other_hash >> comma;
+    if (fabs(audio_hash_[i] - other_hash) > tolerance)
+      return false;
+  }
+  return true;
 }
 
 }  // namespace media

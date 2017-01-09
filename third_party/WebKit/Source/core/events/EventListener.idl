@@ -20,8 +20,6 @@
 
 // https://dom.spec.whatwg.org/#callbackdef-eventlistener
 
-[
-    WillBeGarbageCollected
-] callback interface EventListener {
+callback interface EventListener {
     void handleEvent(Event event);
 };

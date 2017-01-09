@@ -5,6 +5,10 @@
 #ifndef MEDIA_AUDIO_MOCK_AUDIO_SOURCE_CALLBACK_H_
 #define MEDIA_AUDIO_MOCK_AUDIO_SOURCE_CALLBACK_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
+#include "base/time/time.h"
 #include "media/audio/audio_io.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -15,9 +19,9 @@ class MockAudioSourceCallback : public AudioOutputStream::AudioSourceCallback {
   MockAudioSourceCallback();
   virtual ~MockAudioSourceCallback();
 
-  MOCK_METHOD2(OnMoreData, int(AudioBus* audio_bus,
-                               uint32 total_bytes_delay));
-  MOCK_METHOD1(OnError, void(AudioOutputStream* stream));
+  MOCK_METHOD4(OnMoreData,
+               int(base::TimeDelta, base::TimeTicks, int, AudioBus*));
+  MOCK_METHOD1(OnError, void(AudioOutputStream*));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAudioSourceCallback);

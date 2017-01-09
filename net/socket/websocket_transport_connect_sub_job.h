@@ -5,9 +5,13 @@
 #ifndef NET_SOCKET_WEBSOCKET_TRANSPORT_CONNECT_SUB_JOB_H_
 #define NET_SOCKET_WEBSOCKET_TRANSPORT_CONNECT_SUB_JOB_H_
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/address_list.h"
 #include "net/base/load_states.h"
 #include "net/socket/websocket_endpoint_lock_manager.h"
@@ -15,9 +19,9 @@
 
 namespace net {
 
-class BoundNetLog;
 class ClientSocketFactory;
 class IPEndPoint;
+class NetLogWithSource;
 class StreamSocket;
 
 // Attempts to connect to a subset of the addresses required by a
@@ -44,7 +48,9 @@ class WebSocketTransportConnectSubJob
 
   SubJobType type() const { return type_; }
 
-  scoped_ptr<StreamSocket> PassSocket() { return transport_socket_.Pass(); }
+  std::unique_ptr<StreamSocket> PassSocket() {
+    return std::move(transport_socket_);
+  }
 
   // Implementation of WebSocketEndpointLockManager::EndpointWaiter.
   void GotEndpointLock() override;
@@ -61,7 +67,7 @@ class WebSocketTransportConnectSubJob
 
   ClientSocketFactory* client_socket_factory() const;
 
-  const BoundNetLog& net_log() const;
+  const NetLogWithSource& net_log() const;
 
   const IPEndPoint& CurrentAddress() const;
 
@@ -80,7 +86,7 @@ class WebSocketTransportConnectSubJob
   State next_state_;
   const SubJobType type_;
 
-  scoped_ptr<StreamSocket> transport_socket_;
+  std::unique_ptr<StreamSocket> transport_socket_;
 
   DISALLOW_COPY_AND_ASSIGN(WebSocketTransportConnectSubJob);
 };

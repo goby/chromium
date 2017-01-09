@@ -4,7 +4,9 @@
 
 #include "net/url_request/url_request_filter.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "net/base/request_priority.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -48,26 +50,26 @@ TEST(URLRequestFilter, BasicMatching) {
   URLRequestFilter* filter = URLRequestFilter::GetInstance();
 
   const GURL kUrl1("http://foo.com/");
-  scoped_ptr<URLRequest> request1(
+  std::unique_ptr<URLRequest> request1(
       request_context.CreateRequest(kUrl1, DEFAULT_PRIORITY, &delegate));
 
   const GURL kUrl2("http://bar.com/");
-  scoped_ptr<URLRequest> request2(
+  std::unique_ptr<URLRequest> request2(
       request_context.CreateRequest(kUrl2, DEFAULT_PRIORITY, &delegate));
 
   // Check AddUrlInterceptor checks for invalid URLs.
   EXPECT_FALSE(filter->AddUrlInterceptor(
       GURL(),
-      scoped_ptr<URLRequestInterceptor>(new TestURLRequestInterceptor())));
+      std::unique_ptr<URLRequestInterceptor>(new TestURLRequestInterceptor())));
 
   // Check URLRequestInterceptor URL matching.
   filter->ClearHandlers();
   TestURLRequestInterceptor* interceptor = new TestURLRequestInterceptor();
   EXPECT_TRUE(filter->AddUrlInterceptor(
-      kUrl1, scoped_ptr<URLRequestInterceptor>(interceptor)));
+      kUrl1, std::unique_ptr<URLRequestInterceptor>(interceptor)));
   {
-    scoped_refptr<URLRequestJob> found =
-        filter->MaybeInterceptRequest(request1.get(), NULL);
+    std::unique_ptr<URLRequestJob> found(
+        filter->MaybeInterceptRequest(request1.get(), NULL));
     EXPECT_TRUE(interceptor->WasLastJobCreated(found.get()));
   }
   EXPECT_EQ(filter->hit_count(), 1);
@@ -87,10 +89,10 @@ TEST(URLRequestFilter, BasicMatching) {
   interceptor = new TestURLRequestInterceptor();
   filter->AddHostnameInterceptor(
       kUrl1.scheme(), kUrl1.host(),
-      scoped_ptr<URLRequestInterceptor>(interceptor));
+      std::unique_ptr<URLRequestInterceptor>(interceptor));
   {
-    scoped_refptr<URLRequestJob> found =
-        filter->MaybeInterceptRequest(request1.get(), NULL);
+    std::unique_ptr<URLRequestJob> found(
+        filter->MaybeInterceptRequest(request1.get(), NULL));
     EXPECT_TRUE(interceptor->WasLastJobCreated(found.get()));
   }
   EXPECT_EQ(1, filter->hit_count());

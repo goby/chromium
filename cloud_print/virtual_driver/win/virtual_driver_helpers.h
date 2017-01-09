@@ -15,15 +15,10 @@ class FilePath;
 
 namespace cloud_print {
 
-// Returns TRUE if the current OS is 64 bit.
-bool IsSystem64Bit();
-
 // Convert an HRESULT to a localized string and display it in a message box.
-void DisplayWindowsMessage(HWND hwnd, HRESULT hr,
-                           const base::string16 &caption);
-
-// Returns the correct port monitor DLL file name for the current machine.
-base::string16 GetPortMonitorDllName();
+void DisplayWindowsMessage(HWND hwnd,
+                           HRESULT hr,
+                           const base::string16& caption);
 
 // Gets the standard install path for "version 3" print drivers.
 HRESULT GetPrinterDriverDir(base::FilePath* path);
@@ -31,6 +26,3 @@ HRESULT GetPrinterDriverDir(base::FilePath* path);
 }  // namespace cloud_print
 
 #endif  // CLOUD_PRINT_VIRTUAL_DRIVER_WIN_VIRTUAL_DRIVER_HELPERS_H_
-
-
-

@@ -10,6 +10,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "ui/base/models/menu_separator_types.h"
@@ -123,7 +124,7 @@ class VIEWS_EXPORT MenuItemView : public View {
   // Overridden from View:
   bool GetTooltipText(const gfx::Point& p,
                       base::string16* tooltip) const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // Returns the preferred height of menu items. This is only valid when the
   // menu is about to be shown.
@@ -323,9 +324,6 @@ class VIEWS_EXPORT MenuItemView : public View {
   void set_use_right_margin(bool use_right_margin) {
     use_right_margin_ = use_right_margin;
   }
-
-  // Returns a reference to MenuConfig to be used with this menu.
-  const MenuConfig& GetMenuConfig() const;
 
  protected:
   // Creates a MenuItemView. This is used by the various AddXXX methods.

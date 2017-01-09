@@ -4,6 +4,9 @@
 
 #include "chromeos/dbus/services/cros_dbus_service.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/stl_util.h"
 #include "base/sys_info.h"
@@ -24,13 +27,11 @@ CrosDBusService* g_cros_dbus_service = NULL;
 // The CrosDBusService implementation used in production, and unit tests.
 class CrosDBusServiceImpl : public CrosDBusService {
  public:
-  CrosDBusServiceImpl(dbus::Bus* bus,
-                      ScopedVector<ServiceProviderInterface> service_providers)
+  CrosDBusServiceImpl(dbus::Bus* bus, ServiceProviderList service_providers)
       : service_started_(false),
         origin_thread_id_(base::PlatformThread::CurrentId()),
         bus_(bus),
-        service_providers_(service_providers.Pass()) {
-  }
+        service_providers_(std::move(service_providers)) {}
 
   ~CrosDBusServiceImpl() override {
   }
@@ -87,7 +88,7 @@ class CrosDBusServiceImpl : public CrosDBusService {
   scoped_refptr<dbus::ExportedObject> exported_object_;
 
   // Service providers that form CrosDBusService.
-  ScopedVector<ServiceProviderInterface> service_providers_;
+  ServiceProviderList service_providers_;
 };
 
 // The stub CrosDBusService implementation used on Linux desktop,
@@ -101,15 +102,14 @@ class CrosDBusServiceStubImpl : public CrosDBusService {
 };
 
 // static
-void CrosDBusService::Initialize(
-    ScopedVector<ServiceProviderInterface> service_providers) {
+void CrosDBusService::Initialize(ServiceProviderList service_providers) {
   if (g_cros_dbus_service) {
     LOG(WARNING) << "CrosDBusService was already initialized";
     return;
   }
   dbus::Bus* bus = DBusThreadManager::Get()->GetSystemBus();
   if (base::SysInfo::IsRunningOnChromeOS() && bus) {
-    auto* service = new CrosDBusServiceImpl(bus, service_providers.Pass());
+    auto* service = new CrosDBusServiceImpl(bus, std::move(service_providers));
     g_cros_dbus_service = service;
     service->Start();
   } else {
@@ -121,12 +121,12 @@ void CrosDBusService::Initialize(
 // static
 void CrosDBusService::InitializeForTesting(
     dbus::Bus* bus,
-    ScopedVector<ServiceProviderInterface> service_providers) {
+    ServiceProviderList service_providers) {
   if (g_cros_dbus_service) {
     LOG(WARNING) << "CrosDBusService was already initialized";
     return;
   }
-  auto* service = new CrosDBusServiceImpl(bus, service_providers.Pass());
+  auto* service = new CrosDBusServiceImpl(bus, std::move(service_providers));
   service->Start();
   g_cros_dbus_service = service;
   VLOG(1) << "CrosDBusService initialized";

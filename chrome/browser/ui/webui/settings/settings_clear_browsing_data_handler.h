@@ -5,12 +5,18 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_SETTINGS_SETTINGS_CLEAR_BROWSING_DATA_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_SETTINGS_SETTINGS_CLEAR_BROWSING_DATA_HANDLER_H_
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
-#include "base/prefs/pref_member.h"
+#include "base/scoped_observer.h"
 #include "chrome/browser/browsing_data/browsing_data_remover.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/settings/md_settings_ui.h"
+#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
+#include "components/browser_sync/profile_sync_service.h"
+#include "components/browsing_data/core/counters/browsing_data_counter.h"
+#include "components/prefs/pref_change_registrar.h"
 
 namespace base {
 class ListValue;
@@ -24,38 +30,86 @@ namespace settings {
 
 // Chrome browser startup settings handler.
 class ClearBrowsingDataHandler : public SettingsPageUIHandler,
-                                 public BrowsingDataRemover::Observer {
+                                 public syncer::SyncServiceObserver {
  public:
   explicit ClearBrowsingDataHandler(content::WebUI* webui);
   ~ClearBrowsingDataHandler() override;
 
-  // OptionsPageUIHandler:
+  // WebUIMessageHandler implementation.
   void RegisterMessages() override;
+  void OnJavascriptAllowed() override;
+  void OnJavascriptDisallowed() override;
 
  private:
-  // Javascript callback to start clearing data.
-  void HandleClearBrowserData(const base::ListValue* value);
+  // Observes one |remover| task initiated from ClearBrowsingDataHandler.
+  // Calls |callback| when the task is finished.
+  class TaskObserver;
 
-  // BrowsingDataRemover::Observer implementation.
-  // Re-enables clear button once all requested data has been removed.
-  void OnBrowsingDataRemoverDone() override;
+  // Clears browsing data, called by Javascript.
+  void HandleClearBrowsingData(const base::ListValue* value);
+
+  // Called when a clearing task finished. |webui_callback_id| is provided
+  // by the WebUI action that initiated it.
+  void OnClearingTaskFinished(const std::string& webui_callback_id);
 
   // Updates UI when the pref to allow clearing history changes.
   virtual void OnBrowsingHistoryPrefChanged();
 
-  // If non-null it means removal is in progress. BrowsingDataRemover takes care
-  // of deleting itself when done.
-  BrowsingDataRemover* remover_;
+  // Initializes the dialog UI. Called by JavaScript when the DOM is ready.
+  void HandleInitialize(const base::ListValue* args);
 
-  // Keeps track of whether clearing LSO data is supported.
-  BooleanPrefMember clear_plugin_lso_data_enabled_;
+  // Implementation of SyncServiceObserver. Updates the footer of the dialog
+  // when the sync state changes.
+  void OnStateChanged() override;
 
-  // Keeps track of whether Pepper Flash is enabled and thus Flapper-specific
-  // settings and removal options (e.g. Content Licenses) are available.
-  BooleanPrefMember pepper_flash_settings_enabled_;
+  // Finds out whether we should show notice about other forms of history stored
+  // in user's account.
+  void RefreshHistoryNotice();
 
-  // Keeps track of whether deleting browsing history and downloads is allowed.
-  BooleanPrefMember allow_deleting_browser_history_;
+  // Called as an asynchronous response to |RefreshHistoryNotice()|. Shows or
+  // hides the footer about other forms of history stored in user's account.
+  void UpdateHistoryNotice(bool show);
+
+  // Called as an asynchronous response to |RefreshHistoryNotice()|. Enables or
+  // disables the dialog about other forms of history stored in user's account
+  // that is shown when the history deletion is finished.
+  void UpdateHistoryDeletionDialog(bool show);
+
+  // Adds a browsing data |counter|.
+  void AddCounter(std::unique_ptr<browsing_data::BrowsingDataCounter> counter);
+
+  // Updates a counter text according to the |result|.
+  void UpdateCounterText(
+      std::unique_ptr<browsing_data::BrowsingDataCounter::Result> result);
+
+  // Cached profile corresponding to the WebUI of this handler.
+  Profile* profile_;
+
+  // Counters that calculate the data volume for individual data types.
+  std::vector<std::unique_ptr<browsing_data::BrowsingDataCounter>> counters_;
+
+  // Observes the currently active data clearing task.
+  std::unique_ptr<TaskObserver> task_observer_;
+
+  // ProfileSyncService to observe sync state changes.
+  browser_sync::ProfileSyncService* sync_service_;
+  ScopedObserver<browser_sync::ProfileSyncService, syncer::SyncServiceObserver>
+      sync_service_observer_;
+
+  // Used to listen for pref changes to allow / disallow deleting browsing data.
+  PrefChangeRegistrar profile_pref_registrar_;
+
+  // Whether the sentence about other forms of history stored in user's account
+  // should be displayed in the footer. This value is retrieved asynchronously,
+  // so we cache it here.
+  bool show_history_footer_;
+
+  // Whether we should show a dialog informing the user about other forms of
+  // history stored in their account after the history deletion is finished.
+  bool show_history_deletion_dialog_;
+
+  // A weak pointer factory for asynchronous calls referencing this class.
+  base::WeakPtrFactory<ClearBrowsingDataHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ClearBrowsingDataHandler);
 };

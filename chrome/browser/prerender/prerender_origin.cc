@@ -4,8 +4,8 @@
 
 #include "chrome/browser/prerender/prerender_origin.h"
 
-#include "base/basictypes.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 
 namespace prerender {
@@ -26,6 +26,8 @@ const char* kOriginNames[] = {
   "External Request",
   "Instant",
   "Link Rel Next",
+  "External Request Forced Cellular",
+  "Offline",
   "Max",
 };
 static_assert(arraysize(kOriginNames) == ORIGIN_MAX + 1,

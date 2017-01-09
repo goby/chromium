@@ -4,20 +4,25 @@
 
 #include "chrome/browser/extensions/api/identity/web_auth_flow.h"
 
+#include <utility>
+
 #include "base/base64.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/identity_private.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -29,7 +34,7 @@
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_system.h"
-#include "grit/browser_resources.h"
+#include "net/http/http_response_headers.h"
 #include "url/gurl.h"
 
 using content::RenderViewHost;
@@ -52,6 +57,7 @@ WebAuthFlow::WebAuthFlow(
       provider_url_(provider_url),
       mode_(mode),
       embedded_window_created_(false) {
+  TRACE_EVENT_ASYNC_BEGIN0("identity", "WebAuthFlow", this);
 }
 
 WebAuthFlow::~WebAuthFlow() {
@@ -68,6 +74,7 @@ WebAuthFlow::~WebAuthFlow() {
     if (app_window_ && app_window_->web_contents())
       app_window_->web_contents()->Close();
   }
+  TRACE_EVENT_ASYNC_END0("identity", "WebAuthFlow", this);
 }
 
 void WebAuthFlow::Start() {
@@ -80,7 +87,7 @@ void WebAuthFlow::Start() {
   base::Base64Encode(random_bytes, &app_window_key_);
 
   // identityPrivate.onWebFlowRequest(app_window_key, provider_url_, mode_)
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->AppendString(app_window_key_);
   args->AppendString(provider_url_.spec());
   if (mode_ == WebAuthFlow::INTERACTIVE)
@@ -88,9 +95,9 @@ void WebAuthFlow::Start() {
   else
     args->AppendString("silent");
 
-  scoped_ptr<Event> event(
-      new Event(events::IDENTITY_PRIVATE_ON_WEB_FLOW_REQUEST,
-                identity_private::OnWebFlowRequest::kEventName, args.Pass()));
+  std::unique_ptr<Event> event(new Event(
+      events::IDENTITY_PRIVATE_ON_WEB_FLOW_REQUEST,
+      identity_private::OnWebFlowRequest::kEventName, std::move(args)));
   event->restrict_to_browser_context = profile_;
   ExtensionSystem* system = ExtensionSystem::Get(profile_);
 
@@ -103,12 +110,12 @@ void WebAuthFlow::Start() {
   }
 
   EventRouter::Get(profile_)->DispatchEventWithLazyListener(
-      extension_misc::kIdentityApiUiAppId, event.Pass());
+      extension_misc::kIdentityApiUiAppId, std::move(event));
 }
 
 void WebAuthFlow::DetachDelegateAndDelete() {
   delegate_ = NULL;
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 void WebAuthFlow::OnAppWindowAdded(AppWindow* app_window) {
@@ -149,30 +156,24 @@ void WebAuthFlow::AfterUrlLoaded() {
 void WebAuthFlow::Observe(int type,
                           const content::NotificationSource& source,
                           const content::NotificationDetails& details) {
+  DCHECK_EQ(content::NOTIFICATION_WEB_CONTENTS_RENDER_VIEW_HOST_CREATED, type);
   DCHECK(app_window_);
 
-  if (!delegate_)
+  if (!delegate_ || embedded_window_created_)
     return;
 
-  if (!embedded_window_created_) {
-    DCHECK(type == content::NOTIFICATION_WEB_CONTENTS_RENDER_VIEW_HOST_CREATED);
+  RenderViewHost* render_view(content::Details<RenderViewHost>(details).ptr());
+  WebContents* web_contents = WebContents::FromRenderViewHost(render_view);
+  GuestViewBase* guest = GuestViewBase::FromWebContents(web_contents);
+  WebContents* owner = guest ? guest->owner_web_contents() : nullptr;
+  if (!web_contents || owner != WebContentsObserver::web_contents())
+    return;
 
-    RenderViewHost* render_view(
-        content::Details<RenderViewHost>(details).ptr());
-    WebContents* web_contents = WebContents::FromRenderViewHost(render_view);
-    GuestViewBase* guest = GuestViewBase::FromWebContents(web_contents);
-    WebContents* owner = guest ? guest->owner_web_contents() : NULL;
-    if (web_contents &&
-        (owner == WebContentsObserver::web_contents())) {
-      // Switch from watching the app window to the guest inside it.
-      embedded_window_created_ = true;
-      WebContentsObserver::Observe(web_contents);
+  // Switch from watching the app window to the guest inside it.
+  embedded_window_created_ = true;
+  WebContentsObserver::Observe(web_contents);
 
-      registrar_.RemoveAll();
-    }
-  } else {  // embedded_window_created_
-    NOTREACHED() << "Got a notification that we did not register for: " << type;
-  }
+  registrar_.RemoveAll();
 }
 
 void WebAuthFlow::RenderProcessGone(base::TerminationStatus status) {
@@ -180,50 +181,47 @@ void WebAuthFlow::RenderProcessGone(base::TerminationStatus status) {
     delegate_->OnAuthFlowFailure(WebAuthFlow::WINDOW_CLOSED);
 }
 
-void WebAuthFlow::DidStartProvisionalLoadForFrame(
-    content::RenderFrameHost* render_frame_host,
-    const GURL& validated_url,
-    bool is_error_page,
-    bool is_iframe_srcdoc) {
-  if (!render_frame_host->GetParent())
-    BeforeUrlLoaded(validated_url);
-}
-
-void WebAuthFlow::DidFailProvisionalLoad(
-    content::RenderFrameHost* render_frame_host,
-    const GURL& validated_url,
-    int error_code,
-    const base::string16& error_description,
-    bool was_ignored_by_handler) {
-  TRACE_EVENT_ASYNC_STEP_PAST1("identity",
-                               "WebAuthFlow",
-                               this,
-                               "DidFailProvisionalLoad",
-                               "error_code",
-                               error_code);
-  if (delegate_)
-    delegate_->OnAuthFlowFailure(LOAD_FAILED);
-}
-
 void WebAuthFlow::DidGetRedirectForResourceRequest(
-    content::RenderFrameHost* render_frame_host,
     const content::ResourceRedirectDetails& details) {
   BeforeUrlLoaded(details.new_url);
 }
 
 void WebAuthFlow::TitleWasSet(content::NavigationEntry* entry,
                               bool explicit_set) {
-  delegate_->OnAuthFlowTitleChange(base::UTF16ToUTF8(entry->GetTitle()));
+  if (delegate_)
+    delegate_->OnAuthFlowTitleChange(base::UTF16ToUTF8(entry->GetTitle()));
 }
 
 void WebAuthFlow::DidStopLoading() {
   AfterUrlLoaded();
 }
 
-void WebAuthFlow::DidNavigateMainFrame(
-    const content::LoadCommittedDetails& details,
-    const content::FrameNavigateParams& params) {
-  if (delegate_ && details.http_status_code >= 400)
+void WebAuthFlow::DidStartNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (navigation_handle->IsInMainFrame())
+    BeforeUrlLoaded(navigation_handle->GetURL());
+}
+
+void WebAuthFlow::DidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  bool failed = false;
+
+  if (navigation_handle->GetNetErrorCode() != net::OK) {
+    failed = true;
+    TRACE_EVENT_ASYNC_STEP_PAST1("identity", "WebAuthFlow", this,
+                                 "DidFinishNavigationFailure", "error_code",
+                                 navigation_handle->GetNetErrorCode());
+  } else if (navigation_handle->IsInMainFrame() &&
+             navigation_handle->GetResponseHeaders() &&
+             navigation_handle->GetResponseHeaders()->response_code() >= 400) {
+    failed = true;
+    TRACE_EVENT_ASYNC_STEP_PAST1(
+        "identity", "WebAuthFlow", this, "DidFinishNavigationFailure",
+        "response_code",
+        navigation_handle->GetResponseHeaders()->response_code());
+  }
+
+  if (failed && delegate_)
     delegate_->OnAuthFlowFailure(LOAD_FAILED);
 }
 

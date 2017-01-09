@@ -5,18 +5,28 @@
 #ifndef NET_SSL_SSL_INFO_H_
 #define NET_SSL_SSL_INFO_H_
 
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/ct_verify_result.h"
+#include "net/cert/ocsp_verify_result.h"
 #include "net/cert/sct_status_flags.h"
+#include "net/cert/signed_certificate_timestamp_and_status.h"
 #include "net/cert/x509_cert_types.h"
-#include "net/ssl/signed_certificate_timestamp_and_status.h"
 #include "net/ssl/ssl_config.h"
 
 namespace net {
+
+namespace ct {
+
+enum class CertPolicyCompliance;
+enum class EVPolicyCompliance;
+
+}  // namespace ct
 
 class X509Certificate;
 
@@ -44,12 +54,14 @@ class NET_EXPORT SSLInfo {
   // Adds the specified |error| to the cert status.
   void SetCertError(int error);
 
-  // Adds the SignedCertificateTimestamps from ct_verify_result to
-  // |signed_certificate_timestamps|.  SCTs are held in three separate vectors
-  // in ct_verify_result, each vetor representing a particular verification
-  // state, this method associates each of the SCTs with the corresponding
-  // SCTVerifyStatus as it adds it to the |signed_certificate_timestamps| list.
-  void UpdateSignedCertificateTimestamps(
+  // Adds the SignedCertificateTimestamps and policy compliance details
+  // from ct_verify_result to |signed_certificate_timestamps| and
+  // |ct_policy_compliance_details|. SCTs are held in three separate
+  // vectors in ct_verify_result, each vetor representing a particular
+  // verification state, this method associates each of the SCTs with
+  // the corresponding SCTVerifyStatus as it adds it to the
+  // |signed_certificate_timestamps| list.
+  void UpdateCertificateTransparencyInfo(
       const ct::CTVerifyResult& ct_verify_result);
 
   // The SSL certificate.
@@ -70,11 +82,9 @@ class NET_EXPORT SSLInfo {
   // -1 means the security strength is unknown.
   int security_bits;
 
-  // Security information of the SSL connection handshake.
-  // The meaning depends on the cipher used, see BoringSSL's |SSL_SESSION|'s
-  // key_exchange_info for more information.
-  // A zero indicates that the value is unknown.
-  int key_exchange_info;
+  // The ID of the (EC)DH group used by the key exchange or zero if unknown
+  // (older cache entries may not store the value) or not applicable.
+  uint16_t key_exchange_group;
 
   // Information about the SSL connection itself. See
   // ssl_connection_status_flags.h for values. The protocol version,
@@ -84,6 +94,9 @@ class NET_EXPORT SSLInfo {
   // If the certificate is valid, then this is true iff it was rooted at a
   // standard CA root. (As opposed to a user-installed root.)
   bool is_issued_by_known_root;
+
+  // True if pinning was bypassed on this connection.
+  bool pkp_bypassed;
 
   // True if a client certificate was sent to the server.  Note that sending
   // a Certificate message with no client certificate in it does not count.
@@ -115,6 +128,26 @@ class NET_EXPORT SSLInfo {
   // List of SignedCertificateTimestamps and their corresponding validation
   // status.
   SignedCertificateTimestampAndStatusList signed_certificate_timestamps;
+
+  // True if Certificate Transparency policies were applied on this
+  // connection and results are available. If true, the field below
+  // (|ev_policy_compliance|) will contain information about whether
+  // the connection complied with the policy and why the connection
+  // was considered non-compliant, if applicable.
+  bool ct_compliance_details_available;
+
+  // Whether the connection complied with the CT EV policy, and if not,
+  // why not. Only meaningful if |ct_compliance_details_available| is
+  // true.
+  ct::EVPolicyCompliance ct_ev_policy_compliance;
+
+  // Whether the connection complied with the CT cert policy, and if
+  // not, why not. Only meaningful it |ct_compliance_details_available|
+  // is true.
+  ct::CertPolicyCompliance ct_cert_policy_compliance;
+
+  // OCSP stapling details.
+  OCSPVerifyResult ocsp_result;
 };
 
 }  // namespace net

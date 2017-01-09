@@ -13,7 +13,6 @@ namespace gpu {
 typedef int32_t CommandBufferOffset;
 const CommandBufferOffset kInvalidCommandBufferOffset = -1;
 
-// This enum must stay in sync with NPDeviceContext3DError.
 namespace error {
   enum Error {
     kNoError,
@@ -24,12 +23,14 @@ namespace error {
     kLostContext,
     kGenericError,
     kDeferCommandUntilLater,
-    kErrorLast = kDeferCommandUntilLater,
+    kDeferLaterCommands,
+    kErrorLast = kDeferLaterCommands,
   };
 
   // Return true if the given error code is an actual error.
   inline bool IsError(Error error) {
-    return error != kNoError && error != kDeferCommandUntilLater;
+    return error != kNoError && error != kDeferCommandUntilLater &&
+           error != kDeferLaterCommands;
   }
 
   // Provides finer grained information about why the context was lost.
@@ -52,7 +53,11 @@ namespace error {
     // The GPU channel was lost. This error is set client-side.
     kGpuChannelLost,
 
-    kContextLostReasonLast = kGpuChannelLost
+    // The GPU process sent an invalid message/reply. This error is set
+    // client-side.
+    kInvalidGpuMessage,
+
+    kContextLostReasonLast = kInvalidGpuMessage
   };
 }
 
@@ -67,14 +72,13 @@ const int32_t kCommandBufferSharedMemoryId = 4;
 const size_t kDefaultMaxProgramCacheMemoryBytes = 6 * 1024 * 1024;
 
 // Namespace used to separate various command buffer types.
-enum CommandBufferNamespace {
+enum CommandBufferNamespace : int8_t {
   INVALID = -1,
 
   GPU_IO,
   IN_PROCESS,
   MOJO,
   MOJO_LOCAL,
-  OLD_SYNC_POINTS,
 
   NUM_COMMAND_BUFFER_NAMESPACES
 };

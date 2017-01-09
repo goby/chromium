@@ -15,10 +15,16 @@
 </if>
   </div>
   <div id="version-container">
-    <div i18n-content="browserVersion" dir="ltr"></div>
+    <div>
+      <span i18n-content="browserVersion" dir="ltr"></span>
+    </div>
 <if expr="chromeos">
     <div>
       <span i18n-content="platform"></span>&nbsp;<span id="os-version"></span>
+    </div>
+    <div>
+      <span i18n-content="arcVersion">
+      </span>&nbsp;<span id="arc-version"></span>
     </div>
     <div>
       <span i18n-content="firmware"></span>&nbsp;<span id="firmware"></span>
@@ -41,6 +47,15 @@
         <div id="allowed-connection-types-message" hidden></div>
       </div>
     </div>
+<if expr="chromeos">
+    <div id="eol-status-container" hidden>
+      <div id="eol-status-icon" class="help-page-icon"></div>
+      <div id="eol-status-message-container">
+        <div id="eol-message"></div>
+        <div id="eol-learnMore" i18n-content="eolLearnMore"></div>
+      </div>
+    </div>
+</if>
     <div id="update-buttons-container">
       <div id="update-percentage" hidden></div>
 <if expr="is_macosx">
@@ -53,6 +68,7 @@
       </button>
       <button id="request-update" i18n-content="updateButton">
       </button>
+      <div id="controlled-feature-icon" class="help-page-icon" hidden></div>
 </if>
     </div>
 </if>
@@ -70,16 +86,16 @@
       <section id="channel-change-page-container" hidden>
         <h3 i18n-content="channel"></h3>
         <div id="current-channel"></div>
+        <div>
+          <span id="dev-channel-disclaimer" i18n-content="devChannelDisclaimer"
+              hidden></span>
+        </div>
         <button id="change-channel"
             i18n-content="channelChangeButton" disabled>
         </button>
         <div id="channel-change-disallowed-icon"
             class="help-page-icon" hidden>
         </div>
-      </section>
-      <section>
-        <h3 i18n-content="webkit"></h3>
-        <div i18n-content="webkitVersion" dir="ltr"></div>
       </section>
       <section>
         <h3 i18n-content="jsEngine" dir="ltr"></h3>

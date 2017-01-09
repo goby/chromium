@@ -12,31 +12,32 @@ namespace blink {
 // This class is never actually stored anywhere currently, but only used for
 // the parser to pass to a stylesheet
 class StyleRuleNamespace final : public StyleRuleBase {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(StyleRuleNamespace);
-public:
-    static PassRefPtrWillBeRawPtr<StyleRuleNamespace> create(AtomicString prefix, AtomicString uri)
-    {
-        return adoptRefWillBeNoop(new StyleRuleNamespace(prefix, uri));
-    }
+ public:
+  static StyleRuleNamespace* create(AtomicString prefix, AtomicString uri) {
+    return new StyleRuleNamespace(prefix, uri);
+  }
 
-    AtomicString prefix() const { return m_prefix; }
-    AtomicString uri() const { return m_uri; }
+  StyleRuleNamespace* copy() const {
+    return new StyleRuleNamespace(m_prefix, m_uri);
+  }
 
-    DEFINE_INLINE_TRACE_AFTER_DISPATCH() { StyleRuleBase::traceAfterDispatch(visitor); }
+  AtomicString prefix() const { return m_prefix; }
+  AtomicString uri() const { return m_uri; }
 
-private:
-    StyleRuleNamespace(AtomicString prefix, AtomicString uri)
-    : StyleRuleBase(Namespace)
-    , m_prefix(prefix)
-    , m_uri(uri)
-    { }
+  DEFINE_INLINE_TRACE_AFTER_DISPATCH() {
+    StyleRuleBase::traceAfterDispatch(visitor);
+  }
 
-    AtomicString m_prefix;
-    AtomicString m_uri;
+ private:
+  StyleRuleNamespace(AtomicString prefix, AtomicString uri)
+      : StyleRuleBase(Namespace), m_prefix(prefix), m_uri(uri) {}
+
+  AtomicString m_prefix;
+  AtomicString m_uri;
 };
 
 DEFINE_STYLE_RULE_TYPE_CASTS(Namespace);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // StyleRuleNamespace_h
+#endif  // StyleRuleNamespace_h

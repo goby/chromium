@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_BROWSER_EXTENSION_WINDOW_CONTROLLER_H_
 #define CHROME_BROWSER_EXTENSIONS_BROWSER_EXTENSION_WINDOW_CONTROLLER_H_
 
+#include "base/macros.h"
 #include "chrome/browser/extensions/window_controller.h"
 
 class Browser;
@@ -21,11 +22,11 @@ class BrowserExtensionWindowController : public extensions::WindowController {
   // extensions::WindowController implementation.
   int GetWindowId() const override;
   std::string GetWindowTypeText() const override;
-  base::DictionaryValue* CreateWindowValue() const override;
-  base::DictionaryValue* CreateWindowValueWithTabs(
+  std::unique_ptr<base::DictionaryValue> CreateWindowValueWithTabs(
       const extensions::Extension* extension) const override;
-  base::DictionaryValue* CreateTabValue(const extensions::Extension* extension,
-                                        int tab_index) const override;
+  std::unique_ptr<extensions::api::tabs::Tab> CreateTabObject(
+      const extensions::Extension* extension,
+      int tab_index) const override;
   bool CanClose(Reason* reason) const override;
   void SetFullscreenMode(bool is_fullscreen,
                          const GURL& extension_url) const override;

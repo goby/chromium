@@ -5,34 +5,48 @@
 #ifndef CC_PLAYBACK_DRAW_IMAGE_H_
 #define CC_PLAYBACK_DRAW_IMAGE_H_
 
+#include "cc/base/cc_export.h"
 #include "third_party/skia/include/core/SkFilterQuality.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkMatrix.h"
+#include "third_party/skia/include/core/SkRect.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
+#include "ui/gfx/geometry/size_f.h"
 
 namespace cc {
 
-class DrawImage {
+// TODO(vmpstr): This should probably be DISALLOW_COPY_AND_ASSIGN and transport
+// it around using a pointer, since it became kind of large. Profile.
+class CC_EXPORT DrawImage {
  public:
-  DrawImage() : image_(nullptr), filter_quality_(kNone_SkFilterQuality) {}
-  DrawImage(const SkImage* image,
-            const SkSize& scale,
-            SkFilterQuality filter_quality)
-      : image_(image), scale_(scale), filter_quality_(filter_quality) {}
+  DrawImage();
+  DrawImage(sk_sp<const SkImage> image,
+            const SkIRect& src_rect,
+            SkFilterQuality filter_quality,
+            const SkMatrix& matrix);
+  DrawImage(const DrawImage& other);
+  ~DrawImage();
 
-  const SkImage* image() const { return image_; }
+  const sk_sp<const SkImage>& image() const { return image_; }
   const SkSize& scale() const { return scale_; }
+  const SkIRect src_rect() const { return src_rect_; }
   SkFilterQuality filter_quality() const { return filter_quality_; }
+  bool matrix_is_decomposable() const { return matrix_is_decomposable_; }
+  const SkMatrix& matrix() const { return matrix_; }
 
-  DrawImage ApplyScale(float scale) const {
-    return DrawImage(
-        image_, SkSize::Make(scale_.width() * scale, scale_.height() * scale),
-        filter_quality_);
+  DrawImage ApplyScale(const gfx::SizeF& scales) const {
+    SkMatrix scaled_matrix = matrix_;
+    scaled_matrix.preScale(scales.width(), scales.height());
+    return DrawImage(image_, src_rect_, filter_quality_, scaled_matrix);
   }
 
  private:
-  const SkImage* image_;
-  SkSize scale_;
+  sk_sp<const SkImage> image_;
+  SkIRect src_rect_;
   SkFilterQuality filter_quality_;
+  SkMatrix matrix_;
+  SkSize scale_;
+  bool matrix_is_decomposable_;
 };
 
 }  // namespace cc

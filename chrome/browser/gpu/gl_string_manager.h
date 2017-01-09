@@ -8,19 +8,18 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "chrome/browser/gpu/gpu_profile_cache.h"
 #include "content/public/browser/gpu_data_manager_observer.h"
 
-class PrefRegistrySimple;
-
-class GLStringManager : public content::GpuDataManagerObserver {
+class GLStringManager : public GpuProfileCache,
+                        public content::GpuDataManagerObserver {
  public:
-  static void RegisterPrefs(PrefRegistrySimple* registry);
-
   GLStringManager();
   ~GLStringManager() override;
 
-  // Get cached GL strings in local state and send them to GpuDataManager.
-  void Initialize();
+  // GpuProfileCache.
+  void Initialize() override;
 
   // content::GpuDataManagerObserver
   void OnGpuInfoUpdate() override;

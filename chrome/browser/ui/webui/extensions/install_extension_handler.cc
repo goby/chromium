@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/extensions/install_extension_handler.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -103,10 +105,10 @@ void InstallExtensionHandler::HandleInstallMessage(
     ZipFileInstaller::Create(ExtensionSystem::Get(profile)->extension_service())
         ->LoadFromZipFile(file_to_install_);
   } else {
-    scoped_ptr<ExtensionInstallPrompt> prompt(
+    std::unique_ptr<ExtensionInstallPrompt> prompt(
         new ExtensionInstallPrompt(web_ui()->GetWebContents()));
     scoped_refptr<CrxInstaller> crx_installer(CrxInstaller::Create(
-        ExtensionSystem::Get(profile)->extension_service(), prompt.Pass()));
+        ExtensionSystem::Get(profile)->extension_service(), std::move(prompt)));
     crx_installer->set_error_on_unsupported_requirements(true);
     crx_installer->set_off_store_install_allow_reason(
         CrxInstaller::OffStoreInstallAllowedFromSettingsPage);

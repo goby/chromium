@@ -28,17 +28,17 @@
 namespace blink {
 
 class PLATFORM_EXPORT FEMerge final : public FilterEffect {
-public:
-    static PassRefPtrWillBeRawPtr<FEMerge> create(Filter*);
+ public:
+  static FEMerge* create(Filter*);
 
-    TextStream& externalRepresentation(TextStream&, int indention) const override;
+  TextStream& externalRepresentation(TextStream&, int indention) const override;
 
-private:
-    explicit FEMerge(Filter*);
+ private:
+  explicit FEMerge(Filter*);
 
-    PassRefPtr<SkImageFilter> createImageFilter(SkiaImageFilterBuilder&) override;
+  sk_sp<SkImageFilter> createImageFilter() override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // FEMerge_h
+#endif  // FEMerge_h

@@ -4,41 +4,53 @@
 
 #include "chrome/browser/signin/chrome_signin_client.h"
 
+#include <stddef.h>
+#include <utility>
+
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/signin/local_auth.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/user_manager.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "chrome/common/channel_info.h"
+#include "chrome/common/features.h"
+#include "chrome/common/pref_names.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/metrics/metrics_service.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_cookie_changed_subscription.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "components/signin/core/common/profile_management_switches.h"
 #include "components/signin/core/common/signin_pref_names.h"
 #include "components/signin/core/common/signin_switches.h"
+#include "content/public/browser/browser_thread.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #endif
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/net/delay_network_call.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 #endif
 
@@ -46,11 +58,24 @@
 #include "chrome/browser/first_run/first_run.h"
 #endif
 
+namespace {
+
+bool IsForceSigninEnabled() {
+  PrefService* prefs = g_browser_process->local_state();
+  return prefs && prefs->GetBoolean(prefs::kForceBrowserSignin);
+}
+
+}  // namespace
+
 ChromeSigninClient::ChromeSigninClient(
-    Profile* profile, SigninErrorController* signin_error_controller)
+    Profile* profile,
+    SigninErrorController* signin_error_controller)
     : OAuth2TokenService::Consumer("chrome_signin_client"),
       profile_(profile),
-      signin_error_controller_(signin_error_controller) {
+      signin_error_controller_(signin_error_controller),
+      is_force_signin_enabled_(IsForceSigninEnabled()),
+      request_context_pointer_(nullptr),
+      number_of_request_context_pointer_changes_(0) {
   signin_error_controller_->AddObserver(this);
 #if !defined(OS_CHROMEOS)
   net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
@@ -63,20 +88,19 @@ ChromeSigninClient::ChromeSigninClient(
       chromeos::ProfileHelper::Get()->GetUserByProfile(profile_);
   if (!user)
     return;
-  auto* user_manager = user_manager::UserManager::Get();
   const AccountId account_id = user->GetAccountId();
-  if (user_manager->GetKnownUserDeviceId(account_id).empty()) {
+  if (user_manager::known_user::GetDeviceId(account_id).empty()) {
     const std::string legacy_device_id =
         GetPrefs()->GetString(prefs::kGoogleServicesSigninScopedDeviceId);
     if (!legacy_device_id.empty()) {
       // Need to move device ID from the old location to the new one, if it has
       // not been done yet.
-      user_manager->SetKnownUserDeviceId(account_id, legacy_device_id);
+      user_manager::known_user::SetDeviceId(account_id, legacy_device_id);
     } else {
-      user_manager->SetKnownUserDeviceId(
-          account_id,
-          GenerateSigninScopedDeviceID(
-              user_manager->IsUserNonCryptohomeDataEphemeral(account_id)));
+      user_manager::known_user::SetDeviceId(
+          account_id, GenerateSigninScopedDeviceID(
+                          user_manager::UserManager::Get()
+                              ->IsUserNonCryptohomeDataEphemeral(account_id)));
     }
   }
   GetPrefs()->SetString(prefs::kGoogleServicesSigninScopedDeviceId,
@@ -154,8 +178,7 @@ std::string ChromeSigninClient::GetSigninScopedDeviceId() {
     return std::string();
 
   const std::string signin_scoped_device_id =
-      user_manager::UserManager::Get()->GetKnownUserDeviceId(
-          user->GetAccountId());
+      user_manager::known_user::GetDeviceId(user->GetAccountId());
   LOG_IF(ERROR, signin_scoped_device_id.empty())
       << "Device ID is not set for user.";
   return signin_scoped_device_id;
@@ -163,22 +186,50 @@ std::string ChromeSigninClient::GetSigninScopedDeviceId() {
 }
 
 void ChromeSigninClient::OnSignedOut() {
-  ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
+  ProfileAttributesEntry* entry;
+  bool has_entry = g_browser_process->profile_manager()->
+      GetProfileAttributesStorage().
+      GetProfileAttributesWithPath(profile_->GetPath(), &entry);
 
   // If sign out occurs because Sync setup was in progress and the Profile got
-  // deleted, then the profile's no longer in the ProfileInfoCache.
-  if (index == std::string::npos)
+  // deleted, then the profile's no longer in the ProfileAttributesStorage.
+  if (!has_entry)
     return;
 
-  cache.SetLocalAuthCredentialsOfProfileAtIndex(index, std::string());
-  cache.SetAuthInfoOfProfileAtIndex(index, std::string(), base::string16());
-  cache.SetProfileSigninRequiredAtIndex(index, false);
+  entry->SetLocalAuthCredentials(std::string());
+  entry->SetAuthInfo(std::string(), base::string16());
+  entry->SetIsSigninRequired(false);
 }
 
 net::URLRequestContextGetter* ChromeSigninClient::GetURLRequestContext() {
-  return profile_->GetRequestContext();
+  net::URLRequestContextGetter* getter = profile_->GetRequestContext();
+  scoped_refptr<net::URLRequestContextGetter> scoped_getter(getter);
+  content::BrowserThread::PostTaskAndReplyWithResult(
+      content::BrowserThread::IO,
+      FROM_HERE,
+      base::Bind(&net::URLRequestContextGetter::GetURLRequestContext,
+                 scoped_getter),
+      base::Bind(&ChromeSigninClient::RequestContextPointerReply,
+                 base::Unretained(this)));
+  return getter;
+}
+
+void ChromeSigninClient::RequestContextPointerReply(
+    net::URLRequestContext* pointer) {
+  // Because this function runs in the UI thread, it is not possible to
+  // dereference the pointer.  The pointer is used only for its value.
+  if (request_context_pointer_ != nullptr &&
+      pointer != request_context_pointer_) {
+    ++number_of_request_context_pointer_changes_;
+
+    // In theory, |request_context_pointer_changed_| should never be > 0.
+    // Adding a DCHECK here to catch it in debug builds.  In release builds
+    // requests to gaia will be tagged with a special source= parameter.
+    DCHECK_EQ(0, number_of_request_context_pointer_changes_)
+        << "If you hit this DCHECK, open a bug for rogerta@chromium.org";
+  }
+
+  request_context_pointer_ = pointer;
 }
 
 bool ChromeSigninClient::ShouldMergeSigninCredentialsIntoCookieJar() {
@@ -218,7 +269,7 @@ void ChromeSigninClient::RemoveContentSettingsObserver(
       ->RemoveObserver(observer);
 }
 
-scoped_ptr<SigninClient::CookieChangedSubscription>
+std::unique_ptr<SigninClient::CookieChangedSubscription>
 ChromeSigninClient::AddCookieChangedCallback(
     const GURL& url,
     const std::string& name,
@@ -226,9 +277,9 @@ ChromeSigninClient::AddCookieChangedCallback(
   scoped_refptr<net::URLRequestContextGetter> context_getter =
       profile_->GetRequestContext();
   DCHECK(context_getter.get());
-  scoped_ptr<SigninCookieChangedSubscription> subscription(
+  std::unique_ptr<SigninCookieChangedSubscription> subscription(
       new SigninCookieChangedSubscription(context_getter, url, name, callback));
-  return subscription.Pass();
+  return std::move(subscription);
 }
 
 void ChromeSigninClient::OnSignedIn(const std::string& account_id,
@@ -236,11 +287,10 @@ void ChromeSigninClient::OnSignedIn(const std::string& account_id,
                                     const std::string& username,
                                     const std::string& password) {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
-  ProfileInfoCache& cache = profile_manager->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
-  if (index != std::string::npos) {
-    cache.SetAuthInfoOfProfileAtIndex(index, gaia_id,
-                                      base::UTF8ToUTF16(username));
+  ProfileAttributesEntry* entry;
+  if (profile_manager->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(profile_->GetPath(), &entry)) {
+    entry->SetAuthInfo(gaia_id, base::UTF8ToUTF16(username));
     ProfileMetrics::UpdateReportedProfilesStatistics(profile_manager);
   }
 }
@@ -248,11 +298,28 @@ void ChromeSigninClient::OnSignedIn(const std::string& account_id,
 void ChromeSigninClient::PostSignedIn(const std::string& account_id,
                                       const std::string& username,
                                       const std::string& password) {
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   // Don't store password hash except when lock is available for the user.
   if (!password.empty() && profiles::IsLockAvailable(profile_))
     LocalAuth::SetLocalAuthCredentials(profile_, password);
 #endif
+}
+
+void ChromeSigninClient::PreSignOut(const base::Callback<void()>& sign_out) {
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+  if (is_force_signin_enabled_ && !profile_->IsSystemProfile() &&
+      !profile_->IsGuestSession() && !profile_->IsSupervised()) {
+    BrowserList::CloseAllBrowsersWithProfile(
+        profile_, base::Bind(&ChromeSigninClient::OnCloseBrowsersSuccess,
+                             base::Unretained(this), sign_out),
+        base::Bind(&ChromeSigninClient::OnCloseBrowsersAborted,
+                   base::Unretained(this)));
+  } else {
+#else
+  {
+#endif
+    SigninClient::PreSignOut(sign_out);
+  }
 }
 
 void ChromeSigninClient::OnErrorChanged() {
@@ -260,25 +327,27 @@ void ChromeSigninClient::OnErrorChanged() {
   if (g_browser_process->profile_manager() == nullptr)
     return;
 
-  ProfileInfoCache& cache = g_browser_process->profile_manager()->
-      GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
-  if (index == std::string::npos)
-    return;
+  ProfileAttributesEntry* entry;
 
-  cache.SetProfileIsAuthErrorAtIndex(index,
-      signin_error_controller_->HasError());
+  if (!g_browser_process->profile_manager()->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(profile_->GetPath(), &entry)) {
+    return;
+  }
+
+  entry->SetIsAuthError(signin_error_controller_->HasError());
 }
 
 void ChromeSigninClient::OnGetTokenInfoResponse(
-    scoped_ptr<base::DictionaryValue> token_info) {
+    std::unique_ptr<base::DictionaryValue> token_info) {
   if (!token_info->HasKey("error")) {
     std::string handle;
     if (token_info->GetString("token_handle", &handle)) {
-      ProfileInfoCache& info_cache =
-          g_browser_process->profile_manager()->GetProfileInfoCache();
-      size_t index = info_cache.GetIndexOfProfileWithPath(profile_->GetPath());
-      info_cache.SetPasswordChangeDetectionTokenAtIndex(index, handle);
+      ProfileAttributesEntry* entry = nullptr;
+      bool has_entry = g_browser_process->profile_manager()->
+          GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(profile_->GetPath(), &entry);
+      DCHECK(has_entry);
+      entry->SetPasswordChangeDetectionToken(handle);
     }
   }
   oauth_request_.reset();
@@ -352,18 +421,18 @@ GaiaAuthFetcher* ChromeSigninClient::CreateGaiaAuthFetcher(
 }
 
 void ChromeSigninClient::MaybeFetchSigninTokenHandle() {
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   // We get a "handle" that can be used to reference the signin token on the
   // server.  We fetch this if we don't have one so that later we can check
   // it to know if the signin token to which it is attached has been revoked
   // and thus distinguish between a password mismatch due to the password
   // being changed and the user simply mis-typing it.
   if (profiles::IsLockAvailable(profile_)) {
-    ProfileInfoCache& info_cache =
-        g_browser_process->profile_manager()->GetProfileInfoCache();
+    ProfileAttributesStorage& storage =
+        g_browser_process->profile_manager()->GetProfileAttributesStorage();
     ProfileAttributesEntry* entry;
     // If we don't have a token for detecting a password change, create one.
-    if (info_cache.GetProfileAttributesWithPath(profile_->GetPath(), &entry) &&
+    if (storage.GetProfileAttributesWithPath(profile_->GetPath(), &entry) &&
         entry->GetPasswordChangeDetectionToken().empty() && !oauth_request_) {
       std::string account_id = SigninManagerFactory::GetForProfile(profile_)
           ->GetAuthenticatedAccountId();
@@ -376,5 +445,56 @@ void ChromeSigninClient::MaybeFetchSigninTokenHandle() {
       }
     }
   }
+#endif
+}
+
+void ChromeSigninClient::AfterCredentialsCopied() {
+  if (is_force_signin_enabled_) {
+    // The signout after credential copy won't open UserManager after all
+    // browser window are closed. Because the browser window will be opened for
+    // the new profile soon.
+    should_display_user_manager_ = false;
+  }
+}
+
+int ChromeSigninClient::number_of_request_context_pointer_changes() const {
+  return number_of_request_context_pointer_changes_;
+}
+
+void ChromeSigninClient::OnCloseBrowsersSuccess(
+    const base::Callback<void()>& sign_out,
+    const base::FilePath& profile_path) {
+  SigninClient::PreSignOut(sign_out);
+
+  LockForceSigninProfile(profile_path);
+  // After sign out, lock the profile and show UserManager if necessary.
+  if (should_display_user_manager_) {
+    ShowUserManager(profile_path);
+  } else {
+    should_display_user_manager_ = true;
+  }
+}
+
+void ChromeSigninClient::OnCloseBrowsersAborted(
+    const base::FilePath& profile_path) {
+  should_display_user_manager_ = true;
+}
+
+void ChromeSigninClient::LockForceSigninProfile(
+    const base::FilePath& profile_path) {
+  ProfileAttributesEntry* entry;
+  bool has_entry =
+      g_browser_process->profile_manager()
+          ->GetProfileAttributesStorage()
+          .GetProfileAttributesWithPath(profile_->GetPath(), &entry);
+  if (!has_entry)
+    return;
+  entry->LockForceSigninProfile(true);
+}
+
+void ChromeSigninClient::ShowUserManager(const base::FilePath& profile_path) {
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+  UserManager::Show(profile_path, profiles::USER_MANAGER_NO_TUTORIAL,
+                    profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION);
 #endif
 }

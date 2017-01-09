@@ -5,8 +5,10 @@
 #ifndef SKIA_EXT_BITMAP_PLATFORM_DEVICE_CAIRO_H_
 #define SKIA_EXT_BITMAP_PLATFORM_DEVICE_CAIRO_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "skia/ext/platform_device.h"
 
@@ -44,6 +46,8 @@ typedef struct _cairo_surface cairo_surface_t;
 
 namespace skia {
 
+class ScopedPlatformPaint;
+
 // -----------------------------------------------------------------------------
 // This is the Linux bitmap backing for Skia. We create a Cairo image surface
 // to store the backing buffer. This buffer is BGRA in memory (on little-endian
@@ -77,28 +81,19 @@ class BitmapPlatformDevice : public SkBitmapDevice, public PlatformDevice {
   static BitmapPlatformDevice* Create(int width, int height, bool is_opaque,
                                       uint8_t* data);
 
-  // Overridden from SkBaseDevice:
-  void setMatrixClip(const SkMatrix& transform,
-                     const SkRegion& region,
-                     const SkClipStack&) override;
-
-  // Overridden from PlatformDevice:
-  cairo_t* BeginPlatformPaint() override;
-
  protected:
   SkBaseDevice* onCreateDevice(const CreateInfo&, const SkPaint*) override;
 
  private:
+  // Overridden from PlatformDevice:
+  cairo_t* BeginPlatformPaint(const SkMatrix& transform,
+                              const SkIRect& clip_bounds) override;
+
   static BitmapPlatformDevice* Create(int width, int height, bool is_opaque,
                                       cairo_surface_t* surface);
 
-  // Sets the transform and clip operations. This will not update the Cairo
-  // context, but will mark the config as dirty. The next call of LoadConfig
-  // will pick up these changes.
-  void SetMatrixClip(const SkMatrix& transform, const SkRegion& region);
-
   // Loads the current transform and clip into the context.
-  void LoadConfig();
+  void LoadConfig(const SkMatrix& transform, const SkIRect& clip_bounds);
 
   // Graphics context used to draw into the surface.
   cairo_t* cairo_;
@@ -109,14 +104,8 @@ class BitmapPlatformDevice : public SkBitmapDevice, public PlatformDevice {
   // the clip and transform for every one.
   bool config_dirty_;
 
-  // Translation assigned to the context: we need to keep track of this
-  // separately so it can be updated even if the context isn't created yet.
-  SkMatrix transform_;
-
-  // The current clipping
-  SkRegion clip_region_;
-
   DISALLOW_COPY_AND_ASSIGN(BitmapPlatformDevice);
+  friend class ScopedPlatformPaint;
 };
 
 }  // namespace skia

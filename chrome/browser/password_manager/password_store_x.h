@@ -5,18 +5,15 @@
 #ifndef CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_STORE_X_H_
 #define CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_STORE_X_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/time/time.h"
 #include "components/password_manager/core/browser/password_store_default.h"
-
-class PrefService;
-
-namespace user_prefs {
-class PrefRegistrySyncable;
-}
 
 namespace password_manager {
 class LoginDatabase;
@@ -66,15 +63,23 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
         base::Time delete_end,
         password_manager::PasswordStoreChangeList* changes) = 0;
 
+    // Sets the 'skip_zero_click' flag to 'true' for all logins in the database
+    // that match |origin_filter|.
+    virtual bool DisableAutoSignInForOrigins(
+        const base::Callback<bool(const GURL&)>& origin_filter,
+        password_manager::PasswordStoreChangeList* changes) = 0;
+
     // The three methods below overwrite |forms| with all stored credentials
     // matching |form|, all stored non-blacklisted credentials, and all stored
     // blacklisted credentials, respectively. On success, they return true.
-    virtual bool GetLogins(const autofill::PasswordForm& form,
+    virtual bool GetLogins(const FormDigest& form,
                            ScopedVector<autofill::PasswordForm>* forms)
         WARN_UNUSED_RESULT = 0;
     virtual bool GetAutofillableLogins(
         ScopedVector<autofill::PasswordForm>* forms) WARN_UNUSED_RESULT = 0;
     virtual bool GetBlacklistLogins(ScopedVector<autofill::PasswordForm>* forms)
+        WARN_UNUSED_RESULT = 0;
+    virtual bool GetAllLogins(ScopedVector<autofill::PasswordForm>* forms)
         WARN_UNUSED_RESULT = 0;
   };
 
@@ -82,7 +87,7 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
   // case this PasswordStoreX will act the same as PasswordStoreDefault.
   PasswordStoreX(scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
                  scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner,
-                 scoped_ptr<password_manager::LoginDatabase> login_db,
+                 std::unique_ptr<password_manager::LoginDatabase> login_db,
                  NativeBackend* backend);
 
  private:
@@ -97,19 +102,24 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
       const autofill::PasswordForm& form) override;
   password_manager::PasswordStoreChangeList RemoveLoginImpl(
       const autofill::PasswordForm& form) override;
+  password_manager::PasswordStoreChangeList RemoveLoginsByURLAndTimeImpl(
+      const base::Callback<bool(const GURL&)>& url_filter,
+      base::Time delete_begin,
+      base::Time delete_end) override;
   password_manager::PasswordStoreChangeList RemoveLoginsCreatedBetweenImpl(
       base::Time delete_begin,
       base::Time delete_end) override;
   password_manager::PasswordStoreChangeList RemoveLoginsSyncedBetweenImpl(
       base::Time delete_begin,
       base::Time delete_end) override;
-  ScopedVector<autofill::PasswordForm> FillMatchingLogins(
-      const autofill::PasswordForm& form,
-      AuthorizationPromptPolicy prompt_policy) override;
+  password_manager::PasswordStoreChangeList DisableAutoSignInForOriginsImpl(
+      const base::Callback<bool(const GURL&)>& origin_filter) override;
+  std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
+      const FormDigest& form) override;
   bool FillAutofillableLogins(
-      ScopedVector<autofill::PasswordForm>* forms) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool FillBlacklistLogins(
-      ScopedVector<autofill::PasswordForm>* forms) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
 
   // Check to see whether migration is necessary, and perform it if so.
   void CheckMigration();
@@ -128,7 +138,7 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
   ssize_t MigrateLogins();
 
   // The native backend in use, or NULL if none.
-  scoped_ptr<NativeBackend> backend_;
+  std::unique_ptr<NativeBackend> backend_;
   // Whether we have already attempted migration to the native store.
   bool migration_checked_;
   // Whether we should allow falling back to the default store. If there is

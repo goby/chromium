@@ -5,12 +5,14 @@
 #ifndef NET_CERT_X509_CERTIFICATE_H_
 #define NET_CERT_X509_CERTIFICATE_H_
 
+#include <stddef.h>
 #include <string.h>
 
 #include <string>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
@@ -40,8 +42,7 @@ class PickleIterator;
 
 namespace net {
 
-class CRLSet;
-class CertVerifyResult;
+class X509Certificate;
 
 typedef std::vector<scoped_refptr<X509Certificate> > CertificateList;
 
@@ -77,13 +78,6 @@ class NET_EXPORT X509Certificate
     kPublicKeyTypeECDSA,
     kPublicKeyTypeDH,
     kPublicKeyTypeECDH
-  };
-
-  // Predicate functor used in maps when X509Certificate is used as the key.
-  class NET_EXPORT LessThan {
-   public:
-    bool operator()(const scoped_refptr<X509Certificate>& lhs,
-                    const scoped_refptr<X509Certificate>& rhs) const;
   };
 
   enum Format {
@@ -132,42 +126,35 @@ class NET_EXPORT X509Certificate
     PICKLETYPE_CERTIFICATE_CHAIN_V3,
   };
 
-  // Creates a X509Certificate from the ground up.  Used by tests that simulate
-  // SSL connections.
-  X509Certificate(const std::string& subject, const std::string& issuer,
-                  base::Time start_date, base::Time expiration_date);
-
   // Create an X509Certificate from a handle to the certificate object in the
-  // underlying crypto library. The returned pointer must be stored in a
-  // scoped_refptr<X509Certificate>.
-  static X509Certificate* CreateFromHandle(OSCertHandle cert_handle,
-                                           const OSCertHandles& intermediates);
+  // underlying crypto library.
+  static scoped_refptr<X509Certificate> CreateFromHandle(
+      OSCertHandle cert_handle,
+      const OSCertHandles& intermediates);
 
   // Create an X509Certificate from a chain of DER encoded certificates. The
   // first certificate in the chain is the end-entity certificate to which a
   // handle is returned. The other certificates in the chain are intermediate
-  // certificates. The returned pointer must be stored in a
-  // scoped_refptr<X509Certificate>.
-  static X509Certificate* CreateFromDERCertChain(
+  // certificates.
+  static scoped_refptr<X509Certificate> CreateFromDERCertChain(
       const std::vector<base::StringPiece>& der_certs);
 
   // Create an X509Certificate from the DER-encoded representation.
   // Returns NULL on failure.
-  //
-  // The returned pointer must be stored in a scoped_refptr<X509Certificate>.
-  static X509Certificate* CreateFromBytes(const char* data, size_t length);
+  static scoped_refptr<X509Certificate> CreateFromBytes(const char* data,
+                                                        size_t length);
 
 #if defined(USE_NSS_CERTS)
   // Create an X509Certificate from the DER-encoded representation.
   // |nickname| can be NULL if an auto-generated nickname is desired.
-  // Returns NULL on failure.  The returned pointer must be stored in a
-  // scoped_refptr<X509Certificate>.
+  // Returns NULL on failure.
   //
   // This function differs from CreateFromBytes in that it takes a
   // nickname that will be used when the certificate is imported into PKCS#11.
-  static X509Certificate* CreateFromBytesWithNickname(const char* data,
-                                                      size_t length,
-                                                      const char* nickname);
+  static scoped_refptr<X509Certificate> CreateFromBytesWithNickname(
+      const char* data,
+      size_t length,
+      const char* nickname);
 
   // The default nickname of the certificate, based on the certificate type
   // passed in.  If this object was created using CreateFromBytesWithNickname,
@@ -179,10 +166,9 @@ class NET_EXPORT X509Certificate
   // pickle.  The data for this object is found relative to the given
   // pickle_iter, which should be passed to the pickle's various Read* methods.
   // Returns NULL on failure.
-  //
-  // The returned pointer must be stored in a scoped_refptr<X509Certificate>.
-  static X509Certificate* CreateFromPickle(base::PickleIterator* pickle_iter,
-                                           PickleType type);
+  static scoped_refptr<X509Certificate> CreateFromPickle(
+      base::PickleIterator* pickle_iter,
+      PickleType type);
 
   // Parses all of the certificates possible from |data|. |format| is a
   // bit-wise OR of Format, indicating the possible formats the
@@ -213,14 +199,6 @@ class NET_EXPORT X509Certificate
   // lacks either date), the date will be null (i.e., is_null() will be true).
   const base::Time& valid_start() const { return valid_start_; }
   const base::Time& valid_expiry() const { return valid_expiry_; }
-
-  // The fingerprint of this certificate.
-  const SHA1HashValue& fingerprint() const { return fingerprint_; }
-
-  // The fingerprint of the intermediate CA certificates.
-  const SHA1HashValue& ca_fingerprint() const {
-    return ca_fingerprint_;
-  }
 
   // Gets the DNS names in the certificate.  Pursuant to RFC 2818, Section 3.1
   // Server Identity, if the certificate has a subjectAltName extension of
@@ -386,34 +364,12 @@ class NET_EXPORT X509Certificate
   // Frees (or releases a reference to) an OS certificate handle.
   static void FreeOSCertHandle(OSCertHandle cert_handle);
 
-  // Calculates the SHA-1 fingerprint of the certificate.  Returns an empty
-  // (all zero) fingerprint on failure.
-  //
-  // For calculating fingerprints, prefer SHA-1 for performance when indexing,
-  // but callers should use IsSameOSCert() before assuming two certificates are
-  // the same.
-  static SHA1HashValue CalculateFingerprint(OSCertHandle cert_handle);
-
   // Calculates the SHA-256 fingerprint of the certificate.  Returns an empty
   // (all zero) fingerprint on failure.
   static SHA256HashValue CalculateFingerprint256(OSCertHandle cert_handle);
 
-  // Calculates the SHA-1 fingerprint of the intermediate CA certificates.
-  // Returns an empty (all zero) fingerprint on failure.
-  //
-  // See SHA-1 caveat on CalculateFingerprint().
-  static SHA1HashValue CalculateCAFingerprint(
-      const OSCertHandles& intermediates);
-
   // Calculates the SHA-256 fingerprint of the intermediate CA certificates.
   // Returns an empty (all zero) fingerprint on failure.
-  //
-  // As part of the cross-platform implementation of this function, it currently
-  // copies the certificate bytes into local variables which makes it
-  // potentially slower than implementing it directly for each platform. For
-  // now, the expected consumers are not performance critical, but if
-  // performance is a concern going forward, it may warrant implementing this on
-  // a per-platform basis.
   static SHA256HashValue CalculateCAFingerprint256(
       const OSCertHandles& intermediates);
 
@@ -494,12 +450,6 @@ class NET_EXPORT X509Certificate
 
   // This certificate is not valid after |valid_expiry_|
   base::Time valid_expiry_;
-
-  // The fingerprint of this certificate.
-  SHA1HashValue fingerprint_;
-
-  // The fingerprint of the intermediate CA certificates.
-  SHA1HashValue ca_fingerprint_;
 
   // The serial number of this certificate, DER encoded.
   std::string serial_number_;

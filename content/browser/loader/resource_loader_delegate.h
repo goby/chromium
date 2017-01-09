@@ -7,13 +7,17 @@
 
 #include "content/common/content_export.h"
 
+class GURL;
+
 namespace net {
 class AuthChallengeInfo;
+class ClientCertStore;
 }
 
 namespace content {
 class ResourceDispatcherHostLoginDelegate;
 class ResourceLoader;
+struct ResourceResponse;
 
 class CONTENT_EXPORT ResourceLoaderDelegate {
  public:
@@ -26,12 +30,17 @@ class CONTENT_EXPORT ResourceLoaderDelegate {
 
   virtual void DidStartRequest(ResourceLoader* loader) = 0;
   virtual void DidReceiveRedirect(ResourceLoader* loader,
-                                  const GURL& new_url) = 0;
+                                  const GURL& new_url,
+                                  ResourceResponse* response) = 0;
   virtual void DidReceiveResponse(ResourceLoader* loader) = 0;
 
   // This method informs the delegate that the loader is done, and the loader
   // expects to be destroyed as a side-effect of this call.
   virtual void DidFinishLoading(ResourceLoader* loader) = 0;
+
+  // Get platform ClientCertStore. May return nullptr.
+  virtual std::unique_ptr<net::ClientCertStore> CreateClientCertStore(
+      ResourceLoader* loader) = 0;
 
  protected:
   virtual ~ResourceLoaderDelegate() {}

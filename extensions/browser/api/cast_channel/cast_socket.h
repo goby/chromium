@@ -5,12 +5,14 @@
 #ifndef EXTENSIONS_BROWSER_API_CAST_CHANNEL_CAST_SOCKET_H_
 #define EXTENSIONS_BROWSER_API_CAST_CHANNEL_CAST_SOCKET_H_
 
+#include <stdint.h>
+
 #include <queue>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/cancelable_callback.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
@@ -24,15 +26,18 @@
 #include "net/base/completion_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_source.h"
 
 namespace net {
-class AddressList;
 class CertVerifier;
+class CTPolicyEnforcer;
+class CTVerifier;
+class NetLog;
 class SSLClientSocket;
 class StreamSocket;
 class TCPClientSocket;
 class TransportSecurityState;
+class X509Certificate;
 }
 
 namespace extensions {
@@ -41,7 +46,6 @@ namespace cast_channel {
 class CastMessage;
 class Logger;
 struct LastErrors;
-class MessageFramer;
 
 // Cast device capabilities.
 enum CastDeviceCapability {
@@ -69,7 +73,7 @@ class CastSocket : public ApiResource {
   // CHANNEL_ERROR_NONE if successful.
   // |delegate| receives message receipt and error events.
   // Ownership of |delegate| is transferred to this CastSocket.
-  virtual void Connect(scoped_ptr<CastTransport::Delegate> delegate,
+  virtual void Connect(std::unique_ptr<CastTransport::Delegate> delegate,
                        base::Callback<void(ChannelError)> callback) = 0;
 
   // Closes the channel if not already closed. On completion, the channel will
@@ -148,13 +152,13 @@ class CastSocketImpl : public CastSocket {
                  const base::TimeDelta& connect_timeout,
                  bool keep_alive,
                  const scoped_refptr<Logger>& logger,
-                 uint64 device_capabilities);
+                 uint64_t device_capabilities);
 
   // Ensures that the socket is closed.
   ~CastSocketImpl() override;
 
   // CastSocket interface.
-  void Connect(scoped_ptr<CastTransport::Delegate> delegate,
+  void Connect(std::unique_ptr<CastTransport::Delegate> delegate,
                base::Callback<void(ChannelError)> callback) override;
   CastTransport* transport() const override;
   void Close(const net::CompletionCallback& callback) override;
@@ -196,7 +200,7 @@ class CastSocketImpl : public CastSocket {
 
   // Replaces the internally-constructed transport object with one provided
   // by the caller (e.g. a mock).
-  void SetTransportForTesting(scoped_ptr<CastTransport> transport);
+  void SetTransportForTesting(std::unique_ptr<CastTransport> transport);
 
   // Verifies whether the socket complies with cast channel policy.
   // Audio only channel policy mandates that a device declaring a video out
@@ -222,14 +226,16 @@ class CastSocketImpl : public CastSocket {
   void CloseInternal();
 
   // Creates an instance of TCPClientSocket.
-  virtual scoped_ptr<net::TCPClientSocket> CreateTcpSocket();
+  virtual std::unique_ptr<net::TCPClientSocket> CreateTcpSocket();
   // Creates an instance of SSLClientSocket with the given underlying |socket|.
-  virtual scoped_ptr<net::SSLClientSocket> CreateSslSocket(
-      scoped_ptr<net::StreamSocket> socket);
+  virtual std::unique_ptr<net::SSLClientSocket> CreateSslSocket(
+      std::unique_ptr<net::StreamSocket> socket);
   // Extracts peer certificate from SSLClientSocket instance when the socket
   // is in cert error state.
-  // Returns whether certificate is successfully extracted.
-  virtual bool ExtractPeerCert(std::string* cert);
+  // Returns null if the certificate could not be extracted.
+  // TODO(kmarshall): Use MockSSLClientSocket for tests instead of overriding
+  // this function.
+  virtual scoped_refptr<net::X509Certificate> ExtractPeerCert();
   // Verifies whether the challenge reply received from the peer is valid:
   // 1. Signature in the reply is valid.
   // 2. Certificate is rooted to a trusted CA.
@@ -289,7 +295,7 @@ class CastSocketImpl : public CastSocket {
   // The NetLog for this service.
   net::NetLog* net_log_;
   // The NetLog source for this service.
-  net::NetLog::Source net_log_source_;
+  net::NetLogSource net_log_source_;
   // True when keep-alive signaling should be handled for this socket.
   bool keep_alive_;
 
@@ -299,21 +305,23 @@ class CastSocketImpl : public CastSocket {
   // CertVerifier is owned by us but should be deleted AFTER SSLClientSocket
   // since in some cases the destructor of SSLClientSocket may call a method
   // to cancel a cert verification request.
-  scoped_ptr<net::CertVerifier> cert_verifier_;
-  scoped_ptr<net::TransportSecurityState> transport_security_state_;
+  std::unique_ptr<net::CertVerifier> cert_verifier_;
+  std::unique_ptr<net::TransportSecurityState> transport_security_state_;
+  std::unique_ptr<net::CTVerifier> cert_transparency_verifier_;
+  std::unique_ptr<net::CTPolicyEnforcer> ct_policy_enforcer_;
 
   // Owned ptr to the underlying TCP socket.
-  scoped_ptr<net::TCPClientSocket> tcp_socket_;
+  std::unique_ptr<net::TCPClientSocket> tcp_socket_;
 
   // Owned ptr to the underlying SSL socket.
-  scoped_ptr<net::SSLClientSocket> socket_;
+  std::unique_ptr<net::SSLClientSocket> socket_;
 
   // Certificate of the peer. This field may be empty if the peer
   // certificate is not yet fetched.
-  std::string peer_cert_;
+  scoped_refptr<net::X509Certificate> peer_cert_;
 
   // Reply received from the receiver to a challenge request.
-  scoped_ptr<CastMessage> challenge_reply_;
+  std::unique_ptr<CastMessage> challenge_reply_;
 
   // Callback invoked when the socket is connected or fails to connect.
   base::Callback<void(ChannelError)> connect_callback_;
@@ -325,14 +333,14 @@ class CastSocketImpl : public CastSocket {
   base::TimeDelta connect_timeout_;
 
   // Timer invoked when the connection has timed out.
-  scoped_ptr<base::Timer> connect_timeout_timer_;
+  std::unique_ptr<base::Timer> connect_timeout_timer_;
 
   // Set when a timeout is triggered and the connection process has
   // canceled.
   bool is_canceled_;
 
   // Capabilities declared by the cast device.
-  uint64 device_capabilities_;
+  uint64_t device_capabilities_;
 
   // Whether the channel is audio only as identified by the device
   // certificate during channel authentication.
@@ -362,10 +370,10 @@ class CastSocketImpl : public CastSocket {
   base::CancelableClosure send_auth_challenge_callback_;
 
   // Cast message formatting and parsing layer.
-  scoped_ptr<CastTransport> transport_;
+  std::unique_ptr<CastTransport> transport_;
 
   // Caller's message read and error handling delegate.
-  scoped_ptr<CastTransport::Delegate> delegate_;
+  std::unique_ptr<CastTransport::Delegate> delegate_;
 
   // Raw pointer to the auth handshake delegate. Used to get detailed error
   // information.

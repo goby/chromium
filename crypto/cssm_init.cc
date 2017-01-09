@@ -5,6 +5,7 @@
 #include "crypto/cssm_init.h"
 
 #include <Security/SecBase.h>
+#include <stdint.h>
 
 #include "base/logging.h"
 #include "base/mac/scoped_cftyperef.h"
@@ -17,6 +18,11 @@
 //   http://www.opengroup.org/security/cdsa.htm
 // - Apple Cryptographic Service Provider Functional Specification
 // - CryptoSample: http://developer.apple.com/SampleCode/CryptoSample/
+
+// CSSM functions are deprecated as of OSX 10.7, but have no replacement.
+// https://bugs.chromium.org/p/chromium/issues/detail?id=590914#c1
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 namespace {
 
@@ -32,7 +38,7 @@ void* CSSMRealloc(void* ptr, CSSM_SIZE size, void* alloc_ref) {
   return realloc(ptr, size);
 }
 
-void* CSSMCalloc(uint32 num, CSSM_SIZE size, void* alloc_ref) {
+void* CSSMCalloc(uint32_t num, CSSM_SIZE size, void* alloc_ref) {
   return calloc(num, size);
 }
 
@@ -202,3 +208,5 @@ ScopedCSSMData::~ScopedCSSMData() {
 }
 
 }  // namespace crypto
+
+#pragma clang diagnostic pop  // "-Wdeprecated-declarations"

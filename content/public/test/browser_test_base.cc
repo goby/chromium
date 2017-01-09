@@ -4,15 +4,21 @@
 
 #include "content/public/test/browser_test_base.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/stack_trace.h"
+#include "base/feature_list.h"
 #include "base/i18n/icu_util.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/sequenced_worker_pool.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/tracing/tracing_controller_impl.h"
 #include "content/public/app/content_main.h"
@@ -23,9 +29,10 @@
 #include "content/public/test/test_utils.h"
 #include "content/test/content_browser_sanity_checker.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
+#include "net/base/network_interfaces.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "ui/base/test/material_design_controller_test_api.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
@@ -46,9 +53,9 @@
 
 #if defined(USE_AURA)
 #include "content/browser/compositor/image_transport_factory.h"
-#include "ui/aura/test/event_generator_delegate_aura.h"
+#include "ui/aura/test/event_generator_delegate_aura.h"  // nogncheck
 #if defined(USE_X11)
-#include "ui/aura/window_tree_host_x11.h"
+#include "ui/aura/window_tree_host_x11.h"  // nogncheck
 #endif
 #endif
 
@@ -56,18 +63,19 @@ namespace content {
 namespace {
 
 #if defined(OS_POSIX)
-// On SIGTERM (sent by the runner on timeouts), dump a stack trace (to make
-// debugging easier) and also exit with a known error code (so that the test
-// framework considers this a failure -- http://crbug.com/57578).
+// On SIGSEGV or SIGTERM (sent by the runner on timeouts), dump a stack trace
+// (to make debugging easier) and also exit with a known error code (so that
+// the test framework considers this a failure -- http://crbug.com/57578).
 // Note: We only want to do this in the browser process, and not forked
 // processes. That might lead to hangs because of locks inside tcmalloc or the
 // OS. See http://crbug.com/141302.
 static int g_browser_process_pid;
 static void DumpStackTraceSignalHandler(int signal) {
   if (g_browser_process_pid == base::GetCurrentProcId()) {
-    logging::RawLog(logging::LOG_ERROR,
-                    "BrowserTestBase signal handler received SIGTERM. "
-                    "Backtrace:\n");
+    std::string message("BrowserTestBase received signal: ");
+    message += strsignal(signal);
+    message += ". Backtrace:\n";
+    logging::RawLog(logging::LOG_ERROR, message.c_str());
     base::debug::StackTrace().Print();
   }
   _exit(128 + signal);
@@ -144,11 +152,8 @@ BrowserTestBase::BrowserTestBase()
   base::mac::SetOverrideAmIBundled(true);
 #endif
 
-#if defined(USE_AURA)
-#if defined(USE_X11)
+#if defined(USE_AURA) && defined(USE_X11)
   aura::test::SetUseOverrideRedirectWindowByDefault(true);
-#endif
-  aura::test::InitializeAuraEventGeneratorDelegate();
 #endif
 
 #if defined(OS_POSIX)
@@ -161,6 +166,13 @@ BrowserTestBase::BrowserTestBase()
   base::i18n::AllowMultipleInitializeCallsForTesting();
 
   embedded_test_server_.reset(new net::EmbeddedTestServer);
+
+  // SequencedWorkerPool is enabled by default in tests (see
+  // base::TestSuite::Initialize). In browser tests, disable it and expect it
+  // to be re-enabled as part of BrowserMainLoop::PreCreateThreads().
+  // TODO(fdoray): Remove this once the SequencedWorkerPool to TaskScheduler
+  // redirection experiment concludes https://crbug.com/622400.
+  base::SequencedWorkerPool::DisableForProcessForTesting();
 }
 
 BrowserTestBase::~BrowserTestBase() {
@@ -178,6 +190,10 @@ BrowserTestBase::~BrowserTestBase() {
 
 void BrowserTestBase::SetUp() {
   set_up_called_ = true;
+  // ContentTestSuiteBase might have already initialized
+  // MaterialDesignController in browser_tests suite.
+  // Uninitialize here to let the browser process do it.
+  ui::test::MaterialDesignControllerTestAPI::Uninitialize();
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
@@ -199,6 +215,11 @@ void BrowserTestBase::SetUp() {
   if (use_software_compositing_)
     command_line->AppendSwitch(switches::kDisableGpu);
 
+  // The layout of windows on screen is unpredictable during tests, so disable
+  // occlusion when running browser tests.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisableBackgroundingOccludedWindowsForTesting);
+
 #if defined(USE_AURA)
   // Most tests do not need pixel output, so we don't produce any. The command
   // line can override this behaviour to allow for visual debugging.
@@ -215,6 +236,8 @@ void BrowserTestBase::SetUp() {
   // us to, or it's requested on the command line.
   if (!enable_pixel_output_ && !use_software_compositing_)
     command_line->AppendSwitch(switches::kDisableGLDrawingForTests);
+
+  aura::test::InitializeAuraEventGeneratorDelegate();
 #endif
 
   bool use_osmesa = true;
@@ -260,9 +283,28 @@ void BrowserTestBase::SetUp() {
 
   SetUpInProcessBrowserTestFixture();
 
+  // At this point, copy features to the command line, since BrowserMain will
+  // wipe out the current feature list.
+  std::string enabled_features;
+  std::string disabled_features;
+  if (base::FeatureList::GetInstance())
+    base::FeatureList::GetInstance()->GetFeatureOverrides(&enabled_features,
+                                                          &disabled_features);
+  if (!enabled_features.empty())
+    command_line->AppendSwitchASCII(switches::kEnableFeatures,
+                                    enabled_features);
+  if (!disabled_features.empty())
+    command_line->AppendSwitchASCII(switches::kDisableFeatures,
+                                    disabled_features);
+
+  // Need to wipe feature list clean, since BrowserMain calls
+  // FeatureList::SetInstance, which expects no instance to exist.
+  base::FeatureList::ClearInstanceForTesting();
+
   base::Closure* ui_task =
       new base::Closure(
-          base::Bind(&BrowserTestBase::ProxyRunTestOnMainThreadLoop, this));
+          base::Bind(&BrowserTestBase::ProxyRunTestOnMainThreadLoop,
+                     base::Unretained(this)));
 
 #if defined(OS_ANDROID)
   MainFunctionParams params(*command_line);
@@ -281,10 +323,11 @@ void BrowserTestBase::TearDown() {
 
 void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
 #if defined(OS_POSIX)
-  if (handle_sigterm_) {
-    g_browser_process_pid = base::GetCurrentProcId();
+  g_browser_process_pid = base::GetCurrentProcId();
+  signal(SIGSEGV, DumpStackTraceSignalHandler);
+
+  if (handle_sigterm_)
     signal(SIGTERM, DumpStackTraceSignalHandler);
-  }
 #endif  // defined(OS_POSIX)
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -356,7 +399,7 @@ void BrowserTestBase::UseSoftwareCompositing() {
 bool BrowserTestBase::UsingOSMesa() const {
   base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
   return cmd->GetSwitchValueASCII(switches::kUseGL) ==
-         gfx::kGLImplementationOSMesaName;
+         gl::kGLImplementationOSMesaName;
 }
 
 }  // namespace content

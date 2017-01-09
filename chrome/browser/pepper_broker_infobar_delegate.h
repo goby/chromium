@@ -7,6 +7,7 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "url/gurl.h"
 
@@ -35,14 +36,14 @@ class PepperBrokerInfoBarDelegate : public ConfirmInfoBarDelegate {
  private:
   PepperBrokerInfoBarDelegate(const GURL& url,
                               const base::FilePath& plugin_path,
-                              const std::string& languages,
                               HostContentSettingsMap* content_settings,
                               TabSpecificContentSettings* tab_content_settings,
                               const base::Callback<void(bool)>& callback);
   ~PepperBrokerInfoBarDelegate() override;
 
   // ConfirmInfoBarDelegate:
-  int GetIconId() const override;
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
+  gfx::VectorIconId GetVectorIconId() const override;
   base::string16 GetMessageText() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
@@ -54,7 +55,6 @@ class PepperBrokerInfoBarDelegate : public ConfirmInfoBarDelegate {
 
   const GURL url_;
   const base::FilePath plugin_path_;
-  const std::string languages_;
   HostContentSettingsMap* content_settings_;
   TabSpecificContentSettings* tab_content_settings_;
   base::Callback<void(bool)> callback_;

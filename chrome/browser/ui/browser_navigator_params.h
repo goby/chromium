@@ -9,11 +9,11 @@
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/ref_counted_memory.h"
-#include "chrome/browser/ui/host_desktop.h"
+#include "build/build_config.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/referrer.h"
+#include "content/public/common/resource_request_body.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
@@ -55,8 +55,7 @@ namespace chrome {
 struct NavigateParams {
 #if defined(OS_ANDROID)
   explicit NavigateParams(content::WebContents* a_target_contents);
-#endif
-#if !defined(OS_ANDROID) || defined(USE_AURA)
+#else
   NavigateParams(Browser* browser,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
@@ -66,11 +65,15 @@ struct NavigateParams {
   NavigateParams(Profile* profile,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
+  NavigateParams(const NavigateParams& other);
   ~NavigateParams();
 
   // The URL/referrer to be loaded. Ignored if |target_contents| is non-NULL.
   GURL url;
   content::Referrer referrer;
+
+  // The frame name to be used for the main frame.
+  std::string frame_name;
 
   // The browser-global ID of the frame to navigate, or -1 for the main frame.
   int frame_tree_node_id;
@@ -80,13 +83,10 @@ struct NavigateParams {
   std::vector<GURL> redirect_chain;
 
   // Indicates whether this navigation will be sent using POST.
-  // The POST method is limited support for basic POST data by leveraging
-  // NavigationController::LOAD_TYPE_BROWSER_INITIATED_HTTP_POST.
-  // It is not for things like file uploads.
   bool uses_post;
 
   // The post data when the navigation uses POST.
-  scoped_refptr<base::RefCountedMemory> browser_initiated_post_data;
+  scoped_refptr<content::ResourceRequestBody> post_data;
 
   // Extra headers to add to the request for this page.  Headers are
   // represented as "<name>: <value>" and separated by \r\n.  The entire string
@@ -206,7 +206,7 @@ struct NavigateParams {
   // Default is IGNORE.
   RefBehavior ref_behavior;
 
-#if !defined(OS_ANDROID) || defined(USE_AURA)
+#if !defined(OS_ANDROID)
   // [in]  Specifies a Browser object where the navigation could occur or the
   //       tab could be added. Navigate() is not obliged to use this Browser if
   //       it is not compatible with the operation being performed. This can be
@@ -214,7 +214,7 @@ struct NavigateParams {
   // [out] Specifies the Browser object where the navigation occurred or the
   //       tab was added. Guaranteed non-NULL unless the disposition did not
   //       require a navigation, in which case this is set to NULL
-  //       (SUPPRESS_OPEN, SAVE_TO_DISK, IGNORE_ACTION).
+  //       (SAVE_TO_DISK, IGNORE_ACTION).
   // Note: If |show_window| is set to false and a new Browser is created by
   //       Navigate(), the caller is responsible for showing it so that its
   //       window can assume responsibility for the Browser's lifetime (Browser
@@ -226,21 +226,15 @@ struct NavigateParams {
   // browser passed in via |browser|, it's profile will be used instead.
   Profile* initiating_profile;
 
-  // Refers to a navigation that was parked in the browser in order to be
-  // transferred to another RVH. Only used in case of a redirection of a request
-  // to a different site that created a new RVH.
-  content::GlobalRequestID transferred_global_request_id;
-
-  // Refers to which desktop this navigation should occur on. May be passed
-  // explicitly or inferred from an existing Browser instance.
-  chrome::HostDesktopType host_desktop_type;
-
   // Indicates whether this navigation  should replace the current
   // navigation entry.
   bool should_replace_current_entry;
 
   // Indicates whether |target_contents| is being created with a window.opener.
   bool created_with_opener;
+
+  // Whether or not the related navigation was started in the context menu.
+  bool started_from_context_menu;
 
   // SiteInstance of the frame that initiated the navigation or null if we
   // don't know it. This should be assigned from the OpenURLParams of the

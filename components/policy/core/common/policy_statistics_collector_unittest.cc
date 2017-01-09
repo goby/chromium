@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/policy/core/common/policy_statistics_collector.h"
+
 #include <cstring>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/values.h"
 #include "components/policy/core/common/external_data_fetcher.h"
 #include "components/policy/core/common/mock_policy_service.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_pref_names.h"
-#include "components/policy/core/common/policy_statistics_collector.h"
 #include "components/policy/core/common/policy_test_utils.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -106,20 +107,17 @@ class PolicyStatisticsCollectorTest : public testing::Test {
   }
 
   void SetPolicy(const std::string& name) {
-    policy_map_.Set(name,
-                    POLICY_LEVEL_MANDATORY,
-                    POLICY_SCOPE_USER,
+    policy_map_.Set(name, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                     POLICY_SOURCE_CLOUD,
-                    new base::FundamentalValue(true),
-                    NULL);
+                    base::MakeUnique<base::FundamentalValue>(true), nullptr);
   }
 
   base::TimeDelta GetFirstDelay() const {
-    if (task_runner_->GetPendingTasks().empty()) {
+    if (!task_runner_->HasPendingTask()) {
       ADD_FAILURE();
       return base::TimeDelta();
     }
-    return task_runner_->GetPendingTasks().front().delay;
+    return task_runner_->NextPendingTaskDelay();
   }
 
   const base::TimeDelta update_delay_;
@@ -133,7 +131,7 @@ class PolicyStatisticsCollectorTest : public testing::Test {
   PolicyMap policy_map_;
 
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  scoped_ptr<TestPolicyStatisticsCollector> policy_statistics_collector_;
+  std::unique_ptr<TestPolicyStatisticsCollector> policy_statistics_collector_;
 };
 
 TEST_F(PolicyStatisticsCollectorTest, CollectPending) {
@@ -146,7 +144,7 @@ TEST_F(PolicyStatisticsCollectorTest, CollectPending) {
               RecordPolicyUse(kTestPolicy1Id));
 
   policy_statistics_collector_->Initialize();
-  EXPECT_EQ(1u, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1u, task_runner_->NumPendingTasks());
   EXPECT_EQ(update_delay_, GetFirstDelay());
 }
 
@@ -161,7 +159,7 @@ TEST_F(PolicyStatisticsCollectorTest, CollectPendingVeryOld) {
               RecordPolicyUse(kTestPolicy1Id));
 
   policy_statistics_collector_->Initialize();
-  EXPECT_EQ(1u, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1u, task_runner_->NumPendingTasks());
   EXPECT_EQ(update_delay_, GetFirstDelay());
 }
 
@@ -172,7 +170,7 @@ TEST_F(PolicyStatisticsCollectorTest, CollectLater) {
                   (base::Time::Now() - update_delay_ / 2).ToInternalValue());
 
   policy_statistics_collector_->Initialize();
-  EXPECT_EQ(1u, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1u, task_runner_->NumPendingTasks());
   EXPECT_LT(GetFirstDelay(), update_delay_);
 }
 
@@ -189,7 +187,7 @@ TEST_F(PolicyStatisticsCollectorTest, MultiplePolicies) {
               RecordPolicyUse(kTestPolicy2Id));
 
   policy_statistics_collector_->Initialize();
-  EXPECT_EQ(1u, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1u, task_runner_->NumPendingTasks());
 }
 
 }  // namespace policy

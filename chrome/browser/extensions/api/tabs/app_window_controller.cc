@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/api/tabs/app_window_controller.h"
+
+#include <memory>
+#include <utility>
+
+#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/tabs/app_base_window.h"
-#include "chrome/browser/extensions/api/tabs/app_window_controller.h"
 #include "chrome/browser/extensions/api/tabs/tabs_constants.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/window_controller.h"
@@ -17,12 +22,13 @@
 
 namespace extensions {
 
-AppWindowController::AppWindowController(AppWindow* app_window,
-                                         scoped_ptr<AppBaseWindow> base_window,
-                                         Profile* profile)
+AppWindowController::AppWindowController(
+    AppWindow* app_window,
+    std::unique_ptr<AppBaseWindow> base_window,
+    Profile* profile)
     : WindowController(base_window.get(), profile),
       app_window_(app_window),
-      base_window_(base_window.Pass()) {
+      base_window_(std::move(base_window)) {
   WindowControllerList::GetInstance()->AddExtensionWindow(this);
 }
 
@@ -40,23 +46,25 @@ std::string AppWindowController::GetWindowTypeText() const {
   return tabs_constants::kWindowTypeValueApp;
 }
 
-base::DictionaryValue* AppWindowController::CreateWindowValueWithTabs(
+std::unique_ptr<base::DictionaryValue>
+AppWindowController::CreateWindowValueWithTabs(
     const Extension* extension) const {
-  base::DictionaryValue* result = CreateWindowValue();
+  std::unique_ptr<base::DictionaryValue> result = CreateWindowValue();
 
-  base::DictionaryValue* tab_value = CreateTabValue(extension, 0);
+  std::unique_ptr<base::DictionaryValue> tab_value =
+      CreateTabObject(extension, 0)->ToValue();
   if (!tab_value)
     return result;
 
   base::ListValue* tab_list = new base::ListValue();
-  tab_list->Append(tab_value);
+  tab_list->Append(std::move(tab_value));
   result->Set(tabs_constants::kTabsKey, tab_list);
 
   return result;
 }
 
-base::DictionaryValue* AppWindowController::CreateTabValue(
-    const Extension* extension,
+std::unique_ptr<api::tabs::Tab> AppWindowController::CreateTabObject(
+    const extensions::Extension* extension,
     int tab_index) const {
   if (tab_index > 0)
     return nullptr;
@@ -65,38 +73,33 @@ base::DictionaryValue* AppWindowController::CreateTabValue(
   if (!web_contents)
     return nullptr;
 
-  base::DictionaryValue* tab_value = new base::DictionaryValue();
-  tab_value->SetInteger(tabs_constants::kIdKey,
-                        SessionTabHelper::IdForTab(web_contents));
-  tab_value->SetInteger(tabs_constants::kIndexKey, 0);
-  tab_value->SetInteger(
-      tabs_constants::kWindowIdKey,
-      SessionTabHelper::IdForWindowContainingTab(web_contents));
-  tab_value->SetString(tabs_constants::kUrlKey, web_contents->GetURL().spec());
-  tab_value->SetString(
-      tabs_constants::kStatusKey,
-      ExtensionTabUtil::GetTabStatusText(web_contents->IsLoading()));
-  tab_value->SetBoolean(tabs_constants::kActiveKey,
-                        app_window_->GetBaseWindow()->IsActive());
-  tab_value->SetBoolean(tabs_constants::kSelectedKey, true);
-  tab_value->SetBoolean(tabs_constants::kHighlightedKey, true);
-  tab_value->SetBoolean(tabs_constants::kPinnedKey, false);
-  tab_value->SetString(tabs_constants::kTitleKey, web_contents->GetTitle());
-  tab_value->SetBoolean(tabs_constants::kIncognitoKey,
-                        app_window_->GetBaseWindow()->IsActive());
-
+  std::unique_ptr<api::tabs::Tab> tab_object(new api::tabs::Tab);
+  tab_object->id.reset(new int(SessionTabHelper::IdForTab(web_contents)));
+  tab_object->index = 0;
+  tab_object->window_id =
+      SessionTabHelper::IdForWindowContainingTab(web_contents);
+  tab_object->url.reset(new std::string(web_contents->GetURL().spec()));
+  tab_object->status.reset(new std::string(
+      ExtensionTabUtil::GetTabStatusText(web_contents->IsLoading())));
+  tab_object->active = app_window_->GetBaseWindow()->IsActive();
+  tab_object->selected = true;
+  tab_object->highlighted = true;
+  tab_object->pinned = false;
+  tab_object->title.reset(
+      new std::string(base::UTF16ToUTF8(web_contents->GetTitle())));
+  tab_object->incognito = app_window_->GetBaseWindow()->IsActive();
   gfx::Rect bounds = app_window_->GetBaseWindow()->GetBounds();
-  tab_value->SetInteger(tabs_constants::kWidthKey, bounds.width());
-  tab_value->SetInteger(tabs_constants::kHeightKey, bounds.height());
+  tab_object->width.reset(new int(bounds.width()));
+  tab_object->height.reset(new int(bounds.height()));
 
   const Extension* ext = app_window_->GetExtension();
   if (ext) {
     std::string icon_str(chrome::kChromeUIFaviconURL);
     icon_str.append(app_window_->GetExtension()->url().spec());
-    tab_value->SetString(tabs_constants::kFaviconUrlKey, icon_str);
+    tab_object->fav_icon_url.reset(new std::string(icon_str));
   }
 
-  return tab_value;
+  return tab_object;
 }
 
 bool AppWindowController::CanClose(Reason* reason) const {

@@ -5,28 +5,39 @@
 #ifndef COMPONENTS_SUGGESTIONS_SUGGESTIONS_SERVICE_H_
 #define COMPONENTS_SUGGESTIONS_SUGGESTIONS_SERVICE_H_
 
-#include <string>
-#include <vector>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <memory>
+#include <string>
+
 #include "base/callback.h"
-#include "base/cancelable_callback.h"
+#include "base/callback_list.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observer.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/suggestions/image_manager.h"
 #include "components/suggestions/proto/suggestions.pb.h"
-#include "components/suggestions/suggestions_utils.h"
+#include "components/sync/driver/sync_service_observer.h"
 #include "net/url_request/url_fetcher_delegate.h"
-#include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
+
+class OAuth2TokenService;
+class SigninManagerBase;
+
+namespace gfx {
+class Image;
+}  // namespce gfx
 
 namespace net {
 class URLRequestContextGetter;
 }  // namespace net
+
+namespace syncer {
+class SyncService;
+}  // namespace syncer
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -35,69 +46,62 @@ class PrefRegistrySyncable;
 namespace suggestions {
 
 class BlacklistStore;
+class ImageManager;
 class SuggestionsStore;
 
-extern const char kSuggestionsURL[];
-extern const char kSuggestionsBlacklistURLPrefix[];
-extern const char kSuggestionsBlacklistURLParam[];
-extern const char kSuggestionsBlacklistClearURL[];
-extern const int64 kDefaultExpiryUsec;
-
 // An interface to fetch server suggestions asynchronously.
-class SuggestionsService : public KeyedService, public net::URLFetcherDelegate {
+class SuggestionsService : public KeyedService,
+                           public net::URLFetcherDelegate,
+                           public syncer::SyncServiceObserver {
  public:
-  typedef base::Callback<void(const SuggestionsProfile&)> ResponseCallback;
+  using ResponseCallback = base::Callback<void(const SuggestionsProfile&)>;
+  using BitmapCallback = base::Callback<void(const GURL&, const gfx::Image&)>;
 
-  // Class taking ownership of |suggestions_store|, |thumbnail_manager| and
-  // |blacklist_store|.
-  SuggestionsService(
-      net::URLRequestContextGetter* url_request_context,
-      scoped_ptr<SuggestionsStore> suggestions_store,
-      scoped_ptr<ImageManager> thumbnail_manager,
-      scoped_ptr<BlacklistStore> blacklist_store);
+  using ResponseCallbackList =
+      base::CallbackList<void(const SuggestionsProfile&)>;
+
+  SuggestionsService(const SigninManagerBase* signin_manager,
+                     OAuth2TokenService* token_service,
+                     syncer::SyncService* sync_service,
+                     net::URLRequestContextGetter* url_request_context,
+                     std::unique_ptr<SuggestionsStore> suggestions_store,
+                     std::unique_ptr<ImageManager> thumbnail_manager,
+                     std::unique_ptr<BlacklistStore> blacklist_store);
   ~SuggestionsService() override;
 
-  // Request suggestions data, which will be passed to |callback|. |sync_state|
-  // will influence the behavior of this function (see SyncState definition).
-  //
-  // |sync_state| must be specified based on the current state of the system
-  // (see suggestions::GetSyncState). Callers should call this function again if
-  // sync state changes.
-  //
-  // If state allows for a network request, it is initiated unless a pending one
-  // exists, to fill the cache for next time.
-  void FetchSuggestionsData(SyncState sync_state,
-                            ResponseCallback callback);
+  // Initiates a network request for suggestions if sync state allows and there
+  // is no pending request. Returns true iff sync state allowed for a request,
+  // whether a new request was actually sent or not.
+  bool FetchSuggestionsData();
+
+  // Returns the current set of suggestions from the cache.
+  SuggestionsProfile GetSuggestionsDataFromCache() const;
+
+  // Adds a callback that is called when the suggestions are updated.
+  std::unique_ptr<ResponseCallbackList::Subscription> AddCallback(
+      const ResponseCallback& callback) WARN_UNUSED_RESULT;
 
   // Retrieves stored thumbnail for website |url| asynchronously. Calls
   // |callback| with Bitmap pointer if found, and NULL otherwise.
-  void GetPageThumbnail(
-      const GURL& url,
-      const base::Callback<void(const GURL&, const SkBitmap*)>& callback);
+  void GetPageThumbnail(const GURL& url, const BitmapCallback& callback);
 
   // A version of |GetPageThumbnail| that explicitly supplies the download URL
   // for the thumbnail. Replaces any pre-existing thumbnail URL with the
   // supplied one.
-  void GetPageThumbnailWithURL(
-      const GURL& url,
-      const GURL& thumbnail_url,
-      const base::Callback<void(const GURL&, const SkBitmap*)>& callback);
+  void GetPageThumbnailWithURL(const GURL& url,
+                               const GURL& thumbnail_url,
+                               const BitmapCallback& callback);
 
-  // Adds a URL to the blacklist cache, invoking |callback| on success or
-  // |fail_callback| otherwise. The URL will eventually be uploaded to the
-  // server.
-  void BlacklistURL(const GURL& candidate_url,
-                    const ResponseCallback& callback,
-                    const base::Closure& fail_callback);
+  // Adds a URL to the blacklist cache, returning true on success or false on
+  // failure. The URL will eventually be uploaded to the server.
+  bool BlacklistURL(const GURL& candidate_url);
 
-  // Removes a URL from the local blacklist, then invokes |callback|. If the URL
-  // cannot be removed, the |fail_callback| is called.
-  void UndoBlacklistURL(const GURL& url,
-                        const ResponseCallback& callback,
-                        const base::Closure& fail_callback);
+  // Removes a URL from the local blacklist, returning true on success or false
+  // on failure.
+  bool UndoBlacklistURL(const GURL& url);
 
-  // Removes all URLs from the blacklist then invokes |callback|.
-  void ClearBlacklist(const ResponseCallback& callback);
+  // Removes all URLs from the blacklist.
+  void ClearBlacklist();
 
   // Determines which URL a blacklist request was for, irrespective of the
   // request's status. Returns false if |request| is not a blacklist request.
@@ -106,25 +110,55 @@ class SuggestionsService : public KeyedService, public net::URLFetcherDelegate {
   // Register SuggestionsService related prefs in the Profile prefs.
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
-  // Sets default timestamp for suggestions which do not have expiry timestamp.
-  void SetDefaultExpiryTimestamp(SuggestionsProfile* suggestions,
-                                 int64 timestamp_usec);
-
-  // Issue a network request if there isn't already one happening. Visible for
-  // testing.
-  void IssueRequestIfNoneOngoing(const GURL& url);
-
  private:
   friend class SuggestionsServiceTest;
+  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, FetchSuggestionsData);
+  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest,
+                           FetchSuggestionsDataSyncDisabled);
+  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest,
+                           FetchSuggestionsDataNoAccessToken);
+  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest,
+                           IssueRequestIfNoneOngoingError);
+  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest,
+                           IssueRequestIfNoneOngoingResponseNotOK);
   FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, BlacklistURL);
   FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, BlacklistURLRequestFails);
   FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, ClearBlacklist);
   FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, UndoBlacklistURL);
-  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, UndoBlacklistURLFailsHelper);
+  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, GetBlacklistedUrl);
   FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, UpdateBlacklistDelay);
+  FRIEND_TEST_ALL_PREFIXES(SuggestionsServiceTest, CheckDefaultTimeStamps);
+
+  // Helpers to build the various suggestions URLs. These are static members
+  // rather than local functions in the .cc file to make them accessible to
+  // tests.
+  static GURL BuildSuggestionsURL();
+  static std::string BuildSuggestionsBlacklistURLPrefix();
+  static GURL BuildSuggestionsBlacklistURL(const GURL& candidate_url);
+  static GURL BuildSuggestionsBlacklistClearURL();
+
+  // syncer::SyncServiceObserver implementation.
+  void OnStateChanged() override;
+
+  // Sets default timestamp for suggestions which do not have expiry timestamp.
+  void SetDefaultExpiryTimestamp(SuggestionsProfile* suggestions,
+                                 int64_t timestamp_usec);
+
+  // Issues a network request if there isn't already one happening.
+  void IssueRequestIfNoneOngoing(const GURL& url);
+
+  // Issues a network request for suggestions (fetch, blacklist, or clear
+  // blacklist, depending on |url|). |access_token| is used only if OAuth2
+  // authentication is enabled.
+  void IssueSuggestionsRequest(const GURL& url,
+                               const std::string& access_token);
 
   // Creates a request to the suggestions service, properly setting headers.
-  scoped_ptr<net::URLFetcher> CreateSuggestionsRequest(const GURL& url);
+  // If OAuth2 authentication is enabled, |access_token| should be a valid
+  // OAuth2 access token, and will be written into an auth header.
+  std::unique_ptr<net::URLFetcher> CreateSuggestionsRequest(
+      const GURL& url,
+      const std::string& access_token);
 
   // net::URLFetcherDelegate implementation.
   // Called when fetch request completes. Parses the received suggestions data,
@@ -133,13 +167,6 @@ class SuggestionsService : public KeyedService, public net::URLFetcherDelegate {
 
   // KeyedService implementation.
   void Shutdown() override;
-
-  // Loads the cached suggestions (or empty suggestions if no cache) and serves
-  // the requestors with them.
-  void ServeFromCache();
-
-  // Applies the local blacklist to |suggestions|, then serves the requestors.
-  void FilterAndServe(SuggestionsProfile* suggestions);
 
   // Schedules a blacklisting request if the local blacklist isn't empty.
   void ScheduleBlacklistUpload();
@@ -161,37 +188,38 @@ class SuggestionsService : public KeyedService, public net::URLFetcherDelegate {
 
   base::ThreadChecker thread_checker_;
 
+  syncer::SyncService* sync_service_;
+  ScopedObserver<syncer::SyncService, syncer::SyncServiceObserver>
+      sync_service_observer_;
+
   net::URLRequestContextGetter* url_request_context_;
 
   // The cache for the suggestions.
-  scoped_ptr<SuggestionsStore> suggestions_store_;
+  std::unique_ptr<SuggestionsStore> suggestions_store_;
 
   // Used to obtain server thumbnails, if available.
-  scoped_ptr<ImageManager> thumbnail_manager_;
+  std::unique_ptr<ImageManager> thumbnail_manager_;
 
   // The local cache for temporary blacklist, until uploaded to the server.
-  scoped_ptr<BlacklistStore> blacklist_store_;
+  std::unique_ptr<BlacklistStore> blacklist_store_;
 
   // Delay used when scheduling a blacklisting task.
   base::TimeDelta scheduling_delay_;
 
+  // Helper for fetching OAuth2 access tokens.
+  class AccessTokenFetcher;
+  std::unique_ptr<AccessTokenFetcher> token_fetcher_;
+
   // Contains the current suggestions fetch request. Will only have a value
   // while a request is pending, and will be reset by |OnURLFetchComplete| or
   // if cancelled.
-  scoped_ptr<net::URLFetcher> pending_request_;
+  std::unique_ptr<net::URLFetcher> pending_request_;
 
   // The start time of the previous suggestions request. This is used to measure
   // the latency of requests. Initially zero.
   base::TimeTicks last_request_started_time_;
 
-  // The URL to fetch suggestions data from.
-  GURL suggestions_url_;
-
-  // Prefix for building the blacklisting URL.
-  std::string blacklist_url_prefix_;
-
-  // Queue of callbacks. These are flushed when fetch request completes.
-  std::vector<ResponseCallback> waiting_requestors_;
+  ResponseCallbackList callback_list_;
 
   // For callbacks may be run after destruction.
   base::WeakPtrFactory<SuggestionsService> weak_ptr_factory_;

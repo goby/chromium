@@ -5,7 +5,9 @@
 #ifndef GOOGLE_APIS_GCM_ENGINE_GCM_STORE_IMPL_H_
 #define GOOGLE_APIS_GCM_ENGINE_GCM_STORE_IMPL_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "google_apis/gcm/base/gcm_export.h"
@@ -27,7 +29,7 @@ class GCM_EXPORT GCMStoreImpl : public GCMStore {
  public:
   GCMStoreImpl(const base::FilePath& path,
                scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
-               scoped_ptr<Encryptor> encryptor);
+               std::unique_ptr<Encryptor> encryptor);
   ~GCMStoreImpl() override;
 
   // Load the directory and pass the initial state back to caller.
@@ -44,8 +46,8 @@ class GCM_EXPORT GCMStoreImpl : public GCMStore {
   void Destroy(const UpdateCallback& callback) override;
 
   // Sets this device's messaging credentials.
-  void SetDeviceCredentials(uint64 device_android_id,
-                            uint64 device_security_token,
+  void SetDeviceCredentials(uint64_t device_android_id,
+                            uint64_t device_security_token,
                             const UpdateCallback& callback) override;
 
   // Registration info.
@@ -119,7 +121,7 @@ class GCM_EXPORT GCMStoreImpl : public GCMStore {
 
   // Continuation to update the per-app message counts after a load.
   void LoadContinuation(const LoadCallback& callback,
-                        scoped_ptr<LoadResult> result);
+                        std::unique_ptr<LoadResult> result);
 
   // Continuation to update the per-app message counts when adding messages.
   // In particular, if a message fails to add, the message count is decremented.

@@ -10,6 +10,24 @@
 namespace ui {
 namespace {
 
+MotionEvent::ToolType EventPointerTypeToMotionEventToolType(
+    EventPointerType type) {
+  switch (type) {
+    case EventPointerType::POINTER_TYPE_UNKNOWN:
+      return MotionEvent::TOOL_TYPE_UNKNOWN;
+    case EventPointerType::POINTER_TYPE_MOUSE:
+      return MotionEvent::TOOL_TYPE_MOUSE;
+    case EventPointerType::POINTER_TYPE_PEN:
+      return MotionEvent::TOOL_TYPE_STYLUS;
+    case EventPointerType::POINTER_TYPE_TOUCH:
+      return MotionEvent::TOOL_TYPE_FINGER;
+    case EventPointerType::POINTER_TYPE_ERASER:
+      return MotionEvent::TOOL_TYPE_ERASER;
+  }
+
+  return MotionEvent::TOOL_TYPE_UNKNOWN;
+}
+
 PointerProperties GetPointerPropertiesFromTouchEvent(const TouchEvent& touch) {
   PointerProperties pointer_properties;
   pointer_properties.x = touch.x();
@@ -17,11 +35,11 @@ PointerProperties GetPointerPropertiesFromTouchEvent(const TouchEvent& touch) {
   pointer_properties.raw_x = touch.root_location_f().x();
   pointer_properties.raw_y = touch.root_location_f().y();
   pointer_properties.id = touch.touch_id();
-  pointer_properties.pressure = touch.pointer_details().force();
+  pointer_properties.pressure = touch.pointer_details().force;
   pointer_properties.source_device_id = touch.source_device_id();
 
-  pointer_properties.SetAxesAndOrientation(touch.pointer_details().radius_x(),
-                                           touch.pointer_details().radius_y(),
+  pointer_properties.SetAxesAndOrientation(touch.pointer_details().radius_x,
+                                           touch.pointer_details().radius_y,
                                            touch.rotation_angle());
   if (!pointer_properties.touch_major) {
     pointer_properties.touch_major =
@@ -31,8 +49,8 @@ PointerProperties GetPointerPropertiesFromTouchEvent(const TouchEvent& touch) {
     pointer_properties.orientation = 0;
   }
 
-  // TODO(jdduke): Plumb tool type from the platform, crbug.com/404128.
-  pointer_properties.tool_type = MotionEvent::TOOL_TYPE_UNKNOWN;
+  pointer_properties.tool_type = EventPointerTypeToMotionEventToolType(
+      touch.pointer_details().pointer_type);
 
   return pointer_properties;
 }
@@ -48,23 +66,12 @@ bool MotionEventAura::OnTouch(const TouchEvent& touch) {
   bool pointer_id_is_active = index != -1;
 
   if (touch.type() == ET_TOUCH_PRESSED && pointer_id_is_active) {
-    // TODO(tdresser): This should return false (or NOTREACHED()), and
-    // ignore the touch; however, there is at least one case where we
-    // need to allow a touch press from a currently used touch id. See
-    // crbug.com/446852 for details.
-
-    // Cancel the existing touch, before handling the touch press.
-    TouchEvent cancel(ET_TOUCH_CANCELLED, gfx::Point(), touch.touch_id(),
-                      touch.time_stamp());
-    cancel.set_location_f(touch.location_f());
-    cancel.set_root_location_f(touch.location_f());
-    OnTouch(cancel);
-    CleanupRemovedTouchPoints(cancel);
-    DCHECK_EQ(-1, FindPointerIndexOfId(touch.touch_id()));
+    // TODO(tdresser): This should be NOTREACHED() - crbug.com/610423.
+    return false;
   } else if (touch.type() != ET_TOUCH_PRESSED && !pointer_id_is_active) {
-    // We could have an active touch stream transfered to us, resulting in touch
-    // move or touch up events without associated touch down events. Ignore
-    // them.
+    // When a window begins capturing touch events, we could have an active
+    // touch stream transfered to us, resulting in touch move or touch up events
+    // without associated touch down events. Ignore them.
     return false;
   }
 
@@ -95,7 +102,7 @@ bool MotionEventAura::OnTouch(const TouchEvent& touch) {
   UpdateCachedAction(touch);
   set_unique_event_id(touch.unique_event_id());
   set_flags(touch.flags());
-  set_event_time(touch.time_stamp() + base::TimeTicks());
+  set_event_time(touch.time_stamp());
   return true;
 }
 

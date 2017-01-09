@@ -32,55 +32,61 @@
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/GraphicsLayerClient.h"
 #include "platform/graphics/paint/DisplayItemClient.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "web/WebExport.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
 class GraphicsContext;
-class WebPageOverlay;
-class WebViewImpl;
+class WebLocalFrameImpl;
 
-// Manages a layer that is overlaid on a WebView's content.
-// Clients can paint by implementing WebPageOverlay.
-//
-// With Slimming Paint, internal clients can extract a GraphicsContext to add
-// to the PaintController owned by the GraphicsLayer
-class PageOverlay : public GraphicsLayerClient {
-public:
-    class Delegate : public GarbageCollectedFinalized<Delegate> {
-    public:
-        DEFINE_INLINE_VIRTUAL_TRACE() { }
+// Manages a layer that is overlaid on a WebLocalFrame's content.
+class WEB_EXPORT PageOverlay : public GraphicsLayerClient,
+                               public DisplayItemClient {
+ public:
+  class Delegate {
+   public:
+    virtual ~Delegate() {}
 
-        // Paints page overlay contents.
-        virtual void paintPageOverlay(const PageOverlay&, GraphicsContext&, const WebSize& webViewSize) const = 0;
-        virtual ~Delegate() { }
-    };
+    // Paints page overlay contents.
+    virtual void paintPageOverlay(const PageOverlay&,
+                                  GraphicsContext&,
+                                  const WebSize& webViewSize) const = 0;
+  };
 
-    static PassOwnPtr<PageOverlay> create(WebViewImpl*, PageOverlay::Delegate*);
+  static std::unique_ptr<PageOverlay> create(
+      WebLocalFrameImpl*,
+      std::unique_ptr<PageOverlay::Delegate>);
 
-    ~PageOverlay();
+  ~PageOverlay();
 
-    void update();
+  void update();
 
-    GraphicsLayer* graphicsLayer() const { return m_layer.get(); }
-    DisplayItemClient displayItemClient() const { return toDisplayItemClient(this); }
-    String debugName() const { return "PageOverlay"; }
+  GraphicsLayer* graphicsLayer() const { return m_layer.get(); }
 
-    // GraphicsLayerClient implementation
-    IntRect computeInterestRect(const GraphicsLayer*, const IntRect&) const override;
-    void paintContents(const GraphicsLayer*, GraphicsContext&, GraphicsLayerPaintingPhase, const IntRect& interestRect) const override;
-    String debugName(const GraphicsLayer*) const override;
+  // DisplayItemClient methods.
+  String debugName() const final { return "PageOverlay"; }
+  LayoutRect visualRect() const override;
 
-private:
-    PageOverlay(WebViewImpl*, PageOverlay::Delegate*);
+  // GraphicsLayerClient implementation
+  bool needsRepaint(const GraphicsLayer&) const { return true; }
+  IntRect computeInterestRect(const GraphicsLayer*,
+                              const IntRect&) const override;
+  void paintContents(const GraphicsLayer*,
+                     GraphicsContext&,
+                     GraphicsLayerPaintingPhase,
+                     const IntRect& interestRect) const override;
+  String debugName(const GraphicsLayer*) const override;
 
-    WebViewImpl* m_viewImpl;
-    Persistent<PageOverlay::Delegate> m_delegate;
-    OwnPtr<GraphicsLayer> m_layer;
+ private:
+  PageOverlay(WebLocalFrameImpl*, std::unique_ptr<PageOverlay::Delegate>);
+
+  Persistent<WebLocalFrameImpl> m_frameImpl;
+  std::unique_ptr<PageOverlay::Delegate> m_delegate;
+  std::unique_ptr<GraphicsLayer> m_layer;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PageOverlay_h
+#endif  // PageOverlay_h

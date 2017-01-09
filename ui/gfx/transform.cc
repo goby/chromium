@@ -175,8 +175,16 @@ void Transform::Scale3d(SkMScalar x, SkMScalar y, SkMScalar z) {
   matrix_.preScale(x, y, z);
 }
 
+void Transform::Translate(const Vector2dF& offset) {
+  Translate(offset.x(), offset.y());
+}
+
 void Transform::Translate(SkMScalar x, SkMScalar y) {
   matrix_.preTranslate(x, y, 0);
+}
+
+void Transform::Translate3d(const Vector3dF& offset) {
+  Translate3d(offset.x(), offset.y(), offset.z());
 }
 
 void Transform::Translate3d(SkMScalar x, SkMScalar y, SkMScalar z) {
@@ -407,6 +415,11 @@ void Transform::TransformPoint(Point3F* point) const {
   TransformPointInternal(matrix_, point);
 }
 
+void Transform::TransformVector(Vector3dF* vector) const {
+  DCHECK(vector);
+  TransformVectorInternal(matrix_, vector);
+}
+
 bool Transform::TransformPointReverse(Point* point) const {
   DCHECK(point);
 
@@ -520,6 +533,22 @@ void Transform::TransformPointInternal(const SkMatrix44& xform,
   }
 }
 
+void Transform::TransformVectorInternal(const SkMatrix44& xform,
+                                        Vector3dF* vector) const {
+  if (xform.isIdentity())
+    return;
+
+  SkMScalar p[4] = {SkFloatToMScalar(vector->x()),
+                    SkFloatToMScalar(vector->y()),
+                    SkFloatToMScalar(vector->z()), 0};
+
+  xform.mapMScalars(p);
+
+  vector->set_x(p[0]);
+  vector->set_y(p[1]);
+  vector->set_z(p[2]);
+}
+
 void Transform::TransformPointInternal(const SkMatrix44& xform,
                                        Point* point) const {
   if (xform.isIdentity())
@@ -531,6 +560,27 @@ void Transform::TransformPointInternal(const SkMatrix44& xform,
   xform.mapMScalars(p);
 
   point->SetPoint(ToRoundedInt(p[0]), ToRoundedInt(p[1]));
+}
+
+bool Transform::ApproximatelyEqual(const gfx::Transform& transform) const {
+  static const float component_tolerance = 0.1f;
+
+  // We may have a larger discrepancy in the scroll components due to snapping
+  // (floating point error might round the other way).
+  static const float translation_tolerance = 1.f;
+
+  for (int row = 0; row < 4; row++) {
+    for (int col = 0; col < 4; col++) {
+      const float delta =
+          std::abs(matrix().get(row, col) - transform.matrix().get(row, col));
+      const float tolerance =
+          col == 3 && row < 3 ? translation_tolerance : component_tolerance;
+      if (delta > tolerance)
+        return false;
+    }
+  }
+
+  return true;
 }
 
 std::string Transform::ToString() const {

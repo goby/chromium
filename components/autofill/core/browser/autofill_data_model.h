@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_DATA_MODEL_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_DATA_MODEL_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/strings/string16.h"
@@ -12,8 +14,6 @@
 #include "components/autofill/core/browser/form_group.h"
 
 namespace autofill {
-
-class AutofillType;
 
 // This class is an interface for the primary data models that back Autofill.
 // The information in objects of this class is managed by the

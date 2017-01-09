@@ -5,7 +5,8 @@
 #ifndef CONTENT_PUBLIC_BROWSER_DOWNLOAD_MANAGER_DELEGATE_H_
 #define CONTENT_PUBLIC_BROWSER_DOWNLOAD_MANAGER_DELEGATE_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
@@ -51,7 +52,7 @@ typedef base::Callback<void(bool)> DownloadOpenDelayedCallback;
 // Called with the result of CheckForFileExistence().
 typedef base::Callback<void(bool result)> CheckForFileExistenceCallback;
 
-typedef base::Callback<void(uint32)> DownloadIdCallback;
+typedef base::Callback<void(uint32_t)> DownloadIdCallback;
 
 // Browser's download manager: manages all downloads and destination view.
 class CONTENT_EXPORT DownloadManagerDelegate {
@@ -118,6 +119,18 @@ class CONTENT_EXPORT DownloadManagerDelegate {
       const SavePackagePathPickedCallback& callback) {
   }
 
+  // Sanitize a filename that's going to be used for saving a subresource of a
+  // SavePackage.
+  //
+  // If the delegate does nothing, the default filename already populated in
+  // |filename| will be used. Otherwise, the delegate can update |filename| to
+  // the desired filename.
+  //
+  // |filename| contains a basename with an extension, but without a path. This
+  // should be the case on return as well. I.e. |filename| cannot specify a
+  // relative path.
+  virtual void SanitizeSavePackageResourceName(base::FilePath* filename) {}
+
   // Opens the file associated with this download.
   virtual void OpenDownload(DownloadItem* download) {}
 
@@ -129,10 +142,12 @@ class CONTENT_EXPORT DownloadManagerDelegate {
       DownloadItem* download,
       const CheckForFileExistenceCallback& callback) {}
 
-  // Return a GUID string used for identifying the application to the
-  // system AV function for scanning downloaded files. If an empty
-  // or invalid GUID string is returned, no client identification
-  // will be given to the AV function.
+  // Return a GUID string used for identifying the application to the system AV
+  // function for scanning downloaded files. If no GUID is provided or if the
+  // provided GUID is invalid, then the appropriate quarantining will be
+  // performed manually without passing the download to the system AV function.
+  //
+  // This GUID is only used on Windows.
   virtual std::string ApplicationClientIdForFileScanning() const;
 
  protected:

@@ -15,6 +15,7 @@
 FORWARD_DECLARE_TEST(MediaRouterActionUnitTest, IconPressedState);
 
 class MediaRouterAction;
+class MediaRouterActionController;
 
 namespace media_router {
 
@@ -33,11 +34,15 @@ class MediaRouterDialogControllerImpl :
   // Returns nullptr if there is no dialog.
   content::WebContents* GetMediaRouterDialog() const;
 
-  // |action| must always be non-null.
+  // Sets the action to notify when a dialog gets shown or hidden.
   void SetMediaRouterAction(const base::WeakPtr<MediaRouterAction>& action);
 
   // MediaRouterDialogController:
   bool IsShowingMediaRouterDialog() const override;
+
+  void UpdateMaxDialogSize();
+
+  MediaRouterAction* action() { return action_.get(); }
 
  private:
   class DialogWebContentsObserver;
@@ -58,7 +63,7 @@ class MediaRouterDialogControllerImpl :
 
   void PopulateDialog(content::WebContents* media_router_dialog);
 
-  scoped_ptr<DialogWebContentsObserver> dialog_observer_;
+  std::unique_ptr<DialogWebContentsObserver> dialog_observer_;
 
   // True if the controller is waiting for a new media router dialog to be
   // created.
@@ -72,6 +77,12 @@ class MediaRouterDialogControllerImpl :
   // a browser window. The overflow menu's MediaRouterAction is only created
   // when the overflow menu is opened and destroyed when the menu is closed.
   base::WeakPtr<MediaRouterAction> action_;
+
+  // |action_controller_| is responsible for showing and hiding the toolbar
+  // action. It's owned by MediaRouterUIService, which outlives |this|.
+  MediaRouterActionController* action_controller_;
+
+  base::WeakPtrFactory<MediaRouterDialogControllerImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaRouterDialogControllerImpl);
 };

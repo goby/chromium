@@ -6,15 +6,16 @@
 
 #include <cryptohi.h>
 #include <keyhi.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
 #include "base/task_runner_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/ownership/owner_key_util.h"
 #include "crypto/scoped_nss_types.h"
@@ -25,19 +26,19 @@ namespace ownership {
 
 namespace {
 
-using ScopedSGNContext =
-    scoped_ptr<SGNContext,
-               crypto::NSSDestroyer1<SGNContext, SGN_DestroyContext, PR_TRUE>>;
+using ScopedSGNContext = std::unique_ptr<
+    SGNContext,
+    crypto::NSSDestroyer1<SGNContext, SGN_DestroyContext, PR_TRUE>>;
 
-scoped_ptr<em::PolicyFetchResponse> AssembleAndSignPolicy(
-    scoped_ptr<em::PolicyData> policy,
+std::unique_ptr<em::PolicyFetchResponse> AssembleAndSignPolicy(
+    std::unique_ptr<em::PolicyData> policy,
     SECKEYPrivateKey* private_key) {
   // Assemble the policy.
-  scoped_ptr<em::PolicyFetchResponse> policy_response(
+  std::unique_ptr<em::PolicyFetchResponse> policy_response(
       new em::PolicyFetchResponse());
   if (!policy->SerializeToString(policy_response->mutable_policy_data())) {
     LOG(ERROR) << "Failed to encode policy payload.";
-    return scoped_ptr<em::PolicyFetchResponse>(nullptr).Pass();
+    return nullptr;
   }
 
   ScopedSGNContext sign_context(
@@ -50,7 +51,7 @@ scoped_ptr<em::PolicyFetchResponse> AssembleAndSignPolicy(
   SECItem signature_item;
   if (SGN_Begin(sign_context.get()) != SECSuccess ||
       SGN_Update(sign_context.get(),
-                 reinterpret_cast<const uint8*>(
+                 reinterpret_cast<const uint8_t*>(
                      policy_response->policy_data().c_str()),
                  policy_response->policy_data().size()) != SECSuccess ||
       SGN_End(sign_context.get(), &signature_item) != SECSuccess) {
@@ -62,7 +63,7 @@ scoped_ptr<em::PolicyFetchResponse> AssembleAndSignPolicy(
       reinterpret_cast<const char*>(signature_item.data), signature_item.len);
   SECITEM_FreeItem(&signature_item, PR_FALSE);
 
-  return policy_response.Pass();
+  return policy_response;
 }
 
 }  // namepace
@@ -93,8 +94,8 @@ bool OwnerSettingsService::IsOwner() {
 void OwnerSettingsService::IsOwnerAsync(const IsOwnerCallback& callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (private_key_.get()) {
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback, IsOwner()));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, IsOwner()));
   } else {
     pending_is_owner_callbacks_.push_back(callback);
   }
@@ -102,7 +103,7 @@ void OwnerSettingsService::IsOwnerAsync(const IsOwnerCallback& callback) {
 
 bool OwnerSettingsService::AssembleAndSignPolicyAsync(
     base::TaskRunner* task_runner,
-    scoped_ptr<em::PolicyData> policy,
+    std::unique_ptr<em::PolicyData> policy,
     const AssembleAndSignPolicyAsyncCallback& callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!task_runner || !IsOwner())

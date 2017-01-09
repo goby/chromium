@@ -26,14 +26,14 @@ function test()
         dataTreeElement._expandedChildrenLimit = 5;
         dataTreeElement.reveal();
         dataTreeElement.expand();
-        InspectorTest.runAfterPendingDispatches(step2);
+        InspectorTest.deprecatedRunAfterPendingDispatches(step2);
     }
 
     function step2()
     {
         InspectorTest.addResult("=========== Loaded 5 children ===========");
         dumpElementsTree();
-        InspectorTest.addSniffer(WebInspector.ElementsTreeOutline.prototype, "_updateModifiedNodes", step3);
+        InspectorTest.addSniffer(Elements.ElementsTreeOutline.prototype, "_updateModifiedNodes", step3);
         InspectorTest.evaluateInPage("insertNode()");
     }
 
@@ -42,7 +42,7 @@ function test()
         InspectorTest.addResult("=========== Modified children ===========");
         dumpElementsTree();
         dataTreeElement.expandAllButtonElement.button.click();
-        InspectorTest.runAfterPendingDispatches(step4);
+        InspectorTest.deprecatedRunAfterPendingDispatches(step4);
     }
 
     function step4()

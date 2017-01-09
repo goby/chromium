@@ -4,13 +4,14 @@
 
 #include "net/proxy/polling_proxy_config_service.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/threading/worker_pool.h"
 #include "net/proxy/proxy_config.h"
 
@@ -124,9 +125,8 @@ class PollingProxyConfigService::Core
       // If the configuration has changed, notify the observers.
       has_config_ = true;
       last_config_ = config;
-      FOR_EACH_OBSERVER(Observer, observers_,
-                        OnProxyConfigChanged(config,
-                                             ProxyConfigService::CONFIG_VALID));
+      for (auto& observer : observers_)
+        observer.OnProxyConfigChanged(config, ProxyConfigService::CONFIG_VALID);
     }
 
     if (poll_task_queued_)

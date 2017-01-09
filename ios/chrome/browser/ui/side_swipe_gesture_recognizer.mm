@@ -8,12 +8,16 @@
 
 #include "base/logging.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 
 // The absolute maximum swipe angle from |x = y| for a swipe to begin.
 const CGFloat kMaxSwipeYAngle = 65;
-// The distance between touches for a swipe to begin.
-const CGFloat kMinSwipeXThreshold = 4;
+// The minimum distance between touches for a swipe to begin.
+const CGFloat kDefaultMinSwipeXThreshold = 4;
 
 }  // namespace
 
@@ -25,7 +29,16 @@ const CGFloat kMinSwipeXThreshold = 4;
 @synthesize swipeEdge = _swipeEdge;
 @synthesize direction = _direction;
 @synthesize swipeOffset = _swipeOffset;
+@synthesize swipeThreshold = _swipeThreshold;
 @synthesize startPoint = _startPoint;
+
+- (instancetype)initWithTarget:(nullable id)target action:(nullable SEL)action {
+  self = [super initWithTarget:target action:action];
+  if (self) {
+    self.swipeThreshold = kDefaultMinSwipeXThreshold;
+  }
+  return self;
+}
 
 // To quickly avoid interference with other gesture recognizers, fail
 // immediately if the touches aren't at the edge of the touched view.
@@ -38,6 +51,7 @@ const CGFloat kMinSwipeXThreshold = 4;
 
   UITouch* touch = [[event allTouches] anyObject];
   CGPoint location = [touch locationInView:self.view];
+  _startPoint = CGPointZero;
   if (_swipeEdge > 0) {
     if (location.x > _swipeEdge &&
         location.x < CGRectGetMaxX([self.view bounds]) - _swipeEdge) {
@@ -69,6 +83,16 @@ const CGFloat kMinSwipeXThreshold = 4;
     return;
   }
 
+  // In iOS10, sometimes a PanGestureRecognizer will fire a touchesMoved even
+  // after touchesBegan sets its state to |UIGestureRecognizerStateFailed|.
+  // Somehow the state is re-set to UIGestureRecognizerStatePossible, and ends
+  // up in moved.  Checking if |_startPoint| has been set is a secondary way to
+  // catch for failed gestures.
+  if (CGPointEqualToPoint(_startPoint, CGPointZero)) {
+    self.state = UIGestureRecognizerStateFailed;
+    return;
+  }
+
   // Don't swipe at an angle greater than |kMaxSwipeYAngle|.
   UITouch* touch = [[event allTouches] anyObject];
   CGPoint currentPoint = [touch locationInView:self.view];
@@ -77,6 +101,13 @@ const CGFloat kMinSwipeXThreshold = 4;
   CGFloat degrees = std::fabs(std::atan2(dy, dx) * 180 / CGFloat(M_PI));
   if (degrees > kMaxSwipeYAngle) {
     self.state = UIGestureRecognizerStateFailed;
+    return;
+  }
+
+  // On devices that support force presses a -touchesMoved fires when |force|
+  // changes and not the location of the touch. Ignore these events.
+  if (currentPoint.x == _startPoint.x) {
+    self.state = UIGestureRecognizerStatePossible;
     return;
   }
 
@@ -97,8 +128,8 @@ const CGFloat kMinSwipeXThreshold = 4;
     }
   }
 
-  // Begin recognizer after |kMinSwipeXThreshold| distance swiped.
-  if (std::abs(currentPoint.x - _startPoint.x) > kMinSwipeXThreshold) {
+  // Begin recognizer after |self.swipeThreshold| distance swiped.
+  if (std::abs(currentPoint.x - _startPoint.x) > self.swipeThreshold) {
     if (_direction == UISwipeGestureRecognizerDirectionRight) {
       _swipeOffset = currentPoint.x;
     } else {

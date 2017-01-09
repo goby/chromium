@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_CONTENT_SETTINGS_LOCAL_SHARED_OBJECTS_CONTAINER_H_
 #define CHROME_BROWSER_CONTENT_SETTINGS_LOCAL_SHARED_OBJECTS_CONTAINER_H_
 
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "components/content_settings/core/browser/local_shared_objects_counter.h"
 
 class CannedBrowsingDataAppCacheHelper;
 class CannedBrowsingDataChannelIDHelper;
@@ -19,23 +22,26 @@ class CannedBrowsingDataLocalStorageHelper;
 class CannedBrowsingDataServiceWorkerHelper;
 class CannedBrowsingDataCacheStorageHelper;
 class CookiesTreeModel;
+class GURL;
 class Profile;
 
-class LocalSharedObjectsContainer : public LocalSharedObjectsCounter {
+class LocalSharedObjectsContainer {
  public:
   explicit LocalSharedObjectsContainer(Profile* profile);
-  ~LocalSharedObjectsContainer() override;
+  ~LocalSharedObjectsContainer();
 
-  // LocalSharedObjectsCounter:
-  size_t GetObjectCount() const override;
-  size_t GetObjectCountForDomain(const GURL& url) const override;
+  // Returns the number of objects stored in the container.
+  size_t GetObjectCount() const;
+
+  // Returns the number of objects for the given |origin|.
+  size_t GetObjectCountForDomain(const GURL& origin) const;
 
   // Empties the container.
   void Reset();
 
   // Creates a new CookiesTreeModel for all objects in the container,
   // copying each of them.
-  scoped_ptr<CookiesTreeModel> CreateCookiesTreeModel() const;
+  std::unique_ptr<CookiesTreeModel> CreateCookiesTreeModel() const;
 
   CannedBrowsingDataAppCacheHelper* appcaches() const {
     return appcaches_.get();

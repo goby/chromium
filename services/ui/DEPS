@@ -1,0 +1,14 @@
+include_rules = [
+  "+cc",
+  "+ipc",
+  "+mojo/common",
+  "+mojo/converters",
+  "+mojo/public",
+  "+services/catalog/public",
+  "+services/service_manager",
+  "+services/tracing/public",
+  "-services/ui/gpu",
+  "-services/ui/surfaces",
+  "+third_party/skia/include",
+  "+ui",
+]

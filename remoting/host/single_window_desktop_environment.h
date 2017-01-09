@@ -5,6 +5,7 @@
 #ifndef REMOTING_HOST_SINGLE_WINDOW_DESKTOP_ENVIRONMENT_H_
 #define REMOTING_HOST_SINGLE_WINDOW_DESKTOP_ENVIRONMENT_H_
 
+#include "base/macros.h"
 #include "remoting/host/basic_desktop_environment.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_types.h"
 
@@ -17,14 +18,16 @@ class SingleWindowDesktopEnvironmentFactory
  public:
   SingleWindowDesktopEnvironmentFactory(
       scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       webrtc::WindowId window_id);
   ~SingleWindowDesktopEnvironmentFactory() override;
 
   // DesktopEnvironmentFactory interface.
-  scoped_ptr<DesktopEnvironment> Create(
-      base::WeakPtr<ClientSessionControl> client_session_control) override;
+  std::unique_ptr<DesktopEnvironment> Create(
+      base::WeakPtr<ClientSessionControl> client_session_control,
+      const DesktopEnvironmentOptions& options) override;
 
  private:
   webrtc::WindowId window_id_;

@@ -6,29 +6,18 @@
 #define CHROME_BROWSER_UI_VIEWS_TOOLBAR_TOOLBAR_ACTION_VIEW_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_action_view_delegate_views.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "ui/views/animation/ink_drop_host.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/menu_button_listener.h"
+#include "ui/views/controls/menu/menu_model_adapter.h"
 #include "ui/views/drag_controller.h"
 #include "ui/views/view.h"
 
-class ExtensionAction;
-class Profile;
-
-namespace extensions {
-class Extension;
-}
-
-namespace gfx {
-class Image;
-}
-
 namespace views {
 class MenuItemView;
+class MenuModelAdapter;
 class MenuRunner;
 }
 
@@ -39,9 +28,7 @@ class MenuRunner;
 class ToolbarActionView : public views::MenuButton,
                           public ToolbarActionViewDelegateViews,
                           public views::MenuButtonListener,
-                          public views::ContextMenuController,
-                          public content::NotificationObserver,
-                          public views::InkDropHost {
+                          public views::ContextMenuController {
  public:
   // Need DragController here because ToolbarActionView could be
   // dragged/dropped.
@@ -60,9 +47,6 @@ class ToolbarActionView : public views::MenuButton,
     // reference point for a popup when this view isn't visible.
     virtual views::MenuButton* GetOverflowReferenceView() = 0;
 
-    // Notifies the delegate that the mouse entered the view.
-    virtual void OnMouseEnteredToolbarActionView() = 0;
-
    protected:
     ~Delegate() override {}
   };
@@ -71,32 +55,25 @@ class ToolbarActionView : public views::MenuButton,
   using ContextMenuCallback = base::Callback<void(ToolbarActionView*)>;
 
   ToolbarActionView(ToolbarActionViewController* view_controller,
-                    Profile* profile,
                     Delegate* delegate);
   ~ToolbarActionView() override;
 
   // views::MenuButton:
-  void GetAccessibleState(ui::AXViewState* state) override;
-  scoped_ptr<views::LabelButtonBorder> CreateDefaultBorder() const override;
-  void OnMouseEntered(const ui::MouseEvent& event) override;
-  bool ShouldEnterPushedState(const ui::Event& event) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  std::unique_ptr<views::LabelButtonBorder> CreateDefaultBorder()
+      const override;
+  bool IsTriggerableEvent(const ui::Event& event) override;
+  SkColor GetInkDropBaseColor() const override;
+  std::unique_ptr<views::InkDrop> CreateInkDrop() override;
 
   // ToolbarActionViewDelegateViews:
   content::WebContents* GetCurrentWebContents() const override;
   void UpdateState() override;
 
   // views::MenuButtonListener:
-  void OnMenuButtonClicked(views::View* sender,
-                           const gfx::Point& point) override;
-
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
-
-  // views::InkDropHost:
-  void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
-  void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
+  void OnMenuButtonClicked(views::MenuButton* source,
+                           const gfx::Point& point,
+                           const ui::Event* event) override;
 
   ToolbarActionViewController* view_controller() {
     return view_controller_;
@@ -105,12 +82,9 @@ class ToolbarActionView : public views::MenuButton,
   // Returns button icon so it can be accessed during tests.
   gfx::ImageSkia GetIconForTest();
 
-  bool wants_to_run_for_testing() const { return wants_to_run_; }
+  bool IsMenuRunningForTesting() const;
 
-  // Set a callback to be called directly before the context menu is shown.
-  // The toolbar action opening the menu will be passed in.
-  static void set_context_menu_callback_for_testing(
-      ContextMenuCallback* callback);
+  bool wants_to_run_for_testing() const { return wants_to_run_; }
 
   views::MenuItemView* menu_for_testing() { return menu_; }
 
@@ -136,9 +110,6 @@ class ToolbarActionView : public views::MenuButton,
                               const gfx::Point& point,
                               ui::MenuSourceType source_type) override;
 
-  // views::InkDropHost:
-  gfx::Point CalculateInkDropCenter() const override;
-
   // Shows the context menu (if one exists) for the toolbar action.
   void DoShowContextMenu(ui::MenuSourceType source_type);
 
@@ -148,14 +119,14 @@ class ToolbarActionView : public views::MenuButton,
   // Returns true if a menu was closed, false otherwise.
   bool CloseActiveMenuIfNeeded();
 
+  // Callback for MenuModelAdapter.
+  void OnMenuClosed();
+
   // A lock to keep the MenuButton pressed when a menu or popup is visible.
-  scoped_ptr<views::MenuButton::PressedLock> pressed_lock_;
+  std::unique_ptr<views::MenuButton::PressedLock> pressed_lock_;
 
   // The controller for this toolbar action view.
   ToolbarActionViewController* view_controller_;
-
-  // The associated profile.
-  Profile* profile_;
 
   // Delegate that usually represents a container for ToolbarActionView.
   Delegate* delegate_;
@@ -167,21 +138,18 @@ class ToolbarActionView : public views::MenuButton,
   // tab.
   bool wants_to_run_;
 
+  // Responsible for converting the context menu model into |menu_|.
+  std::unique_ptr<views::MenuModelAdapter> menu_adapter_;
+
   // Responsible for running the menu.
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
   // The root MenuItemView for the context menu, or null if no menu is being
   // shown.
   views::MenuItemView* menu_;
 
-  // If non-null, this is the next toolbar action context menu that wants to run
-  // once the current owner (this one) is done.
-  base::Closure followup_context_menu_task_;
-
   // The time the popup was last closed.
   base::TimeTicks popup_closed_time_;
-
-  content::NotificationRegistrar registrar_;
 
   base::WeakPtrFactory<ToolbarActionView> weak_factory_;
 

@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chromecast/media/cma/base/coded_frame_provider.h"
 #include "chromecast/media/cma/base/decoder_buffer_base.h"
@@ -31,7 +31,7 @@ MockFrameConsumer::~MockFrameConsumer() {
 void MockFrameConsumer::Configure(
     const std::vector<bool>& delayed_task_pattern,
     bool last_read_aborted_by_flush,
-    scoped_ptr<FrameGeneratorForTest> frame_generator) {
+    std::unique_ptr<FrameGeneratorForTest> frame_generator) {
   delayed_task_pattern_ = delayed_task_pattern;
   last_read_aborted_by_flush_ = last_read_aborted_by_flush;
   frame_generator_.reset(frame_generator.release());

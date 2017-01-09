@@ -5,18 +5,18 @@
 #ifndef NET_URL_REQUEST_URL_REQUEST_THROTTLER_ENTRY_INTERFACE_H_
 #define NET_URL_REQUEST_URL_REQUEST_THROTTLER_ENTRY_INTERFACE_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 
 namespace net {
 
-class NetworkDelegate;
 class URLRequest;
-class URLRequestThrottlerHeaderInterface;
 
 // Interface provided on entries of the URL request throttler manager.
 class NET_EXPORT URLRequestThrottlerEntryInterface
@@ -41,7 +41,7 @@ class NET_EXPORT URLRequestThrottlerEntryInterface
   // milliseconds. The return value is always positive or 0.
   // Although it is not mandatory, respecting the value returned by this method
   // is helpful to avoid traffic overload.
-  virtual int64 ReserveSendingTimeForNextRequest(
+  virtual int64_t ReserveSendingTimeForNextRequest(
       const base::TimeTicks& earliest_time) = 0;
 
   // Returns the time after which requests are allowed.

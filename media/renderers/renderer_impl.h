@@ -5,11 +5,12 @@
 #ifndef MEDIA_RENDERERS_RENDERER_IMPL_H_
 #define MEDIA_RENDERERS_RENDERER_IMPL_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/cancelable_callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/time/clock.h"
@@ -17,9 +18,11 @@
 #include "base/time/time.h"
 #include "media/base/buffering_state.h"
 #include "media/base/decryptor.h"
+#include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/renderer.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -40,19 +43,15 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   // GetMediaTime() runs on the render main thread because it's part of JS sync
   // API.
   RendererImpl(const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-               scoped_ptr<AudioRenderer> audio_renderer,
-               scoped_ptr<VideoRenderer> video_renderer);
+               std::unique_ptr<AudioRenderer> audio_renderer,
+               std::unique_ptr<VideoRenderer> video_renderer);
 
   ~RendererImpl() final;
 
   // Renderer implementation.
   void Initialize(DemuxerStreamProvider* demuxer_stream_provider,
-                  const PipelineStatusCB& init_cb,
-                  const StatisticsCB& statistics_cb,
-                  const BufferingStateCB& buffering_state_cb,
-                  const base::Closure& ended_cb,
-                  const PipelineStatusCB& error_cb,
-                  const base::Closure& waiting_for_decryption_key_cb) final;
+                  RendererClient* client,
+                  const PipelineStatusCB& init_cb) final;
   void SetCdm(CdmContext* cdm_context,
               const CdmAttachedCB& cdm_attached_cb) final;
   void Flush(const base::Closure& flush_cb) final;
@@ -60,8 +59,10 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   void SetPlaybackRate(double playback_rate) final;
   void SetVolume(float volume) final;
   base::TimeDelta GetMediaTime() final;
-  bool HasAudio() final;
-  bool HasVideo() final;
+
+  void RestartStreamPlayback(DemuxerStream* stream,
+                             bool enabled,
+                             base::TimeDelta time);
 
   // Helper functions for testing purposes. Must be called before Initialize().
   void DisableUnderflowForTesting();
@@ -74,9 +75,12 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   }
 
  private:
+  class RendererClientInternal;
+
   enum State {
     STATE_UNINITIALIZED,
-    STATE_INITIALIZING,
+    STATE_INIT_PENDING_CDM,  // Initialization is waiting for the CDM to be set.
+    STATE_INITIALIZING,      // Initializing audio/video renderers.
     STATE_FLUSHING,
     STATE_PLAYING,
     STATE_ERROR
@@ -85,11 +89,9 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   bool GetWallClockTimes(const std::vector<base::TimeDelta>& media_timestamps,
                          std::vector<base::TimeTicks>* wall_clock_times);
 
-  // Requests that this object notifies when a CDM is ready through the
-  // |cdm_ready_cb| provided.
-  // If |cdm_ready_cb| is null, the existing callback will be fired with
-  // nullptr immediately and reset.
-  void SetCdmReadyCallback(const CdmReadyCB& cdm_ready_cb);
+  bool HasEncryptedStream();
+
+  void FinishInitialization(PipelineStatus status);
 
   // Helper functions and callbacks for Initialize().
   void InitializeAudioRenderer();
@@ -103,8 +105,11 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   void FlushVideoRenderer();
   void OnVideoRendererFlushDone();
 
+  void RestartAudioRenderer(base::TimeDelta time);
+  void RestartVideoRenderer(base::TimeDelta time);
+
   // Callback executed by filters to update statistics.
-  void OnUpdateStatistics(const PipelineStatistics& stats);
+  void OnStatisticsUpdate(const PipelineStatistics& stats);
 
   // Collection of callback methods and helpers for tracking changes in
   // buffering state and transition from paused/underflow states and playing
@@ -115,20 +120,31 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   //     and StartPlayback() should be called
   //   - A non-waiting to waiting transition indicates underflow has occurred
   //     and PausePlayback() should be called
-  void OnBufferingStateChanged(BufferingState* buffering_state,
-                               BufferingState new_buffering_state);
+  void OnBufferingStateChange(DemuxerStream::Type type,
+                              BufferingState new_buffering_state);
+  // Handles the buffering notifications that we might get while an audio or a
+  // video stream is being restarted. In those cases we don't want to report
+  // underflows immediately and instead give decoders a chance to catch up with
+  // currently playing stream. Returns true if the buffering nofication has been
+  // handled and no further processing is necessary, returns false to indicate
+  // that we should fall back to the regular OnBufferingStateChange logic.
+  bool HandleRestartedStreamBufferingChanges(
+      DemuxerStream::Type type,
+      BufferingState new_buffering_state);
   bool WaitingForEnoughData() const;
   void PausePlayback();
   void StartPlayback();
 
   // Callbacks executed when a renderer has ended.
-  void OnAudioRendererEnded();
-  void OnVideoRendererEnded();
+  void OnRendererEnded(DemuxerStream::Type type);
   bool PlaybackHasEnded() const;
   void RunEndedCallbackIfNeeded();
 
   // Callback executed when a runtime error happens.
   void OnError(PipelineStatus error);
+  void OnWaitingForDecryptionKey();
+  void OnVideoNaturalSizeChange(const gfx::Size& size);
+  void OnVideoOpacityChange(bool opaque);
 
   State state_;
 
@@ -136,24 +152,20 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   DemuxerStreamProvider* demuxer_stream_provider_;
-
-  // Permanent callbacks to notify various renderer states/stats.
-  StatisticsCB statistics_cb_;
-  base::Closure ended_cb_;
-  PipelineStatusCB error_cb_;
-  BufferingStateCB buffering_state_cb_;
-  base::Closure waiting_for_decryption_key_cb_;
+  RendererClient* client_;
 
   // Temporary callback used for Initialize() and Flush().
   PipelineStatusCB init_cb_;
   base::Closure flush_cb_;
 
-  scoped_ptr<AudioRenderer> audio_renderer_;
-  scoped_ptr<VideoRenderer> video_renderer_;
+  std::unique_ptr<RendererClientInternal> audio_renderer_client_;
+  std::unique_ptr<RendererClientInternal> video_renderer_client_;
+  std::unique_ptr<AudioRenderer> audio_renderer_;
+  std::unique_ptr<VideoRenderer> video_renderer_;
 
   // Renderer-provided time source used to control playback.
   TimeSource* time_source_;
-  scoped_ptr<WallClockTimeSource> wall_clock_time_source_;
+  std::unique_ptr<WallClockTimeSource> wall_clock_time_source_;
   bool time_ticking_;
   double playback_rate_;
 
@@ -168,24 +180,23 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   bool video_ended_;
 
   CdmContext* cdm_context_;
-
-  // Callback registered by filters (decoder or demuxer) to be informed of a
-  // CDM.
-  // Note: We could have multiple filters registering this callback. One
-  // callback is okay because:
-  // 1, We always initialize filters in sequence.
-  // 2, Filter initialization will not finish until this callback is satisfied.
-  CdmReadyCB cdm_ready_cb_;
+  CdmAttachedCB pending_cdm_attached_cb_;
 
   bool underflow_disabled_for_testing_;
   bool clockless_video_playback_enabled_for_testing_;
 
   // Used to defer underflow for video when audio is present.
-  base::CancelableClosure deferred_underflow_cb_;
+  base::CancelableClosure deferred_video_underflow_cb_;
+
+  // Used to defer underflow for audio when restarting audio playback.
+  base::CancelableClosure deferred_audio_restart_underflow_cb_;
 
   // The amount of time to wait before declaring underflow if the video renderer
   // runs out of data but the audio renderer still has enough.
   base::TimeDelta video_underflow_threshold_;
+
+  bool restarting_audio_ = false;
+  bool restarting_video_ = false;
 
   base::WeakPtr<RendererImpl> weak_this_;
   base::WeakPtrFactory<RendererImpl> weak_factory_;

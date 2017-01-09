@@ -4,10 +4,12 @@
 
 #include "chrome/common/safe_browsing/binary_feature_extractor.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
@@ -36,7 +38,7 @@ bool BinaryFeatureExtractor::ExtractImageFeaturesFromFile(
     ClientDownloadRequest_ImageHeaders* image_headers,
     google::protobuf::RepeatedPtrField<std::string>* signed_data) {
   base::MemoryMappedFile mapped_file;
-  if (!mapped_file.Initialize(file.Pass()))
+  if (!mapped_file.Initialize(std::move(file)))
     return false;
   return ExtractImageFeaturesFromData(mapped_file.data(), mapped_file.length(),
       options, image_headers, signed_data);
@@ -48,8 +50,8 @@ void BinaryFeatureExtractor::ExtractDigest(
   base::File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   if (file.IsValid()) {
     const int kBufferSize = 1 << 12;
-    scoped_ptr<char[]> buf(new char[kBufferSize]);
-    scoped_ptr<crypto::SecureHash> ctx(
+    std::unique_ptr<char[]> buf(new char[kBufferSize]);
+    std::unique_ptr<crypto::SecureHash> ctx(
         crypto::SecureHash::Create(crypto::SecureHash::SHA256));
     int len = 0;
     while (true) {

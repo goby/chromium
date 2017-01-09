@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -16,15 +17,7 @@ namespace base {
 class SequencedTaskRunner;
 }
 
-// TODO(michaelpg): Remove dependency on user_manager.
-namespace user_manager {
-class UserImage;
-}
-
 namespace chromeos {
-
-// TODO(michaelpg): Generalize UserImageLoader for classes like ImageSource.
-class UserImageLoader;
 
 // Data source that reads and decodes an image from the RO file system.
 class ImageSource : public content::URLDataSource {
@@ -36,21 +29,24 @@ class ImageSource : public content::URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& got_data_callback)
       override;
 
   std::string GetMimeType(const std::string& path) const override;
 
  private:
+  // Continuation from StartDataRequest().
+  void StartDataRequestAfterPathExists(
+      const base::FilePath& image_path,
+      const content::URLDataSource::GotDataCallback& got_data_callback,
+      bool path_exists);
+
   // Checks whether we have allowed the image to be loaded.
   bool IsWhitelisted(const std::string& path) const;
 
   // The background task runner on which file I/O and image decoding are done.
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-
-  scoped_refptr<UserImageLoader> image_loader_;
 
   base::WeakPtrFactory<ImageSource> weak_factory_;
 

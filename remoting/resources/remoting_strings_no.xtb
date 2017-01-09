@@ -24,18 +24,19 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="1546934824884762070">Det oppsto en uventet feil. Rapportér dette problemet til utviklerne.</translation>
 <translation id="1619813076098775562">Lukket tilkobling til Cast-enhet.</translation>
 <translation id="1643640058022401035">Hvis du forlater denne siden, avsluttes Chromoting-økten din.</translation>
-<translation id="1646994964686260497">Det finnes ingenting å koble til.</translation>
 <translation id="1654128982815600832">Slår på eksterne tilkoblinger for denne datamaskinen …</translation>
 <translation id="170207782578677537">Kunne ikke registrere denne datamaskinen.</translation>
 <translation id="1704090719919187045">Alternativer for Chromoting-vert</translation>
-<translation id="1738759452976856405">Stopp innspilling</translation>
+<translation id="1730409684442507495">• Forbedret kvalitet på skrivebordsbilder, respons og batteriforbruk.
+• Forbedret respons for klikk-og-dra-handlinger.
+• Forbedringer i flere animerte effekter i brukergrensesnittet.</translation>
 <translation id="174018511426417793">Du har ikke registrert noen datamaskiner. For å aktivere ekstern tilkobling til en datamaskin må du installere Chrome Eksternt skrivebord på maskinen, og klikke på «<ph name="BUTTON_NAME" />».</translation>
 <translation id="1742469581923031760">Kobler til …</translation>
 <translation id="1770394049404108959">Jeg kan ikke åpne appen.</translation>
 <translation id="177096447311351977">Kanal-IP for klienten: <ph name="CLIENT_GAIA_IDENTIFIER" /> ip='<ph name="CLIENT_IP_ADDRESS_AND_PORT" />' host_ip='<ph name="HOST_IP_ADDRESS_AND_PORT" />' channel='<ph name="CHANNEL_TYPE" />' connection='<ph name="CONNECTION_TYPE" />'.</translation>
 <translation id="1779766957982586368">Lukk vindu</translation>
 <translation id="1841799852846221389">Slår av eksterne tilkoblinger for denne datamaskinen …</translation>
-<translation id="189172778771606813">Lukk uttrekksmenyen</translation>
+<translation id="1897488610212723051">Slett</translation>
 <translation id="195619862187186579">Tastaturoppsett</translation>
 <translation id="1996161829609978754">Chrome laster ned installasjonsprogrammet for Chromoting-verten. Når nedlastingen er ferdig, må du kjøre installasjonsprogrammet før du fortsetter.</translation>
 <translation id="2009755455353575666">Tilkobling mislyktes</translation>
@@ -66,7 +67,6 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="2359808026110333948">Fortsett</translation>
 <translation id="2366718077645204424">Kunne ikke nå verten. Dette er sannsynligvis på grunn av innstillingene for nettverket du bruker.</translation>
 <translation id="2370754117186920852"><ph name="OPTIONAL_OFFLINE_REASON" /> Sist pålogget <ph name="RELATIVE_TIMESTAMP" />.</translation>
-<translation id="2498359688066513246">Hjelp og tilbakemelding</translation>
 <translation id="2499160551253595098">Hjelp oss med å forbedre Chrome Eksternt skrivebord ved å gi oss tillatelse til å samle bruksstatistikk og programstopprapporter.</translation>
 <translation id="2512228156274966424">MERK: For å sikre at alle hurtigtastene er tilgjengelige, kan du konfigurere Chrome Eksternt skrivebord til «Åpne som vindu».</translation>
 <translation id="2540992418118313681">Har du lyst til å dele denne datamaskinen slik at en annen bruker kan se og kontrollere den?</translation>
@@ -75,9 +75,7 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="2676780859508944670">Behandler …</translation>
 <translation id="2699970397166997657">Chromoting</translation>
 <translation id="2747641796667576127">Programvareoppdateringer skjer vanligvis automatisk, men kan i noen sjeldne tilfeller mislykkes. Oppdateringen av programvare bør ikke ta mer enn noen få minutter og kan gjøres via ekstern tilgang.</translation>
-<translation id="2813770873348017932">Tilkoblinger til den eksterne datamaskinen er midlertidig blokkert fordi noen prøvde å koble seg til med en ugyldig PIN-kode. Prøv på nytt senere.</translation>
 <translation id="2841013758207633010">Klokkeslett</translation>
-<translation id="2851674870054673688">Når brukeren har skrevet inn koden, starter delingsøkten.</translation>
 <translation id="2851754573186462851">Chromium-appstrømming</translation>
 <translation id="2855866366045322178">uten nett</translation>
 <translation id="2888969873284818612">En nettverksfeil oppsto. Appen blir startet på nytt når enheten din er på nettet igjen.</translation>
@@ -105,6 +103,7 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="337167041784729019">Vis statistikk</translation>
 <translation id="3385242214819933234">Ugyldig vertseier.</translation>
 <translation id="3403830762023901068">Innstillingene tillater ikke at denne datamaskinen deles som vert for Chromoting. Kontakt systemadministratoren for å få hjelp.</translation>
+<translation id="3423542133075182604">Prosess for ekstern sikkerhetsnøkkel</translation>
 <translation id="3581045510967524389">Kunne ikke koble til nettverket. Ssjekk at enheten har nettilkobling.</translation>
 <translation id="3596628256176442606">Med denne tjenesten kan du motta innkommende tilkoblinger fra Chromoting-klienter.</translation>
 <translation id="3606997049964069799">Du er ikke logget på Chromium. Logg på, og prøv på nytt.</translation>
@@ -116,6 +115,7 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 Vert</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
 <translation id="3884839335308961732">Bekreft kontoen og PIN-koden din nedenfor for å tillate tilgang via Chrome Eksternt skrivebord.</translation>
+<translation id="3897092660631435901">Meny</translation>
 <translation id="3905196214175737742">Ugyldig domene for vertseieren.</translation>
 <translation id="3908017899227008678">Forminsk til den passer</translation>
 <translation id="3931191050278863510">Verten stoppet.</translation>
@@ -123,17 +123,15 @@ Vert</translation>
 <translation id="3950820424414687140">Logg på</translation>
 <translation id="3989511127559254552">Før du kan fortsette, må du gi datamaskinen utvidede tilgangstillatelser. Det er bare nødvendig å gjøre dette én gang.</translation>
 <translation id="4006787130661126000">Du må aktivere eksterne tilkoblinger hvis du vil ha tilgang til denne datamaskinen gjennom Chrome Eksternt skrivebord.</translation>
-<translation id="401121182145179743">Du må først konfigurere datamaskinen for ekstern tilgang.</translation>
-<translation id="4028465833180158312">• Oppdateringer av «Material Design»-grensesnittet.
-• Kildereferanser for tredjepartslisenser.
-• Informasjon blir vist for eksterne datamaskiner som ikke er på nettet.</translation>
 <translation id="405887016757208221">Den eksterne datamaskinen kunne ikke initialisere økten. Hvis problemet vedvarer, kan du prøve å konfigurere verten på nytt.</translation>
 <translation id="4068946408131579958">Alle tilkoblinger</translation>
 <translation id="409800995205263688">MERK: I henhold til lokale retningslinjer er tilkobling tillatt bare mellom datamaskiner i nettverket ditt.</translation>
 <translation id="4155497795971509630">Det mangler noen nødvendige komponenter. Kontrollér at du kjører den nyeste versjonen av programvaren, og prøv på nytt.</translation>
 <translation id="4156740505453712750">For å beskytte tilgangen til denne datamaskinen må du velge en PIN-kode bestående av <ph name="BOLD_START" />minst seks tall<ph name="BOLD_END" />. Denne PIN-koden kreves når man kobler til fra en annen posisjon.</translation>
+<translation id="4156741816461781891">Logget på som <ph name="EMAIL_ADDRESS" />.</translation>
 <translation id="4176825807642096119">Tilgangskode</translation>
 <translation id="4207623512727273241">Kjør installasjonsprogrammet før du fortsetter.</translation>
+<translation id="4227991223508142681">Verktøy for vertsidentitetshåndtering</translation>
 <translation id="4240294130679914010">Avinstalleringsprogram for Chromoting-vert</translation>
 <translation id="4277463233460010382">Denne datamaskinen er konfigurer for å la én eller flere klienter koble til uten å skrive inn noen PIN-kode.</translation>
 <translation id="4277736576214464567">Tilgangskoden er ugyldig. Prøv på nytt.</translation>
@@ -152,7 +150,7 @@ Vert</translation>
 <translation id="4573676252416618192">Chrome Eksternt
 skrivebord-vert</translation>
 <translation id="4619978527973181021">Godta og installer</translation>
-<translation id="4647791084836149355">Se Cardboard-visning</translation>
+<translation id="4703302905453407178">En nødvendig komponent har sluttet å fungere. Vennligst rapportér dette problemet til utviklerne.</translation>
 <translation id="4703799847237267011">Chromoting-økten er avsluttet.</translation>
 <translation id="4736223761657662401">Tilkoblingslogg</translation>
 <translation id="4741792197137897469">Autentiseringen mislyktes. Logg på Chrome på nytt.</translation>
@@ -166,18 +164,19 @@ skrivebord-vert</translation>
 <translation id="4918086044614829423">Godta</translation>
 <translation id="492843737083352574">Jeg har problemer med tastaturet eller musen.</translation>
 <translation id="4973800994433240357">Ved å laste ned installasjonsprogrammet for Chromoting-verten samtykker du i Googles <ph name="LINK_BEGIN" />vilkår for bruk<ph name="LINK_END" />.</translation>
+<translation id="4985296110227979402">Du må først konfigurere en datamaskin for ekstern tilgang.</translation>
 <translation id="5064360042339518108"><ph name="HOSTNAME" /> (ikke på nett)</translation>
 <translation id="5070121137485264635">Den eksterne verten krever at du godkjenner via et tredjepartsnettsted. For å fortsette må du gi Chrome Eksternt skrivebord ytterligere tillatelser til å åpne denne adressen:</translation>
+<translation id="507204348399810022">Er du sikker på at du vil deaktivere eksterne forbindelser til <ph name="HOSTNAME" />?</translation>
 <translation id="5156271271724754543">Skriv inn samme PIN-kode i begge feltene.</translation>
-<translation id="5168917394043976756">Åpne uttrekksmenyen</translation>
 <translation id="5170982930780719864">Ugyldig verts-ID.</translation>
 <translation id="518094545883702183">Denne informasjonen brukes bare til å diagnostisere problemet du rapporterer om. Informasjonen er bare tilgjengelig for personer som går gjennom rapporten, og den slettes etter maksimalt 30 dager.</translation>
 <translation id="5222676887888702881">Logg av</translation>
 <translation id="5254120496627797685">Hvis du forlater denne siden, avsluttes Chrome Eksternt skrivebord-økten.</translation>
 <translation id="5308380583665731573">Koble til</translation>
+<translation id="533625276787323658">Det finnes ingenting å koble til</translation>
 <translation id="5363265567587775042">Be brukeren av datamaskinen du vil ha tilgang til, om å klikke på «<ph name="SHARE" />» og gi deg tilgangskoden.</translation>
 <translation id="5379087427956679853">Med Chrome Eksternt skrivebord kan du trygt dele datamaskinen din på nettet. Begge brukerne må installere Chrome Eksternt skrivebord-appen, som er å finne på <ph name="URL" /></translation>
-<translation id="5394895745784982830">For Mac (OS X 10.6 og høyere)</translation>
 <translation id="5397086374758643919">Avinstalleringsprogram for Chrome Eksternt skrivebord-vert</translation>
 <translation id="5419185025274123272">Programmet kunne ikke tilbakestilles. Du kan likevel sende inn en feilrapport.</translation>
 <translation id="544077782045763683">Verten har slått seg av.</translation>
@@ -210,7 +209,6 @@ skrivebord-vert</translation>
 <translation id="6284412385303060032">Verten som kjører på skjermen for konsollpålogging, har blitt avsluttet for å støtte gardinmodus ved å bytte til en vert som kjører i en brukerspesifikk økt.</translation>
 <translation id="629730747756840877">Konto</translation>
 <translation id="6304318647555713317">Klient</translation>
-<translation id="6324708100353784493">Du har slått på Google Cardboard-integreringsmodus. For å bruke denne modusen, sett enheten inn i en Google Cardboard-kompatibel visningsenhet.</translation>
 <translation id="6381670701864002291">Noe annet.</translation>
 <translation id="6398765197997659313">Avslutt fullskjerm</translation>
 <translation id="6441316101718669559">Denne plattformen har ikke støtte for skrivebordsintegrasjon. Du kan fortsatt bruke programmet, men brukeropplevelsen blir redusert.</translation>
@@ -220,10 +218,12 @@ skrivebord-vert</translation>
 <translation id="6542902059648396432">Rapportér et problem</translation>
 <translation id="6550675742724504774">Alternativer</translation>
 <translation id="6570205395680337606">Tilbakestill programmet. Du mister alt arbeid som ikke er lagret.</translation>
+<translation id="6572345186230665992">For Mac (OS X Mavericks 10.9 og nyere)</translation>
 <translation id="6612717000975622067">Send Ctrl-Alt-Del</translation>
 <translation id="6640610550128933069">sist på nettet <ph name="DATE" /></translation>
 <translation id="6668065415969892472">PIN-koden din er oppdatert.</translation>
 <translation id="6681800064886881394">Copyright 2013 Google Inc. Med enerett.</translation>
+<translation id="6705482892455291412">Når de skriver inn koden, blir du bedt om å godta tilkoblingen og begynne delingsøkten.</translation>
 <translation id="6746493157771801606">Tøm logg</translation>
 <translation id="6748108480210050150">Fra</translation>
 <translation id="677755392401385740">Vert startet for brukeren: <ph name="HOST_USERNAME" />.</translation>
@@ -231,11 +231,10 @@ skrivebord-vert</translation>
 <translation id="6930242544192836755">Varighet</translation>
 <translation id="6939719207673461467">Vis/skjul tastaturet.</translation>
 <translation id="6944854424004126054">Gjenopprett vinduet</translation>
-<translation id="6962773374262604195">For Windows (XP og nyere)</translation>
+<translation id="6963936880795878952">Tilkoblinger til den eksterne datamaskinen er midlertidig blokkert fordi noen prøvde å koble seg til med en ugyldig PIN-kode. Prøv på nytt senere.</translation>
 <translation id="6965382102122355670">OK</translation>
 <translation id="6985691951107243942">Er du sikker på at du vil deaktivere eksterne tilkoblinger til <ph name="HOSTNAME" />? Hvis du ombestemmer deg, må du tilbake til datamaskinen for å gjenopprette tilkoblingene.</translation>
 <translation id="6998989275928107238">Til</translation>
-<translation id="7017806586333792422">Start innspilling</translation>
 <translation id="7019153418965365059">Ukjent vertsfeil: <ph name="HOST_OFFLINE_REASON" />.</translation>
 <translation id="701976023053394610">Fjernhjelp</translation>
 <translation id="7038683108611689168">Hjelp oss med å gjøre Chromoting bedre ved å samle inn bruksstatistikk og programstopprapporter.</translation>
@@ -259,9 +258,11 @@ skrivebord-vert</translation>
 <translation id="7836926030608666805">Det mangler noen nødvendige komponenter. Kontrollér at du kjører den nyeste versjonen av Chrome, og prøv på nytt.</translation>
 <translation id="7868137160098754906">Skriv inn PIN-koden for den eksterne datamaskinen.</translation>
 <translation id="7869445566579231750">Du har ikke tillatelse til å kjøre dette programmet.</translation>
+<translation id="7895403300744144251">Sikkerhetsinnstillingene på den eksterne datamaskinen tillater ikke tilkoblinger fra kontoen din.</translation>
 <translation id="7948001860594368197">Skjermalternativer</translation>
 <translation id="7970576581263377361">Autentiseringen mislyktes. Logg på Chromium på nytt.</translation>
 <translation id="7981525049612125370">Den eksterne økten er utløpt.</translation>
+<translation id="8041089156583427627">Send tilbakemelding</translation>
 <translation id="8041721485428375115">Ved å laste ned installasjonsprogrammet for verten for Chrome Eksternt skrivebord samtykker du i Googles <ph name="LINK_BEGIN" />vilkår for bruk<ph name="LINK_END" />.</translation>
 <translation id="8073845705237259513">Hvis du vil bruke Chrome Eksternt skrivebord, må du legge til en Google-konto på enheten din.</translation>
 <translation id="80739703311984697">Den eksterne verten krever at du godkjenner via et tredjepartsnettsted. For å fortsette må du gi Chromoting ytterligere tillatelser til å åpne denne adressen:</translation>
@@ -285,9 +286,11 @@ skrivebord-vert</translation>
 <translation id="8548209692293300397">Du har tidligere logget på som <ph name="USER_NAME" /> (<ph name="USER_EMAIL" />). Hvis du vil ha tilgang til datamaskiner på den kontoen, må du bruke den til å <ph name="LINK_BEGIN" />logge på Chrome<ph name="LINK_END" /> og deretter installere Chrome Eksternt skriverbord på nytt.</translation>
 <translation id="8642984861538780905">Akseptabel</translation>
 <translation id="8712909229180978490">Jeg ser ikke de lagrede filene mine på nettet i Google Disk.</translation>
+<translation id="8743328882720071828">Vil du tillate at <ph name="CLIENT_USERNAME" /> kan se og kontrollere datamaskinen din?</translation>
 <translation id="8759753423332885148">Finn ut mer</translation>
 <translation id="8791202241915690908">Last ned installasjonsprogrammet for Chromoting-verten</translation>
 <translation id="894763922177556086">God</translation>
+<translation id="895780780740011433">For Windows 7 og nyere</translation>
 <translation id="897805526397249209">For å aktivere eksterne tilkoblinger til en annen datamaskin, må du installere Chromoting på maskinen, og klikke på «<ph name="BUTTON_NAME" />».</translation>
 <translation id="8998327464021325874">Kontroller for Chrome Eksternt skrivebord-vert</translation>
 <translation id="9016232822027372900">Koble til likevel</translation>
@@ -297,6 +300,7 @@ skrivebord-vert</translation>
 <translation id="9188433529406846933">Autoriser</translation>
 <translation id="9213184081240281106">Ugyldig vertskonfigurasjon.</translation>
 <translation id="951991426597076286">Avvis</translation>
+<translation id="962733587145768554">Velg «<ph name="SHARE" />» i dialogboksen for tilkoblingen for å fullføre prosessen.</translation>
 <translation id="979100198331752041">Chrome Eksternt skrivebord på <ph name="HOSTNAME" /> er utdatert og må oppdateres.</translation>
 <translation id="985602178874221306">The Chromium Authors</translation>
 <translation id="992215271654996353"><ph name="HOSTNAME" /> (sist på nettet <ph name="DATE_OR_TIME" />)</translation>

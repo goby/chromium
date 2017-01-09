@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_MOUSE_LOCK_CONTROLLER_H_
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_MOUSE_LOCK_CONTROLLER_H_
 
+#include "base/macros.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_controller_base.h"
 #include "components/content_settings/core/common/content_settings.h"
 
@@ -14,9 +15,15 @@ class MouseLockController : public ExclusiveAccessControllerBase {
   explicit MouseLockController(ExclusiveAccessManager* manager);
   ~MouseLockController() override;
 
+  // Returns true if the mouse is locked.
   bool IsMouseLocked() const;
-  bool IsMouseLockSilentlyAccepted() const;
-  bool IsMouseLockRequested() const;
+
+  // Returns true if the mouse was locked and no notification should be
+  // displayed to the user. This is the case when a notice has already been
+  // displayed to the user, and the application voluntarily unlocks, then
+  // re-locks the mouse (a duplicate notification should not be given). See
+  // content::MouseLockDispatcher::LockMouse.
+  bool IsMouseLockedSilently() const;
 
   void RequestToLockMouse(content::WebContents* web_contents,
                           bool user_gesture,
@@ -26,34 +33,38 @@ class MouseLockController : public ExclusiveAccessControllerBase {
   bool HandleUserPressedEscape() override;
 
   void ExitExclusiveAccessToPreviousState() override;
-  bool OnAcceptExclusiveAccessPermission() override;
-  bool OnDenyExclusiveAccessPermission() override;
 
   // Called by Browser::LostMouseLock.
   void LostMouseLock();
 
   void UnlockMouse();
 
+  // If true, does not call into the WebContents to lock the mouse. Just assumes
+  // that it works. This may be necessary when calling
+  // Browser::RequestToLockMouse in tests, because the proper signal will not
+  // have been passed to the RenderViewHost.
+  void set_fake_mouse_lock_for_test(bool value) {
+    fake_mouse_lock_for_test_ = value;
+  }
+
  private:
   enum MouseLockState {
-    MOUSELOCK_NOT_REQUESTED,
-    // The page requests to lock the mouse and the user hasn't responded to the
-    // request.
-    MOUSELOCK_REQUESTED,
-    // Mouse lock has been allowed by the user.
-    MOUSELOCK_ACCEPTED,
-    // Mouse lock has been silently accepted, no notification to user.
-    MOUSELOCK_ACCEPTED_SILENTLY
+    MOUSELOCK_UNLOCKED,
+    // Mouse has been locked.
+    MOUSELOCK_LOCKED,
+    // Mouse has been locked silently, with no notification to user.
+    MOUSELOCK_LOCKED_SILENTLY
   };
 
   void NotifyMouseLockChange();
 
   void ExitExclusiveAccessIfNecessary() override;
   void NotifyTabExclusiveAccessLost() override;
-
-  ContentSetting GetMouseLockSetting(const GURL& url) const;
+  void RecordBubbleReshowsHistogram(int bubble_reshow_count) override;
 
   MouseLockState mouse_lock_state_;
+
+  bool fake_mouse_lock_for_test_;
 
   DISALLOW_COPY_AND_ASSIGN(MouseLockController);
 };

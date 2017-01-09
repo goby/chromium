@@ -5,25 +5,37 @@
 #ifndef REMOTING_CLIENT_AUDIO_PLAYER_H_
 #define REMOTING_CLIENT_AUDIO_PLAYER_H_
 
-#include <list>
+#include <stddef.h>
+#include <stdint.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <list>
+#include <memory>
+
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "remoting/proto/audio.pb.h"
+#include "remoting/protocol/audio_stub.h"
 
 namespace remoting {
 
-class AudioPlayer {
+class AudioPlayer : public protocol::AudioStub {
  public:
-  virtual ~AudioPlayer();
+  // The number of channels in the audio stream (only supporting stereo audio
+  // for now).
+  static const int kChannels = 2;
+  static const int kSampleSizeBytes = 2;
 
-  void ProcessAudioPacket(scoped_ptr<AudioPacket> packet);
+  ~AudioPlayer() override;
+
+  // protocol::AudioStub implementation.
+  void ProcessAudioPacket(std::unique_ptr<AudioPacket> packet,
+                          const base::Closure& done) override;
 
  protected:
   AudioPlayer();
 
   // Return the recommended number of samples to include in a frame.
-  virtual uint32 GetSamplesPerFrame() = 0;
+  virtual uint32_t GetSamplesPerFrame() = 0;
 
   // Resets the audio player and starts playback.
   // Returns true on success.
@@ -31,16 +43,19 @@ class AudioPlayer {
 
   // Function called by the browser when it needs more audio samples.
   static void AudioPlayerCallback(void* samples,
-                                  uint32 buffer_size,
+                                  uint32_t buffer_size,
                                   void* data);
+
+  // Function called by the subclass when it needs more audio samples to fill
+  // its buffer. Will fill the buffer with 0's if no sample is available.
+  void FillWithSamples(void* samples, uint32_t buffer_size);
 
  private:
   friend class AudioPlayerTest;
 
-  typedef std::list<AudioPacket*> AudioPacketQueue;
+  typedef std::list<std::unique_ptr<AudioPacket>> AudioPacketQueue;
 
   void ResetQueue();
-  void FillWithSamples(void* samples, uint32 buffer_size);
 
   AudioPacket::SamplingRate sampling_rate_;
 

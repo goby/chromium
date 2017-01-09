@@ -5,6 +5,7 @@
 #include "components/crash/content/browser/crash_handler_host_linux.h"
 
 #include <errno.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -27,9 +28,11 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "breakpad/src/client/linux/handler/exception_handler.h"
 #include "breakpad/src/client/linux/minidump_writer/linux_dumper.h"
 #include "breakpad/src/client/linux/minidump_writer/minidump_writer.h"
+#include "build/build_config.h"
 #include "components/crash/content/app/breakpad_linux_impl.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -53,9 +56,15 @@ const size_t kControlMsgSize =
 // The length of the regular payload:
 const size_t kCrashContextSize = sizeof(ExceptionHandler::CrashContext);
 
+// Crashing thread might be in "running" state, i.e. after sys_sendmsg() and
+// before sys_read(). Retry 3 times with interval of 100 ms when translating
+// TID.
+const int kNumAttemptsTranslatingTid = 3;
+const int kRetryIntervalTranslatingTidInMs = 100;
+
 // Handles the crash dump and frees the allocated BreakpadInfo struct.
 void CrashDumpTask(CrashHandlerHostLinux* handler,
-                   scoped_ptr<BreakpadInfo> info) {
+                   std::unique_ptr<BreakpadInfo> info) {
   if (handler->IsShuttingDown() && info->upload) {
     base::DeleteFile(base::FilePath(info->filename), false);
 #if defined(ADDRESS_SANITIZER)
@@ -87,9 +96,13 @@ CrashHandlerHostLinux::CrashHandlerHostLinux(const std::string& process_type,
                                              bool upload)
     : process_type_(process_type),
       dumps_path_(dumps_path),
+#if !defined(OS_ANDROID)
       upload_(upload),
+#endif
       shutting_down_(false),
-      worker_pool_token_(BrowserThread::GetBlockingPool()->GetSequenceToken()) {
+      worker_pool_token_(base::SequencedWorkerPool::GetSequenceToken()) {
+  write_dump_file_sequence_checker_.DetachFromSequence();
+
   int fds[2];
   // We use SOCK_SEQPACKET rather than SOCK_DGRAM to prevent the process from
   // sending datagrams to other sockets on the system. The sandbox may prevent
@@ -148,12 +161,12 @@ void CrashHandlerHostLinux::OnFileCanReadWithoutBlocking(int fd) {
   struct msghdr msg = {0};
   struct iovec iov[kCrashIovSize];
 
-  scoped_ptr<char[]> crash_context(new char[kCrashContextSize]);
+  std::unique_ptr<char[]> crash_context(new char[kCrashContextSize]);
 #if defined(ADDRESS_SANITIZER)
-  scoped_ptr<char[]> asan_report(new char[kMaxAsanReportSize + 1]);
+  std::unique_ptr<char[]> asan_report(new char[kMaxAsanReportSize + 1]);
 #endif
 
-  scoped_ptr<CrashKeyStorage> crash_keys(new CrashKeyStorage);
+  std::unique_ptr<CrashKeyStorage> crash_keys(new CrashKeyStorage);
   google_breakpad::SerializedNonAllocatingMap* serialized_crash_keys;
   size_t crash_keys_size = crash_keys->Serialize(
       const_cast<const google_breakpad::SerializedNonAllocatingMap**>(
@@ -276,11 +289,60 @@ void CrashHandlerHostLinux::OnFileCanReadWithoutBlocking(int fd) {
   // but we just check syscall_number through arg3.
   base::StringAppendF(&expected_syscall_data, "%d 0x%x %p 0x1 ",
                       SYS_read, tid_fd, tid_buf_addr);
+
+  FindCrashingThreadAndDump(crashing_pid,
+                            expected_syscall_data,
+                            std::move(crash_context),
+                            std::move(crash_keys),
+#if defined(ADDRESS_SANITIZER)
+                            std::move(asan_report),
+#endif
+                            uptime,
+                            oom_size,
+                            signal_fd.release(),
+                            0);
+}
+
+void CrashHandlerHostLinux::FindCrashingThreadAndDump(
+    pid_t crashing_pid,
+    const std::string& expected_syscall_data,
+    std::unique_ptr<char[]> crash_context,
+    std::unique_ptr<CrashKeyStorage> crash_keys,
+#if defined(ADDRESS_SANITIZER)
+    std::unique_ptr<char[]> asan_report,
+#endif
+    uint64_t uptime,
+    size_t oom_size,
+    int signal_fd,
+    int attempt) {
   bool syscall_supported = false;
-  pid_t crashing_tid =
-      base::FindThreadIDWithSyscall(crashing_pid,
-                                    expected_syscall_data,
-                                    &syscall_supported);
+  pid_t crashing_tid = base::FindThreadIDWithSyscall(
+      crashing_pid, expected_syscall_data, &syscall_supported);
+  ++attempt;
+  if (crashing_tid == -1 && syscall_supported &&
+      attempt <= kNumAttemptsTranslatingTid) {
+    LOG(WARNING) << "Could not translate tid, attempt = " << attempt
+                 << " retry ...";
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE,
+      base::Bind(&CrashHandlerHostLinux::FindCrashingThreadAndDump,
+                 base::Unretained(this),
+                 crashing_pid,
+                 expected_syscall_data,
+                 base::Passed(&crash_context),
+                 base::Passed(&crash_keys),
+#if defined(ADDRESS_SANITIZER)
+                 base::Passed(&asan_report),
+#endif
+                 uptime,
+                 oom_size,
+                 signal_fd,
+                 attempt),
+      base::TimeDelta::FromMilliseconds(kRetryIntervalTranslatingTidInMs));
+    return;
+  }
+
+
   if (crashing_tid == -1) {
     // We didn't find the thread we want. Maybe it didn't reach
     // sys_read() yet or the thread went away.  We'll just take a
@@ -297,7 +359,7 @@ void CrashHandlerHostLinux::OnFileCanReadWithoutBlocking(int fd) {
       reinterpret_cast<ExceptionHandler::CrashContext*>(crash_context.get());
   bad_context->tid = crashing_tid;
 
-  scoped_ptr<BreakpadInfo> info(new BreakpadInfo);
+  std::unique_ptr<BreakpadInfo> info(new BreakpadInfo);
 
   info->fd = -1;
   info->process_type_length = process_type_.length();
@@ -307,7 +369,8 @@ void CrashHandlerHostLinux::OnFileCanReadWithoutBlocking(int fd) {
   process_type_str[info->process_type_length] = '\0';
   info->process_type = process_type_str;
 
-  // Memory released from scoped_ptrs below are also freed in CrashDumpTask().
+  // Memory released from std::unique_ptrs below are also freed in
+  // CrashDumpTask().
   info->crash_keys = crash_keys.release();
 #if defined(ADDRESS_SANITIZER)
   asan_report[kMaxAsanReportSize] = '\0';
@@ -333,15 +396,14 @@ void CrashHandlerHostLinux::OnFileCanReadWithoutBlocking(int fd) {
                  base::Passed(&info),
                  base::Passed(&crash_context),
                  crashing_pid,
-                 signal_fd.release()));
+                 signal_fd));
 }
 
-void CrashHandlerHostLinux::WriteDumpFile(scoped_ptr<BreakpadInfo> info,
-                                          scoped_ptr<char[]> crash_context,
+void CrashHandlerHostLinux::WriteDumpFile(std::unique_ptr<BreakpadInfo> info,
+                                          std::unique_ptr<char[]> crash_context,
                                           pid_t crashing_pid,
                                           int signal_fd) {
-  DCHECK(BrowserThread::GetBlockingPool()->IsRunningSequenceOnCurrentThread(
-      worker_pool_token_));
+  DCHECK(write_dump_file_sequence_checker_.CalledOnValidSequence());
 
   // Set |info->distro| here because base::GetLinuxDistro() needs to run on a
   // blocking thread.
@@ -402,8 +464,9 @@ void CrashHandlerHostLinux::WriteDumpFile(scoped_ptr<BreakpadInfo> info,
                  signal_fd));
 }
 
-void CrashHandlerHostLinux::QueueCrashDumpTask(scoped_ptr<BreakpadInfo> info,
-                                               int signal_fd) {
+void CrashHandlerHostLinux::QueueCrashDumpTask(
+    std::unique_ptr<BreakpadInfo> info,
+    int signal_fd) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   // Send the done signal to the process: it can exit now.

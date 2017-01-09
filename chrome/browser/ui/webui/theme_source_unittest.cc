@@ -2,15 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/theme_source.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/theme_resources.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
-#include "grit/theme_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using content::BrowserThread;
@@ -26,7 +29,10 @@ class WebUISourcesTest : public testing::Test {
   size_t result_data_size() const { return result_data_size_; }
 
   void StartDataRequest(const std::string& source) {
-    theme_source()->StartDataRequest(source, -1, -1, callback_);
+    theme_source()->StartDataRequest(
+        source,
+        content::ResourceRequestInfo::WebContentsGetter(),
+        callback_);
   }
 
   size_t result_data_size_;
@@ -44,7 +50,7 @@ class WebUISourcesTest : public testing::Test {
     profile_.reset();
   }
 
-  void SendResponse(base::RefCountedMemory* data) {
+  void SendResponse(scoped_refptr<base::RefCountedMemory> data) {
     result_data_size_ = data ? data->size() : 0;
   }
 
@@ -53,8 +59,8 @@ class WebUISourcesTest : public testing::Test {
   base::MessageLoop loop_;
   content::TestBrowserThread ui_thread_;
 
-  scoped_ptr<TestingProfile> profile_;
-  scoped_ptr<ThemeSource> theme_source_;
+  std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<ThemeSource> theme_source_;
 };
 
 TEST_F(WebUISourcesTest, ThemeSourceMimeTypes) {
@@ -85,9 +91,11 @@ TEST_F(WebUISourcesTest, ThemeSourceCSS) {
   size_t empty_size = 0;
 
   StartDataRequest("css/new_tab_theme.css");
+  base::RunLoop().RunUntilIdle();
   EXPECT_NE(result_data_size_, empty_size);
 
   StartDataRequest("css/new_tab_theme.css?pie");
+  base::RunLoop().RunUntilIdle();
   EXPECT_NE(result_data_size_, empty_size);
 
 #if !DCHECK_IS_ON()

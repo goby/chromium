@@ -10,6 +10,8 @@ namespace switches {
 
 // Enable compositing individual elements via hardware overlays when
 // permitted by device.
+// Setting the flag to "single-fullscreen" will try to promote a single
+// fullscreen overlay and use it as main framebuffer where possible.
 const char kEnableHardwareOverlays[] = "enable-hardware-overlays";
 
 // Forces tests to produce pixel output when they normally wouldn't.
@@ -17,9 +19,6 @@ const char kEnablePixelOutputInTests[] = "enable-pixel-output-in-tests";
 
 // Disable partial swap which is needed for some OpenGL drivers / emulators.
 const char kUIDisablePartialSwap[] = "ui-disable-partial-swap";
-
-const char kUIEnableCompositorAnimationTimelines[] =
-    "ui-enable-compositor-animation-timelines";
 
 const char kUIEnableRGBA4444Textures[] = "ui-enable-rgba-4444-textures";
 

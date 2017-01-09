@@ -5,9 +5,10 @@
 #ifndef COMPONENTS_INFOBARS_CORE_INFOBAR_H_
 #define COMPONENTS_INFOBARS_CORE_INFOBAR_H_
 
+#include <memory>
 #include <utility>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -40,11 +41,10 @@ class InfoBar : public gfx::AnimationDelegate {
   typedef InfoBar AddedDetails;
   typedef std::pair<InfoBar*, bool> RemovedDetails;
 
-  explicit InfoBar(scoped_ptr<InfoBarDelegate> delegate);
+  explicit InfoBar(std::unique_ptr<InfoBarDelegate> delegate);
   ~InfoBar() override;
 
-  static SkColor GetTopColor(InfoBarDelegate::Type infobar_type);
-  static SkColor GetBottomColor(InfoBarDelegate::Type infobar_type);
+  static SkColor GetBackgroundColor(InfoBarDelegate::Type infobar_type);
 
   InfoBarManager* owner() { return owner_; }
   InfoBarDelegate* delegate() const { return delegate_.get(); }
@@ -120,7 +120,7 @@ class InfoBar : public gfx::AnimationDelegate {
   void MaybeDelete();
 
   InfoBarManager* owner_;
-  scoped_ptr<InfoBarDelegate> delegate_;
+  std::unique_ptr<InfoBarDelegate> delegate_;
   InfoBarContainer* container_;
   gfx::SlideAnimation animation_;
 

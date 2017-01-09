@@ -6,11 +6,15 @@
 
 #include <windows.h>
 #include <psapi.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <winternl.h>
 
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "base/process/memory.h"
 #include "base/sys_info.h"
 
 namespace base {
@@ -27,18 +31,18 @@ typedef NTSTATUS(WINAPI* NTQUERYSYSTEMINFORMATION)(
 
 }  // namespace
 
-SystemMemoryInfoKB::SystemMemoryInfoKB() {
-  total = 0;
-  free = 0;
-  swap_total = 0;
-  swap_free = 0;
-}
+SystemMemoryInfoKB::SystemMemoryInfoKB()
+    : total(0), free(0), swap_total(0), swap_free(0) {}
+
+SystemMemoryInfoKB::SystemMemoryInfoKB(const SystemMemoryInfoKB& other) =
+    default;
 
 ProcessMetrics::~ProcessMetrics() { }
 
 // static
-ProcessMetrics* ProcessMetrics::CreateProcessMetrics(ProcessHandle process) {
-  return new ProcessMetrics(process);
+std::unique_ptr<ProcessMetrics> ProcessMetrics::CreateProcessMetrics(
+    ProcessHandle process) {
+  return WrapUnique(new ProcessMetrics(process));
 }
 
 size_t ProcessMetrics::GetPagefileUsage() const {
@@ -137,6 +141,88 @@ void ProcessMetrics::GetCommittedKBytes(CommittedKBytes* usage) const {
   usage->priv = committed_private / 1024;
 }
 
+namespace {
+
+class WorkingSetInformationBuffer {
+ public:
+  WorkingSetInformationBuffer() {}
+  ~WorkingSetInformationBuffer() { Clear(); }
+
+  bool Reserve(size_t size) {
+    Clear();
+    // Use UncheckedMalloc here because this can be called from the code
+    // that handles low memory condition.
+    return UncheckedMalloc(size, reinterpret_cast<void**>(&buffer_));
+  }
+
+  const PSAPI_WORKING_SET_INFORMATION* operator ->() const { return buffer_; }
+
+  size_t GetPageEntryCount() const { return number_of_entries; }
+
+  // This function is used to get page entries for a process.
+  bool QueryPageEntries(const ProcessHandle& process_) {
+    int retries = 5;
+    number_of_entries = 4096;  // Just a guess.
+
+    for (;;) {
+      size_t buffer_size =
+          sizeof(PSAPI_WORKING_SET_INFORMATION) +
+          (number_of_entries * sizeof(PSAPI_WORKING_SET_BLOCK));
+
+      if (!Reserve(buffer_size))
+        return false;
+
+      // On success, |buffer_| is populated with info about the working set of
+      // |process_|. On ERROR_BAD_LENGTH failure, increase the size of the
+      // buffer and try again.
+      if (QueryWorkingSet(process_, buffer_, buffer_size))
+        break;  // Success
+
+      if (GetLastError() != ERROR_BAD_LENGTH)
+        return false;
+
+      number_of_entries = buffer_->NumberOfEntries;
+
+      // Maybe some entries are being added right now. Increase the buffer to
+      // take that into account. Increasing by 10% should generally be enough,
+      // especially considering the potentially low memory condition during the
+      // call (when called from OomMemoryDetails) and the potentially high
+      // number of entries (300K was observed in crash dumps).
+      number_of_entries *= 1.1;
+
+      if (--retries == 0) {
+        // If we're looping, eventually fail.
+        return false;
+      }
+    }
+
+    // TODO(chengx): Remove the comment and the logic below. It is no longer
+    // needed since we don't have Win2000 support.
+    // On windows 2000 the function returns 1 even when the buffer is too small.
+    // The number of entries that we are going to parse is the minimum between
+    // the size we allocated and the real number of entries.
+    number_of_entries = std::min(number_of_entries,
+                                 static_cast<size_t>(buffer_->NumberOfEntries));
+
+    return true;
+  }
+
+ private:
+  void Clear() {
+    free(buffer_);
+    buffer_ = nullptr;
+  }
+
+  PSAPI_WORKING_SET_INFORMATION* buffer_ = nullptr;
+
+  // Number of page entries.
+  size_t number_of_entries = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(WorkingSetInformationBuffer);
+};
+
+}  // namespace
+
 bool ProcessMetrics::GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const {
   size_t ws_private = 0;
   size_t ws_shareable = 0;
@@ -145,51 +231,12 @@ bool ProcessMetrics::GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const {
   DCHECK(ws_usage);
   memset(ws_usage, 0, sizeof(*ws_usage));
 
-  DWORD number_of_entries = 4096;  // Just a guess.
-  PSAPI_WORKING_SET_INFORMATION* buffer = NULL;
-  int retries = 5;
-  for (;;) {
-    DWORD buffer_size = sizeof(PSAPI_WORKING_SET_INFORMATION) +
-                        (number_of_entries * sizeof(PSAPI_WORKING_SET_BLOCK));
+  WorkingSetInformationBuffer buffer;
+  if (!buffer.QueryPageEntries(process_))
+    return false;
 
-    // if we can't expand the buffer, don't leak the previous
-    // contents or pass a NULL pointer to QueryWorkingSet
-    PSAPI_WORKING_SET_INFORMATION* new_buffer =
-        reinterpret_cast<PSAPI_WORKING_SET_INFORMATION*>(
-            realloc(buffer, buffer_size));
-    if (!new_buffer) {
-      free(buffer);
-      return false;
-    }
-    buffer = new_buffer;
-
-    // Call the function once to get number of items
-    if (QueryWorkingSet(process_, buffer, buffer_size))
-      break;  // Success
-
-    if (GetLastError() != ERROR_BAD_LENGTH) {
-      free(buffer);
-      return false;
-    }
-
-    number_of_entries = static_cast<DWORD>(buffer->NumberOfEntries);
-
-    // Maybe some entries are being added right now. Increase the buffer to
-    // take that into account.
-    number_of_entries = static_cast<DWORD>(number_of_entries * 1.25);
-
-    if (--retries == 0) {
-      free(buffer);  // If we're looping, eventually fail.
-      return false;
-    }
-  }
-
-  // On windows 2000 the function returns 1 even when the buffer is too small.
-  // The number of entries that we are going to parse is the minimum between the
-  // size we allocated and the real number of entries.
-  number_of_entries =
-      std::min(number_of_entries, static_cast<DWORD>(buffer->NumberOfEntries));
-  for (unsigned int i = 0; i < number_of_entries; i++) {
+  size_t num_page_entries = buffer.GetPageEntryCount();
+  for (size_t i = 0; i < num_page_entries; i++) {
     if (buffer->WorkingSetInfo[i].Shared) {
       ws_shareable++;
       if (buffer->WorkingSetInfo[i].ShareCount > 1)
@@ -202,11 +249,32 @@ bool ProcessMetrics::GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const {
   ws_usage->priv = ws_private * PAGESIZE_KB;
   ws_usage->shareable = ws_shareable * PAGESIZE_KB;
   ws_usage->shared = ws_shared * PAGESIZE_KB;
-  free(buffer);
+
   return true;
 }
 
-static uint64 FileTimeToUTC(const FILETIME& ftime) {
+// This function calculates the proportional set size for a process.
+bool ProcessMetrics::GetProportionalSetSizeBytes(uint64_t* pss_bytes) const {
+  double ws_pss = 0.0;
+
+  WorkingSetInformationBuffer buffer;
+  if (!buffer.QueryPageEntries(process_))
+    return false;
+
+  size_t num_page_entries = buffer.GetPageEntryCount();
+  for (size_t i = 0; i < num_page_entries; i++) {
+    if (buffer->WorkingSetInfo[i].Shared &&
+        buffer->WorkingSetInfo[i].ShareCount > 0)
+      ws_pss += 1.0 / buffer->WorkingSetInfo[i].ShareCount;
+    else
+      ws_pss += 1.0;
+  }
+
+  *pss_bytes = static_cast<uint64_t>(ws_pss * GetPageSize());
+  return true;
+}
+
+static uint64_t FileTimeToUTC(const FILETIME& ftime) {
   LARGE_INTEGER li;
   li.LowPart = ftime.dwLowDateTime;
   li.HighPart = ftime.dwHighDateTime;
@@ -226,8 +294,9 @@ double ProcessMetrics::GetCPUUsage() {
     // not yet received the notification.
     return 0;
   }
-  int64 system_time = (FileTimeToUTC(kernel_time) + FileTimeToUTC(user_time)) /
-                        processor_count_;
+  int64_t system_time =
+      (FileTimeToUTC(kernel_time) + FileTimeToUTC(user_time)) /
+      processor_count_;
   TimeTicks time = TimeTicks::Now();
 
   if (last_system_time_ == 0) {
@@ -237,9 +306,9 @@ double ProcessMetrics::GetCPUUsage() {
     return 0;
   }
 
-  int64 system_time_delta = system_time - last_system_time_;
+  int64_t system_time_delta = system_time - last_system_time_;
   // FILETIME is in 100-nanosecond units, so this needs microseconds times 10.
-  int64 time_delta = (time - last_cpu_time_).InMicroseconds() * 10;
+  int64_t time_delta = (time - last_cpu_time_).InMicroseconds() * 10;
   DCHECK_NE(0U, time_delta);
   if (time_delta == 0)
     return 0;
@@ -257,35 +326,8 @@ bool ProcessMetrics::GetIOCounters(IoCounters* io_counters) const {
 
 ProcessMetrics::ProcessMetrics(ProcessHandle process)
     : process_(process),
-      processor_count_(base::SysInfo::NumberOfProcessors()),
-      last_system_time_(0) {
-}
-
-// GetPerformanceInfo is not available on WIN2K.  So we'll
-// load it on-the-fly.
-const wchar_t kPsapiDllName[] = L"psapi.dll";
-typedef BOOL (WINAPI *GetPerformanceInfoFunction) (
-    PPERFORMANCE_INFORMATION pPerformanceInformation,
-    DWORD cb);
-
-// Beware of races if called concurrently from multiple threads.
-static BOOL InternalGetPerformanceInfo(
-    PPERFORMANCE_INFORMATION pPerformanceInformation, DWORD cb) {
-  static GetPerformanceInfoFunction GetPerformanceInfo_func = NULL;
-  if (!GetPerformanceInfo_func) {
-    HMODULE psapi_dll = ::GetModuleHandle(kPsapiDllName);
-    if (psapi_dll)
-      GetPerformanceInfo_func = reinterpret_cast<GetPerformanceInfoFunction>(
-          GetProcAddress(psapi_dll, "GetPerformanceInfo"));
-
-    if (!GetPerformanceInfo_func) {
-      // The function could not be loaded!
-      memset(pPerformanceInformation, 0, cb);
-      return FALSE;
-    }
-  }
-  return GetPerformanceInfo_func(pPerformanceInformation, cb);
-}
+      processor_count_(SysInfo::NumberOfProcessors()),
+      last_system_time_(0) {}
 
 size_t GetSystemCommitCharge() {
   // Get the System Page Size.
@@ -293,7 +335,7 @@ size_t GetSystemCommitCharge() {
   GetSystemInfo(&system_info);
 
   PERFORMANCE_INFORMATION info;
-  if (!InternalGetPerformanceInfo(&info, sizeof(info))) {
+  if (!GetPerformanceInfo(&info, sizeof(info))) {
     DLOG(ERROR) << "Failed to fetch internal performance info.";
     return 0;
   }

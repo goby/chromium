@@ -5,7 +5,9 @@
 #ifndef UI_MESSAGE_CENTER_VIEWS_MESSAGE_VIEW_H_
 #define UI_MESSAGE_CENTER_VIEWS_MESSAGE_VIEW_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -14,15 +16,9 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/notification.h"
-#include "ui/views/controls/button/button.h"
 #include "ui/views/controls/slide_out_view.h"
 
-namespace ui {
-class MenuModel;
-}
-
 namespace views {
-class ImageButton;
 class ImageView;
 class Painter;
 class ScrollView;
@@ -30,14 +26,7 @@ class ScrollView;
 
 namespace message_center {
 
-// Interface that MessageView uses to report clicks and other user actions.
-// Provided by creator of MessageView.
-class MessageViewController {
- public:
-  virtual void ClickOnNotification(const std::string& notification_id) = 0;
-  virtual void RemoveNotification(const std::string& notification_id,
-                                  bool by_user) = 0;
-};
+class MessageCenterController;
 
 // Individual notifications constants.
 const int kPaddingBetweenItems = 10;
@@ -45,16 +34,12 @@ const int kPaddingHorizontal = 18;
 const int kWebNotificationButtonWidth = 32;
 const int kWebNotificationIconSize = 40;
 
-// An base class for a notification entry. Contains background, close button
-// and other elements shared by derived notification views.
-class MESSAGE_CENTER_EXPORT MessageView : public views::SlideOutView,
-                                          public views::ButtonListener {
+// An base class for a notification entry. Contains background and other
+// elements shared by derived notification views.
+class MESSAGE_CENTER_EXPORT MessageView : public views::SlideOutView {
  public:
-  MessageView(MessageViewController* controller,
-              const std::string& notification_id,
-              const NotifierId& notifier_id,
-              const gfx::ImageSkia& small_image,
-              const base::string16& display_source);
+  MessageView(MessageCenterController* controller,
+              const Notification& notification);
   ~MessageView() override;
 
   // Updates this view with the new data contained in the notification.
@@ -66,15 +51,12 @@ class MESSAGE_CENTER_EXPORT MessageView : public views::SlideOutView,
   // Creates a shadow around the notification.
   void CreateShadowBorder();
 
-  bool IsCloseButtonFocused();
-  void RequestFocusOnCloseButton();
-
-  void set_accessible_name(const base::string16& accessible_name) {
-    accessible_name_ = accessible_name;
-  }
+  virtual bool IsCloseButtonFocused() const = 0;
+  virtual void RequestFocusOnCloseButton() = 0;
+  virtual bool IsPinned() const = 0;
 
   // Overridden from views::View:
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
   bool OnKeyReleased(const ui::KeyEvent& event) override;
@@ -86,40 +68,46 @@ class MESSAGE_CENTER_EXPORT MessageView : public views::SlideOutView,
   // Overridden from ui::EventHandler:
   void OnGestureEvent(ui::GestureEvent* event) override;
 
-  // Overridden from ButtonListener:
-  void ButtonPressed(views::Button* sender, const ui::Event& event) override;
-
   void set_scroller(views::ScrollView* scroller) { scroller_ = scroller; }
   std::string notification_id() { return notification_id_; }
   NotifierId notifier_id() { return notifier_id_; }
   const base::string16& display_source() const { return display_source_; }
 
+  void set_controller(MessageCenterController* controller) {
+    controller_ = controller;
+  }
+
  protected:
   // Overridden from views::SlideOutView:
   void OnSlideOut() override;
 
+  // Creates and add close button to view hierarchy when necessary. Derived
+  // classes should call this after its view hierarchy is populated to ensure
+  // it is on top of other views.
+  void CreateOrUpdateCloseButtonView(const Notification& notification);
+
+  // Changes the background color being used by |background_view_| and schedules
+  // a paint.
+  virtual void SetDrawBackgroundAsActive(bool active);
+
+  views::View* background_view() { return background_view_; }
   views::ImageView* small_image() { return small_image_view_.get(); }
-  views::ImageButton* close_button() { return close_button_.get(); }
   views::ScrollView* scroller() { return scroller_; }
+  MessageCenterController* controller() { return controller_; }
 
  private:
-  MessageViewController* controller_;
+  MessageCenterController* controller_;  // Weak, lives longer then views.
   std::string notification_id_;
   NotifierId notifier_id_;
-  views::View* background_view_;  // Owned by views hierarchy.
-  scoped_ptr<views::ImageButton> close_button_;
-  scoped_ptr<views::ImageView> small_image_view_;
-  views::ScrollView* scroller_;
+  views::View* background_view_ = nullptr;  // Owned by views hierarchy.
+  std::unique_ptr<views::ImageView> small_image_view_;
+  views::ScrollView* scroller_ = nullptr;
 
   base::string16 accessible_name_;
 
   base::string16 display_source_;
 
-  scoped_ptr<views::Painter> focus_painter_;
-
-  // Changes the background color being used by |background_view_| and schedules
-  // a paint.
-  void SetDrawBackgroundAsActive(bool active);
+  std::unique_ptr<views::Painter> focus_painter_;
 
   DISALLOW_COPY_AND_ASSIGN(MessageView);
 };

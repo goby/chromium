@@ -6,6 +6,7 @@
 #define CC_BASE_DELAYED_UNIQUE_NOTIFIER_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/base/cc_export.h"
 
@@ -45,6 +46,8 @@ class CC_EXPORT DelayedUniqueNotifier {
   // Returns true if a notification is currently scheduled to run.
   bool HasPendingNotification() const;
 
+  base::TimeDelta delay() const { return delay_; }
+
  protected:
   // Virtual for testing.
   virtual base::TimeTicks Now() const;
@@ -52,9 +55,13 @@ class CC_EXPORT DelayedUniqueNotifier {
  private:
   void NotifyIfTime();
 
-  base::SequencedTaskRunner* task_runner_;
-  base::Closure closure_;
-  base::TimeDelta delay_;
+  base::SequencedTaskRunner* const task_runner_;
+  const base::Closure closure_;
+  const base::TimeDelta delay_;
+
+  // Lock should be held before modifying |next_notification_time_| or
+  // |notification_pending_|.
+  mutable base::Lock lock_;
   base::TimeTicks next_notification_time_;
   bool notification_pending_;
 

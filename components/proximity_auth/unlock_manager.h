@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "components/proximity_auth/messenger_observer.h"
 #include "components/proximity_auth/proximity_auth_system.h"
 #include "components/proximity_auth/remote_device_life_cycle.h"
@@ -37,12 +38,7 @@ class UnlockManager : public MessengerObserver,
  public:
   // The |proximity_auth_client| is not owned and should outlive the constructed
   // unlock manager.
-  // TODO(isherman): Rather than passing a single ProximityMonitor instance, we
-  // should pass a factory, as the UnlockManager should create and destroy
-  // ProximityMonitors as needed.  Currently, the expectations are misaligned
-  // between the ProximityMonitor and the UnlockManager classes.
   UnlockManager(ProximityAuthSystem::ScreenlockType screenlock_type,
-                scoped_ptr<ProximityMonitor> proximity_monitor,
                 ProximityAuthClient* proximity_auth_client);
   ~UnlockManager() override;
 
@@ -62,6 +58,12 @@ class UnlockManager : public MessengerObserver,
   // |auth_type|.
   // Exposed for testing.
   void OnAuthAttempted(ScreenlockBridge::LockHandler::AuthType auth_type);
+
+ protected:
+  // Creates a ProximityMonitor instance for the given |remote_device|.
+  // Exposed for testing.
+  virtual std::unique_ptr<ProximityMonitor> CreateProximityMonitor(
+      const cryptauth::RemoteDevice& remote_device);
 
  private:
   // The possible lock screen states for the remote device.
@@ -84,7 +86,7 @@ class UnlockManager : public MessengerObserver,
       ScreenlockBridge::LockHandler::ScreenType screen_type) override;
   void OnScreenDidUnlock(
       ScreenlockBridge::LockHandler::ScreenType screen_type) override;
-  void OnFocusedUserChanged(const std::string& user_id) override;
+  void OnFocusedUserChanged(const AccountId& account_id) override;
 
   // Called when the screenlock state changes.
   void OnScreenLockedOrUnlocked(bool is_locked);
@@ -144,7 +146,7 @@ class UnlockManager : public MessengerObserver,
 
   // Whether the user is present at the remote device. Unset if no remote status
   // update has yet been received.
-  scoped_ptr<RemoteScreenlockState> remote_screenlock_state_;
+  std::unique_ptr<RemoteScreenlockState> remote_screenlock_state_;
 
   // Controls the proximity auth flow logic for a remote device. Not owned, and
   // expcted to outlive |this| instance.
@@ -152,7 +154,7 @@ class UnlockManager : public MessengerObserver,
 
   // Tracks whether the remote device is currently in close enough proximity to
   // the local device to allow unlocking.
-  scoped_ptr<ProximityMonitor> proximity_monitor_;
+  std::unique_ptr<ProximityMonitor> proximity_monitor_;
 
   // Used to call into the embedder. Expected to outlive |this| instance.
   ProximityAuthClient* proximity_auth_client_;
@@ -173,7 +175,7 @@ class UnlockManager : public MessengerObserver,
 
   // The sign-in secret received from the remote device by decrypting the
   // sign-in challenge.
-  scoped_ptr<std::string> sign_in_secret_;
+  std::unique_ptr<std::string> sign_in_secret_;
 
   // The state of the current screen lock UI.
   ScreenlockState screenlock_state_;

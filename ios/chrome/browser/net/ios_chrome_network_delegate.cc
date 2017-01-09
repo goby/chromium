@@ -12,20 +12,18 @@
 #include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_member.h"
-#include "base/prefs/pref_service.h"
 #include "base/profiler/scoped_tracker.h"
-#include "components/domain_reliability/monitor.h"
+#include "components/prefs/pref_member.h"
+#include "components/prefs/pref_service.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/web/public/web_thread.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/cookies/cookie_options.h"
 #include "net/http/http_status_code.h"
-#include "net/log/net_log.h"
 #include "net/url_request/url_request.h"
 
 namespace {
@@ -52,15 +50,15 @@ void ReportInvalidReferrerSend(const GURL& target_url,
 
 // Record network errors that HTTP requests complete with, including OK and
 // ABORTED.
-void RecordNetworkErrorHistograms(const net::URLRequest* request) {
+void RecordNetworkErrorHistograms(const net::URLRequest* request,
+                                  int net_error) {
   if (request->url().SchemeIs("http")) {
     UMA_HISTOGRAM_SPARSE_SLOWLY("Net.HttpRequestCompletionErrorCodes",
-                                std::abs(request->status().error()));
+                                std::abs(net_error));
 
-    if (request->load_flags() & net::LOAD_MAIN_FRAME) {
+    if (request->load_flags() & net::LOAD_MAIN_FRAME_DEPRECATED) {
       UMA_HISTOGRAM_SPARSE_SLOWLY(
-          "Net.HttpRequestCompletionErrorCodes.MainFrame",
-          std::abs(request->status().error()));
+          "Net.HttpRequestCompletionErrorCodes.MainFrame", std::abs(net_error));
     }
   }
 }
@@ -68,9 +66,7 @@ void RecordNetworkErrorHistograms(const net::URLRequest* request) {
 }  // namespace
 
 IOSChromeNetworkDelegate::IOSChromeNetworkDelegate()
-    : enable_do_not_track_(nullptr),
-      domain_reliability_monitor_(nullptr) {
-}
+    : enable_do_not_track_(nullptr) {}
 
 IOSChromeNetworkDelegate::~IOSChromeNetworkDelegate() {}
 
@@ -78,9 +74,9 @@ IOSChromeNetworkDelegate::~IOSChromeNetworkDelegate() {}
 void IOSChromeNetworkDelegate::InitializePrefsOnUIThread(
     BooleanPrefMember* enable_do_not_track,
     PrefService* pref_service) {
-  DCHECK_CURRENTLY_ON_WEB_THREAD(web::WebThread::UI);
+  DCHECK_CURRENTLY_ON(web::WebThread::UI);
   if (enable_do_not_track) {
-    enable_do_not_track->Init(ios::prefs::kEnableDoNotTrack, pref_service);
+    enable_do_not_track->Init(prefs::kEnableDoNotTrack, pref_service);
     enable_do_not_track->MoveToThread(
         web::WebThread::GetTaskRunnerForThread(web::WebThread::IO));
   }
@@ -111,17 +107,10 @@ int IOSChromeNetworkDelegate::OnBeforeURLRequest(
   return net::OK;
 }
 
-void IOSChromeNetworkDelegate::OnBeforeRedirect(net::URLRequest* request,
-                                                const GURL& new_location) {
-  if (domain_reliability_monitor_)
-    domain_reliability_monitor_->OnBeforeRedirect(request);
-}
-
 void IOSChromeNetworkDelegate::OnCompleted(net::URLRequest* request,
-                                           bool started) {
-  RecordNetworkErrorHistograms(request);
-  if (domain_reliability_monitor_)
-    domain_reliability_monitor_->OnCompleted(request, started);
+                                           bool started,
+                                           int net_error) {
+  RecordNetworkErrorHistograms(request, net_error);
 }
 
 net::NetworkDelegate::AuthRequiredResponse

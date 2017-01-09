@@ -2,18 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media_galleries/fileapi/iapps_finder_impl.h"
+
+#include <memory>
+
 #include "base/base64.h"
 #include "base/base_paths_win.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_path_override.h"
-#include "chrome/browser/media_galleries/fileapi/iapps_finder_impl.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
 
@@ -49,19 +52,15 @@ class ITunesFinderWinTest : public InProcessBrowserTest {
     InProcessBrowserTest::SetUp();
   }
 
-  const base::FilePath& app_data_dir() {
-    return app_data_dir_.path();
-  }
+  const base::FilePath& app_data_dir() { return app_data_dir_.GetPath(); }
 
-  const base::FilePath& music_dir() {
-    return music_dir_.path();
-  }
+  const base::FilePath& music_dir() { return music_dir_.GetPath(); }
 
   void WritePrefFile(const std::string& data) {
     base::FilePath pref_dir =
         app_data_dir().AppendASCII("Apple Computer").AppendASCII("iTunes");
     ASSERT_TRUE(base::CreateDirectory(pref_dir));
-    ASSERT_EQ(data.size(),
+    ASSERT_EQ(static_cast<int>(data.size()),
               base::WriteFile(pref_dir.AppendASCII("iTunesPrefs.xml"),
                               data.data(), data.size()));
   }
@@ -97,8 +96,8 @@ class ITunesFinderWinTest : public InProcessBrowserTest {
     quit_closure.Run();
   }
 
-  scoped_ptr<base::ScopedPathOverride> app_data_dir_override_;
-  scoped_ptr<base::ScopedPathOverride> music_dir_override_;
+  std::unique_ptr<base::ScopedPathOverride> app_data_dir_override_;
+  std::unique_ptr<base::ScopedPathOverride> music_dir_override_;
   base::ScopedTempDir app_data_dir_;
   base::ScopedTempDir music_dir_;
 

@@ -5,6 +5,7 @@
 #ifndef UI_ACCESSIBILITY_PLATFORM_AX_PLATFORM_NODE_BASE_H_
 #define UI_ACCESSIBILITY_PLATFORM_AX_PLATFORM_NODE_BASE_H_
 
+#include "base/macros.h"
 #include "ui/accessibility/ax_enums.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/gfx/geometry/rect.h"
@@ -72,7 +73,7 @@ class AXPlatformNodeBase : public AXPlatformNode {
   static AXPlatformNodeBase* FromNativeViewAccessible(
       gfx::NativeViewAccessible accessible);
 
-
+  virtual void Dispose();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AXPlatformNodeBase);

@@ -5,28 +5,26 @@
 #ifndef CHROME_BROWSER_CHROMEOS_APP_MODE_KIOSK_APP_MANAGER_H_
 #define CHROME_BROWSER_CHROMEOS_APP_MODE_KIOSK_APP_MANAGER_H_
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/time/time.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_data_delegate.h"
 #include "chrome/browser/chromeos/extensions/external_cache.h"
-#include "chrome/browser/chromeos/policy/enterprise_install_attributes.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chrome/browser/chromeos/settings/install_attributes.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "ui/gfx/image/image_skia.h"
 
+class GURL;
 class PrefRegistrySimple;
 class Profile;
-
-namespace base {
-class RefCountedString;
-}
 
 namespace extensions {
 class Extension;
@@ -66,12 +64,14 @@ class KioskAppManager : public KioskAppDataDelegate,
         bool is_extension_pending,
         bool was_auto_launched_with_zero_delay);
     App();
+    App(const App& other);
     ~App();
 
     std::string app_id;
-    std::string user_id;
+    AccountId account_id;
     std::string name;
     gfx::ImageSkia icon;
+    std::string required_platform_version;
     bool is_loading;
     bool was_auto_launched_with_zero_delay;
   };
@@ -108,6 +108,8 @@ class KioskAppManager : public KioskAppDataDelegate,
   // Removes cryptohomes which could not be removed during the previous session.
   static void RemoveObsoleteCryptohomes();
 
+  static bool IsConsumerKioskEnabled();
+
   // Initiates reading of consumer kiosk mode auto-launch status.
   void GetConsumerKioskAutoLaunchStatus(
       const GetConsumerKioskAutoLaunchStatusCallback& callback);
@@ -135,6 +137,10 @@ class KioskAppManager : public KioskAppDataDelegate,
 
   // Enable auto launch setter.
   void SetEnableAutoLaunch(bool value);
+
+  // Returns the cached required platform version of the auto launch with
+  // zero delay kiosk app.
+  std::string GetAutoLaunchAppRequiredPlatformVersion() const;
 
   // Adds/removes a kiosk app by id. When removed, all locally cached data
   // will be removed as well.
@@ -211,10 +217,12 @@ class KioskAppManager : public KioskAppDataDelegate,
       const std::string& version,
       const ExternalCache::PutExternalExtensionCallback& callback);
 
-  bool external_loader_created() const { return external_loader_created_; }
-  bool secondary_app_external_loader_created() const {
-    return secondary_app_external_loader_created_;
-  }
+  // Whether the current platform is compliant with the given required
+  // platform version.
+  bool IsPlatformCompliant(const std::string& required_platform_version) const;
+
+  // Whether the platform is compliant for the given app.
+  bool IsPlatformCompliantWithApp(const extensions::Extension* app) const;
 
   // Notifies the KioskAppManager that a given app was auto-launched
   // automatically with no delay on startup. Certain privacy-sensitive
@@ -225,7 +233,18 @@ class KioskAppManager : public KioskAppDataDelegate,
   // Initialize |app_session_|.
   void InitSession(Profile* profile, const std::string& app_id);
 
+  // Adds an app with the given meta data directly and skips meta data fetching
+  // for test.
+  void AddAppForTest(const std::string& app_id,
+                     const AccountId& account_id,
+                     const GURL& update_url,
+                     const std::string& required_platform_version);
+
   AppSession* app_session() { return app_session_.get(); }
+  bool external_loader_created() const { return external_loader_created_; }
+  bool secondary_app_external_loader_created() const {
+    return secondary_app_external_loader_created_;
+  }
 
  private:
   friend struct base::DefaultLazyInstanceTraits<KioskAppManager>;
@@ -254,6 +273,13 @@ class KioskAppManager : public KioskAppDataDelegate,
   // Updates app data |apps_| based on CrosSettings.
   void UpdateAppData();
 
+  // Clear cached data and crx of the removed apps.
+  void ClearRemovedApps(
+      const std::map<std::string, std::unique_ptr<KioskAppData>>& old_apps);
+
+  // Updates the prefs of |external_cache_| from |apps_|.
+  void UpdateExternalCachePrefs();
+
   // KioskAppDataDelegate overrides:
   void GetKioskAppIconCacheDir(base::FilePath* cache_dir) override;
   void OnKioskAppDataChanged(const std::string& app_id) override;
@@ -266,13 +292,12 @@ class KioskAppManager : public KioskAppDataDelegate,
       const std::string& id,
       extensions::ExtensionDownloaderDelegate::Error error) override;
 
-  // Callback for EnterpriseInstallAttributes::LockDevice() during
+  // Callback for InstallAttributes::LockDevice() during
   // EnableConsumerModeKiosk() call.
-  void OnLockDevice(
-      const EnableKioskAutoLaunchCallback& callback,
-      policy::EnterpriseInstallAttributes::LockResult result);
+  void OnLockDevice(const EnableKioskAutoLaunchCallback& callback,
+                    InstallAttributes::LockResult result);
 
-  // Callback for EnterpriseInstallAttributes::ReadImmutableAttributes() during
+  // Callback for InstallAttributes::ReadImmutableAttributes() during
   // GetConsumerKioskModeStatus() call.
   void OnReadImmutableAttributes(
       const GetConsumerKioskAutoLaunchStatusCallback& callback);
@@ -289,21 +314,24 @@ class KioskAppManager : public KioskAppDataDelegate,
   void GetCrxCacheDir(base::FilePath* cache_dir);
   void GetCrxUnpackDir(base::FilePath* unpack_dir);
 
+  // Returns the auto launch delay.
+  base::TimeDelta GetAutoLaunchDelay() const;
+
   // True if machine ownership is already established.
   bool ownership_established_;
-  ScopedVector<KioskAppData> apps_;
+  std::vector<std::unique_ptr<KioskAppData>> apps_;
   std::string auto_launch_app_id_;
   std::string currently_auto_launched_with_zero_delay_app_;
   base::ObserverList<KioskAppManagerObserver, true> observers_;
 
-  scoped_ptr<CrosSettings::ObserverSubscription>
+  std::unique_ptr<CrosSettings::ObserverSubscription>
       local_accounts_subscription_;
-  scoped_ptr<CrosSettings::ObserverSubscription>
+  std::unique_ptr<CrosSettings::ObserverSubscription>
       local_account_auto_login_id_subscription_;
 
-  scoped_ptr<ExternalCache> external_cache_;
+  std::unique_ptr<ExternalCache> external_cache_;
 
-  scoped_ptr<KioskExternalUpdater> usb_stick_updater_;
+  std::unique_ptr<KioskExternalUpdater> usb_stick_updater_;
 
   // The extension external loader for deploying primary app.
   bool external_loader_created_;
@@ -313,7 +341,7 @@ class KioskAppManager : public KioskAppDataDelegate,
   bool secondary_app_external_loader_created_;
   base::WeakPtr<KioskAppExternalLoader> secondary_app_external_loader_;
 
-  scoped_ptr<AppSession> app_session_;
+  std::unique_ptr<AppSession> app_session_;
 
   DISALLOW_COPY_AND_ASSIGN(KioskAppManager);
 };

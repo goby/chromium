@@ -2,19 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "web/WebFrameImplBase.h"
 
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-WebFrameImplBase::~WebFrameImplBase()
-{
-}
+WebFrameImplBase::~WebFrameImplBase() {}
 
-DEFINE_TRACE(WebFrameImplBase)
-{
-}
+DEFINE_TRACE(WebFrameImplBase) {}
 
-} // namespace blink
+}  // namespace blink

@@ -7,15 +7,16 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/background/background_contents_service.h"
 #include "chrome/browser/background/background_contents_service_factory.h"
 #include "chrome/browser/background/background_mode_manager.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/task_manager/task_manager_browsertest_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -57,7 +58,8 @@ class AppBackgroundPageApiTest : public ExtensionApiTest {
       LOG(ERROR) << "Unable to create a temporary directory.";
       return false;
     }
-    base::FilePath manifest_path = app_dir_.path().AppendASCII("manifest.json");
+    base::FilePath manifest_path =
+        app_dir_.GetPath().AppendASCII("manifest.json");
     int bytes_written = base::WriteFile(manifest_path,
                                         app_manifest.data(),
                                         app_manifest.size());
@@ -66,7 +68,7 @@ class AppBackgroundPageApiTest : public ExtensionApiTest {
                  << bytes_written;
       return false;
     }
-    *app_dir = app_dir_.path();
+    *app_dir = app_dir_.GetPath();
     return true;
   }
 
@@ -100,7 +102,8 @@ class AppBackgroundPageApiTest : public ExtensionApiTest {
   void UnloadExtensionViaTask(const std::string& id) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&AppBackgroundPageApiTest::UnloadExtension, this, id));
+        base::Bind(&AppBackgroundPageApiTest::UnloadExtension,
+                   base::Unretained(this), id));
   }
 
  private:
@@ -307,9 +310,6 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, NoJsBackgroundPage) {
   // Keep the task manager up through this test to verify that a crash doesn't
   // happen when window.open creates a background page that switches
   // RenderViewHosts. See http://crbug.com/165138.
-  // This test is for the old implementation of the task manager. We must
-  // explicitly disable the new one.
-  task_manager::browsertest_util::EnableOldTaskManager();
   chrome::ShowTaskManager(browser());
 
   // Make sure that no BackgroundContentses get deleted (a signal that repeated

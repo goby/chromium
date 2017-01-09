@@ -4,6 +4,8 @@
 
 #include "components/json_schema/json_schema_validator.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -11,13 +13,15 @@
 
 #include "base/json/json_reader.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "components/json_schema/json_schema_constants.h"
-#include "third_party/re2/re2/re2.h"
+#include "third_party/re2/src/re2/re2.h"
 
 namespace schema = json_schema_constants;
 
@@ -75,25 +79,25 @@ bool IsValidSchema(const base::DictionaryValue* dict,
   // binary search.
   static const ExpectedType kExpectedTypes[] = {
     // Note: kRef == "$ref", kSchema == "$schema"
-    { schema::kRef,                     base::Value::TYPE_STRING      },
-    { schema::kSchema,                  base::Value::TYPE_STRING      },
+    { schema::kRef,                     base::Value::Type::STRING      },
+    { schema::kSchema,                  base::Value::Type::STRING      },
 
-    { schema::kAdditionalProperties,    base::Value::TYPE_DICTIONARY  },
-    { schema::kChoices,                 base::Value::TYPE_LIST        },
-    { schema::kDescription,             base::Value::TYPE_STRING      },
-    { schema::kEnum,                    base::Value::TYPE_LIST        },
-    { schema::kId,                      base::Value::TYPE_STRING      },
-    { schema::kMaxItems,                base::Value::TYPE_INTEGER     },
-    { schema::kMaxLength,               base::Value::TYPE_INTEGER     },
-    { schema::kMaximum,                 base::Value::TYPE_DOUBLE      },
-    { schema::kMinItems,                base::Value::TYPE_INTEGER     },
-    { schema::kMinLength,               base::Value::TYPE_INTEGER     },
-    { schema::kMinimum,                 base::Value::TYPE_DOUBLE      },
-    { schema::kOptional,                base::Value::TYPE_BOOLEAN     },
-    { schema::kPattern,                 base::Value::TYPE_STRING      },
-    { schema::kPatternProperties,       base::Value::TYPE_DICTIONARY  },
-    { schema::kProperties,              base::Value::TYPE_DICTIONARY  },
-    { schema::kTitle,                   base::Value::TYPE_STRING      },
+    { schema::kAdditionalProperties,    base::Value::Type::DICTIONARY  },
+    { schema::kChoices,                 base::Value::Type::LIST        },
+    { schema::kDescription,             base::Value::Type::STRING      },
+    { schema::kEnum,                    base::Value::Type::LIST        },
+    { schema::kId,                      base::Value::Type::STRING      },
+    { schema::kMaxItems,                base::Value::Type::INTEGER     },
+    { schema::kMaxLength,               base::Value::Type::INTEGER     },
+    { schema::kMaximum,                 base::Value::Type::DOUBLE      },
+    { schema::kMinItems,                base::Value::Type::INTEGER     },
+    { schema::kMinLength,               base::Value::Type::INTEGER     },
+    { schema::kMinimum,                 base::Value::Type::DOUBLE      },
+    { schema::kOptional,                base::Value::Type::BOOLEAN     },
+    { schema::kPattern,                 base::Value::Type::STRING      },
+    { schema::kPatternProperties,       base::Value::Type::DICTIONARY  },
+    { schema::kProperties,              base::Value::Type::DICTIONARY  },
+    { schema::kTitle,                   base::Value::Type::STRING      },
   };
 
   bool has_type_or_ref = false;
@@ -105,14 +109,14 @@ bool IsValidSchema(const base::DictionaryValue* dict,
     // Validate the "type" attribute, which may be a string or a list.
     if (it.key() == schema::kType) {
       switch (it.value().GetType()) {
-        case base::Value::TYPE_STRING:
+        case base::Value::Type::STRING:
           it.value().GetAsString(&string_value);
           if (!IsValidType(string_value)) {
             *error = "Invalid value for type attribute";
             return false;
           }
           break;
-        case base::Value::TYPE_LIST:
+        case base::Value::Type::LIST:
           it.value().GetAsList(&list_value);
           for (size_t i = 0; i < list_value->GetSize(); ++i) {
             if (!list_value->GetString(i, &string_value) ||
@@ -170,16 +174,16 @@ bool IsValidSchema(const base::DictionaryValue* dict,
 
     // Integer can be converted to double.
     if (!(it.value().IsType(entry->type) ||
-          (it.value().IsType(base::Value::TYPE_INTEGER) &&
-           entry->type == base::Value::TYPE_DOUBLE))) {
+          (it.value().IsType(base::Value::Type::INTEGER) &&
+           entry->type == base::Value::Type::DOUBLE))) {
       *error = base::StringPrintf("Invalid value for %s attribute",
                                   it.key().c_str());
       return false;
     }
 
-    // base::Value::TYPE_INTEGER attributes must be >= 0.
+    // base::Value::Type::INTEGER attributes must be >= 0.
     // This applies to "minItems", "maxItems", "minLength" and "maxLength".
-    if (it.value().IsType(base::Value::TYPE_INTEGER)) {
+    if (it.value().IsType(base::Value::Type::INTEGER)) {
       int integer_value;
       it.value().GetAsInteger(&integer_value);
       if (integer_value < 0) {
@@ -247,11 +251,11 @@ bool IsValidSchema(const base::DictionaryValue* dict,
           return false;
         }
         switch (value->GetType()) {
-          case base::Value::TYPE_NULL:
-          case base::Value::TYPE_BOOLEAN:
-          case base::Value::TYPE_INTEGER:
-          case base::Value::TYPE_DOUBLE:
-          case base::Value::TYPE_STRING:
+          case base::Value::Type::NONE:
+          case base::Value::Type::BOOLEAN:
+          case base::Value::Type::INTEGER:
+          case base::Value::Type::DOUBLE:
+          case base::Value::Type::STRING:
             break;
           default:
             *error = "Invalid value in enum attribute";
@@ -340,13 +344,13 @@ const char JSONSchemaValidator::kInvalidRegex[] =
 // static
 std::string JSONSchemaValidator::GetJSONSchemaType(const base::Value* value) {
   switch (value->GetType()) {
-    case base::Value::TYPE_NULL:
+    case base::Value::Type::NONE:
       return schema::kNull;
-    case base::Value::TYPE_BOOLEAN:
+    case base::Value::Type::BOOLEAN:
       return schema::kBoolean;
-    case base::Value::TYPE_INTEGER:
+    case base::Value::Type::INTEGER:
       return schema::kInteger;
-    case base::Value::TYPE_DOUBLE: {
+    case base::Value::Type::DOUBLE: {
       double double_value = 0;
       value->GetAsDouble(&double_value);
       if (std::abs(double_value) <= std::pow(2.0, DBL_MANT_DIG) &&
@@ -356,11 +360,11 @@ std::string JSONSchemaValidator::GetJSONSchemaType(const base::Value* value) {
         return schema::kNumber;
       }
     }
-    case base::Value::TYPE_STRING:
+    case base::Value::Type::STRING:
       return schema::kString;
-    case base::Value::TYPE_DICTIONARY:
+    case base::Value::Type::DICTIONARY:
       return schema::kObject;
-    case base::Value::TYPE_LIST:
+    case base::Value::Type::LIST:
       return schema::kArray;
     default:
       NOTREACHED() << "Unexpected value type: " << value->GetType();
@@ -387,31 +391,31 @@ std::string JSONSchemaValidator::FormatErrorMessage(const std::string& format,
 }
 
 // static
-scoped_ptr<base::DictionaryValue> JSONSchemaValidator::IsValidSchema(
+std::unique_ptr<base::DictionaryValue> JSONSchemaValidator::IsValidSchema(
     const std::string& schema,
     std::string* error) {
   return JSONSchemaValidator::IsValidSchema(schema, 0, error);
 }
 
 // static
-scoped_ptr<base::DictionaryValue> JSONSchemaValidator::IsValidSchema(
+std::unique_ptr<base::DictionaryValue> JSONSchemaValidator::IsValidSchema(
     const std::string& schema,
     int validator_options,
     std::string* error) {
   base::JSONParserOptions json_options = base::JSON_PARSE_RFC;
-  scoped_ptr<base::Value> json =
+  std::unique_ptr<base::Value> json =
       base::JSONReader::ReadAndReturnError(schema, json_options, NULL, error);
   if (!json)
-    return scoped_ptr<base::DictionaryValue>();
+    return std::unique_ptr<base::DictionaryValue>();
   base::DictionaryValue* dict = NULL;
   if (!json->GetAsDictionary(&dict)) {
     *error = "Schema must be a JSON object";
-    return scoped_ptr<base::DictionaryValue>();
+    return std::unique_ptr<base::DictionaryValue>();
   }
   if (!::IsValidSchema(dict, validator_options, error))
-    return scoped_ptr<base::DictionaryValue>();
+    return std::unique_ptr<base::DictionaryValue>();
   ignore_result(json.release());
-  return make_scoped_ptr(dict);
+  return base::WrapUnique(dict);
 }
 
 JSONSchemaValidator::JSONSchemaValidator(base::DictionaryValue* schema)
@@ -503,8 +507,9 @@ void JSONSchemaValidator::Validate(const base::Value* instance,
       ValidateArray(static_cast<const base::ListValue*>(instance),
                     schema, path);
     } else if (type == schema::kString) {
-      // Intentionally NOT downcasting to StringValue*. TYPE_STRING only implies
-      // GetAsString() can safely be carried out, not that it's a StringValue.
+      // Intentionally NOT downcasting to StringValue*. Type::STRING only
+      // implies GetAsString() can safely be carried out, not that it's a
+      // StringValue.
       ValidateString(instance, schema, path);
     } else if (type == schema::kNumber || type == schema::kInteger) {
       ValidateNumber(instance, schema, path);
@@ -550,17 +555,17 @@ void JSONSchemaValidator::ValidateEnum(const base::Value* instance,
       NOTREACHED();
     }
     switch (choice->GetType()) {
-      case base::Value::TYPE_NULL:
-      case base::Value::TYPE_BOOLEAN:
-      case base::Value::TYPE_STRING:
+      case base::Value::Type::NONE:
+      case base::Value::Type::BOOLEAN:
+      case base::Value::Type::STRING:
         if (instance->Equals(choice))
           return;
         break;
 
-      case base::Value::TYPE_INTEGER:
-      case base::Value::TYPE_DOUBLE:
-        if (instance->IsType(base::Value::TYPE_INTEGER) ||
-            instance->IsType(base::Value::TYPE_DOUBLE)) {
+      case base::Value::Type::INTEGER:
+      case base::Value::Type::DOUBLE:
+        if (instance->IsType(base::Value::Type::INTEGER) ||
+            instance->IsType(base::Value::Type::DOUBLE)) {
           if (GetNumberValue(choice) == GetNumberValue(instance))
             return;
         }
@@ -711,7 +716,7 @@ void JSONSchemaValidator::ValidateTuple(const base::ListValue* instance,
       CHECK(tuple_type->GetDictionary(i, &item_schema));
       const base::Value* item_value = NULL;
       instance->Get(i, &item_value);
-      if (item_value && item_value->GetType() != base::Value::TYPE_NULL) {
+      if (item_value && item_value->GetType() != base::Value::Type::NONE) {
         Validate(item_value, item_schema, item_path);
       } else {
         bool is_optional = false;

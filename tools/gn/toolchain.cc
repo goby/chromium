@@ -4,7 +4,9 @@
 
 #include "tools/gn/toolchain.h"
 
+#include <stddef.h>
 #include <string.h>
+#include <utility>
 
 #include "base/logging.h"
 #include "tools/gn/target.h"
@@ -22,10 +24,11 @@ const char* Toolchain::kToolSolinkModule = "solink_module";
 const char* Toolchain::kToolLink = "link";
 const char* Toolchain::kToolStamp = "stamp";
 const char* Toolchain::kToolCopy = "copy";
+const char* Toolchain::kToolCopyBundleData = "copy_bundle_data";
+const char* Toolchain::kToolCompileXCAssets = "compile_xcassets";
 
 Toolchain::Toolchain(const Settings* settings, const Label& label)
     : Item(settings, label),
-      concurrent_links_(0),
       setup_complete_(false) {
 }
 
@@ -54,6 +57,8 @@ Toolchain::ToolType Toolchain::ToolNameToType(const base::StringPiece& str) {
   if (str == kToolLink) return TYPE_LINK;
   if (str == kToolStamp) return TYPE_STAMP;
   if (str == kToolCopy) return TYPE_COPY;
+  if (str == kToolCopyBundleData) return TYPE_COPY_BUNDLE_DATA;
+  if (str == kToolCompileXCAssets) return TYPE_COMPILE_XCASSETS;
   return TYPE_NONE;
 }
 
@@ -72,10 +77,17 @@ std::string Toolchain::ToolTypeToName(ToolType type) {
     case TYPE_LINK: return kToolLink;
     case TYPE_STAMP: return kToolStamp;
     case TYPE_COPY: return kToolCopy;
+    case TYPE_COPY_BUNDLE_DATA: return kToolCopyBundleData;
+    case TYPE_COMPILE_XCASSETS: return kToolCompileXCAssets;
     default:
       NOTREACHED();
       return std::string();
   }
+}
+
+Tool* Toolchain::GetTool(ToolType type) {
+  DCHECK(type != TYPE_NONE);
+  return tools_[static_cast<size_t>(type)].get();
 }
 
 const Tool* Toolchain::GetTool(ToolType type) const {
@@ -83,11 +95,11 @@ const Tool* Toolchain::GetTool(ToolType type) const {
   return tools_[static_cast<size_t>(type)].get();
 }
 
-void Toolchain::SetTool(ToolType type, scoped_ptr<Tool> t) {
+void Toolchain::SetTool(ToolType type, std::unique_ptr<Tool> t) {
   DCHECK(type != TYPE_NONE);
   DCHECK(!tools_[type].get());
   t->SetComplete();
-  tools_[type] = t.Pass();
+  tools_[type] = std::move(t);
 }
 
 void Toolchain::ToolchainSetupComplete() {
@@ -149,9 +161,11 @@ Toolchain::ToolType Toolchain::GetToolTypeForTargetFinalOutput(
       return Toolchain::TYPE_ALINK;
     case Target::SOURCE_SET:
       return TYPE_STAMP;
-    case Target::COPY_FILES:
     case Target::ACTION:
     case Target::ACTION_FOREACH:
+    case Target::BUNDLE_DATA:
+    case Target::CREATE_BUNDLE:
+    case Target::COPY_FILES:
       return TYPE_STAMP;
     default:
       NOTREACHED();

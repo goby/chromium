@@ -105,12 +105,20 @@ class TestRunner {
   // Sets TestRunner to return without waiting for the process to exit.
   void SetUnsandboxed(bool is_no_sandbox) { no_sandbox_ = is_no_sandbox; }
 
+  // Sets whether TestRunner should disable CSRSS or not (default true).
+  // Any test that needs to spawn a child process needs to set this to false.
+  void SetDisableCsrss(bool disable_csrss) { disable_csrss_ = disable_csrss; }
+
   // Sets the desired state for the test to run.
   void SetTestState(SboxTestsState desired_state);
 
   // Sets a flag whether the process should be killed when the TestRunner is
   // destroyed.
   void SetKillOnDestruction(bool value) { kill_on_destruction_ = value; }
+
+  // Sets whether the TargetPolicy should be released after the child process
+  // is launched while the test is running.
+  void SetReleasePolicyInRun(bool value) { release_policy_in_run_ = value; }
 
   // Returns the pointers to the policy object. It can be used to modify
   // the policy manually.
@@ -127,7 +135,8 @@ class TestRunner {
  private:
   // Initializes the data in the object. Sets is_init_ to tree if the
   // function succeeds. This is meant to be called from the constructor.
-  void Init(JobLevel job_level, TokenLevel startup_token,
+  void Init(JobLevel job_level,
+            TokenLevel startup_token,
             TokenLevel main_token);
 
   // The actual runner.
@@ -140,7 +149,9 @@ class TestRunner {
   bool is_init_;
   bool is_async_;
   bool no_sandbox_;
+  bool disable_csrss_;
   bool kill_on_destruction_;
+  bool release_policy_in_run_ = false;
   base::win::ScopedHandle target_process_;
   DWORD target_process_id_;
 };
@@ -148,7 +159,14 @@ class TestRunner {
 // Returns the broker services.
 BrokerServices* GetBroker();
 
-// Constructs a full path to a file inside the system32 (or syswow64) folder.
+// Constructs a full path to a file inside the system32 folder.
+base::string16 MakePathToSys32(const wchar_t* name, bool is_obj_man_path);
+
+// Constructs a full path to a file inside the syswow64 folder.
+base::string16 MakePathToSysWow64(const wchar_t* name, bool is_obj_man_path);
+
+// Constructs a full path to a file inside the system32 (or syswow64) folder
+// depending on whether process is running in wow64 or not.
 base::string16 MakePathToSys(const wchar_t* name, bool is_obj_man_path);
 
 // Runs the given test on the target process.

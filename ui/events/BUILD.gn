@@ -2,11 +2,18 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//testing/test.gni")
+import("//ui/base/ui_features.gni")
+import("//ui/ozone/ozone.gni")
 
 if (is_android) {
   import("//build/config/android/rules.gni")
+}
+
+if (is_ios) {
+  import("//ios/build/config.gni")
 }
 
 static_library("dom_keycode_converter") {
@@ -22,6 +29,10 @@ static_library("dom_keycode_converter") {
   deps = [
     "//base",
   ]
+
+  if (!is_ios) {
+    deps += [ "//ipc:param_traits" ]
+  }
 }
 
 component("events_base") {
@@ -56,36 +67,28 @@ component("events_base") {
   defines = [ "EVENTS_BASE_IMPLEMENTATION" ]
 
   deps = [
-    ":dom_keycode_converter",
     "//base/third_party/dynamic_annotations",
-    "//skia",
   ]
 
   public_deps = [
+    ":dom_keycode_converter",
     "//base",
     "//ui/events/platform",
-    "//ui/gfx",
     "//ui/gfx/geometry",
   ]
 
   if (use_x11) {
-    configs += [ "//build/config/linux:x11" ]
-
-    sources += [
-      "keycodes/keyboard_code_conversion_x.cc",
-      "keycodes/keyboard_code_conversion_x.h",
-      "x/keysym_to_unicode.cc",
-      "x/keysym_to_unicode.h",
-    ]
-
-    deps += [ "//ui/gfx/x" ]
+    public_deps += [ "//ui/events/keycodes:x11" ]
   }
 
-  if (use_x11 || use_xkbcommon) {
-    sources += [
-      "keycodes/keyboard_code_conversion_xkb.cc",
-      "keycodes/keyboard_code_conversion_xkb.h",
-      "keycodes/xkb_keysym.h",
+  if (!is_ios) {
+    deps += [ "//ipc:param_traits" ]
+  }
+
+  if (is_mac) {
+    libs = [
+      "AppKit.framework",
+      "Carbon.framework",
     ]
   }
 }
@@ -116,6 +119,8 @@ component("events") {
     "events_stub.cc",
     "gestures/gesture_recognizer_impl_mac.cc",
     "gestures/gesture_types.h",
+    "keycodes/platform_key_map_win.cc",
+    "keycodes/platform_key_map_win.h",
     "null_event_targeter.cc",
     "null_event_targeter.h",
     "scoped_target_handler.cc",
@@ -135,29 +140,24 @@ component("events") {
     ":gesture_detection",
     "//base/third_party/dynamic_annotations",
     "//skia",
+    "//ui/display",
     "//ui/gfx",
     "//ui/gfx/geometry",
   ]
 
   if (use_x11) {
     sources += [ "x/events_x.cc" ]
-    configs += [
-      "//build/config/linux:glib",
-      "//build/config/linux:x11",
-    ]
+    configs += [ "//build/config/linux:x11" ]
     deps += [
       "//ui/events/devices",
+      "//ui/events/devices/x11",
+      "//ui/events/x",
       "//ui/gfx/x",
     ]
   }
 
-  if (!is_chromeos && is_linux) {
-    sources += [
-      "linux/text_edit_command_auralinux.cc",
-      "linux/text_edit_command_auralinux.h",
-      "linux/text_edit_key_bindings_delegate_auralinux.cc",
-      "linux/text_edit_key_bindings_delegate_auralinux.h",
-    ]
+  if (use_glib) {
+    configs += [ "//build/config/linux:glib" ]
   }
 
   if (use_ozone || (is_android && use_aura)) {
@@ -190,12 +190,19 @@ component("events") {
 
   if (is_android) {
     sources += [
-      "android/events_jni_registrar.cc",
-      "android/events_jni_registrar.h",
+      "android/key_event_utils.cc",
+      "android/key_event_utils.h",
       "android/motion_event_android.cc",
       "android/motion_event_android.h",
     ]
-    deps += [ ":motionevent_jni_headers" ]
+    deps += [
+      ":keyevent_jni_headers",
+      ":motionevent_jni_headers",
+    ]
+  }
+
+  if (is_mac) {
+    libs = [ "AppKit.framework" ]
   }
 }
 
@@ -245,6 +252,7 @@ component("gesture_detection") {
     ":events_base",
     "//base",
     "//base/third_party/dynamic_annotations",
+    "//ui/display",
     "//ui/gfx",
     "//ui/gfx/geometry",
   ]
@@ -260,7 +268,7 @@ component("gesture_detection") {
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   sources = [
     "test/cocoa_test_event_utils.h",
     "test/cocoa_test_event_utils.mm",
@@ -269,6 +277,10 @@ source_set("test_support") {
     "test/event_generator.h",
     "test/events_test_utils.cc",
     "test/events_test_utils.h",
+    "test/keyboard_layout.cc",
+    "test/keyboard_layout.h",
+    "test/keyboard_layout_mac.cc",
+    "test/keyboard_layout_win.cc",
     "test/motion_event_test_utils.cc",
     "test/motion_event_test_utils.h",
     "test/platform_event_source_test_api.cc",
@@ -289,11 +301,13 @@ source_set("test_support") {
     ":events",
     ":events_base",
     ":gesture_detection",
+    "//ui/events/devices",
   ]
   deps = [
     "//base",
     "//skia",
     "//ui/events/platform",
+    "//ui/gfx",
     "//ui/gfx/geometry",
   ]
 
@@ -304,15 +318,23 @@ source_set("test_support") {
     ]
   }
 
+  if (is_mac) {
+    libs = [ "Carbon.framework" ]
+  }
+
   if (use_x11) {
     sources += [
       "test/events_test_utils_x11.cc",
       "test/events_test_utils_x11.h",
     ]
     deps += [
-      "//ui/events/devices",
+      "//ui/events/devices/x11",
       "//ui/gfx/x",
     ]
+  }
+
+  if (use_x11 || ozone_platform_x11) {
+    deps += [ "//ui/events/x" ]
   }
 
   if (use_x11 || use_ozone) {
@@ -321,15 +343,6 @@ source_set("test_support") {
   } else {
     sources += [ "test/device_data_manager_test_api_stub.cc" ]
   }
-}
-
-# TODO(GYP): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("events_unittests_run") {
-  testonly = true
-  deps = [
-    ":events_unittests",
-  ]
 }
 
 test("events_unittests") {
@@ -350,12 +363,13 @@ test("events_unittests") {
     "gesture_detection/touch_disposition_gesture_filter_unittest.cc",
     "gesture_detection/velocity_tracker_unittest.cc",
     "gestures/fling_curve_unittest.cc",
-    "ipc/latency_info_param_traits_unittest.cc",
     "keycodes/dom/keycode_converter_unittest.cc",
     "keycodes/keyboard_code_conversion_unittest.cc",
+    "keycodes/platform_key_map_win_unittest.cc",
     "latency_info_unittest.cc",
     "platform/platform_event_source_unittest.cc",
     "scoped_target_handler_unittest.cc",
+    "win/event_utils_win_unittest.cc",
   ]
 
   deps = [
@@ -365,34 +379,48 @@ test("events_unittests") {
     ":gesture_detection",
     ":test_support",
     "//base",
-    "//base/test:run_all_unittests",
-    "//ipc:test_support",
+    "//base/test:test_support",
+    "//mojo/edk/test:run_all_unittests",
     "//skia",
+    "//testing/gmock",
     "//testing/gtest",
     "//ui/events/devices",
-    "//ui/events/ipc:events_ipc",
     "//ui/events/platform",
     "//ui/gfx:test_support",
   ]
 
   if (!is_ios) {
     sources += [
+      "blink/blink_event_util_unittest.cc",
       "blink/input_handler_proxy_unittest.cc",
       "blink/input_scroll_elasticity_controller_unittest.cc",
+      "blink/web_input_event_traits_unittest.cc",
+      "blink/web_input_event_unittest.cc",
+      "devices/mojo/device_struct_traits_unittest.cc",
       "gestures/blink/web_gesture_curve_impl_unittest.cc",
+      "ipc/latency_info_param_traits_unittest.cc",
+      "mojo/struct_traits_unittest.cc",
     ]
     deps += [
+      "//cc",
+      "//ipc:test_support",
+      "//mojo/public/cpp/bindings",
       "//third_party/WebKit/public:blink_headers",
+      "//ui/display",
       "//ui/events/blink",
+      "//ui/events/devices/mojo:test_interfaces",
       "//ui/events/gestures/blink",
+      "//ui/events/ipc",
+      "//ui/events/mojo:test_interfaces",
+      "//ui/gfx/ipc/geometry",
     ]
   }
 
-  data_deps = [
-    "//third_party/mesa:osmesa",
-  ]
-
-  include_dirs = [ "//testing/gmock/include" ]
+  if (!is_android && !is_ios) {
+    data_deps = [
+      "//third_party/mesa:osmesa",
+    ]
+  }
 
   if (use_x11) {
     sources += [
@@ -400,7 +428,11 @@ test("events_unittests") {
       "x/events_x_unittest.cc",
     ]
     configs += [ "//build/config/linux:x11" ]
-    deps += [ "//ui/gfx/x" ]
+    deps += [
+      "//ui/events/devices/x11",
+      "//ui/events/x",
+      "//ui/gfx/x",
+    ]
   }
 
   if (use_ozone) {
@@ -440,11 +472,24 @@ test("events_unittests") {
   if (is_android) {
     sources += [ "android/motion_event_android_unittest.cc" ]
   }
+
+  if (is_ios) {
+    assert_no_deps = ios_assert_no_deps
+  }
+
+  if (is_win) {
+    sources += [ "blink/web_input_event_builders_win_unittest.cc" ]
+  }
 }
 
 if (is_android) {
   generate_jar_jni("motionevent_jni_headers") {
     jni_package = "ui"
     classes = [ "android/view/MotionEvent.class" ]
+  }
+
+  generate_jar_jni("keyevent_jni_headers") {
+    jni_package = "ui"
+    classes = [ "android/view/KeyEvent.class" ]
   }
 }

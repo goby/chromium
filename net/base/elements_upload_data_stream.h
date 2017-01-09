@@ -5,12 +5,14 @@
 #ifndef NET_BASE_ELEMENTS_UPLOAD_DATA_STREAM_H_
 #define NET_BASE_ELEMENTS_UPLOAD_DATA_STREAM_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/net_export.h"
 #include "net/base/upload_data_stream.h"
@@ -25,23 +27,23 @@ class UploadElementReader;
 class NET_EXPORT ElementsUploadDataStream : public UploadDataStream {
  public:
   ElementsUploadDataStream(
-      std::vector<scoped_ptr<UploadElementReader>> element_readers,
+      std::vector<std::unique_ptr<UploadElementReader>> element_readers,
       int64_t identifier);
 
   ~ElementsUploadDataStream() override;
 
   // Creates an ElementsUploadDataStream with a single reader.  Returns a
-  // scoped_ptr<UploadDataStream> for ease of use.
-  static scoped_ptr<UploadDataStream> CreateWithReader(
-      scoped_ptr<UploadElementReader> reader,
+  // std::unique_ptr<UploadDataStream> for ease of use.
+  static std::unique_ptr<UploadDataStream> CreateWithReader(
+      std::unique_ptr<UploadElementReader> reader,
       int64_t identifier);
 
  private:
   // UploadDataStream implementation.
   bool IsInMemory() const override;
-  const std::vector<scoped_ptr<UploadElementReader>>* GetElementReaders()
+  const std::vector<std::unique_ptr<UploadElementReader>>* GetElementReaders()
       const override;
-  int InitInternal() override;
+  int InitInternal(const NetLogWithSource& net_log) override;
   int ReadInternal(IOBuffer* buf, int buf_len) override;
   void ResetInternal() override;
 
@@ -68,15 +70,15 @@ class NET_EXPORT ElementsUploadDataStream : public UploadDataStream {
   void ProcessReadResult(const scoped_refptr<DrainableIOBuffer>& buf,
                          int result);
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers_;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers_;
 
   // Index of the current upload element (i.e. the element currently being
   // read). The index is used as a cursor to iterate over elements in
   // |upload_data_|.
   size_t element_index_;
 
-  // True if an error occcured during read operation.
-  bool read_failed_;
+  // Set to actual error if read fails, otherwise set to net::OK.
+  int read_error_;
 
   base::WeakPtrFactory<ElementsUploadDataStream> weak_ptr_factory_;
 

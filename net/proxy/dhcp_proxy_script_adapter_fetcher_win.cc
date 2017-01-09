@@ -8,6 +8,7 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/free_deleter.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task_runner.h"
@@ -20,7 +21,6 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <dhcpcsdk.h>
-#pragma comment(lib, "dhcpcsvc.lib")
 
 namespace {
 
@@ -231,7 +231,7 @@ std::string DhcpProxyScriptAdapterFetcher::GetPacURLFromDhcp(
   // The maximum message size is typically 4096 bytes on Windows per
   // http://support.microsoft.com/kb/321592
   DWORD result_buffer_size = 4096;
-  scoped_ptr<BYTE, base::FreeDeleter> result_buffer;
+  std::unique_ptr<BYTE, base::FreeDeleter> result_buffer;
   int retry_count = 0;
   DWORD res = NO_ERROR;
   do {

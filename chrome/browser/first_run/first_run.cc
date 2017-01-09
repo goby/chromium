@@ -5,16 +5,18 @@
 #include "chrome/browser/first_run/first_run.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -53,6 +55,7 @@
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "chrome/installer/util/util_constants.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_tracker.h"
@@ -64,9 +67,14 @@
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/common/one_shot_event.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+namespace content {
+class BrowserContext;
+}
 
 using base::UserMetricsAction;
 
@@ -75,11 +83,16 @@ namespace {
 // A bitfield formed from values in AutoImportState to record the state of
 // AutoImport. This is used in testing to verify import startup actions that
 // occur before an observer can be registered in the test.
-uint16 g_auto_import_state = first_run::AUTO_IMPORT_NONE;
+uint16_t g_auto_import_state = first_run::AUTO_IMPORT_NONE;
 
 // Flags for functions of similar name.
 bool g_should_show_welcome_page = false;
 bool g_should_do_autofill_personal_data_manager_first_run = false;
+
+// Indicates whether this is first run. Populated when IsChromeFirstRun
+// is invoked, then used as a cache on subsequent calls.
+first_run::internal::FirstRunState g_first_run =
+    first_run::internal::FIRST_RUN_UNKNOWN;
 
 // This class acts as an observer for the ImporterProgressObserver::ImportEnded
 // callback. When the import process is started, certain errors may cause
@@ -121,17 +134,9 @@ class ImportEndedObserver : public importer::ImporterProgressObserver {
 // chrome infrastructure to be up and running before they can be attempted.
 class FirstRunDelayedTasks : public content::NotificationObserver {
  public:
-  enum Tasks {
-    NO_TASK,
-    INSTALL_EXTENSIONS
-  };
-
-  explicit FirstRunDelayedTasks(Tasks task) {
-    if (task == INSTALL_EXTENSIONS) {
-      registrar_.Add(this,
-                     extensions::NOTIFICATION_EXTENSIONS_READY_DEPRECATED,
-                     content::NotificationService::AllSources());
-    }
+  FirstRunDelayedTasks() : weak_ptr_factory_(this) {
+    registrar_.Add(this, chrome::NOTIFICATION_PROFILE_CREATED,
+                   content::NotificationService::AllSources());
     registrar_.Add(this, chrome::NOTIFICATION_BROWSER_CLOSED,
                    content::NotificationService::AllSources());
   }
@@ -139,35 +144,49 @@ class FirstRunDelayedTasks : public content::NotificationObserver {
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
-    // After processing the notification we always delete ourselves.
-    if (type == extensions::NOTIFICATION_EXTENSIONS_READY_DEPRECATED) {
-      Profile* profile = content::Source<Profile>(source).ptr();
-      ExtensionService* service =
-          extensions::ExtensionSystem::Get(profile)->extension_service();
-      DoExtensionWork(service);
+    switch (type) {
+      case chrome::NOTIFICATION_PROFILE_CREATED: {
+        content::BrowserContext* context =
+            content::Source<Profile>(source).ptr();
+        extensions::ExtensionSystem::Get(context)->ready().Post(
+            FROM_HERE, base::Bind(&FirstRunDelayedTasks::OnExtensionSystemReady,
+                                  weak_ptr_factory_.GetWeakPtr(), context));
+        break;
+      }
+      case chrome::NOTIFICATION_BROWSER_CLOSED: {
+        delete this;
+        break;
+      }
+      default:
+        NOTREACHED();
     }
-    delete this;
   }
 
  private:
   // Private ctor forces it to be created only in the heap.
   ~FirstRunDelayedTasks() override {}
 
-  // The extension work is to basically trigger an extension update check.
-  // If the extension specified in the master pref is older than the live
-  // extension it will get updated which is the same as get it installed.
-  void DoExtensionWork(ExtensionService* service) {
-    if (service)
+  void OnExtensionSystemReady(content::BrowserContext* context) {
+    // Process the notification and delete this.
+    ExtensionService* service =
+        extensions::ExtensionSystem::Get(context)->extension_service();
+    if (service) {
+      // Trigger an extension update check. If the extension specified in the
+      // master pref is older than the live extension it will get updated which
+      // is the same as get it installed.
       service->updater()->CheckNow(extensions::ExtensionUpdater::CheckParams());
+    }
+    delete this;
   }
 
   content::NotificationRegistrar registrar_;
+  base::WeakPtrFactory<FirstRunDelayedTasks> weak_ptr_factory_;
 };
 
 // Installs a task to do an extensions update check once the extensions system
 // is running.
 void DoDelayedInstallExtensions() {
-  new FirstRunDelayedTasks(FirstRunDelayedTasks::INSTALL_EXTENSIONS);
+  new FirstRunDelayedTasks();
 }
 
 void DoDelayedInstallExtensionsIfNeeded(
@@ -233,10 +252,15 @@ void SetImportItem(PrefService* user_prefs,
 // |target_profile| for the items specified in the |items_to_import| bitfield.
 // This may be done in a separate process depending on the platform, but it will
 // always block until done.
-void ImportFromSourceProfile(ExternalProcessImporterHost* importer_host,
-                             const importer::SourceProfile& source_profile,
+void ImportFromSourceProfile(const importer::SourceProfile& source_profile,
                              Profile* target_profile,
-                             uint16 items_to_import) {
+                             uint16_t items_to_import) {
+  // Deletes itself.
+  ExternalProcessImporterHost* importer_host =
+      new ExternalProcessImporterHost;
+  // Don't show the warning dialog if import fails.
+  importer_host->set_headless();
+
   ImportEndedObserver observer;
   importer_host->set_observer(&observer);
   importer_host->StartImportSettings(source_profile,
@@ -255,7 +279,6 @@ void ImportFromSourceProfile(ExternalProcessImporterHost* importer_host,
 // Imports bookmarks from an html file whose path is provided by
 // |import_bookmarks_path|.
 void ImportFromFile(Profile* profile,
-                    ExternalProcessImporterHost* file_importer_host,
                     const std::string& import_bookmarks_path) {
   importer::SourceProfile source_profile;
   source_profile.importer_type = importer::TYPE_BOOKMARKS_FILE;
@@ -268,27 +291,27 @@ void ImportFromFile(Profile* profile,
 #endif
   source_profile.source_path = base::FilePath(import_bookmarks_path_str);
 
-  ImportFromSourceProfile(file_importer_host, source_profile, profile,
-                          importer::FAVORITES);
+  ImportFromSourceProfile(source_profile, profile, importer::FAVORITES);
   g_auto_import_state |= first_run::AUTO_IMPORT_BOOKMARKS_FILE_IMPORTED;
 }
 
 // Imports settings from the first profile in |importer_list|.
 void ImportSettings(Profile* profile,
-                    ExternalProcessImporterHost* importer_host,
-                    scoped_ptr<ImporterList> importer_list,
+                    std::unique_ptr<ImporterList> importer_list,
                     int items_to_import) {
   const importer::SourceProfile& source_profile =
       importer_list->GetSourceProfileAt(0);
+  // If no items to import then skip entirely.
+  if (!items_to_import)
+    return;
 
   // Ensure that importers aren't requested to import items that they do not
   // support. If there is no overlap, skip.
   items_to_import &= source_profile.services_supported;
-  if (items_to_import == 0)
-    return;
+  if (items_to_import) {
+    ImportFromSourceProfile(source_profile, profile, items_to_import);
+  }
 
-  ImportFromSourceProfile(importer_host, source_profile, profile,
-                          items_to_import);
   g_auto_import_state |= first_run::AUTO_IMPORT_PROFILE_IMPORTED;
 }
 
@@ -307,12 +330,19 @@ bool IsOnWelcomePage(content::WebContents* contents) {
   // We have to check both the GetURL() similar to the other checks below, but
   // also the original request url because the welcome page we use is a
   // redirect.
-  GURL welcome_page(l10n_util::GetStringUTF8(IDS_WELCOME_PAGE_URL));
-  return contents->GetURL() == welcome_page ||
-         (contents->GetController().GetVisibleEntry() &&
-          contents->GetController()
-                  .GetVisibleEntry()
-                  ->GetOriginalRequestURL() == welcome_page);
+  // TODO(crbug.com/651465): Remove this once kUseConsolidatedStartupFlow is on
+  // by default.
+  const GURL deprecated_welcome_page(
+      l10n_util::GetStringUTF8(IDS_WELCOME_PAGE_URL));
+  if (contents->GetURL() == deprecated_welcome_page ||
+      (contents->GetController().GetVisibleEntry() &&
+       contents->GetController().GetVisibleEntry()->GetOriginalRequestURL() ==
+           deprecated_welcome_page)) {
+    return true;
+  }
+
+  const GURL welcome_page(chrome::kChromeUIWelcomeURL);
+  return contents->GetURL().GetWithEmptyPath() == welcome_page;
 }
 
 // Show the first run search engine bubble at the first appropriate opportunity.
@@ -393,13 +423,13 @@ void FirstRunBubbleLauncher::Observe(
   if (contents && contents->GetURL().SchemeIs(content::kChromeUIScheme)) {
 #if defined(OS_WIN)
     // Suppress the first run bubble if 'make chrome metro' flow is showing.
-    if (contents->GetURL().host() == chrome::kChromeUIMetroFlowHost)
+    if (contents->GetURL().host_piece() == chrome::kChromeUIMetroFlowHost)
       return;
 #endif
 
     // Suppress the first run bubble if the NTP sync promo bubble is showing
     // or if sign in is in progress.
-    if (contents->GetURL().host() == chrome::kChromeUINewTabHost) {
+    if (contents->GetURL().host_piece() == chrome::kChromeUINewTabHost) {
       Profile* profile =
           Profile::FromBrowserContext(contents->GetBrowserContext());
       SigninManagerBase* manager =
@@ -455,19 +485,19 @@ installer::MasterPreferences* LoadMasterPrefs() {
 // Makes chrome the user's default browser according to policy or
 // |make_chrome_default_for_user| if no policy is set.
 void ProcessDefaultBrowserPolicy(bool make_chrome_default_for_user) {
-  // Only proceed if chrome can be made default unattended. The interactive case
-  // (Windows 8+) is handled by the first run default browser prompt.
-  if (ShellIntegration::CanSetAsDefaultBrowser() ==
-          ShellIntegration::SET_DEFAULT_UNATTENDED) {
+  // Only proceed if chrome can be made default unattended. In other cases, this
+  // is handled by the first run default browser prompt (on Windows 8+).
+  if (shell_integration::GetDefaultWebClientSetPermission() ==
+      shell_integration::SET_DEFAULT_UNATTENDED) {
     // The policy has precedence over the user's choice.
     if (g_browser_process->local_state()->IsManagedPreference(
             prefs::kDefaultBrowserSettingEnabled)) {
       if (g_browser_process->local_state()->GetBoolean(
           prefs::kDefaultBrowserSettingEnabled)) {
-        ShellIntegration::SetAsDefaultBrowser();
+        shell_integration::SetAsDefaultBrowser();
       }
     } else if (make_chrome_default_for_user) {
-        ShellIntegration::SetAsDefaultBrowser();
+      shell_integration::SetAsDefaultBrowser();
     }
   }
 }
@@ -476,8 +506,6 @@ void ProcessDefaultBrowserPolicy(bool make_chrome_default_for_user) {
 
 namespace first_run {
 namespace internal {
-
-FirstRunState g_first_run = FIRST_RUN_UNKNOWN;
 
 void SetupMasterPrefsFromInstallPrefs(
     const installer::MasterPreferences& install_prefs,
@@ -500,8 +528,8 @@ void SetupMasterPrefsFromInstallPrefs(
 
   // If we're suppressing the first-run bubble, set that preference now.
   // Otherwise, wait until the user has completed first run to set it, so the
-  // user is guaranteed to see the bubble iff he or she has completed the first
-  // run process.
+  // user is guaranteed to see the bubble iff they have completed the first run
+  // process.
   if (install_prefs.GetBool(
           installer::master_preferences::kDistroSuppressFirstRunBubble,
           &value) && value)
@@ -599,6 +627,14 @@ bool IsOrganicFirstRun() {
 }
 #endif
 
+FirstRunState DetermineFirstRunState(bool has_sentinel,
+                                     bool force_first_run,
+                                     bool no_first_run) {
+  return (force_first_run || (!has_sentinel && !no_first_run))
+             ? FIRST_RUN_TRUE
+             : FIRST_RUN_FALSE;
+}
+
 }  // namespace internal
 
 MasterPrefs::MasterPrefs()
@@ -614,17 +650,15 @@ MasterPrefs::MasterPrefs()
 MasterPrefs::~MasterPrefs() {}
 
 bool IsChromeFirstRun() {
-  if (internal::g_first_run == internal::FIRST_RUN_UNKNOWN) {
-    internal::g_first_run = internal::FIRST_RUN_FALSE;
+  if (g_first_run == internal::FIRST_RUN_UNKNOWN) {
     const base::CommandLine* command_line =
         base::CommandLine::ForCurrentProcess();
-    if (command_line->HasSwitch(switches::kForceFirstRun) ||
-        (!command_line->HasSwitch(switches::kNoFirstRun) &&
-         !internal::IsFirstRunSentinelPresent())) {
-      internal::g_first_run = internal::FIRST_RUN_TRUE;
-    }
+    g_first_run = internal::DetermineFirstRunState(
+        internal::IsFirstRunSentinelPresent(),
+        command_line->HasSwitch(switches::kForceFirstRun),
+        command_line->HasSwitch(switches::kNoFirstRun));
   }
-  return internal::g_first_run == internal::FIRST_RUN_TRUE;
+  return g_first_run == internal::FIRST_RUN_TRUE;
 }
 
 #if defined(OS_MACOSX)
@@ -632,6 +666,13 @@ bool IsFirstRunSuppressed(const base::CommandLine& command_line) {
   return command_line.HasSwitch(switches::kNoFirstRun);
 }
 #endif
+
+bool IsMetricsReportingOptIn() {
+  // Metrics reporting is opt-out by default for all platforms and channels.
+  // However, user will have chance to modify metrics reporting state during
+  // first run.
+  return false;
+}
 
 void CreateSentinelIfNeeded() {
   if (IsChromeFirstRun())
@@ -696,7 +737,8 @@ ProcessMasterPreferencesResult ProcessMasterPreferences(
     MasterPrefs* out_prefs) {
   DCHECK(!user_data_dir.empty());
 
-  scoped_ptr<installer::MasterPreferences> install_prefs(LoadMasterPrefs());
+  std::unique_ptr<installer::MasterPreferences> install_prefs(
+      LoadMasterPrefs());
 
   // Default value in case master preferences is missing or corrupt, or
   // ping_delay is missing.
@@ -732,7 +774,7 @@ void AutoImport(
   // It may be possible to do the if block below asynchronously. In which case,
   // get rid of this RunLoop. http://crbug.com/366116.
   base::RunLoop run_loop;
-  scoped_ptr<ImporterList> importer_list(new ImporterList());
+  std::unique_ptr<ImporterList> importer_list(new ImporterList());
   importer_list->DetectSourceProfiles(
       g_browser_process->GetApplicationLocale(),
       false,  // include_interactive_profiles?
@@ -786,26 +828,14 @@ void AutoImport(
                   importer::FAVORITES,
                   &items);
 
-    // Deletes itself.
-    ExternalProcessImporterHost* importer_host =
-        new ExternalProcessImporterHost;
-
-    // Don't show the warning dialog if import fails.
-    importer_host->set_headless();
-
     importer::LogImporterUseToMetrics(
         "AutoImport", importer_list->GetSourceProfileAt(0).importer_type);
 
-    ImportSettings(profile, importer_host, importer_list.Pass(), items);
+    ImportSettings(profile, std::move(importer_list), items);
   }
 
   if (!import_bookmarks_path.empty()) {
-    // Deletes itself.
-    ExternalProcessImporterHost* file_importer_host =
-        new ExternalProcessImporterHost;
-    file_importer_host->set_headless();
-
-    ImportFromFile(profile, file_importer_host, import_bookmarks_path);
+    ImportFromFile(profile, import_bookmarks_path);
   }
 
   content::RecordAction(UserMetricsAction("FirstRunDef_Accept"));
@@ -829,7 +859,7 @@ void DoPostImportTasks(Profile* profile, bool make_chrome_default_for_user) {
   internal::DoPostImportPlatformSpecificTasks(profile);
 }
 
-uint16 auto_import_state() {
+uint16_t auto_import_state() {
   return g_auto_import_state;
 }
 

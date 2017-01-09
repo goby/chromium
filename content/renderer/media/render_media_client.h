@@ -5,15 +5,16 @@
 #ifndef CONTENT_RENDERER_MEDIA_RENDER_MEDIA_CLIENT_H_
 #define CONTENT_RENDERER_MEDIA_RENDER_MEDIA_CLIENT_H_
 
+#include <memory>
+
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "media/base/media_client.h"
-
-#include "widevine_cdm_version.h" // In SHARED_INTERMEDIATE_DIR.
+#include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
 
 namespace content {
 
@@ -28,10 +29,14 @@ class CONTENT_EXPORT RenderMediaClient : public media::MediaClient {
       std::vector<media::KeySystemInfoForUMA>* key_systems_info_for_uma) final;
   bool IsKeySystemsUpdateNeeded() final;
   void AddSupportedKeySystems(
-      std::vector<media::KeySystemInfo>* key_systems_info) final;
+      std::vector<std::unique_ptr<media::KeySystemProperties>>*
+          key_systems_properties) final;
   void RecordRapporURL(const std::string& metric, const GURL& url) final;
+  bool IsSupportedVideoConfig(media::VideoCodec codec,
+                              media::VideoCodecProfile profile,
+                              int level) override;
 
-  void SetTickClockForTesting(scoped_ptr<base::TickClock> tick_clock);
+  void SetTickClockForTesting(std::unique_ptr<base::TickClock> tick_clock);
 
  private:
   friend struct base::DefaultLazyInstanceTraits<RenderMediaClient>;
@@ -51,7 +56,7 @@ class CONTENT_EXPORT RenderMediaClient : public media::MediaClient {
   bool is_update_needed_;
 
   base::TimeTicks last_update_time_ticks_;
-  scoped_ptr<base::TickClock> tick_clock_;
+  std::unique_ptr<base::TickClock> tick_clock_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderMediaClient);
 };

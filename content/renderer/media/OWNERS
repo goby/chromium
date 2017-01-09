@@ -1,19 +1,11 @@
-dalecurtis@chromium.org
-ddorwin@chromium.org
-jrummell@chromium.org
+file://media/OWNERS
 mcasas@chromium.org
 miu@chromium.org
-sandersd@chromium.org
-wolenetz@chromium.org
-xhwang@chromium.org
 
 # WebRTC OWNERS.
+hbos@chromium.org
 perkj@chromium.org
 tommi@chromium.org
 
-per-file midi_*=toyoshim@chromium.org
-per-file renderer_webmidi*=toyoshim@chromium.org
-
-# WebRTC audio processing OWNERS.
-per-file media_stream_audio_processor*=ajm@chromium.org
+per-file *midi*=toyoshim@chromium.org
 per-file media_stream_audio_processor*=aluebs@chromium.org

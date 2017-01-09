@@ -5,11 +5,13 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_AUTOCOMPLETE_MATCH_H_
 #define COMPONENTS_OMNIBOX_BROWSER_AUTOCOMPLETE_MATCH_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/search_engines/template_url.h"
@@ -60,6 +62,10 @@ struct AutocompleteMatch {
     // The values in here are not mutually exclusive -- use them like a
     // bitfield.  This also means we use "int" instead of this enum type when
     // passing the values around, so the compiler doesn't complain.
+    //
+    // A Java counterpart will be generated for this enum.
+    // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.omnibox
+    // GENERATED_JAVA_CLASS_NAME_OVERRIDE: MatchClassificationStyle
     enum Style {
       NONE  = 0,
       URL   = 1 << 0,  // A URL
@@ -101,10 +107,6 @@ struct AutocompleteMatch {
 
   // Converts |type| to a string representation.  Used in logging and debugging.
   AutocompleteMatch& operator=(const AutocompleteMatch& match);
-
-  // Converts |type| to a resource identifier for the appropriate icon for this
-  // type to show in the completion popup.
-  static int TypeToIcon(Type type);
 
   // Gets the vector icon identifier for the icon to be shown for |type|.
   static gfx::VectorIconId TypeToVectorIcon(Type type);
@@ -199,29 +201,23 @@ struct AutocompleteMatch {
   // starts with any the terms in input.terms_prefixed_by_http_or_https(), we
   // avoid converting an HTTPS scheme to HTTP.  This means URLs that differ
   // only by these schemes won't be marked as dupes, since the distinction
-  // seems to matter to the user.  |languages| is used to format punycoded
-  // domain names to UTF-8 for the aforementioned duplicate detection.
+  // seems to matter to the user.
   static GURL GURLToStrippedGURL(const GURL& url,
                                  const AutocompleteInput& input,
-                                 const std::string& languages,
                                  TemplateURLService* template_url_service,
                                  const base::string16& keyword);
 
   // Computes the stripped destination URL (via GURLToStrippedGURL()) and
-  // stores the result in |stripped_destination_url|.  |input| and |languages|
-  // are used for the same purpose as in GURLToStrippedGURL().
-  void ComputeStrippedDestinationURL(
-      const AutocompleteInput& input,
-      const std::string& languages,
-      TemplateURLService* template_url_service);
+  // stores the result in |stripped_destination_url|.  |input| is used for the
+  // same purpose as in GURLToStrippedGURL().
+  void ComputeStrippedDestinationURL(const AutocompleteInput& input,
+                                     TemplateURLService* template_url_service);
 
   // Sets |allowed_to_be_default_match| to true if this match is effectively
   // the URL-what-you-typed match (i.e., would be dupped against the UWYT
-  // match when AutocompleteResult merges matches).  |languages| is used
-  // for the same purpose as in GURLToStrippedGURL().
+  // match when AutocompleteResult merges matches).
   void EnsureUWYTIsAllowedToBeDefault(
       const AutocompleteInput& input,
-      const std::string& languages,
       TemplateURLService* template_url_service);
 
   // Gets data relevant to whether there should be any special keyword-related
@@ -275,8 +271,8 @@ struct AutocompleteMatch {
   // input.  Note that rare or unusual types that could be considered verbatim,
   // such as keyword engine matches or extension-provided matches, aren't
   // detected by this IsVerbatimType, as the user will not be able to infer
-  // what will happen when he or she presses enter in those cases if the match
-  // is not shown.
+  // what will happen when they press enter in those cases if the match is not
+  // shown.
   bool IsVerbatimType() const;
 
   // Returns whether this match or any duplicate of this match can be deleted.
@@ -340,7 +336,9 @@ struct AutocompleteMatch {
   // It may be empty if there is no possible navigation.
   GURL destination_url;
 
-  // The destination URL with "www." stripped off for better dupe finding.
+  // The destination URL modified for better dupe finding.  The result may not
+  // be navigable or even valid; it's only meant to be used for detecting
+  // duplicates.
   GURL stripped_destination_url;
 
   // The main text displayed in the address bar dropdown.
@@ -360,7 +358,7 @@ struct AutocompleteMatch {
   // A rich-format version of the display for the dropdown.
   base::string16 answer_contents;
   base::string16 answer_type;
-  scoped_ptr<SuggestionAnswer> answer;
+  std::unique_ptr<SuggestionAnswer> answer;
 
   // The transition type to use when the user opens this match.  By default
   // this is TYPED.  Providers whose matches do not look like URLs should set
@@ -378,7 +376,7 @@ struct AutocompleteMatch {
   // line for this match, and tab/shift-tab will toggle in and out of keyword
   // mode without disturbing the rest of the popup.  See also
   // OmniboxPopupModel::SetSelectedLineState().
-  scoped_ptr<AutocompleteMatch> associated_keyword;
+  std::unique_ptr<AutocompleteMatch> associated_keyword;
 
   // The keyword of the TemplateURL the match originated from.  This is nonempty
   // for both explicit "keyword mode" matches as well as matches for the default
@@ -403,7 +401,7 @@ struct AutocompleteMatch {
   // after the complete set of matches in the AutocompleteResult has been chosen
   // and sorted.  Most providers will leave this as NULL, which will cause the
   // AutocompleteController to do no additional transformations.
-  scoped_ptr<TemplateURLRef::SearchTermsArgs> search_terms_args;
+  std::unique_ptr<TemplateURLRef::SearchTermsArgs> search_terms_args;
 
   // Information dictionary into which each provider can optionally record a
   // property and associated value and which is presented in chrome://omnibox.

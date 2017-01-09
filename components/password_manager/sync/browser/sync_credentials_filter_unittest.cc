@@ -4,16 +4,33 @@
 
 #include "components/password_manager/sync/browser/sync_credentials_filter.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/memory/scoped_vector.h"
+#include "base/message_loop/message_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/user_action_tester.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/fake_form_fetcher.h"
+#include "components/password_manager/core/browser/mock_password_store.h"
+#include "components/password_manager/core/browser/password_manager.h"
+#include "components/password_manager/core/browser/password_manager_test_utils.h"
+#include "components/password_manager/core/browser/stub_form_saver.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
-#include "components/password_manager/core/common/password_manager_switches.h"
+#include "components/password_manager/core/browser/stub_password_manager_driver.h"
+#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/sync/browser/sync_username_test_base.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using autofill::PasswordForm;
@@ -22,26 +39,42 @@ namespace password_manager {
 
 namespace {
 
+const char kFilledAndLoginActionName[] =
+    "PasswordManager_SyncCredentialFilledAndLoginSuccessfull";
+
 class FakePasswordManagerClient : public StubPasswordManagerClient {
  public:
-  ~FakePasswordManagerClient() override {}
+  FakePasswordManagerClient()
+      : password_store_(new testing::NiceMock<MockPasswordStore>) {}
+
+  ~FakePasswordManagerClient() override {
+    password_store_->ShutdownOnUIThread();
+  }
 
   // PasswordManagerClient:
   const GURL& GetLastCommittedEntryURL() const override {
     return last_committed_entry_url_;
+  }
+  MockPasswordStore* GetPasswordStore() const override {
+    return password_store_.get();
   }
 
   void set_last_committed_entry_url(const char* url_spec) {
     last_committed_entry_url_ = GURL(url_spec);
   }
 
+ private:
+  base::MessageLoop message_loop_;  // For |password_store_|.
   GURL last_committed_entry_url_;
+  scoped_refptr<testing::NiceMock<MockPasswordStore>> password_store_;
+
+  DISALLOW_COPY_AND_ASSIGN(FakePasswordManagerClient);
 };
 
 bool IsFormFiltered(const CredentialsFilter* filter, const PasswordForm& form) {
-  ScopedVector<PasswordForm> vector;
-  vector.push_back(new PasswordForm(form));
-  vector = filter->FilterResults(vector.Pass());
+  std::vector<std::unique_ptr<PasswordForm>> vector;
+  vector.push_back(base::MakeUnique<PasswordForm>(form));
+  vector = filter->FilterResults(std::move(vector));
   return vector.empty();
 }
 
@@ -58,22 +91,35 @@ class CredentialsFilterTest : public SyncUsernameTestBase {
     enum { NO_HISTOGRAM, HISTOGRAM_REPORTED } histogram_reported;
   };
 
+  // Flag for creating a PasswordFormManager, deciding its IsNewLogin() value.
+  enum class LoginState { NEW, EXISTING };
+
   CredentialsFilterTest()
-      : filter_(&client_,
+      : password_manager_(&client_),
+        pending_(SimpleGaiaForm("user@gmail.com")),
+        form_manager_(&password_manager_,
+                      &client_,
+                      driver_.AsWeakPtr(),
+                      pending_,
+                      base::MakeUnique<StubFormSaver>(),
+                      &fetcher_),
+        filter_(&client_,
                 base::Bind(&SyncUsernameTestBase::sync_service,
                            base::Unretained(this)),
                 base::Bind(&SyncUsernameTestBase::signin_manager,
-                           base::Unretained(this))) {}
+                           base::Unretained(this))) {
+    fetcher_.Fetch();
+  }
 
   void CheckFilterResultsTestCase(const TestCase& test_case) {
     SetSyncingPasswords(test_case.password_sync == TestCase::SYNCING_PASSWORDS);
     FakeSigninAs(test_case.fake_sync_username);
-    client()->set_last_committed_entry_url(test_case.last_committed_entry_url);
+    client_.set_last_committed_entry_url(test_case.last_committed_entry_url);
     base::HistogramTester tester;
     const bool expected_is_form_filtered =
         test_case.is_form_filtered == TestCase::FORM_FILTERED;
     EXPECT_EQ(expected_is_form_filtered,
-              IsFormFiltered(filter(), test_case.form));
+              IsFormFiltered(&filter_, test_case.form));
     if (test_case.histogram_reported == TestCase::HISTOGRAM_REPORTED) {
       tester.ExpectUniqueSample("PasswordManager.SyncCredentialFiltered",
                                 expected_is_form_filtered, 1);
@@ -83,12 +129,27 @@ class CredentialsFilterTest : public SyncUsernameTestBase {
     FakeSignout();
   }
 
-  SyncCredentialsFilter* filter() { return &filter_; }
+  // Makes |form_manager_| provisionally save |pending_|. Depending on
+  // |login_state| being NEW or EXISTING, prepares |form_manager_| in a state in
+  // which |pending_| looks like a new or existing credential, respectively.
+  void SavePending(LoginState login_state) {
+    std::vector<const PasswordForm*> matches;
+    if (login_state == LoginState::EXISTING) {
+      matches.push_back(&pending_);
+    }
+    fetcher_.SetNonFederated(matches, 0u);
 
-  FakePasswordManagerClient* client() { return &client_; }
+    form_manager_.ProvisionallySave(
+        pending_, PasswordFormManager::IGNORE_OTHER_POSSIBLE_USERNAMES);
+  }
 
- private:
+ protected:
   FakePasswordManagerClient client_;
+  PasswordManager password_manager_;
+  StubPasswordManagerDriver driver_;
+  PasswordForm pending_;
+  FakeFormFetcher fetcher_;
+  PasswordFormManager form_manager_;
 
   SyncCredentialsFilter filter_;
 };
@@ -132,9 +193,12 @@ TEST_F(CredentialsFilterTest, FilterResults_AllowAll) {
 }
 
 TEST_F(CredentialsFilterTest, FilterResults_DisallowSyncOnReauth) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitch(
-      switches::kDisallowAutofillSyncCredentialForReauth);
+  // Only 'protect-sync-credential-on-reauth' feature is kept enabled, fill the
+  // sync credential everywhere but on reauth.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitFromCommandLine(
+      features::kProtectSyncCredentialOnReauth.name,
+      features::kProtectSyncCredential.name);
 
   const TestCase kTestCases[] = {
       // Reauth URL, not sync username.
@@ -173,8 +237,13 @@ TEST_F(CredentialsFilterTest, FilterResults_DisallowSyncOnReauth) {
 }
 
 TEST_F(CredentialsFilterTest, FilterResults_DisallowSync) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitch(switches::kDisallowAutofillSyncCredential);
+  // Both features are kept enabled, should cause sync credential to be
+  // filtered.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitFromCommandLine(
+      features::kProtectSyncCredential.name + std::string(",") +
+          features::kProtectSyncCredentialOnReauth.name,
+      std::string());
 
   const TestCase kTestCases[] = {
       // Reauth URL, not sync username.
@@ -212,11 +281,57 @@ TEST_F(CredentialsFilterTest, FilterResults_DisallowSync) {
   }
 }
 
-TEST_F(CredentialsFilterTest, ReportFormUsed) {
+TEST_F(CredentialsFilterTest, ReportFormLoginSuccess_ExistingSyncCredentials) {
+  FakeSigninAs("user@gmail.com");
+  SetSyncingPasswords(true);
+
   base::UserActionTester tester;
-  ASSERT_EQ(0, tester.GetActionCount("PasswordManager_SyncCredentialUsed"));
-  filter()->ReportFormUsed(PasswordForm());
-  EXPECT_EQ(1, tester.GetActionCount("PasswordManager_SyncCredentialUsed"));
+  SavePending(LoginState::EXISTING);
+  filter_.ReportFormLoginSuccess(form_manager_);
+  EXPECT_EQ(1, tester.GetActionCount(kFilledAndLoginActionName));
+}
+
+TEST_F(CredentialsFilterTest, ReportFormLoginSuccess_NewSyncCredentials) {
+  FakeSigninAs("user@gmail.com");
+  SetSyncingPasswords(true);
+
+  base::UserActionTester tester;
+  SavePending(LoginState::NEW);
+  filter_.ReportFormLoginSuccess(form_manager_);
+  EXPECT_EQ(0, tester.GetActionCount(kFilledAndLoginActionName));
+}
+
+TEST_F(CredentialsFilterTest, ReportFormLoginSuccess_GAIANotSyncCredentials) {
+  const char kOtherUsername[] = "other_user@gmail.com";
+  FakeSigninAs(kOtherUsername);
+  ASSERT_NE(pending_.username_value, base::ASCIIToUTF16(kOtherUsername));
+  SetSyncingPasswords(true);
+
+  base::UserActionTester tester;
+  SavePending(LoginState::EXISTING);
+  filter_.ReportFormLoginSuccess(form_manager_);
+  EXPECT_EQ(0, tester.GetActionCount(kFilledAndLoginActionName));
+}
+
+TEST_F(CredentialsFilterTest, ReportFormLoginSuccess_NotGAIACredentials) {
+  pending_ = SimpleNonGaiaForm("user@gmail.com");
+  FakeSigninAs("user@gmail.com");
+  SetSyncingPasswords(true);
+
+  base::UserActionTester tester;
+  SavePending(LoginState::EXISTING);
+  filter_.ReportFormLoginSuccess(form_manager_);
+  EXPECT_EQ(0, tester.GetActionCount(kFilledAndLoginActionName));
+}
+
+TEST_F(CredentialsFilterTest, ReportFormLoginSuccess_NotSyncing) {
+  FakeSigninAs("user@gmail.com");
+  SetSyncingPasswords(false);
+
+  base::UserActionTester tester;
+  SavePending(LoginState::EXISTING);
+  filter_.ReportFormLoginSuccess(form_manager_);
+  EXPECT_EQ(0, tester.GetActionCount(kFilledAndLoginActionName));
 }
 
 TEST_F(CredentialsFilterTest, ShouldSave_NotSyncCredential) {
@@ -225,7 +340,7 @@ TEST_F(CredentialsFilterTest, ShouldSave_NotSyncCredential) {
   ASSERT_NE("user@example.org",
             signin_manager()->GetAuthenticatedAccountInfo().email);
   SetSyncingPasswords(true);
-  EXPECT_TRUE(filter()->ShouldSave(form));
+  EXPECT_TRUE(filter_.ShouldSave(form));
 }
 
 TEST_F(CredentialsFilterTest, ShouldSave_SyncCredential) {
@@ -233,7 +348,7 @@ TEST_F(CredentialsFilterTest, ShouldSave_SyncCredential) {
 
   FakeSigninAs("user@example.org");
   SetSyncingPasswords(true);
-  EXPECT_FALSE(filter()->ShouldSave(form));
+  EXPECT_FALSE(filter_.ShouldSave(form));
 }
 
 TEST_F(CredentialsFilterTest, ShouldSave_SyncCredential_NotSyncingPasswords) {
@@ -241,21 +356,27 @@ TEST_F(CredentialsFilterTest, ShouldSave_SyncCredential_NotSyncingPasswords) {
 
   FakeSigninAs("user@example.org");
   SetSyncingPasswords(false);
-  EXPECT_TRUE(filter()->ShouldSave(form));
+  EXPECT_TRUE(filter_.ShouldSave(form));
 }
 
 TEST_F(CredentialsFilterTest, ShouldFilterOneForm) {
-  // Adding disallow switch should cause sync credential to be filtered.
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitch(switches::kDisallowAutofillSyncCredential);
+  // Both features are kept enabled, should cause sync credential to be
+  // filtered.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitFromCommandLine(
+      features::kProtectSyncCredential.name + std::string(",") +
+          features::kProtectSyncCredentialOnReauth.name,
+      std::string());
 
-  ScopedVector<autofill::PasswordForm> results;
-  results.push_back(new PasswordForm(SimpleGaiaForm("test1@gmail.com")));
-  results.push_back(new PasswordForm(SimpleGaiaForm("test2@gmail.com")));
+  std::vector<std::unique_ptr<PasswordForm>> results;
+  results.push_back(
+      base::MakeUnique<PasswordForm>(SimpleGaiaForm("test1@gmail.com")));
+  results.push_back(
+      base::MakeUnique<PasswordForm>(SimpleGaiaForm("test2@gmail.com")));
 
   FakeSigninAs("test1@gmail.com");
 
-  results = filter()->FilterResults(results.Pass());
+  results = filter_.FilterResults(std::move(results));
 
   ASSERT_EQ(1u, results.size());
   EXPECT_EQ(SimpleGaiaForm("test2@gmail.com"), *results[0]);

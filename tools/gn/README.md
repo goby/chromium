@@ -2,13 +2,11 @@
 
 GN is a meta-build system that generates
 [NinjaBuild](https://chromium.googlesource.com/chromium/src/+/master/docs/ninja_build.md)
-files. It's meant to be faster and simpler than GYP. It outputs only Ninja build
-files.
+files so that you can build Chromium with Ninja.
 
-## Why bother with GN?
+## Why did you switch from GYP?
 
-1. We believe GN files are more readable and more maintainable
-   than GYP files.
+1. We believe GN files are more readable and more maintainable than GYP files.
 2. GN is fast:
   * GN is 20x faster than GYP.
   * GN supports automatically re-running itself as needed by Ninja
@@ -20,62 +18,19 @@ files.
 4. GN gives us tools for querying the build graph; you can ask
    "what does X depend on" and "who depends on Y", for example.
 
-## What's the status?
+## What's the status of the GYP->GN migration?
 
-_as of 7 Oct 2015:_
+_As of Oct 2016:_
 
-GN is now the default system for Linux, though GYP still works. It
-is mostly complete on Android, ChromeOS, and Windows (apart from NaCl
-support on Windows).
-
-Mac and iOS are making progress, though we still need better support
-for bundles before the major targets like Chrome can link and they get
-to parity w/ the other platforms.
-
-## When are you going to be done?
-
-_as of 7 Oct 2015:_
-
-We're currently shooting for having Android, ChromeOS, and Windows
-converted over by the end of 2015, with Mac and iOS following in Q1
-of 2016.
-
-## What does "done" mean?
-
-Ideally we're done when all of the GYP files have been deleted from
-Chromium and no one misses them.
-
-We will be "mostly" done when the following are true:
-
-  * All of the bots maintained by the Chrome infra team for Chromium and
-    downstream of Chromium have been switched to GN. (Upstream projects
-    like Skia and V8 can choose to stay on GYP if they like).
-  * Any developer configurations we care about that don't have bots also
-    work (Generally speaking, we're aiming to not have any of these.
-  * Configurations we care about should have bots to ensure they don't
-    break).  We have verified that all of the tests pass.  We have
-    verified that the command lines match in the above configurations as
-    much as possible, and we accept any differences.  We have reviewed
-    any binary differences that result in the official builds and
-    accepted them.  The GN files are the "source of truth" for the
-    build, and normal chromium developers normally do not need to touch
-    GYP files to keep things working.  We have replacements for the
-    hybrid "msvs-ninja" and "xcode-ninja" configurations that GYP can
-    currently build.
-
-The difference between "mostly done" and "done" exists to cover any
-issues we haven't yet identified :)
-
-We do not currently plan to support full native XCode or Visual Studio
-generation from GN. It is theoretically possible to support such things,
-so we would at least look at patches adding the functionality.
-
-## How can I help?
-
-Check to see if your targets build under GN yet. If they don't,
-volunteer to help convert them!
-
-Or, look at [the list of open bugs](https://code.google.com/p/chromium/issues/list?can=2&q=label:Proj-GN-Migration%20-type:Project&sort=pri&colspec=ID%20Pri%20Summary%20Type%20OS%20Owner%20Status%20Modified%20Blocking) related to the migration and see if there's anything that catches your fancy.
+  * All of the Chromium builds have been switched over.
+  * Nearly all of the GYP files have been deleted from the Chromium repos.
+  * You can no longer build with GYP as a result.
+  * There are still some GYP files in place for the "Closure Compilation"
+    builders that need to be converted over.
+  * Some related projects (e.g., V8, Skia) may still support GYP for their
+    own reasons.
+  * We're still cleaning up some odds and ends like making gclient not
+    still use GYP_DEFINES.
 
 ## I want more info on GN!
 
@@ -83,7 +38,6 @@ Read these links:
 
   * [Quick start](https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/quick_start.md)
   * [FAQ](https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/faq.md)
-  * [GYP conversion cookbook](https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/cookbook.md)
   * [Language and operation details](https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/language.md)
   * [Reference](https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/reference.md) The built-in `gn help` documentation.
   * [Style guide](https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/style_guide.md)

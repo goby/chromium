@@ -4,6 +4,8 @@
 
 #include "chromeos/dbus/update_engine_client.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/bind.h"
@@ -12,7 +14,7 @@
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/chromeos_switches.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
@@ -205,15 +207,22 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
                    callback));
   }
 
+  void GetEolStatus(const GetEolStatusCallback& callback) override {
+    dbus::MethodCall method_call(update_engine::kUpdateEngineInterface,
+                                 update_engine::kGetEolStatus);
+
+    VLOG(1) << "Requesting to get end of life status";
+    update_engine_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::Bind(&UpdateEngineClientImpl::OnGetEolStatus,
+                   weak_ptr_factory_.GetWeakPtr(), callback));
+  }
+
  protected:
   void Init(dbus::Bus* bus) override {
     update_engine_proxy_ = bus->GetObjectProxy(
         update_engine::kUpdateEngineServiceName,
         dbus::ObjectPath(update_engine::kUpdateEngineServicePath));
-
-    // Monitor the D-Bus signal for brightness changes. Only the power
-    // manager knows the actual brightness level. We don't cache the
-    // brightness level in Chrome as it will make things less reliable.
     update_engine_proxy_->ConnectToSignal(
         update_engine::kUpdateEngineInterface,
         update_engine::kStatusUpdate,
@@ -221,15 +230,24 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
                    weak_ptr_factory_.GetWeakPtr()),
         base::Bind(&UpdateEngineClientImpl::StatusUpdateConnected,
                    weak_ptr_factory_.GetWeakPtr()));
-
-    // Get update engine status for the initial status. Update engine won't
-    // send StatusUpdate signal unless there is a status change. If chrome
-    // crashes after UPDATE_STATUS_UPDATED_NEED_REBOOT status is set,
-    // restarted chrome would not get this status. See crbug.com/154104.
-    GetUpdateEngineStatus();
+    update_engine_proxy_->WaitForServiceToBeAvailable(
+        base::Bind(&UpdateEngineClientImpl::OnServiceInitiallyAvailable,
+                   weak_ptr_factory_.GetWeakPtr()));
   }
 
  private:
+  void OnServiceInitiallyAvailable(bool service_is_available) {
+    if (service_is_available) {
+      // Get update engine status for the initial status. Update engine won't
+      // send StatusUpdate signal unless there is a status change. If chrome
+      // crashes after UPDATE_STATUS_UPDATED_NEED_REBOOT status is set,
+      // restarted chrome would not get this status. See crbug.com/154104.
+      GetUpdateEngineStatus();
+    } else {
+      LOG(ERROR) << "Failed to wait for D-Bus service to become available";
+    }
+  }
+
   void GetUpdateEngineStatus() {
     dbus::MethodCall method_call(
         update_engine::kUpdateEngineInterface,
@@ -310,7 +328,8 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
     }
     status.status = UpdateStatusFromString(current_operation);
     last_status_ = status;
-    FOR_EACH_OBSERVER(Observer, observers_, UpdateStatusChanged(status));
+    for (auto& observer : observers_)
+      observer.UpdateStatusChanged(status);
   }
 
   // Called when GetStatus call failed.
@@ -347,11 +366,39 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
     callback.Run(channel);
   }
 
+  // Called when a response for GetEolStatus() is received.
+  void OnGetEolStatus(const GetEolStatusCallback& callback,
+                      dbus::Response* response) {
+    if (!response) {
+      LOG(ERROR) << "Failed to request getting eol status";
+      callback.Run(update_engine::EndOfLifeStatus::kSupported);
+      return;
+    }
+    dbus::MessageReader reader(response);
+    int status;
+    if (!reader.PopInt32(&status)) {
+      LOG(ERROR) << "Incorrect response: " << response->ToString();
+      callback.Run(update_engine::EndOfLifeStatus::kSupported);
+      return;
+    }
+
+    // Validate the value of status
+    if (status > update_engine::EndOfLifeStatus::kEol ||
+        status < update_engine::EndOfLifeStatus::kSupported) {
+      LOG(ERROR) << "Incorrect status value: " << status;
+      callback.Run(update_engine::EndOfLifeStatus::kSupported);
+      return;
+    }
+
+    VLOG(1) << "Eol status received: " << status;
+    callback.Run(static_cast<update_engine::EndOfLifeStatus>(status));
+  }
+
   // Called when a status update signal is received.
   void StatusUpdateReceived(dbus::Signal* signal) {
     VLOG(1) << "Status update signal received: " << signal->ToString();
     dbus::MessageReader reader(signal);
-    int64 last_checked_time = 0;
+    int64_t last_checked_time = 0;
     double progress = 0.0;
     std::string current_operation;
     std::string new_version;
@@ -373,7 +420,8 @@ class UpdateEngineClientImpl : public UpdateEngineClient {
     status.new_size = new_size;
 
     last_status_ = status;
-    FOR_EACH_OBSERVER(Observer, observers_, UpdateStatusChanged(status));
+    for (auto& observer : observers_)
+      observer.UpdateStatusChanged(status);
   }
 
   // Called when the status update signal is initially connected.
@@ -433,6 +481,10 @@ class UpdateEngineClientStubImpl : public UpdateEngineClient {
       callback.Run(current_channel_);
     else
       callback.Run(target_channel_);
+  }
+
+  void GetEolStatus(const GetEolStatusCallback& callback) override {
+    callback.Run(update_engine::EndOfLifeStatus::kSupported);
   }
 
   std::string current_channel_;
@@ -516,7 +568,8 @@ class UpdateEngineClientFakeImpl : public UpdateEngineClientStubImpl {
         break;
     }
     last_status_.status = next_status;
-    FOR_EACH_OBSERVER(Observer, observers_, UpdateStatusChanged(last_status_));
+    for (auto& observer : observers_)
+      observer.UpdateStatusChanged(last_status_);
     if (last_status_.status != UPDATE_STATUS_IDLE) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&UpdateEngineClientFakeImpl::StateTransition,
@@ -550,7 +603,7 @@ UpdateEngineClient* UpdateEngineClient::Create(
     DBusClientImplementationType type) {
   if (type == REAL_DBUS_CLIENT_IMPLEMENTATION)
     return new UpdateEngineClientImpl();
-  DCHECK_EQ(STUB_DBUS_CLIENT_IMPLEMENTATION, type);
+  DCHECK_EQ(FAKE_DBUS_CLIENT_IMPLEMENTATION, type);
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kTestAutoUpdateUI))
     return new UpdateEngineClientFakeImpl();
@@ -562,12 +615,12 @@ UpdateEngineClient* UpdateEngineClient::Create(
 bool UpdateEngineClient::IsTargetChannelMoreStable(
     const std::string& current_channel,
     const std::string& target_channel) {
-  auto cix = std::find(kReleaseChannelsList,
-                       kReleaseChannelsList + arraysize(kReleaseChannelsList),
-                       current_channel);
-  auto tix = std::find(kReleaseChannelsList,
-                       kReleaseChannelsList + arraysize(kReleaseChannelsList),
-                       target_channel);
+  const char** cix = std::find(
+      kReleaseChannelsList,
+      kReleaseChannelsList + arraysize(kReleaseChannelsList), current_channel);
+  const char** tix = std::find(
+      kReleaseChannelsList,
+      kReleaseChannelsList + arraysize(kReleaseChannelsList), target_channel);
   return tix > cix;
 }
 

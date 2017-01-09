@@ -4,7 +4,9 @@
 
 #include "content/renderer/pepper/pepper_graphics_2d_host.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "content/renderer/pepper/gfx_conversion.h"
 #include "content/renderer/pepper/mock_renderer_ppapi_host.h"
@@ -70,7 +72,7 @@ class PepperGraphics2DHostTest : public testing::Test {
   }
 
   void PaintToWebCanvas(SkBitmap* bitmap) {
-    scoped_ptr<WebCanvas> canvas(new WebCanvas(*bitmap));
+    std::unique_ptr<WebCanvas> canvas(new WebCanvas(*bitmap));
     gfx::Rect plugin_rect(PP_ToGfxRect(renderer_view_data_.rect));
     host_->Paint(canvas.get(),
                  plugin_rect,
@@ -90,7 +92,7 @@ class PepperGraphics2DHostTest : public testing::Test {
 
  private:
   ppapi::ViewData renderer_view_data_;
-  scoped_ptr<PepperGraphics2DHost> host_;
+  std::unique_ptr<PepperGraphics2DHost> host_;
   base::MessageLoop message_loop_;
   MockRendererPpapiHost renderer_ppapi_host_;
   ppapi::TestGlobals test_globals_;

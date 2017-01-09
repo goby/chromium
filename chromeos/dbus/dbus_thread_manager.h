@@ -5,13 +5,13 @@
 #ifndef CHROMEOS_DBUS_DBUS_THREAD_MANAGER_H_
 #define CHROMEOS_DBUS_DBUS_THREAD_MANAGER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "chromeos/chromeos_export.h"
-#include "chromeos/dbus/dbus_client_bundle.h"
 
 namespace base {
 class Thread;
@@ -19,35 +19,28 @@ class Thread;
 
 namespace dbus {
 class Bus;
-class ObjectPath;
 }  // namespace dbus
 
 namespace chromeos {
 
 // Style Note: Clients are sorted by names.
-class AmplifierClient;
-class ApManagerClient;
-class AudioDspClient;
+class ArcObbMounterClient;
+class AuthPolicyClient;
 class CrasAudioClient;
 class CrosDisksClient;
 class CryptohomeClient;
+class DBusClientsBrowser;
+class DBusClientsCommon;
 class DBusThreadManagerSetter;
 class DebugDaemonClient;
 class EasyUnlockClient;
 class GsmSMSClient;
 class ImageBurnerClient;
-class IntrospectableClient;
+class ImageLoaderClient;
 class LorgnetteManagerClient;
 class ModemMessagingClient;
-class NfcAdapterClient;
-class NfcDeviceClient;
-class NfcManagerClient;
-class NfcRecordClient;
-class NfcTagClient;
-class PeerDaemonManagerClient;
 class PermissionBrokerClient;
 class PowerManagerClient;
-class PrivetDaemonManagerClient;
 class SMSClient;
 class SessionManagerClient;
 class ShillDeviceClient;
@@ -58,6 +51,7 @@ class ShillServiceClient;
 class ShillThirdPartyVpnDriverClient;
 class SystemClockClient;
 class UpdateEngineClient;
+class UpstartClient;
 
 // DBusThreadManager manages the D-Bus thread, the thread dedicated to
 // handling asynchronous D-Bus operations.
@@ -79,17 +73,30 @@ class UpdateEngineClient;
 //
 class CHROMEOS_EXPORT DBusThreadManager {
  public:
+  // Processes for which to create and initialize the D-Bus clients.
+  // TODO(jamescook): Move creation of clients into //ash and //chrome/browser.
+  // http://crbug.com/647367
+  enum ProcessMask {
+    PROCESS_ASH = 1 << 0,
+    PROCESS_BROWSER = 1 << 1,
+    PROCESS_ALL = ~0,
+  };
   // Sets the global instance. Must be called before any calls to Get().
   // We explicitly initialize and shut down the global object, rather than
   // making it a Singleton, to ensure clean startup and shutdown.
-  // This will initialize real or stub DBusClients depending on command-line
+  // This will initialize real or fake DBusClients depending on command-line
   // arguments and whether this process runs in a ChromeOS environment.
+  // Only D-Bus clients available in the processes in |process_mask| will be
+  // created.
+  static void Initialize(ProcessMask process_mask);
+
+  // Equivalent to Initialize(PROCESS_ALL).
   static void Initialize();
 
   // Returns a DBusThreadManagerSetter instance that allows tests to
   // replace individual D-Bus clients with their own implementations.
   // Also initializes the main DBusThreadManager for testing if necessary.
-  static scoped_ptr<DBusThreadManagerSetter> GetSetterForTesting();
+  static std::unique_ptr<DBusThreadManagerSetter> GetSetterForTesting();
 
   // Returns true if DBusThreadManager has been initialized. Call this to
   // avoid initializing + shutting down DBusThreadManager more than once.
@@ -101,17 +108,18 @@ class CHROMEOS_EXPORT DBusThreadManager {
   // Gets the global instance. Initialize() must be called first.
   static DBusThreadManager* Get();
 
-  // Returns true if |client| is stubbed.
-  bool IsUsingStub(DBusClientBundle::DBusClientType client);
+  // Returns true if clients are faked.
+  bool IsUsingFakes();
 
   // Returns various D-Bus bus instances, owned by DBusThreadManager.
   dbus::Bus* GetSystemBus();
 
   // All returned objects are owned by DBusThreadManager.  Do not use these
   // pointers after DBusThreadManager has been shut down.
-  AmplifierClient* GetAmplifierClient();
-  ApManagerClient* GetApManagerClient();
-  AudioDspClient* GetAudioDspClient();
+  // TODO(jamescook): Replace this with calls to FooClient::Get().
+  // http://crbug.com/647367
+  ArcObbMounterClient* GetArcObbMounterClient();
+  AuthPolicyClient* GetAuthPolicyClient();
   CrasAudioClient* GetCrasAudioClient();
   CrosDisksClient* GetCrosDisksClient();
   CryptohomeClient* GetCryptohomeClient();
@@ -119,17 +127,10 @@ class CHROMEOS_EXPORT DBusThreadManager {
   EasyUnlockClient* GetEasyUnlockClient();
   GsmSMSClient* GetGsmSMSClient();
   ImageBurnerClient* GetImageBurnerClient();
-  IntrospectableClient* GetIntrospectableClient();
+  ImageLoaderClient* GetImageLoaderClient();
   LorgnetteManagerClient* GetLorgnetteManagerClient();
   ModemMessagingClient* GetModemMessagingClient();
-  NfcAdapterClient* GetNfcAdapterClient();
-  NfcDeviceClient* GetNfcDeviceClient();
-  NfcManagerClient* GetNfcManagerClient();
-  NfcRecordClient* GetNfcRecordClient();
-  NfcTagClient* GetNfcTagClient();
-  PeerDaemonManagerClient* GetPeerDaemonManagerClient();
   PermissionBrokerClient* GetPermissionBrokerClient();
-  PrivetDaemonManagerClient* GetPrivetDaemonManagerClient();
   PowerManagerClient* GetPowerManagerClient();
   SessionManagerClient* GetSessionManagerClient();
   ShillDeviceClient* GetShillDeviceClient();
@@ -141,82 +142,58 @@ class CHROMEOS_EXPORT DBusThreadManager {
   SMSClient* GetSMSClient();
   SystemClockClient* GetSystemClockClient();
   UpdateEngineClient* GetUpdateEngineClient();
+  UpstartClient* GetUpstartClient();
 
  private:
   friend class DBusThreadManagerSetter;
 
-  // Creates a new DBusThreadManager using the DBusClients set in
-  // |client_bundle|.
-  explicit DBusThreadManager(scoped_ptr<DBusClientBundle> client_bundle);
+  // Creates dbus clients for all process types in |process_mask|. Creates real
+  // clients if |use_real_clients| is set, otherwise creates fakes.
+  DBusThreadManager(ProcessMask process_mask, bool use_real_clients);
   ~DBusThreadManager();
-
-  // Creates a global instance of DBusThreadManager with the real
-  // implementations for all clients that are listed in |unstub_client_mask| and
-  // stub implementations for all clients that are not included. Cannot be
-  // called more than once.
-  static void CreateGlobalInstance(
-      DBusClientBundle::DBusClientTypeMask unstub_client_mask);
-
-  // Initialize global thread manager instance with all real dbus client
-  // implementations.
-  static void InitializeWithRealClients();
-
-  // Initialize global thread manager instance with stubbed-out dbus clients
-  // implementation.
-  static void InitializeWithStubs();
-
-  // Initialize with stub implementations for only certain clients that are
-  // not included in the comma-separated |unstub_clients| list.
-  static void InitializeWithPartialStub(const std::string& unstub_clients);
 
   // Initializes all currently stored DBusClients with the system bus and
   // performs additional setup.
   void InitializeClients();
 
-  scoped_ptr<base::Thread> dbus_thread_;
+  std::unique_ptr<base::Thread> dbus_thread_;
   scoped_refptr<dbus::Bus> system_bus_;
-  scoped_ptr<DBusClientBundle> client_bundle_;
+
+  // Whether to use real or fake dbus clients.
+  const bool use_real_clients_;
+
+  // Clients used by multiple processes.
+  std::unique_ptr<DBusClientsCommon> clients_common_;
+
+  // Clients used only by the browser process. Null in other processes.
+  std::unique_ptr<DBusClientsBrowser> clients_browser_;
 
   DISALLOW_COPY_AND_ASSIGN(DBusThreadManager);
 };
 
+// TODO(jamescook): Replace these with FooClient::InitializeForTesting().
 class CHROMEOS_EXPORT DBusThreadManagerSetter {
  public:
   ~DBusThreadManagerSetter();
 
-  void SetAmplifierClient(scoped_ptr<AmplifierClient> client);
-  void SetAudioDspClient(scoped_ptr<AudioDspClient> client);
-  void SetCrasAudioClient(scoped_ptr<CrasAudioClient> client);
-  void SetCrosDisksClient(scoped_ptr<CrosDisksClient> client);
-  void SetCryptohomeClient(scoped_ptr<CryptohomeClient> client);
-  void SetDebugDaemonClient(scoped_ptr<DebugDaemonClient> client);
-  void SetEasyUnlockClient(scoped_ptr<EasyUnlockClient> client);
-  void SetLorgnetteManagerClient(scoped_ptr<LorgnetteManagerClient> client);
-  void SetShillDeviceClient(scoped_ptr<ShillDeviceClient> client);
-  void SetShillIPConfigClient(scoped_ptr<ShillIPConfigClient> client);
-  void SetShillManagerClient(scoped_ptr<ShillManagerClient> client);
-  void SetShillServiceClient(scoped_ptr<ShillServiceClient> client);
-  void SetShillProfileClient(scoped_ptr<ShillProfileClient> client);
+  void SetCrasAudioClient(std::unique_ptr<CrasAudioClient> client);
+  void SetCrosDisksClient(std::unique_ptr<CrosDisksClient> client);
+  void SetCryptohomeClient(std::unique_ptr<CryptohomeClient> client);
+  void SetDebugDaemonClient(std::unique_ptr<DebugDaemonClient> client);
+  void SetShillDeviceClient(std::unique_ptr<ShillDeviceClient> client);
+  void SetShillIPConfigClient(std::unique_ptr<ShillIPConfigClient> client);
+  void SetShillManagerClient(std::unique_ptr<ShillManagerClient> client);
+  void SetShillServiceClient(std::unique_ptr<ShillServiceClient> client);
+  void SetShillProfileClient(std::unique_ptr<ShillProfileClient> client);
   void SetShillThirdPartyVpnDriverClient(
-      scoped_ptr<ShillThirdPartyVpnDriverClient> client);
-  void SetGsmSMSClient(scoped_ptr<GsmSMSClient> client);
-  void SetImageBurnerClient(scoped_ptr<ImageBurnerClient> client);
-  void SetIntrospectableClient(scoped_ptr<IntrospectableClient> client);
-  void SetModemMessagingClient(scoped_ptr<ModemMessagingClient> client);
-  void SetNfcAdapterClient(scoped_ptr<NfcAdapterClient> client);
-  void SetNfcDeviceClient(scoped_ptr<NfcDeviceClient> client);
-  void SetNfcManagerClient(scoped_ptr<NfcManagerClient> client);
-  void SetNfcRecordClient(scoped_ptr<NfcRecordClient> client);
-  void SetNfcTagClient(scoped_ptr<NfcTagClient> client);
-  void SetPeerDaemonManagerClient(scoped_ptr<PeerDaemonManagerClient> client);
-  void SetPermissionBrokerClient(scoped_ptr<PermissionBrokerClient> client);
-  void SetPrivetDaemonManagerClient(
-      scoped_ptr<PrivetDaemonManagerClient> client);
-  void SetPowerManagerClient(scoped_ptr<PowerManagerClient> client);
-  void SetSessionManagerClient(scoped_ptr<SessionManagerClient> client);
-  void SetSMSClient(scoped_ptr<SMSClient> client);
-  void SetSystemClockClient(scoped_ptr<SystemClockClient> client);
-  void SetUpdateEngineClient(scoped_ptr<UpdateEngineClient> client);
+      std::unique_ptr<ShillThirdPartyVpnDriverClient> client);
+  void SetImageBurnerClient(std::unique_ptr<ImageBurnerClient> client);
+  void SetImageLoaderClient(std::unique_ptr<ImageLoaderClient> client);
+  void SetPermissionBrokerClient(
+      std::unique_ptr<PermissionBrokerClient> client);
+  void SetPowerManagerClient(std::unique_ptr<PowerManagerClient> client);
+  void SetSessionManagerClient(std::unique_ptr<SessionManagerClient> client);
+  void SetUpdateEngineClient(std::unique_ptr<UpdateEngineClient> client);
 
  private:
   friend class DBusThreadManager;

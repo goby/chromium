@@ -7,13 +7,11 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/common/drag_event_source_info.h"
-#include "third_party/WebKit/public/web/WebDragOperation.h"
-
-class SkBitmap;
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
 
 namespace gfx {
 class ImageSkia;
@@ -21,20 +19,15 @@ class Rect;
 class Vector2d;
 }
 
-namespace ui {
-class GestureEvent;
-class MouseEvent;
-}
-
 namespace content {
 class RenderFrameHost;
+class RenderWidgetHostImpl;
 struct ContextMenuParams;
 struct DropData;
 struct MenuItem;
 
 // This class provides a way for the RenderViewHost to reach out to its
-// delegate's view. It only needs to be implemented by embedders if they don't
-// use the default WebContentsView implementations.
+// delegate's view.
 class CONTENT_EXPORT RenderViewHostDelegateView {
  public:
   // A context menu should be shown, to be built using the context information
@@ -51,7 +44,8 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
                              blink::WebDragOperationsMask allowed_ops,
                              const gfx::ImageSkia& image,
                              const gfx::Vector2d& image_offset,
-                             const DragEventSourceInfo& event_info) {}
+                             const DragEventSourceInfo& event_info,
+                             RenderWidgetHostImpl* source_rwh) {}
 
   // The page wants to update the mouse cursor during a drag & drop operation.
   // |operation| describes the current operation (none, move, copy, link.)
@@ -65,7 +59,7 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
   // retrieved by doing a Shift-Tab.
   virtual void TakeFocus(bool reverse) {}
 
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+#if defined(USE_EXTERNAL_POPUP_MENU)
   // Shows a popup menu with the specified items.
   // This method should call RenderFrameHost::DidSelectPopupMenuItem[s]() or
   // RenderFrameHost::DidCancelPopupMenu() based on the user action.
@@ -80,22 +74,6 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
 
   // Hides a popup menu opened by ShowPopupMenu().
   virtual void HidePopupMenu() {};
-#endif
-
-#if defined(USE_AURA)
-  // Shows a Link Disambiguation Popup. |target_rect| is the area the user
-  // touched that resulted in ambiguity, in DIPs in the host's coordinate
-  // system, |zoomed_bitmap| is an enlarged image of that |target_rect|, and
-  // |callback| is for forwarding on to the original scale web content.
-  virtual void ShowDisambiguationPopup(
-      const gfx::Rect& target_rect,
-      const SkBitmap& zoomed_bitmap,
-      const base::Callback<void(ui::GestureEvent*)>& gesture_cb,
-      const base::Callback<void(ui::MouseEvent*)>& mouse_cb) {}
-
-  // Hides the Link Disambiguation Popup, if it was showing, otherwise does
-  // nothing.
-  virtual void HideDisambiguationPopup() {}
 #endif
 
  protected:

@@ -14,20 +14,23 @@
 #include "ui/gfx/favicon_size.h"
 #include "url/gurl.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 struct FaviconLoader::RequestData {
   RequestData() {}
   RequestData(NSString* key, FaviconLoader::ImageCompletionBlock block)
-      : key([key copy]), block(block, base::scoped_policy::RETAIN) {}
+      : key([key copy]), block(block) {}
   ~RequestData() {}
 
-  base::scoped_nsobject<NSString> key;
+  NSString* key;
   base::mac::ScopedBlock<FaviconLoader::ImageCompletionBlock> block;
 };
 
 FaviconLoader::FaviconLoader(favicon::FaviconService* favicon_service)
     : favicon_service_(favicon_service),
-      favicon_cache_([[NSMutableDictionary dictionaryWithCapacity:10] retain]) {
-}
+      favicon_cache_([NSMutableDictionary dictionaryWithCapacity:10]) {}
 
 FaviconLoader::~FaviconLoader() {}
 
@@ -53,7 +56,7 @@ UIImage* FaviconLoader::ImageForURL(const GURL& url,
   if (favicon_service_) {
     int size = gfx::kFaviconSize * [UIScreen mainScreen].scale;
 
-    scoped_ptr<RequestData> request_data(new RequestData(key, block));
+    std::unique_ptr<RequestData> request_data(new RequestData(key, block));
     favicon_base::FaviconResultsCallback callback =
         base::Bind(&FaviconLoader::OnFaviconAvailable, base::Unretained(this),
                    base::Passed(&request_data));
@@ -67,12 +70,11 @@ UIImage* FaviconLoader::ImageForURL(const GURL& url,
 void FaviconLoader::PurgeCache() {
   DCHECK(thread_checker_.CalledOnValidThread());
   cancelable_task_tracker_.TryCancelAll();
-  favicon_cache_.reset(
-      [[NSMutableDictionary dictionaryWithCapacity:10] retain]);
+  favicon_cache_ = [NSMutableDictionary dictionaryWithCapacity:10];
 }
 
 void FaviconLoader::OnFaviconAvailable(
-    scoped_ptr<RequestData> request_data,
+    std::unique_ptr<RequestData> request_data,
     const std::vector<favicon_base::FaviconRawBitmapResult>&
         favicon_bitmap_results) {
   DCHECK(request_data);

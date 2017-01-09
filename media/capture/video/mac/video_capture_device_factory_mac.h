@@ -4,39 +4,32 @@
 
 // Implementation of a VideoCaptureDeviceFactory class for Mac.
 
-#ifndef MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_FACTORY_MAC_H_
-#define MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_FACTORY_MAC_H_
+#ifndef MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_FACTORY_MAC_H_
+#define MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_FACTORY_MAC_H_
 
+#include "base/macros.h"
 #include "media/capture/video/video_capture_device_factory.h"
 
 namespace media {
 
 // Extension of VideoCaptureDeviceFactory to create and manipulate Mac devices.
-class MEDIA_EXPORT VideoCaptureDeviceFactoryMac
+class CAPTURE_EXPORT VideoCaptureDeviceFactoryMac
     : public VideoCaptureDeviceFactory {
  public:
-  static bool PlatformSupportsAVFoundation();
-
-  explicit VideoCaptureDeviceFactoryMac(
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
+  VideoCaptureDeviceFactoryMac();
   ~VideoCaptureDeviceFactoryMac() override;
 
-  scoped_ptr<VideoCaptureDevice> Create(
-      const VideoCaptureDevice::Name& device_name) override;
-  void GetDeviceNames(VideoCaptureDevice::Names* device_names) override;
-  void EnumerateDeviceNames(const base::Callback<
-      void(scoped_ptr<media::VideoCaptureDevice::Names>)>& callback) override;
-  void GetDeviceSupportedFormats(
-      const VideoCaptureDevice::Name& device,
+  std::unique_ptr<VideoCaptureDevice> CreateDevice(
+      const VideoCaptureDeviceDescriptor& device_descriptor) override;
+  void GetDeviceDescriptors(
+      VideoCaptureDeviceDescriptors* device_descriptors) override;
+  void GetSupportedFormats(
+      const VideoCaptureDeviceDescriptor& device_descriptor,
       VideoCaptureFormats* supported_formats) override;
-
- private:
-  // Cache of |ui_task_runner| for enumerating devices there for QTKit.
-  scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceFactoryMac);
 };
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_VIDEO_CAPTURE_DEVICE_FACTORY_MAC_H_
+#endif  // MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_FACTORY_MAC_H_

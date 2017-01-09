@@ -26,30 +26,28 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#if ENABLE(WEB_AUDIO)
-#include "platform/audio/Panner.h"
-
 #include "platform/audio/EqualPowerPanner.h"
 #include "platform/audio/HRTFPanner.h"
+#include "platform/audio/Panner.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<Panner> Panner::create(PanningModel model, float sampleRate, HRTFDatabaseLoader* databaseLoader)
-{
-    switch (model) {
+std::unique_ptr<Panner> Panner::create(PanningModel model,
+                                       float sampleRate,
+                                       HRTFDatabaseLoader* databaseLoader) {
+  switch (model) {
     case PanningModelEqualPower:
-        return adoptPtr(new EqualPowerPanner(sampleRate));
+      return WTF::makeUnique<EqualPowerPanner>(sampleRate);
 
     case PanningModelHRTF:
-        return adoptPtr(new HRTFPanner(sampleRate, databaseLoader));
+      return WTF::makeUnique<HRTFPanner>(sampleRate, databaseLoader);
 
     default:
-        ASSERT_NOT_REACHED();
-        return nullptr;
-    }
+      ASSERT_NOT_REACHED();
+      return nullptr;
+  }
 }
 
-} // namespace blink
-
-#endif // ENABLE(WEB_AUDIO)
+}  // namespace blink

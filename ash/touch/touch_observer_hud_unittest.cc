@@ -4,19 +4,19 @@
 
 #include "ash/touch/touch_observer_hud.h"
 
-#include "ash/ash_switches.h"
-#include "ash/display/display_manager.h"
+#include "ash/common/ash_switches.h"
 #include "ash/root_window_controller.h"
-#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/display_manager_test_api.h"
 #include "ash/touch/touch_hud_debug.h"
 #include "ash/touch/touch_hud_projection.h"
+#include "ash/touch_hud/touch_hud_renderer.h"
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
 #include "ui/aura/window.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -31,8 +31,9 @@ class TouchHudTestBase : public test::AshTestBase {
 
     // Initialize display infos. They should be initialized after Ash
     // environment is set up, i.e., after test::AshTestBase::SetUp().
-    internal_display_id_ =
-        test::DisplayManagerTestApi().SetFirstDisplayAsInternalDisplay();
+    internal_display_id_ = display::test::DisplayManagerTestApi(
+                               Shell::GetInstance()->display_manager())
+                               .SetFirstDisplayAsInternalDisplay();
     external_display_id_ = 10;
     mirrored_display_id_ = 11;
 
@@ -44,37 +45,29 @@ class TouchHudTestBase : public test::AshTestBase {
         CreateDisplayInfo(mirrored_display_id_, gfx::Rect(0, 0, 100, 100));
   }
 
-  gfx::Display GetPrimaryDisplay() {
-    return Shell::GetScreen()->GetPrimaryDisplay();
-  }
-
-  const gfx::Display& GetSecondaryDisplay() {
-    return ScreenUtil::GetSecondaryDisplay();
+  display::Display GetPrimaryDisplay() {
+    return display::Screen::GetScreen()->GetPrimaryDisplay();
   }
 
   void SetupSingleDisplay() {
     display_info_list_.clear();
     display_info_list_.push_back(internal_display_info_);
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
   void SetupDualDisplays() {
     display_info_list_.clear();
     display_info_list_.push_back(internal_display_info_);
     display_info_list_.push_back(external_display_info_);
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
   void SetInternalAsPrimary() {
-    const gfx::Display& internal_display =
-        GetDisplayManager()->GetDisplayForId(internal_display_id_);
-    GetWindowTreeHostManager()->SetPrimaryDisplay(internal_display);
+    GetWindowTreeHostManager()->SetPrimaryDisplayId(internal_display_id_);
   }
 
   void SetExternalAsPrimary() {
-    const gfx::Display& external_display =
-        GetDisplayManager()->GetDisplayForId(external_display_id_);
-    GetWindowTreeHostManager()->SetPrimaryDisplay(external_display);
+    GetWindowTreeHostManager()->SetPrimaryDisplayId(external_display_id_);
   }
 
   void MirrorDisplays() {
@@ -82,7 +75,7 @@ class TouchHudTestBase : public test::AshTestBase {
     DCHECK_EQ(internal_display_id_, display_info_list_[0].id());
     DCHECK_EQ(external_display_id_, display_info_list_[1].id());
     display_info_list_[1] = mirrored_display_info_;
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
   void UnmirrorDisplays() {
@@ -90,57 +83,50 @@ class TouchHudTestBase : public test::AshTestBase {
     DCHECK_EQ(internal_display_id_, display_info_list_[0].id());
     DCHECK_EQ(mirrored_display_id_, display_info_list_[1].id());
     display_info_list_[1] = external_display_info_;
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
   void RemoveInternalDisplay() {
     DCHECK_LT(0U, display_info_list_.size());
     DCHECK_EQ(internal_display_id_, display_info_list_[0].id());
     display_info_list_.erase(display_info_list_.begin());
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
   void RemoveExternalDisplay() {
     DCHECK_EQ(2U, display_info_list_.size());
     display_info_list_.pop_back();
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
   void AddInternalDisplay() {
     DCHECK_EQ(0U, display_info_list_.size());
     display_info_list_.push_back(internal_display_info_);
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
   void AddExternalDisplay() {
     DCHECK_EQ(1U, display_info_list_.size());
     display_info_list_.push_back(external_display_info_);
-    GetDisplayManager()->OnNativeDisplaysChanged(display_info_list_);
+    display_manager()->OnNativeDisplaysChanged(display_info_list_);
   }
 
-  int64 internal_display_id() const {
-    return internal_display_id_;
-  }
+  int64_t internal_display_id() const { return internal_display_id_; }
 
-  int64 external_display_id() const {
-    return external_display_id_;
-  }
+  int64_t external_display_id() const { return external_display_id_; }
 
  protected:
-  DisplayManager* GetDisplayManager() {
-    return Shell::GetInstance()->display_manager();
-  }
 
   WindowTreeHostManager* GetWindowTreeHostManager() {
     return Shell::GetInstance()->window_tree_host_manager();
   }
 
-  const gfx::Display& GetInternalDisplay() {
-    return GetDisplayManager()->GetDisplayForId(internal_display_id_);
+  const display::Display& GetInternalDisplay() {
+    return display_manager()->GetDisplayForId(internal_display_id_);
   }
 
-  const gfx::Display& GetExternalDisplay() {
-    return GetDisplayManager()->GetDisplayForId(external_display_id_);
+  const display::Display& GetExternalDisplay() {
+    return display_manager()->GetDisplayForId(external_display_id_);
   }
 
   aura::Window* GetInternalRootWindow() {
@@ -154,12 +140,12 @@ class TouchHudTestBase : public test::AshTestBase {
   }
 
   aura::Window* GetPrimaryRootWindow() {
-    const gfx::Display& display = GetPrimaryDisplay();
+    const display::Display& display = GetPrimaryDisplay();
     return GetWindowTreeHostManager()->GetRootWindowForDisplayId(display.id());
   }
 
   aura::Window* GetSecondaryRootWindow() {
-    const gfx::Display& display = GetSecondaryDisplay();
+    const display::Display& display = display_manager()->GetSecondaryDisplay();
     return GetWindowTreeHostManager()->GetRootWindowForDisplayId(display.id());
   }
 
@@ -183,8 +169,10 @@ class TouchHudTestBase : public test::AshTestBase {
     return GetRootWindowController(root);
   }
 
-  DisplayInfo CreateDisplayInfo(int64 id, const gfx::Rect& bounds) {
-    DisplayInfo info(id, base::StringPrintf("x-%" PRId64, id), false);
+  display::ManagedDisplayInfo CreateDisplayInfo(int64_t id,
+                                                const gfx::Rect& bounds) {
+    display::ManagedDisplayInfo info(id, base::StringPrintf("x-%" PRId64, id),
+                                     false);
     info.SetBounds(bounds);
     return info;
   }
@@ -197,14 +185,14 @@ class TouchHudTestBase : public test::AshTestBase {
     return hud->widget_;
   }
 
-  int64 internal_display_id_;
-  int64 external_display_id_;
-  int64 mirrored_display_id_;
-  DisplayInfo internal_display_info_;
-  DisplayInfo external_display_info_;
-  DisplayInfo mirrored_display_info_;
+  int64_t internal_display_id_;
+  int64_t external_display_id_;
+  int64_t mirrored_display_id_;
+  display::ManagedDisplayInfo internal_display_info_;
+  display::ManagedDisplayInfo external_display_info_;
+  display::ManagedDisplayInfo mirrored_display_info_;
 
-  std::vector<DisplayInfo> display_info_list_;
+  std::vector<display::ManagedDisplayInfo> display_info_list_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchHudTestBase);
 };
@@ -229,11 +217,13 @@ class TouchHudDebugTest : public TouchHudTestBase {
     EXPECT_EQ(GetInternalRootWindow(),
               GetRootWindowForTouchHud(GetInternalTouchHudDebug()));
     EXPECT_EQ(GetInternalRootWindow(),
-              GetWidgetForTouchHud(GetInternalTouchHudDebug())->
-                  GetNativeView()->GetRootWindow());
+              GetWidgetForTouchHud(GetInternalTouchHudDebug())
+                  ->GetNativeView()
+                  ->GetRootWindow());
     EXPECT_EQ(GetInternalDisplay().size(),
-              GetWidgetForTouchHud(GetInternalTouchHudDebug())->
-                  GetWindowBoundsInScreen().size());
+              GetWidgetForTouchHud(GetInternalTouchHudDebug())
+                  ->GetWindowBoundsInScreen()
+                  .size());
   }
 
   void CheckExternalDisplay() {
@@ -242,11 +232,13 @@ class TouchHudDebugTest : public TouchHudTestBase {
     EXPECT_EQ(GetExternalRootWindow(),
               GetRootWindowForTouchHud(GetExternalTouchHudDebug()));
     EXPECT_EQ(GetExternalRootWindow(),
-              GetWidgetForTouchHud(GetExternalTouchHudDebug())->
-                  GetNativeView()->GetRootWindow());
+              GetWidgetForTouchHud(GetExternalTouchHudDebug())
+                  ->GetNativeView()
+                  ->GetRootWindow());
     EXPECT_EQ(GetExternalDisplay().size(),
-              GetWidgetForTouchHud(GetExternalTouchHudDebug())->
-                  GetWindowBoundsInScreen().size());
+              GetWidgetForTouchHud(GetExternalTouchHudDebug())
+                  ->GetWindowBoundsInScreen()
+                  .size());
   }
 
  private:
@@ -287,7 +279,7 @@ class TouchHudProjectionTest : public TouchHudTestBase {
   }
 
   int GetInternalTouchPointsCount() {
-    return GetInternalTouchHudProjection()->points_.size();
+    return GetInternalTouchHudProjection()->touch_hud_renderer_->points_.size();
   }
 
   void SendTouchEventToInternalHud(ui::EventType type,
@@ -301,13 +293,19 @@ class TouchHudProjectionTest : public TouchHudTestBase {
   }
 
  private:
-  base::TimeDelta event_time;
+  base::TimeTicks event_time;
 
   DISALLOW_COPY_AND_ASSIGN(TouchHudProjectionTest);
 };
 
 // Checks if debug touch HUD is correctly initialized for a single display.
-TEST_F(TouchHudDebugTest, SingleDisplay) {
+#if defined(OS_WIN) && !defined(USE_ASH)
+// TODO(msw): Broken on Windows. http://crbug.com/584038
+#define MAYBE_SingleDisplay DISABLED_SingleDisplay
+#else
+#define MAYBE_SingleDisplay SingleDisplay
+#endif
+TEST_F(TouchHudDebugTest, MAYBE_SingleDisplay) {
   // Setup a single display setting.
   SetupSingleDisplay();
 
@@ -344,7 +342,8 @@ TEST_F(TouchHudDebugTest, SwapPrimaryDisplay) {
 
   // Check if displays' touch HUDs are not swapped as root windows are.
   EXPECT_EQ(external_display_id(), GetPrimaryDisplay().id());
-  EXPECT_EQ(internal_display_id(), GetSecondaryDisplay().id());
+  EXPECT_EQ(internal_display_id(),
+            display_manager()->GetSecondaryDisplay().id());
   CheckInternalDisplay();
   CheckExternalDisplay();
 
@@ -353,7 +352,8 @@ TEST_F(TouchHudDebugTest, SwapPrimaryDisplay) {
 
   // Check if displays' touch HUDs are not swapped back as root windows are.
   EXPECT_EQ(internal_display_id(), GetPrimaryDisplay().id());
-  EXPECT_EQ(external_display_id(), GetSecondaryDisplay().id());
+  EXPECT_EQ(external_display_id(),
+            display_manager()->GetSecondaryDisplay().id());
   CheckInternalDisplay();
   CheckExternalDisplay();
 }
@@ -378,7 +378,8 @@ TEST_F(TouchHudDebugTest, MirrorDisplays) {
 
   // Check if external display is added back correctly.
   EXPECT_EQ(internal_display_id(), GetPrimaryDisplay().id());
-  EXPECT_EQ(external_display_id(), GetSecondaryDisplay().id());
+  EXPECT_EQ(external_display_id(),
+            display_manager()->GetSecondaryDisplay().id());
   CheckInternalDisplay();
   CheckExternalDisplay();
 }
@@ -408,7 +409,8 @@ TEST_F(TouchHudDebugTest, SwapPrimaryThenMirrorDisplays) {
   // Check if the external display is added back as the primary display and
   // touch HUDs are set correctly.
   EXPECT_EQ(external_display_id(), GetPrimaryDisplay().id());
-  EXPECT_EQ(internal_display_id(), GetSecondaryDisplay().id());
+  EXPECT_EQ(internal_display_id(),
+            display_manager()->GetSecondaryDisplay().id());
   CheckInternalDisplay();
   CheckExternalDisplay();
 }
@@ -434,7 +436,8 @@ TEST_F(TouchHudDebugTest, RemoveSecondaryDisplay) {
 
   // Check if displays' touch HUDs are set correctly.
   EXPECT_EQ(internal_display_id(), GetPrimaryDisplay().id());
-  EXPECT_EQ(external_display_id(), GetSecondaryDisplay().id());
+  EXPECT_EQ(external_display_id(),
+            display_manager()->GetSecondaryDisplay().id());
   CheckInternalDisplay();
   CheckExternalDisplay();
 }
@@ -464,7 +467,8 @@ TEST_F(TouchHudDebugTest, RemovePrimaryDisplay) {
   // Check if the external display is set as primary and touch HUDs are set
   // correctly.
   EXPECT_EQ(external_display_id(), GetPrimaryDisplay().id());
-  EXPECT_EQ(internal_display_id(), GetSecondaryDisplay().id());
+  EXPECT_EQ(internal_display_id(),
+            display_manager()->GetSecondaryDisplay().id());
   CheckInternalDisplay();
   CheckExternalDisplay();
 }
@@ -491,7 +495,14 @@ TEST_F(TouchHudDebugTest, Headless) {
 
 // Checks projection touch HUD with a sequence of touch-pressed, touch-moved,
 // and touch-released events.
-TEST_F(TouchHudProjectionTest, TouchMoveRelease) {
+// Test if the WM sets correct work area under different density.
+#if defined(OS_WIN) && !defined(USE_ASH)
+// TODO(msw): Broken on Windows. http://crbug.com/584038
+#define MAYBE_TouchMoveRelease DISABLED_TouchMoveRelease
+#else
+#define MAYBE_TouchMoveRelease TouchMoveRelease
+#endif
+TEST_F(TouchHudProjectionTest, MAYBE_TouchMoveRelease) {
   SetupSingleDisplay();
   EXPECT_EQ(NULL, GetInternalTouchHudProjection());
 
@@ -516,7 +527,13 @@ TEST_F(TouchHudProjectionTest, TouchMoveRelease) {
 
 // Checks projection touch HUD with a sequence of touch-pressed, touch-moved,
 // and touch-cancelled events.
-TEST_F(TouchHudProjectionTest, TouchMoveCancel) {
+#if defined(OS_WIN) && !defined(USE_ASH)
+// TODO(msw): Broken on Windows. http://crbug.com/584038
+#define MAYBE_TouchMoveCancel DISABLED_TouchMoveCancel
+#else
+#define MAYBE_TouchMoveCancel TouchMoTouchMoveCancelveRelease
+#endif
+TEST_F(TouchHudProjectionTest, MAYBE_TouchMoveCancel) {
   SetupSingleDisplay();
   EXPECT_EQ(NULL, GetInternalTouchHudProjection());
 
@@ -540,7 +557,13 @@ TEST_F(TouchHudProjectionTest, TouchMoveCancel) {
 }
 
 // Checks projection touch HUD with two simultaneous touches.
-TEST_F(TouchHudProjectionTest, DoubleTouch) {
+#if defined(OS_WIN) && !defined(USE_ASH)
+// TODO(msw): Broken on Windows. http://crbug.com/584038
+#define MAYBE_DoubleTouch DISABLED_DoubleTouch
+#else
+#define MAYBE_DoubleTouch DoubleTouch
+#endif
+TEST_F(TouchHudProjectionTest, MAYBE_DoubleTouch) {
   SetupSingleDisplay();
   EXPECT_EQ(NULL, GetInternalTouchHudProjection());
 
@@ -574,7 +597,13 @@ TEST_F(TouchHudProjectionTest, DoubleTouch) {
 
 // Checks if turning off touch HUD projection while touching the screen is
 // handled correctly.
-TEST_F(TouchHudProjectionTest, DisableWhileTouching) {
+#if defined(OS_WIN) && !defined(USE_ASH)
+// TODO(msw): Broken on Windows. http://crbug.com/584038
+#define MAYBE_DisableWhileTouching DISABLED_DisableWhileTouching
+#else
+#define MAYBE_DisableWhileTouching DisableWhileTouching
+#endif
+TEST_F(TouchHudProjectionTest, MAYBE_DisableWhileTouching) {
   SetupSingleDisplay();
   EXPECT_EQ(NULL, GetInternalTouchHudProjection());
 

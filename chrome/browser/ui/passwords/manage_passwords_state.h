@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_UI_PASSWORDS_MANAGE_PASSWORDS_STATE_H_
 #define CHROME_BROWSER_UI_PASSWORDS_MANAGE_PASSWORDS_STATE_H_
 
+#include <map>
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include "base/strings/string16.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/password_store_change.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
@@ -18,7 +19,6 @@
 #include "url/gurl.h"
 
 namespace password_manager {
-struct CredentialInfo;
 class PasswordFormManager;
 class PasswordManagerClient;
 }
@@ -29,7 +29,7 @@ class PasswordManagerClient;
 class ManagePasswordsState {
  public:
   using CredentialsCallback =
-      base::Callback<void(const password_manager::CredentialInfo&)>;
+      base::Callback<void(const autofill::PasswordForm*)>;
 
   ManagePasswordsState();
   ~ManagePasswordsState();
@@ -44,31 +44,36 @@ class ManagePasswordsState {
 
   // Move to PENDING_PASSWORD_STATE.
   void OnPendingPassword(
-      scoped_ptr<password_manager::PasswordFormManager> form_manager);
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager);
 
   // Move to PENDING_PASSWORD_UPDATE_STATE.
   void OnUpdatePassword(
-      scoped_ptr<password_manager::PasswordFormManager> form_manager);
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager);
 
   // Move to CREDENTIAL_REQUEST_STATE.
   void OnRequestCredentials(
-      ScopedVector<autofill::PasswordForm> local_credentials,
-      ScopedVector<autofill::PasswordForm> federated_credentials,
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials,
       const GURL& origin);
 
   // Move to AUTO_SIGNIN_STATE. |local_forms| can't be empty.
-  void OnAutoSignin(ScopedVector<autofill::PasswordForm> local_forms);
+  void OnAutoSignin(
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
+      const GURL& origin);
 
   // Move to CONFIRMATION_STATE.
   void OnAutomaticPasswordSave(
-      scoped_ptr<password_manager::PasswordFormManager> form_manager);
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager);
 
   // Move to MANAGE_STATE or INACTIVE_STATE for PSL matched passwords.
   // |password_form_map| contains best matches from the password store for the
   // form which was autofilled, |origin| is an origin of the form which was
-  // autofilled.
-  void OnPasswordAutofilled(const autofill::PasswordFormMap& password_form_map,
-                            const GURL& origin);
+  // autofilled. In addition, |federated_matches|, if not null, contains stored
+  // federated credentials to show to the user as well.
+  void OnPasswordAutofilled(
+      const std::map<base::string16, const autofill::PasswordForm*>&
+          password_form_map,
+      const GURL& origin,
+      const std::vector<const autofill::PasswordForm*>* federated_matches);
 
   // Move to INACTIVE_STATE.
   void OnInactive();
@@ -81,12 +86,10 @@ class ManagePasswordsState {
   void ProcessLoginsChanged(
       const password_manager::PasswordStoreChangeList& changes);
 
-  // Called when the user chooses a credential. Using data from |form| and
-  // |credential_type| it constructs the object which next is passed to the
+  // Called when the user chooses a credential. |form| is passed to the
   // credentials callback. Method should be called in the
   // CREDENTIAL_REQUEST_STATE state.
-  void ChooseCredential(const autofill::PasswordForm& form,
-                        password_manager::CredentialType credential_type);
+  void ChooseCredential(const autofill::PasswordForm* form);
 
   password_manager::ui::State state() const { return state_; }
   const GURL& origin() const { return origin_; }
@@ -101,14 +104,9 @@ class ManagePasswordsState {
   }
 
   // Current local forms. ManagePasswordsState is responsible for the forms.
-  const std::vector<const autofill::PasswordForm*>& GetCurrentForms() const {
-    return form_manager_ ? current_forms_weak_ : local_credentials_forms_.get();
-  }
-
-  // Current federated forms.
-  const std::vector<const autofill::PasswordForm*>&
-  federated_credentials_forms() const {
-    return federated_credentials_forms_.get();
+  const std::vector<std::unique_ptr<autofill::PasswordForm>>& GetCurrentForms()
+      const {
+    return local_credentials_forms_;
   }
 
  private:
@@ -124,26 +122,15 @@ class ManagePasswordsState {
 
   void SetState(password_manager::ui::State state);
 
-  // The origin of the current page. It's used to determine which PasswordStore
-  // changes are applicable to the internal state.
+  // The origin of the current page for which the state is stored. It's used to
+  // determine which PasswordStore changes are applicable to the internal state.
   GURL origin_;
 
   // Contains the password that was submitted.
-  scoped_ptr<password_manager::PasswordFormManager> form_manager_;
+  std::unique_ptr<password_manager::PasswordFormManager> form_manager_;
 
-  // Weak references to the passwords for the current status. The hard pointers
-  // are scattered between |form_manager_| and |local_credentials_forms_|. If
-  // |form_manager_| is nullptr then all the forms are stored in
-  // |local_credentials_forms_|. |current_forms_weak_| remains empty.
-  std::vector<const autofill::PasswordForm*> current_forms_weak_;
-
-  // If |form_manager_| is nullptr then |local_credentials_forms_| contains all
-  // the current forms. Otherwise, it's a container for the new forms coming
-  // from the PasswordStore.
-  ScopedVector<const autofill::PasswordForm> local_credentials_forms_;
-
-  // Federated credentials for the CREDENTIAL_REQUEST_STATE.
-  ScopedVector<const autofill::PasswordForm> federated_credentials_forms_;
+  // Contains all the current forms.
+  std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials_forms_;
 
   // A callback to be invoked when user selects a credential.
   CredentialsCallback credentials_callback_;

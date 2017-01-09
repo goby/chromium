@@ -4,7 +4,7 @@
 
 #include "ui/gl/gl_osmesa_api_implementation.h"
 
-namespace gfx {
+namespace gl {
 
 RealOSMESAApi* g_real_osmesa;
 
@@ -22,7 +22,7 @@ void InitializeDebugGLBindingsOSMESA() {
   g_driver_osmesa.InitializeDebugBindings();
 }
 
-void ClearGLBindingsOSMESA() {
+void ClearBindingsOSMESA() {
   if (g_real_osmesa) {
     delete g_real_osmesa;
     g_real_osmesa = NULL;
@@ -61,6 +61,4 @@ void RealOSMESAApi::Initialize(DriverOSMESA* driver) {
 TraceOSMESAApi::~TraceOSMESAApi() {
 }
 
-}  // namespace gfx
-
-
+}  // namespace gl

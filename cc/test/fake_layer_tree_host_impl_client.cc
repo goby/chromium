@@ -3,11 +3,15 @@
 // found in the LICENSE file.
 
 #include "cc/test/fake_layer_tree_host_impl_client.h"
+#include "cc/trees/mutator_host.h"
 
 namespace cc {
 
 bool FakeLayerTreeHostImplClient::IsInsideDraw() {
   return false;
 }
+
+void FakeLayerTreeHostImplClient::PostAnimationEventsToMainThreadOnImplThread(
+    std::unique_ptr<MutatorEvents> events) {}
 
 }  // namespace cc

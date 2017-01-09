@@ -6,16 +6,20 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
+#include "base/android/application_status_listener.h"
 #include "base/android/path_utils.h"
 #include "base/big_endian.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "third_party/android_opengl/etc1/etc1.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -128,6 +132,8 @@ ThumbnailCache::ThumbnailCache(size_t default_cache_size,
       ui_resource_provider_(NULL),
       weak_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  memory_pressure_.reset(new base::MemoryPressureListener(
+      base::Bind(&ThumbnailCache::OnMemoryPressure, base::Unretained(this))));
 }
 
 ThumbnailCache::~ThumbnailCache() {
@@ -166,21 +172,21 @@ void ThumbnailCache::Put(TabId tab_id,
   DCHECK(thumbnail_meta_data_.find(tab_id) != thumbnail_meta_data_.end());
 
   base::Time time_stamp = thumbnail_meta_data_[tab_id].capture_time();
-  scoped_ptr<Thumbnail> thumbnail = Thumbnail::Create(
+  std::unique_ptr<Thumbnail> thumbnail = Thumbnail::Create(
       tab_id, time_stamp, thumbnail_scale, ui_resource_provider_, this);
   thumbnail->SetBitmap(bitmap);
 
   RemoveFromReadQueue(tab_id);
   MakeSpaceForNewItemIfNecessary(tab_id);
-  cache_.Put(tab_id, thumbnail.Pass());
+  cache_.Put(tab_id, std::move(thumbnail));
 
   if (use_approximation_thumbnail_) {
     std::pair<SkBitmap, float> approximation =
         CreateApproximation(bitmap, thumbnail_scale);
-    scoped_ptr<Thumbnail> approx_thumbnail = Thumbnail::Create(
+    std::unique_ptr<Thumbnail> approx_thumbnail = Thumbnail::Create(
         tab_id, time_stamp, approximation.second, ui_resource_provider_, this);
     approx_thumbnail->SetBitmap(approximation.first);
-    approximation_cache_.Put(tab_id, approx_thumbnail.Pass());
+    approximation_cache_.Put(tab_id, std::move(approx_thumbnail));
   }
   CompressThumbnailIfNecessary(tab_id, time_stamp, bitmap, thumbnail_scale);
 }
@@ -202,11 +208,8 @@ Thumbnail* ThumbnailCache::Get(TabId tab_id,
     return thumbnail;
   }
 
-  if (force_disk_read &&
-      std::find(visible_ids_.begin(), visible_ids_.end(), tab_id) !=
-          visible_ids_.end() &&
-      std::find(read_queue_.begin(), read_queue_.end(), tab_id) ==
-          read_queue_.end()) {
+  if (force_disk_read && base::ContainsValue(visible_ids_, tab_id) &&
+      !base::ContainsValue(read_queue_, tab_id)) {
     read_queue_.push_back(tab_id);
     ReadNextThumbnail();
   }
@@ -220,14 +223,6 @@ Thumbnail* ThumbnailCache::Get(TabId tab_id,
   }
 
   return NULL;
-}
-
-void ThumbnailCache::RemoveFromDiskAtAndAboveId(TabId min_id) {
-  base::Closure remove_task =
-      base::Bind(&ThumbnailCache::RemoveFromDiskAtAndAboveIdTask,
-                 min_id);
-  content::BrowserThread::PostTask(
-      content::BrowserThread::FILE, FROM_HERE, remove_task);
 }
 
 void ThumbnailCache::InvalidateThumbnailIfChanged(TabId tab_id,
@@ -302,11 +297,8 @@ void ThumbnailCache::UpdateVisibleIds(const TabIdList& priority) {
   while (iter != priority.end() && count < ids_size) {
     TabId tab_id = *iter;
     visible_ids_.push_back(tab_id);
-    if (!cache_.Get(tab_id) &&
-        std::find(read_queue_.begin(), read_queue_.end(), tab_id) ==
-            read_queue_.end()) {
+    if (!cache_.Get(tab_id) && !base::ContainsValue(read_queue_, tab_id))
       read_queue_.push_back(tab_id);
-    }
     iter++;
     count++;
   }
@@ -318,7 +310,7 @@ void ThumbnailCache::DecompressThumbnailFromFile(
     TabId tab_id,
     const base::Callback<void(bool, SkBitmap)>&
         post_decompress_callback) {
-  base::Callback<void(skia::RefPtr<SkPixelRef>, float, const gfx::Size&)>
+  base::Callback<void(sk_sp<SkPixelRef>, float, const gfx::Size&)>
       decompress_task = base::Bind(
           &ThumbnailCache::DecompressionTask, post_decompress_callback);
 
@@ -341,24 +333,9 @@ void ThumbnailCache::RemoveFromDiskTask(TabId tab_id) {
     base::DeleteFile(file_path, false);
 }
 
-void ThumbnailCache::RemoveFromDiskAtAndAboveIdTask(TabId min_id) {
-  base::FilePath dir_path = GetCacheDirectory();
-  base::FileEnumerator enumerator(dir_path, false, base::FileEnumerator::FILES);
-  while (true) {
-    base::FilePath path = enumerator.Next();
-    if (path.empty())
-      break;
-    base::FileEnumerator::FileInfo info = enumerator.GetInfo();
-    TabId tab_id;
-    bool success = base::StringToInt(info.GetName().value(), &tab_id);
-    if (success && tab_id >= min_id)
-      base::DeleteFile(path, false);
-  }
-}
-
 void ThumbnailCache::WriteThumbnailIfNecessary(
     TabId tab_id,
-    skia::RefPtr<SkPixelRef> compressed_data,
+    sk_sp<SkPixelRef> compressed_data,
     float scale,
     const gfx::Size& content_size) {
   if (write_tasks_count_ >= write_queue_max_size_)
@@ -390,7 +367,7 @@ void ThumbnailCache::CompressThumbnailIfNecessary(
 
   compression_tasks_count_++;
 
-  base::Callback<void(skia::RefPtr<SkPixelRef>, const gfx::Size&)>
+  base::Callback<void(sk_sp<SkPixelRef>, const gfx::Size&)>
       post_compression_task = base::Bind(&ThumbnailCache::PostCompressionTask,
                                          weak_factory_.GetWeakPtr(),
                                          tab_id,
@@ -401,12 +378,13 @@ void ThumbnailCache::CompressThumbnailIfNecessary(
   gfx::Size encoded_size = GetEncodedSize(
       raw_data_size, ui_resource_provider_->SupportsETC1NonPowerOfTwo());
 
-  base::WorkerPool::PostTask(FROM_HERE,
-                             base::Bind(&ThumbnailCache::CompressionTask,
-                                        bitmap,
-                                        encoded_size,
-                                        post_compression_task),
-                             true);
+  base::PostTaskWithTraits(
+      FROM_HERE, base::TaskTraits()
+                     .WithPriority(base::TaskPriority::BACKGROUND)
+                     .WithShutdownBehavior(
+                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN),
+      base::Bind(&ThumbnailCache::CompressionTask, bitmap, encoded_size,
+                 post_compression_task));
 }
 
 void ThumbnailCache::ReadNextThumbnail() {
@@ -416,7 +394,7 @@ void ThumbnailCache::ReadNextThumbnail() {
   TabId tab_id = read_queue_.front();
   read_in_progress_ = true;
 
-  base::Callback<void(skia::RefPtr<SkPixelRef>, float, const gfx::Size&)>
+  base::Callback<void(sk_sp<SkPixelRef>, float, const gfx::Size&)>
       post_read_task = base::Bind(
           &ThumbnailCache::PostReadTask, weak_factory_.GetWeakPtr(), tab_id);
 
@@ -427,9 +405,7 @@ void ThumbnailCache::ReadNextThumbnail() {
 }
 
 void ThumbnailCache::MakeSpaceForNewItemIfNecessary(TabId tab_id) {
-  if (cache_.Get(tab_id) ||
-      std::find(visible_ids_.begin(), visible_ids_.end(), tab_id) ==
-          visible_ids_.end() ||
+  if (cache_.Get(tab_id) || !base::ContainsValue(visible_ids_, tab_id) ||
       cache_.size() < cache_.MaximumCacheSize()) {
     return;
   }
@@ -441,8 +417,7 @@ void ThumbnailCache::MakeSpaceForNewItemIfNecessary(TabId tab_id) {
   for (ExpiringThumbnailCache::iterator iter = cache_.begin();
        iter != cache_.end();
        iter++) {
-    if (std::find(visible_ids_.begin(), visible_ids_.end(), iter->first) ==
-        visible_ids_.end()) {
+    if (!base::ContainsValue(visible_ids_, iter->first)) {
       key_to_remove = iter->first;
       found_key_to_remove = true;
       break;
@@ -474,8 +449,23 @@ void ThumbnailCache::RemoveFromReadQueue(TabId tab_id) {
 }
 
 void ThumbnailCache::OnUIResourcesWereEvicted() {
-  cache_.Clear();
-  approximation_cache_.Clear();
+  if (visible_ids_.empty()) {
+    cache_.Clear();
+    approximation_cache_.Clear();
+  } else {
+    TabId last_tab = visible_ids_.front();
+    std::unique_ptr<Thumbnail> thumbnail = cache_.Remove(last_tab);
+    cache_.Clear();
+    std::unique_ptr<Thumbnail> approximation =
+        approximation_cache_.Remove(last_tab);
+    approximation_cache_.Clear();
+
+    // Keep the thumbnail for app resume if it wasn't uploaded yet.
+    if (thumbnail.get() && !thumbnail->ui_resource_id())
+      cache_.Put(last_tab, std::move(thumbnail));
+    if (approximation.get() && !approximation->ui_resource_id())
+      approximation_cache_.Put(last_tab, std::move(approximation));
+  }
 }
 
 void ThumbnailCache::InvalidateCachedThumbnail(Thumbnail* thumbnail) {
@@ -497,7 +487,7 @@ namespace {
 bool WriteToFile(base::File& file,
                  const gfx::Size& content_size,
                  const float scale,
-                 skia::RefPtr<SkPixelRef> compressed_data) {
+                 sk_sp<SkPixelRef> compressed_data) {
   if (!file.IsValid())
     return false;
 
@@ -546,7 +536,7 @@ bool WriteToFile(base::File& file,
 }  // anonymous namespace
 
 void ThumbnailCache::WriteTask(TabId tab_id,
-                               skia::RefPtr<SkPixelRef> compressed_data,
+                               sk_sp<SkPixelRef> compressed_data,
                                float scale,
                                const gfx::Size& content_size,
                                const base::Callback<void()>& post_write_task) {
@@ -578,9 +568,9 @@ void ThumbnailCache::PostWriteTask() {
 void ThumbnailCache::CompressionTask(
     SkBitmap raw_data,
     gfx::Size encoded_size,
-    const base::Callback<void(skia::RefPtr<SkPixelRef>, const gfx::Size&)>&
+    const base::Callback<void(sk_sp<SkPixelRef>, const gfx::Size&)>&
         post_compression_task) {
-  skia::RefPtr<SkPixelRef> compressed_data;
+  sk_sp<SkPixelRef> compressed_data;
   gfx::Size content_size;
 
   if (!raw_data.empty()) {
@@ -595,9 +585,8 @@ void ThumbnailCache::CompressionTask(
                                          encoded_size.height(),
                                          kUnknown_SkColorType,
                                          kUnpremul_SkAlphaType);
-    skia::RefPtr<SkData> etc1_pixel_data = skia::AdoptRef(
-        SkData::NewUninitialized(encoded_bytes));
-    skia::RefPtr<SkMallocPixelRef> etc1_pixel_ref = skia::AdoptRef(
+    sk_sp<SkData> etc1_pixel_data(SkData::MakeUninitialized(encoded_bytes));
+    sk_sp<SkMallocPixelRef> etc1_pixel_ref(
         SkMallocPixelRef::NewWithData(info, 0, NULL, etc1_pixel_data.get()));
 
     etc1_pixel_ref->lockPixels();
@@ -614,7 +603,7 @@ void ThumbnailCache::CompressionTask(
     etc1_pixel_ref->unlockPixels();
 
     if (success) {
-      compressed_data = etc1_pixel_ref;
+      compressed_data = std::move(etc1_pixel_ref);
       content_size = raw_data_size;
     }
   }
@@ -622,14 +611,15 @@ void ThumbnailCache::CompressionTask(
   content::BrowserThread::PostTask(
       content::BrowserThread::UI,
       FROM_HERE,
-      base::Bind(post_compression_task, compressed_data, content_size));
+      base::Bind(post_compression_task, std::move(compressed_data),
+                 content_size));
 }
 
 void ThumbnailCache::PostCompressionTask(
     TabId tab_id,
     const base::Time& time_stamp,
     float scale,
-    skia::RefPtr<SkPixelRef> compressed_data,
+    sk_sp<SkPixelRef> compressed_data,
     const gfx::Size& content_size) {
   compression_tasks_count_--;
   if (!compressed_data) {
@@ -642,9 +632,15 @@ void ThumbnailCache::PostCompressionTask(
     if (thumbnail->time_stamp() != time_stamp)
       return;
     thumbnail->SetCompressedBitmap(compressed_data, content_size);
-    thumbnail->CreateUIResource();
+    // Don't upload the texture if we are being paused/stopped because
+    // the context will go away anyways.
+    if (base::android::ApplicationStatusListener::GetState() ==
+        base::android::APPLICATION_STATE_HAS_RUNNING_ACTIVITIES) {
+      thumbnail->CreateUIResource();
+    }
   }
-  WriteThumbnailIfNecessary(tab_id, compressed_data, scale, content_size);
+  WriteThumbnailIfNecessary(tab_id, std::move(compressed_data), scale,
+                            content_size);
 }
 
 namespace {
@@ -652,7 +648,7 @@ namespace {
 bool ReadFromFile(base::File& file,
                   gfx::Size* out_content_size,
                   float* out_scale,
-                  skia::RefPtr<SkPixelRef>* out_pixels) {
+                  sk_sp<SkPixelRef>* out_pixels) {
   if (!file.IsValid())
     return false;
 
@@ -710,8 +706,7 @@ bool ReadFromFile(base::File& file,
   }
 
   int data_size = etc1_get_encoded_data_size(raw_width, raw_height);
-  skia::RefPtr<SkData> etc1_pixel_data =
-      skia::AdoptRef(SkData::NewUninitialized(data_size));
+  sk_sp<SkData> etc1_pixel_data(SkData::MakeUninitialized(data_size));
 
   int pixel_bytes_read = file.ReadAtCurrentPos(
       reinterpret_cast<char*>(etc1_pixel_data->writable_data()),
@@ -725,7 +720,7 @@ bool ReadFromFile(base::File& file,
                                        kUnknown_SkColorType,
                                        kUnpremul_SkAlphaType);
 
-  *out_pixels = skia::AdoptRef(
+  *out_pixels = sk_sp<SkPixelRef>(
       SkMallocPixelRef::NewWithData(info,
                                     0,
                                     NULL,
@@ -755,11 +750,11 @@ void ThumbnailCache::ReadTask(
     bool decompress,
     TabId tab_id,
     const base::Callback<
-        void(skia::RefPtr<SkPixelRef>, float, const gfx::Size&)>&
+        void(sk_sp<SkPixelRef>, float, const gfx::Size&)>&
         post_read_task) {
   gfx::Size content_size;
   float scale = 0.f;
-  skia::RefPtr<SkPixelRef> compressed_data;
+  sk_sp<SkPixelRef> compressed_data;
   base::FilePath file_path = GetFilePath(tab_id);
 
   if (base::PathExists(file_path)) {
@@ -775,26 +770,28 @@ void ThumbnailCache::ReadTask(
     if (!valid_contents) {
       content_size.SetSize(0, 0);
             scale = 0.f;
-            compressed_data.clear();
+            compressed_data.reset();
             base::DeleteFile(file_path, false);
     }
   }
 
   if (decompress) {
-    base::WorkerPool::PostTask(
+    base::PostTaskWithTraits(
         FROM_HERE,
-        base::Bind(post_read_task, compressed_data, scale, content_size),
-        true);
+        base::TaskTraits().WithPriority(base::TaskPriority::BACKGROUND),
+        base::Bind(post_read_task, std::move(compressed_data), scale,
+                   content_size));
   } else {
     content::BrowserThread::PostTask(
         content::BrowserThread::UI,
         FROM_HERE,
-        base::Bind(post_read_task, compressed_data, scale, content_size));
+        base::Bind(post_read_task, std::move(compressed_data), scale,
+                   content_size));
   }
 }
 
 void ThumbnailCache::PostReadTask(TabId tab_id,
-                                  skia::RefPtr<SkPixelRef> compressed_data,
+                                  sk_sp<SkPixelRef> compressed_data,
                                   float scale,
                                   const gfx::Size& content_size) {
   read_in_progress_ = false;
@@ -816,14 +813,14 @@ void ThumbnailCache::PostReadTask(TabId tab_id,
       time_stamp = meta_iter->second.capture_time();
 
     MakeSpaceForNewItemIfNecessary(tab_id);
-    scoped_ptr<Thumbnail> thumbnail = Thumbnail::Create(
+    std::unique_ptr<Thumbnail> thumbnail = Thumbnail::Create(
         tab_id, time_stamp, scale, ui_resource_provider_, this);
-    thumbnail->SetCompressedBitmap(compressed_data,
+    thumbnail->SetCompressedBitmap(std::move(compressed_data),
                                    content_size);
     if (kPreferCPUMemory)
       thumbnail->CreateUIResource();
 
-    cache_.Put(tab_id, thumbnail.Pass());
+    cache_.Put(tab_id, std::move(thumbnail));
     NotifyObserversOfThumbnailRead(tab_id);
   }
 
@@ -831,8 +828,8 @@ void ThumbnailCache::PostReadTask(TabId tab_id,
 }
 
 void ThumbnailCache::NotifyObserversOfThumbnailRead(TabId tab_id) {
-  FOR_EACH_OBSERVER(
-      ThumbnailCacheObserver, observers_, OnFinishedThumbnailRead(tab_id));
+  for (ThumbnailCacheObserver& observer : observers_)
+    observer.OnFinishedThumbnailRead(tab_id);
 }
 
 void ThumbnailCache::RemoveOnMatchedTimeStamp(TabId tab_id,
@@ -850,7 +847,7 @@ void ThumbnailCache::RemoveOnMatchedTimeStamp(TabId tab_id,
 void ThumbnailCache::DecompressionTask(
     const base::Callback<void(bool, SkBitmap)>&
         post_decompression_callback,
-    skia::RefPtr<SkPixelRef> compressed_data,
+    sk_sp<SkPixelRef> compressed_data,
     float scale,
     const gfx::Size& content_size) {
   SkBitmap raw_data_small;
@@ -935,4 +932,12 @@ std::pair<SkBitmap, float> ThumbnailCache::CreateApproximation(
   dst_bitmap.setImmutable();
 
   return std::make_pair(dst_bitmap, new_scale * scale);
+}
+
+void ThumbnailCache::OnMemoryPressure(
+    base::MemoryPressureListener::MemoryPressureLevel level) {
+  if (level == base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL) {
+    cache_.Clear();
+    approximation_cache_.Clear();
+  }
 }

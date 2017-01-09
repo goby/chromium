@@ -6,14 +6,16 @@
 #define NET_ANDROID_HTTP_AUTH_NEGOTIATE_ANDROID_H_
 
 #include <jni.h>
+
+#include <memory>
 #include <string>
 
 #include "base/android/jni_android.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/completion_callback.h"
+#include "net/base/net_export.h"
 #include "net/http/http_auth.h"
 
 namespace net {
@@ -107,6 +109,7 @@ class NET_EXPORT_PRIVATE HttpAuthNegotiateAndroid {
   // credentials are used instead.
   int GenerateAuthToken(const AuthCredentials* credentials,
                         const std::string& spn,
+                        const std::string& channel_bindings,
                         std::string* auth_token,
                         const net::CompletionCallback& callback);
 

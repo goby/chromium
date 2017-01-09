@@ -4,7 +4,8 @@
 
 #include "ui/views/view.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "ui/aura/window.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_tree_owner.h"
@@ -60,6 +61,11 @@ typedef ViewsTestBase ViewAuraTest;
 //     +-- v8
 //     +-- v9
 TEST_F(ViewAuraTest, RecreateLayersWithWindows) {
+  // TODO: test uses GetContext(), which is not applicable to aura-mus.
+  // http://crbug.com/663809.
+  if (IsAuraMusClient())
+    return;
+
   Widget* w1 = CreateControlWidget(GetContext(), gfx::Rect(0, 0, 100, 100));
   w1->GetNativeView()->layer()->set_name("w1");
 
@@ -120,7 +126,7 @@ TEST_F(ViewAuraTest, RecreateLayersWithWindows) {
   EXPECT_EQ(v7_layer, old_w1_root_sublayers[2]);
 
   {
-    scoped_ptr<ui::LayerTreeOwner> cloned_owner(
+    std::unique_ptr<ui::LayerTreeOwner> cloned_owner(
         wm::RecreateLayers(w1->GetNativeView()));
     EXPECT_EQ(w1_layer, cloned_owner->root());
     EXPECT_NE(w1_layer, w1->GetNativeView()->layer());

@@ -5,6 +5,9 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_VERTEX_ATTRIB_MANAGER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_VERTEX_ATTRIB_MANAGER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <list>
 #include <vector>
 #include "base/logging.h"
@@ -17,6 +20,7 @@
 namespace gpu {
 namespace gles2 {
 
+class BufferManager;
 class FeatureInfo;
 class GLES2Decoder;
 class Program;
@@ -30,6 +34,7 @@ class GPU_EXPORT VertexAttrib {
   typedef std::list<VertexAttrib*> VertexAttribList;
 
   VertexAttrib();
+  VertexAttrib(const VertexAttrib& other);
   ~VertexAttrib();
 
   // Returns true if this VertexAttrib can access index.
@@ -177,7 +182,7 @@ class GPU_EXPORT VertexAttribManager :
 
   VertexAttribManager();
 
-  void Initialize(uint32 num_vertex_attribs, bool init_attribs);
+  void Initialize(uint32_t num_vertex_attribs, bool init_attribs);
 
   bool Enable(GLuint index, bool enable);
 
@@ -194,6 +199,21 @@ class GPU_EXPORT VertexAttribManager :
       return &vertex_attribs_[index];
     }
     return NULL;
+  }
+
+  void UpdateAttribBaseTypeAndMask(GLuint loc, GLenum base_type) {
+    DCHECK(loc < vertex_attribs_.size());
+    int shift_bits = (loc % 16) * 2;
+    attrib_enabled_mask_[loc / 16] |= (0x3 << shift_bits);
+    attrib_base_type_mask_[loc / 16] &= ~(0x3 << shift_bits);
+    attrib_base_type_mask_[loc / 16] |= base_type << shift_bits;
+  }
+
+  const std::vector<uint32_t>& attrib_base_type_mask() const {
+    return attrib_base_type_mask_;
+  }
+  const std::vector<uint32_t>& attrib_enabled_mask() const {
+    return attrib_enabled_mask_;
   }
 
   void SetAttribInfo(
@@ -252,6 +272,7 @@ class GPU_EXPORT VertexAttribManager :
       const char* function_name,
       GLES2Decoder* decoder,
       FeatureInfo* feature_info,
+      BufferManager* buffer_manager,
       Program* current_program,
       GLuint max_vertex_accessed,
       bool instanced,
@@ -263,8 +284,9 @@ class GPU_EXPORT VertexAttribManager :
   friend class base::RefCounted<VertexAttribManager>;
 
   // Used when creating from a VertexArrayManager
-  VertexAttribManager(VertexArrayManager* manager, GLuint service_id,
-      uint32 num_vertex_attribs);
+  VertexAttribManager(VertexArrayManager* manager,
+                      GLuint service_id,
+                      uint32_t num_vertex_attribs);
 
   ~VertexAttribManager();
 
@@ -278,6 +300,15 @@ class GPU_EXPORT VertexAttribManager :
   // Info for each vertex attribute saved so we can check at glDrawXXX time
   // if it is safe to draw.
   std::vector<VertexAttrib> vertex_attribs_;
+
+  // Vertex attrib base types: FLOAT, INT, or UINT.
+  // Each base type is encoded into 2 bits, the lowest 2 bits for location 0,
+  // the highest 2 bits for location (max_vertex_attribs - 1).
+  std::vector<uint32_t> attrib_base_type_mask_;
+  // Same layout as above, 2 bits per location, 0x03 if a location for an
+  // vertex attrib is enabled by enabbleVertexAttribArray, 0x00 if it is
+  // disabled by disableVertexAttribArray. Every location is 0x00 by default.
+  std::vector<uint32_t> attrib_enabled_mask_;
 
   // The currently bound element array buffer. If this is 0 it is illegal
   // to call glDrawElements.
@@ -301,4 +332,3 @@ class GPU_EXPORT VertexAttribManager :
 }  // namespace gpu
 
 #endif  // GPU_COMMAND_BUFFER_SERVICE_VERTEX_ATTRIB_MANAGER_H_
-

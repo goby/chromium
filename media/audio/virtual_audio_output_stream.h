@@ -6,10 +6,11 @@
 #define MEDIA_AUDIO_VIRTUAL_AUDIO_OUTPUT_STREAM_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_converter.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
@@ -46,8 +47,7 @@ class MEDIA_EXPORT VirtualAudioOutputStream
 
  private:
   // AudioConverter::InputCallback:
-  double ProvideInput(AudioBus* audio_bus,
-                      base::TimeDelta buffer_delay) override;
+  double ProvideInput(AudioBus* audio_bus, uint32_t frames_delayed) override;
 
   const AudioParameters params_;
   // Pointer to the VirtualAudioInputStream to attach to when Start() is called.

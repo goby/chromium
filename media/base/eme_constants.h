@@ -7,24 +7,14 @@
 
 #include <stdint.h>
 
+#include "media/media_features.h"
+
 namespace media {
 
 // Defines values that specify registered Initialization Data Types used
 // in Encrypted Media Extensions (EME).
 // http://w3c.github.io/encrypted-media/initdata-format-registry.html#registry
-// The mask values are stored in a InitDataTypeMask.
-enum class EmeInitDataType {
-  UNKNOWN,
-  WEBM,
-  CENC,
-  KEYIDS
-};
-
-typedef uint32_t InitDataTypeMask;
-const InitDataTypeMask kInitDataTypeMaskNone = 0;
-const InitDataTypeMask kInitDataTypeMaskWebM = 1 << 0;
-const InitDataTypeMask kInitDataTypeMaskCenc = 1 << 1;
-const InitDataTypeMask kInitDataTypeMaskKeyIds = 1 << 2;
+enum class EmeInitDataType { UNKNOWN, WEBM, CENC, KEYIDS, MAX = KEYIDS };
 
 // Defines bitmask values that specify codecs used in Encrypted Media Extension
 // (EME). Each value represents a codec within a specific container.
@@ -44,7 +34,14 @@ enum EmeCodec {
   EME_CODEC_MP4_AAC = 1 << 4,
   EME_CODEC_MP4_AUDIO_ALL = EME_CODEC_MP4_AAC,
   EME_CODEC_MP4_AVC1 = 1 << 5,
-  EME_CODEC_MP4_VIDEO_ALL = EME_CODEC_MP4_AVC1,
+  EME_CODEC_MP4_VP9 = 1 << 6,
+#if !BUILDFLAG(ENABLE_HEVC_DEMUXING)
+  EME_CODEC_MP4_VIDEO_ALL = (EME_CODEC_MP4_AVC1 | EME_CODEC_MP4_VP9),
+#else
+  EME_CODEC_MP4_HEVC = 1 << 7,
+  EME_CODEC_MP4_VIDEO_ALL =
+      (EME_CODEC_MP4_AVC1 | EME_CODEC_MP4_VP9 | EME_CODEC_MP4_HEVC),
+#endif
   EME_CODEC_MP4_ALL = (EME_CODEC_MP4_AUDIO_ALL | EME_CODEC_MP4_VIDEO_ALL),
   EME_CODEC_AUDIO_ALL = (EME_CODEC_WEBM_AUDIO_ALL | EME_CODEC_MP4_AUDIO_ALL),
   EME_CODEC_VIDEO_ALL = (EME_CODEC_WEBM_VIDEO_ALL | EME_CODEC_MP4_VIDEO_ALL),
@@ -87,19 +84,6 @@ enum class EmeFeatureSupport {
 enum class EmeMediaType {
   AUDIO,
   VIDEO,
-};
-
-// Robustness values understood by KeySystems.
-// Note: key_systems.cc expects this ordering in GetRobustnessConfigRule(),
-// make sure to correct that code if this list changes.
-enum class EmeRobustness {
-  INVALID,
-  EMPTY,
-  SW_SECURE_CRYPTO,
-  SW_SECURE_DECODE,
-  HW_SECURE_CRYPTO,
-  HW_SECURE_DECODE,
-  HW_SECURE_ALL,
 };
 
 // Configuration rules indicate the configuration state required to support a

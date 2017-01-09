@@ -5,8 +5,10 @@
 #ifndef ASH_TEST_CONTENT_TEST_SHELL_CONTENT_STATE_H_
 #define ASH_TEST_CONTENT_TEST_SHELL_CONTENT_STATE_H_
 
+#include <memory>
+
 #include "ash/content/shell_content_state.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace content {
 class BrowserContext;
@@ -36,7 +38,7 @@ class TestShellContentState : public ShellContentState {
   content::BrowserContext* GetUserPresentingBrowserContextForWindow(
       aura::Window* window) override;
 
-  scoped_ptr<content::BrowserContext> active_browser_context_;
+  std::unique_ptr<content::BrowserContext> active_browser_context_;
 
   DISALLOW_COPY_AND_ASSIGN(TestShellContentState);
 };

@@ -33,6 +33,7 @@
 #define BASE_TRACE_EVENT_TRACE_EVENT_SYNTHETIC_DELAY_H_
 
 #include "base/atomicops.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -60,9 +61,6 @@
     static base::subtle::AtomicWord impl_ptr = 0;                     \
     trace_event_internal::GetOrCreateDelay(name, &impl_ptr)->End();   \
   } while (false)
-
-template <typename Type>
-struct DefaultSingletonTraits;
 
 namespace base {
 namespace trace_event {

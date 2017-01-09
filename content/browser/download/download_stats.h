@@ -7,12 +7,16 @@
 #ifndef CONTENT_BROWSER_DOWNLOAD_DOWNLOAD_STATS_H_
 #define CONTENT_BROWSER_DOWNLOAD_DOWNLOAD_STATS_H_
 
-#include <string>
+#include <stddef.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <string>
+#include <vector>
+
 #include "content/common/content_export.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_interrupt_reasons.h"
+#include "url/gurl.h"
 
 namespace base {
 class FilePath;
@@ -68,9 +72,9 @@ enum DownloadCountTypes {
   // progress.
   APPEND_TO_DETACHED_FILE_COUNT,
 
-  // Counts the number of instances where the downloaded file is missing after a
-  // successful invocation of ScanAndSaveDownloadedFile().
-  FILE_MISSING_AFTER_SUCCESSFUL_SCAN_COUNT,
+  // (Deprecated) Counts the number of instances where the downloaded file is
+  // missing after a successful invocation of ScanAndSaveDownloadedFile().
+  DOWNLOAD_COUNT_UNUSED_14,
 
   // (Deprecated) Count of downloads with a strong ETag and specified
   // 'Accept-Ranges: bytes'.
@@ -105,9 +109,16 @@ enum DownloadSource {
   // Fomerly INITIATED_BY_PEPPER_SAVE.
   DOWNLOAD_SOURCE_UNUSED_3,
 
-  // A request that was initiated as a result of resuming an interrupted
-  // download.
-  INITIATED_BY_RESUMPTION,
+  // Formerly INITIATED_BY_RESUMPTION.
+  DOWNLOAD_SOURCE_UNUSED_4,
+
+  // A request that was initiated as a result of manually resuming an
+  // interrupted download.
+  INITIATED_BY_MANUAL_RESUMPTION,
+
+  // A request that was initiated as a result of automatically resuming an
+  // interrupted download.
+  INITIATED_BY_AUTOMATIC_RESUMPTION,
 
   DOWNLOAD_SOURCE_LAST_ENTRY
 };
@@ -127,12 +138,13 @@ void RecordDownloadCount(DownloadCountTypes type);
 void RecordDownloadSource(DownloadSource source);
 
 // Record COMPLETED_COUNT and how long the download took.
-void RecordDownloadCompleted(const base::TimeTicks& start, int64 download_len);
+void RecordDownloadCompleted(const base::TimeTicks& start,
+                             int64_t download_len);
 
 // Record INTERRUPTED_COUNT, |reason|, |received| and |total| bytes.
 void RecordDownloadInterrupted(DownloadInterruptReason reason,
-                               int64 received,
-                               int64 total);
+                               int64_t received,
+                               int64_t total);
 
 // Record that a download has been classified as malicious.
 void RecordMaliciousDownloadClassified(DownloadDangerType danger_type);
@@ -177,7 +189,7 @@ void RecordOpen(const base::Time& end, bool first);
 // support and ETag indicates downloads that are candidates for partial
 // resumption.
 void RecordAcceptsRanges(const std::string& accepts_ranges,
-                         int64 download_len,
+                         int64_t download_len,
                          bool has_strong_validator);
 
 // Record the number of downloads removed by ClearAll.
@@ -238,6 +250,9 @@ enum OriginStateOnResumption {
 // enum.
 void RecordOriginStateOnResumption(bool is_partial,
                                    int state);
+
+void RecordDownloadConnectionSecurity(const GURL& download_url,
+                                      const std::vector<GURL>& url_chain);
 
 }  // namespace content
 

@@ -11,6 +11,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
@@ -25,11 +26,12 @@
 #include "net/base/filename_util.h"
 #include "net/base/net_module.h"
 #include "net/grit/net_resources.h"
+#include "ppapi/features/features.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/browser/plugin_service.h"
 #include "content/shell/browser/shell_plugin_service_filter.h"
 #endif
@@ -41,7 +43,7 @@
 #endif
 
 #if defined(USE_AURA) && defined(USE_X11)
-#include "ui/events/devices/x11/touch_factory_x11.h"
+#include "ui/events/devices/x11/touch_factory_x11.h"  // nogncheck
 #endif
 #if !defined(OS_CHROMEOS) && defined(USE_AURA) && defined(OS_LINUX)
 #include "ui/base/ime/input_method_initializer.h"
@@ -82,7 +84,7 @@ void LayoutTestBrowserMainParts::InitializeMessageLoopContext() {
                      storage::QuotaManager::kPerHostTemporaryPortion,
                  storage::QuotaCallback()));
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   PluginService* plugin_service = PluginService::GetInstance();
   plugin_service_filter_.reset(new ShellPluginServiceFilter);
   plugin_service->SetFilter(plugin_service_filter_.get());

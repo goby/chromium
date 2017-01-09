@@ -4,6 +4,8 @@
 
 #include "content/browser/devtools/devtools_frame_trace_recorder.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -26,7 +28,7 @@ namespace content {
 namespace {
 
 static base::subtle::Atomic32 frame_data_count = 0;
-static int kMaximumFrameDataCount = 150;
+static int kMaximumFrameDataCount = 450;
 static size_t kFrameAreaLimit = 256000;
 
 class TraceableDevToolsScreenshot
@@ -75,8 +77,8 @@ void FrameCaptured(base::TimeTicks timestamp, const SkBitmap& bitmap,
   base::subtle::NoBarrier_AtomicIncrement(&frame_data_count, 1);
   TRACE_EVENT_OBJECT_SNAPSHOT_WITH_ID_AND_TIMESTAMP(
       TRACE_DISABLED_BY_DEFAULT("devtools.screenshot"), "Screenshot", 1,
-      timestamp.ToInternalValue(),
-      scoped_refptr<base::trace_event::ConvertableToTraceFormat>(
+      timestamp,
+      std::unique_ptr<base::trace_event::ConvertableToTraceFormat>(
           new TraceableDevToolsScreenshot(bitmap)));
 }
 
@@ -89,14 +91,20 @@ void CaptureFrame(RenderFrameHostImpl* host,
   int current_frame_count = base::subtle::NoBarrier_Load(&frame_data_count);
   if (current_frame_count >= kMaximumFrameDataCount)
     return;
-  float scale = metadata.page_scale_factor;
-  float area = metadata.scrollable_viewport_size.GetArea();
-  if (area * scale * scale > kFrameAreaLimit)
-    scale = sqrt(kFrameAreaLimit / area);
-  gfx::Size snapshot_size(gfx::ToRoundedSize(gfx::ScaleSize(
-      metadata.scrollable_viewport_size, scale)));
+
+  gfx::Size src_size = gfx::ToCeiledSize(gfx::ScaleSize(
+      metadata.scrollable_viewport_size, metadata.page_scale_factor));
+  gfx::Size snapshot_size;
+  float area = src_size.GetArea();
+  if (area <= kFrameAreaLimit) {
+    snapshot_size = src_size;
+  } else {
+    double scale = sqrt(kFrameAreaLimit / area);
+    snapshot_size = gfx::ScaleToCeiledSize(src_size, scale);
+  }
+
   view->CopyFromCompositingSurface(
-      gfx::Rect(), snapshot_size,
+      gfx::Rect(gfx::Point(), src_size), snapshot_size,
       base::Bind(FrameCaptured, base::TimeTicks::Now()),
       kN32_SkColorType);
 }
@@ -134,7 +142,8 @@ void DevToolsFrameTraceRecorder::OnSynchronousSwapCompositorFrame(
   TRACE_EVENT_IS_NEW_TRACE(&is_new_trace);
   if (!is_new_trace && last_metadata_)
     CaptureFrame(host, *last_metadata_);
-  last_metadata_.reset(new cc::CompositorFrameMetadata(frame_metadata));
+  last_metadata_.reset(new cc::CompositorFrameMetadata);
+  *last_metadata_ = frame_metadata.Clone();
 }
 
 }  // namespace content

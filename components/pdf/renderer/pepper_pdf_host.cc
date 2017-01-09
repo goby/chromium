@@ -4,11 +4,13 @@
 
 #include "components/pdf/renderer/pepper_pdf_host.h"
 
+#include "base/memory/ptr_util.h"
 #include "components/pdf/common/pdf_messages.h"
+#include "components/pdf/renderer/pdf_accessibility_tree.h"
 #include "content/public/common/referrer.h"
 #include "content/public/renderer/pepper_plugin_instance.h"
+#include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
-#include "content/public/renderer/render_view.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/host_message_context.h"
@@ -21,7 +23,6 @@
 #include "ppapi/thunk/enter.h"
 #include "ppapi/thunk/ppb_image_data_api.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 #include "third_party/WebKit/public/web/WebView.h"
@@ -29,6 +30,7 @@
 namespace pdf {
 
 namespace {
+
 // --single-process model may fail in CHECK(!g_print_client) if there exist
 // more than two RenderThreads, so here we use TLS for g_print_client.
 // See http://crbug.com/457580.
@@ -80,39 +82,48 @@ int32_t PepperPDFHost::OnResourceMessageReceived(
                                       OnHostMsgSetLinkUnderCursor)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_SetContentRestriction,
                                       OnHostMsgSetContentRestriction)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(
+        PpapiHostMsg_PDF_SetAccessibilityViewportInfo,
+        OnHostMsgSetAccessibilityViewportInfo)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(
+        PpapiHostMsg_PDF_SetAccessibilityDocInfo,
+        OnHostMsgSetAccessibilityDocInfo)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(
+        PpapiHostMsg_PDF_SetAccessibilityPageInfo,
+        OnHostMsgSetAccessibilityPageInfo)
   PPAPI_END_MESSAGE_MAP()
   return PP_ERROR_FAILED;
 }
 
 int32_t PepperPDFHost::OnHostMsgDidStartLoading(
     ppapi::host::HostMessageContext* context) {
-  content::PepperPluginInstance* instance =
-      host_->GetPluginInstance(pp_instance());
-  if (!instance)
+  content::RenderFrame* render_frame = GetRenderFrame();
+  if (!render_frame)
     return PP_ERROR_FAILED;
-  instance->GetRenderView()->DidStartLoading();
+
+  render_frame->DidStartLoading();
   return PP_OK;
 }
 
 int32_t PepperPDFHost::OnHostMsgDidStopLoading(
     ppapi::host::HostMessageContext* context) {
-  content::PepperPluginInstance* instance =
-      host_->GetPluginInstance(pp_instance());
-  if (!instance)
+  content::RenderFrame* render_frame = GetRenderFrame();
+  if (!render_frame)
     return PP_ERROR_FAILED;
-  instance->GetRenderView()->DidStopLoading();
+
+  render_frame->DidStopLoading();
   return PP_OK;
 }
 
 int32_t PepperPDFHost::OnHostMsgSetContentRestriction(
     ppapi::host::HostMessageContext* context,
     int restrictions) {
-  content::PepperPluginInstance* instance =
-      host_->GetPluginInstance(pp_instance());
-  if (!instance)
+  content::RenderFrame* render_frame = GetRenderFrame();
+  if (!render_frame)
     return PP_ERROR_FAILED;
-  instance->GetRenderView()->Send(new PDFHostMsg_PDFUpdateContentRestrictions(
-      instance->GetRenderView()->GetRoutingID(), restrictions));
+
+  render_frame->Send(new PDFHostMsg_PDFUpdateContentRestrictions(
+      render_frame->GetRoutingID(), restrictions));
   return PP_OK;
 }
 
@@ -127,16 +138,12 @@ int32_t PepperPDFHost::OnHostMsgUserMetricsRecordAction(
 
 int32_t PepperPDFHost::OnHostMsgHasUnsupportedFeature(
     ppapi::host::HostMessageContext* context) {
-  content::PepperPluginInstance* instance =
-      host_->GetPluginInstance(pp_instance());
-  if (!instance)
+  content::RenderFrame* render_frame = GetRenderFrame();
+  if (!render_frame)
     return PP_ERROR_FAILED;
 
-  blink::WebView* view =
-      instance->GetContainer()->element().document().frame()->view();
-  content::RenderView* render_view = content::RenderView::FromWebView(view);
-  render_view->Send(
-      new PDFHostMsg_PDFHasUnsupportedFeature(render_view->GetRoutingID()));
+  render_frame->Send(
+      new PDFHostMsg_PDFHasUnsupportedFeature(render_frame->GetRoutingID()));
   return PP_OK;
 }
 
@@ -151,15 +158,18 @@ int32_t PepperPDFHost::OnHostMsgSaveAs(
       host_->GetPluginInstance(pp_instance());
   if (!instance)
     return PP_ERROR_FAILED;
+
+  content::RenderFrame* render_frame = instance->GetRenderFrame();
+  if (!render_frame)
+    return PP_ERROR_FAILED;
+
   GURL url = instance->GetPluginURL();
-  content::RenderView* render_view = instance->GetRenderView();
-  blink::WebLocalFrame* frame =
-      render_view->GetWebView()->mainFrame()->toWebLocalFrame();
-  content::Referrer referrer = content::Referrer::SanitizeForRequest(
-      url, content::Referrer(frame->document().url(),
-                             frame->document().referrerPolicy()));
-  render_view->Send(
-      new PDFHostMsg_PDFSaveURLAs(render_view->GetRoutingID(), url, referrer));
+  content::Referrer referrer;
+  referrer.url = url;
+  referrer.policy = blink::WebReferrerPolicyDefault;
+  referrer = content::Referrer::SanitizeForRequest(url, referrer);
+  render_frame->Send(
+      new PDFHostMsg_PDFSaveURLAs(render_frame->GetRoutingID(), url, referrer));
   return PP_OK;
 }
 
@@ -183,6 +193,52 @@ int32_t PepperPDFHost::OnHostMsgSetLinkUnderCursor(
     return PP_ERROR_FAILED;
   instance->SetLinkUnderCursor(url);
   return PP_OK;
+}
+
+int32_t PepperPDFHost::OnHostMsgSetAccessibilityViewportInfo(
+    ppapi::host::HostMessageContext* context,
+    const PP_PrivateAccessibilityViewportInfo& viewport_info) {
+  if (!host_->GetPluginInstance(pp_instance()))
+    return PP_ERROR_FAILED;
+  CreatePdfAccessibilityTreeIfNeeded();
+  pdf_accessibility_tree_->SetAccessibilityViewportInfo(viewport_info);
+  return PP_OK;
+}
+
+int32_t PepperPDFHost::OnHostMsgSetAccessibilityDocInfo(
+    ppapi::host::HostMessageContext* context,
+    const PP_PrivateAccessibilityDocInfo& doc_info) {
+  if (!host_->GetPluginInstance(pp_instance()))
+    return PP_ERROR_FAILED;
+  CreatePdfAccessibilityTreeIfNeeded();
+  pdf_accessibility_tree_->SetAccessibilityDocInfo(doc_info);
+  return PP_OK;
+}
+
+int32_t PepperPDFHost::OnHostMsgSetAccessibilityPageInfo(
+    ppapi::host::HostMessageContext* context,
+    const PP_PrivateAccessibilityPageInfo& page_info,
+    const std::vector<PP_PrivateAccessibilityTextRunInfo>& text_run_info,
+    const std::vector<PP_PrivateAccessibilityCharInfo>& chars) {
+  if (!host_->GetPluginInstance(pp_instance()))
+    return PP_ERROR_FAILED;
+  CreatePdfAccessibilityTreeIfNeeded();
+  pdf_accessibility_tree_->SetAccessibilityPageInfo(
+      page_info, text_run_info, chars);
+  return PP_OK;
+}
+
+void PepperPDFHost::CreatePdfAccessibilityTreeIfNeeded() {
+  if (!pdf_accessibility_tree_) {
+    pdf_accessibility_tree_ =
+        base::MakeUnique<PdfAccessibilityTree>(host_, pp_instance());
+  }
+}
+
+content::RenderFrame* PepperPDFHost::GetRenderFrame() {
+  content::PepperPluginInstance* instance =
+      host_->GetPluginInstance(pp_instance());
+  return instance ? instance->GetRenderFrame() : nullptr;
 }
 
 }  // namespace pdf

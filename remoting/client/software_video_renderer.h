@@ -5,12 +5,15 @@
 #ifndef REMOTING_CLIENT_SOFTWARE_VIDEO_RENDERER_H_
 #define REMOTING_CLIENT_SOFTWARE_VIDEO_RENDERER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "remoting/client/video_renderer.h"
-#include "remoting/protocol/performance_tracker.h"
+#include "remoting/protocol/video_renderer.h"
 #include "remoting/protocol/video_stub.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 
@@ -24,47 +27,58 @@ class DesktopFrame;
 
 namespace remoting {
 
-class FrameConsumer;
 class VideoDecoder;
 
 namespace protocol {
-class PerformanceTracker;
+class FrameConsumer;
+struct FrameStats;
+class FrameStatsConsumer;
 }  // namespace protocol
 
 // Implementation of VideoRenderer interface that decodes frame on CPU (on a
 // decode thread) and then passes decoded frames to a FrameConsumer.
-class SoftwareVideoRenderer : public VideoRenderer,
+class SoftwareVideoRenderer : public protocol::VideoRenderer,
                               public protocol::VideoStub {
  public:
-  // All methods must be called on the same thread the renderer is created. The
-  // |decode_task_runner_| is used to decode the video packets. |perf_tracker|
-  // must outlive the renderer. |perf_tracker| may be nullptr, performance
-  // tracking is disabled in that case.
-  SoftwareVideoRenderer(
-      scoped_refptr<base::SingleThreadTaskRunner> decode_task_runner,
-      FrameConsumer* consumer,
-      protocol::PerformanceTracker* perf_tracker);
+  // The renderer can be created on any thread but afterwards all methods must
+  // be called on the same thread.
+  explicit SoftwareVideoRenderer(protocol::FrameConsumer* consumer);
+
+  // Same as above, but take ownership of the |consumer|.
+  explicit SoftwareVideoRenderer(
+      std::unique_ptr<protocol::FrameConsumer> consumer);
+
   ~SoftwareVideoRenderer() override;
 
   // VideoRenderer interface.
+  bool Initialize(const ClientContext& client_context,
+                  protocol::FrameStatsConsumer* stats_consumer) override;
   void OnSessionConfig(const protocol::SessionConfig& config) override;
   protocol::VideoStub* GetVideoStub() override;
+  protocol::FrameConsumer* GetFrameConsumer() override;
+  protocol::FrameStatsConsumer* GetFrameStatsConsumer() override;
 
   // protocol::VideoStub interface.
-  void ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
+  void ProcessVideoPacket(std::unique_ptr<VideoPacket> packet,
                           const base::Closure& done) override;
 
  private:
-  void RenderFrame(int32_t frame_id,
+  void RenderFrame(std::unique_ptr<protocol::FrameStats> stats,
                    const base::Closure& done,
-                   scoped_ptr<webrtc::DesktopFrame> frame);
-  void OnFrameRendered(int32_t frame_id, const base::Closure& done);
+                   std::unique_ptr<webrtc::DesktopFrame> frame);
+  void OnFrameRendered(std::unique_ptr<protocol::FrameStats> stats,
+                       const base::Closure& done);
 
   scoped_refptr<base::SingleThreadTaskRunner> decode_task_runner_;
-  FrameConsumer* consumer_;
-  protocol::PerformanceTracker* perf_tracker_;
 
-  scoped_ptr<VideoDecoder> decoder_;
+  // |owned_consumer_| and |consumer_| should refer to the same object if
+  // |owned_consumer_| is not null.
+  std::unique_ptr<protocol::FrameConsumer> owned_consumer_;
+  protocol::FrameConsumer* const consumer_;
+
+  protocol::FrameStatsConsumer* stats_consumer_ = nullptr;
+
+  std::unique_ptr<VideoDecoder> decoder_;
 
   webrtc::DesktopSize source_size_;
   webrtc::DesktopVector source_dpi_;

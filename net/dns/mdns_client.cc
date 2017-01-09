@@ -4,11 +4,12 @@
 
 #include "net/dns/mdns_client.h"
 
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/network_interfaces.h"
 #include "net/dns/dns_protocol.h"
 #include "net/dns/mdns_client_impl.h"
+#include "net/log/net_log_source.h"
 
 namespace net {
 
@@ -18,18 +19,17 @@ const char kMDnsMulticastGroupIPv4[] = "224.0.0.251";
 const char kMDnsMulticastGroupIPv6[] = "FF02::FB";
 
 IPEndPoint GetMDnsIPEndPoint(const char* address) {
-  IPAddressNumber multicast_group_number;
-  bool success = ParseIPLiteralToNumber(address,
-                                        &multicast_group_number);
+  IPAddress multicast_group_number;
+  bool success = multicast_group_number.AssignFromIPLiteral(address);
   DCHECK(success);
   return IPEndPoint(multicast_group_number,
                     dns_protocol::kDefaultPortMulticast);
 }
 
 int Bind(const IPEndPoint& multicast_addr,
-         uint32 interface_index,
+         uint32_t interface_index,
          DatagramServerSocket* socket) {
-  IPAddressNumber address_any(multicast_addr.address().size());
+  IPAddress address_any(std::vector<uint8_t>(multicast_addr.address().size()));
   IPEndPoint bind_endpoint(address_any, multicast_addr.port());
 
   socket->AllowAddressReuse();
@@ -45,13 +45,13 @@ int Bind(const IPEndPoint& multicast_addr,
 }  // namespace
 
 // static
-scoped_ptr<MDnsSocketFactory> MDnsSocketFactory::CreateDefault() {
-  return scoped_ptr<MDnsSocketFactory>(new MDnsSocketFactoryImpl);
+std::unique_ptr<MDnsSocketFactory> MDnsSocketFactory::CreateDefault() {
+  return std::unique_ptr<MDnsSocketFactory>(new MDnsSocketFactoryImpl);
 }
 
 // static
-scoped_ptr<MDnsClient> MDnsClient::CreateDefault() {
-  return scoped_ptr<MDnsClient>(new MDnsClientImpl());
+std::unique_ptr<MDnsClient> MDnsClient::CreateDefault() {
+  return std::unique_ptr<MDnsClient>(new MDnsClientImpl());
 }
 
 IPEndPoint GetMDnsIPEndPoint(AddressFamily address_family) {
@@ -85,11 +85,11 @@ InterfaceIndexFamilyList GetMDnsInterfacesToBind() {
   return interfaces;
 }
 
-scoped_ptr<DatagramServerSocket> CreateAndBindMDnsSocket(
+std::unique_ptr<DatagramServerSocket> CreateAndBindMDnsSocket(
     AddressFamily address_family,
-    uint32 interface_index) {
-  scoped_ptr<DatagramServerSocket> socket(
-      new UDPServerSocket(NULL, NetLog::Source()));
+    uint32_t interface_index) {
+  std::unique_ptr<DatagramServerSocket> socket(
+      new UDPServerSocket(NULL, NetLogSource()));
 
   IPEndPoint multicast_addr = GetMDnsIPEndPoint(address_family);
   int rv = Bind(multicast_addr, interface_index, socket.get());
@@ -98,7 +98,7 @@ scoped_ptr<DatagramServerSocket> CreateAndBindMDnsSocket(
     VLOG(1) << "Bind failed, endpoint=" << multicast_addr.ToStringWithoutPort()
             << ", error=" << rv;
   }
-  return socket.Pass();
+  return socket;
 }
 
 }  // namespace net

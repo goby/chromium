@@ -7,6 +7,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "components/navigation_interception/intercept_navigation_throttle.h"
 #include "components/navigation_interception/navigation_params_android.h"
 #include "content/public/browser/browser_thread.h"
@@ -71,7 +72,7 @@ void UpdateUserGestureCarryoverInfoOnUIThread(int render_process_id,
 // static
 void InterceptNavigationDelegate::Associate(
     WebContents* web_contents,
-    scoped_ptr<InterceptNavigationDelegate> delegate) {
+    std::unique_ptr<InterceptNavigationDelegate> delegate) {
   web_contents->SetUserData(kInterceptNavigationDelegateUserDataKey,
                             delegate.release());
 }
@@ -84,12 +85,11 @@ InterceptNavigationDelegate* InterceptNavigationDelegate::Get(
 }
 
 // static
-scoped_ptr<content::NavigationThrottle>
+std::unique_ptr<content::NavigationThrottle>
 InterceptNavigationDelegate::CreateThrottleFor(
     content::NavigationHandle* handle) {
-  return scoped_ptr<content::NavigationThrottle>(
-      new InterceptNavigationThrottle(
-          handle, base::Bind(&CheckIfShouldIgnoreNavigationOnUIThread), false));
+  return base::MakeUnique<InterceptNavigationThrottle>(
+      handle, base::Bind(&CheckIfShouldIgnoreNavigationOnUIThread), false);
 }
 
 // static
@@ -138,19 +138,11 @@ bool InterceptNavigationDelegate::ShouldIgnoreNavigation(
       env, navigation_params, has_user_gesture_carryover);
 
   return Java_InterceptNavigationDelegate_shouldIgnoreNavigation(
-      env,
-      jdelegate.obj(),
-      jobject_params.obj());
+      env, jdelegate, jobject_params);
 }
 
 void InterceptNavigationDelegate::UpdateLastUserGestureCarryoverTimestamp() {
   last_user_gesture_carryover_timestamp_ = base::TimeTicks::Now();
-}
-
-// Register native methods.
-
-bool RegisterInterceptNavigationDelegate(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace navigation_interception

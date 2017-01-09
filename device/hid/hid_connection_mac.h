@@ -7,11 +7,13 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/hid/IOHIDManager.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <queue>
 
 #include "base/mac/foundation_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "device/hid/hid_connection.h"
 
 namespace base {

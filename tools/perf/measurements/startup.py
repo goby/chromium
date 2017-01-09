@@ -2,13 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 
 from metrics import keychain_metric
 from metrics import startup_metric
 
 
-class Startup(page_test.PageTest):
+class Startup(legacy_page_test.LegacyPageTest):
   """Performs a measurement of Chromium's startup performance.
 
   Uses cold start if cold==True, otherwise uses warm start. A cold start means
@@ -30,6 +30,7 @@ class Startup(page_test.PageTest):
     keychain_metric.KeychainMetric.CustomizeBrowserOptions(options)
 
   def ValidateAndMeasurePage(self, page, tab, results):
+    del page  # unused
     keychain_metric.KeychainMetric().AddResults(tab, results)
     startup_metric.StartupMetric().AddResults(tab, results)
 

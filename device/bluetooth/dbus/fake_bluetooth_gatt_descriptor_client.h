@@ -5,7 +5,10 @@
 #ifndef DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_GATT_DESCRIPTOR_CLIENT_H_
 #define DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_GATT_DESCRIPTOR_CLIENT_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
@@ -50,7 +53,7 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothGattDescriptorClient
                  const ValueCallback& callback,
                  const ErrorCallback& error_callback) override;
   void WriteValue(const dbus::ObjectPath& object_path,
-                  const std::vector<uint8>& value,
+                  const std::vector<uint8_t>& value,
                   const base::Closure& callback,
                   const ErrorCallback& error_callback) override;
 
@@ -82,7 +85,7 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothGattDescriptorClient
     DescriptorData();
     ~DescriptorData();
 
-    scoped_ptr<Properties> properties;
+    std::unique_ptr<Properties> properties;
   };
   typedef std::map<dbus::ObjectPath, DescriptorData*> PropertiesMap;
   PropertiesMap properties_;

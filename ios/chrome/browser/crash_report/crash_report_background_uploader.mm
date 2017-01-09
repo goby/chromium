@@ -10,11 +10,15 @@
 #include "base/mac/scoped_block.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/time/time.h"
 #import "breakpad/src/client/ios/BreakpadController.h"
 #include "ios/chrome/browser/experimental_flags.h"
-#include "ios/web/public/user_metrics.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using base::UserMetricsAction;
 
@@ -65,8 +69,7 @@ NSString* CreateSessionIdentifierFromTask(NSURLSessionTask* task) {
 
 - (void)setSessionCompletionHandler:(ProceduralBlock)completionHandler {
   DCHECK(completionHandler);
-  _sessionCompletionHandler.reset(completionHandler,
-                                  base::scoped_policy::RETAIN);
+  _sessionCompletionHandler.reset(completionHandler);
   _didFinishEventsCalled = NO;
 }
 
@@ -177,12 +180,8 @@ NSString* CreateSessionIdentifierFromTask(NSURLSessionTask* task) {
   static NSURLSession* session = nil;
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
-
-    // TODO(olivierrobin) When all bots compile with iOS8 release SDK, use
-    // only backgroundSessionConfigurationWithIdentifier.
     NSURLSessionConfiguration* sessionConfig = [NSURLSessionConfiguration
-        backgroundSessionConfiguration:kBackgroundReportUploader];
-
+        backgroundSessionConfigurationWithIdentifier:kBackgroundReportUploader];
     session = [NSURLSession
         sessionWithConfiguration:sessionConfig
                         delegate:[UrlSessionDelegate sharedInstance]
@@ -318,11 +317,11 @@ NSString* CreateSessionIdentifierFromTask(NSURLSessionTask* task) {
                     [defaults integerForKey:kReportsUploadedInBackground];
                 [defaults setInteger:(uploadedCrashes + 1)
                               forKey:kReportsUploadedInBackground];
-                web::RecordAction(
+                base::RecordAction(
                     UserMetricsAction("BackgroundUploadReportSucceeded"));
 
               } else {
-                web::RecordAction(
+                base::RecordAction(
                     UserMetricsAction("BackgroundUploadReportAborted"));
               }
             }

@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/network/network_handler_callbacks.h"
 
@@ -197,6 +198,10 @@ class CHROMEOS_EXPORT NetworkDeviceHandler {
   // asychronously in the background and applies also to devices which become
   // available in the future.
   virtual void SetCellularAllowRoaming(bool allow_roaming) = 0;
+
+  // Sets up MAC address randomization if available. This applies to devices
+  // which become available in the future.
+  virtual void SetMACAddressRandomizationEnabled(bool enabled) = 0;
 
   // Attempts to enable or disable TDLS for the specified IP or MAC address for
   // the active wifi device.

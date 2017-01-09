@@ -2,27 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/page/scrolling/ScrollStateCallback.h"
+
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-NativeScrollBehavior ScrollStateCallback::toNativeScrollBehavior(String nativeScrollBehavior)
-{
-    DEFINE_STATIC_LOCAL(const String, disable, ("disable-native-scroll"));
-    DEFINE_STATIC_LOCAL(const String, before, ("perform-before-native-scroll"));
-    DEFINE_STATIC_LOCAL(const String, after, ("perform-after-native-scroll"));
+WebNativeScrollBehavior ScrollStateCallback::toNativeScrollBehavior(
+    String nativeScrollBehavior) {
+  static const char disable[] = "disable-native-scroll";
+  static const char before[] = "perform-before-native-scroll";
+  static const char after[] = "perform-after-native-scroll";
 
-    if (nativeScrollBehavior == disable)
-        return NativeScrollBehavior::DisableNativeScroll;
-    if (nativeScrollBehavior == before)
-        return NativeScrollBehavior::PerformBeforeNativeScroll;
-    if (nativeScrollBehavior == after)
-        return NativeScrollBehavior::PerformAfterNativeScroll;
+  if (nativeScrollBehavior == disable)
+    return WebNativeScrollBehavior::DisableNativeScroll;
+  if (nativeScrollBehavior == before)
+    return WebNativeScrollBehavior::PerformBeforeNativeScroll;
+  if (nativeScrollBehavior == after)
+    return WebNativeScrollBehavior::PerformAfterNativeScroll;
 
-    ASSERT_NOT_REACHED();
-    return NativeScrollBehavior::DisableNativeScroll;
+  ASSERT_NOT_REACHED();
+  return WebNativeScrollBehavior::DisableNativeScroll;
 }
 
-} // namespace blink
+}  // namespace blink

@@ -2,19 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/policy/core/common/policy_loader_mac.h"
+
 #include <CoreFoundation/CoreFoundation.h>
 
-#include "base/basictypes.h"
+#include <utility>
+
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
 #include "components/policy/core/common/async_policy_provider.h"
 #include "components/policy/core/common/configuration_policy_provider_test.h"
 #include "components/policy/core/common/external_data_fetcher.h"
 #include "components/policy/core/common/policy_bundle.h"
-#include "components/policy/core/common/policy_loader_mac.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_test_utils.h"
 #include "components/policy/core/common/policy_types.h"
@@ -71,9 +76,9 @@ ConfigurationPolicyProvider* TestHarness::CreateProvider(
     SchemaRegistry* registry,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   prefs_ = new MockPreferences();
-  scoped_ptr<AsyncPolicyLoader> loader(
+  std::unique_ptr<AsyncPolicyLoader> loader(
       new PolicyLoaderMac(task_runner, base::FilePath(), prefs_));
-  return new AsyncPolicyProvider(registry, loader.Pass());
+  return new AsyncPolicyProvider(registry, std::move(loader));
 }
 
 void TestHarness::InstallEmptyPolicy() {}
@@ -104,7 +109,7 @@ void TestHarness::InstallBooleanPolicy(const std::string& policy_name,
 void TestHarness::InstallStringListPolicy(const std::string& policy_name,
                                           const base::ListValue* policy_value) {
   ScopedCFTypeRef<CFStringRef> name(base::SysUTF8ToCFStringRef(policy_name));
-  ScopedCFTypeRef<CFPropertyListRef> array(ValueToProperty(policy_value));
+  ScopedCFTypeRef<CFPropertyListRef> array(ValueToProperty(*policy_value));
   ASSERT_TRUE(array);
   prefs_->AddTestItem(name, array, true);
 }
@@ -113,7 +118,7 @@ void TestHarness::InstallDictionaryPolicy(
     const std::string& policy_name,
     const base::DictionaryValue* policy_value) {
   ScopedCFTypeRef<CFStringRef> name(base::SysUTF8ToCFStringRef(policy_name));
-  ScopedCFTypeRef<CFPropertyListRef> dict(ValueToProperty(policy_value));
+  ScopedCFTypeRef<CFPropertyListRef> dict(ValueToProperty(*policy_value));
   ASSERT_TRUE(dict);
   prefs_->AddTestItem(name, dict, true);
 }
@@ -142,9 +147,10 @@ class PolicyLoaderMacTest : public PolicyTestBase {
 
   void SetUp() override {
     PolicyTestBase::SetUp();
-    scoped_ptr<AsyncPolicyLoader> loader(
+    std::unique_ptr<AsyncPolicyLoader> loader(
         new PolicyLoaderMac(loop_.task_runner(), base::FilePath(), prefs_));
-    provider_.reset(new AsyncPolicyProvider(&schema_registry_, loader.Pass()));
+    provider_.reset(
+        new AsyncPolicyProvider(&schema_registry_, std::move(loader)));
     provider_->Init(&schema_registry_);
   }
 
@@ -154,7 +160,7 @@ class PolicyLoaderMacTest : public PolicyTestBase {
   }
 
   MockPreferences* prefs_;
-  scoped_ptr<AsyncPolicyProvider> provider_;
+  std::unique_ptr<AsyncPolicyProvider> provider_;
 };
 
 TEST_F(PolicyLoaderMacTest, Invalid) {
@@ -171,7 +177,8 @@ TEST_F(PolicyLoaderMacTest, Invalid) {
 
   // Make the provider read the updated |prefs_|.
   provider_->RefreshPolicies();
-  loop_.RunUntilIdle();
+  ASSERT_TRUE(base::MessageLoopForIO::IsCurrent());
+  base::RunLoop().RunUntilIdle();
   const PolicyBundle kEmptyBundle;
   EXPECT_TRUE(provider_->policies().Equals(kEmptyBundle));
 }
@@ -186,15 +193,13 @@ TEST_F(PolicyLoaderMacTest, TestNonForcedValue) {
 
   // Make the provider read the updated |prefs_|.
   provider_->RefreshPolicies();
-  loop_.RunUntilIdle();
+  ASSERT_TRUE(base::MessageLoopForIO::IsCurrent());
+  base::RunLoop().RunUntilIdle();
   PolicyBundle expected_bundle;
   expected_bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
-      .Set(test_keys::kKeyString,
-           POLICY_LEVEL_RECOMMENDED,
-           POLICY_SCOPE_USER,
+      .Set(test_keys::kKeyString, POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER,
            POLICY_SOURCE_PLATFORM,
-           new base::StringValue("string value"),
-           NULL);
+           base::MakeUnique<base::StringValue>("string value"), nullptr);
   EXPECT_TRUE(provider_->policies().Equals(expected_bundle));
 }
 

@@ -4,13 +4,14 @@
 
 #include "cc/quads/draw_quad.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
 #include "cc/debug/traced_value.h"
 #include "cc/quads/debug_border_draw_quad.h"
-#include "cc/quads/io_surface_draw_quad.h"
 #include "cc/quads/picture_draw_quad.h"
 #include "cc/quads/render_pass_draw_quad.h"
 #include "cc/quads/solid_color_draw_quad.h"
@@ -26,6 +27,8 @@ namespace cc {
 DrawQuad::DrawQuad()
     : material(INVALID), needs_blending(false), shared_quad_state(0) {
 }
+
+DrawQuad::DrawQuad(const DrawQuad& other) = default;
 
 void DrawQuad::SetAll(const SharedQuadState* shared_quad_state,
                       Material material,

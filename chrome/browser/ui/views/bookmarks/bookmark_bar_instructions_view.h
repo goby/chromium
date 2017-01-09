@@ -5,8 +5,8 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_BOOKMARKS_BOOKMARK_BAR_INSTRUCTIONS_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_BOOKMARKS_BOOKMARK_BAR_INSTRUCTIONS_VIEW_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/link_listener.h"
 #include "ui/views/view.h"
@@ -38,7 +38,7 @@ class BookmarkBarInstructionsView : public views::View,
   void OnThemeChanged() override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // views::LinkListener:
   void LinkClicked(views::Link* source, int event_flags) override;
@@ -54,10 +54,6 @@ class BookmarkBarInstructionsView : public views::View,
 
   views::Label* instructions_;
   views::Link* import_link_;
-
-  // The baseline of the child views. This is -1 if none of the views support a
-  // baseline.
-  int baseline_;
 
   // Have the colors of the child views been updated? This is initially false
   // and set to true once we have a valid ThemeProvider.

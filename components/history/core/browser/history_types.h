@@ -5,6 +5,9 @@
 #ifndef COMPONENTS_HISTORY_CORE_BROWSER_HISTORY_TYPES_H_
 #define COMPONENTS_HISTORY_CORE_BROWSER_HISTORY_TYPES_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <deque>
 #include <map>
 #include <set>
@@ -12,8 +15,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/containers/stack_container.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string16.h"
@@ -22,6 +25,7 @@
 #include "components/history/core/browser/history_context.h"
 #include "components/history/core/browser/url_row.h"
 #include "components/history/core/common/thumbnail_score.h"
+#include "components/query_parser/query_parser.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
@@ -31,14 +35,13 @@ namespace history {
 // Forward declaration for friend statements.
 class HistoryBackend;
 class PageUsageData;
-class URLDatabase;
 
 // Container for a list of URLs.
 typedef std::vector<GURL> RedirectList;
 
-typedef int64 FaviconBitmapID; // Identifier for a bitmap in a favicon.
-typedef int64 SegmentID;  // URL segments for the most visited view.
-typedef int64 IconMappingID; // For page url and icon mapping.
+typedef int64_t FaviconBitmapID;  // Identifier for a bitmap in a favicon.
+typedef int64_t SegmentID;        // URL segments for the most visited view.
+typedef int64_t IconMappingID;    // For page url and icon mapping.
 
 // The enumeration of all possible sources of visits is listed below.
 // The source will be propagated along with a URL or a visit item
@@ -56,7 +59,7 @@ enum VisitSource {
   SOURCE_SAFARI_IMPORTED = 5,
 };
 
-typedef int64 VisitID;
+typedef int64_t VisitID;
 // Structure to hold the mapping between each visit's id and its source.
 typedef std::map<VisitID, VisitSource> VisitSourceMap;
 
@@ -269,11 +272,14 @@ struct QueryOptions {
   // be handled. The default is REMOVE_DUPLICATES.
   DuplicateHandling duplicate_policy;
 
+  // Allows the caller to specify the matching algorithm for text queries.
+  query_parser::MatchingAlgorithm matching_algorithm;
+
   // Helpers to get the effective parameters values, since a value of 0 means
   // "unspecified".
   int EffectiveMaxCount() const;
-  int64 EffectiveBeginTime() const;
-  int64 EffectiveEndTime() const;
+  int64_t EffectiveBeginTime() const;
+  int64_t EffectiveEndTime() const;
 };
 
 // QueryURLResult -------------------------------------------------------------
@@ -312,6 +318,7 @@ struct MostVisitedURL {
   MostVisitedURL(const GURL& url,
                  const base::string16& title,
                  const base::Time& last_forced_time);
+  MostVisitedURL(const MostVisitedURL& other);
   ~MostVisitedURL();
 
   GURL url;
@@ -324,7 +331,7 @@ struct MostVisitedURL {
 
   RedirectList redirects;
 
-  bool operator==(const MostVisitedURL& other) {
+  bool operator==(const MostVisitedURL& other) const {
     return url == other.url;
   }
 };
@@ -340,7 +347,7 @@ struct FilteredURL {
     // The number of visits, as seen by the Most Visited NTP pane.
     unsigned int visits;
     // The total number of seconds that the page was open.
-    int64 duration_opened;
+    int64_t duration_opened;
     // The time when the page was last visited.
     base::Time last_visit_time;
   };
@@ -364,7 +371,7 @@ struct HistoryAddPageArgs {
   //   HistoryAddPageArgs(
   //       GURL(), base::Time(), NULL, 0, GURL(),
   //       RedirectList(), ui::PAGE_TRANSITION_LINK,
-  //       SOURCE_BROWSED, false)
+  //       SOURCE_BROWSED, false, true)
   HistoryAddPageArgs();
   HistoryAddPageArgs(const GURL& url,
                      base::Time time,
@@ -374,7 +381,9 @@ struct HistoryAddPageArgs {
                      const RedirectList& redirects,
                      ui::PageTransition transition,
                      VisitSource source,
-                     bool did_replace_entry);
+                     bool did_replace_entry,
+                     bool consider_for_ntp_most_visited);
+  HistoryAddPageArgs(const HistoryAddPageArgs& other);
   ~HistoryAddPageArgs();
 
   GURL url;
@@ -386,6 +395,11 @@ struct HistoryAddPageArgs {
   ui::PageTransition transition;
   VisitSource visit_source;
   bool did_replace_entry;
+  // Specifies whether a page visit should contribute to the Most Visited tiles
+  // in the New Tab Page. Note that setting this to true (most common case)
+  // doesn't guarantee it's relevant for Most Visited, since other requirements
+  // exist (e.g. certain page transition types).
+  bool consider_for_ntp_most_visited;
 };
 
 // TopSites -------------------------------------------------------------------
@@ -396,6 +410,7 @@ typedef std::vector<FilteredURL> FilteredURLList;
 // Used by TopSites to store the thumbnails.
 struct Images {
   Images();
+  Images(const Images& other);
   ~Images();
 
   scoped_refptr<base::RefCountedMemory> thumbnail;
@@ -414,6 +429,7 @@ typedef std::vector<MostVisitedURLWithRank> MostVisitedURLWithRankList;
 
 struct TopSitesDelta {
   TopSitesDelta();
+  TopSitesDelta(const TopSitesDelta& other);
   ~TopSitesDelta();
 
   MostVisitedURLList deleted;
@@ -452,8 +468,9 @@ class MostVisitedThumbnails
 // Map from host to visit count, sorted by visit count descending.
 typedef std::vector<std::pair<std::string, int>> TopHostsList;
 
-// Map from origins to a count of matching URLs.
-typedef std::map<GURL, int> OriginCountMap;
+// Map from origins to a count of matching URLs and the last visited time to any
+// URL under that origin.
+typedef std::map<GURL, std::pair<int, base::Time>> OriginCountAndLastVisitMap;
 
 // Statistics -----------------------------------------------------------------
 
@@ -504,6 +521,7 @@ struct FaviconBitmapIDSize {
 // Defines a favicon bitmap stored in the history backend.
 struct FaviconBitmap {
   FaviconBitmap();
+  FaviconBitmap(const FaviconBitmap& other);
   ~FaviconBitmap();
 
   // The unique id of the bitmap.
@@ -527,6 +545,7 @@ struct FaviconBitmap {
 
 struct ExpireHistoryArgs {
   ExpireHistoryArgs();
+  ExpireHistoryArgs(const ExpireHistoryArgs& other);
   ~ExpireHistoryArgs();
 
   // Sets |begin_time| and |end_time| to the beginning and end of the day (in

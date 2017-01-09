@@ -5,21 +5,17 @@
 #ifndef REMOTING_TEST_CHROMOTING_TEST_FIXTURE_H_
 #define REMOTING_TEST_CHROMOTING_TEST_FIXTURE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-namespace base {
-class RunLoop;
-class Timer;
-}
 
 namespace remoting {
 namespace test {
 
 class ConnectionTimeObserver;
 class TestChromotingClient;
-struct HostInfo;
 
 // Provides chromoting connection capabilities for tests to use. Performance
 // metrics of the established connection are readily available to calculate
@@ -39,7 +35,7 @@ class ChromotingTestFixture
 
  protected:
   // Observes and saves the times when a chromoting client changes its state.
-  scoped_ptr<ConnectionTimeObserver> connection_time_observer_;
+  std::unique_ptr<ConnectionTimeObserver> connection_time_observer_;
 
  private:
   // testing::Test overrides.
@@ -52,7 +48,7 @@ class ChromotingTestFixture
   void DestroyObserver();
 
   // Creates and manages the connection to the remote host.
-  scoped_ptr<TestChromotingClient> test_chromoting_client_;
+  std::unique_ptr<TestChromotingClient> test_chromoting_client_;
 
   base::ThreadChecker thread_checker_;
 

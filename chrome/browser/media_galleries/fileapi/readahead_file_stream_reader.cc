@@ -4,6 +4,8 @@
 
 #include "chrome/browser/media_galleries/fileapi/readahead_file_stream_reader.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/message_loop/message_loop.h"
@@ -51,7 +53,7 @@ int ReadaheadFileStreamReader::Read(
   return result;
 }
 
-int64 ReadaheadFileStreamReader::GetLength(
+int64_t ReadaheadFileStreamReader::GetLength(
     const net::Int64CompletionCallback& callback) {
   return source_->GetLength(callback);
 }
@@ -103,11 +105,9 @@ void ReadaheadFileStreamReader::ReadFromSourceIfNeeded() {
 
   scoped_refptr<net::IOBuffer> buf(new net::IOBuffer(kBufferSize));
   int result = source_->Read(
-      buf.get(),
-      kBufferSize,
+      buf.get(), kBufferSize,
       base::Bind(&ReadaheadFileStreamReader::OnFinishReadFromSource,
-                 weak_factory_.GetWeakPtr(),
-                 buf));
+                 weak_factory_.GetWeakPtr(), base::RetainedRef(buf)));
 
   if (result != net::ERR_IO_PENDING)
     OnFinishReadFromSource(buf.get(), result);

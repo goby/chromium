@@ -4,17 +4,20 @@
 
 #include "chrome/browser/ui/hung_plugin_tab_helper.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/process/process.h"
 #include "base/rand_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/common/channel_info.h"
+#include "chrome/common/crash_keys.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/locale_settings.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
 #include "components/version_info/version_info.h"
@@ -27,8 +30,8 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/process_type.h"
 #include "content/public/common/result_codes.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/vector_icons_public.h"
 
 #if defined(OS_WIN)
 #include "base/win/scoped_handle.h"
@@ -83,7 +86,8 @@ void DumpRenderersInBlockingPool(OwnedHandleVector* renderer_handles) {
 
 void DumpAndTerminatePluginInBlockingPool(
     base::win::ScopedHandle* plugin_handle) {
-  CrashDumpAndTerminateHungChildProcess(plugin_handle->Get());
+  base::StringPairs crash_keys = {{crash_keys::kHungRendererReason, "plugin"}};
+  CrashDumpAndTerminateHungChildProcess(plugin_handle->Get(), crash_keys);
 }
 
 #endif  // defined(OS_WIN)
@@ -146,7 +150,8 @@ class HungPluginInfoBarDelegate : public ConfirmInfoBarDelegate {
   ~HungPluginInfoBarDelegate() override;
 
   // ConfirmInfoBarDelegate:
-  int GetIconId() const override;
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
+  gfx::VectorIconId GetVectorIconId() const override;
   base::string16 GetMessageText() const override;
   int GetButtons() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
@@ -166,7 +171,7 @@ infobars::InfoBar* HungPluginInfoBarDelegate::Create(
     int plugin_child_id,
     const base::string16& plugin_name) {
   return infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(new HungPluginInfoBarDelegate(
+      std::unique_ptr<ConfirmInfoBarDelegate>(new HungPluginInfoBarDelegate(
           helper, plugin_child_id, plugin_name))));
 }
 
@@ -186,8 +191,13 @@ HungPluginInfoBarDelegate::HungPluginInfoBarDelegate(
 HungPluginInfoBarDelegate::~HungPluginInfoBarDelegate() {
 }
 
-int HungPluginInfoBarDelegate::GetIconId() const {
-  return IDR_INFOBAR_PLUGIN_CRASHED;
+infobars::InfoBarDelegate::InfoBarIdentifier
+HungPluginInfoBarDelegate::GetIdentifier() const {
+  return HUNG_PLUGIN_INFOBAR_DELEGATE;
+}
+
+gfx::VectorIconId HungPluginInfoBarDelegate::GetVectorIconId() const {
+  return gfx::VectorIconId::EXTENSION_CRASHED;
 }
 
 base::string16 HungPluginInfoBarDelegate::GetMessageText() const {
@@ -358,7 +368,8 @@ void HungPluginTabHelper::KillPlugin(int child_id) {
   if (base::RandInt(0, 100) < 20) {
     version_info::Channel channel = chrome::GetChannel();
     if (channel == version_info::Channel::CANARY) {
-      scoped_ptr<OwnedHandleVector> renderer_handles(new OwnedHandleVector);
+      std::unique_ptr<OwnedHandleVector> renderer_handles(
+          new OwnedHandleVector);
       HANDLE current_process = ::GetCurrentProcess();
       content::RenderProcessHost::iterator renderer_iter =
           content::RenderProcessHost::AllHostsIterator();

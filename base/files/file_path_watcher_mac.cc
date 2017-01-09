@@ -4,6 +4,7 @@
 
 #include "base/files/file_path_watcher.h"
 #include "base/files/file_path_watcher_kqueue.h"
+#include "build/build_config.h"
 
 #if !defined(OS_IOS)
 #include "base/files/file_path_watcher_fsevents.h"
@@ -39,12 +40,6 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
     set_cancelled();
   }
 
-  void CancelOnMessageLoopThread() override {
-    if (impl_.get())
-      impl_->Cancel();
-    set_cancelled();
-  }
-
  protected:
   ~FilePathWatcherImpl() override {}
 
@@ -54,6 +49,7 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate {
 }  // namespace
 
 FilePathWatcher::FilePathWatcher() {
+  sequence_checker_.DetachFromSequence();
   impl_ = new FilePathWatcherImpl();
 }
 

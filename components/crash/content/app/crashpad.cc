@@ -4,6 +4,7 @@
 
 #include "components/crash/content/app/crashpad.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include <algorithm>
@@ -11,14 +12,17 @@
 #include <vector>
 
 #include "base/auto_reset.h"
+#include "base/base_paths.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "third_party/crashpad/crashpad/client/crash_report_database.h"
@@ -90,9 +94,9 @@ void DumpWithoutCrashing() {
   CRASHPAD_SIMULATE_CRASH();
 }
 
-}  // namespace
-
-void InitializeCrashpad(bool initial_client, const std::string& process_type) {
+void InitializeCrashpadImpl(bool initial_client,
+                            const std::string& process_type,
+                            bool embedded_handler) {
   static bool initialized = false;
   DCHECK(!initialized);
   initialized = true;
@@ -106,16 +110,20 @@ void InitializeCrashpad(bool initial_client, const std::string& process_type) {
     // component can't see Chrome's switches. This is only used for argument
     // sanitization.
     DCHECK(browser_process || process_type == "relauncher");
+#elif defined(OS_WIN)
+    // "Chrome Installer" is the name historically used for installer binaries
+    // as processed by the backend.
+    DCHECK(browser_process || process_type == "Chrome Installer");
 #else
-    DCHECK(browser_process);
+#error Port.
 #endif  // OS_MACOSX
   } else {
     DCHECK(!browser_process);
   }
 
   // database_path is only valid in the browser process.
-  base::FilePath database_path =
-      internal::PlatformCrashpadInitialization(initial_client, browser_process);
+  base::FilePath database_path = internal::PlatformCrashpadInitialization(
+      initial_client, browser_process, embedded_handler);
 
   crashpad::CrashpadInfo* crashpad_info =
       crashpad::CrashpadInfo::GetCrashpadInfo();
@@ -143,6 +151,8 @@ void InitializeCrashpad(bool initial_client, const std::string& process_type) {
   g_simple_string_dictionary = new crashpad::SimpleStringDictionary();
   crashpad_info->set_simple_annotations(g_simple_string_dictionary);
 
+  // On Windows chrome_elf registers crash keys. This should work identically
+  // for component and non component builds.
   base::debug::SetCrashKeyReportingFunctions(SetCrashKeyValue, ClearCrashKey);
   crash_reporter_client->RegisterCrashKeys();
 
@@ -163,30 +173,55 @@ void InitializeCrashpad(bool initial_client, const std::string& process_type) {
   // the same file and line.
   base::debug::SetDumpWithoutCrashingFunction(DumpWithoutCrashing);
 
-  if (browser_process) {
+#if defined(OS_MACOSX)
+  // On Mac, we only want the browser to initialize the database, but not the
+  // relauncher.
+  const bool should_initialize_database_and_set_upload_policy = browser_process;
+#elif defined(OS_WIN)
+  // On Windows, we want both the browser process and the installer and any
+  // other "main, first process" to initialize things. There is no "relauncher"
+  // on Windows, so this is synonymous with initial_client.
+  const bool should_initialize_database_and_set_upload_policy = initial_client;
+#endif
+  if (should_initialize_database_and_set_upload_policy) {
     g_database =
         crashpad::CrashReportDatabase::Initialize(database_path).release();
 
-    bool enable_uploads = false;
-    if (!crash_reporter_client->ReportingIsEnforcedByPolicy(&enable_uploads)) {
-      // Breakpad provided a --disable-breakpad switch to disable crash dumping
-      // (not just uploading) here. Crashpad doesn't need it: dumping is enabled
-      // unconditionally and uploading is gated on consent, which tests/bots
-      // shouldn't have. As a precaution, uploading is also disabled on bots
-      // even if consent is present.
-      enable_uploads = crash_reporter_client->GetCollectStatsConsent() &&
-                       !crash_reporter_client->IsRunningUnattended();
-    }
-
-    SetUploadsEnabled(enable_uploads);
+    SetUploadConsent(crash_reporter_client->GetCollectStatsConsent());
   }
 }
 
-void SetUploadsEnabled(bool enable_uploads) {
-  if (g_database) {
-    crashpad::Settings* settings = g_database->GetSettings();
-    settings->SetUploadsEnabled(enable_uploads);
+}  // namespace
+
+void InitializeCrashpad(bool initial_client, const std::string& process_type) {
+  InitializeCrashpadImpl(initial_client, process_type, false);
+}
+
+#if defined(OS_WIN)
+void InitializeCrashpadWithEmbeddedHandler(bool initial_client,
+                                           const std::string& process_type) {
+  InitializeCrashpadImpl(initial_client, process_type, true);
+}
+#endif  // OS_WIN
+
+void SetUploadConsent(bool consent) {
+  if (!g_database)
+    return;
+
+  bool enable_uploads = false;
+  CrashReporterClient* crash_reporter_client = GetCrashReporterClient();
+  if (!crash_reporter_client->ReportingIsEnforcedByPolicy(&enable_uploads)) {
+    // Breakpad provided a --disable-breakpad switch to disable crash dumping
+    // (not just uploading) here. Crashpad doesn't need it: dumping is enabled
+    // unconditionally and uploading is gated on consent, which tests/bots
+    // shouldn't have. As a precaution, uploading is also disabled on bots even
+    // if consent is present.
+    enable_uploads = consent && !crash_reporter_client->IsRunningUnattended();
   }
+
+  crashpad::Settings* settings = g_database->GetSettings();
+  settings->SetUploadsEnabled(enable_uploads &&
+                              crash_reporter_client->GetCollectStatsInSample());
 }
 
 bool GetUploadsEnabled() {
@@ -201,8 +236,8 @@ bool GetUploadsEnabled() {
   return false;
 }
 
-void GetUploadedReports(std::vector<UploadedReport>* uploaded_reports) {
-  uploaded_reports->clear();
+void GetReports(std::vector<Report>* reports) {
+  reports->clear();
 
   if (!g_database) {
     return;
@@ -215,22 +250,91 @@ void GetUploadedReports(std::vector<UploadedReport>* uploaded_reports) {
     return;
   }
 
-  for (const crashpad::CrashReportDatabase::Report& completed_report :
-       completed_reports) {
-    if (completed_report.uploaded) {
-      UploadedReport uploaded_report;
-      uploaded_report.local_id = completed_report.uuid.ToString();
-      uploaded_report.remote_id = completed_report.id;
-      uploaded_report.creation_time = completed_report.creation_time;
-
-      uploaded_reports->push_back(uploaded_report);
-    }
+  std::vector<crashpad::CrashReportDatabase::Report> pending_reports;
+  status = g_database->GetPendingReports(&pending_reports);
+  if (status != crashpad::CrashReportDatabase::kNoError) {
+    return;
   }
 
-  std::sort(uploaded_reports->begin(), uploaded_reports->end(),
-            [](const UploadedReport& a, const UploadedReport& b) {
-              return a.creation_time >= b.creation_time;
+  for (const crashpad::CrashReportDatabase::Report& completed_report :
+       completed_reports) {
+    Report report;
+    report.local_id = completed_report.uuid.ToString();
+    report.capture_time = completed_report.creation_time;
+    report.remote_id = completed_report.id;
+    if (completed_report.uploaded) {
+      report.upload_time = completed_report.last_upload_attempt_time;
+      report.state = ReportUploadState::Uploaded;
+    } else {
+      report.upload_time = 0;
+      report.state = ReportUploadState::NotUploaded;
+    }
+    reports->push_back(report);
+  }
+
+  for (const crashpad::CrashReportDatabase::Report& pending_report :
+       pending_reports) {
+    Report report;
+    report.local_id = pending_report.uuid.ToString();
+    report.capture_time = pending_report.creation_time;
+    report.upload_time = 0;
+    report.state = pending_report.upload_explicitly_requested
+                       ? ReportUploadState::Pending_UserRequested
+                       : report.state = ReportUploadState::Pending;
+    reports->push_back(report);
+  }
+
+  std::sort(reports->begin(), reports->end(),
+            [](const Report& a, const Report& b) {
+              return a.capture_time > b.capture_time;
             });
 }
 
+void RequestSingleCrashUpload(const std::string& local_id) {
+  if (!g_database)
+    return;
+  crashpad::UUID uuid;
+  uuid.InitializeFromString(local_id);
+  g_database->RequestUpload(uuid);
+}
+
 }  // namespace crash_reporter
+
+#if defined(OS_WIN)
+
+extern "C" {
+
+// This function is used in chrome_metrics_services_manager_client.cc to trigger
+// changes to the upload-enabled state. This is done when the metrics services
+// are initialized, and when the user changes their consent for uploads. See
+// crash_reporter::SetUploadConsent for effects. The given consent value should
+// be consistent with
+// crash_reporter::GetCrashReporterClient()->GetCollectStatsConsent(), but it's
+// not enforced to avoid blocking startup code on synchronizing them.
+void __declspec(dllexport) __cdecl SetUploadConsentImpl(bool consent) {
+  crash_reporter::SetUploadConsent(consent);
+}
+
+// NOTE: This function is used by SyzyASAN to annotate crash reports. If you
+// change the name or signature of this function you will break SyzyASAN
+// instrumented releases of Chrome. Please contact syzygy-team@chromium.org
+// before doing so! See also http://crbug.com/567781.
+void __declspec(dllexport) __cdecl SetCrashKeyValueImpl(const wchar_t* key,
+                                                        const wchar_t* value) {
+  crash_reporter::SetCrashKeyValue(base::UTF16ToUTF8(key),
+                                   base::UTF16ToUTF8(value));
+}
+
+void __declspec(dllexport) __cdecl ClearCrashKeyValueImpl(const wchar_t* key) {
+  crash_reporter::ClearCrashKey(base::UTF16ToUTF8(key));
+}
+
+// This helper is invoked by code in chrome.dll to request a single crash report
+// upload. See CrashUploadListCrashpad.
+void __declspec(dllexport)
+    RequestSingleCrashUploadImpl(const std::string& local_id) {
+  crash_reporter::RequestSingleCrashUpload(local_id);
+}
+}  // extern "C"
+
+#endif  // OS_WIN

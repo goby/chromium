@@ -7,7 +7,6 @@
 #import <Foundation/Foundation.h>
 #import <WebKit/WebKit.h>
 
-#include "base/ios/ios_util.h"
 #import "base/ios/weak_nsobject.h"
 #include "base/logging.h"
 #include "ios/web/public/browser_state.h"
@@ -22,9 +21,9 @@ const char kWKWebViewConfigProviderKeyName[] = "wk_web_view_config_provider";
 
 // Returns an autoreleased instance of WKUserScript to be added to
 // configuration's userContentController.
-WKUserScript* GetEarlyPageScript() {
+WKUserScript* InternalGetEarlyPageScript() {
   return [[[WKUserScript alloc]
-        initWithSource:GetEarlyPageScript(WK_WEB_VIEW_TYPE)
+        initWithSource:GetEarlyPageScript()
          injectionTime:WKUserScriptInjectionTimeAtDocumentStart
       forMainFrameOnly:YES] autorelease];
 }
@@ -58,14 +57,17 @@ WKWebViewConfigurationProvider::GetWebViewConfiguration() {
   DCHECK([NSThread isMainThread]);
   if (!configuration_) {
     configuration_.reset([[WKWebViewConfiguration alloc] init]);
-    if (is_off_the_record_ && base::ios::IsRunningOnIOS9OrLater()) {
-      // WKWebsiteDataStore is iOS9 only.
+    if (is_off_the_record_) {
       [configuration_
           setWebsiteDataStore:[WKWebsiteDataStore nonPersistentDataStore]];
     }
+    // API available on iOS 9, although doesn't appear to enable inline playback
+    // Works as intended on iOS 10+
+    [configuration_ setAllowsInlineMediaPlayback:YES];
     // setJavaScriptCanOpenWindowsAutomatically is required to support popups.
     [[configuration_ preferences] setJavaScriptCanOpenWindowsAutomatically:YES];
-    [[configuration_ userContentController] addUserScript:GetEarlyPageScript()];
+    [[configuration_ userContentController]
+        addUserScript:InternalGetEarlyPageScript()];
   }
   // Prevent callers from changing the internals of configuration.
   return [[configuration_ copy] autorelease];

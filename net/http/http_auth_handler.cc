@@ -9,6 +9,7 @@
 #include "base/logging.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
+#include "net/log/net_log_event_type.h"
 
 namespace net {
 
@@ -22,11 +23,11 @@ HttpAuthHandler::HttpAuthHandler()
 HttpAuthHandler::~HttpAuthHandler() {
 }
 
-bool HttpAuthHandler::InitFromChallenge(
-    HttpAuthChallengeTokenizer* challenge,
-    HttpAuth::Target target,
-    const GURL& origin,
-    const BoundNetLog& net_log) {
+bool HttpAuthHandler::InitFromChallenge(HttpAuthChallengeTokenizer* challenge,
+                                        HttpAuth::Target target,
+                                        const SSLInfo& ssl_info,
+                                        const GURL& origin,
+                                        const NetLogWithSource& net_log) {
   origin_ = origin;
   target_ = target;
   score_ = -1;
@@ -34,7 +35,7 @@ bool HttpAuthHandler::InitFromChallenge(
   net_log_ = net_log;
 
   auth_challenge_ = challenge->challenge_text();
-  bool ok = Init(challenge);
+  bool ok = Init(challenge, ssl_info);
 
   // Init() is expected to set the scheme, realm, score, and properties.  The
   // realm may be empty.
@@ -47,15 +48,15 @@ bool HttpAuthHandler::InitFromChallenge(
 
 namespace {
 
-NetLog::EventType EventTypeFromAuthTarget(HttpAuth::Target target) {
+NetLogEventType EventTypeFromAuthTarget(HttpAuth::Target target) {
   switch (target) {
     case HttpAuth::AUTH_PROXY:
-      return NetLog::TYPE_AUTH_PROXY;
+      return NetLogEventType::AUTH_PROXY;
     case HttpAuth::AUTH_SERVER:
-      return NetLog::TYPE_AUTH_SERVER;
+      return NetLogEventType::AUTH_SERVER;
     default:
       NOTREACHED();
-      return NetLog::TYPE_CANCELLED;
+      return NetLogEventType::CANCELLED;
   }
 }
 

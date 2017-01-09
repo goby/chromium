@@ -5,9 +5,12 @@
 #include "chrome/browser/bookmarks/chrome_bookmark_client.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 #include "components/bookmarks/browser/bookmark_storage.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
@@ -16,7 +19,10 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
 #include "content/public/browser/user_metrics.h"
-#include "ui/base/l10n/l10n_util.h"
+
+#if BUILDFLAG(ANDROID_JAVA_UI)
+#include "chrome/browser/android/offline_pages/offline_page_bookmark_observer.h"
+#endif
 
 ChromeBookmarkClient::ChromeBookmarkClient(
     Profile* profile,
@@ -29,11 +35,12 @@ ChromeBookmarkClient::~ChromeBookmarkClient() {
 void ChromeBookmarkClient::Init(bookmarks::BookmarkModel* model) {
   if (managed_bookmark_service_)
     managed_bookmark_service_->BookmarkModelCreated(model);
-}
 
-void ChromeBookmarkClient::Shutdown() {
-  managed_bookmark_service_ = nullptr;
-  BookmarkClient::Shutdown();
+#if BUILDFLAG(ANDROID_JAVA_UI)
+  offline_page_observer_ =
+      base::MakeUnique<offline_pages::OfflinePageBookmarkObserver>(profile_);
+  model->AddObserver(offline_page_observer_.get());
+#endif
 }
 
 bool ChromeBookmarkClient::PreferTouchIcon() {
@@ -52,30 +59,29 @@ ChromeBookmarkClient::GetFaviconImageForPageURL(
       page_url, type, callback, tracker);
 }
 
-bool ChromeBookmarkClient::SupportsTypedCountForNodes() {
+bool ChromeBookmarkClient::SupportsTypedCountForUrls() {
   return true;
 }
 
-void ChromeBookmarkClient::GetTypedCountForNodes(
-    const NodeSet& nodes,
-    NodeTypedCountPairs* node_typed_count_pairs) {
+void ChromeBookmarkClient::GetTypedCountForUrls(
+    UrlTypedCountMap* url_typed_count_map) {
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfileIfExists(
           profile_, ServiceAccessType::EXPLICIT_ACCESS);
   history::URLDatabase* url_db =
       history_service ? history_service->InMemoryDatabase() : nullptr;
-  for (NodeSet::const_iterator i = nodes.begin(); i != nodes.end(); ++i) {
+  for (auto& url_typed_count_pair : *url_typed_count_map) {
     int typed_count = 0;
 
     // If |url_db| is the InMemoryDatabase, it might not cache all URLRows, but
     // it guarantees to contain those with |typed_count| > 0. Thus, if we cannot
     // fetch the URLRow, it is safe to assume that its |typed_count| is 0.
-    history::URLRow url;
-    if (url_db && url_db->GetRowForURL((*i)->url(), &url))
-      typed_count = url.typed_count();
+    history::URLRow url_row;
+    const GURL* url = url_typed_count_pair.first;
+    if (url_db && url && url_db->GetRowForURL(*url, &url_row))
+      typed_count = url_row.typed_count();
 
-    NodeTypedCountPair pair(*i, typed_count);
-    node_typed_count_pairs->push_back(pair);
+    url_typed_count_pair.second = typed_count;
   }
 }
 

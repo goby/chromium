@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <cstddef>
 #include <map>
 #include <set>
@@ -9,9 +12,12 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/invalidation/impl/fake_invalidation_state_tracker.h"
 #include "components/invalidation/impl/push_client_channel.h"
 #include "components/invalidation/impl/sync_invalidation_listener.h"
@@ -39,8 +45,8 @@ const char kNewState[] = "new_state";
 const char kPayload1[] = "payload1";
 const char kPayload2[] = "payload2";
 
-const int64 kVersion1 = 1LL;
-const int64 kVersion2 = 2LL;
+const int64_t kVersion1 = 1LL;
+const int64_t kVersion2 = 2LL;
 
 const int kChromeSyncSourceId = 1004;
 
@@ -143,7 +149,7 @@ class FakeDelegate : public SyncInvalidationListener::Delegate {
     }
   }
 
-  int64 GetVersion(const ObjectId& id) const {
+  int64_t GetVersion(const ObjectId& id) const {
     Map::const_iterator it = invalidations_.find(id);
     if (it == invalidations_.end()) {
       ADD_FAILURE() << "No invalidations for ID " << ObjectIdToString(id);
@@ -261,8 +267,8 @@ class SyncInvalidationListenerTest : public testing::Test {
         kAppsId_(kChromeSyncSourceId, "APP"),
         fake_push_client_(new notifier::FakePushClient()),
         fake_invalidation_client_(NULL),
-        listener_(scoped_ptr<SyncNetworkChannel>(new PushClientChannel(
-            scoped_ptr<notifier::PushClient>(fake_push_client_)))),
+        listener_(base::WrapUnique(
+            new PushClientChannel(base::WrapUnique(fake_push_client_)))),
         fake_delegate_(&listener_) {}
 
   void SetUp() override {
@@ -307,7 +313,7 @@ class SyncInvalidationListenerTest : public testing::Test {
     return fake_delegate_.GetInvalidationCount(id);
   }
 
-  int64 GetVersion(const ObjectId& id) const {
+  int64_t GetVersion(const ObjectId& id) const {
     return fake_delegate_.GetVersion(id);
   }
 
@@ -383,7 +389,8 @@ class SyncInvalidationListenerTest : public testing::Test {
 
   // |payload| can be NULL.
   void FireInvalidate(const ObjectId& object_id,
-                      int64 version, const char* payload) {
+                      int64_t version,
+                      const char* payload) {
     invalidation::Invalidation inv;
     if (payload) {
       inv = invalidation::Invalidation(object_id, version, payload);
@@ -421,9 +428,7 @@ class SyncInvalidationListenerTest : public testing::Test {
     FlushPendingWrites();
   }
 
-  void FlushPendingWrites() {
-    message_loop_.RunUntilIdle();
-  }
+  void FlushPendingWrites() { base::RunLoop().RunUntilIdle(); }
 
   void EnableNotifications() {
     fake_push_client_->EnableNotifications();
@@ -510,8 +515,8 @@ TEST_F(SyncInvalidationListenerTest, InvalidateWithPayload) {
 TEST_F(SyncInvalidationListenerTest, ManyInvalidations_NoDrop) {
   const int kRepeatCount = 10;
   const ObjectId& id = kPreferencesId_;
-  int64 initial_version = kVersion1;
-  for (int64 i = initial_version; i < initial_version + kRepeatCount; ++i) {
+  int64_t initial_version = kVersion1;
+  for (int64_t i = initial_version; i < initial_version + kRepeatCount; ++i) {
     FireInvalidate(id, i, kPayload1);
   }
   ASSERT_EQ(static_cast<size_t>(kRepeatCount), GetInvalidationCount(id));
@@ -556,8 +561,8 @@ TEST_F(SyncInvalidationListenerTest, InvalidateBeforeRegistration_Drop) {
 
   EXPECT_EQ(0U, GetInvalidationCount(id));
 
-  int64 initial_version = kVersion1;
-  for (int64 i = initial_version; i < initial_version + kRepeatCount; ++i) {
+  int64_t initial_version = kVersion1;
+  for (int64_t i = initial_version; i < initial_version + kRepeatCount; ++i) {
     FireInvalidate(id, i, kPayload1);
   }
 
@@ -774,18 +779,18 @@ TEST_F(SyncInvalidationListenerTest, UnregisterCleansUpStateMapCache) {
   EXPECT_TRUE(GetSavedInvalidations().empty());
   FireInvalidate(id, 1, "hello");
   EXPECT_EQ(1U, GetSavedInvalidations().size());
-  EXPECT_TRUE(ContainsKey(GetSavedInvalidations(), id));
+  EXPECT_TRUE(base::ContainsKey(GetSavedInvalidations(), id));
   FireInvalidate(kPreferencesId_, 2, "world");
   EXPECT_EQ(2U, GetSavedInvalidations().size());
 
-  EXPECT_TRUE(ContainsKey(GetSavedInvalidations(), id));
-  EXPECT_TRUE(ContainsKey(GetSavedInvalidations(), kPreferencesId_));
+  EXPECT_TRUE(base::ContainsKey(GetSavedInvalidations(), id));
+  EXPECT_TRUE(base::ContainsKey(GetSavedInvalidations(), kPreferencesId_));
 
   ObjectIdSet ids;
   ids.insert(id);
   listener_.UpdateRegisteredIds(ids);
   EXPECT_EQ(1U, GetSavedInvalidations().size());
-  EXPECT_TRUE(ContainsKey(GetSavedInvalidations(), id));
+  EXPECT_TRUE(base::ContainsKey(GetSavedInvalidations(), id));
 }
 
 TEST_F(SyncInvalidationListenerTest, DuplicateInvaldiations_Simple) {

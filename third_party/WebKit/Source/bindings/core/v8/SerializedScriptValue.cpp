@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "bindings/core/v8/SerializedScriptValue.h"
 
 #include "bindings/core/v8/DOMDataStore.h"
@@ -37,263 +36,439 @@
 #include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValueSerializer.h"
 #include "bindings/core/v8/SerializedScriptValueFactory.h"
+#include "bindings/core/v8/Transferables.h"
 #include "bindings/core/v8/V8ArrayBuffer.h"
 #include "bindings/core/v8/V8ImageBitmap.h"
 #include "bindings/core/v8/V8MessagePort.h"
+#include "bindings/core/v8/V8OffscreenCanvas.h"
 #include "bindings/core/v8/V8SharedArrayBuffer.h"
+#include "core/dom/DOMArrayBuffer.h"
+#include "core/dom/DOMSharedArrayBuffer.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/dom/MessagePort.h"
+#include "core/frame/ImageBitmap.h"
 #include "platform/SharedBuffer.h"
 #include "platform/blob/BlobData.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Assertions.h"
 #include "wtf/ByteOrder.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/Vector.h"
 #include "wtf/text/StringBuffer.h"
 #include "wtf/text/StringHash.h"
+#include <memory>
 
 namespace blink {
 
-PassRefPtr<SerializedScriptValue> SerializedScriptValue::nullValue()
-{
-    SerializedScriptValueWriter writer;
-    writer.writeNull();
-    String wireData = writer.takeWireString();
-    return adoptRef(new SerializedScriptValue(wireData));
+PassRefPtr<SerializedScriptValue> SerializedScriptValue::serialize(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> value,
+    Transferables* transferables,
+    WebBlobInfoArray* blobInfo,
+    ExceptionState& exception) {
+  return SerializedScriptValueFactory::instance().create(
+      isolate, value, transferables, blobInfo, exception);
 }
 
-// Convert serialized string to big endian wire data.
-void SerializedScriptValue::toWireBytes(Vector<char>& result) const
-{
-    ASSERT(result.isEmpty());
-    size_t length = m_data.length();
-    result.resize(length * sizeof(UChar));
-    UChar* dst = reinterpret_cast<UChar*>(result.data());
+PassRefPtr<SerializedScriptValue> SerializedScriptValue::serialize(
+    const String& str) {
+  return create(ScriptValueSerializer::serializeWTFString(str));
+}
 
-    if (m_data.is8Bit()) {
-        const LChar* src = m_data.characters8();
-        for (size_t i = 0; i < length; i++)
-            dst[i] = htons(static_cast<UChar>(src[i]));
-    } else {
-        const UChar* src = m_data.characters16();
-        for (size_t i = 0; i < length; i++)
-            dst[i] = htons(src[i]);
-    }
+PassRefPtr<SerializedScriptValue>
+SerializedScriptValue::serializeAndSwallowExceptions(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> value) {
+  DummyExceptionStateForTesting exceptionState;
+  RefPtr<SerializedScriptValue> serialized =
+      serialize(isolate, value, nullptr, nullptr, exceptionState);
+  if (exceptionState.hadException())
+    return nullValue();
+  return serialized.release();
+}
+
+PassRefPtr<SerializedScriptValue> SerializedScriptValue::create() {
+  return adoptRef(new SerializedScriptValue);
+}
+
+PassRefPtr<SerializedScriptValue> SerializedScriptValue::create(
+    const String& data) {
+  return adoptRef(new SerializedScriptValue(data));
+}
+
+PassRefPtr<SerializedScriptValue> SerializedScriptValue::create(
+    const char* data,
+    size_t length) {
+  if (!data)
+    return create();
+
+  // Decode wire data from big endian to host byte order.
+  DCHECK(!(length % sizeof(UChar)));
+  size_t stringLength = length / sizeof(UChar);
+  StringBuffer<UChar> buffer(stringLength);
+  const UChar* src = reinterpret_cast<const UChar*>(data);
+  UChar* dst = buffer.characters();
+  for (size_t i = 0; i < stringLength; i++)
+    dst[i] = ntohs(src[i]);
+
+  return adoptRef(new SerializedScriptValue(String::adopt(buffer)));
 }
 
 SerializedScriptValue::SerializedScriptValue()
-    : m_externallyAllocatedMemory(0)
-{
-}
-
-static void acculumateArrayBuffersForAllWorlds(v8::Isolate* isolate, DOMArrayBuffer* object, Vector<v8::Local<v8::ArrayBuffer>, 4>& buffers)
-{
-    if (isMainThread()) {
-        Vector<RefPtr<DOMWrapperWorld>> worlds;
-        DOMWrapperWorld::allWorldsInMainThread(worlds);
-        for (size_t i = 0; i < worlds.size(); i++) {
-            v8::Local<v8::Object> wrapper = worlds[i]->domDataStore().get(object, isolate);
-            if (!wrapper.IsEmpty())
-                buffers.append(v8::Local<v8::ArrayBuffer>::Cast(wrapper));
-        }
-    } else {
-        v8::Local<v8::Object> wrapper = DOMWrapperWorld::current(isolate).domDataStore().get(object, isolate);
-        if (!wrapper.IsEmpty())
-            buffers.append(v8::Local<v8::ArrayBuffer>::Cast(wrapper));
-    }
-}
-
-PassOwnPtr<SerializedScriptValue::ImageBitmapContentsArray> SerializedScriptValue::createImageBitmaps(v8::Isolate* isolate, ImageBitmapArray& imageBitmaps, ExceptionState& exceptionState)
-{
-    ASSERT(imageBitmaps.size());
-
-    for (size_t i = 0; i < imageBitmaps.size(); i++) {
-        if (imageBitmaps[i]->isNeutered()) {
-            exceptionState.throwDOMException(DataCloneError, "ImageBitmap at index " + String::number(i) + " is already neutered.");
-            return nullptr;
-        }
-    }
-
-    OwnPtr<ImageBitmapContentsArray> contents = adoptPtr(new ImageBitmapContentsArray);
-    WillBeHeapHashSet<RawPtrWillBeMember<ImageBitmap>> visited;
-    for (size_t i = 0; i < imageBitmaps.size(); i++) {
-        if (visited.contains(imageBitmaps[i].get()))
-            continue;
-        visited.add(imageBitmaps[i].get());
-        contents->append(imageBitmaps[i]->transfer());
-    }
-    return contents.release();
-}
-
-
-PassOwnPtr<SerializedScriptValue::ArrayBufferContentsArray> SerializedScriptValue::createArrayBuffers(v8::Isolate* isolate, ArrayBufferArray& arrayBuffers, ExceptionState& exceptionState)
-{
-    ASSERT(arrayBuffers.size());
-
-    for (size_t i = 0; i < arrayBuffers.size(); i++) {
-        if (arrayBuffers[i]->isNeutered()) {
-            exceptionState.throwDOMException(DataCloneError, "ArrayBuffer at index " + String::number(i) + " is already neutered.");
-            return nullptr;
-        }
-    }
-
-    OwnPtr<ArrayBufferContentsArray> contents = adoptPtr(new ArrayBufferContentsArray(arrayBuffers.size()));
-
-    HashSet<DOMArrayBufferBase*> visited;
-    for (size_t i = 0; i < arrayBuffers.size(); i++) {
-        if (visited.contains(arrayBuffers[i].get()))
-            continue;
-        visited.add(arrayBuffers[i].get());
-
-        if (arrayBuffers[i]->isShared()) {
-            bool result = arrayBuffers[i]->shareContentsWith(contents->at(i));
-            if (!result) {
-                exceptionState.throwDOMException(DataCloneError, "SharedArrayBuffer at index " + String::number(i) + " could not be transferred.");
-                return nullptr;
-            }
-        } else {
-            Vector<v8::Local<v8::ArrayBuffer>, 4> bufferHandles;
-            v8::HandleScope handleScope(isolate);
-            acculumateArrayBuffersForAllWorlds(isolate, static_pointer_cast<DOMArrayBuffer>(arrayBuffers[i]).get(), bufferHandles);
-            bool isNeuterable = true;
-            for (size_t j = 0; j < bufferHandles.size(); j++)
-                isNeuterable &= bufferHandles[j]->IsNeuterable();
-
-            RefPtr<DOMArrayBufferBase> toTransfer = arrayBuffers[i];
-            if (!isNeuterable)
-                toTransfer = DOMArrayBuffer::create(arrayBuffers[i]->buffer());
-            bool result = toTransfer->transfer(contents->at(i));
-            if (!result) {
-                exceptionState.throwDOMException(DataCloneError, "ArrayBuffer at index " + String::number(i) + " could not be transferred.");
-                return nullptr;
-            }
-
-            if (isNeuterable)
-                for (size_t j = 0; j < bufferHandles.size(); j++)
-                    bufferHandles[j]->Neuter();
-        }
-
-    }
-
-    return contents.release();
-}
+    : m_externallyAllocatedMemory(0) {}
 
 SerializedScriptValue::SerializedScriptValue(const String& wireData)
-    : m_externallyAllocatedMemory(0)
-{
-    m_data = wireData.isolatedCopy();
+    : m_dataString(wireData.isolatedCopy()), m_externallyAllocatedMemory(0) {}
+
+SerializedScriptValue::~SerializedScriptValue() {
+  // If the allocated memory was not registered before, then this class is
+  // likely used in a context other than Worker's onmessage environment and the
+  // presence of current v8 context is not guaranteed. Avoid calling v8 then.
+  if (m_externallyAllocatedMemory) {
+    ASSERT(v8::Isolate::GetCurrent());
+    v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(
+        -m_externallyAllocatedMemory);
+  }
 }
 
-v8::Local<v8::Value> SerializedScriptValue::deserialize(MessagePortArray* messagePorts)
-{
-    return deserialize(v8::Isolate::GetCurrent(), messagePorts, 0);
+PassRefPtr<SerializedScriptValue> SerializedScriptValue::nullValue() {
+  return create(ScriptValueSerializer::serializeNullValue());
 }
 
-v8::Local<v8::Value> SerializedScriptValue::deserialize(v8::Isolate* isolate, MessagePortArray* messagePorts, const WebBlobInfoArray* blobInfo)
-{
-    return SerializedScriptValueFactory::instance().deserialize(this, isolate, messagePorts, blobInfo);
+String SerializedScriptValue::toWireString() const {
+  if (!m_dataString.isNull())
+    return m_dataString;
+
+  // Add the padding '\0', but don't put it in |m_dataBuffer|.
+  // This requires direct use of uninitialized strings, though.
+  UChar* destination;
+  size_t stringSizeBytes = (m_dataBufferSize + 1) & ~1;
+  String wireString =
+      String::createUninitialized(stringSizeBytes / 2, destination);
+  memcpy(destination, m_dataBuffer.get(), m_dataBufferSize);
+  if (stringSizeBytes > m_dataBufferSize)
+    reinterpret_cast<char*>(destination)[stringSizeBytes - 1] = '\0';
+  return wireString;
 }
 
-bool SerializedScriptValue::extractTransferables(v8::Isolate* isolate, v8::Local<v8::Value> value, int argumentIndex, MessagePortArray& ports, ArrayBufferArray& arrayBuffers, ImageBitmapArray& imageBitmaps, ExceptionState& exceptionState)
-{
-    if (isUndefinedOrNull(value)) {
-        ports.resize(0);
-        arrayBuffers.resize(0);
-        imageBitmaps.resize(0);
-        return true;
-    }
+// Convert serialized string to big endian wire data.
+void SerializedScriptValue::toWireBytes(Vector<char>& result) const {
+  DCHECK(result.isEmpty());
 
-    uint32_t length = 0;
-    if (value->IsArray()) {
-        v8::Local<v8::Array> array = v8::Local<v8::Array>::Cast(value);
-        length = array->Length();
-    } else if (!toV8Sequence(value, length, isolate, exceptionState)) {
-        if (!exceptionState.hadException())
-            exceptionState.throwTypeError(ExceptionMessages::notAnArrayTypeArgumentOrValue(argumentIndex + 1));
-        return false;
-    }
+  if (m_dataString.isNull()) {
+    size_t wireSizeBytes = (m_dataBufferSize + 1) & ~1;
+    result.resize(wireSizeBytes);
 
-    v8::Local<v8::Object> transferrables = v8::Local<v8::Object>::Cast(value);
+    const UChar* src = reinterpret_cast<UChar*>(m_dataBuffer.get());
+    UChar* dst = reinterpret_cast<UChar*>(result.data());
+    for (size_t i = 0; i < m_dataBufferSize / 2; i++)
+      dst[i] = htons(src[i]);
 
-    // Validate the passed array of transferrables.
-    for (unsigned i = 0; i < length; ++i) {
-        v8::Local<v8::Value> transferrable;
-        if (!transferrables->Get(isolate->GetCurrentContext(), i).ToLocal(&transferrable))
-            return false;
-        // Validation of non-null objects, per HTML5 spec 10.3.3.
-        if (isUndefinedOrNull(transferrable)) {
-            exceptionState.throwTypeError("Value at index " + String::number(i) + " is an untransferable " + (transferrable->IsUndefined() ? "'undefined'" : "'null'") + " value.");
-            return false;
-        }
-        // Validation of Objects implementing an interface, per WebIDL spec 4.1.15.
-        if (V8MessagePort::hasInstance(transferrable, isolate)) {
-            MessagePort* port = V8MessagePort::toImpl(v8::Local<v8::Object>::Cast(transferrable));
-            // Check for duplicate MessagePorts.
-            if (ports.contains(port)) {
-                exceptionState.throwDOMException(DataCloneError, "Message port at index " + String::number(i) + " is a duplicate of an earlier port.");
-                return false;
-            }
-            ports.append(port);
-        } else if (V8ArrayBuffer::hasInstance(transferrable, isolate)) {
-            RefPtr<DOMArrayBuffer> arrayBuffer = V8ArrayBuffer::toImpl(v8::Local<v8::Object>::Cast(transferrable));
-            if (arrayBuffers.contains(arrayBuffer)) {
-                exceptionState.throwDOMException(DataCloneError, "ArrayBuffer at index " + String::number(i) + " is a duplicate of an earlier ArrayBuffer.");
-                return false;
-            }
-            arrayBuffers.append(arrayBuffer.release());
-        } else if (V8SharedArrayBuffer::hasInstance(transferrable, isolate)) {
-            RefPtr<DOMSharedArrayBuffer> sharedArrayBuffer = V8SharedArrayBuffer::toImpl(v8::Local<v8::Object>::Cast(transferrable));
-            if (arrayBuffers.contains(sharedArrayBuffer)) {
-                exceptionState.throwDOMException(DataCloneError, "SharedArrayBuffer at index " + String::number(i) + " is a duplicate of an earlier SharedArrayBuffer.");
-                return false;
-            }
-            arrayBuffers.append(sharedArrayBuffer.release());
-        } else if (V8ImageBitmap::hasInstance(transferrable, isolate)) {
-            RefPtrWillBeRawPtr<ImageBitmap> imageBitmap = V8ImageBitmap::toImpl(v8::Local<v8::Object>::Cast(transferrable));
-            if (imageBitmaps.contains(imageBitmap)) {
-                exceptionState.throwDOMException(DataCloneError, "ImageBitmap at index " + String::number(i) + " is a duplicate of an earlier ImageBitmap.");
-                return false;
-            }
-            imageBitmaps.append(imageBitmap.release());
-        } else {
-            exceptionState.throwTypeError("Value at index " + String::number(i) + " does not have a transferable type.");
-            return false;
-        }
+    // This is equivalent to swapping the byte order of the two bytes (x, 0),
+    // depending on endianness.
+    if (m_dataBufferSize % 2)
+      dst[wireSizeBytes / 2 - 1] = m_dataBuffer[m_dataBufferSize - 1] << 8;
+
+    return;
+  }
+
+  size_t length = m_dataString.length();
+  result.resize(length * sizeof(UChar));
+  UChar* dst = reinterpret_cast<UChar*>(result.data());
+
+  if (m_dataString.is8Bit()) {
+    const LChar* src = m_dataString.characters8();
+    for (size_t i = 0; i < length; i++)
+      dst[i] = htons(static_cast<UChar>(src[i]));
+  } else {
+    const UChar* src = m_dataString.characters16();
+    for (size_t i = 0; i < length; i++)
+      dst[i] = htons(src[i]);
+  }
+}
+
+static void accumulateArrayBuffersForAllWorlds(
+    v8::Isolate* isolate,
+    DOMArrayBuffer* object,
+    Vector<v8::Local<v8::ArrayBuffer>, 4>& buffers) {
+  if (isMainThread()) {
+    Vector<RefPtr<DOMWrapperWorld>> worlds;
+    DOMWrapperWorld::allWorldsInMainThread(worlds);
+    for (size_t i = 0; i < worlds.size(); i++) {
+      v8::Local<v8::Object> wrapper =
+          worlds[i]->domDataStore().get(object, isolate);
+      if (!wrapper.IsEmpty())
+        buffers.push_back(v8::Local<v8::ArrayBuffer>::Cast(wrapper));
     }
+  } else {
+    v8::Local<v8::Object> wrapper =
+        DOMWrapperWorld::current(isolate).domDataStore().get(object, isolate);
+    if (!wrapper.IsEmpty())
+      buffers.push_back(v8::Local<v8::ArrayBuffer>::Cast(wrapper));
+  }
+}
+
+std::unique_ptr<ImageBitmapContentsArray>
+SerializedScriptValue::transferImageBitmapContents(
+    v8::Isolate* isolate,
+    const ImageBitmapArray& imageBitmaps,
+    ExceptionState& exceptionState) {
+  if (!imageBitmaps.size())
+    return nullptr;
+
+  for (size_t i = 0; i < imageBitmaps.size(); ++i) {
+    if (imageBitmaps[i]->isNeutered()) {
+      exceptionState.throwDOMException(
+          DataCloneError, "ImageBitmap at index " + String::number(i) +
+                              " is already detached.");
+      return nullptr;
+    }
+  }
+
+  std::unique_ptr<ImageBitmapContentsArray> contents =
+      WTF::wrapUnique(new ImageBitmapContentsArray);
+  HeapHashSet<Member<ImageBitmap>> visited;
+  for (size_t i = 0; i < imageBitmaps.size(); ++i) {
+    if (visited.contains(imageBitmaps[i]))
+      continue;
+    visited.add(imageBitmaps[i]);
+    contents->push_back(imageBitmaps[i]->transfer());
+  }
+  return contents;
+}
+
+void SerializedScriptValue::transferImageBitmaps(
+    v8::Isolate* isolate,
+    const ImageBitmapArray& imageBitmaps,
+    ExceptionState& exceptionState) {
+  std::unique_ptr<ImageBitmapContentsArray> contents =
+      transferImageBitmapContents(isolate, imageBitmaps, exceptionState);
+  m_imageBitmapContentsArray = std::move(contents);
+}
+
+void SerializedScriptValue::transferOffscreenCanvas(
+    v8::Isolate* isolate,
+    const OffscreenCanvasArray& offscreenCanvases,
+    ExceptionState& exceptionState) {
+  if (!offscreenCanvases.size())
+    return;
+
+  HeapHashSet<Member<OffscreenCanvas>> visited;
+  for (size_t i = 0; i < offscreenCanvases.size(); i++) {
+    if (visited.contains(offscreenCanvases[i].get()))
+      continue;
+    if (offscreenCanvases[i]->isNeutered()) {
+      exceptionState.throwDOMException(
+          DataCloneError, "OffscreenCanvas at index " + String::number(i) +
+                              " is already detached.");
+      return;
+    }
+    if (offscreenCanvases[i]->renderingContext()) {
+      exceptionState.throwDOMException(
+          DataCloneError, "OffscreenCanvas at index " + String::number(i) +
+                              " has an associated context.");
+      return;
+    }
+    visited.add(offscreenCanvases[i].get());
+    offscreenCanvases[i].get()->setNeutered();
+  }
+}
+
+void SerializedScriptValue::transferArrayBuffers(
+    v8::Isolate* isolate,
+    const ArrayBufferArray& arrayBuffers,
+    ExceptionState& exceptionState) {
+  m_arrayBufferContentsArray =
+      transferArrayBufferContents(isolate, arrayBuffers, exceptionState);
+}
+
+v8::Local<v8::Value> SerializedScriptValue::deserialize(
+    MessagePortArray* messagePorts) {
+  return deserialize(v8::Isolate::GetCurrent(), messagePorts, 0);
+}
+
+v8::Local<v8::Value> SerializedScriptValue::deserialize(
+    v8::Isolate* isolate,
+    MessagePortArray* messagePorts,
+    const WebBlobInfoArray* blobInfo) {
+  return SerializedScriptValueFactory::instance().deserialize(
+      this, isolate, messagePorts, blobInfo);
+}
+
+bool SerializedScriptValue::extractTransferables(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> value,
+    int argumentIndex,
+    Transferables& transferables,
+    ExceptionState& exceptionState) {
+  if (value.IsEmpty() || value->IsUndefined())
     return true;
-}
 
-void SerializedScriptValue::registerMemoryAllocatedWithCurrentScriptContext()
-{
-    if (m_externallyAllocatedMemory)
-        return;
-    m_externallyAllocatedMemory = static_cast<intptr_t>(m_data.length());
-    v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(m_externallyAllocatedMemory);
-}
+  uint32_t length = 0;
+  if (value->IsArray()) {
+    v8::Local<v8::Array> array = v8::Local<v8::Array>::Cast(value);
+    length = array->Length();
+  } else if (!toV8Sequence(value, length, isolate, exceptionState)) {
+    if (!exceptionState.hadException())
+      exceptionState.throwTypeError(
+          ExceptionMessages::notAnArrayTypeArgumentOrValue(argumentIndex + 1));
+    return false;
+  }
 
-bool SerializedScriptValue::containsTransferableArrayBuffer() const
-{
-    return m_arrayBufferContentsArray && !m_arrayBufferContentsArray->isEmpty();
-}
+  v8::Local<v8::Object> transferableArray = v8::Local<v8::Object>::Cast(value);
 
-SerializedScriptValue::~SerializedScriptValue()
-{
-    // If the allocated memory was not registered before, then this class is likely
-    // used in a context other then Worker's onmessage environment and the presence of
-    // current v8 context is not guaranteed. Avoid calling v8 then.
-    if (m_externallyAllocatedMemory) {
-        ASSERT(v8::Isolate::GetCurrent());
-        v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(-m_externallyAllocatedMemory);
+  // Validate the passed array of transferables.
+  for (unsigned i = 0; i < length; ++i) {
+    v8::Local<v8::Value> transferableObject;
+    if (!transferableArray->Get(isolate->GetCurrentContext(), i)
+             .ToLocal(&transferableObject))
+      return false;
+    // Validation of non-null objects, per HTML5 spec 10.3.3.
+    if (isUndefinedOrNull(transferableObject)) {
+      exceptionState.throwTypeError(
+          "Value at index " + String::number(i) + " is an untransferable " +
+          (transferableObject->IsUndefined() ? "'undefined'" : "'null'") +
+          " value.");
+      return false;
     }
+    // Validation of Objects implementing an interface, per WebIDL spec 4.1.15.
+    if (V8MessagePort::hasInstance(transferableObject, isolate)) {
+      MessagePort* port = V8MessagePort::toImpl(
+          v8::Local<v8::Object>::Cast(transferableObject));
+      // Check for duplicate MessagePorts.
+      if (transferables.messagePorts.contains(port)) {
+        exceptionState.throwDOMException(
+            DataCloneError, "Message port at index " + String::number(i) +
+                                " is a duplicate of an earlier port.");
+        return false;
+      }
+      transferables.messagePorts.push_back(port);
+    } else if (transferableObject->IsArrayBuffer()) {
+      DOMArrayBuffer* arrayBuffer = V8ArrayBuffer::toImpl(
+          v8::Local<v8::Object>::Cast(transferableObject));
+      if (transferables.arrayBuffers.contains(arrayBuffer)) {
+        exceptionState.throwDOMException(
+            DataCloneError, "ArrayBuffer at index " + String::number(i) +
+                                " is a duplicate of an earlier ArrayBuffer.");
+        return false;
+      }
+      transferables.arrayBuffers.push_back(arrayBuffer);
+    } else if (transferableObject->IsSharedArrayBuffer()) {
+      DOMSharedArrayBuffer* sharedArrayBuffer = V8SharedArrayBuffer::toImpl(
+          v8::Local<v8::Object>::Cast(transferableObject));
+      if (transferables.arrayBuffers.contains(sharedArrayBuffer)) {
+        exceptionState.throwDOMException(
+            DataCloneError,
+            "SharedArrayBuffer at index " + String::number(i) +
+                " is a duplicate of an earlier SharedArrayBuffer.");
+        return false;
+      }
+      transferables.arrayBuffers.push_back(sharedArrayBuffer);
+    } else if (V8ImageBitmap::hasInstance(transferableObject, isolate)) {
+      ImageBitmap* imageBitmap = V8ImageBitmap::toImpl(
+          v8::Local<v8::Object>::Cast(transferableObject));
+      if (transferables.imageBitmaps.contains(imageBitmap)) {
+        exceptionState.throwDOMException(
+            DataCloneError, "ImageBitmap at index " + String::number(i) +
+                                " is a duplicate of an earlier ImageBitmap.");
+        return false;
+      }
+      transferables.imageBitmaps.push_back(imageBitmap);
+    } else if (V8OffscreenCanvas::hasInstance(transferableObject, isolate)) {
+      OffscreenCanvas* offscreenCanvas = V8OffscreenCanvas::toImpl(
+          v8::Local<v8::Object>::Cast(transferableObject));
+      if (transferables.offscreenCanvases.contains(offscreenCanvas)) {
+        exceptionState.throwDOMException(
+            DataCloneError,
+            "OffscreenCanvas at index " + String::number(i) +
+                " is a duplicate of an earlier OffscreenCanvas.");
+        return false;
+      }
+      transferables.offscreenCanvases.push_back(offscreenCanvas);
+    } else {
+      exceptionState.throwTypeError("Value at index " + String::number(i) +
+                                    " does not have a transferable type.");
+      return false;
+    }
+  }
+  return true;
 }
 
-void SerializedScriptValue::transferArrayBuffers(v8::Isolate* isolate, ArrayBufferArray& arrayBuffers, ExceptionState& exceptionState)
-{
-    m_arrayBufferContentsArray = createArrayBuffers(isolate, arrayBuffers, exceptionState);
+std::unique_ptr<ArrayBufferContentsArray>
+SerializedScriptValue::transferArrayBufferContents(
+    v8::Isolate* isolate,
+    const ArrayBufferArray& arrayBuffers,
+    ExceptionState& exceptionState) {
+  if (!arrayBuffers.size())
+    return nullptr;
+
+  for (auto it = arrayBuffers.begin(); it != arrayBuffers.end(); ++it) {
+    DOMArrayBufferBase* arrayBuffer = *it;
+    if (arrayBuffer->isNeutered()) {
+      size_t index = std::distance(arrayBuffers.begin(), it);
+      exceptionState.throwDOMException(
+          DataCloneError, "ArrayBuffer at index " + String::number(index) +
+                              " is already neutered.");
+      return nullptr;
+    }
+  }
+
+  std::unique_ptr<ArrayBufferContentsArray> contents =
+      WTF::wrapUnique(new ArrayBufferContentsArray(arrayBuffers.size()));
+
+  HeapHashSet<Member<DOMArrayBufferBase>> visited;
+  for (auto it = arrayBuffers.begin(); it != arrayBuffers.end(); ++it) {
+    DOMArrayBufferBase* arrayBuffer = *it;
+    if (visited.contains(arrayBuffer))
+      continue;
+    visited.add(arrayBuffer);
+
+    size_t index = std::distance(arrayBuffers.begin(), it);
+    if (arrayBuffer->isShared()) {
+      if (!arrayBuffer->shareContentsWith(contents->at(index))) {
+        exceptionState.throwDOMException(DataCloneError,
+                                         "SharedArrayBuffer at index " +
+                                             String::number(index) +
+                                             " could not be transferred.");
+        return nullptr;
+      }
+    } else {
+      Vector<v8::Local<v8::ArrayBuffer>, 4> bufferHandles;
+      v8::HandleScope handleScope(isolate);
+      accumulateArrayBuffersForAllWorlds(
+          isolate, static_cast<DOMArrayBuffer*>(it->get()), bufferHandles);
+      bool isNeuterable = true;
+      for (const auto& bufferHandle : bufferHandles)
+        isNeuterable &= bufferHandle->IsNeuterable();
+
+      DOMArrayBufferBase* toTransfer = arrayBuffer;
+      if (!isNeuterable) {
+        toTransfer = DOMArrayBuffer::create(
+            arrayBuffer->buffer()->data(), arrayBuffer->buffer()->byteLength());
+      }
+      if (!toTransfer->transfer(contents->at(index))) {
+        exceptionState.throwDOMException(
+            DataCloneError, "ArrayBuffer at index " + String::number(index) +
+                                " could not be transferred.");
+        return nullptr;
+      }
+
+      if (isNeuterable) {
+        for (const auto& bufferHandle : bufferHandles)
+          bufferHandle->Neuter();
+      }
+    }
+  }
+  return contents;
 }
 
-void SerializedScriptValue::transferImageBitmaps(v8::Isolate* isolate, ImageBitmapArray& imageBitmaps, ExceptionState& exceptionState)
-{
-    m_imageBitmapContentsArray = createImageBitmaps(isolate, imageBitmaps, exceptionState);
+void SerializedScriptValue::registerMemoryAllocatedWithCurrentScriptContext() {
+  if (m_externallyAllocatedMemory)
+    return;
+
+  m_externallyAllocatedMemory = static_cast<intptr_t>(dataLengthInBytes());
+  v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(
+      m_externallyAllocatedMemory);
 }
 
-} // namespace blink
+}  // namespace blink

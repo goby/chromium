@@ -5,6 +5,8 @@
 #ifndef CONTENT_TEST_TEST_WEB_CONTENTS_H_
 #define CONTENT_TEST_TEST_WEB_CONTENTS_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -15,10 +17,11 @@
 
 class GURL;
 class Referrer;
-class SiteInstanceImpl;
 
 namespace content {
 
+class NavigationData;
+class NavigationHandle;
 class RenderViewHost;
 class TestRenderViewHost;
 class WebContentsTester;
@@ -30,7 +33,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   ~TestWebContents() override;
 
   static TestWebContents* Create(BrowserContext* browser_context,
-                                 SiteInstance* instance);
+                                 scoped_refptr<SiteInstance> instance);
 
   // WebContentsImpl overrides (returning the same values, but in Test* types)
   TestRenderFrameHost* GetMainFrame() override;
@@ -50,13 +53,11 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   void TestSetIsLoading(bool value) override;
   void ProceedWithCrossSiteNavigation() override;
   void TestDidNavigate(RenderFrameHost* render_frame_host,
-                       int page_id,
                        int nav_entry_id,
                        bool did_create_new_entry,
                        const GURL& url,
                        ui::PageTransition transition) override;
   void TestDidNavigateWithReferrer(RenderFrameHost* render_frame_host,
-                                   int page_id,
                                    int nav_entry_id,
                                    bool did_create_new_entry,
                                    const GURL& url,
@@ -109,6 +110,10 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
                                 const base::string16& error_description,
                                 bool was_ignored_by_handler);
 
+  void SetNavigationData(
+      NavigationHandle* navigation_handle,
+      std::unique_ptr<NavigationData> navigation_data) override;
+
  protected:
   // The deprecated WebContentsTester still needs to subclass this.
   explicit TestWebContents(BrowserContext* browser_context);
@@ -120,19 +125,22 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
-      const ViewHostMsg_CreateWindow_Params& params,
+      const mojom::CreateNewWindowParams& params,
       SessionStorageNamespace* session_storage_namespace) override;
-  void CreateNewWidget(int32 render_process_id,
-                       int32 route_id,
+  void CreateNewWidget(int32_t render_process_id,
+                       int32_t route_id,
                        blink::WebPopupType popup_type) override;
-  void CreateNewFullscreenWidget(int32 render_process_id,
-                                 int32 route_id) override;
-  void ShowCreatedWindow(int route_id,
+  void CreateNewFullscreenWidget(int32_t render_process_id,
+                                 int32_t route_id) override;
+  void ShowCreatedWindow(int process_id,
+                         int route_id,
                          WindowOpenDisposition disposition,
                          const gfx::Rect& initial_rect,
                          bool user_gesture) override;
-  void ShowCreatedWidget(int route_id, const gfx::Rect& initial_rect) override;
-  void ShowCreatedFullscreenWidget(int route_id) override;
+  void ShowCreatedWidget(int process_id,
+                         int route_id,
+                         const gfx::Rect& initial_rect) override;
+  void ShowCreatedFullscreenWidget(int process_id, int route_id) override;
   void SaveFrameWithHeaders(const GURL& url,
                             const Referrer& referrer,
                             const std::string& headers) override;

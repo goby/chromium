@@ -11,10 +11,10 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/prefs/json_pref_store.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/pref_store.h"
+#include "components/prefs/json_pref_store.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/pref_store.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/zoom_level_delegate.h"
 
@@ -22,7 +22,7 @@ namespace base {
 class DictionaryValue;
 }
 
-namespace ui_zoom {
+namespace zoom {
 class ZoomEventManager;
 }
 
@@ -45,15 +45,15 @@ class ChromeZoomLevelPrefs : public content::ZoomLevelDelegate {
       PrefService* pref_service,
       const base::FilePath& profile_path,
       const base::FilePath& partition_path,
-      base::WeakPtr<ui_zoom::ZoomEventManager> zoom_event_manager);
+      base::WeakPtr<zoom::ZoomEventManager> zoom_event_manager);
   ~ChromeZoomLevelPrefs() override;
 
   static std::string GetHashForTesting(const base::FilePath& relative_path);
 
   void SetDefaultZoomLevelPref(double level);
   double GetDefaultZoomLevelPref() const;
-  scoped_ptr<DefaultZoomLevelSubscription> RegisterDefaultZoomLevelCallback(
-      const base::Closure& callback);
+  std::unique_ptr<DefaultZoomLevelSubscription>
+  RegisterDefaultZoomLevelCallback(const base::Closure& callback);
 
   void ExtractPerHostZoomLevels(
       const base::DictionaryValue* host_zoom_dictionary,
@@ -69,9 +69,9 @@ class ChromeZoomLevelPrefs : public content::ZoomLevelDelegate {
   void OnZoomLevelChanged(const content::HostZoomMap::ZoomLevelChange& change);
 
   PrefService* pref_service_;
-  base::WeakPtr<ui_zoom::ZoomEventManager> zoom_event_manager_;
+  base::WeakPtr<zoom::ZoomEventManager> zoom_event_manager_;
   content::HostZoomMap* host_zoom_map_;
-  scoped_ptr<content::HostZoomMap::Subscription> zoom_subscription_;
+  std::unique_ptr<content::HostZoomMap::Subscription> zoom_subscription_;
   std::string partition_key_;
   base::CallbackList<void(void)> default_zoom_changed_callbacks_;
 

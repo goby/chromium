@@ -18,12 +18,11 @@
  *
  */
 
-#include "config.h"
 #include "core/html/HTMLSummaryElement.h"
 
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "core/HTMLNames.h"
-#include "core/dom/shadow/ComposedTreeTraversal.h"
+#include "core/dom/shadow/FlatTreeTraversal.h"
 #include "core/dom/shadow/ShadowRoot.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/html/HTMLContentElement.h"
@@ -36,117 +35,115 @@ namespace blink {
 
 using namespace HTMLNames;
 
-PassRefPtrWillBeRawPtr<HTMLSummaryElement> HTMLSummaryElement::create(Document& document)
-{
-    RefPtrWillBeRawPtr<HTMLSummaryElement> summary = adoptRefWillBeNoop(new HTMLSummaryElement(document));
-    summary->ensureUserAgentShadowRoot();
-    return summary.release();
+HTMLSummaryElement* HTMLSummaryElement::create(Document& document) {
+  HTMLSummaryElement* summary = new HTMLSummaryElement(document);
+  summary->ensureUserAgentShadowRoot();
+  return summary;
 }
 
 HTMLSummaryElement::HTMLSummaryElement(Document& document)
-    : HTMLElement(summaryTag, document)
-{
+    : HTMLElement(summaryTag, document) {}
+
+LayoutObject* HTMLSummaryElement::createLayoutObject(
+    const ComputedStyle& style) {
+  EDisplay display = style.display();
+  if (display == EDisplay::Flex || display == EDisplay::InlineFlex ||
+      display == EDisplay::Grid || display == EDisplay::InlineGrid)
+    return LayoutObject::createObject(this, style);
+  return new LayoutBlockFlow(this);
 }
 
-LayoutObject* HTMLSummaryElement::createLayoutObject(const ComputedStyle&)
-{
-    return new LayoutBlockFlow(this);
+void HTMLSummaryElement::didAddUserAgentShadowRoot(ShadowRoot& root) {
+  DetailsMarkerControl* markerControl =
+      DetailsMarkerControl::create(document());
+  markerControl->setIdAttribute(ShadowElementNames::detailsMarker());
+  root.appendChild(markerControl);
+  root.appendChild(HTMLContentElement::create(document()));
 }
 
-void HTMLSummaryElement::didAddUserAgentShadowRoot(ShadowRoot& root)
-{
-    RefPtrWillBeRawPtr<DetailsMarkerControl> markerControl = DetailsMarkerControl::create(document());
-    markerControl->setIdAttribute(ShadowElementNames::detailsMarker());
-    root.appendChild(markerControl);
-    root.appendChild(HTMLContentElement::create(document()));
+HTMLDetailsElement* HTMLSummaryElement::detailsElement() const {
+  Node* parent = parentNode();
+  if (isHTMLDetailsElement(parent))
+    return toHTMLDetailsElement(parent);
+  Element* host = ownerShadowHost();
+  if (isHTMLDetailsElement(host))
+    return toHTMLDetailsElement(host);
+  return nullptr;
 }
 
-HTMLDetailsElement* HTMLSummaryElement::detailsElement() const
-{
-    Node* parent = parentNode();
-    if (isHTMLDetailsElement(parent))
-        return toHTMLDetailsElement(parent);
-    Element* host = shadowHost();
-    if (isHTMLDetailsElement(host))
-        return toHTMLDetailsElement(host);
-    return nullptr;
+Element* HTMLSummaryElement::markerControl() {
+  return ensureUserAgentShadowRoot().getElementById(
+      ShadowElementNames::detailsMarker());
 }
 
-Element* HTMLSummaryElement::markerControl()
-{
-    return ensureUserAgentShadowRoot().getElementById(ShadowElementNames::detailsMarker());
+bool HTMLSummaryElement::isMainSummary() const {
+  if (HTMLDetailsElement* details = detailsElement())
+    return details->findMainSummary() == this;
+
+  return false;
 }
 
-bool HTMLSummaryElement::isMainSummary() const
-{
-    if (HTMLDetailsElement* details = detailsElement())
-        return details->findMainSummary() == this;
-
+static bool isClickableControl(Node* node) {
+  if (!node->isElementNode())
     return false;
+  Element* element = toElement(node);
+  if (element->isFormControlElement())
+    return true;
+  Element* host = element->ownerShadowHost();
+  return host && host->isFormControlElement();
 }
 
-static bool isClickableControl(Node* node)
-{
-    if (!node->isElementNode())
-        return false;
-    Element* element = toElement(node);
-    if (element->isFormControlElement())
-        return true;
-    Element* host = element->shadowHost();
-    return host && host->isFormControlElement();
+bool HTMLSummaryElement::supportsFocus() const {
+  return isMainSummary();
 }
 
-bool HTMLSummaryElement::supportsFocus() const
-{
-    return isMainSummary();
-}
+void HTMLSummaryElement::defaultEventHandler(Event* event) {
+  if (isMainSummary() && layoutObject()) {
+    if (event->type() == EventTypeNames::DOMActivate &&
+        !isClickableControl(event->target()->toNode())) {
+      if (HTMLDetailsElement* details = detailsElement())
+        details->toggleOpen();
+      event->setDefaultHandled();
+      return;
+    }
 
-void HTMLSummaryElement::defaultEventHandler(Event* event)
-{
-    if (isMainSummary() && layoutObject()) {
-        if (event->type() == EventTypeNames::DOMActivate && !isClickableControl(event->target()->toNode())) {
-            if (HTMLDetailsElement* details = detailsElement())
-                details->toggleOpen();
+    if (event->isKeyboardEvent()) {
+      if (event->type() == EventTypeNames::keydown &&
+          toKeyboardEvent(event)->key() == " ") {
+        setActive(true);
+        // No setDefaultHandled() - IE dispatches a keypress in this case.
+        return;
+      }
+      if (event->type() == EventTypeNames::keypress) {
+        switch (toKeyboardEvent(event)->charCode()) {
+          case '\r':
+            dispatchSimulatedClick(event);
+            event->setDefaultHandled();
+            return;
+          case ' ':
+            // Prevent scrolling down the page.
             event->setDefaultHandled();
             return;
         }
-
-        if (event->isKeyboardEvent()) {
-            if (event->type() == EventTypeNames::keydown && toKeyboardEvent(event)->keyIdentifier() == "U+0020") {
-                setActive(true);
-                // No setDefaultHandled() - IE dispatches a keypress in this case.
-                return;
-            }
-            if (event->type() == EventTypeNames::keypress) {
-                switch (toKeyboardEvent(event)->charCode()) {
-                case '\r':
-                    dispatchSimulatedClick(event);
-                    event->setDefaultHandled();
-                    return;
-                case ' ':
-                    // Prevent scrolling down the page.
-                    event->setDefaultHandled();
-                    return;
-                }
-            }
-            if (event->type() == EventTypeNames::keyup && toKeyboardEvent(event)->keyIdentifier() == "U+0020") {
-                if (active())
-                    dispatchSimulatedClick(event);
-                event->setDefaultHandled();
-                return;
-            }
-        }
+      }
+      if (event->type() == EventTypeNames::keyup &&
+          toKeyboardEvent(event)->key() == " ") {
+        if (isActive())
+          dispatchSimulatedClick(event);
+        event->setDefaultHandled();
+        return;
+      }
     }
+  }
 
-    HTMLElement::defaultEventHandler(event);
+  HTMLElement::defaultEventHandler(event);
 }
 
-bool HTMLSummaryElement::willRespondToMouseClickEvents()
-{
-    if (isMainSummary() && layoutObject())
-        return true;
+bool HTMLSummaryElement::willRespondToMouseClickEvents() {
+  if (isMainSummary() && layoutObject())
+    return true;
 
-    return HTMLElement::willRespondToMouseClickEvents();
+  return HTMLElement::willRespondToMouseClickEvents();
 }
 
-}
+}  // namespace blink

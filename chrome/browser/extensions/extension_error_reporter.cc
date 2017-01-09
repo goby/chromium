@@ -10,14 +10,14 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/simple_message_box.h"
+#include "chrome/grit/generated_resources.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/notification_types.h"
-#include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
 ExtensionErrorReporter* ExtensionErrorReporter::instance_ = NULL;
@@ -36,8 +36,9 @@ ExtensionErrorReporter* ExtensionErrorReporter::GetInstance() {
 }
 
 ExtensionErrorReporter::ExtensionErrorReporter(bool enable_noisy_errors)
-    : ui_loop_(base::MessageLoop::current()),
-      enable_noisy_errors_(enable_noisy_errors) {
+    : enable_noisy_errors_(enable_noisy_errors) {
+  if (base::ThreadTaskRunnerHandle::IsSet())
+    ui_task_runner_ = base::ThreadTaskRunnerHandle::Get();
 }
 
 ExtensionErrorReporter::~ExtensionErrorReporter() {}
@@ -59,18 +60,15 @@ void ExtensionErrorReporter::ReportLoadError(
       path_str.c_str(),
       error.c_str()));
   ReportError(message, be_noisy);
-  FOR_EACH_OBSERVER(Observer,
-                    observers_,
-                    OnLoadFailure(browser_context, extension_path, error));
+  for (auto& observer : observers_)
+    observer.OnLoadFailure(browser_context, extension_path, error);
 }
 
 void ExtensionErrorReporter::ReportError(const base::string16& message,
                                          bool be_noisy) {
-  // NOTE: There won't be a ui_loop_ in the unit test environment.
-  if (ui_loop_) {
-    CHECK(base::MessageLoop::current() == ui_loop_)
-        << "ReportError can only be called from the UI thread.";
-  }
+  // NOTE: There won't be a |ui_task_runner_| in the unit test environment.
+  CHECK(!ui_task_runner_ || ui_task_runner_->BelongsToCurrentThread())
+      << "ReportError can only be called from the UI thread.";
 
   errors_.push_back(message);
 
@@ -79,11 +77,9 @@ void ExtensionErrorReporter::ReportError(const base::string16& message,
   LOG(WARNING) << "Extension error: " << message;
 
   if (enable_noisy_errors_ && be_noisy) {
-    chrome::ShowMessageBox(
-        NULL,
-        l10n_util::GetStringUTF16(IDS_EXTENSIONS_LOAD_ERROR_HEADING),
-        message,
-        chrome::MESSAGE_BOX_TYPE_WARNING);
+    chrome::ShowWarningMessageBox(
+        NULL, l10n_util::GetStringUTF16(IDS_EXTENSIONS_LOAD_ERROR_HEADING),
+        message);
   }
 }
 

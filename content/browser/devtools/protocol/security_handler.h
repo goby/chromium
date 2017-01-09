@@ -5,10 +5,10 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_PROTOCOL_SECURITY_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_PROTOCOL_SECURITY_HANDLER_H_
 
+#include "base/macros.h"
 #include "content/browser/devtools/devtools_protocol_handler.h"
 #include "content/browser/devtools/protocol/devtools_protocol_dispatcher.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/security_style.h"
 
 namespace content {
 namespace devtools {
@@ -21,21 +21,20 @@ class SecurityHandler : public WebContentsObserver {
   SecurityHandler();
   ~SecurityHandler() override;
 
-  void SetClient(scoped_ptr<Client> client);
+  void SetClient(std::unique_ptr<Client> client);
   void SetRenderFrameHost(RenderFrameHost* host);
 
   Response Enable();
   Response Disable();
+  Response ShowCertificateViewer();
 
  private:
   void AttachToRenderFrameHost();
 
   // WebContentsObserver overrides
-  void SecurityStyleChanged(
-      SecurityStyle security_style,
-      const SecurityStyleExplanations& security_style_explanations) override;
+  void DidChangeVisibleSecurityState() override;
 
-  scoped_ptr<Client> client_;
+  std::unique_ptr<Client> client_;
   bool enabled_;
   RenderFrameHost* host_;
 

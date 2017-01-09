@@ -6,12 +6,11 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/metrics/histogram.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
 #include "google_apis/gcm/protocol/checkin.pb.h"
 #include "net/base/load_flags.h"
-#include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
 
@@ -58,10 +57,11 @@ std::string GetCheckinRequestStatusString(CheckinRequestStatus status) {
       return "RESPONSE_PARSING_FAILED";
     case ZERO_ID_OR_TOKEN:
       return "ZERO_ID_OR_TOKEN";
-    default:
+    case STATUS_COUNT:
       NOTREACHED();
-      return "UNKNOWN_STATUS";
+      break;
   }
+  return "UNKNOWN_STATUS";
 }
 
 // Records checkin status to both stats recorder and reports to UMA.
@@ -80,8 +80,8 @@ void RecordCheckinStatusAndReportUMA(CheckinRequestStatus status,
 }  // namespace
 
 CheckinRequest::RequestInfo::RequestInfo(
-    uint64 android_id,
-    uint64 security_token,
+    uint64_t android_id,
+    uint64_t security_token,
     const std::map<std::string, std::string>& account_tokens,
     const std::string& settings_digest,
     const checkin_proto::ChromeBuildProto& chrome_build_proto)
@@ -89,8 +89,9 @@ CheckinRequest::RequestInfo::RequestInfo(
       security_token(security_token),
       account_tokens(account_tokens),
       settings_digest(settings_digest),
-      chrome_build_proto(chrome_build_proto) {
-}
+      chrome_build_proto(chrome_build_proto) {}
+
+CheckinRequest::RequestInfo::RequestInfo(const RequestInfo& other) = default;
 
 CheckinRequest::RequestInfo::~RequestInfo() {}
 
@@ -192,7 +193,7 @@ void CheckinRequest::OnURLFetchComplete(const net::URLFetcher* source) {
     CheckinRequestStatus status = response_status == net::HTTP_BAD_REQUEST ?
         HTTP_BAD_REQUEST : HTTP_UNAUTHORIZED;
     RecordCheckinStatusAndReportUMA(status, recorder_, false);
-    callback_.Run(response_proto);
+    callback_.Run(response_status, response_proto);
     return;
   }
 
@@ -223,7 +224,7 @@ void CheckinRequest::OnURLFetchComplete(const net::URLFetcher* source) {
                        backoff_entry_.failure_count());
   UMA_HISTOGRAM_TIMES("GCM.CheckinCompleteTime",
                       base::TimeTicks::Now() - request_start_time_);
-  callback_.Run(response_proto);
+  callback_.Run(response_status, response_proto);
 }
 
 }  // namespace gcm

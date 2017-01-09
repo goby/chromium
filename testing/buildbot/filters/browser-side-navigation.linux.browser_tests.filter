@@ -1,0 +1,15 @@
+-ChromeServiceWorkerTest.FallbackMainResourceRequestWhenJSDisabled
+-PDFExtensionTest.PdfAccessibilityInOOPIF
+
+# https://crbug.com/652767: NavigationHandle::GetResponseHeaders sometimes
+# returns null for browser-side navigations
+-PageLoadMetricsBrowserTest.Ignore204Pages
+-PageLoadMetricsBrowserTest.IgnoreDownloads
+
+# https://crbug.com/650246: ResourcePrefetchPredictor doesn't work correctly yet
+# with PlzNavigate
+-ResourcePrefetchPredictorBrowserTest.*
+
+# https://crbug.com/668714: Allow setting net/ flags for NavigationHandle
+-NoStatePrefetchBrowserTest.PrefetchLoadFlag
+-NoStatePrefetchBrowserTest.Prefetch301LoadFlags

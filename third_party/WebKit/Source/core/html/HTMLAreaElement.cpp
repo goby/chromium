@@ -19,216 +19,215 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/html/HTMLAreaElement.h"
 
 #include "core/HTMLNames.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/html/HTMLImageElement.h"
 #include "core/html/HTMLMapElement.h"
+#include "core/html/parser/HTMLParserIdioms.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutImage.h"
-#include "core/layout/LayoutView.h"
-#include "platform/LengthFunctions.h"
 #include "platform/graphics/Path.h"
 #include "platform/transforms/AffineTransform.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
+
+namespace {
+
+// Adapt a double to the allowed range of a LayoutUnit and narrow it to float
+// precision.
+float clampCoordinate(double value) {
+  return LayoutUnit(value).toFloat();
+}
+}
 
 using namespace HTMLNames;
 
 inline HTMLAreaElement::HTMLAreaElement(Document& document)
-    : HTMLAnchorElement(areaTag, document)
-    , m_lastSize(-1, -1)
-    , m_shape(Unknown)
-{
-}
+    : HTMLAnchorElement(areaTag, document), m_shape(Rect) {}
 
 // An explicit empty destructor should be in HTMLAreaElement.cpp, because
 // if an implicit destructor is used or an empty destructor is defined in
 // HTMLAreaElement.h, when including HTMLAreaElement.h, msvc tries to expand
 // the destructor and causes a compile error because of lack of blink::Path
 // definition.
-HTMLAreaElement::~HTMLAreaElement()
-{
-}
+HTMLAreaElement::~HTMLAreaElement() {}
 
 DEFINE_NODE_FACTORY(HTMLAreaElement)
 
-void HTMLAreaElement::parseAttribute(const QualifiedName& name, const AtomicString& oldValue, const AtomicString& value)
-{
-    if (name == shapeAttr) {
-        if (equalIgnoringCase(value, "default"))
-            m_shape = Default;
-        else if (equalIgnoringCase(value, "circle"))
-            m_shape = Circle;
-        else if (equalIgnoringCase(value, "poly"))
-            m_shape = Poly;
-        else if (equalIgnoringCase(value, "rect"))
-            m_shape = Rect;
-        invalidateCachedRegion();
-    } else if (name == coordsAttr) {
-        m_coords = parseHTMLAreaElementCoords(value.string());
-        invalidateCachedRegion();
-    } else if (name == altAttr || name == accesskeyAttr) {
-        // Do nothing.
+void HTMLAreaElement::parseAttribute(const QualifiedName& name,
+                                     const AtomicString& oldValue,
+                                     const AtomicString& value) {
+  if (name == shapeAttr) {
+    if (equalIgnoringASCIICase(value, "default")) {
+      m_shape = Default;
+    } else if (equalIgnoringASCIICase(value, "circle") ||
+               equalIgnoringASCIICase(value, "circ")) {
+      m_shape = Circle;
+    } else if (equalIgnoringASCIICase(value, "polygon") ||
+               equalIgnoringASCIICase(value, "poly")) {
+      m_shape = Poly;
     } else {
-        HTMLAnchorElement::parseAttribute(name, oldValue, value);
+      // The missing (and implicitly invalid) value default for the
+      // 'shape' attribute is 'rect'.
+      m_shape = Rect;
     }
+    invalidateCachedPath();
+  } else if (name == coordsAttr) {
+    m_coords = parseHTMLListOfFloatingPointNumbers(value.getString());
+    invalidateCachedPath();
+  } else if (name == altAttr || name == accesskeyAttr) {
+    // Do nothing.
+  } else {
+    HTMLAnchorElement::parseAttribute(name, oldValue, value);
+  }
 }
 
-void HTMLAreaElement::invalidateCachedRegion()
-{
-    m_lastSize = LayoutSize(-1, -1);
+void HTMLAreaElement::invalidateCachedPath() {
+  m_path = nullptr;
 }
 
-bool HTMLAreaElement::pointInArea(LayoutPoint location, const LayoutSize& containerSize)
-{
-    if (m_lastSize != containerSize) {
-        m_region = adoptPtr(new Path(getRegion(containerSize)));
-        m_lastSize = containerSize;
-    }
-
-    return m_region->contains(FloatPoint(location));
+bool HTMLAreaElement::pointInArea(const LayoutPoint& location,
+                                  const LayoutObject* containerObject) const {
+  return getPath(containerObject).contains(FloatPoint(location));
 }
 
-Path HTMLAreaElement::computePath(const LayoutObject* obj) const
-{
-    if (!obj)
-        return Path();
+LayoutRect HTMLAreaElement::computeAbsoluteRect(
+    const LayoutObject* containerObject) const {
+  if (!containerObject)
+    return LayoutRect();
 
-    // FIXME: This doesn't work correctly with transforms.
-    FloatPoint absPos = obj->localToAbsolute();
+  // FIXME: This doesn't work correctly with transforms.
+  FloatPoint absPos = containerObject->localToAbsolute();
 
-    // Default should default to the size of the containing object.
-    LayoutSize size = m_lastSize;
-    if (m_shape == Default)
-        size = obj->absoluteClippedOverflowRect().size();
-
-    Path p = getRegion(size);
-    float zoomFactor = obj->style()->effectiveZoom();
-    if (zoomFactor != 1.0f) {
-        AffineTransform zoomTransform;
-        zoomTransform.scale(zoomFactor);
-        p.transform(zoomTransform);
-    }
-
-    p.translate(toFloatSize(absPos));
-    return p;
+  Path path = getPath(containerObject);
+  path.translate(toFloatSize(absPos));
+  return enclosingLayoutRect(path.boundingRect());
 }
 
-LayoutRect HTMLAreaElement::computeRect(const LayoutObject* obj) const
-{
-    return enclosingLayoutRect(computePath(obj).boundingRect());
-}
+Path HTMLAreaElement::getPath(const LayoutObject* containerObject) const {
+  if (!containerObject)
+    return Path();
 
-Path HTMLAreaElement::getRegion(const LayoutSize& size) const
-{
-    if (m_coords.isEmpty() && m_shape != Default)
-        return Path();
-
-    LayoutUnit width = size.width();
-    LayoutUnit height = size.height();
-
-    // If element omits the shape attribute, select shape based on number of coordinates.
-    Shape shape = m_shape;
-    if (shape == Unknown) {
-        if (m_coords.size() == 3)
-            shape = Circle;
-        else if (m_coords.size() == 4)
-            shape = Rect;
-        else if (m_coords.size() >= 6)
-            shape = Poly;
-    }
-
+  // Always recompute for default shape because it depends on container object's
+  // size and is cheap.
+  if (m_shape == Default) {
     Path path;
-    switch (shape) {
-    case Poly:
+    // No need to zoom because it is already applied in
+    // containerObject->borderBoxRect().
+    if (containerObject->isBox())
+      path.addRect(FloatRect(toLayoutBox(containerObject)->borderBoxRect()));
+    m_path = nullptr;
+    return path;
+  }
+
+  Path path;
+  if (m_path) {
+    path = *m_path;
+  } else {
+    if (m_coords.isEmpty())
+      return path;
+
+    switch (m_shape) {
+      case Poly:
         if (m_coords.size() >= 6) {
-            int numPoints = m_coords.size() / 2;
-            path.moveTo(FloatPoint(minimumValueForLength(m_coords[0], width).toFloat(), minimumValueForLength(m_coords[1], height).toFloat()));
-            for (int i = 1; i < numPoints; ++i)
-                path.addLineTo(FloatPoint(minimumValueForLength(m_coords[i * 2], width).toFloat(), minimumValueForLength(m_coords[i * 2 + 1], height).toFloat()));
-            path.closeSubpath();
+          int numPoints = m_coords.size() / 2;
+          path.moveTo(FloatPoint(clampCoordinate(m_coords[0]),
+                                 clampCoordinate(m_coords[1])));
+          for (int i = 1; i < numPoints; ++i)
+            path.addLineTo(FloatPoint(clampCoordinate(m_coords[i * 2]),
+                                      clampCoordinate(m_coords[i * 2 + 1])));
+          path.closeSubpath();
+          path.setWindRule(RULE_EVENODD);
         }
         break;
-    case Circle:
-        if (m_coords.size() >= 3) {
-            Length radius = m_coords[2];
-            float r = std::min(minimumValueForLength(radius, width).toFloat(), minimumValueForLength(radius, height).toFloat());
-            path.addEllipse(FloatRect(minimumValueForLength(m_coords[0], width).toFloat() - r, minimumValueForLength(m_coords[1], height).toFloat() - r, 2 * r, 2 * r));
+      case Circle:
+        if (m_coords.size() >= 3 && m_coords[2] > 0) {
+          float r = clampCoordinate(m_coords[2]);
+          path.addEllipse(FloatRect(clampCoordinate(m_coords[0]) - r,
+                                    clampCoordinate(m_coords[1]) - r, 2 * r,
+                                    2 * r));
         }
         break;
-    case Rect:
+      case Rect:
         if (m_coords.size() >= 4) {
-            float x0 = minimumValueForLength(m_coords[0], width).toFloat();
-            float y0 = minimumValueForLength(m_coords[1], height).toFloat();
-            float x1 = minimumValueForLength(m_coords[2], width).toFloat();
-            float y1 = minimumValueForLength(m_coords[3], height).toFloat();
-            path.addRect(FloatRect(x0, y0, x1 - x0, y1 - y0));
+          float x0 = clampCoordinate(m_coords[0]);
+          float y0 = clampCoordinate(m_coords[1]);
+          float x1 = clampCoordinate(m_coords[2]);
+          float y1 = clampCoordinate(m_coords[3]);
+          path.addRect(FloatRect(x0, y0, x1 - x0, y1 - y0));
         }
         break;
-    case Default:
-        path.addRect(FloatRect(0, 0, width.toFloat(), height.toFloat()));
-        break;
-    case Unknown:
+      default:
+        NOTREACHED();
         break;
     }
 
-    return path;
+    // Cache the original path, not depending on containerObject.
+    m_path = WTF::makeUnique<Path>(path);
+  }
+
+  // Zoom the path into coordinates of the container object.
+  float zoomFactor = containerObject->styleRef().effectiveZoom();
+  if (zoomFactor != 1.0f) {
+    AffineTransform zoomTransform;
+    zoomTransform.scale(zoomFactor);
+    path.transform(zoomTransform);
+  }
+  return path;
 }
 
-HTMLImageElement* HTMLAreaElement::imageElement() const
-{
-    if (HTMLMapElement* mapElement = Traversal<HTMLMapElement>::firstAncestor(*this))
-        return mapElement->imageElement();
-    return nullptr;
+HTMLImageElement* HTMLAreaElement::imageElement() const {
+  if (HTMLMapElement* mapElement =
+          Traversal<HTMLMapElement>::firstAncestor(*this))
+    return mapElement->imageElement();
+  return nullptr;
 }
 
-bool HTMLAreaElement::isKeyboardFocusable() const
-{
-    return isFocusable();
+bool HTMLAreaElement::isKeyboardFocusable() const {
+  return isFocusable();
 }
 
-bool HTMLAreaElement::isMouseFocusable() const
-{
-    return isFocusable();
+bool HTMLAreaElement::isMouseFocusable() const {
+  return isFocusable();
 }
 
-bool HTMLAreaElement::layoutObjectIsFocusable() const
-{
-    HTMLImageElement* image = imageElement();
-    if (!image || !image->layoutObject() || image->layoutObject()->style()->visibility() != VISIBLE)
-        return false;
+bool HTMLAreaElement::layoutObjectIsFocusable() const {
+  HTMLImageElement* image = imageElement();
+  if (!image || !image->layoutObject() ||
+      image->layoutObject()->style()->visibility() != EVisibility::Visible)
+    return false;
 
-    return supportsFocus() && Element::tabIndex() >= 0;
+  return supportsFocus() && Element::tabIndex() >= 0;
 }
 
-void HTMLAreaElement::setFocus(bool shouldBeFocused)
-{
-    if (focused() == shouldBeFocused)
-        return;
+void HTMLAreaElement::setFocused(bool shouldBeFocused) {
+  if (isFocused() == shouldBeFocused)
+    return;
 
-    HTMLAnchorElement::setFocus(shouldBeFocused);
+  HTMLAnchorElement::setFocused(shouldBeFocused);
 
-    HTMLImageElement* imageElement = this->imageElement();
-    if (!imageElement)
-        return;
+  HTMLImageElement* imageElement = this->imageElement();
+  if (!imageElement)
+    return;
 
-    LayoutObject* layoutObject = imageElement->layoutObject();
-    if (!layoutObject || !layoutObject->isImage())
-        return;
+  LayoutObject* layoutObject = imageElement->layoutObject();
+  if (!layoutObject || !layoutObject->isImage())
+    return;
 
-    toLayoutImage(layoutObject)->areaElementFocusChanged(this);
+  toLayoutImage(layoutObject)->areaElementFocusChanged(this);
 }
 
-void HTMLAreaElement::updateFocusAppearance(SelectionBehaviorOnFocus selectionBehavior)
-{
-    if (!isFocusable())
-        return;
+void HTMLAreaElement::updateFocusAppearance(
+    SelectionBehaviorOnFocus selectionBehavior) {
+  document().updateStyleAndLayoutTreeForNode(this);
+  if (!isFocusable())
+    return;
 
-    if (HTMLImageElement* imageElement = this->imageElement())
-        imageElement->updateFocusAppearance(selectionBehavior);
+  if (HTMLImageElement* imageElement = this->imageElement())
+    imageElement->updateFocusAppearance(selectionBehavior);
 }
 
-}
+}  // namespace blink

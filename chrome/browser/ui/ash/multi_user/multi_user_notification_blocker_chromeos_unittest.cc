@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
-#include "ash/system/system_notifier.h"
+#include "ash/common/system/system_notifier.h"
+#include "ash/common/test/test_session_state_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/test_session_state_delegate.h"
+#include "ash/test/ash_test_helper.h"
 #include "ash/test/test_shell_delegate.h"
+#include "base/macros.h"
+#include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_notification_blocker_chromeos.h"
@@ -15,10 +18,11 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/signin/core/account_id/account_id.h"
-#include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/user_info.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/notification.h"
+
+using base::UTF8ToUTF16;
 
 class MultiUserNotificationBlockerChromeOSTest
     : public ash::test::AshTestBase,
@@ -28,8 +32,7 @@ class MultiUserNotificationBlockerChromeOSTest
       : state_changed_count_(0),
         testing_profile_manager_(TestingBrowserProcess::GetGlobal()),
         window_id_(0),
-        fake_user_manager_(new user_manager::FakeUserManager),
-        user_manager_enabler_(fake_user_manager_) {}
+        user_manager_enabler_(new chromeos::FakeChromeUserManager) {}
   ~MultiUserNotificationBlockerChromeOSTest() override {}
 
   // ash::test::AshTestBase overrides:
@@ -42,14 +45,11 @@ class MultiUserNotificationBlockerChromeOSTest
 
     ash::test::TestShellDelegate* shell_delegate =
         static_cast<ash::test::TestShellDelegate*>(
-            ash::Shell::GetInstance()->delegate());
+            ash::WmShell::Get()->delegate());
     shell_delegate->set_multi_profiles_enabled(true);
     chrome::MultiUserWindowManager::CreateInstance();
 
-    ash::test::TestSessionStateDelegate* session_state_delegate =
-        static_cast<ash::test::TestSessionStateDelegate*>(
-            ash::Shell::GetInstance()->session_state_delegate());
-    session_state_delegate->AddUser(
+    ash::test::AshTestHelper::GetTestSessionStateDelegate()->AddUser(
         AccountId::FromUserEmail("test2@example.com"));
 
     chromeos::WallpaperManager::Initialize();
@@ -81,8 +81,7 @@ class MultiUserNotificationBlockerChromeOSTest
   }
 
   const std::string GetDefaultUserId() {
-    return ash::Shell::GetInstance()
-        ->session_state_delegate()
+    return ash::test::AshTestHelper::GetTestSessionStateDelegate()
         ->GetUserInfo(0)
         ->GetAccountId()
         .GetUserEmail();
@@ -98,8 +97,8 @@ class MultiUserNotificationBlockerChromeOSTest
 
   void SwitchActiveUser(const std::string& name) {
     const AccountId account_id(AccountId::FromUserEmail(name));
-    ash::Shell::GetInstance()->session_state_delegate()->SwitchActiveUser(
-        account_id);
+    ash::test::AshTestHelper::GetTestSessionStateDelegate()
+        ->SwitchActiveUser(account_id);
     if (chrome::MultiUserWindowManager::GetMultiProfileMode() ==
         chrome::MultiUserWindowManager::MULTI_PROFILE_MODE_SEPARATED) {
       static_cast<chrome::MultiUserWindowManagerChromeOS*>(
@@ -119,7 +118,14 @@ class MultiUserNotificationBlockerChromeOSTest
       const std::string profile_id) {
     message_center::NotifierId id_with_profile = notifier_id;
     id_with_profile.profile_id = profile_id;
-    return blocker()->ShouldShowNotificationAsPopup(id_with_profile);
+
+    message_center::Notification notification(
+        message_center::NOTIFICATION_TYPE_SIMPLE, "popup-id",
+        UTF8ToUTF16("popup-title"), UTF8ToUTF16("popup-message"), gfx::Image(),
+        UTF8ToUTF16("popup-source"), GURL(), id_with_profile,
+        message_center::RichNotificationData(), NULL);
+
+    return blocker()->ShouldShowNotificationAsPopup(notification);
   }
 
   bool ShouldShowNotification(
@@ -127,7 +133,14 @@ class MultiUserNotificationBlockerChromeOSTest
       const std::string profile_id) {
     message_center::NotifierId id_with_profile = notifier_id;
     id_with_profile.profile_id = profile_id;
-    return blocker()->ShouldShowNotification(id_with_profile);
+
+    message_center::Notification notification(
+        message_center::NOTIFICATION_TYPE_SIMPLE, "notification-id",
+        UTF8ToUTF16("notification-title"), UTF8ToUTF16("notification-message"),
+        gfx::Image(), UTF8ToUTF16("notification-source"), GURL(),
+        id_with_profile, message_center::RichNotificationData(), NULL);
+
+    return blocker()->ShouldShowNotification(notification);
   }
 
   aura::Window* CreateWindowForProfile(const std::string& name) {
@@ -141,8 +154,6 @@ class MultiUserNotificationBlockerChromeOSTest
   int state_changed_count_;
   TestingProfileManager testing_profile_manager_;
   int window_id_;
-
-  user_manager::FakeUserManager* fake_user_manager_;  // Not owned.
 
   chromeos::ScopedUserManagerEnabler user_manager_enabler_;
 

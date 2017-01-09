@@ -4,6 +4,8 @@
 
 #include "google_apis/gcm/engine/fake_connection_handler.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "google_apis/gcm/base/mcs_util.h"
 #include "net/socket/stream_socket.h"
@@ -14,13 +16,14 @@ namespace gcm {
 namespace {
 
 // Build a basic login response.
-scoped_ptr<google::protobuf::MessageLite> BuildLoginResponse(bool fail_login) {
-  scoped_ptr<mcs_proto::LoginResponse> login_response(
+std::unique_ptr<google::protobuf::MessageLite> BuildLoginResponse(
+    bool fail_login) {
+  std::unique_ptr<mcs_proto::LoginResponse> login_response(
       new mcs_proto::LoginResponse());
   login_response->set_id("id");
   if (fail_login)
     login_response->mutable_error()->set_code(1);
-  return login_response.Pass();
+  return std::move(login_response);
 }
 
 }  // namespace

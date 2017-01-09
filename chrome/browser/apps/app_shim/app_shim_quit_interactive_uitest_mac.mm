@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "apps/switches.h"
+#include "base/macros.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "chrome/browser/apps/app_shim/app_shim_host_manager_mac.h"
 #include "chrome/browser/apps/app_shim/extension_app_shim_handler_mac.h"
@@ -100,7 +101,7 @@ class AppShimQuitTest : public PlatformAppBrowserTest {
   base::FilePath app_path_;
   ExtensionAppShimHandler* handler_;
   std::string extension_id_;
-  scoped_ptr<FakeHost> host_;
+  std::unique_ptr<FakeHost> host_;
 
   DISALLOW_COPY_AND_ASSIGN(AppShimQuitTest);
 };

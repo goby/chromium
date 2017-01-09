@@ -7,13 +7,20 @@
 #include "base/android/jni_string.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/time/time.h"
 #include "chrome/browser/android/shortcut_info.h"
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/browser_process.h"
-#include "components/rappor/rappor_utils.h"
+#include "chrome/browser/engagement/site_engagement_service.h"
+#include "chrome/browser/prefs/pref_metrics_service.h"
+#include "chrome/browser/profiles/profile.h"
+#include "components/rappor/public/rappor_utils.h"
+#include "components/rappor/rappor_service_impl.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/LaunchMetrics_jni.h"
 #include "url/gurl.h"
+
+using base::android::JavaParamRef;
 
 namespace metrics {
 
@@ -45,6 +52,12 @@ static void RecordLaunch(JNIEnv* env,
         web_contents, url, url.spec(),
         AppBannerSettingsHelper::APP_BANNER_EVENT_DID_ADD_TO_HOMESCREEN,
         base::Time::Now());
+
+    // Tell the Site Engagement Service about this launch as sites recently
+    // launched from a shortcut receive a boost to their engagement.
+    SiteEngagementService* service = SiteEngagementService::Get(
+        Profile::FromBrowserContext(web_contents->GetBrowserContext()));
+    service->SetLastShortcutLaunchTime(url);
   }
 
   std::string rappor_metric_source;
@@ -75,6 +88,19 @@ static void RecordLaunch(JNIEnv* env,
 
   rappor::SampleDomainAndRegistryFromGURL(g_browser_process->rappor_service(),
                                           rappor_metric_action, url);
+}
+
+static void RecordHomePageLaunchMetrics(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& caller,
+    jboolean show_home_button,
+    jboolean homepage_is_ntp,
+    const JavaParamRef<jstring>& jhomepage_url) {
+  GURL homepage_url(base::android::ConvertJavaStringToUTF8(env, jhomepage_url));
+  PrefMetricsService::RecordHomePageLaunchMetrics(
+      show_home_button,
+      homepage_is_ntp,
+      homepage_url);
 }
 
 };  // namespace metrics

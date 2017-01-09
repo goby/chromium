@@ -4,13 +4,13 @@
 
 #include "chrome/browser/chromeos/file_system_provider/scoped_file_opener.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/files/file.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/file_system_provider/fake_provided_file_system.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"

@@ -4,14 +4,19 @@
 
 #include "ui/gfx/harfbuzz_font_skia.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
 #include <map>
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkTypeface.h"
 #include "ui/gfx/render_text.h"
+#include "ui/gfx/skia_util.h"
 
 namespace gfx {
 
@@ -61,14 +66,14 @@ void GetGlyphWidthAndExtents(SkPaint* paint,
 
   paint->getTextWidths(&glyph, sizeof(glyph), &sk_width, &sk_bounds);
   if (width)
-    *width = SkScalarToFixed(sk_width);
+    *width = SkiaScalarToHarfBuzzUnits(sk_width);
   if (extents) {
     // Invert y-axis because Skia is y-grows-down but we set up HarfBuzz to be
     // y-grows-up.
-    extents->x_bearing = SkScalarToFixed(sk_bounds.fLeft);
-    extents->y_bearing = SkScalarToFixed(-sk_bounds.fTop);
-    extents->width = SkScalarToFixed(sk_bounds.width());
-    extents->height = SkScalarToFixed(-sk_bounds.height());
+    extents->x_bearing = SkiaScalarToHarfBuzzUnits(sk_bounds.fLeft);
+    extents->y_bearing = SkiaScalarToHarfBuzzUnits(-sk_bounds.fTop);
+    extents->width = SkiaScalarToHarfBuzzUnits(sk_bounds.width());
+    extents->height = SkiaScalarToHarfBuzzUnits(-sk_bounds.height());
   }
 }
 
@@ -128,7 +133,7 @@ hb_position_t GetGlyphKerning(FontData* font_data,
 
   SkScalar upm = SkIntToScalar(typeface->getUnitsPerEm());
   SkScalar size = font_data->paint_.getTextSize();
-  return SkScalarToFixed(
+  return SkiaScalarToHarfBuzzUnits(
       SkScalarMulDiv(SkIntToScalar(kerning_adjustments[0]), size, upm));
 }
 
@@ -211,7 +216,7 @@ hb_blob_t* GetFontTable(hb_face_t* face, hb_tag_t tag, void* user_data) {
   if (!table_size)
     return 0;
 
-  scoped_ptr<char[]> buffer(new char[table_size]);
+  std::unique_ptr<char[]> buffer(new char[table_size]);
   if (!buffer)
     return 0;
   size_t actual_size = typeface->getTableData(tag, 0, table_size, buffer.get());
@@ -255,7 +260,7 @@ class HarfBuzzFace {
 }  // namespace
 
 // Creates a HarfBuzz font from the given Skia face and text size.
-hb_font_t* CreateHarfBuzzFont(SkTypeface* skia_face,
+hb_font_t* CreateHarfBuzzFont(sk_sp<SkTypeface> skia_face,
                               SkScalar text_size,
                               const FontRenderParams& params,
                               bool subpixel_rendering_suppressed) {
@@ -264,13 +269,13 @@ hb_font_t* CreateHarfBuzzFont(SkTypeface* skia_face,
 
   FaceCache* face_cache = &face_caches[skia_face->uniqueID()];
   if (face_cache->first.get() == NULL)
-    face_cache->first.Init(skia_face);
+    face_cache->first.Init(skia_face.get());
 
   hb_font_t* harfbuzz_font = hb_font_create(face_cache->first.get());
-  const int scale = SkScalarToFixed(text_size);
+  const int scale = SkiaScalarToHarfBuzzUnits(text_size);
   hb_font_set_scale(harfbuzz_font, scale, scale);
   FontData* hb_font_data = new FontData(&face_cache->second);
-  hb_font_data->paint_.setTypeface(skia_face);
+  hb_font_data->paint_.setTypeface(std::move(skia_face));
   hb_font_data->paint_.setTextSize(text_size);
   // TODO(ckocagil): Do we need to update these params later?
   internal::ApplyRenderParams(params, subpixel_rendering_suppressed,

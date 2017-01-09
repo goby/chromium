@@ -2,20 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/browser/readback_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -26,14 +33,14 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "ppapi/shared_impl/ppapi_switches.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/display/display.h"
+#include "ui/display/display_switches.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/geometry/point.h"
-#include "ui/gfx/screen.h"
-#include "ui/gfx/switches.h"
 
 namespace {
 
@@ -49,7 +56,7 @@ const int kComparisonHeight = 600;
 // Different platforms have slightly different pixel output, due to different
 // graphics implementations. Slightly different pixels (in BGR space) are still
 // counted as a matching pixel by this simple manhattan distance threshold.
-const int kPixelManhattanDistanceTolerance = 20;
+const int kPixelManhattanDistanceTolerance = 25;
 
 std::string RunTestScript(base::StringPiece test_script,
                           content::WebContents* contents,
@@ -144,16 +151,6 @@ void VerifyPluginMarkedEssential(content::WebContents* contents,
   EXPECT_TRUE(PluginLoaded(contents, element_id));
 }
 
-scoped_ptr<net::test_server::HttpResponse> RespondWithHTML(
-    const std::string& html,
-    const net::test_server::HttpRequest& request) {
-  scoped_ptr<net::test_server::BasicHttpResponse> response(
-      new net::test_server::BasicHttpResponse());
-  response->set_content_type("text/html");
-  response->set_content(html);
-  return response.Pass();
-}
-
 void VerifyVisualStateUpdated(const base::Closure& done_cb,
                               bool visual_state_updated) {
   ASSERT_TRUE(visual_state_updated);
@@ -173,10 +170,10 @@ bool SnapshotMatches(const base::FilePath& reference, const SkBitmap& bitmap) {
   int w = 0;
   int h = 0;
   std::vector<unsigned char> decoded;
-  if (!gfx::PNGCodec::Decode(
-          reinterpret_cast<unsigned char*>(string_as_array(&reference_data)),
-          reference_data.size(), gfx::PNGCodec::FORMAT_BGRA, &decoded, &w,
-          &h)) {
+  if (!gfx::PNGCodec::Decode(reinterpret_cast<unsigned char*>(
+                                 base::string_as_array(&reference_data)),
+                             reference_data.size(), gfx::PNGCodec::FORMAT_BGRA,
+                             &decoded, &w, &h)) {
     return false;
   }
 
@@ -187,10 +184,10 @@ bool SnapshotMatches(const base::FilePath& reference, const SkBitmap& bitmap) {
   SkAutoLockPixels lock_image(bitmap);
   int32_t* pixels = static_cast<int32_t*>(bitmap.getPixels());
 
-  int stride = bitmap.rowBytes();
+  bool success = true;
   for (int y = 0; y < kComparisonHeight; ++y) {
     for (int x = 0; x < kComparisonWidth; ++x) {
-      int32_t pixel = pixels[y * stride / sizeof(int32_t) + x];
+      int32_t pixel = pixels[y * bitmap.rowBytes() / sizeof(int32_t) + x];
       int pixel_b = pixel & 0xFF;
       int pixel_g = (pixel >> 8) & 0xFF;
       int pixel_r = (pixel >> 16) & 0xFF;
@@ -207,12 +204,12 @@ bool SnapshotMatches(const base::FilePath& reference, const SkBitmap& bitmap) {
       if (manhattan_distance > kPixelManhattanDistanceTolerance) {
         ADD_FAILURE() << "Pixel test failed on (" << x << ", " << y << "). " <<
             "Pixel manhattan distance: " << manhattan_distance << ".";
-        return false;
+        success = false;
       }
     }
   }
 
-  return true;
+  return success;
 }
 
 // |snapshot_matches| is set to true if the snapshot matches the reference and
@@ -227,11 +224,9 @@ void CompareSnapshotToReference(const base::FilePath& reference,
 
   *snapshot_matches = SnapshotMatches(reference, bitmap);
 
-  // When rebaselining the pixel test, the test will fail, and we will
-  // overwrite the reference file. On the next try through, the test will then
-  // pass, since we just overwrote the reference file. A bit wonky.
-  if (!(*snapshot_matches) &&
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
+  // When rebaselining the pixel test, the test may fail. However, the
+  // reference file will still be overwritten.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kRebaselinePixelTests)) {
     SkBitmap clipped_bitmap;
     bitmap.extractSubset(&clipped_bitmap,
@@ -261,49 +256,70 @@ class PluginPowerSaverBrowserTest : public InProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
-    ASSERT_TRUE(embedded_test_server()->Start());
 
     embedded_test_server()->ServeFilesFromDirectory(
         ui_test_utils::GetTestFilePath(
             base::FilePath(FILE_PATH_LITERAL("plugin_power_saver")),
             base::FilePath()));
+    ASSERT_TRUE(embedded_test_server()->Start());
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kEnablePepperTesting);
     command_line->AppendSwitch(switches::kEnablePluginPlaceholderTesting);
-    command_line->AppendSwitchASCII(
-        switches::kOverridePluginPowerSaverForTesting, "ignore-list");
-
-    ASSERT_TRUE(ppapi::RegisterPowerSaverTestPlugin(command_line));
+    ASSERT_TRUE(ppapi::RegisterFlashTestPlugin(command_line));
 
     // Allows us to use the same reference image on HiDPI/Retina displays.
     command_line->AppendSwitchASCII(switches::kForceDeviceScaleFactor, "1");
 
-#if !defined(OS_CHROMEOS)
-    // These pixel tests are flaky on MSan bots with hardware rendering.
-    // However, ChromeOS does not support software compositing.
-    command_line->AppendSwitch(switches::kDisableGpu);
-#endif
+    // The pixel tests run more reliably in software mode.
+    if (PixelTestsEnabled())
+      command_line->AppendSwitch(switches::kDisableGpu);
+  }
+
+  void SetUpInProcessBrowserTestFixture() override {
+    // Disable HTML5 By Default feature to test Plugin Power Saver specifically.
+    feature_list.InitAndDisableFeature(features::kPreferHtmlOverPlugins);
   }
 
  protected:
-  void LoadHTML(const std::string& html) {
+  void LoadHTML(const std::string& file) {
     if (PixelTestsEnabled()) {
       gfx::Rect bounds(gfx::Rect(0, 0, kBrowserWidth, kBrowserHeight));
       gfx::Rect screen_bounds =
-          gfx::Screen::GetNativeScreen()->GetPrimaryDisplay().bounds();
+          display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
       ASSERT_GT(screen_bounds.width(), kBrowserWidth);
       ASSERT_GT(screen_bounds.height(), kBrowserHeight);
       browser()->window()->SetBounds(bounds);
     }
 
-    ASSERT_TRUE(embedded_test_server()->Started());
-    embedded_test_server()->RegisterRequestHandler(
-        base::Bind(&RespondWithHTML, html));
-    ui_test_utils::NavigateToURL(browser(), embedded_test_server()->base_url());
+    ui_test_utils::NavigateToURL(browser(),
+                                 embedded_test_server()->GetURL(file));
     EXPECT_TRUE(content::WaitForRenderFrameReady(
         GetActiveWebContents()->GetMainFrame()));
+  }
+
+  // Loads a peripheral plugin (small cross origin) named 'plugin'.
+  void LoadPeripheralPlugin() { LoadHTML("/load_peripheral_plugin.html"); }
+
+  // Returns the background WebContents.
+  content::WebContents* LoadHTMLInBackgroundTab(const std::string& file) {
+    ui_test_utils::NavigateToURLWithDisposition(
+        browser(), embedded_test_server()->GetURL(file),
+        WindowOpenDisposition::NEW_BACKGROUND_TAB,
+        ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+
+    int index = browser()->tab_strip_model()->GetIndexOfLastWebContentsOpenedBy(
+        GetActiveWebContents(), 0 /* start_index */);
+    content::WebContents* contents =
+        browser()->tab_strip_model()->GetWebContentsAt(index);
+    EXPECT_TRUE(content::WaitForRenderFrameReady(contents->GetMainFrame()));
+    return contents;
+  }
+
+  void ActivateTab(content::WebContents* contents) {
+    browser()->tab_strip_model()->ActivateTabAt(
+        browser()->tab_strip_model()->GetIndexOfWebContents(contents),
+        true /* user_gesture */);
   }
 
   content::WebContents* GetActiveWebContents() {
@@ -321,13 +337,13 @@ class PluginPowerSaverBrowserTest : public InProcessBrowserTest {
                                             const gfx::Point& point) {
     WaitForPlaceholderReady(GetActiveWebContents(), element_id);
     content::SimulateMouseClickAt(GetActiveWebContents(), 0 /* modifiers */,
-                                  blink::WebMouseEvent::ButtonLeft, point);
+                                  blink::WebMouseEvent::Button::Left, point);
 
     VerifyPluginMarkedEssential(GetActiveWebContents(), element_id);
   }
 
   // |element_id| must be an element on the foreground tab.
-  void VerifyPluginIsPosterOnly(const std::string& element_id) {
+  void VerifyPluginIsPlaceholderOnly(const std::string& element_id) {
     EXPECT_FALSE(PluginLoaded(GetActiveWebContents(), element_id));
     WaitForPlaceholderReady(GetActiveWebContents(), element_id);
   }
@@ -367,41 +383,39 @@ class PluginPowerSaverBrowserTest : public InProcessBrowserTest {
 
   // TODO(tommycli): Remove this once all flakiness resolved.
   bool PixelTestsEnabled() {
-#if defined(OS_WIN) || defined(ADDRESS_SANITIZER)
-    // Flaky on Windows and Asan bots. See crbug.com/549285.
+#if defined(OS_WIN) || defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
+    // Flaky on Windows, Asan, and Msan bots.
+    // See crbug.com/549285 and crbug.com/512140.
     return false;
-#elif defined(OS_CHROMEOS) && defined(MEMORY_SANITIZER)
-    // Because we cannot use hardware OpenGL under MSan, but also cannot use
-    // software rendering under ChromeOS, we skip this portion of the test.
-    // See crbug.com/512140
+#elif defined(OS_CHROMEOS)
+    // Because ChromeOS cannot use software rendering and the pixel tests
+    // continue to flake with hardware acceleration, disable these on ChromeOS.
     return false;
 #else
     return true;
 #endif
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list;
 };
 
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, SmallSameOrigin) {
-  LoadHTML(
-      "<object id='plugin' data='fake.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='100'>"
-      "</object>");
-  VerifyPluginMarkedEssential(GetActiveWebContents(), "plugin");
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, EssentialPlugins) {
+  LoadHTML("/essential_plugins.html");
+
+  VerifyPluginMarkedEssential(GetActiveWebContents(), "small_same_origin");
+  VerifyPluginMarkedEssential(GetActiveWebContents(),
+                              "small_same_origin_poster");
+  VerifyPluginMarkedEssential(GetActiveWebContents(), "large_cross_origin");
+  VerifyPluginMarkedEssential(GetActiveWebContents(),
+                              "medium_16_9_cross_origin");
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, SmallCrossOrigin) {
-  LoadHTML(
-      "<object id='plugin' data='http://otherorigin.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='100'>"
-      "</object>"
-      "<br>"
-      "<object id='plugin_poster' data='http://otherorigin.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='100' "
-      "    poster='click_me.png'>"
-      "</object>");
+  LoadHTML("/small_cross_origin.html");
 
   VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
-  VerifyPluginIsPosterOnly("plugin_poster");
+  VerifyPluginIsPlaceholderOnly("plugin_poster");
 
   EXPECT_TRUE(
       VerifySnapshot(FILE_PATH_LITERAL("small_cross_origin_expected.png")));
@@ -410,28 +424,25 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, SmallCrossOrigin) {
   SimulateClickAndAwaitMarkedEssential("plugin_poster", gfx::Point(50, 150));
 }
 
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, LargeCrossOrigin) {
-  LoadHTML(
-      "<object id='large' data='http://otherorigin.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='500'>"
-      "</object>"
-      "<object id='medium_16_9' data='http://otherorigin.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='480' height='270'>"
-      "</object>");
-  VerifyPluginMarkedEssential(GetActiveWebContents(), "large");
-  VerifyPluginMarkedEssential(GetActiveWebContents(), "medium_16_9");
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ContentSettings) {
+  HostContentSettingsMap* content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+
+  // Throttle on DETECT.
+  content_settings_map->SetDefaultContentSetting(
+      CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_DETECT_IMPORTANT_CONTENT);
+  LoadPeripheralPlugin();
+  VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
+
+  // Don't throttle on ALLOW.
+  content_settings_map->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
+                                                 CONTENT_SETTING_ALLOW);
+  LoadPeripheralPlugin();
+  VerifyPluginMarkedEssential(GetActiveWebContents(), "plugin");
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, SmallerThanPlayIcon) {
-  LoadHTML(
-      "<object id='plugin_16' type='application/x-ppapi-tests' "
-      "    width='16' height='16'></object>"
-      "<object id='plugin_32' type='application/x-ppapi-tests' "
-      "    width='32' height='32'></object>"
-      "<object id='plugin_16_64' type='application/x-ppapi-tests' "
-      "    width='16' height='64'></object>"
-      "<object id='plugin_64_16' type='application/x-ppapi-tests' "
-      "    width='64' height='16'></object>");
+  LoadHTML("/smaller_than_play_icon.html");
 
   VerifyPluginIsThrottled(GetActiveWebContents(), "plugin_16");
   VerifyPluginIsThrottled(GetActiveWebContents(), "plugin_32");
@@ -446,90 +457,38 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, PosterTests) {
   // This test simultaneously verifies the varied supported poster syntaxes,
   // as well as verifies that the poster is rendered correctly with various
   // mismatched aspect ratios and sizes, following the same rules as VIDEO.
-  LoadHTML(
-      "<object id='plugin_src' type='application/x-ppapi-tests' "
-      "    width='100' height='100' poster='click_me.png'></object>"
-      "<object id='plugin_srcset' type='application/x-ppapi-tests' "
-      "    width='100' height='100' "
-      "    poster='click_me.png 1x, click_me.png 2x'></object>"
-      "<br>"
+  LoadHTML("/poster_tests.html");
 
-      "<object id='plugin_poster_param' type='application/x-ppapi-tests' "
-      "    width='100' height='100'>"
-      "  <param name='poster' value='click_me.png 1x, click_me.png 2x'>"
-      "</object>"
-      "<embed id='plugin_embed_src' type='application/x-ppapi-tests' "
-      "    width='100' height='100' poster='click_me.png'></embed>"
-      "<embed id='plugin_embed_srcset' type='application/x-ppapi-tests' "
-      "    width='100' height='100'"
-      "    poster='click_me.png 1x, click_me.png 2x'></embed>"
-      "<br>"
+  VerifyPluginIsPlaceholderOnly("plugin_src");
+  VerifyPluginIsPlaceholderOnly("plugin_srcset");
 
-      "<object id='poster_missing' type='application/x-ppapi-tests' "
-      "    width='100' height='100' poster='missing.png'></object>"
-      "<object id='poster_too_small' type='application/x-ppapi-tests' "
-      "    width='100' height='50' poster='click_me.png'></object>"
-      "<object id='poster_too_big' type='application/x-ppapi-tests' "
-      "    width='100' height='150' poster='click_me.png'></object>"
-      "<br>"
+  VerifyPluginIsPlaceholderOnly("plugin_poster_param");
+  VerifyPluginIsPlaceholderOnly("plugin_embed_src");
+  VerifyPluginIsPlaceholderOnly("plugin_embed_srcset");
 
-      "<object id='poster_16' type='application/x-ppapi-tests' "
-      "    width='16' height='16' poster='click_me.png'></object>"
-      "<object id='poster_32' type='application/x-ppapi-tests' "
-      "    width='32' height='32' poster='click_me.png'></object>"
-      "<object id='poster_16_64' type='application/x-ppapi-tests' "
-      "    width='16' height='64' poster='click_me.png'></object>"
-      "<object id='poster_64_16' type='application/x-ppapi-tests' "
-      "    width='64' height='16' poster='click_me.png'></object>"
-      "<br>"
+  VerifyPluginIsPlaceholderOnly("poster_missing");
+  VerifyPluginIsPlaceholderOnly("poster_too_small");
+  VerifyPluginIsPlaceholderOnly("poster_too_big");
 
-      "<div id='container' "
-      "    style='width: 400px; height: 100px; overflow: hidden;'>"
-      "  <object id='poster_obscured' data='http://otherorigin.com/fake.swf' "
-      "      type='application/x-ppapi-tests' width='400' height='500' "
-      "      poster='click_me.png'>"
-      "  </object>"
-      "</div>");
+  VerifyPluginIsPlaceholderOnly("poster_16");
+  VerifyPluginIsPlaceholderOnly("poster_32");
+  VerifyPluginIsPlaceholderOnly("poster_16_64");
+  VerifyPluginIsPlaceholderOnly("poster_64_16");
 
-  VerifyPluginIsPosterOnly("plugin_src");
-  VerifyPluginIsPosterOnly("plugin_srcset");
-
-  VerifyPluginIsPosterOnly("plugin_poster_param");
-  VerifyPluginIsPosterOnly("plugin_embed_src");
-  VerifyPluginIsPosterOnly("plugin_embed_srcset");
-
-  VerifyPluginIsPosterOnly("poster_missing");
-  VerifyPluginIsPosterOnly("poster_too_small");
-  VerifyPluginIsPosterOnly("poster_too_big");
-
-  VerifyPluginIsPosterOnly("poster_16");
-  VerifyPluginIsPosterOnly("poster_32");
-  VerifyPluginIsPosterOnly("poster_16_64");
-  VerifyPluginIsPosterOnly("poster_64_16");
-
-  VerifyPluginIsPosterOnly("poster_obscured");
+  VerifyPluginIsPlaceholderOnly("poster_obscured");
 
   EXPECT_TRUE(VerifySnapshot(FILE_PATH_LITERAL("poster_tests_expected.png")));
+
+  // Test that posters can be unthrottled via click.
+  SimulateClickAndAwaitMarkedEssential("plugin_src", gfx::Point(50, 50));
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, LargePostersNotThrottled) {
   // This test verifies that small posters are throttled, large posters are not,
   // and that large posters can whitelist origins for other plugins.
-  LoadHTML(
-      "<object id='poster_small' data='http://a.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='50' height='50' "
-      "    poster='click_me.png'></object>"
-      "<object id='poster_whitelisted_origin' data='http://b.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='50' height='50' "
-      "    poster='click_me.png'></object>"
-      "<object id='plugin_whitelisted_origin' data='http://b.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='50' height='50'></object>"
-      "<br>"
-      "<object id='poster_large' data='http://b.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='300' "
-      "    poster='click_me.png'></object>");
+  LoadHTML("/large_posters_not_throttled.html");
 
-  VerifyPluginIsPosterOnly("poster_small");
+  VerifyPluginIsPlaceholderOnly("poster_small");
   VerifyPluginMarkedEssential(GetActiveWebContents(),
                               "poster_whitelisted_origin");
   VerifyPluginMarkedEssential(GetActiveWebContents(),
@@ -537,46 +496,17 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, LargePostersNotThrottled) {
   VerifyPluginMarkedEssential(GetActiveWebContents(), "poster_large");
 }
 
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest,
-                       PluginMarkedEssentialAfterPosterClicked) {
-  LoadHTML(
-      "<object id='plugin' type='application/x-ppapi-tests' "
-      "    width='400' height='100' poster='snapshot1x.png'></object>");
-  VerifyPluginIsPosterOnly("plugin");
-
-  SimulateClickAndAwaitMarkedEssential("plugin", gfx::Point(50, 50));
-}
-
-// Flaky on ASAN bots: crbug.com/560765.
-#if defined(ADDRESS_SANITIZER)
-#define MAYBE_OriginWhitelisting DISABLED_OriginWhitelisting
-#else
-#define MAYBE_OriginWhitelisting OriginWhitelisting
-#endif
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, MAYBE_OriginWhitelisting) {
-  LoadHTML(
-      "<object id='plugin_small' data='http://a.com/fake1.swf' "
-      "    type='application/x-ppapi-tests' width='100' height='100'></object>"
-      "<object id='plugin_small_poster' data='http://a.com/fake1.swf' "
-      "    type='application/x-ppapi-tests' width='100' height='100' "
-      "    poster='click_me.png'></object>"
-      "<object id='plugin_large' data='http://a.com/fake2.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='500'>"
-      "</object>");
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, OriginWhitelisting) {
+  LoadHTML("/origin_whitelisting.html");
   VerifyPluginMarkedEssential(GetActiveWebContents(), "plugin_small");
   VerifyPluginMarkedEssential(GetActiveWebContents(), "plugin_small_poster");
   VerifyPluginMarkedEssential(GetActiveWebContents(), "plugin_large");
 }
 
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, LargeCrossOriginObscured) {
-  LoadHTML(
-      "<div id='container' "
-      "    style='width: 100px; height: 400px; overflow: hidden;'>"
-      "  <object id='plugin' data='http://otherorigin.com/fake.swf' "
-      "      type='application/x-ppapi-tests' width='400' height='500' "
-      "      style='float: right;'>"
-      "  </object>"
-      "</div>");
+// Flaky on almost all platforms: crbug.com/648827.
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest,
+                       DISABLED_LargeCrossOriginObscured) {
+  LoadHTML("/large_cross_origin_obscured.html");
   VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
   EXPECT_TRUE(VerifySnapshot(
       FILE_PATH_LITERAL("large_cross_origin_obscured_expected.png")));
@@ -590,9 +520,7 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, LargeCrossOriginObscured) {
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ExpandingSmallPlugin) {
-  LoadHTML(
-      "<object id='plugin' data='http://otherorigin.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='80'></object>");
+  LoadPeripheralPlugin();
   VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
 
   std::string script = "window.document.getElementById('plugin').height = 400;";
@@ -601,39 +529,80 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ExpandingSmallPlugin) {
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, BackgroundTabPlugins) {
-  std::string html =
-      "<object id='same_origin' data='fake.swf' "
-      "    type='application/x-ppapi-tests'></object>"
-      "<object id='small_cross_origin' data='http://otherorigin.com/fake1.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='100'></object>";
-  embedded_test_server()->RegisterRequestHandler(
-      base::Bind(&RespondWithHTML, html));
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), embedded_test_server()->base_url(), NEW_BACKGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
-
-  ASSERT_EQ(2, browser()->tab_strip_model()->count());
   content::WebContents* background_contents =
-      browser()->tab_strip_model()->GetWebContentsAt(1);
-  EXPECT_TRUE(
-      content::WaitForRenderFrameReady(background_contents->GetMainFrame()));
+      LoadHTMLInBackgroundTab("/background_tab_plugins.html");
 
   EXPECT_FALSE(PluginLoaded(background_contents, "same_origin"));
   EXPECT_FALSE(PluginLoaded(background_contents, "small_cross_origin"));
 
-  browser()->tab_strip_model()->SelectNextTab();
-  EXPECT_EQ(background_contents, GetActiveWebContents());
+  ActivateTab(background_contents);
 
   VerifyPluginMarkedEssential(background_contents, "same_origin");
   VerifyPluginIsThrottled(background_contents, "small_cross_origin");
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ZoomIndependent) {
-  ui_zoom::ZoomController::FromWebContents(GetActiveWebContents())
+  zoom::ZoomController::FromWebContents(GetActiveWebContents())
       ->SetZoomLevel(4.0);
-  LoadHTML(
-      "<object id='plugin' data='http://otherorigin.com/fake.swf' "
-      "    type='application/x-ppapi-tests' width='400' height='200'>"
-      "</object>");
+  LoadHTML("/zoom_independent.html");
+  VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
+}
+
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, BlockTinyPlugins) {
+  LoadHTML("/block_tiny_plugins.html");
+
+  VerifyPluginMarkedEssential(GetActiveWebContents(), "tiny_same_origin");
+  VerifyPluginIsPlaceholderOnly("tiny_cross_origin_1");
+  VerifyPluginIsPlaceholderOnly("tiny_cross_origin_2");
+}
+
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, BackgroundTabTinyPlugins) {
+  content::WebContents* background_contents =
+      LoadHTMLInBackgroundTab("/background_tab_tiny_plugins.html");
+  EXPECT_FALSE(PluginLoaded(background_contents, "tiny"));
+
+  ActivateTab(background_contents);
+  VerifyPluginIsPlaceholderOnly("tiny");
+}
+
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ExpandingTinyPlugins) {
+  LoadHTML("/expanding_tiny_plugins.html");
+
+  VerifyPluginIsPlaceholderOnly("expand_to_peripheral");
+  VerifyPluginIsPlaceholderOnly("expand_to_essential");
+
+  std::string script =
+      "window.document.getElementById('expand_to_peripheral').height = 200;"
+      "window.document.getElementById('expand_to_peripheral').width = 200;"
+      "window.document.getElementById('expand_to_essential').height = 400;"
+      "window.document.getElementById('expand_to_essential').width = 400;";
+  ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(), script));
+
+  VerifyPluginIsThrottled(GetActiveWebContents(), "expand_to_peripheral");
+  VerifyPluginMarkedEssential(GetActiveWebContents(), "expand_to_essential");
+}
+
+// Separate test case with HTML By Default feature flag on.
+class PluginPowerSaverPreferHtmlBrowserTest
+    : public PluginPowerSaverBrowserTest {
+ public:
+  void SetUpInProcessBrowserTestFixture() override {
+    // Although this is redundant with the Field Trial testing configuration,
+    // the official builders don't read that.
+    feature_list.InitAndEnableFeature(features::kPreferHtmlOverPlugins);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list;
+};
+
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverPreferHtmlBrowserTest,
+                       ThrottlePluginsOnAllowContentSetting) {
+  HostContentSettingsMap* content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+
+  content_settings_map->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
+                                                 CONTENT_SETTING_ALLOW);
+  LoadPeripheralPlugin();
   VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
 }

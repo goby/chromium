@@ -5,6 +5,7 @@
 #include "content/browser/compositor/image_transport_factory.h"
 
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "cc/output/context_provider.h"
 #include "content/browser/compositor/owned_mailbox.h"
 #include "content/public/browser/gpu_data_manager.h"
@@ -19,7 +20,7 @@ namespace {
 
 typedef ContentBrowserTest ImageTransportFactoryBrowserTest;
 
-class MockImageTransportFactoryObserver : public ImageTransportFactoryObserver {
+class MockContextFactoryObserver : public ui::ContextFactoryObserver {
  public:
   MOCK_METHOD0(OnLostResources, void());
 };
@@ -45,8 +46,8 @@ IN_PROC_BROWSER_TEST_F(ImageTransportFactoryBrowserTest,
       new OwnedMailbox(factory->GetGLHelper());
   EXPECT_FALSE(mailbox->mailbox().IsZero());
 
-  MockImageTransportFactoryObserver observer;
-  factory->AddObserver(&observer);
+  MockContextFactoryObserver observer;
+  factory->GetContextFactory()->AddObserver(&observer);
 
   base::RunLoop run_loop;
   EXPECT_CALL(observer, OnLostResources())
@@ -65,7 +66,7 @@ IN_PROC_BROWSER_TEST_F(ImageTransportFactoryBrowserTest,
   run_loop.Run();
   EXPECT_TRUE(mailbox->mailbox().IsZero());
 
-  factory->RemoveObserver(&observer);
+  factory->GetContextFactory()->RemoveObserver(&observer);
 }
 
 class ImageTransportFactoryTearDownBrowserTest : public ContentBrowserTest {
@@ -100,7 +101,7 @@ IN_PROC_BROWSER_TEST_F(ImageTransportFactoryTearDownBrowserTest,
   if (!GpuDataManager::GetInstance()->CanUseGpuBrowserCompositor())
     return;
   ImageTransportFactory* factory = ImageTransportFactory::GetInstance();
-  GLHelper* helper = factory->GetGLHelper();
+  display_compositor::GLHelper* helper = factory->GetGLHelper();
   ASSERT_TRUE(helper);
   mailbox_ = new OwnedMailbox(helper);
   EXPECT_FALSE(mailbox_->mailbox().IsZero());

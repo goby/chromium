@@ -4,10 +4,13 @@
 
 #include "components/drive/file_system_core_util.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
@@ -15,16 +18,15 @@
 #include "base/i18n/icu_string_conversions.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/drive/drive.pb.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/job_list.h"
+#include "components/prefs/pref_service.h"
 
 namespace drive {
 namespace util {
@@ -33,8 +35,8 @@ namespace {
 
 std::string ReadStringFromGDocFile(const base::FilePath& file_path,
                                    const std::string& key) {
-  const int64 kMaxGDocSize = 4096;
-  int64 file_size = 0;
+  const int64_t kMaxGDocSize = 4096;
+  int64_t file_size = 0;
   if (!base::GetFileSize(file_path, &file_size) || file_size > kMaxGDocSize) {
     LOG(WARNING) << "File too large to be a GDoc file " << file_path.value();
     return std::string();
@@ -42,7 +44,8 @@ std::string ReadStringFromGDocFile(const base::FilePath& file_path,
 
   JSONFileValueDeserializer reader(file_path);
   std::string error_message;
-  scoped_ptr<base::Value> root_value(reader.Deserialize(NULL, &error_message));
+  std::unique_ptr<base::Value> root_value(
+      reader.Deserialize(NULL, &error_message));
   if (!root_value) {
     LOG(WARNING) << "Failed to parse " << file_path.value() << " as JSON."
                  << " error = " << error_message;

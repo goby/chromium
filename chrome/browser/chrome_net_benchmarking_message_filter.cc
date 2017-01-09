@@ -4,11 +4,12 @@
 
 #include "chrome/browser/chrome_net_benchmarking_message_filter.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/net/predictor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/benchmarking_messages.h"
@@ -59,6 +60,13 @@ bool ChromeNetBenchmarkingMessageFilter::OnMessageReceived(
   return handled;
 }
 
+void ChromeNetBenchmarkingMessageFilter::OverrideThreadForMessage(
+    const IPC::Message& message,
+    content::BrowserThread::ID* thread) {
+  if (message.type() == ChromeViewHostMsg_ClearPredictorCache::ID)
+    *thread = content::BrowserThread::UI;
+}
+
 void ChromeNetBenchmarkingMessageFilter::OnClearCache(IPC::Message* reply_msg) {
   // This function is disabled unless the user has enabled
   // benchmarking extensions.
@@ -72,7 +80,7 @@ void ChromeNetBenchmarkingMessageFilter::OnClearCache(IPC::Message* reply_msg) {
       http_transaction_factory()->GetCache()->GetCurrentBackend();
   if (backend) {
     net::CompletionCallback callback =
-        base::Bind(&ClearCacheCallback, make_scoped_refptr(this), reply_msg);
+        base::Bind(&ClearCacheCallback, base::RetainedRef(this), reply_msg);
     rv = backend->DoomAllEntries(callback);
     if (rv == net::ERR_IO_PENDING) {
       // The callback will send the reply.
@@ -125,13 +133,16 @@ void ChromeNetBenchmarkingMessageFilter::OnSetCacheMode(bool enabled) {
 void ChromeNetBenchmarkingMessageFilter::OnClearPredictorCache() {
   // This function is disabled unless the user has enabled
   // benchmarking extensions.
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!CheckBenchmarkingEnabled()) {
     NOTREACHED() << "Received unexpected benchmarking IPC";
     return;
   }
+  // TODO(623967): Ensure that the profile or predictor are not accessed after
+  // they have been shut down.
   chrome_browser_net::Predictor* predictor = profile_->GetNetworkPredictor();
   if (predictor)
-    predictor->DiscardAllResults();
+    predictor->DiscardAllResultsAndClearPrefsOnUIThread();
 }
 
 bool ChromeNetBenchmarkingMessageFilter::CheckBenchmarkingEnabled() const {

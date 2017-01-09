@@ -9,14 +9,8 @@
 
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 
-namespace base {
-class TimeDelta;
-}
-
 namespace net {
-class ProxyConfig;
 class ProxyServer;
-class URLRequest;
 }
 
 namespace data_reduction_proxy {
@@ -26,12 +20,9 @@ class TestDataReductionProxyParams : public DataReductionProxyParams {
   // Used to emulate having constants defined by the preprocessor.
   enum HasNames {
     HAS_NOTHING = 0x0,
-    HAS_DEV_ORIGIN = 0x1,
     HAS_ORIGIN = 0x2,
     HAS_FALLBACK_ORIGIN = 0x4,
-    HAS_SSL_ORIGIN = 0x08,
     HAS_SECURE_PROXY_CHECK_URL = 0x40,
-    HAS_DEV_FALLBACK_ORIGIN = 0x80,
     HAS_EVERYTHING = 0xff,
   };
 
@@ -42,28 +33,18 @@ class TestDataReductionProxyParams : public DataReductionProxyParams {
   void SetProxiesForHttp(const std::vector<net::ProxyServer>& proxies);
 
   // Test values to replace the values specified in preprocessor defines.
-  static std::string DefaultDevOrigin();
-  static std::string DefaultDevFallbackOrigin();
   static std::string DefaultOrigin();
   static std::string DefaultFallbackOrigin();
-  static std::string DefaultSSLOrigin();
   static std::string DefaultSecureProxyCheckURL();
 
   static std::string FlagOrigin();
   static std::string FlagFallbackOrigin();
-  static std::string FlagSSLOrigin();
   static std::string FlagSecureProxyCheckURL();
 
  protected:
-  std::string GetDefaultDevOrigin() const override;
-
-  std::string GetDefaultDevFallbackOrigin() const override;
-
   std::string GetDefaultOrigin() const override;
 
   std::string GetDefaultFallbackOrigin() const override;
-
-  std::string GetDefaultSSLOrigin() const override;
 
   std::string GetDefaultSecureProxyCheckURL() const override;
 

@@ -13,12 +13,15 @@ import android.test.suitebuilder.annotation.SmallTest;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.metrics.WebappUma;
 import org.chromium.chrome.browser.tab.TabTestUtils;
 import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
+
+import java.util.concurrent.Callable;
 
 /**
  * Tests for splash screens with EXTRA_THEME_COLOR specified in the Intent.
@@ -35,7 +38,7 @@ public class WebappSplashScreenThemeColorTest extends WebappActivityTestBase {
         Intent intent = super.createIntent();
         intent.putExtra(ShortcutHelper.EXTRA_URL, "http://localhost");
         // This is setting Color.Magenta with 50% opacity.
-        intent.putExtra(ShortcutHelper.EXTRA_THEME_COLOR, (long) Color.argb(128, 255, 0, 255));
+        intent.putExtra(ShortcutHelper.EXTRA_THEME_COLOR, 0x80FF00FFL);
         return intent;
     }
 
@@ -52,6 +55,7 @@ public class WebappSplashScreenThemeColorTest extends WebappActivityTestBase {
     @SmallTest
     @Feature({"Webapps"})
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    @RetryOnFailure
     public void testThemeColorNotUsedIfPagesHasOne() throws InterruptedException {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return;
 
@@ -63,13 +67,13 @@ public class WebappSplashScreenThemeColorTest extends WebappActivityTestBase {
         });
 
         // Waits for theme-color to change so the test doesn't rely on system timing.
-        CriteriaHelper.pollForCriteria(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return getActivity().getWindow().getStatusBarColor()
-                        == ColorUtils.getDarkenedColorForStatusBar(Color.GREEN);
-            }
-        });
+        CriteriaHelper.pollInstrumentationThread(Criteria.equals(
+                ColorUtils.getDarkenedColorForStatusBar(Color.GREEN), new Callable<Integer>() {
+                    @Override
+                    public Integer call() {
+                        return getActivity().getWindow().getStatusBarColor();
+                    }
+                }));
     }
 
     @SmallTest

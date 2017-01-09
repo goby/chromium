@@ -4,12 +4,12 @@
 
 #include "chrome/installer/util/uninstall_metrics.h"
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/installer/util/util_constants.h"
@@ -78,12 +78,12 @@ bool ExtractUninstallMetricsFromFile(const base::FilePath& file_path,
   JSONFileValueDeserializer json_deserializer(file_path);
 
   std::string json_error_string;
-  scoped_ptr<base::Value> root = json_deserializer.Deserialize(NULL, NULL);
+  std::unique_ptr<base::Value> root = json_deserializer.Deserialize(NULL, NULL);
   if (!root.get())
     return false;
 
   // Preferences should always have a dictionary root.
-  if (!root->IsType(base::Value::TYPE_DICTIONARY))
+  if (!root->IsType(base::Value::Type::DICTIONARY))
     return false;
 
   return ExtractUninstallMetrics(

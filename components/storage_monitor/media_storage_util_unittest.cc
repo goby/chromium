@@ -52,12 +52,12 @@ class MediaStorageUtilTest : public testing::Test {
  protected:
   // Create mount point for the test device.
   base::FilePath CreateMountPoint(bool create_dcim_dir) {
-    base::FilePath path(scoped_temp_dir_.path());
+    base::FilePath path(scoped_temp_dir_.GetPath());
     if (create_dcim_dir)
       path = path.Append(kDCIMDirectoryName);
     if (!base::CreateDirectory(path))
       return base::FilePath();
-    return scoped_temp_dir_.path();
+    return scoped_temp_dir_.GetPath();
   }
 
   void SetUp() override {
@@ -79,7 +79,7 @@ class MediaStorageUtilTest : public testing::Test {
     BrowserThread::PostTask(BrowserThread::FILE,
                             FROM_HERE,
                             base::Bind(&PostQuitToUIThread));
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
  private:
@@ -129,7 +129,8 @@ TEST_F(MediaStorageUtilTest, DetectDeviceFiltered) {
   MediaStorageUtil::DeviceIdSet devices;
   devices.insert(kImageCaptureDeviceId);
 
-  base::WaitableEvent event(true, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   base::Closure signal_event =
       base::Bind(&base::WaitableEvent::Signal, base::Unretained(&event));
 

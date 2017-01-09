@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "crypto/nss_util.h"
-#include "crypto/nss_util_internal.h"
 
 #include <nss.h>
 #include <pk11pub.h>
@@ -12,6 +11,14 @@
 #include <prinit.h>
 #include <prtime.h>
 #include <secmod.h>
+
+#include <memory>
+#include <utility>
+
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "crypto/nss_util_internal.h"
 
 #if defined(OS_OPENBSD)
 #include <sys/mount.h>
@@ -35,24 +42,16 @@
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/ptr_util.h"
 #include "base/native_library.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/worker_pool.h"
 #include "build/build_config.h"
-
-// USE_NSS_CERTS means NSS is used for certificates and platform integration.
-// This requires additional support to manage the platform certificate and key
-// stores.
-#if defined(USE_NSS_CERTS)
-#include "base/synchronization/lock.h"
 #include "crypto/nss_crypto_module_delegate.h"
-#endif  // defined(USE_NSS_CERTS)
 
 namespace crypto {
 
@@ -73,7 +72,7 @@ static const base::FilePath::CharType kReadOnlyCertDB[] =
 std::string GetNSSErrorMessage() {
   std::string result;
   if (PR_GetErrorTextLength()) {
-    scoped_ptr<char[]> error_text(new char[PR_GetErrorTextLength() + 1]);
+    std::unique_ptr<char[]> error_text(new char[PR_GetErrorTextLength() + 1]);
     PRInt32 copied = PR_GetErrorText(error_text.get());
     result = std::string(error_text.get(), copied);
   } else {
@@ -82,7 +81,6 @@ std::string GetNSSErrorMessage() {
   return result;
 }
 
-#if defined(USE_NSS_CERTS)
 #if !defined(OS_CHROMEOS)
 base::FilePath GetDefaultConfigDirectory() {
   base::FilePath dir;
@@ -128,13 +126,13 @@ char* PKCS11PasswordFunc(PK11SlotInfo* slot, PRBool retry, void* arg) {
                                                      retry != PR_FALSE,
                                                      &cancelled);
     if (cancelled)
-      return NULL;
+      return nullptr;
     char* result = PORT_Strdup(password.c_str());
     password.replace(0, password.size(), password.size(), 0);
     return result;
   }
-  DLOG(ERROR) << "PK11 password requested with NULL arg";
-  return NULL;
+  DLOG(ERROR) << "PK11 password requested with nullptr arg";
+  return nullptr;
 }
 
 // NSS creates a local cache of the sqlite database if it detects that the
@@ -143,10 +141,6 @@ char* PKCS11PasswordFunc(PK11SlotInfo* slot, PRBool retry, void* arg) {
 // (NSS bug https://bugzilla.mozilla.org/show_bug.cgi?id=578561).  So we set
 // the NSS environment variable NSS_SDB_USE_CACHE to "yes" to override NSS's
 // detection when database_dir is on NFS.  See http://crbug.com/48585.
-//
-// TODO(wtc): port this function to other USE_NSS_CERTS platforms.  It is
-// defined only for OS_LINUX and OS_OPENBSD simply because the statfs structure
-// is OS-specific.
 //
 // Because this function sets an environment variable it must be run before we
 // go multi-threaded.
@@ -165,14 +159,12 @@ void UseLocalCacheOfNSSDatabaseIfNFS(const base::FilePath& database_dir) {
 #endif
 
   if (db_on_nfs) {
-    scoped_ptr<base::Environment> env(base::Environment::Create());
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
     static const char kUseCacheEnvVar[] = "NSS_SDB_USE_CACHE";
     if (!env->HasVar(kUseCacheEnvVar))
       env->SetVar(kUseCacheEnvVar, "yes");
   }
 }
-
-#endif  // defined(USE_NSS_CERTS)
 
 // A singleton to initialize/deinitialize NSPR.
 // Separate from the NSS singleton because we initialize NSPR on the UI thread.
@@ -215,7 +207,7 @@ void CrashOnNSSInitFailure() {
 class ChromeOSUserData {
  public:
   explicit ChromeOSUserData(ScopedPK11Slot public_slot)
-      : public_slot_(public_slot.Pass()),
+      : public_slot_(std::move(public_slot)),
         private_slot_initialization_started_(false) {}
   ~ChromeOSUserData() {
     if (public_slot_) {
@@ -226,8 +218,8 @@ class ChromeOSUserData {
   }
 
   ScopedPK11Slot GetPublicSlot() {
-    return ScopedPK11Slot(
-        public_slot_ ? PK11_ReferenceSlot(public_slot_.get()) : NULL);
+    return ScopedPK11Slot(public_slot_ ? PK11_ReferenceSlot(public_slot_.get())
+                                       : nullptr);
   }
 
   ScopedPK11Slot GetPrivateSlot(
@@ -241,7 +233,7 @@ class ChromeOSUserData {
 
   void SetPrivateSlot(ScopedPK11Slot private_slot) {
     DCHECK(!private_slot_);
-    private_slot_ = private_slot.Pass();
+    private_slot_ = std::move(private_slot);
 
     SlotReadyCallbackList callback_list;
     callback_list.swap(tpm_ready_callback_list_);
@@ -354,23 +346,24 @@ class NSSInitSingleton {
     DCHECK(!initializing_tpm_token_);
     // If EnableTPMTokenForNSS hasn't been called, return false.
     if (!tpm_token_enabled_for_nss_) {
-      base::MessageLoop::current()->PostTask(FROM_HERE,
-                                             base::Bind(callback, false));
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::Bind(callback, false));
       return;
     }
 
     // If everything is already initialized, then return true.
     // Note that only |tpm_slot_| is checked, since |chaps_module_| could be
-    // NULL in tests while |tpm_slot_| has been set to the test DB.
+    // nullptr in tests while |tpm_slot_| has been set to the test DB.
     if (tpm_slot_) {
-      base::MessageLoop::current()->PostTask(FROM_HERE,
-                                             base::Bind(callback, true));
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                    base::Bind(callback, true));
       return;
     }
 
     // Note that a reference is not taken to chaps_module_. This is safe since
     // NSSInitSingleton is Leaky, so the reference it holds is never released.
-    scoped_ptr<TPMModuleAndSlot> tpm_args(new TPMModuleAndSlot(chaps_module_));
+    std::unique_ptr<TPMModuleAndSlot> tpm_args(
+        new TPMModuleAndSlot(chaps_module_));
     TPMModuleAndSlot* tpm_args_ptr = tpm_args.get();
     if (base::WorkerPool::PostTaskAndReply(
             FROM_HERE,
@@ -385,8 +378,8 @@ class NSSInitSingleton {
             )) {
       initializing_tpm_token_ = true;
     } else {
-      base::MessageLoop::current()->PostTask(FROM_HERE,
-                                             base::Bind(callback, false));
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::Bind(callback, false));
     }
   }
 
@@ -416,13 +409,13 @@ class NSSInitSingleton {
 
   void OnInitializedTPMTokenAndSystemSlot(
       const base::Callback<void(bool)>& callback,
-      scoped_ptr<TPMModuleAndSlot> tpm_args) {
+      std::unique_ptr<TPMModuleAndSlot> tpm_args) {
     DCHECK(thread_checker_.CalledOnValidThread());
     DVLOG(2) << "Loaded chaps: " << !!tpm_args->chaps_module
              << ", got tpm slot: " << !!tpm_args->tpm_slot;
 
     chaps_module_ = tpm_args->chaps_module;
-    tpm_slot_ = tpm_args->tpm_slot.Pass();
+    tpm_slot_ = std::move(tpm_args->tpm_slot);
     if (!chaps_module_ && test_system_slot_) {
       // chromeos_unittests try to test the TPM initialization process. If we
       // have a test DB open, pretend that it is the TPM slot.
@@ -500,7 +493,7 @@ class NSSInitSingleton {
         "%s %s", kUserNSSDatabaseName, username_hash.c_str());
     ScopedPK11Slot public_slot(OpenPersistentNSSDBForPath(db_name, path));
     chromeos_user_map_[username_hash] =
-        new ChromeOSUserData(public_slot.Pass());
+        base::MakeUnique<ChromeOSUserData>(std::move(public_slot));
     return true;
   }
 
@@ -532,7 +525,8 @@ class NSSInitSingleton {
 
     // Note that a reference is not taken to chaps_module_. This is safe since
     // NSSInitSingleton is Leaky, so the reference it holds is never released.
-    scoped_ptr<TPMModuleAndSlot> tpm_args(new TPMModuleAndSlot(chaps_module_));
+    std::unique_ptr<TPMModuleAndSlot> tpm_args(
+        new TPMModuleAndSlot(chaps_module_));
     TPMModuleAndSlot* tpm_args_ptr = tpm_args.get();
     base::WorkerPool::PostTaskAndReply(
         FROM_HERE,
@@ -547,13 +541,14 @@ class NSSInitSingleton {
         );
   }
 
-  void OnInitializedTPMForChromeOSUser(const std::string& username_hash,
-                                       scoped_ptr<TPMModuleAndSlot> tpm_args) {
+  void OnInitializedTPMForChromeOSUser(
+      const std::string& username_hash,
+      std::unique_ptr<TPMModuleAndSlot> tpm_args) {
     DCHECK(thread_checker_.CalledOnValidThread());
     DVLOG(2) << "Got tpm slot for " << username_hash << " "
              << !!tpm_args->tpm_slot;
     chromeos_user_map_[username_hash]->SetPrivateSlot(
-        tpm_args->tpm_slot.Pass());
+        std::move(tpm_args->tpm_slot));
   }
 
   void InitializePrivateSoftwareSlotForChromeOSUser(
@@ -592,7 +587,7 @@ class NSSInitSingleton {
     if (username_hash.empty()) {
       DVLOG(2) << "empty username_hash";
       if (!callback.is_null()) {
-        base::MessageLoop::current()->PostTask(
+        base::ThreadTaskRunnerHandle::Get()->PostTask(
             FROM_HERE, base::Bind(callback, base::Passed(ScopedPK11Slot())));
       }
       return ScopedPK11Slot();
@@ -605,17 +600,16 @@ class NSSInitSingleton {
 
   void CloseChromeOSUserForTesting(const std::string& username_hash) {
     DCHECK(thread_checker_.CalledOnValidThread());
-    ChromeOSUserMap::iterator i = chromeos_user_map_.find(username_hash);
+    auto i = chromeos_user_map_.find(username_hash);
     DCHECK(i != chromeos_user_map_.end());
-    delete i->second;
     chromeos_user_map_.erase(i);
   }
 
   void SetSystemKeySlotForTesting(ScopedPK11Slot slot) {
     // Ensure that a previous value of test_system_slot_ is not overwritten.
-    // Unsetting, i.e. setting a NULL, however is allowed.
+    // Unsetting, i.e. setting a nullptr, however is allowed.
     DCHECK(!slot || !test_system_slot_);
-    test_system_slot_ = slot.Pass();
+    test_system_slot_ = std::move(slot);
     if (test_system_slot_) {
       tpm_slot_.reset(PK11_ReferenceSlot(test_system_slot_.get()));
       RunAndClearTPMReadyCallbackList();
@@ -649,7 +643,7 @@ class NSSInitSingleton {
     // TODO(mattm): chromeos::TPMTokenloader always calls
     // InitializeTPMTokenAndSystemSlot with slot 0.  If the system slot is
     // disabled, tpm_slot_ will be the first user's slot instead. Can that be
-    // detected and return NULL instead?
+    // detected and return nullptr instead?
 
     base::Closure wrapped_callback;
     if (!callback.is_null()) {
@@ -664,11 +658,9 @@ class NSSInitSingleton {
   }
 #endif
 
-#if defined(USE_NSS_CERTS)
   base::Lock* write_lock() {
     return &write_lock_;
   }
-#endif  // defined(USE_NSS_CERTS)
 
  private:
   friend struct base::DefaultLazyInstanceTraits<NSSInitSingleton>;
@@ -676,8 +668,8 @@ class NSSInitSingleton {
   NSSInitSingleton()
       : tpm_token_enabled_for_nss_(false),
         initializing_tpm_token_(false),
-        chaps_module_(NULL),
-        root_(NULL) {
+        chaps_module_(nullptr),
+        root_(nullptr) {
     // It's safe to construct on any thread, since LazyInstance will prevent any
     // other threads from accessing until the constructor is done.
     thread_checker_.DetachFromThread();
@@ -700,72 +692,52 @@ class NSSInitSingleton {
     }
 
     SECStatus status = SECFailure;
-    bool nodb_init = false;
+    base::FilePath database_dir = GetInitialConfigDirectory();
+    if (!database_dir.empty()) {
+      // This duplicates the work which should have been done in
+      // EarlySetupForNSSInit. However, this function is idempotent so
+      // there's no harm done.
+      UseLocalCacheOfNSSDatabaseIfNFS(database_dir);
 
-#if !defined(USE_NSS_CERTS)
-    // Use the system certificate store, so initialize NSS without database.
-    nodb_init = true;
+      // Initialize with a persistent database (likely, ~/.pki/nssdb).
+      // Use "sql:" which can be shared by multiple processes safely.
+      std::string nss_config_dir =
+          base::StringPrintf("sql:%s", database_dir.value().c_str());
+#if defined(OS_CHROMEOS)
+      status = NSS_Init(nss_config_dir.c_str());
+#else
+      status = NSS_InitReadWrite(nss_config_dir.c_str());
 #endif
-
-    if (nodb_init) {
-      status = NSS_NoDB_Init(NULL);
+      if (status != SECSuccess) {
+        LOG(ERROR) << "Error initializing NSS with a persistent "
+                      "database (" << nss_config_dir
+                   << "): " << GetNSSErrorMessage();
+      }
+    }
+    if (status != SECSuccess) {
+      VLOG(1) << "Initializing NSS without a persistent database.";
+      status = NSS_NoDB_Init(nullptr);
       if (status != SECSuccess) {
         CrashOnNSSInitFailure();
         return;
       }
-#if defined(OS_IOS)
-      root_ = InitDefaultRootCerts();
-#endif  // defined(OS_IOS)
-    } else {
-#if defined(USE_NSS_CERTS)
-      base::FilePath database_dir = GetInitialConfigDirectory();
-      if (!database_dir.empty()) {
-        // This duplicates the work which should have been done in
-        // EarlySetupForNSSInit. However, this function is idempotent so
-        // there's no harm done.
-        UseLocalCacheOfNSSDatabaseIfNFS(database_dir);
-
-        // Initialize with a persistent database (likely, ~/.pki/nssdb).
-        // Use "sql:" which can be shared by multiple processes safely.
-        std::string nss_config_dir =
-            base::StringPrintf("sql:%s", database_dir.value().c_str());
-#if defined(OS_CHROMEOS)
-        status = NSS_Init(nss_config_dir.c_str());
-#else
-        status = NSS_InitReadWrite(nss_config_dir.c_str());
-#endif
-        if (status != SECSuccess) {
-          LOG(ERROR) << "Error initializing NSS with a persistent "
-                        "database (" << nss_config_dir
-                     << "): " << GetNSSErrorMessage();
-        }
-      }
-      if (status != SECSuccess) {
-        VLOG(1) << "Initializing NSS without a persistent database.";
-        status = NSS_NoDB_Init(NULL);
-        if (status != SECSuccess) {
-          CrashOnNSSInitFailure();
-          return;
-        }
-      }
-
-      PK11_SetPasswordFunc(PKCS11PasswordFunc);
-
-      // If we haven't initialized the password for the NSS databases,
-      // initialize an empty-string password so that we don't need to
-      // log in.
-      PK11SlotInfo* slot = PK11_GetInternalKeySlot();
-      if (slot) {
-        // PK11_InitPin may write to the keyDB, but no other thread can use NSS
-        // yet, so we don't need to lock.
-        if (PK11_NeedUserInit(slot))
-          PK11_InitPin(slot, NULL, NULL);
-        PK11_FreeSlot(slot);
-      }
-
-      root_ = InitDefaultRootCerts();
-#endif  // defined(USE_NSS_CERTS)
     }
+
+    PK11_SetPasswordFunc(PKCS11PasswordFunc);
+
+    // If we haven't initialized the password for the NSS databases,
+    // initialize an empty-string password so that we don't need to
+    // log in.
+    PK11SlotInfo* slot = PK11_GetInternalKeySlot();
+    if (slot) {
+      // PK11_InitPin may write to the keyDB, but no other thread can use NSS
+      // yet, so we don't need to lock.
+      if (PK11_NeedUserInit(slot))
+        PK11_InitPin(slot, nullptr, nullptr);
+      PK11_FreeSlot(slot);
+    }
+
+    root_ = InitDefaultRootCerts();
 
     // Disable MD5 certificate signatures. (They are disabled by default in
     // NSS 3.14.)
@@ -779,18 +751,18 @@ class NSSInitSingleton {
   // down.
   ~NSSInitSingleton() {
 #if defined(OS_CHROMEOS)
-    STLDeleteValues(&chromeos_user_map_);
+    chromeos_user_map_.clear();
 #endif
     tpm_slot_.reset();
     if (root_) {
       SECMOD_UnloadUserModule(root_);
       SECMOD_DestroyModule(root_);
-      root_ = NULL;
+      root_ = nullptr;
     }
     if (chaps_module_) {
       SECMOD_UnloadUserModule(chaps_module_);
       SECMOD_DestroyModule(chaps_module_);
-      chaps_module_ = NULL;
+      chaps_module_ = nullptr;
     }
 
     SECStatus status = NSS_Shutdown();
@@ -801,17 +773,16 @@ class NSSInitSingleton {
     }
   }
 
-#if defined(USE_NSS_CERTS) || defined(OS_IOS)
   // Load nss's built-in root certs.
   SECMODModule* InitDefaultRootCerts() {
-    SECMODModule* root = LoadModule("Root Certs", "libnssckbi.so", NULL);
+    SECMODModule* root = LoadModule("Root Certs", "libnssckbi.so", nullptr);
     if (root)
       return root;
 
     // Aw, snap.  Can't find/load root cert shared library.
     // This will make it hard to talk to anybody via https.
     // TODO(mattm): Re-add the NOTREACHED here when crbug.com/310972 is fixed.
-    return NULL;
+    return nullptr;
   }
 
   // Load the given module for this NSS session.
@@ -827,21 +798,20 @@ class NSSInitSingleton {
     // https://bugzilla.mozilla.org/show_bug.cgi?id=642546 was filed
     // on NSS codebase to address this.
     SECMODModule* module = SECMOD_LoadUserModule(
-        const_cast<char*>(modparams.c_str()), NULL, PR_FALSE);
+        const_cast<char*>(modparams.c_str()), nullptr, PR_FALSE);
     if (!module) {
       LOG(ERROR) << "Error loading " << name << " module into NSS: "
                  << GetNSSErrorMessage();
-      return NULL;
+      return nullptr;
     }
     if (!module->loaded) {
       LOG(ERROR) << "After loading " << name << ", loaded==false: "
                  << GetNSSErrorMessage();
       SECMOD_DestroyModule(module);
-      return NULL;
+      return nullptr;
     }
     return module;
   }
-#endif
 
   bool tpm_token_enabled_for_nss_;
   bool initializing_tpm_token_;
@@ -851,15 +821,12 @@ class NSSInitSingleton {
   crypto::ScopedPK11Slot tpm_slot_;
   SECMODModule* root_;
 #if defined(OS_CHROMEOS)
-  typedef std::map<std::string, ChromeOSUserData*> ChromeOSUserMap;
-  ChromeOSUserMap chromeos_user_map_;
+  std::map<std::string, std::unique_ptr<ChromeOSUserData>> chromeos_user_map_;
   ScopedPK11Slot test_system_slot_;
 #endif
-#if defined(USE_NSS_CERTS)
   // TODO(davidben): When https://bugzilla.mozilla.org/show_bug.cgi?id=564011
   // is fixed, we will no longer need the lock.
   base::Lock write_lock_;
-#endif  // defined(USE_NSS_CERTS)
 
   base::ThreadChecker thread_checker_;
 };
@@ -868,7 +835,6 @@ base::LazyInstance<NSSInitSingleton>::Leaky
     g_nss_singleton = LAZY_INSTANCE_INITIALIZER;
 }  // namespace
 
-#if defined(USE_NSS_CERTS)
 ScopedPK11Slot OpenSoftwareNSSDB(const base::FilePath& path,
                                  const std::string& description) {
   const std::string modspec =
@@ -878,7 +844,7 @@ ScopedPK11Slot OpenSoftwareNSSDB(const base::FilePath& path,
   PK11SlotInfo* db_slot = SECMOD_OpenUserDB(modspec.c_str());
   if (db_slot) {
     if (PK11_NeedUserInit(db_slot))
-      PK11_InitPin(db_slot, NULL, NULL);
+      PK11_InitPin(db_slot, nullptr, nullptr);
   } else {
     LOG(ERROR) << "Error opening persistent database (" << modspec
                << "): " << GetNSSErrorMessage();
@@ -891,7 +857,6 @@ void EarlySetupForNSSInit() {
   if (!database_dir.empty())
     UseLocalCacheOfNSSDatabaseIfNFS(database_dir);
 }
-#endif
 
 void EnsureNSPRInit() {
   g_nspr_singleton.Get();
@@ -909,13 +874,12 @@ bool CheckNSSVersion(const char* version) {
   return !!NSS_VersionCheck(version);
 }
 
-#if defined(USE_NSS_CERTS)
 base::Lock* GetNSSWriteLock() {
   return g_nss_singleton.Get().write_lock();
 }
 
 AutoNSSWriteLock::AutoNSSWriteLock() : lock_(GetNSSWriteLock()) {
-  // May be NULL if the lock is not needed in our version of NSS.
+  // May be nullptr if the lock is not needed in our version of NSS.
   if (lock_)
     lock_->Acquire();
 }
@@ -935,7 +899,6 @@ AutoSECMODListReadLock::AutoSECMODListReadLock()
 AutoSECMODListReadLock::~AutoSECMODListReadLock() {
   SECMOD_ReleaseReadLock(lock_);
 }
-#endif  // defined(USE_NSS_CERTS)
 
 #if defined(OS_CHROMEOS)
 ScopedPK11Slot GetSystemNSSKeySlot(
@@ -944,7 +907,7 @@ ScopedPK11Slot GetSystemNSSKeySlot(
 }
 
 void SetSystemKeySlotForTesting(ScopedPK11Slot slot) {
-  g_nss_singleton.Get().SetSystemKeySlotForTesting(slot.Pass());
+  g_nss_singleton.Get().SetSystemKeySlotForTesting(std::move(slot));
 }
 
 void EnableTPMTokenForNSS() {

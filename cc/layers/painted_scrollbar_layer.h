@@ -5,6 +5,7 @@
 #ifndef CC_LAYERS_PAINTED_SCROLLBAR_LAYER_H_
 #define CC_LAYERS_PAINTED_SCROLLBAR_LAYER_H_
 
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/input/scrollbar.h"
 #include "cc/layers/layer.h"
@@ -13,19 +14,18 @@
 #include "cc/resources/scoped_ui_resource.h"
 
 namespace cc {
-class ScrollbarThemeComposite;
 
 class CC_EXPORT PaintedScrollbarLayer : public ScrollbarLayerInterface,
                                         public Layer {
  public:
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
 
   static scoped_refptr<PaintedScrollbarLayer> Create(
-      const LayerSettings& settings,
-      scoped_ptr<Scrollbar> scrollbar,
+      std::unique_ptr<Scrollbar> scrollbar,
       int scroll_layer_id);
 
   bool OpacityCanAnimateOnImplThread() const override;
+  bool AlwaysUseActiveTreeOpacity() const override;
   ScrollbarLayerInterface* ToScrollbarLayer() override;
 
   // ScrollbarLayerInterface
@@ -44,8 +44,7 @@ class CC_EXPORT PaintedScrollbarLayer : public ScrollbarLayerInterface,
   }
 
  protected:
-  PaintedScrollbarLayer(const LayerSettings& settings,
-                        scoped_ptr<Scrollbar> scrollbar,
+  PaintedScrollbarLayer(std::unique_ptr<Scrollbar> scrollbar,
                         int scroll_layer_id);
   ~PaintedScrollbarLayer() override;
 
@@ -72,14 +71,11 @@ class CC_EXPORT PaintedScrollbarLayer : public ScrollbarLayerInterface,
     return true;
   }
 
-  int MaxTextureSize();
-  float ClampScaleToMaxTextureSize(float scale);
-
   UIResourceBitmap RasterizeScrollbarPart(const gfx::Rect& layer_rect,
                                           const gfx::Rect& content_rect,
                                           ScrollbarPart part);
 
-  scoped_ptr<Scrollbar> scrollbar_;
+  std::unique_ptr<Scrollbar> scrollbar_;
   int scroll_layer_id_;
 
   float internal_contents_scale_;
@@ -94,8 +90,8 @@ class CC_EXPORT PaintedScrollbarLayer : public ScrollbarLayerInterface,
   bool is_overlay_;
   bool has_thumb_;
 
-  scoped_ptr<ScopedUIResource> track_resource_;
-  scoped_ptr<ScopedUIResource> thumb_resource_;
+  std::unique_ptr<ScopedUIResource> track_resource_;
+  std::unique_ptr<ScopedUIResource> thumb_resource_;
 
   float thumb_opacity_;
 

@@ -4,13 +4,21 @@
 
 #include "mojo/edk/embedder/platform_channel_utils_posix.h"
 
+#include <stddef.h>
 #include <sys/socket.h>
-#include <sys/uio.h>
 #include <unistd.h>
 
+#include <utility>
+
+#include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "build/build_config.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
+
+#if !defined(OS_NACL)
+#include <sys/uio.h>
+#endif
 
 #if !defined(SO_PEEK_OFF)
 #define SO_PEEK_OFF 42
@@ -18,6 +26,55 @@
 
 namespace mojo {
 namespace edk {
+namespace {
+
+#if !defined(OS_NACL)
+bool IsRecoverableError() {
+  return errno == ECONNABORTED || errno == EMFILE || errno == ENFILE ||
+         errno == ENOMEM || errno == ENOBUFS;
+}
+
+bool GetPeerEuid(PlatformHandle handle, uid_t* peer_euid) {
+  DCHECK(peer_euid);
+#if defined(OS_MACOSX) || defined(OS_OPENBSD) || defined(OS_FREEBSD)
+  uid_t socket_euid;
+  gid_t socket_gid;
+  if (getpeereid(handle.handle, &socket_euid, &socket_gid) < 0) {
+    PLOG(ERROR) << "getpeereid " << handle.handle;
+    return false;
+  }
+  *peer_euid = socket_euid;
+  return true;
+#else
+  struct ucred cred;
+  socklen_t cred_len = sizeof(cred);
+  if (getsockopt(handle.handle, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) <
+      0) {
+    PLOG(ERROR) << "getsockopt " << handle.handle;
+    return false;
+  }
+  if (static_cast<unsigned>(cred_len) < sizeof(cred)) {
+    NOTREACHED() << "Truncated ucred from SO_PEERCRED?";
+    return false;
+  }
+  *peer_euid = cred.uid;
+  return true;
+#endif
+}
+
+bool IsPeerAuthorized(PlatformHandle peer_handle) {
+  uid_t peer_euid;
+  if (!GetPeerEuid(peer_handle, &peer_euid))
+    return false;
+  if (peer_euid != geteuid()) {
+    DLOG(ERROR) << "Client euid is not authorised";
+    return false;
+  }
+  return true;
+}
+#endif  // !defined(OS_NACL)
+
+}  // namespace
 
 // On Linux, |SIGPIPE| is suppressed by passing |MSG_NOSIGNAL| to
 // |send()|/|sendmsg()|. (There is no way of suppressing |SIGPIPE| on
@@ -55,10 +112,11 @@ ssize_t PlatformChannelWrite(PlatformHandle h,
   DCHECK(bytes);
   DCHECK_GT(num_bytes, 0u);
 
-#if defined(OS_MACOSX)
-  return HANDLE_EINTR(write(h.fd, bytes, num_bytes));
+#if defined(OS_MACOSX) || defined(OS_NACL_NONSFI)
+  // send() is not available under NaCl-nonsfi.
+  return HANDLE_EINTR(write(h.handle, bytes, num_bytes));
 #else
-  return send(h.fd, bytes, num_bytes, kSendFlags);
+  return send(h.handle, bytes, num_bytes, kSendFlags);
 #endif
 }
 
@@ -70,12 +128,12 @@ ssize_t PlatformChannelWritev(PlatformHandle h,
   DCHECK_GT(num_iov, 0u);
 
 #if defined(OS_MACOSX)
-  return HANDLE_EINTR(writev(h.fd, iov, static_cast<int>(num_iov)));
+  return HANDLE_EINTR(writev(h.handle, iov, static_cast<int>(num_iov)));
 #else
   struct msghdr msg = {};
   msg.msg_iov = iov;
   msg.msg_iovlen = num_iov;
-  return HANDLE_EINTR(sendmsg(h.fd, &msg, kSendFlags));
+  return HANDLE_EINTR(sendmsg(h.handle, &msg, kSendFlags));
 #endif
 }
 
@@ -102,10 +160,10 @@ ssize_t PlatformChannelSendmsgWithHandles(PlatformHandle h,
   cmsg->cmsg_len = CMSG_LEN(num_platform_handles * sizeof(int));
   for (size_t i = 0; i < num_platform_handles; i++) {
     DCHECK(platform_handles[i].is_valid());
-    reinterpret_cast<int*>(CMSG_DATA(cmsg))[i] = platform_handles[i].fd;
+    reinterpret_cast<int*>(CMSG_DATA(cmsg))[i] = platform_handles[i].handle;
   }
 
-  return HANDLE_EINTR(sendmsg(h.fd, &msg, kSendFlags));
+  return HANDLE_EINTR(sendmsg(h.handle, &msg, kSendFlags));
 }
 
 bool PlatformChannelSendHandles(PlatformHandle h,
@@ -129,10 +187,10 @@ bool PlatformChannelSendHandles(PlatformHandle h,
   cmsg->cmsg_len = CMSG_LEN(num_handles * sizeof(int));
   for (size_t i = 0; i < num_handles; i++) {
     DCHECK(handles[i].is_valid());
-    reinterpret_cast<int*>(CMSG_DATA(cmsg))[i] = handles[i].fd;
+    reinterpret_cast<int*>(CMSG_DATA(cmsg))[i] = handles[i].handle;
   }
 
-  ssize_t result = HANDLE_EINTR(sendmsg(h.fd, &msg, kSendFlags));
+  ssize_t result = HANDLE_EINTR(sendmsg(h.handle, &msg, kSendFlags));
   if (result < 1) {
     DCHECK_EQ(result, -1);
     return false;
@@ -146,7 +204,8 @@ bool PlatformChannelSendHandles(PlatformHandle h,
 ssize_t PlatformChannelRecvmsg(PlatformHandle h,
                                void* buf,
                                size_t num_bytes,
-                               std::deque<PlatformHandle>* platform_handles) {
+                               std::deque<PlatformHandle>* platform_handles,
+                               bool block) {
   DCHECK(buf);
   DCHECK_GT(num_bytes, 0u);
   DCHECK(platform_handles);
@@ -159,17 +218,10 @@ ssize_t PlatformChannelRecvmsg(PlatformHandle h,
   msg.msg_control = cmsg_buf;
   msg.msg_controllen = sizeof(cmsg_buf);
 
-  // We use SO_PEEK_OFF to hold a common identifier between sockets to detect if
-  // they're connected. recvmsg modifies it, so we cache it and set it again
-  // after the call.
-  int id = 0;
-  socklen_t peek_off_size = sizeof(id);
-  getsockopt(h.fd, SOL_SOCKET, SO_PEEK_OFF, &id, &peek_off_size);
-  ssize_t result = HANDLE_EINTR(recvmsg(h.fd, &msg, MSG_DONTWAIT));
+  ssize_t result =
+      HANDLE_EINTR(recvmsg(h.handle, &msg, block ? 0 : MSG_DONTWAIT));
   if (result < 0)
     return result;
-
-  setsockopt(h.fd, SOL_SOCKET, SO_PEEK_OFF, &id, sizeof(id));
 
   // Success; no control messages.
   if (msg.msg_controllen == 0)
@@ -192,6 +244,38 @@ ssize_t PlatformChannelRecvmsg(PlatformHandle h,
   }
 
   return result;
+}
+
+bool ServerAcceptConnection(PlatformHandle server_handle,
+                            ScopedPlatformHandle* connection_handle,
+                            bool check_peer_user) {
+  DCHECK(server_handle.is_valid());
+  connection_handle->reset();
+#if defined(OS_NACL)
+  NOTREACHED();
+  return false;
+#else
+  ScopedPlatformHandle accept_handle(
+      PlatformHandle(HANDLE_EINTR(accept(server_handle.handle, NULL, 0))));
+  if (!accept_handle.is_valid())
+    return IsRecoverableError();
+
+  // Verify that the IPC channel peer is running as the same user.
+  if (check_peer_user && !IsPeerAuthorized(accept_handle.get())) {
+    return true;
+  }
+
+  if (!base::SetNonBlocking(accept_handle.get().handle)) {
+    PLOG(ERROR) << "base::SetNonBlocking() failed "
+                << accept_handle.get().handle;
+    // It's safe to keep listening on |server_handle| even if the attempt to set
+    // O_NONBLOCK failed on the client fd.
+    return true;
+  }
+
+  *connection_handle = std::move(accept_handle);
+  return true;
+#endif  // defined(OS_NACL)
 }
 
 }  // namespace edk

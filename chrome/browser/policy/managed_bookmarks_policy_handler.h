@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_POLICY_MANAGED_BOOKMARKS_POLICY_HANDLER_H_
 #define CHROME_BROWSER_POLICY_MANAGED_BOOKMARKS_POLICY_HANDLER_H_
 
+#include "base/macros.h"
 #include "components/policy/core/browser/configuration_policy_handler.h"
 
 namespace base {
@@ -24,6 +25,7 @@ class ManagedBookmarksPolicyHandler : public SchemaValidatingPolicyHandler {
                            PrefValueMap* prefs) override;
 
  private:
+  std::string GetFolderName(const base::ListValue& list);
   void FilterBookmarks(base::ListValue* bookmarks);
 
   DISALLOW_COPY_AND_ASSIGN(ManagedBookmarksPolicyHandler);

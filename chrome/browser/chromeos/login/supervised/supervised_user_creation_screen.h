@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/camera_presence_notifier.h"
 #include "chrome/browser/chromeos/login/screens/base_screen.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_creation_controller.h"
@@ -75,7 +75,6 @@ class SupervisedUserCreationScreen
   void OnSupervisedUsersChanged() override;
 
   // BaseScreen implementation:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   std::string GetName() const override;
@@ -88,7 +87,7 @@ class SupervisedUserCreationScreen
   void ImportSupervisedUser(const std::string& user_id) override;
   void ImportSupervisedUserWithPassword(const std::string& user_id,
                                         const std::string& password) override;
-  void AuthenticateManager(const std::string& manager_id,
+  void AuthenticateManager(const AccountId& manager_id,
                            const std::string& manager_password) override;
   void AbortFlow() override;
   void FinishFlow() override;
@@ -127,8 +126,8 @@ class SupervisedUserCreationScreen
 
   SupervisedUserCreationScreenHandler* actor_;
 
-  scoped_ptr<SupervisedUserCreationController> controller_;
-  scoped_ptr<base::DictionaryValue> existing_users_;
+  std::unique_ptr<SupervisedUserCreationController> controller_;
+  std::unique_ptr<base::DictionaryValue> existing_users_;
 
   bool on_error_screen_;
   bool manager_signin_in_progress_;
@@ -140,7 +139,7 @@ class SupervisedUserCreationScreen
   bool apply_photo_after_decoding_;
   int selected_image_;
 
-  scoped_ptr<ErrorScreensHistogramHelper> histogram_helper_;
+  std::unique_ptr<ErrorScreensHistogramHelper> histogram_helper_;
 
   base::WeakPtrFactory<SupervisedUserCreationScreen> weak_factory_;
 

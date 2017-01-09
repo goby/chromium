@@ -5,44 +5,186 @@
 #ifndef COMPONENTS_ARC_ARC_BRIDGE_SERVICE_H_
 #define COMPONENTS_ARC_ARC_BRIDGE_SERVICE_H_
 
+#include <iosfwd>
+#include <string>
+#include <vector>
+
 #include "base/files/scoped_file.h"
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
-#include "components/arc/common/arc_message_types.h"
-#include "components/arc/common/arc_notification_types.h"
+#include "base/values.h"
+#include "components/arc/instance_holder.h"
 
 namespace base {
 class CommandLine;
-class SequencedTaskRunner;
-class SingleThreadTaskRunner;
 }  // namespace base
 
 namespace arc {
+
+class ArcBridgeTest;
+
+namespace mojom {
+
+// Instead of including components/arc/common/arc_bridge.mojom.h, list all the
+// instance classes here for faster build.
+class AppInstance;
+class AudioInstance;
+class AuthInstance;
+class BluetoothInstance;
+class BootPhaseMonitorInstance;
+class ClipboardInstance;
+class CrashCollectorInstance;
+class EnterpriseReportingInstance;
+class FileSystemInstance;
+class ImeInstance;
+class IntentHelperInstance;
+class KioskInstance;
+class MetricsInstance;
+class NetInstance;
+class NotificationsInstance;
+class ObbMounterInstance;
+class PolicyInstance;
+class PowerInstance;
+class PrintInstance;
+class ProcessInstance;
+class StorageManagerInstance;
+class TtsInstance;
+class VideoInstance;
+class WallpaperInstance;
+
+}  // namespace mojom
 
 // The Chrome-side service that handles ARC instances and ARC bridge creation.
 // This service handles the lifetime of ARC instances and sets up the
 // communication channel (the ARC bridge) used to send and receive messages.
 class ArcBridgeService {
  public:
+  // Describes the reason the bridge is stopped.
+  enum class StopReason {
+    // ARC instance has been gracefully shut down.
+    SHUTDOWN,
+
+    // Errors occurred during the ARC instance boot. This includes any failures
+    // before the instance is actually attempted to be started, and also
+    // failures on bootstrapping IPC channels with Android.
+    GENERIC_BOOT_FAILURE,
+
+    // The device is critically low on disk space.
+    LOW_DISK_SPACE,
+
+    // ARC instance has crashed.
+    CRASH,
+  };
+
+  // Notifies life cycle events of ArcBridgeService.
+  class Observer {
+   public:
+    // Called whenever the state of the bridge has changed.
+    virtual void OnBridgeReady() {}
+    virtual void OnBridgeStopped(StopReason reason) {}
+
+   protected:
+    virtual ~Observer() {}
+  };
+
+  virtual ~ArcBridgeService();
+
+  // Return true if ARC has been enabled through a commandline
+  // switch.
+  static bool GetEnabled(const base::CommandLine* command_line);
+
+  // Return true if ARC is available on the current board.
+  static bool GetAvailable(const base::CommandLine* command_line);
+
+  // HandleStartup() should be called upon profile startup.  This will only
+  // launch an instance if the instance is enabled.
+  // This can only be called on the thread that this class was created on.
+
+  // Starts the ARC service, then it will connect the Mojo channel. When the
+  // bridge becomes ready, OnBridgeReady() is called.
+  virtual void RequestStart() = 0;
+
+  // Stops the ARC service.
+  virtual void RequestStop() = 0;
+
+  // OnShutdown() should be called when the browser is shutting down. This can
+  // only be called on the thread that this class was created on. We assume that
+  // when this function is called, MessageLoop is no longer exists.
+  virtual void OnShutdown() = 0;
+
+  // Adds or removes observers. This can only be called on the thread that this
+  // class was created on. RemoveObserver does nothing if |observer| is not in
+  // the list.
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
+
+  InstanceHolder<mojom::AppInstance>* app() { return &app_; }
+  InstanceHolder<mojom::AudioInstance>* audio() { return &audio_; }
+  InstanceHolder<mojom::AuthInstance>* auth() { return &auth_; }
+  InstanceHolder<mojom::BluetoothInstance>* bluetooth() { return &bluetooth_; }
+  InstanceHolder<mojom::BootPhaseMonitorInstance>* boot_phase_monitor() {
+    return &boot_phase_monitor_;
+  }
+  InstanceHolder<mojom::ClipboardInstance>* clipboard() { return &clipboard_; }
+  InstanceHolder<mojom::CrashCollectorInstance>* crash_collector() {
+    return &crash_collector_;
+  }
+  InstanceHolder<mojom::EnterpriseReportingInstance>* enterprise_reporting() {
+    return &enterprise_reporting_;
+  }
+  InstanceHolder<mojom::FileSystemInstance>* file_system() {
+    return &file_system_;
+  }
+  InstanceHolder<mojom::ImeInstance>* ime() { return &ime_; }
+  InstanceHolder<mojom::IntentHelperInstance>* intent_helper() {
+    return &intent_helper_;
+  }
+  InstanceHolder<mojom::KioskInstance>* kiosk() { return &kiosk_; }
+  InstanceHolder<mojom::MetricsInstance>* metrics() { return &metrics_; }
+  InstanceHolder<mojom::NetInstance>* net() { return &net_; }
+  InstanceHolder<mojom::NotificationsInstance>* notifications() {
+    return &notifications_;
+  }
+  InstanceHolder<mojom::ObbMounterInstance>* obb_mounter() {
+    return &obb_mounter_;
+  }
+  InstanceHolder<mojom::PolicyInstance>* policy() { return &policy_; }
+  InstanceHolder<mojom::PowerInstance>* power() { return &power_; }
+  InstanceHolder<mojom::PrintInstance>* print() { return &print_; }
+  InstanceHolder<mojom::ProcessInstance>* process() { return &process_; }
+  InstanceHolder<mojom::StorageManagerInstance>* storage_manager() {
+    return &storage_manager_;
+  }
+  InstanceHolder<mojom::TtsInstance>* tts() { return &tts_; }
+  InstanceHolder<mojom::VideoInstance>* video() { return &video_; }
+  InstanceHolder<mojom::WallpaperInstance>* wallpaper() { return &wallpaper_; }
+
+  // Gets if ARC is currently running.
+  bool ready() const { return state() == State::READY; }
+
+  // Gets if ARC is currently stopped. This is not exactly !ready() since there
+  // are transient states between ready() and stopped().
+  bool stopped() const { return state() == State::STOPPED; }
+
+ protected:
   // The possible states of the bridge.  In the normal flow, the state changes
   // in the following sequence:
   //
   // STOPPED
-  //   SetAvailable(true) + HandleStartup() -> SocketConnect() ->
+  //   PrerequisitesChanged() ->
   // CONNECTING
-  //   Connect() ->
-  // CONNECTED
-  //   SocketConnectAfterSetSocketPermissions() ->
-  // STARTING
-  //   StartInstance() -> OnInstanceReady() ->
+  //   OnConnectionEstablished() ->
   // READY
   //
-  // When Shutdown() is called, the state changes depending on the state it was
-  // at:
+  // The ArcSession state machine can be thought of being substates of
+  // ArcBridgeService's CONNECTING state.
   //
-  // CONNECTED/CONNECTING -> STOPPED
-  // STARTING/READY -> STOPPING -> StopInstance() -> STOPPED
+  // *
+  //   StopInstance() ->
+  // STOPPING
+  //   OnStopped() ->
+  // STOPPED
   enum class State {
     // ARC is not currently running.
     STOPPED,
@@ -50,14 +192,10 @@ class ArcBridgeService {
     // The request to connect has been sent.
     CONNECTING,
 
-    // The bridge has connected to the socket, but has not started the ARC
-    // instance.
+    // The instance has started, and the bridge is fully established.
     CONNECTED,
 
-    // The ARC bridge has been set up and ARC is starting up.
-    STARTING,
-
-    // The ARC instance has been fully initialized and is now ready for user
+    // The ARC instance has finished initializing and is now ready for user
     // interaction.
     READY,
 
@@ -65,162 +203,77 @@ class ArcBridgeService {
     STOPPING,
   };
 
-  // Notifies life cycle events of ArcBridgeService.
-  class Observer {
-   public:
-    // Called whenever the state of the bridge has changed.
-    virtual void OnStateChanged(State state) {}
+  ArcBridgeService();
 
-    // Called when the instance has reached a boot phase
-    virtual void OnInstanceBootPhase(InstanceBootPhase phase) {}
-
-    // Called whenever ARC's availability has changed for this system.
-    virtual void OnAvailableChanged(bool available) {}
-
-   protected:
-    virtual ~Observer() {}
-  };
-
-  class NotificationObserver {
-   public:
-    // Called whenever a notification has been posted on Android side. This
-    // event is used for both creation and update.
-    virtual void OnNotificationPostedFromAndroid(
-        const ArcNotificationData& data) {}
-    // Called whenever a notification has been removed on Android side.
-    virtual void OnNotificationRemovedFromAndroid(const std::string& key) {}
-
-   protected:
-    virtual ~NotificationObserver() {}
-  };
-
-  // Notifies ARC apps related events.
-  class AppObserver {
-   public:
-    // Called whenever ARC sends information about available apps.
-    virtual void OnAppListRefreshed(const std::vector<AppInfo>& apps) {}
-
-    // Called whenever ARC sends app icon data for specific scale factor.
-    virtual void OnAppIcon(const std::string& package,
-                           const std::string& activity,
-                           ScaleFactor scale_factor,
-                           const std::vector<uint8_t>& icon_png_data) {}
-
-   protected:
-    virtual ~AppObserver() {}
-  };
-
-  virtual ~ArcBridgeService();
-
-  // Creates instance of |ArcBridgeService| for normal use.
-  static scoped_ptr<ArcBridgeService> Create(
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
-      const scoped_refptr<base::SequencedTaskRunner>& file_task_runner);
-
-  // Gets the global instance of the ARC Bridge Service. This can only be
-  // called on the thread that this class was created on.
-  static ArcBridgeService* Get();
-
-  // Return true if ARC has been enabled through a commandline
-  // switch.
-  static bool GetEnabled(const base::CommandLine* command_line);
-
-  // DetectAvailability() should be called once D-Bus is available. It will
-  // call CheckArcAvailability() on the session_manager. This can only be
-  // called on the thread that this class was created on.
-  virtual void DetectAvailability() = 0;
-
-  // HandleStartup() should be called upon profile startup.  This will only
-  // launch an instance if the instance service is available and it is enabled.
-  // This can only be called on the thread that this class was created on.
-  virtual void HandleStartup() = 0;
-
-  // Shutdown() should be called when the browser is shutting down. This can
-  // only be called on the thread that this class was created on.
-  virtual void Shutdown() = 0;
-
-  // Adds or removes observers. This can only be called on the thread that this
-  // class was created on.
-  void AddObserver(Observer* observer);
-  void RemoveObserver(Observer* observer);
-  void AddNotificationObserver(NotificationObserver* observer);
-  void RemoveNotificationObserver(NotificationObserver* observer);
-
-  // Adds or removes ARC app observers. This can only be called on the thread
-  // that this class was created on.
-  void AddAppObserver(AppObserver* observer);
-  void RemoveAppObserver(AppObserver* observer);
+  // Instance holders.
+  InstanceHolder<mojom::AppInstance> app_;
+  InstanceHolder<mojom::AudioInstance> audio_;
+  InstanceHolder<mojom::AuthInstance> auth_;
+  InstanceHolder<mojom::BluetoothInstance> bluetooth_;
+  InstanceHolder<mojom::BootPhaseMonitorInstance> boot_phase_monitor_;
+  InstanceHolder<mojom::ClipboardInstance> clipboard_;
+  InstanceHolder<mojom::CrashCollectorInstance> crash_collector_;
+  InstanceHolder<mojom::EnterpriseReportingInstance> enterprise_reporting_;
+  InstanceHolder<mojom::FileSystemInstance> file_system_;
+  InstanceHolder<mojom::ImeInstance> ime_;
+  InstanceHolder<mojom::IntentHelperInstance> intent_helper_;
+  InstanceHolder<mojom::KioskInstance> kiosk_;
+  InstanceHolder<mojom::MetricsInstance> metrics_;
+  InstanceHolder<mojom::NetInstance> net_;
+  InstanceHolder<mojom::NotificationsInstance> notifications_;
+  InstanceHolder<mojom::ObbMounterInstance> obb_mounter_;
+  InstanceHolder<mojom::PolicyInstance> policy_;
+  InstanceHolder<mojom::PowerInstance> power_;
+  InstanceHolder<mojom::PrintInstance> print_;
+  InstanceHolder<mojom::ProcessInstance> process_;
+  InstanceHolder<mojom::StorageManagerInstance> storage_manager_;
+  InstanceHolder<mojom::TtsInstance> tts_;
+  InstanceHolder<mojom::VideoInstance> video_;
+  InstanceHolder<mojom::WallpaperInstance> wallpaper_;
 
   // Gets the current state of the bridge service.
   State state() const { return state_; }
 
-  // Gets if ARC is available in this system.
-  bool available() const { return available_; }
-
-  // Requests registration of an input device on the ARC instance.
-  // TODO(denniskempin): Make this interface more typesafe.
-  // |name| should be the displayable name of the emulated device (e.g. "Chrome
-  // OS Keyboard"), |device_type| the name of the device type (e.g. "keyboard")
-  // and |fd| a file descriptor that emulates the kernel events of the device.
-  // This can only be called on the thread that this class was created on.
-  virtual bool RegisterInputDevice(const std::string& name,
-                                   const std::string& device_type,
-                                   base::ScopedFD fd) = 0;
-
-  // Sends a notification event to Android side.
-  virtual bool SendNotificationEventToAndroid(const std::string& key,
-                                              ArcNotificationEvent event) = 0;
-
-  // Requests to refresh an app list.
-  virtual bool RefreshAppList() = 0;
-
-  // Requests to launch an app.
-  virtual bool LaunchApp(const std::string& package,
-                         const std::string& activity) = 0;
-
-  // Requests to load an icon of specific scale_factor.
-  virtual bool RequestAppIcon(const std::string& package,
-                              const std::string& activity,
-                              ScaleFactor scale_factor) = 0;
-
- protected:
-  ArcBridgeService();
-
   // Changes the current state and notifies all observers.
   void SetState(State state);
 
-  // Changes the current availability and notifies all observers.
-  void SetAvailable(bool availability);
-
-  const scoped_refptr<base::SequencedTaskRunner>& origin_task_runner() const {
-    return origin_task_runner_;
-  }
+  // Sets the reason the bridge is stopped. This function must be always called
+  // before SetState(State::STOPPED) to report a correct reason with
+  // Observer::OnBridgeStopped().
+  void SetStopReason(StopReason stop_reason);
 
   base::ObserverList<Observer>& observer_list() { return observer_list_; }
-  base::ObserverList<NotificationObserver>& notification_observer_list() {
-    return notification_observer_list_;
-  }
 
-  base::ObserverList<AppObserver>& app_observer_list() {
-    return app_observer_list_;
-  }
+  bool CalledOnValidThread();
 
  private:
-  scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
+  friend class ArcBridgeTest;
+  FRIEND_TEST_ALL_PREFIXES(ArcBridgeTest, Basic);
+  FRIEND_TEST_ALL_PREFIXES(ArcBridgeTest, Prerequisites);
+  FRIEND_TEST_ALL_PREFIXES(ArcBridgeTest, StopMidStartup);
+  FRIEND_TEST_ALL_PREFIXES(ArcBridgeTest, Restart);
+  FRIEND_TEST_ALL_PREFIXES(ArcBridgeTest, OnBridgeStopped);
+  FRIEND_TEST_ALL_PREFIXES(ArcBridgeTest, Shutdown);
 
   base::ObserverList<Observer> observer_list_;
-  base::ObserverList<NotificationObserver> notification_observer_list_;
 
-  base::ObserverList<AppObserver> app_observer_list_;
-
-  // If the ARC instance service is available.
-  bool available_;
+  base::ThreadChecker thread_checker_;
 
   // The current state of the bridge.
   ArcBridgeService::State state_;
 
+  // The reason the bridge is stopped.
+  StopReason stop_reason_;
+
+  // WeakPtrFactory to use callbacks.
+  base::WeakPtrFactory<ArcBridgeService> weak_factory_;
+
   DISALLOW_COPY_AND_ASSIGN(ArcBridgeService);
 };
+
+// Defines "<<" operator for LOGging purpose.
+std::ostream& operator<<(
+    std::ostream& os, ArcBridgeService::StopReason reason);
 
 }  // namespace arc
 

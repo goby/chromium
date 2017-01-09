@@ -5,19 +5,19 @@
 #ifndef IOS_CHROME_BROWSER_PASSWORDS_CREDENTIAL_MANAGER_H_
 #define IOS_CHROME_BROWSER_PASSWORDS_CREDENTIAL_MANAGER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_member.h"
 #include "components/password_manager/core/browser/credential_manager_password_form_manager.h"
 #include "components/password_manager/core/browser/credential_manager_pending_request_task.h"
 #include "components/password_manager/core/browser/credential_manager_pending_require_user_mediation_task.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_store.h"
+#include "components/prefs/pref_member.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 
 @class JSCredentialManager;
@@ -58,10 +58,12 @@ class CredentialManager
   bool IsZeroClickAllowed() const override;
   GURL GetOrigin() const override;
   void SendCredential(
-      int id,
+      const password_manager::SendCredentialCallback& send_callback,
       const password_manager::CredentialInfo& credential) override;
+  void SendPasswordForm(
+      const password_manager::SendCredentialCallback& send_callback,
+      const autofill::PasswordForm* form) override;
   password_manager::PasswordManagerClient* client() const override;
-  autofill::PasswordForm GetSynthesizedFormForOrigin() const override;
 
   // password_manager::CredentialManagerPendingRequireUserMediationTaskDelegate:
   password_manager::PasswordStore* GetPasswordStore() override;
@@ -83,6 +85,9 @@ class CredentialManager
     ERROR_TYPE_SECURITY_ERROR_UNTRUSTED_ORIGIN,
   };
 
+  void SendCredentialByID(int request_id,
+                          const password_manager::CredentialInfo& credential);
+
   // Sends a message via |js_manager_| to resolve the JavaScript Promise
   // associated with |request_id|. Invoked after a page-initiated credential
   // event is acknowledged by the PasswordStore.
@@ -99,15 +104,16 @@ class CredentialManager
   bool GetUrlWithAbsoluteTrust(GURL* page_url);
 
   // The request to retrieve credentials from the PasswordStore.
-  scoped_ptr<password_manager::CredentialManagerPendingRequestTask>
+  std::unique_ptr<password_manager::CredentialManagerPendingRequestTask>
       pending_request_;
 
   // The task to notify the password manager that the user was signed out.
-  scoped_ptr<password_manager::CredentialManagerPendingRequireUserMediationTask>
+  std::unique_ptr<
+      password_manager::CredentialManagerPendingRequireUserMediationTask>
       pending_require_user_mediation_;
 
   // Saves credentials to the PasswordStore.
-  scoped_ptr<password_manager::CredentialManagerPasswordFormManager>
+  std::unique_ptr<password_manager::CredentialManagerPasswordFormManager>
       form_manager_;
 
   // Injected JavaScript to provide the API to web pages.

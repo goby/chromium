@@ -4,17 +4,18 @@
 
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
 #include "net/base/load_flags.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_source_type.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_server.h"
 #include "net/proxy/proxy_service.h"
 #include "net/socket/socket_test_util.h"
@@ -29,7 +30,7 @@ namespace data_reduction_proxy {
 TEST(ChromeNetworkDailyDataSavingMetricsTest,
      GetDataReductionProxyRequestType) {
   base::MessageLoopForIO message_loop;
-  scoped_ptr<DataReductionProxyTestContext> test_context =
+  std::unique_ptr<DataReductionProxyTestContext> test_context =
       DataReductionProxyTestContext::Builder()
           .WithParamsFlags(DataReductionProxyParams::kAllowed)
           .WithParamsDefinitions(TestDataReductionProxyParams::HAS_ORIGIN)
@@ -53,79 +54,97 @@ TEST(ChromeNetworkDailyDataSavingMetricsTest,
   };
   const TestCase test_cases[] = {
       {
-       GURL("http://foo.com"),
-       origin,
-       base::TimeDelta(),
-       net::LOAD_NORMAL,
-       "HTTP/1.1 200 OK\r\nVia: 1.1 Chrome-Compression-Proxy\r\n\r\n",
-       VIA_DATA_REDUCTION_PROXY,
+          GURL("http://foo.com"), origin, base::TimeDelta(), net::LOAD_NORMAL,
+          "HTTP/1.1 200 OK\r\nVia: 1.1 Chrome-Compression-Proxy\r\n\r\n",
+          VIA_DATA_REDUCTION_PROXY,
       },
       {
-       GURL("https://foo.com"),
-       net::ProxyServer::Direct(),
-       base::TimeDelta(),
-       net::LOAD_NORMAL,
-       "HTTP/1.1 200 OK\r\n\r\n",
-       HTTPS,
+          GURL("https://foo.com"), net::ProxyServer::Direct(),
+          base::TimeDelta(), net::LOAD_NORMAL, "HTTP/1.1 200 OK\r\n\r\n", HTTPS,
       },
       {
-       GURL("http://foo.com"),
-       net::ProxyServer::Direct(),
-       base::TimeDelta::FromSeconds(1),
-       net::LOAD_NORMAL,
-       "HTTP/1.1 200 OK\r\n\r\n",
-       SHORT_BYPASS,
+          GURL("http://foo.com"), net::ProxyServer::Direct(),
+          base::TimeDelta::FromSeconds(1), net::LOAD_NORMAL,
+          "HTTP/1.1 200 OK\r\n\r\n", SHORT_BYPASS,
       },
       {
-       GURL("http://foo.com"),
-       net::ProxyServer::Direct(),
-       base::TimeDelta::FromMinutes(60),
-       net::LOAD_NORMAL,
-       "HTTP/1.1 200 OK\r\n\r\n",
-       LONG_BYPASS,
+          GURL("http://foo.com"), net::ProxyServer::Direct(),
+          base::TimeDelta::FromSeconds(1), net::LOAD_NORMAL,
+          "HTTP/1.1 304 Not Modified\r\n\r\n", SHORT_BYPASS,
+      },
+      {
+          GURL("http://foo.com"), net::ProxyServer::Direct(),
+          base::TimeDelta::FromMinutes(60), net::LOAD_NORMAL,
+          "HTTP/1.1 200 OK\r\n\r\n", LONG_BYPASS,
+      },
+      {
+          GURL("http://foo.com"), net::ProxyServer::Direct(),
+          base::TimeDelta::FromMinutes(60), net::LOAD_NORMAL,
+          "HTTP/1.1 304 Not Modified\r\n\r\n", LONG_BYPASS,
       },
       // Requests with LOAD_BYPASS_PROXY (e.g. block-once) should be classified
-      // as
-      // SHORT_BYPASS.
+      // as SHORT_BYPASS.
       {
-       GURL("http://foo.com"),
-       net::ProxyServer::Direct(),
-       base::TimeDelta(),
-       net::LOAD_BYPASS_PROXY,
-       "HTTP/1.1 200 OK\r\n\r\n",
-       SHORT_BYPASS,
+          GURL("http://foo.com"), net::ProxyServer::Direct(), base::TimeDelta(),
+          net::LOAD_BYPASS_PROXY, "HTTP/1.1 200 OK\r\n\r\n", SHORT_BYPASS,
       },
       // Another proxy overriding the Data Reduction Proxy should be classified
-      // as
-      // SHORT_BYPASS.
+      // as SHORT_BYPASS.
       {
-       GURL("http://foo.com"),
-       net::ProxyServer::FromPacString("PROXY otherproxy.net:80"),
-       base::TimeDelta(),
-       net::LOAD_NORMAL,
-       "HTTP/1.1 200 OK\r\n\r\n",
-       SHORT_BYPASS,
+          GURL("http://foo.com"),
+          net::ProxyServer::FromPacString("PROXY otherproxy.net:80"),
+          base::TimeDelta(), net::LOAD_NORMAL, "HTTP/1.1 200 OK\r\n\r\n",
+          SHORT_BYPASS,
       },
       // Bypasses due to local bypass rules should be classified as
       // SHORT_BYPASS.
       {
-       GURL("http://localbypass.com"),
-       net::ProxyServer::Direct(),
-       base::TimeDelta(),
-       net::LOAD_NORMAL,
-       "HTTP/1.1 200 OK\r\n\r\n",
-       SHORT_BYPASS,
+          GURL("http://localbypass.com"), net::ProxyServer::Direct(),
+          base::TimeDelta(), net::LOAD_NORMAL, "HTTP/1.1 200 OK\r\n\r\n",
+          SHORT_BYPASS,
       },
       // Responses that seem like they should have come through the Data
-      // Reduction
-      // Proxy, but did not, should be classified as UNKNOWN_TYPE.
+      // Reduction Proxy, but did not, should be classified as UNKNOWN_TYPE.
       {
-       GURL("http://foo.com"),
-       net::ProxyServer::Direct(),
-       base::TimeDelta(),
-       net::LOAD_NORMAL,
-       "HTTP/1.1 200 OK\r\n\r\n",
-       UNKNOWN_TYPE,
+          GURL("http://foo.com"), net::ProxyServer::Direct(), base::TimeDelta(),
+          net::LOAD_NORMAL, "HTTP/1.1 200 OK\r\n\r\n", UNKNOWN_TYPE,
+      },
+      {
+          GURL("http://foo.com"), origin, base::TimeDelta(), net::LOAD_NORMAL,
+          "HTTP/1.1 200 OK\r\n\r\n", UNKNOWN_TYPE,
+      },
+      // The proxy is currently bypassed, but the response still came through
+      // the Data Reduction Proxy, so it should be classified as
+      // VIA_DATA_REDUCTION_PROXY.
+      {
+          GURL("http://foo.com"), origin, base::TimeDelta::FromMinutes(60),
+          net::LOAD_NORMAL,
+          "HTTP/1.1 200 OK\r\nVia: 1.1 Chrome-Compression-Proxy\r\n\r\n",
+          VIA_DATA_REDUCTION_PROXY,
+      },
+      // The request was sent over a direct connection, but the response still
+      // has the Data Reduction Proxy Via header, so it should be classified as
+      // VIA_DATA_REDUCTION_PROXY.
+      {
+          GURL("http://foo.com"), net::ProxyServer::Direct(), base::TimeDelta(),
+          net::LOAD_NORMAL,
+          "HTTP/1.1 200 OK\r\nVia: 1.1 Chrome-Compression-Proxy\r\n\r\n",
+          VIA_DATA_REDUCTION_PROXY,
+      },
+      // A 304 response with a DRP Via header should be classified as
+      // VIA_DATA_REDUCTION_PROXY.
+      {
+          GURL("http://foo.com"), net::ProxyServer::Direct(), base::TimeDelta(),
+          net::LOAD_NORMAL,
+          "HTTP/1.1 304 Not Modified\r\n"
+          "Via: 1.1 Chrome-Compression-Proxy\r\n\r\n",
+          VIA_DATA_REDUCTION_PROXY,
+      },
+      // A 304 response without a DRP Via header where the request was sent
+      // through the DRP should be classified as VIA_DATA_REDUCTION_PROXY.
+      {
+          GURL("http://foo.com"), origin, base::TimeDelta(), net::LOAD_NORMAL,
+          "HTTP/1.1 304 Not Modified\r\n\r\n", VIA_DATA_REDUCTION_PROXY,
       },
   };
 
@@ -134,7 +153,7 @@ TEST(ChromeNetworkDailyDataSavingMetricsTest,
     net::MockClientSocketFactory mock_socket_factory;
     context.set_client_socket_factory(&mock_socket_factory);
     // Set the |proxy_service| to use |test_case.proxy_server| for requests.
-    scoped_ptr<net::ProxyService> proxy_service(
+    std::unique_ptr<net::ProxyService> proxy_service(
         net::ProxyService::CreateFixedFromPacResult(
             test_case.proxy_server.ToPacString()));
     context.set_proxy_service(proxy_service.get());
@@ -155,7 +174,7 @@ TEST(ChromeNetworkDailyDataSavingMetricsTest,
     mock_socket_factory.AddSocketDataProvider(&socket_data_provider);
 
     net::TestDelegate delegate;
-    scoped_ptr<net::URLRequest> request =
+    std::unique_ptr<net::URLRequest> request =
         context.CreateRequest(test_case.url, net::IDLE, &delegate);
     request->SetLoadFlags(test_case.load_flags);
     request->Start();
@@ -169,7 +188,8 @@ TEST(ChromeNetworkDailyDataSavingMetricsTest,
       EXPECT_TRUE(context.proxy_service()->MarkProxiesAsBadUntil(
           proxy_info, test_case.bypass_duration,
           std::vector<net::ProxyServer>(),
-          net::BoundNetLog::Make(context.net_log(), net::NetLog::SOURCE_NONE)));
+          net::NetLogWithSource::Make(context.net_log(),
+                                      net::NetLogSourceType::NONE)));
     }
 
     EXPECT_EQ(test_case.expected_request_type,

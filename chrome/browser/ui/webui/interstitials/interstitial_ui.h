@@ -7,15 +7,11 @@
 
 #include <string>
 
-#include "content/public/browser/url_data_source.h"
+#include "base/macros.h"
 #include "content/public/browser/web_ui_controller.h"
 
-class Profile;
-
-namespace content {
-class WebContents;
-}
-
+// Handler for chrome://interstitials demonstration pages. This class is not
+// used in displaying any real interstitials.
 class InterstitialUI : public content::WebUIController {
  public:
   explicit InterstitialUI(content::WebUI* web_ui);

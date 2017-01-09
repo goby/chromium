@@ -4,10 +4,13 @@ include_rules = [
   "+cc/layers/video_layer.h",
   "+components/scheduler",  # Only allowed in tests.
   "+gin",
-  "+gpu/blink",
   "+media",
+  "+mojo/edk/embedder",
   "+net/base",
   "+net/http",
   "+third_party/WebKit/public/platform",
   "+third_party/WebKit/public/web",
+
+  # media/mojo is not part of "media" target and should not use MEDIA_EXPORT.
+  "-media/base/media_export.h"
 ]

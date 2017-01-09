@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/values.h"
 #include "extensions/browser/api/web_request/upload_data_presenter.h"
 #include "extensions/browser/api/web_request/web_request_api_constants.h"
@@ -22,18 +25,18 @@ TEST(WebRequestUploadDataPresenterTest, ParsedData) {
   net::UploadBytesElementReader element(block, sizeof(block) - 1);
 
   // Expected output.
-  scoped_ptr<base::ListValue> values(new base::ListValue);
-  values->Append(new base::StringValue("value"));
+  std::unique_ptr<base::ListValue> values(new base::ListValue);
+  values->AppendString("value");
   base::DictionaryValue expected_form;
-  expected_form.SetWithoutPathExpansion("key.with.dots", values.release());
+  expected_form.SetWithoutPathExpansion("key.with.dots", std::move(values));
 
   // Real output.
-  scoped_ptr<ParsedDataPresenter> parsed_data_presenter(
+  std::unique_ptr<ParsedDataPresenter> parsed_data_presenter(
       ParsedDataPresenter::CreateForTests());
   ASSERT_TRUE(parsed_data_presenter.get() != NULL);
   parsed_data_presenter->FeedNext(element);
   EXPECT_TRUE(parsed_data_presenter->Succeeded());
-  scoped_ptr<base::Value> result = parsed_data_presenter->Result();
+  std::unique_ptr<base::Value> result = parsed_data_presenter->Result();
   ASSERT_TRUE(result.get() != NULL);
 
   EXPECT_TRUE(result->Equals(&expected_form));
@@ -48,23 +51,23 @@ TEST(WebRequestUploadDataPresenterTest, RawData) {
   const size_t block2_size = sizeof(block2) - 1;
 
   // Expected output.
-  scoped_ptr<base::BinaryValue> expected_a(
+  std::unique_ptr<base::BinaryValue> expected_a(
       base::BinaryValue::CreateWithCopiedBuffer(block1, block1_size));
   ASSERT_TRUE(expected_a.get() != NULL);
-  scoped_ptr<base::StringValue> expected_b(
+  std::unique_ptr<base::StringValue> expected_b(
       new base::StringValue(kFilename));
   ASSERT_TRUE(expected_b.get() != NULL);
-  scoped_ptr<base::BinaryValue> expected_c(
+  std::unique_ptr<base::BinaryValue> expected_c(
       base::BinaryValue::CreateWithCopiedBuffer(block2, block2_size));
   ASSERT_TRUE(expected_c.get() != NULL);
 
   base::ListValue expected_list;
-  subtle::AppendKeyValuePair(
-      keys::kRequestBodyRawBytesKey, expected_a.release(), &expected_list);
-  subtle::AppendKeyValuePair(
-      keys::kRequestBodyRawFileKey, expected_b.release(), &expected_list);
-  subtle::AppendKeyValuePair(
-      keys::kRequestBodyRawBytesKey, expected_c.release(), &expected_list);
+  subtle::AppendKeyValuePair(keys::kRequestBodyRawBytesKey,
+                             std::move(expected_a), &expected_list);
+  subtle::AppendKeyValuePair(keys::kRequestBodyRawFileKey,
+                             std::move(expected_b), &expected_list);
+  subtle::AppendKeyValuePair(keys::kRequestBodyRawBytesKey,
+                             std::move(expected_c), &expected_list);
 
   // Real output.
   RawDataPresenter raw_presenter;
@@ -72,7 +75,7 @@ TEST(WebRequestUploadDataPresenterTest, RawData) {
   raw_presenter.FeedNextFile(kFilename);
   raw_presenter.FeedNextBytes(block2, block2_size);
   EXPECT_TRUE(raw_presenter.Succeeded());
-  scoped_ptr<base::Value> result = raw_presenter.Result();
+  std::unique_ptr<base::Value> result = raw_presenter.Result();
   ASSERT_TRUE(result.get() != NULL);
 
   EXPECT_TRUE(result->Equals(&expected_list));

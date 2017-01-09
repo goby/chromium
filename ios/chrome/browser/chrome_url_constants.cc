@@ -4,6 +4,8 @@
 
 #include "ios/chrome/browser/chrome_url_constants.h"
 
+#include <stddef.h>
+
 #include "base/macros.h"
 
 const char kChromeUIScheme[] = "chrome";
@@ -15,6 +17,10 @@ const char kChromeUICreditsURL[] = "chrome://credits/";
 const char kChromeUIFlagsURL[] = "chrome://flags/";
 const char kChromeUIHistoryURL[] = "chrome://history/";
 const char kChromeUINewTabURL[] = "chrome://newtab/";
+const char kChromeUIOfflineURL[] = "chrome://offline/";
+const char kChromeUIPhysicalWebURL[] = "chrome://physical-web/";
+const char kChromeUIPopularSitesInternalsURL[] =
+    "chrome://popular-sites-internals/";
 const char kChromeUISettingsURL[] = "chrome://settings/";
 const char kChromeUITermsURL[] = "chrome://terms/";
 const char kChromeUIVersionURL[] = "chrome://version/";
@@ -33,7 +39,10 @@ const char kChromeUIHistoryFrameHost[] = "history-frame";
 const char kChromeUIHistoryHost[] = "history";
 const char kChromeUINetExportHost[] = "net-export";
 const char kChromeUINewTabHost[] = "newtab";
+const char kChromeUIOfflineHost[] = "offline";
 const char kChromeUIOmahaHost[] = "omaha";
+const char kChromeUIPhysicalWebHost[] = "physical-web";
+const char kChromeUIPopularSitesInternalsHost[] = "popular-sites-internals";
 const char kChromeUIPolicyHost[] = "policy";
 const char kChromeUISignInInternalsHost[] = "signin-internals";
 const char kChromeUISyncInternalsHost[] = "sync-internals";
@@ -44,10 +53,13 @@ const char kChromeUIVersionHost[] = "version";
 // These hosts will also be suggested by BuiltinProvider.
 // 'histograms' is chrome WebUI on iOS, content WebUI on other platforms.
 const char* const kChromeHostURLs[] = {
-    kChromeUIBookmarksHost, kChromeUIChromeURLsHost, kChromeUICreditsHost,
-    kChromeUIFlagsHost,     kChromeUIHistogramHost,  kChromeUIHistoryHost,
-    kChromeUINetExportHost, kChromeUINewTabHost,     kChromeUISyncInternalsHost,
-    kChromeUITermsHost,     kChromeUIVersionHost,
+    kChromeUIBookmarksHost,             kChromeUIChromeURLsHost,
+    kChromeUICreditsHost,               kChromeUIFlagsHost,
+    kChromeUIHistogramHost,             kChromeUINetExportHost,
+    kChromeUINewTabHost,                kChromeUISignInInternalsHost,
+    kChromeUISyncInternalsHost,         kChromeUIPhysicalWebHost,
+    kChromeUIPopularSitesInternalsHost, kChromeUITermsHost,
+    kChromeUIVersionHost,
 };
 const size_t kNumberOfChromeHostURLs = arraysize(kChromeHostURLs);
 
@@ -65,5 +77,25 @@ const char kPrivacyLearnMoreURL[] =
 const char kDoNotTrackLearnMoreURL[] =
     "https://support.google.com/chrome/answer/2942429?p=mobile_do_not_track";
 
+const char kPhysicalWebLearnMoreURL[] =
+    "https://support.google.com/chrome/answer/6239299?p=physical_web";
+
 const char kSyncEncryptionHelpURL[] =
     "https://support.google.com/chrome/answer/1181035?p=settings_encryption";
+
+const char kClearBrowsingDataLearnMoreURL[] =
+    "https://support.google.com/chrome/answer/2392709";
+
+const char kClearBrowsingDataMyActivityUrlInFooterURL[] =
+    "https://history.google.com/history/?utm_source=chrome_cbd";
+
+const char kClearBrowsingDataMyActivityUrlInDialogURL[] =
+    "https://history.google.com/history/?utm_source=chrome_n";
+
+const char kHistoryMyActivityURL[] =
+    "https://history.google.com/history/?utm_source=chrome_h";
+
+const char kGoogleHistoryURL[] = "https://history.google.com";
+
+const char kGoogleMyAccountURL[] =
+    "https://myaccount.google.com/privacy#activitycontrols";

@@ -5,20 +5,24 @@
 #include "chrome/browser/chromeos/policy/remote_commands/device_command_screenshot_job.h"
 
 #include <fstream>
+#include <utility>
 
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/syslog_logging.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/policy/upload_job_impl.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/http/http_request_headers.h"
-#include "policy/proto/device_management_backend.pb.h"
 
 namespace policy {
 
@@ -70,7 +74,7 @@ class DeviceCommandScreenshotJob::Payload
   ~Payload() override {}
 
   // RemoteCommandJob::ResultPayload:
-  scoped_ptr<std::string> Serialize() override;
+  std::unique_ptr<std::string> Serialize() override;
 
  private:
   std::string payload_;
@@ -85,14 +89,14 @@ DeviceCommandScreenshotJob::Payload::Payload(ResultCode result_code) {
   base::JSONWriter::Write(root_dict, &payload_);
 }
 
-scoped_ptr<std::string> DeviceCommandScreenshotJob::Payload::Serialize() {
-  return make_scoped_ptr(new std::string(payload_));
+std::unique_ptr<std::string> DeviceCommandScreenshotJob::Payload::Serialize() {
+  return base::MakeUnique<std::string>(payload_);
 }
 
 DeviceCommandScreenshotJob::DeviceCommandScreenshotJob(
-    scoped_ptr<Delegate> screenshot_delegate)
+    std::unique_ptr<Delegate> screenshot_delegate)
     : num_pending_screenshots_(0),
-      screenshot_delegate_(screenshot_delegate.Pass()),
+      screenshot_delegate_(std::move(screenshot_delegate)),
       weak_ptr_factory_(this) {
   DCHECK(screenshot_delegate_);
 }
@@ -106,13 +110,14 @@ enterprise_management::RemoteCommand_Type DeviceCommandScreenshotJob::GetType()
 }
 
 void DeviceCommandScreenshotJob::OnSuccess() {
+  SYSLOG(INFO) << "Upload successful.";
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(succeeded_callback_,
-                 base::Passed(make_scoped_ptr(new Payload(SUCCESS)))));
+      FROM_HERE, base::Bind(succeeded_callback_,
+                            base::Passed(base::MakeUnique<Payload>(SUCCESS))));
 }
 
 void DeviceCommandScreenshotJob::OnFailure(UploadJob::ErrorCode error_code) {
+  SYSLOG(ERROR) << "Upload failure: " << error_code;
   ResultCode result_code = FAILURE_CLIENT;
   switch (error_code) {
     case UploadJob::AUTHENTICATION_ERROR:
@@ -122,14 +127,11 @@ void DeviceCommandScreenshotJob::OnFailure(UploadJob::ErrorCode error_code) {
     case UploadJob::SERVER_ERROR:
       result_code = FAILURE_SERVER;
       break;
-    case UploadJob::CONTENT_ENCODING_ERROR:
-      result_code = FAILURE_CLIENT;
-      break;
   }
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(failed_callback_,
-                 base::Passed(make_scoped_ptr(new Payload(result_code)))));
+                 base::Passed(base::MakeUnique<Payload>(result_code))));
 }
 
 bool DeviceCommandScreenshotJob::IsExpired(base::TimeTicks now) {
@@ -139,7 +141,8 @@ bool DeviceCommandScreenshotJob::IsExpired(base::TimeTicks now) {
 
 bool DeviceCommandScreenshotJob::ParseCommandPayload(
     const std::string& command_payload) {
-  scoped_ptr<base::Value> root(base::JSONReader().ReadToValue(command_payload));
+  std::unique_ptr<base::Value> root(
+      base::JSONReader().ReadToValue(command_payload));
   if (!root.get())
     return false;
   base::DictionaryValue* payload = nullptr;
@@ -172,13 +175,13 @@ void DeviceCommandScreenshotJob::StartScreenshotUpload() {
                                         kContentTypeImagePng));
     header_fields.insert(std::make_pair(kCommandIdHeaderName,
                                         base::Uint64ToString(unique_id())));
-    scoped_ptr<std::string> data = make_scoped_ptr(
-        new std::string((const char*)screenshot_entry.second->front(),
-                        screenshot_entry.second->size()));
+    std::unique_ptr<std::string> data = base::MakeUnique<std::string>(
+        (const char*)screenshot_entry.second->front(),
+        screenshot_entry.second->size());
     upload_job_->AddDataSegment(
         base::StringPrintf(kNameFieldTemplate, screenshot_entry.first),
         base::StringPrintf(kFilenameFieldTemplate, screenshot_entry.first),
-        header_fields, data.Pass());
+        header_fields, std::move(data));
   }
   upload_job_->Start();
 }
@@ -189,32 +192,36 @@ void DeviceCommandScreenshotJob::RunImpl(
   succeeded_callback_ = succeeded_callback;
   failed_callback_ = failed_callback;
 
+  SYSLOG(INFO) << "Executing screenshot command.";
+
   // Fail if the delegate says screenshots are not allowed in this session.
   if (!screenshot_delegate_->IsScreenshotAllowed()) {
+    SYSLOG(ERROR) << "Screenshots are not allowed.";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(failed_callback_, base::Passed(make_scoped_ptr(
-                                         new Payload(FAILURE_USER_INPUT)))));
+        base::Bind(failed_callback_, base::Passed(base::MakeUnique<Payload>(
+                                         FAILURE_USER_INPUT))));
   }
 
   aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
 
   // Immediately fail if the upload url is invalid.
   if (!upload_url_.is_valid()) {
-    LOG(ERROR) << upload_url_ << " is not a valid URL.";
+    SYSLOG(ERROR) << upload_url_ << " is not a valid URL.";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(failed_callback_, base::Passed(make_scoped_ptr(
-                                         new Payload(FAILURE_INVALID_URL)))));
+        base::Bind(failed_callback_, base::Passed(base::MakeUnique<Payload>(
+                                         FAILURE_INVALID_URL))));
     return;
   }
 
   // Immediately fail if there are no attached screens.
   if (root_windows.size() == 0) {
+    SYSLOG(ERROR) << "No attached screens.";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(failed_callback_, base::Passed(make_scoped_ptr(new Payload(
-                                         FAILURE_SCREENSHOT_ACQUISITION)))));
+        base::Bind(failed_callback_, base::Passed(base::MakeUnique<Payload>(
+                                         FAILURE_SCREENSHOT_ACQUISITION))));
     return;
   }
 

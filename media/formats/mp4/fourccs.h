@@ -7,15 +7,22 @@
 
 #include <string>
 
+#include "media/media_features.h"
+
 namespace media {
 namespace mp4 {
 
 enum FourCC {
   FOURCC_NULL = 0,
+#if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
+  FOURCC_AC3 = 0x61632d33,   // "ac-3"
+  FOURCC_EAC3 = 0x65632d33,  // "ec-3"
+#endif
   FOURCC_AVC1 = 0x61766331,
   FOURCC_AVC3 = 0x61766333,
   FOURCC_AVCC = 0x61766343,
   FOURCC_BLOC = 0x626C6F63,
+  FOURCC_CBCS = 0x63626373,
   FOURCC_CENC = 0x63656e63,
   FOURCC_CO64 = 0x636f3634,
   FOURCC_CTTS = 0x63747473,
@@ -31,7 +38,7 @@ enum FourCC {
   FOURCC_FTYP = 0x66747970,
   FOURCC_HDLR = 0x68646c72,
   FOURCC_HINT = 0x68696e74,
-#if defined(ENABLE_HEVC_DEMUXING)
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
   FOURCC_HEV1 = 0x68657631,
   FOURCC_HVC1 = 0x68766331,
   FOURCC_HVCC = 0x68766343,
@@ -59,10 +66,12 @@ enum FourCC {
   FOURCC_SAIO = 0x7361696f,
   FOURCC_SAIZ = 0x7361697a,
   FOURCC_SBGP = 0x73626770,
+  FOURCC_SBTL = 0x7362746c,
   FOURCC_SCHI = 0x73636869,
   FOURCC_SCHM = 0x7363686d,
   FOURCC_SDTP = 0x73647470,
   FOURCC_SEIG = 0x73656967,
+  FOURCC_SENC = 0x73656e63,
   FOURCC_SGPD = 0x73677064,
   FOURCC_SIDX = 0x73696478,
   FOURCC_SINF = 0x73696e66,
@@ -78,7 +87,9 @@ enum FourCC {
   FOURCC_STSZ = 0x7374737a,
   FOURCC_STTS = 0x73747473,
   FOURCC_STYP = 0x73747970,
+  FOURCC_SUBT = 0x73756274,
   FOURCC_TENC = 0x74656e63,
+  FOURCC_TEXT = 0x74657874,
   FOURCC_TFDT = 0x74666474,
   FOURCC_TFHD = 0x74666864,
   FOURCC_TKHD = 0x746b6864,
@@ -90,6 +101,8 @@ enum FourCC {
   FOURCC_UUID = 0x75756964,
   FOURCC_VIDE = 0x76696465,
   FOURCC_VMHD = 0x766d6864,
+  FOURCC_VP09 = 0x76703039,
+  FOURCC_VPCC = 0x76706343,
   FOURCC_WIDE = 0x77696465,
 };
 
@@ -100,6 +113,17 @@ const inline std::string FourCCToString(FourCC fourcc) {
   buf[2] = (fourcc >> 8) & 0xff;
   buf[3] = (fourcc) & 0xff;
   buf[4] = 0;
+
+  // Return hex itself if characters can not be printed. Any character within
+  // the "C" locale is considered printable.
+  for (int i = 0; i < 4; ++i) {
+    if (!(buf[i] > 0x1f && buf[i] < 0x7f)) {
+      std::stringstream hex_string;
+      hex_string << "0x" << std::hex << fourcc;
+      return hex_string.str();
+    }
+  }
+
   return std::string(buf);
 }
 

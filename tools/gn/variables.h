@@ -37,6 +37,10 @@ extern const char kDefaultToolchain[];
 extern const char kDefaultToolchain_HelpShort[];
 extern const char kDefaultToolchain_Help[];
 
+extern const char kInvoker[];
+extern const char kInvoker_HelpShort[];
+extern const char kInvoker_Help[];
+
 extern const char kPythonPath[];
 extern const char kPythonPath_HelpShort[];
 extern const char kPythonPath_Help[];
@@ -56,6 +60,10 @@ extern const char kRootOutDir_Help[];
 extern const char kTargetCpu[];
 extern const char kTargetCpu_HelpShort[];
 extern const char kTargetCpu_Help[];
+
+extern const char kTargetName[];
+extern const char kTargetName_HelpShort[];
+extern const char kTargetName_Help[];
 
 extern const char kTargetOs[];
 extern const char kTargetOs_HelpShort[];
@@ -79,6 +87,10 @@ extern const char kAllowCircularIncludesFrom[];
 extern const char kAllowCircularIncludesFrom_HelpShort[];
 extern const char kAllowCircularIncludesFrom_Help[];
 
+extern const char kArflags[];
+extern const char kArflags_HelpShort[];
+extern const char kArflags_Help[];
+
 extern const char kArgs[];
 extern const char kArgs_HelpShort[];
 extern const char kArgs_Help[];
@@ -86,6 +98,30 @@ extern const char kArgs_Help[];
 extern const char kAsmflags[];
 extern const char kAsmflags_HelpShort[];
 extern const char* kAsmflags_Help;
+
+extern const char kAssertNoDeps[];
+extern const char kAssertNoDeps_HelpShort[];
+extern const char kAssertNoDeps_Help[];
+
+extern const char kBundleRootDir[];
+extern const char kBundleRootDir_HelpShort[];
+extern const char kBundleRootDir_Help[];
+
+extern const char kBundleResourcesDir[];
+extern const char kBundleResourcesDir_HelpShort[];
+extern const char kBundleResourcesDir_Help[];
+
+extern const char kBundleDepsFilter[];
+extern const char kBundleDepsFilter_HelpShort[];
+extern const char kBundleDepsFilter_Help[];
+
+extern const char kBundleExecutableDir[];
+extern const char kBundleExecutableDir_HelpShort[];
+extern const char kBundleExecutableDir_Help[];
+
+extern const char kBundlePlugInsDir[];
+extern const char kBundlePlugInsDir_HelpShort[];
+extern const char kBundlePlugInsDir_Help[];
 
 extern const char kCflags[];
 extern const char kCflags_HelpShort[];
@@ -110,6 +146,22 @@ extern const char* kCflagsObjCC_Help;
 extern const char kCheckIncludes[];
 extern const char kCheckIncludes_HelpShort[];
 extern const char kCheckIncludes_Help[];
+
+extern const char kCodeSigningArgs[];
+extern const char kCodeSigningArgs_HelpShort[];
+extern const char kCodeSigningArgs_Help[];
+
+extern const char kCodeSigningScript[];
+extern const char kCodeSigningScript_HelpShort[];
+extern const char kCodeSigningScript_Help[];
+
+extern const char kCodeSigningSources[];
+extern const char kCodeSigningSources_HelpShort[];
+extern const char kCodeSigningSources_Help[];
+
+extern const char kCodeSigningOutputs[];
+extern const char kCodeSigningOutputs_HelpShort[];
+extern const char kCodeSigningOutputs_Help[];
 
 extern const char kCompleteStaticLib[];
 extern const char kCompleteStaticLib_HelpShort[];
@@ -163,6 +215,10 @@ extern const char kLibs[];
 extern const char kLibs_HelpShort[];
 extern const char kLibs_Help[];
 
+extern const char kOutputDir[];
+extern const char kOutputDir_HelpShort[];
+extern const char kOutputDir_Help[];
+
 extern const char kOutputExtension[];
 extern const char kOutputExtension_HelpShort[];
 extern const char kOutputExtension_Help[];
@@ -170,6 +226,10 @@ extern const char kOutputExtension_Help[];
 extern const char kOutputName[];
 extern const char kOutputName_HelpShort[];
 extern const char kOutputName_Help[];
+
+extern const char kOutputPrefixOverride[];
+extern const char kOutputPrefixOverride_HelpShort[];
+extern const char kOutputPrefixOverride_Help[];
 
 extern const char kOutputs[];
 extern const char kOutputs_HelpShort[];
@@ -182,6 +242,10 @@ extern const char kPrecompiledHeader_Help[];
 extern const char kPrecompiledSource[];
 extern const char kPrecompiledSource_HelpShort[];
 extern const char kPrecompiledSource_Help[];
+
+extern const char kProductType[];
+extern const char kProductType_HelpShort[];
+extern const char kProductType_Help[];
 
 extern const char kPublic[];
 extern const char kPublic_HelpShort[];
@@ -214,6 +278,10 @@ extern const char kTestonly_Help[];
 extern const char kVisibility[];
 extern const char kVisibility_HelpShort[];
 extern const char kVisibility_Help[];
+
+extern const char kWriteRuntimeDeps[];
+extern const char kWriteRuntimeDeps_HelpShort[];
+extern const char kWriteRuntimeDeps_Help[];
 
 // -----------------------------------------------------------------------------
 

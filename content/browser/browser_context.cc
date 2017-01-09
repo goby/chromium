@@ -4,9 +4,23 @@
 
 #include "content/public/browser/browser_context.h"
 
-#if !defined(OS_IOS)
+#include <stddef.h>
+#include <stdint.h>
+#include <algorithm>
+#include <limits>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "base/command_line.h"
+#include "base/guid.h"
+#include "base/lazy_instance.h"
+#include "base/macros.h"
+#include "base/rand_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/download/download_manager_impl.h"
-#include "content/browser/fileapi/chrome_blob_storage_context.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/push_messaging/push_messaging_router.h"
@@ -15,32 +29,70 @@
 #include "content/public/browser/blob_handle.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/site_instance.h"
-#include "net/cookies/cookie_monster.h"
+#include "content/public/common/content_switches.h"
+#include "content/public/common/service_manager_connection.h"
+#include "content/public/common/service_names.mojom.h"
 #include "net/cookies/cookie_store.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/channel_id_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/device/device_service.h"
+#include "services/device/public/cpp/constants.h"
+#include "services/file/file_service.h"
+#include "services/file/public/interfaces/constants.mojom.h"
+#include "services/file/user_id_map.h"
+#include "services/service_manager/public/cpp/connection.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/interfaces/service.mojom.h"
 #include "storage/browser/database/database_tracker.h"
 #include "storage/browser/fileapi/external_mount_points.h"
-#endif // !OS_IOS
 
 using base::UserDataAdapter;
 
 namespace content {
 
-// Only ~BrowserContext() is needed on iOS.
-#if !defined(OS_IOS)
 namespace {
+
+base::LazyInstance<std::map<std::string, BrowserContext*>>
+    g_user_id_to_context = LAZY_INSTANCE_INITIALIZER;
+
+class ServiceUserIdHolder : public base::SupportsUserData::Data {
+ public:
+  explicit ServiceUserIdHolder(const std::string& user_id)
+      : user_id_(user_id) {}
+  ~ServiceUserIdHolder() override {}
+
+  const std::string& user_id() const { return user_id_; }
+
+ private:
+  std::string user_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(ServiceUserIdHolder);
+};
 
 // Key names on BrowserContext.
 const char kDownloadManagerKeyName[] = "download_manager";
+const char kMojoWasInitialized[] = "mojo-was-initialized";
+const char kServiceManagerConnection[] = "service-manager-connection";
+const char kServiceUserId[] = "service-user-id";
 const char kStoragePartitionMapKeyName[] = "content_storage_partition_map";
 
 #if defined(OS_CHROMEOS)
 const char kMountPointsKey[] = "mount_points";
 #endif  // defined(OS_CHROMEOS)
+
+void RemoveBrowserContextFromUserIdMap(BrowserContext* browser_context) {
+  ServiceUserIdHolder* holder = static_cast<ServiceUserIdHolder*>(
+      browser_context->GetUserData(kServiceUserId));
+  if (holder) {
+    auto it = g_user_id_to_context.Get().find(holder->user_id());
+    if (it != g_user_id_to_context.Get().end())
+      g_user_id_to_context.Get().erase(it);
+  }
+}
 
 StoragePartitionImplMap* GetStoragePartitionMap(
     BrowserContext* browser_context) {
@@ -72,8 +124,7 @@ void SaveSessionStateOnIOThread(
     const scoped_refptr<net::URLRequestContextGetter>& context_getter,
     AppCacheServiceImpl* appcache_service) {
   net::URLRequestContext* context = context_getter->GetURLRequestContext();
-  context->cookie_store()->GetCookieMonster()->
-      SetForceKeepSessionState();
+  context->cookie_store()->SetForceKeepSessionState();
   context->channel_id_service()->GetChannelIDStore()->
       SetForceKeepSessionState();
   appcache_service->set_force_keep_session_state();
@@ -98,6 +149,29 @@ void SetDownloadManager(BrowserContext* context,
   context->SetUserData(kDownloadManagerKeyName, download_manager);
 }
 
+class BrowserContextServiceManagerConnectionHolder
+    : public base::SupportsUserData::Data {
+ public:
+  BrowserContextServiceManagerConnectionHolder(
+      std::unique_ptr<service_manager::Connection> connection,
+      service_manager::mojom::ServiceRequest request)
+      : root_connection_(std::move(connection)),
+        service_manager_connection_(ServiceManagerConnection::Create(
+            std::move(request),
+            BrowserThread::GetTaskRunnerForThread(BrowserThread::IO))) {}
+  ~BrowserContextServiceManagerConnectionHolder() override {}
+
+  ServiceManagerConnection* service_manager_connection() {
+    return service_manager_connection_.get();
+  }
+
+ private:
+  std::unique_ptr<service_manager::Connection> root_connection_;
+  std::unique_ptr<ServiceManagerConnection> service_manager_connection_;
+
+  DISALLOW_COPY_AND_ASSIGN(BrowserContextServiceManagerConnectionHolder);
+};
+
 }  // namespace
 
 // static
@@ -111,11 +185,11 @@ void BrowserContext::AsyncObliterateStoragePartition(
 
 // static
 void BrowserContext::GarbageCollectStoragePartitions(
-      BrowserContext* browser_context,
-      scoped_ptr<base::hash_set<base::FilePath> > active_paths,
-      const base::Closure& done) {
-  GetStoragePartitionMap(browser_context)->GarbageCollect(
-      active_paths.Pass(), done);
+    BrowserContext* browser_context,
+    std::unique_ptr<base::hash_set<base::FilePath>> active_paths,
+    const base::Closure& done) {
+  GetStoragePartitionMap(browser_context)
+      ->GarbageCollect(std::move(active_paths), done);
 }
 
 DownloadManager* BrowserContext::GetDownloadManager(
@@ -248,12 +322,13 @@ void BrowserContext::CreateFileBackedBlob(
 void BrowserContext::DeliverPushMessage(
     BrowserContext* browser_context,
     const GURL& origin,
-    int64 service_worker_registration_id,
-    const std::string& data,
+    int64_t service_worker_registration_id,
+    const PushEventPayload& payload,
     const base::Callback<void(PushDeliveryStatus)>& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  PushMessagingRouter::DeliverMessage(
-      browser_context, origin, service_worker_registration_id, data, callback);
+  PushMessagingRouter::DeliverMessage(browser_context, origin,
+                                      service_worker_registration_id, payload,
+                                      callback);
 }
 
 // static
@@ -263,6 +338,18 @@ void BrowserContext::NotifyWillBeDestroyed(BrowserContext* browser_context) {
   // render process hosts die before their profile (browser context) dies.
   ForEachStoragePartition(browser_context,
                           base::Bind(ShutdownServiceWorkerContext));
+
+  // Shared workers also keep render process hosts alive, and are expected to
+  // return ref counts to 0 after documents close. However, shared worker
+  // bookkeeping is done on the IO thread and we want to ensure the hosts are
+  // destructed now, so forcibly release their ref counts here.
+  for (RenderProcessHost::iterator host_iterator =
+           RenderProcessHost::AllHostsIterator();
+       !host_iterator.IsAtEnd(); host_iterator.Advance()) {
+    RenderProcessHost* host = host_iterator.GetCurrentValue();
+    if (host->GetBrowserContext() == browser_context)
+      host->ForceReleaseWorkerRefCounts();
+  }
 }
 
 void BrowserContext::EnsureResourceContextInitialized(BrowserContext* context) {
@@ -288,7 +375,8 @@ void BrowserContext::SaveSessionState(BrowserContext* browser_context) {
         BrowserThread::IO, FROM_HERE,
         base::Bind(
             &SaveSessionStateOnIOThread,
-            make_scoped_refptr(browser_context->GetRequestContext()),
+            make_scoped_refptr(BrowserContext::GetDefaultStoragePartition(
+                browser_context)->GetURLRequestContext()),
             static_cast<AppCacheServiceImpl*>(
                 storage_partition->GetAppCacheService())));
   }
@@ -316,13 +404,135 @@ void BrowserContext::SetDownloadManagerForTesting(
   SetDownloadManager(browser_context, download_manager);
 }
 
-#endif  // !OS_IOS
+// static
+void BrowserContext::Initialize(
+    BrowserContext* browser_context,
+    const base::FilePath& path) {
+
+  std::string new_id;
+  if (GetContentClient() && GetContentClient()->browser()) {
+    new_id = GetContentClient()->browser()->GetServiceUserIdForBrowserContext(
+        browser_context);
+  } else {
+    // Some test scenarios initialize a BrowserContext without a content client.
+    new_id = base::GenerateGUID();
+  }
+
+  ServiceUserIdHolder* holder = static_cast<ServiceUserIdHolder*>(
+      browser_context->GetUserData(kServiceUserId));
+  if (holder)
+    file::ForgetServiceUserIdUserDirAssociation(holder->user_id());
+  file::AssociateServiceUserIdWithUserDir(new_id, path);
+  RemoveBrowserContextFromUserIdMap(browser_context);
+  g_user_id_to_context.Get()[new_id] = browser_context;
+  browser_context->SetUserData(kServiceUserId,
+                               new ServiceUserIdHolder(new_id));
+
+  browser_context->SetUserData(kMojoWasInitialized,
+                               new base::SupportsUserData::Data);
+
+  ServiceManagerConnection* service_manager_connection =
+      ServiceManagerConnection::GetForProcess();
+  if (service_manager_connection && base::ThreadTaskRunnerHandle::IsSet()) {
+    // NOTE: Many unit tests create a TestBrowserContext without initializing
+    // Mojo or the global service manager connection.
+
+    service_manager::mojom::ServicePtr service;
+    service_manager::mojom::ServiceRequest service_request =
+        mojo::GetProxy(&service);
+
+    service_manager::mojom::PIDReceiverPtr pid_receiver;
+    service_manager::Connector::ConnectParams params(
+        service_manager::Identity(mojom::kBrowserServiceName, new_id));
+    params.set_client_process_connection(std::move(service),
+                                         mojo::GetProxy(&pid_receiver));
+    pid_receiver->SetPID(base::GetCurrentProcId());
+
+    BrowserContextServiceManagerConnectionHolder* connection_holder =
+        new BrowserContextServiceManagerConnectionHolder(
+            service_manager_connection->GetConnector()->Connect(&params),
+            std::move(service_request));
+    browser_context->SetUserData(kServiceManagerConnection, connection_holder);
+
+    ServiceManagerConnection* connection =
+        connection_holder->service_manager_connection();
+    connection->Start();
+
+    // New embedded service factories should be added to |connection| here.
+    // TODO(blundell): Does this belong as a global service rather than per
+    // BrowserContext?
+    ServiceInfo info;
+    info.factory =
+        base::Bind(&device::CreateDeviceService,
+                   BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE));
+    connection->AddEmbeddedService(device::kDeviceServiceName, info);
+
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kMojoLocalStorage)) {
+      ServiceInfo info;
+      info.factory =
+          base::Bind(&file::CreateFileService,
+                     BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE),
+                     BrowserThread::GetTaskRunnerForThread(BrowserThread::DB));
+      connection->AddEmbeddedService(file::mojom::kServiceName, info);
+    }
+  }
+}
+
+// static
+const std::string& BrowserContext::GetServiceUserIdFor(
+    BrowserContext* browser_context) {
+  CHECK(browser_context->GetUserData(kMojoWasInitialized))
+      << "Attempting to get the mojo user id for a BrowserContext that was "
+      << "never Initialize()ed.";
+
+  ServiceUserIdHolder* holder = static_cast<ServiceUserIdHolder*>(
+      browser_context->GetUserData(kServiceUserId));
+  return holder->user_id();
+}
+
+// static
+BrowserContext* BrowserContext::GetBrowserContextForServiceUserId(
+    const std::string& user_id) {
+  auto it = g_user_id_to_context.Get().find(user_id);
+  return it != g_user_id_to_context.Get().end() ? it->second : nullptr;
+}
+
+// static
+service_manager::Connector* BrowserContext::GetConnectorFor(
+    BrowserContext* browser_context) {
+  ServiceManagerConnection* connection =
+      GetServiceManagerConnectionFor(browser_context);
+  return connection ? connection->GetConnector() : nullptr;
+}
+
+// static
+ServiceManagerConnection* BrowserContext::GetServiceManagerConnectionFor(
+    BrowserContext* browser_context) {
+  BrowserContextServiceManagerConnectionHolder* connection_holder =
+      static_cast<BrowserContextServiceManagerConnectionHolder*>(
+          browser_context->GetUserData(kServiceManagerConnection));
+  return connection_holder ? connection_holder->service_manager_connection()
+                           : nullptr;
+}
 
 BrowserContext::~BrowserContext() {
-#if !defined(OS_IOS)
+  CHECK(GetUserData(kMojoWasInitialized))
+      << "Attempting to destroy a BrowserContext that never called "
+      << "Initialize()";
+
+  DCHECK(!GetUserData(kStoragePartitionMapKeyName))
+      << "StoragePartitionMap is not shut down properly";
+
+  RemoveBrowserContextFromUserIdMap(this);
+
   if (GetUserData(kDownloadManagerKeyName))
     GetDownloadManager(this)->Shutdown();
-#endif
+}
+
+void BrowserContext::ShutdownStoragePartitions() {
+  if (GetUserData(kStoragePartitionMapKeyName))
+    RemoveUserData(kStoragePartitionMapKeyName);
 }
 
 }  // namespace content

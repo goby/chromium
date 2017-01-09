@@ -4,6 +4,8 @@
 
 #include "components/nacl/browser/nacl_browser.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/files/file_proxy.h"
 #include "base/files/file_util.h"
@@ -13,7 +15,7 @@
 #include "base/pickle.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/win/windows_version.h"
 #include "build/build_config.h"
@@ -111,7 +113,7 @@ void LogCacheSet(nacl::NaClBrowser::ValidationCacheStatus status) {
 
 // Crash throttling parameters.
 const size_t kMaxCrashesPerInterval = 3;
-const int64 kCrashesIntervalInSeconds = 120;
+const int64_t kCrashesIntervalInSeconds = 120;
 
 }  // namespace
 
@@ -123,12 +125,12 @@ base::File OpenNaClReadExecImpl(const base::FilePath& file_path,
   // memory map the executable.
   // IMPORTANT: This file descriptor must not have write access - that could
   // allow a NaCl inner sandbox escape.
-  uint32 flags = base::File::FLAG_OPEN | base::File::FLAG_READ;
+  uint32_t flags = base::File::FLAG_OPEN | base::File::FLAG_READ;
   if (is_executable)
     flags |= base::File::FLAG_EXECUTE;  // Windows only flag.
   base::File file(file_path, flags);
   if (!file.IsValid())
-    return file.Pass();
+    return file;
 
   // Check that the file does not reference a directory. Returning a descriptor
   // to an extension directory could allow an outer sandbox escape. openat(...)
@@ -137,7 +139,7 @@ base::File OpenNaClReadExecImpl(const base::FilePath& file_path,
   if (!file.GetInfo(&file_info) || file_info.is_directory)
     return base::File();
 
-  return file.Pass();
+  return file;
 }
 
 NaClBrowser::NaClBrowser()
@@ -245,9 +247,10 @@ void NaClBrowser::EnsureIrtAvailable() {
   if (IsOk() && irt_state_ == NaClResourceUninitialized) {
     irt_state_ = NaClResourceRequested;
     // TODO(ncbray) use blocking pool.
-    scoped_ptr<base::FileProxy> file_proxy(new base::FileProxy(
-        content::BrowserThread::GetMessageLoopProxyForThread(
-                content::BrowserThread::FILE).get()));
+    std::unique_ptr<base::FileProxy> file_proxy(
+        new base::FileProxy(content::BrowserThread::GetTaskRunnerForThread(
+                                content::BrowserThread::FILE)
+                                .get()));
     base::FileProxy* proxy = file_proxy.get();
     if (!proxy->CreateOrOpen(irt_filepath_,
                              base::File::FLAG_OPEN | base::File::FLAG_READ,
@@ -260,7 +263,7 @@ void NaClBrowser::EnsureIrtAvailable() {
   }
 }
 
-void NaClBrowser::OnIrtOpened(scoped_ptr<base::FileProxy> file_proxy,
+void NaClBrowser::OnIrtOpened(std::unique_ptr<base::FileProxy> file_proxy,
                               base::File::Error error_code) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   DCHECK_EQ(irt_state_, NaClResourceRequested);
@@ -404,11 +407,12 @@ const base::FilePath& NaClBrowser::GetIrtFilePath() {
   return irt_filepath_;
 }
 
-void NaClBrowser::PutFilePath(const base::FilePath& path, uint64* file_token_lo,
-                              uint64* file_token_hi) {
+void NaClBrowser::PutFilePath(const base::FilePath& path,
+                              uint64_t* file_token_lo,
+                              uint64_t* file_token_hi) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   while (true) {
-    uint64 file_token[2] = {base::RandUint64(), base::RandUint64()};
+    uint64_t file_token[2] = {base::RandUint64(), base::RandUint64()};
     // A zero file_token indicates there is no file_token, if we get zero, ask
     // for another number.
     if (file_token[0] != 0 || file_token[1] != 0) {
@@ -425,10 +429,11 @@ void NaClBrowser::PutFilePath(const base::FilePath& path, uint64* file_token_lo,
   }
 }
 
-bool NaClBrowser::GetFilePath(uint64 file_token_lo, uint64 file_token_hi,
+bool NaClBrowser::GetFilePath(uint64_t file_token_lo,
+                              uint64_t file_token_hi,
                               base::FilePath* path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  uint64 file_token[2] = {file_token_lo, file_token_hi};
+  uint64_t file_token[2] = {file_token_lo, file_token_hi};
   std::string key(reinterpret_cast<char*>(file_token), sizeof(file_token));
   PathCacheType::iterator iter = path_cache_.Peek(key);
   if (iter == path_cache_.end()) {

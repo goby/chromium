@@ -5,7 +5,6 @@
 #include "media/formats/webm/webm_content_encodings_client.h"
 
 #include "base/logging.h"
-#include "base/stl_util.h"
 #include "media/formats/webm/webm_constants.h"
 
 namespace media {
@@ -18,7 +17,6 @@ WebMContentEncodingsClient::WebMContentEncodingsClient(
 }
 
 WebMContentEncodingsClient::~WebMContentEncodingsClient() {
-  STLDeleteElements(&content_encodings_);
 }
 
 const ContentEncodings& WebMContentEncodingsClient::content_encodings() const {
@@ -30,7 +28,7 @@ WebMParserClient* WebMContentEncodingsClient::OnListStart(int id) {
   if (id == kWebMIdContentEncodings) {
     DCHECK(!cur_content_encoding_.get());
     DCHECK(!content_encryption_encountered_);
-    STLDeleteElements(&content_encodings_);
+    content_encodings_.clear();
     content_encodings_ready_ = false;
     return this;
   }
@@ -112,7 +110,7 @@ bool WebMContentEncodingsClient::OnListEnd(int id) {
       return false;
     }
 
-    content_encodings_.push_back(cur_content_encoding_.release());
+    content_encodings_.push_back(std::move(cur_content_encoding_));
     content_encryption_encountered_ = false;
     return true;
   }
@@ -142,7 +140,7 @@ bool WebMContentEncodingsClient::OnListEnd(int id) {
 
 // Multiple occurrence restriction and range are checked in this function.
 // Mandatory occurrence restriction is checked in OnListEnd.
-bool WebMContentEncodingsClient::OnUInt(int id, int64 val) {
+bool WebMContentEncodingsClient::OnUInt(int id, int64_t val) {
   DCHECK(cur_content_encoding_.get());
 
   if (id == kWebMIdContentEncodingOrder) {
@@ -152,7 +150,7 @@ bool WebMContentEncodingsClient::OnUInt(int id, int64 val) {
       return false;
     }
 
-    if (val != static_cast<int64>(content_encodings_.size())) {
+    if (val != static_cast<int64_t>(content_encodings_.size())) {
       // According to the spec, encoding order starts with 0 and counts upwards.
       MEDIA_LOG(ERROR, media_log_) << "Unexpected ContentEncodingOrder.";
       return false;
@@ -252,7 +250,9 @@ bool WebMContentEncodingsClient::OnUInt(int id, int64 val) {
 
 // Multiple occurrence restriction is checked in this function.  Mandatory
 // restriction is checked in OnListEnd.
-bool WebMContentEncodingsClient::OnBinary(int id, const uint8* data, int size) {
+bool WebMContentEncodingsClient::OnBinary(int id,
+                                          const uint8_t* data,
+                                          int size) {
   DCHECK(cur_content_encoding_.get());
   DCHECK(data);
   DCHECK_GT(size, 0);

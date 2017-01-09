@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OMNIBOX_OMNIBOX_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_OMNIBOX_OMNIBOX_UI_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/webui/mojo_web_ui_controller.h"
 #include "chrome/browser/ui/webui/omnibox/omnibox.mojom.h"
 
+class OmniboxPageHandler;
+
 // The UI for chrome://omnibox/
-class OmniboxUI : public MojoWebUIController<OmniboxUIHandlerMojo> {
+class OmniboxUI : public MojoWebUIController<mojom::OmniboxPageHandler> {
  public:
   explicit OmniboxUI(content::WebUI* contents);
   ~OmniboxUI() override;
@@ -18,7 +20,9 @@ class OmniboxUI : public MojoWebUIController<OmniboxUIHandlerMojo> {
  private:
   // MojoWebUIController overrides:
   void BindUIHandler(
-      mojo::InterfaceRequest<OmniboxUIHandlerMojo> request) override;
+      mojo::InterfaceRequest<mojom::OmniboxPageHandler> request) override;
+
+  std::unique_ptr<OmniboxPageHandler> omnibox_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxUI);
 };

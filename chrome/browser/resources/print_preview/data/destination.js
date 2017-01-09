@@ -247,7 +247,7 @@ cr.define('print_preview', function() {
   /**
    * Enumeration specifying whether a destination is provisional and the reason
    * the destination is provisional.
-   * @enum {string
+   * @enum {string}
    */
   Destination.ProvisionalType = {
     /** Destination is not provisional. */
@@ -357,7 +357,7 @@ cr.define('print_preview', function() {
         this.location_ = '';
         this.tags_.some(function(tag) {
           return Destination.LOCATION_TAG_PREFIXES.some(function(prefix) {
-            if (tag.indexOf(prefix) == 0) {
+            if (tag.startsWith(prefix)) {
               this.location_ = tag.substring(prefix.length) || '';
               return true;
             }
@@ -480,21 +480,26 @@ cr.define('print_preview', function() {
     get iconUrl() {
       if (this.id_ == Destination.GooglePromotedId.DOCS) {
         return Destination.IconUrl_.DOCS;
-      } else if (this.id_ == Destination.GooglePromotedId.FEDEX) {
-        return Destination.IconUrl_.FEDEX;
-      } else if (this.id_ == Destination.GooglePromotedId.SAVE_AS_PDF) {
-        return Destination.IconUrl_.PDF;
-      } else if (this.isLocal) {
-        return Destination.IconUrl_.LOCAL;
-      } else if (this.type_ == Destination.Type.MOBILE && this.isOwned_) {
-        return Destination.IconUrl_.MOBILE;
-      } else if (this.type_ == Destination.Type.MOBILE) {
-        return Destination.IconUrl_.MOBILE_SHARED;
-      } else if (this.isOwned_) {
-        return Destination.IconUrl_.CLOUD;
-      } else {
-        return Destination.IconUrl_.CLOUD_SHARED;
       }
+      if (this.id_ == Destination.GooglePromotedId.FEDEX) {
+        return Destination.IconUrl_.FEDEX;
+      }
+      if (this.id_ == Destination.GooglePromotedId.SAVE_AS_PDF) {
+        return Destination.IconUrl_.PDF;
+      }
+      if (this.isLocal) {
+        return Destination.IconUrl_.LOCAL;
+      }
+      if (this.type_ == Destination.Type.MOBILE && this.isOwned_) {
+        return Destination.IconUrl_.MOBILE;
+      }
+      if (this.type_ == Destination.Type.MOBILE) {
+        return Destination.IconUrl_.MOBILE_SHARED;
+      }
+      if (this.isOwned_) {
+        return Destination.IconUrl_.CLOUD;
+      }
+      return Destination.IconUrl_.CLOUD_SHARED;
     },
 
     /**

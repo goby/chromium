@@ -6,8 +6,10 @@
 #define EXTENSIONS_BROWSER_API_CAST_CHANNEL_CAST_TEST_UTIL_H_
 
 #include <string>
+#include <utility>
 
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "extensions/browser/api/cast_channel/cast_socket.h"
 #include "extensions/browser/api/cast_channel/cast_transport.h"
 #include "extensions/common/api/cast_channel/cast_channel.pb.h"
@@ -25,7 +27,8 @@ class MockCastTransport : public extensions::api::cast_channel::CastTransport {
   MockCastTransport();
   ~MockCastTransport() override;
 
-  void SetReadDelegate(scoped_ptr<CastTransport::Delegate> delegate) override;
+  void SetReadDelegate(
+      std::unique_ptr<CastTransport::Delegate> delegate) override;
 
   MOCK_METHOD2(SendMessage,
                void(const extensions::api::cast_channel::CastMessage& message,
@@ -37,7 +40,7 @@ class MockCastTransport : public extensions::api::cast_channel::CastTransport {
   CastTransport::Delegate* current_delegate() const;
 
  private:
-  scoped_ptr<CastTransport::Delegate> delegate_;
+  std::unique_ptr<CastTransport::Delegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(MockCastTransport);
 };
@@ -68,9 +71,9 @@ class MockCastSocket : public CastSocket {
 
   // Proxy for ConnectRawPtr. Unpacks scoped_ptr into a GMock-friendly bare
   // ptr.
-  void Connect(scoped_ptr<CastTransport::Delegate> delegate,
+  void Connect(std::unique_ptr<CastTransport::Delegate> delegate,
                base::Callback<void(ChannelError)> callback) override {
-    delegate_ = delegate.Pass();
+    delegate_ = std::move(delegate);
     ConnectRawPtr(delegate_.get(), callback);
   }
 
@@ -90,8 +93,8 @@ class MockCastSocket : public CastSocket {
   MockCastTransport* mock_transport() const { return mock_transport_.get(); }
 
  private:
-  scoped_ptr<MockCastTransport> mock_transport_;
-  scoped_ptr<CastTransport::Delegate> delegate_;
+  std::unique_ptr<MockCastTransport> mock_transport_;
+  std::unique_ptr<CastTransport::Delegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(MockCastSocket);
 };
@@ -113,7 +116,7 @@ MATCHER_P(EqualsProto, message, "") {
 ACTION_TEMPLATE(PostCompletionCallbackTask,
                 HAS_1_TEMPLATE_PARAMS(int, cb_idx),
                 AND_1_VALUE_PARAMS(rv)) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(testing::get<cb_idx>(args), rv));
 }
 

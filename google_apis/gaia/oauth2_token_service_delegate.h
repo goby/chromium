@@ -5,6 +5,7 @@
 #ifndef GOOGLE_APIS_GAIA_OAUTH2_TOKEN_SERVICE_DELEGATE_H_
 #define GOOGLE_APIS_GAIA_OAUTH2_TOKEN_SERVICE_DELEGATE_H_
 
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/oauth2_token_service.h"
@@ -13,8 +14,6 @@
 namespace net {
 class URLRequestContextGetter;
 }
-
-class SigninClient;
 
 // Abstract base class to fetch and maintain refresh tokens from various
 // entities. Concrete subclasses should implement RefreshTokenIsAvailable and

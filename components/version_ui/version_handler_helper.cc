@@ -4,6 +4,7 @@
 
 #include "components/version_ui/version_handler_helper.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/metrics/field_trial.h"
@@ -13,7 +14,7 @@
 
 namespace version_ui {
 
-scoped_ptr<base::Value> GetVariationsList() {
+std::unique_ptr<base::Value> GetVariationsList() {
   std::vector<std::string> variations;
 #if !defined(NDEBUG)
   base::FieldTrial::ActiveGroups active_groups;
@@ -32,13 +33,13 @@ scoped_ptr<base::Value> GetVariationsList() {
   variations::GetFieldTrialActiveGroupIdsAsStrings(&variations);
 #endif
 
-  scoped_ptr<base::ListValue> variations_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> variations_list(new base::ListValue);
   for (std::vector<std::string>::const_iterator it = variations.begin();
        it != variations.end(); ++it) {
-    variations_list->Append(new base::StringValue(*it));
+    variations_list->AppendString(*it);
   }
 
-  return variations_list.Pass();
+  return std::move(variations_list);
 }
 
 }  // namespace version_ui

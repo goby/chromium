@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/base/locale_util.h"
 
+#include <utility>
 #include <vector>
 
 #include "chrome/browser/browser_process.h"
@@ -54,7 +55,7 @@ void SwitchLanguageDoReloadLocale(SwitchLanguageData* data) {
 }
 
 // Callback after SwitchLanguageDoReloadLocale() back in UI thread.
-void FinishSwitchLanguage(scoped_ptr<SwitchLanguageData> data) {
+void FinishSwitchLanguage(std::unique_ptr<SwitchLanguageData> data) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (data->result.success) {
     g_browser_process->SetApplicationLocale(data->result.loaded_locale);
@@ -114,15 +115,14 @@ void SwitchLanguage(const std::string& locale,
                     const SwitchLanguageCallback& callback,
                     Profile* profile) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  scoped_ptr<SwitchLanguageData> data(
+  std::unique_ptr<SwitchLanguageData> data(
       new SwitchLanguageData(locale, enable_locale_keyboard_layouts,
                              login_layouts_only, callback, profile));
   base::Closure reloader(
       base::Bind(&SwitchLanguageDoReloadLocale, base::Unretained(data.get())));
   content::BrowserThread::PostBlockingPoolTaskAndReply(
-      FROM_HERE,
-      reloader,
-      base::Bind(&FinishSwitchLanguage, base::Passed(data.Pass())));
+      FROM_HERE, reloader,
+      base::Bind(&FinishSwitchLanguage, base::Passed(std::move(data))));
 }
 
 }  // namespace locale_util

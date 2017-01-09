@@ -7,14 +7,17 @@
 #include <shellapi.h>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/process_singleton.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/user_experiment.h"
-#include "grit/theme_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -24,7 +27,7 @@
 #include "ui/views/background.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/image_button.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/button/radio_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/link.h"
@@ -219,9 +222,9 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
     layout->AddView(kill_chrome_);
   }
 
-  views::LabelButton* accept_button = new views::LabelButton(
-      this, l10n_util::GetStringUTF16(IDS_OK));
-  accept_button->SetStyle(views::Button::STYLE_BUTTON);
+  views::LabelButton* accept_button =
+      views::MdTextButton::CreateSecondaryUiButton(
+          this, l10n_util::GetStringUTF16(IDS_OK));
   accept_button->set_tag(BT_OK_BUTTON);
 
   views::Separator* separator = NULL;
@@ -248,9 +251,9 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
     if (dont_bug_me_button) {
       // The dialog needs a "Don't bug me" as a button or as a radio button,
       // this the button case.
-      views::LabelButton* cancel_button = new views::LabelButton(
-          this, l10n_util::GetStringUTF16(IDS_TRY_TOAST_CANCEL));
-      cancel_button->SetStyle(views::Button::STYLE_BUTTON);
+      views::LabelButton* cancel_button =
+          views::MdTextButton::CreateSecondaryUiButton(
+              this, l10n_util::GetStringUTF16(IDS_TRY_TOAST_CANCEL));
       cancel_button->set_tag(BT_CLOSE_BUTTON);
       layout->AddView(cancel_button);
     }
@@ -286,7 +289,7 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
   popup_->Show();
   if (!listener.is_null())
     listener.Run(popup_->GetNativeView());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   if (!listener.is_null())
     listener.Run(NULL);
   return result_;

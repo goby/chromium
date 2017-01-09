@@ -4,9 +4,14 @@
 
 #include "components/nacl/loader/sandbox_linux/nacl_bpf_sandbox_linux.h"
 
-#include "build/build_config.h"
+#include <memory>
+#include <utility>
 
-#if defined(USE_SECCOMP_BPF)
+#include "base/macros.h"
+#include "build/build_config.h"
+#include "sandbox/sandbox_features.h"
+
+#if BUILDFLAG(USE_SECCOMP_BPF)
 
 #include <errno.h>
 #include <signal.h>
@@ -14,13 +19,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-
 #include "components/nacl/common/nacl_switches.h"
 #include "content/public/common/sandbox_init.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
@@ -28,11 +31,11 @@
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 
-#endif  // defined(USE_SECCOMP_BPF)
+#endif  // BUILDFLAG(USE_SECCOMP_BPF)
 
 namespace nacl {
 
-#if defined(USE_SECCOMP_BPF)
+#if BUILDFLAG(USE_SECCOMP_BPF)
 
 namespace {
 
@@ -60,7 +63,7 @@ class NaClBPFSandboxPolicy : public sandbox::bpf_dsl::Policy {
   }
 
  private:
-  scoped_ptr<sandbox::bpf_dsl::Policy> baseline_policy_;
+  std::unique_ptr<sandbox::bpf_dsl::Policy> baseline_policy_;
   bool enable_nacl_debug_;
   const pid_t policy_pid_;
 
@@ -104,7 +107,8 @@ ResultExpr NaClBPFSandboxPolicy::EvaluateSyscall(int sysno) const {
     // NaCl uses custom signal stacks.
     case __NR_sigaltstack:
     // Below is fairly similar to the policy for a Chromium renderer.
-#if defined(__i386__) || defined(__x86_64__) || defined(__mips__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__mips__) || \
+    defined(__aarch64__)
     case __NR_getrlimit:
 #endif
 #if defined(__i386__) || defined(__arm__)
@@ -160,18 +164,18 @@ void RunSandboxSanityChecks() {
 
 #error "Seccomp-bpf disabled on supported architecture!"
 
-#endif  // defined(USE_SECCOMP_BPF)
+#endif  // BUILDFLAG(USE_SECCOMP_BPF)
 
 bool InitializeBPFSandbox(base::ScopedFD proc_fd) {
-#if defined(USE_SECCOMP_BPF)
+#if BUILDFLAG(USE_SECCOMP_BPF)
   bool sandbox_is_initialized = content::InitializeSandbox(
-      scoped_ptr<sandbox::bpf_dsl::Policy>(new NaClBPFSandboxPolicy),
-      proc_fd.Pass());
+      std::unique_ptr<sandbox::bpf_dsl::Policy>(new NaClBPFSandboxPolicy),
+      std::move(proc_fd));
   if (sandbox_is_initialized) {
     RunSandboxSanityChecks();
     return true;
   }
-#endif  // defined(USE_SECCOMP_BPF)
+#endif  // BUILDFLAG(USE_SECCOMP_BPF)
   return false;
 }
 

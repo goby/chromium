@@ -18,11 +18,12 @@ typedef BOOL(^RequestFilterBlock)(NSURLRequest *request);
 typedef void(^ClearCacheCallback)(int errorCode);
 
 // Interface for installing CrNet.
+__attribute__((visibility("default")))
 @interface CrNet : NSObject
 
-// Sets whether SPDY should be supported by CrNet. This method only has any
-// effect before |install| is called.
-+ (void)setSpdyEnabled:(BOOL)spdyEnabled;
+// Sets whether HTTP/2 should be supported by CrNet. This method only has
+// any effect before |install| is called.
++ (void)setHttp2Enabled:(BOOL)http2Enabled;
 
 // Sets whether QUIC should be supported by CrNet. This method only has any
 // effect before |install| is called.
@@ -33,36 +34,26 @@ typedef void(^ClearCacheCallback)(int errorCode);
 // which file should be used for SDCH persistence metadata. If |filename| is
 // nil, persistence is not enabled. The default is for SDCH to be disabled.
 + (void)setSDCHEnabled:(BOOL)sdchEnabled
-         withPrefStore:(NSString*)filename;
+         withPrefStore:(NSString *)filename;
 
-// Set the alternate protocol threshold. Servers announce alternate protocols
-// with a probability value; any alternate protocol whose probability value is
-// greater than this value will be used, so |alternateProtocolThreshold| == 0
-// implies any announced alternate protocol will be used, and
-// |alternateProtocolThreshold| == 1 implies no alternate protocol will ever be
-// used. Note that individual alternate protocols must also be individually
-// enabled to be considered; currently the only alternate protocol is QUIC (SPDY
-// is not controlled by this mechanism).
-//
-// For example, imagine your service has two frontends a.service.com and
-// b.service.com, and you would like to divide your users into three classes:
-//   Users who use QUIC for both a and b
-//   Users who use QUIC for a but not b
-//   Users who use QUIC for neither a nor b
-// You can achieve that effect with:
-//   a.service.com advertises QUIC with p=0.67
-//   b.service.com advertises QUIC with p=0.33
-//   alternateProtocolThreshold set to a uniform random number in [0,1]
-// Now equal proportions of users will fall into the three experimental groups.
-//
-// The default for this value is 1.0, i.e. all alternate protocols disabled.
-+ (void)setAlternateProtocolThreshold:(double)alternateProtocolThreshold;
-
-// |userAgent| is expected to be of the form Product/Version.
-// Example: Foo/3.0.0.0
-//
+// Set partial UserAgent. This function is a deprecated shortcut for:
+//    [CrNet setUserAgent:userAgent partial:YES];
+// See the documentation for |setUserAgent| for details about the |userAgent|
+// argument.
 // This method only has any effect before |install| is called.
 + (void)setPartialUserAgent:(NSString *)userAgent;
+
+// |userAgent| is expected to be the user agent value sent to remote.
+// If |partial| is set to YES, then actual user agent value is based on device
+// model, OS version, and |userAgent| argument. For example "Foo/3.0.0.0" is
+// sent as "Mozilla/5.0 (iPhone; CPU iPhone OS 9_3 like Mac OS X)
+// AppleWebKit/601.1 (KHTML, like Gecko) Foo/3.0.0.0 Mobile/15G31
+// Safari/601.1.46".
+// If partial is set to NO, then |userAgent| value is complete value sent to
+// the remote. For Example: "Foo/3.0.0.0" is sent as "Foo/3.0.0.0".
+//
+// This method only has any effect before |install| is called.
++ (void)setUserAgent:(NSString*)userAgent partial:(bool)partial;
 
 // Set the block used to determine whether or not CrNet should handle the
 // request. If this is not set, CrNet will handle all requests.
@@ -72,7 +63,11 @@ typedef void(^ClearCacheCallback)(int errorCode);
 
 // Installs CrNet. Once installed, CrNet intercepts and handles all
 // NSURLConnection and NSURLRequests issued by the app, including UIWebView page
-// loads.
+// loads. It is recommended to call this method on the application main thread.
+// If the method is called on any thread other than the main one, the method
+// will internally try to execute synchronously using the main GCD queue.
+// Please make sure that the main thread is not blocked by a job
+// that calls this method; otherwise, a deadlock can occur.
 + (void)install;
 
 // Installs CrNet into an NSURLSession, passed in by the caller. Note that this

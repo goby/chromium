@@ -5,6 +5,7 @@
 #ifndef CC_TEST_TEST_IMAGE_FACTORY_H_
 #define CC_TEST_TEST_IMAGE_FACTORY_H_
 
+#include "base/macros.h"
 #include "gpu/command_buffer/service/image_factory.h"
 
 namespace cc {
@@ -20,7 +21,8 @@ class TestImageFactory : public gpu::ImageFactory {
       const gfx::Size& size,
       gfx::BufferFormat format,
       unsigned internalformat,
-      int client_id) override;
+      int client_id,
+      gpu::SurfaceHandle surface_handle) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestImageFactory);

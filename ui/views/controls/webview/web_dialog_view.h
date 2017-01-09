@@ -5,11 +5,14 @@
 #ifndef UI_VIEWS_CONTROLS_WEBVIEW_WEB_DIALOG_VIEW_H_
 #define UI_VIEWS_CONTROLS_WEBVIEW_WEB_DIALOG_VIEW_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/controls/webview/webview_export.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -113,10 +116,12 @@ class WEBVIEW_EXPORT WebDialogView : public views::ClientView,
                          bool* proceed_to_fire_unload) override;
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
+      content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
       WindowContainerType window_container_type,
+      const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
       const std::string& partition_id,

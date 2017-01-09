@@ -5,10 +5,10 @@
 #ifndef NET_COOKIES_CANONICAL_COOKIE_H_
 #define NET_COOKIES_CANONICAL_COOKIE_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
@@ -23,28 +23,8 @@ class ParsedCookie;
 
 class NET_EXPORT CanonicalCookie {
  public:
-  // These constructors do no validation or canonicalization of their inputs;
-  // the resulting CanonicalCookies should not be relied on to be canonical
-  // unless the caller has done appropriate validation and canonicalization
-  // themselves.
   CanonicalCookie();
-  CanonicalCookie(const GURL& url,
-                  const std::string& name,
-                  const std::string& value,
-                  const std::string& domain,
-                  const std::string& path,
-                  const base::Time& creation,
-                  const base::Time& expiration,
-                  const base::Time& last_access,
-                  bool secure,
-                  bool httponly,
-                  bool firstpartyonly,
-                  CookiePriority priority);
-
-  // This constructor does canonicalization but not validation.
-  // The result of this constructor should not be relied on in contexts
-  // in which pre-validation of the ParsedCookie has not been done.
-  CanonicalCookie(const GURL& url, const ParsedCookie& pc);
+  CanonicalCookie(const CanonicalCookie& other);
 
   ~CanonicalCookie();
 
@@ -53,28 +33,42 @@ class NET_EXPORT CanonicalCookie {
   // Creates a new |CanonicalCookie| from the |cookie_line| and the
   // |creation_time|. Canonicalizes and validates inputs. May return NULL if
   // an attribute value is invalid.
-  static CanonicalCookie* Create(const GURL& url,
-                                 const std::string& cookie_line,
-                                 const base::Time& creation_time,
-                                 const CookieOptions& options);
+  static std::unique_ptr<CanonicalCookie> Create(
+      const GURL& url,
+      const std::string& cookie_line,
+      const base::Time& creation_time,
+      const CookieOptions& options);
 
   // Creates a canonical cookie from unparsed attribute values.
   // Canonicalizes and validates inputs.  May return NULL if an attribute
   // value is invalid.
-  static CanonicalCookie* Create(const GURL& url,
-                                 const std::string& name,
-                                 const std::string& value,
-                                 const std::string& domain,
-                                 const std::string& path,
-                                 const base::Time& creation,
-                                 const base::Time& expiration,
-                                 bool secure,
-                                 bool http_only,
-                                 bool first_party_only,
-                                 bool enforce_strict_secure,
-                                 CookiePriority priority);
+  static std::unique_ptr<CanonicalCookie> Create(const GURL& url,
+                                                 const std::string& name,
+                                                 const std::string& value,
+                                                 const std::string& domain,
+                                                 const std::string& path,
+                                                 const base::Time& creation,
+                                                 const base::Time& expiration,
+                                                 bool secure,
+                                                 bool http_only,
+                                                 CookieSameSite same_site,
+                                                 bool enforce_strict_secure,
+                                                 CookiePriority priority);
 
-  const GURL& Source() const { return source_; }
+  // Creates a canonical cookie from unparsed attribute values.
+  // It does not do any validation.
+  static std::unique_ptr<CanonicalCookie> Create(const std::string& name,
+                                                 const std::string& value,
+                                                 const std::string& domain,
+                                                 const std::string& path,
+                                                 const base::Time& creation,
+                                                 const base::Time& expiration,
+                                                 const base::Time& last_access,
+                                                 bool secure,
+                                                 bool http_only,
+                                                 CookieSameSite same_site,
+                                                 CookiePriority priority);
+
   const std::string& Name() const { return name_; }
   const std::string& Value() const { return value_; }
   const std::string& Domain() const { return domain_; }
@@ -85,7 +79,7 @@ class NET_EXPORT CanonicalCookie {
   const base::Time& ExpiryDate() const { return expiry_date_; }
   bool IsSecure() const { return secure_; }
   bool IsHttpOnly() const { return httponly_; }
-  bool IsFirstPartyOnly() const { return first_party_only_; }
+  CookieSameSite SameSite() const { return same_site_; }
   CookiePriority Priority() const { return priority_; }
   bool IsDomainCookie() const {
     return !domain_.empty() && domain_[0] == '.'; }
@@ -109,17 +103,19 @@ class NET_EXPORT CanonicalCookie {
             && path_ == ecc.Path());
   }
 
-  // Checks if two cookies have the same name and domain-match per RFC 6265.
-  // Note that this purposefully ignores paths, and that this function is
-  // guaranteed to return |true| for a superset of the inputs that
-  // IsEquivalent() above returns |true| for.
+  // Checks a looser set of equivalency rules than 'IsEquivalent()' in order
+  // to support the stricter 'Secure' behaviors specified in
+  // https://tools.ietf.org/html/draft-ietf-httpbis-cookie-alone#section-3
   //
-  // This is needed for the updates to RFC6265 as per
-  // https://tools.ietf.org/html/draft-west-leave-secure-cookies-alone.
-  bool IsEquivalentForSecureCookieMatching(const CanonicalCookie& ecc) const {
-    return (name_ == ecc.Name() && (ecc.IsDomainMatch(Source().host()) ||
-                                    IsDomainMatch(ecc.Source().host())));
-  }
+  // Returns 'true' if this cookie's name matches |ecc|, and this cookie is
+  // a domain-match for |ecc| (or vice versa), and |ecc|'s path is "on" this
+  // cookie's path (as per 'IsOnPath()').
+  //
+  // Note that while the domain-match cuts both ways (e.g. 'example.com'
+  // matches 'www.example.com' in either direction), the path-match is
+  // unidirectional (e.g. '/login/en' matches '/login' and '/', but
+  // '/login' and '/' do not match '/login/en').
+  bool IsEquivalentForSecureCookieMatching(const CanonicalCookie& ecc) const;
 
   void SetLastAccessDate(const base::Time& date) {
     last_access_date_ = date;
@@ -143,6 +139,8 @@ class NET_EXPORT CanonicalCookie {
   std::string DebugString() const;
 
   static std::string CanonPath(const GURL& url, const ParsedCookie& pc);
+
+  // Returns a "null" time if expiration was unspecified or invalid.
   static base::Time CanonExpiration(const ParsedCookie& pc,
                                     const base::Time& current,
                                     const base::Time& server_time);
@@ -160,7 +158,7 @@ class NET_EXPORT CanonicalCookie {
   bool FullCompare(const CanonicalCookie& other) const;
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(CanonicalCookiePrefixHistogramTest, TestHistograms);
+  FRIEND_TEST_ALL_PREFIXES(CanonicalCookieTest, TestPrefixHistograms);
 
   // The special cookie prefixes as defined in
   // https://tools.ietf.org/html/draft-west-cookie-prefixes
@@ -172,6 +170,22 @@ class NET_EXPORT CanonicalCookie {
     COOKIE_PREFIX_HOST,
     COOKIE_PREFIX_LAST
   };
+
+  // This constructor does not validate or canonicalize their inputs;
+  // the resulting CanonicalCookies should not be relied on to be canonical
+  // unless the caller has done appropriate validation and canonicalization
+  // themselves.
+  CanonicalCookie(const std::string& name,
+                  const std::string& value,
+                  const std::string& domain,
+                  const std::string& path,
+                  const base::Time& creation,
+                  const base::Time& expiration,
+                  const base::Time& last_access,
+                  bool secure,
+                  bool httponly,
+                  CookieSameSite same_site,
+                  CookiePriority priority);
 
   // Returns the CookiePrefix (or COOKIE_PREFIX_NONE if none) that
   // applies to the given cookie |name|.
@@ -186,15 +200,9 @@ class NET_EXPORT CanonicalCookie {
                                   const GURL& url,
                                   const ParsedCookie& parsed_cookie);
 
-  // The source member of a canonical cookie is the origin of the URL that tried
-  // to set this cookie.  This field is not persistent though; its only used in
-  // the in-tab cookies dialog to show the user the source URL. This is used for
-  // both allowed and blocked cookies.
-  // When a CanonicalCookie is constructed from the backing store (common case)
-  // this field will be null.  CanonicalCookie consumers should not rely on
-  // this field unless they guarantee that the creator of those
-  // CanonicalCookies properly initialized the field.
-  GURL source_;
+  // Returns the cookie's domain, with the leading dot removed, if present.
+  std::string DomainWithoutDot() const;
+
   std::string name_;
   std::string value_;
   std::string domain_;
@@ -204,7 +212,7 @@ class NET_EXPORT CanonicalCookie {
   base::Time last_access_date_;
   bool secure_;
   bool httponly_;
-  bool first_party_only_;
+  CookieSameSite same_site_;
   CookiePriority priority_;
 };
 

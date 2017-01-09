@@ -4,11 +4,14 @@
 
 #include "content/renderer/pepper/v8_var_converter.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <cmath>
+#include <memory>
 
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
@@ -113,7 +116,7 @@ bool Equals(const PP_Var& var,
     v8::Local<v8::Array> v8_array = val.As<v8::Array>();
     if (v8_array->Length() != array_var->elements().size())
       return false;
-    for (uint32 i = 0; i < v8_array->Length(); ++i) {
+    for (uint32_t i = 0; i < v8_array->Length(); ++i) {
       v8::Local<v8::Value> child_v8 = v8_array->Get(i);
       if (!Equals(array_var->elements()[i].get(), child_v8, visited_ids))
         return false;
@@ -133,7 +136,7 @@ bool Equals(const PP_Var& var,
       v8::Local<v8::Array> property_names(v8_object->GetOwnPropertyNames());
       if (property_names->Length() != dict_var->key_value_map().size())
         return false;
-      for (uint32 i = 0; i < property_names->Length(); ++i) {
+      for (uint32_t i = 0; i < property_names->Length(); ++i) {
         v8::Local<v8::Value> key(property_names->Get(i));
 
         if (!key->IsString() && !key->IsNumber())
@@ -168,8 +171,7 @@ class V8VarConverterTest : public testing::Test {
       : isolate_(v8::Isolate::GetCurrent()) {
     PP_Instance dummy = 1234;
     converter_.reset(new V8VarConverter(
-        dummy,
-        scoped_ptr<ResourceConverter>(new MockResourceConverter).Pass()));
+        dummy, std::unique_ptr<ResourceConverter>(new MockResourceConverter)));
   }
   ~V8VarConverterTest() override {}
 
@@ -231,7 +233,7 @@ class V8VarConverterTest : public testing::Test {
   // Context for the JavaScript in the test.
   v8::Persistent<v8::Context> context_;
 
-  scoped_ptr<V8VarConverter> converter_;
+  std::unique_ptr<V8VarConverter> converter_;
 
  private:
   base::MessageLoop message_loop_;  // Required to receive callbacks.
@@ -401,6 +403,8 @@ TEST_F(V8VarConverterTest, StrangeDictionaryKeyTest) {
     v8::Local<v8::Context> context =
         v8::Local<v8::Context>::New(isolate_, context_);
     v8::Context::Scope context_scope(context);
+    v8::MicrotasksScope microtasks(
+        isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
     const char* source =
         "(function() {"

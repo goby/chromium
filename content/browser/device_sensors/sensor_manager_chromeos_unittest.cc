@@ -4,10 +4,12 @@
 
 #include "content/browser/device_sensors/sensor_manager_chromeos.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chromeos/accelerometer/accelerometer_types.h"
-#include "content/common/device_sensors/device_motion_hardware_buffer.h"
-#include "content/common/device_sensors/device_orientation_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_motion_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_orientation_hardware_buffer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -74,9 +76,9 @@ class SensorManagerChromeOSTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<TestSensorManagerChromeOS> sensor_manager_;
-  scoped_ptr<DeviceMotionHardwareBuffer> motion_buffer_;
-  scoped_ptr<DeviceOrientationHardwareBuffer> orientation_buffer_;
+  std::unique_ptr<TestSensorManagerChromeOS> sensor_manager_;
+  std::unique_ptr<DeviceMotionHardwareBuffer> motion_buffer_;
+  std::unique_ptr<DeviceOrientationHardwareBuffer> orientation_buffer_;
 
   DISALLOW_COPY_AND_ASSIGN(SensorManagerChromeOSTest);
 };
@@ -115,7 +117,6 @@ TEST_F(SensorManagerChromeOSTest, MotionBuffer) {
 // buffer.
 TEST_F(SensorManagerChromeOSTest, OrientationBuffer) {
   DeviceOrientationHardwareBuffer* buffer = orientation_buffer();
-  EXPECT_TRUE(buffer->data.hasAbsolute);
   EXPECT_FALSE(buffer->data.hasAlpha);
   EXPECT_FALSE(buffer->data.hasBeta);
   EXPECT_FALSE(buffer->data.hasGamma);

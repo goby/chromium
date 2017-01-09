@@ -56,7 +56,7 @@ void AudioBufferConverter::AddInput(const scoped_refptr<AudioBuffer>& buffer) {
     return;
   }
 
-  if (timestamp_helper_.base_timestamp() == kNoTimestamp())
+  if (timestamp_helper_.base_timestamp() == kNoTimestamp)
     timestamp_helper_.SetBaseTimestamp(buffer->timestamp());
 
   queued_inputs_.push_back(buffer);
@@ -78,7 +78,7 @@ void AudioBufferConverter::Reset() {
   audio_converter_.reset();
   queued_inputs_.clear();
   queued_outputs_.clear();
-  timestamp_helper_.SetBaseTimestamp(kNoTimestamp());
+  timestamp_helper_.SetBaseTimestamp(kNoTimestamp);
   input_params_ = output_params_;
   input_frames_ = 0;
   buffered_input_frames_ = 0.0;
@@ -87,11 +87,11 @@ void AudioBufferConverter::Reset() {
 
 void AudioBufferConverter::ResetTimestampState() {
   Flush();
-  timestamp_helper_.SetBaseTimestamp(kNoTimestamp());
+  timestamp_helper_.SetBaseTimestamp(kNoTimestamp);
 }
 
 double AudioBufferConverter::ProvideInput(AudioBus* audio_bus,
-                                          base::TimeDelta buffer_delay) {
+                                          uint32_t frames_delayed) {
   DCHECK(is_flushing_ || input_frames_ >= audio_bus->frames());
 
   int requested_frames_left = audio_bus->frames();
@@ -193,7 +193,7 @@ void AudioBufferConverter::ConvertIfPossible() {
                                 output_params_.channels(),
                                 output_params_.sample_rate(),
                                 request_frames);
-  scoped_ptr<AudioBus> output_bus =
+  std::unique_ptr<AudioBus> output_bus =
       AudioBus::CreateWrapper(output_buffer->channel_count());
 
   int frames_remaining = request_frames;

@@ -4,17 +4,17 @@
 
 #include "chrome/browser/sync/test/integration/sync_test.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <limits>
-#include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/guid.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
@@ -26,6 +26,7 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -45,7 +46,6 @@
 #include "chrome/browser/sync/test/integration/sync_integration_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
@@ -56,7 +56,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/google/core/browser/google_url_tracker.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/invalidation/impl/p2p_invalidation_service.h"
@@ -64,12 +64,15 @@
 #include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/invalidation/public/invalidation_service.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/os_crypt/os_crypt.h"
+#include "components/os_crypt/os_crypt_mocker.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/signin/core/browser/profile_identity_provider.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/sync_driver/invalidation_helper.h"
-#include "components/sync_driver/sync_driver_switches.h"
+#include "components/sync/base/invalidation_helper.h"
+#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/engine_impl/sync_scheduler_impl.h"
+#include "components/sync/protocol/sync.pb.h"
+#include "components/sync/test/fake_server/fake_server_network_resources.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
@@ -79,22 +82,16 @@
 #include "net/base/load_flags.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/port_util.h"
-#include "net/cookies/cookie_monster.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "sync/engine/sync_scheduler_impl.h"
-#include "sync/protocol/sync.pb.h"
-#include "sync/test/fake_server/fake_server.h"
-#include "sync/test/fake_server/fake_server_network_resources.h"
 #include "url/gurl.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/chromeos_switches.h"
 #endif
 
+using browser_sync::ProfileSyncService;
 using content::BrowserThread;
 
 namespace switches {
@@ -106,6 +103,36 @@ const char kSyncServerCommandLine[] = "sync-server-command-line";
 
 namespace {
 
+// Helper class to ensure a profile is registered before the manager is
+// notified of creation.
+class SyncProfileDelegate : public Profile::Delegate {
+ public:
+  explicit SyncProfileDelegate(
+      const base::Callback<void(Profile*)>& on_profile_created_callback)
+      : on_profile_created_callback_(on_profile_created_callback) {}
+  ~SyncProfileDelegate() override {}
+
+  void OnProfileCreated(Profile* profile,
+                        bool success,
+                        bool is_new_profile) override {
+    g_browser_process->profile_manager()->RegisterTestingProfile(profile,
+                                                                 true,
+                                                                 false);
+
+    // Perform any custom work needed before the profile is initialized.
+    if (!on_profile_created_callback_.is_null())
+      on_profile_created_callback_.Run(profile);
+
+    g_browser_process->profile_manager()->OnProfileCreated(profile, success,
+                                                           is_new_profile);
+  }
+
+ private:
+  base::Callback<void(Profile*)> on_profile_created_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(SyncProfileDelegate);
+};
+
 // Helper class that checks whether a sync test server is running or not.
 class SyncServerStatusChecker : public net::URLFetcherDelegate {
  public:
@@ -116,7 +143,8 @@ class SyncServerStatusChecker : public net::URLFetcherDelegate {
     source->GetResponseAsString(&data);
     running_ =
         (source->GetStatus().status() == net::URLRequestStatus::SUCCESS &&
-        source->GetResponseCode() == 200 && data.find("ok") == 0);
+         source->GetResponseCode() == 200 &&
+         base::StartsWith(data, "ok", base::CompareCase::SENSITIVE));
     base::MessageLoop::current()->QuitWhenIdle();
   }
 
@@ -144,42 +172,34 @@ class EncryptionChecker : public SingleClientStatusChangeChecker {
   std::string GetDebugMessage() const override { return "Encryption"; }
 };
 
-void SetupNetworkCallback(
-    base::WaitableEvent* done,
-    net::URLRequestContextGetter* url_request_context_getter) {
-  url_request_context_getter->GetURLRequestContext()->
-      set_cookie_store(new net::CookieMonster(NULL, NULL));
-  done->Signal();
-}
-
-scoped_ptr<KeyedService> BuildFakeServerProfileInvalidationProvider(
+std::unique_ptr<KeyedService> BuildFakeServerProfileInvalidationProvider(
     content::BrowserContext* context) {
-  return make_scoped_ptr(new invalidation::ProfileInvalidationProvider(
-      scoped_ptr<invalidation::InvalidationService>(
-          new fake_server::FakeServerInvalidationService)));
+  return base::MakeUnique<invalidation::ProfileInvalidationProvider>(
+      std::unique_ptr<invalidation::InvalidationService>(
+          new fake_server::FakeServerInvalidationService));
 }
 
-scoped_ptr<KeyedService> BuildP2PProfileInvalidationProvider(
+std::unique_ptr<KeyedService> BuildP2PProfileInvalidationProvider(
     content::BrowserContext* context,
     syncer::P2PNotificationTarget notification_target) {
   Profile* profile = static_cast<Profile*>(context);
-  return make_scoped_ptr(new invalidation::ProfileInvalidationProvider(
-      scoped_ptr<invalidation::InvalidationService>(
+  return base::MakeUnique<invalidation::ProfileInvalidationProvider>(
+      std::unique_ptr<invalidation::InvalidationService>(
           new invalidation::P2PInvalidationService(
-              scoped_ptr<IdentityProvider>(new ProfileIdentityProvider(
+              std::unique_ptr<IdentityProvider>(new ProfileIdentityProvider(
                   SigninManagerFactory::GetForProfile(profile),
                   ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
                   LoginUIServiceFactory::GetShowLoginPopupCallbackForProfile(
                       profile))),
-              profile->GetRequestContext(), notification_target))));
+              profile->GetRequestContext(), notification_target)));
 }
 
-scoped_ptr<KeyedService> BuildSelfNotifyingP2PProfileInvalidationProvider(
+std::unique_ptr<KeyedService> BuildSelfNotifyingP2PProfileInvalidationProvider(
     content::BrowserContext* context) {
   return BuildP2PProfileInvalidationProvider(context, syncer::NOTIFY_ALL);
 }
 
-scoped_ptr<KeyedService> BuildRealisticP2PProfileInvalidationProvider(
+std::unique_ptr<KeyedService> BuildRealisticP2PProfileInvalidationProvider(
     content::BrowserContext* context) {
   return BuildP2PProfileInvalidationProvider(context, syncer::NOTIFY_OTHERS);
 }
@@ -205,10 +225,8 @@ SyncTest::SyncTest(TestType test_type)
       num_clients_ = 2;
       break;
     }
-    case MULTIPLE_CLIENT: {
-      num_clients_ = 3;
-      break;
-    }
+    default:
+      NOTREACHED() << "Invalid test type specified.";
   }
 }
 
@@ -243,9 +261,7 @@ void SyncTest::SetUp() {
     LOG(FATAL) << "Cannot run sync tests without GAIA credentials.";
 
   // Mock the Mac Keychain service.  The real Keychain can block on user input.
-#if defined(OS_MACOSX)
-  OSCrypt::UseMockKeychain(true);
-#endif
+  OSCryptMocker::SetUpWithSingleton();
 
   // Start up a sync test server if one is needed and setup mock gaia responses.
   // Note: This must be done prior to the call to SetupClients() because we want
@@ -269,6 +285,9 @@ void SyncTest::TearDown() {
   // Stop the local sync test server. This is a no-op if one wasn't started.
   TearDownLocalTestServer();
 
+  // Return OSCrypt to its real behaviour
+  OSCryptMocker::TearDown();
+
   fake_server_.reset();
 }
 
@@ -288,6 +307,9 @@ void SyncTest::AddTestSwitches(base::CommandLine* cl) {
 
   if (!cl->HasSwitch(switches::kSyncShortInitialRetryOverride))
     cl->AppendSwitch(switches::kSyncShortInitialRetryOverride);
+
+  if (!cl->HasSwitch(switches::kSyncShortNudgeDelayForTest))
+    cl->AppendSwitch(switches::kSyncShortNudgeDelayForTest);
 }
 
 void SyncTest::AddOptionalTypesToCommandLine(base::CommandLine* cl) {}
@@ -326,15 +348,23 @@ void SyncTest::CreateProfile(int index) {
     CHECK(
       tmp_profile_paths_[index]->CreateUniqueTempDirUnderPath(user_data_dir));
   }
-  base::FilePath profile_path = tmp_profile_paths_[index]->path();
+  base::FilePath profile_path = tmp_profile_paths_[index]->GetPath();
   if (UsingExternalServers()) {
     // If running against an EXTERNAL_LIVE_SERVER, we signin profiles using real
     // GAIA server. This requires creating profiles with no test hooks.
-    profiles_[index] = MakeProfileForUISignin(profile_path);
+    InitializeProfile(index, MakeProfileForUISignin(profile_path));
   } else {
     // Without need of real GAIA authentication, we create new test profiles.
-    profiles_[index] = MakeTestProfile(profile_path);
+    // For test profiles, a custom delegate needs to be used to do the
+    // initialization work before the profile is registered.
+    profile_delegates_[index] =
+        base::MakeUnique<SyncProfileDelegate>(base::Bind(
+            &SyncTest::InitializeProfile, base::Unretained(this), index));
+    MakeTestProfile(profile_path, index);
   }
+
+  // Once profile initialization has kicked off, wait for it to finish.
+  WaitForDataModels(GetProfile(index));
 }
 
 // Called when the ProfileManager has created a profile.
@@ -371,7 +401,7 @@ Profile* SyncTest::MakeProfileForUISignin(base::FilePath profile_path) {
   return profile_manager->GetProfileByPath(profile_path);
 }
 
-Profile* SyncTest::MakeTestProfile(base::FilePath profile_path) {
+Profile* SyncTest::MakeTestProfile(base::FilePath profile_path, int index) {
   if (!preexisting_preferences_file_contents_.empty()) {
     base::FilePath pref_path(profile_path.Append(chrome::kPreferencesFilename));
     const char* contents = preexisting_preferences_file_contents_.c_str();
@@ -380,12 +410,10 @@ Profile* SyncTest::MakeTestProfile(base::FilePath profile_path) {
       LOG(FATAL) << "Preexisting Preferences file could not be written.";
     }
   }
-  Profile* profile = Profile::CreateProfile(profile_path,
-                                            NULL,
-                                            Profile::CREATE_MODE_SYNCHRONOUS);
-  g_browser_process->profile_manager()->RegisterTestingProfile(profile,
-                                                               true,
-                                                               true);
+
+  Profile* profile =
+      Profile::CreateProfile(profile_path, profile_delegates_[index].get(),
+                             Profile::CREATE_MODE_SYNCHRONOUS);
   return profile;
 }
 
@@ -395,6 +423,17 @@ Profile* SyncTest::GetProfile(int index) {
   if (index < 0 || index >= static_cast<int>(profiles_.size()))
     LOG(FATAL) << "GetProfile(): Index is out of bounds.";
   return profiles_[index];
+}
+
+std::vector<Profile*> SyncTest::GetAllProfiles() {
+  std::vector<Profile*> profiles;
+  if (use_verifier()) {
+    profiles.push_back(verifier());
+  }
+  for (int i = 0; i < num_clients(); ++i) {
+    profiles.push_back(GetProfile(i));
+  }
+  return profiles;
 }
 
 Browser* SyncTest::GetBrowser(int index) {
@@ -428,7 +467,7 @@ std::vector<ProfileSyncService*> SyncTest::GetSyncServices() {
 Profile* SyncTest::verifier() {
   if (!use_verifier_)
     LOG(FATAL) << "Verifier account is disabled.";
-  if (verifier_ == NULL)
+  if (verifier_ == nullptr)
     LOG(FATAL) << "SetupClients() has not yet been called.";
   return verifier_;
 }
@@ -445,14 +484,23 @@ bool SyncTest::SetupClients() {
 
   // Create the required number of sync profiles, browsers and clients.
   profiles_.resize(num_clients_);
+  profile_delegates_.resize(num_clients_ + 1);  // + 1 for the verifier.
   tmp_profile_paths_.resize(num_clients_);
   browsers_.resize(num_clients_);
   clients_.resize(num_clients_);
   invalidation_forwarders_.resize(num_clients_);
   sync_refreshers_.resize(num_clients_);
   fake_server_invalidation_services_.resize(num_clients_);
+
+  if (create_gaia_account_at_runtime_) {
+    CHECK(UsingExternalServers()) <<
+        "Cannot create Gaia accounts without external authentication servers";
+    if (!CreateGaiaAccount(username_, password_))
+      LOG(FATAL) << "Could not create Gaia account.";
+  }
+
   for (int i = 0; i < num_clients_; ++i) {
-    InitializeInstance(i);
+    CreateProfile(i);
   }
 
   // Verifier account is not useful when running against external servers.
@@ -463,14 +511,11 @@ bool SyncTest::SetupClients() {
   if (use_verifier_) {
     base::FilePath user_data_dir;
     PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+    profile_delegates_[num_clients_] =
+        base::MakeUnique<SyncProfileDelegate>(base::Callback<void(Profile*)>());
     verifier_ = MakeTestProfile(
-        user_data_dir.Append(FILE_PATH_LITERAL("Verifier")));
-    bookmarks::test::WaitForBookmarkModelToLoad(
-        BookmarkModelFactory::GetForProfile(verifier()));
-    ui_test_utils::WaitForHistoryToLoad(HistoryServiceFactory::GetForProfile(
-        verifier(), ServiceAccessType::EXPLICIT_ACCESS));
-    search_test_utils::WaitForTemplateURLServiceToLoad(
-        TemplateURLServiceFactory::GetForProfile(verifier()));
+        user_data_dir.Append(FILE_PATH_LITERAL("Verifier")), num_clients_);
+    WaitForDataModels(verifier());
   }
   // Error cases are all handled by LOG(FATAL) messages. So there is not really
   // a case that returns false.  In case we failed to create a verifier profile,
@@ -478,17 +523,14 @@ bool SyncTest::SetupClients() {
   return true;
 }
 
-void SyncTest::InitializeInstance(int index) {
-  CreateProfile(index);
-  EXPECT_FALSE(GetProfile(index) == NULL) << "Could not create Profile "
-                                          << index << ".";
+void SyncTest::InitializeProfile(int index, Profile* profile) {
+  DCHECK(profile);
+  profiles_[index] = profile;
 
   // CheckInitialState() assumes that no windows are open at startup.
-  browsers_[index] = new Browser(Browser::CreateParams(
-      GetProfile(index), chrome::GetActiveDesktop()));
+  browsers_[index] = new Browser(Browser::CreateParams(GetProfile(index)));
 
-  EXPECT_FALSE(GetBrowser(index) == NULL) << "Could not create Browser "
-                                          << index << ".";
+  EXPECT_NE(nullptr, GetBrowser(index)) << "Could not create Browser " << index;
 
   // Make sure the ProfileSyncService has been created before creating the
   // ProfileSyncServiceHarness - some tests expect the ProfileSyncService to
@@ -496,12 +538,10 @@ void SyncTest::InitializeInstance(int index) {
   ProfileSyncService* profile_sync_service =
       ProfileSyncServiceFactory::GetForProfile(GetProfile(index));
 
-  SetupNetwork(GetProfile(index)->GetRequestContext());
-
   if (server_type_ == IN_PROCESS_FAKE_SERVER) {
     // TODO(pvalenzuela): Run the fake server via EmbeddedTestServer.
     profile_sync_service->OverrideNetworkResourcesForTest(
-        make_scoped_ptr<syncer::NetworkResources>(
+        base::WrapUnique<syncer::NetworkResources>(
             new fake_server::FakeServerNetworkResources(
                 fake_server_->AsWeakPtr())));
   }
@@ -515,16 +555,8 @@ void SyncTest::InitializeInstance(int index) {
                                         username_,
                                         password_,
                                         singin_type);
-  EXPECT_FALSE(GetClient(index) == NULL) << "Could not create Client "
-                                         << index << ".";
+  EXPECT_NE(nullptr, GetClient(index)) << "Could not create Client " << index;
   InitializeInvalidations(index);
-
-  bookmarks::test::WaitForBookmarkModelToLoad(
-      BookmarkModelFactory::GetForProfile(GetProfile(index)));
-  ui_test_utils::WaitForHistoryToLoad(HistoryServiceFactory::GetForProfile(
-      GetProfile(index), ServiceAccessType::EXPLICIT_ACCESS));
-  search_test_utils::WaitForTemplateURLServiceToLoad(
-      TemplateURLServiceFactory::GetForProfile(GetProfile(index)));
 }
 
 void SyncTest::InitializeInvalidations(int index) {
@@ -569,22 +601,20 @@ void SyncTest::InitializeInvalidations(int index) {
 }
 
 bool SyncTest::SetupSync() {
-  if (create_gaia_account_at_runtime_) {
-    CHECK(UsingExternalServers()) <<
-        "Cannot create Gaia accounts without external authentication servers";
-    if (!CreateGaiaAccount(username_, password_))
-      LOG(FATAL) << "Could not create Gaia account.";
-  }
   // Create sync profiles and clients if they haven't already been created.
   if (profiles_.empty()) {
-    if (!SetupClients())
+    if (!SetupClients()) {
       LOG(FATAL) << "SetupClients() failed.";
+      return false;
+    }
   }
 
   // Sync each of the profiles.
   for (int i = 0; i < num_clients_; ++i) {
-    if (!GetClient(i)->SetupSync())
+    if (!GetClient(i)->SetupSync()) {
       LOG(FATAL) << "SetupSync() failed.";
+      return false;
+    }
   }
 
   // Because clients may modify sync data as part of startup (for example local
@@ -595,7 +625,10 @@ bool SyncTest::SetupSync() {
   // have to find their own way of waiting for an initial state if they really
   // need such guarantees.
   if (TestUsesSelfNotifications()) {
-    AwaitQuiescence();
+    if (!AwaitQuiescence()) {
+      LOG(FATAL) << "AwaitQuiescence() failed.";
+      return false;
+    }
   }
 
   // SyncRefresher is used instead of invalidations to notify other profiles to
@@ -618,7 +651,7 @@ bool SyncTest::SetupSync() {
     // be removed. http://crbug.com/484388
     for (int i = 0; i < num_clients_; ++i) {
       LoginUIServiceFactory::GetForProfile(GetProfile(i))->
-          SyncConfirmationUIClosed(false /* configure_sync_first */);
+          SyncConfirmationUIClosed(LoginUIService::SYNC_WITH_DEFAULT_SETTINGS);
     }
   }
 
@@ -670,12 +703,21 @@ void SyncTest::SetUpInProcessBrowserTestFixture() {
   resolver->AllowDirectLookup("*.thawte.com");
   resolver->AllowDirectLookup("*.geotrust.com");
   resolver->AllowDirectLookup("*.gstatic.com");
-  mock_host_resolver_override_.reset(
-      new net::ScopedDefaultHostResolverProc(resolver));
+  mock_host_resolver_override_ =
+      base::MakeUnique<net::ScopedDefaultHostResolverProc>(resolver);
 }
 
 void SyncTest::TearDownInProcessBrowserTestFixture() {
   mock_host_resolver_override_.reset();
+}
+
+void SyncTest::WaitForDataModels(Profile* profile) {
+  bookmarks::test::WaitForBookmarkModelToLoad(
+      BookmarkModelFactory::GetForBrowserContext(profile));
+  ui_test_utils::WaitForHistoryToLoad(HistoryServiceFactory::GetForProfile(
+      profile, ServiceAccessType::EXPLICIT_ACCESS));
+  search_test_utils::WaitForTemplateURLServiceToLoad(
+      TemplateURLServiceFactory::GetForProfile(profile));
 }
 
 void SyncTest::ReadPasswordFile() {
@@ -698,8 +740,8 @@ void SyncTest::ReadPasswordFile() {
 }
 
 void SyncTest::SetupMockGaiaResponses() {
-  factory_.reset(new net::URLFetcherImplFactory());
-  fake_factory_.reset(new net::FakeURLFetcherFactory(factory_.get()));
+  factory_ = base::MakeUnique<net::URLFetcherImplFactory>();
+  fake_factory_ = base::MakeUnique<net::FakeURLFetcherFactory>(factory_.get());
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->get_user_info_url(),
       "email=user@gmail.com\ndisplayEmail=user@gmail.com",
@@ -752,7 +794,7 @@ void SyncTest::SetupMockGaiaResponses() {
 void SyncTest::SetOAuth2TokenResponse(const std::string& response_data,
                                       net::HttpStatusCode response_code,
                                       net::URLRequestStatus::Status status) {
-  ASSERT_TRUE(NULL != fake_factory_.get());
+  ASSERT_NE(nullptr, fake_factory_.get());
   fake_factory_->SetFakeResponse(GaiaUrls::GetInstance()->oauth2_token_url(),
                                  response_data, response_code, status);
 }
@@ -786,7 +828,6 @@ void SyncTest::DecideServerType() {
       switch (test_type_) {
         case SINGLE_CLIENT:
         case TWO_CLIENT:
-        case MULTIPLE_CLIENT:
           server_type_ = IN_PROCESS_FAKE_SERVER;
           break;
         default:
@@ -829,7 +870,7 @@ void SyncTest::SetUpTestServerIfRequired() {
     if (!SetUpLocalTestServer())
       LOG(FATAL) << "Failed to set up local test server";
   } else if (server_type_ == IN_PROCESS_FAKE_SERVER) {
-    fake_server_.reset(new fake_server::FakeServer());
+    fake_server_ = base::MakeUnique<fake_server::FakeServer>();
     SetupMockGaiaResponses();
   } else {
     LOG(FATAL) << "Don't know which server environment to run test in.";
@@ -859,7 +900,7 @@ bool SyncTest::SetUpLocalPythonTestServer() {
 
   net::HostPortPair xmpp_host_port_pair(sync_server_.host_port_pair());
   xmpp_host_port_pair.set_port(xmpp_port);
-  xmpp_port_.reset(new net::ScopedPortException(xmpp_port));
+  xmpp_port_ = base::MakeUnique<net::ScopedPortException>(xmpp_port);
 
   if (!cl->HasSwitch(invalidation::switches::kSyncNotificationHostPort)) {
     cl->AppendSwitchASCII(invalidation::switches::kSyncNotificationHostPort,
@@ -893,11 +934,11 @@ bool SyncTest::SetUpLocalTestServer() {
   const int kNumIntervals = 15;
   if (WaitForTestServerToStart(kMaxWaitTime, kNumIntervals)) {
     DVLOG(1) << "Started local test server at "
-             << cl->GetSwitchValueASCII(switches::kSyncServiceURL) << ".";
+             << cl->GetSwitchValueASCII(switches::kSyncServiceURL);
     return true;
   } else {
     LOG(ERROR) << "Could not start local test server at "
-               << cl->GetSwitchValueASCII(switches::kSyncServiceURL) << ".";
+               << cl->GetSwitchValueASCII(switches::kSyncServiceURL);
     return false;
   }
 }
@@ -934,7 +975,7 @@ bool SyncTest::IsTestServerRunning() {
   std::string sync_url = cl->GetSwitchValueASCII(switches::kSyncServiceURL);
   GURL sync_url_status(sync_url.append("/healthz"));
   SyncServerStatusChecker delegate;
-  scoped_ptr<net::URLFetcher> fetcher =
+  std::unique_ptr<net::URLFetcher> fetcher =
       net::URLFetcher::Create(sync_url_status, net::URLFetcher::GET, &delegate);
   fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE |
                         net::LOAD_DO_NOT_SEND_COOKIES |
@@ -961,7 +1002,7 @@ bool SyncTest::EnableEncryption(int index) {
   // In order to kick off the encryption we have to reconfigure. Just grab the
   // currently synced types and use them.
   syncer::ModelTypeSet synced_datatypes = service->GetPreferredDataTypes();
-  bool sync_everything = synced_datatypes.Equals(syncer::ModelTypeSet::All());
+  bool sync_everything = (synced_datatypes == syncer::ModelTypeSet::All());
   synced_datatypes.RetainAll(syncer::UserSelectableTypes());
   service->OnUserChoseDatatypes(sync_everything, synced_datatypes);
 
@@ -974,9 +1015,7 @@ bool SyncTest::IsEncryptionComplete(int index) {
 
 bool SyncTest::AwaitEncryptionComplete(int index) {
   ProfileSyncService* service = GetClient(index)->service();
-  EncryptionChecker checker(service);
-  checker.Wait();
-  return !checker.TimedOut();
+  return EncryptionChecker(service).Wait();
 }
 
 bool SyncTest::AwaitQuiescence() {
@@ -1082,15 +1121,6 @@ void SyncTest::TriggerCreateSyncedBookmarks() {
             base::UTF16ToASCII(
                 browser()->tab_strip_model()->GetActiveWebContents()->
                     GetTitle()));
-}
-
-void SyncTest::SetupNetwork(net::URLRequestContextGetter* context_getter) {
-  base::WaitableEvent done(false, false);
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&SetupNetworkCallback, &done,
-                 make_scoped_refptr(context_getter)));
-  done.Wait();
 }
 
 fake_server::FakeServer* SyncTest::GetFakeServer() const {

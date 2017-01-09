@@ -32,7 +32,6 @@
 #define QuotaTracker_h
 
 #include "modules/ModulesExport.h"
-#include "platform/weborigin/SecurityOrigin.h"
 #include "wtf/HashMap.h"
 #include "wtf/ThreadingPrimitives.h"
 #include "wtf/text/StringHash.h"
@@ -40,30 +39,36 @@
 
 namespace blink {
 
+class SecurityOrigin;
+
 class MODULES_EXPORT QuotaTracker {
-    USING_FAST_MALLOC(QuotaTracker);
-    WTF_MAKE_NONCOPYABLE(QuotaTracker);
-public:
-    static QuotaTracker& instance();
+  USING_FAST_MALLOC(QuotaTracker);
+  WTF_MAKE_NONCOPYABLE(QuotaTracker);
 
-    void getDatabaseSizeAndSpaceAvailableToOrigin(
-        const String& originIdentifier, const String& databaseName,
-        unsigned long long* databaseSize, unsigned long long* spaceAvailable);
-    void updateDatabaseSize(
-        const String& originIdentifier, const String& databaseName,
-        unsigned long long databaseSize);
-    void updateSpaceAvailableToOrigin(const String& originIdentifier, unsigned long long spaceAvailable);
-    void resetSpaceAvailableToOrigin(const String& originIdentifier);
+ public:
+  static QuotaTracker& instance();
 
-private:
-    QuotaTracker() { }
+  void getDatabaseSizeAndSpaceAvailableToOrigin(
+      SecurityOrigin*,
+      const String& databaseName,
+      unsigned long long* databaseSize,
+      unsigned long long* spaceAvailable);
+  void updateDatabaseSize(SecurityOrigin*,
+                          const String& databaseName,
+                          unsigned long long databaseSize);
+  void updateSpaceAvailableToOrigin(SecurityOrigin*,
+                                    unsigned long long spaceAvailable);
+  void resetSpaceAvailableToOrigin(SecurityOrigin*);
 
-    typedef HashMap<String, unsigned long long> SizeMap;
-    SizeMap m_spaceAvailableToOrigins;
-    HashMap<String, SizeMap> m_databaseSizes;
-    Mutex m_dataGuard;
+ private:
+  QuotaTracker() {}
+
+  typedef HashMap<String, unsigned long long> SizeMap;
+  SizeMap m_spaceAvailableToOrigins;
+  HashMap<String, SizeMap> m_databaseSizes;
+  Mutex m_dataGuard;
 };
 
-}
+}  // namespace blink
 
-#endif // QuotaTracker_h
+#endif  // QuotaTracker_h

@@ -5,6 +5,7 @@
 #include "extensions/browser/extension_zoom_request_client.h"
 
 #include "extensions/common/features/behavior_feature.h"
+#include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_provider.h"
 
 namespace extensions {
@@ -15,13 +16,12 @@ ExtensionZoomRequestClient::ExtensionZoomRequestClient(
 }
 
 bool ExtensionZoomRequestClient::ShouldSuppressBubble() const {
-  return FeatureProvider::GetBehaviorFeature(
-             BehaviorFeature::kZoomWithoutBubble)
-      ->IsAvailableToExtension(extension())
-      .is_available();
+  const Feature* feature =
+      FeatureProvider::GetBehaviorFeature(behavior_feature::kZoomWithoutBubble);
+  return feature && feature->IsAvailableToExtension(extension()).is_available();
 }
 
 ExtensionZoomRequestClient::~ExtensionZoomRequestClient() {
 }
 
-}  // namespace Extensions
+}  // namespace extensions

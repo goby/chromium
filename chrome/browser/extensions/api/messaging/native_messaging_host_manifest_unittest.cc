@@ -8,6 +8,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/string_escape.h"
+#include "build/build_config.h"
 #include "extensions/common/url_pattern_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -27,7 +28,7 @@ class NativeMessagingHostManifestTest : public ::testing::Test {
  public:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    manifest_path_ = temp_dir_.path().AppendASCII("test.json");
+    manifest_path_ = temp_dir_.GetPath().AppendASCII("test.json");
   }
 
  protected:
@@ -73,7 +74,7 @@ TEST_F(NativeMessagingHostManifestTest, LoadValid) {
   ASSERT_TRUE(WriteManifest(kTestHostName, kTestHostPath, kTestOrigin));
 
   std::string error_message;
-  scoped_ptr<NativeMessagingHostManifest> manifest =
+  std::unique_ptr<NativeMessagingHostManifest> manifest =
       NativeMessagingHostManifest::Load(manifest_path_, &error_message);
   ASSERT_TRUE(manifest) << "Failed to load manifest: " << error_message;
   EXPECT_TRUE(error_message.empty());
@@ -94,7 +95,7 @@ TEST_F(NativeMessagingHostManifestTest, InvalidName) {
                             kTestHostPath, kTestOrigin));
 
   std::string error_message;
-  scoped_ptr<NativeMessagingHostManifest> manifest =
+  std::unique_ptr<NativeMessagingHostManifest> manifest =
       NativeMessagingHostManifest::Load(manifest_path_, &error_message);
   ASSERT_FALSE(manifest);
   EXPECT_FALSE(error_message.empty());
@@ -106,7 +107,7 @@ TEST_F(NativeMessagingHostManifestTest, MatchAllOrigin) {
                             "chrome-extension://*/"));
 
   std::string error_message;
-  scoped_ptr<NativeMessagingHostManifest> manifest =
+  std::unique_ptr<NativeMessagingHostManifest> manifest =
       NativeMessagingHostManifest::Load(manifest_path_, &error_message);
   ASSERT_FALSE(manifest);
   EXPECT_FALSE(error_message.empty());

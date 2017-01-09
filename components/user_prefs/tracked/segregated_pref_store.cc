@@ -4,6 +4,8 @@
 
 #include "components/user_prefs/tracked/segregated_pref_store.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/values.h"
@@ -22,8 +24,8 @@ void SegregatedPrefStore::AggregatingObserver::OnPrefValueChanged(
   if (failed_sub_initializations_ + successful_sub_initializations_ < 2)
     return;
 
-  FOR_EACH_OBSERVER(PrefStore::Observer, outer_->observers_,
-                    OnPrefValueChanged(key));
+  for (auto& observer : outer_->observers_)
+    observer.OnPrefValueChanged(key);
 }
 
 void SegregatedPrefStore::AggregatingObserver::OnInitializationCompleted(
@@ -42,9 +44,8 @@ void SegregatedPrefStore::AggregatingObserver::OnInitializationCompleted(
         outer_->read_error_delegate_->OnError(read_error);
     }
 
-    FOR_EACH_OBSERVER(
-        PrefStore::Observer, outer_->observers_,
-        OnInitializationCompleted(successful_sub_initializations_ == 2));
+    for (auto& observer : outer_->observers_)
+      observer.OnInitializationCompleted(successful_sub_initializations_ == 2);
   }
 }
 
@@ -83,12 +84,12 @@ bool SegregatedPrefStore::GetValue(const std::string& key,
 }
 
 void SegregatedPrefStore::SetValue(const std::string& key,
-                                   scoped_ptr<base::Value> value,
-                                   uint32 flags) {
-  StoreForKey(key)->SetValue(key, value.Pass(), flags);
+                                   std::unique_ptr<base::Value> value,
+                                   uint32_t flags) {
+  StoreForKey(key)->SetValue(key, std::move(value), flags);
 }
 
-void SegregatedPrefStore::RemoveValue(const std::string& key, uint32 flags) {
+void SegregatedPrefStore::RemoveValue(const std::string& key, uint32_t flags) {
   StoreForKey(key)->RemoveValue(key, flags);
 }
 
@@ -98,14 +99,14 @@ bool SegregatedPrefStore::GetMutableValue(const std::string& key,
 }
 
 void SegregatedPrefStore::ReportValueChanged(const std::string& key,
-                                             uint32 flags) {
+                                             uint32_t flags) {
   StoreForKey(key)->ReportValueChanged(key, flags);
 }
 
 void SegregatedPrefStore::SetValueSilently(const std::string& key,
-                                           scoped_ptr<base::Value> value,
-                                           uint32 flags) {
-  StoreForKey(key)->SetValueSilently(key, value.Pass(), flags);
+                                           std::unique_ptr<base::Value> value,
+                                           uint32_t flags) {
+  StoreForKey(key)->SetValueSilently(key, std::move(value), flags);
 }
 
 bool SegregatedPrefStore::ReadOnly() const {
@@ -154,20 +155,26 @@ void SegregatedPrefStore::SchedulePendingLossyWrites() {
   selected_pref_store_->SchedulePendingLossyWrites();
 }
 
+void SegregatedPrefStore::ClearMutableValues() {
+  NOTIMPLEMENTED();
+}
+
 SegregatedPrefStore::~SegregatedPrefStore() {
   default_pref_store_->RemoveObserver(&aggregating_observer_);
   selected_pref_store_->RemoveObserver(&aggregating_observer_);
 }
 
 PersistentPrefStore* SegregatedPrefStore::StoreForKey(const std::string& key) {
-  return (ContainsKey(selected_preference_names_, key)
+  return (base::ContainsKey(selected_preference_names_, key)
               ? selected_pref_store_
-              : default_pref_store_).get();
+              : default_pref_store_)
+      .get();
 }
 
 const PersistentPrefStore* SegregatedPrefStore::StoreForKey(
     const std::string& key) const {
-  return (ContainsKey(selected_preference_names_, key)
+  return (base::ContainsKey(selected_preference_names_, key)
               ? selected_pref_store_
-              : default_pref_store_).get();
+              : default_pref_store_)
+      .get();
 }

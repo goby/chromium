@@ -5,54 +5,63 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_HARDWARE_RENDERER_H_
 #define ANDROID_WEBVIEW_BROWSER_HARDWARE_RENDERER_H_
 
-#include "android_webview/browser/shared_renderer_state.h"
-#include "base/memory/scoped_ptr.h"
-#include "cc/surfaces/display_client.h"
+#include <memory>
+
+#include "android_webview/browser/child_frame.h"
+#include "android_webview/browser/compositor_id.h"
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "cc/surfaces/frame_sink_id.h"
 #include "cc/surfaces/surface_factory_client.h"
 #include "cc/surfaces/surface_id.h"
 
 struct AwDrawGLInfo;
 
 namespace cc {
-class Display;
 class SurfaceFactory;
 class SurfaceIdAllocator;
-class SurfaceManager;
 }
 
 namespace android_webview {
 
-class AwGLSurface;
 class ChildFrame;
-class ParentOutputSurface;
+class RenderThreadManager;
+class SurfacesInstance;
 
-class HardwareRenderer : public cc::DisplayClient,
-                         public cc::SurfaceFactoryClient {
+class HardwareRenderer : public cc::SurfaceFactoryClient {
  public:
-  explicit HardwareRenderer(SharedRendererState* state);
+  // Two rules:
+  // 1) Never wait on |new_frame| on the UI thread, or in kModeSync. Otherwise
+  //    this defeats the purpose of having a future.
+  // 2) Never replace a non-empty frames with an empty frame.
+  // The only way to do both is to hold up to two frames here. This is a helper
+  // method to do this. General pattern is call this method to prune existing
+  // queue, and then append the new frame. Wait on all frames in queue. Then
+  // remove all except the latest non-empty frame. If all frames are empty,
+  // then the deque is cleared. Return any non-empty frames that are pruned.
+  // Return value does not guarantee relative order is maintained.
+  static ChildFrameQueue WaitAndPruneFrameQueue(ChildFrameQueue* child_frames);
+
+  explicit HardwareRenderer(RenderThreadManager* state);
   ~HardwareRenderer() override;
 
-  void DrawGL(bool stencil_enabled,
-              AwDrawGLInfo* draw_info);
+  void DrawGL(AwDrawGLInfo* draw_info);
   void CommitFrame();
 
-  void SetBackingFrameBufferObject(int framebuffer_binding_ext);
-
  private:
-  // cc::DisplayClient overrides.
-  void CommitVSyncParameters(base::TimeTicks timebase,
-                             base::TimeDelta interval) override {}
-  void OutputSurfaceLost() override {}
-  void SetMemoryPolicy(const cc::ManagedMemoryPolicy& policy) override {}
-
   // cc::SurfaceFactoryClient implementation.
   void ReturnResources(const cc::ReturnedResourceArray& resources) override;
-  void SetBeginFrameSource(cc::SurfaceId surface_id,
-                           cc::BeginFrameSource* begin_frame_source) override;
+  void SetBeginFrameSource(cc::BeginFrameSource* begin_frame_source) override;
 
-  void ReturnResourcesInChildFrame();
+  void ReturnChildFrame(std::unique_ptr<ChildFrame> child_frame);
+  void ReturnResourcesToCompositor(const cc::ReturnedResourceArray& resources,
+                                   const CompositorID& compositor_id,
+                                   uint32_t compositor_frame_sink_id);
 
-  SharedRendererState* shared_renderer_state_;
+  void AllocateSurface();
+  void DestroySurface();
+
+  RenderThreadManager* render_thread_manager_;
 
   typedef void* EGLContext;
   EGLContext last_egl_context_;
@@ -63,22 +72,24 @@ class HardwareRenderer : public cc::DisplayClient,
   // Infromation from UI on last commit.
   gfx::Vector2d scroll_offset_;
 
+  ChildFrameQueue child_frame_queue_;
+
   // This holds the last ChildFrame received. Contains the frame info of the
-  // last frame. The |frame| member may be null if it's already submitted to
-  // SurfaceFactory.
-  scoped_ptr<ChildFrame> child_frame_;
+  // last frame. The |frame| member is always null since frame has already
+  // been submitted.
+  std::unique_ptr<ChildFrame> child_frame_;
 
-  scoped_refptr<AwGLSurface> gl_surface_;
-
-  scoped_ptr<cc::SurfaceManager> surface_manager_;
-  scoped_ptr<cc::Display> display_;
-  scoped_ptr<cc::SurfaceFactory> surface_factory_;
-  scoped_ptr<cc::SurfaceIdAllocator> surface_id_allocator_;
-  cc::SurfaceId child_id_;
-  cc::SurfaceId root_id_;
-
-  // This is owned by |display_|.
-  ParentOutputSurface* output_surface_;
+  const scoped_refptr<SurfacesInstance> surfaces_;
+  cc::FrameSinkId frame_sink_id_;
+  const std::unique_ptr<cc::SurfaceIdAllocator> surface_id_allocator_;
+  std::unique_ptr<cc::SurfaceFactory> surface_factory_;
+  cc::LocalFrameId child_id_;
+  CompositorID compositor_id_;
+  // HardwareRenderer guarantees resources are returned in the order of
+  // compositor_frame_sink_id, and resources for old output surfaces are
+  // dropped.
+  uint32_t last_committed_compositor_frame_sink_id_;
+  uint32_t last_submitted_compositor_frame_sink_id_;
 
   DISALLOW_COPY_AND_ASSIGN(HardwareRenderer);
 };

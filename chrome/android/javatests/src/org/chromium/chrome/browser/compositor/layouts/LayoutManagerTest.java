@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.compositor.layouts;
 
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE;
-import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_PHONE;
 
 import android.content.Context;
 import android.graphics.PointF;
@@ -18,7 +17,6 @@ import android.view.MotionEvent.PointerProperties;
 import android.widget.FrameLayout;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
@@ -29,14 +27,15 @@ import org.chromium.chrome.browser.compositor.layouts.eventfilter.EventFilter;
 import org.chromium.chrome.browser.compositor.layouts.phone.StackLayout;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.Stack;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackTab;
+import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.util.MathUtils;
+import org.chromium.chrome.test.util.ChromeRestriction;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel.MockTabModelDelegate;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModelSelector;
-import org.chromium.content.browser.BrowserStartupController;
 
 /**
  * Unit tests for {@link org.chromium.chrome.browser.compositor.layouts.LayoutManagerChrome}
@@ -198,14 +197,14 @@ public class LayoutManagerTest extends InstrumentationTestCase
 
     @SmallTest
     @Feature({"Android-TabSwitcher"})
-    @Restriction({RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @Restriction({ChromeRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     public void testCreation() {
         initializeLayoutManagerPhone(0, 0);
     }
 
     @SmallTest
     @Feature({"Android-TabSwitcher"})
-    @Restriction({RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @Restriction({ChromeRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     public void testStack() throws Exception {
         initializeLayoutManagerPhone(3, 0);
         mManagerPhone.showOverview(true);
@@ -218,7 +217,7 @@ public class LayoutManagerTest extends InstrumentationTestCase
 
     @SmallTest
     @Feature({"Android-TabSwitcher"})
-    @Restriction({RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @Restriction({ChromeRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     public void testStackNoAnimation() throws Exception {
         initializeLayoutManagerPhone(1, 0);
         mManagerPhone.showOverview(false);
@@ -233,7 +232,7 @@ public class LayoutManagerTest extends InstrumentationTestCase
      */
     @SmallTest
     @Feature({"Android-TabSwitcher"})
-    @Restriction({RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @Restriction({ChromeRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
     public void testStackPinch() throws Exception {
         initializeLayoutManagerPhone(5, 0);
         // Setting the index to the second to last element ensure the stack can be scrolled in both
@@ -470,10 +469,8 @@ public class LayoutManagerTest extends InstrumentationTestCase
             @Override
             public void run() {
                 try {
-                    BrowserStartupController.get(
-                            getInstrumentation().getTargetContext(),
-                            LibraryProcessType.PROCESS_BROWSER)
-                                    .startBrowserProcessesSync(false);
+                    ChromeBrowserInitializer.getInstance(
+                            getInstrumentation().getTargetContext()).handleSynchronousStartup();
                 } catch (ProcessInitException e) {
                     fail("Failed to load browser");
                 }

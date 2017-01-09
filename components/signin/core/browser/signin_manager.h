@@ -16,7 +16,6 @@
 #define COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_MANAGER_H_
 
 #if defined(OS_CHROMEOS)
-// On Chrome OS, SigninManagerBase is all that exists.
 #include "components/signin/core/browser/signin_manager_base.h"
 
 #else
@@ -27,11 +26,12 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "base/prefs/pref_member.h"
+#include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/prefs/pref_member.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
@@ -92,7 +92,8 @@ class SigninManager : public SigninManagerBase,
 
   // Sign a user out, removing the preference, erasing all keys
   // associated with the user, and canceling all auth in progress.
-  virtual void SignOut(signin_metrics::ProfileSignout signout_source_metric);
+  virtual void SignOut(signin_metrics::ProfileSignout signout_source_metric,
+                       signin_metrics::SignoutDelete signout_delete_metric);
 
   // On platforms where SigninManager is responsible for dealing with
   // invalid username policy updates, we need to check this during
@@ -145,6 +146,10 @@ class SigninManager : public SigninManagerBase,
  protected:
   // Flag saying whether signing out is allowed.
   bool prohibit_signout_;
+
+  // The sign out process which is started by SigninClient::PreSignOut()
+  virtual void DoSignOut(signin_metrics::ProfileSignout signout_source_metric,
+                         signin_metrics::SignoutDelete signout_delete_metric);
 
  private:
   enum SigninType { SIGNIN_TYPE_NONE, SIGNIN_TYPE_WITH_REFRESH_TOKEN };

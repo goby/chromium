@@ -5,6 +5,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -44,10 +45,6 @@ class Delegate : public SimpleMenuModel::Delegate {
   bool IsCommandIdEnabled(int command_id) const override {
     ++enable_count_;
     return true;
-  }
-  bool GetAcceleratorForCommandId(int command_id,
-                                  Accelerator* accelerator) override {
-    return false;
   }
   void ExecuteCommand(int command_id, int event_flags) override {
     ++execute_count_;
@@ -271,8 +268,9 @@ TEST_F(MenuControllerTest, Validate) {
 // Tests that items which have a font set actually use that font.
 TEST_F(MenuControllerTest, LabelFontList) {
   Delegate delegate;
-  const gfx::FontList& bold = ResourceBundle::GetSharedInstance().GetFontList(
-      ResourceBundle::BoldFont);
+  const gfx::FontList& bold =
+      ResourceBundle::GetSharedInstance().GetFontListWithDelta(
+          0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD);
   FontListMenuModel model(&delegate, &bold, 0);
   model.AddItem(1, ASCIIToUTF16("one"));
   model.AddItem(2, ASCIIToUTF16("two"));
@@ -389,7 +387,7 @@ TEST_F(MenuControllerTest, OpenClose) {
   EXPECT_FALSE(delegate.did_close_);
 
   // Pump the task that notifies the delegate.
-  message_loop.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Expect that the delegate got notified properly.
   EXPECT_TRUE(delegate.did_close_);

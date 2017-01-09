@@ -4,6 +4,7 @@
 
 #include "components/dom_distiller/webui/dom_distiller_handler.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -64,13 +65,12 @@ void DomDistillerHandler::HandleAddArticle(const base::ListValue* args) {
   GURL gurl(url);
   if (gurl.is_valid()) {
     service_->AddToList(
-        gurl,
-        service_->CreateDefaultDistillerPage(
-            web_ui()->GetWebContents()->GetContainerBounds().size()),
-        base::Bind(base::Bind(&DomDistillerHandler::OnArticleAdded,
-                              base::Unretained(this))));
+        gurl, service_->CreateDefaultDistillerPage(
+                  web_ui()->GetWebContents()->GetContainerBounds().size()),
+        base::Bind(&DomDistillerHandler::OnArticleAdded,
+                   base::Unretained(this)));
   } else {
-    web_ui()->CallJavascriptFunction("domDistiller.onArticleAddFailed");
+    web_ui()->CallJavascriptFunctionUnsafe("domDistiller.onArticleAddFailed");
   }
 }
 
@@ -83,7 +83,7 @@ void DomDistillerHandler::HandleViewUrl(const base::ListValue* args) {
         ui::PAGE_TRANSITION_GENERATED,
         std::string());
   } else {
-    web_ui()->CallJavascriptFunction("domDistiller.onViewUrlFailed");
+    web_ui()->CallJavascriptFunctionUnsafe("domDistiller.onViewUrlFailed");
   }
 }
 
@@ -108,16 +108,17 @@ void DomDistillerHandler::HandleRequestEntries(const base::ListValue* args) {
        ++it) {
     const ArticleEntry& article = *it;
     DCHECK(IsEntryValid(article));
-    scoped_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
     entry->SetString("entry_id", article.entry_id());
     std::string title = (!article.has_title() || article.title().empty())
                             ? article.entry_id()
                             : article.title();
     entry->SetString("title", net::EscapeForHTML(title));
-    entries.Append(entry.release());
+    entries.Append(std::move(entry));
   }
   // TODO(nyquist): Write a test that ensures we sanitize the data we send.
-  web_ui()->CallJavascriptFunction("domDistiller.onReceivedEntries", entries);
+  web_ui()->CallJavascriptFunctionUnsafe("domDistiller.onReceivedEntries",
+                                         entries);
 }
 
 void DomDistillerHandler::OnArticleAdded(bool article_available) {
@@ -125,7 +126,7 @@ void DomDistillerHandler::OnArticleAdded(bool article_available) {
   if (article_available) {
     HandleRequestEntries(NULL);
   } else {
-    web_ui()->CallJavascriptFunction("domDistiller.onArticleAddFailed");
+    web_ui()->CallJavascriptFunctionUnsafe("domDistiller.onArticleAddFailed");
   }
 }
 

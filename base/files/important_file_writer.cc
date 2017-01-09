@@ -4,6 +4,8 @@
 
 #include "base/files/important_file_writer.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string>
 #include <utility>
@@ -15,7 +17,8 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -23,6 +26,7 @@
 #include "base/task_runner_util.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 
 namespace base {
 
@@ -45,23 +49,33 @@ enum TempFileFailure {
 };
 
 void LogFailure(const FilePath& path, TempFileFailure failure_code,
-                const std::string& message) {
+                StringPiece message) {
   UMA_HISTOGRAM_ENUMERATION("ImportantFile.TempFileFailures", failure_code,
                             TEMP_FILE_FAILURE_MAX);
   DPLOG(WARNING) << "temp file failure: " << path.value() << " : " << message;
 }
 
-// Helper function to call WriteFileAtomically() with a scoped_ptr<std::string>.
-bool WriteScopedStringToFileAtomically(const FilePath& path,
-                                       scoped_ptr<std::string> data) {
-  return ImportantFileWriter::WriteFileAtomically(path, *data);
+// Helper function to call WriteFileAtomically() with a
+// std::unique_ptr<std::string>.
+void WriteScopedStringToFileAtomically(
+    const FilePath& path,
+    std::unique_ptr<std::string> data,
+    Closure before_write_callback,
+    Callback<void(bool success)> after_write_callback) {
+  if (!before_write_callback.is_null())
+    before_write_callback.Run();
+
+  bool result = ImportantFileWriter::WriteFileAtomically(path, *data);
+
+  if (!after_write_callback.is_null())
+    after_write_callback.Run(result);
 }
 
 }  // namespace
 
 // static
 bool ImportantFileWriter::WriteFileAtomically(const FilePath& path,
-                                              const std::string& data) {
+                                              StringPiece data) {
 #if defined(OS_CHROMEOS)
   // On Chrome OS, chrome gets killed when it cannot finish shutdown quickly,
   // and this function seems to be one of the slowest shutdown steps.
@@ -122,19 +136,18 @@ bool ImportantFileWriter::WriteFileAtomically(const FilePath& path,
 
 ImportantFileWriter::ImportantFileWriter(
     const FilePath& path,
-    const scoped_refptr<SequencedTaskRunner>& task_runner)
+    scoped_refptr<SequencedTaskRunner> task_runner)
     : ImportantFileWriter(
-        path,
-        task_runner,
-        TimeDelta::FromMilliseconds(kDefaultCommitIntervalMs)) {
-}
+          path,
+          std::move(task_runner),
+          TimeDelta::FromMilliseconds(kDefaultCommitIntervalMs)) {}
 
 ImportantFileWriter::ImportantFileWriter(
     const FilePath& path,
-    const scoped_refptr<SequencedTaskRunner>& task_runner,
+    scoped_refptr<SequencedTaskRunner> task_runner,
     TimeDelta interval)
     : path_(path),
-      task_runner_(task_runner),
+      task_runner_(std::move(task_runner)),
       serializer_(nullptr),
       commit_interval_(interval),
       weak_factory_(this) {
@@ -154,7 +167,7 @@ bool ImportantFileWriter::HasPendingWrite() const {
   return timer_.IsRunning();
 }
 
-void ImportantFileWriter::WriteNow(scoped_ptr<std::string> data) {
+void ImportantFileWriter::WriteNow(std::unique_ptr<std::string> data) {
   DCHECK(CalledOnValidThread());
   if (!IsValueInRangeForNumericType<int32_t>(data->length())) {
     NOTREACHED();
@@ -164,8 +177,11 @@ void ImportantFileWriter::WriteNow(scoped_ptr<std::string> data) {
   if (HasPendingWrite())
     timer_.Stop();
 
-  auto task = Bind(&WriteScopedStringToFileAtomically, path_, Passed(&data));
-  if (!PostWriteTask(task)) {
+  Closure task = Bind(&WriteScopedStringToFileAtomically, path_, Passed(&data),
+                      Passed(&before_next_write_callback_),
+                      Passed(&after_next_write_callback_));
+
+  if (!task_runner_->PostTask(FROM_HERE, MakeCriticalClosure(task))) {
     // Posting the task to background message loop is not expected
     // to fail, but if it does, avoid losing data and just hit the disk
     // on the current thread.
@@ -189,7 +205,7 @@ void ImportantFileWriter::ScheduleWrite(DataSerializer* serializer) {
 
 void ImportantFileWriter::DoScheduledWrite() {
   DCHECK(serializer_);
-  scoped_ptr<std::string> data(new std::string);
+  std::unique_ptr<std::string> data(new std::string);
   if (serializer_->SerializeData(data.get())) {
     WriteNow(std::move(data));
   } else {
@@ -199,37 +215,11 @@ void ImportantFileWriter::DoScheduledWrite() {
   serializer_ = nullptr;
 }
 
-void ImportantFileWriter::RegisterOnNextSuccessfulWriteCallback(
-    const Closure& on_next_successful_write) {
-  DCHECK(on_next_successful_write_.is_null());
-  on_next_successful_write_ = on_next_successful_write;
-}
-
-bool ImportantFileWriter::PostWriteTask(const Callback<bool()>& task) {
-  // TODO(gab): This code could always use PostTaskAndReplyWithResult and let
-  // ForwardSuccessfulWrite() no-op if |on_next_successful_write_| is null, but
-  // PostTaskAndReply causes memory leaks in tests (crbug.com/371974) and
-  // suppressing all of those is unrealistic hence we avoid most of them by
-  // using PostTask() in the typical scenario below.
-  if (!on_next_successful_write_.is_null()) {
-    return PostTaskAndReplyWithResult(
-        task_runner_.get(),
-        FROM_HERE,
-        MakeCriticalClosure(task),
-        Bind(&ImportantFileWriter::ForwardSuccessfulWrite,
-             weak_factory_.GetWeakPtr()));
-  }
-  return task_runner_->PostTask(
-      FROM_HERE,
-      MakeCriticalClosure(Bind(IgnoreResult(task))));
-}
-
-void ImportantFileWriter::ForwardSuccessfulWrite(bool result) {
-  DCHECK(CalledOnValidThread());
-  if (result && !on_next_successful_write_.is_null()) {
-    on_next_successful_write_.Run();
-    on_next_successful_write_.Reset();
-  }
+void ImportantFileWriter::RegisterOnNextWriteCallbacks(
+    const Closure& before_next_write_callback,
+    const Callback<void(bool success)>& after_next_write_callback) {
+  before_next_write_callback_ = before_next_write_callback;
+  after_next_write_callback_ = after_next_write_callback;
 }
 
 }  // namespace base

@@ -24,7 +24,7 @@ TEST(MiniDecompressTest, ExpandTest) {
   base::ScopedTempDir temp_dir;
   EXPECT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath dest_path(
-      temp_dir.path().Append(FILE_PATH_LITERAL("setup.exe")));
+      temp_dir.GetPath().Append(FILE_PATH_LITERAL("setup.exe")));
 
   // Decompress our test file.
   EXPECT_TRUE(mini_installer::Expand(source_path.value().c_str(),
@@ -33,5 +33,5 @@ TEST(MiniDecompressTest, ExpandTest) {
   // Check if the expanded file is a valid executable.
   DWORD type = static_cast<DWORD>(-1);
   EXPECT_TRUE(GetBinaryType(dest_path.value().c_str(), &type));
-  EXPECT_EQ(SCS_32BIT_BINARY, type);
+  EXPECT_EQ(static_cast<DWORD>(SCS_32BIT_BINARY), type);
 }

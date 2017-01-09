@@ -8,19 +8,12 @@
 
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "components/mus/public/cpp/context_provider.h"
-#include "components/mus/public/cpp/output_surface.h"
-#include "components/mus/public/interfaces/command_buffer.mojom.h"
-#include "components/mus/public/interfaces/compositor_frame.mojom.h"
-#include "components/mus/public/interfaces/gpu.mojom.h"
-#include "components/mus/public/interfaces/window_tree.mojom.h"
-#include "content/public/common/mojo_shell_connection.h"
 #include "content/renderer/mus/compositor_mus_connection.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
-#include "mojo/application/public/cpp/application_impl.h"
-#include "mojo/converters/geometry/geometry_type_converters.h"
-#include "mojo/converters/surfaces/surfaces_utils.h"
+#include "services/ui/public/cpp/context_provider.h"
+#include "services/ui/public/cpp/window_compositor_frame_sink.h"
+#include "services/ui/public/interfaces/window_tree.mojom.h"
 
 namespace content {
 
@@ -32,36 +25,36 @@ base::LazyInstance<ConnectionMap>::Leaky g_connections =
 }
 
 void RenderWidgetMusConnection::Bind(
-    mojo::InterfaceRequest<mus::mojom::WindowTreeClient> request) {
+    mojo::InterfaceRequest<ui::mojom::WindowTreeClient> request) {
   DCHECK(thread_checker_.CalledOnValidThread());
   RenderThreadImpl* render_thread = RenderThreadImpl::current();
   compositor_mus_connection_ = new CompositorMusConnection(
       routing_id_, render_thread->GetCompositorMainThreadTaskRunner(),
       render_thread->compositor_task_runner(), std::move(request),
       render_thread->input_handler_manager());
-  if (window_surface_binding_) {
-    compositor_mus_connection_->AttachSurfaceOnMainThread(
-        std::move(window_surface_binding_));
+  if (window_compositor_frame_sink_binding_) {
+    compositor_mus_connection_->AttachCompositorFrameSinkOnMainThread(
+        std::move(window_compositor_frame_sink_binding_));
   }
 }
 
-scoped_ptr<cc::OutputSurface> RenderWidgetMusConnection::CreateOutputSurface() {
+std::unique_ptr<cc::CompositorFrameSink>
+RenderWidgetMusConnection::CreateCompositorFrameSink(
+    scoped_refptr<gpu::GpuChannelHost> gpu_channel_host,
+    gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(!window_surface_binding_);
-  mus::mojom::GpuPtr gpu_service;
-  MojoShellConnection::Get()->GetApplication()->ConnectToService("mojo:mus",
-                                                                 &gpu_service);
-  mus::mojom::CommandBufferPtr cb;
-  gpu_service->CreateOffscreenGLES2Context(GetProxy(&cb));
-  scoped_refptr<cc::ContextProvider> context_provider(
-      new mus::ContextProvider(cb.PassInterface().PassHandle()));
-  scoped_ptr<cc::OutputSurface> surface(new mus::OutputSurface(
-      context_provider, mus::WindowSurface::Create(&window_surface_binding_)));
+  DCHECK(!window_compositor_frame_sink_binding_);
+
+  std::unique_ptr<cc::CompositorFrameSink> compositor_frame_sink(
+      ui::WindowCompositorFrameSink::Create(
+          make_scoped_refptr(
+              new ui::ContextProvider(std::move(gpu_channel_host))),
+          gpu_memory_buffer_manager, &window_compositor_frame_sink_binding_));
   if (compositor_mus_connection_) {
-    compositor_mus_connection_->AttachSurfaceOnMainThread(
-        std::move(window_surface_binding_));
+    compositor_mus_connection_->AttachCompositorFrameSinkOnMainThread(
+        std::move(window_compositor_frame_sink_binding_));
   }
-  return surface;
+  return compositor_frame_sink;
 }
 
 // static
@@ -84,11 +77,77 @@ RenderWidgetMusConnection* RenderWidgetMusConnection::GetOrCreate(
 }
 
 RenderWidgetMusConnection::RenderWidgetMusConnection(int routing_id)
-    : routing_id_(routing_id) {
+    : routing_id_(routing_id), input_handler_(nullptr) {
   DCHECK(routing_id);
 }
 
 RenderWidgetMusConnection::~RenderWidgetMusConnection() {}
+
+void RenderWidgetMusConnection::FocusChangeComplete() {
+  NOTIMPLEMENTED();
+}
+
+bool RenderWidgetMusConnection::HasTouchEventHandlersAt(
+    const gfx::Point& point) const {
+  return true;
+}
+
+void RenderWidgetMusConnection::ObserveGestureEventAndResult(
+    const blink::WebGestureEvent& gesture_event,
+    const gfx::Vector2dF& wheel_unused_delta,
+    bool event_processed) {
+  NOTIMPLEMENTED();
+}
+
+void RenderWidgetMusConnection::OnDidHandleKeyEvent() {
+  NOTIMPLEMENTED();
+}
+
+void RenderWidgetMusConnection::OnDidOverscroll(
+    const ui::DidOverscrollParams& params) {
+  NOTIMPLEMENTED();
+}
+
+void RenderWidgetMusConnection::OnInputEventAck(
+    std::unique_ptr<InputEventAck> input_event_ack) {
+  DCHECK(!pending_ack_.is_null());
+  pending_ack_.Run(input_event_ack->state ==
+                           InputEventAckState::INPUT_EVENT_ACK_STATE_CONSUMED
+                       ? ui::mojom::EventResult::HANDLED
+                       : ui::mojom::EventResult::UNHANDLED);
+  pending_ack_.Reset();
+}
+
+void RenderWidgetMusConnection::NotifyInputEventHandled(
+    blink::WebInputEvent::Type handled_type,
+    InputEventAckState ack_result) {
+  NOTIMPLEMENTED();
+}
+
+void RenderWidgetMusConnection::SetInputHandler(
+    RenderWidgetInputHandler* input_handler) {
+  DCHECK(!input_handler_);
+  input_handler_ = input_handler;
+}
+
+void RenderWidgetMusConnection::UpdateTextInputState(
+    ShowIme show_ime,
+    ChangeSource change_source) {
+  NOTIMPLEMENTED();
+}
+
+bool RenderWidgetMusConnection::WillHandleGestureEvent(
+    const blink::WebGestureEvent& event) {
+  NOTIMPLEMENTED();
+  return false;
+}
+
+bool RenderWidgetMusConnection::WillHandleMouseEvent(
+    const blink::WebMouseEvent& event) {
+  // TODO(fsamuel): NOTIMPLEMENTED() is too noisy.
+  // NOTIMPLEMENTED();
+  return false;
+}
 
 void RenderWidgetMusConnection::OnConnectionLost() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -97,15 +156,24 @@ void RenderWidgetMusConnection::OnConnectionLost() {
 }
 
 void RenderWidgetMusConnection::OnWindowInputEvent(
-    scoped_ptr<blink::WebInputEvent> input_event,
-    const base::Closure& ack) {
+    ui::ScopedWebInputEvent input_event,
+    const base::Callback<void(ui::mojom::EventResult)>& ack) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  // TODO(fsamuel): Implement this once the following is complete:
-  // 1. The Mus client lib supports manual event ACKing.
-  // 2. Mus supports event coalescing.
-  // 3. RenderWidget is refactored so that we don't send ACKs to the browser
-  //    process.
-  ack.Run();
+  // If we don't yet have a RenderWidgetInputHandler then we don't yet have
+  // an initialized RenderWidget.
+  if (!input_handler_) {
+    ack.Run(ui::mojom::EventResult::UNHANDLED);
+    return;
+  }
+  // TODO(fsamuel): It would be nice to add this DCHECK but the reality is an
+  // event could timeout and we could receive the next event before we ack the
+  // previous event.
+  // DCHECK(pending_ack_.is_null());
+  pending_ack_ = ack;
+  // TODO(fsamuel, sadrul): Track real latency info.
+  ui::LatencyInfo latency_info;
+  input_handler_->HandleInputEvent(*input_event, latency_info,
+                                   DISPATCH_TYPE_BLOCKING);
 }
 
 }  // namespace content

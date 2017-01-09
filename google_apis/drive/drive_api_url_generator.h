@@ -5,8 +5,11 @@
 #ifndef GOOGLE_APIS_DRIVE_DRIVE_API_URL_GENERATOR_H_
 #define GOOGLE_APIS_DRIVE_DRIVE_API_URL_GENERATOR_H_
 
+#include <stdint.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "url/gurl.h"
 
 namespace google_apis {
@@ -18,15 +21,11 @@ class DriveApiUrlGenerator {
   // |base_url| is the path to the target drive api server.
   // Note that this is an injecting point for a testing server.
   DriveApiUrlGenerator(const GURL& base_url,
-                       const GURL& base_download_url,
                        const GURL& base_thumbnail_url);
   ~DriveApiUrlGenerator();
 
   // The base URL for communicating with the production drive api server.
   static const char kBaseUrlForProduction[];
-
-  // The base URL for the file download server for production.
-  static const char kBaseDownloadUrlForProduction[];
 
   // The base URL for the thumbnail download server for production.
   static const char kBaseThumbnailUrlForProduction[];
@@ -78,7 +77,7 @@ class DriveApiUrlGenerator {
   GURL GetChangesListUrl(bool include_deleted,
                          int max_results,
                          const std::string& page_token,
-                         int64 start_change_id) const;
+                         int64_t start_change_id) const;
 
   // Returns a URL to add a resource to a directory with |folder_id|.
   GURL GetChildrenInsertUrl(const std::string& folder_id) const;

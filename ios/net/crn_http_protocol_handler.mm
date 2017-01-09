@@ -4,14 +4,19 @@
 
 #import "ios/net/crn_http_protocol_handler.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/mac/bind_objc_block.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -28,13 +33,16 @@
 #include "net/base/load_flags.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_request_headers.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace net {
 class HttpProtocolHandlerCore;
@@ -146,7 +154,7 @@ class HttpProtocolHandlerCore
   void OnSSLCertificateError(URLRequest* request,
                              const SSLInfo& ssl_info,
                              bool fatal) override;
-  void OnResponseStarted(URLRequest* request) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnReadCompleted(URLRequest* request, int bytes_read) override;
 
  private:
@@ -190,13 +198,13 @@ class HttpProtocolHandlerCore
   // ith client is responsible for managing the (i-1)th client.
   base::scoped_nsobject<NSMutableArray> clients_;
   // Weak. This is the last client in |clients_|.
-  id<CRNNetworkClientProtocol> top_level_client_;
+  __weak id<CRNNetworkClientProtocol> top_level_client_;
   scoped_refptr<IOBuffer> buffer_;
   base::scoped_nsobject<NSMutableURLRequest> request_;
   // Stream delegate to read the HTTPBodyStream.
   base::scoped_nsobject<CRWHTTPStreamDelegate> stream_delegate_;
   // Vector of readers used to accumulate a POST data stream.
-  std::vector<scoped_ptr<UploadElementReader>> post_data_readers_;
+  std::vector<std::unique_ptr<UploadElementReader>> post_data_readers_;
 
   // This cannot be a scoped pointer because it must be deleted on the IO
   // thread.
@@ -240,8 +248,8 @@ void HttpProtocolHandlerCore::HandleStreamEvent(NSStream* stream,
       if (!post_data_readers_.empty()) {
         // NOTE: This call will result in |post_data_readers_| being cleared,
         // which is the desired behavior.
-        net_request_->set_upload(make_scoped_ptr(
-            new ElementsUploadDataStream(std::move(post_data_readers_), 0)));
+        net_request_->set_upload(base::MakeUnique<ElementsUploadDataStream>(
+            std::move(post_data_readers_), 0));
         DCHECK(post_data_readers_.empty());
       }
       net_request_->Start();
@@ -256,7 +264,7 @@ void HttpProtocolHandlerCore::HandleStreamEvent(NSStream* stream,
       if (length) {
         std::vector<char> owned_data(buffer_->data(), buffer_->data() + length);
         post_data_readers_.push_back(
-            make_scoped_ptr(new UploadOwnedBytesElementReader(&owned_data)));
+            base::MakeUnique<UploadOwnedBytesElementReader>(&owned_data));
       }
       break;
     }
@@ -449,16 +457,16 @@ void HttpProtocolHandlerCore::OnSSLCertificateError(URLRequest* request,
   }
 }
 
-void HttpProtocolHandlerCore::OnResponseStarted(URLRequest* request) {
+void HttpProtocolHandlerCore::OnResponseStarted(URLRequest* request,
+                                                int net_error) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_NE(net::ERR_IO_PENDING, net_error);
 
   if (net_request_ == nullptr)
     return;
 
-  const URLRequestStatus& status = request->status();
-  if (!status.is_success()) {
-    int error = status.error();
-    StopRequestWithError(IOSErrorCode(error), error);
+  if (net_error != net::OK) {
+    StopRequestWithError(IOSErrorCode(net_error), net_error);
     return;
   }
 
@@ -503,18 +511,21 @@ void HttpProtocolHandlerCore::StartReading() {
   // using it and the object is not re-entrant.
   [top_level_client_ didReceiveResponse:response];
 
-  int bytes_read = 0;
+  int bytes_read = net_request_->Read(buffer_.get(), kIOBufferSize);
+  if (bytes_read == net::ERR_IO_PENDING)
+    return;
 
-  if (net_request_->Read(buffer_.get(), kIOBufferSize, &bytes_read)) {
+  if (bytes_read >= 0) {
     OnReadCompleted(net_request_, bytes_read);
-  } else if (!net_request_->status().is_success()) {
-    int error = net_request_->status().error();
+  } else {
+    int error = bytes_read;
     StopRequestWithError(IOSErrorCode(error), error);
   }
 }
 
 void HttpProtocolHandlerCore::OnReadCompleted(URLRequest* request,
                                               int bytes_read) {
+  DCHECK_NE(net::ERR_IO_PENDING, bytes_read);
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (net_request_ == nullptr)
@@ -526,34 +537,30 @@ void HttpProtocolHandlerCore::OnReadCompleted(URLRequest* request,
   // TODO(droger): It may be possible to avoid some of the copies (using
   // WrappedIOBuffer for example).
   NSUInteger data_length;
-  bool loop = (bytes_read > 0);
-  bool io_pending = false;
-  uint64_t total_byte_read = loop ? bytes_read : 0;
-  while (loop) {
+  uint64_t total_byte_read = 0;
+  while (bytes_read > 0) {
+    total_byte_read += bytes_read;
     data_length = [data length];  // Assumes that getting the length is fast.
     [data increaseLengthBy:bytes_read];
     memcpy(reinterpret_cast<char*>([data mutableBytes]) + data_length,
            buffer_->data(), bytes_read);
-    io_pending = !request->Read(buffer_.get(), kIOBufferSize, &bytes_read);
-    loop = !io_pending && (bytes_read > 0);
-    total_byte_read += bytes_read;
+    bytes_read = request->Read(buffer_.get(), kIOBufferSize);
   }
 
   if (tracker_)
     tracker_->CaptureReceivedBytes(request, total_byte_read);
 
   // Notify the client.
-  const URLRequestStatus& status = request->status();
-  if (status.is_success()) {
+  if (bytes_read == net::OK || bytes_read == net::ERR_IO_PENDING) {
     if ([data length] > 0) {
       // If the data is not encoded in UTF8, the NSString is nil.
       DVLOG(3) << "To client:" << std::endl
-               << base::SysNSStringToUTF8([[[NSString alloc]
+               << base::SysNSStringToUTF8([[NSString alloc]
                       initWithData:data
-                          encoding:NSUTF8StringEncoding] autorelease]);
+                          encoding:NSUTF8StringEncoding]);
       [top_level_client_ didLoadData:data];
     }
-    if (bytes_read == 0 && !io_pending) {
+    if (bytes_read == 0) {
       DCHECK_EQ(net_request_, request);
       // There is nothing more to read.
       StopNetRequest();
@@ -561,7 +568,7 @@ void HttpProtocolHandlerCore::OnReadCompleted(URLRequest* request,
     }
   } else {
     // Request failed (not canceled).
-    int error = status.error();
+    int error = bytes_read;
     StopRequestWithError(IOSErrorCode(error), error);
   }
 }
@@ -599,13 +606,13 @@ void HttpProtocolHandlerCore::SetLoadFlags() {
         load_flags |= LOAD_VALIDATE_CACHE;
         break;
       case RequestTracker::CACHE_HISTORY:
-        load_flags |= LOAD_PREFERRING_CACHE;
+        load_flags |= LOAD_SKIP_CACHE_VALIDATION;
         break;
       case RequestTracker::CACHE_BYPASS:
         load_flags |= LOAD_DISABLE_CACHE | LOAD_BYPASS_CACHE;
         break;
       case RequestTracker::CACHE_ONLY:
-        load_flags |= LOAD_ONLY_FROM_CACHE;
+        load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
         break;
       case RequestTracker::CACHE_NORMAL:
         // Do nothing, normal load.
@@ -619,10 +626,10 @@ void HttpProtocolHandlerCore::SetLoadFlags() {
         load_flags |= LOAD_DISABLE_CACHE;
         break;
       case NSURLRequestReturnCacheDataElseLoad:
-        load_flags |= LOAD_PREFERRING_CACHE;
+        load_flags |= LOAD_SKIP_CACHE_VALIDATION;
         break;
       case NSURLRequestReturnCacheDataDontLoad:
-        load_flags |= LOAD_ONLY_FROM_CACHE;
+        load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
         break;
       case NSURLRequestReloadRevalidatingCacheData:
         load_flags |= LOAD_VALIDATE_CACHE;
@@ -718,10 +725,10 @@ void HttpProtocolHandlerCore::Start(id<CRNNetworkClientProtocol> base_client) {
   if (body_length > 0) {
     const char* source_bytes = reinterpret_cast<const char*>([body bytes]);
     std::vector<char> owned_data(source_bytes, source_bytes + body_length);
-    scoped_ptr<UploadElementReader> reader(
+    std::unique_ptr<UploadElementReader> reader(
         new UploadOwnedBytesElementReader(&owned_data));
     net_request_->set_upload(
-        ElementsUploadDataStream::CreateWithReader(reader.Pass(), 0));
+        ElementsUploadDataStream::CreateWithReader(std::move(reader), 0));
   }
 
   net_request_->Start();
@@ -918,8 +925,7 @@ void HttpProtocolHandlerCore::PushClients(NSArray* clients) {
 @implementation CRNHTTPProtocolHandler {
   scoped_refptr<net::HttpProtocolHandlerCore> _core;
   base::scoped_nsprotocol<id<CRNHTTPProtocolHandlerProxy>> _protocolProxy;
-  NSThread* _clientThread;
-  NSString* _clientRunLoopMode;
+  __weak NSThread* _clientThread;
   BOOL _supportedURL;
 }
 
@@ -1061,7 +1067,6 @@ void HttpProtocolHandlerCore::PushClients(NSArray* clients) {
 
 - (void)dealloc {
   [self scheduleCancelRequest];
-  [super dealloc];
 }
 
 #pragma mark NSURLProtocol overrides.

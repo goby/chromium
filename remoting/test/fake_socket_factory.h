@@ -5,10 +5,14 @@
 #ifndef REMOTING_TEST_FAKE_SOCKET_FACTORY_H_
 #define REMOTING_TEST_FAKE_SOCKET_FACTORY_H_
 
+#include <stdint.h>
+
 #include <list>
+#include <memory>
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "remoting/test/fake_network_dispatcher.h"
 #include "third_party/webrtc/p2p/base/packetsocketfactory.h"
@@ -49,15 +53,28 @@ class FakePacketSocketFactory : public rtc::PacketSocketFactory,
     out_of_order_rate_ = out_of_order_rate;
   }
 
+  void ResetStats();
+
+  base::TimeDelta average_buffer_delay() {
+    return total_packets_received_ > 0
+               ? (total_buffer_delay_ / total_packets_received_)
+               : base::TimeDelta();
+  }
+  base::TimeDelta max_buffer_delay() { return max_buffer_delay_; }
+  double drop_rate() {
+    return static_cast<double>(total_packets_dropped_) /
+           (total_packets_received_ + total_packets_dropped_);
+  }
+
   // rtc::PacketSocketFactory interface.
   rtc::AsyncPacketSocket* CreateUdpSocket(
       const rtc::SocketAddress& local_address,
-      uint16 min_port,
-      uint16 max_port) override;
+      uint16_t min_port,
+      uint16_t max_port) override;
   rtc::AsyncPacketSocket* CreateServerTcpSocket(
       const rtc::SocketAddress& local_address,
-      uint16 min_port,
-      uint16 max_port,
+      uint16_t min_port,
+      uint16_t max_port,
       int opts) override;
   rtc::AsyncPacketSocket* CreateClientTcpSocket(
       const rtc::SocketAddress& local_address,
@@ -83,6 +100,7 @@ class FakePacketSocketFactory : public rtc::PacketSocketFactory,
         const rtc::SocketAddress& to,
         const scoped_refptr<net::IOBuffer>& data,
         int data_size);
+    PendingPacket(const PendingPacket& other);
     ~PendingPacket();
 
     rtc::SocketAddress from;
@@ -104,7 +122,7 @@ class FakePacketSocketFactory : public rtc::PacketSocketFactory,
 
   rtc::IPAddress address_;
 
-  scoped_ptr<LeakyBucket> leaky_bucket_;
+  std::unique_ptr<LeakyBucket> leaky_bucket_;
   base::TimeDelta latency_average_;
   base::TimeDelta latency_stddev_;
   double out_of_order_rate_;
@@ -113,6 +131,11 @@ class FakePacketSocketFactory : public rtc::PacketSocketFactory,
   uint16_t next_port_;
 
   std::list<PendingPacket> pending_packets_;
+
+  int total_packets_received_ = 0;
+  int total_packets_dropped_ = 0;
+  base::TimeDelta total_buffer_delay_;
+  base::TimeDelta max_buffer_delay_;
 
   base::WeakPtrFactory<FakePacketSocketFactory> weak_factory_;
 

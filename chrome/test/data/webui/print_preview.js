@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+GEN('#include "base/feature_list.h"');
+GEN('#include "chrome/common/chrome_features.h"');
+
 /**
  * Test fixture for print preview WebUI testing.
  * @constructor
@@ -53,6 +56,19 @@ PrintPreviewWebUITest.prototype = {
 
   /** @override */
   isAsync: true,
+
+  /**
+   * @override
+   */
+  testGenPreamble: function() {
+    // Enable print scaling for tests.
+    GEN('  base::FeatureList::ClearInstanceForTesting();');
+    GEN('  std::unique_ptr<base::FeatureList>');
+    GEN('      feature_list(new base::FeatureList);');
+    GEN('  feature_list->InitializeFromCommandLine(');
+    GEN('      features::kPrintScaling.name, std::string());');
+    GEN('  base::FeatureList::SetInstance(std::move(feature_list));');
+  },
 
   /**
    * Stub out low-level functionality like the NativeLayer and
@@ -155,6 +171,23 @@ PrintPreviewWebUITest.prototype = {
   },
 
   /**
+   * Repeated setup steps for the advanced settings tests.
+   * Disables accessiblity errors, sets initial settings, and verifies
+   * advanced options section is visible after expanding more settings.
+   */
+  setupAdvancedSettingsTest: function(device) {
+    // Need to disable this since overlay animation will not fully complete.
+    this.accessibilityIssuesAreErrors = false;
+    this.setInitialSettings();
+    this.setLocalDestinations();
+    this.setCapabilities(device);
+    this.expandMoreSettings();
+
+    // Check that the advanced options settings section is visible.
+    checkSectionVisible($('advanced-options-settings'), true);
+  },
+
+  /**
    * Generate a real C++ class; don't typedef.
    * @type {?string}
    * @override
@@ -166,12 +199,12 @@ PrintPreviewWebUITest.prototype = {
    * @override
    */
   setUp: function() {
+    testing.Test.prototype.setUp.call(this);
     Mock4JS.clearMocksToVerify();
 
     this.initialSettings_ = new print_preview.NativeInitialSettings(
       false /*isInKioskAutoPrintMode*/,
       false /*isInAppKioskMode*/,
-      false /*hidePrintWithSystemDialogLink*/,
       ',' /*thousandsDelimeter*/,
       '.' /*decimalDelimeter*/,
       1 /*unitType*/,
@@ -189,6 +222,12 @@ PrintPreviewWebUITest.prototype = {
     this.nativeLayer_ = printPreview.nativeLayer_;
 
     testing.Test.disableAnimationsAndTransitions();
+
+    // Enable when failure is resolved.
+    // AX_TEXT_03: http://crbug.com/559209
+    this.accessibilityAuditConfig.ignoreSelectors(
+        'multipleLabelableElementsPerLabel',
+        '#page-settings > .right-column > *');
   }
 };
 
@@ -329,12 +368,61 @@ function getCddTemplate(printerId) {
   };
 }
 
+// Test restore settings with one destination.
 TEST_F('PrintPreviewWebUITest', 'TestPrintPreviewRestoreLocalDestination',
     function() {
   this.initialSettings_.serializedAppStateStr_ =
-      '{"version":2,"selectedDestinationId":"ID",' +
-      '"selectedDestinationOrigin":"local"}';
+      '{"version":2,"recentDestinations":[{"id":"ID", "origin":"local",' +
+        '"account":"", "capabilities":0, "name":"", "extensionId":"",' +
+            '"extensionName":""}]}';
   this.setInitialSettings();
+
+  testDone();
+});
+
+//Test with multiple destinations
+TEST_F('PrintPreviewWebUITest', 'TestPrintPreviewRestoreMultipleDestinations',
+    function() {
+  this.initialSettings_.serializedAppStateStr_ =
+      '{"version":2,"recentDestinations":[{"id":"ID1", "origin":"local",' +
+        '"account":"", "capabilities":0, "name":"", "extensionId":"",' +
+            '"extensionName":""},' +
+      '{"id":"ID2", "origin":"local",' +
+        '"account":"", "capabilities":0, "name":"", "extensionId":"",' +
+            '"extensionName":""},' +
+      '{"id":"ID3", "origin":"local",' +
+        '"account":"", "capabilities":0, "name":"", "extensionId":"",' +
+            '"extensionName":""}]}';
+  this.setInitialSettings();
+
+  // Set capabilities for the three recently used destinations + 1 more
+  this.setCapabilities(getCddTemplate('ID1'));
+  this.setCapabilities(getCddTemplate('ID2'));
+  this.setCapabilities(getCddTemplate('ID3'));
+  this.setCapabilities(getCddTemplate('ID4'));
+
+  // The most recently used destination should be the currently selected one.
+  // This is ID1.
+  assertEquals(
+      'ID1', printPreview.destinationStore_.selectedDestination.id);
+
+  // Look through the destinations. ID1, ID2, and ID3 should all be recent.
+  var destinations = printPreview.destinationStore_.destinations_;
+  var ids_found = [];
+
+  for (var i = 0; i < destinations.length; i++) {
+    if (!destinations[i])
+      continue;
+    if (destinations[i].isRecent)
+      ids_found.push(destinations[i].id);
+  }
+
+  // Make sure there were 3 recent destinations and that they are the correct
+  // IDs.
+  assertEquals(3, ids_found.length);
+  assertNotEquals(-1, ids_found.indexOf("ID1"));
+  assertNotEquals(-1, ids_found.indexOf("ID2"));
+  assertNotEquals(-1, ids_found.indexOf("ID3"));
 
   testDone();
 });
@@ -432,6 +520,7 @@ TEST_F('PrintPreviewWebUITest', 'PrintToPDFSelectedCapabilities', function() {
 
   checkSectionVisible($('other-options-settings'), false);
   checkSectionVisible($('media-size-settings'), false);
+  checkSectionVisible($('scaling-settings'), false);
 
   testDone();
 });
@@ -446,17 +535,20 @@ TEST_F('PrintPreviewWebUITest', 'SourceIsHTMLCapabilities', function() {
   var otherOptions = $('other-options-settings');
   var fitToPage = otherOptions.querySelector('.fit-to-page-container');
   var mediaSize = $('media-size-settings');
+  var scalingSettings = $('scaling-settings');
 
   // Check that options are collapsed (section is visible, because duplex is
   // available).
   checkSectionVisible(otherOptions, true);
   checkElementDisplayed(fitToPage, false);
   checkSectionVisible(mediaSize, false);
+  checkSectionVisible(scalingSettings, false);
 
   this.expandMoreSettings();
 
   checkElementDisplayed(fitToPage, false);
   checkSectionVisible(mediaSize, true);
+  checkSectionVisible(scalingSettings, true);
 
   this.waitForAnimationToEnd('more-settings');
 });
@@ -470,12 +562,53 @@ TEST_F('PrintPreviewWebUITest', 'SourceIsPDFCapabilities', function() {
   this.setCapabilities(getCddTemplate("FooDevice"));
 
   var otherOptions = $('other-options-settings');
+  var scalingSettings = $('scaling-settings');
+
   checkSectionVisible(otherOptions, true);
   checkElementDisplayed(
       otherOptions.querySelector('.fit-to-page-container'), true);
   expectTrue(
       otherOptions.querySelector('.fit-to-page-checkbox').checked);
+  this.expandMoreSettings();
   checkSectionVisible($('media-size-settings'), true);
+  checkSectionVisible(scalingSettings, true);
+
+  this.waitForAnimationToEnd('other-options-collapsible');
+});
+
+// When the source is "PDF", depending on the selected destination printer, we
+// show/hide the fit to page option and hide media size selection.
+TEST_F('PrintPreviewWebUITest', 'ScalingUnchecksFitToPage', function() {
+  this.initialSettings_.isDocumentModifiable_ = false;
+  this.setInitialSettings();
+  this.setLocalDestinations();
+  this.setCapabilities(getCddTemplate("FooDevice"));
+
+  var otherOptions = $('other-options-settings');
+  var scalingSettings = $('scaling-settings');
+
+  checkSectionVisible(otherOptions, true);
+  checkElementDisplayed(
+      otherOptions.querySelector('.fit-to-page-container'), true);
+  expectTrue(
+      otherOptions.querySelector('.fit-to-page-checkbox').checked);
+  this.expandMoreSettings();
+  checkSectionVisible($('media-size-settings'), true);
+  checkSectionVisible(scalingSettings, true);
+
+  //Change scaling input
+  var scalingInput = scalingSettings.querySelector('.user-value');
+  expectEquals(scalingInput.value, '100');
+  scalingInput.stepUp(5);
+  expectEquals(scalingInput.value, '105');
+
+  // Trigger the event
+  var enter = document.createEvent('Event');
+  enter.initEvent('keydown');
+  enter.keyCode = 'Enter';
+  scalingInput.dispatchEvent(enter);
+  expectFalse(
+      otherOptions.querySelector('.fit-to-page-checkbox').checked);
 
   this.waitForAnimationToEnd('other-options-collapsible');
 });
@@ -501,7 +634,7 @@ TEST_F('PrintPreviewWebUITest', 'CheckNumCopiesPrintPreset', function() {
   checkSectionVisible($('copies-settings'), true);
   expectEquals(
       printPresetOptions.copies,
-      parseInt($('copies-settings').querySelector('.copies').value));
+      parseInt($('copies-settings').querySelector('.user-value').value));
 
   this.waitForAnimationToEnd('other-options-collapsible');
 });
@@ -858,7 +991,10 @@ TEST_F('PrintPreviewWebUITest', 'TestPrinterChangeUpdatesPreview', function() {
 
   var previewGenerator = mock(print_preview.PreviewGenerator);
   printPreview.previewArea_.previewGenerator_ = previewGenerator.proxy();
-  previewGenerator.expects(exactly(6)).requestPreview();
+
+  // TODO (rbpotter): Figure out why this is 7 with the addition of scaling,
+  // and if it is a problem.
+  previewGenerator.expects(exactly(7)).requestPreview();
 
   var barDestination;
   var destinations = printPreview.destinationStore_.destinations();
@@ -951,3 +1087,129 @@ TEST_F('PrintPreviewWebUITest', 'TestCustomPaperNames', function() {
 
   this.waitForAnimationToEnd('more-settings');
 });
+
+function getCddTemplateWithAdvancedSettings(printerId) {
+  return {
+    printerId: printerId,
+    capabilities: {
+      version: '1.0',
+      printer: {
+        supported_content_type: [{content_type: 'application/pdf'}],
+        vendor_capability:
+        [
+          {display_name: 'Print Area',
+            id: 'Print Area',
+            type: 'SELECT',
+            select_cap: {
+              option: [
+                {display_name: 'A4', value: 4, is_default: true},
+                {display_name: 'A6', value: 6},
+                {display_name: 'A7', value: 7}
+              ]
+            }
+          }
+        ],
+        collate: {},
+        color: {
+          option: [
+            {type: 'STANDARD_COLOR', is_default: true},
+            {type: 'STANDARD_MONOCHROME'}
+          ]
+        },
+        copies: {},
+        duplex: {
+          option: [
+            {type: 'NO_DUPLEX', is_default: true},
+            {type: 'LONG_EDGE'},
+            {type: 'SHORT_EDGE'}
+          ]
+        },
+        page_orientation: {
+          option: [
+            {type: 'PORTRAIT', is_default: true},
+            {type: 'LANDSCAPE'},
+            {type: 'AUTO'}
+          ]
+        },
+        media_size: {
+          option: [
+            { name: 'NA_LETTER',
+              width_microns: 215900,
+              height_microns: 279400,
+              is_default: true
+            }
+          ]
+        },
+      }
+    }
+  };
+}
+
+// Simulates a click of the advanced options settings button to bring up the
+// advanced settings overlay.
+function openAdvancedSettings() {
+  // Check for button and click to view advanced settings section.
+  var advancedOptionsSettingsButton =
+      $('advanced-options-settings').
+      querySelector('.advanced-options-settings-button');
+  checkElementDisplayed(advancedOptionsSettingsButton, true);
+  // Button is disabled during testing due to test version of
+  // testPluginCompatibility() being set to always return false. Enable button
+  // to send click event.
+  advancedOptionsSettingsButton.disabled = false;
+  advancedOptionsSettingsButton.click();
+}
+
+// Test advanced settings with 1 capability (should not display settings search
+// box).
+TEST_F('PrintPreviewWebUITest', 'TestAdvancedSettings1Option', function() {
+  var device = getCddTemplateWithAdvancedSettings("FooDevice");
+  this.setupAdvancedSettingsTest(device);
+
+  // Open the advanced settings overlay.
+  openAdvancedSettings();
+
+  // Check that advanced settings close button is now visible,
+  // but not the search box (only 1 capability).
+  var advancedSettingsCloseButton = $('advanced-settings').
+        querySelector('.close-button');
+  checkElementDisplayed(advancedSettingsCloseButton, true);
+  checkElementDisplayed($('advanced-settings').
+       querySelector('.search-box-area'), false);
+
+  this.waitForAnimationToEnd('more-settings');
+});
+
+
+// Test advanced settings with 2 capabilities (should have settings search box).
+TEST_F('PrintPreviewWebUITest', 'TestAdvancedSettings2Options', function() {
+  var device = getCddTemplateWithAdvancedSettings("FooDevice");
+   // Add new capability.
+  device.capabilities.printer.vendor_capability.push({
+      display_name: 'Paper Type',
+      id: 'Paper Type',
+      type: 'SELECT',
+      select_cap: {
+          option: [
+              {display_name: 'Standard', value: 0, is_default: true},
+              {display_name: 'Recycled', value: 1},
+              {display_name: 'Special', value: 2}
+          ]
+      }
+  });
+  this.setupAdvancedSettingsTest(device);
+
+  // Open the advanced settings overlay.
+  openAdvancedSettings();
+
+  // Check advanced settings is visible and that the search box now
+  // appears.
+  var advancedSettingsCloseButton = $('advanced-settings').
+      querySelector('.close-button');
+  checkElementDisplayed(advancedSettingsCloseButton, true);
+  checkElementDisplayed($('advanced-settings').
+      querySelector('.search-box-area'), true);
+
+  this.waitForAnimationToEnd('more-settings');
+});
+

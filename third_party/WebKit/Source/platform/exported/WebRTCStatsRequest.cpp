@@ -28,52 +28,42 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "public/platform/WebRTCStatsRequest.h"
 
-#include "platform/mediastream/RTCStatsRequest.h"
-#include "platform/mediastream/RTCStatsResponseBase.h"
+#include "platform/peerconnection/RTCStatsRequest.h"
+#include "platform/peerconnection/RTCStatsResponseBase.h"
 #include "public/platform/WebMediaStream.h"
 #include "public/platform/WebMediaStreamTrack.h"
 #include "public/platform/WebRTCStatsResponse.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
 WebRTCStatsRequest::WebRTCStatsRequest(RTCStatsRequest* request)
-    : m_private(request)
-{
+    : m_private(request) {}
+
+void WebRTCStatsRequest::assign(const WebRTCStatsRequest& other) {
+  m_private = other.m_private;
 }
 
-void WebRTCStatsRequest::assign(const WebRTCStatsRequest& other)
-{
-    m_private = other.m_private;
+void WebRTCStatsRequest::reset() {
+  m_private.reset();
 }
 
-void WebRTCStatsRequest::reset()
-{
-    m_private.reset();
+WebRTCStatsResponse WebRTCStatsRequest::createResponse() const {
+  return WebRTCStatsResponse(m_private->createResponse());
 }
 
-WebRTCStatsResponse WebRTCStatsRequest::createResponse() const
-{
-    return WebRTCStatsResponse(m_private->createResponse());
+bool WebRTCStatsRequest::hasSelector() const {
+  return m_private->hasSelector();
 }
 
-bool WebRTCStatsRequest::hasSelector() const
-{
-    return m_private->hasSelector();
+const WebMediaStreamTrack WebRTCStatsRequest::component() const {
+  return WebMediaStreamTrack(m_private->component());
 }
 
-const WebMediaStreamTrack WebRTCStatsRequest::component() const
-{
-    return WebMediaStreamTrack(m_private->component());
+void WebRTCStatsRequest::requestSucceeded(
+    const WebRTCStatsResponse& response) const {
+  m_private->requestSucceeded(response);
 }
 
-void WebRTCStatsRequest::requestSucceeded(const WebRTCStatsResponse& response) const
-{
-    m_private->requestSucceeded(response);
-}
-
-} // namespace blink
+}  // namespace blink

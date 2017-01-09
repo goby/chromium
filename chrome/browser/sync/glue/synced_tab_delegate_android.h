@@ -6,8 +6,10 @@
 #define CHROME_BROWSER_SYNC_GLUE_SYNCED_TAB_DELEGATE_ANDROID_H_
 
 #include <string>
+#include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "components/sync_sessions/synced_tab_delegate.h"
 #include "content/public/browser/web_contents_user_data.h"
 
@@ -23,7 +25,7 @@ namespace browser_sync {
 
 // SyncedTabDelegateAndroid wraps TabContentsSyncedTabDelegate and provides
 // a method to set web contents later when tab is brought to memory.
-class SyncedTabDelegateAndroid : public browser_sync::SyncedTabDelegate {
+class SyncedTabDelegateAndroid : public sync_sessions::SyncedTabDelegate {
  public:
   explicit SyncedTabDelegateAndroid(TabAndroid* owning_tab_);
   ~SyncedTabDelegateAndroid() override;
@@ -47,7 +49,7 @@ class SyncedTabDelegateAndroid : public browser_sync::SyncedTabDelegate {
   void SetSyncId(int sync_id) override;
   bool ShouldSync(sync_sessions::SyncSessionsClient* sessions_client) override;
   bool ProfileIsSupervised() const override;
-  const std::vector<const sessions::SerializedNavigationEntry*>*
+  const std::vector<std::unique_ptr<const sessions::SerializedNavigationEntry>>*
   GetBlockedNavigations() const override;
 
   // Set the web contents for this tab. Also creates

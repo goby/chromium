@@ -4,6 +4,7 @@
 
 #include "ui/compositor/transform_animation_curve_adapter.h"
 
+#include "base/memory/ptr_util.h"
 #include "cc/base/time_util.h"
 
 namespace ui {
@@ -21,6 +22,9 @@ TransformAnimationCurveAdapter::TransformAnimationCurveAdapter(
   gfx::DecomposeTransform(&decomposed_target_value_, target_value_);
 }
 
+TransformAnimationCurveAdapter::TransformAnimationCurveAdapter(
+    const TransformAnimationCurveAdapter& other) = default;
+
 TransformAnimationCurveAdapter::~TransformAnimationCurveAdapter() {
 }
 
@@ -28,8 +32,9 @@ base::TimeDelta TransformAnimationCurveAdapter::Duration() const {
   return duration_;
 }
 
-scoped_ptr<cc::AnimationCurve> TransformAnimationCurveAdapter::Clone() const {
-  return make_scoped_ptr(new TransformAnimationCurveAdapter(
+std::unique_ptr<cc::AnimationCurve> TransformAnimationCurveAdapter::Clone()
+    const {
+  return base::WrapUnique(new TransformAnimationCurveAdapter(
       tween_type_, initial_value_, target_value_, duration_));
 }
 
@@ -57,11 +62,6 @@ bool TransformAnimationCurveAdapter::AnimatedBoundsForBox(
   // computing bounds for TransformOperationMatrix, use that to compute
   // the bounds we need here.
   return false;
-}
-
-bool TransformAnimationCurveAdapter::AffectsScale() const {
-  return !initial_value_.IsIdentityOrTranslation() ||
-         !target_value_.IsIdentityOrTranslation();
 }
 
 bool TransformAnimationCurveAdapter::IsTranslation() const {
@@ -105,8 +105,9 @@ base::TimeDelta InverseTransformCurveAdapter::Duration() const {
   return duration_;
 }
 
-scoped_ptr<cc::AnimationCurve> InverseTransformCurveAdapter::Clone() const {
-  return make_scoped_ptr(
+std::unique_ptr<cc::AnimationCurve> InverseTransformCurveAdapter::Clone()
+    const {
+  return base::WrapUnique(
       new InverseTransformCurveAdapter(base_curve_, initial_value_, duration_));
 }
 
@@ -131,11 +132,6 @@ bool InverseTransformCurveAdapter::AnimatedBoundsForBox(
   // computing bounds for TransformOperationMatrix, use that to compute
   // the bounds we need here.
   return false;
-}
-
-bool InverseTransformCurveAdapter::AffectsScale() const {
-  return !initial_value_.IsIdentityOrTranslation() ||
-         base_curve_.AffectsScale();
 }
 
 bool InverseTransformCurveAdapter::IsTranslation() const {

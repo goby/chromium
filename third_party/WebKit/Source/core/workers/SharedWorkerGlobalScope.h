@@ -36,6 +36,7 @@
 #include "core/workers/WorkerGlobalScope.h"
 #include "core/workers/WorkerThreadStartupData.h"
 #include "platform/heap/Handle.h"
+#include <memory>
 
 namespace blink {
 
@@ -43,34 +44,40 @@ class MessageEvent;
 class SharedWorkerThread;
 
 class SharedWorkerGlobalScope final : public WorkerGlobalScope {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    typedef WorkerGlobalScope Base;
-    static PassRefPtrWillBeRawPtr<SharedWorkerGlobalScope> create(const String& name, SharedWorkerThread*, PassOwnPtr<WorkerThreadStartupData>);
-    ~SharedWorkerGlobalScope() override;
+  DEFINE_WRAPPERTYPEINFO();
 
-    bool isSharedWorkerGlobalScope() const override { return true; }
+ public:
+  static SharedWorkerGlobalScope* create(
+      const String& name,
+      SharedWorkerThread*,
+      std::unique_ptr<WorkerThreadStartupData>);
+  ~SharedWorkerGlobalScope() override;
 
-    // EventTarget
-    const AtomicString& interfaceName() const override;
+  bool isSharedWorkerGlobalScope() const override { return true; }
 
-    // Setters/Getters for attributes in SharedWorkerGlobalScope.idl
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(connect);
-    String name() const { return m_name; }
+  // EventTarget
+  const AtomicString& interfaceName() const override;
 
-    SharedWorkerThread* thread();
+  // Setters/Getters for attributes in SharedWorkerGlobalScope.idl
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(connect);
+  String name() const { return m_name; }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    SharedWorkerGlobalScope(const String& name, const KURL&, const String& userAgent, SharedWorkerThread*, PassOwnPtr<SecurityOrigin::PrivilegeData>, PassOwnPtrWillBeRawPtr<WorkerClients>);
-    void logExceptionToConsole(const String& errorMessage, int scriptId, const String& sourceURL, int lineNumber, int columnNumber, PassRefPtrWillBeRawPtr<ScriptCallStack>) override;
+ private:
+  SharedWorkerGlobalScope(const String& name,
+                          const KURL&,
+                          const String& userAgent,
+                          SharedWorkerThread*,
+                          std::unique_ptr<SecurityOrigin::PrivilegeData>,
+                          WorkerClients*);
+  void exceptionThrown(ErrorEvent*) override;
 
-    String m_name;
+  String m_name;
 };
 
-CORE_EXPORT PassRefPtrWillBeRawPtr<MessageEvent> createConnectEvent(MessagePort*);
+CORE_EXPORT MessageEvent* createConnectEvent(MessagePort*);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SharedWorkerGlobalScope_h
+#endif  // SharedWorkerGlobalScope_h

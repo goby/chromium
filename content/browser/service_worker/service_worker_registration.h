@@ -5,12 +5,16 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REGISTRATION_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REGISTRATION_H_
 
-#include <string>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/single_thread_task_runner.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_types.h"
@@ -26,13 +30,10 @@ struct ServiceWorkerRegistrationInfo;
 // to this class. This is refcounted via ServiceWorkerRegistrationHandle to
 // facilitate multiple controllees being associated with the same registration.
 class CONTENT_EXPORT ServiceWorkerRegistration
-    : NON_EXPORTED_BASE(public base::RefCounted<ServiceWorkerRegistration>),
-      public ServiceWorkerVersion::Listener {
+    : public NON_EXPORTED_BASE(base::RefCounted<ServiceWorkerRegistration>),
+      public NON_EXPORTED_BASE(ServiceWorkerVersion::Listener) {
  public:
   typedef base::Callback<void(ServiceWorkerStatusCode status)> StatusCallback;
-  typedef base::Callback<void(
-      const std::string& data,
-      ServiceWorkerStatusCode status)> GetUserDataCallback;
 
   class Listener {
    public:
@@ -50,10 +51,10 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   };
 
   ServiceWorkerRegistration(const GURL& pattern,
-                            int64 registration_id,
+                            int64_t registration_id,
                             base::WeakPtr<ServiceWorkerContextCore> context);
 
-  int64 id() const { return registration_id_; }
+  int64_t id() const { return registration_id_; }
   const GURL& pattern() const { return pattern_; }
 
   bool is_deleted() const { return is_deleted_; }
@@ -72,6 +73,12 @@ class CONTENT_EXPORT ServiceWorkerRegistration
     resources_total_size_bytes_ = resources_total_size_bytes;
   }
 
+  // Returns the active version. This version may be in ACTIVATING or ACTIVATED
+  // state. If you require an ACTIVATED version, use
+  // ServiceWorkerContextWrapper::FindReadyRegistration* to get a registration
+  // with such a version. Alternatively, use
+  // ServiceWorkerVersion::Listener::OnVersionStateChanged to wait for the
+  // ACTIVATING version to become ACTIVATED.
   ServiceWorkerVersion* active_version() const {
     return active_version_.get();
   }
@@ -82,6 +89,14 @@ class CONTENT_EXPORT ServiceWorkerRegistration
 
   ServiceWorkerVersion* installing_version() const {
     return installing_version_.get();
+  }
+
+  bool has_installed_version() const {
+    return active_version() || waiting_version();
+  }
+
+  const NavigationPreloadState& navigation_preload_state() const {
+    return navigation_preload_state_;
   }
 
   ServiceWorkerVersion* GetNewestVersion() const;
@@ -129,17 +144,6 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   base::Time last_update_check() const { return last_update_check_; }
   void set_last_update_check(base::Time last) { last_update_check_ = last; }
 
-  // Provide a storage mechanism to read/write arbitrary data associated with
-  // this registration in the storage. Stored data is deleted when this
-  // registration is deleted from the storage.
-  void GetUserData(const std::string& key,
-                   const GetUserDataCallback& callback);
-  void StoreUserData(const std::string& key,
-                     const std::string& data,
-                     const StatusCallback& callback);
-  void ClearUserData(const std::string& key,
-                     const StatusCallback& callback);
-
   // Unsets the version and deletes its resources. Also deletes this
   // registration from storage if there is no longer a stored version.
   void DeleteVersion(const scoped_refptr<ServiceWorkerVersion>& version);
@@ -147,10 +151,11 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   void RegisterRegistrationFinishedCallback(const base::Closure& callback);
   void NotifyRegistrationFinished();
 
-  bool force_update_on_page_load() const { return force_update_on_page_load_; }
-  void set_force_update_on_page_load(bool force_update_on_page_load) {
-    force_update_on_page_load_ = force_update_on_page_load;
-  }
+  void SetTaskRunnerForTest(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+
+  void EnableNavigationPreload(bool enable);
+  void SetNavigationPreloadHeader(const std::string& value);
 
  private:
   friend class base::RefCounted<ServiceWorkerRegistration>;
@@ -163,12 +168,22 @@ class CONTENT_EXPORT ServiceWorkerRegistration
 
   // ServiceWorkerVersion::Listener override.
   void OnNoControllees(ServiceWorkerVersion* version) override;
+  void OnNoWork(ServiceWorkerVersion* version) override;
 
-  // This method corresponds to the [[Activate]] algorithm.
-  void ActivateWaitingVersion();
+  bool IsReadyToActivate() const;
+
+  // Promotes the waiting version to active version. If |delay| is true, waits
+  // a short time before attempting to start and dispatch the activate event
+  // to the version.
+  void ActivateWaitingVersion(bool delay);
+  void ContinueActivation(
+      scoped_refptr<ServiceWorkerVersion> activating_version);
+  void DispatchActivateEvent(
+      scoped_refptr<ServiceWorkerVersion> activating_version);
   void OnActivateEventFinished(
-      ServiceWorkerVersion* activating_version,
+      scoped_refptr<ServiceWorkerVersion> activating_version,
       ServiceWorkerStatusCode status);
+
   void OnDeleteFinished(ServiceWorkerStatusCode status);
 
   // This method corresponds to the [[ClearRegistration]] algorithm.
@@ -179,12 +194,12 @@ class CONTENT_EXPORT ServiceWorkerRegistration
                          ServiceWorkerStatusCode status);
 
   const GURL pattern_;
-  const int64 registration_id_;
+  const int64_t registration_id_;
   bool is_deleted_;
   bool is_uninstalling_;
   bool is_uninstalled_;
   bool should_activate_when_ready_;
-  bool force_update_on_page_load_;
+  NavigationPreloadState navigation_preload_state_;
   base::Time last_update_check_;
   int64_t resources_total_size_bytes_;
 
@@ -196,6 +211,7 @@ class CONTENT_EXPORT ServiceWorkerRegistration
   base::ObserverList<Listener> listeners_;
   std::vector<base::Closure> registration_finished_callbacks_;
   base::WeakPtr<ServiceWorkerContextCore> context_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerRegistration);
 };

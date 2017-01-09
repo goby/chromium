@@ -21,7 +21,9 @@ class ClocklessAudioSinkThread : public base::DelegateSimpleThread::Delegate {
                            bool hashing)
       : callback_(callback),
         audio_bus_(AudioBus::Create(params)),
-        stop_event_(new base::WaitableEvent(false, false)) {
+        stop_event_(new base::WaitableEvent(
+            base::WaitableEvent::ResetPolicy::AUTOMATIC,
+            base::WaitableEvent::InitialState::NOT_SIGNALED)) {
     if (hashing)
       audio_hash_.reset(new AudioHash());
   }
@@ -49,7 +51,8 @@ class ClocklessAudioSinkThread : public base::DelegateSimpleThread::Delegate {
   void Run() override {
      base::TimeTicks start;
      while (!stop_event_->IsSignaled()) {
-       const int frames_received = callback_->Render(audio_bus_.get(), 0);
+       const int frames_received = callback_->Render(
+           base::TimeDelta(), base::TimeTicks::Now(), 0, audio_bus_.get());
        DCHECK_GE(frames_received, 0);
        if (audio_hash_)
          audio_hash_->Update(audio_bus_.get(), frames_received);
@@ -67,15 +70,21 @@ class ClocklessAudioSinkThread : public base::DelegateSimpleThread::Delegate {
    }
 
   AudioRendererSink::RenderCallback* callback_;
-  scoped_ptr<AudioBus> audio_bus_;
-  scoped_ptr<base::WaitableEvent> stop_event_;
-  scoped_ptr<base::DelegateSimpleThread> thread_;
+  std::unique_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<base::WaitableEvent> stop_event_;
+  std::unique_ptr<base::DelegateSimpleThread> thread_;
   base::TimeDelta playback_time_;
-  scoped_ptr<AudioHash> audio_hash_;
+  std::unique_ptr<AudioHash> audio_hash_;
 };
 
 ClocklessAudioSink::ClocklessAudioSink()
-    : initialized_(false), playing_(false), hashing_(false) {}
+    : ClocklessAudioSink(OutputDeviceInfo()) {}
+
+ClocklessAudioSink::ClocklessAudioSink(const OutputDeviceInfo& device_info)
+    : device_info_(device_info),
+      initialized_(false),
+      playing_(false),
+      hashing_(false) {}
 
 ClocklessAudioSink::~ClocklessAudioSink() {}
 
@@ -121,8 +130,13 @@ bool ClocklessAudioSink::SetVolume(double volume) {
   return volume == 0.0;
 }
 
-OutputDevice* ClocklessAudioSink::GetOutputDevice() {
-  return nullptr;
+OutputDeviceInfo ClocklessAudioSink::GetOutputDeviceInfo() {
+  return device_info_;
+}
+
+bool ClocklessAudioSink::CurrentThreadIsRenderingThread() {
+  NOTIMPLEMENTED();
+  return false;
 }
 
 void ClocklessAudioSink::StartAudioHashForTesting() {

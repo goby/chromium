@@ -7,14 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/socket_descriptor.h"
 #include "net/socket/stream_socket.h"
 
@@ -32,7 +31,7 @@ class NET_EXPORT UnixDomainClientSocket : public StreamSocket {
                          bool use_abstract_namespace);
   // Builds a client socket with SocketPosix which is already connected.
   // UnixDomainServerSocket uses this after it accepts a connection.
-  explicit UnixDomainClientSocket(scoped_ptr<SocketPosix> socket);
+  explicit UnixDomainClientSocket(std::unique_ptr<SocketPosix> socket);
 
   ~UnixDomainClientSocket() override;
 
@@ -49,11 +48,10 @@ class NET_EXPORT UnixDomainClientSocket : public StreamSocket {
   bool IsConnectedAndIdle() const override;
   int GetPeerAddress(IPEndPoint* address) const override;
   int GetLocalAddress(IPEndPoint* address) const override;
-  const BoundNetLog& NetLog() const override;
+  const NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   bool WasNpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
@@ -69,8 +67,8 @@ class NET_EXPORT UnixDomainClientSocket : public StreamSocket {
   int Write(IOBuffer* buf,
             int buf_len,
             const CompletionCallback& callback) override;
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
 
   // Releases ownership of underlying SocketDescriptor to caller.
   // Internal state is reset so that this object can be used again.
@@ -80,10 +78,10 @@ class NET_EXPORT UnixDomainClientSocket : public StreamSocket {
  private:
   const std::string socket_path_;
   const bool use_abstract_namespace_;
-  scoped_ptr<SocketPosix> socket_;
+  std::unique_ptr<SocketPosix> socket_;
   // This net log is just to comply StreamSocket::NetLog(). It throws away
   // everything.
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(UnixDomainClientSocket);
 };

@@ -7,25 +7,26 @@
 
 #include <queue>
 #include <set>
+#include <unordered_map>
 
 #include "base/callback.h"
 #include "base/synchronization/lock.h"
 #include "content/common/content_export.h"
 #include "content/common/input/input_event_ack_state.h"
 #include "content/renderer/input/input_handler_manager_client.h"
+#include "content/renderer/input/main_thread_event_queue.h"
 #include "ipc/message_filter.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 
 namespace base {
 class SingleThreadTaskRunner;
 }
 
 namespace ui {
-class SynchronousInputHandlerProxy;
+struct DidOverscrollParams;
 }
 
 namespace IPC {
-class Listener;
 class Sender;
 }
 
@@ -33,14 +34,16 @@ class Sender;
 // and have them be delivered to a target thread.  Input events are filtered
 // based on routing_id (see AddRoute and RemoveRoute).
 //
-// The user of this class provides an instance of InputEventFilter::Handler,
-// which will be passed WebInputEvents on the target thread.
+// The user of this class provides an instance of InputHandlerManager via
+// |SetInputHandlerManager|. The InputHandlerManager's |HandleInputEvent|
+// will be called on the target thread to process the WebInputEvents.
 //
 
 namespace content {
 
 class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
-                                        public IPC::MessageFilter {
+                                        public IPC::MessageFilter,
+                                        public MainThreadEventQueueClient {
  public:
   InputEventFilter(
       const base::Callback<void(const IPC::Message&)>& main_listener,
@@ -57,28 +60,57 @@ class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
   // is left to the eventual handler to deliver the corresponding
   // InputHostMsg_HandleInputEvent_ACK.
   //
-  void SetBoundHandler(const Handler& handler) override;
-  void DidAddInputHandler(
-      int routing_id,
-      ui::SynchronousInputHandlerProxy*
-          synchronous_input_handler_proxy) override;
-  void DidRemoveInputHandler(int routing_id) override;
+  void SetInputHandlerManager(InputHandlerManager*) override;
+  void RegisterRoutingID(int routing_id) override;
+  void UnregisterRoutingID(int routing_id) override;
   void DidOverscroll(int routing_id,
-                     const DidOverscrollParams& params) override;
+                     const ui::DidOverscrollParams& params) override;
   void DidStopFlinging(int routing_id) override;
+  void DispatchNonBlockingEventToMainThread(
+      int routing_id,
+      ui::ScopedWebInputEvent event,
+      const ui::LatencyInfo& latency_info) override;
+
+  void NotifyInputEventHandled(int routing_id,
+                               blink::WebInputEvent::Type type,
+                               InputEventAckState ack_result) override;
+  void ProcessRafAlignedInput(int routing_id) override;
 
   // IPC::MessageFilter methods:
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelClosing() override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
+  // MainThreadEventQueueClient methods:
+  void HandleEventOnMainThread(int routing_id,
+                               const blink::WebInputEvent* event,
+                               const ui::LatencyInfo& latency,
+                               InputEventDispatchType dispatch_type) override;
+  // Send an InputEventAck IPC message. |touch_event_id| represents
+  // the unique event id for the original WebTouchEvent and should
+  // be 0 if otherwise. See WebInputEventTraits::GetUniqueTouchEventId.
+  void SendInputEventAck(int routing_id,
+                         blink::WebInputEvent::Type type,
+                         InputEventAckState ack_result,
+                         uint32_t touch_event_id) override;
+
+  void NeedsMainFrame(int routing_id) override;
+
  private:
   ~InputEventFilter() override;
 
-  void ForwardToHandler(const IPC::Message& message);
-  void SendMessage(scoped_ptr<IPC::Message> message);
-  void SendMessageOnIOThread(scoped_ptr<IPC::Message> message);
+  void ForwardToHandler(const IPC::Message& message,
+                        base::TimeTicks received_time);
+  void DidForwardToHandlerAndOverscroll(
+      int routing_id,
+      InputEventDispatchType dispatch_type,
+      InputEventAckState ack_state,
+      ui::ScopedWebInputEvent event,
+      const ui::LatencyInfo& latency_info,
+      std::unique_ptr<ui::DidOverscrollParams> overscroll_params);
+  void SendMessage(std::unique_ptr<IPC::Message> message);
+  void SendMessageOnIOThread(std::unique_ptr<IPC::Message> message);
 
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
   base::Callback<void(const IPC::Message&)> main_listener_;
@@ -87,9 +119,10 @@ class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
   IPC::Sender* sender_;
 
-  // The handler_ only gets Run on the thread corresponding to target_loop_.
+  // The |input_handler_manager_| should outlive this class and
+  // should only be called back on the |target_task_runner_|.
   scoped_refptr<base::SingleThreadTaskRunner> target_task_runner_;
-  Handler handler_;
+  InputHandlerManager* input_handler_manager_;
 
   // Protects access to routes_.
   base::Lock routes_lock_;
@@ -97,11 +130,11 @@ class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
   // Indicates the routing_ids for which input events should be filtered.
   std::set<int> routes_;
 
-  // Used to intercept overscroll notifications while an event is being
-  // dispatched.  If the event causes overscroll, the overscroll metadata can be
-  // bundled in the event ack, saving an IPC.  Note that we must continue
-  // supporting overscroll IPC notifications due to fling animation updates.
-  scoped_ptr<DidOverscrollParams>* current_overscroll_params_;
+  using RouteQueueMap =
+      std::unordered_map<int, scoped_refptr<MainThreadEventQueue>>;
+  RouteQueueMap route_queues_;
+
+  blink::scheduler::RendererScheduler* renderer_scheduler_;
 };
 
 }  // namespace content

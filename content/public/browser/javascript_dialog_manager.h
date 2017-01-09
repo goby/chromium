@@ -31,7 +31,6 @@ class CONTENT_EXPORT JavaScriptDialogManager {
   virtual void RunJavaScriptDialog(
       WebContents* web_contents,
       const GURL& origin_url,
-      const std::string& accept_lang,
       JavaScriptMessageType javascript_message_type,
       const base::string16& message_text,
       const base::string16& default_prompt_text,
@@ -40,7 +39,6 @@ class CONTENT_EXPORT JavaScriptDialogManager {
 
   // Displays a dialog asking the user if they want to leave a page.
   virtual void RunBeforeUnloadDialog(WebContents* web_contents,
-                                     const base::string16& message_text,
                                      bool is_reload,
                                      const DialogClosedCallback& callback) = 0;
 
@@ -52,11 +50,13 @@ class CONTENT_EXPORT JavaScriptDialogManager {
                                       bool accept,
                                       const base::string16* prompt_override);
 
-  // Cancels all active and pending dialogs for the given WebContents.
-  virtual void CancelActiveAndPendingDialogs(WebContents* web_contents) = 0;
-
-  // Reset any saved state tied to the given WebContents.
-  virtual void ResetDialogState(WebContents* web_contents) = 0;
+  // Cancels all active and pending dialogs for the given WebContents. If
+  // |suppress_callbacks| is true, suppresses the calls to callbacks while
+  // canceling those dialogs. If |reset_state| is true, resets any saved state
+  // tied to |web_contents|.
+  virtual void CancelDialogs(WebContents* web_contents,
+                             bool suppress_callbacks,
+                             bool reset_state) = 0;
 
   virtual ~JavaScriptDialogManager() {}
 };

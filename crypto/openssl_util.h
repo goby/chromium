@@ -5,15 +5,17 @@
 #ifndef CRYPTO_OPENSSL_UTIL_H_
 #define CRYPTO_OPENSSL_UTIL_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/location.h"
+#include "base/macros.h"
 #include "crypto/crypto_export.h"
 
 namespace crypto {
 
 // Provides a buffer of at least MIN_SIZE bytes, for use when calling OpenSSL's
 // SHA256, HMAC, etc functions, adapting the buffer sizing rules to meet those
-// of the our base wrapper APIs.
+// of our base wrapper APIs.
 // This allows the library to write directly to the caller's buffer if it is of
 // sufficient size, but if not it will write to temporary |min_sized_buffer_|
 // of required size and then its content is automatically copied out on
@@ -56,12 +58,12 @@ class ScopedOpenSSLSafeSizeBuffer {
 // multiple times.
 // This function is thread-safe, and OpenSSL will only ever be initialized once.
 // OpenSSL will be properly shut down on program exit.
-void CRYPTO_EXPORT EnsureOpenSSLInit();
+CRYPTO_EXPORT void EnsureOpenSSLInit();
 
 // Drains the OpenSSL ERR_get_error stack. On a debug build the error codes
 // are send to VLOG(1), on a release build they are disregarded. In most
 // cases you should pass FROM_HERE as the |location|.
-void CRYPTO_EXPORT ClearOpenSSLERRStack(
+CRYPTO_EXPORT void ClearOpenSSLERRStack(
     const tracked_objects::Location& location);
 
 // Place an instance of this class on the call stack to automatically clear

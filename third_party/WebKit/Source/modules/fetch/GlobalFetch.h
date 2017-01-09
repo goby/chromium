@@ -8,7 +8,6 @@
 #include "bindings/core/v8/ScriptPromise.h"
 #include "modules/ModulesExport.h"
 #include "modules/fetch/Request.h"
-#include "wtf/WeakPtr.h"
 
 namespace blink {
 
@@ -19,24 +18,36 @@ class ScriptState;
 class WorkerGlobalScope;
 
 class GlobalFetch {
-    STATIC_ONLY(GlobalFetch);
-public:
-    class MODULES_EXPORT ScopedFetcher : public WillBeGarbageCollectedMixin {
-    public:
-        virtual ~ScopedFetcher();
+  STATIC_ONLY(GlobalFetch);
 
-        virtual ScriptPromise fetch(ScriptState*, const RequestInfo&, const Dictionary&, ExceptionState&) = 0;
+ public:
+  class MODULES_EXPORT ScopedFetcher : public GarbageCollectedMixin {
+   public:
+    virtual ~ScopedFetcher();
 
-        static WeakPtrWillBeRawPtr<ScopedFetcher> from(DOMWindow&);
-        static WeakPtrWillBeRawPtr<ScopedFetcher> from(WorkerGlobalScope&);
+    virtual ScriptPromise fetch(ScriptState*,
+                                const RequestInfo&,
+                                const Dictionary&,
+                                ExceptionState&) = 0;
 
-        DECLARE_VIRTUAL_TRACE();
-    };
+    static ScopedFetcher* from(DOMWindow&);
+    static ScopedFetcher* from(WorkerGlobalScope&);
 
-    static ScriptPromise fetch(ScriptState*, DOMWindow&, const RequestInfo&, const Dictionary&, ExceptionState&);
-    static ScriptPromise fetch(ScriptState*, WorkerGlobalScope&, const RequestInfo&, const Dictionary&, ExceptionState&);
+    DECLARE_VIRTUAL_TRACE();
+  };
+
+  static ScriptPromise fetch(ScriptState*,
+                             DOMWindow&,
+                             const RequestInfo&,
+                             const Dictionary&,
+                             ExceptionState&);
+  static ScriptPromise fetch(ScriptState*,
+                             WorkerGlobalScope&,
+                             const RequestInfo&,
+                             const Dictionary&,
+                             ExceptionState&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // GlobalFetch_h
+#endif  // GlobalFetch_h

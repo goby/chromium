@@ -30,33 +30,45 @@
 #ifndef DedicatedWorkerThread_h
 #define DedicatedWorkerThread_h
 
-#include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/workers/WorkerThread.h"
+#include <memory>
 
 namespace blink {
 
-class WorkerObjectProxy;
+class InProcessWorkerObjectProxy;
 class WorkerThreadStartupData;
 
-class DedicatedWorkerThread final : public WorkerThread {
-public:
-    static PassRefPtr<DedicatedWorkerThread> create(PassRefPtr<WorkerLoaderProxy>, WorkerObjectProxy&, double timeOrigin);
-    WorkerObjectProxy& workerObjectProxy() const { return m_workerObjectProxy; }
-    ~DedicatedWorkerThread() override;
+class CORE_EXPORT DedicatedWorkerThread : public WorkerThread {
+ public:
+  static std::unique_ptr<DedicatedWorkerThread> create(
+      PassRefPtr<WorkerLoaderProxy>,
+      InProcessWorkerObjectProxy&,
+      double timeOrigin);
+  ~DedicatedWorkerThread() override;
 
-protected:
-    PassRefPtrWillBeRawPtr<WorkerGlobalScope> createWorkerGlobalScope(PassOwnPtr<WorkerThreadStartupData>) override;
-    void postInitialize() override;
-    WebThreadSupportingGC& backingThread() override;
+  WorkerBackingThread& workerBackingThread() override {
+    return *m_workerBackingThread;
+  }
+  void clearWorkerBackingThread() override;
+  InProcessWorkerObjectProxy& workerObjectProxy() const {
+    return m_workerObjectProxy;
+  }
 
-private:
-    DedicatedWorkerThread(PassRefPtr<WorkerLoaderProxy>, WorkerObjectProxy&, double timeOrigin);
+ protected:
+  DedicatedWorkerThread(PassRefPtr<WorkerLoaderProxy>,
+                        InProcessWorkerObjectProxy&,
+                        double timeOrigin);
+  WorkerOrWorkletGlobalScope* createWorkerGlobalScope(
+      std::unique_ptr<WorkerThreadStartupData>) override;
 
-    WorkerObjectProxy& m_workerObjectProxy;
-    double m_timeOrigin;
-    OwnPtr<WebThreadSupportingGC> m_thread;
+ private:
+  friend class DedicatedWorkerThreadForTest;
+
+  std::unique_ptr<WorkerBackingThread> m_workerBackingThread;
+  InProcessWorkerObjectProxy& m_workerObjectProxy;
+  double m_timeOrigin;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DedicatedWorkerThread_h
+#endif  // DedicatedWorkerThread_h

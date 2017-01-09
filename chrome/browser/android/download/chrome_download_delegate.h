@@ -6,16 +6,29 @@
 #define CHROME_BROWSER_ANDROID_DOWNLOAD_CHROME_DOWNLOAD_DELEGATE_H_
 
 #include "base/android/jni_android.h"
-#include "base/android/jni_weak_ref.h"
-#include "base/android/scoped_java_ref.h"
+#include "content/public/browser/web_contents_user_data.h"
 
-class ChromeDownloadDelegate {
+class ChromeDownloadDelegate
+    : public content::WebContentsUserData<ChromeDownloadDelegate> {
  public:
   // Returns true iff this request resulted in the tab creating the download
   // to close.
   static bool EnqueueDownloadManagerRequest(jobject chrome_download_delegate,
                                             bool overwrite,
                                             jobject download_info);
+
+  void SetJavaRef(JNIEnv*, jobject obj);
+
+  void OnDownloadStarted(const std::string& filename);
+  void RequestFileAccess(intptr_t callback_id);
+
+ private:
+  explicit ChromeDownloadDelegate(content::WebContents* contents);
+  friend class content::WebContentsUserData<ChromeDownloadDelegate>;
+  ~ChromeDownloadDelegate() override;
+
+  // A reference to the Java ChromeDownloadDelegate object.
+  jobject java_ref_;
 };
 
 bool RegisterChromeDownloadDelegate(JNIEnv* env);

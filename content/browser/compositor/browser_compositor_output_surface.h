@@ -5,13 +5,18 @@
 #ifndef CONTENT_BROWSER_COMPOSITOR_BROWSER_COMPOSITOR_OUTPUT_SURFACE_H_
 #define CONTENT_BROWSER_COMPOSITOR_BROWSER_COMPOSITOR_OUTPUT_SURFACE_H_
 
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
+#include "build/build_config.h"
 #include "cc/output/output_surface.h"
 #include "content/common/content_export.h"
-#include "ui/compositor/compositor_vsync_manager.h"
 
 namespace cc {
 class SoftwareOutputDevice;
+}
+
+namespace display_compositor {
+class CompositorOverlayCandidateValidator;
 }
 
 namespace gfx {
@@ -19,71 +24,53 @@ enum class SwapResult;
 }
 
 namespace content {
-class BrowserCompositorOverlayCandidateValidator;
-class ContextProviderCommandBuffer;
 class ReflectorImpl;
-class WebGraphicsContext3DCommandBufferImpl;
 
 class CONTENT_EXPORT BrowserCompositorOutputSurface
-    : public cc::OutputSurface,
-      public ui::CompositorVSyncManager::Observer {
+    : public cc::OutputSurface {
  public:
+  using UpdateVSyncParametersCallback =
+      base::Callback<void(base::TimeTicks timebase, base::TimeDelta interval)>;
+
   ~BrowserCompositorOutputSurface() override;
 
   // cc::OutputSurface implementation.
-  bool BindToClient(cc::OutputSurfaceClient* client) override;
   cc::OverlayCandidateValidator* GetOverlayCandidateValidator() const override;
-
-  // ui::CompositorOutputSurface::Observer implementation.
-  void OnUpdateVSyncParameters(base::TimeTicks timebase,
-                               base::TimeDelta interval) override;
-
-  void OnUpdateVSyncParametersFromGpu(base::TimeTicks tiembase,
-                                      base::TimeDelta interval);
+  bool HasExternalStencilTest() const override;
+  void ApplyExternalStencil() override;
 
   void SetReflector(ReflectorImpl* reflector);
 
   // Called when |reflector_| was updated.
   virtual void OnReflectorChanged();
 
-  // Returns a callback that will be called when all mirroring
-  // compositors have started composition.
-  virtual base::Closure CreateCompositionStartedCallback();
-
-  // Called when a swap completion is sent from the GPU process.
-  virtual void OnGpuSwapBuffersCompleted(
-      const std::vector<ui::LatencyInfo>& latency_info,
-      gfx::SwapResult result) = 0;
-
 #if defined(OS_MACOSX)
   virtual void SetSurfaceSuspendedForRecycle(bool suspended) = 0;
-  virtual bool SurfaceShouldNotShowFramesAfterSuspendForRecycle() const = 0;
 #endif
 
  protected:
   // Constructor used by the accelerated implementation.
   BrowserCompositorOutputSurface(
-      const scoped_refptr<cc::ContextProvider>& context,
-      const scoped_refptr<cc::ContextProvider>& worker_context,
-      const scoped_refptr<ui::CompositorVSyncManager>& vsync_manager,
-      scoped_ptr<BrowserCompositorOverlayCandidateValidator>
+      scoped_refptr<cc::ContextProvider> context,
+      const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
+      std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
           overlay_candidate_validator);
 
   // Constructor used by the software implementation.
   BrowserCompositorOutputSurface(
-      scoped_ptr<cc::SoftwareOutputDevice> software_device,
-      const scoped_refptr<ui::CompositorVSyncManager>& vsync_manager);
+      std::unique_ptr<cc::SoftwareOutputDevice> software_device,
+      const UpdateVSyncParametersCallback& update_vsync_parameters_callback);
 
-  scoped_refptr<ui::CompositorVSyncManager> vsync_manager_;
+  // Constructor used by the Vulkan implementation.
+  BrowserCompositorOutputSurface(
+      const scoped_refptr<cc::VulkanContextProvider>& vulkan_context_provider,
+      const UpdateVSyncParametersCallback& update_vsync_parameters_callback);
+
+  const UpdateVSyncParametersCallback update_vsync_parameters_callback_;
   ReflectorImpl* reflector_;
 
-  // True when BeginFrame scheduling is enabled.
-  bool use_begin_frame_scheduling_;
-
  private:
-  void Initialize();
-
-  scoped_ptr<BrowserCompositorOverlayCandidateValidator>
+  std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
       overlay_candidate_validator_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserCompositorOutputSurface);

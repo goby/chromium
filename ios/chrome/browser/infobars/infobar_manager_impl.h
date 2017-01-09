@@ -5,7 +5,9 @@
 #ifndef IOS_CHROME_BROWSER_INFOBARS_INFOBAR_MANAGER_IMPL_H_
 #define IOS_CHROME_BROWSER_INFOBARS_INFOBAR_MANAGER_IMPL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "components/infobars/core/infobar_manager.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #include "ios/web/public/web_state/web_state_user_data.h"
@@ -38,8 +40,8 @@ class InfoBarManagerImpl : public infobars::InfoBarManager,
 
   // InfoBarManager implementation.
   int GetActiveEntryID() override;
-  scoped_ptr<infobars::InfoBar> CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate> delegate) override;
+  std::unique_ptr<infobars::InfoBar> CreateConfirmInfoBar(
+      std::unique_ptr<ConfirmInfoBarDelegate> delegate) override;
 
   // web::WebStateObserver implementation.
   void NavigationItemCommitted(

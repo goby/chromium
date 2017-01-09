@@ -11,7 +11,7 @@
 namespace content {
 
 ResourceRequestDetails::ResourceRequestDetails(const net::URLRequest* request,
-                                               int cert_id)
+                                               bool has_certificate)
     : url(request->url()),
       original_url(request->original_url()),
       method(request->method()),
@@ -19,24 +19,22 @@ ResourceRequestDetails::ResourceRequestDetails(const net::URLRequest* request,
       has_upload(request->has_upload()),
       load_flags(request->load_flags()),
       status(request->status()),
-      ssl_cert_id(cert_id),
+      has_certificate(has_certificate),
       ssl_cert_status(request->ssl_info().cert_status),
       socket_address(request->GetSocketAddress()) {
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
   resource_type = info->GetResourceType();
-  render_frame_id = info->GetRenderFrameID();
   http_response_code =
       request->response_info().headers.get() ?
           request->response_info().headers.get()->response_code() : -1;
-  origin_child_id = info->GetChildID();
 }
 
 ResourceRequestDetails::~ResourceRequestDetails() {}
 
 ResourceRedirectDetails::ResourceRedirectDetails(const net::URLRequest* request,
-                                                 int cert_id,
+                                                 bool has_certificate,
                                                  const GURL& new_url)
-    : ResourceRequestDetails(request, cert_id),
+    : ResourceRequestDetails(request, has_certificate),
       new_url(new_url) {
 }
 

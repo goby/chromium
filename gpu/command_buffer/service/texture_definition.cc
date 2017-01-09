@@ -4,19 +4,23 @@
 
 #include "gpu/command_buffer/service/texture_definition.h"
 
+#include <stdint.h>
+
 #include <list>
 
 #include "base/lazy_instance.h"
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_local.h"
+// gl_stream_texture_image.h is included to work around crbug.com/595189, a
+// compiler bug in VS 2015 Update 2 RC.
+#include "gpu/command_buffer/service/gl_stream_texture_image.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "ui/gl/gl_image.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/scoped_binders.h"
 
 #if !defined(OS_MACOSX)
+#include "base/macros.h"
 #include "ui/gl/gl_surface_egl.h"
 #endif
 
@@ -31,7 +35,6 @@ class GLImageSync : public gl::GLImage {
                        const gfx::Size& size);
 
   // Implement GLImage.
-  void Destroy(bool have_context) override;
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
   bool BindTexImage(unsigned target) override;
@@ -45,6 +48,7 @@ class GLImageSync : public gl::GLImage {
                             gfx::OverlayTransform transform,
                             const gfx::Rect& bounds_rect,
                             const gfx::RectF& crop_rect) override;
+  void Flush() override {}
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                     uint64_t process_tracing_id,
                     const std::string& dump_name) override;
@@ -69,9 +73,6 @@ GLImageSync::GLImageSync(const scoped_refptr<NativeImageBuffer>& buffer,
 GLImageSync::~GLImageSync() {
   if (buffer_.get())
     buffer_->RemoveClient(this);
-}
-
-void GLImageSync::Destroy(bool have_context) {
 }
 
 gfx::Size GLImageSync::GetSize() {
@@ -149,16 +150,16 @@ class NativeImageBufferEGL : public NativeImageBuffer {
 
 scoped_refptr<NativeImageBufferEGL> NativeImageBufferEGL::Create(
     GLuint texture_id) {
-  EGLDisplay egl_display = gfx::GLSurfaceEGL::GetHardwareDisplay();
+  EGLDisplay egl_display = gl::GLSurfaceEGL::GetHardwareDisplay();
   EGLContext egl_context = eglGetCurrentContext();
 
   DCHECK_NE(EGL_NO_CONTEXT, egl_context);
   DCHECK_NE(EGL_NO_DISPLAY, egl_display);
   DCHECK(glIsTexture(texture_id));
 
-  DCHECK(gfx::g_driver_egl.ext.b_EGL_KHR_image_base &&
-         gfx::g_driver_egl.ext.b_EGL_KHR_gl_texture_2D_image &&
-         gfx::g_driver_gl.ext.b_GL_OES_EGL_image);
+  DCHECK(gl::g_driver_egl.ext.b_EGL_KHR_image_base &&
+         gl::g_driver_egl.ext.b_EGL_KHR_gl_texture_2D_image &&
+         gl::g_driver_gl.ext.b_GL_OES_EGL_image);
 
   const EGLint egl_attrib_list[] = {
       EGL_GL_TEXTURE_LEVEL_KHR, 0, EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
@@ -258,12 +259,12 @@ bool g_avoid_egl_target_texture_reuse = false;
 
 // static
 scoped_refptr<NativeImageBuffer> NativeImageBuffer::Create(GLuint texture_id) {
-  switch (gfx::GetGLImplementation()) {
+  switch (gl::GetGLImplementation()) {
 #if !defined(OS_MACOSX)
-    case gfx::kGLImplementationEGLGLES2:
+    case gl::kGLImplementationEGLGLES2:
       return NativeImageBufferEGL::Create(texture_id);
 #endif
-    case gfx::kGLImplementationMockGL:
+    case gl::kGLImplementationMockGL:
       return new NativeImageBufferStub;
     default:
       NOTREACHED();
@@ -306,6 +307,8 @@ TextureDefinition::LevelInfo::LevelInfo(GLenum target,
       type(type),
       cleared_rect(cleared_rect) {
 }
+
+TextureDefinition::LevelInfo::LevelInfo(const LevelInfo& other) = default;
 
 TextureDefinition::LevelInfo::~LevelInfo() {}
 
@@ -354,6 +357,8 @@ TextureDefinition::TextureDefinition(
                           level.type, level.cleared_rect);
 }
 
+TextureDefinition::TextureDefinition(const TextureDefinition& other) = default;
+
 TextureDefinition::~TextureDefinition() {
 }
 
@@ -368,7 +373,7 @@ Texture* TextureDefinition::CreateTexture() const {
 }
 
 void TextureDefinition::UpdateTextureInternal(Texture* texture) const {
-  gfx::ScopedTextureBinder texture_binder(target_, texture->service_id());
+  gl::ScopedTextureBinder texture_binder(target_, texture->service_id());
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter_);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_s_);
@@ -385,11 +390,13 @@ void TextureDefinition::UpdateTextureInternal(Texture* texture) const {
   if (defined_) {
     texture->face_infos_.resize(1);
     texture->face_infos_[0].level_infos.resize(1);
-    texture->SetLevelInfo(NULL, level_info_.target, 0,
+    texture->SetLevelInfo(level_info_.target, 0,
                           level_info_.internal_format, level_info_.width,
                           level_info_.height, level_info_.depth,
                           level_info_.border, level_info_.format,
                           level_info_.type, level_info_.cleared_rect);
+    texture->face_infos_[0].level_infos.resize(
+        texture->face_infos_[0].num_mip_levels);
   }
 
   if (image_buffer_.get()) {
@@ -402,10 +409,10 @@ void TextureDefinition::UpdateTextureInternal(Texture* texture) const {
 
   texture->target_ = target_;
   texture->SetImmutable(immutable_);
-  texture->min_filter_ = min_filter_;
-  texture->mag_filter_ = mag_filter_;
-  texture->wrap_s_ = wrap_s_;
-  texture->wrap_t_ = wrap_t_;
+  texture->sampler_state_.min_filter = min_filter_;
+  texture->sampler_state_.mag_filter = mag_filter_;
+  texture->sampler_state_.wrap_s = wrap_s_;
+  texture->sampler_state_.wrap_t = wrap_t_;
   texture->usage_ = usage_;
 }
 
@@ -435,10 +442,10 @@ void TextureDefinition::UpdateTexture(Texture* texture) const {
 
 bool TextureDefinition::Matches(const Texture* texture) const {
   DCHECK(target_ == texture->target());
-  if (texture->min_filter_ != min_filter_ ||
-      texture->mag_filter_ != mag_filter_ ||
-      texture->wrap_s_ != wrap_s_ ||
-      texture->wrap_t_ != wrap_t_ ||
+  if (texture->sampler_state_.min_filter != min_filter_ ||
+      texture->sampler_state_.mag_filter != mag_filter_ ||
+      texture->sampler_state_.wrap_s != wrap_s_ ||
+      texture->sampler_state_.wrap_t != wrap_t_ ||
       texture->SafeToRenderFrom() != SafeToRenderFrom()) {
     return false;
   }

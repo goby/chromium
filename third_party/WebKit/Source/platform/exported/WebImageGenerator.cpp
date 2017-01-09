@@ -28,16 +28,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/platform/WebImageGenerator.h"
 
 #include "platform/graphics/DecodingImageGenerator.h"
 
 namespace blink {
 
-SkImageGenerator* WebImageGenerator::create(SkData* data)
-{
-    return DecodingImageGenerator::create(data);
+SkImageGenerator* WebImageGenerator::create(SkData* data) {
+  return DecodingImageGenerator::create(data);
 }
 
-} // namespace blink
+}  // namespace blink

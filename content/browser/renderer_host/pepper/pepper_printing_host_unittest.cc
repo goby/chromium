@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/renderer_host/pepper/pepper_printing_host.h"
+
+#include <stdint.h>
+#include <tuple>
+#include <utility>
+
+#include "base/macros.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_test.h"
 #include "content/browser/renderer_host/pepper/pepper_print_settings_manager.h"
-#include "content/browser/renderer_host/pepper/pepper_printing_host.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/ppapi_host.h"
@@ -76,17 +82,15 @@ TEST_F(PepperPrintingHostTest, GetDefaultPrintSettings) {
                                             PP_PRINTOUTPUTFORMAT_PDF};
 
   // Construct the resource host.
-  scoped_ptr<PepperPrintSettingsManager> manager(
+  std::unique_ptr<PepperPrintSettingsManager> manager(
       new MockPepperPrintSettingsManager(expected_settings));
   PepperPrintingHost printing(GetBrowserPpapiHost()->GetPpapiHost(),
-                              pp_instance,
-                              pp_resource,
-                              manager.Pass());
+                              pp_instance, pp_resource, std::move(manager));
 
   // Simulate a message being received.
   ppapi::proxy::ResourceMessageCallParams call_params(pp_resource, 1);
   ppapi::host::HostMessageContext context(call_params);
-  int32 result = printing.OnResourceMessageReceived(
+  int32_t result = printing.OnResourceMessageReceived(
       PpapiHostMsg_Printing_GetDefaultPrintSettings(), &context);
   EXPECT_EQ(PP_OK_COMPLETIONPENDING, result);
 
@@ -105,7 +109,7 @@ TEST_F(PepperPrintingHostTest, GetDefaultPrintSettings) {
       reply_msg_param;
   ASSERT_TRUE(PpapiPluginMsg_Printing_GetDefaultPrintSettingsReply::Read(
       &reply_msg, &reply_msg_param));
-  PP_PrintSettings_Dev actual_settings = base::get<0>(reply_msg_param);
+  PP_PrintSettings_Dev actual_settings = std::get<0>(reply_msg_param);
 
   EXPECT_TRUE(PP_RectEqual(expected_settings.printable_area,
                            actual_settings.printable_area));

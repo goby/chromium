@@ -7,13 +7,16 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/signin/easy_unlock_service.h"
 
-EasyUnlockUserLoginFlow::EasyUnlockUserLoginFlow(const std::string& user_id)
-    : chromeos::ExtendedUserFlow(user_id) {
-}
+EasyUnlockUserLoginFlow::EasyUnlockUserLoginFlow(const AccountId& account_id)
+    : chromeos::ExtendedUserFlow(account_id) {}
 
 EasyUnlockUserLoginFlow::~EasyUnlockUserLoginFlow() {}
 
 bool EasyUnlockUserLoginFlow::CanLockScreen() {
+  return true;
+}
+
+bool EasyUnlockUserLoginFlow::CanStartArc() {
   return true;
 }
 
@@ -31,8 +34,8 @@ bool EasyUnlockUserLoginFlow::HandleLoginFailure(
   EasyUnlockService* service = EasyUnlockService::Get(profile);
   if (!service)
     return false;
-  service->HandleAuthFailure(user_id());
-  service->RecordEasySignInOutcome(user_id(), false);
+  service->HandleAuthFailure(account_id());
+  service->RecordEasySignInOutcome(account_id(), false);
   UnregisterFlowSoon();
   return true;
 }
@@ -43,7 +46,7 @@ void EasyUnlockUserLoginFlow::HandleLoginSuccess(
   EasyUnlockService* service = EasyUnlockService::Get(profile);
   if (!service)
     return;
-  service->RecordEasySignInOutcome(user_id(), true);
+  service->RecordEasySignInOutcome(account_id(), true);
 }
 
 bool EasyUnlockUserLoginFlow::HandlePasswordChangeDetected() {

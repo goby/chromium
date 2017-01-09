@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "extensions/browser/api/declarative/declarative_rule.h"
@@ -18,10 +19,7 @@
 #include "extensions/common/api/events.h"
 #include "url/gurl.h"
 
-class WebRequestPermission;
-
 namespace base {
-class DictionaryValue;
 class Time;
 class Value;
 }
@@ -34,10 +32,6 @@ namespace extensions {
 class Extension;
 class InfoMap;
 struct WebRequestData;
-}
-
-namespace net {
-class URLRequest;
 }
 
 namespace re2 {
@@ -118,14 +112,12 @@ class WebRequestAction : public base::RefCounted<WebRequestAction> {
   // Returns whether the specified extension has permission to execute this
   // action on |request|. Checks the host permission if the host permissions
   // strategy is STRATEGY_DEFAULT.
-  // |extension_info_map| may only be NULL for during testing, in which case
-  // host permissions are ignored. |crosses_incognito| specifies
+  // |apply_info->extension_info_map| may only be NULL for during testing, in
+  // which case host permissions are ignored. |crosses_incognito| specifies
   // whether the request comes from a different profile than |extension_id|
   // but was processed because the extension is in spanning mode.
-  virtual bool HasPermission(const InfoMap* extension_info_map,
-                             const std::string& extension_id,
-                             const net::URLRequest* request,
-                             bool crosses_incognito) const;
+  bool HasPermission(ApplyInfo* apply_info,
+                     const std::string& extension_id) const;
 
   // Factory method that instantiates a concrete WebRequestAction
   // implementation according to |json_action|, the representation of the
@@ -260,8 +252,9 @@ class WebRequestRedirectByRegExAction : public WebRequestAction {
  public:
   // The |to_pattern| has to be passed in RE2 syntax with the exception that
   // capture groups are referenced in Perl style ($1, $2, ...).
-  explicit WebRequestRedirectByRegExAction(scoped_ptr<re2::RE2> from_pattern,
-                                           const std::string& to_pattern);
+  explicit WebRequestRedirectByRegExAction(
+      std::unique_ptr<re2::RE2> from_pattern,
+      const std::string& to_pattern);
 
   // Conversion of capture group styles between Perl style ($1, $2, ...) and
   // RE2 (\1, \2, ...).
@@ -278,7 +271,7 @@ class WebRequestRedirectByRegExAction : public WebRequestAction {
  private:
   ~WebRequestRedirectByRegExAction() override;
 
-  scoped_ptr<re2::RE2> from_pattern_;
+  std::unique_ptr<re2::RE2> from_pattern_;
   std::string to_pattern_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRequestRedirectByRegExAction);

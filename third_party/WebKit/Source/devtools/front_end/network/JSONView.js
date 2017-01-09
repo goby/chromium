@@ -27,188 +27,273 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 /**
- * @constructor
- * @extends {WebInspector.VBox}
- * @param {!WebInspector.ParsedJSON} parsedJSON
+ * @implements {UI.Searchable}
+ * @unrestricted
  */
-WebInspector.JSONView = function(parsedJSON)
-{
-    WebInspector.VBox.call(this);
+Network.JSONView = class extends UI.VBox {
+  /**
+   * @param {!Network.ParsedJSON} parsedJSON
+   */
+  constructor(parsedJSON) {
+    super();
     this._parsedJSON = parsedJSON;
-    this.element.classList.add("json-view");
-}
+    this.element.classList.add('json-view');
 
-// "false", "true", "null", ",", "{", "}", "[", "]", number, double-quoted string.
-WebInspector.JSONView._jsonToken = new RegExp('(?:false|true|null|[/*&\\|;=\\(\\),\\{\\}\\[\\]]|(?:-?\\b(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\\b)|(?:\"(?:[^\\0-\\x08\\x0a-\\x1f\"\\\\]|\\\\(?:[\"/\\\\bfnrt]|u[0-9A-Fa-f]{4}))*\"))', 'g');
+    /** @type {?UI.SearchableView} */
+    this._searchableView;
+    /** @type {!Components.ObjectPropertiesSection} */
+    this._treeOutline;
+    /** @type {number} */
+    this._currentSearchFocusIndex = 0;
+    /** @type {!Array.<!TreeElement>} */
+    this._currentSearchTreeElements = [];
+    /** @type {?RegExp} */
+    this._searchRegex = null;
+  }
 
-// Escaped unicode char.
-WebInspector.JSONView._escapedUnicode = new RegExp('\\\\(?:([^u])|u(.{4}))', 'g');
+  /**
+   * @param {!Network.ParsedJSON} parsedJSON
+   * @return {!UI.SearchableView}
+   */
+  static createSearchableView(parsedJSON) {
+    var jsonView = new Network.JSONView(parsedJSON);
+    var searchableView = new UI.SearchableView(jsonView);
+    searchableView.setPlaceholder(Common.UIString('Find'));
+    jsonView._searchableView = searchableView;
+    jsonView.show(searchableView.element);
+    jsonView.element.setAttribute('tabIndex', 0);
+    return searchableView;
+  }
 
-// Map from escaped char to its literal value.
-WebInspector.JSONView._standardEscapes = {'"': '"', '/': '/', '\\': '\\', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t'};
+  /**
+   * @param {?string} text
+   * @return {!Promise<?Network.ParsedJSON>}
+   */
+  static parseJSON(text) {
+    var returnObj = null;
+    if (text)
+      returnObj = Network.JSONView._extractJSON(/** @type {string} */ (text));
+    if (!returnObj)
+      return Promise.resolve(/** @type {?Network.ParsedJSON} */ (null));
+    return Common.formatterWorkerPool.runTask('relaxedJSONParser', {content: returnObj.data}).then(handleReturnedJSON);
 
-/**
- * @param {string} full
- * @param {string} standard
- * @param {string} unicode
- * @return {string}
- */
-WebInspector.JSONView._unescape = function(full, standard, unicode)
-{
-    return standard ? WebInspector.JSONView._standardEscapes[standard] : String.fromCharCode(parseInt(unicode, 16));
-}
-
-/**
- * @param {string} text
- * @return {string}
- */
-WebInspector.JSONView._unescapeString = function(text)
-{
-    return text.indexOf("\\") === -1 ? text : text.replace(WebInspector.JSONView._escapedUnicode, WebInspector.JSONView._unescape);
-}
-
-/**
- * @return {*}
- */
-WebInspector.JSONView._buildObjectFromJSON = function(text)
-{
-    var regExp = WebInspector.JSONView._jsonToken;
-    regExp.lastIndex = 0;
-    var result = [];
-    var tip = result;
-    var stack = [];
-    var key = undefined;
-    var token = undefined;
-    var lastToken = undefined;
-    while (true) {
-        var match = regExp.exec(text);
-        if (match === null)
-            break;
-        lastToken = token;
-        token = match[0];
-        var code = token.charCodeAt(0);
-        if ((code === 0x5b) || (code === 0x7b)) { // [ or {
-            var newTip = (code === 0x5b) ? [] : {};
-            tip[key || tip.length] = newTip;
-            stack.push(tip);
-            tip = newTip;
-        } else if ((code === 0x5d) || (code === 0x7d)) { // ] or }
-            tip = stack.pop();
-            if (!tip)
-                break;
-        } else if (code === 0x2C) { // ,
-            if (Array.isArray(tip) && (lastToken === undefined || lastToken === "[" || lastToken === ","))
-                tip[tip.length] = undefined;
-        } else if (code === 0x22) { // "
-            token = WebInspector.JSONView._unescapeString(token.substring(1, token.length - 1));
-            if (!key) {
-                if (Array.isArray(tip)) {
-                  key = tip.length;
-                } else {
-                    key = token || "";
-                    continue;
-                }
-            }
-            tip[key] = token;
-        } else if (code === 0x66) { // f
-            tip[key || tip.length] = false;
-        } else if (code === 0x6e) { // n
-            tip[key || tip.length] = null;
-        } else if (code === 0x74) { // t
-            tip[key || tip.length] = true;
-        } else if (code === 0x2f || code === 0x2a || code === 0x26 || code === 0x7c || code === 0x3b || code === 0x3d || code === 0x28 || code === 0x29) { // /*&|;=()
-            // Looks like JavaScript
-            throw "Invalid JSON";
-        } else { // sign or digit
-            tip[key || tip.length] = +(token);
-        }
-        key = undefined;
-    }
-    return (result.length > 1) ? result : result[0];
-}
-
-/**
- * @param {string} text
- * @return {?WebInspector.ParsedJSON}
- */
-WebInspector.JSONView.parseJSON = function(text)
-{
-    // Do not treat HTML as JSON.
-    if (text.startsWith("<"))
+    /**
+     * @param {?MessageEvent} event
+     * @return {?Network.ParsedJSON}
+     */
+    function handleReturnedJSON(event) {
+      if (!event || !event.data)
         return null;
-    var inner = WebInspector.JSONView._findBrackets(text, "{", "}");
-    var inner2 = WebInspector.JSONView._findBrackets(text, "[", "]");
+      returnObj.data = event.data;
+      return returnObj;
+    }
+  }
+
+  /**
+   * @param {string} text
+   * @return {?Network.ParsedJSON}
+   */
+  static _extractJSON(text) {
+    // Do not treat HTML as JSON.
+    if (text.startsWith('<'))
+      return null;
+    var inner = Network.JSONView._findBrackets(text, '{', '}');
+    var inner2 = Network.JSONView._findBrackets(text, '[', ']');
     inner = inner2.length > inner.length ? inner2 : inner;
 
     // Return on blank payloads or on payloads significantly smaller than original text.
     if (inner.length === -1 || text.length - inner.length > 80)
-        return null;
+      return null;
 
     var prefix = text.substring(0, inner.start);
     var suffix = text.substring(inner.end + 1);
     text = text.substring(inner.start, inner.end + 1);
 
     // Only process valid JSONP.
-    if (suffix.trim().length && !(suffix.trim().startsWith(")") && prefix.trim().endsWith("(")))
-        return null;
+    if (suffix.trim().length && !(suffix.trim().startsWith(')') && prefix.trim().endsWith('(')))
+      return null;
 
-    try {
-        return new WebInspector.ParsedJSON(WebInspector.JSONView._buildObjectFromJSON(text), prefix, suffix);
-    } catch (e) {
-        return null;
-    }
-}
+    return new Network.ParsedJSON(text, prefix, suffix);
+  }
 
-/**
- * @param {string} text
- * @param {string} open
- * @param {string} close
- * @return {{start: number, end: number, length: number}}
- */
-WebInspector.JSONView._findBrackets = function(text, open, close)
-{
+  /**
+   * @param {string} text
+   * @param {string} open
+   * @param {string} close
+   * @return {{start: number, end: number, length: number}}
+   */
+  static _findBrackets(text, open, close) {
     var start = text.indexOf(open);
     var end = text.lastIndexOf(close);
     var length = end - start - 1;
-    if (start == -1 || end == -1 || end < start)
-        length = -1;
+    if (start === -1 || end === -1 || end < start)
+      length = -1;
     return {start: start, end: end, length: length};
-}
+  }
 
-WebInspector.JSONView.prototype = {
-    wasShown: function()
-    {
-        this._initialize();
-    },
+  /**
+   * @override
+   */
+  wasShown() {
+    this._initialize();
+  }
 
-    _initialize: function()
-    {
-        if (this._initialized)
-            return;
-        this._initialized = true;
+  _initialize() {
+    if (this._initialized)
+      return;
+    this._initialized = true;
 
-        var obj = WebInspector.RemoteObject.fromLocalObject(this._parsedJSON.data);
-        var title = this._parsedJSON.prefix + obj.description + this._parsedJSON.suffix;
-        var section = new WebInspector.ObjectPropertiesSection(obj, title);
-        section.expand();
-        section.editable = false;
-        this.element.appendChild(section.element);
-    },
+    var obj = SDK.RemoteObject.fromLocalObject(this._parsedJSON.data);
+    var title = this._parsedJSON.prefix + obj.description + this._parsedJSON.suffix;
+    this._treeOutline = new Components.ObjectPropertiesSection(obj, title);
+    this._treeOutline.setEditable(false);
+    this._treeOutline.expand();
+    this.element.appendChild(this._treeOutline.element);
+  }
 
-    __proto__: WebInspector.VBox.prototype
-}
+  /**
+   * @param {number} index
+   */
+  _jumpToMatch(index) {
+    if (!this._searchRegex)
+      return;
+    var previousFocusElement = this._currentSearchTreeElements[this._currentSearchFocusIndex];
+    if (previousFocusElement)
+      previousFocusElement.setSearchRegex(this._searchRegex);
+
+    var newFocusElement = this._currentSearchTreeElements[index];
+    if (newFocusElement) {
+      this._updateSearchIndex(index);
+      newFocusElement.setSearchRegex(this._searchRegex, UI.highlightedCurrentSearchResultClassName);
+      newFocusElement.reveal();
+    } else {
+      this._updateSearchIndex(0);
+    }
+  }
+
+  /**
+   * @param {number} count
+   */
+  _updateSearchCount(count) {
+    if (!this._searchableView)
+      return;
+    this._searchableView.updateSearchMatchesCount(count);
+  }
+
+  /**
+   * @param {number} index
+   */
+  _updateSearchIndex(index) {
+    this._currentSearchFocusIndex = index;
+    if (!this._searchableView)
+      return;
+    this._searchableView.updateCurrentMatchIndex(index);
+  }
+
+  /**
+   * @override
+   */
+  searchCanceled() {
+    this._searchRegex = null;
+    this._currentSearchTreeElements = [];
+
+    for (var element = this._treeOutline.rootElement(); element; element = element.traverseNextTreeElement(false)) {
+      if (!(element instanceof Components.ObjectPropertyTreeElement))
+        continue;
+      element.revertHighlightChanges();
+    }
+    this._updateSearchCount(0);
+    this._updateSearchIndex(0);
+  }
+
+  /**
+   * @override
+   * @param {!UI.SearchableView.SearchConfig} searchConfig
+   * @param {boolean} shouldJump
+   * @param {boolean=} jumpBackwards
+   */
+  performSearch(searchConfig, shouldJump, jumpBackwards) {
+    var newIndex = this._currentSearchFocusIndex;
+    var previousSearchFocusElement = this._currentSearchTreeElements[newIndex];
+    this.searchCanceled();
+    this._searchRegex = searchConfig.toSearchRegex(true);
+
+    for (var element = this._treeOutline.rootElement(); element; element = element.traverseNextTreeElement(false)) {
+      if (!(element instanceof Components.ObjectPropertyTreeElement))
+        continue;
+      var hasMatch = element.setSearchRegex(this._searchRegex);
+      if (hasMatch)
+        this._currentSearchTreeElements.push(element);
+      if (previousSearchFocusElement === element) {
+        var currentIndex = this._currentSearchTreeElements.length - 1;
+        if (hasMatch || jumpBackwards)
+          newIndex = currentIndex;
+        else
+          newIndex = currentIndex + 1;
+      }
+    }
+    this._updateSearchCount(this._currentSearchTreeElements.length);
+
+    if (!this._currentSearchTreeElements.length) {
+      this._updateSearchIndex(0);
+      return;
+    }
+    newIndex = mod(newIndex, this._currentSearchTreeElements.length);
+
+    this._jumpToMatch(newIndex);
+  }
+
+  /**
+   * @override
+   */
+  jumpToNextSearchResult() {
+    if (!this._currentSearchTreeElements.length)
+      return;
+    var newIndex = mod(this._currentSearchFocusIndex + 1, this._currentSearchTreeElements.length);
+    this._jumpToMatch(newIndex);
+  }
+
+  /**
+   * @override
+   */
+  jumpToPreviousSearchResult() {
+    if (!this._currentSearchTreeElements.length)
+      return;
+    var newIndex = mod(this._currentSearchFocusIndex - 1, this._currentSearchTreeElements.length);
+    this._jumpToMatch(newIndex);
+  }
+
+  /**
+   * @override
+   * @return {boolean}
+   */
+  supportsCaseSensitiveSearch() {
+    return true;
+  }
+
+  /**
+   * @override
+   * @return {boolean}
+   */
+  supportsRegexSearch() {
+    return true;
+  }
+};
+
 
 /**
- * @constructor
- * @param {*} data
- * @param {string} prefix
- * @param {string} suffix
+ * @unrestricted
  */
-WebInspector.ParsedJSON = function(data, prefix, suffix)
-{
+Network.ParsedJSON = class {
+  /**
+   * @param {*} data
+   * @param {string} prefix
+   * @param {string} suffix
+   */
+  constructor(data, prefix, suffix) {
     this.data = data;
     this.prefix = prefix;
     this.suffix = suffix;
-}
+  }
+};

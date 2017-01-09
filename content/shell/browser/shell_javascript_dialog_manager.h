@@ -5,9 +5,12 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_JAVASCRIPT_DIALOG_MANAGER_H_
 #define CONTENT_SHELL_BROWSER_SHELL_JAVASCRIPT_DIALOG_MANAGER_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 
 namespace content {
@@ -22,7 +25,6 @@ class ShellJavaScriptDialogManager : public JavaScriptDialogManager {
   // JavaScriptDialogManager:
   void RunJavaScriptDialog(WebContents* web_contents,
                            const GURL& origin_url,
-                           const std::string& accept_lang,
                            JavaScriptMessageType javascript_message_type,
                            const base::string16& message_text,
                            const base::string16& default_prompt_text,
@@ -30,13 +32,12 @@ class ShellJavaScriptDialogManager : public JavaScriptDialogManager {
                            bool* did_suppress_message) override;
 
   void RunBeforeUnloadDialog(WebContents* web_contents,
-                             const base::string16& message_text,
                              bool is_reload,
                              const DialogClosedCallback& callback) override;
 
-  void CancelActiveAndPendingDialogs(WebContents* web_contents) override;
-
-  void ResetDialogState(WebContents* web_contents) override;
+  void CancelDialogs(WebContents* web_contents,
+                     bool suppress_callbacks,
+                     bool reset_state) override;
 
   // Called by the ShellJavaScriptDialog when it closes.
   void DialogClosed(ShellJavaScriptDialog* dialog);
@@ -45,16 +46,25 @@ class ShellJavaScriptDialogManager : public JavaScriptDialogManager {
   void set_dialog_request_callback(const base::Closure& callback) {
     dialog_request_callback_ = callback;
   }
+  void set_should_proceed_on_beforeunload(bool proceed) {
+    should_proceed_on_beforeunload_ = proceed;
+  }
 
  private:
 #if defined(OS_MACOSX) || defined(OS_WIN)
   // The dialog being shown. No queueing.
-  scoped_ptr<ShellJavaScriptDialog> dialog_;
+  std::unique_ptr<ShellJavaScriptDialog> dialog_;
 #else
   // TODO: implement ShellJavaScriptDialog for other platforms, drop this #if
 #endif
 
   base::Closure dialog_request_callback_;
+
+  // Whether to automatically proceed when asked to display a BeforeUnload
+  // dialog.
+  bool should_proceed_on_beforeunload_;
+
+  DialogClosedCallback before_unload_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellJavaScriptDialogManager);
 };

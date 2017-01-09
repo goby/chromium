@@ -9,7 +9,8 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
-#include "base/threading/worker_pool.h"
+#include "base/memory/ptr_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "net/base/hash_value.h"
 #include "net/cert/x509_certificate.h"
 
@@ -52,22 +53,30 @@ const char kTokenIdSystem[] = "system";
 ClientCertificateRequest::ClientCertificateRequest() {
 }
 
+ClientCertificateRequest::ClientCertificateRequest(
+    const ClientCertificateRequest& other) = default;
+
 ClientCertificateRequest::~ClientCertificateRequest() {
 }
 
 void IntersectCertificates(
     const net::CertificateList& certs1,
     const net::CertificateList& certs2,
-    const base::Callback<void(scoped_ptr<net::CertificateList>)>& callback) {
-  scoped_ptr<net::CertificateList> intersection(new net::CertificateList);
+    const base::Callback<void(std::unique_ptr<net::CertificateList>)>&
+        callback) {
+  std::unique_ptr<net::CertificateList> intersection(new net::CertificateList);
   net::CertificateList* const intersection_ptr = intersection.get();
-  if (!base::WorkerPool::PostTaskAndReply(
-          FROM_HERE, base::Bind(&IntersectOnWorkerThread, certs1, certs2,
-                                intersection_ptr),
-          base::Bind(callback, base::Passed(&intersection)),
-          false /* task_is_slow */)) {
-    callback.Run(make_scoped_ptr(new net::CertificateList));
-  }
+
+  // This is triggered by a call to the
+  // chrome.platformKeys.selectClientCertificates extensions API. Completion
+  // does not affect browser responsiveness, hence the BACKGROUND priority.
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE, base::TaskTraits()
+                     .WithPriority(base::TaskPriority::BACKGROUND)
+                     .WithShutdownBehavior(
+                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN),
+      base::Bind(&IntersectOnWorkerThread, certs1, certs2, intersection_ptr),
+      base::Bind(callback, base::Passed(&intersection)));
 }
 
 }  // namespace platform_keys

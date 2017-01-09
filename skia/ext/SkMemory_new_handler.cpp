@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
 #include <stdlib.h>
 
 #include "base/process/memory.h"
-
+#include "build/build_config.h"
 #include "third_party/skia/include/core/SkTypes.h"
+
+#if defined(OS_WIN)
+#include <windows.h>
+#endif
 
 // This implementation of sk_malloc_flags() and friends is similar to
 // SkMemory_malloc.cpp, except it uses base::UncheckedMalloc and friends
@@ -23,13 +28,14 @@ static inline void* throw_on_failure(size_t size, void* p) {
     return p;
 }
 
-void sk_throw() {
-    SkASSERT(!"sk_throw");
+void sk_abort_no_print() {
     abort();
 }
 
 void sk_out_of_memory(void) {
     SkASSERT(!"sk_out_of_memory");
+    base::TerminateBecauseOutOfMemory(0);
+    // Extra safety abort().
     abort();
 }
 

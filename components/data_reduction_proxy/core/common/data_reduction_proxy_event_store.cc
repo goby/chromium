@@ -4,12 +4,14 @@
 
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_store.h"
 
+#include <stddef.h>
 #include <stdint.h>
-
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -53,9 +55,8 @@ const StringToConstant kDataReductionProxyBypassActionTypeTable[] = {
 
 std::string JoinListValueStrings(base::ListValue* list_value) {
   std::vector<std::string> values;
-  for (auto it = list_value->begin(); it != list_value->end(); ++it) {
+  for (const auto& value : *list_value) {
     std::string value_string;
-    base::Value* value = *it;
     if (!value->GetAsString(&value_string))
       return std::string();
 
@@ -72,23 +73,23 @@ namespace data_reduction_proxy {
 // static
 void DataReductionProxyEventStore::AddConstants(
     base::DictionaryValue* constants_dict) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  auto dict = base::MakeUnique<base::DictionaryValue>();
   for (size_t i = 0;
        i < arraysize(kDataReductionProxyBypassEventTypeTable); ++i) {
     dict->SetInteger(kDataReductionProxyBypassEventTypeTable[i].name,
                      kDataReductionProxyBypassEventTypeTable[i].constant);
   }
 
-  constants_dict->Set("dataReductionProxyBypassEventType", dict.Pass());
+  constants_dict->Set("dataReductionProxyBypassEventType", std::move(dict));
 
-  dict.reset(new base::DictionaryValue());
+  dict = base::MakeUnique<base::DictionaryValue>();
   for (size_t i = 0; i < arraysize(kDataReductionProxyBypassActionTypeTable);
        ++i) {
     dict->SetInteger(kDataReductionProxyBypassActionTypeTable[i].name,
                      kDataReductionProxyBypassActionTypeTable[i].constant);
   }
 
-  constants_dict->Set("dataReductionProxyBypassActionType", dict.Pass());
+  constants_dict->Set("dataReductionProxyBypassActionType", std::move(dict));
 }
 
 DataReductionProxyEventStore::DataReductionProxyEventStore()
@@ -98,19 +99,17 @@ DataReductionProxyEventStore::DataReductionProxyEventStore()
 }
 
 DataReductionProxyEventStore::~DataReductionProxyEventStore() {
-  STLDeleteElements(&stored_events_);
 }
 
-base::Value* DataReductionProxyEventStore::GetSummaryValue() const {
+std::unique_ptr<base::DictionaryValue>
+DataReductionProxyEventStore::GetSummaryValue() const {
   DCHECK(thread_checker_.CalledOnValidThread());
-  scoped_ptr<base::DictionaryValue> data_reduction_proxy_values(
-      new base::DictionaryValue());
-  data_reduction_proxy_values->SetBoolean("enabled", enabled_);
 
-  base::Value* current_configuration = current_configuration_.get();
-  if (current_configuration != nullptr) {
+  auto data_reduction_proxy_values = base::MakeUnique<base::DictionaryValue>();
+  data_reduction_proxy_values->SetBoolean("enabled", enabled_);
+  if (current_configuration_) {
     data_reduction_proxy_values->Set("proxy_config",
-                                     current_configuration->DeepCopy());
+                                     current_configuration_->DeepCopy());
   }
 
   switch (secure_proxy_check_state_) {
@@ -125,13 +124,10 @@ base::Value* DataReductionProxyEventStore::GetSummaryValue() const {
       break;
     case CHECK_UNKNOWN:
       break;
-    default:
-      NOTREACHED();
-      break;
   }
 
   base::Value* last_bypass_event = last_bypass_event_.get();
-  if (last_bypass_event != nullptr) {
+  if (last_bypass_event) {
     int current_time_ticks_ms =
         (base::TimeTicks::Now() - base::TimeTicks()).InMilliseconds();
     if (expiration_ticks_ > current_time_ticks_ms) {
@@ -140,27 +136,22 @@ base::Value* DataReductionProxyEventStore::GetSummaryValue() const {
     }
   }
 
-  base::ListValue* eventsList = new base::ListValue();
-  for (size_t i = 0; i < stored_events_.size(); ++i)
-    eventsList->Append(stored_events_[i]->DeepCopy());
-
-  data_reduction_proxy_values->Set("events", eventsList);
-
-  return data_reduction_proxy_values.release();
+  auto events_list = base::MakeUnique<base::ListValue>();
+  for (const auto& event : stored_events_)
+    events_list->Append(event->CreateDeepCopy());
+  data_reduction_proxy_values->Set("events", std::move(events_list));
+  return data_reduction_proxy_values;
 }
 
-void DataReductionProxyEventStore::AddEvent(scoped_ptr<base::Value> event) {
-  if (stored_events_.size() == kMaxEventsToStore) {
-    base::Value* head = stored_events_.front();
+void DataReductionProxyEventStore::AddEvent(
+    std::unique_ptr<base::Value> event) {
+  if (stored_events_.size() == kMaxEventsToStore)
     stored_events_.pop_front();
-    delete head;
-  }
-
-  stored_events_.push_back(event.release());
+  stored_events_.push_back(std::move(event));
 }
 
 void DataReductionProxyEventStore::AddEnabledEvent(
-    scoped_ptr<base::Value> event,
+    std::unique_ptr<base::Value> event,
     bool enabled) {
   DCHECK(thread_checker_.CalledOnValidThread());
   enabled_ = enabled;
@@ -168,24 +159,24 @@ void DataReductionProxyEventStore::AddEnabledEvent(
     current_configuration_.reset(event->DeepCopy());
   else
     current_configuration_.reset();
-  AddEvent(event.Pass());
+  AddEvent(std::move(event));
 }
 
 void DataReductionProxyEventStore::AddEventAndSecureProxyCheckState(
-    scoped_ptr<base::Value> event,
+    std::unique_ptr<base::Value> event,
     SecureProxyCheckState state) {
   DCHECK(thread_checker_.CalledOnValidThread());
   secure_proxy_check_state_ = state;
-  AddEvent(event.Pass());
+  AddEvent(std::move(event));
 }
 
 void DataReductionProxyEventStore::AddAndSetLastBypassEvent(
-    scoped_ptr<base::Value> event,
-    int64 expiration_ticks) {
+    std::unique_ptr<base::Value> event,
+    int64_t expiration_ticks) {
   DCHECK(thread_checker_.CalledOnValidThread());
   last_bypass_event_.reset(event->DeepCopy());
   expiration_ticks_ = expiration_ticks;
-  AddEvent(event.Pass());
+  AddEvent(std::move(event));
 }
 
 std::string DataReductionProxyEventStore::GetHttpProxyList() const {
@@ -208,26 +199,6 @@ std::string DataReductionProxyEventStore::GetHttpProxyList() const {
   return JoinListValueStrings(proxy_list);
 }
 
-std::string DataReductionProxyEventStore::GetHttpsProxyList() const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!enabled_ || !current_configuration_)
-    return std::string();
-
-  base::DictionaryValue* config_dict;
-  if (!current_configuration_->GetAsDictionary(&config_dict))
-    return std::string();
-
-  base::DictionaryValue* params_dict;
-  if (!config_dict->GetDictionary("params", &params_dict))
-    return std::string();
-
-  base::ListValue* proxy_list;
-  if (!params_dict->GetList("https_proxy_list", &proxy_list))
-    return std::string();
-
-  return JoinListValueStrings(proxy_list);
-}
-
 std::string DataReductionProxyEventStore::SanitizedLastBypassEvent() const {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!enabled_ || !last_bypass_event_)
@@ -242,7 +213,7 @@ std::string DataReductionProxyEventStore::SanitizedLastBypassEvent() const {
     return std::string();
 
   // Explicitly add parameters to prevent automatic adding of new parameters.
-  scoped_ptr<base::DictionaryValue> last_bypass(new base::DictionaryValue());
+  auto last_bypass = base::MakeUnique<base::DictionaryValue>();
 
   std::string str_value;
   int int_value;
@@ -272,6 +243,9 @@ std::string DataReductionProxyEventStore::SanitizedLastBypassEvent() const {
       truncate_url_to_host = false;
     }
   }
+
+  if (params_dict->GetString("method", &str_value))
+    last_bypass->SetString("method", str_value);
 
   if (params_dict->GetString("url", &str_value)) {
     GURL url(str_value);

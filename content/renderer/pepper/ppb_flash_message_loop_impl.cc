@@ -6,7 +6,9 @@
 
 #include "base/callback.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "ppapi/c/pp_errors.h"
+#include "third_party/WebKit/public/web/WebView.h"
 
 using ppapi::thunk::PPB_Flash_MessageLoop_API;
 
@@ -87,7 +89,11 @@ int32_t PPB_Flash_MessageLoop_Impl::InternalRun(
   {
     base::MessageLoop::ScopedNestableTaskAllower allow(
         base::MessageLoop::current());
-    base::MessageLoop::current()->Run();
+    blink::WebView::willEnterModalLoop();
+
+    base::RunLoop().Run();
+
+    blink::WebView::didExitModalLoop();
   }
   // Don't access data members of the class below.
 

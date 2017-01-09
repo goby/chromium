@@ -4,17 +4,16 @@
 
 #include "chrome/browser/pepper_broker_infobar_delegate.h"
 
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/plugins/plugin_finder.h"
 #include "chrome/browser/plugins/plugin_metadata.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/infobars/core/infobar.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/plugin_service.h"
@@ -22,10 +21,8 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/webplugininfo.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-
+#include "ui/gfx/vector_icons_public.h"
 
 // static
 void PepperBrokerInfoBarDelegate::Create(
@@ -57,10 +54,9 @@ void PepperBrokerInfoBarDelegate::Create(
     InfoBarService* infobar_service =
         InfoBarService::FromWebContents(web_contents);
     infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-        scoped_ptr<ConfirmInfoBarDelegate>(new PepperBrokerInfoBarDelegate(
-            url, plugin_path,
-            profile->GetPrefs()->GetString(prefs::kAcceptLanguages),
-            content_settings, tab_content_settings, callback))));
+        std::unique_ptr<ConfirmInfoBarDelegate>(
+            new PepperBrokerInfoBarDelegate(url, plugin_path, content_settings,
+                                            tab_content_settings, callback))));
     return;
   }
 
@@ -75,14 +71,12 @@ void PepperBrokerInfoBarDelegate::Create(
 PepperBrokerInfoBarDelegate::PepperBrokerInfoBarDelegate(
     const GURL& url,
     const base::FilePath& plugin_path,
-    const std::string& languages,
     HostContentSettingsMap* content_settings,
     TabSpecificContentSettings* tab_content_settings,
     const base::Callback<void(bool)>& callback)
     : ConfirmInfoBarDelegate(),
       url_(url),
       plugin_path_(plugin_path),
-      languages_(languages),
       content_settings_(content_settings),
       tab_content_settings_(tab_content_settings),
       callback_(callback) {
@@ -93,8 +87,13 @@ PepperBrokerInfoBarDelegate::~PepperBrokerInfoBarDelegate() {
     callback_.Run(false);
 }
 
-int PepperBrokerInfoBarDelegate::GetIconId() const {
-  return IDR_INFOBAR_PLUGIN_INSTALL;
+infobars::InfoBarDelegate::InfoBarIdentifier
+PepperBrokerInfoBarDelegate::GetIdentifier() const {
+  return PEPPER_BROKER_INFOBAR_DELEGATE;
+}
+
+gfx::VectorIconId PepperBrokerInfoBarDelegate::GetVectorIconId() const {
+  return gfx::VectorIconId::EXTENSION;
 }
 
 base::string16 PepperBrokerInfoBarDelegate::GetMessageText() const {
@@ -103,11 +102,11 @@ base::string16 PepperBrokerInfoBarDelegate::GetMessageText() const {
   content::WebPluginInfo plugin;
   bool success = plugin_service->GetPluginInfoByPath(plugin_path_, &plugin);
   DCHECK(success);
-  scoped_ptr<PluginMetadata> plugin_metadata(
+  std::unique_ptr<PluginMetadata> plugin_metadata(
       PluginFinder::GetInstance()->GetPluginMetadata(plugin));
   return l10n_util::GetStringFUTF16(
       IDS_PEPPER_BROKER_MESSAGE, plugin_metadata->name(),
-      url_formatter::FormatUrlForSecurityDisplay(url_, languages_));
+      url_formatter::FormatUrlForSecurityDisplay(url_));
 }
 
 base::string16 PepperBrokerInfoBarDelegate::GetButtonLabel(
@@ -140,10 +139,8 @@ void PepperBrokerInfoBarDelegate::DispatchCallback(bool result) {
       base::UserMetricsAction("PPAPI.BrokerInfobarClickedDeny"));
   callback_.Run(result);
   callback_ = base::Callback<void(bool)>();
-  content_settings_->SetContentSetting(
-      ContentSettingsPattern::FromURLNoWildcard(url_),
-      ContentSettingsPattern::Wildcard(),
-      CONTENT_SETTINGS_TYPE_PPAPI_BROKER,
-      std::string(), result ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
+  content_settings_->SetContentSettingDefaultScope(
+      url_, GURL(), CONTENT_SETTINGS_TYPE_PPAPI_BROKER, std::string(),
+      result ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
   tab_content_settings_->SetPepperBrokerAllowed(result);
 }

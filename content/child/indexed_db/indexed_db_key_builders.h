@@ -5,6 +5,7 @@
 #ifndef CONTENT_CHILD_INDEXED_DB_INDEXED_DB_KEY_BUILDERS_H_
 #define CONTENT_CHILD_INDEXED_DB_INDEXED_DB_KEY_BUILDERS_H_
 
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/common/indexed_db/indexed_db_key.h"
 #include "content/common/indexed_db/indexed_db_key_path.h"
@@ -41,6 +42,14 @@ class CONTENT_EXPORT IndexedDBKeyRangeBuilder {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(IndexedDBKeyRangeBuilder);
+};
+
+class CONTENT_EXPORT WebIDBKeyRangeBuilder {
+ public:
+  static blink::WebIDBKeyRange Build(const content::IndexedDBKeyRange& key);
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WebIDBKeyRangeBuilder);
 };
 
 class CONTENT_EXPORT IndexedDBKeyPathBuilder {

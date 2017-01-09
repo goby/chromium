@@ -7,11 +7,12 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "chrome/browser/profiles/profile_info_cache_observer.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
-#include "components/sync_driver/sync_service_observer.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/sync/driver/sync_service_observer.h"
 
 namespace base {
 class StringValue;
@@ -21,8 +22,8 @@ namespace options {
 
 // Chrome personal stuff profiles manage overlay UI handler.
 class ManageProfileHandler : public OptionsPageUIHandler,
-                             public ProfileInfoCacheObserver,
-                             public sync_driver::SyncServiceObserver {
+                             public ProfileAttributesStorage::Observer,
+                             public syncer::SyncServiceObserver {
  public:
   ManageProfileHandler();
   ~ManageProfileHandler() override;
@@ -36,7 +37,7 @@ class ManageProfileHandler : public OptionsPageUIHandler,
   // WebUIMessageHandler:
   void RegisterMessages() override;
 
-  // ProfileInfoCacheObserver:
+  // ProfileAttributesStorage::Observer:
   void OnProfileAdded(const base::FilePath& profile_path) override;
   void OnProfileWasRemoved(const base::FilePath& profile_path,
                            const base::string16& profile_name) override;
@@ -44,7 +45,7 @@ class ManageProfileHandler : public OptionsPageUIHandler,
                             const base::string16& old_profile_name) override;
   void OnProfileAvatarChanged(const base::FilePath& profile_path) override;
 
-  // sync_driver::SyncServiceObserver:
+  // syncer::SyncServiceObserver:
   void OnStateChanged() override;
 
  private:
@@ -86,13 +87,6 @@ class ManageProfileHandler : public OptionsPageUIHandler,
   //   /*string*/ newProfileName,
   // ]
   void SetProfileIconAndName(const base::ListValue* args);
-
-#if defined(ENABLE_SETTINGS_APP)
-  // Callback for the "switchAppListProfile" message. Asks the
-  // app_list_controller to change the profile registered for the AppList.
-  // |args| is of the form: [ {string} profileFilePath ]
-  void SwitchAppListProfile(const base::ListValue* args);
-#endif
 
   // Callback for the 'profileIconSelectionChanged' message. Used to update the
   // name in the manager profile dialog based on the selected icon.

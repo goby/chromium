@@ -31,7 +31,7 @@
 #include "core/fetch/FetchInitiatorInfo.h"
 #include "core/fetch/IntegrityMetadata.h"
 #include "core/fetch/ResourceLoaderOptions.h"
-#include "platform/network/ResourceLoadPriority.h"
+#include "platform/CrossOriginAttributeValue.h"
 #include "platform/network/ResourceRequest.h"
 #include "wtf/Allocator.h"
 #include "wtf/text/AtomicString.h"
@@ -39,79 +39,125 @@
 namespace blink {
 class SecurityOrigin;
 
+// A FetchRequest is a "parameter object" for ResourceFetcher::requestResource
+// to avoid the method having too many arguments.
 class CORE_EXPORT FetchRequest {
-    STACK_ALLOCATED();
-public:
-    enum DeferOption { NoDefer, LazyLoad, DeferredByClient };
-    enum OriginRestriction { UseDefaultOriginRestrictionForType, RestrictToSameOrigin, NoOriginRestriction };
+  STACK_ALLOCATED();
 
-    struct ResourceWidth {
-        DISALLOW_NEW();
-        float width;
-        bool isSet;
+ public:
+  enum DeferOption { NoDefer, LazyLoad, IdleLoad };
+  enum OriginRestriction {
+    UseDefaultOriginRestrictionForType,
+    RestrictToSameOrigin,
+    NoOriginRestriction
+  };
+  enum PlaceholderImageRequestType {
+    DisallowPlaceholder = 0,  // The requested image must not be a placeholder.
+    AllowPlaceholder,         // The image is allowed to be a placeholder.
+  };
 
-        ResourceWidth()
-            : width(0)
-            , isSet(false)
-        {
-        }
-    };
+  struct ResourceWidth {
+    DISALLOW_NEW();
+    float width;
+    bool isSet;
 
-    explicit FetchRequest(const ResourceRequest&, const AtomicString& initiator, const String& charset = String(), ResourceLoadPriority = ResourceLoadPriorityUnresolved);
-    FetchRequest(const ResourceRequest&, const AtomicString& initiator, const ResourceLoaderOptions&);
-    FetchRequest(const ResourceRequest&, const FetchInitiatorInfo&);
-    ~FetchRequest();
+    ResourceWidth() : width(0), isSet(false) {}
+  };
 
-    ResourceRequest& mutableResourceRequest() { return m_resourceRequest; }
-    const ResourceRequest& resourceRequest() const { return m_resourceRequest; }
-    const KURL& url() const { return m_resourceRequest.url(); }
+  FetchRequest(const ResourceRequest&,
+               const AtomicString& initiator,
+               const String& charset = String());
+  FetchRequest(const ResourceRequest&,
+               const AtomicString& initiator,
+               const ResourceLoaderOptions&);
+  FetchRequest(const ResourceRequest&, const FetchInitiatorInfo&);
+  ~FetchRequest();
 
-    const String& charset() const { return m_charset; }
-    void setCharset(const String& charset) { m_charset = charset; }
+  ResourceRequest& mutableResourceRequest() { return m_resourceRequest; }
+  const ResourceRequest& resourceRequest() const { return m_resourceRequest; }
+  const KURL& url() const { return m_resourceRequest.url(); }
 
-    const ResourceLoaderOptions& options() const { return m_options; }
-    void setOptions(const ResourceLoaderOptions& options) { m_options = options; }
+  const String& charset() const { return m_charset; }
+  void setCharset(const String& charset) { m_charset = charset; }
 
-    ResourceLoadPriority priority() const { return m_priority; }
-    void setPriority(ResourceLoadPriority priority) { m_priority = priority; }
+  const ResourceLoaderOptions& options() const { return m_options; }
 
-    DeferOption defer() const { return m_defer; }
-    void setDefer(DeferOption defer) { m_defer = defer; }
+  DeferOption defer() const { return m_defer; }
+  void setDefer(DeferOption defer) { m_defer = defer; }
 
-    ResourceWidth resourceWidth() const { return m_resourceWidth; }
-    void setResourceWidth(ResourceWidth);
+  ResourceWidth getResourceWidth() const { return m_resourceWidth; }
+  void setResourceWidth(ResourceWidth);
 
-    ClientHintsPreferences& clientHintsPreferences() { return m_clientHintPreferences; }
+  ClientHintsPreferences& clientHintsPreferences() {
+    return m_clientHintPreferences;
+  }
 
-    bool forPreload() const { return m_forPreload; }
-    void setForPreload(bool forPreload) { m_forPreload = forPreload; }
+  bool forPreload() const { return m_forPreload; }
+  void setForPreload(bool forPreload, double discoveryTime = 0);
 
-    bool avoidBlockingOnLoad() { return m_avoidBlockingOnLoad; }
-    void setAvoidBlockingOnLoad(bool doNotBlock) { m_avoidBlockingOnLoad = doNotBlock; }
+  double preloadDiscoveryTime() { return m_preloadDiscoveryTime; }
 
-    void setContentSecurityCheck(ContentSecurityPolicyDisposition contentSecurityPolicyOption) { m_options.contentSecurityPolicyOption = contentSecurityPolicyOption; }
-    void setCrossOriginAccessControl(SecurityOrigin*, StoredCredentials, CredentialRequest);
-    void setCrossOriginAccessControl(SecurityOrigin*, StoredCredentials);
-    void setCrossOriginAccessControl(SecurityOrigin*, const AtomicString& crossOriginMode);
-    OriginRestriction originRestriction() const { return m_originRestriction; }
-    void setOriginRestriction(OriginRestriction restriction) { m_originRestriction = restriction; }
-    const IntegrityMetadataSet& integrityMetadata() const { return m_integrityMetadata; }
-    void setIntegrityMetadata(const IntegrityMetadataSet& metadata) { m_integrityMetadata = metadata; }
+  bool isLinkPreload() { return m_linkPreload; }
+  void setLinkPreload(bool isLinkPreload) { m_linkPreload = isLinkPreload; }
 
-private:
-    ResourceRequest m_resourceRequest;
-    String m_charset;
-    ResourceLoaderOptions m_options;
-    ResourceLoadPriority m_priority;
-    bool m_forPreload;
-    bool m_avoidBlockingOnLoad;
-    DeferOption m_defer;
-    OriginRestriction m_originRestriction;
-    ResourceWidth m_resourceWidth;
-    ClientHintsPreferences m_clientHintPreferences;
-    IntegrityMetadataSet m_integrityMetadata;
+  void setContentSecurityCheck(
+      ContentSecurityPolicyDisposition contentSecurityPolicyOption) {
+    m_options.contentSecurityPolicyOption = contentSecurityPolicyOption;
+  }
+  void setCrossOriginAccessControl(SecurityOrigin*, CrossOriginAttributeValue);
+  OriginRestriction getOriginRestriction() const { return m_originRestriction; }
+  void setOriginRestriction(OriginRestriction restriction) {
+    m_originRestriction = restriction;
+  }
+  const IntegrityMetadataSet integrityMetadata() const {
+    return m_options.integrityMetadata;
+  }
+  void setIntegrityMetadata(const IntegrityMetadataSet& metadata) {
+    m_options.integrityMetadata = metadata;
+  }
+
+  String contentSecurityPolicyNonce() const {
+    return m_options.contentSecurityPolicyNonce;
+  }
+  void setContentSecurityPolicyNonce(const String& nonce) {
+    m_options.contentSecurityPolicyNonce = nonce;
+  }
+
+  void setParserDisposition(ParserDisposition parserDisposition) {
+    m_options.parserDisposition = parserDisposition;
+  }
+
+  void setCacheAwareLoadingEnabled(
+      CacheAwareLoadingEnabled cacheAwareLoadingEnabled) {
+    m_options.cacheAwareLoadingEnabled = cacheAwareLoadingEnabled;
+  }
+
+  void makeSynchronous();
+
+  PlaceholderImageRequestType placeholderImageRequestType() const {
+    return m_placeholderImageRequestType;
+  }
+
+  // Configures the request to load an image placeholder if the request is
+  // eligible (e.g. the url's protocol is HTTP, etc.). If this request is
+  // non-eligible, this method doesn't modify the ResourceRequest. Calling this
+  // method sets m_placeholderImageRequestType to the appropriate value.
+  void setAllowImagePlaceholder();
+
+ private:
+  ResourceRequest m_resourceRequest;
+  String m_charset;
+  ResourceLoaderOptions m_options;
+  bool m_forPreload;
+  bool m_linkPreload;
+  double m_preloadDiscoveryTime;
+  DeferOption m_defer;
+  OriginRestriction m_originRestriction;
+  ResourceWidth m_resourceWidth;
+  ClientHintsPreferences m_clientHintPreferences;
+  PlaceholderImageRequestType m_placeholderImageRequestType;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

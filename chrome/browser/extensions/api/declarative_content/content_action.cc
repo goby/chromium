@@ -7,6 +7,8 @@
 #include <map>
 
 #include "base/lazy_instance.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/declarative_content/content_constants.h"
@@ -37,6 +39,7 @@ const char kInvalidIconDictionary[] =
     "ImageData2}";
 const char kInvalidInstanceTypeError[] =
     "An action has an invalid instanceType: %s";
+const char kMissingInstanceTypeError[] = "Action is missing instanceType";
 const char kMissingParameter[] = "Missing parameter is required: %s";
 const char kNoPageAction[] =
     "Can't use declarativeContent.ShowPageAction without a page action";
@@ -53,7 +56,7 @@ class ShowPageAction : public ContentAction {
   ShowPageAction() {}
   ~ShowPageAction() override {}
 
-  static scoped_ptr<ContentAction> Create(
+  static std::unique_ptr<ContentAction> Create(
       content::BrowserContext* browser_context,
       const Extension* extension,
       const base::DictionaryValue* dict,
@@ -61,9 +64,9 @@ class ShowPageAction : public ContentAction {
     // We can't show a page action if the extension doesn't have one.
     if (ActionInfo::GetPageActionInfo(extension) == NULL) {
       *error = kNoPageAction;
-      return scoped_ptr<ContentAction>();
+      return std::unique_ptr<ContentAction>();
     }
-    return make_scoped_ptr(new ShowPageAction);
+    return base::WrapUnique(new ShowPageAction);
   }
 
   // Implementation of ContentAction:
@@ -103,7 +106,7 @@ class SetIcon : public ContentAction {
       : icon_(icon), action_type_(action_type) {}
   ~SetIcon() override {}
 
-  static scoped_ptr<ContentAction> Create(
+  static std::unique_ptr<ContentAction> Create(
       content::BrowserContext* browser_context,
       const Extension* extension,
       const base::DictionaryValue* dict,
@@ -181,7 +184,7 @@ struct ContentActionFactory {
   // Factory methods for ContentAction instances. |extension| is the extension
   // for which the action is being created. |dict| contains the json dictionary
   // that describes the action. |error| is used to return error messages.
-  using FactoryMethod = scoped_ptr<ContentAction>(*)(
+  using FactoryMethod = std::unique_ptr<ContentAction> (*)(
       content::BrowserContext* /* browser_context */,
       const Extension* /* extension */,
       const base::DictionaryValue* /* dict */,
@@ -225,21 +228,21 @@ RequestContentScript::ScriptData::ScriptData()
 RequestContentScript::ScriptData::~ScriptData() {}
 
 // static
-scoped_ptr<ContentAction> RequestContentScript::Create(
+std::unique_ptr<ContentAction> RequestContentScript::Create(
     content::BrowserContext* browser_context,
     const Extension* extension,
     const base::DictionaryValue* dict,
     std::string* error) {
   ScriptData script_data;
   if (!InitScriptData(dict, error, &script_data))
-    return scoped_ptr<ContentAction>();
+    return std::unique_ptr<ContentAction>();
 
-  return make_scoped_ptr(new RequestContentScript(browser_context, extension,
-                                                  script_data));
+  return base::WrapUnique(
+      new RequestContentScript(browser_context, extension, script_data));
 }
 
 // static
-scoped_ptr<ContentAction> RequestContentScript::CreateForTest(
+std::unique_ptr<ContentAction> RequestContentScript::CreateForTest(
     DeclarativeUserScriptMaster* master,
     const Extension* extension,
     const base::Value& json_action,
@@ -252,17 +255,17 @@ scoped_ptr<ContentAction> RequestContentScript::CreateForTest(
   if (!(json_action.GetAsDictionary(&action_dict) &&
         action_dict->GetString(keys::kInstanceType, &instance_type) &&
         instance_type == std::string(keys::kRequestContentScript)))
-    return scoped_ptr<ContentAction>();
+    return std::unique_ptr<ContentAction>();
 
   // Normal RequestContentScript data initialization.
   ScriptData script_data;
   if (!InitScriptData(action_dict, error, &script_data))
-    return scoped_ptr<ContentAction>();
+    return std::unique_ptr<ContentAction>();
 
   // Inject provided DeclarativeUserScriptMaster, rather than looking it up
   // using a BrowserContext.
-  return make_scoped_ptr(new RequestContentScript(master, extension,
-                                                  script_data));
+  return base::WrapUnique(
+      new RequestContentScript(master, extension, script_data));
 }
 
 // static
@@ -328,7 +331,7 @@ RequestContentScript::RequestContentScript(
 
 RequestContentScript::~RequestContentScript() {
   DCHECK(master_);
-  master_->RemoveScript(script_);
+  master_->RemoveScript(UserScriptIDPair(script_.id(), script_.host_id()));
 }
 
 void RequestContentScript::InitScript(const HostID& host_id,
@@ -344,7 +347,7 @@ void RequestContentScript::InitScript(const HostID& host_id,
        it != script_data.css_file_names.end(); ++it) {
     GURL url = extension->GetResourceURL(*it);
     ExtensionResource resource = extension->GetResource(*it);
-    script_.css_scripts().push_back(UserScript::File(
+    script_.css_scripts().push_back(base::MakeUnique<UserScript::File>(
         resource.extension_root(), resource.relative_path(), url));
   }
   for (std::vector<std::string>::const_iterator it =
@@ -352,9 +355,14 @@ void RequestContentScript::InitScript(const HostID& host_id,
        it != script_data.js_file_names.end(); ++it) {
     GURL url = extension->GetResourceURL(*it);
     ExtensionResource resource = extension->GetResource(*it);
-    script_.js_scripts().push_back(UserScript::File(
+    script_.js_scripts().push_back(base::MakeUnique<UserScript::File>(
         resource.extension_root(), resource.relative_path(), url));
   }
+}
+
+void RequestContentScript::AddScript() {
+  DCHECK(master_);
+  master_->AddScript(UserScript::CopyMetadataFrom(script_));
 }
 
 void RequestContentScript::Apply(const ApplyInfo& apply_info) const {
@@ -380,7 +388,7 @@ void RequestContentScript::InstructRenderProcessToInject(
 }
 
 // static
-scoped_ptr<ContentAction> SetIcon::Create(
+std::unique_ptr<ContentAction> SetIcon::Create(
     content::BrowserContext* browser_context,
     const Extension* extension,
     const base::DictionaryValue* dict,
@@ -393,7 +401,7 @@ scoped_ptr<ContentAction> SetIcon::Create(
     type = ActionInfo::TYPE_BROWSER;
   } else {
     *error = kNoPageOrBrowserAction;
-    return scoped_ptr<ContentAction>();
+    return std::unique_ptr<ContentAction>();
   }
 
   gfx::ImageSkia icon;
@@ -401,9 +409,9 @@ scoped_ptr<ContentAction> SetIcon::Create(
   if (dict->GetDictionary("imageData", &canvas_set) &&
       !ExtensionAction::ParseIconFromCanvasDictionary(*canvas_set, &icon)) {
     *error = kInvalidIconDictionary;
-    return scoped_ptr<ContentAction>();
+    return std::unique_ptr<ContentAction>();
   }
-  return make_scoped_ptr(new SetIcon(gfx::Image(icon), type));
+  return base::WrapUnique(new SetIcon(gfx::Image(icon), type));
 }
 
 //
@@ -413,7 +421,7 @@ scoped_ptr<ContentAction> SetIcon::Create(
 ContentAction::~ContentAction() {}
 
 // static
-scoped_ptr<ContentAction> ContentAction::Create(
+std::unique_ptr<ContentAction> ContentAction::Create(
     content::BrowserContext* browser_context,
     const Extension* extension,
     const base::Value& json_action,
@@ -422,8 +430,10 @@ scoped_ptr<ContentAction> ContentAction::Create(
   const base::DictionaryValue* action_dict = NULL;
   std::string instance_type;
   if (!(json_action.GetAsDictionary(&action_dict) &&
-        action_dict->GetString(keys::kInstanceType, &instance_type)))
-    return scoped_ptr<ContentAction>();
+        action_dict->GetString(keys::kInstanceType, &instance_type))) {
+    *error = kMissingInstanceTypeError;
+    return std::unique_ptr<ContentAction>();
+  }
 
   ContentActionFactory& factory = g_content_action_factory.Get();
   std::map<std::string, ContentActionFactory::FactoryMethod>::iterator
@@ -433,7 +443,7 @@ scoped_ptr<ContentAction> ContentAction::Create(
         browser_context, extension, action_dict, error);
 
   *error = base::StringPrintf(kInvalidInstanceTypeError, instance_type.c_str());
-  return scoped_ptr<ContentAction>();
+  return std::unique_ptr<ContentAction>();
 }
 
 ContentAction::ContentAction() {}

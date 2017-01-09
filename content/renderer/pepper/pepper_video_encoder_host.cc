@@ -2,20 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/renderer/pepper/pepper_video_encoder_host.h"
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/memory/shared_memory.h"
 #include "base/numerics/safe_math.h"
-#include "content/common/gpu/client/command_buffer_proxy_impl.h"
-#include "content/common/gpu/media/gpu_video_accelerator_util.h"
+#include "build/build_config.h"
 #include "content/common/pepper_file_util.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/gfx_conversion.h"
 #include "content/renderer/pepper/host_globals.h"
-#include "content/renderer/pepper/pepper_video_encoder_host.h"
 #include "content/renderer/pepper/video_encoder_shim.h"
 #include "content/renderer/render_thread_impl.h"
+#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+#include "gpu/ipc/client/command_buffer_proxy_impl.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/video_frame.h"
+#include "media/gpu/gpu_video_accelerator_util.h"
+#include "media/gpu/ipc/client/gpu_video_encode_accelerator_host.h"
 #include "media/renderers/gpu_video_accelerator_factories.h"
 #include "media/video/video_encode_accelerator.h"
 #include "ppapi/c/pp_codecs.h"
@@ -75,7 +81,7 @@ media::VideoCodecProfile PP_ToMediaVideoProfile(PP_VideoProfile profile) {
     case PP_VIDEOPROFILE_VP8_ANY:
       return media::VP8PROFILE_ANY;
     case PP_VIDEOPROFILE_VP9_ANY:
-      return media::VP9PROFILE_ANY;
+      return media::VP9PROFILE_PROFILE0;
     // No default case, to catch unhandled PP_VideoProfile values.
   }
   return media::VIDEO_CODEC_PROFILE_UNKNOWN;
@@ -107,7 +113,7 @@ PP_VideoProfile PP_FromMediaVideoProfile(media::VideoCodecProfile profile) {
       return PP_VIDEOPROFILE_H264MULTIVIEWHIGH;
     case media::VP8PROFILE_ANY:
       return PP_VIDEOPROFILE_VP8_ANY;
-    case media::VP9PROFILE_ANY:
+    case media::VP9PROFILE_PROFILE0:
       return PP_VIDEOPROFILE_VP9_ANY;
     default:
       NOTREACHED();
@@ -171,9 +177,10 @@ bool PP_HardwareAccelerationCompatible(bool accelerated,
 
 }  // namespace
 
-PepperVideoEncoderHost::ShmBuffer::ShmBuffer(uint32_t id,
-                                             scoped_ptr<base::SharedMemory> shm)
-    : id(id), shm(shm.Pass()), in_use(true) {
+PepperVideoEncoderHost::ShmBuffer::ShmBuffer(
+    uint32_t id,
+    std::unique_ptr<base::SharedMemory> shm)
+    : id(id), shm(std::move(shm)), in_use(true) {
   DCHECK(this->shm);
 }
 
@@ -225,6 +232,19 @@ int32_t PepperVideoEncoderHost::OnResourceMessageReceived(
                                         OnHostMsgClose)
   PPAPI_END_MESSAGE_MAP()
   return PP_ERROR_FAILED;
+}
+
+void PepperVideoEncoderHost::OnGpuControlLostContext() {
+#if DCHECK_IS_ON()
+  // This should never occur more than once.
+  DCHECK(!lost_context_);
+  lost_context_ = true;
+#endif
+  NotifyPepperError(PP_ERROR_RESOURCE_FAILED);
+}
+
+void PepperVideoEncoderHost::OnGpuControlLostContextMaybeReentrant() {
+  // No internal state to update on lost context.
 }
 
 int32_t PepperVideoEncoderHost::OnHostMsgGetSupportedProfiles(
@@ -372,17 +392,16 @@ void PepperVideoEncoderHost::RequireBitstreamBuffers(
   frame_count_ = frame_count;
 
   for (uint32_t i = 0; i < kDefaultNumberOfBitstreamBuffers; ++i) {
-    scoped_ptr<base::SharedMemory> shm(
-        RenderThread::Get()
-            ->HostAllocateSharedMemoryBuffer(output_buffer_size)
-            .Pass());
+    std::unique_ptr<base::SharedMemory> shm(
+        RenderThread::Get()->HostAllocateSharedMemoryBuffer(
+            output_buffer_size));
 
     if (!shm || !shm->Map(output_buffer_size)) {
       shm_buffers_.clear();
       break;
     }
 
-    shm_buffers_.push_back(new ShmBuffer(i, shm.Pass()));
+    shm_buffers_.push_back(new ShmBuffer(i, std::move(shm)));
   }
 
   // Feed buffers to the encoder.
@@ -421,13 +440,15 @@ void PepperVideoEncoderHost::RequireBitstreamBuffers(
     AllocateVideoFrames();
 }
 
-void PepperVideoEncoderHost::BitstreamBufferReady(int32 buffer_id,
-                                                  size_t payload_size,
-                                                  bool key_frame) {
+void PepperVideoEncoderHost::BitstreamBufferReady(int32_t buffer_id,
+    size_t payload_size,
+    bool key_frame,
+    base::TimeDelta /* timestamp */) {
   DCHECK(RenderThreadImpl::current());
   DCHECK(shm_buffers_[buffer_id]->in_use);
 
   shm_buffers_[buffer_id]->in_use = false;
+  // TODO: Pass timestamp. Tracked in crbug/613984.
   host()->SendUnsolicitedReply(
       pp_resource(),
       PpapiPluginMsg_VideoEncoder_BitstreamBufferReady(
@@ -447,9 +468,16 @@ void PepperVideoEncoderHost::GetSupportedProfiles(
   media::VideoEncodeAccelerator::SupportedProfiles profiles;
 
   if (EnsureGpuChannel()) {
-    profiles = GpuVideoAcceleratorUtil::ConvertGpuToMediaEncodeProfiles(
-        channel_->gpu_info().video_encode_accelerator_supported_profiles);
+    profiles = media::GpuVideoAcceleratorUtil::ConvertGpuToMediaEncodeProfiles(
+        command_buffer_->channel()
+            ->gpu_info()
+            .video_encode_accelerator_supported_profiles);
     for (media::VideoEncodeAccelerator::SupportedProfile profile : profiles) {
+      if (profile.profile == media::VP9PROFILE_PROFILE1 ||
+          profile.profile == media::VP9PROFILE_PROFILE2 ||
+          profile.profile == media::VP9PROFILE_PROFILE3) {
+        continue;
+      }
       pp_profiles->push_back(
           PP_FromVideoEncodeAcceleratorSupportedProfile(profile, PP_TRUE));
     }
@@ -494,28 +522,22 @@ bool PepperVideoEncoderHost::EnsureGpuChannel() {
 
   // There is no guarantee that we have a 3D context to work with. So
   // we create a dummy command buffer to communicate with the gpu process.
-  channel_ = RenderThreadImpl::current()->EstablishGpuChannelSync(
-      CAUSE_FOR_GPU_LAUNCH_PEPPERVIDEOENCODERACCELERATOR_INITIALIZE);
-  if (!channel_)
+  scoped_refptr<gpu::GpuChannelHost> channel =
+      RenderThreadImpl::current()->EstablishGpuChannelSync();
+  if (!channel)
     return false;
 
-  std::vector<int32> attribs(1, PP_GRAPHICS3DATTRIB_NONE);
-  command_buffer_ = channel_->CreateOffscreenCommandBuffer(
-      gfx::Size(), nullptr, GpuChannelHost::kDefaultStreamId,
-      GpuChannelHost::kDefaultStreamPriority, attribs, GURL::EmptyGURL(),
-      gfx::PreferIntegratedGpu);
+  command_buffer_ = gpu::CommandBufferProxyImpl::Create(
+      std::move(channel), gpu::kNullSurfaceHandle, nullptr,
+      gpu::GPU_STREAM_DEFAULT, gpu::GpuStreamPriority::NORMAL,
+      gpu::gles2::ContextCreationAttribHelper(), GURL::EmptyGURL(),
+      base::ThreadTaskRunnerHandle::Get());
   if (!command_buffer_) {
     Close();
     return false;
   }
 
-  command_buffer_->SetContextLostCallback(media::BindToCurrentLoop(
-      base::Bind(&PepperVideoEncoderHost::NotifyPepperError,
-                 weak_ptr_factory_.GetWeakPtr(), PP_ERROR_RESOURCE_FAILED)));
-  if (!command_buffer_->Initialize()) {
-    Close();
-    return false;
-  }
+  command_buffer_->SetGpuControlClient(this);
 
   return true;
 }
@@ -530,13 +552,10 @@ bool PepperVideoEncoderHost::InitializeHardware(
   if (!EnsureGpuChannel())
     return false;
 
-  encoder_ = command_buffer_->CreateVideoEncoder();
-  if (!encoder_ ||
-      !encoder_->Initialize(input_format, input_visible_size, output_profile,
-                            initial_bitrate, this))
-    return false;
-
-  return true;
+  encoder_.reset(
+      new media::GpuVideoEncodeAcceleratorHost(command_buffer_.get()));
+  return encoder_->Initialize(input_format, input_visible_size, output_profile,
+                              initial_bitrate, this);
 }
 
 void PepperVideoEncoderHost::Close() {
@@ -568,15 +587,11 @@ void PepperVideoEncoderHost::AllocateVideoFrames() {
   size *= frame_count_;
   uint32_t total_size = size.ValueOrDie();
 
-  scoped_ptr<base::SharedMemory> shm(
-      RenderThreadImpl::current()
-          ->HostAllocateSharedMemoryBuffer(total_size)
-          .Pass());
+  std::unique_ptr<base::SharedMemory> shm(
+      RenderThreadImpl::current()->HostAllocateSharedMemoryBuffer(total_size));
   if (!shm ||
-      !buffer_manager_.SetBuffers(frame_count_,
-                                  buffer_size_aligned,
-                                  shm.Pass(),
-                                  true)) {
+      !buffer_manager_.SetBuffers(frame_count_, buffer_size_aligned,
+                                  std::move(shm), true)) {
     SendGetFramesErrorReply(PP_ERROR_NOMEMORY);
     return;
   }
@@ -623,15 +638,19 @@ scoped_refptr<media::VideoFrame> PepperVideoEncoderHost::CreateVideoFrame(
 
   ppapi::MediaStreamBuffer* buffer = buffer_manager_.GetBufferPointer(frame_id);
   DCHECK(buffer);
-  uint32_t shm_offset = static_cast<uint8*>(buffer->video.data) -
-                        static_cast<uint8*>(buffer_manager_.shm()->memory());
+  uint32_t shm_offset = static_cast<uint8_t*>(buffer->video.data) -
+                        static_cast<uint8_t*>(buffer_manager_.shm()->memory());
 
   scoped_refptr<media::VideoFrame> frame =
       media::VideoFrame::WrapExternalSharedMemory(
           media_input_format_, input_coded_size_, gfx::Rect(input_coded_size_),
-          input_coded_size_, static_cast<uint8*>(buffer->video.data),
+          input_coded_size_, static_cast<uint8_t*>(buffer->video.data),
           buffer->video.data_size, buffer_manager_.shm()->handle(), shm_offset,
           base::TimeDelta());
+  if (!frame) {
+    NotifyPepperError(PP_ERROR_FAILED);
+    return frame;
+  }
   frame->AddDestructionObserver(
       base::Bind(&PepperVideoEncoderHost::FrameReleased,
                  weak_ptr_factory_.GetWeakPtr(), reply_context, frame_id));
@@ -658,10 +677,10 @@ void PepperVideoEncoderHost::NotifyPepperError(int32_t error) {
       PpapiPluginMsg_VideoEncoder_NotifyError(encoder_last_error_));
 }
 
-uint8_t* PepperVideoEncoderHost::ShmHandleToAddress(int32 buffer_id) {
+uint8_t* PepperVideoEncoderHost::ShmHandleToAddress(int32_t buffer_id) {
   DCHECK(RenderThreadImpl::current());
   DCHECK_GE(buffer_id, 0);
-  DCHECK_LT(buffer_id, static_cast<int32>(shm_buffers_.size()));
+  DCHECK_LT(buffer_id, static_cast<int32_t>(shm_buffers_.size()));
   return static_cast<uint8_t*>(shm_buffers_[buffer_id]->shm->memory());
 }
 

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/command_line.h"
 #include "chrome/browser/extensions/api/gcd_private/gcd_private_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -24,7 +26,7 @@ const char kPrivetInfoResponse[] =
     "  \"crypto\":[\"p224_spake2\"]"
     "}}";
 
-const uint8 kAnnouncePacket[] = {
+const uint8_t kAnnouncePacket[] = {
     // Header
     0x00, 0x00,  // ID is zeroed out
     0x80, 0x00,  // Standard query response, no error
@@ -89,19 +91,19 @@ class GcdPrivateAPITest : public ExtensionApiTest {
         "ddchlicdkolnonkihahngkmmmjnjlkkf");
   }
 
-  scoped_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* fetcher_delegate,
       const std::string& response_data,
       net::HttpStatusCode response_code,
       net::URLRequestStatus::Status status) {
-    scoped_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
+    std::unique_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
         url, fetcher_delegate, response_data, response_code, status));
     scoped_refptr<net::HttpResponseHeaders> headers =
         new net::HttpResponseHeaders("");
     headers->AddHeader("Content-Type: application/json");
     fetcher->set_response_headers(headers);
-    return fetcher.Pass();
+    return fetcher;
   }
 
  protected:
@@ -112,6 +114,7 @@ class GcdPrivateAPITest : public ExtensionApiTest {
 class GcdPrivateWithMdnsAPITest : public GcdPrivateAPITest {
  public:
   void SetUpOnMainThread() override {
+    GcdPrivateAPITest::SetUpOnMainThread();
     test_service_discovery_client_ =
         new local_discovery::TestServiceDiscoveryClient();
     test_service_discovery_client_->Start();
@@ -119,11 +122,11 @@ class GcdPrivateWithMdnsAPITest : public GcdPrivateAPITest {
 
   void TearDownOnMainThread() override {
     test_service_discovery_client_ = nullptr;
-    ExtensionApiTest::TearDownOnMainThread();
+    GcdPrivateAPITest::TearDownOnMainThread();
   }
 
  protected:
-  void SimulateReceiveWithDelay(const uint8* packet, int size) {
+  void SimulateReceiveWithDelay(const uint8_t* packet, int size) {
     if (ExtensionSubtestsAreSkipped())
       return;
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(

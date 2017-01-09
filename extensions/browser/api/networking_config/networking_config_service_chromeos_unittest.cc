@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #include "extensions/browser/api/networking_config/networking_config_service.h"
+
+#include <utility>
+
 #include "extensions/browser/api_unittest.h"
 #include "extensions/browser/extension_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -42,19 +45,20 @@ class NetworkingConfigServiceTest : public ApiUnitTest {
 
   void SetUp() override {
     ApiUnitTest::SetUp();
-    extension_registry_ = scoped_ptr<ExtensionRegistry>(
+    extension_registry_ = std::unique_ptr<ExtensionRegistry>(
         new ExtensionRegistry(browser_context()));
-    scoped_ptr<MockEventDelegate> mock_event_delegate =
-        scoped_ptr<MockEventDelegate>(new MockEventDelegate());
-    service_ = scoped_ptr<NetworkingConfigService>(new NetworkingConfigService(
-        browser_context(), mock_event_delegate.Pass(),
-        extension_registry_.get()));
+    std::unique_ptr<MockEventDelegate> mock_event_delegate =
+        std::unique_ptr<MockEventDelegate>(new MockEventDelegate());
+    service_ =
+        std::unique_ptr<NetworkingConfigService>(new NetworkingConfigService(
+            browser_context(), std::move(mock_event_delegate),
+            extension_registry_.get()));
     DCHECK(service_);
   }
 
  protected:
-  scoped_ptr<ExtensionRegistry> extension_registry_;
-  scoped_ptr<NetworkingConfigService> service_;
+  std::unique_ptr<ExtensionRegistry> extension_registry_;
+  std::unique_ptr<NetworkingConfigService> service_;
 };
 
 TEST_F(NetworkingConfigServiceTest, BasicRegisterHexSsid) {

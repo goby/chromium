@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
@@ -20,11 +21,12 @@ namespace {
 // Creates a very simple extension with a background page.
 scoped_refptr<Extension> CreateExtensionWithBackgroundPage() {
   return ExtensionBuilder()
-      .SetManifest(
-           DictionaryBuilder()
-             .Set("name", "test")
-             .Set("version", "0.1")
-             .Set("background", DictionaryBuilder().Set("page", "bg.html")))
+      .SetManifest(DictionaryBuilder()
+                       .Set("name", "test")
+                       .Set("version", "0.1")
+                       .Set("background",
+                            DictionaryBuilder().Set("page", "bg.html").Build())
+                       .Build())
       .SetID("id2")
       .Build();
 }
@@ -70,19 +72,6 @@ TEST_F(RuntimeDataTest, IsBeingUpgraded) {
   EXPECT_TRUE(runtime_data_.IsBeingUpgraded(extension->id()));
   runtime_data_.SetBeingUpgraded(extension->id(), false);
   EXPECT_FALSE(runtime_data_.IsBeingUpgraded(extension->id()));
-}
-
-TEST_F(RuntimeDataTest, HasUsedWebRequest) {
-  scoped_refptr<Extension> extension = test_util::CreateEmptyExtension();
-
-  // An extension has not used web request until the flag is set.
-  EXPECT_FALSE(runtime_data_.HasUsedWebRequest(extension->id()));
-
-  // The flag can be toggled.
-  runtime_data_.SetHasUsedWebRequest(extension->id(), true);
-  EXPECT_TRUE(runtime_data_.HasUsedWebRequest(extension->id()));
-  runtime_data_.SetHasUsedWebRequest(extension->id(), false);
-  EXPECT_FALSE(runtime_data_.HasUsedWebRequest(extension->id()));
 }
 
 // Unloading an extension erases any data that shouldn't explicitly be kept

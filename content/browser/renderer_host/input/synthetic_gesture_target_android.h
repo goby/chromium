@@ -5,13 +5,14 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_SYNTHETIC_GESTURE_TARGET_ANDROID_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_SYNTHETIC_GESTURE_TARGET_ANDROID_H_
 
+#include <stdint.h>
+
 #include "base/android/jni_android.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target_base.h"
 
 namespace content {
-
-class ContentViewCoreImpl;
 
 class SyntheticGestureTargetAndroid : public SyntheticGestureTargetBase {
  public:
@@ -19,8 +20,6 @@ class SyntheticGestureTargetAndroid : public SyntheticGestureTargetBase {
       RenderWidgetHostImpl* host,
       base::android::ScopedJavaLocalRef<jobject> touch_event_synthesizer);
   ~SyntheticGestureTargetAndroid() override;
-
-  static bool RegisterMotionEventSynthesizer(JNIEnv* env);
 
   // SyntheticGestureTargetBase:
   void DispatchWebTouchEventToPlatform(
@@ -57,7 +56,7 @@ class SyntheticGestureTargetAndroid : public SyntheticGestureTargetBase {
   void TouchInject(JNIEnv* env,
                    Action action,
                    int pointer_count,
-                   int64 time_in_ms);
+                   int64_t time_in_ms);
 
   base::android::ScopedJavaGlobalRef<jobject> touch_event_synthesizer_;
 

@@ -4,7 +4,11 @@
 
 #include "extensions/common/file_util.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
@@ -16,9 +20,9 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
@@ -54,14 +58,8 @@ SafeInstallationFlag g_use_safe_installation = DEFAULT;
 
 // Returns true if the given file path exists and is not zero-length.
 bool ValidateFilePath(const base::FilePath& path) {
-  int64 size = 0;
-  if (!base::PathExists(path) ||
-      !base::GetFileSize(path, &size) ||
-      size == 0) {
-    return false;
-  }
-
-  return true;
+  int64_t size = 0;
+  return base::PathExists(path) && base::GetFileSize(path, &size) && size != 0;
 }
 
 // Returns true if the extension installation should flush all files and the
@@ -134,7 +132,7 @@ base::FilePath InstallExtension(const base::FilePath& unpacked_source_dir,
     return base::FilePath();
   }
   base::FilePath crx_temp_source =
-      extension_temp_dir.path().Append(unpacked_source_dir.BaseName());
+      extension_temp_dir.GetPath().Append(unpacked_source_dir.BaseName());
   if (!base::Move(unpacked_source_dir, crx_temp_source)) {
     LOG(ERROR) << "Moving extension from : " << unpacked_source_dir.value()
                << " to : " << crx_temp_source.value() << " failed.";
@@ -209,7 +207,7 @@ scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
                                        Manifest::Location location,
                                        int flags,
                                        std::string* error) {
-  scoped_ptr<base::DictionaryValue> manifest =
+  std::unique_ptr<base::DictionaryValue> manifest =
       LoadManifest(extension_path, error);
   if (!manifest.get())
     return NULL;
@@ -231,13 +229,13 @@ scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
   return extension;
 }
 
-scoped_ptr<base::DictionaryValue> LoadManifest(
+std::unique_ptr<base::DictionaryValue> LoadManifest(
     const base::FilePath& extension_path,
     std::string* error) {
   return LoadManifest(extension_path, kManifestFilename, error);
 }
 
-scoped_ptr<base::DictionaryValue> LoadManifest(
+std::unique_ptr<base::DictionaryValue> LoadManifest(
     const base::FilePath& extension_path,
     const base::FilePath::CharType* manifest_filename,
     std::string* error) {
@@ -248,7 +246,7 @@ scoped_ptr<base::DictionaryValue> LoadManifest(
   }
 
   JSONFileValueDeserializer deserializer(manifest_path);
-  scoped_ptr<base::Value> root(deserializer.Deserialize(NULL, error));
+  std::unique_ptr<base::Value> root(deserializer.Deserialize(NULL, error));
   if (!root.get()) {
     if (error->empty()) {
       // If |error| is empty, than the file could not be read.
@@ -263,12 +261,12 @@ scoped_ptr<base::DictionaryValue> LoadManifest(
     return NULL;
   }
 
-  if (!root->IsType(base::Value::TYPE_DICTIONARY)) {
+  if (!root->IsType(base::Value::Type::DICTIONARY)) {
     *error = l10n_util::GetStringUTF8(IDS_EXTENSION_MANIFEST_INVALID);
     return NULL;
   }
 
-  return base::DictionaryValue::From(root.Pass());
+  return base::DictionaryValue::From(std::move(root));
 }
 
 bool ValidateExtension(const Extension* extension,
@@ -443,8 +441,10 @@ base::FilePath ExtensionURLToRelativeFilePath(const GURL& url) {
     return base::FilePath();
 
   // Drop the leading slashes and convert %-encoded UTF8 to regular UTF8.
-  std::string file_path = net::UnescapeURLComponent(url_path,
-      net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS);
+  std::string file_path = net::UnescapeURLComponent(
+      url_path,
+      net::UnescapeRule::SPACES |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
   size_t skip = file_path.find_first_not_of("/\\");
   if (skip != file_path.npos)
     file_path = file_path.substr(skip);
@@ -462,8 +462,10 @@ base::FilePath ExtensionURLToRelativeFilePath(const GURL& url) {
 
 base::FilePath ExtensionResourceURLToFilePath(const GURL& url,
                                               const base::FilePath& root) {
-  std::string host = net::UnescapeURLComponent(url.host(),
-      net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS);
+  std::string host = net::UnescapeURLComponent(
+      url.host(),
+      net::UnescapeRule::SPACES |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
   if (host.empty())
     return base::FilePath();
 
@@ -539,7 +541,7 @@ MessageBundle::SubstitutionMap* LoadMessageBundleSubstitutionMap(
   if (!default_locale.empty()) {
     // Touch disk only if extension is localized.
     std::string error;
-    scoped_ptr<MessageBundle> bundle(
+    std::unique_ptr<MessageBundle> bundle(
         LoadMessageBundle(extension_path, default_locale, &error));
 
     if (bundle.get())
@@ -580,7 +582,7 @@ MessageBundle::SubstitutionMap* LoadMessageBundleSubstitutionMapWithImports(
   }
 
   std::string error;
-  scoped_ptr<MessageBundle> bundle(
+  std::unique_ptr<MessageBundle> bundle(
       LoadMessageBundle(extension->path(), default_locale, &error));
 
   if (bundle.get()) {
@@ -600,7 +602,7 @@ MessageBundle::SubstitutionMap* LoadMessageBundleSubstitutionMapWithImports(
       NOTREACHED() << "Missing shared module " << it->extension_id;
       continue;
     }
-    scoped_ptr<MessageBundle> imported_bundle(
+    std::unique_ptr<MessageBundle> imported_bundle(
         LoadMessageBundle(imported_extension->path(), default_locale, &error));
 
     if (imported_bundle.get()) {

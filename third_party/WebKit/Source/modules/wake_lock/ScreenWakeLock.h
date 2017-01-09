@@ -5,8 +5,9 @@
 #ifndef ScreenWakeLock_h
 #define ScreenWakeLock_h
 
-#include "core/frame/LocalFrameLifecycleObserver.h"
-#include "core/page/PageLifecycleObserver.h"
+#include "core/dom/ContextLifecycleObserver.h"
+#include "core/page/PageVisibilityObserver.h"
+#include "device/wake_lock/public/interfaces/wake_lock_service.mojom-blink.h"
 #include "modules/ModulesExport.h"
 #include "wtf/Noncopyable.h"
 
@@ -14,41 +15,43 @@ namespace blink {
 
 class LocalFrame;
 class Screen;
-class WebWakeLockClient;
 
-class MODULES_EXPORT ScreenWakeLock final : public NoBaseWillBeGarbageCollected<ScreenWakeLock>, public WillBeHeapSupplement<LocalFrame>, public PageLifecycleObserver, public LocalFrameLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(ScreenWakeLock);
-    WTF_MAKE_NONCOPYABLE(ScreenWakeLock);
-public:
-    static bool keepAwake(Screen&);
-    static void setKeepAwake(Screen&, bool);
+class MODULES_EXPORT ScreenWakeLock final
+    : public GarbageCollectedFinalized<ScreenWakeLock>,
+      public Supplement<LocalFrame>,
+      public ContextLifecycleObserver,
+      public PageVisibilityObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(ScreenWakeLock);
+  WTF_MAKE_NONCOPYABLE(ScreenWakeLock);
 
-    bool keepAwake() const { return m_keepAwake; }
-    void setKeepAwake(bool);
+ public:
+  static bool keepAwake(Screen&);
+  static void setKeepAwake(Screen&, bool);
 
-    static const char* supplementName();
-    static ScreenWakeLock* from(LocalFrame*);
-    static void provideTo(LocalFrame&, WebWakeLockClient*);
+  static const char* supplementName();
+  static ScreenWakeLock* from(LocalFrame*);
 
-    // Inherited from PageLifecycleObserver.
-    void pageVisibilityChanged() override;
-    void didCommitLoad(LocalFrame*) override;
+  ~ScreenWakeLock() = default;
 
-    // Inherited from LocalFrameLifecycleObserver.
-    void willDetachFrameHost() override;
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+ private:
+  explicit ScreenWakeLock(LocalFrame&);
 
-private:
-    ScreenWakeLock(LocalFrame&, WebWakeLockClient*);
+  // Inherited from PageVisibilityObserver.
+  void pageVisibilityChanged() override;
+  void contextDestroyed() override;
 
-    static ScreenWakeLock* fromScreen(Screen&);
-    void notifyClient();
+  bool keepAwake() const;
+  void setKeepAwake(bool);
 
-    WebWakeLockClient* m_client;
-    bool m_keepAwake;
+  static ScreenWakeLock* fromScreen(Screen&);
+  void notifyService();
+
+  device::mojom::blink::WakeLockServicePtr m_service;
+  bool m_keepAwake;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ScreenWakeLock_h
+#endif  // ScreenWakeLock_h

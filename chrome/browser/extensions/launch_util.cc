@@ -5,10 +5,10 @@
 #include "chrome/browser/extensions/launch_util.h"
 
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -18,7 +18,7 @@
 #include "extensions/common/extension.h"
 
 #if defined(USE_ASH)
-#include "ash/shell.h"
+#include "ash/shell.h"  // nogncheck
 #endif
 
 namespace extensions {
@@ -117,8 +117,7 @@ LaunchContainer GetLaunchContainer(const ExtensionPrefs* prefs,
       // window opening is the default), make the container a window.
       result = LAUNCH_CONTAINER_WINDOW;
 #if defined(USE_ASH)
-    } else if (prefs_launch_type == LAUNCH_TYPE_FULLSCREEN &&
-               chrome::GetActiveDesktop() == chrome::HOST_DESKTOP_TYPE_ASH) {
+    } else if (prefs_launch_type == LAUNCH_TYPE_FULLSCREEN) {
       // LAUNCH_TYPE_FULLSCREEN launches in a maximized app window in ash.
       // For desktop chrome AURA on all platforms we should open the
       // application in full screen mode in the current tab, on the same

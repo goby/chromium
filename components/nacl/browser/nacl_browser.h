@@ -5,19 +5,21 @@
 #ifndef COMPONENTS_NACL_BROWSER_NACL_BROWSER_H_
 #define COMPONENTS_NACL_BROWSER_NACL_BROWSER_H_
 
+#include <stdint.h>
+
 #include <deque>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/containers/mru_cache.h"
 #include "base/files/file.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/nacl/browser/nacl_browser_delegate.h"
 #include "components/nacl/browser/nacl_validation_cache.h"
-
-class URLPattern;
-class GURL;
 
 namespace base {
 class FileProxy;
@@ -110,9 +112,11 @@ class NaClBrowser {
   // per guess.
   // TODO(ncbray): move the cache onto NaClProcessHost so that we don't need to
   // rely on tokens being unguessable by another process.
-  void PutFilePath(const base::FilePath& path, uint64* file_token_lo,
-                   uint64* file_token_hi);
-  bool GetFilePath(uint64 file_token_lo, uint64 file_token_hi,
+  void PutFilePath(const base::FilePath& path,
+                   uint64_t* file_token_lo,
+                   uint64_t* file_token_hi);
+  bool GetFilePath(uint64_t file_token_lo,
+                   uint64_t file_token_hi,
                    base::FilePath* path);
 
   bool QueryKnownToValidate(const std::string& signature, bool off_the_record);
@@ -153,7 +157,7 @@ class NaClBrowser {
 
   void OpenIrtLibraryFile();
 
-  void OnIrtOpened(scoped_ptr<base::FileProxy> file_proxy,
+  void OnIrtOpened(std::unique_ptr<base::FileProxy> file_proxy,
                    base::File::Error error_code);
 
   void InitValidationCacheFilePath();
@@ -194,7 +198,7 @@ class NaClBrowser {
   // A list of pending tasks to start NaCl processes.
   std::vector<base::Closure> waiting_;
 
-  scoped_ptr<NaClBrowserDelegate> browser_delegate_;
+  std::unique_ptr<NaClBrowserDelegate> browser_delegate_;
 
   std::deque<base::Time> crash_times_;
 

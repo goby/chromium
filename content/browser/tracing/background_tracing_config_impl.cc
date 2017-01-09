@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/tracing/background_tracing_config_impl.h"
+
+#include <utility>
+
 #include "base/macros.h"
 #include "base/values.h"
-#include "content/browser/tracing/background_tracing_config_impl.h"
 #include "content/browser/tracing/background_tracing_rule.h"
 
 namespace content {
@@ -27,6 +30,11 @@ const char kConfigCategoryBenchmarkDeep[] = "BENCHMARK_DEEP";
 const char kConfigCategoryBenchmarkGPU[] = "BENCHMARK_GPU";
 const char kConfigCategoryBenchmarkIPC[] = "BENCHMARK_IPC";
 const char kConfigCategoryBenchmarkStartup[] = "BENCHMARK_STARTUP";
+const char kConfigCategoryBenchmarkBlinkGC[] = "BENCHMARK_BLINK_GC";
+const char kConfigCategoryBenchmarkMemoryHeavy[] = "BENCHMARK_MEMORY_HEAVY";
+const char kConfigCategoryBenchmarkMemoryLight[] = "BENCHMARK_MEMORY_LIGHT";
+const char kConfigCategoryBenchmarkExecutionMetric[] =
+    "BENCHMARK_EXECUTION_METRIC";
 const char kConfigCategoryBlinkStyle[] = "BLINK_STYLE";
 
 }  // namespace
@@ -51,8 +59,18 @@ std::string BackgroundTracingConfigImpl::CategoryPresetToString(
       return kConfigCategoryBenchmarkIPC;
     case BackgroundTracingConfigImpl::BENCHMARK_STARTUP:
       return kConfigCategoryBenchmarkStartup;
+    case BackgroundTracingConfigImpl::BENCHMARK_BLINK_GC:
+      return kConfigCategoryBenchmarkBlinkGC;
+    case BackgroundTracingConfigImpl::BENCHMARK_MEMORY_HEAVY:
+      return kConfigCategoryBenchmarkMemoryHeavy;
+    case BackgroundTracingConfigImpl::BENCHMARK_MEMORY_LIGHT:
+      return kConfigCategoryBenchmarkMemoryLight;
+    case BackgroundTracingConfigImpl::BENCHMARK_EXECUTION_METRIC:
+      return kConfigCategoryBenchmarkExecutionMetric;
     case BackgroundTracingConfigImpl::BLINK_STYLE:
       return kConfigCategoryBlinkStyle;
+    case BackgroundTracingConfigImpl::CATEGORY_PRESET_UNSET:
+      NOTREACHED();
   }
   NOTREACHED();
   return "";
@@ -86,6 +104,26 @@ bool BackgroundTracingConfigImpl::StringToCategoryPreset(
     return true;
   }
 
+  if (category_preset_string == kConfigCategoryBenchmarkBlinkGC) {
+    *category_preset = BackgroundTracingConfigImpl::BENCHMARK_BLINK_GC;
+    return true;
+  }
+
+  if (category_preset_string == kConfigCategoryBenchmarkMemoryHeavy) {
+    *category_preset = BackgroundTracingConfigImpl::BENCHMARK_MEMORY_HEAVY;
+    return true;
+  }
+
+  if (category_preset_string == kConfigCategoryBenchmarkMemoryLight) {
+    *category_preset = BackgroundTracingConfigImpl::BENCHMARK_MEMORY_LIGHT;
+    return true;
+  }
+
+  if (category_preset_string == kConfigCategoryBenchmarkExecutionMetric) {
+    *category_preset = BackgroundTracingConfigImpl::BENCHMARK_EXECUTION_METRIC;
+    return true;
+  }
+
   if (category_preset_string == kConfigCategoryBlinkStyle) {
     *category_preset = BackgroundTracingConfigImpl::BLINK_STYLE;
     return true;
@@ -106,15 +144,16 @@ void BackgroundTracingConfigImpl::IntoDict(base::DictionaryValue* dict) const {
       break;
   }
 
-  scoped_ptr<base::ListValue> configs_list(new base::ListValue());
-  for (const auto& it : rules_) {
-    scoped_ptr<base::DictionaryValue> config_dict(new base::DictionaryValue());
+  std::unique_ptr<base::ListValue> configs_list(new base::ListValue());
+  for (auto* it : rules_) {
+    std::unique_ptr<base::DictionaryValue> config_dict(
+        new base::DictionaryValue());
     DCHECK(it);
     it->IntoDict(config_dict.get());
-    configs_list->Append(config_dict.Pass());
+    configs_list->Append(std::move(config_dict));
   }
 
-  dict->Set(kConfigsKey, configs_list.Pass());
+  dict->Set(kConfigsKey, std::move(configs_list));
 
   if (!scenario_name_.empty())
     dict->SetString(kConfigScenarioName, scenario_name_);
@@ -126,30 +165,32 @@ void BackgroundTracingConfigImpl::IntoDict(base::DictionaryValue* dict) const {
 
 void BackgroundTracingConfigImpl::AddPreemptiveRule(
     const base::DictionaryValue* dict) {
-  scoped_ptr<BackgroundTracingRule> rule =
-      BackgroundTracingRule::PreemptiveRuleFromDict(dict);
+  std::unique_ptr<BackgroundTracingRule> rule =
+      BackgroundTracingRule::CreateRuleFromDict(dict);
   if (rule)
-    rules_.push_back(rule.Pass());
+    rules_.push_back(std::move(rule));
 }
 
 void BackgroundTracingConfigImpl::AddReactiveRule(
     const base::DictionaryValue* dict,
     BackgroundTracingConfigImpl::CategoryPreset category_preset) {
-  scoped_ptr<BackgroundTracingRule> rule =
-      BackgroundTracingRule::ReactiveRuleFromDict(dict, category_preset);
-  if (rule)
-    rules_.push_back(rule.Pass());
+  std::unique_ptr<BackgroundTracingRule> rule =
+      BackgroundTracingRule::CreateRuleFromDict(dict);
+  if (rule) {
+    rule->set_category_preset(category_preset);
+    rules_.push_back(std::move(rule));
+  }
 }
 
-scoped_ptr<BackgroundTracingConfigImpl> BackgroundTracingConfigImpl::FromDict(
-    const base::DictionaryValue* dict) {
+std::unique_ptr<BackgroundTracingConfigImpl>
+BackgroundTracingConfigImpl::FromDict(const base::DictionaryValue* dict) {
   DCHECK(dict);
 
   std::string mode;
   if (!dict->GetString(kConfigModeKey, &mode))
     return nullptr;
 
-  scoped_ptr<BackgroundTracingConfigImpl> config;
+  std::unique_ptr<BackgroundTracingConfigImpl> config;
 
   if (mode == kConfigModePreemptive) {
     config = PreemptiveFromDict(dict);
@@ -167,15 +208,15 @@ scoped_ptr<BackgroundTracingConfigImpl> BackgroundTracingConfigImpl::FromDict(
                     &config->disable_blink_features_);
   }
 
-  return config.Pass();
+  return config;
 }
 
-scoped_ptr<BackgroundTracingConfigImpl>
+std::unique_ptr<BackgroundTracingConfigImpl>
 BackgroundTracingConfigImpl::PreemptiveFromDict(
     const base::DictionaryValue* dict) {
   DCHECK(dict);
 
-  scoped_ptr<BackgroundTracingConfigImpl> config(
+  std::unique_ptr<BackgroundTracingConfigImpl> config(
       new BackgroundTracingConfigImpl(BackgroundTracingConfigImpl::PREEMPTIVE));
 
   std::string category_preset_string;
@@ -201,15 +242,15 @@ BackgroundTracingConfigImpl::PreemptiveFromDict(
   if (config->rules().empty())
     return nullptr;
 
-  return config.Pass();
+  return config;
 }
 
-scoped_ptr<BackgroundTracingConfigImpl>
+std::unique_ptr<BackgroundTracingConfigImpl>
 BackgroundTracingConfigImpl::ReactiveFromDict(
     const base::DictionaryValue* dict) {
   DCHECK(dict);
 
-  scoped_ptr<BackgroundTracingConfigImpl> config(
+  std::unique_ptr<BackgroundTracingConfigImpl> config(
       new BackgroundTracingConfigImpl(BackgroundTracingConfigImpl::REACTIVE));
 
   const base::ListValue* configs_list = nullptr;
@@ -235,7 +276,7 @@ BackgroundTracingConfigImpl::ReactiveFromDict(
   if (config->rules().empty())
     return nullptr;
 
-  return config.Pass();
+  return config;
 }
 
 }  // namspace content

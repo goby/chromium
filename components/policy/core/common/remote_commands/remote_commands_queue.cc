@@ -4,6 +4,8 @@
 
 #include "components/policy/core/common/remote_commands/remote_commands_queue.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
@@ -33,7 +35,7 @@ void RemoteCommandsQueue::RemoveObserver(Observer* observer) {
   observer_list_.RemoveObserver(observer);
 }
 
-void RemoteCommandsQueue::AddJob(scoped_ptr<RemoteCommandJob> job) {
+void RemoteCommandsQueue::AddJob(std::unique_ptr<RemoteCommandJob> job) {
   incoming_commands_.push(linked_ptr<RemoteCommandJob>(job.release()));
 
   if (!running_command_)
@@ -41,8 +43,8 @@ void RemoteCommandsQueue::AddJob(scoped_ptr<RemoteCommandJob> job) {
 }
 
 void RemoteCommandsQueue::SetClockForTesting(
-    scoped_ptr<base::TickClock> clock) {
-  clock_ = clock.Pass();
+    std::unique_ptr<base::TickClock> clock) {
+  clock_ = std::move(clock);
 }
 
 base::TimeTicks RemoteCommandsQueue::GetNowTicks() {
@@ -61,8 +63,8 @@ void RemoteCommandsQueue::CurrentJobFinished() {
 
   execution_timeout_timer_.Stop();
 
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnJobFinished(running_command_.get()));
+  for (auto& observer : observer_list_)
+    observer.OnJobFinished(running_command_.get());
   running_command_.reset();
 
   ScheduleNextJob();
@@ -84,8 +86,8 @@ void RemoteCommandsQueue::ScheduleNextJob() {
   if (running_command_->Run(clock_->NowTicks(),
                             base::Bind(&RemoteCommandsQueue::CurrentJobFinished,
                                        base::Unretained(this)))) {
-    FOR_EACH_OBSERVER(Observer, observer_list_,
-                      OnJobStarted(running_command_.get()));
+    for (auto& observer : observer_list_)
+      observer.OnJobStarted(running_command_.get());
   } else {
     CurrentJobFinished();
   }

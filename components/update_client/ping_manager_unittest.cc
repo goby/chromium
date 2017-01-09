@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/update_client/ping_manager.h"
+
+#include <memory>
+#include <string>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
 #include "components/update_client/crx_update_item.h"
-#include "components/update_client/ping_manager.h"
 #include "components/update_client/test_configurator.h"
 #include "components/update_client/url_request_post_interceptor.h"
 #include "net/url_request/url_request_test_util.h"
@@ -31,7 +34,7 @@ class ComponentUpdaterPingManagerTest : public testing::Test {
 
  protected:
   scoped_refptr<TestConfigurator> config_;
-  scoped_ptr<PingManager> ping_manager_;
+  std::unique_ptr<PingManager> ping_manager_;
 
  private:
   base::MessageLoopForIO loop_;
@@ -43,7 +46,7 @@ ComponentUpdaterPingManagerTest::ComponentUpdaterPingManagerTest() {
 void ComponentUpdaterPingManagerTest::SetUp() {
   config_ = new TestConfigurator(base::ThreadTaskRunnerHandle::Get(),
                                  base::ThreadTaskRunnerHandle::Get());
-  ping_manager_.reset(new PingManager(*config_));
+  ping_manager_.reset(new PingManager(config_));
 }
 
 void ComponentUpdaterPingManagerTest::TearDown() {
@@ -57,7 +60,7 @@ void ComponentUpdaterPingManagerTest::RunThreadsUntilIdle() {
 
 // Test is flaky: http://crbug.com/349547
 TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
-  scoped_ptr<InterceptorFactory> interceptor_factory(
+  std::unique_ptr<InterceptorFactory> interceptor_factory(
       new InterceptorFactory(base::ThreadTaskRunnerHandle::Get()));
   URLRequestPostInterceptor* interceptor =
       interceptor_factory->CreateInterceptor();
@@ -70,7 +73,7 @@ TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
   item.previous_version = base::Version("1.0");
   item.next_version = base::Version("2.0");
 
-  ping_manager_->OnUpdateComplete(&item);
+  ping_manager_->SendPing(&item);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, interceptor->GetCount()) << interceptor->GetRequestsAsString();
@@ -88,7 +91,7 @@ TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
   item.previous_version = base::Version("1.0");
   item.next_version = base::Version("2.0");
 
-  ping_manager_->OnUpdateComplete(&item);
+  ping_manager_->SendPing(&item);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, interceptor->GetCount()) << interceptor->GetRequestsAsString();
@@ -116,7 +119,7 @@ TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
   item.diff_update_failed = true;
   item.crx_diffurls.push_back(GURL("http://host/path"));
 
-  ping_manager_->OnUpdateComplete(&item);
+  ping_manager_->SendPing(&item);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, interceptor->GetCount()) << interceptor->GetRequestsAsString();
@@ -156,7 +159,7 @@ TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
   download_metrics.download_time_ms = 9870;
   item.download_metrics.push_back(download_metrics);
 
-  ping_manager_->OnUpdateComplete(&item);
+  ping_manager_->SendPing(&item);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, interceptor->GetCount()) << interceptor->GetRequestsAsString();
@@ -173,6 +176,25 @@ TEST_F(ComponentUpdaterPingManagerTest, DISABLED_PingManagerTest) {
           "download_time_ms=\"9870\"/></app>"))
       << interceptor->GetRequestsAsString();
   interceptor->Reset();
+}
+
+// Tests that sending the ping fails when the component requires encryption but
+// the ping URL is unsecure.
+TEST_F(ComponentUpdaterPingManagerTest, PingManagerRequiresEncryptionTest) {
+  config_->SetPingUrl(GURL("http:\\foo\bar"));
+
+  {
+    CrxUpdateItem item;
+    item.component.requires_network_encryption = true;
+
+    EXPECT_FALSE(ping_manager_->SendPing(&item));
+  }
+
+  {
+    // Tests that the default for |requires_network_encryption| is true.
+    CrxUpdateItem item;
+    EXPECT_FALSE(ping_manager_->SendPing(&item));
+  }
 }
 
 }  // namespace update_client

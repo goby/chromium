@@ -4,6 +4,7 @@
 
 #include "net/proxy/dhcp_proxy_script_adapter_fetcher_win.h"
 
+#include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -14,8 +15,13 @@
 #include "net/proxy/mock_proxy_script_fetcher.h"
 #include "net/proxy/proxy_script_fetcher_impl.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/gtest_util.h"
 #include "net/url_request/url_request_test_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 namespace net {
 
@@ -67,8 +73,9 @@ class MockDhcpProxyScriptAdapterFetcher
    public:
     explicit DelayingDhcpQuery()
         : DhcpQuery(),
-          test_finished_event_(true, false) {
-    }
+          test_finished_event_(
+              base::WaitableEvent::ResetPolicy::MANUAL,
+              base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
     std::string ImplGetPacURLFromDhcp(
         const std::string& adapter_name) override {
@@ -137,12 +144,13 @@ class FetcherClient {
   FetcherClient()
       : url_request_context_(new TestURLRequestContext()),
         worker_pool_(
-            new base::SequencedWorkerPool(4, "DhcpAdapterFetcherTest")),
+            new base::SequencedWorkerPool(4,
+                                          "DhcpAdapterFetcherTest",
+                                          base::TaskPriority::USER_VISIBLE)),
         fetcher_(new MockDhcpProxyScriptAdapterFetcher(
             url_request_context_.get(),
             worker_pool_->GetTaskRunnerWithShutdownBehavior(
-                base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN))) {
-  }
+                base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN))) {}
 
   ~FetcherClient() {
     worker_pool_->Shutdown();
@@ -158,13 +166,13 @@ class FetcherClient {
 
   void FinishTestAllowCleanup() {
     fetcher_->FinishTest();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   TestCompletionCallback callback_;
-  scoped_ptr<URLRequestContext> url_request_context_;
+  std::unique_ptr<URLRequestContext> url_request_context_;
   scoped_refptr<base::SequencedWorkerPool> worker_pool_;
-  scoped_ptr<MockDhcpProxyScriptAdapterFetcher> fetcher_;
+  std::unique_ptr<MockDhcpProxyScriptAdapterFetcher> fetcher_;
   base::string16 pac_text_;
 };
 
@@ -174,7 +182,7 @@ TEST(DhcpProxyScriptAdapterFetcher, NormalCaseURLNotInDhcp) {
   client.RunTest();
   client.WaitForResult(ERR_PAC_NOT_IN_DHCP);
   ASSERT_TRUE(client.fetcher_->DidFinish());
-  EXPECT_EQ(ERR_PAC_NOT_IN_DHCP, client.fetcher_->GetResult());
+  EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_PAC_NOT_IN_DHCP));
   EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
 }
 
@@ -183,7 +191,7 @@ TEST(DhcpProxyScriptAdapterFetcher, NormalCaseURLInDhcp) {
   client.RunTest();
   client.WaitForResult(OK);
   ASSERT_TRUE(client.fetcher_->DidFinish());
-  EXPECT_EQ(OK, client.fetcher_->GetResult());
+  EXPECT_THAT(client.fetcher_->GetResult(), IsOk());
   EXPECT_EQ(base::string16(L"bingo"), client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(kPacUrl), client.fetcher_->GetPacURL());
 }
@@ -206,7 +214,7 @@ TEST(DhcpProxyScriptAdapterFetcher, TimeoutDuringDhcp) {
   client.WaitForResult(ERR_TIMED_OUT);
 
   ASSERT_TRUE(client.fetcher_->DidFinish());
-  EXPECT_EQ(ERR_TIMED_OUT, client.fetcher_->GetResult());
+  EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_TIMED_OUT));
   EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(), client.fetcher_->GetPacURL());
   client.FinishTestAllowCleanup();
@@ -216,10 +224,10 @@ TEST(DhcpProxyScriptAdapterFetcher, CancelWhileDhcp) {
   FetcherClient client;
   client.RunTest();
   client.fetcher_->Cancel();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_FALSE(client.fetcher_->DidFinish());
   ASSERT_TRUE(client.fetcher_->WasCancelled());
-  EXPECT_EQ(ERR_ABORTED, client.fetcher_->GetResult());
+  EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_ABORTED));
   EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(), client.fetcher_->GetPacURL());
   client.FinishTestAllowCleanup();
@@ -234,13 +242,13 @@ TEST(DhcpProxyScriptAdapterFetcher, CancelWhileFetcher) {
   int max_loops = 4;
   while (!client.fetcher_->IsWaitingForFetcher() && max_loops--) {
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(10));
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
   client.fetcher_->Cancel();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_FALSE(client.fetcher_->DidFinish());
   ASSERT_TRUE(client.fetcher_->WasCancelled());
-  EXPECT_EQ(ERR_ABORTED, client.fetcher_->GetResult());
+  EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_ABORTED));
   EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
   // GetPacURL() still returns the URL fetched in this case.
   EXPECT_EQ(GURL(kPacUrl), client.fetcher_->GetPacURL());
@@ -255,7 +263,7 @@ TEST(DhcpProxyScriptAdapterFetcher, CancelAtCompletion) {
   // Canceling after you're done should have no effect, so these
   // are identical expectations to the NormalCaseURLInDhcp test.
   ASSERT_TRUE(client.fetcher_->DidFinish());
-  EXPECT_EQ(OK, client.fetcher_->GetResult());
+  EXPECT_THAT(client.fetcher_->GetResult(), IsOk());
   EXPECT_EQ(base::string16(L"bingo"), client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(kPacUrl), client.fetcher_->GetPacURL());
   client.FinishTestAllowCleanup();
@@ -302,7 +310,7 @@ TEST(DhcpProxyScriptAdapterFetcher, MockDhcpRealFetch) {
   client.RunTest();
   client.WaitForResult(OK);
   ASSERT_TRUE(client.fetcher_->DidFinish());
-  EXPECT_EQ(OK, client.fetcher_->GetResult());
+  EXPECT_THAT(client.fetcher_->GetResult(), IsOk());
   EXPECT_EQ(base::string16(L"-downloadable.pac-\n"),
             client.fetcher_->GetPacScript());
   EXPECT_EQ(configured_url,

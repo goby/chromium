@@ -5,14 +5,13 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_USERS_AVATAR_USER_IMAGE_MANAGER_TEST_UTIL_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_USERS_AVATAR_USER_IMAGE_MANAGER_TEST_UTIL_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "chrome/browser/image_decoder.h"
-
-class SKBitmap;
 
 namespace base {
 class FilePath;
@@ -27,6 +26,8 @@ namespace test {
 
 extern const char kUserAvatarImage1RelativePath[];
 extern const char kUserAvatarImage2RelativePath[];
+// Points to a png file with transparent pixels.
+extern const char kUserAvatarImage3RelativePath[];
 
 // Returns |true| if the two given images are pixel-for-pixel identical.
 bool AreImagesEqual(const gfx::ImageSkia& first, const gfx::ImageSkia& second);
@@ -36,7 +37,7 @@ class ImageLoader : public ImageDecoder::ImageRequest {
   explicit ImageLoader(const base::FilePath& path);
   ~ImageLoader() override;
 
-  scoped_ptr<gfx::ImageSkia> Load();
+  std::unique_ptr<gfx::ImageSkia> Load();
 
   // ImageDecoder::ImageRequest:
   void OnImageDecoded(const SkBitmap& decoded_image) override;
@@ -46,7 +47,7 @@ class ImageLoader : public ImageDecoder::ImageRequest {
   base::FilePath path_;
   base::RunLoop run_loop_;
 
-  scoped_ptr<gfx::ImageSkia> decoded_image_;
+  std::unique_ptr<gfx::ImageSkia> decoded_image_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageLoader);
 };

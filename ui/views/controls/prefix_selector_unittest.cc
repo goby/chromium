@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/views/controls/prefix_delegate.h"
@@ -15,7 +16,7 @@ using base::ASCIIToUTF16;
 
 namespace views {
 
-class TestPrefixDelegate : public PrefixDelegate {
+class TestPrefixDelegate : public View, public PrefixDelegate {
  public:
   TestPrefixDelegate() : selected_row_(0) {
     rows_.push_back(ASCIIToUTF16("aardvark"));
@@ -44,7 +45,7 @@ class TestPrefixDelegate : public PrefixDelegate {
 class PrefixSelectorTest : public ViewsTestBase {
  public:
   PrefixSelectorTest() {
-    selector_.reset(new PrefixSelector(&delegate_));
+    selector_.reset(new PrefixSelector(&delegate_, &delegate_));
   }
   ~PrefixSelectorTest() override {
     // Explicitly release |selector_| here which can happen before releasing
@@ -53,11 +54,11 @@ class PrefixSelectorTest : public ViewsTestBase {
   }
 
  protected:
-  scoped_ptr<PrefixSelector> selector_;
+  std::unique_ptr<PrefixSelector> selector_;
   TestPrefixDelegate delegate_;
 
  private:
-    DISALLOW_COPY_AND_ASSIGN(PrefixSelectorTest);
+  DISALLOW_COPY_AND_ASSIGN(PrefixSelectorTest);
 };
 
 TEST_F(PrefixSelectorTest, PrefixSelect) {

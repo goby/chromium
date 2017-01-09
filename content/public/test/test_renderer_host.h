@@ -5,8 +5,13 @@
 #ifndef CONTENT_PUBLIC_TEST_TEST_RENDERER_HOST_H_
 #define CONTENT_PUBLIC_TEST_TEST_RENDERER_HOST_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -23,6 +28,10 @@ class AuraTestHelper;
 }
 }
 
+namespace display {
+class Screen;
+}
+
 namespace ui {
 class ScopedOleInitializer;
 }
@@ -31,11 +40,11 @@ namespace content {
 
 class BrowserContext;
 class ContentBrowserSanityChecker;
+class MockGpuChannelEstablishFactory;
 class MockRenderProcessHost;
 class MockRenderProcessHostFactory;
 class NavigationController;
 class RenderProcessHostFactory;
-class RenderViewHostDelegate;
 class TestRenderFrameHostFactory;
 class TestRenderViewHostFactory;
 class WebContents;
@@ -50,19 +59,7 @@ class RenderFrameHostTester {
   // RenderViewHostTestEnabler instance (see below) to do this.
   static RenderFrameHostTester* For(RenderFrameHost* host);
 
-  // If the given NavigationController has a pending main frame, returns it,
-  // otherwise NULL. This is an alternative to
-  // WebContentsTester::GetPendingMainFrame() when your WebContents was not
-  // created via a TestWebContents.
-  static RenderFrameHost* GetPendingForController(
-      NavigationController* controller);
-
-  // This removes the need to expose
-  // RenderFrameHostImpl::is_swapped_out() outside of content.
-  //
-  // This is safe to call on any RenderFrameHost, not just ones
-  // constructed while a RenderViewHostTestEnabler is in play.
-  static bool IsRenderFrameHostSwappedOut(RenderFrameHost* rfh);
+  static void CommitPendingLoad(NavigationController* controller);
 
   virtual ~RenderFrameHostTester() {}
 
@@ -74,6 +71,9 @@ class RenderFrameHostTester {
   // Gives tests access to RenderFrameHostImpl::OnCreateChild. The returned
   // RenderFrameHost is owned by the parent RenderFrameHost.
   virtual RenderFrameHost* AppendChild(const std::string& frame_name) = 0;
+
+  // Gives tests access to RenderFrameHostImpl::OnDetach. Destroys |this|.
+  virtual void Detach() = 0;
 
   // Simulates a renderer-initiated navigation to |url| starting in the
   // RenderFrameHost.
@@ -106,16 +106,13 @@ class RenderFrameHostTester {
   // - did_create_new_entry should be true if simulating a navigation that
   //   created a new navigation entry; false for history navigations, reloads,
   //   and other navigations that don't affect the history list.
-  virtual void SendNavigate(int page_id,
-                            int nav_entry_id,
+  virtual void SendNavigate(int nav_entry_id,
                             bool did_create_new_entry,
                             const GURL& url) = 0;
-  virtual void SendFailedNavigate(int page_id,
-                                  int nav_entry_id,
+  virtual void SendFailedNavigate(int nav_entry_id,
                                   bool did_create_new_entry,
                                   const GURL& url) = 0;
-  virtual void SendNavigateWithTransition(int page_id,
-                                          int nav_entry_id,
+  virtual void SendNavigateWithTransition(int nav_entry_id,
                                           bool did_create_new_entry,
                                           const GURL& url,
                                           ui::PageTransition transition) = 0;
@@ -130,6 +127,10 @@ class RenderFrameHostTester {
   // Simulates the SwapOut_ACK that fires if you commit a cross-site
   // navigation without making any network requests.
   virtual void SimulateSwapOutACK() = 0;
+
+  // Simulate a renderer-initiated navigation up until commit.
+  virtual void NavigateAndCommitRendererInitiated(bool did_create_new_entry,
+                                                  const GURL& url) = 0;
 };
 
 // An interface and utility for driving tests of RenderViewHost.
@@ -155,7 +156,6 @@ class RenderViewHostTester {
   virtual bool CreateTestRenderView(const base::string16& frame_name,
                                     int opener_frame_route_id,
                                     int proxy_routing_id,
-                                    int32 max_page_id,
                                     bool created_with_opener) = 0;
 
   // Makes the WasHidden/WasShown calls to the RenderWidget that
@@ -179,9 +179,9 @@ class RenderViewHostTestEnabler {
   DISALLOW_COPY_AND_ASSIGN(RenderViewHostTestEnabler);
   friend class RenderViewHostTestHarness;
 
-  scoped_ptr<MockRenderProcessHostFactory> rph_factory_;
-  scoped_ptr<TestRenderViewHostFactory> rvh_factory_;
-  scoped_ptr<TestRenderFrameHostFactory> rfh_factory_;
+  std::unique_ptr<MockRenderProcessHostFactory> rph_factory_;
+  std::unique_ptr<TestRenderViewHostFactory> rvh_factory_;
+  std::unique_ptr<TestRenderFrameHostFactory> rfh_factory_;
 };
 
 // RenderViewHostTestHarness ---------------------------------------------------
@@ -252,7 +252,7 @@ class RenderViewHostTestHarness : public testing::Test {
   // Configures which TestBrowserThreads inside |thread_bundle| are backed by
   // real threads. Must be called before SetUp().
   void SetThreadBundleOptions(int options) {
-    DCHECK(thread_bundle_.get() == NULL);
+    DCHECK(!thread_bundle_);
     thread_bundle_options_ = options;
   }
 
@@ -267,18 +267,22 @@ class RenderViewHostTestHarness : public testing::Test {
 
  private:
   int thread_bundle_options_;
-  scoped_ptr<TestBrowserThreadBundle> thread_bundle_;
+  std::unique_ptr<TestBrowserThreadBundle> thread_bundle_;
 
-  scoped_ptr<ContentBrowserSanityChecker> sanity_checker_;
+  std::unique_ptr<ContentBrowserSanityChecker> sanity_checker_;
 
-  scoped_ptr<BrowserContext> browser_context_;
+  std::unique_ptr<BrowserContext> browser_context_;
 
-  scoped_ptr<WebContents> contents_;
+  std::unique_ptr<WebContents> contents_;
 #if defined(OS_WIN)
-  scoped_ptr<ui::ScopedOleInitializer> ole_initializer_;
+  std::unique_ptr<ui::ScopedOleInitializer> ole_initializer_;
 #endif
 #if defined(USE_AURA)
-  scoped_ptr<aura::test::AuraTestHelper> aura_test_helper_;
+  std::unique_ptr<aura::test::AuraTestHelper> aura_test_helper_;
+#endif
+#if defined(OS_ANDROID)
+  std::unique_ptr<MockGpuChannelEstablishFactory> gpu_channel_factory_;
+  std::unique_ptr<display::Screen> screen_;
 #endif
   RenderViewHostTestEnabler rvh_test_enabler_;
 

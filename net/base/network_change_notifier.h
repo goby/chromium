@@ -5,15 +5,15 @@
 #ifndef NET_BASE_NETWORK_CHANGE_NOTIFIER_H_
 #define NET_BASE_NETWORK_CHANGE_NOTIFIER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
 #include "base/observer_list_threadsafe.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
-
-class GURL;
 
 namespace net {
 
@@ -59,13 +59,18 @@ class NET_EXPORT NetworkChangeNotifier {
   };
 
   // This is the NetInfo v3 set of connection technologies as seen in
-  // http://w3c.github.io/netinfo/. This enum is copied in
-  // NetworkChangeNotifier.java so be sure to change both at once.
+  // http://w3c.github.io/netinfo/. This enum is duplicated in histograms.xml
+  // so be sure to change both at once. Additionally, since this enum is used in
+  // a UMA histogram, it should not be re-ordered and any new values should be
+  // added to the end.
   //
   // A Java counterpart will be generated for this enum.
   // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.net
   enum ConnectionSubtype {
-    SUBTYPE_GSM = 0,
+    SUBTYPE_UNKNOWN = 0,
+    SUBTYPE_NONE,
+    SUBTYPE_OTHER,
+    SUBTYPE_GSM,
     SUBTYPE_IDEN,
     SUBTYPE_CDMA,
     SUBTYPE_1XRTT,
@@ -95,10 +100,7 @@ class NET_EXPORT NetworkChangeNotifier {
     SUBTYPE_WIFI_N,
     SUBTYPE_WIFI_AC,
     SUBTYPE_WIFI_AD,
-    SUBTYPE_UNKNOWN,
-    SUBTYPE_NONE,
-    SUBTYPE_OTHER,
-    SUBTYPE_LAST = SUBTYPE_OTHER
+    SUBTYPE_LAST = SUBTYPE_WIFI_AD
   };
 
   class NET_EXPORT IPAddressObserver {
@@ -207,8 +209,11 @@ class NET_EXPORT NetworkChangeNotifier {
   // example an association with a particular WiFi network with a particular
   // SSID or a connection to particular cellular network.
   // The meaning of this handle is target-dependent. On Android NetworkHandles
-  // are equivalent to the framework's concept of NetIDs (e.g. Network.netId).
-  typedef int32_t NetworkHandle;
+  // are equivalent to:
+  //   On Lollipop, the framework's concept of NetIDs (e.g. Network.netId), and
+  //   On Marshmallow and newer releases, network handles
+  //           (e.g. Network.getNetworkHandle()).
+  typedef int64_t NetworkHandle;
 
   // A list of networks.
   typedef std::vector<NetworkHandle> NetworkList;
@@ -419,6 +424,12 @@ class NET_EXPORT NetworkChangeNotifier {
   // should be called from the network thread to avoid race conditions.
   static void ShutdownHistogramWatcher();
 
+  // Invoked at the time a new user metrics log record is being finalized, on
+  // the main thread. NCN Histograms that want to be logged once per record
+  // should be logged in this method. Platform-specific histograms should be
+  // logged in an overridden implementaton of OnFinalizingMetricsLogRecord.
+  static void FinalizingMetricsLogRecord();
+
   // Log the |NCN.NetworkOperatorMCCMNC| histogram.
   static void LogOperatorCodeHistogram(ConnectionType type);
 
@@ -496,6 +507,10 @@ class NET_EXPORT NetworkChangeNotifier {
       NetworkHandle network) const;
   virtual NetworkHandle GetCurrentDefaultNetwork() const;
 
+  // Hook that allows derived implementations to log histograms at the time a
+  // new histogram record is being finalized.
+  virtual void OnFinalizingMetricsLogRecord() {}
+
   // Broadcasts a notification to all registered observers.  Note that this
   // happens asynchronously, even for observers on the current thread, even in
   // tests.
@@ -548,13 +563,13 @@ class NET_EXPORT NetworkChangeNotifier {
       network_observer_list_;
 
   // The current network state. Hosts DnsConfig, exposed via GetDnsConfig.
-  scoped_ptr<NetworkState> network_state_;
+  std::unique_ptr<NetworkState> network_state_;
 
   // A little-piggy-back observer that simply logs UMA histogram data.
-  scoped_ptr<HistogramWatcher> histogram_watcher_;
+  std::unique_ptr<HistogramWatcher> histogram_watcher_;
 
   // Computes NetworkChange signal from IPAddress and ConnectionType signals.
-  scoped_ptr<NetworkChangeCalculator> network_change_calculator_;
+  std::unique_ptr<NetworkChangeCalculator> network_change_calculator_;
 
   // Set true to disable non-test notifications (to prevent flakes in tests).
   static bool test_notifications_only_;

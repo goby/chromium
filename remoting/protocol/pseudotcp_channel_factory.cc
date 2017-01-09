@@ -4,6 +4,8 @@
 
 #include "remoting/protocol/pseudotcp_channel_factory.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "net/base/net_errors.h"
 #include "remoting/base/constants.h"
@@ -59,8 +61,8 @@ void PseudoTcpChannelFactory::CancelChannelCreation(const std::string& name) {
 void PseudoTcpChannelFactory::OnDatagramChannelCreated(
     const std::string& name,
     const ChannelCreatedCallback& callback,
-    scoped_ptr<P2PDatagramSocket> datagram_socket) {
-  PseudoTcpAdapter* adapter = new PseudoTcpAdapter(datagram_socket.Pass());
+    std::unique_ptr<P2PDatagramSocket> datagram_socket) {
+  PseudoTcpAdapter* adapter = new PseudoTcpAdapter(std::move(datagram_socket));
   pending_sockets_[name] = adapter;
 
   adapter->SetSendBufferSize(kTcpSendBufferSize);
@@ -86,13 +88,13 @@ void PseudoTcpChannelFactory::OnPseudoTcpConnected(
     int result) {
   PendingSocketsMap::iterator it = pending_sockets_.find(name);
   DCHECK(it != pending_sockets_.end());
-  scoped_ptr<P2PStreamSocket> socket(it->second);
+  std::unique_ptr<P2PStreamSocket> socket(it->second);
   pending_sockets_.erase(it);
 
   if (result != net::OK)
     socket.reset();
 
-  callback.Run(socket.Pass());
+  callback.Run(std::move(socket));
 }
 
 }  // namespace protocol

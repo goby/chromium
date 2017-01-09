@@ -2,181 +2,358 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/animation/TimingInput.h"
 
 #include "bindings/core/v8/V8BindingForTesting.h"
 #include "bindings/core/v8/V8KeyframeEffectOptions.h"
 #include "core/animation/AnimationEffectTiming.h"
 #include "core/animation/AnimationTestHelper.h"
+#include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include <v8.h>
 
 namespace blink {
 
-class AnimationTimingInputTest : public ::testing::Test {
-protected:
-    AnimationTimingInputTest()
-        : m_isolate(v8::Isolate::GetCurrent())
-        , m_scope(m_isolate)
-    {
-    }
-
-    Timing applyTimingInputNumber(String timingProperty, double timingPropertyValue)
-    {
-        v8::Local<v8::Object> timingInput = v8::Object::New(m_isolate);
-        setV8ObjectPropertyAsNumber(m_isolate, timingInput, timingProperty, timingPropertyValue);
-        KeyframeEffectOptions timingInputDictionary;
-        V8KeyframeEffectOptions::toImpl(m_isolate, timingInput, timingInputDictionary, exceptionState);
-        return TimingInput::convert(timingInputDictionary);
-    }
-
-    Timing applyTimingInputString(String timingProperty, String timingPropertyValue)
-    {
-        v8::Local<v8::Object> timingInput = v8::Object::New(m_isolate);
-        setV8ObjectPropertyAsString(m_isolate, timingInput, timingProperty, timingPropertyValue);
-        KeyframeEffectOptions timingInputDictionary;
-        V8KeyframeEffectOptions::toImpl(m_isolate, timingInput, timingInputDictionary, exceptionState);
-        return TimingInput::convert(timingInputDictionary);
-    }
-
-    v8::Isolate* m_isolate;
-    TrackExceptionState exceptionState;
-
-private:
-    V8TestingScope m_scope;
-};
-
-TEST_F(AnimationTimingInputTest, TimingInputStartDelay)
-{
-    EXPECT_EQ(1.1, applyTimingInputNumber("delay", 1100).startDelay);
-    EXPECT_EQ(-1, applyTimingInputNumber("delay", -1000).startDelay);
-    EXPECT_EQ(1, applyTimingInputString("delay", "1000").startDelay);
-    EXPECT_EQ(0, applyTimingInputString("delay", "1s").startDelay);
-    EXPECT_EQ(0, applyTimingInputString("delay", "Infinity").startDelay);
-    EXPECT_EQ(0, applyTimingInputString("delay", "-Infinity").startDelay);
-    EXPECT_EQ(0, applyTimingInputString("delay", "NaN").startDelay);
-    EXPECT_EQ(0, applyTimingInputString("delay", "rubbish").startDelay);
+Timing applyTimingInputNumber(v8::Isolate* isolate,
+                              String timingProperty,
+                              double timingPropertyValue,
+                              bool& timingConversionSuccess) {
+  v8::Local<v8::Object> timingInput = v8::Object::New(isolate);
+  setV8ObjectPropertyAsNumber(isolate, timingInput, timingProperty,
+                              timingPropertyValue);
+  KeyframeEffectOptions timingInputDictionary;
+  DummyExceptionStateForTesting exceptionState;
+  V8KeyframeEffectOptions::toImpl(isolate, timingInput, timingInputDictionary,
+                                  exceptionState);
+  Timing result;
+  timingConversionSuccess = TimingInput::convert(timingInputDictionary, result,
+                                                 nullptr, exceptionState) &&
+                            !exceptionState.hadException();
+  return result;
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputEndDelay)
-{
-    EXPECT_EQ(10, applyTimingInputNumber("endDelay", 10000).endDelay);
-    EXPECT_EQ(-2.5, applyTimingInputNumber("endDelay", -2500).endDelay);
+Timing applyTimingInputString(v8::Isolate* isolate,
+                              String timingProperty,
+                              String timingPropertyValue,
+                              bool& timingConversionSuccess) {
+  v8::Local<v8::Object> timingInput = v8::Object::New(isolate);
+  setV8ObjectPropertyAsString(isolate, timingInput, timingProperty,
+                              timingPropertyValue);
+  KeyframeEffectOptions timingInputDictionary;
+  DummyExceptionStateForTesting exceptionState;
+  V8KeyframeEffectOptions::toImpl(isolate, timingInput, timingInputDictionary,
+                                  exceptionState);
+  Timing result;
+  timingConversionSuccess = TimingInput::convert(timingInputDictionary, result,
+                                                 nullptr, exceptionState) &&
+                            !exceptionState.hadException();
+  return result;
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputFillMode)
-{
-    Timing::FillMode defaultFillMode = Timing::FillModeAuto;
-
-    EXPECT_EQ(Timing::FillModeAuto, applyTimingInputString("fill", "auto").fillMode);
-    EXPECT_EQ(Timing::FillModeForwards, applyTimingInputString("fill", "forwards").fillMode);
-    EXPECT_EQ(Timing::FillModeNone, applyTimingInputString("fill", "none").fillMode);
-    EXPECT_EQ(Timing::FillModeBackwards, applyTimingInputString("fill", "backwards").fillMode);
-    EXPECT_EQ(Timing::FillModeBoth, applyTimingInputString("fill", "both").fillMode);
-    EXPECT_EQ(defaultFillMode, applyTimingInputString("fill", "everything!").fillMode);
-    EXPECT_EQ(defaultFillMode, applyTimingInputString("fill", "backwardsandforwards").fillMode);
-    EXPECT_EQ(defaultFillMode, applyTimingInputNumber("fill", 2).fillMode);
+TEST(AnimationTimingInputTest, TimingInputStartDelay) {
+  V8TestingScope scope;
+  bool ignoredSuccess;
+  EXPECT_EQ(1.1, applyTimingInputNumber(scope.isolate(), "delay", 1100,
+                                        ignoredSuccess)
+                     .startDelay);
+  EXPECT_EQ(-1, applyTimingInputNumber(scope.isolate(), "delay", -1000,
+                                       ignoredSuccess)
+                    .startDelay);
+  EXPECT_EQ(1, applyTimingInputString(scope.isolate(), "delay", "1000",
+                                      ignoredSuccess)
+                   .startDelay);
+  EXPECT_EQ(
+      0, applyTimingInputString(scope.isolate(), "delay", "1s", ignoredSuccess)
+             .startDelay);
+  EXPECT_EQ(0, applyTimingInputString(scope.isolate(), "delay", "Infinity",
+                                      ignoredSuccess)
+                   .startDelay);
+  EXPECT_EQ(0, applyTimingInputString(scope.isolate(), "delay", "-Infinity",
+                                      ignoredSuccess)
+                   .startDelay);
+  EXPECT_EQ(
+      0, applyTimingInputString(scope.isolate(), "delay", "NaN", ignoredSuccess)
+             .startDelay);
+  EXPECT_EQ(0, applyTimingInputString(scope.isolate(), "delay", "rubbish",
+                                      ignoredSuccess)
+                   .startDelay);
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputIterationStart)
-{
-    EXPECT_EQ(1.1, applyTimingInputNumber("iterationStart", 1.1).iterationStart);
-    EXPECT_EQ(0, applyTimingInputNumber("iterationStart", -1).iterationStart);
-    EXPECT_EQ(0, applyTimingInputString("iterationStart", "Infinity").iterationStart);
-    EXPECT_EQ(0, applyTimingInputString("iterationStart", "-Infinity").iterationStart);
-    EXPECT_EQ(0, applyTimingInputString("iterationStart", "NaN").iterationStart);
-    EXPECT_EQ(0, applyTimingInputString("iterationStart", "rubbish").iterationStart);
+TEST(AnimationTimingInputTest, TimingInputEndDelay) {
+  V8TestingScope scope;
+  bool ignoredSuccess;
+  EXPECT_EQ(10, applyTimingInputNumber(scope.isolate(), "endDelay", 10000,
+                                       ignoredSuccess)
+                    .endDelay);
+  EXPECT_EQ(-2.5, applyTimingInputNumber(scope.isolate(), "endDelay", -2500,
+                                         ignoredSuccess)
+                      .endDelay);
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputIterationCount)
-{
-    EXPECT_EQ(2.1, applyTimingInputNumber("iterations", 2.1).iterationCount);
-    EXPECT_EQ(0, applyTimingInputNumber("iterations", -1).iterationCount);
+TEST(AnimationTimingInputTest, TimingInputFillMode) {
+  V8TestingScope scope;
+  Timing::FillMode defaultFillMode = Timing::FillMode::AUTO;
+  bool ignoredSuccess;
 
-    Timing timing = applyTimingInputString("iterations", "Infinity");
-    EXPECT_TRUE(std::isinf(timing.iterationCount));
-    EXPECT_GT(timing.iterationCount, 0);
-
-    EXPECT_EQ(0, applyTimingInputString("iterations", "-Infinity").iterationCount);
-    EXPECT_EQ(1, applyTimingInputString("iterations", "NaN").iterationCount);
-    EXPECT_EQ(1, applyTimingInputString("iterations", "rubbish").iterationCount);
+  EXPECT_EQ(
+      Timing::FillMode::AUTO,
+      applyTimingInputString(scope.isolate(), "fill", "auto", ignoredSuccess)
+          .fillMode);
+  EXPECT_EQ(Timing::FillMode::FORWARDS,
+            applyTimingInputString(scope.isolate(), "fill", "forwards",
+                                   ignoredSuccess)
+                .fillMode);
+  EXPECT_EQ(
+      Timing::FillMode::NONE,
+      applyTimingInputString(scope.isolate(), "fill", "none", ignoredSuccess)
+          .fillMode);
+  EXPECT_EQ(Timing::FillMode::BACKWARDS,
+            applyTimingInputString(scope.isolate(), "fill", "backwards",
+                                   ignoredSuccess)
+                .fillMode);
+  EXPECT_EQ(
+      Timing::FillMode::BOTH,
+      applyTimingInputString(scope.isolate(), "fill", "both", ignoredSuccess)
+          .fillMode);
+  EXPECT_EQ(defaultFillMode,
+            applyTimingInputString(scope.isolate(), "fill", "everything!",
+                                   ignoredSuccess)
+                .fillMode);
+  EXPECT_EQ(defaultFillMode,
+            applyTimingInputString(scope.isolate(), "fill",
+                                   "backwardsandforwards", ignoredSuccess)
+                .fillMode);
+  EXPECT_EQ(defaultFillMode,
+            applyTimingInputNumber(scope.isolate(), "fill", 2, ignoredSuccess)
+                .fillMode);
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputIterationDuration)
-{
-    EXPECT_EQ(1.1, applyTimingInputNumber("duration", 1100).iterationDuration);
-    EXPECT_TRUE(std::isnan(applyTimingInputNumber("duration", -1000).iterationDuration));
-    EXPECT_TRUE(std::isnan(applyTimingInputString("duration", "1000").iterationDuration));
+TEST(AnimationTimingInputTest, TimingInputIterationStart) {
+  V8TestingScope scope;
+  bool success;
+  EXPECT_EQ(1.1, applyTimingInputNumber(scope.isolate(), "iterationStart", 1.1,
+                                        success)
+                     .iterationStart);
+  EXPECT_TRUE(success);
 
-    Timing timing = applyTimingInputNumber("duration", std::numeric_limits<double>::infinity());
-    EXPECT_TRUE(std::isinf(timing.iterationDuration));
-    EXPECT_GT(timing.iterationDuration, 0);
+  applyTimingInputNumber(scope.isolate(), "iterationStart", -1, success);
+  EXPECT_FALSE(success);
 
-    EXPECT_TRUE(std::isnan(applyTimingInputString("duration", "-Infinity").iterationDuration));
-    EXPECT_TRUE(std::isnan(applyTimingInputString("duration", "NaN").iterationDuration));
-    EXPECT_TRUE(std::isnan(applyTimingInputString("duration", "auto").iterationDuration));
-    EXPECT_TRUE(std::isnan(applyTimingInputString("duration", "rubbish").iterationDuration));
+  applyTimingInputString(scope.isolate(), "iterationStart", "Infinity",
+                         success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "iterationStart", "-Infinity",
+                         success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "iterationStart", "NaN", success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "iterationStart", "rubbish", success);
+  EXPECT_FALSE(success);
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputPlaybackRate)
-{
-    EXPECT_EQ(2.1, applyTimingInputNumber("playbackRate", 2.1).playbackRate);
-    EXPECT_EQ(-1, applyTimingInputNumber("playbackRate", -1).playbackRate);
-    EXPECT_EQ(1, applyTimingInputString("playbackRate", "Infinity").playbackRate);
-    EXPECT_EQ(1, applyTimingInputString("playbackRate", "-Infinity").playbackRate);
-    EXPECT_EQ(1, applyTimingInputString("playbackRate", "NaN").playbackRate);
-    EXPECT_EQ(1, applyTimingInputString("playbackRate", "rubbish").playbackRate);
+TEST(AnimationTimingInputTest, TimingInputIterationCount) {
+  V8TestingScope scope;
+  bool success;
+  EXPECT_EQ(2.1,
+            applyTimingInputNumber(scope.isolate(), "iterations", 2.1, success)
+                .iterationCount);
+  EXPECT_TRUE(success);
+
+  Timing timing = applyTimingInputString(scope.isolate(), "iterations",
+                                         "Infinity", success);
+  EXPECT_TRUE(success);
+  EXPECT_TRUE(std::isinf(timing.iterationCount));
+  EXPECT_GT(timing.iterationCount, 0);
+
+  applyTimingInputNumber(scope.isolate(), "iterations", -1, success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "iterations", "-Infinity", success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "iterations", "NaN", success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "iterations", "rubbish", success);
+  EXPECT_FALSE(success);
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputDirection)
-{
-    Timing::PlaybackDirection defaultPlaybackDirection = Timing::PlaybackDirectionNormal;
+TEST(AnimationTimingInputTest, TimingInputIterationDuration) {
+  V8TestingScope scope;
+  bool success;
+  EXPECT_EQ(1.1,
+            applyTimingInputNumber(scope.isolate(), "duration", 1100, success)
+                .iterationDuration);
+  EXPECT_TRUE(success);
 
-    EXPECT_EQ(Timing::PlaybackDirectionNormal, applyTimingInputString("direction", "normal").direction);
-    EXPECT_EQ(Timing::PlaybackDirectionReverse, applyTimingInputString("direction", "reverse").direction);
-    EXPECT_EQ(Timing::PlaybackDirectionAlternate, applyTimingInputString("direction", "alternate").direction);
-    EXPECT_EQ(Timing::PlaybackDirectionAlternateReverse, applyTimingInputString("direction", "alternate-reverse").direction);
-    EXPECT_EQ(defaultPlaybackDirection, applyTimingInputString("direction", "rubbish").direction);
-    EXPECT_EQ(defaultPlaybackDirection, applyTimingInputNumber("direction", 2).direction);
+  Timing timing =
+      applyTimingInputNumber(scope.isolate(), "duration",
+                             std::numeric_limits<double>::infinity(), success);
+  EXPECT_TRUE(success);
+  EXPECT_TRUE(std::isinf(timing.iterationDuration));
+  EXPECT_GT(timing.iterationDuration, 0);
+
+  EXPECT_TRUE(std::isnan(
+      applyTimingInputString(scope.isolate(), "duration", "auto", success)
+          .iterationDuration));
+  EXPECT_TRUE(success);
+
+  applyTimingInputString(scope.isolate(), "duration", "1000", success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputNumber(scope.isolate(), "duration", -1000, success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "duration", "-Infinity", success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "duration", "NaN", success);
+  EXPECT_FALSE(success);
+
+  applyTimingInputString(scope.isolate(), "duration", "rubbish", success);
+  EXPECT_FALSE(success);
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputTimingFunction)
-{
-    const RefPtr<TimingFunction> defaultTimingFunction = LinearTimingFunction::shared();
+TEST(AnimationTimingInputTest, TimingInputDirection) {
+  V8TestingScope scope;
+  Timing::PlaybackDirection defaultPlaybackDirection =
+      Timing::PlaybackDirection::NORMAL;
+  bool ignoredSuccess;
 
-    EXPECT_EQ(*CubicBezierTimingFunction::preset(CubicBezierTimingFunction::Ease), *applyTimingInputString("easing", "ease").timingFunction);
-    EXPECT_EQ(*CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseIn), *applyTimingInputString("easing", "ease-in").timingFunction);
-    EXPECT_EQ(*CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseOut), *applyTimingInputString("easing", "ease-out").timingFunction);
-    EXPECT_EQ(*CubicBezierTimingFunction::preset(CubicBezierTimingFunction::EaseInOut), *applyTimingInputString("easing", "ease-in-out").timingFunction);
-    EXPECT_EQ(*LinearTimingFunction::shared(), *applyTimingInputString("easing", "linear").timingFunction);
-    EXPECT_EQ(*StepsTimingFunction::preset(StepsTimingFunction::Start), *applyTimingInputString("easing", "step-start").timingFunction);
-    EXPECT_EQ(*StepsTimingFunction::preset(StepsTimingFunction::Middle), *applyTimingInputString("easing", "step-middle").timingFunction);
-    EXPECT_EQ(*StepsTimingFunction::preset(StepsTimingFunction::End), *applyTimingInputString("easing", "step-end").timingFunction);
-    EXPECT_EQ(*CubicBezierTimingFunction::create(1, 1, 0.3, 0.3), *applyTimingInputString("easing", "cubic-bezier(1, 1, 0.3, 0.3)").timingFunction);
-    EXPECT_EQ(*StepsTimingFunction::create(3, StepsTimingFunction::Start), *applyTimingInputString("easing", "steps(3, start)").timingFunction);
-    EXPECT_EQ(*StepsTimingFunction::create(5, StepsTimingFunction::Middle), *applyTimingInputString("easing", "steps(5, middle)").timingFunction);
-    EXPECT_EQ(*StepsTimingFunction::create(5, StepsTimingFunction::End), *applyTimingInputString("easing", "steps(5, end)").timingFunction);
-    EXPECT_EQ(*defaultTimingFunction, *applyTimingInputString("easing", "steps(5.6, end)").timingFunction);
-    EXPECT_EQ(*defaultTimingFunction, *applyTimingInputString("easing", "cubic-bezier(2, 2, 0.3, 0.3)").timingFunction);
-    EXPECT_EQ(*defaultTimingFunction, *applyTimingInputString("easing", "rubbish").timingFunction);
-    EXPECT_EQ(*defaultTimingFunction, *applyTimingInputNumber("easing", 2).timingFunction);
-    EXPECT_EQ(*defaultTimingFunction, *applyTimingInputString("easing", "initial").timingFunction);
+  EXPECT_EQ(Timing::PlaybackDirection::NORMAL,
+            applyTimingInputString(scope.isolate(), "direction", "normal",
+                                   ignoredSuccess)
+                .direction);
+  EXPECT_EQ(Timing::PlaybackDirection::REVERSE,
+            applyTimingInputString(scope.isolate(), "direction", "reverse",
+                                   ignoredSuccess)
+                .direction);
+  EXPECT_EQ(Timing::PlaybackDirection::ALTERNATE_NORMAL,
+            applyTimingInputString(scope.isolate(), "direction", "alternate",
+                                   ignoredSuccess)
+                .direction);
+  EXPECT_EQ(Timing::PlaybackDirection::ALTERNATE_REVERSE,
+            applyTimingInputString(scope.isolate(), "direction",
+                                   "alternate-reverse", ignoredSuccess)
+                .direction);
+  EXPECT_EQ(defaultPlaybackDirection,
+            applyTimingInputString(scope.isolate(), "direction", "rubbish",
+                                   ignoredSuccess)
+                .direction);
+  EXPECT_EQ(
+      defaultPlaybackDirection,
+      applyTimingInputNumber(scope.isolate(), "direction", 2, ignoredSuccess)
+          .direction);
 }
 
-TEST_F(AnimationTimingInputTest, TimingInputEmpty)
-{
-    Timing controlTiming;
-    Timing updatedTiming = TimingInput::convert(KeyframeEffectOptions());
+TEST(AnimationTimingInputTest, TimingInputTimingFunction) {
+  V8TestingScope scope;
+  const RefPtr<TimingFunction> defaultTimingFunction =
+      LinearTimingFunction::shared();
+  bool success;
 
-    EXPECT_EQ(controlTiming.startDelay, updatedTiming.startDelay);
-    EXPECT_EQ(controlTiming.fillMode, updatedTiming.fillMode);
-    EXPECT_EQ(controlTiming.iterationStart, updatedTiming.iterationStart);
-    EXPECT_EQ(controlTiming.iterationCount, updatedTiming.iterationCount);
-    EXPECT_TRUE(std::isnan(updatedTiming.iterationDuration));
-    EXPECT_EQ(controlTiming.playbackRate, updatedTiming.playbackRate);
-    EXPECT_EQ(controlTiming.direction, updatedTiming.direction);
-    EXPECT_EQ(*controlTiming.timingFunction, *updatedTiming.timingFunction);
+  EXPECT_EQ(*CubicBezierTimingFunction::preset(
+                CubicBezierTimingFunction::EaseType::EASE),
+            *applyTimingInputString(scope.isolate(), "easing", "ease", success)
+                 .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *CubicBezierTimingFunction::preset(
+          CubicBezierTimingFunction::EaseType::EASE_IN),
+      *applyTimingInputString(scope.isolate(), "easing", "ease-in", success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *CubicBezierTimingFunction::preset(
+          CubicBezierTimingFunction::EaseType::EASE_OUT),
+      *applyTimingInputString(scope.isolate(), "easing", "ease-out", success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *CubicBezierTimingFunction::preset(
+          CubicBezierTimingFunction::EaseType::EASE_IN_OUT),
+      *applyTimingInputString(scope.isolate(), "easing", "ease-in-out", success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *LinearTimingFunction::shared(),
+      *applyTimingInputString(scope.isolate(), "easing", "linear", success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *StepsTimingFunction::preset(StepsTimingFunction::StepPosition::START),
+      *applyTimingInputString(scope.isolate(), "easing", "step-start", success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *StepsTimingFunction::preset(StepsTimingFunction::StepPosition::MIDDLE),
+      *applyTimingInputString(scope.isolate(), "easing", "step-middle", success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *StepsTimingFunction::preset(StepsTimingFunction::StepPosition::END),
+      *applyTimingInputString(scope.isolate(), "easing", "step-end", success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(*CubicBezierTimingFunction::create(1, 1, 0.3, 0.3),
+            *applyTimingInputString(scope.isolate(), "easing",
+                                    "cubic-bezier(1, 1, 0.3, 0.3)", success)
+                 .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *StepsTimingFunction::create(3, StepsTimingFunction::StepPosition::START),
+      *applyTimingInputString(scope.isolate(), "easing", "steps(3, start)",
+                              success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(*StepsTimingFunction::create(
+                5, StepsTimingFunction::StepPosition::MIDDLE),
+            *applyTimingInputString(scope.isolate(), "easing",
+                                    "steps(5, middle)", success)
+                 .timingFunction);
+  EXPECT_TRUE(success);
+  EXPECT_EQ(
+      *StepsTimingFunction::create(5, StepsTimingFunction::StepPosition::END),
+      *applyTimingInputString(scope.isolate(), "easing", "steps(5, end)",
+                              success)
+           .timingFunction);
+  EXPECT_TRUE(success);
+
+  applyTimingInputString(scope.isolate(), "easing", "", success);
+  EXPECT_FALSE(success);
+  applyTimingInputString(scope.isolate(), "easing", "steps(5.6, end)", success);
+  EXPECT_FALSE(success);
+  applyTimingInputString(scope.isolate(), "easing",
+                         "cubic-bezier(2, 2, 0.3, 0.3)", success);
+  EXPECT_FALSE(success);
+  applyTimingInputString(scope.isolate(), "easing", "rubbish", success);
+  EXPECT_FALSE(success);
+  applyTimingInputNumber(scope.isolate(), "easing", 2, success);
+  EXPECT_FALSE(success);
+  applyTimingInputString(scope.isolate(), "easing", "initial", success);
+  EXPECT_FALSE(success);
 }
 
-} // namespace blink
+TEST(AnimationTimingInputTest, TimingInputEmpty) {
+  DummyExceptionStateForTesting exceptionState;
+  Timing controlTiming;
+  Timing updatedTiming;
+  bool success = TimingInput::convert(KeyframeEffectOptions(), updatedTiming,
+                                      nullptr, exceptionState);
+  EXPECT_TRUE(success);
+  EXPECT_FALSE(exceptionState.hadException());
+
+  EXPECT_EQ(controlTiming.startDelay, updatedTiming.startDelay);
+  EXPECT_EQ(controlTiming.fillMode, updatedTiming.fillMode);
+  EXPECT_EQ(controlTiming.iterationStart, updatedTiming.iterationStart);
+  EXPECT_EQ(controlTiming.iterationCount, updatedTiming.iterationCount);
+  EXPECT_TRUE(std::isnan(updatedTiming.iterationDuration));
+  EXPECT_EQ(controlTiming.playbackRate, updatedTiming.playbackRate);
+  EXPECT_EQ(controlTiming.direction, updatedTiming.direction);
+  EXPECT_EQ(*controlTiming.timingFunction, *updatedTiming.timingFunction);
+}
+
+}  // namespace blink

@@ -4,14 +4,19 @@
 
 #include "remoting/protocol/pairing_registry.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/guid.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "crypto/random.h"
 
@@ -38,6 +43,8 @@ PairingRegistry::Pairing::Pairing(const base::Time& created_time,
       client_id_(client_id),
       shared_secret_(shared_secret) {
 }
+
+PairingRegistry::Pairing::Pairing(const Pairing& other) = default;
 
 PairingRegistry::Pairing::~Pairing() {
 }
@@ -72,14 +79,15 @@ PairingRegistry::Pairing PairingRegistry::Pairing::CreateFromValue(
   return Pairing();
 }
 
-scoped_ptr<base::DictionaryValue> PairingRegistry::Pairing::ToValue() const {
-  scoped_ptr<base::DictionaryValue> pairing(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue> PairingRegistry::Pairing::ToValue()
+    const {
+  std::unique_ptr<base::DictionaryValue> pairing(new base::DictionaryValue());
   pairing->SetDouble(kCreatedTimeKey, created_time().ToJsTime());
   pairing->SetString(kClientNameKey, client_name());
   pairing->SetString(kClientIdKey, client_id());
   if (!shared_secret().empty())
     pairing->SetString(kSharedSecretKey, shared_secret());
-  return pairing.Pass();
+  return pairing;
 }
 
 bool PairingRegistry::Pairing::operator==(const Pairing& other) const {
@@ -97,10 +105,10 @@ bool PairingRegistry::Pairing::is_valid() const {
 
 PairingRegistry::PairingRegistry(
     scoped_refptr<base::SingleThreadTaskRunner> delegate_task_runner,
-    scoped_ptr<Delegate> delegate)
+    std::unique_ptr<Delegate> delegate)
     : caller_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       delegate_task_runner_(delegate_task_runner),
-      delegate_(delegate.Pass()) {
+      delegate_(std::move(delegate)) {
   DCHECK(delegate_);
 }
 
@@ -187,7 +195,7 @@ void PairingRegistry::DoLoadAll(
     const protocol::PairingRegistry::GetAllPairingsCallback& callback) {
   DCHECK(delegate_task_runner_->BelongsToCurrentThread());
 
-  scoped_ptr<base::ListValue> pairings = delegate_->LoadAll();
+  std::unique_ptr<base::ListValue> pairings = delegate_->LoadAll();
   PostTask(caller_task_runner_, FROM_HERE, base::Bind(callback,
                                                       base::Passed(&pairings)));
 }
@@ -246,17 +254,18 @@ void PairingRegistry::InvokeGetPairingCallbackAndScheduleNext(
 
 void PairingRegistry::InvokeGetAllPairingsCallbackAndScheduleNext(
     const GetAllPairingsCallback& callback,
-    scoped_ptr<base::ListValue> pairings) {
-  callback.Run(pairings.Pass());
+    std::unique_ptr<base::ListValue> pairings) {
+  callback.Run(std::move(pairings));
   pending_requests_.pop();
   ServiceNextRequest();
 }
 
-void PairingRegistry::SanitizePairings(const GetAllPairingsCallback& callback,
-                                       scoped_ptr<base::ListValue> pairings) {
+void PairingRegistry::SanitizePairings(
+    const GetAllPairingsCallback& callback,
+    std::unique_ptr<base::ListValue> pairings) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  scoped_ptr<base::ListValue> sanitized_pairings(new base::ListValue());
+  std::unique_ptr<base::ListValue> sanitized_pairings(new base::ListValue());
   for (size_t i = 0; i < pairings->GetSize(); ++i) {
     base::DictionaryValue* pairing_json;
     if (!pairings->GetDictionary(i, &pairing_json)) {
@@ -277,10 +286,10 @@ void PairingRegistry::SanitizePairings(const GetAllPairingsCallback& callback,
         pairing.client_name(),
         pairing.client_id(),
         "");
-    sanitized_pairings->Append(sanitized_pairing.ToValue().release());
+    sanitized_pairings->Append(sanitized_pairing.ToValue());
   }
 
-  callback.Run(sanitized_pairings.Pass());
+  callback.Run(std::move(sanitized_pairings));
 }
 
 void PairingRegistry::ServiceOrQueueRequest(const base::Closure& request) {

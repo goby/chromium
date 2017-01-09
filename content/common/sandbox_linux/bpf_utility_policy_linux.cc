@@ -6,7 +6,6 @@
 
 #include <errno.h>
 
-#include "base/basictypes.h"
 #include "build/build_config.h"
 #include "content/common/sandbox_linux/sandbox_linux.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
@@ -33,7 +32,8 @@ ResultExpr UtilityProcessPolicy::EvaluateSyscall(int sysno) const {
     // Allow the system calls below.
     case __NR_fdatasync:
     case __NR_fsync:
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__mips__) || \
+    defined(__aarch64__)
     case __NR_getrlimit:
 #endif
 #if defined(__i386__) || defined(__arm__)

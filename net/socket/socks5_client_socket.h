@@ -5,25 +5,26 @@
 #ifndef NET_SOCKET_SOCKS5_CLIENT_SOCKET_H_
 #define NET_SOCKET_SOCKS5_CLIENT_SOCKET_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_errors.h"
+#include "net/base/net_export.h"
 #include "net/dns/host_resolver.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/stream_socket.h"
 #include "url/gurl.h"
 
 namespace net {
 
 class ClientSocketHandle;
-class BoundNetLog;
 
 // This StreamSocket is used to setup a SOCKSv5 handshake with a socks proxy.
 // Currently no SOCKSv5 authentication is supported.
@@ -35,7 +36,7 @@ class NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {
   // Although SOCKS 5 supports 3 different modes of addressing, we will
   // always pass it a hostname. This means the DNS resolving is done
   // proxy side.
-  SOCKS5ClientSocket(scoped_ptr<ClientSocketHandle> transport_socket,
+  SOCKS5ClientSocket(std::unique_ptr<ClientSocketHandle> transport_socket,
                      const HostResolver::RequestInfo& req_info);
 
   // On destruction Disconnect() is called.
@@ -48,11 +49,10 @@ class NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {
   void Disconnect() override;
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
-  const BoundNetLog& NetLog() const override;
+  const NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   bool WasNpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
@@ -69,8 +69,8 @@ class NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {
             int buf_len,
             const CompletionCallback& callback) override;
 
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
 
   int GetPeerAddress(IPEndPoint* address) const override;
   int GetLocalAddress(IPEndPoint* address) const override;
@@ -98,9 +98,9 @@ class NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {
   static const unsigned int kGreetReadHeaderSize;
   static const unsigned int kWriteHeaderSize;
   static const unsigned int kReadHeaderSize;
-  static const uint8 kSOCKS5Version;
-  static const uint8 kTunnelCommand;
-  static const uint8 kNullByte;
+  static const uint8_t kSOCKS5Version;
+  static const uint8_t kTunnelCommand;
+  static const uint8_t kNullByte;
 
   void DoCallback(int result);
   void OnIOComplete(int result);
@@ -123,7 +123,7 @@ class NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {
   CompletionCallback io_callback_;
 
   // Stores the underlying socket.
-  scoped_ptr<ClientSocketHandle> transport_;
+  std::unique_ptr<ClientSocketHandle> transport_;
 
   State next_state_;
 
@@ -153,7 +153,7 @@ class NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {
 
   HostResolver::RequestInfo host_request_info_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(SOCKS5ClientSocket);
 };

@@ -15,26 +15,26 @@ function loadStylesheet()
 function test()
 {
     InspectorTest.recordNetwork();
-    WebInspector.workspace.addEventListener(WebInspector.Workspace.Events.UISourceCodeAdded, step2);
+    Workspace.workspace.addEventListener(Workspace.Workspace.Events.UISourceCodeAdded, step2);
     InspectorTest.evaluateInPage("loadStylesheet()");
 
     var resource;
     function step2(event)
     {
         var eventUISourceCode = event.data;
-        if (eventUISourceCode.originURL().indexOf("style.css") == -1)
+        if (eventUISourceCode.url().indexOf("style.css") == -1)
             return;
         var request = InspectorTest.networkRequests().pop();
-        uiSourceCode = WebInspector.workspace.uiSourceCodeForOriginURL(request.url);
+        uiSourceCode = Workspace.workspace.uiSourceCodeForURL(request.url);
         if (!uiSourceCode)
             return;
         uiSourceCode.addRevision("");
-        uiSourceCode.history[0].requestContent(step3);
+        uiSourceCode.history[0].requestContent().then(step3);
     }
 
     function step3(content)
     {
-        InspectorTest.addResult(uiSourceCode.originURL());
+        InspectorTest.addResult(uiSourceCode.url());
         InspectorTest.addResult(content);
         InspectorTest.completeTest();
     }

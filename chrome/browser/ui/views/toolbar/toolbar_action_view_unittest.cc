@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -12,7 +13,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_web_contents_factory.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/test/views_test_base.h"
 
@@ -35,7 +36,6 @@ class TestToolbarActionViewDelegate : public ToolbarActionView::Delegate {
   views::MenuButton* GetOverflowReferenceView() override {
     return overflow_reference_view_;
   }
-  void OnMouseEnteredToolbarActionView() override {}
   void WriteDragDataForView(views::View* sender,
                             const gfx::Point& press_pt,
                             ui::OSExchangeData* data) override {}
@@ -128,12 +128,65 @@ class ToolbarActionViewUnitTest : public views::ViewsTestBase {
   DISALLOW_COPY_AND_ASSIGN(ToolbarActionViewUnitTest);
 };
 
+// A MenuButton subclass that provides access to some MenuButton internals.
+class TestToolbarActionView : public ToolbarActionView {
+ public:
+  TestToolbarActionView(ToolbarActionViewController* view_controller,
+                        Delegate* delegate)
+      : ToolbarActionView(view_controller, delegate) {}
+
+  ~TestToolbarActionView() override {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestToolbarActionView);
+};
+
+// Verifies there is no crash when a ToolbarActionView with an InkDrop is
+// destroyed while holding a |pressed_lock_|.
+TEST_F(ToolbarActionViewUnitTest,
+       NoCrashWhenDestroyingToolbarActionViewThatHasAPressedLock) {
+  TestToolbarActionViewController controller("fake controller");
+  TestToolbarActionViewDelegate action_view_delegate;
+
+  // Create a new toolbar action view.
+  std::unique_ptr<ToolbarActionView> view(
+      new ToolbarActionView(&controller, &action_view_delegate));
+  view->set_owned_by_client();
+  view->SetBoundsRect(gfx::Rect(0, 0, 200, 20));
+  widget()->SetContentsView(view.get());
+  widget()->Show();
+
+  controller.ShowPopup(true);
+
+  view.reset();
+}
+
+// Verifies the InkDropAnimation used by the ToolbarActionView doesn't fail a
+// DCHECK for an unsupported transition from ACTIVATED to ACTION_PENDING.
+TEST_F(ToolbarActionViewUnitTest,
+       NoCrashWhenPressingMouseOnToolbarActionViewThatHasAPressedLock) {
+  TestToolbarActionViewController controller("fake controller");
+  TestToolbarActionViewDelegate action_view_delegate;
+
+  // Create a new toolbar action view.
+  ToolbarActionView view(&controller, &action_view_delegate);
+  view.set_owned_by_client();
+  view.SetBoundsRect(gfx::Rect(0, 0, 200, 20));
+  widget()->SetContentsView(&view);
+  widget()->Show();
+
+  ui::test::EventGenerator generator(GetContext(), widget()->GetNativeWindow());
+
+  controller.ShowPopup(true);
+  generator.PressLeftButton();
+}
+
 // Test the basic ui of a ToolbarActionView and that it responds correctly to
 // a controller's state.
 TEST_F(ToolbarActionViewUnitTest, BasicToolbarActionViewTest) {
   TestingProfile profile;
 
-  // ViewsTestBase initializees the aura environment, so the factory shouldn't.
+  // ViewsTestBase initializes the aura environment, so the factory shouldn't.
   content::TestWebContentsFactory web_contents_factory;
 
   TestToolbarActionViewController controller("fake controller");
@@ -154,7 +207,7 @@ TEST_F(ToolbarActionViewUnitTest, BasicToolbarActionViewTest) {
   generator.MoveMouseTo(gfx::Point(300, 300));
 
   // Create a new toolbar action view.
-  ToolbarActionView view(&controller, &profile, &action_view_delegate);
+  ToolbarActionView view(&controller, &action_view_delegate);
   view.set_owned_by_client();
   view.SetBoundsRect(gfx::Rect(0, 0, 200, 20));
   widget()->SetContentsView(&view);
@@ -165,9 +218,9 @@ TEST_F(ToolbarActionViewUnitTest, BasicToolbarActionViewTest) {
   base::string16 tooltip_test;
   EXPECT_TRUE(view.GetTooltipText(gfx::Point(), &tooltip_test));
   EXPECT_EQ(tooltip, tooltip_test);
-  ui::AXViewState ax_state;
-  view.GetAccessibleState(&ax_state);
-  EXPECT_EQ(name, ax_state.name);
+  ui::AXNodeData ax_node_data;
+  view.GetAccessibleNodeData(&ax_node_data);
+  EXPECT_EQ(name, ax_node_data.GetString16Attribute(ui::AX_ATTR_NAME));
 
   // The button should start in normal state, with no actions executed.
   EXPECT_EQ(views::Button::STATE_NORMAL, view.state());
@@ -205,7 +258,7 @@ TEST_F(ToolbarActionViewUnitTest, BasicToolbarActionViewTest) {
   int old_execute_action_count = controller.execute_action_count();
   {
     OpenMenuListener menu_listener(&view);
-    view.Activate();
+    view.Activate(nullptr);
     EXPECT_TRUE(menu_listener.opened_menu());
     EXPECT_EQ(old_execute_action_count, controller.execute_action_count());
   }
@@ -217,7 +270,7 @@ TEST_F(ToolbarActionViewUnitTest, BasicToolbarActionViewTest) {
   EXPECT_FALSE(view.wants_to_run_for_testing());
 
   // Create an overflow button.
-  views::MenuButton overflow_button(nullptr, base::string16(), nullptr, false);
+  views::MenuButton overflow_button(base::string16(), nullptr, false);
   overflow_button.set_owned_by_client();
   action_view_delegate.set_overflow_reference_view(&overflow_button);
 

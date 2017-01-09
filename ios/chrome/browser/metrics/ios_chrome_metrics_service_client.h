@@ -5,11 +5,13 @@
 #ifndef IOS_CHROME_BROWSER_METRICS_IOS_CHROME_METRICS_SERVICE_CLIENT_H_
 #define IOS_CHROME_BROWSER_METRICS_IOS_CHROME_METRICS_SERVICE_CLIENT_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "components/metrics/metrics_service_client.h"
@@ -19,11 +21,6 @@
 
 class IOSChromeStabilityMetricsProvider;
 class PrefRegistrySimple;
-class PrefService;
-
-namespace base {
-class FilePath;
-}  // namespace base
 
 namespace metrics {
 class DriveMetricsProvider;
@@ -42,9 +39,8 @@ class IOSChromeMetricsServiceClient
   ~IOSChromeMetricsServiceClient() override;
 
   // Factory function.
-  static scoped_ptr<IOSChromeMetricsServiceClient> Create(
-      metrics::MetricsStateManager* state_manager,
-      PrefService* local_state);
+  static std::unique_ptr<IOSChromeMetricsServiceClient> Create(
+      metrics::MetricsStateManager* state_manager);
 
   // Registers local state prefs used by this class.
   static void RegisterPrefs(PrefRegistrySimple* registry);
@@ -52,9 +48,7 @@ class IOSChromeMetricsServiceClient
   // metrics::MetricsServiceClient:
   metrics::MetricsService* GetMetricsService() override;
   void SetMetricsClientId(const std::string& client_id) override;
-  void OnRecordingDisabled() override;
-  bool IsOffTheRecordSessionActive() override;
-  int32 GetProduct() override;
+  int32_t GetProduct() override;
   std::string GetApplicationLocale() override;
   bool GetBrand(std::string* brand_code) override;
   metrics::SystemProfileProto::Channel GetChannel() override;
@@ -63,7 +57,7 @@ class IOSChromeMetricsServiceClient
   void InitializeSystemProfileMetrics(
       const base::Closure& done_callback) override;
   void CollectFinalMetricsForLog(const base::Closure& done_callback) override;
-  scoped_ptr<metrics::MetricsLogUploader> CreateUploader(
+  std::unique_ptr<metrics::MetricsLogUploader> CreateUploader(
       const base::Callback<void(int)>& on_upload_complete) override;
   base::TimeDelta GetStandardUploadInterval() override;
   base::string16 GetRegistryBackupKey() override;
@@ -72,6 +66,8 @@ class IOSChromeMetricsServiceClient
   // web::GlobalWebStateObserver:
   void WebStateDidStartLoading(web::WebState* web_state) override;
   void WebStateDidStopLoading(web::WebState* web_state) override;
+
+  metrics::EnableMetricsDefault GetMetricsReportingDefaultState() override;
 
  private:
   explicit IOSChromeMetricsServiceClient(
@@ -118,7 +114,7 @@ class IOSChromeMetricsServiceClient
   metrics::MetricsStateManager* metrics_state_manager_;
 
   // The MetricsService that |this| is a client of.
-  scoped_ptr<metrics::MetricsService> metrics_service_;
+  std::unique_ptr<metrics::MetricsService> metrics_service_;
 
   // The IOSChromeStabilityMetricsProvider instance that was registered with
   // MetricsService. Has the same lifetime as |metrics_service_|.
@@ -142,12 +138,12 @@ class IOSChromeMetricsServiceClient
   const base::TimeTicks start_time_;
 
   // Subscription for receiving callbacks that a tab was parented.
-  scoped_ptr<base::CallbackList<void(web::WebState*)>::Subscription>
+  std::unique_ptr<base::CallbackList<void(web::WebState*)>::Subscription>
       tab_parented_subscription_;
 
   // Subscription for receiving callbacks that a URL was opened from the
   // omnibox.
-  scoped_ptr<base::CallbackList<void(OmniboxLog*)>::Subscription>
+  std::unique_ptr<base::CallbackList<void(OmniboxLog*)>::Subscription>
       omnibox_url_opened_subscription_;
 
   // Whether this client has already uploaded profiler data during this session.

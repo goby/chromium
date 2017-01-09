@@ -1639,6 +1639,8 @@ struct _xsltStylesheet {
      * Forwards-compatible processing
      */
     int forwards_compatible;
+
+    xmlHashTablePtr namedTemplates; /* hash table of named templates */
 };
 
 typedef struct _xsltTransformCache xsltTransformCache;
@@ -1781,9 +1783,9 @@ struct _xsltTransformContext {
     xmlDocPtr localRVT; /* list of local tree fragments; will be freed when
 			   the instruction which created the fragment
                            exits */
-    xmlDocPtr localRVTBase;
+    xmlDocPtr localRVTBase; /* Obsolete */
     int keyInitLevel;   /* Needed to catch recursive keys issues */
-    int funcLevel;      /* Needed to catch recursive functions issues */
+    int depth;          /* Needed to catch recursions */
     int maxTemplateDepth;
     int maxTemplateVars;
 };
@@ -1904,6 +1906,11 @@ XSLTPUBFUN int XSLTCALL
 XSLTPUBFUN int XSLTCALL
 			xsltExtensionInstructionResultFinalize(
 						 xsltTransformContextPtr ctxt);
+XSLTPUBFUN int XSLTCALL
+			xsltFlagRVTs(
+						 xsltTransformContextPtr ctxt,
+						 xmlXPathObjectPtr obj,
+						 void *val);
 XSLTPUBFUN void XSLTCALL
 			xsltFreeRVTs		(xsltTransformContextPtr ctxt);
 XSLTPUBFUN void XSLTCALL

@@ -23,13 +23,13 @@ ExtensionInjectionHost::~ExtensionInjectionHost() {
 }
 
 // static
-scoped_ptr<const InjectionHost> ExtensionInjectionHost::Create(
+std::unique_ptr<const InjectionHost> ExtensionInjectionHost::Create(
     const std::string& extension_id) {
   const Extension* extension =
       RendererExtensionRegistry::Get()->GetByID(extension_id);
   if (!extension)
-    return scoped_ptr<const ExtensionInjectionHost>();
-  return scoped_ptr<const ExtensionInjectionHost>(
+    return std::unique_ptr<const ExtensionInjectionHost>();
+  return std::unique_ptr<const ExtensionInjectionHost>(
       new ExtensionInjectionHost(extension));
 }
 
@@ -51,7 +51,7 @@ PermissionsData::AccessType ExtensionInjectionHost::CanExecuteOnFrame(
     int tab_id,
     bool is_declarative) const {
   blink::WebSecurityOrigin top_frame_security_origin =
-      render_frame->GetWebFrame()->top()->securityOrigin();
+      render_frame->GetWebFrame()->top()->getSecurityOrigin();
   // Only whitelisted extensions may run scripts on another extension's page.
   if (top_frame_security_origin.protocol().utf8() == kExtensionScheme &&
       top_frame_security_origin.host().utf8() != extension_->id() &&
@@ -67,14 +67,12 @@ PermissionsData::AccessType ExtensionInjectionHost::CanExecuteOnFrame(
         extension_,
         document_url,
         tab_id,
-        -1,  // no process id
         nullptr /* ignore error */);
   } else {
     access = extension_->permissions_data()->GetContentScriptAccess(
         extension_,
         document_url,
         tab_id,
-        -1,  // no process id
         nullptr /* ignore error */);
   }
   if (access == PermissionsData::ACCESS_WITHHELD &&

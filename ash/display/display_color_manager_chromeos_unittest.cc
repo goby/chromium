@@ -13,39 +13,90 @@
 #include "base/test/scoped_path_override.h"
 #include "base/test/sequenced_worker_pool_owner.h"
 #include "chromeos/chromeos_paths.h"
+#include "components/quirks/quirks_manager.h"
+#include "net/url_request/url_request_context_getter.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/display/chromeos/test/action_logger_util.h"
-#include "ui/display/chromeos/test/test_display_snapshot.h"
-#include "ui/display/chromeos/test/test_native_display_delegate.h"
+#include "ui/display/fake_display_snapshot.h"
+#include "ui/display/manager/chromeos/test/action_logger_util.h"
+#include "ui/display/manager/chromeos/test/test_native_display_delegate.h"
 
 namespace ash {
 
 namespace {
 
-// Monitors if any task is processed by the message loop.
-class TaskObserver : public base::MessageLoop::TaskObserver {
- public:
-  TaskObserver() { base::MessageLoop::current()->AddTaskObserver(this); }
-  ~TaskObserver() override {
-    base::MessageLoop::current()->RemoveTaskObserver(this);
-  }
+constexpr gfx::Size kDisplaySize(1024, 768);
+const char kResetGammaAction[] = "*set_color_correction(id=123)";
+const char kSetGammaAction[] =
+    "set_color_correction(id=123,gamma[0]*gamma[255]=???????????\?)";
+const char kSetFullCTMAction[] =
+    "set_color_correction(id=123,degamma[0]*gamma[0]*ctm[0]*ctm[8]*)";
 
-  // MessageLoop::TaskObserver overrides.
-  void WillProcessTask(const base::PendingTask& pending_task) override {}
-  void DidProcessTask(const base::PendingTask& pending_task) override {
-    base::MessageLoop::current()->QuitWhenIdle();
+class DisplayColorManagerForTest : public DisplayColorManager {
+ public:
+  DisplayColorManagerForTest(ui::DisplayConfigurator* configurator,
+                             base::SequencedWorkerPool* blocking_pool)
+      : DisplayColorManager(configurator, blocking_pool) {}
+
+  void SetOnFinishedForTest(base::Closure on_finished_for_test) {
+    on_finished_for_test_ = on_finished_for_test;
   }
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(TaskObserver);
+  void FinishLoadCalibrationForDisplay(int64_t display_id,
+                                       int64_t product_id,
+                                       bool has_color_correction_matrix,
+                                       ui::DisplayConnectionType type,
+                                       const base::FilePath& path,
+                                       bool file_downloaded) override {
+    DisplayColorManager::FinishLoadCalibrationForDisplay(
+        display_id, product_id, has_color_correction_matrix, type, path,
+        file_downloaded);
+    // If path is empty, there is no icc file, and the DCM's work is done.
+    if (path.empty() && !on_finished_for_test_.is_null()) {
+      on_finished_for_test_.Run();
+      on_finished_for_test_.Reset();
+    }
+  }
+
+  void UpdateCalibrationData(
+      int64_t display_id,
+      int64_t product_id,
+      std::unique_ptr<ColorCalibrationData> data) override {
+    DisplayColorManager::UpdateCalibrationData(display_id, product_id,
+                                               std::move(data));
+    if (!on_finished_for_test_.is_null()) {
+      on_finished_for_test_.Run();
+      on_finished_for_test_.Reset();
+    }
+  }
+
+  base::Closure on_finished_for_test_;
+
+  DISALLOW_COPY_AND_ASSIGN(DisplayColorManagerForTest);
 };
 
-// Run at least one task. WARNING: Will not return unless there is at least one
-// task to be processed.
-void RunBlockingPoolTask() {
-  TaskObserver task_observer;
-  base::RunLoop().Run();
-}
+// Implementation of QuirksManager::Delegate to fake chrome-restricted parts.
+class QuirksManagerDelegateTestImpl : public quirks::QuirksManager::Delegate {
+ public:
+  QuirksManagerDelegateTestImpl(base::FilePath color_path)
+      : color_path_(color_path) {}
+
+  // Unused by these tests.
+  std::string GetApiKey() const override { return std::string(); }
+
+  base::FilePath GetDisplayProfileDirectory() const override {
+    return color_path_;
+  }
+
+  bool DevicePolicyEnabled() const override { return true; }
+
+ private:
+  ~QuirksManagerDelegateTestImpl() override = default;
+
+  base::FilePath color_path_;
+
+  DISALLOW_COPY_AND_ASSIGN(QuirksManagerDelegateTestImpl);
+};
 
 }  // namespace
 
@@ -59,10 +110,10 @@ class DisplayColorManagerTest : public testing::Test {
     native_display_delegate_ =
         new ui::test::TestNativeDisplayDelegate(log_.get());
     configurator_.SetDelegateForTesting(
-        scoped_ptr<ui::NativeDisplayDelegate>(native_display_delegate_));
+        std::unique_ptr<ui::NativeDisplayDelegate>(native_display_delegate_));
 
-    color_manager_.reset(
-        new DisplayColorManager(&configurator_, pool_owner_->pool().get()));
+    color_manager_.reset(new DisplayColorManagerForTest(
+        &configurator_, pool_owner_->pool().get()));
 
     EXPECT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &color_path_));
 
@@ -70,108 +121,176 @@ class DisplayColorManagerTest : public testing::Test {
                       .Append(FILE_PATH_LITERAL("display"))
                       .Append(FILE_PATH_LITERAL("test_data"));
     path_override_.reset(new base::ScopedPathOverride(
-        chromeos::DIR_DEVICE_COLOR_CALIBRATION_PROFILES, color_path_));
+        chromeos::DIR_DEVICE_DISPLAY_PROFILES, color_path_));
+
+    quirks::QuirksManager::Initialize(
+        std::unique_ptr<quirks::QuirksManager::Delegate>(
+            new QuirksManagerDelegateTestImpl(color_path_)),
+        pool_owner_->pool().get(), nullptr, nullptr);
   }
 
-  void TearDown() override { pool_owner_->pool()->Shutdown(); }
+  void TearDown() override {
+    quirks::QuirksManager::Shutdown();
+    pool_owner_->pool()->Shutdown();
+  }
+
+  void WaitOnColorCalibration() {
+    base::RunLoop run_loop;
+    color_manager_->SetOnFinishedForTest(run_loop.QuitClosure());
+    run_loop.Run();
+  }
 
   DisplayColorManagerTest() : test_api_(&configurator_) {}
   ~DisplayColorManagerTest() override {}
 
  protected:
-  scoped_ptr<base::ScopedPathOverride> path_override_;
+  std::unique_ptr<base::ScopedPathOverride> path_override_;
   base::FilePath color_path_;
-  scoped_ptr<ui::test::ActionLogger> log_;
+  std::unique_ptr<ui::test::ActionLogger> log_;
   ui::DisplayConfigurator configurator_;
   ui::DisplayConfigurator::TestApi test_api_;
   ui::test::TestNativeDisplayDelegate* native_display_delegate_;  // not owned
-  scoped_ptr<DisplayColorManager> color_manager_;
+  std::unique_ptr<DisplayColorManagerForTest> color_manager_;
 
   base::MessageLoopForUI ui_message_loop_;
-  scoped_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DisplayColorManagerTest);
 };
 
 TEST_F(DisplayColorManagerTest, VCGTOnly) {
-  std::vector<const ui::DisplayMode*> modes;
-  ui::DisplayMode mode(gfx::Size(1024, 768), false, 60.0f);
-  modes.push_back(&mode);
-  scoped_ptr<ui::TestDisplaySnapshot> snapshot =
-      make_scoped_ptr(new ui::TestDisplaySnapshot(
-          123, gfx::Point(0, 0),                /* origin */
-          gfx::Size(0, 0),                      /* physical_size */
-          ui::DISPLAY_CONNECTION_TYPE_INTERNAL, /* type */
-          false,      /* is_aspect_preserving_scaling */
-          0x06af5c10, /* product_id */
-          modes,      /* modes */
-          modes[0] /* current_mode */,
-          modes[0] /* native_mode */));
-  std::vector<ui::DisplaySnapshot*> outputs;
-  outputs.push_back(snapshot.get());
+  std::unique_ptr<ui::DisplaySnapshot> snapshot =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(123)
+          .SetNativeMode(kDisplaySize)
+          .SetCurrentMode(kDisplaySize)
+          .SetType(ui::DISPLAY_CONNECTION_TYPE_INTERNAL)
+          .SetHasColorCorrectionMatrix(false)
+          .SetProductId(0x06af5c10)
+          .Build();
+  std::vector<ui::DisplaySnapshot*> outputs({snapshot.get()});
   native_display_delegate_->set_outputs(outputs);
 
   configurator_.OnConfigurationChanged();
   EXPECT_TRUE(test_api_.TriggerConfigureTimeout());
+  EXPECT_TRUE(
+      base::MatchPattern(log_->GetActionsAndClear(), kResetGammaAction));
+
+  WaitOnColorCalibration();
+  EXPECT_TRUE(base::MatchPattern(log_->GetActionsAndClear(), kSetGammaAction));
+}
+
+TEST_F(DisplayColorManagerTest, VCGTOnlyWithPlatformCTM) {
+  std::unique_ptr<ui::DisplaySnapshot> snapshot =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(123)
+          .SetNativeMode(kDisplaySize)
+          .SetCurrentMode(kDisplaySize)
+          .SetType(ui::DISPLAY_CONNECTION_TYPE_INTERNAL)
+          .SetHasColorCorrectionMatrix(true)
+          .SetProductId(0x06af5c10)
+          .Build();
+  std::vector<ui::DisplaySnapshot*> outputs({snapshot.get()});
+  native_display_delegate_->set_outputs(outputs);
+
   log_->GetActionsAndClear();
+  configurator_.OnConfigurationChanged();
+  EXPECT_TRUE(test_api_.TriggerConfigureTimeout());
+  EXPECT_TRUE(
+      base::MatchPattern(log_->GetActionsAndClear(), kResetGammaAction));
 
-  RunBlockingPoolTask();
+  WaitOnColorCalibration();
+  EXPECT_TRUE(base::MatchPattern(log_->GetActionsAndClear(), kSetGammaAction));
+}
 
-  EXPECT_TRUE(base::MatchPattern(
-      log_->GetActionsAndClear(),
-      "set_gamma_ramp(id=123,rgb[0]*rgb[255]=???????????\?)"));
+TEST_F(DisplayColorManagerTest, FullWithPlatformCTM) {
+  std::unique_ptr<ui::DisplaySnapshot> snapshot =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(123)
+          .SetNativeMode(kDisplaySize)
+          .SetCurrentMode(kDisplaySize)
+          .SetType(ui::DISPLAY_CONNECTION_TYPE_INTERNAL)
+          .SetHasColorCorrectionMatrix(true)
+          .SetProductId(0x4c834a42)
+          .Build();
+  std::vector<ui::DisplaySnapshot*> outputs({snapshot.get()});
+  native_display_delegate_->set_outputs(outputs);
+
+  configurator_.OnConfigurationChanged();
+  EXPECT_TRUE(test_api_.TriggerConfigureTimeout());
+  EXPECT_TRUE(
+      base::MatchPattern(log_->GetActionsAndClear(), kResetGammaAction));
+
+  WaitOnColorCalibration();
+  EXPECT_TRUE(
+      base::MatchPattern(log_->GetActionsAndClear(), kSetFullCTMAction));
+}
+
+TEST_F(DisplayColorManagerTest, FullWithoutPlatformCTM) {
+  std::unique_ptr<ui::DisplaySnapshot> snapshot =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(123)
+          .SetNativeMode(kDisplaySize)
+          .SetCurrentMode(kDisplaySize)
+          .SetType(ui::DISPLAY_CONNECTION_TYPE_INTERNAL)
+          .SetHasColorCorrectionMatrix(false)
+          .SetProductId(0x4c834a42)
+          .Build();
+  std::vector<ui::DisplaySnapshot*> outputs({snapshot.get()});
+  native_display_delegate_->set_outputs(outputs);
+
+  configurator_.OnConfigurationChanged();
+  EXPECT_TRUE(test_api_.TriggerConfigureTimeout());
+  EXPECT_TRUE(
+      base::MatchPattern(log_->GetActionsAndClear(), kResetGammaAction));
+
+  WaitOnColorCalibration();
+  EXPECT_STREQ("", log_->GetActionsAndClear().c_str());
 }
 
 TEST_F(DisplayColorManagerTest, NoMatchProductID) {
-  std::vector<const ui::DisplayMode*> modes;
-  ui::DisplayMode mode(gfx::Size(1024, 768), false, 60.0f);
-  modes.push_back(&mode);
-  scoped_ptr<ui::TestDisplaySnapshot> snapshot =
-      make_scoped_ptr(new ui::TestDisplaySnapshot(
-          123, gfx::Point(0, 0),                /* origin */
-          gfx::Size(0, 0),                      /* physical_size */
-          ui::DISPLAY_CONNECTION_TYPE_INTERNAL, /* type */
-          false, /* is_aspect_preserving_scaling */
-          0,     /* product_id */
-          modes, /* modes */
-          modes[0] /* current_mode */,
-          modes[0] /* native_mode */));
-  std::vector<ui::DisplaySnapshot*> outputs;
-  outputs.push_back(snapshot.get());
+  std::unique_ptr<ui::DisplaySnapshot> snapshot =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(123)
+          .SetNativeMode(kDisplaySize)
+          .SetCurrentMode(kDisplaySize)
+          .SetType(ui::DISPLAY_CONNECTION_TYPE_INTERNAL)
+          .SetHasColorCorrectionMatrix(false)
+          .SetProductId(0)
+          .Build();
+  std::vector<ui::DisplaySnapshot*> outputs({snapshot.get()});
   native_display_delegate_->set_outputs(outputs);
 
   configurator_.OnConfigurationChanged();
   EXPECT_TRUE(test_api_.TriggerConfigureTimeout());
+  EXPECT_TRUE(
+      base::MatchPattern(log_->GetActionsAndClear(), kResetGammaAction));
 
-  log_->GetActionsAndClear();
-  RunBlockingPoolTask();
+  // NOTE: If product_id == 0, there is no thread switching in Quirks or Display
+  // code, so we shouldn't call WaitOnColorCalibration().
   EXPECT_STREQ("", log_->GetActionsAndClear().c_str());
 }
 
 TEST_F(DisplayColorManagerTest, NoVCGT) {
-  std::vector<const ui::DisplayMode*> modes;
-  ui::DisplayMode mode(gfx::Size(1024, 768), false, 60.0f);
-  modes.push_back(&mode);
-  scoped_ptr<ui::TestDisplaySnapshot> snapshot =
-      make_scoped_ptr(new ui::TestDisplaySnapshot(
-          123, gfx::Point(0, 0),                /* origin */
-          gfx::Size(0, 0),                      /* physical_size */
-          ui::DISPLAY_CONNECTION_TYPE_INTERNAL, /* type */
-          false,      /* is_aspect_preserving_scaling */
-          0x0dae3211, /* product_id */
-          modes,      /* modes */
-          modes[0] /* current_mode */,
-          modes[0] /* native_mode */));
-  std::vector<ui::DisplaySnapshot*> outputs;
-  outputs.push_back(snapshot.get());
+  std::unique_ptr<ui::DisplaySnapshot> snapshot =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(123)
+          .SetNativeMode(kDisplaySize)
+          .SetCurrentMode(kDisplaySize)
+          .SetType(ui::DISPLAY_CONNECTION_TYPE_INTERNAL)
+          .SetHasColorCorrectionMatrix(false)
+          .SetProductId(0x0dae3211)
+          .Build();
+  std::vector<ui::DisplaySnapshot*> outputs({snapshot.get()});
   native_display_delegate_->set_outputs(outputs);
 
   configurator_.OnConfigurationChanged();
   EXPECT_TRUE(test_api_.TriggerConfigureTimeout());
+  EXPECT_TRUE(
+      base::MatchPattern(log_->GetActionsAndClear(), kResetGammaAction));
 
-  log_->GetActionsAndClear();
-  RunBlockingPoolTask();
+  WaitOnColorCalibration();
   EXPECT_STREQ("", log_->GetActionsAndClear().c_str());
 }
 

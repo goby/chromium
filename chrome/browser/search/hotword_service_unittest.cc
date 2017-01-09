@@ -2,22 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/search/hotword_service.h"
+
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
-#include "base/prefs/pref_service.h"
+#include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/test_extension_service.h"
 #include "chrome/browser/search/hotword_audio_history_handler.h"
-#include "chrome/browser/search/hotword_service.h"
 #include "chrome/browser/search/hotword_service_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/history/core/browser/web_history_service.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
@@ -60,7 +66,7 @@ class MockAudioHistoryHandler : public HotwordAudioHistoryHandler {
 
  private:
   int get_audio_history_calls_;
-  scoped_ptr<history::WebHistoryService> web_history_;
+  std::unique_ptr<history::WebHistoryService> web_history_;
 };
 
 class MockHotwordService : public HotwordService {
@@ -76,19 +82,20 @@ class MockHotwordService : public HotwordService {
   }
 
   void InstallHotwordExtensionFromWebstore(int num_tries) override {
-    scoped_ptr<base::DictionaryValue> manifest =
+    std::unique_ptr<base::DictionaryValue> manifest =
         extensions::DictionaryBuilder()
-        .Set("name", "Hotword Test Extension")
-        .Set("version", "1.0")
-        .Set("manifest_version", 2)
-        .Build();
+            .Set("name", "Hotword Test Extension")
+            .Set("version", "1.0")
+            .Set("manifest_version", 2)
+            .Build();
     scoped_refptr<extensions::Extension> extension =
-        extensions::ExtensionBuilder().SetManifest(manifest.Pass())
-        .AddFlags(extensions::Extension::FROM_WEBSTORE
-                  | extensions::Extension::WAS_INSTALLED_BY_DEFAULT)
-        .SetID(extension_id_)
-        .SetLocation(extensions::Manifest::EXTERNAL_COMPONENT)
-        .Build();
+        extensions::ExtensionBuilder()
+            .SetManifest(std::move(manifest))
+            .AddFlags(extensions::Extension::FROM_WEBSTORE |
+                      extensions::Extension::WAS_INSTALLED_BY_DEFAULT)
+            .SetID(extension_id_)
+            .SetLocation(extensions::Manifest::EXTERNAL_COMPONENT)
+            .Build();
     ASSERT_TRUE(extension.get());
     service_->OnExtensionInstalled(extension.get(), syncer::StringOrdinal());
   }
@@ -109,10 +116,9 @@ class MockHotwordService : public HotwordService {
   std::string extension_id_;
 };
 
-scoped_ptr<KeyedService> BuildMockHotwordService(
+std::unique_ptr<KeyedService> BuildMockHotwordService(
     content::BrowserContext* context) {
-  return make_scoped_ptr(
-      new MockHotwordService(static_cast<Profile*>(context)));
+  return base::MakeUnique<MockHotwordService>(static_cast<Profile*>(context));
 }
 
 }  // namespace
@@ -161,7 +167,7 @@ INSTANTIATE_TEST_CASE_P(HotwordServiceTests,
 // Disabled due to http://crbug.com/503963.
 TEST_P(HotwordServiceTest, DISABLED_IsHotwordAllowedLocale) {
   TestingProfile::Builder profile_builder;
-  scoped_ptr<TestingProfile> profile = profile_builder.Build();
+  std::unique_ptr<TestingProfile> profile = profile_builder.Build();
 
 #if defined(ENABLE_HOTWORDING)
   bool hotwording_enabled = true;
@@ -250,7 +256,7 @@ TEST_P(HotwordServiceTest, PreviousLanguageSetOnInstall) {
   SetApplicationLocale(profile(), "test_locale");
 
   hotword_service->InstallHotwordExtensionFromWebstore(1);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ("test_locale",
             profile()->GetPrefs()->GetString(prefs::kHotwordPreviousLanguage));
@@ -278,7 +284,7 @@ TEST_P(HotwordServiceTest, UninstallReinstallTriggeredCorrectly) {
 
   // Do an initial installation.
   hotword_service->InstallHotwordExtensionFromWebstore(1);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ("en",
             profile()->GetPrefs()->GetString(prefs::kHotwordPreviousLanguage));
 
@@ -373,7 +379,7 @@ TEST_P(HotwordServiceTest, DisableAlwaysOnOnLanguageChange) {
 
   // Do an initial installation.
   hotword_service->InstallHotwordExtensionFromWebstore(1);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The previous locale should be set but should match the current
   // locale. No reason to uninstall.

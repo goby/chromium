@@ -2,13 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/command_line.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/resource_throttle.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -16,11 +25,13 @@
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_resource_dispatcher_host_delegate.h"
+#include "content/test/content_browser_test_utils_internal.h"
 #include "net/base/escape.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_status.h"
+#include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -90,6 +101,8 @@ class TrackingResourceDispatcherHostDelegate
       // If the request is deleted without being cancelled, its status will
       // indicate it succeeded, so have to check if the request is still pending
       // as well.
+      // TODO(maksims): Stop using request_->status() here, because it is
+      // going to be deprecated.
       tracker_->OnTrackedRequestDestroyed(
           !request_->is_pending() && request_->status().is_success());
     }
@@ -129,7 +142,7 @@ class TrackingResourceDispatcherHostDelegate
   base::Closure run_loop_quit_closure_;
 
   // This lives on the UI thread.
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   // Set on the IO thread while |run_loop_| is non-nullptr, read on the UI
   // thread after deleting run_loop_.
@@ -144,29 +157,23 @@ class NoTransferRequestDelegate : public WebContentsDelegate {
  public:
   NoTransferRequestDelegate() {}
 
-  WebContents* OpenURLFromTab(WebContents* source,
-                              const OpenURLParams& params) override {
-    bool is_transfer =
-        (params.transferred_global_request_id != GlobalRequestID());
-    if (is_transfer)
-      return nullptr;
-    NavigationController::LoadURLParams load_url_params(params.url);
-    load_url_params.referrer = params.referrer;
-    load_url_params.frame_tree_node_id = params.frame_tree_node_id;
-    load_url_params.transition_type = params.transition;
-    load_url_params.extra_headers = params.extra_headers;
-    load_url_params.should_replace_current_entry =
-        params.should_replace_current_entry;
-    load_url_params.is_renderer_initiated = true;
-    source->GetController().LoadURLWithParams(load_url_params);
-    return source;
+  bool ShouldTransferNavigation(bool is_main_frame_navigation) override {
+    // Intentionally cancel the transfer.
+    return false;
   }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NoTransferRequestDelegate);
 };
 
-class CrossSiteTransferTest : public ContentBrowserTest {
+enum class TestParameter {
+  LOADING_WITHOUT_MOJO,
+  LOADING_WITH_MOJO,
+};
+
+class CrossSiteTransferTest
+    : public ContentBrowserTest,
+      public ::testing::WithParamInterface<TestParameter> {
  public:
   CrossSiteTransferTest() : old_delegate_(nullptr) {}
 
@@ -177,8 +184,8 @@ class CrossSiteTransferTest : public ContentBrowserTest {
         base::Bind(&CrossSiteTransferTest::InjectResourceDispatcherHostDelegate,
                    base::Unretained(this)));
     host_resolver()->AddRule("*", "127.0.0.1");
-    ASSERT_TRUE(embedded_test_server()->Start());
     content::SetupCrossSiteRedirector(embedded_test_server());
+    ASSERT_TRUE(embedded_test_server()->Start());
   }
 
   void TearDownOnMainThread() override {
@@ -200,7 +207,7 @@ class CrossSiteTransferTest : public ContentBrowserTest {
     else
       script = base::StringPrintf("location.href = '%s'", url.spec().c_str());
     TestNavigationObserver load_observer(shell()->web_contents(), 1);
-    bool result = ExecuteScript(window->web_contents(), script);
+    bool result = ExecuteScript(window, script);
     EXPECT_TRUE(result);
     if (should_wait_for_navigation)
       load_observer.Wait();
@@ -208,6 +215,10 @@ class CrossSiteTransferTest : public ContentBrowserTest {
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     IsolateAllSitesForTesting(command_line);
+    if (GetParam() == TestParameter::LOADING_WITH_MOJO) {
+      command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
+                                      "LoadingWithMojo");
+    }
   }
 
   void InjectResourceDispatcherHostDelegate() {
@@ -245,7 +256,7 @@ class CrossSiteTransferTest : public ContentBrowserTest {
 #endif
 // Tests that the |should_replace_current_entry| flag persists correctly across
 // request transfers that began with a cross-process navigation.
-IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest,
+IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest,
                        MAYBE_ReplaceEntryCrossProcessThenTransfer) {
   const NavigationController& controller =
       shell()->web_contents()->GetController();
@@ -304,8 +315,8 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest,
 // request transfers that began with a content-initiated in-process
 // navigation. This test is the same as the test above, except transfering from
 // in-process.
-IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest,
-                       ReplaceEntryInProcessThenTranfers) {
+IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest,
+                       ReplaceEntryInProcessThenTransfer) {
   const NavigationController& controller =
       shell()->web_contents()->GetController();
 
@@ -345,7 +356,7 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest,
 
 // Tests that the |should_replace_current_entry| flag persists correctly across
 // request transfers that cross processes twice from renderer policy.
-IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest,
+IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest,
                        MAYBE_ReplaceEntryCrossProcessTwice) {
   const NavigationController& controller =
       shell()->web_contents()->GetController();
@@ -379,8 +390,8 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest,
       "A.com", "/cross-site/" + url3b.host() + url3b.PathForRequest());
   NavigateToURLContentInitiated(shell(), url3a, false, true);
 
-  // There should be two history entries. url2b should have replaced url1. url2b
-  // should not have replaced url3b.
+  // There should be two history entries. url2b should have replaced url1. url3b
+  // should not have replaced url2b.
   EXPECT_TRUE(controller.GetPendingEntry() == nullptr);
   EXPECT_EQ(2, controller.GetEntryCount());
   EXPECT_EQ(1, controller.GetCurrentEntryIndex());
@@ -390,7 +401,7 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest,
 
 // Tests that the request is destroyed when a cross process navigation is
 // cancelled.
-IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest, NoLeakOnCrossSiteCancel) {
+IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, NoLeakOnCrossSiteCancel) {
   const NavigationController& controller =
       shell()->web_contents()->GetController();
 
@@ -429,5 +440,78 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest, NoLeakOnCrossSiteCancel) {
 
   shell()->web_contents()->SetDelegate(old_delegate);
 }
+
+// Test that verifies that a cross-process transfer retains ability to read
+// files encapsulated by HTTP POST body that is forwarded to the new renderer.
+// Invalid handling of this scenario has been suspected as the cause of at least
+// some of the renderer kills tracked in https://crbug.com/613260.
+IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, PostWithFileData) {
+  // Navigate to the page with form that posts via 307 redirection to
+  // |redirect_target_url| (cross-site from |form_url|).  Using 307 (rather than
+  // 302) redirection is important to preserve the HTTP method and POST body.
+  GURL form_url(embedded_test_server()->GetURL(
+      "a.com", "/form_that_posts_cross_site.html"));
+  GURL redirect_target_url(embedded_test_server()->GetURL("x.com", "/echoall"));
+  EXPECT_TRUE(NavigateToURL(shell(), form_url));
+
+  // Prepare a file to upload.
+  base::ThreadRestrictions::ScopedAllowIO allow_io_for_temp_dir;
+  base::ScopedTempDir temp_dir;
+  base::FilePath file_path;
+  std::string file_content("test-file-content");
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir.GetPath(), &file_path));
+  ASSERT_LT(
+      0, base::WriteFile(file_path, file_content.data(), file_content.size()));
+
+  // Fill out the form to refer to the test file.
+  std::unique_ptr<FileChooserDelegate> delegate(
+      new FileChooserDelegate(file_path));
+  shell()->web_contents()->SetDelegate(delegate.get());
+  EXPECT_TRUE(ExecuteScript(shell()->web_contents(),
+                            "document.getElementById('file').click();"));
+  EXPECT_TRUE(delegate->file_chosen());
+
+  // Remember the old process id for a sanity check below.
+  int old_process_id = shell()->web_contents()->GetRenderProcessHost()->GetID();
+
+  // Submit the form.
+  TestNavigationObserver form_post_observer(shell()->web_contents(), 1);
+  EXPECT_TRUE(
+      ExecuteScript(shell(), "document.getElementById('file-form').submit();"));
+  form_post_observer.Wait();
+
+  // Verify that we arrived at the expected, redirected location.
+  EXPECT_EQ(redirect_target_url,
+            shell()->web_contents()->GetLastCommittedURL());
+
+  // Verify that the test really verifies access of a *new* renderer process.
+  int new_process_id = shell()->web_contents()->GetRenderProcessHost()->GetID();
+  ASSERT_NE(new_process_id, old_process_id);
+
+  // MAIN VERIFICATION: Check if the new renderer process is able to read the
+  // file.
+  EXPECT_TRUE(ChildProcessSecurityPolicyImpl::GetInstance()->CanReadFile(
+      new_process_id, file_path));
+
+  // Verify that POST body got preserved by 307 redirect.  This expectation
+  // comes from: https://tools.ietf.org/html/rfc7231#section-6.4.7
+  std::string actual_page_body;
+  EXPECT_TRUE(ExecuteScriptAndExtractString(
+      shell()->web_contents(),
+      "window.domAutomationController.send("
+      "document.getElementsByTagName('pre')[0].innerText);",
+      &actual_page_body));
+  EXPECT_THAT(actual_page_body, ::testing::HasSubstr(file_content));
+  EXPECT_THAT(actual_page_body,
+              ::testing::HasSubstr(file_path.BaseName().AsUTF8Unsafe()));
+  EXPECT_THAT(actual_page_body,
+              ::testing::HasSubstr("form-data; name=\"file\""));
+}
+
+INSTANTIATE_TEST_CASE_P(CrossSiteTransferTest,
+                        CrossSiteTransferTest,
+                        ::testing::Values(TestParameter::LOADING_WITHOUT_MOJO,
+                                          TestParameter::LOADING_WITH_MOJO));
 
 }  // namespace content

@@ -5,6 +5,7 @@
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 
 #include "content/browser/gpu/gpu_data_manager_impl_private.h"
+#include "gpu/ipc/common/memory_stats.h"
 
 namespace content {
 
@@ -81,11 +82,6 @@ void GpuDataManagerImpl::RegisterSwiftShaderPath(
   private_->RegisterSwiftShaderPath(path);
 }
 
-bool GpuDataManagerImpl::ShouldUseWarp() const {
-  base::AutoLock auto_lock(lock_);
-  return private_->ShouldUseWarp();
-}
-
 void GpuDataManagerImpl::AddObserver(
     GpuDataManagerObserver* observer) {
   base::AutoLock auto_lock(lock_);
@@ -101,11 +97,6 @@ void GpuDataManagerImpl::RemoveObserver(
 void GpuDataManagerImpl::UnblockDomainFrom3DAPIs(const GURL& url) {
   base::AutoLock auto_lock(lock_);
   private_->UnblockDomainFrom3DAPIs(url);
-}
-
-void GpuDataManagerImpl::DisableGpuWatchdog() {
-  base::AutoLock auto_lock(lock_);
-  private_->DisableGpuWatchdog();
 }
 
 void GpuDataManagerImpl::SetGLStrings(const std::string& gl_vendor,
@@ -138,6 +129,11 @@ void GpuDataManagerImpl::GetDisabledExtensions(
   private_->GetDisabledExtensions(disabled_extensions);
 }
 
+void GpuDataManagerImpl::SetGpuInfo(const gpu::GPUInfo& gpu_info) {
+  base::AutoLock auto_lock(lock_);
+  private_->SetGpuInfo(gpu_info);
+}
+
 void GpuDataManagerImpl::Initialize() {
   base::AutoLock auto_lock(lock_);
   private_->Initialize();
@@ -149,7 +145,7 @@ void GpuDataManagerImpl::UpdateGpuInfo(const gpu::GPUInfo& gpu_info) {
 }
 
 void GpuDataManagerImpl::UpdateVideoMemoryUsageStats(
-    const GPUVideoMemoryUsageStats& video_memory_usage_stats) {
+    const gpu::VideoMemoryUsageStats& video_memory_usage_stats) {
   base::AutoLock auto_lock(lock_);
   private_->UpdateVideoMemoryUsageStats(video_memory_usage_stats);
 }
@@ -161,15 +157,10 @@ void GpuDataManagerImpl::AppendRendererCommandLine(
 }
 
 void GpuDataManagerImpl::AppendGpuCommandLine(
-    base::CommandLine* command_line) const {
+    base::CommandLine* command_line,
+    gpu::GpuPreferences* gpu_preferences) const {
   base::AutoLock auto_lock(lock_);
-  private_->AppendGpuCommandLine(command_line);
-}
-
-void GpuDataManagerImpl::AppendPluginCommandLine(
-    base::CommandLine* command_line) const {
-  base::AutoLock auto_lock(lock_);
-  private_->AppendPluginCommandLine(command_line);
+  private_->AppendGpuCommandLine(command_line, gpu_preferences);
 }
 
 void GpuDataManagerImpl::UpdateRendererWebPrefs(
@@ -246,17 +237,8 @@ size_t GpuDataManagerImpl::GetBlacklistedFeatureCount() const {
   return private_->GetBlacklistedFeatureCount();
 }
 
-void GpuDataManagerImpl::SetDisplayCount(unsigned int display_count) {
-  base::AutoLock auto_lock(lock_);
-  private_->SetDisplayCount(display_count);
-}
-
-unsigned int GpuDataManagerImpl::GetDisplayCount() const {
-  base::AutoLock auto_lock(lock_);
-  return private_->GetDisplayCount();
-}
-
-bool GpuDataManagerImpl::UpdateActiveGpu(uint32 vendor_id, uint32 device_id) {
+bool GpuDataManagerImpl::UpdateActiveGpu(uint32_t vendor_id,
+                                         uint32_t device_id) {
   base::AutoLock auto_lock(lock_);
   return private_->UpdateActiveGpu(vendor_id, device_id);
 }

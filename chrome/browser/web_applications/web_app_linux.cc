@@ -4,8 +4,11 @@
 
 #include "chrome/browser/web_applications/web_app.h"
 
+#include <utility>
+
 #include "base/environment.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "chrome/browser/shell_integration_linux.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -20,7 +23,7 @@ namespace internals {
 
 bool CreatePlatformShortcuts(
     const base::FilePath& web_app_path,
-    scoped_ptr<ShortcutInfo> shortcut_info,
+    std::unique_ptr<ShortcutInfo> shortcut_info,
     const extensions::FileHandlersInfo& file_handlers_info,
     const ShortcutLocations& creation_locations,
     ShortcutCreationReason /*creation_reason*/) {
@@ -34,7 +37,7 @@ bool CreatePlatformShortcuts(
 }
 
 void DeletePlatformShortcuts(const base::FilePath& web_app_path,
-                             scoped_ptr<ShortcutInfo> shortcut_info) {
+                             std::unique_ptr<ShortcutInfo> shortcut_info) {
 #if !defined(OS_CHROMEOS)
   shell_integration_linux::DeleteDesktopShortcuts(shortcut_info->profile_path,
                                                   shortcut_info->extension_id);
@@ -44,11 +47,11 @@ void DeletePlatformShortcuts(const base::FilePath& web_app_path,
 void UpdatePlatformShortcuts(
     const base::FilePath& web_app_path,
     const base::string16& /*old_app_title*/,
-    scoped_ptr<ShortcutInfo> shortcut_info,
+    std::unique_ptr<ShortcutInfo> shortcut_info,
     const extensions::FileHandlersInfo& file_handlers_info) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
 
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
 
   // Find out whether shortcuts are already installed.
   ShortcutLocations creation_locations =
@@ -61,7 +64,7 @@ void UpdatePlatformShortcuts(
   if (creation_locations.applications_menu_location == APP_MENU_LOCATION_NONE)
     creation_locations.applications_menu_location = APP_MENU_LOCATION_HIDDEN;
 
-  CreatePlatformShortcuts(web_app_path, shortcut_info.Pass(),
+  CreatePlatformShortcuts(web_app_path, std::move(shortcut_info),
                           file_handlers_info, creation_locations,
                           SHORTCUT_CREATION_AUTOMATED);
 }

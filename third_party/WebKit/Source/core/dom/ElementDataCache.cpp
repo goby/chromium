@@ -24,52 +24,48 @@
  *
  */
 
-#include "config.h"
 #include "core/dom/ElementDataCache.h"
 
 #include "core/dom/ElementData.h"
 
 namespace blink {
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(ElementDataCache)
-
-inline unsigned attributeHash(const Vector<Attribute>& attributes)
-{
-    return StringHasher::hashMemory(attributes.data(), attributes.size() * sizeof(Attribute));
+inline unsigned attributeHash(const Vector<Attribute>& attributes) {
+  return StringHasher::hashMemory(attributes.data(),
+                                  attributes.size() * sizeof(Attribute));
 }
 
-inline bool hasSameAttributes(const Vector<Attribute>& attributes, ShareableElementData& elementData)
-{
-    if (attributes.size() != elementData.attributes().size())
-        return false;
-    return !memcmp(attributes.data(), elementData.m_attributeArray, attributes.size() * sizeof(Attribute));
+inline bool hasSameAttributes(const Vector<Attribute>& attributes,
+                              ShareableElementData& elementData) {
+  if (attributes.size() != elementData.attributes().size())
+    return false;
+  return !memcmp(attributes.data(), elementData.m_attributeArray,
+                 attributes.size() * sizeof(Attribute));
 }
 
-PassRefPtrWillBeRawPtr<ShareableElementData> ElementDataCache::cachedShareableElementDataWithAttributes(const Vector<Attribute>& attributes)
-{
-    ASSERT(!attributes.isEmpty());
+ShareableElementData*
+ElementDataCache::cachedShareableElementDataWithAttributes(
+    const Vector<Attribute>& attributes) {
+  DCHECK(!attributes.isEmpty());
 
-    ShareableElementDataCache::ValueType* it = m_shareableElementDataCache.add(attributeHash(attributes), nullptr).storedValue;
+  ShareableElementDataCache::ValueType* it =
+      m_shareableElementDataCache.add(attributeHash(attributes), nullptr)
+          .storedValue;
 
-    // FIXME: This prevents sharing when there's a hash collision.
-    if (it->value && !hasSameAttributes(attributes, *it->value))
-        return ShareableElementData::createWithAttributes(attributes);
+  // FIXME: This prevents sharing when there's a hash collision.
+  if (it->value && !hasSameAttributes(attributes, *it->value))
+    return ShareableElementData::createWithAttributes(attributes);
 
-    if (!it->value)
-        it->value = ShareableElementData::createWithAttributes(attributes);
+  if (!it->value)
+    it->value = ShareableElementData::createWithAttributes(attributes);
 
-    return it->value.get();
+  return it->value.get();
 }
 
-ElementDataCache::ElementDataCache()
-{
+ElementDataCache::ElementDataCache() {}
+
+DEFINE_TRACE(ElementDataCache) {
+  visitor->trace(m_shareableElementDataCache);
 }
 
-DEFINE_TRACE(ElementDataCache)
-{
-#if ENABLE(OILPAN)
-    visitor->trace(m_shareableElementDataCache);
-#endif
-}
-
-}
+}  // namespace blink

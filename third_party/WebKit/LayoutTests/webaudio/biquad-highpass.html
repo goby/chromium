@@ -2,9 +2,11 @@
 
 <html>
 <head>
-<script src="resources/compatibility.js"></script>
-<script src="resources/audio-testing.js"></script>
 <script src="../resources/js-test.js"></script>
+<script src="resources/compatibility.js"></script>
+<script src="resources/audit-util.js"></script>
+<script src="resources/audio-testing.js"></script>
+<script src="resources/biquad-filters.js"></script>
 <script src="resources/biquad-testing.js"></script>
 </head>
 
@@ -33,7 +35,10 @@ function runTest() {
                             {cutoff : 0.25, q : 1, gain : 1 },
                            ];
 
-    createTestAndRun(context, "highpass", filterParameters);
+    createTestAndRun(context, "highpass", {
+      threshold: 1.5487e-8,
+      filterParameters: filterParameters
+    });
 }
 
 runTest();

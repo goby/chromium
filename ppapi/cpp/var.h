@@ -5,6 +5,8 @@
 #ifndef PPAPI_CPP_VAR_H_
 #define PPAPI_CPP_VAR_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
@@ -164,7 +166,7 @@ class Var {
 
   /// This function determines if this <code>Var</code> is a number.
   ///
-  /// @return true if this <code>Var</code> is an int32 or double number,
+  /// @return true if this <code>Var</code> is an int32_t or double number,
   /// otherwise false.
   bool is_number() const {
     return var_.type == PP_VARTYPE_INT32 ||
@@ -313,7 +315,7 @@ class Var {
 
  private:
   // Prevent an arbitrary pointer argument from being implicitly converted to
-  // a bool at Var construction. If somebody makes such a mistake, (s)he will
+  // a bool at Var construction. If somebody makes such a mistake, they will
   // get a compilation error.
   Var(void* non_scriptable_object_pointer);
 };

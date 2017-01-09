@@ -3,9 +3,10 @@
 // found in the LICENSE file.
 
 #include <string>
+#include <utility>
 
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
 #include "chrome/browser/browser_process.h"
@@ -16,6 +17,7 @@
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
+#include "chrome/browser/extensions/chrome_extension_test_notification_observer.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -29,7 +31,8 @@
 #include "chromeos/login/auth/user_context.h"
 #include "components/app_modal/javascript_app_modal_dialog.h"
 #include "components/app_modal/native_app_modal_dialog.h"
-#include "components/browser_sync/common/browser_sync_switches.h"
+#include "components/browser_sync/browser_sync_switches.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
@@ -43,7 +46,6 @@
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/cookies/canonical_cookie.h"
-#include "net/cookies/cookie_monster.h"
 #include "net/cookies/cookie_store.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -263,7 +265,6 @@ class OAuth2Test : public OobeBaseTest {
     }
 
     UserContext user_context(account_id);
-    user_context.SetGaiaID(account_id.GetGaiaId());
     user_context.SetKey(Key(password));
     controller->Login(user_context, SigninSpecifics());
     content::WindowedNotificationObserver(
@@ -402,10 +403,8 @@ class CookieReader : public base::RefCountedThreadSafe<CookieReader> {
   }
 
   void ReadCookiesOnIOThread() {
-    context_->GetURLRequestContext()->cookie_store()->GetCookieMonster()->
-        GetAllCookiesAsync(base::Bind(
-            &CookieReader::OnGetAllCookiesOnUIThread,
-            this));
+    context_->GetURLRequestContext()->cookie_store()->GetAllCookiesAsync(
+        base::Bind(&CookieReader::OnGetAllCookiesOnUIThread, this));
   }
 
   void OnGetAllCookiesOnUIThread(const net::CookieList& cookies) {
@@ -520,18 +519,19 @@ const char kRandomPagePath[] = "/non_google_page";
 // merge session tests.
 class FakeGoogle {
  public:
-  FakeGoogle() : start_event_(true, false) {
-  }
+  FakeGoogle()
+      : start_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                     base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   ~FakeGoogle() {}
 
-  scoped_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+  std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
     // The scheme and host of the URL is actually not important but required to
     // get a valid GURL in order to parse |request.relative_url|.
     GURL request_url = GURL("http://localhost").Resolve(request.relative_url);
     LOG(WARNING) << "Requesting page " << request.relative_url;
     std::string request_path = request_url.path();
-    scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse());
+    std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse());
     if (request_path == kHelloPagePath) {  // Serving "google" page.
       start_event_.Signal();
       content::BrowserThread::PostTask(
@@ -547,10 +547,10 @@ class FakeGoogle {
       http_response->set_content_type("text/html");
       http_response->set_content(kRandomPageContent);
     } else {
-      return scoped_ptr<HttpResponse>();      // Request not understood.
+      return std::unique_ptr<HttpResponse>();  // Request not understood.
     }
 
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   // True if we have already served the test page.
@@ -585,9 +585,10 @@ class FakeGoogle {
 class DelayedFakeGaia : public FakeGaia {
  public:
   DelayedFakeGaia()
-     : blocking_event_(true, false),
-       start_event_(true, false) {
-  }
+      : blocking_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                        base::WaitableEvent::InitialState::NOT_SIGNALED),
+        start_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                     base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   void UnblockMergeSession() {
     blocking_event_.Signal();
@@ -708,8 +709,7 @@ void SetUp() override {
 };
 
 Browser* FindOrCreateVisibleBrowser(Profile* profile) {
-  chrome::ScopedTabbedBrowserDisplayer displayer(
-      profile, chrome::GetActiveDesktop());
+  chrome::ScopedTabbedBrowserDisplayer displayer(profile);
   Browser* browser = displayer.browser();
   if (browser->tab_strip_model()->count() == 0)
     chrome::AddTabAt(browser, GURL(), -1, true);
@@ -723,9 +723,8 @@ IN_PROC_BROWSER_TEST_F(MergeSessionTest, PageThrottle) {
   Browser* browser =
       FindOrCreateVisibleBrowser(profile());
   ui_test_utils::NavigateToURLWithDisposition(
-      browser,
-      fake_google_page_url_,
-      CURRENT_TAB, ui_test_utils::BROWSER_TEST_NONE);
+      browser, fake_google_page_url_, WindowOpenDisposition::CURRENT_TAB,
+      ui_test_utils::BROWSER_TEST_NONE);
 
   // Wait until we get send merge session request.
   WaitForMergeSessionToStart();
@@ -767,13 +766,14 @@ IN_PROC_BROWSER_TEST_F(MergeSessionTest, XHRThrottle) {
 
   // Reset ExtensionBrowserTest::observer_ to the right browser object.
   Browser* browser = FindOrCreateVisibleBrowser(profile());
-  observer_.reset(new ExtensionTestNotificationObserver(browser));
+  observer_.reset(
+      new extensions::ChromeExtensionTestNotificationObserver(browser));
 
   // Run background page tests. The tests will just wait for XHR request
   // to complete.
   extensions::ResultCatcher catcher;
 
-  scoped_ptr<ExtensionTestMessageListener> non_google_xhr_listener(
+  std::unique_ptr<ExtensionTestMessageListener> non_google_xhr_listener(
       new ExtensionTestMessageListener("non-google-xhr-received", false));
 
   // Load extension with a background page. The background page will

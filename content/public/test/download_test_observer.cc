@@ -138,7 +138,7 @@ void DownloadTestObserver::OnDownloadDestroyed(DownloadItem* download) {
 void DownloadTestObserver::OnDownloadUpdated(DownloadItem* download) {
   // Real UI code gets the user's response after returning from the observer.
   if (download->IsDangerous() &&
-      !ContainsKey(dangerous_downloads_seen_, download->GetId())) {
+      !base::ContainsKey(dangerous_downloads_seen_, download->GetId())) {
     dangerous_downloads_seen_.insert(download->GetId());
 
     // Calling ValidateDangerousDownload() at this point will
@@ -219,7 +219,7 @@ void DownloadTestObserver::SignalIfFinished() {
     base::MessageLoopForUI::current()->QuitWhenIdle();
 }
 
-void DownloadTestObserver::AcceptDangerousDownload(uint32 download_id) {
+void DownloadTestObserver::AcceptDangerousDownload(uint32_t download_id) {
   // Download manager was shutdown before the UI thread could accept the
   // download.
   if (!download_manager_)
@@ -229,7 +229,7 @@ void DownloadTestObserver::AcceptDangerousDownload(uint32 download_id) {
     download->ValidateDangerousDownload();
 }
 
-void DownloadTestObserver::DenyDangerousDownload(uint32 download_id) {
+void DownloadTestObserver::DenyDangerousDownload(uint32_t download_id) {
   // Download manager was shutdown before the UI thread could deny the
   // download.
   if (!download_manager_)

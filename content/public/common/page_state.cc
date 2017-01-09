@@ -4,7 +4,10 @@
 
 #include "content/public/common/page_state.h"
 
+#include <stddef.h>
+
 #include "base/files/file_path.h"
+#include "base/strings/nullable_string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/common/page_state_serialization.h"
 
@@ -29,9 +32,7 @@ void ToFilePathVector(const std::vector<base::NullableString16>& input,
 
 PageState ToPageState(const ExplodedPageState& state) {
   std::string encoded_data;
-  if (!EncodePageState(state, &encoded_data))
-    return PageState();
-
+  EncodePageState(state, &encoded_data);
   return PageState::CreateFromEncodedData(encoded_data);
 }
 
@@ -82,26 +83,41 @@ PageState PageState::CreateForTesting(
   state.top.url_string = ToNullableString16(url.possibly_invalid_spec());
 
   if (optional_body_data || optional_body_file_path) {
-    state.top.http_body.is_null = false;
     if (optional_body_data) {
-      ExplodedHttpBodyElement element;
-      element.type = blink::WebHTTPBody::Element::TypeData;
-      element.data = optional_body_data;
-      state.top.http_body.elements.push_back(element);
+      std::string body_data(optional_body_data);
+      state.top.http_body.request_body = new ResourceRequestBodyImpl();
+      state.top.http_body.request_body->AppendBytes(body_data.data(),
+                                                    body_data.size());
     }
     if (optional_body_file_path) {
-      ExplodedHttpBodyElement element;
-      element.type = blink::WebHTTPBody::Element::TypeFile;
-      element.file_path =
-          ToNullableString16(optional_body_file_path->AsUTF8Unsafe());
-      state.top.http_body.elements.push_back(element);
-      state.referenced_files.push_back(element.file_path);
+      state.top.http_body.request_body = new ResourceRequestBodyImpl();
+      state.top.http_body.request_body->AppendFileRange(
+          *optional_body_file_path,
+          0, std::numeric_limits<uint64_t>::max(),
+          base::Time());
+      state.referenced_files.push_back(base::NullableString16(
+          optional_body_file_path->AsUTF16Unsafe(), false));
     }
     state.top.http_body.contains_passwords =
         body_contains_password_data;
   }
 
   return ToPageState(state);
+}
+
+// static
+PageState PageState::CreateForTestingWithSequenceNumbers(
+    const GURL& url,
+    int64_t item_sequence_number,
+    int64_t document_sequence_number) {
+  ExplodedPageState page_state;
+  page_state.top.url_string = ToNullableString16(url.spec());
+  page_state.top.item_sequence_number = item_sequence_number;
+  page_state.top.document_sequence_number = document_sequence_number;
+
+  std::string encoded_page_state;
+  EncodePageState(page_state, &encoded_page_state);
+  return CreateFromEncodedData(encoded_page_state);
 }
 
 PageState::PageState() {

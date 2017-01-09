@@ -7,6 +7,7 @@
 import atexit
 import httplib
 import os
+import platform
 import signal
 import stat
 import subprocess
@@ -14,6 +15,8 @@ import sys
 import tempfile
 import urlparse
 import zipfile
+
+import chrome_paths
 
 
 def GetPlatformName():
@@ -37,6 +40,29 @@ def IsLinux():
 
 def IsMac():
   return sys.platform.startswith('darwin')
+
+
+def Is64Bit():
+  # This function checks whether the target (not host) word size is 64-bits.
+  # Since 64-bit hosts can cross-compile 32-bit binaries, check the GN args to
+  # see what CPU we're targetting.
+  try:
+    args_gn = os.path.join(chrome_paths.GetBuildDir(['args.gn']), 'args.gn')
+    with open(args_gn) as build_args:
+      for build_arg in build_args:
+        decommented = build_arg.split('#')[0]
+        key_and_value = decommented.split('=')
+        if len(key_and_value) != 2:
+          continue
+        key = key_and_value[0].strip()
+        value = key_and_value[1].strip()
+        if key == 'target_cpu':
+          return value.endswith('64')
+  except:
+    pass
+  # If we don't find anything, or if there is no GN args file, default to the
+  # host architecture.
+  return platform.architecture()[0] == '64bit'
 
 
 def GetAbsolutePathOfUserPath(user_path):
@@ -87,7 +113,7 @@ def MakeTempDir(parent_dir=None):
   Returns:
     The absolute path to the temporary directory.
   """
-  path = tempfile.mkdtemp(dir=parent_dir)
+  path = tempfile.mkdtemp(prefix='chromedriver_', dir=parent_dir)
   atexit.register(MaybeDelete, path)
   return path
 

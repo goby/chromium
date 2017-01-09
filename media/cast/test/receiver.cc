@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <climits>
 #include <cstdarg>
 #include <cstdio>
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -15,18 +20,19 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
 #include "base/time/default_tick_clock.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
-#include "media/audio/audio_parameters.h"
 #include "media/audio/fake_audio_log_factory.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "media/base/video_frame.h"
 #include "media/cast/cast_config.h"
@@ -40,7 +46,7 @@
 #include "media/cast/test/utility/in_process_receiver.h"
 #include "media/cast/test/utility/input_builder.h"
 #include "media/cast/test/utility/standalone_cast_environment.h"
-#include "net/base/net_util.h"
+#include "net/base/ip_address.h"
 
 #if defined(USE_X11)
 #include "media/cast/test/linux_output_window.h"
@@ -55,24 +61,22 @@ namespace cast {
 #define DEFAULT_SEND_IP "0.0.0.0"
 #define DEFAULT_AUDIO_FEEDBACK_SSRC "2"
 #define DEFAULT_AUDIO_INCOMING_SSRC "1"
-#define DEFAULT_AUDIO_PAYLOAD_TYPE "127"
 #define DEFAULT_VIDEO_FEEDBACK_SSRC "12"
 #define DEFAULT_VIDEO_INCOMING_SSRC "11"
-#define DEFAULT_VIDEO_PAYLOAD_TYPE "96"
 
 #if defined(USE_X11)
 const char* kVideoWindowWidth = "1280";
 const char* kVideoWindowHeight = "720";
 #endif  // defined(USE_X11)
 
-void GetPorts(uint16* tx_port, uint16* rx_port) {
+void GetPorts(uint16_t* tx_port, uint16_t* rx_port) {
   test::InputBuilder tx_input(
       "Enter send port.", DEFAULT_SEND_PORT, 1, 65535);
-  *tx_port = static_cast<uint16>(tx_input.GetIntInput());
+  *tx_port = static_cast<uint16_t>(tx_input.GetIntInput());
 
   test::InputBuilder rx_input(
       "Enter receive port.", DEFAULT_RECEIVE_PORT, 1, 65535);
-  *rx_port = static_cast<uint16>(rx_input.GetIntInput());
+  *rx_port = static_cast<uint16_t>(rx_input.GetIntInput());
 }
 
 std::string GetIpAddress(const std::string& display_text) {
@@ -120,11 +124,13 @@ void GetWindowSize(int* width, int* height) {
 #endif  // defined(USE_X11)
 
 void GetAudioPayloadtype(FrameReceiverConfig* audio_config) {
-  test::InputBuilder input("Choose audio receiver payload type.",
-                           DEFAULT_AUDIO_PAYLOAD_TYPE,
-                           kDefaultRtpVideoPayloadType  /* low_range */,
-                           kDefaultRtpAudioPayloadType  /* high_range */);
-  audio_config->rtp_payload_type = input.GetIntInput();
+  test::InputBuilder input(
+      "Choose audio receiver payload type.",
+      std::to_string(static_cast<int>(RtpPayloadType::AUDIO_OPUS)),
+      static_cast<int>(RtpPayloadType::AUDIO_OPUS) /* low_range */,
+      static_cast<int>(RtpPayloadType::AUDIO_LAST) /* high_range */);
+  audio_config->rtp_payload_type =
+      static_cast<RtpPayloadType>(input.GetIntInput());
 }
 
 FrameReceiverConfig GetAudioReceiverConfig() {
@@ -136,11 +142,13 @@ FrameReceiverConfig GetAudioReceiverConfig() {
 }
 
 void GetVideoPayloadtype(FrameReceiverConfig* video_config) {
-  test::InputBuilder input("Choose video receiver payload type.",
-                           DEFAULT_VIDEO_PAYLOAD_TYPE,
-                           kDefaultRtpVideoPayloadType  /* low_range */,
-                           kDefaultRtpAudioPayloadType  /* high_range */);
-  video_config->rtp_payload_type = input.GetIntInput();
+  test::InputBuilder input(
+      "Choose video receiver payload type.",
+      std::to_string(static_cast<int>(RtpPayloadType::VIDEO_VP8)),
+      static_cast<int>(RtpPayloadType::VIDEO_VP8) /* low_range */,
+      static_cast<int>(RtpPayloadType::LAST) /* high_range */);
+  video_config->rtp_payload_type =
+      static_cast<RtpPayloadType>(input.GetIntInput());
 }
 
 FrameReceiverConfig GetVideoReceiverConfig() {
@@ -216,7 +224,8 @@ class NaivePlayer : public InProcessReceiver,
 
   void Stop() final {
     // First, stop audio output to the Chromium audio stack.
-    base::WaitableEvent done(false, false);
+    base::WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                             base::WaitableEvent::InitialState::NOT_SIGNALED);
     DCHECK(!AudioManager::Get()->GetTaskRunner()->BelongsToCurrentThread());
     AudioManager::Get()->GetTaskRunner()->PostTask(
         FROM_HERE,
@@ -230,7 +239,7 @@ class NaivePlayer : public InProcessReceiver,
 
     // Finally, clear out any frames remaining in the queues.
     while (!audio_playout_queue_.empty()) {
-      const scoped_ptr<AudioBus> to_be_deleted(
+      const std::unique_ptr<AudioBus> to_be_deleted(
           audio_playout_queue_.front().second);
       audio_playout_queue_.pop_front();
     }
@@ -273,23 +282,23 @@ class NaivePlayer : public InProcessReceiver,
         << "Video: Discontinuity in received frames.";
     video_playout_queue_.push_back(std::make_pair(playout_time, video_frame));
     ScheduleVideoPlayout();
-    uint16 frame_no;
+    uint16_t frame_no;
     if (media::cast::test::DecodeBarcode(video_frame, &frame_no)) {
       video_play_times_.insert(
-          std::pair<uint16, base::TimeTicks>(frame_no, playout_time));
+          std::pair<uint16_t, base::TimeTicks>(frame_no, playout_time));
     } else {
       VLOG(2) << "Barcode decode failed!";
     }
   }
 
-  void OnAudioFrame(scoped_ptr<AudioBus> audio_frame,
+  void OnAudioFrame(std::unique_ptr<AudioBus> audio_frame,
                     const base::TimeTicks& playout_time,
                     bool is_continuous) final {
     DCHECK(cast_env()->CurrentlyOn(CastEnvironment::MAIN));
     LOG_IF(WARNING, !is_continuous)
         << "Audio: Discontinuity in received frames.";
     base::AutoLock auto_lock(audio_lock_);
-    uint16 frame_no;
+    uint16_t frame_no;
     if (media::cast::DecodeTimestamp(audio_frame->channel(0),
                                      audio_frame->frames(),
                                      &frame_no)) {
@@ -299,7 +308,7 @@ class NaivePlayer : public InProcessReceiver,
       // that we already missed the first one.
       if (is_continuous && frame_no == last_audio_frame_no_ + 1) {
         audio_play_times_.insert(
-            std::pair<uint16, base::TimeTicks>(frame_no, playout_time));
+            std::pair<uint16_t, base::TimeTicks>(frame_no, playout_time));
       }
       last_audio_frame_no_ = frame_no;
     } else {
@@ -316,7 +325,10 @@ class NaivePlayer : public InProcessReceiver,
   ////////////////////////////////////////////////////////////////////
   // AudioSourceCallback implementation.
 
-  int OnMoreData(AudioBus* dest, uint32 total_bytes_delay) final {
+  int OnMoreData(base::TimeDelta /* delay */,
+                 base::TimeTicks /* delay_timestamp */,
+                 int /* prior_frames_skipped */,
+                 AudioBus* dest) final {
     // Note: This method is being invoked by a separate thread unknown to us
     // (i.e., outside of CastEnvironment).
 
@@ -339,7 +351,7 @@ class NaivePlayer : public InProcessReceiver,
         if (audio_playout_queue_.empty())
           break;
 
-        currently_playing_audio_frame_ = PopOneAudioFrame(false).Pass();
+        currently_playing_audio_frame_ = PopOneAudioFrame(false);
         currently_playing_audio_frame_start_ = 0;
       }
 
@@ -444,7 +456,7 @@ class NaivePlayer : public InProcessReceiver,
     return ret;
   }
 
-  scoped_ptr<AudioBus> PopOneAudioFrame(bool was_skipped) {
+  std::unique_ptr<AudioBus> PopOneAudioFrame(bool was_skipped) {
     audio_lock_.AssertAcquired();
 
     if (was_skipped) {
@@ -463,10 +475,10 @@ class NaivePlayer : public InProcessReceiver,
     }
 
     last_popped_audio_playout_time_ = audio_playout_queue_.front().first;
-    scoped_ptr<AudioBus> ret(audio_playout_queue_.front().second);
+    std::unique_ptr<AudioBus> ret(audio_playout_queue_.front().second);
     audio_playout_queue_.pop_front();
     ++num_audio_frames_processed_;
-    return ret.Pass();
+    return ret;
   }
 
   void CheckAVSync() {
@@ -474,7 +486,7 @@ class NaivePlayer : public InProcessReceiver,
         audio_play_times_.size() > 30) {
       size_t num_events = 0;
       base::TimeDelta delta;
-      std::map<uint16, base::TimeTicks>::iterator audio_iter, video_iter;
+      std::map<uint16_t, base::TimeTicks>::iterator audio_iter, video_iter;
       for (video_iter = video_play_times_.begin();
            video_iter != video_play_times_.end();
            ++video_iter) {
@@ -508,14 +520,14 @@ class NaivePlayer : public InProcessReceiver,
 #if defined(USE_X11)
   test::LinuxOutputWindow render_;
 #endif  // defined(USE_X11)
-  scoped_ptr<AudioOutputStream> audio_output_stream_;
+  std::unique_ptr<AudioOutputStream> audio_output_stream_;
 
   // Video playout queue.
   typedef std::pair<base::TimeTicks, scoped_refptr<VideoFrame> >
       VideoQueueEntry;
   std::deque<VideoQueueEntry> video_playout_queue_;
   base::TimeTicks last_popped_video_playout_time_;
-  int64 num_video_frames_processed_;
+  int64_t num_video_frames_processed_;
 
   base::OneShotTimer video_playout_timer_;
 
@@ -524,15 +536,15 @@ class NaivePlayer : public InProcessReceiver,
   typedef std::pair<base::TimeTicks, AudioBus*> AudioQueueEntry;
   std::deque<AudioQueueEntry> audio_playout_queue_;
   base::TimeTicks last_popped_audio_playout_time_;
-  int64 num_audio_frames_processed_;
+  int64_t num_audio_frames_processed_;
 
   // These must only be used on the audio thread calling OnMoreData().
-  scoped_ptr<AudioBus> currently_playing_audio_frame_;
+  std::unique_ptr<AudioBus> currently_playing_audio_frame_;
   int currently_playing_audio_frame_start_;
 
-  std::map<uint16, base::TimeTicks> audio_play_times_;
-  std::map<uint16, base::TimeTicks> video_play_times_;
-  int32 last_audio_frame_no_;
+  std::map<uint16_t, base::TimeTicks> audio_play_times_;
+  std::map<uint16_t, base::TimeTicks> video_play_times_;
+  int32_t last_audio_frame_no_;
 };
 
 }  // namespace cast
@@ -542,14 +554,15 @@ int main(int argc, char** argv) {
   base::AtExitManager at_exit;
   base::CommandLine::Init(argc, argv);
   InitLogging(logging::LoggingSettings());
+  base::MessageLoop message_loop;
 
   scoped_refptr<media::cast::CastEnvironment> cast_environment(
       new media::cast::StandaloneCastEnvironment);
 
   // Start up Chromium audio system.
-  media::FakeAudioLogFactory fake_audio_log_factory_;
-  const scoped_ptr<media::AudioManager> audio_manager(
-      media::AudioManager::Create(&fake_audio_log_factory_));
+  const media::ScopedAudioManagerPtr audio_manager(
+      media::AudioManager::CreateForTesting(
+          base::ThreadTaskRunnerHandle::Get()));
   CHECK(media::AudioManager::Get());
 
   media::cast::FrameReceiverConfig audio_config =
@@ -558,7 +571,7 @@ int main(int argc, char** argv) {
       media::cast::GetVideoReceiverConfig();
 
   // Determine local and remote endpoints.
-  uint16 remote_port, local_port;
+  uint16_t remote_port, local_port;
   media::cast::GetPorts(&remote_port, &local_port);
   if (!local_port) {
     LOG(ERROR) << "Invalid local port.";
@@ -566,18 +579,18 @@ int main(int argc, char** argv) {
   }
   std::string remote_ip_address = media::cast::GetIpAddress("Enter remote IP.");
   std::string local_ip_address = media::cast::GetIpAddress("Enter local IP.");
-  net::IPAddressNumber remote_ip_number;
-  net::IPAddressNumber local_ip_number;
-  if (!net::ParseIPLiteralToNumber(remote_ip_address, &remote_ip_number)) {
+  net::IPAddress remote_ip;
+  net::IPAddress local_ip;
+  if (!remote_ip.AssignFromIPLiteral(remote_ip_address)) {
     LOG(ERROR) << "Invalid remote IP address.";
     return 1;
   }
-  if (!net::ParseIPLiteralToNumber(local_ip_address, &local_ip_number)) {
+  if (!local_ip.AssignFromIPLiteral(local_ip_address)) {
     LOG(ERROR) << "Invalid local IP address.";
     return 1;
   }
-  net::IPEndPoint remote_end_point(remote_ip_number, remote_port);
-  net::IPEndPoint local_end_point(local_ip_number, local_port);
+  net::IPEndPoint remote_end_point(remote_ip, remote_port);
+  net::IPEndPoint local_end_point(local_ip, local_port);
 
   // Create and start the player.
   int window_width = 0;
@@ -594,7 +607,7 @@ int main(int argc, char** argv) {
                                   window_height);
   player.Start();
 
-  base::MessageLoop().Run();  // Run forever (i.e., until SIGTERM).
+  base::RunLoop().Run();  // Run forever (i.e., until SIGTERM).
   NOTREACHED();
   return 0;
 }

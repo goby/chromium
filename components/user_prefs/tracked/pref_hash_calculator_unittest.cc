@@ -4,9 +4,11 @@
 
 #include "components/user_prefs/tracked/pref_hash_calculator.h"
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -74,28 +76,29 @@ TEST(PrefHashCalculatorTest, CatchHashChanges) {
   static const char kSeed[] = "0123456789ABCDEF0123456789ABCDEF";
   static const char kDeviceId[] = "test_device_id1";
 
-  scoped_ptr<base::Value> null_value = base::Value::CreateNullValue();
-  scoped_ptr<base::Value> bool_value(new base::FundamentalValue(false));
-  scoped_ptr<base::Value> int_value(new base::FundamentalValue(1234567890));
-  scoped_ptr<base::Value> double_value(
+  std::unique_ptr<base::Value> null_value = base::Value::CreateNullValue();
+  std::unique_ptr<base::Value> bool_value(new base::FundamentalValue(false));
+  std::unique_ptr<base::Value> int_value(
+      new base::FundamentalValue(1234567890));
+  std::unique_ptr<base::Value> double_value(
       new base::FundamentalValue(123.0987654321));
-  scoped_ptr<base::Value> string_value(
+  std::unique_ptr<base::Value> string_value(
       new base::StringValue("testing with special chars:\n<>{}:^^@#$\\/"));
 
   // For legacy reasons, we have to support pruning of empty lists/dictionaries
   // and nested empty ists/dicts in the hash generation algorithm.
-  scoped_ptr<base::DictionaryValue> nested_empty_dict(
+  std::unique_ptr<base::DictionaryValue> nested_empty_dict(
       new base::DictionaryValue);
   nested_empty_dict->Set("a", new base::DictionaryValue);
   nested_empty_dict->Set("b", new base::ListValue);
-  scoped_ptr<base::ListValue> nested_empty_list(new base::ListValue);
-  nested_empty_list->Append(new base::DictionaryValue);
-  nested_empty_list->Append(new base::ListValue);
-  nested_empty_list->Append(nested_empty_dict->DeepCopy());
+  std::unique_ptr<base::ListValue> nested_empty_list(new base::ListValue);
+  nested_empty_list->Append(base::MakeUnique<base::DictionaryValue>());
+  nested_empty_list->Append(base::MakeUnique<base::ListValue>());
+  nested_empty_list->Append(nested_empty_dict->CreateDeepCopy());
 
   // A dictionary with an empty dictionary, an empty list, and nested empty
   // dictionaries/lists in it.
-  scoped_ptr<base::DictionaryValue> dict_value(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dict_value(new base::DictionaryValue);
   dict_value->Set("a", new base::StringValue("foo"));
   dict_value->Set("d", new base::ListValue);
   dict_value->Set("b", new base::DictionaryValue);
@@ -103,20 +106,20 @@ TEST(PrefHashCalculatorTest, CatchHashChanges) {
   dict_value->Set("e", nested_empty_dict.release());
   dict_value->Set("f", nested_empty_list.release());
 
-  scoped_ptr<base::ListValue> list_value(new base::ListValue);
+  std::unique_ptr<base::ListValue> list_value(new base::ListValue);
   list_value->AppendBoolean(true);
   list_value->AppendInteger(100);
   list_value->AppendDouble(1.0);
 
-  ASSERT_EQ(base::Value::TYPE_NULL, null_value->GetType());
-  ASSERT_EQ(base::Value::TYPE_BOOLEAN, bool_value->GetType());
-  ASSERT_EQ(base::Value::TYPE_INTEGER, int_value->GetType());
-  ASSERT_EQ(base::Value::TYPE_DOUBLE, double_value->GetType());
-  ASSERT_EQ(base::Value::TYPE_STRING, string_value->GetType());
-  ASSERT_EQ(base::Value::TYPE_DICTIONARY, dict_value->GetType());
-  ASSERT_EQ(base::Value::TYPE_LIST, list_value->GetType());
+  ASSERT_EQ(base::Value::Type::NONE, null_value->GetType());
+  ASSERT_EQ(base::Value::Type::BOOLEAN, bool_value->GetType());
+  ASSERT_EQ(base::Value::Type::INTEGER, int_value->GetType());
+  ASSERT_EQ(base::Value::Type::DOUBLE, double_value->GetType());
+  ASSERT_EQ(base::Value::Type::STRING, string_value->GetType());
+  ASSERT_EQ(base::Value::Type::DICTIONARY, dict_value->GetType());
+  ASSERT_EQ(base::Value::Type::LIST, list_value->GetType());
 
-  // Test every value type independently. Intentionally omits TYPE_BINARY which
+  // Test every value type independently. Intentionally omits Type::BINARY which
   // isn't even allowed in JSONWriter's input.
   static const char kExpectedNullValue[] =
       "82A9F3BBC7F9FF84C76B033C854E79EEB162783FA7B3E99FF9372FA8E12C44F7";

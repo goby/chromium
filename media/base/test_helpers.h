@@ -5,8 +5,15 @@
 #ifndef MEDIA_BASE_TEST_HELPERS_H_
 #define MEDIA_BASE_TEST_HELPERS_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <memory>
+
 #include "base/callback.h"
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/threading/non_thread_safe.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_log.h"
 #include "media/base/pipeline_status.h"
@@ -16,7 +23,6 @@
 #include "ui/gfx/geometry/size.h"
 
 namespace base {
-class MessageLoop;
 class RunLoop;
 class TimeDelta;
 }
@@ -35,9 +41,10 @@ PipelineStatusCB NewExpectedStatusCB(PipelineStatus status);
 // testing classes that run on more than a single thread.
 //
 // Events are intended for single use and cannot be reset.
-class WaitableMessageLoopEvent {
+class WaitableMessageLoopEvent : public base::NonThreadSafe {
  public:
   WaitableMessageLoopEvent();
+  explicit WaitableMessageLoopEvent(base::TimeDelta timeout);
   ~WaitableMessageLoopEvent();
 
   // Returns a thread-safe closure that will signal |this| when executed.
@@ -61,10 +68,10 @@ class WaitableMessageLoopEvent {
   void OnCallback(PipelineStatus status);
   void OnTimeout();
 
-  base::MessageLoop* message_loop_;
   bool signaled_;
   PipelineStatus status_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
+  const base::TimeDelta timeout_;
 
   DISALLOW_COPY_AND_ASSIGN(WaitableMessageLoopEvent);
 };
@@ -77,6 +84,7 @@ class TestVideoConfig {
   static VideoDecoderConfig Invalid();
 
   static VideoDecoderConfig Normal();
+  static VideoDecoderConfig NormalH264();
   static VideoDecoderConfig NormalEncrypted();
 
   // Returns a configuration that is larger in dimensions than Normal().
@@ -88,7 +96,16 @@ class TestVideoConfig {
   static gfx::Size LargeCodedSize();
 
  private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(TestVideoConfig);
+  DISALLOW_COPY_AND_ASSIGN(TestVideoConfig);
+};
+
+// Provides pre-canned AudioParameters objects.
+class TestAudioParameters {
+ public:
+  static AudioParameters Normal();
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestAudioParameters);
 };
 
 // Create an AudioBuffer containing |frames| frames of data, where each sample
@@ -131,18 +148,105 @@ scoped_refptr<DecoderBuffer> CreateFakeVideoBufferForTest(
 bool VerifyFakeVideoBufferForTest(const scoped_refptr<DecoderBuffer>& buffer,
                                   const VideoDecoderConfig& config);
 
-// Used to verify that the each call to A() is followed by a call to B(),
-// before the next call to A(). There may be any number of pairs (including 0).
-class CallbackPairChecker {
- public:
-  CallbackPairChecker();
-  ~CallbackPairChecker();
-  void RecordACalled();
-  void RecordBCalled();
+MATCHER_P(HasTimestamp, timestamp_in_ms, "") {
+  return arg.get() && !arg->end_of_stream() &&
+         arg->timestamp().InMilliseconds() == timestamp_in_ms;
+}
 
- private:
-  bool expecting_b_;
-};
+MATCHER(IsEndOfStream, "") {
+  return arg.get() && arg->end_of_stream();
+}
+
+MATCHER_P(SegmentMissingFrames, track_id, "") {
+  return CONTAINS_STRING(
+      arg, "Media segment did not contain any coded frames for track " +
+               std::string(track_id));
+}
+
+MATCHER(StreamParsingFailed, "") {
+  return CONTAINS_STRING(arg, "Append: stream parsing failed.");
+}
+
+MATCHER_P(FoundStream, stream_type_string, "") {
+  return CONTAINS_STRING(
+             arg, "found_" + std::string(stream_type_string) + "_stream") &&
+         CONTAINS_STRING(arg, "true");
+}
+
+MATCHER_P2(CodecName, stream_type_string, codec_string, "") {
+  return CONTAINS_STRING(arg,
+                         std::string(stream_type_string) + "_codec_name") &&
+         CONTAINS_STRING(arg, std::string(codec_string));
+}
+
+MATCHER_P2(InitSegmentMismatchesMimeType, stream_type, codec_name, "") {
+  return CONTAINS_STRING(arg, std::string(stream_type) + " stream codec " +
+                                  std::string(codec_name) +
+                                  " doesn't match SourceBuffer codecs.");
+}
+
+MATCHER_P(InitSegmentMissesExpectedTrack, missing_codec, "") {
+  return CONTAINS_STRING(arg, "Initialization segment misses expected " +
+                                  std::string(missing_codec) + " track.");
+}
+
+MATCHER_P2(UnexpectedTrack, track_type, id, "") {
+  return CONTAINS_STRING(arg, std::string("Got unexpected ") + track_type +
+                                  " track track_id=" + id);
+}
+
+MATCHER_P2(SkippingSpliceAtOrBefore,
+           new_microseconds,
+           existing_microseconds,
+           "") {
+  return CONTAINS_STRING(
+      arg, "Skipping splice frame generation: first new buffer at " +
+               base::IntToString(new_microseconds) +
+               "us begins at or before existing buffer at " +
+               base::IntToString(existing_microseconds) + "us.");
+}
+
+MATCHER_P(SkippingSpliceAlreadySpliced, time_microseconds, "") {
+  return CONTAINS_STRING(
+      arg, "Skipping splice frame generation: overlapped buffers at " +
+               base::IntToString(time_microseconds) +
+               "us are in a previously buffered splice.");
+}
+
+MATCHER_P(WebMSimpleBlockDurationEstimated, estimated_duration_ms, "") {
+  return CONTAINS_STRING(arg, "Estimating WebM block duration to be " +
+                                  base::IntToString(estimated_duration_ms) +
+                                  "ms for the last (Simple)Block in the "
+                                  "Cluster for this Track. Use BlockGroups "
+                                  "with BlockDurations at the end of each "
+                                  "Track in a Cluster to avoid estimation.");
+}
+
+MATCHER_P(WebMNegativeTimecodeOffset, timecode_string, "") {
+  return CONTAINS_STRING(arg, "Got a block with negative timecode offset " +
+                                  std::string(timecode_string));
+}
+
+MATCHER(WebMOutOfOrderTimecode, "") {
+  return CONTAINS_STRING(
+      arg, "Got a block with a timecode before the previous block.");
+}
+
+MATCHER(WebMClusterBeforeFirstInfo, "") {
+  return CONTAINS_STRING(arg, "Found Cluster element before Info.");
+}
+
+MATCHER_P3(TrimmedSpliceOverlap,
+           splice_time_us,
+           overlapped_start_us,
+           trim_duration_us,
+           "") {
+  return CONTAINS_STRING(
+      arg, "Audio buffer splice at PTS=" + base::IntToString(splice_time_us) +
+               "us. Trimmed tail of overlapped buffer (PTS=" +
+               base::IntToString(overlapped_start_us) + "us) by " +
+               base::IntToString(trim_duration_us));
+}
 
 }  // namespace media
 

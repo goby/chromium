@@ -37,10 +37,26 @@ import java.util.Locale;
 public class BrowserAccessibilityManager {
     private static final String TAG = "BrowserAccessibilityManager";
 
+    private static final int WINDOW_CONTENT_CHANGED_DELAY_MS = 500;
+    private static final int ACCESSIBILITY_FOCUS_LOCATION_CHANGED_DELAY_MS = 100;
+
+    // Constants from AccessibilityNodeInfo defined in the K SDK.
+    private static final int ACTION_COLLAPSE = 0x00080000;
+    private static final int ACTION_EXPAND = 0x00040000;
+
     // Constants from AccessibilityNodeInfo defined in the L SDK.
     private static final int ACTION_SET_TEXT = 0x200000;
     private static final String ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE =
             "ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE";
+
+    // Constants from AccessibilityNodeInfo defined in the M SDK.
+    // Source: https://developer.android.com/reference/android/R.id.html
+    protected static final int ACTION_CONTEXT_CLICK = 0x0102003c;
+    protected static final int ACTION_SHOW_ON_SCREEN = 0x01020036;
+    protected static final int ACTION_SCROLL_UP = 0x01020038;
+    protected static final int ACTION_SCROLL_DOWN = 0x0102003a;
+    protected static final int ACTION_SCROLL_LEFT = 0x01020039;
+    protected static final int ACTION_SCROLL_RIGHT = 0x0102003b;
 
     private final AccessibilityNodeProvider mAccessibilityNodeProvider;
     private ContentViewCore mContentViewCore;
@@ -50,7 +66,7 @@ public class BrowserAccessibilityManager {
     private Rect mAccessibilityFocusRect;
     private boolean mIsHovering;
     private int mLastHoverId = View.NO_ID;
-    private int mCurrentRootId;
+    protected int mCurrentRootId;
     private final int[] mTempLocation = new int[2];
     private final ViewGroup mView;
     private boolean mUserHasTouchExplored;
@@ -60,7 +76,8 @@ public class BrowserAccessibilityManager {
     private int mSelectionStartIndex;
     private int mSelectionEndIndex;
     protected int mAccessibilityFocusId;
-    protected boolean mVisible = true;
+    private Runnable mSendWindowContentChangedRunnable;
+    private Runnable mAccessibilityFocusLocationChangedRunnable;
 
     /**
      * Create a BrowserAccessibilityManager object, which is owned by the C++
@@ -74,6 +91,9 @@ public class BrowserAccessibilityManager {
             ContentViewCore contentViewCore) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             return new LollipopBrowserAccessibilityManager(
+                    nativeBrowserAccessibilityManagerAndroid, contentViewCore);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            return new KitKatBrowserAccessibilityManager(
                     nativeBrowserAccessibilityManagerAndroid, contentViewCore);
         } else {
             return new BrowserAccessibilityManager(
@@ -118,8 +138,13 @@ public class BrowserAccessibilityManager {
     }
 
     @CalledByNative
-    private void onNativeObjectDestroyed() {
-        if (mContentViewCore.getBrowserAccessibilityManager() == this) {
+    private void onNativeObjectDestroyed(long nativeBrowserAccessibilityManagerAndroid) {
+        // There are multiple native objects, one for each frame, but we only have a pointer
+        // to the native object for the root frame.
+        if (nativeBrowserAccessibilityManagerAndroid != mNativeObj) return;
+
+        if (mContentViewCore != null
+                && mContentViewCore.getBrowserAccessibilityManager() == this) {
             mContentViewCore.setBrowserAccessibilityManager(null);
         }
         mNativeObj = 0;
@@ -131,21 +156,6 @@ public class BrowserAccessibilityManager {
      */
     public AccessibilityNodeProvider getAccessibilityNodeProvider() {
         return mAccessibilityNodeProvider;
-    }
-
-    /**
-     * Set whether the web content made accessible by this class is currently visible.
-     * Set it to false if the web view is still on the screen but it's obscured by a
-     * dialog or overlay. This will make every virtual view in the web hierarchy report
-     * that it's not visible, and not accessibility focusable.
-     *
-     * @param visible Whether the web content is currently visible and not obscured.
-     */
-    public void setVisible(boolean visible) {
-        if (visible == mVisible) return;
-
-        mVisible = visible;
-        mView.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
     }
 
     /**
@@ -230,12 +240,16 @@ public class BrowserAccessibilityManager {
                 if (mAccessibilityFocusId == virtualViewId) {
                     mAccessibilityFocusId = View.NO_ID;
                     mAccessibilityFocusRect = null;
+                    // If we had a pending callback to update the location of the previous object
+                    // with accessibility focus, remove it.
+                    if (mAccessibilityFocusLocationChangedRunnable != null) {
+                        mView.removeCallbacks(mAccessibilityFocusLocationChangedRunnable);
+                        mAccessibilityFocusLocationChangedRunnable = null;
+                    }
                 }
                 return true;
             case AccessibilityNodeInfo.ACTION_CLICK:
                 nativeClick(mNativeObj, virtualViewId);
-                sendAccessibilityEvent(virtualViewId,
-                        AccessibilityEvent.TYPE_VIEW_CLICKED);
                 return true;
             case AccessibilityNodeInfo.ACTION_FOCUS:
                 nativeFocus(mNativeObj, virtualViewId);
@@ -278,7 +292,7 @@ public class BrowserAccessibilityManager {
                     selectionStart = arguments.getInt(
                             AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT);
                     selectionEnd = arguments.getInt(
-                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT);
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT);
                 }
                 nativeSetSelection(mNativeObj, virtualViewId, selectionStart, selectionEnd);
                 return true;
@@ -309,6 +323,43 @@ public class BrowserAccessibilityManager {
                 return scrollForward(virtualViewId);
             case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD:
                 return scrollBackward(virtualViewId);
+            case AccessibilityNodeInfo.ACTION_CUT:
+                if (mContentViewCore != null && mContentViewCore.getWebContents() != null) {
+                    mContentViewCore.getWebContents().cut();
+                    return true;
+                }
+                return false;
+            case AccessibilityNodeInfo.ACTION_COPY:
+                if (mContentViewCore != null && mContentViewCore.getWebContents() != null) {
+                    mContentViewCore.getWebContents().copy();
+                    return true;
+                }
+                return false;
+            case AccessibilityNodeInfo.ACTION_PASTE:
+                if (mContentViewCore != null && mContentViewCore.getWebContents() != null) {
+                    mContentViewCore.getWebContents().paste();
+                    return true;
+                }
+                return false;
+            case AccessibilityNodeInfo.ACTION_COLLAPSE:
+            case AccessibilityNodeInfo.ACTION_EXPAND:
+                // If something is collapsible or expandable, just activate it to toggle.
+                nativeClick(mNativeObj, virtualViewId);
+                return true;
+            case ACTION_SHOW_ON_SCREEN:
+                nativeScrollToMakeNodeVisible(mNativeObj, virtualViewId);
+                return true;
+            case ACTION_CONTEXT_CLICK:
+                nativeShowContextMenu(mNativeObj, virtualViewId);
+                return true;
+            case ACTION_SCROLL_UP:
+                return nativeScroll(mNativeObj, virtualViewId, ScrollDirection.UP);
+            case ACTION_SCROLL_DOWN:
+                return nativeScroll(mNativeObj, virtualViewId, ScrollDirection.DOWN);
+            case ACTION_SCROLL_LEFT:
+                return nativeScroll(mNativeObj, virtualViewId, ScrollDirection.LEFT);
+            case ACTION_SCROLL_RIGHT:
+                return nativeScroll(mNativeObj, virtualViewId, ScrollDirection.RIGHT);
             default:
                 break;
         }
@@ -325,6 +376,10 @@ public class BrowserAccessibilityManager {
 
         if (event.getAction() == MotionEvent.ACTION_HOVER_EXIT) {
             mIsHovering = false;
+            if (mLastHoverId != View.NO_ID) {
+                sendAccessibilityEvent(mLastHoverId, AccessibilityEvent.TYPE_VIEW_HOVER_EXIT);
+                mLastHoverId = View.NO_ID;
+            }
             if (mPendingScrollToMakeNodeVisible) {
                 nativeScrollToMakeNodeVisible(
                         mNativeObj, mAccessibilityFocusId);
@@ -360,7 +415,7 @@ public class BrowserAccessibilityManager {
 
         // Invalidate the container view, since the chrome accessibility tree is now
         // ready and listed as the child of the container view.
-        mView.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+        sendWindowContentChangedOnView();
 
         // (Re-) focus focused element, since we weren't able to create an
         // AccessibilityNodeInfo for this element before.
@@ -385,7 +440,8 @@ public class BrowserAccessibilityManager {
             mSelectionEndIndex = -1;
         }
         mSelectionGranularity = granularity;
-        if (nativeIsEditableText(mNativeObj, mAccessibilityFocusId)) {
+        if (nativeIsEditableText(mNativeObj, mAccessibilityFocusId)
+                && nativeIsFocused(mNativeObj, mAccessibilityFocusId)) {
             mSelectionStartIndex = nativeGetEditableTextSelectionStart(
                     mNativeObj, mAccessibilityFocusId);
             mSelectionEndIndex = nativeGetEditableTextSelectionEnd(
@@ -410,6 +466,8 @@ public class BrowserAccessibilityManager {
     @CalledByNative
     private void finishGranularityMove(String text, boolean extendSelection,
             int itemStartIndex, int itemEndIndex, boolean forwards) {
+        if (mNativeObj == 0) return;
+
         // Prepare to send both a selection and a traversal event in sequence.
         AccessibilityEvent selectionEvent = buildAccessibilityEvent(mAccessibilityFocusId,
                 AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED);
@@ -431,7 +489,8 @@ public class BrowserAccessibilityManager {
         if (!extendSelection) {
             mSelectionStartIndex = mSelectionEndIndex;
         }
-        if (nativeIsEditableText(mNativeObj, mAccessibilityFocusId)) {
+        if (nativeIsEditableText(mNativeObj, mAccessibilityFocusId)
+                && nativeIsFocused(mNativeObj, mAccessibilityFocusId)) {
             nativeSetSelection(mNativeObj, mAccessibilityFocusId,
                     mSelectionStartIndex, mSelectionEndIndex);
         }
@@ -487,6 +546,20 @@ public class BrowserAccessibilityManager {
         mSelectionStartIndex = 0;
         mSelectionEndIndex = 0;
 
+        // If we had a pending callback to update the location of the previous object with
+        // accessibility focus, remove it.
+        if (mAccessibilityFocusLocationChangedRunnable != null) {
+            mView.removeCallbacks(mAccessibilityFocusLocationChangedRunnable);
+            mAccessibilityFocusLocationChangedRunnable = null;
+        }
+
+        // Call nativeSetAccessibilityFocus. For the most part Chrome doesn't have a
+        // concept of accessibility focus, but we do two things: (1) auto-focus certain
+        // roles like links when they get accessibility focus and (2) load inline text boxes
+        // for nodes when they get accessibility focus since inline text boxes are expensive
+        // to load and on Android they're only needed for nodes that have input focus or
+        // accessibility focus.
+        //
         // Calling nativeSetAccessibilityFocus will asynchronously load inline text boxes for
         // this node and its subtree. If accessibility focus is on anything other than
         // the root, do it - otherwise set it to -1 so we don't load inline text boxes
@@ -513,6 +586,82 @@ public class BrowserAccessibilityManager {
         }
 
         moveAccessibilityFocusToId(newAccessibilityFocusId);
+    }
+
+    /**
+     * Work around a bug in the Android framework where if the object with accessibility
+     *  focus moves, the accessibility focus rect is not updated - both the visual highlight,
+     * and the location on the screen that's clicked if you double-tap. To work around this,
+     * when we know the object with accessibility focus moved, move focus away and then
+     * move focus right back to it, which tricks Android into updating its bounds.
+     *
+     * Do this after a short delay because sometimes the change to the object with accessibility
+     * focus happens just before navigating somewhere else.
+     */
+    private void updateAccessibilityFocusLocationAfterDelay() {
+        if (mNativeObj == 0) return;
+
+        if (mAccessibilityFocusLocationChangedRunnable != null) return;
+
+        mAccessibilityFocusLocationChangedRunnable = new Runnable() {
+            @Override
+            public void run() {
+                updateAccessibilityFocusLocation();
+            }
+        };
+
+        mView.postDelayed(mAccessibilityFocusLocationChangedRunnable,
+                ACCESSIBILITY_FOCUS_LOCATION_CHANGED_DELAY_MS);
+    }
+
+    /**
+     * See updateAccessibilityFocusLocationAfterDelay for details.
+     */
+    private void updateAccessibilityFocusLocation() {
+        // This can be called from a timeout, so we need to make sure we're still valid.
+        if (mNativeObj == 0 || mContentViewCore == null || mView == null) return;
+
+        if (mAccessibilityFocusLocationChangedRunnable != null) {
+            mView.removeCallbacks(mAccessibilityFocusLocationChangedRunnable);
+            mAccessibilityFocusLocationChangedRunnable = null;
+        }
+
+        moveAccessibilityFocusToIdAndRefocusIfNeeded(mAccessibilityFocusId);
+    }
+
+    /**
+     * Send a WINDOW_CONTENT_CHANGED event after a short delay. This helps throttle such
+     * events from firing too quickly during animations, for example.
+     */
+    @CalledByNative
+    private void sendDelayedWindowContentChangedEvent() {
+        if (mNativeObj == 0) return;
+
+        if (mSendWindowContentChangedRunnable != null) return;
+
+        mSendWindowContentChangedRunnable = new Runnable() {
+            @Override
+            public void run() {
+                sendWindowContentChangedOnView();
+            }
+        };
+
+        mView.postDelayed(mSendWindowContentChangedRunnable, WINDOW_CONTENT_CHANGED_DELAY_MS);
+    }
+
+    private void sendWindowContentChangedOnView() {
+        // This can be called from a timeout, so we need to make sure we're still valid.
+        if (mNativeObj == 0 || mContentViewCore == null || mView == null) return;
+
+        if (mSendWindowContentChangedRunnable != null) {
+            mView.removeCallbacks(mSendWindowContentChangedRunnable);
+            mSendWindowContentChangedRunnable = null;
+        }
+        mView.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+    }
+
+    private void sendWindowContentChangedOnVirtualView(int virtualViewId) {
+        sendAccessibilityEvent(virtualViewId, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
     }
 
     private void sendAccessibilityEvent(int virtualViewId, int eventType) {
@@ -584,7 +733,7 @@ public class BrowserAccessibilityManager {
         }
 
         // Populate the minimum required fields.
-        result.setVisibleToUser(source.isVisibleToUser() && mVisible);
+        result.setVisibleToUser(source.isVisibleToUser());
         result.setEnabled(source.isEnabled());
         result.setPackageName(source.getPackageName());
         result.setClassName(source.getClassName());
@@ -612,6 +761,7 @@ public class BrowserAccessibilityManager {
 
     @CalledByNative
     private void handlePageLoaded(int id) {
+        if (mNativeObj == 0) return;
         if (mUserHasTouchExplored) return;
 
         if (mContentViewCore.shouldSetAccessibilityFocusOnPageLoad()) {
@@ -621,67 +771,86 @@ public class BrowserAccessibilityManager {
 
     @CalledByNative
     private void handleFocusChanged(int id) {
+        if (mNativeObj == 0) return;
         sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_FOCUSED);
         moveAccessibilityFocusToId(id);
     }
 
     @CalledByNative
     private void handleCheckStateChanged(int id) {
+        if (mNativeObj == 0) return;
+        sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_CLICKED);
+    }
+
+    @CalledByNative
+    private void handleClicked(int id) {
+        if (mNativeObj == 0) return;
         sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_CLICKED);
     }
 
     @CalledByNative
     private void handleTextSelectionChanged(int id) {
+        if (mNativeObj == 0) return;
         sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED);
     }
 
     @CalledByNative
     private void handleEditableTextChanged(int id) {
+        if (mNativeObj == 0) return;
         sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED);
     }
 
     @CalledByNative
     private void handleSliderChanged(int id) {
+        if (mNativeObj == 0) return;
         sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_SCROLLED);
     }
 
     @CalledByNative
     private void handleContentChanged(int id) {
+        if (mNativeObj == 0) return;
         int rootId = nativeGetRootId(mNativeObj);
         if (rootId != mCurrentRootId) {
             mCurrentRootId = rootId;
-            mView.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+            sendWindowContentChangedOnView();
         } else {
-            sendAccessibilityEvent(id, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+            sendWindowContentChangedOnVirtualView(id);
         }
     }
 
     @CalledByNative
     private void handleNavigate() {
+        if (mNativeObj == 0) return;
         mAccessibilityFocusId = View.NO_ID;
         mAccessibilityFocusRect = null;
         mUserHasTouchExplored = false;
         // Invalidate the host, since its child is now gone.
-        mView.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+        sendWindowContentChangedOnView();
     }
 
     @CalledByNative
     private void handleScrollPositionChanged(int id) {
+        if (mNativeObj == 0) return;
         sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_SCROLLED);
     }
 
     @CalledByNative
     private void handleScrolledToAnchor(int id) {
+        if (mNativeObj == 0) return;
         moveAccessibilityFocusToId(id);
     }
 
     @CalledByNative
     private void handleHover(int id) {
+        if (mNativeObj == 0) return;
         if (mLastHoverId == id) return;
+        if (!mIsHovering) return;
 
         // Always send the ENTER and then the EXIT event, to match a standard Android View.
         sendAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_HOVER_ENTER);
-        sendAccessibilityEvent(mLastHoverId, AccessibilityEvent.TYPE_VIEW_HOVER_EXIT);
+        if (mLastHoverId != View.NO_ID) {
+            sendAccessibilityEvent(mLastHoverId, AccessibilityEvent.TYPE_VIEW_HOVER_EXIT);
+        }
         mLastHoverId = id;
     }
 
@@ -715,7 +884,7 @@ public class BrowserAccessibilityManager {
         node.setPassword(password);
         node.setScrollable(scrollable);
         node.setSelected(selected);
-        node.setVisibleToUser(visibleToUser && mVisible);
+        node.setVisibleToUser(visibleToUser);
 
         node.setMovementGranularities(
                 AccessibilityNodeInfo.MOVEMENT_GRANULARITY_CHARACTER
@@ -724,56 +893,98 @@ public class BrowserAccessibilityManager {
 
         if (mAccessibilityFocusId == virtualViewId) {
             node.setAccessibilityFocused(true);
-        } else if (mVisible) {
+        } else {
             node.setAccessibilityFocused(false);
         }
     }
 
-    // LollipopBrowserAccessibilityManager overrides this with the non-deprecated APIs.
+    // For anything lower than API level 21 (Lollipop), calls AccessibilityNodeInfo.addAction(int)
+    // if it's a supported action, and does nothing otherwise.  For 21 and higher, this is
+    // overridden in LollipopBrowserAccessibilityManager using the new non-deprecated API.
     @SuppressWarnings("deprecation")
+    protected void addAction(AccessibilityNodeInfo node, int actionId) {
+        // Before API level 21, it's not possible to expose actions other than the "legacy standard"
+        // ones.
+        if (actionId > AccessibilityNodeInfo.ACTION_SET_TEXT) return;
+
+        node.addAction(actionId);
+    }
+
     @CalledByNative
     protected void addAccessibilityNodeInfoActions(AccessibilityNodeInfo node,
             int virtualViewId, boolean canScrollForward, boolean canScrollBackward,
             boolean canScrollUp, boolean canScrollDown, boolean canScrollLeft,
             boolean canScrollRight, boolean clickable, boolean editableText, boolean enabled,
-            boolean focusable, boolean focused) {
-        node.addAction(AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT);
-        node.addAction(AccessibilityNodeInfo.ACTION_PREVIOUS_HTML_ELEMENT);
-        node.addAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY);
-        node.addAction(AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY);
+            boolean focusable, boolean focused, boolean isCollapsed, boolean isExpanded,
+            boolean hasNonEmptyValue) {
+        addAction(node, AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT);
+        addAction(node, AccessibilityNodeInfo.ACTION_PREVIOUS_HTML_ELEMENT);
+        addAction(node, AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY);
+        addAction(node, AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY);
+        addAction(node, ACTION_SHOW_ON_SCREEN);
+        addAction(node, ACTION_CONTEXT_CLICK);
 
         if (editableText && enabled) {
-            node.addAction(ACTION_SET_TEXT);
-            node.addAction(AccessibilityNodeInfo.ACTION_SET_SELECTION);
+            // TODO: don't support actions that modify it if it's read-only (but
+            // SET_SELECTION and COPY are okay).
+            addAction(node, ACTION_SET_TEXT);
+            addAction(node, AccessibilityNodeInfo.ACTION_PASTE);
+
+            if (hasNonEmptyValue) {
+                addAction(node, AccessibilityNodeInfo.ACTION_SET_SELECTION);
+                addAction(node, AccessibilityNodeInfo.ACTION_CUT);
+                addAction(node, AccessibilityNodeInfo.ACTION_COPY);
+            }
         }
 
         if (canScrollForward) {
-            node.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+            addAction(node, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
         }
 
         if (canScrollBackward) {
-            node.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+            addAction(node, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
         }
 
-        // TODO(dmazzoni): add custom actions for scrolling up, down,
-        // left, and right.
+        if (canScrollUp) {
+            addAction(node, ACTION_SCROLL_UP);
+        }
+
+        if (canScrollDown) {
+            addAction(node, ACTION_SCROLL_DOWN);
+        }
+
+        if (canScrollLeft) {
+            addAction(node, ACTION_SCROLL_LEFT);
+        }
+
+        if (canScrollRight) {
+            addAction(node, ACTION_SCROLL_RIGHT);
+        }
 
         if (focusable) {
             if (focused) {
-                node.addAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS);
+                addAction(node, AccessibilityNodeInfo.ACTION_CLEAR_FOCUS);
             } else {
-                node.addAction(AccessibilityNodeInfo.ACTION_FOCUS);
+                addAction(node, AccessibilityNodeInfo.ACTION_FOCUS);
             }
         }
 
         if (mAccessibilityFocusId == virtualViewId) {
-            node.addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
-        } else if (mVisible) {
-            node.addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+            addAction(node, AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
+        } else {
+            addAction(node, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
         }
 
         if (clickable) {
-            node.addAction(AccessibilityNodeInfo.ACTION_CLICK);
+            addAction(node, AccessibilityNodeInfo.ACTION_CLICK);
+        }
+
+        if (isCollapsed) {
+            addAction(node, ACTION_EXPAND);
+        }
+
+        if (isExpanded) {
+            addAction(node, ACTION_COLLAPSE);
         }
     }
 
@@ -785,14 +996,19 @@ public class BrowserAccessibilityManager {
 
     @SuppressLint("NewApi")
     @CalledByNative
-    private void setAccessibilityNodeInfoContentDescription(
-            AccessibilityNodeInfo node, String contentDescription, boolean annotateAsLink) {
+    private void setAccessibilityNodeInfoText(
+            AccessibilityNodeInfo node, String text, boolean annotateAsLink,
+            boolean isEditableText) {
+        CharSequence charSequence = text;
         if (annotateAsLink) {
-            SpannableString spannable = new SpannableString(contentDescription);
+            SpannableString spannable = new SpannableString(text);
             spannable.setSpan(new URLSpan(""), 0, spannable.length(), 0);
-            node.setContentDescription(spannable);
+            charSequence = spannable;
+        }
+        if (isEditableText) {
+            node.setText(charSequence);
         } else {
-            node.setContentDescription(contentDescription);
+            node.setContentDescription(charSequence);
         }
     }
 
@@ -840,19 +1056,22 @@ public class BrowserAccessibilityManager {
 
         node.setBoundsInScreen(rect);
 
-        // Work around a bug in the Android framework where if the object with accessibility
-        // focus moves, the accessibility focus rect is not updated - both the visual highlight,
-        // and the location on the screen that's clicked if you double-tap. To work around this,
-        // when we know the object with accessibility focus moved, move focus away and then
-        // move focus right back to it, which tricks Android into updating its bounds.
+        // If this is the node with accessibility focus, ensure that its location on-screen
+        // is up-to-date.
         if (virtualViewId == mAccessibilityFocusId && virtualViewId != mCurrentRootId) {
             if (mAccessibilityFocusRect == null) {
                 mAccessibilityFocusRect = rect;
             } else if (!mAccessibilityFocusRect.equals(rect)) {
                 mAccessibilityFocusRect = rect;
-                moveAccessibilityFocusToIdAndRefocusIfNeeded(virtualViewId);
+                updateAccessibilityFocusLocationAfterDelay();
             }
         }
+    }
+
+    @CalledByNative
+    protected void setAccessibilityNodeInfoKitKatAttributes(AccessibilityNodeInfo node,
+            boolean isRoot, boolean isEditableText, String roleDescription) {
+        // Requires KitKat or higher.
     }
 
     @CalledByNative
@@ -1008,6 +1227,8 @@ public class BrowserAccessibilityManager {
     private native boolean nativeIsNodeValid(long nativeBrowserAccessibilityManagerAndroid, int id);
     private native boolean nativeIsEditableText(
             long nativeBrowserAccessibilityManagerAndroid, int id);
+    private native boolean nativeIsFocused(
+            long nativeBrowserAccessibilityManagerAndroid, int id);
     private native int nativeGetEditableTextSelectionStart(
             long nativeBrowserAccessibilityManagerAndroid, int id);
     private native int nativeGetEditableTextSelectionEnd(
@@ -1042,4 +1263,8 @@ public class BrowserAccessibilityManager {
             long nativeBrowserAccessibilityManagerAndroid, int id);
     private native boolean nativeScroll(
             long nativeBrowserAccessibilityManagerAndroid, int id, int direction);
+    protected native String nativeGetSupportedHtmlElementTypes(
+            long nativeBrowserAccessibilityManagerAndroid);
+    private native void nativeShowContextMenu(
+            long nativeBrowserAccessibilityManagerAndroid, int id);
 }

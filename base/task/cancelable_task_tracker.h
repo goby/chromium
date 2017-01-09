@@ -36,12 +36,15 @@
 #ifndef BASE_TASK_CANCELABLE_TASK_TRACKER_H_
 #define BASE_TASK_CANCELABLE_TASK_TRACKER_H_
 
+#include <stdint.h>
+
 #include "base/base_export.h"
-#include "base/basictypes.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/task_runner_util.h"
+#include "base/post_task_and_reply_with_result_internal.h"
 #include "base/threading/thread_checker.h"
 
 namespace tracked_objects {
@@ -56,7 +59,7 @@ class TaskRunner;
 class BASE_EXPORT CancelableTaskTracker {
  public:
   // All values except kBadTaskId are valid.
-  typedef int64 TaskId;
+  typedef int64_t TaskId;
   static const TaskId kBadTaskId;
 
   typedef base::Callback<bool()> IsCanceledCallback;

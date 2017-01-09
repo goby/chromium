@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_SPEECH_TTS_CONTROLLER_IMPL_H_
 #define CHROME_BROWSER_SPEECH_TTS_CONTROLLER_IMPL_H_
 
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "chrome/browser/speech/tts_controller.h"
 #include "url/gurl.h"
@@ -53,6 +55,8 @@ class TtsControllerImpl : public TtsController {
   ~TtsControllerImpl() override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(TtsControllerTest, TestGetMatchingVoice);
+
   // Get the platform TTS implementation (or injected mock).
   TtsPlatformImpl* GetPlatformImpl();
 

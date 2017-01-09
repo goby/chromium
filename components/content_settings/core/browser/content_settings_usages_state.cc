@@ -6,25 +6,14 @@
 
 #include <string>
 
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/url_formatter/url_formatter.h"
 
-ContentSettingsUsagesState::CommittedDetails::CommittedDetails()
-    : current_url_valid(false) {
-}
-
-ContentSettingsUsagesState::CommittedDetails::~CommittedDetails() {}
-
 ContentSettingsUsagesState::ContentSettingsUsagesState(
     HostContentSettingsMap* host_content_settings_map,
-    ContentSettingsType type,
-    const std::string& accept_language_pref,
-    PrefService* prefs)
+    ContentSettingsType type)
     : host_content_settings_map_(host_content_settings_map),
-      pref_service_(prefs),
-      accept_language_pref_(accept_language_pref),
       type_(type) {
 }
 
@@ -38,12 +27,10 @@ void ContentSettingsUsagesState::OnPermissionSet(
 }
 
 void ContentSettingsUsagesState::DidNavigate(const CommittedDetails& details) {
-  if (details.current_url_valid)
-    embedder_url_ = details.current_url;
+  embedder_url_ = details.current_url;
   if (state_map_.empty())
     return;
-  if (!details.current_url_valid ||
-      details.previous_url.GetOrigin() != details.current_url.GetOrigin()) {
+  if (details.previous_url.GetOrigin() != details.current_url.GetOrigin()) {
     state_map_.clear();
     return;
   }
@@ -106,7 +93,6 @@ void ContentSettingsUsagesState::GetDetailedInfo(
 std::string ContentSettingsUsagesState::GURLToFormattedHost(
     const GURL& url) const {
   base::string16 display_host;
-  url_formatter::AppendFormattedHost(
-      url, pref_service_->GetString(accept_language_pref_), &display_host);
+  url_formatter::AppendFormattedHost(url, &display_host);
   return base::UTF16ToUTF8(display_host);
 }

@@ -2,33 +2,42 @@ Tests that scripts panel UI elements work as intended.
 
 
 Running: testInitialLoad
-  Dumping ScriptsNavigator sources tab:
-    (no domain)
-      bar.js
-      baz.js
-      foo.js
-      foobar.js
+Navigator:
+top
+  (no domain)
+    bar.js
+    baz.js
+    foo.js
+    foobar.js
 
 Running: testReset
-  Dumping ScriptsNavigator sources tab:
-    (no domain)
+Navigator:
+top
+  (no domain)
+    bar.js
+    baz.js
+    foo.js
 Revealing in navigator.
-  Dumping ScriptsNavigator sources tab:
-    (no domain)
-      bar.js
-      baz.js
-      foo.js
-  Dumping ScriptsNavigator sources tab:
-  Dumping ScriptsNavigator sources tab:
-    (no domain)
-      bar.js
+Navigator:
+top
+  (no domain)
+    bar.js
+    baz.js
+    foo.js
+Navigator:
+Navigator:
+top
+  (no domain)
+    bar.js
 
 Running: testDebuggerUISourceCodeAddedAndRemoved
-  Dumping ScriptsNavigator sources tab:
-    (no domain)
-      foo.js
-  Dumping ScriptsNavigator sources tab:
-    (no domain)
-      foo.js
-      source.js
+Navigator:
+top
+  (no domain)
+    foo.js
+Navigator:
+top
+  (no domain)
+    foo.js
+    source.js
 

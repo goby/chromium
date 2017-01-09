@@ -4,9 +4,16 @@
 
 #include "chromeos/dbus/gsm_sms_client.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/values.h"
 #include "dbus/message.h"
@@ -29,7 +36,7 @@ namespace {
 // A mock SmsReceivedHandler.
 class MockSmsReceivedHandler {
  public:
-  MOCK_METHOD2(Run, void(uint32 index, bool complete));
+  MOCK_METHOD2(Run, void(uint32_t index, bool complete));
 };
 
 // A mock DeleteCallback.
@@ -114,7 +121,7 @@ class GsmSMSClientTest : public testing::Test {
     EXPECT_EQ(modemmanager::kModemManagerSMSInterface,
               method_call->GetInterface());
     EXPECT_EQ(modemmanager::kSMSDeleteFunction, method_call->GetMember());
-    uint32 index = 0;
+    uint32_t index = 0;
     dbus::MessageReader reader(method_call);
     EXPECT_TRUE(reader.PopUint32(&index));
     EXPECT_EQ(expected_index_, index);
@@ -131,7 +138,7 @@ class GsmSMSClientTest : public testing::Test {
     EXPECT_EQ(modemmanager::kModemManagerSMSInterface,
               method_call->GetInterface());
     EXPECT_EQ(modemmanager::kSMSGetFunction, method_call->GetMember());
-    uint32 index = 0;
+    uint32_t index = 0;
     dbus::MessageReader reader(method_call);
     EXPECT_TRUE(reader.PopUint32(&index));
     EXPECT_EQ(expected_index_, index);
@@ -162,7 +169,7 @@ class GsmSMSClientTest : public testing::Test {
 
  protected:
   // The client to be tested.
-  scoped_ptr<GsmSMSClient> client_;
+  std::unique_ptr<GsmSMSClient> client_;
   // A message loop to emulate asynchronous behavior.
   base::MessageLoop message_loop_;
   // The mock bus.
@@ -172,7 +179,7 @@ class GsmSMSClientTest : public testing::Test {
   // The SmsReceived signal handler given by the tested client.
   dbus::ObjectProxy::SignalCallback sms_received_callback_;
   // Expected argument for Delete and Get methods.
-  uint32 expected_index_;
+  uint32_t expected_index_;
   // Response returned by mock methods.
   dbus::Response* response_;
   // Expected result of Get and List methods.
@@ -195,7 +202,7 @@ class GsmSMSClientTest : public testing::Test {
 
 TEST_F(GsmSMSClientTest, SmsReceived) {
   // Set expectations.
-  const uint32 kIndex = 42;
+  const uint32_t kIndex = 42;
   const bool kComplete = true;
   MockSmsReceivedHandler handler;
   EXPECT_CALL(handler, Run(kIndex, kComplete)).Times(1);
@@ -205,7 +212,7 @@ TEST_F(GsmSMSClientTest, SmsReceived) {
                                             base::Unretained(&handler)));
 
   // Run the message loop to run the signal connection result callback.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Send signal.
   dbus::Signal signal(modemmanager::kModemManagerSMSInterface,
@@ -223,14 +230,14 @@ TEST_F(GsmSMSClientTest, SmsReceived) {
 
 TEST_F(GsmSMSClientTest, Delete) {
   // Set expectations.
-  const uint32 kIndex = 42;
+  const uint32_t kIndex = 42;
   expected_index_ = kIndex;
   EXPECT_CALL(*mock_proxy_.get(), CallMethod(_, _, _))
       .WillOnce(Invoke(this, &GsmSMSClientTest::OnDelete));
   MockDeleteCallback callback;
   EXPECT_CALL(callback, Run()).Times(1);
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   response_ = response.get();
   // Call Delete.
   client_->Delete(kServiceName, dbus::ObjectPath(kObjectPath), kIndex,
@@ -238,12 +245,12 @@ TEST_F(GsmSMSClientTest, Delete) {
                              base::Unretained(&callback)));
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(GsmSMSClientTest, Get) {
   // Set expectations.
-  const uint32 kIndex = 42;
+  const uint32_t kIndex = 42;
   expected_index_ = kIndex;
   EXPECT_CALL(*mock_proxy_.get(), CallMethod(_, _, _))
       .WillOnce(Invoke(this, &GsmSMSClientTest::OnGet));
@@ -251,7 +258,7 @@ TEST_F(GsmSMSClientTest, Get) {
   EXPECT_CALL(callback, Run(_))
       .WillOnce(Invoke(this, &GsmSMSClientTest::CheckResult));
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
   dbus::MessageWriter array_writer(NULL);
   writer.OpenArray("{sv}", &array_writer);
@@ -278,7 +285,7 @@ TEST_F(GsmSMSClientTest, Get) {
                base::Bind(&MockGetCallback::Run, base::Unretained(&callback)));
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(GsmSMSClientTest, List) {
@@ -289,7 +296,7 @@ TEST_F(GsmSMSClientTest, List) {
   EXPECT_CALL(callback, Run(_))
       .WillOnce(Invoke(this, &GsmSMSClientTest::CheckResult));
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
   dbus::MessageWriter array_writer(NULL);
   writer.OpenArray("a{sv}", &array_writer);
@@ -309,11 +316,11 @@ TEST_F(GsmSMSClientTest, List) {
   response_ = response.get();
   // Create expected result.
   base::ListValue expected_result;
-  base::DictionaryValue* sms = new base::DictionaryValue;
+  auto sms = base::MakeUnique<base::DictionaryValue>();
   sms->SetWithoutPathExpansion(kNumberKey,
                                new base::StringValue(kExampleNumber));
   sms->SetWithoutPathExpansion(kTextKey, new base::StringValue(kExampleText));
-  expected_result.Append(sms);
+  expected_result.Append(std::move(sms));
   expected_result_ = &expected_result;
   // Call List.
   client_->List(kServiceName, dbus::ObjectPath(kObjectPath),
@@ -321,7 +328,7 @@ TEST_F(GsmSMSClientTest, List) {
                            base::Unretained(&callback)));
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace chromeos

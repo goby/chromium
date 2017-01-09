@@ -28,35 +28,31 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/filters/DistantLightSource.h"
 
 #include "platform/text/TextStream.h"
 
 namespace blink {
 
-bool DistantLightSource::setAzimuth(float azimuth)
-{
-    if (m_azimuth == azimuth)
-        return false;
-    m_azimuth = azimuth;
-    return true;
+bool DistantLightSource::setAzimuth(float azimuth) {
+  if (m_azimuth == azimuth)
+    return false;
+  m_azimuth = azimuth;
+  return true;
 }
 
-bool DistantLightSource::setElevation(float elevation)
-{
-    if (m_elevation == elevation)
-        return false;
-    m_elevation = elevation;
-    return true;
+bool DistantLightSource::setElevation(float elevation) {
+  if (m_elevation == elevation)
+    return false;
+  m_elevation = elevation;
+  return true;
 }
 
-TextStream& DistantLightSource::externalRepresentation(TextStream& ts) const
-{
-    ts << "[type=DISTANT-LIGHT] ";
-    ts << "[azimuth=\"" << azimuth() << "\"]";
-    ts << "[elevation=\"" << elevation() << "\"]";
-    return ts;
+TextStream& DistantLightSource::externalRepresentation(TextStream& ts) const {
+  ts << "[type=DISTANT-LIGHT] ";
+  ts << "[azimuth=\"" << azimuth() << "\"]";
+  ts << "[elevation=\"" << elevation() << "\"]";
+  return ts;
 }
 
-} // namespace blink
+}  // namespace blink

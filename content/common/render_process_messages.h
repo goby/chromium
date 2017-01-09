@@ -5,12 +5,16 @@
 // Common IPC messages used for render processes.
 // Multiply-included message file, hence no include guard.
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/memory/shared_memory.h"
+#include "build/build_config.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_message_utils.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 #if defined(OS_MACOSX)
 #include "content/common/mac/font_descriptor.h"
@@ -37,10 +41,11 @@ IPC_STRUCT_TRAITS_END()
 // Asks the browser process to generate a keypair for grabbing a client
 // certificate from a CA (<keygen> tag), and returns the signed public
 // key and challenge string.
-IPC_SYNC_MESSAGE_CONTROL3_1(RenderProcessHostMsg_Keygen,
-                            uint32 /* key size index */,
+IPC_SYNC_MESSAGE_CONTROL4_1(RenderProcessHostMsg_Keygen,
+                            uint32_t /* key size index */,
                             std::string /* challenge string */,
                             GURL /* URL of requestor */,
+                            GURL /* Origin of top-level frame */,
                             std::string /* signed public key and challenge */)
 
 // Message sent from the renderer to the browser to request that the browser
@@ -49,6 +54,16 @@ IPC_MESSAGE_CONTROL3(RenderProcessHostMsg_DidGenerateCacheableMetadata,
                      GURL /* url */,
                      base::Time /* expected_response_time */,
                      std::vector<char> /* data */)
+
+// Message sent from the renderer to the browser to request that the browser
+// cache |data| for the specified CacheStorage entry.
+IPC_MESSAGE_CONTROL5(
+    RenderProcessHostMsg_DidGenerateCacheableMetadataInCacheStorage,
+    GURL /* url */,
+    base::Time /* expected_response_time */,
+    std::vector<char> /* data */,
+    url::Origin /* cache_storage_origin*/,
+    std::string /* cache_storage_cache_name */)
 
 // Notify the browser that this render process can or can't be suddenly
 // terminated.
@@ -59,18 +74,7 @@ IPC_MESSAGE_CONTROL1(RenderProcessHostMsg_SuddenTerminationChanged,
 // Request that the browser load a font into shared memory for us.
 IPC_SYNC_MESSAGE_CONTROL1_3(RenderProcessHostMsg_LoadFont,
                             FontDescriptor /* font to load */,
-                            uint32 /* buffer size */,
+                            uint32_t /* buffer size */,
                             base::SharedMemoryHandle /* font data */,
-                            uint32 /* font id */)
-#elif defined(OS_WIN)
-// Request that the given font characters be loaded by the browser so it's
-// cached by the OS. Please see RenderMessageFilter::OnPreCacheFontCharacters
-// for details.
-IPC_SYNC_MESSAGE_CONTROL2_0(RenderProcessHostMsg_PreCacheFontCharacters,
-                            LOGFONT /* font_data */,
-                            base::string16 /* characters */)
-
-// Asks the browser for the user's monitor profile.
-IPC_SYNC_MESSAGE_CONTROL0_1(RenderProcessHostMsg_GetMonitorColorProfile,
-                            std::vector<char> /* profile */)
+                            uint32_t /* font id */)
 #endif

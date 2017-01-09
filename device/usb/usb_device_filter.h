@@ -5,10 +5,12 @@
 #ifndef DEVICE_USB_USB_DEVICE_FILTER_H_
 #define DEVICE_USB_USB_DEVICE_FILTER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace base {
 class Value;
@@ -21,6 +23,7 @@ class UsbDevice;
 class UsbDeviceFilter {
  public:
   UsbDeviceFilter();
+  UsbDeviceFilter(const UsbDeviceFilter& other);
   ~UsbDeviceFilter();
 
   void SetVendorId(uint16_t vendor_id);
@@ -30,7 +33,7 @@ class UsbDeviceFilter {
   void SetInterfaceProtocol(uint8_t interface_protocol);
 
   bool Matches(scoped_refptr<UsbDevice> device) const;
-  scoped_ptr<base::Value> ToValue() const;
+  std::unique_ptr<base::Value> ToValue() const;
 
   static bool MatchesAny(scoped_refptr<UsbDevice> device,
                          const std::vector<UsbDeviceFilter>& filters);

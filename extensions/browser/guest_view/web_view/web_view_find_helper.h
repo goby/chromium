@@ -6,8 +6,11 @@
 #define EXTENSIONS_BROWSER_GUEST_VIEW_WEB_VIEW_WEB_VIEW_FIND_HELPER_H_
 
 #include <map>
+#include <memory>
 #include <vector>
 
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "content/public/browser/web_contents.h"
@@ -98,13 +101,12 @@ class WebViewFindHelper {
   };
 
   // Handles all information about a find request and its results.
-  class FindInfo {
+  class FindInfo : public base::RefCounted<FindInfo> {
    public:
     FindInfo(int request_id,
              const base::string16& search_text,
              const blink::WebFindOptions& options,
              scoped_refptr<WebViewInternalFindFunction> find_function);
-    ~FindInfo();
 
     // Add another request to |find_next_requests_|.
     void AddFindNextRequest(const base::WeakPtr<FindInfo>& request) {
@@ -140,6 +142,10 @@ class WebViewFindHelper {
     void SendResponse(bool canceled);
 
    private:
+    friend class base::RefCounted<FindInfo>;
+
+    ~FindInfo();
+
     const int request_id_;
     const base::string16 search_text_;
     blink::WebFindOptions options_;
@@ -169,14 +175,15 @@ class WebViewFindHelper {
   int current_find_request_id_;
 
   // Stores aggregated find results and other info for the |findupdate| event.
-  scoped_ptr<FindUpdateEvent> find_update_event_;
+  std::unique_ptr<FindUpdateEvent> find_update_event_;
 
-  // Pointer to the first request of the current find session.
-  linked_ptr<FindInfo> current_find_session_;
+  // Pointer to the first request of the current find session. find_info_map_
+  // retains ownership.
+  scoped_refptr<FindInfo> current_find_session_;
 
   // Stores each find request's information by request_id so that its callback
   // function can be called when its find results are available.
-  typedef std::map<int, linked_ptr<FindInfo> > FindInfoMap;
+  using FindInfoMap = std::map<int, scoped_refptr<FindInfo>>;
   FindInfoMap find_info_map_;
 
   DISALLOW_COPY_AND_ASSIGN(WebViewFindHelper);

@@ -7,17 +7,24 @@
 
 #include "remoting/test/fake_socket_factory.h"
 
-#include <math.h>
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdlib>
+#include <string>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
-#include "base/rand_util.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "net/base/io_buffer.h"
-#include "remoting/test/leaky_bucket.h"
+#include "remoting/base/leaky_bucket.h"
 #include "third_party/webrtc/base/asyncpacketsocket.h"
+#include "third_party/webrtc/base/socket.h"
+#include "third_party/webrtc/media/base/rtputils.h"
 
 namespace remoting {
 
@@ -26,12 +33,16 @@ namespace {
 const int kPortRangeStart = 1024;
 const int kPortRangeEnd = 65535;
 
+double RandDouble() {
+  return static_cast<double>(std::rand()) / RAND_MAX;
+}
+
 double GetNormalRandom(double average, double stddev) {
   // Based on Box-Muller transform, see
   // http://en.wikipedia.org/wiki/Box_Muller_transform .
   return average +
-         stddev * sqrt(-2.0 * log(1.0 - base::RandDouble())) *
-             cos(base::RandDouble() * 2.0 * M_PI);
+         stddev * sqrt(-2.0 * log(1.0 - RandDouble())) *
+             cos(RandDouble() * 2.0 * M_PI);
 }
 
 class FakeUdpSocket : public rtc::AsyncPacketSocket {
@@ -113,6 +124,14 @@ int FakeUdpSocket::SendTo(const void* data, size_t data_size,
                           const rtc::PacketOptions& options) {
   scoped_refptr<net::IOBuffer> buffer = new net::IOBuffer(data_size);
   memcpy(buffer->data(), data, data_size);
+  base::TimeTicks now = base::TimeTicks::Now();
+  cricket::ApplyPacketOptions(reinterpret_cast<uint8_t*>(buffer->data()),
+                              data_size, options.packet_time_params,
+                              (now - base::TimeTicks()).InMicroseconds());
+  SignalSentPacket(
+      this,
+      rtc::SentPacket(options.packet_id,
+                      (now - base::TimeTicks::UnixEpoch()).InMilliseconds()));
   dispatcher_->DeliverPacket(local_address_, address, buffer, data_size);
   return data_size;
 }
@@ -132,8 +151,8 @@ int FakeUdpSocket::GetOption(rtc::Socket::Option option, int* value) {
 }
 
 int FakeUdpSocket::SetOption(rtc::Socket::Option option, int value) {
-  NOTIMPLEMENTED();
-  return -1;
+  // All options are currently ignored.
+  return 0;
 }
 
 int FakeUdpSocket::GetError() const {
@@ -158,8 +177,10 @@ FakePacketSocketFactory::PendingPacket::PendingPacket(
     : from(from), to(to), data(data), data_size(data_size) {
 }
 
-FakePacketSocketFactory::PendingPacket::~PendingPacket() {
-}
+FakePacketSocketFactory::PendingPacket::PendingPacket(
+    const PendingPacket& other) = default;
+
+FakePacketSocketFactory::PendingPacket::~PendingPacket() {}
 
 FakePacketSocketFactory::FakePacketSocketFactory(
     FakeNetworkDispatcher* dispatcher)
@@ -200,12 +221,13 @@ void FakePacketSocketFactory::SetLatency(base::TimeDelta average,
 
 rtc::AsyncPacketSocket* FakePacketSocketFactory::CreateUdpSocket(
     const rtc::SocketAddress& local_address,
-    uint16 min_port, uint16 max_port) {
+    uint16_t min_port,
+    uint16_t max_port) {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
   int port = -1;
   if (min_port > 0 && max_port > 0) {
-    for (uint16 i = min_port; i <= max_port; ++i) {
+    for (uint16_t i = min_port; i <= max_port; ++i) {
       if (udp_sockets_.find(i) == udp_sockets_.end()) {
         port = i;
         break;
@@ -235,7 +257,8 @@ rtc::AsyncPacketSocket* FakePacketSocketFactory::CreateUdpSocket(
 
 rtc::AsyncPacketSocket* FakePacketSocketFactory::CreateServerTcpSocket(
     const rtc::SocketAddress& local_address,
-    uint16 min_port, uint16 max_port,
+    uint16_t min_port,
+    uint16_t max_port,
     int opts) {
   return nullptr;
 }
@@ -274,12 +297,19 @@ void FakePacketSocketFactory::ReceivePacket(
   base::TimeDelta delay;
 
   if (leaky_bucket_) {
-    delay = leaky_bucket_->AddPacket(data_size);
-    if (delay.is_max()) {
+    base::TimeTicks now = base::TimeTicks::Now();
+    if (!leaky_bucket_->RefillOrSpill(data_size, now)) {
+      ++total_packets_dropped_;
       // Drop the packet.
       return;
     }
+    delay = std::max(base::TimeDelta(), leaky_bucket_->GetEmptyTime() - now);
   }
+
+  total_buffer_delay_ += delay;
+  if (delay > max_buffer_delay_)
+    max_buffer_delay_ = delay;
+  ++total_packets_received_;
 
   if (latency_average_ > base::TimeDelta()) {
     delay += base::TimeDelta::FromMillisecondsD(
@@ -308,7 +338,7 @@ void FakePacketSocketFactory::DoReceivePacket() {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
   PendingPacket packet;
-  if (pending_packets_.size() > 1 && base::RandDouble() < out_of_order_rate_) {
+  if (pending_packets_.size() > 1 && RandDouble() < out_of_order_rate_) {
     std::list<PendingPacket>::iterator it = pending_packets_.begin();
     ++it;
     packet = *it;
@@ -325,6 +355,13 @@ void FakePacketSocketFactory::DoReceivePacket() {
   }
 
   iter->second.Run(packet.from, packet.to, packet.data, packet.data_size);
+}
+
+void FakePacketSocketFactory::ResetStats() {
+  total_packets_dropped_ = 0;
+  total_packets_received_ = 0;
+  total_buffer_delay_ = base::TimeDelta();
+  max_buffer_delay_ = base::TimeDelta();
 }
 
 }  // namespace remoting

@@ -7,10 +7,12 @@
 #ifndef MEDIA_CAST_NET_RTP_CAST_MESSAGE_BUILDER_H_
 #define MEDIA_CAST_NET_RTP_CAST_MESSAGE_BUILDER_H_
 
+#include <stdint.h>
+
 #include <deque>
 #include <map>
 
-#include "media/cast/net/rtcp/rtcp.h"
+#include "base/time/tick_clock.h"
 #include "media/cast/net/rtp/rtp_defines.h"
 
 namespace media {
@@ -19,46 +21,44 @@ namespace cast {
 class Framer;
 class RtpPayloadFeedback;
 
-typedef std::map<uint32, base::TimeTicks> TimeLastNackMap;
-
 class CastMessageBuilder {
  public:
   CastMessageBuilder(base::TickClock* clock,
                      RtpPayloadFeedback* incoming_payload_feedback,
                      const Framer* framer,
-                     uint32 media_ssrc,
+                     uint32_t media_ssrc,
                      bool decoder_faster_than_max_frame_rate,
                      int max_unacked_frames);
   ~CastMessageBuilder();
 
-  void CompleteFrameReceived(uint32 frame_id);
+  void CompleteFrameReceived(FrameId frame_id);
   bool TimeToSendNextCastMessage(base::TimeTicks* time_to_send);
   void UpdateCastMessage();
-  void Reset();
 
  private:
-  bool UpdateAckMessage(uint32 frame_id);
+  bool UpdateAckMessage(FrameId frame_id);
   void BuildPacketList();
   bool UpdateCastMessageInternal(RtcpCastMessage* message);
+
+  FrameId last_acked_frame_id() const { return cast_msg_.ack_frame_id; }
 
   base::TickClock* const clock_;  // Not owned by this class.
   RtpPayloadFeedback* const cast_feedback_;
 
   // CastMessageBuilder has only const access to the framer.
   const Framer* const framer_;
-  const uint32 media_ssrc_;
+  const uint32_t media_ssrc_;
   const bool decoder_faster_than_max_frame_rate_;
   const int max_unacked_frames_;
 
   RtcpCastMessage cast_msg_;
   base::TimeTicks last_update_time_;
 
-  TimeLastNackMap time_last_nacked_map_;
+  std::map<FrameId, base::TimeTicks> time_last_nacked_map_;
 
   bool slowing_down_ack_;
   bool acked_last_frame_;
-  uint32 last_acked_frame_id_;
-  std::deque<uint32> ack_queue_;
+  std::deque<FrameId> ack_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(CastMessageBuilder);
 };

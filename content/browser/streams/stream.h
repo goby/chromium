@@ -5,7 +5,9 @@
 #ifndef CONTENT_BROWSER_STREAMS_STREAM_H_
 #define CONTENT_BROWSER_STREAMS_STREAM_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/byte_stream.h"
@@ -72,7 +74,7 @@ class CONTENT_EXPORT Stream : public base::RefCountedThreadSafe<Stream> {
   void Flush();
 
   // Notifies this stream that it will not be receiving any more data.
-  void Finalize();
+  void Finalize(int status);
 
   // Reads a maximum of |buf_size| from the stream into |buf|.  Sets
   // |*bytes_read| to the number of bytes actually read.
@@ -80,8 +82,12 @@ class CONTENT_EXPORT Stream : public base::RefCountedThreadSafe<Stream> {
   // and STREAM_COMPLETE if the stream is finalized and all data has been read.
   StreamState ReadRawData(net::IOBuffer* buf, int buf_size, int* bytes_read);
 
-  scoped_ptr<StreamHandle> CreateHandle();
+  std::unique_ptr<StreamHandle> CreateHandle();
   void CloseHandle();
+
+  // Returns the status of the stream. This is either an error code that
+  // occurred while reading, or the status that was set in Finalize above.
+  int GetStatus();
 
   // Indicates whether there is space in the buffer to add more data.
   bool can_add_data() const { return can_add_data_; }
@@ -121,8 +127,8 @@ class CONTENT_EXPORT Stream : public base::RefCountedThreadSafe<Stream> {
   // in order to check memory usage.
   size_t last_total_buffered_bytes_;
 
-  scoped_ptr<ByteStreamWriter> writer_;
-  scoped_ptr<ByteStreamReader> reader_;
+  std::unique_ptr<ByteStreamWriter> writer_;
+  std::unique_ptr<ByteStreamReader> reader_;
 
   StreamRegistry* registry_;
   StreamReadObserver* read_observer_;

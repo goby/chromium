@@ -2,20 +2,35 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "mojo/public/cpp/bindings/lib/interface_endpoint_client.h"
+#include "mojo/public/cpp/bindings/interface_endpoint_client.h"
+
+#include <stdint.h>
+
+#include <utility>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "mojo/public/cpp/bindings/associated_group.h"
-#include "mojo/public/cpp/bindings/lib/multiplex_router.h"
+#include "mojo/public/cpp/bindings/associated_group_controller.h"
+#include "mojo/public/cpp/bindings/interface_endpoint_controller.h"
+#include "mojo/public/cpp/bindings/lib/validation_util.h"
+#include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 
 namespace mojo {
-namespace internal {
 
 // ----------------------------------------------------------------------------
 
 namespace {
+
+void DCheckIfInvalid(const base::WeakPtr<InterfaceEndpointClient>& client,
+                   const std::string& message) {
+  bool is_valid = client && !client->encountered_error();
+  DCHECK(!is_valid) << message;
+}
 
 // When receiving an incoming message which expects a repsonse,
 // InterfaceEndpointClient creates a ResponderThunk object and passes it to the
@@ -24,22 +39,28 @@ namespace {
 class ResponderThunk : public MessageReceiverWithStatus {
  public:
   explicit ResponderThunk(
-      const base::WeakPtr<InterfaceEndpointClient>& endpoint_client)
-      : endpoint_client_(endpoint_client), accept_was_invoked_(false) {}
+      const base::WeakPtr<InterfaceEndpointClient>& endpoint_client,
+      scoped_refptr<base::SingleThreadTaskRunner> runner)
+      : endpoint_client_(endpoint_client),
+        accept_was_invoked_(false),
+        task_runner_(std::move(runner)) {}
   ~ResponderThunk() override {
     if (!accept_was_invoked_) {
-      // The Mojo application handled a message that was expecting a response
+      // The Service handled a message that was expecting a response
       // but did not send a response.
-      if (endpoint_client_) {
-        // We raise an error to signal the calling application that an error
-        // condition occurred. Without this the calling application would have
-        // no way of knowing it should stop waiting for a response.
-        //
-        // We raise the error asynchronously and only if |endpoint_client_| is
-        // still alive when the task is run. That way it won't break the case
-        // where the user abandons the interface endpoint client soon after
-        // he/she abandons the callback.
-        base::MessageLoop::current()->PostTask(
+      // We raise an error to signal the calling application that an error
+      // condition occurred. Without this the calling application would have no
+      // way of knowing it should stop waiting for a response.
+      if (task_runner_->RunsTasksOnCurrentThread()) {
+        // Please note that even if this code is run from a different task
+        // runner on the same thread as |task_runner_|, it is okay to directly
+        // call InterfaceEndpointClient::RaiseError(), because it will raise
+        // error from the correct task runner asynchronously.
+        if (endpoint_client_) {
+          endpoint_client_->RaiseError();
+        }
+      } else {
+        task_runner_->PostTask(
             FROM_HERE,
             base::Bind(&InterfaceEndpointClient::RaiseError, endpoint_client_));
       }
@@ -48,8 +69,9 @@ class ResponderThunk : public MessageReceiverWithStatus {
 
   // MessageReceiver implementation:
   bool Accept(Message* message) override {
+    DCHECK(task_runner_->RunsTasksOnCurrentThread());
     accept_was_invoked_ = true;
-    DCHECK(message->has_flag(kMessageIsResponse));
+    DCHECK(message->has_flag(Message::kFlagIsResponse));
 
     bool result = false;
 
@@ -61,17 +83,36 @@ class ResponderThunk : public MessageReceiverWithStatus {
 
   // MessageReceiverWithStatus implementation:
   bool IsValid() override {
+    DCHECK(task_runner_->RunsTasksOnCurrentThread());
     return endpoint_client_ && !endpoint_client_->encountered_error();
   }
+
+  void DCheckInvalid(const std::string& message) override {
+    if (task_runner_->RunsTasksOnCurrentThread()) {
+      DCheckIfInvalid(endpoint_client_, message);
+    } else {
+      task_runner_->PostTask(
+          FROM_HERE, base::Bind(&DCheckIfInvalid, endpoint_client_, message));
+    }
+ }
 
  private:
   base::WeakPtr<InterfaceEndpointClient> endpoint_client_;
   bool accept_was_invoked_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ResponderThunk);
 };
 
 }  // namespace
+
+// ----------------------------------------------------------------------------
+
+InterfaceEndpointClient::SyncResponseInfo::SyncResponseInfo(
+    bool* in_response_received)
+    : response_received(in_response_received) {}
+
+InterfaceEndpointClient::SyncResponseInfo::~SyncResponseInfo() {}
 
 // ----------------------------------------------------------------------------
 
@@ -92,36 +133,54 @@ bool InterfaceEndpointClient::HandleIncomingMessageThunk::Accept(
 InterfaceEndpointClient::InterfaceEndpointClient(
     ScopedInterfaceEndpointHandle handle,
     MessageReceiverWithResponderStatus* receiver,
-    scoped_ptr<MessageFilter> payload_validator)
-    : handle_(handle.Pass()),
+    std::unique_ptr<MessageReceiver> payload_validator,
+    bool expect_sync_requests,
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    uint32_t interface_version)
+    : handle_(std::move(handle)),
       incoming_receiver_(receiver),
-      payload_validator_(payload_validator.Pass()),
       thunk_(this),
+      filters_(&thunk_),
       next_request_id_(1),
       encountered_error_(false),
+      task_runner_(std::move(runner)),
+      control_message_proxy_(this),
+      control_message_handler_(interface_version),
       weak_ptr_factory_(this) {
   DCHECK(handle_.is_valid());
   DCHECK(handle_.is_local());
 
   // TODO(yzshen): the way to use validator (or message filter in general)
   // directly is a little awkward.
-  payload_validator_->set_sink(&thunk_);
+  if (payload_validator)
+    filters_.Append(std::move(payload_validator));
 
-  handle_.router()->AttachEndpointClient(handle_, this);
+  controller_ = handle_.group_controller()->AttachEndpointClient(
+      handle_, this, task_runner_);
+  if (expect_sync_requests)
+    controller_->AllowWokenUpBySyncWatchOnSameThread();
+
+  base::MessageLoop::current()->AddDestructionObserver(this);
 }
 
 InterfaceEndpointClient::~InterfaceEndpointClient() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  STLDeleteValues(&responders_);
+  StopObservingIfNecessary();
 
-  handle_.router()->DetachEndpointClient(handle_);
+  if (handle_.is_valid())
+    handle_.group_controller()->DetachEndpointClient(handle_);
 }
 
 AssociatedGroup* InterfaceEndpointClient::associated_group() {
   if (!associated_group_)
-    associated_group_ = handle_.router()->CreateAssociatedGroup();
+    associated_group_ = handle_.group_controller()->CreateAssociatedGroup();
   return associated_group_.get();
+}
+
+uint32_t InterfaceEndpointClient::interface_id() const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  return handle_.id();
 }
 
 ScopedInterfaceEndpointHandle InterfaceEndpointClient::PassHandle() {
@@ -131,31 +190,39 @@ ScopedInterfaceEndpointHandle InterfaceEndpointClient::PassHandle() {
   if (!handle_.is_valid())
     return ScopedInterfaceEndpointHandle();
 
-  handle_.router()->DetachEndpointClient(handle_);
+  controller_ = nullptr;
+  handle_.group_controller()->DetachEndpointClient(handle_);
 
-  return handle_.Pass();
+  return std::move(handle_);
+}
+
+void InterfaceEndpointClient::AddFilter(
+    std::unique_ptr<MessageReceiver> filter) {
+  filters_.Append(std::move(filter));
 }
 
 void InterfaceEndpointClient::RaiseError() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  handle_.router()->RaiseError();
+  handle_.group_controller()->RaiseError();
 }
 
 bool InterfaceEndpointClient::Accept(Message* message) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(!message->has_flag(kMessageExpectsResponse));
+  DCHECK(controller_);
+  DCHECK(!message->has_flag(Message::kFlagExpectsResponse));
 
   if (encountered_error_)
     return false;
 
-  return handle_.router()->SendMessage(handle_, message);
+  return controller_->SendMessage(message);
 }
 
 bool InterfaceEndpointClient::AcceptWithResponder(Message* message,
                                                   MessageReceiver* responder) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(message->has_flag(kMessageExpectsResponse));
+  DCHECK(controller_);
+  DCHECK(message->has_flag(Message::kFlagExpectsResponse));
 
   if (encountered_error_)
     return false;
@@ -167,18 +234,43 @@ bool InterfaceEndpointClient::AcceptWithResponder(Message* message,
 
   message->set_request_id(request_id);
 
-  if (!handle_.router()->SendMessage(handle_, message))
+  bool is_sync = message->has_flag(Message::kFlagIsSync);
+  if (!controller_->SendMessage(message))
     return false;
 
-  // We assume ownership of |responder|.
-  responders_[request_id] = responder;
+  if (!is_sync) {
+    // We assume ownership of |responder|.
+    async_responders_[request_id] = base::WrapUnique(responder);
+    return true;
+  }
+
+  SyncCallRestrictions::AssertSyncCallAllowed();
+
+  bool response_received = false;
+  std::unique_ptr<MessageReceiver> sync_responder(responder);
+  sync_responses_.insert(std::make_pair(
+      request_id, base::MakeUnique<SyncResponseInfo>(&response_received)));
+
+  base::WeakPtr<InterfaceEndpointClient> weak_self =
+      weak_ptr_factory_.GetWeakPtr();
+  controller_->SyncWatch(&response_received);
+  // Make sure that this instance hasn't been destroyed.
+  if (weak_self) {
+    DCHECK(base::ContainsKey(sync_responses_, request_id));
+    auto iter = sync_responses_.find(request_id);
+    DCHECK_EQ(&response_received, iter->second->response_received);
+    if (response_received)
+      ignore_result(sync_responder->Accept(&iter->second->response));
+    sync_responses_.erase(iter);
+  }
+
+  // Return true means that we take ownership of |responder|.
   return true;
 }
 
 bool InterfaceEndpointClient::HandleIncomingMessage(Message* message) {
   DCHECK(thread_checker_.CalledOnValidThread());
-
-  return payload_validator_->Accept(message);
+  return filters_.Accept(message);
 }
 
 void InterfaceEndpointClient::NotifyError() {
@@ -187,39 +279,80 @@ void InterfaceEndpointClient::NotifyError() {
   if (encountered_error_)
     return;
   encountered_error_ = true;
-  error_handler_.Run();
+
+  // Response callbacks may hold on to resource, and there's no need to keep
+  // them alive any longer. Note that it's allowed that a pending response
+  // callback may own this endpoint, so we simply move the responders onto the
+  // stack here and let them be destroyed when the stack unwinds.
+  AsyncResponderMap responders = std::move(async_responders_);
+
+  control_message_proxy_.OnConnectionError();
+
+  if (!error_handler_.is_null()) {
+    error_handler_.Run();
+  } else if (!error_with_reason_handler_.is_null()) {
+    // Make a copy on the stack. If we directly pass a reference to a member of
+    // |control_message_handler_|, that reference will be invalidated as soon as
+    // the user destroys the interface endpoint.
+    std::string description = control_message_handler_.disconnect_description();
+    error_with_reason_handler_.Run(
+        control_message_handler_.disconnect_custom_reason(), description);
+  }
 }
 
 bool InterfaceEndpointClient::HandleValidatedMessage(Message* message) {
   DCHECK_EQ(handle_.id(), message->interface_id());
+  DCHECK(!encountered_error_);
 
-  if (message->has_flag(kMessageExpectsResponse)) {
-    if (!incoming_receiver_)
-      return false;
-
+  if (message->has_flag(Message::kFlagExpectsResponse)) {
     MessageReceiverWithStatus* responder =
-        new ResponderThunk(weak_ptr_factory_.GetWeakPtr());
-    bool ok = incoming_receiver_->AcceptWithResponder(message, responder);
+        new ResponderThunk(weak_ptr_factory_.GetWeakPtr(), task_runner_);
+    bool ok = false;
+    if (mojo::internal::ControlMessageHandler::IsControlMessage(message)) {
+      ok = control_message_handler_.AcceptWithResponder(message, responder);
+    } else {
+      ok = incoming_receiver_->AcceptWithResponder(message, responder);
+    }
     if (!ok)
       delete responder;
     return ok;
-  } else if (message->has_flag(kMessageIsResponse)) {
+  } else if (message->has_flag(Message::kFlagIsResponse)) {
     uint64_t request_id = message->request_id();
-    ResponderMap::iterator it = responders_.find(request_id);
-    if (it == responders_.end())
+
+    if (message->has_flag(Message::kFlagIsSync)) {
+      auto it = sync_responses_.find(request_id);
+      if (it == sync_responses_.end())
+        return false;
+      it->second->response = std::move(*message);
+      *it->second->response_received = true;
+      return true;
+    }
+
+    auto it = async_responders_.find(request_id);
+    if (it == async_responders_.end())
       return false;
-    MessageReceiver* responder = it->second;
-    responders_.erase(it);
-    bool ok = responder->Accept(message);
-    delete responder;
-    return ok;
+    std::unique_ptr<MessageReceiver> responder = std::move(it->second);
+    async_responders_.erase(it);
+    return responder->Accept(message);
   } else {
-    if (!incoming_receiver_)
-      return false;
+    if (mojo::internal::ControlMessageHandler::IsControlMessage(message))
+      return control_message_handler_.Accept(message);
 
     return incoming_receiver_->Accept(message);
   }
 }
 
-}  // namespace internal
+void InterfaceEndpointClient::StopObservingIfNecessary() {
+  if (!observing_message_loop_destruction_)
+    return;
+
+  observing_message_loop_destruction_ = false;
+  base::MessageLoop::current()->RemoveDestructionObserver(this);
+}
+
+void InterfaceEndpointClient::WillDestroyCurrentMessageLoop() {
+  StopObservingIfNecessary();
+  NotifyError();
+}
+
 }  // namespace mojo

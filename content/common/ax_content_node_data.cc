@@ -33,6 +33,12 @@ typename std::vector<std::pair<FirstType, SecondType>>::const_iterator
 AXContentNodeData::AXContentNodeData() {
 }
 
+AXContentNodeData::AXContentNodeData(const AXContentNodeData& other) = default;
+
+AXContentNodeData::AXContentNodeData(const AXNodeData& other)
+    : AXNodeData(other) {
+}
+
 AXContentNodeData::~AXContentNodeData() {
 }
 
@@ -61,8 +67,8 @@ bool AXContentNodeData::GetContentIntAttribute(
   return false;
 }
 
-void AXContentNodeData::AddContentIntAttribute(
-    AXContentIntAttribute attribute, int32 value) {
+void AXContentNodeData::AddContentIntAttribute(AXContentIntAttribute attribute,
+                                               int32_t value) {
   content_int_attributes.push_back(std::make_pair(attribute, value));
 }
 
@@ -88,7 +94,8 @@ std::string AXContentNodeData::ToString() const {
 }
 
 AXContentTreeData::AXContentTreeData()
-    : routing_id(-1),
+    : AXTreeData(),
+      routing_id(-1),
       parent_routing_id(-1) {
 }
 

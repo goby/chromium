@@ -16,13 +16,26 @@ namespace breakpad {
 // Turns on the crash reporter in any process.
 extern void InitCrashReporter(const std::string& process_type);
 
-// Enables the crash reporter in child processes.
 #if defined(OS_ANDROID)
+
+const char kWebViewSingleProcessType[] = "webview";
+const char kBrowserProcessType[] = "browser";
+
+// Enables the crash reporter in child processes.
 extern void InitNonBrowserCrashReporterForAndroid(
+    const std::string& process_type);
+
+// Enables *micro*dump only. Can be called from any process.
+extern void InitMicrodumpCrashHandlerIfNecessary(
     const std::string& process_type);
 
 extern void AddGpuFingerprintToMicrodumpCrashHandler(
     const std::string& gpu_fingerprint);
+
+// Inform breakpad of the extent of the text section that is
+// considered interesting for the purpose of crashes so that this can
+// be used to elide crashes that do not reference interesting code.
+extern void SetNativeCodeTextAddrRange(uintptr_t start, uintptr_t end);
 #endif
 
 // Checks if crash reporting is enabled. Note that this is not the same as

@@ -5,9 +5,14 @@
 #ifndef CONTENT_BROWSER_DOWNLOAD_SAVE_FILE_H_
 #define CONTENT_BROWSER_DOWNLOAD_SAVE_FILE_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <string>
+
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/browser/download/base_file.h"
 #include "content/browser/download/save_types.h"
 
@@ -34,12 +39,11 @@ class SaveFile {
   void AnnotateWithSourceInformation();
   base::FilePath FullPath() const;
   bool InProgress() const;
-  int64 BytesSoFar() const;
-  bool GetHash(std::string* hash);
+  int64_t BytesSoFar() const;
   std::string DebugString() const;
 
   // Accessors.
-  int save_id() const { return info_->save_id; }
+  SaveItemId save_item_id() const { return info_->save_item_id; }
   int render_process_id() const { return info_->render_process_id; }
   int request_id() const { return info_->request_id; }
   SaveFileCreateInfo::SaveFileSource save_source() const {
@@ -48,7 +52,7 @@ class SaveFile {
 
  private:
   BaseFile file_;
-  scoped_ptr<const SaveFileCreateInfo> info_;
+  std::unique_ptr<const SaveFileCreateInfo> info_;
 
   DISALLOW_COPY_AND_ASSIGN(SaveFile);
 };

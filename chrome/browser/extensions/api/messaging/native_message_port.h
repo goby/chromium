@@ -7,21 +7,22 @@
 
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/extensions/api/messaging/message_service.h"
+#include "extensions/common/api/messaging/port_id.h"
 
 namespace extensions {
-class NativeMessageProcessHost;
 
 // A port that manages communication with a native application.
 // All methods must be called on the UI Thread of the browser process.
 class NativeMessagePort : public MessageService::MessagePort {
  public:
   NativeMessagePort(base::WeakPtr<MessageService> message_service,
-                    int port_id,
-                    scoped_ptr<NativeMessageHost> native_message_host);
+                    const PortId& port_id,
+                    std::unique_ptr<NativeMessageHost> native_message_host);
   ~NativeMessagePort() override;
 
   // MessageService::MessagePort implementation.
-  void DispatchOnMessage(const Message& message, int target_port_id) override;
+  bool IsValidPort() override;
+  void DispatchOnMessage(const Message& message) override;
 
  private:
   class Core;
@@ -31,8 +32,8 @@ class NativeMessagePort : public MessageService::MessagePort {
   base::ThreadChecker thread_checker_;
   base::WeakPtr<MessageService> weak_message_service_;
   scoped_refptr<base::SingleThreadTaskRunner> host_task_runner_;
-  int port_id_;
-  scoped_ptr<Core> core_;
+  const PortId port_id_;
+  std::unique_ptr<Core> core_;
 
   base::WeakPtrFactory<NativeMessagePort> weak_factory_;
 };

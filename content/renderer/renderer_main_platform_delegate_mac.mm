@@ -7,6 +7,7 @@
 #include <Carbon/Carbon.h>
 #import <Cocoa/Cocoa.h>
 #include <objc/runtime.h>
+#include <stdint.h>
 
 #include "base/command_line.h"
 #include "base/logging.h"
@@ -71,11 +72,11 @@ void DisconnectCFNotificationCenter() {
     std::string port_address_std_string =
         base::SysCFStringRefToUTF8(port_address_string);
 #if __LP64__
-    uint64 port_address = 0;
+    uint64_t port_address = 0;
     if (!base::HexStringToUInt64(port_address_std_string, &port_address))
       continue;
 #else
-    uint32 port_address = 0;
+    uint32_t port_address = 0;
     if (!base::HexStringToUInt(port_address_std_string, &port_address))
       continue;
 #endif
@@ -106,9 +107,7 @@ void DisconnectCFNotificationCenter() {
 }  // namespace
 
 RendererMainPlatformDelegate::RendererMainPlatformDelegate(
-    const MainFunctionParams& parameters)
-        : parameters_(parameters) {
-}
+    const MainFunctionParams& parameters) {}
 
 RendererMainPlatformDelegate::~RendererMainPlatformDelegate() {
 }
@@ -117,13 +116,6 @@ RendererMainPlatformDelegate::~RendererMainPlatformDelegate() {
 // running a renderer needs to also be reflected in chrome_main.cc for
 // --single-process support.
 void RendererMainPlatformDelegate::PlatformInitialize() {
-  if (base::mac::IsOSYosemiteOrLater()) {
-    // This is needed by the NSAnimations run for the scrollbars. If we switch
-    // from native scrollers to drawing them in some other way, this warmup can
-    // be removed <http://crbug.com/306348>.
-    [NSScreen screens];
-  }
-
   if (![NSThread isMultiThreaded]) {
     NSString* string = @"";
     [NSThread detachNewThreadSelector:@selector(length)

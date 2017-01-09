@@ -7,23 +7,14 @@ var test = function()
 {
     InspectorTest.reloadPage(step1);
 
-    function findRequestByURL(url)
-    {
-        var requests = InspectorTest.networkRequests();
-        for (var i = 0; i < requests.length; ++i) {
-            if (url.test(requests[i].url))
-                return requests[i];
-        }
-    }
-
     function step1()
     {
-        InspectorTest.networkManager.addEventListener(WebInspector.NetworkManager.EventTypes.RequestStarted, onRequest);
+        InspectorTest.networkManager.addEventListener(SDK.NetworkManager.Events.RequestStarted, onRequest);
         var str = "";
         str += "var s = document.createElement(\"script\");";
         str += "s.src = \"resources/silent_script.js\";";
         str += "document.head.appendChild(s);";
-        WebInspector.context.flavor(WebInspector.ExecutionContext).evaluate(str, "console", true, undefined, undefined, undefined, function(){});
+        UI.context.flavor(SDK.ExecutionContext).evaluate(str, "console", true, undefined, undefined, undefined, undefined, function(){});
     }
 
     function onRequest(event)
@@ -35,7 +26,8 @@ var test = function()
 
     function step2()
     {
-        if (!findRequestByURL(/silent_script.js/))
+        var results = InspectorTest.findRequestsByURLPattern(/silent_script.js/);
+        if (results.length === 0)
             return;
 
         InspectorTest.completeTest();

@@ -1,6 +1,5 @@
 if (self.importScripts) {
   importScripts('/resources/testharness.js');
-  importScripts('/resources/testharness-helpers.js');
   importScripts('/serviceworker/resources/test-helpers.js');
   importScripts('/fetch/resources/fetch-test-options.js');
 }
@@ -188,7 +187,7 @@ function testBlockMixedContent(mode) {
             return fetch(HTTPS_REDIRECT_URL +
                          encodeURIComponent(HTTPS_BASE_URL + 'test4-' + mode),
                          {mode: mode})
-              .then(function(res) {assert_equals(res.status, 200); },
+              .then(function(res) {assert_equals(res.status, mode == 'no-cors' ? 0 : 200); },
                     t.unreached_func('Test 4: Must success (' +
                                      mode + ', HTTPS->HTTPS->HTTPS)'));
           })
@@ -217,19 +216,22 @@ function testBlockMixedContent(mode) {
     }, 'Block fetch() as mixed content (' + mode + ')');
 }
 
-function add_referrer_tests(tests) {
-  for (var test of tests) {
-    var url = test[0];
-    var referrer = test[1];
-    var expected = test[2];
-    promise_test(((url, referrer, expected, t) => {
-        var request = new Request(url, {referrer: referrer, mode: 'cors'});
-        return fetch(new Request(url, request)).then(res => {
+function add_referrer_tests(tests, global) {
+  global = global || self;
+  for (let test of tests) {
+    let url = test[0];
+    let referrer = test[1];
+    let policy = test[2];
+    let expected = test[3];
+    promise_test(t => {
+        var request = new Request(url,
+          {referrer: referrer, referrerPolicy: policy, mode: 'cors'});
+        return global.fetch(new Request(url, request)).then(res => {
             return res.json();
           }).then(json => {
             assert_equals(json.referrer, expected, 'referrer');
           });
-     }).bind(undefined, url, referrer, expected),
-     'referrer test: url = ' + url + ', referrer = ' + referrer);
+     },
+     `referrer test: url = ${url}, referrer = ${referrer}, policy = ${policy}`);
   }
 }

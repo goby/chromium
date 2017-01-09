@@ -4,9 +4,12 @@
 
 #include "ui/events/ozone/evdev/touch_noise/far_apart_taps_touch_noise_filter.h"
 
+#include <stddef.h>
+
 #include <cmath>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 
@@ -40,10 +43,10 @@ int Distance2(int x1, int y1, int x2, int y2) {
 
 void FarApartTapsTouchNoiseFilter::Filter(
     const std::vector<InProgressTouchEvdev>& touches,
-    base::TimeDelta time,
+    base::TimeTicks time,
     std::bitset<kNumTouchEvdevSlots>* slots_with_noise) {
   // Remove old taps.
-  base::TimeDelta tap_cutoff =
+  base::TimeTicks tap_cutoff =
       time - base::TimeDelta::FromMilliseconds(kMaxTapDeltaMs);
   for (size_t i = 0; i < arraysize(tracked_taps_); ++i) {
     if (tracked_taps_[i].start < tap_cutoff)

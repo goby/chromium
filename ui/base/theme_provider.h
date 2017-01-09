@@ -5,7 +5,7 @@
 #ifndef UI_BASE_THEME_PROVIDER_H_
 #define UI_BASE_THEME_PROVIDER_H_
 
-#include "base/basictypes.h"
+#include "build/build_config.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/layout.h"
 #include "ui/base/ui_base_export.h"
@@ -22,10 +22,12 @@ class NSImage;
 #endif  // __OBJC__
 #endif  // OS_*
 
-class SkBitmap;
-
 namespace base {
 class RefCountedMemory;
+}
+
+namespace color_utils {
+struct HSL;
 }
 
 namespace gfx {
@@ -47,16 +49,15 @@ class UI_BASE_EXPORT ThemeProvider {
  public:
   virtual ~ThemeProvider();
 
-  // Whether we're using the system theme (which may or may not be the
-  // same as the default theme).
-  virtual bool UsingSystemTheme() const = 0;
-
   // Get the image specified by |id|. An implementation of ThemeProvider should
   // have its own source of ids (e.g. an enum, or external resource bundle).
   virtual gfx::ImageSkia* GetImageSkiaNamed(int id) const = 0;
 
   // Get the color specified by |id|.
   virtual SkColor GetColor(int id) const = 0;
+
+  // Get the HSL shift specified by |id|.
+  virtual color_utils::HSL GetTint(int id) const = 0;
 
   // Get the property (e.g. an alignment expressed in an enum, or a width or
   // height) specified by |id|.
@@ -78,8 +79,20 @@ class UI_BASE_EXPORT ThemeProvider {
       ui::ScaleFactor scale_factor) const = 0;
 
 #if defined(OS_MACOSX)
+  // Whether we're using the system theme (which may or may not be the
+  // same as the default theme).
+  // TODO(estade): this should probably just be part of ThemeService and not
+  // ThemeProvider, but it's used in many places on OSX.
+  virtual bool UsingSystemTheme() const = 0;
+
+  // Returns whether or not theme is in Incognito mode.
+  virtual bool InIncognitoMode() const = 0;
+
   // Gets the NSImage with the specified |id|.
   virtual NSImage* GetNSImageNamed(int id) const = 0;
+
+  // Returns true if the theme has defined a custom color for color |id|.
+  virtual bool HasCustomColor(int id) const = 0;
 
   // Gets the NSImage that GetNSImageNamed (above) would return, but returns it
   // as a pattern color.
@@ -93,6 +106,9 @@ class UI_BASE_EXPORT ThemeProvider {
 
   // Gets the NSGradient with the specified |id|.
   virtual NSGradient* GetNSGradient(int id) const = 0;
+
+  // Whether the "increase contrast" accessibility setting is enabled.
+  virtual bool ShouldIncreaseContrast() const = 0;
 #endif
 };
 

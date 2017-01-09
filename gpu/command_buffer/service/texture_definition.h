@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "ui/gfx/geometry/rect.h"
@@ -47,6 +48,7 @@ class TextureDefinition {
   TextureDefinition(Texture* texture,
                     unsigned int version,
                     const scoped_refptr<NativeImageBuffer>& image);
+  TextureDefinition(const TextureDefinition& other);
   virtual ~TextureDefinition();
 
   Texture* CreateTexture() const;
@@ -76,6 +78,7 @@ class TextureDefinition {
               GLenum format,
               GLenum type,
               const gfx::Rect& cleared_rect);
+    LevelInfo(const LevelInfo& other);
     ~LevelInfo();
 
     GLenum target;

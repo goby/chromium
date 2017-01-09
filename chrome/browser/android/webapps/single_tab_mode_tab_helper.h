@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_ANDROID_WEBAPPS_SINGLE_TAB_MODE_TAB_HELPER_H_
 #define CHROME_BROWSER_ANDROID_WEBAPPS_SINGLE_TAB_MODE_TAB_HELPER_H_
 
+#include <stdint.h>
+
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/blocked_content/blocked_window_params.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -18,8 +20,6 @@ class RenderViewHost;
 class WebContents;
 }  // namespace content
 
-class GURL;
-
 // Registers and unregisters the IDs of renderers in single tab mode, which
 // are disallowed from opening new windows via
 // ChromeContentBrowserClient::CanCreateWindow().
@@ -28,7 +28,7 @@ class SingleTabModeTabHelper
       public content::WebContentsUserData<SingleTabModeTabHelper> {
  public:
   // Checks if the ID pair is blocked from creating new windows. IO-thread only.
-  static bool IsRegistered(int32 process_id, int32 routing_id);
+  static bool IsRegistered(int32_t process_id, int32_t routing_id);
 
   ~SingleTabModeTabHelper() override;
 

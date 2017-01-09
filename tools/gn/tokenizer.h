@@ -5,6 +5,8 @@
 #ifndef TOOLS_GN_TOKENIZER_H_
 #define TOOLS_GN_TOKENIZER_H_
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/macros.h"
@@ -80,7 +82,7 @@ class Tokenizer {
   size_t cur_;  // Byte offset into input buffer.
 
   int line_number_;
-  int char_in_line_;
+  int column_number_;
 
   DISALLOW_COPY_AND_ASSIGN(Tokenizer);
 };

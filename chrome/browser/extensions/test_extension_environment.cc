@@ -4,10 +4,14 @@
 
 #include "chrome/browser/extensions/test_extension_environment.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -33,13 +37,14 @@ using content::BrowserThread;
 
 namespace {
 
-scoped_ptr<base::DictionaryValue> MakeExtensionManifest(
+std::unique_ptr<base::DictionaryValue> MakeExtensionManifest(
     const base::Value& manifest_extra) {
-  scoped_ptr<base::DictionaryValue> manifest = DictionaryBuilder()
-                                                   .Set("name", "Extension")
-                                                   .Set("version", "1.0")
-                                                   .Set("manifest_version", 2)
-                                                   .Build();
+  std::unique_ptr<base::DictionaryValue> manifest =
+      DictionaryBuilder()
+          .Set("name", "Extension")
+          .Set("version", "1.0")
+          .Set("manifest_version", 2)
+          .Build();
   const base::DictionaryValue* manifest_extra_dict;
   if (manifest_extra.GetAsDictionary(&manifest_extra_dict)) {
     manifest->MergeDictionary(manifest_extra_dict);
@@ -51,16 +56,19 @@ scoped_ptr<base::DictionaryValue> MakeExtensionManifest(
   return manifest;
 }
 
-scoped_ptr<base::DictionaryValue> MakePackagedAppManifest() {
+std::unique_ptr<base::DictionaryValue> MakePackagedAppManifest() {
   return extensions::DictionaryBuilder()
       .Set("name", "Test App Name")
       .Set("version", "2.0")
       .Set("manifest_version", 2)
-      .Set("app", extensions::DictionaryBuilder().Set(
-                      "background",
-                      extensions::DictionaryBuilder().Set(
-                          "scripts",
-                          extensions::ListBuilder().Append("background.js"))))
+      .Set("app", extensions::DictionaryBuilder()
+                      .Set("background",
+                           extensions::DictionaryBuilder()
+                               .Set("scripts", extensions::ListBuilder()
+                                                   .Append("background.js")
+                                                   .Build())
+                               .Build())
+                      .Build())
       .Build();
 }
 
@@ -133,10 +141,10 @@ ExtensionPrefs* TestExtensionEnvironment::GetExtensionPrefs() {
 
 const Extension* TestExtensionEnvironment::MakeExtension(
     const base::Value& manifest_extra) {
-  scoped_ptr<base::DictionaryValue> manifest =
+  std::unique_ptr<base::DictionaryValue> manifest =
       MakeExtensionManifest(manifest_extra);
   scoped_refptr<Extension> result =
-      ExtensionBuilder().SetManifest(manifest.Pass()).Build();
+      ExtensionBuilder().SetManifest(std::move(manifest)).Build();
   GetExtensionService()->AddExtension(result.get());
   return result.get();
 }
@@ -144,10 +152,10 @@ const Extension* TestExtensionEnvironment::MakeExtension(
 const Extension* TestExtensionEnvironment::MakeExtension(
     const base::Value& manifest_extra,
     const std::string& id) {
-  scoped_ptr<base::DictionaryValue> manifest =
+  std::unique_ptr<base::DictionaryValue> manifest =
       MakeExtensionManifest(manifest_extra);
   scoped_refptr<Extension> result =
-      ExtensionBuilder().SetManifest(manifest.Pass()).SetID(id).Build();
+      ExtensionBuilder().SetManifest(std::move(manifest)).SetID(id).Build();
   GetExtensionService()->AddExtension(result.get());
   return result.get();
 }
@@ -165,12 +173,13 @@ scoped_refptr<Extension> TestExtensionEnvironment::MakePackagedApp(
   return result;
 }
 
-scoped_ptr<content::WebContents> TestExtensionEnvironment::MakeTab() const {
-  scoped_ptr<content::WebContents> contents(
+std::unique_ptr<content::WebContents> TestExtensionEnvironment::MakeTab()
+    const {
+  std::unique_ptr<content::WebContents> contents(
       content::WebContentsTester::CreateTestWebContents(profile(), NULL));
   // Create a tab id.
   SessionTabHelper::CreateForWebContents(contents.get());
-  return contents.Pass();
+  return contents;
 }
 
 void TestExtensionEnvironment::DeleteProfile() {

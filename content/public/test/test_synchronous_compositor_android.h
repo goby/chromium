@@ -5,7 +5,12 @@
 #ifndef CONTENT_PUBLIC_TEST_TEST_SYNCHRONOUS_COMPOSITOR_ANDROID_H_
 #define CONTENT_PUBLIC_TEST_TEST_SYNCHRONOUS_COMPOSITOR_ANDROID_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+#include <vector>
+
+#include "base/macros.h"
 #include "content/public/browser/android/synchronous_compositor.h"
 #include "content/public/browser/android/synchronous_compositor_client.h"
 
@@ -13,32 +18,50 @@ namespace content {
 
 class CONTENT_EXPORT TestSynchronousCompositor : public SynchronousCompositor {
  public:
-  TestSynchronousCompositor();
+  TestSynchronousCompositor(int process_id, int routing_id);
   ~TestSynchronousCompositor() override;
 
   void SetClient(SynchronousCompositorClient* client);
 
   // SynchronousCompositor overrides.
-  scoped_ptr<cc::CompositorFrame> DemandDrawHw(
-      const gfx::Size& surface_size,
-      const gfx::Transform& transform,
-      const gfx::Rect& viewport,
-      const gfx::Rect& clip,
+  SynchronousCompositor::Frame DemandDrawHw(
+      const gfx::Size& viewport_size,
       const gfx::Rect& viewport_rect_for_tile_priority,
       const gfx::Transform& transform_for_tile_priority) override;
-  void ReturnResources(const cc::CompositorFrameAck& frame_ack) override {}
+  scoped_refptr<FrameFuture> DemandDrawHwAsync(
+      const gfx::Size& viewport_size,
+      const gfx::Rect& viewport_rect_for_tile_priority,
+      const gfx::Transform& transform_for_tile_priority) override;
+  void ReturnResources(uint32_t compositor_frame_sink_id,
+                       const cc::ReturnedResourceArray& resources) override;
   bool DemandDrawSw(SkCanvas* canvas) override;
   void SetMemoryPolicy(size_t bytes_limit) override {}
   void DidChangeRootLayerScrollOffset(
       const gfx::ScrollOffset& root_offset) override {}
-  void SetIsActive(bool is_active) override {}
+  void SynchronouslyZoomBy(float zoom_delta,
+                           const gfx::Point& anchor) override {}
   void OnComputeScroll(base::TimeTicks animate_time) override {}
 
-  void SetHardwareFrame(scoped_ptr<cc::CompositorFrame> frame);
+  void SetHardwareFrame(uint32_t compositor_frame_sink_id,
+                        std::unique_ptr<cc::CompositorFrame> frame);
+
+  struct ReturnedResources {
+    ReturnedResources();
+    ReturnedResources(const ReturnedResources& other);
+    ~ReturnedResources();
+
+    uint32_t compositor_frame_sink_id;
+    cc::ReturnedResourceArray resources;
+  };
+  using FrameAckArray = std::vector<ReturnedResources>;
+  void SwapReturnedResources(FrameAckArray* array);
 
  private:
   SynchronousCompositorClient* client_;
-  scoped_ptr<cc::CompositorFrame> hardware_frame_;
+  const int process_id_;
+  const int routing_id_;
+  SynchronousCompositor::Frame hardware_frame_;
+  FrameAckArray frame_ack_array_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSynchronousCompositor);
 };

@@ -6,83 +6,90 @@
 #define InspectorAnimationAgent_h
 
 #include "core/CoreExport.h"
-#include "core/InspectorFrontend.h"
 #include "core/animation/Animation.h"
 #include "core/css/CSSKeyframesRule.h"
 #include "core/inspector/InspectorBaseAgent.h"
-#include "wtf/PassOwnPtr.h"
+#include "core/inspector/protocol/Animation.h"
 #include "wtf/text/WTFString.h"
+
+#include <v8-inspector.h>
 
 namespace blink {
 
-class AnimationNode;
 class AnimationTimeline;
-class Element;
-class InjectedScriptManager;
 class InspectedFrames;
 class InspectorCSSAgent;
-class InspectorDOMAgent;
-class TimingFunction;
 
-class CORE_EXPORT InspectorAnimationAgent final : public InspectorBaseAgent<InspectorAnimationAgent, InspectorFrontend::Animation>, public InspectorBackendDispatcher::AnimationCommandHandler {
-    WTF_MAKE_NONCOPYABLE(InspectorAnimationAgent);
-public:
-    static PassOwnPtrWillBeRawPtr<InspectorAnimationAgent> create(InspectedFrames* inspectedFrames, InspectorDOMAgent* domAgent, InspectorCSSAgent* cssAgent, InjectedScriptManager* injectedScriptManager)
-    {
-        return adoptPtrWillBeNoop(new InspectorAnimationAgent(inspectedFrames, domAgent, cssAgent, injectedScriptManager));
-    }
+class CORE_EXPORT InspectorAnimationAgent final
+    : public InspectorBaseAgent<protocol::Animation::Metainfo> {
+  WTF_MAKE_NONCOPYABLE(InspectorAnimationAgent);
 
-    // Base agent methods.
-    void restore() override;
-    void disable(ErrorString*) override;
-    void didCommitLoadForLocalFrame(LocalFrame*) override;
+ public:
+  InspectorAnimationAgent(InspectedFrames*,
+                          InspectorCSSAgent*,
+                          v8_inspector::V8InspectorSession*);
 
-    // Protocol method implementations
-    void getPlaybackRate(ErrorString*, double* playbackRate) override;
-    void setPlaybackRate(ErrorString*, double playbackRate) override;
-    void getCurrentTime(ErrorString*, const String& animationId, double* currentTime) override;
-    void setPaused(ErrorString*, const RefPtr<JSONArray>& animationIds, bool paused) override;
-    void setTiming(ErrorString*, const String& animationId, double duration, double delay) override;
-    void seekAnimations(ErrorString*, const RefPtr<JSONArray>& animationIds, double currentTime) override;
-    void resolveAnimation(ErrorString*, const String& animationId, RefPtr<TypeBuilder::Runtime::RemoteObject>& result) override;
-    void releaseAnimations(ErrorString*, const RefPtr<JSONArray>& animationIds) override;
+  // Base agent methods.
+  void restore() override;
+  void didCommitLoadForLocalFrame(LocalFrame*) override;
 
-    // API for InspectorInstrumentation
-    void didCreateAnimation(unsigned);
-    void animationPlayStateChanged(Animation*, Animation::AnimationPlayState, Animation::AnimationPlayState);
-    void didClearDocumentOfWindowObject(LocalFrame*);
+  // Protocol method implementations
+  Response enable() override;
+  Response disable() override;
+  Response getPlaybackRate(double* playbackRate) override;
+  Response setPlaybackRate(double) override;
+  Response getCurrentTime(const String& id, double* currentTime) override;
+  Response setPaused(std::unique_ptr<protocol::Array<String>> animations,
+                     bool paused) override;
+  Response setTiming(const String& animationId,
+                     double duration,
+                     double delay) override;
+  Response seekAnimations(std::unique_ptr<protocol::Array<String>> animations,
+                          double currentTime) override;
+  Response releaseAnimations(
+      std::unique_ptr<protocol::Array<String>> animations) override;
+  Response resolveAnimation(
+      const String& animationId,
+      std::unique_ptr<v8_inspector::protocol::Runtime::API::RemoteObject>*)
+      override;
 
-    // API for InspectorFrontend
-    void enable(ErrorString*) override;
+  // API for InspectorInstrumentation
+  void didCreateAnimation(unsigned);
+  void animationPlayStateChanged(blink::Animation*,
+                                 blink::Animation::AnimationPlayState,
+                                 blink::Animation::AnimationPlayState);
+  void didClearDocumentOfWindowObject(LocalFrame*);
 
-    // Methods for other agents to use.
-    Animation* assertAnimation(ErrorString*, const String& id);
+  // Methods for other agents to use.
+  Response assertAnimation(const String& id, blink::Animation*& result);
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    InspectorAnimationAgent(InspectedFrames*, InspectorDOMAgent*, InspectorCSSAgent*, InjectedScriptManager*);
+ private:
+  using AnimationType = protocol::Animation::Animation::TypeEnum;
 
-    typedef TypeBuilder::Animation::Animation::Type::Enum AnimationType;
+  std::unique_ptr<protocol::Animation::Animation> buildObjectForAnimation(
+      blink::Animation&);
+  std::unique_ptr<protocol::Animation::Animation> buildObjectForAnimation(
+      blink::Animation&,
+      String,
+      std::unique_ptr<protocol::Animation::KeyframesRule> keyframeRule =
+          nullptr);
+  double normalizedStartTime(blink::Animation&);
+  AnimationTimeline& referenceTimeline();
+  blink::Animation* animationClone(blink::Animation*);
+  String createCSSId(blink::Animation&);
 
-    PassRefPtr<TypeBuilder::Animation::Animation> buildObjectForAnimation(Animation&);
-    PassRefPtr<TypeBuilder::Animation::Animation> buildObjectForAnimation(Animation&, AnimationType, PassRefPtr<TypeBuilder::Animation::KeyframesRule> keyframeRule = nullptr);
-    double normalizedStartTime(Animation&);
-    AnimationTimeline& referenceTimeline();
-    Animation* animationClone(Animation*);
-    String createCSSId(Animation&);
-
-    RawPtrWillBeMember<InspectedFrames> m_inspectedFrames;
-    RawPtrWillBeMember<InspectorDOMAgent> m_domAgent;
-    RawPtrWillBeMember<InspectorCSSAgent> m_cssAgent;
-    RawPtrWillBeMember<InjectedScriptManager> m_injectedScriptManager;
-    PersistentHeapHashMapWillBeHeapHashMap<String, Member<Animation>> m_idToAnimation;
-    PersistentHeapHashMapWillBeHeapHashMap<String, Member<Animation>> m_idToAnimationClone;
-    WillBeHeapHashMap<String, AnimationType> m_idToAnimationType;
-    bool m_isCloning;
-    HashSet<String> m_clearedAnimations;
+  Member<InspectedFrames> m_inspectedFrames;
+  Member<InspectorCSSAgent> m_cssAgent;
+  v8_inspector::V8InspectorSession* m_v8Session;
+  HeapHashMap<String, Member<blink::Animation>> m_idToAnimation;
+  HeapHashMap<String, Member<blink::Animation>> m_idToAnimationClone;
+  HashMap<String, String> m_idToAnimationType;
+  bool m_isCloning;
+  HashSet<String> m_clearedAnimations;
 };
 
-}
+}  // namespace blink
 
-#endif // InspectorAnimationAgent_h
+#endif  // InspectorAnimationAgent_h

@@ -11,40 +11,42 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "net/base/net_export.h"
 #include "net/http/http_basic_state.h"
 #include "net/http/http_stream.h"
 
 namespace net {
 
-class BoundNetLog;
 class ClientSocketHandle;
 class HttpResponseInfo;
 struct HttpRequestInfo;
 class HttpRequestHeaders;
 class HttpStreamParser;
 class IOBuffer;
+class NetLogWithSource;
 
-class HttpBasicStream : public HttpStream {
+class NET_EXPORT_PRIVATE HttpBasicStream : public HttpStream {
  public:
   // Constructs a new HttpBasicStream. InitializeStream must be called to
   // initialize it correctly.
-  HttpBasicStream(ClientSocketHandle* connection, bool using_proxy);
+  HttpBasicStream(std::unique_ptr<ClientSocketHandle> connection,
+                  bool using_proxy,
+                  bool http_09_on_non_default_ports_enabled);
   ~HttpBasicStream() override;
 
   // HttpStream methods:
   int InitializeStream(const HttpRequestInfo* request_info,
                        RequestPriority priority,
-                       const BoundNetLog& net_log,
+                       const NetLogWithSource& net_log,
                        const CompletionCallback& callback) override;
 
   int SendRequest(const HttpRequestHeaders& headers,
                   HttpResponseInfo* response,
                   const CompletionCallback& callback) override;
-
-  UploadProgress GetUploadProgress() const override;
 
   int ReadResponseHeaders(const CompletionCallback& callback) override;
 
@@ -76,7 +78,13 @@ class HttpBasicStream : public HttpStream {
 
   bool GetRemoteEndpoint(IPEndPoint* endpoint) override;
 
+  Error GetTokenBindingSignature(crypto::ECPrivateKey* key,
+                                 TokenBindingType tb_type,
+                                 std::vector<uint8_t>* out) override;
+
   void Drain(HttpNetworkSession* session) override;
+
+  void PopulateNetErrorDetails(NetErrorDetails* details) override;
 
   void SetPriority(RequestPriority priority) override;
 

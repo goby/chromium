@@ -6,7 +6,9 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/common/translate_switches.h"
 #include "net/base/load_flags.h"
@@ -44,7 +46,7 @@ class TranslateScriptTest : public testing::Test {
   void OnComplete(bool success, const std::string& script) {
   }
 
-  scoped_ptr<TranslateScript> script_;
+  std::unique_ptr<TranslateScript> script_;
   net::TestURLFetcherFactory url_fetcher_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TranslateScriptTest);

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/profiles/profile_destroyer.h"
 
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/render_process_host.h"
@@ -12,12 +14,13 @@
 class TestingOffTheRecordDestructionProfile : public TestingProfile {
  public:
   TestingOffTheRecordDestructionProfile()
-      : TestingProfile(base::FilePath(),
-                       NULL,
-                       scoped_refptr<ExtensionSpecialStoragePolicy>()
-                       scoped_ptr<syncable_prefs::PrefServiceSyncable>(),
-                       true,
-                       TestingFactories()),
+      : TestingProfile(
+            base::FilePath(),
+            NULL,
+            scoped_refptr<ExtensionSpecialStoragePolicy>()
+                std::unique_ptr<sync_preferences::PrefServiceSyncable>(),
+            true,
+            TestingFactories()),
         destroyed_otr_profile_(false) {
     set_incognito(true);
   }
@@ -75,13 +78,13 @@ class ProfileDestroyerTest : public BrowserWithTestWindowTest {
 TEST_F(ProfileDestroyerTest, DelayProfileDestruction) {
   scoped_refptr<content::SiteInstance> instance1(
       content::SiteInstance::Create(off_the_record_profile_));
-  scoped_ptr<content::RenderProcessHost> render_process_host1;
+  std::unique_ptr<content::RenderProcessHost> render_process_host1;
   render_process_host1.reset(instance1->GetProcess());
   ASSERT_TRUE(render_process_host1.get() != NULL);
 
   scoped_refptr<content::SiteInstance> instance2(
       content::SiteInstance::Create(off_the_record_profile_));
-  scoped_ptr<content::RenderProcessHost> render_process_host2;
+  std::unique_ptr<content::RenderProcessHost> render_process_host2;
   render_process_host2.reset(instance2->GetProcess());
   ASSERT_TRUE(render_process_host2.get() != NULL);
 
@@ -93,12 +96,12 @@ TEST_F(ProfileDestroyerTest, DelayProfileDestruction) {
   render_process_host1.release()->Cleanup();
 
   // And asynchronicity kicked in properly.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(off_the_record_profile_->destroyed_otr_profile_);
 
   // I meant, ALL the render process hosts... :-)
   render_process_host2.release()->Cleanup();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(off_the_record_profile_->destroyed_otr_profile_);
 }
 
@@ -113,7 +116,7 @@ TEST_F(ProfileDestroyerTest, DelayOriginalProfileDestruction) {
 
   scoped_refptr<content::SiteInstance> instance1(
       content::SiteInstance::Create(off_the_record_profile));
-  scoped_ptr<content::RenderProcessHost> render_process_host1;
+  std::unique_ptr<content::RenderProcessHost> render_process_host1;
   render_process_host1.reset(instance1->GetProcess());
   ASSERT_TRUE(render_process_host1.get() != NULL);
 
@@ -125,7 +128,7 @@ TEST_F(ProfileDestroyerTest, DelayOriginalProfileDestruction) {
   EXPECT_FALSE(original_profile->destroyed_otr_profile_);
 
   render_process_host1.release()->Cleanup();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(NULL, TestingOriginalDestructionProfile::living_instance_);
 
   // And the same protection should apply to the main profile.
@@ -133,13 +136,13 @@ TEST_F(ProfileDestroyerTest, DelayOriginalProfileDestruction) {
       new TestingOriginalDestructionProfile;
   scoped_refptr<content::SiteInstance> instance2(
       content::SiteInstance::Create(main_profile));
-  scoped_ptr<content::RenderProcessHost> render_process_host2;
+  std::unique_ptr<content::RenderProcessHost> render_process_host2;
   render_process_host2.reset(instance2->GetProcess());
   ASSERT_TRUE(render_process_host2.get() != NULL);
 
   ProfileDestroyer::DestroyProfileWhenAppropriate(main_profile);
   EXPECT_EQ(main_profile, TestingOriginalDestructionProfile::living_instance_);
   render_process_host2.release()->Cleanup();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(NULL, TestingOriginalDestructionProfile::living_instance_);
 }

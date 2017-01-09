@@ -21,8 +21,12 @@ class DictionaryValue;
 // This is the interface for platform-specific code for a print backend
 namespace printing {
 
+// Note: There are raw values. The |printer_name| and |printer_description|
+// require further interpretation on Mac and Chrome OS. See existing callers for
+// examples.
 struct PRINTING_EXPORT PrinterBasicInfo {
   PrinterBasicInfo();
+  PrinterBasicInfo(const PrinterBasicInfo& other);
   ~PrinterBasicInfo();
 
   std::string printer_name;
@@ -32,10 +36,11 @@ struct PRINTING_EXPORT PrinterBasicInfo {
   std::map<std::string, std::string> options;
 };
 
-typedef std::vector<PrinterBasicInfo> PrinterList;
+using PrinterList = std::vector<PrinterBasicInfo>;
 
 struct PRINTING_EXPORT PrinterSemanticCapsAndDefaults {
   PrinterSemanticCapsAndDefaults();
+  PrinterSemanticCapsAndDefaults(const PrinterSemanticCapsAndDefaults& other);
   ~PrinterSemanticCapsAndDefaults();
 
   bool collate_capable;
@@ -65,6 +70,7 @@ struct PRINTING_EXPORT PrinterSemanticCapsAndDefaults {
 
 struct PRINTING_EXPORT PrinterCapsAndDefaults {
   PrinterCapsAndDefaults();
+  PrinterCapsAndDefaults(const PrinterCapsAndDefaults& other);
   ~PrinterCapsAndDefaults();
 
   std::string printer_capabilities;
@@ -86,8 +92,12 @@ class PRINTING_EXPORT PrintBackend
   // Enumerates the list of installed local and network printers.
   virtual bool EnumeratePrinters(PrinterList* printer_list) = 0;
 
-  // Get the default printer name. Empty string if no default printer.
+  // Gets the default printer name. Empty string if no default printer.
   virtual std::string GetDefaultPrinterName() = 0;
+
+  // Gets the basic printer info for a specific printer.
+  virtual bool GetPrinterBasicInfo(const std::string& printer_name,
+                                   PrinterBasicInfo* printer_info) = 0;
 
   // Gets the semantic capabilities and defaults for a specific printer.
   // This is usually a lighter implementation than GetPrinterCapsAndDefaults().
@@ -109,10 +119,15 @@ class PRINTING_EXPORT PrintBackend
   // Returns true if printer_name points to a valid printer.
   virtual bool IsValidPrinter(const std::string& printer_name) = 0;
 
-  // Allocate a print backend. If |print_backend_settings| is NULL, default
+  // Allocates a print backend. If |print_backend_settings| is nullptr, default
   // settings will be used.
   static scoped_refptr<PrintBackend> CreateInstance(
       const base::DictionaryValue* print_backend_settings);
+
+  // Returns the value of the native cups flag
+  static bool GetNativeCupsEnabled();
+
+  static void SetNativeCupsEnabled(bool enabled);
 
  protected:
   friend class base::RefCountedThreadSafe<PrintBackend>;

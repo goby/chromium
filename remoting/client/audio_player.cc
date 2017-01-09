@@ -5,14 +5,11 @@
 #include "remoting/client/audio_player.h"
 
 #include <algorithm>
+#include <string>
 
+#include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
-
-// The number of channels in the audio stream (only supporting stereo audio
-// for now).
-const int kChannels = 2;
-const int kSampleSizeBytes = 2;
 
 // If queue grows bigger than 150ms we start dropping packets.
 const int kMaxQueueLatencyMs = 150;
@@ -23,21 +20,20 @@ AudioPlayer::AudioPlayer()
     : sampling_rate_(AudioPacket::SAMPLING_RATE_INVALID),
       start_failed_(false),
       queued_bytes_(0),
-      bytes_consumed_(0) {
-}
+      bytes_consumed_(0) {}
 
-AudioPlayer::~AudioPlayer() {
-  base::AutoLock auto_lock(lock_);
-  ResetQueue();
-}
+AudioPlayer::~AudioPlayer() {}
 
-void AudioPlayer::ProcessAudioPacket(scoped_ptr<AudioPacket> packet) {
+void AudioPlayer::ProcessAudioPacket(std::unique_ptr<AudioPacket> packet,
+                                     const base::Closure& done) {
   CHECK_EQ(1, packet->data_size());
   DCHECK_EQ(AudioPacket::ENCODING_RAW, packet->encoding());
   DCHECK_NE(AudioPacket::SAMPLING_RATE_INVALID, packet->sampling_rate());
-  DCHECK_EQ(kSampleSizeBytes, packet->bytes_per_sample());
-  DCHECK_EQ(static_cast<int>(kChannels), packet->channels());
+  DCHECK_EQ(kSampleSizeBytes, static_cast<int>(packet->bytes_per_sample()));
+  DCHECK_EQ(kChannels, static_cast<int>(packet->channels()));
   DCHECK_EQ(packet->data(0).size() % (kChannels * kSampleSizeBytes), 0u);
+
+  base::ScopedClosureRunner done_runner(done);
 
   // No-op if the Pepper player won't start.
   if (start_failed_) {
@@ -64,7 +60,7 @@ void AudioPlayer::ProcessAudioPacket(scoped_ptr<AudioPacket> packet) {
   base::AutoLock auto_lock(lock_);
 
   queued_bytes_ += packet->data(0).size();
-  queued_packets_.push_back(packet.release());
+  queued_packets_.push_back(std::move(packet));
 
   int max_buffer_size_ =
       kMaxQueueLatencyMs * sampling_rate_ * kSampleSizeBytes * kChannels /
@@ -72,7 +68,6 @@ void AudioPlayer::ProcessAudioPacket(scoped_ptr<AudioPacket> packet) {
   while (queued_bytes_ > max_buffer_size_) {
     queued_bytes_ -= queued_packets_.front()->data(0).size() - bytes_consumed_;
     DCHECK_GE(queued_bytes_, 0);
-    delete queued_packets_.front();
     queued_packets_.pop_front();
     bytes_consumed_ = 0;
   }
@@ -80,7 +75,7 @@ void AudioPlayer::ProcessAudioPacket(scoped_ptr<AudioPacket> packet) {
 
 // static
 void AudioPlayer::AudioPlayerCallback(void* samples,
-                                      uint32 buffer_size,
+                                      uint32_t buffer_size,
                                       void* data) {
   AudioPlayer* audio_player = static_cast<AudioPlayer*>(data);
   audio_player->FillWithSamples(samples, buffer_size);
@@ -88,12 +83,12 @@ void AudioPlayer::AudioPlayerCallback(void* samples,
 
 void AudioPlayer::ResetQueue() {
   lock_.AssertAcquired();
-  STLDeleteElements(&queued_packets_);
+  queued_packets_.clear();
   queued_bytes_ = 0;
   bytes_consumed_ = 0;
 }
 
-void AudioPlayer::FillWithSamples(void* samples, uint32 buffer_size) {
+void AudioPlayer::FillWithSamples(void* samples, uint32_t buffer_size) {
   base::AutoLock auto_lock(lock_);
 
   const size_t bytes_needed = kChannels * kSampleSizeBytes *
@@ -114,7 +109,6 @@ void AudioPlayer::FillWithSamples(void* samples, uint32 buffer_size) {
 
     // Pop off the packet if we've already consumed all its bytes.
     if (queued_packets_.front()->data(0).size() == bytes_consumed_) {
-      delete queued_packets_.front();
       queued_packets_.pop_front();
       bytes_consumed_ = 0;
       continue;

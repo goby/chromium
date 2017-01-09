@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/scoped_observer.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
@@ -33,6 +37,7 @@
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/switches.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "net/dns/mock_host_resolver.h"
@@ -78,8 +83,8 @@ class LoadedIncognitoObserver : public ExtensionRegistryObserver {
   Profile* profile_;
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
       extension_registry_observer_;
-  scoped_ptr<LazyBackgroundObserver> original_complete_;
-  scoped_ptr<LazyBackgroundObserver> incognito_complete_;
+  std::unique_ptr<LazyBackgroundObserver> original_complete_;
+  std::unique_ptr<LazyBackgroundObserver> incognito_complete_;
 };
 
 }  // namespace
@@ -100,8 +105,8 @@ class LazyBackgroundPageApiTest : public ExtensionApiTest {
     ExtensionApiTest::SetUpCommandLine(command_line);
     // Disable background network activity as it can suddenly bring the Lazy
     // Background Page alive.
-    command_line->AppendSwitch(switches::kDisableBackgroundNetworking);
-    command_line->AppendSwitch(switches::kNoProxyServer);
+    command_line->AppendSwitch(::switches::kDisableBackgroundNetworking);
+    command_line->AppendSwitch(::switches::kNoProxyServer);
   }
 
   // Loads the extension, which temporarily starts the lazy background page
@@ -309,7 +314,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForRequest) {
 
 // Tests that the lazy background page stays alive while a NaCl module exists in
 // its DOM.
-#if !defined(DISABLE_NACL) && !defined(DISABLE_NACL_BROWSERTESTS)
+#if !defined(DISABLE_NACL)
 
 IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, NaClInBackgroundPage) {
   {
@@ -459,7 +464,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, DISABLED_IncognitoSplitMode) {
     LazyBackgroundObserver page_complete(browser()->profile()),
                            page2_complete(incognito_browser->profile());
     BookmarkModel* bookmark_model =
-        BookmarkModelFactory::GetForProfile(browser()->profile());
+        BookmarkModelFactory::GetForBrowserContext(browser()->profile());
     bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
     const BookmarkNode* parent = bookmark_model->bookmark_bar_node();
     bookmark_model->AddURL(
@@ -571,11 +576,11 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, EventDispatchToTab) {
   // the event before proceeding with the test.  This allows the regular page
   // to test that the event page received the event, which makes the pass/fail
   // logic simpler.
-  ExtensionTestMessageListener event_page_ready("ready", true);
+  ExtensionTestMessageListener event_page_ready("ready", false);
 
   // Send an event by making a bookmark.
   BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfile(browser()->profile());
+      BookmarkModelFactory::GetForBrowserContext(browser()->profile());
   bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
   bookmarks::AddIfNotBookmarked(bookmark_model,
                                 GURL("http://www.google.com"),
@@ -654,5 +659,40 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, OnSuspendUseStorageApi) {
 
 // TODO: background page with timer.
 // TODO: background page that interacts with popup.
+
+// Test class to allow test cases to run in --isolate-extensions mode.
+class LazyBackgroundPageIsolatedExtensionsApiTest
+    : public LazyBackgroundPageApiTest {
+ public:
+  LazyBackgroundPageIsolatedExtensionsApiTest() {}
+  ~LazyBackgroundPageIsolatedExtensionsApiTest() override {}
+
+  void SetUpInProcessBrowserTestFixture() override {
+    LazyBackgroundPageApiTest::SetUpInProcessBrowserTestFixture();
+
+    // This is needed to allow example.com to actually resolve and load in
+    // tests.
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    LazyBackgroundPageApiTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitch(switches::kIsolateExtensions);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(LazyBackgroundPageIsolatedExtensionsApiTest);
+};
+
+// Ensure that the events page of an extension is properly torn down and the
+// process does not linger around when running in --isolate-extensions mode.
+// See https://crbug.com/612668.
+IN_PROC_BROWSER_TEST_F(LazyBackgroundPageIsolatedExtensionsApiTest,
+                       EventProcessCleanup) {
+  ASSERT_TRUE(LoadExtensionAndWait("event_page_with_web_iframe"));
+
+  // Lazy Background Page doesn't exist anymore.
+  EXPECT_FALSE(IsBackgroundPageAlive(last_loaded_extension_id()));
+}
 
 }  // namespace extensions

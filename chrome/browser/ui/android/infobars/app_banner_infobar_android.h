@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_UI_ANDROID_INFOBARS_APP_BANNER_INFOBAR_ANDROID_H_
 
 #include "base/android/scoped_java_ref.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/android/infobars/confirm_infobar.h"
 #include "url/gurl.h"
 
@@ -19,13 +19,14 @@ class AppBannerInfoBarAndroid : public ConfirmInfoBar {
  public:
   // Constructs an AppBannerInfoBarAndroid promoting a native app.
   AppBannerInfoBarAndroid(
-      scoped_ptr<banners::AppBannerInfoBarDelegateAndroid> delegate,
+      std::unique_ptr<banners::AppBannerInfoBarDelegateAndroid> delegate,
       const base::android::ScopedJavaGlobalRef<jobject>& japp_data);
 
   // Constructs an AppBannerInfoBarAndroid promoting a web app.
   AppBannerInfoBarAndroid(
-      scoped_ptr<banners::AppBannerInfoBarDelegateAndroid> delegate,
-      const GURL& app_url);
+      std::unique_ptr<banners::AppBannerInfoBarDelegateAndroid> delegate,
+      const GURL& app_url,
+      bool is_webapk);
 
   ~AppBannerInfoBarAndroid() override;
 
@@ -45,12 +46,12 @@ class AppBannerInfoBarAndroid : public ConfirmInfoBar {
   // Web app: URL for the app.
   GURL app_url_;
 
+  // Indicates whether the info bar is for installing a WebAPK.
+  bool is_webapk_;
+
   base::android::ScopedJavaGlobalRef<jobject> java_infobar_;
 
   DISALLOW_COPY_AND_ASSIGN(AppBannerInfoBarAndroid);
 };
-
-// Register native methods.
-bool RegisterAppBannerInfoBarAndroid(JNIEnv* env);
 
 #endif  // CHROME_BROWSER_UI_ANDROID_INFOBARS_APP_BANNER_INFOBAR_ANDROID_H_

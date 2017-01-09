@@ -4,6 +4,8 @@
 
 #include "chrome/browser/speech/tts_message_filter.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -113,7 +115,7 @@ void TtsMessageFilter::OnSpeak(const TtsUtteranceRequest& request) {
   if (!browser_context_)
     return;
 
-  scoped_ptr<Utterance> utterance(new Utterance(browser_context_));
+  std::unique_ptr<Utterance> utterance(new Utterance(browser_context_));
   utterance->set_src_id(request.id);
   utterance->set_text(request.text);
   utterance->set_lang(request.lang);

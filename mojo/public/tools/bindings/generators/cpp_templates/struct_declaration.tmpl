@@ -2,13 +2,12 @@
 
 class {{class_name}} {
  public:
-  static {{class_name}}* New(mojo::internal::Buffer* buf);
+  static {{class_name}}* New(mojo::internal::Buffer* buf) {
+    return new (buf->Allocate(sizeof({{class_name}}))) {{class_name}}();
+  }
 
   static bool Validate(const void* data,
-                       mojo::internal::BoundsChecker* bounds_checker);
-
-  void EncodePointersAndHandles(std::vector<mojo::Handle>* handles);
-  void DecodePointersAndHandles(std::vector<mojo::Handle>* handles);
+                       mojo::internal::ValidationContext* validation_context);
 
   mojo::internal::StructHeader header_;
 {%- for packed_field in struct.packed.packed_fields %}
@@ -16,8 +15,6 @@ class {{class_name}} {
 {%-   set kind = packed_field.field.kind %}
 {%-   if kind.spec == 'b' %}
   uint8_t {{name}} : 1;
-{%-   elif kind|is_enum_kind %}
-  int32_t {{name}};
 {%-   else %}
   {{kind|cpp_field_type}} {{name}};
 {%-   endif %}
@@ -41,7 +38,8 @@ class {{class_name}} {
 {%- endif %}
 
  private:
-  {{class_name}}();
+  {{class_name}}() : header_({sizeof(*this), {{struct.versions[-1].version}}}) {
+  }
   ~{{class_name}}() = delete;
 };
 static_assert(sizeof({{class_name}}) == {{struct.versions[-1].num_bytes}},

@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/tools/service_discovery_sniffer/service_discovery_sniffer.h"
+
+#include <memory>
 #include <vector>
 
 #include "base/at_exit.h"
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "chrome/common/local_discovery/service_discovery_client_impl.h"
-#include "chrome/tools/service_discovery_sniffer/service_discovery_sniffer.h"
+#include "base/run_loop.h"
+#include "chrome/browser/local_discovery/service_discovery_client_impl.h"
 #include "net/dns/mdns_client.h"
 
 namespace local_discovery {
@@ -57,9 +59,8 @@ void ServicePrinter::OnServiceResolved(ServiceResolver::RequestStatus status,
     printf("\t\t%s\n", i->c_str());
   }
 
-  if (service.ip_address != net::IPAddressNumber()) {
-    printf("\tIP Address: %s\n", net::IPAddressToString(
-        service.ip_address).c_str());
+  if (service.ip_address.IsValid()) {
+    printf("\tIP Address: %s\n", service.ip_address.ToString().c_str());
   }
 }
 
@@ -103,11 +104,13 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  scoped_ptr<net::MDnsClient> mdns_client = net::MDnsClient::CreateDefault();
-  scoped_ptr<net::MDnsSocketFactory> socket_factory =
+  std::unique_ptr<net::MDnsClient> mdns_client =
+      net::MDnsClient::CreateDefault();
+  std::unique_ptr<net::MDnsSocketFactory> socket_factory =
       net::MDnsSocketFactory::CreateDefault();
   mdns_client->StartListening(socket_factory.get());
-  scoped_ptr<local_discovery::ServiceDiscoveryClient> service_discovery_client;
+  std::unique_ptr<local_discovery::ServiceDiscoveryClient>
+      service_discovery_client;
   service_discovery_client.reset(
       new local_discovery::ServiceDiscoveryClientImpl(mdns_client.get()));
   {
@@ -117,6 +120,6 @@ int main(int argc, char** argv) {
         std::string(argv[1]) + "._tcp.local");
 
     print_changes.Start();
-    message_loop.Run();
+    base::RunLoop().Run();
   }
 }

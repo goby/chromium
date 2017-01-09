@@ -4,10 +4,11 @@
 
 #include "chrome/browser/ui/views/autofill/password_generation_popup_view_views.h"
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/autofill/password_generation_popup_controller.h"
 #include "chrome/browser/ui/autofill/popup_constants.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -49,7 +50,7 @@ class PasswordTextBox : public views::View {
     SetLayoutManager(box_layout);
 
     views::Label* suggestion_label = new views::Label(
-        suggestion_text, font_list.DeriveWithStyle(gfx::Font::BOLD));
+        suggestion_text, font_list.DeriveWithWeight(gfx::Font::Weight::BOLD));
     suggestion_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     suggestion_label->SetEnabledColor(
         PasswordGenerationPopupView::kPasswordTextColor);
@@ -143,12 +144,12 @@ PasswordGenerationPopupViewViews::PasswordGenerationPopupViewViews(
   help_label_->set_background(
       views::Background::CreateSolidBackground(
           kExplanatoryTextBackgroundColor));
-  help_label_->SetBorder(views::Border::CreateEmptyBorder(
+  help_label_->SetBorder(views::CreateEmptyBorder(
       PasswordGenerationPopupController::kHelpVerticalPadding -
-      kHelpVerticalOffset,
+          kHelpVerticalOffset,
       PasswordGenerationPopupController::kHorizontalPadding,
       PasswordGenerationPopupController::kHelpVerticalPadding -
-      kHelpVerticalOffset,
+          kHelpVerticalOffset,
       PasswordGenerationPopupController::kHorizontalPadding));
   AddChildView(help_label_);
 
@@ -204,7 +205,7 @@ void PasswordGenerationPopupViewViews::PasswordSelectionUpdated() {
     return;
 
   if (controller_->password_selected())
-    NotifyAccessibilityEvent(ui::AX_EVENT_FOCUS, true);
+    NotifyAccessibilityEvent(ui::AX_EVENT_SELECTION, true);
 
   password_view_->set_background(
       views::Background::CreateSolidBackground(
@@ -278,10 +279,10 @@ PasswordGenerationPopupView* PasswordGenerationPopupView::Create(
   return new PasswordGenerationPopupViewViews(controller, observing_widget);
 }
 
-void PasswordGenerationPopupViewViews::GetAccessibleState(
-    ui::AXViewState* state) {
-  state->name = controller_->SuggestedText();
-  state->role = ui::AX_ROLE_MENU_ITEM;
+void PasswordGenerationPopupViewViews::GetAccessibleNodeData(
+    ui::AXNodeData* node_data) {
+  node_data->SetName(controller_->SuggestedText());
+  node_data->role = ui::AX_ROLE_MENU_ITEM;
 }
 
 }  // namespace autofill

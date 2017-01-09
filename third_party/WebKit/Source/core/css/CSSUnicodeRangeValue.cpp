@@ -23,23 +23,20 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/css/CSSUnicodeRangeValue.h"
 
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-String CSSUnicodeRangeValue::customCSSText() const
-{
-    if (m_from == m_to)
-        return String::format("U+%X", m_from);
-    return String::format("U+%X-%X", m_from, m_to);
+String CSSUnicodeRangeValue::customCSSText() const {
+  if (m_from == m_to)
+    return String::format("U+%X", m_from);
+  return String::format("U+%X-%X", m_from, m_to);
 }
 
-bool CSSUnicodeRangeValue::equals(const CSSUnicodeRangeValue& other) const
-{
-    return m_from == other.m_from && m_to == other.m_to;
+bool CSSUnicodeRangeValue::equals(const CSSUnicodeRangeValue& other) const {
+  return m_from == other.m_from && m_to == other.m_to;
 }
 
-}
+}  // namespace blink

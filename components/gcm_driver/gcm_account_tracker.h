@@ -5,9 +5,12 @@
 #ifndef COMPONENTS_GCM_DRIVER_GCM_ACCOUNT_TRACKER_H_
 #define COMPONENTS_GCM_DRIVER_GCM_ACCOUNT_TRACKER_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/gcm_connection_observer.h"
@@ -67,7 +70,7 @@ class GCMAccountTracker : public gaia::AccountTracker::Observer,
 
   // |account_tracker| is used to deliver information about the accounts present
   // in the browser context to |driver|.
-  GCMAccountTracker(scoped_ptr<gaia::AccountTracker> account_tracker,
+  GCMAccountTracker(std::unique_ptr<gaia::AccountTracker> account_tracker,
                     GCMDriver* driver);
   ~GCMAccountTracker() override;
 
@@ -140,7 +143,7 @@ class GCMAccountTracker : public gaia::AccountTracker::Observer,
   OAuth2TokenService* GetTokenService();
 
   // Account tracker.
-  scoped_ptr<gaia::AccountTracker> account_tracker_;
+  std::unique_ptr<gaia::AccountTracker> account_tracker_;
 
   // GCM Driver. Not owned.
   GCMDriver* driver_;

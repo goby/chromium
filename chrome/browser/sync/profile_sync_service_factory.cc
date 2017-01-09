@@ -4,9 +4,12 @@
 
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 
-#include "base/command_line.h"
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
@@ -18,9 +21,9 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/services/gcm/gcm_profile_service_factory.h"
-#include "chrome/browser/sessions/tab_restore_service_factory.h"
 #include "chrome/browser/signin/about_signin_internals_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
+#include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/chrome_sync_client.h"
@@ -28,19 +31,20 @@
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "chrome/common/channel_info.h"
-#include "components/browser_sync/browser/profile_sync_components_factory_impl.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_components_factory_impl.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/network_time/network_time_tracker.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/sync_driver/signin_manager_wrapper.h"
-#include "components/sync_driver/startup_controller.h"
-#include "components/sync_driver/sync_util.h"
+#include "components/sync/driver/signin_manager_wrapper.h"
+#include "components/sync/driver/startup_controller.h"
+#include "components/sync/driver/sync_util.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/features/features.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
 #endif
@@ -48,6 +52,8 @@
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #endif
+
+using browser_sync::ProfileSyncService;
 
 namespace {
 
@@ -79,15 +85,14 @@ ProfileSyncServiceFactory* ProfileSyncServiceFactory::GetInstance() {
 ProfileSyncService* ProfileSyncServiceFactory::GetForProfile(
     Profile* profile) {
   if (!ProfileSyncService::IsSyncAllowedByFlag())
-    return NULL;
+    return nullptr;
 
   return static_cast<ProfileSyncService*>(
       GetInstance()->GetServiceForBrowserContext(profile, true));
 }
 
 // static
-sync_driver::SyncService*
-ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(
+syncer::SyncService* ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(
     content::BrowserContext* context) {
   return GetForProfile(Profile::FromBrowserContext(context));
 }
@@ -103,8 +108,10 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   DependsOn(autofill::PersonalDataManagerFactory::GetInstance());
   DependsOn(BookmarkModelFactory::GetInstance());
   DependsOn(ChromeSigninClientFactory::GetInstance());
+  DependsOn(GaiaCookieManagerServiceFactory::GetInstance());
 #if !defined(OS_ANDROID)
   DependsOn(GlobalErrorServiceFactory::GetInstance());
+  DependsOn(ThemeServiceFactory::GetInstance());
 #endif
   DependsOn(HistoryServiceFactory::GetInstance());
   DependsOn(invalidation::ProfileInvalidationProviderFactory::GetInstance());
@@ -112,11 +119,8 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   DependsOn(ProfileOAuth2TokenServiceFactory::GetInstance());
   DependsOn(SigninManagerFactory::GetInstance());
   DependsOn(TemplateURLServiceFactory::GetInstance());
-#if defined(ENABLE_THEMES)
-  DependsOn(ThemeServiceFactory::GetInstance());
-#endif
   DependsOn(WebDataServiceFactory::GetInstance());
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   DependsOn(
       extensions::ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 #endif
@@ -134,7 +138,9 @@ ProfileSyncServiceFactory::~ProfileSyncServiceFactory() {
 
 KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
-  Profile* profile = static_cast<Profile*>(context);
+  ProfileSyncService::InitParams init_params;
+
+  Profile* profile = Profile::FromBrowserContext(context);
 
   SigninManagerBase* signin = SigninManagerFactory::GetForProfile(profile);
 
@@ -147,11 +153,12 @@ KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
   // once http://crbug.com/171406 has been fixed.
   AboutSigninInternalsFactory::GetForProfile(profile);
 
-  scoped_ptr<SigninManagerWrapper> signin_wrapper(
-      new SupervisedUserSigninManagerWrapper(profile, signin));
-
-  ProfileOAuth2TokenService* token_service =
+  init_params.signin_wrapper =
+      base::MakeUnique<SupervisedUserSigninManagerWrapper>(profile, signin);
+  init_params.oauth2_token_service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
+  init_params.gaia_cookie_manager_service =
+      GaiaCookieManagerServiceFactory::GetForProfile(profile);
 
   // TODO(tim): Currently, AUTO/MANUAL settings refer to the *first* time sync
   // is set up and *not* a browser restart for a manual-start platform (where
@@ -159,28 +166,42 @@ KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
   // intervention). We can get rid of the browser_default eventually, but
   // need to take care that ProfileSyncService doesn't get tripped up between
   // those two cases. Bug 88109.
-  browser_sync::ProfileSyncServiceStartBehavior behavior =
-      browser_defaults::kSyncAutoStarts ? browser_sync::AUTO_START
-                                        : browser_sync::MANUAL_START;
-  browser_sync::ChromeSyncClient* chrome_sync_client =
-      new browser_sync::ChromeSyncClient(profile);
-  ProfileSyncService* pss = new ProfileSyncService(
-      make_scoped_ptr(chrome_sync_client), signin_wrapper.Pass(), token_service,
-      behavior, base::Bind(&UpdateNetworkTime), profile->GetPath(),
-      profile->GetRequestContext(), profile->GetDebugName(),
-      chrome::GetChannel(),
-      content::BrowserThread::GetMessageLoopProxyForThread(
-          content::BrowserThread::DB),
-      content::BrowserThread::GetMessageLoopProxyForThread(
-          content::BrowserThread::FILE),
-      content::BrowserThread::GetBlockingPool());
+  init_params.start_behavior = browser_defaults::kSyncAutoStarts
+                                   ? ProfileSyncService::AUTO_START
+                                   : ProfileSyncService::MANUAL_START;
+
+  if (!client_factory_) {
+    init_params.sync_client =
+        base::MakeUnique<browser_sync::ChromeSyncClient>(profile);
+  } else {
+    init_params.sync_client = client_factory_->Run(profile);
+  }
+
+  init_params.network_time_update_callback = base::Bind(&UpdateNetworkTime);
+  init_params.base_directory = profile->GetPath();
+  init_params.url_request_context = profile->GetRequestContext();
+  init_params.debug_identifier = profile->GetDebugName();
+  init_params.channel = chrome::GetChannel();
+  init_params.blocking_pool = content::BrowserThread::GetBlockingPool();
+
+  auto pss = base::MakeUnique<ProfileSyncService>(std::move(init_params));
 
   // Will also initialize the sync client.
   pss->Initialize();
-  return pss;
+  return pss.release();
 }
 
 // static
 bool ProfileSyncServiceFactory::HasProfileSyncService(Profile* profile) {
-  return GetInstance()->GetServiceForBrowserContext(profile, false) != NULL;
+  return GetInstance()->GetServiceForBrowserContext(profile, false) != nullptr;
 }
+
+// static
+void ProfileSyncServiceFactory::SetSyncClientFactoryForTest(
+    SyncClientFactory* client_factory) {
+  client_factory_ = client_factory;
+}
+
+// static
+ProfileSyncServiceFactory::SyncClientFactory*
+    ProfileSyncServiceFactory::client_factory_ = nullptr;

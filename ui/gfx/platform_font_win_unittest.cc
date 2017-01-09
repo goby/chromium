@@ -17,79 +17,6 @@
 
 namespace gfx {
 
-TEST(PlatformFontWinTest, DeriveFontWithHeight) {
-  const Font base_font;
-  PlatformFontWin* platform_font =
-      static_cast<PlatformFontWin*>(base_font.platform_font());
-
-  for (int i = -10; i < 10; i++) {
-    const int target_height = base_font.GetHeight() + i;
-
-    Font derived_font = platform_font->DeriveFontWithHeight(target_height, 0);
-    EXPECT_LE(derived_font.GetHeight(), target_height);
-    EXPECT_GT(derived_font.Derive(1, 0).GetHeight(), target_height);
-    EXPECT_EQ(platform_font->GetActualFontNameForTesting(),
-              derived_font.GetActualFontNameForTesting());
-    EXPECT_EQ(0, derived_font.GetStyle());
-
-    derived_font = platform_font->DeriveFontWithHeight(target_height,
-                                                       Font::BOLD);
-    EXPECT_LE(derived_font.GetHeight(), target_height);
-    EXPECT_GT(derived_font.Derive(1, 0).GetHeight(), target_height);
-    EXPECT_EQ(platform_font->GetActualFontNameForTesting(),
-              derived_font.GetActualFontNameForTesting());
-    EXPECT_EQ(Font::BOLD, derived_font.GetStyle());
-  }
-}
-
-TEST(PlatformFontWinTest, DeriveFontWithHeight_Consistency) {
-  gfx::Font arial_12("Arial", 12);
-  ASSERT_GT(16, arial_12.GetHeight());
-  gfx::Font derived_1 = static_cast<PlatformFontWin*>(
-      arial_12.platform_font())->DeriveFontWithHeight(16, 0);
-
-  gfx::Font arial_15("Arial", 15);
-  ASSERT_LT(16, arial_15.GetHeight());
-  gfx::Font derived_2 = static_cast<PlatformFontWin*>(
-      arial_15.platform_font())->DeriveFontWithHeight(16, 0);
-
-  EXPECT_EQ(derived_1.GetFontSize(), derived_2.GetFontSize());
-  EXPECT_EQ(16, derived_1.GetHeight());
-  EXPECT_EQ(16, derived_2.GetHeight());
-}
-
-// Callback function used by DeriveFontWithHeight_MinSize() below.
-static int GetMinFontSize() {
-  return 10;
-}
-
-TEST(PlatformFontWinTest, DeriveFontWithHeight_MinSize) {
-  PlatformFontWin::GetMinimumFontSizeCallback old_callback =
-    PlatformFontWin::get_minimum_font_size_callback;
-  PlatformFontWin::get_minimum_font_size_callback = &GetMinFontSize;
-
-  const Font base_font;
-  const Font min_font(base_font.GetFontName(), GetMinFontSize());
-  PlatformFontWin* platform_font =
-      static_cast<PlatformFontWin*>(base_font.platform_font());
-
-  const Font derived_font =
-      platform_font->DeriveFontWithHeight(min_font.GetHeight() - 1, 0);
-  EXPECT_EQ(min_font.GetFontSize(), derived_font.GetFontSize());
-  EXPECT_EQ(min_font.GetHeight(), derived_font.GetHeight());
-
-  PlatformFontWin::get_minimum_font_size_callback = old_callback;
-}
-
-TEST(PlatformFontWinTest, DeriveFontWithHeight_TooSmall) {
-  const Font base_font;
-  PlatformFontWin* platform_font =
-      static_cast<PlatformFontWin*>(base_font.platform_font());
-
-  const Font derived_font = platform_font->DeriveFontWithHeight(1, 0);
-  EXPECT_GT(derived_font.GetHeight(), 1);
-}
-
 // Test whether font metrics retrieved by DirectWrite (skia) and GDI match as
 // per assumptions mentioned below:-
 // 1. Font size is the same
@@ -99,9 +26,6 @@ TEST(PlatformFontWinTest, DeriveFontWithHeight_TooSmall) {
 //    font sizes DirectWrite font heights/baselines/cap height are equal/larger
 //    by 1 point.
 TEST(PlatformFontWinTest, Metrics_SkiaVersusGDI) {
-  if (!gfx::win::IsDirectWriteEnabled())
-    return;
-
   // Describes the font being tested.
   struct FontInfo {
     base::string16 font_name;
@@ -127,25 +51,24 @@ TEST(PlatformFontWinTest, Metrics_SkiaVersusGDI) {
   base::win::ScopedGetDC screen_dc(NULL);
   gfx::ScopedSetMapMode mode(screen_dc, MM_TEXT);
 
-  for (int i = 0; i < arraysize(fonts); ++i) {
+  for (const FontInfo& font : fonts) {
     LOGFONT font_info = {0};
 
-    font_info.lfHeight = -fonts[i].font_size;
+    font_info.lfHeight = -font.font_size;
     font_info.lfWeight = FW_NORMAL;
-    wcscpy_s(font_info.lfFaceName,
-             fonts[i].font_name.length() + 1,
-             fonts[i].font_name.c_str());
+    wcscpy_s(font_info.lfFaceName, font.font_name.length() + 1,
+             font.font_name.c_str());
 
-    HFONT font = CreateFontIndirect(&font_info);
+    HFONT hFont = CreateFontIndirect(&font_info);
 
     TEXTMETRIC font_metrics;
-    PlatformFontWin::GetTextMetricsForFont(screen_dc, font, &font_metrics);
+    PlatformFontWin::GetTextMetricsForFont(screen_dc, hFont, &font_metrics);
 
     scoped_refptr<PlatformFontWin::HFontRef> h_font_gdi(
-        PlatformFontWin::CreateHFontRefFromGDI(font, font_metrics));
+        PlatformFontWin::CreateHFontRefFromGDI(hFont, font_metrics));
 
     scoped_refptr<PlatformFontWin::HFontRef> h_font_skia(
-        PlatformFontWin::CreateHFontRefFromSkia(font, font_metrics));
+        PlatformFontWin::CreateHFontRefFromSkia(hFont, font_metrics));
 
     EXPECT_EQ(h_font_gdi->font_size(), h_font_skia->font_size());
     EXPECT_EQ(h_font_gdi->style(), h_font_skia->style());
@@ -167,9 +90,6 @@ TEST(PlatformFontWinTest, Metrics_SkiaVersusGDI) {
 // For random fonts which are not substitutes, DirectWrite should fallback
 // to Arial on a properly configured machine.
 TEST(PlatformFontWinTest, DirectWriteFontSubstitution) {
-  if (!gfx::win::IsDirectWriteEnabled())
-    return;
-
   // Describes the font being tested.
   struct FontInfo {
     base::string16 font_name;
@@ -185,24 +105,23 @@ TEST(PlatformFontWinTest, DirectWriteFontSubstitution) {
   base::win::ScopedGetDC screen_dc(NULL);
   gfx::ScopedSetMapMode mode(screen_dc, MM_TEXT);
 
-  for (int i = 0; i < arraysize(fonts); ++i) {
+  for (const FontInfo& font : fonts) {
     LOGFONT font_info = {0};
 
     font_info.lfHeight = -10;
     font_info.lfWeight = FW_NORMAL;
-    wcscpy_s(font_info.lfFaceName,
-             fonts[i].font_name.length() + 1,
-             fonts[i].font_name.c_str());
+    wcscpy_s(font_info.lfFaceName, font.font_name.length() + 1,
+             font.font_name.c_str());
 
-    HFONT font = CreateFontIndirect(&font_info);
+    HFONT hFont = CreateFontIndirect(&font_info);
 
     TEXTMETRIC font_metrics;
-    PlatformFontWin::GetTextMetricsForFont(screen_dc, font, &font_metrics);
+    PlatformFontWin::GetTextMetricsForFont(screen_dc, hFont, &font_metrics);
 
     scoped_refptr<PlatformFontWin::HFontRef> h_font_skia(
-        PlatformFontWin::CreateHFontRefFromSkia(font, font_metrics));
+        PlatformFontWin::CreateHFontRefFromSkia(hFont, font_metrics));
 
-    EXPECT_EQ(fonts[i].expected_font_name, h_font_skia->font_name());
+    EXPECT_EQ(font.expected_font_name, h_font_skia->font_name());
   }
 }
 

@@ -5,12 +5,16 @@
 #ifndef CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_MEDIA_FILE_SYSTEM_BACKEND_H_
 #define CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_MEDIA_FILE_SYSTEM_BACKEND_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
 #include "storage/browser/fileapi/file_system_backend.h"
 #include "storage/browser/fileapi/task_runner_bound_observer_list.h"
@@ -27,8 +31,8 @@ namespace net {
 class URLRequest;
 }
 
-class MediaPathFilter;
 class DeviceMediaAsyncFileUtil;
+class MediaPathFilter;
 
 class MediaFileSystemBackend : public storage::FileSystemBackend {
  public:
@@ -39,7 +43,10 @@ class MediaFileSystemBackend : public storage::FileSystemBackend {
       base::SequencedTaskRunner* media_task_runner);
   ~MediaFileSystemBackend() override;
 
-  static bool CurrentlyOnMediaTaskRunnerThread();
+  // Asserts that the current task is sequenced with any other task that calls
+  // this.
+  static void AssertCurrentlyOnMediaSequence();
+
   static scoped_refptr<base::SequencedTaskRunner> MediaTaskRunner();
 
   // Construct the mount point for the gallery specified by |pref_id| in
@@ -74,15 +81,15 @@ class MediaFileSystemBackend : public storage::FileSystemBackend {
   bool SupportsStreaming(const storage::FileSystemURL& url) const override;
   bool HasInplaceCopyImplementation(
       storage::FileSystemType type) const override;
-  scoped_ptr<storage::FileStreamReader> CreateFileStreamReader(
+  std::unique_ptr<storage::FileStreamReader> CreateFileStreamReader(
       const storage::FileSystemURL& url,
-      int64 offset,
-      int64 max_bytes_to_read,
+      int64_t offset,
+      int64_t max_bytes_to_read,
       const base::Time& expected_modification_time,
       storage::FileSystemContext* context) const override;
-  scoped_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
+  std::unique_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
       const storage::FileSystemURL& url,
-      int64 offset,
+      int64_t offset,
       storage::FileSystemContext* context) const override;
   storage::FileSystemQuotaUtil* GetQuotaUtil() override;
   const storage::UpdateObserverList* GetUpdateObservers(
@@ -98,26 +105,24 @@ class MediaFileSystemBackend : public storage::FileSystemBackend {
 
   scoped_refptr<base::SequencedTaskRunner> media_task_runner_;
 
-  scoped_ptr<MediaPathFilter> media_path_filter_;
-  scoped_ptr<storage::CopyOrMoveFileValidatorFactory>
+  std::unique_ptr<MediaPathFilter> media_path_filter_;
+  std::unique_ptr<storage::CopyOrMoveFileValidatorFactory>
       media_copy_or_move_file_validator_factory_;
 
-  scoped_ptr<storage::AsyncFileUtil> native_media_file_util_;
-  scoped_ptr<DeviceMediaAsyncFileUtil> device_media_async_file_util_;
+  std::unique_ptr<storage::AsyncFileUtil> native_media_file_util_;
+
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
+  std::unique_ptr<DeviceMediaAsyncFileUtil> device_media_async_file_util_;
+#endif
+
 #if defined(OS_WIN) || defined(OS_MACOSX)
-  scoped_ptr<storage::AsyncFileUtil> picasa_file_util_;
-  scoped_ptr<storage::AsyncFileUtil> itunes_file_util_;
+  std::unique_ptr<storage::AsyncFileUtil> picasa_file_util_;
+  std::unique_ptr<storage::AsyncFileUtil> itunes_file_util_;
 
   // Used for usage UMA tracking.
   bool picasa_file_util_used_;
   bool itunes_file_util_used_;
-#endif  // defined(OS_WIN) || defined(OS_MACOSX)
-#if defined(OS_MACOSX)
-  scoped_ptr<storage::AsyncFileUtil> iphoto_file_util_;
-
-  // Used for usage UMA tracking.
-  bool iphoto_file_util_used_;
-#endif  // defined(OS_MACOSX)
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(MediaFileSystemBackend);
 };

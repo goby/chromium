@@ -4,10 +4,11 @@
 
 #include "content/test/test_render_frame.h"
 
-#include "base/command_line.h"
 #include "content/common/navigation_params.h"
-#include "content/public/common/content_switches.h"
+#include "content/common/resource_request_body_impl.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/resource_response.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 
 namespace content {
 
@@ -28,8 +29,7 @@ void TestRenderFrame::Navigate(const CommonNavigationParams& common_params,
                                const StartNavigationParams& start_params,
                                const RequestNavigationParams& request_params) {
   // PlzNavigate
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
+  if (IsBrowserSideNavigationEnabled()) {
     OnCommitNavigation(ResourceResponseHead(), GURL(), common_params,
                        request_params);
   } else {
@@ -52,6 +52,10 @@ void TestRenderFrame::ExtendSelectionAndDelete(int before, int after) {
   OnExtendSelectionAndDelete(before, after);
 }
 
+void TestRenderFrame::DeleteSurroundingText(int before, int after) {
+  OnDeleteSurroundingText(before, after);
+}
+
 void TestRenderFrame::Unselect() {
   OnUnselect();
 }
@@ -65,6 +69,20 @@ void TestRenderFrame::SetCompositionFromExistingText(
     int end,
     const std::vector<blink::WebCompositionUnderline>& underlines) {
   OnSetCompositionFromExistingText(start, end, underlines);
+}
+
+blink::WebNavigationPolicy TestRenderFrame::decidePolicyForNavigation(
+    const blink::WebFrameClient::NavigationPolicyInfo& info) {
+  if (IsBrowserSideNavigationEnabled() &&
+      info.urlRequest.checkForBrowserSideNavigation() &&
+      GetWebFrame()->parent() &&
+      info.form.isNull()) {
+    // RenderViewTest::LoadHTML already disables PlzNavigate for the main frame
+    // requests. However if the loaded html has a subframe, the WebURLRequest
+    // will be created inside Blink and it won't have this flag set.
+    info.urlRequest.setCheckForBrowserSideNavigation(false);
+  }
+  return RenderFrameImpl::decidePolicyForNavigation(info);
 }
 
 }  // namespace content

@@ -19,14 +19,14 @@ ExtensionRegistry* ExtensionRegistry::Get(content::BrowserContext* context) {
   return ExtensionRegistryFactory::GetForBrowserContext(context);
 }
 
-scoped_ptr<ExtensionSet> ExtensionRegistry::GenerateInstalledExtensionsSet()
-    const {
-  return GenerateInstalledExtensionsSet(EVERYTHING).Pass();
+std::unique_ptr<ExtensionSet>
+ExtensionRegistry::GenerateInstalledExtensionsSet() const {
+  return GenerateInstalledExtensionsSet(EVERYTHING);
 }
 
-scoped_ptr<ExtensionSet> ExtensionRegistry::GenerateInstalledExtensionsSet(
+std::unique_ptr<ExtensionSet> ExtensionRegistry::GenerateInstalledExtensionsSet(
     int include_mask) const {
-  scoped_ptr<ExtensionSet> installed_extensions(new ExtensionSet);
+  std::unique_ptr<ExtensionSet> installed_extensions(new ExtensionSet);
   if (include_mask & IncludeFlag::ENABLED)
     installed_extensions->InsertAll(enabled_extensions_);
   if (include_mask & IncludeFlag::DISABLED)
@@ -37,7 +37,7 @@ scoped_ptr<ExtensionSet> ExtensionRegistry::GenerateInstalledExtensionsSet(
     installed_extensions->InsertAll(blacklisted_extensions_);
   if (include_mask & IncludeFlag::BLOCKED)
     installed_extensions->InsertAll(blocked_extensions_);
-  return installed_extensions.Pass();
+  return installed_extensions;
 }
 
 void ExtensionRegistry::AddObserver(ExtensionRegistryObserver* observer) {
@@ -51,16 +51,15 @@ void ExtensionRegistry::RemoveObserver(ExtensionRegistryObserver* observer) {
 void ExtensionRegistry::TriggerOnLoaded(const Extension* extension) {
   CHECK(extension);
   DCHECK(enabled_extensions_.Contains(extension->id()));
-  FOR_EACH_OBSERVER(ExtensionRegistryObserver,
-                    observers_,
-                    OnExtensionLoaded(browser_context_, extension));
+  for (auto& observer : observers_)
+    observer.OnExtensionLoaded(browser_context_, extension);
 }
 
 void ExtensionRegistry::TriggerOnReady(const Extension* extension) {
   CHECK(extension);
   DCHECK(enabled_extensions_.Contains(extension->id()));
-  FOR_EACH_OBSERVER(ExtensionRegistryObserver, observers_,
-                    OnExtensionReady(browser_context_, extension));
+  for (auto& observer : observers_)
+    observer.OnExtensionReady(browser_context_, extension);
 }
 
 void ExtensionRegistry::TriggerOnUnloaded(
@@ -68,44 +67,36 @@ void ExtensionRegistry::TriggerOnUnloaded(
     UnloadedExtensionInfo::Reason reason) {
   CHECK(extension);
   DCHECK(!enabled_extensions_.Contains(extension->id()));
-  FOR_EACH_OBSERVER(ExtensionRegistryObserver,
-                    observers_,
-                    OnExtensionUnloaded(browser_context_, extension, reason));
+  for (auto& observer : observers_)
+    observer.OnExtensionUnloaded(browser_context_, extension, reason);
 }
 
 void ExtensionRegistry::TriggerOnWillBeInstalled(const Extension* extension,
                                                  bool is_update,
-                                                 bool from_ephemeral,
                                                  const std::string& old_name) {
   CHECK(extension);
   DCHECK_EQ(is_update,
             GenerateInstalledExtensionsSet()->Contains(extension->id()));
   DCHECK_EQ(is_update, !old_name.empty());
-  FOR_EACH_OBSERVER(
-      ExtensionRegistryObserver,
-      observers_,
-      OnExtensionWillBeInstalled(
-          browser_context_, extension, is_update, from_ephemeral, old_name));
+  for (auto& observer : observers_)
+    observer.OnExtensionWillBeInstalled(browser_context_, extension, is_update,
+                                        old_name);
 }
 
 void ExtensionRegistry::TriggerOnInstalled(const Extension* extension,
                                            bool is_update) {
   CHECK(extension);
   DCHECK(GenerateInstalledExtensionsSet()->Contains(extension->id()));
-  FOR_EACH_OBSERVER(ExtensionRegistryObserver,
-                    observers_,
-                    OnExtensionInstalled(
-                        browser_context_, extension, is_update));
+  for (auto& observer : observers_)
+    observer.OnExtensionInstalled(browser_context_, extension, is_update);
 }
 
 void ExtensionRegistry::TriggerOnUninstalled(const Extension* extension,
                                              UninstallReason reason) {
   CHECK(extension);
   DCHECK(!GenerateInstalledExtensionsSet()->Contains(extension->id()));
-  FOR_EACH_OBSERVER(
-      ExtensionRegistryObserver,
-      observers_,
-      OnExtensionUninstalled(browser_context_, extension, reason));
+  for (auto& observer : observers_)
+    observer.OnExtensionUninstalled(browser_context_, extension, reason);
 }
 
 const Extension* ExtensionRegistry::GetExtensionById(const std::string& id,
@@ -214,7 +205,8 @@ void ExtensionRegistry::ClearAll() {
 void ExtensionRegistry::Shutdown() {
   // Release references to all Extension objects in the sets.
   ClearAll();
-  FOR_EACH_OBSERVER(ExtensionRegistryObserver, observers_, OnShutdown(this));
+  for (auto& observer : observers_)
+    observer.OnShutdown(this);
 }
 
 }  // namespace extensions

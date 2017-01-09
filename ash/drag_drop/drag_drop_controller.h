@@ -5,19 +5,27 @@
 #ifndef ASH_DRAG_DROP_DRAG_DROP_CONTROLLER_H_
 #define ASH_DRAG_DROP_DRAG_DROP_CONTROLLER_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
+#include "ash/common/wm_display_observer.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "ui/aura/client/drag_drop_client.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/wm/public/drag_drop_client.h"
 
 namespace gfx {
 class LinearAnimation;
+}
+
+namespace ui {
+class LocatedEvent;
 }
 
 namespace ash {
@@ -29,11 +37,11 @@ namespace test {
 class DragDropControllerTest;
 }
 
-class ASH_EXPORT DragDropController
-    : public aura::client::DragDropClient,
-      public ui::EventHandler,
-      public gfx::AnimationDelegate,
-      public aura::WindowObserver {
+class ASH_EXPORT DragDropController : public aura::client::DragDropClient,
+                                      public ui::EventHandler,
+                                      public gfx::AnimationDelegate,
+                                      public aura::WindowObserver,
+                                      public WmDisplayObserver {
  public:
   DragDropController();
   ~DragDropController() override;
@@ -49,8 +57,6 @@ class ASH_EXPORT DragDropController
                        const gfx::Point& screen_location,
                        int operation,
                        ui::DragDropTypes::DragEventSource source) override;
-  void DragUpdate(aura::Window* target, const ui::LocatedEvent& event) override;
-  void Drop(aura::Window* target, const ui::LocatedEvent& event) override;
   void DragCancel() override;
   bool IsDragDropInProgress() override;
 
@@ -72,6 +78,10 @@ class ASH_EXPORT DragDropController
       int frame_rate,
       gfx::AnimationDelegate* delegate);
 
+  // Exposed for tests to override.
+  virtual void DragUpdate(aura::Window* target, const ui::LocatedEvent& event);
+  virtual void Drop(aura::Window* target, const ui::LocatedEvent& event);
+
   // Actual implementation of |DragCancel()|. protected for testing.
   virtual void DoDragCancel(int drag_cancel_animation_duration_ms);
 
@@ -83,6 +93,9 @@ class ASH_EXPORT DragDropController
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationCanceled(const gfx::Animation* animation) override;
 
+  // WmDisplayObserver:
+  void OnDisplayConfigurationChanging() override;
+
   // Helper method to start drag widget flying back animation.
   void StartCanceledAnimation(int animation_duration_ms);
 
@@ -92,7 +105,7 @@ class ASH_EXPORT DragDropController
   // Helper method to reset everything.
   void Cleanup();
 
-  scoped_ptr<DragImageView> drag_image_;
+  std::unique_ptr<DragImageView> drag_image_;
   gfx::Vector2d drag_image_offset_;
   const ui::OSExchangeData* drag_data_;
   int drag_operation_;
@@ -104,7 +117,7 @@ class ASH_EXPORT DragDropController
   gfx::Rect drag_image_initial_bounds_for_cancel_animation_;
   gfx::Rect drag_image_final_bounds_for_cancel_animation_;
 
-  scoped_ptr<gfx::LinearAnimation> cancel_animation_;
+  std::unique_ptr<gfx::LinearAnimation> cancel_animation_;
 
   // Window that started the drag.
   aura::Window* drag_source_window_;
@@ -116,14 +129,14 @@ class ASH_EXPORT DragDropController
   // Closure for quitting nested message loop.
   base::Closure quit_closure_;
 
-  scoped_ptr<ash::DragDropTracker> drag_drop_tracker_;
-  scoped_ptr<DragDropTrackerDelegate> drag_drop_window_delegate_;
+  std::unique_ptr<ash::DragDropTracker> drag_drop_tracker_;
+  std::unique_ptr<DragDropTrackerDelegate> drag_drop_window_delegate_;
 
   ui::DragDropTypes::DragEventSource current_drag_event_source_;
 
   // Holds a synthetic long tap event to be sent to the |drag_source_window_|.
   // See comment in OnGestureEvent() on why we need this.
-  scoped_ptr<ui::GestureEvent> pending_long_tap_;
+  std::unique_ptr<ui::GestureEvent> pending_long_tap_;
 
   base::WeakPtrFactory<DragDropController> weak_factory_;
 

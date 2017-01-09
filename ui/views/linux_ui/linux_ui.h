@@ -10,9 +10,9 @@
 #include "base/callback.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ime/linux/linux_input_method_context_factory.h"
-#include "ui/events/linux/text_edit_key_bindings_delegate_auralinux.h"
+#include "ui/base/ime/linux/text_edit_key_bindings_delegate_auralinux.h"
 #include "ui/gfx/linux_font_delegate.h"
-#include "ui/shell_dialogs/linux_shell_dialog.h"
+#include "ui/shell_dialogs/shell_dialog_linux.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/linux_ui/status_icon_linux.h"
 #include "ui/views/views_export.h"
@@ -40,7 +40,6 @@ namespace views {
 class Border;
 class LabelButton;
 class LabelButtonBorder;
-class View;
 class WindowButtonOrderObserver;
 
 // Adapter class with targets to render like different toolkits. Set by any
@@ -52,7 +51,7 @@ class WindowButtonOrderObserver;
 // liuigtk3.so, etc.
 class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
                              public gfx::LinuxFontDelegate,
-                             public ui::LinuxShellDialog,
+                             public ui::ShellDialogLinux,
                              public ui::TextEditKeyBindingsDelegateAuraLinux {
  public:
   // Describes the window management actions that could be taken in response to
@@ -80,12 +79,8 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
   static LinuxUI* instance();
 
   virtual void Initialize() = 0;
-
-  // Returns a themed image per theme_provider.h
-  virtual gfx::Image GetThemeImageNamed(int id) const = 0;
   virtual bool GetTint(int id, color_utils::HSL* tint) const = 0;
   virtual bool GetColor(int id, SkColor* color) const = 0;
-  virtual bool HasCustomImage(int id) const = 0;
 
   // Returns the preferences that we pass to WebKit.
   virtual SkColor GetFocusRingColor() const = 0;
@@ -118,7 +113,7 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
   virtual bool IsStatusIconSupported() const = 0;
 
   // Create a native status icon.
-  virtual scoped_ptr<StatusIconLinux> CreateLinuxStatusIcon(
+  virtual std::unique_ptr<StatusIconLinux> CreateLinuxStatusIcon(
       const gfx::ImageSkia& image,
       const base::string16& tool_tip) const = 0;
 
@@ -129,9 +124,9 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
       const std::string& content_type, int size) const = 0;
 
   // Builds a Border which paints the native button style.
-  virtual scoped_ptr<Border> CreateNativeBorder(
+  virtual std::unique_ptr<Border> CreateNativeBorder(
       views::LabelButton* owning_button,
-      scoped_ptr<views::LabelButtonBorder> border) = 0;
+      std::unique_ptr<views::LabelButtonBorder> border) = 0;
 
   // Notifies the observer about changes about how window buttons should be
   // laid out. If the order is anything other than the default min,max,close on
@@ -158,7 +153,7 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
 
   // Updates the device scale factor so that the default font size can be
   // recalculated.
-  virtual void UpdateDeviceScaleFactor(float device_scale_factor) = 0;
+  virtual void UpdateDeviceScaleFactor() = 0;
 
   // Determines the device scale factor of the primary screen.
   virtual float GetDeviceScaleFactor() const = 0;

@@ -4,6 +4,9 @@
 
 #include "device/bluetooth/dbus/fake_bluetooth_profile_service_provider.h"
 
+#include <memory>
+#include <utility>
+
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_profile_manager_client.h"
 
@@ -37,12 +40,12 @@ void FakeBluetoothProfileServiceProvider::Released() {
 
 void FakeBluetoothProfileServiceProvider::NewConnection(
     const dbus::ObjectPath& device_path,
-    scoped_ptr<dbus::FileDescriptor> fd,
+    base::ScopedFD fd,
     const Delegate::Options& options,
     const Delegate::ConfirmationCallback& callback) {
   VLOG(1) << object_path_.value() << ": NewConnection for "
           << device_path.value();
-  delegate_->NewConnection(device_path, fd.Pass(), options, callback);
+  delegate_->NewConnection(device_path, std::move(fd), options, callback);
 }
 
 void FakeBluetoothProfileServiceProvider::RequestDisconnection(

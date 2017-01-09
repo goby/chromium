@@ -4,21 +4,28 @@
 
 #include "media/midi/midi_manager.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/system_monitor/system_monitor.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace media {
 namespace midi {
 
 namespace {
+
+using mojom::PortState;
+using mojom::Result;
 
 class FakeMidiManager : public MidiManager {
  public:
@@ -34,8 +41,8 @@ class FakeMidiManager : public MidiManager {
   void Finalize() override { finalize_is_called_ = true; }
 
   void DispatchSendMidiData(MidiManagerClient* client,
-                            uint32 port_index,
-                            const std::vector<uint8>& data,
+                            uint32_t port_index,
+                            const std::vector<uint8_t>& data,
                             double timestamp) override {}
 
   // Utility functions for testing.
@@ -67,8 +74,8 @@ class FakeMidiManagerClient : public MidiManagerClient {
   // MidiManagerClient implementation.
   void AddInputPort(const MidiPortInfo& info) override {}
   void AddOutputPort(const MidiPortInfo& info) override {}
-  void SetInputPortState(uint32 port_index, MidiPortState state) override {}
-  void SetOutputPortState(uint32 port_index, MidiPortState state) override {}
+  void SetInputPortState(uint32_t port_index, PortState state) override {}
+  void SetOutputPortState(uint32_t port_index, PortState state) override {}
 
   void CompleteStartSession(Result result) override {
     EXPECT_TRUE(wait_for_result_);
@@ -76,8 +83,8 @@ class FakeMidiManagerClient : public MidiManagerClient {
     wait_for_result_ = false;
   }
 
-  void ReceiveMidiData(uint32 port_index,
-                       const uint8* data,
+  void ReceiveMidiData(uint32_t port_index,
+                       const uint8_t* data,
                        size_t size,
                        double timestamp) override {}
   void AccumulateMidiBytesSent(size_t size) override {}
@@ -156,16 +163,16 @@ class MidiManagerTest : public ::testing::Test {
   }
 
  protected:
-  scoped_ptr<FakeMidiManager> manager_;
+  std::unique_ptr<FakeMidiManager> manager_;
 
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(MidiManagerTest);
 };
 
 TEST_F(MidiManagerTest, StartAndEndSession) {
-  scoped_ptr<FakeMidiManagerClient> client;
+  std::unique_ptr<FakeMidiManagerClient> client;
   client.reset(new FakeMidiManagerClient);
 
   StartTheFirstSession(client.get());
@@ -175,7 +182,7 @@ TEST_F(MidiManagerTest, StartAndEndSession) {
 }
 
 TEST_F(MidiManagerTest, StartAndEndSessionWithError) {
-  scoped_ptr<FakeMidiManagerClient> client;
+  std::unique_ptr<FakeMidiManagerClient> client;
   client.reset(new FakeMidiManagerClient);
 
   StartTheFirstSession(client.get());
@@ -185,9 +192,9 @@ TEST_F(MidiManagerTest, StartAndEndSessionWithError) {
 }
 
 TEST_F(MidiManagerTest, StartMultipleSessions) {
-  scoped_ptr<FakeMidiManagerClient> client1;
-  scoped_ptr<FakeMidiManagerClient> client2;
-  scoped_ptr<FakeMidiManagerClient> client3;
+  std::unique_ptr<FakeMidiManagerClient> client1;
+  std::unique_ptr<FakeMidiManagerClient> client2;
+  std::unique_ptr<FakeMidiManagerClient> client3;
   client1.reset(new FakeMidiManagerClient);
   client2.reset(new FakeMidiManagerClient);
   client3.reset(new FakeMidiManagerClient);
@@ -218,7 +225,7 @@ TEST_F(MidiManagerTest, TooManyPendingSessions) {
   EXPECT_TRUE(manager_->start_initialization_is_called_);
 
   // Push the last client that should be rejected for too many pending requests.
-  scoped_ptr<FakeMidiManagerClient> additional_client(
+  std::unique_ptr<FakeMidiManagerClient> additional_client(
       new FakeMidiManagerClient);
   manager_->start_initialization_is_called_ = false;
   manager_->StartSession(additional_client.get());
@@ -245,7 +252,7 @@ TEST_F(MidiManagerTest, TooManyPendingSessions) {
 TEST_F(MidiManagerTest, AbortSession) {
   // A client starting a session can be destructed while an asynchronous
   // initialization is performed.
-  scoped_ptr<FakeMidiManagerClient> client;
+  std::unique_ptr<FakeMidiManagerClient> client;
   client.reset(new FakeMidiManagerClient);
 
   StartTheFirstSession(client.get());
@@ -262,10 +269,10 @@ TEST_F(MidiManagerTest, CreateMidiManager) {
   // SystemMonitor is needed on Windows.
   base::SystemMonitor system_monitor;
 
-  scoped_ptr<FakeMidiManagerClient> client;
+  std::unique_ptr<FakeMidiManagerClient> client;
   client.reset(new FakeMidiManagerClient);
 
-  scoped_ptr<MidiManager> manager(MidiManager::Create());
+  std::unique_ptr<MidiManager> manager(MidiManager::Create());
   manager->StartSession(client.get());
 
   Result result = client->WaitForResult();
@@ -292,4 +299,3 @@ TEST_F(MidiManagerTest, CreateMidiManager) {
 }  // namespace
 
 }  // namespace midi
-}  // namespace media

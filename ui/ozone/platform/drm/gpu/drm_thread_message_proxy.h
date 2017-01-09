@@ -5,11 +5,15 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_DRM_THREAD_MESSAGE_PROXY_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_DRM_THREAD_MESSAGE_PROXY_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ipc/message_filter.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/ozone/platform/drm/gpu/inter_thread_messaging_proxy.h"
 
 namespace base {
 struct FileDescriptor;
@@ -28,12 +32,16 @@ struct DisplayMode_Params;
 struct DisplaySnapshot_Params;
 struct OverlayCheck_Params;
 
-class DrmThreadMessageProxy : public IPC::MessageFilter {
+class DrmThreadMessageProxy : public IPC::MessageFilter,
+                              public InterThreadMessagingProxy {
  public:
-  DrmThreadMessageProxy(DrmThread* drm_thread);
+  DrmThreadMessageProxy();
+
+  // InterThreadMessagingProxy.
+  void SetDrmThread(DrmThread* thread) override;
 
   // IPC::MessageFilter:
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
  private:
@@ -65,7 +73,10 @@ class DrmThreadMessageProxy : public IPC::MessageFilter {
   void OnRemoveGraphicsDevice(const base::FilePath& path);
   void OnGetHDCPState(int64_t display_id);
   void OnSetHDCPState(int64_t display_id, HDCPState state);
-  void OnSetGammaRamp(int64_t id, const std::vector<GammaRampRGBEntry>& lut);
+  void OnSetColorCorrection(int64_t id,
+                            const std::vector<GammaRampRGBEntry>& degamma_lut,
+                            const std::vector<GammaRampRGBEntry>& gamma_lut,
+                            const std::vector<float>& correction_matrix);
 
   void OnCheckOverlayCapabilitiesCallback(
       gfx::AcceleratedWidget widget,

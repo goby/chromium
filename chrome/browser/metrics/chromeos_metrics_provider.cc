@@ -4,24 +4,30 @@
 
 #include "chrome/browser/metrics/chromeos_metrics_provider.h"
 
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
+#include <stddef.h>
+
+#include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/system/statistics_provider.h"
+#include "components/metrics/leak_detector/leak_detector.h"
 #include "components/metrics/metrics_service.h"
 #include "components/metrics/proto/chrome_user_metrics_extension.pb.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_device.h"
+#include "ui/display/display.h"
 #include "ui/events/event_utils.h"
-#include "ui/gfx/screen.h"
 
 #if defined(USE_X11)
 #include "ui/events/devices/x11/touch_factory_x11.h"
@@ -35,35 +41,35 @@ typedef SystemProfileProto::Hardware::Bluetooth::PairedDevice PairedDevice;
 namespace {
 
 PairedDevice::Type AsBluetoothDeviceType(
-    device::BluetoothDevice::DeviceType device_type) {
+    device::BluetoothDeviceType device_type) {
   switch (device_type) {
-    case device::BluetoothDevice::DEVICE_UNKNOWN:
+    case device::BluetoothDeviceType::UNKNOWN:
       return PairedDevice::DEVICE_UNKNOWN;
-    case device::BluetoothDevice::DEVICE_COMPUTER:
+    case device::BluetoothDeviceType::COMPUTER:
       return PairedDevice::DEVICE_COMPUTER;
-    case device::BluetoothDevice::DEVICE_PHONE:
+    case device::BluetoothDeviceType::PHONE:
       return PairedDevice::DEVICE_PHONE;
-    case device::BluetoothDevice::DEVICE_MODEM:
+    case device::BluetoothDeviceType::MODEM:
       return PairedDevice::DEVICE_MODEM;
-    case device::BluetoothDevice::DEVICE_AUDIO:
+    case device::BluetoothDeviceType::AUDIO:
       return PairedDevice::DEVICE_AUDIO;
-    case device::BluetoothDevice::DEVICE_CAR_AUDIO:
+    case device::BluetoothDeviceType::CAR_AUDIO:
       return PairedDevice::DEVICE_CAR_AUDIO;
-    case device::BluetoothDevice::DEVICE_VIDEO:
+    case device::BluetoothDeviceType::VIDEO:
       return PairedDevice::DEVICE_VIDEO;
-    case device::BluetoothDevice::DEVICE_PERIPHERAL:
+    case device::BluetoothDeviceType::PERIPHERAL:
       return PairedDevice::DEVICE_PERIPHERAL;
-    case device::BluetoothDevice::DEVICE_JOYSTICK:
+    case device::BluetoothDeviceType::JOYSTICK:
       return PairedDevice::DEVICE_JOYSTICK;
-    case device::BluetoothDevice::DEVICE_GAMEPAD:
+    case device::BluetoothDeviceType::GAMEPAD:
       return PairedDevice::DEVICE_GAMEPAD;
-    case device::BluetoothDevice::DEVICE_KEYBOARD:
+    case device::BluetoothDeviceType::KEYBOARD:
       return PairedDevice::DEVICE_KEYBOARD;
-    case device::BluetoothDevice::DEVICE_MOUSE:
+    case device::BluetoothDeviceType::MOUSE:
       return PairedDevice::DEVICE_MOUSE;
-    case device::BluetoothDevice::DEVICE_TABLET:
+    case device::BluetoothDeviceType::TABLET:
       return PairedDevice::DEVICE_TABLET;
-    case device::BluetoothDevice::DEVICE_KEYBOARD_MOUSE_COMBO:
+    case device::BluetoothDeviceType::KEYBOARD_MOUSE_COMBO:
       return PairedDevice::DEVICE_KEYBOARD_MOUSE_COMBO;
   }
 
@@ -137,6 +143,18 @@ ChromeOSMetricsProvider::GetEnrollmentStatus() {
   return connector->IsEnterpriseManaged() ? MANAGED : NON_MANAGED;
 }
 
+void ChromeOSMetricsProvider::Init() {
+  perf_provider_.Init();
+
+#if defined(ARCH_CPU_X86_64)
+  // Currently, the runtime memory leak detector is only supported on x86_64
+  // systems.
+  if (base::FeatureList::IsEnabled(features::kRuntimeMemoryLeakDetector)) {
+    leak_detector_controller_.reset(new metrics::LeakDetectorController);
+  }
+#endif
+}
+
 void ChromeOSMetricsProvider::OnDidCreateMetricsLog() {
   registered_user_count_at_log_initialization_ = false;
   if (user_manager::UserManager::IsInitialized()) {
@@ -164,6 +182,13 @@ void ChromeOSMetricsProvider::InitTaskGetHardwareClassOnFileThread() {
       "hardware_class", &hardware_class_);
 }
 
+void ChromeOSMetricsProvider::InitTaskGetBluetoothAdapter(
+    const base::Closure& callback) {
+  device::BluetoothAdapterFactory::GetAdapter(
+      base::Bind(&ChromeOSMetricsProvider::SetBluetoothAdapter,
+                 weak_ptr_factory_.GetWeakPtr(), callback));
+}
+
 void ChromeOSMetricsProvider::ProvideSystemProfileMetrics(
     metrics::SystemProfileProto* system_profile_proto) {
   WriteBluetoothProto(system_profile_proto);
@@ -172,10 +197,11 @@ void ChromeOSMetricsProvider::ProvideSystemProfileMetrics(
   metrics::SystemProfileProto::Hardware* hardware =
       system_profile_proto->mutable_hardware();
   hardware->set_hardware_class(hardware_class_);
-  gfx::Display::TouchSupport has_touch = ui::GetInternalDisplayTouchSupport();
-  if (has_touch == gfx::Display::TOUCH_SUPPORT_AVAILABLE)
+  display::Display::TouchSupport has_touch =
+      ui::GetInternalDisplayTouchSupport();
+  if (has_touch == display::Display::TOUCH_SUPPORT_AVAILABLE)
     hardware->set_internal_display_supports_touch(true);
-  else if (has_touch == gfx::Display::TOUCH_SUPPORT_UNAVAILABLE)
+  else if (has_touch == display::Display::TOUCH_SUPPORT_UNAVAILABLE)
     hardware->set_internal_display_supports_touch(false);
   WriteExternalTouchscreensProto(hardware);
 }
@@ -208,25 +234,27 @@ void ChromeOSMetricsProvider::ProvideGeneralMetrics(
     metrics::ChromeUserMetricsExtension* uma_proto) {
   std::vector<SampledProfile> sampled_profiles;
   if (perf_provider_.GetSampledProfiles(&sampled_profiles)) {
-    for (std::vector<SampledProfile>::iterator iter = sampled_profiles.begin();
-         iter != sampled_profiles.end();
-         ++iter) {
-      uma_proto->add_sampled_profile()->Swap(&(*iter));
+    for (auto& profile : sampled_profiles) {
+      uma_proto->add_sampled_profile()->Swap(&profile);
     }
   }
+
+  if (leak_detector_controller_) {
+    std::vector<metrics::MemoryLeakReportProto> reports;
+    leak_detector_controller_->GetLeakReports(&reports);
+    for (auto& report : reports) {
+      uma_proto->add_memory_leak_report()->Swap(&report);
+    }
+  }
+
   RecordEnrollmentStatus();
+  RecordArcState();
 }
 
 void ChromeOSMetricsProvider::WriteBluetoothProto(
     metrics::SystemProfileProto* system_profile_proto) {
   metrics::SystemProfileProto::Hardware* hardware =
       system_profile_proto->mutable_hardware();
-
-  // BluetoothAdapterFactory::GetAdapter is synchronous on Chrome OS; if that
-  // changes this will fail at the DCHECK().
-  device::BluetoothAdapterFactory::GetAdapter(base::Bind(
-      &ChromeOSMetricsProvider::SetBluetoothAdapter, base::Unretained(this)));
-  DCHECK(adapter_.get());
 
   SystemProfileProto::Hardware::Bluetooth* bluetooth =
       hardware->mutable_bluetooth();
@@ -248,12 +276,12 @@ void ChromeOSMetricsProvider::WriteBluetoothProto(
     paired_device->set_type(AsBluetoothDeviceType(device->GetDeviceType()));
 
     // |address| is xx:xx:xx:xx:xx:xx, extract the first three components and
-    // pack into a uint32.
+    // pack into a uint32_t.
     std::string address = device->GetAddress();
     if (address.size() > 9 && address[2] == ':' && address[5] == ':' &&
         address[8] == ':') {
       std::string vendor_prefix_str;
-      uint64 vendor_prefix;
+      uint64_t vendor_prefix;
 
       base::RemoveChars(address.substr(0, 9), ":", &vendor_prefix_str);
       DCHECK_EQ(6U, vendor_prefix_str.size());
@@ -296,11 +324,19 @@ void ChromeOSMetricsProvider::UpdateMultiProfileUserCount(
 }
 
 void ChromeOSMetricsProvider::SetBluetoothAdapter(
+    base::Closure callback,
     scoped_refptr<device::BluetoothAdapter> adapter) {
   adapter_ = adapter;
+  callback.Run();
 }
 
 void ChromeOSMetricsProvider::RecordEnrollmentStatus() {
   UMA_HISTOGRAM_ENUMERATION(
       "UMA.EnrollmentStatus", GetEnrollmentStatus(), ENROLLMENT_STATUS_MAX);
+}
+
+void ChromeOSMetricsProvider::RecordArcState() {
+  arc::ArcSessionManager* arc_session_manager = arc::ArcSessionManager::Get();
+  if (arc_session_manager)
+    arc_session_manager->RecordArcState();
 }

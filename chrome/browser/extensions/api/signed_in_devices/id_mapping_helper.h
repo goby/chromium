@@ -5,18 +5,18 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_SIGNED_IN_DEVICES_ID_MAPPING_HELPER_H__
 #define CHROME_BROWSER_EXTENSIONS_API_SIGNED_IN_DEVICES_ID_MAPPING_HELPER_H__
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 
 namespace base {
 class DictionaryValue;
 }  // namespace base
 
-namespace sync_driver {
+namespace syncer {
 class DeviceInfo;
-}  // namespace sync_driver
+}  // namespace syncer
 
 class Profile;
 
@@ -45,12 +45,12 @@ std::string GetGUIDFromPublicId(
 // The dictionary would have the public id as the key and the
 // device guid as the value.
 void CreateMappingForUnmappedDevices(
-    std::vector<sync_driver::DeviceInfo*>* device_info,
+    const std::vector<std::unique_ptr<syncer::DeviceInfo>>& device_info,
     base::DictionaryValue* value);
 
 // Gets the device info for a given client id. If the device is not found
 // the returned pointer would be null.
-scoped_ptr<sync_driver::DeviceInfo> GetDeviceInfoForClientId(
+std::unique_ptr<syncer::DeviceInfo> GetDeviceInfoForClientId(
     const std::string& client_id,
     const std::string& extension_id,
     Profile* profile);

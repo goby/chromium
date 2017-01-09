@@ -4,10 +4,14 @@
 
 #include "extensions/browser/api/hid/hid_api.h"
 
+#include <stdint.h>
+
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "device/core/device_client.h"
+#include "base/memory/ptr_util.h"
+#include "device/base/device_client.h"
 #include "device/hid/hid_connection.h"
 #include "device/hid/hid_device_filter.h"
 #include "device/hid/hid_device_info.h"
@@ -17,6 +21,27 @@
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/common/api/hid.h"
 #include "net/base/io_buffer.h"
+
+// The normal EXTENSION_FUNCTION_VALIDATE macro doesn't work well here. It's
+// used in functions that returns a bool. However, EXTENSION_FUNCTION_VALIDATE
+// returns a smart pointer on failure.
+//
+// With C++11, this is problematic since a smart pointer that uses explicit
+// operator bool won't allow this conversion, since it's not in a context (such
+// as a conditional) where a contextual conversion to bool would be allowed.
+// TODO(rdevlin.cronin): restructure this code to remove the need for the
+// additional macro.
+#ifdef NDEBUG
+#define EXTENSION_FUNCTION_VALIDATE_RETURN_FALSE_ON_ERROR(test) \
+  do {                                                          \
+    if (!(test)) {                                              \
+      this->set_bad_message(true);                              \
+      return false;                                             \
+    }                                                           \
+  } while (0)
+#else  // NDEBUG
+#define EXTENSION_FUNCTION_VALIDATE_RETURN_FALSE_ON_ERROR(test) CHECK(test)
+#endif  // NDEBUG
 
 namespace hid = extensions::api::hid;
 
@@ -33,26 +58,27 @@ const char kErrorFailedToOpenDevice[] = "Failed to open HID device.";
 const char kErrorConnectionNotFound[] = "Connection not established.";
 const char kErrorTransfer[] = "Transfer failed.";
 
-base::Value* PopulateHidConnection(int connection_id,
-                                   scoped_refptr<HidConnection> connection) {
+std::unique_ptr<base::Value> PopulateHidConnection(
+    int connection_id,
+    scoped_refptr<HidConnection> connection) {
   hid::HidConnectInfo connection_value;
   connection_value.connection_id = connection_id;
-  return connection_value.ToValue().release();
+  return connection_value.ToValue();
 }
 
-void ConvertHidDeviceFilter(linked_ptr<hid::DeviceFilter> input,
+void ConvertHidDeviceFilter(const hid::DeviceFilter& input,
                             HidDeviceFilter* output) {
-  if (input->vendor_id) {
-    output->SetVendorId(*input->vendor_id);
+  if (input.vendor_id) {
+    output->SetVendorId(*input.vendor_id);
   }
-  if (input->product_id) {
-    output->SetProductId(*input->product_id);
+  if (input.product_id) {
+    output->SetProductId(*input.product_id);
   }
-  if (input->usage_page) {
-    output->SetUsagePage(*input->usage_page);
+  if (input.usage_page) {
+    output->SetUsagePage(*input.usage_page);
   }
-  if (input->usage) {
-    output->SetUsage(*input->usage);
+  if (input.usage) {
+    output->SetUsage(*input.usage);
   }
 }
 
@@ -65,7 +91,7 @@ HidGetDevicesFunction::HidGetDevicesFunction() {}
 HidGetDevicesFunction::~HidGetDevicesFunction() {}
 
 ExtensionFunction::ResponseAction HidGetDevicesFunction::Run() {
-  scoped_ptr<api::hid::GetDevices::Params> parameters =
+  std::unique_ptr<api::hid::GetDevices::Params> parameters =
       hid::GetDevices::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters);
 
@@ -95,8 +121,8 @@ ExtensionFunction::ResponseAction HidGetDevicesFunction::Run() {
 }
 
 void HidGetDevicesFunction::OnEnumerationComplete(
-    scoped_ptr<base::ListValue> devices) {
-  Respond(OneArgument(devices.release()));
+    std::unique_ptr<base::ListValue> devices) {
+  Respond(OneArgument(std::move(devices)));
 }
 
 HidGetUserSelectedDevicesFunction::HidGetUserSelectedDevicesFunction() {
@@ -106,13 +132,13 @@ HidGetUserSelectedDevicesFunction::~HidGetUserSelectedDevicesFunction() {
 }
 
 ExtensionFunction::ResponseAction HidGetUserSelectedDevicesFunction::Run() {
-  scoped_ptr<api::hid::GetUserSelectedDevices::Params> parameters =
+  std::unique_ptr<api::hid::GetUserSelectedDevices::Params> parameters =
       hid::GetUserSelectedDevices::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters);
 
   content::WebContents* web_contents = GetSenderWebContents();
   if (!web_contents || !user_gesture()) {
-    return RespondNow(OneArgument(new base::ListValue()));
+    return RespondNow(OneArgument(base::MakeUnique<base::ListValue>()));
   }
 
   bool multiple = false;
@@ -141,7 +167,7 @@ void HidGetUserSelectedDevicesFunction::OnDevicesChosen(
     const std::vector<scoped_refptr<HidDeviceInfo>>& devices) {
   HidDeviceManager* device_manager = HidDeviceManager::Get(browser_context());
   CHECK(device_manager);
-  Respond(OneArgument(device_manager->GetApiDevicesFromList(devices).Pass()));
+  Respond(OneArgument(device_manager->GetApiDevicesFromList(devices)));
 }
 
 HidConnectFunction::HidConnectFunction() : connection_manager_(nullptr) {
@@ -150,7 +176,7 @@ HidConnectFunction::HidConnectFunction() : connection_manager_(nullptr) {
 HidConnectFunction::~HidConnectFunction() {}
 
 ExtensionFunction::ResponseAction HidConnectFunction::Run() {
-  scoped_ptr<api::hid::Connect::Params> parameters =
+  std::unique_ptr<api::hid::Connect::Params> parameters =
       hid::Connect::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters);
 
@@ -198,7 +224,7 @@ HidDisconnectFunction::HidDisconnectFunction() {}
 HidDisconnectFunction::~HidDisconnectFunction() {}
 
 ExtensionFunction::ResponseAction HidDisconnectFunction::Run() {
-  scoped_ptr<api::hid::Disconnect::Params> parameters =
+  std::unique_ptr<api::hid::Disconnect::Params> parameters =
       hid::Disconnect::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(parameters);
 
@@ -224,9 +250,7 @@ HidConnectionIoFunction::~HidConnectionIoFunction() {
 }
 
 ExtensionFunction::ResponseAction HidConnectionIoFunction::Run() {
-  if (!ValidateParameters()) {
-    return RespondNow(Error(error_));
-  }
+  EXTENSION_FUNCTION_VALIDATE(ValidateParameters());
 
   ApiResourceManager<HidConnectionResource>* connection_manager =
       ApiResourceManager<HidConnectionResource>::Get(browser_context());
@@ -248,7 +272,7 @@ HidReceiveFunction::~HidReceiveFunction() {}
 
 bool HidReceiveFunction::ValidateParameters() {
   parameters_ = hid::Receive::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(parameters_);
+  EXTENSION_FUNCTION_VALIDATE_RETURN_FALSE_ON_ERROR(parameters_);
   set_connection_id(parameters_->connection_id);
   return true;
 }
@@ -264,7 +288,7 @@ void HidReceiveFunction::OnFinished(bool success,
     DCHECK_GE(size, 1u);
     int report_id = reinterpret_cast<uint8_t*>(buffer->data())[0];
 
-    Respond(TwoArguments(new base::FundamentalValue(report_id),
+    Respond(TwoArguments(base::MakeUnique<base::FundamentalValue>(report_id),
                          base::BinaryValue::CreateWithCopiedBuffer(
                              buffer->data() + 1, size - 1)));
   } else {
@@ -278,7 +302,7 @@ HidSendFunction::~HidSendFunction() {}
 
 bool HidSendFunction::ValidateParameters() {
   parameters_ = hid::Send::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(parameters_);
+  EXTENSION_FUNCTION_VALIDATE_RETURN_FALSE_ON_ERROR(parameters_);
   set_connection_id(parameters_->connection_id);
   return true;
 }
@@ -307,7 +331,7 @@ HidReceiveFeatureReportFunction::~HidReceiveFeatureReportFunction() {}
 
 bool HidReceiveFeatureReportFunction::ValidateParameters() {
   parameters_ = hid::ReceiveFeatureReport::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(parameters_);
+  EXTENSION_FUNCTION_VALIDATE_RETURN_FALSE_ON_ERROR(parameters_);
   set_connection_id(parameters_->connection_id);
   return true;
 }
@@ -336,7 +360,7 @@ HidSendFeatureReportFunction::~HidSendFeatureReportFunction() {}
 
 bool HidSendFeatureReportFunction::ValidateParameters() {
   parameters_ = hid::SendFeatureReport::Params::Create(*args_);
-  EXTENSION_FUNCTION_VALIDATE(parameters_);
+  EXTENSION_FUNCTION_VALIDATE_RETURN_FALSE_ON_ERROR(parameters_);
   set_connection_id(parameters_->connection_id);
   return true;
 }

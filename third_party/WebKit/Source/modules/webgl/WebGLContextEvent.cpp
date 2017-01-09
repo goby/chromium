@@ -23,40 +23,33 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/webgl/WebGLContextEvent.h"
 
 namespace blink {
 
-WebGLContextEvent::WebGLContextEvent()
-{
+WebGLContextEvent::WebGLContextEvent() {}
+
+WebGLContextEvent::WebGLContextEvent(const AtomicString& type,
+                                     bool canBubble,
+                                     bool cancelable,
+                                     const String& statusMessage)
+    : Event(type, canBubble, cancelable), m_statusMessage(statusMessage) {}
+
+WebGLContextEvent::WebGLContextEvent(const AtomicString& type,
+                                     const WebGLContextEventInit& initializer)
+    : Event(type, initializer) {
+  if (initializer.hasStatusMessage())
+    m_statusMessage = initializer.statusMessage();
 }
 
-WebGLContextEvent::WebGLContextEvent(const AtomicString& type, bool canBubble, bool cancelable, const String& statusMessage)
-    : Event(type, canBubble, cancelable)
-    , m_statusMessage(statusMessage)
-{
+WebGLContextEvent::~WebGLContextEvent() {}
+
+const AtomicString& WebGLContextEvent::interfaceName() const {
+  return EventNames::WebGLContextEvent;
 }
 
-WebGLContextEvent::WebGLContextEvent(const AtomicString& type, const WebGLContextEventInit& initializer)
-    : Event(type, initializer)
-{
-    if (initializer.hasStatusMessage())
-        m_statusMessage = initializer.statusMessage();
+DEFINE_TRACE(WebGLContextEvent) {
+  Event::trace(visitor);
 }
 
-WebGLContextEvent::~WebGLContextEvent()
-{
-}
-
-const AtomicString& WebGLContextEvent::interfaceName() const
-{
-    return EventNames::WebGLContextEvent;
-}
-
-DEFINE_TRACE(WebGLContextEvent)
-{
-    Event::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

@@ -5,12 +5,19 @@
 #ifndef CONTENT_BROWSER_COMPOSITOR_TEST_NO_TRANSPORT_IMAGE_TRANSPORT_FACTORY_H_
 #define CONTENT_BROWSER_COMPOSITOR_TEST_NO_TRANSPORT_IMAGE_TRANSPORT_FACTORY_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "base/observer_list.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "build/build_config.h"
+#include "cc/surfaces/surface_manager.h"
 #include "content/browser/compositor/image_transport_factory.h"
 
 namespace cc {
 class ContextProvider;
+}
+
+namespace ui {
+class InProcessContextFactory;
 }
 
 namespace content {
@@ -23,27 +30,19 @@ class NoTransportImageTransportFactory : public ImageTransportFactory {
 
   // ImageTransportFactory implementation.
   ui::ContextFactory* GetContextFactory() override;
-  cc::SurfaceManager* GetSurfaceManager() override;
-  GLHelper* GetGLHelper() override;
-  void AddObserver(ImageTransportFactoryObserver* observer) override;
-  void RemoveObserver(ImageTransportFactoryObserver* observer) override;
+  display_compositor::GLHelper* GetGLHelper() override;
+  void SetGpuChannelEstablishFactory(
+      gpu::GpuChannelEstablishFactory* factory) override;
 #if defined(OS_MACOSX)
-  void OnGpuSwapBuffersCompleted(
-      int surface_id,
-      const std::vector<ui::LatencyInfo>& latency_info,
-      gfx::SwapResult result) override {}
   void SetCompositorSuspendedForRecycle(ui::Compositor* compositor,
                                         bool suspended) override {}
-  bool SurfaceShouldNotShowFramesAfterSuspendForRecycle(
-      int surface_id) const override;
 #endif
 
  private:
-  scoped_ptr<cc::SurfaceManager> surface_manager_;
-  scoped_ptr<ui::ContextFactory> context_factory_;
+  std::unique_ptr<cc::SurfaceManager> surface_manager_;
+  std::unique_ptr<ui::InProcessContextFactory> context_factory_;
   scoped_refptr<cc::ContextProvider> context_provider_;
-  scoped_ptr<GLHelper> gl_helper_;
-  base::ObserverList<ImageTransportFactoryObserver> observer_list_;
+  std::unique_ptr<display_compositor::GLHelper> gl_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(NoTransportImageTransportFactory);
 };

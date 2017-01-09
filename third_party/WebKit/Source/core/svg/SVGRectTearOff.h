@@ -37,27 +37,38 @@
 
 namespace blink {
 
-class SVGRectTearOff : public SVGPropertyTearOff<SVGRect>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGRectTearOff> create(PassRefPtrWillBeRawPtr<SVGRect> target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName = QualifiedName::null())
-    {
-        return adoptRefWillBeNoop(new SVGRectTearOff(target, contextElement, propertyIsAnimVal, attributeName));
-    }
+class SVGRectTearOff : public SVGPropertyTearOff<SVGRect>,
+                       public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    void setX(float, ExceptionState&);
-    void setY(float, ExceptionState&);
-    void setWidth(float, ExceptionState&);
-    void setHeight(float, ExceptionState&);
-    float x() { return target()->x(); }
-    float y() { return target()->y(); }
-    float width() { return target()->width(); }
-    float height() { return target()->height(); }
+ public:
+  static SVGRectTearOff* create(
+      SVGRect* target,
+      SVGElement* contextElement,
+      PropertyIsAnimValType propertyIsAnimVal,
+      const QualifiedName& attributeName = QualifiedName::null()) {
+    return new SVGRectTearOff(target, contextElement, propertyIsAnimVal,
+                              attributeName);
+  }
 
-private:
-    SVGRectTearOff(PassRefPtrWillBeRawPtr<SVGRect>, SVGElement* contextElement, PropertyIsAnimValType, const QualifiedName& attributeName = QualifiedName::null());
+  void setX(float, ExceptionState&);
+  void setY(float, ExceptionState&);
+  void setWidth(float, ExceptionState&);
+  void setHeight(float, ExceptionState&);
+  float x() { return target()->x(); }
+  float y() { return target()->y(); }
+  float width() { return target()->width(); }
+  float height() { return target()->height(); }
+
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+ private:
+  SVGRectTearOff(SVGRect*,
+                 SVGElement* contextElement,
+                 PropertyIsAnimValType,
+                 const QualifiedName& attributeName = QualifiedName::null());
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGRectTearOff_h
+#endif  // SVGRectTearOff_h

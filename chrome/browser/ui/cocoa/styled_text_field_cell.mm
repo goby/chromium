@@ -8,7 +8,7 @@
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #import "ui/base/cocoa/nsgraphics_context_additions.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/cocoa/scoped_cg_context_smooth_fonts.h"
@@ -90,8 +90,7 @@
 
   // Paint button background image if there is one (otherwise the border won't
   // look right).
-  ThemeService* themeProvider =
-      static_cast<ThemeService*>([[controlView window] themeProvider]);
+  const ui::ThemeProvider* themeProvider = [[controlView window] themeProvider];
   if (themeProvider) {
     NSColor* backgroundImageColor = nil;
     if (themeProvider->HasCustomImage(IDR_THEME_BUTTON_BACKGROUND)) {
@@ -148,8 +147,7 @@
 
   // Draw optional bezel below bottom stroke.
   if ([self shouldDrawBezel] && themeProvider &&
-      themeProvider->UsingDefaultTheme()) {
-
+      themeProvider->UsingSystemTheme()) {
     NSColor* bezelColor = themeProvider->GetNSColor(
         ThemeProperties::COLOR_TOOLBAR_BEZEL);
     [[bezelColor colorWithAlphaComponent:0.5 / lineWidth] set];

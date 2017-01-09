@@ -4,23 +4,31 @@
 
 #include "storage/browser/blob/view_blob_internals_job.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
 #include "base/i18n/number_formatting.h"
 #include "base/i18n/time_formatting.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/url_request/url_request.h"
+#include "storage/browser/blob/blob_data_item.h"
+#include "storage/browser/blob/blob_entry.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/browser/blob/internal_blob_data.h"
+#include "storage/browser/blob/blob_storage_registry.h"
+#include "storage/browser/blob/shareable_blob_data_item.h"
 
 namespace {
 
@@ -103,10 +111,9 @@ ViewBlobInternalsJob::~ViewBlobInternalsJob() {
 }
 
 void ViewBlobInternalsJob::Start() {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&ViewBlobInternalsJob::StartAsync,
-                 weak_factory_.GetWeakPtr()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&ViewBlobInternalsJob::StartAsync,
+                            weak_factory_.GetWeakPtr()));
 }
 
 bool ViewBlobInternalsJob::IsRedirectResponse(GURL* location,
@@ -137,7 +144,7 @@ int ViewBlobInternalsJob::GetData(
 
   data->clear();
   StartHTML(data);
-  if (blob_storage_context_->blob_map_.empty())
+  if (blob_storage_context_->registry().blob_map_.empty())
     data->append(kEmptyBlobStorageMessage);
   else
     GenerateHTML(data);
@@ -146,19 +153,19 @@ int ViewBlobInternalsJob::GetData(
 }
 
 void ViewBlobInternalsJob::GenerateHTML(std::string* out) const {
-  for (BlobStorageContext::BlobMap::const_iterator iter =
-           blob_storage_context_->blob_map_.begin();
-       iter != blob_storage_context_->blob_map_.end();
-       ++iter) {
+  for (BlobStorageRegistry::BlobMap::const_iterator iter =
+           blob_storage_context_->registry().blob_map_.begin();
+       iter != blob_storage_context_->registry().blob_map_.end(); ++iter) {
     AddHTMLBoldText(iter->first, out);
-    GenerateHTMLForBlobData(*iter->second->data, iter->second->refcount, out);
+    GenerateHTMLForBlobData(*iter->second, iter->second->content_type(),
+                            iter->second->content_disposition(),
+                            iter->second->refcount(), out);
   }
-  if (!blob_storage_context_->public_blob_urls_.empty()) {
+  if (!blob_storage_context_->registry().url_to_uuid_.empty()) {
     AddHorizontalRule(out);
-    for (BlobStorageContext::BlobURLMap::const_iterator iter =
-             blob_storage_context_->public_blob_urls_.begin();
-         iter != blob_storage_context_->public_blob_urls_.end();
-         ++iter) {
+    for (BlobStorageRegistry::URLMap::const_iterator iter =
+             blob_storage_context_->registry().url_to_uuid_.begin();
+         iter != blob_storage_context_->registry().url_to_uuid_.end(); ++iter) {
       AddHTMLBoldText(iter->first.spec(), out);
       StartHTMLList(out);
       AddHTMLListItem(kUUID, iter->second, out);
@@ -168,16 +175,18 @@ void ViewBlobInternalsJob::GenerateHTML(std::string* out) const {
 }
 
 void ViewBlobInternalsJob::GenerateHTMLForBlobData(
-    const InternalBlobData& blob_data,
+    const BlobEntry& blob_data,
+    const std::string& content_type,
+    const std::string& content_disposition,
     int refcount,
     std::string* out) {
   StartHTMLList(out);
 
   AddHTMLListItem(kRefcount, base::IntToString(refcount), out);
-  if (!blob_data.content_type().empty())
-    AddHTMLListItem(kContentType, blob_data.content_type(), out);
-  if (!blob_data.content_disposition().empty())
-    AddHTMLListItem(kContentDisposition, blob_data.content_disposition(), out);
+  if (!content_type.empty())
+    AddHTMLListItem(kContentType, content_type, out);
+  if (!content_disposition.empty())
+    AddHTMLListItem(kContentDisposition, content_disposition, out);
 
   bool has_multi_items = blob_data.items().size() > 1;
   if (has_multi_items) {
@@ -224,17 +233,20 @@ void ViewBlobInternalsJob::GenerateHTMLForBlobData(
         AddHTMLListItem(kURL, item.disk_cache_entry()->GetKey(), out);
         break;
       case DataElement::TYPE_BYTES_DESCRIPTION:
+        AddHTMLListItem(kType, "pending data", out);
       case DataElement::TYPE_UNKNOWN:
         NOTREACHED();
         break;
     }
     if (item.offset()) {
       AddHTMLListItem(kOffset, base::UTF16ToUTF8(base::FormatNumber(
-          static_cast<int64>(item.offset()))), out);
+                                   static_cast<int64_t>(item.offset()))),
+                      out);
     }
-    if (static_cast<int64>(item.length()) != -1) {
+    if (static_cast<int64_t>(item.length()) != -1) {
       AddHTMLListItem(kLength, base::UTF16ToUTF8(base::FormatNumber(
-          static_cast<int64>(item.length()))), out);
+                                   static_cast<int64_t>(item.length()))),
+                      out);
     }
 
     if (has_multi_items)

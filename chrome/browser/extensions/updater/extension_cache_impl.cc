@@ -4,9 +4,12 @@
 
 #include "chrome/browser/extensions/updater/extension_cache_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/memory/singleton.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -24,7 +27,7 @@
 namespace extensions {
 
 ExtensionCacheImpl::ExtensionCacheImpl(
-    scoped_ptr<ExtensionCacheDelegate> delegate)
+    std::unique_ptr<ExtensionCacheDelegate> delegate)
     : cache_(new LocalExtensionCache(
           delegate->GetCacheDir(),
           delegate->GetMaximumCacheSize(),
@@ -86,7 +89,7 @@ void ExtensionCacheImpl::PutExtension(const std::string& id,
 }
 
 bool ExtensionCacheImpl::CachingAllowed(const std::string& id) {
-  return ContainsKey(allowed_extensions_, id);
+  return base::ContainsKey(allowed_extensions_, id);
 }
 
 void ExtensionCacheImpl::OnCacheInitialized() {
@@ -96,7 +99,7 @@ void ExtensionCacheImpl::OnCacheInitialized() {
   }
   init_callbacks_.clear();
 
-  uint64 cache_size = 0;
+  uint64_t cache_size = 0;
   size_t extensions_count = 0;
   if (cache_->GetStatistics(&cache_size, &extensions_count)) {
     UMA_HISTOGRAM_COUNTS_100("Extensions.ExtensionCacheCount",
@@ -109,38 +112,32 @@ void ExtensionCacheImpl::OnCacheInitialized() {
 void ExtensionCacheImpl::Observe(int type,
                                  const content::NotificationSource& source,
                                  const content::NotificationDetails& details) {
+  DCHECK_EQ(extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR, type);
+
   if (!cache_)
     return;
 
-  switch (type) {
-    case extensions::NOTIFICATION_EXTENSION_INSTALL_ERROR: {
-      extensions::CrxInstaller* installer =
-          content::Source<extensions::CrxInstaller>(source).ptr();
-      const std::string& id = installer->expected_id();
-      const std::string& hash = installer->expected_hash();
-      const extensions::CrxInstallError* error =
-          content::Details<const extensions::CrxInstallError>(details).ptr();
-      switch (error->type()) {
-        case extensions::CrxInstallError::ERROR_DECLINED:
-          DVLOG(2) << "Extension install was declined, file kept";
-          break;
-        case extensions::CrxInstallError::ERROR_HASH_MISMATCH: {
-          if (cache_->ShouldRetryDownload(id, hash)) {
-            cache_->RemoveExtension(id, hash);
-            installer->set_hash_check_failed(true);
-          }
-          // We deliberately keep the file with incorrect hash sum, so that it
-          // will not be re-downloaded each time.
-        } break;
-        default:
-          cache_->RemoveExtension(id, hash);
-          break;
-      }
+  extensions::CrxInstaller* installer =
+      content::Source<extensions::CrxInstaller>(source).ptr();
+  const std::string& id = installer->expected_id();
+  const std::string& hash = installer->expected_hash();
+  const extensions::CrxInstallError* error =
+      content::Details<const extensions::CrxInstallError>(details).ptr();
+  switch (error->type()) {
+    case extensions::CrxInstallError::ERROR_DECLINED:
+      DVLOG(2) << "Extension install was declined, file kept";
       break;
-    }
-
+    case extensions::CrxInstallError::ERROR_HASH_MISMATCH:
+      if (cache_->ShouldRetryDownload(id, hash)) {
+        cache_->RemoveExtension(id, hash);
+        installer->set_hash_check_failed(true);
+      }
+      // We deliberately keep the file with incorrect hash sum, so that it
+      // will not be re-downloaded each time.
+      break;
     default:
-      NOTREACHED();
+      cache_->RemoveExtension(id, hash);
+      break;
   }
 }
 

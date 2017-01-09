@@ -2,8 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/nacl/loader/nacl_validation_db.h"
 #include "components/nacl/loader/nacl_validation_query.h"
+
+#include <stdint.h>
+
+#include <memory>
+
+#include "components/nacl/loader/nacl_validation_db.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 // This test makes sure that validation signature generation is performed
@@ -71,8 +76,8 @@ class MockValidationDB : public NaClValidationDB {
   bool did_set_;
   bool status_;
 
-  uint8 query_signature_[NaClValidationQuery::kDigestLength];
-  uint8 set_signature_[NaClValidationQuery::kDigestLength];
+  uint8_t query_signature_[NaClValidationQuery::kDigestLength];
+  uint8_t set_signature_[NaClValidationQuery::kDigestLength];
 };
 
 class TestQuery {
@@ -83,15 +88,15 @@ class TestQuery {
     query.reset(context->CreateQuery());
   }
 
-  scoped_ptr<MockValidationDB> db;
-  scoped_ptr<NaClValidationQueryContext> context;
-  scoped_ptr<NaClValidationQuery> query;
+  std::unique_ptr<MockValidationDB> db;
+  std::unique_ptr<NaClValidationQueryContext> context;
+  std::unique_ptr<NaClValidationQuery> query;
 };
 
 class NaClValidationQueryTest : public ::testing::Test {
  protected:
-  scoped_ptr<TestQuery> query1;
-  scoped_ptr<TestQuery> query2;
+  std::unique_ptr<TestQuery> query1;
+  std::unique_ptr<TestQuery> query2;
 
   void SetUp() override {
     query1.reset(new TestQuery(kKey, kVersion));

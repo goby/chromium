@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
 #include "content/renderer/p2p/ipc_network_manager.h"
+
+#include <memory>
+
 #include "content/renderer/p2p/network_list_manager.h"
-#include "net/base/ip_address_number.h"
-#include "net/base/net_util.h"
+#include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_interfaces.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -30,9 +31,10 @@ class MockP2PSocketDispatcher : public NetworkListManager {
 
 // 2 IPv6 addresses with only last digit different.
 static const char kIPv6PublicAddrString1[] =
-    "2401:fa00:4:1000:be30:5bff:fee5:c3";
+    "2401:fa00:4:1000:be30:5b30:50e5:c3";
 static const char kIPv6PublicAddrString2[] =
-    "2401:fa00:4:1000:be30:5bff:fee5:c4";
+    "2401:fa00:4:1000:be30:5b30:50e5:c4";
+static const char kIPv4MappedAddrString[] = "::ffff:38.32.0.0";
 
 class IpcNetworkManagerTest : public testing::Test {
  public:
@@ -41,8 +43,8 @@ class IpcNetworkManagerTest : public testing::Test {
         network_manager_(new IpcNetworkManager(network_list_manager_.get())) {}
 
  protected:
-  scoped_ptr<MockP2PSocketDispatcher> network_list_manager_;
-  scoped_ptr<IpcNetworkManager> network_manager_;
+  std::unique_ptr<MockP2PSocketDispatcher> network_list_manager_;
+  std::unique_ptr<IpcNetworkManager> network_manager_;
 };
 
 // Test overall logic of IpcNetworkManager on OnNetworkListChanged
@@ -51,35 +53,25 @@ class IpcNetworkManagerTest : public testing::Test {
 // IpcNetworkManager in addition to MergeNetworkList.
 // TODO(guoweis): disable this test case for now until fix for webrtc
 // issue 19249005 integrated into chromium
-TEST_F(IpcNetworkManagerTest, DISABLED_TestMergeNetworkList) {
+TEST_F(IpcNetworkManagerTest, TestMergeNetworkList) {
   net::NetworkInterfaceList list;
-  net::IPAddressNumber ip_number;
+  net::IPAddress ip;
   std::vector<rtc::Network*> networks;
   rtc::IPAddress ip_address;
 
   // Add 2 networks with the same prefix and prefix length.
-  EXPECT_TRUE(net::ParseIPLiteralToNumber(kIPv6PublicAddrString1, &ip_number));
-  list.push_back(
-      net::NetworkInterface("em1",
-                            "em1",
-                            0,
-                            net::NetworkChangeNotifier::CONNECTION_UNKNOWN,
-                            ip_number,
-                            64,
-                            net::IP_ADDRESS_ATTRIBUTE_NONE));
+  EXPECT_TRUE(ip.AssignFromIPLiteral(kIPv6PublicAddrString1));
+  list.push_back(net::NetworkInterface(
+      "em1", "em1", 0, net::NetworkChangeNotifier::CONNECTION_UNKNOWN, ip, 64,
+      net::IP_ADDRESS_ATTRIBUTE_NONE));
 
-  EXPECT_TRUE(net::ParseIPLiteralToNumber(kIPv6PublicAddrString2, &ip_number));
-  list.push_back(
-      net::NetworkInterface("em1",
-                            "em1",
-                            0,
-                            net::NetworkChangeNotifier::CONNECTION_UNKNOWN,
-                            ip_number,
-                            64,
-                            net::IP_ADDRESS_ATTRIBUTE_NONE));
+  EXPECT_TRUE(ip.AssignFromIPLiteral(kIPv6PublicAddrString2));
+  list.push_back(net::NetworkInterface(
+      "em1", "em1", 0, net::NetworkChangeNotifier::CONNECTION_UNKNOWN, ip, 64,
+      net::IP_ADDRESS_ATTRIBUTE_NONE));
 
-  network_manager_->OnNetworkListChanged(list, net::IPAddressNumber(),
-                                         net::IPAddressNumber());
+  network_manager_->OnNetworkListChanged(list, net::IPAddress(),
+                                         net::IPAddress());
   network_manager_->GetNetworks(&networks);
   EXPECT_EQ(1uL, networks.size());
   EXPECT_EQ(2uL, networks[0]->GetIPs().size());
@@ -87,17 +79,16 @@ TEST_F(IpcNetworkManagerTest, DISABLED_TestMergeNetworkList) {
   // Add another network with different prefix length, should result in
   // a different network.
   networks.clear();
-  list.push_back(
-      net::NetworkInterface("em1",
-                            "em1",
-                            0,
-                            net::NetworkChangeNotifier::CONNECTION_UNKNOWN,
-                            ip_number,
-                            48,
-                            net::IP_ADDRESS_ATTRIBUTE_NONE));
+  list.push_back(net::NetworkInterface(
+      "em1", "em1", 0, net::NetworkChangeNotifier::CONNECTION_UNKNOWN, ip, 48,
+      net::IP_ADDRESS_ATTRIBUTE_NONE));
 
-  network_manager_->OnNetworkListChanged(list, net::IPAddressNumber(),
-                                         net::IPAddressNumber());
+  // Push an unknown address as the default address.
+  EXPECT_TRUE(ip.AssignFromIPLiteral(kIPv4MappedAddrString));
+  network_manager_->OnNetworkListChanged(list, net::IPAddress(), ip);
+
+  // The unknown default address should be ignored.
+  EXPECT_FALSE(network_manager_->GetDefaultLocalAddress(AF_INET6, &ip_address));
 
   network_manager_->GetNetworks(&networks);
 

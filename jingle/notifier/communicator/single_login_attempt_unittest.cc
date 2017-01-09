@@ -5,11 +5,12 @@
 #include "jingle/notifier/communicator/single_login_attempt.h"
 
 #include <cstddef>
+#include <memory>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "jingle/notifier/base/const_communicator.h"
 #include "jingle/notifier/base/fake_base_task.h"
 #include "jingle/notifier/communicator/login_settings.h"
@@ -71,7 +72,7 @@ class MyTestURLRequestContext : public net::TestURLRequestContext {
  public:
   MyTestURLRequestContext() : TestURLRequestContext(true) {
     context_storage_.set_host_resolver(
-        scoped_ptr<net::HostResolver>(new net::HangingHostResolver()));
+        std::unique_ptr<net::HostResolver>(new net::HangingHostResolver()));
     Init();
   }
   ~MyTestURLRequestContext() override {}
@@ -81,20 +82,19 @@ class SingleLoginAttemptTest : public ::testing::Test {
  protected:
   SingleLoginAttemptTest()
       : login_settings_(
-          buzz::XmppClientSettings(),
-          new net::TestURLRequestContextGetter(
-              base::ThreadTaskRunnerHandle::Get(),
-              scoped_ptr<net::TestURLRequestContext>(
-                  new MyTestURLRequestContext())),
-          ServerList(
-              1,
-              ServerInformation(
-                  net::HostPortPair("example.com", 100), SUPPORTS_SSLTCP)),
-          false /* try_ssltcp_first */,
-          "auth_mechanism"),
+            buzz::XmppClientSettings(),
+            new net::TestURLRequestContextGetter(
+                base::ThreadTaskRunnerHandle::Get(),
+                std::unique_ptr<net::TestURLRequestContext>(
+                    new MyTestURLRequestContext())),
+            ServerList(1,
+                       ServerInformation(net::HostPortPair("example.com", 100),
+                                         SUPPORTS_SSLTCP)),
+            false /* try_ssltcp_first */,
+            "auth_mechanism"),
         attempt_(new SingleLoginAttempt(login_settings_, &fake_delegate_)) {}
 
-  void TearDown() override { message_loop_.RunUntilIdle(); }
+  void TearDown() override { base::RunLoop().RunUntilIdle(); }
 
   void FireRedirect(buzz::XmlElement* redirect_error) {
     attempt_->OnError(buzz::XmppEngine::ERROR_STREAM, 0, redirect_error);
@@ -102,7 +102,7 @@ class SingleLoginAttemptTest : public ::testing::Test {
 
   ~SingleLoginAttemptTest() override {
     attempt_.reset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
@@ -110,7 +110,7 @@ class SingleLoginAttemptTest : public ::testing::Test {
   const LoginSettings login_settings_;
 
  protected:
-  scoped_ptr<SingleLoginAttempt> attempt_;
+  std::unique_ptr<SingleLoginAttempt> attempt_;
   FakeDelegate fake_delegate_;
   FakeBaseTask fake_base_task_;
 };
@@ -163,7 +163,7 @@ TEST_F(SingleLoginAttemptTest, Redirect) {
       net::HostPortPair("example.com", 1000),
       SUPPORTS_SSLTCP);
 
-  scoped_ptr<buzz::XmlElement> redirect_error(
+  std::unique_ptr<buzz::XmlElement> redirect_error(
       MakeRedirectError(redirect_server.server.ToString()));
   FireRedirect(redirect_error.get());
 
@@ -178,7 +178,7 @@ TEST_F(SingleLoginAttemptTest, RedirectHostOnly) {
       net::HostPortPair("example.com", kDefaultXmppPort),
       SUPPORTS_SSLTCP);
 
-  scoped_ptr<buzz::XmlElement> redirect_error(
+  std::unique_ptr<buzz::XmlElement> redirect_error(
       MakeRedirectError(redirect_server.server.host()));
   FireRedirect(redirect_error.get());
 
@@ -193,7 +193,7 @@ TEST_F(SingleLoginAttemptTest, RedirectZeroPort) {
       net::HostPortPair("example.com", kDefaultXmppPort),
       SUPPORTS_SSLTCP);
 
-  scoped_ptr<buzz::XmlElement> redirect_error(
+  std::unique_ptr<buzz::XmlElement> redirect_error(
       MakeRedirectError(redirect_server.server.host() + ":0"));
   FireRedirect(redirect_error.get());
 
@@ -208,7 +208,7 @@ TEST_F(SingleLoginAttemptTest, RedirectInvalidPort) {
       net::HostPortPair("example.com", kDefaultXmppPort),
       SUPPORTS_SSLTCP);
 
-  scoped_ptr<buzz::XmlElement> redirect_error(
+  std::unique_ptr<buzz::XmlElement> redirect_error(
       MakeRedirectError(redirect_server.server.host() + ":invalidport"));
   FireRedirect(redirect_error.get());
 
@@ -219,7 +219,8 @@ TEST_F(SingleLoginAttemptTest, RedirectInvalidPort) {
 // Fire an empty redirect and make sure the delegate does not get a
 // redirect.
 TEST_F(SingleLoginAttemptTest, RedirectEmpty) {
-  scoped_ptr<buzz::XmlElement> redirect_error(MakeRedirectError(std::string()));
+  std::unique_ptr<buzz::XmlElement> redirect_error(
+      MakeRedirectError(std::string()));
   FireRedirect(redirect_error.get());
   EXPECT_EQ(IDLE, fake_delegate_.state());
 }
@@ -227,7 +228,8 @@ TEST_F(SingleLoginAttemptTest, RedirectEmpty) {
 // Fire a redirect with a missing text element and make sure the
 // delegate does not get a redirect.
 TEST_F(SingleLoginAttemptTest, RedirectMissingText) {
-  scoped_ptr<buzz::XmlElement> redirect_error(MakeRedirectError(std::string()));
+  std::unique_ptr<buzz::XmlElement> redirect_error(
+      MakeRedirectError(std::string()));
   redirect_error->RemoveChildAfter(redirect_error->FirstChild());
   FireRedirect(redirect_error.get());
   EXPECT_EQ(IDLE, fake_delegate_.state());
@@ -236,7 +238,8 @@ TEST_F(SingleLoginAttemptTest, RedirectMissingText) {
 // Fire a redirect with a missing see-other-host element and make sure
 // the delegate does not get a redirect.
 TEST_F(SingleLoginAttemptTest, RedirectMissingSeeOtherHost) {
-  scoped_ptr<buzz::XmlElement> redirect_error(MakeRedirectError(std::string()));
+  std::unique_ptr<buzz::XmlElement> redirect_error(
+      MakeRedirectError(std::string()));
   redirect_error->RemoveChildAfter(NULL);
   FireRedirect(redirect_error.get());
   EXPECT_EQ(IDLE, fake_delegate_.state());

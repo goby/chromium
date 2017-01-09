@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/css/MediaQueryList.h"
 
 #include "core/css/MediaList.h"
@@ -16,19 +15,19 @@ namespace blink {
 namespace {
 
 class TestListener : public MediaQueryListListener {
-public:
-    void notifyMediaQueryChanged() override { }
+ public:
+  void notifyMediaQueryChanged() override {}
 };
 
-} // anonymous namespace
+}  // anonymous namespace
 
-TEST(MediaQueryListTest, CrashInStop)
-{
-    RefPtrWillBeRawPtr<Document> document = Document::create();
-    RefPtrWillBeRawPtr<MediaQueryList> list = MediaQueryList::create(document.get(), MediaQueryMatcher::create(*document), MediaQuerySet::create());
-    list->addListener(adoptRefWillBeNoop(new TestListener()));
-    list->stop();
-    // This test passes if it's not crashed.
+TEST(MediaQueryListTest, CrashInStop) {
+  Document* document = Document::create();
+  MediaQueryList* list = MediaQueryList::create(
+      document, MediaQueryMatcher::create(*document), MediaQuerySet::create());
+  list->addListener(new TestListener());
+  list->contextDestroyed();
+  // This test passes if it's not crashed.
 }
 
-} // namespace blink
+}  // namespace blink

@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_RENDERER_EVENT_BINDINGS_H_
 #define EXTENSIONS_RENDERER_EVENT_BINDINGS_H_
 
+#include <memory>
 #include <set>
 #include <string>
 
@@ -69,8 +70,8 @@ class EventBindings : public ObjectBackedNativeHandler {
 
   void MatchAgainstEventFilter(const v8::FunctionCallbackInfo<v8::Value>& args);
 
-  scoped_ptr<EventMatcher> ParseEventMatcher(
-      scoped_ptr<base::DictionaryValue> filter);
+  std::unique_ptr<EventMatcher> ParseEventMatcher(
+      std::unique_ptr<base::DictionaryValue> filter);
 
   // Called when our context, and therefore us, is invalidated. Run any cleanup.
   void OnInvalidated();

@@ -8,7 +8,7 @@
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/paint/PaintController.h"
 #include "wtf/Allocator.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -17,36 +17,40 @@ class LayoutObject;
 class LayoutSVGResourceFilter;
 
 class SVGFilterRecordingContext {
-    USING_FAST_MALLOC(SVGFilterRecordingContext);
-    WTF_MAKE_NONCOPYABLE(SVGFilterRecordingContext);
-public:
-    explicit SVGFilterRecordingContext(GraphicsContext* initialContext) : m_initialContext(initialContext) { }
+  USING_FAST_MALLOC(SVGFilterRecordingContext);
+  WTF_MAKE_NONCOPYABLE(SVGFilterRecordingContext);
 
-    GraphicsContext* beginContent(FilterData*);
-    void endContent(FilterData*);
+ public:
+  explicit SVGFilterRecordingContext(GraphicsContext& initialContext)
+      : m_initialContext(initialContext) {}
 
-    GraphicsContext* paintingContext() const { return m_initialContext; }
+  GraphicsContext* beginContent(FilterData*);
+  void endContent(FilterData*);
 
-private:
-    OwnPtr<PaintController> m_paintController;
-    OwnPtr<GraphicsContext> m_context;
-    GraphicsContext* m_initialContext;
+  GraphicsContext& paintingContext() const { return m_initialContext; }
+
+ private:
+  std::unique_ptr<PaintController> m_paintController;
+  std::unique_ptr<GraphicsContext> m_context;
+  GraphicsContext& m_initialContext;
 };
 
 class SVGFilterPainter {
-    STACK_ALLOCATED();
-public:
-    SVGFilterPainter(LayoutSVGResourceFilter& filter) : m_filter(filter) { }
+  STACK_ALLOCATED();
 
-    // Returns the context that should be used to paint the filter contents, or
-    // null if the content should not be recorded.
-    GraphicsContext* prepareEffect(const LayoutObject&, SVGFilterRecordingContext&);
-    void finishEffect(const LayoutObject&, SVGFilterRecordingContext&);
+ public:
+  SVGFilterPainter(LayoutSVGResourceFilter& filter) : m_filter(filter) {}
 
-private:
-    LayoutSVGResourceFilter& m_filter;
+  // Returns the context that should be used to paint the filter contents, or
+  // null if the content should not be recorded.
+  GraphicsContext* prepareEffect(const LayoutObject&,
+                                 SVGFilterRecordingContext&);
+  void finishEffect(const LayoutObject&, SVGFilterRecordingContext&);
+
+ private:
+  LayoutSVGResourceFilter& m_filter;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGFilterPainter_h
+#endif  // SVGFilterPainter_h

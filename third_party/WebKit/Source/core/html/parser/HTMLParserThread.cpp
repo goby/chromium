@@ -28,77 +28,68 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/parser/HTMLParserThread.h"
 
-#include "platform/Task.h"
-#include "platform/ThreadSafeFunctional.h"
+#include "platform/CrossThreadFunctional.h"
+#include "platform/WaitableEvent.h"
+#include "platform/heap/SafePoint.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebTraceLocation.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-static HTMLParserThread* s_sharedThread = 0;
+static HTMLParserThread* s_sharedThread = nullptr;
 
-HTMLParserThread::HTMLParserThread()
-{
+HTMLParserThread::HTMLParserThread() {}
+
+HTMLParserThread::~HTMLParserThread() {}
+
+void HTMLParserThread::init() {
+  ASSERT(!s_sharedThread);
+  s_sharedThread = new HTMLParserThread;
 }
 
-HTMLParserThread::~HTMLParserThread()
-{
+void HTMLParserThread::setupHTMLParserThread() {
+  ASSERT(m_thread);
+  m_thread->initialize();
 }
 
-void HTMLParserThread::init()
-{
-    ASSERT(!s_sharedThread);
-    s_sharedThread = new HTMLParserThread;
+void HTMLParserThread::shutdown() {
+  ASSERT(isMainThread());
+  ASSERT(s_sharedThread);
+  // currentThread will always be non-null in production, but can be null in
+  // Chromium unit tests.
+  if (Platform::current()->currentThread() && s_sharedThread->m_thread) {
+    WaitableEvent waitableEvent;
+    s_sharedThread->postTask(
+        crossThreadBind(&HTMLParserThread::cleanupHTMLParserThread,
+                        crossThreadUnretained(s_sharedThread),
+                        crossThreadUnretained(&waitableEvent)));
+    waitableEvent.wait();
+  }
+  delete s_sharedThread;
+  s_sharedThread = nullptr;
 }
 
-void HTMLParserThread::setupHTMLParserThread()
-{
-    ASSERT(m_thread);
-    m_thread->initialize();
+void HTMLParserThread::cleanupHTMLParserThread(WaitableEvent* waitableEvent) {
+  m_thread->shutdown();
+  waitableEvent->signal();
 }
 
-void HTMLParserThread::shutdown()
-{
-    ASSERT(s_sharedThread);
-    // currentThread will always be non-null in production, but can be null in Chromium unit tests.
-    if (Platform::current()->currentThread() && s_sharedThread->isRunning()) {
-        s_sharedThread->postTask(threadSafeBind(&HTMLParserThread::cleanupHTMLParserThread, AllowCrossThreadAccess(s_sharedThread)));
-    }
-    delete s_sharedThread;
-    s_sharedThread = 0;
+HTMLParserThread* HTMLParserThread::shared() {
+  return s_sharedThread;
 }
 
-void HTMLParserThread::cleanupHTMLParserThread()
-{
-    m_thread->shutdown();
+void HTMLParserThread::postTask(std::unique_ptr<CrossThreadClosure> closure) {
+  ASSERT(isMainThread());
+  if (!m_thread) {
+    m_thread = WebThreadSupportingGC::create("HTMLParserThread",
+                                             BlinkGC::PerThreadHeapMode);
+    postTask(crossThreadBind(&HTMLParserThread::setupHTMLParserThread,
+                             crossThreadUnretained(this)));
+  }
+
+  m_thread->postTask(BLINK_FROM_HERE, std::move(closure));
 }
 
-HTMLParserThread* HTMLParserThread::shared()
-{
-    return s_sharedThread;
-}
-
-WebThread& HTMLParserThread::platformThread()
-{
-    if (!isRunning()) {
-        m_thread = WebThreadSupportingGC::create("HTMLParserThread");
-        postTask(threadSafeBind(&HTMLParserThread::setupHTMLParserThread, AllowCrossThreadAccess(this)));
-    }
-    return m_thread->platformThread();
-}
-
-bool HTMLParserThread::isRunning()
-{
-    return !!m_thread;
-}
-
-void HTMLParserThread::postTask(PassOwnPtr<Closure> closure)
-{
-    platformThread().taskRunner()->postTask(BLINK_FROM_HERE, new Task(closure));
-}
-
-} // namespace blink
+}  // namespace blink

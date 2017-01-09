@@ -4,13 +4,16 @@
 
 #include "chrome/browser/ui/webui/chromeos/sim_unlock_ui.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
@@ -20,18 +23,19 @@
 #include "chrome/browser/chromeos/sim_dialog_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_device_handler.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -83,8 +87,7 @@ class SimUnlockUIHTMLSource : public content::URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string&) const override {
     return "text/html";
@@ -201,9 +204,10 @@ class SimUnlockHandler : public WebUIMessageHandler,
   void ChangePin(const std::string& old_pin, const std::string& new_pin);
   void UnblockPin(const std::string& puk, const std::string& new_pin);
   void PinOperationSuccessCallback(const std::string& operation_name);
-  void PinOperationErrorCallback(const std::string& operation_name,
-                                 const std::string& error_name,
-                                 scoped_ptr<base::DictionaryValue> error_data);
+  void PinOperationErrorCallback(
+      const std::string& operation_name,
+      const std::string& error_name,
+      std::unique_ptr<base::DictionaryValue> error_data);
 
   // Called when an asynchronous PIN operation has completed.
   void OnPinOperationCompleted(PinOperationError error);
@@ -267,8 +271,7 @@ std::string SimUnlockUIHTMLSource::GetSource() const {
 
 void SimUnlockUIHTMLSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
     const content::URLDataSource::GotDataCallback& callback) {
   base::DictionaryValue strings;
   strings.SetString("title",
@@ -383,7 +386,7 @@ void SimUnlockHandler::DeviceListChanged() {
     return;
 
   sim_lock_type_ = cellular_device->sim_lock_type();
-  uint32 retries_left = cellular_device->sim_retries_left();
+  uint32_t retries_left = cellular_device->sim_retries_left();
   VLOG(1) << "OnNetworkDeviceSimLockChanged, lock: " << sim_lock_type_
           << ", retries: " << retries_left;
   // There's a pending PIN operation.
@@ -548,7 +551,7 @@ void SimUnlockHandler::PinOperationSuccessCallback(
 void SimUnlockHandler::PinOperationErrorCallback(
     const std::string& operation_name,
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) {
+    std::unique_ptr<base::DictionaryValue> error_data) {
   NET_LOG_ERROR("Pin operation failed: " + error_name, operation_name);
   PinOperationError pin_error;
   if (error_name == NetworkDeviceHandler::kErrorIncorrectPin ||
@@ -656,7 +659,7 @@ void SimUnlockHandler::ProcessSimCardState(
     const DeviceState* cellular) {
   std::string error_msg;
   if (cellular) {
-    uint32 retries_left = cellular->sim_retries_left();
+    uint32_t retries_left = cellular->sim_retries_left();
     VLOG(1) << "Current state: " << state_ << " lock_type: " << sim_lock_type_
             << " retries: " << retries_left;
     switch (state_) {
@@ -750,7 +753,7 @@ void SimUnlockHandler::UpdatePage(const DeviceState* cellular,
     sim_dict.SetString(kError, error_msg);
   else
     sim_dict.SetString(kError, kErrorOk);
-  web_ui()->CallJavascriptFunction(kJsApiSimStatusChanged, sim_dict);
+  web_ui()->CallJavascriptFunctionUnsafe(kJsApiSimStatusChanged, sim_dict);
 }
 
 // SimUnlockUI -----------------------------------------------------------------

@@ -4,10 +4,14 @@
 
 #include "components/policy/core/common/cloud/external_policy_data_fetcher.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
@@ -29,7 +33,7 @@ void ForwardJobFinished(
     const ExternalPolicyDataFetcherBackend::FetchCallback& callback,
     ExternalPolicyDataFetcher::Job* job,
     ExternalPolicyDataFetcher::Result result,
-    scoped_ptr<std::string> data) {
+    std::unique_ptr<std::string> data) {
   task_runner->PostTask(FROM_HERE,
                         base::Bind(callback, job, result, base::Passed(&data)));
 }
@@ -55,11 +59,11 @@ void DoNothing(ExternalPolicyDataFetcher::Job* job) {
 
 struct ExternalPolicyDataFetcher::Job {
   Job(const GURL& url,
-      int64 max_size,
+      int64_t max_size,
       const ExternalPolicyDataFetcherBackend::FetchCallback& callback);
 
   const GURL url;
-  const int64 max_size;
+  const int64_t max_size;
   const ExternalPolicyDataFetcherBackend::FetchCallback callback;
 
  private:
@@ -68,12 +72,9 @@ struct ExternalPolicyDataFetcher::Job {
 
 ExternalPolicyDataFetcher::Job::Job(
     const GURL& url,
-    int64 max_size,
+    int64_t max_size,
     const ExternalPolicyDataFetcherBackend::FetchCallback& callback)
-    : url(url),
-      max_size(max_size),
-      callback(callback) {
-}
+    : url(url), max_size(max_size), callback(callback) {}
 
 ExternalPolicyDataFetcher::ExternalPolicyDataFetcher(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
@@ -93,7 +94,7 @@ ExternalPolicyDataFetcher::~ExternalPolicyDataFetcher() {
 
 ExternalPolicyDataFetcher::Job* ExternalPolicyDataFetcher::StartJob(
     const GURL& url,
-    int64 max_size,
+    int64_t max_size,
     const FetchCallback& callback) {
   DCHECK(task_runner_->RunsTasksOnCurrentThread());
   Job* job = new Job(
@@ -130,10 +131,11 @@ void ExternalPolicyDataFetcher::CancelJob(Job* job) {
                             base::Bind(&DoNothing, base::Owned(job)))));
 }
 
-void ExternalPolicyDataFetcher::OnJobFinished(const FetchCallback& callback,
-                                              Job* job,
-                                              Result result,
-                                              scoped_ptr<std::string> data) {
+void ExternalPolicyDataFetcher::OnJobFinished(
+    const FetchCallback& callback,
+    Job* job,
+    Result result,
+    std::unique_ptr<std::string> data) {
   DCHECK(task_runner_->RunsTasksOnCurrentThread());
   JobSet::iterator it = jobs_.find(job);
   if (it == jobs_.end()) {
@@ -142,10 +144,15 @@ void ExternalPolicyDataFetcher::OnJobFinished(const FetchCallback& callback,
     // finish before the cancellation has reached that thread.
     return;
   }
-  callback.Run(result, data.Pass());
+  callback.Run(result, std::move(data));
   jobs_.erase(it);
   delete job;
 }
+
+struct ExternalPolicyDataFetcherBackend::FetcherAndJob {
+  std::unique_ptr<net::URLFetcher> fetcher;
+  ExternalPolicyDataFetcher::Job* job;
+};
 
 ExternalPolicyDataFetcherBackend::ExternalPolicyDataFetcherBackend(
     scoped_refptr<base::SequencedTaskRunner> io_task_runner,
@@ -158,22 +165,21 @@ ExternalPolicyDataFetcherBackend::ExternalPolicyDataFetcherBackend(
 
 ExternalPolicyDataFetcherBackend::~ExternalPolicyDataFetcherBackend() {
   DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
-  STLDeleteContainerPairFirstPointers(job_map_.begin(), job_map_.end());
 }
 
-scoped_ptr<ExternalPolicyDataFetcher>
-    ExternalPolicyDataFetcherBackend::CreateFrontend(
-        scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  return make_scoped_ptr(new ExternalPolicyDataFetcher(
-      task_runner, io_task_runner_, weak_factory_.GetWeakPtr()));
+std::unique_ptr<ExternalPolicyDataFetcher>
+ExternalPolicyDataFetcherBackend::CreateFrontend(
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
+  return base::MakeUnique<ExternalPolicyDataFetcher>(
+      task_runner, io_task_runner_, weak_factory_.GetWeakPtr());
 }
 
 void ExternalPolicyDataFetcherBackend::StartJob(
     ExternalPolicyDataFetcher::Job* job) {
   DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
-  net::URLFetcher* fetcher =
-      net::URLFetcher::Create(++last_fetch_id_, job->url, net::URLFetcher::GET,
-                              this).release();
+  std::unique_ptr<net::URLFetcher> owned_fetcher = net::URLFetcher::Create(
+      ++last_fetch_id_, job->url, net::URLFetcher::GET, this);
+  net::URLFetcher* fetcher = owned_fetcher.get();
   data_use_measurement::DataUseUserData::AttachToFetcher(
       fetcher, data_use_measurement::DataUseUserData::POLICY);
   fetcher->SetRequestContext(request_context_.get());
@@ -183,16 +189,15 @@ void ExternalPolicyDataFetcherBackend::StartJob(
                         net::LOAD_DO_NOT_SEND_AUTH_DATA);
   fetcher->SetAutomaticallyRetryOnNetworkChanges(3);
   fetcher->Start();
-  job_map_[fetcher] = job;
+  job_map_[fetcher] = {std::move(owned_fetcher), job};
 }
 
 void ExternalPolicyDataFetcherBackend::CancelJob(
     ExternalPolicyDataFetcher::Job* job,
     const base::Closure& callback) {
   DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
-  for (JobMap::iterator it = job_map_.begin(); it != job_map_.end(); ) {
-    if (it->second == job) {
-      delete it->first;
+  for (auto it = job_map_.begin(); it != job_map_.end();) {
+    if (it->second.job == job) {
       job_map_.erase(it++);
     } else {
       ++it;
@@ -204,14 +209,14 @@ void ExternalPolicyDataFetcherBackend::CancelJob(
 void ExternalPolicyDataFetcherBackend::OnURLFetchComplete(
     const net::URLFetcher* source) {
   DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
-  JobMap::iterator it = job_map_.find(const_cast<net::URLFetcher*>(source));
+  auto it = job_map_.find(const_cast<net::URLFetcher*>(source));
   if (it == job_map_.end()) {
     NOTREACHED();
     return;
   }
 
   ExternalPolicyDataFetcher::Result result = ExternalPolicyDataFetcher::SUCCESS;
-  scoped_ptr<std::string> data;
+  std::unique_ptr<std::string> data;
 
   const net::URLRequestStatus status = it->first->GetStatus();
   if (status.error() == net::ERR_CONNECTION_RESET ||
@@ -233,38 +238,37 @@ void ExternalPolicyDataFetcherBackend::OnURLFetchComplete(
   } else {
     data.reset(new std::string);
     source->GetResponseAsString(data.get());
-    if (static_cast<int64>(data->size()) > it->second->max_size) {
+    if (static_cast<int64_t>(data->size()) > it->second.job->max_size) {
       // Received |data| exceeds maximum allowed size.
       data.reset();
       result = ExternalPolicyDataFetcher::MAX_SIZE_EXCEEDED;
     }
   }
 
-  ExternalPolicyDataFetcher::Job* job = it->second;
-  delete it->first;
+  ExternalPolicyDataFetcher::Job* job = it->second.job;
   job_map_.erase(it);
-  job->callback.Run(job, result, data.Pass());
+  job->callback.Run(job, result, std::move(data));
 }
 
 void ExternalPolicyDataFetcherBackend::OnURLFetchDownloadProgress(
     const net::URLFetcher* source,
-    int64 current,
-    int64 total) {
+    int64_t current,
+    int64_t total,
+    int64_t current_network_bytes) {
   DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
-  JobMap::iterator it = job_map_.find(const_cast<net::URLFetcher*>(source));
+  auto it = job_map_.find(source);
   DCHECK(it != job_map_.end());
   if (it == job_map_.end())
     return;
 
   // Reject the data if it exceeds the size limit. The content length is in
   // |total|, and it may be -1 when not known.
-  if (current > it->second->max_size || total > it->second->max_size) {
-    ExternalPolicyDataFetcher::Job* job = it->second;
-    delete it->first;
+  ExternalPolicyDataFetcher::Job* job = it->second.job;
+  int64_t max_size = job->max_size;
+  if (current > max_size || total > max_size) {
     job_map_.erase(it);
-    job->callback.Run(job,
-                      ExternalPolicyDataFetcher::MAX_SIZE_EXCEEDED,
-                      scoped_ptr<std::string>());
+    job->callback.Run(job, ExternalPolicyDataFetcher::MAX_SIZE_EXCEEDED,
+                      std::unique_ptr<std::string>());
   }
 }
 

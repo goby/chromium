@@ -4,12 +4,19 @@
 
 #include "storage/browser/fileapi/file_writer_delegate.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util_proxy.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
 #include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
 #include "storage/browser/fileapi/file_stream_writer.h"
 #include "storage/browser/fileapi/file_system_context.h"
@@ -21,34 +28,30 @@ namespace storage {
 static const int kReadBufSize = 32768;
 
 FileWriterDelegate::FileWriterDelegate(
-    scoped_ptr<FileStreamWriter> file_stream_writer,
+    std::unique_ptr<FileStreamWriter> file_stream_writer,
     FlushPolicy flush_policy)
-    : file_stream_writer_(file_stream_writer.Pass()),
+    : file_stream_writer_(std::move(file_stream_writer)),
       writing_started_(false),
       flush_policy_(flush_policy),
       bytes_written_backlog_(0),
       bytes_written_(0),
       bytes_read_(0),
       io_buffer_(new net::IOBufferWithSize(kReadBufSize)),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
 FileWriterDelegate::~FileWriterDelegate() {
 }
 
-void FileWriterDelegate::Start(scoped_ptr<net::URLRequest> request,
+void FileWriterDelegate::Start(std::unique_ptr<net::URLRequest> request,
                                const DelegateWriteCallback& write_callback) {
   write_callback_ = write_callback;
-  request_ = request.Pass();
+  request_ = std::move(request);
   request_->Start();
 }
 
 void FileWriterDelegate::Cancel() {
-  if (request_) {
-    // This halts any callbacks on this delegate.
-    request_->set_delegate(NULL);
-    request_->Cancel();
-  }
+  // Destroy the request to prevent it from invoking any callbacks.
+  request_.reset();
 
   const int status = file_stream_writer_->Cancel(
       base::Bind(&FileWriterDelegate::OnWriteCancelled,
@@ -89,9 +92,12 @@ void FileWriterDelegate::OnSSLCertificateError(net::URLRequest* request,
   OnError(base::File::FILE_ERROR_SECURITY);
 }
 
-void FileWriterDelegate::OnResponseStarted(net::URLRequest* request) {
+void FileWriterDelegate::OnResponseStarted(net::URLRequest* request,
+                                           int net_error) {
+  DCHECK_NE(net::ERR_IO_PENDING, net_error);
   DCHECK_EQ(request_.get(), request);
-  if (!request->status().is_success() || request->GetResponseCode() != 200) {
+
+  if (net_error != net::OK || request->GetResponseCode() != 200) {
     OnError(base::File::FILE_ERROR_FAILED);
     return;
   }
@@ -100,8 +106,10 @@ void FileWriterDelegate::OnResponseStarted(net::URLRequest* request) {
 
 void FileWriterDelegate::OnReadCompleted(net::URLRequest* request,
                                          int bytes_read) {
+  DCHECK_NE(net::ERR_IO_PENDING, bytes_read);
   DCHECK_EQ(request_.get(), request);
-  if (!request->status().is_success()) {
+
+  if (bytes_read < 0) {
     OnError(base::File::FILE_ERROR_FAILED);
     return;
   }
@@ -110,20 +118,22 @@ void FileWriterDelegate::OnReadCompleted(net::URLRequest* request,
 
 void FileWriterDelegate::Read() {
   bytes_written_ = 0;
-  bytes_read_ = 0;
-  if (request_->Read(io_buffer_.get(), io_buffer_->size(), &bytes_read_)) {
-    base::MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(&FileWriterDelegate::OnDataReceived,
-                   weak_factory_.GetWeakPtr(), bytes_read_));
-  } else if (!request_->status().is_io_pending()) {
+  bytes_read_ = request_->Read(io_buffer_.get(), io_buffer_->size());
+  if (bytes_read_ == net::ERR_IO_PENDING)
+    return;
+
+  if (bytes_read_ >= 0) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(&FileWriterDelegate::OnDataReceived,
+                              weak_factory_.GetWeakPtr(), bytes_read_));
+  } else {
     OnError(base::File::FILE_ERROR_FAILED);
   }
 }
 
 void FileWriterDelegate::OnDataReceived(int bytes_read) {
   bytes_read_ = bytes_read;
-  if (!bytes_read_) {  // We're done.
+  if (bytes_read == 0) {  // We're done.
     OnProgress(0, true);
   } else {
     // This could easily be optimized to rotate between a pool of buffers, so
@@ -136,17 +146,16 @@ void FileWriterDelegate::OnDataReceived(int bytes_read) {
 
 void FileWriterDelegate::Write() {
   writing_started_ = true;
-  int64 bytes_to_write = bytes_read_ - bytes_written_;
+  int64_t bytes_to_write = bytes_read_ - bytes_written_;
   int write_response =
       file_stream_writer_->Write(cursor_.get(),
                                  static_cast<int>(bytes_to_write),
                                  base::Bind(&FileWriterDelegate::OnDataWritten,
                                             weak_factory_.GetWeakPtr()));
   if (write_response > 0) {
-    base::MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(&FileWriterDelegate::OnDataWritten,
-                   weak_factory_.GetWeakPtr(), write_response));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(&FileWriterDelegate::OnDataWritten,
+                              weak_factory_.GetWeakPtr(), write_response));
   } else if (net::ERR_IO_PENDING != write_response) {
     OnError(NetErrorToFileError(write_response));
   }
@@ -172,10 +181,8 @@ FileWriterDelegate::GetCompletionStatusOnError() const {
 }
 
 void FileWriterDelegate::OnError(base::File::Error error) {
-  if (request_) {
-    request_->set_delegate(NULL);
-    request_->Cancel();
-  }
+  // Destroy the request to prevent it from invoking any callbacks.
+  request_.reset();
 
   if (writing_started_)
     MaybeFlushForCompletion(error, 0, ERROR_WRITE_STARTED);

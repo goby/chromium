@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_AUTOFILL_TOOLTIP_ICON_H_
 #define CHROME_BROWSER_UI_VIEWS_AUTOFILL_TOOLTIP_ICON_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "base/timer/timer.h"
@@ -35,7 +36,7 @@ class TooltipIcon : public views::ImageView,
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // views::MouseWatcherListener:
   void MouseMovedOutOfHost() override;
@@ -48,7 +49,7 @@ class TooltipIcon : public views::ImageView,
   }
 
  private:
-  // Changes the color to reflect the hover state.
+  // Changes the color to reflect the hover node_data.
   void SetDrawAsHovered(bool hovered);
 
   // Creates and shows |bubble_|. If |bubble_| already exists, just cancels a
@@ -74,7 +75,7 @@ class TooltipIcon : public views::ImageView,
   base::OneShotTimer show_timer_;
 
   // A watcher that keeps |bubble_| open if the user's mouse enters it.
-  scoped_ptr<views::MouseWatcher> mouse_watcher_;
+  std::unique_ptr<views::MouseWatcher> mouse_watcher_;
 
   ScopedObserver<views::Widget, TooltipIcon> observer_;
 

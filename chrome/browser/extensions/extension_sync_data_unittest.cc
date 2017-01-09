@@ -4,14 +4,15 @@
 
 #include "chrome/browser/extensions/extension_sync_data.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/version.h"
+#include "components/sync/model/string_ordinal.h"
+#include "components/sync/protocol/app_specifics.pb.h"
+#include "components/sync/protocol/extension_specifics.pb.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "extensions/common/extension.h"
-#include "sync/api/string_ordinal.h"
-#include "sync/protocol/app_specifics.pb.h"
-#include "sync/protocol/extension_specifics.pb.h"
-#include "sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -31,7 +32,7 @@ const char kName[] = "MyExtension";
 void ProtobufToSyncDataEqual(const sync_pb::EntitySpecifics& entity) {
   syncer::SyncData sync_data =
       syncer::SyncData::CreateLocalData("sync_tag", "non_unique_title", entity);
-  scoped_ptr<ExtensionSyncData> extension_sync_data =
+  std::unique_ptr<ExtensionSyncData> extension_sync_data =
       ExtensionSyncData::CreateFromSyncData(sync_data);
   ASSERT_TRUE(extension_sync_data.get());
   syncer::SyncData output_sync_data = extension_sync_data->GetSyncData();
@@ -59,7 +60,7 @@ void ProtobufToSyncDataEqual(const sync_pb::EntitySpecifics& entity) {
 // confirms that the input is the same as the output.
 void SyncDataToProtobufEqual(const ExtensionSyncData& input) {
   syncer::SyncData sync_data = input.GetSyncData();
-  scoped_ptr<ExtensionSyncData> output =
+  std::unique_ptr<ExtensionSyncData> output =
       ExtensionSyncData::CreateFromSyncData(sync_data);
   ASSERT_TRUE(output.get());
 
@@ -70,7 +71,7 @@ void SyncDataToProtobufEqual(const ExtensionSyncData& input) {
   EXPECT_EQ(input.remote_install(), output->remote_install());
   EXPECT_EQ(input.installed_by_custodian(), output->installed_by_custodian());
   EXPECT_EQ(input.all_urls_enabled(), output->all_urls_enabled());
-  EXPECT_TRUE(input.version().Equals(output->version()));
+  EXPECT_EQ(input.version(), output->version());
   EXPECT_EQ(input.update_url(), output->update_url());
   EXPECT_EQ(input.name(), output->name());
 }
@@ -110,7 +111,7 @@ TEST_F(ExtensionSyncDataTest, ExtensionSyncDataForExtension) {
   EXPECT_FALSE(extension_sync_data.remote_install());
   EXPECT_EQ(ExtensionSyncData::BOOLEAN_TRUE,
             extension_sync_data.all_urls_enabled());
-  EXPECT_TRUE(Version(kVersion).Equals(extension_sync_data.version()));
+  EXPECT_EQ(base::Version(kVersion), extension_sync_data.version());
   EXPECT_EQ(std::string(kName), extension_sync_data.name());
 
   // Check the serialize-deserialize process for ExtensionSyncData to proto.
@@ -174,7 +175,7 @@ TEST_F(AppSyncDataTest, SyncDataToExtensionSyncDataForApp) {
   syncer::SyncData sync_data =
       syncer::SyncData::CreateLocalData("sync_tag", "non_unique_title", entity);
 
-  scoped_ptr<ExtensionSyncData> app_sync_data =
+  std::unique_ptr<ExtensionSyncData> app_sync_data =
       ExtensionSyncData::CreateFromSyncData(sync_data);
   ASSERT_TRUE(app_sync_data.get());
   EXPECT_EQ(app_specifics->app_launch_ordinal(),
@@ -195,7 +196,7 @@ TEST_F(AppSyncDataTest, ExtensionSyncDataToSyncDataForApp) {
 
   syncer::SyncData sync_data =
       syncer::SyncData::CreateLocalData("sync_tag", "non_unique_title", entity);
-  scoped_ptr<ExtensionSyncData> app_sync_data =
+  std::unique_ptr<ExtensionSyncData> app_sync_data =
       ExtensionSyncData::CreateFromSyncData(sync_data);
   ASSERT_TRUE(app_sync_data.get());
 
@@ -221,7 +222,7 @@ TEST_F(AppSyncDataTest, ExtensionSyncDataInvalidOrdinal) {
       syncer::SyncData::CreateLocalData("sync_tag", "non_unique_title", entity);
 
   // There should be no issue loading the sync data.
-  scoped_ptr<ExtensionSyncData> app_sync_data =
+  std::unique_ptr<ExtensionSyncData> app_sync_data =
       ExtensionSyncData::CreateFromSyncData(sync_data);
   ASSERT_TRUE(app_sync_data.get());
   app_sync_data->GetSyncData();

@@ -214,6 +214,7 @@ class IDLParser(object):
     """CallbackOrInterface : CALLBACK CallbackRestOrInterface
                            | Interface"""
     if len(p) > 2:
+      p[2].AddChildren(self.BuildTrue('CALLBACK'))
       p[0] = p[2]
     else:
       p[0] = p[1]
@@ -554,14 +555,12 @@ class IDLParser(object):
 
   # [36]
   def p_StringifierRest(self, p):
-    """StringifierRest : AttributeRest
+    """StringifierRest : ReadOnly AttributeRest
                        | ReturnType OperationRest
                        | ';'"""
     if len(p) == 3:
       p[2].AddChildren(p[1])
       p[0] = p[2]
-    elif p[1] != ';':
-      p[0] = p[1]
 
   # [37]
   def p_StaticMember(self, p):
@@ -872,16 +871,28 @@ class IDLParser(object):
   # [75]
   def p_UnionType(self, p):
     """UnionType : '(' UnionMemberType OR UnionMemberType UnionMemberTypes ')'"""
+    members = ListFromConcat(p[2], p[4], p[5])
+    p[0] = self.BuildProduction('UnionType', p, 1, members)
 
   # [76]
   def p_UnionMemberType(self, p):
     """UnionMemberType : NonAnyType
                        | UnionType TypeSuffix
                        | ANY '[' ']' TypeSuffix"""
+    if len(p) == 2:
+      p[0] = self.BuildProduction('Type', p, 1, p[1])
+    elif len(p) == 3:
+      p[0] = self.BuildProduction('Type', p, 1, ListFromConcat(p[1], p[2]))
+    else:
+      any_node = ListFromConcat(self.BuildProduction('Any', p, 1), p[4])
+      p[0] = self.BuildProduction('Type', p, 1, any_node)
+
   # [77]
   def p_UnionMemberTypes(self, p):
     """UnionMemberTypes : OR UnionMemberType UnionMemberTypes
                         |"""
+    if len(p) > 2:
+      p[0] = ListFromConcat(p[2], p[3])
 
   # [78] Moved BYTESTRING, DOMSTRING, OBJECT, DATE, REGEXP to PrimitiveType
   # Moving all built-in types into PrimitiveType makes it easier to

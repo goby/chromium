@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace autofill {
 class FormStructure;
@@ -40,11 +40,17 @@ class PasswordGenerationManager {
   // Detect account creation forms from forms with autofill type annotated.
   // Will send a message to the renderer if we find a correctly annotated form
   // and the feature is enabled.
-  void DetectAccountCreationForms(
+  void DetectFormsEligibleForGeneration(
       const std::vector<autofill::FormStructure*>& forms);
 
   // Determines current state of password generation
   bool IsGenerationEnabled() const;
+
+  // Determine if the form classifier should run. If yes, sends a message to the
+  // renderer.
+  // TODO(crbug.com/621442): Remove client-side form classifier when server-side
+  // classifier is ready.
+  void CheckIfFormClassifierShouldRun();
 
  private:
   friend class PasswordGenerationManagerTest;

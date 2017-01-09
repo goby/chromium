@@ -9,8 +9,10 @@
 
 #include "base/strings/string16.h"
 #include "net/base/completion_callback.h"
+#include "net/base/net_export.h"
 #include "net/base/network_delegate.h"
 #include "net/cookies/canonical_cookie.h"
+#include "net/proxy/proxy_retry_info.h"
 
 class GURL;
 
@@ -24,8 +26,6 @@ class CookieOptions;
 class HttpRequestHeaders;
 class HttpResponseHeaders;
 class ProxyInfo;
-class ProxyServer;
-class ProxyService;
 class URLRequest;
 
 class NET_EXPORT NetworkDelegateImpl : public NetworkDelegate {
@@ -53,41 +53,31 @@ class NET_EXPORT NetworkDelegateImpl : public NetworkDelegate {
                          const CompletionCallback& callback,
                          GURL* new_url) override;
 
-  // Called as the proxy is being resolved for |url|. Allows the delegate to
-  // override the proxy resolution decision made by ProxyService. The delegate
-  // may override the decision by modifying the ProxyInfo |result|.
-  void OnResolveProxy(const GURL& url,
-                      int load_flags,
-                      const ProxyService& proxy_service,
-                      ProxyInfo* result) override;
-
-  // Called when use of |bad_proxy| fails due to |net_error|. |net_error| is
-  // the network error encountered, if any, and OK if the fallback was
-  // for a reason other than a network error (e.g. the proxy service was
-  // explicitly directed to skip a proxy).
-  void OnProxyFallback(const ProxyServer& bad_proxy, int net_error) override;
-
-  // Called right before the HTTP headers are sent. Allows the delegate to
+  // Called right before the network transaction starts. Allows the delegate to
   // read/write |headers| before they get sent out. |callback| and |headers| are
   // valid only until OnCompleted or OnURLRequestDestroyed is called for this
   // request.
   // See OnBeforeURLRequest for return value description. Returns OK by default.
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) override;
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) override;
 
-  // Called after a proxy connection. Allows the delegate to read/write
-  // |headers| before they get sent out. |headers| is valid only until
-  // OnCompleted or OnURLRequestDestroyed is called for this request.
-  void OnBeforeSendProxyHeaders(URLRequest* request,
-                                const ProxyInfo& proxy_info,
-                                HttpRequestHeaders* headers) override;
+  // Called after a connection is established , and just before headers are sent
+  // to the destination server (i.e., not called for HTTP CONNECT requests). For
+  // non-tunneled requests using HTTP proxies, |headers| will include any
+  // proxy-specific headers as well. Allows the delegate to read/write |headers|
+  // before they get sent out. |headers| is valid only until OnCompleted or
+  // OnURLRequestDestroyed is called for this request.
+  void OnBeforeSendHeaders(URLRequest* request,
+                           const ProxyInfo& proxy_info,
+                           const ProxyRetryInfoMap& proxy_retry_info,
+                           HttpRequestHeaders* headers) override;
 
   // Called right before the HTTP request(s) are being sent to the network.
   // |headers| is only valid until OnCompleted or OnURLRequestDestroyed is
   // called for this request.
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) override;
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) override;
 
   // Called for HTTP requests when the headers have been received.
   // |original_response_headers| contains the headers as received over the
@@ -115,6 +105,9 @@ class NET_EXPORT NetworkDelegateImpl : public NetworkDelegate {
   void OnBeforeRedirect(URLRequest* request, const GURL& new_location) override;
 
   // This corresponds to URLRequestDelegate::OnResponseStarted.
+  void OnResponseStarted(URLRequest* request, int net_error) override;
+  // Deprecated.
+  // TODO(maksims): Remove this;
   void OnResponseStarted(URLRequest* request) override;
 
   // Called when bytes are received from the network, such as after receiving
@@ -140,6 +133,9 @@ class NET_EXPORT NetworkDelegateImpl : public NetworkDelegate {
   // Indicates that the URL request has been completed or failed.
   // |started| indicates whether the request has been started. If false,
   // some information like the socket address is not available.
+  void OnCompleted(URLRequest* request, bool started, int net_error) override;
+  // Deprecated.
+  // TODO(maksims): Remove this;
   void OnCompleted(URLRequest* request, bool started) override;
 
   // Called when an URLRequest is being destroyed. Note that the request is
@@ -198,13 +194,12 @@ class NET_EXPORT NetworkDelegateImpl : public NetworkDelegate {
       const GURL& url,
       const GURL& first_party_for_cookies) const override;
 
-  // Returns true if the embedder has enabled the "first-party" cookie
-  // experiment, and false otherwise.
-  //
-  // TODO(mkwst): Remove this once we decide whether or not we wish to ship
-  // first-party cookies and cookie prefixes. https://crbug.com/459154,
-  // https://crbug.com/541511
+  // Returns true if the embedder has enabled experimental cookie features.
   bool OnAreExperimentalCookieFeaturesEnabled() const override;
+
+  // TODO(jww): Remove this once we ship strict secure cookies:
+  // https://crbug.com/546820
+  bool OnAreStrictSecureCookiesEnabled() const override;
 
   // Called when the |referrer_url| for requesting |target_url| during handling
   // of the |request| is does not comply with the referrer policy (e.g. a

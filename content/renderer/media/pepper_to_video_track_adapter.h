@@ -5,16 +5,18 @@
 #ifndef CONTENT_RENDERER_MEDIA_WEBRTC_VIDEO_DESTINATION_HANDLER_H_
 #define CONTENT_RENDERER_MEDIA_WEBRTC_VIDEO_DESTINATION_HANDLER_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 
 namespace content {
 
-class PeerConnectionDependencyFactory;
 class MediaStreamRegistryInterface;
 class PPB_ImageData_Impl;
 
@@ -24,7 +26,7 @@ class CONTENT_EXPORT FrameWriterInterface {
   // The ownership of the |image_data| doesn't transfer. So the implementation
   // of this interface should make a copy of the |image_data| before return.
   virtual void PutFrame(PPB_ImageData_Impl* image_data,
-                        int64 time_stamp_ns) = 0;
+                        int64_t time_stamp_ns) = 0;
   virtual ~FrameWriterInterface() {}
 };
 

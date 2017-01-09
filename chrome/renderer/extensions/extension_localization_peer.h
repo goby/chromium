@@ -5,8 +5,12 @@
 #ifndef CHROME_RENDERER_EXTENSIONS_EXTENSION_LOCALIZATION_PEER_H_
 #define CHROME_RENDERER_EXTENSIONS_EXTENSION_LOCALIZATION_PEER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "content/public/child/request_peer.h"
 #include "content/public/common/resource_response_info.h"
 
@@ -25,39 +29,32 @@ class ExtensionLocalizationPeer : public content::RequestPeer {
  public:
   ~ExtensionLocalizationPeer() override;
 
-  static ExtensionLocalizationPeer* CreateExtensionLocalizationPeer(
-      content::RequestPeer* peer,
+  static std::unique_ptr<content::RequestPeer> CreateExtensionLocalizationPeer(
+      std::unique_ptr<content::RequestPeer> peer,
       IPC::Sender* message_sender,
       const std::string& mime_type,
       const GURL& request_url);
 
   // content::RequestPeer methods.
-  void OnUploadProgress(uint64 position, uint64 size) override;
+  void OnUploadProgress(uint64_t position, uint64_t size) override;
   bool OnReceivedRedirect(const net::RedirectInfo& redirect_info,
                           const content::ResourceResponseInfo& info) override;
   void OnReceivedResponse(const content::ResourceResponseInfo& info) override;
   void OnDownloadedData(int len, int encoded_data_length) override {}
-  void OnReceivedData(scoped_ptr<ReceivedData> data) override;
+  void OnReceivedData(std::unique_ptr<ReceivedData> data) override;
+  void OnTransferSizeUpdated(int transfer_size_diff) override;
   void OnCompletedRequest(int error_code,
                           bool was_ignored_by_handler,
                           bool stale_copy_in_cache,
-                          const std::string& security_info,
                           const base::TimeTicks& completion_time,
-                          int64 total_transfer_size) override;
-  void OnReceivedCompletedResponse(const content::ResourceResponseInfo& info,
-                                   scoped_ptr<ReceivedData> data,
-                                   int error_code,
-                                   bool was_ignored_by_handler,
-                                   bool stale_copy_in_cache,
-                                   const std::string& security_info,
-                                   const base::TimeTicks& completion_time,
-                                   int64 total_transfer_size) override;
+                          int64_t total_transfer_size,
+                          int64_t encoded_body_size) override;
 
  private:
   friend class ExtensionLocalizationPeerTest;
 
   // Use CreateExtensionLocalizationPeer to create an instance.
-  ExtensionLocalizationPeer(content::RequestPeer* peer,
+  ExtensionLocalizationPeer(std::unique_ptr<content::RequestPeer> peer,
                             IPC::Sender* message_sender,
                             const GURL& request_url);
 
@@ -66,7 +63,7 @@ class ExtensionLocalizationPeer : public content::RequestPeer {
   void ReplaceMessages();
 
   // Original peer that handles the request once we are done processing data_.
-  content::RequestPeer* original_peer_;
+  std::unique_ptr<content::RequestPeer> original_peer_;
 
   // We just pass though the response info. This holds the copy of the original.
   content::ResourceResponseInfo response_info_;

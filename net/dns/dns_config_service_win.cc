@@ -5,6 +5,7 @@
 #include "net/dns/dns_config_service_win.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
@@ -12,27 +13,28 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/free_deleter.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
-#include "base/win/windows_version.h"
-#include "net/base/net_util.h"
+#include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
 #include "net/dns/dns_hosts.h"
 #include "net/dns/dns_protocol.h"
 #include "net/dns/serial_worker.h"
 #include "url/url_canon.h"
-
-#pragma comment(lib, "iphlpapi.lib")
 
 namespace net {
 
@@ -113,10 +115,11 @@ class RegistryReader : public base::NonThreadSafe {
 };
 
 // Wrapper for GetAdaptersAddresses. Returns NULL if failed.
-scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> ReadIpHelper(ULONG flags) {
+std::unique_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> ReadIpHelper(
+    ULONG flags) {
   base::ThreadRestrictions::AssertIOAllowed();
 
-  scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> out;
+  std::unique_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> out;
   ULONG len = 15000;  // As recommended by MSDN for GetAdaptersAddresses.
   UINT rv = ERROR_BUFFER_OVERFLOW;
   // Try up to three times.
@@ -128,7 +131,7 @@ scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> ReadIpHelper(ULONG flags) {
   }
   if (rv != NO_ERROR)
     out.reset();
-  return out.Pass();
+  return out;
 }
 
 // Converts a base::string16 domain name to ASCII, possibly using punycode.
@@ -220,13 +223,8 @@ ConfigParseWinResult ReadSystemSettings(DnsSystemSettings* settings) {
 // Default address of "localhost" and local computer name can be overridden
 // by the HOSTS file, but if it's not there, then we need to fill it in.
 HostsParseWinResult AddLocalhostEntries(DnsHosts* hosts) {
-  const unsigned char kIPv4Localhost[] = { 127, 0, 0, 1 };
-  const unsigned char kIPv6Localhost[] = { 0, 0, 0, 0, 0, 0, 0, 0,
-                                           0, 0, 0, 0, 0, 0, 0, 1 };
-  IPAddressNumber loopback_ipv4(kIPv4Localhost,
-                                kIPv4Localhost + arraysize(kIPv4Localhost));
-  IPAddressNumber loopback_ipv6(kIPv6Localhost,
-                                kIPv6Localhost + arraysize(kIPv6Localhost));
+  IPAddress loopback_ipv4 = IPAddress::IPv4Localhost();
+  IPAddress loopback_ipv6 = IPAddress::IPv6Localhost();
 
   // This does not override any pre-existing entries from the HOSTS file.
   hosts->insert(std::make_pair(DnsHostsKey("localhost", ADDRESS_FAMILY_IPV4),
@@ -251,11 +249,9 @@ HostsParseWinResult AddLocalhostEntries(DnsHosts* hosts) {
   if (have_ipv4 && have_ipv6)
     return HOSTS_PARSE_WIN_OK;
 
-  scoped_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> addresses =
-      ReadIpHelper(GAA_FLAG_SKIP_ANYCAST |
-                   GAA_FLAG_SKIP_DNS_SERVER |
-                   GAA_FLAG_SKIP_MULTICAST |
-                   GAA_FLAG_SKIP_FRIENDLY_NAME);
+  std::unique_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> addresses =
+      ReadIpHelper(GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_DNS_SERVER |
+                   GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_FRIENDLY_NAME);
   if (!addresses.get())
     return HOSTS_PARSE_WIN_IPHELPER_FAILED;
 
@@ -330,15 +326,12 @@ class RegistryWatcher : public base::NonThreadSafe {
 // Returns true iff |address| is DNS address from IPv6 stateless discovery,
 // i.e., matches fec0:0:0:ffff::{1,2,3}.
 // http://tools.ietf.org/html/draft-ietf-ipngwg-dns-discovery
-bool IsStatelessDiscoveryAddress(const IPAddressNumber& address) {
-  if (address.size() != kIPv6AddressSize)
+bool IsStatelessDiscoveryAddress(const IPAddress& address) {
+  if (!address.IsIPv6())
     return false;
-  const uint8 kPrefix[] = {
-      0xfe, 0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  };
-  return std::equal(kPrefix, kPrefix + arraysize(kPrefix),
-                    address.begin()) && (address.back() < 4);
+  const uint8_t kPrefix[] = {0xfe, 0xc0, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
+                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  return IPAddressStartsWith(address, kPrefix) && (address.bytes().back() < 4);
 }
 
 // Returns the path to the HOSTS file.
@@ -540,12 +533,7 @@ ConfigParseWinResult ConvertSettingsToDnsConfig(
   config->ndots = 1;
 
   if (!settings.append_to_multi_label_name.set) {
-    // The default setting is true for XP, false for Vista+.
-    if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-      config->append_to_multi_label_name = false;
-    } else {
-      config->append_to_multi_label_name = true;
-    }
+    config->append_to_multi_label_name = false;
   } else {
     config->append_to_multi_label_name =
         (settings.append_to_multi_label_name.value != 0);
@@ -672,9 +660,8 @@ class DnsConfigServiceWin::ConfigReader : public SerialWorker {
     } else {
       LOG(WARNING) << "Failed to read DnsConfig.";
       // Try again in a while in case DnsConfigWatcher missed the signal.
-      base::MessageLoop::current()->PostDelayedTask(
-          FROM_HERE,
-          base::Bind(&ConfigReader::WorkNow, this),
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+          FROM_HERE, base::Bind(&ConfigReader::WorkNow, this),
           base::TimeDelta::FromSeconds(kRetryIntervalSeconds));
     }
   }
@@ -779,8 +766,8 @@ void DnsConfigServiceWin::OnHostsChanged(bool succeeded) {
 }  // namespace internal
 
 // static
-scoped_ptr<DnsConfigService> DnsConfigService::CreateSystemService() {
-  return scoped_ptr<DnsConfigService>(new internal::DnsConfigServiceWin());
+std::unique_ptr<DnsConfigService> DnsConfigService::CreateSystemService() {
+  return std::unique_ptr<DnsConfigService>(new internal::DnsConfigServiceWin());
 }
 
 }  // namespace net

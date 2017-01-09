@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "content/test/ppapi/ppapi_test.h"
 #include "ppapi/shared_impl/test_utils.h"
 
@@ -35,7 +36,13 @@ namespace {
     RunTest(STRIP_PREFIXES(test_name)); \
   }
 
-TEST_PPAPI_OUT_OF_PROCESS(BrowserFont)
+// Doesn't work in GN CrOS ozone builds yet, http://crbug.com/619765
+#if defined(OS_CHROMEOS) && defined(USE_OZONE)
+#define MAYBE_BrowserFont DISABLED_BrowserFont
+#else
+#define MAYBE_BrowserFont BrowserFont
+#endif
+TEST_PPAPI_OUT_OF_PROCESS(MAYBE_BrowserFont)
 
 TEST_PPAPI_IN_PROCESS(Buffer)
 TEST_PPAPI_OUT_OF_PROCESS(Buffer)
@@ -130,7 +137,13 @@ TEST_PPAPI_OUT_OF_PROCESS(DISABLED_Scrollbar)
 TEST_PPAPI_IN_PROCESS(TraceEvent)
 TEST_PPAPI_OUT_OF_PROCESS(TraceEvent)
 
-TEST_PPAPI_OUT_OF_PROCESS(TrueTypeFont)
+// Doesn't work in GN CrOS ozone builds yet, http://crbug.com/619765
+#if defined(OS_CHROMEOS) && defined(USE_OZONE)
+#define MAYBE_TrueTypeFont DISABLED_TrueTypeFont
+#else
+#define MAYBE_TrueTypeFont TrueTypeFont
+#endif
+TEST_PPAPI_OUT_OF_PROCESS(MAYBE_TrueTypeFont)
 
 TEST_PPAPI_IN_PROCESS(URLUtil)
 TEST_PPAPI_OUT_OF_PROCESS(URLUtil)
@@ -150,7 +163,13 @@ TEST_PPAPI_OUT_OF_PROCESS(MAYBE_VarDeprecated)
 TEST_PPAPI_IN_PROCESS(VarResource)
 TEST_PPAPI_OUT_OF_PROCESS(VarResource)
 
-TEST_PPAPI_OUT_OF_PROCESS(VideoDecoder)
+// Flaky on Win, Linux and CrOS, http://crbug.com/602877
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS)
+#define MAYBE_VideoDecoder DISABLED_VideoDecoder
+#else
+#define MAYBE_VideoDecoder VideoDecoder
+#endif
+TEST_PPAPI_OUT_OF_PROCESS(MAYBE_VideoDecoder)
 
 TEST_PPAPI_IN_PROCESS(VideoDecoderDev)
 TEST_PPAPI_OUT_OF_PROCESS(VideoDecoderDev)

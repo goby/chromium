@@ -4,15 +4,13 @@
 
 package org.chromium.chrome.browser;
 
-import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_PHONE;
-
-import android.test.FlakyTest;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.view.View;
 import android.view.View.OnFocusChangeListener;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
@@ -20,6 +18,7 @@ import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
 import org.chromium.chrome.browser.compositor.layouts.eventfilter.EdgeSwipeEventFilter.ScrollDirection;
 import org.chromium.chrome.browser.compositor.layouts.eventfilter.EdgeSwipeHandler;
 import org.chromium.chrome.test.ChromeTabbedActivityTestBase;
+import org.chromium.chrome.test.util.ChromeRestriction;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.OverviewModeBehaviorWatcher;
 import org.chromium.content.browser.test.util.Criteria;
@@ -79,9 +78,8 @@ public class ContentViewFocusTest extends ChromeTabbedActivityTestBase {
      * @MediumTest
      * @Feature({"TabContents"})
      * @Restriction(RESTRICTION_TYPE_PHONE)
-     * Bug: http://crbug.com/172473
      */
-    @FlakyTest
+    @FlakyTest(message = "http://crbug.com/172473")
     public void testHideSelectionOnPhoneTabSwiping() throws Exception {
         // Setup
         ChromeTabUtils.newTabsFromMenu(getInstrumentation(), getActivity(), 2);
@@ -106,7 +104,7 @@ public class ContentViewFocusTest extends ChromeTabbedActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Layout still requesting Tab Android view be attached") {
                     @Override
                     public boolean isSatisfied() {
@@ -127,7 +125,7 @@ public class ContentViewFocusTest extends ChromeTabbedActivityTestBase {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Layout not requesting Tab Android view be attached") {
                     @Override
                     public boolean isSatisfied() {
@@ -148,7 +146,7 @@ public class ContentViewFocusTest extends ChromeTabbedActivityTestBase {
      */
     @MediumTest
     @Feature({"TabContents"})
-    @Restriction(RESTRICTION_TYPE_PHONE)
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     public void testHideSelectionOnPhoneTabSwitcher() throws Exception {
         // Setup
         OverviewModeBehaviorWatcher showWatcher = new OverviewModeBehaviorWatcher(

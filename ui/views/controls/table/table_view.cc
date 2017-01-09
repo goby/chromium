@@ -4,13 +4,17 @@
 
 #include "ui/views/controls/table/table_view.h"
 
+#include <stddef.h>
+
+#include <algorithm>
 #include <map>
+#include <utility>
 
 #include "base/auto_reset.h"
 #include "base/i18n/rtl.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect_conversions.h"
@@ -142,7 +146,8 @@ TableView::TableView(ui::TableModel* model,
     visible_column.column = columns[i];
     visible_columns_.push_back(visible_column);
   }
-  SetFocusable(true);
+  // Always focusable, even on Mac (consistent with NSTableView).
+  SetFocusBehavior(FocusBehavior::ALWAYS);
   SetModel(model);
 }
 
@@ -175,8 +180,8 @@ View* TableView::CreateParentIfNecessary() {
 }
 
 void TableView::SetRowBackgroundPainter(
-    scoped_ptr<TableViewRowBackgroundPainter> painter) {
-  row_background_painter_ = painter.Pass();
+    std::unique_ptr<TableViewRowBackgroundPainter> painter) {
+  row_background_painter_ = std::move(painter);
 }
 
 void TableView::SetGrouper(TableGrouper* grouper) {
@@ -229,21 +234,33 @@ void TableView::SetColumnVisibility(int id, bool is_visible) {
 void TableView::ToggleSortOrder(int visible_column_index) {
   DCHECK(visible_column_index >= 0 &&
          visible_column_index < static_cast<int>(visible_columns_.size()));
-  if (!visible_columns_[visible_column_index].column.sortable)
+  const ui::TableColumn& column = visible_columns_[visible_column_index].column;
+  if (!column.sortable)
     return;
-  const int column_id = visible_columns_[visible_column_index].column.id;
   SortDescriptors sort(sort_descriptors_);
-  if (!sort.empty() && sort[0].column_id == column_id) {
-    sort[0].ascending = !sort[0].ascending;
+  if (!sort.empty() && sort[0].column_id == column.id) {
+    if (sort[0].ascending == column.initial_sort_is_ascending) {
+      // First toggle inverts the order.
+      sort[0].ascending = !sort[0].ascending;
+    } else {
+      // Second toggle clears the sort.
+      sort.clear();
+    }
   } else {
-    SortDescriptor descriptor(column_id, visible_columns_[
-        visible_column_index].column.initial_sort_is_ascending);
+    SortDescriptor descriptor(column.id, column.initial_sort_is_ascending);
     sort.insert(sort.begin(), descriptor);
     // Only persist two sort descriptors.
     if (sort.size() > 2)
       sort.resize(2);
   }
   SetSortDescriptors(sort);
+}
+
+void TableView::SetSortDescriptors(const SortDescriptors& sort_descriptors) {
+  sort_descriptors_ = sort_descriptors;
+  SortItemsAndUpdateMapping();
+  if (header_)
+    header_->SchedulePaint();
 }
 
 bool TableView::IsColumnVisible(int id) const {
@@ -426,18 +443,19 @@ bool TableView::GetTooltipTextOrigin(const gfx::Point& p,
   return GetTooltipImpl(p, NULL, loc);
 }
 
-void TableView::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_TABLE;
-  state->AddStateFlag(ui::AX_STATE_READ_ONLY);
-  state->count = RowCount();
+void TableView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_TABLE;
+  node_data->AddStateFlag(ui::AX_STATE_READ_ONLY);
+  node_data->AddIntAttribute(ui::AX_ATTR_SET_SIZE, RowCount());
 
   if (selection_model_.active() != ui::ListSelectionModel::kUnselectedIndex) {
     // Get information about the active item, this is not the same as the set
     // of selected items (of which there could be more than one).
-    state->role = ui::AX_ROLE_ROW;
-    state->index = selection_model_.active();
+    node_data->role = ui::AX_ROLE_ROW;
+    node_data->AddIntAttribute(ui::AX_ATTR_POS_IN_SET,
+                               selection_model_.active());
     if (selection_model_.IsSelected(selection_model_.active())) {
-      state->AddStateFlag(ui::AX_STATE_SELECTED);
+      node_data->AddStateFlag(ui::AX_STATE_SELECTED);
     }
 
     std::vector<base::string16> name_parts;
@@ -449,7 +467,7 @@ void TableView::GetAccessibleState(ui::AXViewState* state) {
         name_parts.push_back(value);
       }
     }
-    state->name = base::JoinString(name_parts, base::ASCIIToUTF16(", "));
+    node_data->SetName(base::JoinString(name_parts, base::ASCIIToUTF16(", ")));
   }
 }
 
@@ -635,13 +653,6 @@ void TableView::NumRowsChanged() {
   SchedulePaint();
 }
 
-void TableView::SetSortDescriptors(const SortDescriptors& sort_descriptors) {
-  sort_descriptors_ = sort_descriptors;
-  SortItemsAndUpdateMapping();
-  if (header_)
-    header_->SchedulePaint();
-}
-
 void TableView::SortItemsAndUpdateMapping() {
   if (!is_sorted()) {
     view_to_model_.clear();
@@ -656,9 +667,11 @@ void TableView::SortItemsAndUpdateMapping() {
       GroupSortHelper sort_helper(this);
       GetModelIndexToRangeStart(grouper_, RowCount(),
                                 &sort_helper.model_index_to_range_start);
-      std::sort(view_to_model_.begin(), view_to_model_.end(), sort_helper);
+      std::stable_sort(view_to_model_.begin(), view_to_model_.end(),
+                       sort_helper);
     } else {
-      std::sort(view_to_model_.begin(), view_to_model_.end(), SortHelper(this));
+      std::stable_sort(view_to_model_.begin(), view_to_model_.end(),
+                       SortHelper(this));
     }
     for (int i = 0; i < row_count; ++i)
       model_to_view_[view_to_model_[i]] = i;

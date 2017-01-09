@@ -34,6 +34,10 @@
 #include "WebCommon.h"
 #include "WebVector.h"
 
+#if INSIDE_BLINK
+#include <memory>
+#endif
+
 namespace blink {
 
 class WebMessagePortChannelClient;
@@ -41,38 +45,36 @@ class WebString;
 
 typedef WebVector<class WebMessagePortChannel*> WebMessagePortChannelArray;
 
-// Provides an interface to a Message Port Channel implementation. The object owns itself and
-// is signalled that its not needed anymore with the destroy() call.
+// Provides an interface to a Message Port Channel implementation. The object
+// owns itself and is signalled that its not needed anymore with the destroy()
+// call.
 class WebMessagePortChannel {
-public:
-    virtual void setClient(WebMessagePortChannelClient*) = 0;
-    virtual void destroy() = 0;
-    // Callee receives ownership of the passed vector.
-    // FIXME: Blob refs should be passed to maintain ref counts. crbug.com/351753
-    virtual void postMessage(const WebString&, WebMessagePortChannelArray*) = 0;
-    virtual bool tryGetMessage(WebString*, WebMessagePortChannelArray&) = 0;
+ public:
+  virtual void setClient(WebMessagePortChannelClient*) = 0;
+  virtual void destroy() = 0;
+  // Callee receives ownership of the passed vector.
+  // FIXME: Blob refs should be passed to maintain ref counts. crbug.com/351753
+  virtual void postMessage(const WebString&, WebMessagePortChannelArray*) = 0;
+  virtual bool tryGetMessage(WebString*, WebMessagePortChannelArray&) = 0;
 
-protected:
-    ~WebMessagePortChannel() { }
+ protected:
+  ~WebMessagePortChannel() {}
 };
-
-} // namespace blink
 
 #if INSIDE_BLINK
 
-namespace WTF {
-
-template<typename T> struct OwnedPtrDeleter;
-template<> struct OwnedPtrDeleter<blink::WebMessagePortChannel> {
-    static void deletePtr(blink::WebMessagePortChannel* channel)
-    {
-        if (channel)
-            channel->destroy();
-    }
+struct WebMessagePortChannelDeleter {
+  void operator()(WebMessagePortChannel* channel) {
+    if (channel)
+      channel->destroy();
+  }
 };
 
-} // namespace WTF
+using WebMessagePortChannelUniquePtr =
+    std::unique_ptr<WebMessagePortChannel, WebMessagePortChannelDeleter>;
 
-#endif // INSIDE_BLINK
+#endif  // INSIDE_BLINK
 
-#endif // WebMessagePortChannel_h
+}  // namespace blink
+
+#endif  // WebMessagePortChannel_h

@@ -7,11 +7,12 @@
 
 #import <Cocoa/Cocoa.h>
 
-#import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
-#import "chrome/browser/ui/cocoa/image_button_cell.h"
+#include <memory>
 
-class Browser;
+#import "base/mac/scoped_nsobject.h"
+#import "chrome/browser/ui/cocoa/image_button_cell.h"
+#import "chrome/browser/ui/cocoa/toolbar/toolbar_button_cocoa.h"
+
 @class BrowserActionsController;
 @class MenuController;
 class ToolbarActionViewController;
@@ -22,7 +23,7 @@ extern NSString* const kBrowserActionButtonDraggingNotification;
 // Fired when the user drops the button.
 extern NSString* const kBrowserActionButtonDragEndNotification;
 
-@interface BrowserActionButton : NSButton<NSMenuDelegate> {
+@interface BrowserActionButton : ToolbarButton<NSMenuDelegate> {
  @private
   // Used to move the button and query whether a button is currently animating.
   base::scoped_nsobject<NSViewAnimation> moveAnimation_;
@@ -31,7 +32,7 @@ extern NSString* const kBrowserActionButtonDragEndNotification;
   ToolbarActionViewController* viewController_;
 
   // The bridge between the view controller and this object.
-  scoped_ptr<ToolbarActionViewDelegateBridge> viewControllerDelegate_;
+  std::unique_ptr<ToolbarActionViewDelegateBridge> viewControllerDelegate_;
 
   // The context menu controller.
   base::scoped_nsobject<MenuController> contextMenuController_;
@@ -86,6 +87,9 @@ extern NSString* const kBrowserActionButtonDragEndNotification;
 // cell image drawn into it.
 - (NSImage*)compositedImage;
 
+// Shows the context menu for the action.
+- (void)showContextMenu;
+
 @property(readonly, nonatomic) BOOL isBeingDragged;
 
 @end
@@ -95,6 +99,8 @@ extern NSString* const kBrowserActionButtonDragEndNotification;
 - (void)setTestContextMenu:(NSMenu*)testContextMenu;
 // Returns true if the action wants to run.
 - (BOOL)wantsToRunForTesting;
+// Returns true if the cell is highlighted.
+- (BOOL)isHighlighted;
 @end
 
 @interface BrowserActionCell : ImageButtonCell {

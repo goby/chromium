@@ -6,18 +6,21 @@
 
 // TODOv3(shess): Review these changes carefully.
 
+#include "chrome/browser/safe_browsing/protocol_parser.h"
+
+#include <stdint.h>
 #include <stdlib.h>
+#include <utility>
 
 #include "base/format_macros.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "chrome/browser/safe_browsing/protocol_parser.h"
-#include "chrome/browser/safe_browsing/safe_browsing_util.h"
+#include "components/safe_browsing_db/metadata.pb.h"
 
 namespace safe_browsing {
 
@@ -72,8 +75,8 @@ class BufferReader {
     return true;
   }
 
-  // Read a 32-bit integer in network byte order into a local uint32.
-  bool GetNet32(uint32* i) {
+  // Read a 32-bit integer in network byte order into a local uint32_t.
+  bool GetNet32(uint32_t* i) {
     if (!GetData(i, sizeof(*i)))
       return false;
 
@@ -133,6 +136,68 @@ class BufferReader {
   DISALLOW_COPY_AND_ASSIGN(BufferReader);
 };
 
+// Helper function to parse malware metadata string
+void InterpretMalwareMetadataString(const std::string& raw_metadata,
+                                    ThreatMetadata* metadata) {
+  MalwarePatternType proto;
+  if (!proto.ParseFromString(raw_metadata)) {
+    DCHECK(false) << "Bad MalwarePatternType";
+    return;
+  }
+
+  // Convert proto enum to internal enum (we'll move away from this
+  // proto in Pver4).
+  switch (proto.pattern_type()) {
+    case MalwarePatternType::LANDING:
+      metadata->threat_pattern_type = ThreatPatternType::MALWARE_LANDING;
+      break;
+    case MalwarePatternType::DISTRIBUTION:
+      metadata->threat_pattern_type = ThreatPatternType::MALWARE_DISTRIBUTION;
+      break;
+    default:
+      metadata->threat_pattern_type = ThreatPatternType::NONE;
+  }
+}
+
+// Helper function to parse social engineering metadata string.
+void InterpretSocEngMetadataString(const std::string& raw_metadata,
+                                   ThreatMetadata* metadata) {
+  SocialEngineeringPatternType proto;
+  if (!proto.ParseFromString(raw_metadata)) {
+    DCHECK(false) << "Bad SocialEngineeringPatternType";
+    return;
+  }
+
+  switch (proto.pattern_type()) {
+    case SocialEngineeringPatternType::SOCIAL_ENGINEERING_ADS:
+      metadata->threat_pattern_type = ThreatPatternType::SOCIAL_ENGINEERING_ADS;
+      break;
+    case SocialEngineeringPatternType::SOCIAL_ENGINEERING_LANDING:
+      metadata->threat_pattern_type =
+          ThreatPatternType::SOCIAL_ENGINEERING_LANDING;
+      break;
+    case SocialEngineeringPatternType::PHISHING:
+      metadata->threat_pattern_type = ThreatPatternType::PHISHING;
+      break;
+    default:
+      metadata->threat_pattern_type = ThreatPatternType::NONE;
+  }
+}
+
+// Parse the |raw_metadata| string based on the |list_type| and populate
+// the appropriate field of |metadata|.  For Pver3 (which this file implements),
+// we only fill in threat_pattern_type.  Others are populated for Pver4.
+void InterpretMetadataString(const std::string& raw_metadata,
+                             ListType list_type,
+                             ThreatMetadata* metadata) {
+  if (raw_metadata.empty())
+    return;
+  if (list_type == MALWARE)
+    InterpretMalwareMetadataString(raw_metadata, metadata);
+  else if (list_type == PHISH)
+    InterpretSocEngMetadataString(raw_metadata, metadata);
+}
+
 bool ParseGetHashMetadata(
     size_t hash_count,
     BufferReader* reader,
@@ -151,8 +216,14 @@ bool ParseGetHashMetadata(
       return false;
 
     if (full_hashes) {
-      (*full_hashes)[full_hashes->size() - hash_count + i].metadata.assign(
-          reinterpret_cast<const char*>(meta_data), meta_data_len);
+      const std::string raw_metadata(reinterpret_cast<const char*>(meta_data),
+                                     meta_data_len);
+      // Update the i'th entry in the last hash_count elements of the list.
+      SBFullHashResult* full_hash =
+          &((*full_hashes)[full_hashes->size() - hash_count + i]);
+      InterpretMetadataString(raw_metadata,
+                              static_cast<ListType>(full_hash->list_id),
+                              &full_hash->metadata);
     }
   }
   return true;
@@ -350,11 +421,11 @@ bool ParseUpdate(const char* chunk_data,
 // CHUNKDATA = Encoded ChunkData protocol message
 bool ParseChunk(const char* data,
                 size_t length,
-                std::vector<scoped_ptr<SBChunkData>>* chunks) {
+                std::vector<std::unique_ptr<SBChunkData>>* chunks) {
   BufferReader reader(data, length);
 
   while (!reader.empty()) {
-    uint32 l = 0;
+    uint32_t l = 0;
     if (!reader.GetNet32(&l) || l == 0 || l > reader.length())
       return false;
 
@@ -362,11 +433,11 @@ bool ParseChunk(const char* data,
     if (!reader.RefData(&p, l))
       return false;
 
-    scoped_ptr<SBChunkData> chunk(new SBChunkData());
+    std::unique_ptr<SBChunkData> chunk(new SBChunkData());
     if (!chunk->ParseFrom(reinterpret_cast<const unsigned char*>(p), l))
       return false;
 
-    chunks->push_back(chunk.Pass());
+    chunks->push_back(std::move(chunk));
   }
 
   DCHECK(reader.empty());

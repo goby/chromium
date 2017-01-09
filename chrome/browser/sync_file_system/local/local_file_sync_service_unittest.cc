@@ -2,16 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/sync_file_system/file_change.h"
 #include "chrome/browser/sync_file_system/local/canned_syncable_file_system.h"
 #include "chrome/browser/sync_file_system/local/local_file_change_tracker.h"
@@ -114,10 +117,9 @@ class LocalFileSyncServiceTest
     in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
 
     file_system_.reset(new CannedSyncableFileSystem(
-        GURL(kOrigin),
-        in_memory_env_.get(),
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO),
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE)));
+        GURL(kOrigin), in_memory_env_.get(),
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE)));
 
     local_service_ = LocalFileSyncService::CreateForTesting(
         &profile_, in_memory_env_.get());
@@ -148,7 +150,7 @@ class LocalFileSyncServiceTest
   }
 
   // LocalChangeObserver overrides.
-  void OnLocalChangeAvailable(int64 num_changes) override {
+  void OnLocalChangeAvailable(int64_t num_changes) override {
     num_changes_ = num_changes;
   }
 
@@ -190,20 +192,20 @@ class LocalFileSyncServiceTest
     return sync_status;
   }
 
-  int64 GetNumChangesInTracker() const {
+  int64_t GetNumChangesInTracker() const {
     return file_system_->backend()->change_tracker()->num_changes();
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
 
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
   TestingProfile profile_;
 
-  scoped_ptr<CannedSyncableFileSystem> file_system_;
-  scoped_ptr<LocalFileSyncService> local_service_;
+  std::unique_ptr<CannedSyncableFileSystem> file_system_;
+  std::unique_ptr<LocalFileSyncService> local_service_;
 
-  int64 num_changes_;
+  int64_t num_changes_;
 };
 
 // More complete tests for PrepareForProcessRemoteChange and ApplyRemoteChange
@@ -215,7 +217,7 @@ TEST_F(LocalFileSyncServiceTest, RemoteSyncStepsSimple) {
   const int kTestFileDataSize = static_cast<int>(arraysize(kTestFileData) - 1);
 
   base::FilePath local_path;
-  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &local_path));
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &local_path));
   ASSERT_EQ(kTestFileDataSize,
             base::WriteFile(local_path, kTestFileData, kTestFileDataSize));
 
@@ -297,10 +299,9 @@ TEST_F(LocalFileSyncServiceTest, LocalChangeObserver) {
 TEST_F(LocalFileSyncServiceTest, MAYBE_LocalChangeObserverMultipleContexts) {
   const char kOrigin2[] = "http://foo";
   CannedSyncableFileSystem file_system2(
-      GURL(kOrigin2),
-      in_memory_env_.get(),
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO),
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE));
+      GURL(kOrigin2), in_memory_env_.get(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE));
   file_system2.SetUp(CannedSyncableFileSystem::QUOTA_ENABLED);
 
   base::RunLoop run_loop;
@@ -597,11 +598,9 @@ class OriginChangeMapTest : public testing::Test {
     return map_.NextOriginToProcess(origin);
   }
 
-  int64 GetTotalChangeCount() const {
-    return map_.GetTotalChangeCount();
-  }
+  int64_t GetTotalChangeCount() const { return map_.GetTotalChangeCount(); }
 
-  void SetOriginChangeCount(const GURL& origin, int64 changes) {
+  void SetOriginChangeCount(const GURL& origin, int64_t changes) {
     map_.SetOriginChangeCount(origin, changes);
   }
 
@@ -635,7 +634,7 @@ TEST_F(OriginChangeMapTest, Basic) {
   GURL origin;
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -648,7 +647,7 @@ TEST_F(OriginChangeMapTest, Basic) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -659,7 +658,7 @@ TEST_F(OriginChangeMapTest, Basic) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -670,7 +669,7 @@ TEST_F(OriginChangeMapTest, Basic) {
   all_origins.insert(kOrigins, kOrigins + arraysize(kOrigins));
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
     all_origins.erase(origin);
   }
 }
@@ -695,7 +694,7 @@ TEST_F(OriginChangeMapTest, WithDisabled) {
   GURL origin;
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -707,7 +706,7 @@ TEST_F(OriginChangeMapTest, WithDisabled) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -727,7 +726,7 @@ TEST_F(OriginChangeMapTest, WithDisabled) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
     all_origins.erase(origin);
   }
 }

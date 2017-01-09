@@ -7,21 +7,29 @@
 #include <string>
 
 #include "base/bind.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_storage.h"
+#include "content/common/service_worker/service_worker_messages.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/common/push_event_payload.h"
 
 namespace content {
 
 namespace {
 
+// The number of seconds for which the event triggered by a push message should
+// be allowed to run.
+const int kPushMessageTimeoutSeconds = 90;
+
 void RunDeliverCallback(
     const PushMessagingRouter::DeliverMessageCallback& deliver_message_callback,
     PushDeliveryStatus delivery_status) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(deliver_message_callback, delivery_status));
@@ -33,8 +41,8 @@ void RunDeliverCallback(
 void PushMessagingRouter::DeliverMessage(
     BrowserContext* browser_context,
     const GURL& origin,
-    int64 service_worker_registration_id,
-    const std::string& data,
+    int64_t service_worker_registration_id,
+    const PushEventPayload& payload,
     const DeliverMessageCallback& deliver_message_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   StoragePartition* partition =
@@ -45,15 +53,15 @@ void PushMessagingRouter::DeliverMessage(
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::Bind(&PushMessagingRouter::FindServiceWorkerRegistration, origin,
-                 service_worker_registration_id, data, deliver_message_callback,
-                 service_worker_context));
+                 service_worker_registration_id, payload,
+                 deliver_message_callback, service_worker_context));
 }
 
 // static
 void PushMessagingRouter::FindServiceWorkerRegistration(
     const GURL& origin,
-    int64 service_worker_registration_id,
-    const std::string& data,
+    int64_t service_worker_registration_id,
+    const PushEventPayload& payload,
     const DeliverMessageCallback& deliver_message_callback,
     scoped_refptr<ServiceWorkerContextWrapper> service_worker_context) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -62,21 +70,27 @@ void PushMessagingRouter::FindServiceWorkerRegistration(
   service_worker_context->FindReadyRegistrationForId(
       service_worker_registration_id, origin,
       base::Bind(&PushMessagingRouter::FindServiceWorkerRegistrationCallback,
-                 data, deliver_message_callback));
+                 payload, deliver_message_callback));
 }
 
 // static
 void PushMessagingRouter::FindServiceWorkerRegistrationCallback(
-    const std::string& data,
+    const PushEventPayload& payload,
     const DeliverMessageCallback& deliver_message_callback,
     ServiceWorkerStatusCode service_worker_status,
-    const scoped_refptr<ServiceWorkerRegistration>&
-        service_worker_registration) {
+    scoped_refptr<ServiceWorkerRegistration> service_worker_registration) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  // TODO(mvanouwerkerk): UMA logging.
-  if (service_worker_status != SERVICE_WORKER_OK) {
+  UMA_HISTOGRAM_ENUMERATION("PushMessaging.DeliveryStatus.FindServiceWorker",
+                            service_worker_status,
+                            SERVICE_WORKER_ERROR_MAX_VALUE);
+  if (service_worker_status == SERVICE_WORKER_ERROR_NOT_FOUND) {
     RunDeliverCallback(deliver_message_callback,
                        PUSH_DELIVERY_STATUS_NO_SERVICE_WORKER);
+    return;
+  }
+  if (service_worker_status != SERVICE_WORKER_OK) {
+    RunDeliverCallback(deliver_message_callback,
+                       PUSH_DELIVERY_STATUS_SERVICE_WORKER_ERROR);
     return;
   }
 
@@ -87,11 +101,30 @@ void PushMessagingRouter::FindServiceWorkerRegistrationCallback(
   // alive until the callback dies. Otherwise the registration could be
   // released when this method returns - before the event is delivered to the
   // service worker.
-  base::Callback<void(ServiceWorkerStatusCode)> dispatch_event_callback =
+  version->RunAfterStartWorker(
+      ServiceWorkerMetrics::EventType::PUSH,
+      base::Bind(&PushMessagingRouter::DeliverMessageToWorker,
+                 make_scoped_refptr(version), service_worker_registration,
+                 payload, deliver_message_callback),
       base::Bind(&PushMessagingRouter::DeliverMessageEnd,
-                 deliver_message_callback, service_worker_registration);
+                 deliver_message_callback, service_worker_registration));
+}
 
-  version->DispatchPushEvent(dispatch_event_callback, data);
+// static
+void PushMessagingRouter::DeliverMessageToWorker(
+    const scoped_refptr<ServiceWorkerVersion>& service_worker,
+    const scoped_refptr<ServiceWorkerRegistration>& service_worker_registration,
+    const PushEventPayload& payload,
+    const DeliverMessageCallback& deliver_message_callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  int request_id = service_worker->StartRequestWithCustomTimeout(
+      ServiceWorkerMetrics::EventType::PUSH,
+      base::Bind(&PushMessagingRouter::DeliverMessageEnd,
+                 deliver_message_callback, service_worker_registration),
+      base::TimeDelta::FromSeconds(kPushMessageTimeoutSeconds),
+      ServiceWorkerVersion::KILL_ON_TIMEOUT);
+  service_worker->DispatchSimpleEvent<ServiceWorkerHostMsg_PushEventFinished>(
+      request_id, ServiceWorkerMsg_PushEvent(request_id, payload));
 }
 
 // static
@@ -100,7 +133,9 @@ void PushMessagingRouter::DeliverMessageEnd(
     const scoped_refptr<ServiceWorkerRegistration>& service_worker_registration,
     ServiceWorkerStatusCode service_worker_status) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  // TODO(mvanouwerkerk): UMA logging.
+  UMA_HISTOGRAM_ENUMERATION("PushMessaging.DeliveryStatus.ServiceWorkerEvent",
+                            service_worker_status,
+                            SERVICE_WORKER_ERROR_MAX_VALUE);
   PushDeliveryStatus delivery_status =
       PUSH_DELIVERY_STATUS_SERVICE_WORKER_ERROR;
   switch (service_worker_status) {
@@ -110,13 +145,15 @@ void PushMessagingRouter::DeliverMessageEnd(
     case SERVICE_WORKER_ERROR_EVENT_WAITUNTIL_REJECTED:
       delivery_status = PUSH_DELIVERY_STATUS_EVENT_WAITUNTIL_REJECTED;
       break;
+    case SERVICE_WORKER_ERROR_TIMEOUT:
+      delivery_status = PUSH_DELIVERY_STATUS_TIMEOUT;
+      break;
     case SERVICE_WORKER_ERROR_FAILED:
     case SERVICE_WORKER_ERROR_ABORT:
     case SERVICE_WORKER_ERROR_START_WORKER_FAILED:
     case SERVICE_WORKER_ERROR_PROCESS_NOT_FOUND:
     case SERVICE_WORKER_ERROR_NOT_FOUND:
     case SERVICE_WORKER_ERROR_IPC_FAILED:
-    case SERVICE_WORKER_ERROR_TIMEOUT:
     case SERVICE_WORKER_ERROR_SCRIPT_EVALUATE_FAILED:
     case SERVICE_WORKER_ERROR_DISK_CACHE:
     case SERVICE_WORKER_ERROR_REDUNDANT:

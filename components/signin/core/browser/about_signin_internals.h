@@ -6,10 +6,10 @@
 #define COMPONENTS_SIGNIN_CORE_BROWSER_ABOUT_SIGNIN_INTERNALS_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -25,13 +25,12 @@ class PrefRegistrySyncable;
 }
 
 class AccountTrackerService;
-class GaiaAuthFetcher;
 class ProfileOAuth2TokenService;
 class SigninClient;
 
 // Many values in SigninStatus are also associated with a timestamp.
 // This makes it easier to keep values and their associated times together.
-typedef std::pair<std::string, std::string> TimedSigninStatusValue;
+using TimedSigninStatusValue = std::pair<std::string, std::string>;
 
 // This class collects authentication, signin and token information
 // to propagate to about:signin-internals via SigninInternalsUI.
@@ -93,11 +92,12 @@ class AboutSigninInternals
   //     [ List of {"name": "foo-name", "token" : "foo-token",
   //                 "status": "foo_stat", "time" : "foo_time"} elems]
   //  }
-  scoped_ptr<base::DictionaryValue> GetSigninStatus();
+  std::unique_ptr<base::DictionaryValue> GetSigninStatus();
 
   // GaiaCookieManagerService::Observer implementations.
   void OnGaiaAccountsInCookieUpdated(
       const std::vector<gaia::ListedAccount>& gaia_accounts,
+      const std::vector<gaia::ListedAccount>& signed_out_accounts,
       const GoogleServiceAuthError& error) override;
 
  private:
@@ -106,9 +106,10 @@ class AboutSigninInternals
     TokenInfo(const std::string& consumer_id,
               const OAuth2TokenService::ScopeSet& scopes);
     ~TokenInfo();
-    base::DictionaryValue* ToValue() const;
+    std::unique_ptr<base::DictionaryValue> ToValue() const;
 
-    static bool LessThan(const TokenInfo* a, const TokenInfo* b);
+    static bool LessThan(const std::unique_ptr<TokenInfo>& a,
+                         const std::unique_ptr<TokenInfo>& b);
 
     // Called when the token is invalidated.
     void Invalidate();
@@ -122,15 +123,15 @@ class AboutSigninInternals
     bool removed_;
   };
 
-  // Map account id to tokens associated to the account.
-  typedef std::map<std::string, std::vector<TokenInfo*> > TokenInfoMap;
-
   // Encapsulates both authentication and token related information. Used
   // by SigninInternals to maintain information that needs to be shown in
   // the about:signin-internals page.
   struct SigninStatus {
     std::vector<TimedSigninStatusValue> timed_signin_fields;
-    TokenInfoMap token_info_map;
+
+    // Map account id to tokens associated to the account.
+    std::map<std::string, std::vector<std::unique_ptr<TokenInfo>>>
+        token_info_map;
 
     SigninStatus();
     ~SigninStatus();
@@ -156,7 +157,7 @@ class AboutSigninInternals
     //                           "status" : request status} elems]
     //       }],
     //  }
-    scoped_ptr<base::DictionaryValue> ToValue(
+    std::unique_ptr<base::DictionaryValue> ToValue(
         AccountTrackerService* account_tracker,
         SigninManagerBase* signin_manager,
         SigninErrorController* signin_error_controller,

@@ -5,7 +5,11 @@
 #include "chrome/browser/ui/views/status_icons/status_tray_win.h"
 
 #include <commctrl.h>
+#include <stddef.h>
 
+#include <utility>
+
+#include "base/macros.h"
 #include "chrome/browser/status_icons/status_icon_menu_model.h"
 #include "chrome/browser/status_icons/status_icon_observer.h"
 #include "chrome/browser/ui/views/status_icons/status_icon_win.h"
@@ -72,9 +76,9 @@ TEST(StatusTrayWinTest, CreateIconAndMenu) {
   // down.
   StatusTrayWin tray;
   StatusIcon* icon = CreateStatusIcon(&tray);
-  scoped_ptr<StatusIconMenuModel> menu(new StatusIconMenuModel(NULL));
+  std::unique_ptr<StatusIconMenuModel> menu(new StatusIconMenuModel(NULL));
   menu->AddItem(0, L"foo");
-  icon->SetContextMenu(menu.Pass());
+  icon->SetContextMenu(std::move(menu));
 }
 
 #if !defined(USE_AURA)  // http://crbug.com/156370
@@ -123,7 +127,7 @@ TEST(StatusTrayWinTest, EnsureVisibleTest) {
   FakeStatusTrayStateChangerProxy* proxy =
       new FakeStatusTrayStateChangerProxy();
   tray.SetStatusTrayStateChangerProxyForTest(
-      scoped_ptr<StatusTrayStateChangerProxy>(proxy));
+      std::unique_ptr<StatusTrayStateChangerProxy>(proxy));
 
   StatusIconWin* icon = CreateStatusIcon(&tray);
 

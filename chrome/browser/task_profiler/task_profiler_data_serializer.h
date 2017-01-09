@@ -5,13 +5,12 @@
 #ifndef CHROME_BROWSER_TASK_PROFILER_TASK_PROFILER_DATA_SERIALIZER_H_
 #define CHROME_BROWSER_TASK_PROFILER_TASK_PROFILER_DATA_SERIALIZER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/process/process_handle.h"
 #include "components/metrics/proto/profiler_event.pb.h"
 
 namespace base {
 class DictionaryValue;
-class FilePath;
 }
 
 namespace tracked_objects {

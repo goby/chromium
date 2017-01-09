@@ -5,12 +5,12 @@
 /**
  * @param {!MessagePort=} opt_messagePort Message port overriding the default
  *     worker port.
- * @extends {NewMetadataProvider}
+ * @extends {MetadataProvider}
  * @constructor
  * @struct
  */
 function ContentMetadataProvider(opt_messagePort) {
-  NewMetadataProvider.call(
+  MetadataProvider.call(
       this,
       ContentMetadataProvider.PROPERTY_NAMES);
 
@@ -58,9 +58,13 @@ ContentMetadataProvider.PROPERTY_NAMES = [
   'ifd',
   'imageHeight',
   'imageWidth',
+  'mediaAlbum',
   'mediaArtist',
+  'mediaDuration',
+  'mediaGenre',
   'mediaMimeType',
-  'mediaTitle'
+  'mediaTitle',
+  'mediaTrack',
 ];
 
 /**
@@ -85,13 +89,11 @@ ContentMetadataProvider.convertContentMetadata = function(metadata) {
   item.ifd = metadata['ifd'];
   item.imageHeight = metadata['height'];
   item.imageWidth = metadata['width'];
-  item.mediaArtist = metadata['artist'];
   item.mediaMimeType = metadata['mimeType'];
-  item.mediaTitle = metadata['title'];
   return item;
 };
 
-ContentMetadataProvider.prototype.__proto__ = NewMetadataProvider.prototype;
+ContentMetadataProvider.prototype.__proto__ = MetadataProvider.prototype;
 
 /**
  * @override
@@ -111,28 +113,82 @@ ContentMetadataProvider.prototype.get = function(requests) {
 
 /**
  * Fetches the metadata.
- * @param {Entry} entry File entry.
+ * @param {!Entry} entry File entry.
  * @param {!Array<string>} names Requested metadata type.
- * @param {function(Object)} callback Callback expects a map from metadata type
- *     to metadata value. This callback is called asynchronously.
+ * @param {function(!MetadataItem)} callback Callback expects metadata value.
+ *     This callback is called asynchronously.
  * @private
  */
 ContentMetadataProvider.prototype.getImpl_ = function(entry, names, callback) {
   if (entry.isDirectory) {
-    setTimeout(callback.bind(null, {}), 0);
+    setTimeout(callback.bind(null, this.createError_(entry.toURL(),
+        'get',
+        'we don\'t generate thumbnails for directory')), 0);
     return;
   }
-  var url = entry.toURL();
-  if (this.callbacks_[url]) {
-    this.callbacks_[url].push(callback);
-  } else {
-    this.callbacks_[url] = [callback];
-    this.dispatcher_.postMessage({verb: 'request', arguments: [url]});
+  // TODO(ryoh): mediaGalleries API does not handle
+  // jpes's exif thumbnail and mirror attribute correctly
+  // and .ico file.
+  // We parse it in our pure js parser.
+  // chrome/browser/media_galleries/fileapi/supported_image_type_validator.cc
+  var type = FileType.getType(entry);
+  if (type && type.type === 'image' &&
+      (type.subtype === 'JPEG' || type.subtype === 'ICO')) {
+    var url = entry.toURL();
+    if (this.callbacks_[url]) {
+      this.callbacks_[url].push(callback);
+    } else {
+      this.callbacks_[url] = [callback];
+      this.dispatcher_.postMessage({verb: 'request', arguments: [url]});
+    }
+    return;
   }
+  this.getFromMediaGalleries_(entry, names).then(callback);
 };
 
 /**
- * Dispatch a message from a metadata reader to the appropriate on* method.
+ * Gets a metadata from mediaGalleries API
+ *
+ * @param {!Entry} entry File entry.
+ * @param {!Array<string>} names Requested metadata type.
+ * @return {!Promise<!MetadataItem>}  Promise that resolves with the metadata of
+ *    the entry.
+ * @private
+ */
+ContentMetadataProvider.prototype.getFromMediaGalleries_ =
+    function(entry, names) {
+  var self = this;
+  return new Promise(function(resolve, reject) {
+    entry.file(function(blob) {
+      var metadataType = 'mimeTypeOnly';
+      if (names.indexOf('mediaArtist') !== -1 ||
+          names.indexOf('mediaTitle') !== -1) {
+        metadataType = 'mimeTypeAndTags';
+      }
+      if (names.indexOf('contentThumbnailUrl') !== -1) {
+        metadataType = 'all';
+      }
+      chrome.mediaGalleries.getMetadata(blob, {metadataType: metadataType},
+          function(metadata) {
+            if (chrome.runtime.lastError) {
+              resolve(self.createError_(entry.toURL(),
+                  'resolving metadata',
+                  chrome.runtime.lastError.toString()));
+            } else {
+              self.convertMediaMetadataToMetadataItem_(entry, metadata)
+                  .then(resolve, reject);
+            }
+          });
+    }, function(err) {
+      resolve(self.createError_(entry.toURL(),
+          'loading file entry',
+          'failed to open file entry'));
+    });
+  });
+};
+
+/**
+ * Dispatches a message from a metadata reader to the appropriate on* method.
  * @param {Object} event The event.
  * @private
  */
@@ -150,11 +206,13 @@ ContentMetadataProvider.prototype.onMessage_ = function(event) {
           new MetadataItem());
       break;
     case 'error':
-      this.onError_(
+      var error = this.createError_(
           data.arguments[0],
           data.arguments[1],
-          data.arguments[2],
-          data.arguments[3]);
+          data.arguments[2]);
+      this.onResult_(
+          data.arguments[0],
+          error);
       break;
     case 'log':
       this.onLog_(data.arguments[0]);
@@ -198,39 +256,99 @@ ContentMetadataProvider.prototype.onResult_ = function(url, metadataItem) {
 };
 
 /**
- * Handles the 'error' message from the worker.
- * @param {string} url File entry.
- * @param {string} step Step failed.
- * @param {string} errorDescription Error description.
- * @param {Object?} metadata The metadata, if available.
- * @private
- */
-ContentMetadataProvider.prototype.onError_ = function(
-    url, step, errorDescription, metadata) {
-  // For error case, fill all fields with error object.
-  var error = new ContentMetadataProvider.Error(url, step, errorDescription);
-  var item = new MetadataItem();
-  item.contentImageTransformError = error;
-  item.contentThumbnailTransformError = error;
-  item.contentThumbnailUrlError = error;
-  item.exifLittleEndianError = error;
-  item.ifdError = error;
-  item.imageHeightError = error;
-  item.imageWidthError = error;
-  item.mediaArtistError = error;
-  item.mediaMimeTypeError = error;
-  item.mediaTitleError = error;
-
-  this.onResult_(url, item);
-};
-
-/**
  * Handles the 'log' message from the worker.
  * @param {Array<*>} arglist Log arguments.
  * @private
  */
 ContentMetadataProvider.prototype.onLog_ = function(arglist) {
   console.log.apply(console, ['ContentMetadataProvider log:'].concat(arglist));
+};
+
+/**
+ * Dispatches a message from MediaGalleries API to the appropriate on* method.
+ * @param {!Entry} entry File entry.
+ * @param {!Object} metadata The metadata from MediaGalleries API.
+ * @return {!Promise<!MetadataItem>}  Promise that resolves with
+ *    converted metadata item.
+ * @private
+ */
+ContentMetadataProvider.prototype.convertMediaMetadataToMetadataItem_ =
+    function(entry, metadata) {
+  return new Promise(function(resolve, reject) {
+    if (!metadata) {
+      resolve(this.createError_(entry.toURL(), 'Reading a thumbnail image',
+          "Failed to parse metadata"));
+      return;
+    }
+    var item = new MetadataItem();
+    var mimeType = metadata['mimeType'];
+    item.contentMimeType = mimeType;
+    var trans = {scaleX: 1, scaleY: 1, rotate90: 0};
+    if (metadata.rotation) {
+      switch (metadata.rotation) {
+        case 0:
+          break;
+        case 90:
+          trans.rotate90 = 1;
+          break;
+        case 180:
+          trans.scaleX *= -1;
+          trans.scaleY *= -1;
+          break;
+        case 270:
+          trans.rotate90 = 1;
+          trans.scaleX *= -1;
+          trans.scaleY *= -1;
+          break;
+        default:
+          console.error('Unknown rotation angle: ', metadata.rotation);
+      }
+    }
+    if (metadata.rotation) {
+      item.contentImageTransform = item.contentThumbnailTransform = trans;
+    }
+    item.imageHeight = metadata['height'];
+    item.imageWidth = metadata['width'];
+    item.mediaAlbum = metadata['album'];
+    item.mediaArtist = metadata['artist'];
+    item.mediaDuration = metadata['duration'];
+    item.mediaGenre = metadata['genre'];
+    item.mediaTitle = metadata['title'];
+    item.mediaTrack = metadata['track'];
+    if (metadata.attachedImages && metadata.attachedImages.length > 0) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        item.contentThumbnailUrl = e.target.result;
+        resolve(item);
+      };
+      reader.onerror = function(e) {
+        resolve(this.createError_(entry.toURL(), 'Reading a thumbnail image',
+            reader.error.toString()));
+      }.bind(this);
+      reader.readAsDataURL(metadata.attachedImages[0]);
+    } else {
+      resolve(item);
+    }
+  }.bind(this));
+};
+
+/**
+ * Handles the 'error' message from the worker.
+ * @param {string} url File entry.
+ * @param {string} step Step failed.
+ * @param {string} errorDescription Error description.
+ * @return {!MetadataItem} Error metadata
+ * @private
+ */
+ContentMetadataProvider.prototype.createError_ = function(
+    url, step, errorDescription) {
+  // For error case, fill all fields with error object.
+  var error = new ContentMetadataProvider.Error(url, step, errorDescription);
+  var item = new MetadataItem();
+  item.contentImageTransformError = error;
+  item.contentThumbnailTransformError = error;
+  item.contentThumbnailUrlError = error;
+  return item;
 };
 
 /**

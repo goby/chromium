@@ -3,6 +3,10 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/app_list/fast_show_pickler.h"
+
+#include <stddef.h>
+
+#include "base/memory/ptr_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColorPriv.h"
@@ -44,14 +48,14 @@ class AppListModelPicklerUnitTest : public testing::Test {
     }
   }
 
-  scoped_ptr<AppListModel> CopyViaPickle(AppListModel* model) {
-    scoped_ptr<base::Pickle> pickle(
+  std::unique_ptr<AppListModel> CopyViaPickle(AppListModel* model) {
+    std::unique_ptr<base::Pickle> pickle(
         FastShowPickler::PickleAppListModelForFastShow(model));
     return FastShowPickler::UnpickleAppListModelForFastShow(pickle.get());
   }
 
   void DoConsistencyChecks(AppListModel* model) {
-    scoped_ptr<AppListModel> model2(CopyViaPickle(model));
+    std::unique_ptr<AppListModel> model2(CopyViaPickle(model));
     AppListModel dest_model;
     FastShowPickler::CopyOver(model2.get(), &dest_model);
 
@@ -77,17 +81,15 @@ TEST_F(AppListModelPicklerUnitTest, EmptyModel) {
 
 TEST_F(AppListModelPicklerUnitTest, OneItem) {
   AppListModel model;
-  model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
+  model.AddItem(base::MakeUnique<AppListItem>("abc"));
   DoConsistencyChecks(&model);
 }
 
 TEST_F(AppListModelPicklerUnitTest, TwoItems) {
   AppListModel model;
-  AppListItem* app1 =
-      model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
+  AppListItem* app1 = model.AddItem(base::MakeUnique<AppListItem>("abc"));
   model.SetItemNameAndShortName(app1, "hello, there", "ht");
-  AppListItem* app2 =
-      model.AddItem(make_scoped_ptr(new AppListItem("abc2")).Pass());
+  AppListItem* app2 = model.AddItem(base::MakeUnique<AppListItem>("abc2"));
   model.SetItemNameAndShortName(app2, "hello, there 2", "ht2");
 
   DoConsistencyChecks(&model);
@@ -95,12 +97,10 @@ TEST_F(AppListModelPicklerUnitTest, TwoItems) {
 
 TEST_F(AppListModelPicklerUnitTest, Images) {
   AppListModel model;
-  AppListItem* app1 =
-      model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
+  AppListItem* app1 = model.AddItem(base::MakeUnique<AppListItem>("abc"));
   model.SetItemName(app1, "hello, there");
   app1->SetIcon(MakeImage());
-  AppListItem* app2 =
-      model.AddItem(make_scoped_ptr(new AppListItem("abc2")).Pass());
+  AppListItem* app2 = model.AddItem(base::MakeUnique<AppListItem>("abc2"));
   model.SetItemName(app2, "hello, there 2");
 
   DoConsistencyChecks(&model);
@@ -108,8 +108,7 @@ TEST_F(AppListModelPicklerUnitTest, Images) {
 
 TEST_F(AppListModelPicklerUnitTest, EmptyImage) {
   AppListModel model;
-  AppListItem* app1 =
-      model.AddItem(make_scoped_ptr(new AppListItem("abc")).Pass());
+  AppListItem* app1 = model.AddItem(base::MakeUnique<AppListItem>("abc"));
   model.SetItemName(app1, "hello, there");
   app1->SetIcon(gfx::ImageSkia());
 

@@ -26,7 +26,6 @@ class InstallTracker;
 }
 
 namespace gfx {
-class ImageSkia;
 class Rect;
 }
 
@@ -43,6 +42,7 @@ class AppListControllerDelegate {
   };
 
   // Whether apps can be pinned, and whether pinned apps are editable or fixed.
+  // TODO(khmel): Find better home for Pinnable enum.
   enum Pinnable {
     NO_PIN,
     PIN_EDITABLE,
@@ -69,14 +69,14 @@ class AppListControllerDelegate {
   // returns a 0x0 rectangle.
   virtual gfx::Rect GetAppListBounds();
 
-  // Get the application icon to be used, if any, for the app list.
-  virtual gfx::ImageSkia GetWindowIcon() = 0;
-
   // Control of pinning apps.
-  virtual bool IsAppPinned(const std::string& extension_id) = 0;
-  virtual void PinApp(const std::string& extension_id) = 0;
-  virtual void UnpinApp(const std::string& extension_id) = 0;
-  virtual Pinnable GetPinnable(const std::string& extension_id) = 0;
+  virtual bool IsAppPinned(const std::string& app_id) = 0;
+  virtual void PinApp(const std::string& app_id) = 0;
+  virtual void UnpinApp(const std::string& app_id) = 0;
+  virtual Pinnable GetPinnable(const std::string& app_id) = 0;
+
+  // Returns true if requested app is open.
+  virtual bool IsAppOpen(const std::string& app_id) const = 0;
 
   // Called before and after a dialog opens in the app list. For example,
   // displays an overlay that disables the app list while the dialog is open.
@@ -162,7 +162,8 @@ class AppListControllerDelegate {
       extensions::LaunchType launch_type);
 
   // Returns true if the given extension is installed.
-  bool IsExtensionInstalled(Profile* profile, const std::string& app_id);
+  virtual bool IsExtensionInstalled(Profile* profile,
+                                    const std::string& app_id);
 
   extensions::InstallTracker* GetInstallTrackerFor(Profile* profile);
 

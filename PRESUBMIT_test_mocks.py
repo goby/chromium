@@ -20,13 +20,15 @@ class MockInputApi(object):
     self.json = json
     self.re = re
     self.os_path = os.path
+    self.platform = sys.platform
     self.python_executable = sys.executable
+    self.platform = sys.platform
     self.subprocess = subprocess
     self.files = []
     self.is_committing = False
     self.change = MockChange([])
 
-  def AffectedFiles(self, file_filter=None):
+  def AffectedFiles(self, file_filter=None, include_deletes=False):
     return self.files
 
   def AffectedSourceFiles(self, file_filter=None):
@@ -92,10 +94,18 @@ class MockFile(object):
   MockInputApi for presubmit unittests.
   """
 
-  def __init__(self, local_path, new_contents):
+  def __init__(self, local_path, new_contents, action='A'):
     self._local_path = local_path
     self._new_contents = new_contents
     self._changed_contents = [(i + 1, l) for i, l in enumerate(new_contents)]
+    self._action = action
+    self._scm_diff = "--- /dev/null\n+++ %s\n@@ -0,0 +1,%d @@\n" % (local_path,
+      len(new_contents))
+    for l in new_contents:
+      self._scm_diff += "+%s\n" % l
+
+  def Action(self):
+    return self._action
 
   def ChangedContents(self):
     return self._changed_contents
@@ -106,6 +116,12 @@ class MockFile(object):
   def LocalPath(self):
     return self._local_path
 
+  def AbsoluteLocalPath(self):
+    return self._local_path
+
+  def GenerateScmDiff(self):
+    return self._scm_diff
+
   def rfind(self, p):
     """os.path.basename is called on MockFile so we need an rfind method."""
     return self._local_path.rfind(p)
@@ -113,6 +129,10 @@ class MockFile(object):
   def __getitem__(self, i):
     """os.path.basename is called on MockFile so we need a get method."""
     return self._local_path[i]
+
+  def __len__(self):
+    """os.path.basename is called on MockFile so we need a len method."""
+    return len(self._local_path)
 
 
 class MockAffectedFile(MockFile):
@@ -131,4 +151,8 @@ class MockChange(object):
     self._changed_files = changed_files
 
   def LocalPaths(self):
+    return self._changed_files
+
+  def AffectedFiles(self, include_dirs=False, include_deletes=True,
+                    file_filter=None):
     return self._changed_files

@@ -5,14 +5,21 @@
 #ifndef DEVICE_BLUETOOTH_BLUETOOTH_DEVICE_WIN_H_
 #define DEVICE_BLUETOOTH_BLUETOOTH_DEVICE_WIN_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_task_manager_win.h"
+#include "net/log/net_log_source.h"
+
+namespace net {
+class NetLog;
+}
 
 namespace device {
 
@@ -28,24 +35,26 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceWin : public BluetoothDevice {
       const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
       const scoped_refptr<BluetoothSocketThread>& socket_thread,
       net::NetLog* net_log,
-      const net::NetLog::Source& net_log_source);
+      const net::NetLogSource& net_log_source);
   ~BluetoothDeviceWin() override;
 
   // BluetoothDevice override
-  uint32 GetBluetoothClass() const override;
+  uint32_t GetBluetoothClass() const override;
   std::string GetAddress() const override;
   VendorIDSource GetVendorIDSource() const override;
-  uint16 GetVendorID() const override;
-  uint16 GetProductID() const override;
-  uint16 GetDeviceID() const override;
+  uint16_t GetVendorID() const override;
+  uint16_t GetProductID() const override;
+  uint16_t GetDeviceID() const override;
+  uint16_t GetAppearance() const override;
+  base::Optional<std::string> GetName() const override;
   bool IsPaired() const override;
   bool IsConnected() const override;
   bool IsGattConnected() const override;
   bool IsConnectable() const override;
   bool IsConnecting() const override;
-  UUIDList GetUUIDs() const override;
-  int16 GetInquiryRSSI() const override;
-  int16 GetInquiryTxPower() const override;
+  UUIDSet GetUUIDs() const override;
+  base::Optional<int8_t> GetInquiryRSSI() const override;
+  base::Optional<int8_t> GetInquiryTxPower() const override;
   bool ExpectingPinCode() const override;
   bool ExpectingPasskey() const override;
   bool ExpectingConfirmation() const override;
@@ -54,7 +63,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceWin : public BluetoothDevice {
                const base::Closure& callback,
                const ConnectErrorCallback& error_callback) override;
   void SetPinCode(const std::string& pincode) override;
-  void SetPasskey(uint32 passkey) override;
+  void SetPasskey(uint32_t passkey) override;
   void ConfirmPairing() override;
   void RejectPairing() override;
   void CancelPairing() override;
@@ -89,7 +98,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceWin : public BluetoothDevice {
 
  protected:
   // BluetoothDevice override
-  std::string GetDeviceName() const override;
   void CreateGattConnectionImpl() override;
   void DisconnectGatt() override;
 
@@ -105,17 +113,33 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceWin : public BluetoothDevice {
   // Updates the services with services stored in |device_state|.
   void UpdateServices(const BluetoothTaskManagerWin::DeviceState& device_state);
 
+  // Checks if GATT service with |uuid| and |attribute_handle| has already been
+  // discovered.
+  bool IsGattServiceDiscovered(BluetoothUUID& uuid, uint16_t attribute_handle);
+
+  // Checks if |service| still exist on device according to newly discovered
+  // |service_state|.
+  bool DoesGattServiceExist(
+      const ScopedVector<BluetoothTaskManagerWin::ServiceRecordState>&
+          service_state,
+      BluetoothRemoteGattService* service);
+
+  // Updates the GATT services with the services stored in |service_state|.
+  void UpdateGattServices(
+      const ScopedVector<BluetoothTaskManagerWin::ServiceRecordState>&
+          service_state);
+
   scoped_refptr<base::SequencedTaskRunner> ui_task_runner_;
   scoped_refptr<BluetoothSocketThread> socket_thread_;
   net::NetLog* net_log_;
-  net::NetLog::Source net_log_source_;
+  net::NetLogSource net_log_source_;
 
   // The Bluetooth class of the device, a bitmask that may be decoded using
   // https://www.bluetooth.org/Technical/AssignedNumbers/baseband.htm
-  uint32 bluetooth_class_;
+  uint32_t bluetooth_class_;
 
   // The name of the device, as supplied by the remote device.
-  std::string name_;
+  base::Optional<std::string> name_;
 
   // The Bluetooth address of the device.
   std::string address_;
@@ -130,7 +154,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceWin : public BluetoothDevice {
   bool visible_;
 
   // The services (identified by UUIDs) that this device provides.
-  UUIDList uuids_;
+  UUIDSet uuids_;
 
   // The service records retrieved from SDP.
   ServiceRecordList service_record_list_;

@@ -6,7 +6,7 @@
 #define InspectorHighlight_h
 
 #include "core/CoreExport.h"
-#include "core/InspectorTypeBuilder.h"
+#include "core/inspector/protocol/DOM.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/geometry/LayoutRect.h"
 #include "platform/graphics/Color.h"
@@ -15,57 +15,72 @@
 namespace blink {
 
 class Color;
-class JSONValue;
 
 struct CORE_EXPORT InspectorHighlightConfig {
-    USING_FAST_MALLOC(InspectorHighlightConfig);
-public:
-    InspectorHighlightConfig();
+  USING_FAST_MALLOC(InspectorHighlightConfig);
 
-    Color content;
-    Color contentOutline;
-    Color padding;
-    Color border;
-    Color margin;
-    Color eventTarget;
-    Color shape;
-    Color shapeMargin;
+ public:
+  InspectorHighlightConfig();
 
-    bool showInfo;
-    bool showRulers;
-    bool showExtensionLines;
-    bool displayAsMaterial;
+  Color content;
+  Color contentOutline;
+  Color padding;
+  Color border;
+  Color margin;
+  Color eventTarget;
+  Color shape;
+  Color shapeMargin;
 
-    String selectorList;
+  bool showInfo;
+  bool showRulers;
+  bool showExtensionLines;
+  bool displayAsMaterial;
+
+  String selectorList;
 };
 
 class CORE_EXPORT InspectorHighlight {
-    STACK_ALLOCATED();
-public:
-    InspectorHighlight(Node*, const InspectorHighlightConfig&, bool appendElementInfo);
-    InspectorHighlight();
-    ~InspectorHighlight();
+  STACK_ALLOCATED();
 
-    static bool getBoxModel(Node*, RefPtr<TypeBuilder::DOM::BoxModel>&);
-    static InspectorHighlightConfig defaultConfig();
-    static bool buildNodeQuads(Node*, FloatQuad* content, FloatQuad* padding, FloatQuad* border, FloatQuad* margin);
+ public:
+  InspectorHighlight(Node*,
+                     const InspectorHighlightConfig&,
+                     bool appendElementInfo);
+  explicit InspectorHighlight(float scale);
+  ~InspectorHighlight();
 
-    void appendPath(PassRefPtr<JSONArrayBase> path, const Color& fillColor, const Color& outlineColor, const String& name = String());
-    void appendQuad(const FloatQuad&, const Color& fillColor, const Color& outlineColor = Color::transparent, const String& name = String());
-    void appendEventTargetQuads(Node* eventTargetNode, const InspectorHighlightConfig&);
-    PassRefPtr<JSONObject> asJSONObject() const;
+  static bool getBoxModel(Node*, std::unique_ptr<protocol::DOM::BoxModel>*);
+  static InspectorHighlightConfig defaultConfig();
+  static bool buildNodeQuads(Node*,
+                             FloatQuad* content,
+                             FloatQuad* padding,
+                             FloatQuad* border,
+                             FloatQuad* margin);
 
-private:
-    void appendNodeHighlight(Node*, const InspectorHighlightConfig&);
-    void appendPathsForShapeOutside(Node*, const InspectorHighlightConfig&);
+  void appendPath(std::unique_ptr<protocol::ListValue> path,
+                  const Color& fillColor,
+                  const Color& outlineColor,
+                  const String& name = String());
+  void appendQuad(const FloatQuad&,
+                  const Color& fillColor,
+                  const Color& outlineColor = Color::transparent,
+                  const String& name = String());
+  void appendEventTargetQuads(Node* eventTargetNode,
+                              const InspectorHighlightConfig&);
+  std::unique_ptr<protocol::DictionaryValue> asProtocolValue() const;
 
-    RefPtr<JSONObject> m_elementInfo;
-    RefPtr<JSONArray> m_highlightPaths;
-    bool m_showRulers;
-    bool m_showExtensionLines;
-    bool m_displayAsMaterial;
+ private:
+  void appendNodeHighlight(Node*, const InspectorHighlightConfig&);
+  void appendPathsForShapeOutside(Node*, const InspectorHighlightConfig&);
+
+  std::unique_ptr<protocol::DictionaryValue> m_elementInfo;
+  std::unique_ptr<protocol::ListValue> m_highlightPaths;
+  bool m_showRulers;
+  bool m_showExtensionLines;
+  bool m_displayAsMaterial;
+  float m_scale;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InspectorHighlight_h
+#endif  // InspectorHighlight_h

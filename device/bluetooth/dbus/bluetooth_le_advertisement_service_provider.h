@@ -8,14 +8,13 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "dbus/bus.h"
-#include "dbus/file_descriptor.h"
 #include "dbus/object_path.h"
 #include "device/bluetooth/bluetooth_export.h"
 
@@ -56,15 +55,15 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothLEAdvertisementServiceProvider {
   // the object onto, |object_path| is the object path that it should have
   // and |delegate| is the object to which all method calls will be passed
   // and responses generated from.
-  static scoped_ptr<BluetoothLEAdvertisementServiceProvider> Create(
+  static std::unique_ptr<BluetoothLEAdvertisementServiceProvider> Create(
       dbus::Bus* bus,
       const dbus::ObjectPath& object_path,
       Delegate* delegate,
       AdvertisementType type,
-      scoped_ptr<UUIDList> service_uuids,
-      scoped_ptr<ManufacturerData> manufacturer_data,
-      scoped_ptr<UUIDList> solicit_uuids,
-      scoped_ptr<ServiceData> service_data);
+      std::unique_ptr<UUIDList> service_uuids,
+      std::unique_ptr<ManufacturerData> manufacturer_data,
+      std::unique_ptr<UUIDList> solicit_uuids,
+      std::unique_ptr<ServiceData> service_data);
 
  protected:
   BluetoothLEAdvertisementServiceProvider();

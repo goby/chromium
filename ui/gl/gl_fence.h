@@ -5,10 +5,10 @@
 #ifndef UI_GL_GL_FENCE_H_
 #define UI_GL_GL_FENCE_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "ui/gl/gl_export.h"
 
-namespace gfx {
+namespace gl {
 
 class GL_EXPORT GLFence {
  public:
@@ -25,10 +25,19 @@ class GL_EXPORT GLFence {
   // client.
   virtual void ServerWait() = 0;
 
+  // Returns true if re-setting state is supported.
+  virtual bool ResetSupported();
+
+  // Resets the fence to the original state.
+  virtual void ResetState();
+
+  // Loses the reference to the fence. Useful if the context is lost.
+  virtual void Invalidate();
+
  private:
   DISALLOW_COPY_AND_ASSIGN(GLFence);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_FENCE_H_

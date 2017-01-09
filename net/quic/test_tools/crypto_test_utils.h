@@ -6,16 +6,18 @@
 #define NET_QUIC_TEST_TOOLS_CRYPTO_TEST_UTILS_H_
 
 #include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
-#include "net/quic/crypto/crypto_framer.h"
-#include "net/quic/quic_framer.h"
-#include "net/quic/quic_protocol.h"
+#include "net/quic/core/crypto/crypto_framer.h"
+#include "net/quic/core/quic_framer.h"
+#include "net/quic/core/quic_packets.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 
 namespace net {
@@ -58,16 +60,17 @@ class CryptoTestUtils {
   // server in HandshakeWithFakeServer.
   struct FakeServerOptions {
     FakeServerOptions();
+    ~FakeServerOptions();
 
-    // If token_binding_enabled is true, then the server will attempt to
-    // negotiate Token Binding.
-    bool token_binding_enabled;
+    // The Token Binding params that the server supports and will negotiate.
+    QuicTagVector token_binding_params;
   };
 
   // FakeClientOptions bundles together a number of options for configuring
   // HandshakeWithFakeClient.
   struct FakeClientOptions {
     FakeClientOptions();
+    ~FakeClientOptions();
 
     // If channel_id_enabled is true then the client will attempt to send a
     // ChannelID.
@@ -77,74 +80,84 @@ class CryptoTestUtils {
     // ChannelIDSource for testing. Ignored if channel_id_enabled is false.
     bool channel_id_source_async;
 
-    // If token_binding_enabled is true, then the client will attempt to
-    // negotiate Token Binding.
-    bool token_binding_enabled;
+    // The Token Binding params that the client supports and will negotiate.
+    QuicTagVector token_binding_params;
   };
 
   // returns: the number of client hellos that the client sent.
-  static int HandshakeWithFakeServer(MockConnectionHelper* helper,
+  static int HandshakeWithFakeServer(QuicConfig* server_quic_config,
+                                     MockQuicConnectionHelper* helper,
+                                     MockAlarmFactory* alarm_factory,
                                      PacketSavingConnection* client_conn,
                                      QuicCryptoClientStream* client,
                                      const FakeServerOptions& options);
 
   // returns: the number of client hellos that the client sent.
-  static int HandshakeWithFakeClient(MockConnectionHelper* helper,
+  static int HandshakeWithFakeClient(MockQuicConnectionHelper* helper,
+                                     MockAlarmFactory* alarm_factory,
                                      PacketSavingConnection* server_conn,
                                      QuicCryptoServerStream* server,
                                      const QuicServerId& server_id,
                                      const FakeClientOptions& options);
 
-  // SetupCryptoServerConfigForTest configures |config| and |crypto_config|
+  // SetupCryptoServerConfigForTest configures |crypto_config|
   // with sensible defaults for testing.
   static void SetupCryptoServerConfigForTest(
       const QuicClock* clock,
       QuicRandom* rand,
-      QuicConfig* config,
       QuicCryptoServerConfig* crypto_config,
       const FakeServerOptions& options);
 
-  // CommunicateHandshakeMessages moves messages from |a| to |b| and back until
-  // |a|'s handshake has completed.
-  static void CommunicateHandshakeMessages(PacketSavingConnection* a_conn,
-                                           QuicCryptoStream* a,
-                                           PacketSavingConnection* b_conn,
-                                           QuicCryptoStream* b);
+  // CommunicateHandshakeMessages moves messages from |client| to |server| and
+  // back until |clients|'s handshake has completed.
+  static void CommunicateHandshakeMessages(PacketSavingConnection* client_conn,
+                                           QuicCryptoStream* client,
+                                           PacketSavingConnection* server_conn,
+                                           QuicCryptoStream* server);
 
-  // CommunicateHandshakeMessagesAndRunCallbacks moves messages from |a| to |b|
-  // and back until |a|'s handshake has completed. If |callback_source| is not
-  // nullptr, CommunicateHandshakeMessagesAndRunCallbacks also runs callbacks
-  // from
+  // CommunicateHandshakeMessagesAndRunCallbacks moves messages from |client|
+  // to |server| and back until |client|'s handshake has completed. If
+  // |callback_source| is not nullptr,
+  // CommunicateHandshakeMessagesAndRunCallbacks also runs callbacks from
   // |callback_source| between processing messages.
   static void CommunicateHandshakeMessagesAndRunCallbacks(
-      PacketSavingConnection* a_conn,
-      QuicCryptoStream* a,
-      PacketSavingConnection* b_conn,
-      QuicCryptoStream* b,
+      PacketSavingConnection* client_conn,
+      QuicCryptoStream* client,
+      PacketSavingConnection* server_conn,
+      QuicCryptoStream* server,
       CallbackSource* callback_source);
 
-  // AdvanceHandshake attempts to moves messages from |a| to |b| and |b| to |a|.
-  // Returns the number of messages moved.
+  // AdvanceHandshake attempts to moves messages from |client| to |server| and
+  // |server| to |client|. Returns the number of messages moved.
   static std::pair<size_t, size_t> AdvanceHandshake(
-      PacketSavingConnection* a_conn,
-      QuicCryptoStream* a,
-      size_t a_i,
-      PacketSavingConnection* b_conn,
-      QuicCryptoStream* b,
-      size_t b_i);
+      PacketSavingConnection* client_conn,
+      QuicCryptoStream* client,
+      size_t client_i,
+      PacketSavingConnection* server_conn,
+      QuicCryptoStream* server,
+      size_t server_i);
 
   // Returns the value for the tag |tag| in the tag value map of |message|.
   static std::string GetValueForTag(const CryptoHandshakeMessage& message,
                                     QuicTag tag);
 
-  // Returns a |ProofSource| that serves up test certificates.
-  static ProofSource* ProofSourceForTesting();
+  // Returns a new |ProofSource| that serves up test certificates.
+  static std::unique_ptr<ProofSource> ProofSourceForTesting();
 
-  // Returns a |ProofVerifier| that uses the QUIC testing root CA.
-  static ProofVerifier* ProofVerifierForTesting();
+  // Identical to |ProofSourceForTesting|, with the addition of setting
+  // the |emit_expect_ct_header| field on the test certificates
+  // to be the value of |send_expect_ct_header|.
+  static std::unique_ptr<ProofSource> ProofSourceForTesting(
+      bool send_expect_ct_header);
+
+  // Returns a new |ProofVerifier| that uses the QUIC testing root CA.
+  static std::unique_ptr<ProofVerifier> ProofVerifierForTesting();
 
   // Returns a real ProofVerifier (not a fake proof verifier) for testing.
-  static ProofVerifier* RealProofVerifierForTesting();
+  static std::unique_ptr<ProofVerifier> RealProofVerifierForTesting();
+
+  // Returns a hash of the leaf test certificate.
+  static uint64_t LeafCertHashForTesting();
 
   // Returns a |ProofVerifyContext| that must be used with the verifier
   // returned by |ProofVerifierForTesting|.
@@ -153,8 +166,14 @@ class CryptoTestUtils {
   // MockCommonCertSets returns a CommonCertSets that contains a single set with
   // hash |hash|, consisting of the certificate |cert| at index |index|.
   static CommonCertSets* MockCommonCertSets(base::StringPiece cert,
-                                            uint64 hash,
-                                            uint32 index);
+                                            uint64_t hash,
+                                            uint32_t index);
+
+  // Creates a minimal dummy reject message that will pass the client-config
+  // validation tests. This will include a server config, but no certs, proof
+  // source address token, or server nonce.
+  static void FillInDummyReject(CryptoHandshakeMessage* rej,
+                                bool reject_is_stateless);
 
   // ParseTag returns a QuicTag from parsing |tagstr|. |tagstr| may either be
   // in the format "EXMP" (i.e. ASCII format), or "#11223344" (an explicit hex
@@ -188,11 +207,39 @@ class CryptoTestUtils {
   static void MovePackets(PacketSavingConnection* source_conn,
                           size_t* inout_packet_index,
                           QuicCryptoStream* dest_stream,
-                          PacketSavingConnection* dest_conn);
+                          PacketSavingConnection* dest_conn,
+                          Perspective dest_perspective);
+
+  // Return an inchoate CHLO with some basic tag value std:pairs.
+  static CryptoHandshakeMessage GenerateDefaultInchoateCHLO(
+      const QuicClock* clock,
+      QuicVersion version,
+      QuicCryptoServerConfig* crypto_config);
+
+  // Takes a inchoate CHLO, returns a full CHLO in |out| which can pass
+  // |crypto_config|'s validation.
+  static void GenerateFullCHLO(
+      const CryptoHandshakeMessage& inchoate_chlo,
+      QuicCryptoServerConfig* crypto_config,
+      QuicSocketAddress server_addr,
+      QuicSocketAddress client_addr,
+      QuicVersion version,
+      const QuicClock* clock,
+      scoped_refptr<QuicSignedServerConfig> signed_config,
+      QuicCompressedCertsCache* compressed_certs_cache,
+      CryptoHandshakeMessage* out);
 
  private:
   static void CompareClientAndServerKeys(QuicCryptoClientStream* client,
                                          QuicCryptoServerStream* server);
+
+  // Return a CHLO nonce in hexadecimal.
+  static std::string GenerateClientNonceHex(
+      const QuicClock* clock,
+      QuicCryptoServerConfig* crypto_config);
+
+  // Return a CHLO PUBS in hexadecimal.
+  static std::string GenerateClientPublicValuesHex();
 
   DISALLOW_COPY_AND_ASSIGN(CryptoTestUtils);
 };

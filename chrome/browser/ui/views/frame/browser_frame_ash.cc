@@ -4,14 +4,16 @@
 
 #include "chrome/browser/ui/views/frame/browser_frame_ash.h"
 
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm/window_state_delegate.h"
 #include "ash/shell.h"
 #include "ash/wm/window_properties.h"
-#include "ash/wm/window_state.h"
-#include "ash/wm/window_state_delegate.h"
+#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/views/frame/browser_shutdown.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
@@ -61,9 +63,8 @@ BrowserFrameAsh::BrowserFrameAsh(BrowserFrame* browser_frame,
   Browser* browser = browser_view->browser();
   ash::wm::WindowState* window_state =
       ash::wm::GetWindowState(GetNativeWindow());
-  window_state->SetDelegate(
-      scoped_ptr<ash::wm::WindowStateDelegate>(
-          new BrowserWindowStateDelegate(browser)).Pass());
+  window_state->SetDelegate(std::unique_ptr<ash::wm::WindowStateDelegate>(
+      new BrowserWindowStateDelegate(browser)));
 
   // Turn on auto window management if we don't need an explicit bounds.
   // This way the requested bounds are honored.
@@ -80,14 +81,6 @@ BrowserFrameAsh::BrowserFrameAsh(BrowserFrame* browser_frame,
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserFrameAsh, views::NativeWidgetAura overrides:
 
-void BrowserFrameAsh::OnWindowDestroying(aura::Window* window) {
-  // Destroy any remaining WebContents early on. Doing so may result in
-  // calling back to one of the Views/LayoutManagers or supporting classes of
-  // BrowserView. By destroying here we ensure all said classes are valid.
-  DestroyBrowserWebContents(browser_view_->browser());
-  NativeWidgetAura::OnWindowDestroying(window);
-}
-
 void BrowserFrameAsh::OnWindowTargetVisibilityChanged(bool visible) {
   if (visible) {
     // Once the window has been shown we know the requested bounds
@@ -96,6 +89,9 @@ void BrowserFrameAsh::OnWindowTargetVisibilityChanged(bool visible) {
   }
   views::NativeWidgetAura::OnWindowTargetVisibilityChanged(visible);
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// BrowserFrameAsh, NativeBrowserFrame implementation:
 
 bool BrowserFrameAsh::ShouldSaveWindowPlacement() const {
   return nullptr == GetWidget()->GetNativeWindow()->GetProperty(
@@ -137,8 +133,15 @@ void BrowserFrameAsh::GetWindowPlacement(
   }
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// BrowserFrameAsh, NativeBrowserFrame implementation:
+bool BrowserFrameAsh::PreHandleKeyboardEvent(
+    const content::NativeWebKeyboardEvent& event) {
+  return false;
+}
+
+bool BrowserFrameAsh::HandleKeyboardEvent(
+    const content::NativeWebKeyboardEvent& event) {
+  return false;
+}
 
 views::Widget::InitParams BrowserFrameAsh::GetWidgetParams() {
   views::Widget::InitParams params;

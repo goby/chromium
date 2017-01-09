@@ -2,19 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/html/CrossOriginAttribute.h"
 
 namespace blink {
 
-CrossOriginAttributeValue crossOriginAttributeValue(const String& value)
-{
-    if (value.isNull())
-        return CrossOriginAttributeNotSet;
-    if (equalIgnoringCase(value, "use-credentials"))
-        return CrossOriginAttributeUseCredentials;
-    return CrossOriginAttributeAnonymous;
+CrossOriginAttributeValue crossOriginAttributeValue(const String& value) {
+  if (value.isNull())
+    return CrossOriginAttributeNotSet;
+  if (equalIgnoringCase(value, "use-credentials"))
+    return CrossOriginAttributeUseCredentials;
+  return CrossOriginAttributeAnonymous;
 }
 
-} // namespace blink
-
+}  // namespace blink

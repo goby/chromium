@@ -1,3 +1,9 @@
+CONSOLE WARNING: line 24: The specified value "foo" is not a valid number. The value must match to the following regular expression: -?(\d+|\d+\.\d+|\.\d+)([eE][-+]?\d+)?
+CONSOLE WARNING: line 24: The specified value "foo" is not a valid number. The value must match to the following regular expression: -?(\d+|\d+\.\d+|\.\d+)([eE][-+]?\d+)?
+CONSOLE WARNING: line 24: The specified value "foo" is not a valid number. The value must match to the following regular expression: -?(\d+|\d+\.\d+|\.\d+)([eE][-+]?\d+)?
+CONSOLE WARNING: line 24: The specified value "foo" is not a valid number. The value must match to the following regular expression: -?(\d+|\d+\.\d+|\.\d+)([eE][-+]?\d+)?
+CONSOLE WARNING: line 24: The specified value "foo" is not a valid number. The value must match to the following regular expression: -?(\d+|\d+\.\d+|\.\d+)([eE][-+]?\d+)?
+CONSOLE WARNING: line 24: The specified value "foo" is not a valid number. The value must match to the following regular expression: -?(\d+|\d+\.\d+|\.\d+)([eE][-+]?\d+)?
 Check stepping-up and -down for number input from renderer.
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -40,10 +46,12 @@ PASS stepDown("1", "1", "0") is "0"
 PASS stepDown("0", "1", "0") is "0"
 PASS stepDown("1", "1", "0", 2) is "0"
 PASS stepDown("1", "1.797693134862315e+308", "", 2) is "-1.797693134862315e+308"
+PASS stepDown("136.01", "0.1", "136.01") is "136.01"
 PASS stepUp("-1", "1", "0") is "0"
 PASS stepUp("0", "1", "0") is "0"
 PASS stepUp("-1", "1", "0", 2) is "0"
 PASS stepUp("1", "1.797693134862315e+308", "", 2) is "1.797693134862315e+308"
+PASS stepUp("136.01", "0.1", "136.01") is "136.01"
 stepDown()/stepUp() for stepMismatch values
 PASS stepUp("1", "2", "") is "2"
 PASS input.min = "0"; stepUp("9", "10", "") is "10"

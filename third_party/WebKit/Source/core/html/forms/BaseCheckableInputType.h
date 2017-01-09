@@ -32,36 +32,41 @@
 #define BaseCheckableInputType_h
 
 #include "core/html/forms/InputType.h"
+#include "core/html/forms/InputTypeView.h"
 
 namespace blink {
 
 // Base of checkbox and radio types.
-class BaseCheckableInputType : public InputType {
-protected:
-    BaseCheckableInputType(HTMLInputElement& element)
-        : InputType(element)
-        , m_isInClickHandler(false)
-    {
-    }
-    void handleKeydownEvent(KeyboardEvent*) override;
+class BaseCheckableInputType : public InputType, public InputTypeView {
+  USING_GARBAGE_COLLECTED_MIXIN(BaseCheckableInputType);
 
-    bool m_isInClickHandler;
+ public:
+  DECLARE_VIRTUAL_TRACE();
+  using InputType::element;
 
-private:
-    FormControlState saveFormControlState() const final;
-    void restoreFormControlState(const FormControlState&) final;
-    void appendToFormData(FormData&) const final;
-    void handleKeypressEvent(KeyboardEvent*) final;
-    bool canSetStringValue() const final;
-    void accessKeyAction(bool sendMouseEvents) final;
-    String fallbackValue() const final;
-    bool storesValueSeparateFromAttribute() final;
-    void setValue(const String&, bool, TextFieldEventBehavior) final;
-    void readingChecked() const final;
-    bool isCheckable() final;
-    bool shouldDispatchFormControlChangeEvent(String&, String&) override;
+ protected:
+  BaseCheckableInputType(HTMLInputElement& element)
+      : InputType(element), InputTypeView(element), m_isInClickHandler(false) {}
+  void handleKeydownEvent(KeyboardEvent*) override;
+
+  bool m_isInClickHandler;
+
+ private:
+  InputTypeView* createView() override;
+  FormControlState saveFormControlState() const final;
+  void restoreFormControlState(const FormControlState&) final;
+  void appendToFormData(FormData&) const final;
+  void handleKeypressEvent(KeyboardEvent*) final;
+  bool canSetStringValue() const final;
+  void accessKeyAction(bool sendMouseEvents) final;
+  bool matchesDefaultPseudoClass() override;
+  ValueMode valueMode() const override;
+  void setValue(const String&, bool, TextFieldEventBehavior) final;
+  void readingChecked() const final;
+  bool isCheckable() final;
+  bool shouldDispatchFormControlChangeEvent(String&, String&) override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // BaseCheckableInputType_h
+#endif  // BaseCheckableInputType_h

@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_ANDROID_DOM_DISTILLER_DISTILLER_UI_HANDLE_ANDROID_H_
 #define CHROME_BROWSER_ANDROID_DOM_DISTILLER_DISTILLER_UI_HANDLE_ANDROID_H_
 
+#include "base/macros.h"
 #include "components/dom_distiller/content/browser/distiller_ui_handle.h"
 #include "content/public/browser/web_contents.h"
 
@@ -29,9 +30,6 @@ class DistillerUIHandleAndroid : public DistillerUIHandle {
  private:
   DISALLOW_COPY_AND_ASSIGN(DistillerUIHandleAndroid);
 };
-
-// Registers the FeedbackReporter's native methods through JNI.
-bool RegisterUIHandle(JNIEnv* env);
 
 }  // namespace android
 

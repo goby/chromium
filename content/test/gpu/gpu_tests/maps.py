@@ -15,9 +15,10 @@ from gpu_tests import maps_expectations
 from gpu_tests import path_util
 
 from telemetry.core import util
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry import story as story_module
 from telemetry.story import story_set as story_set_module
+
 
 class MapsValidator(cloud_storage_test_base.ValidatorBase):
   def __init__(self):
@@ -36,15 +37,25 @@ class MapsValidator(cloud_storage_test_base.ValidatorBase):
     MapsValidator.SpinWaitOnRAF(tab, 3)
 
     if not tab.screenshot_supported:
-      raise page_test.Failure('Browser does not support screenshot capture')
+      raise legacy_page_test.Failure(
+          'Browser does not support screenshot capture')
     screenshot = tab.Screenshot(5)
     if screenshot is None:
-      raise page_test.Failure('Could not capture screenshot')
+      raise legacy_page_test.Failure('Could not capture screenshot')
 
     dpr = tab.EvaluateJavaScript('window.devicePixelRatio')
+    print 'Maps\' devicePixelRatio is ' + str(dpr)
+    # Even though the Maps test uses a fixed devicePixelRatio so that
+    # it fetches all of the map tiles at the same resolution, on two
+    # different devices with the same devicePixelRatio (a Retina
+    # MacBook Pro and a Nexus 9), different scale factors of the final
+    # screenshot are observed. Hack around this by specifying a scale
+    # factor for these bots in the test expectations. This relies on
+    # the test-machine-name argument being specified on the command
+    # line.
     expected = self._ReadPixelExpectations(page)
     self._ValidateScreenshotSamples(
-        page.display_name, screenshot, expected, dpr)
+        tab, page.display_name, screenshot, expected, dpr)
 
   @staticmethod
   def SpinWaitOnRAF(tab, iterations, timeout=60):
@@ -79,13 +90,13 @@ class MapsValidator(cloud_storage_test_base.ValidatorBase):
 class MapsPage(gpu_test_base.PageBase):
   def __init__(self, story_set, base_dir, expectations):
     super(MapsPage, self).__init__(
-        url='http://localhost:10020/tracker.html',
+        url='http://map-test/performance.html',
         page_set=story_set,
         base_dir=base_dir,
-        name='Maps.maps_002',
+        name='Maps.maps_004',
         make_javascript_deterministic=False,
         expectations=expectations)
-    self.pixel_expectations = 'data/maps_002_expectations.json'
+    self.pixel_expectations = 'data/maps_004_expectations.json'
 
   def RunNavigateSteps(self, action_runner):
     super(MapsPage, self).RunNavigateSteps(action_runner)
@@ -93,8 +104,33 @@ class MapsPage(gpu_test_base.PageBase):
         'window.testDone', timeout_in_seconds=180)
 
 
-class Maps(cloud_storage_test_base.TestBase):
-  """Google Maps pixel tests."""
+class Maps(cloud_storage_test_base.CloudStorageTestBase):
+  """Google Maps pixel tests.
+
+  Note: the WPR for this test was recorded from the smoothness.maps
+  benchmark's similar page. The Maps team gave us a build of their
+  test. The only modification to the test was to config.js, where the
+  width and height query args were set to 800 by 600. The WPR was
+  recorded with:
+
+  tools/perf/record_wpr smoothness_maps --browser=system
+
+  This would produce maps_???.wpr and maps.json were copied from
+  tools/perf/page_sets/data into content/test/gpu/page_sets/data.
+  It worths noting that telemetry no longer allows replaying URL that has form
+  of local host. If the recording was created for locahost URL, ones can update
+  the host name by running:
+    web-page-replay/httparchive.py remap-host maps_004.wpr \
+    localhost:10020 map-test
+  (web-page-replay/ can be found in third_party/catapult/telemetry/third_party/)
+  After update the host name in WPR archive, please remember to update the host
+  URL in content/test/gpu/gpu_tests/maps.py as well.
+
+  To upload the maps_???.wpr to cloud storage, one would run:
+    depot_tools/upload_to_google_storage.py --bucket=chromium-telemetry \
+    maps_???.wpr
+  The same sha1 file and json file need to be copied into both of these
+  directories in any CL which updates the recording."""
   test = MapsValidator
 
   @classmethod

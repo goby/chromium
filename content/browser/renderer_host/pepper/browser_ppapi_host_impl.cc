@@ -4,7 +4,8 @@
 
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 
-#include "base/metrics/sparse_histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/browser/renderer_host/pepper/pepper_message_filter.h"
 #include "content/browser/tracing/trace_message_filter.h"
 #include "content/common/pepper_renderer_instance_data.h"
@@ -60,7 +61,7 @@ BrowserPpapiHostImpl::BrowserPpapiHostImpl(
       external_plugin_(external_plugin),
       ssl_context_helper_(new SSLContextHelper()) {
   message_filter_ = new HostMessageFilter(ppapi_host_.get(), this);
-  ppapi_host_->AddHostFactoryFilter(scoped_ptr<ppapi::host::HostFactory>(
+  ppapi_host_->AddHostFactoryFilter(std::unique_ptr<ppapi::host::HostFactory>(
       new ContentBrowserPepperHostFactory(this)));
 }
 
@@ -70,8 +71,8 @@ BrowserPpapiHostImpl::~BrowserPpapiHostImpl() {
 
   // Notify instance observers about our impending destruction.
   for (auto& instance_data : instance_map_) {
-    FOR_EACH_OBSERVER(InstanceObserver, instance_data.second->observer_list,
-                      OnHostDestroyed());
+    for (auto& observer : instance_data.second->observer_list)
+      observer.OnHostDestroyed();
   }
 
   // Delete the host explicitly first. This shutdown will destroy the
@@ -154,7 +155,7 @@ void BrowserPpapiHostImpl::AddInstance(
     const PepperRendererInstanceData& renderer_instance_data) {
   DCHECK(!instance_map_.contains(instance));
   instance_map_.add(instance,
-                    make_scoped_ptr(new InstanceData(renderer_instance_data)));
+                    base::MakeUnique<InstanceData>(renderer_instance_data));
 }
 
 void BrowserPpapiHostImpl::DeleteInstance(PP_Instance instance) {
@@ -179,8 +180,8 @@ void BrowserPpapiHostImpl::OnThrottleStateChanged(PP_Instance instance,
   auto* data = instance_map_.get(instance);
   if (data) {
     data->is_throttled = is_throttled;
-    FOR_EACH_OBSERVER(InstanceObserver, data->observer_list,
-                      OnThrottleStateChanged(is_throttled));
+    for (auto& observer : data->observer_list)
+      observer.OnThrottleStateChanged(is_throttled);
   }
 }
 
@@ -211,7 +212,7 @@ bool BrowserPpapiHostImpl::HostMessageFilter::OnMessageReceived(
   IPC_MESSAGE_HANDLER(PpapiHostMsg_LogInterfaceUsage,
                       OnHostMsgLogInterfaceUsage)
   IPC_MESSAGE_UNHANDLED(handled = ppapi_host_->OnMessageReceived(msg))
-  IPC_END_MESSAGE_MAP();
+  IPC_END_MESSAGE_MAP()
   return handled;
 }
 

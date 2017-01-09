@@ -7,9 +7,9 @@ import("//third_party/protobuf/proto_library.gni")
 # These values are duplicated in the GYP build in:
 # //components/precache/precache_defines.gypi
 precache_config_settings_url =
-    "http://www.gstatic.com/chrome/wifiprefetch/precache_config"
+    "https://www.gstatic.com/chrome/wifiprefetch/precache_config"
 precache_manifest_url_prefix =
-    "http://www.gstatic.com/chrome/wifiprefetch/hosts/"
+    "https://www.gstatic.com/chrome/wifiprefetch/hosts/"
 
 config("precache_config") {
   defines = [
@@ -18,12 +18,17 @@ config("precache_config") {
   ]
 }
 
-source_set("core") {
+static_library("core") {
   sources = [
+    "fetcher_pool.h",
     "precache_database.cc",
     "precache_database.h",
     "precache_fetcher.cc",
     "precache_fetcher.h",
+    "precache_referrer_host_table.cc",
+    "precache_referrer_host_table.h",
+    "precache_session_table.cc",
+    "precache_session_table.h",
     "precache_switches.cc",
     "precache_switches.h",
     "precache_url_table.cc",
@@ -38,8 +43,9 @@ source_set("core") {
   deps = [
     ":proto",
     "//base",
-    "//base:prefs",
+    "//components/data_use_measurement/core",
     "//components/history/core/browser",
+    "//components/prefs",
     "//net",
     "//sql",
     "//url",
@@ -49,14 +55,20 @@ source_set("core") {
 proto_library("proto") {
   sources = [
     "proto/precache.proto",
+    "proto/quota.proto",
+    "proto/timestamp.proto",
+    "proto/unfinished_work.proto",
   ]
 }
 
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "fetcher_pool_unittest.cc",
     "precache_database_unittest.cc",
     "precache_fetcher_unittest.cc",
+    "precache_referrer_host_table_unittest.cc",
+    "precache_session_table_unittest.cc",
     "precache_url_table_unittest.cc",
   ]
 

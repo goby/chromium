@@ -4,13 +4,16 @@
 
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 
-#include <vector>
+#include <stdint.h>
+
+#include <string>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
-#include "chrome/browser/chromeos/policy/enterprise_install_attributes.h"
+#include "chrome/browser/chromeos/settings/install_attributes.h"
 #include "chrome/common/chrome_paths.h"
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -35,15 +38,14 @@ void DevicePolicyCrosTestHelper::MarkAsEnterpriseOwnedBy(
   OverridePaths();
 
   const std::string install_attrs_blob(
-      EnterpriseInstallAttributes::
+      chromeos::InstallAttributes::
           GetEnterpriseOwnedInstallAttributesBlobForTesting(user_name));
 
   base::FilePath install_attrs_file;
   ASSERT_TRUE(
       PathService::Get(chromeos::FILE_INSTALL_ATTRIBUTES, &install_attrs_file));
-  ASSERT_EQ(static_cast<int>(install_attrs_blob.size()),
-            base::WriteFile(install_attrs_file,
-                            install_attrs_blob.c_str(),
+  ASSERT_EQ(base::checked_cast<int>(install_attrs_blob.size()),
+            base::WriteFile(install_attrs_file, install_attrs_blob.c_str(),
                             install_attrs_blob.size()));
 }
 
@@ -56,13 +58,11 @@ void DevicePolicyCrosTestHelper::InstallOwnerKey() {
 
   base::FilePath owner_key_file;
   ASSERT_TRUE(PathService::Get(chromeos::FILE_OWNER_KEY, &owner_key_file));
-  std::vector<uint8> owner_key_bits;
-  ASSERT_TRUE(
-      device_policy()->GetSigningKey()->ExportPublicKey(&owner_key_bits));
-  ASSERT_EQ(base::WriteFile(owner_key_file, reinterpret_cast<const char*>(
-                                                owner_key_bits.data()),
-                            owner_key_bits.size()),
-            static_cast<int>(owner_key_bits.size()));
+  std::string owner_key_bits = device_policy()->GetPublicSigningKeyAsString();
+  ASSERT_FALSE(owner_key_bits.empty());
+  ASSERT_EQ(base::checked_cast<int>(owner_key_bits.length()),
+            base::WriteFile(owner_key_file, owner_key_bits.data(),
+                            owner_key_bits.length()));
 }
 
 // static
@@ -83,9 +83,12 @@ DevicePolicyCrosBrowserTest::~DevicePolicyCrosBrowserTest() {
 }
 
 void DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture() {
+  InstallOwnerKey();
+  MarkAsEnterpriseOwned();
   dbus_setter_ = chromeos::DBusThreadManager::GetSetterForTesting();
   dbus_setter_->SetSessionManagerClient(
-      scoped_ptr<chromeos::SessionManagerClient>(fake_session_manager_client_));
+      std::unique_ptr<chromeos::SessionManagerClient>(
+          fake_session_manager_client_));
   InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
 }
 

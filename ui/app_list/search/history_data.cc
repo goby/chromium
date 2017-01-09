@@ -34,6 +34,7 @@ bool EntrySortByTimeAscending(const EntrySortData& entry1,
 
 HistoryData::Data::Data() {
 }
+HistoryData::Data::Data(const Data& other) = default;
 HistoryData::Data::~Data() {
 }
 
@@ -96,9 +97,9 @@ void HistoryData::Add(const std::string& query, const std::string& result_id) {
   store_->SetSecondary(query, secondary);
 }
 
-scoped_ptr<KnownResults> HistoryData::GetKnownResults(
+std::unique_ptr<KnownResults> HistoryData::GetKnownResults(
     const std::string& query) const {
-  scoped_ptr<KnownResults> results(new KnownResults);
+  std::unique_ptr<KnownResults> results(new KnownResults);
   for (Associations::const_iterator assoc_it = associations_.lower_bound(query);
        assoc_it != associations_.end();
        ++assoc_it) {
@@ -129,7 +130,7 @@ scoped_ptr<KnownResults> HistoryData::GetKnownResults(
     }
   }
 
-  return results.Pass();
+  return results;
 }
 
 void HistoryData::AddObserver(HistoryDataObserver* observer) {
@@ -140,12 +141,12 @@ void HistoryData::RemoveObserver(HistoryDataObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void HistoryData::OnStoreLoaded(scoped_ptr<Associations> loaded_data) {
+void HistoryData::OnStoreLoaded(std::unique_ptr<Associations> loaded_data) {
   if (loaded_data)
     loaded_data->swap(associations_);
 
-  FOR_EACH_OBSERVER(
-      HistoryDataObserver, observers_, OnHistoryDataLoadedFromStore());
+  for (auto& observer : observers_)
+    observer.OnHistoryDataLoadedFromStore();
 }
 
 void HistoryData::TrimEntries() {

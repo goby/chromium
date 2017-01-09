@@ -7,19 +7,20 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/utility/utility_message_handler.h"
 #include "ipc/ipc_platform_file.h"
+#include "printing/features/features.h"
 #include "printing/pdf_render_settings.h"
 
-#if !defined(ENABLE_PRINT_PREVIEW) && !defined(OS_WIN)
-#error "Windows or full printing must be enabled"
+#if !BUILDFLAG(ENABLE_PRINT_PREVIEW) && \
+    !(BUILDFLAG(ENABLE_BASIC_PRINTING) && defined(OS_WIN))
+#error "Windows basic printing or print preview must be enabled"
 #endif
 
 namespace printing {
-class PdfRenderSettings;
+
 struct PwgRasterSettings;
-struct PageRange;
-}
 
 // Dispatches IPCs for printing.
 class PrintingHandler : public UtilityMessageHandler {
@@ -34,18 +35,18 @@ class PrintingHandler : public UtilityMessageHandler {
   // IPC message handlers.
 #if defined(OS_WIN)
   void OnRenderPDFPagesToMetafile(IPC::PlatformFileForTransit pdf_transit,
-                                  const printing::PdfRenderSettings& settings);
+                                  const PdfRenderSettings& settings,
+                                  bool print_text_with_gdi);
   void OnRenderPDFPagesToMetafileGetPage(
       int page_number,
       IPC::PlatformFileForTransit output_file);
   void OnRenderPDFPagesToMetafileStop();
 #endif  // OS_WIN
-#if defined(ENABLE_PRINT_PREVIEW)
-  void OnRenderPDFPagesToPWGRaster(
-      IPC::PlatformFileForTransit pdf_transit,
-      const printing::PdfRenderSettings& settings,
-      const printing::PwgRasterSettings& bitmap_settings,
-      IPC::PlatformFileForTransit bitmap_transit);
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+  void OnRenderPDFPagesToPWGRaster(IPC::PlatformFileForTransit pdf_transit,
+                                   const PdfRenderSettings& settings,
+                                   const PwgRasterSettings& bitmap_settings,
+                                   IPC::PlatformFileForTransit bitmap_transit);
 #endif  // ENABLE_PRINT_PREVIEW
 
 #if defined(OS_WIN)
@@ -54,12 +55,11 @@ class PrintingHandler : public UtilityMessageHandler {
                                base::File output_file,
                                float* scale_factor);
 #endif  // OS_WIN
-#if defined(ENABLE_PRINT_PREVIEW)
-  bool RenderPDFPagesToPWGRaster(
-      base::File pdf_file,
-      const printing::PdfRenderSettings& settings,
-      const printing::PwgRasterSettings& bitmap_settings,
-      base::File bitmap_file);
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+  bool RenderPDFPagesToPWGRaster(base::File pdf_file,
+                                 const PdfRenderSettings& settings,
+                                 const PwgRasterSettings& bitmap_settings,
+                                 base::File bitmap_file);
 
   void OnGetPrinterCapsAndDefaults(const std::string& printer_name);
   void OnGetPrinterSemanticCapsAndDefaults(const std::string& printer_name);
@@ -67,10 +67,12 @@ class PrintingHandler : public UtilityMessageHandler {
 
 #if defined(OS_WIN)
   std::vector<char> pdf_data_;
-  printing::PdfRenderSettings pdf_rendering_settings_;
+  PdfRenderSettings pdf_rendering_settings_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(PrintingHandler);
 };
+
+}  // namespace printing
 
 #endif  // CHROME_UTILITY_PRINTING_HANDLER_H_

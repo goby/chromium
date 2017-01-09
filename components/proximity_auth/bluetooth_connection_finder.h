@@ -5,22 +5,21 @@
 #ifndef COMPONENTS_PROXIMITY_AUTH_BLUETOOTH_CONNECTION_FINDER_H
 #define COMPONENTS_PROXIMITY_AUTH_BLUETOOTH_CONNECTION_FINDER_H
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/bluetooth_util.h"
 #include "components/proximity_auth/connection_finder.h"
 #include "components/proximity_auth/connection_observer.h"
-#include "components/proximity_auth/remote_device.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_uuid.h"
 
 namespace proximity_auth {
-
-class BluetoothConnection;
 
 // This ConnectionFinder implementation tries to find a Bluetooth connection to
 // the remote device by polling at a fixed interval.
@@ -28,7 +27,7 @@ class BluetoothConnectionFinder : public ConnectionFinder,
                                   public ConnectionObserver,
                                   public device::BluetoothAdapter::Observer {
  public:
-  BluetoothConnectionFinder(const RemoteDevice& remote_device,
+  BluetoothConnectionFinder(const cryptauth::RemoteDevice& remote_device,
                             const device::BluetoothUUID& uuid,
                             const base::TimeDelta& polling_interval);
   ~BluetoothConnectionFinder() override;
@@ -38,7 +37,7 @@ class BluetoothConnectionFinder : public ConnectionFinder,
 
  protected:
   // Exposed for mocking out the connection in tests.
-  virtual scoped_ptr<Connection> CreateConnection();
+  virtual std::unique_ptr<Connection> CreateConnection();
 
   // Calls bluetooth_util::SeekDeviceByAddress. Exposed for testing, as this
   // utility function is platform dependent.
@@ -87,7 +86,7 @@ class BluetoothConnectionFinder : public ConnectionFinder,
   void InvokeCallbackAsync();
 
   // The remote device to connect to.
-  const RemoteDevice remote_device_;
+  const cryptauth::RemoteDevice remote_device_;
 
   // The UUID of the service on the remote device.
   const device::BluetoothUUID uuid_;
@@ -105,7 +104,7 @@ class BluetoothConnectionFinder : public ConnectionFinder,
   scoped_refptr<device::BluetoothAdapter> adapter_;
 
   // The Bluetooth connection that will be opened.
-  scoped_ptr<Connection> connection_;
+  std::unique_ptr<Connection> connection_;
 
   // Whether there is currently a polling task scheduled.
   bool has_delayed_poll_scheduled_;

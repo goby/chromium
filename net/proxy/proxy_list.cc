@@ -9,6 +9,9 @@
 #include "base/strings/string_tokenizer.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_server.h"
 
 using base::TimeDelta;
@@ -18,6 +21,8 @@ namespace net {
 
 ProxyList::ProxyList() {
 }
+
+ProxyList::ProxyList(const ProxyList& other) = default;
 
 ProxyList::~ProxyList() {
 }
@@ -142,16 +147,16 @@ std::string ProxyList::ToPacString() const {
   return proxy_list.empty() ? std::string() : proxy_list;
 }
 
-scoped_ptr<base::ListValue> ProxyList::ToValue() const {
-  scoped_ptr<base::ListValue> list(new base::ListValue());
+std::unique_ptr<base::ListValue> ProxyList::ToValue() const {
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   for (size_t i = 0; i < proxies_.size(); ++i)
     list->AppendString(proxies_[i].ToURI());
-  return list.Pass();
+  return list;
 }
 
 bool ProxyList::Fallback(ProxyRetryInfoMap* proxy_retry_info,
                          int net_error,
-                         const BoundNetLog& net_log) {
+                         const NetLogWithSource& net_log) {
   // TODO(eroman): It would be good if instead of removing failed proxies
   // from the list, we simply annotated them with the error code they failed
   // with. Of course, ProxyService::ReconsiderProxyAfterError() would need to
@@ -184,7 +189,7 @@ void ProxyList::AddProxyToRetryList(ProxyRetryInfoMap* proxy_retry_info,
                                     bool try_while_bad,
                                     const ProxyServer& proxy_to_retry,
                                     int net_error,
-                                    const BoundNetLog& net_log) const {
+                                    const NetLogWithSource& net_log) const {
   // Mark this proxy as bad.
   TimeTicks bad_until = TimeTicks::Now() + retry_delay;
   std::string proxy_key = proxy_to_retry.ToURI();
@@ -197,7 +202,7 @@ void ProxyList::AddProxyToRetryList(ProxyRetryInfoMap* proxy_retry_info,
     retry_info.net_error = net_error;
     (*proxy_retry_info)[proxy_key] = retry_info;
   }
-  net_log.AddEvent(NetLog::TYPE_PROXY_LIST_FALLBACK,
+  net_log.AddEvent(NetLogEventType::PROXY_LIST_FALLBACK,
                    NetLog::StringCallback("bad_proxy", &proxy_key));
 }
 
@@ -207,8 +212,8 @@ void ProxyList::UpdateRetryInfoOnFallback(
     bool reconsider,
     const std::vector<ProxyServer>& additional_proxies_to_bypass,
     int net_error,
-    const BoundNetLog& net_log) const {
-  DCHECK(retry_delay != base::TimeDelta());
+    const NetLogWithSource& net_log) const {
+  DCHECK(!retry_delay.is_zero());
 
   if (proxies_.empty()) {
     NOTREACHED();

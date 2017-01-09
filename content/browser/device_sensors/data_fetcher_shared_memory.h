@@ -5,12 +5,14 @@
 #ifndef CONTENT_BROWSER_DEVICE_SENSORS_DATA_FETCHER_SHARED_MEMORY_H_
 #define CONTENT_BROWSER_DEVICE_SENSORS_DATA_FETCHER_SHARED_MEMORY_H_
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "content/browser/device_sensors/data_fetcher_shared_memory_base.h"
 
 #if !defined(OS_ANDROID)
-#include "content/common/device_sensors/device_light_hardware_buffer.h"
-#include "content/common/device_sensors/device_motion_hardware_buffer.h"
-#include "content/common/device_sensors/device_orientation_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_light_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_motion_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_orientation_hardware_buffer.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -43,21 +45,23 @@ class CONTENT_EXPORT DataFetcherSharedMemory
   bool Start(ConsumerType consumer_type, void* buffer) override;
   bool Stop(ConsumerType consumer_type) override;
 
-#if !defined(OS_ANDROID)
-  DeviceMotionHardwareBuffer* motion_buffer_;
-  DeviceOrientationHardwareBuffer* orientation_buffer_;
-  DeviceOrientationHardwareBuffer* orientation_absolute_buffer_;
-  DeviceLightHardwareBuffer* light_buffer_;
+#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
+#if !defined(OS_CHROMEOS)
+  DeviceMotionHardwareBuffer* motion_buffer_ = nullptr;
+  DeviceOrientationHardwareBuffer* orientation_buffer_ = nullptr;
+  DeviceLightHardwareBuffer* light_buffer_ = nullptr;
+#endif
+  DeviceOrientationHardwareBuffer* orientation_absolute_buffer_ = nullptr;
 #endif
 
 #if defined(OS_CHROMEOS)
-  scoped_ptr<SensorManagerChromeOS> sensor_manager_;
+  std::unique_ptr<SensorManagerChromeOS> sensor_manager_;
 #elif defined(OS_MACOSX)
   void Fetch(unsigned consumer_bitmask) override;
   FetcherType GetType() const override;
 
-  scoped_ptr<AmbientLightSensor> ambient_light_sensor_;
-  scoped_ptr<SuddenMotionSensor> sudden_motion_sensor_;
+  std::unique_ptr<AmbientLightSensor> ambient_light_sensor_;
+  std::unique_ptr<SuddenMotionSensor> sudden_motion_sensor_;
 #elif defined(OS_WIN)
   class SensorEventSink;
   class SensorEventSinkMotion;
@@ -72,6 +76,7 @@ class CONTENT_EXPORT DataFetcherSharedMemory
   void SetBufferAvailableState(ConsumerType consumer_type, bool enabled);
 
   base::win::ScopedComPtr<ISensor> sensor_inclinometer_;
+  base::win::ScopedComPtr<ISensor> sensor_inclinometer_absolute_;
   base::win::ScopedComPtr<ISensor> sensor_accelerometer_;
   base::win::ScopedComPtr<ISensor> sensor_gyrometer_;
   base::win::ScopedComPtr<ISensor> sensor_light_;

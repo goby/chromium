@@ -4,11 +4,11 @@
 
 #include "components/content_settings/core/browser/content_settings_origin_identifier_value_map.h"
 
+#include <memory>
 #include <tuple>
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/values.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
@@ -37,7 +37,7 @@ class RuleIteratorImpl : public RuleIterator {
   bool HasNext() const override { return (current_rule_ != rule_end_); }
 
   Rule Next() override {
-    DCHECK(current_rule_ != rule_end_);
+    DCHECK(HasNext());
     DCHECK(current_rule_->second.get());
     Rule to_return(current_rule_->first.primary_pattern,
                    current_rule_->first.secondary_pattern,
@@ -49,7 +49,7 @@ class RuleIteratorImpl : public RuleIterator {
  private:
   OriginIdentifierValueMap::Rules::const_iterator current_rule_;
   OriginIdentifierValueMap::Rules::const_iterator rule_end_;
-  scoped_ptr<base::AutoLock> auto_lock_;
+  std::unique_ptr<base::AutoLock> auto_lock_;
 };
 
 }  // namespace
@@ -83,7 +83,7 @@ bool OriginIdentifierValueMap::PatternPair::operator<(
          std::tie(other.primary_pattern, other.secondary_pattern);
 }
 
-scoped_ptr<RuleIterator> OriginIdentifierValueMap::GetRuleIterator(
+std::unique_ptr<RuleIterator> OriginIdentifierValueMap::GetRuleIterator(
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
     base::Lock* lock) const {
@@ -92,21 +92,20 @@ scoped_ptr<RuleIterator> OriginIdentifierValueMap::GetRuleIterator(
   // be passed to the |RuleIteratorImpl| in a locked state, so that nobody can
   // access |entries_| after |find()| but before the |RuleIteratorImpl| is
   // created.
-  scoped_ptr<base::AutoLock> auto_lock;
+  std::unique_ptr<base::AutoLock> auto_lock;
   if (lock)
     auto_lock.reset(new base::AutoLock(*lock));
   EntryMap::const_iterator it = entries_.find(key);
   if (it == entries_.end())
-    return scoped_ptr<RuleIterator>(new EmptyRuleIterator());
-  return scoped_ptr<RuleIterator>(new RuleIteratorImpl(
+    return nullptr;
+  return std::unique_ptr<RuleIterator>(new RuleIteratorImpl(
       it->second.begin(), it->second.end(), auto_lock.release()));
 }
 
 size_t OriginIdentifierValueMap::size() const {
   size_t size = 0;
-  EntryMap::const_iterator it;
-  for (it = entries_.begin(); it != entries_.end(); ++it)
-    size += it->second.size();
+  for (const auto& entry : entries_)
+    size += entry.second.size();
   return size;
 }
 
@@ -122,19 +121,18 @@ base::Value* OriginIdentifierValueMap::GetValue(
   EntryMapKey key(content_type, resource_identifier);
   EntryMap::const_iterator it = entries_.find(key);
   if (it == entries_.end())
-      return NULL;
+    return nullptr;
 
   // Iterate the entries in until a match is found. Since the rules are stored
   // in the order of decreasing precedence, the most specific match is found
   // first.
-  Rules::const_iterator entry;
-  for (entry = it->second.begin(); entry != it->second.end(); ++entry) {
-    if (entry->first.primary_pattern.Matches(primary_url) &&
-        entry->first.secondary_pattern.Matches(secondary_url)) {
-      return entry->second.get();
+  for (const auto& entry : it->second) {
+    if (entry.first.primary_pattern.Matches(primary_url) &&
+        entry.first.secondary_pattern.Matches(secondary_url)) {
+      return entry.second.get();
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 void OriginIdentifierValueMap::SetValue(

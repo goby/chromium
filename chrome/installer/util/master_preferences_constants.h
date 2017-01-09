@@ -15,12 +15,8 @@ namespace master_preferences {
 // is specified in master preference as well as command line, the command line
 // value takes precedence.
 
-// Boolean. Use alternate text for the shortcut. Cmd line override present.
-extern const char kAltShortcutText[];
 // Boolean. This is to be a Chrome install. (When using MultiInstall)
 extern const char kChrome[];
-// Integer. Icon index from chrome.exe to use for shortcuts.
-extern const char kChromeShortcutIconIndex[];
 // Boolean. This is a legacy preference and should no longer be used; it is
 // kept around so that old master_preferences which specify
 // "create_all_shortcuts":false still enforce the new
@@ -96,6 +92,9 @@ extern const char kSystemLevel[];
 extern const char kVerboseLogging[];
 // Name of the block that contains the extensions on the master preferences.
 extern const char kExtensionsBlock[];
+// Boolean. Allow Chrome to be downgraded to a previous version if true.
+extern const char kAllowDowngrade[];
+
 }  // namespace master_preferences
 }  // namespace installer
 

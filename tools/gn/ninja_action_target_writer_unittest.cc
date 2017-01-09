@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <sstream>
 
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "tools/gn/ninja_action_target_writer.h"
 #include "tools/gn/substitution_list.h"
@@ -12,10 +13,8 @@
 #include "tools/gn/test_with_scope.h"
 
 TEST(NinjaActionTargetWriter, WriteOutputFilesForBuildLine) {
-  TestWithScope setup;
   Err err;
-
-  setup.build_settings()->SetBuildDir(SourceDir("//out/Debug/"));
+  TestWithScope setup;
 
   Target target(setup.settings(), Label(SourceDir("//foo/"), "bar"));
   target.set_output_type(Target::ACTION_FOREACH);
@@ -38,10 +37,9 @@ TEST(NinjaActionTargetWriter, WriteOutputFilesForBuildLine) {
 
 // Tests an action with no sources.
 TEST(NinjaActionTargetWriter, ActionNoSources) {
-  TestWithScope setup;
   Err err;
+  TestWithScope setup;
 
-  setup.build_settings()->SetBuildDir(SourceDir("//out/Debug/"));
   Target target(setup.settings(), Label(SourceDir("//foo/"), "bar"));
   target.set_output_type(Target::ACTION);
 
@@ -78,10 +76,9 @@ TEST(NinjaActionTargetWriter, ActionNoSources) {
 
 // Tests an action with no sources and console = true
 TEST(NinjaActionTargetWriter, ActionNoSourcesConsole) {
-  TestWithScope setup;
   Err err;
+  TestWithScope setup;
 
-  setup.build_settings()->SetBuildDir(SourceDir("//out/Debug/"));
   Target target(setup.settings(), Label(SourceDir("//foo/"), "bar"));
   target.set_output_type(Target::ACTION);
 
@@ -120,10 +117,9 @@ TEST(NinjaActionTargetWriter, ActionNoSourcesConsole) {
 // Makes sure that we write sources as input dependencies for actions with
 // both sources and inputs (ACTION_FOREACH treats the sources differently).
 TEST(NinjaActionTargetWriter, ActionWithSources) {
-  TestWithScope setup;
   Err err;
+  TestWithScope setup;
 
-  setup.build_settings()->SetBuildDir(SourceDir("//out/Debug/"));
   Target target(setup.settings(), Label(SourceDir("//foo/"), "bar"));
   target.set_output_type(Target::ACTION);
 
@@ -160,10 +156,8 @@ TEST(NinjaActionTargetWriter, ActionWithSources) {
 }
 
 TEST(NinjaActionTargetWriter, ForEach) {
-  TestWithScope setup;
   Err err;
-
-  setup.build_settings()->SetBuildDir(SourceDir("//out/Debug/"));
+  TestWithScope setup;
 
   // Some dependencies that the action can depend on. Use actions for these
   // so they have a nice platform-independent stamp file that can appear in the
@@ -242,10 +236,9 @@ TEST(NinjaActionTargetWriter, ForEach) {
 }
 
 TEST(NinjaActionTargetWriter, ForEachWithDepfile) {
-  TestWithScope setup;
   Err err;
+  TestWithScope setup;
 
-  setup.build_settings()->SetBuildDir(SourceDir("//out/Debug/"));
   Target target(setup.settings(), Label(SourceDir("//foo/"), "bar"));
   target.set_output_type(Target::ACTION_FOREACH);
 
@@ -305,10 +298,9 @@ TEST(NinjaActionTargetWriter, ForEachWithDepfile) {
 }
 
 TEST(NinjaActionTargetWriter, ForEachWithResponseFile) {
-  TestWithScope setup;
   Err err;
+  TestWithScope setup;
 
-  setup.build_settings()->SetBuildDir(SourceDir("//out/Debug/"));
   Target target(setup.settings(), Label(SourceDir("//foo/"), "bar"));
   target.set_output_type(Target::ACTION_FOREACH);
 
@@ -348,10 +340,9 @@ TEST(NinjaActionTargetWriter, ForEachWithResponseFile) {
           "${source_file_part} ${rspfile}\n"
       "  description = ACTION //foo:bar()\n"
       "  restat = 1\n"
-      "build obj/foo/bar.inputdeps.stamp: stamp ../../foo/script.py\n"
       "\n"
       "build input1.out: __foo_bar___rule ../../foo/input1.txt"
-          " | obj/foo/bar.inputdeps.stamp\n"
+          " | ../../foo/script.py\n"
       // Necessary for the rspfile defined in the rule.
       "  unique_name = 0\n"
       // Substitution for the args.

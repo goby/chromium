@@ -41,22 +41,26 @@
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_VIDEO_CAPTURE_CONTROLLER_H_
 
 #include <list>
+#include <memory>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "content/browser/renderer_host/media/video_capture_controller_event_handler.h"
 #include "content/common/content_export.h"
 #include "content/common/media/video_capture.h"
-#include "media/base/video_capture_types.h"
-#include "media/capture/video/video_capture_device.h"
+#include "media/capture/video/video_frame_receiver.h"
+#include "media/capture/video_capture_types.h"
+
+namespace media {
+class VideoCaptureBufferPool;
+}
 
 namespace content {
-class VideoCaptureBufferPool;
 
-class CONTENT_EXPORT VideoCaptureController {
+class CONTENT_EXPORT VideoCaptureController : public media::VideoFrameReceiver {
  public:
   // |max_buffers| is the maximum number of video frame buffers in-flight at any
   // one time.  This value should be based on the logical capacity of the
@@ -64,20 +68,27 @@ class CONTENT_EXPORT VideoCaptureController {
   // capture requires more buffers than webcam capture because the pipeline is
   // longer (it includes read-backs pending in the GPU pipeline).
   explicit VideoCaptureController(int max_buffers);
-  virtual ~VideoCaptureController();
+  ~VideoCaptureController() override;
 
   base::WeakPtr<VideoCaptureController> GetWeakPtrForIOThread();
 
+  // Factory code creating instances of VideoCaptureController may optionally
+  // set a VideoFrameConsumerFeedbackObserver. Setting the observer is done in
+  // this method separate from the constructor to allow clients to create and
+  // use instances before they can provide the observer. (This is the case with
+  // VideoCaptureManager).
+  void SetConsumerFeedbackObserver(
+      std::unique_ptr<media::VideoFrameConsumerFeedbackObserver> observer);
+
   // Return a new VideoCaptureDeviceClient to forward capture events to this
   // instance.
-  scoped_ptr<media::VideoCaptureDevice::Client> NewDeviceClient();
+  std::unique_ptr<media::VideoCaptureDevice::Client> NewDeviceClient();
 
   // Start video capturing and try to use the resolution specified in |params|.
   // Buffers will be shared to the client as necessary. The client will continue
   // to receive frames from the device until RemoveClient() is called.
   void AddClient(VideoCaptureControllerID id,
                  VideoCaptureControllerEventHandler* event_handler,
-                 base::ProcessHandle render_process,
                  media::VideoCaptureSessionId session_id,
                  const media::VideoCaptureParams& params);
 
@@ -98,8 +109,11 @@ class CONTENT_EXPORT VideoCaptureController {
 
   int GetClientCount() const;
 
-  // Return the number of clients that aren't paused.
-  int GetActiveClientCount() const;
+  // Return true if there is client that isn't paused.
+  bool HasActiveClient() const;
+
+  // Return true if there is client paused.
+  bool HasPausedClient() const;
 
   // API called directly by VideoCaptureManager in case the device is
   // prematurely closed.
@@ -121,18 +135,44 @@ class CONTENT_EXPORT VideoCaptureController {
 
   bool has_received_frames() const { return has_received_frames_; }
 
-  // Worker functions on IO thread. Called by the VideoCaptureDeviceClient.
-  virtual void DoIncomingCapturedVideoFrameOnIOThread(
-      scoped_ptr<media::VideoCaptureDevice::Client::Buffer> buffer,
-      const scoped_refptr<media::VideoFrame>& frame,
-      const base::TimeTicks& timestamp);
-  virtual void DoErrorOnIOThread();
-  virtual void DoLogOnIOThread(const std::string& message);
-  virtual void DoBufferDestroyedOnIOThread(int buffer_id_to_drop);
+  // Implementation of media::VideoFrameReceiver interface:
+  void OnIncomingCapturedVideoFrame(
+      std::unique_ptr<media::VideoCaptureDevice::Client::Buffer> buffer,
+      scoped_refptr<media::VideoFrame> frame) override;
+  void OnError() override;
+  void OnLog(const std::string& message) override;
+  void OnBufferDestroyed(int buffer_id_to_drop) override;
 
  private:
   struct ControllerClient;
-  typedef std::list<ControllerClient*> ControllerClients;
+  typedef std::list<std::unique_ptr<ControllerClient>> ControllerClients;
+
+  class BufferState {
+   public:
+    explicit BufferState(
+        int buffer_id,
+        int frame_feedback_id,
+        media::VideoFrameConsumerFeedbackObserver* consumer_feedback_observer,
+        scoped_refptr<media::VideoCaptureBufferPool> buffer_pool,
+        scoped_refptr<media::VideoFrame> frame);
+    ~BufferState();
+    BufferState(const BufferState& other);
+    void RecordConsumerUtilization(double utilization);
+    void IncreaseConsumerCount();
+    void DecreaseConsumerCount();
+    bool HasZeroConsumerHoldCount();
+    void SetConsumerFeedbackObserver(
+        media::VideoFrameConsumerFeedbackObserver* consumer_feedback_observer);
+
+   private:
+    const int buffer_id_;
+    const int frame_feedback_id_;
+    media::VideoFrameConsumerFeedbackObserver* consumer_feedback_observer_;
+    const scoped_refptr<media::VideoCaptureBufferPool> buffer_pool_;
+    const scoped_refptr<media::VideoFrame> frame_;
+    double max_consumer_utilization_;
+    int consumer_hold_count_;
+  };
 
   // Notify renderer that a new buffer has been created.
   void DoNewBufferOnIOThread(ControllerClient* client,
@@ -149,7 +189,12 @@ class CONTENT_EXPORT VideoCaptureController {
                                const ControllerClients& clients);
 
   // The pool of shared-memory buffers used for capturing.
-  const scoped_refptr<VideoCaptureBufferPool> buffer_pool_;
+  const scoped_refptr<media::VideoCaptureBufferPool> buffer_pool_;
+
+  std::unique_ptr<media::VideoFrameConsumerFeedbackObserver>
+      consumer_feedback_observer_;
+
+  std::map<int, BufferState> buffer_id_to_state_map_;
 
   // All clients served by this controller.
   ControllerClients controller_clients_;

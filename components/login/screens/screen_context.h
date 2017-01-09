@@ -8,10 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/values.h"

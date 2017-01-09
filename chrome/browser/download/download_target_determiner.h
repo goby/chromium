@@ -5,19 +5,23 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_DOWNLOAD_TARGET_DETERMINER_H_
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_TARGET_DETERMINER_H_
 
+#include <memory>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "build/build_config.h"
 #include "chrome/browser/download/download_path_reservation_tracker.h"
 #include "chrome/browser/download/download_target_determiner_delegate.h"
 #include "chrome/browser/download/download_target_info.h"
+#include "chrome/common/safe_browsing/download_file_types.pb.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager_delegate.h"
+#include "ppapi/features/features.h"
 
-class ChromeDownloadManagerDelegate;
 class Profile;
 class DownloadPrefs;
 
@@ -51,7 +55,7 @@ enum DownloadDangerType;
 class DownloadTargetDeterminer
     : public content::DownloadItem::Observer {
  public:
-  typedef base::Callback<void(scoped_ptr<DownloadTargetInfo>)>
+  typedef base::Callback<void(std::unique_ptr<DownloadTargetInfo>)>
       CompletionCallback;
 
   // Start the process of determing the target of |download|.
@@ -124,7 +128,7 @@ class DownloadTargetDeterminer
     COMPLETE
   };
 
-  // Used with IsDangerousFile to indicate whether the user has visited the
+  // Used with GetDangerLevel to indicate whether the user has visited the
   // referrer URL for the download prior to today.
   enum PriorVisitsToReferrer {
     NO_VISITS_TO_REFERRER,
@@ -216,7 +220,7 @@ class DownloadTargetDeterminer
   // - STATE_DETERMINE_IF_ADOBE_READER_UP_TO_DATE.
   Result DoDetermineIfHandledSafely();
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   // Callback invoked when a decision is available about whether the file type
   // can be handled safely by the browser.
   void DetermineIfHandledSafelyDone(bool is_handled_safely);
@@ -270,7 +274,7 @@ class DownloadTargetDeterminer
 
   void CancelOnFailureAndDeleteSelf();
 
-  Profile* GetProfile();
+  Profile* GetProfile() const;
 
   // Determine whether to prompt the user for the download location. For regular
   // downloads, this determination is based on the target disposition, auto-open
@@ -292,7 +296,11 @@ class DownloadTargetDeterminer
   // Various factors are considered, such as the type of the file, whether a
   // user action initiated the download, and whether the user has explicitly
   // marked the file type as "auto open". Protected virtual for testing.
-  bool IsDangerousFile(PriorVisitsToReferrer visits);
+  //
+  // If |require_explicit_consent| is non-null then the pointed bool will be set
+  // to true if the download requires explicit user consent.
+  safe_browsing::DownloadFileType::DangerLevel GetDangerLevel(
+      PriorVisitsToReferrer visits) const;
 
   // content::DownloadItem::Observer
   void OnDownloadDestroyed(content::DownloadItem* download) override;
@@ -304,7 +312,7 @@ class DownloadTargetDeterminer
   bool create_target_directory_;
   DownloadPathReservationTracker::FilenameConflictAction conflict_action_;
   content::DownloadDangerType danger_type_;
-  bool is_dangerous_file_;  // See DownloadTargetInfo::is_dangerous_file
+  safe_browsing::DownloadFileType::DangerLevel danger_level_;
   base::FilePath virtual_path_;
   base::FilePath local_path_;
   base::FilePath intermediate_path_;

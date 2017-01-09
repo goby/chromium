@@ -4,11 +4,16 @@
 
 #include "chrome/browser/extensions/api/networking_private/networking_private_credentials_getter.h"
 
+#include <stdint.h>
+
 #include "base/base64.h"
 #include "base/bind.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/macros.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "chrome/common/extensions/api/networking_private/networking_private_crypto.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/extensions/api/networking_private/networking_private_crypto.h"
 #include "chrome/common/extensions/chrome_utility_extensions_messages.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
@@ -30,7 +35,7 @@ class CredentialsGetterHostClient : public UtilityProcessHostClient {
   // UtilityProcessHostClient
   bool OnMessageReceived(const IPC::Message& message) override;
   void OnProcessCrashed(int exit_code) override;
-  void OnProcessLaunchFailed() override;
+  void OnProcessLaunchFailed(int error_code) override;
 
   // IPC message handlers.
   void OnGotCredentials(const std::string& key_data, bool success);
@@ -44,7 +49,7 @@ class CredentialsGetterHostClient : public UtilityProcessHostClient {
   ~CredentialsGetterHostClient() override;
 
   // Public key used to encrypt results
-  std::vector<uint8> public_key_;
+  std::vector<uint8_t> public_key_;
 
   // Callback for reporting the result.
   NetworkingPrivateCredentialsGetter::CredentialsCallback callback_;
@@ -68,17 +73,19 @@ bool CredentialsGetterHostClient::OnMessageReceived(
 }
 
 void CredentialsGetterHostClient::OnProcessCrashed(int exit_code) {
-  callback_.Run("", "Process Crashed");
+  callback_.Run(
+      "", base::StringPrintf("Process Crashed with code %08x.", exit_code));
 }
 
-void CredentialsGetterHostClient::OnProcessLaunchFailed() {
-  callback_.Run("", "Process Launch Failed");
+void CredentialsGetterHostClient::OnProcessLaunchFailed(int error_code) {
+  callback_.Run("", base::StringPrintf("Process Launch Failed with code %08x.",
+                                       error_code));
 }
 
 void CredentialsGetterHostClient::OnGotCredentials(const std::string& key_data,
                                                    bool success) {
   if (success) {
-    std::vector<uint8> ciphertext;
+    std::vector<uint8_t> ciphertext;
     if (!networking_private_crypto::EncryptByteString(
             public_key_, key_data, &ciphertext)) {
       callback_.Run("", "Encrypt Credentials Failed");
@@ -86,8 +93,10 @@ void CredentialsGetterHostClient::OnGotCredentials(const std::string& key_data,
     }
 
     std::string base64_encoded_key_data;
-    base::Base64Encode(std::string(ciphertext.begin(), ciphertext.end()),
-                       &base64_encoded_key_data);
+    base::Base64Encode(
+        base::StringPiece(reinterpret_cast<const char*>(ciphertext.data()),
+                          ciphertext.size()),
+        &base64_encoded_key_data);
     callback_.Run(base64_encoded_key_data, "");
   } else {
     callback_.Run("", "Get Credentials Failed");

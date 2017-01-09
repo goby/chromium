@@ -5,13 +5,13 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILEAPI_FILE_SYSTEM_BACKEND_DELEGATE_H_
 #define CHROME_BROWSER_CHROMEOS_FILEAPI_FILE_SYSTEM_BACKEND_DELEGATE_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 #include "storage/browser/fileapi/file_system_backend.h"
 #include "storage/common/fileapi/file_system_types.h"
-
-class GURL;
 
 namespace base {
 class Time;
@@ -39,17 +39,17 @@ class FileSystemBackendDelegate {
       storage::FileSystemType type) = 0;
 
   // Called from FileSystemBackend::CreateFileStreamReader().
-  virtual scoped_ptr<storage::FileStreamReader> CreateFileStreamReader(
+  virtual std::unique_ptr<storage::FileStreamReader> CreateFileStreamReader(
       const storage::FileSystemURL& url,
-      int64 offset,
-      int64 max_bytes_to_read,
+      int64_t offset,
+      int64_t max_bytes_to_read,
       const base::Time& expected_modification_time,
       storage::FileSystemContext* context) = 0;
 
   // Called from FileSystemBackend::CreateFileStreamWriter().
-  virtual scoped_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
+  virtual std::unique_ptr<storage::FileStreamWriter> CreateFileStreamWriter(
       const storage::FileSystemURL& url,
-      int64 offset,
+      int64_t offset,
       storage::FileSystemContext* context) = 0;
 
   // Called from the FileSystemWatcherService class. The returned pointer must

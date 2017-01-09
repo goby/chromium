@@ -6,6 +6,7 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "chrome/service/service_process_prefs.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -17,7 +18,7 @@ class ServiceProcessPrefsTest : public testing::Test {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
     prefs_.reset(new ServiceProcessPrefs(
-        temp_dir_.path().AppendASCII("service_process_prefs.txt"),
+        temp_dir_.GetPath().AppendASCII("service_process_prefs.txt"),
         message_loop_.task_runner().get()));
   }
 
@@ -27,7 +28,7 @@ class ServiceProcessPrefsTest : public testing::Test {
   base::ScopedTempDir temp_dir_;
   // A message loop that we can use as the file thread message loop.
   base::MessageLoop message_loop_;
-  scoped_ptr<ServiceProcessPrefs> prefs_;
+  std::unique_ptr<ServiceProcessPrefs> prefs_;
 };
 
 // Test ability to retrieve prefs
@@ -35,7 +36,7 @@ TEST_F(ServiceProcessPrefsTest, RetrievePrefs) {
   prefs_->SetBoolean("testb", true);
   prefs_->SetString("tests", "testvalue");
   prefs_->WritePrefs();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   prefs_->SetBoolean("testb", false);   // overwrite
   prefs_->SetString("tests", std::string());  // overwrite
   prefs_->ReadPrefs();

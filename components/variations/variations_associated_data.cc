@@ -8,7 +8,14 @@
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "base/metrics/field_trial.h"
+#include "base/metrics/field_trial_param_associator.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
+#include "components/variations/variations_http_header_provider.h"
 
 namespace variations {
 
@@ -32,7 +39,7 @@ class GroupMapAccessor {
                    const VariationID id,
                    const bool force) {
 #if !defined(NDEBUG)
-    DCHECK_EQ(4, ID_COLLECTION_COUNT);
+    DCHECK_EQ(3, ID_COLLECTION_COUNT);
     // Ensure that at most one of the trigger/non-trigger web property IDs are
     // set.
     if (key == GOOGLE_WEB_PROPERTIES || key == GOOGLE_WEB_PROPERTIES_TRIGGER) {
@@ -98,66 +105,6 @@ class GroupMapAccessor {
 
   DISALLOW_COPY_AND_ASSIGN(GroupMapAccessor);
 };
-
-// Singleton helper class that keeps track of the parameters of all variations
-// and ensures access to these is thread-safe.
-class VariationsParamAssociator {
- public:
-  typedef std::pair<std::string, std::string> VariationKey;
-  typedef std::map<std::string, std::string> VariationParams;
-
-  // Retrieve the singleton.
-  static VariationsParamAssociator* GetInstance() {
-    return base::Singleton<VariationsParamAssociator>::get();
-  }
-
-  bool AssociateVariationParams(const std::string& trial_name,
-                                const std::string& group_name,
-                                const VariationParams& params) {
-    base::AutoLock scoped_lock(lock_);
-
-    if (base::FieldTrialList::IsTrialActive(trial_name))
-      return false;
-
-    const VariationKey key(trial_name, group_name);
-    if (ContainsKey(variation_params_, key))
-      return false;
-
-    variation_params_[key] = params;
-    return true;
-  }
-
-  bool GetVariationParams(const std::string& trial_name,
-                          VariationParams* params) {
-    base::AutoLock scoped_lock(lock_);
-
-    const std::string group_name =
-        base::FieldTrialList::FindFullName(trial_name);
-    const VariationKey key(trial_name, group_name);
-    if (!ContainsKey(variation_params_, key))
-      return false;
-
-    *params = variation_params_[key];
-    return true;
-  }
-
-  void ClearAllParamsForTesting() {
-    base::AutoLock scoped_lock(lock_);
-    variation_params_.clear();
-  }
-
- private:
-  friend struct base::DefaultSingletonTraits<VariationsParamAssociator>;
-
-  VariationsParamAssociator() {}
-  ~VariationsParamAssociator() {}
-
-  base::Lock lock_;
-  std::map<VariationKey, VariationParams> variation_params_;
-
-  DISALLOW_COPY_AND_ASSIGN(VariationsParamAssociator);
-};
-
 }  // namespace
 
 void AssociateGoogleVariationID(IDCollectionKey key,
@@ -199,14 +146,26 @@ bool AssociateVariationParams(
     const std::string& trial_name,
     const std::string& group_name,
     const std::map<std::string, std::string>& params) {
-  return VariationsParamAssociator::GetInstance()->AssociateVariationParams(
-      trial_name, group_name, params);
+  return base::FieldTrialParamAssociator::GetInstance()
+      ->AssociateFieldTrialParams(trial_name, group_name, params);
 }
 
 bool GetVariationParams(const std::string& trial_name,
                         std::map<std::string, std::string>* params) {
-  return VariationsParamAssociator::GetInstance()->GetVariationParams(
+  return base::FieldTrialParamAssociator::GetInstance()->GetFieldTrialParams(
       trial_name, params);
+}
+
+bool GetVariationParamsByFeature(const base::Feature& feature,
+                                 std::map<std::string, std::string>* params) {
+  if (!base::FeatureList::IsEnabled(feature))
+    return false;
+
+  base::FieldTrial* trial = base::FeatureList::GetFieldTrial(feature);
+  if (!trial)
+    return false;
+
+  return GetVariationParams(trial->trial_name(), params);
 }
 
 std::string GetVariationParamValue(const std::string& trial_name,
@@ -220,6 +179,76 @@ std::string GetVariationParamValue(const std::string& trial_name,
   return std::string();
 }
 
+std::string GetVariationParamValueByFeature(const base::Feature& feature,
+                                            const std::string& param_name) {
+  if (!base::FeatureList::IsEnabled(feature))
+    return std::string();
+
+  base::FieldTrial* trial = base::FeatureList::GetFieldTrial(feature);
+  if (!trial)
+    return std::string();
+
+  return GetVariationParamValue(trial->trial_name(), param_name);
+}
+
+int GetVariationParamByFeatureAsInt(const base::Feature& feature,
+                                    const std::string& param_name,
+                                    int default_value) {
+  std::string value_as_string =
+      GetVariationParamValueByFeature(feature, param_name);
+  int value_as_int = 0;
+  if (!base::StringToInt(value_as_string, &value_as_int)) {
+    if (!value_as_string.empty()) {
+      DLOG(WARNING) << "Failed to parse variation param " << param_name
+                    << " with string value " << value_as_string
+                    << " under feature " << feature.name
+                    << " into an int. Falling back to default value of "
+                    << default_value;
+    }
+    value_as_int = default_value;
+  }
+  return value_as_int;
+}
+
+double GetVariationParamByFeatureAsDouble(const base::Feature& feature,
+                                          const std::string& param_name,
+                                          double default_value) {
+  std::string value_as_string =
+      GetVariationParamValueByFeature(feature, param_name);
+  double value_as_double = 0;
+  if (!base::StringToDouble(value_as_string, &value_as_double)) {
+    if (!value_as_string.empty()) {
+      DLOG(WARNING) << "Failed to parse variation param " << param_name
+                    << " with string value " << value_as_string
+                    << " under feature " << feature.name
+                    << " into a double. Falling back to default value of "
+                    << default_value;
+    }
+    value_as_double = default_value;
+  }
+  return value_as_double;
+}
+
+bool GetVariationParamByFeatureAsBool(const base::Feature& feature,
+                                      const std::string& param_name,
+                                      bool default_value) {
+  std::string value_as_string =
+      variations::GetVariationParamValueByFeature(feature, param_name);
+  if (value_as_string == "true")
+    return true;
+  if (value_as_string == "false")
+    return false;
+
+  if (!value_as_string.empty()) {
+    DLOG(WARNING) << "Failed to parse variation param " << param_name
+                  << " with string value " << value_as_string
+                  << " under feature " << feature.name
+                  << " into a bool. Falling back to default value of "
+                  << default_value;
+  }
+  return default_value;
+}
+
 // Functions below are exposed for testing explicitly behind this namespace.
 // They simply wrap existing functions in this file.
 namespace testing {
@@ -229,7 +258,7 @@ void ClearAllVariationIDs() {
 }
 
 void ClearAllVariationParams() {
-  VariationsParamAssociator::GetInstance()->ClearAllParamsForTesting();
+  base::FieldTrialParamAssociator::GetInstance()->ClearAllParamsForTesting();
 }
 
 }  // namespace testing

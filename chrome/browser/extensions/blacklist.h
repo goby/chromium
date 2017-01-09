@@ -7,16 +7,17 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "chrome/browser/safe_browsing/database_manager.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/safe_browsing_db/database_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/blacklist_state.h"
@@ -28,7 +29,6 @@ class BrowserContext;
 namespace extensions {
 
 class BlacklistStateFetcher;
-class Extension;
 class ExtensionPrefs;
 
 // The blacklist of extensions backed by safe browsing.
@@ -145,7 +145,7 @@ class Blacklist : public KeyedService,
   // The cached BlacklistState's, received from BlacklistStateFetcher.
   BlacklistStateMap blacklist_state_cache_;
 
-  scoped_ptr<BlacklistStateFetcher> state_fetcher_;
+  std::unique_ptr<BlacklistStateFetcher> state_fetcher_;
 
   typedef std::list<std::pair<std::vector<std::string>,
                               base::Callback<void()> > >

@@ -5,11 +5,12 @@
 #ifndef IOS_TEST_MOCK_PROFILE_OAUTH2_TOKEN_SERVICE_PROVIDER_IOS_H_
 #define IOS_TEST_MOCK_PROFILE_OAUTH2_TOKEN_SERVICE_PROVIDER_IOS_H_
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/signin/ios/browser/profile_oauth2_token_service_ios_provider.h"
 
 // Mock class of ProfileOAuth2TokenServiceIOSProvider for testing.
@@ -26,9 +27,8 @@ class FakeProfileOAuth2TokenServiceIOSProvider
                       const std::set<std::string>& scopes,
                       const AccessTokenCallback& callback) override;
   std::vector<AccountInfo> GetAllAccounts() const override;
-  AccountInfo GetAccountInfoForEmail(const std::string& email) const override;
-  AccountInfo GetAccountInfoForGaia(const std::string& gaia) const override;
   AuthenticationErrorCategory GetAuthenticationErrorCategory(
+      const std::string& gaia_id,
       NSError* error) const override;
 
   // Methods to configure this fake provider.

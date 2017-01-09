@@ -19,6 +19,8 @@ WDKeywordsResult::WDKeywordsResult()
     builtin_keyword_version(0) {
 }
 
+WDKeywordsResult::WDKeywordsResult(const WDKeywordsResult& other) = default;
+
 WDKeywordsResult::~WDKeywordsResult() {}
 
 KeywordWebDataService::BatchModeScoper::BatchModeScoper(
@@ -121,9 +123,9 @@ WebDatabase::State KeywordWebDataService::PerformKeywordOperationsImpl(
       WebDatabase::COMMIT_NEEDED : WebDatabase::COMMIT_NOT_NEEDED;
 }
 
-scoped_ptr<WDTypedResult> KeywordWebDataService::GetKeywordsImpl(
+std::unique_ptr<WDTypedResult> KeywordWebDataService::GetKeywordsImpl(
     WebDatabase* db) {
-  scoped_ptr<WDTypedResult> result_ptr;
+  std::unique_ptr<WDTypedResult> result_ptr;
   WDKeywordsResult result;
   if (KeywordTable::FromWebDatabase(db)->GetKeywords(&result.keywords)) {
     result.default_search_provider_id =
@@ -132,7 +134,7 @@ scoped_ptr<WDTypedResult> KeywordWebDataService::GetKeywordsImpl(
         KeywordTable::FromWebDatabase(db)->GetBuiltinKeywordVersion();
     result_ptr.reset(new WDResult<WDKeywordsResult>(KEYWORDS_RESULT, result));
   }
-  return result_ptr.Pass();
+  return result_ptr;
 }
 
 WebDatabase::State KeywordWebDataService::SetDefaultSearchProviderIDImpl(

@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/gesture_detection/touch_disposition_gesture_filter.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/test/motion_event_test_utils.h"
 
 using ui::test::MockMotionEvent;
@@ -35,6 +39,8 @@ class TouchDispositionGestureFilterTest
 
   // TouchDispositionGestureFilterClient
   void ForwardGestureEvent(const GestureEventData& event) override {
+    EXPECT_EQ(GestureDeviceType::DEVICE_TOUCHSCREEN,
+              event.details.device_type());
     ++sent_gesture_count_;
     last_sent_gesture_.reset(new GestureEventData(event));
     sent_gestures_.push_back(event.type());
@@ -116,8 +122,8 @@ class TouchDispositionGestureFilterTest
     return queue_->OnGesturePacket(touch_packet);
   }
 
-  uint32 SendTouchGestures(const MotionEvent& touch,
-                           const GestureEventDataPacket& packet) {
+  uint32_t SendTouchGestures(const MotionEvent& touch,
+                             const GestureEventDataPacket& packet) {
     SendTouchGesturesWithResult(touch, packet);
     last_sent_touch_event_id_ = touch.GetUniqueEventId();
     return touch.GetUniqueEventId();
@@ -134,15 +140,15 @@ class TouchDispositionGestureFilterTest
     return queue_->OnGesturePacket(packet);
   }
 
-  void SendTouchEventAck(uint32 touch_event_id, bool event_consumed) {
+  void SendTouchEventAck(uint32_t touch_event_id, bool event_consumed) {
     queue_->OnTouchEventAck(touch_event_id, event_consumed);
   }
 
-  void SendTouchConsumedAck(uint32 touch_event_id) {
+  void SendTouchConsumedAck(uint32_t touch_event_id) {
     SendTouchEventAck(touch_event_id, true);
   }
 
-  void SendTouchNotConsumedAck(uint32 touch_event_id) {
+  void SendTouchNotConsumedAck(uint32_t touch_event_id) {
     SendTouchEventAck(touch_event_id, false);
   }
 
@@ -188,8 +194,8 @@ class TouchDispositionGestureFilterTest
     return touch_event_;
   }
 
-  uint32 SendPacket(const MockMotionEvent& touch_event,
-                    GestureList gesture_list) {
+  uint32_t SendPacket(const MockMotionEvent& touch_event,
+                      GestureList gesture_list) {
     GestureEventDataPacket gesture_packet;
     for (EventType type : gesture_list)
       gesture_packet.Push(CreateGesture(type));
@@ -259,31 +265,33 @@ class TouchDispositionGestureFilterTest
                                  float x,
                                  float y,
                                  float diameter) {
+    GestureEventDetails details(type);
+    details.set_device_type(GestureDeviceType::DEVICE_TOUCHSCREEN);
     return GestureEventData(
-        GestureEventDetails(type), 0, MotionEvent::TOOL_TYPE_FINGER,
-        base::TimeTicks(), x, y, 0, 0, 1,
+        details, 0, MotionEvent::TOOL_TYPE_FINGER, base::TimeTicks(), x, y, 0,
+        0, 1,
         gfx::RectF(x - diameter / 2, y - diameter / 2, diameter, diameter),
-        kDefaultEventFlags);
+        kDefaultEventFlags, 0U);
   }
 
  private:
-  scoped_ptr<TouchDispositionGestureFilter> queue_;
+  std::unique_ptr<TouchDispositionGestureFilter> queue_;
   bool cancel_after_next_gesture_;
   MockMotionEvent touch_event_;
   GestureEventDataPacket pending_gesture_packet_;
   size_t sent_gesture_count_;
   GestureList sent_gestures_;
   gfx::Vector2dF raw_offset_;
-  scoped_ptr<GestureEventData> last_sent_gesture_;
+  std::unique_ptr<GestureEventData> last_sent_gesture_;
   gfx::Rect show_press_bounding_box_;
-  uint32 last_sent_touch_event_id_;
+  uint32_t last_sent_touch_event_id_;
 };
 
 TEST_F(TouchDispositionGestureFilterTest, BasicNoGestures) {
-  uint32 touch_press_event_id = PressTouchPoint().GetUniqueEventId();
+  uint32_t touch_press_event_id = PressTouchPoint().GetUniqueEventId();
   EXPECT_FALSE(GesturesSent());
 
-  uint32 touch_move_event_id = MoveTouchPoint().GetUniqueEventId();
+  uint32_t touch_move_event_id = MoveTouchPoint().GetUniqueEventId();
   EXPECT_FALSE(GesturesSent());
 
   // No gestures should be dispatched by the ack, as the queued packets
@@ -292,7 +300,7 @@ TEST_F(TouchDispositionGestureFilterTest, BasicNoGestures) {
   EXPECT_FALSE(GesturesSent());
 
   // Release the touch gesture.
-  uint32 touch_release_event_id = ReleaseTouchPoint().GetUniqueEventId();
+  uint32_t touch_release_event_id = ReleaseTouchPoint().GetUniqueEventId();
   SendTouchConsumedAck(touch_move_event_id);
   SendTouchConsumedAck(touch_release_event_id);
   EXPECT_FALSE(GesturesSent());
@@ -560,13 +568,13 @@ TEST_F(TouchDispositionGestureFilterTest, UpdateEventsDependOnBeginEvents) {
 
 TEST_F(TouchDispositionGestureFilterTest, MultipleTouchSequences) {
   // Queue two touch-to-gestures sequences.
-  uint32 touch_press_event_id1 =
+  uint32_t touch_press_event_id1 =
       SendPacket(PressTouchPoint(), Gestures(ET_GESTURE_TAP_DOWN));
-  uint32 touch_release_event_id1 =
+  uint32_t touch_release_event_id1 =
       SendPacket(ReleaseTouchPoint(), Gestures(ET_GESTURE_TAP));
-  uint32 touch_press_event_id2 =
+  uint32_t touch_press_event_id2 =
       SendPacket(PressTouchPoint(), Gestures(ET_GESTURE_SCROLL_BEGIN));
-  uint32 touch_release_event_id2 =
+  uint32_t touch_release_event_id2 =
       SendPacket(ReleaseTouchPoint(), Gestures(ET_GESTURE_SCROLL_END));
 
   // The first gesture sequence should not be allowed.
@@ -802,9 +810,9 @@ TEST_F(TouchDispositionGestureFilterTest, SpuriousAcksIgnored) {
   SendTouchConsumedAck(0);
   EXPECT_FALSE(GesturesSent());
 
-  uint32 touch_press_event_id =
+  uint32_t touch_press_event_id =
       SendPacket(PressTouchPoint(), Gestures(ET_GESTURE_SCROLL_BEGIN));
-  uint32 touch_move_event_id =
+  uint32_t touch_move_event_id =
       SendPacket(MoveTouchPoint(), Gestures(ET_GESTURE_SCROLL_UPDATE));
   SendTouchNotConsumedAck(touch_press_event_id);
   SendTouchNotConsumedAck(touch_move_event_id);
@@ -1145,7 +1153,7 @@ TEST_F(TouchDispositionGestureFilterTest, AckQueueBack) {
   // Pending touch move.
   GestureEventDataPacket packet1;
   packet1.Push(CreateGesture(ET_GESTURE_SCROLL_UPDATE, 2, 3, 0));
-  uint32 touch_event_id = SendTouchGestures(MoveTouchPoint(), packet1);
+  uint32_t touch_event_id = SendTouchGestures(MoveTouchPoint(), packet1);
   EXPECT_FALSE(GesturesSent());
 
   // Additional pending touch move.
@@ -1194,9 +1202,9 @@ TEST_F(TouchDispositionGestureFilterTest, AckQueueBack) {
 
 TEST_F(TouchDispositionGestureFilterTest, AckQueueGestureAtBack) {
   // Send gesture sequence
-  uint32 touch_press_event_id1 =
+  uint32_t touch_press_event_id1 =
       SendPacket(PressTouchPoint(), Gestures(ET_GESTURE_BEGIN));
-  uint32 touch_release_event_id1 =
+  uint32_t touch_release_event_id1 =
       SendPacket(ReleaseTouchPoint(), Gestures(ET_GESTURE_END));
 
   // Send second gesture sequence, and synchronously ack it.
@@ -1224,7 +1232,7 @@ TEST_F(TouchDispositionGestureFilterTest, AckQueueGestureAtBack) {
 TEST_F(TouchDispositionGestureFilterTest,
        SyncAcksOnlyTriggerAppropriateGestures) {
   // Queue a touch press.
-  uint32 touch_press_event_id =
+  uint32_t touch_press_event_id =
       SendPacket(PressTouchPoint(), Gestures(ET_GESTURE_BEGIN));
 
   // Send and synchronously ack two touch moves.
@@ -1235,7 +1243,7 @@ TEST_F(TouchDispositionGestureFilterTest,
   SendTouchNotConsumedAckForLastTouch();
 
   // Queue a touch release.
-  uint32 touch_release_event_id =
+  uint32_t touch_release_event_id =
       SendPacket(ReleaseTouchPoint(), Gestures(ET_GESTURE_END));
 
   EXPECT_FALSE(GesturesSent());

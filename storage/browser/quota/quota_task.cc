@@ -9,8 +9,8 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 using base::TaskRunner;
 
@@ -52,15 +52,14 @@ void QuotaTask::DeleteSoon() {
   if (delete_scheduled_)
     return;
   delete_scheduled_ = true;
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 // QuotaTaskObserver -------------------------------------------------------
 
 QuotaTaskObserver::~QuotaTaskObserver() {
-  std::for_each(running_quota_tasks_.begin(),
-                running_quota_tasks_.end(),
-                std::mem_fun(&QuotaTask::Abort));
+  for (auto* task : running_quota_tasks_)
+    task->Abort();
 }
 
 QuotaTaskObserver::QuotaTaskObserver() {

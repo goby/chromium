@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -99,14 +99,12 @@ class CHROMEOS_EXPORT CertLoader : public net::CertDatabase::Observer {
   void LoadCertificates();
 
   // Called if a certificate load task is finished.
-  void UpdateCertificates(scoped_ptr<net::CertificateList> cert_list);
+  void UpdateCertificates(std::unique_ptr<net::CertificateList> cert_list);
 
   void NotifyCertificatesLoaded(bool initial_load);
 
   // net::CertDatabase::Observer
-  void OnCACertChanged(const net::X509Certificate* cert) override;
-  void OnCertAdded(const net::X509Certificate* cert) override;
-  void OnCertRemoved(const net::X509Certificate* cert) override;
+  void OnCertDBChanged(const net::X509Certificate* cert) override;
 
   base::ObserverList<Observer> observers_;
 
@@ -120,7 +118,7 @@ class CHROMEOS_EXPORT CertLoader : public net::CertDatabase::Observer {
   net::NSSCertDatabase* database_;
 
   // Cached Certificates loaded from the database.
-  scoped_ptr<net::CertificateList> cert_list_;
+  std::unique_ptr<net::CertificateList> cert_list_;
 
   base::ThreadChecker thread_checker_;
 

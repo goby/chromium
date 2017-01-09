@@ -7,6 +7,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "ui/aura/client/visibility_client.h"
 #include "ui/wm/wm_export.h"
 
@@ -72,8 +73,8 @@ class WM_EXPORT SuspendChildWindowVisibilityAnimations {
 // the animation stays enabled.
 void WM_EXPORT SetWindowVisibilityChangesAnimated(aura::Window* window);
 
-// Enable visibiilty change animation for all children of the |window|.
-// Tyically applied to a container whose child windows should be animated
+// Enable visibility change animation for all children of the |window|.
+// Typically applied to a container whose child windows should be animated
 // when their visibility changes.
 void WM_EXPORT SetChildWindowVisibilityChangesAnimated(
     aura::Window* window);

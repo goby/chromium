@@ -6,12 +6,17 @@
 
 #include "gpu/command_buffer/client/ring_buffer.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/run_loop.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 #include "gpu/command_buffer/service/cmd_buffer_engine.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
-#include "gpu/command_buffer/service/gpu_scheduler.h"
+#include "gpu/command_buffer/service/command_executor.h"
 #include "gpu/command_buffer/service/mocks.h"
 #include "gpu/command_buffer/service/transfer_buffer_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -33,9 +38,9 @@ class BaseRingBufferTest : public testing::Test {
   static const unsigned int kAlignment = 4;
 
   void RunPendingSetToken() {
-    for (std::vector<const void*>::iterator it = set_token_arguments_.begin();
-         it != set_token_arguments_.end();
-         ++it) {
+    for (std::vector<const volatile void*>::iterator it =
+             set_token_arguments_.begin();
+         it != set_token_arguments_.end(); ++it) {
       api_mock_->SetToken(cmd::kSetToken, 1, *it);
     }
     set_token_arguments_.clear();
@@ -44,7 +49,7 @@ class BaseRingBufferTest : public testing::Test {
 
   void SetToken(unsigned int command,
                 unsigned int arg_count,
-                const void* _args) {
+                const volatile void* _args) {
     EXPECT_EQ(static_cast<unsigned int>(cmd::kSetToken), command);
     EXPECT_EQ(1u, arg_count);
     if (delay_set_token_)
@@ -72,35 +77,33 @@ class BaseRingBufferTest : public testing::Test {
     }
     command_buffer_.reset(
         new CommandBufferService(transfer_buffer_manager_.get()));
-    EXPECT_TRUE(command_buffer_->Initialize());
 
-    gpu_scheduler_.reset(new GpuScheduler(
-        command_buffer_.get(), api_mock_.get(), NULL));
+    executor_.reset(
+        new CommandExecutor(command_buffer_.get(), api_mock_.get(), NULL));
     command_buffer_->SetPutOffsetChangeCallback(base::Bind(
-        &GpuScheduler::PutChanged, base::Unretained(gpu_scheduler_.get())));
+        &CommandExecutor::PutChanged, base::Unretained(executor_.get())));
     command_buffer_->SetGetBufferChangeCallback(base::Bind(
-        &GpuScheduler::SetGetBuffer, base::Unretained(gpu_scheduler_.get())));
+        &CommandExecutor::SetGetBuffer, base::Unretained(executor_.get())));
 
-    api_mock_->set_engine(gpu_scheduler_.get());
+    api_mock_->set_engine(executor_.get());
 
     helper_.reset(new CommandBufferHelper(command_buffer_.get()));
     helper_->Initialize(kBufferSize);
   }
 
-  int32 GetToken() {
-    return command_buffer_->GetLastState().token;
-  }
+  int32_t GetToken() { return command_buffer_->GetLastState().token; }
 
-  scoped_ptr<AsyncAPIMock> api_mock_;
+  std::unique_ptr<AsyncAPIMock> api_mock_;
   scoped_refptr<TransferBufferManagerInterface> transfer_buffer_manager_;
-  scoped_ptr<CommandBufferService> command_buffer_;
-  scoped_ptr<GpuScheduler> gpu_scheduler_;
-  scoped_ptr<CommandBufferHelper> helper_;
-  std::vector<const void*> set_token_arguments_;
+  std::unique_ptr<CommandBufferService> command_buffer_;
+  std::unique_ptr<CommandExecutor> executor_;
+  std::unique_ptr<CommandBufferHelper> helper_;
+  std::vector<const volatile void*> set_token_arguments_;
   bool delay_set_token_;
 
-  scoped_ptr<int8[]> buffer_;
-  int8* buffer_start_;
+  std::unique_ptr<int8_t[]> buffer_;
+  int8_t* buffer_start_;
+  base::MessageLoop message_loop_;
 };
 
 #ifndef _MSC_VER
@@ -117,20 +120,20 @@ class RingBufferTest : public BaseRingBufferTest {
   void SetUp() override {
     BaseRingBufferTest::SetUp();
 
-    buffer_.reset(new int8[kBufferSize + kBaseOffset]);
+    buffer_.reset(new int8_t[kBufferSize + kBaseOffset]);
     buffer_start_ = buffer_.get() + kBaseOffset;
     allocator_.reset(new RingBuffer(kAlignment, kBaseOffset, kBufferSize,
                                     helper_.get(), buffer_start_));
   }
 
   void TearDown() override {
-    // If the GpuScheduler posts any tasks, this forces them to run.
-    base::MessageLoop::current()->RunUntilIdle();
+    // If the CommandExecutor posts any tasks, this forces them to run.
+    base::RunLoop().RunUntilIdle();
 
     BaseRingBufferTest::TearDown();
   }
 
-  scoped_ptr<RingBuffer> allocator_;
+  std::unique_ptr<RingBuffer> allocator_;
 };
 
 // Checks basic alloc and free.
@@ -142,7 +145,7 @@ TEST_F(RingBufferTest, TestBasic) {
   EXPECT_GE(kBufferSize, allocator_->GetOffset(pointer) - kBaseOffset + kSize);
   EXPECT_EQ(kBufferSize, allocator_->GetLargestFreeOrPendingSize());
   EXPECT_EQ(kBufferSize - kSize, allocator_->GetLargestFreeSizeNoWaiting());
-  int32 token = helper_->InsertToken();
+  int32_t token = helper_->InsertToken();
   allocator_->FreePendingToken(pointer, token);
 }
 
@@ -154,7 +157,7 @@ TEST_F(RingBufferTest, TestFreePendingToken) {
 
   delay_set_token_ = true;
   // Allocate several buffers to fill in the memory.
-  int32 tokens[kAllocCount];
+  int32_t tokens[kAllocCount];
   for (unsigned int ii = 0; ii < kAllocCount; ++ii) {
     void* pointer = allocator_->Alloc(kSize);
     EXPECT_GE(kBufferSize,

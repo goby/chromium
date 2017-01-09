@@ -5,6 +5,7 @@
 #include "components/policy/core/common/mac_util.h"
 
 #include <string>
+#include <utility>
 
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -21,7 +22,7 @@ namespace {
 // in the DictionaryValue in |context|.
 void DictionaryEntryToValue(const void* key, const void* value, void* context) {
   if (CFStringRef cf_key = CFCast<CFStringRef>(key)) {
-    scoped_ptr<base::Value> converted =
+    std::unique_ptr<base::Value> converted =
         PropertyToValue(static_cast<CFPropertyListRef>(value));
     if (converted) {
       const std::string string = base::SysCFStringRefToUTF8(cf_key);
@@ -35,7 +36,7 @@ void DictionaryEntryToValue(const void* key, const void* value, void* context) {
 // CFArray that should be converted into an equivalent entry in the ListValue
 // in |context|.
 void ArrayEntryToValue(const void* value, void* context) {
-  scoped_ptr<base::Value> converted =
+  std::unique_ptr<base::Value> converted =
       PropertyToValue(static_cast<CFPropertyListRef>(value));
   if (converted)
     static_cast<base::ListValue *>(context)->Append(converted.release());
@@ -43,12 +44,12 @@ void ArrayEntryToValue(const void* value, void* context) {
 
 }  // namespace
 
-scoped_ptr<base::Value> PropertyToValue(CFPropertyListRef property) {
+std::unique_ptr<base::Value> PropertyToValue(CFPropertyListRef property) {
   if (CFCast<CFNullRef>(property))
     return base::Value::CreateNullValue();
 
   if (CFBooleanRef boolean = CFCast<CFBooleanRef>(property)) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         static_cast<bool>(CFBooleanGetValue(boolean))));
   }
 
@@ -58,35 +59,37 @@ scoped_ptr<base::Value> PropertyToValue(CFPropertyListRef property) {
     if (CFNumberIsFloatType(number)) {
       double double_value = 0.0;
       if (CFNumberGetValue(number, kCFNumberDoubleType, &double_value)) {
-        return scoped_ptr<base::Value>(
+        return std::unique_ptr<base::Value>(
             new base::FundamentalValue(double_value));
       }
     } else {
       int int_value = 0;
       if (CFNumberGetValue(number, kCFNumberIntType, &int_value)) {
-        return scoped_ptr<base::Value>(new base::FundamentalValue(int_value));
+        return std::unique_ptr<base::Value>(
+            new base::FundamentalValue(int_value));
       }
     }
   }
 
   if (CFStringRef string = CFCast<CFStringRef>(property)) {
-    return scoped_ptr<base::Value>(
+    return std::unique_ptr<base::Value>(
         new base::StringValue(base::SysCFStringRefToUTF8(string)));
   }
 
   if (CFDictionaryRef dict = CFCast<CFDictionaryRef>(property)) {
-    scoped_ptr<base::DictionaryValue> dict_value(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict_value(
+        new base::DictionaryValue());
     CFDictionaryApplyFunction(dict, DictionaryEntryToValue, dict_value.get());
-    return dict_value.Pass();
+    return std::move(dict_value);
   }
 
   if (CFArrayRef array = CFCast<CFArrayRef>(property)) {
-    scoped_ptr<base::ListValue> list_value(new base::ListValue());
+    std::unique_ptr<base::ListValue> list_value(new base::ListValue());
     CFArrayApplyFunction(array,
                          CFRangeMake(0, CFArrayGetCount(array)),
                          ArrayEntryToValue,
                          list_value.get());
-    return list_value.Pass();
+    return std::move(list_value);
   }
 
   return nullptr;

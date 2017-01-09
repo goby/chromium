@@ -2,27 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "net/base/net_util.h"
-
-#include <iphlpapi.h>
-#include <wlanapi.h>
+#include "net/base/network_interfaces_win.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/win/scoped_handle.h"
-#include "base/win/windows_version.h"
 #include "net/base/escape.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/network_interfaces_win.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -31,12 +26,6 @@ namespace {
 
 // Converts Windows defined types to NetworkInterfaceType.
 NetworkChangeNotifier::ConnectionType GetNetworkInterfaceType(DWORD ifType) {
-  // Bail out for pre-Vista versions of Windows which are documented to give
-  // inaccurate results like returning Ethernet for WiFi.
-  // http://msdn.microsoft.com/en-us/library/windows/desktop/aa366058.aspx
-  if (base::win::GetVersion() < base::win::VERSION_VISTA)
-    return NetworkChangeNotifier::CONNECTION_UNKNOWN;
-
   NetworkChangeNotifier::ConnectionType type =
       NetworkChangeNotifier::CONNECTION_UNKNOWN;
   if (ifType == IF_TYPE_ETHERNET_CSMACD) {
@@ -50,28 +39,28 @@ NetworkChangeNotifier::ConnectionType GetNetworkInterfaceType(DWORD ifType) {
 
 // Returns scoped_ptr to WLAN_CONNECTION_ATTRIBUTES. The scoped_ptr may hold a
 // NULL pointer if WLAN_CONNECTION_ATTRIBUTES is unavailable.
-scoped_ptr<WLAN_CONNECTION_ATTRIBUTES, internal::WlanApiDeleter>
+std::unique_ptr<WLAN_CONNECTION_ATTRIBUTES, internal::WlanApiDeleter>
 GetConnectionAttributes() {
   const internal::WlanApi& wlanapi = internal::WlanApi::GetInstance();
-  scoped_ptr<WLAN_CONNECTION_ATTRIBUTES, internal::WlanApiDeleter>
+  std::unique_ptr<WLAN_CONNECTION_ATTRIBUTES, internal::WlanApiDeleter>
       wlan_connection_attributes;
   if (!wlanapi.initialized)
-    return wlan_connection_attributes.Pass();
+    return wlan_connection_attributes;
 
   internal::WlanHandle client;
   DWORD cur_version = 0;
   const DWORD kMaxClientVersion = 2;
   DWORD result = wlanapi.OpenHandle(kMaxClientVersion, &cur_version, &client);
   if (result != ERROR_SUCCESS)
-    return wlan_connection_attributes.Pass();
+    return wlan_connection_attributes;
 
   WLAN_INTERFACE_INFO_LIST* interface_list_ptr = NULL;
   result =
       wlanapi.enum_interfaces_func(client.Get(), NULL, &interface_list_ptr);
   if (result != ERROR_SUCCESS)
-    return wlan_connection_attributes.Pass();
-  scoped_ptr<WLAN_INTERFACE_INFO_LIST, internal::WlanApiDeleter> interface_list(
-      interface_list_ptr);
+    return wlan_connection_attributes;
+  std::unique_ptr<WLAN_INTERFACE_INFO_LIST, internal::WlanApiDeleter>
+      interface_list(interface_list_ptr);
 
   // Assume at most one connected wifi interface.
   WLAN_INTERFACE_INFO* info = NULL;
@@ -84,7 +73,7 @@ GetConnectionAttributes() {
   }
 
   if (info == NULL)
-    return wlan_connection_attributes.Pass();
+    return wlan_connection_attributes;
 
   WLAN_CONNECTION_ATTRIBUTES* conn_info_ptr = nullptr;
   DWORD conn_info_size = 0;
@@ -98,7 +87,7 @@ GetConnectionAttributes() {
     DCHECK(conn_info_ptr);
   else
     wlan_connection_attributes.reset();
-  return wlan_connection_attributes.Pass();
+  return wlan_connection_attributes;
 }
 
 }  // namespace
@@ -140,7 +129,6 @@ WlanApi::WlanApi() : initialized(false) {
 
 bool GetNetworkListImpl(NetworkInterfaceList* networks,
                         int policy,
-                        bool is_xp,
                         const IP_ADAPTER_ADDRESSES* adapters) {
   for (const IP_ADAPTER_ADDRESSES* adapter = adapters; adapter != NULL;
        adapter = adapter->Next) {
@@ -169,28 +157,7 @@ bool GetNetworkListImpl(NetworkInterfaceList* networks,
         IPEndPoint endpoint;
         if (endpoint.FromSockAddr(address->Address.lpSockaddr,
                                   address->Address.iSockaddrLength)) {
-          // XP has no OnLinkPrefixLength field.
-          size_t prefix_length = is_xp ? 0 : address->OnLinkPrefixLength;
-          if (is_xp) {
-            // Prior to Windows Vista the FirstPrefix pointed to the list with
-            // single prefix for each IP address assigned to the adapter.
-            // Order of FirstPrefix does not match order of FirstUnicastAddress,
-            // so we need to find corresponding prefix.
-            for (IP_ADAPTER_PREFIX* prefix = adapter->FirstPrefix; prefix;
-                 prefix = prefix->Next) {
-              int prefix_family = prefix->Address.lpSockaddr->sa_family;
-              IPEndPoint network_endpoint;
-              if (prefix_family == family &&
-                  network_endpoint.FromSockAddr(prefix->Address.lpSockaddr,
-                      prefix->Address.iSockaddrLength) &&
-                  IPNumberMatchesPrefix(endpoint.address(),
-                                        network_endpoint.address(),
-                                        prefix->PrefixLength)) {
-                prefix_length =
-                    std::max<size_t>(prefix_length, prefix->PrefixLength);
-              }
-            }
-          }
+          size_t prefix_length = address->OnLinkPrefixLength;
 
           // If the duplicate address detection (DAD) state is not changed to
           // Preferred, skip this address.
@@ -230,26 +197,49 @@ bool GetNetworkListImpl(NetworkInterfaceList* networks,
 }  // namespace internal
 
 bool GetNetworkList(NetworkInterfaceList* networks, int policy) {
-  bool is_xp = base::win::GetVersion() < base::win::VERSION_VISTA;
-  ULONG len = 0;
-  ULONG flags = is_xp ? GAA_FLAG_INCLUDE_PREFIX : 0;
+  // Max number of times to retry GetAdaptersAddresses due to
+  // ERROR_BUFFER_OVERFLOW. If GetAdaptersAddresses returns this indefinitely
+  // due to an unforseen reason, we don't want to be stuck in an endless loop.
+  static constexpr int MAX_GETADAPTERSADDRESSES_TRIES = 10;
+  // Use an initial buffer size of 15KB, as recommended by MSDN. See:
+  // https://msdn.microsoft.com/en-us/library/windows/desktop/aa365915(v=vs.85).aspx
+  static constexpr int INITIAL_BUFFER_SIZE = 15000;
+
+  ULONG len = INITIAL_BUFFER_SIZE;
+  ULONG flags = 0;
+  // Initial buffer allocated on stack.
+  char initial_buf[INITIAL_BUFFER_SIZE];
+  // Dynamic buffer in case initial buffer isn't large enough.
+  std::unique_ptr<char[]> buf;
+
   // GetAdaptersAddresses() may require IO operations.
   base::ThreadRestrictions::AssertIOAllowed();
-  ULONG result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, NULL, &len);
-  if (result != ERROR_BUFFER_OVERFLOW) {
+
+  IP_ADAPTER_ADDRESSES* adapters =
+      reinterpret_cast<IP_ADAPTER_ADDRESSES*>(&initial_buf);
+  ULONG result =
+      GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, adapters, &len);
+
+  // If we get ERROR_BUFFER_OVERFLOW, call GetAdaptersAddresses in a loop,
+  // because the required size may increase between successive calls, resulting
+  // in ERROR_BUFFER_OVERFLOW multiple times.
+  for (int tries = 1; result == ERROR_BUFFER_OVERFLOW &&
+                      tries < MAX_GETADAPTERSADDRESSES_TRIES;
+       ++tries) {
+    buf.reset(new char[len]);
+    adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.get());
+    result = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, adapters, &len);
+  }
+
+  if (result == ERROR_NO_DATA) {
     // There are 0 networks.
     return true;
-  }
-  scoped_ptr<char[]> buf(new char[len]);
-  IP_ADAPTER_ADDRESSES* adapters =
-      reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.get());
-  result = GetAdaptersAddresses(AF_UNSPEC, flags, NULL, adapters, &len);
-  if (result != NO_ERROR) {
+  } else if (result != NO_ERROR) {
     LOG(ERROR) << "GetAdaptersAddresses failed: " << result;
     return false;
   }
 
-  return internal::GetNetworkListImpl(networks, policy, is_xp, adapters);
+  return internal::GetNetworkListImpl(networks, policy, adapters);
 }
 
 WifiPHYLayerProtocol GetWifiPHYLayerProtocol() {
@@ -300,7 +290,7 @@ class WifiOptionSetter : public ScopedWifiOptions {
                                           &interface_list_ptr);
     if (result != ERROR_SUCCESS)
       return;
-    scoped_ptr<WLAN_INTERFACE_INFO_LIST, internal::WlanApiDeleter>
+    std::unique_ptr<WLAN_INTERFACE_INFO_LIST, internal::WlanApiDeleter>
         interface_list(interface_list_ptr);
 
     for (unsigned i = 0; i < interface_list->dwNumberOfItems; ++i) {
@@ -330,8 +320,8 @@ class WifiOptionSetter : public ScopedWifiOptions {
   internal::WlanHandle client_;
 };
 
-scoped_ptr<ScopedWifiOptions> SetWifiOptions(int options) {
-  return scoped_ptr<ScopedWifiOptions>(new WifiOptionSetter(options));
+std::unique_ptr<ScopedWifiOptions> SetWifiOptions(int options) {
+  return std::unique_ptr<ScopedWifiOptions>(new WifiOptionSetter(options));
 }
 
 std::string GetWifiSSID() {

@@ -4,10 +4,15 @@
 
 #include "chrome/browser/android/profiles/profile_downloader_android.h"
 
+#include <stddef.h>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/macros.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_android.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profile_downloader.h"
 #include "chrome/browser/profiles/profile_downloader_delegate.h"
@@ -19,7 +24,9 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/screen.h"
+
+using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace {
 
@@ -81,11 +88,9 @@ class AccountInfoRetriever : public ProfileDownloaderDelegate {
 
     JNIEnv* env = base::android::AttachCurrentThread();
     Java_ProfileDownloader_onProfileDownloadSuccess(
-        env,
-        base::android::ConvertUTF8ToJavaString(env, email_).obj(),
-        base::android::ConvertUTF16ToJavaString(env, full_name).obj(),
-        base::android::ConvertUTF16ToJavaString(env, given_name).obj(),
-        jbitmap.obj());
+        env, base::android::ConvertUTF8ToJavaString(env, email_),
+        base::android::ConvertUTF16ToJavaString(env, full_name),
+        base::android::ConvertUTF16ToJavaString(env, given_name), jbitmap);
     Shutdown();
   }
 
@@ -97,7 +102,7 @@ class AccountInfoRetriever : public ProfileDownloaderDelegate {
   }
 
   // The profile image downloader instance.
-  scoped_ptr<ProfileDownloader> profile_image_downloader_;
+  std::unique_ptr<ProfileDownloader> profile_image_downloader_;
 
   // The browser profile associated with this download request.
   Profile* profile_;
@@ -125,13 +130,13 @@ ScopedJavaLocalRef<jstring> GetCachedFullNameForPrimaryAccount(
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jprofile) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
-  ProfileInfoInterface& info =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  const size_t index = info.GetIndexOfProfileWithPath(profile->GetPath());
 
   base::string16 name;
-  if (index != std::string::npos)
-    name = info.GetGAIANameOfProfileAtIndex(index);
+  ProfileAttributesEntry* entry;
+  if (g_browser_process->profile_manager()->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(profile->GetPath(), &entry)) {
+    name = entry->GetGAIAName();
+  }
 
   return base::android::ConvertUTF16ToJavaString(env, name);
 }
@@ -142,13 +147,13 @@ ScopedJavaLocalRef<jstring> GetCachedGivenNameForPrimaryAccount(
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jprofile) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
-  ProfileInfoInterface& info =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  const size_t index = info.GetIndexOfProfileWithPath(profile->GetPath());
 
   base::string16 name;
-  if (index != std::string::npos)
-    name = info.GetGAIAGivenNameOfProfileAtIndex(index);
+  ProfileAttributesEntry* entry;
+  if (g_browser_process->profile_manager()->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(profile->GetPath(), &entry)) {
+    name = entry->GetGAIAGivenName();
+  }
 
   return base::android::ConvertUTF16ToJavaString(env, name);
 }
@@ -159,13 +164,12 @@ ScopedJavaLocalRef<jobject> GetCachedAvatarForPrimaryAccount(
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jprofile) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
-  ProfileInfoInterface& info =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  const size_t index = info.GetIndexOfProfileWithPath(profile->GetPath());
 
   ScopedJavaLocalRef<jobject> jbitmap;
-  if (index != std::string::npos) {
-    gfx::Image avatar_image = info.GetAvatarIconOfProfileAtIndex(index);
+  ProfileAttributesEntry* entry;
+  if (g_browser_process->profile_manager()->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(profile->GetPath(), &entry)) {
+    gfx::Image avatar_image = entry->GetAvatarIcon();
     if (!avatar_image.IsEmpty() &&
         avatar_image.Width() > profiles::kAvatarIconWidth &&
         avatar_image.Height() > profiles::kAvatarIconHeight &&
@@ -189,6 +193,15 @@ void StartFetchingAccountInfoFor(JNIEnv* env,
       base::android::ConvertJavaStringToUTF8(env, jemail);
   AccountTrackerService* account_tracker_service =
       AccountTrackerServiceFactory::GetForProfile(profile);
+
+  AccountInfo account_info =
+      account_tracker_service->FindAccountInfoByEmail(email);
+
+  if (account_info.account_id.empty()) {
+      LOG(ERROR) << "Attempted to get AccountInfo for account not in the "
+          << "AccountTrackerService";
+      return;
+  }
 
   AccountInfoRetriever* retriever = new AccountInfoRetriever(
       profile,

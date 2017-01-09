@@ -19,6 +19,8 @@ CompoundBuffer::DataChunk::DataChunk(
       size(size_value) {
 }
 
+CompoundBuffer::DataChunk::DataChunk(const DataChunk& other) = default;
+
 CompoundBuffer::DataChunk::~DataChunk() {}
 
 CompoundBuffer::CompoundBuffer()
@@ -272,7 +274,7 @@ bool CompoundBufferInputStream::Skip(int count) {
   return count == 0;
 }
 
-int64 CompoundBufferInputStream::ByteCount() const {
+int64_t CompoundBufferInputStream::ByteCount() const {
   return position_;
 }
 

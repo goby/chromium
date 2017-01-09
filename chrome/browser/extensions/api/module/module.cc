@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -36,29 +37,30 @@ std::string GetUpdateURLData(const ExtensionPrefs* prefs,
 
 }  // namespace extension
 
-bool ExtensionSetUpdateUrlDataFunction::RunSync() {
+ExtensionFunction::ResponseAction ExtensionSetUpdateUrlDataFunction::Run() {
   std::string data;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &data));
 
   if (ManifestURL::UpdatesFromGallery(extension())) {
-    return false;
+    return RespondNow(Error(kUnknownErrorDoNotUse));
   }
 
-  ExtensionPrefs::Get(GetProfile())->UpdateExtensionPref(
-      extension_id(), extension::kUpdateURLData, new base::StringValue(data));
-  return true;
+  ExtensionPrefs::Get(browser_context())
+      ->UpdateExtensionPref(extension_id(), extension::kUpdateURLData,
+                            new base::StringValue(data));
+  return RespondNow(NoArguments());
 }
 
-bool ExtensionIsAllowedIncognitoAccessFunction::RunSync() {
-  SetResult(new base::FundamentalValue(
-      util::IsIncognitoEnabled(extension_id(), GetProfile())));
-  return true;
+ExtensionFunction::ResponseAction
+ExtensionIsAllowedIncognitoAccessFunction::Run() {
+  return RespondNow(OneArgument(base::MakeUnique<base::FundamentalValue>(
+      util::IsIncognitoEnabled(extension_id(), browser_context()))));
 }
 
-bool ExtensionIsAllowedFileSchemeAccessFunction::RunSync() {
-  SetResult(new base::FundamentalValue(
-      util::AllowFileAccess(extension_id(), GetProfile())));
-  return true;
+ExtensionFunction::ResponseAction
+ExtensionIsAllowedFileSchemeAccessFunction::Run() {
+  return RespondNow(OneArgument(base::MakeUnique<base::FundamentalValue>(
+      util::AllowFileAccess(extension_id(), browser_context()))));
 }
 
 }  // namespace extensions

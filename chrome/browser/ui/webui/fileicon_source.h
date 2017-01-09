@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/icon_manager.h"
 #include "content/public/browser/url_data_source.h"
@@ -20,14 +21,13 @@ class Image;
 // requests for favicons and the history backend that serves these.
 class FileIconSource : public content::URLDataSource {
  public:
-  explicit FileIconSource();
+  FileIconSource();
 
   // content::URLDataSource implementation.
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string&) const override;
 
@@ -47,6 +47,7 @@ class FileIconSource : public content::URLDataSource {
   // Contains the necessary information for completing an icon fetch request.
   struct IconRequestDetails {
     IconRequestDetails();
+    IconRequestDetails(const IconRequestDetails& other);
     ~IconRequestDetails();
 
     // The callback to run with the response.

@@ -5,11 +5,13 @@
 #ifndef PPAPI_PROXY_NACL_MESSAGE_SCANNER_H_
 #define PPAPI_PROXY_NACL_MESSAGE_SCANNER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "ppapi/c/pp_resource.h"
 #include "ppapi/proxy/ppapi_proxy_export.h"
@@ -45,12 +47,12 @@ class PPAPI_PROXY_EXPORT NaClMessageScanner {
   bool ScanMessage(const IPC::Message& msg,
                    uint32_t type,
                    std::vector<SerializedHandle>* handles,
-                   scoped_ptr<IPC::Message>* new_msg_ptr);
+                   std::unique_ptr<IPC::Message>* new_msg_ptr);
 
   // Scans an untrusted message for items that require special handling. If the
   // message had to be rewritten, sets |new_msg_ptr| to the new message.
   void ScanUntrustedMessage(const IPC::Message& untrusted_msg,
-                            scoped_ptr<IPC::Message>* new_msg_ptr);
+                            std::unique_ptr<IPC::Message>* new_msg_ptr);
 
   // FileSystem information for quota auditing.
   class PPAPI_PROXY_EXPORT FileSystem {

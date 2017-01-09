@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/safe_browsing/client_side_model_loader.h"
+
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
-#include "chrome/browser/safe_browsing/client_side_model_loader.h"
 #include "chrome/common/safe_browsing/client_model.pb.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
 #include "components/variations/variations_associated_data.h"
@@ -38,7 +42,7 @@ class MockModelLoader : public ModelLoader {
       : ModelLoader(update_renderers_callback, model_name) {}
   ~MockModelLoader() override {}
 
-  MOCK_METHOD1(ScheduleFetch, void(int64));
+  MOCK_METHOD1(ScheduleFetch, void(int64_t));
   MOCK_METHOD2(EndFetch, void(ClientModelStatus, base::TimeDelta));
 
  private:
@@ -50,8 +54,8 @@ class MockModelLoader : public ModelLoader {
 class ModelLoaderTest : public testing::Test {
  protected:
   ModelLoaderTest()
-      : factory_(new net::FakeURLFetcherFactory(NULL)),
-        field_trials_(new base::FieldTrialList(NULL)) {}
+      : factory_(new net::FakeURLFetcherFactory(nullptr)),
+        field_trials_(new base::FieldTrialList(nullptr)) {}
 
   void SetUp() override {
     variations::testing::ClearAllVariationIDs();
@@ -64,7 +68,7 @@ class ModelLoaderTest : public testing::Test {
     // Destroy the existing FieldTrialList before creating a new one to avoid
     // a DCHECK.
     field_trials_.reset();
-    field_trials_.reset(new base::FieldTrialList(NULL));
+    field_trials_.reset(new base::FieldTrialList(nullptr));
     variations::testing::ClearAllVariationIDs();
     variations::testing::ClearAllVariationParams();
 
@@ -92,8 +96,8 @@ class ModelLoaderTest : public testing::Test {
 
  private:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<net::FakeURLFetcherFactory> factory_;
-  scoped_ptr<base::FieldTrialList> field_trials_;
+  std::unique_ptr<net::FakeURLFetcherFactory> factory_;
+  std::unique_ptr<base::FieldTrialList> field_trials_;
   GURL model_url_;
 };
 
@@ -283,7 +287,7 @@ TEST_F(ModelLoaderTest, ModelNamesTest) {
             "client_model_v5_variation_5.pb");
 
   // No Finch setup. Should default to 0.
-  scoped_ptr<ModelLoader> loader;
+  std::unique_ptr<ModelLoader> loader;
   loader.reset(new ModelLoader(base::Closure(), NULL,
                                false /* is_extended_reporting */));
   EXPECT_EQ(loader->name(), "client_model_v5_variation_0.pb");

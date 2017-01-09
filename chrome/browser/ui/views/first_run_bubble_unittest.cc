@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/views/first_run_bubble.h"
-#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
+#include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
@@ -59,37 +60,33 @@ class FirstRunBubbleTest : public views::ViewsTestBase,
 
   // Overrides from views::ViewsTestBase:
   void SetUp() override;
-  void TearDown() override;
 
   void CreateAndCloseBubbleOnEventTest(ui::Event* event);
 
  protected:
-  TestingProfile* profile() { return profile_.get(); }
+  TestingProfile* profile() { return &profile_; }
 
  private:
-  scoped_ptr<TestingProfile> profile_;
+  // TestBrowserThreadBundle cannot be used here because the ViewsTestBase
+  // superclass creates its own MessageLoop.
+  content::TestBrowserThread ui_thread_;
+  TestingProfile profile_;
 
   DISALLOW_COPY_AND_ASSIGN(FirstRunBubbleTest);
 };
 
-FirstRunBubbleTest::FirstRunBubbleTest() {}
+FirstRunBubbleTest::FirstRunBubbleTest()
+    : ui_thread_(content::BrowserThread::UI, base::MessageLoop::current()) {}
 
 FirstRunBubbleTest::~FirstRunBubbleTest() {}
 
 void FirstRunBubbleTest::SetUp() {
   ViewsTestBase::SetUp();
-  profile_.reset(new TestingProfile());
   TemplateURLServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-      profile_.get(), &TemplateURLServiceFactory::BuildInstanceFor);
+      profile(), &TemplateURLServiceFactory::BuildInstanceFor);
   TemplateURLService* turl_model =
-      TemplateURLServiceFactory::GetForProfile(profile_.get());
+      TemplateURLServiceFactory::GetForProfile(profile());
   turl_model->Load();
-}
-
-void FirstRunBubbleTest::TearDown() {
-  ViewsTestBase::TearDown();
-  profile_.reset();
-  TestingBrowserProcess::DeleteInstance();
 }
 
 void FirstRunBubbleTest::CreateAndCloseBubbleOnEventTest(ui::Event* event) {
@@ -97,7 +94,7 @@ void FirstRunBubbleTest::CreateAndCloseBubbleOnEventTest(ui::Event* event) {
   views::Widget::InitParams params =
       CreateParams(views::Widget::InitParams::TYPE_WINDOW);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  scoped_ptr<views::Widget> anchor_widget(new views::Widget);
+  std::unique_ptr<views::Widget> anchor_widget(new views::Widget);
   anchor_widget->Init(params);
   anchor_widget->SetBounds(gfx::Rect(10, 10, 500, 500));
   anchor_widget->Show();
@@ -109,7 +106,7 @@ void FirstRunBubbleTest::CreateAndCloseBubbleOnEventTest(ui::Event* event) {
   anchor_widget->GetFocusManager()->SetFocusedView(
       anchor_widget->GetContentsView());
 
-  scoped_ptr<WidgetClosingObserver> widget_observer(
+  std::unique_ptr<WidgetClosingObserver> widget_observer(
       new WidgetClosingObserver(delegate->GetWidget()));
 
   ui::EventDispatchDetails details =
@@ -125,7 +122,7 @@ TEST_F(FirstRunBubbleTest, CreateAndClose) {
   views::Widget::InitParams params =
       CreateParams(views::Widget::InitParams::TYPE_WINDOW);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  scoped_ptr<views::Widget> anchor_widget(new views::Widget);
+  std::unique_ptr<views::Widget> anchor_widget(new views::Widget);
   anchor_widget->Init(params);
   anchor_widget->Show();
 

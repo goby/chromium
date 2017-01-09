@@ -2,34 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// https://webbluetoothchrome.github.io/web-bluetooth/#idl-def-bluetoothdevice
+// https://webbluetoothcg.github.io/web-bluetooth/#bluetoothdevice
 
 // Implement BluetoothDevice interface: http://crbug.com/421668
-
-enum VendorIDSource {
-    "bluetooth",
-    "usb"
-};
 
 [
-    GarbageCollected,
+    DependentLifetime,
     RuntimeEnabled=WebBluetooth,
-] interface BluetoothDevice
+] interface BluetoothDevice : EventTarget
 // Implement ServiceEventHandlers interface: http://crbug.com/421670
-// : ServiceEventHandlers 
+// : ServiceEventHandlers
 {
 // Implement BluetoothDevice interface: http://crbug.com/421668
-    [DeprecateAs=BluetoothDeviceInstanceId, ImplementedAs=id] readonly attribute DOMString instanceID;
     readonly    attribute DOMString id;
     readonly    attribute DOMString?                 name;
-    readonly    attribute BluetoothAdvertisingData   adData;
-    readonly    attribute unsigned long?             deviceClass;
-    readonly    attribute VendorIDSource?            vendorIDSource;
-    readonly    attribute unsigned long?             vendorID;
-    readonly    attribute unsigned long?             productID;
-    readonly    attribute unsigned long?             productVersion;
-    readonly    attribute boolean                    paired;
-//    readonly    attribute BluetoothGATTRemoteServer? gattServer;
-    readonly    attribute UUID[]                     uuids;
-    [CallWith=ScriptState] Promise<BluetoothGATTRemoteServer> connectGATT ();
+    readonly    attribute BluetoothRemoteGATTServer  gatt;
+
+    attribute EventHandler ongattserverdisconnected;
 };

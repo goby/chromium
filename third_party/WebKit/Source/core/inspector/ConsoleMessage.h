@@ -5,90 +5,70 @@
 #ifndef ConsoleMessage_h
 #define ConsoleMessage_h
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/CoreExport.h"
-#include "core/frame/ConsoleTypes.h"
-#include "core/inspector/ConsoleAPITypes.h"
-#include "core/inspector/ScriptCallStack.h"
+#include "core/inspector/ConsoleTypes.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-class ScriptArguments;
-class ScriptCallStack;
-class ScriptState;
-class WorkerGlobalScopeProxy;
+class SourceLocation;
 
-class CORE_EXPORT ConsoleMessage final: public RefCountedWillBeGarbageCollectedFinalized<ConsoleMessage> {
-public:
-    static PassRefPtrWillBeRawPtr<ConsoleMessage> create(MessageSource source, MessageLevel level, const String& message, const String& url = String(), unsigned lineNumber = 0, unsigned columnNumber = 0)
-    {
-        return adoptRefWillBeNoop(new ConsoleMessage(source, level, message, url, lineNumber, columnNumber));
-    }
-    ~ConsoleMessage();
+class CORE_EXPORT ConsoleMessage final
+    : public GarbageCollectedFinalized<ConsoleMessage> {
+ public:
+  // Location must be non-null.
+  static ConsoleMessage* create(MessageSource,
+                                MessageLevel,
+                                const String& message,
+                                std::unique_ptr<SourceLocation>);
 
-    MessageType type() const;
-    void setType(MessageType);
-    int scriptId() const;
-    void setScriptId(int);
-    const String& url() const;
-    void setURL(const String&);
-    unsigned lineNumber() const;
-    void setLineNumber(unsigned);
-    PassRefPtrWillBeRawPtr<ScriptCallStack> callStack() const;
-    void setCallStack(PassRefPtrWillBeRawPtr<ScriptCallStack>);
-    ScriptState* scriptState() const;
-    void setScriptState(ScriptState*);
-    PassRefPtrWillBeRawPtr<ScriptArguments> scriptArguments() const;
-    void setScriptArguments(PassRefPtrWillBeRawPtr<ScriptArguments>);
-    unsigned long requestIdentifier() const;
-    void setRequestIdentifier(unsigned long);
-    double timestamp() const;
-    void setTimestamp(double);
-    WorkerGlobalScopeProxy* workerGlobalScopeProxy() { return m_workerProxy; }
-    void setWorkerGlobalScopeProxy(WorkerGlobalScopeProxy* proxy) { m_workerProxy = proxy; }
-    unsigned assignMessageId();
-    unsigned messageId() const { return m_messageId; }
-    unsigned relatedMessageId() const { return m_relatedMessageId; }
-    void setRelatedMessageId(unsigned relatedMessageId) { m_relatedMessageId = relatedMessageId; }
+  // Shortcut when location is unknown. Captures current location.
+  static ConsoleMessage* create(MessageSource,
+                                MessageLevel,
+                                const String& message);
 
-    MessageSource source() const;
-    MessageLevel level() const;
-    const String& message() const;
-    unsigned columnNumber() const;
+  // This method captures current location if available.
+  static ConsoleMessage* createForRequest(MessageSource,
+                                          MessageLevel,
+                                          const String& message,
+                                          const String& url,
+                                          unsigned long requestIdentifier);
 
-    void frameWindowDiscarded(LocalDOMWindow*);
-    unsigned argumentCount();
+  // This creates message from WorkerMessageSource.
+  static ConsoleMessage* createFromWorker(MessageLevel,
+                                          const String& message,
+                                          std::unique_ptr<SourceLocation>,
+                                          const String& workerId);
 
-    void collectCallStack();
+  ~ConsoleMessage();
 
-    DECLARE_TRACE();
+  SourceLocation* location() const;
+  unsigned long requestIdentifier() const;
+  double timestamp() const;
+  MessageSource source() const;
+  MessageLevel level() const;
+  const String& message() const;
+  const String& workerId() const;
 
-private:
-    ConsoleMessage(MessageSource, MessageLevel, const String& message, const String& url = String(), unsigned lineNumber = 0, unsigned columnNumber = 0);
+  DECLARE_TRACE();
 
-    MessageSource m_source;
-    MessageLevel m_level;
-    MessageType m_type;
-    String m_message;
-    int m_scriptId;
-    String m_url;
-    unsigned m_lineNumber;
-    unsigned m_columnNumber;
-    RefPtrWillBeMember<ScriptCallStack> m_callStack;
-    OwnPtr<ScriptStateProtectingContext> m_scriptState;
-    RefPtrWillBeMember<ScriptArguments> m_scriptArguments;
-    unsigned long m_requestIdentifier;
-    double m_timestamp;
-    WorkerGlobalScopeProxy* m_workerProxy;
-    unsigned m_messageId;
-    unsigned m_relatedMessageId;
+ private:
+  ConsoleMessage(MessageSource,
+                 MessageLevel,
+                 const String& message,
+                 std::unique_ptr<SourceLocation>);
+
+  MessageSource m_source;
+  MessageLevel m_level;
+  String m_message;
+  std::unique_ptr<SourceLocation> m_location;
+  unsigned long m_requestIdentifier;
+  double m_timestamp;
+  String m_workerId;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ConsoleMessage_h
+#endif  // ConsoleMessage_h

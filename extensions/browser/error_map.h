@@ -5,22 +5,23 @@
 #ifndef EXTENSIONS_BROWSER_ERROR_MAP_H_
 #define EXTENSIONS_BROWSER_ERROR_MAP_H_
 
+#include <stddef.h>
+
 #include <deque>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "extensions/browser/extension_error.h"
 
 namespace extensions {
 
-typedef std::deque<const ExtensionError*> ErrorList;
+using ErrorList = std::deque<std::unique_ptr<ExtensionError>>;
 
 // An ErrorMap is responsible for storing Extension-related errors, keyed by
-// Extension ID. The errors are owned by the ErrorMap, and are deleted upon
-// destruction.
+// Extension ID.
 class ErrorMap {
  public:
   ErrorMap();
@@ -31,6 +32,7 @@ class ErrorMap {
            int restrict_to_type,
            const std::set<int>& restrict_to_ids,
            bool restrict_to_incognito);
+    Filter(const Filter& other);
     ~Filter();
 
     // Convenience methods to get a specific type of filter. Prefer these over
@@ -58,7 +60,7 @@ class ErrorMap {
   const ErrorList& GetErrorsForExtension(const std::string& extension_id) const;
 
   // Add the |error| to the ErrorMap.
-  const ExtensionError* AddError(scoped_ptr<ExtensionError> error);
+  const ExtensionError* AddError(std::unique_ptr<ExtensionError> error);
 
   // Removes errors that match the given |filter| from the map. If non-null,
   // |affected_ids| will be populated with the set of extension ids that were
@@ -74,10 +76,9 @@ class ErrorMap {
   // An Entry is created for each Extension ID, and stores the errors related to
   // that Extension.
   class ExtensionEntry;
-  using EntryMap = std::map<std::string, ExtensionEntry*>;
 
   // The mapping between Extension IDs and their corresponding Entries.
-  EntryMap map_;
+  std::map<std::string, std::unique_ptr<ExtensionEntry>> map_;
 
   DISALLOW_COPY_AND_ASSIGN(ErrorMap);
 };

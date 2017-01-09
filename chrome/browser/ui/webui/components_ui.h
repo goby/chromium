@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/update_client/crx_update_item.h"
 #include "content/public/browser/web_ui_controller.h"
@@ -14,10 +15,6 @@
 
 namespace base {
 class RefCountedMemory;
-}
-
-namespace user_prefs {
-class PrefRegistrySyncable;
 }
 
 class ComponentsUI : public content::WebUIController,

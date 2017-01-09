@@ -5,8 +5,10 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_AW_BROWSER_MAIN_PARTS_H_
 #define ANDROID_WEBVIEW_BROWSER_AW_BROWSER_MAIN_PARTS_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/public/browser/browser_main_parts.h"
 
 namespace base {
@@ -15,11 +17,11 @@ class MessageLoop;
 
 namespace android_webview {
 
-class AwBrowserContext;
+class AwContentBrowserClient;
 
 class AwBrowserMainParts : public content::BrowserMainParts {
  public:
-  explicit AwBrowserMainParts(AwBrowserContext* browser_context);
+  explicit AwBrowserMainParts(AwContentBrowserClient* browser_client);
   ~AwBrowserMainParts() override;
 
   // Overriding methods from content::BrowserMainParts.
@@ -30,9 +32,9 @@ class AwBrowserMainParts : public content::BrowserMainParts {
 
  private:
   // Android specific UI MessageLoop.
-  scoped_ptr<base::MessageLoop> main_message_loop_;
+  std::unique_ptr<base::MessageLoop> main_message_loop_;
 
-  AwBrowserContext* browser_context_;  // weak
+  AwContentBrowserClient* browser_client_;
 
   DISALLOW_COPY_AND_ASSIGN(AwBrowserMainParts);
 };

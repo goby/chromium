@@ -6,34 +6,42 @@
 #define CSSPathValue_h
 
 #include "core/css/CSSValue.h"
+#include "core/style/StylePath.h"
+#include "core/svg/SVGPathByteStream.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
+#include <memory>
 
 namespace blink {
 
+class StylePath;
+
 class CSSPathValue : public CSSValue {
-public:
-    static PassRefPtrWillBeRawPtr<CSSPathValue> create(const String& pathString)
-    {
-        return adoptRefWillBeNoop(new CSSPathValue(pathString));
-    }
+ public:
+  static CSSPathValue* create(PassRefPtr<StylePath>);
+  static CSSPathValue* create(std::unique_ptr<SVGPathByteStream>);
 
-    String customCSSText() const;
+  static CSSPathValue& emptyPathValue();
 
-    bool equals(const CSSPathValue&) const;
+  StylePath* stylePath() const { return m_stylePath.get(); }
+  String customCSSText() const;
 
-    DECLARE_TRACE_AFTER_DISPATCH();
+  bool equals(const CSSPathValue&) const;
 
-    const String& pathString() const { return m_pathString; }
+  DECLARE_TRACE_AFTER_DISPATCH();
 
-private:
-    CSSPathValue(const String& pathString);
+  const SVGPathByteStream& byteStream() const {
+    return m_stylePath->byteStream();
+  }
 
-    String m_pathString;
+ private:
+  CSSPathValue(PassRefPtr<StylePath>);
+
+  RefPtr<StylePath> m_stylePath;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSPathValue, isPathValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSPathValue_h
+#endif  // CSSPathValue_h

@@ -4,6 +4,10 @@
 
 #include "chrome/common/auto_start_linux.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -30,7 +34,7 @@ bool AutoStart::AddApplication(const std::string& autostart_filename,
                                const std::string& application_name,
                                const std::string& command_line,
                                bool is_terminal_app) {
-  scoped_ptr<base::Environment> environment(base::Environment::Create());
+  std::unique_ptr<base::Environment> environment(base::Environment::Create());
   base::FilePath autostart_directory = GetAutostartDirectory(environment.get());
   if (!base::DirectoryExists(autostart_directory) &&
       !base::CreateDirectory(autostart_directory)) {
@@ -57,7 +61,7 @@ bool AutoStart::AddApplication(const std::string& autostart_filename,
 }
 
 bool AutoStart::Remove(const std::string& autostart_filename) {
-  scoped_ptr<base::Environment> environment(base::Environment::Create());
+  std::unique_ptr<base::Environment> environment(base::Environment::Create());
   base::FilePath autostart_directory = GetAutostartDirectory(environment.get());
   base::FilePath autostart_file =
       autostart_directory.Append(autostart_filename);
@@ -66,7 +70,7 @@ bool AutoStart::Remove(const std::string& autostart_filename) {
 
 bool AutoStart::GetAutostartFileContents(
     const std::string& autostart_filename, std::string* contents) {
-  scoped_ptr<base::Environment> environment(base::Environment::Create());
+  std::unique_ptr<base::Environment> environment(base::Environment::Create());
   base::FilePath autostart_directory = GetAutostartDirectory(environment.get());
   base::FilePath autostart_file =
       autostart_directory.Append(autostart_filename);

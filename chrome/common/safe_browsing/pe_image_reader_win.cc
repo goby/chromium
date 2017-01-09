@@ -6,7 +6,10 @@
 
 #include <wintrust.h>
 
+#include <memory>
+
 #include "base/logging.h"
+#include "base/macros.h"
 
 namespace safe_browsing {
 
@@ -243,7 +246,7 @@ bool PeImageReader::ValidateOptionalHeader() {
     return false;
   }
 
-  scoped_ptr<OptionalHeader> optional_header;
+  std::unique_ptr<OptionalHeader> optional_header;
   if (*optional_header_magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
     optional_header.reset(new OptionalHeaderImpl<IMAGE_OPTIONAL_HEADER32>(
         image_data_ + optional_header_offset));

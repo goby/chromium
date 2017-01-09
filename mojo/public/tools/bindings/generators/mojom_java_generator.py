@@ -10,8 +10,8 @@ import contextlib
 import os
 import re
 import shutil
+import sys
 import tempfile
-import zipfile
 
 from jinja2 import contextfilter
 
@@ -19,6 +19,11 @@ import mojom.fileutil as fileutil
 import mojom.generate.generator as generator
 import mojom.generate.module as mojom
 from mojom.generate.template_expander import UseJinja
+
+sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir,
+                             os.pardir, os.pardir, os.pardir, os.pardir,
+                             'build', 'android', 'gyp'))
+from util import build_utils
 
 
 GENERATOR_PREFIX = 'java'
@@ -219,8 +224,8 @@ def GetPackage(module):
     return ParseStringAttribute(module.attributes['JavaPackage'])
   # Default package.
   if module.namespace:
-    return 'org.chromium.mojom.' + module.namespace
-  return 'org.chromium.mojom'
+    return 'org.chromium.' + module.namespace
+  return 'org.chromium'
 
 def GetNameForKind(context, kind):
   def _GetNameHierachy(kind):
@@ -236,6 +241,10 @@ def GetNameForKind(context, kind):
     elements += [GetPackage(kind.module)]
   elements += _GetNameHierachy(kind)
   return '.'.join(elements)
+
+@contextfilter
+def GetJavaClassForEnum(context, kind):
+  return GetNameForKind(context, kind)
 
 def GetBoxedJavaType(context, kind, with_generics=True):
   unboxed_type = GetJavaType(context, kind, False, with_generics)
@@ -393,14 +402,6 @@ def TempDir():
   finally:
     shutil.rmtree(dirname)
 
-def ZipContentInto(root, zip_filename):
-  with zipfile.ZipFile(zip_filename, 'w') as zip_file:
-    for dirname, _, files in os.walk(root):
-      for filename in files:
-        path = os.path.join(dirname, filename)
-        path_in_archive = os.path.relpath(path, root)
-        zip_file.write(path, path_in_archive)
-
 class Generator(generator.Generator):
 
   java_filters = {
@@ -416,6 +417,7 @@ class Generator(generator.Generator):
     'interface_response_name': GetInterfaceResponseName,
     'is_array_kind': mojom.IsArrayKind,
     'is_any_handle_kind': mojom.IsAnyHandleKind,
+    "is_enum_kind": mojom.IsEnumKind,
     'is_interface_request_kind': mojom.IsInterfaceRequestKind,
     'is_map_kind': mojom.IsMapKind,
     'is_nullable_kind': mojom.IsNullableKind,
@@ -424,6 +426,7 @@ class Generator(generator.Generator):
     'is_struct_kind': mojom.IsStructKind,
     'is_union_array_kind': IsUnionArrayKind,
     'is_union_kind': mojom.IsUnionKind,
+    'java_class_for_enum': GetJavaClassForEnum,
     'java_true_false': GetJavaTrueFalse,
     'java_type': GetJavaType,
     'method_ordinal_name': GetMethodOrdinalName,
@@ -437,38 +440,46 @@ class Generator(generator.Generator):
       'package': GetPackage(self.module),
     }
 
+  @staticmethod
+  def GetTemplatePrefix():
+    return "java_templates"
+
+  @classmethod
+  def GetFilters(cls):
+    return cls.java_filters
+
   def GetJinjaExportsForInterface(self, interface):
     exports = self.GetJinjaExports()
     exports.update({'interface': interface})
     return exports
 
-  @UseJinja('java_templates/enum.java.tmpl', filters=java_filters)
+  @UseJinja('enum.java.tmpl')
   def GenerateEnumSource(self, enum):
     exports = self.GetJinjaExports()
     exports.update({'enum': enum})
     return exports
 
-  @UseJinja('java_templates/struct.java.tmpl', filters=java_filters)
+  @UseJinja('struct.java.tmpl')
   def GenerateStructSource(self, struct):
     exports = self.GetJinjaExports()
     exports.update({'struct': struct})
     return exports
 
-  @UseJinja('java_templates/union.java.tmpl', filters=java_filters)
+  @UseJinja('union.java.tmpl')
   def GenerateUnionSource(self, union):
     exports = self.GetJinjaExports()
     exports.update({'union': union})
     return exports
 
-  @UseJinja('java_templates/interface.java.tmpl', filters=java_filters)
+  @UseJinja('interface.java.tmpl')
   def GenerateInterfaceSource(self, interface):
     return self.GetJinjaExportsForInterface(interface)
 
-  @UseJinja('java_templates/interface_internal.java.tmpl', filters=java_filters)
+  @UseJinja('interface_internal.java.tmpl')
   def GenerateInterfaceInternalSource(self, interface):
     return self.GetJinjaExportsForInterface(interface)
 
-  @UseJinja('java_templates/constants.java.tmpl', filters=java_filters)
+  @UseJinja('constants.java.tmpl')
   def GenerateConstantsSource(self, module):
     exports = self.GetJinjaExports()
     exports.update({'main_entity': GetConstantsMainEntityName(module),
@@ -503,6 +514,10 @@ class Generator(generator.Generator):
                  '%s.java' % GetConstantsMainEntityName(self.module))
 
   def GenerateFiles(self, unparsed_args):
+    # TODO(rockot): Support variant output for Java.
+    if self.variant:
+      raise Exception("Variants not supported in Java bindings.")
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--java_output_directory', dest='java_output_directory')
     args = parser.parse_args(unparsed_args)
@@ -515,7 +530,7 @@ class Generator(generator.Generator):
     with TempDir() as temp_java_root:
       self.output_dir = os.path.join(temp_java_root, package_path)
       self.DoGenerateFiles();
-      ZipContentInto(temp_java_root, zip_filename)
+      build_utils.ZipDir(zip_filename, temp_java_root)
 
     if args.java_output_directory:
       # If requested, generate the java files directly into indicated directory.

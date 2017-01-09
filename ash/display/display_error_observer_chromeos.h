@@ -7,8 +7,9 @@
 
 #include "ash/ash_export.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
-#include "ui/display/chromeos/display_configurator.h"
+#include "ui/display/manager/chromeos/display_configurator.h"
 
 namespace ash {
 
@@ -26,10 +27,6 @@ class ASH_EXPORT DisplayErrorObserver
       ui::MultipleDisplayState failed_new_state) override;
 
  private:
-  friend class DisplayErrorObserverTest;
-
-  base::string16 GetDisplayErrorNotificationMessageForTest();
-
   DISALLOW_COPY_AND_ASSIGN(DisplayErrorObserver);
 };
 

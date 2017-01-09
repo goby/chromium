@@ -6,7 +6,7 @@
 ## Overview
 
 Logging used to be done using Android's [android.util.Log]
-(http://developer.android.com/reference/android/util/Log.html).
+(https://developer.android.com/reference/android/util/Log.html).
 
 A wrapper on that is now available: org.chromium.base.Log. It is designed to
 write logs as belonging to logical groups going beyond single classes, and to
@@ -200,5 +200,29 @@ environment variable:
 export ANDROID_LOG_TAGS="cr_YourModuleTag:D *:S"
 ```
 
+The syntax does not support tag expansion or regular expressions other than `*`
+for all tags. Please use `grep` or a similar tool to refine your filters
+further.
+
 For more, see the [related page on developer.android.com]
-(http://developer.android.com/tools/debugging/debugging-log.html#filteringOutput)
+(https://developer.android.com/tools/debugging/debugging-log.html#filteringOutput)
+
+## Logs in JUnit tests
+
+We use [robolectric](http://robolectric.org/) to run our JUnit tests. It
+replaces some of the Android framework classes with "Shadow" classes
+to ensure that we can run our code in a regular JVM. `android.util.Log` is one
+of those replaced classes, and by default calling `Log` methods doesn't print
+anything.
+
+That default is not changed in the normal configuration, but if you need to
+enable logging locally or for a specific test, just add those few lines to your
+test:
+
+```java
+@Before
+public void setUp() {
+  ShadowLog.stream = System.out;
+  //you other setup here
+}
+```

@@ -2,24 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/safe_browsing/client_side_detection_host.h"
+
+#include <memory>
+#include <tuple>
+#include <utility>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
 #include "chrome/browser/safe_browsing/browser_feature_extractor.h"
-#include "chrome/browser/safe_browsing/client_side_detection_host.h"
 #include "chrome/browser/safe_browsing/client_side_detection_service.h"
-#include "chrome/browser/safe_browsing/database_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/safe_browsing/test_database_manager.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
-#include "chrome/common/safe_browsing/safebrowsing_messages.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/safe_browsing/common/safebrowsing_messages.h"
+#include "components/safe_browsing_db/database_manager.h"
+#include "components/safe_browsing_db/test_database_manager.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_render_process_host.h"
@@ -46,7 +51,6 @@ using ::testing::SetArgumentPointee;
 using ::testing::StrictMock;
 using content::BrowserThread;
 using content::RenderFrameHostTester;
-using content::ResourceType;
 using content::WebContents;
 
 namespace {
@@ -94,15 +98,15 @@ ACTION(QuitUIMessageLoop) {
 }
 
 ACTION_P(InvokeDoneCallback, verdict) {
-  scoped_ptr<ClientPhishingRequest> request(::std::tr1::get<1>(args));
+  std::unique_ptr<ClientPhishingRequest> request(::std::tr1::get<1>(args));
   request->CopyFrom(*verdict);
-  ::std::tr1::get<2>(args).Run(true, request.Pass());
+  ::std::tr1::get<2>(args).Run(true, std::move(request));
 }
 
 ACTION_P(InvokeMalwareCallback, verdict) {
-  scoped_ptr<ClientMalwareRequest> request(::std::tr1::get<1>(args));
+  std::unique_ptr<ClientMalwareRequest> request(::std::tr1::get<1>(args));
   request->CopyFrom(*verdict);
-  ::std::tr1::get<2>(args).Run(true, request.Pass());
+  ::std::tr1::get<2>(args).Run(true, std::move(request));
 }
 
 void EmptyUrlCheckCallback(bool processed) {
@@ -139,7 +143,8 @@ class MockSafeBrowsingUIManager : public SafeBrowsingUIManager {
 
   // Helper function which calls OnBlockingPageComplete for this client
   // object.
-  void InvokeOnBlockingPageComplete(const UrlCheckCallback& callback) {
+  void InvokeOnBlockingPageComplete(
+    const security_interstitials::UnsafeResource::UrlCheckCallback& callback) {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
     // Note: this will delete the client object in the case of the CsdClient
     // implementation.
@@ -200,7 +205,7 @@ class MockBrowserFeatureExtractor : public BrowserFeatureExtractor {
 
 class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
  public:
-  typedef SafeBrowsingUIManager::UnsafeResource UnsafeResource;
+  typedef security_interstitials::UnsafeResource UnsafeResource;
 
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
@@ -325,10 +330,10 @@ class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
         SafeBrowsingMsg_StartPhishingDetection::ID);
     if (url) {
       ASSERT_TRUE(msg);
-      base::Tuple<GURL> actual_url;
+      std::tuple<GURL> actual_url;
       SafeBrowsingMsg_StartPhishingDetection::Read(msg, &actual_url);
-      EXPECT_EQ(*url, base::get<0>(actual_url));
-      EXPECT_EQ(rvh()->GetRoutingID(), msg->routing_id());
+      EXPECT_EQ(*url, std::get<0>(actual_url));
+      EXPECT_EQ(main_rfh()->GetRoutingID(), msg->routing_id());
       process()->sink().ClearMessages();
     } else {
       ASSERT_FALSE(msg);
@@ -345,13 +350,11 @@ class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
               csd_host_->unsafe_resource_->is_subresource);
     EXPECT_EQ(resource.threat_type, csd_host_->unsafe_resource_->threat_type);
     EXPECT_TRUE(csd_host_->unsafe_resource_->callback.is_null());
-    EXPECT_EQ(resource.render_process_host_id,
-              csd_host_->unsafe_resource_->render_process_host_id);
-    EXPECT_EQ(resource.render_view_id,
-              csd_host_->unsafe_resource_->render_view_id);
+    EXPECT_EQ(resource.web_contents_getter.Run(),
+              csd_host_->unsafe_resource_->web_contents_getter.Run());
   }
 
-  void SetUnsafeSubResourceForCurrent() {
+  void SetUnsafeSubResourceForCurrent(bool expect_unsafe_resource) {
     UnsafeResource resource;
     resource.url = GURL("http://www.malware.com/");
     resource.original_url = web_contents()->GetURL();
@@ -359,15 +362,16 @@ class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
     resource.threat_type = SB_THREAT_TYPE_URL_MALWARE;
     resource.callback = base::Bind(&EmptyUrlCheckCallback);
     resource.callback_thread =
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
-    resource.render_process_host_id = web_contents()->GetRenderProcessHost()->
-        GetID();
-    resource.render_view_id =
-        web_contents()->GetRenderViewHost()->GetRoutingID();
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
+    resource.web_contents_getter =
+        SafeBrowsingUIManager::UnsafeResource::GetWebContentsGetter(
+            web_contents()->GetRenderProcessHost()->GetID(),
+            web_contents()->GetMainFrame()->GetRoutingID());
     csd_host_->OnSafeBrowsingHit(resource);
     resource.callback.Reset();
-    ASSERT_TRUE(csd_host_->DidShowSBInterstitial());
-    TestUnsafeResourceCopied(resource);
+    ASSERT_EQ(expect_unsafe_resource, csd_host_->DidShowSBInterstitial());
+    if (expect_unsafe_resource)
+      TestUnsafeResourceCopied(resource);
   }
 
   void NavigateWithSBHitAndCommit(const GURL& url) {
@@ -375,11 +379,11 @@ class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
     controller().LoadURL(
         url, content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
 
-    ASSERT_TRUE(pending_rvh());
-    if (web_contents()->GetRenderViewHost()->GetProcess()->GetID() ==
-        pending_rvh()->GetProcess()->GetID()) {
-      EXPECT_NE(web_contents()->GetRenderViewHost()->GetRoutingID(),
-                pending_rvh()->GetRoutingID());
+    ASSERT_TRUE(pending_main_rfh());
+    if (web_contents()->GetMainFrame()->GetProcess()->GetID() ==
+        pending_main_rfh()->GetProcess()->GetID()) {
+      EXPECT_NE(web_contents()->GetMainFrame()->GetRoutingID(),
+                pending_main_rfh()->GetRoutingID());
     }
 
     // Simulate a safebrowsing hit before navigation completes.
@@ -390,9 +394,11 @@ class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
     resource.threat_type = SB_THREAT_TYPE_URL_MALWARE;
     resource.callback = base::Bind(&EmptyUrlCheckCallback);
     resource.callback_thread =
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
-    resource.render_process_host_id = pending_rvh()->GetProcess()->GetID();
-    resource.render_view_id = pending_rvh()->GetRoutingID();
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
+    resource.web_contents_getter =
+        SafeBrowsingUIManager::UnsafeResource::GetWebContentsGetter(
+            pending_rvh()->GetProcess()->GetID(),
+            pending_main_rfh()->GetRoutingID());
     csd_host_->OnSafeBrowsingHit(resource);
     resource.callback.Reset();
 
@@ -409,13 +415,12 @@ class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
         safe_url, content::Referrer(), ui::PAGE_TRANSITION_LINK,
         std::string());
 
-    ASSERT_TRUE(pending_rvh());
-    if (web_contents()->GetRenderViewHost()->GetProcess()->GetID() ==
-        pending_rvh()->GetProcess()->GetID()) {
-      EXPECT_NE(web_contents()->GetRenderViewHost()->GetRoutingID(),
-                pending_rvh()->GetRoutingID());
+    ASSERT_TRUE(pending_main_rfh());
+    if (web_contents()->GetMainFrame()->GetProcess()->GetID() ==
+        pending_main_rfh()->GetProcess()->GetID()) {
+      EXPECT_NE(web_contents()->GetMainFrame()->GetRoutingID(),
+                pending_main_rfh()->GetRoutingID());
     }
-    ASSERT_FALSE(csd_host_->DidShowSBInterstitial());
 
     content::WebContentsTester::For(web_contents())->CommitPendingNavigation();
     ASSERT_FALSE(csd_host_->DidShowSBInterstitial());
@@ -434,8 +439,8 @@ class ClientSideDetectionHostTest : public ChromeRenderViewHostTestHarness {
   }
 
  protected:
-  scoped_ptr<ClientSideDetectionHost> csd_host_;
-  scoped_ptr<StrictMock<MockClientSideDetectionService> > csd_service_;
+  std::unique_ptr<ClientSideDetectionHost> csd_host_;
+  std::unique_ptr<StrictMock<MockClientSideDetectionService>> csd_service_;
   scoped_refptr<StrictMock<MockSafeBrowsingUIManager> > ui_manager_;
   scoped_refptr<StrictMock<MockSafeBrowsingDatabaseManager> > database_manager_;
   MockTestingProfile* mock_profile_;  // We don't own this object
@@ -556,10 +561,8 @@ TEST_F(ClientSideDetectionHostTest, OnPhishingDetectionDoneShowInterstitial) {
   EXPECT_EQ(phishing_url, resource.original_url);
   EXPECT_FALSE(resource.is_subresource);
   EXPECT_EQ(SB_THREAT_TYPE_CLIENT_SIDE_PHISHING_URL, resource.threat_type);
-  EXPECT_EQ(web_contents()->GetRenderProcessHost()->GetID(),
-            resource.render_process_host_id);
-  EXPECT_EQ(web_contents()->GetRenderViewHost()->GetRoutingID(),
-            resource.render_view_id);
+  EXPECT_EQ(ThreatSource::CLIENT_SIDE_DETECTION, resource.threat_source);
+  EXPECT_EQ(web_contents(), resource.web_contents_getter.Run());
 
   // Make sure the client object will be deleted.
   BrowserThread::PostTask(
@@ -624,7 +627,7 @@ TEST_F(ClientSideDetectionHostTest, OnPhishingDetectionDoneMultiplePings) {
   redirect_chain.push_back(other_phishing_url);
   SetRedirectChain(redirect_chain);
   OnPhishingDetectionDone(verdict.SerializeAsString());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(Mock::VerifyAndClear(csd_host_.get()));
   EXPECT_TRUE(Mock::VerifyAndClear(csd_service_.get()));
   ASSERT_FALSE(cb_other.is_null());
@@ -644,10 +647,8 @@ TEST_F(ClientSideDetectionHostTest, OnPhishingDetectionDoneMultiplePings) {
   EXPECT_EQ(other_phishing_url, resource.original_url);
   EXPECT_FALSE(resource.is_subresource);
   EXPECT_EQ(SB_THREAT_TYPE_CLIENT_SIDE_PHISHING_URL, resource.threat_type);
-  EXPECT_EQ(web_contents()->GetRenderProcessHost()->GetID(),
-            resource.render_process_host_id);
-  EXPECT_EQ(web_contents()->GetRenderViewHost()->GetRoutingID(),
-            resource.render_view_id);
+  EXPECT_EQ(ThreatSource::CLIENT_SIDE_DETECTION, resource.threat_source);
+  EXPECT_EQ(web_contents(), resource.web_contents_getter.Run());
 
   // Make sure the client object will be deleted.
   BrowserThread::PostTask(
@@ -690,7 +691,7 @@ TEST_F(ClientSideDetectionHostTest,
                                 &kFalse, &kFalse, &kFalse, &kFalse);
   NavigateAndCommit(url);
   WaitAndCheckPreClassificationChecks();
-  SetUnsafeSubResourceForCurrent();
+  SetUnsafeSubResourceForCurrent(true /* expect_unsafe_resource */);
 
   EXPECT_CALL(*csd_service_,
               SendClientReportPhishingRequest(
@@ -700,7 +701,7 @@ TEST_F(ClientSideDetectionHostTest,
   redirect_chain.push_back(url);
   SetRedirectChain(redirect_chain);
   OnPhishingDetectionDone(verdict.SerializeAsString());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(Mock::VerifyAndClear(csd_host_.get()));
 }
 
@@ -739,13 +740,76 @@ TEST_F(ClientSideDetectionHostTest,
   redirect_chain.push_back(url);
   SetRedirectChain(redirect_chain);
   OnPhishingDetectionDone(verdict.SerializeAsString());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(Mock::VerifyAndClear(csd_host_.get()));
 
   ExpectPreClassificationChecks(start_url, &kFalse, &kFalse, &kFalse, &kFalse,
                                 &kFalse, &kFalse, &kFalse, &kFalse);
   NavigateWithoutSBHitAndCommit(start_url);
   WaitAndCheckPreClassificationChecks();
+}
+
+TEST_F(
+    ClientSideDetectionHostTest,
+    OnPhishingDetectionDoneVerdictNotPhishingButSBMatchOnSubresourceWhileNavPending) {
+  // When a malware hit happens on a committed page while a slow pending load is
+  // in progress, the csd report should be sent for the committed page.
+
+  // Do an initial navigation to a safe host.
+  GURL start_url("http://safe.example.com/");
+  ExpectPreClassificationChecks(
+      start_url, &kFalse, &kFalse, &kFalse, &kFalse, &kFalse, &kFalse, &kFalse,
+      &kFalse);
+  NavigateAndCommit(start_url);
+  WaitAndCheckPreClassificationChecks();
+
+  // Now navigate to a different host which does not have a SB hit.
+  GURL url("http://not-malware-not-phishing-but-malware-subresource.com/");
+  ClientPhishingRequest verdict;
+  verdict.set_url(url.spec());
+  verdict.set_client_score(0.1f);
+  verdict.set_is_phishing(false);
+
+  ExpectPreClassificationChecks(url, &kFalse, &kFalse, &kFalse, &kFalse,
+                                &kFalse, &kFalse, &kFalse, &kFalse);
+  NavigateWithoutSBHitAndCommit(url);
+
+  // Simulate a subresource malware hit on committed page.
+  SetUnsafeSubResourceForCurrent(true /* expect_unsafe_resource */);
+
+  // Create a pending navigation, but don't commit it.
+  GURL pending_url("http://slow.example.com/");
+  content::WebContentsTester::For(web_contents())->StartNavigation(pending_url);
+
+  WaitAndCheckPreClassificationChecks();
+
+  // Even though we have a pending navigation, the DidShowSBInterstitial check
+  // should apply to the committed navigation, so we should get a report even
+  // though the verdict has is_phishing = false.
+  EXPECT_CALL(*csd_service_,
+              SendClientReportPhishingRequest(
+                  Pointee(PartiallyEqualVerdict(verdict)), _, CallbackIsNull()))
+      .WillOnce(DoAll(DeleteArg<0>(), QuitUIMessageLoop()));
+  std::vector<GURL> redirect_chain;
+  redirect_chain.push_back(url);
+  SetRedirectChain(redirect_chain);
+  OnPhishingDetectionDone(verdict.SerializeAsString());
+  base::RunLoop().Run();
+  EXPECT_TRUE(Mock::VerifyAndClear(csd_host_.get()));
+}
+
+TEST_F(ClientSideDetectionHostTest, SafeBrowsingHitOnFreshTab) {
+  // A fresh WebContents should not have any NavigationEntries yet. (See
+  // https://crbug.com/524208.)
+  EXPECT_EQ(nullptr, controller().GetLastCommittedEntry());
+  EXPECT_EQ(nullptr, controller().GetPendingEntry());
+
+  // Simulate a subresource malware hit (this could happen if the WebContents
+  // was created with window.open, and had content injected into it).
+  SetUnsafeSubResourceForCurrent(false /* expect_unsafe_resource */);
+
+  // If the test didn't crash, we're good. (Nothing else to test, since there
+  // was no DidNavigateMainFrame, CSD won't do anything with this hit.)
 }
 
 TEST_F(ClientSideDetectionHostTest,
@@ -796,10 +860,8 @@ TEST_F(ClientSideDetectionHostTest,
   EXPECT_EQ(malware_landing_url, resource.original_url);
   EXPECT_TRUE(resource.is_subresource);
   EXPECT_EQ(SB_THREAT_TYPE_CLIENT_SIDE_MALWARE_URL, resource.threat_type);
-  EXPECT_EQ(web_contents()->GetRenderProcessHost()->GetID(),
-            resource.render_process_host_id);
-  EXPECT_EQ(web_contents()->GetRenderViewHost()->GetRoutingID(),
-            resource.render_view_id);
+  EXPECT_EQ(ThreatSource::CLIENT_SIDE_DETECTION, resource.threat_source);
+  EXPECT_EQ(web_contents(), resource.web_contents_getter.Run());
 
   // Make sure the client object will be deleted.
   BrowserThread::PostTask(
@@ -970,7 +1032,7 @@ TEST_F(ClientSideDetectionHostTest, TestPreClassificationCheckMimeType) {
   // other mime types for malware.
   // Note: for this test to work correctly, the new URL must be on the
   // same domain as the previous URL, otherwise it will create a new
-  // RenderViewHost that won't have the mime type set.
+  // RenderFrameHost that won't have the mime type set.
   GURL url("http://host2.com/image.jpg");
   RenderFrameHostTester::For(web_contents()->GetMainFrame())->
       SetContentsMimeType("image/jpeg");

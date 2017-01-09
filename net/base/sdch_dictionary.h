@@ -5,20 +5,17 @@
 #ifndef NET_BASE_SDCH_DICTIONARY_H_
 #define NET_BASE_SDCH_DICTIONARY_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 #include "net/base/sdch_problem_codes.h"
 #include "url/gurl.h"
-
-namespace base {
-class Clock;
-class Value;
-}
 
 namespace net {
 

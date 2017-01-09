@@ -8,13 +8,15 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension_set.h"
+#include "extensions/features/features.h"
 
-#if !defined(ENABLE_EXTENSIONS)
+#if !BUILDFLAG(ENABLE_EXTENSIONS)
 #error "Extensions must be enabled"
 #endif
 
@@ -69,7 +71,7 @@ class ExtensionRegistry : public KeyedService {
 
   // Returns the set of all installed extensions, regardless of state (enabled,
   // disabled, etc). Equivalent to GenerateInstalledExtensionSet(EVERYTHING).
-  scoped_ptr<ExtensionSet> GenerateInstalledExtensionsSet() const;
+  std::unique_ptr<ExtensionSet> GenerateInstalledExtensionsSet() const;
 
   // Returns a set of all extensions in the subsets specified by |include_mask|.
   //  * enabled_extensions()     --> ExtensionRegistry::ENABLED
@@ -77,7 +79,7 @@ class ExtensionRegistry : public KeyedService {
   //  * terminated_extensions()  --> ExtensionRegistry::TERMINATED
   //  * blacklisted_extensions() --> ExtensionRegistry::BLACKLISTED
   //  * blocked_extensions()     --> ExtensionRegistry::BLOCKED
-  scoped_ptr<ExtensionSet> GenerateInstalledExtensionsSet(
+  std::unique_ptr<ExtensionSet> GenerateInstalledExtensionsSet(
       int include_mask) const;
 
   // The usual observer interface.
@@ -102,12 +104,8 @@ class ExtensionRegistry : public KeyedService {
   // any installed extension with |extension|'s ID. If this is an update then
   // |is_update| is true and must be an installed extension with |extension|'s
   // ID, and |old_name| must be non-empty.
-  // If true, |from_ephemeral| indicates that the extension was previously
-  // installed ephemerally and has been promoted to a regular installed
-  // extension. |is_update| should also be true.
   void TriggerOnWillBeInstalled(const Extension* extension,
                                 bool is_update,
-                                bool from_ephemeral,
                                 const std::string& old_name);
 
   // Invokes the observer method OnExtensionInstalled(). The extension must be

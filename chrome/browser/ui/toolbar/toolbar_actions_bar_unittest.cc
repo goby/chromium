@@ -14,15 +14,19 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
-#include "chrome/browser/ui/extensions/extension_toolbar_icon_surfacing_bubble_delegate.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_delegate.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/feature_switch.h"
+#include "ui/base/test/material_design_controller_test_api.h"
 
 namespace {
 
@@ -84,22 +88,15 @@ std::string VerifyToolbarOrderForBar(
 }  // namespace
 
 ToolbarActionsBarUnitTest::ToolbarActionsBarUnitTest()
-    : toolbar_model_(nullptr),
-      use_redesign_(false) {}
-
-ToolbarActionsBarUnitTest::ToolbarActionsBarUnitTest(bool use_redesign)
-    : toolbar_model_(nullptr),
-      use_redesign_(use_redesign) {}
+    : toolbar_model_(nullptr) {}
 
 ToolbarActionsBarUnitTest::~ToolbarActionsBarUnitTest() {}
 
 void ToolbarActionsBarUnitTest::SetUp() {
-  if (use_redesign_) {
-    redesign_switch_.reset(new extensions::FeatureSwitch::ScopedOverride(
-        extensions::FeatureSwitch::extension_action_redesign(), true));
-  }
-
   BrowserWithTestWindowTest::SetUp();
+  local_state_.reset(
+      new ScopedTestingLocalState(TestingBrowserProcess::GetGlobal()));
+
   // The toolbar typically displays extension icons, so create some extension
   // test infrastructure.
   extensions::TestExtensionSystem* extension_system =
@@ -113,10 +110,12 @@ void ToolbarActionsBarUnitTest::SetUp() {
       extensions::extension_action_test_util::CreateToolbarModelForProfile(
           profile());
 
+  material_design_state_.reset(
+      new ui::test::MaterialDesignControllerTestAPI(GetParam()));
   ToolbarActionsBar::disable_animations_for_testing_ = true;
   browser_action_test_util_.reset(new BrowserActionTestUtil(browser(), false));
 
-  if (use_redesign_) {
+  if (extensions::FeatureSwitch::extension_action_redesign()->IsEnabled()) {
     overflow_browser_action_test_util_ =
         browser_action_test_util_->CreateOverflowBar();
   }
@@ -128,7 +127,8 @@ void ToolbarActionsBarUnitTest::TearDown() {
   browser_action_test_util_.reset();
   overflow_browser_action_test_util_.reset();
   ToolbarActionsBar::disable_animations_for_testing_ = false;
-  redesign_switch_.reset();
+  material_design_state_.reset();
+  local_state_.reset();
   BrowserWithTestWindowTest::TearDown();
 }
 
@@ -169,7 +169,7 @@ testing::AssertionResult ToolbarActionsBarUnitTest::VerifyToolbarOrder(
                                total_size,
                                visible_count);
   std::string overflow_bar_error;
-  if (use_redesign_) {
+  if (extensions::FeatureSwitch::extension_action_redesign()->IsEnabled()) {
     overflow_bar_error =
         VerifyToolbarOrderForBar(overflow_bar(),
                                  overflow_browser_action_test_util(),
@@ -185,12 +185,15 @@ testing::AssertionResult ToolbarActionsBarUnitTest::VerifyToolbarOrder(
           "overflow bar error:\n" << overflow_bar_error;
 }
 
-ToolbarActionsBarRedesignUnitTest::ToolbarActionsBarRedesignUnitTest()
-    : ToolbarActionsBarUnitTest(true) {}
+// Note: First argument is optional and intentionally left blank.
+// (it's a prefix for the generated test cases)
+INSTANTIATE_TEST_CASE_P(
+    ,
+    ToolbarActionsBarUnitTest,
+    testing::Values(ui::MaterialDesignController::MATERIAL_NORMAL,
+                    ui::MaterialDesignController::MATERIAL_HYBRID));
 
-ToolbarActionsBarRedesignUnitTest::~ToolbarActionsBarRedesignUnitTest() {}
-
-TEST_F(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
+TEST_P(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
   // Add three extensions to the profile; this is the easiest way to have
   // toolbar actions.
   for (int i = 0; i < 3; ++i) {
@@ -204,20 +207,18 @@ TEST_F(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
 
   // By default, all three actions should be visible.
   EXPECT_EQ(3u, toolbar_actions_bar()->GetIconCount());
-  // Check the widths.
-  int expected_width = 3 * ToolbarActionsBar::IconWidth(true) -
-                       platform_settings.item_spacing +
-                       platform_settings.left_padding +
-                       platform_settings.right_padding;
+  // Check the widths. IconWidth(true) includes the spacing to the left of
+  // each icon and |item_spacing| accounts for the spacing to the right
+  // of the rightmost icon.
+  int expected_width =
+      3 * ToolbarActionsBar::IconWidth(true) + platform_settings.item_spacing;
   EXPECT_EQ(expected_width, toolbar_actions_bar()->GetPreferredSize().width());
   // Since all icons are showing, the current width should be the max width.
   int maximum_width = expected_width;
   EXPECT_EQ(maximum_width, toolbar_actions_bar()->GetMaximumWidth());
-  // The minimum width should be just enough for the chevron to be displayed.
-  int minimum_width = platform_settings.left_padding +
-                      platform_settings.right_padding +
-                      toolbar_actions_bar()->delegate_for_test()->
-                          GetChevronWidth();
+  // The minimum width should be be non-zero (as long as there are any icons) so
+  // we can render the grippy to allow the user to drag to adjust the width.
+  int minimum_width = platform_settings.item_spacing;
   EXPECT_EQ(minimum_width, toolbar_actions_bar()->GetMinimumWidth());
 
   // Test the connection between the ToolbarActionsBar and the model by
@@ -225,13 +226,12 @@ TEST_F(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
   toolbar_model()->SetVisibleIconCount(2u);
   EXPECT_EQ(2u, toolbar_actions_bar()->GetIconCount());
 
-  // The current width should now be enough for two icons, and the chevron.
-  expected_width = 2 * ToolbarActionsBar::IconWidth(true) -
-                   platform_settings.item_spacing +
-                   platform_settings.left_padding +
-                   platform_settings.right_padding +
-                   toolbar_actions_bar()->delegate_for_test()->
-                       GetChevronWidth();
+  // The current width should now be enough for two icons.
+  // IconWidth(true) includes the spacing to the left of each icon and
+  // |item_spacing| accounts for the spacing to the right of the rightmost
+  // icon.
+  expected_width = 2 * ToolbarActionsBar::IconWidth(true) +
+                   platform_settings.item_spacing;
   EXPECT_EQ(expected_width, toolbar_actions_bar()->GetPreferredSize().width());
   // The maximum and minimum widths should have remained constant (since we have
   // the same number of actions).
@@ -301,7 +301,7 @@ TEST_F(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
   EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
 }
 
-TEST_F(ToolbarActionsBarUnitTest, ToolbarActionsReorderOnPrefChange) {
+TEST_P(ToolbarActionsBarUnitTest, ToolbarActionsReorderOnPrefChange) {
   for (int i = 0; i < 3; ++i) {
     CreateAndAddExtension(
         base::StringPrintf("extension %d", i),
@@ -333,7 +333,7 @@ TEST_F(ToolbarActionsBarUnitTest, ToolbarActionsReorderOnPrefChange) {
   }
 }
 
-TEST_F(ToolbarActionsBarUnitTest, TestHighlightMode) {
+TEST_P(ToolbarActionsBarUnitTest, TestHighlightMode) {
   std::vector<std::string> ids;
   for (int i = 0; i < 3; ++i) {
     ids.push_back(CreateAndAddExtension(
@@ -401,61 +401,12 @@ TEST_F(ToolbarActionsBarUnitTest, TestHighlightMode) {
   }
 }
 
-TEST_F(ToolbarActionsBarRedesignUnitTest, IconSurfacingBubbleAppearance) {
-  // Without showing anything new, we shouldn't show the bubble, and should
-  // auto-acknowledge it.
-  EXPECT_FALSE(
-      ExtensionToolbarIconSurfacingBubbleDelegate::ShouldShowForProfile(
-          profile()));
-  PrefService* prefs = profile()->GetPrefs();
-  EXPECT_TRUE(
-      prefs->GetBoolean(prefs::kToolbarIconSurfacingBubbleAcknowledged));
-
-  // Clear the pref for testing, and add an extension that wouldn't normally
-  // have an icon. We should now show the bubble.
-  prefs->ClearPref(prefs::kToolbarIconSurfacingBubbleAcknowledged);
-  CreateAndAddExtension("extension",
-                        extensions::extension_action_test_util::NO_ACTION);
-  EXPECT_TRUE(ExtensionToolbarIconSurfacingBubbleDelegate::ShouldShowForProfile(
-      profile()));
-
-  // If the bubble was recently shown, we shouldn't show it again...
-  scoped_ptr<ToolbarActionsBarBubbleDelegate> bubble_delegate(
-      new ExtensionToolbarIconSurfacingBubbleDelegate(profile()));
-  bubble_delegate->OnBubbleShown();
-  bubble_delegate->OnBubbleClosed(
-      ToolbarActionsBarBubbleDelegate::CLOSE_DISMISS_USER_ACTION);
-  EXPECT_FALSE(
-    ExtensionToolbarIconSurfacingBubbleDelegate::ShouldShowForProfile(
-        profile()));
-
-  // ...But if it was only dismissed, we should show it before too long.
-  base::Time two_days_ago = base::Time::Now() - base::TimeDelta::FromDays(2);
-  prefs->SetInt64(prefs::kToolbarIconSurfacingBubbleLastShowTime,
-                  two_days_ago.ToInternalValue());
-  EXPECT_TRUE(ExtensionToolbarIconSurfacingBubbleDelegate::ShouldShowForProfile(
-      profile()));
-
-  // If it's acknowledged, then it should never show again, and should be
-  // recorded as acknowledged.
-  bubble_delegate->OnBubbleShown();
-  bubble_delegate->OnBubbleClosed(
-      ToolbarActionsBarBubbleDelegate::CLOSE_EXECUTE);
-  EXPECT_FALSE(
-      ExtensionToolbarIconSurfacingBubbleDelegate::ShouldShowForProfile(
-          profile()));
-  base::Time one_week_ago = base::Time::Now() - base::TimeDelta::FromDays(7);
-  prefs->SetInt64(prefs::kToolbarIconSurfacingBubbleLastShowTime,
-                  one_week_ago.ToInternalValue());
-  EXPECT_TRUE(
-      prefs->GetBoolean(prefs::kToolbarIconSurfacingBubbleAcknowledged));
-}
-
 // Test the bounds calculation for different indices.
-TEST_F(ToolbarActionsBarRedesignUnitTest, TestActionFrameBounds) {
+TEST_P(ToolbarActionsBarUnitTest, TestActionFrameBounds) {
   const int kIconWidth = ToolbarActionsBar::IconWidth(false);
   const int kIconHeight = ToolbarActionsBar::IconHeight();
   const int kIconWidthWithPadding = ToolbarActionsBar::IconWidth(true);
+  const int kIconSpacing = GetLayoutConstant(TOOLBAR_STANDARD_SPACING);
   const int kIconsPerOverflowRow = 3;
   const int kNumExtensions = 7;
   const int kSpacing =
@@ -470,7 +421,7 @@ TEST_F(ToolbarActionsBarRedesignUnitTest, TestActionFrameBounds) {
   }
   toolbar_model()->SetVisibleIconCount(kNumExtensions);
   overflow_bar()->SetOverflowRowWidth(
-      kIconWidthWithPadding * kIconsPerOverflowRow + 3);
+      kIconWidthWithPadding * kIconsPerOverflowRow + kIconSpacing);
   EXPECT_EQ(kIconsPerOverflowRow,
             overflow_bar()->platform_settings().icons_per_overflow_menu_row);
 
@@ -516,7 +467,10 @@ TEST_F(ToolbarActionsBarRedesignUnitTest, TestActionFrameBounds) {
             overflow_bar()->GetFrameForIndex(6));
 }
 
-TEST_F(ToolbarActionsBarRedesignUnitTest, TestStartAndEndIndexes) {
+TEST_P(ToolbarActionsBarUnitTest, TestStartAndEndIndexes) {
+  const int kIconWidthWithPadding = ToolbarActionsBar::IconWidth(true);
+  const int kIconSpacing = GetLayoutConstant(TOOLBAR_STANDARD_SPACING);
+
   for (int i = 0; i < 3; ++i) {
     CreateAndAddExtension(
         base::StringPrintf("extension %d", i),
@@ -532,7 +486,8 @@ TEST_F(ToolbarActionsBarRedesignUnitTest, TestStartAndEndIndexes) {
   EXPECT_FALSE(toolbar_actions_bar()->NeedsOverflow());
 
   // Shrink the width of the view to be a little over enough for one icon.
-  browser_action_test_util()->SetWidth(ToolbarActionsBar::IconWidth(true) + 5);
+  browser_action_test_util()->SetWidth(kIconWidthWithPadding +
+                                       kIconSpacing + 2);
   // Tricky: GetIconCount() is what we use to determine our preferred size,
   // stored pref size, etc, and should not be affected by a minimum size that is
   // too small to show everything. It should remain constant.
@@ -547,7 +502,7 @@ TEST_F(ToolbarActionsBarRedesignUnitTest, TestStartAndEndIndexes) {
 
   // Shrink the container again to be too small to display even one icon.
   // The overflow container should be displaying everything.
-  browser_action_test_util()->SetWidth(ToolbarActionsBar::IconWidth(true) - 10);
+  browser_action_test_util()->SetWidth(kIconWidthWithPadding - 10);
   EXPECT_EQ(3u, toolbar_actions_bar()->GetIconCount());
   EXPECT_EQ(0u, toolbar_actions_bar()->GetStartIndexInBounds());
   EXPECT_EQ(0u, toolbar_actions_bar()->GetEndIndexInBounds());
@@ -564,4 +519,65 @@ TEST_F(ToolbarActionsBarRedesignUnitTest, TestStartAndEndIndexes) {
   EXPECT_EQ(3u, overflow_bar()->GetStartIndexInBounds());
   EXPECT_EQ(3u, overflow_bar()->GetEndIndexInBounds());
   EXPECT_FALSE(toolbar_actions_bar()->NeedsOverflow());
+}
+
+// Tests the logic for determining if the container needs an overflow menu item.
+TEST_P(ToolbarActionsBarUnitTest, TestNeedsOverflow) {
+  CreateAndAddExtension(
+      "extension 1",
+      extensions::extension_action_test_util::BROWSER_ACTION);
+  // One extension on the main bar, none overflowed. Overflow not needed.
+  EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
+  EXPECT_EQ(0u, overflow_bar()->GetIconCount());
+  EXPECT_FALSE(toolbar_actions_bar()->NeedsOverflow());
+
+  // Set one extension in the overflow menu, none on the main bar. Overflow
+  // needed.
+  toolbar_model()->SetVisibleIconCount(0u);
+  EXPECT_EQ(0u, toolbar_actions_bar()->GetIconCount());
+  EXPECT_EQ(1u, overflow_bar()->GetIconCount());
+  EXPECT_TRUE(toolbar_actions_bar()->NeedsOverflow());
+
+  // Pop out an extension for a non-sticky popup. Even though the extension is
+  // on the main bar, overflow is still needed because it will pop back in
+  // when the menu is opened.
+  ToolbarActionViewController* action = toolbar_actions_bar()->GetActions()[0];
+  {
+    base::RunLoop run_loop;
+    toolbar_actions_bar()->PopOutAction(action, false, run_loop.QuitClosure());
+    run_loop.Run();
+  }
+  EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
+  EXPECT_TRUE(toolbar_actions_bar()->NeedsOverflow());
+
+  // Back to one in overflow, none on the main bar.
+  toolbar_actions_bar()->UndoPopOut();
+  EXPECT_EQ(0u, toolbar_actions_bar()->GetIconCount());
+  EXPECT_EQ(1u, overflow_bar()->GetIconCount());
+  EXPECT_TRUE(toolbar_actions_bar()->NeedsOverflow());
+
+  // Pop out an extension for a sticky popup. Overflow shouldn't be needed now
+  // because the extension will remain popped out even when the menu opens.
+  {
+    base::RunLoop run_loop;
+    toolbar_actions_bar()->PopOutAction(action, true, run_loop.QuitClosure());
+    run_loop.Run();
+  }
+  EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
+  EXPECT_FALSE(toolbar_actions_bar()->NeedsOverflow());
+
+  // Add another extension and verify that if one is still in overflow when
+  // another is popped out, we still need overflow.
+  toolbar_actions_bar()->UndoPopOut();
+  CreateAndAddExtension(
+      "extension 2",
+      extensions::extension_action_test_util::BROWSER_ACTION);
+  toolbar_model()->SetVisibleIconCount(0u);
+  {
+    base::RunLoop run_loop;
+    toolbar_actions_bar()->PopOutAction(action, true, run_loop.QuitClosure());
+    run_loop.Run();
+  }
+  EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
+  EXPECT_TRUE(toolbar_actions_bar()->NeedsOverflow());
 }

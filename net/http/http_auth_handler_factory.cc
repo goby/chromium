@@ -4,6 +4,7 @@
 
 #include "net/http/http_auth_handler_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "net/base/net_errors.h"
@@ -14,6 +15,7 @@
 #include "net/http/http_auth_handler_ntlm.h"
 #include "net/http/http_auth_preferences.h"
 #include "net/http/http_auth_scheme.h"
+#include "net/ssl/ssl_info.h"
 
 #if defined(USE_KERBEROS)
 #include "net/http/http_auth_handler_negotiate.h"
@@ -24,12 +26,13 @@ namespace net {
 int HttpAuthHandlerFactory::CreateAuthHandlerFromString(
     const std::string& challenge,
     HttpAuth::Target target,
+    const SSLInfo& ssl_info,
     const GURL& origin,
-    const BoundNetLog& net_log,
-    scoped_ptr<HttpAuthHandler>* handler) {
+    const NetLogWithSource& net_log,
+    std::unique_ptr<HttpAuthHandler>* handler) {
   HttpAuthChallengeTokenizer props(challenge.begin(), challenge.end());
-  return CreateAuthHandler(&props, target, origin, CREATE_CHALLENGE, 1,
-                           net_log, handler);
+  return CreateAuthHandler(&props, target, ssl_info, origin, CREATE_CHALLENGE,
+                           1, net_log, handler);
 }
 
 int HttpAuthHandlerFactory::CreatePreemptiveAuthHandlerFromString(
@@ -37,11 +40,13 @@ int HttpAuthHandlerFactory::CreatePreemptiveAuthHandlerFromString(
     HttpAuth::Target target,
     const GURL& origin,
     int digest_nonce_count,
-    const BoundNetLog& net_log,
-    scoped_ptr<HttpAuthHandler>* handler) {
+    const NetLogWithSource& net_log,
+    std::unique_ptr<HttpAuthHandler>* handler) {
   HttpAuthChallengeTokenizer props(challenge.begin(), challenge.end());
-  return CreateAuthHandler(&props, target, origin, CREATE_PREEMPTIVE,
-                           digest_nonce_count, net_log, handler);
+  SSLInfo null_ssl_info;
+  return CreateAuthHandler(&props, target, null_ssl_info, origin,
+                           CREATE_PREEMPTIVE, digest_nonce_count, net_log,
+                           handler);
 }
 
 namespace {
@@ -56,10 +61,10 @@ const char* const kDefaultAuthSchemes[] = {kBasicAuthScheme, kDigestAuthScheme,
 // should only be used to create the factories. It should not be passed
 // to the registry factory or its children as the preferences they should
 // use.
-scoped_ptr<HttpAuthHandlerRegistryFactory> CreateAuthHandlerRegistryFactory(
-    const HttpAuthPreferences& prefs,
-    HostResolver* host_resolver) {
-  scoped_ptr<HttpAuthHandlerRegistryFactory> registry_factory(
+std::unique_ptr<HttpAuthHandlerRegistryFactory>
+CreateAuthHandlerRegistryFactory(const HttpAuthPreferences& prefs,
+                                 HostResolver* host_resolver) {
+  std::unique_ptr<HttpAuthHandlerRegistryFactory> registry_factory(
       new HttpAuthHandlerRegistryFactory());
   if (prefs.IsSupportedScheme(kBasicAuthScheme))
     registry_factory->RegisterSchemeFactory(
@@ -81,10 +86,10 @@ scoped_ptr<HttpAuthHandlerRegistryFactory> CreateAuthHandlerRegistryFactory(
     HttpAuthHandlerNegotiate::Factory* negotiate_factory =
         new HttpAuthHandlerNegotiate::Factory();
 #if defined(OS_WIN)
-    negotiate_factory->set_library(make_scoped_ptr(new SSPILibraryDefault()));
+    negotiate_factory->set_library(base::MakeUnique<SSPILibraryDefault>());
 #elif defined(OS_POSIX) && !defined(OS_ANDROID)
     negotiate_factory->set_library(
-        make_scoped_ptr(new GSSAPISharedLibrary(prefs.GssapiLibraryName())));
+        base::MakeUnique<GSSAPISharedLibrary>(prefs.GssapiLibraryName()));
 #endif  // defined(OS_POSIX) && !defined(OS_ANDROID)
     negotiate_factory->set_host_resolver(host_resolver);
     registry_factory->RegisterSchemeFactory(kNegotiateAuthScheme,
@@ -100,8 +105,6 @@ HttpAuthHandlerRegistryFactory::HttpAuthHandlerRegistryFactory() {
 }
 
 HttpAuthHandlerRegistryFactory::~HttpAuthHandlerRegistryFactory() {
-  STLDeleteContainerPairSecondPointers(factory_map_.begin(),
-                                       factory_map_.end());
 }
 
 void HttpAuthHandlerRegistryFactory::SetHttpAuthPreferences(
@@ -117,14 +120,10 @@ void HttpAuthHandlerRegistryFactory::RegisterSchemeFactory(
     HttpAuthHandlerFactory* factory) {
   factory->set_http_auth_preferences(http_auth_preferences());
   std::string lower_scheme = base::ToLowerASCII(scheme);
-  FactoryMap::iterator it = factory_map_.find(lower_scheme);
-  if (it != factory_map_.end()) {
-    delete it->second;
-  }
   if (factory)
-    factory_map_[lower_scheme] = factory;
+    factory_map_[lower_scheme] = base::WrapUnique(factory);
   else
-    factory_map_.erase(it);
+    factory_map_.erase(lower_scheme);
 }
 
 HttpAuthHandlerFactory* HttpAuthHandlerRegistryFactory::GetSchemeFactory(
@@ -134,11 +133,11 @@ HttpAuthHandlerFactory* HttpAuthHandlerRegistryFactory::GetSchemeFactory(
   if (it == factory_map_.end()) {
     return NULL;                  // |scheme| is not registered.
   }
-  return it->second;
+  return it->second.get();
 }
 
 // static
-scoped_ptr<HttpAuthHandlerRegistryFactory>
+std::unique_ptr<HttpAuthHandlerRegistryFactory>
 HttpAuthHandlerFactory::CreateDefault(HostResolver* host_resolver) {
   std::vector<std::string> auth_types(std::begin(kDefaultAuthSchemes),
                                       std::end(kDefaultAuthSchemes));
@@ -152,13 +151,13 @@ HttpAuthHandlerFactory::CreateDefault(HostResolver* host_resolver) {
 }
 
 // static
-scoped_ptr<HttpAuthHandlerRegistryFactory>
+std::unique_ptr<HttpAuthHandlerRegistryFactory>
 HttpAuthHandlerRegistryFactory::Create(const HttpAuthPreferences* prefs,
                                        HostResolver* host_resolver) {
-  scoped_ptr<HttpAuthHandlerRegistryFactory> registry_factory(
+  std::unique_ptr<HttpAuthHandlerRegistryFactory> registry_factory(
       CreateAuthHandlerRegistryFactory(*prefs, host_resolver));
   registry_factory->set_http_auth_preferences(prefs);
-  for (auto factory_entry : registry_factory->factory_map_) {
+  for (auto& factory_entry : registry_factory->factory_map_) {
     factory_entry.second->set_http_auth_preferences(prefs);
   }
   return registry_factory;
@@ -167,11 +166,12 @@ HttpAuthHandlerRegistryFactory::Create(const HttpAuthPreferences* prefs,
 int HttpAuthHandlerRegistryFactory::CreateAuthHandler(
     HttpAuthChallengeTokenizer* challenge,
     HttpAuth::Target target,
+    const SSLInfo& ssl_info,
     const GURL& origin,
     CreateReason reason,
     int digest_nonce_count,
-    const BoundNetLog& net_log,
-    scoped_ptr<HttpAuthHandler>* handler) {
+    const NetLogWithSource& net_log,
+    std::unique_ptr<HttpAuthHandler>* handler) {
   std::string scheme = challenge->scheme();
   if (scheme.empty()) {
     handler->reset();
@@ -184,8 +184,9 @@ int HttpAuthHandlerRegistryFactory::CreateAuthHandler(
     return ERR_UNSUPPORTED_AUTH_SCHEME;
   }
   DCHECK(it->second);
-  return it->second->CreateAuthHandler(challenge, target, origin, reason,
-                                       digest_nonce_count, net_log, handler);
+  return it->second->CreateAuthHandler(challenge, target, ssl_info, origin,
+                                       reason, digest_nonce_count, net_log,
+                                       handler);
 }
 
 }  // namespace net

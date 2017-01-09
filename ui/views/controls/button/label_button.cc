@@ -4,14 +4,25 @@
 
 #include "ui/views/controls/button/label_button.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "ui/gfx/animation/throb_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/native_theme/native_theme.h"
+#include "ui/views/animation/flood_fill_ink_drop_ripple.h"
+#include "ui/views/animation/ink_drop.h"
+#include "ui/views/animation/ink_drop_highlight.h"
+#include "ui/views/animation/ink_drop_impl.h"
+#include "ui/views/animation/square_ink_drop_ripple.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/painter.h"
@@ -23,11 +34,20 @@ namespace {
 // The default spacing between the icon and text.
 const int kSpacing = 5;
 
-#if !(defined(OS_LINUX) && !defined(OS_CHROMEOS))
-// Default text and shadow colors for STYLE_BUTTON.
-const SkColor kStyleButtonTextColor = SK_ColorBLACK;
-const SkColor kStyleButtonShadowColor = SK_ColorWHITE;
-#endif
+gfx::Font::Weight GetValueBolderThan(gfx::Font::Weight weight) {
+  if (weight < gfx::Font::Weight::BOLD)
+    return gfx::Font::Weight::BOLD;
+  switch (weight) {
+    case gfx::Font::Weight::BOLD:
+      return gfx::Font::Weight::EXTRA_BOLD;
+    case gfx::Font::Weight::EXTRA_BOLD:
+    case gfx::Font::Weight::BLACK:
+      return gfx::Font::Weight::BLACK;
+    default:
+      NOTREACHED();
+  }
+  return gfx::Font::Weight::INVALID;
+}
 
 const gfx::FontList& GetDefaultNormalFontList() {
   static base::LazyInstance<gfx::FontList>::Leaky font_list =
@@ -36,13 +56,19 @@ const gfx::FontList& GetDefaultNormalFontList() {
 }
 
 const gfx::FontList& GetDefaultBoldFontList() {
+  if (!views::PlatformStyle::kDefaultLabelButtonHasBoldFont)
+    return GetDefaultNormalFontList();
+
   static base::LazyInstance<gfx::FontList>::Leaky font_list =
       LAZY_INSTANCE_INITIALIZER;
-  if ((font_list.Get().GetFontStyle() & gfx::Font::BOLD) == 0) {
-    font_list.Get() = font_list.Get().
-        DeriveWithStyle(font_list.Get().GetFontStyle() | gfx::Font::BOLD);
-    DCHECK_NE(font_list.Get().GetFontStyle() & gfx::Font::BOLD, 0);
-  }
+
+  static const gfx::Font::Weight default_bold_weight =
+      font_list.Get().GetFontWeight();
+
+  font_list.Get() = font_list.Get().DeriveWithWeight(
+      GetValueBolderThan(default_bold_weight));
+  DCHECK_GE(font_list.Get().GetFontWeight(), gfx::Font::Weight::BOLD);
+
   return font_list.Get();
 }
 
@@ -52,13 +78,13 @@ namespace views {
 
 // static
 const int LabelButton::kHoverAnimationDurationMs = 170;
-const int LabelButton::kFocusRectInset = 3;
 const char LabelButton::kViewClassName[] = "LabelButton";
 
 LabelButton::LabelButton(ButtonListener* listener, const base::string16& text)
     : CustomButton(listener),
       image_(new ImageView()),
       label_(new Label()),
+      ink_drop_container_(new InkDropContainerView()),
       cached_normal_font_list_(GetDefaultNormalFontList()),
       cached_bold_font_list_(GetDefaultBoldFontList()),
       button_state_images_(),
@@ -67,9 +93,15 @@ LabelButton::LabelButton(ButtonListener* listener, const base::string16& text)
       is_default_(false),
       style_(STYLE_TEXTBUTTON),
       border_is_themed_border_(true),
-      image_label_spacing_(kSpacing) {
+      image_label_spacing_(kSpacing),
+      horizontal_alignment_(gfx::ALIGN_LEFT) {
   SetAnimationDuration(kHoverAnimationDurationMs);
-  SetText(text);
+  SetTextInternal(text);
+
+  AddChildView(ink_drop_container_);
+  ink_drop_container_->SetPaintToLayer(true);
+  ink_drop_container_->layer()->SetFillsBoundsOpaquely(false);
+  ink_drop_container_->SetVisible(false);
 
   AddChildView(image_);
   image_->set_interactive(false);
@@ -77,16 +109,15 @@ LabelButton::LabelButton(ButtonListener* listener, const base::string16& text)
   AddChildView(label_);
   label_->SetFontList(cached_normal_font_list_);
   label_->SetAutoColorReadabilityEnabled(false);
-  label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  label_->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
 
   // Inset the button focus rect from the actual border; roughly match Windows.
-  SetFocusPainter(Painter::CreateDashedFocusPainterWithInsets(gfx::Insets(
-      kFocusRectInset, kFocusRectInset, kFocusRectInset, kFocusRectInset)));
+  SetFocusPainter(Painter::CreateDashedFocusPainterWithInsets(gfx::Insets(3)));
 }
 
 LabelButton::~LabelButton() {}
 
-const gfx::ImageSkia& LabelButton::GetImage(ButtonState for_state) {
+gfx::ImageSkia LabelButton::GetImage(ButtonState for_state) const {
   if (for_state != STATE_NORMAL && button_state_images_[for_state].isNull())
     return button_state_images_[STATE_NORMAL];
   return button_state_images_[for_state];
@@ -102,8 +133,7 @@ const base::string16& LabelButton::GetText() const {
 }
 
 void LabelButton::SetText(const base::string16& text) {
-  SetAccessibleName(text);
-  label_->SetText(text);
+  SetTextInternal(text);
 }
 
 void LabelButton::SetTextColor(ButtonState for_state, SkColor color) {
@@ -129,39 +159,34 @@ void LabelButton::SetTextSubpixelRenderingEnabled(bool enabled) {
   label_->SetSubpixelRenderingEnabled(enabled);
 }
 
-bool LabelButton::GetTextMultiLine() const {
-  return label_->multi_line();
-}
-
-void LabelButton::SetTextMultiLine(bool text_multi_line) {
-  label_->SetMultiLine(text_multi_line);
-}
-
 const gfx::FontList& LabelButton::GetFontList() const {
   return label_->font_list();
 }
 
 void LabelButton::SetFontList(const gfx::FontList& font_list) {
   cached_normal_font_list_ = font_list;
-  cached_bold_font_list_ = font_list.DeriveWithStyle(
-      font_list.GetFontStyle() | gfx::Font::BOLD);
+  if (PlatformStyle::kDefaultLabelButtonHasBoldFont) {
+    cached_bold_font_list_ = font_list.DeriveWithWeight(
+        GetValueBolderThan(font_list.GetFontWeight()));
+    if (is_default_) {
+      label_->SetFontList(cached_bold_font_list_);
+      return;
+    }
+  }
+  label_->SetFontList(cached_normal_font_list_);
+}
 
-  // STYLE_BUTTON uses bold text to indicate default buttons.
-  label_->SetFontList(
-      style_ == STYLE_BUTTON && is_default_ ?
-      cached_bold_font_list_ : cached_normal_font_list_);
+void LabelButton::AdjustFontSize(int font_size_delta) {
+  LabelButton::SetFontList(GetFontList().DeriveWithSizeDelta(font_size_delta));
 }
 
 void LabelButton::SetElideBehavior(gfx::ElideBehavior elide_behavior) {
   label_->SetElideBehavior(elide_behavior);
 }
 
-gfx::HorizontalAlignment LabelButton::GetHorizontalAlignment() const {
-  return label_->horizontal_alignment();
-}
-
 void LabelButton::SetHorizontalAlignment(gfx::HorizontalAlignment alignment) {
-  label_->SetHorizontalAlignment(alignment);
+  DCHECK_NE(gfx::ALIGN_TO_HEAD, alignment);
+  horizontal_alignment_ = alignment;
   InvalidateLayout();
 }
 
@@ -176,17 +201,15 @@ void LabelButton::SetMaxSize(const gfx::Size& max_size) {
 }
 
 void LabelButton::SetIsDefault(bool is_default) {
+  // TODO(estade): move this to MdTextButton once |style_| is removed.
   if (is_default == is_default_)
     return;
+
   is_default_ = is_default;
   ui::Accelerator accel(ui::VKEY_RETURN, ui::EF_NONE);
   is_default_ ? AddAccelerator(accel) : RemoveAccelerator(accel);
 
-  // STYLE_BUTTON uses bold text to indicate default buttons.
-  if (style_ == STYLE_BUTTON) {
-    label_->SetFontList(
-        is_default ? cached_bold_font_list_ : cached_normal_font_list_);
-  }
+  UpdateStyleToIndicateDefaultStatus();
 }
 
 void LabelButton::SetStyle(ButtonStyle style) {
@@ -199,9 +222,11 @@ void LabelButton::SetStyle(ButtonStyle style) {
   style_ = style;
 
   SetFocusPainter(nullptr);
-  label_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  SetFocusable(true);
-  SetMinSize(gfx::Size(70, 33));
+  SetHorizontalAlignment(gfx::ALIGN_CENTER);
+  SetFocusForPlatform();
+  set_request_focus_on_press(true);
+  SetMinSize(gfx::Size(PlatformStyle::kMinLabelButtonWidth,
+                       PlatformStyle::kMinLabelButtonHeight));
 
   // Themed borders will be set once the button is added to a Widget, since that
   // provides the value of GetNativeTheme().
@@ -215,8 +240,8 @@ void LabelButton::SetImageLabelSpacing(int spacing) {
   InvalidateLayout();
 }
 
-void LabelButton::SetFocusPainter(scoped_ptr<Painter> focus_painter) {
-  focus_painter_ = focus_painter.Pass();
+void LabelButton::SetFocusPainter(std::unique_ptr<Painter> focus_painter) {
+  focus_painter_ = std::move(focus_painter);
 }
 
 gfx::Size LabelButton::GetPreferredSize() const {
@@ -224,17 +249,16 @@ gfx::Size LabelButton::GetPreferredSize() const {
     return cached_preferred_size_;
 
   // Use a temporary label copy for sizing to avoid calculation side-effects.
-  Label label(GetText(), cached_normal_font_list_);
+  Label label(GetText(), label_->font_list());
   label.SetShadows(label_->shadows());
-  label.SetMultiLine(GetTextMultiLine());
 
-  if (style() == STYLE_BUTTON) {
+  if (style_ == STYLE_BUTTON && PlatformStyle::kDefaultLabelButtonHasBoldFont) {
     // Some text appears wider when rendered normally than when rendered bold.
     // Accommodate the widest, as buttons may show bold and shouldn't resize.
     const int current_width = label.GetPreferredSize().width();
     label.SetFontList(cached_bold_font_list_);
     if (label.GetPreferredSize().width() < current_width)
-      label.SetFontList(cached_normal_font_list_);
+      label.SetFontList(label_->font_list());
   }
 
   // Calculate the required size.
@@ -283,14 +307,13 @@ int LabelButton::GetHeightForWidth(int w) const {
 }
 
 void LabelButton::Layout() {
-  gfx::HorizontalAlignment adjusted_alignment = GetHorizontalAlignment();
-  if (base::i18n::IsRTL() && adjusted_alignment != gfx::ALIGN_CENTER)
-    adjusted_alignment = (adjusted_alignment == gfx::ALIGN_LEFT) ?
-        gfx::ALIGN_RIGHT : gfx::ALIGN_LEFT;
+  ink_drop_container_->SetBoundsRect(GetLocalBounds());
 
   // By default, GetChildAreaBounds() ignores the top and bottom border, but we
   // want the image to respect it.
   gfx::Rect child_area(GetChildAreaBounds());
+  // The space that the label can use. Its actual bounds may be smaller if the
+  // label is short.
   gfx::Rect label_area(child_area);
 
   gfx::Insets insets(GetInsets());
@@ -301,40 +324,43 @@ void LabelButton::Layout() {
   gfx::Size image_size(image_->GetPreferredSize());
   image_size.SetToMin(child_area.size());
 
-  // The label takes any remaining width after sizing the image, unless both
-  // views are centered. In that case, using the tighter preferred label width
-  // avoids wasted space within the label that would look like awkward padding.
-  gfx::Size label_size(label_area.size());
-  if (!image_size.IsEmpty() && !label_size.IsEmpty()) {
-    label_size.set_width(std::max(child_area.width() -
-        image_size.width() - image_label_spacing_, 0));
-    if (adjusted_alignment == gfx::ALIGN_CENTER) {
-      // Ensure multi-line labels paired with images use their available width.
-      label_size.set_width(
-          std::min(label_size.width(), label_->GetPreferredSize().width()));
-    }
+  if (!image_size.IsEmpty()) {
+    int image_space = image_size.width() + image_label_spacing_;
+    if (horizontal_alignment_ == gfx::ALIGN_RIGHT)
+      label_area.Inset(0, 0, image_space, 0);
+    else
+      label_area.Inset(image_space, 0, 0, 0);
   }
+
+  gfx::Size label_size(
+      std::min(label_area.width(), label_->GetPreferredSize().width()),
+      label_area.height());
 
   gfx::Point image_origin(child_area.origin());
   image_origin.Offset(0, (child_area.height() - image_size.height()) / 2);
-  if (adjusted_alignment == gfx::ALIGN_CENTER) {
+  if (horizontal_alignment_ == gfx::ALIGN_CENTER) {
     const int spacing = (image_size.width() > 0 && label_size.width() > 0) ?
         image_label_spacing_ : 0;
     const int total_width = image_size.width() + label_size.width() +
         spacing;
     image_origin.Offset((child_area.width() - total_width) / 2, 0);
-  } else if (adjusted_alignment == gfx::ALIGN_RIGHT) {
+  } else if (horizontal_alignment_ == gfx::ALIGN_RIGHT) {
     image_origin.Offset(child_area.width() - image_size.width(), 0);
   }
+  image_->SetBoundsRect(gfx::Rect(image_origin, image_size));
 
-  gfx::Point label_origin(label_area.origin());
-  if (!image_size.IsEmpty() && adjusted_alignment != gfx::ALIGN_RIGHT) {
-    label_origin.set_x(image_origin.x() + image_size.width() +
-        image_label_spacing_);
+  gfx::Rect label_bounds = label_area;
+  if (label_area.width() == label_size.width()) {
+    // Label takes up the whole area.
+  } else if (horizontal_alignment_ == gfx::ALIGN_CENTER) {
+    label_bounds.ClampToCenteredSize(label_size);
+  } else {
+    label_bounds.set_size(label_size);
+    if (horizontal_alignment_ == gfx::ALIGN_RIGHT)
+      label_bounds.Offset(label_area.width() - label_size.width(), 0);
   }
 
-  image_->SetBoundsRect(gfx::Rect(image_origin, image_size));
-  label_->SetBoundsRect(gfx::Rect(label_origin, label_size));
+  label_->SetBoundsRect(label_bounds);
   CustomButton::Layout();
 }
 
@@ -347,13 +373,19 @@ void LabelButton::EnableCanvasFlippingForRTLUI(bool flip) {
   image_->EnableCanvasFlippingForRTLUI(flip);
 }
 
-scoped_ptr<LabelButtonBorder> LabelButton::CreateDefaultBorder() const {
-  return PlatformStyle::CreateLabelButtonBorder(style());
+std::unique_ptr<LabelButtonBorder> LabelButton::CreateDefaultBorder() const {
+  if (style_ != Button::STYLE_TEXTBUTTON)
+    return base::MakeUnique<LabelButtonAssetBorder>(style_);
+  std::unique_ptr<LabelButtonBorder> border =
+      base::MakeUnique<LabelButtonBorder>();
+  border->set_insets(views::LabelButtonAssetBorder::GetDefaultInsetsForStyle(
+      style_));
+  return border;
 }
 
-void LabelButton::SetBorder(scoped_ptr<Border> border) {
+void LabelButton::SetBorder(std::unique_ptr<Border> border) {
   border_is_themed_border_ = false;
-  View::SetBorder(border.Pass());
+  View::SetBorder(std::move(border));
   ResetCachedPreferredSize();
 }
 
@@ -367,13 +399,13 @@ void LabelButton::OnPaint(gfx::Canvas* canvas) {
 }
 
 void LabelButton::OnFocus() {
-  View::OnFocus();
+  CustomButton::OnFocus();
   // Typically the border renders differently when focused.
   SchedulePaint();
 }
 
 void LabelButton::OnBlur() {
-  View::OnBlur();
+  CustomButton::OnBlur();
   // Typically the border renders differently when focused.
   SchedulePaint();
 }
@@ -381,16 +413,54 @@ void LabelButton::OnBlur() {
 void LabelButton::OnNativeThemeChanged(const ui::NativeTheme* theme) {
   ResetColorsFromNativeTheme();
   UpdateThemedBorder();
+  ResetLabelEnabledColor();
   // Invalidate the layout to pickup the new insets from the border.
   InvalidateLayout();
+  // The entire button has to be repainted here, since the native theme can
+  // define the tint for the entire background/border/focus ring.
+  SchedulePaint();
+}
+
+void LabelButton::AddInkDropLayer(ui::Layer* ink_drop_layer) {
+  image()->SetPaintToLayer(true);
+  image()->layer()->SetFillsBoundsOpaquely(false);
+  ink_drop_container_->AddInkDropLayer(ink_drop_layer);
+}
+
+void LabelButton::RemoveInkDropLayer(ui::Layer* ink_drop_layer) {
+  image()->SetPaintToLayer(false);
+  ink_drop_container_->RemoveInkDropLayer(ink_drop_layer);
+}
+
+std::unique_ptr<InkDrop> LabelButton::CreateInkDrop() {
+  return UseFloodFillInkDrop() ? CreateDefaultFloodFillInkDropImpl()
+                               : CustomButton::CreateInkDrop();
+}
+
+std::unique_ptr<views::InkDropRipple> LabelButton::CreateInkDropRipple() const {
+  return UseFloodFillInkDrop()
+             ? base::MakeUnique<views::FloodFillInkDropRipple>(
+                   size(), GetInkDropCenterBasedOnLastEvent(),
+                   GetInkDropBaseColor(), ink_drop_visible_opacity())
+             : CreateDefaultInkDropRipple(
+                   image()->GetMirroredBounds().CenterPoint());
+}
+
+std::unique_ptr<views::InkDropHighlight> LabelButton::CreateInkDropHighlight()
+    const {
+  return UseFloodFillInkDrop()
+             ? base::MakeUnique<views::InkDropHighlight>(
+                   size(), kInkDropSmallCornerRadius,
+                   gfx::RectF(GetLocalBounds()).CenterPoint(),
+                   GetInkDropBaseColor())
+             : CreateDefaultInkDropHighlight(
+                   gfx::RectF(image()->GetMirroredBounds()).CenterPoint());
 }
 
 void LabelButton::StateChanged() {
   const gfx::Size previous_image_size(image_->GetPreferredSize());
   UpdateImage();
-  const SkColor color = button_state_colors_[state()];
-  if (state() != STATE_DISABLED && label_->enabled_color() != color)
-    label_->SetEnabledColor(color);
+  ResetLabelEnabledColor();
   label_->SetEnabled(state() != STATE_DISABLED);
   if (image_->GetPreferredSize() != previous_image_size)
     Layout();
@@ -408,44 +478,40 @@ void LabelButton::GetExtraParams(ui::NativeTheme::ExtraParams* params) const {
 
 void LabelButton::ResetColorsFromNativeTheme() {
   const ui::NativeTheme* theme = GetNativeTheme();
+  bool button_style = style() == STYLE_BUTTON;
+  // Button colors are used only for STYLE_BUTTON, otherwise we use label
+  // colors. As it turns out, these are almost always the same color anyway in
+  // pre-MD, although in the MD world labels and buttons get different colors.
+  // TODO(estade): simplify this by removing STYLE_BUTTON.
   SkColor colors[STATE_COUNT] = {
-    theme->GetSystemColor(ui::NativeTheme::kColorId_ButtonEnabledColor),
-    theme->GetSystemColor(ui::NativeTheme::kColorId_ButtonHoverColor),
-    theme->GetSystemColor(ui::NativeTheme::kColorId_ButtonHoverColor),
-    theme->GetSystemColor(ui::NativeTheme::kColorId_ButtonDisabledColor),
+      theme->GetSystemColor(button_style
+                                ? ui::NativeTheme::kColorId_ButtonEnabledColor
+                                : ui::NativeTheme::kColorId_LabelEnabledColor),
+      theme->GetSystemColor(button_style
+                                ? ui::NativeTheme::kColorId_ButtonHoverColor
+                                : ui::NativeTheme::kColorId_LabelEnabledColor),
+      theme->GetSystemColor(button_style
+                                ? ui::NativeTheme::kColorId_ButtonHoverColor
+                                : ui::NativeTheme::kColorId_LabelEnabledColor),
+      theme->GetSystemColor(button_style
+                                ? ui::NativeTheme::kColorId_ButtonDisabledColor
+                                : ui::NativeTheme::kColorId_LabelDisabledColor),
   };
 
-  // Certain styles do not change text color when hovered or pressed.
-  bool constant_text_color = false;
   // Use hardcoded colors for inverted color scheme support and STYLE_BUTTON.
   if (color_utils::IsInvertedColorScheme()) {
-    constant_text_color = true;
-    colors[STATE_NORMAL] = SK_ColorWHITE;
+    colors[STATE_NORMAL] = colors[STATE_HOVERED] = colors[STATE_PRESSED] =
+        SK_ColorWHITE;
     label_->SetBackgroundColor(SK_ColorBLACK);
     label_->set_background(Background::CreateSolidBackground(SK_ColorBLACK));
     label_->SetAutoColorReadabilityEnabled(true);
     label_->SetShadows(gfx::ShadowValues());
-  } else if (style() == STYLE_BUTTON) {
-    // TODO(erg): This is disabled on desktop linux because of the binary asset
-    // confusion. These details should either be pushed into ui::NativeThemeWin
-    // or should be obsoleted by rendering buttons with paint calls instead of
-    // with static assets. http://crbug.com/350498
-#if !(defined(OS_LINUX) && !defined(OS_CHROMEOS))
-    constant_text_color = true;
-    colors[STATE_NORMAL] = kStyleButtonTextColor;
-    label_->SetBackgroundColor(theme->GetSystemColor(
-        ui::NativeTheme::kColorId_ButtonBackgroundColor));
-    label_->SetAutoColorReadabilityEnabled(false);
-    label_->SetShadows(gfx::ShadowValues(
-        1, gfx::ShadowValue(gfx::Vector2d(0, 1), 0, kStyleButtonShadowColor)));
-#endif
-    label_->set_background(NULL);
   } else {
-    label_->set_background(NULL);
+    if (style() == STYLE_BUTTON)
+      PlatformStyle::ApplyLabelButtonTextStyle(label_, &colors);
+    label_->set_background(nullptr);
+    label_->SetAutoColorReadabilityEnabled(false);
   }
-
-  if (constant_text_color)
-    colors[STATE_HOVERED] = colors[STATE_PRESSED] = colors[STATE_NORMAL];
 
   for (size_t state = STATE_NORMAL; state < STATE_COUNT; ++state) {
     if (!explicitly_set_colors_[state]) {
@@ -453,6 +519,14 @@ void LabelButton::ResetColorsFromNativeTheme() {
       explicitly_set_colors_[state] = false;
     }
   }
+}
+
+void LabelButton::UpdateStyleToIndicateDefaultStatus() {
+  const bool bold =
+      PlatformStyle::kDefaultLabelButtonHasBoldFont && is_default_;
+  label_->SetFontList(bold ? cached_bold_font_list_ : cached_normal_font_list_);
+  InvalidateLayout();
+  ResetLabelEnabledColor();
 }
 
 void LabelButton::UpdateImage() {
@@ -469,9 +543,15 @@ void LabelButton::UpdateThemedBorder() {
   border_is_themed_border_ = true;
 }
 
+void LabelButton::SetTextInternal(const base::string16& text) {
+  SetAccessibleName(text);
+  label_->SetText(text);
+}
+
 void LabelButton::ChildPreferredSizeChanged(View* child) {
   ResetCachedPreferredSize();
   PreferredSizeChanged();
+  Layout();
 }
 
 ui::NativeTheme::Part LabelButton::GetThemePart() const {
@@ -496,7 +576,7 @@ ui::NativeTheme::State LabelButton::GetThemeState(
 }
 
 const gfx::Animation* LabelButton::GetThemeAnimation() const {
-  return hover_animation_.get();
+  return &hover_animation();
 }
 
 ui::NativeTheme::State LabelButton::GetBackgroundThemeState(
@@ -514,6 +594,19 @@ ui::NativeTheme::State LabelButton::GetForegroundThemeState(
 void LabelButton::ResetCachedPreferredSize() {
   cached_preferred_size_valid_ = false;
   cached_preferred_size_ = gfx::Size();
+}
+
+void LabelButton::ResetLabelEnabledColor() {
+  const SkColor color =
+      explicitly_set_colors_[state()]
+          ? button_state_colors_[state()]
+          : PlatformStyle::TextColorForButton(button_state_colors_, *this);
+  if (state() != STATE_DISABLED && label_->enabled_color() != color)
+    label_->SetEnabledColor(color);
+}
+
+bool LabelButton::UseFloodFillInkDrop() const {
+  return !GetText().empty();
 }
 
 }  // namespace views

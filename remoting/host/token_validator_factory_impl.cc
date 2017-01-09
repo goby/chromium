@@ -4,13 +4,20 @@
 
 #include "remoting/host/token_validator_factory_impl.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringize_macros.h"
 #include "base/values.h"
 #include "crypto/random.h"
 #include "net/base/elements_upload_data_stream.h"
@@ -83,15 +90,28 @@ void TokenValidatorImpl::StartValidateRequest(const std::string& token) {
   request_ = request_context_getter_->GetURLRequestContext()->CreateRequest(
       third_party_auth_config_.token_validation_url, net::DEFAULT_PRIORITY,
       this);
+
+#if defined(GOOGLE_CHROME_BUILD)
+  std::string app_name = "Chrome Remote Desktop";
+#else
+  std::string app_name = "Chromoting";
+#endif
+#ifndef VERSION
+#error VERSION is not set.
+#endif
+  // Set a user-agent for logging/auditing purposes.
+  request_->SetExtraRequestHeaderByName(net::HttpRequestHeaders::kUserAgent,
+                                        app_name + " " + STRINGIZE(VERSION),
+                                        true);
+
   request_->SetExtraRequestHeaderByName(
       net::HttpRequestHeaders::kContentType,
       "application/x-www-form-urlencoded", true);
   request_->set_method("POST");
-  scoped_ptr<net::UploadElementReader> reader(
-      new net::UploadBytesElementReader(
-          post_body_.data(), post_body_.size()));
+  std::unique_ptr<net::UploadElementReader> reader(
+      new net::UploadBytesElementReader(post_body_.data(), post_body_.size()));
   request_->set_upload(
-      net::ElementsUploadDataStream::CreateWithReader(reader.Pass(), 0));
+      net::ElementsUploadDataStream::CreateWithReader(std::move(reader), 0));
   request_->Start();
 }
 
@@ -118,14 +138,12 @@ TokenValidatorFactoryImpl::TokenValidatorFactoryImpl(
 TokenValidatorFactoryImpl::~TokenValidatorFactoryImpl() {
 }
 
-scoped_ptr<protocol::TokenValidator>
-TokenValidatorFactoryImpl::CreateTokenValidator(
-    const std::string& local_jid,
-    const std::string& remote_jid) {
-  return make_scoped_ptr(
-      new TokenValidatorImpl(third_party_auth_config_,
-                             key_pair_, local_jid, remote_jid,
-                             request_context_getter_));
+std::unique_ptr<protocol::TokenValidator>
+TokenValidatorFactoryImpl::CreateTokenValidator(const std::string& local_jid,
+                                                const std::string& remote_jid) {
+  return base::MakeUnique<TokenValidatorImpl>(third_party_auth_config_,
+                                              key_pair_, local_jid, remote_jid,
+                                              request_context_getter_);
 }
 
 }  // namespace remoting

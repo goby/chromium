@@ -3,12 +3,15 @@
 // found in the LICENSE file.
 
 #include <algorithm>
+#include <memory>
+#include <utility>
 #include <vector>
 
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/scoped_user_pref_update.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/signin/core/browser/account_fetcher_service.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
@@ -334,11 +337,11 @@ class AccountTrackerServiceTest : public testing::Test {
 
   base::MessageLoopForIO message_loop_;
   net::TestURLFetcherFactory test_fetcher_factory_;
-  scoped_ptr<FakeOAuth2TokenService> fake_oauth2_token_service_;
+  std::unique_ptr<FakeOAuth2TokenService> fake_oauth2_token_service_;
   TestingPrefServiceSimple pref_service_;
-  scoped_ptr<AccountFetcherService> account_fetcher_;
-  scoped_ptr<AccountTrackerService> account_tracker_;
-  scoped_ptr<TestSigninClient> signin_client_;
+  std::unique_ptr<AccountFetcherService> account_fetcher_;
+  std::unique_ptr<AccountTrackerService> account_tracker_;
+  std::unique_ptr<TestSigninClient> signin_client_;
 };
 
 void AccountTrackerServiceTest::ReturnOAuthUrlFetchResults(
@@ -665,6 +668,50 @@ TEST_F(AccountTrackerServiceTest, SeedAccountInfo) {
   EXPECT_EQ(email, infos[0].email);
 }
 
+TEST_F(AccountTrackerServiceTest, SeedAccountInfoFull) {
+  AccountTrackerObserver observer;
+  account_tracker()->AddObserver(&observer);
+
+  AccountInfo info;
+  info.gaia = AccountIdToGaiaId("alpha");
+  info.email = AccountIdToEmail("alpha");
+  info.full_name = AccountIdToFullName("alpha");
+  info.account_id = account_tracker()->SeedAccountInfo(info);
+
+  // Validate that seeding an unexisting account works and doesn't send a
+  // notification if the info isn't full.
+  AccountInfo stored_info = account_tracker()->GetAccountInfo(info.account_id);
+  EXPECT_EQ(info.gaia, stored_info.gaia);
+  EXPECT_EQ(info.email, stored_info.email);
+  EXPECT_EQ(info.full_name, stored_info.full_name);
+  EXPECT_TRUE(observer.CheckEvents());
+
+  // Validate that seeding new full informations to an existing account works
+  // and sends a notification.
+  info.given_name = AccountIdToGivenName("alpha");
+  info.hosted_domain = AccountTrackerService::kNoHostedDomainFound;
+  info.locale = AccountIdToLocale("alpha");
+  info.picture_url = AccountIdToPictureURL("alpha");
+  account_tracker()->SeedAccountInfo(info);
+  stored_info = account_tracker()->GetAccountInfo(info.account_id);
+  EXPECT_EQ(info.gaia, stored_info.gaia);
+  EXPECT_EQ(info.email, stored_info.email);
+  EXPECT_EQ(info.given_name, stored_info.given_name);
+  EXPECT_TRUE(
+      observer.CheckEvents(TrackingEvent(UPDATED, info.account_id, info.gaia)));
+
+  // Validate that seeding invalid information to an existing account doesn't
+  // work and doesn't send a notification.
+  info.given_name = AccountIdToGivenName("beta");
+  account_tracker()->SeedAccountInfo(info);
+  stored_info = account_tracker()->GetAccountInfo(info.account_id);
+  EXPECT_EQ(info.gaia, stored_info.gaia);
+  EXPECT_NE(info.given_name, stored_info.given_name);
+  EXPECT_TRUE(observer.CheckEvents());
+
+  account_tracker()->RemoveObserver(&observer);
+}
+
 TEST_F(AccountTrackerServiceTest, UpgradeToFullAccountInfo) {
   // Start by simulating an incomplete account info and let it be saved to
   // prefs.
@@ -860,19 +907,19 @@ TEST_F(AccountTrackerServiceTest, MigrateAccountIdToGaiaId) {
 
     ListPrefUpdate update(&pref, AccountTrackerService::kAccountInfoPref);
 
-    base::DictionaryValue* dict = new base::DictionaryValue();
-    update->Append(dict);
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     dict->SetString("account_id", base::UTF8ToUTF16(email_alpha));
     dict->SetString("email", base::UTF8ToUTF16(email_alpha));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_alpha));
+    update->Append(std::move(dict));
 
-    dict = new base::DictionaryValue();
-    update->Append(dict);
+    dict.reset(new base::DictionaryValue());
     dict->SetString("account_id", base::UTF8ToUTF16(email_beta));
     dict->SetString("email", base::UTF8ToUTF16(email_beta));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_beta));
+    update->Append(std::move(dict));
 
-    scoped_ptr<TestSigninClient> client;
+    std::unique_ptr<TestSigninClient> client;
     client.reset(new TestSigninClient(&pref));
     tracker.Initialize(client.get());
 
@@ -912,19 +959,19 @@ TEST_F(AccountTrackerServiceTest, CanNotMigrateAccountIdToGaiaId) {
 
     ListPrefUpdate update(&pref, AccountTrackerService::kAccountInfoPref);
 
-    base::DictionaryValue* dict = new base::DictionaryValue();
-    update->Append(dict);
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     dict->SetString("account_id", base::UTF8ToUTF16(email_alpha));
     dict->SetString("email", base::UTF8ToUTF16(email_alpha));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_alpha));
+    update->Append(std::move(dict));
 
-    dict = new base::DictionaryValue();
-    update->Append(dict);
+    dict.reset(new base::DictionaryValue());
     dict->SetString("account_id", base::UTF8ToUTF16(email_beta));
     dict->SetString("email", base::UTF8ToUTF16(email_beta));
     dict->SetString("gaia", base::UTF8ToUTF16(std::string()));
+    update->Append(std::move(dict));
 
-    scoped_ptr<TestSigninClient> client;
+    std::unique_ptr<TestSigninClient> client;
     client.reset(new TestSigninClient(&pref));
     tracker.Initialize(client.get());
 
@@ -964,26 +1011,26 @@ TEST_F(AccountTrackerServiceTest, GaiaIdMigrationCrashInTheMiddle) {
 
     ListPrefUpdate update(&pref, AccountTrackerService::kAccountInfoPref);
 
-    base::DictionaryValue* dict = new base::DictionaryValue();
-    update->Append(dict);
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     dict->SetString("account_id", base::UTF8ToUTF16(email_alpha));
     dict->SetString("email", base::UTF8ToUTF16(email_alpha));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_alpha));
+    update->Append(std::move(dict));
 
-    dict = new base::DictionaryValue();
-    update->Append(dict);
+    dict.reset(new base::DictionaryValue());
     dict->SetString("account_id", base::UTF8ToUTF16(email_beta));
     dict->SetString("email", base::UTF8ToUTF16(email_beta));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_beta));
+    update->Append(std::move(dict));
 
     // Succeed miggrated account.
-    dict = new base::DictionaryValue();
-    update->Append(dict);
+    dict.reset(new base::DictionaryValue());
     dict->SetString("account_id", base::UTF8ToUTF16(gaia_alpha));
     dict->SetString("email", base::UTF8ToUTF16(email_alpha));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_alpha));
+    update->Append(std::move(dict));
 
-    scoped_ptr<TestSigninClient> client;
+    std::unique_ptr<TestSigninClient> client;
     client.reset(new TestSigninClient(&pref));
     tracker.Initialize(client.get());
 

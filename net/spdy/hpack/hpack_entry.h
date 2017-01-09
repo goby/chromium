@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_SPDY_HPACK_ENTRY_H_
-#define NET_SPDY_HPACK_ENTRY_H_
+#ifndef NET_SPDY_HPACK_HPACK_ENTRY_H_
+#define NET_SPDY_HPACK_HPACK_ENTRY_H_
+
+#include <stddef.h>
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
@@ -72,6 +73,9 @@ class NET_EXPORT_PRIVATE HpackEntry {
 
   std::string GetDebugString() const;
 
+  int64_t time_added() const { return time_added_; }
+  void set_time_added(int64_t now) { time_added_ = now; }
+
  private:
   enum EntryType {
     LOOKUP,
@@ -93,8 +97,11 @@ class NET_EXPORT_PRIVATE HpackEntry {
   size_t insertion_index_;
 
   EntryType type_;
+
+  // For HpackHeaderTable::DebugVisitorInterface
+  int64_t time_added_;
 };
 
 }  // namespace net
 
-#endif  // NET_SPDY_HPACK_ENTRY_H_
+#endif  // NET_SPDY_HPACK_HPACK_ENTRY_H_

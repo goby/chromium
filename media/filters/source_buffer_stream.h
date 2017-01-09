@@ -10,13 +10,15 @@
 #ifndef MEDIA_FILTERS_SOURCE_BUFFER_STREAM_H_
 #define MEDIA_FILTERS_SOURCE_BUFFER_STREAM_H_
 
+#include <stddef.h>
+
 #include <deque>
 #include <list>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/media_export.h"
@@ -55,29 +57,25 @@ class MEDIA_EXPORT SourceBufferStream {
   };
 
   SourceBufferStream(const AudioDecoderConfig& audio_config,
-                     const scoped_refptr<MediaLog>& media_log,
-                     bool splice_frames_enabled);
+                     const scoped_refptr<MediaLog>& media_log);
   SourceBufferStream(const VideoDecoderConfig& video_config,
-                     const scoped_refptr<MediaLog>& media_log,
-                     bool splice_frames_enabled);
+                     const scoped_refptr<MediaLog>& media_log);
   SourceBufferStream(const TextTrackConfig& text_config,
-                     const scoped_refptr<MediaLog>& media_log,
-                     bool splice_frames_enabled);
+                     const scoped_refptr<MediaLog>& media_log);
 
   ~SourceBufferStream();
 
-  // Signals that the next buffers appended are part of a new media segment
-  // starting at |media_segment_start_time|.
+  // Signals that the next buffers appended are part of a new coded frame group
+  // starting at |coded_frame_group_start_time|.
   // TODO(acolwell/wolenetz): This should be changed to a presentation
   // timestamp. See http://crbug.com/402502
-  void OnNewMediaSegment(DecodeTimestamp media_segment_start_time);
+  void OnStartOfCodedFrameGroup(DecodeTimestamp coded_frame_group_start_time);
 
   // Add the |buffers| to the SourceBufferStream. Buffers within the queue are
   // expected to be in order, but multiple calls to Append() may add buffers out
   // of order or overlapping. Assumes all buffers within |buffers| are in
   // presentation order and are non-overlapping.
   // Returns true if Append() was successful, false if |buffers| are not added.
-  // TODO(vrk): Implement garbage collection. (crbug.com/125070)
   bool Append(const BufferQueue& buffers);
 
   // Removes buffers between |start| and |end| according to the steps
@@ -119,6 +117,10 @@ class MEDIA_EXPORT SourceBufferStream {
 
   // Returns a list of the buffered time ranges.
   Ranges<base::TimeDelta> GetBufferedTime() const;
+
+  // Returns the highest buffered PTS or base::TimeDelta() if nothing is
+  // buffered.
+  base::TimeDelta GetHighestPresentationTimestamp() const;
 
   // Returns the duration of the buffered ranges, which is equivalent
   // to the end timestamp of the last buffered range. If no data is buffered
@@ -205,11 +207,11 @@ class MEDIA_EXPORT SourceBufferStream {
       DecodeTimestamp first_timestamp, DecodeTimestamp second_timestamp) const;
 
   // Helper method that returns the timestamp for the next buffer that
-  // |selected_range_| will return from GetNextBuffer() call, or kNoTimestamp()
+  // |selected_range_| will return from GetNextBuffer() call, or kNoTimestamp
   // if in between seeking (i.e. |selected_range_| is null).
   DecodeTimestamp GetNextBufferTimestamp();
 
-  // Finds the range that should contain a media segment that begins with
+  // Finds the range that should contain a coded frame group that begins with
   // |start_timestamp| and returns the iterator pointing to it. Returns
   // |ranges_.end()| if there's no such existing range.
   RangeList::iterator FindExistingRangeFor(DecodeTimestamp start_timestamp);
@@ -234,18 +236,16 @@ class MEDIA_EXPORT SourceBufferStream {
   // Resets this stream back to an unseeked state.
   void ResetSeekState();
 
+  // Reset state tracking various metadata about the last appended buffer.
+  void ResetLastAppendedState();
+
   // Returns true if |seek_timestamp| refers to the beginning of the first range
   // in |ranges_|, false otherwise or if |ranges_| is empty.
   bool ShouldSeekToStartOfBuffered(base::TimeDelta seek_timestamp) const;
 
   // Returns true if the timestamps of |buffers| are monotonically increasing
-  // since the previous append to the media segment, false otherwise.
-  bool IsMonotonicallyIncreasing(const BufferQueue& buffers) const;
-
-  // Returns true if |next_timestamp| and |next_is_keyframe| are valid for
-  // the first buffer after the previous append.
-  bool IsNextTimestampValid(DecodeTimestamp next_timestamp,
-                            bool next_is_keyframe) const;
+  // since the previous append to the coded frame group, false otherwise.
+  bool IsMonotonicallyIncreasing(const BufferQueue& buffers);
 
   // Returns true if |selected_range_| is the only range in |ranges_| that
   // HasNextBufferPosition().
@@ -271,19 +271,23 @@ class MEDIA_EXPORT SourceBufferStream {
 
   // Find a keyframe timestamp that is >= |start_timestamp| and can be used to
   // find a new selected range.
-  // Returns kNoTimestamp() if an appropriate keyframe timestamp could not be
+  // Returns kNoTimestamp if an appropriate keyframe timestamp could not be
   // found.
   DecodeTimestamp FindNewSelectedRangeSeekTimestamp(
       const DecodeTimestamp start_timestamp);
 
   // Searches |ranges_| for the first keyframe timestamp that is >= |timestamp|.
   // If |ranges_| doesn't contain a GOP that covers |timestamp| or doesn't
-  // have a keyframe after |timestamp| then kNoTimestamp() is returned.
+  // have a keyframe after |timestamp| then kNoTimestamp is returned.
   DecodeTimestamp FindKeyframeAfterTimestamp(const DecodeTimestamp timestamp);
 
   // Returns "VIDEO" for a video SourceBufferStream, "AUDIO" for an audio
   // stream, and "TEXT" for a text stream.
   std::string GetStreamTypeName() const;
+
+  // (Audio only) If |new_buffers| overlap existing buffers, trims end of
+  // existing buffers to remove overlap. |new_buffers| are not modified.
+  void TrimSpliceOverlap(const BufferQueue& new_buffers);
 
   // Returns true if end of stream has been reached, i.e. the
   // following conditions are met:
@@ -298,6 +302,15 @@ class MEDIA_EXPORT SourceBufferStream {
   // was removed or to |ranges_.end()| if the last range was removed.
   void DeleteAndRemoveRange(RangeList::iterator* itr);
 
+  // Helper function used when updating |range_for_next_append_|.
+  // Returns a guess of what the next append timestamp will be based on
+  // |last_appended_buffer_timestamp_|, |new_coded_frame_group_| and
+  // |coded_frame_group_start_time_|. Returns kNoDecodeTimestamp() if unable to
+  // guess, which can occur prior to first OnStartOfCodedFrameGroup(), or
+  // when the most recent GOP appended to since the last
+  // OnStartOfCodedFrameGroup() is removed.
+  DecodeTimestamp PotentialNextAppendTimestamp() const;
+
   // Helper function used by Remove() and PrepareRangesForNextAppend() to
   // remove buffers and ranges between |start| and |end|.
   // |exclude_start| - If set to true, buffers with timestamps that
@@ -311,12 +324,15 @@ class MEDIA_EXPORT SourceBufferStream {
                       bool exclude_start,
                       BufferQueue* deleted_buffers);
 
-  Type GetType() const;
+  // Helper function used by RemoveInternal() to evaluate whether remove will
+  // disrupt the last appended GOP. If disruption is expected, reset state
+  // tracking the last append. This will trigger frame filtering in Append()
+  // until a new key frame is provided.
+  void UpdateLastAppendStateForRemove(DecodeTimestamp remove_start,
+                                      DecodeTimestamp remove_end,
+                                      bool exclude_start);
 
-  // See GetNextBuffer() for additional details.  This method handles splice
-  // frame processing.
-  Status HandleNextBufferWithSplice(
-      scoped_refptr<StreamParserBuffer>* out_buffer);
+  Type GetType() const;
 
   // See GetNextBuffer() for additional details.  This method handles preroll
   // frame processing.
@@ -325,7 +341,7 @@ class MEDIA_EXPORT SourceBufferStream {
 
   // See GetNextBuffer() for additional details.  The internal method hands out
   // single buffers from the |track_buffer_| and |selected_range_| without
-  // additional processing for splice frame or preroll buffers.
+  // additional processing for preroll buffers.
   Status GetNextBufferInternal(scoped_refptr<StreamParserBuffer>* out_buffer);
 
   // If the next buffer's timestamp is significantly beyond the last output
@@ -336,14 +352,8 @@ class MEDIA_EXPORT SourceBufferStream {
   void WarnIfTrackBufferExhaustionSkipsForward(
       const scoped_refptr<StreamParserBuffer>& next_buffer);
 
-  // Called by PrepareRangesForNextAppend() before pruning overlapped buffers to
-  // generate a splice frame with a small portion of the overlapped buffers.  If
-  // a splice frame is generated, the first buffer in |new_buffers| will have
-  // its timestamps, duration, and fade out preroll updated.
-  void GenerateSpliceFrame(const BufferQueue& new_buffers);
-
-  // If |out_buffer| has splice buffers or preroll, sets |pending_buffer_|
-  // appropriately and returns true.  Otherwise returns false.
+  // If |out_buffer| has preroll, sets |pending_buffer_| to feed out preroll and
+  // returns true.  Otherwise returns false.
   bool SetPendingBuffer(scoped_refptr<StreamParserBuffer>* out_buffer);
 
   // Used to report log messages that can help the web developer figure out what
@@ -395,19 +405,21 @@ class MEDIA_EXPORT SourceBufferStream {
   // emitted buffer emptied |track_buffer_|.
   bool just_exhausted_track_buffer_ = false;
 
-  // The start time of the current media segment being appended.
-  DecodeTimestamp media_segment_start_time_;
+  // The start time of the current coded frame group being appended.
+  DecodeTimestamp coded_frame_group_start_time_;
 
-  // Points to the range containing the current media segment being appended.
+  // Points to the range containing the current coded frame group being
+  // appended.
   RangeList::iterator range_for_next_append_;
 
-  // True when the next call to Append() begins a new media segment.
-  bool new_media_segment_ = false;
+  // True when the next call to Append() begins a new coded frame group.
+  // TODO(wolenetz): Simplify by passing this flag into Append().
+  bool new_coded_frame_group_ = false;
 
-  // The timestamp of the last buffer appended to the media segment, set to
-  // kNoDecodeTimestamp() if the beginning of the segment.
+  // The timestamp of the last buffer appended to the coded frame group, set to
+  // kNoDecodeTimestamp() if the beginning of the group.
   DecodeTimestamp last_appended_buffer_timestamp_ = kNoDecodeTimestamp();
-  base::TimeDelta last_appended_buffer_duration_ = kNoTimestamp();
+  base::TimeDelta last_appended_buffer_duration_ = kNoTimestamp;
   bool last_appended_buffer_is_keyframe_ = false;
 
   // The decode timestamp on the last buffer returned by the most recent
@@ -427,26 +439,18 @@ class MEDIA_EXPORT SourceBufferStream {
   // GetCurrentXXXDecoderConfig() has been called.
   bool config_change_pending_ = false;
 
-  // Used by HandleNextBufferWithSplice() or HandleNextBufferWithPreroll() when
-  // a splice frame buffer or buffer with preroll is returned from
-  // GetNextBufferInternal().
+  // Used by HandleNextBufferWithPreroll() when a buffer with preroll is
+  // returned from GetNextBufferInternal().
   scoped_refptr<StreamParserBuffer> pending_buffer_;
-
-  // Indicates which of the splice buffers in |splice_buffer_| should be
-  // handled out next.
-  size_t splice_buffers_index_ = 0;
 
   // Indicates that all buffers before |pending_buffer_| have been handed out.
   bool pending_buffers_complete_ = false;
 
-  // Indicates that splice frame generation is enabled.
-  const bool splice_frames_enabled_;
-
-  // To prevent log spam, count the number of warnings and successes logged.
-  int num_splice_generation_warning_logs_ = 0;
-  int num_splice_generation_success_logs_ = 0;
+  // To prevent log spam, count the number of logs for different log scenarios.
+  int num_splice_logs_ = 0;
   int num_track_buffer_gap_warning_logs_ = 0;
   int num_garbage_collect_algorithm_logs_ = 0;
+  int num_strange_same_timestamps_logs_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(SourceBufferStream);
 };

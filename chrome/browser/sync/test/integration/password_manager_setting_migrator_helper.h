@@ -4,16 +4,14 @@
 #ifndef CHROME_BROWSER_SYNC_TEST_INTEGRATION_PASSWORD_MANAGER_SETTING_MIGRATOR_HELPER_H_
 #define CHROME_BROWSER_SYNC_TEST_INTEGRATION_PASSWORD_MANAGER_SETTING_MIGRATOR_HELPER_H_
 
-namespace base {
-class FieldTrial;
-}
-
 class Profile;
 
 namespace password_manager_setting_migrater_helper {
 
-// Enables the password manager setting migration field trial.
-void SetupFieldTrial();
+// Ensures that the password manager setting migration field trial experiment is
+// enabled. Returns false if it already was enabled, and true if it got enabled
+// during this call.
+bool EnsureFieldTrialSetup();
 
 // Triggers Initalization of the PasswordManagerSettingMigrator service.
 // The service registers observes which are required in order to perform

@@ -4,15 +4,20 @@
 
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <utility>
+
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
-#include "chrome/browser/apps/scoped_keep_alive.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/data_use_measurement/data_use_web_contents_observer.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/file_select_helper.h"
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shell_integration.h"
@@ -24,7 +29,7 @@
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
 #include "chrome/common/extensions/chrome_extension_messages.h"
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/host_zoom_map.h"
@@ -33,19 +38,20 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "extensions/common/constants.h"
+#include "printing/features/features.h"
 
 #if defined(USE_ASH)
-#include "ash/shelf/shelf_constants.h"
+#include "ash/common/shelf/shelf_constants.h"  // nogncheck
 #endif
 
-#if defined(ENABLE_PRINTING)
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/printing/print_preview_message_handler.h"
 #include "chrome/browser/printing/print_view_manager.h"
 #else
 #include "chrome/browser/printing/print_view_manager_basic.h"
-#endif  // defined(ENABLE_PRINT_PREVIEW)
-#endif  // defined(ENABLE_PRINTING)
+#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#endif  // BUILDFLAG(ENABLE_PRINTING)
 
 namespace {
 
@@ -62,10 +68,10 @@ content::WebContents* OpenURLFromTabInternal(
   // window.
   chrome::NavigateParams new_tab_params(
       static_cast<Browser*>(NULL), params.url, params.transition);
-  if (params.disposition == NEW_BACKGROUND_TAB) {
-    new_tab_params.disposition = NEW_BACKGROUND_TAB;
+  if (params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
+    new_tab_params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
   } else {
-    new_tab_params.disposition = NEW_FOREGROUND_TAB;
+    new_tab_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
     new_tab_params.window_action = chrome::NavigateParams::SHOW_WINDOW;
   }
 
@@ -75,44 +81,30 @@ content::WebContents* OpenURLFromTabInternal(
   return new_tab_params.target_contents;
 }
 
-// Helper class that opens a URL based on if this browser instance is the
-// default system browser. If it is the default, open the URL directly instead
-// of asking the system to open it.
-class OpenURLFromTabBasedOnBrowserDefault
-    : public ShellIntegration::DefaultWebClientObserver {
- public:
-  OpenURLFromTabBasedOnBrowserDefault(scoped_ptr<content::WebContents> source,
-                                      const content::OpenURLParams& params)
-      : source_(source.Pass()), params_(params) {}
-
-  // Opens a URL when called with the result of if this is the default system
-  // browser or not.
-  void SetDefaultWebClientUIState(
-      ShellIntegration::DefaultWebClientUIState state) override {
-    Profile* profile =
-        Profile::FromBrowserContext(source_->GetBrowserContext());
-    DCHECK(profile);
-    if (!profile)
-      return;
-    switch (state) {
-      case ShellIntegration::STATE_PROCESSING:
-        break;
-      case ShellIntegration::STATE_IS_DEFAULT:
-        OpenURLFromTabInternal(profile, params_);
-        break;
-      case ShellIntegration::STATE_NOT_DEFAULT:
-      case ShellIntegration::STATE_UNKNOWN:
-        platform_util::OpenExternal(profile, params_.url);
-        break;
-    }
+void OnCheckIsDefaultBrowserFinished(
+    std::unique_ptr<content::WebContents> source,
+    const content::OpenURLParams& params,
+    shell_integration::DefaultWebClientState state) {
+  // Open a URL based on if this browser instance is the default system browser.
+  // If it is the default, open the URL directly instead of asking the system to
+  // open it.
+  Profile* profile = Profile::FromBrowserContext(source->GetBrowserContext());
+  DCHECK(profile);
+  if (!profile)
+    return;
+  switch (state) {
+    case shell_integration::IS_DEFAULT:
+      OpenURLFromTabInternal(profile, params);
+      break;
+    case shell_integration::NOT_DEFAULT:
+    case shell_integration::UNKNOWN_DEFAULT:
+      platform_util::OpenExternal(profile, params.url);
+      break;
+    case shell_integration::NUM_DEFAULT_STATES:
+      NOTREACHED();
+      break;
   }
-
-  bool IsOwnedByWorker() override { return true; }
-
- private:
-  scoped_ptr<content::WebContents> source_;
-  const content::OpenURLParams params_;
-};
+}
 
 }  // namespace
 
@@ -123,7 +115,8 @@ void ChromeAppDelegate::RelinquishKeepAliveAfterTimeout(
   // ChromeAppDelegate which also resets the ScopedKeepAlive. To avoid this,
   // move the ScopedKeepAlive out to here and let it fall out of scope.
   if (chrome_app_delegate.get() && chrome_app_delegate->is_hidden_)
-    scoped_ptr<ScopedKeepAlive>(chrome_app_delegate->keep_alive_.Pass());
+    std::unique_ptr<ScopedKeepAlive>(
+        std::move(chrome_app_delegate->keep_alive_));
 }
 
 class ChromeAppDelegate::NewWindowContentsDelegate
@@ -147,30 +140,33 @@ ChromeAppDelegate::NewWindowContentsDelegate::OpenURLFromTab(
   if (source) {
     // This NewWindowContentsDelegate was given ownership of the incoming
     // WebContents by being assigned as its delegate within
-    // ChromeAppDelegate::AddNewContents, but this is the first time
-    // NewWindowContentsDelegate actually sees the WebContents.
-    // Here it is captured for deletion.
-    scoped_ptr<content::WebContents> owned_source(source);
-    scoped_refptr<ShellIntegration::DefaultWebClientWorker>
+    // ChromeAppDelegate::AddNewContents(), but this is the first time
+    // NewWindowContentsDelegate actually sees the WebContents. Here ownership
+    // is captured and passed to OnCheckIsDefaultBrowserFinished(), which
+    // destroys it after the default browser worker completes.
+    std::unique_ptr<content::WebContents> source_ptr(source);
+    // Object lifetime notes: StartCheckIsDefault() takes lifetime ownership of
+    // check_if_default_browser_worker and will clean up after the asynchronous
+    // tasks.
+    scoped_refptr<shell_integration::DefaultBrowserWorker>
         check_if_default_browser_worker =
-            new ShellIntegration::DefaultBrowserWorker(
-                new OpenURLFromTabBasedOnBrowserDefault(owned_source.Pass(),
-                                                        params));
-    // Object lifetime notes: The OpenURLFromTabBasedOnBrowserDefault is owned
-    // by check_if_default_browser_worker. StartCheckIsDefault() takes lifetime
-    // ownership of check_if_default_browser_worker and will clean up after
-    // the asynchronous tasks.
+            new shell_integration::DefaultBrowserWorker(
+                base::Bind(&OnCheckIsDefaultBrowserFinished,
+                           base::Passed(&source_ptr), params));
     check_if_default_browser_worker->StartCheckIsDefault();
   }
   return NULL;
 }
 
-ChromeAppDelegate::ChromeAppDelegate(scoped_ptr<ScopedKeepAlive> keep_alive)
+ChromeAppDelegate::ChromeAppDelegate(bool keep_alive)
     : has_been_shown_(false),
       is_hidden_(true),
-      keep_alive_(keep_alive.Pass()),
       new_window_contents_delegate_(new NewWindowContentsDelegate()),
       weak_factory_(this) {
+  if (keep_alive) {
+    keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::CHROME_APP_DELEGATE,
+                                          KeepAliveRestartOption::DISABLED));
+  }
   registrar_.Add(this,
                  chrome::NOTIFICATION_APP_TERMINATING,
                  content::NotificationService::AllSources());
@@ -186,22 +182,22 @@ void ChromeAppDelegate::DisableExternalOpenForTesting() {
 }
 
 void ChromeAppDelegate::InitWebContents(content::WebContents* web_contents) {
+  data_use_measurement::DataUseWebContentsObserver::CreateForWebContents(
+      web_contents);
   favicon::CreateContentFaviconDriverForWebContents(web_contents);
 
-#if defined(ENABLE_PRINTING)
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   printing::PrintViewManager::CreateForWebContents(web_contents);
   printing::PrintPreviewMessageHandler::CreateForWebContents(web_contents);
 #else
   printing::PrintViewManagerBasic::CreateForWebContents(web_contents);
-#endif  // defined(ENABLE_PRINT_PREVIEW)
-#endif  // defined(ENABLE_PRINTING)
+#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#endif  // BUILDFLAG(ENABLE_PRINTING)
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
       web_contents);
 
-  // Kiosk app supports zooming.
-  if (chrome::IsRunningInForcedAppMode())
-    ui_zoom::ZoomController::CreateForWebContents(web_contents);
+  zoom::ZoomController::CreateForWebContents(web_contents);
 }
 
 void ChromeAppDelegate::RenderViewCreated(
@@ -224,7 +220,7 @@ void ChromeAppDelegate::RenderViewCreated(
 
 void ChromeAppDelegate::ResizeWebContents(content::WebContents* web_contents,
                                           const gfx::Size& size) {
-  ::ResizeWebContents(web_contents, size);
+  ::ResizeWebContents(web_contents, gfx::Rect(size));
 }
 
 content::WebContents* ChromeAppDelegate::OpenURLFromTab(
@@ -249,11 +245,12 @@ void ChromeAppDelegate::AddNewContents(content::BrowserContext* context,
     return;
   }
   chrome::ScopedTabbedBrowserDisplayer displayer(
-      Profile::FromBrowserContext(context), chrome::GetActiveDesktop());
+      Profile::FromBrowserContext(context));
   // Force all links to open in a new tab, even if they were trying to open a
   // new window.
-  disposition =
-      disposition == NEW_BACKGROUND_TAB ? disposition : NEW_FOREGROUND_TAB;
+  disposition = disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB
+                    ? disposition
+                    : WindowOpenDisposition::NEW_FOREGROUND_TAB;
   chrome::AddWebContents(displayer.browser(),
                          NULL,
                          new_contents,
@@ -270,9 +267,9 @@ content::ColorChooser* ChromeAppDelegate::ShowColorChooser(
 }
 
 void ChromeAppDelegate::RunFileChooser(
-    content::WebContents* tab,
+    content::RenderFrameHost* render_frame_host,
     const content::FileChooserParams& params) {
-  FileSelectHelper::RunFileChooser(tab, params);
+  FileSelectHelper::RunFileChooser(render_frame_host, params);
 }
 
 void ChromeAppDelegate::RequestMediaAccessPermission(
@@ -296,7 +293,7 @@ bool ChromeAppDelegate::CheckMediaAccessPermission(
 
 int ChromeAppDelegate::PreferredIconSize() {
 #if defined(USE_ASH)
-  return ash::kShelfSize;
+  return ash::GetShelfConstant(ash::SHELF_SIZE);
 #else
   return extension_misc::EXTENSION_ICON_SMALL;
 #endif
@@ -343,18 +340,14 @@ void ChromeAppDelegate::OnHide() {
 void ChromeAppDelegate::OnShow() {
   has_been_shown_ = true;
   is_hidden_ = false;
-  keep_alive_.reset(new ScopedKeepAlive);
+  keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::CHROME_APP_DELEGATE,
+                                        KeepAliveRestartOption::DISABLED));
 }
 
 void ChromeAppDelegate::Observe(int type,
                                 const content::NotificationSource& source,
                                 const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_APP_TERMINATING:
-      if (!terminating_callback_.is_null())
-        terminating_callback_.Run();
-      break;
-    default:
-      NOTREACHED() << "Received unexpected notification";
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_APP_TERMINATING, type);
+  if (!terminating_callback_.is_null())
+    terminating_callback_.Run();
 }

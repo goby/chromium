@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "cc/layers/video_frame_provider_client_impl.h"
 #include "cc/layers/video_layer_impl.h"
 #include "cc/output/begin_frame_args.h"
@@ -137,31 +138,6 @@ TEST_F(VideoFrameProviderClientImplTest, DidDrawFrameIssuesPutCurrentFrame) {
   client_impl_->DidDrawFrame();
   EXPECT_EQ(1, provider_.put_current_frame_count());
   StopRendering();
-}
-
-TEST_F(VideoFrameProviderClientImplTest, StreamTextureMatrix) {
-  const float kIdentityMatrix[] = {
-      1.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      1.0,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      1.0,
-  };
-
-  EXPECT_FALSE(client_impl_->StreamTextureMatrix().IsIdentity());
-  client_impl_->DidUpdateMatrix(kIdentityMatrix);
-  EXPECT_TRUE(client_impl_->StreamTextureMatrix().IsIdentity());
 }
 
 }  // namespace cc

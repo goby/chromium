@@ -5,7 +5,6 @@
 #include "media/base/mock_filters.h"
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 
 using ::testing::_;
 using ::testing::Invoke;
@@ -13,6 +12,25 @@ using ::testing::NotNull;
 using ::testing::Return;
 
 namespace media {
+
+MockPipelineClient::MockPipelineClient() {}
+MockPipelineClient::~MockPipelineClient() {}
+
+MockPipeline::MockPipeline() {}
+MockPipeline::~MockPipeline() {}
+
+void MockPipeline::Start(Demuxer* demuxer,
+                         std::unique_ptr<Renderer> renderer,
+                         Client* client,
+                         const PipelineStatusCB& seek_cb) {
+  Start(demuxer, &renderer, client, seek_cb);
+}
+
+void MockPipeline::Resume(std::unique_ptr<Renderer> renderer,
+                          base::TimeDelta timestamp,
+                          const PipelineStatusCB& seek_cb) {
+  Resume(&renderer, timestamp, seek_cb);
+}
 
 MockDemuxer::MockDemuxer() {}
 
@@ -71,7 +89,7 @@ std::string MockVideoDecoder::GetDisplayName() const {
 }
 
 MockVideoDecoder::MockVideoDecoder() {
-  EXPECT_CALL(*this, HasAlpha()).WillRepeatedly(Return(false));
+  ON_CALL(*this, CanReadWithoutStalling()).WillByDefault(Return(true));
 }
 
 std::string MockAudioDecoder::GetDisplayName() const {
@@ -83,6 +101,10 @@ MockVideoDecoder::~MockVideoDecoder() {}
 MockAudioDecoder::MockAudioDecoder() {}
 
 MockAudioDecoder::~MockAudioDecoder() {}
+
+MockRendererClient::MockRendererClient() {}
+
+MockRendererClient::~MockRendererClient() {}
 
 MockVideoRenderer::MockVideoRenderer() {}
 
@@ -104,6 +126,10 @@ MockTextTrack::MockTextTrack() {}
 
 MockTextTrack::~MockTextTrack() {}
 
+MockCdmClient::MockCdmClient() {}
+
+MockCdmClient::~MockCdmClient() {}
+
 MockDecryptor::MockDecryptor() {}
 
 MockDecryptor::~MockDecryptor() {}
@@ -113,7 +139,15 @@ MockCdmContext::MockCdmContext() {}
 MockCdmContext::~MockCdmContext() {}
 
 int MockCdmContext::GetCdmId() const {
-  return CdmContext::kInvalidCdmId;
+  return cdm_id_;
 }
+
+void MockCdmContext::set_cdm_id(int cdm_id) {
+  cdm_id_ = cdm_id;
+}
+
+MockStreamParser::MockStreamParser() {}
+
+MockStreamParser::~MockStreamParser() {}
 
 }  // namespace media

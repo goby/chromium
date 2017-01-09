@@ -7,7 +7,6 @@
 #include <unistd.h>
 
 #include "base/base_paths.h"
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
@@ -17,16 +16,17 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/md5.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "net/base/net_util.h"
+#include "net/base/network_interfaces.h"
 #include "remoting/host/host_config.h"
 #include "remoting/host/usage_stats_consent.h"
 
@@ -126,13 +126,14 @@ DaemonController::State DaemonControllerDelegateLinux::GetState() {
   }
 }
 
-scoped_ptr<base::DictionaryValue> DaemonControllerDelegateLinux::GetConfig() {
-  scoped_ptr<base::DictionaryValue> config(
+std::unique_ptr<base::DictionaryValue>
+DaemonControllerDelegateLinux::GetConfig() {
+  std::unique_ptr<base::DictionaryValue> config(
       HostConfigFromJsonFile(GetConfigPath()));
   if (!config)
     return nullptr;
 
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   std::string value;
   if (config->GetString(kHostIdConfigPath, &value)) {
     result->SetString(kHostIdConfigPath, value);
@@ -140,11 +141,11 @@ scoped_ptr<base::DictionaryValue> DaemonControllerDelegateLinux::GetConfig() {
   if (config->GetString(kXmppLoginConfigPath, &value)) {
     result->SetString(kXmppLoginConfigPath, value);
   }
-  return result.Pass();
+  return result;
 }
 
 void DaemonControllerDelegateLinux::SetConfigAndStart(
-    scoped_ptr<base::DictionaryValue> config,
+    std::unique_ptr<base::DictionaryValue> config,
     bool consent,
     const DaemonController::CompletionCallback& done) {
   // Add the user to chrome-remote-desktop group first.
@@ -186,9 +187,9 @@ void DaemonControllerDelegateLinux::SetConfigAndStart(
 }
 
 void DaemonControllerDelegateLinux::UpdateConfig(
-    scoped_ptr<base::DictionaryValue> config,
+    std::unique_ptr<base::DictionaryValue> config,
     const DaemonController::CompletionCallback& done) {
-  scoped_ptr<base::DictionaryValue> new_config(
+  std::unique_ptr<base::DictionaryValue> new_config(
       HostConfigFromJsonFile(GetConfigPath()));
   if (new_config)
     new_config->MergeDictionary(config.get());
@@ -230,9 +231,8 @@ DaemonControllerDelegateLinux::GetUsageStatsConsent() {
 }
 
 scoped_refptr<DaemonController> DaemonController::Create() {
-  scoped_ptr<DaemonController::Delegate> delegate(
-      new DaemonControllerDelegateLinux());
-  return new DaemonController(delegate.Pass());
+  return new DaemonController(
+      base::WrapUnique(new DaemonControllerDelegateLinux()));
 }
 
 }  // namespace remoting

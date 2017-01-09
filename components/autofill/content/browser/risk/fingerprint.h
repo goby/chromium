@@ -12,14 +12,13 @@
 #ifndef COMPONENTS_AUTOFILL_CONTENT_BROWSER_RISK_FINGERPRINT_H_
 #define COMPONENTS_AUTOFILL_CONTENT_BROWSER_RISK_FINGERPRINT_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/autofill/core/browser/autofill_client.h"
-
-class PrefService;
 
 namespace base {
 class Time;
@@ -47,7 +46,7 @@ class Fingerprint;
 // character set. |accept_languages| is the Accept-Languages setting.
 // |install_time| is the absolute time of installation.
 void GetFingerprint(
-    uint64 obfuscated_gaia_id,
+    uint64_t obfuscated_gaia_id,
     const gfx::Rect& window_bounds,
     content::WebContents* web_contents,
     const std::string& version,
@@ -56,7 +55,7 @@ void GetFingerprint(
     const base::Time& install_time,
     const std::string& app_locale,
     const std::string& user_agent,
-    const base::Callback<void(scoped_ptr<Fingerprint>)>& callback);
+    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback);
 
 }  // namespace risk
 }  // namespace autofill

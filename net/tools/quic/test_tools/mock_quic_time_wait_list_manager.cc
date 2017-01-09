@@ -9,14 +9,14 @@ using testing::AnyNumber;
 using testing::Invoke;
 
 namespace net {
-namespace tools {
 namespace test {
 
 MockTimeWaitListManager::MockTimeWaitListManager(
     QuicPacketWriter* writer,
-    QuicServerSessionVisitor* visitor,
-    QuicConnectionHelperInterface* helper)
-    : QuicTimeWaitListManager(writer, visitor, helper) {
+    Visitor* visitor,
+    QuicConnectionHelperInterface* helper,
+    QuicAlarmFactory* alarm_factory)
+    : QuicTimeWaitListManager(writer, visitor, helper, alarm_factory) {
   // Though AddConnectionIdToTimeWait is mocked, we want to retain its
   // functionality.
   EXPECT_CALL(*this, AddConnectionIdToTimeWait(_, _, _, _))
@@ -30,5 +30,4 @@ MockTimeWaitListManager::MockTimeWaitListManager(
 MockTimeWaitListManager::~MockTimeWaitListManager() {}
 
 }  // namespace test
-}  // namespace tools
 }  // namespace net

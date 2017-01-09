@@ -40,9 +40,9 @@ WebMouseEvent SyntheticWebMouseEventBuilder::Build(
   result.modifiers = modifiers;
 
   if (type == WebInputEvent::MouseDown || type == WebInputEvent::MouseUp)
-    result.button = WebMouseEvent::ButtonLeft;
+    result.button = WebMouseEvent::Button::Left;
   else
-    result.button = WebMouseEvent::ButtonNone;
+    result.button = WebMouseEvent::Button::NoButton;
 
   return result;
 }
@@ -55,12 +55,29 @@ WebMouseWheelEvent SyntheticWebMouseWheelEventBuilder::Build(
   return result;
 }
 
-WebMouseWheelEvent SyntheticWebMouseWheelEventBuilder::Build(float dx,
+WebMouseWheelEvent SyntheticWebMouseWheelEventBuilder::Build(float x,
+                                                             float y,
+                                                             float dx,
+                                                             float dy,
+                                                             int modifiers,
+                                                             bool precise) {
+  return Build(x, y, 0, 0, dx, dy, modifiers, precise);
+}
+
+WebMouseWheelEvent SyntheticWebMouseWheelEventBuilder::Build(float x,
+                                                             float y,
+                                                             float global_x,
+                                                             float global_y,
+                                                             float dx,
                                                              float dy,
                                                              int modifiers,
                                                              bool precise) {
   WebMouseWheelEvent result;
   result.type = WebInputEvent::MouseWheel;
+  result.globalX = global_x;
+  result.globalY = global_y;
+  result.x = x;
+  result.y = y;
   result.deltaX = dx;
   result.deltaY = dy;
   if (dx)
@@ -69,7 +86,6 @@ WebMouseWheelEvent SyntheticWebMouseWheelEventBuilder::Build(float dx,
     result.wheelTicksY = dy > 0.0f ? 1.0f : -1.0f;
   result.modifiers = modifiers;
   result.hasPreciseScrollingDeltas = precise;
-  result.canScroll = true;
   return result;
 }
 
@@ -101,9 +117,10 @@ WebGestureEvent SyntheticWebGestureEventBuilder::Build(
 
 WebGestureEvent SyntheticWebGestureEventBuilder::BuildScrollBegin(
     float dx_hint,
-    float dy_hint) {
-  WebGestureEvent result = Build(WebInputEvent::GestureScrollBegin,
-                                 blink::WebGestureDeviceTouchscreen);
+    float dy_hint,
+    blink::WebGestureDevice source_device) {
+  WebGestureEvent result =
+      Build(WebInputEvent::GestureScrollBegin, source_device);
   result.data.scrollBegin.deltaXHint = dx_hint;
   result.data.scrollBegin.deltaYHint = dy_hint;
   return result;
@@ -152,7 +169,7 @@ WebGestureEvent SyntheticWebGestureEventBuilder::BuildFling(
 
 SyntheticWebTouchEvent::SyntheticWebTouchEvent() : WebTouchEvent() {
   uniqueTouchEventId = ui::GetNextTouchEventId();
-  SetTimestamp(base::TimeTicks::Now() - base::TimeTicks());
+  SetTimestamp(base::TimeTicks::Now());
 }
 
 void SyntheticWebTouchEvent::ResetPoints() {
@@ -167,12 +184,12 @@ void SyntheticWebTouchEvent::ResetPoints() {
   }
   touchesLength = point;
   type = WebInputEvent::Undefined;
-  causesScrollingIfUncanceled = false;
+  movedBeyondSlopRegion = false;
   uniqueTouchEventId = ui::GetNextTouchEventId();
 }
 
 int SyntheticWebTouchEvent::PressPoint(float x, float y) {
-  if (touchesLength == touchesLengthCap)
+  if (touchesLength == kTouchesLengthCap)
     return -1;
   WebTouchPoint& point = touches[touchesLength];
   point.id = touchesLength;
@@ -191,10 +208,10 @@ int SyntheticWebTouchEvent::PressPoint(float x, float y) {
 
 void SyntheticWebTouchEvent::MovePoint(int index, float x, float y) {
   CHECK_GE(index, 0);
-  CHECK_LT(index, touchesLengthCap);
+  CHECK_LT(index, kTouchesLengthCap);
   // Always set this bit to avoid otherwise unexpected touchmove suppression.
   // The caller can opt-out explicitly, if necessary.
-  causesScrollingIfUncanceled = true;
+  movedBeyondSlopRegion = true;
   WebTouchPoint& point = touches[index];
   point.position.x = point.screenPosition.x = x;
   point.position.y = point.screenPosition.y = y;
@@ -205,7 +222,7 @@ void SyntheticWebTouchEvent::MovePoint(int index, float x, float y) {
 
 void SyntheticWebTouchEvent::ReleasePoint(int index) {
   CHECK_GE(index, 0);
-  CHECK_LT(index, touchesLengthCap);
+  CHECK_LT(index, kTouchesLengthCap);
   touches[index].state = WebTouchPoint::StateReleased;
   WebTouchEventTraits::ResetType(
       WebInputEvent::TouchEnd, timeStampSeconds, this);
@@ -213,14 +230,14 @@ void SyntheticWebTouchEvent::ReleasePoint(int index) {
 
 void SyntheticWebTouchEvent::CancelPoint(int index) {
   CHECK_GE(index, 0);
-  CHECK_LT(index, touchesLengthCap);
+  CHECK_LT(index, kTouchesLengthCap);
   touches[index].state = WebTouchPoint::StateCancelled;
   WebTouchEventTraits::ResetType(
       WebInputEvent::TouchCancel, timeStampSeconds, this);
 }
 
-void SyntheticWebTouchEvent::SetTimestamp(base::TimeDelta timestamp) {
-  timeStampSeconds = timestamp.InSecondsF();
+void SyntheticWebTouchEvent::SetTimestamp(base::TimeTicks timestamp) {
+  timeStampSeconds = ui::EventTimeStampToSeconds(timestamp);
 }
 
 }  // namespace content

@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/test/scoped_path_override.h"
 #include "base/values.h"
 #include "chrome/browser/first_run/first_run.h"
@@ -84,6 +84,46 @@ TEST_F(FirstRunTest,
   MasterPrefs out_prefs;
   internal::SetupMasterPrefsFromInstallPrefs(install_prefs, &out_prefs);
   EXPECT_FALSE(out_prefs.welcome_page_on_os_upgrade_enabled);
+}
+
+// No switches and no sentinel present. This is the standard case for first run.
+TEST_F(FirstRunTest, DetermineFirstRunState_FirstRun) {
+  internal::FirstRunState result =
+      internal::DetermineFirstRunState(false, false, false);
+  EXPECT_EQ(internal::FIRST_RUN_TRUE, result);
+}
+
+// Force switch is present, overriding both sentinel and suppress switch.
+TEST_F(FirstRunTest, DetermineFirstRunState_ForceSwitch) {
+  internal::FirstRunState result =
+      internal::DetermineFirstRunState(true, true, true);
+  EXPECT_EQ(internal::FIRST_RUN_TRUE, result);
+
+  result = internal::DetermineFirstRunState(true, true, false);
+  EXPECT_EQ(internal::FIRST_RUN_TRUE, result);
+
+  result = internal::DetermineFirstRunState(false, true, true);
+  EXPECT_EQ(internal::FIRST_RUN_TRUE, result);
+
+  result = internal::DetermineFirstRunState(false, true, false);
+  EXPECT_EQ(internal::FIRST_RUN_TRUE, result);
+}
+
+// No switches, but sentinel present. This is not a first run.
+TEST_F(FirstRunTest, DetermineFirstRunState_NotFirstRun) {
+  internal::FirstRunState result =
+      internal::DetermineFirstRunState(true, false, false);
+  EXPECT_EQ(internal::FIRST_RUN_FALSE, result);
+}
+
+// Suppress switch is present, overriding sentinel state.
+TEST_F(FirstRunTest, DetermineFirstRunState_SuppressSwitch) {
+  internal::FirstRunState result =
+      internal::DetermineFirstRunState(false, false, true);
+  EXPECT_EQ(internal::FIRST_RUN_FALSE, result);
+
+  result = internal::DetermineFirstRunState(true, false, true);
+  EXPECT_EQ(internal::FIRST_RUN_FALSE, result);
 }
 
 }  // namespace first_run

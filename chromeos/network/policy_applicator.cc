@@ -4,13 +4,13 @@
 
 #include "chromeos/network/policy_applicator.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_profile_client.h"
 #include "chromeos/network/network_type_pattern.h"
@@ -36,10 +36,10 @@ void LogErrorMessage(const tracked_objects::Location& from_where,
 const base::DictionaryValue* GetByGUID(
     const PolicyApplicator::GuidToPolicyMap& policies,
     const std::string& guid) {
-  PolicyApplicator::GuidToPolicyMap::const_iterator it = policies.find(guid);
+  auto it = policies.find(guid);
   if (it == policies.end())
     return NULL;
-  return it->second;
+  return it->second.get();
 }
 
 }  // namespace
@@ -53,14 +53,13 @@ PolicyApplicator::PolicyApplicator(
     : handler_(handler), profile_(profile), weak_ptr_factory_(this) {
   global_network_config_.MergeDictionary(&global_network_config);
   remaining_policies_.swap(*modified_policies);
-  for (GuidToPolicyMap::const_iterator it = all_policies.begin();
-       it != all_policies.end(); ++it) {
-    all_policies_.insert(std::make_pair(it->first, it->second->DeepCopy()));
+  for (const auto& policy_pair : all_policies) {
+    all_policies_.insert(std::make_pair(policy_pair.first,
+                                        policy_pair.second->CreateDeepCopy()));
   }
 }
 
 PolicyApplicator::~PolicyApplicator() {
-  STLDeleteValues(&all_policies_);
   VLOG(1) << "Destroying PolicyApplicator for " << profile_.userhash;
 }
 
@@ -130,7 +129,7 @@ void PolicyApplicator::GetEntryCallback(
   VLOG(2) << "Received properties for entry " << entry << " of profile "
           << profile_.ToDebugString();
 
-  scoped_ptr<base::DictionaryValue> onc_part(
+  std::unique_ptr<base::DictionaryValue> onc_part(
       onc::TranslateShillServiceToONCPart(
           entry_properties, ::onc::ONC_SOURCE_UNKNOWN,
           &onc::kNetworkWithStateSignature, nullptr /* network_state */));
@@ -144,7 +143,7 @@ void PolicyApplicator::GetEntryCallback(
     // unmanaged.
   }
 
-  scoped_ptr<NetworkUIData> ui_data =
+  std::unique_ptr<NetworkUIData> ui_data =
       shill_property_util::GetUIDataFromProperties(entry_properties);
   if (!ui_data) {
     VLOG(1) << "Entry " << entry << " of profile " << profile_.ToDebugString()
@@ -192,12 +191,10 @@ void PolicyApplicator::GetEntryCallback(
     } else {
       const base::DictionaryValue* user_settings =
           ui_data ? ui_data->user_settings() : NULL;
-      scoped_ptr<base::DictionaryValue> new_shill_properties =
-          policy_util::CreateShillConfiguration(profile_,
-                                                new_guid,
+      std::unique_ptr<base::DictionaryValue> new_shill_properties =
+          policy_util::CreateShillConfiguration(profile_, new_guid,
                                                 &global_network_config_,
-                                                new_policy,
-                                                user_settings);
+                                                new_policy, user_settings);
       // A new policy has to be applied to this profile entry. In order to keep
       // implicit state of Shill like "connected successfully before", keep the
       // entry if a policy is reapplied (e.g. after reboot) or is updated.
@@ -296,7 +293,7 @@ void PolicyApplicator::WriteNewShillConfiguration(
   }
 
   if (write_later)
-    new_shill_configurations_.push_back(shill_dictionary.DeepCopy());
+    new_shill_configurations_.push_back(shill_dictionary.CreateDeepCopy());
   else
     handler_->CreateConfigurationFromPolicy(shill_dictionary);
 }
@@ -305,11 +302,8 @@ void PolicyApplicator::ApplyRemainingPolicies() {
   DCHECK(pending_get_entry_calls_.empty());
 
   // Write all queued configurations now.
-  for (ScopedVector<base::DictionaryValue>::const_iterator it =
-           new_shill_configurations_.begin();
-       it != new_shill_configurations_.end();
-       ++it) {
-    handler_->CreateConfigurationFromPolicy(**it);
+  for (const auto& configuration : new_shill_configurations_) {
+    handler_->CreateConfigurationFromPolicy(*configuration);
   }
   new_shill_configurations_.clear();
 
@@ -328,12 +322,10 @@ void PolicyApplicator::ApplyRemainingPolicies() {
     VLOG(1) << "Creating new configuration managed by policy " << *it
             << " in profile " << profile_.ToDebugString() << ".";
 
-    scoped_ptr<base::DictionaryValue> shill_dictionary =
-        policy_util::CreateShillConfiguration(profile_,
-                                              *it,
-                                              &global_network_config_,
-                                              network_policy,
-                                              NULL /* no user settings */);
+    std::unique_ptr<base::DictionaryValue> shill_dictionary =
+        policy_util::CreateShillConfiguration(
+            profile_, *it, &global_network_config_, network_policy,
+            NULL /* no user settings */);
     WriteNewShillConfiguration(
         *shill_dictionary, *network_policy, false /* write now */);
   }

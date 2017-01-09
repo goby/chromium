@@ -1,53 +1,39 @@
 <!DOCTYPE html>
-<html>
-    <head>
-        <script src=media-file.js></script>
-        <script src=video-test.js></script>
-        <script>
-            var repeated = false;
-            var mediaElement = new Audio();
+<title>This test ensures that media element fires the "playing" event every time it starts playing after eos. It also ensure that "pause" and "ended" events are fired when media playback ends.</title>
+<script src="../resources/testharness.js"></script>
+<script src="../resources/testharnessreport.js"></script>
+<script src="media-file.js"></script>
+<audio></audio>
+<script>
+async_test(function(t) {
+    var loop = true;
+    var audio = document.querySelector("audio");
+    audio.src = findMediaFile("audio", "content/silence");
 
-            function start()
-            {
-                mediaElement.src = findMediaFile('audio', 'content/silence');
-                waitForEvent("loadedmetadata", mediaLoadedMetadata);
-            }
-
-            function mediaLoadedMetadata()
-            {
-                waitForEventOnce("playing", mediaPlaying);
-                waitForEvent("pause", mediaPause);
-                waitForEvent("ended", mediaEnded);
-                run("mediaElement.play()");
-            }
-
-            function mediaPlaying()
-            {
-                mediaElement.currentTime = mediaElement.duration - 0.2;
-            }
-
-            function mediaPause()
-            {
-                testExpected("mediaElement.paused", true);
-            }
-
-            function mediaEnded()
-            {
-                testExpected("mediaElement.ended", true);
-
-                if (repeated) {
-                    endTest();
-                    return;
-                }
-
-                repeated = true;
-                waitForEventOnce("playing", mediaPlaying);
-                run("mediaElement.play()");
-            }
-
-        </script>
-    </head>
-    <body onload="start()">
-        <p>This tests ensure that media element emits the 'playing' event every time it starts playing after eos. It also ensure that 'pause' and 'ended' events are sent when media playback ends.</p>
-    </body>
-</html>
+    var watcher = new EventWatcher(t, audio, ["loadedmetadata", "playing", "pause", "ended"]);
+    watcher.wait_for("loadedmetadata").then(t.step_func(function() {
+        audio.play();
+        return watcher.wait_for("playing");
+    })).then(t.step_func(function() {
+        audio.currentTime = audio.duration - 0.2;
+        return watcher.wait_for("playing");
+    })).then(t.step_func(function() {
+        return watcher.wait_for("pause");
+    })).then(t.step_func(function() {
+        assert_true(audio.paused);
+        return watcher.wait_for("ended");
+    })).then(t.step_func(function() {
+        assert_true(audio.ended);
+        audio.play();
+        return watcher.wait_for("playing");
+    })).then(t.step_func(function() {
+        audio.currentTime = audio.duration - 0.2;
+        return watcher.wait_for("playing");
+    })).then(t.step_func(function() {
+        return watcher.wait_for("pause");
+    })).then(t.step_func(function() {
+        assert_true(audio.paused);
+        return watcher.wait_for("ended");
+    })).then(t.step_func_done());
+});
+</script>

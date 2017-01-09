@@ -10,15 +10,11 @@
 
 namespace cc {
 
-SoftwareOutputDevice::SoftwareOutputDevice() : scale_factor_(1.f) {
-}
-
-SoftwareOutputDevice::~SoftwareOutputDevice() {}
+SoftwareOutputDevice::SoftwareOutputDevice() = default;
+SoftwareOutputDevice::~SoftwareOutputDevice() = default;
 
 void SoftwareOutputDevice::Resize(const gfx::Size& viewport_pixel_size,
                                   float scale_factor) {
-  scale_factor_ = scale_factor;
-
   if (viewport_pixel_size_ == viewport_pixel_size)
     return;
 
@@ -26,7 +22,7 @@ void SoftwareOutputDevice::Resize(const gfx::Size& viewport_pixel_size,
                                           viewport_pixel_size.height(),
                                           kOpaque_SkAlphaType);
   viewport_pixel_size_ = viewport_pixel_size;
-  surface_ = skia::AdoptRef(SkSurface::NewRaster(info));
+  surface_ = SkSurface::MakeRaster(info);
 }
 
 SkCanvas* SoftwareOutputDevice::BeginPaint(const gfx::Rect& damage_rect) {

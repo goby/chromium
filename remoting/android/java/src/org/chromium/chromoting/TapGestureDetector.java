@@ -25,38 +25,45 @@ public class TapGestureDetector {
          * Notified when a tap event occurs.
          *
          * @param pointerCount The number of fingers that were tapped.
+         * @param x The x coordinate of the initial finger tapped.
+         * @param y The y coordinate of the initial finger tapped.
          * @return True if the event is consumed.
          */
-        boolean onTap(int pointerCount);
+        boolean onTap(int pointerCount, float x, float y);
 
         /**
          * Notified when a long-touch event occurs.
          *
          * @param pointerCount The number of fingers held down.
+         * @param x The x coordinate of the initial finger tapped.
+         * @param y The y coordinate of the initial finger tapped.
          */
-        void onLongPress(int pointerCount);
+        void onLongPress(int pointerCount, float x, float y);
     }
 
     /** The listener to which notifications are sent. */
-    private OnTapListener mListener;
+    private final OnTapListener mListener;
 
     /** Handler used for posting tasks to be executed in the future. */
-    private Handler mHandler;
-
-    /** The maximum number of fingers seen in the gesture. */
-    private int mPointerCount = 0;
+    private final Handler mHandler;
 
     /**
      * Stores the location of each down MotionEvent (by pointer ID), for detecting motion of any
      * pointer beyond the TouchSlop region.
      */
-    private SparseArray<PointF> mInitialPositions = new SparseArray<PointF>();
+    private final SparseArray<PointF> mInitialPositions = new SparseArray<PointF>();
 
     /**
      * Threshold squared-distance, in pixels, to use for motion-detection. If a finger moves less
      * than this distance, the gesture is still eligible to be a tap event.
      */
-    private int mTouchSlopSquare;
+    private final int mTouchSlopSquare;
+
+    /** The maximum number of fingers seen in the gesture. */
+    private int mPointerCount = 0;
+
+    /** The coordinates of the first finger down seen in the gesture. */
+    private PointF mInitialPoint;
 
     /** Set to true whenever motion is detected in the gesture, or a long-touch is triggered. */
     private boolean mTapCancelled = false;
@@ -74,8 +81,10 @@ public class TapGestureDetector {
         public void handleMessage(Message message) {
             TapGestureDetector detector = mDetector.get();
             if (detector != null) {
-                detector.mListener.onLongPress(detector.mPointerCount);
                 detector.mTapCancelled = true;
+                detector.mListener.onLongPress(
+                        detector.mPointerCount, detector.mInitialPoint.x, detector.mInitialPoint.y);
+                detector.mInitialPoint = null;
             }
         }
     }
@@ -94,9 +103,10 @@ public class TapGestureDetector {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 reset();
+                trackDownEvent(event);
+
                 // Cause a long-press notification to be triggered after the timeout.
                 mHandler.sendEmptyMessageDelayed(0, ViewConfiguration.getLongPressTimeout());
-                trackDownEvent(event);
                 mPointerCount = 1;
                 break;
 
@@ -117,8 +127,9 @@ public class TapGestureDetector {
             case MotionEvent.ACTION_UP:
                 cancelLongTouchNotification();
                 if (!mTapCancelled) {
-                    handled = mListener.onTap(mPointerCount);
+                    handled = mListener.onTap(mPointerCount, mInitialPoint.x, mInitialPoint.y);
                 }
+                mInitialPoint = null;
                 break;
 
             case MotionEvent.ACTION_POINTER_UP:
@@ -143,8 +154,12 @@ public class TapGestureDetector {
             pointerIndex = event.getActionIndex();
         }
         int pointerId = event.getPointerId(pointerIndex);
-        mInitialPositions.put(pointerId,
-                new PointF(event.getX(pointerIndex), event.getY(pointerIndex)));
+        PointF eventPosition = new PointF(event.getX(pointerIndex), event.getY(pointerIndex));
+        mInitialPositions.put(pointerId, eventPosition);
+
+        if (mInitialPoint == null) {
+            mInitialPoint = eventPosition;
+        }
     }
 
     /** Removes the ACTION_UP or ACTION_POINTER_UP event from the stored list. */

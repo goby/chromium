@@ -4,17 +4,25 @@
 
 #include "cc/output/ca_layer_overlay.h"
 
-#include "base/metrics/histogram.h"
-#include "cc/quads/io_surface_draw_quad.h"
+#include "base/metrics/histogram_macros.h"
+#include "cc/quads/render_pass_draw_quad.h"
 #include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/stream_video_draw_quad.h"
 #include "cc/quads/texture_draw_quad.h"
 #include "cc/quads/tile_draw_quad.h"
 #include "cc/resources/resource_provider.h"
+#include "gpu/GLES2/gl2extchromium.h"
 
 namespace cc {
 
 namespace {
+
+// If there are too many RenderPassDrawQuads, we shouldn't use Core Animation to
+// present them as individual layers, since that potentially doubles the amount
+// of work needed to present them. cc has to blit them into an IOSurface, and
+// then Core Animation has to blit them to the final surface.
+// https://crbug.com/636884.
+const int kTooManyRenderPassDrawQuads = 30;
 
 // This enum is used for histogram states and should only have new values added
 // to the end before COUNT.
@@ -35,17 +43,53 @@ enum CALayerResult {
   CA_LAYER_FAILED_RENDER_PASS,
   CA_LAYER_FAILED_SURFACE_CONTENT,
   CA_LAYER_FAILED_YUV_VIDEO_CONTENT,
+  CA_LAYER_FAILED_DIFFERENT_CLIP_SETTINGS,
+  CA_LAYER_FAILED_DIFFERENT_VERTEX_OPACITIES,
+  CA_LAYER_FAILED_RENDER_PASS_FILTER_SCALE,
+  CA_LAYER_FAILED_RENDER_PASS_BACKGROUND_FILTERS,
+  CA_LAYER_FAILED_RENDER_PASS_MASK,
+  CA_LAYER_FAILED_RENDER_PASS_FILTER_OPERATION,
+  CA_LAYER_FAILED_RENDER_PASS_SORTING_CONTEXT_ID,
+  CA_LAYER_FAILED_TOO_MANY_RENDER_PASS_DRAW_QUADS,
   CA_LAYER_FAILED_COUNT,
 };
 
-CALayerResult FromIOSurfaceQuad(ResourceProvider* resource_provider,
-                                const IOSurfaceDrawQuad* quad,
-                                CALayerOverlay* ca_layer_overlay) {
-  unsigned resource_id = quad->io_surface_resource_id();
-  if (!resource_provider->IsOverlayCandidate(resource_id))
-    return CA_LAYER_FAILED_IO_SURFACE_NOT_CANDIDATE;
-  ca_layer_overlay->contents_resource_id = resource_id;
+bool FilterOperationSupported(const FilterOperation& operation) {
+  switch (operation.type()) {
+    case FilterOperation::GRAYSCALE:
+    case FilterOperation::SEPIA:
+    case FilterOperation::SATURATE:
+    case FilterOperation::HUE_ROTATE:
+    case FilterOperation::INVERT:
+    case FilterOperation::BRIGHTNESS:
+    case FilterOperation::CONTRAST:
+    case FilterOperation::OPACITY:
+    case FilterOperation::BLUR:
+    case FilterOperation::DROP_SHADOW:
+      return true;
+    default:
+      return false;
+  }
+}
+
+CALayerResult FromRenderPassQuad(ResourceProvider* resource_provider,
+                                 const RenderPassDrawQuad* quad,
+                                 CALayerOverlay* ca_layer_overlay) {
+  if (quad->background_filters.size() != 0)
+    return CA_LAYER_FAILED_RENDER_PASS_BACKGROUND_FILTERS;
+
+  if (quad->shared_quad_state->sorting_context_id != 0)
+    return CA_LAYER_FAILED_RENDER_PASS_SORTING_CONTEXT_ID;
+
+  for (const FilterOperation& operation : quad->filters.operations()) {
+    bool success = FilterOperationSupported(operation);
+    if (!success)
+      return CA_LAYER_FAILED_RENDER_PASS_FILTER_OPERATION;
+  }
+
+  ca_layer_overlay->rpdq = quad;
   ca_layer_overlay->contents_rect = gfx::RectF(0, 0, 1, 1);
+
   return CA_LAYER_SUCCESS;
 }
 
@@ -82,18 +126,25 @@ CALayerResult FromTextureQuad(ResourceProvider* resource_provider,
   unsigned resource_id = quad->resource_id();
   if (!resource_provider->IsOverlayCandidate(resource_id))
     return CA_LAYER_FAILED_TEXTURE_NOT_CANDIDATE;
-  // TODO(ccameron): Merge the y flip into the layer transform.
-  if (quad->y_flipped)
-    return CA_LAYER_FAILED_TEXTURE_Y_FLIPPED;
+  if (quad->y_flipped) {
+    // The anchor point is at the bottom-left corner of the CALayer. The
+    // transformation that flips the contents of the layer without changing its
+    // frame is the composition of a vertical flip about the anchor point, and a
+    // translation by the height of the layer.
+    ca_layer_overlay->shared_state->transform.preTranslate(
+        0, ca_layer_overlay->bounds_rect.height(), 0);
+    ca_layer_overlay->shared_state->transform.preScale(1, -1, 1);
+  }
   ca_layer_overlay->contents_resource_id = resource_id;
   ca_layer_overlay->contents_rect =
       BoundingRect(quad->uv_top_left, quad->uv_bottom_right);
   ca_layer_overlay->background_color = quad->background_color;
   for (int i = 1; i < 4; ++i) {
     if (quad->vertex_opacity[i] != quad->vertex_opacity[0])
-      return CA_LAYER_FAILED_UNKNOWN;
+      return CA_LAYER_FAILED_DIFFERENT_VERTEX_OPACITIES;
   }
-  ca_layer_overlay->opacity *= quad->vertex_opacity[0];
+  ca_layer_overlay->shared_state->opacity *= quad->vertex_opacity[0];
+  ca_layer_overlay->filter = quad->nearest_neighbor ? GL_NEAREST : GL_LINEAR;
   return CA_LAYER_SUCCESS;
 }
 
@@ -110,94 +161,99 @@ CALayerResult FromTileQuad(ResourceProvider* resource_provider,
   return CA_LAYER_SUCCESS;
 }
 
-CALayerResult FromDrawQuad(ResourceProvider* resource_provider,
-                           const gfx::RectF& display_rect,
-                           const DrawQuad* quad,
-                           CALayerOverlay* ca_layer_overlay,
-                           bool* skip) {
-  if (quad->shared_quad_state->blend_mode != SkXfermode::kSrcOver_Mode)
-    return CA_LAYER_FAILED_QUAD_BLEND_MODE;
+class CALayerOverlayProcessor {
+ public:
+  CALayerResult FromDrawQuad(ResourceProvider* resource_provider,
+                             const gfx::RectF& display_rect,
+                             const DrawQuad* quad,
+                             CALayerOverlay* ca_layer_overlay,
+                             bool* skip,
+                             bool* render_pass_draw_quad) {
+    if (quad->shared_quad_state->blend_mode != SkBlendMode::kSrcOver)
+      return CA_LAYER_FAILED_QUAD_BLEND_MODE;
 
-  // TODO(ccameron): Handle 3D transforms.
-  if (!quad->shared_quad_state->quad_to_target_transform.IsFlat())
-    return CA_LAYER_FAILED_QUAD_TRANSFORM;
-
-  // Early-out for invisible quads.
-  if (quad->shared_quad_state->opacity == 0.f) {
-    *skip = true;
-    return CA_LAYER_SUCCESS;
-  }
-
-  // Check rect clipping.
-  gfx::RectF quad_rect(quad->rect);
-  if (quad->shared_quad_state->is_clipped) {
-    gfx::RectF clip_rect = gfx::RectF(quad->shared_quad_state->clip_rect);
-    gfx::RectF quad_rect_in_clip_space = gfx::RectF(quad->rect);
-    quad->shared_quad_state->quad_to_target_transform.TransformRect(
-        &quad_rect_in_clip_space);
-    quad_rect_in_clip_space.Intersect(display_rect);
-    // Skip quads that are entirely clipped.
-    if (!quad_rect_in_clip_space.Intersects(clip_rect)) {
+    // Early-out for invisible quads.
+    if (quad->shared_quad_state->opacity == 0.f) {
       *skip = true;
       return CA_LAYER_SUCCESS;
     }
-    // Fall back if the clip rect actually has an effect.
-    // TODO(ccameron): Handle more clip rects.
-    if (!clip_rect.Contains(quad_rect_in_clip_space)) {
-      return CA_LAYER_FAILED_QUAD_CLIPPING;
+
+    // Enable edge anti-aliasing only on layer boundaries.
+    ca_layer_overlay->edge_aa_mask = 0;
+    if (quad->IsLeftEdge())
+      ca_layer_overlay->edge_aa_mask |= GL_CA_LAYER_EDGE_LEFT_CHROMIUM;
+    if (quad->IsRightEdge())
+      ca_layer_overlay->edge_aa_mask |= GL_CA_LAYER_EDGE_RIGHT_CHROMIUM;
+    if (quad->IsBottomEdge())
+      ca_layer_overlay->edge_aa_mask |= GL_CA_LAYER_EDGE_BOTTOM_CHROMIUM;
+    if (quad->IsTopEdge())
+      ca_layer_overlay->edge_aa_mask |= GL_CA_LAYER_EDGE_TOP_CHROMIUM;
+
+    if (most_recent_shared_quad_state_ != quad->shared_quad_state) {
+      most_recent_shared_quad_state_ = quad->shared_quad_state;
+      most_recent_overlay_shared_state_ = new CALayerOverlaySharedState;
+      // Set rect clipping and sorting context ID.
+      most_recent_overlay_shared_state_->sorting_context_id =
+          quad->shared_quad_state->sorting_context_id;
+      most_recent_overlay_shared_state_->is_clipped =
+          quad->shared_quad_state->is_clipped;
+      most_recent_overlay_shared_state_->clip_rect =
+          gfx::RectF(quad->shared_quad_state->clip_rect);
+
+      most_recent_overlay_shared_state_->opacity =
+          quad->shared_quad_state->opacity;
+      most_recent_overlay_shared_state_->transform =
+          quad->shared_quad_state->quad_to_target_transform.matrix();
     }
-  }
+    ca_layer_overlay->shared_state = most_recent_overlay_shared_state_;
 
-  ca_layer_overlay->opacity = quad->shared_quad_state->opacity;
-  ca_layer_overlay->bounds_size = gfx::SizeF(quad->rect.size());
-  ca_layer_overlay->transform.setTranslate(quad->rect.x(), quad->rect.y(), 0);
-  ca_layer_overlay->transform.postConcat(
-      quad->shared_quad_state->quad_to_target_transform.matrix());
+    ca_layer_overlay->bounds_rect = gfx::RectF(quad->rect);
 
-  switch (quad->material) {
-    case DrawQuad::IO_SURFACE_CONTENT:
-      return FromIOSurfaceQuad(resource_provider,
-                               IOSurfaceDrawQuad::MaterialCast(quad),
+    *render_pass_draw_quad = quad->material == DrawQuad::RENDER_PASS;
+    switch (quad->material) {
+      case DrawQuad::TEXTURE_CONTENT:
+        return FromTextureQuad(resource_provider,
+                               TextureDrawQuad::MaterialCast(quad),
                                ca_layer_overlay);
-    case DrawQuad::TEXTURE_CONTENT:
-      return FromTextureQuad(resource_provider,
-                             TextureDrawQuad::MaterialCast(quad),
-                             ca_layer_overlay);
-    case DrawQuad::TILED_CONTENT:
-      return FromTileQuad(resource_provider, TileDrawQuad::MaterialCast(quad),
-                          ca_layer_overlay);
-    case DrawQuad::SOLID_COLOR:
-      return FromSolidColorDrawQuad(SolidColorDrawQuad::MaterialCast(quad),
-                                    ca_layer_overlay, skip);
-    case DrawQuad::STREAM_VIDEO_CONTENT:
-      return FromStreamVideoQuad(resource_provider,
-                                 StreamVideoDrawQuad::MaterialCast(quad),
-                                 ca_layer_overlay);
-    case DrawQuad::DEBUG_BORDER:
-      return CA_LAYER_FAILED_DEBUG_BORDER;
-    case DrawQuad::PICTURE_CONTENT:
-      return CA_LAYER_FAILED_PICTURE_CONTENT;
-    case DrawQuad::RENDER_PASS:
-      return CA_LAYER_FAILED_RENDER_PASS;
-    case DrawQuad::SURFACE_CONTENT:
-      return CA_LAYER_FAILED_SURFACE_CONTENT;
-    case DrawQuad::YUV_VIDEO_CONTENT:
-      return CA_LAYER_FAILED_YUV_VIDEO_CONTENT;
-    default:
-      return CA_LAYER_FAILED_UNKNOWN;
-      break;
+      case DrawQuad::TILED_CONTENT:
+        return FromTileQuad(resource_provider, TileDrawQuad::MaterialCast(quad),
+                            ca_layer_overlay);
+      case DrawQuad::SOLID_COLOR:
+        return FromSolidColorDrawQuad(SolidColorDrawQuad::MaterialCast(quad),
+                                      ca_layer_overlay, skip);
+      case DrawQuad::STREAM_VIDEO_CONTENT:
+        return FromStreamVideoQuad(resource_provider,
+                                   StreamVideoDrawQuad::MaterialCast(quad),
+                                   ca_layer_overlay);
+      case DrawQuad::DEBUG_BORDER:
+        return CA_LAYER_FAILED_DEBUG_BORDER;
+      case DrawQuad::PICTURE_CONTENT:
+        return CA_LAYER_FAILED_PICTURE_CONTENT;
+      case DrawQuad::RENDER_PASS:
+        return FromRenderPassQuad(resource_provider,
+                                  RenderPassDrawQuad::MaterialCast(quad),
+                                  ca_layer_overlay);
+      case DrawQuad::SURFACE_CONTENT:
+        return CA_LAYER_FAILED_SURFACE_CONTENT;
+      case DrawQuad::YUV_VIDEO_CONTENT:
+        return CA_LAYER_FAILED_YUV_VIDEO_CONTENT;
+      default:
+        break;
+    }
+
+    return CA_LAYER_FAILED_UNKNOWN;
   }
 
-  return CA_LAYER_FAILED_UNKNOWN;
-}
+ private:
+  const SharedQuadState* most_recent_shared_quad_state_ = nullptr;
+  scoped_refptr<CALayerOverlaySharedState> most_recent_overlay_shared_state_;
+};
 
 }  // namespace
 
-CALayerOverlay::CALayerOverlay()
-    : contents_resource_id(0),
-      opacity(1),
-      background_color(SK_ColorTRANSPARENT),
-      transform(SkMatrix44::kIdentity_Constructor) {}
+CALayerOverlay::CALayerOverlay() : filter(GL_LINEAR) {}
+
+CALayerOverlay::CALayerOverlay(const CALayerOverlay& other) = default;
 
 CALayerOverlay::~CALayerOverlay() {}
 
@@ -206,18 +262,50 @@ bool ProcessForCALayerOverlays(ResourceProvider* resource_provider,
                                const QuadList& quad_list,
                                CALayerOverlayList* ca_layer_overlays) {
   CALayerResult result = CA_LAYER_SUCCESS;
+  ca_layer_overlays->reserve(quad_list.size());
+
+  int render_pass_draw_quad_count = 0;
+  CALayerOverlayProcessor processor;
   for (auto it = quad_list.BackToFrontBegin(); it != quad_list.BackToFrontEnd();
        ++it) {
     const DrawQuad* quad = *it;
-    CALayerOverlay ca_layer_overlay;
+    CALayerOverlay ca_layer;
     bool skip = false;
-    result = FromDrawQuad(resource_provider, display_rect, quad,
-                          &ca_layer_overlay, &skip);
+    bool render_pass_draw_quad = false;
+    result = processor.FromDrawQuad(resource_provider, display_rect, quad,
+                                    &ca_layer, &skip, &render_pass_draw_quad);
     if (result != CA_LAYER_SUCCESS)
       break;
+
+    if (render_pass_draw_quad) {
+      ++render_pass_draw_quad_count;
+      if (render_pass_draw_quad_count > kTooManyRenderPassDrawQuads) {
+        result = CA_LAYER_FAILED_TOO_MANY_RENDER_PASS_DRAW_QUADS;
+        break;
+      }
+    }
+
     if (skip)
       continue;
-    ca_layer_overlays->push_back(ca_layer_overlay);
+
+    // It is not possible to correctly represent two different clipping settings
+    // within one sorting context.
+    if (!ca_layer_overlays->empty()) {
+      const CALayerOverlay& previous_ca_layer = ca_layer_overlays->back();
+      if (ca_layer.shared_state->sorting_context_id &&
+          previous_ca_layer.shared_state->sorting_context_id ==
+              ca_layer.shared_state->sorting_context_id) {
+        if (previous_ca_layer.shared_state->is_clipped !=
+                ca_layer.shared_state->is_clipped ||
+            previous_ca_layer.shared_state->clip_rect !=
+                ca_layer.shared_state->clip_rect) {
+          result = CA_LAYER_FAILED_DIFFERENT_CLIP_SETTINGS;
+          break;
+        }
+      }
+    }
+
+    ca_layer_overlays->push_back(ca_layer);
   }
 
   UMA_HISTOGRAM_ENUMERATION("Compositing.Renderer.CALayerResult", result,

@@ -5,6 +5,8 @@
 #ifndef CONTENT_RENDERER_GPU_QUEUE_MESSAGE_SWAP_PROMISE_H_
 #define CONTENT_RENDERER_GPU_QUEUE_MESSAGE_SWAP_PROMISE_H_
 
+#include <stdint.h>
+
 #include "base/memory/ref_counted.h"
 #include "cc/output/swap_promise.h"
 
@@ -26,9 +28,9 @@ class QueueMessageSwapPromise : public cc::SwapPromise {
 
   void DidActivate() override;
   void DidSwap(cc::CompositorFrameMetadata* metadata) override;
-  void DidNotSwap(DidNotSwapReason reason) override;
+  DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override;
 
-  int64 TraceId() const override;
+  int64_t TraceId() const override;
 
  private:
   void PromiseCompleted();

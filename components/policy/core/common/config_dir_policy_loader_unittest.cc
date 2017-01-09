@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/policy/core/common/config_dir_policy_loader.h"
+
+#include <utility>
+
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_string_value_serializer.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "components/policy/core/common/async_policy_provider.h"
-#include "components/policy/core/common/config_dir_policy_loader.h"
 #include "components/policy/core/common/configuration_policy_provider_test.h"
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/core/common/policy_map.h"
@@ -49,7 +53,7 @@ class TestHarness : public PolicyProviderTestHarness {
       const base::DictionaryValue* policy_value) override;
   void Install3rdPartyPolicy(const base::DictionaryValue* policies) override;
 
-  const base::FilePath& test_dir() { return test_dir_.path(); }
+  const base::FilePath& test_dir() { return test_dir_.GetPath(); }
 
   // JSON-encode a dictionary and write it to a file.
   void WriteConfigFile(const base::DictionaryValue& dict,
@@ -83,9 +87,9 @@ void TestHarness::SetUp() {
 ConfigurationPolicyProvider* TestHarness::CreateProvider(
     SchemaRegistry* registry,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  scoped_ptr<AsyncPolicyLoader> loader(new ConfigDirPolicyLoader(
-      task_runner, test_dir(), POLICY_SCOPE_MACHINE));
-  return new AsyncPolicyProvider(registry, loader.Pass());
+  std::unique_ptr<AsyncPolicyLoader> loader(
+      new ConfigDirPolicyLoader(task_runner, test_dir(), POLICY_SCOPE_MACHINE));
+  return new AsyncPolicyProvider(registry, std::move(loader));
 }
 
 void TestHarness::InstallEmptyPolicy() {
@@ -187,7 +191,7 @@ class ConfigDirPolicyLoaderTest : public PolicyTestBase {
 TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsEmpty) {
   ConfigDirPolicyLoader loader(loop_.task_runner(), harness_.test_dir(),
                                POLICY_SCOPE_MACHINE);
-  scoped_ptr<PolicyBundle> bundle(loader.Load());
+  std::unique_ptr<PolicyBundle> bundle(loader.Load());
   ASSERT_TRUE(bundle.get());
   const PolicyBundle kEmptyBundle;
   EXPECT_TRUE(bundle->Equals(kEmptyBundle));
@@ -200,7 +204,7 @@ TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsNonExistentDirectory) {
       harness_.test_dir().Append(FILE_PATH_LITERAL("not_there")));
   ConfigDirPolicyLoader loader(loop_.task_runner(), non_existent_dir,
                                POLICY_SCOPE_MACHINE);
-  scoped_ptr<PolicyBundle> bundle(loader.Load());
+  std::unique_ptr<PolicyBundle> bundle(loader.Load());
   ASSERT_TRUE(bundle.get());
   const PolicyBundle kEmptyBundle;
   EXPECT_TRUE(bundle->Equals(kEmptyBundle));
@@ -224,7 +228,7 @@ TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsMergePrefs) {
 
   ConfigDirPolicyLoader loader(loop_.task_runner(), harness_.test_dir(),
                                POLICY_SCOPE_USER);
-  scoped_ptr<PolicyBundle> bundle(loader.Load());
+  std::unique_ptr<PolicyBundle> bundle(loader.Load());
   ASSERT_TRUE(bundle.get());
   PolicyBundle expected_bundle;
   expected_bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))

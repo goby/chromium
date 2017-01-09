@@ -9,7 +9,26 @@
 
 namespace switches {
 
+GPU_EXPORT extern const char kGpuActiveVendorID[];
+GPU_EXPORT extern const char kGpuActiveDeviceID[];
+GPU_EXPORT extern const char kGpuDeviceID[];
 GPU_EXPORT extern const char kGpuDriverBugWorkarounds[];
+GPU_EXPORT extern const char kGpuDriverVendor[];
+GPU_EXPORT extern const char kGpuDriverVersion[];
+GPU_EXPORT extern const char kGpuDriverDate[];
+GPU_EXPORT extern const char kGpuSecondaryVendorIDs[];
+GPU_EXPORT extern const char kGpuSecondaryDeviceIDs[];
+GPU_EXPORT extern const char kGpuTestingNoCompleteInfoCollection[];
+GPU_EXPORT extern const char kGpuTestingOsVersion[];
+GPU_EXPORT extern const char kGpuTestingVendorId[];
+GPU_EXPORT extern const char kGpuTestingDeviceId[];
+GPU_EXPORT extern const char kGpuTestingSecondaryVendorIDs[];
+GPU_EXPORT extern const char kGpuTestingSecondaryDeviceIDs[];
+GPU_EXPORT extern const char kGpuTestingDriverDate[];
+GPU_EXPORT extern const char kGpuTestingGLVendor[];
+GPU_EXPORT extern const char kGpuTestingGLRenderer[];
+GPU_EXPORT extern const char kGpuTestingGLVersion[];
+GPU_EXPORT extern const char kGpuVendorID[];
 
 }  // namespace switches
 

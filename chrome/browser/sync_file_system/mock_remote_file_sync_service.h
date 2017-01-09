@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_MOCK_REMOTE_FILE_SYNC_SERVICE_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_MOCK_REMOTE_FILE_SYNC_SERVICE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/values.h"
 #include "chrome/browser/sync_file_system/file_status_observer.h"
@@ -61,7 +64,7 @@ class MockRemoteFileSyncService : public RemoteFileSyncService {
 
   // Send notifications to the observers.
   // Can be used in the mock implementation.
-  void NotifyRemoteChangeQueueUpdated(int64 pending_changes);
+  void NotifyRemoteChangeQueueUpdated(int64_t pending_changes);
   void NotifyRemoteServiceStateUpdated(
       RemoteServiceState state,
       const std::string& description);

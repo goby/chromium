@@ -4,13 +4,14 @@
 
 #include "components/visitedlink/browser/visitedlink_event_listener.h"
 
-#include "base/memory/shared_memory.h"
+#include "base/bind.h"
 #include "components/visitedlink/browser/visitedlink_delegate.h"
-#include "components/visitedlink/common/visitedlink_messages.h"
+#include "components/visitedlink/common/visitedlink.mojom.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 using base::Time;
 using base::TimeDelta;
@@ -19,7 +20,7 @@ using content::RenderWidgetHost;
 namespace {
 
 // The amount of time we wait to accumulate visited link additions.
-const int kCommitIntervalMs = 100;
+constexpr int kCommitIntervalMs = 100;
 
 // Size of the buffer after which individual link updates deemed not warranted
 // and the overall update should be used instead.
@@ -40,21 +41,20 @@ namespace visitedlink {
 class VisitedLinkUpdater {
  public:
   explicit VisitedLinkUpdater(int render_process_id)
-      : reset_needed_(false), render_process_id_(render_process_id) {
+      : reset_needed_(false),
+        invalidate_hashes_(false),
+        render_process_id_(render_process_id) {
+    content::RenderProcessHost::FromID(render_process_id)
+        ->GetRemoteInterfaces()
+        ->GetInterface(&sink_);
   }
 
   // Informs the renderer about a new visited link table.
-  void SendVisitedLinkTable(base::SharedMemory* table_memory) {
-    content::RenderProcessHost* process =
-        content::RenderProcessHost::FromID(render_process_id_);
-    if (!process)
-      return;  // Happens in tests
-    base::SharedMemoryHandle handle_for_process;
-    table_memory->ShareReadOnlyToProcess(process->GetHandle(),
-                                         &handle_for_process);
-    if (base::SharedMemory::IsHandleValid(handle_for_process))
-      process->Send(new ChromeViewMsg_VisitedLink_NewTable(
-          handle_for_process));
+  void SendVisitedLinkTable(mojo::SharedBufferHandle table) {
+    mojo::ScopedSharedBufferHandle client_table =
+        table.Clone(mojo::SharedBufferHandle::AccessMode::READ_ONLY);
+    if (client_table.is_valid())
+      sink_->UpdateVisitedLinks(std::move(client_table));
   }
 
   // Buffers |links| to update, but doesn't actually relay them.
@@ -65,7 +65,7 @@ class VisitedLinkUpdater {
     if (pending_.size() + links.size() > kVisitedLinkBufferThreshold) {
       // Once the threshold is reached, there's no need to store pending visited
       // link updates -- we opt for resetting the state for all links.
-      AddReset();
+      AddReset(false);
       return;
     }
 
@@ -73,9 +73,15 @@ class VisitedLinkUpdater {
   }
 
   // Tells the updater that sending individual link updates is no longer
-  // necessary and the visited state for all links should be reset.
-  void AddReset() {
+  // necessary and the visited state for all links should be reset. If
+  // |invalidateHashes| is true all cached visited links hashes should be
+  // dropped.
+  void AddReset(bool invalidate_hashes) {
     reset_needed_ = true;
+    // Do not set to false. If tab is invisible the reset message will not be
+    // sent until tab became visible.
+    if (invalidate_hashes)
+      invalidate_hashes_ = true;
     pending_.clear();
   }
 
@@ -91,29 +97,31 @@ class VisitedLinkUpdater {
       return;
 
     if (reset_needed_) {
-      process->Send(new ChromeViewMsg_VisitedLink_Reset());
+      sink_->ResetVisitedLinks(invalidate_hashes_);
       reset_needed_ = false;
+      invalidate_hashes_ = false;
       return;
     }
 
     if (pending_.empty())
       return;
 
-    process->Send(new ChromeViewMsg_VisitedLink_Add(pending_));
+    sink_->AddVisitedLinks(pending_);
 
     pending_.clear();
   }
 
  private:
   bool reset_needed_;
+  bool invalidate_hashes_;
   int render_process_id_;
+  mojom::VisitedLinkNotificationSinkPtr sink_;
   VisitedLinkCommon::Fingerprints pending_;
 };
 
 VisitedLinkEventListener::VisitedLinkEventListener(
-    VisitedLinkMaster* master,
     content::BrowserContext* browser_context)
-    : master_(master),
+    : coalesce_timer_(&default_coalesce_timer_),
       browser_context_(browser_context) {
   registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,
                  content::NotificationService::AllBrowserContextsAndSources());
@@ -128,8 +136,10 @@ VisitedLinkEventListener::~VisitedLinkEventListener() {
     pending_visited_links_.clear();
 }
 
-void VisitedLinkEventListener::NewTable(base::SharedMemory* table_memory) {
-  if (!table_memory)
+void VisitedLinkEventListener::NewTable(mojo::SharedBufferHandle table) {
+  DCHECK(table.is_valid());
+  shared_memory_ = table.Clone(mojo::SharedBufferHandle::AccessMode::READ_ONLY);
+  if (!shared_memory_.is_valid())
     return;
 
   // Send to all RenderProcessHosts.
@@ -140,28 +150,34 @@ void VisitedLinkEventListener::NewTable(base::SharedMemory* table_memory) {
     if (!process)
       continue;
 
-    i->second->SendVisitedLinkTable(table_memory);
+    i->second->SendVisitedLinkTable(shared_memory_.get());
   }
 }
 
 void VisitedLinkEventListener::Add(VisitedLinkMaster::Fingerprint fingerprint) {
   pending_visited_links_.push_back(fingerprint);
 
-  if (!coalesce_timer_.IsRunning()) {
-    coalesce_timer_.Start(FROM_HERE,
-        TimeDelta::FromMilliseconds(kCommitIntervalMs), this,
-        &VisitedLinkEventListener::CommitVisitedLinks);
+  if (!coalesce_timer_->IsRunning()) {
+    coalesce_timer_->Start(
+        FROM_HERE, TimeDelta::FromMilliseconds(kCommitIntervalMs),
+        base::Bind(&VisitedLinkEventListener::CommitVisitedLinks,
+                   base::Unretained(this)));
   }
 }
 
-void VisitedLinkEventListener::Reset() {
+void VisitedLinkEventListener::Reset(bool invalidate_hashes) {
   pending_visited_links_.clear();
-  coalesce_timer_.Stop();
+  coalesce_timer_->Stop();
 
   for (Updaters::iterator i = updaters_.begin(); i != updaters_.end(); ++i) {
-    i->second->AddReset();
+    i->second->AddReset(invalidate_hashes);
     i->second->Update();
   }
+}
+
+void VisitedLinkEventListener::SetCoalesceTimerForTest(
+    base::Timer* coalesce_timer_override) {
+  coalesce_timer_ = coalesce_timer_override;
 }
 
 void VisitedLinkEventListener::CommitVisitedLinks() {
@@ -186,13 +202,12 @@ void VisitedLinkEventListener::Observe(
         return;
 
       // Happens on browser start up.
-      if (!master_->shared_memory())
+      if (!shared_memory_.is_valid())
         return;
 
-      updaters_[process->GetID()] =
-          make_linked_ptr(new VisitedLinkUpdater(process->GetID()));
-      updaters_[process->GetID()]->SendVisitedLinkTable(
-          master_->shared_memory());
+      updaters_[process->GetID()].reset(
+          new VisitedLinkUpdater(process->GetID()));
+      updaters_[process->GetID()]->SendVisitedLinkTable(shared_memory_.get());
       break;
     }
     case content::NOTIFICATION_RENDERER_PROCESS_TERMINATED: {

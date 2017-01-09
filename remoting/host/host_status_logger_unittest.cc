@@ -5,6 +5,7 @@
 #include "remoting/host/host_status_logger.h"
 
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "remoting/host/fake_host_status_monitor.h"
 #include "remoting/signaling/mock_signal_strategy.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -23,8 +24,8 @@ namespace remoting {
 
 namespace {
 
-ACTION_P(QuitMainMessageLoop, message_loop) {
-  message_loop->PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+ACTION_P(QuitRunLoop, run_loop) {
+  run_loop->QuitWhenIdle();
 }
 
 const char kJabberClientNamespace[] = "jabber:client";
@@ -137,11 +138,12 @@ class HostStatusLoggerTest : public testing::Test {
  protected:
   base::MessageLoop message_loop_;
   MockSignalStrategy signal_strategy_;
-  scoped_ptr<HostStatusLogger> host_status_logger_;
+  std::unique_ptr<HostStatusLogger> host_status_logger_;
   FakeHostStatusMonitor host_status_monitor_;
 };
 
 TEST_F(HostStatusLoggerTest, SendNow) {
+  base::RunLoop run_loop;
   {
     InSequence s;
     EXPECT_CALL(signal_strategy_, GetLocalJid())
@@ -151,7 +153,7 @@ TEST_F(HostStatusLoggerTest, SendNow) {
     EXPECT_CALL(signal_strategy_, SendStanzaPtr(IsClientConnected("direct")))
         .WillOnce(DoAll(DeleteArg<0>(), Return(true)));
     EXPECT_CALL(signal_strategy_, RemoveListener(_))
-        .WillOnce(QuitMainMessageLoop(&message_loop_))
+        .WillOnce(QuitRunLoop(&run_loop))
         .RetiresOnSaturation();
   }
   host_status_logger_->SetSignalingStateForTest(SignalStrategy::CONNECTED);
@@ -162,10 +164,11 @@ TEST_F(HostStatusLoggerTest, SendNow) {
   host_status_logger_->OnClientConnected(kClientJid1);
   host_status_logger_->SetSignalingStateForTest(
       SignalStrategy::DISCONNECTED);
-  message_loop_.Run();
+  run_loop.Run();
 }
 
 TEST_F(HostStatusLoggerTest, SendLater) {
+  base::RunLoop run_loop;
   protocol::TransportRoute route;
   route.type = protocol::TransportRoute::DIRECT;
   host_status_logger_->OnClientRouteChange(kClientJid1, "video", route);
@@ -180,15 +183,16 @@ TEST_F(HostStatusLoggerTest, SendLater) {
     EXPECT_CALL(signal_strategy_, SendStanzaPtr(IsClientConnected("direct")))
         .WillOnce(DoAll(DeleteArg<0>(), Return(true)));
     EXPECT_CALL(signal_strategy_, RemoveListener(_))
-        .WillOnce(QuitMainMessageLoop(&message_loop_))
+        .WillOnce(QuitRunLoop(&run_loop))
         .RetiresOnSaturation();
   }
   host_status_logger_->SetSignalingStateForTest(SignalStrategy::CONNECTED);
   host_status_logger_->SetSignalingStateForTest(SignalStrategy::DISCONNECTED);
-  message_loop_.Run();
+  run_loop.Run();
 }
 
 TEST_F(HostStatusLoggerTest, SendTwoEntriesLater) {
+  base::RunLoop run_loop;
   protocol::TransportRoute route1;
   route1.type = protocol::TransportRoute::DIRECT;
   host_status_logger_->OnClientRouteChange(kClientJid1, "video", route1);
@@ -209,15 +213,16 @@ TEST_F(HostStatusLoggerTest, SendTwoEntriesLater) {
         SendStanzaPtr(IsTwoClientsConnected("direct", "stun")))
             .WillOnce(DoAll(DeleteArg<0>(), Return(true)));
     EXPECT_CALL(signal_strategy_, RemoveListener(_))
-        .WillOnce(QuitMainMessageLoop(&message_loop_))
+        .WillOnce(QuitRunLoop(&run_loop))
         .RetiresOnSaturation();
   }
   host_status_logger_->SetSignalingStateForTest(SignalStrategy::CONNECTED);
   host_status_logger_->SetSignalingStateForTest(SignalStrategy::DISCONNECTED);
-  message_loop_.Run();
+  run_loop.Run();
 }
 
 TEST_F(HostStatusLoggerTest, HandleRouteChangeInUnusualOrder) {
+  base::RunLoop run_loop;
   {
     InSequence s;
     EXPECT_CALL(signal_strategy_, GetLocalJid())
@@ -233,7 +238,7 @@ TEST_F(HostStatusLoggerTest, HandleRouteChangeInUnusualOrder) {
     EXPECT_CALL(signal_strategy_, SendStanzaPtr(IsClientConnected("stun")))
         .WillOnce(DoAll(DeleteArg<0>(), Return(true)));
     EXPECT_CALL(signal_strategy_, RemoveListener(_))
-        .WillOnce(QuitMainMessageLoop(&message_loop_))
+        .WillOnce(QuitRunLoop(&run_loop))
         .RetiresOnSaturation();
   }
   host_status_logger_->SetSignalingStateForTest(SignalStrategy::CONNECTED);
@@ -249,7 +254,7 @@ TEST_F(HostStatusLoggerTest, HandleRouteChangeInUnusualOrder) {
   host_status_logger_->OnClientAuthenticated(kClientJid2);
   host_status_logger_->OnClientConnected(kClientJid2);
   host_status_logger_->SetSignalingStateForTest(SignalStrategy::DISCONNECTED);
-  message_loop_.Run();
+  run_loop.Run();
 }
 
 }  // namespace remoting

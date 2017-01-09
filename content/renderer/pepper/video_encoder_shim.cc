@@ -13,11 +13,11 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/renderer/pepper/pepper_video_encoder_host.h"
 #include "content/renderer/render_thread_impl.h"
-#include "third_party/libvpx_new/source/libvpx/vpx/vp8cx.h"
-#include "third_party/libvpx_new/source/libvpx/vpx/vpx_encoder.h"
+#include "third_party/libvpx/source/libvpx/vpx/vp8cx.h"
+#include "third_party/libvpx/source/libvpx/vpx/vpx_encoder.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace content {
@@ -74,7 +74,9 @@ void GetVpxCodecParameters(media::VideoCodecProfile codec,
       *max_quantizer = kVp8DefaultMaxQuantizer;
       *cpu_used = kVp8DefaultCpuUsed;
       break;
-    case media::VP9PROFILE_ANY:
+    // Only VP9 profile 0 is supported by PPAPI at the moment. VP9 profiles 1-3
+    // are not supported due to backward compatibility.
+    case media::VP9PROFILE_PROFILE0:
       *vpx_codec = vpx_codec_vp9_cx();
       *min_quantizer = kVp9DefaultMinQuantizer;
       *max_quantizer = kVp9DefaultMaxQuantizer;
@@ -99,12 +101,12 @@ class VideoEncoderShim::EncoderImpl {
   void Initialize(media::VideoPixelFormat input_format,
                   const gfx::Size& input_visible_size,
                   media::VideoCodecProfile output_profile,
-                  uint32 initial_bitrate);
+                  uint32_t initial_bitrate);
   void Encode(const scoped_refptr<media::VideoFrame>& frame,
               bool force_keyframe);
   void UseOutputBitstreamBuffer(const media::BitstreamBuffer& buffer,
                                 uint8_t* mem);
-  void RequestEncodingParametersChange(uint32 bitrate, uint32 framerate);
+  void RequestEncodingParametersChange(uint32_t bitrate, uint32_t framerate);
   void Stop();
 
  private:
@@ -139,7 +141,7 @@ class VideoEncoderShim::EncoderImpl {
   vpx_codec_enc_cfg_t config_;
   vpx_codec_ctx_t encoder_;
 
-  uint32 framerate_;
+  uint32_t framerate_;
 
   std::deque<PendingEncode> frames_;
   std::deque<BitstreamBuffer> buffers_;
@@ -161,9 +163,15 @@ void VideoEncoderShim::EncoderImpl::Initialize(
     media::VideoPixelFormat input_format,
     const gfx::Size& input_visible_size,
     media::VideoCodecProfile output_profile,
-    uint32 initial_bitrate) {
+    uint32_t initial_bitrate) {
   gfx::Size coded_size =
       media::VideoFrame::PlaneSize(input_format, 0, input_visible_size);
+
+  // Only VP9 profile 0 is supported by PPAPI at the moment. VP9 profiles 1-3
+  // are not supported due to backward compatibility.
+  DCHECK_NE(output_profile, media::VP9PROFILE_PROFILE1);
+  DCHECK_NE(output_profile, media::VP9PROFILE_PROFILE2);
+  DCHECK_NE(output_profile, media::VP9PROFILE_PROFILE3);
 
   vpx_codec_iface_t* vpx_codec;
   int32_t min_quantizer, max_quantizer, cpu_used;
@@ -196,7 +204,7 @@ void VideoEncoderShim::EncoderImpl::Initialize(
   // Use Q/CQ mode if no target bitrate is given. Note that in the VP8/CQ case
   // the meaning of rc_target_bitrate changes to target maximum rate.
   if (initial_bitrate == 0) {
-    if (output_profile == media::VP9PROFILE_ANY) {
+    if (output_profile == media::VP9PROFILE_PROFILE0) {
       config_.rc_end_usage = VPX_Q;
     } else if (output_profile == media::VP8PROFILE_ANY) {
       config_.rc_end_usage = VPX_CQ;
@@ -223,7 +231,7 @@ void VideoEncoderShim::EncoderImpl::Initialize(
     return;
   }
 
-  if (output_profile == media::VP9PROFILE_ANY) {
+  if (output_profile == media::VP9PROFILE_PROFILE0) {
     if (vpx_codec_control(&encoder_, VP9E_SET_AQ_MODE,
                           kVp9AqModeCyclicRefresh) != VPX_CODEC_OK) {
       NotifyError(media::VideoEncodeAccelerator::kPlatformFailureError);
@@ -252,11 +260,11 @@ void VideoEncoderShim::EncoderImpl::UseOutputBitstreamBuffer(
 }
 
 void VideoEncoderShim::EncoderImpl::RequestEncodingParametersChange(
-    uint32 bitrate,
-    uint32 framerate) {
+    uint32_t bitrate,
+    uint32_t framerate) {
   framerate_ = framerate;
 
-  uint32 bitrate_kbit = bitrate / 1000;
+  uint32_t bitrate_kbit = bitrate / 1000;
   if (config_.rc_target_bitrate == bitrate_kbit)
     return;
 
@@ -389,10 +397,10 @@ VideoEncoderShim::GetSupportedProfiles() {
   ret = vpx_codec_enc_config_default(vpx_codec_vp9_cx(), &config, 0);
   if (ret == VPX_CODEC_OK) {
     media::VideoEncodeAccelerator::SupportedProfile profile;
-    profile.profile = media::VP9PROFILE_ANY;
     profile.max_resolution = gfx::Size(kMaxWidth, kMaxHeight);
     profile.max_framerate_numerator = config.g_timebase.den;
     profile.max_framerate_denominator = config.g_timebase.num;
+    profile.profile = media::VP9PROFILE_PROFILE0;
     profiles.push_back(profile);
   }
 
@@ -403,7 +411,7 @@ bool VideoEncoderShim::Initialize(
     media::VideoPixelFormat input_format,
     const gfx::Size& input_visible_size,
     media::VideoCodecProfile output_profile,
-    uint32 initial_bitrate,
+    uint32_t initial_bitrate,
     media::VideoEncodeAccelerator::Client* client) {
   DCHECK(RenderThreadImpl::current());
   DCHECK_EQ(client, host_);
@@ -412,7 +420,7 @@ bool VideoEncoderShim::Initialize(
     return false;
 
   if (output_profile != media::VP8PROFILE_ANY &&
-      output_profile != media::VP9PROFILE_ANY)
+      output_profile != media::VP9PROFILE_PROFILE0)
     return false;
 
   media_task_runner_->PostTask(
@@ -445,8 +453,8 @@ void VideoEncoderShim::UseOutputBitstreamBuffer(
                  host_->ShmHandleToAddress(buffer.id())));
 }
 
-void VideoEncoderShim::RequestEncodingParametersChange(uint32 bitrate,
-                                                       uint32 framerate) {
+void VideoEncoderShim::RequestEncodingParametersChange(uint32_t bitrate,
+                                                       uint32_t framerate) {
   DCHECK(RenderThreadImpl::current());
 
   media_task_runner_->PostTask(
@@ -474,12 +482,13 @@ void VideoEncoderShim::OnRequireBitstreamBuffers(
 
 void VideoEncoderShim::OnBitstreamBufferReady(
     scoped_refptr<media::VideoFrame> frame,
-    int32 bitstream_buffer_id,
+    int32_t bitstream_buffer_id,
     size_t payload_size,
     bool key_frame) {
   DCHECK(RenderThreadImpl::current());
 
-  host_->BitstreamBufferReady(bitstream_buffer_id, payload_size, key_frame);
+  host_->BitstreamBufferReady(bitstream_buffer_id, payload_size, key_frame,
+                              frame->timestamp());
 }
 
 void VideoEncoderShim::OnNotifyError(

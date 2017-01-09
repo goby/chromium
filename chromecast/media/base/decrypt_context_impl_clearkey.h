@@ -5,8 +5,16 @@
 #ifndef CHROMECAST_MEDIA_BASE_DECRYPT_CONTEXT_IMPL_CLEARKEY_H_
 #define CHROMECAST_MEDIA_BASE_DECRYPT_CONTEXT_IMPL_CLEARKEY_H_
 
+#include <stddef.h>
+
+#include <vector>
+
 #include "base/macros.h"
 #include "chromecast/media/base/decrypt_context_impl.h"
+
+namespace crypto {
+class SymmetricKey;
+}
 
 namespace chromecast {
 namespace media {
@@ -17,10 +25,18 @@ class DecryptContextImplClearKey : public DecryptContextImpl {
   explicit DecryptContextImplClearKey(crypto::SymmetricKey* key);
   ~DecryptContextImplClearKey() override;
 
-  // DecryptContext implementation.
-  crypto::SymmetricKey* GetKey() const override;
+  // DecryptContextImpl implementation.
+  void DecryptAsync(CastDecoderBuffer* buffer,
+                    uint8_t* output,
+                    size_t data_offset,
+                    const DecryptCB& decrypt_cb) override;
+
+  bool CanDecryptToBuffer() const override;
 
  private:
+  bool DoDecrypt(CastDecoderBuffer* buffer,
+                 uint8_t* output,
+                 size_t data_offset);
   crypto::SymmetricKey* const key_;
 
   DISALLOW_COPY_AND_ASSIGN(DecryptContextImplClearKey);

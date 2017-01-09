@@ -4,9 +4,14 @@
 
 #include "chrome/browser/extensions/convert_web_app.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
@@ -53,7 +58,7 @@ std::string GenerateKey(const GURL& app_url) {
   std::string key;
   crypto::SHA256HashString(app_url.spec().c_str(), raw,
                            crypto::kSHA256Length);
-  base::Base64Encode(std::string(raw, crypto::kSHA256Length), &key);
+  base::Base64Encode(base::StringPiece(raw, crypto::kSHA256Length), &key);
   return key;
 }
 
@@ -71,16 +76,14 @@ std::string ConvertTimeToExtensionVersion(const Time& create_time) {
       (create_time_exploded.minute * Time::kMicrosecondsPerMinute) +
       (create_time_exploded.hour * Time::kMicrosecondsPerHour));
   double day_fraction = micros / Time::kMicrosecondsPerDay;
-  double stamp = day_fraction * std::numeric_limits<uint16>::max();
+  double stamp = day_fraction * std::numeric_limits<uint16_t>::max();
 
   // Ghetto-round, since VC++ doesn't have round().
   stamp = stamp >= (floor(stamp) + 0.5) ? (stamp + 1) : stamp;
 
-  return base::StringPrintf("%i.%i.%i.%i",
-                            create_time_exploded.year,
-                            create_time_exploded.month,
-                            create_time_exploded.day_of_month,
-                            static_cast<uint16>(stamp));
+  return base::StringPrintf(
+      "%i.%i.%i.%i", create_time_exploded.year, create_time_exploded.month,
+      create_time_exploded.day_of_month, static_cast<uint16_t>(stamp));
 }
 
 scoped_refptr<Extension> ConvertWebAppToExtension(
@@ -101,7 +104,7 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
   }
 
   // Create the manifest
-  scoped_ptr<base::DictionaryValue> root(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> root(new base::DictionaryValue);
   root->SetString(keys::kPublicKey, GenerateKey(web_app.app_url));
   root->SetString(keys::kName, base::UTF16ToUTF8(web_app.title));
   root->SetString(keys::kVersion, ConvertTimeToExtensionVersion(create_time));
@@ -124,15 +127,16 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
     icons->SetString(size, icon_path);
 
     if (icon.url.is_valid()) {
-      base::DictionaryValue* linked_icon = new base::DictionaryValue();
+      std::unique_ptr<base::DictionaryValue> linked_icon(
+          new base::DictionaryValue());
       linked_icon->SetString(keys::kLinkedAppIconURL, icon.url.spec());
       linked_icon->SetInteger(keys::kLinkedAppIconSize, icon.width);
-      linked_icons->Append(linked_icon);
+      linked_icons->Append(std::move(linked_icon));
     }
   }
 
   // Write the manifest.
-  base::FilePath manifest_path = temp_dir.path().Append(kManifestFilename);
+  base::FilePath manifest_path = temp_dir.GetPath().Append(kManifestFilename);
   JSONFileValueSerializer serializer(manifest_path);
   if (!serializer.Serialize(*root)) {
     LOG(ERROR) << "Could not serialize manifest.";
@@ -140,7 +144,7 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
   }
 
   // Write the icon files.
-  base::FilePath icons_dir = temp_dir.path().AppendASCII(kIconsDirName);
+  base::FilePath icons_dir = temp_dir.GetPath().AppendASCII(kIconsDirName);
   if (!base::CreateDirectory(icons_dir)) {
     LOG(ERROR) << "Could not create icons directory.";
     return NULL;
@@ -170,12 +174,9 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
 
   // Finally, create the extension object to represent the unpacked directory.
   std::string error;
-  scoped_refptr<Extension> extension = Extension::Create(
-      temp_dir.path(),
-      Manifest::INTERNAL,
-      *root,
-      Extension::FROM_BOOKMARK,
-      &error);
+  scoped_refptr<Extension> extension =
+      Extension::Create(temp_dir.GetPath(), Manifest::INTERNAL, *root,
+                        Extension::FROM_BOOKMARK, &error);
   if (!extension.get()) {
     LOG(ERROR) << error;
     return NULL;

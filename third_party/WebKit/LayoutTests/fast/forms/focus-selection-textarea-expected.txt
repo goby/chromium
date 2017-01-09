@@ -21,7 +21,7 @@ EDITING DELEGATE: webViewDidChangeSelection:WebViewDidChangeSelectionNotificatio
 This test checks whether the selection is restored, cleared, or set to the full range when using different ways to focus a text area. These results all match Mozilla. When running manually, please follow the steps below. In the test harness, the test runs automatically.
 
 1) Hit tab, only the word "SUCCESS" should be selected:  
-2) Hit Ctrl-Option-J (or Alt-J on Windows), only the word "SUCCESS" should be selected:  
+2) Hit Ctrl-Option-J (or Alt-J on Windows), only the word "SUCCESS" should be selected: 
 3) , only the word "SUCCESS" should be selected:  
 4) Click in the input field, nothing should be selected:  
 5) Click this label, only the word "SUCCESS" should be selected:  
@@ -38,8 +38,8 @@ PASS successfullyParsed is true
 TEST COMPLETE
 PASS first.selectionStart is 11
 PASS first.selectionEnd is 18
-FAIL first.selectionStart should be 11. Was 0.
-FAIL first.selectionEnd should be 18. Was 0.
+PASS first.selectionStart is 11
+PASS first.selectionEnd is 18
 PASS second.selectionStart is 11
 PASS second.selectionEnd is 18
 PASS second.selectionStart is 11
@@ -66,8 +66,8 @@ PASS seventh.selectionStart is 11
 PASS seventh.selectionEnd is 18
 PASS eighth.selectionStart is 11
 PASS eighth.selectionEnd is 18
-FAIL eighth.selectionStart should be 11. Was 0.
-FAIL eighth.selectionEnd should be 18. Was 0.
+PASS eighth.selectionStart is 11
+PASS eighth.selectionEnd is 18
 PASS ninth.selectionStart is 11
 PASS ninth.selectionEnd is 18
 PASS ninth.selectionStart is 11

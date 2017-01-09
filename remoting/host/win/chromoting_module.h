@@ -9,12 +9,12 @@
 #include <atlcom.h>
 #include <atlctl.h>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/win/scoped_com_initializer.h"
 
 // chromoting_lib.h contains MIDL-generated declarations.
-#include "remoting/host/chromoting_lib.h"
+#include "remoting/host/win/chromoting_lib.h"
 
 namespace base {
 namespace win {

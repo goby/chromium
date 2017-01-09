@@ -4,13 +4,17 @@
 
 #include "chrome/browser/supervised_user/legacy/supervised_user_registration_utility.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
@@ -24,13 +28,14 @@
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_client.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "components/sync/base/get_session_name.h"
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
-#include "sync/util/get_session_name.h"
 
 using base::DictionaryValue;
 
@@ -45,7 +50,7 @@ class SupervisedUserRegistrationUtilityImpl
  public:
   SupervisedUserRegistrationUtilityImpl(
       PrefService* prefs,
-      scoped_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
+      std::unique_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
       SupervisedUserSyncService* service,
       SupervisedUserSharedSettingsService* shared_settings_service);
 
@@ -54,9 +59,9 @@ class SupervisedUserRegistrationUtilityImpl
   // Registers a new supervised user with the server. |supervised_user_id| is a
   // new unique ID for the new supervised user. If its value is the same as that
   // of one of the existing supervised users, then the same user will be created
-  // on this machine (and if he has no avatar in sync, his avatar will be
+  // on this machine (and if they have no avatar in sync, their avatar will be
   // updated). |info| contains necessary information like the display name of
-  // the user and his avatar. |callback| is called with the result of the
+  // the user and their avatar. |callback| is called with the result of the
   // registration. We use the info here and not the profile, because on Chrome
   // OS the profile of the supervised user does not yet exist.
   void Register(const std::string& supervised_user_id,
@@ -100,7 +105,7 @@ class SupervisedUserRegistrationUtilityImpl
   void OnPasswordChangeAcknowledged(bool success);
 
   PrefService* prefs_;
-  scoped_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher_;
+  std::unique_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher_;
 
   // A |KeyedService| owned by the custodian profile.
   SupervisedUserSyncService* supervised_user_sync_service_;
@@ -114,7 +119,7 @@ class SupervisedUserRegistrationUtilityImpl
   bool is_existing_supervised_user_;
   bool avatar_updated_;
   RegistrationCallback callback_;
-  scoped_ptr<SupervisedUserSharedSettingsUpdate> password_update_;
+  std::unique_ptr<SupervisedUserSharedSettingsUpdate> password_update_;
 
   base::WeakPtrFactory<SupervisedUserRegistrationUtilityImpl> weak_ptr_factory_;
 
@@ -144,12 +149,12 @@ ScopedTestingSupervisedUserRegistrationUtility::
 }
 
 // static
-scoped_ptr<SupervisedUserRegistrationUtility>
+std::unique_ptr<SupervisedUserRegistrationUtility>
 SupervisedUserRegistrationUtility::Create(Profile* profile) {
   if (g_instance_for_tests) {
     SupervisedUserRegistrationUtility* result = g_instance_for_tests;
     g_instance_for_tests = NULL;
-    return make_scoped_ptr(result);
+    return base::WrapUnique(result);
   }
 
   ProfileOAuth2TokenService* token_service =
@@ -160,21 +165,17 @@ SupervisedUserRegistrationUtility::Create(Profile* profile) {
       ChromeSigninClientFactory::GetForProfile(profile);
   std::string signin_scoped_device_id =
       signin_client->GetSigninScopedDeviceId();
-  scoped_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher =
+  std::unique_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher =
       SupervisedUserRefreshTokenFetcher::Create(
-          token_service,
-          signin_manager->GetAuthenticatedAccountId(),
-          signin_scoped_device_id,
-          profile->GetRequestContext());
+          token_service, signin_manager->GetAuthenticatedAccountId(),
+          signin_scoped_device_id, profile->GetRequestContext());
   SupervisedUserSyncService* supervised_user_sync_service =
       SupervisedUserSyncServiceFactory::GetForProfile(profile);
   SupervisedUserSharedSettingsService* supervised_user_shared_settings_service =
       SupervisedUserSharedSettingsServiceFactory::GetForBrowserContext(profile);
-  return make_scoped_ptr(SupervisedUserRegistrationUtility::CreateImpl(
-      profile->GetPrefs(),
-      token_fetcher.Pass(),
-      supervised_user_sync_service,
-      supervised_user_shared_settings_service));
+  return base::WrapUnique(SupervisedUserRegistrationUtility::CreateImpl(
+      profile->GetPrefs(), std::move(token_fetcher),
+      supervised_user_sync_service, supervised_user_shared_settings_service));
 }
 
 // static
@@ -195,25 +196,23 @@ void SupervisedUserRegistrationUtility::SetUtilityForTests(
 // static
 SupervisedUserRegistrationUtility*
 SupervisedUserRegistrationUtility::CreateImpl(
-      PrefService* prefs,
-      scoped_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
-      SupervisedUserSyncService* service,
-      SupervisedUserSharedSettingsService* shared_settings_service) {
-  return new SupervisedUserRegistrationUtilityImpl(prefs,
-                                                   token_fetcher.Pass(),
-                                                   service,
-                                                   shared_settings_service);
+    PrefService* prefs,
+    std::unique_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
+    SupervisedUserSyncService* service,
+    SupervisedUserSharedSettingsService* shared_settings_service) {
+  return new SupervisedUserRegistrationUtilityImpl(
+      prefs, std::move(token_fetcher), service, shared_settings_service);
 }
 
 namespace {
 
 SupervisedUserRegistrationUtilityImpl::SupervisedUserRegistrationUtilityImpl(
     PrefService* prefs,
-    scoped_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
+    std::unique_ptr<SupervisedUserRefreshTokenFetcher> token_fetcher,
     SupervisedUserSyncService* service,
     SupervisedUserSharedSettingsService* shared_settings_service)
     : prefs_(prefs),
-      token_fetcher_(token_fetcher.Pass()),
+      token_fetcher_(std::move(token_fetcher)),
       supervised_user_sync_service_(service),
       supervised_user_shared_settings_service_(shared_settings_service),
       pending_supervised_user_acknowledged_(false),
@@ -295,14 +294,12 @@ void SupervisedUserRegistrationUtilityImpl::Register(
       base::FundamentalValue(info.avatar_index));
   if (need_password_update) {
     password_update_.reset(new SupervisedUserSharedSettingsUpdate(
-        supervised_user_shared_settings_service_,
-        pending_supervised_user_id_,
+        supervised_user_shared_settings_service_, pending_supervised_user_id_,
         supervised_users::kChromeOSPasswordData,
-        scoped_ptr<base::Value>(info.password_data.DeepCopy()),
-        base::Bind(
-            &SupervisedUserRegistrationUtilityImpl::
-                OnPasswordChangeAcknowledged,
-            weak_ptr_factory_.GetWeakPtr())));
+        std::unique_ptr<base::Value>(info.password_data.DeepCopy()),
+        base::Bind(&SupervisedUserRegistrationUtilityImpl::
+                       OnPasswordChangeAcknowledged,
+                   weak_ptr_factory_.GetWeakPtr())));
   }
 
   syncer::GetSessionName(

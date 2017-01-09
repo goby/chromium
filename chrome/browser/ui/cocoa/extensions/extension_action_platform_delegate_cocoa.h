@@ -7,6 +7,7 @@
 
 #import <Foundation/Foundation.h>
 
+#include "base/macros.h"
 #include "chrome/browser/ui/extensions/extension_action_platform_delegate.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -27,10 +28,11 @@ class ExtensionActionPlatformDelegateCocoa
   void RegisterCommand() override;
   void OnDelegateSet() override;
   void ShowPopup(
-      scoped_ptr<extensions::ExtensionViewHost> host,
+      std::unique_ptr<extensions::ExtensionViewHost> host,
       bool grant_tab_permissions,
       ExtensionActionViewController::PopupShowAction show_action) override;
   void CloseOverflowMenu() override;
+  void ShowContextMenu() override;
 
   // content::NotificationObserver:
   void Observe(int type,

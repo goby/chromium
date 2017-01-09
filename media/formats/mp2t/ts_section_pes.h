@@ -5,9 +5,12 @@
 #ifndef MEDIA_FORMATS_MP2T_TS_SECTION_PES_H_
 #define MEDIA_FORMATS_MP2T_TS_SECTION_PES_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/byte_queue.h"
 #include "media/formats/mp2t/ts_section.h"
 
@@ -19,13 +22,14 @@ class TimestampUnroller;
 
 class TsSectionPes : public TsSection {
  public:
-  TsSectionPes(scoped_ptr<EsParser> es_parser,
+  TsSectionPes(std::unique_ptr<EsParser> es_parser,
                TimestampUnroller* timestamp_unroller);
   ~TsSectionPes() override;
 
   // TsSection implementation.
   bool Parse(bool payload_unit_start_indicator,
-                     const uint8* buf, int size) override;
+             const uint8_t* buf,
+             int size) override;
   void Flush() override;
   void Reset() override;
 
@@ -37,7 +41,7 @@ class TsSectionPes : public TsSection {
   bool Emit(bool emit_for_unknown_size);
 
   // Parse a PES packet, return true if successful.
-  bool ParseInternal(const uint8* raw_pes, int raw_pes_size);
+  bool ParseInternal(const uint8_t* raw_pes, int raw_pes_size);
 
   void ResetPesState();
 
@@ -45,7 +49,7 @@ class TsSectionPes : public TsSection {
   ByteQueue pes_byte_queue_;
 
   // ES parser.
-  scoped_ptr<EsParser> es_parser_;
+  std::unique_ptr<EsParser> es_parser_;
 
   // Do not start parsing before getting a unit start indicator.
   bool wait_for_pusi_;
@@ -59,5 +63,4 @@ class TsSectionPes : public TsSection {
 }  // namespace mp2t
 }  // namespace media
 
-#endif
-
+#endif  // MEDIA_FORMATS_MP2T_TS_SECTION_PES_H_

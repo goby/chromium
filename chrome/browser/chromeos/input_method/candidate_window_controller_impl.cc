@@ -7,14 +7,13 @@
 #include <string>
 #include <vector>
 
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ash/wm/window_util.h"
 #include "base/logging.h"
 #include "chrome/browser/chromeos/input_method/mode_indicator_controller.h"
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/chromeos/ime/infolist_window.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/widget/widget.h"
 
 namespace chromeos {
@@ -56,8 +55,8 @@ void CandidateWindowControllerImpl::InitCandidateWindowView() {
   views::Widget* widget = candidate_window_view_->InitWidget();
   widget->AddObserver(this);
   widget->Show();
-  FOR_EACH_OBSERVER(CandidateWindowController::Observer, observers_,
-                    CandidateWindowOpened());
+  for (auto& observer : observers_)
+    observer.CandidateWindowOpened();
 }
 
 void CandidateWindowControllerImpl::Hide() {
@@ -97,6 +96,8 @@ void CandidateWindowControllerImpl::SetCursorBounds(
 
 void CandidateWindowControllerImpl::FocusStateChanged(bool is_focused) {
   mode_indicator_controller_->FocusStateChanged(is_focused);
+  if (candidate_window_view_)
+    candidate_window_view_->HidePreeditText();
 }
 
 void CandidateWindowControllerImpl::UpdateLookupTable(
@@ -167,8 +168,8 @@ void CandidateWindowControllerImpl::UpdatePreeditText(
 }
 
 void CandidateWindowControllerImpl::OnCandidateCommitted(int index) {
-  FOR_EACH_OBSERVER(CandidateWindowController::Observer, observers_,
-                    CandidateClicked(index));
+  for (auto& observer : observers_)
+    observer.CandidateClicked(index);
 }
 
 void CandidateWindowControllerImpl::OnWidgetClosing(views::Widget* widget) {
@@ -180,8 +181,8 @@ void CandidateWindowControllerImpl::OnWidgetClosing(views::Widget* widget) {
     widget->RemoveObserver(this);
     candidate_window_view_->RemoveObserver(this);
     candidate_window_view_ = NULL;
-    FOR_EACH_OBSERVER(CandidateWindowController::Observer, observers_,
-                      CandidateWindowClosed());
+    for (auto& observer : observers_)
+      observer.CandidateWindowClosed();
   }
 }
 

@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 #include "chrome/browser/dom_distiller/tab_utils.h"
 #include "chrome/browser/ui/browser.h"
@@ -110,7 +111,7 @@ IN_PROC_BROWSER_TEST_F(DomDistillerTabUtilsBrowserTest,
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(after_web_contents != NULL);
   base::RunLoop new_url_loaded_runner;
-  scoped_ptr<WebContentsMainFrameHelper> distilled_page_loaded(
+  std::unique_ptr<WebContentsMainFrameHelper> distilled_page_loaded(
       new WebContentsMainFrameHelper(after_web_contents,
                                      new_url_loaded_runner.QuitClosure()));
   new_url_loaded_runner.Run();
@@ -153,7 +154,7 @@ IN_PROC_BROWSER_TEST_F(DomDistillerTabUtilsBrowserTest,
 
   // Wait until the destination WebContents has fully navigated.
   base::RunLoop new_url_loaded_runner;
-  scoped_ptr<WebContentsMainFrameHelper> distilled_page_loaded(
+  std::unique_ptr<WebContentsMainFrameHelper> distilled_page_loaded(
       new WebContentsMainFrameHelper(destination_web_contents,
                                      new_url_loaded_runner.QuitClosure()));
   new_url_loaded_runner.Run();

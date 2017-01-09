@@ -5,14 +5,16 @@
 #ifndef MEDIA_BASE_FAKE_AUDIO_RENDERER_SINK_H_
 #define MEDIA_BASE_FAKE_AUDIO_RENDERER_SINK_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "media/audio/audio_parameters.h"
+#include "base/macros.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/audio_renderer_sink.h"
+#include "media/base/output_device_info.h"
 
 namespace media {
-
-class FakeOutputDevice;
 
 class FakeAudioRendererSink : public AudioRendererSink {
  public:
@@ -27,6 +29,8 @@ class FakeAudioRendererSink : public AudioRendererSink {
 
   FakeAudioRendererSink();
 
+  explicit FakeAudioRendererSink(const AudioParameters& hardware_params);
+
   void Initialize(const AudioParameters& params,
                   RenderCallback* callback) override;
   void Start() override;
@@ -34,17 +38,17 @@ class FakeAudioRendererSink : public AudioRendererSink {
   void Pause() override;
   void Play() override;
   bool SetVolume(double volume) override;
-  OutputDevice* GetOutputDevice() override;
+  OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool CurrentThreadIsRenderingThread() override;
 
   // Attempts to call Render() on the callback provided to
-  // Initialize() with |dest| and |audio_delay_milliseconds|.
+  // Initialize() with |dest| and |delay|.
   // Returns true and sets |frames_written| to the return value of the
   // Render() call.
   // Returns false if this object is in a state where calling Render()
   // should not occur. (i.e., in the kPaused or kStopped state.) The
   // value of |frames_written| is undefined if false is returned.
-  bool Render(AudioBus* dest, int audio_delay_milliseconds,
-              int* frames_written);
+  bool Render(AudioBus* dest, base::TimeDelta delay, int* frames_written);
   void OnRenderError();
 
   State state() const { return state_; }
@@ -57,7 +61,7 @@ class FakeAudioRendererSink : public AudioRendererSink {
 
   State state_;
   RenderCallback* callback_;
-  scoped_ptr<FakeOutputDevice> output_device_;
+  OutputDeviceInfo output_device_info_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeAudioRendererSink);
 };

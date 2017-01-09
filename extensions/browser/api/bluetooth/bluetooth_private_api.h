@@ -18,8 +18,6 @@ class BluetoothAdapter;
 
 namespace extensions {
 
-class BluetoothApiPairingDelegate;
-
 // The profile-keyed service that manages the bluetoothPrivate extension API.
 class BluetoothPrivateAPI : public BrowserContextKeyedAPI,
                             public EventRouter::Observer {
@@ -74,6 +72,10 @@ class BluetoothPrivateSetAdapterStateFunction
 
   // Set of adapter properties that were not set successfully.
   std::set<std::string> failed_properties_;
+
+  // Whether or not the function has finished parsing the arguments and queuing
+  // up state requests.
+  bool parsed_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothPrivateSetAdapterStateFunction);
 };

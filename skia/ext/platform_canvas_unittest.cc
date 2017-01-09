@@ -6,12 +6,14 @@
 
 #include "skia/ext/platform_canvas.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "build/build_config.h"
 #include "skia/ext/platform_device.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkColorPriv.h"
 #include "third_party/skia/include/core/SkPixelRef.h"
@@ -24,9 +26,36 @@
 #include <unistd.h>
 #endif
 
+#if defined(USE_CAIRO)
+#if defined(OS_OPENBSD)
+#include <cairo.h>
+#else
+#include <cairo/cairo.h>
+#endif  // OS_OPENBSD
+#endif  // USE_CAIRO
+
 namespace skia {
 
 namespace {
+
+// Uses DstATop transfer mode with SK_ColorBLACK 0xff000000:
+//   the destination pixel will end up with 0xff alpha
+//   if it was transparent black (0x0) before the blend,
+//      it will be set to opaque black (0xff000000).
+//   if it has nonzero alpha before the blend,
+//      it will retain its color.
+void MakeOpaque(SkCanvas* canvas, int x, int y, int width, int height) {
+  if (width <= 0 || height <= 0)
+    return;
+
+  SkRect rect;
+  rect.setXYWH(SkIntToScalar(x), SkIntToScalar(y),
+               SkIntToScalar(width), SkIntToScalar(height));
+  SkPaint paint;
+  paint.setColor(SK_ColorBLACK);
+  paint.setBlendMode(SkBlendMode::kDstATop);
+  canvas->drawRect(rect, paint);
+}
 
 bool IsOfColor(const SkBitmap& bitmap, int x, int y, uint32_t color) {
   // For masking out the alpha values.
@@ -39,10 +68,10 @@ bool IsOfColor(const SkBitmap& bitmap, int x, int y, uint32_t color) {
 // rectangle filled to rect_color. This function ignores the alpha channel,
 // since Windows will sometimes clear the alpha channel when drawing, and we
 // will fix that up later in cases it's necessary.
-bool VerifyRect(const PlatformCanvas& canvas,
+bool VerifyRect(const SkCanvas& canvas,
                 uint32_t canvas_color, uint32_t rect_color,
                 int x, int y, int w, int h) {
-  const SkBitmap bitmap = skia::ReadPixels(const_cast<PlatformCanvas*>(&canvas));
+  const SkBitmap bitmap = skia::ReadPixels(const_cast<SkCanvas*>(&canvas));
   SkAutoLockPixels lock(bitmap);
 
   for (int cur_y = 0; cur_y < bitmap.height(); cur_y++) {
@@ -66,16 +95,17 @@ bool VerifyRect(const PlatformCanvas& canvas,
 // Return true if canvas has something that passes for a rounded-corner
 // rectangle. Basically, we're just checking to make sure that the pixels in the
 // middle are of rect_color and pixels in the corners are of canvas_color.
-bool VerifyRoundedRect(const PlatformCanvas& canvas,
+bool VerifyRoundedRect(const SkCanvas& canvas,
                        uint32_t canvas_color,
                        uint32_t rect_color,
                        int x,
                        int y,
                        int w,
                        int h) {
-  SkBaseDevice* device = skia::GetTopDevice(canvas);
-  const SkBitmap& bitmap = device->accessBitmap(false);
-  SkAutoLockPixels lock(bitmap);
+  SkPixmap pixmap;
+  ASSERT_TRUE(canvas.peekPixels(&pixmap));
+  SkBitmap bitmap;
+  bitmap.installPixels(pixmap);
 
   // Check corner points first. They should be of canvas_color.
   if (!IsOfColor(bitmap, x, y, canvas_color)) return false;
@@ -95,21 +125,19 @@ bool VerifyRoundedRect(const PlatformCanvas& canvas,
 
 // Checks whether there is a white canvas with a black square at the given
 // location in pixels (not in the canvas coordinate system).
-bool VerifyBlackRect(const PlatformCanvas& canvas, int x, int y, int w, int h) {
+bool VerifyBlackRect(const SkCanvas& canvas, int x, int y, int w, int h) {
   return VerifyRect(canvas, SK_ColorWHITE, SK_ColorBLACK, x, y, w, h);
 }
 
-#if !defined(USE_AURA)  // http://crbug.com/154358
 // Check that every pixel in the canvas is a single color.
-bool VerifyCanvasColor(const PlatformCanvas& canvas, uint32_t canvas_color) {
+bool VerifyCanvasColor(const SkCanvas& canvas, uint32_t canvas_color) {
   return VerifyRect(canvas, canvas_color, 0, 0, 0, 0, 0);
 }
-#endif  // !defined(USE_AURA)
 
 #if defined(OS_WIN)
-void DrawNativeRect(PlatformCanvas& canvas, int x, int y, int w, int h) {
+void DrawNativeRect(SkCanvas& canvas, int x, int y, int w, int h) {
   skia::ScopedPlatformPaint scoped_platform_paint(&canvas);
-  HDC dc = scoped_platform_paint.GetPlatformSurface();
+  HDC dc = scoped_platform_paint.GetNativeDrawingContext();
 
   RECT inner_rc;
   inner_rc.left = x;
@@ -119,9 +147,9 @@ void DrawNativeRect(PlatformCanvas& canvas, int x, int y, int w, int h) {
   FillRect(dc, &inner_rc, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
 }
 #elif defined(OS_MACOSX)
-void DrawNativeRect(PlatformCanvas& canvas, int x, int y, int w, int h) {
+void DrawNativeRect(SkCanvas& canvas, int x, int y, int w, int h) {
   skia::ScopedPlatformPaint scoped_platform_paint(&canvas);
-  CGContextRef context = scoped_platform_paint.GetPlatformSurface();
+  CGContextRef context = scoped_platform_paint.GetNativeDrawingContext();
 
   CGRect inner_rc = CGRectMake(x, y, w, h);
   // RGBA opaque black
@@ -130,15 +158,24 @@ void DrawNativeRect(PlatformCanvas& canvas, int x, int y, int w, int h) {
   CGColorRelease(black);
   CGContextFillRect(context, inner_rc);
 }
+#elif defined(USE_CAIRO)
+void DrawNativeRect(SkCanvas& canvas, int x, int y, int w, int h) {
+  skia::ScopedPlatformPaint scoped_platform_paint(&canvas);
+  cairo_t* context = scoped_platform_paint.GetNativeDrawingContext();
+
+  cairo_rectangle(context, x, y, w, h);
+  cairo_set_source_rgb(context, 0.0, 0.0, 0.0);
+  cairo_fill(context);
+}
 #else
-void DrawNativeRect(PlatformCanvas& canvas, int x, int y, int w, int h) {
+void DrawNativeRect(SkCanvas& canvas, int x, int y, int w, int h) {
   NOTIMPLEMENTED();
 }
 #endif
 
 // Clips the contents of the canvas to the given rectangle. This will be
 // intersected with any existing clip.
-void AddClip(PlatformCanvas& canvas, int x, int y, int w, int h) {
+void AddClip(SkCanvas& canvas, int x, int y, int w, int h) {
   SkRect rect;
   rect.set(SkIntToScalar(x), SkIntToScalar(y),
            SkIntToScalar(x + w), SkIntToScalar(y + h));
@@ -147,7 +184,7 @@ void AddClip(PlatformCanvas& canvas, int x, int y, int w, int h) {
 
 class LayerSaver {
  public:
-  LayerSaver(PlatformCanvas& canvas, int x, int y, int w, int h)
+  LayerSaver(SkCanvas& canvas, int x, int y, int w, int h)
       : canvas_(canvas),
         x_(x),
         y_(y),
@@ -174,7 +211,7 @@ class LayerSaver {
   int bottom() const { return y_ + h_; }
 
  private:
-  PlatformCanvas& canvas_;
+  SkCanvas& canvas_;
   int x_, y_, w_, h_;
 };
 
@@ -196,7 +233,7 @@ const int kInnerH = 3;
 // regular skia primitives.
 TEST(PlatformCanvas, SkLayer) {
   // Create the canvas initialized to opaque white.
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  std::unique_ptr<SkCanvas> canvas = CreatePlatformCanvas(16, 16, true);
   canvas->drawColor(SK_ColorWHITE);
 
   // Make a layer and fill it completely to make sure that the bounds are
@@ -208,11 +245,10 @@ TEST(PlatformCanvas, SkLayer) {
   EXPECT_TRUE(VerifyBlackRect(*canvas, kLayerX, kLayerY, kLayerW, kLayerH));
 }
 
-#if !defined(USE_AURA)  // http://crbug.com/154358
 // Test native clipping.
 TEST(PlatformCanvas, ClipRegion) {
   // Initialize a white canvas
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  std::unique_ptr<SkCanvas> canvas = CreatePlatformCanvas(16, 16, true);
   canvas->drawColor(SK_ColorWHITE);
   EXPECT_TRUE(VerifyCanvasColor(*canvas, SK_ColorWHITE));
 
@@ -233,12 +269,11 @@ TEST(PlatformCanvas, ClipRegion) {
   }
   EXPECT_TRUE(VerifyCanvasColor(*canvas, SK_ColorWHITE));
 }
-#endif  // !defined(USE_AURA)
 
 // Test the layers get filled properly by native rendering.
 TEST(PlatformCanvas, FillLayer) {
   // Create the canvas initialized to opaque white.
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  std::unique_ptr<SkCanvas> canvas(CreatePlatformCanvas(16, 16, true));
 
   // Make a layer and fill it completely to make sure that the bounds are
   // correct.
@@ -246,9 +281,7 @@ TEST(PlatformCanvas, FillLayer) {
   {
     LayerSaver layer(*canvas, kLayerX, kLayerY, kLayerW, kLayerH);
     DrawNativeRect(*canvas, 0, 0, 100, 100);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), 0, 0, 100, 100);
-#endif
   }
   EXPECT_TRUE(VerifyBlackRect(*canvas, kLayerX, kLayerY, kLayerW, kLayerH));
 
@@ -257,9 +290,7 @@ TEST(PlatformCanvas, FillLayer) {
   {
     LayerSaver layer(*canvas, kLayerX, kLayerY, kLayerW, kLayerH);
     DrawNativeRect(*canvas, kInnerX, kInnerY, kInnerW, kInnerH);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), kInnerX, kInnerY, kInnerW, kInnerH);
-#endif
   }
   EXPECT_TRUE(VerifyBlackRect(*canvas, kInnerX, kInnerY, kInnerW, kInnerH));
 
@@ -270,9 +301,7 @@ TEST(PlatformCanvas, FillLayer) {
     canvas->save();
     AddClip(*canvas, kInnerX, kInnerY, kInnerW, kInnerH);
     DrawNativeRect(*canvas, 0, 0, 100, 100);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), kInnerX, kInnerY, kInnerW, kInnerH);
-#endif
     canvas->restore();
   }
   EXPECT_TRUE(VerifyBlackRect(*canvas, kInnerX, kInnerY, kInnerW, kInnerH));
@@ -284,20 +313,16 @@ TEST(PlatformCanvas, FillLayer) {
   {
     LayerSaver layer(*canvas, kLayerX, kLayerY, kLayerW, kLayerH);
     DrawNativeRect(*canvas, 0, 0, 100, 100);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), 0, 0, 100, 100);
-#endif
   }
   canvas->restore();
   EXPECT_TRUE(VerifyBlackRect(*canvas, kInnerX, kInnerY, kInnerW, kInnerH));
 }
 
-#if !defined(USE_AURA)  // http://crbug.com/154358
-
 // Test that translation + make layer works properly.
 TEST(PlatformCanvas, TranslateLayer) {
   // Create the canvas initialized to opaque white.
-  RefPtr<SkCanvas> canvas = AdoptRef(CreatePlatformCanvas(16, 16, true));
+  std::unique_ptr<SkCanvas> canvas = CreatePlatformCanvas(16, 16, true);
 
   // Make a layer and fill it completely to make sure that the bounds are
   // correct.
@@ -307,9 +332,7 @@ TEST(PlatformCanvas, TranslateLayer) {
   {
     LayerSaver layer(*canvas, kLayerX, kLayerY, kLayerW, kLayerH);
     DrawNativeRect(*canvas, 0, 0, 100, 100);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), 0, 0, 100, 100);
-#endif
   }
   canvas->restore();
   EXPECT_TRUE(VerifyBlackRect(*canvas, kLayerX + 1, kLayerY + 1,
@@ -322,9 +345,7 @@ TEST(PlatformCanvas, TranslateLayer) {
   {
     LayerSaver layer(*canvas, kLayerX, kLayerY, kLayerW, kLayerH);
     DrawNativeRect(*canvas, kInnerX, kInnerY, kInnerW, kInnerH);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), kInnerX, kInnerY, kInnerW, kInnerH);
-#endif
   }
   canvas->restore();
   EXPECT_TRUE(VerifyBlackRect(*canvas, kInnerX + 1, kInnerY + 1,
@@ -337,9 +358,7 @@ TEST(PlatformCanvas, TranslateLayer) {
     LayerSaver layer(*canvas, kLayerX, kLayerY, kLayerW, kLayerH);
     canvas->translate(1, 1);
     DrawNativeRect(*canvas, kInnerX, kInnerY, kInnerW, kInnerH);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), kInnerX, kInnerY, kInnerW, kInnerH);
-#endif
   }
   canvas->restore();
   EXPECT_TRUE(VerifyBlackRect(*canvas, kInnerX + 1, kInnerY + 1,
@@ -355,9 +374,7 @@ TEST(PlatformCanvas, TranslateLayer) {
     canvas->translate(1, 1);
     AddClip(*canvas, kInnerX + 1, kInnerY + 1, kInnerW - 1, kInnerH - 1);
     DrawNativeRect(*canvas, 0, 0, 100, 100);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), kLayerX, kLayerY, kLayerW, kLayerH);
-#endif
   }
   canvas->restore();
   EXPECT_TRUE(VerifyBlackRect(*canvas, kInnerX + 3, kInnerY + 3,
@@ -365,7 +382,7 @@ TEST(PlatformCanvas, TranslateLayer) {
 
 // TODO(dglazkov): Figure out why this fails on Mac (antialiased clipping?),
 // modify test and remove this guard.
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && !defined(USE_AURA)
   // Translate both before and after, and have a path clip.
   canvas->drawColor(SK_ColorWHITE);
   canvas->save();
@@ -384,16 +401,12 @@ TEST(PlatformCanvas, TranslateLayer) {
     canvas->clipPath(path);
 
     DrawNativeRect(*canvas, 0, 0, 100, 100);
-#if defined(OS_WIN)
     MakeOpaque(canvas.get(), kLayerX, kLayerY, kLayerW, kLayerH);
-#endif
   }
   canvas->restore();
   EXPECT_TRUE(VerifyRoundedRect(*canvas, SK_ColorWHITE, SK_ColorBLACK,
                                 kInnerX + 1, kInnerY + 1, kInnerW, kInnerH));
 #endif
 }
-
-#endif  // #if !defined(USE_AURA)
 
 }  // namespace skia

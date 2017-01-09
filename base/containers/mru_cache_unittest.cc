@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/containers/mru_cache.h"
+
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace base {
 
 namespace {
 
@@ -186,15 +193,15 @@ TEST(MRUCacheTest, KeyReplacement) {
 
 // Make sure that the owning version release its pointers properly.
 TEST(MRUCacheTest, Owning) {
-  typedef base::OwningMRUCache<int, CachedItem*> Cache;
+  using Cache = base::MRUCache<int, std::unique_ptr<CachedItem>>;
   Cache cache(Cache::NO_AUTO_EVICT);
 
   int initial_count = cached_item_live_count;
 
   // First insert and item and then overwrite it.
   static const int kItem1Key = 1;
-  cache.Put(kItem1Key, new CachedItem(20));
-  cache.Put(kItem1Key, new CachedItem(22));
+  cache.Put(kItem1Key, WrapUnique(new CachedItem(20)));
+  cache.Put(kItem1Key, WrapUnique(new CachedItem(22)));
 
   // There should still be one item, and one extra live item.
   Cache::iterator iter = cache.Get(kItem1Key);
@@ -210,8 +217,8 @@ TEST(MRUCacheTest, Owning) {
   // go away.
   {
     Cache cache2(Cache::NO_AUTO_EVICT);
-    cache2.Put(1, new CachedItem(20));
-    cache2.Put(2, new CachedItem(20));
+    cache2.Put(1, WrapUnique(new CachedItem(20)));
+    cache2.Put(2, WrapUnique(new CachedItem(20)));
   }
 
   // There should be no objects leaked.
@@ -220,8 +227,8 @@ TEST(MRUCacheTest, Owning) {
   // Check that Clear() also frees things correctly.
   {
     Cache cache2(Cache::NO_AUTO_EVICT);
-    cache2.Put(1, new CachedItem(20));
-    cache2.Put(2, new CachedItem(20));
+    cache2.Put(1, WrapUnique(new CachedItem(20)));
+    cache2.Put(2, WrapUnique(new CachedItem(20)));
     EXPECT_EQ(initial_count + 2, cached_item_live_count);
     cache2.Clear();
     EXPECT_EQ(initial_count, cached_item_live_count);
@@ -229,7 +236,7 @@ TEST(MRUCacheTest, Owning) {
 }
 
 TEST(MRUCacheTest, AutoEvict) {
-  typedef base::OwningMRUCache<int, CachedItem*> Cache;
+  using Cache = base::MRUCache<int, std::unique_ptr<CachedItem>>;
   static const Cache::size_type kMaxSize = 3;
 
   int initial_count = cached_item_live_count;
@@ -238,10 +245,10 @@ TEST(MRUCacheTest, AutoEvict) {
     Cache cache(kMaxSize);
 
     static const int kItem1Key = 1, kItem2Key = 2, kItem3Key = 3, kItem4Key = 4;
-    cache.Put(kItem1Key, new CachedItem(20));
-    cache.Put(kItem2Key, new CachedItem(21));
-    cache.Put(kItem3Key, new CachedItem(22));
-    cache.Put(kItem4Key, new CachedItem(23));
+    cache.Put(kItem1Key, MakeUnique<CachedItem>(20));
+    cache.Put(kItem2Key, MakeUnique<CachedItem>(21));
+    cache.Put(kItem3Key, MakeUnique<CachedItem>(22));
+    cache.Put(kItem4Key, MakeUnique<CachedItem>(23));
 
     // The cache should only have kMaxSize items in it even though we inserted
     // more.
@@ -269,3 +276,109 @@ TEST(MRUCacheTest, HashingMRUCache) {
   EXPECT_EQ(two.value, cache.Get("Second")->second.value);
   EXPECT_TRUE(cache.Get("First") == cache.end());
 }
+
+TEST(MRUCacheTest, Swap) {
+  typedef base::MRUCache<int, CachedItem> Cache;
+  Cache cache1(Cache::NO_AUTO_EVICT);
+
+  // Insert two items into cache1.
+  static const int kItem1Key = 1;
+  CachedItem item1(2);
+  Cache::iterator inserted_item = cache1.Put(kItem1Key, item1);
+  EXPECT_EQ(1U, cache1.size());
+
+  static const int kItem2Key = 3;
+  CachedItem item2(4);
+  cache1.Put(kItem2Key, item2);
+  EXPECT_EQ(2U, cache1.size());
+
+  // Verify cache1's elements.
+  {
+    Cache::iterator iter = cache1.begin();
+    ASSERT_TRUE(iter != cache1.end());
+    EXPECT_EQ(kItem2Key, iter->first);
+    EXPECT_EQ(item2.value, iter->second.value);
+
+    ++iter;
+    ASSERT_TRUE(iter != cache1.end());
+    EXPECT_EQ(kItem1Key, iter->first);
+    EXPECT_EQ(item1.value, iter->second.value);
+  }
+
+  // Create another cache2.
+  Cache cache2(Cache::NO_AUTO_EVICT);
+
+  // Insert three items into cache2.
+  static const int kItem3Key = 5;
+  CachedItem item3(6);
+  inserted_item = cache2.Put(kItem3Key, item3);
+  EXPECT_EQ(1U, cache2.size());
+
+  static const int kItem4Key = 7;
+  CachedItem item4(8);
+  cache2.Put(kItem4Key, item4);
+  EXPECT_EQ(2U, cache2.size());
+
+  static const int kItem5Key = 9;
+  CachedItem item5(10);
+  cache2.Put(kItem5Key, item5);
+  EXPECT_EQ(3U, cache2.size());
+
+  // Verify cache2's elements.
+  {
+    Cache::iterator iter = cache2.begin();
+    ASSERT_TRUE(iter != cache2.end());
+    EXPECT_EQ(kItem5Key, iter->first);
+    EXPECT_EQ(item5.value, iter->second.value);
+
+    ++iter;
+    ASSERT_TRUE(iter != cache2.end());
+    EXPECT_EQ(kItem4Key, iter->first);
+    EXPECT_EQ(item4.value, iter->second.value);
+
+    ++iter;
+    ASSERT_TRUE(iter != cache2.end());
+    EXPECT_EQ(kItem3Key, iter->first);
+    EXPECT_EQ(item3.value, iter->second.value);
+  }
+
+  // Swap cache1 and cache2 and verify cache2 has cache1's elements and cache1
+  // has cache2's elements.
+  cache2.Swap(cache1);
+
+  EXPECT_EQ(3U, cache1.size());
+  EXPECT_EQ(2U, cache2.size());
+
+  // Verify cache1's elements.
+  {
+    Cache::iterator iter = cache1.begin();
+    ASSERT_TRUE(iter != cache1.end());
+    EXPECT_EQ(kItem5Key, iter->first);
+    EXPECT_EQ(item5.value, iter->second.value);
+
+    ++iter;
+    ASSERT_TRUE(iter != cache1.end());
+    EXPECT_EQ(kItem4Key, iter->first);
+    EXPECT_EQ(item4.value, iter->second.value);
+
+    ++iter;
+    ASSERT_TRUE(iter != cache1.end());
+    EXPECT_EQ(kItem3Key, iter->first);
+    EXPECT_EQ(item3.value, iter->second.value);
+  }
+
+  // Verify cache2's elements.
+  {
+    Cache::iterator iter = cache2.begin();
+    ASSERT_TRUE(iter != cache2.end());
+    EXPECT_EQ(kItem2Key, iter->first);
+    EXPECT_EQ(item2.value, iter->second.value);
+
+    ++iter;
+    ASSERT_TRUE(iter != cache2.end());
+    EXPECT_EQ(kItem1Key, iter->first);
+    EXPECT_EQ(item1.value, iter->second.value);
+  }
+}
+
+}  // namespace base

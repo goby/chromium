@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
 #include "net/cert/ct_verifier.h"
@@ -36,8 +37,8 @@ class NET_EXPORT MultiLogCTVerifier : public CTVerifier {
   int Verify(X509Certificate* cert,
              const std::string& stapled_ocsp_response,
              const std::string& sct_list_from_tls_extension,
-             ct::CTVerifyResult* result,
-             const BoundNetLog& net_log) override;
+             SignedCertificateTimestampAndStatusList* output_scts,
+             const NetLogWithSource& net_log) override;
 
   void SetObserver(Observer* observer) override;
 
@@ -49,13 +50,13 @@ class NET_EXPORT MultiLogCTVerifier : public CTVerifier {
                   const ct::LogEntry& expected_entry,
                   ct::SignedCertificateTimestamp::Origin origin,
                   X509Certificate* cert,
-                  ct::CTVerifyResult* result);
+                  SignedCertificateTimestampAndStatusList* output_scts);
 
   // Verifies a single, parsed SCT against all logs.
   bool VerifySingleSCT(scoped_refptr<ct::SignedCertificateTimestamp> sct,
                        const ct::LogEntry& expected_entry,
                        X509Certificate* cert,
-                       ct::CTVerifyResult* result);
+                       SignedCertificateTimestampAndStatusList* output_scts);
 
   // Mapping from a log's ID to the verifier for this log.
   // A log's ID is the SHA-256 of the log's key, as defined in section 3.2.

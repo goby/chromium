@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/extensions/install_observer.h"
 #include "chrome/common/extensions/webstore_install_result.h"
@@ -38,6 +38,9 @@ class WebstoreResult : public SearchResult,
                  AppListControllerDelegate* controller);
   ~WebstoreResult() override;
 
+  static std::string GetResultIdFromExtensionId(
+      const std::string& extension_id);
+
   const std::string& app_id() const { return app_id_; }
   const GURL& icon_url() const { return icon_url_; }
   extensions::Manifest::Type item_type() const { return item_type_; }
@@ -46,7 +49,7 @@ class WebstoreResult : public SearchResult,
   // SearchResult overrides:
   void Open(int event_flags) override;
   void InvokeAction(int action_index, int event_flags) override;
-  scoped_ptr<SearchResult> Duplicate() const override;
+  std::unique_ptr<SearchResult> Duplicate() const override;
 
  private:
   // Set the initial state and start observing both InstallObserver and

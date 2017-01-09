@@ -7,16 +7,18 @@
 
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_curve.h"
-#include "cc/animation/layer_animation_controller.h"
-#include "cc/animation/layer_animation_value_observer.h"
-#include "cc/animation/layer_animation_value_provider.h"
+#include "cc/animation/animation_timeline.h"
+#include "cc/animation/transform_operations.h"
 #include "cc/output/filter_operations.h"
 #include "cc/test/geometry_test_utils.h"
+#include "cc/trees/element_id.h"
 
 namespace cc {
 class AnimationPlayer;
-class LayerImpl;
-class Layer;
+}
+
+namespace gfx {
+class ScrollOffset;
 }
 
 namespace cc {
@@ -29,7 +31,7 @@ class FakeFloatAnimationCurve : public FloatAnimationCurve {
 
   base::TimeDelta Duration() const override;
   float GetValue(base::TimeDelta now) const override;
-  scoped_ptr<AnimationCurve> Clone() const override;
+  std::unique_ptr<AnimationCurve> Clone() const override;
 
  private:
   base::TimeDelta duration_;
@@ -44,7 +46,6 @@ class FakeTransformTransition : public TransformAnimationCurve {
   gfx::Transform GetValue(base::TimeDelta time) const override;
   bool AnimatedBoundsForBox(const gfx::BoxF& box,
                             gfx::BoxF* bounds) const override;
-  bool AffectsScale() const override;
   bool IsTranslation() const override;
   bool PreservesAxisAlignment() const override;
   bool AnimationStartScale(bool forward_direction,
@@ -52,7 +53,7 @@ class FakeTransformTransition : public TransformAnimationCurve {
   bool MaximumTargetScale(bool forward_direction,
                           float* max_scale) const override;
 
-  scoped_ptr<AnimationCurve> Clone() const override;
+  std::unique_ptr<AnimationCurve> Clone() const override;
 
  private:
   base::TimeDelta duration_;
@@ -66,7 +67,7 @@ class FakeFloatTransition : public FloatAnimationCurve {
   base::TimeDelta Duration() const override;
   float GetValue(base::TimeDelta time) const override;
 
-  scoped_ptr<AnimationCurve> Clone() const override;
+  std::unique_ptr<AnimationCurve> Clone() const override;
 
  private:
   base::TimeDelta duration_;
@@ -74,120 +75,20 @@ class FakeFloatTransition : public FloatAnimationCurve {
   float to_;
 };
 
-class FakeLayerAnimationValueObserver : public LayerAnimationValueObserver {
- public:
-  FakeLayerAnimationValueObserver();
-  ~FakeLayerAnimationValueObserver() override;
-
-  // LayerAnimationValueObserver implementation
-  void OnFilterAnimated(const FilterOperations& filters) override;
-  void OnOpacityAnimated(float opacity) override;
-  void OnTransformAnimated(const gfx::Transform& transform) override;
-  void OnScrollOffsetAnimated(const gfx::ScrollOffset& scroll_offset) override;
-  void OnAnimationWaitingForDeletion() override;
-  void OnTransformIsPotentiallyAnimatingChanged(bool is_animating) override;
-  bool IsActive() const override;
-
-  const FilterOperations& filters() const { return filters_; }
-  float opacity() const  { return opacity_; }
-  const gfx::Transform& transform() const { return transform_; }
-  gfx::ScrollOffset scroll_offset() { return scroll_offset_; }
-
-  bool animation_waiting_for_deletion() {
-    return animation_waiting_for_deletion_;
-  }
-
-  bool transform_is_animating() { return transform_is_animating_; }
-
- private:
-  FilterOperations filters_;
-  float opacity_;
-  gfx::Transform transform_;
-  gfx::ScrollOffset scroll_offset_;
-  bool animation_waiting_for_deletion_;
-  bool transform_is_animating_;
-};
-
-class FakeInactiveLayerAnimationValueObserver
-    : public FakeLayerAnimationValueObserver {
- public:
-  bool IsActive() const override;
-};
-
-class FakeLayerAnimationValueProvider : public LayerAnimationValueProvider {
- public:
-  gfx::ScrollOffset ScrollOffsetForAnimation() const override;
-
-  void set_scroll_offset(const gfx::ScrollOffset& scroll_offset) {
-    scroll_offset_ = scroll_offset;
-  }
-
- private:
-  gfx::ScrollOffset scroll_offset_;
-};
-
-int AddOpacityTransitionToController(LayerAnimationController* controller,
-                                     double duration,
-                                     float start_opacity,
-                                     float end_opacity,
-                                     bool use_timing_function);
-
-int AddAnimatedTransformToController(LayerAnimationController* controller,
-                                     double duration,
-                                     int delta_x,
-                                     int delta_y);
-
-int AddAnimatedFilterToController(LayerAnimationController* controller,
-                                  double duration,
-                                  float start_brightness,
-                                  float end_brightness);
-
-int AddOpacityTransitionToLayer(Layer* layer,
-                                double duration,
-                                float start_opacity,
-                                float end_opacity,
-                                bool use_timing_function);
-
-int AddOpacityTransitionToLayer(LayerImpl* layer,
-                                double duration,
-                                float start_opacity,
-                                float end_opacity,
-                                bool use_timing_function);
-
-int AddAnimatedTransformToLayer(Layer* layer,
-                                double duration,
-                                int delta_x,
-                                int delta_y);
-
-int AddAnimatedTransformToLayer(LayerImpl* layer,
-                                double duration,
-                                int delta_x,
-                                int delta_y);
-
-int AddAnimatedTransformToLayer(Layer* layer,
-                                double duration,
-                                TransformOperations start_operations,
-                                TransformOperations operations);
-
-int AddAnimatedTransformToLayer(LayerImpl* layer,
-                                double duration,
-                                TransformOperations start_operations,
-                                TransformOperations operations);
-
-int AddAnimatedFilterToLayer(Layer* layer,
-                             double duration,
-                             float start_brightness,
-                             float end_brightness);
-
-int AddAnimatedFilterToLayer(LayerImpl* layer,
-                             double duration,
-                             float start_brightness,
-                             float end_brightness);
+int AddScrollOffsetAnimationToPlayer(AnimationPlayer* player,
+                                     gfx::ScrollOffset initial_value,
+                                     gfx::ScrollOffset target_value,
+                                     bool impl_only);
 
 int AddAnimatedTransformToPlayer(AnimationPlayer* player,
                                  double duration,
                                  int delta_x,
                                  int delta_y);
+
+int AddAnimatedTransformToPlayer(AnimationPlayer* player,
+                                 double duration,
+                                 TransformOperations start_operations,
+                                 TransformOperations operations);
 
 int AddOpacityTransitionToPlayer(AnimationPlayer* player,
                                  double duration,
@@ -200,11 +101,58 @@ int AddAnimatedFilterToPlayer(AnimationPlayer* player,
                               float start_brightness,
                               float end_brightness);
 
-int AddOpacityStepsToController(LayerAnimationController* target,
-                                double duration,
-                                float start_opacity,
-                                float end_opacity,
-                                int num_steps);
+int AddOpacityStepsToPlayer(AnimationPlayer* player,
+                            double duration,
+                            float start_opacity,
+                            float end_opacity,
+                            int num_steps);
+
+void AddAnimationToElementWithPlayer(ElementId element_id,
+                                     scoped_refptr<AnimationTimeline> timeline,
+                                     std::unique_ptr<Animation> animation);
+void AddAnimationToElementWithExistingPlayer(
+    ElementId element_id,
+    scoped_refptr<AnimationTimeline> timeline,
+    std::unique_ptr<Animation> animation);
+
+void RemoveAnimationFromElementWithExistingPlayer(
+    ElementId element_id,
+    scoped_refptr<AnimationTimeline> timeline,
+    int animation_id);
+
+Animation* GetAnimationFromElementWithExistingPlayer(
+    ElementId element_id,
+    scoped_refptr<AnimationTimeline> timeline,
+    int animation_id);
+
+int AddAnimatedFilterToElementWithPlayer(
+    ElementId element_id,
+    scoped_refptr<AnimationTimeline> timeline,
+    double duration,
+    float start_brightness,
+    float end_brightness);
+
+int AddAnimatedTransformToElementWithPlayer(
+    ElementId element_id,
+    scoped_refptr<AnimationTimeline> timeline,
+    double duration,
+    int delta_x,
+    int delta_y);
+
+int AddAnimatedTransformToElementWithPlayer(
+    ElementId element_id,
+    scoped_refptr<AnimationTimeline> timeline,
+    double duration,
+    TransformOperations start_operations,
+    TransformOperations operations);
+
+int AddOpacityTransitionToElementWithPlayer(
+    ElementId element_id,
+    scoped_refptr<AnimationTimeline> timeline,
+    double duration,
+    float start_opacity,
+    float end_opacity,
+    bool use_timing_function);
 
 }  // namespace cc
 

@@ -5,7 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "chrome/browser/media/router/issue_manager.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace media_router {
@@ -16,7 +18,7 @@ const char kTestRouteId[] = "routeId";
 Issue CreateTestIssue(const std::string& route_id) {
   return Issue("title", "message", IssueAction(IssueAction::TYPE_DISMISS),
                std::vector<IssueAction>(), route_id, Issue::WARNING, false,
-               "http://www.example.com/help");
+               12345);
 }
 
 class IssueManagerUnitTest : public ::testing::Test {
@@ -24,6 +26,7 @@ class IssueManagerUnitTest : public ::testing::Test {
   IssueManagerUnitTest() {}
   ~IssueManagerUnitTest() override {}
 
+  content::TestBrowserThreadBundle thread_bundle_;
   IssueManager manager_;
 
  private:

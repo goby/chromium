@@ -7,14 +7,12 @@
 #include <vector>
 
 #include "ash/autoclick/autoclick_controller.h"
-#include "ash/display/display_manager.h"
+#include "ash/common/accessibility_types.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/i18n/time_formatting.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_member.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -26,10 +24,12 @@
 #include "chrome/browser/chromeos/input_method/input_method_syncer.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/net/wake_on_wifi_manager.h"
+#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
+#include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/system/statistics_provider.h"
@@ -37,14 +37,20 @@
 #include "components/drive/drive_pref_names.h"
 #include "components/feedback/tracing_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/prefs/pref_member.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync_preferences/pref_service_syncable.h"
+#include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
+#include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "third_party/cros_system_api/dbus/update_engine/dbus-constants.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
-#include "ui/chromeos/accessibility_types.h"
+#include "ui/display/manager/display_manager.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_utils.h"
 #include "url/gurl.h"
@@ -60,8 +66,8 @@ Preferences::Preferences()
       user_is_primary_(false) {
   // Do not observe shell, if there is no shell instance; e.g., in some unit
   // tests.
-  if (ash::Shell::HasInstance())
-    ash::Shell::GetInstance()->AddShellObserver(this);
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->AddShellObserver(this);
 }
 
 Preferences::Preferences(input_method::InputMethodManager* input_method_manager)
@@ -71,8 +77,8 @@ Preferences::Preferences(input_method::InputMethodManager* input_method_manager)
       user_is_primary_(false) {
   // Do not observe shell, if there is no shell instance; e.g., in some unit
   // tests.
-  if (ash::Shell::HasInstance())
-    ash::Shell::GetInstance()->AddShellObserver(this);
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->AddShellObserver(this);
 }
 
 Preferences::~Preferences() {
@@ -80,8 +86,8 @@ Preferences::~Preferences() {
   user_manager::UserManager::Get()->RemoveSessionStateObserver(this);
   // If shell instance is destoryed before this preferences instance, there is
   // no need to remove this shell observer.
-  if (ash::Shell::HasInstance())
-    ash::Shell::GetInstance()->RemoveShellObserver(this);
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->RemoveShellObserver(this);
 }
 
 // static
@@ -90,9 +96,14 @@ void Preferences::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kOwnerTapToClickEnabled, true);
   registry->RegisterBooleanPref(prefs::kAccessibilityVirtualKeyboardEnabled,
                                 false);
+  registry->RegisterBooleanPref(prefs::kAccessibilityMonoAudioEnabled,
+                                false);
   registry->RegisterStringPref(prefs::kLogoutStartedLast, std::string());
   registry->RegisterBooleanPref(prefs::kResolveDeviceTimezoneByGeolocation,
                                 true);
+  registry->RegisterIntegerPref(
+      prefs::kSystemTimezoneAutomaticDetectionPolicy,
+      enterprise_management::SystemTimezoneProto::USERS_DECIDE);
 }
 
 // static
@@ -157,8 +168,7 @@ void Preferences::RegisterProfilePrefs(
       prefs::kAccessibilityScreenMagnifierEnabled, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
-      prefs::kAccessibilityScreenMagnifierType,
-      ui::kDefaultMagnifierType,
+      prefs::kAccessibilityScreenMagnifierType, ash::kDefaultMagnifierType,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterDoublePref(prefs::kAccessibilityScreenMagnifierScale,
                                std::numeric_limits<double>::min());
@@ -168,15 +178,34 @@ void Preferences::RegisterProfilePrefs(
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
       prefs::kAccessibilityAutoclickDelayMs,
-      ash::AutoclickController::kDefaultAutoclickDelayMs,
+      int{ash::AutoclickController::GetDefaultAutoclickDelay()
+              .InMilliseconds()},
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kAccessibilityVirtualKeyboardEnabled,
       false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
-      prefs::kShouldAlwaysShowAccessibilityMenu,
+      prefs::kAccessibilityMonoAudioEnabled,
       false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilityCaretHighlightEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilityCursorHighlightEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilityFocusHighlightEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilitySelectToSpeakEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilitySwitchAccessEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kShouldAlwaysShowAccessibilityMenu, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
       prefs::kMouseSensitivity,
@@ -227,8 +256,13 @@ void Preferences::RegisterProfilePrefs(
   registry->RegisterIntegerPref(prefs::kLanguageRemapCapsLockKeyTo,
                                 input_method::kCapsLockKey);
   registry->RegisterIntegerPref(
-      prefs::kLanguageRemapDiamondKeyTo,
-      input_method::kControlKey,
+      prefs::kLanguageRemapEscapeKeyTo, input_method::kEscapeKey,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kLanguageRemapBackspaceKeyTo, input_method::kBackspaceKey,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
+  registry->RegisterIntegerPref(
+      prefs::kLanguageRemapDiamondKeyTo, input_method::kControlKey,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
   // The following pref isn't synced since the user may desire a different value
   // depending on whether an external keyboard is attached to a particular
@@ -245,6 +279,13 @@ void Preferences::RegisterProfilePrefs(
   registry->RegisterIntegerPref(
       prefs::kLanguageXkbAutoRepeatInterval,
       language_prefs::kXkbAutoRepeatIntervalInMs,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+
+  registry->RegisterBooleanPref(
+      prefs::kEnableStylusTools, true,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kLaunchPaletteOnEjectEvent, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 
   // We don't sync wake-on-wifi related prefs because they are device specific.
@@ -267,6 +308,8 @@ void Preferences::RegisterProfilePrefs(
 
   registry->RegisterBooleanPref(prefs::kExternalStorageDisabled, false);
 
+  registry->RegisterBooleanPref(prefs::kExternalStorageReadOnly, false);
+
   registry->RegisterStringPref(prefs::kTermsOfServiceURL, "");
 
   registry->RegisterBooleanPref(prefs::kTouchHudProjectionEnabled, false);
@@ -283,9 +326,27 @@ void Preferences::RegisterProfilePrefs(
                                 true);
 
   registry->RegisterBooleanPref(prefs::kForceMaximizeOnFirstRun, false);
+
+  registry->RegisterBooleanPref(prefs::kLanguageImeMenuActivated, false);
+
+  registry->RegisterInt64Pref(prefs::kHatsLastInteractionTimestamp,
+                              base::Time().ToInternalValue());
+
+  registry->RegisterInt64Pref(prefs::kHatsSurveyCycleEndTimestamp,
+                              base::Time().ToInternalValue());
+
+  registry->RegisterBooleanPref(prefs::kHatsDeviceIsSelected, false);
+
+  registry->RegisterBooleanPref(prefs::kQuickUnlockFeatureNotificationShown,
+                                false);
+
+  // We don't sync EOL related prefs because they are device specific.
+  registry->RegisterBooleanPref(prefs::kEolNotificationDismissed, false);
+  registry->RegisterIntegerPref(prefs::kEolStatus,
+                                update_engine::EndOfLifeStatus::kSupported);
 }
 
-void Preferences::InitUserPrefs(syncable_prefs::PrefServiceSyncable* prefs) {
+void Preferences::InitUserPrefs(sync_preferences::PrefServiceSyncable* prefs) {
   prefs_ = prefs;
 
   BooleanPrefMember::NamedChangeCallback callback =
@@ -315,6 +376,11 @@ void Preferences::InitUserPrefs(syncable_prefs::PrefServiceSyncable* prefs) {
                              prefs, callback);
   previous_input_method_.Init(prefs::kLanguagePreviousInputMethod,
                               prefs, callback);
+  ime_menu_activated_.Init(prefs::kLanguageImeMenuActivated, prefs, callback);
+  // Notifies the system tray to remove the IME items.
+  if (base::FeatureList::IsEnabled(features::kOptInImeMenu) &&
+      ime_menu_activated_.GetValue())
+    input_method::InputMethodManager::Get()->ImeMenuActivationChanged(true);
 
   xkb_auto_repeat_enabled_.Init(
       prefs::kLanguageXkbAutoRepeatEnabled, prefs, callback);
@@ -334,7 +400,7 @@ void Preferences::InitUserPrefs(syncable_prefs::PrefServiceSyncable* prefs) {
 void Preferences::Init(Profile* profile, const user_manager::User* user) {
   DCHECK(profile);
   DCHECK(user);
-  syncable_prefs::PrefServiceSyncable* prefs =
+  sync_preferences::PrefServiceSyncable* prefs =
       PrefServiceSyncableFromProfile(profile);
   // This causes OnIsSyncingChanged to be called when the value of
   // PrefService::IsSyncing() changes.
@@ -349,6 +415,12 @@ void Preferences::Init(Profile* profile, const user_manager::User* user) {
   UserSessionManager* session_manager = UserSessionManager::GetInstance();
   DCHECK(session_manager);
   ime_state_ = session_manager->GetDefaultIMEState(profile);
+
+  if (user_is_primary_) {
+    g_browser_process->platform_part()
+        ->GetTimezoneResolverManager()
+        ->SetPrimaryUserPrefs(prefs_);
+  }
 
   // Initialize preferences to currently saved state.
   ApplyPreferences(REASON_INITIALIZATION, "");
@@ -372,7 +444,7 @@ void Preferences::Init(Profile* profile, const user_manager::User* user) {
 }
 
 void Preferences::InitUserPrefsForTesting(
-    syncable_prefs::PrefServiceSyncable* prefs,
+    sync_preferences::PrefServiceSyncable* prefs,
     const user_manager::User* user,
     scoped_refptr<input_method::InputMethodManager::State> ime_state) {
   user_ = user;
@@ -580,6 +652,14 @@ void Preferences::ApplyPreferences(ApplyReason reason,
     ime_state_->SetEnabledExtensionImes(&split_values);
   }
 
+  if (pref_name == prefs::kLanguageImeMenuActivated &&
+      (reason == REASON_PREF_CHANGED || reason == REASON_ACTIVE_USER_CHANGED) &&
+      base::FeatureList::IsEnabled(features::kOptInImeMenu)) {
+    const bool activated = ime_menu_activated_.GetValue();
+    input_method::InputMethodManager::Get()->ImeMenuActivationChanged(
+        activated);
+  }
+
   if (user_is_active) {
     system::InputDeviceSettings::Get()->UpdateTouchpadSettings(
         touchpad_settings);
@@ -609,15 +689,13 @@ void Preferences::ApplyPreferences(ApplyReason reason,
           prefs::kResolveDeviceTimezoneByGeolocation, value);
     }
     if (user_is_primary_) {
-      if (value) {
-        g_browser_process->platform_part()->GetTimezoneResolver()->Start();
-      } else {
-        g_browser_process->platform_part()->GetTimezoneResolver()->Stop();
-        if (reason == REASON_PREF_CHANGED) {
-          // Allow immediate timezone update on Stop + Start.
-          g_browser_process->local_state()->ClearPref(
-              TimeZoneResolver::kLastTimeZoneRefreshTime);
-        }
+      g_browser_process->platform_part()
+          ->GetTimezoneResolverManager()
+          ->UpdateTimezoneResolver();
+      if (!value && reason == REASON_PREF_CHANGED) {
+        // Allow immediate timezone update on Stop + Start.
+        g_browser_process->local_state()->ClearPref(
+            TimeZoneResolver::kLastTimeZoneRefreshTime);
       }
     }
   }
@@ -625,9 +703,11 @@ void Preferences::ApplyPreferences(ApplyReason reason,
   if (pref_name == prefs::kUse24HourClock ||
       reason != REASON_ACTIVE_USER_CHANGED) {
     const bool value = prefs_->GetBoolean(prefs::kUse24HourClock);
-    user_manager::UserManager::Get()->SetKnownUserBooleanPref(
-        user_->GetAccountId(), prefs::kUse24HourClock, value);
+    user_manager::known_user::SetBooleanPref(user_->GetAccountId(),
+                                             prefs::kUse24HourClock, value);
   }
+
+  system::InputDeviceSettings::Get()->UpdateTouchDevicesStatusFromPrefs();
 }
 
 void Preferences::OnIsSyncingChanged() {

@@ -1,8 +1,0 @@
-enum StyleValueKeyword {"initial", "inherit", "default", "unset"};
-
-[
-    Constructor(DOMString keyword),
-    RuntimeEnabled=CSSTypedOM
-] interface KeywordValue : StyleValue {
-    readonly attribute StyleValueKeyword keywordValue;
-};

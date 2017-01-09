@@ -28,12 +28,32 @@ var testOnSinksUpdated = function() {
 
 var testRequestAuthentication = function() {
   var callback = function(auth_info) {
-    chrome.test.assertEq("PBC", auth_info.method);
+    chrome.test.assertEq("PIN", auth_info.method);
+    chrome.test.assertEq(undefined, auth_info.data);
     chrome.test.succeed("RequestAuthentication succeded");
   };
   chrome.displaySource.requestAuthentication(1, callback);
 };
 
+var testStartSessionErrorReport = function() {
+  var callback = function() {
+    chrome.test.assertLastError('Invalid stream arguments');
+    chrome.test.succeed();
+  };
+  var session_info = { sinkId: 1, authenticationInfo: { method: "PBC" } };
+  chrome.displaySource.startSession(session_info, callback);
+};
+
+var testTerminateSessionErrorReport = function() {
+  var callback = function() {
+    chrome.test.assertLastError('Session not found');
+    chrome.test.succeed();
+  };
+  chrome.displaySource.terminateSession(1, callback);
+};
+
 chrome.test.runTests([testGetAvailableSinks,
                       testOnSinksUpdated,
-                      testRequestAuthentication]);
+                      testRequestAuthentication,
+                      testStartSessionErrorReport,
+                      testTerminateSessionErrorReport]);

@@ -5,10 +5,11 @@
 #include "chrome/browser/ui/webui/chromeos/mobile_setup_dialog.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_shutdown.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
 #include "chrome/browser/chromeos/mobile/mobile_activator.h"
 #include "chrome/browser/platform_util.h"
@@ -17,6 +18,8 @@
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/network/network_state.h"
+#include "chromeos/network/network_state_handler.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/geometry/size.h"
@@ -63,9 +66,17 @@ class MobileSetupDialogDelegate : public WebDialogDelegate {
 };
 
 // static
-void MobileSetupDialog::Show(const std::string& service_path) {
+void MobileSetupDialog::ShowByNetworkId(const std::string& network_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  MobileSetupDialogDelegate::GetInstance()->ShowDialog(service_path);
+  const chromeos::NetworkState* network =
+      chromeos::NetworkHandler::Get()
+          ->network_state_handler()
+          ->GetNetworkStateFromGuid(network_id);
+  if (!network) {
+    LOG(ERROR) << "MobileSetupDialog: Network ID not found: " << network_id;
+    return;
+  }
+  MobileSetupDialogDelegate::GetInstance()->ShowDialog(network->path());
 }
 
 // static
@@ -74,8 +85,8 @@ MobileSetupDialogDelegate* MobileSetupDialogDelegate::GetInstance() {
   return base::Singleton<MobileSetupDialogDelegate>::get();
 }
 
-MobileSetupDialogDelegate::MobileSetupDialogDelegate() : dialog_window_(NULL) {
-}
+MobileSetupDialogDelegate::MobileSetupDialogDelegate()
+    : dialog_window_(nullptr) {}
 
 MobileSetupDialogDelegate::~MobileSetupDialogDelegate() {
 }
@@ -83,13 +94,11 @@ MobileSetupDialogDelegate::~MobileSetupDialogDelegate() {
 void MobileSetupDialogDelegate::ShowDialog(const std::string& service_path) {
   service_path_ = service_path;
 
-  gfx::NativeWindow parent = NULL;
+  gfx::NativeWindow parent = nullptr;
   // If we're on the login screen.
-  if (chromeos::LoginDisplayHostImpl::default_host()) {
-    chromeos::LoginDisplayHostImpl* webui_host =
-        static_cast<chromeos::LoginDisplayHostImpl*>(
-            chromeos::LoginDisplayHostImpl::default_host());
-    chromeos::WebUILoginView* login_view = webui_host->GetWebUILoginView();
+  if (chromeos::LoginDisplayHost::default_host()) {
+    chromeos::WebUILoginView* login_view =
+        chromeos::LoginDisplayHost::default_host()->GetWebUILoginView();
     if (login_view)
       parent = login_view->GetNativeWindow();
   }
@@ -127,7 +136,7 @@ std::string MobileSetupDialogDelegate::GetDialogArgs() const {
 }
 
 void MobileSetupDialogDelegate::OnDialogClosed(const std::string& json_retval) {
-  dialog_window_ = NULL;
+  dialog_window_ = nullptr;
 }
 
 void MobileSetupDialogDelegate::OnCloseContents(WebContents* source,
@@ -143,10 +152,9 @@ void MobileSetupDialogDelegate::OnCloseContents(WebContents* source,
     return;
   }
 
-  *out_close_dialog = chrome::ShowMessageBox(dialog_window_,
-      l10n_util::GetStringUTF16(IDS_MOBILE_SETUP_TITLE),
-      l10n_util::GetStringUTF16(IDS_MOBILE_CANCEL_ACTIVATION),
-      chrome::MESSAGE_BOX_TYPE_QUESTION);
+  *out_close_dialog = chrome::ShowQuestionMessageBox(
+      dialog_window_, l10n_util::GetStringUTF16(IDS_MOBILE_SETUP_TITLE),
+      l10n_util::GetStringUTF16(IDS_MOBILE_CANCEL_ACTIVATION));
 }
 
 bool MobileSetupDialogDelegate::ShouldShowDialogTitle() const {

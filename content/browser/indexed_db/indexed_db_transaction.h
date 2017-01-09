@@ -5,19 +5,24 @@
 #ifndef CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_TRANSACTION_H_
 #define CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_TRANSACTION_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <set>
 #include <stack>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
+#include "content/browser/indexed_db/indexed_db_connection.h"
 #include "content/browser/indexed_db/indexed_db_database.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
+#include "content/browser/indexed_db/indexed_db_observer.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
 
 namespace content {
@@ -26,10 +31,10 @@ class BlobWriteCallbackImpl;
 class IndexedDBCursor;
 class IndexedDBDatabaseCallbacks;
 
-class CONTENT_EXPORT IndexedDBTransaction
-    : public NON_EXPORTED_BASE(base::RefCounted<IndexedDBTransaction>) {
+class CONTENT_EXPORT IndexedDBTransaction {
  public:
-  typedef base::Callback<void(IndexedDBTransaction*)> Operation;
+  using Operation = base::Callback<leveldb::Status(IndexedDBTransaction*)>;
+  using AbortOperation = base::Closure;
 
   enum State {
     CREATED,     // Created, but not yet started by coordinator.
@@ -39,21 +44,26 @@ class CONTENT_EXPORT IndexedDBTransaction
     FINISHED,    // Either aborted or committed.
   };
 
-  virtual void Abort();
+  virtual ~IndexedDBTransaction();
+
   leveldb::Status Commit();
+
+  // This object is destroyed by these method calls.
+  virtual void Abort();
   void Abort(const IndexedDBDatabaseError& error);
 
   // Called by the transaction coordinator when this transaction is unblocked.
   void Start();
 
   blink::WebIDBTransactionMode mode() const { return mode_; }
-  const std::set<int64>& scope() const { return object_store_ids_; }
+  const std::set<int64_t>& scope() const { return object_store_ids_; }
 
+  // Tasks cannot call Commit.
   void ScheduleTask(Operation task) {
     ScheduleTask(blink::WebIDBTaskTypeNormal, task);
   }
   void ScheduleTask(blink::WebIDBTaskType, Operation task);
-  void ScheduleAbortTask(Operation abort_task);
+  void ScheduleAbortTask(AbortOperation abort_task);
   void RegisterOpenCursor(IndexedDBCursor* cursor);
   void UnregisterOpenCursor(IndexedDBCursor* cursor);
   void AddPreemptiveEvent() { pending_preemptive_events_++; }
@@ -61,13 +71,27 @@ class CONTENT_EXPORT IndexedDBTransaction
     pending_preemptive_events_--;
     DCHECK_GE(pending_preemptive_events_, 0);
   }
+  void AddPendingObserver(int32_t observer_id,
+                          const IndexedDBObserver::Options& options);
+  // Delete pending observers with ID's listed in |pending_observer_ids|.
+  void RemovePendingObservers(const std::vector<int32_t>& pending_observer_ids);
+
+  // Adds observation for the connection.
+  void AddObservation(int32_t connection_id,
+                      ::indexed_db::mojom::ObservationPtr observation);
+  // Adds the last observation index to observer_id's list of recorded
+  // observation indices.
+  void RecordObserverForLastObservation(int32_t connection_id,
+                                        int32_t observer_id);
+
   IndexedDBBackingStore::Transaction* BackingStoreTransaction() {
     return transaction_.get();
   }
-  int64 id() const { return id_; }
+  int64_t id() const { return id_; }
 
   IndexedDBDatabase* database() const { return database_.get(); }
-  IndexedDBDatabaseCallbacks* connection() const { return callbacks_.get(); }
+  IndexedDBDatabaseCallbacks* callbacks() const { return callbacks_.get(); }
+  IndexedDBConnection* connection() const { return connection_; }
 
   State state() const { return state_; }
   bool IsTimeoutTimerRunning() const { return timeout_timer_.IsRunning(); }
@@ -81,17 +105,18 @@ class CONTENT_EXPORT IndexedDBTransaction
 
   const Diagnostics& diagnostics() const { return diagnostics_; }
 
+  void set_size(int64_t size) { size_ = size; }
+  int64_t size() const { return size_; }
+
  protected:
   // Test classes may derive, but most creation should be done via
   // IndexedDBClassFactory.
   IndexedDBTransaction(
-      int64 id,
-      scoped_refptr<IndexedDBDatabaseCallbacks> callbacks,
-      const std::set<int64>& object_store_ids,
+      int64_t id,
+      IndexedDBConnection* connection,
+      const std::set<int64_t>& object_store_ids,
       blink::WebIDBTransactionMode mode,
-      IndexedDBDatabase* db,
       IndexedDBBackingStore::Transaction* backing_store_transaction);
-  virtual ~IndexedDBTransaction();
 
   // May be overridden in tests.
   virtual base::TimeDelta GetInactivityTimeout() const;
@@ -99,6 +124,7 @@ class CONTENT_EXPORT IndexedDBTransaction
  private:
   friend class BlobWriteCallbackImpl;
   friend class IndexedDBClassFactory;
+  friend class IndexedDBConnection;
   friend class base::RefCounted<IndexedDBTransaction>;
 
   FRIEND_TEST_ALL_PREFIXES(IndexedDBTransactionTestMode, AbortPreemptive);
@@ -108,35 +134,48 @@ class CONTENT_EXPORT IndexedDBTransaction
                            SchedulePreemptiveTask);
   FRIEND_TEST_ALL_PREFIXES(IndexedDBTransactionTestMode,
                            ScheduleNormalTask);
+  FRIEND_TEST_ALL_PREFIXES(IndexedDBTransactionTestMode, TaskFails);
   FRIEND_TEST_ALL_PREFIXES(IndexedDBTransactionTest, Timeout);
+  FRIEND_TEST_ALL_PREFIXES(IndexedDBTransactionTest, IndexedDBObserver);
 
   void RunTasksIfStarted();
 
   bool IsTaskQueueEmpty() const;
   bool HasPendingTasks() const;
 
-  void BlobWriteComplete(bool success);
+  leveldb::Status BlobWriteComplete(
+      IndexedDBBackingStore::BlobWriteResult result);
   void ProcessTaskQueue();
   void CloseOpenCursors();
   leveldb::Status CommitPhaseTwo();
   void Timeout();
 
-  const int64 id_;
-  const std::set<int64> object_store_ids_;
+  const int64_t id_;
+  const std::set<int64_t> object_store_ids_;
   const blink::WebIDBTransactionMode mode_;
 
-  bool used_;
-  State state_;
-  bool commit_pending_;
+  bool used_ = false;
+  State state_ = CREATED;
+  bool commit_pending_ = false;
+  // We are owned by the connection object.
+  IndexedDBConnection* connection_;
   scoped_refptr<IndexedDBDatabaseCallbacks> callbacks_;
   scoped_refptr<IndexedDBDatabase> database_;
+
+  // Observers in pending queue do not listen to changes until activated.
+  std::vector<std::unique_ptr<IndexedDBObserver>> pending_observers_;
+  std::map<int32_t, ::indexed_db::mojom::ObserverChangesPtr>
+      connection_changes_map_;
+
+  // Metrics for quota.
+  int64_t size_ = 0;
 
   class TaskQueue {
    public:
     TaskQueue();
     ~TaskQueue();
     bool empty() const { return queue_.empty(); }
-    void push(Operation task) { queue_.push(task); }
+    void push(Operation task) { queue_.push(std::move(task)); }
     Operation pop();
     void clear();
 
@@ -151,12 +190,12 @@ class CONTENT_EXPORT IndexedDBTransaction
     TaskStack();
     ~TaskStack();
     bool empty() const { return stack_.empty(); }
-    void push(Operation task) { stack_.push(task); }
-    Operation pop();
+    void push(AbortOperation task) { stack_.push(std::move(task)); }
+    AbortOperation pop();
     void clear();
 
    private:
-    std::stack<Operation> stack_;
+    std::stack<AbortOperation> stack_;
 
     DISALLOW_COPY_AND_ASSIGN(TaskStack);
   };
@@ -165,11 +204,12 @@ class CONTENT_EXPORT IndexedDBTransaction
   TaskQueue preemptive_task_queue_;
   TaskStack abort_task_stack_;
 
-  scoped_ptr<IndexedDBBackingStore::Transaction> transaction_;
-  bool backing_store_transaction_begun_;
+  std::unique_ptr<IndexedDBBackingStore::Transaction> transaction_;
+  bool backing_store_transaction_begun_ = false;
 
-  bool should_process_queue_;
-  int pending_preemptive_events_;
+  bool should_process_queue_ = false;
+  int pending_preemptive_events_ = 0;
+  bool processing_event_queue_ = false;
 
   std::set<IndexedDBCursor*> open_cursors_;
 
@@ -179,6 +219,8 @@ class CONTENT_EXPORT IndexedDBTransaction
   base::OneShotTimer timeout_timer_;
 
   Diagnostics diagnostics_;
+
+  base::WeakPtrFactory<IndexedDBTransaction> ptr_factory_;
 };
 
 }  // namespace content

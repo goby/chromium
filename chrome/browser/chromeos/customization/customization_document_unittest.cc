@@ -4,8 +4,9 @@
 
 #include "chrome/browser/chromeos/customization/customization_document.h"
 
+#include <utility>
+
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/testing_pref_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/chromeos/net/network_portal_detector_test_impl.h"
@@ -21,9 +22,11 @@
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/system/fake_statistics_provider.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/pref_service_mock_factory.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/prefs/testing_pref_service.h"
+#include "components/sync_preferences/pref_service_mock_factory.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/browser/external_install_info.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "net/http/http_response_headers.h"
@@ -37,6 +40,8 @@ using ::testing::Exactly;
 using ::testing::Invoke;
 using ::testing::Mock;
 using ::testing::_;
+using extensions::ExternalInstallInfoFile;
+using extensions::ExternalInstallInfoUpdateUrl;
 
 namespace {
 
@@ -155,16 +160,16 @@ TEST(StartupCustomizationDocumentTest, BadManifest) {
 
 class TestURLFetcherCallback {
  public:
-  scoped_ptr<net::FakeURLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* d,
       const std::string& response_data,
       net::HttpStatusCode response_code,
       net::URLRequestStatus::Status status) {
-    scoped_ptr<net::FakeURLFetcher> fetcher(
+    std::unique_ptr<net::FakeURLFetcher> fetcher(
         new net::FakeURLFetcher(url, d, response_data, response_code, status));
     OnRequestCreate(url, fetcher.get());
-    return fetcher.Pass();
+    return fetcher;
   }
   MOCK_METHOD2(OnRequestCreate,
                void(const GURL&, net::FakeURLFetcher*));
@@ -182,23 +187,18 @@ class MockExternalProviderVisitor
  public:
   MockExternalProviderVisitor() {}
 
-  MOCK_METHOD7(OnExternalExtensionFileFound,
-               bool(const std::string&,
-                    const base::Version*,
-                    const base::FilePath&,
-                    extensions::Manifest::Location,
-                    int,
-                    bool,
-                    bool));
-  MOCK_METHOD6(OnExternalExtensionUpdateUrlFound,
-               bool(const std::string&,
-                    const std::string&,
-                    const GURL&,
-                    extensions::Manifest::Location,
-                    int,
-                    bool));
+  MOCK_METHOD1(OnExternalExtensionFileFound,
+               bool(const ExternalInstallInfoFile&));
+  MOCK_METHOD2(OnExternalExtensionUpdateUrlFound,
+               bool(const ExternalInstallInfoUpdateUrl&, bool));
   MOCK_METHOD1(OnExternalProviderReady,
                void(const extensions::ExternalProviderInterface* provider));
+  MOCK_METHOD4(
+      OnExternalProviderUpdateComplete,
+      void(const extensions::ExternalProviderInterface*,
+           const std::vector<std::unique_ptr<ExternalInstallInfoUpdateUrl>>&,
+           const std::vector<std::unique_ptr<ExternalInstallInfoFile>>&,
+           const std::set<std::string>& removed_extensions));
 };
 
 class ServicesCustomizationDocumentTest : public testing::Test {
@@ -279,15 +279,15 @@ class ServicesCustomizationDocumentTest : public testing::Test {
       .WillRepeatedly(Invoke(AddMimeHeader));
   }
 
-  scoped_ptr<TestingProfile> CreateProfile() {
+  std::unique_ptr<TestingProfile> CreateProfile() {
     TestingProfile::Builder profile_builder;
-    syncable_prefs::PrefServiceMockFactory factory;
+    sync_preferences::PrefServiceMockFactory factory;
     scoped_refptr<user_prefs::PrefRegistrySyncable> registry(
         new user_prefs::PrefRegistrySyncable);
-    scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs(
+    std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs(
         factory.CreateSyncable(registry.get()));
     chrome::RegisterUserProfilePrefs(registry.get());
-    profile_builder.SetPrefService(prefs.Pass());
+    profile_builder.SetPrefService(std::move(prefs));
     return profile_builder.Build();
   }
 
@@ -316,7 +316,7 @@ TEST_F(ServicesCustomizationDocumentTest, Basic) {
   EXPECT_FALSE(doc->GetDefaultWallpaperUrl(&wallpaper_url));
   EXPECT_EQ("", wallpaper_url.spec());
 
-  scoped_ptr<base::DictionaryValue> default_apps(doc->GetDefaultApps());
+  std::unique_ptr<base::DictionaryValue> default_apps(doc->GetDefaultApps());
   ASSERT_TRUE(default_apps);
   EXPECT_EQ(default_apps->size(), 2u);
 
@@ -345,27 +345,23 @@ TEST_F(ServicesCustomizationDocumentTest, NoCustomizationIdInVpd) {
       ServicesCustomizationDocument::GetInstance();
   EXPECT_FALSE(doc->IsReady());
 
-  scoped_ptr<TestingProfile> profile = CreateProfile();
+  std::unique_ptr<TestingProfile> profile = CreateProfile();
   extensions::ExternalLoader* loader = doc->CreateExternalLoader(profile.get());
   EXPECT_TRUE(loader);
 
   MockExternalProviderVisitor visitor;
-  scoped_ptr<extensions::ExternalProviderImpl> provider(
+  std::unique_ptr<extensions::ExternalProviderImpl> provider(
       new extensions::ExternalProviderImpl(
-          &visitor,
-          loader,
-          profile.get(),
-          extensions::Manifest::EXTERNAL_PREF,
+          &visitor, loader, profile.get(), extensions::Manifest::EXTERNAL_PREF,
           extensions::Manifest::EXTERNAL_PREF_DOWNLOAD,
           extensions::Extension::FROM_WEBSTORE |
               extensions::Extension::WAS_INSTALLED_BY_DEFAULT));
 
-  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_, _, _, _, _, _, _))
-      .Times(0);
-  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _, _, _, _, _))
-      .Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_)).Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _)).Times(0);
   EXPECT_CALL(visitor, OnExternalProviderReady(_))
       .Times(1);
+  EXPECT_CALL(visitor, OnExternalProviderUpdateComplete(_, _, _, _)).Times(0);
 
   // Manually request a load.
   RunUntilIdle();
@@ -385,7 +381,7 @@ TEST_F(ServicesCustomizationDocumentTest, DefaultApps) {
       ServicesCustomizationDocument::GetInstance();
   EXPECT_FALSE(doc->IsReady());
 
-  scoped_ptr<TestingProfile> profile = CreateProfile();
+  std::unique_ptr<TestingProfile> profile = CreateProfile();
   extensions::ExternalLoader* loader = doc->CreateExternalLoader(profile.get());
   EXPECT_TRUE(loader);
 
@@ -395,33 +391,28 @@ TEST_F(ServicesCustomizationDocumentTest, DefaultApps) {
           &app_list::AppListSyncableServiceFactory::BuildInstanceFor);
 
   MockExternalProviderVisitor visitor;
-  scoped_ptr<extensions::ExternalProviderImpl> provider(
+  std::unique_ptr<extensions::ExternalProviderImpl> provider(
       new extensions::ExternalProviderImpl(
-          &visitor,
-          loader,
-          profile.get(),
-          extensions::Manifest::EXTERNAL_PREF,
+          &visitor, loader, profile.get(), extensions::Manifest::EXTERNAL_PREF,
           extensions::Manifest::EXTERNAL_PREF_DOWNLOAD,
           extensions::Extension::FROM_WEBSTORE |
               extensions::Extension::WAS_INSTALLED_BY_DEFAULT));
 
-  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_, _, _, _, _, _, _))
-      .Times(0);
-  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _, _, _, _, _))
-      .Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_)).Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _)).Times(0);
   EXPECT_CALL(visitor, OnExternalProviderReady(_))
       .Times(1);
+  EXPECT_CALL(visitor, OnExternalProviderUpdateComplete(_, _, _, _)).Times(0);
 
   // Manually request a load.
   loader->StartLoading();
   Mock::VerifyAndClearExpectations(&visitor);
 
-  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_, _, _, _, _, _, _))
-      .Times(0);
-  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _, _, _, _, _))
-      .Times(2);
+  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_)).Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _)).Times(2);
   EXPECT_CALL(visitor, OnExternalProviderReady(_))
       .Times(1);
+  EXPECT_CALL(visitor, OnExternalProviderUpdateComplete(_, _, _, _)).Times(0);
 
   RunUntilIdle();
   EXPECT_TRUE(doc->IsReady());
@@ -440,38 +431,33 @@ TEST_F(ServicesCustomizationDocumentTest, CustomizationManifestNotFound) {
       ServicesCustomizationDocument::GetInstance();
   EXPECT_FALSE(doc->IsReady());
 
-  scoped_ptr<TestingProfile> profile = CreateProfile();
+  std::unique_ptr<TestingProfile> profile = CreateProfile();
   extensions::ExternalLoader* loader = doc->CreateExternalLoader(profile.get());
   EXPECT_TRUE(loader);
 
   MockExternalProviderVisitor visitor;
-  scoped_ptr<extensions::ExternalProviderImpl> provider(
+  std::unique_ptr<extensions::ExternalProviderImpl> provider(
       new extensions::ExternalProviderImpl(
-          &visitor,
-          loader,
-          profile.get(),
-          extensions::Manifest::EXTERNAL_PREF,
+          &visitor, loader, profile.get(), extensions::Manifest::EXTERNAL_PREF,
           extensions::Manifest::EXTERNAL_PREF_DOWNLOAD,
           extensions::Extension::FROM_WEBSTORE |
               extensions::Extension::WAS_INSTALLED_BY_DEFAULT));
 
-  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_, _, _, _, _, _, _))
-      .Times(0);
-  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _, _, _, _, _))
-      .Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_)).Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _)).Times(0);
   EXPECT_CALL(visitor, OnExternalProviderReady(_))
       .Times(1);
+  EXPECT_CALL(visitor, OnExternalProviderUpdateComplete(_, _, _, _)).Times(0);
 
   // Manually request a load.
   loader->StartLoading();
   Mock::VerifyAndClearExpectations(&visitor);
 
-  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_, _, _, _, _, _, _))
-      .Times(0);
-  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _, _, _, _, _))
-      .Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionFileFound(_)).Times(0);
+  EXPECT_CALL(visitor, OnExternalExtensionUpdateUrlFound(_, _)).Times(0);
   EXPECT_CALL(visitor, OnExternalProviderReady(_))
       .Times(1);
+  EXPECT_CALL(visitor, OnExternalProviderUpdateComplete(_, _, _, _)).Times(0);
 
   RunUntilIdle();
   EXPECT_TRUE(doc->IsReady());

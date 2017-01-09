@@ -7,7 +7,6 @@
 #include <sys/mman.h>
 #include <xf86drmMode.h>
 
-#include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/ozone/platform/drm/common/scoped_drm_types.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 
@@ -44,8 +43,7 @@ bool DrmConsoleBuffer::Initialize() {
     return false;
   }
 
-  surface_ =
-      skia::AdoptRef(SkSurface::NewRasterDirect(info, mmap_base_, stride_));
+  surface_ = SkSurface::MakeRasterDirect(info, mmap_base_, stride_);
   if (!surface_)
     return false;
 

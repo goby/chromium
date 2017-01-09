@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/views/extensions/extension_view_views.h"
 
+#include <utility>
+
 #include "chrome/browser/extensions/extension_view_host.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -40,10 +42,11 @@ Browser* ExtensionViewViews::GetBrowser() {
   return browser_;
 }
 
-void ExtensionViewViews::SetVisible(bool is_visible) {
-  if (is_visible != visible()) {
-    views::WebView::SetVisible(is_visible);
+void ExtensionViewViews::VisibilityChanged(View* starting_from,
+                                           bool is_visible) {
+  views::WebView::VisibilityChanged(starting_from, is_visible);
 
+  if (starting_from == this) {
     // Also tell RenderWidgetHostView the new visibility. Despite its name, it
     // is not part of the View hierarchy and does not know about the change
     // unless we tell it.
@@ -133,14 +136,15 @@ void ExtensionViewViews::OnWebContentsAttached() {
 namespace extensions {
 
 // static
-scoped_ptr<ExtensionView> ExtensionViewHost::CreateExtensionView(
+std::unique_ptr<ExtensionView> ExtensionViewHost::CreateExtensionView(
     ExtensionViewHost* host,
     Browser* browser) {
-  scoped_ptr<ExtensionViewViews> view(new ExtensionViewViews(host, browser));
+  std::unique_ptr<ExtensionViewViews> view(
+      new ExtensionViewViews(host, browser));
   // We own |view_|, so don't auto delete when it's removed from the view
   // hierarchy.
   view->set_owned_by_client();
-  return view.Pass();
+  return std::move(view);
 }
 
 }  // namespace extensions

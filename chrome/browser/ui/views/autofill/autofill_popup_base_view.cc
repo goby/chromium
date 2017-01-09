@@ -7,26 +7,14 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/autofill/popup_constants.h"
 #include "ui/views/border.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/widget/widget.h"
 
 namespace autofill {
-
-const SkColor AutofillPopupBaseView::kBorderColor =
-    SkColorSetARGB(0xFF, 0xC7, 0xCA, 0xCE);
-const SkColor AutofillPopupBaseView::kHoveredBackgroundColor =
-    SkColorSetARGB(0xFF, 0xCD, 0xCD, 0xCD);
-const SkColor AutofillPopupBaseView::kItemTextColor =
-    SkColorSetARGB(0xFF, 0x7F, 0x7F, 0x7F);
-const SkColor AutofillPopupBaseView::kPopupBackground =
-    SkColorSetARGB(0xFF, 0xFF, 0xFF, 0xFF);
-const SkColor AutofillPopupBaseView::kValueTextColor =
-    SkColorSetARGB(0xFF, 0x00, 0x00, 0x00);
-const SkColor AutofillPopupBaseView::kWarningTextColor =
-    SkColorSetARGB(0xFF, 0x7F, 0x7F, 0x7F);
 
 AutofillPopupBaseView::AutofillPopupBaseView(
     AutofillPopupViewDelegate* delegate,
@@ -65,7 +53,6 @@ void AutofillPopupBaseView::DoShow() {
     params.delegate = this;
     params.parent = parent_widget_->GetNativeView();
     widget->Init(params);
-    widget->SetContentsView(this);
 
     // No animation for popup appearance (too distracting).
     widget->SetVisibilityAnimationTransition(views::Widget::ANIMATE_HIDE);
@@ -73,8 +60,7 @@ void AutofillPopupBaseView::DoShow() {
     show_time_ = base::Time::Now();
   }
 
-  SetBorder(views::Border::CreateSolidBorder(kPopupBorderThickness,
-                                             kBorderColor));
+  SetBorder(views::CreateSolidBorder(kPopupBorderThickness, kBorderColor));
 
   DoUpdateBoundsAndRedrawPopup();
   GetWidget()->Show();

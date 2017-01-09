@@ -5,12 +5,15 @@
 #ifndef STORAGE_BROWSER_FILEAPI_SANDBOX_DIRECTORY_DATABASE_H_
 #define STORAGE_BROWSER_FILEAPI_SANDBOX_DIRECTORY_DATABASE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "storage/browser/storage_browser_export.h"
 
@@ -42,7 +45,7 @@ namespace storage {
 // TODO(ericu): Add a method that will give a unique filename for a data file.
 class STORAGE_EXPORT SandboxDirectoryDatabase {
  public:
-  typedef int64 FileId;
+  typedef int64_t FileId;
 
   struct STORAGE_EXPORT FileInfo {
     FileInfo();
@@ -92,7 +95,7 @@ class STORAGE_EXPORT SandboxDirectoryDatabase {
   // This produces the series 0, 1, 2..., starting at 0 when the underlying
   // filesystem is first created, and maintaining state across
   // creation/destruction of SandboxDirectoryDatabase objects.
-  bool GetNextInteger(int64* next);
+  bool GetNextInteger(int64_t* next);
 
   bool IsDirectory(FileId file_id);
 
@@ -120,12 +123,14 @@ class STORAGE_EXPORT SandboxDirectoryDatabase {
   bool AddFileInfoHelper(
       const FileInfo& info, FileId file_id, leveldb::WriteBatch* batch);
   bool RemoveFileInfoHelper(FileId file_id, leveldb::WriteBatch* batch);
+  // Close the database. Before this, all iterators associated with the database
+  // must be deleted.
   void HandleError(const tracked_objects::Location& from_here,
                    const leveldb::Status& status);
 
   const base::FilePath filesystem_data_directory_;
   leveldb::Env* env_override_;
-  scoped_ptr<leveldb::DB> db_;
+  std::unique_ptr<leveldb::DB> db_;
   base::Time last_reported_time_;
   DISALLOW_COPY_AND_ASSIGN(SandboxDirectoryDatabase);
 };

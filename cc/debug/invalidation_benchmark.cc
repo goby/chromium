@@ -4,15 +4,17 @@
 
 #include "cc/debug/invalidation_benchmark.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 #include <limits>
 
-#include "base/basictypes.h"
 #include "base/rand_util.h"
 #include "base/values.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/picture_layer.h"
-#include "cc/trees/layer_tree_host.h"
+#include "cc/trees/draw_property_utils.h"
+#include "cc/trees/layer_tree.h"
 #include "cc/trees/layer_tree_host_common.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -25,7 +27,7 @@ const char* kDefaultInvalidationMode = "viewport";
 }  // namespace
 
 InvalidationBenchmark::InvalidationBenchmark(
-    scoped_ptr<base::Value> value,
+    std::unique_ptr<base::Value> value,
     const MicroBenchmark::DoneCallback& callback)
     : MicroBenchmark(callback), seed_(0) {
   base::DictionaryValue* settings = nullptr;
@@ -61,17 +63,23 @@ InvalidationBenchmark::InvalidationBenchmark(
 InvalidationBenchmark::~InvalidationBenchmark() {
 }
 
-void InvalidationBenchmark::DidUpdateLayers(LayerTreeHost* host) {
-  LayerTreeHostCommon::CallFunctionForSubtree(
-      host->root_layer(),
-      [this](Layer* layer) { layer->RunMicroBenchmark(this); });
+void InvalidationBenchmark::DidUpdateLayers(LayerTree* layer_tree) {
+  LayerTreeHostCommon::CallFunctionForEveryLayer(
+      layer_tree, [this](Layer* layer) { layer->RunMicroBenchmark(this); });
 }
 
 void InvalidationBenchmark::RunOnLayer(PictureLayer* layer) {
+  gfx::Rect visible_layer_rect = gfx::Rect(layer->bounds());
+  gfx::Transform from_screen;
+  bool invertible = layer->screen_space_transform().GetInverse(&from_screen);
+  if (!invertible)
+    from_screen = gfx::Transform();
+  gfx::Rect viewport_rect = MathUtil::ProjectEnclosingClippedRect(
+      from_screen, gfx::Rect(layer->GetLayerTree()->device_viewport_size()));
+  visible_layer_rect.Intersect(viewport_rect);
   switch (mode_) {
     case FIXED_SIZE: {
       // Invalidation with a random position and fixed size.
-      gfx::Rect visible_layer_rect = layer->visible_layer_rect();
       int x = LCGRandom() * (visible_layer_rect.width() - width_);
       int y = LCGRandom() * (visible_layer_rect.height() - height_);
       gfx::Rect invalidation_rect(x, y, width_, height_);
@@ -85,7 +93,6 @@ void InvalidationBenchmark::RunOnLayer(PictureLayer* layer) {
     }
     case RANDOM: {
       // Random invalidation inside the viewport.
-      gfx::Rect visible_layer_rect = layer->visible_layer_rect();
       int x_min = LCGRandom() * visible_layer_rect.width();
       int x_max = LCGRandom() * visible_layer_rect.width();
       int y_min = LCGRandom() * visible_layer_rect.height();
@@ -100,13 +107,13 @@ void InvalidationBenchmark::RunOnLayer(PictureLayer* layer) {
     }
     case VIEWPORT: {
       // Invalidate entire viewport.
-      layer->SetNeedsDisplayRect(layer->visible_layer_rect());
+      layer->SetNeedsDisplayRect(visible_layer_rect);
       break;
     }
   }
 }
 
-bool InvalidationBenchmark::ProcessMessage(scoped_ptr<base::Value> value) {
+bool InvalidationBenchmark::ProcessMessage(std::unique_ptr<base::Value> value) {
   base::DictionaryValue* message = nullptr;
   value->GetAsDictionary(&message);
   if (!message)
@@ -126,10 +133,10 @@ bool InvalidationBenchmark::ProcessMessage(scoped_ptr<base::Value> value) {
 // high quality, but they need to be identical in each run. Therefore, we use a
 // LCG and keep the state locally in the benchmark.
 float InvalidationBenchmark::LCGRandom() {
-  const uint32 a = 1664525;
-  const uint32 c = 1013904223;
+  const uint32_t a = 1664525;
+  const uint32_t c = 1013904223;
   seed_ = a * seed_ + c;
-  return static_cast<float>(seed_) / std::numeric_limits<uint32>::max();
+  return static_cast<float>(seed_) / std::numeric_limits<uint32_t>::max();
 }
 
 }  // namespace cc

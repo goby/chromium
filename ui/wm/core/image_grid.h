@@ -5,8 +5,9 @@
 #ifndef UI_WM_CORE_IMAGE_GRID_H_
 #define UI_WM_CORE_IMAGE_GRID_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_delegate.h"
 #include "ui/gfx/geometry/rect.h"
@@ -139,7 +140,6 @@ class WM_EXPORT ImageGrid {
     void OnPaintLayer(const ui::PaintContext& context) override;
     void OnDelegatedFrameDamage(const gfx::Rect& damage_rect_in_dip) override;
     void OnDeviceScaleFactorChanged(float device_scale_factor) override;
-    base::Closure PrepareForLayerBoundsChange() override;
 
    private:
     friend class TestAPI;
@@ -164,12 +164,12 @@ class WM_EXPORT ImageGrid {
   // guarantee that it has minimum size in order for scaling work properly
   // with fractional device scale factors. crbug.com/376519.
   void SetImage(const gfx::Image* image,
-                scoped_ptr<ui::Layer>* layer_ptr,
-                scoped_ptr<ImagePainter>* painter_ptr,
+                std::unique_ptr<ui::Layer>* layer_ptr,
+                std::unique_ptr<ImagePainter>* painter_ptr,
                 ImageType type);
 
   // Layer that contains all of the image layers.
-  scoped_ptr<ui::Layer> layer_;
+  std::unique_ptr<ui::Layer> layer_;
 
   // The grid's dimensions.
   gfx::Size size_;
@@ -191,27 +191,27 @@ class WM_EXPORT ImageGrid {
 
   // Layers used to display the various images.  Children of |layer_|.
   // Positions for which no images were supplied are NULL.
-  scoped_ptr<ui::Layer> top_left_layer_;
-  scoped_ptr<ui::Layer> top_layer_;
-  scoped_ptr<ui::Layer> top_right_layer_;
-  scoped_ptr<ui::Layer> left_layer_;
-  scoped_ptr<ui::Layer> center_layer_;
-  scoped_ptr<ui::Layer> right_layer_;
-  scoped_ptr<ui::Layer> bottom_left_layer_;
-  scoped_ptr<ui::Layer> bottom_layer_;
-  scoped_ptr<ui::Layer> bottom_right_layer_;
+  std::unique_ptr<ui::Layer> top_left_layer_;
+  std::unique_ptr<ui::Layer> top_layer_;
+  std::unique_ptr<ui::Layer> top_right_layer_;
+  std::unique_ptr<ui::Layer> left_layer_;
+  std::unique_ptr<ui::Layer> center_layer_;
+  std::unique_ptr<ui::Layer> right_layer_;
+  std::unique_ptr<ui::Layer> bottom_left_layer_;
+  std::unique_ptr<ui::Layer> bottom_layer_;
+  std::unique_ptr<ui::Layer> bottom_right_layer_;
 
   // Delegates responsible for painting the above layers.
   // Positions for which no images were supplied are NULL.
-  scoped_ptr<ImagePainter> top_left_painter_;
-  scoped_ptr<ImagePainter> top_painter_;
-  scoped_ptr<ImagePainter> top_right_painter_;
-  scoped_ptr<ImagePainter> left_painter_;
-  scoped_ptr<ImagePainter> center_painter_;
-  scoped_ptr<ImagePainter> right_painter_;
-  scoped_ptr<ImagePainter> bottom_left_painter_;
-  scoped_ptr<ImagePainter> bottom_painter_;
-  scoped_ptr<ImagePainter> bottom_right_painter_;
+  std::unique_ptr<ImagePainter> top_left_painter_;
+  std::unique_ptr<ImagePainter> top_painter_;
+  std::unique_ptr<ImagePainter> top_right_painter_;
+  std::unique_ptr<ImagePainter> left_painter_;
+  std::unique_ptr<ImagePainter> center_painter_;
+  std::unique_ptr<ImagePainter> right_painter_;
+  std::unique_ptr<ImagePainter> bottom_left_painter_;
+  std::unique_ptr<ImagePainter> bottom_painter_;
+  std::unique_ptr<ImagePainter> bottom_right_painter_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageGrid);
 };

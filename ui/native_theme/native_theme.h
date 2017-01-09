@@ -5,7 +5,9 @@
 #ifndef UI_NATIVE_THEME_NATIVE_THEME_H_
 #define UI_NATIVE_THEME_NATIVE_THEME_H_
 
+#include "base/macros.h"
 #include "base/observer_list.h"
+#include "build/build_config.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/native_theme/native_theme_export.h"
@@ -42,16 +44,17 @@ class NATIVE_THEME_EXPORT NativeTheme {
  public:
   // The part to be painted / sized.
   enum Part {
-    kComboboxArrow,
     kCheckbox,
     kInnerSpinButton,
     kMenuList,
+    kMenuPopupBackground,
+#if defined(OS_WIN)
     kMenuCheck,
     kMenuCheckBackground,
     kMenuPopupArrow,
-    kMenuPopupBackground,
     kMenuPopupGutter,
     kMenuPopupSeparator,
+#endif
     kMenuItemBackground,
     kProgressBar,
     kPushButton,
@@ -128,6 +131,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
 
   struct MenuItemExtraParams {
     bool is_selected;
+    int corner_radius;
   };
 
   struct MenuListExtraParams {
@@ -167,8 +171,14 @@ class NATIVE_THEME_EXPORT NativeTheme {
     int classic_state;  // Used on Windows when uxtheme is not available.
   };
 
+  enum ScrollbarOverlayColorTheme {
+    ScrollbarOverlayColorThemeDark,
+    ScrollbarOverlayColorThemeLight
+  };
+
   struct ScrollbarThumbExtraParams {
     bool is_hovering;
+    ScrollbarOverlayColorTheme scrollbar_theme;
   };
 
   struct SliderExtraParams {
@@ -192,7 +202,10 @@ class NATIVE_THEME_EXPORT NativeTheme {
     int classic_state;  // Used on Windows when uxtheme is not available.
   };
 
-  union ExtraParams {
+  union NATIVE_THEME_EXPORT ExtraParams {
+    ExtraParams();
+    ExtraParams(const ExtraParams& other);
+
     ButtonExtraParams button;
     InnerSpinButtonExtraParams inner_spin;
     MenuArrowExtraParams menu_arrow;
@@ -228,7 +241,8 @@ class NATIVE_THEME_EXPORT NativeTheme {
                                     State startState,
                                     State endState,
                                     double progress,
-                                    const gfx::Rect& rect) const { }
+                                    const gfx::Rect& rect,
+                                    ScrollbarOverlayColorTheme theme) const {}
 
   // Supports theme specific colors.
   void SetScrollbarColors(unsigned inactive_color,
@@ -246,25 +260,22 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_FocusedBorderColor,
     kColorId_UnfocusedBorderColor,
     // Button
-    kColorId_ButtonBackgroundColor,
     kColorId_ButtonEnabledColor,
     kColorId_ButtonDisabledColor,
-    kColorId_ButtonHighlightColor,
     kColorId_ButtonHoverColor,
-    kColorId_ButtonHoverBackgroundColor,
+    kColorId_ButtonPressedShade,
     kColorId_BlueButtonEnabledColor,
     kColorId_BlueButtonDisabledColor,
     kColorId_BlueButtonPressedColor,
     kColorId_BlueButtonHoverColor,
     kColorId_BlueButtonShadowColor,
-    kColorId_CallToActionColor,
+    kColorId_ProminentButtonColor,
+    kColorId_TextOnProminentButtonColor,
     // MenuItem
     kColorId_EnabledMenuItemForegroundColor,
     kColorId_DisabledMenuItemForegroundColor,
-    kColorId_DisabledEmphasizedMenuItemForegroundColor,
     kColorId_SelectedMenuItemForegroundColor,
     kColorId_FocusedMenuItemBackgroundColor,
-    kColorId_HoverMenuItemBackgroundColor,
     kColorId_MenuSeparatorColor,
     kColorId_MenuBackgroundColor,
     kColorId_MenuBorderColor,
@@ -275,7 +286,8 @@ class NATIVE_THEME_EXPORT NativeTheme {
     // Label
     kColorId_LabelEnabledColor,
     kColorId_LabelDisabledColor,
-    kColorId_LabelBackgroundColor,
+    kColorId_LabelTextSelectionColor,
+    kColorId_LabelTextSelectionBackgroundFocused,
     // Link
     kColorId_LinkDisabled,
     kColorId_LinkEnabled,
@@ -316,9 +328,6 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_ResultsTableNormalDimmedText,
     kColorId_ResultsTableHoveredDimmedText,
     kColorId_ResultsTableSelectedDimmedText,
-    kColorId_ResultsTableNormalHeadline,
-    kColorId_ResultsTableHoveredHeadline,
-    kColorId_ResultsTableSelectedHeadline,
     kColorId_ResultsTableNormalUrl,
     kColorId_ResultsTableHoveredUrl,
     kColorId_ResultsTableSelectedUrl,
@@ -336,6 +345,10 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_ThrobberSpinningColor,
     kColorId_ThrobberWaitingColor,
     kColorId_ThrobberLightColor,
+    // Colors for icons that alert, e.g. upgrade reminders.
+    kColorId_AlertSeverityLow,
+    kColorId_AlertSeverityMedium,
+    kColorId_AlertSeverityHigh,
     // TODO(benrg): move other hardcoded colors here.
 
     kColorId_NumColors,
@@ -351,6 +364,9 @@ class NATIVE_THEME_EXPORT NativeTheme {
   // NativeTheme should provide its own implementation of this function,
   // returning the port's subclass.
   static NativeTheme* GetInstanceForWeb();
+
+  // Returns a shared instance of the default native theme for native UI.
+  static NativeTheme* GetInstanceForNativeUi();
 
   // Add or remove observers to be notified when the native theme changes.
   void AddObserver(NativeThemeObserver* observer);

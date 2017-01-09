@@ -4,7 +4,7 @@
 
 #include "components/signin/core/browser/signin_cookie_changed_subscription.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/cookies/cookie_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -87,19 +87,17 @@ void SigninCookieChangedSubscription::RunAsyncOnCookieChanged(
     scoped_refptr<base::TaskRunner> proxy,
     base::WeakPtr<SigninCookieChangedSubscription> subscription,
     const net::CanonicalCookie& cookie,
-    bool removed) {
+    net::CookieStore::ChangeCause cause) {
   proxy->PostTask(FROM_HERE,
                   base::Bind(&SigninCookieChangedSubscription::OnCookieChanged,
-                             subscription,
-                             cookie,
-                             removed));
+                             subscription, cookie, cause));
 }
 
 void SigninCookieChangedSubscription::OnCookieChanged(
     const net::CanonicalCookie& cookie,
-    bool removed) {
+    net::CookieStore::ChangeCause cause) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!callback_.is_null()) {
-    callback_.Run(cookie, removed);
+    callback_.Run(cookie, cause);
   }
 }

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/capabilities.h"
 #include "chrome/test/chromedriver/chrome/devtools_event_listener.h"
@@ -69,7 +72,7 @@ TEST(WebDriverLog, Levels) {
   log.AddEntry(Log::kError, "severe message");
   log.AddEntry(Log::kDebug, "debug message");  // Must not log
 
-  scoped_ptr<base::ListValue> entries(log.GetAndClearEntries());
+  std::unique_ptr<base::ListValue> entries(log.GetAndClearEntries());
 
   ASSERT_EQ(2u, entries->GetSize());
   ValidateLogEntry(entries.get(), 0, "INFO", "info message");
@@ -81,7 +84,7 @@ TEST(WebDriverLog, Off) {
   log.AddEntry(Log::kError, "severe message");  // Must not log
   log.AddEntry(Log::kDebug, "debug message");  // Must not log
 
-  scoped_ptr<base::ListValue> entries(log.GetAndClearEntries());
+  std::unique_ptr<base::ListValue> entries(log.GetAndClearEntries());
 
   ASSERT_EQ(0u, entries->GetSize());
 }
@@ -91,7 +94,7 @@ TEST(WebDriverLog, All) {
   log.AddEntry(Log::kError, "severe message");
   log.AddEntry(Log::kDebug, "debug message");
 
-  scoped_ptr<base::ListValue> entries(log.GetAndClearEntries());
+  std::unique_ptr<base::ListValue> entries(log.GetAndClearEntries());
 
   ASSERT_EQ(2u, entries->GetSize());
   ValidateLogEntry(entries.get(), 0, "SEVERE", "severe message");

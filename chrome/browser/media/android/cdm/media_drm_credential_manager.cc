@@ -10,16 +10,17 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
-#include "content/public/browser/android/provision_fetcher_factory.h"
+#include "content/public/browser/provision_fetcher_factory.h"
 #include "jni/MediaDrmCredentialManager_jni.h"
 #include "media/base/android/media_drm_bridge.h"
-#include "media/base/android/provision_fetcher.h"
+#include "media/base/provision_fetcher.h"
 #include "url/gurl.h"
 
 #include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
 
+using base::android::JavaParamRef;
 using base::android::ScopedJavaGlobalRef;
 
 namespace {
@@ -29,7 +30,7 @@ void MediaDrmCredentialManagerCallback(
     bool succeeded) {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_MediaDrmCredentialManagerCallback_onCredentialResetFinished(
-      env, j_media_drm_credential_manager_callback.obj(), succeeded);
+      env, j_media_drm_credential_manager_callback, succeeded);
 }
 
 }  // namespace
@@ -51,11 +52,8 @@ void MediaDrmCredentialManager::ResetCredentials(
 
   reset_credentials_cb_ = reset_credentials_cb;
 
-  // First reset the L3 credential.
-  if (!ResetCredentialsInternal(media::MediaDrmBridge::SECURITY_LEVEL_3)) {
-    // TODO(qinmin): We should post a task instead.
-    base::ResetAndReturn(&reset_credentials_cb_).Run(false);
-  }
+  // First reset the L3 credentials.
+  ResetCredentialsInternal(media::MediaDrmBridge::SECURITY_LEVEL_3);
 }
 
 // static
@@ -80,9 +78,8 @@ void ResetCredentials(
 void MediaDrmCredentialManager::OnResetCredentialsCompleted(
     SecurityLevel security_level, bool success) {
   if (security_level == media::MediaDrmBridge::SECURITY_LEVEL_3 && success) {
-    if (ResetCredentialsInternal(media::MediaDrmBridge::SECURITY_LEVEL_1))
-      return;
-    success = false;
+    ResetCredentialsInternal(media::MediaDrmBridge::SECURITY_LEVEL_1);
+    return;
   }
 
   base::ResetAndReturn(&reset_credentials_cb_).Run(success);
@@ -90,31 +87,28 @@ void MediaDrmCredentialManager::OnResetCredentialsCompleted(
 }
 
 // TODO(ddorwin): The key system should be passed in. http://crbug.com/459400
-bool MediaDrmCredentialManager::ResetCredentialsInternal(
+void MediaDrmCredentialManager::ResetCredentialsInternal(
     SecurityLevel security_level) {
   // Create provision fetcher for the default browser http request context.
   media::CreateFetcherCB create_fetcher_cb =
       base::Bind(&content::CreateProvisionFetcher,
                  g_browser_process->system_request_context());
 
-  media_drm_bridge_ = media::MediaDrmBridge::CreateWithoutSessionSupport(
-      kWidevineKeySystem, create_fetcher_cb);
-  if (!media_drm_bridge_)
-    return false;
-
   ResetCredentialsCB reset_credentials_cb =
       base::Bind(&MediaDrmCredentialManager::OnResetCredentialsCompleted,
                  base::Unretained(this), security_level);
 
-  if (!media_drm_bridge_->SetSecurityLevel(security_level)) {
-    // No need to reset credentials for unsupported |security_level|.
+  media_drm_bridge_ = media::MediaDrmBridge::CreateWithoutSessionSupport(
+      kWidevineKeySystem, security_level, create_fetcher_cb);
+
+  // No need to reset credentials for unsupported |security_level|.
+  if (!media_drm_bridge_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(reset_credentials_cb, true));
-    return true;
+    return;
   }
 
   media_drm_bridge_->ResetDeviceCredentials(reset_credentials_cb);
-  return true;
 }
 
 // static

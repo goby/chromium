@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_GCM_DRIVER_CRYPTO_GCM_MESSAGE_CRYPTOGRAPHER_H_
 #define COMPONENTS_GCM_DRIVER_CRYPTO_GCM_MESSAGE_CRYPTOGRAPHER_H_
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string>
 
@@ -50,22 +51,22 @@ class GCMMessageCryptographer {
 
   ~GCMMessageCryptographer();
 
-  // Encrypts |plaintext| using the |key| and the |salt|, both of which must be
+  // Encrypts |plaintext| using the |ikm| and the |salt|, both of which must be
   // 16 octets in length. The |plaintext| will be written to a single record,
   // and will include a 16 octet authentication tag. The encrypted result will
   // be written to |ciphertext|, the record size to |record_size|. This
   // implementation does not support prepending padding to the |plaintext|.
   bool Encrypt(const base::StringPiece& plaintext,
-               const base::StringPiece& key,
+               const base::StringPiece& ikm,
                const base::StringPiece& salt,
                size_t* record_size,
                std::string* ciphertext) const WARN_UNUSED_RESULT;
 
-  // Decrypts |ciphertext| using the |key| and the |salt|, both of which must be
+  // Decrypts |ciphertext| using the |ikm| and the |salt|, both of which must be
   // 16 octets in length. The result will be stored in |plaintext|. Note that
   // there must only be a single record, per draft-thomson-http-encryption-01.
   bool Decrypt(const base::StringPiece& ciphertext,
-               const base::StringPiece& key,
+               const base::StringPiece& ikm,
                const base::StringPiece& salt,
                size_t record_size,
                std::string* plaintext) const WARN_UNUSED_RESULT;
@@ -74,7 +75,7 @@ class GCMMessageCryptographer {
   FRIEND_TEST_ALL_PREFIXES(GCMMessageCryptographerTest, AuthSecretAffectsIKM);
   FRIEND_TEST_ALL_PREFIXES(GCMMessageCryptographerTest, InvalidRecordPadding);
   FRIEND_TEST_ALL_PREFIXES(GCMMessageCryptographerTest, NonceGeneration);
-  FRIEND_TEST_ALL_PREFIXES(GCMMessageCryptographerTest, ReferenceTest);
+  friend class GCMMessageCryptographerReferenceTest;
 
   // Size, in bytes, of the authentication tag included in the messages.
   static const size_t kAuthenticationTagBytes;
@@ -82,24 +83,24 @@ class GCMMessageCryptographer {
   enum Mode { ENCRYPT, DECRYPT };
 
   // Private implementation of the encryption and decryption routines, provided
-  // by either NSS or BoringSSL depending on the platform.
+  // by BoringSSL.
   bool EncryptDecryptRecordInternal(Mode mode,
                                     const base::StringPiece& input,
                                     const base::StringPiece& key,
                                     const base::StringPiece& nonce,
                                     std::string* output) const;
 
-  // Derives the input keying material (IKM) to use for deriving the content
+  // Derives the pseuro random key (PRK) to use for deriving the content
   // encryption key and the nonce. If |auth_secret_| is not the empty string,
   // another HKDF will be invoked between the |key| and the |auth_secret_|.
-  std::string DeriveInputKeyingMaterial(const base::StringPiece& key) const;
+  std::string DerivePseudoRandomKey(const base::StringPiece& ikm) const;
 
-  // Derives the content encryption key from |key| and |salt|.
-  std::string DeriveContentEncryptionKey(const base::StringPiece& key,
+  // Derives the content encryption key from |prk| and |salt|.
+  std::string DeriveContentEncryptionKey(const base::StringPiece& prk,
                                          const base::StringPiece& salt) const;
 
-  // Derives the nonce from |key| and |salt|.
-  std::string DeriveNonce(const base::StringPiece& key,
+  // Derives the nonce from |prk| and |salt|.
+  std::string DeriveNonce(const base::StringPiece& prk,
                           const base::StringPiece& salt) const;
 
   // The info parameters to the HKDFs used for deriving the content encryption

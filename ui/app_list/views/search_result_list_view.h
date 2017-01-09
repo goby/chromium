@@ -5,7 +5,9 @@
 #ifndef UI_APP_LIST_VIEWS_SEARCH_RESULT_LIST_VIEW_H_
 #define UI_APP_LIST_VIEWS_SEARCH_RESULT_LIST_VIEW_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/app_list/views/search_result_container_view.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -89,7 +91,7 @@ class APP_LIST_EXPORT SearchResultListView : public gfx::AnimationDelegate,
 
   views::View* results_container_;
   views::View* auto_launch_indicator_;
-  scoped_ptr<gfx::LinearAnimation> auto_launch_animation_;
+  std::unique_ptr<gfx::LinearAnimation> auto_launch_animation_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchResultListView);
 };

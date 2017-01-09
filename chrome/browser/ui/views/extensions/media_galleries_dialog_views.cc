@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/views/extensions/media_galleries_dialog_views.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/views/extensions/media_gallery_checkbox_view.h"
 #include "chrome/grit/generated_resources.h"
@@ -16,7 +19,7 @@
 #include "ui/views/border.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/image_button.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/scroll_view.h"
@@ -124,10 +127,8 @@ void MediaGalleriesDialogViews::InitChildViews() {
       views::BoxLayout::kVertical, 0, 0,
       views::kRelatedControlSmallVerticalSpacing));
   scroll_container->SetBorder(
-      views::Border::CreateEmptyBorder(views::kRelatedControlVerticalSpacing,
-                                       0,
-                                       views::kRelatedControlVerticalSpacing,
-                                       0));
+      views::CreateEmptyBorder(views::kRelatedControlVerticalSpacing, 0,
+                               views::kRelatedControlVerticalSpacing, 0));
 
   std::vector<base::string16> section_headers =
       controller_->GetSectionHeaders();
@@ -144,11 +145,9 @@ void MediaGalleriesDialogViews::InitChildViews() {
       views::Label* header = new views::Label(section_headers[i]);
       header->SetMultiLine(true);
       header->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-      header->SetBorder(views::Border::CreateEmptyBorder(
-          views::kRelatedControlVerticalSpacing,
-          views::kPanelHorizMargin,
-          views::kRelatedControlVerticalSpacing,
-          0));
+      header->SetBorder(views::CreateEmptyBorder(
+          views::kRelatedControlVerticalSpacing, views::kPanelHorizMargin,
+          views::kRelatedControlVerticalSpacing, 0));
       scroll_container->AddChildView(header);
     }
 
@@ -188,8 +187,6 @@ bool MediaGalleriesDialogViews::AddOrUpdateGallery(
     const MediaGalleriesDialogController::Entry& gallery,
     views::View* container,
     int trailing_vertical_space) {
-  bool show_folder_viewer = controller_->ShouldShowFolderViewer(gallery);
-
   CheckboxMap::iterator iter = checkbox_map_.find(gallery.pref_info.pref_id);
   if (iter != checkbox_map_.end()) {
     views::Checkbox* checkbox = iter->second->checkbox();
@@ -199,13 +196,11 @@ bool MediaGalleriesDialogViews::AddOrUpdateGallery(
     base::string16 details = gallery.pref_info.GetGalleryAdditionalDetails();
     iter->second->secondary_text()->SetText(details);
     iter->second->secondary_text()->SetVisible(details.length() > 0);
-    iter->second->folder_viewer_button()->SetVisible(show_folder_viewer);
     return false;
   }
 
-  MediaGalleryCheckboxView* gallery_view =
-      new MediaGalleryCheckboxView(gallery.pref_info, show_folder_viewer,
-                                   trailing_vertical_space, this, this);
+  MediaGalleryCheckboxView* gallery_view = new MediaGalleryCheckboxView(
+      gallery.pref_info, trailing_vertical_space, this, this);
   gallery_view->checkbox()->SetChecked(gallery.selected);
   container->AddChildView(gallery_view);
   checkbox_map_[gallery.pref_info.pref_id] = gallery_view;
@@ -253,8 +248,8 @@ views::View* MediaGalleriesDialogViews::CreateExtraView() {
   DCHECK(!auxiliary_button_);
   base::string16 button_label = controller_->GetAuxiliaryButtonText();
   if (!button_label.empty()) {
-    auxiliary_button_ = new views::LabelButton(this, button_label);
-    auxiliary_button_->SetStyle(views::Button::STYLE_BUTTON);
+    auxiliary_button_ =
+        views::MdTextButton::CreateSecondaryUiButton(this, button_label);
   }
   return auxiliary_button_;
 }
@@ -287,10 +282,6 @@ void MediaGalleriesDialogViews::ButtonPressed(views::Button* sender,
                                   iter->second->checkbox()->checked());
       return;
     }
-    if (sender == iter->second->folder_viewer_button()) {
-      controller_->DidClickOpenFolderViewer(iter->first);
-      return;
-    }
   }
 }
 
@@ -312,20 +303,22 @@ void MediaGalleriesDialogViews::ShowContextMenu(const gfx::Point& point,
                                                 MediaGalleryPrefId id) {
   context_menu_runner_.reset(new views::MenuRunner(
       controller_->GetContextMenu(id),
-      views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU));
+      views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU |
+          views::MenuRunner::ASYNC,
+      base::Bind(&MediaGalleriesDialogViews::OnMenuClosed,
+                 base::Unretained(this))));
 
-  if (context_menu_runner_->RunMenuAt(GetWidget(),
-                                      NULL,
-                                      gfx::Rect(point.x(), point.y(), 0, 0),
-                                      views::MENU_ANCHOR_TOPLEFT,
-                                      source_type) ==
-      views::MenuRunner::MENU_DELETED) {
-    return;
-  }
+  context_menu_runner_->RunMenuAt(GetWidget(), NULL,
+                                  gfx::Rect(point.x(), point.y(), 0, 0),
+                                  views::MENU_ANCHOR_TOPLEFT, source_type);
 }
 
 bool MediaGalleriesDialogViews::ControllerHasWebContents() const {
   return controller_->WebContents() != NULL;
+}
+
+void MediaGalleriesDialogViews::OnMenuClosed() {
+  context_menu_runner_.reset();
 }
 
 // MediaGalleriesDialogViewsController -----------------------------------------

@@ -181,6 +181,8 @@ class TLSConnection(TLSRecordLayer):
         @type sock: L{socket.socket}
         """
         TLSRecordLayer.__init__(self, sock)
+        self.clientRandom = b""
+        self.serverRandom = b""
 
     #*********************************************************
     # Client Handshake Functions
@@ -493,6 +495,10 @@ class TLSConnection(TLSRecordLayer):
             settings = HandshakeSettings()
         settings = settings._filter()
 
+        if settings.alpnProtos is not None:
+            if len(settings.alpnProtos) == 0:
+                raise ValueError("Caller passed no alpnProtos")
+
         if clientCertChain:
             if not isinstance(clientCertChain, X509CertChain):
                 raise ValueError("Unrecognized certificate type")
@@ -606,6 +612,9 @@ class TLSConnection(TLSRecordLayer):
                 else: break
         masterSecret = result
         
+        self.clientRandom = clientHello.random
+        self.serverRandom = serverHello.random
+
         # Create the session object which is used for resumptions
         self.session = Session()
         self.session.create(masterSecret, serverHello.session_id, cipherSuite,
@@ -646,7 +655,8 @@ class TLSConnection(TLSRecordLayer):
                                    session.sessionID, cipherSuites,
                                    certificateTypes, 
                                    session.srpUsername,
-                                   reqTack, nextProtos is not None,
+                                   reqTack, settings.alpnProtos,
+                                   nextProtos is not None,
                                    session.serverName)
 
         #Or send ClientHello (without)
@@ -656,7 +666,8 @@ class TLSConnection(TLSRecordLayer):
                                bytearray(0), cipherSuites,
                                certificateTypes, 
                                srpUsername,
-                               reqTack, nextProtos is not None, 
+                               reqTack, settings.alpnProtos,
+                               nextProtos is not None,
                                serverName)
         for result in self._sendMsg(clientHello):
             yield result
@@ -709,6 +720,16 @@ class TLSConnection(TLSRecordLayer):
                     AlertDescription.illegal_parameter,
                     "Server responded with unrequested Tack Extension"):
                     yield result
+        if serverHello.alpn_proto_selected and not clientHello.alpn_protos_advertised:
+            for result in self._sendError(\
+                AlertDescription.illegal_parameter,
+                "Server responded with unrequested ALPN Extension"):
+                yield result
+        if serverHello.alpn_proto_selected and serverHello.next_protos:
+            for result in self._sendError(\
+                AlertDescription.illegal_parameter,
+                "Server responded with both ALPN and NPN extension"):
+                yield result
         if serverHello.next_protos and not clientHello.supports_npn:
             for result in self._sendError(\
                 AlertDescription.illegal_parameter,
@@ -1310,6 +1331,15 @@ class TLSConnection(TLSRecordLayer):
         else:
             sessionID = bytearray(0)
         
+        alpn_proto_selected = None
+        if (clientHello.alpn_protos_advertised is not None
+                and settings.alpnProtos is not None):
+            for proto in settings.alpnProtos:
+                if proto in clientHello.alpn_protos_advertised:
+                    alpn_proto_selected = proto
+                    nextProtos = None
+                    break;
+
         if not clientHello.supports_npn:
             nextProtos = None
 
@@ -1325,6 +1355,7 @@ class TLSConnection(TLSRecordLayer):
         serverHello = ServerHello()
         serverHello.create(self.version, getRandomBytes(32), sessionID, \
                             cipherSuite, CertificateType.x509, tackExt,
+                            alpn_proto_selected,
                             nextProtos)
         serverHello.channel_id = \
             clientHello.channel_id and settings.enableChannelID
@@ -1339,6 +1370,8 @@ class TLSConnection(TLSRecordLayer):
             serverHello.signed_cert_timestamps = signedCertTimestamps
         if clientHello.status_request:
             serverHello.status_request = ocspResponse
+        if clientHello.ri:
+            serverHello.send_ri = True
 
         # Perform the SRP key exchange
         clientCertChain = None
@@ -1397,6 +1430,9 @@ class TLSConnection(TLSRecordLayer):
                 if result in (0,1): yield result
                 else: break
         masterSecret = result
+
+        self.clientRandom = clientHello.random
+        self.serverRandom = serverHello.random
 
         #Create the session object
         self.session = Session()
@@ -1492,6 +1528,14 @@ class TLSConnection(TLSRecordLayer):
         else:
             assert(False)
 
+        alpn_proto_selected = None
+        if (clientHello.alpn_protos_advertised is not None
+                and settings.alpnProtos is not None):
+            for proto in settings.alpnProtos:
+                if proto in clientHello.alpn_protos_advertised:
+                    alpn_proto_selected = proto
+                    break;
+
         #If resumption was requested and we have a session cache...
         if clientHello.session_id and sessionCache:
             session = None
@@ -1532,10 +1576,17 @@ class TLSConnection(TLSRecordLayer):
                 serverHello = ServerHello()
                 serverHello.create(self.version, getRandomBytes(32),
                                    session.sessionID, session.cipherSuite,
-                                   CertificateType.x509, None, None)
+                                   CertificateType.x509, None,
+                                   alpn_proto_selected, None)
                 serverHello.extended_master_secret = \
                     clientHello.extended_master_secret and \
                     settings.enableExtendedMasterSecret
+                for param in clientHello.tb_client_params:
+                    if param in settings.supportedTokenBindingParams:
+                          serverHello.tb_params = param
+                          break
+                if clientHello.ri:
+                    serverHello.send_ri = True
                 for result in self._sendMsg(serverHello):
                     yield result
 
@@ -1558,6 +1609,8 @@ class TLSConnection(TLSRecordLayer):
                 #Set the session
                 self.session = session
                     
+                self.clientRandom = clientHello.random
+                self.serverRandom = serverHello.random
                 yield None # Handshake done!
 
         #Calculate the first cipher suite intersection.
@@ -2013,3 +2066,22 @@ class TLSConnection(TLSRecordLayer):
             except:
                 self._shutdown(False)
                 raise
+
+
+    def exportKeyingMaterial(self, label, context, use_context, length):
+        """Returns the exported keying material as defined in RFC 5705."""
+
+        seed = self.clientRandom + self.serverRandom
+        if use_context:
+            if len(context) > 65535:
+                raise ValueError("Context is too long")
+            seed += bytearray(2)
+            seed[len(seed) - 2] = len(context) >> 8
+            seed[len(seed) - 1] = len(context) & 0xFF
+            seed += context
+        if self.version in ((3,1), (3,2)):
+            return PRF(self.session.masterSecret, label, seed, length)
+        elif self.version == (3,3):
+            return PRF_1_2(self.session.masterSecret, label, seed, length)
+        else:
+            raise AssertionError()

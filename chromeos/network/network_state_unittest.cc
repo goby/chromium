@@ -4,9 +4,14 @@
 
 #include "chromeos/network/network_state.h"
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/i18n/streaming_utf8_validator.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,9 +25,7 @@ namespace {
 class TestStringValue : public base::Value {
  public:
   explicit TestStringValue(const std::string& in_value)
-      : base::Value(TYPE_STRING),
-        value_(in_value) {
-  }
+      : base::Value(Type::STRING), value_(in_value) {}
 
   ~TestStringValue() override {}
 
@@ -54,14 +57,14 @@ class NetworkStateTest : public testing::Test {
   }
 
  protected:
-  bool SetProperty(const std::string& key, scoped_ptr<base::Value> value) {
+  bool SetProperty(const std::string& key, std::unique_ptr<base::Value> value) {
     const bool result = network_state_.PropertyChanged(key, *value);
     properties_.SetWithoutPathExpansion(key, value.release());
     return result;
   }
 
   bool SetStringProperty(const std::string& key, const std::string& value) {
-    return SetProperty(key, make_scoped_ptr(new TestStringValue(value)));
+    return SetProperty(key, base::MakeUnique<TestStringValue>(value));
   }
 
   bool SignalInitialPropertiesReceived() {
@@ -125,10 +128,10 @@ TEST_F(NetworkStateTest, SsidFromName) {
 TEST_F(NetworkStateTest, SsidLatin) {
   EXPECT_TRUE(SetStringProperty(shill::kTypeProperty, shill::kTypeWifi));
 
-  std::string wifi_latin1 = "latin-1 \xc0\xcb\xcc\xd6\xfb";
+  std::string wifi_latin1 = "latin-1 \x54\xe9\x6c\xe9\x63\x6f\x6d";  // Télécom
   std::string wifi_latin1_hex =
       base::HexEncode(wifi_latin1.c_str(), wifi_latin1.length());
-  std::string wifi_latin1_result = "latin-1 \u00c0\u00cb\u00cc\u00d6\u00fb";
+  std::string wifi_latin1_result = "latin-1 T\xc3\xa9\x6c\xc3\xa9\x63om";
   EXPECT_TRUE(SetStringProperty(shill::kWifiHexSsid, wifi_latin1_hex));
   EXPECT_TRUE(SignalInitialPropertiesReceived());
   EXPECT_EQ(network_state_.name(), wifi_latin1_result);
@@ -221,12 +224,12 @@ TEST_F(NetworkStateTest, VPNThirdPartyProvider) {
   EXPECT_TRUE(SetStringProperty(shill::kTypeProperty, shill::kTypeVPN));
   EXPECT_TRUE(SetStringProperty(shill::kNameProperty, "VPN"));
 
-  scoped_ptr<base::DictionaryValue> provider(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> provider(new base::DictionaryValue);
   provider->SetStringWithoutPathExpansion(shill::kTypeProperty,
                                           shill::kProviderThirdPartyVpn);
   provider->SetStringWithoutPathExpansion(
       shill::kHostProperty, "third-party-vpn-provider-extension-id");
-  EXPECT_TRUE(SetProperty(shill::kProviderProperty, provider.Pass()));
+  EXPECT_TRUE(SetProperty(shill::kProviderProperty, std::move(provider)));
   SignalInitialPropertiesReceived();
   EXPECT_EQ(network_state_.vpn_provider_type(), shill::kProviderThirdPartyVpn);
   EXPECT_EQ(network_state_.third_party_vpn_provider_extension_id(),

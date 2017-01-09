@@ -21,14 +21,14 @@ const char kClassName[] = "extensions::SafeBuiltins";
 // Documentation for makeCallback in the JavaScript, out here to reduce the
 // (very small) amount of effort that the v8 parser needs to do:
 //
-// Returns a new object with every function on |obj| configured to call()\n"
-// itself with the given arguments.\n"
-// E.g. given\n"
-//    var result = makeCallable(Function.prototype)\n"
-// |result| will be a object including 'bind' such that\n"
-//    result.bind(foo, 1, 2, 3);\n"
-// is equivalent to Function.prototype.bind.call(foo, 1, 2, 3), and so on.\n"
-// This is a convenient way to save functions that user scripts may clobber.\n"
+// Returns a new object with every function on |obj| configured to call()
+// itself with the given arguments.
+// E.g. given
+//    var result = makeCallable(Function.prototype)
+// |result| will be a object including 'bind' such that
+//    result.bind(foo, 1, 2, 3);
+// is equivalent to Function.prototype.bind.call(foo, 1, 2, 3), and so on.
+// This is a convenient way to save functions that user scripts may clobber.
 const char kScript[] =
     "(function() {\n"
     "'use strict';\n"
@@ -70,17 +70,21 @@ const char kScript[] =
     "saveBuiltin(Object,\n"
     "            ['hasOwnProperty'],\n"
     "            ['create', 'defineProperty', 'freeze',\n"
-    "             'getOwnPropertyDescriptor', 'getPrototypeOf', 'keys']);\n"
+    "             'getOwnPropertyDescriptor', 'getPrototypeOf', 'keys',\n"
+    "             'assign', 'setPrototypeOf']);\n"
     "saveBuiltin(Function,\n"
     "            ['apply', 'bind', 'call']);\n"
     "saveBuiltin(Array,\n"
     "            ['concat', 'forEach', 'indexOf', 'join', 'push', 'slice',\n"
-    "             'splice', 'map', 'filter']);\n"
+    "             'splice', 'map', 'filter', 'unshift', 'pop', 'reverse'],\n"
+    "            ['isArray']);\n"
     "saveBuiltin(String,\n"
     "            ['indexOf', 'slice', 'split', 'substr', 'toUpperCase',\n"
     "             'replace']);\n"
+    "// Use exec rather than test to defend against clobbering in the\n"
+    "// presence of ES2015 semantics, which read RegExp.prototype.exec.\n"
     "saveBuiltin(RegExp,\n"
-    "            ['test']);\n"
+    "            ['exec']);\n"
     "saveBuiltin(Error,\n"
     "            [],\n"
     "            ['captureStackTrace']);\n"
@@ -192,7 +196,8 @@ class ExtensionImpl : public v8::Extension {
 
     v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
     int argc = args_length - first_arg_index;
-    scoped_ptr<v8::Local<v8::Value> []> argv(new v8::Local<v8::Value>[argc]);
+    std::unique_ptr<v8::Local<v8::Value>[]> argv(
+        new v8::Local<v8::Value>[argc]);
     for (int i = 0; i < argc; ++i) {
       CHECK(IsTrue(args->Has(context, i + first_arg_index)));
       // Getting a property value could throw an exception.
@@ -200,6 +205,8 @@ class ExtensionImpl : public v8::Extension {
         return;
     }
 
+    v8::MicrotasksScope microtasks(
+        info.GetIsolate(), v8::MicrotasksScope::kDoNotRunMicrotasks);
     v8::Local<v8::Value> return_value;
     if (function->Call(context, recv, argc, argv.get()).ToLocal(&return_value))
       info.GetReturnValue().Set(return_value);

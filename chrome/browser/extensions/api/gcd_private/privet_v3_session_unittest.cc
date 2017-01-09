@@ -6,7 +6,7 @@
 
 #include "base/base64.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/api/gcd_private/privet_v3_context_getter.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
@@ -78,25 +78,25 @@ class PrivetV3SessionTest : public testing::Test {
         base::Bind(&PrivetV3SessionTest::OnPostData, base::Unretained(this));
   }
 
-  scoped_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateFakeURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* fetcher_delegate,
       const std::string& response_data,
       net::HttpStatusCode response_code,
       net::URLRequestStatus::Status status) {
-    scoped_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
+    std::unique_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
         url, fetcher_delegate, response_data, response_code, status));
     scoped_refptr<net::HttpResponseHeaders> headers =
         new net::HttpResponseHeaders("");
     headers->AddHeader("Content-Type: application/json");
     fetcher->set_response_headers(headers);
-    return fetcher.Pass();
+    return fetcher;
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
   net::FakeURLFetcherFactory fetcher_factory_;
   base::DictionaryValue info_;
-  scoped_ptr<PrivetV3Session> session_;
+  std::unique_ptr<PrivetV3Session> session_;
 };
 
 TEST_F(PrivetV3SessionTest, InitError) {
@@ -232,8 +232,9 @@ TEST_F(PrivetV3SessionTest, Pairing) {
             const std::string& key = spake.GetUnverifiedKey();
             EXPECT_TRUE(hmac.Init(key));
             std::string signature(hmac.DigestLength(), ' ');
-            EXPECT_TRUE(hmac.Sign(fingerprint, reinterpret_cast<unsigned char*>(
-                                                   string_as_array(&signature)),
+            EXPECT_TRUE(hmac.Sign(fingerprint,
+                                  reinterpret_cast<unsigned char*>(
+                                      base::string_as_array(&signature)),
                                   signature.size()));
 
             std::string signature_base64;

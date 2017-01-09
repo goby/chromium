@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "web/LocalFileSystemClient.h"
 
 #include "core/dom/Document.h"
@@ -39,50 +38,51 @@
 #include "public/web/WebContentSettingsClient.h"
 #include "web/WebLocalFrameImpl.h"
 #include "web/WorkerContentSettingsClient.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<FileSystemClient> LocalFileSystemClient::create()
-{
-    return adoptPtr(static_cast<FileSystemClient*>(new LocalFileSystemClient()));
+std::unique_ptr<FileSystemClient> LocalFileSystemClient::create() {
+  return WTF::wrapUnique(
+      static_cast<FileSystemClient*>(new LocalFileSystemClient()));
 }
 
-LocalFileSystemClient::~LocalFileSystemClient()
-{
+LocalFileSystemClient::~LocalFileSystemClient() {}
+
+bool LocalFileSystemClient::requestFileSystemAccessSync(
+    ExecutionContext* context) {
+  DCHECK(context);
+  if (context->isDocument()) {
+    NOTREACHED();
+    return false;
+  }
+
+  DCHECK(context->isWorkerGlobalScope());
+  return WorkerContentSettingsClient::from(*toWorkerGlobalScope(context))
+      ->requestFileSystemAccessSync();
 }
 
-bool LocalFileSystemClient::requestFileSystemAccessSync(ExecutionContext* context)
-{
-    ASSERT(context);
-    if (context->isDocument()) {
-        ASSERT_NOT_REACHED();
-        return false;
-    }
+void LocalFileSystemClient::requestFileSystemAccessAsync(
+    ExecutionContext* context,
+    std::unique_ptr<ContentSettingCallbacks> callbacks) {
+  DCHECK(context);
+  if (!context->isDocument()) {
+    NOTREACHED();
+    return;
+  }
 
-    ASSERT(context->isWorkerGlobalScope());
-    return WorkerContentSettingsClient::from(*toWorkerGlobalScope(context))->requestFileSystemAccessSync();
+  Document* document = toDocument(context);
+  WebLocalFrameImpl* webFrame = WebLocalFrameImpl::fromFrame(document->frame());
+  if (!webFrame->contentSettingsClient()) {
+    callbacks->onAllowed();
+    return;
+  }
+  webFrame->contentSettingsClient()->requestFileSystemAccessAsync(
+      std::move(callbacks));
 }
 
-void LocalFileSystemClient::requestFileSystemAccessAsync(ExecutionContext* context, PassOwnPtr<ContentSettingCallbacks> callbacks)
-{
-    ASSERT(context);
-    if (!context->isDocument()) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
+LocalFileSystemClient::LocalFileSystemClient() {}
 
-    Document* document = toDocument(context);
-    WebLocalFrameImpl* webFrame = WebLocalFrameImpl::fromFrame(document->frame());
-    if (!webFrame->contentSettingsClient()) {
-        callbacks->onAllowed();
-        return;
-    }
-    webFrame->contentSettingsClient()->requestFileSystemAccessAsync(callbacks);
-}
-
-LocalFileSystemClient::LocalFileSystemClient()
-{
-}
-
-} // namespace blink
+}  // namespace blink

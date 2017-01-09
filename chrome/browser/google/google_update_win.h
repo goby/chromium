@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_GOOGLE_GOOGLE_UPDATE_WIN_H_
 #define CHROME_BROWSER_GOOGLE_GOOGLE_UPDATE_WIN_H_
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -95,7 +94,7 @@ class UpdateCheckDelegate {
 // invoked on the caller's thread to provide feedback on the operation, with
 // messages localized to |locale| if possible.
 void BeginUpdateCheck(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const std::string& locale,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,

@@ -10,12 +10,14 @@
 #include "base/json/json_reader.h"
 #include "base/location.h"
 #include "base/md5.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/common/cloud_print/cloud_print_constants.h"
 #include "chrome/common/cloud_print/cloud_print_helpers.h"
 #include "chrome/grit/generated_resources.h"
@@ -59,6 +61,9 @@ enum PrinterJobHandlerEvent {
 PrinterJobHandler::PrinterInfoFromCloud::PrinterInfoFromCloud()
     : current_xmpp_timeout(0), pending_xmpp_timeout(0) {
 }
+
+PrinterJobHandler::PrinterInfoFromCloud::PrinterInfoFromCloud(
+    const PrinterInfoFromCloud& other) = default;
 
 PrinterJobHandler::PrinterJobHandler(
     const printing::PrinterBasicInfo& printer_info,
@@ -131,7 +136,6 @@ CloudPrintURLFetcher::ResponseAction PrinterJobHandler::HandleRawResponse(
     const GURL& url,
     const net::URLRequestStatus& status,
     int response_code,
-    const net::ResponseCookies& cookies,
     const std::string& data) {
   // 415 (Unsupported media type) error while fetching data from the server
   // means data conversion error. Stop fetching process and mark job as error.
@@ -158,7 +162,7 @@ CloudPrintURLFetcher::ResponseAction PrinterJobHandler::HandleRawData(
 CloudPrintURLFetcher::ResponseAction PrinterJobHandler::HandleJSONData(
     const net::URLFetcher* source,
     const GURL& url,
-    base::DictionaryValue* json_data,
+    const base::DictionaryValue* json_data,
     bool succeeded) {
   DCHECK(next_json_data_handler_);
   return (this->*next_json_data_handler_)(source, url, json_data, succeeded);
@@ -199,19 +203,17 @@ bool PrinterJobHandler::OnJobCompleted(JobStatusUpdater* updater) {
                             JOB_HANDLER_JOB_COMPLETED, JOB_HANDLER_MAX);
   UMA_HISTOGRAM_LONG_TIMES("CloudPrint.PrintingTime",
                            base::Time::Now() - updater->start_time());
-  bool ret = false;
   base::subtle::NoBarrier_AtomicIncrement(&g_total_jobs_done, 1);
   job_queue_handler_.JobDone(job_details_.job_id_);
 
-  for (JobStatusUpdaterList::iterator index = job_status_updater_list_.begin();
-       index != job_status_updater_list_.end(); index++) {
-    if (index->get() == updater) {
-      job_status_updater_list_.erase(index);
-      ret = true;
-      break;
+  for (JobStatusUpdaterList::iterator it = job_status_updater_list_.begin();
+       it != job_status_updater_list_.end(); ++it) {
+    if (it->get() == updater) {
+      job_status_updater_list_.erase(it);
+      return true;
     }
   }
-  return ret;
+  return false;
 }
 
 void PrinterJobHandler::OnAuthError() {
@@ -237,26 +239,25 @@ void PrinterJobHandler::OnPrinterChanged() {
 void PrinterJobHandler::OnJobChanged() {
   // Some job on the printer changed. Loop through all our JobStatusUpdaters
   // and have them check for updates.
-  for (JobStatusUpdaterList::iterator index = job_status_updater_list_.begin();
-       index != job_status_updater_list_.end(); index++) {
+  for (const auto& it : job_status_updater_list_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&JobStatusUpdater::UpdateStatus, index->get()));
+        FROM_HERE, base::Bind(&JobStatusUpdater::UpdateStatus, it));
   }
 }
 
 void PrinterJobHandler::OnJobSpoolSucceeded(const PlatformJobId& job_id) {
-  DCHECK(base::MessageLoop::current() == print_thread_.message_loop());
+  DCHECK(CurrentlyOnPrintThread());
   job_spooler_->AddRef();
-  print_thread_.message_loop()->ReleaseSoon(FROM_HERE, job_spooler_.get());
+  print_thread_.task_runner()->ReleaseSoon(FROM_HERE, job_spooler_.get());
   job_spooler_ = NULL;
   job_handler_task_runner_->PostTask(
       FROM_HERE, base::Bind(&PrinterJobHandler::JobSpooled, this, job_id));
 }
 
 void PrinterJobHandler::OnJobSpoolFailed() {
-  DCHECK(base::MessageLoop::current() == print_thread_.message_loop());
+  DCHECK(CurrentlyOnPrintThread());
   job_spooler_->AddRef();
-  print_thread_.message_loop()->ReleaseSoon(FROM_HERE, job_spooler_.get());
+  print_thread_.task_runner()->ReleaseSoon(FROM_HERE, job_spooler_.get());
   job_spooler_ = NULL;
   VLOG(1) << "CP_CONNECTOR: Job failed (spool failed)";
   job_handler_task_runner_->PostTask(
@@ -283,7 +284,7 @@ CloudPrintURLFetcher::ResponseAction
 PrinterJobHandler::HandlePrinterUpdateResponse(
     const net::URLFetcher* source,
     const GURL& url,
-    base::DictionaryValue* json_data,
+    const base::DictionaryValue* json_data,
     bool succeeded) {
   VLOG(1) << "CP_CONNECTOR: Handling printer update response"
           << ", printer id: " << printer_info_cloud_.printer_id;
@@ -299,16 +300,16 @@ CloudPrintURLFetcher::ResponseAction
 PrinterJobHandler::HandleJobMetadataResponse(
     const net::URLFetcher* source,
     const GURL& url,
-    base::DictionaryValue* json_data,
+    const base::DictionaryValue* json_data,
     bool succeeded) {
   VLOG(1) << "CP_CONNECTOR: Handling job metadata response"
           << ", printer id: " << printer_info_cloud_.printer_id;
   bool job_available = false;
   if (succeeded) {
-    std::vector<JobDetails> jobs;
-    job_queue_handler_.GetJobsFromQueue(json_data, &jobs);
+    std::vector<JobDetails> jobs =
+        job_queue_handler_.GetJobsFromQueue(*json_data);
     if (!jobs.empty()) {
-      if (jobs[0].time_remaining_ == base::TimeDelta()) {
+      if (jobs[0].time_remaining_.is_zero()) {
         job_available = true;
         job_details_ = jobs[0];
         job_start_time_ = base::Time::Now();
@@ -392,7 +393,6 @@ PrinterJobHandler::HandlePrintDataResponse(const net::URLFetcher* source,
                               data.c_str(), data.length());
     source->GetResponseHeaders()->GetMimeType(
         &job_details_.print_data_mime_type_);
-    DCHECK(ret == static_cast<int>(data.length()));
     if (ret == static_cast<int>(data.length())) {
       UpdateJobStatus(PRINT_JOB_STATUS_IN_PROGRESS, JOB_SUCCESS);
       return CloudPrintURLFetcher::STOP_PROCESSING;
@@ -415,7 +415,7 @@ CloudPrintURLFetcher::ResponseAction
 PrinterJobHandler::HandleInProgressStatusUpdateResponse(
     const net::URLFetcher* source,
     const GURL& url,
-    base::DictionaryValue* json_data,
+    const base::DictionaryValue* json_data,
     bool succeeded) {
   VLOG(1) << "CP_CONNECTOR: Handling success status update response"
           << ", printer id: " << printer_info_cloud_.printer_id;
@@ -428,7 +428,7 @@ CloudPrintURLFetcher::ResponseAction
 PrinterJobHandler::HandleFailureStatusUpdateResponse(
     const net::URLFetcher* source,
     const GURL& url,
-    base::DictionaryValue* json_data,
+    const base::DictionaryValue* json_data,
     bool succeeded) {
   VLOG(1) << "CP_CONNECTOR: Handling failure status update response"
           << ", printer id: " << printer_info_cloud_.printer_id;
@@ -623,7 +623,7 @@ void PrinterJobHandler::JobSpooled(PlatformJobId local_job_id) {
   job_status_updater_list_.push_back(job_status_updater);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&JobStatusUpdater::UpdateStatus, job_status_updater.get()));
+      base::Bind(&JobStatusUpdater::UpdateStatus, job_status_updater));
 
   CheckForJobs(kJobFetchReasonQueryMore);
 
@@ -683,8 +683,7 @@ void PrinterJobHandler::OnReceivePrinterCaps(
     printer_watcher_->GetCurrentPrinterInfo(&printer_info);
 
   std::string post_data;
-  std::string mime_boundary;
-  CreateMimeBoundaryForUpload(&mime_boundary);
+  std::string mime_boundary = net::GenerateMimeMultipartBoundary();
 
   if (succeeded) {
     std::string caps_hash =
@@ -781,17 +780,13 @@ void PrinterJobHandler::OnReceivePrinterCaps(
   }
 }
 
-// The following methods are called on |print_thread_|. It is not safe to
-// access any members other than |job_handler_task_runner_|,
-// |job_spooler_| and |print_system_|.
 void PrinterJobHandler::DoPrint(const JobDetails& job_details,
                                 const std::string& printer_name) {
+  DCHECK(CurrentlyOnPrintThread());
   job_spooler_ = print_system_->CreateJobSpooler();
   UMA_HISTOGRAM_LONG_TIMES("CloudPrint.PrepareTime",
                            base::Time::Now() - job_start_time_);
   DCHECK(job_spooler_.get());
-  if (!job_spooler_.get())
-    return;
 
   base::string16 document_name =
       job_details.job_title_.empty()
@@ -814,6 +809,10 @@ void PrinterJobHandler::DoPrint(const JobDetails& job_details,
                            this)) {
     OnJobSpoolFailed();
   }
+}
+
+bool PrinterJobHandler::CurrentlyOnPrintThread() const {
+  return print_thread_.task_runner()->BelongsToCurrentThread();
 }
 
 }  // namespace cloud_print

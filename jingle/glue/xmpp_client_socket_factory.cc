@@ -4,6 +4,8 @@
 
 #include "jingle/glue/xmpp_client_socket_factory.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "jingle/glue/fake_ssl_client_socket.h"
 #include "jingle/glue/proxy_resolving_client_socket.h"
@@ -29,36 +31,34 @@ XmppClientSocketFactory::XmppClientSocketFactory(
 
 XmppClientSocketFactory::~XmppClientSocketFactory() {}
 
-scoped_ptr<net::StreamSocket>
+std::unique_ptr<net::StreamSocket>
 XmppClientSocketFactory::CreateTransportClientSocket(
     const net::HostPortPair& host_and_port) {
   // TODO(akalin): Use socket pools.
-  scoped_ptr<net::StreamSocket> transport_socket(
-      new ProxyResolvingClientSocket(
-          NULL,
-          request_context_getter_,
-          ssl_config_,
-          host_and_port));
-  return (use_fake_ssl_client_socket_ ?
-          scoped_ptr<net::StreamSocket>(
-              new FakeSSLClientSocket(transport_socket.Pass())) :
-          transport_socket.Pass());
+  std::unique_ptr<net::StreamSocket> transport_socket(
+      new ProxyResolvingClientSocket(NULL, request_context_getter_, ssl_config_,
+                                     host_and_port));
+  return (use_fake_ssl_client_socket_
+              ? std::unique_ptr<net::StreamSocket>(
+                    new FakeSSLClientSocket(std::move(transport_socket)))
+              : std::move(transport_socket));
 }
 
-scoped_ptr<net::SSLClientSocket>
+std::unique_ptr<net::SSLClientSocket>
 XmppClientSocketFactory::CreateSSLClientSocket(
-    scoped_ptr<net::ClientSocketHandle> transport_socket,
+    std::unique_ptr<net::ClientSocketHandle> transport_socket,
     const net::HostPortPair& host_and_port) {
-  net::SSLClientSocketContext context;
-  context.cert_verifier =
-      request_context_getter_->GetURLRequestContext()->cert_verifier();
-  context.transport_security_state = request_context_getter_->
-      GetURLRequestContext()->transport_security_state();
-  DCHECK(context.transport_security_state);
-  // TODO(rkn): context.channel_id_service is NULL because the
-  // ChannelIDService class is not thread safe.
+  const net::URLRequestContext* url_context =
+      request_context_getter_->GetURLRequestContext();
+  net::SSLClientSocketContext context(
+      url_context->cert_verifier(),
+      nullptr, /* TODO(rkn): ChannelIDService is not thread safe. */
+      url_context->transport_security_state(),
+      url_context->cert_transparency_verifier(),
+      url_context->ct_policy_enforcer(),
+      std::string() /* TODO(rsleevi): Ensure a proper unique shard. */);
   return client_socket_factory_->CreateSSLClientSocket(
-      transport_socket.Pass(), host_and_port, ssl_config_, context);
+      std::move(transport_socket), host_and_port, ssl_config_, context);
 }
 
 

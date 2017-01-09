@@ -5,88 +5,60 @@
 #ifndef ProgrammaticScrollAnimator_h
 #define ProgrammaticScrollAnimator_h
 
-#include "platform/geometry/FloatPoint.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/WebCompositorAnimationDelegate.h"
-#include "public/platform/WebCompositorAnimationPlayerClient.h"
+#include "platform/scroll/ScrollAnimatorCompositorCoordinator.h"
 #include "wtf/Allocator.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
 class ScrollableArea;
-class WebCompositorAnimationPlayer;
-class WebCompositorAnimationTimeline;
-class WebScrollOffsetAnimationCurve;
+class CompositorAnimationTimeline;
+class CompositorScrollOffsetAnimationCurve;
 
 // Animator for fixed-destination scrolls, such as those triggered by
 // CSSOM View scroll APIs.
-class ProgrammaticScrollAnimator : public NoBaseWillBeGarbageCollectedFinalized<ProgrammaticScrollAnimator>, private WebCompositorAnimationPlayerClient, WebCompositorAnimationDelegate {
-    WTF_MAKE_NONCOPYABLE(ProgrammaticScrollAnimator);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ProgrammaticScrollAnimator);
-public:
-    static PassOwnPtrWillBeRawPtr<ProgrammaticScrollAnimator> create(ScrollableArea*);
+class ProgrammaticScrollAnimator : public ScrollAnimatorCompositorCoordinator {
+  WTF_MAKE_NONCOPYABLE(ProgrammaticScrollAnimator);
 
-    virtual ~ProgrammaticScrollAnimator();
+ public:
+  static ProgrammaticScrollAnimator* create(ScrollableArea* scrollableArea) {
+    return new ProgrammaticScrollAnimator(scrollableArea);
+  }
 
-    void scrollToOffsetWithoutAnimation(const FloatPoint&);
-    void animateToOffset(FloatPoint);
-    void cancelAnimation();
-    void tickAnimation(double monotonicTime);
-    bool hasAnimationThatRequiresService() const;
-    void updateCompositorAnimations();
-    void layerForCompositedScrollingDidChange(WebCompositorAnimationTimeline*);
-    void notifyCompositorAnimationFinished(int groupId);
-    // WebCompositorAnimationDelegate implementation.
-    void notifyAnimationStarted(double monotonicTime, int group) override;
-    void notifyAnimationFinished(double monotonicTime, int group) override;
+  virtual ~ProgrammaticScrollAnimator();
 
-    // WebCompositorAnimationPlayerClient implementation.
-    WebCompositorAnimationPlayer* compositorPlayer() const override;
+  void scrollToOffsetWithoutAnimation(const ScrollOffset&);
+  void animateToOffset(const ScrollOffset&);
 
-    DECLARE_TRACE();
+  // ScrollAnimatorCompositorCoordinator implementation.
+  void resetAnimationState() override;
+  void cancelAnimation() override;
+  void takeOverCompositorAnimation() override{};
+  ScrollableArea* getScrollableArea() const override {
+    return m_scrollableArea;
+  }
+  void tickAnimation(double monotonicTime) override;
+  void updateCompositorAnimations() override;
+  void notifyCompositorAnimationFinished(int groupId) override;
+  void notifyCompositorAnimationAborted(int groupId) override{};
+  void layerForCompositedScrollingDidChange(
+      CompositorAnimationTimeline*) override;
 
-private:
-    explicit ProgrammaticScrollAnimator(ScrollableArea*);
+  DECLARE_TRACE();
 
-    enum class RunState {
-        // No animation.
-        Idle,
+ private:
+  explicit ProgrammaticScrollAnimator(ScrollableArea*);
 
-        // Waiting to send an animation to the compositor. There might also
-        // already be another animation running on the compositor that will need
-        // to be canceled first.
-        WaitingToSendToCompositor,
+  void notifyOffsetChanged(const ScrollOffset&);
 
-        // Running an animation on the compositor.
-        RunningOnCompositor,
-
-        // Running an animation on the main thread.
-        RunningOnMainThread,
-
-        // Waiting to cancel the animation currently running on the compositor.
-        // There is no pending animation to replace the canceled animation.
-        WaitingToCancelOnCompositor
-    };
-
-    void resetAnimationState();
-    void notifyPositionChanged(const DoublePoint&);
-    void reattachCompositorPlayerIfNeeded(WebCompositorAnimationTimeline*);
-
-    OwnPtr<WebCompositorAnimationPlayer> m_compositorPlayer;
-    int m_compositorAnimationAttachedToLayerId;
-
-    RawPtrWillBeMember<ScrollableArea> m_scrollableArea;
-    OwnPtr<WebScrollOffsetAnimationCurve> m_animationCurve;
-    FloatPoint m_targetOffset;
-    double m_startTime;
-    RunState m_runState;
-    int m_compositorAnimationId;
-    int m_compositorAnimationGroupId;
+  Member<ScrollableArea> m_scrollableArea;
+  std::unique_ptr<CompositorScrollOffsetAnimationCurve> m_animationCurve;
+  ScrollOffset m_targetOffset;
+  double m_startTime;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ProgrammaticScrollAnimator_h
+#endif  // ProgrammaticScrollAnimator_h

@@ -5,19 +5,17 @@
 #ifndef CRYPTO_SIGNATURE_CREATOR_H_
 #define CRYPTO_SIGNATURE_CREATOR_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
+#include "base/macros.h"
 #include "build/build_config.h"
-#include "base/basictypes.h"
 #include "crypto/crypto_export.h"
 
-#if defined(USE_OPENSSL)
 // Forward declaration for openssl/*.h
 typedef struct env_md_ctx_st EVP_MD_CTX;
-#elif defined(USE_NSS_CERTS) || defined(OS_WIN) || defined(OS_MACOSX)
-// Forward declaration.
-struct SGNContextStr;
-#endif
 
 namespace crypto {
 
@@ -38,32 +36,28 @@ class CRYPTO_EXPORT SignatureCreator {
   // Create an instance. The caller must ensure that the provided PrivateKey
   // instance outlives the created SignatureCreator. Uses the HashAlgorithm
   // specified.
-  static SignatureCreator* Create(RSAPrivateKey* key, HashAlgorithm hash_alg);
-
+  static std::unique_ptr<SignatureCreator> Create(RSAPrivateKey* key,
+                                                  HashAlgorithm hash_alg);
 
   // Signs the precomputed |hash_alg| digest |data| using private |key| as
   // specified in PKCS #1 v1.5.
   static bool Sign(RSAPrivateKey* key,
                    HashAlgorithm hash_alg,
-                   const uint8* data,
+                   const uint8_t* data,
                    int data_len,
-                   std::vector<uint8>* signature);
+                   std::vector<uint8_t>* signature);
 
   // Update the signature with more data.
-  bool Update(const uint8* data_part, int data_part_len);
+  bool Update(const uint8_t* data_part, int data_part_len);
 
   // Finalize the signature.
-  bool Final(std::vector<uint8>* signature);
+  bool Final(std::vector<uint8_t>* signature);
 
  private:
   // Private constructor. Use the Create() method instead.
   SignatureCreator();
 
-#if defined(USE_OPENSSL)
   EVP_MD_CTX* sign_context_;
-#elif defined(USE_NSS_CERTS) || defined(OS_WIN) || defined(OS_MACOSX)
-  SGNContextStr* sign_context_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(SignatureCreator);
 };

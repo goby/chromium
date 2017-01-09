@@ -9,6 +9,7 @@ import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 import android.test.suitebuilder.annotation.LargeTest;
 
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.test.util.Criteria;
@@ -67,8 +68,6 @@ public class SelectPopupTest extends ContentShellTestBase {
         super.setUp();
         launchContentShellWithUrl(SELECT_URL);
         waitForActiveShellToBeDoneLoading();
-        // TODO(aurimas) remove this wait once crbug.com/179511 is fixed.
-        assertWaitForPageScaleFactorMatch(1);
     }
 
     /**
@@ -78,9 +77,10 @@ public class SelectPopupTest extends ContentShellTestBase {
     @LargeTest
     @Feature({"Browser"})
     @RerunWithUpdatedContainerView
+    @RetryOnFailure
     public void testReloadWhilePopupShowing() throws InterruptedException, Exception, Throwable {
         // The popup should be hidden before the click.
-        CriteriaHelper.pollForCriteria(new PopupHiddenCriteria());
+        CriteriaHelper.pollInstrumentationThread(new PopupHiddenCriteria());
 
         final ContentViewCore viewCore = getContentViewCore();
         final TestCallbackHelperContainer viewClient = new TestCallbackHelperContainer(viewCore);
@@ -88,7 +88,7 @@ public class SelectPopupTest extends ContentShellTestBase {
 
         // Once clicked, the popup should show up.
         DOMUtils.clickNode(this, viewCore, "select");
-        CriteriaHelper.pollForCriteria(new PopupShowingCriteria());
+        CriteriaHelper.pollInstrumentationThread(new PopupShowingCriteria());
 
         // Reload the test page.
         int currentCallCount = onPageFinishedHelper.getCallCount();
@@ -103,10 +103,10 @@ public class SelectPopupTest extends ContentShellTestBase {
                 WAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         // The popup should be hidden after the page reload.
-        CriteriaHelper.pollForCriteria(new PopupHiddenCriteria());
+        CriteriaHelper.pollInstrumentationThread(new PopupHiddenCriteria());
 
         // Click the select and wait for the popup to show.
         DOMUtils.clickNode(this, viewCore, "select");
-        CriteriaHelper.pollForCriteria(new PopupShowingCriteria());
+        CriteriaHelper.pollInstrumentationThread(new PopupShowingCriteria());
     }
 }

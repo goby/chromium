@@ -4,13 +4,19 @@
 
 #include "components/drive/file_write_watcher.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path_watcher.h"
-#include "base/stl_util.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "base/timer/timer.h"
 #include "google_apis/drive/task_util.h"
 
@@ -18,7 +24,7 @@ namespace drive {
 namespace internal {
 
 namespace {
-const int64 kWriteEventDelayInSeconds = 5;
+const int64_t kWriteEventDelayInSeconds = 5;
 }  // namespace
 
 // base::FileWatcher needs to live in a thread that is allowed to do File IO
@@ -66,7 +72,7 @@ class FileWriteWatcher::FileWriteWatcherImpl {
   };
 
   base::TimeDelta delay_;
-  std::map<base::FilePath, PathWatchInfo*> watchers_;
+  std::map<base::FilePath, std::unique_ptr<PathWatchInfo>> watchers_;
   scoped_refptr<base::SingleThreadTaskRunner> file_task_runner_;
 
   base::ThreadChecker thread_checker_;
@@ -110,8 +116,6 @@ void FileWriteWatcher::FileWriteWatcherImpl::StartWatch(
 
 FileWriteWatcher::FileWriteWatcherImpl::~FileWriteWatcherImpl() {
   DCHECK(file_task_runner_->BelongsToCurrentThread());
-
-  STLDeleteContainerPairSecondPointers(watchers_.begin(), watchers_.end());
 }
 
 void FileWriteWatcher::FileWriteWatcherImpl::DestroyOnFileThread() {
@@ -126,7 +130,7 @@ void FileWriteWatcher::FileWriteWatcherImpl::StartWatchOnFileThread(
     const base::Closure& on_write_callback) {
   DCHECK(file_task_runner_->BelongsToCurrentThread());
 
-  std::map<base::FilePath, PathWatchInfo*>::iterator it = watchers_.find(path);
+  auto it = watchers_.find(path);
   if (it != watchers_.end()) {
     // We are already watching the path.
     on_start_callback.Run(true);
@@ -135,13 +139,14 @@ void FileWriteWatcher::FileWriteWatcherImpl::StartWatchOnFileThread(
   }
 
   // Start watching |path|.
-  scoped_ptr<PathWatchInfo> info(new PathWatchInfo(on_write_callback));
+  std::unique_ptr<PathWatchInfo> info =
+      base::MakeUnique<PathWatchInfo>(on_write_callback);
   bool ok = info->watcher.Watch(
       path,
       false,  // recursive
       base::Bind(&FileWriteWatcherImpl::OnWriteEvent,
                  weak_ptr_factory_.GetWeakPtr()));
-  watchers_[path] = info.release();
+  watchers_[path] = std::move(info);
   on_start_callback.Run(ok);
 }
 
@@ -153,7 +158,7 @@ void FileWriteWatcher::FileWriteWatcherImpl::OnWriteEvent(
   if (error)
     return;
 
-  std::map<base::FilePath, PathWatchInfo*>::iterator it = watchers_.find(path);
+  auto it = watchers_.find(path);
   DCHECK(it != watchers_.end());
 
   // Heuristics for detecting the end of successive write operations.
@@ -171,16 +176,15 @@ void FileWriteWatcher::FileWriteWatcherImpl::InvokeCallback(
     const base::FilePath& path) {
   DCHECK(file_task_runner_->BelongsToCurrentThread());
 
-  std::map<base::FilePath, PathWatchInfo*>::iterator it = watchers_.find(path);
+  auto it = watchers_.find(path);
   DCHECK(it != watchers_.end());
 
   std::vector<base::Closure> callbacks;
   callbacks.swap(it->second->on_write_callbacks);
-  delete it->second;
   watchers_.erase(it);
 
-  for (size_t i = 0; i < callbacks.size(); ++i)
-    callbacks[i].Run();
+  for (const auto& callback : callbacks)
+    callback.Run();
 }
 
 FileWriteWatcher::FileWriteWatcher(

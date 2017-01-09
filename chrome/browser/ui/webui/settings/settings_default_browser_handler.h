@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_UI_WEBUI_SETTINGS_SETTINGS_DEFAULT_BROWSER_HANDLER_H_
 
 #include "base/macros.h"
-#include "base/prefs/pref_member.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shell_integration.h"
-#include "chrome/browser/ui/webui/settings/md_settings_ui.h"
+#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
+#include "components/prefs/pref_change_registrar.h"
 
 namespace base {
 class ListValue;
@@ -24,21 +25,15 @@ namespace settings {
 // The application used by the OS to open web documents (e.g. *.html)
 // is the "default browser".  This class is an API for the JavaScript
 // settings code to change the default browser settings.
-class DefaultBrowserHandler
-    : public SettingsPageUIHandler,
-      public ShellIntegration::DefaultWebClientObserver {
+class DefaultBrowserHandler : public SettingsPageUIHandler {
  public:
   explicit DefaultBrowserHandler(content::WebUI* webui);
   ~DefaultBrowserHandler() override;
 
   // SettingsPageUIHandler implementation.
   void RegisterMessages() override;
-
-  // ShellIntegration::DefaultWebClientObserver implementation.
-  void SetDefaultWebClientUIState(
-      ShellIntegration::DefaultWebClientUIState state) override;
-  bool IsInteractiveSetDefaultPermitted() override;
-  void OnSetAsDefaultConcluded(bool succeeded) override;
+  void OnJavascriptAllowed() override;
+  void OnJavascriptDisallowed() override;
 
  private:
   // Called from WebUI to request the current state.
@@ -47,11 +42,20 @@ class DefaultBrowserHandler
   // Makes this the default browser. Called from WebUI.
   void SetAsDefaultBrowser(const base::ListValue* args);
 
-  // Reference to a background worker that handles default browser settings.
-  scoped_refptr<ShellIntegration::DefaultBrowserWorker> default_browser_worker_;
+  // Called with the default browser state when the DefaultBrowserWorker is
+  // done.
+  void OnDefaultBrowserWorkerFinished(
+      shell_integration::DefaultWebClientState state);
 
-  // Policy setting to determine if default browser setting is managed.
-  BooleanPrefMember default_browser_policy_;
+  // Reference to a background worker that handles default browser settings.
+  scoped_refptr<shell_integration::DefaultBrowserWorker>
+      default_browser_worker_;
+
+  // Used to listen for changes to if the default browser setting is managed.
+  PrefChangeRegistrar local_state_pref_registrar_;
+
+  // Used to invalidate the DefaultBrowserWorker callback.
+  base::WeakPtrFactory<DefaultBrowserHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultBrowserHandler);
 };

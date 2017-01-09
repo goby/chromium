@@ -7,21 +7,25 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
+#include "base/location.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/common/frame_messages.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/renderer/peripheral_content_heuristic.h"
 #include "ppapi/shared_impl/ppapi_constants.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace content {
 
 namespace {
 
 const char kPeripheralHeuristicHistogram[] =
-    "Plugin.PowerSaver.PeripheralHeuristic";
+    "Plugin.PowerSaver.PeripheralHeuristicInitialDecision";
 
 }  // namespace
 
@@ -30,6 +34,9 @@ PluginPowerSaverHelper::PeripheralPlugin::PeripheralPlugin(
     const base::Closure& unthrottle_callback)
     : content_origin(content_origin),
       unthrottle_callback(unthrottle_callback) {}
+
+PluginPowerSaverHelper::PeripheralPlugin::PeripheralPlugin(
+    const PeripheralPlugin& other) = default;
 
 PluginPowerSaverHelper::PeripheralPlugin::~PeripheralPlugin() {
 }
@@ -61,6 +68,10 @@ bool PluginPowerSaverHelper::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
+void PluginPowerSaverHelper::OnDestruct() {
+  delete this;
+}
+
 void PluginPowerSaverHelper::OnUpdatePluginContentOriginWhitelist(
     const std::set<url::Origin>& origin_whitelist) {
   origin_whitelist_ = origin_whitelist;
@@ -69,7 +80,10 @@ void PluginPowerSaverHelper::OnUpdatePluginContentOriginWhitelist(
   auto it = peripheral_plugins_.begin();
   while (it != peripheral_plugins_.end()) {
     if (origin_whitelist.count(it->content_origin)) {
-      it->unthrottle_callback.Run();
+      // Because the unthrottle callback may register another peripheral plugin
+      // and invalidate our iterator, we cannot run it synchronously.
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                    it->unthrottle_callback);
       it = peripheral_plugins_.erase(it);
     } else {
       ++it;
@@ -84,33 +98,28 @@ void PluginPowerSaverHelper::RegisterPeripheralPlugin(
       PeripheralPlugin(content_origin, unthrottle_callback));
 }
 
-bool PluginPowerSaverHelper::ShouldThrottleContent(
+RenderFrame::PeripheralContentStatus
+PluginPowerSaverHelper::GetPeripheralContentStatus(
     const url::Origin& main_frame_origin,
     const url::Origin& content_origin,
-    int width,
-    int height,
-    bool* cross_origin_main_content) const {
-  if (cross_origin_main_content)
-    *cross_origin_main_content = false;
-
+    const gfx::Size& unobscured_size,
+    RenderFrame::RecordPeripheralDecision record_decision) const {
   if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kOverridePluginPowerSaverForTesting) == "always") {
-    return true;
+    return RenderFrame::CONTENT_STATUS_PERIPHERAL;
   }
 
-  auto decision = PeripheralContentHeuristic::GetPeripheralStatus(
-      origin_whitelist_, main_frame_origin, content_origin, width, height);
+  auto status = PeripheralContentHeuristic::GetPeripheralStatus(
+      origin_whitelist_, main_frame_origin, content_origin, unobscured_size);
 
-  UMA_HISTOGRAM_ENUMERATION(
-      kPeripheralHeuristicHistogram, decision,
-      PeripheralContentHeuristic::HEURISTIC_DECISION_NUM_ITEMS);
+  // Never record ESSENTIAL_UNKNOWN_SIZE. Wait for retest after size is known.
+  if (record_decision == RenderFrame::RECORD_DECISION &&
+      status != RenderFrame::CONTENT_STATUS_ESSENTIAL_UNKNOWN_SIZE) {
+    UMA_HISTOGRAM_ENUMERATION(kPeripheralHeuristicHistogram, status,
+                              RenderFrame::CONTENT_STATUS_NUM_ITEMS);
+  }
 
-  if (decision == PeripheralContentHeuristic::
-                      HEURISTIC_DECISION_ESSENTIAL_CROSS_ORIGIN_BIG &&
-      cross_origin_main_content)
-    *cross_origin_main_content = true;
-
-  return decision == PeripheralContentHeuristic::HEURISTIC_DECISION_PERIPHERAL;
+  return status;
 }
 
 void PluginPowerSaverHelper::WhitelistContentOrigin(

@@ -4,10 +4,10 @@
 
 #include "base/macros.h"
 #include "components/filesystem/file_system_app.h"
-#include "mojo/application/public/cpp/application_runner.h"
-#include "mojo/public/c/system/main.h"
+#include "services/service_manager/public/c/main.h"
+#include "services/service_manager/public/cpp/service_runner.h"
 
-MojoResult MojoMain(MojoHandle application_request) {
-  mojo::ApplicationRunner runner(new filesystem::FileSystemApp());
-  return runner.Run(application_request);
+MojoResult ServiceMain(MojoHandle request) {
+  service_manager::ServiceRunner runner(new filesystem::FileSystemApp());
+  return runner.Run(request);
 }

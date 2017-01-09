@@ -7,8 +7,7 @@
 
 #include <deque>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/media_export.h"
 

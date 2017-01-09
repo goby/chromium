@@ -5,7 +5,11 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_APPS_APP_INFO_DIALOG_APP_INFO_SUMMARY_PANEL_H_
 #define CHROME_BROWSER_UI_VIEWS_APPS_APP_INFO_DIALOG_APP_INFO_SUMMARY_PANEL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/views/apps/app_info_dialog/app_info_panel.h"
 #include "extensions/common/constants.h"
@@ -53,7 +57,7 @@ class AppInfoSummaryPanel : public AppInfoPanel,
   // Called asynchronously to calculate and update the size of the app displayed
   // in the dialog.
   void StartCalculatingAppSize();
-  void OnAppSizeCalculated(int64 app_size_in_bytes);
+  void OnAppSizeCalculated(int64_t app_size_in_bytes);
 
   // Returns the launch type of the app (e.g. pinned tab, fullscreen, etc).
   extensions::LaunchType GetLaunchType() const;
@@ -79,7 +83,7 @@ class AppInfoSummaryPanel : public AppInfoPanel,
   views::Link* homepage_link_;
   views::Link* licenses_link_;
 
-  scoped_ptr<LaunchOptionsComboboxModel> launch_options_combobox_model_;
+  std::unique_ptr<LaunchOptionsComboboxModel> launch_options_combobox_model_;
   views::Combobox* launch_options_combobox_;
 
   base::WeakPtrFactory<AppInfoSummaryPanel> weak_ptr_factory_;

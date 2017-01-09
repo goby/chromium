@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/extension_view_host.h"
 
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -23,8 +24,7 @@
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/runtime_data.h"
-#include "grit/browser_resources.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
@@ -146,25 +146,15 @@ bool ExtensionViewHost::IsBackgroundPage() const {
 WebContents* ExtensionViewHost::OpenURLFromTab(
     WebContents* source,
     const OpenURLParams& params) {
-  // Supporting CURRENT_TAB is necessary for renderer-initiated, cross-site
-  // frame navigations with --isolate-extensions or --site-per-process.  These
-  // navigations cause cross-process transfers which utilize this function with
-  // CURRENT_TAB.  This means that the navigation should happen in the same
-  // ExtensionViewHost window.
-  bool is_transfer =
-      params.transferred_global_request_id != content::GlobalRequestID();
-  if (params.disposition == CURRENT_TAB && is_transfer)
-    return WebContentsDelegate::OpenURLFromTab(host_contents(), params);
-
   // Whitelist the dispositions we will allow to be opened.
   switch (params.disposition) {
-    case SINGLETON_TAB:
-    case NEW_FOREGROUND_TAB:
-    case NEW_BACKGROUND_TAB:
-    case NEW_POPUP:
-    case NEW_WINDOW:
-    case SAVE_TO_DISK:
-    case OFF_THE_RECORD: {
+    case WindowOpenDisposition::SINGLETON_TAB:
+    case WindowOpenDisposition::NEW_FOREGROUND_TAB:
+    case WindowOpenDisposition::NEW_BACKGROUND_TAB:
+    case WindowOpenDisposition::NEW_POPUP:
+    case WindowOpenDisposition::NEW_WINDOW:
+    case WindowOpenDisposition::SAVE_TO_DISK:
+    case WindowOpenDisposition::OFF_THE_RECORD: {
       // Only allow these from hosts that are bound to a browser (e.g. popups).
       // Otherwise they are not driven by a user gesture.
       Browser* browser = view_->GetBrowser();
@@ -173,6 +163,14 @@ WebContents* ExtensionViewHost::OpenURLFromTab(
     default:
       return NULL;
   }
+}
+
+bool ExtensionViewHost::ShouldTransferNavigation(
+    bool is_main_frame_navigation) {
+  // Block navigations that cause main frame of an extension pop-up (or
+  // background page) to navigate to non-extension content (i.e. to web
+  // content).
+  return !is_main_frame_navigation;
 }
 
 bool ExtensionViewHost::PreHandleKeyboardEvent(
@@ -229,11 +227,11 @@ content::ColorChooser* ExtensionViewHost::OpenColorChooser(
 }
 
 void ExtensionViewHost::RunFileChooser(
-    WebContents* tab,
+    content::RenderFrameHost* render_frame_host,
     const content::FileChooserParams& params) {
   // For security reasons opening a file picker requires a visible <input>
   // element to click on, so this code only exists for extensions with a view.
-  FileSelectHelper::RunFileChooser(tab, params);
+  FileSelectHelper::RunFileChooser(render_frame_host, params);
 }
 
 

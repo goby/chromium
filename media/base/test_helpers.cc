@@ -4,9 +4,11 @@
 
 #include "media/base/test_helpers.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
@@ -61,33 +63,35 @@ PipelineStatusCB NewExpectedStatusCB(PipelineStatus status) {
 }
 
 WaitableMessageLoopEvent::WaitableMessageLoopEvent()
-    : message_loop_(base::MessageLoop::current()),
-      signaled_(false),
-      status_(PIPELINE_OK) {
-  DCHECK(message_loop_);
+    : WaitableMessageLoopEvent(TestTimeouts::action_timeout()) {}
+
+WaitableMessageLoopEvent::WaitableMessageLoopEvent(base::TimeDelta timeout)
+    : signaled_(false), status_(PIPELINE_OK), timeout_(timeout) {}
+
+WaitableMessageLoopEvent::~WaitableMessageLoopEvent() {
+  DCHECK(CalledOnValidThread());
 }
 
-WaitableMessageLoopEvent::~WaitableMessageLoopEvent() {}
-
 base::Closure WaitableMessageLoopEvent::GetClosure() {
-  DCHECK_EQ(message_loop_, base::MessageLoop::current());
+  DCHECK(CalledOnValidThread());
   return BindToCurrentLoop(base::Bind(
       &WaitableMessageLoopEvent::OnCallback, base::Unretained(this),
       PIPELINE_OK));
 }
 
 PipelineStatusCB WaitableMessageLoopEvent::GetPipelineStatusCB() {
-  DCHECK_EQ(message_loop_, base::MessageLoop::current());
+  DCHECK(CalledOnValidThread());
   return BindToCurrentLoop(base::Bind(
       &WaitableMessageLoopEvent::OnCallback, base::Unretained(this)));
 }
 
 void WaitableMessageLoopEvent::RunAndWait() {
+  DCHECK(CalledOnValidThread());
   RunAndWaitForStatus(PIPELINE_OK);
 }
 
 void WaitableMessageLoopEvent::RunAndWaitForStatus(PipelineStatus expected) {
-  DCHECK_EQ(message_loop_, base::MessageLoop::current());
+  DCHECK(CalledOnValidThread());
   if (signaled_) {
     EXPECT_EQ(expected, status_);
     return;
@@ -95,8 +99,9 @@ void WaitableMessageLoopEvent::RunAndWaitForStatus(PipelineStatus expected) {
 
   run_loop_.reset(new base::RunLoop());
   base::Timer timer(false, false);
-  timer.Start(FROM_HERE, TestTimeouts::action_timeout(), base::Bind(
-      &WaitableMessageLoopEvent::OnTimeout, base::Unretained(this)));
+  timer.Start(
+      FROM_HERE, timeout_,
+      base::Bind(&WaitableMessageLoopEvent::OnTimeout, base::Unretained(this)));
 
   run_loop_->Run();
   EXPECT_TRUE(signaled_);
@@ -105,7 +110,7 @@ void WaitableMessageLoopEvent::RunAndWaitForStatus(PipelineStatus expected) {
 }
 
 void WaitableMessageLoopEvent::OnCallback(PipelineStatus status) {
-  DCHECK_EQ(message_loop_, base::MessageLoop::current());
+  DCHECK(CalledOnValidThread());
   signaled_ = true;
   status_ = status;
 
@@ -115,7 +120,7 @@ void WaitableMessageLoopEvent::OnCallback(PipelineStatus status) {
 }
 
 void WaitableMessageLoopEvent::OnTimeout() {
-  DCHECK_EQ(message_loop_, base::MessageLoop::current());
+  DCHECK(CalledOnValidThread());
   ADD_FAILURE() << "Timed out waiting for message loop to quit";
   run_loop_->Quit();
 }
@@ -126,41 +131,60 @@ static VideoDecoderConfig GetTestConfig(VideoCodec codec,
   gfx::Rect visible_rect(coded_size.width(), coded_size.height());
   gfx::Size natural_size = coded_size;
 
-  return VideoDecoderConfig(codec, VIDEO_CODEC_PROFILE_UNKNOWN,
-                            PIXEL_FORMAT_YV12, COLOR_SPACE_UNSPECIFIED,
-                            coded_size, visible_rect, natural_size,
-                            EmptyExtraData(), is_encrypted);
+  return VideoDecoderConfig(
+      codec, VIDEO_CODEC_PROFILE_UNKNOWN, PIXEL_FORMAT_YV12,
+      COLOR_SPACE_UNSPECIFIED, coded_size, visible_rect, natural_size,
+      EmptyExtraData(),
+      is_encrypted ? AesCtrEncryptionScheme() : Unencrypted());
 }
 
 static const gfx::Size kNormalSize(320, 240);
 static const gfx::Size kLargeSize(640, 480);
 
+// static
 VideoDecoderConfig TestVideoConfig::Invalid() {
   return GetTestConfig(kUnknownVideoCodec, kNormalSize, false);
 }
 
+// static
 VideoDecoderConfig TestVideoConfig::Normal() {
   return GetTestConfig(kCodecVP8, kNormalSize, false);
 }
 
+// static
+VideoDecoderConfig TestVideoConfig::NormalH264() {
+  return GetTestConfig(kCodecH264, kNormalSize, false);
+}
+
+// static
 VideoDecoderConfig TestVideoConfig::NormalEncrypted() {
   return GetTestConfig(kCodecVP8, kNormalSize, true);
 }
 
+// static
 VideoDecoderConfig TestVideoConfig::Large() {
   return GetTestConfig(kCodecVP8, kLargeSize, false);
 }
 
+// static
 VideoDecoderConfig TestVideoConfig::LargeEncrypted() {
   return GetTestConfig(kCodecVP8, kLargeSize, true);
 }
 
+// static
 gfx::Size TestVideoConfig::NormalCodedSize() {
   return kNormalSize;
 }
 
+// static
 gfx::Size TestVideoConfig::LargeCodedSize() {
   return kLargeSize;
+}
+
+// static
+AudioParameters TestAudioParameters::Normal() {
+  return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                         CHANNEL_LAYOUT_STEREO, 48000, 16, 2048);
 }
 
 template <class T>
@@ -216,9 +240,9 @@ scoped_refptr<AudioBuffer> MakeAudioBuffer(SampleFormat format,
       type increment,                                        \
       size_t frames,                                         \
       base::TimeDelta start_time)
-DEFINE_MAKE_AUDIO_BUFFER_INSTANCE(uint8);
-DEFINE_MAKE_AUDIO_BUFFER_INSTANCE(int16);
-DEFINE_MAKE_AUDIO_BUFFER_INSTANCE(int32);
+DEFINE_MAKE_AUDIO_BUFFER_INSTANCE(uint8_t);
+DEFINE_MAKE_AUDIO_BUFFER_INSTANCE(int16_t);
+DEFINE_MAKE_AUDIO_BUFFER_INSTANCE(int32_t);
 DEFINE_MAKE_AUDIO_BUFFER_INSTANCE(float);
 
 static const char kFakeVideoBufferHeader[] = "FakeVideoBufferForTest";
@@ -232,9 +256,9 @@ scoped_refptr<DecoderBuffer> CreateFakeVideoBufferForTest(
   pickle.WriteInt(config.coded_size().height());
   pickle.WriteInt64(timestamp.InMilliseconds());
 
-  scoped_refptr<DecoderBuffer> buffer = DecoderBuffer::CopyFrom(
-      static_cast<const uint8*>(pickle.data()),
-      static_cast<int>(pickle.size()));
+  scoped_refptr<DecoderBuffer> buffer =
+      DecoderBuffer::CopyFrom(static_cast<const uint8_t*>(pickle.data()),
+                              static_cast<int>(pickle.size()));
   buffer->set_timestamp(timestamp);
   buffer->set_duration(duration);
   buffer->set_is_key_frame(true);
@@ -246,8 +270,9 @@ bool VerifyFakeVideoBufferForTest(
     const scoped_refptr<DecoderBuffer>& buffer,
     const VideoDecoderConfig& config) {
   // Check if the input |buffer| matches the |config|.
-  base::PickleIterator pickle(base::Pickle(
-      reinterpret_cast<const char*>(buffer->data()), buffer->data_size()));
+  base::PickleIterator pickle(
+      base::Pickle(reinterpret_cast<const char*>(buffer->data()),
+                   static_cast<int>(buffer->data_size())));
   std::string header;
   int width = 0;
   int height = 0;
@@ -256,23 +281,6 @@ bool VerifyFakeVideoBufferForTest(
   return (success && header == kFakeVideoBufferHeader &&
           width == config.coded_size().width() &&
           height == config.coded_size().height());
-}
-
-CallbackPairChecker::CallbackPairChecker() : expecting_b_(false) {
-}
-
-CallbackPairChecker::~CallbackPairChecker() {
-  EXPECT_FALSE(expecting_b_);
-}
-
-void CallbackPairChecker::RecordACalled() {
-  EXPECT_FALSE(expecting_b_);
-  expecting_b_ = true;
-}
-
-void CallbackPairChecker::RecordBCalled() {
-  EXPECT_TRUE(expecting_b_);
-  expecting_b_ = false;
 }
 
 }  // namespace media

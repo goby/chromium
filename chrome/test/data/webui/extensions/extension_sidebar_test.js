@@ -23,19 +23,16 @@ cr.define('extension_sidebar_tests', function() {
     loadUnpacked: function() {},
 
     /** @override */
-    packExtension: function() {},
-
-    /** @override */
     updateAllExtensions: function() {},
 
     /** @override */
-    scrollToExtensions: function() {},
+    showType: function() {},
 
     /** @override */
-    scrollToApps: function() {},
+    showKeyboardShortcuts: function() {},
 
     /** @override */
-    scrollToWebsites: function() {},
+    showPackDialog: function() {},
   };
 
   /** @enum {string} */
@@ -61,10 +58,12 @@ cr.define('extension_sidebar_tests', function() {
         sidebar = document.querySelector('extensions-manager').sidebar;
         mockDelegate = new MockDelegate();
         sidebar.setDelegate(mockDelegate);
-        sidebar.setScrollDelegate(mockDelegate);
+        sidebar.setListDelegate(mockDelegate);
       });
 
       test(assert(TestNames.Layout), function() {
+        extension_test_util.testIronIcons(sidebar);
+
         var testVisible = extension_test_util.testVisible.bind(null, sidebar);
         testVisible('#load-unpacked', false);
         testVisible('#pack-extensions', false);
@@ -91,15 +90,17 @@ cr.define('extension_sidebar_tests', function() {
         mockDelegate.testClickingCalls(
             sidebar.$$('#load-unpacked'), 'loadUnpacked', []);
         mockDelegate.testClickingCalls(
-            sidebar.$$('#pack-extensions'), 'packExtension', []);
+            sidebar.$$('#pack-extensions'), 'showPackDialog', []);
         mockDelegate.testClickingCalls(
             sidebar.$$('#update-now'), 'updateAllExtensions', []);
         mockDelegate.testClickingCalls(
-            sidebar.$$('#sections-extensions'), 'scrollToExtensions', []);
+            sidebar.$$('#sections-extensions'), 'showType',
+            [extensions.ShowingType.EXTENSIONS]);
         mockDelegate.testClickingCalls(
-            sidebar.$$('#sections-apps'), 'scrollToApps', []);
+            sidebar.$$('#sections-apps'), 'showType',
+            [extensions.ShowingType.APPS]);
         mockDelegate.testClickingCalls(
-            sidebar.$$('#sections-websites'), 'scrollToWebsites', []);
+            sidebar.$$('#keyboard-shortcuts'), 'showKeyboardShortcuts', []);
       });
     });
   }

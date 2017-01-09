@@ -4,6 +4,10 @@
 
 #include "components/browser_watcher/exit_code_watcher_win.h"
 
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/process/process.h"
 #include "base/strings/string16.h"
@@ -84,7 +88,7 @@ class ExitCodeWatcherTest : public testing::Test {
     override_manager_.OverrideRegistry(HKEY_CURRENT_USER);
   }
 
-  base::Process OpenSelfWithAccess(uint32 access) {
+  base::Process OpenSelfWithAccess(uint32_t access) {
     return base::Process::OpenWithAccess(base::GetCurrentProcId(), access);
   }
 
@@ -92,7 +96,7 @@ class ExitCodeWatcherTest : public testing::Test {
     base::win::RegistryValueIterator it(
           HKEY_CURRENT_USER, kRegistryPath);
 
-    ASSERT_EQ(1, it.ValueCount());
+    ASSERT_EQ(1u, it.ValueCount());
     base::win::RegKey key(HKEY_CURRENT_USER,
                           kRegistryPath,
                           KEY_QUERY_VALUE);
@@ -104,7 +108,7 @@ class ExitCodeWatcherTest : public testing::Test {
         base::CompareCase::SENSITIVE));
     DWORD value = 0;
     ASSERT_EQ(ERROR_SUCCESS, key.ReadValueDW(it.Name(), &value));
-    ASSERT_EQ(exit_code, value);
+    ASSERT_EQ(exit_code, static_cast<int>(value));
   }
 
  protected:
@@ -121,7 +125,7 @@ TEST_F(ExitCodeWatcherTest, ExitCodeWatcherInvalidHandleFailsInit) {
   base::Process event(::CreateEvent(NULL, false, false, NULL));
 
   // A non-process handle should fail.
-  EXPECT_FALSE(watcher.Initialize(event.Pass()));
+  EXPECT_FALSE(watcher.Initialize(std::move(event)));
 }
 
 TEST_F(ExitCodeWatcherTest, ExitCodeWatcherNoAccessHandleFailsInit) {
@@ -132,7 +136,7 @@ TEST_F(ExitCodeWatcherTest, ExitCodeWatcherNoAccessHandleFailsInit) {
   ASSERT_TRUE(self.IsValid());
 
   // A process handle with insufficient access should fail.
-  EXPECT_FALSE(watcher.Initialize(self.Pass()));
+  EXPECT_FALSE(watcher.Initialize(std::move(self)));
 }
 
 TEST_F(ExitCodeWatcherTest, ExitCodeWatcherSucceedsInit) {
@@ -144,7 +148,7 @@ TEST_F(ExitCodeWatcherTest, ExitCodeWatcherSucceedsInit) {
   ASSERT_TRUE(self.IsValid());
 
   // A process handle with sufficient access should succeed init.
-  EXPECT_TRUE(watcher.Initialize(self.Pass()));
+  EXPECT_TRUE(watcher.Initialize(std::move(self)));
 }
 
 TEST_F(ExitCodeWatcherTest, ExitCodeWatcherOnExitedProcess) {

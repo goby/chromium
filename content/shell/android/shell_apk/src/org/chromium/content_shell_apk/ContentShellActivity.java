@@ -42,6 +42,7 @@ public class ContentShellActivity extends Activity {
     private ShellManager mShellManager;
     private ActivityWindowAndroid mWindowAndroid;
     private Intent mLastSentIntent;
+    private String mStartupUrl;
 
     @Override
     @SuppressFBWarnings("DM_EXIT")
@@ -59,9 +60,9 @@ public class ContentShellActivity extends Activity {
         waitForDebuggerIfNeeded();
 
         DeviceUtils.addDeviceSpecificUserAgentSwitch(this);
+
         try {
-            LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER)
-                    .ensureInitialized(getApplicationContext());
+            LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER).ensureInitialized();
         } catch (ProcessInitException e) {
             Log.e(TAG, "ContentView initialization failed.", e);
             // Since the library failed to initialize nothing in the application
@@ -81,9 +82,9 @@ public class ContentShellActivity extends Activity {
         mWindowAndroid.setAnimationPlaceholderView(
                 mShellManager.getContentViewRenderView().getSurfaceView());
 
-        String startupUrl = getUrlFromIntent(getIntent());
-        if (!TextUtils.isEmpty(startupUrl)) {
-            mShellManager.setStartupUrl(Shell.sanitizeUrl(startupUrl));
+        mStartupUrl = getUrlFromIntent(getIntent());
+        if (!TextUtils.isEmpty(mStartupUrl)) {
+            mShellManager.setStartupUrl(Shell.sanitizeUrl(mStartupUrl));
         }
 
         if (CommandLine.getInstance().hasSwitch(ContentSwitches.RUN_LAYOUT_TEST)) {
@@ -98,6 +99,7 @@ public class ContentShellActivity extends Activity {
             try {
                 BrowserStartupController.get(this, LibraryProcessType.PROCESS_BROWSER)
                         .startBrowserProcessesAsync(
+                                true,
                                 new BrowserStartupController.StartupCallback() {
                                     @Override
                                     public void onSuccess(boolean alreadyStarted) {
@@ -117,7 +119,13 @@ public class ContentShellActivity extends Activity {
     }
 
     private void finishInitialization(Bundle savedInstanceState) {
-        String shellUrl = ShellManager.DEFAULT_SHELL_URL;
+        String shellUrl;
+        if (!TextUtils.isEmpty(mStartupUrl)) {
+            shellUrl = mStartupUrl;
+        } else {
+            shellUrl = ShellManager.DEFAULT_SHELL_URL;
+        }
+
         if (savedInstanceState != null
                 && savedInstanceState.containsKey(ACTIVE_SHELL_URL_KEY)) {
             shellUrl = savedInstanceState.getString(ACTIVE_SHELL_URL_KEY);
@@ -201,6 +209,12 @@ public class ContentShellActivity extends Activity {
     public void startActivity(Intent i) {
         mLastSentIntent = i;
         super.startActivity(i);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mShellManager != null) mShellManager.destroy();
+        super.onDestroy();
     }
 
     public Intent getLastSentIntent() {

@@ -38,110 +38,98 @@
 namespace blink {
 
 template <typename TargetClass>
-class AsyncMethodRunner final {
-    WTF_MAKE_NONCOPYABLE(AsyncMethodRunner);
-    USING_FAST_MALLOC(AsyncMethodRunner);
-public:
-    typedef void (TargetClass::*TargetMethod)();
+class AsyncMethodRunner final
+    : public GarbageCollectedFinalized<AsyncMethodRunner<TargetClass>> {
+  WTF_MAKE_NONCOPYABLE(AsyncMethodRunner);
 
-    AsyncMethodRunner(TargetClass* object, TargetMethod method)
-        : m_timer(this, &AsyncMethodRunner<TargetClass>::fired)
-        , m_object(object)
-        , m_method(method)
-        , m_suspended(false)
-        , m_runWhenResumed(false)
-    {
+ public:
+  typedef void (TargetClass::*TargetMethod)();
+
+  static AsyncMethodRunner* create(TargetClass* object, TargetMethod method) {
+    return new AsyncMethodRunner(object, method);
+  }
+
+  ~AsyncMethodRunner() {}
+
+  // Schedules to run the method asynchronously. Do nothing if it's already
+  // scheduled. If it's suspended, remember to schedule to run the method when
+  // resume() is called.
+  void runAsync() {
+    if (m_suspended) {
+      ASSERT(!m_timer.isActive());
+      m_runWhenResumed = true;
+      return;
     }
 
-    // Schedules to run the method asynchronously. Do nothing if it's already
-    // scheduled. If it's suspended, remember to schedule to run the method when
-    // resume() is called.
-    void runAsync()
-    {
-        if (m_suspended) {
-            ASSERT(!m_timer.isActive());
-            m_runWhenResumed = true;
-            return;
-        }
+    // FIXME: runAsync should take a TraceLocation and pass it to timer here.
+    if (!m_timer.isActive())
+      m_timer.startOneShot(0, BLINK_FROM_HERE);
+  }
 
-        // FIXME: runAsync should take a TraceLocation and pass it to timer here.
-        if (!m_timer.isActive())
-            m_timer.startOneShot(0, BLINK_FROM_HERE);
+  // If it's scheduled to run the method, cancel it and remember to schedule
+  // it again when resume() is called. Mainly for implementing
+  // SuspendableObject::suspend().
+  void suspend() {
+    if (m_suspended)
+      return;
+    m_suspended = true;
+
+    if (!m_timer.isActive())
+      return;
+
+    m_timer.stop();
+    m_runWhenResumed = true;
+  }
+
+  // Resumes pending method run.
+  void resume() {
+    if (!m_suspended)
+      return;
+    m_suspended = false;
+
+    if (!m_runWhenResumed)
+      return;
+
+    m_runWhenResumed = false;
+    // FIXME: resume should take a TraceLocation and pass it to timer here.
+    m_timer.startOneShot(0, BLINK_FROM_HERE);
+  }
+
+  void stop() {
+    if (m_suspended) {
+      ASSERT(!m_timer.isActive());
+      m_runWhenResumed = false;
+      m_suspended = false;
+      return;
     }
 
-    // If it's scheduled to run the method, cancel it and remember to schedule
-    // it again when resume() is called. Mainly for implementing
-    // ActiveDOMObject::suspend().
-    void suspend()
-    {
-        if (m_suspended)
-            return;
-        m_suspended = true;
+    ASSERT(!m_runWhenResumed);
+    m_timer.stop();
+  }
 
-        if (!m_timer.isActive())
-            return;
+  bool isActive() const { return m_timer.isActive(); }
 
-        m_timer.stop();
-        m_runWhenResumed = true;
-    }
+  DEFINE_INLINE_TRACE() { visitor->trace(m_object); }
 
-    // Resumes pending method run.
-    void resume()
-    {
-        if (!m_suspended)
-            return;
-        m_suspended = false;
+ private:
+  AsyncMethodRunner(TargetClass* object, TargetMethod method)
+      : m_timer(this, &AsyncMethodRunner<TargetClass>::fired),
+        m_object(object),
+        m_method(method),
+        m_suspended(false),
+        m_runWhenResumed(false) {}
 
-        if (!m_runWhenResumed)
-            return;
+  void fired(TimerBase*) { (m_object->*m_method)(); }
 
-        m_runWhenResumed = false;
-        // FIXME: resume should take a TraceLocation and pass it to timer here.
-        m_timer.startOneShot(0, BLINK_FROM_HERE);
-    }
+  Timer<AsyncMethodRunner<TargetClass>> m_timer;
 
-    void stop()
-    {
-        if (m_suspended) {
-            ASSERT(!m_timer.isActive());
-            m_runWhenResumed = false;
-            m_suspended = false;
-            return;
-        }
+  Member<TargetClass> m_object;
+  TargetMethod m_method;
 
-        ASSERT(!m_runWhenResumed);
-        if (m_timer.isActive())
-            m_timer.stop();
-    }
-
-    bool isActive() const
-    {
-        return m_timer.isActive();
-    }
-
-private:
-    void fired(Timer<AsyncMethodRunner<TargetClass>>*)
-    {
-        // TODO(Oilpan): when AsyncMethodRunner is on the heap, this check becomes
-        // redundant; handled directly by Timer<> instead.
-        if (!TimerIsObjectAliveTrait<TargetClass>::isHeapObjectAlive(m_object))
-            return;
-        (m_object->*m_method)();
-    }
-
-    Timer<AsyncMethodRunner<TargetClass>> m_timer;
-
-    // TODO(Oilpan): AsyncMethodRunner should be moved to the heap and m_object should be traced.
-    // This raw pointer is safe as long as AsyncMethodRunner<X> is held by the X itself
-    // (That's the case in the current code base).
-    GC_PLUGIN_IGNORE("363031")
-    TargetClass* m_object;
-    TargetMethod m_method;
-
-    bool m_suspended;
-    bool m_runWhenResumed;
+  bool m_suspended;
+  bool m_runWhenResumed;
 };
 
-}
+}  // namespace blink
 
 #endif

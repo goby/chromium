@@ -10,6 +10,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/cocoa/location_bar/bubble_decoration.h"
 
@@ -17,6 +18,9 @@ class SelectedKeywordDecoration : public BubbleDecoration {
  public:
   SelectedKeywordDecoration();
   ~SelectedKeywordDecoration() override;
+
+  // Return the color used to draw the SelectedKeywordDecoration in MD.
+  NSColor* GetBackgroundBorderColor() override;
 
   // Calculates appropriate full and partial label strings based on
   // inputs.

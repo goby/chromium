@@ -4,9 +4,10 @@
 
 #include <string>
 
-#include "ash/shell.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/app_list_service_views.h"
@@ -22,10 +23,16 @@
 #include "ui/app_list/views/contents_view.h"
 #include "ui/app_list/views/custom_launcher_page_view.h"
 #include "ui/app_list/views/search_box_view.h"
+#include "ui/aura/window.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/focus/focus_manager.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/ash/app_list/test/app_list_service_ash_test_api.h"
+#include "ui/app_list/presenter/app_list_presenter_impl.h"
+#endif
 
 namespace {
 
@@ -49,9 +56,6 @@ class CustomLauncherPageBrowserTest
   void SetUpCommandLine(base::CommandLine* command_line) override {
     PlatformAppBrowserTest::SetUpCommandLine(command_line);
 
-    // Custom launcher pages only work in the experimental app list.
-    command_line->AppendSwitch(app_list::switches::kEnableExperimentalAppList);
-
     // Ensure the app list does not close during the test.
     command_line->AppendSwitch(
         app_list::switches::kDisableAppListDismissOnBlur);
@@ -64,8 +68,7 @@ class CustomLauncherPageBrowserTest
   // Open the launcher. Ignores the Extension argument (this will simply
   // activate any loaded launcher pages).
   void LaunchPlatformApp(const extensions::Extension* /*unused*/) override {
-    AppListService* service =
-        AppListService::Get(chrome::HOST_DESKTOP_TYPE_NATIVE);
+    AppListService* service = AppListService::Get();
     DCHECK(service);
     service->ShowForProfile(browser()->profile());
   }
@@ -73,12 +76,12 @@ class CustomLauncherPageBrowserTest
   app_list::AppListView* GetAppListView() {
     app_list::AppListView* app_list_view = nullptr;
 #if defined(OS_CHROMEOS)
-    ash::Shell* shell = ash::Shell::GetInstance();
-    app_list_view = shell->GetAppListView();
-    EXPECT_TRUE(shell->GetAppListTargetVisibility());
+    AppListServiceAshTestApi service_test;
+    app_list_view = service_test.GetAppListView();
+    EXPECT_TRUE(service_test.GetAppListPresenter()->GetTargetVisibility());
 #else
-    AppListServiceViews* service = static_cast<AppListServiceViews*>(
-        AppListService::Get(chrome::HOST_DESKTOP_TYPE_NATIVE));
+    AppListServiceViews* service =
+        static_cast<AppListServiceViews*>(AppListService::Get());
     // The app list should have loaded instantly since the profile is already
     // loaded.
     EXPECT_TRUE(service->IsAppListVisible());

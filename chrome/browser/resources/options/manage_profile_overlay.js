@@ -17,7 +17,7 @@ cr.define('options', function() {
     Page.call(this, 'manageProfile',
               loadTimeData.getString('manageProfileTabTitle'),
               'manage-profile-overlay');
-  };
+  }
 
   cr.addSingletonGetter(ManageProfileOverlay);
 
@@ -95,7 +95,7 @@ cr.define('options', function() {
 
       $('create-profile-supervised-sign-in-link').onclick =
           function(event) {
-        SyncSetupOverlay.startSignIn();
+        SyncSetupOverlay.startSignIn(true /* creatingSupervisedUser */);
       };
 
       $('create-profile-supervised-sign-in-again-link').onclick =
@@ -371,6 +371,12 @@ cr.define('options', function() {
      * @private
      */
     receiveExistingSupervisedUsers_: function(supervisedUsers) {
+      // After a supervised user has been created and the dialog has been
+      // hidden, this gets called again with a list including
+      // the just-created SU. Ignore, to prevent the "already exists" bubble
+      // from showing up if the overlay is already hidden.
+      if (PageManager.getTopmostVisiblePage().pageDiv != this.pageDiv)
+        return;
       $('import-existing-supervised-user-link').hidden =
           supervisedUsers.length === 0;
       if (!$('create-profile-supervised').checked)
@@ -379,27 +385,39 @@ cr.define('options', function() {
       var newName = $('create-profile-name').value;
       var i;
       for (i = 0; i < supervisedUsers.length; ++i) {
-        if (supervisedUsers[i].name == newName &&
-            !supervisedUsers[i].onCurrentDevice) {
-          var errorHtml = loadTimeData.getStringF(
-              'manageProfilesExistingSupervisedUser',
-              HTMLEscape(elide(newName, /* maxLength */ 50)));
-          this.showErrorBubble_(errorHtml, 'create', true);
-
-          // Check if another supervised user also exists with that name.
-          var nameIsUnique = true;
-          var j;
-          for (j = i + 1; j < supervisedUsers.length; ++j) {
-            if (supervisedUsers[j].name == newName) {
-              nameIsUnique = false;
-              break;
-            }
+        if (supervisedUsers[i].name != newName)
+          continue;
+        // Check if another supervised user also exists with that name.
+        var nameIsUnique = true;
+        // Handling the case when multiple supervised users with the same
+        // name exist, but not all of them are on the device.
+        // If at least one is not imported, we want to offer that
+        // option to the user. This could happen due to a bug that allowed
+        // creating SUs with the same name (https://crbug.com/557445).
+        var allOnCurrentDevice = supervisedUsers[i].onCurrentDevice;
+        var j;
+        for (j = i + 1; j < supervisedUsers.length; ++j) {
+          if (supervisedUsers[j].name == newName) {
+            nameIsUnique = false;
+            allOnCurrentDevice = allOnCurrentDevice &&
+               supervisedUsers[j].onCurrentDevice;
           }
+        }
+
+        var errorHtml = allOnCurrentDevice ?
+            loadTimeData.getStringF(
+                'managedProfilesExistingLocalSupervisedUser') :
+            loadTimeData.getStringF(
+                'manageProfilesExistingSupervisedUser',
+                HTMLEscape(elide(newName, /* maxLength */ 50)));
+        this.showErrorBubble_(errorHtml, 'create', true);
+
+        if ($('supervised-user-import-existing')) {
           $('supervised-user-import-existing').onclick =
               this.getImportHandler_(supervisedUsers[i], nameIsUnique);
-          $('create-profile-ok').disabled = true;
-          return;
         }
+        $('create-profile-ok').disabled = true;
+        return;
       }
     },
 
@@ -549,7 +567,7 @@ cr.define('options', function() {
       $('manage-profile-overlay-delete').hidden = false;
       $('manage-profile-overlay-disconnect-managed').hidden = true;
       $('delete-profile-icon').style.content =
-          getProfileAvatarIcon(profileInfo.iconURL);
+          cr.icon.getImage(profileInfo.iconURL);
       $('delete-profile-text').textContent =
           loadTimeData.getStringF('deleteProfileMessage',
                                   elide(profileInfo.name, /* maxLength */ 50));
@@ -577,9 +595,7 @@ cr.define('options', function() {
           loadTimeData.getString('disconnectManagedProfileText');
       $('manage-profile-overlay-disconnect-managed').hidden = false;
 
-      // Because this dialog isn't useful when refreshing or as part of the
-      // history, don't create a history entry for it when showing.
-      PageManager.showPageByName('manageProfile', false);
+      PageManager.showPageByName('signOut');
     },
 
     /**
@@ -605,16 +621,46 @@ cr.define('options', function() {
     'showCreateDialog',
   ]);
 
+  /**
+   * @constructor
+   * @extends {options.ManageProfileOverlay}
+   */
+  function DisconnectAccountOverlay() {
+    Page.call(this, 'signOut',
+              loadTimeData.getString('disconnectAccountTabTitle'),
+              'manage-profile-overlay');
+  }
+
+  cr.addSingletonGetter(DisconnectAccountOverlay);
+
+  DisconnectAccountOverlay.prototype = {
+    __proto__: ManageProfileOverlay.prototype,
+
+    /** @override */
+    canShowPage: function() {
+      var syncData = loadTimeData.getValue('syncData');
+      return syncData.signedIn && !syncData.signoutAllowed;
+    },
+
+    /** @override */
+    didShowPage: function() {
+      chrome.send('showDisconnectManagedProfileDialog');
+    }
+  };
+
+  /**
+   * @constructor
+   * @extends {options.ManageProfileOverlay}
+   */
   function CreateProfileOverlay() {
     Page.call(this, 'createProfile',
               loadTimeData.getString('createProfileTabTitle'),
               'manage-profile-overlay');
-  };
+  }
 
   cr.addSingletonGetter(CreateProfileOverlay);
 
   CreateProfileOverlay.prototype = {
-    // Inherit from ManageProfileOverlay.
     __proto__: ManageProfileOverlay.prototype,
 
     // The signed-in email address of the current profile, or empty if they're
@@ -865,6 +911,7 @@ cr.define('options', function() {
   // Export
   return {
     ManageProfileOverlay: ManageProfileOverlay,
+    DisconnectAccountOverlay: DisconnectAccountOverlay,
     CreateProfileOverlay: CreateProfileOverlay,
   };
 });

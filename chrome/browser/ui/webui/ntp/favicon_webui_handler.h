@@ -8,7 +8,7 @@
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon_base/favicon_types.h"
@@ -59,7 +59,7 @@ class FaviconWebUIHandler : public content::WebUIMessageHandler {
   scoped_refptr<base::RefCountedMemory> default_favicon_;
 
   // Manage retrieval of icons from apps.
-  scoped_ptr<ExtensionIconColorManager> app_icon_color_manager_;
+  std::unique_ptr<ExtensionIconColorManager> app_icon_color_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(FaviconWebUIHandler);
 };

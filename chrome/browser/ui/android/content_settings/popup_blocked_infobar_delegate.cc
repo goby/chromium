@@ -4,17 +4,20 @@
 
 #include "chrome/browser/ui/android/content_settings/popup_blocked_infobar_delegate.h"
 
-#include "base/prefs/pref_service.h"
+#include <stddef.h>
+#include <utility>
+
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/infobars/core/infobar.h"
-#include "grit/theme_resources.h"
+#include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util.h"
 
 
@@ -26,11 +29,12 @@ void PopupBlockedInfoBarDelegate::Create(content::WebContents* web_contents,
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents);
-  scoped_ptr<infobars::InfoBar> infobar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(new PopupBlockedInfoBarDelegate(
-          num_popups,
-          url,
-          HostContentSettingsMapFactory::GetForProfile(profile)))));
+  std::unique_ptr<infobars::InfoBar> infobar(
+      infobar_service->CreateConfirmInfoBar(
+          std::unique_ptr<ConfirmInfoBarDelegate>(
+              new PopupBlockedInfoBarDelegate(
+                  num_popups, url,
+                  HostContentSettingsMapFactory::GetForProfile(profile)))));
 
   // See if there is an existing popup infobar already.
   // TODO(dfalcantara) When triggering more than one popup the infobar
@@ -39,15 +43,20 @@ void PopupBlockedInfoBarDelegate::Create(content::WebContents* web_contents,
   for (size_t i = 0; i < infobar_service->infobar_count(); ++i) {
     infobars::InfoBar* existing_infobar = infobar_service->infobar_at(i);
     if (existing_infobar->delegate()->AsPopupBlockedInfoBarDelegate()) {
-      infobar_service->ReplaceInfoBar(existing_infobar, infobar.Pass());
+      infobar_service->ReplaceInfoBar(existing_infobar, std::move(infobar));
       return;
     }
   }
 
-  infobar_service->AddInfoBar(infobar.Pass());
+  infobar_service->AddInfoBar(std::move(infobar));
 }
 
 PopupBlockedInfoBarDelegate::~PopupBlockedInfoBarDelegate() {
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+PopupBlockedInfoBarDelegate::GetIdentifier() const {
+  return POPUP_BLOCKED_INFOBAR_DELEGATE;
 }
 
 int PopupBlockedInfoBarDelegate::GetIconId() const {
@@ -65,15 +74,15 @@ PopupBlockedInfoBarDelegate::PopupBlockedInfoBarDelegate(
     HostContentSettingsMap* map)
     : ConfirmInfoBarDelegate(), num_popups_(num_popups), url_(url), map_(map) {
   content_settings::SettingInfo setting_info;
-  scoped_ptr<base::Value> setting = map->GetWebsiteSetting(
+  std::unique_ptr<base::Value> setting = map->GetWebsiteSetting(
       url, url, CONTENT_SETTINGS_TYPE_POPUPS, std::string(), &setting_info);
   can_show_popups_ =
       setting_info.source != content_settings::SETTING_SOURCE_POLICY;
 }
 
 base::string16 PopupBlockedInfoBarDelegate::GetMessageText() const {
-  return l10n_util::GetStringFUTF16Int(IDS_POPUPS_BLOCKED_INFOBAR_TEXT,
-                                       num_popups_);
+  return l10n_util::GetPluralStringFUTF16(IDS_POPUPS_BLOCKED_INFOBAR_TEXT,
+                                          num_popups_);
 }
 
 int PopupBlockedInfoBarDelegate::GetButtons() const {

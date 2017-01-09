@@ -16,6 +16,7 @@ import android.view.WindowManager;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.MainDex;
 
 /**
  * This class facilitates access to android information typically only
@@ -23,8 +24,11 @@ import org.chromium.base.annotations.JNINamespace;
  *
  * Currently the information consists of very raw display information (height, width, DPI scale)
  * regarding the main display.
+ *
+ * This class is being Deprecated. Use DisplayAndroid instead where possible.
  */
 @JNINamespace("gfx")
+@MainDex
 public class DeviceDisplayInfo {
 
     private final Context mAppContext;
@@ -94,7 +98,7 @@ public class DeviceDisplayInfo {
      * @return Bits per pixel.
      */
     @CalledByNative
-    public int getBitsPerPixel() {
+    private int getBitsPerPixel() {
         int format = getPixelFormat();
         PixelFormat info = new PixelFormat();
         PixelFormat.getPixelFormatInfo(format, info);
@@ -106,7 +110,7 @@ public class DeviceDisplayInfo {
      */
     @SuppressWarnings("deprecation")
     @CalledByNative
-    public int getBitsPerComponent() {
+    private int getBitsPerComponent() {
         int format = getPixelFormat();
         switch (format) {
             case PixelFormat.RGBA_4444:

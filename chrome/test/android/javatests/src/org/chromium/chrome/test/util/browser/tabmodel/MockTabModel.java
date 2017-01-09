@@ -39,10 +39,11 @@ public class MockTabModel extends EmptyTabModel {
         mDelegate = delegate;
     }
 
-    public void addTab(int id) {
+    public Tab addTab(int id) {
         Tab tab = mDelegate == null
                 ? new Tab(id, isIncognito(), null) : mDelegate.createTab(id, isIncognito());
         mTabs.add(tab);
+        return tab;
     }
 
     @Override
@@ -51,6 +52,9 @@ public class MockTabModel extends EmptyTabModel {
             mTabs.add(tab);
         } else {
             mTabs.add(index, tab);
+            if (index <= mIndex) {
+                mIndex++;
+            }
         }
     }
 

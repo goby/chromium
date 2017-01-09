@@ -4,9 +4,11 @@
 
 #include "chrome/browser/media/extension_media_access_handler.h"
 
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
-#include "chrome/browser/media/media_stream_capture_indicator.h"
-#include "chrome/browser/media/media_stream_device_permissions.h"
+#include <utility>
+
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
+#include "chrome/browser/media/webrtc/media_stream_device_permissions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/web_contents.h"
@@ -135,7 +137,7 @@ void ExtensionMediaAccessHandler::HandleRequest(
         profile, get_default_audio_device, get_default_video_device, &devices);
   }
 
-  scoped_ptr<content::MediaStreamUI> ui;
+  std::unique_ptr<content::MediaStreamUI> ui;
   if (!devices.empty()) {
     result = content::MEDIA_DEVICE_OK;
     ui = MediaCaptureDevicesDispatcher::GetInstance()
@@ -143,5 +145,5 @@ void ExtensionMediaAccessHandler::HandleRequest(
              ->RegisterMediaStream(web_contents, devices);
   }
 
-  callback.Run(devices, result, ui.Pass());
+  callback.Run(devices, result, std::move(ui));
 }

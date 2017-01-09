@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "components/webcrypto/algorithm_dispatch.h"
 #include "components/webcrypto/algorithms/test_helpers.h"
@@ -198,7 +202,7 @@ TEST_F(WebCryptoRsaSsaTest, ImportRsaPrivateKeyJwkToPkcs8RoundTrip) {
 // be imported correctly, however every key after that would actually import
 // the first key.
 TEST_F(WebCryptoRsaSsaTest, ImportMultipleRSAPrivateKeysJwk) {
-  scoped_ptr<base::ListValue> key_list;
+  std::unique_ptr<base::ListValue> key_list;
   ASSERT_TRUE(ReadJsonTestFileToList("rsa_private_keys.json", &key_list));
 
   // For this test to be meaningful the keys MUST be kept alive before importing
@@ -255,7 +259,7 @@ TEST_F(WebCryptoRsaSsaTest, ImportMultipleRSAPrivateKeysJwk) {
 // that the second import retrieves the first key. See http://crbug.com/378315
 // for how that could happen.
 TEST_F(WebCryptoRsaSsaTest, ImportJwkExistingModulusAndInvalid) {
-  scoped_ptr<base::ListValue> key_list;
+  std::unique_ptr<base::ListValue> key_list;
   ASSERT_TRUE(ReadJsonTestFileToList("rsa_private_keys.json", &key_list));
 
   // Import a 1024-bit private key.
@@ -624,7 +628,7 @@ TEST_F(WebCryptoRsaSsaTest, SignVerifyFailures) {
 }
 
 TEST_F(WebCryptoRsaSsaTest, SignVerifyKnownAnswer) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("pkcs1v15_sign.json", &tests));
 
   // Import the key pair.
@@ -961,21 +965,15 @@ TEST_F(WebCryptoRsaSsaTest, ImportJwkRsaFailures) {
 }
 
 // Try importing an RSA-SSA key from JWK format, having specified both Sign and
-// Verify usage, and an invalid JWK.
+// Verify usage, AND an invalid JWK.
 //
-// The test must fail with a usage error BEFORE attempting to read the JWK data.
-// Although both Sign and Verify are valid usages for RSA-SSA keys, it is
-// invalid to have them both at the same time for one key (since Sign applies to
-// private keys, whereas Verify applies to public keys).
-//
-// If the implementation does not fail fast, this test will crash dereferencing
-// invalid memory.
-TEST_F(WebCryptoRsaSsaTest, ImportRsaSsaJwkBadUsageFailFast) {
-  CryptoData bad_data(NULL, 128);  // Invalid buffer of length 128.
+// Parsing the invalid JWK will fail before the usage check is done.
+TEST_F(WebCryptoRsaSsaTest, ImportRsaSsaJwkBadUsageAndData) {
+  std::string bad_data = "hello";
 
   blink::WebCryptoKey key;
-  ASSERT_EQ(Status::ErrorCreateKeyBadUsages(),
-            ImportKey(blink::WebCryptoKeyFormatJwk, bad_data,
+  ASSERT_EQ(Status::ErrorJwkNotDictionary(),
+            ImportKey(blink::WebCryptoKeyFormatJwk, CryptoData(bad_data),
                       CreateRsaHashedImportAlgorithm(
                           blink::WebCryptoAlgorithmIdRsaSsaPkcs1v1_5,
                           blink::WebCryptoAlgorithmIdSha256),
@@ -986,7 +984,7 @@ TEST_F(WebCryptoRsaSsaTest, ImportRsaSsaJwkBadUsageFailFast) {
 
 // Imports invalid JWK/SPKI/PKCS8 data and verifies that it fails as expected.
 TEST_F(WebCryptoRsaSsaTest, ImportInvalidKeyData) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("bad_rsa_keys.json", &tests));
 
   for (size_t test_index = 0; test_index < tests->GetSize(); ++test_index) {

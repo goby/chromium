@@ -4,20 +4,25 @@
 
 #include "media/midi/midi_manager_usb.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
 #include "media/midi/midi_scheduler.h"
 #include "media/midi/usb_midi_descriptor_parser.h"
 
-namespace media {
 namespace midi {
 
-MidiManagerUsb::MidiManagerUsb(scoped_ptr<UsbMidiDevice::Factory> factory)
-    : device_factory_(factory.Pass()) {
-}
+using mojom::PortState;
+using mojom::Result;
+
+MidiManagerUsb::MidiManagerUsb(std::unique_ptr<UsbMidiDevice::Factory> factory)
+    : device_factory_(std::move(factory)) {}
 
 MidiManagerUsb::~MidiManagerUsb() {
+  base::AutoLock auto_lock(scheduler_lock_);
+  CHECK(!scheduler_);
 }
 
 void MidiManagerUsb::StartInitialization() {
@@ -25,9 +30,20 @@ void MidiManagerUsb::StartInitialization() {
       base::Bind(&MidiManager::CompleteInitialization, base::Unretained(this)));
 }
 
+void MidiManagerUsb::Finalize() {
+  // Destruct MidiScheduler on Chrome_IOThread.
+  base::AutoLock auto_lock(scheduler_lock_);
+  scheduler_.reset();
+}
+
 void MidiManagerUsb::Initialize(base::Callback<void(Result result)> callback) {
   initialize_callback_ = callback;
-  scheduler_.reset(new MidiScheduler(this));
+
+  {
+    base::AutoLock auto_lock(scheduler_lock_);
+    scheduler_.reset(new MidiScheduler(this));
+  }
+
   // This is safe because EnumerateDevices cancels the operation on destruction.
   device_factory_->EnumerateDevices(
       this,
@@ -37,7 +53,7 @@ void MidiManagerUsb::Initialize(base::Callback<void(Result result)> callback) {
 
 void MidiManagerUsb::DispatchSendMidiData(MidiManagerClient* client,
                                           uint32_t port_index,
-                                          const std::vector<uint8>& data,
+                                          const std::vector<uint8_t>& data,
                                           double timestamp) {
   if (port_index >= output_streams_.size()) {
     // |port_index| is provided by a renderer so we can't believe that it is
@@ -55,7 +71,7 @@ void MidiManagerUsb::DispatchSendMidiData(MidiManagerClient* client,
 
 void MidiManagerUsb::ReceiveUsbMidiData(UsbMidiDevice* device,
                                         int endpoint_number,
-                                        const uint8* data,
+                                        const uint8_t* data,
                                         size_t size,
                                         base::TimeTicks time) {
   if (!input_stream_)
@@ -67,9 +83,9 @@ void MidiManagerUsb::ReceiveUsbMidiData(UsbMidiDevice* device,
                                 time);
 }
 
-void MidiManagerUsb::OnDeviceAttached(scoped_ptr<UsbMidiDevice> device) {
+void MidiManagerUsb::OnDeviceAttached(std::unique_ptr<UsbMidiDevice> device) {
   int device_id = static_cast<int>(devices_.size());
-  devices_.push_back(device.Pass());
+  devices_.push_back(std::move(device));
   AddPorts(devices_.back(), device_id);
 }
 
@@ -80,22 +96,22 @@ void MidiManagerUsb::OnDeviceDetached(size_t index) {
   UsbMidiDevice* device = devices_[index];
   for (size_t i = 0; i < output_streams_.size(); ++i) {
     if (output_streams_[i]->jack().device == device) {
-      SetOutputPortState(static_cast<uint32>(i), MIDI_PORT_DISCONNECTED);
+      SetOutputPortState(static_cast<uint32_t>(i), PortState::DISCONNECTED);
     }
   }
   const std::vector<UsbMidiJack>& input_jacks = input_stream_->jacks();
   for (size_t i = 0; i < input_jacks.size(); ++i) {
     if (input_jacks[i].device == device) {
-      SetInputPortState(static_cast<uint32>(i), MIDI_PORT_DISCONNECTED);
+      SetInputPortState(static_cast<uint32_t>(i), PortState::DISCONNECTED);
     }
   }
 }
 
 void MidiManagerUsb::OnReceivedData(size_t jack_index,
-                                    const uint8* data,
+                                    const uint8_t* data,
                                     size_t size,
                                     base::TimeTicks time) {
-  ReceiveMidiData(static_cast<uint32>(jack_index), data, size, time);
+  ReceiveMidiData(static_cast<uint32_t>(jack_index), data, size, time);
 }
 
 
@@ -118,8 +134,8 @@ void MidiManagerUsb::OnEnumerateDevicesDone(bool result,
 
 bool MidiManagerUsb::AddPorts(UsbMidiDevice* device, int device_id) {
   UsbMidiDescriptorParser parser;
-  std::vector<uint8> descriptor = device->GetDescriptors();
-  const uint8* data = descriptor.size() > 0 ? &descriptor[0] : NULL;
+  std::vector<uint8_t> descriptor = device->GetDescriptors();
+  const uint8_t* data = descriptor.size() > 0 ? &descriptor[0] : NULL;
   std::vector<UsbMidiJack> jacks;
   bool parse_result = parser.Parse(device,
                                    data,
@@ -141,16 +157,15 @@ bool MidiManagerUsb::AddPorts(UsbMidiDevice* device, int device_id) {
     if (jacks[j].direction() == UsbMidiJack::DIRECTION_OUT) {
       output_streams_.push_back(new UsbMidiOutputStream(jacks[j]));
       AddOutputPort(MidiPortInfo(id, manufacturer, product_name, version,
-                                 MIDI_PORT_OPENED));
+                                 PortState::OPENED));
     } else {
       DCHECK_EQ(jacks[j].direction(), UsbMidiJack::DIRECTION_IN);
       input_stream_->Add(jacks[j]);
       AddInputPort(MidiPortInfo(id, manufacturer, product_name, version,
-                                MIDI_PORT_OPENED));
+                                PortState::OPENED));
     }
   }
   return true;
 }
 
 }  // namespace midi
-}  // namespace media

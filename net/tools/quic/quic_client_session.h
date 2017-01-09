@@ -7,35 +7,39 @@
 #ifndef NET_TOOLS_QUIC_QUIC_CLIENT_SESSION_H_
 #define NET_TOOLS_QUIC_QUIC_CLIENT_SESSION_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "net/quic/quic_client_session_base.h"
-#include "net/quic/quic_crypto_client_stream.h"
-#include "net/quic/quic_protocol.h"
+#include "base/macros.h"
+#include "net/quic/core/quic_client_session_base.h"
+#include "net/quic/core/quic_crypto_client_stream.h"
+#include "net/quic/core/quic_packets.h"
 #include "net/tools/quic/quic_spdy_client_stream.h"
 
 namespace net {
 
 class QuicConnection;
 class QuicServerId;
-class ReliableQuicStream;
-
-namespace tools {
 
 class QuicClientSession : public QuicClientSessionBase {
  public:
+  // Takes ownership of |connection|. Caller retains ownership of
+  // |promised_by_url|.
   QuicClientSession(const QuicConfig& config,
                     QuicConnection* connection,
                     const QuicServerId& server_id,
-                    QuicCryptoClientConfig* crypto_config);
+                    QuicCryptoClientConfig* crypto_config,
+                    QuicClientPushPromiseIndex* push_promise_index);
   ~QuicClientSession() override;
   // Set up the QuicClientSession. Must be called prior to use.
   void Initialize() override;
 
   // QuicSession methods:
-  QuicSpdyClientStream* CreateOutgoingDynamicStream() override;
+  QuicSpdyClientStream* CreateOutgoingDynamicStream(
+      SpdyPriority priority) override;
   QuicCryptoClientStreamBase* GetCryptoStream() override;
+
+  bool IsAuthorized(const std::string& authority) override;
 
   // QuicClientSessionBase methods:
   void OnProofValid(const QuicCryptoClientConfig::CachedState& cached) override;
@@ -50,6 +54,8 @@ class QuicClientSession : public QuicClientSessionBase {
   // than the number of round-trips needed for the handshake.
   int GetNumSentClientHellos() const;
 
+  int GetNumReceivedServerConfigUpdates() const;
+
   void set_respect_goaway(bool respect_goaway) {
     respect_goaway_ = respect_goaway;
   }
@@ -57,21 +63,26 @@ class QuicClientSession : public QuicClientSessionBase {
  protected:
   // QuicSession methods:
   QuicSpdyStream* CreateIncomingDynamicStream(QuicStreamId id) override;
+  // If an outgoing stream can be created, return true.
+  bool ShouldCreateOutgoingDynamicStream() override;
 
-  // Create the crypto stream. Called by Initialize()
-  virtual QuicCryptoClientStreamBase* CreateQuicCryptoStream();
+  // If an incoming stream can be created, return true.
+  bool ShouldCreateIncomingDynamicStream(QuicStreamId id) override;
+
+  // Create the crypto stream. Called by Initialize().
+  virtual std::unique_ptr<QuicCryptoClientStreamBase> CreateQuicCryptoStream();
 
   // Unlike CreateOutgoingDynamicStream, which applies a bunch of sanity checks,
   // this simply returns a new QuicSpdyClientStream. This may be used by
   // subclasses which want to use a subclass of QuicSpdyClientStream for streams
   // but wish to use the sanity checks in CreateOutgoingDynamicStream.
-  virtual QuicSpdyClientStream* CreateClientStream();
+  virtual std::unique_ptr<QuicSpdyClientStream> CreateClientStream();
 
   const QuicServerId& server_id() { return server_id_; }
   QuicCryptoClientConfig* crypto_config() { return crypto_config_; }
 
  private:
-  scoped_ptr<QuicCryptoClientStreamBase> crypto_stream_;
+  std::unique_ptr<QuicCryptoClientStreamBase> crypto_stream_;
   QuicServerId server_id_;
   QuicCryptoClientConfig* crypto_config_;
 
@@ -82,7 +93,6 @@ class QuicClientSession : public QuicClientSessionBase {
   DISALLOW_COPY_AND_ASSIGN(QuicClientSession);
 };
 
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_QUIC_CLIENT_SESSION_H_

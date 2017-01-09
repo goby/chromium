@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_NETWORK_SCREEN_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_NETWORK_SCREEN_HANDLER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/base/locale_util.h"
 #include "chrome/browser/chromeos/login/screens/network_view.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
@@ -19,8 +20,6 @@
 namespace chromeos {
 
 class CoreOobeActor;
-class IdleDetector;
-class InputEventsBlocker;
 
 // WebUI implementation of NetworkScreenActor. It is used to interact with
 // the welcome screen (part of the page) of the OOBE.
@@ -31,7 +30,6 @@ class NetworkScreenHandler : public NetworkView, public BaseScreenHandler {
 
  private:
   // NetworkView implementation:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void Bind(NetworkModel& model) override;

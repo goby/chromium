@@ -22,7 +22,7 @@ and library dependencies directly from Ubuntu:
 
 ### Installing the sysroot
 
-A prebuilt sysroot image is kept up-to-date on Cloud Storage. It will
+A prebuilt sysroot image is kept up to date on Cloud Storage. It will
 automatically be installed by gclient runhooks installed if you have
 `target_arch=arm` in your `GYP_DEFINES`.
 
@@ -38,21 +38,16 @@ gn args:
 
     target_cpu = "arm"
 
-Or the following gyp settings:
-
-    GYP_CROSSCOMPILE=1
-    GYP_DEFINES="target_arch=arm"
-
 ## Testing
 
 ### Automated Build and Testing
 
 Chromium's testing infrastructure for ARM/Linux is somewhat limited.
 There are currently two builders setup, one on the FYI waterfall and one
-the the trybot waterfall:
+the the try bot waterfall:
 
-*   [Linux ARM](http://build.chromium.org/p/chromium.fyi/builders/Linux%20ARM)
-*   [linux_arm_compile](http://build.chromium.org/p/tryserver.chromium.linux/builders/linux_arm_compile)
+*   [Linux ARM](https://build.chromium.org/p/chromium.fyi/builders/Linux%20ARM)
+*   [linux_arm](https://build.chromium.org/p/tryserver.chromium.linux/builders/linux_arm)
 
 These bots run x86-64 linux and cross-compile the ARM targets.  Tests are
 run on ARM hardware via swarming.

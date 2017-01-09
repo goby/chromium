@@ -8,16 +8,17 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/dbus/cryptohome_client.h"
 
 namespace chromeos {
 
 FakeSessionManagerClient::FakeSessionManagerClient()
     : start_device_wipe_call_count_(0),
+      request_lock_screen_call_count_(0),
       notify_lock_screen_shown_call_count_(0),
-      notify_lock_screen_dismissed_call_count_(0) {
-}
+      notify_lock_screen_dismissed_call_count_(0),
+      arc_available_(false) {}
 
 FakeSessionManagerClient::~FakeSessionManagerClient() {
 }
@@ -48,13 +49,16 @@ void FakeSessionManagerClient::EmitLoginPromptVisible() {
 }
 
 void FakeSessionManagerClient::RestartJob(
-    const std::vector<std::string>& argv) {}
+    int socket_fd,
+    const std::vector<std::string>& argv,
+    const VoidDBusMethodCallback& callback) {}
 
-void FakeSessionManagerClient::StartSession(const std::string& user_email) {
-  DCHECK_EQ(0UL, user_sessions_.count(user_email));
+void FakeSessionManagerClient::StartSession(
+    const cryptohome::Identification& cryptohome_id) {
+  DCHECK_EQ(0UL, user_sessions_.count(cryptohome_id));
   std::string user_id_hash =
-      CryptohomeClient::GetStubSanitizedUsername(user_email);
-  user_sessions_[user_email] = user_id_hash;
+      CryptohomeClient::GetStubSanitizedUsername(cryptohome_id);
+  user_sessions_[cryptohome_id] = user_id_hash;
 }
 
 void FakeSessionManagerClient::StopSession() {
@@ -71,6 +75,7 @@ void FakeSessionManagerClient::StartDeviceWipe() {
 }
 
 void FakeSessionManagerClient::RequestLockScreen() {
+  request_lock_screen_call_count_++;
 }
 
 void FakeSessionManagerClient::NotifyLockScreenShown() {
@@ -94,15 +99,15 @@ void FakeSessionManagerClient::RetrieveDevicePolicy(
 }
 
 void FakeSessionManagerClient::RetrievePolicyForUser(
-    const std::string& username,
+    const cryptohome::Identification& cryptohome_id,
     const RetrievePolicyCallback& callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, user_policies_[username]));
+      FROM_HERE, base::Bind(callback, user_policies_[cryptohome_id]));
 }
 
 std::string FakeSessionManagerClient::BlockingRetrievePolicyForUser(
-    const std::string& username) {
-  return user_policies_[username];
+    const cryptohome::Identification& cryptohome_id) {
+  return user_policies_[cryptohome_id];
 }
 
 void FakeSessionManagerClient::RetrieveDeviceLocalAccountPolicy(
@@ -119,14 +124,15 @@ void FakeSessionManagerClient::StoreDevicePolicy(
   device_policy_ = policy_blob;
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
                                                 base::Bind(callback, true));
-  FOR_EACH_OBSERVER(Observer, observers_, PropertyChangeComplete(true));
+  for (auto& observer : observers_)
+    observer.PropertyChangeComplete(true);
 }
 
 void FakeSessionManagerClient::StorePolicyForUser(
-    const std::string& username,
+    const cryptohome::Identification& cryptohome_id,
     const std::string& policy_blob,
     const StorePolicyCallback& callback) {
-  user_policies_[username] = policy_blob;
+  user_policies_[cryptohome_id] = policy_blob;
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
                                                 base::Bind(callback, true));
 }
@@ -141,9 +147,8 @@ void FakeSessionManagerClient::StoreDeviceLocalAccountPolicy(
 }
 
 void FakeSessionManagerClient::SetFlagsForUser(
-    const std::string& username,
-    const std::vector<std::string>& flags) {
-}
+    const cryptohome::Identification& cryptohome_id,
+    const std::vector<std::string>& flags) {}
 
 void FakeSessionManagerClient::GetServerBackedStateKeys(
     const StateKeysCallback& callback) {
@@ -153,19 +158,47 @@ void FakeSessionManagerClient::GetServerBackedStateKeys(
 
 void FakeSessionManagerClient::CheckArcAvailability(
     const ArcCallback& callback) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                base::Bind(callback, false));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, arc_available_));
 }
 
-void FakeSessionManagerClient::StartArcInstance(const std::string& socket_path,
-                                                const ArcCallback& callback) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                base::Bind(callback, false));
+void FakeSessionManagerClient::StartArcInstance(
+    const cryptohome::Identification& cryptohome_id,
+    bool disable_boot_completed_broadcast,
+    const StartArcInstanceCallback& callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::Bind(callback, arc_available_
+                               ? StartArcInstanceResult::SUCCESS
+                               : StartArcInstanceResult::UNKNOWN_ERROR));
 }
 
 void FakeSessionManagerClient::StopArcInstance(const ArcCallback& callback) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                base::Bind(callback, false));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, arc_available_));
+}
+
+void FakeSessionManagerClient::PrioritizeArcInstance(
+    const ArcCallback& callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, arc_available_));
+}
+
+void FakeSessionManagerClient::EmitArcBooted() {}
+
+void FakeSessionManagerClient::GetArcStartTime(
+    const GetArcStartTimeCallback& callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, arc_available_, base::TimeTicks::Now()));
+}
+
+void FakeSessionManagerClient::RemoveArcData(
+    const cryptohome::Identification& cryptohome_id,
+    const ArcCallback& callback) {
+  if (!callback.is_null()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, arc_available_));
+  }
 }
 
 const std::string& FakeSessionManagerClient::device_policy() const {
@@ -178,15 +211,16 @@ void FakeSessionManagerClient::set_device_policy(
 }
 
 const std::string& FakeSessionManagerClient::user_policy(
-    const std::string& username) const {
-  std::map<std::string, std::string>::const_iterator it =
-      user_policies_.find(username);
+    const cryptohome::Identification& cryptohome_id) const {
+  std::map<cryptohome::Identification, std::string>::const_iterator it =
+      user_policies_.find(cryptohome_id);
   return it == user_policies_.end() ? base::EmptyString() : it->second;
 }
 
-void FakeSessionManagerClient::set_user_policy(const std::string& username,
-                                               const std::string& policy_blob) {
-  user_policies_[username] = policy_blob;
+void FakeSessionManagerClient::set_user_policy(
+    const cryptohome::Identification& cryptohome_id,
+    const std::string& policy_blob) {
+  user_policies_[cryptohome_id] = policy_blob;
 }
 
 const std::string& FakeSessionManagerClient::device_local_account_policy(
@@ -204,7 +238,8 @@ void FakeSessionManagerClient::set_device_local_account_policy(
 }
 
 void FakeSessionManagerClient::OnPropertyChangeComplete(bool success) {
-  FOR_EACH_OBSERVER(Observer, observers_, PropertyChangeComplete(success));
+  for (auto& observer : observers_)
+    observer.PropertyChangeComplete(success);
 }
 
 }  // namespace chromeos

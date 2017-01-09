@@ -5,11 +5,9 @@
 #ifndef UI_VIEWS_TEST_WEB_VIEW_TEST_HELPER_H_
 #define UI_VIEWS_TEST_WEB_VIEW_TEST_HELPER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
 
-namespace base {
-class MessageLoopForUI;
-}
+#include "base/macros.h"
 
 namespace content {
 class TestContentClientInitializer;
@@ -23,7 +21,7 @@ class WebViewTestHelper {
   virtual ~WebViewTestHelper();
 
  private:
-  scoped_ptr<content::TestContentClientInitializer>
+  std::unique_ptr<content::TestContentClientInitializer>
       test_content_client_initializer_;
 
   DISALLOW_COPY_AND_ASSIGN(WebViewTestHelper);

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include "base/memory/ptr_util.h"
 #include "components/webcrypto/algorithms/rsa.h"
 #include "components/webcrypto/algorithms/rsa_sign.h"
 #include "components/webcrypto/status.h"
@@ -53,8 +56,8 @@ class RsaPssImplementation : public RsaHashedAlgorithm {
 
 }  // namespace
 
-scoped_ptr<AlgorithmImplementation> CreateRsaPssImplementation() {
-  return make_scoped_ptr(new RsaPssImplementation);
+std::unique_ptr<AlgorithmImplementation> CreateRsaPssImplementation() {
+  return base::WrapUnique(new RsaPssImplementation);
 }
 
 }  // namespace webcrypto

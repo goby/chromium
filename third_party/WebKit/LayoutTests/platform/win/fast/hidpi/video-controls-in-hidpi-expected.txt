@@ -1,29 +1,29 @@
-layer at (0,0) size 800x600
-  LayoutView at (0,0) size 800x600
-layer at (0,0) size 800x600
-  LayoutBlockFlow {HTML} at (0,0) size 800x600
-    LayoutBlockFlow {BODY} at (8,8) size 784x584
-      LayoutBlockFlow {DIV} at (0,0) size 784x18
-        LayoutText {#text} at (0,0) size 551x17
-          text run at (0,0) width 551: "This test passes if the video controls are non-blurry and properly positioned in HiDPI."
-      LayoutBlockFlow (anonymous) at (0,18) size 784x150
+layer at (0,0) size 1600x1200
+  LayoutView at (0,0) size 1600x1200
+layer at (0,0) size 1600x377
+  LayoutBlockFlow {HTML} at (0,0) size 1600x377
+    LayoutBlockFlow {BODY} at (16,16) size 1568x345
+      LayoutBlockFlow {DIV} at (0,0) size 1568x37
+        LayoutText {#text} at (0,0) size 1101x36
+          text run at (0,0) width 1101: "This test passes if the video controls are non-blurry and properly positioned in HiDPI."
+      LayoutBlockFlow (anonymous) at (0,37) size 1568x308
         LayoutText {#text} at (0,0) size 0x0
-layer at (8,26) size 300x150
-  LayoutVideo {VIDEO} at (0,0) size 300x150
-layer at (8,26) size 300x150
-  LayoutFlexibleBox (relative positioned) {DIV} at (0,0) size 300x150
-    LayoutBlockFlow {DIV} at (0,115) size 300x35
-layer at (8,26) size 300x115
-  LayoutFlexibleBox (relative positioned) {DIV} at (0,0) size 300x115
-layer at (13,141) size 290x30
-  LayoutFlexibleBox (relative positioned) {DIV} at (5,0) size 290x30 [bgcolor=#141414CC]
-    LayoutButton {INPUT} at (9,0) size 30x30
-    LayoutSlider {INPUT} at (48,11) size 152x8
-      LayoutFlexibleBox {DIV} at (0,0) size 152x8 [border: (1px solid #E6E6E659)]
-        LayoutBlockFlow {DIV} at (1,-8) size 164x24
-          LayoutBlockFlow {DIV} at (-7,0) size 32x24
-    LayoutFlexibleBox {DIV} at (215,0) size 25x30 [color=#FFFFFF]
-      LayoutBlockFlow (anonymous) at (0,0) size 25x30
-        LayoutText {#text} at (0,7) size 25x16
-          text run at (0,7) width 25: "0:00"
-    LayoutButton {INPUT} at (249,0) size 35x30
+        LayoutText {#text} at (0,0) size 0x0
+layer at (16,53) size 600x300
+  LayoutVideo {VIDEO} at (0,0) size 600x300
+layer at (16,53) size 600x300
+  LayoutFlexibleBox (relative positioned) {DIV} at (0,0) size 600x300
+    LayoutBlockFlow {DIV} at (0,236) size 600x64
+layer at (16,53) size 600x216
+  LayoutFlexibleBox (relative positioned) {DIV} at (0,0) size 600x216
+layer at (16,289) size 600x64 scrollHeight 80
+  LayoutFlexibleBox (relative positioned) {DIV} at (0,0) size 600x64 [bgcolor=#FAFAFA]
+    LayoutButton {INPUT} at (0,0) size 64x64
+    LayoutFlexibleBox {DIV} at (64,0) size 46.72x64 [color=#5A5A5A]
+      LayoutBlockFlow (anonymous) at (0,0) size 46.72x64
+        LayoutText {#text} at (0,18) size 47x27
+          text run at (0,18) width 47: "0:00"
+    LayoutSlider {INPUT} at (146.72,30) size 417.28x4
+      LayoutFlexibleBox {DIV} at (0,0) size 417.28x4
+        LayoutBlockFlow {DIV} at (-36,-46) size 489.28x96
+          LayoutBlockFlow {DIV} at (0,0) size 72x96

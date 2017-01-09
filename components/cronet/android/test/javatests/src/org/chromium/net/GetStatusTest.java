@@ -11,9 +11,16 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.net.TestUrlRequestCallback.ResponseStep;
 import org.chromium.net.UrlRequest.Status;
 import org.chromium.net.UrlRequest.StatusListener;
+import org.chromium.net.impl.LoadState;
+import org.chromium.net.impl.UrlRequestBase;
+
+import java.io.IOException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
- * Tests that {@link CronetUrlRequest#getStatus} works as expected.
+ * Tests that {@link org.chromium.net.impl.CronetUrlRequest#getStatus(StatusListener)} works as
+ * expected.
  */
 public class GetStatusTest extends CronetTestBase {
     private CronetTestFramework mTestFramework;
@@ -55,8 +62,8 @@ public class GetStatusTest extends CronetTestBase {
         String url = NativeTestServer.getEchoMethodURL();
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         callback.setAutoAdvance(false);
-        UrlRequest.Builder builder = new UrlRequest.Builder(
-                url, callback, callback.getExecutor(), mTestFramework.mCronetEngine);
+        UrlRequest.Builder builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
         UrlRequest urlRequest = builder.build();
         // Calling before request is started should give Status.INVALID,
         // since the native adapter is not created.
@@ -73,8 +80,9 @@ public class GetStatusTest extends CronetTestBase {
         urlRequest.getStatus(statusListener1);
         statusListener1.waitUntilOnStatusCalled();
         assertTrue(statusListener1.mOnStatusCalled);
-        assertTrue(statusListener1.mStatus >= Status.IDLE);
-        assertTrue(statusListener1.mStatus <= Status.READING_RESPONSE);
+        assertTrue("Status is :" + statusListener1.mStatus, statusListener1.mStatus >= Status.IDLE);
+        assertTrue("Status is :" + statusListener1.mStatus,
+                statusListener1.mStatus <= Status.READING_RESPONSE);
 
         callback.waitForNextStep();
         assertEquals(ResponseStep.ON_RESPONSE_STARTED, callback.mResponseStep);
@@ -110,14 +118,14 @@ public class GetStatusTest extends CronetTestBase {
     @Feature({"Cronet"})
     public void testInvalidLoadState() throws Exception {
         try {
-            Status.convertLoadState(LoadState.WAITING_FOR_APPCACHE);
+            UrlRequestBase.convertLoadState(LoadState.WAITING_FOR_APPCACHE);
             fail();
         } catch (IllegalArgumentException e) {
             // Expected because LoadState.WAITING_FOR_APPCACHE is not mapped.
         }
 
         try {
-            Status.convertLoadState(-1);
+            UrlRequestBase.convertLoadState(-1);
             fail();
         } catch (AssertionError e) {
             // Expected.
@@ -127,7 +135,7 @@ public class GetStatusTest extends CronetTestBase {
         }
 
         try {
-            Status.convertLoadState(16);
+            UrlRequestBase.convertLoadState(16);
             fail();
         } catch (AssertionError e) {
             // Expected.
@@ -135,5 +143,59 @@ public class GetStatusTest extends CronetTestBase {
             // If assertions are disabled, an IllegalArgumentException should be thrown.
             assertEquals("No request status found.", e.getMessage());
         }
+    }
+
+    @SmallTest
+    @Feature({"Cronet"})
+    // Regression test for crbug.com/606872.
+    @OnlyRunNativeCronet
+    public void testGetStatusForUpload() throws Exception {
+        TestUrlRequestCallback callback = new TestUrlRequestCallback();
+        UrlRequest.Builder builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                NativeTestServer.getEchoBodyURL(), callback, callback.getExecutor());
+
+        final ConditionVariable block = new ConditionVariable();
+        // Use a separate executor for UploadDataProvider so the upload can be
+        // stalled while getStatus gets processed.
+        Executor uploadProviderExecutor = Executors.newSingleThreadExecutor();
+        TestUploadDataProvider dataProvider = new TestUploadDataProvider(
+                TestUploadDataProvider.SuccessCallbackMode.SYNC, uploadProviderExecutor) {
+            @Override
+            public long getLength() throws IOException {
+                // Pause the data provider.
+                block.block();
+                block.close();
+                return super.getLength();
+            }
+        };
+        dataProvider.addRead("test".getBytes());
+        builder.setUploadDataProvider(dataProvider, uploadProviderExecutor);
+        builder.addHeader("Content-Type", "useless/string");
+        UrlRequest urlRequest = builder.build();
+        TestStatusListener statusListener = new TestStatusListener();
+        urlRequest.start();
+        // Call getStatus() immediately after start(), which will post
+        // startInternal() to the upload provider's executor because there is an
+        // upload. When CronetUrlRequestAdapter::GetStatusOnNetworkThread is
+        // executed, the |url_request_| is null.
+        urlRequest.getStatus(statusListener);
+        statusListener.waitUntilOnStatusCalled();
+        assertTrue(statusListener.mOnStatusCalled);
+        // The request should be in IDLE state because GetStatusOnNetworkThread
+        // is called before |url_request_| is initialized and started.
+        assertEquals(Status.IDLE, statusListener.mStatus);
+        // Resume the UploadDataProvider.
+        block.open();
+
+        // Make sure the request is successful and there is no crash.
+        callback.blockForDone();
+        dataProvider.assertClosed();
+
+        assertEquals(4, dataProvider.getUploadedLength());
+        assertEquals(1, dataProvider.getNumReadCalls());
+        assertEquals(0, dataProvider.getNumRewindCalls());
+
+        assertEquals(200, callback.mResponseInfo.getHttpStatusCode());
+        assertEquals("test", callback.mResponseAsString);
     }
 }

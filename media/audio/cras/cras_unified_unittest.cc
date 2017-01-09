@@ -2,10 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/test_message_loop.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "media/audio/cras/audio_manager_cras.h"
 #include "media/audio/fake_audio_log_factory.h"
@@ -30,20 +37,10 @@ namespace media {
 
 class MockAudioManagerCras : public AudioManagerCras {
  public:
-  MockAudioManagerCras() : AudioManagerCras(&fake_audio_log_factory_) {}
-
-  MOCK_METHOD0(Init, void());
-  MOCK_METHOD0(HasAudioOutputDevices, bool());
-  MOCK_METHOD0(HasAudioInputDevices, bool());
-  MOCK_METHOD1(MakeLinearOutputStream, AudioOutputStream*(
-      const AudioParameters& params));
-  MOCK_METHOD2(MakeLowLatencyOutputStream,
-               AudioOutputStream*(const AudioParameters& params,
-                                  const std::string& device_id));
-  MOCK_METHOD2(MakeLinearOutputStream, AudioInputStream*(
-      const AudioParameters& params, const std::string& device_id));
-  MOCK_METHOD2(MakeLowLatencyInputStream, AudioInputStream*(
-      const AudioParameters& params, const std::string& device_id));
+  MockAudioManagerCras()
+      : AudioManagerCras(base::ThreadTaskRunnerHandle::Get(),
+                         base::ThreadTaskRunnerHandle::Get(),
+                         &fake_audio_log_factory_) {}
 
   // We need to override this function in order to skip the checking the number
   // of active output streams. It is because the number of active streams
@@ -62,17 +59,17 @@ class CrasUnifiedStreamTest : public testing::Test {
  protected:
   CrasUnifiedStreamTest() {
     mock_manager_.reset(new StrictMock<MockAudioManagerCras>());
+    base::RunLoop().RunUntilIdle();
   }
 
-  virtual ~CrasUnifiedStreamTest() {
-  }
+  ~CrasUnifiedStreamTest() override {}
 
   CrasUnifiedStream* CreateStream(ChannelLayout layout) {
     return CreateStream(layout, kTestFramesPerPacket);
   }
 
   CrasUnifiedStream* CreateStream(ChannelLayout layout,
-                                 int32 samples_per_packet) {
+                                  int32_t samples_per_packet) {
     AudioParameters params(kTestFormat, layout, kTestSampleRate,
                            kTestBitsPerSample, samples_per_packet);
     return new CrasUnifiedStream(params, mock_manager_.get());
@@ -86,9 +83,11 @@ class CrasUnifiedStreamTest : public testing::Test {
   static const int kTestSampleRate;
   static const int kTestBitsPerSample;
   static const AudioParameters::Format kTestFormat;
-  static const uint32 kTestFramesPerPacket;
+  static const uint32_t kTestFramesPerPacket;
 
-  scoped_ptr<StrictMock<MockAudioManagerCras> > mock_manager_;
+  base::TestMessageLoop message_loop_;
+  std::unique_ptr<StrictMock<MockAudioManagerCras>, AudioManagerDeleter>
+      mock_manager_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CrasUnifiedStreamTest);
@@ -101,7 +100,7 @@ const int CrasUnifiedStreamTest::kTestSampleRate =
 const int CrasUnifiedStreamTest::kTestBitsPerSample = 16;
 const AudioParameters::Format CrasUnifiedStreamTest::kTestFormat =
     AudioParameters::AUDIO_PCM_LINEAR;
-const uint32 CrasUnifiedStreamTest::kTestFramesPerPacket = 1000;
+const uint32_t CrasUnifiedStreamTest::kTestFramesPerPacket = 1000;
 
 TEST_F(CrasUnifiedStreamTest, ConstructedState) {
   CrasUnifiedStream* test_stream = CreateStream(kTestChannelLayout);
@@ -140,12 +139,13 @@ TEST_F(CrasUnifiedStreamTest, RenderFrames) {
 
   ASSERT_TRUE(test_stream->Open());
 
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
 
-  EXPECT_CALL(mock_callback, OnMoreData(_, _))
-      .WillRepeatedly(DoAll(
-          InvokeWithoutArgs(&event, &base::WaitableEvent::Signal),
-                            Return(kTestFramesPerPacket)));
+  EXPECT_CALL(mock_callback, OnMoreData(_, _, 0, _))
+      .WillRepeatedly(
+          DoAll(InvokeWithoutArgs(&event, &base::WaitableEvent::Signal),
+                Return(kTestFramesPerPacket)));
 
   test_stream->Start(&mock_callback);
 

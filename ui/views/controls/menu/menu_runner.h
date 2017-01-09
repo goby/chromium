@@ -5,15 +5,19 @@
 #ifndef UI_VIEWS_CONTROLS_MENU_MENU_RUNNER_H_
 #define UI_VIEWS_CONTROLS_MENU_MENU_RUNNER_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/controls/menu/menu_types.h"
 #include "ui/views/views_export.h"
 
 namespace base {
-class TimeDelta;
+class TimeTicks;
 }
 
 namespace gfx {
@@ -28,7 +32,6 @@ namespace views {
 
 class MenuButton;
 class MenuItemView;
-class MenuModelAdapter;
 class MenuRunnerHandler;
 class Widget;
 
@@ -102,10 +105,15 @@ class VIEWS_EXPORT MenuRunner {
     NORMAL_EXIT
   };
 
-  // Creates a new MenuRunner.
-  // |run_types| is a bitmask of RunTypes.
-  MenuRunner(ui::MenuModel* menu_model, int32 run_types);
-  MenuRunner(MenuItemView* menu, int32 run_types);
+  // Creates a new MenuRunner, which may use a native menu if available.
+  // |run_types| is a bitmask of RunTypes. If provided,
+  // |on_menu_closed_callback| is invoked when the menu is closed.
+  MenuRunner(ui::MenuModel* menu_model,
+             int32_t run_types,
+             const base::Closure& on_menu_closed_callback = base::Closure());
+
+  // Creates a runner for a custom-created toolkit-views menu.
+  MenuRunner(MenuItemView* menu, int32_t run_types);
   ~MenuRunner();
 
   // Runs the menu. If this returns MENU_DELETED the method is returning
@@ -118,7 +126,7 @@ class VIEWS_EXPORT MenuRunner {
                       MenuButton* button,
                       const gfx::Rect& bounds,
                       MenuAnchorPosition anchor,
-                      ui::MenuSourceType source_type) WARN_UNUSED_RESULT;
+                      ui::MenuSourceType source_type);
 
   // Returns true if we're in a nested message loop running the menu.
   bool IsRunning() const;
@@ -127,24 +135,24 @@ class VIEWS_EXPORT MenuRunner {
   void Cancel();
 
   // Returns the time from the event which closed the menu - or 0.
-  base::TimeDelta closing_event_time() const;
+  base::TimeTicks closing_event_time() const;
 
  private:
   friend class test::MenuRunnerTestAPI;
 
   // Sets an implementation of RunMenuAt. This is intended to be used at test.
-  void SetRunnerHandler(scoped_ptr<MenuRunnerHandler> runner_handler);
+  void SetRunnerHandler(std::unique_ptr<MenuRunnerHandler> runner_handler);
 
-  const int32 run_types_;
+  const int32_t run_types_;
 
   // We own this. No scoped_ptr because it is destroyed by calling Release().
   internal::MenuRunnerImplInterface* impl_;
 
   // An implementation of RunMenuAt. This is usually NULL and ignored. If this
   // is not NULL, this implementation will be used.
-  scoped_ptr<MenuRunnerHandler> runner_handler_;
+  std::unique_ptr<MenuRunnerHandler> runner_handler_;
 
-  scoped_ptr<internal::DisplayChangeListener> display_change_listener_;
+  std::unique_ptr<internal::DisplayChangeListener> display_change_listener_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuRunner);
 };

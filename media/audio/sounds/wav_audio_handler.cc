@@ -8,7 +8,9 @@
 #include <cstring>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/sys_byteorder.h"
+#include "build/build_config.h"
 #include "media/base/audio_bus.h"
 
 namespace media {
@@ -76,10 +78,10 @@ bool ParseFmtChunk(const base::StringPiece data, WavAudioParameters* params) {
   }
 
   // Read in serialized parameters.
-  params->audio_format = ReadInt<uint16>(data, kAudioFormatOffset);
-  params->num_channels = ReadInt<uint16>(data, kChannelOffset);
-  params->sample_rate = ReadInt<uint32>(data, kSampleRateOffset);
-  params->bits_per_sample = ReadInt<uint16>(data, kBitsPerSampleOffset);
+  params->audio_format = ReadInt<uint16_t>(data, kAudioFormatOffset);
+  params->num_channels = ReadInt<uint16_t>(data, kChannelOffset);
+  params->sample_rate = ReadInt<uint32_t>(data, kSampleRateOffset);
+  params->bits_per_sample = ReadInt<uint16_t>(data, kBitsPerSampleOffset);
   return true;
 }
 
@@ -173,18 +175,18 @@ WavAudioHandler::WavAudioHandler(base::StringPiece audio_data,
 WavAudioHandler::~WavAudioHandler() {}
 
 // static
-scoped_ptr<WavAudioHandler> WavAudioHandler::Create(
+std::unique_ptr<WavAudioHandler> WavAudioHandler::Create(
     const base::StringPiece wav_data) {
   WavAudioParameters params;
   base::StringPiece audio_data;
 
   // Attempt to parse the WAV data.
   if (!ParseWavData(wav_data, &audio_data, &params))
-    return scoped_ptr<WavAudioHandler>();
+    return nullptr;
 
-  return make_scoped_ptr(new WavAudioHandler(audio_data, params.num_channels,
-                                             params.sample_rate,
-                                             params.bits_per_sample));
+  return base::WrapUnique(new WavAudioHandler(audio_data, params.num_channels,
+                                              params.sample_rate,
+                                              params.bits_per_sample));
 }
 
 bool WavAudioHandler::AtEnd(size_t cursor) const {

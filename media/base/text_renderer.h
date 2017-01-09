@@ -6,10 +6,11 @@
 #define MEDIA_BASE_TEXT_RENDERER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
@@ -75,11 +76,11 @@ class MEDIA_EXPORT TextRenderer {
       kReadPending
     };
 
-    explicit TextTrackState(scoped_ptr<TextTrack> text_track);
+    explicit TextTrackState(std::unique_ptr<TextTrack> text_track);
     ~TextTrackState();
 
     ReadState read_state;
-    scoped_ptr<TextTrack> text_track;
+    std::unique_ptr<TextTrack> text_track;
     TextRanges text_ranges_;
   };
 
@@ -96,7 +97,7 @@ class MEDIA_EXPORT TextRenderer {
   // Dispatched when the AddTextTrackCB completes, after having created
   // the TextTrack object associated with |text_stream|.
   void OnAddTextTrackDone(DemuxerStream* text_stream,
-                          scoped_ptr<TextTrack> text_track);
+                          std::unique_ptr<TextTrack> text_track);
 
   // Utility function to post a read request on |text_stream|.
   void Read(TextTrackState* state, DemuxerStream* text_stream);
@@ -120,8 +121,8 @@ class MEDIA_EXPORT TextRenderer {
   };
   State state_;
 
-  typedef std::map<DemuxerStream*, TextTrackState*> TextTrackStateMap;
-  TextTrackStateMap text_track_state_map_;
+  std::map<DemuxerStream*, std::unique_ptr<TextTrackState>>
+      text_track_state_map_;
 
   // Indicates how many read requests are in flight.
   int pending_read_count_;

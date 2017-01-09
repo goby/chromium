@@ -35,8 +35,6 @@
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
-#include "wtf/RefCounted.h"
-#include "wtf/RefPtr.h"
 
 namespace blink {
 
@@ -46,30 +44,33 @@ class DataTransfer;
 class StringCallback;
 class ExecutionContext;
 
-class CORE_EXPORT DataTransferItem final : public GarbageCollected<DataTransferItem>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-    WTF_MAKE_NONCOPYABLE(DataTransferItem);
-public:
-    static DataTransferItem* create(DataTransfer*, DataObjectItem*);
+class CORE_EXPORT DataTransferItem final
+    : public GarbageCollected<DataTransferItem>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
+  WTF_MAKE_NONCOPYABLE(DataTransferItem);
 
-    String kind() const;
-    String type() const;
+ public:
+  static DataTransferItem* create(DataTransfer*, DataObjectItem*);
 
-    void getAsString(ExecutionContext*, StringCallback*) const;
-    Blob* getAsFile() const;
+  String kind() const;
+  String type() const;
 
-    DataTransfer* dataTransfer() { return m_dataTransfer.get(); }
-    DataObjectItem* dataObjectItem() { return m_item.get(); }
+  void getAsString(ExecutionContext*, StringCallback*) const;
+  Blob* getAsFile() const;
 
-    DECLARE_TRACE();
+  DataTransfer* getDataTransfer() { return m_dataTransfer.get(); }
+  DataObjectItem* getDataObjectItem() { return m_item.get(); }
 
-private:
-    DataTransferItem(DataTransfer*, DataObjectItem*);
+  DECLARE_TRACE();
 
-    Member<DataTransfer> m_dataTransfer;
-    Member<DataObjectItem> m_item;
+ private:
+  DataTransferItem(DataTransfer*, DataObjectItem*);
+
+  Member<DataTransfer> m_dataTransfer;
+  Member<DataObjectItem> m_item;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DataTransferItem_h
+#endif  // DataTransferItem_h

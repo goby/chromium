@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_FRAME_ASH_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_FRAME_ASH_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/ui/views/frame/native_browser_frame.h"
 #include "ui/views/widget/native_widget_aura.h"
 
@@ -30,7 +31,6 @@ class BrowserFrameAsh : public views::NativeWidgetAura,
 
  protected:
   // Overridden from views::NativeWidgetAura:
-  void OnWindowDestroying(aura::Window* window) override;
   void OnWindowTargetVisibilityChanged(bool visible) override;
 
   // Overridden from NativeBrowserFrame:
@@ -41,6 +41,10 @@ class BrowserFrameAsh : public views::NativeWidgetAura,
   bool ShouldSaveWindowPlacement() const override;
   void GetWindowPlacement(gfx::Rect* bounds,
                           ui::WindowShowState* show_state) const override;
+  bool PreHandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
 
   ~BrowserFrameAsh() override;
 

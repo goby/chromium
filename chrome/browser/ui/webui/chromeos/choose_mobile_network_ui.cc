@@ -4,29 +4,36 @@
 
 #include "chrome/browser/ui/webui/chromeos/choose_mobile_network_ui.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_device_handler.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 using content::WebContents;
@@ -84,7 +91,7 @@ chromeos::NetworkStateHandler* GetNetworkStateHandler() {
 void NetworkOperationErrorCallback(
     const std::string& operation_name,
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) {
+    std::unique_ptr<base::DictionaryValue> error_data) {
   NET_LOG_ERROR("Operation failed: " + error_name, operation_name);
 }
 
@@ -171,7 +178,7 @@ void ChooseMobileNetworkHandler::DeviceListChanged() {
     NET_LOG_EVENT("ChooseMobileNetwork", "Device is scanning for networks.");
     scanning_ = true;
     if (is_page_ready_)
-      web_ui()->CallJavascriptFunction(kJsApiShowScanning);
+      web_ui()->CallJavascriptFunctionUnsafe(kJsApiShowScanning);
     return;
   }
   scanning_ = false;
@@ -185,7 +192,7 @@ void ChooseMobileNetworkHandler::DeviceListChanged() {
     // Register API doesn't allow technology to be specified so just show unique
     // network in UI.
     if (network_ids.insert(it->network_id).second) {
-      base::DictionaryValue* network = new base::DictionaryValue();
+      auto network = base::MakeUnique<base::DictionaryValue>();
       network->SetString(kNetworkIdProperty, it->network_id);
       if (!it->long_name.empty())
         network->SetString(kOperatorNameProperty, it->long_name);
@@ -195,11 +202,11 @@ void ChooseMobileNetworkHandler::DeviceListChanged() {
         network->SetString(kOperatorNameProperty, it->network_id);
       network->SetString(kStatusProperty, it->status);
       network->SetString(kTechnologyProperty, it->technology);
-      networks_list_.Append(network);
+      networks_list_.Append(std::move(network));
     }
   }
   if (is_page_ready_) {
-    web_ui()->CallJavascriptFunction(kJsApiShowNetworks, networks_list_);
+    web_ui()->CallJavascriptFunctionUnsafe(kJsApiShowNetworks, networks_list_);
     networks_list_.Clear();
     has_pending_results_ = false;
   } else {
@@ -248,11 +255,11 @@ void ChooseMobileNetworkHandler::HandlePageReady(const base::ListValue* args) {
   }
 
   if (has_pending_results_) {
-    web_ui()->CallJavascriptFunction(kJsApiShowNetworks, networks_list_);
+    web_ui()->CallJavascriptFunctionUnsafe(kJsApiShowNetworks, networks_list_);
     networks_list_.Clear();
     has_pending_results_ = false;
   } else if (scanning_) {
-    web_ui()->CallJavascriptFunction(kJsApiShowScanning);
+    web_ui()->CallJavascriptFunctionUnsafe(kJsApiShowScanning);
   }
   is_page_ready_ = true;
 }

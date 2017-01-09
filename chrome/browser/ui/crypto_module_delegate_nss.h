@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/synchronization/waitable_event.h"
 #include "chrome/browser/ui/crypto_module_password_dialog.h"
 #include "crypto/nss_crypto_module_delegate.h"
@@ -39,8 +40,8 @@ class ChromeNSSCryptoModuleDelegate
       chrome::CryptoModulePasswordReason reason,
       const net::HostPortPair& server,
       content::ResourceContext* context,
-      const base::Callback<void(scoped_ptr<ChromeNSSCryptoModuleDelegate>)>&
-          callback);
+      const base::Callback<
+          void(std::unique_ptr<ChromeNSSCryptoModuleDelegate>)>& callback);
 
   // crypto::NSSCryptoModuleDelegate implementation.
   crypto::ScopedPK11Slot RequestSlot() override;

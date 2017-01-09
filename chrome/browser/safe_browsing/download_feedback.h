@@ -5,17 +5,14 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_DOWNLOAD_FEEDBACK_H_
 #define CHROME_BROWSER_SAFE_BROWSING_DOWNLOAD_FEEDBACK_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "chrome/browser/safe_browsing/two_phase_uploader.h"
-
-namespace content {
-class DownloadItem;
-}
 
 namespace safe_browsing {
 
@@ -27,7 +24,7 @@ class DownloadFeedback : public base::NonThreadSafe {
  public:
   // Takes ownership of the file pointed to be |file_path|, it will be deleted
   // when the DownloadFeedback is destructed.
-  static DownloadFeedback* Create(
+  static std::unique_ptr<DownloadFeedback> Create(
       net::URLRequestContextGetter* request_context_getter,
       base::TaskRunner* file_task_runner,
       const base::FilePath& file_path,
@@ -37,7 +34,7 @@ class DownloadFeedback : public base::NonThreadSafe {
   // The largest file size we support uploading.
   // Note: changing this will affect the max size of
   // SBDownloadFeedback.SizeSuccess and SizeFailure histograms.
-  static const int64 kMaxUploadSize;
+  static const int64_t kMaxUploadSize;
 
   // The URL where the browser sends download feedback requests.
   static const char kSbFeedbackURL[];
@@ -69,7 +66,7 @@ class DownloadFeedbackFactory {
  public:
   virtual ~DownloadFeedbackFactory() {}
 
-  virtual DownloadFeedback* CreateDownloadFeedback(
+  virtual std::unique_ptr<DownloadFeedback> CreateDownloadFeedback(
       net::URLRequestContextGetter* request_context_getter,
       base::TaskRunner* file_task_runner,
       const base::FilePath& file_path,

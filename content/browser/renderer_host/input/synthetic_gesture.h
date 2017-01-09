@@ -5,7 +5,9 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_SYNTHETIC_GESTURE_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_SYNTHETIC_GESTURE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "content/common/input/synthetic_gesture_params.h"
@@ -15,7 +17,7 @@ namespace content {
 class SyntheticGestureTarget;
 
 // Base class for synthetic gesture implementations. A synthetic gesture class
-// is responsible for forwaring InputEvents, simulating the gesture, to a
+// is responsible for forwarding InputEvents, simulating the gesture, to a
 // SyntheticGestureTarget.
 //
 // Adding new gesture types involved the following steps:
@@ -30,17 +32,18 @@ class CONTENT_EXPORT SyntheticGesture {
   SyntheticGesture();
   virtual ~SyntheticGesture();
 
-  static scoped_ptr<SyntheticGesture> Create(
+  static std::unique_ptr<SyntheticGesture> Create(
       const SyntheticGestureParams& gesture_params);
 
   enum Result {
     GESTURE_RUNNING,
     GESTURE_FINISHED,
+    // Received when the user input parameters for SyntheticPointerAction are
+    // invalid.
+    POINTER_ACTION_INPUT_INVALID,
     GESTURE_SOURCE_TYPE_NOT_IMPLEMENTED,
     GESTURE_RESULT_MAX = GESTURE_SOURCE_TYPE_NOT_IMPLEMENTED
   };
-
-  enum PointerActionType { PRESS, MOVE, RELEASE };
 
   // Update the state of the gesture and forward the appropriate events to the
   // platform. This function is called repeatedly by the synthetic gesture

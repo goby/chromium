@@ -5,7 +5,11 @@
 #ifndef CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_EXCLUSIVE_ACCESS_MANAGER_H_
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_EXCLUSIVE_ACCESS_MANAGER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/feature_list.h"
+#include "base/macros.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/exclusive_access/mouse_lock_controller.h"
@@ -16,6 +20,7 @@ class GURL;
 class MouseLockController;
 
 namespace content {
+struct NativeWebKeyboardEvent;
 class WebContents;
 }
 
@@ -43,6 +48,7 @@ class ExclusiveAccessManager {
 
   GURL GetExclusiveAccessBubbleURL() const;
 
+  static bool IsExperimentalKeyboardLockUIEnabled();
   static bool IsSimplifiedFullscreenUIEnabled();
 
   // Callbacks ////////////////////////////////////////////////////////////////
@@ -56,18 +62,24 @@ class ExclusiveAccessManager {
   // Called by Browser::TabClosingAt.
   void OnTabClosing(content::WebContents* web_contents);
 
-  // Called by Browser::PreHandleKeyboardEvent
-  bool HandleUserPressedEscape();
+  // Called by Browser::PreHandleKeyboardEvent.
+  bool HandleUserKeyPress(const content::NativeWebKeyboardEvent& event);
+
+  // Called by Browser::ContentsMouseEvent.
+  void OnUserInput();
 
   // Called by platform ExclusiveAccessExitBubble.
-  void OnAcceptExclusiveAccessPermission();
-  void OnDenyExclusiveAccessPermission();
   void ExitExclusiveAccess();
+  void RecordBubbleReshownUMA(ExclusiveAccessBubbleType type);
 
  private:
+  // Called when the user has held down Escape.
+  void HandleUserHeldEscape();
+
   ExclusiveAccessContext* const exclusive_access_context_;
   FullscreenController fullscreen_controller_;
   MouseLockController mouse_lock_controller_;
+  base::OneShotTimer hold_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(ExclusiveAccessManager);
 };

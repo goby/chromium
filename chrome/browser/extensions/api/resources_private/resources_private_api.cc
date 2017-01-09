@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/api/resources_private/resources_private_api.h"
 
 #include <string>
+#include <utility>
 
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -60,8 +61,9 @@ ResourcesPrivateGetStringsFunction::ResourcesPrivateGetStringsFunction() {}
 ResourcesPrivateGetStringsFunction::~ResourcesPrivateGetStringsFunction() {}
 
 ExtensionFunction::ResponseAction ResourcesPrivateGetStringsFunction::Run() {
-  scoped_ptr<get_strings::Params> params(get_strings::Params::Create(*args_));
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  std::unique_ptr<get_strings::Params> params(
+      get_strings::Params::Create(*args_));
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
 
   api::resources_private::Component component = params->component;
 
@@ -79,7 +81,7 @@ ExtensionFunction::ResponseAction ResourcesPrivateGetStringsFunction::Run() {
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
   webui::SetLoadTimeDataDefaults(app_locale, dict.get());
 
-  return RespondNow(OneArgument(dict.Pass()));
+  return RespondNow(OneArgument(std::move(dict)));
 }
 
 }  // namespace extensions

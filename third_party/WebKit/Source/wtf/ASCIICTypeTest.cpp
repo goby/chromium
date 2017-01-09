@@ -2,19 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "wtf/ASCIICType.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace WTF {
 
-TEST(ASCIICTypeTest, ASCIICaseFoldTable)
-{
-    LChar symbol = 0xff;
-    while (symbol--) {
-        EXPECT_EQ(toASCIILower<LChar>(symbol), ASCIICaseFoldTable[symbol]);
-    }
+TEST(ASCIICTypeTest, ASCIICaseFoldTable) {
+  LChar symbol = 0xff;
+  while (symbol--) {
+    EXPECT_EQ(toASCIILower<LChar>(symbol), ASCIICaseFoldTable[symbol]);
+  }
 }
 
-}
+}  // namespace WTF

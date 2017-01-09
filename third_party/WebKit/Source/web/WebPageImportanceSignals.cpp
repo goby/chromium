@@ -2,42 +2,44 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "public/web/WebPageImportanceSignals.h"
 
-#include "public/platform/Platform.h"
+#include "platform/Histogram.h"
 #include "public/web/WebViewClient.h"
 
 namespace blink {
 
-void WebPageImportanceSignals::reset()
-{
-    m_hadFormInteraction = false;
-    m_issuedNonGetFetchFromScript = false;
-    if (m_observer)
-        m_observer->pageImportanceSignalsChanged();
+void WebPageImportanceSignals::reset() {
+  m_hadFormInteraction = false;
+  m_issuedNonGetFetchFromScript = false;
+  if (m_observer)
+    m_observer->pageImportanceSignalsChanged();
 }
 
-void WebPageImportanceSignals::setHadFormInteraction()
-{
-    m_hadFormInteraction = true;
-    if (m_observer)
-        m_observer->pageImportanceSignalsChanged();
+void WebPageImportanceSignals::setHadFormInteraction() {
+  m_hadFormInteraction = true;
+  if (m_observer)
+    m_observer->pageImportanceSignalsChanged();
 }
 
-void WebPageImportanceSignals::setIssuedNonGetFetchFromScript()
-{
-    m_issuedNonGetFetchFromScript = true;
-    if (m_observer)
-        m_observer->pageImportanceSignalsChanged();
+void WebPageImportanceSignals::setIssuedNonGetFetchFromScript() {
+  m_issuedNonGetFetchFromScript = true;
+  if (m_observer)
+    m_observer->pageImportanceSignalsChanged();
 }
 
-void WebPageImportanceSignals::onCommitLoad()
-{
-    Platform::current()->histogramEnumeration("PageImportanceSignals.HadFormInteraction.OnCommitLoad", m_hadFormInteraction, 2);
-    Platform::current()->histogramEnumeration("PageImportanceSignals.IssuedNonGetFetchFromScript.OnCommitLoad", m_issuedNonGetFetchFromScript, 2);
+void WebPageImportanceSignals::onCommitLoad() {
+  DEFINE_STATIC_LOCAL(
+      EnumerationHistogram, hadFormInteractionHistogram,
+      ("PageImportanceSignals.HadFormInteraction.OnCommitLoad", 2));
+  hadFormInteractionHistogram.count(m_hadFormInteraction);
 
-    reset();
+  DEFINE_STATIC_LOCAL(
+      EnumerationHistogram, issuedNonGetHistogram,
+      ("PageImportanceSignals.IssuedNonGetFetchFromScript.OnCommitLoad", 2));
+  issuedNonGetHistogram.count(m_issuedNonGetFetchFromScript);
+
+  reset();
 }
 
-} // namespace blink
+}  // namespace blink

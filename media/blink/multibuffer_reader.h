@@ -78,7 +78,12 @@ class MEDIA_BLINK_EXPORT MultiBufferReader
   // The range [current_position - backward ... current_position + forward)
   // will be locked in the cache. Calling Wait() or TryRead() with values
   // larger than |forward| is not supported.
-  void SetMaxBuffer(int64_t backward, int64_t forward);
+  void SetPinRange(int64_t backward, int64_t forward);
+
+  // Set how much memory usage we target. This memory is added to the global
+  // LRU and shared between all multibuffers. We may end up using more memory
+  // if no memory can be freed due to pinning.
+  void SetMaxBuffer(int64_t bytes);
 
   // Returns true if we are currently loading data.
   bool IsLoading() const;
@@ -91,6 +96,8 @@ class MEDIA_BLINK_EXPORT MultiBufferReader
   int64_t preload_low() const { return preload_low_; }
 
  private:
+  friend class MultibufferDataSourceTest;
+
   // Returns the block for a particular byte position.
   MultiBufferBlockId block(int64_t byte_pos) const {
     return byte_pos >> multibuffer_->block_size_shift();
@@ -101,6 +108,9 @@ class MEDIA_BLINK_EXPORT MultiBufferReader
     return block(byte_pos + (1LL << multibuffer_->block_size_shift()) - 1);
   }
 
+  // Unpin previous range, then pin the new range.
+  void PinRange(MultiBuffer::BlockId begin, MultiBuffer::BlockId end);
+
   // Check if wait operation can complete now.
   void CheckWait();
 
@@ -109,6 +119,9 @@ class MEDIA_BLINK_EXPORT MultiBufferReader
   // called anything changes, like when we get more data or seek to
   // a new position.
   void UpdateInternalState();
+
+  // Update end_ if p-1 contains an end-of-stream block.
+  void UpdateEnd(MultiBufferBlockId p);
 
   // Indirection function used to call callbacks. When we post a callback
   // we indirect it through a weak_ptr and this function to make sure we
@@ -129,6 +142,12 @@ class MEDIA_BLINK_EXPORT MultiBufferReader
   // Pin this much data in the cache from the current position.
   int64_t max_buffer_forward_;
   int64_t max_buffer_backward_;
+
+  // The amount of buffer we've added to the global LRU.
+  int64_t current_buffer_size_;
+
+  // Currently pinned range.
+  Interval<MultiBuffer::BlockId> pinned_range_;
 
   // Current position in bytes.
   int64_t pos_;

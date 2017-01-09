@@ -7,9 +7,12 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/process/process_handle.h"
 #include "base/task_runner.h"
+#include "build/build_config.h"
 #include "content/browser/browser_child_process_host_impl.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/common/content_switches.h"
@@ -33,9 +36,9 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
   ~Internal() override {}
 
   // IPC::MessageFilter implementation:
-  void OnFilterAdded(IPC::Sender* sender) override {
-    filter_->sender_ = sender;
-    filter_->OnFilterAdded(sender);
+  void OnFilterAdded(IPC::Channel* channel) override {
+    filter_->sender_ = channel;
+    filter_->OnFilterAdded(channel);
   }
 
   void OnFilterRemoved() override { filter_->OnFilterRemoved(); }
@@ -45,7 +48,7 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
     filter_->OnChannelClosing();
   }
 
-  void OnChannelConnected(int32 peer_pid) override {
+  void OnChannelConnected(int32_t peer_pid) override {
     filter_->peer_process_ = base::Process::OpenWithExtraPrivileges(peer_pid);
     filter_->OnChannelConnected(peer_pid);
   }
@@ -67,11 +70,6 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
       return DispatchMessage(message);
     }
 
-    if (thread == BrowserThread::UI &&
-        !BrowserMessageFilter::CheckCanDispatchOnUI(message, filter_.get())) {
-      return true;
-    }
-
     BrowserThread::PostTask(
         thread, FROM_HERE,
         base::Bind(
@@ -80,7 +78,7 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
   }
 
   bool GetSupportedMessageClasses(
-      std::vector<uint32>* supported_message_classes) const override {
+      std::vector<uint32_t>* supported_message_classes) const override {
     supported_message_classes->assign(
         filter_->message_classes_to_filter().begin(),
         filter_->message_classes_to_filter().end());
@@ -100,13 +98,13 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
   DISALLOW_COPY_AND_ASSIGN(Internal);
 };
 
-BrowserMessageFilter::BrowserMessageFilter(uint32 message_class_to_filter)
+BrowserMessageFilter::BrowserMessageFilter(uint32_t message_class_to_filter)
     : internal_(nullptr),
       sender_(nullptr),
       message_classes_to_filter_(1, message_class_to_filter) {}
 
 BrowserMessageFilter::BrowserMessageFilter(
-    const uint32* message_classes_to_filter,
+    const uint32_t* message_classes_to_filter,
     size_t num_message_classes_to_filter)
     : internal_(nullptr),
       sender_(nullptr),
@@ -114,6 +112,12 @@ BrowserMessageFilter::BrowserMessageFilter(
           message_classes_to_filter,
           message_classes_to_filter + num_message_classes_to_filter) {
   DCHECK(num_message_classes_to_filter);
+}
+
+void BrowserMessageFilter::AddAssociatedInterface(
+    const std::string& name,
+    const IPC::ChannelProxy::GenericAssociatedInterfaceFactory& factory) {
+  associated_interfaces_.emplace_back(name, factory);
 }
 
 base::ProcessHandle BrowserMessageFilter::PeerHandle() {
@@ -155,38 +159,10 @@ base::TaskRunner* BrowserMessageFilter::OverrideTaskRunnerForMessage(
   return nullptr;
 }
 
-bool BrowserMessageFilter::CheckCanDispatchOnUI(const IPC::Message& message,
-                                                IPC::Sender* sender) {
-#if defined(OS_WIN)
-  // On Windows there's a potential deadlock with sync messsages going in
-  // a circle from browser -> plugin -> renderer -> browser.
-  // On Linux we can avoid this by avoiding sync messages from browser->plugin.
-  // On Mac we avoid this by not supporting windowed plugins.
-  if (message.is_sync() && !message.is_caller_pumping_messages()) {
-    // NOTE: IF YOU HIT THIS ASSERT, THE SOLUTION IS ALMOST NEVER TO RUN A
-    // NESTED MESSAGE LOOP IN THE RENDERER!!!
-    // That introduces reentrancy which causes hard to track bugs.  You should
-    // find a way to either turn this into an asynchronous message, or one
-    // that can be answered on the IO thread.
-    NOTREACHED() << "Can't send sync messages to UI thread without pumping "
-        "messages in the renderer or else deadlocks can occur if the page "
-        "has windowed plugins! (message type " << message.type() << ")";
-    IPC::Message* reply = IPC::SyncMessage::GenerateReply(&message);
-    reply->set_reply_error();
-    sender->Send(reply);
-    return false;
-  }
-#endif
-  return true;
-}
-
 void BrowserMessageFilter::ShutdownForBadMessage() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kDisableKillAfterBadIPC))
     return;
-
-  BrowserChildProcessHostImpl::HistogramBadMessageTerminated(
-      PROCESS_TYPE_RENDERER);
 
 #if defined(OS_ANDROID)
   // Android requires a different approach for killing.
@@ -194,6 +170,13 @@ void BrowserMessageFilter::ShutdownForBadMessage() {
 #else
   peer_process_.Terminate(content::RESULT_CODE_KILLED_BAD_MESSAGE, false);
 #endif
+
+  // Report a crash, since none will be generated by the killed renderer.
+  base::debug::DumpWithoutCrashing();
+
+  // Log the renderer kill to the histogram tracking all kills.
+  BrowserChildProcessHostImpl::HistogramBadMessageTerminated(
+      PROCESS_TYPE_RENDERER);
 }
 
 BrowserMessageFilter::~BrowserMessageFilter() {
@@ -205,6 +188,13 @@ IPC::MessageFilter* BrowserMessageFilter::GetFilter() {
   DCHECK(!internal_) << "Should only be called once.";
   internal_ = new Internal(this);
   return internal_;
+}
+
+void BrowserMessageFilter::RegisterAssociatedInterfaces(
+    IPC::ChannelProxy* proxy) {
+  for (const auto& entry : associated_interfaces_)
+    proxy->AddGenericAssociatedInterfaceForIOThread(entry.first, entry.second);
+  associated_interfaces_.clear();
 }
 
 }  // namespace content

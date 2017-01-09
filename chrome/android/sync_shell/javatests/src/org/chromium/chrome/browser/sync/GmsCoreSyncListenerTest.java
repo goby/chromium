@@ -9,13 +9,17 @@ import android.test.suitebuilder.annotation.MediumTest;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 
+import java.util.concurrent.Callable;
+
 /**
  * Test suite for the GmsCoreSyncListener.
  */
+@RetryOnFailure  // crbug.com/637448
 public class GmsCoreSyncListenerTest extends SyncTestBase {
     private static final String PASSPHRASE = "passphrase";
 
@@ -60,7 +64,7 @@ public class GmsCoreSyncListenerTest extends SyncTestBase {
     @MediumTest
     @Feature({"Sync"})
     public void testGetsKey() throws Throwable {
-        Account account = setUpTestAccountAndSignInToSync();
+        Account account = setUpTestAccountAndSignIn();
         assertEquals(0, mListener.callCount());
         encryptWithPassphrase(PASSPHRASE);
         waitForCallCount(1);
@@ -74,12 +78,12 @@ public class GmsCoreSyncListenerTest extends SyncTestBase {
     @MediumTest
     @Feature({"Sync"})
     public void testClearData() throws Throwable {
-        setUpTestAccountAndSignInToSync();
+        setUpTestAccountAndSignIn();
         assertEquals(0, mListener.callCount());
         encryptWithPassphrase(PASSPHRASE);
         waitForCallCount(1);
         clearServerData();
-        startSync();
+        setUpTestAccountAndSignIn();
         encryptWithPassphrase(PASSPHRASE);
         waitForCallCount(2);
     }
@@ -106,7 +110,7 @@ public class GmsCoreSyncListenerTest extends SyncTestBase {
     }
 
     private void waitForCryptographer() throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria(
+        CriteriaHelper.pollUiThread(new Criteria(
                 "Timed out waiting for cryptographer to be ready.") {
             @Override
             public boolean isSatisfied() {
@@ -117,13 +121,12 @@ public class GmsCoreSyncListenerTest extends SyncTestBase {
         });
     }
 
-    private void waitForCallCount(final int count) throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+    private void waitForCallCount(int count) throws InterruptedException {
+        CriteriaHelper.pollUiThread(Criteria.equals(count, new Callable<Integer>() {
             @Override
-            public boolean isSatisfied() {
-                return mListener.callCount() == count;
+            public Integer call() {
+                return mListener.callCount();
             }
-        });
-        assertEquals(count, mListener.callCount());
+        }));
     }
 }

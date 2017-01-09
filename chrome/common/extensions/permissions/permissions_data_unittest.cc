@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include <utility>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/common/extensions/extension_test_util.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/common/socket_permission_request.h"
@@ -39,11 +43,10 @@ namespace {
 
 const char kAllHostsPermission[] = "*://*/*";
 
-bool CheckSocketPermission(
-    scoped_refptr<Extension> extension,
-    SocketPermissionRequest::OperationType type,
-    const char* host,
-    uint16 port) {
+bool CheckSocketPermission(scoped_refptr<Extension> extension,
+                           SocketPermissionRequest::OperationType type,
+                           const char* host,
+                           uint16_t port) {
   SocketPermission::CheckParam param(type, host, port);
   return extension->permissions_data()->CheckAPIPermissionWithParam(
       APIPermission::kSocket, &param);
@@ -60,14 +63,13 @@ scoped_refptr<const Extension> GetExtensionWithHostPermission(
     permissions.Append(host_permissions);
 
   return ExtensionBuilder()
-      .SetManifest(
-          DictionaryBuilder()
-              .Set("name", id)
-              .Set("description", "an extension")
-              .Set("manifest_version", 2)
-              .Set("version", "1.0.0")
-              .Set("permissions", permissions.Pass())
-              .Build())
+      .SetManifest(DictionaryBuilder()
+                       .Set("name", id)
+                       .Set("description", "an extension")
+                       .Set("manifest_version", 2)
+                       .Set("version", "1.0.0")
+                       .Set("permissions", permissions.Build())
+                       .Build())
       .SetLocation(location)
       .SetID(id)
       .Build();
@@ -313,16 +315,6 @@ TEST(PermissionsDataTest, GetPermissionMessages_ManyHostsPermissions) {
       "Read and change your data on a number of websites", submessages));
 }
 
-TEST(PermissionsDataTest, GetPermissionMessages_LocationApiPermission) {
-  scoped_refptr<Extension> extension;
-  extension = LoadManifest("permissions",
-                           "location-api.json",
-                           Manifest::COMPONENT,
-                           Extension::NO_FLAGS);
-  EXPECT_TRUE(VerifyOnePermissionMessage(extension->permissions_data(),
-                                         "Detect your physical location"));
-}
-
 TEST(PermissionsDataTest, GetPermissionMessages_ManyHosts) {
   scoped_refptr<Extension> extension;
   extension = LoadManifest("permissions", "many-hosts.json");
@@ -413,13 +405,13 @@ class ExtensionScriptAndCaptureVisibleTest : public testing::Test {
   }
 
   bool AllowedScript(const Extension* extension, const GURL& url, int tab_id) {
-    return extension->permissions_data()->CanAccessPage(
-        extension, url, tab_id, -1, NULL);
+    return extension->permissions_data()->CanAccessPage(extension, url, tab_id,
+                                                        nullptr);
   }
 
   bool BlockedScript(const Extension* extension, const GURL& url) {
-    return !extension->permissions_data()->CanAccessPage(
-        extension, url, -1, -1, NULL);
+    return !extension->permissions_data()->CanAccessPage(extension, url, -1,
+                                                         nullptr);
   }
 
   bool Allowed(const Extension* extension, const GURL& url) {
@@ -427,8 +419,8 @@ class ExtensionScriptAndCaptureVisibleTest : public testing::Test {
   }
 
   bool Allowed(const Extension* extension, const GURL& url, int tab_id) {
-    return (extension->permissions_data()->CanAccessPage(
-                extension, url, tab_id, -1, NULL) &&
+    return (extension->permissions_data()->CanAccessPage(extension, url, tab_id,
+                                                         nullptr) &&
             extension->permissions_data()->CanCaptureVisiblePage(tab_id, NULL));
   }
 
@@ -437,9 +429,10 @@ class ExtensionScriptAndCaptureVisibleTest : public testing::Test {
   }
 
   bool CaptureOnly(const Extension* extension, const GURL& url, int tab_id) {
-    return !extension->permissions_data()->CanAccessPage(
-               extension, url, tab_id, -1, NULL) &&
-           extension->permissions_data()->CanCaptureVisiblePage(tab_id, NULL);
+    return !extension->permissions_data()->CanAccessPage(extension, url, tab_id,
+                                                         nullptr) &&
+           extension->permissions_data()->CanCaptureVisiblePage(tab_id,
+                                                                nullptr);
   }
 
   bool ScriptOnly(const Extension* extension, const GURL& url) {
@@ -448,7 +441,8 @@ class ExtensionScriptAndCaptureVisibleTest : public testing::Test {
 
   bool ScriptOnly(const Extension* extension, const GURL& url, int tab_id) {
     return AllowedScript(extension, url, tab_id) &&
-           !extension->permissions_data()->CanCaptureVisiblePage(tab_id, NULL);
+           !extension->permissions_data()->CanCaptureVisiblePage(tab_id,
+                                                                 nullptr);
   }
 
   bool Blocked(const Extension* extension, const GURL& url) {
@@ -456,10 +450,10 @@ class ExtensionScriptAndCaptureVisibleTest : public testing::Test {
   }
 
   bool Blocked(const Extension* extension, const GURL& url, int tab_id) {
-    return !(extension->permissions_data()->CanAccessPage(
-                 extension, url, tab_id, -1, NULL) ||
-             extension->permissions_data()->CanCaptureVisiblePage(tab_id,
-                                                                  NULL));
+    return !extension->permissions_data()->CanAccessPage(extension, url, tab_id,
+                                                         nullptr) &&
+           !extension->permissions_data()->CanCaptureVisiblePage(tab_id,
+                                                                 nullptr);
   }
 
   bool ScriptAllowedExclusivelyOnTab(
@@ -773,6 +767,69 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, TabSpecific) {
   EXPECT_TRUE(ScriptAllowedExclusivelyOnTab(extension.get(), no_urls, 0));
   EXPECT_TRUE(ScriptAllowedExclusivelyOnTab(extension.get(), no_urls, 1));
   EXPECT_TRUE(ScriptAllowedExclusivelyOnTab(extension.get(), no_urls, 2));
+}
+
+// Check that the webstore url is inaccessible.
+TEST(PermissionsDataTest, ChromeWebstoreUrl) {
+  scoped_refptr<const Extension> normal_extension =
+      GetExtensionWithHostPermission("all_hosts_normal_extension",
+                                     kAllHostsPermission, Manifest::INTERNAL);
+  scoped_refptr<const Extension> policy_extension =
+      GetExtensionWithHostPermission("all_hosts_policy_extension",
+                                     kAllHostsPermission,
+                                     Manifest::EXTERNAL_POLICY);
+  scoped_refptr<const Extension> unpacked_extension =
+      GetExtensionWithHostPermission("all_hosts_unpacked_extension",
+                                     kAllHostsPermission, Manifest::UNPACKED);
+  const Extension* extensions[] = {
+      normal_extension.get(), policy_extension.get(), unpacked_extension.get(),
+  };
+  const GURL kWebstoreUrls[] = {
+      GURL("https://chrome.google.com/webstore"),
+      GURL("https://chrome.google.com./webstore"),
+      GURL("https://chrome.google.com/webstore/category/extensions"),
+      GURL("https://chrome.google.com./webstore/category/extensions"),
+      GURL("https://chrome.google.com/webstore/search/foo"),
+      GURL("https://chrome.google.com./webstore/search/foo"),
+      GURL("https://chrome.google.com/webstore/detail/"
+           "empty-new-tab-page/dpjamkmjmigaoobjbekmfgabipmfilij"),
+      GURL("https://chrome.google.com./webstore/detail/"
+           "empty-new-tab-page/dpjamkmjmigaoobjbekmfgabipmfilij"),
+  };
+
+  const int kTabId = 1;
+  std::string error;
+  URLPatternSet tab_hosts;
+  tab_hosts.AddOrigin(UserScript::ValidUserScriptSchemes(),
+                      GURL("https://chrome.google.com/webstore").GetOrigin());
+  tab_hosts.AddOrigin(UserScript::ValidUserScriptSchemes(),
+                      GURL("https://chrome.google.com./webstore").GetOrigin());
+  PermissionSet tab_permissions(APIPermissionSet(), ManifestPermissionSet(),
+                                tab_hosts, tab_hosts);
+  for (const Extension* extension : extensions) {
+    // Give the extension activeTab permissions to run on the webstore - it
+    // shouldn't make a difference.
+    extension->permissions_data()->UpdateTabSpecificPermissions(
+        kTabId, tab_permissions);
+    for (const GURL& url : kWebstoreUrls) {
+      EXPECT_EQ(PermissionsData::ACCESS_DENIED,
+                extension->permissions_data()->GetPageAccess(extension, url, -1,
+                                                             &error))
+          << extension->name() << ": " << url;
+      EXPECT_EQ(PermissionsData::ACCESS_DENIED,
+                extension->permissions_data()->GetContentScriptAccess(
+                    extension, url, -1, &error))
+          << extension->name() << ": " << url;
+      EXPECT_EQ(PermissionsData::ACCESS_DENIED,
+                extension->permissions_data()->GetPageAccess(extension, url,
+                                                             kTabId, &error))
+          << extension->name() << ": " << url;
+      EXPECT_EQ(PermissionsData::ACCESS_DENIED,
+                extension->permissions_data()->GetContentScriptAccess(
+                    extension, url, kTabId, &error))
+          << extension->name() << ": " << url;
+    }
+  }
 }
 
 }  // namespace extensions

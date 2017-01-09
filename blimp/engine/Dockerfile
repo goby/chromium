@@ -1,23 +1,21 @@
-FROM ubuntu:trusty
+FROM base:latest
 
-# Run the command below to update the lib list.
-# ldd ./blimp_engine_app | grep usr/lib | awk '{print $3}' | xargs -n1 \
-#   dpkg-query -S | awk -F: '{print $1}'
-RUN apt-get update && \
-  apt-get install -yq libnss3 libnss3 libnss3 libnspr4 libnspr4 libnspr4 \
-  libfreetype6 libfontconfig1 libdrm2 libasound2 libcups2 libgssapi-krb5-2 \
-  libkrb5-3 libk5crypto3 libstdc++6 libgnutls26 libavahi-common3 \
-  libavahi-client3 libkrb5support0 libtasn1-6 libp11-kit0 libffi6
-
-RUN mkdir /engine
+RUN mkdir /tmp/engine
 
 RUN useradd -ms /bin/bash blimp_user
 
-ADD * /engine/
-RUN mv /engine/chrome_sandbox /engine/chrome-sandbox
-RUN chown -R blimp_user /engine
+# Permission is not set correctly on directories automatically created by
+# Docker ADD/COPY (see bug https://github.com/docker/docker/issues/7511 and
+# https://github.com/docker/docker/issues/1295). So working around this issue
+# by adding the files to tmp directory and then moving it to right location.
+ADD * /tmp/engine/
+RUN mv /tmp/engine/chrome_sandbox /tmp/engine/chrome-sandbox && \
+    mv /tmp/engine/third_party/blimp_fonts /tmp/engine/fonts && \
+    cp -r /tmp/engine /engine && \
+    chown -R blimp_user /engine && \
+    rm -rf /tmp/engine
 
 USER blimp_user
 WORKDIR "/engine"
 
-ENTRYPOINT ["/engine/blimp_engine_app", "--disable-gpu"]
+ENTRYPOINT ["/engine/start_engine.sh"]

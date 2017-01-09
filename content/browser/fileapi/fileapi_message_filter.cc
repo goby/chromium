@@ -4,22 +4,24 @@
 
 #include "content/browser/fileapi/fileapi_message_filter.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "content/browser/bad_message.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/child_process_security_policy_impl.h"
-#include "content/browser/fileapi/blob_storage_host.h"
 #include "content/browser/fileapi/browser_file_system_helper.h"
-#include "content/browser/fileapi/chrome_blob_storage_context.h"
 #include "content/browser/streams/stream_registry.h"
 #include "content/common/fileapi/file_system_messages.h"
 #include "content/common/fileapi/webblob_messages.h"
@@ -53,10 +55,7 @@ namespace content {
 
 namespace {
 
-const uint32 kFilteredMessageClasses[] = {
-  BlobMsgStart,
-  FileSystemMsgStart,
-};
+const uint32_t kFilteredMessageClasses[] = {FileSystemMsgStart, BlobMsgStart};
 
 void RevokeFilePermission(int child_id, const base::FilePath& path) {
   ChildProcessSecurityPolicyImpl::GetInstance()->RevokeAllPermissionsForFile(
@@ -106,7 +105,7 @@ FileAPIMessageFilter::FileAPIMessageFilter(
   DCHECK(stream_context);
 }
 
-void FileAPIMessageFilter::OnChannelConnected(int32 peer_pid) {
+void FileAPIMessageFilter::OnChannelConnected(int32_t peer_pid) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   if (request_context_getter_.get()) {
@@ -116,18 +115,13 @@ void FileAPIMessageFilter::OnChannelConnected(int32 peer_pid) {
     DCHECK(request_context_);
   }
 
-  blob_storage_host_.reset(
-      new BlobStorageHost(blob_storage_context_->context()));
-
   operation_runner_ = context_->CreateFileSystemOperationRunner();
 }
 
 void FileAPIMessageFilter::OnChannelClosing() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  // Unregister all the blob and stream URLs that are previously registered in
-  // this process.
-  blob_storage_host_.reset();
+  // Unregister all stream URLs that are previously registered in this process.
   for (base::hash_set<std::string>::const_iterator iter = stream_urls_.begin();
        iter != stream_urls_.end(); ++iter) {
     stream_context_->registry()->UnregisterStream(GURL(*iter));
@@ -169,19 +163,6 @@ bool FileAPIMessageFilter::OnMessageReceived(const IPC::Message& message) {
                         OnDidReceiveSnapshotFile)
     IPC_MESSAGE_HANDLER(FileSystemHostMsg_SyncGetPlatformPath,
                         OnSyncGetPlatformPath)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_StartBuilding, OnStartBuildingBlob)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_AppendBlobDataItem,
-                        OnAppendBlobDataItemToBlob)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_SyncAppendSharedMemory,
-                        OnAppendSharedMemoryToBlob)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_FinishBuilding, OnFinishBuildingBlob)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_IncrementRefCount,
-                        OnIncrementBlobRefCount)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_DecrementRefCount,
-                        OnDecrementBlobRefCount)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_RegisterPublicURL,
-                        OnRegisterPublicBlobURL)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_RevokePublicURL, OnRevokePublicBlobURL)
     IPC_MESSAGE_HANDLER(StreamHostMsg_StartBuilding, OnStartBuildingStream)
     IPC_MESSAGE_HANDLER(StreamHostMsg_AppendBlobDataItem,
                         OnAppendBlobDataItemToStream)
@@ -386,11 +367,10 @@ void FileAPIMessageFilter::OnReadDirectory(
                       this, request_id));
 }
 
-void FileAPIMessageFilter::OnWrite(
-    int request_id,
-    const GURL& path,
-    const std::string& blob_uuid,
-    int64 offset) {
+void FileAPIMessageFilter::OnWrite(int request_id,
+                                   const GURL& path,
+                                   const std::string& blob_uuid,
+                                   int64_t offset) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!request_context_) {
     // We can't write w/o a request context, trying to do so will crash.
@@ -407,18 +387,17 @@ void FileAPIMessageFilter::OnWrite(
     return;
   }
 
-  scoped_ptr<storage::BlobDataHandle> blob =
+  std::unique_ptr<storage::BlobDataHandle> blob =
       blob_storage_context_->context()->GetBlobDataFromUUID(blob_uuid);
 
   operations_[request_id] = operation_runner()->Write(
-      request_context_, url, blob.Pass(), offset,
+      request_context_, url, std::move(blob), offset,
       base::Bind(&FileAPIMessageFilter::DidWrite, this, request_id));
 }
 
-void FileAPIMessageFilter::OnTruncate(
-    int request_id,
-    const GURL& path,
-    int64 length) {
+void FileAPIMessageFilter::OnTruncate(int request_id,
+                                      const GURL& path,
+                                      int64_t length) {
   FileSystemURL url(context_->CrackURL(path));
   if (!ValidateFileSystemURL(request_id, url))
     return;
@@ -514,95 +493,11 @@ void FileAPIMessageFilter::OnDidReceiveSnapshotFile(int request_id) {
   in_transit_snapshot_files_.erase(request_id);
 }
 
-void FileAPIMessageFilter::OnStartBuildingBlob(const std::string& uuid) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  ignore_result(blob_storage_host_->StartBuildingBlob(uuid));
-}
-
-void FileAPIMessageFilter::OnAppendBlobDataItemToBlob(
-    const std::string& uuid,
-    const storage::DataElement& item) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (item.type() == storage::DataElement::TYPE_FILE_FILESYSTEM) {
-    FileSystemURL filesystem_url(context_->CrackURL(item.filesystem_url()));
-    if (!FileSystemURLIsValid(context_, filesystem_url) ||
-        !security_policy_->CanReadFileSystemFile(process_id_, filesystem_url)) {
-      ignore_result(blob_storage_host_->CancelBuildingBlob(uuid));
-      return;
-    }
-  }
-  if (item.type() == storage::DataElement::TYPE_FILE &&
-      !security_policy_->CanReadFile(process_id_, item.path())) {
-    ignore_result(blob_storage_host_->CancelBuildingBlob(uuid));
-    return;
-  }
-  if (item.length() == 0) {
-    bad_message::ReceivedBadMessage(this,
-                                    bad_message::FAMF_APPEND_ITEM_TO_BLOB);
-    return;
-  }
-  ignore_result(blob_storage_host_->AppendBlobDataItem(uuid, item));
-}
-
-void FileAPIMessageFilter::OnAppendSharedMemoryToBlob(
-    const std::string& uuid,
-    base::SharedMemoryHandle handle,
-    size_t buffer_size) {
-  DCHECK(base::SharedMemory::IsHandleValid(handle));
-  if (!buffer_size) {
-    bad_message::ReceivedBadMessage(
-        this, bad_message::FAMF_APPEND_SHARED_MEMORY_TO_BLOB);
-    return;
-  }
-#if defined(OS_WIN)
-  base::SharedMemory shared_memory(handle, true, PeerHandle());
-#else
-  base::SharedMemory shared_memory(handle, true);
-#endif
-  if (!shared_memory.Map(buffer_size)) {
-    ignore_result(blob_storage_host_->CancelBuildingBlob(uuid));
-    return;
-  }
-
-  storage::DataElement item;
-  item.SetToSharedBytes(static_cast<char*>(shared_memory.memory()),
-                        buffer_size);
-  ignore_result(blob_storage_host_->AppendBlobDataItem(uuid, item));
-}
-
-void FileAPIMessageFilter::OnFinishBuildingBlob(
-    const std::string& uuid, const std::string& content_type) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  ignore_result(blob_storage_host_->FinishBuildingBlob(uuid, content_type));
-  // TODO(michaeln): check return values once blink has migrated, crbug/174200
-}
-
-void FileAPIMessageFilter::OnIncrementBlobRefCount(const std::string& uuid) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  ignore_result(blob_storage_host_->IncrementBlobRefCount(uuid));
-}
-
-void FileAPIMessageFilter::OnDecrementBlobRefCount(const std::string& uuid) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  ignore_result(blob_storage_host_->DecrementBlobRefCount(uuid));
-}
-
-void FileAPIMessageFilter::OnRegisterPublicBlobURL(
-    const GURL& public_url, const std::string& uuid) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  ignore_result(blob_storage_host_->RegisterPublicBlobURL(public_url, uuid));
-}
-
-void FileAPIMessageFilter::OnRevokePublicBlobURL(const GURL& public_url) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  ignore_result(blob_storage_host_->RevokePublicBlobURL(public_url));
-}
-
 void FileAPIMessageFilter::OnStartBuildingStream(
     const GURL& url, const std::string& content_type) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   // Only an internal Blob URL is expected here. See the BlobURL of the Blink.
-  if (!base::StartsWith(url.path(), "blobinternal%3A///",
+  if (!base::StartsWith(url.path(), "blobinternal:///",
                         base::CompareCase::SENSITIVE)) {
     NOTREACHED() << "Malformed Stream URL: " << url.spec();
     bad_message::ReceivedBadMessage(this,
@@ -638,18 +533,15 @@ void FileAPIMessageFilter::OnAppendBlobDataItemToStream(
 }
 
 void FileAPIMessageFilter::OnAppendSharedMemoryToStream(
-    const GURL& url, base::SharedMemoryHandle handle, size_t buffer_size) {
+    const GURL& url, base::SharedMemoryHandle handle,
+    uint32_t buffer_size) {
   DCHECK(base::SharedMemory::IsHandleValid(handle));
   if (!buffer_size) {
     bad_message::ReceivedBadMessage(
         this, bad_message::FAMF_APPEND_SHARED_MEMORY_TO_STREAM);
     return;
   }
-#if defined(OS_WIN)
-  base::SharedMemory shared_memory(handle, true, PeerHandle());
-#else
   base::SharedMemory shared_memory(handle, true);
-#endif
   if (!shared_memory.Map(buffer_size)) {
     OnRemoveStream(url);
     return;
@@ -673,7 +565,7 @@ void FileAPIMessageFilter::OnFinishBuildingStream(const GURL& url) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   scoped_refptr<Stream> stream(GetStreamForURL(url));
   if (stream.get())
-    stream->Finalize();
+    stream->Finalize(net::OK);
 }
 
 void FileAPIMessageFilter::OnAbortBuildingStream(const GURL& url) {
@@ -758,7 +650,7 @@ void FileAPIMessageFilter::DidReadDirectory(
 
 void FileAPIMessageFilter::DidWrite(int request_id,
                                     base::File::Error result,
-                                    int64 bytes,
+                                    int64_t bytes,
                                     bool complete) {
   if (result == base::File::FILE_OK) {
     Send(new FileSystemMsg_DidWrite(request_id, bytes, complete));

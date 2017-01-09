@@ -32,14 +32,14 @@
 #define WebServiceWorkerProvider_h
 
 #include "public/platform/WebCallbacks.h"
-#include "public/platform/WebPassOwnPtr.h"
 #include "public/platform/WebVector.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerRegistration.h"
+
+#include <memory>
 
 namespace blink {
 
 class WebURL;
-class WebServiceWorker;
 class WebServiceWorkerProviderClient;
 struct WebServiceWorkerError;
 
@@ -47,28 +47,45 @@ struct WebServiceWorkerError;
 // thread (e.g. worker thread) later. All methods of this class must be called
 // on the single script context thread.
 class WebServiceWorkerProvider {
-public:
-    // Called when a client wants to start listening to the service worker
-    // events. Must be cleared before the client becomes invalid.
-    virtual void setClient(WebServiceWorkerProviderClient*) { }
+ public:
+  // Called when a client wants to start listening to the service worker
+  // events. Must be cleared before the client becomes invalid.
+  virtual void setClient(WebServiceWorkerProviderClient*) {}
 
-    using WebServiceWorkerRegistrationCallbacks = WebCallbacks<WebPassOwnPtr<WebServiceWorkerRegistration::Handle>, const WebServiceWorkerError&>;
-    using WebServiceWorkerGetRegistrationCallbacks = WebCallbacks<WebPassOwnPtr<WebServiceWorkerRegistration::Handle>, const WebServiceWorkerError&>;
+  using WebServiceWorkerRegistrationCallbacks =
+      WebCallbacks<std::unique_ptr<WebServiceWorkerRegistration::Handle>,
+                   const WebServiceWorkerError&>;
+  using WebServiceWorkerGetRegistrationCallbacks =
+      WebCallbacks<std::unique_ptr<WebServiceWorkerRegistration::Handle>,
+                   const WebServiceWorkerError&>;
 
-    // Each element's ownership is transferred.
-    // TODO(yhirano): Consider using vector<scoped_ptr<>>.
-    using WebServiceWorkerGetRegistrationsCallbacks = WebCallbacks<WebPassOwnPtr<WebVector<WebServiceWorkerRegistration::Handle*>>, const WebServiceWorkerError&>;
-    using WebServiceWorkerGetRegistrationForReadyCallbacks = WebCallbacks<WebPassOwnPtr<WebServiceWorkerRegistration::Handle>, void>;
+  // Each element's ownership is transferred.
+  using WebServiceWorkerGetRegistrationsCallbacks = WebCallbacks<
+      std::unique_ptr<WebVector<WebServiceWorkerRegistration::Handle*>>,
+      const WebServiceWorkerError&>;
+  using WebServiceWorkerGetRegistrationForReadyCallbacks =
+      WebCallbacks<std::unique_ptr<WebServiceWorkerRegistration::Handle>, void>;
 
-    virtual void registerServiceWorker(const WebURL& pattern, const WebURL& scriptUrl, WebServiceWorkerRegistrationCallbacks*) { }
-    virtual void getRegistration(const WebURL& documentURL, WebServiceWorkerGetRegistrationCallbacks*) { }
-    virtual void getRegistrations(WebServiceWorkerGetRegistrationsCallbacks*) { }
-    virtual void getRegistrationForReady(WebServiceWorkerGetRegistrationForReadyCallbacks*) { }
-    virtual bool validateScopeAndScriptURL(const WebURL& scope, const WebURL& scriptURL, WebString* errorMessage) { return false; }
+  virtual void registerServiceWorker(
+      const WebURL& pattern,
+      const WebURL& scriptUrl,
+      std::unique_ptr<WebServiceWorkerRegistrationCallbacks>) {}
+  virtual void getRegistration(
+      const WebURL& documentURL,
+      std::unique_ptr<WebServiceWorkerGetRegistrationCallbacks>) {}
+  virtual void getRegistrations(
+      std::unique_ptr<WebServiceWorkerGetRegistrationsCallbacks>) {}
+  virtual void getRegistrationForReady(
+      std::unique_ptr<WebServiceWorkerGetRegistrationForReadyCallbacks>) {}
+  virtual bool validateScopeAndScriptURL(const WebURL& scope,
+                                         const WebURL& scriptURL,
+                                         WebString* errorMessage) {
+    return false;
+  }
 
-    virtual ~WebServiceWorkerProvider() { }
+  virtual ~WebServiceWorkerProvider() {}
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

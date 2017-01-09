@@ -5,9 +5,11 @@
 #ifndef CONTENT_BROWSER_WEB_CONTENTS_WEB_CONTENTS_VIEW_GUEST_H_
 #define CONTENT_BROWSER_WEB_CONTENTS_WEB_CONTENTS_VIEW_GUEST_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/content_export.h"
@@ -29,7 +31,7 @@ class WebContentsViewGuest : public WebContentsView,
   // |platform_view|.
   WebContentsViewGuest(WebContentsImpl* web_contents,
                        BrowserPluginGuest* guest,
-                       scoped_ptr<WebContentsView> platform_view,
+                       std::unique_ptr<WebContentsView> platform_view,
                        RenderViewHostDelegateView** delegate_view);
   ~WebContentsViewGuest() override;
 
@@ -43,6 +45,7 @@ class WebContentsViewGuest : public WebContentsView,
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetContentNativeView() const override;
   gfx::NativeWindow GetTopLevelNativeWindow() const override;
+  void GetScreenInfo(ScreenInfo* screen_info) const override;
   void GetContainerBounds(gfx::Rect* out) const override;
   void SizeContents(const gfx::Size& size) override;
   void Focus() override;
@@ -76,7 +79,8 @@ class WebContentsViewGuest : public WebContentsView,
                      blink::WebDragOperationsMask allowed_ops,
                      const gfx::ImageSkia& image,
                      const gfx::Vector2d& image_offset,
-                     const DragEventSourceInfo& event_info) override;
+                     const DragEventSourceInfo& event_info,
+                     RenderWidgetHostImpl* source_rwh) override;
   void UpdateDragCursor(blink::WebDragOperation operation) override;
   void GotFocus() override;
   void TakeFocus(bool reverse) override;
@@ -87,7 +91,7 @@ class WebContentsViewGuest : public WebContentsView,
   BrowserPluginGuest* guest_;
   // The platform dependent view backing this WebContentsView.
   // Calls to this WebContentsViewGuest are forwarded to |platform_view_|.
-  scoped_ptr<WebContentsView> platform_view_;
+  std::unique_ptr<WebContentsView> platform_view_;
   gfx::Size size_;
 
   // Delegate view for guest's platform view.

@@ -2,37 +2,35 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/presentation/PresentationError.h"
 
 #include "core/dom/DOMException.h"
 #include "core/dom/ExceptionCode.h"
 #include "public/platform/modules/presentation/WebPresentationError.h"
-#include "wtf/OwnPtr.h"
 
 namespace blink {
 
 // static
-DOMException* PresentationError::take(ScriptPromiseResolver*, const WebPresentationError& error)
-{
-    ExceptionCode code = UnknownError;
-    switch (error.errorType) {
+DOMException* PresentationError::take(ScriptPromiseResolver*,
+                                      const WebPresentationError& error) {
+  ExceptionCode code = UnknownError;
+  switch (error.errorType) {
     case WebPresentationError::ErrorTypeNoAvailableScreens:
     case WebPresentationError::ErrorTypeNoPresentationFound:
-        code = NotFoundError;
-        break;
+      code = NotFoundError;
+      break;
     case WebPresentationError::ErrorTypeSessionRequestCancelled:
-        code = AbortError;
-        break;
+      code = NotAllowedError;
+      break;
     case WebPresentationError::ErrorTypeAvailabilityNotSupported:
-        code = NotSupportedError;
-        break;
+      code = NotSupportedError;
+      break;
     case WebPresentationError::ErrorTypeUnknown:
-        code = UnknownError;
-        break;
-    }
+      code = UnknownError;
+      break;
+  }
 
-    return DOMException::create(code, error.message);
+  return DOMException::create(code, error.message);
 }
 
-} // namespace blink
+}  // namespace blink

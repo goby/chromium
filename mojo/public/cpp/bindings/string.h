@@ -5,11 +5,15 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_STRING_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_STRING_H_
 
+#include <stddef.h>
+
+#include <functional>
 #include <string>
 
+#include "base/logging.h"
 #include "mojo/public/cpp/bindings/lib/array_internal.h"
+#include "mojo/public/cpp/bindings/lib/hash_util.h"
 #include "mojo/public/cpp/bindings/type_converter.h"
-#include "mojo/public/cpp/environment/logging.h"
 
 namespace mojo {
 
@@ -18,9 +22,8 @@ namespace mojo {
 // object.
 class String {
  public:
-  typedef internal::String_Data Data_;
-
-  String() : is_null_(true) {}
+  // Constructs an empty string.
+  String() : is_null_(false) {}
   String(const std::string& str) : value_(str), is_null_(false) {}
   String(const char* chars) : is_null_(!chars) {
     if (chars)
@@ -34,6 +37,9 @@ class String {
   template <size_t N>
   String(const char chars[N])
       : value_(chars, N - 1), is_null_(false) {}
+
+  String(std::string&& other) : value_(std::move(other)), is_null_(false) {}
+  String(String&& other) : is_null_(true) { Swap(&other); }
 
   template <typename U>
   static String From(const U& other) {
@@ -65,9 +71,16 @@ class String {
     return *this;
   }
 
-  void reset() {
-    value_.clear();
+  String& operator=(std::string&& other) {
+    value_ = std::move(other);
+    is_null_ = false;
+    return *this;
+  }
+  String& operator=(String&& other) {
     is_null_ = true;
+    value_.clear();
+    Swap(&other);
+    return *this;
   }
 
   bool is_null() const { return is_null_; }
@@ -81,6 +94,16 @@ class String {
 
   const std::string& get() const { return value_; }
   operator const std::string&() const { return value_; }
+
+  // Returns a const reference to the |std::string| managed by this class. If
+  // the string is null, this will be an empty std::string.
+  const std::string& storage() const { return value_; }
+
+  // Passes the underlying storage and resets this string to null.
+  std::string PassStorage() {
+    is_null_ = true;
+    return std::move(value_);
+  }
 
   void Swap(String* other) {
     std::swap(is_null_, other->is_null_);
@@ -150,7 +173,7 @@ struct TypeConverter<std::string, String> {
 template <size_t N>
 struct TypeConverter<String, char[N]> {
   static String Convert(const char input[N]) {
-    MOJO_DCHECK(input);
+    DCHECK(input);
     return String(input, N - 1);
   }
 };
@@ -159,7 +182,7 @@ struct TypeConverter<String, char[N]> {
 template <size_t N>
 struct TypeConverter<String, const char[N]> {
   static String Convert(const char input[N]) {
-    MOJO_DCHECK(input);
+    DCHECK(input);
     return String(input, N - 1);
   }
 };
@@ -171,5 +194,16 @@ struct TypeConverter<String, const char*> {
 };
 
 }  // namespace mojo
+
+namespace std {
+
+template <>
+struct hash<mojo::String> {
+  size_t operator()(const mojo::String& value) const {
+    return value.is_null() ? 0 : hash<std::string>()(value.get());
+  }
+};
+
+}  // namespace std
 
 #endif  // MOJO_PUBLIC_CPP_BINDINGS_STRING_H_

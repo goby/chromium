@@ -23,6 +23,7 @@ class BrowserContext;
 namespace extensions {
 
 class ExtensionRegistry;
+class ValueStoreFactory;
 
 // A storage area for per-extension state that needs to be persisted to disk.
 class StateStore : public base::SupportsWeakPtr<StateStore>,
@@ -34,11 +35,12 @@ class StateStore : public base::SupportsWeakPtr<StateStore>,
   // If |deferred_load| is true, we won't load the database until the first
   // page has been loaded.
   StateStore(content::BrowserContext* context,
-             const std::string& uma_client_name,
-             const base::FilePath& db_path,
+             const scoped_refptr<ValueStoreFactory>& store_factory,
+             ValueStoreFrontend::BackendType backend_type,
              bool deferred_load);
   // This variant is useful for testing (using a mock ValueStore).
-  StateStore(content::BrowserContext* context, scoped_ptr<ValueStore> store);
+  StateStore(content::BrowserContext* context,
+             std::unique_ptr<ValueStore> store);
   ~StateStore() override;
 
   // Requests that the state store to be initialized after its usual delay. Can
@@ -59,7 +61,7 @@ class StateStore : public base::SupportsWeakPtr<StateStore>,
   // Sets a value for a given extension and key.
   void SetExtensionValue(const std::string& extension_id,
                          const std::string& key,
-                         scoped_ptr<base::Value> value);
+                         std::unique_ptr<base::Value> value);
 
   // Removes a value for a given extension and key.
   void RemoveExtensionValue(const std::string& extension_id,
@@ -92,24 +94,17 @@ class StateStore : public base::SupportsWeakPtr<StateStore>,
   void OnExtensionWillBeInstalled(content::BrowserContext* browser_context,
                                   const Extension* extension,
                                   bool is_update,
-                                  bool from_ephemeral,
                                   const std::string& old_name) override;
 
-  // Path to our database, on disk. Empty during testing.
-  base::FilePath db_path_;
-
-  // Database client name used for UMA logging by database backend.
-  const std::string uma_client_name_;
-
   // The store that holds our key/values.
-  ValueStoreFrontend store_;
+  std::unique_ptr<ValueStoreFrontend> store_;
 
   // List of all known keys. They will be cleared for each extension when it is
   // (un)installed.
   std::set<std::string> registered_keys_;
 
   // Keeps track of tasks we have delayed while starting up.
-  scoped_ptr<DelayedTaskQueue> task_queue_;
+  std::unique_ptr<DelayedTaskQueue> task_queue_;
 
   content::NotificationRegistrar registrar_;
 

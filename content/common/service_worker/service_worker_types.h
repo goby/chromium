@@ -5,12 +5,16 @@
 #ifndef CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_TYPES_H_
 #define CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_TYPES_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "content/common/service_worker/service_worker_client_info.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
@@ -30,11 +34,6 @@ namespace content {
 // messaging between the browser process and the child process.
 static const int kDocumentMainThreadId = 0;
 
-// Indicates invalid request ID (i.e. the sender does not expect it gets
-// response for the message) for messaging between browser process
-// and embedded worker.
-static const int kInvalidServiceWorkerRequestId = -1;
-
 // Constants for error messages.
 extern const char kServiceWorkerRegisterErrorPrefix[];
 extern const char kServiceWorkerUpdateErrorPrefix[];
@@ -47,11 +46,10 @@ extern const char kFetchScriptError[];
 static const int kInvalidServiceWorkerHandleId = -1;
 static const int kInvalidServiceWorkerRegistrationHandleId = -1;
 static const int kInvalidServiceWorkerProviderId = -1;
-static const int64 kInvalidServiceWorkerRegistrationId = -1;
-static const int64 kInvalidServiceWorkerVersionId = -1;
-static const int64 kInvalidServiceWorkerResourceId = -1;
+static const int64_t kInvalidServiceWorkerRegistrationId = -1;
+static const int64_t kInvalidServiceWorkerVersionId = -1;
+static const int64_t kInvalidServiceWorkerResourceId = -1;
 static const int kInvalidEmbeddedWorkerThreadId = -1;
-static const int kInvalidServiceWorkerClientId = 0;
 
 // The HTTP cache is bypassed for Service Worker scripts if the last network
 // fetch occurred over 24 hours ago.
@@ -69,11 +67,8 @@ enum ServiceWorkerProviderType {
   // For ServiceWorkers.
   SERVICE_WORKER_PROVIDER_FOR_CONTROLLER,
 
-  // For sandboxed frames.
-  SERVICE_WORKER_PROVIDER_FOR_SANDBOXED_FRAME,
-
   SERVICE_WORKER_PROVIDER_TYPE_LAST =
-      SERVICE_WORKER_PROVIDER_FOR_SANDBOXED_FRAME
+      SERVICE_WORKER_PROVIDER_FOR_CONTROLLER
 };
 
 // The enum entries below are written to histograms and thus cannot be deleted
@@ -92,7 +87,8 @@ enum FetchCredentialsMode {
   FETCH_CREDENTIALS_MODE_OMIT,
   FETCH_CREDENTIALS_MODE_SAME_ORIGIN,
   FETCH_CREDENTIALS_MODE_INCLUDE,
-  FETCH_CREDENTIALS_MODE_LAST = FETCH_CREDENTIALS_MODE_INCLUDE
+  FETCH_CREDENTIALS_MODE_PASSWORD,
+  FETCH_CREDENTIALS_MODE_LAST = FETCH_CREDENTIALS_MODE_PASSWORD
 };
 
 enum class FetchRedirectMode {
@@ -100,6 +96,19 @@ enum class FetchRedirectMode {
   ERROR_MODE,
   MANUAL_MODE,
   LAST = MANUAL_MODE
+};
+
+// Indicates which types of ServiceWorkers should skip handling a request.
+enum class SkipServiceWorker {
+  // Request can be handled both by a controlling same-origin worker and
+  // a cross-origin foreign fetch service worker.
+  NONE,
+  // Request should not be handled by a same-origin controlling worker,
+  // but can be intercepted by a foreign fetch service worker.
+  CONTROLLING,
+  // Request should skip all possible service workers.
+  ALL,
+  LAST = ALL
 };
 
 // Indicates how the service worker handled a fetch event.
@@ -111,14 +120,22 @@ enum ServiceWorkerFetchEventResult {
   SERVICE_WORKER_FETCH_EVENT_LAST = SERVICE_WORKER_FETCH_EVENT_RESULT_RESPONSE
 };
 
+enum class ServiceWorkerFetchType {
+  FETCH,
+  FOREIGN_FETCH,
+  LAST = FOREIGN_FETCH
+};
+
 struct ServiceWorkerCaseInsensitiveCompare {
   bool operator()(const std::string& lhs, const std::string& rhs) const {
     return base::CompareCaseInsensitiveASCII(lhs, rhs) < 0;
   }
 };
 
-typedef std::map<std::string, std::string, ServiceWorkerCaseInsensitiveCompare>
-    ServiceWorkerHeaderMap;
+using ServiceWorkerHeaderMap =
+    std::map<std::string, std::string, ServiceWorkerCaseInsensitiveCompare>;
+
+using ServiceWorkerHeaderList = std::vector<std::string>;
 
 // To dispatch fetch request from browser to child process.
 struct CONTENT_EXPORT ServiceWorkerFetchRequest {
@@ -128,61 +145,84 @@ struct CONTENT_EXPORT ServiceWorkerFetchRequest {
                             const ServiceWorkerHeaderMap& headers,
                             const Referrer& referrer,
                             bool is_reload);
+  ServiceWorkerFetchRequest(const ServiceWorkerFetchRequest& other);
   ~ServiceWorkerFetchRequest();
+  size_t EstimatedStructSize();
 
+  // Be sure to update EstimatedSize() when adding members.
   FetchRequestMode mode;
+  bool is_main_resource_load;
   RequestContextType request_context_type;
   RequestContextFrameType frame_type;
   GURL url;
   std::string method;
   ServiceWorkerHeaderMap headers;
   std::string blob_uuid;
-  uint64 blob_size;
+  uint64_t blob_size;
   Referrer referrer;
   FetchCredentialsMode credentials_mode;
   FetchRedirectMode redirect_mode;
+  std::string client_id;
   bool is_reload;
+  ServiceWorkerFetchType fetch_type;
 };
 
 // Represents a response to a fetch.
 struct CONTENT_EXPORT ServiceWorkerResponse {
   ServiceWorkerResponse();
-  ServiceWorkerResponse(const GURL& url,
-                        int status_code,
-                        const std::string& status_text,
-                        blink::WebServiceWorkerResponseType response_type,
-                        const ServiceWorkerHeaderMap& headers,
-                        const std::string& blob_uuid,
-                        uint64 blob_size,
-                        const GURL& stream_url,
-                        blink::WebServiceWorkerResponseError error);
+  ServiceWorkerResponse(
+      std::unique_ptr<std::vector<GURL>> url_list,
+      int status_code,
+      const std::string& status_text,
+      blink::WebServiceWorkerResponseType response_type,
+      std::unique_ptr<ServiceWorkerHeaderMap> headers,
+      const std::string& blob_uuid,
+      uint64_t blob_size,
+      const GURL& stream_url,
+      blink::WebServiceWorkerResponseError error,
+      base::Time response_time,
+      bool is_in_cache_storage,
+      const std::string& cache_storage_cache_name,
+      std::unique_ptr<ServiceWorkerHeaderList> cors_exposed_header_names);
+  ServiceWorkerResponse(const ServiceWorkerResponse& other);
   ~ServiceWorkerResponse();
+  size_t EstimatedStructSize();
 
-  GURL url;
+  // Be sure to update EstimatedSize() when adding members.
+  std::vector<GURL> url_list;
   int status_code;
   std::string status_text;
   blink::WebServiceWorkerResponseType response_type;
   ServiceWorkerHeaderMap headers;
   std::string blob_uuid;
-  uint64 blob_size;
+  uint64_t blob_size;
   GURL stream_url;
   blink::WebServiceWorkerResponseError error;
+  base::Time response_time;
+  bool is_in_cache_storage = false;
+  std::string cache_storage_cache_name;
+  ServiceWorkerHeaderList cors_exposed_header_names;
 };
 
 // Represents initialization info for a WebServiceWorker object.
 struct CONTENT_EXPORT ServiceWorkerObjectInfo {
   ServiceWorkerObjectInfo();
+
+  // Returns whether the instance is valid. A valid instance has valid
+  // |handle_id| and |version_id|.
+  bool IsValid() const;
+
   int handle_id;
   GURL url;
   blink::WebServiceWorkerState state;
-  int64 version_id;
+  int64_t version_id;
 };
 
 struct CONTENT_EXPORT ServiceWorkerRegistrationObjectInfo {
   ServiceWorkerRegistrationObjectInfo();
   int handle_id;
   GURL scope;
-  int64 registration_id;
+  int64_t registration_id;
 };
 
 struct ServiceWorkerVersionAttributes {
@@ -219,6 +259,26 @@ struct ServiceWorkerClientQueryOptions {
   ServiceWorkerClientQueryOptions();
   blink::WebServiceWorkerClientType client_type;
   bool include_uncontrolled;
+};
+
+struct ExtendableMessageEventSource {
+  ExtendableMessageEventSource();
+  explicit ExtendableMessageEventSource(
+      const ServiceWorkerClientInfo& client_info);
+  explicit ExtendableMessageEventSource(
+      const ServiceWorkerObjectInfo& service_worker_info);
+
+  // Exactly one of these infos should be valid.
+  ServiceWorkerClientInfo client_info;
+  ServiceWorkerObjectInfo service_worker_info;
+};
+
+struct CONTENT_EXPORT NavigationPreloadState {
+  NavigationPreloadState();
+  NavigationPreloadState(bool enabled, std::string header);
+  NavigationPreloadState(const NavigationPreloadState& other);
+  bool enabled;
+  std::string header;
 };
 
 }  // namespace content

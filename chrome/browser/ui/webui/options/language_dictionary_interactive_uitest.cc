@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
@@ -174,7 +176,7 @@ class LanguageDictionaryWebUITest : public InProcessBrowserTest {
   }
 
  private:
-  scoped_ptr<content::DOMMessageQueue> dom_message_queue_;
+  std::unique_ptr<content::DOMMessageQueue> dom_message_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(LanguageDictionaryWebUITest);
 };

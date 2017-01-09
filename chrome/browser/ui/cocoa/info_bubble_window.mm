@@ -6,10 +6,13 @@
 
 #include <Carbon/Carbon.h>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/mac/scoped_nsobject.h"
+#import "base/mac/foundation_util.h"
+#import "base/mac/scoped_nsobject.h"
+#import "base/mac/sdk_forward_declarations.h"
+#include "base/macros.h"
 #include "chrome/browser/chrome_notification_types.h"
+#import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
@@ -48,7 +51,7 @@ class AppNotificationBridge : public content::NotificationObserver {
         [owner_ appIsTerminating];
         break;
       default:
-        NOTREACHED() << L"Unexpected notification";
+        NOTREACHED() << "Unexpected notification";
     }
   }
 
@@ -66,7 +69,7 @@ class AppNotificationBridge : public content::NotificationObserver {
 // An InfoBubbleWindow instance cannot be the delegate for its own animation
 // because CAAnimations retain their delegates, and since the InfoBubbleWindow
 // retains its animations a retain loop would be formed.
-@interface InfoBubbleWindowCloser : NSObject {
+@interface InfoBubbleWindowCloser : NSObject <CAAnimationDelegate> {
  @private
   InfoBubbleWindow* window_;  // Weak. Window to close.
 }
@@ -80,6 +83,10 @@ class AppNotificationBridge : public content::NotificationObserver {
     window_ = window;
   }
   return self;
+}
+
+- (void)animationDidStart:(CAAnimation*)theAnimation {
+  // CAAnimationDelegate method added on OSX 10.12.
 }
 
 // Callback for the alpha animation. Closes window_ if appropriate.
@@ -141,7 +148,10 @@ class AppNotificationBridge : public content::NotificationObserver {
   if (([event keyCode] == kVK_Escape) ||
       (([event keyCode] == kVK_ANSI_Period) &&
        (([event modifierFlags] & NSCommandKeyMask) != 0))) {
-    [[self windowController] cancel:self];
+    BaseBubbleController* bubbleController =
+        base::mac::ObjCCastStrict<BaseBubbleController>(
+            [self windowController]);
+    [bubbleController cancel:self];
     return YES;
   }
   return [super performKeyEquivalent:event];

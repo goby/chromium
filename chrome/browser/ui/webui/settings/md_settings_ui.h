@@ -5,37 +5,42 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_SETTINGS_MD_SETTINGS_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_SETTINGS_MD_SETTINGS_UI_H_
 
-#include <string>
-#include <vector>
+#include <unordered_set>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/values.h"
+#include "base/macros.h"
+#include "base/time/time.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_controller.h"
-#include "content/public/browser/web_ui_message_handler.h"
+
+class GURL;
 
 namespace settings {
 
-// The base class handler of Javascript messages of settings pages.
-class SettingsPageUIHandler : public content::WebUIMessageHandler {
- public:
-  SettingsPageUIHandler();
-  ~SettingsPageUIHandler() override;
-
-  // WebUIMessageHandler implementation.
-  void RegisterMessages() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SettingsPageUIHandler);
-};
+class SettingsPageUIHandler;
 
 // The WebUI handler for chrome://md-settings.
-class MdSettingsUI : public content::WebUIController {
+class MdSettingsUI : public content::WebUIController,
+                     public content::WebContentsObserver {
  public:
-  explicit MdSettingsUI(content::WebUI* web_ui);
+  MdSettingsUI(content::WebUI* web_ui, const GURL& url);
   ~MdSettingsUI() override;
 
+  // content::WebContentsObserver:
+  void DidStartProvisionalLoadForFrame(
+      content::RenderFrameHost* render_frame_host,
+      const GURL& validated_url,
+      bool is_error_page) override;
+  void DocumentLoadedInFrame(
+      content::RenderFrameHost *render_frame_host) override;
+  void DocumentOnLoadCompletedInMainFrame() override;
+
  private:
-  void AddSettingsPageUIHandler(content::WebUIMessageHandler* handler);
+  void AddSettingsPageUIHandler(SettingsPageUIHandler* handler);
+
+  // Weak references; all |handlers_| are owned by |web_ui()|.
+  std::unordered_set<SettingsPageUIHandler*> handlers_;
+
+  base::Time load_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(MdSettingsUI);
 };

@@ -22,12 +22,13 @@ const int64_t kDisplayId = 0;
 
 }  // namespace
 
-ShellScreen::ShellScreen(const gfx::Size& size)
-    : host_(nullptr), display_(kDisplayId) {
+ShellScreen::ShellScreen(const gfx::Size& size) : host_(nullptr) {
   DCHECK(!size.IsEmpty());
   // Screen is positioned at (0,0).
+  display::Display display(kDisplayId);
   gfx::Rect bounds(size);
-  display_.SetScaleAndBounds(1.0f, bounds);
+  display.SetScaleAndBounds(1.0f, bounds);
+  ProcessDisplayChanged(display, true /* is_primary */);
 }
 
 ShellScreen::~ShellScreen() {
@@ -36,7 +37,8 @@ ShellScreen::~ShellScreen() {
 
 aura::WindowTreeHost* ShellScreen::CreateHostForPrimaryDisplay() {
   DCHECK(!host_);
-  host_ = aura::WindowTreeHost::Create(gfx::Rect(display_.GetSizeInPixel()));
+  host_ = aura::WindowTreeHost::Create(
+      gfx::Rect(GetPrimaryDisplay().GetSizeInPixel()));
   host_->window()->AddObserver(this);
   host_->InitHost();
   return host_;
@@ -48,7 +50,9 @@ void ShellScreen::OnWindowBoundsChanged(aura::Window* window,
                                         const gfx::Rect& old_bounds,
                                         const gfx::Rect& new_bounds) {
   DCHECK_EQ(host_->window(), window);
-  display_.SetSize(new_bounds.size());
+  display::Display display(GetPrimaryDisplay());
+  display.SetSize(new_bounds.size());
+  display_list().UpdateDisplay(display);
 }
 
 void ShellScreen::OnWindowDestroying(aura::Window* window) {
@@ -57,51 +61,23 @@ void ShellScreen::OnWindowDestroying(aura::Window* window) {
   host_ = nullptr;
 }
 
-// gfx::Screen overrides:
+// display::Screen overrides:
 
 gfx::Point ShellScreen::GetCursorScreenPoint() {
   return aura::Env::GetInstance()->last_mouse_location();
 }
 
-gfx::NativeWindow ShellScreen::GetWindowUnderCursor() {
-  return GetWindowAtScreenPoint(GetCursorScreenPoint());
+bool ShellScreen::IsWindowUnderCursor(gfx::NativeWindow window) {
+  return GetWindowAtScreenPoint(GetCursorScreenPoint()) == window;
 }
 
 gfx::NativeWindow ShellScreen::GetWindowAtScreenPoint(const gfx::Point& point) {
   return host_->window()->GetTopWindowContainingPoint(point);
 }
 
-int ShellScreen::GetNumDisplays() const {
-  return 1;
-}
-
-std::vector<gfx::Display> ShellScreen::GetAllDisplays() const {
-  return std::vector<gfx::Display>(1, display_);
-}
-
-gfx::Display ShellScreen::GetDisplayNearestWindow(
+display::Display ShellScreen::GetDisplayNearestWindow(
     gfx::NativeWindow window) const {
-  return display_;
-}
-
-gfx::Display ShellScreen::GetDisplayNearestPoint(
-    const gfx::Point& point) const {
-  return display_;
-}
-
-gfx::Display ShellScreen::GetDisplayMatching(
-    const gfx::Rect& match_rect) const {
-  return display_;
-}
-
-gfx::Display ShellScreen::GetPrimaryDisplay() const {
-  return display_;
-}
-
-void ShellScreen::AddObserver(gfx::DisplayObserver* observer) {
-}
-
-void ShellScreen::RemoveObserver(gfx::DisplayObserver* observer) {
+  return GetPrimaryDisplay();
 }
 
 }  // namespace extensions

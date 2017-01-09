@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 #include "components/omnibox/browser/autocomplete_match.h"
@@ -20,7 +20,6 @@ class AutocompleteInput;
 class AutocompleteSchemeClassifier;
 
 namespace base {
-class DictionaryValue;
 class Value;
 }
 
@@ -44,6 +43,7 @@ class SearchSuggestionParser {
            bool relevance_from_server,
            AutocompleteMatchType::Type type,
            const std::string& deletion_url);
+    Result(const Result& other);
     virtual ~Result();
 
     bool from_keyword_provider() const { return from_keyword_provider_; }
@@ -119,7 +119,7 @@ class SearchSuggestionParser {
                   const base::string16& annotation,
                   const base::string16& answer_contents,
                   const base::string16& answer_type,
-                  scoped_ptr<SuggestionAnswer> answer,
+                  std::unique_ptr<SuggestionAnswer> answer,
                   const std::string& suggest_query_params,
                   const std::string& deletion_url,
                   bool from_keyword_provider,
@@ -185,7 +185,7 @@ class SearchSuggestionParser {
     base::string16 answer_type_;
 
     // Optional short answer to the input that produced this suggestion.
-    scoped_ptr<SuggestionAnswer> answer_;
+    std::unique_ptr<SuggestionAnswer> answer_;
 
     // Should this result be prefetched?
     bool should_prefetch_;
@@ -201,8 +201,7 @@ class SearchSuggestionParser {
                      bool from_keyword_provider,
                      int relevance,
                      bool relevance_from_server,
-                     const base::string16& input_text,
-                     const std::string& languages);
+                     const base::string16& input_text);
     ~NavigationResult() override;
 
     const GURL& url() const { return url_; }
@@ -210,13 +209,11 @@ class SearchSuggestionParser {
     const base::string16& formatted_url() const { return formatted_url_; }
 
     // Fills in |match_contents_| and |match_contents_class_| to reflect how
-    // the URL should be displayed and bolded against the current |input_text|
-    // and user |languages|.  If |allow_bolding_nothing| is false and
-    // |match_contents_class_| would result in an entirely unbolded
-    // |match_contents_|, do nothing.
+    // the URL should be displayed and bolded against the current |input_text|.
+    // If |allow_bolding_nothing| is false and |match_contents_class_| would
+    // result in an entirely unbolded |match_contents_|, do nothing.
     void CalculateAndClassifyMatchContents(const bool allow_bolding_nothing,
-                                           const base::string16& input_text,
-                                           const std::string& languages);
+                                           const base::string16& input_text);
 
     // Result:
     int CalculateRelevance(const AutocompleteInput& input,
@@ -287,7 +284,7 @@ class SearchSuggestionParser {
   // Parses JSON response received from the provider, stripping XSSI
   // protection if needed. Returns the parsed data if successful, NULL
   // otherwise.
-  static scoped_ptr<base::Value> DeserializeJsonData(
+  static std::unique_ptr<base::Value> DeserializeJsonData(
       base::StringPiece json_data);
 
   // Parses results from the suggest server and updates the appropriate suggest
@@ -299,7 +296,6 @@ class SearchSuggestionParser {
       const AutocompleteInput& input,
       const AutocompleteSchemeClassifier& scheme_classifier,
       int default_result_relevance,
-      const std::string& languages,
       bool is_keyword_result,
       Results* results);
 

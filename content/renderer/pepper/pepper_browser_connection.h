@@ -5,12 +5,15 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_BROWSER_CONNECTION_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_BROWSER_CONNECTION_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
 #include "ppapi/c/pp_file_info.h"
@@ -57,6 +60,9 @@ class PepperBrowserConnection
   void DidDeleteInProcessInstance(PP_Instance instance);
 
  private:
+  // RenderFrameObserver implementation.
+  void OnDestruct() override;
+
   // Message handlers.
   void OnMsgCreateResourceHostsFromHostReply(
       int32_t sequence_number,

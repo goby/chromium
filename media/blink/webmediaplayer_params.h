@@ -5,8 +5,13 @@
 #ifndef MEDIA_BLINK_WEBMEDIAPLAYER_PARAMS_H_
 #define MEDIA_BLINK_WEBMEDIAPLAYER_PARAMS_H_
 
+#include <stdint.h>
+
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
+#include "media/base/media_observer.h"
 #include "media/blink/media_blink_export.h"
 #include "media/filters/context_3d.h"
 
@@ -17,14 +22,13 @@ class TaskRunner;
 
 namespace blink {
 class WebContentDecryptionModule;
-class WebMediaPlayerClient;
 }
 
 namespace media {
 
-class RestartableAudioRendererSink;
+class SwitchableAudioRendererSink;
 class MediaLog;
-class MediaPermission;
+class SurfaceManager;
 
 // Holds parameters for constructing WebMediaPlayerImpl without having
 // to plumb arguments through various abstraction layers.
@@ -44,21 +48,22 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
   // |context_3d_cb| may be null.
   WebMediaPlayerParams(
       const DeferLoadCB& defer_load_cb,
-      const scoped_refptr<RestartableAudioRendererSink>& audio_renderer_sink,
+      const scoped_refptr<SwitchableAudioRendererSink>& audio_renderer_sink,
       const scoped_refptr<MediaLog>& media_log,
       const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
       const scoped_refptr<base::TaskRunner>& worker_task_runner,
       const scoped_refptr<base::SingleThreadTaskRunner>& compositor_task_runner,
       const Context3DCB& context_3d,
       const AdjustAllocatedMemoryCB& adjust_allocated_memory_cb,
-      MediaPermission* media_permission,
-      blink::WebContentDecryptionModule* initial_cdm);
+      blink::WebContentDecryptionModule* initial_cdm,
+      SurfaceManager* surface_manager,
+      base::WeakPtr<MediaObserver> media_observer);
 
   ~WebMediaPlayerParams();
 
   DeferLoadCB defer_load_cb() const { return defer_load_cb_; }
 
-  const scoped_refptr<RestartableAudioRendererSink>& audio_renderer_sink()
+  const scoped_refptr<SwitchableAudioRendererSink>& audio_renderer_sink()
       const {
     return audio_renderer_sink_;
   }
@@ -82,8 +87,6 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
 
   Context3DCB context_3d_cb() const { return context_3d_cb_; }
 
-  MediaPermission* media_permission() const { return media_permission_; }
-
   blink::WebContentDecryptionModule* initial_cdm() const {
     return initial_cdm_;
   }
@@ -92,9 +95,15 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
     return adjust_allocated_memory_cb_;
   }
 
+  SurfaceManager* surface_manager() const { return surface_manager_; }
+
+  base::WeakPtr<MediaObserver> media_observer() const {
+    return media_observer_;
+  }
+
  private:
   DeferLoadCB defer_load_cb_;
-  scoped_refptr<RestartableAudioRendererSink> audio_renderer_sink_;
+  scoped_refptr<SwitchableAudioRendererSink> audio_renderer_sink_;
   scoped_refptr<MediaLog> media_log_;
   scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
   scoped_refptr<base::TaskRunner> worker_task_runner_;
@@ -102,9 +111,9 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
   Context3DCB context_3d_cb_;
   AdjustAllocatedMemoryCB adjust_allocated_memory_cb_;
 
-  // TODO(xhwang): Remove after prefixed EME API support is removed.
-  MediaPermission* media_permission_;
   blink::WebContentDecryptionModule* initial_cdm_;
+  SurfaceManager* surface_manager_;
+  base::WeakPtr<MediaObserver> media_observer_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(WebMediaPlayerParams);
 };

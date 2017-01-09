@@ -4,9 +4,10 @@
 
 #include "chrome/browser/ui/views/external_protocol_dialog.h"
 
-#include "base/metrics/histogram.h"
+#include <utility>
+
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
-#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/browser/ui/external_protocol_dialog_delegate.h"
@@ -33,9 +34,8 @@ const int kMessageWidth = 400;
 void ExternalProtocolHandler::RunExternalProtocolDialog(
     const GURL& url, int render_process_host_id, int routing_id,
     ui::PageTransition page_transition, bool has_user_gesture) {
-  scoped_ptr<ExternalProtocolDialogDelegate> delegate(
-      new ExternalProtocolDialogDelegate(url,
-                                         render_process_host_id,
+  std::unique_ptr<ExternalProtocolDialogDelegate> delegate(
+      new ExternalProtocolDialogDelegate(url, render_process_host_id,
                                          routing_id));
   if (delegate->program_name().empty()) {
     // ShellExecute won't do anything. Don't bother warning the user.
@@ -43,8 +43,8 @@ void ExternalProtocolHandler::RunExternalProtocolDialog(
   }
 
   // Windowing system takes ownership.
-  new ExternalProtocolDialog(
-      delegate.Pass(), render_process_host_id, routing_id);
+  new ExternalProtocolDialog(std::move(delegate), render_process_host_id,
+                             routing_id);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -62,10 +62,7 @@ int ExternalProtocolDialog::GetDefaultDialogButton() const {
 
 base::string16 ExternalProtocolDialog::GetDialogButtonLabel(
     ui::DialogButton button) const {
-  if (button == ui::DIALOG_BUTTON_OK)
-    return l10n_util::GetStringUTF16(IDS_EXTERNAL_PROTOCOL_OK_BUTTON_TEXT);
-  else
-    return l10n_util::GetStringUTF16(IDS_EXTERNAL_PROTOCOL_CANCEL_BUTTON_TEXT);
+  return delegate_->GetDialogButtonLabel(button);
 }
 
 base::string16 ExternalProtocolDialog::GetWindowTitle() const {
@@ -84,6 +81,9 @@ bool ExternalProtocolDialog::Cancel() {
   delegate_->DoCancel(delegate_->url(),
                       message_box_view_->IsCheckBoxSelected());
 
+  ExternalProtocolHandler::RecordMetrics(
+      message_box_view_->IsCheckBoxSelected());
+
   // Returning true closes the dialog.
   return true;
 }
@@ -94,6 +94,9 @@ bool ExternalProtocolDialog::Accept() {
   // clickjacking.
   UMA_HISTOGRAM_LONG_TIMES("clickjacking.launch_url",
                            base::TimeTicks::Now() - creation_time_);
+
+  ExternalProtocolHandler::RecordMetrics(
+      message_box_view_->IsCheckBoxSelected());
 
   delegate_->DoAccept(delegate_->url(),
                       message_box_view_->IsCheckBoxSelected());
@@ -122,10 +125,10 @@ ui::ModalType ExternalProtocolDialog::GetModalType() const {
 // ExternalProtocolDialog, private:
 
 ExternalProtocolDialog::ExternalProtocolDialog(
-    scoped_ptr<const ProtocolDialogDelegate> delegate,
+    std::unique_ptr<const ProtocolDialogDelegate> delegate,
     int render_process_host_id,
     int routing_id)
-    : delegate_(delegate.Pass()),
+    : delegate_(std::move(delegate)),
       render_process_host_id_(render_process_host_id),
       routing_id_(routing_id),
       creation_time_(base::TimeTicks::Now()) {

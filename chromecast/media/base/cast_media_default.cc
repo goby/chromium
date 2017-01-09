@@ -2,9 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
+#include "chromecast/base/task_runner_impl.h"
 #include "chromecast/media/cma/backend/media_pipeline_backend_default.h"
 #include "chromecast/public/cast_media_shlib.h"
 #include "chromecast/public/graphics_types.h"
+#include "chromecast/public/media/media_capabilities_shlib.h"
+#include "chromecast/public/media/media_pipeline_device_params.h"
 #include "chromecast/public/media_codec_support_shlib.h"
 #include "chromecast/public/video_plane.h"
 
@@ -21,6 +29,7 @@ class DefaultVideoPlane : public VideoPlane {
 };
 
 DefaultVideoPlane* g_video_plane = nullptr;
+base::ThreadTaskRunnerHandle* g_thread_task_runner_handle = nullptr;
 
 }  // namespace
 
@@ -31,6 +40,8 @@ void CastMediaShlib::Initialize(const std::vector<std::string>& argv) {
 void CastMediaShlib::Finalize() {
   delete g_video_plane;
   g_video_plane = nullptr;
+  delete g_thread_task_runner_handle;
+  g_thread_task_runner_handle = nullptr;
 }
 
 VideoPlane* CastMediaShlib::GetVideoPlane() {
@@ -39,6 +50,17 @@ VideoPlane* CastMediaShlib::GetVideoPlane() {
 
 MediaPipelineBackend* CastMediaShlib::CreateMediaPipelineBackend(
     const MediaPipelineDeviceParams& params) {
+  // Set up the static reference in base::ThreadTaskRunnerHandle::Get
+  // for the media thread in this shared library.  We can extract the
+  // SingleThreadTaskRunner passed in from cast_shell for this.
+  if (!base::ThreadTaskRunnerHandle::IsSet()) {
+    DCHECK(!g_thread_task_runner_handle);
+    const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+        static_cast<TaskRunnerImpl*>(params.task_runner)->runner();
+    DCHECK(task_runner->BelongsToCurrentThread());
+    g_thread_task_runner_handle = new base::ThreadTaskRunnerHandle(task_runner);
+  }
+
   return new MediaPipelineBackendDefault();
 }
 
@@ -82,6 +104,12 @@ bool CastMediaShlib::SetMediaClockRate(double new_rate) {
 
 bool CastMediaShlib::SupportsMediaClockRateChange() {
   return false;
+}
+
+bool MediaCapabilitiesShlib::IsSupportedVideoConfig(VideoCodec codec,
+                                                    VideoProfile profile,
+                                                    int level) {
+  return (codec == kCodecH264 || codec == kCodecVP8);
 }
 
 }  // namespace media

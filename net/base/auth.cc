@@ -12,18 +12,11 @@ AuthChallengeInfo::AuthChallengeInfo() : is_proxy(false) {
 
 bool AuthChallengeInfo::Equals(const AuthChallengeInfo& that) const {
   return (this->is_proxy == that.is_proxy &&
-          this->challenger.Equals(that.challenger) &&
-          this->scheme == that.scheme &&
+          this->challenger == that.challenger && this->scheme == that.scheme &&
           this->realm == that.realm);
 }
 
 AuthChallengeInfo::~AuthChallengeInfo() {
-}
-
-AuthData::AuthData() : state(AUTH_STATE_NEED_AUTH) {
-}
-
-AuthData::~AuthData() {
 }
 
 AuthCredentials::AuthCredentials() {

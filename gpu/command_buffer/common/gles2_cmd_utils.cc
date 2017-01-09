@@ -5,15 +5,16 @@
 // This file is here so other GLES2 related files can have a common set of
 // includes where appropriate.
 
-#include <sstream>
+#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <GLES2/gl2extchromium.h>
 #include <GLES3/gl3.h>
 
+#include <sstream>
+
 #include "base/numerics/safe_math.h"
-#include "gpu/command_buffer/common/gles2_cmd_format.h"
-#include "gpu/command_buffer/common/gles2_cmd_utils.h"
 
 namespace gpu {
 namespace gles2 {
@@ -25,10 +26,10 @@ enum GLErrorBit {
   kInvalidValue = (1 << 1),
   kInvalidOperation = (1 << 2),
   kOutOfMemory = (1 << 3),
-  kInvalidFrameBufferOperation = (1 << 4),
+  kInvalidFramebufferOperation = (1 << 4),
   kContextLost = (1 << 5)
 };
-}
+}  // namespace gl_error_bit
 
 int GLES2Util::GLGetNumValuesReturned(int id) const {
   switch (id) {
@@ -131,8 +132,6 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_PACK_ALIGNMENT:
       return 1;
-    case GL_PACK_REVERSE_ROW_ORDER_ANGLE:
-      return 1;
     case GL_POLYGON_OFFSET_FACTOR:
       return 1;
     case GL_POLYGON_OFFSET_FILL:
@@ -213,21 +212,73 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_COPY_WRITE_BUFFER_BINDING:
       return 1;
+    case GL_MAX_3D_TEXTURE_SIZE:
+      return 1;
+    case GL_MAX_ARRAY_TEXTURE_LAYERS:
+      return 1;
+    case GL_MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS:
+      return 1;
+    case GL_MAX_COMBINED_UNIFORM_BLOCKS:
+      return 1;
+    case GL_MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS:
+      return 1;
+    case GL_MAX_ELEMENT_INDEX:
+      return 1;
+    case GL_MAX_ELEMENTS_INDICES:
+      return 1;
+    case GL_MAX_ELEMENTS_VERTICES:
+      return 1;
+    case GL_MAX_FRAGMENT_INPUT_COMPONENTS:
+      return 1;
+    case GL_MAX_FRAGMENT_UNIFORM_BLOCKS:
+      return 1;
+    case GL_MAX_FRAGMENT_UNIFORM_COMPONENTS:
+      return 1;
+    case GL_MAX_PROGRAM_TEXEL_OFFSET:
+      return 1;
+    case GL_MAX_SERVER_WAIT_TIMEOUT:
+      return 1;
+    case GL_MAX_TEXTURE_LOD_BIAS:
+      return 1;
+    case GL_MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS:
+      return 1;
+    case GL_MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS:
+      return 1;
+    case GL_MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS:
+      return 1;
+    case GL_MAX_UNIFORM_BLOCK_SIZE:
+      return 1;
+    case GL_MAX_UNIFORM_BUFFER_BINDINGS:
+      return 1;
+    case GL_MAX_VARYING_COMPONENTS:
+      return 1;
+    case GL_MAX_VERTEX_OUTPUT_COMPONENTS:
+      return 1;
+    case GL_MAX_VERTEX_UNIFORM_BLOCKS:
+      return 1;
+    case GL_MAX_VERTEX_UNIFORM_COMPONENTS:
+      return 1;
+    case GL_MIN_PROGRAM_TEXEL_OFFSET:
+      return 1;
     case GL_PIXEL_PACK_BUFFER_BINDING:
       return 1;
     case GL_PIXEL_UNPACK_BUFFER_BINDING:
       return 1;
     case GL_TRANSFORM_FEEDBACK_BUFFER_BINDING:
       return 1;
-    case GL_UNIFORM_BUFFER_BINDING:
+    case GL_TRANSFORM_FEEDBACK_BUFFER_MODE:
       return 1;
     case GL_TRANSFORM_FEEDBACK_BUFFER_SIZE:
       return 1;
     case GL_TRANSFORM_FEEDBACK_BUFFER_START:
       return 1;
+    case GL_UNIFORM_BUFFER_BINDING:
+      return 1;
     case GL_UNIFORM_BUFFER_SIZE:
       return 1;
     case GL_UNIFORM_BUFFER_START:
+      return 1;
+    case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
       return 1;
 
     // -- glGetBooleanv, glGetFloatv, glGetIntergerv with
@@ -377,6 +428,14 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_TEXTURE_MAX_ANISOTROPY_EXT:
       return 1;
+    case GL_TEXTURE_SWIZZLE_R:
+      return 1;
+    case GL_TEXTURE_SWIZZLE_G:
+      return 1;
+    case GL_TEXTURE_SWIZZLE_B:
+      return 1;
+    case GL_TEXTURE_SWIZZLE_A:
+      return 1;
 
     // -- glGetVertexAttrib
     case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING:
@@ -501,7 +560,7 @@ int BytesPerElement(int type) {
 
 }  // anonymous namespace
 
-uint32 GLES2Util::ComputeImageGroupSize(int format, int type) {
+uint32_t GLES2Util::ComputeImageGroupSize(int format, int type) {
   int bytes_per_element = BytesPerElement(type);
   DCHECK_GE(8, bytes_per_element);
   int elements_per_group = ElementsPerGroup(format, type);
@@ -509,67 +568,148 @@ uint32 GLES2Util::ComputeImageGroupSize(int format, int type) {
   return  bytes_per_element * elements_per_group;
 }
 
-bool GLES2Util::ComputeImagePaddedRowSize(
-        int width, int format, int type, int unpack_alignment,
-        uint32* padded_row_size) {
-  DCHECK(unpack_alignment == 1 || unpack_alignment == 2 ||
-         unpack_alignment == 4 || unpack_alignment == 8);
-  uint32 bytes_per_group = ComputeImageGroupSize(format, type);
-  uint32 unpadded_row_size;
+bool GLES2Util::ComputeImageRowSizeHelper(int width,
+                                          uint32_t bytes_per_group,
+                                          int alignment,
+                                          uint32_t* rt_unpadded_row_size,
+                                          uint32_t* rt_padded_row_size,
+                                          uint32_t* rt_padding) {
+  DCHECK(alignment == 1 || alignment == 2 ||
+         alignment == 4 || alignment == 8);
+  uint32_t unpadded_row_size;
   if (!SafeMultiplyUint32(width, bytes_per_group, &unpadded_row_size)) {
     return false;
   }
-  uint32 temp;
-  if (!SafeAddUint32(unpadded_row_size, unpack_alignment - 1, &temp)) {
+  uint32_t residual = unpadded_row_size % alignment;
+  uint32_t padding = 0;
+  uint32_t padded_row_size = unpadded_row_size;
+  if (residual > 0) {
+    padding = alignment - residual;
+    if (!SafeAddUint32(unpadded_row_size, padding, &padded_row_size)) {
       return false;
+    }
   }
-  *padded_row_size = (temp / unpack_alignment) * unpack_alignment;
+
+  if (rt_unpadded_row_size)
+    *rt_unpadded_row_size = unpadded_row_size;
+  if (rt_padded_row_size)
+    *rt_padded_row_size = padded_row_size;
+  if (rt_padding)
+    *rt_padding = padding;
   return true;
 }
 
+bool GLES2Util::ComputeImagePaddedRowSize(int width,
+                                          int format,
+                                          int type,
+                                          int alignment,
+                                          uint32_t* padded_row_size) {
+  uint32_t bytes_per_group = ComputeImageGroupSize(format, type);
+  return ComputeImageRowSizeHelper(
+      width, bytes_per_group, alignment, nullptr, padded_row_size, nullptr);
+}
+
 // Returns the amount of data glTexImage*D or glTexSubImage*D will access.
-bool GLES2Util::ComputeImageDataSizes(
+bool GLES2Util::ComputeImageDataSizes(int width,
+                                      int height,
+                                      int depth,
+                                      int format,
+                                      int type,
+                                      int alignment,
+                                      uint32_t* size,
+                                      uint32_t* opt_unpadded_row_size,
+                                      uint32_t* opt_padded_row_size) {
+  PixelStoreParams params;
+  params.alignment = alignment;
+  return ComputeImageDataSizesES3(
+      width, height, depth, format, type, params,
+      size, opt_unpadded_row_size, opt_padded_row_size, nullptr, nullptr);
+}
+
+bool GLES2Util::ComputeImageDataSizesES3(
     int width, int height, int depth, int format, int type,
-    int unpack_alignment, uint32* size, uint32* ret_unpadded_row_size,
-    uint32* ret_padded_row_size) {
-  DCHECK(unpack_alignment == 1 || unpack_alignment == 2 ||
-         unpack_alignment == 4 || unpack_alignment == 8);
-  uint32 bytes_per_group = ComputeImageGroupSize(format, type);
-  uint32 row_size;
-  if (!SafeMultiplyUint32(width, bytes_per_group, &row_size)) {
+    const PixelStoreParams& params,
+    uint32_t* size, uint32_t* opt_unpadded_row_size,
+    uint32_t* opt_padded_row_size, uint32_t* opt_skip_size,
+    uint32_t* opt_padding) {
+  DCHECK(width >= 0 && height >= 0 && depth >= 0);
+
+  uint32_t bytes_per_group = ComputeImageGroupSize(format, type);
+
+  uint32_t unpadded_row_size;
+  uint32_t padded_row_size;
+  if (!ComputeImageRowSizeHelper(width, bytes_per_group, params.alignment,
+                                 &unpadded_row_size, &padded_row_size,
+                                 opt_padding)) {
     return false;
   }
-  uint32 num_of_rows;
-  if (!SafeMultiplyUint32(height, depth, &num_of_rows)) {
+  if (params.row_length > 0 &&
+      !ComputeImageRowSizeHelper(params.row_length, bytes_per_group,
+                                 params.alignment, nullptr, &padded_row_size,
+                                 opt_padding)) {
+    // Here we re-compute the padded_row_size, but the unpadded_row_size
+    // isn't affected. That is, the last row isn't affected by ROW_LENGTH.
     return false;
   }
-  if (num_of_rows > 1) {
-    uint32 temp;
-    if (!SafeAddUint32(row_size, unpack_alignment - 1, &temp)) {
+
+  int image_height = params.image_height > 0 ? params.image_height : height;
+  uint32_t num_of_rows;
+  if (depth > 0) {
+    if (!SafeMultiplyUint32(image_height, depth - 1, &num_of_rows) ||
+        !SafeAddUint32(num_of_rows, height, &num_of_rows)) {
       return false;
     }
-    uint32 padded_row_size = (temp / unpack_alignment) * unpack_alignment;
-    uint32 size_of_all_but_last_row;
+  } else {
+    num_of_rows = 0;
+  }
+
+  if (num_of_rows > 0) {
+    uint32_t size_of_all_but_last_row;
     if (!SafeMultiplyUint32((num_of_rows - 1), padded_row_size,
                             &size_of_all_but_last_row)) {
       return false;
     }
-    if (!SafeAddUint32(size_of_all_but_last_row, row_size, size)) {
+    if (!SafeAddUint32(size_of_all_but_last_row, unpadded_row_size, size)) {
       return false;
     }
-    if (ret_padded_row_size) {
-      *ret_padded_row_size = padded_row_size;
-    }
   } else {
-    *size = row_size;
-    if (ret_padded_row_size) {
-      *ret_padded_row_size = row_size;
-    }
-  }
-  if (ret_unpadded_row_size) {
-    *ret_unpadded_row_size = row_size;
+    *size = 0;
   }
 
+  uint32_t skip_size = 0;
+  if (params.skip_images > 0) {
+    uint32_t image_size;
+    if (!SafeMultiplyUint32(image_height, padded_row_size, &image_size))
+      return false;
+    if (!SafeMultiplyUint32(image_size, params.skip_images, &skip_size))
+      return false;
+  }
+  if (params.skip_rows > 0) {
+    uint32_t temp;
+    if (!SafeMultiplyUint32(padded_row_size, params.skip_rows, &temp))
+      return false;
+    if (!SafeAddUint32(skip_size, temp, &skip_size))
+      return false;
+  }
+  if (params.skip_pixels > 0) {
+    uint32_t temp;
+    if (!SafeMultiplyUint32(bytes_per_group, params.skip_pixels, &temp))
+      return false;
+    if (!SafeAddUint32(skip_size, temp, &skip_size))
+      return false;
+  }
+  uint32_t total_size;
+  if (!SafeAddUint32(*size, skip_size, &total_size))
+    return false;
+
+  if (opt_padded_row_size) {
+    *opt_padded_row_size = padded_row_size;
+  }
+  if (opt_unpadded_row_size) {
+    *opt_unpadded_row_size = unpadded_row_size;
+  }
+  if (opt_skip_size)
+    *opt_skip_size = skip_size;
   return true;
 }
 
@@ -594,7 +734,7 @@ size_t GLES2Util::RenderbufferBytesPerPixel(int format) {
   }
 }
 
-uint32 GLES2Util::GetElementSizeForUniformType(int type) {
+uint32_t GLES2Util::GetElementSizeForUniformType(int type) {
   switch (type) {
     case GL_FLOAT:
     case GL_FLOAT_VEC2:
@@ -651,7 +791,7 @@ uint32 GLES2Util::GetElementSizeForUniformType(int type) {
   }
 }
 
-uint32 GLES2Util::GetElementCountForUniformType(int type) {
+uint32_t GLES2Util::GetElementCountForUniformType(int type) {
   switch (type) {
     case GL_FLOAT:
     case GL_INT:
@@ -716,7 +856,11 @@ uint32 GLES2Util::GetElementCountForUniformType(int type) {
   }
 }
 
-size_t GLES2Util::GetGLTypeSizeForTexturesAndBuffers(uint32 type) {
+size_t GLES2Util::GetGLTypeSizeForTextures(uint32_t type) {
+  return static_cast<size_t>(BytesPerElement(type));
+}
+
+size_t GLES2Util::GetGLTypeSizeForBuffers(uint32_t type) {
   switch (type) {
     case GL_BYTE:
       return sizeof(GLbyte);  // NOLINT
@@ -734,12 +878,27 @@ size_t GLES2Util::GetGLTypeSizeForTexturesAndBuffers(uint32 type) {
       return sizeof(GLfloat);  // NOLINT
     case GL_FIXED:
       return sizeof(GLfixed);  // NOLINT
+    case GL_HALF_FLOAT:
+      return sizeof(GLushort);  // NOLINT
+    case GL_INT_2_10_10_10_REV:
+      return sizeof(GLint);  // NOLINT
+    case GL_UNSIGNED_INT_2_10_10_10_REV:
+      return sizeof(GLuint);  // NOLINT
     default:
       return 0;
   }
 }
 
-size_t GLES2Util::GetComponentCountForGLTransformType(uint32 type) {
+size_t GLES2Util::GetGroupSizeForBufferType(uint32_t count, uint32_t type) {
+  size_t type_size = GetGLTypeSizeForBuffers(type);
+  // For packed types, group size equals to the type size.
+  if (type == GL_INT_2_10_10_10_REV || type == GL_UNSIGNED_INT_2_10_10_10_REV) {
+    DCHECK_EQ(4u, count);
+    return type_size;
+  }
+  return type_size * count;
+}
+size_t GLES2Util::GetComponentCountForGLTransformType(uint32_t type) {
   switch (type) {
     case GL_TRANSLATE_X_CHROMIUM:
     case GL_TRANSLATE_Y_CHROMIUM:
@@ -773,7 +932,7 @@ size_t GLES2Util::GetCoefficientCountForGLPathFragmentInputGenMode(
   }
 }
 
-size_t GLES2Util::GetGLTypeSizeForPathCoordType(uint32 type) {
+size_t GLES2Util::GetGLTypeSizeForPathCoordType(uint32_t type) {
   switch (type) {
     case GL_BYTE:
       return sizeof(GLbyte);  // NOLINT
@@ -790,7 +949,7 @@ size_t GLES2Util::GetGLTypeSizeForPathCoordType(uint32 type) {
   }
 }
 
-size_t GLES2Util::GetGLTypeSizeForGLPathNameType(uint32 type) {
+size_t GLES2Util::GetGLTypeSizeForGLPathNameType(uint32_t type) {
   switch (type) {
     case GL_BYTE:
       return sizeof(GLbyte);  // NOLINT
@@ -809,7 +968,7 @@ size_t GLES2Util::GetGLTypeSizeForGLPathNameType(uint32 type) {
   }
 }
 
-uint32 GLES2Util::GLErrorToErrorBit(uint32 error) {
+uint32_t GLES2Util::GLErrorToErrorBit(uint32_t error) {
   switch (error) {
     case GL_INVALID_ENUM:
       return gl_error_bit::kInvalidEnum;
@@ -820,7 +979,7 @@ uint32 GLES2Util::GLErrorToErrorBit(uint32 error) {
     case GL_OUT_OF_MEMORY:
       return gl_error_bit::kOutOfMemory;
     case GL_INVALID_FRAMEBUFFER_OPERATION:
-      return gl_error_bit::kInvalidFrameBufferOperation;
+      return gl_error_bit::kInvalidFramebufferOperation;
     case GL_CONTEXT_LOST_KHR:
       return gl_error_bit::kContextLost;
     default:
@@ -829,7 +988,7 @@ uint32 GLES2Util::GLErrorToErrorBit(uint32 error) {
   }
 }
 
-uint32 GLES2Util::GLErrorBitToGLError(uint32 error_bit) {
+uint32_t GLES2Util::GLErrorBitToGLError(uint32_t error_bit) {
   switch (error_bit) {
     case gl_error_bit::kInvalidEnum:
       return GL_INVALID_ENUM;
@@ -839,7 +998,7 @@ uint32 GLES2Util::GLErrorBitToGLError(uint32 error_bit) {
       return GL_INVALID_OPERATION;
     case gl_error_bit::kOutOfMemory:
       return GL_OUT_OF_MEMORY;
-    case gl_error_bit::kInvalidFrameBufferOperation:
+    case gl_error_bit::kInvalidFramebufferOperation:
       return GL_INVALID_FRAMEBUFFER_OPERATION;
     case gl_error_bit::kContextLost:
       return GL_CONTEXT_LOST_KHR;
@@ -849,19 +1008,16 @@ uint32 GLES2Util::GLErrorBitToGLError(uint32 error_bit) {
   }
 }
 
-uint32 GLES2Util::IndexToGLFaceTarget(int index) {
-  static uint32 faces[] = {
-    GL_TEXTURE_CUBE_MAP_POSITIVE_X,
-    GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
-    GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
-    GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
-    GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
-    GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
+uint32_t GLES2Util::IndexToGLFaceTarget(int index) {
+  static uint32_t faces[] = {
+      GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+      GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+      GL_TEXTURE_CUBE_MAP_POSITIVE_Z, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
   };
   return faces[index];
 }
 
-size_t GLES2Util::GLTargetToFaceIndex(uint32 target) {
+size_t GLES2Util::GLTargetToFaceIndex(uint32_t target) {
   switch (target) {
     case GL_TEXTURE_2D:
     case GL_TEXTURE_EXTERNAL_OES:
@@ -887,8 +1043,31 @@ size_t GLES2Util::GLTargetToFaceIndex(uint32 target) {
   }
 }
 
-uint32 GLES2Util::GetGLReadPixelsImplementationFormat(
-    uint32 internal_format) {
+uint32_t GLES2Util::GLFaceTargetToTextureTarget(uint32_t target) {
+  switch (target) {
+    case GL_TEXTURE_2D:
+    case GL_TEXTURE_EXTERNAL_OES:
+    case GL_TEXTURE_RECTANGLE_ARB:
+    case GL_TEXTURE_3D:
+    case GL_TEXTURE_2D_ARRAY:
+      return target;
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+      return GL_TEXTURE_CUBE_MAP;
+    default:
+      NOTREACHED();
+      return 0;
+  }
+}
+
+uint32_t GLES2Util::GetGLReadPixelsImplementationFormat(
+    uint32_t internal_format,
+    uint32_t texture_type,
+    bool supports_bgra) {
   switch (internal_format) {
     case GL_R8:
     case GL_R16F:
@@ -927,13 +1106,21 @@ uint32 GLES2Util::GetGLReadPixelsImplementationFormat(
     case GL_RGBA32UI:
     case GL_RGBA32I:
       return GL_RGBA_INTEGER;
+    case GL_BGRA_EXT:
+    case GL_BGRA8_EXT:
+      // If the internal format is BGRA, we prefer reading back BGRA if
+      // possible.
+      if (texture_type == GL_UNSIGNED_BYTE && supports_bgra)
+        return GL_BGRA_EXT;
+      else
+        return GL_RGBA;
     default:
       return GL_RGBA;
   }
 }
 
-uint32 GLES2Util::GetGLReadPixelsImplementationType(
-    uint32 internal_format, uint32 texture_type) {
+uint32_t GLES2Util::GetGLReadPixelsImplementationType(uint32_t internal_format,
+                                                      uint32_t texture_type) {
   switch (internal_format) {
     case GL_R16UI:
     case GL_RG16UI:
@@ -961,34 +1148,20 @@ uint32 GLES2Util::GetGLReadPixelsImplementationType(
     case GL_RG32F:
     case GL_RGB32F:
     case GL_RGBA32F:
-      return GL_FLOAT;
+    case GL_R11F_G11F_B10F:
+      return GL_UNSIGNED_BYTE;
     case GL_R16F:
     case GL_RG16F:
-    case GL_R11F_G11F_B10F:
     case GL_RGB16F:
     case GL_RGBA16F:
-      // TODO(zmo): Consider return GL_UNSIGNED_INT_10F_11F_11F_REV and
-      // GL_HALF_FLOAT.
-      return GL_FLOAT;
-    case GL_RGBA:
-    case GL_RGB:
-      // Unsized internal format, check the type
-      switch (texture_type) {
-        case GL_FLOAT:
-        case GL_HALF_FLOAT_OES:
-          return GL_FLOAT;
-        // TODO(zmo): Consider return GL_UNSIGNED_SHORT_5_6_5,
-        // GL_UNSIGNED_SHORT_4_4_4_4, GL_UNSIGNED_SHORT_5_5_5_1, and
-        // GL_UNSIGNED_INT_2_10_10_10_REV.
-        default:
-          return GL_UNSIGNED_BYTE;
-      }
+      return GL_HALF_FLOAT;
     default:
-      return GL_UNSIGNED_BYTE;
+      // Unsized internal format.
+      return texture_type;
   }
 }
 
-uint32 GLES2Util::GetChannelsForFormat(int format) {
+uint32_t GLES2Util::GetChannelsForFormat(int format) {
   switch (format) {
     case GL_ALPHA:
     case GL_ALPHA16F_EXT:
@@ -1076,8 +1249,251 @@ uint32 GLES2Util::GetChannelsForFormat(int format) {
   }
 }
 
-uint32 GLES2Util::GetChannelsNeededForAttachmentType(
-    int type, uint32 max_color_attachments) {
+bool GLES2Util::IsSizedColorFormat(uint32_t internal_format) {
+  switch (internal_format) {
+    case GL_ALPHA16F_EXT:
+    case GL_ALPHA32F_EXT:
+    case GL_RGB8:
+    case GL_RGB565:
+    case GL_RGB16F:
+    case GL_RGB32F:
+    case GL_SRGB8:
+    case GL_RGB8_SNORM:
+    case GL_R11F_G11F_B10F:
+    case GL_RGB9_E5:
+    case GL_RGB8UI:
+    case GL_RGB8I:
+    case GL_RGB16UI:
+    case GL_RGB16I:
+    case GL_RGB32UI:
+    case GL_RGB32I:
+    case GL_BGRA8_EXT:
+    case GL_RGBA16F:
+    case GL_RGBA32F:
+    case GL_RGBA8_OES:
+    case GL_RGBA4:
+    case GL_RGB5_A1:
+    case GL_SRGB8_ALPHA8:
+    case GL_RGBA8_SNORM:
+    case GL_RGB10_A2:
+    case GL_RGBA8UI:
+    case GL_RGBA8I:
+    case GL_RGB10_A2UI:
+    case GL_RGBA16UI:
+    case GL_RGBA16I:
+    case GL_RGBA32UI:
+    case GL_RGBA32I:
+    case GL_R8:
+    case GL_R8_SNORM:
+    case GL_R16F:
+    case GL_R32F:
+    case GL_R8UI:
+    case GL_R8I:
+    case GL_R16UI:
+    case GL_R16I:
+    case GL_R32UI:
+    case GL_R32I:
+    case GL_RG8:
+    case GL_RG8_SNORM:
+    case GL_RG16F:
+    case GL_RG32F:
+    case GL_RG8UI:
+    case GL_RG8I:
+    case GL_RG16UI:
+    case GL_RG16I:
+    case GL_RG32UI:
+    case GL_RG32I:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void GLES2Util::GetColorFormatComponentSizes(
+    uint32_t internal_format, uint32_t type, int* r, int* g, int* b, int* a) {
+  DCHECK(r && g && b && a);
+  *r = 0;
+  *g = 0;
+  *b = 0;
+  *a = 0;
+
+  switch (internal_format) {
+    case GL_LUMINANCE:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          // It can be RGBA8, RGB8, RG8, or R8.
+          // Here we only require R8, which is good enough for validation.
+          // Same for other types.
+          internal_format = GL_R8;
+          break;
+        case GL_HALF_FLOAT_OES:
+          internal_format = GL_R16F;
+          break;
+        case GL_FLOAT:
+          internal_format = GL_R32F;
+          return;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_LUMINANCE_ALPHA:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          internal_format = GL_RGBA8;
+          break;
+        case GL_HALF_FLOAT_OES:
+          internal_format = GL_RGBA16F;
+          break;
+        case GL_FLOAT:
+          internal_format = GL_RGBA32F;
+          return;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    default:
+      internal_format = ConvertToSizedFormat(internal_format, type);
+      break;
+  }
+
+  // Sized formats.
+  switch (internal_format) {
+    case GL_ALPHA8_EXT:
+      *a = 8;
+    case GL_ALPHA16F_EXT:
+      *a = 16;
+    case GL_ALPHA32F_EXT:
+      *a = 32;
+    case GL_RGB8_OES:
+    case GL_SRGB8:
+    case GL_RGB8_SNORM:
+    case GL_RGB8UI:
+    case GL_RGB8I:
+      *r = 8;
+      *g = 8;
+      *b = 8;
+      break;
+    case GL_RGB565:
+      *r = 5;
+      *g = 6;
+      *b = 5;
+      break;
+    case GL_RGB16F:
+    case GL_RGB16UI:
+    case GL_RGB16I:
+      *r = 16;
+      *g = 16;
+      *b = 16;
+      break;
+    case GL_RGB32F:
+    case GL_RGB32UI:
+    case GL_RGB32I:
+      *r = 32;
+      *g = 32;
+      *b = 32;
+      break;
+    case GL_R11F_G11F_B10F:
+      *r = 11;
+      *g = 11;
+      *b = 10;
+      break;
+    case GL_RGB9_E5:
+      *r = 9;
+      *g = 9;
+      *b = 9;
+      break;
+    case GL_BGRA8_EXT:
+    case GL_RGBA8:
+    case GL_SRGB8_ALPHA8:
+    case GL_RGBA8_SNORM:
+    case GL_RGBA8UI:
+    case GL_RGBA8I:
+      *r = 8;
+      *g = 8;
+      *b = 8;
+      *a = 8;
+      break;
+    case GL_RGBA16F_EXT:
+    case GL_RGBA16UI:
+    case GL_RGBA16I:
+      *r = 16;
+      *g = 16;
+      *b = 16;
+      *a = 16;
+      break;
+    case GL_RGBA32F_EXT:
+    case GL_RGBA32UI:
+    case GL_RGBA32I:
+      *r = 32;
+      *g = 32;
+      *b = 32;
+      *a = 32;
+      break;
+    case GL_RGBA4:
+      *r = 4;
+      *g = 4;
+      *b = 4;
+      *a = 4;
+      break;
+    case GL_RGB5_A1:
+      *r = 5;
+      *g = 5;
+      *b = 5;
+      *a = 1;
+      break;
+    case GL_RGB10_A2:
+    case GL_RGB10_A2UI:
+      *r = 10;
+      *g = 10;
+      *b = 10;
+      *a = 2;
+      break;
+    case GL_R8:
+    case GL_R8_SNORM:
+    case GL_R8UI:
+    case GL_R8I:
+      *r = 8;
+      break;
+    case GL_R16F:
+    case GL_R16UI:
+    case GL_R16I:
+      *r = 16;
+      break;
+    case GL_R32F:
+    case GL_R32UI:
+    case GL_R32I:
+      *r = 32;
+      break;
+    case GL_RG8:
+    case GL_RG8_SNORM:
+    case GL_RG8UI:
+    case GL_RG8I:
+      *r = 8;
+      *g = 8;
+      break;
+    case GL_RG16F:
+    case GL_RG16UI:
+    case GL_RG16I:
+      *r = 16;
+      *g = 16;
+      break;
+    case GL_RG32F:
+    case GL_RG32UI:
+    case GL_RG32I:
+      *r = 32;
+      *g = 32;
+      break;
+    default:
+      NOTREACHED();
+      break;
+  }
+}
+
+uint32_t GLES2Util::GetChannelsNeededForAttachmentType(
+    int type,
+    uint32_t max_color_attachments) {
   switch (type) {
     case GL_DEPTH_ATTACHMENT:
       return kDepth;
@@ -1093,13 +1509,12 @@ uint32 GLES2Util::GetChannelsNeededForAttachmentType(
   }
 }
 
-std::string GLES2Util::GetStringEnum(uint32 value) {
+std::string GLES2Util::GetStringEnum(uint32_t value) {
   const EnumToString* entry = enum_to_string_table_;
   const EnumToString* end = entry + enum_to_string_table_len_;
-  for (;entry < end; ++entry) {
-    if (value == entry->value) {
+  for (; entry < end; ++entry) {
+    if (value == entry->value)
       return entry->name;
-    }
   }
   std::stringstream ss;
   ss.fill('0');
@@ -1108,7 +1523,7 @@ std::string GLES2Util::GetStringEnum(uint32 value) {
   return "0x" + ss.str();
 }
 
-std::string GLES2Util::GetStringError(uint32 value) {
+std::string GLES2Util::GetStringError(uint32_t value) {
   static EnumToString string_table[] = {
     { GL_NONE, "GL_NONE" },
   };
@@ -1116,12 +1531,13 @@ std::string GLES2Util::GetStringError(uint32 value) {
       string_table, arraysize(string_table), value);
 }
 
-std::string GLES2Util::GetStringBool(uint32 value) {
+std::string GLES2Util::GetStringBool(uint32_t value) {
   return value ? "GL_TRUE" : "GL_FALSE";
 }
 
-std::string GLES2Util::GetQualifiedEnumString(
-    const EnumToString* table, size_t count, uint32 value) {
+std::string GLES2Util::GetQualifiedEnumString(const EnumToString* table,
+                                              size_t count,
+                                              uint32_t value) {
   for (const EnumToString* end = table + count; table < end; ++table) {
     if (table->value == value) {
       return table->name;
@@ -1133,7 +1549,7 @@ std::string GLES2Util::GetQualifiedEnumString(
 GLSLArrayName::GLSLArrayName(const std::string& name) : element_index_(-1) {
   if (name.size() < 4)
     return;
-  if (name[name.size() - 1] != ']')
+  if (name.back() != ']')
     return;
 
   size_t open_pos = name.find_last_of('[');
@@ -1143,7 +1559,7 @@ GLSLArrayName::GLSLArrayName(const std::string& name) : element_index_(-1) {
   base::CheckedNumeric<int> index = 0;
   size_t last = name.size() - 1;
   for (size_t pos = open_pos + 1; pos < last; ++pos) {
-    int8 digit = name[pos] - '0';
+    int8_t digit = name[pos] - '0';
     if (digit < 0 || digit > 9)
       return;
     index = index * 10 + digit;
@@ -1223,6 +1639,9 @@ bool GLES2Util::IsUnsignedIntegerFormat(uint32_t internal_format) {
     case GL_RG8UI:
     case GL_RG16UI:
     case GL_RG32UI:
+    case GL_RGB8UI:
+    case GL_RGB16UI:
+    case GL_RGB32UI:
     case GL_RGBA8UI:
     case GL_RGB10_A2UI:
     case GL_RGBA16UI:
@@ -1242,6 +1661,9 @@ bool GLES2Util::IsSignedIntegerFormat(uint32_t internal_format) {
     case GL_RG8I:
     case GL_RG16I:
     case GL_RG32I:
+    case GL_RGB8I:
+    case GL_RGB16I:
+    case GL_RGB32I:
     case GL_RGBA8I:
     case GL_RGBA16I:
     case GL_RGBA32I:
@@ -1275,36 +1697,178 @@ bool GLES2Util::IsFloatFormat(uint32_t internal_format) {
   }
 }
 
+// static
+uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
+  switch (format) {
+    case GL_RGB:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_RGB8;
+        case GL_UNSIGNED_SHORT_5_6_5:
+          return GL_RGB565;
+        case GL_HALF_FLOAT_OES:
+          return GL_RGB16F;
+        case GL_FLOAT:
+          return GL_RGB32F;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_RGBA:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_RGBA8;
+        case GL_UNSIGNED_SHORT_4_4_4_4:
+          return GL_RGBA4;
+        case GL_UNSIGNED_SHORT_5_5_5_1:
+          return GL_RGB5_A1;
+        case GL_HALF_FLOAT_OES:
+          return GL_RGBA16F;
+        case GL_FLOAT:
+          return GL_RGBA32F;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_ALPHA:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_ALPHA8_EXT;
+        case GL_HALF_FLOAT_OES:
+          return GL_ALPHA16F_EXT;
+        case GL_FLOAT:
+          return GL_ALPHA32F_EXT;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_RED:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_R8;
+        case GL_HALF_FLOAT_OES:
+          return GL_R16F;
+        case GL_FLOAT:
+          return GL_R32F;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_RG:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_RG8;
+        case GL_HALF_FLOAT_OES:
+          return GL_RG16F;
+        case GL_FLOAT:
+          return GL_RG32F;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_SRGB_EXT:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_SRGB8;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_SRGB_ALPHA_EXT:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_SRGB8_ALPHA8;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    case GL_BGRA_EXT:
+      switch (type) {
+        case GL_UNSIGNED_BYTE:
+          return GL_BGRA8_EXT;
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    default:
+      break;
+  }
+
+  return format;
+}
+
+// static
+bool GLES2Util::ComputeDataSize(uint32_t count,
+                                size_t size,
+                                unsigned int elements_per_unit,
+                                uint32_t* dst) {
+  uint32_t value;
+  if (!SafeMultiplyUint32(count, static_cast<uint32_t>(size), &value)) {
+    return false;
+  }
+  if (!SafeMultiplyUint32(value, elements_per_unit, &value)) {
+    return false;
+  }
+  *dst = value;
+  return true;
+}
+
 namespace {
 
-// WebGraphicsContext3DCommandBufferImpl configuration attributes. Those in
-// the 16-bit range are the same as used by EGL. Those outside the 16-bit range
-// are unique to Chromium. Attributes are matched using a closest fit algorithm.
+// GL context configuration attributes. Those in the 16-bit range are the same
+// as used by EGL. Those outside the 16-bit range are unique to Chromium.
+// Attributes are matched using a closest fit algorithm.
 
 // From <EGL/egl.h>.
-const int32 kAlphaSize       = 0x3021;  // EGL_ALPHA_SIZE
-const int32 kBlueSize        = 0x3022;  // EGL_BLUE_SIZE
-const int32 kGreenSize       = 0x3023;  // EGL_GREEN_SIZE
-const int32 kRedSize         = 0x3024;  // EGL_RED_SIZE
-const int32 kDepthSize       = 0x3025;  // EGL_DEPTH_SIZE
-const int32 kStencilSize     = 0x3026;  // EGL_STENCIL_SIZE
-const int32 kSamples         = 0x3031;  // EGL_SAMPLES
-const int32 kSampleBuffers   = 0x3032;  // EGL_SAMPLE_BUFFERS
-const int32 kNone            = 0x3038;  // EGL_NONE
-const int32 kSwapBehavior    = 0x3093;  // EGL_SWAP_BEHAVIOR
-const int32 kBufferPreserved = 0x3094;  // EGL_BUFFER_PRESERVED
-const int32 kBufferDestroyed = 0x3095;  // EGL_BUFFER_DESTROYED
+#include <stddef.h>
+#include <stdint.h>
+const int32_t kAlphaSize = 0x3021;        // EGL_ALPHA_SIZE
+const int32_t kBlueSize = 0x3022;         // EGL_BLUE_SIZE
+const int32_t kGreenSize = 0x3023;        // EGL_GREEN_SIZE
+const int32_t kRedSize = 0x3024;          // EGL_RED_SIZE
+const int32_t kDepthSize = 0x3025;        // EGL_DEPTH_SIZE
+const int32_t kStencilSize = 0x3026;      // EGL_STENCIL_SIZE
+const int32_t kSamples = 0x3031;          // EGL_SAMPLES
+const int32_t kSampleBuffers = 0x3032;    // EGL_SAMPLE_BUFFERS
+const int32_t kNone = 0x3038;             // EGL_NONE
+const int32_t kSwapBehavior = 0x3093;     // EGL_SWAP_BEHAVIOR
+const int32_t kBufferPreserved = 0x3094;  // EGL_BUFFER_PRESERVED
 
 // Chromium only.
-const int32 kBindGeneratesResource = 0x10000;
-const int32 kFailIfMajorPerfCaveat = 0x10001;
-const int32 kLoseContextWhenOutOfMemory = 0x10002;
-const int32 kContextType = 0x10003;
+const int32_t kBindGeneratesResource = 0x10000;
+const int32_t kFailIfMajorPerfCaveat = 0x10001;
+const int32_t kLoseContextWhenOutOfMemory = 0x10002;
+const int32_t kShouldUseNativeGMBForBackbuffer = 0x10003;
+const int32_t kContextType = 0x10004;
 
 }  // namespace
 
+bool IsWebGLContextType(ContextType context_type) {
+  // Switch statement to cause a compile-time error if we miss a case.
+  switch (context_type) {
+    case CONTEXT_TYPE_WEBGL1:
+    case CONTEXT_TYPE_WEBGL2:
+      return true;
+    case CONTEXT_TYPE_OPENGLES2:
+    case CONTEXT_TYPE_OPENGLES3:
+      return false;
+  }
+
+  NOTREACHED();
+  return false;
+}
+
 ContextCreationAttribHelper::ContextCreationAttribHelper()
-    : alpha_size(-1),
+    : gpu_preference(gl::PreferIntegratedGpu),
+      alpha_size(-1),
       blue_size(-1),
       green_size(-1),
       red_size(-1),
@@ -1316,57 +1880,15 @@ ContextCreationAttribHelper::ContextCreationAttribHelper()
       bind_generates_resource(true),
       fail_if_major_perf_caveat(false),
       lose_context_when_out_of_memory(false),
+      should_use_native_gmb_for_backbuffer(false),
       context_type(CONTEXT_TYPE_OPENGLES2) {}
 
-void ContextCreationAttribHelper::Serialize(std::vector<int32>* attribs) const {
-  if (alpha_size != -1) {
-    attribs->push_back(kAlphaSize);
-    attribs->push_back(alpha_size);
-  }
-  if (blue_size != -1) {
-    attribs->push_back(kBlueSize);
-    attribs->push_back(blue_size);
-  }
-  if (green_size != -1) {
-    attribs->push_back(kGreenSize);
-    attribs->push_back(green_size);
-  }
-  if (red_size != -1) {
-    attribs->push_back(kRedSize);
-    attribs->push_back(red_size);
-  }
-  if (depth_size != -1) {
-    attribs->push_back(kDepthSize);
-    attribs->push_back(depth_size);
-  }
-  if (stencil_size != -1) {
-    attribs->push_back(kStencilSize);
-    attribs->push_back(stencil_size);
-  }
-  if (samples != -1) {
-    attribs->push_back(kSamples);
-    attribs->push_back(samples);
-  }
-  if (sample_buffers != -1) {
-    attribs->push_back(kSampleBuffers);
-    attribs->push_back(sample_buffers);
-  }
-  attribs->push_back(kSwapBehavior);
-  attribs->push_back(buffer_preserved ? kBufferPreserved : kBufferDestroyed);
-  attribs->push_back(kBindGeneratesResource);
-  attribs->push_back(bind_generates_resource ? 1 : 0);
-  attribs->push_back(kFailIfMajorPerfCaveat);
-  attribs->push_back(fail_if_major_perf_caveat ? 1 : 0);
-  attribs->push_back(kLoseContextWhenOutOfMemory);
-  attribs->push_back(lose_context_when_out_of_memory ? 1 : 0);
-  attribs->push_back(kContextType);
-  attribs->push_back(context_type);
-  attribs->push_back(kNone);
-}
+ContextCreationAttribHelper::ContextCreationAttribHelper(
+    const ContextCreationAttribHelper& other) = default;
 
-bool ContextCreationAttribHelper::Parse(const std::vector<int32>& attribs) {
+bool ContextCreationAttribHelper::Parse(const std::vector<int32_t>& attribs) {
   for (size_t i = 0; i < attribs.size(); i += 2) {
-    const int32 attrib = attribs[i];
+    const int32_t attrib = attribs[i];
     if (i + 1 >= attribs.size()) {
       if (attrib == kNone) {
         return true;
@@ -1377,7 +1899,7 @@ bool ContextCreationAttribHelper::Parse(const std::vector<int32>& attribs) {
       return false;
     }
 
-    const int32 value = attribs[i+1];
+    const int32_t value = attribs[i + 1];
     switch (attrib) {
       case kAlphaSize:
         alpha_size = value;
@@ -1415,6 +1937,9 @@ bool ContextCreationAttribHelper::Parse(const std::vector<int32>& attribs) {
       case kLoseContextWhenOutOfMemory:
         lose_context_when_out_of_memory = value != 0;
         break;
+      case kShouldUseNativeGMBForBackbuffer:
+        should_use_native_gmb_for_backbuffer = value != 0;
+        break;
       case kContextType:
         context_type = static_cast<ContextType>(value);
         break;
@@ -1434,4 +1959,3 @@ bool ContextCreationAttribHelper::Parse(const std::vector<int32>& attribs) {
 
 }  // namespace gles2
 }  // namespace gpu
-

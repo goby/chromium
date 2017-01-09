@@ -5,11 +5,13 @@
 #include "ui/surface/transport_dib.h"
 
 #include <windows.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <limits>
+#include <memory>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sys_info.h"
 #include "skia/ext/platform_canvas.h"
 
@@ -24,7 +26,7 @@ TransportDIB::TransportDIB(base::SharedMemoryHandle handle)
     : shared_memory_(handle, false /* read write */), size_(0) {}
 
 // static
-TransportDIB* TransportDIB::Create(size_t size, uint32 sequence_num) {
+TransportDIB* TransportDIB::Create(size_t size, uint32_t sequence_num) {
   TransportDIB* dib = new TransportDIB;
 
   if (!dib->shared_memory_.CreateAnonymous(size)) {
@@ -40,7 +42,7 @@ TransportDIB* TransportDIB::Create(size_t size, uint32 sequence_num) {
 
 // static
 TransportDIB* TransportDIB::Map(Handle handle) {
-  scoped_ptr<TransportDIB> dib(CreateWithHandle(handle));
+  std::unique_ptr<TransportDIB> dib(CreateWithHandle(handle));
   if (!dib->Map())
     return NULL;
   return dib.release();
@@ -56,8 +58,9 @@ bool TransportDIB::is_valid_handle(Handle dib) {
   return dib.IsValid();
 }
 
-skia::PlatformCanvas* TransportDIB::GetPlatformCanvas(int w, int h,
-                                                      bool opaque) {
+std::unique_ptr<SkCanvas> TransportDIB::GetPlatformCanvas(int w,
+                                                          int h,
+                                                          bool opaque) {
   // This DIB already mapped the file into this process, but PlatformCanvas
   // will map it again.
   DCHECK(!memory()) << "Mapped file twice in the same process.";
@@ -65,7 +68,7 @@ skia::PlatformCanvas* TransportDIB::GetPlatformCanvas(int w, int h,
   // We can't check the canvas size before mapping, but it's safe because
   // Windows will fail to map the section if the dimensions of the canvas
   // are too large.
-  skia::PlatformCanvas* canvas = skia::CreatePlatformCanvas(
+  std::unique_ptr<SkCanvas> canvas = skia::CreatePlatformCanvas(
       w, h, opaque, shared_memory_.handle().GetHandle(),
       skia::RETURN_NULL_ON_FAILURE);
 

@@ -7,10 +7,13 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/login/auth/authenticator.h"
 #include "chromeos/login/auth/user_context.h"
+
+class AccountId;
 
 namespace content {
 class BrowserContext;
@@ -34,8 +37,9 @@ class CHROMEOS_EXPORT StubAuthenticator : public Authenticator {
   void LoginAsSupervisedUser(const UserContext& user_context) override;
   void LoginOffTheRecord() override;
   void LoginAsPublicSession(const UserContext& user_context) override;
-  void LoginAsKioskAccount(const std::string& app_user_id,
+  void LoginAsKioskAccount(const AccountId& app_account_id,
                            bool use_guest_mount) override;
+  void LoginAsArcKioskAccount(const AccountId& app_account_id) override;
   void OnAuthSuccess() override;
   void OnAuthFailure(const AuthFailure& failure) override;
   void RecoverEncryptedData(const std::string& old_password) override;

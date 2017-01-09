@@ -5,12 +5,16 @@
 #ifndef REMOTING_HOST_DESKTOP_SESSION_WIN_H_
 #define REMOTING_HOST_DESKTOP_SESSION_WIN_H_
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/win/scoped_handle.h"
-#include "ipc/ipc_platform_file.h"
+#include "ipc/ipc_channel_handle.h"
 #include "remoting/host/desktop_session.h"
 #include "remoting/host/win/wts_terminal_observer.h"
 #include "remoting/host/worker_process_ipc_delegate.h"
@@ -38,7 +42,7 @@ class DesktopSessionWin
       public WtsTerminalObserver {
  public:
   // Creates a desktop session instance that attaches to the physical console.
-  static scoped_ptr<DesktopSession> CreateForConsole(
+  static std::unique_ptr<DesktopSession> CreateForConsole(
       scoped_refptr<AutoThreadTaskRunner> caller_task_runner,
       scoped_refptr<AutoThreadTaskRunner> io_task_runner,
       DaemonProcess* daemon_process,
@@ -46,7 +50,7 @@ class DesktopSessionWin
       const ScreenResolution& resolution);
 
   // Creates a desktop session instance that attaches to a virtual console.
-  static scoped_ptr<DesktopSession> CreateForVirtualTerminal(
+  static std::unique_ptr<DesktopSession> CreateForVirtualTerminal(
       scoped_refptr<AutoThreadTaskRunner> caller_task_runner,
       scoped_refptr<AutoThreadTaskRunner> io_task_runner,
       DaemonProcess* daemon_process,
@@ -85,17 +89,17 @@ class DesktopSessionWin
   virtual void InjectSas() = 0;
 
   // WorkerProcessIpcDelegate implementation.
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   bool OnMessageReceived(const IPC::Message& message) override;
   void OnPermanentError(int exit_code) override;
 
   // WtsTerminalObserver implementation.
-  void OnSessionAttached(uint32 session_id) override;
+  void OnSessionAttached(uint32_t session_id) override;
   void OnSessionDetached() override;
 
  private:
   // ChromotingDesktopDaemonMsg_DesktopAttached handler.
-  void OnDesktopSessionAgentAttached(IPC::PlatformFileForTransit desktop_pipe);
+  void OnDesktopSessionAgentAttached(const IPC::ChannelHandle& desktop_pipe);
 
   // Requests the desktop process to crash.
   void CrashDesktopProcess(const tracked_objects::Location& location);
@@ -113,7 +117,7 @@ class DesktopSessionWin
   base::win::ScopedHandle desktop_process_;
 
   // Launches and monitors the desktop process.
-  scoped_ptr<WorkerProcessLauncher> launcher_;
+  std::unique_ptr<WorkerProcessLauncher> launcher_;
 
   // Used to unsubscribe from session attach and detach events.
   WtsTerminalMonitor* monitor_;
@@ -126,6 +130,10 @@ class DesktopSessionWin
   base::OneShotTimer session_attach_timer_;
 
   base::Time last_timestamp_;
+
+  // The id of the current desktop session being remoted or UINT32_MAX if no
+  // session exists.
+  int session_id_ = UINT32_MAX;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopSessionWin);
 };

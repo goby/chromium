@@ -4,31 +4,45 @@
 
 #include "ui/ozone/platform/drm/host/drm_display_host.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/bind.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "ui/display/types/display_mode.h"
 #include "ui/ozone/common/display_snapshot_proxy.h"
-#include "ui/ozone/common/display_util.h"
-#include "ui/ozone/common/gpu/ozone_gpu_messages.h"
-#include "ui/ozone/platform/drm/host/drm_gpu_platform_support_host.h"
+#include "ui/ozone/platform/drm/host/gpu_thread_adapter.h"
 
 namespace ui {
 
-DrmDisplayHost::DrmDisplayHost(DrmGpuPlatformSupportHost* sender,
+namespace {
+
+DisplayMode_Params GetDisplayModeParams(const DisplayMode& mode) {
+  DisplayMode_Params params;
+  params.size = mode.size();
+  params.is_interlaced = mode.is_interlaced();
+  params.refresh_rate = mode.refresh_rate();
+  return params;
+}
+
+}  // namespace
+
+DrmDisplayHost::DrmDisplayHost(GpuThreadAdapter* sender,
                                const DisplaySnapshot_Params& params,
                                bool is_dummy)
     : sender_(sender),
       snapshot_(new DisplaySnapshotProxy(params)),
       is_dummy_(is_dummy) {
-  sender_->AddChannelObserver(this);
+  sender_->AddGpuThreadObserver(this);
 }
 
 DrmDisplayHost::~DrmDisplayHost() {
-  sender_->RemoveChannelObserver(this);
+  sender_->RemoveGpuThreadObserver(this);
   ClearCallbacks();
 }
 
 void DrmDisplayHost::UpdateDisplaySnapshot(
     const DisplaySnapshot_Params& params) {
-  snapshot_ = make_scoped_ptr(new DisplaySnapshotProxy(params));
+  snapshot_ = base::MakeUnique<DisplaySnapshotProxy>(params);
 }
 
 void DrmDisplayHost::Configure(const DisplayMode* mode,
@@ -42,11 +56,10 @@ void DrmDisplayHost::Configure(const DisplayMode* mode,
   configure_callback_ = callback;
   bool status = false;
   if (mode) {
-    status = sender_->Send(new OzoneGpuMsg_ConfigureNativeDisplay(
-        snapshot_->display_id(), GetDisplayModeParams(*mode), origin));
+    status = sender_->GpuConfigureNativeDisplay(
+        snapshot_->display_id(), GetDisplayModeParams(*mode), origin);
   } else {
-    status = sender_->Send(
-        new OzoneGpuMsg_DisableNativeDisplay(snapshot_->display_id()));
+    status = sender_->GpuDisableNativeDisplay(snapshot_->display_id());
   }
 
   if (!status)
@@ -67,7 +80,7 @@ void DrmDisplayHost::OnDisplayConfigured(bool status) {
 
 void DrmDisplayHost::GetHDCPState(const GetHDCPStateCallback& callback) {
   get_hdcp_callback_ = callback;
-  if (!sender_->Send(new OzoneGpuMsg_GetHDCPState(snapshot_->display_id())))
+  if (!sender_->GpuGetHDCPState(snapshot_->display_id()))
     OnHDCPStateReceived(false, HDCP_STATE_UNDESIRED);
 }
 
@@ -86,8 +99,7 @@ void DrmDisplayHost::OnHDCPStateReceived(bool status, HDCPState state) {
 void DrmDisplayHost::SetHDCPState(HDCPState state,
                                   const SetHDCPStateCallback& callback) {
   set_hdcp_callback_ = callback;
-  if (!sender_->Send(
-          new OzoneGpuMsg_SetHDCPState(snapshot_->display_id(), state)))
+  if (!sender_->GpuSetHDCPState(snapshot_->display_id(), state))
     OnHDCPStateUpdated(false);
 }
 
@@ -103,11 +115,17 @@ void DrmDisplayHost::OnHDCPStateUpdated(bool status) {
   set_hdcp_callback_.Reset();
 }
 
-void DrmDisplayHost::SetGammaRamp(const std::vector<GammaRampRGBEntry>& lut) {
-  sender_->Send(new OzoneGpuMsg_SetGammaRamp(snapshot_->display_id(), lut));
+void DrmDisplayHost::SetColorCorrection(
+    const std::vector<GammaRampRGBEntry>& degamma_lut,
+    const std::vector<GammaRampRGBEntry>& gamma_lut,
+    const std::vector<float>& correction_matrix) {
+  sender_->GpuSetColorCorrection(snapshot_->display_id(), degamma_lut,
+                                 gamma_lut, correction_matrix);
 }
 
-void DrmDisplayHost::OnChannelEstablished() {
+void DrmDisplayHost::OnGpuProcessLaunched() {}
+
+void DrmDisplayHost::OnGpuThreadReady() {
   is_dummy_ = false;
 
   // Note: These responses are done here since the OnChannelDestroyed() is
@@ -115,8 +133,7 @@ void DrmDisplayHost::OnChannelEstablished() {
   ClearCallbacks();
 }
 
-void DrmDisplayHost::OnChannelDestroyed() {
-}
+void DrmDisplayHost::OnGpuThreadRetired() {}
 
 void DrmDisplayHost::ClearCallbacks() {
   if (!configure_callback_.is_null())

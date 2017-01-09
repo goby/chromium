@@ -4,12 +4,16 @@
 
 #include "device/hid/input_service_linux.h"
 
+#include <memory>
+
 #include "base/bind.h"
-#include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
+#include "device/base/device_monitor_linux.h"
 #include "device/udev_linux/udev.h"
 
 namespace device {
@@ -18,6 +22,7 @@ namespace {
 
 const char kSubsystemHid[] = "hid";
 const char kSubsystemInput[] = "input";
+const char kSubsystemMisc[] = "misc";
 const char kTypeBluetooth[] = "bluetooth";
 const char kTypeUsb[] = "usb";
 const char kTypeSerio[] = "serio";
@@ -30,9 +35,7 @@ const char kIdInputTablet[] = "ID_INPUT_TABLET";
 const char kIdInputTouchpad[] = "ID_INPUT_TOUCHPAD";
 const char kIdInputTouchscreen[] = "ID_INPUT_TOUCHSCREEN";
 
-// The instance will be reset when message loop destroys.
-base::LazyInstance<scoped_ptr<InputServiceLinux> >::Leaky
-    g_input_service_linux_ptr = LAZY_INSTANCE_INITIALIZER;
+InputServiceLinux* g_input_service_linux = nullptr;
 
 bool GetBoolProperty(udev_device* device, const char* key) {
   CHECK(device);
@@ -49,8 +52,14 @@ bool GetBoolProperty(udev_device* device, const char* key) {
 }
 
 InputServiceLinux::InputDeviceInfo::Type GetDeviceType(udev_device* device) {
-  if (udev_device_get_parent_with_subsystem_devtype(
-          device, kTypeBluetooth, NULL)) {
+  // Bluetooth classic hid devices are registered under bluetooth subsystem.
+  // Bluetooth LE hid devices are registered under virtual misc/hid subsystems.
+  if (udev_device_get_parent_with_subsystem_devtype(device, kTypeBluetooth,
+                                                    NULL) ||
+      (udev_device_get_parent_with_subsystem_devtype(device, kSubsystemHid,
+                                                     NULL) &&
+       udev_device_get_parent_with_subsystem_devtype(device, kSubsystemMisc,
+                                                     NULL))) {
     return InputServiceLinux::InputDeviceInfo::TYPE_BLUETOOTH;
   }
   if (udev_device_get_parent_with_subsystem_devtype(device, kTypeUsb, NULL))
@@ -86,22 +95,23 @@ class InputServiceLinuxImpl : public InputServiceLinux,
   InputServiceLinuxImpl();
   ~InputServiceLinuxImpl() override;
 
+  ScopedObserver<DeviceMonitorLinux, DeviceMonitorLinux::Observer> observer_;
+
   DISALLOW_COPY_AND_ASSIGN(InputServiceLinuxImpl);
 };
 
-InputServiceLinuxImpl::InputServiceLinuxImpl() {
+InputServiceLinuxImpl::InputServiceLinuxImpl() : observer_(this) {
   base::ThreadRestrictions::AssertIOAllowed();
-  base::MessageLoop::current()->AddDestructionObserver(this);
 
-  DeviceMonitorLinux::GetInstance()->AddObserver(this);
-  DeviceMonitorLinux::GetInstance()->Enumerate(base::Bind(
-      &InputServiceLinuxImpl::OnDeviceAdded, base::Unretained(this)));
+  DeviceMonitorLinux* monitor = DeviceMonitorLinux::GetInstance();
+  observer_.Add(monitor);
+  monitor->Enumerate(base::Bind(&InputServiceLinuxImpl::OnDeviceAdded,
+                                base::Unretained(this)));
 }
 
 InputServiceLinuxImpl::~InputServiceLinuxImpl() {
-  if (DeviceMonitorLinux::HasInstance())
-    DeviceMonitorLinux::GetInstance()->RemoveObserver(this);
-  base::MessageLoop::current()->RemoveDestructionObserver(this);
+  // Never destroyed.
+  NOTREACHED();
 }
 
 void InputServiceLinuxImpl::OnDeviceAdded(udev_device* device) {
@@ -165,6 +175,9 @@ InputServiceLinux::InputDeviceInfo::InputDeviceInfo()
       is_touchpad(false),
       is_touchscreen(false) {}
 
+InputServiceLinux::InputDeviceInfo::InputDeviceInfo(
+    const InputDeviceInfo& other) = default;
+
 InputServiceLinux::InputServiceLinux() {
 }
 
@@ -175,18 +188,22 @@ InputServiceLinux::~InputServiceLinux() {
 // static
 InputServiceLinux* InputServiceLinux::GetInstance() {
   if (!HasInstance())
-    g_input_service_linux_ptr.Get().reset(new InputServiceLinuxImpl());
-  return g_input_service_linux_ptr.Get().get();
+    g_input_service_linux = new InputServiceLinuxImpl();
+  return g_input_service_linux;
 }
 
 // static
 bool InputServiceLinux::HasInstance() {
-  return g_input_service_linux_ptr.Get().get();
+  return !!g_input_service_linux;
 }
 
 // static
-void InputServiceLinux::SetForTesting(InputServiceLinux* service) {
-  g_input_service_linux_ptr.Get().reset(service);
+void InputServiceLinux::SetForTesting(
+    std::unique_ptr<InputServiceLinux> service) {
+  DCHECK(!HasInstance());
+  DCHECK(service);
+  // |service| will never be destroyed.
+  g_input_service_linux = service.release();
 }
 
 void InputServiceLinux::AddObserver(Observer* observer) {
@@ -219,19 +236,16 @@ bool InputServiceLinux::GetDeviceInfo(const std::string& id,
   return true;
 }
 
-void InputServiceLinux::WillDestroyCurrentMessageLoop() {
-  DCHECK(CalledOnValidThread());
-  g_input_service_linux_ptr.Get().reset(NULL);
-}
-
 void InputServiceLinux::AddDevice(const InputDeviceInfo& info) {
   devices_[info.id] = info;
-  FOR_EACH_OBSERVER(Observer, observers_, OnInputDeviceAdded(info));
+  for (auto& observer : observers_)
+    observer.OnInputDeviceAdded(info);
 }
 
 void InputServiceLinux::RemoveDevice(const std::string& id) {
   devices_.erase(id);
-  FOR_EACH_OBSERVER(Observer, observers_, OnInputDeviceRemoved(id));
+  for (auto& observer : observers_)
+    observer.OnInputDeviceRemoved(id);
 }
 
 bool InputServiceLinux::CalledOnValidThread() const {

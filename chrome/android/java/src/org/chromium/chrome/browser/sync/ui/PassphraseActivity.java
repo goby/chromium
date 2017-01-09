@@ -17,9 +17,10 @@ import android.util.Log;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeApplication;
+import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.browser.sync.SyncController;
-import org.chromium.sync.signin.ChromeSigninController;
+import org.chromium.components.signin.ChromeSigninController;
 
 /**
  * This activity is used for requesting a sync passphrase from the user. Typically,
@@ -43,11 +44,11 @@ public class PassphraseActivity extends FragmentActivity implements
         // During a normal user flow the ChromeTabbedActivity would start the Chrome browser
         // process and this wouldn't be necessary.
         try {
-            ((ChromeApplication) getApplication())
-                    .startBrowserProcessesAndLoadLibrariesSync(true);
+            ChromeBrowserInitializer.getInstance(this).handleSynchronousStartup();
         } catch (ProcessInitException e) {
             Log.e(TAG, "Failed to start browser process.", e);
             ChromeApplication.reportStartupErrorAndExit(e);
+            return;
         }
         assert ProfileSyncService.get() != null;
         getFragmentManager().addOnBackStackChangedListener(this);
@@ -63,7 +64,7 @@ public class PassphraseActivity extends FragmentActivity implements
         }
 
         if (!isShowingDialog(FRAGMENT_PASSPHRASE)) {
-            if (ProfileSyncService.get().isBackendInitialized()) {
+            if (ProfileSyncService.get().isEngineInitialized()) {
                 displayPassphraseDialog();
             } else {
                 addSyncStateChangedListener();
@@ -87,7 +88,7 @@ public class PassphraseActivity extends FragmentActivity implements
         mSyncStateChangedListener = new ProfileSyncService.SyncStateChangedListener() {
             @Override
             public void syncStateChanged() {
-                if (ProfileSyncService.get().isBackendInitialized()) {
+                if (ProfileSyncService.get().isEngineInitialized()) {
                     removeSyncStateChangedListener();
                     displayPassphraseDialog();
                 }
@@ -108,7 +109,7 @@ public class PassphraseActivity extends FragmentActivity implements
     }
 
     private void displayPassphraseDialog() {
-        assert ProfileSyncService.get().isBackendInitialized();
+        assert ProfileSyncService.get().isEngineInitialized();
         FragmentTransaction ft = getFragmentManager().beginTransaction();
         ft.addToBackStack(null);
         PassphraseDialogFragment.newInstance(null).show(ft, FRAGMENT_PASSPHRASE);

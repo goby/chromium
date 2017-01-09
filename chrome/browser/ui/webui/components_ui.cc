@@ -4,23 +4,28 @@
 
 #include "chrome/browser/ui/webui/components_ui.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/component_updater/component_updater_service.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -101,7 +106,7 @@ void ComponentsDOMHandler::HandleRequestComponentsData(
   base::ListValue* list = ComponentsUI::LoadComponents();
   base::DictionaryValue result;
   result.Set("components", list);
-  web_ui()->CallJavascriptFunction("returnComponentsData", result);
+  web_ui()->CallJavascriptFunctionUnsafe("returnComponentsData", result);
 }
 
 // This function is called when user presses button from html UI.
@@ -153,7 +158,8 @@ ComponentsUI::~ComponentsUI() {
 void ComponentsUI::OnDemandUpdate(const std::string& component_id) {
   component_updater::ComponentUpdateService* cus =
       g_browser_process->component_updater();
-  cus->GetOnDemandUpdater().OnDemandUpdate(component_id);
+  cus->GetOnDemandUpdater().OnDemandUpdate(component_id,
+                                           component_updater::Callback());
 }
 
 // static
@@ -168,12 +174,13 @@ base::ListValue* ComponentsUI::LoadComponents() {
   for (size_t j = 0; j < component_ids.size(); ++j) {
     update_client::CrxUpdateItem item;
     if (cus->GetComponentDetails(component_ids[j], &item)) {
-      base::DictionaryValue* component_entry = new base::DictionaryValue();
+      std::unique_ptr<base::DictionaryValue> component_entry(
+          new base::DictionaryValue());
       component_entry->SetString("id", component_ids[j]);
       component_entry->SetString("name", item.component.name);
       component_entry->SetString("version", item.component.version.GetString());
       component_entry->SetString("status", ServiceStatusToString(item.state));
-      component_list->Append(component_entry);
+      component_list->Append(std::move(component_entry));
     }
   }
 
@@ -233,6 +240,7 @@ base::string16 ComponentsUI::ServiceStatusToString(
       return l10n_util::GetStringUTF16(IDS_COMPONENTS_SVC_STATUS_UPTODATE);
     case update_client::CrxUpdateItem::State::kNoUpdate:
       return l10n_util::GetStringUTF16(IDS_COMPONENTS_SVC_STATUS_NOUPDATE);
+    case update_client::CrxUpdateItem::State::kUninstalled:  // Fall through.
     case update_client::CrxUpdateItem::State::kLastStatus:
       return l10n_util::GetStringUTF16(IDS_COMPONENTS_UNKNOWN);
   }
@@ -244,12 +252,12 @@ void ComponentsUI::OnEvent(Events event, const std::string& id) {
   parameters.SetString("event", ComponentEventToString(event));
   if (!id.empty()) {
     if (event == Events::COMPONENT_UPDATED) {
-      auto cus = g_browser_process->component_updater();
+      auto* component_updater = g_browser_process->component_updater();
       update_client::CrxUpdateItem item;
-      if (cus->GetComponentDetails(id, &item))
+      if (component_updater->GetComponentDetails(id, &item))
         parameters.SetString("version", item.component.version.GetString());
     }
     parameters.SetString("id", id);
   }
-  web_ui()->CallJavascriptFunction("onComponentEvent", parameters);
+  web_ui()->CallJavascriptFunctionUnsafe("onComponentEvent", parameters);
 }

@@ -8,6 +8,7 @@
 #include <string>
 
 #include "net/base/net_export.h"
+#include "net/url_request/url_request.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -17,6 +18,7 @@ namespace net {
 // content/common/resource_messages.h.
 struct NET_EXPORT RedirectInfo {
   RedirectInfo();
+  RedirectInfo(const RedirectInfo& other);
   ~RedirectInfo();
 
   // The status code for the redirect response. This is almost redundant with
@@ -36,6 +38,15 @@ struct NET_EXPORT RedirectInfo {
 
   // The new HTTP referrer header.
   std::string new_referrer;
+
+  // The new referrer policy that should be obeyed if there are
+  // subsequent redirects.
+  URLRequest::ReferrerPolicy new_referrer_policy;
+
+  // The hostname of the referrer if it asked the client to include a referred
+  // Token Binding when following the redirect; otherwise this is the empty
+  // string.
+  std::string referred_token_binding_host;
 };
 
 }  // namespace net

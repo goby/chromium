@@ -5,9 +5,10 @@
 #include "chrome/browser/ui/cocoa/download/background_theme.h"
 
 #import "chrome/browser/themes/theme_properties.h"
+#include "ui/gfx/color_utils.h"
 
-BackgroundTheme::BackgroundTheme(ui::ThemeProvider* provider) :
-    provider_(provider) {
+BackgroundTheme::BackgroundTheme(const ui::ThemeProvider* provider)
+    : provider_(provider) {
   NSColor* bgColor = [NSColor colorWithCalibratedRed:241/255.0
                                                green:245/255.0
                                                 blue:250/255.0
@@ -31,12 +32,24 @@ bool BackgroundTheme::UsingSystemTheme() const {
   return true;
 }
 
+bool BackgroundTheme::InIncognitoMode() const {
+  return false;
+}
+
+bool BackgroundTheme::HasCustomColor(int id) const {
+  return false;
+}
+
 gfx::ImageSkia* BackgroundTheme::GetImageSkiaNamed(int id) const {
   return NULL;
 }
 
 SkColor BackgroundTheme::GetColor(int id) const {
   return SkColor();
+}
+
+color_utils::HSL BackgroundTheme::GetTint(int id) const {
+  return color_utils::HSL();
 }
 
 int BackgroundTheme::GetDisplayProperty(int id) const {
@@ -89,4 +102,6 @@ NSGradient* BackgroundTheme::GetNSGradient(int id) const {
   }
 }
 
-
+bool BackgroundTheme::ShouldIncreaseContrast() const {
+  return false;
+}

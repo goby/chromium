@@ -5,16 +5,14 @@
 #ifndef CONTENT_BROWSER_ANDROID_CONTENT_VIEW_RENDER_VIEW_H_
 #define CONTENT_BROWSER_ANDROID_CONTENT_VIEW_RENDER_VIEW_H_
 
+#include <memory>
+
 #include "base/android/jni_weak_ref.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/android/compositor_client.h"
 #include "ui/gfx/native_widget_types.h"
-
-namespace cc {
-class Layer;
-}
 
 namespace content {
 class Compositor;
@@ -30,10 +28,10 @@ class ContentViewRenderView : public CompositorClient {
 
   // Methods called from Java via JNI -----------------------------------------
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
-  void SetCurrentContentViewCore(
+  void SetCurrentWebContents(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      jlong native_content_view_core);
+      const base::android::JavaParamRef<jobject>& jweb_contents);
   void SurfaceCreated(JNIEnv* env,
                       const base::android::JavaParamRef<jobject>& obj);
   void SurfaceDestroyed(JNIEnv* env,
@@ -47,13 +45,6 @@ class ContentViewRenderView : public CompositorClient {
   void SetOverlayVideoMode(JNIEnv* env,
                            const base::android::JavaParamRef<jobject>& obj,
                            bool enabled);
-  void SetNeedsComposite(JNIEnv* env,
-                         const base::android::JavaParamRef<jobject>& obj);
-
-  // TODO(yusufo): Remove this once the compositor code is
-  // refactored to use a unified system.
-  jlong GetUIResourceProvider(JNIEnv* env,
-                              const base::android::JavaParamRef<jobject>& obj);
 
   // CompositorClient implementation
   void UpdateLayerTreeHost() override;
@@ -66,7 +57,7 @@ class ContentViewRenderView : public CompositorClient {
 
   base::android::ScopedJavaGlobalRef<jobject> java_obj_;
 
-  scoped_ptr<content::Compositor> compositor_;
+  std::unique_ptr<content::Compositor> compositor_;
 
   gfx::NativeWindow root_window_;
   int current_surface_format_;

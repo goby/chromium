@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_APP_LAUNCH_CONTROLLER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_APP_LAUNCH_CONTROLLER_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_launch_error.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_profile_loader.h"
@@ -23,8 +25,7 @@ class Profile;
 namespace chromeos {
 
 class LoginDisplayHost;
-class OobeDisplay;
-class UserManager;
+class OobeUI;
 
 // Controller for the kiosk app launch process, responsible for
 // coordinating loading the kiosk profile, launching the app, and
@@ -41,7 +42,7 @@ class AppLaunchController
   AppLaunchController(const std::string& app_id,
                       bool diagnostic_mode,
                       LoginDisplayHost* host,
-                      OobeDisplay* oobe_display);
+                      OobeUI* oobe_ui);
 
   ~AppLaunchController() override;
 
@@ -83,6 +84,10 @@ class AppLaunchController
   // owner password might be checked before showing the network configure UI.
   void MaybeShowNetworkConfigureUI();
 
+  // Show network configuration UI when ready (i.e. after app profile is
+  // loaded).
+  void ShowNetworkConfigureUIWhenReady();
+
   // KioskProfileLoader::Delegate overrides:
   void OnProfileLoaded(Profile* profile) override;
   void OnProfileLoadFailed(KioskAppLaunchError::Error error) override;
@@ -112,30 +117,31 @@ class AppLaunchController
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  Profile* profile_;
+  Profile* profile_ = nullptr;
   const std::string app_id_;
   const bool diagnostic_mode_;
-  LoginDisplayHost* host_;
-  OobeDisplay* oobe_display_;
-  AppLaunchSplashScreenActor* app_launch_splash_screen_actor_;
-  scoped_ptr<KioskProfileLoader> kiosk_profile_loader_;
-  scoped_ptr<StartupAppLauncher> startup_app_launcher_;
-  scoped_ptr<AppLaunchSigninScreen> signin_screen_;
-  scoped_ptr<AppWindowWatcher> app_window_watcher_;
+  LoginDisplayHost* host_ = nullptr;
+  OobeUI* oobe_ui_ = nullptr;
+  AppLaunchSplashScreenActor* app_launch_splash_screen_actor_ = nullptr;
+  std::unique_ptr<KioskProfileLoader> kiosk_profile_loader_;
+  std::unique_ptr<StartupAppLauncher> startup_app_launcher_;
+  std::unique_ptr<AppLaunchSigninScreen> signin_screen_;
+  std::unique_ptr<AppWindowWatcher> app_window_watcher_;
 
   content::NotificationRegistrar registrar_;
-  bool webui_visible_;
-  bool launcher_ready_;
+  bool webui_visible_ = false;
+  bool launcher_ready_ = false;
 
   // A timer to ensure the app splash is shown for a minimum amount of time.
   base::OneShotTimer splash_wait_timer_;
 
   base::OneShotTimer network_wait_timer_;
-  bool waiting_for_network_;
-  bool network_wait_timedout_;
-  bool showing_network_dialog_;
-  bool network_config_requested_;
-  int64 launch_splash_start_time_;
+  bool waiting_for_network_ = false;
+  bool network_wait_timedout_ = false;
+  bool showing_network_dialog_ = false;
+  bool network_config_requested_ = false;
+  bool show_network_config_ui_after_profile_load_ = false;
+  int64_t launch_splash_start_time_ = 0;
 
   static bool skip_splash_wait_;
   static int network_wait_time_;

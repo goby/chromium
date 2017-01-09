@@ -7,6 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/web/public/block_types.h"
 #include "url/gurl.h"
 
 @protocol CRWNativeContentDelegate;
@@ -49,6 +50,12 @@
 // Notifies the CRWNativeContent that it has been hidden.
 - (void)wasHidden;
 
+// Executes JavaScript on the native view. |handler| is called with the results
+// of the evaluation. If the native view cannot evaluate JS at the moment,
+// |handler| is called with an NSError.
+- (void)executeJavaScript:(NSString*)script
+        completionHandler:(web::JavaScriptResultBlock)handler;
+
 // Returns |YES| if CRWNativeContent wants the keyboard shield when the keyboard
 // is up.
 - (BOOL)wantsKeyboardShield;
@@ -77,6 +84,10 @@
 
 // Called when a snapshot of the content will be taken.
 - (void)willUpdateSnapshot;
+
+// The URL that will be displayed to the user when presenting this native
+// content.
+- (GURL)virtualURL;
 
 @end
 

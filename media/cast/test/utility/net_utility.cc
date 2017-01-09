@@ -4,9 +4,12 @@
 
 #include "media/cast/test/utility/net_utility.h"
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
-#include "net/udp/udp_server_socket.h"
+#include "net/log/net_log_source.h"
+#include "net/socket/udp_server_socket.h"
 
 namespace media {
 namespace cast {
@@ -14,15 +17,11 @@ namespace test {
 
 // TODO(hubbe): Move to /net/.
 net::IPEndPoint GetFreeLocalPort() {
-  net::IPAddressNumber localhost;
-  localhost.push_back(127);
-  localhost.push_back(0);
-  localhost.push_back(0);
-  localhost.push_back(1);
-  scoped_ptr<net::UDPServerSocket> receive_socket(
-      new net::UDPServerSocket(NULL, net::NetLog::Source()));
+  std::unique_ptr<net::UDPServerSocket> receive_socket(
+      new net::UDPServerSocket(NULL, net::NetLogSource()));
   receive_socket->AllowAddressReuse();
-  CHECK_EQ(net::OK, receive_socket->Listen(net::IPEndPoint(localhost, 0)));
+  CHECK_EQ(net::OK, receive_socket->Listen(
+                        net::IPEndPoint(net::IPAddress::IPv4Localhost(), 0)));
   net::IPEndPoint endpoint;
   CHECK_EQ(net::OK, receive_socket->GetLocalAddress(&endpoint));
   return endpoint;

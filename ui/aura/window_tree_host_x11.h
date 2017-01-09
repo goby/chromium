@@ -5,7 +5,11 @@
 #ifndef UI_AURA_WINDOW_TREE_HOST_X11_H_
 #define UI_AURA_WINDOW_TREE_HOST_X11_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/aura/aura_export.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
@@ -19,18 +23,13 @@ typedef unsigned long XID;
 typedef XID Window;
 
 namespace ui {
-class MouseEvent;
+class XScopedEventSelector;
 }
 
 namespace aura {
 
-namespace internal {
-class TouchEventCalibrate;
-}
-
 class AURA_EXPORT WindowTreeHostX11 : public WindowTreeHost,
                                       public ui::PlatformEventDispatcher {
-
  public:
   explicit WindowTreeHostX11(const gfx::Rect& bounds);
   ~WindowTreeHostX11() override;
@@ -44,14 +43,18 @@ class AURA_EXPORT WindowTreeHostX11 : public WindowTreeHost,
   gfx::AcceleratedWidget GetAcceleratedWidget() override;
   void ShowImpl() override;
   void HideImpl() override;
-  gfx::Rect GetBounds() const override;
-  void SetBounds(const gfx::Rect& bounds) override;
-  gfx::Point GetLocationOnNativeScreen() const override;
+  gfx::Rect GetBoundsInPixels() const override;
+  void SetBoundsInPixels(const gfx::Rect& bounds) override;
+  gfx::Point GetLocationOnScreenInPixels() const override;
   void SetCapture() override;
   void ReleaseCapture() override;
   void SetCursorNative(gfx::NativeCursor cursor_type) override;
-  void MoveCursorToNative(const gfx::Point& location) override;
+  void MoveCursorToScreenLocationInPixels(
+      const gfx::Point& location_in_pixels) override;
   void OnCursorVisibilityChangedNative(bool show) override;
+
+  // Deselects mouse and keyboard events on |xwindow_|.
+  void DisableInput();
 
  protected:
   // Called when X Configure Notify event is recevied.
@@ -80,6 +83,9 @@ class AURA_EXPORT WindowTreeHostX11 : public WindowTreeHost,
   XDisplay* xdisplay_;
   ::Window xwindow_;
 
+  // Events selected on |xwindow_|.
+  std::unique_ptr<ui::XScopedEventSelector> xwindow_events_;
+
   // The native root window.
   ::Window x_root_window_;
 
@@ -91,8 +97,6 @@ class AURA_EXPORT WindowTreeHostX11 : public WindowTreeHost,
 
   // The bounds of |xwindow_|.
   gfx::Rect bounds_;
-
-  scoped_ptr<internal::TouchEventCalibrate> touch_calibrate_;
 
   ui::X11AtomCache atom_cache_;
 

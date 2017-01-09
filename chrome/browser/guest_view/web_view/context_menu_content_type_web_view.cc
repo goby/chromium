@@ -5,6 +5,7 @@
 #include "chrome/browser/guest_view/web_view/context_menu_content_type_web_view.h"
 
 #include "base/command_line.h"
+#include "build/build_config.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/version_info/version_info.h"
@@ -52,7 +53,7 @@ bool ContextMenuContentTypeWebView::SupportsGroup(int group) {
         if (chrome::GetChannel() >= version_info::Channel::DEV) {
           // Hide dev tools items in guests inside WebUI if we are not running
           // canary or tott.
-          auto web_view_guest =
+          auto* web_view_guest =
               extensions::WebViewGuest::FromWebContents(source_web_contents());
           // Note that this check might not be sufficient to hide dev tools
           // items on OS_MACOSX if we start supporting <webview> inside

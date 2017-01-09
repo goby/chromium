@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/extension_gcm_app_handler.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
@@ -14,18 +15,20 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/services/gcm/gcm_product_util.h"
 #include "chrome/browser/services/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -88,9 +91,7 @@ class Waiter {
   }
 
   // Runs until UI loop becomes idle.
-  void PumpUILoop() {
-    base::MessageLoop::current()->RunUntilIdle();
-  }
+  void PumpUILoop() { base::RunLoop().RunUntilIdle(); }
 
   // Runs until IO loop becomes idle.
   void PumpIOLoop() {
@@ -127,7 +128,7 @@ class Waiter {
         base::Bind(&Waiter::PumpIOLoopCompleted, base::Unretained(this)));
   }
 
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(Waiter);
 };
@@ -168,7 +169,7 @@ class FakeExtensionGCMAppHandler : public ExtensionGCMAppHandler {
 
   void RemoveAppHandler(const std::string& app_id) override {
     ExtensionGCMAppHandler::RemoveAppHandler(app_id);
-    if (!GetGCMDriver()->app_handlers().size())
+    if (GetGCMDriver()->app_handlers().empty())
       app_handler_count_drop_to_zero_ = true;
   }
 
@@ -193,14 +194,14 @@ class FakeExtensionGCMAppHandler : public ExtensionGCMAppHandler {
 
 class ExtensionGCMAppHandlerTest : public testing::Test {
  public:
-  static scoped_ptr<KeyedService> BuildGCMProfileService(
+  static std::unique_ptr<KeyedService> BuildGCMProfileService(
       content::BrowserContext* context) {
     Profile* profile = Profile::FromBrowserContext(context);
     scoped_refptr<base::SequencedTaskRunner> ui_thread =
-        content::BrowserThread::GetMessageLoopProxyForThread(
+        content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::UI);
     scoped_refptr<base::SequencedTaskRunner> io_thread =
-        content::BrowserThread::GetMessageLoopProxyForThread(
+        content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO);
     base::SequencedWorkerPool* worker_pool =
         content::BrowserThread::GetBlockingPool();
@@ -208,16 +209,17 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
         worker_pool->GetSequencedTaskRunnerWithShutdownBehavior(
             worker_pool->GetSequenceToken(),
             base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
-    return make_scoped_ptr(new gcm::GCMProfileService(
+    return base::MakeUnique<gcm::GCMProfileService>(
         profile->GetPrefs(), profile->GetPath(), profile->GetRequestContext(),
         chrome::GetChannel(),
-        scoped_ptr<ProfileIdentityProvider>(new ProfileIdentityProvider(
+        gcm::GetProductCategoryForSubtypes(profile->GetPrefs()),
+        std::unique_ptr<ProfileIdentityProvider>(new ProfileIdentityProvider(
             SigninManagerFactory::GetForProfile(profile),
             ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
             LoginUIServiceFactory::GetShowLoginPopupCallbackForProfile(
                 profile))),
-        make_scoped_ptr(new gcm::FakeGCMClientFactory(ui_thread, io_thread)),
-        ui_thread, io_thread, blocking_task_runner));
+        base::WrapUnique(new gcm::FakeGCMClientFactory(ui_thread, io_thread)),
+        ui_thread, io_thread, blocking_task_runner);
   }
 
   ExtensionGCMAppHandlerTest()
@@ -257,13 +259,12 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     TestExtensionSystem* extension_system(
         static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile())));
     base::FilePath extensions_install_dir =
-        temp_dir_.path().Append(FILE_PATH_LITERAL("Extensions"));
+        temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Extensions"));
     extension_system->CreateExtensionService(
         base::CommandLine::ForCurrentProcess(), extensions_install_dir, false);
     extension_service_ = extension_system->Get(profile())->extension_service();
     extension_service_->set_extensions_enabled(true);
     extension_service_->set_show_extensions_prompts(false);
-    extension_service_->set_install_updates_when_idle_for_test(false);
 
     // Create GCMProfileService that talks with fake GCMClient.
     gcm::GCMProfileServiceFactory::GetInstance()->SetTestingFactoryAndUse(
@@ -287,17 +288,13 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     manifest.SetString(manifest_keys::kVersion, "1.0.0.0");
     manifest.SetString(manifest_keys::kName, kTestExtensionName);
     base::ListValue* permission_list = new base::ListValue;
-    permission_list->Append(new base::StringValue("gcm"));
+    permission_list->AppendString("gcm");
     manifest.Set(manifest_keys::kPermissions, permission_list);
 
     std::string error;
     scoped_refptr<Extension> extension = Extension::Create(
-        temp_dir_.path(),
-        Manifest::UNPACKED,
-        manifest,
-        Extension::NO_FLAGS,
-        "ldnnhddmnhbkjipkidpdiheffobcpfmf",
-        &error);
+        temp_dir_.GetPath(), Manifest::UNPACKED, manifest, Extension::NO_FLAGS,
+        "ldnnhddmnhbkjipkidpdiheffobcpfmf", &error);
     EXPECT_TRUE(extension.get()) << error;
     EXPECT_TRUE(
         extension->permissions_data()->HasAPIPermission(APIPermission::kGcm));
@@ -326,7 +323,7 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     data_dir = data_dir.AppendASCII("extensions");
     data_dir = data_dir.AppendASCII(update_crx);
 
-    base::FilePath path = temp_dir_.path();
+    base::FilePath path = temp_dir_.GetPath();
     path = path.Append(data_dir.BaseName());
     ASSERT_TRUE(base::CopyFile(data_dir, path));
 
@@ -394,10 +391,10 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<content::TestBrowserThreadBundle> thread_bundle_;
-  scoped_ptr<content::InProcessUtilityThreadHelper>
+  std::unique_ptr<content::TestBrowserThreadBundle> thread_bundle_;
+  std::unique_ptr<content::InProcessUtilityThreadHelper>
       in_process_utility_thread_helper_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   ExtensionService* extension_service_;  // Not owned.
   base::ScopedTempDir temp_dir_;
 
@@ -405,11 +402,11 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
 #if defined(OS_CHROMEOS)
   chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
   chromeos::ScopedTestCrosSettings test_cros_settings_;
-  scoped_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
+  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
 #endif
 
   Waiter waiter_;
-  scoped_ptr<FakeExtensionGCMAppHandler> gcm_app_handler_;
+  std::unique_ptr<FakeExtensionGCMAppHandler> gcm_app_handler_;
   gcm::GCMClient::Result registration_result_;
   gcm::GCMClient::Result unregistration_result_;
 

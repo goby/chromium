@@ -64,6 +64,7 @@ class MockUserManager : public ChromeUserManager {
   MOCK_CONST_METHOD0(IsLoggedInAsGuest, bool(void));
   MOCK_CONST_METHOD0(IsLoggedInAsSupervisedUser, bool(void));
   MOCK_CONST_METHOD0(IsLoggedInAsKioskApp, bool(void));
+  MOCK_CONST_METHOD0(IsLoggedInAsArcKioskApp, bool(void));
   MOCK_CONST_METHOD0(IsLoggedInAsStub, bool(void));
   MOCK_CONST_METHOD0(IsSessionStarted, bool(void));
   MOCK_CONST_METHOD1(IsUserNonCryptohomeDataEphemeral, bool(const AccountId&));
@@ -75,6 +76,19 @@ class MockUserManager : public ChromeUserManager {
                void(UserManager::UserSessionStateObserver*));
   MOCK_METHOD0(NotifyLocalStateChanged, void(void));
   MOCK_CONST_METHOD0(AreSupervisedUsersAllowed, bool(void));
+  MOCK_CONST_METHOD3(UpdateLoginState,
+                     void(const user_manager::User*,
+                          const user_manager::User*,
+                          bool));
+  MOCK_CONST_METHOD1(AsyncRemoveCryptohome, void(const AccountId&));
+  MOCK_CONST_METHOD3(GetPlatformKnownUserId,
+                     bool(const std::string&, const std::string&, AccountId*));
+  MOCK_CONST_METHOD0(GetGuestAccountId, const AccountId&());
+  MOCK_CONST_METHOD0(IsFirstExecAfterBoot, bool(void));
+  MOCK_CONST_METHOD1(IsGuestAccountId, bool(const AccountId&));
+  MOCK_CONST_METHOD1(IsStubAccountId, bool(const AccountId&));
+  MOCK_CONST_METHOD1(IsSupervisedAccountId, bool(const AccountId&));
+  MOCK_CONST_METHOD0(HasBrowserRestarted, bool(void));
 
   // UserManagerBase overrides:
   MOCK_CONST_METHOD0(AreEphemeralUsersEnabled, bool(void));
@@ -84,26 +98,33 @@ class MockUserManager : public ChromeUserManager {
                      void(const AccountId&,
                           user_manager::User::OAuthTokenStatus status));
   MOCK_CONST_METHOD0(IsEnterpriseManaged, bool(void));
-  MOCK_METHOD1(LoadPublicAccounts, void(std::set<AccountId>*));
+  MOCK_METHOD1(LoadDeviceLocalAccounts, void(std::set<AccountId>*));
   MOCK_METHOD0(PerformPreUserListLoadingActions, void(void));
   MOCK_METHOD0(PerformPostUserListLoadingActions, void(void));
   MOCK_METHOD1(PerformPostUserLoggedInActions, void(bool));
   MOCK_CONST_METHOD1(IsDemoApp, bool(const AccountId&));
   MOCK_CONST_METHOD1(IsKioskApp, bool(const AccountId&));
-  MOCK_CONST_METHOD1(IsPublicAccountMarkedForRemoval, bool(const AccountId&));
+  MOCK_CONST_METHOD1(IsDeviceLocalAccountMarkedForRemoval,
+                     bool(const AccountId&));
   MOCK_METHOD0(DemoAccountLoggedIn, void(void));
-  MOCK_METHOD1(KioskAppLoggedIn, void(const AccountId&));
+  MOCK_METHOD1(KioskAppLoggedIn, void(user_manager::User*));
+  MOCK_METHOD1(ArcKioskAppLoggedIn, void(user_manager::User*));
   MOCK_METHOD1(PublicAccountUserLoggedIn, void(user_manager::User*));
   MOCK_METHOD1(SupervisedUserLoggedIn, void(const AccountId&));
   MOCK_METHOD1(OnUserRemoved, void(const AccountId&));
+  MOCK_CONST_METHOD1(GetResourceImagekiaNamed, const gfx::ImageSkia&(int));
+  MOCK_CONST_METHOD1(GetResourceStringUTF16, base::string16(int));
+  MOCK_CONST_METHOD3(ScheduleResolveLocale,
+                     void(const std::string&,
+                          const base::Closure&,
+                          std::string*));
+  MOCK_CONST_METHOD1(IsValidDefaultUserImageId, bool(int));
 
   // You can't mock these functions easily because nobody can create
   // User objects but the ChromeUserManager and us.
   const user_manager::UserList& GetUsers() const override;
-  const user_manager::User* GetLoggedInUser() const override;
   user_manager::UserList GetUnlockUsers() const override;
   const AccountId& GetOwnerAccountId() const override;
-  user_manager::User* GetLoggedInUser() override;
   const user_manager::User* GetActiveUser() const override;
   user_manager::User* GetActiveUser() override;
   const user_manager::User* GetPrimaryUser() const override;
@@ -148,14 +169,10 @@ class MockUserManager : public ChromeUserManager {
   // MockUserManager become invalid.
   void ClearUserList();
 
-  scoped_ptr<UserFlow> user_flow_;
-  scoped_ptr<MockUserImageManager> user_image_manager_;
-  scoped_ptr<FakeSupervisedUserManager> supervised_user_manager_;
+  std::unique_ptr<UserFlow> user_flow_;
+  std::unique_ptr<MockUserImageManager> user_image_manager_;
+  std::unique_ptr<FakeSupervisedUserManager> supervised_user_manager_;
   user_manager::UserList user_list_;
-  // TODO (alemate): remove temporary_owner_account_id_ as soon as
-  // User::GetAccountId will
-  // return constant reference. crbug.com/546863
-  mutable AccountId temporary_owner_account_id_ = EmptyAccountId();
 };
 
 }  // namespace chromeos

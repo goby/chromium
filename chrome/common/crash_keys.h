@@ -5,12 +5,17 @@
 #ifndef CHROME_COMMON_CRASH_KEYS_H_
 #define CHROME_COMMON_CRASH_KEYS_H_
 
+#include <stddef.h>
+
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/debug/crash_logging.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "components/crash/core/common/crash_keys.h"
+#include "third_party/kasko/kasko_features.h"
 
 namespace base {
 class CommandLine;
@@ -78,6 +83,27 @@ extern const char kGPUVendor[];
 extern const char kGPURenderer[];
 #endif
 
+#if defined(OS_WIN)
+extern const char kHungAudioThreadDetails[];
+
+// Hung renderer crash reports are only sent on Windows.
+extern const char kHungRendererOutstandingAckCount[];
+extern const char kHungRendererOutstandingEventType[];
+extern const char kHungRendererLastEventType[];
+extern const char kHungRendererReason[];
+
+// Third-party module crash keys are sent only on Windows.
+extern const char kThirdPartyModulesLoaded[];
+extern const char kThirdPartyModulesNotLoaded[];
+
+// Whether the machine is domain joined is only sent on Windows.
+extern const char kEnrolledToDomain[];
+#endif
+
+// Number of input event send IPC failures. Added to debug
+// crbug.com/615090.
+extern const char kInputEventFilterSendFailure[];
+
 // The user's printers, up to kPrinterInfoCount. Should be set with
 // ScopedPrinterInfo.
 const size_t kPrinterInfoCount = 4;
@@ -107,10 +133,13 @@ extern const char kNSExceptionTrace[];
 // target-action.
 extern const char kSendAction[];
 
+// In the CrApplication, records information about the current event.
+extern const char kNSEvent[];
+
 }  // namespace mac
 #endif
 
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
 // Used to correlate a report sent via Kasko with one sent via Breakpad.
 extern const char kKaskoGuid[];
 extern const char kKaskoEquivalentGuid[];

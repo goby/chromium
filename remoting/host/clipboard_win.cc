@@ -6,15 +6,15 @@
 
 #include <windows.h>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "base/win/message_window.h"
 #include "base/win/scoped_hglobal.h"
-#include "base/win/windows_version.h"
 #include "remoting/base/constants.h"
 #include "remoting/base/util.h"
 #include "remoting/proto/event.pb.h"
@@ -110,7 +110,7 @@ class ClipboardWin : public Clipboard {
   ~ClipboardWin() override;
 
   void Start(
-      scoped_ptr<protocol::ClipboardStub> client_clipboard) override;
+      std::unique_ptr<protocol::ClipboardStub> client_clipboard) override;
   void InjectClipboardEvent(
       const protocol::ClipboardEvent& event) override;
 
@@ -123,12 +123,12 @@ class ClipboardWin : public Clipboard {
                      LPARAM lparam,
                      LRESULT* result);
 
-  scoped_ptr<protocol::ClipboardStub> client_clipboard_;
+  std::unique_ptr<protocol::ClipboardStub> client_clipboard_;
   AddClipboardFormatListenerFn* add_clipboard_format_listener_;
   RemoveClipboardFormatListenerFn* remove_clipboard_format_listener_;
 
   // Used to subscribe to WM_CLIPBOARDUPDATE messages.
-  scoped_ptr<base::win::MessageWindow> window_;
+  std::unique_ptr<base::win::MessageWindow> window_;
 
   DISALLOW_COPY_AND_ASSIGN(ClipboardWin);
 };
@@ -144,7 +144,7 @@ ClipboardWin::~ClipboardWin() {
 }
 
 void ClipboardWin::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   DCHECK(!add_clipboard_format_listener_);
   DCHECK(!remove_clipboard_format_listener_);
   DCHECK(!window_);
@@ -273,8 +273,8 @@ bool ClipboardWin::HandleMessage(
   return false;
 }
 
-scoped_ptr<Clipboard> Clipboard::Create() {
-  return make_scoped_ptr(new ClipboardWin());
+std::unique_ptr<Clipboard> Clipboard::Create() {
+  return base::WrapUnique(new ClipboardWin());
 }
 
 }  // namespace remoting

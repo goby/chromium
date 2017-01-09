@@ -5,6 +5,8 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_GESTURE_EVENT_DETAILS_H_
 #define UI_EVENTS_GESTURE_DETECTION_GESTURE_EVENT_DETAILS_H_
 
+#include <string.h>
+
 #include "base/logging.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/events_base_export.h"
@@ -25,16 +27,15 @@ struct EVENTS_BASE_EXPORT GestureEventDetails {
 
   EventType type() const { return type_; }
 
+  GestureDeviceType device_type() const { return device_type_; }
+  void set_device_type(GestureDeviceType device_type) {
+    device_type_ = device_type;
+  }
+
   int touch_points() const { return touch_points_; }
   void set_touch_points(int touch_points) {
     DCHECK_GT(touch_points, 0);
     touch_points_ = touch_points;
-  }
-
-  int oldest_touch_id() const { return oldest_touch_id_; }
-  void set_oldest_touch_id(int oldest_touch_id) {
-    DCHECK_GE(oldest_touch_id, 0);
-    oldest_touch_id_ = oldest_touch_id;
   }
 
   const gfx::Rect bounding_box() const {
@@ -143,6 +144,15 @@ struct EVENTS_BASE_EXPORT GestureEventDetails {
     return data_.scroll_update.previous_update_in_sequence_prevented;
   }
 
+  // Supports comparison over internal structures for testing.
+  bool operator==(const GestureEventDetails& other) const {
+    return type_ == other.type_ &&
+           !memcmp(&data_, &other.data_, sizeof(Details)) &&
+           device_type_ == other.device_type_ &&
+           touch_points_ == other.touch_points_ &&
+           bounding_box_ == other.bounding_box_;
+  }
+
  private:
   EventType type_;
   union Details {
@@ -188,14 +198,13 @@ struct EVENTS_BASE_EXPORT GestureEventDetails {
     int tap_count;  // TAP repeat count.
   } data_;
 
+  GestureDeviceType device_type_;
+
   int touch_points_;  // Number of active touch points in the gesture.
 
   // Bounding box is an axis-aligned rectangle that contains all the
   // enclosing rectangles of the touch-points in the gesture.
   gfx::RectF bounding_box_;
-
-  // The touch id of the oldest touch contributing to the gesture.
-  int oldest_touch_id_;
 };
 
 }  // namespace ui

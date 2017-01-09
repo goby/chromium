@@ -7,8 +7,8 @@
 
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/views/views_export.h"
 
@@ -42,6 +42,8 @@ class VIEWS_EXPORT DesktopCaptureClient : public aura::client::CaptureClient {
   void ReleaseCapture(aura::Window* window) override;
   aura::Window* GetCaptureWindow() override;
   aura::Window* GetGlobalCaptureWindow() override;
+  void AddObserver(aura::client::CaptureClientObserver* observer) override;
+  void RemoveObserver(aura::client::CaptureClientObserver* observer) override;
 
  private:
   typedef std::set<DesktopCaptureClient*> CaptureClients;

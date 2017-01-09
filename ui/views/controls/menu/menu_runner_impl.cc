@@ -4,6 +4,7 @@
 
 #include "ui/views/controls/menu/menu_runner_impl.h"
 
+#include "build/build_config.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/menu/menu_controller.h"
@@ -22,8 +23,9 @@ namespace internal {
 #if !defined(OS_MACOSX)
 MenuRunnerImplInterface* MenuRunnerImplInterface::Create(
     ui::MenuModel* menu_model,
-    int32 run_types) {
-  return new MenuRunnerImplAdapter(menu_model);
+    int32_t run_types,
+    const base::Closure& on_menu_closed_callback) {
+  return new MenuRunnerImplAdapter(menu_model, on_menu_closed_callback);
 }
 #endif
 
@@ -35,7 +37,6 @@ MenuRunnerImpl::MenuRunnerImpl(MenuItemView* menu)
       for_drop_(false),
       controller_(NULL),
       owns_controller_(false),
-      closing_event_time_(base::TimeDelta()),
       weak_factory_(this) {}
 
 bool MenuRunnerImpl::IsRunning() const {
@@ -59,22 +60,27 @@ void MenuRunnerImpl::Release() {
       empty_delegate_.reset(new MenuDelegate());
     menu_->set_delegate(empty_delegate_.get());
 
-    DCHECK(controller_);
-    // Release is invoked when MenuRunner is destroyed. Assume this is happening
-    // because the object referencing the menu has been destroyed and the menu
-    // button is no longer valid.
-    controller_->Cancel(MenuController::EXIT_DESTROYED);
-  } else {
-    delete this;
+    // Verify that the MenuController is still active. It may have been
+    // destroyed out of order.
+    if (MenuController::GetActiveInstance()) {
+      DCHECK(controller_);
+      // Release is invoked when MenuRunner is destroyed. Assume this is
+      // happening because the object referencing the menu has been destroyed
+      // and the menu button is no longer valid.
+      controller_->Cancel(MenuController::EXIT_DESTROYED);
+      return;
+    }
   }
+
+  delete this;
 }
 
 MenuRunner::RunResult MenuRunnerImpl::RunMenuAt(Widget* parent,
                                                 MenuButton* button,
                                                 const gfx::Rect& bounds,
                                                 MenuAnchorPosition anchor,
-                                                int32 run_types) {
-  closing_event_time_ = base::TimeDelta();
+                                                int32_t run_types) {
+  closing_event_time_ = base::TimeTicks();
   if (running_) {
     // Ignore requests to show the menu while it's already showing. MenuItemView
     // doesn't handle this very well (meaning it crashes).
@@ -87,6 +93,11 @@ MenuRunner::RunResult MenuRunnerImpl::RunMenuAt(Widget* parent,
       if (!controller->IsBlockingRun()) {
         controller->CancelAll();
         controller = NULL;
+      } else {
+        // Only nest the delegate when not cancelling drag-and-drop. When
+        // cancelling this will become the root delegate of the new
+        // MenuController
+        controller->AddNestedDelegate(this);
       }
     } else {
       // There's some other menu open and we're not nested. Cancel the menu.
@@ -113,7 +124,7 @@ MenuRunner::RunResult MenuRunnerImpl::RunMenuAt(Widget* parent,
     controller = new MenuController(!for_drop_, this);
     owns_controller_ = true;
   }
-  controller->set_async_run(async_);
+  controller->SetAsyncRun(async_);
   controller->set_is_combobox((run_types & MenuRunner::COMBOBOX) != 0);
   controller_ = controller;
   menu_->set_controller(controller_);
@@ -147,7 +158,7 @@ void MenuRunnerImpl::Cancel() {
     controller_->Cancel(MenuController::EXIT_ALL);
 }
 
-base::TimeDelta MenuRunnerImpl::GetClosingEventTime() const {
+base::TimeTicks MenuRunnerImpl::GetClosingEventTime() const {
   return closing_event_time_;
 }
 

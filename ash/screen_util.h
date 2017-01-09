@@ -6,27 +6,20 @@
 #define ASH_SCREEN_UTIL_H_
 
 #include "ash/ash_export.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace aura {
 class Window;
 }
 
 namespace gfx {
-class Display;
 class Rect;
-class Point;
 }
 
 namespace ash {
 
 class ASH_EXPORT ScreenUtil {
  public:
-  // Finds the display that contains |point| in screeen coordinates.
-  // Returns invalid display if there is no display that can satisfy
-  // the condition.
-  static gfx::Display FindDisplayContainingPoint(const gfx::Point& point);
-
   // Returns the bounds for maximized windows in parent coordinates.
   // Maximized windows trigger auto-hiding the shelf.
   static gfx::Rect GetMaximizedWindowBoundsInParent(aura::Window* window);
@@ -36,15 +29,6 @@ class ASH_EXPORT ScreenUtil {
 
   // Returns the display's work area bounds in parent coordinates.
   static gfx::Rect GetDisplayWorkAreaBoundsInParent(aura::Window* window);
-
-  // Returns the physical display bounds containing the shelf that
-  // shares the same root window as |root|. Physical displays can
-  // differ from logical displays in unified desktop mode.
-  // TODO(oshima): If we need to expand the unified desktop support to
-  // general use, we should consider always using physical display in
-  // window layout instead of root window, and keep the logical
-  // display only in display management code.
-  static gfx::Rect GetShelfDisplayBoundsInRoot(aura::Window* window);
 
   // TODO(oshima): Move following two to wm/coordinate_conversion.h
   // Converts |rect| from |window|'s coordinates to the virtual screen
@@ -56,11 +40,6 @@ class ASH_EXPORT ScreenUtil {
   // coordinates.
   static gfx::Rect ConvertRectFromScreen(aura::Window* window,
                                          const gfx::Rect& rect);
-
-  // Returns a gfx::Display object for secondary display. Returns
-  // invalid display if there is no secondary display connected.
-  static const gfx::Display& GetSecondaryDisplay();
-
  private:
   ScreenUtil() {}
   ~ScreenUtil() {}

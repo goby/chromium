@@ -4,18 +4,18 @@
 
 #include "content/child/child_process.h"
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
-#include <signal.h>  // For SigUSR1Handler below.
-#endif
+#include <string.h>
 
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/process/process_handle.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_local.h"
+#include "build/build_config.h"
 #include "content/child/child_thread_impl.h"
 
 #if defined(OS_ANDROID)
@@ -23,6 +23,7 @@
 #endif
 
 #if defined(OS_POSIX) && !defined(OS_ANDROID)
+#include <signal.h>
 static void SigUSR1Handler(int signal) { }
 #endif
 
@@ -34,9 +35,12 @@ base::LazyInstance<base::ThreadLocalPointer<ChildProcess> > g_lazy_tls =
     LAZY_INSTANCE_INITIALIZER;
 }
 
-ChildProcess::ChildProcess()
+ChildProcess::ChildProcess() : ChildProcess(base::ThreadPriority::NORMAL) {}
+
+ChildProcess::ChildProcess(base::ThreadPriority io_thread_priority)
     : ref_count_(0),
-      shutdown_event_(true, false),
+      shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
       io_thread_("Chrome_ChildIOThread") {
   DCHECK(!g_lazy_tls.Pointer()->Get());
   g_lazy_tls.Pointer()->Set(this);
@@ -45,7 +49,10 @@ ChildProcess::ChildProcess()
 
   // We can't recover from failing to start the IO thread.
   base::Thread::Options thread_options(base::MessageLoop::TYPE_IO, 0);
+  thread_options.priority = io_thread_priority;
 #if defined(OS_ANDROID)
+  // TODO(reveman): Remove this in favor of setting it explicitly for each type
+  // of process.
   thread_options.priority = base::ThreadPriority::DISPLAY;
 #endif
   CHECK(io_thread_.StartWithOptions(thread_options));
@@ -81,13 +88,13 @@ void ChildProcess::set_main_thread(ChildThreadImpl* thread) {
 
 void ChildProcess::AddRefProcess() {
   DCHECK(!main_thread_.get() ||  // null in unittests.
-         base::MessageLoop::current() == main_thread_->message_loop());
+         main_thread_->message_loop()->task_runner()->BelongsToCurrentThread());
   ref_count_++;
 }
 
 void ChildProcess::ReleaseProcess() {
   DCHECK(!main_thread_.get() ||  // null in unittests.
-         base::MessageLoop::current() == main_thread_->message_loop());
+         main_thread_->message_loop()->task_runner()->BelongsToCurrentThread());
   DCHECK(ref_count_);
   if (--ref_count_)
     return;
@@ -95,6 +102,13 @@ void ChildProcess::ReleaseProcess() {
   if (main_thread_)  // null in unittests.
     main_thread_->OnProcessFinalRelease();
 }
+
+#if defined(OS_LINUX)
+void ChildProcess::SetIOThreadPriority(
+    base::ThreadPriority io_thread_priority) {
+  main_thread_->SetThreadPriority(io_thread_.GetThreadId(), io_thread_priority);
+}
+#endif
 
 ChildProcess* ChildProcess::current() {
   return g_lazy_tls.Pointer()->Get();
@@ -123,7 +137,7 @@ void ChildProcess::WaitForDebugger(const std::string& label) {
 #if defined(OS_ANDROID)
   LOG(ERROR) << label << " waiting for GDB.";
   // Wait 24 hours for a debugger to be attached to the current process.
-  base::debug::WaitForDebugger(24 * 60 * 60, false);
+  base::debug::WaitForDebugger(24 * 60 * 60, true);
 #else
   // TODO(playmobil): In the long term, overriding this flag doesn't seem
   // right, either use our own flag or open a dialog we can use.

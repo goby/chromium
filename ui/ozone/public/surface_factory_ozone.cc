@@ -9,39 +9,62 @@
 #include "base/command_line.h"
 #include "ui/ozone/public/native_pixmap.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
-#include "ui/ozone/public/surface_ozone_egl.h"
 
 namespace ui {
 
-SurfaceFactoryOzone::SurfaceFactoryOzone() {
+SurfaceFactoryOzone::SurfaceFactoryOzone() {}
+
+SurfaceFactoryOzone::~SurfaceFactoryOzone() {}
+
+std::vector<gl::GLImplementation>
+SurfaceFactoryOzone::GetAllowedGLImplementations() {
+  std::vector<gl::GLImplementation> impls;
+  // TODO(kylechar): Remove EGL from this list once every Ozone platform that
+  // uses EGL overrides this method.
+  impls.push_back(gl::kGLImplementationEGLGLES2);
+  impls.push_back(gl::kGLImplementationOSMesaGL);
+  return impls;
 }
 
-SurfaceFactoryOzone::~SurfaceFactoryOzone() {
+GLOzone* SurfaceFactoryOzone::GetGLOzone(gl::GLImplementation implementation) {
+  return nullptr;
 }
 
 intptr_t SurfaceFactoryOzone::GetNativeDisplay() {
   return 0;
 }
 
-scoped_ptr<SurfaceOzoneEGL> SurfaceFactoryOzone::CreateEGLSurfaceForWidget(
+scoped_refptr<gl::GLSurface> SurfaceFactoryOzone::CreateViewGLSurface(
+    gl::GLImplementation implementation,
     gfx::AcceleratedWidget widget) {
   return nullptr;
 }
 
-scoped_ptr<SurfaceOzoneEGL>
-SurfaceFactoryOzone::CreateSurfacelessEGLSurfaceForWidget(
+scoped_refptr<gl::GLSurface>
+SurfaceFactoryOzone::CreateSurfacelessViewGLSurface(
+    gl::GLImplementation implementation,
     gfx::AcceleratedWidget widget) {
   return nullptr;
 }
 
-scoped_ptr<SurfaceOzoneCanvas> SurfaceFactoryOzone::CreateCanvasForWidget(
+scoped_refptr<gl::GLSurface> SurfaceFactoryOzone::CreateOffscreenGLSurface(
+    gl::GLImplementation implementation,
+    const gfx::Size& size) {
+  return nullptr;
+}
+
+std::unique_ptr<SurfaceOzoneCanvas> SurfaceFactoryOzone::CreateCanvasForWidget(
     gfx::AcceleratedWidget widget) {
   return nullptr;
 }
 
-const int32* SurfaceFactoryOzone::GetEGLSurfaceProperties(
-    const int32* desired_attributes) {
-  return desired_attributes;
+bool SurfaceFactoryOzone::LoadEGLGLES2Bindings() {
+  return false;
+}
+
+std::vector<gfx::BufferFormat> SurfaceFactoryOzone::GetScanoutFormats(
+    gfx::AcceleratedWidget widget) {
+  return std::vector<gfx::BufferFormat>();
 }
 
 scoped_refptr<ui::NativePixmap> SurfaceFactoryOzone::CreateNativePixmap(
@@ -54,6 +77,9 @@ scoped_refptr<ui::NativePixmap> SurfaceFactoryOzone::CreateNativePixmap(
 
 scoped_refptr<ui::NativePixmap>
 SurfaceFactoryOzone::CreateNativePixmapFromHandle(
+    gfx::AcceleratedWidget widget,
+    gfx::Size size,
+    gfx::BufferFormat format,
     const gfx::NativePixmapHandle& handle) {
   return nullptr;
 }

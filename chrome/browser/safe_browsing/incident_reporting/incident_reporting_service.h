@@ -8,14 +8,14 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/safe_browsing/download_protection_service.h"
@@ -46,12 +46,15 @@ class URLRequestContextGetter;
 
 namespace safe_browsing {
 
+#if !defined(GOOGLE_CHROME_BUILD)
+extern const base::Feature kIncidentReportingDisableUpload;
+#endif
+
 class ClientDownloadRequest;
 class ClientIncidentReport;
 class ClientIncidentReport_DownloadDetails;
 class ClientIncidentReport_EnvironmentData;
 class ClientIncidentReport_ExtensionData;
-class ClientIncidentReport_IncidentData;
 class Incident;
 class IncidentReceiver;
 class SafeBrowsingDatabaseManager;
@@ -69,12 +72,10 @@ class SafeBrowsingService;
 // a bit. Additional incidents that arrive during this time are collated with
 // the initial incident. Finally, already-reported incidents are pruned and any
 // remaining are uploaded in an incident report.
+// Lives on the UI thread.
 class IncidentReportingService : public content::NotificationObserver {
  public:
-  IncidentReportingService(
-      SafeBrowsingService* safe_browsing_service,
-      const scoped_refptr<net::URLRequestContextGetter>&
-          request_context_getter);
+  explicit IncidentReportingService(SafeBrowsingService* safe_browsing_service);
 
   // All incident collection, data collection, and uploads in progress are
   // dropped at destruction.
@@ -86,17 +87,22 @@ class IncidentReportingService : public content::NotificationObserver {
   // Returns an object by which external components can add an incident to the
   // service. The object may outlive the service, but will no longer have any
   // effect after the service is deleted.
-  scoped_ptr<IncidentReceiver> GetIncidentReceiver();
+  std::unique_ptr<IncidentReceiver> GetIncidentReceiver();
 
   // Returns a preference validation delegate that adds incidents to the service
   // for validation failures in |profile|. The delegate may outlive the service,
   // but incidents reported by it will no longer have any effect after the
   // service is deleted.
-  scoped_ptr<TrackedPreferenceValidationDelegate>
-      CreatePreferenceValidationDelegate(Profile* profile);
+  std::unique_ptr<TrackedPreferenceValidationDelegate>
+  CreatePreferenceValidationDelegate(Profile* profile);
 
   // Registers |callback| to be run after some delay following process launch.
   void RegisterDelayedAnalysisCallback(const DelayedAnalysisCallback& callback);
+
+  // Registers |callback| to be run after some delay following process launch if
+  // a profile participating in extended reporting is found.
+  void RegisterExtendedReportingOnlyDelayedAnalysisCallback(
+      const DelayedAnalysisCallback& callback);
 
   // Adds |download_manager| to the set monitored for client download request
   // storage.
@@ -137,11 +143,11 @@ class IncidentReportingService : public content::NotificationObserver {
 
   // Initiates a search for the most recent binary download. Overriden by unit
   // tests to provide a fake finder.
-  virtual scoped_ptr<LastDownloadFinder> CreateDownloadFinder(
+  virtual std::unique_ptr<LastDownloadFinder> CreateDownloadFinder(
       const LastDownloadFinder::LastDownloadCallback& callback);
 
   // Initiates an upload. Overridden by unit tests to provide a fake uploader.
-  virtual scoped_ptr<IncidentReportUploader> StartReportUpload(
+  virtual std::unique_ptr<IncidentReportUploader> StartReportUpload(
       const IncidentReportUploader::OnResultCallback& callback,
       const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
       const ClientIncidentReport& report);
@@ -153,9 +159,6 @@ class IncidentReportingService : public content::NotificationObserver {
   struct ProfileContext;
   class UploadContext;
   class Receiver;
-
-  // A mapping of profiles to contexts holding state about received incidents.
-  typedef std::map<Profile*, ProfileContext*> ProfileContextCollection;
 
   // Returns the context for |profile|, creating it if it does not exist.
   ProfileContext* GetOrCreateProfileContext(Profile* profile);
@@ -172,11 +175,11 @@ class IncidentReportingService : public content::NotificationObserver {
   Profile* FindEligibleProfile() const;
 
   // Adds |incident_data| relating to the optional |profile| to the service.
-  void AddIncident(Profile* profile, scoped_ptr<Incident> incident);
+  void AddIncident(Profile* profile, std::unique_ptr<Incident> incident);
 
   // Clears all data associated with the |incident| relating to the optional
   // |profile|.
-  void ClearIncident(Profile* profile, scoped_ptr<Incident> incident);
+  void ClearIncident(Profile* profile, std::unique_ptr<Incident> incident);
 
   // Returns true if there are incidents waiting to be sent.
   bool HasIncidentsToUpload() const;
@@ -216,7 +219,7 @@ class IncidentReportingService : public content::NotificationObserver {
   // complete. Incident report processing continues, either by waiting for the
   // collection timeout or by sending an incident report.
   void OnEnvironmentDataCollected(
-      scoped_ptr<ClientIncidentReport_EnvironmentData> environment_data);
+      std::unique_ptr<ClientIncidentReport_EnvironmentData> environment_data);
 
   // Starts the asynchronous process of finding the most recent executable
   // download if one is not currently being search for and/or has not already
@@ -235,8 +238,9 @@ class IncidentReportingService : public content::NotificationObserver {
   // search for the most recent binary download and most recent non-binary
   // download is complete.
   void OnLastDownloadFound(
-      scoped_ptr<ClientIncidentReport_DownloadDetails> last_binary_download,
-      scoped_ptr<ClientIncidentReport_NonBinaryDownloadDetails>
+      std::unique_ptr<ClientIncidentReport_DownloadDetails>
+          last_binary_download,
+      std::unique_ptr<ClientIncidentReport_NonBinaryDownloadDetails>
           last_non_binary_download);
 
   // Processes all received incidents once all data collection is
@@ -258,7 +262,7 @@ class IncidentReportingService : public content::NotificationObserver {
   // IncidentReportUploader::OnResultCallback implementation.
   void OnReportUploadResult(UploadContext* context,
                             IncidentReportUploader::Result result,
-                            scoped_ptr<ClientIncidentResponse> response);
+                            std::unique_ptr<ClientIncidentResponse> response);
 
   // DownloadProtectionService::ClientDownloadRequestCallback implementation.
   void OnClientDownloadRequest(content::DownloadItem* download,
@@ -268,8 +272,6 @@ class IncidentReportingService : public content::NotificationObserver {
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
-
-  base::ThreadChecker thread_checker_;
 
   // The safe browsing database manager, through which the whitelist killswitch
   // is checked.
@@ -312,7 +314,7 @@ class IncidentReportingService : public content::NotificationObserver {
   // The report currently being assembled. This becomes non-NULL when an initial
   // incident is reported, and returns to NULL when the report is sent for
   // upload.
-  scoped_ptr<ClientIncidentReport> report_;
+  std::unique_ptr<ClientIncidentReport> report_;
 
   // The time at which the initial incident is reported.
   base::Time first_incident_time_;
@@ -327,20 +329,25 @@ class IncidentReportingService : public content::NotificationObserver {
   base::TimeTicks last_download_begin_;
 
   // Context data for all on-the-record profiles plus the process-wide (NULL)
-  // context.
-  ProfileContextCollection profiles_;
+  // context. A mapping of profiles to contexts holding state about received
+  // incidents.
+  std::map<Profile*, std::unique_ptr<ProfileContext>> profiles_;
 
   // Callbacks registered for performing delayed analysis.
   DelayedCallbackRunner delayed_analysis_callbacks_;
 
+  // Callbacks registered for performing delayed analysis that should only
+  // be executed for safebrowsing extended reporting users.
+  DelayedCallbackRunner extended_reporting_only_delayed_analysis_callbacks_;
+
   DownloadMetadataManager download_metadata_manager_;
 
   // The collection of uploads in progress.
-  std::vector<scoped_ptr<UploadContext>> uploads_;
+  std::vector<std::unique_ptr<UploadContext>> uploads_;
 
   // An object that asynchronously searches for the most recent binary download.
   // Non-NULL while such a search is outstanding.
-  scoped_ptr<LastDownloadFinder> last_download_finder_;
+  std::unique_ptr<LastDownloadFinder> last_download_finder_;
 
   // True if IncidentReportingService is enabled at the process level, by a
   // field trial.

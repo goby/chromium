@@ -5,13 +5,22 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_DRM_THREAD_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_DRM_THREAD_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/files/scoped_file.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/service_manager/public/cpp/connection.h"
+#include "ui/gfx/native_pixmap_handle.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/vsync_provider.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
-#include "ui/ozone/public/surface_ozone_egl.h"
+#include "ui/ozone/public/interfaces/device_cursor.mojom.h"
+#include "ui/ozone/public/swap_completion_callback.h"
 
 namespace base {
 struct FileDescriptor;
@@ -26,8 +35,6 @@ namespace ui {
 
 class DrmDeviceManager;
 class DrmGpuDisplayManager;
-class DrmWindow;
-class DrmWindowProxy;
 class GbmBuffer;
 class ScanoutBufferGenerator;
 class ScreenManager;
@@ -42,7 +49,7 @@ struct OverlayPlane;
 // (for example jank in the cursor if the GPU main thread is performing heavy
 // operations). The inverse is also true as blocking operations on the DRM
 // thread (such as modesetting) no longer block the GPU main thread.
-class DrmThread : public base::Thread {
+class DrmThread : public base::Thread, public ozone::mojom::DeviceCursor {
  public:
   DrmThread();
   ~DrmThread() override;
@@ -55,7 +62,15 @@ class DrmThread : public base::Thread {
                     gfx::BufferFormat format,
                     gfx::BufferUsage usage,
                     scoped_refptr<GbmBuffer>* buffer);
+  void CreateBufferFromFds(gfx::AcceleratedWidget widget,
+                           const gfx::Size& size,
+                           gfx::BufferFormat format,
+                           std::vector<base::ScopedFD>&& fds,
+                           const std::vector<gfx::NativePixmapPlane>& planes,
+                           scoped_refptr<GbmBuffer>* buffer);
 
+  void GetScanoutFormats(gfx::AcceleratedWidget widget,
+                         std::vector<gfx::BufferFormat>* scanout_formats);
   void SchedulePageFlip(gfx::AcceleratedWidget widget,
                         const std::vector<OverlayPlane>& planes,
                         const SwapCompletionCallback& callback);
@@ -66,11 +81,12 @@ class DrmThread : public base::Thread {
   void CreateWindow(gfx::AcceleratedWidget widget);
   void DestroyWindow(gfx::AcceleratedWidget widget);
   void SetWindowBounds(gfx::AcceleratedWidget widget, const gfx::Rect& bounds);
-  void SetCursor(gfx::AcceleratedWidget widget,
+  void SetCursor(const gfx::AcceleratedWidget& widget,
                  const std::vector<SkBitmap>& bitmaps,
                  const gfx::Point& location,
-                 int frame_delay_ms);
-  void MoveCursor(gfx::AcceleratedWidget widget, const gfx::Point& location);
+                 int32_t frame_delay_ms) override;
+  void MoveCursor(const gfx::AcceleratedWidget& widget,
+                  const gfx::Point& location) override;
   void CheckOverlayCapabilities(
       gfx::AcceleratedWidget widget,
       const std::vector<OverlayCheck_Params>& overlays,
@@ -99,16 +115,26 @@ class DrmThread : public base::Thread {
   void SetHDCPState(int64_t display_id,
                     HDCPState state,
                     const base::Callback<void(int64_t, bool)>& callback);
-  void SetGammaRamp(int64_t id, const std::vector<GammaRampRGBEntry>& lut);
+  void SetColorCorrection(int64_t display_id,
+                          const std::vector<GammaRampRGBEntry>& degamma_lut,
+                          const std::vector<GammaRampRGBEntry>& gamma_lut,
+                          const std::vector<float>& correction_matrix);
 
   // base::Thread:
   void Init() override;
 
+  // Mojo support for DeviceCursorRequest.
+  void AddBinding(ozone::mojom::DeviceCursorRequest request);
+
  private:
-  scoped_ptr<DrmDeviceManager> device_manager_;
-  scoped_ptr<ScanoutBufferGenerator> buffer_generator_;
-  scoped_ptr<ScreenManager> screen_manager_;
-  scoped_ptr<DrmGpuDisplayManager> display_manager_;
+  std::unique_ptr<DrmDeviceManager> device_manager_;
+  std::unique_ptr<ScanoutBufferGenerator> buffer_generator_;
+  std::unique_ptr<ScreenManager> screen_manager_;
+  std::unique_ptr<DrmGpuDisplayManager> display_manager_;
+
+  // The mojo implementation requires a BindingSet because the DrmThread serves
+  // requests from two different client threads.
+  mojo::BindingSet<ozone::mojom::DeviceCursor> bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(DrmThread);
 };

@@ -4,6 +4,8 @@
 
 #include "components/policy/core/common/schema_registry_tracking_policy_provider.h"
 
+#include <utility>
+
 #include "components/policy/core/common/schema_map.h"
 #include "components/policy/core/common/schema_registry.h"
 
@@ -80,7 +82,7 @@ void SchemaRegistryTrackingPolicyProvider::OnUpdatePolicy(
   if (state_ == WAITING_FOR_REFRESH)
     state_ = READY;
 
-  scoped_ptr<PolicyBundle> bundle(new PolicyBundle());
+  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle());
   if (state_ == READY) {
     bundle->CopyFrom(delegate_->policies());
     schema_map()->FilterBundle(bundle.get());
@@ -91,7 +93,7 @@ void SchemaRegistryTrackingPolicyProvider::OnUpdatePolicy(
     bundle->Get(chrome_ns).CopyFrom(delegate_->policies().Get(chrome_ns));
   }
 
-  UpdatePolicy(bundle.Pass());
+  UpdatePolicy(std::move(bundle));
 }
 
 }  // namespace policy

@@ -2,30 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/at_exit.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/value_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
-#include "chrome/browser/download/download_extensions.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/download/download_target_determiner.h"
 #include "chrome/browser/download/download_target_info.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/safe_browsing/file_type_policies.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_types.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/prefs/pref_service.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -33,17 +37,20 @@
 #include "content/public/test/mock_download_item.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
+#include "extensions/features/features.h"
 #include "net/base/mime_util.h"
+#include "ppapi/features/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/browser/plugin_service.h"
 #include "content/public/browser/plugin_service_filter.h"
 #include "content/public/common/webplugininfo.h"
 #endif
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/extension.h"
 #endif
 
@@ -57,6 +64,8 @@ using ::testing::Truly;
 using ::testing::WithArg;
 using ::testing::_;
 using content::DownloadItem;
+using safe_browsing::FileTypePolicies;
+using safe_browsing::DownloadFileType;
 
 namespace {
 
@@ -113,6 +122,9 @@ struct DownloadTestCase {
 
   // Expected danger type. Verified at the end of target determination.
   content::DownloadDangerType expected_danger_type;
+
+  // Expected danger level. Verified at the end of target determination.
+  DownloadFileType::DangerLevel expected_danger_level;
 
   // Value of DownloadItem::GetURL()
   const char* url;
@@ -202,7 +214,7 @@ class DownloadTargetDeterminerTest : public ChromeRenderViewHostTestHarness {
 
   // Creates MockDownloadItem and sets up default expectations.
   content::MockDownloadItem* CreateActiveDownloadItem(
-      int32 id,
+      int32_t id,
       const DownloadTestCase& test_case);
 
   // Sets the AutoOpenBasedOnExtension user preference for |path|.
@@ -225,7 +237,7 @@ class DownloadTargetDeterminerTest : public ChromeRenderViewHostTestHarness {
 
   // Runs |test_case| with |item|. When the DownloadTargetDeterminer is done,
   // returns the resulting DownloadTargetInfo.
-  scoped_ptr<DownloadTargetInfo> RunDownloadTargetDeterminer(
+  std::unique_ptr<DownloadTargetInfo> RunDownloadTargetDeterminer(
       const base::FilePath& initial_virtual_path,
       content::MockDownloadItem* item);
 
@@ -242,7 +254,7 @@ class DownloadTargetDeterminerTest : public ChromeRenderViewHostTestHarness {
                             const DownloadTargetInfo* target_info);
 
   const base::FilePath& test_download_dir() const {
-    return test_download_dir_.path();
+    return test_download_dir_.GetPath();
   }
 
   const base::FilePath& test_virtual_dir() const {
@@ -257,8 +269,13 @@ class DownloadTargetDeterminerTest : public ChromeRenderViewHostTestHarness {
     return download_prefs_.get();
   }
 
+  // Shortcut
+  const FileTypePolicies* Policies() const {
+    return FileTypePolicies::GetInstance();
+  }
+
  private:
-  scoped_ptr<DownloadPrefs> download_prefs_;
+  std::unique_ptr<DownloadPrefs> download_prefs_;
   ::testing::NiceMock<MockDownloadTargetDeterminerDelegate> delegate_;
   NullWebContentsDelegate web_contents_delegate_;
   base::ScopedTempDir test_download_dir_;
@@ -283,7 +300,7 @@ void DownloadTargetDeterminerTest::TearDown() {
 
 content::MockDownloadItem*
 DownloadTargetDeterminerTest::CreateActiveDownloadItem(
-    int32 id,
+    int32_t id,
     const DownloadTestCase& test_case) {
   content::MockDownloadItem* item =
       new ::testing::NiceMock<content::MockDownloadItem>();
@@ -369,24 +386,24 @@ void DownloadTargetDeterminerTest::RunTestCase(
     const DownloadTestCase& test_case,
     const base::FilePath& initial_virtual_path,
     content::MockDownloadItem* item) {
-  scoped_ptr<DownloadTargetInfo> target_info =
+  std::unique_ptr<DownloadTargetInfo> target_info =
       RunDownloadTargetDeterminer(initial_virtual_path, item);
   VerifyDownloadTarget(test_case, target_info.get());
 }
 
 void CompletionCallbackWrapper(
     const base::Closure& closure,
-    scoped_ptr<DownloadTargetInfo>* target_info_receiver,
-    scoped_ptr<DownloadTargetInfo> target_info) {
+    std::unique_ptr<DownloadTargetInfo>* target_info_receiver,
+    std::unique_ptr<DownloadTargetInfo> target_info) {
   target_info_receiver->swap(target_info);
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, closure);
 }
 
-scoped_ptr<DownloadTargetInfo>
+std::unique_ptr<DownloadTargetInfo>
 DownloadTargetDeterminerTest::RunDownloadTargetDeterminer(
     const base::FilePath& initial_virtual_path,
     content::MockDownloadItem* item) {
-  scoped_ptr<DownloadTargetInfo> target_info;
+  std::unique_ptr<DownloadTargetInfo> target_info;
   base::RunLoop run_loop;
   DownloadTargetDeterminer::Start(
       item, initial_virtual_path, download_prefs_.get(), delegate(),
@@ -395,14 +412,14 @@ DownloadTargetDeterminerTest::RunDownloadTargetDeterminer(
                  &target_info));
   run_loop.Run();
   ::testing::Mock::VerifyAndClearExpectations(delegate());
-  return target_info.Pass();
+  return target_info;
 }
 
 void DownloadTargetDeterminerTest::RunTestCasesWithActiveItem(
     const DownloadTestCase test_cases[],
     size_t test_case_count) {
   for (size_t i = 0; i < test_case_count; ++i) {
-    scoped_ptr<content::MockDownloadItem> item(
+    std::unique_ptr<content::MockDownloadItem> item(
         CreateActiveDownloadItem(i, test_cases[i]));
     SCOPED_TRACE(testing::Message() << "Running test case " << i);
     RunTestCase(test_cases[i], base::FilePath(), item.get());
@@ -417,6 +434,7 @@ void DownloadTargetDeterminerTest::VerifyDownloadTarget(
   EXPECT_EQ(expected_local_path.value(), target_info->target_path.value());
   EXPECT_EQ(test_case.expected_disposition, target_info->target_disposition);
   EXPECT_EQ(test_case.expected_danger_type, target_info->danger_type);
+  EXPECT_EQ(test_case.expected_danger_level, target_info->danger_level);
 
   switch (test_case.expected_intermediate) {
     case EXPECT_CRDOWNLOAD:
@@ -492,183 +510,139 @@ void NotifyExtensionsOverridePath(
   callback.Run(new_path, DownloadPathReservationTracker::UNIQUIFY);
 }
 
-void CheckDownloadUrlCheckExes(
-    content::DownloadItem* download,
-    const base::FilePath& path,
-    const DownloadTargetDeterminerDelegate::CheckDownloadUrlCallback&
-        callback) {
-  if (path.MatchesExtension(FILE_PATH_LITERAL(".exe")))
-    callback.Run(content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT);
-  else
-    callback.Run(content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
-}
-
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_Basic) {
+TEST_F(DownloadTargetDeterminerTest, Basic) {
   const DownloadTestCase kBasicTestCases[] = {
-    {
-      // 0: Automatic Safe
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic Safe
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 1: Save_As Safe
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+      {// 1: Save_As Safe
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
-    {
-      // 2: Automatic Dangerous
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-      "http://example.com/foo.crx", "",
-      FILE_PATH_LITERAL(""),
+      {// 2: Automatic Dangerous
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+       DownloadFileType::ALLOW_ON_USER_GESTURE, "http://example.com/foo.crx",
+       "", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 3: Forced Safe
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "",
-      FILE_PATH_LITERAL("forced-foo.txt"),
+      {// 3: Forced Safe
+       FORCED, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt", "",
+       FILE_PATH_LITERAL("forced-foo.txt"),
 
-      FILE_PATH_LITERAL("forced-foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("forced-foo.txt"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_LOCAL_PATH},
   };
 
   // The test assumes that .crx files have a danger level of
   // ALLOW_ON_USER_GESTURE.
-  ASSERT_EQ(download_util::ALLOW_ON_USER_GESTURE,
-            download_util::GetFileDangerLevel(
+  ASSERT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE,
+            Policies()->GetFileDangerLevel(
                 base::FilePath(FILE_PATH_LITERAL("foo.crx"))));
   RunTestCasesWithActiveItem(kBasicTestCases, arraysize(kBasicTestCases));
 }
 
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_CancelSaveAs) {
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+TEST_F(DownloadTargetDeterminerTest, CancelSaveAs) {
   const DownloadTestCase kCancelSaveAsTestCases[] = {
-    {
-      // 0: Save_As Safe, Cancelled.
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Save_As Safe, Cancelled.
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL(""),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL(""), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_LOCAL_PATH
-    }
-  };
+       EXPECT_LOCAL_PATH}};
   ON_CALL(*delegate(), PromptUserForDownloadPath(_, _, _))
       .WillByDefault(WithArg<2>(ScheduleCallback(base::FilePath())));
   RunTestCasesWithActiveItem(kCancelSaveAsTestCases,
                              arraysize(kCancelSaveAsTestCases));
 }
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
 // The SafeBrowsing check is performed early. Make sure that a download item
 // that has been marked as DANGEROUS_URL behaves correctly.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_DangerousUrl) {
+TEST_F(DownloadTargetDeterminerTest, DangerousUrl) {
   const DownloadTestCase kSafeBrowsingTestCases[] = {
-    {
-      // 0: Automatic Dangerous URL
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
-      "http://phishing.example.com/foo.txt", "",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic Dangerous URL
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.txt",
+       "", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 1: Save As Dangerous URL
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
-      "http://phishing.example.com/foo.txt", "",
-      FILE_PATH_LITERAL(""),
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+      {// 1: Save As Dangerous URL
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.txt",
+       "", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
-    {
-      // 2: Forced Dangerous URL
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
-      "http://phishing.example.com/foo.txt", "",
-      FILE_PATH_LITERAL("forced-foo.txt"),
+      {// 2: Forced Dangerous URL
+       FORCED, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.txt",
+       "", FILE_PATH_LITERAL("forced-foo.txt"),
 
-      FILE_PATH_LITERAL("forced-foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("forced-foo.txt"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 3: Automatic Dangerous URL + Dangerous file. Dangerous URL takes
-      // precedence.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
-      "http://phishing.example.com/foo.html", "",
-      FILE_PATH_LITERAL(""),
+      {// 3: Automatic Dangerous URL + Dangerous file. Dangerous URL takes
+       // precedence.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.html",
+       "", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.html"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.html"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 4: Save As Dangerous URL + Dangerous file
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
-      "http://phishing.example.com/foo.html", "",
-      FILE_PATH_LITERAL(""),
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+      {// 4: Save As Dangerous URL + Dangerous file
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.html",
+       "", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.html"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.html"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
-    {
-      // 5: Forced Dangerous URL + Dangerous file
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
-      "http://phishing.example.com/foo.html", "",
-      FILE_PATH_LITERAL("forced-foo.html"),
+      {// 5: Forced Dangerous URL + Dangerous file
+       FORCED, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.html",
+       "", FILE_PATH_LITERAL("forced-foo.html"),
 
-      FILE_PATH_LITERAL("forced-foo.html"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("forced-foo.html"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
   };
 
   ON_CALL(*delegate(), CheckDownloadUrl(_, _, _))
@@ -680,47 +654,56 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_DangerousUrl) {
 
 // The SafeBrowsing check is performed early. Make sure that a download item
 // that has been marked as MAYBE_DANGEROUS_CONTENT behaves correctly.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_MaybeDangerousContent) {
+TEST_F(DownloadTargetDeterminerTest, MaybeDangerousContent) {
   const DownloadTestCase kSafeBrowsingTestCases[] = {
-    {
-      // 0: Automatic Maybe dangerous content
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
-      "http://phishing.example.com/foo.exe", "",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic Maybe dangerous content
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
+       DownloadFileType::ALLOW_ON_USER_GESTURE,
+       "http://phishing.example.com/foo.crx", "", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.exe"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 1: Save As Maybe dangerous content
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
-      "http://phishing.example.com/foo.exe", "",
-      FILE_PATH_LITERAL(""),
+      {// 1: Automatic Maybe dangerous content with DANGEROUS type.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
+       DownloadFileType::DANGEROUS, "http://phishing.example.com/foo.swf", "",
+       FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.exe"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.swf"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 2: Forced Maybe dangerous content
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
-      "http://phishing.example.com/foo.exe", "",
-      FILE_PATH_LITERAL("forced-foo.exe"),
 
-      FILE_PATH_LITERAL("forced-foo.exe"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+      {// 2: Save As Maybe dangerous content
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.crx",
+       "", FILE_PATH_LITERAL(""),
 
-      EXPECT_UNCONFIRMED
-    },
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_PROMPT,
+
+       EXPECT_UNCONFIRMED},
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
+
+      {// 3: Forced Maybe dangerous content
+       FORCED, content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
+       DownloadFileType::NOT_DANGEROUS, "http://phishing.example.com/foo.crx",
+       "", FILE_PATH_LITERAL("forced-foo.crx"),
+
+       FILE_PATH_LITERAL("forced-foo.crx"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+
+       EXPECT_UNCONFIRMED},
   };
+
+  // Test assumptions:
+  ASSERT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE,
+            Policies()->GetFileDangerLevel(
+                base::FilePath(FILE_PATH_LITERAL("foo.crx"))));
+  ASSERT_EQ(DownloadFileType::DANGEROUS,
+            Policies()->GetFileDangerLevel(
+                base::FilePath(FILE_PATH_LITERAL("foo.swf"))));
 
   ON_CALL(*delegate(), CheckDownloadUrl(_, _, _))
       .WillByDefault(WithArg<2>(ScheduleCallback(
@@ -729,70 +712,55 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_MaybeDangerousContent) {
                              arraysize(kSafeBrowsingTestCases));
 }
 
+#if !BUILDFLAG(ANDROID_JAVA_UI)
 // Test whether the last saved directory is used for 'Save As' downloads.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_LastSavePath) {
+TEST_F(DownloadTargetDeterminerTest, LastSavePath) {
   const DownloadTestCase kLastSavePathTestCasesPre[] = {
-    {
-      // 0: If the last save path is empty, then the default download directory
-      //    should be used.
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: If the last save path is empty, then the default download directory
+       //    should be used.
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    }
-  };
+       EXPECT_CRDOWNLOAD}};
 
   // These test cases are run with a last save path set to a non-emtpy local
   // download directory.
   const DownloadTestCase kLastSavePathTestCasesPost[] = {
-    {
-      // 0: This test case is run with the last download directory set to
-      //    '<test_download_dir()>/foo'.
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: This test case is run with the last download directory set to
+       //    '<test_download_dir()>/foo'.
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo/foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo/foo.txt"),
+       DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 1: Start an automatic download. This should be saved to the user's
-      //    default download directory and not the last used Save As directory.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 1: Start an automatic download. This should be saved to the user's
+       //    default download directory and not the last used Save As directory.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
   };
 
   // This test case is run with the last save path set to a non-empty virtual
   // directory.
   const DownloadTestCase kLastSavePathTestCasesVirtual[] = {
-    {
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("bar.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("bar.txt"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_LOCAL_PATH},
   };
 
   {
@@ -833,45 +801,49 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_LastSavePath) {
                                arraysize(kLastSavePathTestCasesVirtual));
   }
 }
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
 // These tests are run with the default downloads folder set to a virtual
 // directory.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_DefaultVirtual) {
+TEST_F(DownloadTargetDeterminerTest, DefaultVirtual) {
   // The default download directory is the virutal path.
   download_prefs()->SetDownloadPath(test_virtual_dir());
 
   {
     SCOPED_TRACE(testing::Message() << "Automatic Safe Download");
     const DownloadTestCase kAutomaticDownloadToVirtualDir = {
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+        AUTOMATIC,
+        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS,
+        "http://example.com/foo.txt",
+        "text/plain",
+        FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo-local.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+        FILE_PATH_LITERAL("foo-local.txt"),
+        DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    };
+        EXPECT_LOCAL_PATH};
     EXPECT_CALL(*delegate(), DetermineLocalPath(_, _, _))
         .WillOnce(WithArg<2>(ScheduleCallback(
             GetPathInDownloadDir(FILE_PATH_LITERAL("foo-local.txt")))));
     RunTestCasesWithActiveItem(&kAutomaticDownloadToVirtualDir, 1);
   }
 
+#if !BUILDFLAG(ANDROID_JAVA_UI)
   {
     SCOPED_TRACE(testing::Message() << "Save As to virtual directory");
     const DownloadTestCase kSaveAsToVirtualDir = {
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/bar.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+        SAVE_AS,
+        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS,
+        "http://example.com/bar.txt",
+        "text/plain",
+        FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo-local.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+        FILE_PATH_LITERAL("foo-local.txt"),
+        DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_LOCAL_PATH
-    };
+        EXPECT_LOCAL_PATH};
     EXPECT_CALL(*delegate(), DetermineLocalPath(_, _, _))
         .WillOnce(WithArg<2>(ScheduleCallback(
             GetPathInDownloadDir(FILE_PATH_LITERAL("foo-local.txt")))));
@@ -885,101 +857,95 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_DefaultVirtual) {
   {
     SCOPED_TRACE(testing::Message() << "Save As to local directory");
     const DownloadTestCase kSaveAsToLocalDir = {
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/bar.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+        SAVE_AS,
+        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS,
+        "http://example.com/bar.txt",
+        "text/plain",
+        FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo-x.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+        FILE_PATH_LITERAL("foo-x.txt"),
+        DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    };
+        EXPECT_CRDOWNLOAD};
     EXPECT_CALL(*delegate(), PromptUserForDownloadPath(
         _, test_virtual_dir().AppendASCII("bar.txt"), _))
         .WillOnce(WithArg<2>(ScheduleCallback(
             GetPathInDownloadDir(FILE_PATH_LITERAL("foo-x.txt")))));
     RunTestCasesWithActiveItem(&kSaveAsToLocalDir, 1);
   }
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
   {
     SCOPED_TRACE(testing::Message() << "Forced safe download");
     const DownloadTestCase kForcedSafe = {
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "",
-      FILE_PATH_LITERAL("forced-foo.txt"),
+        FORCED,
+        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS,
+        "http://example.com/foo.txt",
+        "",
+        FILE_PATH_LITERAL("forced-foo.txt"),
 
-      FILE_PATH_LITERAL("forced-foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+        FILE_PATH_LITERAL("forced-foo.txt"),
+        DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    };
+        EXPECT_LOCAL_PATH};
     RunTestCasesWithActiveItem(&kForcedSafe, 1);
   }
 }
 
 // Test that an inactive download will still get a virtual or local download
 // path.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_InactiveDownload) {
+TEST_F(DownloadTargetDeterminerTest, InactiveDownload) {
   const DownloadTestCase kInactiveTestCases[] = {
-    {
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL(""),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+      {SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL(""),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_LOCAL_PATH
-    }
+       EXPECT_CRDOWNLOAD}
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
   };
 
   for (size_t i = 0; i < arraysize(kInactiveTestCases); ++i) {
     SCOPED_TRACE(testing::Message() << "Running test case " << i);
     const DownloadTestCase& test_case = kInactiveTestCases[i];
-    scoped_ptr<content::MockDownloadItem> item(
+    std::unique_ptr<content::MockDownloadItem> item(
         CreateActiveDownloadItem(i, test_case));
     EXPECT_CALL(*item.get(), GetState())
         .WillRepeatedly(Return(content::DownloadItem::CANCELLED));
-    // Even though one is a SAVE_AS download, no prompt will be displayed to
-    // the user because the download is inactive.
-    EXPECT_CALL(*delegate(), PromptUserForDownloadPath(_, _, _))
-        .Times(0);
+
+    EXPECT_CALL(*delegate(), PromptUserForDownloadPath(_, _, _)).Times(0);
+    EXPECT_CALL(*delegate(), NotifyExtensions(_, _, _)).Times(0);
+    EXPECT_CALL(*delegate(), ReserveVirtualPath(_, _, _, _, _)).Times(0);
+    EXPECT_CALL(*delegate(), DetermineLocalPath(_, _, _)).Times(1);
     RunTestCase(test_case, base::FilePath(), item.get());
   }
 }
 
 // If the reserved path could not be verified, then the user should see a
 // prompt.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ReservationFailed) {
+TEST_F(DownloadTargetDeterminerTest, ReservationFailed) {
   const DownloadTestCase kReservationFailedCases[] = {
-    {
-      // 0: Automatic download. Since the reservation fails, the disposition of
-      // the target is to prompt, but the returned path is used.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic download. Since the reservation fails, the disposition of
+       // the target is to prompt, but the returned path is used.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("bar.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("bar.txt"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
   };
 
   // Setup ReserveVirtualPath() to fail.
@@ -991,20 +957,16 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ReservationFailed) {
 }
 
 // If the local path could not be determined, the download should be cancelled.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_LocalPathFailed) {
+TEST_F(DownloadTargetDeterminerTest, LocalPathFailed) {
   const DownloadTestCase kLocalPathFailedCases[] = {
-    {
-      // 0: Automatic download.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic download.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL(""),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL(""), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_LOCAL_PATH},
   };
 
   // The default download directory is the virtual path.
@@ -1020,67 +982,56 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_LocalPathFailed) {
 // Downloads that have a danger level of ALLOW_ON_USER_GESTURE should be marked
 // as safe depending on whether there was a user gesture associated with the
 // download and whether the referrer was visited prior to today.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_VisitedReferrer) {
+TEST_F(DownloadTargetDeterminerTest, VisitedReferrer) {
   const DownloadTestCase kVisitedReferrerCases[] = {
-    // http://visited.example.com/ is added to the history as a visit that
-    // happened prior to today.
-    {
-      // 0: Safe download due to visiting referrer before.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://visited.example.com/foo.crx", "application/xml",
-      FILE_PATH_LITERAL(""),
+      // http://visited.example.com/ is added to the history as a visit that
+      // happened prior to today.
+      {// 0: Safe download due to visiting referrer before.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://visited.example.com/foo.crx",
+       "application/xml", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 1: Dangerous due to not having visited referrer before.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-      "http://not-visited.example.com/foo.crx", "application/xml",
-      FILE_PATH_LITERAL(""),
+      {// 1: Dangerous due to not having visited referrer before.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+       DownloadFileType::ALLOW_ON_USER_GESTURE,
+       "http://not-visited.example.com/foo.crx", "application/xml",
+       FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 2: Safe because the user is being prompted.
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://not-visited.example.com/foo.crx", "application/xml",
-      FILE_PATH_LITERAL(""),
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+      {// 2: Safe because the user is being prompted.
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS,
+       "http://not-visited.example.com/foo.crx", "application/xml",
+       FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
-    {
-      // 3: Safe because of forced path.
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://not-visited.example.com/foo.crx", "application/xml",
-      FILE_PATH_LITERAL("foo.crx"),
+      {// 3: Safe because of forced path.
+       FORCED, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS,
+       "http://not-visited.example.com/foo.crx", "application/xml",
+       FILE_PATH_LITERAL("foo.crx"),
 
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_LOCAL_PATH},
   };
 
   // This test assumes that the danger level of .crx files is
   // ALLOW_ON_USER_GESTURE.
-  ASSERT_EQ(download_util::ALLOW_ON_USER_GESTURE,
-            download_util::GetFileDangerLevel(
+  ASSERT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE,
+            Policies()->GetFileDangerLevel(
                 base::FilePath(FILE_PATH_LITERAL("foo.crx"))));
 
   // First the history service must exist.
@@ -1101,50 +1052,159 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_VisitedReferrer) {
                              arraysize(kVisitedReferrerCases));
 }
 
+TEST_F(DownloadTargetDeterminerTest, TransitionType) {
+  const DownloadTestCase kSafeFile = {
+      AUTOMATIC,
+      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadFileType::NOT_DANGEROUS,
+      "http://example.com/foo.txt",
+      "text/plain",
+      FILE_PATH_LITERAL(""),
+
+      FILE_PATH_LITERAL("foo.txt"),
+      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+
+      EXPECT_CRDOWNLOAD};
+
+  const DownloadTestCase kAllowOnUserGesture = {
+      AUTOMATIC,
+      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+      DownloadFileType::ALLOW_ON_USER_GESTURE,
+      "http://example.com/foo.crx",
+      "application/octet-stream",
+      FILE_PATH_LITERAL(""),
+
+      FILE_PATH_LITERAL("foo.crx"),
+      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+
+      EXPECT_UNCONFIRMED};
+
+  const DownloadTestCase kDangerousFile = {
+      AUTOMATIC,
+      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+      DownloadFileType::DANGEROUS,
+      "http://example.com/foo.swf",
+      "application/octet-stream",
+      FILE_PATH_LITERAL(""),
+
+      FILE_PATH_LITERAL("foo.swf"),
+      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+
+      EXPECT_UNCONFIRMED};
+
+  const struct {
+    ui::PageTransition page_transition;
+    content::DownloadDangerType expected_danger_type;
+    const DownloadTestCase& template_download_test_case;
+  } kTestCases[] = {
+      {// Benign file type. Results in a danger type of NOT_DANGEROUS. Page
+       // transition type is irrelevant.
+       ui::PAGE_TRANSITION_LINK, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       kSafeFile},
+
+      {// File type is ALLOW_ON_USER_GESTURE. PAGE_TRANSITION_LINK doesn't
+       // cause file to be marked as safe.
+       ui::PAGE_TRANSITION_LINK, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+       kAllowOnUserGesture},
+
+      {// File type is ALLOW_ON_USER_GESTURE. PAGE_TRANSITION_TYPED doesn't
+       // cause file to be marked as safe. TYPED can be used for certain
+       // types of explicit page transitions that aren't necessarily
+       // initiated by a user. Hence a resulting download may not be
+       // intentional.
+       ui::PAGE_TRANSITION_TYPED, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+       kAllowOnUserGesture},
+
+      {// File type is ALLOW_ON_USER_GESTURE.
+       // PAGE_TRANSITION_FROM_ADDRESS_BAR causes file to be marked as safe.
+       static_cast<ui::PageTransition>(ui::PAGE_TRANSITION_TYPED |
+                                       ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
+       content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, kAllowOnUserGesture},
+
+      {// File type is ALLOW_ON_USER_GESTURE.
+       // PAGE_TRANSITION_FROM_ADDRESS_BAR causes file to be marked as safe.
+       static_cast<ui::PageTransition>(ui::PAGE_TRANSITION_GENERATED |
+                                       ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
+       content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, kAllowOnUserGesture},
+
+      {// File type is ALLOW_ON_USER_GESTURE.
+       // PAGE_TRANSITION_FROM_ADDRESS_BAR causes file to be marked as safe.
+       ui::PAGE_TRANSITION_FROM_ADDRESS_BAR,
+       content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, kAllowOnUserGesture},
+
+      {// File type is DANGEROUS. PageTransition is irrelevant.
+       static_cast<ui::PageTransition>(ui::PAGE_TRANSITION_TYPED |
+                                       ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
+       content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE, kDangerousFile},
+  };
+
+  // Test assumptions:
+  ASSERT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE,
+            Policies()->GetFileDangerLevel(
+                base::FilePath(FILE_PATH_LITERAL("foo.crx"))));
+  ASSERT_EQ(DownloadFileType::DANGEROUS,
+            Policies()->GetFileDangerLevel(
+                base::FilePath(FILE_PATH_LITERAL("foo.swf"))));
+  ASSERT_EQ(DownloadFileType::NOT_DANGEROUS,
+            Policies()->GetFileDangerLevel(
+                base::FilePath(FILE_PATH_LITERAL("foo.txt"))));
+
+  for (const auto& test_case : kTestCases) {
+    // The template download test case describes what to expect if the page
+    // transition was LINK. If the expectation is that the page transition type
+    // causes the download to be considered safe, then download_test_case needs
+    // to be adjusted accordingly.
+    DownloadTestCase download_test_case = test_case.template_download_test_case;
+    download_test_case.expected_danger_type = test_case.expected_danger_type;
+    if (test_case.expected_danger_type ==
+        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS) {
+      download_test_case.expected_danger_level =
+          DownloadFileType::NOT_DANGEROUS;
+      download_test_case.expected_intermediate = EXPECT_CRDOWNLOAD;
+    }
+
+    std::unique_ptr<content::MockDownloadItem> item(
+        CreateActiveDownloadItem(1, download_test_case));
+    EXPECT_CALL(*item, GetTransitionType())
+        .WillRepeatedly(Return(test_case.page_transition));
+    RunTestCase(download_test_case, base::FilePath(), item.get());
+  }
+}
+
+#if !BUILDFLAG(ANDROID_JAVA_UI)
 // These test cases are run with "Prompt for download" user preference set to
 // true.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_PromptAlways) {
+TEST_F(DownloadTargetDeterminerTest, PromptAlways) {
   const DownloadTestCase kPromptingTestCases[] = {
-    {
-      // 0: Safe Automatic - Should prompt because of "Prompt for download"
-      //    preference setting.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Safe Automatic - Should prompt because of "Prompt for download"
+       //    preference setting.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 1: Safe Forced - Shouldn't prompt.
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL("foo.txt"),
+      {// 1: Safe Forced - Shouldn't prompt.
+       FORCED, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL("foo.txt"),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_LOCAL_PATH},
 
-    {
-      // 2: Automatic - The filename extension is marked as one that we will
-      //    open automatically. Shouldn't prompt.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.dummy", "",
-      FILE_PATH_LITERAL(""),
+      {// 2: Automatic - The filename extension is marked as one that we will
+       //    open automatically. Shouldn't prompt.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.dummy", "",
+       FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.dummy"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.dummy"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
   };
 
   SetPromptForDownload(true);
@@ -1153,57 +1213,47 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_PromptAlways) {
   RunTestCasesWithActiveItem(kPromptingTestCases,
                              arraysize(kPromptingTestCases));
 }
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // These test cases are run with "Prompt for download" user preference set to
 // true. Automatic extension downloads shouldn't cause prompting.
 // Android doesn't support extensions.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_PromptAlways_Extension) {
+TEST_F(DownloadTargetDeterminerTest, PromptAlways_Extension) {
   const DownloadTestCase kPromptingTestCases[] = {
-    {
-      // 0: Automatic Browser Extension download. - Shouldn't prompt for browser
-      //    extension downloads even if "Prompt for download" preference is set.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-      "http://example.com/foo.crx",
-      extensions::Extension::kMimeType,
-      FILE_PATH_LITERAL(""),
+    {// 0: Automatic Browser Extension download. - Shouldn't prompt for browser
+     //    extension downloads even if "Prompt for download" preference is set.
+     AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+     DownloadFileType::ALLOW_ON_USER_GESTURE, "http://example.com/foo.crx",
+     extensions::Extension::kMimeType, FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+     FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+     EXPECT_UNCONFIRMED},
 
 #if defined(OS_WIN)
-    {
-      // 1: Automatic User Script - Shouldn't prompt for user script downloads
-      //    even if "Prompt for download" preference is set. ".js" files are
-      //    considered dangerous on Windows.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-      "http://example.com/foo.user.js", "",
-      FILE_PATH_LITERAL(""),
+    {// 1: Automatic User Script - Shouldn't prompt for user script downloads
+     //    even if "Prompt for download" preference is set. ".js" files are
+     //    considered dangerous on Windows.
+     AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+     DownloadFileType::ALLOW_ON_USER_GESTURE, "http://example.com/foo.user.js", "",
+     FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.user.js"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+     FILE_PATH_LITERAL("foo.user.js"),
+     DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+     EXPECT_UNCONFIRMED},
 #else
-    {
-      // 1: Automatic User Script - Shouldn't prompt for user script downloads
-      //    even if "Prompt for download" preference is set.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.user.js", "",
-      FILE_PATH_LITERAL(""),
+    {// 1: Automatic User Script - Shouldn't prompt for user script downloads
+     //    even if "Prompt for download" preference is set.
+     AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+     DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.user.js", "",
+     FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.user.js"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+     FILE_PATH_LITERAL("foo.user.js"),
+     DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+     EXPECT_CRDOWNLOAD},
 #endif
   };
 
@@ -1211,37 +1261,29 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_PromptAlways_Extension) {
   RunTestCasesWithActiveItem(kPromptingTestCases,
                              arraysize(kPromptingTestCases));
 }
-#endif  // defined(ENABLE_EXTENSIONS)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // If the download path is managed, then we don't show any prompts.
 // Note that if the download path is managed, then PromptForDownload() is false.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ManagedPath) {
+TEST_F(DownloadTargetDeterminerTest, ManagedPath) {
   const DownloadTestCase kManagedPathTestCases[] = {
-    {
-      // 0: Automatic Safe
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic Safe
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 1: Save_As Safe
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 1: Save_As Safe
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
   };
 
   SetManagedDownloadPath(test_download_dir());
@@ -1252,59 +1294,49 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ManagedPath) {
 
 // Test basic functionality supporting extensions that want to override download
 // filenames.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_NotifyExtensionsSafe) {
+TEST_F(DownloadTargetDeterminerTest, NotifyExtensionsSafe) {
   const DownloadTestCase kNotifyExtensionsTestCases[] = {
-    {
-      // 0: Automatic Safe
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic Safe
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("overridden/foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("overridden/foo.txt"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 1: Save_As Safe
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+#if !BUILDFLAG(ANDROID_JAVA_UI)
+      {// 1: Save_As Safe
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("overridden/foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("overridden/foo.txt"),
+       DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
-    {
-      // 2: Automatic Dangerous
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-      "http://example.com/foo.crx", "",
-      FILE_PATH_LITERAL(""),
+      {// 2: Automatic Dangerous
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+       DownloadFileType::ALLOW_ON_USER_GESTURE, "http://example.com/foo.crx",
+       "", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("overridden/foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("overridden/foo.crx"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 3: Forced Safe
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "",
-      FILE_PATH_LITERAL("forced-foo.txt"),
+      {// 3: Forced Safe
+       FORCED, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt", "",
+       FILE_PATH_LITERAL("forced-foo.txt"),
 
-      FILE_PATH_LITERAL("forced-foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("forced-foo.txt"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_LOCAL_PATH},
   };
 
   ON_CALL(*delegate(), NotifyExtensions(_, _, _))
@@ -1315,62 +1347,61 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_NotifyExtensionsSafe) {
 
 // Test that filenames provided by extensions are passed into SafeBrowsing
 // checks and dangerous download checks.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_NotifyExtensionsUnsafe) {
-  const DownloadTestCase kNotifyExtensionsTestCases[] = {
-    {
-      // 0: Automatic Safe : Later overridden by a dangerous filetype.
+TEST_F(DownloadTargetDeterminerTest, NotifyExtensionsUnsafe) {
+  const DownloadTestCase kNotHandledBySafeBrowsing = {
       AUTOMATIC,
       content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-      "http://example.com/foo.crx.remove", "text/plain",
+      DownloadFileType::ALLOW_ON_USER_GESTURE,
+      "http://example.com/foo.crx.remove",
+      "text/plain",
       FILE_PATH_LITERAL(""),
 
       FILE_PATH_LITERAL("overridden/foo.crx"),
       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+      EXPECT_UNCONFIRMED};
 
-    {
-      // 1: Automatic Safe : Later overridden by a potentially dangerous
-      // filetype.
+  const DownloadTestCase kHandledBySafeBrowsing = {
       AUTOMATIC,
       content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT,
-      "http://example.com/foo.exe.remove", "text/plain",
+      DownloadFileType::ALLOW_ON_USER_GESTURE,
+      "http://example.com/foo.crx.remove",
+      "text/plain",
       FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("overridden/foo.exe"),
+      FILE_PATH_LITERAL("overridden/foo.crx"),
       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
-  };
+      EXPECT_UNCONFIRMED};
 
   ON_CALL(*delegate(), NotifyExtensions(_, _, _))
       .WillByDefault(Invoke(&NotifyExtensionsOverridePath));
+  RunTestCasesWithActiveItem(&kNotHandledBySafeBrowsing, 1);
+
   ON_CALL(*delegate(), CheckDownloadUrl(_, _, _))
-      .WillByDefault(Invoke(&CheckDownloadUrlCheckExes));
-  RunTestCasesWithActiveItem(kNotifyExtensionsTestCases,
-                             arraysize(kNotifyExtensionsTestCases));
+      .WillByDefault(WithArg<2>(ScheduleCallback(
+          content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT)));
+  RunTestCasesWithActiveItem(&kHandledBySafeBrowsing, 1);
 }
 
 // Test that conflict actions set by extensions are passed correctly into
 // ReserveVirtualPath.
-TEST_F(DownloadTargetDeterminerTest,
-       TargetDeterminer_NotifyExtensionsConflict) {
+TEST_F(DownloadTargetDeterminerTest, NotifyExtensionsConflict) {
   const DownloadTestCase kNotifyExtensionsTestCase = {
-    AUTOMATIC,
-    content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-    "http://example.com/foo.txt", "text/plain",
-    FILE_PATH_LITERAL(""),
+      AUTOMATIC,
+      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadFileType::NOT_DANGEROUS,
+      "http://example.com/foo.txt",
+      "text/plain",
+      FILE_PATH_LITERAL(""),
 
-    FILE_PATH_LITERAL("overridden/foo.txt"),
-    DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+      FILE_PATH_LITERAL("overridden/foo.txt"),
+      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-    EXPECT_CRDOWNLOAD
-  };
+      EXPECT_CRDOWNLOAD};
 
   const DownloadTestCase& test_case = kNotifyExtensionsTestCase;
-  scoped_ptr<content::MockDownloadItem> item(
+  std::unique_ptr<content::MockDownloadItem> item(
       CreateActiveDownloadItem(0, test_case));
   base::FilePath overridden_path(FILE_PATH_LITERAL("overridden/foo.txt"));
   base::FilePath full_overridden_path =
@@ -1400,24 +1431,25 @@ TEST_F(DownloadTargetDeterminerTest,
   RunTestCase(test_case, base::FilePath(), item.get());
 }
 
+#if !BUILDFLAG(ANDROID_JAVA_UI)
 // Test that relative paths returned by extensions are always relative to the
 // default downloads path.
-TEST_F(DownloadTargetDeterminerTest,
-       TargetDeterminer_NotifyExtensionsDefaultPath) {
+TEST_F(DownloadTargetDeterminerTest, NotifyExtensionsDefaultPath) {
   const DownloadTestCase kNotifyExtensionsTestCase = {
-    SAVE_AS,
-    content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-    "http://example.com/foo.txt", "text/plain",
-    FILE_PATH_LITERAL(""),
+      SAVE_AS,
+      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadFileType::NOT_DANGEROUS,
+      "http://example.com/foo.txt",
+      "text/plain",
+      FILE_PATH_LITERAL(""),
 
-    FILE_PATH_LITERAL("overridden/foo.txt"),
-    DownloadItem::TARGET_DISPOSITION_PROMPT,
+      FILE_PATH_LITERAL("overridden/foo.txt"),
+      DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-    EXPECT_CRDOWNLOAD
-  };
+      EXPECT_CRDOWNLOAD};
 
   const DownloadTestCase& test_case = kNotifyExtensionsTestCase;
-  scoped_ptr<content::MockDownloadItem> item(
+  std::unique_ptr<content::MockDownloadItem> item(
       CreateActiveDownloadItem(0, test_case));
   base::FilePath overridden_path(FILE_PATH_LITERAL("overridden/foo.txt"));
   base::FilePath full_overridden_path =
@@ -1436,29 +1468,30 @@ TEST_F(DownloadTargetDeterminerTest,
           ScheduleCallback(full_overridden_path)));
   RunTestCase(test_case, base::FilePath(), item.get());
 }
+#endif  // !BUILDFLAG(ANDROID_JAVA_UI)
 
-TEST_F(DownloadTargetDeterminerTest,
-       TargetDeterminer_InitialVirtualPathUnsafe) {
+TEST_F(DownloadTargetDeterminerTest, InitialVirtualPathUnsafe) {
   const base::FilePath::CharType* kInitialPath =
       FILE_PATH_LITERAL("some_path/bar.html");
 
   const DownloadTestCase kInitialPathTestCase = {
-    // 0: Save As Save. The path generated based on the DownloadItem is safe,
-    // but the initial path is unsafe. However, the download is not considered
-    // dangerous since the user has been prompted.
-    SAVE_AS,
-    content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-    "http://example.com/foo.txt", "text/plain",
-    FILE_PATH_LITERAL(""),
+      // 0: Save As Save. The path generated based on the DownloadItem is safe,
+      // but the initial path is unsafe. However, the download is not considered
+      // dangerous since the user has been prompted.
+      SAVE_AS,
+      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadFileType::NOT_DANGEROUS,
+      "http://example.com/foo.txt",
+      "text/plain",
+      FILE_PATH_LITERAL(""),
 
-    kInitialPath,
-    DownloadItem::TARGET_DISPOSITION_PROMPT,
+      kInitialPath,
+      DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-    EXPECT_CRDOWNLOAD
-  };
+      EXPECT_CRDOWNLOAD};
 
   const DownloadTestCase& test_case = kInitialPathTestCase;
-  scoped_ptr<content::MockDownloadItem> item(
+  std::unique_ptr<content::MockDownloadItem> item(
       CreateActiveDownloadItem(1, test_case));
   EXPECT_CALL(*item, GetLastReason())
       .WillRepeatedly(Return(
@@ -1473,77 +1506,62 @@ TEST_F(DownloadTargetDeterminerTest,
 // the download (ACCESS_DENIED, NO_SPACE, etc..), then the user should be
 // prompted, and not otherwise. These test cases shouldn't result in prompting
 // since the error is set to NETWORK_FAILED.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedNoPrompt) {
+TEST_F(DownloadTargetDeterminerTest, ResumedNoPrompt) {
   // All test cases run with GetPathInDownloadDir(kInitialPath) as the inital
   // path.
   const base::FilePath::CharType* kInitialPath =
       FILE_PATH_LITERAL("some_path/bar.txt");
 
   const DownloadTestCase kResumedTestCases[] = {
-    {
-      // 0: Automatic Safe: Initial path is ignored since the user has not been
-      // prompted before.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic Safe: Initial path is ignored since the user has not been
+       // prompted before.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt", "text/plain",
+       FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.txt"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 1: Save_As Safe: Initial path used.
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 1: Save_As Safe: Initial path used.
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt", "text/plain",
+       FILE_PATH_LITERAL(""),
 
-      kInitialPath,
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       kInitialPath, DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      EXPECT_CRDOWNLOAD
-    },
+       EXPECT_CRDOWNLOAD},
 
-    {
-      // 2: Automatic Dangerous: Initial path is ignored since the user hasn't
-      // been prompted before.
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-      "http://example.com/foo.crx", "",
-      FILE_PATH_LITERAL(""),
+      {// 2: Automatic Dangerous: Initial path is ignored since the user hasn't
+       // been prompted before.
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+       DownloadFileType::ALLOW_ON_USER_GESTURE, "http://example.com/foo.crx", "",
+       FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("foo.crx"), DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_UNCONFIRMED
-    },
+       EXPECT_UNCONFIRMED},
 
-    {
-      // 3: Forced Safe: Initial path is ignored due to the forced path.
-      FORCED,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "",
-      FILE_PATH_LITERAL("forced-foo.txt"),
+      {// 3: Forced Safe: Initial path is ignored due to the forced path.
+       FORCED, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt", "",
+       FILE_PATH_LITERAL("forced-foo.txt"),
 
-      FILE_PATH_LITERAL("forced-foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+       FILE_PATH_LITERAL("forced-foo.txt"),
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-      EXPECT_LOCAL_PATH
-    },
+       EXPECT_LOCAL_PATH},
   };
 
   // The test assumes that .crx files have a danger level of
   // ALLOW_ON_USER_GESTURE.
-  ASSERT_EQ(download_util::ALLOW_ON_USER_GESTURE,
-            download_util::GetFileDangerLevel(
+  ASSERT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE,
+            Policies()->GetFileDangerLevel(
                 base::FilePath(FILE_PATH_LITERAL("foo.crx"))));
   for (size_t i = 0; i < arraysize(kResumedTestCases); ++i) {
     SCOPED_TRACE(testing::Message() << "Running test case " << i);
     const DownloadTestCase& test_case = kResumedTestCases[i];
-    scoped_ptr<content::MockDownloadItem> item(
+    std::unique_ptr<content::MockDownloadItem> item(
         CreateActiveDownloadItem(i, test_case));
     base::FilePath expected_path =
         GetPathInDownloadDir(test_case.expected_local_path);
@@ -1566,26 +1584,27 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedNoPrompt) {
 
 // Test that a forced download doesn't prompt, even if the interrupt reason
 // suggests that the target path may not be suitable for downloads.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedForcedDownload) {
+TEST_F(DownloadTargetDeterminerTest, ResumedForcedDownload) {
   const base::FilePath::CharType* kInitialPath =
       FILE_PATH_LITERAL("some_path/bar.txt");
   const DownloadTestCase kResumedForcedDownload = {
-    // 3: Forced Safe
-    FORCED,
-    content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-    "http://example.com/foo.txt", "",
-    FILE_PATH_LITERAL("forced-foo.txt"),
+      // 3: Forced Safe
+      FORCED,
+      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadFileType::NOT_DANGEROUS,
+      "http://example.com/foo.txt",
+      "",
+      FILE_PATH_LITERAL("forced-foo.txt"),
 
-    FILE_PATH_LITERAL("forced-foo.txt"),
-    DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+      FILE_PATH_LITERAL("forced-foo.txt"),
+      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-    EXPECT_LOCAL_PATH
-  };
+      EXPECT_LOCAL_PATH};
 
   const DownloadTestCase& test_case = kResumedForcedDownload;
   base::FilePath expected_path =
       GetPathInDownloadDir(test_case.expected_local_path);
-  scoped_ptr<content::MockDownloadItem> item(
+  std::unique_ptr<content::MockDownloadItem> item(
       CreateActiveDownloadItem(0, test_case));
   ON_CALL(*item.get(), GetLastReason())
       .WillByDefault(Return(content::DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE));
@@ -1604,57 +1623,63 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedForcedDownload) {
 // the download (ACCESS_DENIED, NO_SPACE, etc..), then the user should be
 // prompted, and not otherwise. These test cases result in prompting since the
 // error is set to NO_SPACE.
-TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedWithPrompt) {
+TEST_F(DownloadTargetDeterminerTest, ResumedWithPrompt) {
   // All test cases run with GetPathInDownloadDir(kInitialPath) as the inital
   // path.
   const base::FilePath::CharType* kInitialPath =
       FILE_PATH_LITERAL("some_path/bar.txt");
 
   const DownloadTestCase kResumedTestCases[] = {
-    {
-      // 0: Automatic Safe
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+      {// 0: Automatic Safe
+       AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-      FILE_PATH_LITERAL("foo.txt"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       FILE_PATH_LITERAL("foo.txt"),
+#if BUILDFLAG(ANDROID_JAVA_UI)
+       DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+#else
+       DownloadItem::TARGET_DISPOSITION_PROMPT,
+#endif
+       EXPECT_CRDOWNLOAD},
 
-      EXPECT_CRDOWNLOAD
-    },
+      {// 1: Save_As Safe
+       SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+       DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+       "text/plain", FILE_PATH_LITERAL(""),
 
-    {
-      // 1: Save_As Safe
-      SAVE_AS,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.txt", "text/plain",
-      FILE_PATH_LITERAL(""),
+       kInitialPath, DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-      kInitialPath,
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
+       EXPECT_CRDOWNLOAD},
 
-      EXPECT_CRDOWNLOAD
-    },
+      {
+          // 2: Automatic Dangerous
+          AUTOMATIC,
+#if BUILDFLAG(ANDROID_JAVA_UI)
+          // If we don't prompt user, the file will be treated as dangerous.
+          content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+          DownloadFileType::ALLOW_ON_USER_GESTURE,
+#else
+          content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+          DownloadFileType::NOT_DANGEROUS,
+#endif
+          "http://example.com/foo.crx", "", FILE_PATH_LITERAL(""),
 
-    {
-      // 2: Automatic Dangerous
-      AUTOMATIC,
-      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-      "http://example.com/foo.crx", "",
-      FILE_PATH_LITERAL(""),
-
-      FILE_PATH_LITERAL("foo.crx"),
-      DownloadItem::TARGET_DISPOSITION_PROMPT,
-
-      EXPECT_CRDOWNLOAD
-    },
+          FILE_PATH_LITERAL("foo.crx"),
+#if BUILDFLAG(ANDROID_JAVA_UI)
+          DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+          // Dangerous download will have an unconfirmed intermediate file name.
+          EXPECT_UNCONFIRMED,
+#else
+          DownloadItem::TARGET_DISPOSITION_PROMPT, EXPECT_CRDOWNLOAD,
+#endif
+      },
   };
 
   // The test assumes that .xml files have a danger level of
   // ALLOW_ON_USER_GESTURE.
-  ASSERT_EQ(download_util::ALLOW_ON_USER_GESTURE,
-            download_util::GetFileDangerLevel(
+  ASSERT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE,
+            Policies()->GetFileDangerLevel(
                 base::FilePath(FILE_PATH_LITERAL("foo.crx"))));
   for (size_t i = 0; i < arraysize(kResumedTestCases); ++i) {
     SCOPED_TRACE(testing::Message() << "Running test case " << i);
@@ -1662,7 +1687,7 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedWithPrompt) {
     const DownloadTestCase& test_case = kResumedTestCases[i];
     base::FilePath expected_path =
         GetPathInDownloadDir(test_case.expected_local_path);
-    scoped_ptr<content::MockDownloadItem> item(
+    std::unique_ptr<content::MockDownloadItem> item(
         CreateActiveDownloadItem(i, test_case));
     ON_CALL(*item.get(), GetLastReason())
         .WillByDefault(Return(
@@ -1670,7 +1695,12 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedWithPrompt) {
     EXPECT_CALL(*delegate(), NotifyExtensions(_, _, _))
         .Times(test_case.test_type == AUTOMATIC ? 1 : 0);
     EXPECT_CALL(*delegate(), ReserveVirtualPath(_, expected_path, false, _, _));
+#if BUILDFLAG(ANDROID_JAVA_UI)
+    EXPECT_CALL(*delegate(), PromptUserForDownloadPath(_, expected_path, _))
+        .Times(0);
+#else
     EXPECT_CALL(*delegate(), PromptUserForDownloadPath(_, expected_path, _));
+#endif
     EXPECT_CALL(*delegate(), DetermineLocalPath(_, expected_path, _));
     EXPECT_CALL(*delegate(), CheckDownloadUrl(_, expected_path, _));
     RunTestCase(test_case, GetPathInDownloadDir(kInitialPath), item.get());
@@ -1678,8 +1708,7 @@ TEST_F(DownloadTargetDeterminerTest, TargetDeterminer_ResumedWithPrompt) {
 }
 
 // Test intermediate filename generation for resumed downloads.
-TEST_F(DownloadTargetDeterminerTest,
-       TargetDeterminer_IntermediateNameForResumed) {
+TEST_F(DownloadTargetDeterminerTest, IntermediateNameForResumed) {
   // All test cases run with GetPathInDownloadDir(kInitialPath) as the inital
   // path.
   const base::FilePath::CharType kInitialPath[] =
@@ -1697,106 +1726,80 @@ TEST_F(DownloadTargetDeterminerTest,
     // match is performed if this string is non-empty. Ignored otherwise.
     const base::FilePath::CharType* expected_intermediate_path;
   } kIntermediateNameTestCases[] = {
-    {
-      {
-        // 0: Automatic Safe
-        AUTOMATIC,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.txt", "text/plain",
-        FILE_PATH_LITERAL(""),
+      {{// 0: Automatic Safe
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+        "text/plain", FILE_PATH_LITERAL(""),
 
         FILE_PATH_LITERAL("foo.txt"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_CRDOWNLOAD
-      },
-      FILE_PATH_LITERAL("bar.txt.crdownload"),
-      FILE_PATH_LITERAL("foo.txt.crdownload")
-    },
+        EXPECT_CRDOWNLOAD},
+       FILE_PATH_LITERAL("bar.txt.crdownload"),
+       FILE_PATH_LITERAL("foo.txt.crdownload")},
 
-    {
-      {
-        // 1: Save_As Safe
-        SAVE_AS,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.txt", "text/plain",
-        FILE_PATH_LITERAL(""),
+      {{// 1: Save_As Safe
+        SAVE_AS, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt",
+        "text/plain", FILE_PATH_LITERAL(""),
 
-        kInitialPath,
-        DownloadItem::TARGET_DISPOSITION_PROMPT,
+        kInitialPath, DownloadItem::TARGET_DISPOSITION_PROMPT,
 
-        EXPECT_CRDOWNLOAD
-      },
-      FILE_PATH_LITERAL("foo.txt.crdownload"),
-      FILE_PATH_LITERAL("some_path/bar.txt.crdownload")
-    },
+        EXPECT_CRDOWNLOAD},
+       FILE_PATH_LITERAL("foo.txt.crdownload"),
+       FILE_PATH_LITERAL("some_path/bar.txt.crdownload")},
 
-    {
-      {
-        // 2: Automatic Dangerous
-        AUTOMATIC,
-        content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-        "http://example.com/foo.crx", "",
-        FILE_PATH_LITERAL(""),
+      {{// 2: Automatic Dangerous
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+        DownloadFileType::ALLOW_ON_USER_GESTURE, "http://example.com/foo.crx",
+        "", FILE_PATH_LITERAL(""),
 
         FILE_PATH_LITERAL("foo.crx"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_UNCONFIRMED
-      },
-      FILE_PATH_LITERAL("Unconfirmed abcd.crdownload"),
-      FILE_PATH_LITERAL("Unconfirmed abcd.crdownload")
-    },
+        EXPECT_UNCONFIRMED},
+       FILE_PATH_LITERAL("Unconfirmed abcd.crdownload"),
+       FILE_PATH_LITERAL("Unconfirmed abcd.crdownload")},
 
-    {
-      {
-        // 3: Automatic Dangerous
-        AUTOMATIC,
-        content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
-        "http://example.com/foo.crx", "",
-        FILE_PATH_LITERAL(""),
+      {{// 3: Automatic Dangerous
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE,
+        DownloadFileType::ALLOW_ON_USER_GESTURE, "http://example.com/foo.crx",
+        "", FILE_PATH_LITERAL(""),
 
         FILE_PATH_LITERAL("foo.crx"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_UNCONFIRMED
-      },
-      FILE_PATH_LITERAL("other_path/Unconfirmed abcd.crdownload"),
-      // Rely on the EXPECT_UNCONFIRMED check in the general test settings. A
-      // new intermediate path of the form "Unconfirmed <number>.crdownload"
-      // should be generated for this case since the initial intermediate path
-      // is in the wrong directory.
-      FILE_PATH_LITERAL("")
-    },
+        EXPECT_UNCONFIRMED},
+       FILE_PATH_LITERAL("other_path/Unconfirmed abcd.crdownload"),
+       // Rely on the EXPECT_UNCONFIRMED check in the general test settings. A
+       // new intermediate path of the form "Unconfirmed <number>.crdownload"
+       // should be generated for this case since the initial intermediate path
+       // is in the wrong directory.
+       FILE_PATH_LITERAL("")},
 
-    {
-      {
-        // 3: Forced Safe: Initial path is ignored due to the forced path.
-        FORCED,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.txt", "",
+      {{// 3: Forced Safe: Initial path is ignored due to the forced path.
+        FORCED, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.txt", "",
         FILE_PATH_LITERAL("forced-foo.txt"),
 
         FILE_PATH_LITERAL("forced-foo.txt"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_LOCAL_PATH
-      },
-      FILE_PATH_LITERAL("forced-foo.txt"),
-      FILE_PATH_LITERAL("forced-foo.txt")
-    },
+        EXPECT_LOCAL_PATH},
+       FILE_PATH_LITERAL("forced-foo.txt"),
+       FILE_PATH_LITERAL("forced-foo.txt")},
   };
 
   // The test assumes that .crx files have a danger level of
   // ALLOW_ON_USER_GESTURE.
-  ASSERT_EQ(download_util::ALLOW_ON_USER_GESTURE,
-            download_util::GetFileDangerLevel(
+  ASSERT_EQ(DownloadFileType::ALLOW_ON_USER_GESTURE,
+            Policies()->GetFileDangerLevel(
                 base::FilePath(FILE_PATH_LITERAL("foo.crx"))));
 
   for (size_t i = 0; i < arraysize(kIntermediateNameTestCases); ++i) {
     SCOPED_TRACE(testing::Message() << "Running test case " << i);
     const IntermediateNameTestCase& test_case = kIntermediateNameTestCases[i];
-    scoped_ptr<content::MockDownloadItem> item(
+    std::unique_ptr<content::MockDownloadItem> item(
         CreateActiveDownloadItem(i, test_case.general));
 
     ON_CALL(*item.get(), GetLastReason())
@@ -1808,7 +1811,7 @@ TEST_F(DownloadTargetDeterminerTest,
     ON_CALL(*item.get(), GetDangerType())
         .WillByDefault(Return(test_case.general.expected_danger_type));
 
-    scoped_ptr<DownloadTargetInfo> target_info =
+    std::unique_ptr<DownloadTargetInfo> target_info =
         RunDownloadTargetDeterminer(GetPathInDownloadDir(kInitialPath),
                                     item.get());
     VerifyDownloadTarget(test_case.general, target_info.get());
@@ -1820,8 +1823,7 @@ TEST_F(DownloadTargetDeterminerTest,
 }
 
 // Test MIME type determination based on the target filename.
-TEST_F(DownloadTargetDeterminerTest,
-       TargetDeterminer_MIMETypeDetermination) {
+TEST_F(DownloadTargetDeterminerTest, MIMETypeDetermination) {
   // All test cases run with GetPathInDownloadDir(kInitialPath) as the inital
   // path.
   const base::FilePath::CharType kInitialPath[] =
@@ -1834,81 +1836,67 @@ TEST_F(DownloadTargetDeterminerTest,
     // Expected MIME type for test case.
     const char* expected_mime_type;
   } kMIMETypeTestCases[] = {
-    {
-      {
-        // 0:
-        AUTOMATIC,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.png", "image/png",
+      {{// 0:
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.png",
+        "image/png", FILE_PATH_LITERAL(""),
+
+        FILE_PATH_LITERAL("foo.png"),
+        DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+
+        EXPECT_CRDOWNLOAD},
+       "image/png"},
+      {{// 1: Empty MIME type in response.
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.png", "",
         FILE_PATH_LITERAL(""),
 
         FILE_PATH_LITERAL("foo.png"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_CRDOWNLOAD
-      },
-      "image/png"
-    },
-    {
-      {
-        // 1: Empty MIME type in response.
-        AUTOMATIC,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.png", "",
-        FILE_PATH_LITERAL(""),
-
-        FILE_PATH_LITERAL("foo.png"),
-        DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-
-        EXPECT_CRDOWNLOAD
-      },
-      "image/png"
-    },
-    {
-      {
-        // 2: Forced path.
-        FORCED,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.abc", "",
+        EXPECT_CRDOWNLOAD},
+       "image/png"},
+      {{// 2: Forced path.
+        FORCED, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.abc", "",
         FILE_PATH_LITERAL("foo.png"),
 
         FILE_PATH_LITERAL("foo.png"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_CRDOWNLOAD
-      },
-      "image/png"
-    },
-    {
-      {
-        // 3: Unknown file type.
-        AUTOMATIC,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.notarealext", "",
-        FILE_PATH_LITERAL(""),
+        EXPECT_CRDOWNLOAD},
+       "image/png"},
+      {{// 3: Unknown file type.
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.notarealext",
+        "", FILE_PATH_LITERAL(""),
 
         FILE_PATH_LITERAL("foo.notarealext"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_CRDOWNLOAD
-      },
-      ""
-    },
-    {
-      {
-        // 4: Unknown file type.
-        AUTOMATIC,
-        content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        "http://example.com/foo.notarealext", "image/png",
-        FILE_PATH_LITERAL(""),
+        EXPECT_CRDOWNLOAD},
+       ""},
+      {{// 4: Unknown file type.
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.notarealext",
+        "image/png", FILE_PATH_LITERAL(""),
 
         FILE_PATH_LITERAL("foo.notarealext"),
         DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-        EXPECT_CRDOWNLOAD
-      },
-      ""
-    },
+        EXPECT_CRDOWNLOAD},
+       ""},
+      {{// 5: x-x509-user-cert mime-type.
+        AUTOMATIC, content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+        DownloadFileType::NOT_DANGEROUS, "http://example.com/foo.notarealext",
+        "application/x-x509-user-cert", FILE_PATH_LITERAL(""),
+
+        FILE_PATH_LITERAL("user.crt"),
+        DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+
+        EXPECT_CRDOWNLOAD},
+       ""},
+
   };
 
   ON_CALL(*delegate(), GetFileMimeType(
@@ -1919,16 +1907,16 @@ TEST_F(DownloadTargetDeterminerTest,
   for (size_t i = 0; i < arraysize(kMIMETypeTestCases); ++i) {
     SCOPED_TRACE(testing::Message() << "Running test case " << i);
     const MIMETypeTestCase& test_case = kMIMETypeTestCases[i];
-    scoped_ptr<content::MockDownloadItem> item(
+    std::unique_ptr<content::MockDownloadItem> item(
         CreateActiveDownloadItem(i, test_case.general));
-    scoped_ptr<DownloadTargetInfo> target_info =
+    std::unique_ptr<DownloadTargetInfo> target_info =
         RunDownloadTargetDeterminer(GetPathInDownloadDir(kInitialPath),
                                     item.get());
     EXPECT_EQ(test_case.expected_mime_type, target_info->mime_type);
   }
 }
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 
 void DummyGetPluginsCallback(
     const base::Closure& closure,
@@ -1959,7 +1947,7 @@ class MockPluginServiceFilter : public content::PluginServiceFilter {
                          int render_view_id,
                          const void* context,
                          const GURL& url,
-                         const GURL& policy_url,
+                         const url::Origin& main_frame_origin,
                          content::WebPluginInfo* plugin) override {
     return MockPluginAvailable(plugin->path);
   }
@@ -2022,7 +2010,6 @@ class DownloadTargetDeterminerTestWithPlugin
     content::PluginService* plugin_service =
         content::PluginService::GetInstance();
     plugin_service->Init();
-    plugin_service->DisablePluginsDiscoveryForTesting();
     old_plugin_service_filter_ = plugin_service->GetFilter();
     plugin_service->SetFilter(&mock_plugin_filter_);
   }
@@ -2042,8 +2029,7 @@ class DownloadTargetDeterminerTestWithPlugin
 
 // Check if secure handling of filetypes is determined correctly for PPAPI
 // plugins.
-TEST_F(DownloadTargetDeterminerTestWithPlugin,
-       TargetDeterminer_CheckForSecureHandling_PPAPI) {
+TEST_F(DownloadTargetDeterminerTestWithPlugin, CheckForSecureHandling_PPAPI) {
   // All test cases run with GetPathInDownloadDir(kInitialPath) as the inital
   // path.
   const base::FilePath::CharType kInitialPath[] =
@@ -2051,16 +2037,17 @@ TEST_F(DownloadTargetDeterminerTestWithPlugin,
   const char kTestMIMEType[] = "application/x-example-should-not-exist";
 
   DownloadTestCase kSecureHandlingTestCase = {
-    AUTOMATIC,
-    content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-    "http://example.com/foo.fakeext", "",
-    FILE_PATH_LITERAL(""),
+      AUTOMATIC,
+      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadFileType::NOT_DANGEROUS,
+      "http://example.com/foo.fakeext",
+      "",
+      FILE_PATH_LITERAL(""),
 
-    FILE_PATH_LITERAL("foo.fakeext"),
-    DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+      FILE_PATH_LITERAL("foo.fakeext"),
+      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-    EXPECT_CRDOWNLOAD
-  };
+      EXPECT_CRDOWNLOAD};
 
   content::PluginService* plugin_service =
       content::PluginService::GetInstance();
@@ -2079,11 +2066,10 @@ TEST_F(DownloadTargetDeterminerTestWithPlugin,
       GetPathInDownloadDir(FILE_PATH_LITERAL("foo.fakeext")), _))
       .WillByDefault(WithArg<1>(
           ScheduleCallback(kTestMIMEType)));
-  scoped_ptr<content::MockDownloadItem> item(
+  std::unique_ptr<content::MockDownloadItem> item(
       CreateActiveDownloadItem(1, kSecureHandlingTestCase));
-  scoped_ptr<DownloadTargetInfo> target_info =
-      RunDownloadTargetDeterminer(GetPathInDownloadDir(kInitialPath),
-                                  item.get());
+  std::unique_ptr<DownloadTargetInfo> target_info = RunDownloadTargetDeterminer(
+      GetPathInDownloadDir(kInitialPath), item.get());
   EXPECT_FALSE(target_info->is_filetype_handled_safely);
 
   // Register a PPAPI plugin. This should count as handling the filetype
@@ -2112,7 +2098,7 @@ TEST_F(DownloadTargetDeterminerTestWithPlugin,
 // Check if secure handling of filetypes is determined correctly for
 // BrowserPlugins.
 TEST_F(DownloadTargetDeterminerTestWithPlugin,
-       TargetDeterminer_CheckForSecureHandling_BrowserPlugin) {
+       CheckForSecureHandling_BrowserPlugin) {
   // All test cases run with GetPathInDownloadDir(kInitialPath) as the inital
   // path.
   const base::FilePath::CharType kInitialPath[] =
@@ -2120,16 +2106,17 @@ TEST_F(DownloadTargetDeterminerTestWithPlugin,
   const char kTestMIMEType[] = "application/x-example-should-not-exist";
 
   DownloadTestCase kSecureHandlingTestCase = {
-    AUTOMATIC,
-    content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-    "http://example.com/foo.fakeext", "",
-    FILE_PATH_LITERAL(""),
+      AUTOMATIC,
+      content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
+      DownloadFileType::NOT_DANGEROUS,
+      "http://example.com/foo.fakeext",
+      "",
+      FILE_PATH_LITERAL(""),
 
-    FILE_PATH_LITERAL("foo.fakeext"),
-    DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+      FILE_PATH_LITERAL("foo.fakeext"),
+      DownloadItem::TARGET_DISPOSITION_OVERWRITE,
 
-    EXPECT_CRDOWNLOAD
-  };
+      EXPECT_CRDOWNLOAD};
 
   content::PluginService* plugin_service =
       content::PluginService::GetInstance();
@@ -2148,11 +2135,10 @@ TEST_F(DownloadTargetDeterminerTestWithPlugin,
       GetPathInDownloadDir(FILE_PATH_LITERAL("foo.fakeext")), _))
       .WillByDefault(WithArg<1>(
           ScheduleCallback(kTestMIMEType)));
-  scoped_ptr<content::MockDownloadItem> item(
+  std::unique_ptr<content::MockDownloadItem> item(
       CreateActiveDownloadItem(1, kSecureHandlingTestCase));
-  scoped_ptr<DownloadTargetInfo> target_info =
-      RunDownloadTargetDeterminer(GetPathInDownloadDir(kInitialPath),
-                                  item.get());
+  std::unique_ptr<DownloadTargetInfo> target_info = RunDownloadTargetDeterminer(
+      GetPathInDownloadDir(kInitialPath), item.get());
   EXPECT_FALSE(target_info->is_filetype_handled_safely);
 
   // Register a BrowserPlugin. This should count as handling the filetype
@@ -2178,71 +2164,6 @@ TEST_F(DownloadTargetDeterminerTestWithPlugin,
   EXPECT_FALSE(target_info->is_filetype_handled_safely);
 }
 
-// Check if secure handling of filetypes is determined correctly for NPAPI
-// plugins.
-TEST_F(DownloadTargetDeterminerTestWithPlugin,
-       TargetDeterminer_CheckForSecureHandling_NPAPI) {
-  // All test cases run with GetPathInDownloadDir(kInitialPath) as the inital
-  // path.
-  const base::FilePath::CharType kInitialPath[] =
-      FILE_PATH_LITERAL("some_path/bar.txt");
-  const char kTestMIMEType[] = "application/x-example-should-not-exist";
-
-  DownloadTestCase kSecureHandlingTestCase = {
-    AUTOMATIC,
-    content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-    "http://example.com/foo.fakeext", "",
-    FILE_PATH_LITERAL(""),
-
-    FILE_PATH_LITERAL("foo.fakeext"),
-    DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-
-    EXPECT_CRDOWNLOAD
-  };
-
-  content::PluginService* plugin_service =
-      content::PluginService::GetInstance();
-
-  // Can't run this test if NPAPI isn't supported.
-  if (!plugin_service->NPAPIPluginsSupported())
-    return;
-
-  // Verify our test assumptions.
-  {
-    ForceRefreshOfPlugins();
-    std::vector<content::WebPluginInfo> info;
-    ASSERT_FALSE(plugin_service->GetPluginInfoArray(
-        GURL(), kTestMIMEType, false, &info, NULL));
-    ASSERT_EQ(0u, info.size())
-        << "Name: " << info[0].name << ", Path: " << info[0].path.value();
-  }
-
-  ON_CALL(*delegate(), GetFileMimeType(
-      GetPathInDownloadDir(FILE_PATH_LITERAL("foo.fakeext")), _))
-      .WillByDefault(WithArg<1>(
-          ScheduleCallback(kTestMIMEType)));
-  scoped_ptr<content::MockDownloadItem> item(
-      CreateActiveDownloadItem(1, kSecureHandlingTestCase));
-  scoped_ptr<DownloadTargetInfo> target_info =
-      RunDownloadTargetDeterminer(GetPathInDownloadDir(kInitialPath),
-                                  item.get());
-  EXPECT_FALSE(target_info->is_filetype_handled_safely);
-
-  // Register a NPAPI plugin. This should not count as handling the filetype
-  // securely.
-  ScopedRegisterInternalPlugin npapi_plugin(
-      plugin_service,
-      content::WebPluginInfo::PLUGIN_TYPE_NPAPI,
-      test_download_dir().AppendASCII("npapi"),
-      kTestMIMEType,
-      "fakeext");
-  EXPECT_CALL(mock_plugin_filter_, MockPluginAvailable(npapi_plugin.path()))
-      .WillRepeatedly(Return(true));
-
-  target_info = RunDownloadTargetDeterminer(
-      GetPathInDownloadDir(kInitialPath), item.get());
-  EXPECT_FALSE(target_info->is_filetype_handled_safely);
-}
-#endif  // defined(ENABLE_PLUGINS)
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 }  // namespace

@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/pickle.h"
 #include "extensions/common/user_script.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -101,6 +104,25 @@ TEST(ExtensionUserScriptTest, ExcludeUrlPattern) {
   EXPECT_TRUE(script.MatchesURL(GURL("http://business.nytimes.com")));
 }
 
+TEST(ExtensionUserScriptTest, ExcludeUrlPatternWithTrailingDot) {
+  UserScript script;
+
+  URLPattern pattern(kAllSchemes);
+  ASSERT_EQ(URLPattern::PARSE_SUCCESS, pattern.Parse("*://*/*"));
+  script.add_url_pattern(pattern);
+
+  URLPattern exclude(kAllSchemes);
+  ASSERT_EQ(URLPattern::PARSE_SUCCESS, exclude.Parse("*://mail.nytimes.com/*"));
+  script.add_exclude_url_pattern(exclude);
+
+  EXPECT_TRUE(script.MatchesURL(GURL("http://www.nytimes.com/health")));
+  EXPECT_TRUE(script.MatchesURL(GURL("http://business.nytimes.com")));
+  EXPECT_FALSE(script.MatchesURL(GURL("http://mail.nytimes.com")));
+  EXPECT_FALSE(script.MatchesURL(GURL("http://mail.nytimes.com.")));
+  EXPECT_FALSE(script.MatchesURL(GURL("http://mail.nytimes.com/login")));
+  EXPECT_FALSE(script.MatchesURL(GURL("http://mail.nytimes.com./login")));
+}
+
 TEST(ExtensionUserScriptTest, UrlPatternAndIncludeGlobs) {
   UserScript script;
 
@@ -171,15 +193,15 @@ TEST(ExtensionUserScriptTest, Pickle) {
   ASSERT_EQ(URLPattern::PARSE_SUCCESS, exclude2.Parse("https://*/*"));
 
   UserScript script1;
-  script1.js_scripts().push_back(UserScript::File(
+  script1.js_scripts().push_back(base::MakeUnique<UserScript::File>(
       base::FilePath(FILE_PATH_LITERAL("c:\\foo\\")),
       base::FilePath(FILE_PATH_LITERAL("foo.user.js")),
       GURL("chrome-extension://abc/foo.user.js")));
-  script1.css_scripts().push_back(UserScript::File(
+  script1.css_scripts().push_back(base::MakeUnique<UserScript::File>(
       base::FilePath(FILE_PATH_LITERAL("c:\\foo\\")),
       base::FilePath(FILE_PATH_LITERAL("foo.user.css")),
       GURL("chrome-extension://abc/foo.user.css")));
-  script1.css_scripts().push_back(UserScript::File(
+  script1.css_scripts().push_back(base::MakeUnique<UserScript::File>(
       base::FilePath(FILE_PATH_LITERAL("c:\\foo\\")),
       base::FilePath(FILE_PATH_LITERAL("foo2.user.css")),
       GURL("chrome-extension://abc/foo2.user.css")));
@@ -190,7 +212,7 @@ TEST(ExtensionUserScriptTest, Pickle) {
   script1.add_exclude_url_pattern(exclude1);
   script1.add_exclude_url_pattern(exclude2);
 
-  const int64 kId = 12;
+  const int64_t kId = 12;
   script1.set_id(kId);
   const std::string kExtensionId = "foo";
   HostID id(HostID::EXTENSIONS, kExtensionId);
@@ -204,11 +226,11 @@ TEST(ExtensionUserScriptTest, Pickle) {
   script2.Unpickle(pickle, &iter);
 
   EXPECT_EQ(1U, script2.js_scripts().size());
-  EXPECT_EQ(script1.js_scripts()[0].url(), script2.js_scripts()[0].url());
+  EXPECT_EQ(script1.js_scripts()[0]->url(), script2.js_scripts()[0]->url());
 
   EXPECT_EQ(2U, script2.css_scripts().size());
   for (size_t i = 0; i < script2.js_scripts().size(); ++i) {
-    EXPECT_EQ(script1.css_scripts()[i].url(), script2.css_scripts()[i].url());
+    EXPECT_EQ(script1.css_scripts()[i]->url(), script2.css_scripts()[i]->url());
   }
 
   ASSERT_EQ(script1.globs().size(), script2.globs().size());

@@ -6,7 +6,7 @@
 
 #include "ui/gl/gl_bindings.h"
 
-namespace gfx {
+namespace gl {
 
 GLFenceNV::GLFenceNV() {
   // What if either of these GL calls fails? TestFenceNV will return true.
@@ -20,6 +20,14 @@ GLFenceNV::GLFenceNV() {
   //     they are bound, in that they acquire their state upon binding.
   //     We will arbitrarily return TRUE for consistency.
   glGenFencesNV(1, &fence_);
+  ResetState();
+}
+
+bool GLFenceNV::ResetSupported() {
+  return true;
+}
+
+void GLFenceNV::ResetState() {
   glSetFenceNV(fence_, GL_ALL_COMPLETED_NV);
   DCHECK(glIsFenceNV(fence_));
   glFlush();
@@ -41,8 +49,14 @@ void GLFenceNV::ServerWait() {
 }
 
 GLFenceNV::~GLFenceNV() {
-  DCHECK(glIsFenceNV(fence_));
-  glDeleteFencesNV(1, &fence_);
+  if (fence_) {
+    DCHECK(glIsFenceNV(fence_));
+    glDeleteFencesNV(1, &fence_);
+  }
 }
 
-}  // namespace gfx
+void GLFenceNV::Invalidate() {
+  fence_ = 0;
+}
+
+}  // namespace gl

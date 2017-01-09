@@ -5,12 +5,14 @@
 #ifndef UI_VIEWS_TEST_SCOPED_VIEWS_TEST_HELPER_H_
 #define UI_VIEWS_TEST_SCOPED_VIEWS_TEST_HELPER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace views {
 
+class PlatformTestHelper;
 class TestViewsDelegate;
 class ViewsTestHelper;
 
@@ -26,7 +28,8 @@ class ScopedViewsTestHelper {
 
   // Initialize with the given TestViewsDelegate instance, after setting the
   // ContextFactory.
-  explicit ScopedViewsTestHelper(scoped_ptr<TestViewsDelegate> views_delegate);
+  explicit ScopedViewsTestHelper(
+      std::unique_ptr<TestViewsDelegate> views_delegate);
 
   ~ScopedViewsTestHelper();
 
@@ -36,9 +39,14 @@ class ScopedViewsTestHelper {
 
   TestViewsDelegate* views_delegate() { return views_delegate_.get(); };
 
+  PlatformTestHelper* platform_test_helper() {
+    return platform_test_helper_.get();
+  }
+
  private:
-  scoped_ptr<TestViewsDelegate> views_delegate_;
-  scoped_ptr<ViewsTestHelper> test_helper_;
+  std::unique_ptr<TestViewsDelegate> views_delegate_;
+  std::unique_ptr<ViewsTestHelper> test_helper_;
+  std::unique_ptr<PlatformTestHelper> platform_test_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedViewsTestHelper);
 };

@@ -6,6 +6,7 @@
 
 #include "base/i18n/time_formatting.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -13,12 +14,12 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/suggestion_answer.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/url_formatter/url_formatter.h"
-#include "grit/components_scaled_resources.h"
 #include "ui/gfx/vector_icons_public.h"
 
 namespace {
@@ -34,17 +35,15 @@ bool IsTrivialClassification(const ACMatchClassifications& classifications) {
 // |terms_prefixed_by_http_or_https|, for the input "http://a b" will be
 // ["a"].)  This suggests that the user wants a particular URL with a scheme
 // in mind, hence the caller should not consider another URL like this one
-// but with a different scheme to be a duplicate.  |languages| is used to
-// format punycoded URLs to decide if they match.
+// but with a different scheme to be a duplicate.
 bool WordMatchesURLContent(
     const std::vector<base::string16>& terms_prefixed_by_http_or_https,
-    const std::string& languages,
     const GURL& url) {
   size_t prefix_length =
       url.scheme().length() + strlen(url::kStandardSchemeSeparator);
   DCHECK_GE(url.spec().length(), prefix_length);
   const base::string16& formatted_url = url_formatter::FormatUrl(
-      url, languages, url_formatter::kFormatUrlOmitNothing,
+      url, url_formatter::kFormatUrlOmitNothing,
       net::UnescapeRule::NORMAL, nullptr, nullptr, &prefix_length);
   if (prefix_length == base::string16::npos)
     return false;
@@ -167,64 +166,8 @@ AutocompleteMatch& AutocompleteMatch::operator=(
 }
 
 // static
-int AutocompleteMatch::TypeToIcon(Type type) {
-#if !defined(OS_IOS)
-  static const int kIcons[] = {
-      IDR_OMNIBOX_HTTP,           // URL_WHAT_YOU_TYPE
-      IDR_OMNIBOX_HTTP,           // HISTORY_URL
-      IDR_OMNIBOX_HTTP,           // HISTORY_TITLE
-      IDR_OMNIBOX_HTTP,           // HISTORY_BODY
-      IDR_OMNIBOX_HTTP,           // HISTORY_KEYWORD
-      IDR_OMNIBOX_HTTP,           // NAVSUGGEST
-      IDR_OMNIBOX_SEARCH,         // SEARCH_WHAT_YOU_TYPED
-      IDR_OMNIBOX_SEARCH,         // SEARCH_HISTORY
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_ENTITY
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_TAIL
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_PERSONALIZED
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_PROFILE
-      IDR_OMNIBOX_SEARCH,         // SEARCH_OTHER_ENGINE
-      IDR_OMNIBOX_EXTENSION_APP,  // EXTENSION_APP
-      IDR_OMNIBOX_SEARCH,         // CONTACT_DEPRECATED
-      IDR_OMNIBOX_HTTP,           // BOOKMARK_TITLE
-      IDR_OMNIBOX_HTTP,           // NAVSUGGEST_PERSONALIZED
-      IDR_OMNIBOX_CALCULATOR,     // CALCULATOR
-      IDR_OMNIBOX_HTTP,           // CLIPBOARD
-      IDR_OMNIBOX_SEARCH,         // VOICE_SEARCH
-  };
-#else
-  static const int kIcons[] = {
-      IDR_OMNIBOX_HTTP,           // URL_WHAT_YOU_TYPE
-      IDR_OMNIBOX_HISTORY,        // HISTORY_URL
-      IDR_OMNIBOX_HISTORY,        // HISTORY_TITLE
-      IDR_OMNIBOX_HISTORY,        // HISTORY_BODY
-      IDR_OMNIBOX_HISTORY,        // HISTORY_KEYWORD
-      IDR_OMNIBOX_HTTP,           // NAVSUGGEST
-      IDR_OMNIBOX_SEARCH,         // SEARCH_WHAT_YOU_TYPED
-      IDR_OMNIBOX_HISTORY,        // SEARCH_HISTORY
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_ENTITY
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_TAIL
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_PERSONALIZED
-      IDR_OMNIBOX_SEARCH,         // SEARCH_SUGGEST_PROFILE
-      IDR_OMNIBOX_SEARCH,         // SEARCH_OTHER_ENGINE
-      IDR_OMNIBOX_EXTENSION_APP,  // EXTENSION_APP
-      IDR_OMNIBOX_SEARCH,         // CONTACT_DEPRECATED
-      IDR_OMNIBOX_HTTP,           // BOOKMARK_TITLE
-      IDR_OMNIBOX_HTTP,           // NAVSUGGEST_PERSONALIZED
-      IDR_OMNIBOX_CALCULATOR,     // CALCULATOR
-      IDR_OMNIBOX_HTTP,           // CLIPBOARD
-      IDR_OMNIBOX_SEARCH,         // VOICE_SEARCH
-  };
-#endif
-  static_assert(arraysize(kIcons) == AutocompleteMatchType::NUM_TYPES,
-                "icons array must have NUM_TYPES elements");
-  return kIcons[type];
-}
-
-// static
 gfx::VectorIconId AutocompleteMatch::TypeToVectorIcon(Type type) {
-#if !defined(OS_ANDROID) && !defined(OS_MACOSX) && !defined(OS_IOS)
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
   static const gfx::VectorIconId kIcons[] = {
       gfx::VectorIconId::OMNIBOX_HTTP,           // URL_WHAT_YOU_TYPE
       gfx::VectorIconId::OMNIBOX_HTTP,           // HISTORY_URL
@@ -247,6 +190,8 @@ gfx::VectorIconId AutocompleteMatch::TypeToVectorIcon(Type type) {
       gfx::VectorIconId::OMNIBOX_CALCULATOR,     // CALCULATOR
       gfx::VectorIconId::OMNIBOX_HTTP,           // CLIPBOARD
       gfx::VectorIconId::OMNIBOX_SEARCH,         // VOICE_SEARCH
+      gfx::VectorIconId::OMNIBOX_HTTP,           // PHYSICAL_WEB
+      gfx::VectorIconId::OMNIBOX_HTTP,           // PHYSICAL_WEB_OVERFLOW
   };
   static_assert(arraysize(kIcons) == AutocompleteMatchType::NUM_TYPES,
                 "icons array must have NUM_TYPES elements");
@@ -270,10 +215,8 @@ bool AutocompleteMatch::MoreRelevant(const AutocompleteMatch& elem1,
 // static
 bool AutocompleteMatch::DestinationsEqual(const AutocompleteMatch& elem1,
                                           const AutocompleteMatch& elem2) {
-  if (elem1.stripped_destination_url.is_empty() &&
-      elem2.stripped_destination_url.is_empty())
-    return false;
-  return elem1.stripped_destination_url == elem2.stripped_destination_url;
+  return !elem1.stripped_destination_url.is_empty() &&
+         (elem1.stripped_destination_url == elem2.stripped_destination_url);
 }
 
 // static
@@ -459,7 +402,6 @@ TemplateURL* AutocompleteMatch::GetTemplateURLWithKeyword(
 GURL AutocompleteMatch::GURLToStrippedGURL(
     const GURL& url,
     const AutocompleteInput& input,
-    const std::string& languages,
     TemplateURLService* template_url_service,
     const base::string16& keyword) {
   if (!url.is_valid())
@@ -510,7 +452,7 @@ GURL AutocompleteMatch::GURLToStrippedGURL(
   if (stripped_destination_url.SchemeIs(url::kHttpsScheme) &&
       (input.terms_prefixed_by_http_or_https().empty() ||
        !WordMatchesURLContent(
-           input.terms_prefixed_by_http_or_https(), languages, url))) {
+           input.terms_prefixed_by_http_or_https(), url))) {
     replacements.SetScheme(url::kHttpScheme,
                            url::Component(0, strlen(url::kHttpScheme)));
     needs_replacement = true;
@@ -524,22 +466,20 @@ GURL AutocompleteMatch::GURLToStrippedGURL(
 
 void AutocompleteMatch::ComputeStrippedDestinationURL(
     const AutocompleteInput& input,
-    const std::string& languages,
     TemplateURLService* template_url_service) {
   stripped_destination_url = GURLToStrippedGURL(
-      destination_url, input, languages, template_url_service, keyword);
+      destination_url, input, template_url_service, keyword);
 }
 
 void AutocompleteMatch::EnsureUWYTIsAllowedToBeDefault(
     const AutocompleteInput& input,
-    const std::string& languages,
     TemplateURLService* template_url_service) {
   if (!allowed_to_be_default_match) {
     const GURL& stripped_canonical_input_url =
         AutocompleteMatch::GURLToStrippedGURL(
-            input.canonicalized_url(), input, languages, template_url_service,
+            input.canonicalized_url(), input, template_url_service,
             base::string16());
-    ComputeStrippedDestinationURL(input, languages, template_url_service);
+    ComputeStrippedDestinationURL(input, template_url_service);
     allowed_to_be_default_match =
         stripped_canonical_input_url == stripped_destination_url;
   }
@@ -556,7 +496,7 @@ void AutocompleteMatch::GetKeywordUIState(
 
 base::string16 AutocompleteMatch::GetSubstitutingExplicitlyInvokedKeyword(
     TemplateURLService* template_url_service) const {
-  if (transition != ui::PAGE_TRANSITION_KEYWORD ||
+  if (!ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_KEYWORD) ||
       template_url_service == NULL) {
     return base::string16();
   }

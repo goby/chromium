@@ -8,8 +8,8 @@
 #include <set>
 
 #include "base/files/file.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/api/developer_private/entry_picker.h"
@@ -22,6 +22,7 @@
 #include "chrome/browser/extensions/pack_extension_job.h"
 #include "chrome/common/extensions/api/developer_private.h"
 #include "chrome/common/extensions/webstore_install_result.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
@@ -41,14 +42,10 @@ class EventRouter;
 class ExtensionError;
 class ExtensionInfoGenerator;
 class ExtensionRegistry;
-class ExtensionSystem;
-class ManagementPolicy;
 class ProcessManager;
-class RequirementsChecker;
 
 namespace api {
 
-class EntryPicker;
 class EntryPickerClient;
 
 }  // namespace api
@@ -130,9 +127,8 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
   void BroadcastItemStateChangedHelper(
       api::developer_private::EventType event_type,
       const std::string& extension_id,
-      scoped_ptr<ExtensionInfoGenerator> info_generator,
-      const std::vector<linked_ptr<api::developer_private::ExtensionInfo>>&
-          infos);
+      std::unique_ptr<ExtensionInfoGenerator> info_generator,
+      std::vector<api::developer_private::ExtensionInfo> infos);
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
       extension_registry_observer_;
@@ -218,7 +214,7 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
   base::FilePath last_unpacked_directory_;
 
   // Created lazily upon OnListenerAdded.
-  scoped_ptr<DeveloperPrivateEventRouter> developer_private_event_router_;
+  std::unique_ptr<DeveloperPrivateEventRouter> developer_private_event_router_;
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateAPI);
 };
@@ -260,10 +256,9 @@ class DeveloperPrivateGetItemsInfoFunction
   ResponseAction Run() override;
 
   void OnInfosGenerated(
-      const std::vector<linked_ptr<api::developer_private::ExtensionInfo>>&
-          infos);
+      std::vector<api::developer_private::ExtensionInfo> infos);
 
-  scoped_ptr<ExtensionInfoGenerator> info_generator_;
+  std::unique_ptr<ExtensionInfoGenerator> info_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetItemsInfoFunction);
 };
@@ -280,10 +275,9 @@ class DeveloperPrivateGetExtensionsInfoFunction
   ResponseAction Run() override;
 
   void OnInfosGenerated(
-      const std::vector<linked_ptr<api::developer_private::ExtensionInfo>>&
-          infos);
+      std::vector<api::developer_private::ExtensionInfo> infos);
 
-  scoped_ptr<ExtensionInfoGenerator> info_generator_;
+  std::unique_ptr<ExtensionInfoGenerator> info_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetExtensionsInfoFunction);
 };
@@ -300,10 +294,9 @@ class DeveloperPrivateGetExtensionInfoFunction
   ResponseAction Run() override;
 
   void OnInfosGenerated(
-      const std::vector<linked_ptr<api::developer_private::ExtensionInfo>>&
-          infos);
+      std::vector<api::developer_private::ExtensionInfo> infos);
 
-  scoped_ptr<ExtensionInfoGenerator> info_generator_;
+  std::unique_ptr<ExtensionInfoGenerator> info_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetExtensionInfoFunction);
 };
@@ -448,7 +441,7 @@ class DeveloperPrivatePackDirectoryFunction
 };
 
 class DeveloperPrivateIsProfileManagedFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.isProfileManaged",
                              DEVELOPERPRIVATE_ISPROFILEMANAGED);
@@ -457,7 +450,7 @@ class DeveloperPrivateIsProfileManagedFunction
   ~DeveloperPrivateIsProfileManagedFunction() override;
 
   // ExtensionFunction:
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class DeveloperPrivateLoadDirectoryFunction
@@ -530,7 +523,7 @@ class DeveloperPrivateRequestFileSourceFunction
  private:
   void Finish(const std::string& file_contents);
 
-  scoped_ptr<api::developer_private::RequestFileSource::Params> params_;
+  std::unique_ptr<api::developer_private::RequestFileSource::Params> params_;
 };
 
 class DeveloperPrivateOpenDevToolsFunction

@@ -5,11 +5,13 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_RESET_PROFILE_SETTINGS_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_RESET_PROFILE_SETTINGS_HANDLER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/profile_resetter/profile_reset_report.pb.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
 
 namespace base {
@@ -29,6 +31,10 @@ class ResetProfileSettingsHandler
     : public OptionsPageUIHandler,
       public base::SupportsWeakPtr<ResetProfileSettingsHandler> {
  public:
+  // Hash used by the Chrome Cleanup Tool when launching chrome with the reset
+  // profile settings URL.
+  static const char kCctResetSettingsHash[];
+
   ResetProfileSettingsHandler();
   ~ResetProfileSettingsHandler() override;
 
@@ -45,7 +51,9 @@ class ResetProfileSettingsHandler
   void HandleResetProfileSettings(const base::ListValue* value);
 
   // Closes the dialog once all requested settings has been reset.
-  void OnResetProfileSettingsDone(bool send_feedback);
+  void OnResetProfileSettingsDone(
+      bool send_feedback,
+      reset_report::ChromeResetReport::ResetRequestOrigin request_origin);
 
   // Called when the confirmation box appears.
   void OnShowResetProfileDialog(const base::ListValue* value);
@@ -57,18 +65,20 @@ class ResetProfileSettingsHandler
   void OnSettingsFetched();
 
   // Resets profile settings to default values. |send_settings| is true if user
-  // gave his consent to upload broken settings to Google for analysis.
-  void ResetProfile(bool send_settings);
+  // gave their consent to upload broken settings to Google for analysis.
+  void ResetProfile(
+      bool send_settings,
+      reset_report::ChromeResetReport::ResetRequestOrigin request_origin);
 
   // Sets new values for the feedback area.
   void UpdateFeedbackUI();
 
-  scoped_ptr<ProfileResetter> resetter_;
+  std::unique_ptr<ProfileResetter> resetter_;
 
-  scoped_ptr<BrandcodeConfigFetcher> config_fetcher_;
+  std::unique_ptr<BrandcodeConfigFetcher> config_fetcher_;
 
   // Snapshot of settings before profile was reseted.
-  scoped_ptr<ResettableSettingsSnapshot> setting_snapshot_;
+  std::unique_ptr<ResettableSettingsSnapshot> setting_snapshot_;
 
   // Contains Chrome brand code; empty for organic Chrome.
   std::string brandcode_;

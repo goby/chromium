@@ -6,11 +6,11 @@
 #define EXTENSIONS_BROWSER_EXTENSION_THROTTLE_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/platform_thread.h"
 #include "extensions/browser/extension_throttle_entry.h"
@@ -24,8 +24,8 @@ class ResourceThrottle;
 }
 
 namespace net {
-class BoundNetLog;
 class NetLog;
+class NetLogWithSource;
 }
 
 namespace extensions {
@@ -49,7 +49,7 @@ class ExtensionThrottleManager
 
   // Creates a content::ResourceThrottle for |request| to prevent extensions
   // from requesting a URL too often, if such a throttle is needed.
-  scoped_ptr<content::ResourceThrottle> MaybeCreateThrottle(
+  std::unique_ptr<content::ResourceThrottle> MaybeCreateThrottle(
       const net::URLRequest* request);
 
   // TODO(xunjieli): Remove this method and replace with
@@ -64,7 +64,8 @@ class ExtensionThrottleManager
   scoped_refptr<ExtensionThrottleEntryInterface> RegisterRequestUrl(
       const GURL& url);
 
-  void SetBackoffPolicyForTests(scoped_ptr<net::BackoffEntry::Policy> policy);
+  void SetBackoffPolicyForTests(
+      std::unique_ptr<net::BackoffEntry::Policy> policy);
 
   // Registers a new entry in this service and overrides the existing entry (if
   // any) for the URL. The service will hold a reference to the entry.
@@ -167,7 +168,7 @@ class ExtensionThrottleManager
   bool logged_for_localhost_disabled_;
 
   // net::NetLog to use, if configured.
-  net::BoundNetLog net_log_;
+  net::NetLogWithSource net_log_;
 
   // Valid once we've registered for network notifications.
   base::PlatformThreadId registered_from_thread_;
@@ -175,7 +176,7 @@ class ExtensionThrottleManager
   bool ignore_user_gesture_load_flag_for_tests_;
 
   // This is NULL when it is not set for tests.
-  scoped_ptr<net::BackoffEntry::Policy> backoff_policy_for_tests_;
+  std::unique_ptr<net::BackoffEntry::Policy> backoff_policy_for_tests_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionThrottleManager);
 };

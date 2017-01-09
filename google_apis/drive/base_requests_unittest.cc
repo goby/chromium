@@ -4,8 +4,13 @@
 
 #include "google_apis/drive/base_requests.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/values.h"
@@ -58,7 +63,7 @@ class FakeMultipartUploadRequest : public MultipartUploadRequestBase {
       base::SequencedTaskRunner* blocking_task_runner,
       const std::string& metadata_json,
       const std::string& content_type,
-      int64 content_length,
+      int64_t content_length,
       const base::FilePath& local_file_path,
       const FileResourceCallback& callback,
       const google_apis::ProgressCallback& progress_callback,
@@ -115,24 +120,24 @@ class BaseRequestsTest : public testing::Test {
                                     message_loop_.task_runner(),
                                     std::string() /* custom user agent */));
 
-    ASSERT_TRUE(test_server_.Start());
     test_server_.RegisterRequestHandler(
         base::Bind(&BaseRequestsTest::HandleRequest, base::Unretained(this)));
+    ASSERT_TRUE(test_server_.Start());
   }
 
-  scoped_ptr<net::test_server::HttpResponse> HandleRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
       const net::test_server::HttpRequest& request) {
-    scoped_ptr<net::test_server::BasicHttpResponse> response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> response(
         new net::test_server::BasicHttpResponse);
     response->set_code(response_code_);
     response->set_content(response_body_);
     response->set_content_type("application/json");
-    return response.Pass();
+    return std::move(response);
   }
 
   base::MessageLoopForIO message_loop_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_getter_;
-  scoped_ptr<RequestSender> sender_;
+  std::unique_ptr<RequestSender> sender_;
   net::EmbeddedTestServer test_server_;
 
   net::HttpStatusCode response_code_;
@@ -142,7 +147,7 @@ class BaseRequestsTest : public testing::Test {
 typedef BaseRequestsTest MultipartUploadRequestBaseTest;
 
 TEST_F(BaseRequestsTest, ParseValidJson) {
-  scoped_ptr<base::Value> json(ParseJson(kValidJsonString));
+  std::unique_ptr<base::Value> json(ParseJson(kValidJsonString));
 
   base::DictionaryValue* root_dict = NULL;
   ASSERT_TRUE(json);
@@ -175,7 +180,7 @@ TEST_F(BaseRequestsTest, UrlFetchRequestBaseResponseCodeOverride) {
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
   base::RunLoop run_loop;
-  sender_->StartRequestWithAuthRetry(new FakeUrlFetchRequest(
+  sender_->StartRequestWithAuthRetry(base::MakeUnique<FakeUrlFetchRequest>(
       sender_.get(),
       test_util::CreateQuitCallback(
           &run_loop, test_util::CreateCopyResultCallback(&error)),
@@ -189,15 +194,15 @@ TEST_F(BaseRequestsTest, UrlFetchRequestBaseResponseCodeOverride) {
 TEST_F(MultipartUploadRequestBaseTest, Basic) {
   response_code_ = net::HTTP_OK;
   response_body_ = "{\"kind\": \"drive#file\", \"id\": \"file_id\"}";
-  scoped_ptr<google_apis::FileResource> file;
+  std::unique_ptr<google_apis::FileResource> file;
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
   base::RunLoop run_loop;
   const base::FilePath source_path =
       google_apis::test_util::GetTestFilePath("drive/text.txt");
   std::string upload_content_type;
   std::string upload_content_data;
-  FakeMultipartUploadRequest* const multipart_request =
-      new FakeMultipartUploadRequest(
+  std::unique_ptr<FakeMultipartUploadRequest> multipart_request =
+      base::MakeUnique<FakeMultipartUploadRequest>(
           sender_->blocking_task_runner(), "{json:\"test\"}", "text/plain", 10,
           source_path,
           test_util::CreateQuitCallback(
@@ -205,10 +210,9 @@ TEST_F(MultipartUploadRequestBaseTest, Basic) {
           ProgressCallback(), test_server_.base_url(), &upload_content_type,
           &upload_content_data);
   multipart_request->SetBoundaryForTesting("TESTBOUNDARY");
-  scoped_ptr<drive::SingleBatchableDelegateRequest> request(
-      new drive::SingleBatchableDelegateRequest(
-          sender_.get(), multipart_request));
-  sender_->StartRequestWithAuthRetry(request.release());
+  sender_->StartRequestWithAuthRetry(
+      base::MakeUnique<drive::SingleBatchableDelegateRequest>(
+          sender_.get(), std::move(multipart_request)));
   run_loop.Run();
   EXPECT_EQ("multipart/related; boundary=TESTBOUNDARY", upload_content_type);
   EXPECT_EQ(

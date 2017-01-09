@@ -20,12 +20,9 @@ class CssCheckerTest(SuperMoxTestBase):
   def setUp(self):
     SuperMoxTestBase.setUp(self)
 
-    self.fake_file_name = 'fake.css'
-
     self.fake_file = self.mox.CreateMockAnything()
+    # Actual calls to NewContents() and LocalPath() are defined in each test.
     self.mox.StubOutWithMock(self.fake_file, 'LocalPath')
-    self.fake_file.LocalPath().AndReturn(self.fake_file_name)
-    # Actual calls to NewContents() are defined in each test.
     self.mox.StubOutWithMock(self.fake_file, 'NewContents')
 
     self.input_api = self.mox.CreateMockAnything()
@@ -43,13 +40,18 @@ class CssCheckerTest(SuperMoxTestBase):
     self.mox.StubOutWithMock(self.output_api, 'PresubmitNotifyResult',
                              use_mock_anything=True)
 
-  def VerifyContentsIsValid(self, contents):
+  def _create_file(self, contents, filename):
+    self.fake_file_name = filename
+    self.fake_file.LocalPath().AndReturn(self.fake_file_name)
     self.fake_file.NewContents().AndReturn(contents.splitlines())
+
+  def VerifyContentIsValid(self, contents, filename='fake.css'):
+    self._create_file(contents, filename)
     self.mox.ReplayAll()
     css_checker.CSSChecker(self.input_api, self.output_api).RunChecks()
 
-  def VerifyContentsProducesOutput(self, contents, output):
-    self.fake_file.NewContents().AndReturn(contents.splitlines())
+  def VerifyContentsProducesOutput(self, contents, output, filename='fake.css'):
+    self._create_file(contents, filename)
     self.output_api.PresubmitPromptWarning(
         self.fake_file_name + ':\n' + output.strip()).AndReturn(None)
     self.mox.ReplayAll()
@@ -95,7 +97,7 @@ class CssCheckerTest(SuperMoxTestBase):
     color: black;""")
 
   def testCssStringWithAt(self):
-    self.VerifyContentsIsValid("""
+    self.VerifyContentIsValid("""
 #logo {
   background-image: url(images/google_logo.png@2x);
 }
@@ -103,6 +105,11 @@ class CssCheckerTest(SuperMoxTestBase):
 body.alternate-logo #logo {
   -webkit-mask-image: url(images/google_logo.png@2x);
   background: none;
+  @apply(--some-variable);
+}
+
+div {
+  -webkit-margin-start: 5px;
 }
 
 .stuff1 {
@@ -132,6 +139,21 @@ div {
 - Alphabetize properties and list vendor specific (i.e. -webkit) above standard.
     border-left: 5px;
     border: 5px solid red;""")
+
+  def testCssAlphaWithVariables(self):
+    self.VerifyContentIsValid("""
+#id {
+  --zzyxx-xylophone: 3px;
+  --ignore-me: {
+    /* TODO(dbeam): fix this by creating a "sort context". If we simply strip
+     * off the mixin, the inside contents will be compared to the outside
+     * contents, which isn't what we want. */
+    visibility: hidden;
+    color: black;
+  };
+  --aardvark-animal: var(--zzyxz-xylophone);
+}
+""")
 
   def testCssBracesHaveSpaceBeforeAndNothingAfter(self):
     self.VerifyContentsProducesOutput("""
@@ -183,8 +205,9 @@ blah /* hey! */
   100% { height: 500px; }
 }
 
-#id { /* ${TemplateExpressions} should be ignored. */
-  rule: ${someValue};
+#id { /* $i18n{*} and $i18nRaw{*} should be ignored. */
+  rule: $i18n{someValue};
+  rule2: $i18nRaw{someValue};
   --css-mixin: {
     color: red;
   };
@@ -268,6 +291,16 @@ img {
 }""", """
 - Don't use data URIs in source files. Use grit instead.
     background: url( data:image/jpeg,4\/\/350|\/|3|2 );""")
+
+  def testCssNoMixinShims(self):
+    self.VerifyContentsProducesOutput("""
+:host {
+  --good-property: red;
+  --not-okay-mixin_-_not-okay-property: green;
+}""", """
+- Don't override custom properties created by Polymer's mixin shim. Set \
+mixins or documented custom properties directly.
+    --not-okay-mixin_-_not-okay-property: green;""")
 
   def testCssNoQuotesInUrl(self):
     self.VerifyContentsProducesOutput("""
@@ -427,6 +460,42 @@ body.alternate-logo #logo {
     height: 0cm;
     width: 0in;
 """)
+
+  def testHtmlInlineStyle(self):
+    self.VerifyContentsProducesOutput("""<!doctype html>
+<html>
+<head>
+  <!-- Don't warn about problems outside of style tags
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+    }
+  -->
+  <style>
+    body {
+      flex-direction:column;
+    }
+  </style>
+</head>
+</html>""", """
+- Colons (:) should have a space after them.
+    flex-direction:column;
+""", filename='test.html')
+
+  def testHtmlIncludeStyle(self):
+    self.VerifyContentsProducesOutput("""<!doctype html>
+<html>
+  <style include="fake-shared-css">
+    body {
+      flex-direction:column;
+    }
+  </style>
+</head>
+</html>""", """
+- Colons (:) should have a space after them.
+    flex-direction:column;
+""", filename='test.html')
 
 
 if __name__ == '__main__':

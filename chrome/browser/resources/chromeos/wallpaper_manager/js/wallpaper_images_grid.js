@@ -163,8 +163,12 @@ cr.define('wallpapers', function() {
             }
           });
           break;
+        case Constants.WallpaperSourceEnum.Daily:
+        case Constants.WallpaperSourceEnum.ThirdParty:
         default:
-          console.error('Unsupported image source.');
+          // It's impossible to manually select a DAILY or THIRDPARTY type
+          // wallpaper.
+          console.error('Unsupported wallpaper source.');
           // Delay dispatching the completion callback until all items have
           // begun loading and are tracked.
           window.setTimeout(this.callback_.bind(this, this.dataModelId_), 0);
@@ -204,7 +208,7 @@ cr.define('wallpapers', function() {
 
     /** @override */
     handleKeyDown: function(e) {
-      if (e.keyIdentifier == 'Enter')
+      if (e.key == 'Enter')
         cr.dispatchSimpleEvent(this.grid_, 'activate');
       else
         GridSelectionController.prototype.handleKeyDown.call(this, e);

@@ -4,8 +4,14 @@
 
 #include "ppapi/proxy/nacl_message_scanner.h"
 
+#include <stddef.h>
+
+#include <tuple>
+#include <utility>
 #include <vector>
+
 #include "base/bind.h"
+#include "build/build_config.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
 #include "ppapi/proxy/ppapi_messages.h"
@@ -39,7 +45,7 @@ struct ScanningResults {
   // check for NULL before writing to it. In some cases, a ScanParam overload
   // may set this to NULL when it can determine that there are no parameters
   // that need conversion. (See the ResourceMessageReplyParams overload.)
-  scoped_ptr<IPC::Message> new_msg;
+  std::unique_ptr<IPC::Message> new_msg;
   // Resource id for resource messages. Save this when scanning resource replies
   // so when we audit the nested message, we know which resource it is for.
   PP_Resource pp_resource;
@@ -50,14 +56,13 @@ struct ScanningResults {
 
 void WriteHandle(int handle_index,
                  const SerializedHandle& handle,
-                 IPC::Message* msg) {
+                 base::Pickle* msg) {
   SerializedHandle::WriteHeader(handle.header(), msg);
 
   if (handle.type() != SerializedHandle::INVALID) {
     // Now write the handle itself in POSIX style.
     // See ParamTraits<FileDescriptor>::Read for where these values are read.
     msg->WriteBool(true);  // valid == true
-    msg->WriteBool(false);  // brokerable == false
     msg->WriteInt(handle_index);
   }
 }
@@ -73,7 +78,7 @@ void ScanParam(const SerializedHandle& handle, ScanningResults* results) {
 }
 
 void HandleWriter(int* handle_index,
-                  IPC::Message* m,
+                  base::Pickle* m,
                   const SerializedHandle& handle) {
   WriteHandle((*handle_index)++, handle, m);
 }
@@ -138,6 +143,15 @@ void ScanParam(const IPC::Message& param, ScanningResults* results) {
     IPC::WriteParam(results->new_msg.get(), param);
 }
 
+template <class T>
+void ScanParam(const std::vector<T>& vec, ScanningResults* results) {
+  if (results->new_msg)
+    IPC::WriteParam(results->new_msg.get(), static_cast<int>(vec.size()));
+  for (const T& element : vec) {
+    ScanParam(element, results);
+  }
+}
+
 // Overload to match all other types. If we need to rewrite the message, write
 // the parameter.
 template <class T>
@@ -150,46 +164,59 @@ void ScanParam(const T& param, ScanningResults* results) {
 // The idea is to scan elements in the tuple which require special handling,
 // and write them into the |results| struct.
 template <class A>
-void ScanTuple(const base::Tuple<A>& t1, ScanningResults* results) {
-  ScanParam(base::get<0>(t1), results);
+void ScanTuple(const std::tuple<A>& t1, ScanningResults* results) {
+  ScanParam(std::get<0>(t1), results);
 }
 template <class A, class B>
-void ScanTuple(const base::Tuple<A, B>& t1, ScanningResults* results) {
-  ScanParam(base::get<0>(t1), results);
-  ScanParam(base::get<1>(t1), results);
+void ScanTuple(const std::tuple<A, B>& t1, ScanningResults* results) {
+  ScanParam(std::get<0>(t1), results);
+  ScanParam(std::get<1>(t1), results);
 }
 template <class A, class B, class C>
-void ScanTuple(const base::Tuple<A, B, C>& t1, ScanningResults* results) {
-  ScanParam(base::get<0>(t1), results);
-  ScanParam(base::get<1>(t1), results);
-  ScanParam(base::get<2>(t1), results);
+void ScanTuple(const std::tuple<A, B, C>& t1, ScanningResults* results) {
+  ScanParam(std::get<0>(t1), results);
+  ScanParam(std::get<1>(t1), results);
+  ScanParam(std::get<2>(t1), results);
 }
 template <class A, class B, class C, class D>
-void ScanTuple(const base::Tuple<A, B, C, D>& t1, ScanningResults* results) {
-  ScanParam(base::get<0>(t1), results);
-  ScanParam(base::get<1>(t1), results);
-  ScanParam(base::get<2>(t1), results);
-  ScanParam(base::get<3>(t1), results);
+void ScanTuple(const std::tuple<A, B, C, D>& t1, ScanningResults* results) {
+  ScanParam(std::get<0>(t1), results);
+  ScanParam(std::get<1>(t1), results);
+  ScanParam(std::get<2>(t1), results);
+  ScanParam(std::get<3>(t1), results);
 }
 
 template <class MessageType>
 class MessageScannerImpl {
  public:
   explicit MessageScannerImpl(const IPC::Message* msg)
+      // The cast below is invalid. See https://crbug.com/520760.
       : msg_(static_cast<const MessageType*>(msg)) {
   }
   bool ScanMessage(ScanningResults* results) {
-    typename base::TupleTypes<typename MessageType::Schema::Param>::ValueTuple
-        params;
+    typename MessageType::Param params;
     if (!MessageType::Read(msg_, &params))
       return false;
     ScanTuple(params, results);
     return true;
   }
 
+  bool ScanSyncMessage(ScanningResults* results) {
+    typename MessageType::SendParam params;
+    if (!MessageType::ReadSendParam(msg_, &params))
+      return false;
+    // If we need to rewrite the message, write the message id first.
+    if (results->new_msg) {
+      results->new_msg->set_sync();
+      int id = IPC::SyncMessage::GetMessageId(*msg_);
+      results->new_msg->WriteInt(id);
+    }
+    ScanTuple(params, results);
+    return true;
+  }
+
   bool ScanReply(ScanningResults* results) {
-    typename base::TupleTypes<typename MessageType::Schema::ReplyParam>
-        ::ValueTuple params;
+    typename MessageType::ReplyParam params;
     if (!MessageType::ReadReplyParam(msg_, &params))
       return false;
     // If we need to rewrite the message, write the message id first.
@@ -201,8 +228,6 @@ class MessageScannerImpl {
     ScanTuple(params, results);
     return true;
   }
-  // TODO(dmichael): Add ScanSyncMessage for outgoing sync messages, if we ever
-  //                 need to scan those.
 
  private:
   const MessageType* msg_;
@@ -218,6 +243,17 @@ class MessageScannerImpl {
               new IPC::Message(msg.routing_id(), msg.type(), \
                                IPC::Message::PRIORITY_NORMAL)); \
         if (!scanner.ScanMessage(&results)) \
+          return false; \
+        break; \
+      }
+#define CASE_FOR_SYNC_MESSAGE(MESSAGE_TYPE) \
+      case MESSAGE_TYPE::ID: { \
+        MessageScannerImpl<MESSAGE_TYPE> scanner(&msg); \
+        if (rewrite_msg) \
+          results.new_msg.reset( \
+              new IPC::Message(msg.routing_id(), msg.type(), \
+                               IPC::Message::PRIORITY_NORMAL)); \
+        if (!scanner.ScanSyncMessage(&results)) \
           return false; \
         break; \
       }
@@ -301,7 +337,7 @@ bool NaClMessageScanner::ScanMessage(
     const IPC::Message& msg,
     uint32_t type,
     std::vector<SerializedHandle>* handles,
-    scoped_ptr<IPC::Message>* new_msg_ptr) {
+    std::unique_ptr<IPC::Message>* new_msg_ptr) {
   DCHECK(handles);
   DCHECK(handles->empty());
   DCHECK(new_msg_ptr);
@@ -326,6 +362,9 @@ bool NaClMessageScanner::ScanMessage(
     CASE_FOR_MESSAGE(PpapiMsg_PPBAudio_NotifyAudioStreamCreated)
     CASE_FOR_MESSAGE(PpapiMsg_PPPMessaging_HandleMessage)
     CASE_FOR_MESSAGE(PpapiPluginMsg_ResourceReply)
+    CASE_FOR_SYNC_MESSAGE(PpapiMsg_PPPMessageHandler_HandleBlockingMessage)
+    CASE_FOR_SYNC_MESSAGE(PpapiMsg_PnaclTranslatorCompileInit)
+    CASE_FOR_SYNC_MESSAGE(PpapiMsg_PnaclTranslatorLink)
     CASE_FOR_REPLY(PpapiHostMsg_OpenResource)
     CASE_FOR_REPLY(PpapiHostMsg_PPBGraphics3D_Create)
     CASE_FOR_REPLY(PpapiHostMsg_PPBGraphics3D_CreateTransferBuffer)
@@ -342,14 +381,14 @@ bool NaClMessageScanner::ScanMessage(
   // we ever add new param types that also require rewriting.
   if (!results.handles.empty()) {
     handles->swap(results.handles);
-    *new_msg_ptr = results.new_msg.Pass();
+    *new_msg_ptr = std::move(results.new_msg);
   }
   return true;
 }
 
 void NaClMessageScanner::ScanUntrustedMessage(
     const IPC::Message& untrusted_msg,
-    scoped_ptr<IPC::Message>* new_msg_ptr) {
+    std::unique_ptr<IPC::Message>* new_msg_ptr) {
   // Audit FileIO and FileSystem messages to ensure that the plugin doesn't
   // exceed its file quota. If we find the message is malformed, just pass it
   // through - we only care about well formed messages to the host.

@@ -4,6 +4,8 @@
 
 #include "chrome/test/remoting/remote_desktop_browsertest.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
@@ -28,6 +30,7 @@
 #include "extensions/common/extension_set.h"
 #include "extensions/common/switches.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/events/keycodes/dom/keycode_converter.h"
 
 namespace remoting {
 
@@ -74,9 +77,9 @@ void RemoteDesktopBrowserTest::VerifyInternetAccess() {
 void RemoteDesktopBrowserTest::OpenClientBrowserPage() {
   // Open the client browser page in a new tab
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(),
-      GURL(http_server() + "/client.html"),
-      NEW_FOREGROUND_TAB, ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
+      browser(), GURL(http_server() + "/client.html"),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
 
   // Save this web content for later reference
   client_web_content_ = browser()->tab_strip_model()->GetActiveWebContents();
@@ -192,7 +195,7 @@ content::WebContents* RemoteDesktopBrowserTest::LaunchChromotingApp(
       defer_start);
 
   if (is_platform_app()) {
-    window_open_disposition = NEW_WINDOW;
+    window_open_disposition = WindowOpenDisposition::NEW_WINDOW;
   }
 
   OpenApplication(AppLaunchParams(browser()->profile(), extension_,
@@ -208,7 +211,8 @@ content::WebContents* RemoteDesktopBrowserTest::LaunchChromotingApp(
   // The active WebContents instance should be the source of the LOAD_STOP
   // notification.
   content::NavigationController* controller =
-      content::Source<content::NavigationController>(observer.source()).ptr();
+      content::Source<content::NavigationController>(
+          observer.matched_source()).ptr();
 
   content::WebContents* web_contents = controller->GetWebContents();
   _ASSERT_TRUE(web_contents);
@@ -233,7 +237,7 @@ content::WebContents* RemoteDesktopBrowserTest::LaunchChromotingApp(
 
 content::WebContents* RemoteDesktopBrowserTest::LaunchChromotingApp(
     bool defer_start) {
-  return LaunchChromotingApp(defer_start, CURRENT_TAB);
+  return LaunchChromotingApp(defer_start, WindowOpenDisposition::CURRENT_TAB);
 }
 
 void RemoteDesktopBrowserTest::StartChromotingApp() {
@@ -261,8 +265,8 @@ void RemoteDesktopBrowserTest::Authorize() {
   observer.Wait();
 
   content::NavigationController* controller =
-      content::Source<content::NavigationController>(observer.source()).ptr();
-
+      content::Source<content::NavigationController>(
+          observer.matched_source()).ptr();
   content::WebContents* web_contents = controller->GetWebContents();
   _ASSERT_TRUE(web_contents);
 
@@ -311,16 +315,24 @@ void RemoteDesktopBrowserTest::Approve() {
 
     // There is nothing for the V2 app to approve because the chromoting test
     // account has already been granted permissions.
+    //
     // TODO(weitaosu): Revoke the permission at the beginning of the test so
     // that we can test first-time experience here.
+    //
+    // TODO(jamiewalch): Remove the elapsed time logging once this has run a few
+    // times on the bots.
+    base::Time start = base::Time::Now();
     ConditionalTimeoutWaiter waiter(
-        base::TimeDelta::FromSeconds(7),
+        base::TimeDelta::FromSeconds(10),
         base::TimeDelta::FromSeconds(1),
         base::Bind(
             &RemoteDesktopBrowserTest::IsAuthenticatedInWindow,
             active_web_contents()));
-
-    ASSERT_TRUE(waiter.Wait());
+    bool result = waiter.Wait();
+    base::TimeDelta elapsed = base::Time::Now() - start;
+    LOG(INFO) << "*** IsAuthenticatedInWindow took "
+              << elapsed.InSeconds() << "s";
+    ASSERT_TRUE(result);
   } else {
     ASSERT_EQ("accounts.google.com", GetCurrentURL().host());
 
@@ -394,34 +406,34 @@ void RemoteDesktopBrowserTest::DisconnectMe2Me() {
 
 void RemoteDesktopBrowserTest::SimulateKeyPressWithCode(
     ui::KeyboardCode keyCode,
-    const std::string& code) {
-  SimulateKeyPressWithCode(keyCode, code, false, false, false, false);
+    const std::string& codeStr) {
+  ui::DomCode code = ui::KeycodeConverter::CodeStringToDomCode(codeStr);
+  SimulateKeyPressWithCode(ui::DomKey(), code, keyCode, false, false, false,
+                           false);
 }
 
 void RemoteDesktopBrowserTest::SimulateKeyPressWithCode(
+    ui::DomKey key,
+    ui::DomCode code,
     ui::KeyboardCode keyCode,
-    const std::string& code,
     bool control,
     bool shift,
     bool alt,
     bool command) {
-  content::SimulateKeyPressWithCode(
-      active_web_contents(),
-      keyCode,
-      code,
-      control,
-      shift,
-      alt,
-      command);
+  content::SimulateKeyPress(active_web_contents(), key, code, keyCode, control,
+                            shift, alt, command);
 }
 
 void RemoteDesktopBrowserTest::SimulateCharInput(char c) {
-  const char* code;
+  const char* codeStr;
   ui::KeyboardCode keyboard_code;
   bool shift;
-  GetKeyValuesFromChar(c, &code, &keyboard_code, &shift);
-  ASSERT_TRUE(code != NULL);
-  SimulateKeyPressWithCode(keyboard_code, code, false, shift, false, false);
+  GetKeyValuesFromChar(c, &codeStr, &keyboard_code, &shift);
+  ui::DomKey key = ui::DomKey::FromCharacter(c);
+  ASSERT_TRUE(codeStr != NULL);
+  ui::DomCode code = ui::KeycodeConverter::CodeStringToDomCode(codeStr);
+  SimulateKeyPressWithCode(key, code, keyboard_code, false, shift, false,
+                           false);
 }
 
 void RemoteDesktopBrowserTest::SimulateStringInput(const std::string& input) {
@@ -430,7 +442,7 @@ void RemoteDesktopBrowserTest::SimulateStringInput(const std::string& input) {
 }
 
 void RemoteDesktopBrowserTest::SimulateMouseLeftClickAt(int x, int y) {
-  SimulateMouseClickAt(0, blink::WebMouseEvent::ButtonLeft, x, y);
+  SimulateMouseClickAt(0, blink::WebMouseEvent::Button::Left, x, y);
 }
 
 void RemoteDesktopBrowserTest::SimulateMouseClickAt(
@@ -548,7 +560,8 @@ void RemoteDesktopBrowserTest::ConnectToLocalHost(bool remember_pin) {
   ConditionalTimeoutWaiter waiter(
         base::TimeDelta::FromSeconds(5),
         base::TimeDelta::FromMilliseconds(500),
-        base::Bind(&RemoteDesktopBrowserTest::IsLocalHostReady, this));
+        base::Bind(&RemoteDesktopBrowserTest::IsLocalHostReady,
+                   base::Unretained(this)));
   EXPECT_TRUE(waiter.Wait());
 
   // Verify that the local host is online.
@@ -576,7 +589,8 @@ void RemoteDesktopBrowserTest::ConnectToRemoteHost(
   ConditionalTimeoutWaiter waiter(
         base::TimeDelta::FromSeconds(5),
         base::TimeDelta::FromMilliseconds(500),
-        base::Bind(&RemoteDesktopBrowserTest::IsHostListReady, this));
+        base::Bind(&RemoteDesktopBrowserTest::IsHostListReady,
+                   base::Unretained(this)));
   EXPECT_TRUE(waiter.Wait());
 
   std::string host_id = ExecuteScriptAndExtractString(
@@ -585,10 +599,13 @@ void RemoteDesktopBrowserTest::ConnectToRemoteHost(
   EXPECT_FALSE(host_id.empty());
   std::string element_id = "host_" + host_id;
 
-  // Verify the host is online.
-  std::string host_div_class = ExecuteScriptAndExtractString(
-      "document.getElementById('" + element_id + "').parentNode.className");
-  EXPECT_NE(std::string::npos, host_div_class.find("host-online"));
+  // Wait for the hosts to be online. Try 3 times each spanning 20 seconds
+  // successively for 60 seconds.
+  ConditionalTimeoutWaiter hostOnlineWaiter(
+      base::TimeDelta::FromSeconds(60), base::TimeDelta::FromSeconds(20),
+      base::Bind(&RemoteDesktopBrowserTest::IsHostOnline,
+                 base::Unretained(this), host_id));
+  EXPECT_TRUE(hostOnlineWaiter.Wait());
 
   ClickOnControl(element_id);
 
@@ -730,7 +747,7 @@ void RemoteDesktopBrowserTest::RunJavaScriptTest(
 
   // Read in the JSON
   base::JSONReader reader;
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       reader.Read(result, base::JSON_ALLOW_TRAILING_COMMAS);
 
   // Convert to dictionary
@@ -781,7 +798,8 @@ void RemoteDesktopBrowserTest::EnterPin(const std::string& pin,
   ConditionalTimeoutWaiter waiter(
       base::TimeDelta::FromSeconds(30),
       base::TimeDelta::FromSeconds(1),
-      base::Bind(&RemoteDesktopBrowserTest::IsPinFormVisible, this));
+      base::Bind(&RemoteDesktopBrowserTest::IsPinFormVisible,
+                 base::Unretained(this)));
   EXPECT_TRUE(waiter.Wait());
 
   ExecuteScript(
@@ -807,13 +825,26 @@ void RemoteDesktopBrowserTest::WaitForConnection() {
   ConditionalTimeoutWaiter waiter(
       base::TimeDelta::FromSeconds(30),
       base::TimeDelta::FromSeconds(1),
-      base::Bind(&RemoteDesktopBrowserTest::IsSessionConnected, this));
+      base::Bind(&RemoteDesktopBrowserTest::IsSessionConnected,
+                 base::Unretained(this)));
   EXPECT_TRUE(waiter.Wait());
 
   // The client is not yet ready to take input when the session state becomes
   // CONNECTED. Wait for 2 seconds for the client to become ready.
   // TODO(weitaosu): Find a way to detect when the client is truly ready.
   TimeoutWaiter(base::TimeDelta::FromSeconds(2)).Wait();
+}
+
+bool RemoteDesktopBrowserTest::IsHostOnline(const std::string& host_id) {
+
+  ExecuteScript("remoting.hostList.refreshAndDisplay()");
+
+ // Verify the host is online.
+  std::string element_id = "host_" + host_id;
+  std::string host_div_class = ExecuteScriptAndExtractString(
+      "document.getElementById('" + element_id + "').parentNode.className");
+
+  return (std::string::npos != host_div_class.find("host-online"));
 }
 
 bool RemoteDesktopBrowserTest::IsLocalHostReady() {
@@ -859,7 +890,7 @@ void RemoteDesktopBrowserTest::SetUserNameAndPassword(
   ASSERT_TRUE(base::ReadFileToString(absolute_path, &accounts_info));
 
   // Get the root dictionary from the input json file contents.
-  scoped_ptr<base::Value> root =
+  std::unique_ptr<base::Value> root =
       base::JSONReader::Read(accounts_info, base::JSON_ALLOW_TRAILING_COMMAS);
 
   const base::DictionaryValue* root_dict = NULL;
@@ -906,7 +937,8 @@ void RemoteDesktopBrowserTest::DisableRemoteConnection() {
   ConditionalTimeoutWaiter hostReadyWaiter(
         base::TimeDelta::FromSeconds(5),
         base::TimeDelta::FromMilliseconds(500),
-        base::Bind(&RemoteDesktopBrowserTest::IsLocalHostReady, this));
+        base::Bind(&RemoteDesktopBrowserTest::IsLocalHostReady,
+                   base::Unretained(this)));
   EXPECT_TRUE(hostReadyWaiter.Wait());
 
   ClickOnControl("stop-daemon");
@@ -915,7 +947,8 @@ void RemoteDesktopBrowserTest::DisableRemoteConnection() {
           base::TimeDelta::FromSeconds(30),
           base::TimeDelta::FromMilliseconds(500),
           base::Bind(&RemoteDesktopBrowserTest::IsAppModeEqualTo,
-                     this, "remoting.AppMode.HOST_SETUP_DONE"));
+                     base::Unretained(this),
+                     "remoting.AppMode.HOST_SETUP_DONE"));
   EXPECT_TRUE(setupDoneWaiter.Wait());
 
   ClickOnControl("host-config-done-dismiss");
@@ -924,7 +957,8 @@ void RemoteDesktopBrowserTest::DisableRemoteConnection() {
           base::TimeDelta::FromSeconds(5),
           base::TimeDelta::FromMilliseconds(500),
           base::Bind(&RemoteDesktopBrowserTest::IsAppModeEqualTo,
-                     this, "remoting.AppMode.HOME"));
+                     base::Unretained(this),
+                     "remoting.AppMode.HOME"));
   EXPECT_TRUE(homeWaiter.Wait());
 }
 

@@ -26,7 +26,6 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/Document.h"
-#include "wtf/PassRefPtr.h"
 
 namespace blink {
 
@@ -34,49 +33,52 @@ class Document;
 class DocumentInit;
 class DocumentType;
 class ExceptionState;
-class LocalFrame;
 class HTMLDocument;
-class KURL;
 class XMLDocument;
 
-class CORE_EXPORT DOMImplementation final : public NoBaseWillBeGarbageCollected<DOMImplementation>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-    USING_FAST_MALLOC_WILL_BE_REMOVED(DOMImplementation);
-public:
-    static PassOwnPtrWillBeRawPtr<DOMImplementation> create(Document& document)
-    {
-        return adoptPtrWillBeNoop(new DOMImplementation(document));
-    }
+class CORE_EXPORT DOMImplementation final
+    : public GarbageCollected<DOMImplementation>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-#if !ENABLE(OILPAN)
-    void ref() { m_document->ref(); }
-    void deref() { m_document->deref(); }
-#endif
-    Document& document() const { return *m_document; }
+ public:
+  static DOMImplementation* create(Document& document) {
+    return new DOMImplementation(document);
+  }
 
-    // DOM methods & attributes for DOMImplementation
-    bool hasFeature() { return true; }
-    PassRefPtrWillBeRawPtr<DocumentType> createDocumentType(const AtomicString& qualifiedName, const String& publicId, const String& systemId, ExceptionState&);
-    PassRefPtrWillBeRawPtr<XMLDocument> createDocument(const AtomicString& namespaceURI, const AtomicString& qualifiedName, DocumentType*, ExceptionState&);
+  Document& document() const { return *m_document; }
 
-    // From the HTMLDOMImplementation interface
-    PassRefPtrWillBeRawPtr<HTMLDocument> createHTMLDocument(const String& title);
+  // DOM methods & attributes for DOMImplementation
+  bool hasFeature() { return true; }
+  DocumentType* createDocumentType(const AtomicString& qualifiedName,
+                                   const String& publicId,
+                                   const String& systemId,
+                                   ExceptionState&);
+  XMLDocument* createDocument(const AtomicString& namespaceURI,
+                              const AtomicString& qualifiedName,
+                              DocumentType*,
+                              ExceptionState&);
 
-    // Other methods (not part of DOM)
-    static PassRefPtrWillBeRawPtr<Document> createDocument(const String& mimeType, const DocumentInit&, bool inViewSourceMode);
+  // From the HTMLDOMImplementation interface
+  HTMLDocument* createHTMLDocument(const String& title);
 
-    static bool isXMLMIMEType(const String&);
-    static bool isTextMIMEType(const String&);
-    static bool isJSONMIMEType(const String&);
+  // Other methods (not part of DOM)
+  static Document* createDocument(const String& mimeType,
+                                  const DocumentInit&,
+                                  bool inViewSourceMode);
 
-    DECLARE_TRACE();
+  static bool isXMLMIMEType(const String&);
+  static bool isTextMIMEType(const String&);
+  static bool isJSONMIMEType(const String&);
 
-private:
-    explicit DOMImplementation(Document&);
+  DECLARE_TRACE();
 
-    RawPtrWillBeMember<Document> m_document;
+ private:
+  explicit DOMImplementation(Document&);
+
+  Member<Document> m_document;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DOMImplementation_h
+#endif  // DOMImplementation_h

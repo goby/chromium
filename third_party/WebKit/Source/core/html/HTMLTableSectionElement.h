@@ -33,30 +33,30 @@ namespace blink {
 class ExceptionState;
 
 class HTMLTableSectionElement final : public HTMLTablePartElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    DECLARE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLTableSectionElement);
+  DEFINE_WRAPPERTYPEINFO();
 
-    PassRefPtrWillBeRawPtr<HTMLElement> insertRow(int index, ExceptionState&);
-    void deleteRow(int index, ExceptionState&);
+ public:
+  DECLARE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLTableSectionElement);
 
-    int numRows() const;
+  HTMLElement* insertRow(int index, ExceptionState&);
+  void deleteRow(int index, ExceptionState&);
 
-    PassRefPtrWillBeRawPtr<HTMLCollection> rows();
+  HTMLCollection* rows();
 
-private:
-    HTMLTableSectionElement(const QualifiedName& tagName, Document&);
+ private:
+  HTMLTableSectionElement(const QualifiedName& tagName, Document&);
 
-    const StylePropertySet* additionalPresentationAttributeStyle() override;
+  const StylePropertySet* additionalPresentationAttributeStyle() override;
 };
 
-inline bool isHTMLTableSectionElement(const HTMLElement& element)
-{
-    return element.hasTagName(HTMLNames::tbodyTag) || element.hasTagName(HTMLNames::tfootTag) || element.hasTagName(HTMLNames::theadTag);
+inline bool isHTMLTableSectionElement(const HTMLElement& element) {
+  return element.hasTagName(HTMLNames::tbodyTag) ||
+         element.hasTagName(HTMLNames::tfootTag) ||
+         element.hasTagName(HTMLNames::theadTag);
 }
 
 DEFINE_HTMLELEMENT_TYPE_CASTS_WITH_FUNCTION(HTMLTableSectionElement);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLTableSectionElement_h
+#endif  // HTMLTableSectionElement_h

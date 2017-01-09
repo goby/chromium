@@ -5,25 +5,20 @@
 #ifndef CC_TEST_LAYER_TREE_PIXEL_TEST_H_
 #define CC_TEST_LAYER_TREE_PIXEL_TEST_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/resources/single_release_callback.h"
 #include "cc/test/layer_tree_test.h"
 #include "ui/gl/gl_implementation.h"
 
 class SkBitmap;
 
-namespace gpu {
-class GLInProcessContext;
-}
-
 namespace cc {
 class CopyOutputRequest;
 class CopyOutputResult;
-class LayerTreeHost;
 class PixelComparator;
 class SolidColorLayer;
 class TextureLayer;
@@ -40,12 +35,16 @@ class LayerTreePixelTest : public LayerTreeTest {
   LayerTreePixelTest();
   ~LayerTreePixelTest() override;
 
-  scoped_ptr<OutputSurface> CreateOutputSurface() override;
-  void WillCommitCompleteOnThread(LayerTreeHostImpl* impl) override;
+  // LayerTreeTest overrides.
+  std::unique_ptr<TestCompositorFrameSink> CreateCompositorFrameSink(
+      scoped_refptr<ContextProvider> compositor_context_provider,
+      scoped_refptr<ContextProvider> worker_context_provider) override;
+  std::unique_ptr<OutputSurface> CreateDisplayOutputSurfaceOnThread(
+      scoped_refptr<ContextProvider> compositor_context_provider) override;
 
-  virtual scoped_ptr<CopyOutputRequest> CreateCopyOutputRequest();
+  virtual std::unique_ptr<CopyOutputRequest> CreateCopyOutputRequest();
 
-  void ReadbackResult(scoped_ptr<CopyOutputResult> result);
+  void ReadbackResult(std::unique_ptr<CopyOutputResult> result);
 
   void BeginTest() override;
   void SetupTree() override;
@@ -75,13 +74,16 @@ class LayerTreePixelTest : public LayerTreeTest {
                                       Layer* target,
                                       base::FilePath file_name);
 
-  scoped_ptr<SkBitmap> CopyTextureMailboxToBitmap(
+  std::unique_ptr<SkBitmap> CopyTextureMailboxToBitmap(
       const gfx::Size& size,
       const TextureMailbox& texture_mailbox);
 
   void Finish();
 
-  void set_enlarge_texture_amount(const gfx::Vector2d& enlarge_texture_amount) {
+  // Allow tests to enlarge the backing texture for a non-root render pass, to
+  // simulate reusing a larger texture from a previous frame for a new
+  // render pass. This should be called before the output surface is bound.
+  void set_enlarge_texture_amount(const gfx::Size& enlarge_texture_amount) {
     enlarge_texture_amount_ = enlarge_texture_amount;
   }
 
@@ -90,16 +92,16 @@ class LayerTreePixelTest : public LayerTreeTest {
   static const SkColor kCSSBrown = 0xffa52a2a;
   static const SkColor kCSSGreen = 0xff008000;
 
-  gfx::DisableNullDrawGLBindings enable_pixel_output_;
-  scoped_ptr<PixelComparator> pixel_comparator_;
+  gl::DisableNullDrawGLBindings enable_pixel_output_;
+  std::unique_ptr<PixelComparator> pixel_comparator_;
   PixelTestType test_type_;
   scoped_refptr<Layer> content_root_;
   Layer* readback_target_;
   base::FilePath ref_file_;
-  scoped_ptr<SkBitmap> result_bitmap_;
+  std::unique_ptr<SkBitmap> result_bitmap_;
   std::vector<scoped_refptr<TextureLayer>> texture_layers_;
   int pending_texture_mailbox_callbacks_;
-  gfx::Vector2d enlarge_texture_amount_;
+  gfx::Size enlarge_texture_amount_;
 };
 
 }  // namespace cc

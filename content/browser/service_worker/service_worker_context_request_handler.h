@@ -5,6 +5,9 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_CONTEXT_REQUEST_HANDLER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_CONTEXT_REQUEST_HANDLER_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "content/browser/service_worker/service_worker_request_handler.h"
 
 namespace content {
@@ -29,11 +32,9 @@ class CONTENT_EXPORT ServiceWorkerContextRequestHandler
       net::NetworkDelegate* network_delegate,
       ResourceContext* resource_context) override;
 
-  void GetExtraResponseInfo(ResourceResponseInfo* response_info) const override;
-
  private:
   bool ShouldAddToScriptCache(const GURL& url);
-  bool ShouldReadFromScriptCache(const GURL& url, int64* resource_id_out);
+  bool ShouldReadFromScriptCache(const GURL& url, int64_t* resource_id_out);
 
   scoped_refptr<ServiceWorkerVersion> version_;
 

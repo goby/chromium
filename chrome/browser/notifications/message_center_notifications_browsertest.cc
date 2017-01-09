@@ -6,19 +6,22 @@
 #include <string>
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/lifetime/keep_alive_registry.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
 #include "chrome/browser/notifications/message_center_notification_manager.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/test_switches.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_switches.h"
 #include "ui/message_center/message_center_types.h"
@@ -144,13 +147,6 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, RetrieveBaseParts) {
 }
 
 IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, BasicAddCancel) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   // Someone may create system notifications like "you're in multi-profile
   // mode..." or something which may change the expectation.
   // TODO(mukai): move this to SetUpOnMainThread() after fixing the side-effect
@@ -163,13 +159,6 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, BasicAddCancel) {
 }
 
 IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, BasicDelegate) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   TestDelegate* delegate;
   manager()->Add(CreateTestNotification("hey", &delegate), profile());
   // Verify that delegate accumulated correct log of events.
@@ -181,13 +170,6 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, BasicDelegate) {
 }
 
 IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, ButtonClickedDelegate) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   TestDelegate* delegate;
   manager()->Add(CreateTestNotification("n", &delegate), profile());
   const std::string notification_id =
@@ -200,13 +182,6 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, ButtonClickedDelegate) {
 
 IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest,
                        UpdateExistingNotification) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   TestDelegate* delegate;
   manager()->Add(CreateTestNotification("n", &delegate), profile());
   TestDelegate* delegate2;
@@ -215,6 +190,32 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest,
   manager()->CancelById("n", NotificationUIManager::GetProfileID(profile()));
   EXPECT_EQ("Display_", delegate->log());
   EXPECT_EQ("Close_programmatically_", delegate2->log());
+
+  delegate->Release();
+  delegate2->Release();
+}
+
+IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest, VerifyKeepAlives) {
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::NOTIFICATION));
+
+  TestDelegate* delegate;
+  manager()->Add(CreateTestNotification("a", &delegate), profile());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::NOTIFICATION));
+
+  TestDelegate* delegate2;
+  manager()->Add(CreateRichTestNotification("b", &delegate2), profile());
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::NOTIFICATION));
+
+  manager()->CancelById("a", NotificationUIManager::GetProfileID(profile()));
+  EXPECT_TRUE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::NOTIFICATION));
+
+  manager()->CancelById("b", NotificationUIManager::GetProfileID(profile()));
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsOriginRegistered(
+      KeepAliveOrigin::NOTIFICATION));
 
   delegate->Release();
   delegate2->Release();

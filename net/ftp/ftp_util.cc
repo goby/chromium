@@ -10,6 +10,7 @@
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/char_iterator.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -60,7 +61,7 @@ std::string FtpUtil::UnixFilePathToVMS(const std::string& unix_path) {
       for (size_t i = 2; i < tokens.size() - 1; i++)
         result.append("." + tokens[i]);
     }
-    result.append("]" + tokens[tokens.size() - 1]);
+    result.append("]" + tokens.back());
     return result;
   }
 
@@ -70,7 +71,7 @@ std::string FtpUtil::UnixFilePathToVMS(const std::string& unix_path) {
   std::string result("[");
   for (size_t i = 0; i < tokens.size() - 1; i++)
     result.append("." + tokens[i]);
-  result.append("]" + tokens[tokens.size() - 1]);
+  result.append("]" + tokens.back());
   return result;
 }
 
@@ -81,7 +82,7 @@ std::string FtpUtil::UnixDirectoryPathToVMS(const std::string& unix_path) {
 
   std::string path(unix_path);
 
-  if (path[path.length() - 1] != '/')
+  if (path.back() != '/')
     path.append("/");
 
   // Reuse logic from UnixFilePathToVMS by appending a fake file name to the
@@ -120,7 +121,7 @@ std::string FtpUtil::VMSPathToUnix(const std::string& vms_path) {
   std::replace(result.begin(), result.end(), ']', '/');
 
   // Make sure the result doesn't end with a slash.
-  if (result.length() && result[result.length() - 1] == '/')
+  if (!result.empty() && result.back() == '/')
     result = result.substr(0, result.length() - 1);
 
   return result;
@@ -271,7 +272,7 @@ bool FtpUtil::LsDateListingToTime(const base::string16& month,
 
     // Guess the year.
     base::Time::Exploded current_exploded;
-    current_time.LocalExplode(&current_exploded);
+    current_time.UTCExplode(&current_exploded);
 
     // If it's not possible for the parsed date to be in the current year,
     // use the previous year.
@@ -284,8 +285,8 @@ bool FtpUtil::LsDateListingToTime(const base::string16& month,
     }
   }
 
-  // We don't know the time zone of the listing, so just use local time.
-  *result = base::Time::FromLocalExploded(time_exploded);
+  // We don't know the time zone of the listing, so just use UTC.
+  *result = base::Time::FromUTCExploded(time_exploded);
   return true;
 }
 
@@ -347,8 +348,8 @@ bool FtpUtil::WindowsDateListingToTime(const base::string16& date,
     }
   }
 
-  // We don't know the time zone of the server, so just use local time.
-  *result = base::Time::FromLocalExploded(time_exploded);
+  // We don't know the time zone of the server, so just use UTC.
+  *result = base::Time::FromUTCExploded(time_exploded);
   return true;
 }
 
@@ -372,4 +373,4 @@ base::string16 FtpUtil::GetStringPartAfterColumns(const base::string16& text,
   return result;
 }
 
-}  // namespace
+}  // namespace net

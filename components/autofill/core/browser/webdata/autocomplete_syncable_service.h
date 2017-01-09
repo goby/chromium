@@ -5,13 +5,13 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_WEBDATA_AUTOCOMPLETE_SYNCABLE_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/supports_user_data.h"
 #include "base/threading/non_thread_safe.h"
@@ -20,21 +20,23 @@
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service_observer.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/syncable_service.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/syncable_service.h"
 
+namespace browser_sync {
 class FakeServerUpdater;
 class ProfileSyncServiceAutofillTest;
+}  // namespace browser_sync
 
 namespace syncer {
 class SyncErrorFactory;
-}
+}  // namespace syncer
 
 namespace sync_pb {
 class AutofillSpecifics;
-}
+}  // namespace sync_pb
 
 namespace autofill {
 
@@ -68,8 +70,8 @@ class AutocompleteSyncableService
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -98,8 +100,8 @@ class AutocompleteSyncableService
   virtual bool SaveChangesToWebData(const std::vector<AutofillEntry>& entries);
 
  private:
-  friend class ::FakeServerUpdater;
-  friend class ::ProfileSyncServiceAutofillTest;
+  friend class browser_sync::FakeServerUpdater;
+  friend class browser_sync::ProfileSyncServiceAutofillTest;
 
   // This is a helper map used only in Merge/Process* functions. The lifetime
   // of the iterator is longer than the map object. The bool in the pair is used
@@ -152,11 +154,11 @@ class AutocompleteSyncableService
 
   // We receive ownership of |sync_processor_| in MergeDataAndStartSyncing() and
   // destroy it in StopSyncing().
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
 
   // We receive ownership of |error_handler_| in MergeDataAndStartSyncing() and
   // destroy it in StopSyncing().
-  scoped_ptr<syncer::SyncErrorFactory> error_handler_;
+  std::unique_ptr<syncer::SyncErrorFactory> error_handler_;
 
   syncer::SyncableService::StartSyncFlare flare_;
 

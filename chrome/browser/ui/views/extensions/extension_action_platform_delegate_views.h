@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_ACTION_PLATFORM_DELEGATE_VIEWS_H_
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_ACTION_PLATFORM_DELEGATE_VIEWS_H_
 
+#include "base/macros.h"
 #include "chrome/browser/ui/extensions/extension_action_platform_delegate.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -33,10 +34,11 @@ class ExtensionActionPlatformDelegateViews
   // ExtensionActionPlatformDelegate:
   void RegisterCommand() override;
   void ShowPopup(
-      scoped_ptr<extensions::ExtensionViewHost> host,
+      std::unique_ptr<extensions::ExtensionViewHost> host,
       bool grant_tab_permissions,
       ExtensionActionViewController::PopupShowAction show_action) override;
   void CloseOverflowMenu() override;
+  void ShowContextMenu() override;
 
   // content::NotificationObserver:
   void Observe(int type,
@@ -59,7 +61,7 @@ class ExtensionActionPlatformDelegateViews
 
   // The extension key binding accelerator this extension action is listening
   // for (to show the popup).
-  scoped_ptr<ui::Accelerator> action_keybinding_;
+  std::unique_ptr<ui::Accelerator> action_keybinding_;
 
   content::NotificationRegistrar registrar_;
 

@@ -259,10 +259,11 @@ util.Transform;
  *                           contains scaleX, scaleY and rotate90 properties.
  */
 util.applyTransform = function(element, transform) {
-  element.style.webkitTransform =
-      transform ? 'scaleX(' + transform.scaleX + ') ' +
-                  'scaleY(' + transform.scaleY + ') ' +
-                  'rotate(' + transform.rotate90 * 90 + 'deg)' :
+  // The order of rotate and scale matters.
+  element.style.transform =
+      transform ? 'rotate(' + transform.rotate90 * 90 + 'deg)' +
+                  'scaleX(' + transform.scaleX + ') ' +
+                  'scaleY(' + transform.scaleY + ') ' :
       '';
 };
 
@@ -884,45 +885,6 @@ util.isTeleported = function(window) {
 };
 
 /**
- * Sets up and shows the alert to inform a user the task is opened in the
- * desktop of the running profile.
- *
- * TODO(hirono): Move the function from the util namespace.
- * @param {cr.ui.dialogs.AlertDialog} alertDialog Alert dialog to be shown.
- * @param {Array<Entry>} entries List of opened entries.
- */
-util.showOpenInOtherDesktopAlert = function(alertDialog, entries) {
-  if (!entries.length)
-    return;
-  chrome.fileManagerPrivate.getProfiles(
-      function(profiles, currentId, displayedId) {
-        // Find strings.
-        var displayName;
-        for (var i = 0; i < profiles.length; i++) {
-          if (profiles[i].profileId === currentId) {
-            displayName = profiles[i].displayName;
-            break;
-          }
-        }
-        if (!displayName) {
-          console.warn('Display name is not found.');
-          return;
-        }
-
-        var title = entries.length > 1 ?
-            entries[0].name + '\u2026' /* ellipsis */ : entries[0].name;
-        var message = strf(entries.length > 1 ?
-                           'OPEN_IN_OTHER_DESKTOP_MESSAGE_PLURAL' :
-                           'OPEN_IN_OTHER_DESKTOP_MESSAGE',
-                           displayName,
-                           currentId);
-
-        // Show the dialog.
-        alertDialog.showWithTitle(title, message, null, null, null);
-      }.bind(this));
-};
-
-/**
  * Runs chrome.test.sendMessage in test environment. Does nothing if running
  * in production environment.
  *
@@ -975,7 +937,6 @@ util.getRootTypeLabel = function(locationInfo) {
     case VolumeManagerCommon.RootType.DRIVE_RECENT:
       return str('DRIVE_RECENT_COLLECTION_LABEL');
     case VolumeManagerCommon.RootType.DRIVE_OTHER:
-    case VolumeManagerCommon.RootType.DOWNLOADS:
     case VolumeManagerCommon.RootType.ARCHIVE:
     case VolumeManagerCommon.RootType.REMOVABLE:
     case VolumeManagerCommon.RootType.MTP:

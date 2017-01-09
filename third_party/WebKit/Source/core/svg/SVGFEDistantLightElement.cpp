@@ -17,7 +17,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/svg/SVGFEDistantLightElement.h"
 
 #include "core/SVGNames.h"
@@ -26,15 +25,14 @@
 namespace blink {
 
 inline SVGFEDistantLightElement::SVGFEDistantLightElement(Document& document)
-    : SVGFELightElement(SVGNames::feDistantLightTag, document)
-{
-}
+    : SVGFELightElement(SVGNames::feDistantLightTag, document) {}
 
 DEFINE_NODE_FACTORY(SVGFEDistantLightElement)
 
-PassRefPtr<LightSource> SVGFEDistantLightElement::lightSource(Filter* filter) const
-{
-    return DistantLightSource::create(azimuth()->currentValue()->value(), elevation()->currentValue()->value());
+PassRefPtr<LightSource> SVGFEDistantLightElement::lightSource(
+    Filter* filter) const {
+  return DistantLightSource::create(azimuth()->currentValue()->value(),
+                                    elevation()->currentValue()->value());
 }
 
-}
+}  // namespace blink

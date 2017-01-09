@@ -48,12 +48,6 @@ oblique
 // The following is only allowed in @font-face:
 all
 
-//
-// font-variant
-//
-//normal
-small-caps
-
 // font-variant-ligatures:
 //
 // normal
@@ -65,6 +59,27 @@ historical-ligatures
 no-historical-ligatures
 contextual
 no-contextual
+
+// font-variant-caps:
+//
+// normal
+small-caps
+all-small-caps
+petite-caps
+all-petite-caps
+unicase
+titling-caps
+
+// font-variant-numeric
+// normal
+lining-nums
+oldstyle-nums
+proportional-nums
+tabular-nums
+diagonal-fractions
+stacked-fractions
+ordinal
+slashed-zero
 
 //
 // font-weigth
@@ -188,8 +203,9 @@ windowtext
 currentcolor
 grey
 //
-// colors in non strict mode
--webkit-text mode=QuirksOrUASheet
+// Value used to implement the behavior in:
+// https://quirks.spec.whatwg.org/#the-tables-inherit-color-from-body-quirk
+-internal-quirk-inherit
 //
 // background-repeat
 //
@@ -200,7 +216,7 @@ no-repeat
 // round
 // space
 //
-// -webkit-background-composite
+// -webkit-mask-composite
 //
 clear
 copy
@@ -230,7 +246,7 @@ bottom
 -webkit-baseline-middle
 //
 // text-align
-// The order here must match the order of the ETextAlign enum in ComputedStyleConstants.h.
+// The order of this enum must match the order found in CSSParserFastPaths::isValidKeywordPropertyAndValue().
 //
 -webkit-auto
 left
@@ -241,6 +257,7 @@ justify
 -webkit-right
 -webkit-center
 -webkit-match-parent
+-internal-center
 //
 // text-justify
 //
@@ -255,7 +272,7 @@ outside
 inside
 //
 // list-style-type
-// The order here must match the order of the EListStyleType enum in ComputedStyleConstants.h.
+// The order of this enum must match the order found in CSSParserFastPaths::isValidKeywordPropertyAndValue().
 //
 disc
 circle
@@ -315,7 +332,7 @@ katakana-iroha
 //none
 //
 // display
-// The order here must match the order of the EDisplay enum in ComputedStyleConstants.h.
+// The order of this enum must match the order found in CSSParserFastPaths::isValidKeywordPropertyAndValue().
 //
 inline
 block
@@ -337,12 +354,13 @@ flex
 inline-flex
 grid
 inline-grid
+contents
 //none
 -webkit-flex
 -webkit-inline-flex
 //
 // cursor
-// The order here must match the order of the ECursor enum in ComputedStyleConstants.h.
+// The order of this enum must match the order found in CSSPropertyParser::consumeCursor().
 //
 auto
 crosshair
@@ -496,6 +514,8 @@ space-between
 space-around
 space-evenly
 // stretch
+unsafe
+safe
 
 // align-items / align-self
 // flex-start
@@ -514,6 +534,8 @@ space-evenly
 // space-around
 // space-evenly
 // stretch
+// unsafe
+// safe
 
 
 // flex-flow
@@ -526,6 +548,7 @@ wrap
 wrap-reverse
 
 // grid-auto-flow
+auto-flow
 dense
 
 //
@@ -556,6 +579,12 @@ fit-content
 //
 clip
 ellipsis
+
+//
+// text-decoration-skip
+//
+objects
+ink
 
 //
 // -webkit-margin-collapse
@@ -589,6 +618,9 @@ loose
 strict
 after-white-space
 
+// hyphens
+manual
+
 // -webkit-appearance
 // The order here must match the order in the ControlPart enum in ThemeTypes.h.
 // All appearance values that should be accepted by the parser should be listed between 'checkbox' and 'textarea':
@@ -620,6 +652,11 @@ media-current-time-display
 media-time-remaining-display
 -internal-media-cast-off-button
 -internal-media-overlay-cast-off-button
+-internal-media-track-selection-checkmark
+-internal-media-closed-captions-icon
+-internal-media-subtitles-icon
+-internal-media-overflow-button
+-internal-media-download-button
 menulist
 menulist-button
 menulist-text
@@ -633,14 +670,8 @@ sliderthumb-horizontal
 sliderthumb-vertical
 caret
 searchfield
-searchfield-decoration
-searchfield-results-decoration
 searchfield-cancel-button
 textfield
-relevancy-level-indicator
-continuous-capacity-level-indicator
-discrete-capacity-level-indicator
-rating-level-indicator
 textarea
 // An appearance value that should not be accepted by the parser:
 caps-lock-indicator
@@ -933,6 +964,7 @@ pan-right
 pan-up
 pan-down
 manipulation
+pinch-zoom
 
 // justify-items / justify-self
 // auto
@@ -948,8 +980,8 @@ self-end
 // flex-end
 // left
 // right
-true
-safe
+// unsafe
+// safe
 legacy
 
 // scroll-behavior
@@ -972,6 +1004,7 @@ linear-gradient
 radial-gradient
 repeating-linear-gradient
 repeating-radial-gradient
+paint
 -webkit-cross-fade
 -webkit-gradient
 -webkit-linear-gradient
@@ -1058,6 +1091,23 @@ from-image
 paint
 style
 layout
+size
+
+// grid auto-repeat
+auto-fill
+auto-fit
 
 var
 -internal-variable-value
+
+// break-before, break-after, break-inside
+avoid-page
+page
+recto
+verso
+avoid-column
+
+// shape
+// rect
+// round
+

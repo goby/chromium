@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -19,6 +20,7 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 
 namespace base {
 
@@ -220,7 +222,7 @@ size_t CancelableSyncSocket::Send(const void* buffer, size_t length) {
   DCHECK_LE(length, kMaxMessageLength);
   DCHECK_NE(handle_, kInvalidHandle);
 
-  const long flags = fcntl(handle_, F_GETFL, NULL);
+  const int flags = fcntl(handle_, F_GETFL);
   if (flags != -1 && (flags & O_NONBLOCK) == 0) {
     // Set the socket to non-blocking mode for sending if its original mode
     // is blocking.

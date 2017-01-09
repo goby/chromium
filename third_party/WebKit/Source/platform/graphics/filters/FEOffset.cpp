@@ -22,7 +22,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "platform/graphics/filters/FEOffset.h"
 
 #include "SkOffsetImageFilter.h"
@@ -33,63 +32,52 @@
 namespace blink {
 
 FEOffset::FEOffset(Filter* filter, float dx, float dy)
-    : FilterEffect(filter)
-    , m_dx(dx)
-    , m_dy(dy)
-{
+    : FilterEffect(filter), m_dx(dx), m_dy(dy) {}
+
+FEOffset* FEOffset::create(Filter* filter, float dx, float dy) {
+  return new FEOffset(filter, dx, dy);
 }
 
-PassRefPtrWillBeRawPtr<FEOffset> FEOffset::create(Filter* filter, float dx, float dy)
-{
-    return adoptRefWillBeNoop(new FEOffset(filter, dx, dy));
+float FEOffset::dx() const {
+  return m_dx;
 }
 
-float FEOffset::dx() const
-{
-    return m_dx;
+void FEOffset::setDx(float dx) {
+  m_dx = dx;
 }
 
-void FEOffset::setDx(float dx)
-{
-    m_dx = dx;
+float FEOffset::dy() const {
+  return m_dy;
 }
 
-float FEOffset::dy() const
-{
-    return m_dy;
+void FEOffset::setDy(float dy) {
+  m_dy = dy;
 }
 
-void FEOffset::setDy(float dy)
-{
-    m_dy = dy;
+FloatRect FEOffset::mapEffect(const FloatRect& rect) const {
+  FloatRect result = rect;
+  result.move(getFilter()->applyHorizontalScale(m_dx),
+              getFilter()->applyVerticalScale(m_dy));
+  return result;
 }
 
-FloatRect FEOffset::mapRect(const FloatRect& rect, bool forward)
-{
-    FloatRect result = rect;
-    if (forward)
-        result.move(filter()->applyHorizontalScale(m_dx), filter()->applyVerticalScale(m_dy));
-    else
-        result.move(-filter()->applyHorizontalScale(m_dx), -filter()->applyVerticalScale(m_dy));
-    return result;
+sk_sp<SkImageFilter> FEOffset::createImageFilter() {
+  Filter* filter = this->getFilter();
+  SkImageFilter::CropRect cropRect = getCropRect();
+  return SkOffsetImageFilter::Make(
+      SkFloatToScalar(filter->applyHorizontalScale(m_dx)),
+      SkFloatToScalar(filter->applyVerticalScale(m_dy)),
+      SkiaImageFilterBuilder::build(inputEffect(0), operatingColorSpace()),
+      &cropRect);
 }
 
-PassRefPtr<SkImageFilter> FEOffset::createImageFilter(SkiaImageFilterBuilder& builder)
-{
-    RefPtr<SkImageFilter> input(builder.build(inputEffect(0), operatingColorSpace()));
-    Filter* filter = this->filter();
-    SkImageFilter::CropRect cropRect = getCropRect(builder.cropOffset());
-    return adoptRef(SkOffsetImageFilter::Create(SkFloatToScalar(filter->applyHorizontalScale(m_dx)), SkFloatToScalar(filter->applyVerticalScale(m_dy)), input.get(), &cropRect));
+TextStream& FEOffset::externalRepresentation(TextStream& ts, int indent) const {
+  writeIndent(ts, indent);
+  ts << "[feOffset";
+  FilterEffect::externalRepresentation(ts);
+  ts << " dx=\"" << dx() << "\" dy=\"" << dy() << "\"]\n";
+  inputEffect(0)->externalRepresentation(ts, indent + 1);
+  return ts;
 }
 
-TextStream& FEOffset::externalRepresentation(TextStream& ts, int indent) const
-{
-    writeIndent(ts, indent);
-    ts << "[feOffset";
-    FilterEffect::externalRepresentation(ts);
-    ts << " dx=\"" << dx() << "\" dy=\"" << dy() << "\"]\n";
-    inputEffect(0)->externalRepresentation(ts, indent + 1);
-    return ts;
-}
-
-} // namespace blink
+}  // namespace blink

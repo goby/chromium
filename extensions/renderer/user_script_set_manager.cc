@@ -15,7 +15,8 @@
 
 namespace extensions {
 
-UserScriptSetManager::UserScriptSetManager() {
+UserScriptSetManager::UserScriptSetManager()
+    : activity_logging_enabled_(false) {
   content::RenderThread::Get()->AddObserver(this);
 }
 
@@ -30,7 +31,7 @@ void UserScriptSetManager::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-scoped_ptr<ScriptInjection>
+std::unique_ptr<ScriptInjection>
 UserScriptSetManager::GetInjectionForDeclarativeScript(
     int script_id,
     content::RenderFrame* render_frame,
@@ -40,14 +41,11 @@ UserScriptSetManager::GetInjectionForDeclarativeScript(
   UserScriptSet* user_script_set =
       GetProgrammaticScriptsByHostID(HostID(HostID::EXTENSIONS, extension_id));
   if (!user_script_set)
-    return scoped_ptr<ScriptInjection>();
+    return std::unique_ptr<ScriptInjection>();
 
   return user_script_set->GetDeclarativeScriptInjection(
-      script_id,
-      render_frame,
-      tab_id,
-      UserScript::BROWSER_DRIVEN,
-      url);
+      script_id, render_frame, tab_id, UserScript::BROWSER_DRIVEN, url,
+      activity_logging_enabled_);
 }
 
 bool UserScriptSetManager::OnControlMessageReceived(
@@ -61,15 +59,17 @@ bool UserScriptSetManager::OnControlMessageReceived(
 }
 
 void UserScriptSetManager::GetAllInjections(
-    ScopedVector<ScriptInjection>* injections,
+    std::vector<std::unique_ptr<ScriptInjection>>* injections,
     content::RenderFrame* render_frame,
     int tab_id,
     UserScript::RunLocation run_location) {
-  static_scripts_.GetInjections(injections, render_frame, tab_id, run_location);
+  static_scripts_.GetInjections(injections, render_frame, tab_id, run_location,
+                                activity_logging_enabled_);
   for (UserScriptSetMap::iterator it = programmatic_scripts_.begin();
        it != programmatic_scripts_.end();
        ++it) {
-    it->second->GetInjections(injections, render_frame, tab_id, run_location);
+    it->second->GetInjections(injections, render_frame, tab_id, run_location,
+                              activity_logging_enabled_);
   }
 }
 
@@ -115,8 +115,10 @@ void UserScriptSetManager::OnUpdateUserScripts(
     // or just the owner.
     CHECK(changed_hosts.size() <= 1);
     if (programmatic_scripts_.find(host_id) == programmatic_scripts_.end()) {
-      scripts = new UserScriptSet();
-      programmatic_scripts_[host_id] = make_linked_ptr(scripts);
+      scripts = programmatic_scripts_
+                    .insert(std::make_pair(host_id,
+                                           base::MakeUnique<UserScriptSet>()))
+                    .first->second.get();
     } else {
       scripts = programmatic_scripts_[host_id].get();
     }
@@ -149,10 +151,8 @@ void UserScriptSetManager::OnUpdateUserScripts(
   if (scripts->UpdateUserScripts(shared_memory,
                                  *effective_hosts,
                                  whitelisted_only)) {
-    FOR_EACH_OBSERVER(
-        Observer,
-        observers_,
-        OnUserScriptsUpdated(*effective_hosts, scripts->scripts()));
+    for (auto& observer : observers_)
+      observer.OnUserScriptsUpdated(*effective_hosts);
   }
 }
 

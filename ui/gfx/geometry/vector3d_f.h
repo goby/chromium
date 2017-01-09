@@ -20,18 +20,19 @@ namespace gfx {
 
 class GFX_EXPORT Vector3dF {
  public:
-  Vector3dF();
-  Vector3dF(float x, float y, float z);
+  constexpr Vector3dF() : x_(0), y_(0), z_(0) {}
+  constexpr Vector3dF(float x, float y, float z) : x_(x), y_(y), z_(z) {}
 
-  explicit Vector3dF(const Vector2dF& other);
+  constexpr explicit Vector3dF(const Vector2dF& other)
+      : x_(other.x()), y_(other.y()), z_(0) {}
 
-  float x() const { return x_; }
+  constexpr float x() const { return x_; }
   void set_x(float x) { x_ = x; }
 
-  float y() const { return y_; }
+  constexpr float y() const { return y_; }
   void set_y(float y) { y_ = y; }
 
-  float z() const { return z_; }
+  constexpr float z() const { return z_; }
   void set_z(float z) { z_ = z; }
 
   // True if all components of the vector are 0.
@@ -132,8 +133,8 @@ GFX_EXPORT float ClockwiseAngleBetweenVectorsInDegrees(
     const gfx::Vector3dF& normal);
 
 // This is declared here for use in gtest-based unit tests but is defined in
-// the gfx_test_support target. Depend on that to use this in your unit test.
-// This should not be used in production code - call ToString() instead.
+// the //ui/gfx:test_support target. Depend on that to use this in your unit
+// test. This should not be used in production code - call ToString() instead.
 void PrintTo(const Vector3dF& vector, ::std::ostream* os);
 
 }  // namespace gfx

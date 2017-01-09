@@ -4,8 +4,8 @@
 
 #include "chrome/browser/ui/webui/options/chromeos/proxy_handler.h"
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -68,7 +68,7 @@ void ProxyHandler::InitializePage() {
   bool keyboard_driven_oobe =
       system::InputDeviceSettings::Get()->ForceKeyboardDrivenUINavigation();
   if (keyboard_driven_oobe) {
-    web_ui()->CallJavascriptFunction(
+    web_ui()->CallJavascriptFunctionUnsafe(
         "DetailsInternetPage.initializeKeyboardFlow");
   }
 }

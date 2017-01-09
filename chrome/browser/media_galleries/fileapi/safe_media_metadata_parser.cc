@@ -4,8 +4,11 @@
 
 #include "chrome/browser/media_galleries/fileapi/safe_media_metadata_parser.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/blob_reader.h"
 #include "chrome/common/extensions/chrome_utility_extensions_messages.h"
 #include "chrome/grit/generated_resources.h"
@@ -18,9 +21,11 @@ using content::BrowserThread;
 
 namespace metadata {
 
-SafeMediaMetadataParser::SafeMediaMetadataParser(
-    Profile* profile, const std::string& blob_uuid, int64 blob_size,
-    const std::string& mime_type, bool get_attached_images)
+SafeMediaMetadataParser::SafeMediaMetadataParser(Profile* profile,
+                                                 const std::string& blob_uuid,
+                                                 int64_t blob_size,
+                                                 const std::string& mime_type,
+                                                 bool get_attached_images)
     : profile_(profile),
       blob_uuid_(blob_uuid),
       blob_size_(blob_size),
@@ -74,21 +79,21 @@ void SafeMediaMetadataParser::OnParseMediaMetadataFinished(
 
   // We need to make a scoped copy of this vector since it will be destroyed
   // at the end of the IPC message handler.
-  scoped_ptr<std::vector<metadata::AttachedImage> > attached_images_copy =
-      make_scoped_ptr(new std::vector<metadata::AttachedImage>(
-          attached_images));
+  std::unique_ptr<std::vector<metadata::AttachedImage>> attached_images_copy =
+      base::MakeUnique<std::vector<metadata::AttachedImage>>(attached_images);
 
   BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
+      BrowserThread::UI, FROM_HERE,
       base::Bind(callback_, parse_success,
-                 base::Passed(make_scoped_ptr(metadata_dictionary.DeepCopy())),
+                 base::Passed(base::WrapUnique(metadata_dictionary.DeepCopy())),
                  base::Passed(&attached_images_copy)));
   parser_state_ = FINISHED_PARSING_STATE;
 }
 
 void SafeMediaMetadataParser::OnUtilityProcessRequestBlobBytes(
-    int64 request_id, int64 byte_start, int64 length) {
+    int64_t request_id,
+    int64_t byte_start,
+    int64_t length) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   BrowserThread::PostTask(
       BrowserThread::UI,
@@ -97,8 +102,9 @@ void SafeMediaMetadataParser::OnUtilityProcessRequestBlobBytes(
                  request_id, byte_start, length));
 }
 
-void SafeMediaMetadataParser::StartBlobReaderOnUIThread(
-    int64 request_id, int64 byte_start, int64 length) {
+void SafeMediaMetadataParser::StartBlobReaderOnUIThread(int64_t request_id,
+                                                        int64_t byte_start,
+                                                        int64_t length) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // BlobReader is self-deleting.
@@ -109,18 +115,19 @@ void SafeMediaMetadataParser::StartBlobReaderOnUIThread(
 }
 
 void SafeMediaMetadataParser::OnBlobReaderDoneOnUIThread(
-    int64 request_id, scoped_ptr<std::string> data,
-    int64 /* blob_total_size */) {
+    int64_t request_id,
+    std::unique_ptr<std::string> data,
+    int64_t /* blob_total_size */) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
+      BrowserThread::IO, FROM_HERE,
       base::Bind(&SafeMediaMetadataParser::FinishRequestBlobBytes, this,
-                 request_id, base::Passed(data.Pass())));
+                 request_id, base::Passed(std::move(data))));
 }
 
 void SafeMediaMetadataParser::FinishRequestBlobBytes(
-    int64 request_id, scoped_ptr<std::string> data) {
+    int64_t request_id,
+    std::unique_ptr<std::string> data) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!utility_process_host_.get())
     return;
@@ -133,11 +140,10 @@ void SafeMediaMetadataParser::OnProcessCrashed(int exit_code) {
   DCHECK(!callback_.is_null());
 
   BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
+      BrowserThread::UI, FROM_HERE,
       base::Bind(callback_, false,
-                 base::Passed(scoped_ptr<base::DictionaryValue>()),
-                 base::Passed(scoped_ptr<std::vector<AttachedImage> >())));
+                 base::Passed(std::unique_ptr<base::DictionaryValue>()),
+                 base::Passed(std::unique_ptr<std::vector<AttachedImage>>())));
   parser_state_ = FINISHED_PARSING_STATE;
 }
 

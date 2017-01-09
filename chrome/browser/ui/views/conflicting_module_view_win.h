@@ -5,24 +5,18 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_CONFLICTING_MODULE_VIEW_WIN_H_
 #define CHROME_BROWSER_UI_VIEWS_CONFLICTING_MODULE_VIEW_WIN_H_
 
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "ui/views/bubble/bubble_delegate.h"
-#include "ui/views/controls/button/button.h"
+#include "base/macros.h"
+#include "base/scoped_observer.h"
+#include "chrome/browser/win/enumerate_modules_model.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "url/gurl.h"
 
 class Browser;
 
-namespace views {
-class Label;
-class LabelButton;
-}
-
 // This is the class that implements the UI for the bubble showing that there
 // is a 3rd party module loaded that conflicts with Chrome.
-class ConflictingModuleView : public views::BubbleDelegateView,
-                              public views::ButtonListener,
-                              public content::NotificationObserver {
+class ConflictingModuleView : public views::BubbleDialogDelegateView,
+                              public EnumerateModulesModel::Observer {
  public:
   ConflictingModuleView(views::View* anchor_view,
                         Browser* browser,
@@ -37,35 +31,22 @@ class ConflictingModuleView : public views::BubbleDelegateView,
   // Shows the bubble and updates the counter for how often it has been shown.
   void ShowBubble();
 
-  // Dismiss and make sure the bubble is not shown again. This bubble is a
-  // single-appearance bubble.
-  void DismissBubble();
-
-  // views::BubbleDelegateView implementation:
+  // views::BubbleDialogDelegateView implementation:
+  void OnWidgetClosing(views::Widget* widget) override;
+  bool Accept() override;
+  base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   void Init() override;
 
-  // views::ButtonListener implementation.
-  void ButtonPressed(views::Button* sender, const ui::Event& event) override;
-
   // views::View implementation.
-  void GetAccessibleState(ui::AXViewState* state) override;
-  void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
-  // content::NotificationObserver implementation.
-  void Observe(
-      int type,
-      const content::NotificationSource& source,
-      const content::NotificationDetails& details) override;
+  // EnumerateModulesModel::Observer:
+  void OnConflictsAcknowledged() override;
 
   Browser* browser_;
 
-  content::NotificationRegistrar registrar_;
-
-  // The headline, labels and buttons on the bubble.
-  views::Label* explanation_;
-  views::LabelButton* learn_more_button_;
-  views::LabelButton* not_now_button_;
+  ScopedObserver<EnumerateModulesModel,
+                 EnumerateModulesModel::Observer> observer_;
 
   // The link to the help center for this conflict.
   GURL help_center_url_;

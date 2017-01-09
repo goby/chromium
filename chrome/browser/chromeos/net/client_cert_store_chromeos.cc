@@ -6,12 +6,13 @@
 
 #include <cert.h>
 #include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/location.h"
-#include "base/threading/worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider.h"
 #include "crypto/nss_crypto_module_delegate.h"
 #include "net/ssl/ssl_cert_request_info.h"
@@ -36,10 +37,11 @@ class CertNotAllowedPredicate {
 }  // namespace
 
 ClientCertStoreChromeOS::ClientCertStoreChromeOS(
-    scoped_ptr<CertificateProvider> cert_provider,
-    scoped_ptr<CertFilter> cert_filter,
+    std::unique_ptr<CertificateProvider> cert_provider,
+    std::unique_ptr<CertFilter> cert_filter,
     const PasswordDelegateFactory& password_delegate_factory)
-    : cert_provider_(cert_provider.Pass()), cert_filter_(cert_filter.Pass()) {}
+    : cert_provider_(std::move(cert_provider)),
+      cert_filter_(std::move(cert_filter)) {}
 
 ClientCertStoreChromeOS::~ClientCertStoreChromeOS() {}
 
@@ -73,33 +75,31 @@ void ClientCertStoreChromeOS::GotAdditionalCerts(
     net::CertificateList* selected_certs,
     const base::Closure& callback,
     const net::CertificateList& additional_certs) {
-  scoped_ptr<crypto::CryptoModuleBlockingPasswordDelegate> password_delegate;
+  std::unique_ptr<crypto::CryptoModuleBlockingPasswordDelegate>
+      password_delegate;
   if (!password_delegate_factory_.is_null()) {
     password_delegate.reset(
         password_delegate_factory_.Run(request->host_and_port));
   }
-  if (base::WorkerPool::PostTaskAndReply(
-          FROM_HERE,
-          base::Bind(&ClientCertStoreChromeOS::GetAndFilterCertsOnWorkerThread,
-                     base::Unretained(this), base::Passed(&password_delegate),
-                     request, additional_certs, selected_certs),
-          callback, true)) {
-    return;
-  }
-  // If the task could not be posted, behave as if there were no certificates
-  // which requires to clear |selected_certs|.
-  selected_certs->clear();
-  callback.Run();
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE,
+      base::TaskTraits().WithWait().WithFileIO().WithShutdownBehavior(
+          base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN),
+      base::Bind(&ClientCertStoreChromeOS::GetAndFilterCertsOnWorkerThread,
+                 base::Unretained(this), base::Passed(&password_delegate),
+                 request, additional_certs, selected_certs),
+      callback);
 }
 
 void ClientCertStoreChromeOS::GetAndFilterCertsOnWorkerThread(
-    scoped_ptr<crypto::CryptoModuleBlockingPasswordDelegate> password_delegate,
+    std::unique_ptr<crypto::CryptoModuleBlockingPasswordDelegate>
+        password_delegate,
     const net::SSLCertRequestInfo* request,
     const net::CertificateList& additional_certs,
     net::CertificateList* selected_certs) {
   net::CertificateList unfiltered_certs;
   net::ClientCertStoreNSS::GetPlatformCertsOnWorkerThread(
-      password_delegate.Pass(), &unfiltered_certs);
+      std::move(password_delegate), &unfiltered_certs);
 
   unfiltered_certs.erase(
       std::remove_if(unfiltered_certs.begin(), unfiltered_certs.end(),
@@ -110,7 +110,7 @@ void ClientCertStoreChromeOS::GetAndFilterCertsOnWorkerThread(
                           additional_certs.end());
 
   net::ClientCertStoreNSS::FilterCertsOnWorkerThread(unfiltered_certs, *request,
-                                                     true, selected_certs);
+                                                     selected_certs);
 }
 
 }  // namespace chromeos

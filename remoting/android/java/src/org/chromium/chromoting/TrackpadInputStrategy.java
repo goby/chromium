@@ -4,7 +4,8 @@
 
 package org.chromium.chromoting;
 
-import org.chromium.chromoting.jni.JniInterface;
+import android.graphics.PointF;
+import android.view.MotionEvent;
 
 /**
  * Defines a set of behavior and methods to simulate trackpad behavior when responding to
@@ -13,78 +14,67 @@ import org.chromium.chromoting.jni.JniInterface;
  */
 public class TrackpadInputStrategy implements InputStrategyInterface {
     private final RenderData mRenderData;
-    private final DesktopViewInterface mViewer;
+    private final InputEventSender mInjector;
 
-    public TrackpadInputStrategy(DesktopViewInterface viewer, RenderData renderData) {
-        mViewer = viewer;
+    /** Mouse-button currently held down, or BUTTON_UNDEFINED otherwise. */
+    private int mHeldButton = InputStub.BUTTON_UNDEFINED;
+
+    public TrackpadInputStrategy(RenderData renderData, InputEventSender injector) {
+        Preconditions.notNull(injector);
         mRenderData = renderData;
+        mInjector = injector;
+
+        mRenderData.drawCursor = true;
     }
 
     @Override
-    public void injectRemoteMoveEvent(int x, int y) {
-        injectRemoteButtonEvent(x, y, TouchInputHandlerInterface.BUTTON_UNDEFINED, false);
-    }
-
-    @Override
-    public void injectRemoteButtonEvent(int button, boolean pressed) {
-        int x;
-        int y;
-        synchronized (mRenderData) {
-            x = mRenderData.cursorPosition.x;
-            y = mRenderData.cursorPosition.y;
-        }
-
-        injectRemoteButtonEvent(x, y, button, pressed);
-    }
-
-    @Override
-    public void injectRemoteScrollEvent(int deltaX, int deltaY) {
-        JniInterface.sendMouseWheelEvent(deltaX, deltaY);
-    }
-
-    @Override
-    public DesktopView.InputFeedbackType getShortPressFeedbackType() {
-        return DesktopView.InputFeedbackType.NONE;
-    }
-
-    @Override
-    public DesktopView.InputFeedbackType getLongPressFeedbackType() {
-        return DesktopView.InputFeedbackType.SMALL_ANIMATION;
-    }
-
-    @Override
-    public boolean centerCursorInView() {
+    public boolean onTap(int button) {
+        mInjector.sendMouseClick(getCursorPosition(), button);
         return true;
     }
 
     @Override
-    public boolean invertCursorMovement() {
+    public boolean onPressAndHold(int button) {
+        mInjector.sendMouseDown(getCursorPosition(), button);
+        mHeldButton = button;
         return true;
     }
 
-    private void injectRemoteButtonEvent(int x, int y, int button, boolean pressed) {
-        boolean cursorMoved = false;
-        synchronized (mRenderData) {
-            // Test if the cursor actually moved, which requires repainting the cursor. This
-            // requires that |mRenderData.cursorPosition| was not assigned to beforehand.
-            if (x != mRenderData.cursorPosition.x) {
-                mRenderData.cursorPosition.x = x;
-                cursorMoved = true;
-            }
-            if (y != mRenderData.cursorPosition.y) {
-                mRenderData.cursorPosition.y = y;
-                cursorMoved = true;
-            }
-        }
+    @Override
+    public void onScroll(float distanceX, float distanceY) {
+        mInjector.sendReverseMouseWheelEvent(distanceX, distanceY);
+    }
 
-        if (button == TouchInputHandlerInterface.BUTTON_UNDEFINED && !cursorMoved) {
-            // No need to inject anything or repaint.
-            return;
+    @Override
+    public void onMotionEvent(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_UP
+                && mHeldButton != InputStub.BUTTON_UNDEFINED) {
+            mInjector.sendMouseUp(getCursorPosition(), mHeldButton);
+            mHeldButton = InputStub.BUTTON_UNDEFINED;
         }
+    }
 
-        JniInterface.sendMouseEvent(x, y, button, pressed);
-        if (cursorMoved) {
-            mViewer.transformationChanged();
-        }
+    @Override
+    public void injectCursorMoveEvent(int x, int y) {
+        mInjector.sendCursorMove(x, y);
+    }
+
+    @Override
+    public RenderStub.InputFeedbackType getShortPressFeedbackType() {
+        return RenderStub.InputFeedbackType.NONE;
+    }
+
+    @Override
+    public RenderStub.InputFeedbackType getLongPressFeedbackType() {
+        return RenderStub.InputFeedbackType.LONG_TRACKPAD_ANIMATION;
+    }
+
+    @Override
+    public boolean isIndirectInputMode() {
+        return true;
+    }
+
+    private PointF getCursorPosition() {
+        return mRenderData.getCursorPosition();
     }
 }

@@ -4,8 +4,8 @@
 
 #include "chrome/browser/ui/webui/media_router/media_router_resources_provider.h"
 
+#include "chrome/grit/browser_resources.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "grit/browser_resources.h"
 
 namespace {
 
@@ -22,6 +22,9 @@ void AddMainWebResources(content::WebUIDataSource* html_source) {
 }
 
 void AddPolymerElements(content::WebUIDataSource* html_source) {
+  html_source->AddResourcePath(
+      "icons/media_router_icons.html",
+      IDR_MEDIA_ROUTER_ICONS_HTML);
   html_source->AddResourcePath(
       "elements/issue_banner/issue_banner.css",
       IDR_ISSUE_BANNER_CSS);
@@ -50,6 +53,18 @@ void AddPolymerElements(content::WebUIDataSource* html_source) {
       "elements/media_router_header/media_router_header.js",
       IDR_MEDIA_ROUTER_HEADER_JS);
   html_source->AddResourcePath(
+      "elements/media_router_search_highlighter/"
+      "media_router_search_highlighter.css",
+      IDR_MEDIA_ROUTER_SEARCH_HIGHLIGHTER_CSS);
+  html_source->AddResourcePath(
+      "elements/media_router_search_highlighter/"
+      "media_router_search_highlighter.html",
+      IDR_MEDIA_ROUTER_SEARCH_HIGHLIGHTER_HTML);
+  html_source->AddResourcePath(
+      "elements/media_router_search_highlighter/"
+      "media_router_search_highlighter.js",
+      IDR_MEDIA_ROUTER_SEARCH_HIGHLIGHTER_JS);
+  html_source->AddResourcePath(
       "elements/route_details/route_details.css",
       IDR_ROUTE_DETAILS_CSS);
   html_source->AddResourcePath(
@@ -58,6 +73,9 @@ void AddPolymerElements(content::WebUIDataSource* html_source) {
   html_source->AddResourcePath(
       "elements/route_details/route_details.js",
       IDR_ROUTE_DETAILS_JS);
+  html_source->AddResourcePath(
+      "elements/media_router_container/pseudo_sink_search_state.js",
+      IDR_PSEUDO_SINK_SEARCH_STATE_JS);
 }
 
 }  // namespace

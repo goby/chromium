@@ -4,16 +4,14 @@
 
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
 
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
 
-OobeScreenWaiter::OobeScreenWaiter(OobeDisplay::Screen expected_screen)
-    : waiting_for_screen_(false),
-      expected_screen_(expected_screen) {
-}
+OobeScreenWaiter::OobeScreenWaiter(OobeScreen expected_screen)
+    : expected_screen_(expected_screen) {}
 
 OobeScreenWaiter::~OobeScreenWaiter() {
   if (waiting_for_screen_) {
@@ -39,9 +37,8 @@ void OobeScreenWaiter::WaitNoAssertCurrentScreen() {
   ASSERT_FALSE(waiting_for_screen_);
 }
 
-void OobeScreenWaiter::OnCurrentScreenChanged(
-    OobeDisplay::Screen current_screen,
-    OobeDisplay::Screen new_screen) {
+void OobeScreenWaiter::OnCurrentScreenChanged(OobeScreen current_screen,
+                                              OobeScreen new_screen) {
   if (waiting_for_screen_ && new_screen == expected_screen_) {
     runner_->Quit();
     waiting_for_screen_ = false;
@@ -50,8 +47,7 @@ void OobeScreenWaiter::OnCurrentScreenChanged(
 }
 
 OobeUI* OobeScreenWaiter::GetOobeUI() {
-  OobeUI* oobe_ui = static_cast<chromeos::LoginDisplayHostImpl*>(
-      chromeos::LoginDisplayHostImpl::default_host())->GetOobeUI();
+  OobeUI* oobe_ui = LoginDisplayHost::default_host()->GetOobeUI();
   CHECK(oobe_ui);
   return oobe_ui;
 }

@@ -5,9 +5,10 @@
 #ifndef COMPONENTS_SESSIONS_CORE_IN_MEMORY_TAB_RESTORE_SERVICE_H_
 #define COMPONENTS_SESSIONS_CORE_IN_MEMORY_TAB_RESTORE_SERVICE_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/sessions/core/sessions_export.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/sessions/core/tab_restore_service_client.h"
@@ -26,7 +27,7 @@ class SESSIONS_EXPORT InMemoryTabRestoreService : public TabRestoreService {
   // Creates a new TabRestoreService and provides an object that provides the
   // current time. The TabRestoreService does not take ownership of
   // |time_factory|.
-  InMemoryTabRestoreService(scoped_ptr<TabRestoreServiceClient> client,
+  InMemoryTabRestoreService(std::unique_ptr<TabRestoreServiceClient> client,
                             TimeFactory* time_factory);
 
   ~InMemoryTabRestoreService() override;
@@ -39,21 +40,21 @@ class SESSIONS_EXPORT InMemoryTabRestoreService : public TabRestoreService {
   void BrowserClosed(LiveTabContext* context) override;
   void ClearEntries() override;
   const Entries& entries() const override;
-  std::vector<LiveTab*> RestoreMostRecentEntry(LiveTabContext* context,
-                                               int host_desktop_type) override;
-  Tab* RemoveTabEntryById(SessionID::id_type id) override;
+  std::vector<LiveTab*> RestoreMostRecentEntry(
+      LiveTabContext* context) override;
+  std::unique_ptr<Tab> RemoveTabEntryById(SessionID::id_type id) override;
   std::vector<LiveTab*> RestoreEntryById(
       LiveTabContext* context,
       SessionID::id_type id,
-      int host_desktop_type,
       WindowOpenDisposition disposition) override;
   void LoadTabsFromLastSession() override;
   bool IsLoaded() const override;
   void DeleteLastSession() override;
+  bool IsRestoring() const override;
   void Shutdown() override;
 
  private:
-  scoped_ptr<TabRestoreServiceClient> client_;
+  std::unique_ptr<TabRestoreServiceClient> client_;
   TabRestoreServiceHelper helper_;
 
   DISALLOW_COPY_AND_ASSIGN(InMemoryTabRestoreService);

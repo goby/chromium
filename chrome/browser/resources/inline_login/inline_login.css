@@ -1,7 +1,6 @@
 /* Copyright 2013 The Chromium Authors. All rights reserved.
  * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file.
- */
+ * found in the LICENSE file. */
 
 html,
 body,
@@ -32,4 +31,15 @@ body,
 
 #contents:not(.loading) #spinner-container {
   display: none;
+}
+
+#navigation-button {
+  color: white;
+  position: absolute;
+  top: 0;
+  visibility: hidden;
+}
+
+#navigation-button.enabled {
+  visibility: visible;
 }

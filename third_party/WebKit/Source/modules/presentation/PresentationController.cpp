@@ -2,140 +2,160 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/presentation/PresentationController.h"
 
 #include "core/frame/LocalFrame.h"
 #include "modules/presentation/PresentationConnection.h"
 #include "public/platform/modules/presentation/WebPresentationClient.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PresentationController::PresentationController(LocalFrame& frame, WebPresentationClient* client)
-    : LocalFrameLifecycleObserver(&frame)
-    , m_client(client)
-{
-    if (m_client)
-        m_client->setController(this);
+PresentationController::PresentationController(LocalFrame& frame,
+                                               WebPresentationClient* client)
+    : DOMWindowProperty(&frame), m_client(client) {
+  if (m_client)
+    m_client->setController(this);
 }
 
-PresentationController::~PresentationController()
-{
-    if (m_client)
-        m_client->setController(nullptr);
-}
-
-// static
-PassOwnPtrWillBeRawPtr<PresentationController> PresentationController::create(LocalFrame& frame, WebPresentationClient* client)
-{
-    return adoptPtrWillBeNoop(new PresentationController(frame, client));
+PresentationController::~PresentationController() {
+  if (m_client)
+    m_client->setController(nullptr);
 }
 
 // static
-const char* PresentationController::supplementName()
-{
-    return "PresentationController";
+PresentationController* PresentationController::create(
+    LocalFrame& frame,
+    WebPresentationClient* client) {
+  return new PresentationController(frame, client);
 }
 
 // static
-PresentationController* PresentationController::from(LocalFrame& frame)
-{
-    return static_cast<PresentationController*>(WillBeHeapSupplement<LocalFrame>::from(frame, supplementName()));
+const char* PresentationController::supplementName() {
+  return "PresentationController";
 }
 
 // static
-void PresentationController::provideTo(LocalFrame& frame, WebPresentationClient* client)
-{
-    WillBeHeapSupplement<LocalFrame>::provideTo(frame, PresentationController::supplementName(), PresentationController::create(frame, client));
+PresentationController* PresentationController::from(LocalFrame& frame) {
+  return static_cast<PresentationController*>(
+      Supplement<LocalFrame>::from(frame, supplementName()));
 }
 
-WebPresentationClient* PresentationController::client()
-{
-    return m_client;
+// static
+void PresentationController::provideTo(LocalFrame& frame,
+                                       WebPresentationClient* client) {
+  Supplement<LocalFrame>::provideTo(
+      frame, PresentationController::supplementName(),
+      PresentationController::create(frame, client));
 }
 
-DEFINE_TRACE(PresentationController)
-{
-    visitor->trace(m_presentation);
-    visitor->trace(m_connections);
-    WillBeHeapSupplement<LocalFrame>::trace(visitor);
-    LocalFrameLifecycleObserver::trace(visitor);
+WebPresentationClient* PresentationController::client() {
+  return m_client;
 }
 
-void PresentationController::didStartDefaultSession(WebPresentationConnectionClient* connectionClient)
-{
-    if (!m_presentation || !m_presentation->defaultRequest())
-        return;
-    PresentationConnection::take(this, adoptPtr(connectionClient), m_presentation->defaultRequest());
+DEFINE_TRACE(PresentationController) {
+  visitor->trace(m_presentation);
+  visitor->trace(m_connections);
+  Supplement<LocalFrame>::trace(visitor);
+  DOMWindowProperty::trace(visitor);
 }
 
-void PresentationController::didChangeSessionState(WebPresentationConnectionClient* connectionClient, WebPresentationConnectionState state)
-{
-    OwnPtr<WebPresentationConnectionClient> client = adoptPtr(connectionClient);
-
-    PresentationConnection* connection = findConnection(client.get());
-    if (!connection)
-        return;
-    connection->didChangeState(state);
+void PresentationController::didStartDefaultSession(
+    WebPresentationConnectionClient* connectionClient) {
+  if (!m_presentation || !m_presentation->defaultRequest())
+    return;
+  PresentationConnection::take(this, WTF::wrapUnique(connectionClient),
+                               m_presentation->defaultRequest());
 }
 
-void PresentationController::didReceiveSessionTextMessage(WebPresentationConnectionClient* connectionClient, const WebString& message)
-{
-    OwnPtr<WebPresentationConnectionClient> client = adoptPtr(connectionClient);
+void PresentationController::didChangeSessionState(
+    WebPresentationConnectionClient* connectionClient,
+    WebPresentationConnectionState state) {
+  std::unique_ptr<WebPresentationConnectionClient> client =
+      WTF::wrapUnique(connectionClient);
 
-    PresentationConnection* connection = findConnection(client.get());
-    if (!connection)
-        return;
-    connection->didReceiveTextMessage(message);
+  PresentationConnection* connection = findConnection(client.get());
+  if (!connection)
+    return;
+  connection->didChangeState(state);
 }
 
-void PresentationController::didReceiveSessionBinaryMessage(WebPresentationConnectionClient* connectionClient, const uint8_t* data, size_t length)
-{
-    OwnPtr<WebPresentationConnectionClient> client = adoptPtr(connectionClient);
+void PresentationController::didCloseConnection(
+    WebPresentationConnectionClient* connectionClient,
+    WebPresentationConnectionCloseReason reason,
+    const WebString& message) {
+  std::unique_ptr<WebPresentationConnectionClient> client =
+      WTF::wrapUnique(connectionClient);
 
-    PresentationConnection* connection = findConnection(client.get());
-    if (!connection)
-        return;
-    connection->didReceiveBinaryMessage(data, length);
+  PresentationConnection* connection = findConnection(client.get());
+  if (!connection)
+    return;
+  connection->didClose(reason, message);
 }
 
-void PresentationController::setPresentation(Presentation* presentation)
-{
-    m_presentation = presentation;
+void PresentationController::didReceiveSessionTextMessage(
+    WebPresentationConnectionClient* connectionClient,
+    const WebString& message) {
+  std::unique_ptr<WebPresentationConnectionClient> client =
+      WTF::wrapUnique(connectionClient);
+
+  PresentationConnection* connection = findConnection(client.get());
+  if (!connection)
+    return;
+  connection->didReceiveTextMessage(message);
 }
 
-void PresentationController::setDefaultRequestUrl(const KURL& url)
-{
-    if (!m_client)
-        return;
+void PresentationController::didReceiveSessionBinaryMessage(
+    WebPresentationConnectionClient* connectionClient,
+    const uint8_t* data,
+    size_t length) {
+  std::unique_ptr<WebPresentationConnectionClient> client =
+      WTF::wrapUnique(connectionClient);
 
-    if (url.isValid())
-        m_client->setDefaultPresentationUrl(url.string());
-    else
-        m_client->setDefaultPresentationUrl(blink::WebString());
+  PresentationConnection* connection = findConnection(client.get());
+  if (!connection)
+    return;
+  connection->didReceiveBinaryMessage(data, length);
 }
 
-void PresentationController::registerConnection(PresentationConnection* connection)
-{
-    m_connections.add(connection);
+void PresentationController::setPresentation(Presentation* presentation) {
+  m_presentation = presentation;
 }
 
-void PresentationController::willDetachFrameHost()
-{
-    if (m_client) {
-        m_client->setController(nullptr);
-        m_client = nullptr;
-    }
+void PresentationController::setDefaultRequestUrl(const KURL& url) {
+  if (!m_client)
+    return;
+
+  // TODO(crbug.com/627655): Accept multiple URLs per PresentationRequest.
+  WebVector<WebURL> presentationUrls(static_cast<size_t>(1));
+  if (url.isValid())
+    presentationUrls[0] = url;
+
+  m_client->setDefaultPresentationUrls(presentationUrls);
 }
 
-PresentationConnection* PresentationController::findConnection(WebPresentationConnectionClient* connectionClient)
-{
-    for (const auto& connection : m_connections) {
-        if (connection->matches(connectionClient))
-            return connection.get();
-    }
-
-    return nullptr;
+void PresentationController::registerConnection(
+    PresentationConnection* connection) {
+  m_connections.add(connection);
 }
 
-} // namespace blink
+void PresentationController::frameDestroyed() {
+  if (m_client) {
+    m_client->setController(nullptr);
+    m_client = nullptr;
+  }
+  DOMWindowProperty::frameDestroyed();
+}
+
+PresentationConnection* PresentationController::findConnection(
+    WebPresentationConnectionClient* connectionClient) {
+  for (const auto& connection : m_connections) {
+    if (connection->matches(connectionClient))
+      return connection.get();
+  }
+
+  return nullptr;
+}
+
+}  // namespace blink

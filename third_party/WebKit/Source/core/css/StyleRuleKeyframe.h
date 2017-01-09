@@ -6,6 +6,7 @@
 #define StyleRuleKeyframe_h
 
 #include "core/css/StyleRule.h"
+#include <memory>
 
 namespace blink {
 
@@ -13,36 +14,35 @@ class MutableStylePropertySet;
 class StylePropertySet;
 
 class StyleRuleKeyframe final : public StyleRuleBase {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(StyleRuleKeyframe);
-public:
-    static PassRefPtrWillBeRawPtr<StyleRuleKeyframe> create(PassOwnPtr<Vector<double>> keys, PassRefPtrWillBeRawPtr<StylePropertySet> properties)
-    {
-        return adoptRefWillBeNoop(new StyleRuleKeyframe(keys, properties));
-    }
+ public:
+  static StyleRuleKeyframe* create(std::unique_ptr<Vector<double>> keys,
+                                   StylePropertySet* properties) {
+    return new StyleRuleKeyframe(std::move(keys), properties);
+  }
 
-    // Exposed to JavaScript.
-    String keyText() const;
-    bool setKeyText(const String&);
+  // Exposed to JavaScript.
+  String keyText() const;
+  bool setKeyText(const String&);
 
-    // Used by StyleResolver.
-    const Vector<double>& keys() const;
+  // Used by StyleResolver.
+  const Vector<double>& keys() const;
 
-    const StylePropertySet& properties() const { return *m_properties; }
-    MutableStylePropertySet& mutableProperties();
+  const StylePropertySet& properties() const { return *m_properties; }
+  MutableStylePropertySet& mutableProperties();
 
-    String cssText() const;
+  String cssText() const;
 
-    DECLARE_TRACE_AFTER_DISPATCH();
+  DECLARE_TRACE_AFTER_DISPATCH();
 
-private:
-    StyleRuleKeyframe(PassOwnPtr<Vector<double>>, PassRefPtrWillBeRawPtr<StylePropertySet>);
+ private:
+  StyleRuleKeyframe(std::unique_ptr<Vector<double>>, StylePropertySet*);
 
-    RefPtrWillBeMember<StylePropertySet> m_properties;
-    Vector<double> m_keys;
+  Member<StylePropertySet> m_properties;
+  Vector<double> m_keys;
 };
 
 DEFINE_STYLE_RULE_TYPE_CASTS(Keyframe);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // StyleRuleKeyframe_h
+#endif  // StyleRuleKeyframe_h

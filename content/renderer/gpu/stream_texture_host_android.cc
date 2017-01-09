@@ -4,33 +4,35 @@
 
 #include "content/renderer/gpu/stream_texture_host_android.h"
 
-#include "content/common/gpu/client/gpu_channel_host.h"
-#include "content/common/gpu/gpu_messages.h"
+#include "base/unguessable_token.h"
 #include "content/renderer/render_thread_impl.h"
+#include "gpu/ipc/client/gpu_channel_host.h"
+#include "gpu/ipc/common/gpu_messages.h"
 #include "ipc/ipc_message_macros.h"
 
 namespace content {
 
-StreamTextureHost::StreamTextureHost(GpuChannelHost* channel)
-    : stream_id_(0),
-      listener_(NULL),
-      channel_(channel),
+StreamTextureHost::StreamTextureHost(scoped_refptr<gpu::GpuChannelHost> channel,
+                                     int32_t route_id)
+    : route_id_(route_id),
+      listener_(nullptr),
+      channel_(std::move(channel)),
       weak_ptr_factory_(this) {
-  DCHECK(channel);
+  DCHECK(channel_);
+  DCHECK(route_id_);
 }
 
 StreamTextureHost::~StreamTextureHost() {
-  if (channel_.get() && stream_id_)
-    channel_->RemoveRoute(stream_id_);
+  if (channel_)
+    channel_->RemoveRoute(route_id_);
 }
 
-bool StreamTextureHost::BindToCurrentThread(int32 stream_id,
-                                            Listener* listener) {
+bool StreamTextureHost::BindToCurrentThread(Listener* listener) {
   listener_ = listener;
-  if (channel_.get() && stream_id && !stream_id_) {
-    stream_id_ = stream_id;
-    channel_->AddRoute(stream_id, weak_ptr_factory_.GetWeakPtr());
-    channel_->Send(new GpuStreamTextureMsg_StartListening(stream_id));
+
+  if (channel_) {
+    channel_->AddRoute(route_id_, weak_ptr_factory_.GetWeakPtr());
+    channel_->Send(new GpuStreamTextureMsg_StartListening(route_id_));
     return true;
   }
 
@@ -40,10 +42,7 @@ bool StreamTextureHost::BindToCurrentThread(int32 stream_id,
 bool StreamTextureHost::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(StreamTextureHost, message)
-    IPC_MESSAGE_HANDLER(GpuStreamTextureMsg_FrameAvailable,
-                        OnFrameAvailable);
-    IPC_MESSAGE_HANDLER(GpuStreamTextureMsg_MatrixChanged,
-                        OnMatrixChanged);
+    IPC_MESSAGE_HANDLER(GpuStreamTextureMsg_FrameAvailable, OnFrameAvailable);
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   DCHECK(handled);
@@ -51,6 +50,7 @@ bool StreamTextureHost::OnMessageReceived(const IPC::Message& message) {
 }
 
 void StreamTextureHost::OnChannelError() {
+  channel_ = nullptr;
 }
 
 void StreamTextureHost::OnFrameAvailable() {
@@ -58,12 +58,24 @@ void StreamTextureHost::OnFrameAvailable() {
     listener_->OnFrameAvailable();
 }
 
-void StreamTextureHost::OnMatrixChanged(
-    const GpuStreamTextureMsg_MatrixChanged_Params& params) {
-  static_assert(sizeof(params) == sizeof(float) * 16,
-                "bad GpuStreamTextureMsg MatrixChanged_Params format");
-  if (listener_)
-    listener_->OnMatrixChanged((const float*)&params);
+void StreamTextureHost::EstablishPeer(int player_id, int frame_id) {
+  if (channel_) {
+    channel_->Send(
+        new GpuStreamTextureMsg_EstablishPeer(route_id_, frame_id, player_id));
+  }
+}
+
+void StreamTextureHost::SetStreamTextureSize(const gfx::Size& size) {
+  if (channel_)
+    channel_->Send(new GpuStreamTextureMsg_SetSize(route_id_, size));
+}
+
+void StreamTextureHost::ForwardStreamTextureForSurfaceRequest(
+    const base::UnguessableToken& request_token) {
+  if (channel_) {
+    channel_->Send(new GpuStreamTextureMsg_ForwardForSurfaceRequest(
+        route_id_, request_token));
+  }
 }
 
 }  // namespace content

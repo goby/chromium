@@ -5,9 +5,12 @@
 #include "components/gcm_driver/gcm_account_tracker.h"
 
 #include <map>
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "components/gcm_driver/fake_gcm_driver.h"
 #include "google_apis/gaia/fake_identity_provider.h"
 #include "google_apis/gaia/fake_oauth2_token_service.h"
@@ -185,9 +188,9 @@ class GCMAccountTrackerTest : public testing::Test {
 
   base::MessageLoop message_loop_;
   net::TestURLFetcherFactory test_fetcher_factory_;
-  scoped_ptr<FakeOAuth2TokenService> fake_token_service_;
-  scoped_ptr<FakeIdentityProvider> fake_identity_provider_;
-  scoped_ptr<GCMAccountTracker> tracker_;
+  std::unique_ptr<FakeOAuth2TokenService> fake_token_service_;
+  std::unique_ptr<FakeIdentityProvider> fake_identity_provider_;
+  std::unique_ptr<GCMAccountTracker> tracker_;
 };
 
 GCMAccountTrackerTest::GCMAccountTrackerTest() {
@@ -196,12 +199,13 @@ GCMAccountTrackerTest::GCMAccountTrackerTest() {
   fake_identity_provider_.reset(
       new FakeIdentityProvider(fake_token_service_.get()));
 
-  scoped_ptr<gaia::AccountTracker> gaia_account_tracker(
+  std::unique_ptr<gaia::AccountTracker> gaia_account_tracker(
       new gaia::AccountTracker(
           fake_identity_provider_.get(),
           new net::TestURLRequestContextGetter(message_loop_.task_runner())));
 
-  tracker_.reset(new GCMAccountTracker(gaia_account_tracker.Pass(), &driver_));
+  tracker_.reset(
+      new GCMAccountTracker(std::move(gaia_account_tracker), &driver_));
 }
 
 GCMAccountTrackerTest::~GCMAccountTrackerTest() {

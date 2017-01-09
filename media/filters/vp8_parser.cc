@@ -153,8 +153,8 @@ bool Vp8Parser::ParseFrameHeader(Vp8FrameHeader* fhdr) {
 
   int log2_nbr_of_dct_partitions;
   BD_READ_UNSIGNED_OR_RETURN(2, &log2_nbr_of_dct_partitions);
-  fhdr->num_of_dct_partitions =
-      static_cast<size_t>(1 << log2_nbr_of_dct_partitions);
+  fhdr->num_of_dct_partitions = static_cast<size_t>(1)
+                                << log2_nbr_of_dct_partitions;
 
   if (!ParseQuantizationHeader(&fhdr->quantization_hdr))
     return false;
@@ -242,6 +242,8 @@ bool Vp8Parser::ParseSegmentationHeader(bool keyframe) {
       BD_READ_BOOL_OR_RETURN(&quantizer_update);
       if (quantizer_update)
         BD_READ_SIGNED_OR_RETURN(7, &shdr->quantizer_update_value[i]);
+      else
+        shdr->quantizer_update_value[i] = 0;
     }
 
     for (size_t i = 0; i < kMaxMBSegments; ++i) {
@@ -249,6 +251,8 @@ bool Vp8Parser::ParseSegmentationHeader(bool keyframe) {
       BD_READ_BOOL_OR_RETURN(&loop_filter_update);
       if (loop_filter_update)
         BD_READ_SIGNED_OR_RETURN(6, &shdr->lf_update_value[i]);
+      else
+        shdr->lf_update_value[i] = 0;
     }
   }
 

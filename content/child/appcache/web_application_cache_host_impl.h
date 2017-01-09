@@ -23,7 +23,8 @@ class WebApplicationCacheHostImpl
   static WebApplicationCacheHostImpl* FromId(int id);
 
   WebApplicationCacheHostImpl(blink::WebApplicationCacheHostClient* client,
-                              AppCacheBackend* backend);
+                              AppCacheBackend* backend,
+                              int appcache_host_id);
   ~WebApplicationCacheHostImpl() override;
 
   int host_id() const { return host_id_; }
@@ -49,7 +50,7 @@ class WebApplicationCacheHostImpl
   void didReceiveResponseForMainResource(const blink::WebURLResponse&) override;
   void didReceiveDataForMainResource(const char* data, unsigned len) override;
   void didFinishLoadingMainResource(bool success) override;
-  blink::WebApplicationCacheHost::Status status() override;
+  blink::WebApplicationCacheHost::Status getStatus() override;
   bool startUpdate() override;
   bool swapCache() override;
   void getResourceList(blink::WebVector<ResourceInfo>* resources) override;

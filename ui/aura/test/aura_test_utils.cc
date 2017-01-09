@@ -4,6 +4,9 @@
 
 #include "ui/aura/test/aura_test_utils.h"
 
+#include <utility>
+
+#include "base/macros.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
 
@@ -18,8 +21,8 @@ class WindowTreeHostTestApi {
     return host_->last_cursor_request_position_in_host_;
   }
 
-  void set_dispatcher(scoped_ptr<WindowEventDispatcher> dispatcher) {
-    host_->dispatcher_ = dispatcher.Pass();
+  void set_dispatcher(std::unique_ptr<WindowEventDispatcher> dispatcher) {
+    host_->dispatcher_ = std::move(dispatcher);
   }
 
  private:
@@ -34,9 +37,9 @@ const gfx::Point& QueryLatestMousePositionRequestInHost(WindowTreeHost* host) {
 }
 
 void SetHostDispatcher(WindowTreeHost* host,
-                       scoped_ptr<WindowEventDispatcher> dispatcher) {
+                       std::unique_ptr<WindowEventDispatcher> dispatcher) {
   WindowTreeHostTestApi host_test_api(host);
-  host_test_api.set_dispatcher(dispatcher.Pass());
+  host_test_api.set_dispatcher(std::move(dispatcher));
 }
 
 }  // namespace test

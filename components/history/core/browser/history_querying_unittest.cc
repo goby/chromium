@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/history/core/browser/history_database_params.h"
@@ -62,7 +65,7 @@ bool NthResultIs(const QueryResults& results,
     return false;
 
   // Now check the URL & title.
-  return result.url() == GURL(test_entries[test_entry_index].url) &&
+  return result.url() == test_entries[test_entry_index].url &&
          result.title() ==
              base::UTF8ToUTF16(test_entries[test_entry_index].title);
 }
@@ -83,7 +86,7 @@ class HistoryQueryTest : public testing::Test {
                                       base::Unretained(this)),
                            &tracker_);
     // Will go until ...Complete calls Quit.
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     results->Swap(&last_query_results_);
   }
 
@@ -140,7 +143,7 @@ class HistoryQueryTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<HistoryService> history_;
+  std::unique_ptr<HistoryService> history_;
 
   // Counter used to generate a unique ID for each page added to the history.
   int nav_entry_id_;
@@ -159,12 +162,11 @@ class HistoryQueryTest : public testing::Test {
  private:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    history_dir_ = temp_dir_.path().AppendASCII("HistoryTest");
+    history_dir_ = temp_dir_.GetPath().AppendASCII("HistoryTest");
     ASSERT_TRUE(base::CreateDirectory(history_dir_));
 
     history_.reset(new HistoryService);
-    if (!history_->Init(std::string(),
-                        TestHistoryDatabaseParamsForPath(history_dir_))) {
+    if (!history_->Init(TestHistoryDatabaseParamsForPath(history_dir_))) {
       history_.reset();  // Tests should notice this NULL ptr & fail.
       return;
     }
@@ -184,7 +186,7 @@ class HistoryQueryTest : public testing::Test {
           base::MessageLoop::QuitWhenIdleClosure());
       history_->Cleanup();
       history_.reset();
-      base::MessageLoop::current()->Run();  // Wait for the other thread.
+      base::RunLoop().Run();  // Wait for the other thread.
     }
   }
 

@@ -5,39 +5,27 @@
 #ifndef CONTENT_RENDERER_PEPPER_VIDEO_DECODER_SHIM_H_
 #define CONTENT_RENDERER_PEPPER_VIDEO_DECODER_SHIM_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "media/base/video_decoder_config.h"
 #include "media/video/video_decode_accelerator.h"
-
 #include "ppapi/c/pp_codecs.h"
 
 namespace base {
 class SingleThreadTaskRunner;
 }
 
-namespace cc_blink {
-class ContextProviderWebContext;
-}
-
-namespace gpu {
-namespace gles2 {
-class GLES2Interface;
-}
-}
-
-namespace media {
-class DecoderBuffer;
-}
-
 namespace content {
 
+class ContextProviderCommandBuffer;
 class PepperVideoDecoderHost;
 
 // This class is a shim to wrap a media::VideoDecoder so that it can be used
@@ -54,7 +42,7 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
   void Decode(const media::BitstreamBuffer& bitstream_buffer) override;
   void AssignPictureBuffers(
       const std::vector<media::PictureBuffer>& buffers) override;
-  void ReusePictureBuffer(int32 picture_buffer_id) override;
+  void ReusePictureBuffer(int32_t picture_buffer_id) override;
   void Flush() override;
   void Reset() override;
   void Destroy() override;
@@ -74,7 +62,7 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
 
   void OnInitializeFailed();
   void OnDecodeComplete(int32_t result, uint32_t decode_id);
-  void OnOutputComplete(scoped_ptr<PendingFrame> frame);
+  void OnOutputComplete(std::unique_ptr<PendingFrame> frame);
   void SendPictures();
   void OnResetComplete();
   void NotifyCompletedDecodes();
@@ -84,12 +72,12 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
   // creating picture textures.
   void FlushCommandBuffer();
 
-  scoped_ptr<DecoderImpl> decoder_impl_;
+  std::unique_ptr<DecoderImpl> decoder_impl_;
   State state_;
 
   PepperVideoDecoderHost* host_;
   scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
-  scoped_refptr<cc_blink::ContextProviderWebContext> context_provider_;
+  scoped_refptr<ContextProviderCommandBuffer> context_provider_;
 
   // The current decoded frame size.
   gfx::Size texture_size_;
@@ -109,7 +97,7 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
   CompletedDecodeQueue completed_decodes_;
 
   // Queue of decoded frames that await rgb->yuv conversion.
-  typedef std::queue<scoped_ptr<PendingFrame>> PendingFrameQueue;
+  typedef std::queue<std::unique_ptr<PendingFrame>> PendingFrameQueue;
   PendingFrameQueue pending_frames_;
 
   // The optimal number of textures to allocate for decoder_impl_.
@@ -117,7 +105,7 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
 
   uint32_t num_pending_decodes_;
 
-  scoped_ptr<YUVConverter> yuv_converter_;
+  std::unique_ptr<YUVConverter> yuv_converter_;
 
   base::WeakPtrFactory<VideoDecoderShim> weak_ptr_factory_;
 

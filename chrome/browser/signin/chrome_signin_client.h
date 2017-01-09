@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_SIGNIN_CHROME_SIGNIN_CLIENT_H_
 #define CHROME_BROWSER_SIGNIN_CHROME_SIGNIN_CLIENT_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "components/signin/core/browser/signin_client.h"
 #include "components/signin/core/browser/signin_error_controller.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
@@ -16,8 +17,8 @@
 #include "net/base/network_change_notifier.h"
 #endif
 
-namespace content_settings {
-class CookieSettings;
+namespace net {
+class URLRequestContext;
 }
 
 class Profile;
@@ -65,7 +66,7 @@ class ChromeSigninClient
   // <Build Info> <OS> <Version number> (<Last change>)<channel or "-devel">
   // If version information is unavailable, returns "invalid."
   std::string GetProductVersion() override;
-  scoped_ptr<CookieChangedSubscription> AddCookieChangedCallback(
+  std::unique_ptr<CookieChangedSubscription> AddCookieChangedCallback(
       const GURL& url,
       const std::string& name,
       const net::CookieStore::CookieChangedCallback& callback) override;
@@ -76,13 +77,14 @@ class ChromeSigninClient
   void PostSignedIn(const std::string& account_id,
                     const std::string& username,
                     const std::string& password) override;
+  void PreSignOut(const base::Callback<void()>& sign_out) override;
 
   // SigninErrorController::Observer implementation.
   void OnErrorChanged() override;
 
   // gaia::GaiaOAuthClient::Delegate implementation.
   void OnGetTokenInfoResponse(
-      scoped_ptr<base::DictionaryValue> token_info) override;
+      std::unique_ptr<base::DictionaryValue> token_info) override;
   void OnOAuthError() override;
   void OnNetworkError(int response_code) override;
 
@@ -99,8 +101,19 @@ class ChromeSigninClient
       override;
 #endif
 
+  void AfterCredentialsCopied() override;
+  int number_of_request_context_pointer_changes() const override;
+
+ protected:
+  virtual void ShowUserManager(const base::FilePath& profile_path);
+  virtual void LockForceSigninProfile(const base::FilePath& profile_path);
+
  private:
   void MaybeFetchSigninTokenHandle();
+  void OnCloseBrowsersSuccess(const base::Callback<void()>& sign_out,
+                              const base::FilePath& profile_path);
+  void OnCloseBrowsersAborted(const base::FilePath& profile_path);
+  void RequestContextPointerReply(net::URLRequestContext* pointer);
 
   Profile* profile_;
 
@@ -109,8 +122,15 @@ class ChromeSigninClient
   std::list<base::Closure> delayed_callbacks_;
 #endif
 
-  scoped_ptr<gaia::GaiaOAuthClient> oauth_client_;
-  scoped_ptr<OAuth2TokenService::Request> oauth_request_;
+  bool is_force_signin_enabled_;
+  bool should_display_user_manager_ = true;
+
+  std::unique_ptr<gaia::GaiaOAuthClient> oauth_client_;
+  std::unique_ptr<OAuth2TokenService::Request> oauth_request_;
+
+  // These members are used to debug channel id binding problems in chrome.
+  void* request_context_pointer_;
+  int number_of_request_context_pointer_changes_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeSigninClient);
 };

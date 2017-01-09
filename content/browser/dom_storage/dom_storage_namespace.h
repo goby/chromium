@@ -5,14 +5,21 @@
 #ifndef CONTENT_BROWSER_DOM_STORAGE_DOM_STORAGE_NAMESPACE_H_
 #define CONTENT_BROWSER_DOM_STORAGE_DOM_STORAGE_NAMESPACE_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "url/gurl.h"
+
+namespace base {
+namespace trace_event {
+class ProcessMemoryDump;
+}
+}
 
 namespace content {
 
@@ -25,14 +32,11 @@ class SessionStorageDatabase;
 class CONTENT_EXPORT DOMStorageNamespace
     : public base::RefCountedThreadSafe<DOMStorageNamespace> {
  public:
-  // Option for PurgeMemory.
-  enum PurgeOption {
-    // Purge unopened areas only.
-    PURGE_UNOPENED,
-
-    // Purge aggressively, i.e. discard cache even for areas that have
-    // non-zero open count.
-    PURGE_AGGRESSIVE,
+  // Struct to hold statistics about the areas in the namespace.
+  struct UsageStatistics {
+    size_t total_cache_size;
+    unsigned total_area_count;
+    unsigned inactive_area_count;  // areas with open count 0.
   };
 
   // Constructor for a LocalStorage namespace with id of 0
@@ -42,12 +46,12 @@ class CONTENT_EXPORT DOMStorageNamespace
 
   // Constructor for a SessionStorage namespace with a non-zero id and an
   // optional backing on disk via |session_storage_database| (may be NULL).
-  DOMStorageNamespace(int64 namespace_id,
+  DOMStorageNamespace(int64_t namespace_id,
                       const std::string& persistent_namespace_id,
                       SessionStorageDatabase* session_storage_database,
                       DOMStorageTaskRunner* task_runner);
 
-  int64 namespace_id() const { return namespace_id_; }
+  int64_t namespace_id() const { return namespace_id_; }
   const std::string& persistent_namespace_id() const {
     return persistent_namespace_id_;
   }
@@ -64,16 +68,22 @@ class CONTENT_EXPORT DOMStorageNamespace
   // Creates a clone of |this| namespace including
   // shallow copies of all contained areas.
   // Should only be called for session storage namespaces.
-  DOMStorageNamespace* Clone(int64 clone_namespace_id,
+  DOMStorageNamespace* Clone(int64_t clone_namespace_id,
                              const std::string& clone_persistent_namespace_id);
 
   void DeleteLocalStorageOrigin(const GURL& origin);
   void DeleteSessionStorageOrigin(const GURL& origin);
-  void PurgeMemory(PurgeOption purge);
+  void PurgeMemory(bool aggressively);
   void Shutdown();
   void Flush();
 
-  unsigned int CountInMemoryAreas() const;
+  // Returns statistics about the areas in the namespace.
+  UsageStatistics GetUsageStatistics() const;
+
+  // Adds memory statistics to |pmd| for chrome://tracing.
+  void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd);
+
+  void GetOriginsWithAreas(std::vector<GURL>* origins) const;
 
  private:
   friend class base::RefCountedThreadSafe<DOMStorageNamespace>;
@@ -85,6 +95,7 @@ class CONTENT_EXPORT DOMStorageNamespace
     int open_count_;
     AreaHolder();
     AreaHolder(DOMStorageArea* area, int count);
+    AreaHolder(const AreaHolder& other);
     ~AreaHolder();
   };
   typedef std::map<GURL, AreaHolder> AreaMap;
@@ -94,7 +105,7 @@ class CONTENT_EXPORT DOMStorageNamespace
   // Returns a pointer to the area holder in our map or NULL.
   AreaHolder* GetAreaHolder(const GURL& origin);
 
-  int64 namespace_id_;
+  int64_t namespace_id_;
   std::string persistent_namespace_id_;
   base::FilePath directory_;
   AreaMap areas_;

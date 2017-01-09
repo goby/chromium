@@ -5,14 +5,14 @@
 #ifndef PPAPI_CPP_PRIVATE_EXTENSION_CRX_FILE_SYSTEM_PRIVATE_H_
 #define PPAPI_CPP_PRIVATE_EXTENSION_CRX_FILE_SYSTEM_PRIVATE_H_
 
+#include <stdint.h>
+
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/cpp/completion_callback.h"
 #include "ppapi/cpp/file_system.h"
 #include "ppapi/cpp/instance_handle.h"
 
 namespace pp {
-
-class CompletionCallback;
 
 class ExtCrxFileSystemPrivate {
  public:

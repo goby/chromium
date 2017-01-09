@@ -4,13 +4,21 @@
 
 #include "chrome/browser/signin/cross_device_promo.h"
 
+#include <stdint.h>
+
+#include <map>
+#include <string>
+#include <vector>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/test/histogram_tester.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/cross_device_promo_factory.h"
-#include "chrome/browser/signin/fake_gaia_cookie_manager_service.h"
+#include "chrome/browser/signin/fake_gaia_cookie_manager_service_builder.h"
 #include "chrome/browser/signin/fake_signin_manager_builder.h"
 #include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -19,14 +27,16 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/signin/core/browser/fake_gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_metrics.h"
 #include "components/signin/core/browser/test_signin_client.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/variations/entropy_provider.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -35,7 +45,7 @@ namespace {
 
 typedef std::map<std::string, std::string> VariationsMap;
 
-int64 InTwoHours() {
+int64_t InTwoHours() {
   return (base::Time::Now() + base::TimeDelta::FromHours(2)).ToInternalValue();
 }
 
@@ -90,7 +100,9 @@ class CrossDevicePromoTest : public ::testing::Test {
   TestingProfile* profile() { return profile_; }
   FakeSigninManagerForTesting* signin_manager() { return signin_manager_; }
   base::HistogramTester* histogram_tester() { return &histogram_tester_; }
-  syncable_prefs::TestingPrefServiceSyncable* prefs() { return pref_service_; }
+  sync_preferences::TestingPrefServiceSyncable* prefs() {
+    return pref_service_;
+  }
   FakeGaiaCookieManagerService* cookie_manager_service() {
     return cookie_manager_service_;
   }
@@ -104,10 +116,10 @@ class CrossDevicePromoTest : public ::testing::Test {
   TestingProfile* profile_;
   FakeSigninManagerForTesting* signin_manager_;
   FakeGaiaCookieManagerService* cookie_manager_service_;
-  syncable_prefs::TestingPrefServiceSyncable* pref_service_;
-  scoped_ptr<TestingProfileManager> testing_profile_manager_;
+  sync_preferences::TestingPrefServiceSyncable* pref_service_;
+  std::unique_ptr<TestingProfileManager> testing_profile_manager_;
   base::HistogramTester histogram_tester_;
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
   net::FakeURLFetcherFactory fake_url_fetcher_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CrossDevicePromoTest);
@@ -127,16 +139,16 @@ void CrossDevicePromoTest::SetUp() {
                                      signin::BuildTestSigninClient));
   factories.push_back(
       std::make_pair(GaiaCookieManagerServiceFactory::GetInstance(),
-                     FakeGaiaCookieManagerService::Build));
+                     BuildFakeGaiaCookieManagerService));
   factories.push_back(std::make_pair(SigninManagerFactory::GetInstance(),
                                      BuildFakeSigninManagerBase));
 
-  pref_service_ = new syncable_prefs::TestingPrefServiceSyncable();
+  pref_service_ = new sync_preferences::TestingPrefServiceSyncable();
   chrome::RegisterUserProfilePrefs(pref_service_->registry());
 
   profile_ = testing_profile_manager_.get()->CreateTestingProfile(
       "name",
-      make_scoped_ptr<syncable_prefs::PrefServiceSyncable>(pref_service_),
+      base::WrapUnique<sync_preferences::PrefServiceSyncable>(pref_service_),
       base::UTF8ToUTF16("name"), 0, std::string(), factories);
 
   cookie_manager_service_ = static_cast<FakeGaiaCookieManagerService*>(
@@ -154,7 +166,8 @@ void CrossDevicePromoTest::ResetFieldTrialList() {
   // a DCHECK.
   field_trial_list_.reset();
   field_trial_list_.reset(
-      new base::FieldTrialList(new metrics::SHA1EntropyProvider("foo")));
+      new base::FieldTrialList(
+          base::MakeUnique<metrics::SHA1EntropyProvider>("foo")));
   variations::testing::ClearAllVariationParams();
 }
 
@@ -292,7 +305,8 @@ TEST_F(CrossDevicePromoTest, SignedInAndOut) {
 
   {
     base::HistogramTester test_signed_out;
-    signin_manager()->SignOut(signin_metrics::SIGNOUT_TEST);
+    signin_manager()->SignOut(signin_metrics::SIGNOUT_TEST,
+                              signin_metrics::SignoutDelete::IGNORE_METRIC);
     promo()->CheckPromoEligibilityForTesting();
     test_signed_out.ExpectUniqueSample("Signin.XDevicePromo.Eligibility",
                                        signin_metrics::NOT_SINGLE_GAIA_ACCOUNT,
@@ -312,7 +326,8 @@ TEST_F(CrossDevicePromoTest, TrackAccountsInCookie) {
   base::Time before_setting_cookies = base::Time::Now();
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseOneAccount("f@bar.com", "1");
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
 
   base::Time after_setting_cookies = base::Time::Now();
@@ -328,7 +343,8 @@ TEST_F(CrossDevicePromoTest, TrackAccountsInCookie) {
   // A single cookie a second time doesn't change the time.
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseOneAccount("f@bar.com", "1");
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(prefs()->HasPrefPath(
@@ -340,7 +356,8 @@ TEST_F(CrossDevicePromoTest, TrackAccountsInCookie) {
   // Setting accounts with an auth error doesn't change the time.
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseWebLoginRequired();
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(prefs()->HasPrefPath(
@@ -355,7 +372,8 @@ TEST_F(CrossDevicePromoTest, TrackAccountsInCookie) {
   // Seeing zero accounts clears the pref.
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseNoAccounts();
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(prefs()->HasPrefPath(
@@ -379,7 +397,8 @@ TEST_F(CrossDevicePromoTest, SingleAccountEligibility) {
     std::vector<gaia::ListedAccount> accounts;
     cookie_manager_service()->set_list_accounts_stale_for_testing(true);
     cookie_manager_service()->SetListAccountsResponseOneAccount("a@b.com", "1");
-    EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+    EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+        &accounts, nullptr, GaiaConstants::kChromeSource));
     base::RunLoop().RunUntilIdle();
 
     EXPECT_FALSE(promo()->CheckPromoEligibilityForTesting());
@@ -407,22 +426,23 @@ TEST_F(CrossDevicePromoTest, NumDevicesEligibility) {
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseOneAccount("f@bar.com", "1");
   std::vector<gaia::ListedAccount> accounts;
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
 
   // Ensure we appropriate schedule a check for device activity.
   {
     base::HistogramTester test_missing_list_devices;
-    int64 earliest_time_to_check_list_devices =
+    int64_t earliest_time_to_check_list_devices =
         base::Time::Now().ToInternalValue();
     EXPECT_FALSE(promo()->CheckPromoEligibilityForTesting());
-    int64 latest_time_to_check_list_devices = InTwoHours();
+    int64_t latest_time_to_check_list_devices = InTwoHours();
     test_missing_list_devices.ExpectUniqueSample(
         "Signin.XDevicePromo.Eligibility",
         signin_metrics::UNKNOWN_COUNT_DEVICES, 1);
     EXPECT_TRUE(
         prefs()->HasPrefPath(prefs::kCrossDevicePromoNextFetchListDevicesTime));
-    int64 when_to_check_list_devices =
+    int64_t when_to_check_list_devices =
         prefs()->GetInt64(prefs::kCrossDevicePromoNextFetchListDevicesTime);
     EXPECT_LT(earliest_time_to_check_list_devices, when_to_check_list_devices);
     EXPECT_GT(latest_time_to_check_list_devices, when_to_check_list_devices);
@@ -431,7 +451,7 @@ TEST_F(CrossDevicePromoTest, NumDevicesEligibility) {
   // Don't reschedule the device activity check if there's one pending.
   {
     base::HistogramTester test_unknown_devices;
-    int64 list_devices_time = InTwoHours();
+    int64_t list_devices_time = InTwoHours();
     prefs()->SetInt64(prefs::kCrossDevicePromoNextFetchListDevicesTime,
                       list_devices_time);
     EXPECT_FALSE(promo()->CheckPromoEligibilityForTesting());
@@ -483,7 +503,8 @@ TEST_F(CrossDevicePromoTest, ThrottleDeviceActivityCall) {
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseOneAccount("f@bar.com", "1");
   std::vector<gaia::ListedAccount> accounts;
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
 
   // Ensure device activity fetches get throttled.
@@ -506,7 +527,8 @@ TEST_F(CrossDevicePromoTest, NumDevicesKnown) {
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseOneAccount("f@bar.com", "1");
   std::vector<gaia::ListedAccount> accounts;
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
   prefs()->SetInt64(prefs::kCrossDevicePromoNextFetchListDevicesTime,
                     InTwoHours());
@@ -537,7 +559,8 @@ TEST_F(CrossDevicePromoTest, FetchDeviceResults) {
   cookie_manager_service()->set_list_accounts_stale_for_testing(true);
   cookie_manager_service()->SetListAccountsResponseOneAccount("f@bar.com", "1");
   std::vector<gaia::ListedAccount> accounts;
-  EXPECT_FALSE(cookie_manager_service()->ListAccounts(&accounts));
+  EXPECT_FALSE(cookie_manager_service()->ListAccounts(
+      &accounts, nullptr, GaiaConstants::kChromeSource));
   base::RunLoop().RunUntilIdle();
   prefs()->SetInt64(prefs::kCrossDevicePromoNextFetchListDevicesTime,
                     base::Time::Now().ToInternalValue());
@@ -549,7 +572,7 @@ TEST_F(CrossDevicePromoTest, FetchDeviceResults) {
   {
     base::HistogramTester test_no_devices;
     std::vector<DeviceActivityFetcher::DeviceActivity> devices;
-    int64 in_two_hours = InTwoHours();
+    int64_t in_two_hours = InTwoHours();
     promo()->OnFetchDeviceActivitySuccess(devices);
     EXPECT_LE(
         in_two_hours,
@@ -574,7 +597,7 @@ TEST_F(CrossDevicePromoTest, FetchDeviceResults) {
     device.name = "Aslan";
     devices.push_back(device);
 
-    int64 in_two_hours = InTwoHours();
+    int64_t in_two_hours = InTwoHours();
     promo()->OnFetchDeviceActivitySuccess(devices);
     EXPECT_LE(
         in_two_hours,
@@ -604,7 +627,7 @@ TEST_F(CrossDevicePromoTest, FetchDeviceResults) {
     device.name = "Aslan";
     devices.push_back(device);
 
-    int64 in_two_hours = InTwoHours();
+    int64_t in_two_hours = InTwoHours();
     promo()->OnFetchDeviceActivitySuccess(devices);
     EXPECT_LE(
         in_two_hours,
@@ -639,7 +662,7 @@ TEST_F(CrossDevicePromoTest, FetchDeviceResults) {
     device2.name = "Balrog";
     devices.push_back(device2);
 
-    int64 in_two_hours = InTwoHours();
+    int64_t in_two_hours = InTwoHours();
     promo()->OnFetchDeviceActivitySuccess(devices);
     EXPECT_LE(
         in_two_hours,

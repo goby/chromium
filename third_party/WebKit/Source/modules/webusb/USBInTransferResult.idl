@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// http://reillyeon.github.io/webusb/#idl-def-usbintransferresult
+// https://wicg.github.io/webusb/#transfers
 
 [
-    GarbageCollected,
-    RuntimeEnabled=WebUSB,
+    OriginTrialEnabled=WebUSB,
 ] interface USBInTransferResult {
-    readonly attribute ArrayBuffer data;
+    readonly attribute DataView data;
     readonly attribute USBTransferStatus status;
 };

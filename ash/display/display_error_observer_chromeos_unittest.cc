@@ -4,6 +4,7 @@
 
 #include "ash/display/display_error_observer_chromeos.h"
 
+#include "ash/display/display_util.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "grit/ash_strings.h"
@@ -17,8 +18,7 @@ namespace ash {
 
 class DisplayErrorObserverTest : public test::AshTestBase {
  protected:
-  DisplayErrorObserverTest() {
-  }
+  DisplayErrorObserverTest() {}
 
   ~DisplayErrorObserverTest() override {}
 
@@ -31,11 +31,11 @@ class DisplayErrorObserverTest : public test::AshTestBase {
   DisplayErrorObserver* observer() { return observer_.get(); }
 
   base::string16 GetMessageContents() {
-    return observer_->GetDisplayErrorNotificationMessageForTest();
+    return GetDisplayErrorNotificationMessageForTest();
   }
 
  private:
-  scoped_ptr<DisplayErrorObserver> observer_;
+  std::unique_ptr<DisplayErrorObserver> observer_;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayErrorObserverTest);
 };

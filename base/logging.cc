@@ -4,11 +4,16 @@
 
 #include "base/logging.h"
 
+#include <limits.h>
+#include <stdint.h>
+
+#include "base/debug/activity_tracker.h"
+#include "base/macros.h"
+#include "build/build_config.h"
+
 #if defined(OS_WIN)
 #include <io.h>
 #include <windows.h>
-#include "base/files/file_path.h"
-#include "base/files/file_util.h"
 typedef HANDLE FileHandle;
 typedef HANDLE MutexHandle;
 // Windows warns on using write().  It prefers _write().
@@ -24,8 +29,6 @@ typedef HANDLE MutexHandle;
 #elif defined(OS_POSIX)
 #if defined(OS_NACL)
 #include <sys/time.h>  // timespec doesn't seem to be in <time.h>
-#else
-#include <sys/syscall.h>
 #endif
 #include <time.h>
 #endif
@@ -126,7 +129,7 @@ LogMessageHandlerFunction log_message_handler = nullptr;
 
 // Helper functions to wrap platform differences.
 
-int32 CurrentProcessId() {
+int32_t CurrentProcessId() {
 #if defined(OS_WIN)
   return GetCurrentProcessId();
 #elif defined(OS_POSIX)
@@ -134,7 +137,7 @@ int32 CurrentProcessId() {
 #endif
 }
 
-uint64 TickCount() {
+uint64_t TickCount() {
 #if defined(OS_WIN)
   return GetTickCount();
 #elif defined(OS_MACOSX)
@@ -147,9 +150,8 @@ uint64 TickCount() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
 
-  uint64 absolute_micro =
-    static_cast<int64>(ts.tv_sec) * 1000000 +
-    static_cast<int64>(ts.tv_nsec) / 1000;
+  uint64_t absolute_micro = static_cast<int64_t>(ts.tv_sec) * 1000000 +
+                            static_cast<int64_t>(ts.tv_nsec) / 1000;
 
   return absolute_micro;
 #endif
@@ -286,13 +288,24 @@ bool InitializeLogFileHandle() {
                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (g_log_file == INVALID_HANDLE_VALUE || g_log_file == nullptr) {
+      // We are intentionally not using FilePath or FileUtil here to reduce the
+      // dependencies of the logging implementation. For e.g. FilePath and
+      // FileUtil depend on shell32 and user32.dll. This is not acceptable for
+      // some consumers of base logging like chrome_elf, etc.
+      // Please don't change the code below to use FilePath.
       // try the current directory
-      base::FilePath file_path;
-      if (!base::GetCurrentDirectory(&file_path))
+      wchar_t system_buffer[MAX_PATH];
+      system_buffer[0] = 0;
+      DWORD len = ::GetCurrentDirectory(arraysize(system_buffer),
+                                        system_buffer);
+      if (len == 0 || len > arraysize(system_buffer))
         return false;
 
-      *g_log_file_name = file_path.Append(
-          FILE_PATH_LITERAL("debug.log")).value();
+      *g_log_file_name = system_buffer;
+      // Append a trailing backslash if needed.
+      if (g_log_file_name->back() != L'\\')
+        *g_log_file_name += L"\\";
+      *g_log_file_name += L"debug.log";
 
       g_log_file = CreateFile(g_log_file_name->c_str(), FILE_APPEND_DATA,
                               FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
@@ -329,6 +342,11 @@ void CloseLogFileUnlocked() {
 }
 
 }  // namespace
+
+// This is never instantiated, it's just used for EAT_STREAM_PARAMETERS to have
+// an object of the correct type on the LHS of the unused part of the ternary
+// operator.
+std::ostream* g_swallow_stream;
 
 LoggingSettings::LoggingSettings()
     : logging_dest(LOG_DEFAULT),
@@ -390,6 +408,17 @@ int GetMinLogLevel() {
   return g_min_log_level;
 }
 
+bool ShouldCreateLogMessage(int severity) {
+  if (severity < g_min_log_level)
+    return false;
+
+  // Return true here unless we know ~LogMessage won't do anything. Note that
+  // ~LogMessage writes to stderr if severity_ >= kAlwaysPrintErrorLevel, even
+  // when g_logging_destination is LOG_NONE.
+  return g_logging_destination != LOG_NONE || log_message_handler ||
+         severity >= kAlwaysPrintErrorLevel;
+}
+
 int GetVlogVerbosity() {
   return std::max(-1, LOG_INFO - GetMinLogLevel());
 }
@@ -439,6 +468,10 @@ template std::string* MakeCheckOpString<unsigned int, unsigned long>(
     const unsigned int&, const unsigned long&, const char* names);
 template std::string* MakeCheckOpString<std::string, std::string>(
     const std::string&, const std::string&, const char* name);
+
+void MakeCheckOpValueString(std::ostream* os, std::nullptr_t p) {
+  (*os) << "nullptr";
+}
 
 #if !defined(NDEBUG)
 // Displays a message box to the user with the error message in it.
@@ -695,6 +728,12 @@ LogMessage::~LogMessage() {
   }
 
   if (severity_ == LOG_FATAL) {
+    // Write the log message to the global activity tracker, if running.
+    base::debug::GlobalActivityTracker* tracker =
+        base::debug::GlobalActivityTracker::Get();
+    if (tracker)
+      tracker->RecordLogMessage(str_newline);
+
     // Ensure the first characters of the string are on the stack so they
     // are contained in minidumps for diagnostic purposes.
     char str_stack[1024];
@@ -738,13 +777,12 @@ void LogMessage::Init(const char* file, int line) {
   if (g_log_thread_id)
     stream_ << base::PlatformThread::CurrentId() << ':';
   if (g_log_timestamp) {
-    time_t t = time(nullptr);
-    struct tm local_time = {0};
-#ifdef _MSC_VER
-    localtime_s(&local_time, &t);
-#else
+#if defined(OS_POSIX)
+    timeval tv;
+    gettimeofday(&tv, nullptr);
+    time_t t = tv.tv_sec;
+    struct tm local_time;
     localtime_r(&t, &local_time);
-#endif
     struct tm* tm_time = &local_time;
     stream_ << std::setfill('0')
             << std::setw(2) << 1 + tm_time->tm_mon
@@ -753,7 +791,23 @@ void LogMessage::Init(const char* file, int line) {
             << std::setw(2) << tm_time->tm_hour
             << std::setw(2) << tm_time->tm_min
             << std::setw(2) << tm_time->tm_sec
+            << '.'
+            << std::setw(6) << tv.tv_usec
             << ':';
+#elif defined(OS_WIN)
+    SYSTEMTIME local_time;
+    GetLocalTime(&local_time);
+    stream_ << std::setfill('0')
+            << std::setw(2) << local_time.wMonth
+            << std::setw(2) << local_time.wDay
+            << '/'
+            << std::setw(2) << local_time.wHour
+            << std::setw(2) << local_time.wMinute
+            << std::setw(2) << local_time.wSecond
+            << '.'
+            << std::setw(3) << local_time.wMilliseconds
+            << ':';
+#endif
   }
   if (g_log_tickcount)
     stream_ << TickCount() << ':';
@@ -846,7 +900,7 @@ void CloseLogFile() {
 }
 
 void RawLog(int level, const char* message) {
-  if (level >= g_min_log_level) {
+  if (level >= g_min_log_level && message) {
     size_t bytes_written = 0;
     const size_t message_len = strlen(message);
     int rv;
@@ -899,5 +953,5 @@ BASE_EXPORT void LogErrorNotReached(const char* file, int line) {
 }  // namespace logging
 
 std::ostream& std::operator<<(std::ostream& out, const wchar_t* wstr) {
-  return out << base::WideToUTF8(wstr);
+  return out << (wstr ? base::WideToUTF8(wstr) : std::string());
 }

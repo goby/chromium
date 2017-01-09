@@ -10,7 +10,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -40,7 +40,8 @@ enum NatType {
 };
 
 // This needs to match "NatType" in histograms.xml.
-const char* NatTypeNames[] = {"NoNAT", "UnknownNAT", "SymNAT", "NonSymNAT"};
+const char* const NatTypeNames[] =
+    {"NoNAT", "UnknownNAT", "SymNAT", "NonSymNAT"};
 static_assert(arraysize(NatTypeNames) == NAT_TYPE_MAX,
               "NatType enums must match names");
 
@@ -96,7 +97,7 @@ void StunProberTrial::SaveHistogramData() {
   int count = 0;
   int total_requests_sent = 0;
   int total_responses_received = 0;
-  for (auto& prober : probers_) {
+  for (auto* prober : probers_) {
     ++count;
 
     // Get the stats.
@@ -261,7 +262,7 @@ void StunProberTrial::OnNetworksChanged() {
   total_probers_ = params.total_batches * batch_size_;
 
   for (int i = 0; i < total_probers_; i++) {
-    scoped_ptr<StunProber> prober(
+    std::unique_ptr<StunProber> prober(
         new StunProber(factory_, rtc::Thread::Current(), networks));
     if (!prober->Prepare(params.servers, (params.shared_socket_mode != 0),
                          params.interval_ms, params.requests_per_ip, 1000,

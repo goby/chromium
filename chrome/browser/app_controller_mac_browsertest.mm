@@ -8,11 +8,11 @@
 #import <Foundation/NSAppleEventDescriptor.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#include <stddef.h>
 
 #include "base/command_line.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -22,6 +22,8 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -29,8 +31,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_bridge.h"
 #include "chrome/browser/ui/cocoa/history_menu_bridge.h"
-#include "chrome/browser/ui/cocoa/run_loop_testing.h"
-#include "chrome/browser/ui/host_desktop.h"
+#include "chrome/browser/ui/cocoa/test/run_loop_testing.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/common/chrome_constants.h"
@@ -41,6 +42,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
@@ -113,9 +115,7 @@ class AppControllerPlatformAppBrowserTest
     : public extensions::PlatformAppBrowserTest {
  protected:
   AppControllerPlatformAppBrowserTest()
-      : active_browser_list_(BrowserList::GetInstance(
-                                chrome::GetActiveDesktop())) {
-  }
+      : active_browser_list_(BrowserList::GetInstance()) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     PlatformAppBrowserTest::SetUpCommandLine(command_line);
@@ -171,9 +171,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerPlatformAppBrowserTest,
 class AppControllerWebAppBrowserTest : public InProcessBrowserTest {
  protected:
   AppControllerWebAppBrowserTest()
-      : active_browser_list_(BrowserList::GetInstance(
-                                chrome::GetActiveDesktop())) {
-  }
+      : active_browser_list_(BrowserList::GetInstance()) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitchASCII(switches::kApp, GetAppURL());
@@ -232,9 +230,7 @@ class AppControllerNewProfileManagementBrowserTest
     : public InProcessBrowserTest {
  protected:
   AppControllerNewProfileManagementBrowserTest()
-      : active_browser_list_(BrowserList::GetInstance(
-                                chrome::GetActiveDesktop())) {
-  }
+      : active_browser_list_(BrowserList::GetInstance()) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     switches::EnableNewProfileManagementForTesting(command_line);
@@ -266,11 +262,12 @@ IN_PROC_BROWSER_TEST_F(AppControllerNewProfileManagementBrowserTest,
 
   // Lock the active profile.
   Profile* profile = [ac lastProfile];
-  ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  size_t profile_index = cache.GetIndexOfProfileWithPath(profile->GetPath());
-  cache.SetProfileSigninRequiredAtIndex(profile_index, true);
-  EXPECT_TRUE(cache.ProfileIsSigninRequiredAtIndex(profile_index));
+  ProfileAttributesEntry* entry;
+  ASSERT_TRUE(g_browser_process->profile_manager()->
+                  GetProfileAttributesStorage().
+                  GetProfileAttributesWithPath(profile->GetPath(), &entry));
+  entry->SetIsSigninRequired(true);
+  EXPECT_TRUE(entry->IsSigninRequired());
 
   EXPECT_EQ(1u, active_browser_list_->size());
   BOOL result = [ac applicationShouldHandleReopen:NSApp hasVisibleWindows:NO];
@@ -442,7 +439,8 @@ class AppControllerMainMenuBrowserTest : public InProcessBrowserTest {
 IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
     HistoryMenuResetAfterProfileDeletion) {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
-  AppController* ac = [NSApp delegate];
+  AppController* ac =
+      base::mac::ObjCCastStrict<AppController>([NSApp delegate]);
 
   // Use the existing profile as profile 1.
   Profile* profile1 = browser()->profile();
@@ -520,7 +518,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
   // Use the existing profile as profile 1.
   Profile* profile1 = browser()->profile();
   bookmarks::test::WaitForBookmarkModelToLoad(
-      BookmarkModelFactory::GetForProfile(profile1));
+      BookmarkModelFactory::GetForBrowserContext(profile1));
 
   // Create profile 2.
   base::FilePath path2 = profile_manager->GenerateNextProfileDirectoryPath();
@@ -528,7 +526,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerMainMenuBrowserTest,
       Profile::CreateProfile(path2, NULL, Profile::CREATE_MODE_SYNCHRONOUS);
   profile_manager->RegisterTestingProfile(profile2, false, true);
   bookmarks::test::WaitForBookmarkModelToLoad(
-      BookmarkModelFactory::GetForProfile(profile2));
+      BookmarkModelFactory::GetForBrowserContext(profile2));
 
   // Switch to profile 1, create bookmark 1 and force the menu to build.
   [ac windowChangedToProfile:profile1];
@@ -644,7 +642,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
   // Test that opening a new tab updates the handoff URL.
   GURL test_url2 = embedded_test_server()->GetURL("/title2.html");
   chrome::NavigateParams params(browser(), test_url2, ui::PAGE_TRANSITION_LINK);
-  params.disposition = NEW_FOREGROUND_TAB;
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   ui_test_utils::NavigateToURL(&params);
   EXPECT_EQ(g_handoff_url, test_url2);
 
@@ -659,13 +657,12 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
   // Test that opening a new browser window updates the handoff URL.
   GURL test_url3 = embedded_test_server()->GetURL("/title3.html");
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(test_url3), NEW_WINDOW,
+      browser(), GURL(test_url3), WindowOpenDisposition::NEW_WINDOW,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_BROWSER);
   EXPECT_EQ(g_handoff_url, test_url3);
 
   // Check that there are exactly 2 browsers.
-  BrowserList* active_browser_list =
-      BrowserList::GetInstance(chrome::GetActiveDesktop());
+  BrowserList* active_browser_list = BrowserList::GetInstance();
   EXPECT_EQ(2u, active_browser_list->size());
 
   // Close the second browser window (which only has 1 tab left).
@@ -676,7 +673,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
   // The URLs of incognito windows should not be passed to Handoff.
   GURL test_url4 = embedded_test_server()->GetURL("/simple.html");
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(test_url4), OFF_THE_RECORD,
+      browser(), GURL(test_url4), WindowOpenDisposition::OFF_THE_RECORD,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_BROWSER);
   EXPECT_EQ(g_handoff_url, GURL());
 
@@ -684,7 +681,7 @@ IN_PROC_BROWSER_TEST_F(AppControllerHandoffBrowserTest, TestHandoffURLs) {
   EXPECT_EQ(2u, active_browser_list->size());
   Browser* browser3 = active_browser_list->get(1);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser3, test_url4, NEW_FOREGROUND_TAB,
+      browser3, test_url4, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
   EXPECT_EQ(g_handoff_url, GURL());
 

@@ -4,13 +4,14 @@
 
 #include "ios/chrome/browser/favicon/favicon_service_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/favicon/favicon_client_impl.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 namespace ios {
 
@@ -47,14 +48,14 @@ FaviconServiceFactory::FaviconServiceFactory()
 FaviconServiceFactory::~FaviconServiceFactory() {
 }
 
-scoped_ptr<KeyedService> FaviconServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService> FaviconServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return make_scoped_ptr(new favicon::FaviconService(
-      make_scoped_ptr(new FaviconClientImpl(browser_state)),
+  return base::MakeUnique<favicon::FaviconService>(
+      base::WrapUnique(new FaviconClientImpl(browser_state)),
       ios::HistoryServiceFactory::GetForBrowserState(
-          browser_state, ServiceAccessType::EXPLICIT_ACCESS)));
+          browser_state, ServiceAccessType::EXPLICIT_ACCESS));
 }
 
 }  // namespace ios

@@ -4,9 +4,14 @@
 
 #include "ui/gfx/image/image_skia_operations.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "skia/ext/image_operations.h"
+#include "third_party/skia/include/core/SkClipOp.h"
+#include "third_party/skia/include/core/SkDrawLooper.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/point.h"
@@ -366,11 +371,8 @@ class ResizeSource : public ImageSkiaSource {
 // |source| that represent requested scale factors.
 class DropShadowSource : public ImageSkiaSource {
  public:
-  DropShadowSource(const ImageSkia& source,
-                   const ShadowValues& shadows_in_dip)
-      : source_(source),
-        shaodws_in_dip_(shadows_in_dip) {
-  }
+  DropShadowSource(const ImageSkia& source, const ShadowValues& shadows_in_dip)
+      : source_(source), shadows_in_dip_(shadows_in_dip) {}
   ~DropShadowSource() override {}
 
   // gfx::ImageSkiaSource overrides:
@@ -378,8 +380,8 @@ class DropShadowSource : public ImageSkiaSource {
     const ImageSkiaRep& image_rep = source_.GetRepresentation(scale);
 
     ShadowValues shadows_in_pixel;
-    for (size_t i = 0; i < shaodws_in_dip_.size(); ++i)
-      shadows_in_pixel.push_back(shaodws_in_dip_[i].Scale(scale));
+    for (size_t i = 0; i < shadows_in_dip_.size(); ++i)
+      shadows_in_pixel.push_back(shadows_in_dip_[i].Scale(scale));
 
     const SkBitmap shadow_bitmap = SkBitmapOperations::CreateDropShadow(
         image_rep.sk_bitmap(),
@@ -389,9 +391,92 @@ class DropShadowSource : public ImageSkiaSource {
 
  private:
   const ImageSkia source_;
-  const ShadowValues shaodws_in_dip_;
+  const ShadowValues shadows_in_dip_;
 
   DISALLOW_COPY_AND_ASSIGN(DropShadowSource);
+};
+
+class ShadowNineboxSource : public CanvasImageSource {
+ public:
+  ShadowNineboxSource(const std::vector<ShadowValue>& shadows,
+                      float corner_radius)
+      : CanvasImageSource(CalculateSize(shadows, corner_radius), false),
+        shadows_(shadows),
+        corner_radius_(corner_radius) {
+    DCHECK(!shadows.empty());
+  }
+  ~ShadowNineboxSource() override {}
+
+  // CanvasImageSource overrides:
+  void Draw(Canvas* canvas) override {
+    SkPaint paint;
+    paint.setLooper(CreateShadowDrawLooperCorrectBlur(shadows_));
+    Insets insets = -ShadowValue::GetMargin(shadows_);
+    gfx::Rect bounds(size());
+    bounds.Inset(insets);
+    SkRRect r_rect = SkRRect::MakeRectXY(gfx::RectToSkRect(bounds),
+                                         corner_radius_, corner_radius_);
+
+    // Clip out the center so it's not painted with the shadow.
+    canvas->sk_canvas()->clipRRect(r_rect, kDifference_SkClipOp, true);
+    // Clipping alone is not enough --- due to anti aliasing there will still be
+    // some of the fill color in the rounded corners. We must make the fill
+    // color transparent.
+    paint.setColor(SK_ColorTRANSPARENT);
+    canvas->sk_canvas()->drawRRect(r_rect, paint);
+  }
+
+ private:
+  static Size CalculateSize(const std::vector<ShadowValue>& shadows,
+                            float corner_radius) {
+    // The "content" area (the middle tile in the 3x3 grid) is a single pixel.
+    gfx::Rect bounds(0, 0, 1, 1);
+    // We need enough space to render the full range of blur.
+    bounds.Inset(-ShadowValue::GetBlurRegion(shadows));
+    // We also need space for the full roundrect corner rounding.
+    bounds.Inset(-gfx::Insets(corner_radius));
+    return bounds.size();
+  }
+
+  const std::vector<ShadowValue> shadows_;
+
+  const float corner_radius_;
+
+  DISALLOW_COPY_AND_ASSIGN(ShadowNineboxSource);
+};
+
+// An image source that is 1px wide, suitable for tiling horizontally.
+class HorizontalShadowSource : public CanvasImageSource {
+ public:
+  HorizontalShadowSource(const std::vector<ShadowValue>& shadows,
+                         bool fades_down)
+      : CanvasImageSource(Size(1, GetHeightForShadows(shadows)), false),
+        shadows_(shadows),
+        fades_down_(fades_down) {}
+  ~HorizontalShadowSource() override {}
+
+  // CanvasImageSource overrides:
+  void Draw(Canvas* canvas) override {
+    SkPaint paint;
+    paint.setLooper(CreateShadowDrawLooperCorrectBlur(shadows_));
+    canvas->DrawRect(RectF(0, fades_down_ ? -1 : size().height(), 1, 1), paint);
+  }
+
+ private:
+  static int GetHeightForShadows(const std::vector<ShadowValue>& shadows) {
+    int height = 0;
+    for (const auto& shadow : shadows) {
+      height = std::max(height, shadow.y() + ToCeiledInt(shadow.blur() / 2));
+    }
+    return height;
+  }
+
+  const std::vector<ShadowValue> shadows_;
+
+  // The orientation of the shadow (true for shadows that emanate downwards).
+  bool fades_down_;
+
+  DISALLOW_COPY_AND_ASSIGN(HorizontalShadowSource);
 };
 
 // RotatedSource generates image reps that are rotations of those in
@@ -420,6 +505,28 @@ class RotatedSource : public ImageSkiaSource {
   DISALLOW_COPY_AND_ASSIGN(RotatedSource);
 };
 
+class IconWithBadgeSource : public gfx::CanvasImageSource {
+ public:
+  IconWithBadgeSource(const ImageSkia& icon, const ImageSkia& badge)
+      : gfx::CanvasImageSource(icon.size(), false /* is opaque */),
+        icon_(icon),
+        badge_(badge) {}
+
+  ~IconWithBadgeSource() override {}
+
+  // gfx::CanvasImageSource override.
+  void Draw(Canvas* canvas) override {
+    canvas->DrawImageInt(icon_, 0, 0);
+    canvas->DrawImageInt(badge_, (icon_.width() - badge_.width()),
+                         (icon_.height() - badge_.height()));
+  }
+
+ private:
+  const ImageSkia icon_;
+  const ImageSkia badge_;
+
+  DISALLOW_COPY_AND_ASSIGN(IconWithBadgeSource);
+};
 
 }  // namespace
 
@@ -532,6 +639,21 @@ ImageSkia ImageSkiaOperations::CreateImageWithDropShadow(
 }
 
 // static
+ImageSkia ImageSkiaOperations::CreateShadowNinebox(const ShadowValues& shadows,
+                                                   float corner_radius) {
+  auto source = new ShadowNineboxSource(shadows, corner_radius);
+  return ImageSkia(source, source->size());
+}
+
+// static
+ImageSkia ImageSkiaOperations::CreateHorizontalShadow(
+    const std::vector<ShadowValue>& shadows,
+    bool fades_down) {
+  auto source = new HorizontalShadowSource(shadows, fades_down);
+  return ImageSkia(source, source->size());
+}
+
+// static
 ImageSkia ImageSkiaOperations::CreateRotatedImage(
       const ImageSkia& source,
       SkBitmapOperations::RotationAmount rotation) {
@@ -543,6 +665,18 @@ ImageSkia ImageSkiaOperations::CreateRotatedImage(
           source.size() :
           gfx::Size(source.height(), source.width()));
 
+}
+
+// static
+ImageSkia ImageSkiaOperations::CreateIconWithBadge(const ImageSkia& icon,
+                                                   const ImageSkia& badge) {
+  if (icon.isNull())
+    return ImageSkia();
+
+  if (badge.isNull())
+    return icon;
+
+  return ImageSkia(new IconWithBadgeSource(icon, badge), icon.size());
 }
 
 }  // namespace gfx

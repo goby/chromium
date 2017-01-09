@@ -4,6 +4,7 @@
 
 #include "ui/app_list/views/test/apps_grid_view_test_api.h"
 
+#include "build/build_config.h"
 #include "ui/app_list/views/app_list_item_view.h"
 #include "ui/app_list/views/apps_grid_view.h"
 #include "ui/events/event.h"
@@ -42,16 +43,6 @@ void AppsGridViewTestApi::SetPageFlipDelay(int page_flip_delay_in_ms) {
 void AppsGridViewTestApi::PressItemAt(int index) {
   GetViewAtModelIndex(index)->OnKeyPressed(
       ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_RETURN, ui::EF_NONE));
-}
-
-void AppsGridViewTestApi::DisableSynchronousDrag() {
-#if defined(OS_WIN)
-  DCHECK(view_->synchronous_drag_.Get() == NULL)
-      << "DisableSynchronousDrag needs to "
-         "be called before "
-         "synchronous_drag_ is set up.";
-  view_->use_synchronous_drag_ = false;
-#endif
 }
 
 bool AppsGridViewTestApi::HasPendingPageFlip() const {

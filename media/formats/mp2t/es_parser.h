@@ -5,11 +5,14 @@
 #ifndef MEDIA_FORMATS_MP2T_ES_PARSER_H_
 #define MEDIA_FORMATS_MP2T_ES_PARSER_H_
 
+#include <stdint.h>
+
 #include <list>
+#include <memory>
 #include <utility>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "media/base/media_export.h"
@@ -17,6 +20,7 @@
 
 namespace media {
 
+class DecryptConfig;
 class OffsetByteQueue;
 class StreamParserBuffer;
 
@@ -24,14 +28,16 @@ namespace mp2t {
 
 class MEDIA_EXPORT EsParser {
  public:
-  typedef base::Callback<void(scoped_refptr<StreamParserBuffer>)> EmitBufferCB;
+  using EmitBufferCB = base::Callback<void(scoped_refptr<StreamParserBuffer>)>;
+  using GetDecryptConfigCB = base::Callback<const DecryptConfig*()>;
 
   EsParser();
   virtual ~EsParser();
 
   // ES parsing.
   // Should use kNoTimestamp when a timestamp is not valid.
-  bool Parse(const uint8* buf, int size,
+  bool Parse(const uint8_t* buf,
+             int size,
              base::TimeDelta pts,
              DecodeTimestamp dts);
 
@@ -62,10 +68,10 @@ class MEDIA_EXPORT EsParser {
   // This timing descriptor and all the ones that come before (in stream order)
   // are removed from list |timing_desc_list_|.
   // If no timing descriptor is found, then the default TimingDesc is returned.
-  TimingDesc GetTimingDescriptor(int64 es_byte_count);
+  TimingDesc GetTimingDescriptor(int64_t es_byte_count);
 
   // Bytes of the ES stream that have not been emitted yet.
-  scoped_ptr<media::OffsetByteQueue> es_queue_;
+  std::unique_ptr<media::OffsetByteQueue> es_queue_;
 
  private:
   // Anchor some timing information into the ES queue.
@@ -79,7 +85,7 @@ class MEDIA_EXPORT EsParser {
   // in Annex A of Rec. ITU-T H.264 | ISO/IEC 14496-10 video, if a PTS is
   // present in the PES packet header, it shall refer to the first AVC access
   // unit that commences in this PES packet.
-  std::list<std::pair<int64, TimingDesc> > timing_desc_list_;
+  std::list<std::pair<int64_t, TimingDesc>> timing_desc_list_;
 
   DISALLOW_COPY_AND_ASSIGN(EsParser);
 };
@@ -87,4 +93,4 @@ class MEDIA_EXPORT EsParser {
 }  // namespace mp2t
 }  // namespace media
 
-#endif
+#endif  // MEDIA_FORMATS_MP2T_ES_PARSER_H_

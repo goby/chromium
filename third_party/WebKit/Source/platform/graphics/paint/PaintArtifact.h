@@ -23,39 +23,64 @@ class WebDisplayItemList;
 //
 // It represents a particular state of the world, and should be immutable
 // (const) to most of its users.
+//
+// Unless its dangerous accessors are used, it promises to be in a reasonable
+// state (e.g. chunk bounding boxes computed).
+//
+// Reminder: moved-from objects may not be in a known state. They can only
+// safely be assigned to or destroyed.
 class PLATFORM_EXPORT PaintArtifact final {
-    DISALLOW_NEW();
-    WTF_MAKE_NONCOPYABLE(PaintArtifact);
-public:
-    PaintArtifact();
-    ~PaintArtifact();
+  DISALLOW_NEW();
+  WTF_MAKE_NONCOPYABLE(PaintArtifact);
 
-    bool isEmpty() const { return m_displayItemList.isEmpty(); }
+ public:
+  PaintArtifact();
+  PaintArtifact(DisplayItemList,
+                Vector<PaintChunk>,
+                bool isSuitableForGpuRasterization);
+  PaintArtifact(PaintArtifact&&);
+  ~PaintArtifact();
 
-    DisplayItemList& displayItemList() { return m_displayItemList; }
-    const DisplayItemList& displayItemList() const { return m_displayItemList; }
+  PaintArtifact& operator=(PaintArtifact&&);
 
-    Vector<PaintChunk>& paintChunks() { return m_paintChunks; }
-    const Vector<PaintChunk>& paintChunks() const { return m_paintChunks; }
+  bool isEmpty() const { return m_displayItemList.isEmpty(); }
 
-    // Resets to an empty paint artifact.
-    void reset();
+  DisplayItemList& getDisplayItemList() { return m_displayItemList; }
+  const DisplayItemList& getDisplayItemList() const {
+    return m_displayItemList;
+  }
 
-    // Returns the approximate memory usage, excluding memory likely to be
-    // shared with the embedder after copying to WebDisplayItemList.
-    size_t approximateUnsharedMemoryUsage() const;
+  Vector<PaintChunk>& paintChunks() { return m_paintChunks; }
+  const Vector<PaintChunk>& paintChunks() const { return m_paintChunks; }
 
-    // Draws the paint artifact to a GraphicsContext.
-    void replay(GraphicsContext&) const;
+  Vector<PaintChunk>::const_iterator findChunkByDisplayItemIndex(
+      size_t index) const {
+    return findChunkInVectorByDisplayItemIndex(m_paintChunks, index);
+  }
 
-    // Writes the paint artifact into a WebDisplayItemList.
-    void appendToWebDisplayItemList(WebDisplayItemList*) const;
+  bool isSuitableForGpuRasterization() const {
+    return m_isSuitableForGpuRasterization;
+  }
 
-private:
-    DisplayItemList m_displayItemList;
-    Vector<PaintChunk> m_paintChunks;
+  // Resets to an empty paint artifact.
+  void reset();
+
+  // Returns the approximate memory usage, excluding memory likely to be
+  // shared with the embedder after copying to WebDisplayItemList.
+  size_t approximateUnsharedMemoryUsage() const;
+
+  // Draws the paint artifact to a GraphicsContext.
+  void replay(GraphicsContext&) const;
+
+  // Writes the paint artifact into a WebDisplayItemList.
+  void appendToWebDisplayItemList(WebDisplayItemList*) const;
+
+ private:
+  DisplayItemList m_displayItemList;
+  Vector<PaintChunk> m_paintChunks;
+  bool m_isSuitableForGpuRasterization;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PaintArtifact_h
+#endif  // PaintArtifact_h

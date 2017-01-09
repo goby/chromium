@@ -6,14 +6,16 @@
 #define CHROME_BROWSER_ANDROID_TAB_ANDROID_H_
 
 #include <jni.h>
+#include <stdint.h>
+
+#include <memory>
 
 #include "base/android/jni_weak_ref.h"
+#include "base/android/scoped_java_ref.h"
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
-#include "chrome/browser/search/instant_service_observer.h"
 #include "chrome/browser/sync/glue/synced_tab_delegate_android.h"
-#include "chrome/browser/ui/search/search_tab_helper_delegate.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper_delegate.h"
 #include "components/favicon/core/favicon_driver_observer.h"
 #include "components/infobars/core/infobar_manager.h"
@@ -24,7 +26,12 @@
 
 class GURL;
 class Profile;
-class SkBitmap;
+
+namespace blimp {
+namespace client {
+class BlimpContents;
+}
+}
 
 namespace cc {
 class Layer;
@@ -34,24 +41,13 @@ namespace chrome {
 struct NavigateParams;
 }
 
-namespace chrome {
 namespace android {
 class TabWebContentsDelegateAndroid;
 class TabContentManager;
 }
-}
 
 namespace content {
-class ContentViewCore;
 class WebContents;
-}
-
-namespace infobars {
-class InfoBar;
-}
-
-namespace offline_pages {
-struct OfflinePageItem;
 }
 
 namespace prerender {
@@ -59,8 +55,6 @@ class PrerenderManager;
 }
 
 class TabAndroid : public CoreTabHelperDelegate,
-                   public InstantServiceObserver,
-                   public SearchTabHelperDelegate,
                    public content::NotificationObserver,
                    public favicon::FaviconDriverObserver {
  public:
@@ -75,16 +69,17 @@ class TabAndroid : public CoreTabHelperDelegate,
 
   // Convenience method to retrieve the Tab associated with the passed
   // WebContents.  Can return NULL.
-  static TabAndroid* FromWebContents(content::WebContents* web_contents);
+  static TabAndroid* FromWebContents(const content::WebContents* web_contents);
 
   // Returns the native TabAndroid stored in the Java Tab represented by
   // |obj|.
-  static TabAndroid* GetNativeTab(JNIEnv* env, jobject obj);
+  static TabAndroid* GetNativeTab(JNIEnv* env,
+                                  const base::android::JavaRef<jobject>& obj);
 
   // Function to attach helpers to the contentView.
   static void AttachTabHelpers(content::WebContents* web_contents);
 
-  TabAndroid(JNIEnv* env, jobject obj);
+  TabAndroid(JNIEnv* env, const base::android::JavaRef<jobject>& obj);
   ~TabAndroid() override;
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
@@ -92,11 +87,18 @@ class TabAndroid : public CoreTabHelperDelegate,
   // Return the WebContents, if any, currently owned by this TabAndroid.
   content::WebContents* web_contents() const { return web_contents_.get(); }
 
+  // Return the BlimpContents, if any, currently owned by this TabAndroid.
+  blimp::client::BlimpContents* blimp_contents() const {
+    return blimp_contents_.get();
+  }
+
   // Return the cc::Layer that represents the content for this TabAndroid.
   scoped_refptr<cc::Layer> GetContentLayer() const;
 
   // Return specific id information regarding this TabAndroid.
   const SessionID& session_id() const { return session_tab_id_; }
+  const SessionID& window_id() const { return session_window_id_; }
+
   int GetAndroidId() const;
   int GetSyncId() const;
 
@@ -111,9 +113,8 @@ class TabAndroid : public CoreTabHelperDelegate,
 
   // Helper methods to make it easier to access objects from the associated
   // WebContents.  Can return NULL.
-  content::ContentViewCore* GetContentViewCore() const;
   Profile* GetProfile() const;
-  browser_sync::SyncedTabDelegate* GetSyncedTabDelegate() const;
+  sync_sessions::SyncedTabDelegate* GetSyncedTabDelegate() const;
 
   void SetWindowSessionID(SessionID::id_type window_id);
   void SetSyncId(int sync_id);
@@ -122,27 +123,13 @@ class TabAndroid : public CoreTabHelperDelegate,
 
   bool HasPrerenderedUrl(GURL gurl);
 
-  void MakeLoadURLParams(
-      chrome::NavigateParams* params,
-      content::NavigationController::LoadURLParams* load_url_params);
-
-  bool HasOfflinePages() const;
   void ShowOfflinePages();
-  void LoadOfflineCopy(const GURL& url);
 
   // Overridden from CoreTabHelperDelegate:
   void SwapTabContents(content::WebContents* old_contents,
                        content::WebContents* new_contents,
                        bool did_start_load,
                        bool did_finish_load) override;
-
-  // Overridden from InstantServiceObserver:
-  void DefaultSearchProviderChanged(
-      bool google_base_url_domain_changed) override;
-
-  // Overridden from SearchTabHelperDelegate:
-  void OnWebContentsInstantSupportDisabled(
-      const content::WebContents* web_contents) override;
 
   // Overridden from NotificationObserver:
   void Observe(int type,
@@ -163,9 +150,19 @@ class TabAndroid : public CoreTabHelperDelegate,
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jboolean incognito,
-      const base::android::JavaParamRef<jobject>& jcontent_view_core,
+      const base::android::JavaParamRef<jobject>& jweb_contents,
       const base::android::JavaParamRef<jobject>& jweb_contents_delegate,
       const base::android::JavaParamRef<jobject>& jcontext_menu_populator);
+  base::android::ScopedJavaLocalRef<jobject> InitBlimpContents(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& j_profile,
+      jlong window_android_ptr);
+  void UpdateDelegates(
+        JNIEnv* env,
+        const base::android::JavaParamRef<jobject>& obj,
+        const base::android::JavaParamRef<jobject>& jweb_contents_delegate,
+        const base::android::JavaParamRef<jobject>& jcontext_menu_populator);
   void DestroyWebContents(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj,
                           jboolean delete_native);
@@ -177,7 +174,7 @@ class TabAndroid : public CoreTabHelperDelegate,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& url,
       const base::android::JavaParamRef<jstring>& j_extra_headers,
-      const base::android::JavaParamRef<jbyteArray>& j_post_data,
+      const base::android::JavaParamRef<jobject>& j_post_data,
       jint page_transition,
       const base::android::JavaParamRef<jstring>& j_referrer_url,
       jint referrer_policy,
@@ -207,11 +204,12 @@ class TabAndroid : public CoreTabHelperDelegate,
   static void CreateHistoricalTabFromContents(
       content::WebContents* web_contents);
 
-  void UpdateTopControlsState(JNIEnv* env,
-                              const base::android::JavaParamRef<jobject>& obj,
-                              jint constraints,
-                              jint current,
-                              jboolean animate);
+  void UpdateBrowserControlsState(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint constraints,
+      jint current,
+      jboolean animate);
 
   void LoadOriginalImage(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj);
@@ -226,7 +224,7 @@ class TabAndroid : public CoreTabHelperDelegate,
   jboolean IsOfflinePage(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj);
 
-  base::android::ScopedJavaLocalRef<jstring> GetOfflinePageOriginalUrl(
+  base::android::ScopedJavaLocalRef<jobject> GetOfflinePage(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
@@ -241,17 +239,6 @@ class TabAndroid : public CoreTabHelperDelegate,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& jtab_content_manager);
 
-  void AttachOverlayContentViewCore(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jobject>& jcontent_view_core,
-      jboolean visible);
-
-  void DetachOverlayContentViewCore(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jobject>& jcontent_view_core);
-
   bool HasPrerenderedUrl(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj,
                          const base::android::JavaParamRef<jstring>& url);
@@ -261,10 +248,6 @@ class TabAndroid : public CoreTabHelperDelegate,
 
  private:
   prerender::PrerenderManager* GetPrerenderManager() const;
-
-  int64_t GetBookmarkIdHelper(bool only_editable) const;
-
-  const offline_pages::OfflinePageItem* GetOfflinePage(const GURL& url) const;
 
   JavaObjectWeakGlobalRef weak_java_tab_;
 
@@ -277,13 +260,15 @@ class TabAndroid : public CoreTabHelperDelegate,
   content::NotificationRegistrar notification_registrar_;
 
   scoped_refptr<cc::Layer> content_layer_;
-  chrome::android::TabContentManager* tab_content_manager_;
+  android::TabContentManager* tab_content_manager_;
 
-  scoped_ptr<content::WebContents> web_contents_;
-  scoped_ptr<chrome::android::TabWebContentsDelegateAndroid>
+  std::unique_ptr<content::WebContents> web_contents_;
+  std::unique_ptr<android::TabWebContentsDelegateAndroid>
       web_contents_delegate_;
 
-  scoped_ptr<browser_sync::SyncedTabDelegateAndroid> synced_tab_delegate_;
+  std::unique_ptr<blimp::client::BlimpContents> blimp_contents_;
+
+  std::unique_ptr<browser_sync::SyncedTabDelegateAndroid> synced_tab_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(TabAndroid);
 };

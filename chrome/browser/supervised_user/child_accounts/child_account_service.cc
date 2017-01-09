@@ -6,24 +6,28 @@
 
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
-#include "base/prefs/pref_service.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/supervised_user/child_accounts/permission_request_creator_apiary.h"
+#include "chrome/browser/supervised_user/experimental/safe_search_url_reporter.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/common/signin_pref_names.h"
@@ -33,7 +37,9 @@
 #include "components/user_manager/user_manager.h"
 #endif
 
+#if !defined(OS_ANDROID)
 const char kChildAccountDetectionFieldTrialName[] = "ChildAccountDetection";
+#endif
 
 // Normally, re-check the family info once per day.
 const int kUpdateIntervalSeconds = 60 * 60 * 24;
@@ -75,19 +81,14 @@ ChildAccountService::~ChildAccountService() {}
 
 // static
 bool ChildAccountService::IsChildAccountDetectionEnabled() {
-  // Note: It's important to query the field trial state first, to ensure that
-  // UMA reports the correct group.
+  // Child account detection is always enabled on Android.
+#if !defined(OS_ANDROID)
   const std::string group_name =
       base::FieldTrialList::FindFullName(kChildAccountDetectionFieldTrialName);
-
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kDisableChildAccountDetection))
-    return false;
-  if (command_line->HasSwitch(switches::kEnableChildAccountDetection))
-    return true;
-
   if (group_name == "Disabled")
     return false;
+#endif
+
   return true;
 }
 
@@ -142,16 +143,21 @@ bool ChildAccountService::SetActive(bool active) {
     SupervisedUserSettingsService* settings_service =
         SupervisedUserSettingsServiceFactory::GetForProfile(profile_);
 
+    settings_service->SetLocalSetting(
+        supervised_users::kRecordHistoryIncludesSessionSync,
+        base::MakeUnique<base::FundamentalValue>(false));
+
     // In contrast to legacy SUs, child account SUs must sign in.
     settings_service->SetLocalSetting(
         supervised_users::kSigninAllowed,
-        make_scoped_ptr(new base::FundamentalValue(true)));
+        base::MakeUnique<base::FundamentalValue>(true));
 
     // SafeSearch is controlled at the account level, so don't override it
     // client-side.
     settings_service->SetLocalSetting(
         supervised_users::kForceSafeSearch,
-        make_scoped_ptr(new base::FundamentalValue(false)));
+        base::MakeUnique<base::FundamentalValue>(false));
+
 #if !defined(OS_CHROMEOS)
     // This is also used by user policies (UserPolicySigninService), but since
     // child accounts can not also be Dasher accounts, there shouldn't be any
@@ -167,11 +173,15 @@ bool ChildAccountService::SetActive(bool active) {
         SupervisedUserServiceFactory::GetForProfile(profile_);
     service->AddPermissionRequestCreator(
         PermissionRequestCreatorApiary::CreateWithProfile(profile_));
+    if (base::FeatureList::IsEnabled(features::kSafeSearchUrlReporting)) {
+      service->SetSafeSearchURLReporter(
+          SafeSearchURLReporter::CreateWithProfile(profile_));
+    }
   } else {
     SupervisedUserSettingsService* settings_service =
         SupervisedUserSettingsServiceFactory::GetForProfile(profile_);
     settings_service->SetLocalSetting(supervised_users::kSigninAllowed,
-                                      scoped_ptr<base::Value>());
+                                      std::unique_ptr<base::Value>());
 #if !defined(OS_CHROMEOS)
     SigninManagerFactory::GetForProfile(profile_)->ProhibitSignout(false);
 #endif
@@ -181,9 +191,9 @@ bool ChildAccountService::SetActive(bool active) {
 
   // Trigger a sync reconfig to enable/disable the right SU data types.
   // The logic to do this lives in the SupervisedUserSyncDataTypeController.
-  ProfileSyncService* sync_service =
+  browser_sync::ProfileSyncService* sync_service =
       ProfileSyncServiceFactory::GetForProfile(profile_);
-  if (sync_service->HasSyncSetupCompleted())
+  if (sync_service->IsFirstSetupComplete())
     sync_service->ReconfigureDatatypeManager();
 
   return true;
@@ -282,12 +292,10 @@ void ChildAccountService::PropagateChildStatusToUser(bool is_child) {
 #if defined(OS_CHROMEOS)
   user_manager::User* user =
       chromeos::ProfileHelper::Get()->GetUserByProfile(profile_);
-  if (user) {
+  if (user)
     user_manager::UserManager::Get()->ChangeUserChildStatus(user, is_child);
-  } else {
-    LOG(WARNING) <<
-        "User instance wasn't found while setting child account flag.";
-  }
+  else if (!chromeos::ProfileHelper::Get()->IsSigninProfile(profile_))
+    LOG(DFATAL) << "User instance not found while setting child account flag.";
 #endif
 }
 

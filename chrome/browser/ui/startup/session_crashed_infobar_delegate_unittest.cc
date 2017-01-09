@@ -5,8 +5,7 @@
 #include "chrome/browser/ui/startup/session_crashed_infobar_delegate.h"
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -18,6 +17,8 @@
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/infobars/core/infobar.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 
 class SessionCrashedInfoBarDelegateUnitTest : public BrowserWithTestWindowTest {
  public:
@@ -33,7 +34,7 @@ class SessionCrashedInfoBarDelegateUnitTest : public BrowserWithTestWindowTest {
     // Make sure we have a Profile Manager.
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     TestingBrowserProcess::GetGlobal()->SetProfileManager(
-        new ProfileManagerWithoutInit(temp_dir_.path()));
+        new ProfileManagerWithoutInit(temp_dir_.GetPath()));
   }
 
   void TearDown() override {
@@ -51,14 +52,13 @@ class SessionCrashedInfoBarDelegateUnitTest : public BrowserWithTestWindowTest {
 TEST_F(SessionCrashedInfoBarDelegateUnitTest, DetachingTabWithCrashedInfoBar) {
   SessionServiceFactory::SetForTestProfile(
       browser()->profile(),
-      make_scoped_ptr(static_cast<SessionService*>(
+      base::WrapUnique(static_cast<SessionService*>(
           SessionServiceFactory::GetInstance()->BuildServiceInstanceFor(
               browser()->profile()))));
 
   // Create a browser which we can close during the test.
-  Browser::CreateParams params(browser()->profile(),
-                               browser()->host_desktop_type());
-  scoped_ptr<Browser> first_browser(
+  Browser::CreateParams params(browser()->profile());
+  std::unique_ptr<Browser> first_browser(
       chrome::CreateBrowserWithTestWindowForParams(&params));
   AddTab(first_browser.get(), GURL(chrome::kChromeUINewTabURL));
 
@@ -76,7 +76,7 @@ TEST_F(SessionCrashedInfoBarDelegateUnitTest, DetachingTabWithCrashedInfoBar) {
   ASSERT_TRUE(infobar);
 
   // Open another browser.
-  scoped_ptr<Browser> opened_browser(
+  std::unique_ptr<Browser> opened_browser(
       chrome::CreateBrowserWithTestWindowForParams(&params));
 
   // Move the tab which is destroying the crash info bar to the new browser.

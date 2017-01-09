@@ -6,6 +6,7 @@
 #define IOS_WEB_NET_REQUEST_TRACKER_IMPL_H_
 
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 #include <map>
 #include <set>
 
@@ -22,12 +23,7 @@
 
 @class SSLCarrier;
 @class CRWSSLCarrier;
-class SSLErrorInfo;
 struct TrackerCounts;
-
-namespace content {
-struct SSLStatus;
-}
 
 namespace net {
 class HttpResponseHeaders;

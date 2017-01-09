@@ -8,6 +8,7 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -27,10 +28,6 @@ class BrowserTestBase : public testing::Test {
  public:
   BrowserTestBase();
   ~BrowserTestBase() override;
-
-  // We do this so we can be used in a Task.
-  void AddRef() {}
-  void Release() {}
 
   // Configures everything for an in process browser test, then invokes
   // BrowserMain. BrowserMain ends up invoking RunTestOnMainThreadLoop.
@@ -131,10 +128,10 @@ class BrowserTestBase : public testing::Test {
   void ProxyRunTestOnMainThreadLoop();
 
   // Testing server, started on demand.
-  scoped_ptr<net::SpawnedTestServer> spawned_test_server_;
+  std::unique_ptr<net::SpawnedTestServer> spawned_test_server_;
 
   // Embedded test server, cheap to create, started on demand.
-  scoped_ptr<net::EmbeddedTestServer> embedded_test_server_;
+  std::unique_ptr<net::EmbeddedTestServer> embedded_test_server_;
 
   // Host resolver used during tests.
   scoped_refptr<net::RuleBasedHostResolverProc> rule_based_resolver_;

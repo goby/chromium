@@ -19,14 +19,23 @@ else(UNIX)
 endif()
 
 include_directories("${CMAKE_SOURCE_DIR}/include"
-                    "${CMAKE_SOURCE_DIR}/tools/clang/include"
                     "${CMAKE_BINARY_DIR}/include"
                     "${CMAKE_BINARY_DIR}/tools/clang/include")
 
 link_directories("${CMAKE_SOURCE_DIR}/lib"
-                 "${CMAKE_SOURCE_DIR}/tools/clang/lib"
                  "${CMAKE_BINARY_DIR}/lib"
                  "${CMAKE_BINARY_DIR}/tools/clang/lib")
+
+if (DEFINED LLVM_EXTERNAL_CLANG_SOURCE_DIR)
+  include_directories("${LLVM_EXTERNAL_CLANG_SOURCE_DIR}/include")
+  link_directories("${LLVM_EXTERNAL_CLANG_SOURCE_DIR}/lib")
+else ()
+  include_directories("${CMAKE_SOURCE_DIR}/tools/clang/include")
+  link_directories("${CMAKE_SOURCE_DIR}/tools/clang/lib")
+endif ()
+
+# Tests for all enabled tools can be run by building this target.
+add_custom_target(cr-check-all COMMAND ${CMAKE_CTEST_COMMAND} -V)
 
 # cr_add_test(
 #   name
@@ -34,12 +43,11 @@ link_directories("${CMAKE_SOURCE_DIR}/lib"
 #   arguments...
 #   )
 function(cr_add_test name testprog)
-  add_test(NAME ${name} COMMAND ${testprog} ${ARGN})
+  add_custom_target(
+    ${name} COMMAND ${testprog} ${ARGN}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   add_dependencies(cr-check-all ${name})
 endfunction(cr_add_test)
-
-# Tests for all enabled tools can be run by building this target.
-add_custom_target(cr-check-all COMMAND ${CMAKE_CTEST_COMMAND} -V)
 
 function(cr_install)
   install(${ARGN} COMPONENT chrome-tools OPTIONAL)

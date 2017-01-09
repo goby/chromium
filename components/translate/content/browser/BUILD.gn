@@ -4,28 +4,21 @@
 
 import("//build/config/features.gni")
 
-source_set("browser") {
+static_library("browser") {
   sources = [
-    "browser_cld_data_provider.cc",
-    "browser_cld_data_provider.h",
-    "browser_cld_data_provider_factory.cc",
-    "browser_cld_data_provider_factory.h",
-    "browser_cld_utils.cc",
-    "browser_cld_utils.h",
     "content_translate_driver.cc",
     "content_translate_driver.h",
-    "data_file_browser_cld_data_provider.cc",
-    "data_file_browser_cld_data_provider.h",
   ]
 
-  deps = [
+  public_deps = [
     "//base",
     "//components/translate/content/common",
     "//components/translate/core/browser",
     "//components/translate/core/common",
+  ]
+  deps = [
     "//content/public/browser",
     "//content/public/common",
-    "//ipc",
     "//net",
   ]
 }

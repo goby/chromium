@@ -4,9 +4,10 @@
 
 #include "ash/metrics/desktop_task_switch_metric_recorder.h"
 
+#include <memory>
+
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/test/user_action_tester.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
@@ -45,11 +46,11 @@ class DesktopTaskSwitchMetricRecorderTest : public test::AshTestBase {
 
   // Creates a positionable window such that wm::IsWindowUserPositionable(...)
   // would retun true.
-  scoped_ptr<aura::Window> CreatePositionableWindow() const;
+  std::unique_ptr<aura::Window> CreatePositionableWindow() const;
 
   // Creates a non-positionable window such that
   // wm::IsWindowUserPositionable(...) would retun false.
-  scoped_ptr<aura::Window> CreateNonPositionableWindow() const;
+  std::unique_ptr<aura::Window> CreateNonPositionableWindow() const;
 
   // Wrapper to notify the test target's OnWindowActivated(...) method that
   // |window| was activated due to an INPUT_EVENT.
@@ -57,20 +58,18 @@ class DesktopTaskSwitchMetricRecorderTest : public test::AshTestBase {
 
  protected:
   // Records UMA user action counts.
-  scoped_ptr<base::UserActionTester> user_action_tester_;
+  std::unique_ptr<base::UserActionTester> user_action_tester_;
 
   // The test target.
-  scoped_ptr<DesktopTaskSwitchMetricRecorder> metrics_recorder_;
+  std::unique_ptr<DesktopTaskSwitchMetricRecorder> metrics_recorder_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DesktopTaskSwitchMetricRecorderTest);
 };
 
-DesktopTaskSwitchMetricRecorderTest::DesktopTaskSwitchMetricRecorderTest() {
-}
+DesktopTaskSwitchMetricRecorderTest::DesktopTaskSwitchMetricRecorderTest() {}
 
-DesktopTaskSwitchMetricRecorderTest::~DesktopTaskSwitchMetricRecorderTest() {
-}
+DesktopTaskSwitchMetricRecorderTest::~DesktopTaskSwitchMetricRecorderTest() {}
 
 void DesktopTaskSwitchMetricRecorderTest::SetUp() {
   test::AshTestBase::SetUp();
@@ -98,31 +97,31 @@ int DesktopTaskSwitchMetricRecorderTest::GetActionCount() const {
   return user_action_tester_->GetActionCount(kDesktopTaskSwitchUserAction);
 }
 
-scoped_ptr<aura::Window>
+std::unique_ptr<aura::Window>
 DesktopTaskSwitchMetricRecorderTest::CreatePositionableWindow() const {
-  scoped_ptr<aura::Window> window(new aura::Window(
+  std::unique_ptr<aura::Window> window(new aura::Window(
       aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate()));
   window->SetType(ui::wm::WINDOW_TYPE_NORMAL);
   window->Init(ui::LAYER_NOT_DRAWN);
-  return window.Pass();
+  return window;
 }
 
-scoped_ptr<aura::Window>
+std::unique_ptr<aura::Window>
 DesktopTaskSwitchMetricRecorderTest::CreateNonPositionableWindow() const {
-  scoped_ptr<aura::Window> window(new aura::Window(
+  std::unique_ptr<aura::Window> window(new aura::Window(
       aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate()));
   window->SetType(ui::wm::WINDOW_TYPE_UNKNOWN);
   window->Init(ui::LAYER_NOT_DRAWN);
-  return window.Pass();
+  return window;
 }
 
 // Verify user action is recorded when a positionable window is activated given
 // that a null window was activated last.
 TEST_F(DesktopTaskSwitchMetricRecorderTest,
        ActivatePositionableWindowWhenNullWindowWasActivatedLast) {
-  scoped_ptr<aura::Window> null_window;
-  scoped_ptr<aura::Window> positionable_window =
-      CreatePositionableWindow().Pass();
+  std::unique_ptr<aura::Window> null_window;
+  std::unique_ptr<aura::Window> positionable_window =
+      CreatePositionableWindow();
 
   ActiveTaskWindowWithUserInput(null_window.get());
   ResetActionCounts();
@@ -136,10 +135,10 @@ TEST_F(DesktopTaskSwitchMetricRecorderTest,
 TEST_F(
     DesktopTaskSwitchMetricRecorderTest,
     ActivatePositionableWindowWhenADifferentPositionableWindowWasActivatedLast) {
-  scoped_ptr<aura::Window> positionable_window_1 =
-      CreatePositionableWindow().Pass();
-  scoped_ptr<aura::Window> positionable_window_2 =
-      CreatePositionableWindow().Pass();
+  std::unique_ptr<aura::Window> positionable_window_1 =
+      CreatePositionableWindow();
+  std::unique_ptr<aura::Window> positionable_window_2 =
+      CreatePositionableWindow();
 
   ActiveTaskWindowWithUserInput(positionable_window_1.get());
   ResetActionCounts();
@@ -153,8 +152,8 @@ TEST_F(
 TEST_F(
     DesktopTaskSwitchMetricRecorderTest,
     ActivatePositionableWindowWhenTheSamePositionableWindowWasActivatedLast) {
-  scoped_ptr<aura::Window> positionable_window =
-      CreatePositionableWindow().Pass();
+  std::unique_ptr<aura::Window> positionable_window =
+      CreatePositionableWindow();
 
   ActiveTaskWindowWithUserInput(positionable_window.get());
   ResetActionCounts();
@@ -167,10 +166,10 @@ TEST_F(
 // a non-positionable window was activated last.
 TEST_F(DesktopTaskSwitchMetricRecorderTest,
        ActivatePositionableWindowWhenANonPositionableWindowWasActivatedLast) {
-  scoped_ptr<aura::Window> non_positionable_window =
-      CreateNonPositionableWindow().Pass();
-  scoped_ptr<aura::Window> positionable_window =
-      CreatePositionableWindow().Pass();
+  std::unique_ptr<aura::Window> non_positionable_window =
+      CreateNonPositionableWindow();
+  std::unique_ptr<aura::Window> positionable_window =
+      CreatePositionableWindow();
 
   ActiveTaskWindowWithUserInput(non_positionable_window.get());
   ResetActionCounts();
@@ -183,10 +182,10 @@ TEST_F(DesktopTaskSwitchMetricRecorderTest,
 // activated between two activations of the same positionable window.
 TEST_F(DesktopTaskSwitchMetricRecorderTest,
        ActivateNonPositionableWindowBetweenTwoPositionableWindowActivations) {
-  scoped_ptr<aura::Window> positionable_window =
-      CreatePositionableWindow().Pass();
-  scoped_ptr<aura::Window> non_positionable_window =
-      CreateNonPositionableWindow().Pass();
+  std::unique_ptr<aura::Window> positionable_window =
+      CreatePositionableWindow();
+  std::unique_ptr<aura::Window> non_positionable_window =
+      CreateNonPositionableWindow();
 
   ActiveTaskWindowWithUserInput(positionable_window.get());
   ResetActionCounts();
@@ -200,9 +199,9 @@ TEST_F(DesktopTaskSwitchMetricRecorderTest,
 
 // Verify user action is not recorded when a null window is activated.
 TEST_F(DesktopTaskSwitchMetricRecorderTest, ActivateNullWindow) {
-  scoped_ptr<aura::Window> positionable_window =
-      CreatePositionableWindow().Pass();
-  scoped_ptr<aura::Window> null_window = nullptr;
+  std::unique_ptr<aura::Window> positionable_window =
+      CreatePositionableWindow();
+  std::unique_ptr<aura::Window> null_window = nullptr;
 
   ActiveTaskWindowWithUserInput(positionable_window.get());
   ResetActionCounts();
@@ -214,10 +213,10 @@ TEST_F(DesktopTaskSwitchMetricRecorderTest, ActivateNullWindow) {
 // Verify user action is not recorded when a non-positionable window is
 // activated.
 TEST_F(DesktopTaskSwitchMetricRecorderTest, ActivateNonPositionableWindow) {
-  scoped_ptr<aura::Window> positionable_window =
-      CreatePositionableWindow().Pass();
-  scoped_ptr<aura::Window> non_positionable_window =
-      CreateNonPositionableWindow().Pass();
+  std::unique_ptr<aura::Window> positionable_window =
+      CreatePositionableWindow();
+  std::unique_ptr<aura::Window> non_positionable_window =
+      CreateNonPositionableWindow();
 
   ActiveTaskWindowWithUserInput(positionable_window.get());
   ResetActionCounts();
@@ -230,10 +229,10 @@ TEST_F(DesktopTaskSwitchMetricRecorderTest, ActivateNonPositionableWindow) {
 // INPUT_EVENT.
 TEST_F(DesktopTaskSwitchMetricRecorderTest,
        ActivatePositionableWindowWithNonInputEventReason) {
-  scoped_ptr<aura::Window> positionable_window_1 =
-      CreatePositionableWindow().Pass();
-  scoped_ptr<aura::Window> positionable_window_2 =
-      CreatePositionableWindow().Pass();
+  std::unique_ptr<aura::Window> positionable_window_1 =
+      CreatePositionableWindow();
+  std::unique_ptr<aura::Window> positionable_window_2 =
+      CreatePositionableWindow();
 
   ActiveTaskWindowWithUserInput(positionable_window_1.get());
   ResetActionCounts();
@@ -267,7 +266,7 @@ class DesktopTaskSwitchMetricRecorderWithShellIntegrationTest
 
  protected:
   // Records UMA user action counts.
-  scoped_ptr<base::UserActionTester> user_action_tester_;
+  std::unique_ptr<base::UserActionTester> user_action_tester_;
 
   // Delegate used when creating new windows using the
   // CreatePositionableWindowInShellWithBounds(...) method.
@@ -279,12 +278,10 @@ class DesktopTaskSwitchMetricRecorderWithShellIntegrationTest
 };
 
 DesktopTaskSwitchMetricRecorderWithShellIntegrationTest::
-    DesktopTaskSwitchMetricRecorderWithShellIntegrationTest() {
-}
+    DesktopTaskSwitchMetricRecorderWithShellIntegrationTest() {}
 
 DesktopTaskSwitchMetricRecorderWithShellIntegrationTest::
-    ~DesktopTaskSwitchMetricRecorderWithShellIntegrationTest() {
-}
+    ~DesktopTaskSwitchMetricRecorderWithShellIntegrationTest() {}
 
 void DesktopTaskSwitchMetricRecorderWithShellIntegrationTest::SetUp() {
   test::AshTestBase::SetUp();

@@ -5,11 +5,14 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_URL_REQUEST_JOB_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_URL_REQUEST_JOB_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/files/file.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_byte_range.h"
@@ -18,10 +21,6 @@
 #include "storage/browser/storage_browser_export.h"
 
 class GURL;
-
-namespace base {
-class FilePath;
-}
 
 namespace storage {
 class FileStreamReader;
@@ -64,11 +63,11 @@ class STORAGE_EXPORT FileSystemURLRequestJob : public net::URLRequestJob {
 
   const std::string storage_domain_;
   FileSystemContext* file_system_context_;
-  scoped_ptr<storage::FileStreamReader> reader_;
+  std::unique_ptr<storage::FileStreamReader> reader_;
   FileSystemURL url_;
   bool is_directory_;
-  scoped_ptr<net::HttpResponseInfo> response_info_;
-  int64 remaining_bytes_;
+  std::unique_ptr<net::HttpResponseInfo> response_info_;
+  int64_t remaining_bytes_;
   net::Error range_parse_result_;
   net::HttpByteRange byte_range_;
   base::WeakPtrFactory<FileSystemURLRequestJob> weak_factory_;

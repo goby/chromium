@@ -4,9 +4,9 @@
 
 #include "chrome/browser/net/chrome_http_user_agent_settings.h"
 
-#include "base/prefs/pref_service.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/http/http_util.h"
 
@@ -17,7 +17,7 @@ ChromeHttpUserAgentSettings::ChromeHttpUserAgentSettings(PrefService* prefs) {
   last_http_accept_language_ =
       net::HttpUtil::GenerateAcceptLanguageHeader(last_pref_accept_language_);
   pref_accept_language_.MoveToThread(
-      content::BrowserThread::GetMessageLoopProxyForThread(
+      content::BrowserThread::GetTaskRunnerForThread(
           content::BrowserThread::IO));
 }
 

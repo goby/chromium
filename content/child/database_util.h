@@ -5,6 +5,8 @@
 #ifndef CONTENT_CHILD_DATABASE_UTIL_H_
 #define CONTENT_CHILD_DATABASE_UTIL_H_
 
+#include <stdint.h>
+
 #include "content/child/blink_platform_impl.h"
 
 namespace IPC {
@@ -32,12 +34,11 @@ class DatabaseUtil {
       const blink::WebString& vfs_file_name,
       IPC::SyncMessageFilter* sync_message_filter);
   static long long DatabaseGetSpaceAvailable(
-      const blink::WebString& origin_identifier,
+      const blink::WebSecurityOrigin& origin,
       IPC::SyncMessageFilter* sync_message_filter);
-  static bool DatabaseSetFileSize(
-      const blink::WebString& vfs_file_name,
-      int64 size,
-      IPC::SyncMessageFilter* sync_message_filter);
+  static bool DatabaseSetFileSize(const blink::WebString& vfs_file_name,
+                                  int64_t size,
+                                  IPC::SyncMessageFilter* sync_message_filter);
 };
 
 }  // namespace content

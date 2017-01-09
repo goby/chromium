@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_BROWSER_NAVIGATOR_BROWSERTEST_H_
 #define CHROME_BROWSER_UI_BROWSER_NAVIGATOR_BROWSERTEST_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "chrome/browser/ui/browser.h"
@@ -34,7 +36,7 @@ class BrowserNavigatorTest : public InProcessBrowserTest,
   Browser* CreateEmptyBrowserForType(Browser::Type type, Profile* profile);
   Browser* CreateEmptyBrowserForApp(Profile* profile);
 
-  content::WebContents* CreateWebContents();
+  content::WebContents* CreateWebContents(bool initialize_renderer);
 
   void RunSuppressTest(WindowOpenDisposition disposition);
   void RunUseNonIncognitoWindowTest(const GURL& url);

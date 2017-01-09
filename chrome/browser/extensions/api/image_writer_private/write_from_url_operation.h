@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_IMAGE_WRITER_PRIVATE_WRITE_FROM_URL_OPERATION_H_
 #define CHROME_BROWSER_EXTENSIONS_API_IMAGE_WRITER_PRIVATE_WRITE_FROM_URL_OPERATION_H_
 
+#include <stdint.h>
+
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
@@ -53,11 +55,12 @@ class WriteFromUrlOperation : public Operation, public net::URLFetcherDelegate {
   // URLFetcherDelegate implementation.
   void OnURLFetchComplete(const net::URLFetcher* source) override;
   void OnURLFetchDownloadProgress(const net::URLFetcher* source,
-                                  int64 current,
-                                  int64 total) override;
+                                  int64_t current,
+                                  int64_t total,
+                                  int64_t current_network_bytes) override;
   void OnURLFetchUploadProgress(const net::URLFetcher* source,
-                                int64 current,
-                                int64 total) override;
+                                int64_t current,
+                                int64_t total) override;
 
   void VerifyDownloadCompare(const base::Closure& continuation,
                              const std::string& download_hash);
@@ -69,7 +72,7 @@ class WriteFromUrlOperation : public Operation, public net::URLFetcherDelegate {
   const std::string hash_;
 
   // Local state
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   base::Closure download_continuation_;
 };
 

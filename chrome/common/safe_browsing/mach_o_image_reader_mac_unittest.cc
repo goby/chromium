@@ -8,6 +8,8 @@
 #include <libkern/OSByteOrder.h>
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 #include <uuid/uuid.h>
 
@@ -81,12 +83,12 @@ class MachOImageReaderTest : public testing::Test {
   // Returns the identity of the signed code data.
   void GetSigningIdentity(const std::vector<uint8_t>& signature,
                           std::string* identity) {
-    auto super_blob =
+    auto* super_blob =
         reinterpret_cast<const CodeSigningSuperBlob*>(&signature[0]);
     EXPECT_EQ(CSMAGIC_EMBEDDED_SIGNATURE, ntohl(super_blob->magic));
     ASSERT_EQ(CSSLOT_CODEDIRECTORY, ntohl(super_blob->index[0].type));
     size_t dir_offset = ntohl(super_blob->index[0].offset);
-    auto directory =
+    auto* directory =
         reinterpret_cast<const CodeSigningDirectory*>(&signature[dir_offset]);
     ASSERT_EQ(CSMAGIC_CODEDIRECTORY, ntohl(directory->magic));
     size_t ident_offset = ntohl(directory->identOffset) + dir_offset;
@@ -100,12 +102,12 @@ class MachOImageReaderTest : public testing::Test {
   // when using `codesign -d -vvvvvv`.
   void GetCodeSignatureHash(const std::vector<uint8_t>& signature,
                             std::vector<uint8_t>* hash) {
-    auto super_blob =
+    auto* super_blob =
         reinterpret_cast<const CodeSigningSuperBlob*>(&signature[0]);
     EXPECT_EQ(CSMAGIC_EMBEDDED_SIGNATURE, ntohl(super_blob->magic));
     ASSERT_EQ(CSSLOT_CODEDIRECTORY, ntohl(super_blob->index[0].type));
     size_t dir_offset = ntohl(super_blob->index[0].offset);
-    auto directory =
+    auto* directory =
         reinterpret_cast<const CodeSigningDirectory*>(&signature[dir_offset]);
     ASSERT_EQ(CSMAGIC_CODEDIRECTORY, ntohl(directory->magic));
     size_t hash_offset = ntohl(directory->hashOffset) + dir_offset;
@@ -147,7 +149,7 @@ TEST_F(MachOImageReaderTest, Executable32) {
   ASSERT_EQ(15u, commands.size());
   auto command = commands[11];
   ASSERT_EQ(static_cast<uint32_t>(LC_LOAD_DYLIB), command.cmd());
-  auto actual = command.as_command<dylib_command>();
+  auto* actual = command.as_command<dylib_command>();
   EXPECT_EQ(2u, actual->dylib.timestamp);
   EXPECT_EQ(0x4ad0101u, actual->dylib.current_version);
   EXPECT_EQ(0x10000u, actual->dylib.compatibility_version);
@@ -209,7 +211,7 @@ TEST_F(MachOImageReaderTest, ExecutableFat) {
     ASSERT_EQ(15u, commands.size());
     auto command = commands[1];
     ASSERT_EQ(static_cast<uint32_t>(LC_SEGMENT_64), command.cmd());
-    auto actual = command.as_command<segment_command_64>();
+    auto* actual = command.as_command<segment_command_64>();
     EXPECT_EQ("__TEXT", std::string(actual->segname));
     EXPECT_EQ(0u, actual->fileoff);
     EXPECT_EQ(4096u, actual->filesize);
@@ -479,6 +481,34 @@ TEST_F(MachOImageReaderTest, CmdsizeSmallerThanLoadCommand) {
   EXPECT_EQ(static_cast<uint32_t>(LC_SYMSEG), load_commands[1].cmd());
   EXPECT_EQ(sizeof(load_command) - 3, load_commands[1].cmdsize());
   EXPECT_EQ(static_cast<uint32_t>(LC_SEGMENT), load_commands[2].cmd());
+}
+
+// https://crbug.com/591194
+TEST_F(MachOImageReaderTest, RecurseFatHeader) {
+#pragma pack(push, 1)
+  struct TestImage {
+    fat_header header;
+    fat_arch arch1;
+    fat_arch arch2;
+    mach_header_64 macho64;
+    mach_header macho;
+  };
+#pragma pack(pop)
+
+  TestImage test_image = {};
+  test_image.header.magic = FAT_MAGIC;
+  test_image.header.nfat_arch = 2;
+  test_image.arch1.offset = offsetof(TestImage, macho64);
+  test_image.arch1.size = sizeof(mach_header_64);
+  test_image.arch2.offset = 0;  // Cannot point back at the fat_header.
+  test_image.arch2.size = sizeof(test_image);
+
+  test_image.macho64.magic = MH_MAGIC_64;
+  test_image.macho.magic = MH_MAGIC;
+
+  MachOImageReader reader;
+  EXPECT_FALSE(reader.Initialize(reinterpret_cast<const uint8_t*>(&test_image),
+                                 sizeof(test_image)));
 }
 
 }  // namespace

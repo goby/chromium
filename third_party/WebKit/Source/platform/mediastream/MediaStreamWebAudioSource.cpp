@@ -28,44 +28,37 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#if ENABLE(WEB_AUDIO)
-#include "platform/mediastream/MediaStreamWebAudioSource.h"
-
 #include "platform/audio/AudioBus.h"
+#include "platform/mediastream/MediaStreamWebAudioSource.h"
 #include "public/platform/WebAudioSourceProvider.h"
+#include <memory>
 
 namespace blink {
 
-MediaStreamWebAudioSource::MediaStreamWebAudioSource(PassOwnPtr<WebAudioSourceProvider> provider)
-    : m_webAudioSourceProvider(provider)
-{
+MediaStreamWebAudioSource::MediaStreamWebAudioSource(
+    std::unique_ptr<WebAudioSourceProvider> provider)
+    : m_webAudioSourceProvider(std::move(provider)) {}
+
+MediaStreamWebAudioSource::~MediaStreamWebAudioSource() {}
+
+void MediaStreamWebAudioSource::provideInput(AudioBus* bus,
+                                             size_t framesToProcess) {
+  ASSERT(bus);
+  if (!bus)
+    return;
+
+  if (!m_webAudioSourceProvider) {
+    bus->zero();
+    return;
+  }
+
+  // Wrap the AudioBus channel data using WebVector.
+  size_t n = bus->numberOfChannels();
+  WebVector<float*> webAudioData(n);
+  for (size_t i = 0; i < n; ++i)
+    webAudioData[i] = bus->channel(i)->mutableData();
+
+  m_webAudioSourceProvider->provideInput(webAudioData, framesToProcess);
 }
 
-MediaStreamWebAudioSource::~MediaStreamWebAudioSource()
-{
-}
-
-void MediaStreamWebAudioSource::provideInput(AudioBus* bus, size_t framesToProcess)
-{
-    ASSERT(bus);
-    if (!bus)
-        return;
-
-    if (!m_webAudioSourceProvider) {
-        bus->zero();
-        return;
-    }
-
-    // Wrap the AudioBus channel data using WebVector.
-    size_t n = bus->numberOfChannels();
-    WebVector<float*> webAudioData(n);
-    for (size_t i = 0; i < n; ++i)
-        webAudioData[i] = bus->channel(i)->mutableData();
-
-    m_webAudioSourceProvider->provideInput(webAudioData, framesToProcess);
-}
-
-} // namespace blink
-
-#endif // ENABLE(WEB_AUDIO)
+}  // namespace blink

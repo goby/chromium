@@ -4,10 +4,14 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browsing_data/browsing_data_file_system_helper.h"
@@ -50,7 +54,7 @@ const int kEmptyFileSystemSize = 0;
 
 typedef std::list<BrowsingDataFileSystemHelper::FileSystemInfo>
     FileSystemInfoList;
-typedef scoped_ptr<FileSystemInfoList> ScopedFileSystemInfoList;
+typedef std::unique_ptr<FileSystemInfoList> ScopedFileSystemInfoList;
 
 // The FileSystem APIs are all asynchronous; this testing class wraps up the
 // boilerplate code necessary to deal with waiting for responses. In a nutshell,
@@ -67,13 +71,13 @@ class BrowsingDataFileSystemHelperTest : public testing::Test {
     helper_ = BrowsingDataFileSystemHelper::Create(
         BrowserContext::GetDefaultStoragePartition(profile_.get())->
             GetFileSystemContext());
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     canned_helper_ = new CannedBrowsingDataFileSystemHelper(profile_.get());
   }
   ~BrowsingDataFileSystemHelperTest() override {
     // Avoid memory leaks.
     profile_.reset();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   TestingProfile* GetProfile() {
@@ -81,9 +85,7 @@ class BrowsingDataFileSystemHelperTest : public testing::Test {
   }
 
   // Blocks on the current MessageLoop until Notify() is called.
-  void BlockUntilNotified() {
-    base::MessageLoop::current()->Run();
-  }
+  void BlockUntilNotified() { base::RunLoop().Run(); }
 
   // Unblocks the current MessageLoop. Should be called in response to some sort
   // of async activity in a callback method.
@@ -184,7 +186,7 @@ class BrowsingDataFileSystemHelperTest : public testing::Test {
 
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
 
   // Temporary storage to pass information back from callbacks.
   base::File::Error open_file_system_result_;
@@ -212,21 +214,21 @@ TEST_F(BrowsingDataFileSystemHelperTest, FetchData) {
     if (info.origin == kOrigin1) {
       EXPECT_FALSE(test_hosts_found[0]);
       test_hosts_found[0] = true;
-      EXPECT_FALSE(ContainsKey(info.usage_map, kPersistent));
-      EXPECT_TRUE(ContainsKey(info.usage_map, kTemporary));
+      EXPECT_FALSE(base::ContainsKey(info.usage_map, kPersistent));
+      EXPECT_TRUE(base::ContainsKey(info.usage_map, kTemporary));
       EXPECT_EQ(kEmptyFileSystemSize,
                 info.usage_map.at(storage::kFileSystemTypeTemporary));
     } else if (info.origin == kOrigin2) {
       EXPECT_FALSE(test_hosts_found[1]);
       test_hosts_found[1] = true;
-      EXPECT_TRUE(ContainsKey(info.usage_map, kPersistent));
-      EXPECT_FALSE(ContainsKey(info.usage_map, kTemporary));
+      EXPECT_TRUE(base::ContainsKey(info.usage_map, kPersistent));
+      EXPECT_FALSE(base::ContainsKey(info.usage_map, kTemporary));
       EXPECT_EQ(kEmptyFileSystemSize, info.usage_map.at(kPersistent));
     } else if (info.origin == kOrigin3) {
       EXPECT_FALSE(test_hosts_found[2]);
       test_hosts_found[2] = true;
-      EXPECT_TRUE(ContainsKey(info.usage_map, kPersistent));
-      EXPECT_TRUE(ContainsKey(info.usage_map, kTemporary));
+      EXPECT_TRUE(base::ContainsKey(info.usage_map, kPersistent));
+      EXPECT_TRUE(base::ContainsKey(info.usage_map, kTemporary));
       EXPECT_EQ(kEmptyFileSystemSize, info.usage_map.at(kPersistent));
       EXPECT_EQ(kEmptyFileSystemSize, info.usage_map.at(kTemporary));
     } else {
@@ -252,8 +254,8 @@ TEST_F(BrowsingDataFileSystemHelperTest, DeleteData) {
   BrowsingDataFileSystemHelper::FileSystemInfo info =
       *(file_system_info_list_->begin());
   EXPECT_EQ(kOrigin3, info.origin);
-  EXPECT_TRUE(ContainsKey(info.usage_map, kPersistent));
-  EXPECT_TRUE(ContainsKey(info.usage_map, kTemporary));
+  EXPECT_TRUE(base::ContainsKey(info.usage_map, kPersistent));
+  EXPECT_TRUE(base::ContainsKey(info.usage_map, kTemporary));
   EXPECT_EQ(kEmptyFileSystemSize, info.usage_map[kPersistent]);
   EXPECT_EQ(kEmptyFileSystemSize, info.usage_map[kTemporary]);
 }
@@ -280,14 +282,14 @@ TEST_F(BrowsingDataFileSystemHelperTest, CannedAddFileSystem) {
   std::list<BrowsingDataFileSystemHelper::FileSystemInfo>::iterator info =
       file_system_info_list_->begin();
   EXPECT_EQ(kOrigin1, info->origin);
-  EXPECT_TRUE(ContainsKey(info->usage_map, kPersistent));
-  EXPECT_FALSE(ContainsKey(info->usage_map, kTemporary));
+  EXPECT_TRUE(base::ContainsKey(info->usage_map, kPersistent));
+  EXPECT_FALSE(base::ContainsKey(info->usage_map, kTemporary));
   EXPECT_EQ(200, info->usage_map[kPersistent]);
 
   info++;
   EXPECT_EQ(kOrigin2, info->origin);
-  EXPECT_FALSE(ContainsKey(info->usage_map, kPersistent));
-  EXPECT_TRUE(ContainsKey(info->usage_map, kTemporary));
+  EXPECT_FALSE(base::ContainsKey(info->usage_map, kPersistent));
+  EXPECT_TRUE(base::ContainsKey(info->usage_map, kTemporary));
   EXPECT_EQ(100, info->usage_map[kTemporary]);
 }
 

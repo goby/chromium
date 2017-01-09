@@ -1,19 +1,18 @@
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
+      "drawsContent": true
+    },
+    {
+      "name": "LayoutBlockFlow (relative positioned) DIV id='layer'",
+      "position": [642, 58],
+      "bounds": [100, 100],
+      "contentsOpaque": true,
       "drawsContent": true,
-      "children": [
-        {
-          "position": [642, 58],
-          "bounds": [100, 100],
-          "contentsOpaque": true,
-          "drawsContent": true,
-          "backgroundColor": "#008000"
-        }
-      ]
+      "backgroundColor": "#008000"
     }
   ]
 }

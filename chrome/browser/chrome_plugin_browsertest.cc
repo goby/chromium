@@ -2,23 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
 #include "base/process/process.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
@@ -133,24 +137,6 @@ class ChromePluginTest : public InProcessBrowserTest {
     return plugins;
   }
 
-  static void EnableFlash(bool enable, Profile* profile) {
-    std::vector<base::FilePath> paths;
-    GetFlashPath(&paths);
-    ASSERT_FALSE(paths.empty());
-
-    PluginPrefs* plugin_prefs = PluginPrefs::GetForProfile(profile).get();
-    scoped_refptr<content::MessageLoopRunner> runner =
-        new content::MessageLoopRunner;
-    scoped_refptr<CallbackBarrier> callback_barrier(
-        new CallbackBarrier(runner->QuitClosure()));
-    for (std::vector<base::FilePath>::iterator iter = paths.begin();
-         iter != paths.end(); ++iter) {
-      plugin_prefs->EnablePlugin(enable, *iter,
-                                 callback_barrier->CreateCallback());
-    }
-    runner->Run();
-  }
-
   static void EnsureFlashProcessCount(int expected) {
     int actual = 0;
     scoped_refptr<content::MessageLoopRunner> runner =
@@ -167,10 +153,8 @@ class ChromePluginTest : public InProcessBrowserTest {
   static void CrashFlashInternal(const base::Closure& quit_task) {
     bool found = false;
     for (content::BrowserChildProcessHostIterator iter; !iter.Done(); ++iter) {
-      if (iter.GetData().process_type != content::PROCESS_TYPE_PLUGIN &&
-          iter.GetData().process_type != content::PROCESS_TYPE_PPAPI_PLUGIN) {
+      if (iter.GetData().process_type != content::PROCESS_TYPE_PPAPI_PLUGIN)
         continue;
-      }
       base::Process process = base::Process::DeprecatedGetProcessFromHandle(
           iter.GetData().handle);
       process.Terminate(0, true);
@@ -190,10 +174,8 @@ class ChromePluginTest : public InProcessBrowserTest {
 
   static void CountPluginProcesses(int* count, const base::Closure& quit_task) {
     for (content::BrowserChildProcessHostIterator iter; !iter.Done(); ++iter) {
-      if (iter.GetData().process_type == content::PROCESS_TYPE_PLUGIN ||
-          iter.GetData().process_type == content::PROCESS_TYPE_PPAPI_PLUGIN) {
+      if (iter.GetData().process_type == content::PROCESS_TYPE_PPAPI_PLUGIN)
         (*count)++;
-      }
     }
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, quit_task);
   }
@@ -230,18 +212,6 @@ IN_PROC_BROWSER_TEST_F(ChromePluginTest, DISABLED_Flash) {
   CrashFlash();
   EnsureFlashProcessCount(0);
 
-  ASSERT_NO_FATAL_FAILURE(LoadAndWait(browser(), url, true));
-  EnsureFlashProcessCount(1);
-
-  // Now try disabling it.
-  EnableFlash(false, profile);
-  CrashFlash();
-
-  ASSERT_NO_FATAL_FAILURE(LoadAndWait(browser(), url, false));
-  EnsureFlashProcessCount(0);
-
-  // Now enable it again.
-  EnableFlash(true, profile);
   ASSERT_NO_FATAL_FAILURE(LoadAndWait(browser(), url, true));
   EnsureFlashProcessCount(1);
 }

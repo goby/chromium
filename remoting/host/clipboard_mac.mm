@@ -5,10 +5,13 @@
 #include "remoting/host/clipboard.h"
 
 #import <Cocoa/Cocoa.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/timer/timer.h"
 #include "remoting/base/constants.h"
@@ -19,7 +22,7 @@
 namespace {
 
 // Clipboard polling interval in milliseconds.
-const int64 kClipboardPollingIntervalMs = 500;
+const int64_t kClipboardPollingIntervalMs = 500;
 
 } // namespace
 
@@ -30,14 +33,15 @@ class ClipboardMac : public Clipboard {
   ClipboardMac();
   ~ClipboardMac() override;
 
-  void Start(scoped_ptr<protocol::ClipboardStub> client_clipboard) override;
+  void Start(
+      std::unique_ptr<protocol::ClipboardStub> client_clipboard) override;
   void InjectClipboardEvent(const protocol::ClipboardEvent& event) override;
 
  private:
   void CheckClipboardForChanges();
 
-  scoped_ptr<protocol::ClipboardStub> client_clipboard_;
-  scoped_ptr<base::RepeatingTimer> clipboard_polling_timer_;
+  std::unique_ptr<protocol::ClipboardStub> client_clipboard_;
+  std::unique_ptr<base::RepeatingTimer> clipboard_polling_timer_;
   NSInteger current_change_count_;
 
   DISALLOW_COPY_AND_ASSIGN(ClipboardMac);
@@ -47,7 +51,8 @@ ClipboardMac::ClipboardMac() : current_change_count_(0) {}
 
 ClipboardMac::~ClipboardMac() {}
 
-void ClipboardMac::Start(scoped_ptr<protocol::ClipboardStub> client_clipboard) {
+void ClipboardMac::Start(
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   client_clipboard_.reset(client_clipboard.release());
 
   // Synchronize local change-count with the pasteboard's. The change-count is
@@ -102,8 +107,8 @@ void ClipboardMac::CheckClipboardForChanges() {
   client_clipboard_->InjectClipboardEvent(event);
 }
 
-scoped_ptr<Clipboard> Clipboard::Create() {
-  return make_scoped_ptr(new ClipboardMac());
+std::unique_ptr<Clipboard> Clipboard::Create() {
+  return base::WrapUnique(new ClipboardMac());
 }
 
 }  // namespace remoting

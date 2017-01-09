@@ -4,10 +4,14 @@
 
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_bypass_protocol.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <utility>
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
@@ -21,11 +25,13 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_util.h"
 #include "net/base/completion_callback.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_delegate.h"
+#include "net/base/proxy_delegate.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_transaction_test_util.h"
 #include "net/proxy/proxy_server.h"
@@ -74,7 +80,7 @@ class DataReductionProxyProtocolTest : public testing::Test {
   DataReductionProxyProtocolTest() : http_user_agent_settings_("", "") {
     simple_interceptor_.reset(new SimpleURLRequestInterceptor());
     net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
-        "http", "www.google.com", simple_interceptor_.Pass());
+        "http", "www.google.com", std::move(simple_interceptor_));
   }
 
   ~DataReductionProxyProtocolTest() override {
@@ -92,11 +98,11 @@ class DataReductionProxyProtocolTest : public testing::Test {
   }
 
   // Sets up the |TestURLRequestContext| with the provided |ProxyService|.
-  void ConfigureTestDependencies(scoped_ptr<ProxyService> proxy_service) {
+  void ConfigureTestDependencies(std::unique_ptr<ProxyService> proxy_service) {
     // Create a context with delayed initialization.
     context_.reset(new TestURLRequestContext(true));
 
-    proxy_service_ = proxy_service.Pass();
+    proxy_service_ = std::move(proxy_service);
     context_->set_client_socket_factory(&mock_socket_factory_);
     context_->set_proxy_service(proxy_service_.get());
     network_delegate_.reset(new net::TestNetworkDelegate());
@@ -112,10 +118,10 @@ class DataReductionProxyProtocolTest : public testing::Test {
         new DataReductionProxyInterceptor(
             test_context_->config(), test_context_->io_data()->config_client(),
             bypass_stats_.get(), test_context_->event_creator());
-    scoped_ptr<net::URLRequestJobFactoryImpl> job_factory_impl(
+    std::unique_ptr<net::URLRequestJobFactoryImpl> job_factory_impl(
         new net::URLRequestJobFactoryImpl());
     job_factory_.reset(new net::URLRequestInterceptingJobFactory(
-        job_factory_impl.Pass(), make_scoped_ptr(interceptor)));
+        std::move(job_factory_impl), base::WrapUnique(interceptor)));
 
     context_->set_job_factory(job_factory_.get());
     context_->Init();
@@ -230,10 +236,8 @@ class DataReductionProxyProtocolTest : public testing::Test {
     int initial_headers_received_count =
         network_delegate_->headers_received_count();
     TestDelegate d;
-    scoped_ptr<URLRequest> r(context_->CreateRequest(
-        GURL("http://www.google.com/"),
-        net::DEFAULT_PRIORITY,
-        &d));
+    std::unique_ptr<URLRequest> r(context_->CreateRequest(
+        GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, &d));
     r->set_method(method);
     r->SetLoadFlags(net::LOAD_NORMAL);
 
@@ -241,8 +245,7 @@ class DataReductionProxyProtocolTest : public testing::Test {
     base::RunLoop().Run();
 
     if (!expected_error) {
-      EXPECT_EQ(net::URLRequestStatus::SUCCESS, r->status().status());
-      EXPECT_EQ(net::OK, r->status().error());
+      EXPECT_EQ(net::OK, d.request_status());
       if (expected_retry)
         EXPECT_EQ(initial_headers_received_count + 2,
                   network_delegate_->headers_received_count());
@@ -252,8 +255,7 @@ class DataReductionProxyProtocolTest : public testing::Test {
       EXPECT_EQ(content, d.data_received());
       return;
     }
-    EXPECT_EQ(net::URLRequestStatus::FAILED, r->status().status());
-    EXPECT_EQ(net::ERR_INVALID_RESPONSE, r->status().error());
+    EXPECT_EQ(net::ERR_INVALID_RESPONSE, d.request_status());
     EXPECT_EQ(initial_headers_received_count,
               network_delegate_->headers_received_count());
   }
@@ -306,18 +308,18 @@ class DataReductionProxyProtocolTest : public testing::Test {
 
  protected:
   base::MessageLoopForIO message_loop_;
-  scoped_ptr<net::NetworkChangeNotifier> network_change_notifier_;
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
 
-  scoped_ptr<net::URLRequestInterceptor> simple_interceptor_;
+  std::unique_ptr<net::URLRequestInterceptor> simple_interceptor_;
   net::MockClientSocketFactory mock_socket_factory_;
-  scoped_ptr<net::TestNetworkDelegate> network_delegate_;
-  scoped_ptr<ProxyService> proxy_service_;
-  scoped_ptr<DataReductionProxyTestContext> test_context_;
-  scoped_ptr<DataReductionProxyBypassStats> bypass_stats_;
+  std::unique_ptr<net::TestNetworkDelegate> network_delegate_;
+  std::unique_ptr<ProxyService> proxy_service_;
+  std::unique_ptr<DataReductionProxyTestContext> test_context_;
+  std::unique_ptr<DataReductionProxyBypassStats> bypass_stats_;
   net::StaticHttpUserAgentSettings http_user_agent_settings_;
 
-  scoped_ptr<net::URLRequestInterceptingJobFactory> job_factory_;
-  scoped_ptr<TestURLRequestContext> context_;
+  std::unique_ptr<net::URLRequestInterceptingJobFactory> job_factory_;
+  std::unique_ptr<TestURLRequestContext> context_;
 };
 
 // Tests that request are deemed idempotent or not according to the method used.
@@ -337,14 +339,11 @@ TEST_F(DataReductionProxyProtocolTest, TestIdempotency) {
       { "CONNECT", false },
   };
   for (size_t i = 0; i < arraysize(tests); ++i) {
-    scoped_ptr<net::URLRequest> request(
-        context.CreateRequest(GURL("http://www.google.com/"),
-                              net::DEFAULT_PRIORITY,
-                              NULL));
+    std::unique_ptr<net::URLRequest> request(context.CreateRequest(
+        GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, NULL));
     request->set_method(tests[i].method);
-    EXPECT_EQ(
-        tests[i].expected_result,
-        DataReductionProxyBypassProtocol::IsRequestIdempotent(request.get()));
+    EXPECT_EQ(tests[i].expected_result,
+              util::IsMethodIdempotent(request->method()));
   }
 }
 
@@ -532,9 +531,9 @@ TEST_F(DataReductionProxyProtocolTest, BypassLogic) {
       "Server: proxy\r\n\r\n",
       true,
       false,
-      1u,
+      0u,
       true,
-      1,
+      0,
       BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_4XX
     },
     // Invalid data reduction proxy response. Missing Via header.
@@ -779,6 +778,8 @@ class DataReductionProxyBypassProtocolEndToEndTest : public testing::Test {
             .WithMockClientSocketFactory(mock_socket_factory_.get())
             .WithURLRequestContext(context_.get())
             .Build();
+    proxy_delegate_ = drp_test_context_->io_data()->CreateProxyDelegate();
+    context_->set_proxy_delegate(proxy_delegate_.get());
   }
 
   void AttachToContextAndInit() {
@@ -797,10 +798,11 @@ class DataReductionProxyBypassProtocolEndToEndTest : public testing::Test {
 
  private:
   base::MessageLoopForIO loop_;
-  scoped_ptr<net::TestURLRequestContext> context_;
-  scoped_ptr<net::URLRequestContextStorage> storage_;
-  scoped_ptr<net::MockClientSocketFactory> mock_socket_factory_;
-  scoped_ptr<DataReductionProxyTestContext> drp_test_context_;
+  std::unique_ptr<net::TestURLRequestContext> context_;
+  std::unique_ptr<net::URLRequestContextStorage> storage_;
+  std::unique_ptr<net::MockClientSocketFactory> mock_socket_factory_;
+  std::unique_ptr<net::ProxyDelegate> proxy_delegate_;
+  std::unique_ptr<DataReductionProxyTestContext> drp_test_context_;
 
   DISALLOW_COPY_AND_ASSIGN(DataReductionProxyBypassProtocolEndToEndTest);
 };
@@ -874,7 +876,7 @@ TEST_F(DataReductionProxyBypassProtocolEndToEndTest,
       mock_socket_factory()->AddSocketDataProvider(&retry_socket);
 
     net::TestDelegate delegate;
-    scoped_ptr<net::URLRequest> url_request(context()->CreateRequest(
+    std::unique_ptr<net::URLRequest> url_request(context()->CreateRequest(
         GURL("http://www.google.com"), net::IDLE, &delegate));
     url_request->Start();
     drp_test_context()->RunUntilIdle();
@@ -882,9 +884,9 @@ TEST_F(DataReductionProxyBypassProtocolEndToEndTest,
     EXPECT_EQ(test.expected_bypass_type,
               drp_test_context()->io_data()->bypass_stats()->GetBypassType());
     // Check the bad proxy list.
-    EXPECT_EQ(
-        test.expected_bad_proxy,
-        ContainsKey(context()->proxy_service()->proxy_retry_info(), kPrimary));
+    EXPECT_EQ(test.expected_bad_proxy,
+              base::ContainsKey(context()->proxy_service()->proxy_retry_info(),
+                                kPrimary));
   }
 }
 
@@ -933,7 +935,7 @@ TEST_F(DataReductionProxyBypassProtocolEndToEndTest,
 
     base::HistogramTester histogram_tester;
     net::TestDelegate delegate;
-    scoped_ptr<net::URLRequest> request(context()->CreateRequest(
+    std::unique_ptr<net::URLRequest> request(context()->CreateRequest(
         GURL("http://google.com"), net::IDLE, &delegate));
     request->Start();
     drp_test_context()->RunUntilIdle();
@@ -968,18 +970,15 @@ TEST_F(DataReductionProxyProtocolTest,
   mock_socket_factory_.AddSocketDataProvider(&data1);
 
   TestDelegate d;
-  scoped_ptr<URLRequest> r(context_->CreateRequest(
-      GURL("http://www.google.com/"),
-      net::DEFAULT_PRIORITY,
-      &d));
+  std::unique_ptr<URLRequest> r(context_->CreateRequest(
+      GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, &d));
   r->set_method("GET");
   r->SetLoadFlags(net::LOAD_NORMAL);
 
   r->Start();
   base::RunLoop().Run();
 
-  EXPECT_EQ(net::URLRequestStatus::SUCCESS, r->status().status());
-  EXPECT_EQ(net::OK, r->status().error());
+  EXPECT_EQ(net::OK, d.request_status());
 
   EXPECT_EQ("Bypass message", d.data_received());
 

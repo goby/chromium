@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_PRERENDER_PRERENDER_HANDLE_H_
 #define CHROME_BROWSER_PRERENDER_PRERENDER_HANDLE_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/non_thread_safe.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 
 class GURL;
@@ -27,8 +28,7 @@ class PrerenderContents;
 // Destroying a handle before a prerender starts will prevent it from ever
 // starting. Destroying a handle while a prerendering is running will stop the
 // prerender, without making any calls to the observer.
-class PrerenderHandle : public base::NonThreadSafe,
-                        public PrerenderContents::Observer {
+class PrerenderHandle : public PrerenderContents::Observer {
  public:
   class Observer {
    public:
@@ -43,10 +43,6 @@ class PrerenderHandle : public base::NonThreadSafe,
 
     // Signals that the prerender has stopped running.
     virtual void OnPrerenderStop(PrerenderHandle* handle) = 0;
-
-    // Signals that this prerender has just become a MatchComplete replacement.
-    virtual void OnPrerenderCreatedMatchCompleteReplacement(
-        PrerenderHandle* handle) = 0;
 
    protected:
     Observer();
@@ -101,9 +97,6 @@ class PrerenderHandle : public base::NonThreadSafe,
   void OnPrerenderDomContentLoaded(
       PrerenderContents* prerender_contents) override;
   void OnPrerenderStop(PrerenderContents* prerender_contents) override;
-  void OnPrerenderCreatedMatchCompleteReplacement(
-      PrerenderContents* contents,
-      PrerenderContents* replacement) override;
 
   Observer* observer_;
 

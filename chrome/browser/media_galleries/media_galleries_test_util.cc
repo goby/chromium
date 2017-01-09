@@ -4,16 +4,16 @@
 
 #include "chrome/browser/media_galleries/media_galleries_test_util.h"
 
-#if defined(OS_WIN)
-#include <windows.h>
-#endif
+#include <stddef.h>
+
+#include <utility>
 
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/media_galleries/fileapi/picasa_finder.h"
 #include "chrome/browser/profiles/profile.h"
@@ -32,6 +32,7 @@
 #endif  // OS_MACOSX
 
 #if defined(OS_WIN)
+#include <windows.h>
 #include "base/test/test_reg_util_win.h"
 #include "base/win/registry.h"
 #endif  // OS_WIN
@@ -40,24 +41,23 @@ scoped_refptr<extensions::Extension> AddMediaGalleriesApp(
     const std::string& name,
     const std::vector<std::string>& media_galleries_permissions,
     Profile* profile) {
-  scoped_ptr<base::DictionaryValue> manifest(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> manifest(new base::DictionaryValue);
   manifest->SetString(extensions::manifest_keys::kName, name);
   manifest->SetString(extensions::manifest_keys::kVersion, "0.1");
   manifest->SetInteger(extensions::manifest_keys::kManifestVersion, 2);
   base::ListValue* background_script_list = new base::ListValue;
-  background_script_list->Append(new base::StringValue("background.js"));
+  background_script_list->AppendString("background.js");
   manifest->Set(extensions::manifest_keys::kPlatformAppBackgroundScripts,
                 background_script_list);
 
   base::ListValue* permission_detail_list = new base::ListValue;
   for (size_t i = 0; i < media_galleries_permissions.size(); i++)
-    permission_detail_list->Append(
-        new base::StringValue(media_galleries_permissions[i]));
-  base::DictionaryValue* media_galleries_permission =
-      new base::DictionaryValue();
+    permission_detail_list->AppendString(media_galleries_permissions[i]);
+  std::unique_ptr<base::DictionaryValue> media_galleries_permission(
+      new base::DictionaryValue());
   media_galleries_permission->Set("mediaGalleries", permission_detail_list);
   base::ListValue* permission_list = new base::ListValue;
-  permission_list->Append(media_galleries_permission);
+  permission_list->Append(std::move(media_galleries_permission));
   manifest->Set(extensions::manifest_keys::kPermissions, permission_list);
 
   extensions::ExtensionPrefs* extension_prefs =
@@ -109,21 +109,21 @@ void EnsureMediaDirectoriesExists::ChangeMediaPathOverrides() {
   music_path_string.append(base::IntToString(times_overrides_changed_));
   music_override_.reset(new base::ScopedPathOverride(
       chrome::DIR_USER_MUSIC,
-      fake_dir_.path().AppendASCII(music_path_string)));
+      fake_dir_.GetPath().AppendASCII(music_path_string)));
 
   pictures_override_.reset();
   std::string pictures_path_string("pictures");
   pictures_path_string.append(base::IntToString(times_overrides_changed_));
   pictures_override_.reset(new base::ScopedPathOverride(
       chrome::DIR_USER_PICTURES,
-      fake_dir_.path().AppendASCII(pictures_path_string)));
+      fake_dir_.GetPath().AppendASCII(pictures_path_string)));
 
   video_override_.reset();
   std::string videos_path_string("videos");
   videos_path_string.append(base::IntToString(times_overrides_changed_));
   video_override_.reset(new base::ScopedPathOverride(
       chrome::DIR_USER_VIDEOS,
-      fake_dir_.path().AppendASCII(videos_path_string)));
+      fake_dir_.GetPath().AppendASCII(videos_path_string)));
 
   times_overrides_changed_++;
 
@@ -132,13 +132,13 @@ void EnsureMediaDirectoriesExists::ChangeMediaPathOverrides() {
 
 base::FilePath EnsureMediaDirectoriesExists::GetFakeAppDataPath() const {
   DCHECK(fake_dir_.IsValid());
-  return fake_dir_.path().AppendASCII("appdata");
+  return fake_dir_.GetPath().AppendASCII("appdata");
 }
 
 #if defined(OS_WIN)
 base::FilePath EnsureMediaDirectoriesExists::GetFakeLocalAppDataPath() const {
   DCHECK(fake_dir_.IsValid());
-  return fake_dir_.path().AppendASCII("localappdata");
+  return fake_dir_.GetPath().AppendASCII("localappdata");
 }
 
 void EnsureMediaDirectoriesExists::SetCustomPicasaAppDataPath(
@@ -163,19 +163,14 @@ void EnsureMediaDirectoriesExists::SetCustomPicasaAppDataPath(
 base::FilePath
 EnsureMediaDirectoriesExists::GetFakePicasaFoldersRootPath() const {
   DCHECK(fake_dir_.IsValid());
-  return fake_dir_.path().AppendASCII("picasa_folders");
+  return fake_dir_.GetPath().AppendASCII("picasa_folders");
 }
 #endif  // OS_WIN || OS_MACOSX
 
 #if defined(OS_MACOSX)
 base::FilePath EnsureMediaDirectoriesExists::GetFakeITunesRootPath() const {
   DCHECK(fake_dir_.IsValid());
-  return fake_dir_.path().AppendASCII("itunes");
-}
-
-base::FilePath EnsureMediaDirectoriesExists::GetFakeIPhotoRootPath() const {
-  DCHECK(fake_dir_.IsValid());
-  return fake_dir_.path().AppendASCII("iphoto");
+  return fake_dir_.GetPath().AppendASCII("itunes");
 }
 #endif  // OS_MACOSX
 
@@ -210,14 +205,6 @@ void EnsureMediaDirectoriesExists::Init() {
   mac_preferences_->AddTestItem(
       base::mac::NSToCFCast(iapps::kITunesRecentDatabasePathsKey),
       base::mac::NSToCFCast(iapps::NSArrayFromFilePath(itunes_xml)),
-      false);
-
-  // iPhoto override.
-  base::FilePath iphoto_xml =
-      GetFakeIPhotoRootPath().AppendASCII("AlbumData.xml");
-  mac_preferences_->AddTestItem(
-      base::mac::NSToCFCast(iapps::kIPhotoRecentDatabasesKey),
-      base::mac::NSToCFCast(iapps::NSArrayFromFilePath(iphoto_xml)),
       false);
 
   iapps::SetMacPreferencesForTesting(mac_preferences_.get());

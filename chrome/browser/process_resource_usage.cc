@@ -4,15 +4,18 @@
 
 #include "chrome/browser/process_resource_usage.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/common/resource_usage_reporter_type_converters.h"
 
-ProcessResourceUsage::ProcessResourceUsage(ResourceUsageReporterPtr service)
-    : service_(service.Pass()), update_in_progress_(false) {
+ProcessResourceUsage::ProcessResourceUsage(
+    chrome::mojom::ResourceUsageReporterPtr service)
+    : service_(std::move(service)), update_in_progress_(false) {
   service_.set_connection_error_handler(
       base::Bind(&ProcessResourceUsage::RunPendingRefreshCallbacks,
                  base::Unretained(this)));
@@ -48,10 +51,11 @@ void ProcessResourceUsage::Refresh(const base::Closure& callback) {
   }
 }
 
-void ProcessResourceUsage::OnRefreshDone(ResourceUsageDataPtr data) {
+void ProcessResourceUsage::OnRefreshDone(
+    chrome::mojom::ResourceUsageDataPtr data) {
   DCHECK(thread_checker_.CalledOnValidThread());
   update_in_progress_ = false;
-  stats_ = data.Pass();
+  stats_ = std::move(data);
   RunPendingRefreshCallbacks();
 }
 

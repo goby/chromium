@@ -5,7 +5,7 @@ from gpu_tests import gpu_process_expectations as expectations
 from gpu_tests import gpu_test_base
 import page_sets
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 
 test_harness_script = r"""
   var domAutomationController = {};
@@ -16,6 +16,14 @@ test_harness_script = r"""
   }
 
   window.domAutomationController = domAutomationController;
+
+  function GetDriverBugWorkarounds() {
+    var query_result = document.querySelector('.workarounds-list');
+    var browser_list = []
+    for (var i=0; i < query_result.childElementCount; i++)
+      browser_list.push(query_result.children[i].textContent);
+    return browser_list;
+  };
 """
 
 class GpuProcessValidator(gpu_test_base.ValidatorBase):
@@ -30,10 +38,10 @@ class GpuProcessValidator(gpu_test_base.ValidatorBase):
     if hasattr(page, 'Validate'):
       page.Validate(tab, results)
     else:
-      has_gpu_process_js = 'chrome.gpuBenchmarking.hasGpuProcess()'
-      has_gpu_process = tab.EvaluateJavaScript(has_gpu_process_js)
-      if not has_gpu_process:
-        raise page_test.Failure('No GPU process detected')
+      has_gpu_channel_js = 'chrome.gpuBenchmarking.hasGpuChannel()'
+      has_gpu_channel = tab.EvaluateJavaScript(has_gpu_channel_js)
+      if not has_gpu_channel:
+        raise legacy_page_test.Failure('No GPU channel detected')
 
 class GpuProcess(gpu_test_base.TestBase):
   """Tests that accelerated content triggers the creation of a GPU process"""
@@ -47,7 +55,10 @@ class GpuProcess(gpu_test_base.TestBase):
     return expectations.GpuProcessExpectations()
 
   def CreateStorySet(self, options):
-    story_set = page_sets.GpuProcessTestsStorySet(self.GetExpectations())
+    browser_type = options.browser_options.browser_type
+    is_platform_android = browser_type.startswith('android')
+    story_set = page_sets.GpuProcessTestsStorySet(self.GetExpectations(),
+                                                  is_platform_android)
     for page in story_set:
       page.script_to_evaluate_on_commit = test_harness_script
     return story_set

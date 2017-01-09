@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_APP_LIST_EXTENSION_UNINSTALLER_H_
 #define CHROME_BROWSER_UI_APP_LIST_EXTENSION_UNINSTALLER_H_
 
+#include "base/macros.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 
 class AppListControllerDelegate;
@@ -33,7 +34,7 @@ class ExtensionUninstaller
   Profile* profile_;
   std::string app_id_;
   AppListControllerDelegate* controller_;
-  scoped_ptr<extensions::ExtensionUninstallDialog> dialog_;
+  std::unique_ptr<extensions::ExtensionUninstallDialog> dialog_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionUninstaller);
 };

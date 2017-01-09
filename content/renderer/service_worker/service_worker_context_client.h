@@ -5,23 +5,29 @@
 #ifndef CONTENT_RENDERER_SERVICE_WORKER_SERVICE_WORKER_CONTEXT_CLIENT_H_
 #define CONTENT_RENDERER_SERVICE_WORKER_SERVICE_WORKER_CONTEXT_CLIENT_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/id_map.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "content/child/webmessageportchannel_impl.h"
-#include "content/common/routed_service_provider.mojom.h"
+#include "content/common/service_worker/service_worker_event_dispatcher.mojom.h"
+#include "content/common/service_worker/service_worker_status_code.h"
 #include "content/common/service_worker/service_worker_types.h"
-#include "content/public/common/service_worker_event_status.mojom.h"
 #include "ipc/ipc_listener.h"
-#include "third_party/WebKit/public/platform/WebGeofencingEventType.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "third_party/WebKit/public/platform/WebMessagePortChannel.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerError.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_event_status.mojom.h"
 #include "third_party/WebKit/public/web/modules/serviceworker/WebServiceWorkerContextClient.h"
 #include "third_party/WebKit/public/web/modules/serviceworker/WebServiceWorkerContextProxy.h"
 #include "v8/include/v8.h"
@@ -32,13 +38,12 @@ class TaskRunner;
 }
 
 namespace blink {
-struct WebCircularGeofencingRegion;
-struct WebCrossOriginServiceWorkerClient;
+class WebDataConsumerHandle;
 class WebDataSource;
 struct WebServiceWorkerClientQueryOptions;
 class WebServiceWorkerContextProxy;
 class WebServiceWorkerProvider;
-struct WebSyncRegistration;
+class WebServiceWorkerResponse;
 }
 
 namespace IPC {
@@ -47,28 +52,41 @@ class Message;
 
 namespace content {
 
-struct NavigatorConnectClient;
 struct PlatformNotificationData;
+struct PushEventPayload;
 struct ServiceWorkerClientInfo;
 class ServiceWorkerProviderContext;
 class ServiceWorkerContextClient;
 class ThreadSafeSender;
-class WebServiceWorkerRegistrationImpl;
+class EmbeddedWorkerInstanceClientImpl;
 
 // This class provides access to/from an ServiceWorker's WorkerGlobalScope.
 // Unless otherwise noted, all methods are called on the worker thread.
-class ServiceWorkerContextClient
-    : public blink::WebServiceWorkerContextClient {
+class ServiceWorkerContextClient : public blink::WebServiceWorkerContextClient,
+                                   public mojom::ServiceWorkerEventDispatcher {
  public:
-  using SyncCallback = mojo::Callback<void(ServiceWorkerEventStatus)>;
+  using SyncCallback =
+      base::Callback<void(ServiceWorkerStatusCode,
+                          base::Time /* dispatch_event_time */)>;
+  using FetchCallback =
+      base::Callback<void(ServiceWorkerStatusCode,
+                          base::Time /* dispatch_event_time */)>;
 
   // Returns a thread-specific client instance.  This does NOT create a
   // new instance.
   static ServiceWorkerContextClient* ThreadSpecificInstance();
 
   // Called on the main thread.
+  ServiceWorkerContextClient(
+      int embedded_worker_id,
+      int64_t service_worker_version_id,
+      const GURL& service_worker_scope,
+      const GURL& script_url,
+      int worker_devtools_agent_route_id,
+      mojom::ServiceWorkerEventDispatcherRequest dispatcher_request,
+      std::unique_ptr<EmbeddedWorkerInstanceClientImpl> embedded_worker_client);
   ServiceWorkerContextClient(int embedded_worker_id,
-                             int64 service_worker_version_id,
+                             int64_t service_worker_version_id,
                              const GURL& service_worker_scope,
                              const GURL& script_url,
                              int worker_devtools_agent_route_id);
@@ -78,19 +96,20 @@ class ServiceWorkerContextClient
                          int embedded_worker_id,
                          const IPC::Message& message);
 
-  // Called some time after the worker has started. Attempts to use the
-  // ServiceRegistry to connect to services before this method is called are
-  // queued up and will resolve after this method is called.
-  void BindServiceRegistry(
-      mojo::InterfaceRequest<RoutedServiceProvider> services,
-      RoutedServiceProviderPtr exposed_services);
+  // Called after the worker has started.
+  void BindEventDispatcher(mojom::ServiceWorkerEventDispatcherRequest request);
 
   // WebServiceWorkerContextClient overrides.
   blink::WebURL scope() const override;
-  void getClients(const blink::WebServiceWorkerClientQueryOptions&,
-                  blink::WebServiceWorkerClientsCallbacks*) override;
-  void openWindow(const blink::WebURL&,
-                  blink::WebServiceWorkerClientCallbacks*) override;
+  void getClient(
+      const blink::WebString&,
+      std::unique_ptr<blink::WebServiceWorkerClientCallbacks>) override;
+  void getClients(
+      const blink::WebServiceWorkerClientQueryOptions&,
+      std::unique_ptr<blink::WebServiceWorkerClientsCallbacks>) override;
+  void openWindow(
+      const blink::WebURL&,
+      std::unique_ptr<blink::WebServiceWorkerClientCallbacks>) override;
   void setCachedMetadata(const blink::WebURL&,
                          const char* data,
                          size_t size) override;
@@ -100,12 +119,12 @@ class ServiceWorkerContextClient
   // Called on the main thread.
   void workerContextFailedToStart() override;
   void workerScriptLoaded() override;
+  bool hasAssociatedRegistration() override;
 
   void workerContextStarted(
       blink::WebServiceWorkerContextProxy* proxy) override;
   void didEvaluateWorkerScript(bool success) override;
-  void didInitializeWorkerContext(v8::Local<v8::Context> context,
-                                  const blink::WebURL& url) override;
+  void didInitializeWorkerContext(v8::Local<v8::Context> context) override;
   void willDestroyWorkerContext(v8::Local<v8::Context> context) override;
   void workerContextDestroyed() override;
   void reportException(const blink::WebString& error_message,
@@ -121,22 +140,40 @@ class ServiceWorkerContextClient
                            int call_id,
                            const blink::WebString& message,
                            const blink::WebString& state) override;
+  blink::WebDevToolsAgentClient::WebKitClientMessageLoop*
+  createDevToolsMessageLoop() override;
   void didHandleActivateEvent(int request_id,
-                              blink::WebServiceWorkerEventResult) override;
-  void didHandleInstallEvent(
+                              blink::WebServiceWorkerEventResult,
+                              double dispatch_event_time) override;
+  void didHandleExtendableMessageEvent(
       int request_id,
-      blink::WebServiceWorkerEventResult result) override;
-  void didHandleFetchEvent(int request_id) override;
-  void didHandleFetchEvent(
-      int request_id,
-      const blink::WebServiceWorkerResponse& response) override;
+      blink::WebServiceWorkerEventResult result,
+      double dispatch_event_time) override;
+  void didHandleInstallEvent(int request_id,
+                             blink::WebServiceWorkerEventResult result,
+                             double event_dispatch_time) override;
+  void respondToFetchEvent(int fetch_event_id,
+                           double event_dispatch_time) override;
+  void respondToFetchEvent(int fetch_event_id,
+                           const blink::WebServiceWorkerResponse& response,
+                           double event_dispatch_time) override;
+  void didHandleFetchEvent(int fetch_event_id,
+                           blink::WebServiceWorkerEventResult result,
+                           double dispatch_event_time) override;
   void didHandleNotificationClickEvent(
       int request_id,
-      blink::WebServiceWorkerEventResult result) override;
+      blink::WebServiceWorkerEventResult result,
+      double dispatch_event_time) override;
+  void didHandleNotificationCloseEvent(
+      int request_id,
+      blink::WebServiceWorkerEventResult result,
+      double dispatch_event_time) override;
   void didHandlePushEvent(int request_id,
-                          blink::WebServiceWorkerEventResult result) override;
+                          blink::WebServiceWorkerEventResult result,
+                          double dispatch_event_time) override;
   void didHandleSyncEvent(int request_id,
-                          blink::WebServiceWorkerEventResult result) override;
+                          blink::WebServiceWorkerEventResult result,
+                          double dispatch_event_time) override;
 
   // Called on the main thread.
   blink::WebServiceWorkerNetworkProvider* createServiceWorkerNetworkProvider(
@@ -148,27 +185,26 @@ class ServiceWorkerContextClient
       const blink::WebString& message,
       blink::WebMessagePortChannelArray* channels) override;
   void postMessageToCrossOriginClient(
-      const blink::WebCrossOriginServiceWorkerClient& client,
-      const blink::WebString& message,
-      blink::WebMessagePortChannelArray* channels) override;
+      const blink::WebCrossOriginServiceWorkerClient&,
+      const blink::WebString&,
+      blink::WebMessagePortChannelArray*) override;
   void focus(const blink::WebString& uuid,
-             blink::WebServiceWorkerClientCallbacks*) override;
-  void navigate(const blink::WebString& uuid,
-                const blink::WebURL&,
-                blink::WebServiceWorkerClientCallbacks*) override;
-  void skipWaiting(
-      blink::WebServiceWorkerSkipWaitingCallbacks* callbacks) override;
-  void claim(blink::WebServiceWorkerClientsClaimCallbacks* callbacks) override;
+             std::unique_ptr<blink::WebServiceWorkerClientCallbacks>) override;
+  void navigate(
+      const blink::WebString& uuid,
+      const blink::WebURL&,
+      std::unique_ptr<blink::WebServiceWorkerClientCallbacks>) override;
+  void skipWaiting(std::unique_ptr<blink::WebServiceWorkerSkipWaitingCallbacks>
+                       callbacks) override;
+  void claim(std::unique_ptr<blink::WebServiceWorkerClientsClaimCallbacks>
+                 callbacks) override;
   void registerForeignFetchScopes(
-      const blink::WebVector<blink::WebURL>& sub_scopes) override;
-
-  virtual void DispatchSyncEvent(
-      const blink::WebSyncRegistration& registration,
-      blink::WebServiceWorkerContextProxy::LastChanceOption last_chance,
-      const SyncCallback& callback);
+      const blink::WebVector<blink::WebURL>& sub_scopes,
+      const blink::WebVector<blink::WebSecurityOrigin>& origins) override;
 
  private:
   struct WorkerContextData;
+  class NavigationPreloadRequest;
 
   // Get routing_id for sending message to the ServiceWorkerVersion
   // in the browser process.
@@ -180,28 +216,34 @@ class ServiceWorkerContextClient
       const ServiceWorkerRegistrationObjectInfo& info,
       const ServiceWorkerVersionAttributes& attrs);
 
+  // mojom::ServiceWorkerEventDispatcher
+  void DispatchExtendableMessageEvent(
+      mojom::ExtendableMessageEventPtr event,
+      const DispatchExtendableMessageEventCallback& callback) override;
+  void DispatchFetchEvent(int fetch_event_id,
+                          const ServiceWorkerFetchRequest& request,
+                          mojom::FetchEventPreloadHandlePtr preload_handle,
+                          const DispatchFetchEventCallback& callback) override;
+  void DispatchSyncEvent(
+      const std::string& tag,
+      blink::mojom::BackgroundSyncEventLastChance last_chance,
+      const DispatchSyncEventCallback& callback) override;
+
   void OnActivateEvent(int request_id);
   void OnInstallEvent(int request_id);
-  void OnFetchEvent(int request_id, const ServiceWorkerFetchRequest& request);
   void OnNotificationClickEvent(
       int request_id,
-      int64_t persistent_notification_id,
+      const std::string& notification_id,
       const PlatformNotificationData& notification_data,
-      int action_index);
-  void OnPushEvent(int request_id, const std::string& data);
-  void OnGeofencingEvent(int request_id,
-                         blink::WebGeofencingEventType event_type,
-                         const std::string& region_id,
-                         const blink::WebCircularGeofencingRegion& region);
-  void OnPostMessage(
-      const base::string16& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports,
-      const std::vector<int>& new_routing_ids);
-  void OnCrossOriginMessageToWorker(
-      const NavigatorConnectClient& client,
-      const base::string16& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports,
-      const std::vector<int>& new_routing_ids);
+      int action_index,
+      const base::NullableString16& reply);
+  void OnPushEvent(int request_id, const PushEventPayload& payload);
+  void OnNotificationCloseEvent(
+      int request_id,
+      const std::string& notification_id,
+      const PlatformNotificationData& notification_data);
+
+  void OnDidGetClient(int request_id, const ServiceWorkerClientInfo& client);
   void OnDidGetClients(
       int request_id, const std::vector<ServiceWorkerClientInfo>& clients);
   void OnOpenWindowResponse(int request_id,
@@ -219,10 +261,18 @@ class ServiceWorkerContextClient
                            const base::string16& message);
   void OnPing();
 
+  void OnNavigationPreloadResponse(
+      int fetch_event_id,
+      std::unique_ptr<blink::WebServiceWorkerResponse> response,
+      std::unique_ptr<blink::WebDataConsumerHandle> data_consumer_handle);
+  void OnNavigationPreloadError(
+      int fetch_event_id,
+      std::unique_ptr<blink::WebServiceWorkerError> error);
+
   base::WeakPtr<ServiceWorkerContextClient> GetWeakPtr();
 
   const int embedded_worker_id_;
-  const int64 service_worker_version_id_;
+  const int64_t service_worker_version_id_;
   const GURL service_worker_scope_;
   const GURL script_url_;
   const int worker_devtools_agent_route_id_;
@@ -235,14 +285,15 @@ class ServiceWorkerContextClient
   // Not owned; this object is destroyed when proxy_ becomes invalid.
   blink::WebServiceWorkerContextProxy* proxy_;
 
-  // Used for incoming messages from the browser for which an outgoing response
-  // back to the browser is expected, the id must be sent back with the
-  // response.
-  int current_request_id_;
+  // This is bound on the worker thread.
+  mojom::ServiceWorkerEventDispatcherRequest pending_dispatcher_request_;
+
+  // Renderer-side object corresponding to WebEmbeddedWorkerInstance
+  std::unique_ptr<EmbeddedWorkerInstanceClientImpl> embedded_worker_client_;
 
   // Initialized on the worker thread in workerContextStarted and
   // destructed on the worker thread in willDestroyWorkerContext.
-  scoped_ptr<WorkerContextData> context_;
+  std::unique_ptr<WorkerContextData> context_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerContextClient);
 };

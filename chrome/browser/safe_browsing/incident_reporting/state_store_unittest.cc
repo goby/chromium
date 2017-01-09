@@ -4,14 +4,17 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/state_store.h"
 
+#include <stdint.h>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident.h"
 #include "chrome/browser/safe_browsing/incident_reporting/platform_state_store.h"
@@ -20,8 +23,10 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
-#include "components/syncable_prefs/pref_service_syncable_factory.h"
+#include "components/sync_preferences/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable_factory.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/browser/quota_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
@@ -69,11 +74,11 @@ class StateStoreTest : public PlatformStateStoreTestBase {
   StateStoreTest()
       : profile_(nullptr),
         task_runner_(new base::TestSimpleTaskRunner()),
-        thread_task_runner_handle_(task_runner_),
         profile_manager_(TestingBrowserProcess::GetGlobal()) {}
 
   void SetUp() override {
     PlatformStateStoreTestBase::SetUp();
+    base::MessageLoop::current()->SetTaskRunner(task_runner_);
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     ASSERT_TRUE(profile_manager_.SetUp());
     CreateProfile();
@@ -90,8 +95,8 @@ class StateStoreTest : public PlatformStateStoreTestBase {
   // store.
   void TrimPref() {
     ASSERT_EQ(nullptr, profile_);
-    scoped_ptr<base::Value> prefs(JSONFileValueDeserializer(GetPrefsPath())
-                                      .Deserialize(nullptr, nullptr));
+    std::unique_ptr<base::Value> prefs(JSONFileValueDeserializer(GetPrefsPath())
+                                           .Deserialize(nullptr, nullptr));
     ASSERT_NE(nullptr, prefs.get());
     base::DictionaryValue* dict = nullptr;
     ASSERT_TRUE(prefs->GetAsDictionary(&dict));
@@ -102,29 +107,31 @@ class StateStoreTest : public PlatformStateStoreTestBase {
   void CreateProfile() {
     ASSERT_EQ(nullptr, profile_);
     // Create the testing profile with a file-backed user pref store.
-    syncable_prefs::PrefServiceSyncableFactory factory;
+    sync_preferences::PrefServiceSyncableFactory factory;
     factory.SetUserPrefsFile(GetPrefsPath(), task_runner_.get());
     user_prefs::PrefRegistrySyncable* pref_registry =
         new user_prefs::PrefRegistrySyncable();
     chrome::RegisterUserProfilePrefs(pref_registry);
     profile_ = profile_manager_.CreateTestingProfile(
-        kProfileName_, factory.CreateSyncable(pref_registry).Pass(),
+        kProfileName_, factory.CreateSyncable(pref_registry),
         base::UTF8ToUTF16(kProfileName_), 0, std::string(),
         TestingProfile::TestingFactories());
   }
 
   static const char kProfileName_[];
   static const TestData kTestData_[];
+  content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile* profile_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
 
  private:
   base::FilePath GetPrefsPath() {
-    return temp_dir_.path().AppendASCII("prefs");
+    return temp_dir_.GetPath().AppendASCII("prefs");
   }
 
+  extensions::QuotaService::ScopedDisablePurgeForTesting
+      disable_purge_for_testing_;
   base::ScopedTempDir temp_dir_;
-  base::ThreadTaskRunnerHandle thread_task_runner_handle_;
   TestingProfileManager profile_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(StateStoreTest);

@@ -11,15 +11,15 @@
 
 namespace blink {
 
-class IdleCallbackDeadline;
+class IdleRequestCallback
+    : public GarbageCollectedFinalized<IdleRequestCallback> {
+ public:
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  virtual ~IdleRequestCallback() {}
 
-class IdleRequestCallback : public GarbageCollectedFinalized<IdleRequestCallback> {
-public:
-    DEFINE_INLINE_VIRTUAL_TRACE() {}
-    virtual ~IdleRequestCallback() {}
-
-    virtual void handleEvent(IdleDeadline*) = 0;
+  virtual void handleEvent(IdleDeadline*) = 0;
 };
-}
 
-#endif // IdleRequestCallback_h
+}  // namespace blink
+
+#endif  // IdleRequestCallback_h

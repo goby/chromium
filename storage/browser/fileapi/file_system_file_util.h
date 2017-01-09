@@ -5,9 +5,13 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_FILE_UTIL_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_FILE_UTIL_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "storage/browser/blob/scoped_file.h"
 #include "storage/browser/fileapi/file_system_operation.h"
 #include "storage/browser/storage_browser_export.h"
@@ -42,7 +46,7 @@ class STORAGE_EXPORT FileSystemFileUtil {
     // Next(). If Next() has never been called, or if Next() most recently
     // returned an empty string, then return the default values of 0,
     // "null time", and false, respectively.
-    virtual int64 Size() = 0;
+    virtual int64_t Size() = 0;
     virtual base::Time LastModifiedTime() = 0;
     virtual bool IsDirectory() = 0;
   };
@@ -50,7 +54,7 @@ class STORAGE_EXPORT FileSystemFileUtil {
   class STORAGE_EXPORT EmptyFileEnumerator
       : public AbstractFileEnumerator {
     base::FilePath Next() override;
-    int64 Size() override;
+    int64_t Size() override;
     base::Time LastModifiedTime() override;
     bool IsDirectory() override;
   };
@@ -95,7 +99,7 @@ class STORAGE_EXPORT FileSystemFileUtil {
   //
   // The supplied context must remain valid at least lifetime of the enumerator
   // instance.
-  virtual scoped_ptr<AbstractFileEnumerator> CreateFileEnumerator(
+  virtual std::unique_ptr<AbstractFileEnumerator> CreateFileEnumerator(
       FileSystemOperationContext* context,
       const FileSystemURL& root_url) = 0;
 
@@ -117,10 +121,9 @@ class STORAGE_EXPORT FileSystemFileUtil {
 
   // Truncates a file to the given length.
   // See header comments for AsyncFileUtil::Truncate() for more details.
-  virtual base::File::Error Truncate(
-      FileSystemOperationContext* context,
-      const FileSystemURL& url,
-      int64 length) = 0;
+  virtual base::File::Error Truncate(FileSystemOperationContext* context,
+                                     const FileSystemURL& url,
+                                     int64_t length) = 0;
 
   // Copies or moves a single file from |src_url| to |dest_url|.
   // The filesystem type of |src_url| and |dest_url| MUST be same.

@@ -5,25 +5,26 @@
 #ifndef UI_GL_GL_IMAGE_SURFACE_TEXTURE_H_
 #define UI_GL_GL_IMAGE_SURFACE_TEXTURE_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_export.h"
 #include "ui/gl/gl_image.h"
 
-namespace gfx {
-class SurfaceTexture;
-}
-
 namespace gl {
+
+class SurfaceTexture;
 
 class GL_EXPORT GLImageSurfaceTexture : public GLImage {
  public:
   explicit GLImageSurfaceTexture(const gfx::Size& size);
 
-  bool Initialize(gfx::SurfaceTexture* surface_texture);
+  bool Initialize(SurfaceTexture* surface_texture);
 
   // Overridden from GLImage:
-  void Destroy(bool have_context) override;
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
   bool BindTexImage(unsigned target) override;
@@ -37,6 +38,7 @@ class GL_EXPORT GLImageSurfaceTexture : public GLImage {
                             gfx::OverlayTransform transform,
                             const gfx::Rect& bounds_rect,
                             const gfx::RectF& crop_rect) override;
+  void Flush() override {}
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                     uint64_t process_tracing_id,
                     const std::string& dump_name) override;
@@ -45,7 +47,7 @@ class GL_EXPORT GLImageSurfaceTexture : public GLImage {
   ~GLImageSurfaceTexture() override;
 
  private:
-  scoped_refptr<gfx::SurfaceTexture> surface_texture_;
+  scoped_refptr<SurfaceTexture> surface_texture_;
   const gfx::Size size_;
   GLint texture_id_;
   base::ThreadChecker thread_checker_;

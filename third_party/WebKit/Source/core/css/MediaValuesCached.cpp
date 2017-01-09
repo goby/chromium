@@ -2,197 +2,161 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/css/MediaValuesCached.h"
 
 #include "core/css/CSSPrimitiveValue.h"
 #include "core/dom/Document.h"
 #include "core/frame/LocalFrame.h"
 #include "core/layout/LayoutObject.h"
+#include "core/layout/api/LayoutViewItem.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<MediaValues> MediaValuesCached::create()
-{
-    return adoptRefWillBeNoop(new MediaValuesCached());
+MediaValuesCached::MediaValuesCachedData::MediaValuesCachedData(
+    Document& document)
+    : MediaValuesCached::MediaValuesCachedData() {
+  ASSERT(isMainThread());
+  LocalFrame* frame = MediaValues::frameFrom(document);
+  // TODO(hiroshige): Clean up |frame->view()| conditions.
+  ASSERT(!frame || frame->view());
+  if (frame && frame->view()) {
+    ASSERT(frame->document() && !frame->document()->layoutViewItem().isNull());
+
+    // In case that frame is missing (e.g. for images that their document does
+    // not have a frame)
+    // We simply leave the MediaValues object with the default
+    // MediaValuesCachedData values.
+    viewportWidth = MediaValues::calculateViewportWidth(frame);
+    viewportHeight = MediaValues::calculateViewportHeight(frame);
+    deviceWidth = MediaValues::calculateDeviceWidth(frame);
+    deviceHeight = MediaValues::calculateDeviceHeight(frame);
+    devicePixelRatio = MediaValues::calculateDevicePixelRatio(frame);
+    colorBitsPerComponent = MediaValues::calculateColorBitsPerComponent(frame);
+    monochromeBitsPerComponent =
+        MediaValues::calculateMonochromeBitsPerComponent(frame);
+    primaryPointerType = MediaValues::calculatePrimaryPointerType(frame);
+    availablePointerTypes = MediaValues::calculateAvailablePointerTypes(frame);
+    primaryHoverType = MediaValues::calculatePrimaryHoverType(frame);
+    availableHoverTypes = MediaValues::calculateAvailableHoverTypes(frame);
+    defaultFontSize = MediaValues::calculateDefaultFontSize(frame);
+    threeDEnabled = MediaValues::calculateThreeDEnabled(frame);
+    strictMode = MediaValues::calculateStrictMode(frame);
+    displayMode = MediaValues::calculateDisplayMode(frame);
+    mediaType = MediaValues::calculateMediaType(frame);
+    displayShape = MediaValues::calculateDisplayShape(frame);
+  }
 }
 
-PassRefPtrWillBeRawPtr<MediaValues> MediaValuesCached::create(MediaValuesCachedData& data)
-{
-    return adoptRefWillBeNoop(new MediaValuesCached(data));
+MediaValuesCached* MediaValuesCached::create() {
+  return new MediaValuesCached();
 }
 
-PassRefPtrWillBeRawPtr<MediaValues> MediaValuesCached::create(Document& document)
-{
-    return MediaValuesCached::create(frameFrom(document));
+MediaValuesCached* MediaValuesCached::create(
+    const MediaValuesCachedData& data) {
+  return new MediaValuesCached(data);
 }
 
-PassRefPtrWillBeRawPtr<MediaValues> MediaValuesCached::create(LocalFrame* frame)
-{
-    // FIXME - Added an assert here so we can better understand when a frame is present without its view().
-    ASSERT(!frame || frame->view());
-    if (!frame || !frame->view())
-        return adoptRefWillBeNoop(new MediaValuesCached());
-    ASSERT(frame->document() && frame->document()->layoutView());
-    return adoptRefWillBeNoop(new MediaValuesCached(frame));
-}
-
-MediaValuesCached::MediaValuesCached()
-{
-}
-
-MediaValuesCached::MediaValuesCached(LocalFrame* frame)
-{
-    ASSERT(isMainThread());
-    ASSERT(frame);
-    // In case that frame is missing (e.g. for images that their document does not have a frame)
-    // We simply leave the MediaValues object with the default MediaValuesCachedData values.
-    m_data.viewportWidth = calculateViewportWidth(frame);
-    m_data.viewportHeight = calculateViewportHeight(frame);
-    m_data.deviceWidth = calculateDeviceWidth(frame);
-    m_data.deviceHeight = calculateDeviceHeight(frame);
-    m_data.devicePixelRatio = calculateDevicePixelRatio(frame);
-    m_data.colorBitsPerComponent = calculateColorBitsPerComponent(frame);
-    m_data.monochromeBitsPerComponent = calculateMonochromeBitsPerComponent(frame);
-    m_data.primaryPointerType = calculatePrimaryPointerType(frame);
-    m_data.availablePointerTypes = calculateAvailablePointerTypes(frame);
-    m_data.primaryHoverType = calculatePrimaryHoverType(frame);
-    m_data.availableHoverTypes = calculateAvailableHoverTypes(frame);
-    m_data.defaultFontSize = calculateDefaultFontSize(frame);
-    m_data.threeDEnabled = calculateThreeDEnabled(frame);
-    m_data.strictMode = calculateStrictMode(frame);
-    m_data.displayMode = calculateDisplayMode(frame);
-    const String mediaType = calculateMediaType(frame);
-    if (!mediaType.isEmpty())
-        m_data.mediaType = mediaType.isolatedCopy();
-}
+MediaValuesCached::MediaValuesCached() {}
 
 MediaValuesCached::MediaValuesCached(const MediaValuesCachedData& data)
-    : m_data(data)
-{
+    : m_data(data) {}
+
+MediaValues* MediaValuesCached::copy() const {
+  return new MediaValuesCached(m_data);
 }
 
-PassRefPtrWillBeRawPtr<MediaValues> MediaValuesCached::copy() const
-{
-    return adoptRefWillBeNoop(new MediaValuesCached(m_data));
+bool MediaValuesCached::computeLength(double value,
+                                      CSSPrimitiveValue::UnitType type,
+                                      int& result) const {
+  return MediaValues::computeLength(value, type, m_data.defaultFontSize,
+                                    m_data.viewportWidth, m_data.viewportHeight,
+                                    result);
 }
 
-bool MediaValuesCached::computeLength(double value, CSSPrimitiveValue::UnitType type, int& result) const
-{
-    return MediaValues::computeLength(value, type, m_data.defaultFontSize, m_data.viewportWidth, m_data.viewportHeight, result);
+bool MediaValuesCached::computeLength(double value,
+                                      CSSPrimitiveValue::UnitType type,
+                                      double& result) const {
+  return MediaValues::computeLength(value, type, m_data.defaultFontSize,
+                                    m_data.viewportWidth, m_data.viewportHeight,
+                                    result);
 }
 
-bool MediaValuesCached::computeLength(double value, CSSPrimitiveValue::UnitType type, double& result) const
-{
-    return MediaValues::computeLength(value, type, m_data.defaultFontSize, m_data.viewportWidth, m_data.viewportHeight, result);
+double MediaValuesCached::viewportWidth() const {
+  return m_data.viewportWidth;
 }
 
-bool MediaValuesCached::isSafeToSendToAnotherThread() const
-{
-#if ENABLE(OILPAN)
-    // Oilpan objects are safe to send to another thread as long as the thread
-    // does not outlive the thread used for creation. MediaValues are
-    // allocated on the main thread and may be passed to the parser thread,
-    // so this should be safe.
-    return true;
-#else
-    return hasOneRef();
-#endif
+double MediaValuesCached::viewportHeight() const {
+  return m_data.viewportHeight;
 }
 
-double MediaValuesCached::viewportWidth() const
-{
-    return m_data.viewportWidth;
+int MediaValuesCached::deviceWidth() const {
+  return m_data.deviceWidth;
 }
 
-double MediaValuesCached::viewportHeight() const
-{
-    return m_data.viewportHeight;
+int MediaValuesCached::deviceHeight() const {
+  return m_data.deviceHeight;
 }
 
-int MediaValuesCached::deviceWidth() const
-{
-    return m_data.deviceWidth;
+float MediaValuesCached::devicePixelRatio() const {
+  return m_data.devicePixelRatio;
 }
 
-int MediaValuesCached::deviceHeight() const
-{
-    return m_data.deviceHeight;
+int MediaValuesCached::colorBitsPerComponent() const {
+  return m_data.colorBitsPerComponent;
 }
 
-float MediaValuesCached::devicePixelRatio() const
-{
-    return m_data.devicePixelRatio;
+int MediaValuesCached::monochromeBitsPerComponent() const {
+  return m_data.monochromeBitsPerComponent;
 }
 
-int MediaValuesCached::colorBitsPerComponent() const
-{
-    return m_data.colorBitsPerComponent;
+PointerType MediaValuesCached::primaryPointerType() const {
+  return m_data.primaryPointerType;
 }
 
-int MediaValuesCached::monochromeBitsPerComponent() const
-{
-    return m_data.monochromeBitsPerComponent;
+int MediaValuesCached::availablePointerTypes() const {
+  return m_data.availablePointerTypes;
 }
 
-PointerType MediaValuesCached::primaryPointerType() const
-{
-    return m_data.primaryPointerType;
+HoverType MediaValuesCached::primaryHoverType() const {
+  return m_data.primaryHoverType;
 }
 
-int MediaValuesCached::availablePointerTypes() const
-{
-    return m_data.availablePointerTypes;
+int MediaValuesCached::availableHoverTypes() const {
+  return m_data.availableHoverTypes;
 }
 
-HoverType MediaValuesCached::primaryHoverType() const
-{
-    return m_data.primaryHoverType;
+bool MediaValuesCached::threeDEnabled() const {
+  return m_data.threeDEnabled;
 }
 
-int MediaValuesCached::availableHoverTypes() const
-{
-    return m_data.availableHoverTypes;
+bool MediaValuesCached::strictMode() const {
+  return m_data.strictMode;
 }
 
-bool MediaValuesCached::threeDEnabled() const
-{
-    return m_data.threeDEnabled;
+const String MediaValuesCached::mediaType() const {
+  return m_data.mediaType;
 }
 
-bool MediaValuesCached::strictMode() const
-{
-    return m_data.strictMode;
+WebDisplayMode MediaValuesCached::displayMode() const {
+  return m_data.displayMode;
 }
 
-const String MediaValuesCached::mediaType() const
-{
-    return m_data.mediaType;
+Document* MediaValuesCached::document() const {
+  return nullptr;
 }
 
-WebDisplayMode MediaValuesCached::displayMode() const
-{
-    return m_data.displayMode;
+bool MediaValuesCached::hasValues() const {
+  return true;
 }
 
-Document* MediaValuesCached::document() const
-{
-    return nullptr;
+void MediaValuesCached::overrideViewportDimensions(double width,
+                                                   double height) {
+  m_data.viewportWidth = width;
+  m_data.viewportHeight = height;
 }
 
-bool MediaValuesCached::hasValues() const
-{
-    return true;
+DisplayShape MediaValuesCached::displayShape() const {
+  return m_data.displayShape;
 }
 
-void MediaValuesCached::setViewportWidth(double width)
-{
-    m_data.viewportWidth = width;
-}
-
-void MediaValuesCached::setViewportHeight(double height)
-{
-    m_data.viewportHeight = height;
-}
-
-} // namespace
+}  // namespace blink

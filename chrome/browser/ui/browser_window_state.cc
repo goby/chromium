@@ -4,9 +4,11 @@
 
 #include "chrome/browser/ui/browser_window_state.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/profiles/profile.h"
@@ -16,6 +18,8 @@
 #include "chrome/browser/ui/window_sizer/window_sizer.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 
 namespace chrome {
 namespace {
@@ -76,16 +80,15 @@ std::string GetWindowName(const Browser* browser) {
   return browser->app_name();
 }
 
-scoped_ptr<DictionaryPrefUpdate> GetWindowPlacementDictionaryReadWrite(
+std::unique_ptr<DictionaryPrefUpdate> GetWindowPlacementDictionaryReadWrite(
     const std::string& window_name,
     PrefService* prefs) {
   DCHECK(!window_name.empty());
   // A normal DictionaryPrefUpdate will suffice for non-app windows.
   if (prefs->FindPreference(window_name.c_str())) {
-    return make_scoped_ptr(
-        new DictionaryPrefUpdate(prefs, window_name.c_str()));
+    return base::MakeUnique<DictionaryPrefUpdate>(prefs, window_name.c_str());
   }
-  return scoped_ptr<DictionaryPrefUpdate>(
+  return std::unique_ptr<DictionaryPrefUpdate>(
       new WindowPlacementPrefUpdate(prefs, window_name));
 }
 
@@ -112,6 +115,13 @@ bool ShouldSaveWindowPlacement(const Browser* browser) {
     ((browser->type() == Browser::TYPE_POPUP) && browser->is_trusted_source());
 }
 
+bool SavedBoundsAreContentBounds(const Browser* browser) {
+  // Pop ups such as devtools or bookmark app windows should behave as per other
+  // windows with persisted sizes - treating the saved bounds as window bounds.
+  return browser->is_type_popup() && !browser->is_app() &&
+         !browser->is_trusted_source();
+}
+
 void SaveWindowPlacement(const Browser* browser,
                          const gfx::Rect& bounds,
                          ui::WindowShowState show_state) {
@@ -123,6 +133,13 @@ void SaveWindowPlacement(const Browser* browser,
       SessionServiceFactory::GetForProfileIfExisting(browser->profile());
   if (session_service)
     session_service->SetWindowBounds(browser->session_id(), bounds, show_state);
+}
+
+void SaveWindowWorkspace(const Browser* browser, const std::string& workspace) {
+  SessionService* session_service =
+      SessionServiceFactory::GetForProfileIfExisting(browser->profile());
+  if (session_service)
+    session_service->SetWindowWorkspace(browser->session_id(), workspace);
 }
 
 void GetSavedWindowBoundsAndShowState(const Browser* browser,

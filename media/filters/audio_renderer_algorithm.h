@@ -21,11 +21,16 @@
 #ifndef MEDIA_FILTERS_AUDIO_RENDERER_ALGORITHM_H_
 #define MEDIA_FILTERS_AUDIO_RENDERER_ALGORITHM_H_
 
+#include <stdint.h>
+
+#include <memory>
+#include <vector>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/audio_buffer_queue.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 
@@ -38,6 +43,17 @@ class MEDIA_EXPORT AudioRendererAlgorithm {
 
   // Initializes this object with information about the audio stream.
   void Initialize(const AudioParameters& params);
+
+  // Allows clients to specify which channels will be considered by the
+  // algorithm when adapting for playback rate, other channels will be muted.
+  // Useful to avoid performance overhead of the adapatation algorithm. Must
+  // only be called after Initialize(); may be called multiple times if the
+  // mask changes.
+  //
+  // E.g., If |channel_mask| is [true, false] only the first channel will be
+  // used to construct the playback rate adapated signal. This is useful if
+  // channel upmixing has been performed prior to this point.
+  void SetChannelMask(std::vector<bool> channel_mask);
 
   // Tries to fill |requested_frames| frames into |dest| with possibly scaled
   // data from our |audio_buffer_|. Data is scaled based on |playback_rate|,
@@ -79,6 +95,8 @@ class MEDIA_EXPORT AudioRendererAlgorithm {
 
   // Returns the samples per second for this audio stream.
   int samples_per_second() { return samples_per_second_; }
+
+  std::vector<bool> channel_mask_for_testing() { return channel_mask_; }
 
  private:
   // Within |search_block_|, find the block of data that is most similar to
@@ -123,6 +141,11 @@ class MEDIA_EXPORT AudioRendererAlgorithm {
 
   // Converts a time in milliseconds to frames using |samples_per_second_|.
   int ConvertMillisecondsToFrames(int ms) const;
+
+  // Creates or recreates |target_block_wrapper_| and |search_block_wrapper_|
+  // after a |channel_mask_| change. May be called at anytime after a channel
+  // mask has been specified.
+  void CreateSearchWrappers();
 
   // Number of channels in audio stream.
   int channels_;
@@ -179,29 +202,40 @@ class MEDIA_EXPORT AudioRendererAlgorithm {
   // number of requested samples. Furthermore, due to overlap-and-add,
   // the last half-window of the output is incomplete, which is stored in this
   // buffer.
-  scoped_ptr<AudioBus> wsola_output_;
+  std::unique_ptr<AudioBus> wsola_output_;
 
   // Overlap-and-add window.
-  scoped_ptr<float[]> ola_window_;
+  std::unique_ptr<float[]> ola_window_;
 
   // Transition window, used to update |optimal_block_| by a weighted sum of
   // |optimal_block_| and |target_block_|.
-  scoped_ptr<float[]> transition_window_;
+  std::unique_ptr<float[]> transition_window_;
 
   // Auxiliary variables to avoid allocation in every iteration.
 
   // Stores the optimal block in every iteration. This is the most
   // similar block to |target_block_| within |search_block_| and it is
   // overlap-and-added to |wsola_output_|.
-  scoped_ptr<AudioBus> optimal_block_;
+  std::unique_ptr<AudioBus> optimal_block_;
 
   // A block of data that search is performed over to find the |optimal_block_|.
-  scoped_ptr<AudioBus> search_block_;
+  std::unique_ptr<AudioBus> search_block_;
 
   // Stores the target block, denoted as |target| above. |search_block_| is
   // searched for a block (|optimal_block_|) that is most similar to
   // |target_block_|.
-  scoped_ptr<AudioBus> target_block_;
+  std::unique_ptr<AudioBus> target_block_;
+
+  // Active channels to consider while searching. Used to speed up WSOLA
+  // processing by ignoring always muted channels. Wrappers are always
+  // constructed during Initialize() and have <= |channels_|.
+  std::vector<bool> channel_mask_;
+  std::unique_ptr<AudioBus> search_block_wrapper_;
+  std::unique_ptr<AudioBus> target_block_wrapper_;
+
+  // The initial and maximum capacity calculated by Initialize().
+  int initial_capacity_;
+  int max_capacity_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioRendererAlgorithm);
 };

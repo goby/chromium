@@ -5,31 +5,45 @@
 #include "content/browser/frame_host/render_frame_message_filter.h"
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "content/browser/bad_message.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/child_process_security_policy_impl.h"
+#include "content/browser/download/download_stats.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/renderer_host/render_widget_helper.h"
+#include "content/browser/resource_context_impl.h"
+#include "content/common/content_constants_internal.h"
 #include "content/common/frame_messages.h"
+#include "content/common/frame_owner_properties.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/download_manager.h"
+#include "content/public/browser/download_url_parameters.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "gpu/GLES2/gl2extchromium.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "ppapi/features/features.h"
+#include "storage/browser/blob/blob_storage_context.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 #if !defined(OS_MACOSX)
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
 #endif
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/browser/plugin_service_impl.h"
 #include "content/browser/ppapi_plugin_process_host.h"
 #include "content/public/browser/plugin_service_filter.h"
@@ -39,20 +53,20 @@ namespace content {
 
 namespace {
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 const int kPluginsRefreshThresholdInSeconds = 3;
 #endif
 
 const char kEnforceStrictSecureExperiment[] = "StrictSecureCookies";
 
-void CreateChildFrameOnUI(
-    int process_id,
-    int parent_routing_id,
-    blink::WebTreeScopeType scope,
-    const std::string& frame_name,
-    blink::WebSandboxFlags sandbox_flags,
-    const blink::WebFrameOwnerProperties& frame_owner_properties,
-    int new_routing_id) {
+void CreateChildFrameOnUI(int process_id,
+                          int parent_routing_id,
+                          blink::WebTreeScopeType scope,
+                          const std::string& frame_name,
+                          const std::string& frame_unique_name,
+                          blink::WebSandboxFlags sandbox_flags,
+                          const FrameOwnerProperties& frame_owner_properties,
+                          int new_routing_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   RenderFrameHostImpl* render_frame_host =
       RenderFrameHostImpl::FromID(process_id, parent_routing_id);
@@ -60,9 +74,24 @@ void CreateChildFrameOnUI(
   // processing a subframe creation message.
   if (render_frame_host) {
     render_frame_host->OnCreateChildFrame(new_routing_id, scope, frame_name,
-                                          sandbox_flags,
+                                          frame_unique_name, sandbox_flags,
                                           frame_owner_properties);
   }
+}
+
+void DownloadUrlOnUIThread(std::unique_ptr<DownloadUrlParameters> parameters) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  RenderProcessHost* render_process_host =
+      RenderProcessHost::FromID(parameters->render_process_host_id());
+  if (!render_process_host)
+    return;
+
+  BrowserContext* browser_context = render_process_host->GetBrowserContext();
+  DownloadManager* download_manager =
+      BrowserContext::GetDownloadManager(browser_context);
+  RecordDownloadSource(INITIATED_BY_RENDERER);
+  download_manager->DownloadUrl(std::move(parameters));
 }
 
 // Common functionality for converting a sync renderer message to a callback
@@ -102,7 +131,7 @@ class RenderMessageCompletionCallback {
 
 }  // namespace
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 
 class RenderFrameMessageFilter::OpenChannelToPpapiBrokerCallback
     : public PpapiPluginProcessHost::BrokerClient {
@@ -117,6 +146,9 @@ class RenderFrameMessageFilter::OpenChannelToPpapiBrokerCallback
 
   void GetPpapiChannelInfo(base::ProcessHandle* renderer_handle,
                            int* renderer_id) override {
+    // base::kNullProcessHandle indicates that the channel will be used by the
+    // browser itself. Make sure we never output that value here.
+    CHECK_NE(base::kNullProcessHandle, filter_->PeerHandle());
     *renderer_handle = filter_->PeerHandle();
     *renderer_id = filter_->render_process_id_;
   }
@@ -130,85 +162,11 @@ class RenderFrameMessageFilter::OpenChannelToPpapiBrokerCallback
     delete this;
   }
 
-  bool OffTheRecord() override { return filter_->incognito_; }
+  bool Incognito() override { return filter_->incognito_; }
 
  private:
   scoped_refptr<RenderFrameMessageFilter> filter_;
   int routing_id_;
-};
-
-class RenderFrameMessageFilter::OpenChannelToNpapiPluginCallback
-    : public RenderMessageCompletionCallback,
-      public PluginProcessHost::Client {
- public:
-  OpenChannelToNpapiPluginCallback(RenderFrameMessageFilter* filter,
-                                   ResourceContext* context,
-                                   IPC::Message* reply_msg)
-      : RenderMessageCompletionCallback(filter, reply_msg),
-        context_(context),
-        host_(nullptr),
-        sent_plugin_channel_request_(false) {
-  }
-
-  int ID() override { return filter()->render_process_id_; }
-
-  ResourceContext* GetResourceContext() override { return context_; }
-
-  bool OffTheRecord() override {
-    if (filter()->incognito_)
-      return true;
-    if (GetContentClient()->browser()->AllowSaveLocalState(context_))
-      return false;
-
-    // For now, only disallow storing data for Flash <http://crbug.com/97319>.
-    for (const auto& type : info_.mime_types) {
-      if (type.mime_type == kFlashPluginSwfMimeType)
-        return true;
-    }
-    return false;
-  }
-
-  void SetPluginInfo(const WebPluginInfo& info) override { info_ = info; }
-
-  void OnFoundPluginProcessHost(PluginProcessHost* host) override {
-    DCHECK(host);
-    host_ = host;
-  }
-
-  void OnSentPluginChannelRequest() override {
-    sent_plugin_channel_request_ = true;
-  }
-
-  void OnChannelOpened(const IPC::ChannelHandle& handle) override {
-    WriteReplyAndDeleteThis(handle);
-  }
-
-  void OnError() override { WriteReplyAndDeleteThis(IPC::ChannelHandle()); }
-
-  PluginProcessHost* host() const {
-    return host_;
-  }
-
-  bool sent_plugin_channel_request() const {
-    return sent_plugin_channel_request_;
-  }
-
-  void Cancel() {
-    delete this;
-  }
-
- private:
-  void WriteReplyAndDeleteThis(const IPC::ChannelHandle& handle) {
-    FrameHostMsg_OpenChannelToPlugin::WriteReplyParams(reply_msg(),
-                                                       handle, info_);
-    filter()->OnCompletedOpenChannelToNpapiPlugin(this);
-    SendReplyAndDeleteThis();
-  }
-
-  ResourceContext* context_;
-  WebPluginInfo info_;
-  PluginProcessHost* host_;
-  bool sent_plugin_channel_request_;
 };
 
 class RenderFrameMessageFilter::OpenChannelToPpapiPluginCallback
@@ -224,6 +182,9 @@ class RenderFrameMessageFilter::OpenChannelToPpapiPluginCallback
 
   void GetPpapiChannelInfo(base::ProcessHandle* renderer_handle,
                            int* renderer_id) override {
+    // base::kNullProcessHandle indicates that the channel will be used by the
+    // browser itself. Make sure we never output that value here.
+    CHECK_NE(base::kNullProcessHandle, filter()->PeerHandle());
     *renderer_handle = filter()->PeerHandle();
     *renderer_id = filter()->render_process_id_;
   }
@@ -236,7 +197,7 @@ class RenderFrameMessageFilter::OpenChannelToPpapiPluginCallback
     SendReplyAndDeleteThis();
   }
 
-  bool OffTheRecord() override { return filter()->incognito_; }
+  bool Incognito() override { return filter()->incognito_; }
 
   ResourceContext* GetResourceContext() override { return context_; }
 
@@ -253,7 +214,8 @@ RenderFrameMessageFilter::RenderFrameMessageFilter(
     net::URLRequestContextGetter* request_context,
     RenderWidgetHelper* render_widget_helper)
     : BrowserMessageFilter(FrameMsgStart),
-#if defined(ENABLE_PLUGINS)
+      BrowserAssociatedInterface<mojom::RenderFrameMessageFilter>(this, this),
+#if BUILDFLAG(ENABLE_PLUGINS)
       plugin_service_(plugin_service),
       profile_data_directory_(browser_context->GetPath()),
 #endif  // ENABLE_PLUGINS
@@ -267,45 +229,22 @@ RenderFrameMessageFilter::RenderFrameMessageFilter(
 RenderFrameMessageFilter::~RenderFrameMessageFilter() {
   // This function should be called on the IO thread.
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-#if defined(ENABLE_PLUGINS)
-  DCHECK(plugin_host_clients_.empty());
-#endif  // ENABLE_PLUGINS
-}
-
-void RenderFrameMessageFilter::OnChannelClosing() {
-#if defined(ENABLE_PLUGINS)
-  for (OpenChannelToNpapiPluginCallback* client : plugin_host_clients_) {
-    if (client->host()) {
-      if (client->sent_plugin_channel_request()) {
-        client->host()->CancelSentRequest(client);
-      } else {
-        client->host()->CancelPendingRequest(client);
-      }
-    } else {
-      plugin_service_->CancelOpenChannelToNpapiPlugin(client);
-    }
-    client->Cancel();
-  }
-  plugin_host_clients_.clear();
-#endif  // ENABLE_PLUGINS
 }
 
 bool RenderFrameMessageFilter::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(RenderFrameMessageFilter, message)
     IPC_MESSAGE_HANDLER(FrameHostMsg_CreateChildFrame, OnCreateChildFrame)
-    IPC_MESSAGE_HANDLER(FrameHostMsg_SetCookie, OnSetCookie)
-    IPC_MESSAGE_HANDLER_DELAY_REPLY(FrameHostMsg_GetCookies, OnGetCookies)
     IPC_MESSAGE_HANDLER(FrameHostMsg_CookiesEnabled, OnCookiesEnabled)
+    IPC_MESSAGE_HANDLER(FrameHostMsg_DownloadUrl, OnDownloadUrl)
+    IPC_MESSAGE_HANDLER(FrameHostMsg_SaveImageFromDataURL,
+                        OnSaveImageFromDataURL)
     IPC_MESSAGE_HANDLER(FrameHostMsg_Are3DAPIsBlocked, OnAre3DAPIsBlocked)
-    IPC_MESSAGE_HANDLER(FrameHostMsg_DidLose3DContext, OnDidLose3DContext)
     IPC_MESSAGE_HANDLER_GENERIC(FrameHostMsg_RenderProcessGone,
                                 OnRenderProcessGone())
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(FrameHostMsg_GetPlugins, OnGetPlugins)
     IPC_MESSAGE_HANDLER(FrameHostMsg_GetPluginInfo, OnGetPluginInfo)
-    IPC_MESSAGE_HANDLER_DELAY_REPLY(FrameHostMsg_OpenChannelToPlugin,
-                                    OnOpenChannelToPlugin)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(FrameHostMsg_OpenChannelToPepperPlugin,
                                     OnOpenChannelToPepperPlugin)
     IPC_MESSAGE_HANDLER(FrameHostMsg_DidCreateOutOfProcessPepperInstance,
@@ -323,80 +262,51 @@ bool RenderFrameMessageFilter::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
+void RenderFrameMessageFilter::OnDestruct() const {
+  BrowserThread::DeleteOnIOThread::Destruct(this);
+}
+
+void RenderFrameMessageFilter::DownloadUrl(int render_view_id,
+                                           int render_frame_id,
+                                           const GURL& url,
+                                           const Referrer& referrer,
+                                           const base::string16& suggested_name,
+                                           const bool use_prompt) const {
+  if (!resource_context_)
+    return;
+
+  std::unique_ptr<DownloadUrlParameters> parameters(
+      new DownloadUrlParameters(url, render_process_id_, render_view_id,
+                                render_frame_id, request_context_.get()));
+  parameters->set_content_initiated(true);
+  parameters->set_suggested_name(suggested_name);
+  parameters->set_prompt(use_prompt);
+  parameters->set_referrer(referrer);
+
+  if (url.SchemeIsBlob()) {
+    ChromeBlobStorageContext* blob_context =
+        GetChromeBlobStorageContextForResourceContext(resource_context_);
+    parameters->set_blob_data_handle(
+        blob_context->context()->GetBlobDataFromPublicURL(url));
+    // Don't care if the above fails. We are going to let the download go
+    // through and allow it to be interrupted so that the embedder can deal.
+  }
+
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(&DownloadUrlOnUIThread, base::Passed(&parameters)));
+}
+
 void RenderFrameMessageFilter::OnCreateChildFrame(
-    int parent_routing_id,
-    blink::WebTreeScopeType scope,
-    const std::string& frame_name,
-    blink::WebSandboxFlags sandbox_flags,
-    const blink::WebFrameOwnerProperties& frame_owner_properties,
+    const FrameHostMsg_CreateChildFrame_Params& params,
     int* new_routing_id) {
   *new_routing_id = render_widget_helper_->GetNextRoutingID();
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&CreateChildFrameOnUI, render_process_id_, parent_routing_id,
-                 scope, frame_name, sandbox_flags, frame_owner_properties,
-                 *new_routing_id));
-}
-
-void RenderFrameMessageFilter::OnSetCookie(int render_frame_id,
-                                           const GURL& url,
-                                           const GURL& first_party_for_cookies,
-                                           const std::string& cookie) {
-  ChildProcessSecurityPolicyImpl* policy =
-      ChildProcessSecurityPolicyImpl::GetInstance();
-  if (!policy->CanAccessDataForOrigin(render_process_id_, url)) {
-    bad_message::ReceivedBadMessage(this,
-                                    bad_message::RFMF_SET_COOKIE_BAD_ORIGIN);
-    return;
-  }
-
-  net::CookieOptions options;
-  if (GetContentClient()->browser()->AllowSetCookie(
-          url, first_party_for_cookies, cookie, resource_context_,
-          render_process_id_, render_frame_id, &options)) {
-    net::URLRequestContext* context = GetRequestContextForURL(url);
-    bool experimental_web_platform_features_enabled =
-        base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kEnableExperimentalWebPlatformFeatures);
-    const std::string enforce_strict_secure_group =
-        base::FieldTrialList::FindFullName(kEnforceStrictSecureExperiment);
-    if (experimental_web_platform_features_enabled)
-      options.set_enforce_prefixes();
-    if (experimental_web_platform_features_enabled ||
-        base::StartsWith(enforce_strict_secure_group, "Enabled",
-                         base::CompareCase::INSENSITIVE_ASCII)) {
-      options.set_enforce_strict_secure();
-    }
-    // Pass a null callback since we don't care about when the 'set' completes.
-    context->cookie_store()->SetCookieWithOptionsAsync(
-        url, cookie, options, net::CookieStore::SetCookiesCallback());
-  }
-}
-
-void RenderFrameMessageFilter::OnGetCookies(int render_frame_id,
-                                            const GURL& url,
-                                            const GURL& first_party_for_cookies,
-                                            IPC::Message* reply_msg) {
-  ChildProcessSecurityPolicyImpl* policy =
-      ChildProcessSecurityPolicyImpl::GetInstance();
-  if (!policy->CanAccessDataForOrigin(render_process_id_, url)) {
-    bad_message::ReceivedBadMessage(this,
-                                    bad_message::RFMF_GET_COOKIES_BAD_ORIGIN);
-    delete reply_msg;
-    return;
-  }
-
-  // If we crash here, figure out what URL the renderer was requesting.
-  // http://crbug.com/99242
-  char url_buf[128];
-  base::strlcpy(url_buf, url.spec().c_str(), arraysize(url_buf));
-  base::debug::Alias(url_buf);
-
-  net::URLRequestContext* context = GetRequestContextForURL(url);
-  context->cookie_store()->GetAllCookiesForURLAsync(
-      url, base::Bind(&RenderFrameMessageFilter::CheckPolicyForCookies, this,
-                      render_frame_id, url, first_party_for_cookies,
-                      reply_msg));
+      base::Bind(&CreateChildFrameOnUI, render_process_id_,
+                 params.parent_routing_id, params.scope, params.frame_name,
+                 params.frame_unique_name, params.sandbox_flags,
+                 params.frame_owner_properties, *new_routing_id));
 }
 
 void RenderFrameMessageFilter::OnCookiesEnabled(
@@ -416,29 +326,45 @@ void RenderFrameMessageFilter::CheckPolicyForCookies(
     int render_frame_id,
     const GURL& url,
     const GURL& first_party_for_cookies,
-    IPC::Message* reply_msg,
+    const GetCookiesCallback& callback,
     const net::CookieList& cookie_list) {
   net::URLRequestContext* context = GetRequestContextForURL(url);
   // Check the policy for get cookies, and pass cookie_list to the
   // TabSpecificContentSetting for logging purpose.
-  if (GetContentClient()->browser()->AllowGetCookie(
+  if (context &&
+      GetContentClient()->browser()->AllowGetCookie(
           url, first_party_for_cookies, cookie_list, resource_context_,
           render_process_id_, render_frame_id)) {
-    // Gets the cookies from cookie store if allowed.
-    context->cookie_store()->GetCookiesWithOptionsAsync(
-        url, net::CookieOptions(),
-        base::Bind(&RenderFrameMessageFilter::SendGetCookiesResponse,
-                   this, reply_msg));
+    callback.Run(net::CookieStore::BuildCookieLine(cookie_list));
   } else {
-    SendGetCookiesResponse(reply_msg, std::string());
+    callback.Run(std::string());
   }
 }
 
-void RenderFrameMessageFilter::SendGetCookiesResponse(
-    IPC::Message* reply_msg,
-    const std::string& cookies) {
-  FrameHostMsg_GetCookies::WriteReplyParams(reply_msg, cookies);
-  Send(reply_msg);
+void RenderFrameMessageFilter::OnDownloadUrl(
+    int render_view_id,
+    int render_frame_id,
+    const GURL& url,
+    const Referrer& referrer,
+    const base::string16& suggested_name) {
+  DownloadUrl(render_view_id, render_frame_id, url, referrer, suggested_name,
+              false);
+}
+
+void RenderFrameMessageFilter::OnSaveImageFromDataURL(
+    int render_view_id,
+    int render_frame_id,
+    const std::string& url_str) {
+  // Please refer to RenderFrameImpl::saveImageFromDataURL().
+  if (url_str.length() >= kMaxLengthOfDataURLString)
+    return;
+
+  GURL data_url(url_str);
+  if (!data_url.is_valid() || !data_url.SchemeIs(url::kDataScheme))
+    return;
+
+  DownloadUrl(render_view_id, render_frame_id, data_url, Referrer(),
+              base::string16(), true);
 }
 
 void RenderFrameMessageFilter::OnAre3DAPIsBlocked(int render_frame_id,
@@ -447,27 +373,6 @@ void RenderFrameMessageFilter::OnAre3DAPIsBlocked(int render_frame_id,
                                                   bool* blocked) {
   *blocked = GpuDataManagerImpl::GetInstance()->Are3DAPIsBlocked(
       top_origin_url, render_process_id_, render_frame_id, requester);
-}
-
-void RenderFrameMessageFilter::OnDidLose3DContext(
-    const GURL& top_origin_url,
-    ThreeDAPIType /* unused */,
-    int arb_robustness_status_code) {
-  GpuDataManagerImpl::DomainGuilt guilt;
-  switch (arb_robustness_status_code) {
-    case GL_GUILTY_CONTEXT_RESET_ARB:
-      guilt = GpuDataManagerImpl::DOMAIN_GUILT_KNOWN;
-      break;
-    case GL_UNKNOWN_CONTEXT_RESET_ARB:
-      guilt = GpuDataManagerImpl::DOMAIN_GUILT_UNKNOWN;
-      break;
-    default:
-      // Ignore lost contexts known to be innocent.
-      return;
-  }
-
-  GpuDataManagerImpl::GetInstance()->BlockDomainFrom3DAPIs(
-      top_origin_url, guilt);
 }
 
 void RenderFrameMessageFilter::OnRenderProcessGone() {
@@ -479,10 +384,83 @@ void RenderFrameMessageFilter::OnRenderProcessGone() {
       this, bad_message::RFMF_RENDERER_FAKED_ITS_OWN_DEATH);
 }
 
-#if defined(ENABLE_PLUGINS)
+void RenderFrameMessageFilter::SetCookie(int32_t render_frame_id,
+                                         const GURL& url,
+                                         const GURL& first_party_for_cookies,
+                                         const std::string& cookie) {
+  ChildProcessSecurityPolicyImpl* policy =
+      ChildProcessSecurityPolicyImpl::GetInstance();
+  if (!policy->CanAccessDataForOrigin(render_process_id_, url)) {
+    bad_message::ReceivedBadMessage(this,
+                                    bad_message::RFMF_SET_COOKIE_BAD_ORIGIN);
+    return;
+  }
+
+  net::CookieOptions options;
+  bool experimental_web_platform_features_enabled =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableExperimentalWebPlatformFeatures);
+  const std::string enforce_strict_secure_group =
+      base::FieldTrialList::FindFullName(kEnforceStrictSecureExperiment);
+  if (experimental_web_platform_features_enabled ||
+      base::StartsWith(enforce_strict_secure_group, "Enabled",
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+    options.set_enforce_strict_secure();
+  }
+  if (GetContentClient()->browser()->AllowSetCookie(
+          url, first_party_for_cookies, cookie, resource_context_,
+          render_process_id_, render_frame_id, options)) {
+    net::URLRequestContext* context = GetRequestContextForURL(url);
+    // Pass a null callback since we don't care about when the 'set' completes.
+    context->cookie_store()->SetCookieWithOptionsAsync(
+        url, cookie, options, net::CookieStore::SetCookiesCallback());
+  }
+}
+
+void RenderFrameMessageFilter::GetCookies(int render_frame_id,
+                                          const GURL& url,
+                                          const GURL& first_party_for_cookies,
+                                          const GetCookiesCallback& callback) {
+  ChildProcessSecurityPolicyImpl* policy =
+      ChildProcessSecurityPolicyImpl::GetInstance();
+  if (!policy->CanAccessDataForOrigin(render_process_id_, url)) {
+    bad_message::ReceivedBadMessage(this,
+                                    bad_message::RFMF_GET_COOKIES_BAD_ORIGIN);
+    callback.Run(std::string());
+    return;
+  }
+
+  net::CookieOptions options;
+  if (net::registry_controlled_domains::SameDomainOrHost(
+          url, first_party_for_cookies,
+          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
+    // TODO(mkwst): This check ought to further distinguish between frames
+    // initiated in a strict or lax same-site context.
+    options.set_same_site_cookie_mode(
+        net::CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
+  } else {
+    options.set_same_site_cookie_mode(
+        net::CookieOptions::SameSiteCookieMode::DO_NOT_INCLUDE);
+  }
+
+  // If we crash here, figure out what URL the renderer was requesting.
+  // http://crbug.com/99242
+  char url_buf[128];
+  base::strlcpy(url_buf, url.spec().c_str(), arraysize(url_buf));
+  base::debug::Alias(url_buf);
+
+  net::URLRequestContext* context = GetRequestContextForURL(url);
+  context->cookie_store()->GetCookieListWithOptionsAsync(
+      url, options,
+      base::Bind(&RenderFrameMessageFilter::CheckPolicyForCookies, this,
+                 render_frame_id, url, first_party_for_cookies, callback));
+}
+
+#if BUILDFLAG(ENABLE_PLUGINS)
 
 void RenderFrameMessageFilter::OnGetPlugins(
     bool refresh,
+    const url::Origin& main_frame_origin,
     IPC::Message* reply_msg) {
   // Don't refresh if the specified threshold has not been passed.  Note that
   // this check is performed before off-loading to the file thread.  The reason
@@ -501,12 +479,14 @@ void RenderFrameMessageFilter::OnGetPlugins(
     }
   }
 
-  PluginServiceImpl::GetInstance()->GetPlugins(base::Bind(
-      &RenderFrameMessageFilter::GetPluginsCallback, this, reply_msg));
+  PluginServiceImpl::GetInstance()->GetPlugins(
+      base::Bind(&RenderFrameMessageFilter::GetPluginsCallback, this, reply_msg,
+                 main_frame_origin));
 }
 
 void RenderFrameMessageFilter::GetPluginsCallback(
     IPC::Message* reply_msg,
+    const url::Origin& main_frame_origin,
     const std::vector<WebPluginInfo>& all_plugins) {
   // Filter the plugin list.
   PluginServiceFilter* filter = PluginServiceImpl::GetInstance()->GetFilter();
@@ -517,12 +497,11 @@ void RenderFrameMessageFilter::GetPluginsCallback(
   // In this loop, copy the WebPluginInfo (and do not use a reference) because
   // the filter might mutate it.
   for (WebPluginInfo plugin : all_plugins) {
-    if (!filter || filter->IsPluginAvailable(child_process_id,
-                                             routing_id,
-                                             resource_context_,
-                                             GURL(),
-                                             GURL(),
-                                             &plugin)) {
+    // TODO(crbug.com/621724): Pass an url::Origin instead of a GURL.
+    if (!filter ||
+        filter->IsPluginAvailable(child_process_id, routing_id,
+                                  resource_context_, main_frame_origin.GetURL(),
+                                  main_frame_origin, &plugin)) {
       plugins.push_back(plugin);
     }
   }
@@ -534,38 +513,16 @@ void RenderFrameMessageFilter::GetPluginsCallback(
 void RenderFrameMessageFilter::OnGetPluginInfo(
     int render_frame_id,
     const GURL& url,
-    const GURL& page_url,
+    const url::Origin& main_frame_origin,
     const std::string& mime_type,
     bool* found,
     WebPluginInfo* info,
     std::string* actual_mime_type) {
   bool allow_wildcard = true;
   *found = plugin_service_->GetPluginInfo(
-      render_process_id_, render_frame_id, resource_context_,
-      url, page_url, mime_type, allow_wildcard,
-      nullptr, info, actual_mime_type);
-}
-
-void RenderFrameMessageFilter::OnOpenChannelToPlugin(
-    int render_frame_id,
-    const GURL& url,
-    const GURL& policy_url,
-    const std::string& mime_type,
-    IPC::Message* reply_msg) {
-  OpenChannelToNpapiPluginCallback* client =
-      new OpenChannelToNpapiPluginCallback(this, resource_context_, reply_msg);
-  DCHECK(!ContainsKey(plugin_host_clients_, client));
-  plugin_host_clients_.insert(client);
-  plugin_service_->OpenChannelToNpapiPlugin(
-      render_process_id_, render_frame_id,
-      url, policy_url, mime_type, client);
-}
-
-void RenderFrameMessageFilter::OnCompletedOpenChannelToNpapiPlugin(
-    OpenChannelToNpapiPluginCallback* client) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DCHECK(ContainsKey(plugin_host_clients_, client));
-  plugin_host_clients_.erase(client);
+      render_process_id_, render_frame_id, resource_context_, url,
+      main_frame_origin, mime_type, allow_wildcard, nullptr, info,
+      actual_mime_type);
 }
 
 void RenderFrameMessageFilter::OnOpenChannelToPepperPlugin(
@@ -580,7 +537,7 @@ void RenderFrameMessageFilter::OnOpenChannelToPepperPlugin(
 
 void RenderFrameMessageFilter::OnDidCreateOutOfProcessPepperInstance(
     int plugin_child_id,
-    int32 pp_instance,
+    int32_t pp_instance,
     PepperRendererInstanceData instance_data,
     bool is_external) {
   // It's important that we supply the render process ID ourselves based on the
@@ -606,7 +563,7 @@ void RenderFrameMessageFilter::OnDidCreateOutOfProcessPepperInstance(
 
 void RenderFrameMessageFilter::OnDidDeleteOutOfProcessPepperInstance(
     int plugin_child_id,
-    int32 pp_instance,
+    int32_t pp_instance,
     bool is_external) {
   if (is_external) {
     // We provide the BrowserPpapiHost to the embedder, so it's safe to cast.
@@ -632,7 +589,7 @@ void RenderFrameMessageFilter::OnOpenChannelToPpapiBroker(
 
 void RenderFrameMessageFilter::OnPluginInstanceThrottleStateChange(
     int plugin_child_id,
-    int32 pp_instance,
+    int32_t pp_instance,
     bool is_throttled) {
   // Feature is only implemented for non-external Plugins.
   PpapiPluginProcessHost::OnPluginInstanceThrottleStateChange(

@@ -4,26 +4,30 @@
 
 #include "ash/shell/shell_delegate_impl.h"
 
-#include "ash/accessibility_delegate.h"
-#include "ash/default_accessibility_delegate.h"
-#include "ash/default_user_wallpaper_delegate.h"
-#include "ash/gpu_support_stub.h"
-#include "ash/media_delegate.h"
-#include "ash/new_window_delegate.h"
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell/content/shell_content_state_impl.h"
+#include "ash/app_list/app_list_presenter_delegate_factory.h"
+#include "ash/common/accessibility_delegate.h"
+#include "ash/common/default_accessibility_delegate.h"
+#include "ash/common/gpu_support_stub.h"
+#include "ash/common/media_delegate.h"
+#include "ash/common/palette_delegate.h"
+#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/system/tray/default_system_tray_delegate.h"
+#include "ash/common/test/test_shelf_delegate.h"
+#include "ash/common/wm/window_state.h"
+#include "ash/default_wallpaper_delegate.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/shell.h"
 #include "ash/shell/context_menu.h"
 #include "ash/shell/example_factory.h"
-#include "ash/shell/shelf_delegate_impl.h"
 #include "ash/shell/toplevel_window.h"
-#include "ash/shell_window_ids.h"
-#include "ash/system/tray/default_system_tray_delegate.h"
 #include "ash/test/test_keyboard_ui.h"
-#include "ash/wm/window_state.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/user_manager/user_info_impl.h"
 #include "ui/app_list/app_list_view_delegate.h"
+#include "ui/app_list/presenter/app_list_presenter_impl.h"
+#include "ui/app_list/presenter/app_list_view_delegate_factory.h"
 #include "ui/aura/window.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
@@ -31,31 +35,6 @@
 namespace ash {
 namespace shell {
 namespace {
-
-class NewWindowDelegateImpl : public NewWindowDelegate {
- public:
-  NewWindowDelegateImpl() {}
-  ~NewWindowDelegateImpl() override {}
-
-  // NewWindowDelegate:
-  void NewTab() override {}
-  void NewWindow(bool incognito) override {
-    ash::shell::ToplevelWindow::CreateParams create_params;
-    create_params.can_resize = true;
-    create_params.can_maximize = true;
-    ash::shell::ToplevelWindow::CreateToplevelWindow(create_params);
-  }
-  void OpenFileManager() override {}
-  void OpenCrosh() override {}
-  void OpenGetHelp() override {}
-  void RestoreTab() override {}
-  void ShowKeyboardOverlay() override {}
-  void ShowTaskManager() override {}
-  void OpenFeedbackPage() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(NewWindowDelegateImpl);
-};
 
 class MediaDelegateImpl : public MediaDelegate {
  public:
@@ -74,6 +53,35 @@ class MediaDelegateImpl : public MediaDelegate {
   DISALLOW_COPY_AND_ASSIGN(MediaDelegateImpl);
 };
 
+class PaletteDelegateImpl : public PaletteDelegate {
+ public:
+  PaletteDelegateImpl() {}
+  ~PaletteDelegateImpl() override {}
+
+  // PaletteDelegate:
+  std::unique_ptr<EnableListenerSubscription> AddPaletteEnableListener(
+      const EnableListener& on_state_changed) override {
+    on_state_changed.Run(false);
+    return nullptr;
+  }
+  void CreateNote() override {}
+  bool HasNoteApp() override { return false; }
+  void SetPartialMagnifierState(bool enabled) override {}
+  void SetStylusStateChangedCallback(
+      const OnStylusStateChangedCallback& on_stylus_state_changed) override {}
+  bool ShouldAutoOpenPalette() override { return false; }
+  bool ShouldShowPalette() override { return false; }
+  void TakeScreenshot() override {}
+  void TakePartialScreenshot(const base::Closure& done) override {
+    if (done)
+      done.Run();
+  }
+  void CancelPartialScreenshot() override {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(PaletteDelegateImpl);
+};
+
 class SessionStateDelegateImpl : public SessionStateDelegate {
  public:
   SessionStateDelegateImpl()
@@ -90,7 +98,7 @@ class SessionStateDelegateImpl : public SessionStateDelegate {
   bool IsActiveUserSessionStarted() const override { return true; }
   bool CanLockScreen() const override { return true; }
   bool IsScreenLocked() const override { return screen_locked_; }
-  bool ShouldLockScreenBeforeSuspending() const override { return false; }
+  bool ShouldLockScreenAutomatically() const override { return false; }
   void LockScreen() override {
     shell::CreateLockScreen();
     screen_locked_ = true;
@@ -103,18 +111,19 @@ class SessionStateDelegateImpl : public SessionStateDelegate {
   bool IsUserSessionBlocked() const override {
     return !IsActiveUserSessionStarted() || IsScreenLocked();
   }
-  SessionState GetSessionState() const override {
+  session_manager::SessionState GetSessionState() const override {
     // Assume that if session is not active we're at login.
-    return IsActiveUserSessionStarted() ? SESSION_STATE_ACTIVE
-                                        : SESSION_STATE_LOGIN_PRIMARY;
+    return IsActiveUserSessionStarted()
+               ? session_manager::SessionState::ACTIVE
+               : session_manager::SessionState::LOGIN_PRIMARY;
   }
   const user_manager::UserInfo* GetUserInfo(UserIndex index) const override {
     return user_info_.get();
   }
-  bool ShouldShowAvatar(aura::Window* window) const override {
+  bool ShouldShowAvatar(WmWindow* window) const override {
     return !user_info_->GetImage().isNull();
   }
-  gfx::ImageSkia GetAvatarImageForWindow(aura::Window* window) const override {
+  gfx::ImageSkia GetAvatarImageForWindow(WmWindow* window) const override {
     return gfx::ImageSkia();
   }
   void SwitchActiveUser(const AccountId& account_id) override {}
@@ -122,35 +131,48 @@ class SessionStateDelegateImpl : public SessionStateDelegate {
   bool IsMultiProfileAllowedByPrimaryUserPolicy() const override {
     return true;
   }
-  void AddSessionStateObserver(ash::SessionStateObserver* observer) override {}
-  void RemoveSessionStateObserver(
-      ash::SessionStateObserver* observer) override {}
+  void AddSessionStateObserver(SessionStateObserver* observer) override {}
+  void RemoveSessionStateObserver(SessionStateObserver* observer) override {}
 
  private:
   bool screen_locked_;
 
   // A pseudo user info.
-  scoped_ptr<user_manager::UserInfo> user_info_;
+  std::unique_ptr<user_manager::UserInfo> user_info_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionStateDelegateImpl);
+};
+
+class AppListViewDelegateFactoryImpl
+    : public app_list::AppListViewDelegateFactory {
+ public:
+  AppListViewDelegateFactoryImpl() {}
+  ~AppListViewDelegateFactoryImpl() override {}
+
+  // app_list::AppListViewDelegateFactory:
+  app_list::AppListViewDelegate* GetDelegate() override {
+    if (!app_list_view_delegate_.get())
+      app_list_view_delegate_.reset(CreateAppListViewDelegate());
+    return app_list_view_delegate_.get();
+  }
+
+ private:
+  std::unique_ptr<app_list::AppListViewDelegate> app_list_view_delegate_;
+
+  DISALLOW_COPY_AND_ASSIGN(AppListViewDelegateFactoryImpl);
 };
 
 }  // namespace
 
 ShellDelegateImpl::ShellDelegateImpl()
-    : watcher_(NULL), shelf_delegate_(NULL) {}
+    : shelf_delegate_(nullptr),
+      app_list_presenter_delegate_factory_(new AppListPresenterDelegateFactory(
+          base::WrapUnique(new AppListViewDelegateFactoryImpl))) {}
 
-ShellDelegateImpl::~ShellDelegateImpl() {
-}
+ShellDelegateImpl::~ShellDelegateImpl() {}
 
-void ShellDelegateImpl::SetWatcher(WindowWatcher* watcher) {
-  watcher_ = watcher;
-  if (shelf_delegate_)
-    shelf_delegate_->set_watcher(watcher);
-}
-
-bool ShellDelegateImpl::IsFirstRunAfterBoot() const {
-  return false;
+::service_manager::Connector* ShellDelegateImpl::GetShellConnector() const {
+  return nullptr;
 }
 
 bool ShellDelegateImpl::IsIncognitoAllowed() const {
@@ -165,7 +187,7 @@ bool ShellDelegateImpl::IsRunningInForcedAppMode() const {
   return false;
 }
 
-bool ShellDelegateImpl::CanShowWindowForUser(aura::Window* window) const {
+bool ShellDelegateImpl::CanShowWindowForUser(WmWindow* window) const {
   return true;
 }
 
@@ -173,71 +195,61 @@ bool ShellDelegateImpl::IsForceMaximizeOnFirstRun() const {
   return false;
 }
 
-void ShellDelegateImpl::PreInit() {
-}
+void ShellDelegateImpl::PreInit() {}
 
-void ShellDelegateImpl::PreShutdown() {
-}
+void ShellDelegateImpl::PreShutdown() {}
 
 void ShellDelegateImpl::Exit() {
-  base::MessageLoopForUI::current()->QuitWhenIdle();
+  base::MessageLoop::current()->QuitWhenIdle();
 }
 
 keyboard::KeyboardUI* ShellDelegateImpl::CreateKeyboardUI() {
   return new TestKeyboardUI;
 }
 
-void ShellDelegateImpl::VirtualKeyboardActivated(bool activated) {
-}
+void ShellDelegateImpl::OpenUrlFromArc(const GURL& url) {}
 
-void ShellDelegateImpl::AddVirtualKeyboardStateObserver(
-    VirtualKeyboardStateObserver* observer) {
-}
-
-void ShellDelegateImpl::RemoveVirtualKeyboardStateObserver(
-    VirtualKeyboardStateObserver* observer) {
-}
-
-app_list::AppListViewDelegate* ShellDelegateImpl::GetAppListViewDelegate() {
-  if (!app_list_view_delegate_)
-    app_list_view_delegate_.reset(ash::shell::CreateAppListViewDelegate());
-  return app_list_view_delegate_.get();
+app_list::AppListPresenter* ShellDelegateImpl::GetAppListPresenter() {
+  if (!app_list_presenter_) {
+    app_list_presenter_.reset(new app_list::AppListPresenterImpl(
+        app_list_presenter_delegate_factory_.get()));
+  }
+  return app_list_presenter_.get();
 }
 
 ShelfDelegate* ShellDelegateImpl::CreateShelfDelegate(ShelfModel* model) {
-  shelf_delegate_ = new ShelfDelegateImpl(watcher_);
+  shelf_delegate_ = new test::TestShelfDelegate(model);
   return shelf_delegate_;
 }
 
-ash::SystemTrayDelegate* ShellDelegateImpl::CreateSystemTrayDelegate() {
+SystemTrayDelegate* ShellDelegateImpl::CreateSystemTrayDelegate() {
   return new DefaultSystemTrayDelegate;
 }
 
-ash::UserWallpaperDelegate* ShellDelegateImpl::CreateUserWallpaperDelegate() {
-  return new DefaultUserWallpaperDelegate();
+std::unique_ptr<WallpaperDelegate>
+ShellDelegateImpl::CreateWallpaperDelegate() {
+  return base::MakeUnique<DefaultWallpaperDelegate>();
 }
 
-ash::SessionStateDelegate* ShellDelegateImpl::CreateSessionStateDelegate() {
+SessionStateDelegate* ShellDelegateImpl::CreateSessionStateDelegate() {
   return new SessionStateDelegateImpl;
 }
 
-ash::AccessibilityDelegate* ShellDelegateImpl::CreateAccessibilityDelegate() {
+AccessibilityDelegate* ShellDelegateImpl::CreateAccessibilityDelegate() {
   return new DefaultAccessibilityDelegate;
 }
 
-ash::NewWindowDelegate* ShellDelegateImpl::CreateNewWindowDelegate() {
-  return new NewWindowDelegateImpl;
-}
-
-ash::MediaDelegate* ShellDelegateImpl::CreateMediaDelegate() {
+MediaDelegate* ShellDelegateImpl::CreateMediaDelegate() {
   return new MediaDelegateImpl;
 }
 
-ui::MenuModel* ShellDelegateImpl::CreateContextMenu(
-    aura::Window* root,
-    ash::ShelfItemDelegate* item_delegate,
-    ash::ShelfItem* item) {
-  return new ContextMenu(root);
+std::unique_ptr<PaletteDelegate> ShellDelegateImpl::CreatePaletteDelegate() {
+  return base::MakeUnique<PaletteDelegateImpl>();
+}
+
+ui::MenuModel* ShellDelegateImpl::CreateContextMenu(WmShelf* wm_shelf,
+                                                    const ShelfItem* item) {
+  return new ContextMenu(wm_shelf);
 }
 
 GPUSupport* ShellDelegateImpl::CreateGPUSupport() {
@@ -252,6 +264,16 @@ base::string16 ShellDelegateImpl::GetProductName() const {
 gfx::Image ShellDelegateImpl::GetDeprecatedAcceleratorImage() const {
   return gfx::Image();
 }
+
+bool ShellDelegateImpl::IsTouchscreenEnabledInPrefs(
+    bool use_local_state) const {
+  return true;
+}
+
+void ShellDelegateImpl::SetTouchscreenEnabledInPrefs(bool enabled,
+                                                     bool use_local_state) {}
+
+void ShellDelegateImpl::UpdateTouchscreenStatusFromPrefs() {}
 
 }  // namespace shell
 }  // namespace ash

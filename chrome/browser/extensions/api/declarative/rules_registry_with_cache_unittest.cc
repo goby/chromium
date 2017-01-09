@@ -14,7 +14,6 @@
 #include "chrome/browser/extensions/test_extension_environment.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/extensions/extension_test_util.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/version_info/version_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -25,6 +24,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/value_store/testing_value_store.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -226,14 +226,13 @@ TEST_F(RulesRegistryWithCacheTest, OnExtensionUninstalled) {
 
 TEST_F(RulesRegistryWithCacheTest, DeclarativeRulesStored) {
   ExtensionPrefs* extension_prefs = env_.GetExtensionPrefs();
-  // The value store is first created during GetExtensionService.
-  TestingValueStore* store = env_.GetExtensionSystem()->value_store();
 
   const std::string event_name("testEvent");
   const std::string rules_stored_key(
       RulesCacheDelegate::GetRulesStoredKey(
           event_name, profile()->IsOffTheRecord()));
-  scoped_ptr<RulesCacheDelegate> cache_delegate(new RulesCacheDelegate(false));
+  std::unique_ptr<RulesCacheDelegate> cache_delegate(
+      new RulesCacheDelegate(false));
   scoped_refptr<RulesRegistry> registry(
       new TestRulesRegistry(profile(), event_name, content::BrowserThread::UI,
                             cache_delegate.get(), kRulesRegistryID));
@@ -251,18 +250,24 @@ TEST_F(RulesRegistryWithCacheTest, DeclarativeRulesStored) {
   EXPECT_TRUE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
 
   // 2. Test writing behavior.
-  int write_count = store->write_count();
+  // The ValueStore is lazily created when reading/writing. None done yet so
+  // verify that not yet created.
+  TestingValueStore* store = env_.GetExtensionSystem()->value_store();
+  // No write yet so no store should have been created.
+  ASSERT_FALSE(store);
 
-  scoped_ptr<base::ListValue> value(new base::ListValue);
+  std::unique_ptr<base::ListValue> value(new base::ListValue);
   value->AppendBoolean(true);
-  cache_delegate->WriteToStorage(extension1_->id(), value.Pass());
+  cache_delegate->WriteToStorage(extension1_->id(), std::move(value));
   EXPECT_TRUE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(write_count + 1, store->write_count());
-  write_count = store->write_count();
+  store = env_.GetExtensionSystem()->value_store();
+  ASSERT_TRUE(store);
+  EXPECT_EQ(1, store->write_count());
+  int write_count = store->write_count();
 
   value.reset(new base::ListValue);
-  cache_delegate->WriteToStorage(extension1_->id(), value.Pass());
+  cache_delegate->WriteToStorage(extension1_->id(), std::move(value));
   EXPECT_FALSE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
   base::RunLoop().RunUntilIdle();
   // No rules currently, but previously there were, so we expect a write.
@@ -270,7 +275,7 @@ TEST_F(RulesRegistryWithCacheTest, DeclarativeRulesStored) {
   write_count = store->write_count();
 
   value.reset(new base::ListValue);
-  cache_delegate->WriteToStorage(extension1_->id(), value.Pass());
+  cache_delegate->WriteToStorage(extension1_->id(), std::move(value));
   EXPECT_FALSE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(write_count, store->write_count());
@@ -302,12 +307,14 @@ TEST_F(RulesRegistryWithCacheTest, RulesStoredFlagMultipleRegistries) {
   const std::string rules_stored_key2(
       RulesCacheDelegate::GetRulesStoredKey(
           event_name2, profile()->IsOffTheRecord()));
-  scoped_ptr<RulesCacheDelegate> cache_delegate1(new RulesCacheDelegate(false));
+  std::unique_ptr<RulesCacheDelegate> cache_delegate1(
+      new RulesCacheDelegate(false));
   scoped_refptr<RulesRegistry> registry1(
       new TestRulesRegistry(profile(), event_name1, content::BrowserThread::UI,
                             cache_delegate1.get(), kRulesRegistryID));
 
-  scoped_ptr<RulesCacheDelegate> cache_delegate2(new RulesCacheDelegate(false));
+  std::unique_ptr<RulesCacheDelegate> cache_delegate2(
+      new RulesCacheDelegate(false));
   scoped_refptr<RulesRegistry> registry2(
       new TestRulesRegistry(profile(), event_name2, content::BrowserThread::UI,
                             cache_delegate2.get(), kRulesRegistryID));
@@ -352,7 +359,8 @@ TEST_F(RulesRegistryWithCacheTest, RulesPreservedAcrossRestart) {
   env_.GetExtensionSystem()->SetReady();
 
   // 2. First run, adding a rule for the extension.
-  scoped_ptr<RulesCacheDelegate> cache_delegate(new RulesCacheDelegate(false));
+  std::unique_ptr<RulesCacheDelegate> cache_delegate(
+      new RulesCacheDelegate(false));
   scoped_refptr<TestRulesRegistry> registry(
       new TestRulesRegistry(profile(), "testEvent", content::BrowserThread::UI,
                             cache_delegate.get(), kRulesRegistryID));
@@ -378,14 +386,15 @@ TEST_F(RulesRegistryWithCacheTest, ConcurrentStoringOfRules) {
   // write a rules update for extension A, just because it is immediately
   // followed by a rules update for extension B.
   extensions::TestExtensionSystem* system = env_.GetExtensionSystem();
-  TestingValueStore* store = system->value_store();
+  // ValueStore created lazily, assure none currently exists.
+  ASSERT_TRUE(system->value_store() == nullptr);
 
-  int write_count = store->write_count();
+  int write_count = 0;
   EXPECT_EQ("", AddRule(extension1_->id(), kRuleId));
   EXPECT_EQ("", AddRule(extension2_->id(), kRule2Id));
   env_.GetExtensionSystem()->SetReady();
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(write_count + 2, store->write_count());
+  EXPECT_EQ(write_count + 2, system->value_store()->write_count());
 }
 
 }  //  namespace extensions

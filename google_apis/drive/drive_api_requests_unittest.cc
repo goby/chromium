@@ -2,18 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "google_apis/drive/drive_api_requests.h"
+
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "google_apis/drive/drive_api_parser.h"
-#include "google_apis/drive/drive_api_requests.h"
 #include "google_apis/drive/drive_api_url_generator.h"
 #include "google_apis/drive/dummy_auth_service.h"
 #include "google_apis/drive/request_sender.h"
@@ -48,12 +54,13 @@ const char kTestPermissionResponse[] =
 
 const char kTestUploadExistingFilePath[] = "/upload/existingfile/path";
 const char kTestUploadNewFilePath[] = "/upload/newfile/path";
-const char kTestDownloadPathPrefix[] = "/host/";
+const char kTestDownloadPathPrefix[] = "/drive/v2/files/";
+const char kTestDownloadFileQuery[] = "alt=media";
 
 // Used as a GetContentCallback.
 void AppendContent(std::string* out,
                    DriveApiErrorCode error,
-                   scoped_ptr<std::string> content) {
+                   std::unique_ptr<std::string> content) {
   EXPECT_EQ(HTTP_SUCCESS, error);
   out->append(*content);
 }
@@ -92,22 +99,25 @@ class TestBatchableDelegate : public BatchableDelegate {
     closure.Run();
   }
   void NotifyUploadProgress(const net::URLFetcher* source,
-                            int64 current,
-                            int64 total) override {
+                            int64_t current,
+                            int64_t total) override {
     progress_values_.push_back(current);
   }
-  const std::vector<int64>& progress_values() const { return progress_values_; }
+  const std::vector<int64_t>& progress_values() const {
+    return progress_values_;
+  }
 
  private:
   GURL url_;
   std::string content_type_;
   std::string content_data_;
   base::Closure callback_;
-  std::vector<int64> progress_values_;
+  std::vector<int64_t> progress_values_;
 };
 
-void EmptyPreapreCallback(DriveApiErrorCode) {
+void EmptyPrepareCallback(DriveApiErrorCode) {
 }
+
 void EmptyClosure() {
 }
 
@@ -129,7 +139,6 @@ class DriveApiRequestsTest : public testing::Test {
 
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
-    ASSERT_TRUE(test_server_.Start());
     test_server_.RegisterRequestHandler(
         base::Bind(&DriveApiRequestsTest::HandleChildrenDeleteRequest,
                    base::Unretained(this)));
@@ -157,10 +166,11 @@ class DriveApiRequestsTest : public testing::Test {
     test_server_.RegisterRequestHandler(
         base::Bind(&DriveApiRequestsTest::HandleBatchUploadRequest,
                    base::Unretained(this)));
+    ASSERT_TRUE(test_server_.Start());
 
     GURL test_base_url = test_util::GetBaseUrlForTesting(test_server_.port());
     url_generator_.reset(
-        new DriveApiUrlGenerator(test_base_url, test_base_url, test_base_url));
+        new DriveApiUrlGenerator(test_base_url, test_base_url));
 
     // Reset the server's expected behavior just in case.
     ResetExpectedResponse();
@@ -184,8 +194,8 @@ class DriveApiRequestsTest : public testing::Test {
 
   base::MessageLoopForIO message_loop_;  // Test server needs IO thread.
   net::EmbeddedTestServer test_server_;
-  scoped_ptr<RequestSender> request_sender_;
-  scoped_ptr<DriveApiUrlGenerator> url_generator_;
+  std::unique_ptr<RequestSender> request_sender_;
+  std::unique_ptr<DriveApiUrlGenerator> url_generator_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_getter_;
   base::ScopedTempDir temp_dir_;
 
@@ -224,34 +234,34 @@ class DriveApiRequestsTest : public testing::Test {
 
   // For "Children: delete" request, the server will return "204 No Content"
   // response meaning "success".
-  scoped_ptr<net::test_server::HttpResponse> HandleChildrenDeleteRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleChildrenDeleteRequest(
       const net::test_server::HttpRequest& request) {
     if (request.method != net::test_server::METHOD_DELETE ||
         request.relative_url.find("/children/") == std::string::npos) {
       // The request is not the "Children: delete" request. Delegate the
       // processing to the next handler.
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     http_request_ = request;
 
     // Return the response with just "204 No Content" status code.
-    scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
         new net::test_server::BasicHttpResponse);
     http_response->set_code(net::HTTP_NO_CONTENT);
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   // Reads the data file of |expected_data_file_path_| and returns its content
   // for the request.
   // To use this method, it is necessary to set |expected_data_file_path_|
   // to the appropriate file path before sending the request to the server.
-  scoped_ptr<net::test_server::HttpResponse> HandleDataFileRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleDataFileRequest(
       const net::test_server::HttpRequest& request) {
     if (expected_data_file_path_.empty()) {
       // The file is not specified. Delegate the processing to the next
       // handler.
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     http_request_ = request;
@@ -262,38 +272,39 @@ class DriveApiRequestsTest : public testing::Test {
 
   // Deletes the resource and returns no content with HTTP_NO_CONTENT status
   // code.
-  scoped_ptr<net::test_server::HttpResponse> HandleDeleteRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleDeleteRequest(
       const net::test_server::HttpRequest& request) {
     if (request.method != net::test_server::METHOD_DELETE ||
         request.relative_url.find("/files/") == std::string::npos) {
       // The file is not file deletion request. Delegate the processing to the
       // next handler.
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     http_request_ = request;
 
-    scoped_ptr<net::test_server::BasicHttpResponse> response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> response(
         new net::test_server::BasicHttpResponse);
     response->set_code(net::HTTP_NO_CONTENT);
 
-    return response.Pass();
+    return std::move(response);
   }
 
   // Returns PRECONDITION_FAILED response for ETag mismatching with error JSON
   // content specified by |expected_precondition_failed_file_path_|.
   // To use this method, it is necessary to set the variable to the appropriate
   // file path before sending the request to the server.
-  scoped_ptr<net::test_server::HttpResponse> HandlePreconditionFailedRequest(
+  std::unique_ptr<net::test_server::HttpResponse>
+  HandlePreconditionFailedRequest(
       const net::test_server::HttpRequest& request) {
     if (expected_precondition_failed_file_path_.empty()) {
       // The file is not specified. Delegate the process to the next handler.
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     http_request_ = request;
 
-    scoped_ptr<net::test_server::BasicHttpResponse> response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> response(
         new net::test_server::BasicHttpResponse);
     response->set_code(net::HTTP_PRECONDITION_FAILED);
 
@@ -304,7 +315,7 @@ class DriveApiRequestsTest : public testing::Test {
       response->set_content_type("application/json");
     }
 
-    return response.Pass();
+    return std::move(response);
   }
 
   // Returns the response based on set expected upload url.
@@ -312,27 +323,26 @@ class DriveApiRequestsTest : public testing::Test {
   // have any content.
   // To use this method, it is necessary to set |expected_upload_path_|
   // to the string representation of the url to be returned.
-  scoped_ptr<net::test_server::HttpResponse> HandleInitiateUploadRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleInitiateUploadRequest(
       const net::test_server::HttpRequest& request) {
     if (request.relative_url == expected_upload_path_ ||
         expected_upload_path_.empty()) {
       // The request is for resume uploading or the expected upload url is not
       // set. Delegate the processing to the next handler.
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     http_request_ = request;
 
-    scoped_ptr<net::test_server::BasicHttpResponse> response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> response(
         new net::test_server::BasicHttpResponse);
 
     // Check if the X-Upload-Content-Length is present. If yes, store the
     // length of the file.
-    std::map<std::string, std::string>::const_iterator found =
-        request.headers.find("X-Upload-Content-Length");
+    auto found = request.headers.find("X-Upload-Content-Length");
     if (found == request.headers.end() ||
         !base::StringToInt64(found->second, &content_length_)) {
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
     received_bytes_ = 0;
 
@@ -340,34 +350,33 @@ class DriveApiRequestsTest : public testing::Test {
     response->AddCustomHeader(
         "Location",
         test_server_.base_url().Resolve(expected_upload_path_).spec());
-    return response.Pass();
+    return std::move(response);
   }
 
-  scoped_ptr<net::test_server::HttpResponse> HandleResumeUploadRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleResumeUploadRequest(
       const net::test_server::HttpRequest& request) {
     if (request.relative_url != expected_upload_path_) {
       // The request path is different from the expected path for uploading.
       // Delegate the processing to the next handler.
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     http_request_ = request;
 
     if (!request.content.empty()) {
-      std::map<std::string, std::string>::const_iterator iter =
-          request.headers.find("Content-Range");
+      auto iter = request.headers.find("Content-Range");
       if (iter == request.headers.end()) {
         // The range must be set.
-        return scoped_ptr<net::test_server::HttpResponse>();
+        return std::unique_ptr<net::test_server::HttpResponse>();
       }
 
-      int64 length = 0;
-      int64 start_position = 0;
-      int64 end_position = 0;
+      int64_t length = 0;
+      int64_t start_position = 0;
+      int64_t end_position = 0;
       if (!test_util::ParseContentRangeHeader(
               iter->second, &start_position, &end_position, &length)) {
         // Invalid "Content-Range" value.
-        return scoped_ptr<net::test_server::HttpResponse>();
+        return std::unique_ptr<net::test_server::HttpResponse>();
       }
 
       EXPECT_EQ(start_position, received_bytes_);
@@ -378,7 +387,7 @@ class DriveApiRequestsTest : public testing::Test {
     }
 
     if (received_bytes_ < content_length_) {
-      scoped_ptr<net::test_server::BasicHttpResponse> response(
+      std::unique_ptr<net::test_server::BasicHttpResponse> response(
           new net::test_server::BasicHttpResponse);
       // Set RESUME INCOMPLETE (308) status code.
       response->set_code(static_cast<net::HttpStatusCode>(308));
@@ -391,12 +400,12 @@ class DriveApiRequestsTest : public testing::Test {
             "Range", "bytes=0-" + base::Int64ToString(received_bytes_ - 1));
       }
 
-      return response.Pass();
+      return std::move(response);
     }
 
     // All bytes are received. Return the "success" response with the file's
     // (dummy) metadata.
-    scoped_ptr<net::test_server::BasicHttpResponse> response =
+    std::unique_ptr<net::test_server::BasicHttpResponse> response =
         test_util::CreateHttpResponseFromFile(
             test_util::GetTestFilePath("drive/file_entry.json"));
 
@@ -405,62 +414,62 @@ class DriveApiRequestsTest : public testing::Test {
       response->set_code(net::HTTP_CREATED);
     }
 
-    return response.Pass();
+    return std::move(response);
   }
 
   // Returns the response based on set expected content and its type.
   // To use this method, both |expected_content_type_| and |expected_content_|
   // must be set in advance.
-  scoped_ptr<net::test_server::HttpResponse> HandleContentResponse(
+  std::unique_ptr<net::test_server::HttpResponse> HandleContentResponse(
       const net::test_server::HttpRequest& request) {
     if (expected_content_type_.empty() || expected_content_.empty()) {
       // Expected content is not set. Delegate the processing to the next
       // handler.
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     http_request_ = request;
 
-    scoped_ptr<net::test_server::BasicHttpResponse> response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> response(
         new net::test_server::BasicHttpResponse);
     response->set_code(net::HTTP_OK);
     response->set_content_type(expected_content_type_);
     response->set_content(expected_content_);
-    return response.Pass();
+    return std::move(response);
   }
 
   // Handles a request for downloading a file.
-  scoped_ptr<net::test_server::HttpResponse> HandleDownloadRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleDownloadRequest(
       const net::test_server::HttpRequest& request) {
     http_request_ = request;
 
     const GURL absolute_url = test_server_.GetURL(request.relative_url);
     std::string id;
-    if (!test_util::RemovePrefix(absolute_url.path(),
-                                 kTestDownloadPathPrefix,
-                                 &id)) {
-      return scoped_ptr<net::test_server::HttpResponse>();
+    if (!test_util::RemovePrefix(
+          absolute_url.path(), kTestDownloadPathPrefix, &id) ||
+        absolute_url.query() != kTestDownloadFileQuery) {
+      return std::unique_ptr<net::test_server::HttpResponse>();
     }
 
     // For testing, returns a text with |id| repeated 3 times.
-    scoped_ptr<net::test_server::BasicHttpResponse> response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> response(
         new net::test_server::BasicHttpResponse);
     response->set_code(net::HTTP_OK);
     response->set_content(id + id + id);
     response->set_content_type("text/plain");
-    return response.Pass();
+    return std::move(response);
   }
 
-  scoped_ptr<net::test_server::HttpResponse> HandleBatchUploadRequest(
+  std::unique_ptr<net::test_server::HttpResponse> HandleBatchUploadRequest(
       const net::test_server::HttpRequest& request) {
     http_request_ = request;
 
     const GURL absolute_url = test_server_.GetURL(request.relative_url);
     std::string id;
     if (absolute_url.path() != "/upload/drive")
-      return scoped_ptr<net::test_server::HttpResponse>();
+      return std::unique_ptr<net::test_server::HttpResponse>();
 
-    scoped_ptr<net::test_server::BasicHttpResponse> response(
+    std::unique_ptr<net::test_server::BasicHttpResponse> response(
         new net::test_server::BasicHttpResponse);
     response->set_code(net::HTTP_OK);
     response->set_content_type("multipart/mixed; boundary=BOUNDARY");
@@ -486,12 +495,12 @@ class DriveApiRequestsTest : public testing::Test {
         " {\"reason\": \"userRateLimitExceeded\"}]}}\r\n"
         "\r\n"
         "--BOUNDARY--\r\n");
-    return response.Pass();
+    return std::move(response);
   }
 
   // These are for the current upload file status.
-  int64 received_bytes_;
-  int64 content_length_;
+  int64_t received_bytes_;
+  int64_t content_length_;
 };
 
 TEST_F(DriveApiRequestsTest, DriveApiDataRequest_Fields) {
@@ -503,19 +512,19 @@ TEST_F(DriveApiRequestsTest, DriveApiDataRequest_Fields) {
       "drive/about.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<AboutResource> about_resource;
+  std::unique_ptr<AboutResource> about_resource;
 
   {
     base::RunLoop run_loop;
-    drive::AboutGetRequest* request = new drive::AboutGetRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &about_resource)));
+    std::unique_ptr<drive::AboutGetRequest> request =
+        base::MakeUnique<drive::AboutGetRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &about_resource)));
     request->set_fields("kind,quotaBytesTotal,quotaBytesUsedAggregate,"
                         "largestChangeId,rootFolderId");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -526,9 +535,8 @@ TEST_F(DriveApiRequestsTest, DriveApiDataRequest_Fields) {
             "largestChangeId%2CrootFolderId",
             http_request_.relative_url);
 
-  scoped_ptr<AboutResource> expected(
-      AboutResource::CreateFrom(
-          *test_util::LoadJSONFile("drive/about.json")));
+  std::unique_ptr<AboutResource> expected(
+      AboutResource::CreateFrom(*test_util::LoadJSONFile("drive/about.json")));
   ASSERT_TRUE(about_resource.get());
   EXPECT_EQ(expected->largest_change_id(), about_resource->largest_change_id());
   EXPECT_EQ(expected->quota_bytes_total(), about_resource->quota_bytes_total());
@@ -547,26 +555,33 @@ TEST_F(DriveApiRequestsTest, FilesInsertRequest) {
       test_util::GetTestFilePath("drive/directory_entry.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> file_resource;
+  std::unique_ptr<FileResource> file_resource;
 
   // Create "new directory" in the root directory.
   {
     base::RunLoop run_loop;
-    drive::FilesInsertRequest* request = new drive::FilesInsertRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &file_resource)));
+    std::unique_ptr<drive::FilesInsertRequest> request =
+        base::MakeUnique<drive::FilesInsertRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &file_resource)));
     request->set_visibility(drive::FILE_VISIBILITY_PRIVATE);
-    request->set_last_viewed_by_me_date(
-        base::Time::FromUTCExploded(kLastViewedByMeDate));
+
+    base::Time last_viewed_by_me_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kLastViewedByMeDate,
+                                            &last_viewed_by_me_date_utc));
+    request->set_last_viewed_by_me_date(last_viewed_by_me_date_utc);
+
+    base::Time modified_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kModifiedDate, &modified_date_utc));
+    request->set_modified_date(modified_date_utc);
+
     request->set_mime_type("application/vnd.google-apps.folder");
-    request->set_modified_date(base::Time::FromUTCExploded(kModifiedDate));
     request->add_parent("root");
     request->set_title("new directory");
     request->set_properties(testing_properties_);
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -587,9 +602,8 @@ TEST_F(DriveApiRequestsTest, FilesInsertRequest) {
       "\"title\":\"new directory\"}",
       http_request_.content);
 
-  scoped_ptr<FileResource> expected(
-      FileResource::CreateFrom(
-          *test_util::LoadJSONFile("drive/directory_entry.json")));
+  std::unique_ptr<FileResource> expected(FileResource::CreateFrom(
+      *test_util::LoadJSONFile("drive/directory_entry.json")));
 
   // Sanity check.
   ASSERT_TRUE(file_resource.get());
@@ -610,28 +624,33 @@ TEST_F(DriveApiRequestsTest, FilesPatchRequest) {
       test_util::GetTestFilePath("drive/file_entry.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> file_resource;
+  std::unique_ptr<FileResource> file_resource;
 
   {
     base::RunLoop run_loop;
-    drive::FilesPatchRequest* request = new drive::FilesPatchRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &file_resource)));
+    std::unique_ptr<drive::FilesPatchRequest> request =
+        base::MakeUnique<drive::FilesPatchRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &file_resource)));
     request->set_file_id("resource_id");
     request->set_set_modified_date(true);
     request->set_update_viewed_date(false);
 
     request->set_title("new title");
-    request->set_modified_date(base::Time::FromUTCExploded(kModifiedDate));
-    request->set_last_viewed_by_me_date(
-        base::Time::FromUTCExploded(kLastViewedByMeDate));
-    request->add_parent("parent_resource_id");
+    base::Time modified_date_utc;
+    base::Time::FromUTCExploded(kLastViewedByMeDate);
+    ASSERT_TRUE(base::Time::FromUTCExploded(kModifiedDate, &modified_date_utc));
+    request->set_modified_date(modified_date_utc);
 
+    base::Time last_viewed_by_me_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kLastViewedByMeDate,
+                                            &last_viewed_by_me_date_utc));
+    request->set_last_viewed_by_me_date(last_viewed_by_me_date_utc);
+    request->add_parent("parent_resource_id");
     request->set_properties(testing_properties_);
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -661,17 +680,17 @@ TEST_F(DriveApiRequestsTest, AboutGetRequest_ValidJson) {
       "drive/about.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<AboutResource> about_resource;
+  std::unique_ptr<AboutResource> about_resource;
 
   {
     base::RunLoop run_loop;
-    drive::AboutGetRequest* request = new drive::AboutGetRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &about_resource)));
-    request_sender_->StartRequestWithAuthRetry(request);
+    std::unique_ptr<drive::AboutGetRequest> request =
+        base::MakeUnique<drive::AboutGetRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &about_resource)));
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -679,9 +698,8 @@ TEST_F(DriveApiRequestsTest, AboutGetRequest_ValidJson) {
   EXPECT_EQ(net::test_server::METHOD_GET, http_request_.method);
   EXPECT_EQ("/drive/v2/about", http_request_.relative_url);
 
-  scoped_ptr<AboutResource> expected(
-      AboutResource::CreateFrom(
-          *test_util::LoadJSONFile("drive/about.json")));
+  std::unique_ptr<AboutResource> expected(
+      AboutResource::CreateFrom(*test_util::LoadJSONFile("drive/about.json")));
   ASSERT_TRUE(about_resource.get());
   EXPECT_EQ(expected->largest_change_id(), about_resource->largest_change_id());
   EXPECT_EQ(expected->quota_bytes_total(), about_resource->quota_bytes_total());
@@ -696,17 +714,17 @@ TEST_F(DriveApiRequestsTest, AboutGetRequest_InvalidJson) {
       "drive/testfile.txt");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<AboutResource> about_resource;
+  std::unique_ptr<AboutResource> about_resource;
 
   {
     base::RunLoop run_loop;
-    drive::AboutGetRequest* request = new drive::AboutGetRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &about_resource)));
-    request_sender_->StartRequestWithAuthRetry(request);
+    std::unique_ptr<drive::AboutGetRequest> request =
+        base::MakeUnique<drive::AboutGetRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &about_resource)));
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -723,18 +741,18 @@ TEST_F(DriveApiRequestsTest, AppsListRequest) {
       "drive/applist.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<AppList> app_list;
+  std::unique_ptr<AppList> app_list;
 
   {
     base::RunLoop run_loop;
-    drive::AppsListRequest* request = new drive::AppsListRequest(
-        request_sender_.get(),
-        *url_generator_,
-        false,  // use_internal_endpoint
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &app_list)));
-    request_sender_->StartRequestWithAuthRetry(request);
+    std::unique_ptr<drive::AppsListRequest> request =
+        base::MakeUnique<drive::AppsListRequest>(
+            request_sender_.get(), *url_generator_,
+            false,  // use_internal_endpoint
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &app_list)));
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -750,19 +768,20 @@ TEST_F(DriveApiRequestsTest, ChangesListRequest) {
       "drive/changelist.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<ChangeList> result;
+  std::unique_ptr<ChangeList> result;
 
   {
     base::RunLoop run_loop;
-    drive::ChangesListRequest* request = new drive::ChangesListRequest(
-        request_sender_.get(), *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &result)));
+    std::unique_ptr<drive::ChangesListRequest> request =
+        base::MakeUnique<drive::ChangesListRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &result)));
     request->set_include_deleted(true);
     request->set_start_change_id(100);
     request->set_max_results(500);
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -779,18 +798,18 @@ TEST_F(DriveApiRequestsTest, ChangesListNextPageRequest) {
       "drive/changelist.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<ChangeList> result;
+  std::unique_ptr<ChangeList> result;
 
   {
     base::RunLoop run_loop;
-    drive::ChangesListNextPageRequest* request =
-        new drive::ChangesListNextPageRequest(
+    std::unique_ptr<drive::ChangesListNextPageRequest> request =
+        base::MakeUnique<drive::ChangesListNextPageRequest>(
             request_sender_.get(),
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &result)));
     request->set_next_link(test_server_.GetURL("/continue/get/change/list"));
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -809,23 +828,27 @@ TEST_F(DriveApiRequestsTest, FilesCopyRequest) {
       test_util::GetTestFilePath("drive/file_entry.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> file_resource;
+  std::unique_ptr<FileResource> file_resource;
 
   // Copy the file to a new file named "new title".
   {
     base::RunLoop run_loop;
-    drive::FilesCopyRequest* request = new drive::FilesCopyRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &file_resource)));
+    std::unique_ptr<drive::FilesCopyRequest> request =
+        base::MakeUnique<drive::FilesCopyRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &file_resource)));
     request->set_visibility(drive::FILE_VISIBILITY_PRIVATE);
     request->set_file_id("resource_id");
-    request->set_modified_date(base::Time::FromUTCExploded(kModifiedDate));
+
+    base::Time modified_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kModifiedDate, &modified_date_utc));
+
+    request->set_modified_date(modified_date_utc);
     request->add_parent("parent_resource_id");
     request->set_title("new title");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -850,20 +873,20 @@ TEST_F(DriveApiRequestsTest, FilesCopyRequest_EmptyParentResourceId) {
       test_util::GetTestFilePath("drive/file_entry.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> file_resource;
+  std::unique_ptr<FileResource> file_resource;
 
   // Copy the file to a new file named "new title".
   {
     base::RunLoop run_loop;
-    drive::FilesCopyRequest* request = new drive::FilesCopyRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &file_resource)));
+    std::unique_ptr<drive::FilesCopyRequest> request =
+        base::MakeUnique<drive::FilesCopyRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &file_resource)));
     request->set_file_id("resource_id");
     request->set_title("new title");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -883,18 +906,19 @@ TEST_F(DriveApiRequestsTest, FilesListRequest) {
       "drive/filelist.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<FileList> result;
+  std::unique_ptr<FileList> result;
 
   {
     base::RunLoop run_loop;
-    drive::FilesListRequest* request = new drive::FilesListRequest(
-        request_sender_.get(), *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &result)));
+    std::unique_ptr<drive::FilesListRequest> request =
+        base::MakeUnique<drive::FilesListRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &result)));
     request->set_max_results(50);
     request->set_q("\"abcde\" in parents");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -911,18 +935,18 @@ TEST_F(DriveApiRequestsTest, FilesListNextPageRequest) {
       "drive/filelist.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<FileList> result;
+  std::unique_ptr<FileList> result;
 
   {
     base::RunLoop run_loop;
-    drive::FilesListNextPageRequest* request =
-        new drive::FilesListNextPageRequest(
+    std::unique_ptr<drive::FilesListNextPageRequest> request =
+        base::MakeUnique<drive::FilesListNextPageRequest>(
             request_sender_.get(),
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &result)));
     request->set_next_link(test_server_.GetURL("/continue/get/file/list"));
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -938,14 +962,14 @@ TEST_F(DriveApiRequestsTest, FilesDeleteRequest) {
   // Delete a resource with the given resource id.
   {
     base::RunLoop run_loop;
-    drive::FilesDeleteRequest* request = new drive::FilesDeleteRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop, test_util::CreateCopyResultCallback(&error)));
+    std::unique_ptr<drive::FilesDeleteRequest> request =
+        base::MakeUnique<drive::FilesDeleteRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop, test_util::CreateCopyResultCallback(&error)));
     request->set_file_id("resource_id");
     request->set_etag(kTestETag);
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -963,19 +987,19 @@ TEST_F(DriveApiRequestsTest, FilesTrashRequest) {
       test_util::GetTestFilePath("drive/directory_entry.json");
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> file_resource;
+  std::unique_ptr<FileResource> file_resource;
 
   // Trash a resource with the given resource id.
   {
     base::RunLoop run_loop;
-    drive::FilesTrashRequest* request = new drive::FilesTrashRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error, &file_resource)));
+    std::unique_ptr<drive::FilesTrashRequest> request =
+        base::MakeUnique<drive::FilesTrashRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&error, &file_resource)));
     request->set_file_id("resource_id");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -997,15 +1021,14 @@ TEST_F(DriveApiRequestsTest, ChildrenInsertRequest) {
   // "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::ChildrenInsertRequest* request = new drive::ChildrenInsertRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error)));
+    std::unique_ptr<drive::ChildrenInsertRequest> request =
+        base::MakeUnique<drive::ChildrenInsertRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop, test_util::CreateCopyResultCallback(&error)));
     request->set_folder_id("parent_resource_id");
     request->set_id("resource_id");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1026,15 +1049,14 @@ TEST_F(DriveApiRequestsTest, ChildrenDeleteRequest) {
   // "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::ChildrenDeleteRequest* request = new drive::ChildrenDeleteRequest(
-        request_sender_.get(),
-        *url_generator_,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&error)));
+    std::unique_ptr<drive::ChildrenDeleteRequest> request =
+        base::MakeUnique<drive::ChildrenDeleteRequest>(
+            request_sender_.get(), *url_generator_,
+            test_util::CreateQuitCallback(
+                &run_loop, test_util::CreateCopyResultCallback(&error)));
     request->set_child_id("resource_id");
     request->set_folder_id("parent_resource_id");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1052,7 +1074,7 @@ TEST_F(DriveApiRequestsTest, UploadNewFileRequest) {
   const char kTestContentType[] = "text/plain";
   const std::string kTestContent(100, 'a');
   const base::FilePath kTestFilePath =
-      temp_dir_.path().AppendASCII("upload_file.txt");
+      temp_dir_.GetPath().AppendASCII("upload_file.txt");
   ASSERT_TRUE(test_util::WriteStringToFile(kTestFilePath, kTestContent));
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
@@ -1062,19 +1084,17 @@ TEST_F(DriveApiRequestsTest, UploadNewFileRequest) {
   // "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadNewFileRequest* request =
-        new drive::InitiateUploadNewFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadNewFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadNewFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "parent_resource_id",  // The resource id of the parent directory.
-            "new file title",  // The title of the file being uploaded.
+            "new file title",      // The title of the file being uploaded.
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &upload_url)));
     request->set_properties(testing_properties_);
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1102,24 +1122,22 @@ TEST_F(DriveApiRequestsTest, UploadNewFileRequest) {
 
   // Upload the content to the upload URL.
   UploadRangeResponse response;
-  scoped_ptr<FileResource> new_entry;
+  std::unique_ptr<FileResource> new_entry;
 
   {
     base::RunLoop run_loop;
-    drive::ResumeUploadRequest* resume_request =
-        new drive::ResumeUploadRequest(
-            request_sender_.get(),
-            upload_url,
-            0,  // start_position
+    std::unique_ptr<drive::ResumeUploadRequest> request =
+        base::MakeUnique<drive::ResumeUploadRequest>(
+            request_sender_.get(), upload_url,
+            0,                    // start_position
             kTestContent.size(),  // end_position (exclusive)
             kTestContent.size(),  // content_length,
-            kTestContentType,
-            kTestFilePath,
+            kTestContentType, kTestFilePath,
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&response, &new_entry)),
             ProgressCallback());
-    request_sender_->StartRequestWithAuthRetry(resume_request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1150,7 +1168,7 @@ TEST_F(DriveApiRequestsTest, UploadNewEmptyFileRequest) {
   const char kTestContentType[] = "text/plain";
   const char kTestContent[] = "";
   const base::FilePath kTestFilePath =
-      temp_dir_.path().AppendASCII("empty_file.txt");
+      temp_dir_.GetPath().AppendASCII("empty_file.txt");
   ASSERT_TRUE(test_util::WriteStringToFile(kTestFilePath, kTestContent));
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
@@ -1159,18 +1177,15 @@ TEST_F(DriveApiRequestsTest, UploadNewEmptyFileRequest) {
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadNewFileRequest* request =
-        new drive::InitiateUploadNewFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
-            0,
+    std::unique_ptr<drive::InitiateUploadNewFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadNewFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType, 0,
             "parent_resource_id",  // The resource id of the parent directory.
-            "new file title",  // The title of the file being uploaded.
+            "new file title",      // The title of the file being uploaded.
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &upload_url)));
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1193,24 +1208,22 @@ TEST_F(DriveApiRequestsTest, UploadNewEmptyFileRequest) {
 
   // Upload the content to the upload URL.
   UploadRangeResponse response;
-  scoped_ptr<FileResource> new_entry;
+  std::unique_ptr<FileResource> new_entry;
 
   {
     base::RunLoop run_loop;
-    drive::ResumeUploadRequest* resume_request =
-        new drive::ResumeUploadRequest(
-            request_sender_.get(),
-            upload_url,
+    std::unique_ptr<drive::ResumeUploadRequest> request =
+        base::MakeUnique<drive::ResumeUploadRequest>(
+            request_sender_.get(), upload_url,
             0,  // start_position
             0,  // end_position (exclusive)
             0,  // content_length,
-            kTestContentType,
-            kTestFilePath,
+            kTestContentType, kTestFilePath,
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&response, &new_entry)),
             ProgressCallback());
-    request_sender_->StartRequestWithAuthRetry(resume_request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1239,7 +1252,7 @@ TEST_F(DriveApiRequestsTest, UploadNewLargeFileRequest) {
   const size_t kNumChunkBytes = 10;  // Num bytes in a chunk.
   const std::string kTestContent(100, 'a');
   const base::FilePath kTestFilePath =
-      temp_dir_.path().AppendASCII("upload_file.txt");
+      temp_dir_.GetPath().AppendASCII("upload_file.txt");
   ASSERT_TRUE(test_util::WriteStringToFile(kTestFilePath, kTestContent));
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
@@ -1248,18 +1261,16 @@ TEST_F(DriveApiRequestsTest, UploadNewLargeFileRequest) {
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadNewFileRequest* request =
-        new drive::InitiateUploadNewFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadNewFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadNewFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "parent_resource_id",  // The resource id of the parent directory.
-            "new file title",  // The title of the file being uploaded.
+            "new file title",      // The title of the file being uploaded.
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &upload_url)));
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1285,20 +1296,18 @@ TEST_F(DriveApiRequestsTest, UploadNewLargeFileRequest) {
   // This is an edge case test for GetUploadStatusRequest.
   {
     UploadRangeResponse response;
-    scoped_ptr<FileResource> new_entry;
+    std::unique_ptr<FileResource> new_entry;
 
     // Check the response by GetUploadStatusRequest.
     {
       base::RunLoop run_loop;
-      drive::GetUploadStatusRequest* get_upload_status_request =
-          new drive::GetUploadStatusRequest(
-              request_sender_.get(),
-              upload_url,
-              kTestContent.size(),
+      std::unique_ptr<drive::GetUploadStatusRequest> request =
+          base::MakeUnique<drive::GetUploadStatusRequest>(
+              request_sender_.get(), upload_url, kTestContent.size(),
               test_util::CreateQuitCallback(
                   &run_loop,
                   test_util::CreateCopyResultCallback(&response, &new_entry)));
-      request_sender_->StartRequestWithAuthRetry(get_upload_status_request);
+      request_sender_->StartRequestWithAuthRetry(std::move(request));
       run_loop.Run();
     }
 
@@ -1327,24 +1336,20 @@ TEST_F(DriveApiRequestsTest, UploadNewLargeFileRequest) {
     const size_t end_position = start_position + payload.size();
 
     UploadRangeResponse response;
-    scoped_ptr<FileResource> new_entry;
+    std::unique_ptr<FileResource> new_entry;
 
     {
       base::RunLoop run_loop;
-      drive::ResumeUploadRequest* resume_request =
-          new drive::ResumeUploadRequest(
-              request_sender_.get(),
-              upload_url,
-              start_position,
-              end_position,
+      std::unique_ptr<drive::ResumeUploadRequest> request =
+          base::MakeUnique<drive::ResumeUploadRequest>(
+              request_sender_.get(), upload_url, start_position, end_position,
               kTestContent.size(),  // content_length,
-              kTestContentType,
-              kTestFilePath,
+              kTestContentType, kTestFilePath,
               test_util::CreateQuitCallback(
                   &run_loop,
                   test_util::CreateCopyResultCallback(&response, &new_entry)),
               ProgressCallback());
-      request_sender_->StartRequestWithAuthRetry(resume_request);
+      request_sender_->StartRequestWithAuthRetry(std::move(request));
       run_loop.Run();
     }
 
@@ -1375,20 +1380,19 @@ TEST_F(DriveApiRequestsTest, UploadNewLargeFileRequest) {
     // Check the response.
     EXPECT_EQ(HTTP_RESUME_INCOMPLETE, response.code);
     EXPECT_EQ(0, response.start_position_received);
-    EXPECT_EQ(static_cast<int64>(end_position), response.end_position_received);
+    EXPECT_EQ(static_cast<int64_t>(end_position),
+              response.end_position_received);
 
     // Check the response by GetUploadStatusRequest.
     {
       base::RunLoop run_loop;
-      drive::GetUploadStatusRequest* get_upload_status_request =
-          new drive::GetUploadStatusRequest(
-              request_sender_.get(),
-              upload_url,
-              kTestContent.size(),
+      std::unique_ptr<drive::GetUploadStatusRequest> request =
+          base::MakeUnique<drive::GetUploadStatusRequest>(
+              request_sender_.get(), upload_url, kTestContent.size(),
               test_util::CreateQuitCallback(
                   &run_loop,
                   test_util::CreateCopyResultCallback(&response, &new_entry)));
-      request_sender_->StartRequestWithAuthRetry(get_upload_status_request);
+      request_sender_->StartRequestWithAuthRetry(std::move(request));
       run_loop.Run();
     }
 
@@ -1405,7 +1409,7 @@ TEST_F(DriveApiRequestsTest, UploadNewLargeFileRequest) {
     // Check the response.
     EXPECT_EQ(HTTP_RESUME_INCOMPLETE, response.code);
     EXPECT_EQ(0, response.start_position_received);
-    EXPECT_EQ(static_cast<int64>(end_position),
+    EXPECT_EQ(static_cast<int64_t>(end_position),
               response.end_position_received);
   }
 }
@@ -1427,21 +1431,25 @@ TEST_F(DriveApiRequestsTest, UploadNewFileWithMetadataRequest) {
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadNewFileRequest* request =
-        new drive::InitiateUploadNewFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadNewFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadNewFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "parent_resource_id",  // The resource id of the parent directory.
-            "new file title",  // The title of the file being uploaded.
+            "new file title",      // The title of the file being uploaded.
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &upload_url)));
-    request->set_modified_date(base::Time::FromUTCExploded(kModifiedDate));
-    request->set_last_viewed_by_me_date(
-        base::Time::FromUTCExploded(kLastViewedByMeDate));
-    request_sender_->StartRequestWithAuthRetry(request);
+    base::Time modified_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kModifiedDate, &modified_date_utc));
+
+    request->set_modified_date(modified_date_utc);
+
+    base::Time last_viewed_by_me_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kLastViewedByMeDate,
+                                            &last_viewed_by_me_date_utc));
+    request->set_last_viewed_by_me_date(last_viewed_by_me_date_utc);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1471,7 +1479,7 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequest) {
   const char kTestContentType[] = "text/plain";
   const std::string kTestContent(100, 'a');
   const base::FilePath kTestFilePath =
-      temp_dir_.path().AppendASCII("upload_file.txt");
+      temp_dir_.GetPath().AppendASCII("upload_file.txt");
   ASSERT_TRUE(test_util::WriteStringToFile(kTestFilePath, kTestContent));
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
@@ -1480,11 +1488,9 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequest) {
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadExistingFileRequest* request =
-        new drive::InitiateUploadExistingFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadExistingFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadExistingFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "resource_id",  // The resource id of the file to be overwritten.
             std::string(),  // No etag.
@@ -1492,7 +1498,7 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequest) {
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &upload_url)));
     request->set_properties(testing_properties_);
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1515,24 +1521,22 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequest) {
 
   // Upload the content to the upload URL.
   UploadRangeResponse response;
-  scoped_ptr<FileResource> new_entry;
+  std::unique_ptr<FileResource> new_entry;
 
   {
     base::RunLoop run_loop;
-    drive::ResumeUploadRequest* resume_request =
-        new drive::ResumeUploadRequest(
-            request_sender_.get(),
-            upload_url,
-            0,  // start_position
+    std::unique_ptr<drive::ResumeUploadRequest> request =
+        base::MakeUnique<drive::ResumeUploadRequest>(
+            request_sender_.get(), upload_url,
+            0,                    // start_position
             kTestContent.size(),  // end_position (exclusive)
             kTestContent.size(),  // content_length,
-            kTestContentType,
-            kTestFilePath,
+            kTestContentType, kTestFilePath,
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&response, &new_entry)),
             ProgressCallback());
-    request_sender_->StartRequestWithAuthRetry(resume_request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1563,7 +1567,7 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequestWithETag) {
   const char kTestContentType[] = "text/plain";
   const std::string kTestContent(100, 'a');
   const base::FilePath kTestFilePath =
-      temp_dir_.path().AppendASCII("upload_file.txt");
+      temp_dir_.GetPath().AppendASCII("upload_file.txt");
   ASSERT_TRUE(test_util::WriteStringToFile(kTestFilePath, kTestContent));
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
@@ -1572,18 +1576,15 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequestWithETag) {
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadExistingFileRequest* request =
-        new drive::InitiateUploadExistingFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadExistingFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadExistingFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "resource_id",  // The resource id of the file to be overwritten.
-            kTestETag,
-            test_util::CreateQuitCallback(
-                &run_loop,
-                test_util::CreateCopyResultCallback(&error, &upload_url)));
-    request_sender_->StartRequestWithAuthRetry(request);
+            kTestETag, test_util::CreateQuitCallback(
+                           &run_loop, test_util::CreateCopyResultCallback(
+                                          &error, &upload_url)));
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1602,24 +1603,22 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequestWithETag) {
 
   // Upload the content to the upload URL.
   UploadRangeResponse response;
-  scoped_ptr<FileResource> new_entry;
+  std::unique_ptr<FileResource> new_entry;
 
   {
     base::RunLoop run_loop;
-    drive::ResumeUploadRequest* resume_request =
-        new drive::ResumeUploadRequest(
-            request_sender_.get(),
-            upload_url,
-            0,  // start_position
+    std::unique_ptr<drive::ResumeUploadRequest> request =
+        base::MakeUnique<drive::ResumeUploadRequest>(
+            request_sender_.get(), upload_url,
+            0,                    // start_position
             kTestContent.size(),  // end_position (exclusive)
             kTestContent.size(),  // content_length,
-            kTestContentType,
-            kTestFilePath,
+            kTestContentType, kTestFilePath,
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&response, &new_entry)),
             ProgressCallback());
-    request_sender_->StartRequestWithAuthRetry(resume_request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1661,18 +1660,16 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileRequestWithETagConflicting) {
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadExistingFileRequest* request =
-        new drive::InitiateUploadExistingFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadExistingFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadExistingFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "resource_id",  // The resource id of the file to be overwritten.
             "Conflicting-etag",
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&error, &upload_url)));
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1697,7 +1694,7 @@ TEST_F(DriveApiRequestsTest,
   const char kTestContentType[] = "text/plain";
   const std::string kTestContent(100, 'a');
   const base::FilePath kTestFilePath =
-      temp_dir_.path().AppendASCII("upload_file.txt");
+      temp_dir_.GetPath().AppendASCII("upload_file.txt");
   ASSERT_TRUE(test_util::WriteStringToFile(kTestFilePath, kTestContent));
 
   DriveApiErrorCode error = DRIVE_OTHER_ERROR;
@@ -1706,18 +1703,15 @@ TEST_F(DriveApiRequestsTest,
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadExistingFileRequest* request =
-        new drive::InitiateUploadExistingFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadExistingFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadExistingFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "resource_id",  // The resource id of the file to be overwritten.
-            kTestETag,
-            test_util::CreateQuitCallback(
-                &run_loop,
-                test_util::CreateCopyResultCallback(&error, &upload_url)));
-    request_sender_->StartRequestWithAuthRetry(request);
+            kTestETag, test_util::CreateQuitCallback(
+                           &run_loop, test_util::CreateCopyResultCallback(
+                                          &error, &upload_url)));
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1741,24 +1735,22 @@ TEST_F(DriveApiRequestsTest,
 
   // Upload the content to the upload URL.
   UploadRangeResponse response;
-  scoped_ptr<FileResource> new_entry;
+  std::unique_ptr<FileResource> new_entry;
 
   {
     base::RunLoop run_loop;
-    drive::ResumeUploadRequest* resume_request =
-        new drive::ResumeUploadRequest(
-            request_sender_.get(),
-            upload_url,
-            0,  // start_position
+    std::unique_ptr<drive::ResumeUploadRequest> resume_request =
+        base::MakeUnique<drive::ResumeUploadRequest>(
+            request_sender_.get(), upload_url,
+            0,                    // start_position
             kTestContent.size(),  // end_position (exclusive)
             kTestContent.size(),  // content_length,
-            kTestContentType,
-            kTestFilePath,
+            kTestContentType, kTestFilePath,
             test_util::CreateQuitCallback(
                 &run_loop,
                 test_util::CreateCopyResultCallback(&response, &new_entry)),
             ProgressCallback());
-    request_sender_->StartRequestWithAuthRetry(resume_request);
+    request_sender_->StartRequestWithAuthRetry(std::move(resume_request));
     run_loop.Run();
   }
 
@@ -1802,24 +1794,26 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileWithMetadataRequest) {
   // Initiate uploading a new file to the directory with "parent_resource_id".
   {
     base::RunLoop run_loop;
-    drive::InitiateUploadExistingFileRequest* request =
-        new drive::InitiateUploadExistingFileRequest(
-            request_sender_.get(),
-            *url_generator_,
-            kTestContentType,
+    std::unique_ptr<drive::InitiateUploadExistingFileRequest> request =
+        base::MakeUnique<drive::InitiateUploadExistingFileRequest>(
+            request_sender_.get(), *url_generator_, kTestContentType,
             kTestContent.size(),
             "resource_id",  // The resource id of the file to be overwritten.
-            kTestETag,
-            test_util::CreateQuitCallback(
-                &run_loop,
-                test_util::CreateCopyResultCallback(&error, &upload_url)));
+            kTestETag, test_util::CreateQuitCallback(
+                           &run_loop, test_util::CreateCopyResultCallback(
+                                          &error, &upload_url)));
     request->set_parent_resource_id("new_parent_resource_id");
     request->set_title("new file title");
-    request->set_modified_date(base::Time::FromUTCExploded(kModifiedDate));
-    request->set_last_viewed_by_me_date(
-        base::Time::FromUTCExploded(kLastViewedByMeDate));
+    base::Time modified_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kModifiedDate, &modified_date_utc));
 
-    request_sender_->StartRequestWithAuthRetry(request);
+    request->set_modified_date(modified_date_utc);
+
+    base::Time last_viewed_by_me_date_utc;
+    ASSERT_TRUE(base::Time::FromUTCExploded(kLastViewedByMeDate,
+                                            &last_viewed_by_me_date_utc));
+    request->set_last_viewed_by_me_date(last_viewed_by_me_date_utc);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1846,24 +1840,22 @@ TEST_F(DriveApiRequestsTest, UploadExistingFileWithMetadataRequest) {
 
 TEST_F(DriveApiRequestsTest, DownloadFileRequest) {
   const base::FilePath kDownloadedFilePath =
-      temp_dir_.path().AppendASCII("cache_file");
+      temp_dir_.GetPath().AppendASCII("cache_file");
   const std::string kTestId("dummyId");
 
   DriveApiErrorCode result_code = DRIVE_OTHER_ERROR;
   base::FilePath temp_file;
   {
     base::RunLoop run_loop;
-    drive::DownloadFileRequest* request = new drive::DownloadFileRequest(
-        request_sender_.get(),
-        *url_generator_,
-        kTestId,
-        kDownloadedFilePath,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&result_code, &temp_file)),
-        GetContentCallback(),
-        ProgressCallback());
-    request_sender_->StartRequestWithAuthRetry(request);
+    std::unique_ptr<drive::DownloadFileRequest> request =
+        base::MakeUnique<drive::DownloadFileRequest>(
+            request_sender_.get(), *url_generator_, kTestId,
+            kDownloadedFilePath,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&result_code, &temp_file)),
+            GetContentCallback(), ProgressCallback());
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1873,7 +1865,8 @@ TEST_F(DriveApiRequestsTest, DownloadFileRequest) {
 
   EXPECT_EQ(HTTP_SUCCESS, result_code);
   EXPECT_EQ(net::test_server::METHOD_GET, http_request_.method);
-  EXPECT_EQ(kTestDownloadPathPrefix + kTestId, http_request_.relative_url);
+  EXPECT_EQ(kTestDownloadPathPrefix + kTestId + "?" + kTestDownloadFileQuery,
+            http_request_.relative_url);
   EXPECT_EQ(kDownloadedFilePath, temp_file);
 
   const std::string expected_contents = kTestId + kTestId + kTestId;
@@ -1882,7 +1875,7 @@ TEST_F(DriveApiRequestsTest, DownloadFileRequest) {
 
 TEST_F(DriveApiRequestsTest, DownloadFileRequest_GetContentCallback) {
   const base::FilePath kDownloadedFilePath =
-      temp_dir_.path().AppendASCII("cache_file");
+      temp_dir_.GetPath().AppendASCII("cache_file");
   const std::string kTestId("dummyId");
 
   DriveApiErrorCode result_code = DRIVE_OTHER_ERROR;
@@ -1890,17 +1883,15 @@ TEST_F(DriveApiRequestsTest, DownloadFileRequest_GetContentCallback) {
   std::string contents;
   {
     base::RunLoop run_loop;
-    drive::DownloadFileRequest* request = new drive::DownloadFileRequest(
-        request_sender_.get(),
-        *url_generator_,
-        kTestId,
-        kDownloadedFilePath,
-        test_util::CreateQuitCallback(
-            &run_loop,
-            test_util::CreateCopyResultCallback(&result_code, &temp_file)),
-        base::Bind(&AppendContent, &contents),
-        ProgressCallback());
-    request_sender_->StartRequestWithAuthRetry(request);
+    std::unique_ptr<drive::DownloadFileRequest> request =
+        base::MakeUnique<drive::DownloadFileRequest>(
+            request_sender_.get(), *url_generator_, kTestId,
+            kDownloadedFilePath,
+            test_util::CreateQuitCallback(
+                &run_loop,
+                test_util::CreateCopyResultCallback(&result_code, &temp_file)),
+            base::Bind(&AppendContent, &contents), ProgressCallback());
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1908,7 +1899,8 @@ TEST_F(DriveApiRequestsTest, DownloadFileRequest_GetContentCallback) {
 
   EXPECT_EQ(HTTP_SUCCESS, result_code);
   EXPECT_EQ(net::test_server::METHOD_GET, http_request_.method);
-  EXPECT_EQ(kTestDownloadPathPrefix + kTestId, http_request_.relative_url);
+  EXPECT_EQ(kTestDownloadPathPrefix + kTestId + "?" + kTestDownloadFileQuery,
+            http_request_.relative_url);
   EXPECT_EQ(kDownloadedFilePath, temp_file);
 
   const std::string expected_contents = kTestId + kTestId + kTestId;
@@ -1924,18 +1916,16 @@ TEST_F(DriveApiRequestsTest, PermissionsInsertRequest) {
   // Add comment permission to the user "user@example.com".
   {
     base::RunLoop run_loop;
-    drive::PermissionsInsertRequest* request =
-        new drive::PermissionsInsertRequest(
-            request_sender_.get(),
-            *url_generator_,
+    std::unique_ptr<drive::PermissionsInsertRequest> request =
+        base::MakeUnique<drive::PermissionsInsertRequest>(
+            request_sender_.get(), *url_generator_,
             test_util::CreateQuitCallback(
-                &run_loop,
-                test_util::CreateCopyResultCallback(&error)));
+                &run_loop, test_util::CreateCopyResultCallback(&error)));
     request->set_id("resource_id");
     request->set_role(drive::PERMISSION_ROLE_COMMENTER);
     request->set_type(drive::PERMISSION_TYPE_USER);
     request->set_value("user@example.com");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1945,12 +1935,12 @@ TEST_F(DriveApiRequestsTest, PermissionsInsertRequest) {
             http_request_.relative_url);
   EXPECT_EQ("application/json", http_request_.headers["Content-Type"]);
 
-  scoped_ptr<base::Value> expected = base::JSONReader::Read(
+  std::unique_ptr<base::Value> expected = base::JSONReader::Read(
       "{\"additionalRoles\":[\"commenter\"], \"role\":\"reader\", "
       "\"type\":\"user\",\"value\":\"user@example.com\"}");
   ASSERT_TRUE(expected);
 
-  scoped_ptr<base::Value> result =
+  std::unique_ptr<base::Value> result =
       base::JSONReader::Read(http_request_.content);
   EXPECT_TRUE(http_request_.has_content);
   EXPECT_TRUE(base::Value::Equals(expected.get(), result.get()));
@@ -1959,18 +1949,16 @@ TEST_F(DriveApiRequestsTest, PermissionsInsertRequest) {
   error = DRIVE_OTHER_ERROR;
   {
     base::RunLoop run_loop;
-    drive::PermissionsInsertRequest* request =
-        new drive::PermissionsInsertRequest(
-            request_sender_.get(),
-            *url_generator_,
+    std::unique_ptr<drive::PermissionsInsertRequest> request =
+        base::MakeUnique<drive::PermissionsInsertRequest>(
+            request_sender_.get(), *url_generator_,
             test_util::CreateQuitCallback(
-                &run_loop,
-                test_util::CreateCopyResultCallback(&error)));
+                &run_loop, test_util::CreateCopyResultCallback(&error)));
     request->set_id("resource_id2");
     request->set_role(drive::PERMISSION_ROLE_WRITER);
     request->set_type(drive::PERMISSION_TYPE_DOMAIN);
     request->set_value("example.com");
-    request_sender_->StartRequestWithAuthRetry(request);
+    request_sender_->StartRequestWithAuthRetry(std::move(request));
     run_loop.Run();
   }
 
@@ -1994,18 +1982,20 @@ TEST_F(DriveApiRequestsTest, BatchUploadRequest) {
   const char kTestContentType[] = "text/plain";
   const std::string kTestContent(10, 'a');
   const base::FilePath kTestFilePath =
-      temp_dir_.path().AppendASCII("upload_file.txt");
+      temp_dir_.GetPath().AppendASCII("upload_file.txt");
   ASSERT_TRUE(test_util::WriteStringToFile(kTestFilePath, kTestContent));
 
   // Create batch request.
-  drive::BatchUploadRequest* const request =
-      new drive::BatchUploadRequest(request_sender_.get(), *url_generator_);
-  request->SetBoundaryForTesting("OUTERBOUNDARY");
-  request_sender_->StartRequestWithAuthRetry(request);
+  std::unique_ptr<drive::BatchUploadRequest> request =
+      base::MakeUnique<drive::BatchUploadRequest>(request_sender_.get(),
+                                                  *url_generator_);
+  drive::BatchUploadRequest* request_ptr = request.get();
+  request_ptr->SetBoundaryForTesting("OUTERBOUNDARY");
+  request_sender_->StartRequestWithAuthRetry(std::move(request));
 
   // Create child request.
   DriveApiErrorCode errors[] = {DRIVE_OTHER_ERROR, DRIVE_OTHER_ERROR};
-  scoped_ptr<FileResource> file_resources[2];
+  std::unique_ptr<FileResource> file_resources[2];
   base::RunLoop run_loop[2];
   for (int i = 0; i < 2; ++i) {
     const FileResourceCallback callback = test_util::CreateQuitCallback(
@@ -2019,9 +2009,9 @@ TEST_F(DriveApiRequestsTest, BatchUploadRequest) {
             base::Time(), base::Time(), kTestFilePath, drive::Properties(),
             *url_generator_, callback, ProgressCallback());
     child_request->SetBoundaryForTesting("INNERBOUNDARY");
-    request->AddRequest(child_request);
+    request_ptr->AddRequest(child_request);
   }
-  request->Commit();
+  request_ptr->Commit();
   run_loop[0].Run();
   run_loop[1].Run();
 
@@ -2075,21 +2065,14 @@ TEST_F(DriveApiRequestsTest, BatchUploadRequest) {
   EXPECT_EQ(HTTP_SERVICE_UNAVAILABLE, errors[1]);
 }
 
-TEST_F(DriveApiRequestsTest, EmptyBatchUploadRequest) {
-  drive::BatchUploadRequest* const request =
-      new drive::BatchUploadRequest(request_sender_.get(), *url_generator_);
-  base::WeakPtr<drive::BatchUploadRequest> weak_ptr =
-      request->GetWeakPtrAsBatchUploadRequest();
-  request->Commit();
-  ASSERT_FALSE(weak_ptr.get());
-}
-
 TEST_F(DriveApiRequestsTest, BatchUploadRequestWithBodyIncludingZero) {
   // Create batch request.
-  drive::BatchUploadRequest* const request =
-      new drive::BatchUploadRequest(request_sender_.get(), *url_generator_);
-  request->SetBoundaryForTesting("OUTERBOUNDARY");
-  request_sender_->StartRequestWithAuthRetry(request);
+  std::unique_ptr<drive::BatchUploadRequest> request =
+      base::MakeUnique<drive::BatchUploadRequest>(request_sender_.get(),
+                                                  *url_generator_);
+  drive::BatchUploadRequest* request_ptr = request.get();
+  request_ptr->SetBoundaryForTesting("OUTERBOUNDARY");
+  request_sender_->StartRequestWithAuthRetry(std::move(request));
 
   // Create child request.
   {
@@ -2097,8 +2080,8 @@ TEST_F(DriveApiRequestsTest, BatchUploadRequestWithBodyIncludingZero) {
     TestBatchableDelegate* const child_request = new TestBatchableDelegate(
         GURL("http://example.com/test"), "application/binary",
         std::string("Apple\0Orange\0", 13), loop.QuitClosure());
-    request->AddRequest(child_request);
-    request->Commit();
+    request_ptr->AddRequest(child_request);
+    request_ptr->Commit();
     loop.Run();
   }
 
@@ -2123,8 +2106,9 @@ TEST_F(DriveApiRequestsTest, BatchUploadRequestWithBodyIncludingZero) {
 
 TEST_F(DriveApiRequestsTest, BatchUploadRequestProgress) {
   // Create batch request.
-  drive::BatchUploadRequest* const request =
-      new drive::BatchUploadRequest(request_sender_.get(), *url_generator_);
+  std::unique_ptr<drive::BatchUploadRequest> request =
+      base::MakeUnique<drive::BatchUploadRequest>(request_sender_.get(),
+                                                  *url_generator_);
   TestBatchableDelegate* requests[] = {
       new TestBatchableDelegate(GURL("http://example.com/test"),
                                 "application/binary", std::string(100, 'a'),
@@ -2135,13 +2119,13 @@ TEST_F(DriveApiRequestsTest, BatchUploadRequestProgress) {
       new TestBatchableDelegate(GURL("http://example.com/test"),
                                 "application/binary", std::string(0, 'c'),
                                 base::Bind(&EmptyClosure))};
-  const size_t kExpectedUploadDataPosition[] = {208, 517, 776};
+  const size_t kExpectedUploadDataPosition[] = {207, 515, 773};
   const size_t kExpectedUploadDataSize = 851;
   request->AddRequest(requests[0]);
   request->AddRequest(requests[1]);
   request->AddRequest(requests[2]);
   request->Commit();
-  request->Prepare(base::Bind(&EmptyPreapreCallback));
+  request->Prepare(base::Bind(&EmptyPrepareCallback));
 
   request->OnURLFetchUploadProgress(nullptr, 0, kExpectedUploadDataSize);
   request->OnURLFetchUploadProgress(nullptr, 150, kExpectedUploadDataSize);

@@ -39,7 +39,14 @@ RtpSender::~RtpSender() {}
 
 bool RtpSender::Initialize(const CastTransportRtpConfig& config) {
   config_.ssrc = config.ssrc;
-  config_.payload_type = config.rtp_payload_type;
+  // TODO(xjz): Android TV receivers expect the |payload_type| to be one of
+  // these two specific values. This constraint needs to be removed and the
+  // value of the |payload_type| can vary according to the spec:
+  // https://tools.ietf.org/html/rfc3551.
+  if (config.rtp_payload_type <= RtpPayloadType::AUDIO_LAST)
+    config_.payload_type = 127;
+  else
+    config_.payload_type = 96;
   packetizer_.reset(new RtpPacketizer(transport_, &storage_, config_));
   return true;
 }
@@ -60,7 +67,7 @@ void RtpSender::ResendPackets(
        it != missing_frames_and_packets.end();
        ++it) {
     SendPacketVector packets_to_resend;
-    uint8 frame_id = it->first;
+    FrameId frame_id = it->first;
     // Set of packets that the receiver wants us to re-send.
     // If empty, we need to re-send all packets for this frame.
     const PacketIdSet& missing_packet_set = it->second;
@@ -70,14 +77,14 @@ void RtpSender::ResendPackets(
     bool resend_last = missing_packet_set.find(kRtcpCastLastPacket) !=
         missing_packet_set.end();
 
-    const SendPacketVector* stored_packets = storage_.GetFrame8(frame_id);
+    const SendPacketVector* stored_packets = storage_.GetFramePackets(frame_id);
     if (!stored_packets)
       continue;
 
     for (SendPacketVector::const_iterator it = stored_packets->begin();
          it != stored_packets->end(); ++it) {
       const PacketKey& packet_key = it->first;
-      const uint16 packet_id = packet_key.packet_id;
+      const uint16_t packet_id = packet_key.packet_id;
 
       // Should we resend the packet?
       bool resend = resend_all;
@@ -96,8 +103,7 @@ void RtpSender::ResendPackets(
 
       if (resend) {
         // Resend packet to the network.
-        VLOG(3) << "Resend " << static_cast<int>(frame_id) << ":"
-                << packet_id;
+        VLOG(3) << "Resend " << frame_id << ":" << packet_id;
         // Set a unique incremental sequence number for every packet.
         PacketRef packet_copy = FastCopyPacket(it->second);
         UpdateSequenceNumber(&packet_copy->data);
@@ -110,21 +116,20 @@ void RtpSender::ResendPackets(
   }
 }
 
-void RtpSender::CancelSendingFrames(const std::vector<uint32>& frame_ids) {
-  for (std::vector<uint32>::const_iterator i = frame_ids.begin();
-       i != frame_ids.end(); ++i) {
-    const SendPacketVector* stored_packets = storage_.GetFrame8(*i & 0xFF);
+void RtpSender::CancelSendingFrames(const std::vector<FrameId>& frame_ids) {
+  for (FrameId i : frame_ids) {
+    const SendPacketVector* stored_packets = storage_.GetFramePackets(i);
     if (!stored_packets)
       continue;
     for (SendPacketVector::const_iterator j = stored_packets->begin();
          j != stored_packets->end(); ++j) {
       transport_->CancelSendingPacket(j->first);
     }
-    storage_.ReleaseFrame(*i);
+    storage_.ReleaseFrame(i);
   }
 }
 
-void RtpSender::ResendFrameForKickstart(uint32 frame_id,
+void RtpSender::ResendFrameForKickstart(FrameId frame_id,
                                         base::TimeDelta dedupe_window) {
   // Send the last packet of the encoded frame to kick start
   // retransmission. This gives enough information to the receiver what
@@ -147,12 +152,12 @@ void RtpSender::UpdateSequenceNumber(Packet* packet) {
   static const int kByteOffsetToSequenceNumber = 2;
   base::BigEndianWriter big_endian_writer(
       reinterpret_cast<char*>((&packet->front()) + kByteOffsetToSequenceNumber),
-      sizeof(uint16));
+      sizeof(uint16_t));
   big_endian_writer.WriteU16(packetizer_->NextSequenceNumber());
 }
 
-int64 RtpSender::GetLastByteSentForFrame(uint32 frame_id) {
-  const SendPacketVector* stored_packets = storage_.GetFrame8(frame_id & 0xFF);
+int64_t RtpSender::GetLastByteSentForFrame(FrameId frame_id) {
+  const SendPacketVector* stored_packets = storage_.GetFramePackets(frame_id);
   if (!stored_packets)
     return 0;
   PacketKey last_packet_key = stored_packets->rbegin()->first;

@@ -38,7 +38,7 @@ bool CreateAPIPermission(
   const APIPermissionInfo* permission_info =
       PermissionsInfo::GetInstance()->GetByName(permission_str);
   if (permission_info) {
-    scoped_ptr<APIPermission> permission(
+    std::unique_ptr<APIPermission> permission(
         permission_info->CreateAPIPermission());
     if (source != APIPermissionSet::kAllowInternalPermissions &&
         permission_info->is_internal()) {
@@ -197,6 +197,8 @@ PermissionID::~PermissionID() {
 PermissionIDSet::PermissionIDSet() {
 }
 
+PermissionIDSet::PermissionIDSet(const PermissionIDSet& other) = default;
+
 PermissionIDSet::~PermissionIDSet() {
 }
 
@@ -273,7 +275,7 @@ PermissionIDSet PermissionIDSet::GetAllPermissionsWithIDs(
     const std::set<APIPermission::ID>& permission_ids) const {
   PermissionIDSet subset;
   for (const auto& permission : permissions_) {
-    if (ContainsKey(permission_ids, permission.id())) {
+    if (base::ContainsKey(permission_ids, permission.id())) {
       subset.permissions_.insert(permission);
     }
   }

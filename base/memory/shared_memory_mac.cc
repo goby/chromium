@@ -5,8 +5,8 @@
 #include "base/memory/shared_memory.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <mach/mach_vm.h>
+#include <stddef.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -16,14 +16,16 @@
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_mach_vm.h"
+#include "base/memory/shared_memory_helper.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/safe_strerror.h"
 #include "base/process/process_metrics.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/scoped_generic.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/foundation_util.h"
@@ -32,38 +34,6 @@
 namespace base {
 
 namespace {
-
-const char kTrialName[] = "MacMemoryMechanism";
-const char kTrialMach[] = "Mach";
-const char kTrialPosix[] = "Posix";
-
-SharedMemoryHandle::Type GetABTestMechanism() {
-  static bool found_group = false;
-  static SharedMemoryHandle::Type group = SharedMemoryHandle::MACH;
-
-  if (found_group)
-    return group;
-
-  const std::string group_name =
-      base::FieldTrialList::FindFullName(kTrialName);
-  if (group_name == kTrialMach) {
-    group = SharedMemoryHandle::MACH;
-    found_group = true;
-  } else if (group_name == kTrialPosix) {
-    group = SharedMemoryHandle::POSIX;
-    found_group = true;
-  } else {
-    group = SharedMemoryHandle::MACH;
-  }
-
-  return group;
-}
-
-// Emits a histogram entry indicating which type of SharedMemory was created.
-void EmitMechanism(SharedMemoryHandle::Type type) {
-  UMA_HISTOGRAM_ENUMERATION("OSX.SharedMemory.Mechanism", type,
-                            SharedMemoryHandle::TypeMax);
-}
 
 // Returns whether the operation succeeded.
 // |new_handle| is an output variable, populated on success. The caller takes
@@ -108,90 +78,11 @@ bool MakeMachSharedMemoryHandleReadOnly(SharedMemoryHandle* new_handle,
   return true;
 }
 
-struct ScopedPathUnlinkerTraits {
-  static FilePath* InvalidValue() { return nullptr; }
-
-  static void Free(FilePath* path) {
-    // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/466437
-    // is fixed.
-    tracked_objects::ScopedTracker tracking_profile(
-        FROM_HERE_WITH_EXPLICIT_FUNCTION(
-            "466437 SharedMemory::Create::Unlink"));
-    if (unlink(path->value().c_str()))
-      PLOG(WARNING) << "unlink";
-  }
-};
-
-// Unlinks the FilePath when the object is destroyed.
-typedef ScopedGeneric<FilePath*, ScopedPathUnlinkerTraits> ScopedPathUnlinker;
-
-// Makes a temporary file, fdopens it, and then unlinks it. |fp| is populated
-// with the fdopened FILE. |readonly_fd| is populated with the opened fd if
-// options.share_read_only is true. |path| is populated with the location of
-// the file before it was unlinked.
-// Returns false if there's an unhandled failure.
-bool CreateAnonymousSharedMemory(const SharedMemoryCreateOptions& options,
-                                 ScopedFILE* fp,
-                                 ScopedFD* readonly_fd,
-                                 FilePath* path) {
-  // Q: Why not use the shm_open() etc. APIs?
-  // A: Because they're limited to 4mb on OS X.  FFFFFFFUUUUUUUUUUU
-  FilePath directory;
-  ScopedPathUnlinker path_unlinker;
-  if (GetShmemTempDir(options.executable, &directory)) {
-    // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/466437
-    // is fixed.
-    tracked_objects::ScopedTracker tracking_profile(
-        FROM_HERE_WITH_EXPLICIT_FUNCTION(
-            "466437 SharedMemory::Create::OpenTemporaryFile"));
-    fp->reset(CreateAndOpenTemporaryFileInDir(directory, path));
-
-    // Deleting the file prevents anyone else from mapping it in (making it
-    // private), and prevents the need for cleanup (once the last fd is
-    // closed, it is truly freed).
-    if (*fp)
-      path_unlinker.reset(path);
-  }
-
-  if (*fp) {
-    if (options.share_read_only) {
-      // TODO(erikchen): Remove ScopedTracker below once
-      // http://crbug.com/466437 is fixed.
-      tracked_objects::ScopedTracker tracking_profile(
-          FROM_HERE_WITH_EXPLICIT_FUNCTION(
-              "466437 SharedMemory::Create::OpenReadonly"));
-      // Also open as readonly so that we can ShareReadOnlyToProcess.
-      readonly_fd->reset(HANDLE_EINTR(open(path->value().c_str(), O_RDONLY)));
-      if (!readonly_fd->is_valid()) {
-        DPLOG(ERROR) << "open(\"" << path->value() << "\", O_RDONLY) failed";
-        fp->reset();
-        return false;
-      }
-    }
-  }
-  return true;
-}
 
 }  // namespace
 
-SharedMemoryCreateOptions::SharedMemoryCreateOptions()
-    : type(SharedMemoryHandle::MACH),
-      size(0),
-      executable(false),
-      share_read_only(false) {
-  if (mac::IsOSLionOrLater()) {
-    // A/B test the mechanism. Once the experiment is over, this will always be
-    // set to SharedMemoryHandle::MACH.
-    // http://crbug.com/547261
-    type = GetABTestMechanism();
-  } else {
-    // Mach shared memory isn't supported on OSX 10.6 or older.
-    type = SharedMemoryHandle::POSIX;
-  }
-}
-
 SharedMemory::SharedMemory()
-    : mapped_memory_mechanism_(SharedMemoryHandle::POSIX),
+    : mapped_memory_mechanism_(SharedMemoryHandle::MACH),
       readonly_mapped_file_(-1),
       mapped_size_(0),
       memory_(NULL),
@@ -206,20 +97,6 @@ SharedMemory::SharedMemory(const SharedMemoryHandle& handle, bool read_only)
       memory_(NULL),
       read_only_(read_only),
       requested_size_(0) {}
-
-SharedMemory::SharedMemory(const SharedMemoryHandle& handle,
-                           bool read_only,
-                           ProcessHandle process)
-    : mapped_memory_mechanism_(SharedMemoryHandle::POSIX),
-      readonly_mapped_file_(-1),
-      mapped_size_(0),
-      memory_(NULL),
-      read_only_(read_only),
-      requested_size_(0) {
-  // We don't handle this case yet (note the ignored parameter); let's die if
-  // someone comes calling.
-  NOTREACHED();
-}
 
 SharedMemory::~SharedMemory() {
   Unmap();
@@ -255,22 +132,11 @@ SharedMemoryHandle SharedMemory::DuplicateHandle(
 // static
 int SharedMemory::GetFdFromSharedMemoryHandle(
     const SharedMemoryHandle& handle) {
-  return handle.GetFileDescriptor().fd;
+  return handle.file_descriptor_.fd;
 }
 
 bool SharedMemory::CreateAndMapAnonymous(size_t size) {
   return CreateAnonymous(size) && Map(size);
-}
-
-bool SharedMemory::CreateAndMapAnonymousPosix(size_t size) {
-  return CreateAnonymousPosix(size) && Map(size);
-}
-
-bool SharedMemory::CreateAnonymousPosix(size_t size) {
-  SharedMemoryCreateOptions options;
-  options.type = SharedMemoryHandle::POSIX;
-  options.size = size;
-  return Create(options);
 }
 
 // static
@@ -283,18 +149,11 @@ bool SharedMemory::GetSizeFromSharedMemoryHandle(
 // Chromium mostly only uses the unique/private shmem as specified by
 // "name == L"". The exception is in the StatsTable.
 bool SharedMemory::Create(const SharedMemoryCreateOptions& options) {
-  // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/466437
-  // is fixed.
-  tracked_objects::ScopedTracker tracking_profile1(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "466437 SharedMemory::Create::Start"));
   DCHECK(!shm_.IsValid());
   if (options.size == 0) return false;
 
   if (options.size > static_cast<size_t>(std::numeric_limits<int>::max()))
     return false;
-
-  EmitMechanism(options.type);
 
   if (options.type == SharedMemoryHandle::MACH) {
     shm_ = SharedMemoryHandle(options.size);
@@ -331,7 +190,12 @@ bool SharedMemory::Create(const SharedMemoryCreateOptions& options) {
   }
   requested_size_ = options.size;
 
-  return PrepareMapFile(std::move(fp), std::move(readonly_fd));
+  int mapped_file = -1;
+  result = PrepareMapFile(std::move(fp), std::move(readonly_fd), &mapped_file,
+                          &readonly_mapped_file_);
+
+  shm_ = SharedMemoryHandle(FileDescriptor(mapped_file, false));
+  return result;
 }
 
 bool SharedMemory::MapAt(off_t offset, size_t bytes) {
@@ -347,7 +211,7 @@ bool SharedMemory::MapAt(off_t offset, size_t bytes) {
     mapped_size_ = bytes;
     DCHECK_EQ(0U, reinterpret_cast<uintptr_t>(memory_) &
                       (SharedMemory::MAP_MINIMUM_ALIGNMENT - 1));
-    mapped_memory_mechanism_ = shm_.GetType();
+    mapped_memory_mechanism_ = shm_.type_;
   } else {
     memory_ = NULL;
   }
@@ -376,18 +240,25 @@ bool SharedMemory::Unmap() {
 }
 
 SharedMemoryHandle SharedMemory::handle() const {
-  switch (shm_.GetType()) {
+  switch (shm_.type_) {
     case SharedMemoryHandle::POSIX:
-      return SharedMemoryHandle(shm_.GetFileDescriptor().fd, false);
+      return SharedMemoryHandle(
+          FileDescriptor(shm_.file_descriptor_.fd, false));
     case SharedMemoryHandle::MACH:
       return shm_;
   }
 }
 
+SharedMemoryHandle SharedMemory::TakeHandle() {
+  SharedMemoryHandle dup = DuplicateHandle(handle());
+  Close();
+  return dup;
+}
+
 void SharedMemory::Close() {
   shm_.Close();
   shm_ = SharedMemoryHandle();
-  if (shm_.GetType() == SharedMemoryHandle::POSIX) {
+  if (shm_.type_ == SharedMemoryHandle::POSIX) {
     if (readonly_mapped_file_ > 0) {
       if (IGNORE_EINTR(close(readonly_mapped_file_)) < 0)
         PLOG(ERROR) << "close";
@@ -396,50 +267,8 @@ void SharedMemory::Close() {
   }
 }
 
-bool SharedMemory::PrepareMapFile(ScopedFILE fp, ScopedFD readonly_fd) {
-  DCHECK(!shm_.IsValid());
-  DCHECK_EQ(-1, readonly_mapped_file_);
-  if (fp == NULL)
-    return false;
-
-  // This function theoretically can block on the disk, but realistically
-  // the temporary files we create will just go into the buffer cache
-  // and be deleted before they ever make it out to disk.
-  base::ThreadRestrictions::ScopedAllowIO allow_io;
-
-  struct stat st = {};
-  if (fstat(fileno(fp.get()), &st))
-    NOTREACHED();
-  if (readonly_fd.is_valid()) {
-    struct stat readonly_st = {};
-    if (fstat(readonly_fd.get(), &readonly_st))
-      NOTREACHED();
-    if (st.st_dev != readonly_st.st_dev || st.st_ino != readonly_st.st_ino) {
-      LOG(ERROR) << "writable and read-only inodes don't match; bailing";
-      return false;
-    }
-  }
-
-  int mapped_file = HANDLE_EINTR(dup(fileno(fp.get())));
-  if (mapped_file == -1) {
-    if (errno == EMFILE) {
-      LOG(WARNING) << "Shared memory creation failed; out of file descriptors";
-      return false;
-    } else {
-      NOTREACHED() << "Call to dup failed, errno=" << errno;
-    }
-  }
-  shm_ = SharedMemoryHandle(mapped_file, false);
-  readonly_mapped_file_ = readonly_fd.release();
-
-  return true;
-}
-
-bool SharedMemory::ShareToProcessCommon(ProcessHandle process,
-                                        SharedMemoryHandle* new_handle,
-                                        bool close_self,
-                                        ShareMode share_mode) {
-  if (shm_.GetType() == SharedMemoryHandle::MACH) {
+bool SharedMemory::Share(SharedMemoryHandle* new_handle, ShareMode share_mode) {
+  if (shm_.type_ == SharedMemoryHandle::MACH) {
     DCHECK(shm_.IsValid());
 
     bool success = false;
@@ -456,18 +285,13 @@ bool SharedMemory::ShareToProcessCommon(ProcessHandle process,
     if (success)
       new_handle->SetOwnershipPassesToIPC(true);
 
-    if (close_self) {
-      Unmap();
-      Close();
-    }
-
     return success;
   }
 
   int handle_to_dup = -1;
   switch (share_mode) {
     case SHARE_CURRENT_MODE:
-      handle_to_dup = shm_.GetFileDescriptor().fd;
+      handle_to_dup = shm_.file_descriptor_.fd;
       break;
     case SHARE_READONLY:
       // We could imagine re-opening the file from /dev/fd, but that can't make
@@ -479,22 +303,26 @@ bool SharedMemory::ShareToProcessCommon(ProcessHandle process,
 
   const int new_fd = HANDLE_EINTR(dup(handle_to_dup));
   if (new_fd < 0) {
-    if (close_self) {
-      Unmap();
-      Close();
-    }
     DPLOG(ERROR) << "dup() failed.";
     return false;
   }
 
-  new_handle->SetFileHandle(new_fd, true);
+  new_handle->file_descriptor_.fd = new_fd;
+  new_handle->type_ = SharedMemoryHandle::POSIX;
 
+  return true;
+}
+
+bool SharedMemory::ShareToProcessCommon(ProcessHandle process,
+                                        SharedMemoryHandle* new_handle,
+                                        bool close_self,
+                                        ShareMode share_mode) {
+  bool success = Share(new_handle, share_mode);
   if (close_self) {
     Unmap();
     Close();
   }
-
-  return true;
+  return success;
 }
 
 }  // namespace base

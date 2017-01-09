@@ -4,6 +4,8 @@
 
 #include "net/base/backoff_entry_serializer.h"
 
+#include <utility>
+
 #include "base/strings/string_number_conversions.h"
 #include "base/time/tick_clock.h"
 #include "base/values.h"
@@ -17,16 +19,17 @@ const int kSerializationFormatVersion = 1;
 
 namespace net {
 
-scoped_ptr<base::Value> BackoffEntrySerializer::SerializeToValue(
-    const BackoffEntry& entry, base::Time time_now) {
-  scoped_ptr<base::ListValue> serialized(new base::ListValue());
+std::unique_ptr<base::Value> BackoffEntrySerializer::SerializeToValue(
+    const BackoffEntry& entry,
+    base::Time time_now) {
+  std::unique_ptr<base::ListValue> serialized(new base::ListValue());
   serialized->AppendInteger(kSerializationFormatVersion);
 
   serialized->AppendInteger(entry.failure_count());
 
   // Can't use entry.GetTimeUntilRelease as it doesn't allow negative deltas.
   base::TimeDelta backoff_duration =
-      entry.GetReleaseTime() - entry.tick_clock()->NowTicks();
+      entry.GetReleaseTime() - entry.GetTimeTicksNow();
   // Redundantly stores both the remaining time delta and the absolute time.
   // The delta is used to work around some cases where wall clock time changes.
   serialized->AppendDouble(backoff_duration.InSecondsF());
@@ -34,12 +37,14 @@ scoped_ptr<base::Value> BackoffEntrySerializer::SerializeToValue(
   serialized->AppendString(
       base::Int64ToString(absolute_release_time.ToInternalValue()));
 
-  return serialized.Pass();
+  return std::move(serialized);
 }
 
-scoped_ptr<BackoffEntry> BackoffEntrySerializer::DeserializeFromValue(
-    const base::Value& serialized, const BackoffEntry::Policy* policy,
-    base::TickClock* tick_clock, base::Time time_now) {
+std::unique_ptr<BackoffEntry> BackoffEntrySerializer::DeserializeFromValue(
+    const base::Value& serialized,
+    const BackoffEntry::Policy* policy,
+    base::TickClock* tick_clock,
+    base::Time time_now) {
   const base::ListValue* serialized_list = nullptr;
   if (!serialized.GetAsList(&serialized_list))
     return nullptr;
@@ -67,7 +72,7 @@ scoped_ptr<BackoffEntry> BackoffEntrySerializer::DeserializeFromValue(
     return nullptr;
   }
 
-  scoped_ptr<BackoffEntry> entry(new BackoffEntry(policy, tick_clock));
+  std::unique_ptr<BackoffEntry> entry(new BackoffEntry(policy, tick_clock));
 
   for (int n = 0; n < failure_count; n++)
     entry->InformOfRequest(false);

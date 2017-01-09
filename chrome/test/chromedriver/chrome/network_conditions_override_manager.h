@@ -5,11 +5,11 @@
 #ifndef CHROME_TEST_CHROMEDRIVER_CHROME_NETWORK_CONDITIONS_OVERRIDE_MANAGER_H_
 #define CHROME_TEST_CHROMEDRIVER_CHROME_NETWORK_CONDITIONS_OVERRIDE_MANAGER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/test/chromedriver/chrome/devtools_event_listener.h"
 
 namespace base {

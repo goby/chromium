@@ -23,25 +23,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/style/StyleFilterData.h"
 
 namespace blink {
 
-StyleFilterData::StyleFilterData()
-    : m_operations()
-{
-}
+StyleFilterData::StyleFilterData() : m_operations() {}
 
 StyleFilterData::StyleFilterData(const StyleFilterData& o)
-    : m_operations(o.m_operations)
-{
+    : m_operations(o.m_operations) {}
+
+bool StyleFilterData::operator==(const StyleFilterData& o) const {
+  return m_operations == o.m_operations;
 }
 
-bool StyleFilterData::operator==(const StyleFilterData& o) const
-{
-    return m_operations == o.m_operations;
-}
-
-} // namespace blink
-
+}  // namespace blink

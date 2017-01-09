@@ -13,8 +13,12 @@
 #include "base/sys_info.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths_internal.h"
+#include "chrome/common/features.h"
+#include "media/cdm/cdm_paths.h"
+#include "ppapi/features/features.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/path_utils.h"
@@ -39,13 +43,9 @@ namespace {
 const base::FilePath::CharType kPepperFlashBaseDirectory[] =
     FILE_PATH_LITERAL("PepperFlash");
 
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MACOSX)
 const base::FilePath::CharType kPepperFlashSystemBaseDirectory[] =
     FILE_PATH_LITERAL("Internet Plug-Ins/PepperFlashPlayer");
-const base::FilePath::CharType kFlashSystemBaseDirectory[] =
-    FILE_PATH_LITERAL("Internet Plug-Ins");
-const base::FilePath::CharType kFlashSystemPluginName[] =
-    FILE_PATH_LITERAL("Flash Player.plugin");
 #endif
 
 const base::FilePath::CharType kInternalNaClPluginFileName[] =
@@ -67,12 +67,17 @@ const base::FilePath::CharType kComponentUpdatedFlashHint[] =
     FILE_PATH_LITERAL("latest-component-updated-flash");
 #endif  // defined(OS_LINUX)
 
+#if defined(OS_CHROMEOS)
+const base::FilePath::CharType kChromeOSComponentFlash[] = FILE_PATH_LITERAL(
+    "/run/imageloader/PepperFlashPlayer/libpepflashplayer.so");
+#endif  // defined(OS_CHROMEOS)
+
 static base::LazyInstance<base::FilePath>
     g_invalid_specified_user_data_dir = LAZY_INSTANCE_INITIALIZER;
 
 // Gets the path for internal plugins.
 bool GetInternalPluginsDirectory(base::FilePath* result) {
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MACOSX)
   // If called from Chrome, get internal plugins from a subdirectory of the
   // framework.
   if (base::mac::AmIBundled()) {
@@ -88,19 +93,34 @@ bool GetInternalPluginsDirectory(base::FilePath* result) {
   return PathService::Get(base::DIR_MODULE, result);
 }
 
+// Gets the path for bundled implementations of components. Note that these
+// implementations should not be used if higher-versioned component-updated
+// implementations are available in DIR_USER_DATA.
+bool GetComponentDirectory(base::FilePath* result) {
+#if defined(OS_MACOSX)
+  // If called from Chrome, return the framework's Libraries directory.
+  if (base::mac::AmIBundled()) {
+    *result = chrome::GetFrameworkBundlePath();
+    DCHECK(!result->empty());
+    *result = result->Append("Libraries");
+    return true;
+  }
+// In tests, just look in the module directory (below).
+#endif
+
+  // The rest of the world expects components in the module directory.
+  return PathService::Get(base::DIR_MODULE, result);
+}
+
 #if defined(OS_WIN)
-// Gets the Flash path if installed on the system. |is_npapi| determines whether
-// to return the NPAPI of the PPAPI version of the system plugin.
-bool GetSystemFlashFilename(base::FilePath* out_path, bool is_npapi) {
-  const wchar_t kNpapiFlashRegistryRoot[] =
-      L"SOFTWARE\\Macromedia\\FlashPlayerPlugin";
+// Gets the Pepper Flash path if installed on the system.
+bool GetSystemFlashFilename(base::FilePath* out_path) {
   const wchar_t kPepperFlashRegistryRoot[] =
       L"SOFTWARE\\Macromedia\\FlashPlayerPepper";
   const wchar_t kFlashPlayerPathValueName[] = L"PlayerPath";
 
-  base::win::RegKey path_key(
-      HKEY_LOCAL_MACHINE,
-      is_npapi ? kNpapiFlashRegistryRoot : kPepperFlashRegistryRoot, KEY_READ);
+  base::win::RegKey path_key(HKEY_LOCAL_MACHINE, kPepperFlashRegistryRoot,
+                             KEY_READ);
   base::string16 path_str;
   if (FAILED(path_key.ReadValue(kFlashPlayerPathValueName, &path_str)))
     return false;
@@ -239,10 +259,11 @@ bool PathProvider(int key, base::FilePath* result) {
       cur = cur.Append(FILE_PATH_LITERAL("resources"));
 #endif
       break;
-    case chrome::DIR_INSPECTOR:
+    case chrome::DIR_INSPECTOR_DEBUG:
       if (!PathService::Get(chrome::DIR_RESOURCES, &cur))
         return false;
-      cur = cur.Append(FILE_PATH_LITERAL("inspector"));
+      cur = cur.Append(FILE_PATH_LITERAL("inspector"))
+               .Append(FILE_PATH_LITERAL("debug"));
       break;
     case chrome::DIR_APP_DICTIONARIES:
 #if defined(OS_POSIX)
@@ -263,6 +284,10 @@ bool PathProvider(int key, base::FilePath* result) {
       if (!GetInternalPluginsDirectory(&cur))
         return false;
       break;
+    case chrome::DIR_COMPONENTS:
+      if (!GetComponentDirectory(&cur))
+        return false;
+      break;
     case chrome::DIR_PEPPER_FLASH_PLUGIN:
       if (!GetInternalPluginsDirectory(&cur))
         return false;
@@ -275,9 +300,9 @@ bool PathProvider(int key, base::FilePath* result) {
       break;
     case chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN:
 #if defined(OS_WIN)
-      if (!GetSystemFlashFilename(&cur, false))
+      if (!GetSystemFlashFilename(&cur))
         return false;
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
+#elif defined(OS_MACOSX)
       if (!GetLocalLibraryDirectory(&cur))
         return false;
       cur = cur.Append(kPepperFlashSystemBaseDirectory);
@@ -285,20 +310,6 @@ bool PathProvider(int key, base::FilePath* result) {
 #else
       // Chrome on iOS does not supports PPAPI binaries, return false.
       // TODO(wfh): If Adobe release PPAPI binaries for Linux, add support here.
-      return false;
-#endif
-      break;
-    case chrome::FILE_FLASH_SYSTEM_PLUGIN:
-#if defined(OS_WIN)
-      if (!GetSystemFlashFilename(&cur, true))
-        return false;
-#elif defined(OS_MACOSX) && !defined(OS_IOS)
-      if (!GetLocalLibraryDirectory(&cur))
-        return false;
-      cur = cur.Append(kFlashSystemBaseDirectory);
-      cur = cur.Append(kFlashSystemPluginName);
-#else
-      // Chrome on other platforms does not supports system NPAPI binaries.
       return false;
 #endif
       break;
@@ -361,31 +372,31 @@ bool PathProvider(int key, base::FilePath* result) {
 #endif
       cur = cur.Append(FILE_PATH_LITERAL("pnacl"));
       break;
-#if defined(WIDEVINE_CDM_AVAILABLE) && defined(ENABLE_PEPPER_CDMS)
+#if defined(WIDEVINE_CDM_AVAILABLE) && BUILDFLAG(ENABLE_PEPPER_CDMS)
 #if defined(WIDEVINE_CDM_IS_COMPONENT)
     case chrome::DIR_COMPONENT_WIDEVINE_CDM:
       if (!PathService::Get(chrome::DIR_USER_DATA, &cur))
         return false;
-      cur = cur.Append(FILE_PATH_LITERAL("WidevineCDM"));
+      cur = cur.AppendASCII(kWidevineCdmBaseDirectory);
       break;
 #endif  // defined(WIDEVINE_CDM_IS_COMPONENT)
     // TODO(xhwang): FILE_WIDEVINE_CDM_ADAPTER has different meanings.
     // In the component case, this is the source adapter. Otherwise, it is the
     // actual Pepper module that gets loaded.
     case chrome::FILE_WIDEVINE_CDM_ADAPTER:
-      if (!GetInternalPluginsDirectory(&cur))
+      if (!GetComponentDirectory(&cur))
         return false;
+      cur = cur.Append(
+          media::GetPlatformSpecificDirectory(kWidevineCdmBaseDirectory));
       cur = cur.AppendASCII(kWidevineCdmAdapterFileName);
       break;
-#endif  // defined(WIDEVINE_CDM_AVAILABLE) && defined(ENABLE_PEPPER_CDMS)
+#endif  // defined(WIDEVINE_CDM_AVAILABLE) && BUILDFLAG(ENABLE_PEPPER_CDMS)
     case chrome::FILE_RESOURCES_PACK:
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-      if (base::mac::AmIBundled()) {
-        cur = base::mac::FrameworkBundlePath();
-        cur = cur.Append(FILE_PATH_LITERAL("Resources"))
-                 .Append(FILE_PATH_LITERAL("resources.pak"));
-        break;
-      }
+#if defined(OS_MACOSX)
+      cur = base::mac::FrameworkBundlePath();
+      cur = cur.Append(FILE_PATH_LITERAL("Resources"))
+               .Append(FILE_PATH_LITERAL("resources.pak"));
+      break;
 #elif defined(OS_ANDROID)
       if (!PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &cur))
         return false;
@@ -420,7 +431,7 @@ bool PathProvider(int key, base::FilePath* result) {
       cur = cur.Append(FILE_PATH_LITERAL("custom_wallpapers"));
       break;
 #endif
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #if defined(OS_LINUX)
     case chrome::DIR_SUPERVISED_USERS_DEFAULT_APPS:
       if (!PathService::Get(chrome::DIR_STANDALONE_EXTERNAL_EXTENSIONS, &cur))
@@ -441,7 +452,7 @@ bool PathProvider(int key, base::FilePath* result) {
 #if defined(OS_ANDROID)
       // On Android, our tests don't have permission to write to DIR_MODULE.
       // gtest/test_runner.py pushes data to external storage.
-      if (!PathService::Get(base::DIR_ANDROID_EXTERNAL_STORAGE, &cur))
+      if (!PathService::Get(base::DIR_SOURCE_ROOT, &cur))
         return false;
 #else
       if (!PathService::Get(base::DIR_MODULE, &cur))
@@ -479,24 +490,8 @@ bool PathProvider(int key, base::FilePath* result) {
       break;
     }
 #endif
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-    case chrome::DIR_USER_LIBRARY: {
-      if (!GetUserLibraryDirectory(&cur))
-        return false;
-      if (!base::PathExists(cur))  // We don't want to create this.
-        return false;
-      break;
-    }
-    case chrome::DIR_USER_APPLICATIONS: {
-      if (!GetUserApplicationsDirectory(&cur))
-        return false;
-      if (!base::PathExists(cur))  // We don't want to create this.
-        return false;
-      break;
-    }
-#endif
 #if defined(OS_CHROMEOS) || (defined(OS_LINUX) && defined(CHROMIUM_BUILD)) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS))
+    defined(OS_MACOSX)
     case chrome::DIR_USER_EXTERNAL_EXTENSIONS: {
       if (!PathService::Get(chrome::DIR_USER_DATA, &cur))
         return false;
@@ -511,7 +506,7 @@ bool PathProvider(int key, base::FilePath* result) {
     }
 #endif
     case chrome::DIR_EXTERNAL_EXTENSIONS:
-#if defined(OS_MACOSX) && !defined(OS_IOS)
+#if defined(OS_MACOSX)
       if (!chrome::GetGlobalApplicationSupportDirectory(&cur))
         return false;
 
@@ -539,7 +534,7 @@ bool PathProvider(int key, base::FilePath* result) {
 #endif
       break;
 
-#if defined(OS_LINUX) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_LINUX) || defined(OS_MACOSX)
     case chrome::DIR_NATIVE_MESSAGING:
 #if defined(OS_MACOSX)
 #if defined(GOOGLE_CHROME_BUILD)
@@ -565,7 +560,7 @@ bool PathProvider(int key, base::FilePath* result) {
         return false;
       cur = cur.Append(FILE_PATH_LITERAL("NativeMessagingHosts"));
       break;
-#endif  // defined(OS_LINUX) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX)
 #if !defined(OS_ANDROID)
     case chrome::DIR_GLOBAL_GCM_STORE:
       if (!PathService::Get(chrome::DIR_USER_DATA, &cur))
@@ -582,6 +577,12 @@ bool PathProvider(int key, base::FilePath* result) {
       cur = cur.Append(kComponentUpdatedFlashHint);
       break;
 #endif  // defined(OS_LINUX)
+#if defined(OS_CHROMEOS)
+    case chrome::FILE_CHROME_OS_COMPONENT_FLASH:
+      cur = base::FilePath(kChromeOSComponentFlash);
+      create_dir = false;
+      break;
+#endif  // defined(OS_CHROMEOS)
 
     default:
       return false;

@@ -5,16 +5,16 @@
 #ifndef CHROME_BROWSER_CHROMEOS_SESSION_LENGTH_LIMITER_H_
 #define CHROME_BROWSER_CHROMEOS_SESSION_LENGTH_LIMITER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "ui/base/user_activity/user_activity_observer.h"
 
-class PrefService;
 class PrefRegistrySimple;
 
 namespace chromeos {
@@ -60,10 +60,10 @@ class SessionLengthLimiter : public ui::UserActivityObserver {
 
   base::ThreadChecker thread_checker_;
 
-  scoped_ptr<Delegate> delegate_;
+  std::unique_ptr<Delegate> delegate_;
   PrefChangeRegistrar pref_change_registrar_;
 
-  scoped_ptr<base::OneShotTimer> timer_;
+  std::unique_ptr<base::OneShotTimer> timer_;
   base::TimeTicks session_start_time_;
   bool user_activity_seen_;
 

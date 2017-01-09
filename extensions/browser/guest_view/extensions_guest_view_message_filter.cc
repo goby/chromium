@@ -4,6 +4,7 @@
 
 #include "extensions/browser/guest_view/extensions_guest_view_message_filter.h"
 
+#include "base/macros.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
@@ -30,8 +31,8 @@ using guest_view::GuestViewMessageFilter;
 
 namespace extensions {
 
-const uint32 ExtensionsGuestViewMessageFilter::kFilteredMessageClasses[] =
-    {GuestViewMsgStart, ExtensionsGuestViewMsgStart};
+const uint32_t ExtensionsGuestViewMessageFilter::kFilteredMessageClasses[] = {
+    GuestViewMsgStart, ExtensionsGuestViewMsgStart};
 
 ExtensionsGuestViewMessageFilter::ExtensionsGuestViewMessageFilter(
     int render_process_id,
@@ -75,7 +76,7 @@ bool ExtensionsGuestViewMessageFilter::OnMessageReceived(
 
 GuestViewManager* ExtensionsGuestViewMessageFilter::
     GetOrCreateGuestViewManager() {
-  auto manager = GuestViewManager::FromBrowserContext(browser_context_);
+  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
   if (!manager) {
     manager = GuestViewManager::CreateWithDelegate(
         browser_context_,
@@ -103,10 +104,10 @@ void ExtensionsGuestViewMessageFilter::OnCreateMimeHandlerViewGuest(
     int element_instance_id,
     const gfx::Size& element_size) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  auto manager = GetOrCreateGuestViewManager();
+  auto* manager = GetOrCreateGuestViewManager();
 
-  auto rfh = RenderFrameHost::FromID(render_process_id_, render_frame_id);
-  auto embedder_web_contents = WebContents::FromRenderFrameHost(rfh);
+  auto* rfh = RenderFrameHost::FromID(render_process_id_, render_frame_id);
+  auto* embedder_web_contents = WebContents::FromRenderFrameHost(rfh);
   if (!embedder_web_contents)
     return;
 
@@ -134,15 +135,15 @@ void ExtensionsGuestViewMessageFilter::OnResizeGuest(
     int render_frame_id,
     int element_instance_id,
     const gfx::Size& new_size) {
-  auto manager = GuestViewManager::FromBrowserContext(browser_context_);
+  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
   // We should have a GuestViewManager at this point. If we don't then the
   // embedder is misbehaving.
   if (!manager)
     return;
 
-  auto guest_web_contents =
+  auto* guest_web_contents =
       manager->GetGuestByInstanceID(render_process_id_, element_instance_id);
-  auto mhvg = MimeHandlerViewGuest::FromWebContents(guest_web_contents);
+  auto* mhvg = MimeHandlerViewGuest::FromWebContents(guest_web_contents);
   if (!mhvg)
     return;
 
@@ -158,25 +159,26 @@ void ExtensionsGuestViewMessageFilter::MimeHandlerViewGuestCreatedCallback(
     int embedder_render_frame_id,
     const gfx::Size& element_size,
     WebContents* web_contents) {
-  auto guest_view = MimeHandlerViewGuest::FromWebContents(web_contents);
+  auto* guest_view = MimeHandlerViewGuest::FromWebContents(web_contents);
   if (!guest_view)
     return;
 
   int guest_instance_id = guest_view->guest_instance_id();
-  auto rfh = RenderFrameHost::FromID(embedder_render_process_id,
-                                     embedder_render_frame_id);
+  auto* rfh = RenderFrameHost::FromID(embedder_render_process_id,
+                                      embedder_render_frame_id);
   if (!rfh)
     return;
+
+  guest_view->SetEmbedderFrame(embedder_render_process_id,
+                               embedder_render_frame_id);
 
   base::DictionaryValue attach_params;
   attach_params.SetInteger(guest_view::kElementWidth, element_size.width());
   attach_params.SetInteger(guest_view::kElementHeight, element_size.height());
-  auto manager = GuestViewManager::FromBrowserContext(browser_context_);
+  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
   CHECK(manager);
-  manager->AttachGuest(embedder_render_process_id,
-                       element_instance_id,
-                       guest_instance_id,
-                       attach_params);
+  manager->AttachGuest(embedder_render_process_id, element_instance_id,
+                       guest_instance_id, attach_params);
 
   rfh->Send(
       new ExtensionsGuestViewMsg_CreateMimeHandlerViewGuestACK(

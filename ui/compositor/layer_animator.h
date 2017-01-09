@@ -10,13 +10,24 @@
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
+#include "cc/animation/animation_delegate.h"
+#include "cc/trees/target_property.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/compositor/layer_animation_element.h"
+#include "ui/compositor/layer_threaded_animation_delegate.h"
 #include "ui/gfx/animation/tween.h"
+
+namespace cc {
+class Animation;
+class AnimationPlayer;
+class AnimationTimeline;
+class Layer;
+}
 
 namespace gfx {
 class Animation;
@@ -25,6 +36,7 @@ class Transform;
 }
 
 namespace ui {
+class Compositor;
 class Layer;
 class LayerAnimationSequence;
 class LayerAnimationDelegate;
@@ -41,7 +53,10 @@ class ScopedLayerAnimationSettings;
 // ensure that it is not disposed of until it finishes executing. It does this
 // by holding a reference to itself for the duration of methods for which it
 // must guarantee that |this| is valid.
-class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator> {
+class COMPOSITOR_EXPORT LayerAnimator
+    : public base::RefCounted<LayerAnimator>,
+      public LayerThreadedAnimationDelegate,
+      NON_EXPORTED_BASE(public cc::AnimationDelegate) {
  public:
   enum PreemptionStrategy {
     IMMEDIATELY_SET_NEW_TARGET,
@@ -96,6 +111,16 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator> {
   // delegate for most of its operations, so do not call any methods without
   // a valid delegate installed.
   void SetDelegate(LayerAnimationDelegate* delegate);
+
+  // Unsubscribe from |cc_layer_| and subscribe to |new_layer|.
+  void SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
+
+  // Attach AnimationPlayer to Layer and AnimationTimeline
+  void AttachLayerAndTimeline(Compositor* compositor);
+  // Detach AnimationPlayer from Layer and AnimationTimeline
+  void DetachLayerAndTimeline(Compositor* compositor);
+
+  cc::AnimationPlayer* GetAnimationPlayerForTesting() const;
 
   // Sets the animation preemption strategy. This determines the behaviour if
   // a property is set during an animation. The default is
@@ -169,7 +194,9 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator> {
   void RemoveObserver(LayerAnimationObserver* observer);
 
   // Called when a threaded animation is actually started.
-  void OnThreadedAnimationStarted(const cc::AnimationEvent& event);
+  void OnThreadedAnimationStarted(base::TimeTicks monotonic_time,
+                                  cc::TargetProperty::Type target_property,
+                                  int group_id);
 
   // This determines how implicit animations will be tweened. This has no
   // effect on animations that are explicitly started or scheduled. The default
@@ -193,7 +220,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator> {
   void RemoveFromCollection(LayerAnimatorCollection* collection);
 
  protected:
-  virtual ~LayerAnimator();
+  ~LayerAnimator() override;
 
   LayerAnimationDelegate* delegate() { return delegate_; }
   const LayerAnimationDelegate* delegate() const { return delegate_; }
@@ -218,6 +245,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator> {
   class RunningAnimation {
    public:
     RunningAnimation(const base::WeakPtr<LayerAnimationSequence>& sequence);
+    RunningAnimation(const RunningAnimation& other);
     ~RunningAnimation();
 
     bool is_sequence_alive() const { return !!sequence_.get(); }
@@ -311,11 +339,37 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator> {
 
   LayerAnimatorCollection* GetLayerAnimatorCollection();
 
+  // cc::AnimationDelegate implementation.
+  void NotifyAnimationStarted(base::TimeTicks monotonic_time,
+                              cc::TargetProperty::Type target_property,
+                              int group_id) override;
+  void NotifyAnimationFinished(base::TimeTicks monotonic_time,
+                               cc::TargetProperty::Type target_property,
+                               int group_id) override {}
+  void NotifyAnimationAborted(base::TimeTicks monotonic_time,
+                              cc::TargetProperty::Type target_property,
+                              int group_id) override {}
+  void NotifyAnimationTakeover(
+      base::TimeTicks monotonic_time,
+      cc::TargetProperty::Type target_property,
+      double animation_start_time,
+      std::unique_ptr<cc::AnimationCurve> curve) override {}
+
+  // Implementation of LayerThreadedAnimationDelegate.
+  void AddThreadedAnimation(std::unique_ptr<cc::Animation> animation) override;
+  void RemoveThreadedAnimation(int animation_id) override;
+
+  void AttachLayerToAnimationPlayer(int layer_id);
+  void DetachLayerFromAnimationPlayer();
+
   // This is the queue of animations to run.
   AnimationQueue animation_queue_;
 
   // The target of all layer animations.
   LayerAnimationDelegate* delegate_;
+
+  // Plays CC animations.
+  scoped_refptr<cc::AnimationPlayer> animation_player_;
 
   // The currently running animations.
   RunningAnimations running_animations_;

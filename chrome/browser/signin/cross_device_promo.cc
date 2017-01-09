@@ -4,12 +4,14 @@
 
 #include "chrome/browser/signin/cross_device_promo.h"
 
+#include <stdint.h>
+
 #include "base/metrics/histogram_macros.h"
-#include "base/prefs/pref_service.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_client.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_metrics.h"
@@ -94,6 +96,7 @@ void CrossDevicePromo::RemoveObserver(CrossDevicePromo::Observer* observer) {
 
 void CrossDevicePromo::OnGaiaAccountsInCookieUpdated(
     const std::vector<gaia::ListedAccount>& accounts,
+    const std::vector<gaia::ListedAccount>& signed_out_accounts,
     const GoogleServiceAuthError& error) {
   VLOG(1) << "CrossDevicePromo::OnGaiaAccountsInCookieUpdated. "
           << accounts.size() << " accounts with auth error " << error.state();
@@ -280,8 +283,8 @@ void CrossDevicePromo::MarkPromoShouldBeShown() {
 
   if (!prefs_->GetBoolean(prefs::kCrossDevicePromoShouldBeShown)) {
     prefs_->SetBoolean(prefs::kCrossDevicePromoShouldBeShown, true);
-    FOR_EACH_OBSERVER(CrossDevicePromo::Observer, observer_list_,
-                      OnPromoEligibilityChanged(true));
+    for (CrossDevicePromo::Observer& observer : observer_list_)
+      observer.OnPromoEligibilityChanged(true);
   }
 }
 
@@ -289,8 +292,8 @@ void CrossDevicePromo::MarkPromoShouldNotBeShown() {
   VLOG(1) << "CrossDevicePromo::MarkPromoShouldNotBeShown.";
   if (prefs_->GetBoolean(prefs::kCrossDevicePromoShouldBeShown)) {
     prefs_->SetBoolean(prefs::kCrossDevicePromoShouldBeShown, false);
-    FOR_EACH_OBSERVER(CrossDevicePromo::Observer, observer_list_,
-                      OnPromoEligibilityChanged(false));
+    for (CrossDevicePromo::Observer& observer : observer_list_)
+      observer.OnPromoEligibilityChanged(false);
   }
 }
 
@@ -321,7 +324,7 @@ bool CrossDevicePromo::CheckPromoEligibility() {
     // The missing preference indicates CheckPromoEligibility() has never been
     // called. Determine when to call the DeviceActivityFetcher for the first
     // time.
-    const uint64 milliseconds_until_next_activity_fetch = base::RandGenerator(
+    const uint64_t milliseconds_until_next_activity_fetch = base::RandGenerator(
         delay_until_next_device_activity_fetch_.InMilliseconds());
     const base::Time time_of_next_device_activity_fetch = base::Time::Now() +
         base::TimeDelta::FromMilliseconds(

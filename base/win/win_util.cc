@@ -6,31 +6,41 @@
 
 #include <aclapi.h>
 #include <cfgmgr32.h>
-#include <lm.h>
 #include <powrprof.h>
-#include <shellapi.h>
-#include <shlobj.h>
 #include <shobjidl.h>  // Must be before propkey.
 #include <initguid.h>
+#include <inspectable.h>
 #include <propkey.h>
 #include <propvarutil.h>
+#include <psapi.h>
+#include <roapi.h>
 #include <sddl.h>
 #include <setupapi.h>
+#include <shellscalingapi.h>
+#include <shlwapi.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdlib.h>
+#include <tchar.h> // Must be before tpcshrd.h or for any use of _T macro
+#include <tpcshrd.h>
+#include <uiviewsettingsinterop.h>
+#include <windows.ui.viewmanagement.h>
+#include <winstring.h>
+#include <wrl/wrappers/corewrappers.h>
+
+#include <memory>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/win/metro.h"
 #include "base/win/registry.h"
-#include "base/win/scoped_co_mem.h"
+#include "base/win/scoped_comptr.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_propvariant.h"
 #include "base/win/windows_version.h"
@@ -95,11 +105,89 @@ class LazyIsUser32AndGdi32Available {
   DISALLOW_COPY_AND_ASSIGN(LazyIsUser32AndGdi32Available);
 };
 
-const wchar_t kWindows8OSKRegPath[] =
-    L"Software\\Classes\\CLSID\\{054AAE20-4BEA-4347-8A35-64A533254A9D}"
-    L"\\LocalServer32";
+// Returns the current platform role. We use the PowerDeterminePlatformRoleEx
+// API for that.
+POWER_PLATFORM_ROLE GetPlatformRole() {
+  return PowerDeterminePlatformRoleEx(POWER_PLATFORM_ROLE_V2);
+}
 
 }  // namespace
+
+// Uses the Windows 10 WRL API's to query the current system state. The API's
+// we are using in the function below are supported in Win32 apps as per msdn.
+// It looks like the API implementation is buggy at least on Surface 4 causing
+// it to always return UserInteractionMode_Touch which as per documentation
+// indicates tablet mode.
+bool IsWindows10TabletMode(HWND hwnd) {
+  if (GetVersion() < VERSION_WIN10)
+    return false;
+
+  using RoGetActivationFactoryFunction = decltype(&RoGetActivationFactory);
+  using WindowsCreateStringFunction = decltype(&WindowsCreateString);
+
+  static RoGetActivationFactoryFunction get_factory = nullptr;
+  static WindowsCreateStringFunction create_string = nullptr;
+
+  if (!get_factory) {
+    DCHECK_EQ(create_string, static_cast<WindowsCreateStringFunction>(
+        nullptr));
+
+    HMODULE combase_dll = ::LoadLibrary(L"combase.dll");
+    if (!combase_dll)
+      return false;
+
+    get_factory = reinterpret_cast<RoGetActivationFactoryFunction>(
+        ::GetProcAddress(combase_dll, "RoGetActivationFactory"));
+    if (!get_factory) {
+      CHECK(false);
+      return false;
+    }
+
+    create_string = reinterpret_cast<WindowsCreateStringFunction>(
+        ::GetProcAddress(combase_dll, "WindowsCreateString"));
+    if (!create_string) {
+      CHECK(false);
+      return false;
+    }
+  }
+
+  HRESULT hr = E_FAIL;
+  // This HSTRING is allocated on the heap and is leaked.
+  static HSTRING view_settings_guid = NULL;
+  if (!view_settings_guid) {
+    hr = create_string(
+        RuntimeClass_Windows_UI_ViewManagement_UIViewSettings,
+        static_cast<UINT32>(
+            wcslen(RuntimeClass_Windows_UI_ViewManagement_UIViewSettings)),
+        &view_settings_guid);
+    if (FAILED(hr))
+      return false;
+  }
+
+  base::win::ScopedComPtr<IUIViewSettingsInterop> view_settings_interop;
+  hr = get_factory(view_settings_guid,
+                   __uuidof(IUIViewSettingsInterop),
+                   view_settings_interop.ReceiveVoid());
+  if (FAILED(hr))
+    return false;
+
+  base::win::ScopedComPtr<ABI::Windows::UI::ViewManagement::IUIViewSettings>
+      view_settings;
+  // TODO(ananta)
+  // Avoid using GetForegroundWindow here and pass in the HWND of the window
+  // intiating the request to display the keyboard.
+  hr = view_settings_interop->GetForWindow(
+      hwnd,
+      __uuidof(ABI::Windows::UI::ViewManagement::IUIViewSettings),
+      view_settings.ReceiveVoid());
+  if (FAILED(hr))
+    return false;
+
+  ABI::Windows::UI::ViewManagement::UserInteractionMode mode =
+      ABI::Windows::UI::ViewManagement::UserInteractionMode_Mouse;
+  view_settings->get_UserInteractionMode(&mode);
+  return mode == ABI::Windows::UI::ViewManagement::UserInteractionMode_Touch;
+}
 
 // Returns true if a physical keyboard is detected on Windows 8 and up.
 // Uses the Setup APIs to enumerate the attached keyboards and returns true
@@ -109,7 +197,7 @@ const wchar_t kWindows8OSKRegPath[] =
 bool IsKeyboardPresentOnSlate(std::string* reason) {
   bool result = false;
 
-  if (GetVersion() < VERSION_WIN7) {
+  if (GetVersion() < VERSION_WIN8) {
     *reason = "Detection not supported";
     return false;
   }
@@ -133,10 +221,14 @@ bool IsKeyboardPresentOnSlate(std::string* reason) {
     }
   }
 
-  // If the device is docked, the user is treating the device as a PC.
-  if (GetSystemMetrics(SM_SYSTEMDOCKED) != 0) {
+  // If it is a tablet device we assume that there is no keyboard attached.
+  if (IsTabletDevice(reason)) {
+    if (reason)
+      *reason += "Tablet device.\n";
+    return false;
+  } else {
     if (reason) {
-      *reason += "SM_SYSTEMDOCKED\n";
+      *reason += "Not a tablet device";
       result = true;
     } else {
       return true;
@@ -180,23 +272,6 @@ bool IsKeyboardPresentOnSlate(std::string* reason) {
         return true;
       }
     }
-  }
-
-  // Check if the device is being used as a laptop or a tablet. This can be
-  // checked by first checking the role of the device and then the
-  // corresponding system metric (SM_CONVERTIBLESLATEMODE). If it is being used
-  // as a tablet then we want the OSK to show up.
-  POWER_PLATFORM_ROLE role = PowerDeterminePlatformRole();
-
-  if (((role == PlatformRoleMobile) || (role == PlatformRoleSlate)) &&
-       (GetSystemMetrics(SM_CONVERTIBLESLATEMODE) == 0)) {
-      if (reason) {
-        *reason += (role == PlatformRoleMobile) ? "PlatformRoleMobile\n" :
-                                                  "PlatformRoleSlate\n";
-        // Don't change result here if it's already true.
-      } else {
-        return false;
-      }
   }
 
   const GUID KEYBOARD_CLASS_GUID =
@@ -269,7 +344,7 @@ bool GetUserSidString(std::wstring* user_sid) {
   ScopedHandle token_scoped(token);
 
   DWORD size = sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE;
-  scoped_ptr<BYTE[]> user_bytes(new BYTE[size]);
+  std::unique_ptr<BYTE[]> user_bytes(new BYTE[size]);
   TOKEN_USER* user = reinterpret_cast<TOKEN_USER*>(user_bytes.get());
 
   if (!::GetTokenInformation(token, TokenUser, user, size, &size))
@@ -390,144 +465,69 @@ void SetAbortBehaviorForCrashReporting() {
   signal(SIGABRT, ForceCrashOnSigAbort);
 }
 
-bool IsTabletDevice() {
-  if (GetSystemMetrics(SM_MAXIMUMTOUCHES) == 0)
+bool IsTabletDevice(std::string* reason) {
+  if (GetVersion() < VERSION_WIN8) {
+    if (reason)
+      *reason = "Tablet device detection not supported below Windows 8\n";
     return false;
+  }
 
-  Version version = GetVersion();
-  if (version == VERSION_XP)
-    return (GetSystemMetrics(SM_TABLETPC) != 0);
+  if (IsWindows10TabletMode(::GetForegroundWindow()))
+    return true;
 
-  // If the device is docked, the user is treating the device as a PC.
-  if (GetSystemMetrics(SM_SYSTEMDOCKED) != 0)
-    return false;
-
-  // PlatformRoleSlate was only added in Windows 8, but prior to Win8 it is
-  // still possible to check for a mobile power profile.
-  POWER_PLATFORM_ROLE role = PowerDeterminePlatformRole();
-  bool mobile_power_profile = (role == PlatformRoleMobile);
-  bool slate_power_profile = false;
-  if (version >= VERSION_WIN8)
-    slate_power_profile = (role == PlatformRoleSlate);
-
-  if (mobile_power_profile || slate_power_profile)
-    return (GetSystemMetrics(SM_CONVERTIBLESLATEMODE) == 0);
-
-  return false;
-}
-
-bool DisplayVirtualKeyboard() {
-  if (GetVersion() < VERSION_WIN8)
-    return false;
-
-  if (IsKeyboardPresentOnSlate(nullptr))
-    return false;
-
-  static LazyInstance<string16>::Leaky osk_path = LAZY_INSTANCE_INITIALIZER;
-
-  if (osk_path.Get().empty()) {
-    // We need to launch TabTip.exe from the location specified under the
-    // LocalServer32 key for the {{054AAE20-4BEA-4347-8A35-64A533254A9D}}
-    // CLSID.
-    // TabTip.exe is typically found at
-    // c:\program files\common files\microsoft shared\ink on English Windows.
-    // We don't want to launch TabTip.exe from
-    // c:\program files (x86)\common files\microsoft shared\ink. This path is
-    // normally found on 64 bit Windows.
-    RegKey key(HKEY_LOCAL_MACHINE, kWindows8OSKRegPath,
-               KEY_READ | KEY_WOW64_64KEY);
-    DWORD osk_path_length = 1024;
-    if (key.ReadValue(NULL,
-                      WriteInto(&osk_path.Get(), osk_path_length),
-                      &osk_path_length,
-                      NULL) != ERROR_SUCCESS) {
-      DLOG(WARNING) << "Failed to read on screen keyboard path from registry";
+  if (GetSystemMetrics(SM_MAXIMUMTOUCHES) == 0) {
+    if (reason) {
+      *reason += "Device does not support touch.\n";
+    } else {
       return false;
     }
-    size_t common_program_files_offset =
-        osk_path.Get().find(L"%CommonProgramFiles%");
-    // Typically the path to TabTip.exe read from the registry will start with
-    // %CommonProgramFiles% which needs to be replaced with the corrsponding
-    // expanded string.
-    // If the path does not begin with %CommonProgramFiles% we use it as is.
-    if (common_program_files_offset != string16::npos) {
-      // Preserve the beginning quote in the path.
-      osk_path.Get().erase(common_program_files_offset,
-                           wcslen(L"%CommonProgramFiles%"));
-      // The path read from the registry contains the %CommonProgramFiles%
-      // environment variable prefix. On 64 bit Windows the SHGetKnownFolderPath
-      // function returns the common program files path with the X86 suffix for
-      // the FOLDERID_ProgramFilesCommon value.
-      // To get the correct path to TabTip.exe we first read the environment
-      // variable CommonProgramW6432 which points to the desired common
-      // files path. Failing that we fallback to the SHGetKnownFolderPath API.
+  }
 
-      // We then replace the %CommonProgramFiles% value with the actual common
-      // files path found in the process.
-      string16 common_program_files_path;
-      scoped_ptr<wchar_t[]> common_program_files_wow6432;
-      DWORD buffer_size =
-          GetEnvironmentVariable(L"CommonProgramW6432", NULL, 0);
-      if (buffer_size) {
-        common_program_files_wow6432.reset(new wchar_t[buffer_size]);
-        GetEnvironmentVariable(L"CommonProgramW6432",
-                               common_program_files_wow6432.get(),
-                               buffer_size);
-        common_program_files_path = common_program_files_wow6432.get();
-        DCHECK(!common_program_files_path.empty());
-      } else {
-        ScopedCoMem<wchar_t> common_program_files;
-        if (FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFilesCommon, 0, NULL,
-                                        &common_program_files))) {
-          return false;
-        }
-        common_program_files_path = common_program_files;
-      }
-
-      osk_path.Get().insert(1, common_program_files_path);
+  // If the device is docked, the user is treating the device as a PC.
+  if (GetSystemMetrics(SM_SYSTEMDOCKED) != 0) {
+    if (reason) {
+      *reason += "SM_SYSTEMDOCKED\n";
+    } else {
+      return false;
     }
   }
 
-  HINSTANCE ret = ::ShellExecuteW(NULL,
-                                  L"",
-                                  osk_path.Get().c_str(),
-                                  NULL,
-                                  NULL,
-                                  SW_SHOW);
-  return reinterpret_cast<intptr_t>(ret) > 32;
-}
+  // PlatformRoleSlate was added in Windows 8+.
+  POWER_PLATFORM_ROLE role = GetPlatformRole();
+  bool mobile_power_profile = (role == PlatformRoleMobile);
+  bool slate_power_profile = (role == PlatformRoleSlate);
 
-bool DismissVirtualKeyboard() {
-  if (GetVersion() < VERSION_WIN8)
-    return false;
-
-  // We dismiss the virtual keyboard by generating the ESC keystroke
-  // programmatically.
-  const wchar_t kOSKClassName[] = L"IPTip_Main_Window";
-  HWND osk = ::FindWindow(kOSKClassName, NULL);
-  if (::IsWindow(osk) && ::IsWindowEnabled(osk)) {
-    PostMessage(osk, WM_SYSCOMMAND, SC_CLOSE, 0);
-    return true;
+  bool is_tablet = false;
+  if (mobile_power_profile || slate_power_profile) {
+    is_tablet = !GetSystemMetrics(SM_CONVERTIBLESLATEMODE);
+    if (!is_tablet) {
+      if (reason) {
+        *reason += "Not in slate mode.\n";
+      } else {
+        return false;
+      }
+    } else {
+      if (reason) {
+        *reason += (role == PlatformRoleMobile) ? "PlatformRoleMobile\n" :
+                                                  "PlatformRoleSlate\n";
+      }
+    }
+  } else {
+    if (reason)
+      *reason += "Device role is not mobile or slate.\n";
   }
-  return false;
+  return is_tablet;
 }
 
-typedef HWND (*MetroRootWindow) ();
-
-enum DomainEnrollementState {UNKNOWN = -1, NOT_ENROLLED, ENROLLED};
+enum DomainEnrollmentState {UNKNOWN = -1, NOT_ENROLLED, ENROLLED};
 static volatile long int g_domain_state = UNKNOWN;
 
 bool IsEnrolledToDomain() {
   // Doesn't make any sense to retry inside a user session because joining a
   // domain will only kick in on a restart.
   if (g_domain_state == UNKNOWN) {
-    LPWSTR domain;
-    NETSETUP_JOIN_STATUS join_status;
-    if(::NetGetJoinInformation(NULL, &domain, &join_status) != NERR_Success)
-      return false;
-    ::NetApiBufferFree(domain);
     ::InterlockedCompareExchange(&g_domain_state,
-                                 join_status == ::NetSetupDomainName ?
+                                 IsOS(OS_DOMAINMEMBER) ?
                                      ENROLLED : NOT_ENROLLED,
                                  UNKNOWN);
   }
@@ -539,29 +539,88 @@ void SetDomainStateForTesting(bool state) {
   g_domain_state = state ? ENROLLED : NOT_ENROLLED;
 }
 
-bool MaybeHasSHA256Support() {
-  const OSInfo* os_info = OSInfo::GetInstance();
-
-  if (os_info->version() == VERSION_PRE_XP)
-    return false;  // Too old to have it and this OS is not supported anyway.
-
-  if (os_info->version() == VERSION_XP)
-    return os_info->service_pack().major >= 3;  // Windows XP SP3 has it.
-
-  // Assume it is missing in this case, although it may not be. This category
-  // includes Windows XP x64, and Windows Server, where a hotfix could be
-  // deployed.
-  if (os_info->version() == VERSION_SERVER_2003)
-    return false;
-
-  DCHECK(os_info->version() >= VERSION_VISTA);
-  return true;  // New enough to have SHA-256 support.
-}
-
 bool IsUser32AndGdi32Available() {
   static base::LazyInstance<LazyIsUser32AndGdi32Available>::Leaky available =
       LAZY_INSTANCE_INITIALIZER;
   return available.Get().value();
+}
+
+bool GetLoadedModulesSnapshot(HANDLE process, std::vector<HMODULE>* snapshot) {
+  DCHECK(snapshot);
+  DCHECK_EQ(0u, snapshot->size());
+  snapshot->resize(128);
+
+  // We will retry at least once after first determining |bytes_required|. If
+  // the list of modules changes after we receive |bytes_required| we may retry
+  // more than once.
+  int retries_remaining = 5;
+  do {
+    DWORD bytes_required = 0;
+    // EnumProcessModules returns 'success' even if the buffer size is too
+    // small.
+    DCHECK_GE(std::numeric_limits<DWORD>::max(),
+              snapshot->size() * sizeof(HMODULE));
+    if (!::EnumProcessModules(
+            process, &(*snapshot)[0],
+            static_cast<DWORD>(snapshot->size() * sizeof(HMODULE)),
+            &bytes_required)) {
+      DPLOG(ERROR) << "::EnumProcessModules failed.";
+      return false;
+    }
+    DCHECK_EQ(0u, bytes_required % sizeof(HMODULE));
+    size_t num_modules = bytes_required / sizeof(HMODULE);
+    if (num_modules <= snapshot->size()) {
+      // Buffer size was too big, presumably because a module was unloaded.
+      snapshot->erase(snapshot->begin() + num_modules, snapshot->end());
+      return true;
+    } else if (num_modules == 0) {
+      DLOG(ERROR) << "Can't determine the module list size.";
+      return false;
+    } else {
+      // Buffer size was too small. Try again with a larger buffer. A little
+      // more room is given to avoid multiple expensive calls to
+      // ::EnumProcessModules() just because one module has been added.
+      snapshot->resize(num_modules + 8, NULL);
+    }
+  } while (--retries_remaining);
+
+  DLOG(ERROR) << "Failed to enumerate modules.";
+  return false;
+}
+
+void EnableFlicks(HWND hwnd) {
+  ::RemoveProp(hwnd, MICROSOFT_TABLETPENSERVICE_PROPERTY);
+}
+
+void DisableFlicks(HWND hwnd) {
+  ::SetProp(hwnd, MICROSOFT_TABLETPENSERVICE_PROPERTY,
+      reinterpret_cast<HANDLE>(TABLET_DISABLE_FLICKS |
+          TABLET_DISABLE_FLICKFALLBACKKEYS));
+}
+
+bool IsProcessPerMonitorDpiAware() {
+  enum class PerMonitorDpiAware {
+    UNKNOWN = 0,
+    PER_MONITOR_DPI_UNAWARE,
+    PER_MONITOR_DPI_AWARE,
+  };
+  static PerMonitorDpiAware per_monitor_dpi_aware = PerMonitorDpiAware::UNKNOWN;
+  if (per_monitor_dpi_aware == PerMonitorDpiAware::UNKNOWN) {
+    per_monitor_dpi_aware = PerMonitorDpiAware::PER_MONITOR_DPI_UNAWARE;
+    HMODULE shcore_dll = ::LoadLibrary(L"shcore.dll");
+    if (shcore_dll) {
+      auto get_process_dpi_awareness_func =
+          reinterpret_cast<decltype(::GetProcessDpiAwareness)*>(
+              ::GetProcAddress(shcore_dll, "GetProcessDpiAwareness"));
+      if (get_process_dpi_awareness_func) {
+        PROCESS_DPI_AWARENESS awareness;
+        if (SUCCEEDED(get_process_dpi_awareness_func(nullptr, &awareness)) &&
+            awareness == PROCESS_PER_MONITOR_DPI_AWARE)
+          per_monitor_dpi_aware = PerMonitorDpiAware::PER_MONITOR_DPI_AWARE;
+      }
+    }
+  }
+  return per_monitor_dpi_aware == PerMonitorDpiAware::PER_MONITOR_DPI_AWARE;
 }
 
 }  // namespace win

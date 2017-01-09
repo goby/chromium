@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "chromecast/crash/cast_crash_keys.h"
 
 // TODO(kjoswiak): Potentially refactor chunk size info as well as non-cast
@@ -43,6 +44,79 @@ size_t RegisterCastCrashKeys() {
     { "ppapi_path", kMediumSize },
     { "subresource_url", kLargeSize },
     { "total-discardable-memory-allocated", kSmallSize },
+
+    // gin/:
+    { "v8-ignition", kSmallSize },
+
+    // Copied from common/crash_keys. Remove when
+    // http://crbug.com/598854 is resolved.
+
+    // Temporary for http://crbug.com/575245
+    { "swapout_frame_id", kSmallSize },
+    { "swapout_proxy_id", kSmallSize },
+    { "swapout_view_id", kSmallSize },
+    { "commit_frame_id", kSmallSize },
+    { "commit_proxy_id", kSmallSize },
+    { "commit_view_id", kSmallSize },
+    { "commit_main_render_frame_id", kSmallSize },
+    { "newproxy_proxy_id", kSmallSize },
+    { "newproxy_view_id", kSmallSize },
+    { "newproxy_opener_id", kSmallSize },
+    { "newproxy_parent_id", kSmallSize },
+    { "rvinit_view_id", kSmallSize },
+    { "rvinit_proxy_id", kSmallSize },
+    { "rvinit_main_frame_id", kSmallSize },
+    { "initrf_frame_id", kSmallSize },
+    { "initrf_proxy_id", kSmallSize },
+    { "initrf_view_id", kSmallSize },
+    { "initrf_main_frame_id", kSmallSize },
+    { "initrf_view_is_live", kSmallSize },
+
+    // Keys for https://crbug.com/591478
+    { "initrf_parent_proxy_exists", kSmallSize },
+    { "initrf_render_view_is_live", kSmallSize },
+    { "initrf_parent_is_in_same_site_instance", kSmallSize},
+    { "initrf_parent_process_is_live", kSmallSize},
+    { "initrf_root_is_in_same_site_instance", kSmallSize},
+    { "initrf_root_is_in_same_site_instance_as_parent", kSmallSize},
+    { "initrf_root_process_is_live", kSmallSize},
+    { "initrf_root_proxy_is_live", kSmallSize},
+
+    // Temporary for https://crbug.com/626802.
+    { "newframe_routing_id", kSmallSize },
+    { "newframe_proxy_id", kSmallSize },
+    { "newframe_opener_id", kSmallSize },
+    { "newframe_parent_id", kSmallSize },
+    { "newframe_widget_id", kSmallSize },
+    { "newframe_widget_hidden", kSmallSize },
+    { "newframe_replicated_origin", kSmallSize },
+    { "newframe_oopifs_possible", kSmallSize },
+
+    // Temporary for https://crbug.com/630103.
+    { "origin_mismatch_url", kLargeSize },
+    { "origin_mismatch_origin", kMediumSize },
+    { "origin_mismatch_transition", kSmallSize },
+    { "origin_mismatch_redirects", kSmallSize },
+    { "origin_mismatch_same_page", kSmallSize },
+
+    // Temporary for https://crbug.com/612711.
+    { "aci_wrong_sp_extension_id", kSmallSize },
+
+    // Temporary for https://crbug.com/616149.
+    { "existing_extension_pref_value_type", kSmallSize },
+
+    // Temporary for https://crbug.com/630495.
+    { "swdh_register_cannot_host_url", kLargeSize },
+    { "swdh_register_cannot_scope_url", kLargeSize },
+    { "swdh_register_cannot_script_url", kLargeSize },
+
+    // Temporary for https://crbug.com/630496.
+    { "swdh_get_registration_cannot_host_url", kLargeSize },
+    { "swdh_get_registration_cannot_document_url", kLargeSize },
+
+    // Temporary for https://crbug.com/668633.
+    { "swdh_set_hosted_version_worker_pid", kSmallSize },
+    { "swdh_set_hosted_version_host_pid", kSmallSize },
   };
 
   return base::debug::InitCrashKeys(fixed_keys, arraysize(fixed_keys),

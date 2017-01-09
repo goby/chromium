@@ -7,11 +7,15 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/format_macros.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
@@ -25,7 +29,6 @@
 #include "net/base/load_timing_info.h"
 #include "net/base/load_timing_info_test_util.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/x509_certificate.h"
@@ -40,6 +43,9 @@
 #include "net/http/http_transaction_test_util.h"
 #include "net/http/http_util.h"
 #include "net/http/mock_http_cache.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
 #include "net/log/test_net_log_entry.h"
 #include "net/log/test_net_log_util.h"
@@ -47,12 +53,20 @@
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/gtest_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 using base::Time;
 
 namespace net {
+
+using CacheEntryStatus = HttpResponseInfo::CacheEntryStatus;
 
 namespace {
 
@@ -60,7 +74,7 @@ namespace {
 // MockNetworkTransaction.
 void TestLoadTimingNetworkRequest(const LoadTimingInfo& load_timing_info) {
   EXPECT_FALSE(load_timing_info.socket_reused);
-  EXPECT_NE(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
+  EXPECT_NE(NetLogSource::kInvalidId, load_timing_info.socket_log_id);
 
   EXPECT_TRUE(load_timing_info.proxy_resolve_start.is_null());
   EXPECT_TRUE(load_timing_info.proxy_resolve_end.is_null());
@@ -81,7 +95,7 @@ void TestLoadTimingNetworkRequest(const LoadTimingInfo& load_timing_info) {
 // Tests the load timing values of a request that receives a cached response.
 void TestLoadTimingCachedResponse(const LoadTimingInfo& load_timing_info) {
   EXPECT_FALSE(load_timing_info.socket_reused);
-  EXPECT_EQ(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
+  EXPECT_EQ(NetLogSource::kInvalidId, load_timing_info.socket_log_id);
 
   EXPECT_TRUE(load_timing_info.proxy_resolve_start.is_null());
   EXPECT_TRUE(load_timing_info.proxy_resolve_end.is_null());
@@ -129,7 +143,7 @@ void ReadAndVerifyTransaction(HttpTransaction* trans,
   std::string content;
   int rv = ReadTransaction(trans, &content);
 
-  EXPECT_EQ(OK, rv);
+  EXPECT_THAT(rv, IsOk());
   std::string expected(trans_info.data);
   EXPECT_EQ(expected, content);
 }
@@ -138,7 +152,7 @@ void RunTransactionTestBase(HttpCache* cache,
                             const MockTransaction& trans_info,
                             const MockHttpRequest& request,
                             HttpResponseInfo* response_info,
-                            const BoundNetLog& net_log,
+                            const NetLogWithSource& net_log,
                             LoadTimingInfo* load_timing_info,
                             int64_t* sent_bytes,
                             int64_t* received_bytes,
@@ -147,9 +161,9 @@ void RunTransactionTestBase(HttpCache* cache,
 
   // write to the cache
 
-  scoped_ptr<HttpTransaction> trans;
+  std::unique_ptr<HttpTransaction> trans;
   int rv = cache->CreateTransaction(DEFAULT_PRIORITY, &trans);
-  EXPECT_EQ(OK, rv);
+  EXPECT_THAT(rv, IsOk());
   ASSERT_TRUE(trans.get());
 
   rv = trans->Start(&request, callback.callback(), net_log);
@@ -190,12 +204,13 @@ void RunTransactionTestWithRequest(HttpCache* cache,
                                    const MockHttpRequest& request,
                                    HttpResponseInfo* response_info) {
   RunTransactionTestBase(cache, trans_info, request, response_info,
-                         BoundNetLog(), nullptr, nullptr, nullptr, nullptr);
+                         NetLogWithSource(), nullptr, nullptr, nullptr,
+                         nullptr);
 }
 
 void RunTransactionTestAndGetTiming(HttpCache* cache,
                                     const MockTransaction& trans_info,
-                                    const BoundNetLog& log,
+                                    const NetLogWithSource& log,
                                     LoadTimingInfo* load_timing_info) {
   RunTransactionTestBase(cache, trans_info, MockHttpRequest(trans_info),
                          nullptr, log, load_timing_info, nullptr, nullptr,
@@ -205,7 +220,7 @@ void RunTransactionTestAndGetTiming(HttpCache* cache,
 void RunTransactionTestAndGetTimingAndConnectedSocketAddress(
     HttpCache* cache,
     const MockTransaction& trans_info,
-    const BoundNetLog& log,
+    const NetLogWithSource& log,
     LoadTimingInfo* load_timing_info,
     IPEndPoint* remote_endpoint) {
   RunTransactionTestBase(cache, trans_info, MockHttpRequest(trans_info),
@@ -214,12 +229,13 @@ void RunTransactionTestAndGetTimingAndConnectedSocketAddress(
 }
 
 void RunTransactionTest(HttpCache* cache, const MockTransaction& trans_info) {
-  RunTransactionTestAndGetTiming(cache, trans_info, BoundNetLog(), nullptr);
+  RunTransactionTestAndGetTiming(cache, trans_info, NetLogWithSource(),
+                                 nullptr);
 }
 
 void RunTransactionTestWithLog(HttpCache* cache,
                                const MockTransaction& trans_info,
-                               const BoundNetLog& log) {
+                               const NetLogWithSource& log) {
   RunTransactionTestAndGetTiming(cache, trans_info, log, nullptr);
 }
 
@@ -234,7 +250,7 @@ void RunTransactionTestWithResponseInfoAndGetTiming(
     HttpCache* cache,
     const MockTransaction& trans_info,
     HttpResponseInfo* response,
-    const BoundNetLog& log,
+    const NetLogWithSource& log,
     LoadTimingInfo* load_timing_info) {
   RunTransactionTestBase(cache, trans_info, MockHttpRequest(trans_info),
                          response, log, load_timing_info, nullptr, nullptr,
@@ -253,7 +269,7 @@ void RunTransactionTestWithResponseAndGetTiming(
     HttpCache* cache,
     const MockTransaction& trans_info,
     std::string* response_headers,
-    const BoundNetLog& log,
+    const NetLogWithSource& log,
     LoadTimingInfo* load_timing_info) {
   HttpResponseInfo response;
   RunTransactionTestBase(cache, trans_info, MockHttpRequest(trans_info),
@@ -299,6 +315,7 @@ const MockTransaction kFastNoStoreGET_Transaction = {
     "<html><body>Google Blah Blah</body></html>",
     TEST_MODE_SYNC_NET_START,
     &FastTransactionServer::FastNoStoreHandler,
+    nullptr,
     nullptr,
     0,
     0,
@@ -458,24 +475,15 @@ void RangeTransactionServer::RangeHandler(const HttpRequestInfo* request,
 }
 
 const MockTransaction kRangeGET_TransactionOK = {
-    "http://www.google.com/range",
-    "GET",
-    base::Time(),
-    "Range: bytes = 40-49\r\n" EXTRA_HEADER,
-    LOAD_NORMAL,
+    "http://www.google.com/range", "GET", base::Time(),
+    "Range: bytes = 40-49\r\n" EXTRA_HEADER, LOAD_NORMAL,
     "HTTP/1.1 206 Partial Content",
     "Last-Modified: Sat, 18 Apr 2007 01:10:43 GMT\n"
     "ETag: \"foo\"\n"
     "Accept-Ranges: bytes\n"
     "Content-Length: 10\n",
-    base::Time(),
-    "rg: 40-49 ",
-    TEST_MODE_NORMAL,
-    &RangeTransactionServer::RangeHandler,
-    nullptr,
-    0,
-    0,
-    OK};
+    base::Time(), "rg: 40-49 ", TEST_MODE_NORMAL,
+    &RangeTransactionServer::RangeHandler, nullptr, nullptr, 0, 0, OK};
 
 const char kFullRangeData[] =
     "rg: 00-09 rg: 10-19 rg: 20-29 rg: 30-39 "
@@ -491,10 +499,10 @@ void Verify206Response(const std::string& response, int start, int end) {
 
   ASSERT_EQ(206, headers->response_code());
 
-  int64 range_start, range_end, object_size;
+  int64_t range_start, range_end, object_size;
   ASSERT_TRUE(
       headers->GetContentRange(&range_start, &range_end, &object_size));
-  int64 content_length = headers->GetContentLength();
+  int64_t content_length = headers->GetContentLength();
 
   int length = end - start + 1;
   ASSERT_EQ(length, content_length);
@@ -569,7 +577,7 @@ struct Context {
 
   int result;
   TestCompletionCallback callback;
-  scoped_ptr<HttpTransaction> trans;
+  std::unique_ptr<HttpTransaction> trans;
 };
 
 class FakeWebSocketHandshakeStreamCreateHelper
@@ -577,7 +585,7 @@ class FakeWebSocketHandshakeStreamCreateHelper
  public:
   ~FakeWebSocketHandshakeStreamCreateHelper() override {}
   WebSocketHandshakeStreamBase* CreateBasicStream(
-      scoped_ptr<ClientSocketHandle> connect,
+      std::unique_ptr<ClientSocketHandle> connect,
       bool using_proxy) override {
     return NULL;
   }
@@ -589,16 +597,16 @@ class FakeWebSocketHandshakeStreamCreateHelper
 };
 
 // Returns true if |entry| is not one of the log types paid attention to in this
-// test. Note that TYPE_HTTP_CACHE_WRITE_INFO and TYPE_HTTP_CACHE_*_DATA are
+// test. Note that HTTP_CACHE_WRITE_INFO and HTTP_CACHE_*_DATA are
 // ignored.
 bool ShouldIgnoreLogEntry(const TestNetLogEntry& entry) {
   switch (entry.type) {
-    case NetLog::TYPE_HTTP_CACHE_GET_BACKEND:
-    case NetLog::TYPE_HTTP_CACHE_OPEN_ENTRY:
-    case NetLog::TYPE_HTTP_CACHE_CREATE_ENTRY:
-    case NetLog::TYPE_HTTP_CACHE_ADD_TO_ENTRY:
-    case NetLog::TYPE_HTTP_CACHE_DOOM_ENTRY:
-    case NetLog::TYPE_HTTP_CACHE_READ_INFO:
+    case NetLogEventType::HTTP_CACHE_GET_BACKEND:
+    case NetLogEventType::HTTP_CACHE_OPEN_ENTRY:
+    case NetLogEventType::HTTP_CACHE_CREATE_ENTRY:
+    case NetLogEventType::HTTP_CACHE_ADD_TO_ENTRY:
+    case NetLogEventType::HTTP_CACHE_DOOM_ENTRY:
+    case NetLogEventType::HTTP_CACHE_READ_INFO:
       return false;
     default:
       return true;
@@ -614,7 +622,7 @@ void FilterLogEntries(TestNetLogEntry::List* entries) {
 }
 
 bool LogContainsEventType(const BoundTestNetLog& log,
-                          NetLog::EventType expected) {
+                          NetLogEventType expected) {
   TestNetLogEntry::List entries;
   log.GetEntries(&entries);
   for (size_t i = 0; i < entries.size(); i++) {
@@ -633,8 +641,8 @@ bool LogContainsEventType(const BoundTestNetLog& log,
 TEST(HttpCache, CreateThenDestroy) {
   MockHttpCache cache;
 
-  scoped_ptr<HttpTransaction> trans;
-  EXPECT_EQ(OK, cache.CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  EXPECT_THAT(cache.CreateTransaction(&trans), IsOk());
   ASSERT_TRUE(trans.get());
 }
 
@@ -645,7 +653,7 @@ TEST(HttpCache, GetBackend) {
   TestCompletionCallback cb;
   // This will lazily initialize the backend.
   int rv = cache.http_cache()->GetBackend(&backend, cb.callback());
-  EXPECT_EQ(OK, cb.GetResult(rv));
+  EXPECT_THAT(cb.GetResult(rv), IsOk());
 }
 
 TEST(HttpCache, SimpleGET) {
@@ -682,18 +690,18 @@ TEST(HttpCache, SimpleGETNoDiskCache) {
   FilterLogEntries(&entries);
 
   EXPECT_EQ(6u, entries.size());
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0,
+                                    NetLogEventType::HTTP_CACHE_GET_BACKEND));
   EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 0, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
+      LogContainsEndEvent(entries, 1, NetLogEventType::HTTP_CACHE_GET_BACKEND));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 2,
+                                    NetLogEventType::HTTP_CACHE_OPEN_ENTRY));
   EXPECT_TRUE(
-      LogContainsEndEvent(entries, 1, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 2, NetLog::TYPE_HTTP_CACHE_OPEN_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 3, NetLog::TYPE_HTTP_CACHE_OPEN_ENTRY));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 4, NetLog::TYPE_HTTP_CACHE_CREATE_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 5, NetLog::TYPE_HTTP_CACHE_CREATE_ENTRY));
+      LogContainsEndEvent(entries, 3, NetLogEventType::HTTP_CACHE_OPEN_ENTRY));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 4,
+                                    NetLogEventType::HTTP_CACHE_CREATE_ENTRY));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 5,
+                                  NetLogEventType::HTTP_CACHE_CREATE_ENTRY));
 
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
   EXPECT_EQ(0, cache.disk_cache()->open_count());
@@ -703,11 +711,11 @@ TEST(HttpCache, SimpleGETNoDiskCache) {
 
 TEST(HttpCache, SimpleGETNoDiskCache2) {
   // This will initialize a cache object with NULL backend.
-  scoped_ptr<MockBlockingBackendFactory> factory(
+  std::unique_ptr<MockBlockingBackendFactory> factory(
       new MockBlockingBackendFactory());
   factory->set_fail(true);
   factory->FinishCreation();  // We'll complete synchronously.
-  MockHttpCache cache(factory.Pass());
+  MockHttpCache cache(std::move(factory));
 
   // Read from the network, and don't use the cache.
   RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
@@ -724,15 +732,15 @@ TEST(HttpCache, ReleaseBuffer) {
   RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
 
   MockHttpRequest request(kSimpleGET_Transaction);
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
   const int kBufferSize = 10;
   scoped_refptr<IOBuffer> buffer(new IOBuffer(kBufferSize));
   ReleaseBufferCompletionCallback cb(buffer.get());
 
-  int rv = trans->Start(&request, cb.callback(), BoundNetLog());
-  EXPECT_EQ(OK, cb.GetResult(rv));
+  int rv = trans->Start(&request, cb.callback(), NetLogWithSource());
+  EXPECT_THAT(cb.GetResult(rv), IsOk());
 
   rv = trans->Read(buffer.get(), kBufferSize, cb.callback());
   EXPECT_EQ(kBufferSize, cb.GetResult(rv));
@@ -765,12 +773,12 @@ TEST(HttpCache, SimpleGETWithDiskFailures2) {
 
   MockHttpRequest request(kSimpleGET_Transaction);
 
-  scoped_ptr<Context> c(new Context());
+  std::unique_ptr<Context> c(new Context());
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   rv = c->callback.WaitForResult();
 
   // Start failing request now.
@@ -810,13 +818,13 @@ TEST(HttpCache, SimpleGETWithDiskFailures3) {
   cache.disk_cache()->set_soft_failures(true);
 
   // Now fail to read from the cache.
-  scoped_ptr<Context> c(new Context());
+  std::unique_ptr<Context> c(new Context());
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
   MockHttpRequest request(kSimpleGET_Transaction);
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(OK, c->callback.GetResult(rv));
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(c->callback.GetResult(rv), IsOk());
 
   // Now verify that the entry was removed from the cache.
   cache.disk_cache()->set_soft_failures(false);
@@ -848,28 +856,28 @@ TEST(HttpCache, SimpleGET_LoadOnlyFromCache_Hit) {
   FilterLogEntries(&entries);
 
   EXPECT_EQ(8u, entries.size());
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0,
+                                    NetLogEventType::HTTP_CACHE_GET_BACKEND));
   EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 0, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
+      LogContainsEndEvent(entries, 1, NetLogEventType::HTTP_CACHE_GET_BACKEND));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 2,
+                                    NetLogEventType::HTTP_CACHE_OPEN_ENTRY));
   EXPECT_TRUE(
-      LogContainsEndEvent(entries, 1, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 2, NetLog::TYPE_HTTP_CACHE_OPEN_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 3, NetLog::TYPE_HTTP_CACHE_OPEN_ENTRY));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 4, NetLog::TYPE_HTTP_CACHE_CREATE_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 5, NetLog::TYPE_HTTP_CACHE_CREATE_ENTRY));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 6, NetLog::TYPE_HTTP_CACHE_ADD_TO_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 7, NetLog::TYPE_HTTP_CACHE_ADD_TO_ENTRY));
+      LogContainsEndEvent(entries, 3, NetLogEventType::HTTP_CACHE_OPEN_ENTRY));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 4,
+                                    NetLogEventType::HTTP_CACHE_CREATE_ENTRY));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 5,
+                                  NetLogEventType::HTTP_CACHE_CREATE_ENTRY));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 6,
+                                    NetLogEventType::HTTP_CACHE_ADD_TO_ENTRY));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 7,
+                                  NetLogEventType::HTTP_CACHE_ADD_TO_ENTRY));
 
   TestLoadTimingNetworkRequest(load_timing_info);
 
   // Force this transaction to read from the cache.
   MockTransaction transaction(kSimpleGET_Transaction);
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   log.Clear();
 
@@ -881,22 +889,22 @@ TEST(HttpCache, SimpleGET_LoadOnlyFromCache_Hit) {
   FilterLogEntries(&entries);
 
   EXPECT_EQ(8u, entries.size());
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0,
+                                    NetLogEventType::HTTP_CACHE_GET_BACKEND));
   EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 0, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
+      LogContainsEndEvent(entries, 1, NetLogEventType::HTTP_CACHE_GET_BACKEND));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 2,
+                                    NetLogEventType::HTTP_CACHE_OPEN_ENTRY));
   EXPECT_TRUE(
-      LogContainsEndEvent(entries, 1, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
+      LogContainsEndEvent(entries, 3, NetLogEventType::HTTP_CACHE_OPEN_ENTRY));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 4,
+                                    NetLogEventType::HTTP_CACHE_ADD_TO_ENTRY));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 5,
+                                  NetLogEventType::HTTP_CACHE_ADD_TO_ENTRY));
   EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 2, NetLog::TYPE_HTTP_CACHE_OPEN_ENTRY));
+      LogContainsBeginEvent(entries, 6, NetLogEventType::HTTP_CACHE_READ_INFO));
   EXPECT_TRUE(
-      LogContainsEndEvent(entries, 3, NetLog::TYPE_HTTP_CACHE_OPEN_ENTRY));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 4, NetLog::TYPE_HTTP_CACHE_ADD_TO_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 5, NetLog::TYPE_HTTP_CACHE_ADD_TO_ENTRY));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 6, NetLog::TYPE_HTTP_CACHE_READ_INFO));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 7, NetLog::TYPE_HTTP_CACHE_READ_INFO));
+      LogContainsEndEvent(entries, 7, NetLogEventType::HTTP_CACHE_READ_INFO));
 
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
   EXPECT_EQ(1, cache.disk_cache()->open_count());
@@ -909,18 +917,18 @@ TEST(HttpCache, SimpleGET_LoadOnlyFromCache_Miss) {
 
   // force this transaction to read from the cache
   MockTransaction transaction(kSimpleGET_Transaction);
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   MockHttpRequest request(transaction);
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+  int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = callback.WaitForResult();
-  ASSERT_EQ(ERR_CACHE_MISS, rv);
+  ASSERT_THAT(rv, IsError(ERR_CACHE_MISS));
 
   trans.reset();
 
@@ -937,7 +945,7 @@ TEST(HttpCache, SimpleGET_LoadPreferringCache_Hit) {
 
   // force this transaction to read from the cache if valid
   MockTransaction transaction(kSimpleGET_Transaction);
-  transaction.load_flags |= LOAD_PREFERRING_CACHE;
+  transaction.load_flags |= LOAD_SKIP_CACHE_VALIDATION;
 
   RunTransactionTest(cache.http_cache(), transaction);
 
@@ -951,7 +959,7 @@ TEST(HttpCache, SimpleGET_LoadPreferringCache_Miss) {
 
   // force this transaction to read from the cache if valid
   MockTransaction transaction(kSimpleGET_Transaction);
-  transaction.load_flags |= LOAD_PREFERRING_CACHE;
+  transaction.load_flags |= LOAD_SKIP_CACHE_VALIDATION;
 
   RunTransactionTest(cache.http_cache(), transaction);
 
@@ -960,7 +968,7 @@ TEST(HttpCache, SimpleGET_LoadPreferringCache_Miss) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 }
 
-// Tests LOAD_PREFERRING_CACHE in the presence of vary headers.
+// Tests LOAD_SKIP_CACHE_VALIDATION in the presence of vary headers.
 TEST(HttpCache, SimpleGET_LoadPreferringCache_VaryMatch) {
   MockHttpCache cache;
 
@@ -973,7 +981,7 @@ TEST(HttpCache, SimpleGET_LoadPreferringCache_VaryMatch) {
   RunTransactionTest(cache.http_cache(), transaction);
 
   // Read from the cache.
-  transaction.load_flags |= LOAD_PREFERRING_CACHE;
+  transaction.load_flags |= LOAD_SKIP_CACHE_VALIDATION;
   RunTransactionTest(cache.http_cache(), transaction);
 
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
@@ -982,7 +990,7 @@ TEST(HttpCache, SimpleGET_LoadPreferringCache_VaryMatch) {
   RemoveMockTransaction(&transaction);
 }
 
-// Tests LOAD_PREFERRING_CACHE in the presence of vary headers.
+// Tests LOAD_SKIP_CACHE_VALIDATION in the presence of vary headers.
 TEST(HttpCache, SimpleGET_LoadPreferringCache_VaryMismatch) {
   MockHttpCache cache;
 
@@ -996,7 +1004,7 @@ TEST(HttpCache, SimpleGET_LoadPreferringCache_VaryMismatch) {
 
   // Attempt to read from the cache... this is a vary mismatch that must reach
   // the network again.
-  transaction.load_flags |= LOAD_PREFERRING_CACHE;
+  transaction.load_flags |= LOAD_SKIP_CACHE_VALIDATION;
   transaction.request_headers = "Foo: none\r\n";
   BoundTestNetLog log;
   LoadTimingInfo load_timing_info;
@@ -1031,12 +1039,12 @@ TEST(HttpCache, SimpleGET_CacheSignal_Failure) {
 
   MockHttpRequest request(transaction);
   TestCompletionCallback callback;
-  scoped_ptr<HttpTransaction> trans;
+  std::unique_ptr<HttpTransaction> trans;
   int rv = cache.http_cache()->CreateTransaction(DEFAULT_PRIORITY, &trans);
-  EXPECT_EQ(OK, rv);
+  EXPECT_THAT(rv, IsOk());
   ASSERT_TRUE(trans.get());
-  rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_FAILED, callback.GetResult(rv));
+  rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+  EXPECT_THAT(callback.GetResult(rv), IsError(ERR_FAILED));
 
   const HttpResponseInfo* response_info = trans->GetResponseInfo();
   ASSERT_TRUE(response_info);
@@ -1059,6 +1067,8 @@ TEST(HttpCache, SimpleGET_NetworkAccessed_Network) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
   EXPECT_TRUE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_NOT_IN_CACHE,
+            response_info.cache_entry_status);
 }
 
 // Confirm if we have a fresh entry in cache, it isn't marked as
@@ -1081,6 +1091,7 @@ TEST(HttpCache, SimpleGET_NetworkAccessed_Cache) {
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
   EXPECT_FALSE(response_info.server_data_unavailable);
   EXPECT_FALSE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_USED, response_info.cache_entry_status);
 }
 
 TEST(HttpCache, SimpleGET_LoadBypassCache) {
@@ -1106,22 +1117,22 @@ TEST(HttpCache, SimpleGET_LoadBypassCache) {
   FilterLogEntries(&entries);
 
   EXPECT_EQ(8u, entries.size());
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0,
+                                    NetLogEventType::HTTP_CACHE_GET_BACKEND));
   EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 0, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
+      LogContainsEndEvent(entries, 1, NetLogEventType::HTTP_CACHE_GET_BACKEND));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 2,
+                                    NetLogEventType::HTTP_CACHE_DOOM_ENTRY));
   EXPECT_TRUE(
-      LogContainsEndEvent(entries, 1, NetLog::TYPE_HTTP_CACHE_GET_BACKEND));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 2, NetLog::TYPE_HTTP_CACHE_DOOM_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 3, NetLog::TYPE_HTTP_CACHE_DOOM_ENTRY));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 4, NetLog::TYPE_HTTP_CACHE_CREATE_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 5, NetLog::TYPE_HTTP_CACHE_CREATE_ENTRY));
-  EXPECT_TRUE(
-      LogContainsBeginEvent(entries, 6, NetLog::TYPE_HTTP_CACHE_ADD_TO_ENTRY));
-  EXPECT_TRUE(
-      LogContainsEndEvent(entries, 7, NetLog::TYPE_HTTP_CACHE_ADD_TO_ENTRY));
+      LogContainsEndEvent(entries, 3, NetLogEventType::HTTP_CACHE_DOOM_ENTRY));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 4,
+                                    NetLogEventType::HTTP_CACHE_CREATE_ENTRY));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 5,
+                                  NetLogEventType::HTTP_CACHE_CREATE_ENTRY));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 6,
+                                    NetLogEventType::HTTP_CACHE_ADD_TO_ENTRY));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 7,
+                                  NetLogEventType::HTTP_CACHE_ADD_TO_ENTRY));
 
   EXPECT_EQ(2, cache.network_layer()->transaction_count());
   EXPECT_EQ(0, cache.disk_cache()->open_count());
@@ -1210,6 +1221,50 @@ TEST(HttpCache, SimpleGET_LoadValidateCache_Implicit) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 }
 
+// Tests that |unused_since_prefetch| is updated accordingly (e.g. it is set to
+// true after a prefetch and set back to false when the prefetch is used).
+TEST(HttpCache, SimpleGET_UnusedSincePrefetch) {
+  MockHttpCache cache;
+  HttpResponseInfo response_info;
+
+  // A normal load does not have |unused_since_prefetch| set.
+  RunTransactionTestWithResponseInfoAndGetTiming(
+      cache.http_cache(), kSimpleGET_Transaction, &response_info,
+      BoundTestNetLog().bound(), nullptr);
+  EXPECT_FALSE(response_info.unused_since_prefetch);
+  EXPECT_FALSE(response_info.was_cached);
+
+  // The prefetch itself does not have |unused_since_prefetch| set.
+  MockTransaction prefetch_transaction(kSimpleGET_Transaction);
+  prefetch_transaction.load_flags |= LOAD_PREFETCH;
+  RunTransactionTestWithResponseInfoAndGetTiming(
+      cache.http_cache(), prefetch_transaction, &response_info,
+      BoundTestNetLog().bound(), nullptr);
+  EXPECT_FALSE(response_info.unused_since_prefetch);
+  EXPECT_TRUE(response_info.was_cached);
+
+  // A duplicated prefetch has |unused_since_prefetch| set.
+  RunTransactionTestWithResponseInfoAndGetTiming(
+      cache.http_cache(), prefetch_transaction, &response_info,
+      BoundTestNetLog().bound(), nullptr);
+  EXPECT_TRUE(response_info.unused_since_prefetch);
+  EXPECT_TRUE(response_info.was_cached);
+
+  // |unused_since_prefetch| is still true after two prefetches in a row.
+  RunTransactionTestWithResponseInfoAndGetTiming(
+      cache.http_cache(), kSimpleGET_Transaction, &response_info,
+      BoundTestNetLog().bound(), nullptr);
+  EXPECT_TRUE(response_info.unused_since_prefetch);
+  EXPECT_TRUE(response_info.was_cached);
+
+  // The resource has now been used, back to normal behavior.
+  RunTransactionTestWithResponseInfoAndGetTiming(
+      cache.http_cache(), kSimpleGET_Transaction, &response_info,
+      BoundTestNetLog().bound(), nullptr);
+  EXPECT_FALSE(response_info.unused_since_prefetch);
+  EXPECT_TRUE(response_info.was_cached);
+}
+
 static void PreserveRequestHeaders_Handler(const HttpRequestInfo* request,
                                            std::string* response_status,
                                            std::string* response_headers,
@@ -1271,11 +1326,11 @@ TEST(HttpCache, SimpleGET_ManyReaders) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
     EXPECT_EQ(LOAD_STATE_IDLE, c->trans->GetLoadState());
 
     c->result =
-        c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+        c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   }
 
   // All requests are waiting for the active entry.
@@ -1285,7 +1340,7 @@ TEST(HttpCache, SimpleGET_ManyReaders) {
   }
 
   // Allow all requests to move from the Create queue to the active entry.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The first request should be a writer at this point, and the subsequent
   // requests should be pending.
@@ -1329,7 +1384,7 @@ TEST(HttpCache, SimpleGET_RacingReaders) {
 
   MockHttpRequest request(kSimpleGET_Transaction);
   MockHttpRequest reader_request(kSimpleGET_Transaction);
-  reader_request.load_flags = LOAD_ONLY_FROM_CACHE;
+  reader_request.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   std::vector<Context*> context_list;
   const int kNumTransactions = 5;
@@ -1339,18 +1394,18 @@ TEST(HttpCache, SimpleGET_RacingReaders) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
 
     MockHttpRequest* this_request = &request;
     if (i == 1 || i == 2)
       this_request = &reader_request;
 
-    c->result =
-        c->trans->Start(this_request, c->callback.callback(), BoundNetLog());
+    c->result = c->trans->Start(this_request, c->callback.callback(),
+                                NetLogWithSource());
   }
 
   // Allow all requests to move from the Create queue to the active entry.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The first request should be a writer at this point, and the subsequent
   // requests should be pending.
@@ -1360,7 +1415,7 @@ TEST(HttpCache, SimpleGET_RacingReaders) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   Context* c = context_list[0];
-  ASSERT_EQ(ERR_IO_PENDING, c->result);
+  ASSERT_THAT(c->result, IsError(ERR_IO_PENDING));
   c->result = c->callback.WaitForResult();
   ReadAndVerifyTransaction(c->trans.get(), kSimpleGET_Transaction);
 
@@ -1371,7 +1426,7 @@ TEST(HttpCache, SimpleGET_RacingReaders) {
             context_list[3]->trans->GetLoadState());
 
   c = context_list[1];
-  ASSERT_EQ(ERR_IO_PENDING, c->result);
+  ASSERT_THAT(c->result, IsError(ERR_IO_PENDING));
   c->result = c->callback.WaitForResult();
   if (c->result == OK)
     ReadAndVerifyTransaction(c->trans.get(), kSimpleGET_Transaction);
@@ -1415,22 +1470,22 @@ TEST(HttpCache, SimpleGET_DoomWithPending) {
   MockHttpRequest writer_request(kSimpleGET_Transaction);
   writer_request.load_flags = LOAD_BYPASS_CACHE;
 
-  std::vector<scoped_ptr<Context>> context_list;
+  std::vector<std::unique_ptr<Context>> context_list;
   const int kNumTransactions = 4;
 
   for (int i = 0; i < kNumTransactions; ++i) {
-    context_list.push_back(make_scoped_ptr(new Context()));
+    context_list.push_back(base::WrapUnique(new Context()));
     Context* c = context_list[i].get();
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
 
     MockHttpRequest* this_request = &request;
     if (i == 3)
       this_request = &writer_request;
 
-    c->result =
-        c->trans->Start(this_request, c->callback.callback(), BoundNetLog());
+    c->result = c->trans->Start(this_request, c->callback.callback(),
+                                NetLogWithSource());
   }
 
   // The first request should be a writer at this point, and the two subsequent
@@ -1445,7 +1500,7 @@ TEST(HttpCache, SimpleGET_DoomWithPending) {
     if (i == 1)
       continue;
     Context* c = context_list[i].get();
-    ASSERT_EQ(ERR_IO_PENDING, c->result);
+    ASSERT_THAT(c->result, IsError(ERR_IO_PENDING));
     c->result = c->callback.WaitForResult();
     ReadAndVerifyTransaction(c->trans.get(), kSimpleGET_Transaction);
   }
@@ -1470,14 +1525,14 @@ TEST(HttpCache, FastNoStoreGET_DoneWithPending) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
 
     c->result =
-        c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+        c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   }
 
   // Allow all requests to move from the Create queue to the active entry.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The first request should be a writer at this point, and the subsequent
   // requests should be pending.
@@ -1517,14 +1572,14 @@ TEST(HttpCache, SimpleGET_ManyWriters_CancelFirst) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
 
     c->result =
-        c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+        c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   }
 
   // Allow all requests to move from the Create queue to the active entry.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The first request should be a writer at this point, and the subsequent
   // requests should be pending.
@@ -1577,10 +1632,10 @@ TEST(HttpCache, SimpleGET_ManyWriters_CancelCreate) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
 
     c->result =
-        c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+        c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   }
 
   // The first request should be creating the disk cache entry and the others
@@ -1628,17 +1683,18 @@ TEST(HttpCache, SimpleGET_CancelCreate) {
   Context* c = new Context();
 
   c->result = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, c->result);
+  ASSERT_THAT(c->result, IsOk());
 
-  c->result = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, c->result);
+  c->result =
+      c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(c->result, IsError(ERR_IO_PENDING));
 
   // Release the reference that the mock disk cache keeps for this entry, so
   // that we test that the http cache handles the cancellation correctly.
   cache.disk_cache()->ReleaseAll();
   delete c;
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 }
 
@@ -1657,10 +1713,10 @@ TEST(HttpCache, SimpleGET_ManyWriters_BypassCache) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
 
     c->result =
-        c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+        c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   }
 
   // The first request should be deleting the disk cache entry and the others
@@ -1696,12 +1752,12 @@ TEST(HttpCache, SimpleGET_WriterTimeout) {
 
   MockHttpRequest request(kSimpleGET_Transaction);
   Context c1, c2;
-  ASSERT_EQ(OK, cache.CreateTransaction(&c1.trans));
-  ASSERT_EQ(ERR_IO_PENDING,
-            c1.trans->Start(&request, c1.callback.callback(), BoundNetLog()));
-  ASSERT_EQ(OK, cache.CreateTransaction(&c2.trans));
-  ASSERT_EQ(ERR_IO_PENDING,
-            c2.trans->Start(&request, c2.callback.callback(), BoundNetLog()));
+  ASSERT_THAT(cache.CreateTransaction(&c1.trans), IsOk());
+  ASSERT_EQ(ERR_IO_PENDING, c1.trans->Start(&request, c1.callback.callback(),
+                                            NetLogWithSource()));
+  ASSERT_THAT(cache.CreateTransaction(&c2.trans), IsOk());
+  ASSERT_EQ(ERR_IO_PENDING, c2.trans->Start(&request, c2.callback.callback(),
+                                            NetLogWithSource()));
 
   // The second request is queued after the first one.
 
@@ -1722,16 +1778,16 @@ TEST(HttpCache, SimpleGET_AbandonedCacheRead) {
   MockHttpRequest request(kSimpleGET_Transaction);
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.CreateTransaction(&trans));
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
+  int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = callback.WaitForResult();
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
   scoped_refptr<IOBuffer> buf(new IOBuffer(256));
   rv = trans->Read(buf.get(), 256, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Test that destroying the transaction while it is reading from the cache
   // works properly.
@@ -1739,14 +1795,14 @@ TEST(HttpCache, SimpleGET_AbandonedCacheRead) {
 
   // Make sure we pump any pending events, which should include a call to
   // HttpCache::Transaction::OnCacheReadCompleted.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Tests that we can delete the HttpCache and deal with queued transactions
 // ("waiting for the backend" as opposed to Active or Doomed entries).
 TEST(HttpCache, SimpleGET_ManyWriters_DeleteCache) {
-  scoped_ptr<MockHttpCache> cache(
-      new MockHttpCache(make_scoped_ptr(new MockBackendNoCbFactory())));
+  std::unique_ptr<MockHttpCache> cache(
+      new MockHttpCache(base::WrapUnique(new MockBackendNoCbFactory())));
 
   MockHttpRequest request(kSimpleGET_Transaction);
 
@@ -1758,10 +1814,10 @@ TEST(HttpCache, SimpleGET_ManyWriters_DeleteCache) {
     Context* c = context_list[i];
 
     c->result = cache->CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
 
     c->result =
-        c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+        c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   }
 
   // The first request should be creating the disk cache entry and the others
@@ -1783,7 +1839,7 @@ TEST(HttpCache, SimpleGET_ManyWriters_DeleteCache) {
 // Tests that we queue requests when initializing the backend.
 TEST(HttpCache, SimpleGET_WaitForBackend) {
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  MockHttpCache cache(make_scoped_ptr(factory));
+  MockHttpCache cache(base::WrapUnique(factory));
 
   MockHttpRequest request0(kSimpleGET_Transaction);
   MockHttpRequest request1(kTypicalGET_Transaction);
@@ -1797,25 +1853,25 @@ TEST(HttpCache, SimpleGET_WaitForBackend) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
   }
 
   context_list[0]->result = context_list[0]->trans->Start(
-      &request0, context_list[0]->callback.callback(), BoundNetLog());
+      &request0, context_list[0]->callback.callback(), NetLogWithSource());
   context_list[1]->result = context_list[1]->trans->Start(
-      &request1, context_list[1]->callback.callback(), BoundNetLog());
+      &request1, context_list[1]->callback.callback(), NetLogWithSource());
   context_list[2]->result = context_list[2]->trans->Start(
-      &request2, context_list[2]->callback.callback(), BoundNetLog());
+      &request2, context_list[2]->callback.callback(), NetLogWithSource());
 
   // Just to make sure that everything is still pending.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The first request should be creating the disk cache.
   EXPECT_FALSE(context_list[0]->callback.have_result());
 
   factory->FinishCreation();
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(3, cache.network_layer()->transaction_count());
   EXPECT_EQ(3, cache.disk_cache()->create_count());
 
@@ -1829,7 +1885,7 @@ TEST(HttpCache, SimpleGET_WaitForBackend) {
 // to be initialized.
 TEST(HttpCache, SimpleGET_WaitForBackend_CancelCreate) {
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  MockHttpCache cache(make_scoped_ptr(factory));
+  MockHttpCache cache(base::WrapUnique(factory));
 
   MockHttpRequest request0(kSimpleGET_Transaction);
   MockHttpRequest request1(kTypicalGET_Transaction);
@@ -1843,18 +1899,18 @@ TEST(HttpCache, SimpleGET_WaitForBackend_CancelCreate) {
     Context* c = context_list[i];
 
     c->result = cache.CreateTransaction(&c->trans);
-    ASSERT_EQ(OK, c->result);
+    ASSERT_THAT(c->result, IsOk());
   }
 
   context_list[0]->result = context_list[0]->trans->Start(
-      &request0, context_list[0]->callback.callback(), BoundNetLog());
+      &request0, context_list[0]->callback.callback(), NetLogWithSource());
   context_list[1]->result = context_list[1]->trans->Start(
-      &request1, context_list[1]->callback.callback(), BoundNetLog());
+      &request1, context_list[1]->callback.callback(), NetLogWithSource());
   context_list[2]->result = context_list[2]->trans->Start(
-      &request2, context_list[2]->callback.callback(), BoundNetLog());
+      &request2, context_list[2]->callback.callback(), NetLogWithSource());
 
   // Just to make sure that everything is still pending.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The first request should be creating the disk cache.
   EXPECT_FALSE(context_list[0]->callback.have_result());
@@ -1883,18 +1939,19 @@ TEST(HttpCache, SimpleGET_WaitForBackend_CancelCreate) {
 // Tests that we can delete the cache while creating the backend.
 TEST(HttpCache, DeleteCacheWaitingForBackend) {
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  scoped_ptr<MockHttpCache> cache(new MockHttpCache(make_scoped_ptr(factory)));
+  std::unique_ptr<MockHttpCache> cache(
+      new MockHttpCache(base::WrapUnique(factory)));
 
   MockHttpRequest request(kSimpleGET_Transaction);
 
-  scoped_ptr<Context> c(new Context());
+  std::unique_ptr<Context> c(new Context());
   c->result = cache->CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, c->result);
+  ASSERT_THAT(c->result, IsOk());
 
-  c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
 
   // Just to make sure that everything is still pending.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The request should be creating the disk cache.
   EXPECT_FALSE(c->callback.have_result());
@@ -1902,10 +1959,10 @@ TEST(HttpCache, DeleteCacheWaitingForBackend) {
   // We cannot call FinishCreation because the factory itself will go away with
   // the cache, so grab the callback and attempt to use it.
   CompletionCallback callback = factory->callback();
-  scoped_ptr<disk_cache::Backend>* backend = factory->backend();
+  std::unique_ptr<disk_cache::Backend>* backend = factory->backend();
 
   cache.reset();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   backend->reset();
   callback.Run(ERR_ABORTED);
@@ -1915,29 +1972,29 @@ TEST(HttpCache, DeleteCacheWaitingForBackend) {
 // one of the callbacks.
 TEST(HttpCache, DeleteCacheWaitingForBackend2) {
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  MockHttpCache* cache = new MockHttpCache(make_scoped_ptr(factory));
+  MockHttpCache* cache = new MockHttpCache(base::WrapUnique(factory));
 
   DeleteCacheCompletionCallback cb(cache);
   disk_cache::Backend* backend;
   int rv = cache->http_cache()->GetBackend(&backend, cb.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Now let's queue a regular transaction
   MockHttpRequest request(kSimpleGET_Transaction);
 
-  scoped_ptr<Context> c(new Context());
+  std::unique_ptr<Context> c(new Context());
   c->result = cache->CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, c->result);
+  ASSERT_THAT(c->result, IsOk());
 
-  c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
 
   // And another direct backend request.
   TestCompletionCallback cb2;
   rv = cache->http_cache()->GetBackend(&backend, cb2.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Just to make sure that everything is still pending.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The request should be queued.
   EXPECT_FALSE(c->callback.have_result());
@@ -1947,8 +2004,8 @@ TEST(HttpCache, DeleteCacheWaitingForBackend2) {
   rv = cb.WaitForResult();
 
   // The cache should be gone by now.
-  base::MessageLoop::current()->RunUntilIdle();
-  EXPECT_EQ(OK, c->callback.GetResult(c->result));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_THAT(c->callback.GetResult(c->result), IsOk());
   EXPECT_FALSE(cb2.have_result());
 }
 
@@ -2469,7 +2526,7 @@ static void ConditionalizedRequestUpdatesCacheHelper(
   // Request |kUrl| a second time. Now |kNetResponse1| it is in the HTTP
   // cache, so we don't hit the network.
 
-  request.load_flags = LOAD_ONLY_FROM_CACHE;
+  request.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   kUnexpectedResponse.AssignTo(&mock_network_response);  // Network mock.
   net_response_1.AssignTo(&request);                     // Expected result.
@@ -2507,7 +2564,7 @@ static void ConditionalizedRequestUpdatesCacheHelper(
   // value in the cache with the modified response.
 
   request.request_headers = "";
-  request.load_flags = LOAD_ONLY_FROM_CACHE;
+  request.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   kUnexpectedResponse.AssignTo(&mock_network_response);  // Network mock.
   cached_response_2.AssignTo(&request);                  // Expected result.
@@ -2861,7 +2918,7 @@ TEST(HttpCache, UrlContainingHash) {
   // Since the cache key strips the hash sections, this should be a cache hit.
   std::string url_with_hash = std::string(trans.url) + "#multiple#hashes";
   trans.url = url_with_hash.c_str();
-  trans.load_flags = LOAD_ONLY_FROM_CACHE;
+  trans.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   RunTransactionTest(cache.http_cache(), trans);
 
@@ -2898,17 +2955,17 @@ TEST(HttpCache, SimplePOST_LoadOnlyFromCache_Miss) {
   MockHttpCache cache;
 
   MockTransaction transaction(kSimplePOST_Transaction);
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   MockHttpRequest request(transaction);
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
   ASSERT_TRUE(trans.get());
 
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  ASSERT_EQ(ERR_CACHE_MISS, callback.GetResult(rv));
+  int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+  ASSERT_THAT(callback.GetResult(rv), IsError(ERR_CACHE_MISS));
 
   trans.reset();
 
@@ -2924,11 +2981,11 @@ TEST(HttpCache, SimplePOST_LoadOnlyFromCache_Hit) {
 
   MockTransaction transaction(kSimplePOST_Transaction);
 
-  const int64 kUploadId = 1;  // Just a dummy value.
+  const int64_t kUploadId = 1;  // Just a dummy value.
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::MakeUnique<UploadBytesElementReader>("hello", 5));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers),
                                               kUploadId);
   MockHttpRequest request(transaction);
@@ -2942,7 +2999,7 @@ TEST(HttpCache, SimplePOST_LoadOnlyFromCache_Hit) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // Load from cache.
-  request.load_flags |= LOAD_ONLY_FROM_CACHE;
+  request.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   RunTransactionTestWithRequest(cache.http_cache(), transaction, request, NULL);
 
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
@@ -2957,11 +3014,11 @@ TEST(HttpCache, SimplePOST_WithRanges) {
   MockTransaction transaction(kSimplePOST_Transaction);
   transaction.request_headers = "Range: bytes = 0-4\r\n";
 
-  const int64 kUploadId = 1;  // Just a dummy value.
+  const int64_t kUploadId = 1;  // Just a dummy value.
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers),
                                               kUploadId);
 
@@ -2976,13 +3033,13 @@ TEST(HttpCache, SimplePOST_WithRanges) {
   EXPECT_EQ(0, cache.disk_cache()->create_count());
 }
 
-// Tests that a POST is cached separately from a previously cached GET.
+// Tests that a POST is cached separately from a GET.
 TEST(HttpCache, SimplePOST_SeparateCache) {
   MockHttpCache cache;
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 1);
 
   MockTransaction transaction(kSimplePOST_Transaction);
@@ -3020,9 +3077,9 @@ TEST(HttpCache, SimplePOST_Invalidate_205) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 1);
 
   transaction.method = "POST";
@@ -3060,9 +3117,9 @@ TEST(HttpCache, SimplePOST_NoUploadId_Invalidate_205) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   transaction.method = "POST";
@@ -3087,15 +3144,15 @@ TEST(HttpCache, SimplePOST_NoUploadId_Invalidate_205) {
 // Tests that processing a POST before creating the backend doesn't crash.
 TEST(HttpCache, SimplePOST_NoUploadId_NoBackend) {
   // This will initialize a cache object with NULL backend.
-  scoped_ptr<MockBlockingBackendFactory> factory(
+  std::unique_ptr<MockBlockingBackendFactory> factory(
       new MockBlockingBackendFactory());
   factory->set_fail(true);
   factory->FinishCreation();
-  MockHttpCache cache(factory.Pass());
+  MockHttpCache cache(std::move(factory));
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   MockTransaction transaction(kSimplePOST_Transaction);
@@ -3123,9 +3180,9 @@ TEST(HttpCache, SimplePOST_DontInvalidate_100) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 1);
 
   transaction.method = "POST";
@@ -3152,18 +3209,18 @@ TEST(HttpCache, SimpleHEAD_LoadOnlyFromCache_Miss) {
   MockHttpCache cache;
   MockTransaction transaction(kSimplePOST_Transaction);
   AddMockTransaction(&transaction);
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   transaction.method = "HEAD";
 
   MockHttpRequest request(transaction);
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
   ASSERT_TRUE(trans.get());
 
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  ASSERT_EQ(ERR_CACHE_MISS, callback.GetResult(rv));
+  int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+  ASSERT_THAT(callback.GetResult(rv), IsError(ERR_CACHE_MISS));
 
   trans.reset();
 
@@ -3188,7 +3245,7 @@ TEST(HttpCache, SimpleHEAD_LoadOnlyFromCache_Hit) {
 
   // Load from cache.
   transaction.method = "HEAD";
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   transaction.data = "";
   RunTransactionTest(cache.http_cache(), transaction);
 
@@ -3210,7 +3267,7 @@ TEST(HttpCache, SimpleHEAD_ContentLengthOnHit_Read) {
 
   // Load from cache.
   transaction.method = "HEAD";
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   transaction.data = "";
   std::string headers;
 
@@ -3255,7 +3312,7 @@ TEST(HttpCache, SimpleHEAD_WithRanges) {
   // Load from cache.
   transaction.method = "HEAD";
   transaction.request_headers = "Range: bytes = 0-4\r\n";
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   transaction.return_code = ERR_CACHE_MISS;
   RunTransactionTest(cache.http_cache(), transaction);
 
@@ -3351,10 +3408,10 @@ TEST(HttpCache, TypicalHEAD_UpdatesResponse) {
   AddMockTransaction(&transaction2);
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Load from the cache.
-  transaction2.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction2.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   RunTransactionTestWithResponse(cache.http_cache(), transaction2, &headers);
 
   EXPECT_NE(std::string::npos, headers.find("Foo: bar\n"));
@@ -3391,10 +3448,10 @@ TEST(HttpCache, TypicalHEAD_ConditionalizedRequestUpdatesResponse) {
   AddMockTransaction(&transaction2);
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Load from the cache.
-  transaction2.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction2.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   RunTransactionTestWithResponse(cache.http_cache(), transaction2, &headers);
 
   EXPECT_NE(std::string::npos, headers.find("Foo: bar\n"));
@@ -3421,7 +3478,7 @@ TEST(HttpCache, SimpleHEAD_InvalidatesEntry) {
 
   // Load from the cache.
   transaction.method = "GET";
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   transaction.return_code = ERR_CACHE_MISS;
   RunTransactionTest(cache.http_cache(), transaction);
 
@@ -3435,9 +3492,9 @@ TEST(HttpCache, SimplePUT_Miss) {
   MockTransaction transaction(kSimplePOST_Transaction);
   transaction.method = "PUT";
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   MockHttpRequest request(transaction);
@@ -3465,9 +3522,9 @@ TEST(HttpCache, SimplePUT_Invalidate) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   transaction.method = "PUT";
@@ -3502,9 +3559,9 @@ TEST(HttpCache, SimplePUT_Invalidate_305) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   transaction.method = "PUT";
@@ -3541,9 +3598,9 @@ TEST(HttpCache, SimplePUT_DontInvalidate_404) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   transaction.method = "PUT";
@@ -3572,9 +3629,9 @@ TEST(HttpCache, SimpleDELETE_Miss) {
   MockTransaction transaction(kSimplePOST_Transaction);
   transaction.method = "DELETE";
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   MockHttpRequest request(transaction);
@@ -3602,9 +3659,9 @@ TEST(HttpCache, SimpleDELETE_Invalidate) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  std::vector<scoped_ptr<UploadElementReader>> element_readers;
+  std::vector<std::unique_ptr<UploadElementReader>> element_readers;
   element_readers.push_back(
-      make_scoped_ptr(new UploadBytesElementReader("hello", 5)));
+      base::WrapUnique(new UploadBytesElementReader("hello", 5)));
   ElementsUploadDataStream upload_data_stream(std::move(element_readers), 0);
 
   transaction.method = "DELETE";
@@ -3707,7 +3764,7 @@ TEST(HttpCache, SimpleGET_DontInvalidateOnFailure) {
   EXPECT_EQ(2, cache.network_layer()->transaction_count());
   RemoveMockTransaction(&transaction);
 
-  transaction.load_flags = LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
   transaction.return_code = OK;
   AddMockTransaction(&transaction);
   RunTransactionTest(cache.http_cache(), transaction);
@@ -3790,7 +3847,7 @@ TEST(HttpCache, SimpleGET_DoesntLogHeaders) {
                             log.bound());
 
   EXPECT_FALSE(LogContainsEventType(
-      log, NetLog::TYPE_HTTP_CACHE_CALLER_REQUEST_HEADERS));
+      log, NetLogEventType::HTTP_CACHE_CALLER_REQUEST_HEADERS));
 }
 
 TEST(HttpCache, RangeGET_LogsHeaders) {
@@ -3801,7 +3858,7 @@ TEST(HttpCache, RangeGET_LogsHeaders) {
                             log.bound());
 
   EXPECT_TRUE(LogContainsEventType(
-      log, NetLog::TYPE_HTTP_CACHE_CALLER_REQUEST_HEADERS));
+      log, NetLogEventType::HTTP_CACHE_CALLER_REQUEST_HEADERS));
 }
 
 TEST(HttpCache, ExternalValidation_LogsHeaders) {
@@ -3813,7 +3870,7 @@ TEST(HttpCache, ExternalValidation_LogsHeaders) {
   RunTransactionTestWithLog(cache.http_cache(), transaction, log.bound());
 
   EXPECT_TRUE(LogContainsEventType(
-      log, NetLog::TYPE_HTTP_CACHE_CALLER_REQUEST_HEADERS));
+      log, NetLogEventType::HTTP_CACHE_CALLER_REQUEST_HEADERS));
 }
 
 TEST(HttpCache, SpecialHeaders_LogsHeaders) {
@@ -3825,7 +3882,7 @@ TEST(HttpCache, SpecialHeaders_LogsHeaders) {
   RunTransactionTestWithLog(cache.http_cache(), transaction, log.bound());
 
   EXPECT_TRUE(LogContainsEventType(
-      log, NetLog::TYPE_HTTP_CACHE_CALLER_REQUEST_HEADERS));
+      log, NetLogEventType::HTTP_CACHE_CALLER_REQUEST_HEADERS));
 }
 
 // Tests that receiving 206 for a regular request is handled correctly.
@@ -3941,7 +3998,7 @@ TEST(HttpCache, RangeGET_NoValidation_LogsRestart) {
                             log.bound());
 
   EXPECT_TRUE(LogContainsEventType(
-      log, NetLog::TYPE_HTTP_CACHE_RESTART_PARTIAL_REQUEST));
+      log, NetLogEventType::HTTP_CACHE_RESTART_PARTIAL_REQUEST));
 }
 
 // Tests that a failure to conditionalize a regular request (no range) with a
@@ -4085,7 +4142,7 @@ TEST(HttpCache, MAYBE_RangeGET_OK) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Write to the cache (30-39).
   MockTransaction transaction(kRangeGET_TransactionOK);
@@ -4099,7 +4156,7 @@ TEST(HttpCache, MAYBE_RangeGET_OK) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Write and read from the cache (20-59).
   transaction.request_headers = "Range: bytes = 20-59\r\n" EXTRA_HEADER;
@@ -4152,7 +4209,7 @@ TEST(HttpCache, MAYBE_RangeGET_SyncOK) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Write to the cache (30-39).
   transaction.request_headers = "Range: bytes = 30-39\r\n" EXTRA_HEADER;
@@ -4165,7 +4222,7 @@ TEST(HttpCache, MAYBE_RangeGET_SyncOK) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Write and read from the cache (20-59).
   transaction.request_headers = "Range: bytes = 20-59\r\n" EXTRA_HEADER;
@@ -4652,7 +4709,7 @@ TEST(HttpCache, UnknownRangeGET_1) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Write and read from the cache (60-79).
   transaction.request_headers = "Range: bytes = 60-\r\n" EXTRA_HEADER;
@@ -4691,7 +4748,7 @@ TEST(HttpCache, UnknownRangeGET_2) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // Make sure we are done with the previous transaction.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Write and read from the cache (60-79).
   transaction.request_headers = "Range: bytes = -20\r\n" EXTRA_HEADER;
@@ -5037,13 +5094,13 @@ TEST(HttpCache, MAYBE_RangeGET_Previous200) {
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
   // The last transaction has finished so make sure the entry is deactivated.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Make a request for an invalid range.
   MockTransaction transaction3(kRangeGET_TransactionOK);
   transaction3.request_headers = "Range: bytes = 80-90\r\n" EXTRA_HEADER;
   transaction3.data = transaction.data;
-  transaction3.load_flags = LOAD_PREFERRING_CACHE;
+  transaction3.load_flags = LOAD_SKIP_CACHE_VALIDATION;
   RunTransactionTestWithResponse(cache.http_cache(), transaction3, &headers);
   EXPECT_EQ(2, cache.disk_cache()->open_count());
   EXPECT_EQ(0U, headers.find("HTTP/1.1 200 "));
@@ -5051,14 +5108,14 @@ TEST(HttpCache, MAYBE_RangeGET_Previous200) {
   EXPECT_EQ(std::string::npos, headers.find("Content-Length: 80"));
 
   // Make sure the entry is deactivated.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Even though the request was invalid, we should have the entry.
   RunTransactionTest(cache.http_cache(), transaction2);
   EXPECT_EQ(3, cache.disk_cache()->open_count());
 
   // Make sure the entry is deactivated.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Now we should receive a range from the server and drop the stored entry.
   handler.set_not_modified(false);
@@ -5163,9 +5220,9 @@ TEST(HttpCache, MAYBE_RangeGET_Cancel) {
 
   Context* c = new Context();
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = c->callback.WaitForResult();
 
@@ -5208,9 +5265,9 @@ TEST(HttpCache, MAYBE_RangeGET_Cancel2) {
 
   Context* c = new Context();
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = c->callback.WaitForResult();
 
@@ -5224,7 +5281,7 @@ TEST(HttpCache, MAYBE_RangeGET_Cancel2) {
   rv = c->trans->Read(buf.get(), buf->size(), c->callback.callback());
   EXPECT_EQ(5, c->callback.GetResult(rv));
   rv = c->trans->Read(buf.get(), buf->size(), c->callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Destroy the transaction before completing the read.
   delete c;
@@ -5253,10 +5310,10 @@ TEST(HttpCache, RangeGET_Cancel3) {
 
   Context* c = new Context();
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   rv = c->callback.WaitForResult();
 
   EXPECT_EQ(2, cache.network_layer()->transaction_count());
@@ -5269,7 +5326,7 @@ TEST(HttpCache, RangeGET_Cancel3) {
   rv = c->trans->Read(buf.get(), buf->size(), c->callback.callback());
   EXPECT_EQ(5, c->callback.GetResult(rv));
   rv = c->trans->Read(buf.get(), buf->size(), c->callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Destroy the transaction before completing the read.
   delete c;
@@ -5280,20 +5337,20 @@ TEST(HttpCache, RangeGET_Cancel3) {
 
   c = new Context();
   rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   MockDiskEntry::IgnoreCallbacks(true);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   MockDiskEntry::IgnoreCallbacks(false);
 
   // The new transaction is waiting for the query range callback.
   delete c;
 
   // And we should not crash when the callback is delivered.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(2, cache.network_layer()->transaction_count());
   EXPECT_EQ(1, cache.disk_cache()->open_count());
@@ -5432,11 +5489,11 @@ TEST(HttpCache, RangeGET_LargeValues) {
 // Tests that we don't crash with a range request if the disk cache was not
 // initialized properly.
 TEST(HttpCache, RangeGET_NoDiskCache) {
-  scoped_ptr<MockBlockingBackendFactory> factory(
+  std::unique_ptr<MockBlockingBackendFactory> factory(
       new MockBlockingBackendFactory());
   factory->set_fail(true);
   factory->FinishCreation();  // We'll complete synchronously.
-  MockHttpCache cache(factory.Pass());
+  MockHttpCache cache(std::move(factory));
 
   AddMockTransaction(&kRangeGET_TransactionOK);
 
@@ -5491,7 +5548,7 @@ TEST(HttpCache, RangeGET_FastFlakyServer) {
   EXPECT_EQ(1, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
   EXPECT_TRUE(LogContainsEventType(
-      log, NetLog::TYPE_HTTP_CACHE_RE_SEND_PARTIAL_REQUEST));
+      log, NetLogEventType::HTTP_CACHE_RE_SEND_PARTIAL_REQUEST));
 }
 
 // Tests that when the server gives us less data than expected, we don't keep
@@ -5548,20 +5605,20 @@ TEST(HttpCache, RangeGET_OK_LoadOnlyFromCache) {
 
   // Force this transaction to read from the cache.
   MockTransaction transaction(kRangeGET_TransactionOK);
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   MockHttpRequest request(transaction);
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans;
+  std::unique_ptr<HttpTransaction> trans;
   int rv = cache.http_cache()->CreateTransaction(DEFAULT_PRIORITY, &trans);
-  EXPECT_EQ(OK, rv);
+  EXPECT_THAT(rv, IsOk());
   ASSERT_TRUE(trans.get());
 
-  rv = trans->Start(&request, callback.callback(), BoundNetLog());
+  rv = trans->Start(&request, callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = callback.WaitForResult();
-  ASSERT_EQ(ERR_CACHE_MISS, rv);
+  ASSERT_THAT(rv, IsError(ERR_CACHE_MISS));
 
   trans.reset();
 
@@ -5633,9 +5690,9 @@ TEST(HttpCache, DoomOnDestruction) {
 
   Context* c = new Context();
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     c->result = c->callback.WaitForResult();
 
@@ -5663,9 +5720,9 @@ TEST(HttpCache, DoomOnDestruction2) {
 
   Context* c = new Context();
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = c->callback.WaitForResult();
 
@@ -5706,9 +5763,9 @@ TEST(HttpCache, DoomOnDestruction3) {
 
   Context* c = new Context();
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = c->callback.WaitForResult();
 
@@ -5746,12 +5803,12 @@ TEST(HttpCache, SetTruncatedFlag) {
       "Etag: \"foopy\"\n";
   MockHttpRequest request(transaction);
 
-  scoped_ptr<Context> c(new Context());
+  std::unique_ptr<Context> c(new Context());
 
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = c->callback.WaitForResult();
 
@@ -5768,7 +5825,7 @@ TEST(HttpCache, SetTruncatedFlag) {
 
   // We want to cancel the request when the transaction is busy.
   rv = c->trans->Read(buf.get(), buf->size(), c->callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_FALSE(c->callback.have_result());
 
   MockHttpCache::SetTestMode(TEST_MODE_SYNC_ALL);
@@ -5799,12 +5856,12 @@ TEST(HttpCache, DontSetTruncatedFlag) {
       "Etag: \"foopy\"\n";
   MockHttpRequest request(transaction);
 
-  scoped_ptr<Context> c(new Context());
+  std::unique_ptr<Context> c(new Context());
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(OK, c->callback.GetResult(rv));
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(c->callback.GetResult(rv), IsOk());
 
   // Read everything.
   scoped_refptr<IOBufferWithSize> buf(new IOBufferWithSize(22));
@@ -5825,14 +5882,14 @@ TEST(HttpCache, RangeGET_DontTruncate) {
   ScopedMockTransaction transaction(kRangeGET_TransactionOK);
   transaction.request_headers = "Range: bytes = 0-19\r\n" EXTRA_HEADER;
 
-  scoped_ptr<MockHttpRequest> request(new MockHttpRequest(transaction));
-  scoped_ptr<HttpTransaction> trans;
+  std::unique_ptr<MockHttpRequest> request(new MockHttpRequest(transaction));
+  std::unique_ptr<HttpTransaction> trans;
 
   int rv = cache.http_cache()->CreateTransaction(DEFAULT_PRIORITY, &trans);
-  EXPECT_EQ(OK, rv);
+  EXPECT_THAT(rv, IsOk());
 
   TestCompletionCallback cb;
-  rv = trans->Start(request.get(), cb.callback(), BoundNetLog());
+  rv = trans->Start(request.get(), cb.callback(), NetLogWithSource());
   EXPECT_EQ(0, cb.GetResult(rv));
 
   scoped_refptr<IOBuffer> buf(new IOBuffer(10));
@@ -5852,14 +5909,14 @@ TEST(HttpCache, RangeGET_DontTruncate2) {
   ScopedMockTransaction transaction(kRangeGET_TransactionOK);
   transaction.request_headers = "Range: bytes = 30-49\r\n" EXTRA_HEADER;
 
-  scoped_ptr<MockHttpRequest> request(new MockHttpRequest(transaction));
-  scoped_ptr<HttpTransaction> trans;
+  std::unique_ptr<MockHttpRequest> request(new MockHttpRequest(transaction));
+  std::unique_ptr<HttpTransaction> trans;
 
   int rv = cache.http_cache()->CreateTransaction(DEFAULT_PRIORITY, &trans);
-  EXPECT_EQ(OK, rv);
+  EXPECT_THAT(rv, IsOk());
 
   TestCompletionCallback cb;
-  rv = trans->Start(request.get(), cb.callback(), BoundNetLog());
+  rv = trans->Start(request.get(), cb.callback(), NetLogWithSource());
   EXPECT_EQ(0, cb.GetResult(rv));
 
   scoped_refptr<IOBuffer> buf(new IOBuffer(10));
@@ -5977,20 +6034,20 @@ TEST(HttpCache, GET_IncompleteResource_Cancel) {
   Context* c = new Context();
 
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
   // Queue another request to this transaction. We have to start this request
   // before the first one gets the response from the server and dooms the entry,
   // otherwise it will just create a new entry without being queued to the first
   // request.
   Context* pending = new Context();
-  ASSERT_EQ(OK, cache.CreateTransaction(&pending->trans));
+  ASSERT_THAT(cache.CreateTransaction(&pending->trans), IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   EXPECT_EQ(ERR_IO_PENDING,
             pending->trans->Start(&request, pending->callback.callback(),
-                                  BoundNetLog()));
-  EXPECT_EQ(OK, c->callback.GetResult(rv));
+                                  NetLogWithSource()));
+  EXPECT_THAT(c->callback.GetResult(rv), IsOk());
 
   // Make sure that the entry has some data stored.
   scoped_refptr<IOBufferWithSize> buf(new IOBufferWithSize(5));
@@ -6005,7 +6062,7 @@ TEST(HttpCache, GET_IncompleteResource_Cancel) {
   EXPECT_EQ(1, cache.disk_cache()->open_count());
   EXPECT_EQ(2, cache.disk_cache()->create_count());
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   RemoveMockTransaction(&transaction);
 }
 
@@ -6066,13 +6123,13 @@ TEST(HttpCache, GET_IncompleteResource3) {
   transaction.request_headers = EXTRA_HEADER;
   transaction.data = kFullRangeData;
 
-  scoped_ptr<Context> c(new Context);
+  std::unique_ptr<Context> c(new Context);
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
   MockHttpRequest request(transaction);
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(OK, c->callback.GetResult(rv));
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(c->callback.GetResult(rv), IsOk());
 
   // We should have checked with the server before finishing Start().
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
@@ -6101,19 +6158,19 @@ TEST(HttpCache, GET_IncompleteResourceWithAuth) {
   transaction.data = kFullRangeData;
   RangeTransactionServer handler;
 
-  scoped_ptr<Context> c(new Context);
+  std::unique_ptr<Context> c(new Context);
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
   MockHttpRequest request(transaction);
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(OK, c->callback.GetResult(rv));
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(c->callback.GetResult(rv), IsOk());
 
   const HttpResponseInfo* response = c->trans->GetResponseInfo();
   ASSERT_TRUE(response);
   ASSERT_EQ(401, response->headers->response_code());
   rv = c->trans->RestartWithAuth(AuthCredentials(), c->callback.callback());
-  EXPECT_EQ(OK, c->callback.GetResult(rv));
+  EXPECT_THAT(c->callback.GetResult(rv), IsOk());
   response = c->trans->GetResponseInfo();
   ASSERT_TRUE(response);
   ASSERT_EQ(200, response->headers->response_code());
@@ -6152,18 +6209,18 @@ TEST(HttpCache, TransactionRetryLimit) {
       "Range: bytes = 0-79\r\n"
       "X-Require-Mock-Auth-Alt: dummy\r\n" EXTRA_HEADER;
 
-  scoped_ptr<Context> c(new Context);
+  std::unique_ptr<Context> c(new Context);
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
   MockHttpRequest request(transaction);
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = c->callback.WaitForResult();
   std::string content;
   rv = ReadTransaction(c->trans.get(), &content);
-  EXPECT_EQ(ERR_CACHE_AUTH_FAILURE_AFTER_READ, rv);
+  EXPECT_THAT(rv, IsError(ERR_CACHE_AUTH_FAILURE_AFTER_READ));
 }
 
 // Tests that we cache a 200 response to the validation request.
@@ -6213,10 +6270,10 @@ TEST(HttpCache, GET_CancelIncompleteResource) {
   MockHttpRequest request(transaction);
   Context* c = new Context();
   int rv = cache.CreateTransaction(&c->trans);
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
 
-  rv = c->trans->Start(&request, c->callback.callback(), BoundNetLog());
-  EXPECT_EQ(OK, c->callback.GetResult(rv));
+  rv = c->trans->Start(&request, c->callback.callback(), NetLogWithSource());
+  EXPECT_THAT(c->callback.GetResult(rv), IsOk());
 
   // Read 20 bytes from the cache, and 10 from the net.
   scoped_refptr<IOBuffer> buf(new IOBuffer(100));
@@ -6282,23 +6339,23 @@ TEST(HttpCache, SyncRead) {
       c2(DEFAULT_PRIORITY, cache.http_cache()),
       c3(DEFAULT_PRIORITY, cache.http_cache());
 
-  c1.Start(&r1, BoundNetLog());
+  c1.Start(&r1, NetLogWithSource());
 
-  r2.load_flags |= LOAD_ONLY_FROM_CACHE;
-  c2.Start(&r2, BoundNetLog());
+  r2.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
+  c2.Start(&r2, NetLogWithSource());
 
-  r3.load_flags |= LOAD_ONLY_FROM_CACHE;
-  c3.Start(&r3, BoundNetLog());
+  r3.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
+  c3.Start(&r3, NetLogWithSource());
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_TRUE(c1.is_done());
   EXPECT_TRUE(c2.is_done());
   EXPECT_TRUE(c3.is_done());
 
-  EXPECT_EQ(OK, c1.error());
-  EXPECT_EQ(OK, c2.error());
-  EXPECT_EQ(OK, c3.error());
+  EXPECT_THAT(c1.error(), IsOk());
+  EXPECT_THAT(c2.error(), IsOk());
+  EXPECT_THAT(c3.error(), IsOk());
 }
 
 TEST(HttpCache, ValidationResultsIn200) {
@@ -6331,13 +6388,13 @@ TEST(HttpCache, CachedRedirect) {
 
   // Write to the cache.
   {
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
     if (rv == ERR_IO_PENDING)
       rv = callback.WaitForResult();
-    ASSERT_EQ(OK, rv);
+    ASSERT_THAT(rv, IsOk());
 
     const HttpResponseInfo* info = trans->GetResponseInfo();
     ASSERT_TRUE(info);
@@ -6361,17 +6418,17 @@ TEST(HttpCache, CachedRedirect) {
   // Active entries in the cache are not retired synchronously. Make
   // sure the next run hits the MockHttpCache and open_count is
   // correct.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Read from the cache.
   {
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
     if (rv == ERR_IO_PENDING)
       rv = callback.WaitForResult();
-    ASSERT_EQ(OK, rv);
+    ASSERT_THAT(rv, IsOk());
 
     const HttpResponseInfo* info = trans->GetResponseInfo();
     ASSERT_TRUE(info);
@@ -6421,7 +6478,7 @@ TEST(HttpCache, CacheControlNoCacheNormalLoad) {
 }
 
 // Verify that no-cache resources are stored in cache and fetched from cache
-// when the LOAD_PREFERRING_CACHE flag is set.
+// when the LOAD_SKIP_CACHE_VALIDATION flag is set.
 TEST(HttpCache, CacheControlNoCacheHistoryLoad) {
   MockHttpCache cache;
 
@@ -6435,8 +6492,8 @@ TEST(HttpCache, CacheControlNoCacheHistoryLoad) {
   EXPECT_EQ(0, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
 
-  // Try loading again with LOAD_PREFERRING_CACHE.
-  transaction.load_flags = LOAD_PREFERRING_CACHE;
+  // Try loading again with LOAD_SKIP_CACHE_VALIDATION.
+  transaction.load_flags = LOAD_SKIP_CACHE_VALIDATION;
   RunTransactionTest(cache.http_cache(), transaction);
 
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
@@ -6541,26 +6598,26 @@ TEST(HttpCache, SimpleGET_SSLError) {
   RunTransactionTest(cache.http_cache(), transaction);
 
   // Test that it was not cached.
-  transaction.load_flags |= LOAD_ONLY_FROM_CACHE;
+  transaction.load_flags |= LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   MockHttpRequest request(transaction);
   TestCompletionCallback callback;
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
+  int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
   if (rv == ERR_IO_PENDING)
     rv = callback.WaitForResult();
-  ASSERT_EQ(ERR_CACHE_MISS, rv);
+  ASSERT_THAT(rv, IsError(ERR_CACHE_MISS));
 }
 
 // Ensure that we don't crash by if left-behind transactions.
 TEST(HttpCache, OutlivedTransactions) {
   MockHttpCache* cache = new MockHttpCache;
 
-  scoped_ptr<HttpTransaction> trans;
-  EXPECT_EQ(OK, cache->CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  EXPECT_THAT(cache->CreateTransaction(&trans), IsOk());
 
   delete cache;
   trans.reset();
@@ -6686,7 +6743,7 @@ TEST(HttpCache, WriteMetadata_OK) {
   buf = NULL;
 
   // Makes sure we finish pending operations.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   RunTransactionTestWithResponseInfo(cache.http_cache(), kSimpleGET_Transaction,
                                      &response);
@@ -6720,7 +6777,7 @@ TEST(HttpCache, WriteMetadata_Fail) {
                                     buf->size());
 
   // Makes sure we finish pending operations.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   RunTransactionTestWithResponseInfo(cache.http_cache(), kSimpleGET_Transaction,
                                      &response);
@@ -6729,6 +6786,112 @@ TEST(HttpCache, WriteMetadata_Fail) {
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
   EXPECT_EQ(2, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
+}
+
+// Tests that we ignore VARY checks when writing metadata since the request
+// headers for the WriteMetadata transaction are made up.
+TEST(HttpCache, WriteMetadata_IgnoreVary) {
+  MockHttpCache cache;
+
+  // Write to the cache
+  HttpResponseInfo response;
+  ScopedMockTransaction transaction(kSimpleGET_Transaction);
+  transaction.request_headers = "accept-encoding: gzip\r\n";
+  transaction.response_headers =
+      "Vary: accept-encoding\n"
+      "Cache-Control: max-age=10000\n";
+
+  RunTransactionTestWithResponseInfo(cache.http_cache(), transaction,
+                                     &response);
+  EXPECT_FALSE(response.metadata);
+
+  // Attempt to write meta data to the same entry.
+  scoped_refptr<IOBufferWithSize> buf(new IOBufferWithSize(50));
+  memset(buf->data(), 0, buf->size());
+  base::strlcpy(buf->data(), "Hi there", buf->size());
+  cache.http_cache()->WriteMetadata(GURL(transaction.url), DEFAULT_PRIORITY,
+                                    response.response_time, buf.get(),
+                                    buf->size());
+
+  // Makes sure we finish pending operations.
+  base::RunLoop().RunUntilIdle();
+
+  RunTransactionTestWithResponseInfo(cache.http_cache(), transaction,
+                                     &response);
+  ASSERT_TRUE(response.metadata);
+  EXPECT_EQ(50, response.metadata->size());
+  EXPECT_EQ(0, strcmp(response.metadata->data(), "Hi there"));
+
+  EXPECT_EQ(1, cache.network_layer()->transaction_count());
+  EXPECT_EQ(2, cache.disk_cache()->open_count());
+  EXPECT_EQ(1, cache.disk_cache()->create_count());
+}
+
+TEST(HttpCache, SkipVaryCheck) {
+  MockHttpCache cache;
+
+  // Write a simple vary transaction to the cache.
+  HttpResponseInfo response;
+  ScopedMockTransaction transaction(kSimpleGET_Transaction);
+  transaction.request_headers = "accept-encoding: gzip\r\n";
+  transaction.response_headers =
+      "Vary: accept-encoding\n"
+      "Cache-Control: max-age=10000\n";
+  RunTransactionTest(cache.http_cache(), transaction);
+
+  // Change the request headers so that the request doesn't match due to vary.
+  // The request should fail.
+  transaction.load_flags = LOAD_ONLY_FROM_CACHE;
+  transaction.request_headers = "accept-encoding: foo\r\n";
+  transaction.return_code = ERR_CACHE_MISS;
+  RunTransactionTest(cache.http_cache(), transaction);
+
+  // Change the load flags to ignore vary checks, the request should now hit.
+  transaction.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_VARY_CHECK;
+  transaction.return_code = OK;
+  RunTransactionTest(cache.http_cache(), transaction);
+}
+
+// Tests that we only return valid entries with LOAD_ONLY_FROM_CACHE
+// transactions unless LOAD_SKIP_CACHE_VALIDATION is set.
+TEST(HttpCache, ValidLoadOnlyFromCache) {
+  MockHttpCache cache;
+  base::SimpleTestClock* clock = new base::SimpleTestClock();
+  cache.http_cache()->SetClockForTesting(base::WrapUnique(clock));
+  cache.network_layer()->SetClock(clock);
+
+  // Write a resource that will expire in 100 seconds.
+  ScopedMockTransaction transaction(kSimpleGET_Transaction);
+  transaction.response_headers = "Cache-Control: max-age=100\n";
+  RunTransactionTest(cache.http_cache(), transaction);
+
+  // Move forward in time such that the cached response is no longer valid.
+  clock->Advance(base::TimeDelta::FromSeconds(101));
+
+  // Skipping cache validation should still return a response.
+  transaction.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
+  RunTransactionTest(cache.http_cache(), transaction);
+
+  // If the cache entry is checked for validitiy, it should fail.
+  transaction.load_flags = LOAD_ONLY_FROM_CACHE;
+  transaction.return_code = ERR_CACHE_MISS;
+  RunTransactionTest(cache.http_cache(), transaction);
+}
+
+TEST(HttpCache, InvalidLoadFlagCombination) {
+  MockHttpCache cache;
+
+  // Put the resource in the cache.
+  RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
+
+  // Now try to fetch it again, but with a flag combination disallowing both
+  // cache and network access.
+  ScopedMockTransaction transaction(kSimpleGET_Transaction);
+  // DevTools relies on this combination of flags for "disable cache" mode
+  // when a resource is only supposed to be loaded from cache.
+  transaction.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_BYPASS_CACHE;
+  transaction.return_code = ERR_CACHE_MISS;
+  RunTransactionTest(cache.http_cache(), transaction);
 }
 
 // Tests that we can read metadata after validating the entry and with READ mode
@@ -6751,11 +6914,11 @@ TEST(HttpCache, ReadMetadata) {
                                     buf.get(), buf->size());
 
   // Makes sure we finish pending operations.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Start with a READ mode transaction.
   MockTransaction trans1(kTypicalGET_Transaction);
-  trans1.load_flags = LOAD_ONLY_FROM_CACHE;
+  trans1.load_flags = LOAD_ONLY_FROM_CACHE | LOAD_SKIP_CACHE_VALIDATION;
 
   RunTransactionTestWithResponseInfo(cache.http_cache(), trans1, &response);
   ASSERT_TRUE(response.metadata.get() != NULL);
@@ -6765,7 +6928,7 @@ TEST(HttpCache, ReadMetadata) {
   EXPECT_EQ(1, cache.network_layer()->transaction_count());
   EXPECT_EQ(2, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Now make sure that the entry is re-validated with the server.
   trans1.load_flags = LOAD_VALIDATE_CACHE;
@@ -6779,7 +6942,7 @@ TEST(HttpCache, ReadMetadata) {
   EXPECT_EQ(2, cache.network_layer()->transaction_count());
   EXPECT_EQ(3, cache.disk_cache()->open_count());
   EXPECT_EQ(1, cache.disk_cache()->create_count());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   RemoveMockTransaction(&trans1);
 
   // Now return 200 when validating the entry so the metadata will be lost.
@@ -6800,12 +6963,12 @@ TEST(HttpCache, FilterCompletion) {
   TestCompletionCallback callback;
 
   {
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
     MockHttpRequest request(kSimpleGET_Transaction);
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-    EXPECT_EQ(OK, callback.GetResult(rv));
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+    EXPECT_THAT(callback.GetResult(rv), IsOk());
 
     scoped_refptr<IOBuffer> buf(new IOBuffer(256));
     rv = trans->Read(buf.get(), 256, callback.callback());
@@ -6816,7 +6979,7 @@ TEST(HttpCache, FilterCompletion) {
   }
 
   // Make sure that the ActiveEntry is gone.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Read from the cache.
   RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
@@ -6836,18 +6999,18 @@ TEST(HttpCache, DoneReading) {
   ScopedMockTransaction transaction(kSimpleGET_Transaction);
   transaction.data = "";
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
   MockHttpRequest request(transaction);
-  int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 
   trans->DoneReading();
   // Leave the transaction around.
 
   // Make sure that the ActiveEntry is gone.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Read from the cache. This should not deadlock.
   RunTransactionTest(cache.http_cache(), transaction);
@@ -6864,11 +7027,11 @@ TEST(HttpCache, StopCachingDeletesEntry) {
   MockHttpRequest request(kSimpleGET_Transaction);
 
   {
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-    EXPECT_EQ(OK, callback.GetResult(rv));
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+    EXPECT_THAT(callback.GetResult(rv), IsOk());
 
     scoped_refptr<IOBuffer> buf(new IOBuffer(256));
     rv = trans->Read(buf.get(), 10, callback.callback());
@@ -6884,7 +7047,7 @@ TEST(HttpCache, StopCachingDeletesEntry) {
   }
 
   // Make sure that the ActiveEntry is gone.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Verify that the entry is gone.
   RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
@@ -6902,11 +7065,11 @@ TEST(HttpCache, StopCachingThenDoneReadingDeletesEntry) {
   MockHttpRequest request(kSimpleGET_Transaction);
 
   {
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-    EXPECT_EQ(OK, callback.GetResult(rv));
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+    EXPECT_THAT(callback.GetResult(rv), IsOk());
 
     scoped_refptr<IOBuffer> buf(new IOBuffer(256));
     rv = trans->Read(buf.get(), 10, callback.callback());
@@ -6925,7 +7088,7 @@ TEST(HttpCache, StopCachingThenDoneReadingDeletesEntry) {
   }
 
   // Make sure that the ActiveEntry is gone.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Verify that the entry is gone.
   RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
@@ -6945,11 +7108,11 @@ TEST(HttpCache, StopCachingWithAuthDeletesEntry) {
   MockHttpRequest request(mock_transaction);
 
   {
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-    EXPECT_EQ(OK, callback.GetResult(rv));
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+    EXPECT_THAT(callback.GetResult(rv), IsOk());
 
     trans->StopCaching();
 
@@ -6960,7 +7123,7 @@ TEST(HttpCache, StopCachingWithAuthDeletesEntry) {
   RemoveMockTransaction(&mock_transaction);
 
   // Make sure that the ActiveEntry is gone.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Verify that the entry is gone.
   RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
@@ -6977,8 +7140,8 @@ TEST(HttpCache, StopCachingSavesEntry) {
   MockHttpRequest request(kSimpleGET_Transaction);
 
   {
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
     // Force a response that can be resumed.
     ScopedMockTransaction mock_transaction(kSimpleGET_Transaction);
@@ -6987,8 +7150,8 @@ TEST(HttpCache, StopCachingSavesEntry) {
                                         "Content-Length: 42\n"
                                         "Etag: \"foo\"\n";
 
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-    EXPECT_EQ(OK, callback.GetResult(rv));
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+    EXPECT_THAT(callback.GetResult(rv), IsOk());
 
     scoped_refptr<IOBuffer> buf(new IOBuffer(256));
     rv = trans->Read(buf.get(), 10, callback.callback());
@@ -7025,11 +7188,11 @@ TEST(HttpCache, StopCachingTruncatedEntry) {
 
   {
     // Now make a regular request.
-    scoped_ptr<HttpTransaction> trans;
-    ASSERT_EQ(OK, cache.CreateTransaction(&trans));
+    std::unique_ptr<HttpTransaction> trans;
+    ASSERT_THAT(cache.CreateTransaction(&trans), IsOk());
 
-    int rv = trans->Start(&request, callback.callback(), BoundNetLog());
-    EXPECT_EQ(OK, callback.GetResult(rv));
+    int rv = trans->Start(&request, callback.callback(), NetLogWithSource());
+    EXPECT_THAT(callback.GetResult(rv), IsOk());
 
     scoped_refptr<IOBuffer> buf(new IOBuffer(256));
     rv = trans->Read(buf.get(), 10, callback.callback());
@@ -7050,6 +7213,277 @@ TEST(HttpCache, StopCachingTruncatedEntry) {
   // Verify that the disk entry was updated.
   VerifyTruncatedFlag(&cache, kRangeGET_TransactionOK.url, false, 80);
   RemoveMockTransaction(&kRangeGET_TransactionOK);
+}
+
+namespace {
+
+enum class TransactionPhase {
+  BEFORE_FIRST_READ,
+  AFTER_FIRST_READ,
+  AFTER_NETWORK_READ
+};
+
+using CacheInitializer = void (*)(MockHttpCache*);
+using HugeCacheTestConfiguration =
+    std::pair<TransactionPhase, CacheInitializer>;
+
+class HttpCacheHugeResourceTest
+    : public ::testing::TestWithParam<HugeCacheTestConfiguration> {
+ public:
+  static std::list<HugeCacheTestConfiguration> GetTestModes();
+  static std::list<HugeCacheTestConfiguration> kTestModes;
+
+  // CacheInitializer callbacks. These are used to initialize the cache
+  // depending on the test run configuration.
+
+  // Initializes a cache containing a truncated entry containing the first 20
+  // bytes of the reponse body.
+  static void SetupTruncatedCacheEntry(MockHttpCache* cache);
+
+  // Initializes a cache containing a sparse entry. The first 10 bytes are
+  // present in the cache.
+  static void SetupPrefixSparseCacheEntry(MockHttpCache* cache);
+
+  // Initializes a cache containing a sparse entry. The 10 bytes at offset
+  // 99990 are present in the cache.
+  static void SetupInfixSparseCacheEntry(MockHttpCache* cache);
+
+ protected:
+  static void LargeResourceTransactionHandler(
+      const net::HttpRequestInfo* request,
+      std::string* response_status,
+      std::string* response_headers,
+      std::string* response_data);
+  static int LargeBufferReader(int64_t content_length,
+                               int64_t offset,
+                               net::IOBuffer* buf,
+                               int buf_len);
+
+  static void SetFlagOnBeforeNetworkStart(bool* started, bool* /* defer */);
+
+  // Size of resource to be tested.
+  static const int64_t kTotalSize = 5000LL * 1000 * 1000;
+};
+
+const int64_t HttpCacheHugeResourceTest::kTotalSize;
+
+// static
+void HttpCacheHugeResourceTest::LargeResourceTransactionHandler(
+    const net::HttpRequestInfo* request,
+    std::string* response_status,
+    std::string* response_headers,
+    std::string* response_data) {
+  std::string if_range;
+  if (!request->extra_headers.GetHeader(net::HttpRequestHeaders::kIfRange,
+                                        &if_range)) {
+    // If there were no range headers in the request, we are going to just
+    // return the entire response body.
+    *response_status = "HTTP/1.1 200 Success";
+    *response_headers = base::StringPrintf("Content-Length: %" PRId64
+                                           "\n"
+                                           "ETag: \"foo\"\n"
+                                           "Accept-Ranges: bytes\n",
+                                           kTotalSize);
+    return;
+  }
+
+  // From this point on, we should be processing a valid byte-range request.
+  EXPECT_EQ("\"foo\"", if_range);
+
+  std::string range_header;
+  EXPECT_TRUE(request->extra_headers.GetHeader(net::HttpRequestHeaders::kRange,
+                                               &range_header));
+  std::vector<net::HttpByteRange> ranges;
+
+  EXPECT_TRUE(net::HttpUtil::ParseRangeHeader(range_header, &ranges));
+  ASSERT_EQ(1u, ranges.size());
+
+  net::HttpByteRange range = ranges[0];
+  EXPECT_TRUE(range.HasFirstBytePosition());
+  int64_t last_byte_position =
+      range.HasLastBytePosition() ? range.last_byte_position() : kTotalSize - 1;
+
+  *response_status = "HTTP/1.1 206 Partial";
+  *response_headers = base::StringPrintf(
+      "Content-Range: bytes %" PRId64 "-%" PRId64 "/%" PRId64
+      "\n"
+      "Content-Length: %" PRId64 "\n",
+      range.first_byte_position(), last_byte_position, kTotalSize,
+      last_byte_position - range.first_byte_position() + 1);
+}
+
+// static
+int HttpCacheHugeResourceTest::LargeBufferReader(int64_t content_length,
+                                                 int64_t offset,
+                                                 net::IOBuffer* buf,
+                                                 int buf_len) {
+  // This test involves reading multiple gigabytes of data. To make it run in a
+  // reasonable amount of time, we are going to skip filling the buffer with
+  // data. Instead the test relies on verifying that the count of bytes expected
+  // at the end is correct.
+  EXPECT_LT(0, content_length);
+  EXPECT_LE(offset, content_length);
+  int num = std::min(static_cast<int64_t>(buf_len), content_length - offset);
+  return num;
+}
+
+// static
+void HttpCacheHugeResourceTest::SetFlagOnBeforeNetworkStart(bool* started,
+                                                            bool* /* defer */) {
+  *started = true;
+}
+
+// static
+void HttpCacheHugeResourceTest::SetupTruncatedCacheEntry(MockHttpCache* cache) {
+  ScopedMockTransaction scoped_transaction(kRangeGET_TransactionOK);
+  std::string cached_headers = base::StringPrintf(
+      "HTTP/1.1 200 OK\n"
+      "Last-Modified: Sat, 18 Apr 2007 01:10:43 GMT\n"
+      "ETag: \"foo\"\n"
+      "Accept-Ranges: bytes\n"
+      "Content-Length: %" PRId64 "\n",
+      kTotalSize);
+  CreateTruncatedEntry(cached_headers, cache);
+}
+
+// static
+void HttpCacheHugeResourceTest::SetupPrefixSparseCacheEntry(
+    MockHttpCache* cache) {
+  MockTransaction transaction(kRangeGET_TransactionOK);
+  transaction.handler = nullptr;
+  transaction.request_headers = "Range: bytes = 0-9\r\n" EXTRA_HEADER;
+  transaction.response_headers =
+      "Last-Modified: Sat, 18 Apr 2007 01:10:43 GMT\n"
+      "ETag: \"foo\"\n"
+      "Accept-Ranges: bytes\n"
+      "Content-Range: bytes 0-9/5000000000\n"
+      "Content-Length: 10\n";
+  AddMockTransaction(&transaction);
+  std::string headers;
+  RunTransactionTestWithResponse(cache->http_cache(), transaction, &headers);
+  RemoveMockTransaction(&transaction);
+}
+
+// static
+void HttpCacheHugeResourceTest::SetupInfixSparseCacheEntry(
+    MockHttpCache* cache) {
+  MockTransaction transaction(kRangeGET_TransactionOK);
+  transaction.handler = nullptr;
+  transaction.request_headers = "Range: bytes = 99990-99999\r\n" EXTRA_HEADER;
+  transaction.response_headers =
+      "Last-Modified: Sat, 18 Apr 2007 01:10:43 GMT\n"
+      "ETag: \"foo\"\n"
+      "Accept-Ranges: bytes\n"
+      "Content-Range: bytes 99990-99999/5000000000\n"
+      "Content-Length: 10\n";
+  AddMockTransaction(&transaction);
+  std::string headers;
+  RunTransactionTestWithResponse(cache->http_cache(), transaction, &headers);
+  RemoveMockTransaction(&transaction);
+}
+
+// static
+std::list<HugeCacheTestConfiguration>
+HttpCacheHugeResourceTest::GetTestModes() {
+  std::list<HugeCacheTestConfiguration> test_modes;
+  const TransactionPhase kTransactionPhases[] = {
+      TransactionPhase::BEFORE_FIRST_READ, TransactionPhase::AFTER_FIRST_READ,
+      TransactionPhase::AFTER_NETWORK_READ};
+  const CacheInitializer kInitializers[] = {&SetupTruncatedCacheEntry,
+                                            &SetupPrefixSparseCacheEntry,
+                                            &SetupInfixSparseCacheEntry};
+
+  for (const auto phase : kTransactionPhases)
+    for (const auto initializer : kInitializers)
+      test_modes.push_back(std::make_pair(phase, initializer));
+
+  return test_modes;
+}
+
+// static
+std::list<HugeCacheTestConfiguration> HttpCacheHugeResourceTest::kTestModes =
+    HttpCacheHugeResourceTest::GetTestModes();
+
+INSTANTIATE_TEST_CASE_P(
+    _,
+    HttpCacheHugeResourceTest,
+    ::testing::ValuesIn(HttpCacheHugeResourceTest::kTestModes));
+
+}  // namespace
+
+// Test what happens when StopCaching() is called while reading a huge resource
+// fetched via GET. Various combinations of cache state and when StopCaching()
+// is called is controlled by the parameter passed into the test via the
+// INSTANTIATE_TEST_CASE_P invocation above.
+TEST_P(HttpCacheHugeResourceTest,
+       StopCachingFollowedByReadForHugeTruncatedResource) {
+  // This test is going to be repeated for all combinations of TransactionPhase
+  // and CacheInitializers returned by GetTestModes().
+  const TransactionPhase stop_caching_phase = GetParam().first;
+  const CacheInitializer cache_initializer = GetParam().second;
+
+  MockHttpCache cache;
+  (*cache_initializer)(&cache);
+
+  MockTransaction transaction(kSimpleGET_Transaction);
+  transaction.url = kRangeGET_TransactionOK.url;
+  transaction.handler = &LargeResourceTransactionHandler;
+  transaction.read_handler = &LargeBufferReader;
+  ScopedMockTransaction scoped_transaction(transaction);
+
+  MockHttpRequest request(transaction);
+  net::TestCompletionCallback callback;
+  std::unique_ptr<net::HttpTransaction> http_transaction;
+  int rv = cache.http_cache()->CreateTransaction(net::DEFAULT_PRIORITY,
+                                                 &http_transaction);
+  ASSERT_EQ(net::OK, rv);
+  ASSERT_TRUE(http_transaction.get());
+
+  bool network_transaction_started = false;
+  if (stop_caching_phase == TransactionPhase::AFTER_NETWORK_READ) {
+    http_transaction->SetBeforeNetworkStartCallback(
+        base::Bind(&SetFlagOnBeforeNetworkStart, &network_transaction_started));
+  }
+
+  rv = http_transaction->Start(&request, callback.callback(),
+                               NetLogWithSource());
+  rv = callback.GetResult(rv);
+  ASSERT_EQ(net::OK, rv);
+
+  if (stop_caching_phase == TransactionPhase::BEFORE_FIRST_READ)
+    http_transaction->StopCaching();
+
+  int64_t total_bytes_received = 0;
+
+  EXPECT_EQ(kTotalSize,
+            http_transaction->GetResponseInfo()->headers->GetContentLength());
+  do {
+    // This test simulates reading gigabytes of data. Buffer size is set to 10MB
+    // to reduce the number of reads and speed up the test.
+    const int kBufferSize = 1024 * 1024 * 10;
+    scoped_refptr<net::IOBuffer> buf(new net::IOBuffer(kBufferSize));
+    rv = http_transaction->Read(buf.get(), kBufferSize, callback.callback());
+    rv = callback.GetResult(rv);
+
+    if (stop_caching_phase == TransactionPhase::AFTER_FIRST_READ &&
+        total_bytes_received == 0) {
+      http_transaction->StopCaching();
+    }
+
+    if (rv > 0)
+      total_bytes_received += rv;
+
+    if (network_transaction_started &&
+        stop_caching_phase == TransactionPhase::AFTER_NETWORK_READ) {
+      http_transaction->StopCaching();
+      network_transaction_started = false;
+    }
+  } while (rv > 0);
+
+  // The only verification we are going to do is that the received resource has
+  // the correct size. This is sufficient to verify that the state machine
+  // didn't terminate abruptly due to the StopCaching() call.
+  EXPECT_EQ(kTotalSize, total_bytes_received);
 }
 
 // Tests that we detect truncated resources from the net when there is
@@ -7096,8 +7530,8 @@ TEST(HttpCache, TruncatedByContentLength2) {
 TEST(HttpCache, SetPriority) {
   MockHttpCache cache;
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.http_cache()->CreateTransaction(IDLE, &trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.http_cache()->CreateTransaction(IDLE, &trans), IsOk());
 
   // Shouldn't crash, but doesn't do anything either.
   trans->SetPriority(LOW);
@@ -7110,7 +7544,7 @@ TEST(HttpCache, SetPriority) {
   info.url = GURL(kSimpleGET_Transaction.url);
   TestCompletionCallback callback;
   EXPECT_EQ(ERR_IO_PENDING,
-            trans->Start(&info, callback.callback(), BoundNetLog()));
+            trans->Start(&info, callback.callback(), NetLogWithSource()));
 
   EXPECT_TRUE(cache.network_layer()->last_transaction());
   if (cache.network_layer()->last_transaction()) {
@@ -7125,7 +7559,7 @@ TEST(HttpCache, SetPriority) {
     EXPECT_EQ(HIGHEST, cache.network_layer()->last_transaction()->priority());
   }
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 }
 
 // Make sure that calling SetWebSocketHandshakeStreamCreateHelper on a cache
@@ -7134,8 +7568,8 @@ TEST(HttpCache, SetWebSocketHandshakeStreamCreateHelper) {
   MockHttpCache cache;
 
   FakeWebSocketHandshakeStreamCreateHelper create_helper;
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.http_cache()->CreateTransaction(IDLE, &trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.http_cache()->CreateTransaction(IDLE, &trans), IsOk());
 
   EXPECT_FALSE(cache.network_layer()->last_transaction());
 
@@ -7143,7 +7577,7 @@ TEST(HttpCache, SetWebSocketHandshakeStreamCreateHelper) {
   info.url = GURL(kSimpleGET_Transaction.url);
   TestCompletionCallback callback;
   EXPECT_EQ(ERR_IO_PENDING,
-            trans->Start(&info, callback.callback(), BoundNetLog()));
+            trans->Start(&info, callback.callback(), NetLogWithSource()));
 
   ASSERT_TRUE(cache.network_layer()->last_transaction());
   EXPECT_FALSE(cache.network_layer()->last_transaction()->
@@ -7152,7 +7586,7 @@ TEST(HttpCache, SetWebSocketHandshakeStreamCreateHelper) {
   EXPECT_EQ(&create_helper,
             cache.network_layer()->last_transaction()->
             websocket_handshake_stream_create_helper());
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 }
 
 // Make sure that a cache transaction passes on its priority to
@@ -7174,16 +7608,16 @@ TEST(HttpCache, SetPriorityNewTransaction) {
   transaction.request_headers = EXTRA_HEADER;
   transaction.data = kFullRangeData;
 
-  scoped_ptr<HttpTransaction> trans;
-  ASSERT_EQ(OK, cache.http_cache()->CreateTransaction(MEDIUM, &trans));
+  std::unique_ptr<HttpTransaction> trans;
+  ASSERT_THAT(cache.http_cache()->CreateTransaction(MEDIUM, &trans), IsOk());
   EXPECT_EQ(DEFAULT_PRIORITY,
             cache.network_layer()->last_create_transaction_priority());
 
   MockHttpRequest info(transaction);
   TestCompletionCallback callback;
   EXPECT_EQ(ERR_IO_PENDING,
-            trans->Start(&info, callback.callback(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+            trans->Start(&info, callback.callback(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ(MEDIUM, cache.network_layer()->last_create_transaction_priority());
 
@@ -7203,9 +7637,9 @@ void RunTransactionAndGetNetworkBytes(MockHttpCache& cache,
                                       const MockTransaction& trans_info,
                                       int64_t* sent_bytes,
                                       int64_t* received_bytes) {
-  RunTransactionTestBase(cache.http_cache(), trans_info,
-                         MockHttpRequest(trans_info), nullptr, BoundNetLog(),
-                         nullptr, sent_bytes, received_bytes, nullptr);
+  RunTransactionTestBase(
+      cache.http_cache(), trans_info, MockHttpRequest(trans_info), nullptr,
+      NetLogWithSource(), nullptr, sent_bytes, received_bytes, nullptr);
 }
 
 }  // namespace
@@ -7282,7 +7716,7 @@ TEST(HttpCache, NetworkBytesRange) {
   RunTransactionAndGetNetworkBytes(cache, transaction, &sent, &received);
   EXPECT_EQ(0, sent);
   EXPECT_EQ(0, received);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Read bytes 30-39 from the network.
   transaction.request_headers = "Range: bytes = 30-39\r\n" EXTRA_HEADER;
@@ -7290,7 +7724,7 @@ TEST(HttpCache, NetworkBytesRange) {
   RunTransactionAndGetNetworkBytes(cache, transaction, &sent, &received);
   EXPECT_EQ(MockNetworkTransaction::kTotalSentBytes, sent);
   EXPECT_EQ(MockNetworkTransaction::kTotalReceivedBytes, received);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Read bytes 20-29 and 50-59 from the network, bytes 30-49 from the cache.
   transaction.request_headers = "Range: bytes = 20-59\r\n" EXTRA_HEADER;
@@ -7304,6 +7738,7 @@ TEST(HttpCache, NetworkBytesRange) {
 
 class HttpCachePrefetchValidationTest : public ::testing::Test {
  protected:
+  static const int kNumSecondsPerMinute = 60;
   static const int kMaxAgeSecs = 100;
   static const int kRequireValidationSecs = kMaxAgeSecs + 1;
 
@@ -7311,7 +7746,7 @@ class HttpCachePrefetchValidationTest : public ::testing::Test {
     DCHECK_LT(kMaxAgeSecs, prefetch_reuse_mins() * kNumSecondsPerMinute);
 
     clock_ = new base::SimpleTestClock();
-    cache_.http_cache()->SetClockForTesting(make_scoped_ptr(clock_));
+    cache_.http_cache()->SetClockForTesting(base::WrapUnique(clock_));
     cache_.network_layer()->SetClock(clock_);
 
     transaction_.response_headers = "Cache-Control: max-age=100\n";
@@ -7365,7 +7800,8 @@ TEST_F(HttpCachePrefetchValidationTest, SkipValidationOnceOnly) {
 TEST_F(HttpCachePrefetchValidationTest, SkipValidationOnceReadOnly) {
   EXPECT_TRUE(TransactionRequiredNetwork(LOAD_PREFETCH));
   AdvanceTime(kRequireValidationSecs);
-  EXPECT_FALSE(TransactionRequiredNetwork(LOAD_ONLY_FROM_CACHE));
+  EXPECT_FALSE(TransactionRequiredNetwork(LOAD_ONLY_FROM_CACHE |
+                                          LOAD_SKIP_CACHE_VALIDATION));
   EXPECT_TRUE(TransactionRequiredNetwork(LOAD_NORMAL));
 }
 
@@ -7567,13 +8003,13 @@ TEST(HttpCache, RangeGET_MultipleRequests) {
   AddMockTransaction(&transaction);
 
   TestCompletionCallback callback;
-  scoped_ptr<HttpTransaction> trans;
+  std::unique_ptr<HttpTransaction> trans;
   int rv = cache.http_cache()->CreateTransaction(DEFAULT_PRIORITY, &trans);
-  EXPECT_EQ(OK, rv);
+  EXPECT_THAT(rv, IsOk());
   ASSERT_TRUE(trans.get());
 
   // Start our transaction.
-  trans->Start(&request, callback.callback(), BoundNetLog());
+  trans->Start(&request, callback.callback(), NetLogWithSource());
 
   // A second transaction on a different part of the file (the default
   // kRangeGET_TransactionOK requests 40-49) should not be blocked by
@@ -7596,15 +8032,15 @@ TEST(HttpCache, NoStoreResponseShouldNotBlockFollowingRequests) {
   mock_transaction.response_headers = "Cache-Control: no-store\n";
   MockHttpRequest request(mock_transaction);
 
-  scoped_ptr<Context> first(new Context);
+  std::unique_ptr<Context> first(new Context);
   first->result = cache.CreateTransaction(&first->trans);
-  ASSERT_EQ(OK, first->result);
+  ASSERT_THAT(first->result, IsOk());
   EXPECT_EQ(LOAD_STATE_IDLE, first->trans->GetLoadState());
-  first->result =
-      first->trans->Start(&request, first->callback.callback(), BoundNetLog());
+  first->result = first->trans->Start(&request, first->callback.callback(),
+                                      NetLogWithSource());
   EXPECT_EQ(LOAD_STATE_WAITING_FOR_CACHE, first->trans->GetLoadState());
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(LOAD_STATE_IDLE, first->trans->GetLoadState());
   ASSERT_TRUE(first->trans->GetResponseInfo());
   EXPECT_TRUE(first->trans->GetResponseInfo()->headers->HasHeaderValue(
@@ -7612,16 +8048,16 @@ TEST(HttpCache, NoStoreResponseShouldNotBlockFollowingRequests) {
   // Here we have read the response header but not read the response body yet.
 
   // Let us create the second (read) transaction.
-  scoped_ptr<Context> second(new Context);
+  std::unique_ptr<Context> second(new Context);
   second->result = cache.CreateTransaction(&second->trans);
-  ASSERT_EQ(OK, second->result);
+  ASSERT_THAT(second->result, IsOk());
   EXPECT_EQ(LOAD_STATE_IDLE, second->trans->GetLoadState());
   second->result = second->trans->Start(&request, second->callback.callback(),
-                                        BoundNetLog());
+                                        NetLogWithSource());
 
   // Here the second transaction proceeds without reading the first body.
   EXPECT_EQ(LOAD_STATE_WAITING_FOR_CACHE, second->trans->GetLoadState());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(LOAD_STATE_IDLE, second->trans->GetLoadState());
   ASSERT_TRUE(second->trans->GetResponseInfo());
   EXPECT_TRUE(second->trans->GetResponseInfo()->headers->HasHeaderValue(
@@ -7735,6 +8171,93 @@ TEST(HttpCache, RevalidationUpdatesSSLInfo) {
   // The new SSL state is reported.
   EXPECT_EQ(status2, response_info.ssl_info.connection_status);
   EXPECT_TRUE(cert2->Equals(response_info.ssl_info.cert.get()));
+}
+
+TEST(HttpCache, CacheEntryStatusOther) {
+  MockHttpCache cache;
+
+  HttpResponseInfo response_info;
+  RunTransactionTestWithResponseInfo(cache.http_cache(), kRangeGET_Transaction,
+                                     &response_info);
+
+  EXPECT_FALSE(response_info.was_cached);
+  EXPECT_TRUE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_OTHER, response_info.cache_entry_status);
+}
+
+TEST(HttpCache, CacheEntryStatusNotInCache) {
+  MockHttpCache cache;
+
+  HttpResponseInfo response_info;
+  RunTransactionTestWithResponseInfo(cache.http_cache(), kSimpleGET_Transaction,
+                                     &response_info);
+
+  EXPECT_FALSE(response_info.was_cached);
+  EXPECT_TRUE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_NOT_IN_CACHE,
+            response_info.cache_entry_status);
+}
+
+TEST(HttpCache, CacheEntryStatusUsed) {
+  MockHttpCache cache;
+  RunTransactionTest(cache.http_cache(), kSimpleGET_Transaction);
+
+  HttpResponseInfo response_info;
+  RunTransactionTestWithResponseInfo(cache.http_cache(), kSimpleGET_Transaction,
+                                     &response_info);
+
+  EXPECT_TRUE(response_info.was_cached);
+  EXPECT_FALSE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_USED, response_info.cache_entry_status);
+}
+
+TEST(HttpCache, CacheEntryStatusValidated) {
+  MockHttpCache cache;
+  RunTransactionTest(cache.http_cache(), kETagGET_Transaction);
+
+  ScopedMockTransaction still_valid(kETagGET_Transaction);
+  still_valid.load_flags = LOAD_VALIDATE_CACHE;  // Force a validation.
+  still_valid.handler = ETagGet_ConditionalRequest_Handler;
+
+  HttpResponseInfo response_info;
+  RunTransactionTestWithResponseInfo(cache.http_cache(), still_valid,
+                                     &response_info);
+
+  EXPECT_TRUE(response_info.was_cached);
+  EXPECT_TRUE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_VALIDATED,
+            response_info.cache_entry_status);
+}
+
+TEST(HttpCache, CacheEntryStatusUpdated) {
+  MockHttpCache cache;
+  RunTransactionTest(cache.http_cache(), kETagGET_Transaction);
+
+  ScopedMockTransaction update(kETagGET_Transaction);
+  update.load_flags = LOAD_VALIDATE_CACHE;  // Force a validation.
+
+  HttpResponseInfo response_info;
+  RunTransactionTestWithResponseInfo(cache.http_cache(), update,
+                                     &response_info);
+
+  EXPECT_FALSE(response_info.was_cached);
+  EXPECT_TRUE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_UPDATED, response_info.cache_entry_status);
+}
+
+TEST(HttpCache, CacheEntryStatusCantConditionalize) {
+  MockHttpCache cache;
+  cache.FailConditionalizations();
+  RunTransactionTest(cache.http_cache(), kTypicalGET_Transaction);
+
+  HttpResponseInfo response_info;
+  RunTransactionTestWithResponseInfo(cache.http_cache(),
+                                     kTypicalGET_Transaction, &response_info);
+
+  EXPECT_FALSE(response_info.was_cached);
+  EXPECT_TRUE(response_info.network_accessed);
+  EXPECT_EQ(CacheEntryStatus::ENTRY_CANT_CONDITIONALIZE,
+            response_info.cache_entry_status);
 }
 
 }  // namespace net

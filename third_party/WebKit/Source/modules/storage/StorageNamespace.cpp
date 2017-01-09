@@ -23,44 +23,47 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/storage/StorageNamespace.h"
 
 #include "modules/storage/StorageArea.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebSecurityOrigin.h"
 #include "public/platform/WebStorageArea.h"
 #include "public/platform/WebStorageNamespace.h"
-#include "wtf/MainThread.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-StorageNamespace::StorageNamespace(PassOwnPtr<WebStorageNamespace> webStorageNamespace)
-    : m_webStorageNamespace(webStorageNamespace)
-{
+StorageNamespace::StorageNamespace(
+    std::unique_ptr<WebStorageNamespace> webStorageNamespace)
+    : m_webStorageNamespace(std::move(webStorageNamespace)) {}
+
+StorageNamespace::~StorageNamespace() {}
+
+StorageArea* StorageNamespace::localStorageArea(SecurityOrigin* origin) {
+  ASSERT(isMainThread());
+  static WebStorageNamespace* localStorageNamespace = nullptr;
+  if (!localStorageNamespace)
+    localStorageNamespace = Platform::current()->createLocalStorageNamespace();
+  return StorageArea::create(
+      WTF::wrapUnique(
+          localStorageNamespace->createStorageArea(WebSecurityOrigin(origin))),
+      LocalStorage);
 }
 
-StorageNamespace::~StorageNamespace()
-{
+StorageArea* StorageNamespace::storageArea(SecurityOrigin* origin) {
+  return StorageArea::create(
+      WTF::wrapUnique(
+          m_webStorageNamespace->createStorageArea(WebSecurityOrigin(origin))),
+      SessionStorage);
 }
 
-StorageArea* StorageNamespace::localStorageArea(SecurityOrigin* origin)
-{
-    ASSERT(isMainThread());
-    static WebStorageNamespace* localStorageNamespace = nullptr;
-    if (!localStorageNamespace)
-        localStorageNamespace = Platform::current()->createLocalStorageNamespace();
-    return StorageArea::create(adoptPtr(localStorageNamespace->createStorageArea(origin->toString())), LocalStorage);
+bool StorageNamespace::isSameNamespace(
+    const WebStorageNamespace& sessionNamespace) const {
+  return m_webStorageNamespace &&
+         m_webStorageNamespace->isSameNamespace(sessionNamespace);
 }
 
-StorageArea* StorageNamespace::storageArea(SecurityOrigin* origin)
-{
-    return StorageArea::create(adoptPtr(m_webStorageNamespace->createStorageArea(origin->toString())), SessionStorage);
-}
-
-bool StorageNamespace::isSameNamespace(const WebStorageNamespace& sessionNamespace) const
-{
-    return m_webStorageNamespace && m_webStorageNamespace->isSameNamespace(sessionNamespace);
-}
-
-} // namespace blink
+}  // namespace blink

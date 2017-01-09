@@ -14,6 +14,7 @@ import android.widget.FrameLayout;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
 /***
@@ -128,20 +129,11 @@ public class ContentViewRenderView extends FrameLayout {
 
         if (mContentViewCore != null) {
             mContentViewCore.onPhysicalBackingSizeChanged(getWidth(), getHeight());
-            nativeSetCurrentContentViewCore(mNativeContentViewRenderView,
-                                            mContentViewCore.getNativeContentViewCore());
+            nativeSetCurrentWebContents(
+                    mNativeContentViewRenderView, mContentViewCore.getWebContents());
         } else {
-            nativeSetCurrentContentViewCore(mNativeContentViewRenderView, 0);
+            nativeSetCurrentWebContents(mNativeContentViewRenderView, null);
         }
-    }
-
-    /**
-     * Trigger a redraw of the compositor.  This is only needed if the UI changes something that
-     * does not trigger a redraw itself by updating the layer tree.
-     */
-    public void setNeedsComposite() {
-        if (mNativeContentViewRenderView == 0) return;
-        nativeSetNeedsComposite(mNativeContentViewRenderView);
     }
 
     /**
@@ -189,23 +181,14 @@ public class ContentViewRenderView extends FrameLayout {
         }
     }
 
-    /**
-     * @return Native pointer for the UI resource provider taken from the compositor.
-     */
-    public long getUIResourceProvider() {
-        return nativeGetUIResourceProvider(mNativeContentViewRenderView);
-    }
-
     private native long nativeInit(long rootWindowNativePointer);
-    private native long nativeGetUIResourceProvider(long nativeContentViewRenderView);
     private native void nativeDestroy(long nativeContentViewRenderView);
-    private native void nativeSetCurrentContentViewCore(long nativeContentViewRenderView,
-            long nativeContentViewCore);
+    private native void nativeSetCurrentWebContents(
+            long nativeContentViewRenderView, WebContents webContents);
     private native void nativeSurfaceCreated(long nativeContentViewRenderView);
     private native void nativeSurfaceDestroyed(long nativeContentViewRenderView);
     private native void nativeSurfaceChanged(long nativeContentViewRenderView,
             int format, int width, int height, Surface surface);
     private native void nativeSetOverlayVideoMode(long nativeContentViewRenderView,
             boolean enabled);
-    private native void nativeSetNeedsComposite(long nativeContentViewRenderView);
 }

@@ -9,8 +9,8 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "extensions/common/api/app_runtime.h"
 #include "extensions/common/constants.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
@@ -27,24 +27,10 @@ struct AppLaunchParams {
                   const extensions::Extension* extension,
                   extensions::LaunchContainer container,
                   WindowOpenDisposition disposition,
-                  extensions::AppLaunchSource source);
+                  extensions::AppLaunchSource source,
+                  bool set_playstore_status = false);
 
-  // Helper to create AppLaunchParams using extensions::GetLaunchContainer with
-  // LAUNCH_TYPE_REGULAR to check for a user-configured container.
-  AppLaunchParams(Profile* profile,
-                  const extensions::Extension* extension,
-                  WindowOpenDisposition disposition,
-                  extensions::AppLaunchSource source);
-
-  // Helper to create AppLaunchParams using event flags that allows user to
-  // override the user-configured container using modifier keys, falling back to
-  // extensions::GetLaunchContainer() with no modifiers. |desktop_type|
-  // indicates the desktop upon which to launch (Ash or Native).
-  AppLaunchParams(Profile* profile,
-                  const extensions::Extension* extension,
-                  WindowOpenDisposition disposition,
-                  chrome::HostDesktopType desktop_type,
-                  extensions::AppLaunchSource source);
+  AppLaunchParams(const AppLaunchParams& other);
 
   ~AppLaunchParams();
 
@@ -59,9 +45,6 @@ struct AppLaunchParams {
 
   // If container is TAB, this field controls how the tab is opened.
   WindowOpenDisposition disposition;
-
-  // The desktop type to launch on. Uses GetActiveDesktop() if unspecified.
-  chrome::HostDesktopType desktop_type;
 
   // If non-empty, use override_url in place of the application's launch url.
   GURL override_url;
@@ -81,6 +64,26 @@ struct AppLaunchParams {
   // Record where the app is launched from for tracking purpose.
   // Different app may have their own enumeration of sources.
   extensions::AppLaunchSource source;
+
+  // Status of ARC++ on this device.
+  extensions::api::app_runtime::PlayStoreStatus play_store_status;
 };
+
+// Helper to create AppLaunchParams using extensions::GetLaunchContainer with
+// LAUNCH_TYPE_REGULAR to check for a user-configured container.
+AppLaunchParams CreateAppLaunchParamsUserContainer(
+    Profile* profile,
+    const extensions::Extension* extension,
+    WindowOpenDisposition disposition,
+    extensions::AppLaunchSource source);
+
+// Helper to create AppLaunchParams using event flags that allows user to
+// override the user-configured container using modifier keys, falling back to
+// extensions::GetLaunchContainer() with no modifiers.
+AppLaunchParams CreateAppLaunchParamsWithEventFlags(
+    Profile* profile,
+    const extensions::Extension* extension,
+    int event_flags,
+    extensions::AppLaunchSource source);
 
 #endif  // CHROME_BROWSER_UI_EXTENSIONS_APP_LAUNCH_PARAMS_H_

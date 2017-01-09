@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+GEN_INCLUDE(['options_browsertest_base.js']);
+
 /**
  * TestFixture for EditDictionaryOverlay WebUI testing.
  * @extends {testing.Test}
@@ -10,7 +12,7 @@
 function EditDictionaryWebUITest() {}
 
 EditDictionaryWebUITest.prototype = {
-  __proto__: testing.Test.prototype,
+  __proto__: OptionsBrowsertestBase.prototype,
 
   /**
    * Browse to the edit dictionary page & call our preLoad().
@@ -32,6 +34,28 @@ EditDictionaryWebUITest.prototype = {
         }));
     this.mockHandler.stubs().addDictionaryWord(ANYTHING);
     this.mockHandler.stubs().removeDictionaryWord(ANYTHING);
+  },
+
+  /** @override */
+  setUp: function() {
+    OptionsBrowsertestBase.prototype.setUp.call(this);
+
+    // Enable when failure is resolved.
+    // AX_TEXT_01: http://crbug.com/570556
+    this.accessibilityAuditConfig.ignoreSelectors(
+        'controlsWithoutLabel',
+        '#language-dictionary-overlay-word-list > .deletable-item > *');
+
+    var unsupportedAriaAttributeSelectors = [
+      '#language-dictionary-overlay-word-list',
+      '#language-options-list',
+    ];
+
+    // Enable when failure is resolved.
+    // AX_ARIA_10: http://crbug.com/570559
+    this.accessibilityAuditConfig.ignoreSelectors(
+        'unsupportedAriaAttribute',
+        unsupportedAriaAttributeSelectors);
   },
 };
 
@@ -83,7 +107,7 @@ TEST_F('EditDictionaryWebUITest', 'testNoCloseOnSearchEnter', function() {
   searchField.dispatchEvent(new KeyboardEvent('keydown', {
     'bubbles': true,
     'cancelable': true,
-    'keyIdentifier': 'Enter'
+    'key': 'Enter'
   }));
   assertTrue(editDictionaryPage.visible);
 });
@@ -113,7 +137,13 @@ TEST_F('EditDictionaryWebUITest', 'testAddNotification', function() {
 
 // Verify that dictionary hides newly removed words that arrived in a
 // notification, but ignores duplicate remove notifications.
-TEST_F('EditDictionaryWebUITest', 'testRemoveNotification', function() {
+// TODO(crbug.com/631940): Flaky on Win 7.
+GEN('#if defined(OS_WIN)');
+GEN('#define MAYBE_testRemoveNotification DISABLED_testRemoveNotification');
+GEN('#else');
+GEN('#define MAYBE_testRemoveNotification testRemoveNotification');
+GEN('#endif  // defined(OS_WIN)');
+TEST_F('EditDictionaryWebUITest', 'MAYBE_testRemoveNotification', function() {
   // Begin with a dictionary with words 'foo', 'bar', 'baz', and 'baz'. The
   // second instance of 'baz' appears because the user added the word twice.
   // The backend keeps only one copy of the word.

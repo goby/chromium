@@ -37,15 +37,16 @@ void ChromeWebContentsViewDelegateAndroid::ShowContextMenu(
     if (content_view_core) {
       content_view_core->ShowPastePopup(params.selection_start.x(),
                                         params.selection_start.y());
-      return;
     }
+    return;
   }
 
-  // TODO(dtrainor, kouhei): Give WebView a Populator/delegate so it can use the
-  // same context menu code.
-  ContextMenuHelper* helper = ContextMenuHelper::FromWebContents(web_contents_);
+  // TODO(dtrainor, kouhei): Give WebView a Populator/delegate so it can use
+  // the same context menu code.
+  ContextMenuHelper* helper =
+      ContextMenuHelper::FromWebContents(web_contents_);
   if (helper)
-    helper->ShowContextMenu(params);
+    helper->ShowContextMenu(render_frame_host, params);
 }
 
 namespace chrome {

@@ -5,6 +5,7 @@
 #ifndef UI_EVENTS_OZONE_DEVICE_UDEV_DEVICE_MANAGER_UDEV_H_
 #define UI_EVENTS_OZONE_DEVICE_UDEV_DEVICE_MANAGER_UDEV_H_
 
+#include "base/macros.h"
 #include "base/message_loop/message_pump_libevent.h"
 #include "base/observer_list.h"
 #include "device/udev_linux/scoped_udev.h"
@@ -22,7 +23,7 @@ class DeviceManagerUdev
   ~DeviceManagerUdev() override;
 
  private:
-  scoped_ptr<DeviceEvent> ProcessMessage(udev_device* device);
+  std::unique_ptr<DeviceEvent> ProcessMessage(udev_device* device);
 
   // Creates a device-monitor to look for device add/remove/change events.
   void CreateMonitor();

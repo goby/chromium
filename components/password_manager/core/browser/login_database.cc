@@ -4,28 +4,38 @@
 
 #include "components/password_manager/core/browser/login_database.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <algorithm>
 #include <limits>
+#include <map>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
+#include "components/password_manager/core/browser/password_manager_util.h"
+#include "components/password_manager/core/browser/sql_table_builder.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "sql/connection.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
+#include "url/origin.h"
 #include "url/url_constants.h"
 
 using autofill::PasswordForm;
@@ -33,10 +43,10 @@ using autofill::PasswordForm;
 namespace password_manager {
 
 // The current version number of the login database schema.
-const int kCurrentVersionNumber = 16;
+const int kCurrentVersionNumber = 18;
 // The oldest version of the schema such that a legacy Chrome client using that
 // version can still read/write the current database.
-const int kCompatibleVersionNumber = 14;
+const int kCompatibleVersionNumber = 18;
 
 base::Pickle SerializeVector(const std::vector<base::string16>& vec) {
   base::Pickle p;
@@ -69,7 +79,6 @@ enum LoginTableColumns {
   COLUMN_PASSWORD_VALUE,
   COLUMN_SUBMIT_ELEMENT,
   COLUMN_SIGNON_REALM,
-  COLUMN_SSL_VALID,
   COLUMN_PREFERRED,
   COLUMN_DATE_CREATED,
   COLUMN_BLACKLISTED_BY_USER,
@@ -84,6 +93,7 @@ enum LoginTableColumns {
   COLUMN_FEDERATION_URL,
   COLUMN_SKIP_ZERO_CLICK,
   COLUMN_GENERATION_UPLOAD_STATUS,
+  COLUMN_NUM  // Keep this last.
 };
 
 enum class HistogramSize { SMALL, LARGE };
@@ -115,7 +125,6 @@ void BindAddStatement(const PasswordForm& form,
               static_cast<int>(encrypted_password.length()));
   s->BindString16(COLUMN_SUBMIT_ELEMENT, form.submit_element);
   s->BindString(COLUMN_SIGNON_REALM, form.signon_realm);
-  s->BindInt(COLUMN_SSL_VALID, form.ssl_valid);
   s->BindInt(COLUMN_PREFERRED, form.preferred);
   s->BindInt64(COLUMN_DATE_CREATED, form.date_created.ToInternalValue());
   s->BindInt(COLUMN_BLACKLISTED_BY_USER, form.blacklisted_by_user);
@@ -135,7 +144,11 @@ void BindAddStatement(const PasswordForm& form,
   s->BindInt64(COLUMN_DATE_SYNCED, form.date_synced.ToInternalValue());
   s->BindString16(COLUMN_DISPLAY_NAME, form.display_name);
   s->BindString(COLUMN_ICON_URL, form.icon_url.spec());
-  s->BindString(COLUMN_FEDERATION_URL, form.federation_url.spec());
+  // An empty Origin serializes as "null" which would be strange to store here.
+  s->BindString(COLUMN_FEDERATION_URL,
+                form.federation_origin.unique()
+                    ? std::string()
+                    : form.federation_origin.Serialize());
   s->BindInt(COLUMN_SKIP_ZERO_CLICK, form.skip_zero_click);
   s->BindInt(COLUMN_GENERATION_UPLOAD_STATUS, form.generation_upload_status);
 }
@@ -324,45 +337,171 @@ void LogPasswordReuseMetrics(const std::vector<std::string>& signon_realms) {
   }
 }
 
-// Creates a table named |table_name| using our current schema.
-bool CreateNewTable(sql::Connection* db,
-                    const char* table_name,
-                    const char* extra_columns) {
-  std::string query = base::StringPrintf(
-      "CREATE TABLE %s ("
-      "origin_url VARCHAR NOT NULL, "
-      "action_url VARCHAR, "
-      "username_element VARCHAR, "
-      "username_value VARCHAR, "
-      "password_element VARCHAR, "
-      "password_value BLOB, "
-      "submit_element VARCHAR, "
-      "signon_realm VARCHAR NOT NULL,"
-      "ssl_valid INTEGER NOT NULL,"
-      "preferred INTEGER NOT NULL,"
-      "date_created INTEGER NOT NULL,"
-      "blacklisted_by_user INTEGER NOT NULL,"
-      "scheme INTEGER NOT NULL,"
-      "password_type INTEGER,"
-      "possible_usernames BLOB,"
-      "times_used INTEGER,"
-      "form_data BLOB,"
-      "date_synced INTEGER,"
-      "display_name VARCHAR,"
-      "icon_url VARCHAR,"
-      "federation_url VARCHAR,"
-      "skip_zero_click INTEGER,"
-      "%s"
-      "UNIQUE (origin_url, username_element, username_value, "
-      "password_element, signon_realm))",
-      table_name, extra_columns);
-  return db->Execute(query.c_str());
+// Teaches |builder| about the different DB schemes in different versions.
+void InitializeBuilder(SQLTableBuilder* builder) {
+  // Versions 0 and 1, which are the same.
+  builder->AddColumnToUniqueKey("origin_url", "VARCHAR NOT NULL");
+  builder->AddColumn("action_url", "VARCHAR");
+  builder->AddColumnToUniqueKey("username_element", "VARCHAR");
+  builder->AddColumnToUniqueKey("username_value", "VARCHAR");
+  builder->AddColumnToUniqueKey("password_element", "VARCHAR");
+  builder->AddColumn("password_value", "BLOB");
+  builder->AddColumn("submit_element", "VARCHAR");
+  builder->AddColumnToUniqueKey("signon_realm", "VARCHAR NOT NULL");
+  builder->AddColumn("ssl_valid", "INTEGER NOT NULL");
+  builder->AddColumn("preferred", "INTEGER NOT NULL");
+  builder->AddColumn("date_created", "INTEGER NOT NULL");
+  builder->AddColumn("blacklisted_by_user", "INTEGER NOT NULL");
+  builder->AddColumn("scheme", "INTEGER NOT NULL");
+  builder->SealVersion();
+  unsigned version = builder->SealVersion();
+  DCHECK_EQ(1u, version);
+
+  // Version 2.
+  builder->AddColumn("password_type", "INTEGER");
+  builder->AddColumn("possible_usernames", "BLOB");
+  version = builder->SealVersion();
+  DCHECK_EQ(2u, version);
+
+  // Version 3.
+  builder->AddColumn("times_used", "INTEGER");
+  version = builder->SealVersion();
+  DCHECK_EQ(3u, version);
+
+  // Version 4.
+  builder->AddColumn("form_data", "BLOB");
+  version = builder->SealVersion();
+  DCHECK_EQ(4u, version);
+
+  // Version 5.
+  builder->AddColumn("use_additional_auth", "INTEGER");
+  version = builder->SealVersion();
+  DCHECK_EQ(5u, version);
+
+  // Version 6.
+  builder->AddColumn("date_synced", "INTEGER");
+  version = builder->SealVersion();
+  DCHECK_EQ(6u, version);
+
+  // Version 7.
+  builder->AddColumn("display_name", "VARCHAR");
+  builder->AddColumn("avatar_url", "VARCHAR");
+  builder->AddColumn("federation_url", "VARCHAR");
+  builder->AddColumn("is_zero_click", "INTEGER");
+  version = builder->SealVersion();
+  DCHECK_EQ(7u, version);
+
+  // Version 8.
+  builder->SealVersion();
+  // Version 9.
+  version = builder->SealVersion();
+  // Version 10.
+  builder->DropColumn("use_additional_auth");
+  version = builder->SealVersion();
+  DCHECK_EQ(10u, version);
+
+  // Version 11.
+  builder->RenameColumn("is_zero_click", "skip_zero_click");
+  version = builder->SealVersion();
+  DCHECK_EQ(11u, version);
+
+  // Version 12.
+  builder->AddColumn("generation_upload_status", "INTEGER");
+  version = builder->SealVersion();
+  DCHECK_EQ(12u, version);
+
+  // Version 13.
+  builder->SealVersion();
+  // Version 14.
+  builder->RenameColumn("avatar_url", "icon_url");
+  version = builder->SealVersion();
+  DCHECK_EQ(14u, version);
+
+  // Version 15.
+  builder->SealVersion();
+  // Version 16.
+  builder->SealVersion();
+  // Version 17.
+  version = builder->SealVersion();
+  DCHECK_EQ(17u, version);
+
+  // Version 18.
+  builder->DropColumn("ssl_valid");
+  version = builder->SealVersion();
+  DCHECK_EQ(18u, version);
+
+  DCHECK_EQ(static_cast<size_t>(COLUMN_NUM), builder->NumberOfColumns())
+      << "Adjust LoginTableColumns if you change column definitions here.";
 }
 
-bool CreateIndexOnSignonRealm(sql::Connection* db, const char* table_name) {
-  std::string query = base::StringPrintf(
-      "CREATE INDEX logins_signon ON %s (signon_realm)", table_name);
-  return db->Execute(query.c_str());
+// Call this after having called InitializeBuilder, to migrate the database from
+// the current version to kCurrentVersionNumber.
+bool MigrateLogins(unsigned current_version,
+                   SQLTableBuilder* builder,
+                   sql::Connection* db) {
+  if (!builder->MigrateFrom(current_version, db))
+    return false;
+
+  // Data changes, not covered by the schema migration above.
+  if (current_version <= 8) {
+    sql::Statement fix_time_format;
+    fix_time_format.Assign(db->GetCachedStatement(
+        SQL_FROM_HERE,
+        "UPDATE logins SET date_created = (date_created * ?) + ?"));
+    fix_time_format.BindInt64(0, base::Time::kMicrosecondsPerSecond);
+    fix_time_format.BindInt64(1, base::Time::kTimeTToMicrosecondsOffset);
+    if (!fix_time_format.Run())
+      return false;
+  }
+
+  if (current_version <= 16) {
+    sql::Statement reset_zero_click;
+    reset_zero_click.Assign(db->GetCachedStatement(
+        SQL_FROM_HERE, "UPDATE logins SET skip_zero_click = 1"));
+    if (!reset_zero_click.Run())
+      return false;
+  }
+
+  return true;
+}
+
+// Because of https://crbug.com/295851, some early version numbers might be
+// wrong. This function detects that and fixes the version.
+bool FixVersionIfNeeded(sql::Connection* db, int* current_version) {
+  if (*current_version == 1) {
+    int extra_columns = 0;
+    if (db->DoesColumnExist("logins", "password_type"))
+      ++extra_columns;
+    if (db->DoesColumnExist("logins", "possible_usernames"))
+      ++extra_columns;
+    if (extra_columns == 2) {
+      *current_version = 2;
+    } else if (extra_columns == 1) {
+      // If this is https://crbug.com/295851 then either both columns exist
+      // or none.
+      return false;
+    }
+  }
+  if (*current_version == 2) {
+    if (db->DoesColumnExist("logins", "times_used"))
+      *current_version = 3;
+  }
+  if (*current_version == 3) {
+    if (db->DoesColumnExist("logins", "form_data"))
+      *current_version = 4;
+  }
+  return true;
+}
+
+// Generates the string "(?,?,...,?)" with |count| repetitions of "?".
+std::string GeneratePlaceholders(size_t count) {
+  std::string result(2 * count + 1, ',');
+  result.front() = '(';
+  result.back() = ')';
+  for (size_t i = 1; i < 2 * count + 1; i += 2) {
+    result[i] = '?';
+  }
+  return result;
 }
 
 }  // namespace
@@ -401,6 +540,7 @@ bool LoginDatabase::Init() {
                         kCompatibleVersionNumber)) {
     LogDatabaseInitError(META_TABLE_INIT_ERROR);
     LOG(ERROR) << "Unable to create the meta table.";
+    transaction.Rollback();
     db_.Close();
     return false;
   }
@@ -409,28 +549,49 @@ bool LoginDatabase::Init() {
     LOG(ERROR) << "Password store database is too new, kCurrentVersionNumber="
                << kCurrentVersionNumber << ", GetCompatibleVersionNumber="
                << meta_table_.GetCompatibleVersionNumber();
+    transaction.Rollback();
     db_.Close();
     return false;
   }
 
-  // Initialize the tables.
-  if (!InitLoginsTable()) {
-    LogDatabaseInitError(INIT_LOGINS_ERROR);
-    LOG(ERROR) << "Unable to initialize the logins table.";
-    db_.Close();
-    return false;
+  SQLTableBuilder builder;
+  InitializeBuilder(&builder);
+  InitializeStatementStrings(builder);
+
+  if (!db_.DoesTableExist("logins")) {
+    if (!builder.CreateTable(&db_)) {
+      VLOG(0) << "Failed to create the 'logins' table";
+      transaction.Rollback();
+      db_.Close();
+      return false;
+    }
   }
+
   stats_table_.Init(&db_);
 
+  int current_version = meta_table_.GetVersionNumber();
+  bool migration_success = FixVersionIfNeeded(&db_, &current_version);
+  DCHECK_LE(current_version, kCurrentVersionNumber);
+
   // If the file on disk is an older database version, bring it up to date.
-  if (meta_table_.GetVersionNumber() < kCurrentVersionNumber &&
-      !MigrateOldVersionsAsNeeded()) {
+  if (migration_success && current_version < kCurrentVersionNumber) {
+    migration_success = MigrateLogins(
+        base::checked_cast<unsigned>(current_version), &builder, &db_);
+  }
+  if (migration_success && current_version <= 15) {
+    migration_success = stats_table_.MigrateToVersion(16);
+  }
+  if (migration_success) {
+    meta_table_.SetCompatibleVersionNumber(kCompatibleVersionNumber);
+    meta_table_.SetVersionNumber(kCurrentVersionNumber);
+  } else {
     LogDatabaseInitError(MIGRATION_ERROR);
     UMA_HISTOGRAM_SPARSE_SLOWLY("PasswordManager.LoginDatabaseFailedVersion",
                                 meta_table_.GetVersionNumber());
     LOG(ERROR) << "Unable to migrate database from "
                << meta_table_.GetVersionNumber() << " to "
                << kCurrentVersionNumber;
+    transaction.Rollback();
     db_.Close();
     return false;
   }
@@ -438,6 +599,7 @@ bool LoginDatabase::Init() {
   if (!stats_table_.CreateTableIfNecessary()) {
     LogDatabaseInitError(INIT_STATS_ERROR);
     LOG(ERROR) << "Unable to create the stats table.";
+    transaction.Rollback();
     db_.Close();
     return false;
   }
@@ -450,197 +612,6 @@ bool LoginDatabase::Init() {
   }
 
   LogDatabaseInitError(INIT_OK);
-  return true;
-}
-
-bool LoginDatabase::MigrateOldVersionsAsNeeded() {
-  const int original_version = meta_table_.GetVersionNumber();
-  switch (original_version) {
-    case 1:
-      // Column could exist because of https://crbug.com/295851
-      if (!db_.DoesColumnExist("logins", "password_type") &&
-          !db_.Execute("ALTER TABLE logins "
-                       "ADD COLUMN password_type INTEGER")) {
-        return false;
-      }
-      if (!db_.DoesColumnExist("logins", "possible_usernames") &&
-          !db_.Execute("ALTER TABLE logins "
-                       "ADD COLUMN possible_usernames BLOB")) {
-        return false;
-      }
-    // Fall through.
-    case 2:
-      // Column could exist because of https://crbug.com/295851
-      if (!db_.DoesColumnExist("logins", "times_used") &&
-          !db_.Execute("ALTER TABLE logins ADD COLUMN times_used INTEGER")) {
-        return false;
-      }
-    // Fall through.
-    case 3:
-      // Column could exist because of https://crbug.com/295851
-      if (!db_.DoesColumnExist("logins", "form_data") &&
-          !db_.Execute("ALTER TABLE logins ADD COLUMN form_data BLOB")) {
-        return false;
-      }
-    // Fall through.
-    case 4:
-      if (!db_.Execute(
-              "ALTER TABLE logins ADD COLUMN use_additional_auth INTEGER")) {
-        return false;
-      }
-    // Fall through.
-    case 5:
-      if (!db_.Execute("ALTER TABLE logins ADD COLUMN date_synced INTEGER")) {
-        return false;
-      }
-    // Fall through.
-    case 6:
-      if (!db_.Execute("ALTER TABLE logins ADD COLUMN display_name VARCHAR") ||
-          !db_.Execute("ALTER TABLE logins ADD COLUMN avatar_url VARCHAR") ||
-          !db_.Execute("ALTER TABLE logins "
-                       "ADD COLUMN federation_url VARCHAR") ||
-          !db_.Execute("ALTER TABLE logins ADD COLUMN is_zero_click INTEGER")) {
-        return false;
-      }
-    // Fall through.
-    case 7: {
-      // Keep version 8 around even though no changes are made. See
-      // crbug.com/423716 for context.
-      // Fall through.
-    }
-    case 8: {
-      sql::Statement s;
-      s.Assign(db_.GetCachedStatement(SQL_FROM_HERE,
-                                      "UPDATE logins SET "
-                                      "date_created = "
-                                      "(date_created * ?) + ?"));
-      s.BindInt64(0, base::Time::kMicrosecondsPerSecond);
-      s.BindInt64(1, base::Time::kTimeTToMicrosecondsOffset);
-      if (!s.Run())
-        return false;
-      // Fall through.
-    }
-    case 9: {
-      // Remove use_additional_auth column from database schema
-      // crbug.com/423716 for context.
-      std::string fields_to_copy =
-          "origin_url, action_url, username_element, username_value, "
-          "password_element, password_value, submit_element, "
-          "signon_realm, ssl_valid, preferred, date_created, "
-          "blacklisted_by_user, scheme, password_type, possible_usernames, "
-          "times_used, form_data, date_synced, display_name, avatar_url, "
-          "federation_url, is_zero_click";
-      auto copy_data_query =
-          [&fields_to_copy](const std::string& from, const std::string& to) {
-        return "INSERT INTO " + to + " SELECT " + fields_to_copy + " FROM " +
-               from;
-      };
-
-      if (!db_.Execute(("CREATE TEMPORARY TABLE logins_data(" + fields_to_copy +
-                        ")").c_str()) ||
-          !db_.Execute(copy_data_query("logins", "logins_data").c_str()) ||
-          !db_.Execute("DROP TABLE logins") ||
-          !db_.Execute(
-              ("CREATE TABLE logins(" + fields_to_copy + ")").c_str()) ||
-          !db_.Execute(copy_data_query("logins_data", "logins").c_str()) ||
-          !db_.Execute("DROP TABLE logins_data") ||
-          !CreateIndexOnSignonRealm(&db_, "logins")) {
-        return false;
-      }
-      // Fall through.
-    }
-    case 10: {
-      // Rename is_zero_click -> skip_zero_click. Note that previous versions
-      // may have incorrectly used a 6-column key (origin_url, username_element,
-      // username_value, password_element, signon_realm, submit_element).
-      // In that case, this step also restores the correct 5-column key;
-      // that is, the above without "submit_element".
-      const char copy_query[] = "INSERT OR REPLACE INTO logins_new SELECT "
-          "origin_url, action_url, username_element, username_value, "
-          "password_element, password_value, submit_element, signon_realm, "
-          "ssl_valid, preferred, date_created, blacklisted_by_user, scheme, "
-          "password_type, possible_usernames, times_used, form_data, "
-          "date_synced, display_name, avatar_url, federation_url, is_zero_click"
-          " FROM logins";
-      if (!CreateNewTable(&db_, "logins_new", "") ||
-          !db_.Execute(copy_query) ||
-          !db_.Execute("DROP TABLE logins") ||
-          !db_.Execute("ALTER TABLE logins_new RENAME TO logins") ||
-          !CreateIndexOnSignonRealm(&db_, "logins")) {
-        return false;
-      }
-      // Fall through.
-    }
-    case 11:
-      if (!db_.Execute(
-              "ALTER TABLE logins ADD COLUMN "
-              "generation_upload_status INTEGER"))
-        return false;
-      // Fall through.
-    case 12:
-      // The stats table was added. Nothing to do really.
-      // Fall through.
-    case 13: {
-      // Rename avatar_url -> icon_url. Note that if the original version was
-      // at most 10, this renaming would have already happened in step 10,
-      // as |CreateNewTable| would create a table with the new column name.
-      if (original_version > 10) {
-        const char copy_query[] = "INSERT OR REPLACE INTO logins_new SELECT "
-            "origin_url, action_url, username_element, username_value, "
-            "password_element, password_value, submit_element, signon_realm, "
-            "ssl_valid, preferred, date_created, blacklisted_by_user, scheme, "
-            "password_type, possible_usernames, times_used, form_data, "
-            "date_synced, display_name, avatar_url, federation_url, "
-            "skip_zero_click, generation_upload_status FROM logins";
-        if (!CreateNewTable(
-                &db_, "logins_new", "generation_upload_status INTEGER,") ||
-            !db_.Execute(copy_query) ||
-            !db_.Execute("DROP TABLE logins") ||
-            !db_.Execute("ALTER TABLE logins_new RENAME TO logins") ||
-            !CreateIndexOnSignonRealm(&db_, "logins")) {
-          return false;
-        }
-      }
-      // Fall through.
-    }
-    case 14:
-      // No change of schema. Version 15 was introduced to force all databases
-      // through an otherwise no-op migration process that will, however, now
-      // correctly set the 'compatible version number'. Previously, it was
-      // always being set to (and forever left at) version 1.
-      meta_table_.SetCompatibleVersionNumber(kCompatibleVersionNumber);
-    case 15:
-      // Recreate the statistics.
-      if (!stats_table_.MigrateToVersion(16))
-        return false;
-
-    // -------------------------------------------------------------------------
-    // DO NOT FORGET to update |kCompatibleVersionNumber| if you add a migration
-    // step that is a breaking change. This is needed so that an older version
-    // of the browser can fail with a meaningful error when opening a newer
-    // database, as opposed to failing on the first database operation.
-    // -------------------------------------------------------------------------
-    case kCurrentVersionNumber:
-      // Already up to date.
-      meta_table_.SetVersionNumber(kCurrentVersionNumber);
-      return true;
-    default:
-      NOTREACHED();
-      return false;
-  }
-}
-
-bool LoginDatabase::InitLoginsTable() {
-  if (!db_.DoesTableExist("logins")) {
-    if (!CreateNewTable(&db_, "logins", "generation_upload_status INTEGER,")) {
-      NOTREACHED();
-      return false;
-    }
-    if (!CreateIndexOnSignonRealm(&db_, "logins")) {
-      NOTREACHED();
-      return false;
-    }
-  }
   return true;
 }
 
@@ -766,8 +737,7 @@ void LoginDatabase::ReportMetrics(const std::string& sync_username,
   }
 
   sql::Statement logins_with_schemes_statement(db_.GetUniqueStatement(
-      "SELECT signon_realm, origin_url, ssl_valid, blacklisted_by_user "
-      "FROM logins;"));
+      "SELECT signon_realm, origin_url, blacklisted_by_user FROM logins;"));
 
   if (!logins_with_schemes_statement.is_valid())
     return;
@@ -781,8 +751,7 @@ void LoginDatabase::ReportMetrics(const std::string& sync_username,
   while (logins_with_schemes_statement.Step()) {
     std::string signon_realm = logins_with_schemes_statement.ColumnString(0);
     GURL origin_url = GURL(logins_with_schemes_statement.ColumnString(1));
-    bool ssl_valid = !!logins_with_schemes_statement.ColumnInt(2);
-    bool blacklisted_by_user = !!logins_with_schemes_statement.ColumnInt(3);
+    bool blacklisted_by_user = !!logins_with_schemes_statement.ColumnInt(2);
     if (blacklisted_by_user)
       continue;
 
@@ -790,8 +759,6 @@ void LoginDatabase::ReportMetrics(const std::string& sync_username,
       ++android_logins;
     } else if (origin_url.SchemeIs(url::kHttpsScheme)) {
       ++https_logins;
-      metrics_util::LogUMAHistogramBoolean(
-          "PasswordManager.UserStoredPasswordWithInvalidSSLCert", !ssl_valid);
     } else if (origin_url.SchemeIs(url::kHttpScheme)) {
       ++http_logins;
     } else if (origin_url.SchemeIs(url::kFtpScheme)) {
@@ -838,17 +805,9 @@ PasswordStoreChangeList LoginDatabase::AddLogin(const PasswordForm& form) {
           &encrypted_password) != ENCRYPTION_RESULT_SUCCESS)
     return list;
 
-  // You *must* change LoginTableColumns if this query changes.
-  sql::Statement s(db_.GetCachedStatement(
-      SQL_FROM_HERE,
-      "INSERT INTO logins "
-      "(origin_url, action_url, username_element, username_value, "
-      " password_element, password_value, submit_element, "
-      " signon_realm, ssl_valid, preferred, date_created, blacklisted_by_user, "
-      " scheme, password_type, possible_usernames, times_used, form_data, "
-      " date_synced, display_name, icon_url,"
-      " federation_url, skip_zero_click, generation_upload_status) VALUES "
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+  DCHECK(!add_statement_.empty());
+  sql::Statement s(
+      db_.GetCachedStatement(SQL_FROM_HERE, add_statement_.c_str()));
   BindAddStatement(form, encrypted_password, &s);
   db_.set_error_callback(base::Bind(&AddCallback));
   const bool success = s.Run();
@@ -858,16 +817,9 @@ PasswordStoreChangeList LoginDatabase::AddLogin(const PasswordForm& form) {
     return list;
   }
   // Repeat the same statement but with REPLACE semantic.
-  s.Assign(db_.GetCachedStatement(
-      SQL_FROM_HERE,
-      "INSERT OR REPLACE INTO logins "
-      "(origin_url, action_url, username_element, username_value, "
-      " password_element, password_value, submit_element, "
-      " signon_realm, ssl_valid, preferred, date_created, blacklisted_by_user, "
-      " scheme, password_type, possible_usernames, times_used, form_data, "
-      " date_synced, display_name, icon_url,"
-      " federation_url, skip_zero_click, generation_upload_status) VALUES "
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+  DCHECK(!add_replace_statement_.empty());
+  s.Assign(
+      db_.GetCachedStatement(SQL_FROM_HERE, add_replace_statement_.c_str()));
   BindAddStatement(form, encrypted_password, &s);
   if (s.Run()) {
     list.push_back(PasswordStoreChange(PasswordStoreChange::REMOVE, form));
@@ -888,47 +840,31 @@ PasswordStoreChangeList LoginDatabase::UpdateLogin(const PasswordForm& form) {
 #endif
   // Replacement is necessary to deal with updating imported credentials. See
   // crbug.com/349138 for details.
-  sql::Statement s(db_.GetCachedStatement(SQL_FROM_HERE,
-                                          "UPDATE OR REPLACE logins SET "
-                                          "action_url = ?, "
-                                          "password_value = ?, "
-                                          "ssl_valid = ?, "
-                                          "preferred = ?, "
-                                          "possible_usernames = ?, "
-                                          "times_used = ?, "
-                                          "submit_element = ?, "
-                                          "date_synced = ?, "
-                                          "date_created = ?, "
-                                          "blacklisted_by_user = ?, "
-                                          "scheme = ?, "
-                                          "password_type = ?, "
-                                          "display_name = ?, "
-                                          "icon_url = ?, "
-                                          "federation_url = ?, "
-                                          "skip_zero_click = ?, "
-                                          "generation_upload_status = ? "
-                                          "WHERE origin_url = ? AND "
-                                          "username_element = ? AND "
-                                          "username_value = ? AND "
-                                          "password_element = ? AND "
-                                          "signon_realm = ?"));
+  DCHECK(!update_statement_.empty());
+  sql::Statement s(
+      db_.GetCachedStatement(SQL_FROM_HERE, update_statement_.c_str()));
   s.BindString(0, form.action.spec());
   s.BindBlob(1, encrypted_password.data(),
              static_cast<int>(encrypted_password.length()));
-  s.BindInt(2, form.ssl_valid);
+  s.BindString16(2, form.submit_element);
   s.BindInt(3, form.preferred);
+  s.BindInt64(4, form.date_created.ToInternalValue());
+  s.BindInt(5, form.blacklisted_by_user);
+  s.BindInt(6, form.scheme);
+  s.BindInt(7, form.type);
   base::Pickle pickle = SerializeVector(form.other_possible_usernames);
-  s.BindBlob(4, pickle.data(), pickle.size());
-  s.BindInt(5, form.times_used);
-  s.BindString16(6, form.submit_element);
-  s.BindInt64(7, form.date_synced.ToInternalValue());
-  s.BindInt64(8, form.date_created.ToInternalValue());
-  s.BindInt(9, form.blacklisted_by_user);
-  s.BindInt(10, form.scheme);
-  s.BindInt(11, form.type);
+  s.BindBlob(8, pickle.data(), pickle.size());
+  s.BindInt(9, form.times_used);
+  base::Pickle form_data_pickle;
+  autofill::SerializeFormData(form.form_data, &form_data_pickle);
+  s.BindBlob(10, form_data_pickle.data(), form_data_pickle.size());
+  s.BindInt64(11, form.date_synced.ToInternalValue());
   s.BindString16(12, form.display_name);
   s.BindString(13, form.icon_url.spec());
-  s.BindString(14, form.federation_url.spec());
+  // An empty Origin serializes as "null" which would be strange to store here.
+  s.BindString(14, form.federation_origin.unique()
+                       ? std::string()
+                       : form.federation_origin.Serialize());
   s.BindInt(15, form.skip_zero_click);
   s.BindInt(16, form.generation_upload_status);
 
@@ -959,20 +895,14 @@ bool LoginDatabase::RemoveLogin(const PasswordForm& form) {
   DeleteEncryptedPassword(form);
 #endif
   // Remove a login by UNIQUE-constrained fields.
-  sql::Statement s(db_.GetCachedStatement(SQL_FROM_HERE,
-                                          "DELETE FROM logins WHERE "
-                                          "origin_url = ? AND "
-                                          "username_element = ? AND "
-                                          "username_value = ? AND "
-                                          "password_element = ? AND "
-                                          "submit_element = ? AND "
-                                          "signon_realm = ? "));
+  DCHECK(!delete_statement_.empty());
+  sql::Statement s(
+      db_.GetCachedStatement(SQL_FROM_HERE, delete_statement_.c_str()));
   s.BindString(0, form.origin.spec());
   s.BindString16(1, form.username_element);
   s.BindString16(2, form.username_value);
   s.BindString16(3, form.password_element);
-  s.BindString16(4, form.submit_element);
-  s.BindString(5, form.signon_realm);
+  s.BindString(4, form.signon_realm);
 
   return s.Run() && db_.GetLastChangeCount() > 0;
 }
@@ -992,7 +922,7 @@ bool LoginDatabase::RemoveLoginsCreatedBetween(base::Time delete_begin,
       "DELETE FROM logins WHERE "
       "date_created >= ? AND date_created < ?"));
   s.BindInt64(0, delete_begin.ToInternalValue());
-  s.BindInt64(1, delete_end.is_null() ? std::numeric_limits<int64>::max()
+  s.BindInt64(1, delete_end.is_null() ? std::numeric_limits<int64_t>::max()
                                       : delete_end.ToInternalValue());
 
   return s.Run();
@@ -1011,17 +941,39 @@ bool LoginDatabase::RemoveLoginsSyncedBetween(base::Time delete_begin,
   return s.Run();
 }
 
+bool LoginDatabase::GetAutoSignInLogins(
+    ScopedVector<autofill::PasswordForm>* forms) const {
+  DCHECK(forms);
+  DCHECK(!autosignin_statement_.empty());
+  sql::Statement s(
+      db_.GetCachedStatement(SQL_FROM_HERE, autosignin_statement_.c_str()));
+
+  return StatementToForms(&s, nullptr, forms);
+}
+
+bool LoginDatabase::DisableAutoSignInForOrigin(const GURL& origin) {
+  sql::Statement s(db_.GetCachedStatement(
+      SQL_FROM_HERE,
+      "UPDATE logins SET skip_zero_click = 1 WHERE origin_url = ?;"));
+  s.BindString(0, origin.spec());
+
+  return s.Run();
+}
+
 // static
 LoginDatabase::EncryptionResult LoginDatabase::InitPasswordFormFromStatement(
     PasswordForm* form,
-    sql::Statement& s) {
+    const sql::Statement& s) {
   std::string encrypted_password;
   s.ColumnBlobAsString(COLUMN_PASSWORD_VALUE, &encrypted_password);
   base::string16 decrypted_password;
   EncryptionResult encryption_result =
       DecryptedString(encrypted_password, &decrypted_password);
-  if (encryption_result != ENCRYPTION_RESULT_SUCCESS)
+  if (encryption_result != ENCRYPTION_RESULT_SUCCESS) {
+    VLOG(0) << "Password decryption failed, encryption_result is "
+            << encryption_result;
     return encryption_result;
+  }
 
   std::string tmp = s.ColumnString(COLUMN_ORIGIN_URL);
   form->origin = GURL(tmp);
@@ -1034,7 +986,6 @@ LoginDatabase::EncryptionResult LoginDatabase::InitPasswordFormFromStatement(
   form->submit_element = s.ColumnString16(COLUMN_SUBMIT_ELEMENT);
   tmp = s.ColumnString(COLUMN_SIGNON_REALM);
   form->signon_realm = tmp;
-  form->ssl_valid = (s.ColumnInt(COLUMN_SSL_VALID) > 0);
   form->preferred = (s.ColumnInt(COLUMN_PREFERRED) > 0);
   form->date_created =
       base::Time::FromInternalValue(s.ColumnInt64(COLUMN_DATE_CREATED));
@@ -1044,7 +995,7 @@ LoginDatabase::EncryptionResult LoginDatabase::InitPasswordFormFromStatement(
   DCHECK_GE(PasswordForm::SCHEME_LAST, scheme_int);
   form->scheme = static_cast<PasswordForm::Scheme>(scheme_int);
   int type_int = s.ColumnInt(COLUMN_PASSWORD_TYPE);
-  DCHECK(type_int >= 0 && type_int <= PasswordForm::TYPE_GENERATED);
+  DCHECK(type_int >= 0 && type_int <= PasswordForm::TYPE_LAST) << type_int;
   form->type = static_cast<PasswordForm::Type>(type_int);
   if (s.ColumnByteLength(COLUMN_POSSIBLE_USERNAMES)) {
     base::Pickle pickle(
@@ -1069,7 +1020,8 @@ LoginDatabase::EncryptionResult LoginDatabase::InitPasswordFormFromStatement(
       base::Time::FromInternalValue(s.ColumnInt64(COLUMN_DATE_SYNCED));
   form->display_name = s.ColumnString16(COLUMN_DISPLAY_NAME);
   form->icon_url = GURL(s.ColumnString(COLUMN_ICON_URL));
-  form->federation_url = GURL(s.ColumnString(COLUMN_FEDERATION_URL));
+  form->federation_origin =
+      url::Origin(GURL(s.ColumnString(COLUMN_FEDERATION_URL)));
   form->skip_zero_click = (s.ColumnInt(COLUMN_SKIP_ZERO_CLICK) > 0);
   int generation_upload_status_int =
       s.ColumnInt(COLUMN_GENERATION_UPLOAD_STATUS);
@@ -1082,25 +1034,33 @@ LoginDatabase::EncryptionResult LoginDatabase::InitPasswordFormFromStatement(
 }
 
 bool LoginDatabase::GetLogins(
-    const PasswordForm& form,
-    ScopedVector<autofill::PasswordForm>* forms) const {
+    const PasswordStore::FormDigest& form,
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) const {
   DCHECK(forms);
-  // You *must* change LoginTableColumns if this query changes.
-  const std::string sql_query =
-      "SELECT origin_url, action_url, "
-      "username_element, username_value, "
-      "password_element, password_value, submit_element, "
-      "signon_realm, ssl_valid, preferred, date_created, blacklisted_by_user, "
-      "scheme, password_type, possible_usernames, times_used, form_data, "
-      "date_synced, display_name, icon_url, "
-      "federation_url, skip_zero_click, generation_upload_status "
-      "FROM logins WHERE signon_realm == ? ";
-  sql::Statement s;
   const GURL signon_realm(form.signon_realm);
   std::string registered_domain = GetRegistryControlledDomain(signon_realm);
   const bool should_PSL_matching_apply =
       form.scheme == PasswordForm::SCHEME_HTML &&
       ShouldPSLDomainMatchingApply(registered_domain);
+  const bool should_federated_apply = form.scheme == PasswordForm::SCHEME_HTML;
+  DCHECK(!get_statement_.empty());
+  DCHECK(!get_statement_psl_.empty());
+  DCHECK(!get_statement_federated_.empty());
+  DCHECK(!get_statement_psl_federated_.empty());
+  const std::string* sql_query = &get_statement_;
+  if (should_PSL_matching_apply && should_federated_apply)
+    sql_query = &get_statement_psl_federated_;
+  else if (should_PSL_matching_apply)
+    sql_query = &get_statement_psl_;
+  else if (should_federated_apply)
+    sql_query = &get_statement_federated_;
+
+  // TODO(nyquist) Consider usage of GetCachedStatement when
+  // http://crbug.com/248608 is fixed.
+  sql::Statement s(db_.GetUniqueStatement(sql_query->c_str()));
+  s.BindString(0, form.signon_realm);
+  int placeholder = 1;
+
   // PSL matching only applies to HTML forms.
   if (should_PSL_matching_apply) {
     // We are extending the original SQL query with one that includes more
@@ -1109,11 +1069,6 @@ bool LoginDatabase::GetLogins(
     // in the |logins| table. The result (scheme, domain and port) is verified
     // further down using GURL. See the functions SchemeMatches,
     // RegistryControlledDomainMatches and PortMatches.
-    const std::string extended_sql_query =
-        sql_query + "OR signon_realm REGEXP ? ";
-    // TODO(nyquist) Re-enable usage of GetCachedStatement when
-    // http://crbug.com/248608 is fixed.
-    s.Assign(db_.GetUniqueStatement(extended_sql_query.c_str()));
     // We need to escape . in the domain. Since the domain has already been
     // sanitized using GURL, we do not need to escape any other characters.
     base::ReplaceChars(registered_domain, ".", "\\.", &registered_domain);
@@ -1129,18 +1084,32 @@ bool LoginDatabase::GetLogins(
     // The scheme and port has to be the same as the observed form.
     std::string regexp = "^(" + scheme + ":\\/\\/)([\\w-]+\\.)*" +
                          registered_domain + "(:" + port + ")?\\/$";
-    s.BindString(0, form.signon_realm);
-    s.BindString(1, regexp);
-  } else {
+    s.BindString(placeholder++, regexp);
+  }
+  if (should_federated_apply) {
+    std::string expression =
+        base::StringPrintf("federation://%s/%%", form.origin.host().c_str());
+    s.BindString(placeholder++, expression);
+  }
+
+  if (!should_PSL_matching_apply && !should_federated_apply) {
+    // Otherwise the histogram is reported in StatementToForms.
     UMA_HISTOGRAM_ENUMERATION("PasswordManager.PslDomainMatchTriggering",
                               PSL_DOMAIN_MATCH_NOT_USED,
                               PSL_DOMAIN_MATCH_COUNT);
-    s.Assign(db_.GetCachedStatement(SQL_FROM_HERE, sql_query.c_str()));
-    s.BindString(0, form.signon_realm);
   }
 
-  return StatementToForms(&s, should_PSL_matching_apply ? &form : nullptr,
-                          forms);
+  ScopedVector<autofill::PasswordForm> forms_scopedvector;
+  bool success = StatementToForms(
+      &s, should_PSL_matching_apply || should_federated_apply ? &form : nullptr,
+      &forms_scopedvector);
+  if (success) {
+    *forms = password_manager_util::ConvertScopedVector(
+        std::move(forms_scopedvector));
+    return true;
+  }
+  forms->clear();
+  return false;
 }
 
 bool LoginDatabase::GetLoginsCreatedBetween(
@@ -1148,19 +1117,11 @@ bool LoginDatabase::GetLoginsCreatedBetween(
     const base::Time end,
     ScopedVector<autofill::PasswordForm>* forms) const {
   DCHECK(forms);
-  sql::Statement s(db_.GetCachedStatement(
-      SQL_FROM_HERE,
-      "SELECT origin_url, action_url, "
-      "username_element, username_value, "
-      "password_element, password_value, submit_element, "
-      "signon_realm, ssl_valid, preferred, date_created, blacklisted_by_user, "
-      "scheme, password_type, possible_usernames, times_used, form_data, "
-      "date_synced, display_name, icon_url, "
-      "federation_url, skip_zero_click, generation_upload_status FROM logins "
-      "WHERE date_created >= ? AND date_created < ?"
-      "ORDER BY origin_url"));
+  DCHECK(!created_statement_.empty());
+  sql::Statement s(
+      db_.GetCachedStatement(SQL_FROM_HERE, created_statement_.c_str()));
   s.BindInt64(0, begin.ToInternalValue());
-  s.BindInt64(1, end.is_null() ? std::numeric_limits<int64>::max()
+  s.BindInt64(1, end.is_null() ? std::numeric_limits<int64_t>::max()
                                : end.ToInternalValue());
 
   return StatementToForms(&s, nullptr, forms);
@@ -1171,16 +1132,9 @@ bool LoginDatabase::GetLoginsSyncedBetween(
     const base::Time end,
     ScopedVector<autofill::PasswordForm>* forms) const {
   DCHECK(forms);
-  sql::Statement s(db_.GetCachedStatement(
-      SQL_FROM_HERE,
-      "SELECT origin_url, action_url, username_element, username_value, "
-      "password_element, password_value, submit_element, signon_realm, "
-      "ssl_valid, preferred, date_created, blacklisted_by_user, "
-      "scheme, password_type, possible_usernames, times_used, form_data, "
-      "date_synced, display_name, icon_url, "
-      "federation_url, skip_zero_click, generation_upload_status FROM logins "
-      "WHERE date_synced >= ? AND date_synced < ?"
-      "ORDER BY origin_url"));
+  DCHECK(!synced_statement_.empty());
+  sql::Statement s(
+      db_.GetCachedStatement(SQL_FROM_HERE, synced_statement_.c_str()));
   s.BindInt64(0, begin.ToInternalValue());
   s.BindInt64(1,
               end.is_null() ? base::Time::Max().ToInternalValue()
@@ -1190,33 +1144,33 @@ bool LoginDatabase::GetLoginsSyncedBetween(
 }
 
 bool LoginDatabase::GetAutofillableLogins(
-    ScopedVector<autofill::PasswordForm>* forms) const {
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) const {
   return GetAllLoginsWithBlacklistSetting(false, forms);
 }
 
 bool LoginDatabase::GetBlacklistLogins(
-    ScopedVector<autofill::PasswordForm>* forms) const {
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) const {
   return GetAllLoginsWithBlacklistSetting(true, forms);
 }
 
 bool LoginDatabase::GetAllLoginsWithBlacklistSetting(
     bool blacklisted,
-    ScopedVector<autofill::PasswordForm>* forms) const {
+    std::vector<std::unique_ptr<PasswordForm>>* forms) const {
   DCHECK(forms);
-  // You *must* change LoginTableColumns if this query changes.
-  sql::Statement s(db_.GetCachedStatement(
-      SQL_FROM_HERE,
-      "SELECT origin_url, action_url, "
-      "username_element, username_value, "
-      "password_element, password_value, submit_element, "
-      "signon_realm, ssl_valid, preferred, date_created, blacklisted_by_user, "
-      "scheme, password_type, possible_usernames, times_used, form_data, "
-      "date_synced, display_name, icon_url, "
-      "federation_url, skip_zero_click, generation_upload_status FROM logins "
-      "WHERE blacklisted_by_user == ? ORDER BY origin_url"));
+  DCHECK(!blacklisted_statement_.empty());
+  sql::Statement s(
+      db_.GetCachedStatement(SQL_FROM_HERE, blacklisted_statement_.c_str()));
   s.BindInt(0, blacklisted ? 1 : 0);
 
-  return StatementToForms(&s, nullptr, forms);
+  ScopedVector<autofill::PasswordForm> forms_scopedvector;
+  bool success = StatementToForms(&s, nullptr, &forms_scopedvector);
+  if (success) {
+    *forms = password_manager_util::ConvertScopedVector(
+        std::move(forms_scopedvector));
+    return true;
+  }
+  forms->clear();
+  return false;
 }
 
 bool LoginDatabase::DeleteAndRecreateDatabaseFile() {
@@ -1229,22 +1183,15 @@ bool LoginDatabase::DeleteAndRecreateDatabaseFile() {
 
 std::string LoginDatabase::GetEncryptedPassword(
     const autofill::PasswordForm& form) const {
+  DCHECK(!encrypted_statement_.empty());
   sql::Statement s(
-      db_.GetCachedStatement(SQL_FROM_HERE,
-                             "SELECT password_value FROM logins WHERE "
-                             "origin_url = ? AND "
-                             "username_element = ? AND "
-                             "username_value = ? AND "
-                             "password_element = ? AND "
-                             "submit_element = ? AND "
-                             "signon_realm = ? "));
+      db_.GetCachedStatement(SQL_FROM_HERE, encrypted_statement_.c_str()));
 
   s.BindString(0, form.origin.spec());
   s.BindString16(1, form.username_element);
   s.BindString16(2, form.username_value);
   s.BindString16(3, form.password_element);
-  s.BindString16(4, form.submit_element);
-  s.BindString(5, form.signon_realm);
+  s.BindString(4, form.signon_realm);
 
   std::string encrypted_password;
   if (s.Step()) {
@@ -1256,36 +1203,39 @@ std::string LoginDatabase::GetEncryptedPassword(
 // static
 bool LoginDatabase::StatementToForms(
     sql::Statement* statement,
-    const autofill::PasswordForm* psl_match,
+    const PasswordStore::FormDigest* matched_form,
     ScopedVector<autofill::PasswordForm>* forms) {
   PSLDomainMatchMetric psl_domain_match_metric = PSL_DOMAIN_MATCH_NONE;
 
   forms->clear();
   while (statement->Step()) {
-    scoped_ptr<PasswordForm> new_form(new PasswordForm());
+    std::unique_ptr<PasswordForm> new_form(new PasswordForm());
     EncryptionResult result =
         InitPasswordFormFromStatement(new_form.get(), *statement);
     if (result == ENCRYPTION_RESULT_SERVICE_FAILURE)
       return false;
     if (result == ENCRYPTION_RESULT_ITEM_FAILURE)
       continue;
-    DCHECK(result == ENCRYPTION_RESULT_SUCCESS);
-    if (psl_match && psl_match->signon_realm != new_form->signon_realm) {
+    DCHECK_EQ(ENCRYPTION_RESULT_SUCCESS, result);
+    if (matched_form && matched_form->signon_realm != new_form->signon_realm) {
       if (new_form->scheme != PasswordForm::SCHEME_HTML)
         continue;  // Ignore non-HTML matches.
 
-      if (!IsPublicSuffixDomainMatch(new_form->signon_realm,
-                                     psl_match->signon_realm)) {
+      if (IsPublicSuffixDomainMatch(new_form->signon_realm,
+                                    matched_form->signon_realm)) {
+        psl_domain_match_metric = PSL_DOMAIN_MATCH_FOUND;
+        new_form->is_public_suffix_match = true;
+      } else if (!new_form->federation_origin.unique() &&
+                 IsFederatedMatch(new_form->signon_realm,
+                                  matched_form->origin)) {
+      } else {
         continue;
       }
-
-      psl_domain_match_metric = PSL_DOMAIN_MATCH_FOUND;
-      new_form->is_public_suffix_match = true;
     }
-    forms->push_back(new_form.Pass());
+    forms->push_back(std::move(new_form));
   }
 
-  if (psl_match) {
+  if (matched_form) {
     UMA_HISTOGRAM_ENUMERATION("PasswordManager.PslDomainMatchTriggering",
                               psl_domain_match_metric, PSL_DOMAIN_MATCH_COUNT);
   }
@@ -1293,6 +1243,70 @@ bool LoginDatabase::StatementToForms(
   if (!statement->Succeeded())
     return false;
   return true;
+}
+
+void LoginDatabase::InitializeStatementStrings(const SQLTableBuilder& builder) {
+  // This method may be called multiple times, if Chrome switches backends and
+  // LoginDatabase::DeleteAndRecreateDatabaseFile ends up being called. In those
+  // case do not recompute the SQL statements, because they would end up the
+  // same.
+  if (!add_statement_.empty())
+    return;
+
+  // Initialize the cached strings.
+  std::string all_column_names = builder.ListAllColumnNames();
+  std::string right_amount_of_placeholders =
+      GeneratePlaceholders(builder.NumberOfColumns());
+  std::string all_unique_key_column_names = builder.ListAllUniqueKeyNames();
+  std::string all_nonunique_key_column_names =
+      builder.ListAllNonuniqueKeyNames();
+
+  add_statement_ = "INSERT INTO logins (" + all_column_names + ") VALUES " +
+                   right_amount_of_placeholders;
+  DCHECK(add_replace_statement_.empty());
+  add_replace_statement_ = "INSERT OR REPLACE INTO logins (" +
+                           all_column_names + ") VALUES " +
+                           right_amount_of_placeholders;
+  DCHECK(update_statement_.empty());
+  update_statement_ = "UPDATE OR REPLACE logins SET " +
+                      all_nonunique_key_column_names + " WHERE " +
+                      all_unique_key_column_names;
+  DCHECK(delete_statement_.empty());
+  delete_statement_ = "DELETE FROM logins WHERE " + all_unique_key_column_names;
+  DCHECK(autosignin_statement_.empty());
+  autosignin_statement_ = "SELECT " + all_column_names +
+                          " FROM logins "
+                          "WHERE skip_zero_click = 0 ORDER BY origin_url";
+  DCHECK(get_statement_.empty());
+  get_statement_ = "SELECT " + all_column_names +
+                   " FROM logins "
+                   "WHERE signon_realm == ?";
+  std::string psl_statement = "OR signon_realm REGEXP ? ";
+  std::string federated_statement =
+      "OR (signon_realm LIKE ? AND password_type == 2) ";
+  DCHECK(get_statement_psl_.empty());
+  get_statement_psl_ = get_statement_ + psl_statement;
+  DCHECK(get_statement_federated_.empty());
+  get_statement_federated_ = get_statement_ + federated_statement;
+  DCHECK(get_statement_psl_federated_.empty());
+  get_statement_psl_federated_ =
+      get_statement_ + psl_statement + federated_statement;
+  DCHECK(created_statement_.empty());
+  created_statement_ =
+      "SELECT " + all_column_names +
+      " FROM logins WHERE date_created >= ? AND date_created < "
+      "? ORDER BY origin_url";
+  DCHECK(synced_statement_.empty());
+  synced_statement_ = "SELECT " + all_column_names +
+                      " FROM logins WHERE date_synced >= ? AND date_synced < "
+                      "? ORDER BY origin_url";
+  DCHECK(blacklisted_statement_.empty());
+  blacklisted_statement_ =
+      "SELECT " + all_column_names +
+      " FROM logins WHERE blacklisted_by_user == ? ORDER BY origin_url";
+  DCHECK(encrypted_statement_.empty());
+  encrypted_statement_ =
+      "SELECT password_value FROM logins WHERE " + all_unique_key_column_names;
 }
 
 }  // namespace password_manager

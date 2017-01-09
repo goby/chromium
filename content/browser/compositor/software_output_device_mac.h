@@ -8,13 +8,13 @@
 #include <IOSurface/IOSurface.h>
 
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
 #include "cc/output/software_output_device.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/gfx/vsync_provider.h"
 
-namespace gfx {
-class Canvas;
-}
+class SkCanvas;
 
 namespace ui {
 class Compositor;
@@ -62,7 +62,7 @@ class SoftwareOutputDeviceMac :
 
   // The SkCanvas wrapps the mapped current IOSurface. It is valid only between
   // BeginPaint and EndPaint.
-  skia::RefPtr<SkCanvas> canvas_;
+  std::unique_ptr<SkCanvas> canvas_;
 
   gfx::VSyncProvider::UpdateVSyncCallback update_vsync_callback_;
 

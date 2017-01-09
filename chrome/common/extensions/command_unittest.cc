@@ -4,11 +4,16 @@
 
 #include "chrome/common/extensions/command.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class CommandTest : public testing::Test {
@@ -27,7 +32,7 @@ typedef const struct {
 // |platform_specific_only| is true, only the latter is tested. |platforms|
 // specifies all platforms to use when populating the |suggested_key|
 // dictionary.
-void CheckParse(ConstCommandsTestData data,
+void CheckParse(const ConstCommandsTestData& data,
                 int i,
                 bool platform_specific_only,
                 std::vector<std::string>& platforms) {
@@ -36,7 +41,7 @@ void CheckParse(ConstCommandsTestData data,
                base::IntToString(i));
 
   extensions::Command command;
-  scoped_ptr<base::DictionaryValue> input(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> input(new base::DictionaryValue);
   base::string16 error;
 
   // First, test the parse of a string suggested_key value.
@@ -201,7 +206,7 @@ TEST(CommandTest, ExtensionCommandParsingFallback) {
 
   // Test that platform specific keys are honored on each platform, despite
   // fallback being given.
-  scoped_ptr<base::DictionaryValue> input(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> input(new base::DictionaryValue);
   base::DictionaryValue* key_dict = new base::DictionaryValue();
   key_dict->SetString("default",  "Ctrl+Shift+D");
   key_dict->SetString("windows",  "Ctrl+Shift+W");

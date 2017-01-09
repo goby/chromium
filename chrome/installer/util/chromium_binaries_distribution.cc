@@ -6,6 +6,8 @@
 
 #include "chrome/installer/util/google_chrome_binaries_distribution.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "chrome/installer/util/app_registration_data.h"
 #include "chrome/installer/util/non_updating_app_registration_data.h"
@@ -17,20 +19,19 @@ const wchar_t kChromiumBinariesName[] = L"Chromium Binaries";
 }  // namespace
 
 ChromiumBinariesDistribution::ChromiumBinariesDistribution()
-    : BrowserDistribution(
-          CHROME_BINARIES,
-          scoped_ptr<AppRegistrationData>(new NonUpdatingAppRegistrationData(
-              base::string16(L"Software\\").append(kChromiumBinariesName)))),
+    : BrowserDistribution(CHROME_BINARIES,
+                          std::unique_ptr<AppRegistrationData>(
+                              new NonUpdatingAppRegistrationData(
+                                  base::string16(L"Software\\")
+                                      .append(kChromiumBinariesName)))),
       browser_distribution_(
-          BrowserDistribution::GetSpecificDistribution(CHROME_BROWSER)) {
-}
+          BrowserDistribution::GetSpecificDistribution(CHROME_BROWSER)) {}
 
 ChromiumBinariesDistribution::ChromiumBinariesDistribution(
-    scoped_ptr<AppRegistrationData> app_reg_data)
-    : BrowserDistribution(CHROME_BINARIES, app_reg_data.Pass()),
+    std::unique_ptr<AppRegistrationData> app_reg_data)
+    : BrowserDistribution(CHROME_BINARIES, std::move(app_reg_data)),
       browser_distribution_(
-          BrowserDistribution::GetSpecificDistribution(CHROME_BROWSER)) {
-}
+          BrowserDistribution::GetSpecificDistribution(CHROME_BROWSER)) {}
 
 base::string16 ChromiumBinariesDistribution::GetBaseAppName() {
   NOTREACHED();
@@ -51,8 +52,7 @@ base::string16 ChromiumBinariesDistribution::GetDisplayName() {
   return kChromiumBinariesName;
 }
 
-base::string16 ChromiumBinariesDistribution::GetShortcutName(
-    ShortcutType shortcut_type) {
+base::string16 ChromiumBinariesDistribution::GetShortcutName() {
   NOTREACHED();
   return base::string16();
 }
@@ -86,6 +86,14 @@ std::string ChromiumBinariesDistribution::GetSafeBrowsingName() {
   return std::string();
 }
 
+base::string16 ChromiumBinariesDistribution::GetRegistryPath() {
+  NOTREACHED();
+  // Handling a NOTREACHED() with anything but a default return value is unusual
+  // but in this case returning the empty string would point the caller at the
+  // root of the registry which could have disastrous consequences.
+  return BrowserDistribution::GetRegistryPath();
+}
+
 base::string16 ChromiumBinariesDistribution::GetUninstallRegPath() {
   NOTREACHED();
   return base::string16();
@@ -96,7 +104,7 @@ BrowserDistribution::DefaultBrowserControlPolicy
   return DEFAULT_BROWSER_UNSUPPORTED;
 }
 
-int ChromiumBinariesDistribution::GetIconIndex(ShortcutType shortcut_type) {
+int ChromiumBinariesDistribution::GetIconIndex() {
   NOTREACHED();
   return 0;
 }

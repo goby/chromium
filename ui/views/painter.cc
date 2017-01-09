@@ -4,23 +4,83 @@
 
 #include "ui/views/painter.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
+#include "third_party/skia/include/pathops/SkPathOps.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/geometry/insets_f.h"
 #include "ui/gfx/geometry/point.h"
-#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/nine_image_painter.h"
+#include "ui/gfx/scoped_canvas.h"
 #include "ui/views/view.h"
 
 namespace views {
 
 namespace {
+
+// SolidRoundRectPainter -------------------------------------------------------
+
+// Creates a round rect painter with a 1 pixel border. The border paints on top
+// of the background.
+class SolidRoundRectPainter : public Painter {
+ public:
+  SolidRoundRectPainter(SkColor bg_color, SkColor stroke_color, float radius);
+  ~SolidRoundRectPainter() override;
+
+  // Painter:
+  gfx::Size GetMinimumSize() const override;
+  void Paint(gfx::Canvas* canvas, const gfx::Size& size) override;
+
+ private:
+  const SkColor bg_color_;
+  const SkColor stroke_color_;
+  const float radius_;
+
+  DISALLOW_COPY_AND_ASSIGN(SolidRoundRectPainter);
+};
+
+SolidRoundRectPainter::SolidRoundRectPainter(SkColor bg_color,
+                                             SkColor stroke_color,
+                                             float radius)
+    : bg_color_(bg_color), stroke_color_(stroke_color), radius_(radius) {}
+
+SolidRoundRectPainter::~SolidRoundRectPainter() {}
+
+gfx::Size SolidRoundRectPainter::GetMinimumSize() const {
+  return gfx::Size();
+}
+
+void SolidRoundRectPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
+  gfx::ScopedCanvas scoped_canvas(canvas);
+  const float scale = canvas->UndoDeviceScaleFactor();
+
+  gfx::RectF border_rect_f(gfx::ScaleToEnclosingRect(gfx::Rect(size), scale));
+  const SkScalar scaled_corner_radius = SkFloatToScalar(radius_ * scale);
+
+  SkPaint paint;
+  paint.setAntiAlias(true);
+  paint.setStyle(SkPaint::kFill_Style);
+  paint.setColor(bg_color_);
+  canvas->DrawRoundRect(border_rect_f, scaled_corner_radius, paint);
+
+  border_rect_f.Inset(gfx::InsetsF(0.5f));
+  paint.setStyle(SkPaint::kStroke_Style);
+  paint.setStrokeWidth(1);
+  paint.setColor(stroke_color_);
+  canvas->DrawRoundRect(border_rect_f, scaled_corner_radius, paint);
+}
 
 // DashedFocusPainter ----------------------------------------------------------
 
@@ -60,7 +120,9 @@ void DashedFocusPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
 
 class SolidFocusPainter : public Painter {
  public:
-  SolidFocusPainter(SkColor color, const gfx::Insets& insets);
+  SolidFocusPainter(SkColor color,
+                    SkScalar thickness,
+                    const gfx::InsetsF& insets);
   ~SolidFocusPainter() override;
 
   // Painter:
@@ -69,16 +131,16 @@ class SolidFocusPainter : public Painter {
 
  private:
   const SkColor color_;
-  const gfx::Insets insets_;
+  const SkScalar thickness_;
+  const gfx::InsetsF insets_;
 
   DISALLOW_COPY_AND_ASSIGN(SolidFocusPainter);
 };
 
 SolidFocusPainter::SolidFocusPainter(SkColor color,
-                                     const gfx::Insets& insets)
-    : color_(color),
-      insets_(insets) {
-}
+                                     SkScalar thickness,
+                                     const gfx::InsetsF& insets)
+    : color_(color), thickness_(thickness), insets_(insets) {}
 
 SolidFocusPainter::~SolidFocusPainter() {
 }
@@ -88,9 +150,9 @@ gfx::Size SolidFocusPainter::GetMinimumSize() const {
 }
 
 void SolidFocusPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
-  gfx::Rect rect(size);
+  gfx::RectF rect((gfx::Rect(size)));
   rect.Inset(insets_);
-  canvas->DrawSolidFocusRect(rect, color_);
+  canvas->DrawSolidFocusRect(rect, color_, thickness_);
 }
 
 // GradientPainter ------------------------------------------------------------
@@ -111,9 +173,9 @@ class GradientPainter : public Painter {
   // If |horizontal_| is true then the gradient is painted horizontally.
   bool horizontal_;
   // The gradient colors.
-  scoped_ptr<SkColor[]> colors_;
+  std::unique_ptr<SkColor[]> colors_;
   // The relative positions of the corresponding gradient colors.
-  scoped_ptr<SkScalar[]> pos_;
+  std::unique_ptr<SkScalar[]> pos_;
   // The number of elements in |colors_| and |pos_|.
   size_t count_;
 
@@ -150,10 +212,9 @@ void GradientPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
   else
     p[1].iset(0, size.height());
 
-  skia::RefPtr<SkShader> s = skia::AdoptRef(SkGradientShader::CreateLinear(
+  paint.setShader(SkGradientShader::MakeLinear(
       p, colors_.get(), pos_.get(), count_, SkShader::kClamp_TileMode));
   paint.setStyle(SkPaint::kFill_Style);
-  paint.setShader(s.get());
 
   canvas->sk_canvas()->drawRectCoords(SkIntToScalar(0), SkIntToScalar(0),
                                       SkIntToScalar(size.width()),
@@ -179,7 +240,7 @@ class ImagePainter : public Painter {
   void Paint(gfx::Canvas* canvas, const gfx::Size& size) override;
 
  private:
-  scoped_ptr<gfx::NineImagePainter> nine_painter_;
+  std::unique_ptr<gfx::NineImagePainter> nine_painter_;
 
   DISALLOW_COPY_AND_ASSIGN(ImagePainter);
 };
@@ -219,7 +280,8 @@ Painter::~Painter() {
 void Painter::PaintPainterAt(gfx::Canvas* canvas,
                              Painter* painter,
                              const gfx::Rect& rect) {
-  DCHECK(canvas && painter);
+  DCHECK(canvas);
+  DCHECK(painter);
   canvas->Save();
   canvas->Translate(rect.OffsetFromOrigin());
   painter->Paint(canvas, rect.size());
@@ -232,6 +294,18 @@ void Painter::PaintFocusPainter(View* view,
                                 Painter* focus_painter) {
   if (focus_painter && view->HasFocus())
     PaintPainterAt(canvas, focus_painter, view->GetLocalBounds());
+}
+
+// static
+Painter* Painter::CreateSolidRoundRectPainter(SkColor color, float radius) {
+  return new SolidRoundRectPainter(color, SK_ColorTRANSPARENT, radius);
+}
+
+// static
+Painter* Painter::CreateRoundRectWith1PxBorderPainter(SkColor bg_color,
+                                                      SkColor stroke_color,
+                                                      float radius) {
+  return new SolidRoundRectPainter(bg_color, stroke_color, radius);
 }
 
 // static
@@ -271,21 +345,36 @@ Painter* Painter::CreateImageGridPainter(const int image_ids[]) {
 }
 
 // static
-scoped_ptr<Painter> Painter::CreateDashedFocusPainter() {
-  return make_scoped_ptr(new DashedFocusPainter(gfx::Insets()));
+std::unique_ptr<Painter> Painter::CreateDashedFocusPainter() {
+  return base::MakeUnique<DashedFocusPainter>(gfx::Insets());
 }
 
 // static
-scoped_ptr<Painter> Painter::CreateDashedFocusPainterWithInsets(
+std::unique_ptr<Painter> Painter::CreateDashedFocusPainterWithInsets(
     const gfx::Insets& insets) {
-  return make_scoped_ptr(new DashedFocusPainter(insets));
+  return base::MakeUnique<DashedFocusPainter>(insets);
 }
 
 // static
-scoped_ptr<Painter> Painter::CreateSolidFocusPainter(
+std::unique_ptr<Painter> Painter::CreateSolidFocusPainter(
     SkColor color,
     const gfx::Insets& insets) {
-  return make_scoped_ptr(new SolidFocusPainter(color, insets));
+  // Before Canvas::DrawSolidFocusRect correctly inset the rect's bounds based
+  // on the thickness, callers had to add 1 to the bottom and right insets.
+  // Subtract that here so it works the same way with the new
+  // Canvas::DrawSolidFocusRect.
+  const gfx::Insets corrected_insets = insets - gfx::Insets(0, 0, 1, 1);
+  return base::MakeUnique<SolidFocusPainter>(color, SkIntToScalar(1),
+                                             corrected_insets);
+}
+
+// static
+std::unique_ptr<Painter> Painter::CreateSolidFocusPainter(
+    SkColor color,
+    float thickness,
+    const gfx::InsetsF& insets) {
+  return base::MakeUnique<SolidFocusPainter>(color, SkFloatToScalar(thickness),
+                                             insets);
 }
 
 // HorizontalPainter ----------------------------------------------------------

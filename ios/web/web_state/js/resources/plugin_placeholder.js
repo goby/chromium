@@ -42,8 +42,8 @@ __gCrWeb['plugin'] = {};
 
   /**
    * Returns the first <embed> child of the given node, if any.
-   * @param {HTMLElement} node The node to check.
-   * @return {HTMLElement} The first <embed> child, or null.
+   * @param {Node} node The node to check.
+   * @return {Node} The first <embed> child, or null.
    * @private
    */
   __gCrWeb['plugin'].getEmbedChild_ = function(node) {
@@ -128,7 +128,7 @@ __gCrWeb['plugin'] = {};
    * @param {string} message The message to show in the placeholder.
    */
   __gCrWeb['plugin']['addPluginPlaceholders'] = function(message) {
-    var plugins = __gCrWeb['placeholderTargetPlugins'];
+    var i, plugins = __gCrWeb['placeholderTargetPlugins'];
     for (i = 0; i < plugins.length; i++) {
       var plugin = plugins[i];
       if (!__gCrWeb['plugin'].isSignificantPlugin_(plugin)) {

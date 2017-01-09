@@ -9,6 +9,7 @@
 
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/test/https_forwarder.h"
 #include "chrome/browser/chromeos/login/test/js_checker.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
@@ -96,15 +97,16 @@ class OobeBaseTest : public ExtensionApiTest {
   void SetSignFormField(const std::string& field_id,
                         const std::string& field_value);
 
-  scoped_ptr<FakeGaia> fake_gaia_;
+  std::unique_ptr<FakeGaia> fake_gaia_;
   NetworkPortalDetectorTestImpl* network_portal_detector_;
 
   // Whether to use background networking. Note this is only effective when it
   // is set before SetUpCommandLine is invoked.
   bool needs_background_networking_;
 
-  scoped_ptr<content::WindowedNotificationObserver> login_screen_load_observer_;
-  scoped_ptr<extensions::ScopedCurrentChannel> scoped_channel_;
+  std::unique_ptr<content::WindowedNotificationObserver>
+      login_screen_load_observer_;
+  std::unique_ptr<extensions::ScopedCurrentChannel> scoped_channel_;
   HTTPSForwarder gaia_https_forwarder_;
   std::string gaia_frame_parent_;
   bool initialize_fake_merge_session_;

@@ -271,7 +271,9 @@ cr.define('options', function() {
       this.clearElement_(instructionsEl);
       this.dismissible_ = opt_notDismissible !== true;
       var message = loadTimeData.getString(this.event_.pairing);
-      message = message.replace('%1', this.event_.device.name);
+      assert(typeof this.event_.device.name == 'string');
+      message = message.replace(
+          '%1', /** @type {string} */(this.event_.device.name));
       instructionsEl.textContent = message;
 
       // Update visibility of dialog elements.
@@ -547,6 +549,27 @@ cr.define('options', function() {
         break;
       case chrome.bluetoothPrivate.ConnectResultType.UNSUPPORTED_DEVICE:
         message = 'bluetoothConnectUnsupportedDevice';
+        break;
+      case chrome.bluetoothPrivate.ConnectResultType.ATTRIBUTE_LENGTH_INVALID:
+        message = 'bluetoothConnectAttributeLengthInvalid';
+        break;
+      case chrome.bluetoothPrivate.ConnectResultType.CONNECTION_CONGESTED:
+        message = 'bluetoothConnectConnectionCongested';
+        break;
+      case chrome.bluetoothPrivate.ConnectResultType.INSUFFICIENT_ENCRYPTION:
+        message = 'bluetoothConnectInsufficientEncryption';
+        break;
+      case chrome.bluetoothPrivate.ConnectResultType.OFFSET_INVALID:
+        message = 'bluetoothConnectOffsetInvalid';
+        break;
+      case chrome.bluetoothPrivate.ConnectResultType.READ_NOT_PERMITTED:
+        message = 'bluetoothConnectReadNotPermitted';
+        break;
+      case chrome.bluetoothPrivate.ConnectResultType.REQUEST_NOT_SUPPORTED:
+        message = 'bluetoothConnectRequestNotSupported';
+        break;
+      case chrome.bluetoothPrivate.ConnectResultType.WRITE_NOT_PERMITTED:
+        message = 'bluetoothConnectWriteNotPermitted';
         break;
     }
     if (message)

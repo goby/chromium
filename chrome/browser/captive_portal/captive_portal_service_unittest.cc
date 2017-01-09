@@ -4,10 +4,9 @@
 
 #include "chrome/browser/captive_portal/captive_portal_service.h"
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_timeouts.h"
@@ -16,6 +15,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/captive_portal/captive_portal_testing_utils.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -282,16 +282,16 @@ class CaptivePortalServiceTest : public testing::Test,
   content::TestBrowserThreadBundle thread_bundle_;
 
   // Note that the construction order of these matters.
-  scoped_ptr<TestingProfile> profile_;
-  scoped_ptr<base::SimpleTestTickClock> tick_clock_;
-  scoped_ptr<CaptivePortalService> service_;
+  std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<base::SimpleTestTickClock> tick_clock_;
+  std::unique_ptr<CaptivePortalService> service_;
 };
 
 // Verify that an observer doesn't get messages from the wrong profile.
 TEST_F(CaptivePortalServiceTest, CaptivePortalTwoProfiles) {
   Initialize(CaptivePortalService::SKIP_OS_CHECK_FOR_TESTING);
   TestingProfile profile2;
-  scoped_ptr<CaptivePortalService> service2(
+  std::unique_ptr<CaptivePortalService> service2(
       new CaptivePortalService(&profile2));
   CaptivePortalObserver observer2(&profile2, service2.get());
 

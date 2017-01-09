@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/values.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/prerender/prerender_history.h"
+
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace prerender {
@@ -48,7 +52,7 @@ bool ListEntryMatches(base::ListValue* list,
 }
 
 TEST(PrerenderHistoryTest, GetAsValue)  {
-  scoped_ptr<base::Value> entry_value;
+  std::unique_ptr<base::Value> entry_value;
   base::ListValue* entry_list = NULL;
 
   // Create a history with only 2 values.

@@ -4,13 +4,17 @@
 
 #include "third_party/zlib/google/zip_reader.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "third_party/zlib/google/zip_internal.h"
 
 #if defined(USE_SYSTEM_MINIZIP)
@@ -162,12 +166,9 @@ ZipReader::EntryInfo::EntryInfo(const std::string& file_name_in_zip,
   exploded_time.minute = raw_file_info.tmu_date.tm_min;
   exploded_time.second = raw_file_info.tmu_date.tm_sec;
   exploded_time.millisecond = 0;
-  if (exploded_time.HasValidValues()) {
-    last_modified_ = base::Time::FromLocalExploded(exploded_time);
-  } else {
-    // Use Unix time epoch if the time stamp data is invalid.
+
+  if (!base::Time::FromLocalExploded(exploded_time, &last_modified_))
     last_modified_ = base::Time::UnixEpoch();
-  }
 }
 
 ZipReader::ZipReader()
@@ -299,7 +300,7 @@ bool ZipReader::ExtractCurrentEntry(WriterDelegate* delegate) const {
     return false;
 
   bool success = true;  // This becomes false when something bad happens.
-  scoped_ptr<char[]> buf(new char[internal::kZipBufSize]);
+  std::unique_ptr<char[]> buf(new char[internal::kZipBufSize]);
   while (true) {
     const int num_bytes_read = unzReadCurrentFile(zip_file_, buf.get(),
                                                   internal::kZipBufSize);
@@ -390,15 +391,11 @@ void ZipReader::ExtractCurrentEntryToFilePathAsync(
     return;
   }
 
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&ZipReader::ExtractChunk,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 Passed(output_file.Pass()),
-                 success_callback,
-                 failure_callback,
-                 progress_callback,
-                 0 /* initial offset */));
+      base::Bind(&ZipReader::ExtractChunk, weak_ptr_factory_.GetWeakPtr(),
+                 Passed(std::move(output_file)), success_callback,
+                 failure_callback, progress_callback, 0 /* initial offset */));
 }
 
 bool ZipReader::ExtractCurrentEntryIntoDirectory(
@@ -438,9 +435,9 @@ bool ZipReader::ExtractCurrentEntryToString(size_t max_read_bytes,
   // correct. However, we need to assume that the uncompressed size could be
   // incorrect therefore this function needs to read as much data as possible.
   std::string contents;
-  contents.reserve(static_cast<size_t>(std::min(
-      static_cast<int64>(max_read_bytes),
-      current_entry_info()->original_size())));
+  contents.reserve(
+      static_cast<size_t>(std::min(static_cast<int64_t>(max_read_bytes),
+                                   current_entry_info()->original_size())));
 
   StringWriterDelegate writer(max_read_bytes, &contents);
   if (!ExtractCurrentEntry(&writer))
@@ -476,7 +473,7 @@ void ZipReader::ExtractChunk(base::File output_file,
                              const SuccessCallback& success_callback,
                              const FailureCallback& failure_callback,
                              const ProgressCallback& progress_callback,
-                             const int64 offset) {
+                             const int64_t offset) {
   char buffer[internal::kZipBufSize];
 
   const int num_bytes_read = unzReadCurrentFile(zip_file_,
@@ -497,20 +494,15 @@ void ZipReader::ExtractChunk(base::File output_file,
       return;
     }
 
-    int64 current_progress = offset + num_bytes_read;
+    int64_t current_progress = offset + num_bytes_read;
 
     progress_callback.Run(current_progress);
 
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&ZipReader::ExtractChunk,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   Passed(output_file.Pass()),
-                   success_callback,
-                   failure_callback,
-                   progress_callback,
-                   current_progress));
-
+        base::Bind(&ZipReader::ExtractChunk, weak_ptr_factory_.GetWeakPtr(),
+                   Passed(std::move(output_file)), success_callback,
+                   failure_callback, progress_callback, current_progress));
   }
 }
 
@@ -522,11 +514,9 @@ FileWriterDelegate::FileWriterDelegate(base::File* file)
 }
 
 FileWriterDelegate::~FileWriterDelegate() {
-#if !defined(NDEBUG)
-  const bool success =
-#endif
-      file_->SetLength(file_length_);
-  DPLOG_IF(ERROR, !success) << "Failed updating length of written file";
+  if (!file_->SetLength(file_length_)) {
+    DPLOG(ERROR) << "Failed updating length of written file";
+  }
 }
 
 bool FileWriterDelegate::PrepareOutput() {

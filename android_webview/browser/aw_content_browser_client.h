@@ -5,10 +5,13 @@
 #ifndef ANDROID_WEBVIEW_LIB_AW_CONTENT_BROWSER_CLIENT_H_
 #define ANDROID_WEBVIEW_LIB_AW_CONTENT_BROWSER_CLIENT_H_
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "android_webview/browser/aw_web_preferences_populater.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/public/browser/content_browser_client.h"
 
 namespace android_webview {
@@ -27,27 +30,15 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   AwContentBrowserClient(JniDependencyFactory* native_factory);
   ~AwContentBrowserClient() override;
 
-  // Overriden methods from ContentBrowserClient.
-  void AddCertificate(net::CertificateMimeType cert_type,
-                      const void* cert_data,
-                      size_t cert_size,
-                      int render_process_id,
-                      int render_frame_id) override;
+  // Allows AwBrowserMainParts to initialize a BrowserContext at the right
+  // moment during startup. AwContentBrowserClient owns the result.
+  AwBrowserContext* InitBrowserContext();
+
   content::BrowserMainParts* CreateBrowserMainParts(
       const content::MainFunctionParams& parameters) override;
   content::WebContentsViewDelegate* GetWebContentsViewDelegate(
       content::WebContents* web_contents) override;
   void RenderProcessWillLaunch(content::RenderProcessHost* host) override;
-  net::URLRequestContextGetter* CreateRequestContext(
-      content::BrowserContext* browser_context,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
-  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      content::BrowserContext* browser_context,
-      const base::FilePath& partition_path,
-      bool in_memory,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
   bool IsHandledURL(const GURL& url) override;
   std::string GetCanonicalEncodingNameByAliasName(
       const std::string& alias_name) override;
@@ -71,14 +62,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                       content::ResourceContext* context,
                       int render_process_id,
                       int render_frame_id,
-                      net::CookieOptions* options) override;
-  bool AllowWorkerDatabase(
-      const GURL& url,
-      const base::string16& name,
-      const base::string16& display_name,
-      unsigned long estimated_size,
-      content::ResourceContext* context,
-      const std::vector<std::pair<int, int>>& render_frames) override;
+                      const net::CookieOptions& options) override;
   void AllowWorkerFileSystem(
       const GURL& url,
       content::ResourceContext* context,
@@ -99,18 +83,19 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       bool overridable,
       bool strict_enforcement,
       bool expired_previous_decision,
-      const base::Callback<void(bool)>& callback,
-      content::CertificateRequestResultType* result) override;
+      const base::Callback<void(content::CertificateRequestResultType)>&
+          callback) override;
   void SelectClientCertificate(
       content::WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
-      scoped_ptr<content::ClientCertificateDelegate> delegate) override;
+      std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
   bool CanCreateWindow(const GURL& opener_url,
                        const GURL& opener_top_level_frame_url,
                        const GURL& source_origin,
                        WindowContainerType container_type,
                        const GURL& target_url,
                        const content::Referrer& referrer,
+                       const std::string& frame_name,
                        WindowOpenDisposition disposition,
                        const blink::WebWindowFeatures& features,
                        bool user_gesture,
@@ -122,8 +107,6 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                        bool* no_javascript_access) override;
   void ResourceDispatcherHostCreated() override;
   net::NetLog* GetNetLog() override;
-  content::AccessTokenStore* CreateAccessTokenStore() override;
-  bool IsFastShutdownPossible() override;
   void ClearCache(content::RenderFrameHost* rfh) override;
   void ClearCookies(content::RenderFrameHost* rfh) override;
   base::FilePath GetDefaultDownloadDirectory() override;
@@ -134,6 +117,9 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       const GURL& url,
       bool private_api,
       const content::SocketPermissionRequest* params) override;
+  bool IsPepperVpnProviderAPIAllowed(content::BrowserContext* browser_context,
+                                     const GURL& url) override;
+  content::TracingDelegate* GetTracingDelegate() override;
   void GetAdditionalMappedFilesForChildProcess(
       const base::CommandLine& command_line,
       int child_process_id,
@@ -143,17 +129,18 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                            content::WebPreferences* web_prefs) override;
   ScopedVector<content::NavigationThrottle> CreateThrottlesForNavigation(
       content::NavigationHandle* navigation_handle) override;
-#if defined(VIDEO_HOLE)
-  content::ExternalVideoSurfaceContainer*
-  OverrideCreateExternalVideoSurfaceContainer(
-      content::WebContents* web_contents) override;
-#endif
+  content::DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
+  std::unique_ptr<base::Value> GetServiceManifestOverlay(
+      const std::string& name) override;
+  void RegisterRenderFrameMojoInterfaces(
+      service_manager::InterfaceRegistry* registry,
+      content::RenderFrameHost* render_frame_host) override;
 
  private:
   // Android WebView currently has a single global (non-off-the-record) browser
   // context.
-  scoped_ptr<AwBrowserContext> browser_context_;
-  scoped_ptr<AwWebPreferencesPopulater> preferences_populater_;
+  std::unique_ptr<AwBrowserContext> browser_context_;
+  std::unique_ptr<AwWebPreferencesPopulater> preferences_populater_;
 
   JniDependencyFactory* native_factory_;
 

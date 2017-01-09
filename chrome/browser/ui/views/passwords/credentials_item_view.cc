@@ -4,23 +4,27 @@
 
 #include "chrome/browser/ui/views/passwords/credentials_item_view.h"
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/autofill/core/common/password_form.h"
-#include "grit/theme_resources.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/path.h"
+#include "ui/gfx/vector_icons_public.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/layout/layout_constants.h"
 
 namespace {
 // The default spacing between the icon and text.
-const int kSpacing = 10;
+const int kSpacing = 12;
 
 gfx::Size GetTextLabelsSize(const views::Label* upper_label,
                             const views::Label* lower_label) {
@@ -59,16 +63,17 @@ void CircularImageView::OnPaint(gfx::Canvas* canvas) {
 
 CredentialsItemView::CredentialsItemView(
     views::ButtonListener* button_listener,
-    const autofill::PasswordForm* form,
-    password_manager::CredentialType credential_type,
     const base::string16& upper_text,
     const base::string16& lower_text,
+    SkColor hover_color,
+    const autofill::PasswordForm* form,
     net::URLRequestContextGetter* request_context)
     : LabelButton(button_listener, base::string16()),
       form_(form),
-      credential_type_(credential_type),
       upper_label_(nullptr),
       lower_label_(nullptr),
+      info_icon_(nullptr),
+      hover_color_(hover_color),
       weak_ptr_factory_(this) {
   set_notify_enter_exit_on_child(true);
   // Create an image-view for the avatar. Make sure it ignores events so that
@@ -91,7 +96,7 @@ CredentialsItemView::CredentialsItemView(
   ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
   if (!upper_text.empty()) {
     upper_label_ = new views::Label(
-        upper_text, rb->GetFontList(ui::ResourceBundle::BoldFont));
+        upper_text, rb->GetFontList(ui::ResourceBundle::SmallFont));
     upper_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     AddChildView(upper_label_);
   }
@@ -100,22 +105,45 @@ CredentialsItemView::CredentialsItemView(
     lower_label_ = new views::Label(
         lower_text, rb->GetFontList(ui::ResourceBundle::SmallFont));
     lower_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+    lower_label_->SetMultiLine(true);
     AddChildView(lower_label_);
   }
 
-  SetFocusable(true);
+  if (form_->is_public_suffix_match) {
+    info_icon_ = new views::ImageView;
+    info_icon_->SetImage(gfx::CreateVectorIcon(gfx::VectorIconId::INFO_OUTLINE,
+                                               kInfoIconSize,
+                                               gfx::kChromeIconGrey));
+    info_icon_->SetTooltipText(
+        base::UTF8ToUTF16(form_->origin.GetOrigin().spec()));
+    AddChildView(info_icon_);
+  }
+
+  if (!upper_text.empty() && !lower_text.empty())
+    SetAccessibleName(upper_text + base::ASCIIToUTF16("\n") + lower_text);
+  else
+    SetAccessibleName(upper_text + lower_text);
+
+  SetFocusBehavior(FocusBehavior::ALWAYS);
 }
 
 CredentialsItemView::~CredentialsItemView() = default;
-
 
 void CredentialsItemView::UpdateAvatar(const gfx::ImageSkia& image) {
   image_view_->SetImage(ScaleImageForAccountAvatar(image));
 }
 
-int CredentialsItemView::GetLabelOffset() const {
-  return GetInsets().left() + image_view_->GetPreferredSize().width() +
-      kSpacing;
+void CredentialsItemView::SetLowerLabelColor(SkColor color) {
+  if (lower_label_)
+    lower_label_->SetEnabledColor(color);
+}
+
+void CredentialsItemView::SetHoverColor(SkColor color) {
+  hover_color_ = color;
+}
+
+int CredentialsItemView::GetPreferredHeight() const {
+  return GetPreferredSize().height();
 }
 
 gfx::Size CredentialsItemView::GetPreferredSize() const {
@@ -159,4 +187,17 @@ void CredentialsItemView::Layout() {
     label_origin.Offset(0, upper_size.height());
     lower_label_->SetBoundsRect(gfx::Rect(label_origin, lower_size));
   }
+  if (info_icon_) {
+    info_icon_->SizeToPreferredSize();
+    info_icon_->SetPosition(
+        gfx::Point(child_area.right() - info_icon_->width(),
+                   child_area.CenterPoint().y() - info_icon_->height() / 2));
+  }
+}
+
+void CredentialsItemView::OnPaint(gfx::Canvas* canvas) {
+  if (state() == STATE_PRESSED || state() == STATE_HOVERED)
+    canvas->DrawColor(hover_color_);
+
+  LabelButton::OnPaint(canvas);
 }

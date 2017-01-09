@@ -5,7 +5,12 @@
 #ifndef IOS_PUBLIC_PROVIDER_WEB_WEB_CONTROLLER_PROVIDER_H_
 #define IOS_PUBLIC_PROVIDER_WEB_WEB_CONTROLLER_PROVIDER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+// TODO(sdefresne): remove includes of web_controller_provider_factory.h and
+// web_state_observer.h once downstream code has been fixed to use the correct
+// includes.
+#include "ios/public/provider/web/web_controller_provider_factory.h"
 #include "ios/web/public/block_types.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #include "url/gurl.h"
@@ -50,18 +55,7 @@ class WebControllerProvider {
   // |completion| with the result.  Calls |completion| with nil parameters
   // when there is no previously loaded page.
   virtual void InjectScript(const std::string& script,
-                            web::JavaScriptCompletion completion);
-};
-
-class WebControllerProviderFactory {
- public:
-  WebControllerProviderFactory();
-  virtual ~WebControllerProviderFactory();
-
-  // Vends WebControllerProviders created using |browser_state|, passing
-  // ownership to callers.
-  virtual scoped_ptr<WebControllerProvider> CreateWebControllerProvider(
-      web::BrowserState* browser_state);
+                            web::JavaScriptResultBlock completion);
 };
 
 }  // namespace ios

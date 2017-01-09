@@ -5,7 +5,11 @@
 #ifndef CHROME_UTILITY_CLOUD_PRINT_BITMAP_IMAGE_H_
 #define CHROME_UTILITY_CLOUD_PRINT_BITMAP_IMAGE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -22,19 +26,19 @@ class BitmapImage {
   BitmapImage(const gfx::Size& size, Colorspace colorspace);
   ~BitmapImage();
 
-  uint8 channels() const;
+  uint8_t channels() const;
   const gfx::Size& size() const { return size_; }
   Colorspace colorspace() const { return colorspace_; }
 
-  const uint8* pixel_data() const { return data_.get(); }
-  uint8* pixel_data() { return data_.get(); }
+  const uint8_t* pixel_data() const { return data_.get(); }
+  uint8_t* pixel_data() { return data_.get(); }
 
-  const uint8* GetPixel(const gfx::Point& point) const;
+  const uint8_t* GetPixel(const gfx::Point& point) const;
 
  private:
   gfx::Size size_;
   Colorspace colorspace_;
-  scoped_ptr<uint8[]> data_;
+  std::unique_ptr<uint8_t[]> data_;
 
   DISALLOW_COPY_AND_ASSIGN(BitmapImage);
 };

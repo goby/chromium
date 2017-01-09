@@ -5,20 +5,27 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_GBM_SURFACE_FACTORY_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_GBM_SURFACE_FACTORY_H_
 
-#include <map>
+#include <stdint.h>
 
+#include <map>
+#include <memory>
+#include <vector>
+
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
+#include "ui/gl/gl_implementation.h"
+#include "ui/gl/gl_surface.h"
+#include "ui/ozone/common/gl_ozone_egl.h"
 #include "ui/ozone/public/surface_factory_ozone.h"
 
 namespace ui {
 
 class DrmThreadProxy;
-class GbmDevice;
 class GbmSurfaceless;
 
 class GbmSurfaceFactory : public SurfaceFactoryOzone {
  public:
-  GbmSurfaceFactory(DrmThreadProxy* drm_thread);
+  explicit GbmSurfaceFactory(DrmThreadProxy* drm_thread_proxy);
   ~GbmSurfaceFactory() override;
 
   void RegisterSurface(gfx::AcceleratedWidget widget, GbmSurfaceless* surface);
@@ -26,16 +33,12 @@ class GbmSurfaceFactory : public SurfaceFactoryOzone {
   GbmSurfaceless* GetSurface(gfx::AcceleratedWidget widget) const;
 
   // SurfaceFactoryOzone:
-  intptr_t GetNativeDisplay() override;
-  const int32_t* GetEGLSurfaceProperties(const int32_t* desired_list) override;
-  bool LoadEGLGLES2Bindings(
-      AddGLLibraryCallback add_gl_library,
-      SetGLGetProcAddressProcCallback set_gl_get_proc_address) override;
-  scoped_ptr<SurfaceOzoneCanvas> CreateCanvasForWidget(
+  std::vector<gl::GLImplementation> GetAllowedGLImplementations() override;
+  GLOzone* GetGLOzone(gl::GLImplementation implementation) override;
+
+  std::vector<gfx::BufferFormat> GetScanoutFormats(
       gfx::AcceleratedWidget widget) override;
-  scoped_ptr<ui::SurfaceOzoneEGL> CreateEGLSurfaceForWidget(
-      gfx::AcceleratedWidget w) override;
-  scoped_ptr<SurfaceOzoneEGL> CreateSurfacelessEGLSurfaceForWidget(
+  std::unique_ptr<SurfaceOzoneCanvas> CreateCanvasForWidget(
       gfx::AcceleratedWidget widget) override;
   scoped_refptr<ui::NativePixmap> CreateNativePixmap(
       gfx::AcceleratedWidget widget,
@@ -43,12 +46,17 @@ class GbmSurfaceFactory : public SurfaceFactoryOzone {
       gfx::BufferFormat format,
       gfx::BufferUsage usage) override;
   scoped_refptr<NativePixmap> CreateNativePixmapFromHandle(
+      gfx::AcceleratedWidget widget,
+      gfx::Size size,
+      gfx::BufferFormat format,
       const gfx::NativePixmapHandle& handle) override;
 
  private:
+  std::unique_ptr<GLOzone> egl_implementation_;
+
   base::ThreadChecker thread_checker_;
 
-  DrmThreadProxy* drm_thread_;
+  DrmThreadProxy* drm_thread_proxy_;
 
   std::map<gfx::AcceleratedWidget, GbmSurfaceless*> widget_to_surface_map_;
 

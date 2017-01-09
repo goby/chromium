@@ -4,7 +4,6 @@
 
 #include "chrome/browser/signin/signin_tracker_factory.h"
 
-#include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -14,13 +13,11 @@ SigninTrackerFactory::SigninTrackerFactory() {}
 SigninTrackerFactory::~SigninTrackerFactory() {}
 
 // static
-scoped_ptr<SigninTracker> SigninTrackerFactory::CreateForProfile(
+std::unique_ptr<SigninTracker> SigninTrackerFactory::CreateForProfile(
     Profile* profile,
     SigninTracker::Observer* observer) {
-  return scoped_ptr<SigninTracker>(new SigninTracker(
+  return std::unique_ptr<SigninTracker>(new SigninTracker(
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
       SigninManagerFactory::GetForProfile(profile),
-      GaiaCookieManagerServiceFactory::GetForProfile(profile),
-      ChromeSigninClientFactory::GetForProfile(profile),
-      observer));
+      GaiaCookieManagerServiceFactory::GetForProfile(profile), observer));
 }

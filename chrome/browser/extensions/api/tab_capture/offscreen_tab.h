@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_TAB_CAPTURE_OFFSCREEN_TAB_H_
 #define CHROME_BROWSER_EXTENSIONS_API_TAB_CAPTURE_OFFSCREEN_TAB_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -72,7 +74,7 @@ class OffscreenTabsOwner
   explicit OffscreenTabsOwner(content::WebContents* extension_web_contents);
 
   content::WebContents* const extension_web_contents_;
-  ScopedVector<OffscreenTab> tabs_;
+  std::vector<std::unique_ptr<OffscreenTab>> tabs_;
 
   DISALLOW_COPY_AND_ASSIGN(OffscreenTabsOwner);
 };
@@ -138,11 +140,13 @@ class OffscreenTab : protected content::WebContentsDelegate,
                     const content::DropData& data,
                     blink::WebDragOperationsMask operations_allowed) final;
   bool ShouldCreateWebContents(
-      content::WebContents* contents,
+      content::WebContents* web_contents,
+      content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
       WindowContainerType window_container_type,
+      const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
       const std::string& partition_id,
@@ -164,7 +168,7 @@ class OffscreenTab : protected content::WebContentsDelegate,
                                   content::MediaStreamType type) final;
 
   // content::WebContentsObserver overrides
-  void DidShowFullscreenWidget(int routing_id) final;
+  void DidShowFullscreenWidget() final;
 
  private:
   bool in_fullscreen_mode() const {
@@ -183,10 +187,10 @@ class OffscreenTab : protected content::WebContentsDelegate,
 
   // A non-shared off-the-record profile based on the profile of the extension
   // background page.
-  const scoped_ptr<Profile> profile_;
+  const std::unique_ptr<Profile> profile_;
 
   // The WebContents containing the off-screen tab's page.
-  scoped_ptr<content::WebContents> offscreen_tab_web_contents_;
+  std::unique_ptr<content::WebContents> offscreen_tab_web_contents_;
 
   // The time at which Start() finished creating |offscreen_tab_web_contents_|.
   base::TimeTicks start_time_;

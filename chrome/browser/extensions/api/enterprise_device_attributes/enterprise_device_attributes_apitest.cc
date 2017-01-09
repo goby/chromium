@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/affiliation_test_helper.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
-#include "chrome/browser/chromeos/policy/stub_enterprise_install_attributes.h"
+#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/net/url_request_mock_util.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
-#include "chromeos/login/user_names.h"
+#include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_service.h"
@@ -24,7 +26,6 @@
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/test/result_catcher.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
-#include "policy/policy_constants.h"
 
 namespace {
 
@@ -75,7 +76,7 @@ class EnterpriseDeviceAttributesTest :
     chromeos::FakeSessionManagerClient* fake_session_manager_client =
         new chromeos::FakeSessionManagerClient;
     chromeos::DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        scoped_ptr<chromeos::SessionManagerClient>(
+        std::unique_ptr<chromeos::SessionManagerClient>(
             fake_session_manager_client));
 
     std::set<std::string> device_affiliation_ids;
@@ -95,10 +96,10 @@ class EnterpriseDeviceAttributesTest :
         affiliated_account_id_.GetUserEmail(), user_affiliation_ids);
 
     // Set up fake install attributes.
-    scoped_ptr<policy::StubEnterpriseInstallAttributes> attributes(
-        new policy::StubEnterpriseInstallAttributes());
+    std::unique_ptr<chromeos::StubInstallAttributes> attributes =
+        base::MakeUnique<chromeos::StubInstallAttributes>();
 
-    attributes->SetRegistrationUser(affiliated_account_id_.GetUserEmail());
+    attributes->SetEnterprise("fake-domain", "fake-id");
     policy::BrowserPolicyConnectorChromeOS::SetInstallAttributesForTesting(
         attributes.release());
 
@@ -118,6 +119,9 @@ class EnterpriseDeviceAttributesTest :
     policy_provider_.SetAutoRefresh();
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
         &policy_provider_);
+
+    // Set retry delay to prevent timeouts.
+    policy::DeviceManagementService::SetRetryDelayForTesting(0);
   }
 
   void SetUpOnMainThread() override {
@@ -140,14 +144,14 @@ class EnterpriseDeviceAttributesTest :
     GURL update_manifest_url(net::URLRequestMockHTTPJob::GetMockUrl(
         update_manifest_path.MaybeAsASCII()));
 
-    scoped_ptr<base::ListValue> forcelist(new base::ListValue);
+    std::unique_ptr<base::ListValue> forcelist(new base::ListValue);
     forcelist->AppendString(base::StringPrintf(
         "%s;%s", kTestExtensionID, update_manifest_url.spec().c_str()));
 
     policy::PolicyMap policy;
     policy.Set(policy::key::kExtensionInstallForcelist,
                policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
-               policy::POLICY_SOURCE_CLOUD, forcelist.release(), nullptr);
+               policy::POLICY_SOURCE_CLOUD, std::move(forcelist), nullptr);
 
     // Set the policy and wait until the extension is installed.
     extensions::TestExtensionRegistryObserver observer(
@@ -200,7 +204,7 @@ IN_PROC_BROWSER_TEST_P(EnterpriseDeviceAttributesTest, Success) {
   SetPolicy();
 
   EXPECT_EQ(GetParam().affiliated_, user_manager::UserManager::Get()->
-      FindUser(affiliated_account_id_)->is_affiliated());
+      FindUser(affiliated_account_id_)->IsAffiliated());
 
   // Device ID is available only for affiliated user.
   std::string device_id = GetParam().affiliated_ ? kDeviceId : "";

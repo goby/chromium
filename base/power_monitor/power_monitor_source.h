@@ -6,7 +6,7 @@
 #define BASE_POWER_MONITOR_POWER_MONITOR_SOURCE_H_
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list_threadsafe.h"
 #include "base/synchronization/lock.h"
@@ -49,9 +49,14 @@ class BASE_EXPORT PowerMonitorSource {
   // false otherwise.
   virtual bool IsOnBatteryPowerImpl() = 0;
 
+  // Sets the initial state for |on_battery_power_|, which defaults to false
+  // since not all implementations can provide the value at construction. May
+  // only be called before a base::PowerMonitor has been created.
+  void SetInitialOnBatteryPowerState(bool on_battery_power);
+
  private:
-  bool on_battery_power_;
-  bool suspended_;
+  bool on_battery_power_ = false;
+  bool suspended_ = false;
 
   // This lock guards access to on_battery_power_, to ensure that
   // IsOnBatteryPower can be called from any thread.

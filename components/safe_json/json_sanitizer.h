@@ -9,7 +9,8 @@
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 
 #if defined(OS_ANDROID)
 #include <jni.h>

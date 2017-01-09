@@ -5,8 +5,10 @@
 #include "net/proxy/proxy_resolver_v8_tracing.h"
 
 #include <string>
+#include <utility>
 
 #include "base/files/file_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -18,11 +20,16 @@
 #include "net/base/test_completion_callback.h"
 #include "net/dns/host_cache.h"
 #include "net/dns/mock_host_resolver.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_info.h"
 #include "net/test/event_waiter.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 namespace net {
 
@@ -87,8 +94,8 @@ class MockBindings {
     waiter_.WaitForEvent(EVENT_ERROR);
   }
 
-  scoped_ptr<ProxyResolverV8Tracing::Bindings> CreateBindings() {
-    return make_scoped_ptr(new ForwardingBindings(this));
+  std::unique_ptr<ProxyResolverV8Tracing::Bindings> CreateBindings() {
+    return base::MakeUnique<ForwardingBindings>(this);
   }
 
  private:
@@ -107,9 +114,9 @@ class MockBindings {
       bindings_->OnError(line_number, error);
     }
 
-    BoundNetLog GetBoundNetLog() override {
+    NetLogWithSource GetNetLogWithSource() override {
       DCHECK(thread_checker_.CalledOnValidThread());
-      return BoundNetLog();
+      return NetLogWithSource();
     }
 
     HostResolver* GetHostResolver() override {
@@ -133,37 +140,38 @@ class MockBindings {
   EventWaiter<Event> waiter_;
 };
 
-scoped_ptr<ProxyResolverV8Tracing> CreateResolver(
-    scoped_ptr<ProxyResolverV8Tracing::Bindings> bindings,
+std::unique_ptr<ProxyResolverV8Tracing> CreateResolver(
+    std::unique_ptr<ProxyResolverV8Tracing::Bindings> bindings,
     const char* filename) {
-  scoped_ptr<ProxyResolverV8Tracing> resolver;
-  scoped_ptr<ProxyResolverV8TracingFactory> factory(
+  std::unique_ptr<ProxyResolverV8Tracing> resolver;
+  std::unique_ptr<ProxyResolverV8TracingFactory> factory(
       ProxyResolverV8TracingFactory::Create());
   TestCompletionCallback callback;
-  scoped_ptr<ProxyResolverFactory::Request> request;
+  std::unique_ptr<ProxyResolverFactory::Request> request;
   factory->CreateProxyResolverV8Tracing(LoadScriptData(filename),
-                                        bindings.Pass(), &resolver,
+                                        std::move(bindings), &resolver,
                                         callback.callback(), &request);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_TRUE(resolver);
-  return resolver.Pass();
+  return resolver;
 }
 
 TEST_F(ProxyResolverV8TracingTest, Simple) {
   MockCachingHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "simple.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
+  std::unique_ptr<ProxyResolver::Request> req;
 
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ("foo:99", proxy_info.proxy_server().ToURI());
 
@@ -178,17 +186,18 @@ TEST_F(ProxyResolverV8TracingTest, JavascriptError) {
   MockCachingHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "error.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://throw-an-error/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(ERR_PAC_SCRIPT_FAILED, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_PAC_SCRIPT_FAILED));
 
   EXPECT_EQ(0u, host_resolver.num_resolve());
 
@@ -205,17 +214,18 @@ TEST_F(ProxyResolverV8TracingTest, TooManyAlerts) {
   MockCachingHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "too_many_alerts.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // Iteration1 does a DNS resolve
   // Iteration2 exceeds the alert buffer
@@ -241,17 +251,18 @@ TEST_F(ProxyResolverV8TracingTest, TooManyEmptyAlerts) {
   MockCachingHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver = CreateResolver(
+  std::unique_ptr<ProxyResolverV8Tracing> resolver = CreateResolver(
       mock_bindings.CreateBindings(), "too_many_empty_alerts.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ("foo:3", proxy_info.proxy_server().ToURI());
 
@@ -287,17 +298,18 @@ TEST_F(ProxyResolverV8TracingTest, Dns) {
       "*", ADDRESS_FAMILY_IPV4, "122.133.144.155");
   host_resolver.rules()->AddRule("*", "133.122.100.200");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "dns.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // The test does 13 DNS resolution, however only 7 of them are unique.
   EXPECT_EQ(7u, host_resolver.num_resolve());
@@ -338,18 +350,19 @@ TEST_F(ProxyResolverV8TracingTest, DnsChecksCache) {
   host_resolver.rules()->AddRule("foopy", "166.155.144.11");
   host_resolver.rules()->AddRule("*", "122.133.144.155");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "simple_dns.js");
 
   TestCompletionCallback callback1;
   TestCompletionCallback callback2;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foopy/req1"), &proxy_info,
-                           callback1.callback(), NULL,
+                           callback1.callback(), &req,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(OK, callback1.WaitForResult());
+  EXPECT_THAT(callback1.WaitForResult(), IsOk());
 
   // The test does 2 DNS resolutions.
   EXPECT_EQ(2u, host_resolver.num_resolve());
@@ -357,11 +370,12 @@ TEST_F(ProxyResolverV8TracingTest, DnsChecksCache) {
   // The first request took 2 restarts, hence on g_iteration=3.
   EXPECT_EQ("166.155.144.11:3", proxy_info.proxy_server().ToURI());
 
+  std::unique_ptr<ProxyResolver::Request> req2;
   resolver->GetProxyForURL(GURL("http://foopy/req2"), &proxy_info,
-                           callback2.callback(), NULL,
+                           callback2.callback(), &req2,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(OK, callback2.WaitForResult());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
 
   EXPECT_EQ(4u, host_resolver.num_resolve());
 
@@ -384,16 +398,17 @@ TEST_F(ProxyResolverV8TracingTest, FallBackToSynchronous1) {
   host_resolver.rules()->AddRule("crazy4", "133.199.111.4");
   host_resolver.rules()->AddRule("*", "122.133.144.155");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "global_sideffects1.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // The script itself only does 2 DNS resolves per execution, however it
   // constructs the hostname using a global counter which changes on each
@@ -423,16 +438,17 @@ TEST_F(ProxyResolverV8TracingTest, FallBackToSynchronous2) {
   host_resolver.rules()->AddRule("host4", "166.155.144.44");
   host_resolver.rules()->AddRule("*", "122.133.144.155");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "global_sideffects2.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ(3u, host_resolver.num_resolve());
 
@@ -454,16 +470,17 @@ TEST_F(ProxyResolverV8TracingTest, InfiniteDNSSequence) {
   host_resolver.rules()->AddRule("host*", "166.155.144.11");
   host_resolver.rules()->AddRule("*", "122.133.144.155");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "global_sideffects3.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ(20u, host_resolver.num_resolve());
 
@@ -494,16 +511,17 @@ TEST_F(ProxyResolverV8TracingTest, InfiniteDNSSequence2) {
   host_resolver.rules()->AddRule("host*", "166.155.144.11");
   host_resolver.rules()->AddRule("*", "122.133.144.155");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "global_sideffects4.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ(20u, host_resolver.num_resolve());
 
@@ -525,7 +543,7 @@ void DnsDuringInitHelper(bool synchronous_host_resolver) {
   host_resolver.rules()->AddRule("host1", "91.13.12.1");
   host_resolver.rules()->AddRule("host2", "91.13.12.2");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "dns_during_init.js");
 
   // Initialization did 2 dnsResolves.
@@ -540,10 +558,11 @@ void DnsDuringInitHelper(bool synchronous_host_resolver) {
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // Fetched host1 and host2 again, since the ones done during initialization
   // should not have been cached.
@@ -581,12 +600,12 @@ TEST_F(ProxyResolverV8TracingTest, CancelAll) {
 
   host_resolver.rules()->AddSimulatedFailure("*");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "dns.js");
 
   const size_t kNumRequests = 5;
   ProxyInfo proxy_info[kNumRequests];
-  ProxyResolver::RequestHandle request[kNumRequests];
+  std::unique_ptr<ProxyResolver::Request> request[kNumRequests];
 
   for (size_t i = 0; i < kNumRequests; ++i) {
     resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info[i],
@@ -595,7 +614,7 @@ TEST_F(ProxyResolverV8TracingTest, CancelAll) {
   }
 
   for (size_t i = 0; i < kNumRequests; ++i) {
-    resolver->CancelRequest(request[i]);
+    request[i].reset();
   }
 }
 
@@ -608,13 +627,13 @@ TEST_F(ProxyResolverV8TracingTest, CancelSome) {
 
   host_resolver.rules()->AddSimulatedFailure("*");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "dns.js");
 
   ProxyInfo proxy_info1;
   ProxyInfo proxy_info2;
-  ProxyResolver::RequestHandle request1;
-  ProxyResolver::RequestHandle request2;
+  std::unique_ptr<ProxyResolver::Request> request1;
+  std::unique_ptr<ProxyResolver::Request> request2;
   TestCompletionCallback callback;
 
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info1,
@@ -624,9 +643,9 @@ TEST_F(ProxyResolverV8TracingTest, CancelSome) {
                            callback.callback(), &request2,
                            mock_bindings.CreateBindings());
 
-  resolver->CancelRequest(request1);
+  request1.reset();
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 }
 
 // Cancel a request after it has finished running on the worker thread, and has
@@ -637,13 +656,13 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhilePendingCompletionTask) {
 
   host_resolver.rules()->AddSimulatedFailure("*");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "error.js");
 
   ProxyInfo proxy_info1;
   ProxyInfo proxy_info2;
-  ProxyResolver::RequestHandle request1;
-  ProxyResolver::RequestHandle request2;
+  std::unique_ptr<ProxyResolver::Request> request1;
+  std::unique_ptr<ProxyResolver::Request> request2;
   TestCompletionCallback callback;
 
   resolver->GetProxyForURL(GURL("http://throw-an-error/"), &proxy_info1,
@@ -652,17 +671,17 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhilePendingCompletionTask) {
 
   // Wait until the first request has finished running on the worker thread.
   // Cancel the first request, while it is running its completion task on
-  // the origin thread.
-  mock_bindings.RunOnError(base::Bind(&ProxyResolverV8Tracing::CancelRequest,
-                                      base::Unretained(resolver.get()),
-                                      request1));
+  // the origin thread. Reset deletes Request opject which cancels the request.
+  mock_bindings.RunOnError(
+      base::Bind(&std::unique_ptr<ProxyResolver::Request>::reset,
+                 base::Unretained(&request1), nullptr));
 
   // Start another request, to make sure it is able to complete.
   resolver->GetProxyForURL(GURL("http://i-have-no-idea-what-im-doing/"),
                            &proxy_info2, callback.callback(), &request2,
                            mock_bindings.CreateBindings());
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ("i-approve-this-message:42", proxy_info2.proxy_server().ToURI());
 }
@@ -678,8 +697,8 @@ class BlockableHostResolver : public HostResolver {
               RequestPriority priority,
               AddressList* addresses,
               const CompletionCallback& callback,
-              RequestHandle* out_req,
-              const BoundNetLog& net_log) override {
+              std::unique_ptr<Request>* out_req,
+              const NetLogWithSource& net_log) override {
     EXPECT_FALSE(callback.is_null());
     EXPECT_TRUE(out_req);
 
@@ -693,7 +712,7 @@ class BlockableHostResolver : public HostResolver {
     // This line is intentionally after action_.Run(), since one of the
     // tests does a cancellation inside of Resolve(), and it is more
     // interesting if *out_req hasn't been written yet at that point.
-    *out_req = reinterpret_cast<RequestHandle*>(1);  // Magic value.
+    out_req->reset(new RequestImpl(this));
 
     // Return ERR_IO_PENDING as this request will NEVER be completed.
     // Expectation is for the caller to later cancel the request.
@@ -702,15 +721,12 @@ class BlockableHostResolver : public HostResolver {
 
   int ResolveFromCache(const RequestInfo& info,
                        AddressList* addresses,
-                       const BoundNetLog& net_log) override {
+                       const NetLogWithSource& net_log) override {
     NOTREACHED();
     return ERR_DNS_CACHE_MISS;
   }
 
-  void CancelRequest(RequestHandle req) override {
-    EXPECT_EQ(reinterpret_cast<RequestHandle*>(1), req);
-    num_cancelled_requests_++;
-  }
+  void IncreaseNumOfCancelledRequests() { num_cancelled_requests_++; }
 
   void SetAction(const base::Callback<void(void)>& action) {
     action_ = action;
@@ -719,7 +735,7 @@ class BlockableHostResolver : public HostResolver {
   // Waits until Resolve() has been called.
   void WaitUntilRequestIsReceived() {
     waiting_for_resolve_ = true;
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     DCHECK(waiting_for_resolve_);
     waiting_for_resolve_ = false;
   }
@@ -729,6 +745,23 @@ class BlockableHostResolver : public HostResolver {
   }
 
  private:
+  class RequestImpl : public HostResolver::Request {
+   public:
+    RequestImpl(BlockableHostResolver* resolver) : resolver_(resolver) {}
+
+    ~RequestImpl() override {
+      if (resolver_)
+        resolver_->IncreaseNumOfCancelledRequests();
+    }
+
+    void ChangeRequestPriority(RequestPriority priority) override {}
+
+   private:
+    BlockableHostResolver* resolver_;
+
+    DISALLOW_COPY_AND_ASSIGN(RequestImpl);
+  };
+
   int num_cancelled_requests_;
   bool waiting_for_resolve_;
   base::Callback<void(void)> action_;
@@ -740,13 +773,13 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhileOutstandingNonBlockingDns) {
   BlockableHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "dns.js");
 
   ProxyInfo proxy_info1;
   ProxyInfo proxy_info2;
-  ProxyResolver::RequestHandle request1;
-  ProxyResolver::RequestHandle request2;
+  std::unique_ptr<ProxyResolver::Request> request1;
+  std::unique_ptr<ProxyResolver::Request> request2;
 
   resolver->GetProxyForURL(GURL("http://foo/req1"), &proxy_info1,
                            base::Bind(&CrashCallback), &request1,
@@ -760,8 +793,8 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhileOutstandingNonBlockingDns) {
 
   host_resolver.WaitUntilRequestIsReceived();
 
-  resolver->CancelRequest(request1);
-  resolver->CancelRequest(request2);
+  request1.reset();
+  request2.reset();
 
   EXPECT_EQ(2, host_resolver.num_cancelled_requests());
 
@@ -770,9 +803,8 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhileOutstandingNonBlockingDns) {
   // should have been cancelled.
 }
 
-void CancelRequestAndPause(ProxyResolverV8Tracing* resolver,
-                           ProxyResolver::RequestHandle request) {
-  resolver->CancelRequest(request);
+void CancelRequestAndPause(std::unique_ptr<ProxyResolver::Request>* request) {
+  request->reset();
 
   // Sleep for a little bit. This makes it more likely for the worker
   // thread to have returned from its call, and serves as a regression
@@ -787,18 +819,17 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhileBlockedInNonBlockingDns) {
   BlockableHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "dns.js");
 
   ProxyInfo proxy_info;
-  ProxyResolver::RequestHandle request;
+  std::unique_ptr<ProxyResolver::Request> request;
 
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
                            base::Bind(&CrashCallback), &request,
                            mock_bindings.CreateBindings());
 
-  host_resolver.SetAction(
-      base::Bind(CancelRequestAndPause, resolver.get(), request));
+  host_resolver.SetAction(base::Bind(CancelRequestAndPause, &request));
 
   host_resolver.WaitUntilRequestIsReceived();
 }
@@ -809,11 +840,11 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhileBlockedInNonBlockingDns2) {
   MockCachingHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "dns.js");
 
   ProxyInfo proxy_info;
-  ProxyResolver::RequestHandle request;
+  std::unique_ptr<ProxyResolver::Request> request;
 
   resolver->GetProxyForURL(GURL("http://foo/"), &proxy_info,
                            base::Bind(&CrashCallback), &request,
@@ -823,7 +854,7 @@ TEST_F(ProxyResolverV8TracingTest, CancelWhileBlockedInNonBlockingDns2) {
   // work whatever the delay is here, but it is most useful if the delay
   // is large enough to allow a task to be posted back.
   base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(10));
-  resolver->CancelRequest(request);
+  request.reset();
 
   EXPECT_EQ(0u, host_resolver.num_resolve());
 }
@@ -833,10 +864,10 @@ TEST_F(ProxyResolverV8TracingTest,
   BlockableHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8TracingFactory> factory(
+  std::unique_ptr<ProxyResolverV8TracingFactory> factory(
       ProxyResolverV8TracingFactory::Create());
-  scoped_ptr<ProxyResolverV8Tracing> resolver;
-  scoped_ptr<ProxyResolverFactory::Request> request;
+  std::unique_ptr<ProxyResolverV8Tracing> resolver;
+  std::unique_ptr<ProxyResolverFactory::Request> request;
   factory->CreateProxyResolverV8Tracing(
       LoadScriptData("dns_during_init.js"), mock_bindings.CreateBindings(),
       &resolver, base::Bind(&CrashCallback), &request);
@@ -851,10 +882,10 @@ TEST_F(ProxyResolverV8TracingTest, DeleteFactoryWhileOutstandingBlockingDns) {
   BlockableHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver;
-  scoped_ptr<ProxyResolverFactory::Request> request;
+  std::unique_ptr<ProxyResolverV8Tracing> resolver;
+  std::unique_ptr<ProxyResolverFactory::Request> request;
   {
-    scoped_ptr<ProxyResolverV8TracingFactory> factory(
+    std::unique_ptr<ProxyResolverV8TracingFactory> factory(
         ProxyResolverV8TracingFactory::Create());
 
     factory->CreateProxyResolverV8Tracing(
@@ -869,16 +900,16 @@ TEST_F(ProxyResolverV8TracingTest, ErrorLoadingScript) {
   BlockableHostResolver host_resolver;
   MockBindings mock_bindings(&host_resolver);
 
-  scoped_ptr<ProxyResolverV8TracingFactory> factory(
+  std::unique_ptr<ProxyResolverV8TracingFactory> factory(
       ProxyResolverV8TracingFactory::Create());
-  scoped_ptr<ProxyResolverV8Tracing> resolver;
-  scoped_ptr<ProxyResolverFactory::Request> request;
+  std::unique_ptr<ProxyResolverV8Tracing> resolver;
+  std::unique_ptr<ProxyResolverFactory::Request> request;
   TestCompletionCallback callback;
   factory->CreateProxyResolverV8Tracing(
       LoadScriptData("error_on_load.js"), mock_bindings.CreateBindings(),
       &resolver, callback.callback(), &request);
 
-  EXPECT_EQ(ERR_PAC_SCRIPT_FAILED, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_PAC_SCRIPT_FAILED));
   EXPECT_FALSE(resolver);
 }
 
@@ -891,16 +922,17 @@ TEST_F(ProxyResolverV8TracingTest, Terminate) {
   host_resolver.rules()->AddRule("host1", "182.111.0.222");
   host_resolver.rules()->AddRule("host2", "111.33.44.55");
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver =
       CreateResolver(mock_bindings.CreateBindings(), "terminate.js");
 
   TestCompletionCallback callback;
   ProxyInfo proxy_info;
 
+  std::unique_ptr<ProxyResolver::Request> req;
   resolver->GetProxyForURL(GURL("http://foopy/req1"), &proxy_info,
-                           callback.callback(), NULL,
+                           callback.callback(), &req,
                            mock_bindings.CreateBindings());
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // The test does 2 DNS resolutions.
   EXPECT_EQ(2u, host_resolver.num_resolve());
@@ -933,19 +965,19 @@ TEST_F(ProxyResolverV8TracingTest, MultipleResolvers) {
   host_resolver0.rules()->AddRuleForAddressFamily(
       "*", ADDRESS_FAMILY_IPV4, "122.133.144.155");
   host_resolver0.rules()->AddRule("*", "133.122.100.200");
-  scoped_ptr<ProxyResolverV8Tracing> resolver0 =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver0 =
       CreateResolver(mock_bindings0.CreateBindings(), "dns.js");
 
   // ------------------------
   // Setup resolver1
   // ------------------------
-  scoped_ptr<ProxyResolverV8Tracing> resolver1 =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver1 =
       CreateResolver(mock_bindings0.CreateBindings(), "dns.js");
 
   // ------------------------
   // Setup resolver2
   // ------------------------
-  scoped_ptr<ProxyResolverV8Tracing> resolver2 =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver2 =
       CreateResolver(mock_bindings0.CreateBindings(), "simple.js");
 
   // ------------------------
@@ -954,7 +986,7 @@ TEST_F(ProxyResolverV8TracingTest, MultipleResolvers) {
   MockHostResolver host_resolver3;
   MockBindings mock_bindings3(&host_resolver3);
   host_resolver3.rules()->AddRule("foo", "166.155.144.33");
-  scoped_ptr<ProxyResolverV8Tracing> resolver3 =
+  std::unique_ptr<ProxyResolverV8Tracing> resolver3 =
       CreateResolver(mock_bindings3.CreateBindings(), "simple_dns.js");
 
   // ------------------------
@@ -970,13 +1002,14 @@ TEST_F(ProxyResolverV8TracingTest, MultipleResolvers) {
   const size_t kNumResults = kNumResolvers * kNumIterations;
   TestCompletionCallback callback[kNumResults];
   ProxyInfo proxy_info[kNumResults];
+  std::unique_ptr<ProxyResolver::Request> request[kNumResults];
 
   for (size_t i = 0; i < kNumResults; ++i) {
     size_t resolver_i = i % kNumResolvers;
     resolver[resolver_i]->GetProxyForURL(
-        GURL("http://foo/"), &proxy_info[i], callback[i].callback(), NULL,
-        resolver_i == 3 ? mock_bindings3.CreateBindings()
-                        : mock_bindings0.CreateBindings());
+        GURL("http://foo/"), &proxy_info[i], callback[i].callback(),
+        &request[i], resolver_i == 3 ? mock_bindings3.CreateBindings()
+                                     : mock_bindings0.CreateBindings());
   }
 
   // ------------------------
@@ -1001,7 +1034,7 @@ TEST_F(ProxyResolverV8TracingTest, MultipleResolvers) {
 
   for (size_t i = 0; i < kNumResults; ++i) {
     size_t resolver_i = i % kNumResolvers;
-    EXPECT_EQ(OK, callback[i].WaitForResult());
+    EXPECT_THAT(callback[i].WaitForResult(), IsOk());
 
     std::string proxy_uri = proxy_info[i].proxy_server().ToURI();
 

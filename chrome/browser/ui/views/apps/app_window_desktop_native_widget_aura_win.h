@@ -5,19 +5,13 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_APPS_APP_WINDOW_DESKTOP_NATIVE_WIDGET_AURA_WIN_H_
 #define CHROME_BROWSER_UI_VIEWS_APPS_APP_WINDOW_DESKTOP_NATIVE_WIDGET_AURA_WIN_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 
-class BrowserFrame;
-class BrowserView;
 class ChromeNativeAppWindowViewsWin;
 
 namespace views {
 class DesktopWindowTreeHost;
-}
-
-namespace wm {
-class VisibilityController;
 }
 
 // AppWindowDesktopNativeWidgetAura is a DesktopNativeWidgetAura subclass that

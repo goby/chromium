@@ -4,6 +4,8 @@
 
 #include "content/browser/renderer_host/pepper/pepper_internal_file_ref_backend.h"
 
+#include <string.h>
+
 #include <string>
 
 #include "base/callback.h"
@@ -96,6 +98,7 @@ int32_t PepperInternalFileRefBackend::MakeDirectory(
   if (!GetFileSystemURL().is_valid())
     return PP_ERROR_FAILED;
 
+  PpapiPluginMsg_FileRef_MakeDirectoryReply reply;
   GetFileSystemContext()->operation_runner()->CreateDirectory(
       GetFileSystemURL(),
       !!(make_directory_flags & PP_MAKEDIRECTORYFLAG_EXCLUSIVE),
@@ -103,7 +106,7 @@ int32_t PepperInternalFileRefBackend::MakeDirectory(
       base::Bind(&PepperInternalFileRefBackend::DidFinish,
                  weak_factory_.GetWeakPtr(),
                  reply_context,
-                 PpapiPluginMsg_FileRef_MakeDirectoryReply()));
+                 reply));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -114,6 +117,7 @@ int32_t PepperInternalFileRefBackend::Touch(
   if (!GetFileSystemURL().is_valid())
     return PP_ERROR_FAILED;
 
+  PpapiPluginMsg_FileRef_TouchReply reply;
   GetFileSystemContext()->operation_runner()->TouchFile(
       GetFileSystemURL(),
       ppapi::PPTimeToTime(last_access_time),
@@ -121,7 +125,7 @@ int32_t PepperInternalFileRefBackend::Touch(
       base::Bind(&PepperInternalFileRefBackend::DidFinish,
                  weak_factory_.GetWeakPtr(),
                  reply_context,
-                 PpapiPluginMsg_FileRef_TouchReply()));
+                 reply));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -130,13 +134,14 @@ int32_t PepperInternalFileRefBackend::Delete(
   if (!GetFileSystemURL().is_valid())
     return PP_ERROR_FAILED;
 
+  PpapiPluginMsg_FileRef_DeleteReply reply;
   GetFileSystemContext()->operation_runner()->Remove(
       GetFileSystemURL(),
       false,
       base::Bind(&PepperInternalFileRefBackend::DidFinish,
                  weak_factory_.GetWeakPtr(),
                  reply_context,
-                 PpapiPluginMsg_FileRef_DeleteReply()));
+                 reply));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -152,6 +157,7 @@ int32_t PepperInternalFileRefBackend::Rename(
   if (!new_url.IsInSameFileSystem(GetFileSystemURL()))
     return PP_ERROR_FAILED;
 
+  PpapiPluginMsg_FileRef_RenameReply reply;
   GetFileSystemContext()->operation_runner()->Move(
       GetFileSystemURL(),
       new_url,
@@ -159,7 +165,7 @@ int32_t PepperInternalFileRefBackend::Rename(
       base::Bind(&PepperInternalFileRefBackend::DidFinish,
                  weak_factory_.GetWeakPtr(),
                  reply_context,
-                 PpapiPluginMsg_FileRef_RenameReply()));
+                 reply));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -227,23 +233,18 @@ void PepperInternalFileRefBackend::ReadDirectoryComplete(
   std::vector<PP_FileType> file_types;
   if (error == base::File::FILE_OK && fs_host_.get()) {
     std::string dir_path = path_;
-    if (dir_path.empty() || dir_path[dir_path.size() - 1] != '/')
+    if (dir_path.empty() || dir_path.back() != '/')
       dir_path += '/';
 
-    for (storage::FileSystemOperation::FileEntryList::const_iterator it =
-             accumulated_file_list->begin();
-         it != accumulated_file_list->end();
-         ++it) {
-      if (it->is_directory)
-        file_types.push_back(PP_FILETYPE_DIRECTORY);
-      else
-        file_types.push_back(PP_FILETYPE_REGULAR);
+    for (const auto& it : *accumulated_file_list) {
+      file_types.push_back(it.is_directory ? PP_FILETYPE_DIRECTORY
+                                           : PP_FILETYPE_REGULAR);
 
       ppapi::FileRefCreateInfo info;
       info.file_system_type = fs_type_;
       info.file_system_plugin_resource = fs_host_->pp_resource();
       std::string path =
-          dir_path + storage::FilePathToString(base::FilePath(it->name));
+          dir_path + storage::FilePathToString(base::FilePath(it.name));
       info.internal_path = path;
       info.display_name = ppapi::GetNameForInternalFilePath(path);
       infos.push_back(info);

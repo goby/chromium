@@ -10,6 +10,7 @@
 #include "apps/app_load_service.h"
 #include "apps/saved_files_service.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
@@ -56,12 +57,13 @@ class RevokeButton : public views::ImageButton, public views::ButtonListener {
              rb.GetImageNamed(IDR_DISABLE_H).ToImageSkia());
     SetImage(views::CustomButton::STATE_PRESSED,
              rb.GetImageNamed(IDR_DISABLE_P).ToImageSkia());
-    SetBorder(scoped_ptr<views::Border>());
+    SetBorder(std::unique_ptr<views::Border>());
     SetSize(GetPreferredSize());
 
     // Make the button focusable & give it alt-text so permissions can be
     // revoked using only the keyboard.
-    SetFocusable(true);
+    SetFocusForPlatform();
+    set_request_focus_on_press(true);
     SetTooltipText(l10n_util::GetStringFUTF16(
         IDS_APPLICATION_INFO_REVOKE_PERMISSION_ALT_TEXT, permission_message));
   }

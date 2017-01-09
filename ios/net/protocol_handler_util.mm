@@ -7,8 +7,6 @@
 #include <string>
 
 #include "base/base64.h"
-#include "base/i18n/icu_encoding_detection.h"
-#include "base/i18n/icu_string_conversions.h"
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
@@ -22,6 +20,16 @@
 #include "net/http/http_version.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
+#include "url/url_features.h"
+
+#if !BUILDFLAG(USE_PLATFORM_ICU_ALTERNATIVES)
+#include "base/i18n/encoding_detection.h"  // nogncheck
+#include "base/i18n/icu_string_conversions.h"  // nogncheck
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+#endif  // !BUILDFLAG(USE_PLATFORM_ICU_ALTERNATIVES)
 
 namespace {
 
@@ -80,17 +88,17 @@ NSURLResponse* GetNSURLResponseForRequest(URLRequest* request) {
     // The default iOS stack computes the length of the decoded string. If we
     // wanted to do that we would have to decode the string now. However, using
     // the unknown length (-1) seems to be working.
-    return [[[NSURLResponse alloc] initWithURL:url
-                                      MIMEType:mime_type
-                         expectedContentLength:-1
-                              textEncodingName:charset] autorelease];
+    return [[NSURLResponse alloc] initWithURL:url
+                                     MIMEType:mime_type
+                        expectedContentLength:-1
+                             textEncodingName:charset];
   } else {
     // Iterate over all the headers and copy them.
     bool has_content_type_header = false;
     NSMutableDictionary* header_fields = [NSMutableDictionary dictionary];
     HttpResponseHeaders* headers = request->response_headers();
     if (headers != nullptr) {
-      void* iter = nullptr;
+      size_t iter = 0;
       std::string name, value;
       while (headers->EnumerateHeaderLines(&iter, &name, &value)) {
         NSString* key = base::SysUTF8ToNSString(name);
@@ -111,6 +119,10 @@ NSURLResponse* GetNSURLResponseForRequest(URLRequest* request) {
         NSString* v = base::SysUTF8ToNSString(value);
         if (!v) {
           DLOG(ERROR) << "Header \"" << name << "\" is not in UTF8: " << value;
+#if BUILDFLAG(USE_PLATFORM_ICU_ALTERNATIVES)
+          DCHECK(FALSE) << "ICU support is required, but not included.";
+          continue;
+#else
           // Infer the encoding, or skip the header if it's not possible.
           std::string encoding;
           if (!base::DetectEncoding(value, &encoding))
@@ -120,6 +132,7 @@ NSURLResponse* GetNSURLResponseForRequest(URLRequest* request) {
             continue;
           v = base::SysUTF8ToNSString(value_utf8);
           DCHECK(v);
+#endif  // !BUILDFLAG(USE_PLATFORM_ICU_ALTERNATIVES)
         }
 
         // Duplicate keys are appended using a comma separator (RFC 2616).
@@ -164,10 +177,10 @@ NSURLResponse* GetNSURLResponseForRequest(URLRequest* request) {
                                                   http_version.minor_value()];
     }
 
-    return [[[CRNHTTPURLResponse alloc] initWithURL:url
-                                         statusCode:request->GetResponseCode()
-                                        HTTPVersion:version_string
-                                       headerFields:header_fields] autorelease];
+    return [[CRNHTTPURLResponse alloc] initWithURL:url
+                                        statusCode:request->GetResponseCode()
+                                       HTTPVersion:version_string
+                                      headerFields:header_fields];
   }
 }
 

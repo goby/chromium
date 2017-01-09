@@ -11,6 +11,7 @@
 // An instance of this class is generated when a safe browsing warning page
 // is shown (SafeBrowsingBlockingPage).
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -19,9 +20,9 @@
 #include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "net/base/completion_callback.h"
 
@@ -44,10 +45,12 @@ typedef base::hash_map<
     linked_ptr<ClientSafeBrowsingReportRequest::Resource>>
     ResourceMap;
 
-class ThreatDetails : public base::RefCountedThreadSafe<ThreatDetails>,
+class ThreatDetails : public base::RefCountedThreadSafe<
+                          ThreatDetails,
+                          content::BrowserThread::DeleteOnUIThread>,
                       public content::WebContentsObserver {
  public:
-  typedef SafeBrowsingUIManager::UnsafeResource UnsafeResource;
+  typedef security_interstitials::UnsafeResource UnsafeResource;
 
   // Constructs a new ThreatDetails instance, using the factory.
   static ThreatDetails* NewThreatDetails(SafeBrowsingUIManager* ui_manager,
@@ -73,10 +76,12 @@ class ThreatDetails : public base::RefCountedThreadSafe<ThreatDetails>,
   void OnRedirectionCollectionReady();
 
   // content::WebContentsObserver implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
+  bool OnMessageReceived(const IPC::Message& message,
+                         content::RenderFrameHost* render_frame_host) override;
 
  protected:
   friend class ThreatDetailsFactoryImpl;
+  friend class TestThreatDetailsFactory;
 
   ThreatDetails(SafeBrowsingUIManager* ui_manager,
                 content::WebContents* web_contents,
@@ -91,13 +96,16 @@ class ThreatDetails : public base::RefCountedThreadSafe<ThreatDetails>,
   Profile* profile_;
 
   // The report protocol buffer.
-  scoped_ptr<ClientSafeBrowsingReportRequest> report_;
+  std::unique_ptr<ClientSafeBrowsingReportRequest> report_;
 
   // Used to get a pointer to the HTTP cache.
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
 
  private:
   friend class base::RefCountedThreadSafe<ThreatDetails>;
+  friend struct content::BrowserThread::DeleteOnThread<
+      content::BrowserThread::UI>;
+  friend class base::DeleteHelper<ThreatDetails>;
 
   // Starts the collection of the report.
   void StartCollection();
@@ -156,6 +164,7 @@ class ThreatDetails : public base::RefCountedThreadSafe<ThreatDetails>,
   FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, ThreatDOMDetails);
   FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, HTTPCache);
   FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, HTTPCacheNoEntries);
+  FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, HttpsResourceSanitization);
   FRIEND_TEST_ALL_PREFIXES(ThreatDetailsTest, HistoryServiceUrls);
 
   DISALLOW_COPY_AND_ASSIGN(ThreatDetails);

@@ -4,12 +4,15 @@
 
 #include "chrome/browser/chromeos/login/screens/chrome_user_selection_screen.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
@@ -21,11 +24,12 @@
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/policy/policy_constants.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_type.h"
-#include "policy/policy_constants.h"
 
 namespace chromeos {
 
@@ -36,11 +40,15 @@ ChromeUserSelectionScreen::ChromeUserSelectionScreen(
       weak_factory_(this) {
   device_local_account_policy_service_ = g_browser_process->platform_part()->
       browser_policy_connector_chromeos()->GetDeviceLocalAccountPolicyService();
-  device_local_account_policy_service_->AddObserver(this);
+  if (device_local_account_policy_service_) {
+    device_local_account_policy_service_->AddObserver(this);
+  }
 }
 
 ChromeUserSelectionScreen::~ChromeUserSelectionScreen() {
-  device_local_account_policy_service_->RemoveObserver(this);
+  if (device_local_account_policy_service_) {
+    device_local_account_policy_service_->RemoveObserver(this);
+  }
 }
 
 void ChromeUserSelectionScreen::Init(const user_manager::UserList& users,
@@ -78,8 +86,7 @@ void ChromeUserSelectionScreen::OnDeviceLocalAccountsChanged() {
 void ChromeUserSelectionScreen::CheckForPublicSessionDisplayNameChange(
     policy::DeviceLocalAccountPolicyBroker* broker) {
   const AccountId& account_id =
-      user_manager::UserManager::GetKnownUserAccountId(broker->user_id(),
-                                                       std::string());
+      user_manager::known_user::GetAccountId(broker->user_id(), std::string());
   DCHECK(account_id.is_valid());
   const std::string& display_name = broker->GetDisplayName();
   if (display_name == public_session_display_names_[account_id])
@@ -101,7 +108,7 @@ void ChromeUserSelectionScreen::CheckForPublicSessionDisplayNameChange(
   // and |this| are informed of the display name change is undefined. Post a
   // task that will update the UI after the UserManager is guaranteed to have
   // been informed of the change.
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&ChromeUserSelectionScreen::SetPublicSessionDisplayName,
                  weak_factory_.GetWeakPtr(), account_id));
@@ -110,8 +117,7 @@ void ChromeUserSelectionScreen::CheckForPublicSessionDisplayNameChange(
 void ChromeUserSelectionScreen::CheckForPublicSessionLocalePolicyChange(
     policy::DeviceLocalAccountPolicyBroker* broker) {
   const AccountId& account_id =
-      user_manager::UserManager::GetKnownUserAccountId(broker->user_id(),
-                                                       std::string());
+      user_manager::known_user::GetAccountId(broker->user_id(), std::string());
   DCHECK(account_id.is_valid());
   const policy::PolicyMap::Entry* entry =
       broker->core()->store()->policy_map().Get(policy::key::kSessionLocales);
@@ -166,7 +172,7 @@ void ChromeUserSelectionScreen::SetPublicSessionLocales(
 
   // Construct the list of available locales. This list consists of the
   // recommended locales, followed by all others.
-  scoped_ptr<base::ListValue> available_locales =
+  std::unique_ptr<base::ListValue> available_locales =
       GetUILanguageList(&recommended_locales, std::string());
 
   // Set the initially selected locale to the first recommended locale that is
@@ -183,7 +189,7 @@ void ChromeUserSelectionScreen::SetPublicSessionLocales(
   const bool two_or_more_recommended_locales = recommended_locales.size() >= 2;
 
   // Notify the UI.
-  view_->SetPublicSessionLocales(account_id, available_locales.Pass(),
+  view_->SetPublicSessionLocales(account_id, std::move(available_locales),
                                  default_locale,
                                  two_or_more_recommended_locales);
 }

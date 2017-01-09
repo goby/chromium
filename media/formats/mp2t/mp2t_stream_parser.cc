@@ -4,9 +4,12 @@
 
 #include "media/formats/mp2t/mp2t_stream_parser.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/stl_util.h"
+#include "media/base/media_tracks.h"
 #include "media/base/stream_parser_buffer.h"
 #include "media/base/text_track_config.h"
 #include "media/base/timestamp_constants.h"
@@ -21,14 +24,39 @@
 #include "media/formats/mp2t/ts_section_pes.h"
 #include "media/formats/mp2t/ts_section_pmt.h"
 
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+#include "media/formats/mp2t/ts_section_cat.h"
+#include "media/formats/mp2t/ts_section_cets_ecm.h"
+#include "media/formats/mp2t/ts_section_cets_pssh.h"
+#endif
+
 namespace media {
 namespace mp2t {
+
+namespace {
+
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+const int64_t kSampleAESPrivateDataIndicatorAVC = 0x7a617663;
+const int64_t kSampleAESPrivateDataIndicatorAAC = 0x61616364;
+// TODO(dougsteed). Consider adding support for the following:
+// const int64_t kSampleAESPrivateDataIndicatorAC3 = 0x61633364;
+// const int64_t kSampleAESPrivateDataIndicatorEAC3 = 0x65633364;
+#endif
+
+}  // namespace
 
 enum StreamType {
   // ISO-13818.1 / ITU H.222 Table 2.34 "Stream type assignments"
   kStreamTypeMpeg1Audio = 0x3,
   kStreamTypeAAC = 0xf,
   kStreamTypeAVC = 0x1b,
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+  kStreamTypeAACWithSampleAES = 0xcf,
+  kStreamTypeAVCWithSampleAES = 0xdb,
+// TODO(dougsteed). Consider adding support for the following:
+//  kStreamTypeAC3WithSampleAES = 0xc1,
+//  kStreamTypeEAC3WithSampleAES = 0xc2,
+#endif
 };
 
 class PidState {
@@ -38,10 +66,16 @@ class PidState {
     kPidPmt,
     kPidAudioPes,
     kPidVideoPes,
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+    kPidCat,
+    kPidCetsEcm,
+    kPidCetsPssh,
+#endif
   };
 
-  PidState(int pid, PidType pid_tyoe,
-           scoped_ptr<TsSection> section_parser);
+  PidState(int pid,
+           PidType pid_type,
+           std::unique_ptr<TsSection> section_parser);
 
   // Extract the content of the TS packet and parse it.
   // Return true if successful.
@@ -65,20 +99,21 @@ class PidState {
 
   int pid_;
   PidType pid_type_;
-  scoped_ptr<TsSection> section_parser_;
+  std::unique_ptr<TsSection> section_parser_;
 
   bool enable_;
 
   int continuity_counter_;
 };
 
-PidState::PidState(int pid, PidType pid_type,
-                   scoped_ptr<TsSection> section_parser)
-  : pid_(pid),
-    pid_type_(pid_type),
-    section_parser_(section_parser.Pass()),
-    enable_(false),
-    continuity_counter_(-1) {
+PidState::PidState(int pid,
+                   PidType pid_type,
+                   std::unique_ptr<TsSection> section_parser)
+    : pid_(pid),
+      pid_type_(pid_type),
+      section_parser_(std::move(section_parser)),
+      enable_(false),
+      continuity_counter_(-1) {
   DCHECK(section_parser_);
 }
 
@@ -147,6 +182,9 @@ Mp2tStreamParser::BufferQueueWithConfig::BufferQueueWithConfig(
     video_config(video_cfg) {
 }
 
+Mp2tStreamParser::BufferQueueWithConfig::BufferQueueWithConfig(
+    const BufferQueueWithConfig& other) = default;
+
 Mp2tStreamParser::BufferQueueWithConfig::~BufferQueueWithConfig() {
 }
 
@@ -159,7 +197,6 @@ Mp2tStreamParser::Mp2tStreamParser(bool sbr_in_mimetype)
 }
 
 Mp2tStreamParser::~Mp2tStreamParser() {
-  STLDeleteValues(&pids_);
 }
 
 void Mp2tStreamParser::Init(
@@ -169,7 +206,7 @@ void Mp2tStreamParser::Init(
     bool /* ignore_text_tracks */,
     const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
     const NewMediaSegmentCB& new_segment_cb,
-    const base::Closure& end_of_segment_cb,
+    const EndMediaSegmentCB& end_of_segment_cb,
     const scoped_refptr<MediaLog>& media_log) {
   DCHECK(!is_initialized_);
   DCHECK(init_cb_.is_null());
@@ -177,6 +214,7 @@ void Mp2tStreamParser::Init(
   DCHECK(!config_cb.is_null());
   DCHECK(!new_buffers_cb.is_null());
   DCHECK(!encrypted_media_init_data_cb.is_null());
+  DCHECK(!new_segment_cb.is_null());
   DCHECK(!end_of_segment_cb.is_null());
 
   init_cb_ = init_cb;
@@ -192,12 +230,9 @@ void Mp2tStreamParser::Flush() {
   DVLOG(1) << "Mp2tStreamParser::Flush";
 
   // Flush the buffers and reset the pids.
-  for (std::map<int, PidState*>::iterator it = pids_.begin();
-       it != pids_.end(); ++it) {
-    DVLOG(1) << "Flushing PID: " << it->first;
-    PidState* pid_state = it->second;
-    pid_state->Flush();
-    delete pid_state;
+  for (const auto& pid_pair : pids_) {
+    DVLOG(1) << "Flushing PID: " << pid_pair.first;
+    pid_pair.second->Flush();
   }
   pids_.clear();
 
@@ -239,14 +274,14 @@ void Mp2tStreamParser::Flush() {
   timestamp_unroller_.Reset();
 }
 
-bool Mp2tStreamParser::Parse(const uint8* buf, int size) {
+bool Mp2tStreamParser::Parse(const uint8_t* buf, int size) {
   DVLOG(1) << "Mp2tStreamParser::Parse size=" << size;
 
   // Add the data to the parser state.
   ts_byte_queue_.Push(buf, size);
 
   while (true) {
-    const uint8* ts_buffer;
+    const uint8_t* ts_buffer;
     int ts_buffer_size;
     ts_byte_queue_.Peek(&ts_buffer, &ts_buffer_size);
     if (ts_buffer_size < TsPacket::kPacketSize)
@@ -262,7 +297,8 @@ bool Mp2tStreamParser::Parse(const uint8* buf, int size) {
     }
 
     // Parse the TS header, skipping 1 byte if the header is invalid.
-    scoped_ptr<TsPacket> ts_packet(TsPacket::Parse(ts_buffer, ts_buffer_size));
+    std::unique_ptr<TsPacket> ts_packet(
+        TsPacket::Parse(ts_buffer, ts_buffer_size));
     if (!ts_packet) {
       DVLOG(1) << "Error: invalid TS packet";
       ts_byte_queue_.Pop(1);
@@ -273,22 +309,29 @@ bool Mp2tStreamParser::Parse(const uint8* buf, int size) {
         << " start_unit=" << ts_packet->payload_unit_start_indicator();
 
     // Parse the section.
-    std::map<int, PidState*>::iterator it = pids_.find(ts_packet->pid());
+    auto it = pids_.find(ts_packet->pid());
     if (it == pids_.end() &&
         ts_packet->pid() == TsSection::kPidPat) {
       // Create the PAT state here if needed.
-      scoped_ptr<TsSection> pat_section_parser(
-          new TsSectionPat(
-              base::Bind(&Mp2tStreamParser::RegisterPmt,
-                         base::Unretained(this))));
-      scoped_ptr<PidState> pat_pid_state(
-          new PidState(ts_packet->pid(), PidState::kPidPat,
-                       pat_section_parser.Pass()));
+      std::unique_ptr<TsSection> pat_section_parser(new TsSectionPat(
+          base::Bind(&Mp2tStreamParser::RegisterPmt, base::Unretained(this))));
+      std::unique_ptr<PidState> pat_pid_state(new PidState(
+          ts_packet->pid(), PidState::kPidPat, std::move(pat_section_parser)));
       pat_pid_state->Enable();
-      it = pids_.insert(
-          std::pair<int, PidState*>(ts_packet->pid(),
-                                    pat_pid_state.release())).first;
+      it = pids_
+               .insert(
+                   std::make_pair(ts_packet->pid(), std::move(pat_pid_state)))
+               .first;
     }
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+    // We allow a CAT to appear as the first packet in the TS. This allows us to
+    // specify encryption metadata for HLS by injecting it as an extra TS packet
+    // at the front of the stream.
+    else if (it == pids_.end() && ts_packet->pid() == TsSection::kPidCat) {
+      it = pids_.insert(std::make_pair(TsSection::kPidCat, MakeCatPidState()))
+               .first;
+    }
+#endif
 
     if (it != pids_.end()) {
       if (!it->second->PushTsPacket(*ts_packet))
@@ -314,41 +357,50 @@ void Mp2tStreamParser::RegisterPmt(int program_number, int pmt_pid) {
 
   // Only one TS program is allowed. Ignore the incoming program map table,
   // if there is already one registered.
-  for (std::map<int, PidState*>::iterator it = pids_.begin();
-       it != pids_.end(); ++it) {
-    PidState* pid_state = it->second;
+  for (const auto& pid_pair : pids_) {
+    PidState* pid_state = pid_pair.second.get();
     if (pid_state->pid_type() == PidState::kPidPmt) {
-      DVLOG_IF(1, pmt_pid != it->first) << "More than one program is defined";
+      DVLOG_IF(1, pmt_pid != pid_pair.first)
+          << "More than one program is defined";
       return;
     }
   }
 
   // Create the PMT state here if needed.
   DVLOG(1) << "Create a new PMT parser";
-  scoped_ptr<TsSection> pmt_section_parser(
-      new TsSectionPmt(
-          base::Bind(&Mp2tStreamParser::RegisterPes,
-                     base::Unretained(this), pmt_pid)));
-  scoped_ptr<PidState> pmt_pid_state(
-      new PidState(pmt_pid, PidState::kPidPmt, pmt_section_parser.Pass()));
+  std::unique_ptr<TsSection> pmt_section_parser(new TsSectionPmt(base::Bind(
+      &Mp2tStreamParser::RegisterPes, base::Unretained(this), pmt_pid)));
+  std::unique_ptr<PidState> pmt_pid_state(
+      new PidState(pmt_pid, PidState::kPidPmt, std::move(pmt_section_parser)));
   pmt_pid_state->Enable();
-  pids_.insert(std::pair<int, PidState*>(pmt_pid, pmt_pid_state.release()));
+  pids_.insert(std::make_pair(pmt_pid, std::move(pmt_pid_state)));
+
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+  // Take the opportunity to clean up any PIDs that were involved in importing
+  // encryption metadata for HLS with SampleAES. This prevents the possibility
+  // of interference with actual PIDs that might be declared in the PMT.
+  // TODO(dougsteed): if in the future the appropriate PIDs are embedded in the
+  // source stream, this will not be necessary.
+  UnregisterCat();
+  UnregisterCencPids();
+#endif
 }
 
 void Mp2tStreamParser::RegisterPes(int pmt_pid,
                                    int pes_pid,
-                                   int stream_type) {
+                                   int stream_type,
+                                   const Descriptors& descriptors) {
   // TODO(damienv): check there is no mismatch if the entry already exists.
   DVLOG(1) << "RegisterPes:"
            << " pes_pid=" << pes_pid
            << " stream_type=" << std::hex << stream_type << std::dec;
-  std::map<int, PidState*>::iterator it = pids_.find(pes_pid);
+  auto it = pids_.find(pes_pid);
   if (it != pids_.end())
     return;
 
   // Create a stream parser corresponding to the stream type.
   bool is_audio = false;
-  scoped_ptr<EsParser> es_parser;
+  std::unique_ptr<EsParser> es_parser;
   if (stream_type == kStreamTypeAVC) {
     es_parser.reset(
         new EsParserH264(
@@ -377,19 +429,42 @@ void Mp2tStreamParser::RegisterPes(int pmt_pid,
                    pes_pid),
         media_log_));
     is_audio = true;
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+  } else if (stream_type == kStreamTypeAVCWithSampleAES &&
+             descriptors.HasPrivateDataIndicator(
+                 kSampleAESPrivateDataIndicatorAVC)) {
+    es_parser.reset(
+        new EsParserH264(base::Bind(&Mp2tStreamParser::OnVideoConfigChanged,
+                                    base::Unretained(this), pes_pid),
+                         base::Bind(&Mp2tStreamParser::OnEmitVideoBuffer,
+                                    base::Unretained(this), pes_pid),
+                         true, base::Bind(&Mp2tStreamParser::GetDecryptConfig,
+                                          base::Unretained(this))));
+  } else if (stream_type == kStreamTypeAACWithSampleAES &&
+             descriptors.HasPrivateDataIndicator(
+                 kSampleAESPrivateDataIndicatorAAC)) {
+    es_parser.reset(new EsParserAdts(
+        base::Bind(&Mp2tStreamParser::OnAudioConfigChanged,
+                   base::Unretained(this), pes_pid),
+        base::Bind(&Mp2tStreamParser::OnEmitAudioBuffer, base::Unretained(this),
+                   pes_pid),
+        base::Bind(&Mp2tStreamParser::GetDecryptConfig, base::Unretained(this)),
+        true, sbr_in_mimetype_));
+    is_audio = true;
+#endif
   } else {
     return;
   }
 
   // Create the PES state here.
   DVLOG(1) << "Create a new PES state";
-  scoped_ptr<TsSection> pes_section_parser(
-      new TsSectionPes(es_parser.Pass(), &timestamp_unroller_));
+  std::unique_ptr<TsSection> pes_section_parser(
+      new TsSectionPes(std::move(es_parser), &timestamp_unroller_));
   PidState::PidType pid_type =
       is_audio ? PidState::kPidAudioPes : PidState::kPidVideoPes;
-  scoped_ptr<PidState> pes_pid_state(
-      new PidState(pes_pid, pid_type, pes_section_parser.Pass()));
-  pids_.insert(std::pair<int, PidState*>(pes_pid, pes_pid_state.release()));
+  std::unique_ptr<PidState> pes_pid_state(
+      new PidState(pes_pid, pid_type, std::move(pes_section_parser)));
+  pids_.insert(std::make_pair(pes_pid, std::move(pes_pid_state)));
 
   // A new PES pid has been added, the PID filter might change.
   UpdatePidFilter();
@@ -400,11 +475,11 @@ void Mp2tStreamParser::UpdatePidFilter() {
   // select the audio/video streams with the lowest PID.
   // TODO(damienv): this can be changed when the StreamParser interface
   // supports multiple audio/video streams.
-  PidMap::iterator lowest_audio_pid = pids_.end();
-  PidMap::iterator lowest_video_pid = pids_.end();
-  for (PidMap::iterator it = pids_.begin(); it != pids_.end(); ++it) {
+  auto lowest_audio_pid = pids_.end();
+  auto lowest_video_pid = pids_.end();
+  for (auto it = pids_.begin(); it != pids_.end(); ++it) {
     int pid = it->first;
-    PidState* pid_state = it->second;
+    PidState* pid_state = it->second.get();
     if (pid_state->pid_type() == PidState::kPidAudioPes &&
         (lowest_audio_pid == pids_.end() || pid < lowest_audio_pid->first))
       lowest_audio_pid = it;
@@ -426,8 +501,8 @@ void Mp2tStreamParser::UpdatePidFilter() {
   }
 
   // Disable all the other audio and video PIDs.
-  for (PidMap::iterator it = pids_.begin(); it != pids_.end(); ++it) {
-    PidState* pid_state = it->second;
+  for (auto it = pids_.begin(); it != pids_.end(); ++it) {
+    PidState* pid_state = it->second.get();
     if (it != lowest_audio_pid && it != lowest_video_pid &&
         (pid_state->pid_type() == PidState::kPidAudioPes ||
          pid_state->pid_type() == PidState::kPidVideoPes))
@@ -499,6 +574,23 @@ void Mp2tStreamParser::OnAudioConfigChanged(
   }
 }
 
+std::unique_ptr<MediaTracks> GenerateMediaTrackInfo(
+    const AudioDecoderConfig& audio_config,
+    const VideoDecoderConfig& video_config) {
+  std::unique_ptr<MediaTracks> media_tracks(new MediaTracks());
+  // TODO(servolk): Implement proper sourcing of media track info as described
+  // in crbug.com/590085
+  if (audio_config.IsValidConfig()) {
+    media_tracks->AddAudioTrack(audio_config, kMp2tAudioTrackId, "main", "",
+                                "");
+  }
+  if (video_config.IsValidConfig()) {
+    media_tracks->AddVideoTrack(video_config, kMp2tVideoTrackId, "main", "",
+                                "");
+  }
+  return media_tracks;
+}
+
 bool Mp2tStreamParser::FinishInitializationIfNeeded() {
   // Nothing to be done if already initialized.
   if (is_initialized_)
@@ -518,14 +610,23 @@ bool Mp2tStreamParser::FinishInitializationIfNeeded() {
     return true;
 
   // Pass the config before invoking the initialization callback.
-  RCHECK(config_cb_.Run(queue_with_config.audio_config,
-                        queue_with_config.video_config,
-                        TextTrackConfigMap()));
+  std::unique_ptr<MediaTracks> media_tracks = GenerateMediaTrackInfo(
+      queue_with_config.audio_config, queue_with_config.video_config);
+  RCHECK(config_cb_.Run(std::move(media_tracks), TextTrackConfigMap()));
   queue_with_config.is_config_sent = true;
 
   // For Mpeg2 TS, the duration is not known.
   DVLOG(1) << "Mpeg2TS stream parser initialization done";
-  base::ResetAndReturn(&init_cb_).Run(InitParameters(kInfiniteDuration()));
+
+  // TODO(wolenetz): If possible, detect and report track counts by type more
+  // accurately here. Currently, capped at max 1 each for audio and video, with
+  // assumption of 0 text tracks.
+  InitParameters params(kInfiniteDuration);
+  params.detected_audio_track_count =
+      queue_with_config.audio_config.IsValidConfig() ? 1 : 0;
+  params.detected_video_track_count =
+      queue_with_config.video_config.IsValidConfig() ? 1 : 0;
+  base::ResetAndReturn(&init_cb_).Run(params);
   is_initialized_ = true;
 
   return true;
@@ -549,7 +650,7 @@ void Mp2tStreamParser::OnEmitAudioBuffer(
 
   // Ignore the incoming buffer if it is not associated with any config.
   if (buffer_queue_chain_.empty()) {
-    NOTREACHED() << "Cannot provide buffers before configs";
+    LOG(ERROR) << "Cannot provide buffers before configs";
     return;
   }
 
@@ -617,23 +718,24 @@ bool Mp2tStreamParser::EmitRemainingBuffers() {
     // Update the audio and video config if needed.
     BufferQueueWithConfig& queue_with_config = buffer_queue_chain_.front();
     if (!queue_with_config.is_config_sent) {
-      if (!config_cb_.Run(queue_with_config.audio_config,
-                          queue_with_config.video_config,
-                          TextTrackConfigMap()))
+      std::unique_ptr<MediaTracks> media_tracks = GenerateMediaTrackInfo(
+          queue_with_config.audio_config, queue_with_config.video_config);
+      if (!config_cb_.Run(std::move(media_tracks), TextTrackConfigMap()))
         return false;
       queue_with_config.is_config_sent = true;
     }
 
     // Add buffers.
-    TextBufferQueueMap empty_text_map;
-    if (!queue_with_config.audio_queue.empty() ||
-        !queue_with_config.video_queue.empty()) {
-      if (!new_buffers_cb_.Run(queue_with_config.audio_queue,
-                               queue_with_config.video_queue,
-                               empty_text_map)) {
-        return false;
-      }
-    }
+    BufferQueueMap buffer_queue_map;
+    if (!queue_with_config.audio_queue.empty())
+      buffer_queue_map.insert(
+          std::make_pair(kMp2tAudioTrackId, queue_with_config.audio_queue));
+    if (!queue_with_config.video_queue.empty())
+      buffer_queue_map.insert(
+          std::make_pair(kMp2tVideoTrackId, queue_with_config.video_queue));
+
+    if (!buffer_queue_map.empty() && !new_buffers_cb_.Run(buffer_queue_map))
+      return false;
 
     buffer_queue_chain_.pop_front();
   }
@@ -646,6 +748,69 @@ bool Mp2tStreamParser::EmitRemainingBuffers() {
 
   return true;
 }
+
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+std::unique_ptr<PidState> Mp2tStreamParser::MakeCatPidState() {
+  std::unique_ptr<TsSection> cat_section_parser(new TsSectionCat(
+      base::Bind(&Mp2tStreamParser::RegisterCencPids, base::Unretained(this))));
+  std::unique_ptr<PidState> cat_pid_state(new PidState(
+      TsSection::kPidCat, PidState::kPidCat, std::move(cat_section_parser)));
+  cat_pid_state->Enable();
+  return cat_pid_state;
+}
+
+void Mp2tStreamParser::UnregisterCat() {
+  for (auto& pid : pids_) {
+    if (pid.second->pid_type() == PidState::kPidCat) {
+      pids_.erase(pid.first);
+      break;
+    }
+  }
+}
+
+void Mp2tStreamParser::RegisterCencPids(int ca_pid, int pssh_pid) {
+  std::unique_ptr<TsSectionCetsEcm> ecm_parser(new TsSectionCetsEcm(base::Bind(
+      &Mp2tStreamParser::RegisterDecryptConfig, base::Unretained(this))));
+  std::unique_ptr<PidState> ecm_pid_state(
+      new PidState(ca_pid, PidState::kPidCetsEcm, std::move(ecm_parser)));
+  ecm_pid_state->Enable();
+  pids_.insert(std::make_pair(ca_pid, std::move(ecm_pid_state)));
+
+  std::unique_ptr<TsSectionCetsPssh> pssh_parser(
+      new TsSectionCetsPssh(base::Bind(&Mp2tStreamParser::RegisterPsshBoxes,
+                                       base::Unretained(this))));
+  std::unique_ptr<PidState> pssh_pid_state(
+      new PidState(pssh_pid, PidState::kPidCetsPssh, std::move(pssh_parser)));
+  pssh_pid_state->Enable();
+  pids_.insert(std::make_pair(pssh_pid, std::move(pssh_pid_state)));
+}
+
+void Mp2tStreamParser::UnregisterCencPids() {
+  for (auto& pid : pids_) {
+    if (pid.second->pid_type() == PidState::kPidCetsEcm) {
+      pids_.erase(pid.first);
+      break;
+    }
+  }
+  for (auto& pid : pids_) {
+    if (pid.second->pid_type() == PidState::kPidCetsPssh) {
+      pids_.erase(pid.first);
+      break;
+    }
+  }
+}
+
+void Mp2tStreamParser::RegisterDecryptConfig(const DecryptConfig& config) {
+  decrypt_config_.reset(
+      new DecryptConfig(config.key_id(), config.iv(), config.subsamples()));
+}
+
+void Mp2tStreamParser::RegisterPsshBoxes(
+    const std::vector<uint8_t>& init_data) {
+  encrypted_media_init_data_cb_.Run(EmeInitDataType::CENC, init_data);
+}
+
+#endif
 
 }  // namespace mp2t
 }  // namespace media

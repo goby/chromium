@@ -9,6 +9,7 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "chrome/test/chromedriver/net/timeout.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "url/gurl.h"
@@ -32,7 +33,7 @@ bool SyncWebSocketImpl::Send(const std::string& message) {
 }
 
 SyncWebSocket::StatusCode SyncWebSocketImpl::ReceiveNextMessage(
-    std::string* message, const base::TimeDelta& timeout) {
+    std::string* message, const Timeout& timeout) {
   return core_->ReceiveNextMessage(message, timeout);
 }
 
@@ -52,7 +53,8 @@ bool SyncWebSocketImpl::Core::IsConnected() {
 
 bool SyncWebSocketImpl::Core::Connect(const GURL& url) {
   bool success = false;
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   context_getter_->GetNetworkTaskRunner()->PostTask(
       FROM_HERE,
       base::Bind(&SyncWebSocketImpl::Core::ConnectOnIO,
@@ -63,7 +65,8 @@ bool SyncWebSocketImpl::Core::Connect(const GURL& url) {
 
 bool SyncWebSocketImpl::Core::Send(const std::string& message) {
   bool success = false;
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   context_getter_->GetNetworkTaskRunner()->PostTask(
       FROM_HERE,
       base::Bind(&SyncWebSocketImpl::Core::SendOnIO,
@@ -74,15 +77,13 @@ bool SyncWebSocketImpl::Core::Send(const std::string& message) {
 
 SyncWebSocket::StatusCode SyncWebSocketImpl::Core::ReceiveNextMessage(
     std::string* message,
-    const base::TimeDelta& timeout) {
+    const Timeout& timeout) {
   base::AutoLock lock(lock_);
-  base::TimeTicks deadline = base::TimeTicks::Now() + timeout;
-  base::TimeDelta next_wait = timeout;
   while (received_queue_.empty() && is_connected_) {
+    base::TimeDelta next_wait = timeout.GetRemainingTime();
     if (next_wait <= base::TimeDelta())
       return SyncWebSocket::kTimeout;
     on_update_event_.TimedWait(next_wait);
-    next_wait = deadline - base::TimeTicks::Now();
   }
   if (!is_connected_)
     return SyncWebSocket::kDisconnected;

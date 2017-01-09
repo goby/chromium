@@ -24,7 +24,6 @@
  *
  */
 
-#include "config.h"
 #include "core/dom/MessageChannel.h"
 
 #include "core/dom/MessagePort.h"
@@ -33,31 +32,27 @@
 
 namespace blink {
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(MessageChannel);
+static void createChannel(MessagePort* port1, MessagePort* port2) {
+  WebMessagePortChannel* channel1;
+  WebMessagePortChannel* channel2;
+  Platform::current()->createMessageChannel(&channel1, &channel2);
+  DCHECK(channel1);
+  DCHECK(channel2);
 
-static void createChannel(MessagePort* port1, MessagePort* port2)
-{
-    WebMessagePortChannel* channel1;
-    WebMessagePortChannel* channel2;
-    Platform::current()->createMessageChannel(&channel1, &channel2);
-    ASSERT(channel1 && channel2);
-
-    // Now entangle the proxies with the appropriate local ports.
-    port1->entangle(adoptPtr(channel2));
-    port2->entangle(adoptPtr(channel1));
+  // Now entangle the proxies with the appropriate local ports.
+  port1->entangle(WebMessagePortChannelUniquePtr(channel2));
+  port2->entangle(WebMessagePortChannelUniquePtr(channel1));
 }
 
 MessageChannel::MessageChannel(ExecutionContext* context)
-    : m_port1(MessagePort::create(*context))
-    , m_port2(MessagePort::create(*context))
-{
-    createChannel(m_port1.get(), m_port2.get());
+    : m_port1(MessagePort::create(*context)),
+      m_port2(MessagePort::create(*context)) {
+  createChannel(m_port1.get(), m_port2.get());
 }
 
-DEFINE_TRACE(MessageChannel)
-{
-    visitor->trace(m_port1);
-    visitor->trace(m_port2);
+DEFINE_TRACE(MessageChannel) {
+  visitor->trace(m_port1);
+  visitor->trace(m_port2);
 }
 
-} // namespace blink
+}  // namespace blink

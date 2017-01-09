@@ -4,17 +4,21 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/supervised_user_creation_screen_handler.h"
 
-#include "ash/audio/sounds.h"
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/screens/user_selection_screen.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_creation_flow.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/supervised_user_manager.h"
 #include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/audio/chromeos_sounds.h"
 #include "components/login/localized_values_builder.h"
@@ -22,7 +26,7 @@
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_type.h"
 #include "google_apis/gaia/gaia_auth_util.h"
-#include "grit/browser_resources.h"
+#include "media/audio/sounds/sounds_manager.h"
 #include "net/base/data_url.h"
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -215,11 +219,9 @@ void SupervisedUserCreationScreenHandler::RegisterMessages() {
                   HandleCurrentSupervisedUserPage);
 }
 
-void SupervisedUserCreationScreenHandler::PrepareToShow() {}
-
 void SupervisedUserCreationScreenHandler::Show() {
-  scoped_ptr<base::DictionaryValue> data(new base::DictionaryValue());
-  scoped_ptr<base::ListValue> users_list(new base::ListValue());
+  std::unique_ptr<base::DictionaryValue> data(new base::DictionaryValue());
+  std::unique_ptr<base::ListValue> users_list(new base::ListValue());
   const user_manager::UserList& users =
       ChromeUserManager::Get()->GetUsersAllowedForSupervisedUsersCreation();
   std::string owner;
@@ -228,17 +230,18 @@ void SupervisedUserCreationScreenHandler::Show() {
   for (user_manager::UserList::const_iterator it = users.begin();
        it != users.end();
        ++it) {
-    bool is_owner = ((*it)->email() == owner);
-    base::DictionaryValue* user_dict = new base::DictionaryValue();
+    bool is_owner = ((*it)->GetAccountId().GetUserEmail() == owner);
+    auto user_dict = base::MakeUnique<base::DictionaryValue>();
     UserSelectionScreen::FillUserDictionary(
         *it, is_owner, false, /* is_signin_to_add */
         proximity_auth::ScreenlockBridge::LockHandler::OFFLINE_PASSWORD,
         NULL, /* public_session_recommended_locales */
-        user_dict);
-    users_list->Append(user_dict);
+        user_dict.get());
+    users_list->Append(std::move(user_dict));
   }
   data->Set("managers", users_list.release());
-  ShowScreen(OobeUI::kScreenSupervisedUserCreationFlow, data.get());
+  ShowScreenWithData(OobeScreen::SCREEN_CREATE_SUPERVISED_USER_FLOW,
+                     data.get());
 
   if (!delegate_)
     return;
@@ -302,7 +305,7 @@ void SupervisedUserCreationScreenHandler::HandleManagerSelected(
     const AccountId& manager_id) {
   if (!delegate_)
     return;
-  WallpaperManager::Get()->SetUserWallpaperNow(manager_id.GetUserEmail());
+  WallpaperManager::Get()->SetUserWallpaperNow(manager_id);
 }
 
 void SupervisedUserCreationScreenHandler::HandleImportUserSelected(
@@ -398,27 +401,27 @@ void SupervisedUserCreationScreenHandler::HandleAuthenticateManager(
   const AccountId manager_account_id = AccountId::FromUserEmailGaiaId(
       gaia::SanitizeEmail(manager_raw_account_id.GetUserEmail()),
       manager_raw_account_id.GetGaiaId());
-  delegate_->AuthenticateManager(manager_account_id.GetUserEmail(),
-                                 manager_password);
+  delegate_->AuthenticateManager(manager_account_id, manager_password);
 }
 
 // TODO(antrim) : this is an explicit code duplications with UserImageScreen.
 // It should be removed by issue 251179.
 void SupervisedUserCreationScreenHandler::HandleGetImages() {
   base::ListValue image_urls;
-  for (int i = user_manager::kFirstDefaultImageIndex;
-       i < user_manager::kDefaultImagesCount;
-       ++i) {
-    scoped_ptr<base::DictionaryValue> image_data(new base::DictionaryValue);
-    image_data->SetString("url", user_manager::GetDefaultImageUrl(i));
-    image_data->SetString(
-        "author",
-        l10n_util::GetStringUTF16(user_manager::kDefaultImageAuthorIDs[i]));
-    image_data->SetString(
-        "website",
-        l10n_util::GetStringUTF16(user_manager::kDefaultImageWebsiteIDs[i]));
-    image_data->SetString("title", user_manager::GetDefaultImageDescription(i));
-    image_urls.Append(image_data.release());
+  for (int i = default_user_image::kFirstDefaultImageIndex;
+       i < default_user_image::kDefaultImagesCount; ++i) {
+    std::unique_ptr<base::DictionaryValue> image_data(
+        new base::DictionaryValue);
+    image_data->SetString("url", default_user_image::GetDefaultImageUrl(i));
+    image_data->SetString("author",
+                          l10n_util::GetStringUTF16(
+                              default_user_image::kDefaultImageAuthorIDs[i]));
+    image_data->SetString("website",
+                          l10n_util::GetStringUTF16(
+                              default_user_image::kDefaultImageWebsiteIDs[i]));
+    image_data->SetString("title",
+                          default_user_image::GetDefaultImageDescription(i));
+    image_urls.Append(std::move(image_data));
   }
   CallJS("setDefaultImages", image_urls);
 }
@@ -435,11 +438,13 @@ void SupervisedUserCreationScreenHandler::HandlePhotoTaken
 }
 
 void SupervisedUserCreationScreenHandler::HandleTakePhoto() {
-  ash::PlaySystemSoundIfSpokenFeedback(SOUND_CAMERA_SNAP);
+  AccessibilityManager::Get()->PlayEarcon(
+      SOUND_CAMERA_SNAP, PlaySoundOption::SPOKEN_FEEDBACK_ENABLED);
 }
 
 void SupervisedUserCreationScreenHandler::HandleDiscardPhoto() {
-  ash::PlaySystemSoundIfSpokenFeedback(SOUND_OBJECT_DELETE);
+  AccessibilityManager::Get()->PlayEarcon(
+      SOUND_OBJECT_DELETE, PlaySoundOption::SPOKEN_FEEDBACK_ENABLED);
 }
 
 void SupervisedUserCreationScreenHandler::HandleSelectImage(

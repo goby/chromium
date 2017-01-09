@@ -33,25 +33,26 @@ namespace blink {
 class Text;
 
 class InsertIntoTextNodeCommand final : public SimpleEditCommand {
-public:
-    static PassRefPtrWillBeRawPtr<InsertIntoTextNodeCommand> create(PassRefPtrWillBeRawPtr<Text> node, unsigned offset, const String& text)
-    {
-        return adoptRefWillBeNoop(new InsertIntoTextNodeCommand(node, offset, text));
-    }
+ public:
+  static InsertIntoTextNodeCommand* create(Text* node,
+                                           unsigned offset,
+                                           const String& text) {
+    return new InsertIntoTextNodeCommand(node, offset, text);
+  }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    InsertIntoTextNodeCommand(PassRefPtrWillBeRawPtr<Text> node, unsigned offset, const String& text);
+ private:
+  InsertIntoTextNodeCommand(Text* node, unsigned offset, const String& text);
 
-    void doApply() override;
-    void doUnapply() override;
+  void doApply(EditingState*) override;
+  void doUnapply() override;
 
-    RefPtrWillBeMember<Text> m_node;
-    unsigned m_offset;
-    String m_text;
+  Member<Text> m_node;
+  unsigned m_offset;
+  String m_text;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InsertIntoTextNodeCommand_h
+#endif  // InsertIntoTextNodeCommand_h

@@ -4,7 +4,10 @@
 
 #include "chromeos/network/network_state.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "chromeos/network/network_profile_handler.h"
@@ -76,17 +79,9 @@ bool IsCaptivePortalState(const base::DictionaryValue& properties, bool log) {
 namespace chromeos {
 
 NetworkState::NetworkState(const std::string& path)
-    : ManagedState(MANAGED_TYPE_NETWORK, path),
-      visible_(false),
-      priority_(0),
-      prefix_length_(0),
-      connectable_(false),
-      is_captive_portal_(false),
-      signal_strength_(0),
-      cellular_out_of_credits_(false) {}
+    : ManagedState(MANAGED_TYPE_NETWORK, path) {}
 
-NetworkState::~NetworkState() {
-}
+NetworkState::~NetworkState() {}
 
 bool NetworkState::PropertyChanged(const std::string& key,
                                    const base::Value& value) {
@@ -96,7 +91,14 @@ bool NetworkState::PropertyChanged(const std::string& key,
   if (key == shill::kSignalStrengthProperty) {
     return GetIntegerValue(key, value, &signal_strength_);
   } else if (key == shill::kStateProperty) {
-    return GetStringValue(key, value, &connection_state_);
+    std::string saved_state = connection_state_;
+    if (GetStringValue(key, value, &connection_state_)) {
+      if (connection_state_ != saved_state)
+        last_connection_state_ = saved_state;
+      return true;
+    } else {
+      return false;
+    }
   } else if (key == shill::kVisibleProperty) {
     return GetBooleanValue(key, value, &visible_);
   } else if (key == shill::kConnectableProperty) {
@@ -109,6 +111,8 @@ bool NetworkState::PropertyChanged(const std::string& key,
     else
       error_.clear();
     return true;
+  } else if (key == shill::kWifiFrequency) {
+    return GetIntegerValue(key, value, &frequency_);
   } else if (key == shill::kActivationTypeProperty) {
     return GetStringValue(key, value, &activation_type_);
   } else if (key == shill::kActivationStateProperty) {
@@ -137,11 +141,12 @@ bool NetworkState::PropertyChanged(const std::string& key,
     return GetStringValue(key, value, &profile_path_);
   } else if (key == shill::kWifiHexSsid) {
     std::string ssid_hex;
-    if (!GetStringValue(key, value, &ssid_hex)) {
+    if (!GetStringValue(key, value, &ssid_hex))
       return false;
-    }
     raw_ssid_.clear();
     return base::HexStringToBytes(ssid_hex, &raw_ssid_);
+  } else if (key == shill::kWifiBSsid) {
+    return GetStringValue(key, value, &bssid_);
   } else if (key == shill::kPriorityProperty) {
     return GetIntegerValue(key, value, &priority_);
   } else if (key == shill::kOutOfCreditsProperty) {
@@ -157,7 +162,7 @@ bool NetworkState::PropertyChanged(const std::string& key,
     if (proxy_config_str.empty())
       return true;
 
-    scoped_ptr<base::DictionaryValue> proxy_config_dict(
+    std::unique_ptr<base::DictionaryValue> proxy_config_dict(
         onc::ReadDictionaryFromJson(proxy_config_str));
     if (proxy_config_dict) {
       // Warning: The DictionaryValue returned from
@@ -244,7 +249,7 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
   if (NetworkTypePattern::VPN().MatchesType(type())) {
     // Shill sends VPN provider properties in a nested dictionary. |dictionary|
     // must replicate that nested structure.
-    scoped_ptr<base::DictionaryValue> provider_property(
+    std::unique_ptr<base::DictionaryValue> provider_property(
         new base::DictionaryValue);
     provider_property->SetStringWithoutPathExpansion(shill::kTypeProperty,
                                                      vpn_provider_type_);
@@ -269,8 +274,11 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
 
   // Wifi properties
   if (NetworkTypePattern::WiFi().MatchesType(type())) {
+    dictionary->SetStringWithoutPathExpansion(shill::kWifiBSsid, bssid_);
     dictionary->SetStringWithoutPathExpansion(shill::kEapMethodProperty,
                                               eap_method());
+    dictionary->SetIntegerWithoutPathExpansion(shill::kWifiFrequency,
+                                               frequency_);
   }
 
   // Mobile properties
@@ -348,6 +356,11 @@ bool NetworkState::IsConnectedState() const {
 
 bool NetworkState::IsConnectingState() const {
   return visible() && StateIsConnecting(connection_state_);
+}
+
+bool NetworkState::IsReconnecting() const {
+  return visible() && StateIsConnecting(connection_state_) &&
+         StateIsConnected(last_connection_state_);
 }
 
 bool NetworkState::IsInProfile() const {

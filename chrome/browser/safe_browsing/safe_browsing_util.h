@@ -7,12 +7,14 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_SAFE_BROWSING_UTIL_H_
 #define CHROME_BROWSER_SAFE_BROWSING_SAFE_BROWSING_UTIL_H_
 
+#include <stddef.h>
+
 #include <cstring>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "chrome/browser/safe_browsing/chunk_range.h"
@@ -37,7 +39,7 @@ class SBChunkData {
   // Create with manufactured data, for testing only.
   // TODO(shess): Right now the test code calling this is in an anonymous
   // namespace.  Figure out how to shift this into private:.
-  explicit SBChunkData(scoped_ptr<ChunkData> data);
+  explicit SBChunkData(std::unique_ptr<ChunkData> data);
 
   // Read serialized ChunkData, returning true if the parse suceeded.
   bool ParseFrom(const unsigned char* data, size_t length);
@@ -58,7 +60,7 @@ class SBChunkData {
 
  private:
   // Protocol buffer sent from server.
-  scoped_ptr<ChunkData> chunk_data_;
+  std::unique_ptr<ChunkData> chunk_data_;
 
   DISALLOW_COPY_AND_ASSIGN(SBChunkData);
 };
@@ -75,6 +77,7 @@ struct SBListChunkRanges {
 // Container for deleting chunks from the database.
 struct SBChunkDelete {
   SBChunkDelete();
+  SBChunkDelete(const SBChunkDelete& other);
   ~SBChunkDelete();
 
   std::string list_name;

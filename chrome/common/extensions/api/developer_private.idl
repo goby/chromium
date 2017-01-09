@@ -62,13 +62,14 @@ namespace developerPrivate {
   enum ViewType {
     APP_WINDOW,
     BACKGROUND_CONTENTS,
+    COMPONENT,
     EXTENSION_BACKGROUND_PAGE,
     EXTENSION_DIALOG,
+    EXTENSION_GUEST,
     EXTENSION_POPUP,
     LAUNCHER_PAGE,
     PANEL,
-    TAB_CONTENTS,
-    VIRTUAL_KEYBOARD
+    TAB_CONTENTS
   };
 
   enum ErrorType {
@@ -85,7 +86,8 @@ namespace developerPrivate {
   enum ExtensionState {
     ENABLED,
     DISABLED,
-    TERMINATED
+    TERMINATED,
+    BLACKLISTED
   };
 
   enum CommandScope {
@@ -178,12 +180,17 @@ namespace developerPrivate {
     boolean isExtensionAction;
   };
 
+  dictionary DependentExtension {
+    DOMString id;
+    DOMString name;
+  };
+
   dictionary ExtensionInfo {
     boolean actionButtonHidden;
     DOMString? blacklistText;
     Command[] commands;
     ControlledInfo? controlledInfo;
-    DOMString[] dependentExtensions;
+    DependentExtension[] dependentExtensions;
     DOMString description;
     DisableReasons disableReasons;
     AccessModifier errorCollection;
@@ -202,6 +209,7 @@ namespace developerPrivate {
     boolean offlineEnabled;
     OptionsPage? optionsPage;
     DOMString? path;
+    DOMString[] permissions;
     DOMString? prettifiedPath;
     AccessModifier runOnAllUrls;
     RuntimeError[] runtimeErrors;

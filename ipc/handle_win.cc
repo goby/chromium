@@ -21,7 +21,7 @@ HandleWin::HandleWin(const HANDLE& handle, Permissions permissions)
     : handle_(handle), permissions_(permissions) {}
 
 // static
-void ParamTraits<HandleWin>::Write(Message* m, const param_type& p) {
+void ParamTraits<HandleWin>::Write(base::Pickle* m, const param_type& p) {
   scoped_refptr<IPC::internal::HandleAttachmentWin> attachment(
       new IPC::internal::HandleAttachmentWin(p.get_handle(),
                                              p.get_permissions()));
@@ -30,23 +30,20 @@ void ParamTraits<HandleWin>::Write(Message* m, const param_type& p) {
 }
 
 // static
-bool ParamTraits<HandleWin>::Read(const Message* m,
+bool ParamTraits<HandleWin>::Read(const base::Pickle* m,
                                   base::PickleIterator* iter,
                                   param_type* r) {
-  scoped_refptr<MessageAttachment> attachment;
-  if (!m->ReadAttachment(iter, &attachment))
+  scoped_refptr<base::Pickle::Attachment> base_attachment;
+  if (!m->ReadAttachment(iter, &base_attachment))
     return false;
-  if (attachment->GetType() != MessageAttachment::TYPE_BROKERABLE_ATTACHMENT)
+  MessageAttachment* attachment =
+      static_cast<MessageAttachment*>(base_attachment.get());
+  if (attachment->GetType() != MessageAttachment::Type::WIN_HANDLE)
     return false;
-  BrokerableAttachment* brokerable_attachment =
-      static_cast<BrokerableAttachment*>(attachment.get());
-  if (brokerable_attachment->GetBrokerableType() !=
-      BrokerableAttachment::WIN_HANDLE) {
-    return false;
-  }
   IPC::internal::HandleAttachmentWin* handle_attachment =
-      static_cast<IPC::internal::HandleAttachmentWin*>(brokerable_attachment);
+      static_cast<IPC::internal::HandleAttachmentWin*>(attachment);
   r->set_handle(handle_attachment->get_handle());
+  handle_attachment->reset_handle_ownership();
   return true;
 }
 

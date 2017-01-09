@@ -13,16 +13,98 @@
 # method.AddParameter('baz', 0, mojom.INT32)
 
 
+# We use our own version of __repr__ when displaying the AST, as the
+# AST currently doesn't capture which nodes are reference (e.g. to
+# types) and which nodes are definitions. This allows us to e.g. print
+# the definition of a struct when it's defined inside a module, but
+# only print its name when it's referenced in e.g. a method parameter.
+def Repr(obj, as_ref=True):
+  """A version of __repr__ that can distinguish references.
+
+  Sometimes we like to print an object's full representation
+  (e.g. with its fields) and sometimes we just want to reference an
+  object that was printed in full elsewhere. This function allows us
+  to make that distinction.
+
+  Args:
+    obj: The object whose string representation we compute.
+    as_ref: If True, use the short reference representation.
+
+  Returns:
+    A str representation of |obj|.
+  """
+  if hasattr(obj, 'Repr'):
+    return obj.Repr(as_ref=as_ref)
+  # Since we cannot implement Repr for existing container types, we
+  # handle them here.
+  elif isinstance(obj, list):
+    if not obj:
+      return '[]'
+    else:
+      return ('[\n%s\n]' % (',\n'.join('    %s' % Repr(elem, as_ref).replace(
+          '\n', '\n    ') for elem in obj)))
+  elif isinstance(obj, dict):
+    if not obj:
+      return '{}'
+    else:
+      return ('{\n%s\n}' % (',\n'.join('    %s: %s' % (
+          Repr(key, as_ref).replace('\n', '\n    '),
+          Repr(val, as_ref).replace('\n', '\n    '))
+          for key, val in obj.iteritems())))
+  else:
+    return repr(obj)
+
+
+def GenericRepr(obj, names):
+  """Compute generic Repr for |obj| based on the attributes in |names|.
+
+  Args:
+    obj: The object to compute a Repr for.
+    names: A dict from attribute names to include, to booleans
+        specifying whether those attributes should be shown as
+        references or not.
+
+  Returns:
+    A str representation of |obj|.
+  """
+  def ReprIndent(name, as_ref):
+    return '    %s=%s' % (name, Repr(getattr(obj, name), as_ref).replace(
+        '\n', '\n    '))
+
+  return '%s(\n%s\n)' % (
+      obj.__class__.__name__,
+      ',\n'.join(ReprIndent(name, as_ref)
+                 for (name, as_ref) in names.iteritems()))
+
+
 class Kind(object):
+  """Kind represents a type (e.g. int8, string).
+
+  Attributes:
+    spec: A string uniquely identifying the type. May be None.
+    parent_kind: The enclosing type. For example, a struct defined
+        inside an interface has that interface as its parent. May be None.
+  """
   def __init__(self, spec=None):
     self.spec = spec
     self.parent_kind = None
 
+  def Repr(self, as_ref=True):
+    return '<%s spec=%r>' % (self.__class__.__name__, self.spec)
+
+  def __repr__(self):
+    # Gives us a decent __repr__ for all kinds.
+    return self.Repr()
+
 
 class ReferenceKind(Kind):
-  """ReferenceKind represents pointer types and handle types.
+  """ReferenceKind represents pointer and handle types.
+
   A type is nullable if null (for pointer types) or invalid handle (for handle
   types) is a legal value for the type.
+
+  Attributes:
+    is_nullable: True if the type is nullable.
   """
 
   def __init__(self, spec=None, is_nullable=False):
@@ -30,6 +112,10 @@ class ReferenceKind(Kind):
     Kind.__init__(self, spec)
     self.is_nullable = is_nullable
     self.shared_definition = {}
+
+  def Repr(self, as_ref=True):
+    return '<%s spec=%r is_nullable=%r>' % (self.__class__.__name__, self.spec,
+                                            self.is_nullable)
 
   def MakeNullableKind(self):
     assert not self.is_nullable
@@ -131,6 +217,8 @@ PRIMITIVES = (
 
 
 ATTRIBUTE_MIN_VERSION = 'MinVersion'
+ATTRIBUTE_EXTENSIBLE = 'Extensible'
+ATTRIBUTE_SYNC = 'Sync'
 
 
 class NamedValue(object):
@@ -188,6 +276,11 @@ class Field(object):
     self.default = default
     self.attributes = attributes
 
+  def Repr(self, as_ref=True):
+    # Fields are only referenced by objects which define them and thus
+    # they are always displayed as non-references.
+    return GenericRepr(self, {'name': False, 'kind': True})
+
   @property
   def min_version(self):
     return self.attributes.get(ATTRIBUTE_MIN_VERSION) \
@@ -201,7 +294,22 @@ class UnionField(Field): pass
 
 
 class Struct(ReferenceKind):
+  """A struct with typed fields.
+
+  Attributes:
+    name: {str} The name of the struct type.
+    native_only: {bool} Does the struct have a body (i.e. any fields) or is it
+        purely a native struct.
+    module: {Module} The defining module.
+    imported_from: {dict} Information about where this union was
+        imported from.
+    fields: {List[StructField]} The members of the union.
+    attributes: {dict} Additional information about the struct, such as
+        if it's a native struct.
+  """
+
   ReferenceKind.AddSharedProperty('name')
+  ReferenceKind.AddSharedProperty('native_only')
   ReferenceKind.AddSharedProperty('module')
   ReferenceKind.AddSharedProperty('imported_from')
   ReferenceKind.AddSharedProperty('fields')
@@ -214,10 +322,20 @@ class Struct(ReferenceKind):
       spec = None
     ReferenceKind.__init__(self, spec)
     self.name = name
+    self.native_only = False
     self.module = module
     self.imported_from = None
     self.fields = []
     self.attributes = attributes
+
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s name=%r imported_from=%s>' % (
+          self.__class__.__name__, self.name,
+          Repr(self.imported_from, as_ref=True))
+    else:
+      return GenericRepr(self, {'name': False, 'fields': False,
+                                'imported_from': True})
 
   def AddField(self, name, kind, ordinal=None, default=None, attributes=None):
     field = StructField(name, kind, ordinal, default, attributes)
@@ -226,6 +344,18 @@ class Struct(ReferenceKind):
 
 
 class Union(ReferenceKind):
+  """A union of several kinds.
+
+  Attributes:
+    name: {str} The name of the union type.
+    module: {Module} The defining module.
+    imported_from: {dict} Information about where this union was
+        imported from.
+    fields: {List[UnionField]} The members of the union.
+    attributes: {dict} Additional information about the union, such as
+        which Java class name to use to represent it in the generated
+        bindings.
+  """
   ReferenceKind.AddSharedProperty('name')
   ReferenceKind.AddSharedProperty('module')
   ReferenceKind.AddSharedProperty('imported_from')
@@ -244,6 +374,14 @@ class Union(ReferenceKind):
     self.fields = []
     self.attributes = attributes
 
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s spec=%r is_nullable=%r fields=%s>' % (
+          self.__class__.__name__, self.spec, self.is_nullable,
+          Repr(self.fields))
+    else:
+      return GenericRepr(self, {'fields': True, 'is_nullable': False})
+
   def AddField(self, name, kind, ordinal=None, attributes=None):
     field = UnionField(name, kind, ordinal, None, attributes)
     self.fields.append(field)
@@ -251,6 +389,13 @@ class Union(ReferenceKind):
 
 
 class Array(ReferenceKind):
+  """An array.
+
+  Attributes:
+    kind: {Kind} The type of the elements. May be None.
+    length: The number of elements. None if unknown.
+  """
+
   ReferenceKind.AddSharedProperty('kind')
   ReferenceKind.AddSharedProperty('length')
 
@@ -267,8 +412,23 @@ class Array(ReferenceKind):
     self.kind = kind
     self.length = length
 
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s spec=%r is_nullable=%r kind=%s length=%r>' % (
+          self.__class__.__name__, self.spec, self.is_nullable, Repr(self.kind),
+          self.length)
+    else:
+      return GenericRepr(self, {'kind': True, 'length': False,
+                                'is_nullable': False})
+
 
 class Map(ReferenceKind):
+  """A map.
+
+  Attributes:
+    key_kind: {Kind} The type of the keys. May be None.
+    value_kind: {Kind} The type of the elements. May be None.
+  """
   ReferenceKind.AddSharedProperty('key_kind')
   ReferenceKind.AddSharedProperty('value_kind')
 
@@ -279,14 +439,9 @@ class Map(ReferenceKind):
                              ']')
       if IsNullableKind(key_kind):
         raise Exception("Nullable kinds cannot be keys in maps.")
-      if IsStructKind(key_kind):
-        # TODO(erg): It would sometimes be nice if we could key on struct
-        # values. However, what happens if the struct has a handle in it? Or
-        # non-copyable data like an array?
-        raise Exception("Structs cannot be keys in maps.")
       if IsAnyHandleKind(key_kind):
         raise Exception("Handles cannot be keys in maps.")
-      if IsInterfaceKind(key_kind):
+      if IsAnyInterfaceKind(key_kind):
         raise Exception("Interfaces cannot be keys in maps.")
       if IsArrayKind(key_kind):
         raise Exception("Arrays cannot be keys in maps.")
@@ -295,6 +450,14 @@ class Map(ReferenceKind):
 
     self.key_kind = key_kind
     self.value_kind = value_kind
+
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s spec=%r is_nullable=%r key_kind=%s value_kind=%s>' % (
+          self.__class__.__name__, self.spec, self.is_nullable,
+          Repr(self.key_kind), Repr(self.value_kind))
+    else:
+      return GenericRepr(self, {'key_kind': True, 'value_kind': True})
 
 
 class InterfaceRequest(ReferenceKind):
@@ -336,6 +499,10 @@ class Parameter(object):
     self.default = default
     self.attributes = attributes
 
+  def Repr(self, as_ref=True):
+    return '<%s name=%r kind=%s>' % (self.__class__.__name__, self.name,
+                                     self.kind.Repr(as_ref=True))
+
   @property
   def min_version(self):
     return self.attributes.get(ATTRIBUTE_MIN_VERSION) \
@@ -350,6 +517,13 @@ class Method(object):
     self.parameters = []
     self.response_parameters = None
     self.attributes = attributes
+
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s name=%r>' % (self.__class__.__name__, self.name)
+    else:
+      return GenericRepr(self, {'name': False, 'parameters': True,
+                                'response_parameters': True})
 
   def AddParameter(self, name, kind, ordinal=None, default=None,
                    attributes=None):
@@ -368,6 +542,11 @@ class Method(object):
   @property
   def min_version(self):
     return self.attributes.get(ATTRIBUTE_MIN_VERSION) \
+        if self.attributes else None
+
+  @property
+  def sync(self):
+    return self.attributes.get(ATTRIBUTE_SYNC) \
         if self.attributes else None
 
 
@@ -389,6 +568,13 @@ class Interface(ReferenceKind):
     self.imported_from = None
     self.methods = []
     self.attributes = attributes
+
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s name=%r>' % (self.__class__.__name__, self.name)
+    else:
+      return GenericRepr(self, {'name': False, 'attributes': False,
+                                'methods': False})
 
   def AddMethod(self, name, ordinal=None, attributes=None):
     method = Method(self, name, ordinal, attributes)
@@ -434,6 +620,7 @@ class Enum(Kind):
   def __init__(self, name=None, module=None, attributes=None):
     self.module = module
     self.name = name
+    self.native_only = False
     self.imported_from = None
     if name is not None:
       spec = 'x:' + name
@@ -442,6 +629,17 @@ class Enum(Kind):
     Kind.__init__(self, spec)
     self.fields = []
     self.attributes = attributes
+
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s name=%r>' % (self.__class__.__name__, self.name)
+    else:
+      return GenericRepr(self, {'name': False, 'fields': False})
+
+  @property
+  def extensible(self):
+    return self.attributes.get(ATTRIBUTE_EXTENSIBLE, False) \
+        if self.attributes else False
 
 
 class Module(object):
@@ -454,6 +652,19 @@ class Module(object):
     self.interfaces = []
     self.kinds = {}
     self.attributes = attributes
+
+  def __repr__(self):
+    # Gives us a decent __repr__ for modules.
+    return self.Repr()
+
+  def Repr(self, as_ref=True):
+    if as_ref:
+      return '<%s name=%r namespace=%r>' % (
+          self.__class__.__name__, self.name, self.namespace)
+    else:
+      return GenericRepr(self, {'name': False, 'namespace': False,
+                                'attributes': False, 'structs': False,
+                                'interfaces': False, 'unions': False})
 
   def AddInterface(self, name, attributes=None):
     interface = Interface(name, self, attributes)
@@ -569,48 +780,27 @@ def IsPointerKind(kind):
           IsMapKind(kind))
 
 
-# Please note that interface is not considered as handle kind, since it is an
-# aggregate type consisting of a handle and a version number.
+# Please note that it doesn't include any interface kind.
 def IsAnyHandleKind(kind):
   return (IsGenericHandleKind(kind) or
           IsDataPipeConsumerKind(kind) or
           IsDataPipeProducerKind(kind) or
           IsMessagePipeKind(kind) or
-          IsSharedBufferKind(kind) or
-          IsInterfaceRequestKind(kind))
+          IsSharedBufferKind(kind))
+
+
+def IsAnyInterfaceKind(kind):
+  return (IsInterfaceKind(kind) or IsInterfaceRequestKind(kind) or
+          IsAssociatedKind(kind))
+
+
+def IsAnyHandleOrInterfaceKind(kind):
+  return IsAnyHandleKind(kind) or IsAnyInterfaceKind(kind)
 
 
 def IsAssociatedKind(kind):
   return (IsAssociatedInterfaceKind(kind) or
           IsAssociatedInterfaceRequestKind(kind))
-
-
-def IsMoveOnlyKind(kind):
-  return (not IsStringKind(kind) and IsObjectKind(kind)) or \
-      IsAnyHandleKind(kind) or IsInterfaceKind(kind) or IsAssociatedKind(kind)
-
-
-def IsCloneableKind(kind):
-  def _IsCloneable(kind, visited_kinds):
-    if kind in visited_kinds:
-      # No need to examine the kind again.
-      return True
-    visited_kinds.add(kind)
-    if IsAnyHandleKind(kind) or IsInterfaceKind(kind) or IsAssociatedKind(kind):
-      return False
-    if IsArrayKind(kind):
-      return _IsCloneable(kind.kind, visited_kinds)
-    if IsStructKind(kind) or IsUnionKind(kind):
-      for field in kind.fields:
-        if not _IsCloneable(field.kind, visited_kinds):
-          return False
-    if IsMapKind(kind):
-      # No need to examine the key kind, only primitive kinds and non-nullable
-      # string are allowed to be key kinds.
-      return _IsCloneable(kind.value_kind, visited_kinds)
-    return True
-
-  return _IsCloneable(kind, set())
 
 
 def HasCallbacks(interface):
@@ -652,3 +842,46 @@ def PassesAssociatedKinds(interface):
         if _ContainsAssociatedKinds(param.kind, visited_kinds):
           return True
   return False
+
+
+def HasSyncMethods(interface):
+  for method in interface.methods:
+    if method.sync:
+      return True
+  return False
+
+
+def ContainsHandlesOrInterfaces(kind):
+  """Check if the kind contains any handles.
+
+  This check is recursive so it checks all struct fields, containers elements,
+  etc.
+
+  Args:
+    struct: {Kind} The kind to check.
+
+  Returns:
+    {bool}: True if the kind contains handles.
+  """
+  # We remember the types we already checked to avoid infinite recursion when
+  # checking recursive (or mutually recursive) types:
+  checked = set()
+  def Check(kind):
+    if kind.spec in checked:
+      return False
+    checked.add(kind.spec)
+    if IsStructKind(kind):
+      return any(Check(field.kind) for field in kind.fields)
+    elif IsUnionKind(kind):
+      return any(Check(field.kind) for field in kind.fields)
+    elif IsAnyHandleKind(kind):
+      return True
+    elif IsAnyInterfaceKind(kind):
+      return True
+    elif IsArrayKind(kind):
+      return Check(kind.kind)
+    elif IsMapKind(kind):
+      return Check(kind.key_kind) or Check(kind.value_kind)
+    else:
+      return False
+  return Check(kind)

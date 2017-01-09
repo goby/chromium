@@ -8,20 +8,9 @@
 #include "jni/Surface_jni.h"
 #include "ui/gl/android/surface_texture.h"
 
-namespace {
+using base::android::ScopedJavaLocalRef;
 
-bool g_jni_initialized = false;
-
-void RegisterNativesIfNeeded(JNIEnv* env) {
-  if (!g_jni_initialized) {
-    JNI_Surface::RegisterNativesImpl(env);
-    g_jni_initialized = true;
-  }
-}
-
-}  // anonymous namespace
-
-namespace gfx {
+namespace gl {
 
 ScopedJavaSurface::ScopedJavaSurface() {
 }
@@ -31,7 +20,6 @@ ScopedJavaSurface::ScopedJavaSurface(
     : auto_release_(true),
       is_protected_(false) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  RegisterNativesIfNeeded(env);
   DCHECK(env->IsInstanceOf(surface.obj(), Surface_clazz(env)));
   j_surface_.Reset(surface);
 }
@@ -41,9 +29,8 @@ ScopedJavaSurface::ScopedJavaSurface(
     : auto_release_(true),
       is_protected_(false) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  RegisterNativesIfNeeded(env);
   ScopedJavaLocalRef<jobject> tmp(JNI_Surface::Java_Surface_Constructor(
-      env, surface_texture->j_surface_texture().obj()));
+      env, surface_texture->j_surface_texture()));
   DCHECK(!tmp.is_null());
   j_surface_.Reset(tmp);
 }
@@ -60,7 +47,7 @@ ScopedJavaSurface& ScopedJavaSurface::operator=(ScopedJavaSurface&& rhs) {
 ScopedJavaSurface::~ScopedJavaSurface() {
   if (auto_release_ && !j_surface_.is_null()) {
     JNIEnv* env = base::android::AttachCurrentThread();
-    JNI_Surface::Java_Surface_release(env, j_surface_.obj());
+    JNI_Surface::Java_Surface_release(env, j_surface_);
   }
 }
 
@@ -75,15 +62,20 @@ bool ScopedJavaSurface::IsEmpty() const {
   return j_surface_.is_null();
 }
 
+bool ScopedJavaSurface::IsValid() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return !IsEmpty() && JNI_Surface::Java_Surface_isValid(env, j_surface_);
+}
+
 // static
 ScopedJavaSurface ScopedJavaSurface::AcquireExternalSurface(jobject surface) {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> surface_ref;
   surface_ref.Reset(env, surface);
-  gfx::ScopedJavaSurface scoped_surface(surface_ref);
+  ScopedJavaSurface scoped_surface(surface_ref);
   scoped_surface.auto_release_ = false;
   scoped_surface.is_protected_ = true;
   return scoped_surface;
 }
 
-}  // namespace gfx
+}  // namespace gl

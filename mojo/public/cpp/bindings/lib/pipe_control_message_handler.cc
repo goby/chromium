@@ -2,22 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "mojo/public/cpp/bindings/lib/pipe_control_message_handler.h"
+#include "mojo/public/cpp/bindings/pipe_control_message_handler.h"
 
 #include "base/logging.h"
 #include "mojo/public/cpp/bindings/lib/message_builder.h"
-#include "mojo/public/cpp/bindings/lib/pipe_control_message_handler_delegate.h"
+#include "mojo/public/cpp/bindings/lib/serialization.h"
+#include "mojo/public/cpp/bindings/lib/validation_context.h"
 #include "mojo/public/cpp/bindings/lib/validation_util.h"
+#include "mojo/public/cpp/bindings/pipe_control_message_handler_delegate.h"
 #include "mojo/public/interfaces/bindings/pipe_control_messages.mojom.h"
 
 namespace mojo {
-namespace internal {
 
 PipeControlMessageHandler::PipeControlMessageHandler(
     PipeControlMessageHandlerDelegate* delegate)
     : delegate_(delegate) {}
 
 PipeControlMessageHandler::~PipeControlMessageHandler() {}
+
+void PipeControlMessageHandler::SetDescription(const std::string& description) {
+  description_ = description;
+}
 
 // static
 bool PipeControlMessageHandler::IsPipeControlMessage(const Message* message) {
@@ -35,12 +40,18 @@ bool PipeControlMessageHandler::Accept(Message* message) {
   return false;
 }
 
-bool PipeControlMessageHandler::Validate(const Message* message) {
+bool PipeControlMessageHandler::Validate(Message* message) {
+  internal::ValidationContext validation_context(
+      message->data(), message->data_num_bytes(), 0, message, description_);
+
   if (message->name() == pipe_control::kRunOrClosePipeMessageId) {
-    if (!ValidateMessageIsRequestWithoutResponse(message))
+    if (!internal::ValidateMessageIsRequestWithoutResponse(
+            message, &validation_context)) {
       return false;
-    return ValidateMessagePayload<
-        pipe_control::internal::RunOrClosePipeMessageParams_Data>(message);
+    }
+    return internal::ValidateMessagePayload<
+        pipe_control::internal::RunOrClosePipeMessageParams_Data>(
+            message, &validation_context);
   }
 
   return false;
@@ -51,10 +62,9 @@ bool PipeControlMessageHandler::RunOrClosePipe(Message* message) {
       reinterpret_cast<
           pipe_control::internal::RunOrClosePipeMessageParams_Data*>(
           message->mutable_payload());
-  params->DecodePointersAndHandles(message->mutable_handles());
-
   pipe_control::RunOrClosePipeMessageParamsPtr params_ptr;
-  Deserialize_(params, &params_ptr, nullptr);
+  internal::Deserialize<pipe_control::RunOrClosePipeMessageParamsDataView>(
+      params, &params_ptr, &context_);
 
   if (params_ptr->input->is_peer_associated_endpoint_closed_event()) {
     return delegate_->OnPeerAssociatedEndpointClosed(
@@ -71,5 +81,4 @@ bool PipeControlMessageHandler::RunOrClosePipe(Message* message) {
   return false;
 }
 
-}  // namespace internal
 }  // namespace mojo

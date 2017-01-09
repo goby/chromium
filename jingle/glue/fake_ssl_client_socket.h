@@ -19,11 +19,10 @@
 #include <stdint.h>
 
 #include <cstddef>
+#include <memory>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_errors.h"
@@ -38,7 +37,8 @@ namespace jingle_glue {
 
 class FakeSSLClientSocket : public net::StreamSocket {
  public:
-  explicit FakeSSLClientSocket(scoped_ptr<net::StreamSocket> transport_socket);
+  explicit FakeSSLClientSocket(
+      std::unique_ptr<net::StreamSocket> transport_socket);
 
   ~FakeSSLClientSocket() override;
 
@@ -53,19 +53,18 @@ class FakeSSLClientSocket : public net::StreamSocket {
   int Write(net::IOBuffer* buf,
             int buf_len,
             const net::CompletionCallback& callback) override;
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
   int Connect(const net::CompletionCallback& callback) override;
   void Disconnect() override;
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
   int GetPeerAddress(net::IPEndPoint* address) const override;
   int GetLocalAddress(net::IPEndPoint* address) const override;
-  const net::BoundNetLog& NetLog() const override;
+  const net::NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   bool WasNpnNegotiated() const override;
   net::NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(net::SSLInfo* ssl_info) override;
@@ -99,7 +98,7 @@ class FakeSSLClientSocket : public net::StreamSocket {
   void OnVerifyServerHelloDone(int status);
   net::Error ProcessVerifyServerHelloDone(size_t read);
 
-  scoped_ptr<net::StreamSocket> transport_socket_;
+  std::unique_ptr<net::StreamSocket> transport_socket_;
 
   // During the handshake process, holds a value from HandshakeState.
   // STATE_NONE otherwise.

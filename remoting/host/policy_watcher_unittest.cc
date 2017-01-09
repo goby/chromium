@@ -2,19 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include "remoting/host/policy_watcher.h"
+
 #include "base/bind.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/mock_log.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/policy/core/common/fake_async_policy_loader.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 #include "remoting/host/dns_blackhole_checker.h"
-#include "remoting/host/policy_watcher.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -44,9 +47,9 @@ class MockPolicyCallback {
  public:
   MockPolicyCallback(){};
 
-  // TODO(lukasza): gmock cannot mock a method taking scoped_ptr<T>...
+  // TODO(lukasza): gmock cannot mock a method taking std::unique_ptr<T>...
   MOCK_METHOD1(OnPolicyUpdatePtr, void(const base::DictionaryValue* policies));
-  void OnPolicyUpdate(scoped_ptr<base::DictionaryValue> policies) {
+  void OnPolicyUpdate(std::unique_ptr<base::DictionaryValue> policies) {
     OnPolicyUpdatePtr(policies.get());
   }
 
@@ -69,7 +72,7 @@ class PolicyWatcherTest : public testing::Test {
     policy_loader_ =
         new policy::FakeAsyncPolicyLoader(base::ThreadTaskRunnerHandle::Get());
     policy_watcher_ =
-        PolicyWatcher::CreateFromPolicyLoader(make_scoped_ptr(policy_loader_));
+        PolicyWatcher::CreateFromPolicyLoader(base::WrapUnique(policy_loader_));
 
     nat_true_.SetBoolean(key::kRemoteAccessHostFirewallTraversal, true);
     nat_false_.SetBoolean(key::kRemoteAccessHostFirewallTraversal, false);
@@ -145,6 +148,10 @@ class PolicyWatcherTest : public testing::Test {
     third_party_auth_cert_empty_.MergeDictionary(&third_party_auth_partial_);
     third_party_auth_cert_empty_.SetString(
         key::kRemoteAccessHostTokenValidationCertificateIssuer, "");
+    remote_assistance_uiaccess_true_.SetBoolean(
+        key::kRemoteAccessHostAllowUiAccessForRemoteAssistance, true);
+    remote_assistance_uiaccess_false_.SetBoolean(
+        key::kRemoteAccessHostAllowUiAccessForRemoteAssistance, false);
   }
 
   void TearDown() override {
@@ -198,7 +205,7 @@ class PolicyWatcherTest : public testing::Test {
   // a raw pointer to |policy_loader_| in order to control the simulated / faked
   // policy contents.
   policy::FakeAsyncPolicyLoader* policy_loader_;
-  scoped_ptr<PolicyWatcher> policy_watcher_;
+  std::unique_ptr<PolicyWatcher> policy_watcher_;
 
   base::DictionaryValue empty_;
   base::DictionaryValue nat_true_;
@@ -235,12 +242,15 @@ class PolicyWatcherTest : public testing::Test {
   base::DictionaryValue third_party_auth_full_;
   base::DictionaryValue third_party_auth_partial_;
   base::DictionaryValue third_party_auth_cert_empty_;
+  base::DictionaryValue remote_assistance_uiaccess_true_;
+  base::DictionaryValue remote_assistance_uiaccess_false_;
 
  private:
   void SetDefaults(base::DictionaryValue& dict) {
     dict.SetBoolean(key::kRemoteAccessHostFirewallTraversal, true);
     dict.SetBoolean(key::kRemoteAccessHostAllowRelayedConnection, true);
     dict.SetString(key::kRemoteAccessHostUdpPortRange, "");
+    dict.SetString(key::kRemoteAccessHostClientDomain, std::string());
     dict.SetString(key::kRemoteAccessHostDomain, std::string());
     dict.SetBoolean(key::kRemoteAccessHostMatchUsername, false);
     dict.SetString(key::kRemoteAccessHostTalkGadgetPrefix,
@@ -251,6 +261,8 @@ class PolicyWatcherTest : public testing::Test {
     dict.SetString(key::kRemoteAccessHostTokenValidationCertificateIssuer, "");
     dict.SetBoolean(key::kRemoteAccessHostAllowClientPairing, true);
     dict.SetBoolean(key::kRemoteAccessHostAllowGnubbyAuth, true);
+    dict.SetBoolean(key::kRemoteAccessHostAllowUiAccessForRemoteAssistance,
+                    false);
 
     ASSERT_THAT(&dict, IsPolicies(&GetDefaultValues()))
         << "Sanity check that defaults expected by the test code "
@@ -487,6 +499,26 @@ TEST_F(PolicyWatcherTest, GnubbyAuth) {
   SetPolicies(gnubby_auth_true_);
 }
 
+TEST_F(PolicyWatcherTest, RemoteAssistanceUiAccess) {
+  testing::InSequence sequence;
+  EXPECT_CALL(mock_policy_callback_,
+              OnPolicyUpdatePtr(IsPolicies(&nat_true_others_default_)));
+#if defined(OS_WIN)
+  // This setting only affects Windows, it is ignored on other platforms so the
+  // 2 SetPolicies calls won't result in any calls to OnPolicyUpdate.
+  EXPECT_CALL(mock_policy_callback_,
+              OnPolicyUpdatePtr(IsPolicies(&remote_assistance_uiaccess_true_)));
+  EXPECT_CALL(
+      mock_policy_callback_,
+      OnPolicyUpdatePtr(IsPolicies(&remote_assistance_uiaccess_false_)));
+#endif  // defined(OS_WIN)
+
+  SetPolicies(empty_);
+  StartWatching();
+  SetPolicies(remote_assistance_uiaccess_true_);
+  SetPolicies(remote_assistance_uiaccess_false_);
+}
+
 TEST_F(PolicyWatcherTest, Relay) {
   testing::InSequence sequence;
   EXPECT_CALL(mock_policy_callback_,
@@ -612,6 +644,9 @@ TEST_F(PolicyWatcherTest, PolicySchemaAndPolicyWatcherShouldBeInSync) {
   // RemoteAccessHostMatchUsername is marked in policy_templates.json as not
   // supported on Windows and therefore is (by design) excluded from the schema.
   expected_schema.erase(key::kRemoteAccessHostMatchUsername);
+#else  // !defined(OS_WIN)
+  // RemoteAssistanceHostAllowUiAccess does not exist on non-Windows platforms.
+  expected_schema.erase(key::kRemoteAccessHostAllowUiAccessForRemoteAssistance);
 #endif
 
   std::map<std::string, base::Value::Type> actual_schema;
@@ -639,79 +674,14 @@ TEST_F(PolicyWatcherTest, SchemaTypeCheck) {
   const policy::Schema string_schema =
       schema->GetKnownProperty("RemoteAccessHostDomain");
   EXPECT_TRUE(string_schema.valid());
-  EXPECT_EQ(string_schema.type(), base::Value::Type::TYPE_STRING);
+  EXPECT_EQ(string_schema.type(), base::Value::Type::STRING);
 
   // And check one, random "boolean" policy to see if the type propagated
   // correctly from policy_templates.json file.
   const policy::Schema boolean_schema =
       schema->GetKnownProperty("RemoteAccessHostRequireCurtain");
   EXPECT_TRUE(boolean_schema.valid());
-  EXPECT_EQ(boolean_schema.type(), base::Value::Type::TYPE_BOOLEAN);
+  EXPECT_EQ(boolean_schema.type(), base::Value::Type::BOOLEAN);
 }
-
-// Unit tests cannot instantiate PolicyWatcher on ChromeOS
-// (as this requires running inside a browser process).
-#ifndef OS_CHROMEOS
-
-namespace {
-
-void OnPolicyUpdatedDumpPolicy(scoped_ptr<base::DictionaryValue> policies) {
-  VLOG(1) << "OnPolicyUpdated callback received the following policies:";
-
-  for (base::DictionaryValue::Iterator iter(*policies); !iter.IsAtEnd();
-       iter.Advance()) {
-    switch (iter.value().GetType()) {
-      case base::Value::Type::TYPE_STRING: {
-        std::string value;
-        CHECK(iter.value().GetAsString(&value));
-        VLOG(1) << iter.key() << " = "
-                << "string: " << '"' << value << '"';
-        break;
-      }
-      case base::Value::Type::TYPE_BOOLEAN: {
-        bool value;
-        CHECK(iter.value().GetAsBoolean(&value));
-        VLOG(1) << iter.key() << " = "
-                << "boolean: " << (value ? "True" : "False");
-        break;
-      }
-      default: {
-        VLOG(1) << iter.key() << " = "
-                << "unrecognized type";
-        break;
-      }
-    }
-  }
-}
-
-}  // anonymous namespace
-
-// To dump policy contents, run unit tests with the following flags:
-// out/Debug/remoting_unittests --gtest_filter=*TestRealChromotingPolicy* -v=1
-#if defined(ADDRESS_SANITIZER)
-// http://crbug.com/517918
-#define MAYBE_TestRealChromotingPolicy DISABLED_TestRealChromotingPolicy
-#else
-#define MAYBE_TestRealChromotingPolicy TestRealChromotingPolicy
-#endif
-TEST_F(PolicyWatcherTest, MAYBE_TestRealChromotingPolicy) {
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      base::MessageLoop::current()->task_runner();
-  scoped_ptr<PolicyWatcher> policy_watcher(
-      PolicyWatcher::Create(nullptr, task_runner));
-
-  {
-    base::RunLoop run_loop;
-    policy_watcher->StartWatching(base::Bind(OnPolicyUpdatedDumpPolicy),
-                                  base::Bind(base::DoNothing));
-    run_loop.RunUntilIdle();
-  }
-
-  // Today, the only verification offered by this test is:
-  // - Manual verification of policy values dumped by OnPolicyUpdatedDumpPolicy
-  // - Automated verification that nothing crashed
-}
-
-#endif
 
 }  // namespace remoting

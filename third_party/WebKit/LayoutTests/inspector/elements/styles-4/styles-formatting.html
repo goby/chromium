@@ -10,6 +10,19 @@ function test()
     var formattedStyle;
     var unformattedStyle;
 
+
+    InspectorTest.cssModel.addEventListener(SDK.CSSModel.Events.StyleSheetChanged, onStyleSheetChanged, this);
+
+    function onStyleSheetChanged(event)
+    {
+        if (!event.data || !event.data.edit)
+            return;
+        if (formattedStyle)
+            formattedStyle.rebase(event.data.edit);
+        if (unformattedStyle)
+            unformattedStyle.rebase(event.data.edit);
+    }
+
     InspectorTest.runTestSuite([
         function initFormattedStyle(next)
         {
@@ -262,13 +275,14 @@ function test()
 
 <style>
 
-#formatted { 
-    property1: value1;
-    property2: value2;
-    property3: value3
+#formatted {
+    /* leading comment */
+    color: red;   /* comment1 */
+    zoom: 1;/* comment2 */ /* like: property */
+    padding: 0
 }
 
-#unformatted {property1:value1;property2:value2;property3:value3;}
+#unformatted {/*leading comment*/color:red;zoom:1;padding:0;}
 
 </style>
 </head>

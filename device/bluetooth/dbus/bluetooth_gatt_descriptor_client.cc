@@ -4,11 +4,16 @@
 
 #include "device/bluetooth/dbus/bluetooth_gatt_descriptor_client.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/values.h"
 #include "dbus/bus.h"
 #include "dbus/object_manager.h"
+#include "dbus/values_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace bluez {
@@ -96,6 +101,11 @@ class BluetoothGattDescriptorClientImpl
         bluetooth_gatt_descriptor::kBluetoothGattDescriptorInterface,
         bluetooth_gatt_descriptor::kReadValue);
 
+    // Append empty option dict
+    dbus::MessageWriter writer(&method_call);
+    base::DictionaryValue dict;
+    dbus::AppendValueData(&writer, dict);
+
     object_proxy->CallMethodWithErrorCallback(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
         base::Bind(&BluetoothGattDescriptorClientImpl::OnValueSuccess,
@@ -106,7 +116,7 @@ class BluetoothGattDescriptorClientImpl
 
   // BluetoothGattDescriptorClientImpl override.
   void WriteValue(const dbus::ObjectPath& object_path,
-                  const std::vector<uint8>& value,
+                  const std::vector<uint8_t>& value,
                   const base::Closure& callback,
                   const ErrorCallback& error_callback) override {
     dbus::ObjectProxy* object_proxy =
@@ -121,6 +131,10 @@ class BluetoothGattDescriptorClientImpl
         bluetooth_gatt_descriptor::kWriteValue);
     dbus::MessageWriter writer(&method_call);
     writer.AppendArrayOfBytes(value.data(), value.size());
+
+    // Append empty option dict
+    base::DictionaryValue dict;
+    dbus::AppendValueData(&writer, dict);
 
     object_proxy->CallMethodWithErrorCallback(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
@@ -146,16 +160,16 @@ class BluetoothGattDescriptorClientImpl
   void ObjectAdded(const dbus::ObjectPath& object_path,
                    const std::string& interface_name) override {
     VLOG(2) << "Remote GATT descriptor added: " << object_path.value();
-    FOR_EACH_OBSERVER(BluetoothGattDescriptorClient::Observer, observers_,
-                      GattDescriptorAdded(object_path));
+    for (auto& observer : observers_)
+      observer.GattDescriptorAdded(object_path);
   }
 
   // dbus::ObjectManager::Interface override.
   void ObjectRemoved(const dbus::ObjectPath& object_path,
                      const std::string& interface_name) override {
     VLOG(2) << "Remote GATT descriptor removed: " << object_path.value();
-    FOR_EACH_OBSERVER(BluetoothGattDescriptorClient::Observer, observers_,
-                      GattDescriptorRemoved(object_path));
+    for (auto& observer : observers_)
+      observer.GattDescriptorRemoved(object_path);
   }
 
  protected:
@@ -177,9 +191,8 @@ class BluetoothGattDescriptorClientImpl
                                  const std::string& property_name) {
     VLOG(2) << "Remote GATT descriptor property changed: "
             << object_path.value() << ": " << property_name;
-    FOR_EACH_OBSERVER(
-        BluetoothGattDescriptorClient::Observer, observers_,
-        GattDescriptorPropertyChanged(object_path, property_name));
+    for (auto& observer : observers_)
+      observer.GattDescriptorPropertyChanged(object_path, property_name);
   }
 
   // Called when a response for a successful method call is received.
@@ -194,13 +207,13 @@ class BluetoothGattDescriptorClientImpl
     DCHECK(response);
     dbus::MessageReader reader(response);
 
-    const uint8* bytes = NULL;
+    const uint8_t* bytes = NULL;
     size_t length = 0;
 
     if (!reader.PopArrayOfBytes(&bytes, &length))
       VLOG(2) << "Error reading array of bytes in ValueCallback";
 
-    std::vector<uint8> value;
+    std::vector<uint8_t> value;
 
     if (bytes)
       value.assign(bytes, bytes + length);

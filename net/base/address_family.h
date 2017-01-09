@@ -5,10 +5,11 @@
 #ifndef NET_BASE_ADDRESS_FAMILY_H_
 #define NET_BASE_ADDRESS_FAMILY_H_
 
-#include "net/base/ip_address_number.h"
 #include "net/base/net_export.h"
 
 namespace net {
+
+class IPAddress;
 
 // Enum wrapper around the address family types supported by host resolver
 // procedures.
@@ -34,7 +35,7 @@ enum {
 typedef int HostResolverFlags;
 
 // Returns AddressFamily for |address|.
-NET_EXPORT AddressFamily GetAddressFamily(const IPAddressNumber& address);
+NET_EXPORT AddressFamily GetAddressFamily(const IPAddress& address);
 
 // Maps the given AddressFamily to either AF_INET, AF_INET6 or AF_UNSPEC.
 NET_EXPORT int ConvertAddressFamily(AddressFamily address_family);

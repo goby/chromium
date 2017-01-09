@@ -5,6 +5,7 @@
 #ifndef REMOTING_TEST_FAKE_HOST_LIST_FETCHER_H_
 #define REMOTING_TEST_FAKE_HOST_LIST_FETCHER_H_
 
+#include "base/macros.h"
 #include "remoting/test/host_list_fetcher.h"
 
 namespace remoting {
@@ -19,6 +20,7 @@ class FakeHostListFetcher : public HostListFetcher {
 
   // HostListFetcher interface.
   void RetrieveHostlist(const std::string& access_token,
+                        const std::string& target_url,
                         const HostlistCallback& callback) override;
 
   void set_retrieved_host_list(const std::vector<HostInfo>& host_list) {

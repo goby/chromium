@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/HTMLWBRElement.h"
 
 #include "core/HTMLNames.h"
@@ -39,15 +38,12 @@ namespace blink {
 using namespace HTMLNames;
 
 inline HTMLWBRElement::HTMLWBRElement(Document& document)
-    : HTMLElement(wbrTag, document)
-{
-}
+    : HTMLElement(wbrTag, document) {}
 
 DEFINE_NODE_FACTORY(HTMLWBRElement)
 
-LayoutObject* HTMLWBRElement::createLayoutObject(const ComputedStyle& style)
-{
-    return new LayoutWordBreak(this);
+LayoutObject* HTMLWBRElement::createLayoutObject(const ComputedStyle& style) {
+  return new LayoutWordBreak(this);
 }
 
-}
+}  // namespace blink

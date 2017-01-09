@@ -9,6 +9,7 @@
 
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/macros.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -19,7 +20,8 @@ namespace test_server {
 // The C++ side of the Java EmbeddedTestServer.
 class EmbeddedTestServerAndroid {
  public:
-  EmbeddedTestServerAndroid(JNIEnv* env, jobject obj);
+  EmbeddedTestServerAndroid(JNIEnv* env,
+                            const base::android::JavaRef<jobject>& obj);
   ~EmbeddedTestServerAndroid();
 
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
@@ -34,6 +36,11 @@ class EmbeddedTestServerAndroid {
       JNIEnv* jenv,
       const base::android::JavaParamRef<jobject>& jobj,
       const base::android::JavaParamRef<jstring>& jrelative_url) const;
+
+  void AddDefaultHandlers(
+      JNIEnv* jenv,
+      const base::android::JavaParamRef<jobject>& jobj,
+      const base::android::JavaParamRef<jstring>& jdirectory_path);
 
   void ServeFilesFromDirectory(
       JNIEnv* env,

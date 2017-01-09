@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_UPDATE_CLIENT_UPDATE_RESPONSE_H_
 #define COMPONENTS_UPDATE_CLIENT_UPDATE_RESPONSE_H_
 
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,7 +16,7 @@
 namespace update_client {
 
 // Parses responses for the update protocol version 3.
-// (http://code.google.com/p/omaha/wiki/ServerProtocol)
+// (https://github.com/google/omaha/blob/wiki/ServerProtocolV3.md)
 //
 // An update response looks like this:
 //
@@ -62,6 +64,7 @@ class UpdateResponse {
     struct Manifest {
       struct Package {
         Package();
+        Package(const Package& other);
         ~Package();
 
         std::string fingerprint;
@@ -78,6 +81,7 @@ class UpdateResponse {
       };
 
       Manifest();
+      Manifest(const Manifest& other);
       ~Manifest();
 
       std::string version;
@@ -86,6 +90,7 @@ class UpdateResponse {
     };
 
     Result();
+    Result(const Result& other);
     ~Result();
 
     std::string extension_id;
@@ -96,15 +101,27 @@ class UpdateResponse {
     std::vector<GURL> crx_diffurls;
 
     Manifest manifest;
+
+    // The server has instructed the client to set its [key] to [value] for each
+    // key-value pair in this string.
+    std::map<std::string, std::string> cohort_attrs;
+
+    // The following are the only allowed keys in |cohort_attrs|.
+    static const char kCohort[];
+    static const char kCohortHint[];
+    static const char kCohortName[];
   };
 
   static const int kNoDaystart = -1;
   struct Results {
     Results();
+    Results(const Results& other);
     ~Results();
 
     // This will be >= 0, or kNoDaystart if the <daystart> tag was not present.
     int daystart_elapsed_seconds;
+    // This will be >= 0, or kNoDaystart if the <daystart> tag was not present.
+    int daystart_elapsed_days;
     std::vector<Result> list;
   };
 

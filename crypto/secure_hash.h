@@ -5,13 +5,12 @@
 #ifndef CRYPTO_SECURE_HASH_H_
 #define CRYPTO_SECURE_HASH_H_
 
-#include "base/basictypes.h"
-#include "crypto/crypto_export.h"
+#include <stddef.h>
 
-namespace base {
-class Pickle;
-class PickleIterator;
-}
+#include <memory>
+
+#include "base/macros.h"
+#include "crypto/crypto_export.h"
 
 namespace crypto {
 
@@ -24,21 +23,16 @@ class CRYPTO_EXPORT SecureHash {
   };
   virtual ~SecureHash() {}
 
-  static SecureHash* Create(Algorithm type);
+  static std::unique_ptr<SecureHash> Create(Algorithm type);
 
   virtual void Update(const void* input, size_t len) = 0;
   virtual void Finish(void* output, size_t len) = 0;
+  virtual size_t GetHashLength() const = 0;
 
-  // Serialize the context, so it can be restored at a later time.
-  // |pickle| will contain the serialized data.
-  // Returns whether or not |pickle| was filled.
-  virtual bool Serialize(base::Pickle* pickle) = 0;
-
-  // Restore the context that was saved earlier.
-  // |data_iterator| allows this to be used as part of a larger pickle.
-  // |pickle| holds the saved data.
-  // Returns success or failure.
-  virtual bool Deserialize(base::PickleIterator* data_iterator) = 0;
+  // Create a clone of this SecureHash. The returned clone and this both
+  // represent the same hash state. But from this point on, calling
+  // Update()/Finish() on either doesn't affect the state of the other.
+  virtual std::unique_ptr<SecureHash> Clone() const = 0;
 
  protected:
   SecureHash() {}

@@ -5,7 +5,11 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_CAMERA_DEVICE_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_CAMERA_DEVICE_HOST_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/ppb_buffer_impl.h"
 #include "ppapi/c/pp_size.h"
@@ -51,7 +55,7 @@ class PepperCameraDeviceHost : public ppapi::host::ResourceHost {
   // Utility methods.
   void DetachPlatformCameraDevice();
 
-  scoped_ptr<PepperPlatformCameraDevice> platform_camera_device_;
+  std::unique_ptr<PepperPlatformCameraDevice> platform_camera_device_;
 
   RendererPpapiHostImpl* renderer_ppapi_host_;
 

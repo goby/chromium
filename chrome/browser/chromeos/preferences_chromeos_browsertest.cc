@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
 #include <sys/types.h>
 
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/input_method/input_method_manager_impl.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
@@ -23,6 +23,7 @@
 #include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/feedback/tracing_manager.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -41,7 +42,7 @@ const char* const kTestUsers[] = {"test-user1@gmail.com",
 class PreferencesTest : public LoginManagerTest {
  public:
   PreferencesTest()
-      : LoginManagerTest(true), input_settings_(NULL), keyboard_(NULL) {
+      : LoginManagerTest(true), input_settings_(nullptr), keyboard_(nullptr) {
     for (size_t i = 0; i < arraysize(kTestUsers); ++i) {
       test_users_.push_back(AccountId::FromUserEmail(kTestUsers[i]));
     }
@@ -54,8 +55,8 @@ class PreferencesTest : public LoginManagerTest {
 
   void SetUpOnMainThread() override {
     LoginManagerTest::SetUpOnMainThread();
-    input_settings_ = new system::FakeInputDeviceSettings();
-    system::InputDeviceSettings::SetSettingsForTesting(input_settings_);
+    input_settings_ = system::InputDeviceSettings::Get()->GetFakeInterface();
+    EXPECT_NE(nullptr, input_settings_);
     keyboard_ = new input_method::FakeImeKeyboard();
     static_cast<input_method::InputMethodManagerImpl*>(
         input_method::InputMethodManager::Get())
@@ -134,7 +135,7 @@ class PreferencesTest : public LoginManagerTest {
   std::vector<AccountId> test_users_;
 
  private:
-  system::FakeInputDeviceSettings* input_settings_;
+  system::InputDeviceSettings::FakeInterface* input_settings_;
   input_method::FakeImeKeyboard* keyboard_;
 
   DISALLOW_COPY_AND_ASSIGN(PreferencesTest);
@@ -177,7 +178,7 @@ IN_PROC_BROWSER_TEST_F(PreferencesTest, MultiProfiles) {
 
   // Check that changing prefs of the active user doesn't affect prefs of the
   // inactive user.
-  scoped_ptr<base::DictionaryValue> prefs_backup =
+  std::unique_ptr<base::DictionaryValue> prefs_backup =
       prefs1->GetPreferenceValues();
   SetPrefs(prefs2, false);
   CheckSettingsCorrespondToPrefs(prefs2);

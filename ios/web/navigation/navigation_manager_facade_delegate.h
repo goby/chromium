@@ -5,13 +5,14 @@
 #ifndef IOS_WEB_NAVIGATION_NAVIGATION_MANAGER_FACADE_DELEGATE_H_
 #define IOS_WEB_NAVIGATION_NAVIGATION_MANAGER_FACADE_DELEGATE_H_
 
+#include <stddef.h>
+
 namespace content {
 class NavigationController;
 }
 
 namespace web {
 
-class NavigationItemImpl;
 class NavigationManagerImpl;
 
 // Interface used by the NavigationManager to drive the NavigationController

@@ -5,6 +5,7 @@
 #include "content/public/common/pepper_plugin_info.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "base/version.h"
 
 namespace content {
 
@@ -17,9 +18,11 @@ PepperPluginInfo::EntryPoints::EntryPoints()
 PepperPluginInfo::PepperPluginInfo()
     : is_internal(false),
       is_out_of_process(false),
-      is_debug(false),
+      is_external(false),
       permissions(0) {
 }
+
+PepperPluginInfo::PepperPluginInfo(const PepperPluginInfo& other) = default;
 
 PepperPluginInfo::~PepperPluginInfo() {
 }

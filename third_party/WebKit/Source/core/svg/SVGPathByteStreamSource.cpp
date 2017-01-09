@@ -17,76 +17,60 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/svg/SVGPathByteStreamSource.h"
 
 namespace blink {
 
-bool SVGPathByteStreamSource::hasMoreData() const
-{
-    return m_streamCurrent < m_streamEnd;
-}
+PathSegmentData SVGPathByteStreamSource::parseSegment() {
+  ASSERT(hasMoreData());
+  PathSegmentData segment;
+  segment.command = static_cast<SVGPathSegType>(readSVGSegmentType());
 
-SVGPathSegType SVGPathByteStreamSource::peekSegmentType()
-{
-    ASSERT(hasMoreData());
-    ASSERT(m_streamCurrent + sizeof(unsigned short) <= m_streamEnd);
-    unsigned short commandBytes;
-    memcpy(&commandBytes, m_streamCurrent, sizeof(commandBytes));
-    return static_cast<SVGPathSegType>(commandBytes);
-}
-
-PathSegmentData SVGPathByteStreamSource::parseSegment()
-{
-    ASSERT(hasMoreData());
-    PathSegmentData segment;
-    segment.command = static_cast<SVGPathSegType>(readSVGSegmentType());
-
-    switch (segment.command) {
+  switch (segment.command) {
     case PathSegCurveToCubicRel:
     case PathSegCurveToCubicAbs:
-        segment.point1 = readFloatPoint();
-        /* fall through */
+      segment.point1 = readFloatPoint();
+    /* fall through */
     case PathSegCurveToCubicSmoothRel:
     case PathSegCurveToCubicSmoothAbs:
-        segment.point2 = readFloatPoint();
-        /* fall through */
+      segment.point2 = readFloatPoint();
+    /* fall through */
     case PathSegMoveToRel:
     case PathSegMoveToAbs:
     case PathSegLineToRel:
     case PathSegLineToAbs:
     case PathSegCurveToQuadraticSmoothRel:
     case PathSegCurveToQuadraticSmoothAbs:
-        segment.targetPoint = readFloatPoint();
-        break;
+      segment.targetPoint = readFloatPoint();
+      break;
     case PathSegLineToHorizontalRel:
     case PathSegLineToHorizontalAbs:
-        segment.targetPoint.setX(readFloat());
-        break;
+      segment.targetPoint.setX(readFloat());
+      break;
     case PathSegLineToVerticalRel:
     case PathSegLineToVerticalAbs:
-        segment.targetPoint.setY(readFloat());
-        break;
+      segment.targetPoint.setY(readFloat());
+      break;
     case PathSegClosePath:
-        break;
+      break;
     case PathSegCurveToQuadraticRel:
     case PathSegCurveToQuadraticAbs:
-        segment.point1 = readFloatPoint();
-        segment.targetPoint = readFloatPoint();
-        break;
+      segment.point1 = readFloatPoint();
+      segment.targetPoint = readFloatPoint();
+      break;
     case PathSegArcRel:
     case PathSegArcAbs: {
-        segment.arcRadii() = readFloatPoint();
-        segment.setArcAngle(readFloat());
-        segment.arcLarge = readFlag();
-        segment.arcSweep = readFlag();
-        segment.targetPoint = readFloatPoint();
-        break;
+      segment.arcRadii() = readFloatPoint();
+      segment.setArcAngle(readFloat());
+      segment.arcLarge = readFlag();
+      segment.arcSweep = readFlag();
+      segment.targetPoint = readFloatPoint();
+      break;
     }
     default:
-        ASSERT_NOT_REACHED();
-    }
-    return segment;
+      ASSERT_NOT_REACHED();
+  }
+  return segment;
 }
 
-}
+}  // namespace blink

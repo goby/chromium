@@ -5,8 +5,7 @@
 #ifndef UI_OZONE_PLATFORM_DRM_COMMON_SCOPED_DRM_TYPES_H_
 #define UI_OZONE_PLATFORM_DRM_COMMON_SCOPED_DRM_TYPES_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "ui/ozone/ozone_export.h"
+#include <memory>
 
 typedef struct _drmModeConnector drmModeConnector;
 typedef struct _drmModeCrtc drmModeCrtc;
@@ -22,57 +21,62 @@ typedef struct _drmModeRes drmModeRes;
 
 namespace ui {
 
-struct OZONE_EXPORT DrmResourcesDeleter {
+struct DrmResourcesDeleter {
   void operator()(drmModeRes* resources) const;
 };
-struct OZONE_EXPORT DrmConnectorDeleter {
+struct DrmConnectorDeleter {
   void operator()(drmModeConnector* connector) const;
 };
-struct OZONE_EXPORT DrmCrtcDeleter {
+struct DrmCrtcDeleter {
   void operator()(drmModeCrtc* crtc) const;
 };
-struct OZONE_EXPORT DrmEncoderDeleter {
+struct DrmEncoderDeleter {
   void operator()(drmModeEncoder* encoder) const;
 };
-struct OZONE_EXPORT DrmObjectPropertiesDeleter {
+struct DrmObjectPropertiesDeleter {
   void operator()(drmModeObjectProperties* properties) const;
 };
-struct OZONE_EXPORT DrmPlaneDeleter {
+struct DrmPlaneDeleter {
   void operator()(drmModePlane* plane) const;
 };
-struct OZONE_EXPORT DrmPlaneResDeleter {
+struct DrmPlaneResDeleter {
   void operator()(drmModePlaneRes* plane_res) const;
 };
-struct OZONE_EXPORT DrmPropertyDeleter {
+struct DrmPropertyDeleter {
   void operator()(drmModePropertyRes* property) const;
 };
 #if defined(USE_DRM_ATOMIC)
-struct OZONE_EXPORT DrmAtomicReqDeleter {
+struct DrmAtomicReqDeleter {
   void operator()(drmModeAtomicReq* property) const;
 };
 #endif  // defined(USE_DRM_ATOMIC)
-struct OZONE_EXPORT DrmPropertyBlobDeleter {
+struct DrmPropertyBlobDeleter {
   void operator()(drmModePropertyBlobRes* property) const;
 };
-struct OZONE_EXPORT DrmFramebufferDeleter {
+struct DrmFramebufferDeleter {
   void operator()(drmModeFB* framebuffer) const;
 };
 
-typedef scoped_ptr<drmModeRes, DrmResourcesDeleter> ScopedDrmResourcesPtr;
-typedef scoped_ptr<drmModeConnector, DrmConnectorDeleter> ScopedDrmConnectorPtr;
-typedef scoped_ptr<drmModeCrtc, DrmCrtcDeleter> ScopedDrmCrtcPtr;
-typedef scoped_ptr<drmModeEncoder, DrmEncoderDeleter> ScopedDrmEncoderPtr;
-typedef scoped_ptr<drmModeObjectProperties, DrmObjectPropertiesDeleter>
+typedef std::unique_ptr<drmModeRes, DrmResourcesDeleter> ScopedDrmResourcesPtr;
+typedef std::unique_ptr<drmModeConnector, DrmConnectorDeleter>
+    ScopedDrmConnectorPtr;
+typedef std::unique_ptr<drmModeCrtc, DrmCrtcDeleter> ScopedDrmCrtcPtr;
+typedef std::unique_ptr<drmModeEncoder, DrmEncoderDeleter> ScopedDrmEncoderPtr;
+typedef std::unique_ptr<drmModeObjectProperties, DrmObjectPropertiesDeleter>
     ScopedDrmObjectPropertyPtr;
-typedef scoped_ptr<drmModePlane, DrmPlaneDeleter> ScopedDrmPlanePtr;
-typedef scoped_ptr<drmModePlaneRes, DrmPlaneResDeleter> ScopedDrmPlaneResPtr;
-typedef scoped_ptr<drmModePropertyRes, DrmPropertyDeleter> ScopedDrmPropertyPtr;
+typedef std::unique_ptr<drmModePlane, DrmPlaneDeleter> ScopedDrmPlanePtr;
+typedef std::unique_ptr<drmModePlaneRes, DrmPlaneResDeleter>
+    ScopedDrmPlaneResPtr;
+typedef std::unique_ptr<drmModePropertyRes, DrmPropertyDeleter>
+    ScopedDrmPropertyPtr;
 #if defined(USE_DRM_ATOMIC)
-typedef scoped_ptr<drmModeAtomicReq, DrmAtomicReqDeleter> ScopedDrmAtomicReqPtr;
+typedef std::unique_ptr<drmModeAtomicReq, DrmAtomicReqDeleter>
+    ScopedDrmAtomicReqPtr;
 #endif  // defined(USE_DRM_ATOMIC)
-typedef scoped_ptr<drmModePropertyBlobRes, DrmPropertyBlobDeleter>
+typedef std::unique_ptr<drmModePropertyBlobRes, DrmPropertyBlobDeleter>
     ScopedDrmPropertyBlobPtr;
-typedef scoped_ptr<drmModeFB, DrmFramebufferDeleter> ScopedDrmFramebufferPtr;
+typedef std::unique_ptr<drmModeFB, DrmFramebufferDeleter>
+    ScopedDrmFramebufferPtr;
 
 }  // namespace ui
 

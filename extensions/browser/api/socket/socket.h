@@ -5,12 +5,15 @@
 #ifndef EXTENSIONS_BROWSER_API_SOCKET_SOCKET_H_
 #define EXTENSIONS_BROWSER_API_SOCKET_SOCKET_H_
 
+#include <stdint.h>
+
 #include <queue>
 #include <string>
 #include <utility>
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 #include "extensions/browser/api/api_resource.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "net/base/completion_callback.h"
@@ -30,15 +33,17 @@ class Socket;
 
 namespace extensions {
 
-typedef base::Callback<void(int)> CompletionCallback;
-typedef base::Callback<void(int, scoped_refptr<net::IOBuffer> io_buffer)>
-    ReadCompletionCallback;
-typedef base::Callback<void(int,
-                            scoped_refptr<net::IOBuffer> io_buffer,
-                            const std::string&,
-                            uint16)> RecvFromCompletionCallback;
-typedef base::Callback<void(int, net::TCPClientSocket*)>
-    AcceptCompletionCallback;
+using CompletionCallback = base::Callback<void(int)>;
+using ReadCompletionCallback = base::Callback<
+    void(int, scoped_refptr<net::IOBuffer> io_buffer, bool socket_destroying)>;
+using RecvFromCompletionCallback =
+    base::Callback<void(int,
+                        scoped_refptr<net::IOBuffer> io_buffer,
+                        bool socket_destroying,
+                        const std::string&,
+                        uint16_t)>;
+using AcceptCompletionCallback =
+    base::Callback<void(int, std::unique_ptr<net::TCPClientSocket>)>;
 
 // A Socket wraps a low-level socket and includes housekeeping information that
 // we need to manage it in the context of an extension.
@@ -61,9 +66,9 @@ class Socket : public ApiResource {
 
 #if defined(OS_CHROMEOS)
   void set_firewall_hole(
-      scoped_ptr<AppFirewallHole, content::BrowserThread::DeleteOnUIThread>
+      std::unique_ptr<AppFirewallHole, content::BrowserThread::DeleteOnUIThread>
           firewall_hole) {
-    firewall_hole_ = firewall_hole.Pass();
+    firewall_hole_ = std::move(firewall_hole);
   }
 #endif  // OS_CHROMEOS
 
@@ -72,8 +77,10 @@ class Socket : public ApiResource {
   // must also supply the hostname of the endpoint via set_hostname().
   virtual void Connect(const net::AddressList& address,
                        const CompletionCallback& callback) = 0;
-  virtual void Disconnect() = 0;
-  virtual int Bind(const std::string& address, uint16 port) = 0;
+  // |socket_destroying| is true if disconnect is due to destruction of the
+  // socket.
+  virtual void Disconnect(bool socket_destroying) = 0;
+  virtual int Bind(const std::string& address, uint16_t port) = 0;
 
   // The |callback| will be called with the number of bytes read into the
   // buffer, or a negative number if an error occurred.
@@ -95,7 +102,7 @@ class Socket : public ApiResource {
   virtual bool SetKeepAlive(bool enable, int delay);
   virtual bool SetNoDelay(bool no_delay);
   virtual int Listen(const std::string& address,
-                     uint16 port,
+                     uint16_t port,
                      int backlog,
                      std::string* error_msg);
   virtual void Accept(const AcceptCompletionCallback& callback);
@@ -108,11 +115,11 @@ class Socket : public ApiResource {
   virtual SocketType GetSocketType() const = 0;
 
   static bool StringAndPortToIPEndPoint(const std::string& ip_address_str,
-                                        uint16 port,
+                                        uint16_t port,
                                         net::IPEndPoint* ip_end_point);
   static void IPEndPointToStringAndPort(const net::IPEndPoint& address,
                                         std::string* ip_address_str,
-                                        uint16* port);
+                                        uint16_t* port);
 
  protected:
   explicit Socket(const std::string& owner_extension_id_);
@@ -134,6 +141,7 @@ class Socket : public ApiResource {
     WriteRequest(scoped_refptr<net::IOBuffer> io_buffer,
                  int byte_count,
                  const CompletionCallback& callback);
+    WriteRequest(const WriteRequest& other);
     ~WriteRequest();
     scoped_refptr<net::IOBuffer> io_buffer;
     int byte_count;
@@ -145,7 +153,7 @@ class Socket : public ApiResource {
 
 #if defined(OS_CHROMEOS)
   // Represents a hole punched in the system firewall for this socket.
-  scoped_ptr<AppFirewallHole, content::BrowserThread::DeleteOnUIThread>
+  std::unique_ptr<AppFirewallHole, content::BrowserThread::DeleteOnUIThread>
       firewall_hole_;
 #endif  // OS_CHROMEOS
 };

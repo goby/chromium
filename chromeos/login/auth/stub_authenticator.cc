@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace chromeos {
 
@@ -75,8 +75,17 @@ void StubAuthenticator::LoginAsPublicSession(const UserContext& user_context) {
 }
 
 void StubAuthenticator::LoginAsKioskAccount(
-    const std::string& /* app_user_id */,
+    const AccountId& /* app_account_id */,
     bool use_guest_mount) {
+  UserContext user_context(expected_user_context_.GetAccountId());
+  user_context.SetIsUsingOAuth(false);
+  user_context.SetUserIDHash(
+      expected_user_context_.GetAccountId().GetUserEmail() + kUserIdHashSuffix);
+  consumer_->OnAuthSuccess(user_context);
+}
+
+void StubAuthenticator::LoginAsArcKioskAccount(
+    const AccountId& /* app_account_id */) {
   UserContext user_context(expected_user_context_.GetAccountId());
   user_context.SetIsUsingOAuth(false);
   user_context.SetUserIDHash(

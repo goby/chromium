@@ -4,17 +4,18 @@
 
 #include "components/component_updater/configurator_impl.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/command_line.h"
-#include "base/compiler_specific.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "components/component_updater/component_updater_switches.h"
 #include "components/component_updater/component_updater_url_constants.h"
-#include "components/update_client/configurator.h"
+#include "components/update_client/utils.h"
 #include "components/version_info/version_info.h"
 
 #if defined(OS_WIN)
@@ -24,12 +25,15 @@
 namespace component_updater {
 
 namespace {
+
 // Default time constants.
 const int kDelayOneMinute = 60;
 const int kDelayOneHour = kDelayOneMinute * 60;
 
-// Debug values you can pass to --component-updater=value1,value2.
-// Speed up component checking.
+// Debug values you can pass to --component-updater=value1,value2. Do not
+// use these values in production code.
+
+// Speed up the initial component checking.
 const char kSwitchFastUpdate[] = "fast-update";
 
 // Add "testrequest=1" attribute to the update check request.
@@ -57,19 +61,6 @@ bool HasSwitchValue(const std::vector<std::string>& vec, const char* test) {
   return (std::find(vec.begin(), vec.end(), test) != vec.end());
 }
 
-// Returns true if falling back on an alternate, unsafe, service URL is
-// allowed. In the fallback case, the security of the component update relies
-// only on the integrity of the CRX payloads, which is self-validating.
-// This is allowed only for some of the pre-Windows Vista versions not including
-// Windows XP SP3. As a side note, pings could be sent to the alternate URL too.
-bool CanUseAltUrlSource() {
-#if defined(OS_WIN)
-  return !base::win::MaybeHasSHA256Support();
-#else
-  return false;
-#endif  // OS_WIN
-}
-
 // If there is an element of |vec| of the form |test|=.*, returns the right-
 // hand side of that assignment. Otherwise, returns an empty string.
 // The right-hand side may contain additional '=' characters, allowing for
@@ -94,13 +85,14 @@ std::string GetSwitchArgument(const std::vector<std::string>& vec,
 
 ConfiguratorImpl::ConfiguratorImpl(
     const base::CommandLine* cmdline,
-    net::URLRequestContextGetter* url_request_getter)
+    net::URLRequestContextGetter* url_request_getter,
+    bool require_encryption)
     : url_request_getter_(url_request_getter),
       fast_update_(false),
       pings_enabled_(false),
       deltas_enabled_(false),
       background_downloads_enabled_(false),
-      fallback_to_alt_source_url_enabled_(false) {
+      require_encryption_(require_encryption) {
   // Parse comma-delimited debug flags.
   std::vector<std::string> switch_values = base::SplitString(
       cmdline->GetSwitchValueASCII(switches::kComponentUpdater), ",",
@@ -125,8 +117,6 @@ ConfiguratorImpl::ConfiguratorImpl(
 
   if (HasSwitchValue(switch_values, kSwitchRequestParam))
     extra_info_ += "testrequest=\"1\"";
-
-  fallback_to_alt_source_url_enabled_ = CanUseAltUrlSource();
 }
 
 ConfiguratorImpl::~ConfiguratorImpl() {}
@@ -136,11 +126,11 @@ int ConfiguratorImpl::InitialDelay() const {
 }
 
 int ConfiguratorImpl::NextCheckDelay() const {
-  return fast_update_ ? 60 : (6 * kDelayOneHour);
+  return 6 * kDelayOneHour;
 }
 
 int ConfiguratorImpl::StepDelay() const {
-  return fast_update_ ? 1 : 1;
+  return 1;
 }
 
 int ConfiguratorImpl::OnDemandDelay() const {
@@ -155,12 +145,14 @@ std::vector<GURL> ConfiguratorImpl::UpdateUrl() const {
   std::vector<GURL> urls;
   if (url_source_override_.is_valid()) {
     urls.push_back(GURL(url_source_override_));
-  } else {
-    urls.push_back(GURL(kUpdaterDefaultUrl));
-    if (fallback_to_alt_source_url_enabled_) {
-      urls.push_back(GURL(kUpdaterAltUrl));
-    }
+    return urls;
   }
+
+  urls.push_back(GURL(kUpdaterDefaultUrl));
+  urls.push_back(GURL(kUpdaterFallbackUrl));
+  if (require_encryption_)
+    update_client::RemoveUnsecureUrls(&urls);
+
   return urls;
 }
 
@@ -180,20 +172,28 @@ std::string ConfiguratorImpl::ExtraRequestParams() const {
   return extra_info_;
 }
 
+std::string ConfiguratorImpl::GetDownloadPreference() const {
+  return std::string();
+}
+
 net::URLRequestContextGetter* ConfiguratorImpl::RequestContext() const {
   return url_request_getter_;
 }
 
-bool ConfiguratorImpl::DeltasEnabled() const {
+bool ConfiguratorImpl::EnabledDeltas() const {
   return deltas_enabled_;
 }
 
-bool ConfiguratorImpl::UseBackgroundDownloader() const {
+bool ConfiguratorImpl::EnabledComponentUpdates() const {
+  return true;
+}
+
+bool ConfiguratorImpl::EnabledBackgroundDownloader() const {
   return background_downloads_enabled_;
 }
 
-void ConfiguratorImpl::set_enable_alt_source_url(bool enable_alt_source_url) {
-  fallback_to_alt_source_url_enabled_ = enable_alt_source_url;
+bool ConfiguratorImpl::EnabledCupSigning() const {
+  return true;
 }
 
 }  // namespace component_updater

@@ -7,6 +7,7 @@
 
 #include <cmath>
 
+#include "media/base/audio_timestamp_helper.h"
 #include "media/base/fake_audio_render_callback.h"
 
 namespace media {
@@ -14,7 +15,7 @@ namespace media {
 FakeAudioRenderCallback::FakeAudioRenderCallback(double step)
     : half_fill_(false),
       step_(step),
-      last_audio_delay_milliseconds_(-1),
+      last_frames_delayed_(-1),
       last_channel_count_(-1),
       volume_(1) {
   reset();
@@ -22,9 +23,28 @@ FakeAudioRenderCallback::FakeAudioRenderCallback(double step)
 
 FakeAudioRenderCallback::~FakeAudioRenderCallback() {}
 
-int FakeAudioRenderCallback::Render(AudioBus* audio_bus,
-                                    int audio_delay_milliseconds) {
-  last_audio_delay_milliseconds_ = audio_delay_milliseconds;
+int FakeAudioRenderCallback::Render(base::TimeDelta delay,
+                                    base::TimeTicks delay_timestamp,
+                                    int prior_frames_skipped,
+                                    AudioBus* audio_bus) {
+  const int kSampleRate = 48000;
+  auto frames_delayed = AudioTimestampHelper::TimeToFrames(delay, kSampleRate);
+  return RenderInternal(audio_bus, frames_delayed, volume_);
+}
+
+double FakeAudioRenderCallback::ProvideInput(AudioBus* audio_bus,
+                                             uint32_t frames_delayed) {
+  // Volume should only be applied by the caller to ProvideInput, so don't bake
+  // it into the rendered audio.
+  RenderInternal(audio_bus, frames_delayed, 1.0);
+  return volume_;
+}
+
+int FakeAudioRenderCallback::RenderInternal(AudioBus* audio_bus,
+                                            uint32_t frames_delayed,
+                                            double volume) {
+  DCHECK_LE(frames_delayed, static_cast<uint32_t>(INT_MAX));
+  last_frames_delayed_ = static_cast<int>(frames_delayed);
   last_channel_count_ = audio_bus->channels();
 
   int number_of_frames = audio_bus->frames();
@@ -33,21 +53,16 @@ int FakeAudioRenderCallback::Render(AudioBus* audio_bus,
 
   // Fill first channel with a sine wave.
   for (int i = 0; i < number_of_frames; ++i)
-    audio_bus->channel(0)[i] = sin(2 * M_PI * (x_ + step_ * i));
+    audio_bus->channel(0)[i] = sin(2 * M_PI * (x_ + step_ * i)) * volume;
   x_ += number_of_frames * step_;
 
   // Copy first channel into the rest of the channels.
-  for (int i = 1; i < audio_bus->channels(); ++i)
+  for (int i = 1; i < audio_bus->channels(); ++i) {
     memcpy(audio_bus->channel(i), audio_bus->channel(0),
            number_of_frames * sizeof(*audio_bus->channel(i)));
+  }
 
   return number_of_frames;
-}
-
-double FakeAudioRenderCallback::ProvideInput(AudioBus* audio_bus,
-                                             base::TimeDelta buffer_delay) {
-  Render(audio_bus, buffer_delay.InMillisecondsF() + 0.5);
-  return volume_;
 }
 
 }  // namespace media

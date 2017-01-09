@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "url/gurl.h"
 #include "url/url_canon.h"
@@ -221,7 +223,7 @@ bool URLMatcherCondition::IsMatch(
     const std::set<StringPattern::ID>& matching_patterns,
     const GURL& url) const {
   DCHECK(string_pattern_);
-  if (!ContainsKey(matching_patterns, string_pattern_->id()))
+  if (!base::ContainsKey(matching_patterns, string_pattern_->id()))
     return false;
   // The criteria HOST_CONTAINS, PATH_CONTAINS, QUERY_CONTAINS are based on
   // a substring match on the raw URL. In case of a match, we need to verify
@@ -261,9 +263,6 @@ const char kQuerySeparator = '&';
 URLMatcherConditionFactory::URLMatcherConditionFactory() : id_counter_(0) {}
 
 URLMatcherConditionFactory::~URLMatcherConditionFactory() {
-  STLDeleteElements(&substring_pattern_singletons_);
-  STLDeleteElements(&regex_pattern_singletons_);
-  STLDeleteElements(&origin_and_path_regex_pattern_singletons_);
 }
 
 std::string URLMatcherConditionFactory::CanonicalizeURLForComponentSearches(
@@ -462,32 +461,28 @@ URLMatcherConditionFactory::CreateOriginAndPathMatchesCondition(
 
 void URLMatcherConditionFactory::ForgetUnusedPatterns(
       const std::set<StringPattern::ID>& used_patterns) {
-  PatternSingletons::iterator i = substring_pattern_singletons_.begin();
+  auto i = substring_pattern_singletons_.begin();
   while (i != substring_pattern_singletons_.end()) {
-    if (ContainsKey(used_patterns, (*i)->id())) {
+    if (base::ContainsKey(used_patterns, i->first->id()))
       ++i;
-    } else {
-      delete *i;
+    else
       substring_pattern_singletons_.erase(i++);
-    }
   }
+
   i = regex_pattern_singletons_.begin();
   while (i != regex_pattern_singletons_.end()) {
-    if (ContainsKey(used_patterns, (*i)->id())) {
+    if (base::ContainsKey(used_patterns, i->first->id()))
       ++i;
-    } else {
-      delete *i;
+    else
       regex_pattern_singletons_.erase(i++);
-    }
   }
+
   i = origin_and_path_regex_pattern_singletons_.begin();
   while (i != origin_and_path_regex_pattern_singletons_.end()) {
-    if (ContainsKey(used_patterns, (*i)->id())) {
+    if (base::ContainsKey(used_patterns, i->first->id()))
       ++i;
-    } else {
-      delete *i;
+    else
       origin_and_path_regex_pattern_singletons_.erase(i++);
-    }
   }
 }
 
@@ -509,33 +504,28 @@ URLMatcherCondition URLMatcherConditionFactory::CreateCondition(
   else
     pattern_singletons = &substring_pattern_singletons_;
 
-  PatternSingletons::const_iterator iter =
-      pattern_singletons->find(&search_pattern);
+  auto iter = pattern_singletons->find(&search_pattern);
 
-  if (iter != pattern_singletons->end()) {
-    return URLMatcherCondition(criterion, *iter);
-  } else {
-    StringPattern* new_pattern =
-        new StringPattern(pattern, id_counter_++);
-    pattern_singletons->insert(new_pattern);
-    return URLMatcherCondition(criterion, new_pattern);
-  }
+  if (iter != pattern_singletons->end())
+    return URLMatcherCondition(criterion, iter->first);
+
+  StringPattern* new_pattern = new StringPattern(pattern, id_counter_++);
+  (*pattern_singletons)[new_pattern] = base::WrapUnique(new_pattern);
+  return URLMatcherCondition(criterion, new_pattern);
 }
 
 std::string URLMatcherConditionFactory::CanonicalizeHostSuffix(
     const std::string& suffix) const {
-  if (!suffix.empty() && suffix[suffix.size() - 1] == '.')
-    return suffix;
-  else
-    return suffix + ".";
+  if (suffix.empty())
+    return ".";
+  return suffix.back() == '.' ? suffix : suffix + ".";
 }
 
 std::string URLMatcherConditionFactory::CanonicalizeHostPrefix(
     const std::string& prefix) const {
-  if (!prefix.empty() && prefix[0] == '.')
-    return prefix;
-  else
-    return "." + prefix;
+  if (prefix.empty())
+    return ".";
+  return prefix[0] == '.' ? prefix : "." + prefix;
 }
 
 std::string URLMatcherConditionFactory::CanonicalizeHostname(
@@ -617,6 +607,9 @@ URLQueryElementMatcherCondition::URLQueryElementMatcherCondition(
   key_length_ = key_.length();
   value_length_ = value_.length();
 }
+
+URLQueryElementMatcherCondition::URLQueryElementMatcherCondition(
+    const URLQueryElementMatcherCondition& other) = default;
 
 URLQueryElementMatcherCondition::~URLQueryElementMatcherCondition() {}
 
@@ -738,24 +731,24 @@ URLMatcherConditionSet::URLMatcherConditionSet(
 URLMatcherConditionSet::URLMatcherConditionSet(
     ID id,
     const Conditions& conditions,
-    scoped_ptr<URLMatcherSchemeFilter> scheme_filter,
-    scoped_ptr<URLMatcherPortFilter> port_filter)
+    std::unique_ptr<URLMatcherSchemeFilter> scheme_filter,
+    std::unique_ptr<URLMatcherPortFilter> port_filter)
     : id_(id),
       conditions_(conditions),
-      scheme_filter_(scheme_filter.Pass()),
-      port_filter_(port_filter.Pass()) {}
+      scheme_filter_(std::move(scheme_filter)),
+      port_filter_(std::move(port_filter)) {}
 
 URLMatcherConditionSet::URLMatcherConditionSet(
     ID id,
     const Conditions& conditions,
     const QueryConditions& query_conditions,
-    scoped_ptr<URLMatcherSchemeFilter> scheme_filter,
-    scoped_ptr<URLMatcherPortFilter> port_filter)
+    std::unique_ptr<URLMatcherSchemeFilter> scheme_filter,
+    std::unique_ptr<URLMatcherPortFilter> port_filter)
     : id_(id),
       conditions_(conditions),
       query_conditions_(query_conditions),
-      scheme_filter_(scheme_filter.Pass()),
-      port_filter_(port_filter.Pass()) {}
+      scheme_filter_(std::move(scheme_filter)),
+      port_filter_(std::move(port_filter)) {}
 
 bool URLMatcherConditionSet::IsMatch(
     const std::set<StringPattern::ID>& matching_patterns,
@@ -784,7 +777,7 @@ bool URLMatcherConditionSet::IsMatch(
   for (QueryConditions::const_iterator i = query_conditions_.begin();
        i != query_conditions_.end();
        ++i) {
-    if (!ContainsKey(matching_patterns, i->string_pattern()->id()))
+    if (!base::ContainsKey(matching_patterns, i->string_pattern()->id()))
       return false;
   }
   for (QueryConditions::const_iterator i = query_conditions_.begin();

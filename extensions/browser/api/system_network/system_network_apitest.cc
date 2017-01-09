@@ -34,19 +34,16 @@ IN_PROC_BROWSER_TEST_F(SystemNetworkApiTest, GetNetworkInterfaces) {
   socket_function->set_extension(empty_extension.get());
   socket_function->set_has_callback(true);
 
-  scoped_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
+  std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
       socket_function.get(), "[]", browser_context()));
-  ASSERT_EQ(base::Value::TYPE_LIST, result->GetType());
+  ASSERT_EQ(base::Value::Type::LIST, result->GetType());
 
   // All we can confirm is that we have at least one address, but not what it
   // is.
   base::ListValue* value = static_cast<base::ListValue*>(result.get());
   ASSERT_TRUE(value->GetSize() > 0);
 
-  for (base::ListValue::const_iterator it = value->begin(); it != value->end();
-       ++it) {
-    base::Value* network_interface_value = *it;
-
+  for (const auto& network_interface_value : *value) {
     NetworkInterface network_interface;
     ASSERT_TRUE(NetworkInterface::Populate(*network_interface_value,
                                            &network_interface));

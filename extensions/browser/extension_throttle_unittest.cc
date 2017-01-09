@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/pickle.h"
 #include "base/stl_util.h"
@@ -175,7 +177,7 @@ class ExtensionThrottleEntryTest : public testing::Test {
   base::MessageLoopForIO message_loop_;
 
   TestURLRequestContext context_;
-  scoped_ptr<URLRequest> request_;
+  std::unique_ptr<URLRequest> request_;
 };
 
 void ExtensionThrottleEntryTest::SetUp() {
@@ -356,7 +358,7 @@ class ExtensionThrottleManagerTest : public testing::Test {
   base::MessageLoopForIO message_loop_;
   // context_ must be declared before request_.
   TestURLRequestContext context_;
-  scoped_ptr<URLRequest> request_;
+  std::unique_ptr<URLRequest> request_;
 };
 
 TEST_F(ExtensionThrottleManagerTest, IsUrlStandardised) {

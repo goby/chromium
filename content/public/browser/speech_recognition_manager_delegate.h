@@ -13,18 +13,12 @@
 namespace content {
 
 class SpeechRecognitionEventListener;
-struct SpeechRecognitionResult;
 
 // Allows embedders to display the current state of recognition, for getting the
 // user's permission and for fetching optional request information.
 class SpeechRecognitionManagerDelegate {
  public:
   virtual ~SpeechRecognitionManagerDelegate() {}
-
-  // Get the optional diagnostic hardware information if available.
-  // This is called on the IO thread.
-  virtual void GetDiagnosticInformation(bool* can_report_metrics,
-                                        std::string* hardware_info) = 0;
 
   // Checks (asynchronously) if current setup allows speech recognition.
   // This is called on the IO thread.

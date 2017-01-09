@@ -5,6 +5,7 @@
 #ifndef REMOTING_HOST_IPC_INPUT_INJECTOR_H_
 #define REMOTING_HOST_IPC_INPUT_INJECTOR_H_
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "remoting/host/input_injector.h"
 #include "remoting/proto/event.pb.h"
@@ -31,7 +32,8 @@ class IpcInputInjector : public InputInjector {
   void InjectTouchEvent(const protocol::TouchEvent& event) override;
 
   // InputInjector interface.
-  void Start(scoped_ptr<protocol::ClipboardStub> client_clipboard) override;
+  void Start(
+      std::unique_ptr<protocol::ClipboardStub> client_clipboard) override;
 
  private:
   // Wraps the IPC channel to the desktop process.

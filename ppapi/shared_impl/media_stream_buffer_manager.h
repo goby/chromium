@@ -5,11 +5,14 @@
 #ifndef PPAPI_SHARED_IMPL_MEDIA_STREAM_BUFFER_MANAGER_H_
 #define PPAPI_SHARED_IMPL_MEDIA_STREAM_BUFFER_MANAGER_H_
 
+#include <stdint.h>
+
 #include <deque>
+#include <memory>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "ppapi/shared_impl/ppapi_shared_export.h"
 
@@ -58,7 +61,7 @@ class PPAPI_SHARED_EXPORT MediaStreamBufferManager {
   // Initializes shared memory for buffers transmission.
   bool SetBuffers(int32_t number_of_buffers,
                   int32_t buffer_size,
-                  scoped_ptr<base::SharedMemory> shm,
+                  std::unique_ptr<base::SharedMemory> shm,
                   bool enqueue_all_buffers);
 
   // Dequeues a buffer from |buffer_queue_|.
@@ -92,7 +95,7 @@ class PPAPI_SHARED_EXPORT MediaStreamBufferManager {
   int32_t number_of_buffers_;
 
   // A memory block shared between renderer process and plugin process.
-  scoped_ptr<base::SharedMemory> shm_;
+  std::unique_ptr<base::SharedMemory> shm_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamBufferManager);
 };

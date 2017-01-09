@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_OPAQUE_BROWSER_FRAME_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_OPAQUE_BROWSER_FRAME_VIEW_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/ui/view_ids.h"
+#include "chrome/browser/ui/views/frame/avatar_button_manager.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/frame/opaque_browser_frame_view_layout_delegate.h"
@@ -19,7 +22,6 @@ class BrowserView;
 class OpaqueBrowserFrameViewLayout;
 class OpaqueBrowserFrameViewPlatformSpecific;
 class TabIconView;
-class NewAvatarButton;
 
 namespace views {
 class ImageButton;
@@ -43,6 +45,7 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   int GetThemeBackgroundXInset() const override;
   void UpdateThrobber(bool running) override;
   gfx::Size GetMinimumSize() const override;
+  views::View* GetProfileSwitcherView() const override;
 
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
@@ -56,14 +59,15 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   void SizeConstraintsChanged() override;
 
   // views::View:
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::MenuButtonListener:
-  void OnMenuButtonClicked(views::View* source,
-                           const gfx::Point& point) override;
+  void OnMenuButtonClicked(views::MenuButton* source,
+                           const gfx::Point& point,
+                           const ui::Event* event) override;
 
   // TabIconViewModel:
   bool ShouldTabIconViewAnimate() const override;
@@ -76,9 +80,8 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   int GetIconSize() const override;
   gfx::Size GetBrowserViewMinimumSize() const override;
   bool ShouldShowCaptionButtons() const override;
-  bool ShouldShowAvatar() const override;
   bool IsRegularOrGuestSession() const override;
-  gfx::ImageSkia GetOTRAvatarIcon() const override;
+  gfx::ImageSkia GetIncognitoAvatarIcon() const override;
   bool IsMaximized() const override;
   bool IsMinimized() const override;
   bool IsFullscreen() const override;
@@ -98,13 +101,9 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
 
   // BrowserNonClientFrameView:
   bool ShouldPaintAsThemed() const override;
-  void UpdateNewAvatarButtonImpl() override;
+  void UpdateProfileIcons() override;
 
  private:
-  // views::NonClientFrameView:
-  bool DoesIntersectRect(const views::View* target,
-                         const gfx::Rect& rect) const override;
-
   // Creates, adds and returns a new image button with |this| as its listener.
   // Memory is owned by the caller.
   views::ImageButton* InitWindowCaptionButton(int normal_image_id,
@@ -116,12 +115,9 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
 
   // Returns the thickness of the border that makes up the window frame edges.
   // This does not include any client edge.  If |restored| is true, this is
-  // calculated as if the window was restored, regardless of its current state.
+  // calculated as if the window was restored, regardless of its current
+  // node_data.
   int FrameBorderThickness(bool restored) const;
-
-  // Returns the height of the top resize area.  This is smaller than the frame
-  // border height in order to increase the window draggable area.
-  int TopResizeHeight() const;
 
   // Returns true if the specified point is within the avatar menu buttons.
   bool IsWithinAvatarMenuButtons(const gfx::Point& point) const;
@@ -137,13 +133,23 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   // Returns true if the view should draw its own custom title bar.
   bool ShouldShowWindowTitleBar() const;
 
+  // Computes the height of the top area of the frame.
+  int GetTopAreaHeight() const;
+
   // Paint various sub-components of this view.  The *FrameBorder() functions
   // also paint the background of the titlebar area, since the top frame border
   // and titlebar background are a contiguous component.
-  void PaintRestoredFrameBorder(gfx::Canvas* canvas);
-  void PaintMaximizedFrameBorder(gfx::Canvas* canvas);
-  void PaintToolbarBackground(gfx::Canvas* canvas);
-  void PaintClientEdge(gfx::Canvas* canvas);
+  void PaintRestoredFrameBorder(gfx::Canvas* canvas) const;
+  void PaintMaximizedFrameBorder(gfx::Canvas* canvas) const;
+  void PaintToolbarBackground(gfx::Canvas* canvas) const;
+  void PaintClientEdge(gfx::Canvas* canvas) const;
+  void FillClientEdgeRects(int x,
+                           int y,
+                           int w,
+                           int h,
+                           bool draw_bottom,
+                           SkColor color,
+                           gfx::Canvas* canvas) const;
 
   // Our layout manager also calculates various bounds.
   OpaqueBrowserFrameViewLayout* layout_;
@@ -158,11 +164,14 @@ class OpaqueBrowserFrameView : public BrowserNonClientFrameView,
   TabIconView* window_icon_;
   views::Label* window_title_;
 
+  // Wrapper around the in-frame avatar switcher.
+  AvatarButtonManager profile_switcher_;
+
   // Background painter for the window frame.
-  scoped_ptr<views::FrameBackground> frame_background_;
+  std::unique_ptr<views::FrameBackground> frame_background_;
 
   // Observer that handles platform dependent configuration.
-  scoped_ptr<OpaqueBrowserFrameViewPlatformSpecific> platform_observer_;
+  std::unique_ptr<OpaqueBrowserFrameViewPlatformSpecific> platform_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(OpaqueBrowserFrameView);
 };

@@ -5,10 +5,13 @@
 #ifndef CHROMEOS_NETWORK_MANAGED_STATE_H_
 #define CHROMEOS_NETWORK_MANAGED_STATE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chromeos/chromeos_export.h"
 
 namespace base {
@@ -35,7 +38,8 @@ class CHROMEOS_EXPORT ManagedState {
 
   // This will construct and return a new instance of the appropriate class
   // based on |type|.
-  static ManagedState* Create(ManagedType type, const std::string& path);
+  static std::unique_ptr<ManagedState> Create(ManagedType type,
+                                              const std::string& path);
 
   // Returns the specific class pointer if this is the correct type, or
   // NULL if it is not.
@@ -101,7 +105,7 @@ class CHROMEOS_EXPORT ManagedState {
                       std::string* out_value);
   bool GetUInt32Value(const std::string& key,
                       const base::Value& value,
-                      uint32* out_value);
+                      uint32_t* out_value);
 
   void set_name(const std::string& name) { name_ = name; }
 

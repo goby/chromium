@@ -4,19 +4,20 @@
 
 #include "ash/virtual_keyboard_controller.h"
 
+#include <utility>
 #include <vector>
 
+#include "ash/common/system/chromeos/virtual_keyboard/virtual_keyboard_observer.h"
+#include "ash/common/system/tray/system_tray_notifier.h"
+#include "ash/common/wm/maximize_mode/maximize_mode_controller.h"
+#include "ash/common/wm/maximize_mode/scoped_disable_internal_mouse_and_keyboard.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
-#include "ash/system/chromeos/virtual_keyboard/virtual_keyboard_observer.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
-#include "ash/wm/maximize_mode/scoped_disable_internal_mouse_and_keyboard.h"
-#include "ash_switches.h"
 #include "base/command_line.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/device_hotplug_event_observer.h"
 #include "ui/events/devices/input_device.h"
-#include "ui/events/devices/keyboard_device.h"
 #include "ui/events/devices/touchscreen_device.h"
 #include "ui/keyboard/keyboard_export.h"
 #include "ui/keyboard/keyboard_switches.h"
@@ -37,7 +38,7 @@ class VirtualKeyboardControllerTest : public AshTestBase {
     manager->OnTouchscreenDevicesUpdated(touchscreen_devices);
   }
 
-  void UpdateKeyboardDevices(std::vector<ui::KeyboardDevice> keyboard_devices) {
+  void UpdateKeyboardDevices(std::vector<ui::InputDevice> keyboard_devices) {
     ui::DeviceHotplugEventObserver* manager =
         ui::DeviceDataManager::GetInstance();
     manager->OnKeyboardDevicesUpdated(keyboard_devices);
@@ -45,16 +46,16 @@ class VirtualKeyboardControllerTest : public AshTestBase {
 
   // Sets the event blocker on the maximized window controller.
   void SetEventBlocker(
-      scoped_ptr<ScopedDisableInternalMouseAndKeyboard> blocker) {
-    Shell::GetInstance()->maximize_mode_controller()->event_blocker_ =
-        blocker.Pass();
+      std::unique_ptr<ScopedDisableInternalMouseAndKeyboard> blocker) {
+    WmShell::Get()->maximize_mode_controller()->event_blocker_ =
+        std::move(blocker);
   }
 
   void SetUp() override {
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        keyboard::switches::kSmartVirtualKeyboard, "disabled");
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        keyboard::switches::kDisableSmartVirtualKeyboard);
     AshTestBase::SetUp();
-    UpdateKeyboardDevices(std::vector<ui::KeyboardDevice>());
+    UpdateKeyboardDevices(std::vector<ui::InputDevice>());
     UpdateTouchscreenDevices(std::vector<ui::TouchscreenDevice>());
   }
 
@@ -65,14 +66,12 @@ class VirtualKeyboardControllerTest : public AshTestBase {
 TEST_F(VirtualKeyboardControllerTest, EnabledDuringMaximizeMode) {
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
   // Toggle maximized mode on.
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(true);
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      true);
   EXPECT_TRUE(keyboard::IsKeyboardEnabled());
   // Toggle maximized mode off.
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(false);
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      false);
   EXPECT_FALSE(keyboard::IsKeyboardEnabled());
 }
 
@@ -82,12 +81,12 @@ class MockEventBlocker : public ScopedDisableInternalMouseAndKeyboard {
  public:
   MockEventBlocker() {}
   ~MockEventBlocker() override {
-    std::vector<ui::KeyboardDevice> keyboards;
-    keyboards.push_back(ui::KeyboardDevice(
+    std::vector<ui::InputDevice> keyboard_devices;
+    keyboard_devices.push_back(ui::InputDevice(
         1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL, "keyboard"));
     ui::DeviceHotplugEventObserver* manager =
         ui::DeviceDataManager::GetInstance();
-    manager->OnKeyboardDevicesUpdated(keyboards);
+    manager->OnKeyboardDevicesUpdated(keyboard_devices);
   }
 
  private:
@@ -98,12 +97,11 @@ class MockEventBlocker : public ScopedDisableInternalMouseAndKeyboard {
 // cause the Virtual Keyboard Controller to crash. See crbug.com/446204.
 TEST_F(VirtualKeyboardControllerTest, RestoreKeyboardDevices) {
   // Toggle maximized mode on.
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(true);
-  scoped_ptr<ScopedDisableInternalMouseAndKeyboard> blocker(
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      true);
+  std::unique_ptr<ScopedDisableInternalMouseAndKeyboard> blocker(
       new MockEventBlocker);
-  SetEventBlocker(blocker.Pass());
+  SetEventBlocker(std::move(blocker));
 }
 
 class VirtualKeyboardControllerAutoTest : public VirtualKeyboardControllerTest,
@@ -116,15 +114,13 @@ class VirtualKeyboardControllerAutoTest : public VirtualKeyboardControllerTest,
     AshTestBase::SetUp();
     // Set the current list of devices to empty so that they don't interfere
     // with the test.
-    UpdateKeyboardDevices(std::vector<ui::KeyboardDevice>());
+    UpdateKeyboardDevices(std::vector<ui::InputDevice>());
     UpdateTouchscreenDevices(std::vector<ui::TouchscreenDevice>());
-    Shell::GetInstance()->system_tray_notifier()->AddVirtualKeyboardObserver(
-        this);
+    WmShell::Get()->system_tray_notifier()->AddVirtualKeyboardObserver(this);
   }
 
   void TearDown() override {
-    Shell::GetInstance()->system_tray_notifier()->RemoveVirtualKeyboardObserver(
-        this);
+    WmShell::Get()->system_tray_notifier()->RemoveVirtualKeyboardObserver(this);
     AshTestBase::TearDown();
   }
 
@@ -160,16 +156,16 @@ TEST_F(VirtualKeyboardControllerAutoTest, DisabledIfInternalKeyboardPresent) {
       ui::TouchscreenDevice(1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
                             "Touchscreen", gfx::Size(1024, 768), 0));
   UpdateTouchscreenDevices(screens);
-  std::vector<ui::KeyboardDevice> keyboards;
-  keyboards.push_back(ui::KeyboardDevice(
+  std::vector<ui::InputDevice> keyboard_devices;
+  keyboard_devices.push_back(ui::InputDevice(
       1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL, "keyboard"));
-  UpdateKeyboardDevices(keyboards);
+  UpdateKeyboardDevices(keyboard_devices);
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
   // Remove the internal keyboard. Virtual keyboard should now show.
-  UpdateKeyboardDevices(std::vector<ui::KeyboardDevice>());
+  UpdateKeyboardDevices(std::vector<ui::InputDevice>());
   EXPECT_TRUE(keyboard::IsKeyboardEnabled());
   // Replug in the internal keyboard. Virtual keyboard should hide.
-  UpdateKeyboardDevices(keyboards);
+  UpdateKeyboardDevices(keyboard_devices);
   EXPECT_FALSE(keyboard::IsKeyboardEnabled());
 }
 
@@ -192,10 +188,10 @@ TEST_F(VirtualKeyboardControllerAutoTest, SuppressedIfExternalKeyboardPresent) {
       ui::TouchscreenDevice(1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
                             "Touchscreen", gfx::Size(1024, 768), 0));
   UpdateTouchscreenDevices(screens);
-  std::vector<ui::KeyboardDevice> keyboards;
-  keyboards.push_back(ui::KeyboardDevice(
+  std::vector<ui::InputDevice> keyboard_devices;
+  keyboard_devices.push_back(ui::InputDevice(
       1, ui::InputDeviceType::INPUT_DEVICE_EXTERNAL, "keyboard"));
-  UpdateKeyboardDevices(keyboards);
+  UpdateKeyboardDevices(keyboard_devices);
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
   ASSERT_TRUE(notified());
   ASSERT_TRUE(IsVirtualKeyboardSuppressed());
@@ -218,7 +214,7 @@ TEST_F(VirtualKeyboardControllerAutoTest, SuppressedIfExternalKeyboardPresent) {
   // Remove external keyboard. Should be notified that the keyboard is not
   // suppressed.
   ResetObserver();
-  UpdateKeyboardDevices(std::vector<ui::KeyboardDevice>());
+  UpdateKeyboardDevices(std::vector<ui::InputDevice>());
   ASSERT_TRUE(keyboard::IsKeyboardEnabled());
   ASSERT_TRUE(notified());
   ASSERT_FALSE(IsVirtualKeyboardSuppressed());
@@ -226,12 +222,12 @@ TEST_F(VirtualKeyboardControllerAutoTest, SuppressedIfExternalKeyboardPresent) {
 
 // Tests handling multiple keyboards. Catches crbug.com/430252
 TEST_F(VirtualKeyboardControllerAutoTest, HandleMultipleKeyboardsPresent) {
-  std::vector<ui::KeyboardDevice> keyboards;
-  keyboards.push_back(ui::KeyboardDevice(
+  std::vector<ui::InputDevice> keyboards;
+  keyboards.push_back(ui::InputDevice(
       1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL, "keyboard"));
-  keyboards.push_back(ui::KeyboardDevice(
+  keyboards.push_back(ui::InputDevice(
       2, ui::InputDeviceType::INPUT_DEVICE_EXTERNAL, "keyboard"));
-  keyboards.push_back(ui::KeyboardDevice(
+  keyboards.push_back(ui::InputDevice(
       3, ui::InputDeviceType::INPUT_DEVICE_EXTERNAL, "keyboard"));
   UpdateKeyboardDevices(keyboards);
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
@@ -244,20 +240,18 @@ TEST_F(VirtualKeyboardControllerAutoTest, EnabledDuringMaximizeMode) {
       ui::TouchscreenDevice(1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
                             "Touchscreen", gfx::Size(1024, 768), 0));
   UpdateTouchscreenDevices(screens);
-  std::vector<ui::KeyboardDevice> keyboards;
-  keyboards.push_back(ui::KeyboardDevice(
+  std::vector<ui::InputDevice> keyboard_devices;
+  keyboard_devices.push_back(ui::InputDevice(
       1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL, "Keyboard"));
-  UpdateKeyboardDevices(keyboards);
+  UpdateKeyboardDevices(keyboard_devices);
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
   // Toggle maximized mode on.
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(true);
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      true);
   ASSERT_TRUE(keyboard::IsKeyboardEnabled());
   // Toggle maximized mode off.
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(false);
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      false);
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
 }
 
@@ -268,16 +262,15 @@ TEST_F(VirtualKeyboardControllerAutoTest, SuppressedInMaximizedMode) {
       ui::TouchscreenDevice(1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
                             "Touchscreen", gfx::Size(1024, 768), 0));
   UpdateTouchscreenDevices(screens);
-  std::vector<ui::KeyboardDevice> keyboards;
-  keyboards.push_back(ui::KeyboardDevice(
+  std::vector<ui::InputDevice> keyboard_devices;
+  keyboard_devices.push_back(ui::InputDevice(
       1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL, "Keyboard"));
-  keyboards.push_back(ui::KeyboardDevice(
+  keyboard_devices.push_back(ui::InputDevice(
       2, ui::InputDeviceType::INPUT_DEVICE_EXTERNAL, "Keyboard"));
-  UpdateKeyboardDevices(keyboards);
+  UpdateKeyboardDevices(keyboard_devices);
   // Toggle maximized mode on.
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(true);
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      true);
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
   ASSERT_TRUE(notified());
   ASSERT_TRUE(IsVirtualKeyboardSuppressed());
@@ -300,15 +293,14 @@ TEST_F(VirtualKeyboardControllerAutoTest, SuppressedInMaximizedMode) {
   // Remove external keyboard. Should be notified that the keyboard is not
   // suppressed.
   ResetObserver();
-  keyboards.pop_back();
-  UpdateKeyboardDevices(keyboards);
+  keyboard_devices.pop_back();
+  UpdateKeyboardDevices(keyboard_devices);
   ASSERT_TRUE(keyboard::IsKeyboardEnabled());
   ASSERT_TRUE(notified());
   ASSERT_FALSE(IsVirtualKeyboardSuppressed());
   // Toggle maximized mode oFF.
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(false);
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      false);
   ASSERT_FALSE(keyboard::IsKeyboardEnabled());
 }
 
@@ -337,10 +329,10 @@ TEST_F(VirtualKeyboardControllerAlwaysEnabledTest, DoesNotSuppressKeyboard) {
       ui::TouchscreenDevice(1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
                             "Touchscreen", gfx::Size(1024, 768), 0));
   UpdateTouchscreenDevices(screens);
-  std::vector<ui::KeyboardDevice> keyboards;
-  keyboards.push_back(ui::KeyboardDevice(
+  std::vector<ui::InputDevice> keyboard_devices;
+  keyboard_devices.push_back(ui::InputDevice(
       1, ui::InputDeviceType::INPUT_DEVICE_EXTERNAL, "keyboard"));
-  UpdateKeyboardDevices(keyboards);
+  UpdateKeyboardDevices(keyboard_devices);
   ASSERT_TRUE(keyboard::IsKeyboardEnabled());
 }
 

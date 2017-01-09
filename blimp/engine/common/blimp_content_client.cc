@@ -4,19 +4,11 @@
 
 #include "blimp/engine/common/blimp_content_client.h"
 
-#include "content/public/common/user_agent.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
 namespace blimp {
 namespace engine {
-
-// TODO(haibinlu) Generate proper version. See crbug/537367.
-const char kProduct[] = "Chrome/20.77.33.5";
-
-std::string GetBlimpEngineUserAgent() {
-  return content::BuildUserAgentFromProduct(kProduct);
-}
 
 BlimpContentClient::~BlimpContentClient() {}
 
@@ -35,7 +27,7 @@ base::StringPiece BlimpContentClient::GetDataResource(
       resource_id, scale_factor);
 }
 
-base::RefCountedStaticMemory* BlimpContentClient::GetDataResourceBytes(
+base::RefCountedMemory* BlimpContentClient::GetDataResourceBytes(
     int resource_id) const {
   return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
       resource_id);

@@ -28,6 +28,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// https://html.spec.whatwg.org/#imagebitmapfactories
+
 typedef (HTMLImageElement or
          HTMLVideoElement or
          HTMLCanvasElement or
@@ -39,10 +41,11 @@ typedef (HTMLImageElement or
     LegacyTreatAsPartialInterface,
     NoInterfaceObject, // Always used on target of 'implements'
     Exposed=(Window,Worker),
-    RuntimeEnabled=ExperimentalCanvasFeatures,
 ] interface ImageBitmapFactories {
-    [CallWith=ScriptState, RaisesException] Promise createImageBitmap(ImageBitmapSource imageBitmap);
-    [CallWith=ScriptState, RaisesException] Promise createImageBitmap(ImageBitmapSource imageBitmap, long sx, long sy, long sw, long sh);
+    [CallWith=ScriptState, RaisesException] Promise createImageBitmap(
+        ImageBitmapSource imageBitmap, optional ImageBitmapOptions options);
+    [CallWith=ScriptState, RaisesException] Promise createImageBitmap(
+        ImageBitmapSource imageBitmap, long sx, long sy, long sw, long sh, optional ImageBitmapOptions options);
 };
 
 Window implements ImageBitmapFactories;

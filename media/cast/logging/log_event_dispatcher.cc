@@ -5,6 +5,7 @@
 #include "media/cast/logging/log_event_dispatcher.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -23,9 +24,9 @@ LogEventDispatcher::LogEventDispatcher(CastEnvironment* env)
 LogEventDispatcher::~LogEventDispatcher() {}
 
 void LogEventDispatcher::DispatchFrameEvent(
-    scoped_ptr<FrameEvent> event) const {
+    std::unique_ptr<FrameEvent> event) const {
   if (env_->CurrentlyOn(CastEnvironment::MAIN)) {
-    impl_->DispatchFrameEvent(event.Pass());
+    impl_->DispatchFrameEvent(std::move(event));
   } else {
     env_->PostTask(CastEnvironment::MAIN, FROM_HERE,
                    base::Bind(&LogEventDispatcher::Impl::DispatchFrameEvent,
@@ -34,9 +35,9 @@ void LogEventDispatcher::DispatchFrameEvent(
 }
 
 void LogEventDispatcher::DispatchPacketEvent(
-    scoped_ptr<PacketEvent> event) const {
+    std::unique_ptr<PacketEvent> event) const {
   if (env_->CurrentlyOn(CastEnvironment::MAIN)) {
-    impl_->DispatchPacketEvent(event.Pass());
+    impl_->DispatchPacketEvent(std::move(event));
   } else {
     env_->PostTask(CastEnvironment::MAIN, FROM_HERE,
                    base::Bind(&LogEventDispatcher::Impl::DispatchPacketEvent,
@@ -45,10 +46,11 @@ void LogEventDispatcher::DispatchPacketEvent(
 }
 
 void LogEventDispatcher::DispatchBatchOfEvents(
-    scoped_ptr<std::vector<FrameEvent>> frame_events,
-    scoped_ptr<std::vector<PacketEvent>> packet_events) const {
+    std::unique_ptr<std::vector<FrameEvent>> frame_events,
+    std::unique_ptr<std::vector<PacketEvent>> packet_events) const {
   if (env_->CurrentlyOn(CastEnvironment::MAIN)) {
-    impl_->DispatchBatchOfEvents(frame_events.Pass(), packet_events.Pass());
+    impl_->DispatchBatchOfEvents(std::move(frame_events),
+                                 std::move(packet_events));
   } else {
     env_->PostTask(
         CastEnvironment::MAIN, FROM_HERE,
@@ -83,7 +85,8 @@ void LogEventDispatcher::Unsubscribe(RawEventSubscriber* subscriber) {
         done->Signal();
       }
     };
-    base::WaitableEvent done(true, false);
+    base::WaitableEvent done(base::WaitableEvent::ResetPolicy::MANUAL,
+                             base::WaitableEvent::InitialState::NOT_SIGNALED);
     CHECK(env_->PostTask(
         CastEnvironment::MAIN, FROM_HERE,
         base::Bind(&Helper::UnsubscribeAndSignal, impl_, subscriber, &done)));
@@ -98,20 +101,20 @@ LogEventDispatcher::Impl::~Impl() {
 }
 
 void LogEventDispatcher::Impl::DispatchFrameEvent(
-    scoped_ptr<FrameEvent> event) const {
+    std::unique_ptr<FrameEvent> event) const {
   for (RawEventSubscriber* s : subscribers_)
     s->OnReceiveFrameEvent(*event);
 }
 
 void LogEventDispatcher::Impl::DispatchPacketEvent(
-    scoped_ptr<PacketEvent> event) const {
+    std::unique_ptr<PacketEvent> event) const {
   for (RawEventSubscriber* s : subscribers_)
     s->OnReceivePacketEvent(*event);
 }
 
 void LogEventDispatcher::Impl::DispatchBatchOfEvents(
-    scoped_ptr<std::vector<FrameEvent>> frame_events,
-    scoped_ptr<std::vector<PacketEvent>> packet_events) const {
+    std::unique_ptr<std::vector<FrameEvent>> frame_events,
+    std::unique_ptr<std::vector<PacketEvent>> packet_events) const {
   for (RawEventSubscriber* s : subscribers_) {
     for (const FrameEvent& e : *frame_events)
       s->OnReceiveFrameEvent(e);

@@ -5,22 +5,26 @@
 #ifndef ASH_DISPLAY_DISPLAY_COLOR_MANAGER_CHROMEOS_H_
 #define ASH_DISPLAY_DISPLAY_COLOR_MANAGER_CHROMEOS_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "ash/ash_export.h"
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "ui/display/chromeos/display_configurator.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/display_observer.h"
+#include "base/threading/thread_checker.h"
+#include "ui/display/manager/chromeos/display_configurator.h"
+#include "ui/display/types/display_constants.h"
 
 namespace base {
 class SequencedWorkerPool;
 }
 
 namespace ui {
+class DisplaySnapshot;
 struct GammaRampRGBEntry;
 }  // namespace ui
 
@@ -29,8 +33,7 @@ namespace ash {
 // An object that observes changes in display configuration applies any color
 // calibration where needed.
 class ASH_EXPORT DisplayColorManager
-    : public ui::DisplayConfigurator::Observer,
-      public base::SupportsWeakPtr<DisplayColorManager> {
+    : public ui::DisplayConfigurator::Observer {
  public:
   DisplayColorManager(ui::DisplayConfigurator* configurator,
                       base::SequencedWorkerPool* blocking_pool);
@@ -47,21 +50,34 @@ class ASH_EXPORT DisplayColorManager
     ColorCalibrationData();
     ~ColorCalibrationData();
 
-    std::vector<ui::GammaRampRGBEntry> lut;
+    std::vector<ui::GammaRampRGBEntry> degamma_lut;
+    std::vector<ui::GammaRampRGBEntry> gamma_lut;
+    std::vector<float> correction_matrix;
   };
+
+ protected:
+  virtual void FinishLoadCalibrationForDisplay(int64_t display_id,
+                                               int64_t product_id,
+                                               bool has_color_correction_matrix,
+                                               ui::DisplayConnectionType type,
+                                               const base::FilePath& path,
+                                               bool file_downloaded);
+  virtual void UpdateCalibrationData(
+      int64_t display_id,
+      int64_t product_id,
+      std::unique_ptr<ColorCalibrationData> data);
 
  private:
   void ApplyDisplayColorCalibration(int64_t display_id, int64_t product_id);
   void LoadCalibrationForDisplay(const ui::DisplaySnapshot* display);
-  void UpdateCalibrationData(
-      int64_t display_id,
-      int64_t product_id,
-      scoped_ptr<DisplayColorManager::ColorCalibrationData> data,
-      bool success);
 
   ui::DisplayConfigurator* configurator_;
-  std::map<int64_t, ColorCalibrationData*> calibration_map_;
+  std::map<int64_t, std::unique_ptr<ColorCalibrationData>> calibration_map_;
+  base::ThreadChecker thread_checker_;
   base::SequencedWorkerPool* blocking_pool_;
+
+  // Factory for callbacks.
+  base::WeakPtrFactory<DisplayColorManager> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayColorManager);
 };

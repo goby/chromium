@@ -4,14 +4,12 @@
 
 #include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/blocked_content/blocked_window_params.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/features.h"
 #include "chrome/common/render_messages.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -20,7 +18,6 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_delegate.h"
 #include "third_party/WebKit/public/web/WebWindowFeatures.h"
 
 #if BUILDFLAG(ANDROID_JAVA_UI)
@@ -94,28 +91,30 @@ bool PopupBlockerTabHelper::MaybeBlockPopup(
           creator, creator, CONTENT_SETTINGS_TYPE_POPUPS, std::string()) ==
           CONTENT_SETTING_ALLOW) {
     return false;
-  } else {
-    if (blocked_popups_.size() < kMaximumNumberOfPopups) {
-      blocked_popups_.Add(new BlockedRequest(params, window_features));
-      TabSpecificContentSettings::FromWebContents(web_contents())->
-          OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS);
-    }
-    return true;
   }
+
+  AddBlockedPopup(params, window_features);
+  return true;
 }
 
 void PopupBlockerTabHelper::AddBlockedPopup(const BlockedWindowParams& params) {
-  chrome::NavigateParams nav_params =
-      params.CreateNavigateParams(web_contents());
-
-  if (blocked_popups_.size() < kMaximumNumberOfPopups) {
-    blocked_popups_.Add(new BlockedRequest(nav_params, params.features()));
-    TabSpecificContentSettings::FromWebContents(web_contents())->
-        OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS);
-  }
+  AddBlockedPopup(params.CreateNavigateParams(web_contents()),
+                  params.features());
 }
 
-void PopupBlockerTabHelper::ShowBlockedPopup(int32 id) {
+void PopupBlockerTabHelper::AddBlockedPopup(
+    const chrome::NavigateParams& params,
+    const WebWindowFeatures& window_features) {
+  if (blocked_popups_.size() >= kMaximumNumberOfPopups)
+    return;
+
+  blocked_popups_.Add(
+      base::MakeUnique<BlockedRequest>(params, window_features));
+  TabSpecificContentSettings::FromWebContents(web_contents())->
+      OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS);
+}
+
+void PopupBlockerTabHelper::ShowBlockedPopup(int32_t id) {
   BlockedRequest* popup = blocked_popups_.Lookup(id);
   if (!popup)
     return;
@@ -128,7 +127,8 @@ void PopupBlockerTabHelper::ShowBlockedPopup(int32 id) {
 #endif
   if (popup->params.target_contents) {
     popup->params.target_contents->Send(new ChromeViewMsg_SetWindowFeatures(
-        popup->params.target_contents->GetRoutingID(), popup->window_features));
+        popup->params.target_contents->GetRenderViewHost()->GetRoutingID(),
+        popup->window_features));
   }
   blocked_popups_.Remove(id);
   if (blocked_popups_.IsEmpty())
@@ -142,7 +142,7 @@ size_t PopupBlockerTabHelper::GetBlockedPopupsCount() const {
 PopupBlockerTabHelper::PopupIdMap
     PopupBlockerTabHelper::GetBlockedPopupRequests() {
   PopupIdMap result;
-  for (IDMap<BlockedRequest, IDMapOwnPointer>::const_iterator iter(
+  for (IDMap<std::unique_ptr<BlockedRequest>>::const_iterator iter(
            &blocked_popups_);
        !iter.IsAtEnd();
        iter.Advance()) {

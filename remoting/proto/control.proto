@@ -11,13 +11,13 @@ option optimize_for = LITE_RUNTIME;
 package remoting.protocol;
 
 message ClientResolution {
-  // Legacy width and height of the client in Density-Independent Pixels
+  // Width and height of the client in Density-Independent Pixels
   optional int32 dips_width = 1;
   optional int32 dips_height = 2;
 
-  // Width and height of the client in device pixels.
-  optional int32 width = 3;
-  optional int32 height = 4;
+  // Deprecated width and height of the client in device pixels.
+  optional int32 width_deprecated = 3;
+  optional int32 height_deprecated = 4;
 
   // Horizontal and vertical DPI of the screen. If either of these is zero or
   // unset, the corresponding DPI should be assumed to be 96 (Windows' default)
@@ -80,4 +80,27 @@ message ExtensionMessage {
   // for each message type; different message types need not shared the same
   // encoding.
   optional string data = 2;
+}
+
+message VideoTrackLayout {
+  // Name of the video track.
+  optional string track_name = 1;
+
+  // Position of the top left corner of the rectangle covered by the video
+  // track in DIPs (device independent pixels).
+  optional int32 position_x = 2;
+  optional int32 position_y = 3;
+
+  // Size of the area covered by the video track in DIPs.
+  optional int32 width = 4;
+  optional int32 height = 5;
+
+  // DPI of the screen.
+  optional int32 x_dpi = 6;
+  optional int32 y_dpi = 7;
+}
+
+message VideoLayout {
+  // Layout for each video track.
+  repeated VideoTrackLayout video_track = 1;
 }

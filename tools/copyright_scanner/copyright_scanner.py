@@ -49,8 +49,6 @@ def FindFiles(input_api, root_dir, start_paths_list, excluded_dirs_list):
     # Quickoffice js files from internal src used on buildbots.
     # crbug.com/350472.
     path_join('chrome', 'browser', 'resources', 'chromeos', 'quickoffice'),
-    # This is a test output directory
-    path_join('chrome', 'tools', 'test', 'reference_build'),
     # blink style copy right headers.
     path_join('content', 'shell', 'renderer', 'test_runner'),
     # blink style copy right headers.
@@ -68,11 +66,15 @@ def FindFiles(input_api, root_dir, start_paths_list, excluded_dirs_list):
     path_join('tools', 'histograms'),
     # Swarming tools, doesn't exist in the snapshot
     path_join('tools', 'swarming_client'),
+    # Don't check downloaded goma client binaries.
+    path_join('build', 'goma', 'client'),
     # Ignore sysroots.
+    path_join('build', 'linux', 'debian_jessie_arm64-sysroot'),
     path_join('build', 'linux', 'debian_wheezy_amd64-sysroot'),
     path_join('build', 'linux', 'debian_wheezy_arm-sysroot'),
     path_join('build', 'linux', 'debian_wheezy_mips-sysroot'),
     path_join('build', 'linux', 'debian_wheezy_i386-sysroot'),
+    path_join('build', 'linux', 'ubuntu_precise_amd64-sysroot'),
     # Old location (TODO(sbc): Remove this once it no longer exists on any bots)
     path_join('chrome', 'installer', 'linux', 'debian_wheezy_arm-sysroot'),
     # Data is not part of open source chromium, but are included on some bots.

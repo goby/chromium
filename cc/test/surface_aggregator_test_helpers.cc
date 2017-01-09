@@ -4,11 +4,12 @@
 
 #include "cc/test/surface_aggregator_test_helpers.h"
 
+#include <stddef.h>
+
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
 #include "cc/layers/append_quads_data.h"
 #include "cc/output/compositor_frame.h"
-#include "cc/output/delegated_frame_data.h"
 #include "cc/quads/render_pass_draw_quad.h"
 #include "cc/quads/shared_quad_state.h"
 #include "cc/quads/solid_color_draw_quad.h"
@@ -16,7 +17,7 @@
 #include "cc/surfaces/surface.h"
 #include "cc/test/render_pass_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/skia/include/core/SkXfermode.h"
+#include "third_party/skia/include/core/SkBlendMode.h"
 
 namespace cc {
 namespace test {
@@ -30,7 +31,7 @@ void AddSurfaceQuad(RenderPass* pass,
   gfx::Rect visible_layer_rect = gfx::Rect(surface_size);
   gfx::Rect clip_rect = gfx::Rect(surface_size);
   bool is_clipped = false;
-  SkXfermode::Mode blend_mode = SkXfermode::kSrcOver_Mode;
+  SkBlendMode blend_mode = SkBlendMode::kSrcOver;
 
   SharedQuadState* shared_quad_state = pass->CreateAndAppendSharedQuadState();
   shared_quad_state->SetAll(layer_to_target_transform, layer_bounds,
@@ -40,20 +41,20 @@ void AddSurfaceQuad(RenderPass* pass,
   SurfaceDrawQuad* surface_quad =
       pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
   gfx::Rect quad_rect = gfx::Rect(surface_size);
-  surface_quad->SetNew(pass->shared_quad_state_list.back(),
-                       gfx::Rect(surface_size), gfx::Rect(surface_size),
-                       surface_id);
+  surface_quad->SetNew(pass->shared_quad_state_list.back(), quad_rect,
+                       quad_rect, surface_id);
 }
-void AddRenderPassQuad(RenderPass* pass, RenderPassId render_pass_id) {
+
+void AddRenderPassQuad(RenderPass* pass, int render_pass_id) {
   gfx::Rect output_rect = gfx::Rect(0, 0, 5, 5);
   SharedQuadState* shared_state = pass->CreateAndAppendSharedQuadState();
   shared_state->SetAll(gfx::Transform(), output_rect.size(), output_rect,
-                       output_rect, false, 1, SkXfermode::kSrcOver_Mode, 0);
+                       output_rect, false, 1, SkBlendMode::kSrcOver, 0);
   RenderPassDrawQuad* quad =
       pass->CreateAndAppendDrawQuad<RenderPassDrawQuad>();
   quad->SetNew(shared_state, output_rect, output_rect, render_pass_id, 0,
                gfx::Vector2dF(), gfx::Size(), FilterOperations(),
-               gfx::Vector2dF(), FilterOperations());
+               gfx::Vector2dF(), gfx::PointF(), FilterOperations());
 }
 
 void AddQuadInPass(RenderPass* pass, Quad desc) {

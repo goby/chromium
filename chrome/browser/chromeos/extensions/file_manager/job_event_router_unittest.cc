@@ -4,6 +4,10 @@
 
 #include "chrome/browser/chromeos/extensions/file_manager/job_event_router.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -42,7 +46,7 @@ class JobEventRouterImpl : public JobEventRouter {
       const std::string& extension_id,
       extensions::events::HistogramValue histogram_value,
       const std::string& event_name,
-      scoped_ptr<base::ListValue> event_args) override {
+      std::unique_ptr<base::ListValue> event_args) override {
     const base::DictionaryValue* event;
     event_args->GetDictionary(0, &event);
     events.push_back(make_linked_ptr(event->DeepCopy()));
@@ -59,8 +63,8 @@ class JobEventRouterTest : public testing::Test {
   void SetUp() override { job_event_router.reset(new JobEventRouterImpl()); }
 
   drive::JobInfo CreateJobInfo(drive::JobID id,
-                               int64 num_completed_bytes,
-                               int64 num_total_bytes,
+                               int64_t num_completed_bytes,
+                               int64_t num_total_bytes,
                                const base::FilePath& file_path) {
     drive::JobInfo job(drive::TYPE_DOWNLOAD_FILE);
     job.job_id = id;
@@ -82,7 +86,7 @@ class JobEventRouterTest : public testing::Test {
     return value;
   }
 
-  scoped_ptr<JobEventRouterImpl> job_event_router;
+  std::unique_ptr<JobEventRouterImpl> job_event_router;
 
  private:
   base::MessageLoop message_loop_;

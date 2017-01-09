@@ -6,14 +6,16 @@
 #define CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_IAPPS_DATA_PROVIDER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/media_galleries/fileapi/file_path_watcher_util.h"
 
 namespace iapps {
 
@@ -52,7 +54,7 @@ class IAppsDataProvider {
  private:
   // Called when the FilePathWatcher for |library_path_| has tried to add an
   // watch.
-  void OnLibraryWatchStarted(scoped_ptr<base::FilePathWatcher> library_watcher);
+  void OnLibraryWatchStarted(MediaFilePathWatcherUniquePtr library_watcher);
 
   // Path to the library XML file.
   const base::FilePath library_path_;
@@ -65,7 +67,7 @@ class IAppsDataProvider {
   bool is_valid_;
 
   // A watcher on the library xml file.
-  scoped_ptr<base::FilePathWatcher> library_watcher_;
+  MediaFilePathWatcherUniquePtr library_watcher_;
 
   base::WeakPtrFactory<IAppsDataProvider> weak_factory_;
 

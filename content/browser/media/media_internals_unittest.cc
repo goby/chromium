@@ -4,14 +4,17 @@
 
 #include "content/browser/media/media_internals.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
@@ -41,7 +44,7 @@ class MediaInternalsTestBase {
     std::string utf8_update = base::UTF16ToUTF8(update);
     const std::string::size_type first_brace = utf8_update.find('{');
     const std::string::size_type last_brace = utf8_update.rfind('}');
-    scoped_ptr<base::Value> output_value = base::JSONReader::Read(
+    std::unique_ptr<base::Value> output_value = base::JSONReader::Read(
         utf8_update.substr(first_brace, last_brace - first_brace + 1));
     CHECK(output_value);
 
@@ -109,35 +112,33 @@ class MediaInternalsVideoCaptureDeviceTest : public testing::Test,
   MediaInternals::UpdateCallback update_cb_;
 };
 
+// TODO(chfremer): Consider removing this. This test seem be
+// a duplicate implementation of the functionality under test.
+// https://crbug.com/630694
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
     defined(OS_ANDROID)
 TEST_F(MediaInternalsVideoCaptureDeviceTest,
        AllCaptureApiTypesHaveProperStringRepresentation) {
-  typedef media::VideoCaptureDevice::Name VideoCaptureDeviceName;
-  typedef std::map<VideoCaptureDeviceName::CaptureApiType, std::string>
-      CaptureApiTypeStringMap;
-  CaptureApiTypeStringMap m;
-#if defined(OS_LINUX)
-  m[VideoCaptureDeviceName::V4L2_SINGLE_PLANE] = "V4L2 SPLANE";
-  m[VideoCaptureDeviceName::V4L2_MULTI_PLANE] = "V4L2 MPLANE";
-#elif defined(OS_WIN)
-  m[VideoCaptureDeviceName::MEDIA_FOUNDATION] = "Media Foundation";
-  m[VideoCaptureDeviceName::DIRECT_SHOW] = "Direct Show";
-#elif defined(OS_MACOSX)
-  m[VideoCaptureDeviceName::AVFOUNDATION] = "AV Foundation";
-  m[VideoCaptureDeviceName::QTKIT] = "QTKit";
-  m[VideoCaptureDeviceName::DECKLINK] = "DeckLink";
-#elif defined(OS_ANDROID)
-  m[VideoCaptureDeviceName::API1] = "Camera API1";
-  m[VideoCaptureDeviceName::API2_LEGACY] = "Camera API2 Legacy";
-  m[VideoCaptureDeviceName::API2_FULL] = "Camera API2 Full";
-  m[VideoCaptureDeviceName::API2_LIMITED] = "Camera API2 Limited";
-  m[VideoCaptureDeviceName::TANGO] = "Tango API";
-#endif
-  EXPECT_EQ(media::VideoCaptureDevice::Name::API_TYPE_UNKNOWN, m.size());
-  for (CaptureApiTypeStringMap::iterator it = m.begin(); it != m.end(); ++it) {
-    const VideoCaptureDeviceName device_name("dummy", "dummy", it->first);
-    EXPECT_EQ(it->second, device_name.GetCaptureApiTypeString());
+  using VideoCaptureApi = media::VideoCaptureApi;
+  std::map<VideoCaptureApi, std::string> api_to_string_map;
+  api_to_string_map[VideoCaptureApi::LINUX_V4L2_SINGLE_PLANE] = "V4L2 SPLANE";
+  api_to_string_map[VideoCaptureApi::WIN_MEDIA_FOUNDATION] = "Media Foundation";
+  api_to_string_map[VideoCaptureApi::WIN_DIRECT_SHOW] = "Direct Show";
+  api_to_string_map[VideoCaptureApi::MACOSX_AVFOUNDATION] = "AV Foundation";
+  api_to_string_map[VideoCaptureApi::MACOSX_DECKLINK] = "DeckLink";
+  api_to_string_map[VideoCaptureApi::ANDROID_API1] = "Camera API1";
+  api_to_string_map[VideoCaptureApi::ANDROID_API2_LEGACY] =
+      "Camera API2 Legacy";
+  api_to_string_map[VideoCaptureApi::ANDROID_API2_FULL] = "Camera API2 Full";
+  api_to_string_map[VideoCaptureApi::ANDROID_API2_LIMITED] =
+      "Camera API2 Limited";
+  api_to_string_map[VideoCaptureApi::ANDROID_TANGO] = "Tango API";
+  EXPECT_EQ(static_cast<size_t>(VideoCaptureApi::UNKNOWN),
+            api_to_string_map.size());
+  for (const auto& map_entry : api_to_string_map) {
+    media::VideoCaptureDeviceDescriptor descriptor;
+    descriptor.capture_api = map_entry.first;
+    EXPECT_EQ(map_entry.second, descriptor.GetCaptureApiTypeString());
   }
 }
 #endif
@@ -157,7 +158,7 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
   const media::VideoCaptureFormat capture_format(kFrameSize, kFrameRate,
                                                  kPixelFormat, kPixelStorage);
   const std::string expected_string = base::StringPrintf(
-      "(%s)@%.3ffps, pixel format: %s storage: %s.",
+      "(%s)@%.3ffps, pixel format: %s, storage: %s",
       kFrameSize.ToString().c_str(), kFrameRate,
       media::VideoPixelFormatToString(kPixelFormat).c_str(),
       media::VideoCaptureFormat::PixelStorageToString(kPixelStorage).c_str());
@@ -176,32 +177,30 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
       kFrameRate, kPixelFormat);
   media::VideoCaptureFormats formats{};
   formats.push_back(format_hd);
-  const media::VideoCaptureDeviceInfo device_info(
+  media::VideoCaptureDeviceDescriptor descriptor;
+  descriptor.device_id = "dummy";
+  descriptor.display_name = "dummy";
 #if defined(OS_MACOSX)
-      media::VideoCaptureDevice::Name("dummy", "dummy",
-          media::VideoCaptureDevice::Name::QTKIT),
+  descriptor.capture_api = media::VideoCaptureApi::MACOSX_AVFOUNDATION;
 #elif defined(OS_WIN)
-      media::VideoCaptureDevice::Name("dummy", "dummy",
-          media::VideoCaptureDevice::Name::DIRECT_SHOW),
+  descriptor.capture_api = media::VideoCaptureApi::WIN_DIRECT_SHOW;
 #elif defined(OS_LINUX)
-      media::VideoCaptureDevice::Name(
-          "dummy", "/dev/dummy",
-          media::VideoCaptureDevice::Name::V4L2_SINGLE_PLANE),
+  descriptor.device_id = "/dev/dummy";
+  descriptor.capture_api = media::VideoCaptureApi::LINUX_V4L2_SINGLE_PLANE;
 #elif defined(OS_ANDROID)
-      media::VideoCaptureDevice::Name("dummy", "dummy",
-          media::VideoCaptureDevice::Name::API2_LEGACY),
-#else
-      media::VideoCaptureDevice::Name("dummy", "dummy"),
+  descriptor.capture_api = media::VideoCaptureApi::ANDROID_API2_LEGACY;
 #endif
-      formats);
-  media::VideoCaptureDeviceInfos device_infos{};
-  device_infos.push_back(device_info);
+  std::vector<std::tuple<media::VideoCaptureDeviceDescriptor,
+                         media::VideoCaptureFormats>>
+      descriptors_and_formats{};
+  descriptors_and_formats.push_back(std::make_tuple(descriptor, formats));
 
   // When updating video capture capabilities, the update will serialize
   // a JSON array of objects to string. So here, the |UpdateCallbackImpl| will
   // deserialize the first object in the array. This means we have to have
-  // exactly one device_info in the |device_infos|.
-  media_internals_->UpdateVideoCaptureDeviceCapabilities(device_infos);
+  // exactly one device_info in the |descriptors_and_formats|.
+  media_internals_->UpdateVideoCaptureDeviceCapabilities(
+      descriptors_and_formats);
 
 #if defined(OS_LINUX)
   ExpectString("id", "/dev/dummy");
@@ -217,7 +216,7 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
 #elif defined(OS_WIN)
   ExpectString("captureApi", "Direct Show");
 #elif defined(OS_MACOSX)
-  ExpectString("captureApi", "QTKit");
+  ExpectString("captureApi", "AV Foundation");
 #elif defined(OS_ANDROID)
   ExpectString("captureApi", "Camera API2 Legacy");
 #endif
@@ -244,7 +243,7 @@ class MediaInternalsAudioLogTest
   MediaInternals::UpdateCallback update_cb_;
   const media::AudioParameters test_params_;
   const media::AudioLogFactory::AudioComponent test_component_;
-  scoped_ptr<media::AudioLog> audio_log_;
+  std::unique_ptr<media::AudioLog> audio_log_;
 
  private:
   static media::AudioParameters MakeAudioParams() {

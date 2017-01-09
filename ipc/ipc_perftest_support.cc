@@ -4,17 +4,23 @@
 
 #include "ipc/ipc_perftest_support.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/pickle.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/perf_time_logger.h"
 #include "base/test/test_io_thread.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ipc/ipc_channel.h"
@@ -22,6 +28,7 @@
 #include "ipc/ipc_descriptors.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/ipc_sender.h"
+#include "mojo/edk/test/scoped_ipc_support.h"
 
 namespace IPC {
 namespace test {
@@ -221,8 +228,11 @@ class PerformanceChannelListener : public Listener {
   int count_down_;
   std::string payload_;
   EventTimeTracker latency_tracker_;
-  scoped_ptr<base::PerfTimeLogger> perf_logger_;
+  std::unique_ptr<base::PerfTimeLogger> perf_logger_;
 };
+
+IPCChannelPerfTestBase::IPCChannelPerfTestBase() = default;
+IPCChannelPerfTestBase::~IPCChannelPerfTestBase() = default;
 
 std::vector<PingPongTestParams>
 IPCChannelPerfTestBase::GetDefaultTestParams() {
@@ -239,14 +249,15 @@ IPCChannelPerfTestBase::GetDefaultTestParams() {
 
 void IPCChannelPerfTestBase::RunTestChannelPingPong(
     const std::vector<PingPongTestParams>& params) {
-  Init("PerformanceClient");
+  auto message_loop = base::MakeUnique<base::MessageLoopForIO>();
+  mojo::edk::test::ScopedIPCSupport ipc_support(message_loop->task_runner());
+  InitWithCustomMessageLoop("MojoPerfTestClient", std::move(message_loop));
 
   // Set up IPC channel and start client.
   PerformanceChannelListener listener("Channel");
   CreateChannel(&listener);
   listener.Init(channel());
   ASSERT_TRUE(ConnectChannel());
-  ASSERT_TRUE(StartClient());
 
   LockThreadAffinity thread_locker(kSharedCore);
   for (size_t i = 0; i < params.size(); i++) {
@@ -262,7 +273,7 @@ void IPCChannelPerfTestBase::RunTestChannelPingPong(
     sender()->Send(message);
 
     // Run message loop.
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   // Send quit message.
@@ -278,43 +289,47 @@ void IPCChannelPerfTestBase::RunTestChannelPingPong(
 
 void IPCChannelPerfTestBase::RunTestChannelProxyPingPong(
     const std::vector<PingPongTestParams>& params) {
-  InitWithCustomMessageLoop("PerformanceClient",
-                            make_scoped_ptr(new base::MessageLoop()));
+  io_thread_.reset(new base::TestIOThread(base::TestIOThread::kAutoStart));
+  {
+    auto message_loop = base::MakeUnique<base::MessageLoopForIO>();
+    mojo::edk::test::ScopedIPCSupport ipc_support(io_thread_->task_runner());
+    InitWithCustomMessageLoop("MojoPerfTestClient", std::move(message_loop));
 
-  base::TestIOThread io_thread(base::TestIOThread::kAutoStart);
+    // Set up IPC channel and start client.
+    PerformanceChannelListener listener("ChannelProxy");
+    auto channel_proxy = IPC::ChannelProxy::Create(
+        TakeHandle().release(), IPC::Channel::MODE_SERVER, &listener,
+        io_thread_->task_runner());
+    listener.Init(channel_proxy.get());
 
-  // Set up IPC channel and start client.
-  PerformanceChannelListener listener("ChannelProxy");
-  CreateChannelProxy(&listener, io_thread.task_runner());
-  listener.Init(channel_proxy());
-  ASSERT_TRUE(StartClient());
+    LockThreadAffinity thread_locker(kSharedCore);
+    for (size_t i = 0; i < params.size(); i++) {
+      listener.SetTestParams(params[i].message_count(),
+                             params[i].message_size());
 
-  LockThreadAffinity thread_locker(kSharedCore);
-  for (size_t i = 0; i < params.size(); i++) {
-    listener.SetTestParams(params[i].message_count(),
-                           params[i].message_size());
+      // This initial message will kick-start the ping-pong of messages.
+      Message* message = new Message(0, 2, Message::PRIORITY_NORMAL);
+      message->WriteInt64(base::TimeTicks::Now().ToInternalValue());
+      message->WriteInt(-1);
+      message->WriteString("hello");
+      channel_proxy->Send(message);
 
-    // This initial message will kick-start the ping-pong of messages.
-    Message* message =
-        new Message(0, 2, Message::PRIORITY_NORMAL);
+      // Run message loop.
+      base::RunLoop().Run();
+    }
+
+    // Send quit message.
+    Message* message = new Message(0, 2, Message::PRIORITY_NORMAL);
     message->WriteInt64(base::TimeTicks::Now().ToInternalValue());
     message->WriteInt(-1);
-    message->WriteString("hello");
-    sender()->Send(message);
+    message->WriteString("quit");
+    channel_proxy->Send(message);
 
-    // Run message loop.
-    base::MessageLoop::current()->Run();
+    EXPECT_TRUE(WaitForClientShutdown());
+    channel_proxy.reset();
   }
 
-  // Send quit message.
-  Message* message = new Message(0, 2, Message::PRIORITY_NORMAL);
-  message->WriteInt64(base::TimeTicks::Now().ToInternalValue());
-  message->WriteInt(-1);
-  message->WriteString("quit");
-  sender()->Send(message);
-
-  EXPECT_TRUE(WaitForClientShutdown());
-  DestroyChannelProxy();
+  io_thread_.reset();
 }
 
 
@@ -325,19 +340,13 @@ PingPongTestClient::PingPongTestClient()
 PingPongTestClient::~PingPongTestClient() {
 }
 
-scoped_ptr<Channel> PingPongTestClient::CreateChannel(
-    Listener* listener) {
-  return Channel::CreateClient(IPCTestBase::GetChannelName("PerformanceClient"),
-                               listener);
-}
-
 int PingPongTestClient::RunMain() {
   LockThreadAffinity thread_locker(kSharedCore);
-  scoped_ptr<Channel> channel = CreateChannel(listener_.get());
+  std::unique_ptr<Channel> channel = CreateChannel(listener_.get());
   listener_->Init(channel.get());
   CHECK(channel->Connect());
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   return 0;
 }
 
@@ -348,7 +357,7 @@ scoped_refptr<base::TaskRunner> PingPongTestClient::task_runner() {
 LockThreadAffinity::LockThreadAffinity(int cpu_number)
     : affinity_set_ok_(false) {
 #if defined(OS_WIN)
-  const DWORD_PTR thread_mask = 1 << cpu_number;
+  const DWORD_PTR thread_mask = static_cast<DWORD_PTR>(1) << cpu_number;
   old_affinity_ = SetThreadAffinityMask(GetCurrentThread(), thread_mask);
   affinity_set_ok_ = old_affinity_ != 0;
 #elif defined(OS_LINUX)

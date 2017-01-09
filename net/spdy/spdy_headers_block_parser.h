@@ -5,8 +5,12 @@
 #ifndef NET_SPDY_SPDY_HEADERS_BLOCK_PARSER_H_
 #define NET_SPDY_SPDY_HEADERS_BLOCK_PARSER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 #include "net/spdy/spdy_headers_handler_interface.h"
@@ -14,12 +18,6 @@
 #include "net/spdy/spdy_protocol.h"
 
 namespace net {
-
-namespace test {
-
-class SpdyHeadersBlockParserPeer;
-
-}  // namespace test
 
 // This class handles SPDY headers block bytes and parses out key-value pairs
 // as they arrive. This class is not thread-safe, and assumes that all headers
@@ -31,8 +29,7 @@ class NET_EXPORT_PRIVATE SpdyHeadersBlockParser {
 
   // Constructor. The handler's OnHeader will be called for every key
   // value pair that we parsed from the headers block.
-  SpdyHeadersBlockParser(SpdyMajorVersion spdy_version,
-                         SpdyHeadersHandlerInterface* handler);
+  explicit SpdyHeadersBlockParser(SpdyHeadersHandlerInterface* handler);
 
   virtual ~SpdyHeadersBlockParser();
 
@@ -59,13 +56,8 @@ class NET_EXPORT_PRIVATE SpdyHeadersBlockParser {
   };
   ParserError get_error() const { return error_; }
 
-  SpdyMajorVersion spdy_version() const { return spdy_version_; }
-
-  // Returns the size in bytes of a length field in a SPDY header.
-  static size_t LengthFieldSizeForVersion(SpdyMajorVersion spdy_version);
-
   // Returns the maximal number of headers in a SPDY headers block.
-  static size_t MaxNumberOfHeadersForVersion(SpdyMajorVersion spdy_version);
+  static size_t MaxNumberOfHeaders();
 
  private:
   typedef SpdyPrefixedBufferReader Reader;
@@ -89,9 +81,6 @@ class NET_EXPORT_PRIVATE SpdyHeadersBlockParser {
     FINISHED_HEADER
   };
   ParserState state_;
-
-  // Size in bytes of a length field in the spdy header.
-  const size_t length_field_size_;
 
   // The maximal number of headers in a SPDY headers block.
   const size_t max_headers_in_block_;
@@ -121,8 +110,6 @@ class NET_EXPORT_PRIVATE SpdyHeadersBlockParser {
   SpdyStreamId stream_id_;
 
   ParserError error_;
-
-  const SpdyMajorVersion spdy_version_;
 };
 
 }  // namespace net

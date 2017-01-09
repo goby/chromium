@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_util.h"
@@ -67,7 +68,12 @@ class AppListMainView::IconLoader : public AppListItemObserver {
  private:
   // AppListItemObserver overrides:
   void ItemIconChanged() override {
-    owner_->OnItemIconLoaded(this);
+    owner_->OnIconLoaderFinished(this);
+    // Note that IconLoader is released here.
+  }
+
+  void ItemBeingDestroyed() override {
+    owner_->OnIconLoaderFinished(this);
     // Note that IconLoader is released here.
   }
 
@@ -122,7 +128,7 @@ void AppListMainView::AddContentsViews() {
   search_box_view_->set_contents_view(contents_view_);
 
   contents_view_->SetPaintToLayer(true);
-  contents_view_->SetFillsBoundsOpaquely(false);
+  contents_view_->layer()->SetFillsBoundsOpaquely(false);
   contents_view_->layer()->SetMasksToBounds(true);
 
   delegate_->StartSearch();
@@ -145,9 +151,7 @@ void AppListMainView::ShowAppListWhenReady() {
 }
 
 void AppListMainView::ResetForShow() {
-  if (switches::IsExperimentalAppListEnabled())
-    contents_view_->SetActiveState(AppListModel::STATE_START);
-
+  contents_view_->SetActiveState(AppListModel::STATE_START);
   contents_view_->apps_container_view()->ResetForShowApps();
   // We clear the search when hiding so when app list appears it is not showing
   // search results.
@@ -157,10 +161,6 @@ void AppListMainView::ResetForShow() {
 void AppListMainView::Close() {
   icon_loading_wait_timer_.Stop();
   contents_view_->CancelDrag();
-}
-
-void AppListMainView::Prerender() {
-  contents_view_->Prerender();
 }
 
 void AppListMainView::ModelChanged() {
@@ -178,10 +178,6 @@ void AppListMainView::ModelChanged() {
 void AppListMainView::SetDragAndDropHostOfCurrentAppList(
     ApplicationDragAndDropHost* drag_and_drop_host) {
   contents_view_->SetDragAndDropHostOfCurrentAppList(drag_and_drop_host);
-}
-
-bool AppListMainView::ShouldCenterWindow() const {
-  return delegate_->ShouldCenterWindow();
 }
 
 PaginationModel* AppListMainView::GetAppsPaginationModel() {
@@ -224,7 +220,7 @@ void AppListMainView::OnIconLoadingWaitTimer() {
   GetWidget()->Show();
 }
 
-void AppListMainView::OnItemIconLoaded(IconLoader* loader) {
+void AppListMainView::OnIconLoaderFinished(IconLoader* loader) {
   ScopedVector<IconLoader>::iterator it = std::find(
       pending_icon_loaders_.begin(), pending_icon_loaders_.end(), loader);
   DCHECK(it != pending_icon_loaders_.end());
@@ -289,12 +285,6 @@ void AppListMainView::ActivateApp(AppListItem* item, int event_flags) {
     contents_view_->ShowFolderContent(static_cast<AppListFolderItem*>(item));
   else
     item->Activate(event_flags);
-}
-
-void AppListMainView::GetShortcutPathForApp(
-    const std::string& app_id,
-    const base::Callback<void(const base::FilePath&)>& callback) {
-  delegate_->GetShortcutPathForApp(app_id, callback);
 }
 
 void AppListMainView::CancelDragInActiveFolder() {

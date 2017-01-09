@@ -16,6 +16,7 @@
 
 namespace base {
 class Value;
+class DictionaryValue;
 }
 
 namespace net {
@@ -49,6 +50,7 @@ class NET_EXPORT ProxyConfig {
     // Note that the default of TYPE_NO_RULES results in direct connections
     // being made when using this ProxyConfig.
     ProxyRules();
+    ProxyRules(const ProxyRules& other);
     ~ProxyRules();
 
     bool empty() const {
@@ -175,7 +177,7 @@ class NET_EXPORT ProxyConfig {
   void ClearAutomaticSettings();
 
   // Creates a Value dump of this configuration.
-  scoped_ptr<base::DictionaryValue> ToValue() const;
+  std::unique_ptr<base::DictionaryValue> ToValue() const;
 
   ProxyRules& proxy_rules() {
     return proxy_rules_;

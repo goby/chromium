@@ -7,10 +7,8 @@
 
 #include <set>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-
-class GURL;
 
 namespace content {
 class ResourceContext;

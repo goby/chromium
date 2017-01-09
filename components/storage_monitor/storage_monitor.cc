@@ -66,7 +66,7 @@ StorageMonitor* StorageMonitor::GetInstance() {
 }
 
 void StorageMonitor::SetStorageMonitorForTesting(
-    scoped_ptr<StorageMonitor> storage_monitor) {
+    std::unique_ptr<StorageMonitor> storage_monitor) {
   delete g_storage_monitor;
   g_storage_monitor = storage_monitor.release();
 }
@@ -162,7 +162,7 @@ void StorageMonitor::MarkInitialized() {
 void StorageMonitor::ProcessAttach(const StorageInfo& info) {
   {
     base::AutoLock lock(storage_lock_);
-    if (ContainsKey(storage_map_, info.device_id())) {
+    if (base::ContainsKey(storage_map_, info.device_id())) {
       // This can happen if our unique id scheme fails. Ignore the incoming
       // non-unique attachment.
       return;

@@ -2,7 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/json/json_writer.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -10,15 +16,17 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "base/win/windows_version.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/webrtc_audio_private/webrtc_audio_private_api.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/media/webrtc_log_uploader.h"
+#include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
@@ -27,8 +35,8 @@
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "media/audio/audio_device_description.h"
 #include "media/audio/audio_manager.h"
-#include "media/audio/audio_manager_base.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -52,7 +60,7 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
     for (size_t remaining_tries = 50; remaining_tries > 0; --remaining_tries) {
       tab->GetRenderProcessHost()->GetAudioOutputControllers(
           base::Bind(OnAudioControllers, &audio_playing));
-      base::MessageLoop::current()->RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
       if (audio_playing)
         break;
 
@@ -75,8 +83,8 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
 class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
  public:
   WebrtcAudioPrivateTest()
-      : enumeration_event_(false, false) {
-  }
+      : enumeration_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   void SetUpOnMainThread() override {
     AudioWaitingExtensionTest::SetUpOnMainThread();
@@ -86,9 +94,10 @@ class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
 
  protected:
   void AppendTabIdToRequestInfo(base::ListValue* params, int tab_id) {
-    base::DictionaryValue* request_info = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> request_info(
+        new base::DictionaryValue());
     request_info->SetInteger("tabId", tab_id);
-    params->Append(request_info);
+    params->Append(std::move(request_info));
   }
 
   std::string InvokeGetActiveSink(int tab_id) {
@@ -100,24 +109,22 @@ class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
     scoped_refptr<WebrtcAudioPrivateGetActiveSinkFunction> function =
         new WebrtcAudioPrivateGetActiveSinkFunction();
     function->set_source_url(source_url_);
-    scoped_ptr<base::Value> result(
-        RunFunctionAndReturnSingleResult(function.get(),
-                                         parameter_string,
-                                         browser()));
+    std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
+        function.get(), parameter_string, browser()));
     std::string device_id;
     result->GetAsString(&device_id);
     return device_id;
   }
 
-  scoped_ptr<base::Value> InvokeGetSinks(base::ListValue** sink_list) {
+  std::unique_ptr<base::Value> InvokeGetSinks(base::ListValue** sink_list) {
     scoped_refptr<WebrtcAudioPrivateGetSinksFunction> function =
         new WebrtcAudioPrivateGetSinksFunction();
     function->set_source_url(source_url_);
 
-    scoped_ptr<base::Value> result(
+    std::unique_ptr<base::Value> result(
         RunFunctionAndReturnSingleResult(function.get(), "[]", browser()));
     result->GetAsList(sink_list);
-    return result.Pass();
+    return result;
   }
 
   // Synchronously (from the calling thread's point of view) runs the
@@ -129,10 +136,11 @@ class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
       AudioDeviceNames* device_names) {
     AudioManager* audio_manager = AudioManager::Get();
 
-    if (!audio_manager->GetWorkerTaskRunner()->BelongsToCurrentThread()) {
-      audio_manager->GetWorkerTaskRunner()->PostTask(
+    if (!audio_manager->GetTaskRunner()->BelongsToCurrentThread()) {
+      audio_manager->GetTaskRunner()->PostTask(
           FROM_HERE,
-          base::Bind(&WebrtcAudioPrivateTest::GetAudioDeviceNames, this,
+          base::Bind(&WebrtcAudioPrivateTest::GetAudioDeviceNames,
+                     base::Unretained(this),
                      EnumerationFunc, device_names));
       enumeration_event_.Wait();
     } else {
@@ -149,17 +157,16 @@ class WebrtcAudioPrivateTest : public AudioWaitingExtensionTest {
                      GURL origin,
                      const std::string& raw_device_id,
                      std::string* id_in_origin) {
-    if (!content::BrowserThread::CurrentlyOn(content::BrowserThread::IO)) {
+    if (!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
       content::BrowserThread::PostTask(
-          content::BrowserThread::IO, FROM_HERE,
+          content::BrowserThread::UI, FROM_HERE,
           base::Bind(&WebrtcAudioPrivateTest::GetIDInOrigin,
-                     this, resource_context, origin, raw_device_id,
-                     id_in_origin));
+                     base::Unretained(this),
+                     resource_context, origin, raw_device_id, id_in_origin));
       enumeration_event_.Wait();
     } else {
       *id_in_origin = content::GetHMACForMediaDeviceID(
-          resource_context->GetMediaDeviceIDSalt(),
-          origin,
+          resource_context->GetMediaDeviceIDSalt(), url::Origin(origin),
           raw_device_id);
       enumeration_event_.Signal();
     }
@@ -178,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetSinks) {
   GetAudioDeviceNames(&AudioManager::GetAudioOutputDeviceNames, &devices);
 
   base::ListValue* sink_list = NULL;
-  scoped_ptr<base::Value> result = InvokeGetSinks(&sink_list);
+  std::unique_ptr<base::Value> result = InvokeGetSinks(&sink_list);
 
   std::string result_string;
   JSONWriter::Write(*result, &result_string);
@@ -198,9 +205,8 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetSinks) {
     dict->GetString("sinkId", &sink_id);
 
     std::string expected_id;
-    if (it->unique_id.empty() ||
-        it->unique_id == media::AudioManagerBase::kDefaultDeviceId) {
-      expected_id = media::AudioManagerBase::kDefaultDeviceId;
+    if (media::AudioDeviceDescription::IsDefaultDevice(it->unique_id)) {
+      expected_id = media::AudioDeviceDescription::kDefaultDeviceId;
     } else {
       GetIDInOrigin(profile()->GetResourceContext(),
                     source_url_.GetOrigin(),
@@ -235,10 +241,8 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetActiveSinkNoMediaStream) {
   scoped_refptr<WebrtcAudioPrivateGetActiveSinkFunction> function =
       new WebrtcAudioPrivateGetActiveSinkFunction();
   function->set_source_url(source_url_);
-  scoped_ptr<base::Value> result(
-      RunFunctionAndReturnSingleResult(function.get(),
-                                       parameter_string,
-                                       browser()));
+  std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
+      function.get(), parameter_string, browser()));
 
   std::string result_string;
   JSONWriter::Write(*result, &result_string);
@@ -277,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetAndSetWithMediaStream) {
   // where we set the active sink to each of the different available
   // sinks in turn.
   base::ListValue* sink_list = NULL;
-  scoped_ptr<base::Value> result = InvokeGetSinks(&sink_list);
+  std::unique_ptr<base::Value> result = InvokeGetSinks(&sink_list);
 
   ASSERT_TRUE(StartEmbeddedTestServer());
 
@@ -311,7 +315,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetAndSetWithMediaStream) {
     scoped_refptr<WebrtcAudioPrivateSetActiveSinkFunction> function =
       new WebrtcAudioPrivateSetActiveSinkFunction();
     function->set_source_url(source_url_);
-    scoped_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
+    std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
         function.get(), parameter_string, browser()));
     // The function was successful if the above invocation doesn't
     // fail. Just for kicks, also check that it returns no result.
@@ -354,10 +358,8 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, GetAssociatedSink) {
     std::string parameter_string;
     JSONWriter::Write(parameters, &parameter_string);
 
-    scoped_ptr<base::Value> result(
-        RunFunctionAndReturnSingleResult(function.get(),
-                                         parameter_string,
-                                         browser()));
+    std::unique_ptr<base::Value> result(RunFunctionAndReturnSingleResult(
+        function.get(), parameter_string, browser()));
     std::string result_string;
     JSONWriter::Write(*result, &result_string);
     VLOG(2) << "Results: " << result_string;
@@ -376,12 +378,12 @@ IN_PROC_BROWSER_TEST_F(WebrtcAudioPrivateTest, MAYBE_TriggerEvent) {
       WebrtcAudioPrivateEventService::GetFactoryInstance()->Get(profile());
 
   // Just trigger, without any extension listening.
-  service->OnDevicesChanged(base::SystemMonitor::DEVTYPE_AUDIO_CAPTURE);
+  service->OnDevicesChanged(base::SystemMonitor::DEVTYPE_AUDIO);
 
   // Now load our test extension and do it again.
   const extensions::Extension* extension = LoadExtension(
       test_data_dir_.AppendASCII("webrtc_audio_private_event_listener"));
-  service->OnDevicesChanged(base::SystemMonitor::DEVTYPE_AUDIO_CAPTURE);
+  service->OnDevicesChanged(base::SystemMonitor::DEVTYPE_AUDIO);
 
   // Check that the extension got the notification.
   std::string result = ExecuteScriptInBackgroundPage(extension->id(),
@@ -398,7 +400,7 @@ class HangoutServicesBrowserTest : public AudioWaitingExtensionTest {
   }
 };
 
-#if defined(GOOGLE_CHROME_BUILD) || defined(ENABLE_HANGOUT_SERVICES_EXTENSION)
+#if BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
 IN_PROC_BROWSER_TEST_F(HangoutServicesBrowserTest,
                        RunComponentExtensionTest) {
   // This runs the end-to-end JavaScript test for the Hangout Services
@@ -435,6 +437,6 @@ IN_PROC_BROWSER_TEST_F(HangoutServicesBrowserTest,
   g_browser_process->webrtc_log_uploader()->OverrideUploadWithBufferForTesting(
       NULL);
 }
-#endif  // defined(GOOGLE_CHROME_BUILD) || defined(ENABLE_HANGOUT_SERVICES_EXTENSION)
+#endif  // BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
 
 }  // namespace extensions

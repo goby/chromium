@@ -7,35 +7,31 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/chromeos/attestation/platform_verification_flow.h"
 #include "content/public/browser/render_frame_host.h"
 #include "media/mojo/interfaces/platform_verification.mojom.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace chromeos {
 namespace attestation {
 
-// Implements media::interfaces::PlatformVerification on ChromeOS using
+// Implements media::mojom::PlatformVerification on ChromeOS using
 // PlatformVerificationFlow. Can only be used on the UI thread because
 // PlatformVerificationFlow lives on the UI thread.
-class PlatformVerificationImpl
-    : public media::interfaces::PlatformVerification {
+class PlatformVerificationImpl : public media::mojom::PlatformVerification {
  public:
   static void Create(
       content::RenderFrameHost* render_frame_host,
-      mojo::InterfaceRequest<media::interfaces::PlatformVerification> request);
+      mojo::InterfaceRequest<media::mojom::PlatformVerification> request);
 
-  PlatformVerificationImpl(
-      content::RenderFrameHost* render_frame_host,
-      mojo::InterfaceRequest<PlatformVerification> request);
+  explicit PlatformVerificationImpl(
+      content::RenderFrameHost* render_frame_host);
   ~PlatformVerificationImpl() override;
 
   // mojo::InterfaceImpl<PlatformVerification> implementation.
-  void ChallengePlatform(const mojo::String& service_id,
-                         const mojo::String& challenge,
+  void ChallengePlatform(const std::string& service_id,
+                         const std::string& challenge,
                          const ChallengePlatformCallback& callback) override;
 
  private:
@@ -46,8 +42,6 @@ class PlatformVerificationImpl
                             const std::string& signed_data,
                             const std::string& signature,
                             const std::string& platform_key_certificate);
-
-  mojo::StrongBinding<media::interfaces::PlatformVerification> binding_;
 
   content::RenderFrameHost* const render_frame_host_;
 

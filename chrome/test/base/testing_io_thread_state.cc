@@ -7,8 +7,9 @@
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
+#include "build/build_config.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "content/public/browser/browser_thread.h"
@@ -45,8 +46,7 @@ TestingIOThreadState::TestingIOThreadState() {
   chromeos::DBusThreadManager::Initialize();
   bluez::BluezDBusManager::Initialize(
       chromeos::DBusThreadManager::Get()->GetSystemBus(),
-      chromeos::DBusThreadManager::Get()->IsUsingStub(
-          chromeos::DBusClientBundle::BLUETOOTH));
+      chromeos::DBusThreadManager::Get()->IsUsingFakes());
   chromeos::NetworkHandler::Initialize();
 #endif
 

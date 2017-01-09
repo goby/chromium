@@ -4,6 +4,7 @@
 
 #include "chrome/test/base/interactive_test_utils.h"
 
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 
@@ -27,7 +28,12 @@ bool BringBrowserWindowToFront(const Browser* browser) {
   if (!GetNativeWindow(browser, &window))
     return false;
 
-  return ui_test_utils::ShowAndFocusNativeWindow(window);
+  if (!ShowAndFocusNativeWindow(window))
+    return false;
+
+  BrowserActivationWaiter waiter(browser);
+  waiter.WaitForActivation();
+  return true;
 }
 
 bool SendKeyPressSync(const Browser* browser,

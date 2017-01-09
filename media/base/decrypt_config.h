@@ -5,32 +5,17 @@
 #ifndef MEDIA_BASE_DECRYPT_CONFIG_H_
 #define MEDIA_BASE_DECRYPT_CONFIG_H_
 
+#include <stdint.h>
+
 #include <iosfwd>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/media_export.h"
+#include "media/base/subsample_entry.h"
 
 namespace media {
-
-// The Common Encryption spec provides for subsample encryption, where portions
-// of a sample are set in cleartext. A SubsampleEntry specifies the number of
-// clear and encrypted bytes in each subsample. For decryption, all of the
-// encrypted bytes in a sample should be considered a single logical stream,
-// regardless of how they are divided into subsamples, and the clear bytes
-// should not be considered as part of decryption. This is logically equivalent
-// to concatenating all 'cypher_bytes' portions of subsamples, decrypting that
-// result, and then copying each byte from the decrypted block over the
-// position of the corresponding encrypted byte.
-struct SubsampleEntry {
-  SubsampleEntry() : clear_bytes(0), cypher_bytes(0) {}
-  SubsampleEntry(uint32 clear_bytes, uint32 cypher_bytes)
-      : clear_bytes(clear_bytes), cypher_bytes(cypher_bytes) {}
-  uint32 clear_bytes;
-  uint32 cypher_bytes;
-};
 
 // Contains all information that a decryptor needs to decrypt a media sample.
 class MEDIA_EXPORT DecryptConfig {
@@ -53,6 +38,10 @@ class MEDIA_EXPORT DecryptConfig {
   const std::string& key_id() const { return key_id_; }
   const std::string& iv() const { return iv_; }
   const std::vector<SubsampleEntry>& subsamples() const { return subsamples_; }
+
+  // Returns true if the corresponding decoder buffer requires decryption and
+  // false if that buffer is clear despite the presense of DecryptConfig.
+  bool is_encrypted() const { return !key_id_.empty() && !iv_.empty(); }
 
   // Returns true if all fields in |config| match this config.
   bool Matches(const DecryptConfig& config) const;

@@ -2,21 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/gcm_driver/gcm_profile_service.h"
-
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
+#include "chrome/browser/services/gcm/gcm_product_util.h"
 #include "chrome/browser/services/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/gcm_driver/gcm_profile_service.h"
 #if defined(OS_CHROMEOS)
 #include "chromeos/dbus/dbus_thread_manager.h"
 #endif
@@ -40,7 +43,7 @@ namespace {
 const char kTestAppID[] = "TestApp";
 const char kUserID[] = "user";
 
-scoped_ptr<KeyedService> BuildGCMProfileService(
+std::unique_ptr<KeyedService> BuildGCMProfileService(
     content::BrowserContext* context) {
   Profile* profile = Profile::FromBrowserContext(context);
   base::SequencedWorkerPool* worker_pool =
@@ -49,23 +52,24 @@ scoped_ptr<KeyedService> BuildGCMProfileService(
       worker_pool->GetSequencedTaskRunnerWithShutdownBehavior(
           worker_pool->GetSequenceToken(),
           base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
-  return make_scoped_ptr(new gcm::GCMProfileService(
+  return base::MakeUnique<gcm::GCMProfileService>(
       profile->GetPrefs(), profile->GetPath(), profile->GetRequestContext(),
       chrome::GetChannel(),
-      scoped_ptr<ProfileIdentityProvider>(new ProfileIdentityProvider(
+      gcm::GetProductCategoryForSubtypes(profile->GetPrefs()),
+      std::unique_ptr<ProfileIdentityProvider>(new ProfileIdentityProvider(
           SigninManagerFactory::GetForProfile(profile),
           ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
           LoginUIServiceFactory::GetShowLoginPopupCallbackForProfile(profile))),
-      scoped_ptr<gcm::GCMClientFactory>(new gcm::FakeGCMClientFactory(
-          content::BrowserThread::GetMessageLoopProxyForThread(
+      std::unique_ptr<gcm::GCMClientFactory>(new gcm::FakeGCMClientFactory(
+          content::BrowserThread::GetTaskRunnerForThread(
               content::BrowserThread::UI),
-          content::BrowserThread::GetMessageLoopProxyForThread(
+          content::BrowserThread::GetTaskRunnerForThread(
               content::BrowserThread::IO))),
-      content::BrowserThread::GetMessageLoopProxyForThread(
+      content::BrowserThread::GetTaskRunnerForThread(
           content::BrowserThread::UI),
-      content::BrowserThread::GetMessageLoopProxyForThread(
+      content::BrowserThread::GetTaskRunnerForThread(
           content::BrowserThread::IO),
-      blocking_task_runner));
+      blocking_task_runner);
 }
 
 }  // namespace
@@ -107,9 +111,9 @@ class GCMProfileServiceTest : public testing::Test {
 
  private:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   GCMProfileService* gcm_profile_service_;
-  scoped_ptr<FakeGCMAppHandler> gcm_app_handler_;
+  std::unique_ptr<FakeGCMAppHandler> gcm_app_handler_;
 
   std::string registration_id_;
   GCMClient::Result registration_result_;

@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_CONSTRAINED_WEB_DIALOG_UI_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -15,13 +16,11 @@ class Size;
 
 namespace content {
 class BrowserContext;
-class RenderViewHost;
 class WebContents;
 }
 
 namespace ui {
 class WebDialogDelegate;
-class WebDialogWebContentsDelegate;
 }
 
 class ConstrainedWebDialogDelegate {
@@ -50,6 +49,8 @@ class ConstrainedWebDialogDelegate {
   // Returns the maximum size for the dialog.
   virtual gfx::Size GetMaximumSize() const = 0;
 
+  // Returns the preferred size for the dialog, or an empty size if
+  // the dialog has been closed.
   virtual gfx::Size GetPreferredSize() const = 0;
 
  protected:
@@ -68,7 +69,7 @@ class ConstrainedWebDialogUI : public content::WebUIController {
   ~ConstrainedWebDialogUI() override;
 
   // WebUIController implementation:
-  void RenderViewCreated(content::RenderViewHost* render_view_host) override;
+  void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
 
   // Sets the delegate on the WebContents.
   static void SetConstrainedDelegate(content::WebContents* web_contents,

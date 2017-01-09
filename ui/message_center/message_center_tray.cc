@@ -4,8 +4,11 @@
 
 #include "ui/message_center/message_center_tray.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/message_center/message_center.h"
@@ -37,8 +40,6 @@ class NotificationMenuModel : public ui::SimpleMenuModel,
   // Overridden from ui::SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
  private:
@@ -76,12 +77,6 @@ bool NotificationMenuModel::IsCommandIdChecked(int command_id) const {
 
 bool NotificationMenuModel::IsCommandIdEnabled(int command_id) const {
   return tray_->delegate()->IsContextMenuEnabled();
-}
-
-bool NotificationMenuModel::GetAcceleratorForCommandId(
-    int command_id,
-    ui::Accelerator* accelerator) {
-  return false;
 }
 
 void NotificationMenuModel::ExecuteCommand(int command_id, int event_flags) {
@@ -197,7 +192,7 @@ void MessageCenterTray::ShowNotifierSettingsBubble() {
   NotifyMessageCenterTrayChanged();
 }
 
-scoped_ptr<ui::MenuModel> MessageCenterTray::CreateNotificationMenuModel(
+std::unique_ptr<ui::MenuModel> MessageCenterTray::CreateNotificationMenuModel(
     const NotifierId& notifier_id,
     const base::string16& display_source) {
 #if !defined(OS_CHROMEOS)
@@ -207,8 +202,8 @@ scoped_ptr<ui::MenuModel> MessageCenterTray::CreateNotificationMenuModel(
   }
 #endif
 
-  return make_scoped_ptr(
-      new NotificationMenuModel(this, notifier_id, display_source));
+  return base::MakeUnique<NotificationMenuModel>(this, notifier_id,
+                                                 display_source);
 }
 
 void MessageCenterTray::OnNotificationAdded(

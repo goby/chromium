@@ -1,5 +1,6 @@
-class {{union.name}} {
+class {{export_attribute}} {{union.name}} {
  public:
+  using DataView = {{union.name}}DataView;
   using Data_ = internal::{{union.name}}_Data;
   using Tag = Data_::{{union.name}}_Tag;
 
@@ -18,19 +19,42 @@ class {{union.name}} {
   {{union.name}}();
   ~{{union.name}}();
 
-{%  if union|is_cloneable_kind %}
+  // Clone() is a template so it is only instantiated if it is used. Thus, the
+  // bindings generator does not need to know whether Clone() or copy
+  // constructor/assignment are available for members.
+  template <typename UnionPtrType = {{union.name}}Ptr>
   {{union.name}}Ptr Clone() const;
+
+  // Equals() is a template so it is only instantiated if it is used. Thus, the
+  // bindings generator does not need to know whether Equals() or == operator
+  // are available for members.
+  template <typename T,
+            typename std::enable_if<std::is_same<
+                T, {{union.name}}>::value>::type* = nullptr>
+  bool Equals(const T& other) const;
+
+{%- if union|is_hashable %}
+  size_t Hash(size_t seed) const;
 {%- endif %}
-  bool Equals(const {{union.name}}& other) const;
 
   Tag which() const {
     return tag_;
   }
 
 {%  for field in union.fields %}
-  bool is_{{field.name}}() const;
-  {{field.kind|cpp_union_getter_return_type}} get_{{field.name}}() const;
-  void set_{{field.name}}({{field.kind|cpp_const_wrapper_type}} {{field.name}});
+  bool is_{{field.name}}() const { return tag_ == Tag::{{field.name|upper}}; }
+
+  {{field.kind|cpp_union_getter_return_type}} get_{{field.name}}() const {
+    DCHECK(tag_ == Tag::{{field.name|upper}});
+{%-   if field.kind|is_object_kind or
+         field.kind|is_any_handle_or_interface_kind %}
+    return *(data_.{{field.name}});
+{%-   else %}
+    return data_.{{field.name}};
+{%-   endif %}
+  }
+
+  void set_{{field.name}}({{field.kind|cpp_wrapper_param_type}} {{field.name}});
 {%- endfor %}
 
  private:
@@ -38,13 +62,14 @@ class {{union.name}} {
   union Union_ {
     Union_() {}
     ~Union_() {}
-{%  for field in union.fields %}
-{%    if field.kind|is_object_kind or field.kind|is_any_handle_kind or
-         field.kind|is_interface_kind or field.kind|is_associated_kind -%}
+
+{%- for field in union.fields %}
+{%-   if field.kind|is_object_kind or
+         field.kind|is_any_handle_or_interface_kind %}
     {{field.kind|cpp_wrapper_type}}* {{field.name}};
-{%    else -%}
+{%-   else %}
     {{field.kind|cpp_wrapper_type}} {{field.name}};
-{%    endif -%}
+{%-   endif %}
 {%- endfor %}
   };
   void SwitchActive(Tag new_active);

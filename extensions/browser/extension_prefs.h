@@ -5,25 +5,24 @@
 #ifndef EXTENSIONS_BROWSER_EXTENSION_PREFS_H_
 #define EXTENSIONS_BROWSER_EXTENSION_PREFS_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync/model/string_ordinal.h"
 #include "extensions/browser/blacklist_state.h"
 #include "extensions/browser/extension_scoped_prefs.h"
 #include "extensions/browser/install_flag.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/url_pattern_set.h"
-#include "sync/api/string_ordinal.h"
 
 class ExtensionPrefValueMap;
 class PrefService;
@@ -59,7 +58,7 @@ class URLPatternSet;
 //       maintains as the underlying extensions change.
 class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
  public:
-  typedef std::vector<linked_ptr<ExtensionInfo> > ExtensionsInfo;
+  using ExtensionsInfo = std::vector<std::unique_ptr<ExtensionInfo>>;
 
   // Vector containing identifiers for preferences.
   typedef std::set<std::string> PrefKeySet;
@@ -72,6 +71,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
     DELAY_REASON_GC = 1,
     DELAY_REASON_WAIT_FOR_IDLE = 2,
     DELAY_REASON_WAIT_FOR_IMPORTS = 3,
+    DELAY_REASON_WAIT_FOR_OS_UPDATE = 4,
   };
 
   // Creates base::Time classes. The default implementation is just to return
@@ -117,9 +117,9 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
 
     DISALLOW_COPY_AND_ASSIGN(ScopedUpdate);
   };
-  typedef ScopedUpdate<base::DictionaryValue, base::Value::TYPE_DICTIONARY>
+  typedef ScopedUpdate<base::DictionaryValue, base::Value::Type::DICTIONARY>
       ScopedDictionaryUpdate;
-  typedef ScopedUpdate<base::ListValue, base::Value::TYPE_LIST>
+  typedef ScopedUpdate<base::ListValue, base::Value::Type::LIST>
       ScopedListUpdate;
 
   // Creates an ExtensionPrefs object.
@@ -145,7 +145,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
       ExtensionPrefValueMap* extension_pref_value_map,
       bool extensions_disabled,
       const std::vector<ExtensionPrefsObserver*>& early_observers,
-      scoped_ptr<TimeProvider> time_provider);
+      std::unique_ptr<TimeProvider> time_provider);
 
   ~ExtensionPrefs() override;
 
@@ -279,10 +279,6 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // blacklist.
   std::set<std::string> GetBlacklistedExtensions() const;
 
-  // Sets whether the extension with |id| is blacklisted.
-  void SetExtensionBlacklisted(const std::string& extension_id,
-                               bool is_blacklisted);
-
   // Returns the version string for the currently installed extension, or
   // the empty string if not found.
   std::string GetVersionString(const std::string& extension_id) const;
@@ -355,7 +351,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Returns the granted permission set for the extension with |extension_id|,
   // and NULL if no preferences were found for |extension_id|.
   // This passes ownership of the returned set to the caller.
-  scoped_ptr<const PermissionSet> GetGrantedPermissions(
+  std::unique_ptr<const PermissionSet> GetGrantedPermissions(
       const std::string& extension_id) const;
 
   // Adds |permissions| to the granted permissions set for the extension with
@@ -371,7 +367,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Gets the active permission set for the specified extension. This may
   // differ from the permissions in the manifest due to the optional
   // permissions API. This passes ownership of the set to the caller.
-  scoped_ptr<const PermissionSet> GetActivePermissions(
+  std::unique_ptr<const PermissionSet> GetActivePermissions(
       const std::string& extension_id) const;
 
   // Sets the active |permissions| for the extension with |extension_id|.
@@ -412,15 +408,15 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // version directory and the location. Blacklisted extensions won't be saved
   // and neither will external extensions the user has explicitly uninstalled.
   // Caller takes ownership of returned structure.
-  scoped_ptr<ExtensionsInfo> GetInstalledExtensionsInfo() const;
+  std::unique_ptr<ExtensionsInfo> GetInstalledExtensionsInfo() const;
 
   // Same as above, but only includes external extensions the user has
   // explicitly uninstalled.
-  scoped_ptr<ExtensionsInfo> GetUninstalledExtensionsInfo() const;
+  std::unique_ptr<ExtensionsInfo> GetUninstalledExtensionsInfo() const;
 
   // Returns the ExtensionInfo from the prefs for the given extension. If the
   // extension is not present, NULL is returned.
-  scoped_ptr<ExtensionInfo> GetInstalledExtensionInfo(
+  std::unique_ptr<ExtensionInfo> GetInstalledExtensionInfo(
       const std::string& extension_id) const;
 
   // We've downloaded an updated .crx file for the extension, but are waiting
@@ -443,20 +439,14 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
 
   // Returns the ExtensionInfo from the prefs for delayed install information
   // for |extension_id|, if we have any. Otherwise returns NULL.
-  scoped_ptr<ExtensionInfo> GetDelayedInstallInfo(
+  std::unique_ptr<ExtensionInfo> GetDelayedInstallInfo(
       const std::string& extension_id) const;
 
   DelayReason GetDelayedInstallReason(const std::string& extension_id) const;
 
   // Returns information about all the extensions that have delayed install
   // information.
-  scoped_ptr<ExtensionsInfo> GetAllDelayedInstallInfo() const;
-
-  // Returns true if the extension is an ephemeral app.
-  bool IsEphemeralApp(const std::string& extension_id) const;
-
-  // Promotes an ephemeral app to a regular installed app.
-  void OnEphemeralAppPromoted(const std::string& extension_id);
+  std::unique_ptr<ExtensionsInfo> GetAllDelayedInstallInfo() const;
 
   // Returns true if the user repositioned the app on the app launcher via drag
   // and drop.
@@ -527,7 +517,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   const base::DictionaryValue* GetGeometryCache(
         const std::string& extension_id) const;
   void SetGeometryCache(const std::string& extension_id,
-                        scoped_ptr<base::DictionaryValue> cache);
+                        std::unique_ptr<base::DictionaryValue> cache);
 
   // Used for verification of installed extension ids. For the Set method, pass
   // null to remove the preference.
@@ -567,7 +557,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
                  PrefService* prefs,
                  const base::FilePath& root_dir,
                  ExtensionPrefValueMap* extension_pref_value_map,
-                 scoped_ptr<TimeProvider> time_provider,
+                 std::unique_ptr<TimeProvider> time_provider,
                  bool extensions_disabled,
                  const std::vector<ExtensionPrefsObserver*>& early_observers);
 
@@ -582,7 +572,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Helper function used by GetInstalledExtensionInfo() and
   // GetDelayedInstallInfo() to construct an ExtensionInfo from the provided
   // |extension| dictionary.
-  scoped_ptr<ExtensionInfo> GetInstalledInfoHelper(
+  std::unique_ptr<ExtensionInfo> GetInstalledInfoHelper(
       const std::string& extension_id,
       const base::DictionaryValue* extension) const;
 
@@ -592,6 +582,12 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
                                const std::string& pref_key,
                                URLPatternSet* result,
                                int valid_schemes) const;
+
+  // DEPRECATED. Use GetExtensionBlacklistState() instead.
+  // TODO(atuchin): Remove this once all clients are updated.
+  // Sets whether the extension with |id| is blacklisted.
+  void SetExtensionBlacklisted(const std::string& extension_id,
+                               bool is_blacklisted);
 
   // Converts |new_value| to a list of strings and sets the |pref_key| pref
   // belonging to |extension_id|.
@@ -606,7 +602,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
 
   // Interprets |pref_key| in |extension_id|'s preferences as an
   // PermissionSet, and passes ownership of the set to the caller.
-  scoped_ptr<const PermissionSet> ReadPrefAsPermissionSet(
+  std::unique_ptr<const PermissionSet> ReadPrefAsPermissionSet(
       const std::string& extension_id,
       const std::string& pref_key) const;
 
@@ -628,19 +624,9 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
                             int reasons,
                             DisableReasonChange change);
 
-  // Fix missing preference entries in the extensions that are were introduced
-  // in a later Chrome version.
-  void FixMissingPrefs(const ExtensionIdList& extension_ids);
-
   // Installs the persistent extension preferences into |prefs_|'s extension
   // pref store. Does nothing if extensions_disabled_ is true.
   void InitPrefStore();
-
-  // Migrates the permissions data in the pref store.
-  void MigratePermissions(const ExtensionIdList& extension_ids);
-
-  // Migrates the disable reasons from a single enum to a bit mask.
-  void MigrateDisableReasons(const ExtensionIdList& extension_ids);
 
   // Checks whether there is a state pref for the extension and if so, whether
   // it matches |check_state|.
@@ -697,7 +683,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Weak pointer, owned by BrowserContext.
   ExtensionPrefValueMap* extension_pref_value_map_;
 
-  scoped_ptr<TimeProvider> time_provider_;
+  std::unique_ptr<TimeProvider> time_provider_;
 
   bool extensions_disabled_;
 

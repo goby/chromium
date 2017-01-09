@@ -5,13 +5,15 @@
 #ifndef CONTENT_PUBLIC_RENDERER_PEPPER_PLUGIN_INSTANCE_H_
 #define CONTENT_PUBLIC_RENDERER_PEPPER_PLUGIN_INSTANCE_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "base/process/process_handle.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "ppapi/c/pp_resource.h"
 #include "ppapi/c/pp_var.h"
 #include "ppapi/c/private/ppb_instance_private.h"
+#include "ppapi/c/private/ppb_pdf.h"
 #include "ui/base/ime/text_input_type.h"
 
 class GURL;
@@ -44,15 +46,17 @@ class Isolate;
 }
 
 namespace content {
-class RenderView;
+class RenderFrame;
 
 class PepperPluginInstance {
  public:
+  // Return the PepperPluginInstance for the given |instance_id|. Will return
+  // null if the instance is in the process of being deleted.
   static CONTENT_EXPORT PepperPluginInstance* Get(PP_Instance instance_id);
 
   virtual ~PepperPluginInstance() {}
 
-  virtual content::RenderView* GetRenderView() = 0;
+  virtual content::RenderFrame* GetRenderFrame() = 0;
 
   virtual blink::WebPluginContainer* GetContainer() = 0;
 

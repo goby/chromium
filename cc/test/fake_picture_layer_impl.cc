@@ -4,7 +4,11 @@
 
 #include "cc/test/fake_picture_layer_impl.h"
 
+#include <stddef.h>
+
 #include <vector>
+
+#include "base/memory/ptr_util.h"
 #include "cc/tiles/tile.h"
 #include "cc/trees/layer_tree_impl.h"
 
@@ -13,17 +17,9 @@ namespace cc {
 FakePictureLayerImpl::FakePictureLayerImpl(
     LayerTreeImpl* tree_impl,
     int id,
-    scoped_refptr<DisplayListRasterSource> raster_source,
+    scoped_refptr<RasterSource> raster_source,
     bool is_mask)
-    : PictureLayerImpl(tree_impl,
-                       id,
-                       is_mask,
-                       new LayerImpl::SyncedScrollOffset),
-      append_quads_count_(0),
-      did_become_active_call_count_(0),
-      has_valid_tile_priorities_(false),
-      use_set_valid_tile_priorities_flag_(false),
-      release_resources_count_(0) {
+    : PictureLayerImpl(tree_impl, id, is_mask) {
   SetBounds(raster_source->GetSize());
   SetRasterSourceOnPending(raster_source, Region());
 }
@@ -31,18 +27,10 @@ FakePictureLayerImpl::FakePictureLayerImpl(
 FakePictureLayerImpl::FakePictureLayerImpl(
     LayerTreeImpl* tree_impl,
     int id,
-    scoped_refptr<DisplayListRasterSource> raster_source,
+    scoped_refptr<RasterSource> raster_source,
     bool is_mask,
     const gfx::Size& layer_bounds)
-    : PictureLayerImpl(tree_impl,
-                       id,
-                       is_mask,
-                       new LayerImpl::SyncedScrollOffset),
-      append_quads_count_(0),
-      did_become_active_call_count_(0),
-      has_valid_tile_priorities_(false),
-      use_set_valid_tile_priorities_flag_(false),
-      release_resources_count_(0) {
+    : PictureLayerImpl(tree_impl, id, is_mask) {
   SetBounds(layer_bounds);
   SetRasterSourceOnPending(raster_source, Region());
 }
@@ -50,29 +38,11 @@ FakePictureLayerImpl::FakePictureLayerImpl(
 FakePictureLayerImpl::FakePictureLayerImpl(LayerTreeImpl* tree_impl,
                                            int id,
                                            bool is_mask)
-    : FakePictureLayerImpl(tree_impl,
-                           id,
-                           is_mask,
-                           new LayerImpl::SyncedScrollOffset) {
-}
+    : PictureLayerImpl(tree_impl, id, is_mask) {}
 
-FakePictureLayerImpl::FakePictureLayerImpl(
-    LayerTreeImpl* tree_impl,
-    int id,
-    bool is_mask,
-    scoped_refptr<LayerImpl::SyncedScrollOffset> synced_scroll_offset)
-    : PictureLayerImpl(tree_impl, id, is_mask, synced_scroll_offset),
-      append_quads_count_(0),
-      did_become_active_call_count_(0),
-      has_valid_tile_priorities_(false),
-      use_set_valid_tile_priorities_flag_(false),
-      release_resources_count_(0) {
-}
-
-scoped_ptr<LayerImpl> FakePictureLayerImpl::CreateLayerImpl(
+std::unique_ptr<LayerImpl> FakePictureLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
-  return make_scoped_ptr(new FakePictureLayerImpl(tree_impl, id(), is_mask_,
-                                                  synced_scroll_offset()));
+  return base::WrapUnique(new FakePictureLayerImpl(tree_impl, id(), is_mask_));
 }
 
 void FakePictureLayerImpl::PushPropertiesTo(LayerImpl* layer_impl) {
@@ -125,19 +95,13 @@ PictureLayerTiling* FakePictureLayerImpl::LowResTiling() const {
 }
 
 void FakePictureLayerImpl::SetRasterSourceOnPending(
-    scoped_refptr<DisplayListRasterSource> raster_source,
+    scoped_refptr<RasterSource> raster_source,
     const Region& invalidation) {
   DCHECK(layer_tree_impl()->IsPendingTree());
   Region invalidation_temp = invalidation;
   const PictureLayerTilingSet* pending_set = nullptr;
   set_gpu_raster_max_texture_size(layer_tree_impl()->device_viewport_size());
   UpdateRasterSource(raster_source, &invalidation_temp, pending_set);
-}
-
-void FakePictureLayerImpl::SetIsDrawnRenderSurfaceLayerListMember(bool is) {
-  draw_properties().last_drawn_render_surface_layer_list_id =
-      is ? layer_tree_impl()->current_render_surface_list_id()
-         : layer_tree_impl()->current_render_surface_list_id() - 1;
 }
 
 void FakePictureLayerImpl::CreateAllTiles() {
@@ -187,11 +151,11 @@ size_t FakePictureLayerImpl::CountTilesRequired(
   if (!tilings_)
     return 0;
 
-  if (visible_rect_for_tile_priority_.IsEmpty())
+  if (visible_layer_rect().IsEmpty())
     return 0;
 
   gfx::Rect rect = viewport_rect_for_tile_priority_in_content_space_;
-  rect.Intersect(visible_rect_for_tile_priority_);
+  rect.Intersect(visible_layer_rect());
 
   size_t count = 0;
 
@@ -239,6 +203,11 @@ size_t FakePictureLayerImpl::CountTilesRequiredForDraw() const {
 void FakePictureLayerImpl::ReleaseResources() {
   PictureLayerImpl::ReleaseResources();
   ++release_resources_count_;
+}
+
+void FakePictureLayerImpl::ReleaseTileResources() {
+  PictureLayerImpl::ReleaseTileResources();
+  ++release_tile_resources_count_;
 }
 
 }  // namespace cc

@@ -4,22 +4,23 @@
 
 #include "chrome/browser/ui/webui/app_list/start_page_ui.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sys_info.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/app_list/start_page_handler.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
-#include "grit/browser_resources.h"
 
 namespace app_list {
 
@@ -32,7 +33,7 @@ StartPageUI::StartPageUI(content::WebUI* web_ui)
 StartPageUI::~StartPageUI() {}
 
 void StartPageUI::InitDataSource() {
-  scoped_ptr<content::WebUIDataSource> source(
+  std::unique_ptr<content::WebUIDataSource> source(
       content::WebUIDataSource::Create(chrome::kChromeUIAppListStartPageHost));
 
   source->SetJsonPath("strings.js");

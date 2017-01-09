@@ -4,35 +4,42 @@
 
 #include "content/browser/renderer_host/media/audio_input_renderer_host.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/shared_memory.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_math.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
+#include "content/browser/media/capture/desktop_capture_device_uma_types.h"
 #include "content/browser/media/capture/web_contents_audio_input_stream.h"
-#include "content/browser/media/capture/web_contents_capture_util.h"
 #include "content/browser/media/media_internals.h"
-#include "content/browser/media/webrtc_internals.h"
 #include "content/browser/renderer_host/media/audio_input_debug_writer.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
 #include "content/browser/renderer_host/media/audio_input_sync_writer.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
-#include "media/audio/audio_manager_base.h"
+#include "content/browser/webrtc/webrtc_internals.h"
+#include "content/public/browser/web_contents_media_capture_id.h"
+#include "media/audio/audio_device_description.h"
 #include "media/base/audio_bus.h"
+#include "media/base/media_switches.h"
+#include "media/media_features.h"
 
 namespace content {
 
 namespace {
 
-#ifdef ENABLE_WEBRTC
+#if BUILDFLAG(ENABLE_WEBRTC)
 const base::FilePath::CharType kDebugRecordingFileNameAddition[] =
     FILE_PATH_LITERAL("source_input");
 const base::FilePath::CharType kDebugRecordingFileNameExtension[] =
-    FILE_PATH_LITERAL("pcm");
+    FILE_PATH_LITERAL("wav");
 #endif
 
 void LogMessage(int stream_id, const std::string& msg, bool add_prefix) {
@@ -45,29 +52,6 @@ void LogMessage(int stream_id, const std::string& msg, bool add_prefix) {
   DVLOG(1) << oss.str();
 }
 
-#ifdef ENABLE_WEBRTC
-base::File CreateDebugRecordingFile(base::FilePath file_path) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  base::File recording_file(
-      file_path, base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_APPEND);
-  PLOG_IF(ERROR, !recording_file.IsValid())
-      << "Could not open debug recording file, error="
-      << recording_file.error_details();
-  return recording_file.Pass();
-}
-
-void CloseFile(base::File file) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  // |file| must be closed and destroyed on FILE thread.
-}
-
-void DeleteInputDebugWriterOnFileThread(
-    scoped_ptr<AudioInputDebugWriter> writer) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  // |writer| must be closed and destroyed on FILE thread.
-}
-#endif  // ENABLE_WEBRTC
-
 }  // namespace
 
 struct AudioInputRendererHost::AudioEntry {
@@ -77,7 +61,7 @@ struct AudioInputRendererHost::AudioEntry {
   // The AudioInputController that manages the audio input stream.
   scoped_refptr<media::AudioInputController> controller;
 
-  // The audio input stream ID in the render view.
+  // The audio input stream ID in the RenderFrame.
   int stream_id;
 
   // Shared memory for transmission of the audio data. It has
@@ -87,11 +71,7 @@ struct AudioInputRendererHost::AudioEntry {
 
   // The synchronous writer to be used by the controller. We have the
   // ownership of the writer.
-  scoped_ptr<media::AudioInputController::SyncWriter> writer;
-
-  // Must be deleted on the file thread. Must be posted for deletion and nulled
-  // before the AudioEntry is deleted.
-  scoped_ptr<AudioInputDebugWriter> input_debug_writer;
+  std::unique_ptr<AudioInputSyncWriter> writer;
 
   // Set to true after we called Close() for the controller.
   bool pending_close;
@@ -108,12 +88,11 @@ AudioInputRendererHost::AudioEntry::AudioEntry()
 }
 
 AudioInputRendererHost::AudioEntry::~AudioEntry() {
-  DCHECK(!input_debug_writer.get());
 }
 
 AudioInputRendererHost::AudioInputRendererHost(
     int render_process_id,
-    int32 renderer_pid,
+    int32_t renderer_pid,
     media::AudioManager* audio_manager,
     MediaStreamManager* media_stream_manager,
     AudioMirroringManager* audio_mirroring_manager,
@@ -134,7 +113,7 @@ AudioInputRendererHost::~AudioInputRendererHost() {
   DCHECK(audio_entries_.empty());
 }
 
-#ifdef ENABLE_WEBRTC
+#if BUILDFLAG(ENABLE_WEBRTC)
 void AudioInputRendererHost::EnableDebugRecording(const base::FilePath& file) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   base::FilePath file_with_extensions =
@@ -145,10 +124,7 @@ void AudioInputRendererHost::EnableDebugRecording(const base::FilePath& file) {
 
 void AudioInputRendererHost::DisableDebugRecording() {
   for (const auto& entry : audio_entries_) {
-    entry.second->controller->DisableDebugRecording(
-        base::Bind(&AudioInputRendererHost::DeleteDebugWriter,
-                   this,
-                   entry.first));
+    entry.second->controller->DisableDebugRecording();
   }
 }
 #endif  // ENABLE_WEBRTC
@@ -165,35 +141,25 @@ void AudioInputRendererHost::OnDestruct() const {
 void AudioInputRendererHost::OnCreated(
     media::AudioInputController* controller) {
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(
-          &AudioInputRendererHost::DoCompleteCreation,
-          this,
-          make_scoped_refptr(controller)));
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&AudioInputRendererHost::DoCompleteCreation, this,
+                 base::RetainedRef(controller)));
 }
 
 void AudioInputRendererHost::OnRecording(
     media::AudioInputController* controller) {
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(
-          &AudioInputRendererHost::DoSendRecordingMessage,
-          this,
-          make_scoped_refptr(controller)));
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&AudioInputRendererHost::DoSendRecordingMessage, this,
+                 base::RetainedRef(controller)));
 }
 
 void AudioInputRendererHost::OnError(media::AudioInputController* controller,
     media::AudioInputController::ErrorCode error_code) {
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(
-          &AudioInputRendererHost::DoHandleError,
-          this,
-          make_scoped_refptr(controller),
-          error_code));
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&AudioInputRendererHost::DoHandleError, this,
+                 base::RetainedRef(controller), error_code));
 }
 
 void AudioInputRendererHost::OnData(media::AudioInputController* controller,
@@ -203,15 +169,12 @@ void AudioInputRendererHost::OnData(media::AudioInputController* controller,
 
 void AudioInputRendererHost::OnLog(media::AudioInputController* controller,
                                    const std::string& message) {
-  BrowserThread::PostTask(BrowserThread::IO,
-                          FROM_HERE,
-                          base::Bind(&AudioInputRendererHost::DoLog,
-                                     this,
-                                     make_scoped_refptr(controller),
-                                     message));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(&AudioInputRendererHost::DoLog, this,
+                                     base::RetainedRef(controller), message));
 }
 
-void AudioInputRendererHost::set_renderer_pid(int32 renderer_pid) {
+void AudioInputRendererHost::set_renderer_pid(int32_t renderer_pid) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   renderer_pid_ = renderer_pid;
 }
@@ -249,8 +212,7 @@ void AudioInputRendererHost::DoCompleteCreation(
     return;
   }
 
-  AudioInputSyncWriter* writer =
-      static_cast<AudioInputSyncWriter*>(entry->writer.get());
+  AudioInputSyncWriter* writer = entry->writer.get();
 
   base::SyncSocket::TransitDescriptor socket_transit_descriptor;
 
@@ -292,17 +254,6 @@ void AudioInputRendererHost::DoHandleError(
   AudioEntry* entry = LookupByController(controller);
   if (!entry) {
     NOTREACHED() << "AudioInputController is invalid.";
-    return;
-  }
-
-  // This is a fix for crbug.com/357501. The error can be triggered when closing
-  // the lid on Macs, which causes more problems than it fixes.
-  // Also, in crbug.com/357569, the goal is to remove usage of the error since
-  // it was added to solve a crash on Windows that no longer can be reproduced.
-  if (error_code == media::AudioInputController::NO_DATA_ERROR) {
-    // TODO(henrika): it might be possible to do something other than just
-    // logging when we detect many NO_DATA_ERROR calls for a stream.
-    LogMessage(entry->stream_id, "AIC::DoCheckForNoData: NO_DATA_ERROR", false);
     return;
   }
 
@@ -383,13 +334,15 @@ void AudioInputRendererHost::DoCreateStream(
   }
 
   media::AudioParameters audio_params(config.params);
-  if (media_stream_manager_->audio_input_device_manager()
-          ->ShouldUseFakeDevice())
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kUseFakeDeviceForMediaStream)) {
     audio_params.set_format(media::AudioParameters::AUDIO_FAKE);
+  }
 
   // Check if we have the permission to open the device and which device to use.
+  MediaStreamType type = MEDIA_NO_SERVICE;
   std::string device_name;
-  std::string device_id = media::AudioManagerBase::kDefaultDeviceId;
+  std::string device_id = media::AudioDeviceDescription::kDefaultDeviceId;
   if (audio_params.format() != media::AudioParameters::AUDIO_FAKE) {
     const StreamDeviceInfo* info = media_stream_manager_->
         audio_input_device_manager()->GetOpenedDeviceInfoById(session_id);
@@ -400,23 +353,23 @@ void AudioInputRendererHost::DoCreateStream(
       MaybeUnregisterKeyboardMicStream(config);
       return;
     }
-
+    type = info->device.type;
     device_id = info->device.id;
     device_name = info->device.name;
     oss << ": device_name=" << device_name;
   }
 
   // Create a new AudioEntry structure.
-  scoped_ptr<AudioEntry> entry(new AudioEntry());
+  std::unique_ptr<AudioEntry> entry(new AudioEntry());
 
-  const uint32 segment_size =
+  const uint32_t segment_size =
       (sizeof(media::AudioInputBufferParameters) +
        media::AudioBus::CalculateMemorySize(audio_params));
   entry->shared_memory_segment_count = config.shared_memory_count;
 
   // Create the shared memory and share it with the renderer process
   // using a new SyncWriter object.
-  base::CheckedNumeric<uint32> size = segment_size;
+  base::CheckedNumeric<uint32_t> size = segment_size;
   size *= entry->shared_memory_segment_count;
   if (!size.IsValid() ||
       !entry->shared_memory.CreateAndMapAnonymous(size.ValueOrDie())) {
@@ -426,7 +379,7 @@ void AudioInputRendererHost::DoCreateStream(
     return;
   }
 
-  scoped_ptr<AudioInputSyncWriter> writer(new AudioInputSyncWriter(
+  std::unique_ptr<AudioInputSyncWriter> writer(new AudioInputSyncWriter(
       entry->shared_memory.memory(), entry->shared_memory.requested_size(),
       entry->shared_memory_segment_count, audio_params));
 
@@ -436,20 +389,32 @@ void AudioInputRendererHost::DoCreateStream(
     return;
   }
 
+#if BUILDFLAG(ENABLE_WEBRTC)
+  std::unique_ptr<media::AudioInputWriter> debug_writer(
+      new AudioInputDebugWriter(audio_params));
+#else
+  std::unique_ptr<media::AudioInputWriter> debug_writer(nullptr);
+#endif
+
   // If we have successfully created the SyncWriter then assign it to the
   // entry and construct an AudioInputController.
   entry->writer.reset(writer.release());
-  if (WebContentsCaptureUtil::IsWebContentsDeviceId(device_id)) {
+  if (WebContentsMediaCaptureId::Parse(device_id, nullptr)) {
+    // For MEDIA_DESKTOP_AUDIO_CAPTURE, the source is selected from picker
+    // window, we do not mute the source audio.
+    // For MEDIA_TAB_AUDIO_CAPTURE, the probable use case is Cast, we mute
+    // the source audio.
+    // TODO(qiangchen): Analyze audio constraints to make a duplicating or
+    // diverting decision. It would give web developer more flexibility.
     entry->controller = media::AudioInputController::CreateForStream(
-        audio_manager_->GetTaskRunner(),
-        this,
+        audio_manager_->GetTaskRunner(), this,
         WebContentsAudioInputStream::Create(
-            device_id,
-            audio_params,
-            audio_manager_->GetWorkerTaskRunner(),
+            device_id, audio_params, audio_manager_->GetWorkerTaskRunner(),
             audio_mirroring_manager_),
-        entry->writer.get(),
-        user_input_monitor_);
+        entry->writer.get(), std::move(debug_writer), user_input_monitor_);
+    // Only count for captures from desktop media picker dialog.
+    if (entry->controller.get() && type == MEDIA_DESKTOP_AUDIO_CAPTURE)
+      IncrementDesktopCaptureCounter(TAB_AUDIO_CAPTURER_CREATED);
   } else {
     // We call CreateLowLatency regardless of the value of
     // |audio_params.format|. Low latency can currently mean different things in
@@ -457,14 +422,19 @@ void AudioInputRendererHost::DoCreateStream(
     // TODO(grunell): Clean up the low latency terminology so that it's less
     // confusing.
     entry->controller = media::AudioInputController::CreateLowLatency(
-        audio_manager_,
-        this,
-        audio_params,
-        device_id,
-        entry->writer.get(),
-        user_input_monitor_,
+        audio_manager_, this, audio_params, device_id, entry->writer.get(),
+        std::move(debug_writer), user_input_monitor_,
         config.automatic_gain_control);
     oss << ", AGC=" << config.automatic_gain_control;
+
+    // Only count for captures from desktop media picker dialog and system loop
+    // back audio.
+    if (entry->controller.get() && type == MEDIA_DESKTOP_AUDIO_CAPTURE &&
+        (device_id == media::AudioDeviceDescription::kLoopbackInputDeviceId ||
+         device_id ==
+             media::AudioDeviceDescription::kLoopbackWithMuteDeviceId)) {
+      IncrementDesktopCaptureCounter(SYSTEM_LOOPBACK_AUDIO_CAPTURER_CREATED);
+    }
   }
 
   if (!entry->controller.get()) {
@@ -491,7 +461,7 @@ void AudioInputRendererHost::DoCreateStream(
   MediaInternals::GetInstance()->SetWebContentsTitleForAudioLogEntry(
       stream_id, render_process_id_, render_frame_id, audio_log_.get());
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   BrowserThread::PostTask(
       BrowserThread::UI,
       FROM_HERE,
@@ -581,18 +551,8 @@ void AudioInputRendererHost::DeleteEntry(AudioEntry* entry) {
   }
 #endif
 
-#if defined(ENABLE_WEBRTC)
-  if (entry->input_debug_writer.get()) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(&DeleteInputDebugWriterOnFileThread,
-                   base::Passed(entry->input_debug_writer.Pass())));
-  }
-#endif
-
   // Delete the entry when this method goes out of scope.
-  scoped_ptr<AudioEntry> entry_deleter(entry);
+  std::unique_ptr<AudioEntry> entry_deleter(entry);
 
   // Erase the entry from the map.
   audio_entries_.erase(entry->stream_id);
@@ -643,7 +603,7 @@ void AudioInputRendererHost::MaybeUnregisterKeyboardMicStream(
 #endif
 }
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
 void AudioInputRendererHost::MaybeEnableDebugRecordingForId(int stream_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (WebRTCInternals::GetInstance()->IsAudioDebugRecordingsEnabled()) {
@@ -673,61 +633,19 @@ base::FilePath AudioInputRendererHost::GetDebugRecordingFilePathWithExtensions(
 }
 
 void AudioInputRendererHost::EnableDebugRecordingForId(
-    const base::FilePath& file,
+    const base::FilePath& file_name,
     int stream_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::FILE,
-      FROM_HERE,
-      base::Bind(
-          &CreateDebugRecordingFile,
-          file.AddExtension(IntToStringType(stream_id))
-              .AddExtension(kDebugRecordingFileNameExtension)),
-      base::Bind(
-          &AudioInputRendererHost::DoEnableDebugRecording,
-          weak_factory_.GetWeakPtr(),
-          stream_id));
+  AudioEntry* entry = LookupById(stream_id);
+  if (!entry)
+    return;
+  entry->controller->EnableDebugRecording(
+      file_name.AddExtension(IntToStringType(stream_id))
+          .AddExtension(kDebugRecordingFileNameExtension));
 }
 
 #undef IntToStringType
 
-void AudioInputRendererHost::DoEnableDebugRecording(
-    int stream_id,
-    base::File file) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (!file.IsValid())
-    return;
-  AudioEntry* entry = LookupById(stream_id);
-  if (!entry) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(
-            &CloseFile,
-            Passed(file.Pass())));
-    return;
-  }
-  entry->input_debug_writer.reset(new AudioInputDebugWriter(file.Pass()));
-  entry->controller->EnableDebugRecording(entry->input_debug_writer.get());
-}
-
-void AudioInputRendererHost::DeleteDebugWriter(int stream_id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  AudioEntry* entry = LookupById(stream_id);
-  if (!entry) {
-    // This happens if DisableDebugRecording is called right after
-    // DeleteEntries.
-    return;
-  }
-
-  if (entry->input_debug_writer.get()) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(&DeleteInputDebugWriterOnFileThread,
-                   base::Passed(entry->input_debug_writer.Pass())));
-  }
-}
-#endif  // defined(ENABLE_WEBRTC)
+#endif  // BUILDFLAG(ENABLE_WEBRTC)
 
 }  // namespace content

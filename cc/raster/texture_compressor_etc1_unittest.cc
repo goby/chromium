@@ -4,6 +4,8 @@
 
 #include "cc/raster/texture_compressor.h"
 
+#include <stdint.h>
+
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -15,7 +17,7 @@ const int kImageChannels = 4;
 const int kImageSizeInBytes = kImageWidth * kImageHeight * kImageChannels;
 
 TEST(TextureCompressorETC1Test, Compress256x256Ratio) {
-  scoped_ptr<TextureCompressor> compressor =
+  std::unique_ptr<TextureCompressor> compressor =
       TextureCompressor::Create(TextureCompressor::kFormatETC1);
   uint8_t src[kImageSizeInBytes];
   uint8_t dst[kImageSizeInBytes];

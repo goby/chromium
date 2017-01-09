@@ -15,7 +15,7 @@ function doEval()
 
 function doEvalWithNonRelativeURL()
 {
-    eval("function relativeURLScript() {}\n//# sourceURL=/js/nonRelativeURL.js");
+    eval("function relativeURLScript() {}\n//# sourceURL=js/nonRelativeURL.js");
 }
 
 function doDynamicScript()
@@ -28,6 +28,11 @@ function doDynamicScript()
 function doURLAndMappingURL()
 {
     eval("function keepAlive() {}\n//# sourceMappingURL=sourceMappingURL.map\n//# sourceURL=sourceURL.js");
+}
+
+function doEvalWithMultipleSourceURL()
+{
+    eval("\n//# sourceURL=evalURL2.js\nfunction keepAlive() {}\n//# sourceURL=evalMultipleURL.js");
 }
 
 function addScriptWithURL()
@@ -63,11 +68,11 @@ function test()
 
             function didShowScriptSource(sourceFrame)
             {
-                var panel = WebInspector.panels.sources;
+                var panel = UI.panels.sources;
                 var uiSourceCodes = panel._workspace.uiSourceCodes();
                 var ignored = true;
                 for (var i = 0; i < uiSourceCodes.length && ignored; ++i) {
-                    if (uiSourceCodes[i].originURL().indexOf("inlineScriptURL.js") !== -1)
+                    if (uiSourceCodes[i].url().indexOf("inlineScriptURL.js") !== -1)
                         ignored = false;
                 }
                 if (ignored)
@@ -96,10 +101,10 @@ function test()
 
             function didShowScriptSource(sourceFrame)
             {
-                var panel = WebInspector.panels.sources;
+                var panel = UI.panels.sources;
                 var uiSourceCodes = panel._workspace.uiSourceCodes();
                 for (var i = 0; i < uiSourceCodes.length; ++i) {
-                    if (uiSourceCodes[i].originURL().indexOf("scriptWithPoorSourceURL.js") !== -1)
+                    if (uiSourceCodes[i].url().indexOf("scriptWithPoorSourceURL.js") !== -1)
                         InspectorTest.addResult("FAILED: poor sourceURL comment in script was used as a script name");
                 }
                 next();
@@ -153,13 +158,26 @@ function test()
 
         function testNonRelativeURL(next)
         {
-            InspectorTest.showScriptSource("/js/nonRelativeURL.js", didShowScriptSource);
+            InspectorTest.showScriptSource("js/nonRelativeURL.js", didShowScriptSource);
             InspectorTest.evaluateInPage("setTimeout(doEvalWithNonRelativeURL, 0)");
 
             function didShowScriptSource(sourceFrame)
             {
                 InspectorTest.addResult(sourceFrame.textEditor.text());
                 forEachScriptMatchingURL("nonRelativeURL.js", checkScriptSourceURL);
+                next();
+            }
+        },
+
+        function testMultipleSourceURLComment(next)
+        {
+            InspectorTest.showScriptSource("evalMultipleURL.js", didShowScriptSource);
+            InspectorTest.evaluateInPage("setTimeout(doEvalWithMultipleSourceURL, 0)");
+
+            function didShowScriptSource(sourceFrame)
+            {
+                InspectorTest.addResult(sourceFrame.textEditor.text());
+                forEachScriptMatchingURL("evalMultipleURL.js", checkScriptSourceURL);
                 next();
             }
         }

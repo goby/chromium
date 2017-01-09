@@ -5,6 +5,8 @@
 #ifndef UI_EVENTS_GESTURES_GESTURE_RECOGNIZER_H_
 #define UI_EVENTS_GESTURES_GESTURE_RECOGNIZER_H_
 
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/memory/scoped_vector.h"
@@ -35,7 +37,7 @@ class EVENTS_EXPORT GestureRecognizer {
   // Returns a list of zero or more GestureEvents. The caller is responsible for
   // freeing the returned events. Acks the gesture packet in the queue which
   // matches with unique_event_id.
-  virtual Gestures* AckTouchEvent(uint32 unique_event_id,
+  virtual Gestures* AckTouchEvent(uint32_t unique_event_id,
                                   ui::EventResult result,
                                   GestureConsumer* consumer) = 0;
 
@@ -49,10 +51,6 @@ class EVENTS_EXPORT GestureRecognizer {
   // Otherwise, returns null.
   virtual GestureConsumer* GetTouchLockedTarget(const TouchEvent& event) = 0;
 
-  // Return the window which should handle this GestureEvent.
-  virtual GestureConsumer* GetTargetForGestureEvent(
-      const GestureEvent& event) = 0;
-
   // Returns the target of the nearest active touch with source device of
   // |source_device_id|, within
   // GestureConfiguration::max_separation_for_gesture_touches_in_pixels of
@@ -64,13 +62,15 @@ class EVENTS_EXPORT GestureRecognizer {
   // |not_cancelled| == nullptr, cancels all touches.
   virtual void CancelActiveTouchesExcept(GestureConsumer* not_cancelled) = 0;
 
-  // Makes |new_consumer| the target for events previously targeting
-  // |current_consumer|. Touches targeting all other targets are
-  // canceled. The caller is responsible for updating the state of the
-  // consumers to be aware of this transfer of control (there are no
-  // ENTERED/EXITED events).
+  enum class ShouldCancelTouches { Cancel, DontCancel };
+
+  // Transfer the gesture stream from the drag source (current_consumer) to the
+  // consumer used for dragging (new_consumer). If |should_cancel_touches| is
+  // Cancel, dispatches cancel events to |current_consumer| to ensure that its
+  // touch stream remains valid.
   virtual void TransferEventsTo(GestureConsumer* current_consumer,
-                                GestureConsumer* new_consumer) = 0;
+                                GestureConsumer* new_consumer,
+                                ShouldCancelTouches should_cancel_touches) = 0;
 
   // If a gesture is underway for |consumer| |point| is set to the last touch
   // point and true is returned. If no touch events have been processed for

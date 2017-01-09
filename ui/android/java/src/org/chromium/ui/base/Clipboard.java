@@ -10,6 +10,7 @@ import android.content.Context;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.ui.R;
 import org.chromium.ui.widget.Toast;
 
@@ -66,14 +67,16 @@ public class Clipboard {
     @SuppressWarnings("javadoc")
     @CalledByNative
     private String getCoercedText() {
-        final ClipData clip = mClipboardManager.getPrimaryClip();
-        if (clip != null && clip.getItemCount() > 0) {
-            final CharSequence sequence = clip.getItemAt(0).coerceToText(mContext);
-            if (sequence != null) {
-                return sequence.toString();
-            }
+        // getPrimaryClip() has been observed to throw unexpected exceptions for some devices (see
+        // crbug.com/654802 and b/31501780)
+        try {
+            return mClipboardManager.getPrimaryClip()
+                    .getItemAt(0)
+                    .coerceToText(mContext)
+                    .toString();
+        } catch (Exception e) {
+            return null;
         }
-        return null;
     }
 
     /**
@@ -84,11 +87,13 @@ public class Clipboard {
      */
     @CalledByNative
     private String getHTMLText() {
-        final ClipData clip = mClipboardManager.getPrimaryClip();
-        if (clip != null && clip.getItemCount() > 0) {
-            return clip.getItemAt(0).getHtmlText();
+        // getPrimaryClip() has been observed to throw unexpected exceptions for some devices (see
+        // crbug/654802 and b/31501780)
+        try {
+            return mClipboardManager.getPrimaryClip().getItemAt(0).getHtmlText();
+        } catch (Exception e) {
+            return null;
         }
-        return null;
     }
 
     /**
@@ -96,25 +101,12 @@ public class Clipboard {
      * {@link android.text.ClipboardManager#setText(CharSequence)}, setting the
      * clipboard's current primary clip to a plain-text clip that consists of
      * the specified string.
-     *
-     * @param label will become the label of the clipboard's primary clip
      * @param text  will become the content of the clipboard's primary clip
      */
-    public void setText(final String label, final String text) {
-        setPrimaryClipNoException(ClipData.newPlainText(label, text));
-    }
-
-    /**
-     * Emulates the behavior of the now-deprecated
-     * {@link android.text.ClipboardManager#setText(CharSequence)}, setting the
-     * clipboard's current primary clip to a plain-text clip that consists of
-     * the specified string.
-     *
-     * @param text will become the content of the clipboard's primary clip
-     */
+    @SuppressFBWarnings("UPM_UNCALLED_PRIVATE_METHOD")
     @CalledByNative
     public void setText(final String text) {
-        setText(null, text);
+        setPrimaryClipNoException(ClipData.newPlainText("text", text));
     }
 
     /**
@@ -122,23 +114,22 @@ public class Clipboard {
      * of that very data.
      *
      * @param html  The HTML content to be pasted to the clipboard.
-     * @param label The Plain-text label for the HTML content.
      * @param text  Plain-text representation of the HTML content.
      */
-    public void setHTMLText(final String html, final String label, final String text) {
-        setPrimaryClipNoException(ClipData.newHtmlText(label, text, html));
+    @SuppressFBWarnings("UPM_UNCALLED_PRIVATE_METHOD")
+    @CalledByNative
+    private void setHTMLText(final String html, final String text) {
+        setPrimaryClipNoException(ClipData.newHtmlText("html", text, html));
     }
 
     /**
-     * Writes HTML to the clipboard, together with a plain-text representation
-     * of that very data.
+     * Clears the Clipboard Primary clip.
      *
-     * @param html The HTML content to be pasted to the clipboard.
-     * @param text Plain-text representation of the HTML content.
      */
+    @SuppressFBWarnings("UPM_UNCALLED_PRIVATE_METHOD")
     @CalledByNative
-    public void setHTMLText(final String html, final String text) {
-        setHTMLText(html, null, text);
+    private void clear() {
+        setPrimaryClipNoException(ClipData.newPlainText(null, null));
     }
 
     private void setPrimaryClipNoException(ClipData clip) {

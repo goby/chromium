@@ -3,9 +3,9 @@ This test can not be run manually, it requires testRunner.layerTreeAsText.
 
 Case: No src, no poster
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true
@@ -16,9 +16,9 @@ Case: No src, no poster
 
 Case: Displaying poster
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
       "drawsContent": true
@@ -29,33 +29,33 @@ Case: Displaying poster
 
 Case: Displaying movie
 {
-  "bounds": [785, 782],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [785, 782],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "children": [
-        {
-          "position": [8, 8],
-          "bounds": [352, 288]
-        },
-        {
-          "shouldFlattenTransform": false,
-          "children": [
-            {
-              "position": [8, 8],
-              "bounds": [352, 288],
-              "drawsContent": true
-            },
-            {
-              "position": [8, 8],
-              "bounds": [352, 253],
-              "drawsContent": true
-            }
-          ]
-        }
-      ]
+      "drawsContent": true
+    },
+    {
+      "name": "LayoutVideo VIDEO",
+      "position": [8, 8],
+      "bounds": [352, 288]
+    },
+    {
+      "name": "Squashing Containment Layer",
+      "shouldFlattenTransform": false
+    },
+    {
+      "name": "LayoutFlexibleBox (relative positioned) DIV",
+      "position": [8, 8],
+      "bounds": [352, 288],
+      "drawsContent": true
+    },
+    {
+      "name": "Squashing Layer (first squashed layer: LayoutFlexibleBox (relative positioned) DIV)",
+      "position": [8, 8],
+      "bounds": [352, 246],
+      "drawsContent": true
     }
   ]
 }

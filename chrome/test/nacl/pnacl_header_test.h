@@ -5,15 +5,13 @@
 #ifndef CHROME_TEST_NACL_PNACL_HEADER_TEST_H_
 #define CHROME_TEST_NACL_PNACL_HEADER_TEST_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/common/resource_type.h"
-
-namespace base {
-class FilePath;
-}
 
 namespace net {
 namespace test_server {
@@ -61,7 +59,7 @@ class PnaclHeaderTest : public InProcessBrowserTest {
  private:
   void StartServer();
 
-  scoped_ptr<net::test_server::HttpResponse> WatchForPexeFetch(
+  std::unique_ptr<net::test_server::HttpResponse> WatchForPexeFetch(
       const net::test_server::HttpRequest& request);
 
   int noncors_loads_;

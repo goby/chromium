@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/filesystem/EntryBase.h"
 
 #include "modules/filesystem/DOMFilePath.h"
@@ -38,32 +37,26 @@
 namespace blink {
 
 EntryBase::EntryBase(DOMFileSystemBase* fileSystem, const String& fullPath)
-    : m_fileSystem(fileSystem)
-    , m_fullPath(fullPath)
-    , m_name(DOMFilePath::getName(fullPath))
-{
-}
+    : m_fileSystem(fileSystem),
+      m_fullPath(fullPath),
+      m_name(DOMFilePath::getName(fullPath)) {}
 
-EntryBase::~EntryBase()
-{
-}
+EntryBase::~EntryBase() {}
 
-String EntryBase::toURL() const
-{
-    if (!m_cachedURL.isNull())
-        return m_cachedURL;
-
-    // Some filesystem type may not support toURL.
-    if (!m_fileSystem->supportsToURL())
-        m_cachedURL = emptyString();
-    else
-        m_cachedURL = m_fileSystem->createFileSystemURL(this).string();
+String EntryBase::toURL() const {
+  if (!m_cachedURL.isNull())
     return m_cachedURL;
+
+  // Some filesystem type may not support toURL.
+  if (!m_fileSystem->supportsToURL())
+    m_cachedURL = emptyString();
+  else
+    m_cachedURL = m_fileSystem->createFileSystemURL(this).getString();
+  return m_cachedURL;
 }
 
-DEFINE_TRACE(EntryBase)
-{
-    visitor->trace(m_fileSystem);
+DEFINE_TRACE(EntryBase) {
+  visitor->trace(m_fileSystem);
 }
 
-} // namespace blink
+}  // namespace blink

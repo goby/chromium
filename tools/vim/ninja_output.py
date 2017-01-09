@@ -10,8 +10,8 @@ import itertools
 import re
 
 
-def GetNinjaOutputDirectory(chrome_root, configuration=None):
-  """Returns <chrome_root>/<output_dir>/(Release|Debug).
+def GetNinjaOutputDirectory(chrome_root):
+  """Returns <chrome_root>/<output_dir>/(Release|Debug|<other>).
 
   If either of the following environment variables are set, their
   value is used to determine the output directory:
@@ -20,11 +20,7 @@ def GetNinjaOutputDirectory(chrome_root, configuration=None):
 
   Otherwise, all directories starting with the word out are examined.
 
-  The output directory must contain {configuration}/build.ninja (if
-  configuration is None, both Debug and Release will be checked).
-
-  The configuration chosen is the one most recently generated/built,
-  but can be overriden via the <configuration> parameter.
+  The configuration chosen is the one most recently generated/built.
   """
 
   output_dirs = []
@@ -41,19 +37,16 @@ def GetNinjaOutputDirectory(chrome_root, configuration=None):
   if not output_dirs:
     for f in os.listdir(chrome_root):
       if re.match(r'out(\b|_)', f):
-        out = os.path.realpath(os.path.join(chrome_root, f))
-        if os.path.isdir(out):
-          output_dirs.append(os.path.relpath(out, start = chrome_root))
-
-  configs = ['Debug', 'Release', 'Default']
-  if configuration:
-    configs = [configuration]
+        if os.path.isdir(os.path.join(chrome_root, f)):
+          output_dirs.append(f)
 
   def generate_paths():
-    for out_dir, config in itertools.product(output_dirs, configs):
-      path = os.path.join(chrome_root, out_dir, config)
-      if os.path.exists(os.path.join(path, 'build.ninja')):
-        yield path
+    for out_dir in output_dirs:
+      out_path = os.path.join(chrome_root, out_dir)
+      for config in os.listdir(out_path):
+        path = os.path.join(out_path, config)
+        if os.path.exists(os.path.join(path, 'build.ninja')):
+          yield path
 
   def approx_directory_mtime(path):
     # This is a heuristic; don't recurse into subdirectories.

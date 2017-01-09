@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/child/child_thread_impl.h"
 #include "content/child/fileapi/file_system_dispatcher.h"
 #include "content/public/child/worker_thread.h"
@@ -36,11 +36,15 @@ class WebFileWriterImpl::WriterBridge
         task_runner_(running_on_worker_ ? base::ThreadTaskRunnerHandle::Get()
                                         : nullptr),
         written_bytes_(0) {
-    if (type == WebFileWriterImpl::TYPE_SYNC)
-      waitable_event_.reset(new base::WaitableEvent(false, false));
+    if (type == WebFileWriterImpl::TYPE_SYNC) {
+      waitable_event_.reset(new base::WaitableEvent(
+          base::WaitableEvent::ResetPolicy::AUTOMATIC,
+          base::WaitableEvent::InitialState::NOT_SIGNALED));
+    }
   }
 
-  void Truncate(const GURL& path, int64 offset,
+  void Truncate(const GURL& path,
+                int64_t offset,
                 const StatusCallback& status_callback) {
     status_callback_ = status_callback;
     if (!GetFileSystemDispatcher())
@@ -50,7 +54,9 @@ class WebFileWriterImpl::WriterBridge
         base::Bind(&WriterBridge::DidFinish, this));
   }
 
-  void Write(const GURL& path, const std::string& id, int64 offset,
+  void Write(const GURL& path,
+             const std::string& id,
+             int64_t offset,
              const WriteCallback& write_callback,
              const StatusCallback& error_callback) {
     write_callback_ = write_callback;
@@ -86,7 +92,7 @@ class WebFileWriterImpl::WriterBridge
   friend class base::RefCountedThreadSafe<WriterBridge>;
   virtual ~WriterBridge() {}
 
-  void DidWrite(int64 bytes, bool complete) {
+  void DidWrite(int64_t bytes, bool complete) {
     written_bytes_ += bytes;
     if (waitable_event_ && !complete)
       return;
@@ -119,7 +125,7 @@ class WebFileWriterImpl::WriterBridge
   const bool running_on_worker_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   int written_bytes_;
-  scoped_ptr<base::WaitableEvent> waitable_event_;
+  std::unique_ptr<base::WaitableEvent> waitable_event_;
   base::Closure results_closure_;
 };
 
@@ -135,14 +141,15 @@ WebFileWriterImpl::WebFileWriterImpl(
 WebFileWriterImpl::~WebFileWriterImpl() {
 }
 
-void WebFileWriterImpl::DoTruncate(const GURL& path, int64 offset) {
+void WebFileWriterImpl::DoTruncate(const GURL& path, int64_t offset) {
   RunOnMainThread(base::Bind(&WriterBridge::Truncate, bridge_,
       path, offset,
       base::Bind(&WebFileWriterImpl::DidFinish, AsWeakPtr())));
 }
 
-void WebFileWriterImpl::DoWrite(
-    const GURL& path, const std::string& blob_id, int64 offset) {
+void WebFileWriterImpl::DoWrite(const GURL& path,
+                                const std::string& blob_id,
+                                int64_t offset) {
   RunOnMainThread(base::Bind(&WriterBridge::Write, bridge_,
       path, blob_id, offset,
       base::Bind(&WebFileWriterImpl::DidWrite, AsWeakPtr()),

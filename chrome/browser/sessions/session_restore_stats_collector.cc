@@ -5,8 +5,9 @@
 #include "chrome/browser/sessions/session_restore_stats_collector.h"
 
 #include <string>
+#include <utility>
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/default_tick_clock.h"
 #include "content/public/browser/notification_service.h"
@@ -110,7 +111,7 @@ SessionRestoreStatsCollector::TabState::TabState(
 
 SessionRestoreStatsCollector::SessionRestoreStatsCollector(
     const base::TimeTicks& restore_started,
-    scoped_ptr<StatsReportingDelegate> reporting_delegate)
+    std::unique_ptr<StatsReportingDelegate> reporting_delegate)
     : done_tracking_non_deferred_tabs_(false),
       got_first_foreground_load_(false),
       got_first_paint_(false),
@@ -119,7 +120,7 @@ SessionRestoreStatsCollector::SessionRestoreStatsCollector(
       loading_tab_count_(0u),
       deferred_tab_count_(0u),
       tick_clock_(new base::DefaultTickClock()),
-      reporting_delegate_(reporting_delegate.Pass()) {
+      reporting_delegate_(std::move(reporting_delegate)) {
   this_retainer_ = this;
 }
 
@@ -284,7 +285,7 @@ void SessionRestoreStatsCollector::Observe(
           if (tab_state.loading_state == TAB_IS_LOADED)
             loaded_tabs.push_back(tab_state.controller);
         }
-        for (auto& tab : loaded_tabs)
+        for (auto* tab : loaded_tabs)
           RemoveTab(tab);
       }
       break;
@@ -372,7 +373,7 @@ SessionRestoreStatsCollector::GetTabState(NavigationController* tab) {
 SessionRestoreStatsCollector::TabState*
 SessionRestoreStatsCollector::GetTabState(RenderWidgetHost* tab) {
   for (auto& pair : tabs_tracked_) {
-    auto rwh = GetRenderWidgetHost(pair.first);
+    auto* rwh = GetRenderWidgetHost(pair.first);
     if (rwh == tab)
       return &pair.second;
   }

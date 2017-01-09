@@ -4,6 +4,10 @@
 
 #import "chrome/browser/ui/cocoa/extensions/extension_install_view_controller.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/auto_reset.h"
 #include "base/i18n/rtl.h"
 #include "base/mac/bundle_locations.h"
@@ -11,11 +15,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/extensions/bundle_installer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#import "chrome/browser/ui/chrome_style.h"
-#include "chrome/browser/ui/cocoa/extensions/bundle_util.h"
+#import "chrome/browser/ui/cocoa/chrome_style.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -31,7 +33,6 @@
 
 using content::OpenURLParams;
 using content::Referrer;
-using extensions::BundleInstaller;
 
 namespace {
 
@@ -51,7 +52,6 @@ typedef NSUInteger CellAttributes;
 }  // namespace.
 
 @interface ExtensionInstallViewController ()
-- (BOOL)isBundleInstall;
 - (BOOL)hasWebstoreData;
 - (void)appendRatingStar:(const gfx::ImageSkia*)skiaImage;
 - (void)onOutlineViewRowCountDidChange;
@@ -223,15 +223,12 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
 
 - (id)initWithProfile:(Profile*)profile
             navigator:(content::PageNavigator*)navigator
-             delegate:(ExtensionInstallPrompt::Delegate*)delegate
-               prompt:(scoped_refptr<ExtensionInstallPrompt::Prompt>)prompt {
-  // We use a different XIB in the case of bundle installs, installs with
-  // webstore data, or no permission warnings. These are laid out nicely for
-  // the data they display.
+             delegate:(ExtensionInstallViewDelegate*)delegate
+               prompt:(std::unique_ptr<ExtensionInstallPrompt::Prompt>)prompt {
+  // We use a different XIB in the case of installs with webstore data, or no
+  // permission warnings. These are laid out nicely for the data they display.
   NSString* nibName = nil;
-  if (prompt->type() == ExtensionInstallPrompt::BUNDLE_INSTALL_PROMPT) {
-    nibName = @"ExtensionInstallPromptBundle";
-  } else if (prompt->has_webstore_data()) {
+  if (prompt->has_webstore_data()) {
     nibName = @"ExtensionInstallPromptWebstoreData";
   } else if (!prompt->ShouldShowPermissions() &&
              prompt->GetRetainedFileCount() == 0 &&
@@ -246,8 +243,8 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
     profile_ = profile;
     navigator_ = navigator;
     delegate_ = delegate;
-    prompt_ = prompt;
-    warnings_.reset([[self buildWarnings:*prompt] retain]);
+    prompt_ = std::move(prompt);
+    warnings_.reset([[self buildWarnings:*prompt_] retain]);
   }
   return self;
 }
@@ -255,25 +252,25 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
 - (IBAction)storeLinkClicked:(id)sender {
   GURL store_url(extension_urls::GetWebstoreItemDetailURLPrefix() +
                  prompt_->extension()->id());
-  OpenURLParams params(store_url, Referrer(), NEW_FOREGROUND_TAB,
-      ui::PAGE_TRANSITION_LINK, false);
+  OpenURLParams params(store_url, Referrer(),
+                       WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                       ui::PAGE_TRANSITION_LINK, false);
   if (navigator_) {
     navigator_->OpenURL(params);
   } else {
-    chrome::ScopedTabbedBrowserDisplayer displayer(
-        profile_, chrome::GetActiveDesktop());
+    chrome::ScopedTabbedBrowserDisplayer displayer(profile_);
     displayer.browser()->OpenURL(params);
   }
 
-  delegate_->InstallUIAbort(/*user_initiated=*/true);
+  delegate_->OnStoreLinkClicked();
 }
 
 - (IBAction)cancel:(id)sender {
-  delegate_->InstallUIAbort(/*user_initiated=*/true);
+  delegate_->OnCancelButtonClicked();
 }
 
 - (IBAction)ok:(id)sender {
-  delegate_->InstallUIProceed();
+  delegate_->OnOkButtonClicked();
 }
 
 - (void)awakeFromNib {
@@ -305,9 +302,10 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
         prompt_->GetRatingCount())];
     [userCountField_ setStringValue:base::SysUTF16ToNSString(
         prompt_->GetUserCount())];
-    [[storeLinkButton_ cell] setUnderlineOnHover:YES];
+    [[storeLinkButton_ cell] setUnderlineBehavior:
+        hyperlink_button_cell::UnderlineBehavior::ON_HOVER];
     [[storeLinkButton_ cell] setTextColor:
-        gfx::SkColorToCalibratedNSColor(chrome_style::GetLinkColor())];
+        skia::SkColorToCalibratedNSColor(chrome_style::GetLinkColor())];
   }
 
   [iconView_ setImage:prompt_->icon().ToNSImage()];
@@ -356,15 +354,6 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
                                          -buttonDelta.width, 0)];
   }
 
-  if ([self isBundleInstall]) {
-    BundleInstaller::ItemList items = prompt_->bundle()->GetItemsWithState(
-        BundleInstaller::Item::STATE_PENDING);
-    PopulateBundleItemsList(items, itemsField_);
-
-    // Adjust the view to fit the list of extensions.
-    OffsetViewVerticallyToFitContent(itemsField_, &totalOffset);
-  }
-
   // If there are any warnings, retained devices or retained files, then we
   // have to do some special layout.
   if (prompt_->ShouldShowPermissions() || prompt_->GetRetainedFileCount() > 0) {
@@ -378,10 +367,10 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
 
     // Adjust the outline view to fit the warnings.
     OffsetOutlineViewVerticallyToFitContent(outlineView_, &totalOffset);
-  } else if ([self hasWebstoreData] || [self isBundleInstall]) {
-    // Installs with webstore data and bundle installs that don't have a
-    // permissions section need to hide controls related to that and shrink the
-    // window by the space they take up.
+  } else if ([self hasWebstoreData]) {
+    // Installs with webstore data that don't have a permissions section need to
+    // hide controls related to that and shrink the window by the space they
+    // take up.
     NSRect hiddenRect = NSUnionRect([warningsSeparator_ frame],
                                     [[outlineView_ enclosingScrollView] frame]);
     [warningsSeparator_ setHidden:YES];
@@ -395,10 +384,6 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
     currentRect.size.height += totalOffset;
     [self updateViewFrame:currentRect];
   }
-}
-
-- (BOOL)isBundleInstall {
-  return prompt_->type() == ExtensionInstallPrompt::BUNDLE_INSTALL_PROMPT;
 }
 
 - (BOOL)hasWebstoreData {
@@ -564,9 +549,10 @@ bool HasAttribute(id item, CellAttributesMask attributeMask) {
     [cell setTarget:self];
     [cell setLinkClickedAction:@selector(onToggleDetailsLinkClicked:)];
     [cell setAlignment:NSLeftTextAlignment];
-    [cell setUnderlineOnHover:YES];
+    [cell setUnderlineBehavior:
+        hyperlink_button_cell::UnderlineBehavior::ON_HOVER];
     [cell setTextColor:
-        gfx::SkColorToCalibratedNSColor(chrome_style::GetLinkColor())];
+        skia::SkColorToCalibratedNSColor(chrome_style::GetLinkColor())];
 
     size_t detailsIndex =
         [[item objectForKey:kPermissionsDetailIndex] unsignedIntegerValue];

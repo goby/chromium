@@ -24,12 +24,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/dom/NodeChildRemovalTracker.h"
-
 
 namespace blink {
 
 NodeChildRemovalTracker* NodeChildRemovalTracker::s_last;
 
-} // namespace
+}  // namespace

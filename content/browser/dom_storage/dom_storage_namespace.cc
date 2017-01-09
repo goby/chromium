@@ -4,7 +4,6 @@
 
 #include "content/browser/dom_storage/dom_storage_namespace.h"
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -24,7 +23,7 @@ DOMStorageNamespace::DOMStorageNamespace(
 }
 
 DOMStorageNamespace::DOMStorageNamespace(
-    int64 namespace_id,
+    int64_t namespace_id,
     const std::string& persistent_namespace_id,
     SessionStorageDatabase* session_storage_database,
     DOMStorageTaskRunner* task_runner)
@@ -72,7 +71,7 @@ DOMStorageArea* DOMStorageNamespace::GetOpenStorageArea(const GURL& origin) {
 }
 
 DOMStorageNamespace* DOMStorageNamespace::Clone(
-    int64 clone_namespace_id,
+    int64_t clone_namespace_id,
     const std::string& clone_persistent_namespace_id) {
   DCHECK_NE(kLocalStorageNamespaceId, namespace_id_);
   DCHECK_NE(kLocalStorageNamespaceId, clone_namespace_id);
@@ -118,9 +117,10 @@ void DOMStorageNamespace::DeleteSessionStorageOrigin(const GURL& origin) {
   CloseStorageArea(area);
 }
 
-void DOMStorageNamespace::PurgeMemory(PurgeOption option) {
+void DOMStorageNamespace::PurgeMemory(bool aggressively) {
   if (directory_.empty())
     return;  // We can't purge w/o backing on disk.
+
   AreaMap::iterator it = areas_.begin();
   while (it != areas_.end()) {
     const AreaHolder& holder = it->second;
@@ -144,7 +144,7 @@ void DOMStorageNamespace::PurgeMemory(PurgeOption option) {
       continue;
     }
 
-    if (option == PURGE_AGGRESSIVE) {
+    if (aggressively) {
       // If aggressive is true, we clear caches and such
       // for opened areas.
       holder.area_->PurgeMemory();
@@ -168,13 +168,32 @@ void DOMStorageNamespace::Flush() {
   }
 }
 
-unsigned int DOMStorageNamespace::CountInMemoryAreas() const {
-  unsigned int area_count = 0;
+DOMStorageNamespace::UsageStatistics DOMStorageNamespace::GetUsageStatistics()
+    const {
+  UsageStatistics stats = {0};
   for (AreaMap::const_iterator it = areas_.begin(); it != areas_.end(); ++it) {
-    if (it->second.area_->IsLoadedInMemory())
-      ++area_count;
+    if (it->second.area_->IsLoadedInMemory()) {
+      stats.total_cache_size += it->second.area_->map_usage_in_bytes();
+      ++stats.total_area_count;
+      if (it->second.open_count_ == 0)
+        ++stats.inactive_area_count;
+    }
   }
-  return area_count;
+  return stats;
+}
+
+void DOMStorageNamespace::OnMemoryDump(
+    base::trace_event::ProcessMemoryDump* pmd) {
+  task_runner_->AssertIsRunningOnPrimarySequence();
+  for (const auto& it : areas_)
+    it.second.area_->OnMemoryDump(pmd);
+}
+
+void DOMStorageNamespace::GetOriginsWithAreas(
+    std::vector<GURL>* origins) const {
+  origins->clear();
+  for (const auto& entry : areas_)
+    origins->push_back(entry.first);
 }
 
 DOMStorageNamespace::AreaHolder*
@@ -195,6 +214,8 @@ DOMStorageNamespace::AreaHolder::AreaHolder(
     DOMStorageArea* area, int count)
     : area_(area), open_count_(count) {
 }
+
+DOMStorageNamespace::AreaHolder::AreaHolder(const AreaHolder& other) = default;
 
 DOMStorageNamespace::AreaHolder::~AreaHolder() {
 }

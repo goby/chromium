@@ -4,29 +4,34 @@
 
 #include "media/formats/mpeg/adts_stream_parser.h"
 
+#include <stddef.h>
+
+#include "build/build_config.h"
+#include "media/base/media_log.h"
+#include "media/formats/mp4/aac.h"
 #include "media/formats/mpeg/adts_constants.h"
 
 namespace media {
 
-static const uint32 kADTSStartCodeMask = 0xfff00000;
+static const uint32_t kADTSStartCodeMask = 0xfff00000;
 
 ADTSStreamParser::ADTSStreamParser()
     : MPEGAudioStreamParserBase(kADTSStartCodeMask, kCodecAAC, 0) {}
 
 ADTSStreamParser::~ADTSStreamParser() {}
 
-int ADTSStreamParser::ParseFrameHeader(const uint8* data,
+int ADTSStreamParser::ParseFrameHeader(const uint8_t* data,
                                        int size,
                                        int* frame_size,
                                        int* sample_rate,
                                        ChannelLayout* channel_layout,
                                        int* sample_count,
-                                       bool* metadata_frame) const {
+                                       bool* metadata_frame,
+                                       std::vector<uint8_t>* extra_data) const {
   DCHECK(data);
   DCHECK_GE(size, 0);
-  DCHECK(frame_size);
 
-  if (size < 8)
+  if (size < kADTSHeaderMinSize)
     return 0;
 
   BitReader reader(data, size);
@@ -69,11 +74,13 @@ int ADTSStreamParser::ParseFrameHeader(const uint8* data,
   if (sync != 0xfff || layer != 0 || frame_length < bytes_read ||
       sample_rate_index >= kADTSFrequencyTableSize ||
       channel_layout_index >= kADTSChannelLayoutTableSize) {
-    MEDIA_LOG(DEBUG, media_log())
-        << "Invalid header data :" << std::hex << " sync 0x" << sync
-        << " version 0x" << version << " layer 0x" << layer
-        << " sample_rate_index 0x" << sample_rate_index
-        << " channel_layout_index 0x" << channel_layout_index;
+    if (media_log()) {
+      MEDIA_LOG(DEBUG, media_log())
+          << "Invalid header data :" << std::hex << " sync 0x" << sync
+          << " version 0x" << version << " layer 0x" << layer
+          << " sample_rate_index 0x" << sample_rate_index
+          << " channel_layout_index 0x" << channel_layout_index;
+    }
     return -1;
   }
 
@@ -91,6 +98,23 @@ int ADTSStreamParser::ParseFrameHeader(const uint8* data,
 
   if (metadata_frame)
     *metadata_frame = false;
+
+  if (extra_data) {
+    // See mp4::AAC::Parse() for details. We don't need to worry about writing
+    // extensions since we can't have extended ADTS by this point (it's
+    // explicitly rejected as invalid above).
+    DCHECK_NE(sample_rate_index, 15u);
+
+    // The following code is written according to ISO 14496 Part 3 Table 1.13 -
+    // Syntax of AudioSpecificConfig.
+    const uint16_t esds = (((((profile + 1) << 4) + sample_rate_index) << 4) +
+                           channel_layout_index)
+                          << 3;
+    extra_data->push_back(esds >> 8);
+    extra_data->push_back(esds & 0xFF);
+    if (media_log())
+      DCHECK(mp4::AAC().Parse(*extra_data, media_log()));
+  }
 
   return bytes_read;
 }

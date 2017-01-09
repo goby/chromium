@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file.h"
 #include "base/logging.h"
 #include "net/base/net_export.h"
@@ -44,6 +43,9 @@ NET_EXPORT bool IsCertificateError(int error);
 // does not include ERR_SSL_PROTOCOL_ERROR which may also signal a bad client
 // certificate.
 NET_EXPORT bool IsClientCertificateError(int error);
+
+// Returns true if |error| is a DNS error.
+NET_EXPORT bool IsDnsError(int error);
 
 // Map system error code to Error.
 NET_EXPORT Error MapSystemError(logging::SystemErrorCode os_error);

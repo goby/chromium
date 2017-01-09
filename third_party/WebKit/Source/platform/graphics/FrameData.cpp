@@ -24,39 +24,29 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/FrameData.h"
+#include "third_party/skia/include/core/SkImage.h"
 
 namespace blink {
 
 FrameData::FrameData()
-    : m_orientation(DefaultImageOrientation)
-    , m_duration(0)
-    , m_haveMetadata(false)
-    , m_isComplete(false)
-    , m_hasAlpha(true)
-    , m_frameBytes(0)
-{
+    : m_orientation(DefaultImageOrientation),
+      m_duration(0),
+      m_haveMetadata(false),
+      m_isComplete(false),
+      m_hasAlpha(true),
+      m_frameBytes(0) {}
+
+FrameData::~FrameData() {
+  clear(true);
 }
 
-FrameData::~FrameData()
-{
-    clear(true);
+void FrameData::clear(bool clearMetadata) {
+  if (clearMetadata)
+    m_haveMetadata = false;
+
+  m_orientation = DefaultImageOrientation;
+  m_frameBytes = 0;
 }
 
-bool FrameData::clear(bool clearMetadata)
-{
-    if (clearMetadata)
-        m_haveMetadata = false;
-
-    m_orientation = DefaultImageOrientation;
-    m_frameBytes = 0;
-
-    if (m_frame) {
-        m_frame.clear();
-        return true;
-    }
-    return false;
-}
-
-} // namespace blink
+}  // namespace blink

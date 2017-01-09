@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ref_counted.h"
-#include "base/trace_event/heap_profiler_allocation_context.h"
 #include "base/trace_event/heap_profiler_stack_frame_deduplicator.h"
+
+#include <iterator>
+#include <memory>
+
+#include "base/macros.h"
+#include "base/trace_event/heap_profiler_allocation_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -12,17 +16,14 @@ namespace trace_event {
 
 // Define all strings once, because the deduplicator requires pointer equality,
 // and string interning is unreliable.
-const char kBrowserMain[] = "BrowserMain";
-const char kRendererMain[] = "RendererMain";
-const char kCreateWidget[] = "CreateWidget";
-const char kInitialize[] = "Initialize";
-const char kMalloc[] = "malloc";
+StackFrame kBrowserMain = StackFrame::FromTraceEventName("BrowserMain");
+StackFrame kRendererMain = StackFrame::FromTraceEventName("RendererMain");
+StackFrame kCreateWidget = StackFrame::FromTraceEventName("CreateWidget");
+StackFrame kInitialize = StackFrame::FromTraceEventName("Initialize");
+StackFrame kMalloc = StackFrame::FromTraceEventName("malloc");
 
-class StackFrameDeduplicatorTest : public testing::Test {};
-
-TEST_F(StackFrameDeduplicatorTest, SingleBacktrace) {
-  Backtrace bt = {
-      {kBrowserMain, kCreateWidget, kMalloc, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+TEST(StackFrameDeduplicatorTest, SingleBacktrace) {
+  StackFrame bt[] = {kBrowserMain, kCreateWidget, kMalloc};
 
   // The call tree should look like this (index in brackets).
   //
@@ -30,8 +31,8 @@ TEST_F(StackFrameDeduplicatorTest, SingleBacktrace) {
   //   CreateWidget [1]
   //     malloc [2]
 
-  scoped_refptr<StackFrameDeduplicator> dedup = new StackFrameDeduplicator;
-  ASSERT_EQ(2, dedup->Insert(bt));
+  std::unique_ptr<StackFrameDeduplicator> dedup(new StackFrameDeduplicator);
+  ASSERT_EQ(2, dedup->Insert(std::begin(bt), std::end(bt)));
 
   auto iter = dedup->begin();
   ASSERT_EQ(kBrowserMain, (iter + 0)->frame);
@@ -46,12 +47,41 @@ TEST_F(StackFrameDeduplicatorTest, SingleBacktrace) {
   ASSERT_EQ(iter + 3, dedup->end());
 }
 
+TEST(StackFrameDeduplicatorTest, SingleBacktraceWithNull) {
+  StackFrame null_frame = StackFrame::FromTraceEventName(nullptr);
+  StackFrame bt[] = {kBrowserMain, null_frame, kMalloc};
+
+  // Deduplicator doesn't care about what's inside StackFrames,
+  // and handles nullptr StackFrame values as any other.
+  //
+  // So the call tree should look like this (index in brackets).
+  //
+  // BrowserMain [0]
+  //   (null) [1]
+  //     malloc [2]
+
+  std::unique_ptr<StackFrameDeduplicator> dedup(new StackFrameDeduplicator);
+  ASSERT_EQ(2, dedup->Insert(std::begin(bt), std::end(bt)));
+
+  auto iter = dedup->begin();
+  ASSERT_EQ(kBrowserMain, (iter + 0)->frame);
+  ASSERT_EQ(-1, (iter + 0)->parent_frame_index);
+
+  ASSERT_EQ(null_frame, (iter + 1)->frame);
+  ASSERT_EQ(0, (iter + 1)->parent_frame_index);
+
+  ASSERT_EQ(kMalloc, (iter + 2)->frame);
+  ASSERT_EQ(1, (iter + 2)->parent_frame_index);
+
+  ASSERT_EQ(iter + 3, dedup->end());
+}
+
 // Test that there can be different call trees (there can be multiple bottom
 // frames). Also verify that frames with the same name but a different caller
 // are represented as distinct nodes.
-TEST_F(StackFrameDeduplicatorTest, MultipleRoots) {
-  Backtrace bt0 = {{kBrowserMain, kCreateWidget, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
-  Backtrace bt1 = {{kRendererMain, kCreateWidget, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+TEST(StackFrameDeduplicatorTest, MultipleRoots) {
+  StackFrame bt0[] = {kBrowserMain, kCreateWidget};
+  StackFrame bt1[] = {kRendererMain, kCreateWidget};
 
   // The call tree should look like this (index in brackets).
   //
@@ -63,9 +93,9 @@ TEST_F(StackFrameDeduplicatorTest, MultipleRoots) {
   // Note that there will be two instances of CreateWidget,
   // with different parents.
 
-  scoped_refptr<StackFrameDeduplicator> dedup = new StackFrameDeduplicator;
-  ASSERT_EQ(1, dedup->Insert(bt0));
-  ASSERT_EQ(3, dedup->Insert(bt1));
+  std::unique_ptr<StackFrameDeduplicator> dedup(new StackFrameDeduplicator);
+  ASSERT_EQ(1, dedup->Insert(std::begin(bt0), std::end(bt0)));
+  ASSERT_EQ(3, dedup->Insert(std::begin(bt1), std::end(bt1)));
 
   auto iter = dedup->begin();
   ASSERT_EQ(kBrowserMain, (iter + 0)->frame);
@@ -83,9 +113,9 @@ TEST_F(StackFrameDeduplicatorTest, MultipleRoots) {
   ASSERT_EQ(iter + 4, dedup->end());
 }
 
-TEST_F(StackFrameDeduplicatorTest, Deduplication) {
-  Backtrace bt0 = {{kBrowserMain, kCreateWidget, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
-  Backtrace bt1 = {{kBrowserMain, kInitialize, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+TEST(StackFrameDeduplicatorTest, Deduplication) {
+  StackFrame bt0[] = {kBrowserMain, kCreateWidget};
+  StackFrame bt1[] = {kBrowserMain, kInitialize};
 
   // The call tree should look like this (index in brackets).
   //
@@ -95,9 +125,9 @@ TEST_F(StackFrameDeduplicatorTest, Deduplication) {
   //
   // Note that BrowserMain will be re-used.
 
-  scoped_refptr<StackFrameDeduplicator> dedup = new StackFrameDeduplicator;
-  ASSERT_EQ(1, dedup->Insert(bt0));
-  ASSERT_EQ(2, dedup->Insert(bt1));
+  std::unique_ptr<StackFrameDeduplicator> dedup(new StackFrameDeduplicator);
+  ASSERT_EQ(1, dedup->Insert(std::begin(bt0), std::end(bt0)));
+  ASSERT_EQ(2, dedup->Insert(std::begin(bt1), std::end(bt1)));
 
   auto iter = dedup->begin();
   ASSERT_EQ(kBrowserMain, (iter + 0)->frame);
@@ -113,8 +143,8 @@ TEST_F(StackFrameDeduplicatorTest, Deduplication) {
 
   // Inserting the same backtrace again should return the index of the existing
   // node.
-  ASSERT_EQ(1, dedup->Insert(bt0));
-  ASSERT_EQ(2, dedup->Insert(bt1));
+  ASSERT_EQ(1, dedup->Insert(std::begin(bt0), std::end(bt0)));
+  ASSERT_EQ(2, dedup->Insert(std::begin(bt1), std::end(bt1)));
   ASSERT_EQ(dedup->begin() + 3, dedup->end());
 }
 

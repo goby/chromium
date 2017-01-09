@@ -23,7 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/HTMLAudioElement.h"
 
 #include "core/HTMLNames.h"
@@ -34,27 +33,25 @@ namespace blink {
 using namespace HTMLNames;
 
 HTMLAudioElement::HTMLAudioElement(Document& document)
-    : HTMLMediaElement(audioTag, document)
-{
+    : HTMLMediaElement(audioTag, document) {}
+
+HTMLAudioElement* HTMLAudioElement::create(Document& document) {
+  HTMLAudioElement* audio = new HTMLAudioElement(document);
+  audio->ensureUserAgentShadowRoot();
+  audio->suspendIfNeeded();
+  return audio;
 }
 
-PassRefPtrWillBeRawPtr<HTMLAudioElement> HTMLAudioElement::create(Document& document)
-{
-    RefPtrWillBeRawPtr<HTMLAudioElement> audio = adoptRefWillBeNoop(new HTMLAudioElement(document));
-    audio->ensureUserAgentShadowRoot();
-    audio->suspendIfNeeded();
-    return audio.release();
+HTMLAudioElement* HTMLAudioElement::createForJSConstructor(
+    Document& document,
+    const AtomicString& src) {
+  HTMLAudioElement* audio = new HTMLAudioElement(document);
+  audio->ensureUserAgentShadowRoot();
+  audio->setPreload(AtomicString("auto"));
+  if (!src.isNull())
+    audio->setSrc(src);
+  audio->suspendIfNeeded();
+  return audio;
 }
 
-PassRefPtrWillBeRawPtr<HTMLAudioElement> HTMLAudioElement::createForJSConstructor(Document& document, const AtomicString& src)
-{
-    RefPtrWillBeRawPtr<HTMLAudioElement> audio = adoptRefWillBeNoop(new HTMLAudioElement(document));
-    audio->ensureUserAgentShadowRoot();
-    audio->setPreload(AtomicString("auto", AtomicString::ConstructFromLiteral));
-    if (!src.isNull())
-        audio->setSrc(src);
-    audio->suspendIfNeeded();
-    return audio.release();
-}
-
-}
+}  // namespace blink

@@ -5,8 +5,11 @@
 #include "media/audio/android/opensles_output.h"
 
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "media/audio/android/audio_manager_android.h"
+#include "media/base/audio_timestamp_helper.h"
 
 #define LOG_ON_FAILURE_AND_RETURN(op, ...)      \
   do {                                          \
@@ -27,11 +30,14 @@ OpenSLESOutputStream::OpenSLESOutputStream(AudioManagerAndroid* manager,
       callback_(NULL),
       player_(NULL),
       simple_buffer_queue_(NULL),
+      audio_data_(),
       active_buffer_index_(0),
-      buffer_size_bytes_(0),
+      bytes_per_frame_(params.GetBytesPerFrame()),
+      buffer_size_bytes_(params.GetBytesPerBuffer()),
       started_(false),
       muted_(false),
-      volume_(1.0) {
+      volume_(1.0),
+      delay_calculator_(params.sample_rate()) {
   DVLOG(2) << "OpenSLESOutputStream::OpenSLESOutputStream("
            << "stream_type=" << stream_type << ")";
   format_.formatType = SL_DATAFORMAT_PCM;
@@ -41,17 +47,8 @@ OpenSLESOutputStream::OpenSLESOutputStream(AudioManagerAndroid* manager,
   format_.bitsPerSample = params.bits_per_sample();
   format_.containerSize = params.bits_per_sample();
   format_.endianness = SL_BYTEORDER_LITTLEENDIAN;
-  if (format_.numChannels == 1)
-    format_.channelMask = SL_SPEAKER_FRONT_CENTER;
-  else if (format_.numChannels == 2)
-    format_.channelMask = SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT;
-  else
-    NOTREACHED() << "Unsupported number of channels: " << format_.numChannels;
-
-  buffer_size_bytes_ = params.GetBytesPerBuffer();
+  format_.channelMask = ChannelCountToSLESChannelMask(params.channels());
   audio_bus_ = AudioBus::Create(params);
-
-  memset(&audio_data_, 0, sizeof(audio_data_));
 }
 
 OpenSLESOutputStream::~OpenSLESOutputStream() {
@@ -90,18 +87,33 @@ void OpenSLESOutputStream::Start(AudioSourceCallback* callback) {
     return;
 
   base::AutoLock lock(lock_);
-  DCHECK(callback_ == NULL || callback_ == callback);
+  DCHECK(!callback_);
   callback_ = callback;
 
-  // Avoid start-up glitches by filling up one buffer queue before starting
-  // the stream.
-  FillBufferQueueNoLock();
+  // Fill audio data with silence to avoid start-up glitches. Don't use
+  // FillBufferQueueNoLock() since it can trigger recursive entry if an error
+  // occurs while writing into the stream. See http://crbug.com/624877.
+  memset(audio_data_[active_buffer_index_], 0, buffer_size_bytes_);
+  LOG_ON_FAILURE_AND_RETURN((*simple_buffer_queue_)
+                                ->Enqueue(simple_buffer_queue_,
+                                          audio_data_[active_buffer_index_],
+                                          buffer_size_bytes_));
+  active_buffer_index_ = (active_buffer_index_ + 1) % kMaxNumOfBuffersInQueue;
 
   // Start streaming data by setting the play state to SL_PLAYSTATE_PLAYING.
   // For a player object, when the object is in the SL_PLAYSTATE_PLAYING
   // state, adding buffers will implicitly start playback.
   LOG_ON_FAILURE_AND_RETURN(
       (*player_)->SetPlayState(player_, SL_PLAYSTATE_PLAYING));
+
+  // On older version of Android, the position may not be reset even though we
+  // call Clear() during Stop(), in this case the best we can do is assume that
+  // we're continuing on from this previous position.
+  uint32_t position_in_ms = 0;
+  LOG_ON_FAILURE_AND_RETURN((*player_)->GetPosition(player_, &position_in_ms));
+  delay_calculator_.SetBaseTimestamp(
+      base::TimeDelta::FromMilliseconds(position_in_ms));
+  delay_calculator_.AddFrames(audio_bus_->frames());
 
   started_ = true;
 }
@@ -327,12 +339,28 @@ void OpenSLESOutputStream::FillBufferQueueNoLock() {
   // done in this method.
   lock_.AssertAcquired();
 
+  // Calculate the position relative to the number of frames written.
+  uint32_t position_in_ms = 0;
+  SLresult err = (*player_)->GetPosition(player_, &position_in_ms);
+  // Given the position of the playback head, compute the approximate number of
+  // frames that have been queued to the buffer but not yet played out.
+  // Note that the value returned by GetFramesToTarget() is negative because
+  // more frames have been added to |delay_calculator_| than have been played
+  // out and thus the target timestamp is earlier than the current timestamp of
+  // |delay_calculator_|.
+  const int delay_frames =
+      err == SL_RESULT_SUCCESS
+          ? -delay_calculator_.GetFramesToTarget(
+                base::TimeDelta::FromMilliseconds(position_in_ms))
+          : 0;
+  DCHECK_GE(delay_frames, 0);
+
+  const base::TimeDelta delay =
+      AudioTimestampHelper::FramesToTime(delay_frames, format_.samplesPerSec);
+
   // Read data from the registered client source.
-  // TODO(henrika): Investigate if it is possible to get a more accurate
-  // delay estimation.
-  const uint32 hardware_delay = buffer_size_bytes_;
-  int frames_filled = callback_->OnMoreData(
-      audio_bus_.get(), hardware_delay);
+  const int frames_filled =
+      callback_->OnMoreData(delay, base::TimeTicks::Now(), 0, audio_bus_.get());
   if (frames_filled <= 0) {
     // Audio source is shutting down, or halted on error.
     return;
@@ -342,19 +370,17 @@ void OpenSLESOutputStream::FillBufferQueueNoLock() {
   // raw float, the data must be clipped and sanitized since it may come
   // from an untrusted source such as NaCl.
   audio_bus_->Scale(muted_ ? 0.0f : volume_);
-  audio_bus_->ToInterleaved(frames_filled,
-                            format_.bitsPerSample / 8,
+  audio_bus_->ToInterleaved(frames_filled, format_.bitsPerSample / 8,
                             audio_data_[active_buffer_index_]);
 
-  const int num_filled_bytes =
-      frames_filled * audio_bus_->channels() * format_.bitsPerSample / 8;
+  delay_calculator_.AddFrames(frames_filled);
+  const int num_filled_bytes = frames_filled * bytes_per_frame_;
   DCHECK_LE(static_cast<size_t>(num_filled_bytes), buffer_size_bytes_);
 
   // Enqueue the buffer for playback.
-  SLresult err =
-      (*simple_buffer_queue_)->Enqueue(simple_buffer_queue_,
-                                       audio_data_[active_buffer_index_],
-                                       num_filled_bytes);
+  err = (*simple_buffer_queue_)
+            ->Enqueue(simple_buffer_queue_, audio_data_[active_buffer_index_],
+                      num_filled_bytes);
   if (SL_RESULT_SUCCESS != err)
     HandleError(err);
 
@@ -365,7 +391,7 @@ void OpenSLESOutputStream::SetupAudioBuffer() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!audio_data_[0]);
   for (int i = 0; i < kMaxNumOfBuffersInQueue; ++i) {
-    audio_data_[i] = new uint8[buffer_size_bytes_];
+    audio_data_[i] = new uint8_t[buffer_size_bytes_];
   }
 }
 

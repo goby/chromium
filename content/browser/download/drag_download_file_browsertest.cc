@@ -4,6 +4,7 @@
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/download/download_file_factory.h"
 #include "content/browser/download/download_file_impl.h"
@@ -13,7 +14,6 @@
 #include "content/browser/download/drag_download_util.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/browser/power_save_blocker.h"
 #include "content/public/common/content_client.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -22,6 +22,7 @@
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_download_manager_delegate.h"
+#include "device/power_save_blocker/power_save_blocker.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -80,7 +81,7 @@ class DragDownloadFileTest : public ContentBrowserTest {
   }
 
   const base::FilePath& downloads_directory() const {
-    return downloads_directory_.path();
+    return downloads_directory_.GetPath();
   }
 
  private:

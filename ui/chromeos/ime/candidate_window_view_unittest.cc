@@ -4,8 +4,11 @@
 
 #include "ui/chromeos/ime/candidate_window_view.h"
 
+#include <stddef.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -92,7 +95,7 @@ class CandidateWindowViewTest : public views::ViewsTestBase {
   }
 
   CandidateView* GetCandidateAt(size_t i) {
-    return candidate_window_view_->candidate_views_[i];
+    return candidate_window_view_->candidate_views_[i].get();
   }
 
   void SelectCandidateAt(int index_in_page) {

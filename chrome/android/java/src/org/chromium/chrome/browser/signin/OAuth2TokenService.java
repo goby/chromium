@@ -6,16 +6,17 @@ package org.chromium.chrome.browser.signin;
 
 import android.accounts.Account;
 import android.content.Context;
-import android.preference.PreferenceManager;
+import android.os.StrictMode;
 import android.util.Log;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.sync.signin.AccountManagerHelper;
-import org.chromium.sync.signin.ChromeSigninController;
+import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.ChromeSigninController;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -222,7 +223,15 @@ public final class OAuth2TokenService
      */
     @CalledByNative
     public static boolean hasOAuth2RefreshToken(Context context, String accountName) {
-        return AccountManagerHelper.get(context).hasAccountForName(accountName);
+        // Temporarily allowing disk read while fixing. TODO: http://crbug.com/618096.
+        // This function is called in RefreshTokenIsAvailable of OAuth2TokenService which is
+        // expected to be called in the UI thread synchronously.
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
+        try {
+            return AccountManagerHelper.get(context).hasAccountForName(accountName);
+        } finally {
+            StrictMode.setThreadPolicy(oldPolicy);
+        }
     }
 
     /**
@@ -359,7 +368,7 @@ public final class OAuth2TokenService
 
     private static String[] getStoredAccounts(Context context) {
         Set<String> accounts =
-                PreferenceManager.getDefaultSharedPreferences(context)
+                ContextUtils.getAppSharedPreferences()
                         .getStringSet(STORED_ACCOUNTS_KEY, null);
         return accounts == null ? new String[]{} : accounts.toArray(new String[accounts.size()]);
     }
@@ -367,7 +376,7 @@ public final class OAuth2TokenService
     @CalledByNative
     private static void saveStoredAccounts(Context context, String[] accounts) {
         Set<String> set = new HashSet<String>(Arrays.asList(accounts));
-        PreferenceManager.getDefaultSharedPreferences(context).edit()
+        ContextUtils.getAppSharedPreferences().edit()
                 .putStringSet(STORED_ACCOUNTS_KEY, set).apply();
     }
 

@@ -26,19 +26,27 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from webkitpy.common.config.builders import BUILDERS
 from webkitpy.common.checkout.scm.scm_mock import MockSCM
-from webkitpy.common.net.buildbot.buildbot_mock import MockBuildBot
+from webkitpy.common.net.buildbot_mock import MockBuildBot
 from webkitpy.common.net.web_mock import MockWeb
 from webkitpy.common.system.systemhost_mock import MockSystemHost
 
 # New-style ports need to move down into webkitpy.common.
+from webkitpy.layout_tests.builder_list import BuilderList
 from webkitpy.layout_tests.port.factory import PortFactory
 from webkitpy.layout_tests.port.test import add_unit_tests_to_mock_filesystem
 
 
 class MockHost(MockSystemHost):
-    def __init__(self, log_executive=False, executive_throws_when_run=None, initialize_scm_by_default=True, web=None, scm=None):
-        MockSystemHost.__init__(self, log_executive, executive_throws_when_run)
+
+    def __init__(self, log_executive=False, executive_throws_when_run=None,
+                 initialize_scm_by_default=True, web=None, scm=None, os_name=None, os_version=None,
+                 time_return_val=123):
+
+        MockSystemHost.__init__(self, log_executive, executive_throws_when_run, os_name=os_name,
+                                os_version=os_version, time_return_val=time_return_val)
+
         add_unit_tests_to_mock_filesystem(self.filesystem)
         self.web = web or MockWeb()
 
@@ -52,6 +60,8 @@ class MockHost(MockSystemHost):
         # Note: We're using a real PortFactory here.  Tests which don't wish to depend
         # on the list of known ports should override this with a MockPortFactory.
         self.port_factory = PortFactory(self)
+
+        self.builders = BuilderList(BUILDERS)
 
     def initialize_scm(self, patch_directories=None):
         if not self._scm:
@@ -67,6 +77,3 @@ class MockHost(MockSystemHost):
         # FIXME: consider supporting more than one SCM so that we can do more comprehensive testing.
         self.initialize_scm()
         return self._scm
-
-    def checkout(self):
-        return self._checkout

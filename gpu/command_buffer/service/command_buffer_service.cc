@@ -4,9 +4,14 @@
 
 #include "gpu/command_buffer/service/command_buffer_service.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
+#include <memory>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/common/cmd_buffer_common.h"
 #include "gpu/command_buffer/common/command_buffer_shared.h"
@@ -16,40 +21,50 @@ using ::base::SharedMemory;
 
 namespace gpu {
 
+namespace {
+
+class MemoryBufferBacking : public BufferBacking {
+ public:
+  explicit MemoryBufferBacking(size_t size)
+      : memory_(new char[size]), size_(size) {}
+  ~MemoryBufferBacking() override {}
+  void* GetMemory() const override { return memory_.get(); }
+  size_t GetSize() const override { return size_; }
+
+ private:
+  std::unique_ptr<char[]> memory_;
+  size_t size_;
+  DISALLOW_COPY_AND_ASSIGN(MemoryBufferBacking);
+};
+
+}  // anonymous namespace
+
 CommandBufferService::CommandBufferService(
     TransferBufferManagerInterface* transfer_buffer_manager)
     : ring_buffer_id_(-1),
-      shared_state_(NULL),
+      shared_state_(nullptr),
       num_entries_(0),
       get_offset_(0),
       put_offset_(0),
       transfer_buffer_manager_(transfer_buffer_manager),
       token_(0),
+      release_count_(0),
       generation_(0),
       error_(error::kNoError),
-      context_lost_reason_(error::kUnknown) {
-}
+      context_lost_reason_(error::kUnknown) {}
 
-CommandBufferService::~CommandBufferService() {
-}
-
-bool CommandBufferService::Initialize() {
-  return true;
-}
+CommandBufferService::~CommandBufferService() {}
 
 CommandBufferService::State CommandBufferService::GetLastState() {
   State state;
   state.get_offset = get_offset_;
   state.token = token_;
+  state.release_count = release_count_;
   state.error = error_;
   state.context_lost_reason = context_lost_reason_;
   state.generation = ++generation_;
 
   return state;
-}
-
-int32 CommandBufferService::GetLastToken() {
-  return GetLastState().token;
 }
 
 void CommandBufferService::UpdateState() {
@@ -59,16 +74,21 @@ void CommandBufferService::UpdateState() {
   }
 }
 
-void CommandBufferService::WaitForTokenInRange(int32 start, int32 end) {
+CommandBuffer::State CommandBufferService::WaitForTokenInRange(int32_t start,
+                                                               int32_t end) {
   DCHECK(error_ != error::kNoError || InRange(start, end, token_));
+  return GetLastState();
 }
 
-void CommandBufferService::WaitForGetOffsetInRange(int32 start, int32 end) {
+CommandBuffer::State CommandBufferService::WaitForGetOffsetInRange(
+    int32_t start,
+    int32_t end) {
   DCHECK(error_ != error::kNoError || InRange(start, end, get_offset_));
+  return GetLastState();
 }
 
-void CommandBufferService::Flush(int32 put_offset) {
-  if (put_offset < 0 || put_offset > num_entries_) {
+void CommandBufferService::Flush(int32_t put_offset) {
+  if (put_offset < 0 || put_offset >= num_entries_) {
     error_ = gpu::error::kOutOfBounds;
     return;
   }
@@ -79,18 +99,18 @@ void CommandBufferService::Flush(int32 put_offset) {
     put_offset_change_callback_.Run();
 }
 
-void CommandBufferService::OrderingBarrier(int32 put_offset) {
+void CommandBufferService::OrderingBarrier(int32_t put_offset) {
   Flush(put_offset);
 }
 
-void CommandBufferService::SetGetBuffer(int32 transfer_buffer_id) {
+void CommandBufferService::SetGetBuffer(int32_t transfer_buffer_id) {
   DCHECK_EQ(-1, ring_buffer_id_);
   DCHECK_EQ(put_offset_, get_offset_);  // Only if it's empty.
   // If the buffer is invalid we handle it gracefully.
   // This means ring_buffer_ can be NULL.
   ring_buffer_ = GetTransferBuffer(transfer_buffer_id);
   ring_buffer_id_ = transfer_buffer_id;
-  int32 size = ring_buffer_.get() ? ring_buffer_->size() : 0;
+  int32_t size = ring_buffer_.get() ? ring_buffer_->size() : 0;
   num_entries_ = size / sizeof(CommandBufferEntry);
   put_offset_ = 0;
   SetGetOffset(0);
@@ -102,8 +122,8 @@ void CommandBufferService::SetGetBuffer(int32 transfer_buffer_id) {
 }
 
 void CommandBufferService::SetSharedStateBuffer(
-    scoped_ptr<BufferBacking> shared_state_buffer) {
-  shared_state_buffer_ = shared_state_buffer.Pass();
+    std::unique_ptr<BufferBacking> shared_state_buffer) {
+  shared_state_buffer_ = std::move(shared_state_buffer);
   DCHECK(shared_state_buffer_->GetSize() >= sizeof(*shared_state_));
 
   shared_state_ =
@@ -112,37 +132,28 @@ void CommandBufferService::SetSharedStateBuffer(
   UpdateState();
 }
 
-void CommandBufferService::SetGetOffset(int32 get_offset) {
+void CommandBufferService::SetGetOffset(int32_t get_offset) {
   DCHECK(get_offset >= 0 && get_offset < num_entries_);
   get_offset_ = get_offset;
 }
 
-scoped_refptr<Buffer> CommandBufferService::CreateTransferBuffer(size_t size,
-                                                                 int32* id) {
-  *id = -1;
-
-  scoped_ptr<SharedMemory> shared_memory(new SharedMemory());
-  if (!shared_memory->CreateAndMapAnonymous(size)) {
-    if (error_ == error::kNoError)
-      error_ = gpu::error::kOutOfBounds;
-    return NULL;
-  }
-
-  static int32 next_id = 1;
-  *id = next_id++;
-
-  if (!RegisterTransferBuffer(
-          *id, MakeBackingFromSharedMemory(shared_memory.Pass(), size))) {
-    if (error_ == error::kNoError)
-      error_ = gpu::error::kOutOfBounds;
-    *id = -1;
-    return NULL;
-  }
-
-  return GetTransferBuffer(*id);
+void CommandBufferService::SetReleaseCount(uint64_t release_count) {
+  DCHECK(release_count >= release_count_);
+  release_count_ = release_count;
+  UpdateState();
 }
 
-void CommandBufferService::DestroyTransferBuffer(int32 id) {
+scoped_refptr<Buffer> CommandBufferService::CreateTransferBuffer(size_t size,
+                                                                 int32_t* id) {
+  static int32_t next_id = 1;
+  *id = next_id++;
+  auto result = CreateTransferBufferWithId(size, *id);
+  if (!result)
+    *id = -1;
+  return result;
+}
+
+void CommandBufferService::DestroyTransferBuffer(int32_t id) {
   transfer_buffer_manager_->DestroyTransferBuffer(id);
   if (id == ring_buffer_id_) {
     ring_buffer_id_ = -1;
@@ -153,17 +164,31 @@ void CommandBufferService::DestroyTransferBuffer(int32 id) {
   }
 }
 
-scoped_refptr<Buffer> CommandBufferService::GetTransferBuffer(int32 id) {
+scoped_refptr<Buffer> CommandBufferService::GetTransferBuffer(int32_t id) {
   return transfer_buffer_manager_->GetTransferBuffer(id);
 }
 
 bool CommandBufferService::RegisterTransferBuffer(
-    int32 id,
-    scoped_ptr<BufferBacking> buffer) {
-  return transfer_buffer_manager_->RegisterTransferBuffer(id, buffer.Pass());
+    int32_t id,
+    std::unique_ptr<BufferBacking> buffer) {
+  return transfer_buffer_manager_->RegisterTransferBuffer(id,
+                                                          std::move(buffer));
 }
 
-void CommandBufferService::SetToken(int32 token) {
+scoped_refptr<Buffer> CommandBufferService::CreateTransferBufferWithId(
+    size_t size,
+    int32_t id) {
+  if (!RegisterTransferBuffer(id,
+                              base::MakeUnique<MemoryBufferBacking>(size))) {
+    if (error_ == error::kNoError)
+      error_ = gpu::error::kOutOfBounds;
+    return NULL;
+  }
+
+  return GetTransferBuffer(id);
+}
+
+void CommandBufferService::SetToken(int32_t token) {
   token_ = token;
   UpdateState();
 }
@@ -181,7 +206,7 @@ void CommandBufferService::SetContextLostReason(
   context_lost_reason_ = reason;
 }
 
-int32 CommandBufferService::GetPutOffset() {
+int32_t CommandBufferService::GetPutOffset() {
   return put_offset_;
 }
 

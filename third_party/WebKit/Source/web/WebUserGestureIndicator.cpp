@@ -28,27 +28,30 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebUserGestureIndicator.h"
 
 #include "platform/UserGestureIndicator.h"
 #include "public/web/WebUserGestureToken.h"
+#include "web/WebLocalFrameImpl.h"
 
 namespace blink {
 
-bool WebUserGestureIndicator::isProcessingUserGesture()
-{
-    return UserGestureIndicator::processingUserGesture();
+bool WebUserGestureIndicator::isProcessingUserGesture() {
+  return UserGestureIndicator::processingUserGesture();
 }
 
-bool WebUserGestureIndicator::consumeUserGesture()
-{
-    return UserGestureIndicator::consumeUserGesture();
+bool WebUserGestureIndicator::consumeUserGesture() {
+  return UserGestureIndicator::consumeUserGesture();
 }
 
-WebUserGestureToken WebUserGestureIndicator::currentUserGestureToken()
-{
-    return WebUserGestureToken(UserGestureIndicator::currentToken());
+bool WebUserGestureIndicator::processedUserGestureSinceLoad(
+    WebLocalFrame* frame) {
+  Document* document = toWebLocalFrameImpl(frame)->frame()->document();
+  return document->hasReceivedUserGesture();
 }
 
-} // namespace blink
+WebUserGestureToken WebUserGestureIndicator::currentUserGestureToken() {
+  return WebUserGestureToken(UserGestureIndicator::currentToken());
+}
+
+}  // namespace blink

@@ -4,20 +4,16 @@
 
 #include "ui/views/widget/desktop_aura/desktop_native_cursor_manager.h"
 
+#include <utility>
+
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/cursor_loader.h"
-#include "ui/views/widget/desktop_aura/desktop_cursor_loader_updater.h"
 
 namespace views {
 
-DesktopNativeCursorManager::DesktopNativeCursorManager(
-    scoped_ptr<DesktopCursorLoaderUpdater> cursor_loader_updater)
-    : cursor_loader_updater_(cursor_loader_updater.Pass()),
-      cursor_loader_(ui::CursorLoader::Create()) {
-  if (cursor_loader_updater_.get())
-    cursor_loader_updater_->OnCreate(1.0f, cursor_loader_.get());
-}
+DesktopNativeCursorManager::DesktopNativeCursorManager()
+    : cursor_loader_(ui::CursorLoader::Create()) {}
 
 DesktopNativeCursorManager::~DesktopNativeCursorManager() {
 }
@@ -37,14 +33,11 @@ void DesktopNativeCursorManager::RemoveHost(aura::WindowTreeHost* host) {
 }
 
 void DesktopNativeCursorManager::SetDisplay(
-    const gfx::Display& display,
+    const display::Display& display,
     wm::NativeCursorManagerDelegate* delegate) {
   cursor_loader_->UnloadAll();
   cursor_loader_->set_rotation(display.rotation());
   cursor_loader_->set_scale(display.device_scale_factor());
-
-  if (cursor_loader_updater_.get())
-    cursor_loader_updater_->OnDisplayUpdated(display, cursor_loader_.get());
 
   SetCursor(delegate->GetCursor(), delegate);
 }

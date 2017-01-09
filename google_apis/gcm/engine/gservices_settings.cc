@@ -4,8 +4,11 @@
 
 #include "google_apis/gcm/engine/gservices_settings.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -24,8 +27,8 @@ const char kMCSSecurePortKey[] = "gcm_secure_port";
 // The URL to get MCS registration IDs.
 const char kRegistrationURLKey[] = "gcm_registration_url";
 
-const int64 kDefaultCheckinInterval = 2 * 24 * 60 * 60;  // seconds = 2 days.
-const int64 kMinimumCheckinInterval = 12 * 60 * 60;      // seconds = 12 hours.
+const int64_t kDefaultCheckinInterval = 2 * 24 * 60 * 60;  // seconds = 2 days.
+const int64_t kMinimumCheckinInterval = 12 * 60 * 60;  // seconds = 12 hours.
 const char kDefaultCheckinURL[] = "https://android.clients.google.com/checkin";
 const char kDefaultMCSHostname[] = "mtalk.google.com";
 const int kDefaultMCSMainSecurePort = 5228;
@@ -61,12 +64,12 @@ bool VerifyCheckinInterval(
   if (iter == settings.end())
     return CanBeOmitted(kCheckinIntervalKey);
 
-  int64 checkin_interval = kMinimumCheckinInterval;
+  int64_t checkin_interval = kMinimumCheckinInterval;
   if (!base::StringToInt64(iter->second, &checkin_interval)) {
     DVLOG(1) << "Failed to parse checkin interval: " << iter->second;
     return false;
   }
-  if (checkin_interval == std::numeric_limits<int64>::max()) {
+  if (checkin_interval == std::numeric_limits<int64_t>::max()) {
     DVLOG(1) << "Checkin interval is too big: " << checkin_interval;
     return false;
   }
@@ -224,7 +227,8 @@ bool GServicesSettings::UpdateFromCheckinResponse(
       return false;
     }
 
-    if (settings_diff && name.find(kDeleteSettingPrefix) == 0) {
+    if (settings_diff && base::StartsWith(name, kDeleteSettingPrefix,
+                                          base::CompareCase::SENSITIVE)) {
       std::string setting_to_delete =
           name.substr(arraysize(kDeleteSettingPrefix) - 1);
       new_settings.erase(setting_to_delete);
@@ -264,7 +268,7 @@ void GServicesSettings::UpdateFromLoadResult(
 }
 
 base::TimeDelta GServicesSettings::GetCheckinInterval() const {
-  int64 checkin_interval = kMinimumCheckinInterval;
+  int64_t checkin_interval = kMinimumCheckinInterval;
   SettingsMap::const_iterator iter = settings_.find(kCheckinIntervalKey);
   if (iter == settings_.end() ||
       !base::StringToInt64(iter->second, &checkin_interval)) {
@@ -301,7 +305,7 @@ GURL GServicesSettings::GetMCSMainEndpoint() const {
   else
     mcs_hostname = kDefaultMCSHostname;
 
-  // Get alternative secure port or use defualt.
+  // Get alternative secure port or use default.
   int mcs_secure_port = 0;
   iter = settings_.find(kMCSSecurePortKey);
   if (iter == settings_.end() || iter->second.empty() ||

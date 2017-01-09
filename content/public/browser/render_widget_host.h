@@ -5,13 +5,18 @@
 #ifndef CONTENT_PUBLIC_BROWSER_RENDER_WIDGET_HOST_H_
 #define CONTENT_PUBLIC_BROWSER_RENDER_WIDGET_HOST_H_
 
+#include <stdint.h>
+
 #include "base/callback.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/readback_types.h"
+#include "content/public/common/drop_data.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_sender.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
+#include "third_party/WebKit/public/platform/WebGestureEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/web/WebTextDirection.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "ui/gfx/geometry/size.h"
@@ -23,15 +28,14 @@ class Rect;
 
 namespace blink {
 class WebMouseEvent;
-struct WebScreenInfo;
 }
 
 namespace content {
 
 class RenderProcessHost;
-class RenderWidgetHostImpl;
 class RenderWidgetHostIterator;
 class RenderWidgetHostView;
+struct ScreenInfo;
 
 // A RenderWidgetHost manages the browser side of a browser<->renderer
 // HWND connection.  The HWND lives in the browser process, and
@@ -103,11 +107,11 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
  public:
   // Returns the RenderWidgetHost given its ID and the ID of its render process.
   // Returns nullptr if the IDs do not correspond to a live RenderWidgetHost.
-  static RenderWidgetHost* FromID(int32 process_id, int32 routing_id);
+  static RenderWidgetHost* FromID(int32_t process_id, int32_t routing_id);
 
   // Returns an iterator to iterate over the global list of active render widget
   // hosts.
-  static scoped_ptr<RenderWidgetHostIterator> GetRenderWidgetHosts();
+  static std::unique_ptr<RenderWidgetHostIterator> GetRenderWidgetHosts();
 
   ~RenderWidgetHost() override {}
 
@@ -189,6 +193,8 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
       const blink::WebMouseWheelEvent& wheel_event) = 0;
   virtual void ForwardKeyboardEvent(
       const NativeWebKeyboardEvent& key_event) = 0;
+  virtual void ForwardGestureEvent(
+      const blink::WebGestureEvent& gesture_event) = 0;
 
   virtual RenderProcessHost* GetProcess() const = 0;
 
@@ -203,16 +209,18 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
   // Returns true if the renderer is loading, false if not.
   virtual bool IsLoading() const = 0;
 
-  // Called to notify the RenderWidget that the resize rect has changed without
-  // the size of the RenderWidget itself changing.
-  virtual void ResizeRectChanged(const gfx::Rect& new_rect) = 0;
-
-  // Restart the active hang monitor timeout. Clears all existing timeouts and
-  // starts with a new one.  This can be because the renderer has become
+  // Restart the active hang monitor timeout if the renderer is actively
+  // waiting on a response. Clears all existing timeouts and starts with
+  // a new one.  This can be because the renderer has become
   // active, the tab is being hidden, or the user has chosen to wait some more
   // to give the tab a chance to become active and we don't want to display a
   // warning too soon.
-  virtual void RestartHangMonitorTimeout() = 0;
+  virtual void RestartHangMonitorTimeoutIfNecessary() = 0;
+
+  // Stops and disables hang monitor. This avoids flakiness in tests that need
+  // to observe things like beforeunload dialogs, which could fail if the
+  // timeout skips the dialog.
+  virtual void DisableHangMonitorForTesting() = 0;
 
   virtual void SetIgnoreInputEvents(bool ignore_input_events) = 0;
 
@@ -235,13 +243,60 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
   virtual void AddMouseEventCallback(const MouseEventCallback& callback) = 0;
   virtual void RemoveMouseEventCallback(const MouseEventCallback& callback) = 0;
 
+  // Observer for WebInputEvents (but not input event acks).
+  class InputEventObserver {
+   public:
+    virtual ~InputEventObserver() {}
+
+    virtual void OnInputEvent(const blink::WebInputEvent&) = 0;
+  };
+
+  // Add/remove an input event observer.
+  virtual void AddInputEventObserver(InputEventObserver* observer) = 0;
+  virtual void RemoveInputEventObserver(InputEventObserver* observer) = 0;
+
   // Get the screen info corresponding to this render widget.
-  virtual void GetWebScreenInfo(blink::WebScreenInfo* result) = 0;
-  // Get the color profile corresponding to this render widget.
-  virtual bool GetScreenColorProfile(std::vector<char>* color_profile) = 0;
+  virtual void GetScreenInfo(ScreenInfo* result) = 0;
 
   // Sends a compositor proto to the render widget.
   virtual void HandleCompositorProto(const std::vector<uint8_t>& proto) = 0;
+
+  // Drag-and-drop drop target messages that get sent to Blink.
+  virtual void DragTargetDragEnter(
+      const DropData& drop_data,
+      const gfx::Point& client_pt,
+      const gfx::Point& screen_pt,
+      blink::WebDragOperationsMask operations_allowed,
+      int key_modifiers) {}
+  virtual void DragTargetDragEnterWithMetaData(
+      const std::vector<DropData::Metadata>& metadata,
+      const gfx::Point& client_pt,
+      const gfx::Point& screen_pt,
+      blink::WebDragOperationsMask operations_allowed,
+      int key_modifiers) {};
+  virtual void DragTargetDragOver(
+      const gfx::Point& client_pt,
+      const gfx::Point& screen_pt,
+      blink::WebDragOperationsMask operations_allowed,
+      int key_modifiers) {}
+  virtual void DragTargetDragLeave() {}
+  virtual void DragTargetDrop(const DropData& drop_data,
+                              const gfx::Point& client_pt,
+                              const gfx::Point& screen_pt,
+                              int key_modifiers) {}
+
+  // Notifies the renderer that a drag operation that it started has ended,
+  // either in a drop or by being cancelled.
+  virtual void DragSourceEndedAt(const gfx::Point& client_pt,
+                                 const gfx::Point& screen_pt,
+                                 blink::WebDragOperation operation) {};
+
+  // Notifies the renderer that we're done with the drag and drop operation.
+  // This allows the renderer to reset some state.
+  virtual void DragSourceSystemDragEnded() {};
+
+  // Filters drop data before it is passed to RenderWidgetHost.
+  virtual void FilterDropData(DropData* drop_data) {}
 };
 
 }  // namespace content

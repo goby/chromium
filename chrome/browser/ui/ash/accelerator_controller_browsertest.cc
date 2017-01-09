@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/accelerators/accelerator_controller.h"
+#include "ash/common/accelerators/accelerator_controller.h"
 
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -15,7 +18,7 @@
 #include "ui/events/test/events_test_utils_x11.h"
 #endif
 
-#if defined(OS_CHROMEOS) && defined(USE_X11)
+#if defined(USE_X11)
 typedef InProcessBrowserTest AcceleratorControllerBrowserTest;
 
 // Test that pressing and holding Alt+ toggles the maximized state exactly once.
@@ -32,7 +35,7 @@ IN_PROC_BROWSER_TEST_F(AcceleratorControllerBrowserTest,
 
   ui::Accelerator accelerator(ui::VKEY_OEM_PLUS, ui::EF_ALT_DOWN);
   ash::AcceleratorController* accelerator_controller =
-      ash::Shell::GetInstance()->accelerator_controller();
+      ash::WmShell::Get()->accelerator_controller();
   ASSERT_TRUE(accelerator_controller->IsRegistered(accelerator));
 
   ash::wm::WindowState* window_state = ash::wm::GetActiveWindowState();

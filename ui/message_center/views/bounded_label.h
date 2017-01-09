@@ -7,8 +7,9 @@
 
 #include <list>
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/views/view.h"
@@ -55,7 +56,7 @@ class MESSAGE_CENTER_EXPORT BoundedLabel : public views::View {
   int GetHeightForWidth(int width) const override;
   void OnPaint(gfx::Canvas* canvas) override;
   bool CanProcessEventsWithinSubtree() const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
  protected:
   // Overridden from views::View.
@@ -67,7 +68,7 @@ class MESSAGE_CENTER_EXPORT BoundedLabel : public views::View {
 
   base::string16 GetWrappedTextForTest(int width, int lines);
 
-  scoped_ptr<InnerBoundedLabel> label_;
+  std::unique_ptr<InnerBoundedLabel> label_;
   int line_limit_;
 
   DISALLOW_COPY_AND_ASSIGN(BoundedLabel);

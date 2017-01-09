@@ -8,8 +8,13 @@
 #include <string>
 
 #include "base/logging.h"
+#include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -22,8 +27,8 @@ NSString* const kEligibleDomainsKey = @"EligibleDomains";
   std::set<std::string> _eligibleDomains;
 }
 
-// Loads |eligibleDomains_| from config file.
-- (void)loadEligibleDomains;
+// Loads |_eligibleDomains| from config file |plistFileName|.
+- (void)loadConfigFile:(NSString*)plistFileName;
 
 @end
 
@@ -35,11 +40,10 @@ NSString* const kEligibleDomainsKey = @"EligibleDomains";
   return instance;
 }
 
-- (id)init {
-  self =
-      [super initWithAppId:nil version:nil plist:@"OmniboxGeolocation.plist"];
+- (instancetype)init {
+  self = [super init];
   if (self) {
-    [self loadEligibleDomains];
+    [self loadConfigFile:@"OmniboxGeolocation"];
   }
   return self;
 }
@@ -58,23 +62,22 @@ NSString* const kEligibleDomainsKey = @"EligibleDomains";
 
 #pragma mark - Private
 
-- (void)loadEligibleDomains {
-  _eligibleDomains.clear();
-
-  NSDictionary* configData = [self dictionaryFromConfig];
-  NSArray* eligibleDomains = [configData objectForKey:kEligibleDomainsKey];
+- (void)loadConfigFile:(NSString*)plistFileName {
+  NSString* path = [[NSBundle mainBundle] pathForResource:plistFileName
+                                                   ofType:@"plist"
+                                              inDirectory:@"gm-config/ANY"];
+  NSDictionary* configData = [NSDictionary dictionaryWithContentsOfFile:path];
+  NSArray* eligibleDomains = base::mac::ObjCCastStrict<NSArray>(
+      [configData objectForKey:kEligibleDomainsKey]);
   if (eligibleDomains) {
-    DCHECK([eligibleDomains isKindOfClass:[NSArray class]]);
-
-    for (NSString* domain in eligibleDomains) {
-      DCHECK([domain isKindOfClass:[NSString class]]);
+    for (id item in eligibleDomains) {
+      NSString* domain = base::mac::ObjCCastStrict<NSString>(item);
       if ([domain length]) {
         _eligibleDomains.insert(
             base::SysNSStringToUTF8([domain lowercaseString]));
       }
     }
   }
-
   DCHECK(!_eligibleDomains.empty());
 }
 

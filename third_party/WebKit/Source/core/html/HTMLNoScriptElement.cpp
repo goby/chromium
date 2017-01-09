@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/HTMLNoScriptElement.h"
 
 #include "bindings/core/v8/ScriptController.h"
@@ -41,18 +40,14 @@ namespace blink {
 using namespace HTMLNames;
 
 inline HTMLNoScriptElement::HTMLNoScriptElement(Document& document)
-    : HTMLElement(noscriptTag, document)
-{
-}
+    : HTMLElement(noscriptTag, document) {}
 
 DEFINE_NODE_FACTORY(HTMLNoScriptElement)
 
-bool HTMLNoScriptElement::layoutObjectIsNeeded(const ComputedStyle& style)
-{
-    if (document().frame()->script().canExecuteScripts(NotAboutToExecuteScript))
-        return false;
-    return Element::layoutObjectIsNeeded(style);
-
+bool HTMLNoScriptElement::layoutObjectIsNeeded(const ComputedStyle& style) {
+  if (document().frame()->script().canExecuteScripts(NotAboutToExecuteScript))
+    return false;
+  return Element::layoutObjectIsNeeded(style);
 }
 
-}
+}  // namespace blink

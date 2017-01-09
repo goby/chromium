@@ -7,8 +7,9 @@
 #include <cmath>
 
 #include "ash/display/cursor_window_controller.h"
-#include "ash/display/display_manager.h"
+#include "ash/display/display_util.h"
 #include "ash/display/mouse_warp_controller.h"
+
 #include "ash/shell.h"
 #include "ui/events/event.h"
 
@@ -23,10 +24,8 @@ MouseCursorEventFilter::~MouseCursorEventFilter() {
 }
 
 void MouseCursorEventFilter::ShowSharedEdgeIndicator(aura::Window* from) {
-  mouse_warp_controller_ = Shell::GetInstance()
-                               ->display_manager()
-                               ->CreateMouseWarpController(from)
-                               .Pass();
+  mouse_warp_controller_ = ash::CreateMouseWarpController(
+      Shell::GetInstance()->display_manager(), from);
 }
 
 void MouseCursorEventFilter::HideSharedEdgeIndicator() {
@@ -38,10 +37,8 @@ void MouseCursorEventFilter::OnDisplaysInitialized() {
 }
 
 void MouseCursorEventFilter::OnDisplayConfigurationChanged() {
-  mouse_warp_controller_ = Shell::GetInstance()
-                               ->display_manager()
-                               ->CreateMouseWarpController(nullptr)
-                               .Pass();
+  mouse_warp_controller_ = ash::CreateMouseWarpController(
+      Shell::GetInstance()->display_manager(), nullptr);
 }
 
 void MouseCursorEventFilter::OnMouseEvent(ui::MouseEvent* event) {
@@ -54,7 +51,7 @@ void MouseCursorEventFilter::OnMouseEvent(ui::MouseEvent* event) {
   // (at least X11) stops generating a ui::ET_MOUSE_MOVED event.
   if (event->type() != ui::ET_MOUSE_MOVED &&
       event->type() != ui::ET_MOUSE_DRAGGED) {
-      return;
+    return;
   }
 
   Shell::GetInstance()

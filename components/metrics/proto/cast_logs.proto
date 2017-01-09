@@ -12,16 +12,17 @@ option java_package = "org.chromium.components.metrics";
 
 package metrics;
 
-// Next tag: 4
+// Next tag: 7
 message CastLogsProto {
   // Cast specific device information.
-  // Next tag: 5
+  // Next tag: 6
   message CastDeviceInfo {
     // The product type of Cast device sent from Cast-enabled devices.
     // Next tag: 5
     enum CastProductType {
       CAST_PRODUCT_TYPE_UNKNOWN = 0;
       CAST_PRODUCT_TYPE_CHROMECAST = 1;
+      CAST_PRODUCT_TYPE_TV = 2;
       CAST_PRODUCT_TYPE_AUDIO = 3;
       CAST_PRODUCT_TYPE_ANDROID_TV = 4;
     }
@@ -36,6 +37,9 @@ message CastLogsProto {
 
     // The model of the Cast device.
     optional string model = 4;
+
+    // The serial number.
+    optional string serial_number = 5;
   }
   // The device sends this information at least once per day.
   optional CastDeviceInfo cast_device_info = 1;
@@ -50,7 +54,7 @@ message CastLogsProto {
 
     // This message describes a detail sender device and sdk. Those are
     // parsed from the user agent string sent from sender sdk during connection.
-    // Next tag: 9
+    // Next tag: 10
     message SenderInfo {
       // The identifier for the sender device, that is not tied any kind of
       // device id outside of UMA, and this id is reset when user resets sender
@@ -107,6 +111,11 @@ message CastLogsProto {
 
       // Sender device model.
       optional string model = 8;
+
+      // Last 2 bytes of the sender’s local IP addresses (both IP4/IP6) when
+      // the sender connected. This field stores ip fragment to last 2 bytes and
+      // first 2 bytes won't be used.
+      optional int32 sender_local_ip_fragment = 9;
     }
     optional SenderInfo sender_info = 3;
   }
@@ -115,7 +124,7 @@ message CastLogsProto {
   repeated CastConnectionInfo cast_connection_info = 2;
 
   // Stores Cast-enabled device specific events with a various context data.
-  // Next tag: 10
+  // Next tag: 13
   message CastEventProto {
     // The name of the action, hashed by same logic used to hash user action
     // event and histogram.
@@ -147,6 +156,51 @@ message CastLogsProto {
 
     // An optional value for the multi-room group uuid.
     optional fixed64 group_uuid = 10;
+
+    // For application events associated with an assistant session, identifies
+    // the assistant conversation.
+    optional string conversation_key = 11;
+
+    // Request ID of V2 Application Protocol, identifies a pair of request
+    // and response.
+    optional fixed32 request_id = 12;
   }
   repeated CastEventProto cast_event = 3;
+
+  // Virtual release track for device.
+  optional fixed32 virtual_release_track = 4;
+
+  // Cast specific device information which is expected to change over time.
+  // Next tag: 4
+  message CastDeviceMutableInfo {
+    // This is the last type of reboot the device encountered
+    // Next tag: 9
+    enum RebootType {
+      REBOOT_TYPE_UNKNOWN = 0;
+      REBOOT_TYPE_FORCED = 1;
+      REBOOT_TYPE_API = 2;
+      REBOOT_TYPE_NIGHTLY = 3;
+      REBOOT_TYPE_OTA = 4;
+      REBOOT_TYPE_WATCHDOG = 5;
+      REBOOT_TYPE_PROCESS_MANAGER = 6;
+      REBOOT_TYPE_CRASH_UPLOADER = 7;
+      REBOOT_TYPE_FDR = 8;
+    }
+    optional RebootType last_reboot_type = 1;
+
+    // System version which the cast_shell is running.
+    optional fixed64 system_build_number = 2;
+
+    // An identifier that is specific to the combination of app and device, in
+    // this case the one used by backdrop.
+    optional string backdrop_app_device_id = 3;
+  }
+  optional CastDeviceMutableInfo cast_device_mutable_info = 5;
+
+  // Unique identifier that is randomly generated on first setup, on re-setup
+  // (FDR), and when user opted-in from opted-out status. If user is opted-out
+  // then this field should not be set.
+  // This is used for joining logs from Cast sender SDK to evaluate Cast
+  // sender/receiver communication quality.
+  optional fixed64 receiver_metrics_id = 6;
 }

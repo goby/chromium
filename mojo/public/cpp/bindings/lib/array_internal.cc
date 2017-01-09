@@ -4,6 +4,9 @@
 
 #include "mojo/public/cpp/bindings/lib/array_internal.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <sstream>
 
 namespace mojo {
@@ -50,24 +53,6 @@ ArrayDataTraits<bool>::BitRef& ArrayDataTraits<bool>::BitRef::operator=(
 
 ArrayDataTraits<bool>::BitRef::operator bool() const {
   return (*storage_ & mask_) != 0;
-}
-
-// static
-void ArraySerializationHelper<Handle, true>::EncodePointersAndHandles(
-    const ArrayHeader* header,
-    ElementType* elements,
-    std::vector<Handle>* handles) {
-  for (uint32_t i = 0; i < header->num_elements; ++i)
-    EncodeHandle(&elements[i], handles);
-}
-
-// static
-void ArraySerializationHelper<Handle, true>::DecodePointersAndHandles(
-    const ArrayHeader* header,
-    ElementType* elements,
-    std::vector<Handle>* handles) {
-  for (uint32_t i = 0; i < header->num_elements; ++i)
-    DecodeHandle(&elements[i], handles);
 }
 
 }  // namespace internal

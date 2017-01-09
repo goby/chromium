@@ -2,26 +2,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/base/ime/input_method_base.h"
-
 #ifndef UI_VIEWS_MUS_INPUT_METHOD_MUS_H_
 #define UI_VIEWS_MUS_INPUT_METHOD_MUS_H_
 
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/ui/public/interfaces/ime/ime.mojom.h"
+#include "ui/base/ime/input_method_base.h"
 #include "ui/views/mus/mus_export.h"
 
-namespace mus {
+namespace ui {
 class Window;
-}  // namespace mojo
+namespace mojom {
+enum class EventResult;
+}  // namespace mojom
+}  // namespace ui
 
 namespace views {
 
-class VIEWS_MUS_EXPORT InputMethodMUS : public ui::InputMethodBase {
- public:
-  InputMethodMUS(ui::internal::InputMethodDelegate* delegate,
-                 mus::Window* window);
-  ~InputMethodMUS() override;
+class TextInputClientImpl;
 
- private:
+class VIEWS_MUS_EXPORT InputMethodMus : public ui::InputMethodBase {
+ public:
+  InputMethodMus(ui::internal::InputMethodDelegate* delegate,
+                 ui::Window* window);
+  ~InputMethodMus() override;
+
+  void Init(service_manager::Connector* connector);
+  void DispatchKeyEvent(
+      ui::KeyEvent* event,
+      std::unique_ptr<base::Callback<void(ui::mojom::EventResult)>>
+          ack_callback);
+
   // Overridden from ui::InputMethod:
   void OnFocus() override;
   void OnBlur() override;
@@ -32,19 +45,31 @@ class VIEWS_MUS_EXPORT InputMethodMUS : public ui::InputMethodBase {
   void OnCaretBoundsChanged(const ui::TextInputClient* client) override;
   void CancelComposition(const ui::TextInputClient* client) override;
   void OnInputLocaleChanged() override;
-  std::string GetInputLocale() override;
   bool IsCandidatePopupOpen() const override;
+
+ private:
+  friend TextInputClientImpl;
 
   // Overridden from ui::InputMethodBase:
   void OnDidChangeFocusedClient(ui::TextInputClient* focused_before,
                                 ui::TextInputClient* focused) override;
 
   void UpdateTextInputType();
+  void ProcessKeyEventCallback(
+      const ui::KeyEvent& event,
+      std::unique_ptr<base::Callback<void(ui::mojom::EventResult)>>
+          ack_callback,
+      bool handled);
 
-  // The toplevel window which is not owned by this class.
-  mus::Window* window_;
+  // The toplevel window which is not owned by this class. This may be null
+  // for tests.
+  ui::Window* window_;
 
-  DISALLOW_COPY_AND_ASSIGN(InputMethodMUS);
+  ui::mojom::IMEServerPtr ime_server_;
+  ui::mojom::InputMethodPtr input_method_;
+  std::unique_ptr<TextInputClientImpl> text_input_client_;
+
+  DISALLOW_COPY_AND_ASSIGN(InputMethodMus);
 };
 
 }  // namespace views

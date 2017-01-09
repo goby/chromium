@@ -4,15 +4,19 @@
 
 #include "components/data_usage/core/data_use_aggregator.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/time/time.h"
 #include "components/data_usage/core/data_use.h"
 #include "components/data_usage/core/data_use_amortizer.h"
@@ -39,9 +43,9 @@ base::TimeTicks GetRequestStart(const net::URLRequest& request) {
 // Test class that can set the network operator's MCCMNC.
 class TestDataUseAggregator : public DataUseAggregator {
  public:
-  TestDataUseAggregator(scoped_ptr<DataUseAnnotator> annotator,
-                        scoped_ptr<DataUseAmortizer> amortizer)
-      : DataUseAggregator(annotator.Pass(), amortizer.Pass()) {}
+  TestDataUseAggregator(std::unique_ptr<DataUseAnnotator> annotator,
+                        std::unique_ptr<DataUseAmortizer> amortizer)
+      : DataUseAggregator(std::move(annotator), std::move(amortizer)) {}
 
   ~TestDataUseAggregator() override {}
 
@@ -90,10 +94,10 @@ class FakeDataUseAnnotator : public DataUseAnnotator {
 
   void Annotate(
       net::URLRequest* request,
-      scoped_ptr<DataUse> data_use,
-      const base::Callback<void(scoped_ptr<DataUse>)>& callback) override {
+      std::unique_ptr<DataUse> data_use,
+      const base::Callback<void(std::unique_ptr<DataUse>)>& callback) override {
     data_use->tab_id = tab_id_;
-    callback.Run(data_use.Pass());
+    callback.Run(std::move(data_use));
   }
 
   void set_tab_id(int32_t tab_id) { tab_id_ = tab_id; }
@@ -110,11 +114,11 @@ class DoublingAmortizer : public DataUseAmortizer {
   DoublingAmortizer() {}
   ~DoublingAmortizer() override {}
 
-  void AmortizeDataUse(scoped_ptr<DataUse> data_use,
+  void AmortizeDataUse(std::unique_ptr<DataUse> data_use,
                        const AmortizationCompleteCallback& callback) override {
     data_use->tx_bytes *= 2;
     data_use->rx_bytes *= 2;
-    callback.Run(data_use.Pass());
+    callback.Run(std::move(data_use));
   }
 
   void OnExtraBytes(int64_t extra_tx_bytes, int64_t extra_rx_bytes) override {}
@@ -232,8 +236,8 @@ class DataUseAggregatorTest : public testing::Test {
   DataUseAggregatorTest() {}
   ~DataUseAggregatorTest() override {}
 
-  void Initialize(scoped_ptr<FakeDataUseAnnotator> annotator,
-                  scoped_ptr<DataUseAmortizer> amortizer) {
+  void Initialize(std::unique_ptr<FakeDataUseAnnotator> annotator,
+                  std::unique_ptr<DataUseAmortizer> amortizer) {
     // Destroy objects that have dependencies on other objects here in the
     // reverse order that they are created.
     context_.reset();
@@ -245,7 +249,7 @@ class DataUseAggregatorTest : public testing::Test {
     // Initialize testing objects.
     FakeDataUseAnnotator* fake_data_use_annotator = annotator.get();
     data_use_aggregator_.reset(
-        new TestDataUseAggregator(annotator.Pass(), amortizer.Pass()));
+        new TestDataUseAggregator(std::move(annotator), std::move(amortizer)));
     test_observer_.reset(new TestObserver(data_use_aggregator_.get()));
     test_network_change_notifier_.reset(
         new TestNetworkChangeNotifier(data_use_aggregator_.get()));
@@ -260,7 +264,7 @@ class DataUseAggregatorTest : public testing::Test {
     context_->Init();
   }
 
-  scoped_ptr<net::URLRequest> ExecuteRequest(
+  std::unique_ptr<net::URLRequest> ExecuteRequest(
       const GURL& url,
       const GURL& first_party_for_cookies,
       int32_t tab_id,
@@ -274,7 +278,7 @@ class DataUseAggregatorTest : public testing::Test {
     mock_socket_factory_->AddSocketDataProvider(&socket);
 
     net::TestDelegate delegate;
-    scoped_ptr<net::URLRequest> request =
+    std::unique_ptr<net::URLRequest> request =
         context_->CreateRequest(url, net::IDLE, &delegate);
     request->set_first_party_for_cookies(first_party_for_cookies);
 
@@ -285,9 +289,9 @@ class DataUseAggregatorTest : public testing::Test {
     reporting_network_delegate_->set_data_use_context_map(data_use_context_map);
 
     request->Start();
-    loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
-    return request.Pass();
+    return request;
   }
 
   ReportingNetworkDelegate* reporting_network_delegate() {
@@ -308,12 +312,12 @@ class DataUseAggregatorTest : public testing::Test {
 
  private:
   base::MessageLoopForIO loop_;
-  scoped_ptr<TestDataUseAggregator> data_use_aggregator_;
-  scoped_ptr<TestObserver> test_observer_;
-  scoped_ptr<TestNetworkChangeNotifier> test_network_change_notifier_;
-  scoped_ptr<net::MockClientSocketFactory> mock_socket_factory_;
-  scoped_ptr<ReportingNetworkDelegate> reporting_network_delegate_;
-  scoped_ptr<net::TestURLRequestContext> context_;
+  std::unique_ptr<TestDataUseAggregator> data_use_aggregator_;
+  std::unique_ptr<TestObserver> test_observer_;
+  std::unique_ptr<TestNetworkChangeNotifier> test_network_change_notifier_;
+  std::unique_ptr<net::MockClientSocketFactory> mock_socket_factory_;
+  std::unique_ptr<ReportingNetworkDelegate> reporting_network_delegate_;
+  std::unique_ptr<net::TestURLRequestContext> context_;
 
   DISALLOW_COPY_AND_ASSIGN(DataUseAggregatorTest);
 };
@@ -332,18 +336,18 @@ TEST_F(DataUseAggregatorTest, ReportDataUse) {
   };
 
   for (const auto& test_case : kTestCases) {
-    scoped_ptr<FakeDataUseAnnotator> annotator(
+    std::unique_ptr<FakeDataUseAnnotator> annotator(
         test_case.use_annotator ? new FakeDataUseAnnotator() : nullptr);
-    scoped_ptr<DataUseAmortizer> amortizer(
+    std::unique_ptr<DataUseAmortizer> amortizer(
         test_case.use_amortizer ? new DoublingAmortizer() : nullptr);
 
-    Initialize(annotator.Pass(), amortizer.Pass());
+    Initialize(std::move(annotator), std::move(amortizer));
 
     const int32_t kFooTabId = 10;
     const net::NetworkChangeNotifier::ConnectionType kFooConnectionType =
         net::NetworkChangeNotifier::CONNECTION_2G;
     const std::string kFooMccMnc = "foo_mcc_mnc";
-    scoped_ptr<net::URLRequest> foo_request =
+    std::unique_ptr<net::URLRequest> foo_request =
         ExecuteRequest(GURL("http://foo.com"), GURL("http://foofirstparty.com"),
                        kFooTabId, kFooConnectionType, kFooMccMnc);
 
@@ -351,7 +355,7 @@ TEST_F(DataUseAggregatorTest, ReportDataUse) {
     const net::NetworkChangeNotifier::ConnectionType kBarConnectionType =
         net::NetworkChangeNotifier::CONNECTION_WIFI;
     const std::string kBarMccMnc = "bar_mcc_mnc";
-    scoped_ptr<net::URLRequest> bar_request =
+    std::unique_ptr<net::URLRequest> bar_request =
         ExecuteRequest(GURL("http://bar.com"), GURL("http://barfirstparty.com"),
                        kBarTabId, kBarConnectionType, kBarMccMnc);
 
@@ -360,7 +364,7 @@ TEST_F(DataUseAggregatorTest, ReportDataUse) {
     // First, the |foo_request| data use should have happened.
     int64_t observed_foo_tx_bytes = 0, observed_foo_rx_bytes = 0;
     while (data_use_it != test_observer()->observed_data_use().end() &&
-           data_use_it->url == GURL("http://foo.com")) {
+           data_use_it->url == "http://foo.com/") {
       EXPECT_EQ(GetRequestStart(*foo_request), data_use_it->request_start);
       EXPECT_EQ(GURL("http://foofirstparty.com"),
                 data_use_it->first_party_for_cookies);
@@ -414,12 +418,12 @@ TEST_F(DataUseAggregatorTest, ReportDataUse) {
 }
 
 TEST_F(DataUseAggregatorTest, ReportOffTheRecordDataUse) {
-  Initialize(scoped_ptr<FakeDataUseAnnotator>(new FakeDataUseAnnotator()),
-             scoped_ptr<DataUseAmortizer>(new DoublingAmortizer()));
+  Initialize(std::unique_ptr<FakeDataUseAnnotator>(new FakeDataUseAnnotator()),
+             std::unique_ptr<DataUseAmortizer>(new DoublingAmortizer()));
 
   // Off the record data use should not be reported to observers.
   data_use_aggregator()->ReportOffTheRecordDataUse(1000, 1000);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(static_cast<size_t>(0),
             test_observer()->observed_data_use().size());
 }

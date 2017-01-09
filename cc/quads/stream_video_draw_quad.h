@@ -5,7 +5,10 @@
 #ifndef CC_QUADS_STREAM_VIDEO_DRAW_QUAD_H_
 #define CC_QUADS_STREAM_VIDEO_DRAW_QUAD_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "cc/base/cc_export.h"
 #include "cc/quads/draw_quad.h"
 #include "ui/gfx/transform.h"
@@ -14,6 +17,8 @@ namespace cc {
 
 class CC_EXPORT StreamVideoDrawQuad : public DrawQuad {
  public:
+  static const size_t kResourceIdIndex = 0;
+
   StreamVideoDrawQuad();
 
   void SetNew(const SharedQuadState* shared_quad_state,
@@ -49,8 +54,6 @@ class CC_EXPORT StreamVideoDrawQuad : public DrawQuad {
   }
 
  private:
-  static const size_t kResourceIdIndex = 0;
-
   void ExtendValue(base::trace_event::TracedValue* value) const override;
 };
 

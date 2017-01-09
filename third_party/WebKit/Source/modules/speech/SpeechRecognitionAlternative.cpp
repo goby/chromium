@@ -23,21 +23,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "modules/speech/SpeechRecognitionAlternative.h"
 
 namespace blink {
 
-SpeechRecognitionAlternative* SpeechRecognitionAlternative::create(const String& transcript, double confidence)
-{
-    return new SpeechRecognitionAlternative(transcript, confidence);
+SpeechRecognitionAlternative* SpeechRecognitionAlternative::create(
+    const String& transcript,
+    double confidence) {
+  return new SpeechRecognitionAlternative(transcript, confidence);
 }
 
-SpeechRecognitionAlternative::SpeechRecognitionAlternative(const String& transcript, double confidence)
-    : m_transcript(transcript)
-    , m_confidence(confidence)
-{
-}
+SpeechRecognitionAlternative::SpeechRecognitionAlternative(
+    const String& transcript,
+    double confidence)
+    : m_transcript(transcript), m_confidence(confidence) {}
 
-} // namespace blink
+}  // namespace blink

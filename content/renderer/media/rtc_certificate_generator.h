@@ -9,6 +9,7 @@
 #include "third_party/WebKit/public/platform/WebRTCCertificate.h"
 #include "third_party/WebKit/public/platform/WebRTCCertificateGenerator.h"
 #include "third_party/WebKit/public/platform/WebRTCKeyParams.h"
+#include "third_party/webrtc/base/optional.h"
 
 namespace content {
 
@@ -23,12 +24,22 @@ class RTCCertificateGenerator : public blink::WebRTCCertificateGenerator {
   // blink::WebRTCCertificateGenerator implementation.
   void generateCertificate(
       const blink::WebRTCKeyParams& key_params,
-      const blink::WebURL& url,
-      const blink::WebURL& first_party_for_cookies,
-      blink::WebCallbacks<blink::WebRTCCertificate*, void>* observer) override;
+      std::unique_ptr<blink::WebRTCCertificateCallback> observer) override;
+  void generateCertificateWithExpiration(
+      const blink::WebRTCKeyParams& key_params,
+      uint64_t expires_ms,
+      std::unique_ptr<blink::WebRTCCertificateCallback> observer) override;
   bool isSupportedKeyParams(const blink::WebRTCKeyParams& key_params) override;
+  std::unique_ptr<blink::WebRTCCertificate> fromPEM(
+      blink::WebString pem_private_key,
+      blink::WebString pem_certificate) override;
 
  private:
+  void generateCertificateWithOptionalExpiration(
+      const blink::WebRTCKeyParams& key_params,
+      const rtc::Optional<uint64_t>& expires_ms,
+      std::unique_ptr<blink::WebRTCCertificateCallback> observer);
+
   DISALLOW_COPY_AND_ASSIGN(RTCCertificateGenerator);
 };
 

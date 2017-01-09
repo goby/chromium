@@ -4,8 +4,13 @@
 
 #include "net/log/test_net_log.h"
 
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/values.h"
+#include "net/log/net_log_capture_mode.h"
+#include "net/log/net_log_entry.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_source_type.h"
 
 namespace net {
 
@@ -23,7 +28,7 @@ class TestNetLog::Observer : public NetLog::ThreadSafeObserver {
   }
 
   // Fills |entry_list| with all entries in the log from the specified Source.
-  void GetEntriesForSource(NetLog::Source source,
+  void GetEntriesForSource(NetLogSource source,
                            TestNetLogEntry::List* entry_list) const {
     base::AutoLock lock(lock_);
     entry_list->clear();
@@ -46,19 +51,17 @@ class TestNetLog::Observer : public NetLog::ThreadSafeObserver {
 
  private:
   // ThreadSafeObserver implementation:
-  void OnAddEntry(const NetLog::Entry& entry) override {
+  void OnAddEntry(const NetLogEntry& entry) override {
     // Using Dictionaries instead of Values makes checking values a little
     // simpler.
-    base::DictionaryValue* param_dict = nullptr;
-    base::Value* param_value = entry.ParametersToValue();
-    if (param_value && !param_value->GetAsDictionary(&param_dict))
-      delete param_value;
+    std::unique_ptr<base::DictionaryValue> param_dict =
+        base::DictionaryValue::From(entry.ParametersToValue());
 
     // Only need to acquire the lock when accessing class variables.
     base::AutoLock lock(lock_);
-    entry_list_.push_back(TestNetLogEntry(
-        entry.type(), base::TimeTicks::Now(), entry.source(), entry.phase(),
-        scoped_ptr<base::DictionaryValue>(param_dict)));
+    entry_list_.push_back(TestNetLogEntry(entry.type(), base::TimeTicks::Now(),
+                                          entry.source(), entry.phase(),
+                                          std::move(param_dict)));
   }
 
   // Needs to be "mutable" to use it in GetEntries().
@@ -86,7 +89,7 @@ void TestNetLog::GetEntries(TestNetLogEntry::List* entry_list) const {
   observer_->GetEntries(entry_list);
 }
 
-void TestNetLog::GetEntriesForSource(NetLog::Source source,
+void TestNetLog::GetEntriesForSource(NetLogSource source,
                                      TestNetLogEntry::List* entry_list) const {
   observer_->GetEntriesForSource(source, entry_list);
 }
@@ -104,7 +107,7 @@ NetLog::ThreadSafeObserver* TestNetLog::GetObserver() const {
 }
 
 BoundTestNetLog::BoundTestNetLog()
-    : net_log_(BoundNetLog::Make(&test_net_log_, NetLog::SOURCE_NONE)) {
+    : net_log_(NetLogWithSource::Make(&test_net_log_, NetLogSourceType::NONE)) {
 }
 
 BoundTestNetLog::~BoundTestNetLog() {
@@ -115,7 +118,7 @@ void BoundTestNetLog::GetEntries(TestNetLogEntry::List* entry_list) const {
 }
 
 void BoundTestNetLog::GetEntriesForSource(
-    NetLog::Source source,
+    NetLogSource source,
     TestNetLogEntry::List* entry_list) const {
   test_net_log_.GetEntriesForSource(source, entry_list);
 }

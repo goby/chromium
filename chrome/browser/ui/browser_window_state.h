@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_BROWSER_WINDOW_STATE_H_
 #define CHROME_BROWSER_UI_BROWSER_WINDOW_STATE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "ui/base/ui_base_types.h"
 
 class Browser;
@@ -30,7 +30,7 @@ std::string GetWindowName(const Browser* browser);
 // of the window that is stored in the given PrefService. If the window_name
 // isn't the name of a registered preference it is assumed to be the name of an
 // app and the AppWindowPlacement key is used to find the app's dictionary.
-scoped_ptr<DictionaryPrefUpdate> GetWindowPlacementDictionaryReadWrite(
+std::unique_ptr<DictionaryPrefUpdate> GetWindowPlacementDictionaryReadWrite(
     const std::string& window_name,
     PrefService* prefs);
 // Returns NULL if the window corresponds to an app that doesn't have placement
@@ -41,9 +41,15 @@ const base::DictionaryValue* GetWindowPlacementDictionaryReadOnly(
 
 bool ShouldSaveWindowPlacement(const Browser* browser);
 
+// Returns true if the saved bounds for this window should be treated as the
+// bounds of the content area, not the whole window.
+bool SavedBoundsAreContentBounds(const Browser* browser);
+
 void SaveWindowPlacement(const Browser* browser,
                          const gfx::Rect& bounds,
                          ui::WindowShowState show_state);
+
+void SaveWindowWorkspace(const Browser* browser, const std::string& workspace);
 
 // Return the |bounds| for the browser window to be used upon creation.
 // The |show_state| variable will receive the desired initial show state for

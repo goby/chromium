@@ -4,14 +4,18 @@
 
 #include "storage/browser/fileapi/isolated_file_system_backend.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util_proxy.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "storage/browser/fileapi/async_file_util_adapter.h"
 #include "storage/browser/fileapi/copy_or_move_file_validator.h"
 #include "storage/browser/fileapi/dragged_file_util.h"
@@ -106,7 +110,7 @@ FileSystemOperation* IsolatedFileSystemBackend::CreateFileSystemOperation(
     FileSystemContext* context,
     base::File::Error* error_code) const {
   return FileSystemOperation::Create(
-      url, context, make_scoped_ptr(new FileSystemOperationContext(context)));
+      url, context, base::MakeUnique<FileSystemOperationContext>(context));
 }
 
 bool IsolatedFileSystemBackend::SupportsStreaming(
@@ -121,31 +125,27 @@ bool IsolatedFileSystemBackend::HasInplaceCopyImplementation(
   return false;
 }
 
-scoped_ptr<storage::FileStreamReader>
+std::unique_ptr<storage::FileStreamReader>
 IsolatedFileSystemBackend::CreateFileStreamReader(
     const FileSystemURL& url,
-    int64 offset,
-    int64 max_bytes_to_read,
+    int64_t offset,
+    int64_t max_bytes_to_read,
     const base::Time& expected_modification_time,
     FileSystemContext* context) const {
-  return scoped_ptr<storage::FileStreamReader>(
+  return std::unique_ptr<storage::FileStreamReader>(
       storage::FileStreamReader::CreateForLocalFile(
-          context->default_file_task_runner(),
-          url.path(),
-          offset,
+          context->default_file_task_runner(), url.path(), offset,
           expected_modification_time));
 }
 
-scoped_ptr<FileStreamWriter> IsolatedFileSystemBackend::CreateFileStreamWriter(
+std::unique_ptr<FileStreamWriter>
+IsolatedFileSystemBackend::CreateFileStreamWriter(
     const FileSystemURL& url,
-    int64 offset,
+    int64_t offset,
     FileSystemContext* context) const {
-  return scoped_ptr<FileStreamWriter>(
-      FileStreamWriter::CreateForLocalFile(
-          context->default_file_task_runner(),
-          url.path(),
-          offset,
-          FileStreamWriter::OPEN_EXISTING_FILE));
+  return std::unique_ptr<FileStreamWriter>(FileStreamWriter::CreateForLocalFile(
+      context->default_file_task_runner(), url.path(), offset,
+      FileStreamWriter::OPEN_EXISTING_FILE));
 }
 
 FileSystemQuotaUtil* IsolatedFileSystemBackend::GetQuotaUtil() {

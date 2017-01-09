@@ -18,129 +18,150 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/svg/SVGPathElement.h"
 
+#include "core/css/CSSIdentifierValue.h"
+#include "core/dom/StyleChangeReason.h"
 #include "core/layout/svg/LayoutSVGPath.h"
-#include "core/svg/SVGDocumentExtensions.h"
 #include "core/svg/SVGMPathElement.h"
 #include "core/svg/SVGPathQuery.h"
+#include "core/svg/SVGPathUtilities.h"
 #include "core/svg/SVGPointTearOff.h"
 
 namespace blink {
 
-class SVGAnimatedPathLength final : public SVGAnimatedNumber {
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedPathLength> create(SVGPathElement* contextElement)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedPathLength(contextElement));
-    }
-
-    void setBaseValueAsString(const String& value, SVGParsingError& parseError) override
-    {
-        SVGAnimatedNumber::setBaseValueAsString(value, parseError);
-
-        ASSERT(contextElement());
-        if (parseError == NoError && baseValue()->value() < 0)
-            contextElement()->document().accessSVGExtensions().reportError("A negative value for path attribute <pathLength> is not allowed");
-    }
-
-private:
-    explicit SVGAnimatedPathLength(SVGPathElement* contextElement)
-        : SVGAnimatedNumber(contextElement, SVGNames::pathLengthAttr, SVGNumber::create())
-    {
-    }
-};
-
 inline SVGPathElement::SVGPathElement(Document& document)
-    : SVGGeometryElement(SVGNames::pathTag, document)
-    , m_pathLength(SVGAnimatedPathLength::create(this))
-    , m_path(SVGAnimatedPath::create(this, SVGNames::dAttr))
-{
-    addToPropertyMap(m_pathLength);
-    addToPropertyMap(m_path);
+    : SVGGeometryElement(SVGNames::pathTag, document),
+      m_path(SVGAnimatedPath::create(this, SVGNames::dAttr, CSSPropertyD)) {
+  addToPropertyMap(m_path);
 }
 
-DEFINE_TRACE(SVGPathElement)
-{
-    visitor->trace(m_pathLength);
-    visitor->trace(m_path);
-    SVGGeometryElement::trace(visitor);
+DEFINE_TRACE(SVGPathElement) {
+  visitor->trace(m_path);
+  SVGGeometryElement::trace(visitor);
 }
 
 DEFINE_NODE_FACTORY(SVGPathElement)
 
-Path SVGPathElement::asPath() const
-{
-    // If this is a <use> instance, return the referenced path to maximize geometry sharing.
+Path SVGPathElement::attributePath() const {
+  return m_path->currentValue()->stylePath()->path();
+}
+
+const StylePath* SVGPathElement::stylePath() const {
+  if (LayoutObject* layoutObject = this->layoutObject()) {
+    const StylePath* stylePath = layoutObject->styleRef().svgStyle().d();
+    if (stylePath)
+      return stylePath;
+    return StylePath::emptyPath();
+  }
+  return m_path->currentValue()->stylePath();
+}
+
+float SVGPathElement::computePathLength() const {
+  return stylePath()->length();
+}
+
+Path SVGPathElement::asPath() const {
+  return stylePath()->path();
+}
+
+float SVGPathElement::getTotalLength() {
+  document().updateStyleAndLayoutIgnorePendingStylesheets();
+  return SVGPathQuery(pathByteStream()).getTotalLength();
+}
+
+SVGPointTearOff* SVGPathElement::getPointAtLength(float length) {
+  document().updateStyleAndLayoutIgnorePendingStylesheets();
+  FloatPoint point = SVGPathQuery(pathByteStream()).getPointAtLength(length);
+  return SVGPointTearOff::create(SVGPoint::create(point), 0,
+                                 PropertyIsNotAnimVal);
+}
+
+unsigned SVGPathElement::getPathSegAtLength(float length) {
+  document().updateStyleAndLayoutIgnorePendingStylesheets();
+  return SVGPathQuery(pathByteStream()).getPathSegIndexAtLength(length);
+}
+
+void SVGPathElement::svgAttributeChanged(const QualifiedName& attrName) {
+  if (attrName == SVGNames::dAttr) {
+    SVGElement::InvalidationGuard invalidationGuard(this);
+    invalidateSVGPresentationAttributeStyle();
+    setNeedsStyleRecalc(LocalStyleChange,
+                        StyleChangeReasonForTracing::fromAttribute(attrName));
+
+    if (LayoutSVGShape* layoutPath = toLayoutSVGShape(this->layoutObject()))
+      layoutPath->setNeedsShapeUpdate();
+
+    invalidateMPathDependencies();
+    if (layoutObject())
+      markForLayoutAndParentResourceInvalidation(layoutObject());
+
+    return;
+  }
+
+  if (attrName == SVGNames::pathLengthAttr) {
+    SVGElement::InvalidationGuard invalidationGuard(this);
+    if (layoutObject())
+      markForLayoutAndParentResourceInvalidation(layoutObject());
+    return;
+  }
+
+  SVGGeometryElement::svgAttributeChanged(attrName);
+}
+
+void SVGPathElement::collectStyleForPresentationAttribute(
+    const QualifiedName& name,
+    const AtomicString& value,
+    MutableStylePropertySet* style) {
+  SVGAnimatedPropertyBase* property = propertyFromAttribute(name);
+  if (property == m_path) {
+    SVGAnimatedPath* path = this->path();
+    // If this is a <use> instance, return the referenced path to maximize
+    // geometry sharing.
     if (const SVGElement* element = correspondingElement())
-        return toSVGPathElement(element)->asPath();
+      path = toSVGPathElement(element)->path();
 
-    return m_path->currentValue()->path();
-}
-
-float SVGPathElement::getTotalLength()
-{
-    return SVGPathQuery(m_path->currentValue()->byteStream()).getTotalLength();
-}
-
-PassRefPtrWillBeRawPtr<SVGPointTearOff> SVGPathElement::getPointAtLength(float length)
-{
-    FloatPoint point = SVGPathQuery(m_path->currentValue()->byteStream()).getPointAtLength(length);
-    return SVGPointTearOff::create(SVGPoint::create(point), 0, PropertyIsNotAnimVal);
-}
-
-unsigned SVGPathElement::getPathSegAtLength(float length)
-{
-    return SVGPathQuery(m_path->currentValue()->byteStream()).getPathSegIndexAtLength(length);
-}
-
-void SVGPathElement::svgAttributeChanged(const QualifiedName& attrName)
-{
-    if (attrName == SVGNames::dAttr || attrName == SVGNames::pathLengthAttr) {
-        SVGElement::InvalidationGuard invalidationGuard(this);
-
-        LayoutSVGShape* layoutObject = toLayoutSVGShape(this->layoutObject());
-
-        if (attrName == SVGNames::dAttr) {
-            if (layoutObject)
-                layoutObject->setNeedsShapeUpdate();
-
-            invalidateMPathDependencies();
-        }
-
-        if (layoutObject)
-            markForLayoutAndParentResourceInvalidation(layoutObject);
-
-        return;
+    CSSPathValue* pathValue = path->currentValue()->pathValue();
+    if (pathValue->stylePath()->byteStream().isEmpty()) {
+      addPropertyToPresentationAttributeStyle(
+          style, CSSPropertyD, CSSIdentifierValue::create(CSSValueNone));
+      return;
     }
-
-    SVGGeometryElement::svgAttributeChanged(attrName);
+    addPropertyToPresentationAttributeStyle(style, CSSPropertyD, pathValue);
+    return;
+  }
+  SVGGeometryElement::collectStyleForPresentationAttribute(name, value, style);
 }
 
-void SVGPathElement::invalidateMPathDependencies()
-{
-    // <mpath> can only reference <path> but this dependency is not handled in
-    // markForLayoutAndParentResourceInvalidation so we update any mpath dependencies manually.
-    if (SVGElementSet* dependencies = setOfIncomingReferences()) {
-        for (SVGElement* element : *dependencies) {
-            if (isSVGMPathElement(*element))
-                toSVGMPathElement(element)->targetPathChanged();
-        }
+void SVGPathElement::invalidateMPathDependencies() {
+  // <mpath> can only reference <path> but this dependency is not handled in
+  // markForLayoutAndParentResourceInvalidation so we update any mpath
+  // dependencies manually.
+  if (SVGElementSet* dependencies = setOfIncomingReferences()) {
+    for (SVGElement* element : *dependencies) {
+      if (isSVGMPathElement(*element))
+        toSVGMPathElement(element)->targetPathChanged();
     }
+  }
 }
 
-Node::InsertionNotificationRequest SVGPathElement::insertedInto(ContainerNode* rootParent)
-{
-    SVGGeometryElement::insertedInto(rootParent);
-    invalidateMPathDependencies();
-    return InsertionDone;
+Node::InsertionNotificationRequest SVGPathElement::insertedInto(
+    ContainerNode* rootParent) {
+  SVGGeometryElement::insertedInto(rootParent);
+  invalidateMPathDependencies();
+  return InsertionDone;
 }
 
-void SVGPathElement::removedFrom(ContainerNode* rootParent)
-{
-    SVGGeometryElement::removedFrom(rootParent);
-    invalidateMPathDependencies();
+void SVGPathElement::removedFrom(ContainerNode* rootParent) {
+  SVGGeometryElement::removedFrom(rootParent);
+  invalidateMPathDependencies();
 }
 
-} // namespace blink
+FloatRect SVGPathElement::getBBox() {
+  document().updateStyleAndLayoutIgnorePendingStylesheets();
+
+  // We want the exact bounds.
+  return SVGPathElement::asPath().boundingRect(Path::BoundsType::Exact);
+}
+
+}  // namespace blink

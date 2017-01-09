@@ -5,11 +5,14 @@
 #ifndef COMPONENTS_HISTORY_CORE_TEST_HISTORY_BACKEND_DB_BASE_TEST_H_
 #define COMPONENTS_HISTORY_CORE_TEST_HISTORY_BACKEND_DB_BASE_TEST_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "components/history/core/test/history_unittest_base.h"
 #include "sql/init_status.h"
@@ -49,7 +52,10 @@ class HistoryBackendDBBaseTest : public HistoryUnitTestBase {
 
   void DeleteBackend();
 
-  bool AddDownload(uint32 id, DownloadState state, base::Time time);
+  bool AddDownload(uint32_t id,
+                   const std::string& guid,
+                   DownloadState state,
+                   base::Time time);
 
   base::ScopedTempDir temp_dir_;
 
@@ -60,7 +66,7 @@ class HistoryBackendDBBaseTest : public HistoryUnitTestBase {
 
   // Created via CreateBackendAndDatabase.
   scoped_refptr<HistoryBackend> backend_;
-  scoped_ptr<InMemoryHistoryBackend> in_mem_backend_;
+  std::unique_ptr<InMemoryHistoryBackend> in_mem_backend_;
   HistoryDatabase* db_;  // Cached reference to the backend's database.
   sql::InitStatus last_profile_error_;
 };

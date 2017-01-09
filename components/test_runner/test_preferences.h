@@ -10,31 +10,22 @@
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebSettings.h"
 
-namespace blink {
-class WebView;
-}
-
 namespace test_runner {
 
 struct TEST_RUNNER_EXPORT TestPreferences {
     int default_font_size;
     int minimum_font_size;
-    bool dom_paste_allowed;
     bool xss_auditor_enabled;
-    bool allow_display_of_insecure_content;
     bool allow_file_access_from_file_urls;
     bool allow_running_of_insecure_content;
-    bool author_and_user_styles_enabled;
     blink::WebString default_text_encoding_name;
     bool experimental_webgl_enabled;
-    bool experimental_css_regions_enabled;
     bool experimental_css_grid_layout_enabled;
     bool java_script_can_access_clipboard;
     bool java_script_can_open_windows_automatically;
     bool supports_multiple_windows;
     bool java_script_enabled;
     bool loads_images_automatically;
-    bool offline_web_application_cache_enabled;
     bool plugins_enabled;
     bool allow_universal_access_from_file_urls;
     blink::WebSettings::EditingBehavior editing_behavior;
@@ -47,6 +38,7 @@ struct TEST_RUNNER_EXPORT TestPreferences {
     bool disable_reading_from_canvas;
     bool strict_mixed_content_checking;
     bool strict_powerful_feature_restrictions;
+    bool spatial_navigation_enabled;
 
     TestPreferences();
     void Reset();

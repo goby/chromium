@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_SUPERVISED_SUPERVISED_USER_CREATION_CONTROLLER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_SUPERVISED_SUPERVISED_USER_CREATION_CONTROLLER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/values.h"
@@ -22,8 +23,8 @@ namespace chromeos {
 class SupervisedUserCreationController {
  public:
   // This constant is used to indicate that user does not have one of default
-  // avatars: either he has no chromeos avatar at all, or has an external
-  // image as an avatar.
+  // avatars: either they have no chromeos avatar at all, or they have an
+  // external image as an avatar.
   static const int kDummyAvatarIndex;
 
   enum ErrorCode {

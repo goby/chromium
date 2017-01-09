@@ -12,8 +12,7 @@
 namespace cc_blink {
 
 WebImageLayerImpl::WebImageLayerImpl() {
-  layer_.reset(new WebLayerImplFixedBounds(
-      cc::PictureImageLayer::Create(WebLayerImpl::LayerSettings())));
+  layer_.reset(new WebLayerImplFixedBounds(cc::PictureImageLayer::Create()));
 }
 
 WebImageLayerImpl::~WebImageLayerImpl() {
@@ -24,9 +23,8 @@ blink::WebLayer* WebImageLayerImpl::layer() {
 }
 
 void WebImageLayerImpl::setImage(const SkImage* image) {
-  skia::RefPtr<const SkImage> imageRef = skia::SharePtr(image);
   static_cast<cc::PictureImageLayer*>(layer_->layer())
-      ->SetImage(std::move(imageRef));
+      ->SetImage(sk_ref_sp(image));
   static_cast<WebLayerImplFixedBounds*>(layer_.get())
       ->SetFixedBounds(gfx::Size(image->width(), image->height()));
 }

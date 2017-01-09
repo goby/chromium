@@ -4,9 +4,11 @@
 
 #include "chrome/service/cloud_print/cloud_print_proxy.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
@@ -131,7 +133,7 @@ void CloudPrintProxy::UnregisterPrintersAndDisableForUser() {
     // We'll get notified in this case.
     backend_->UnregisterPrinters();
   } else {
-    // If no backend avaialble, disable connector immidiately.
+    // If no backend available, disable connector immediately.
     DisableForUser();
   }
 }

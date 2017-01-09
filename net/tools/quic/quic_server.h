@@ -11,38 +11,44 @@
 #ifndef NET_TOOLS_QUIC_QUIC_SERVER_H_
 #define NET_TOOLS_QUIC_QUIC_SERVER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "net/base/ip_endpoint.h"
-#include "net/quic/crypto/quic_crypto_server_config.h"
-#include "net/quic/quic_config.h"
-#include "net/quic/quic_connection_helper.h"
-#include "net/quic/quic_framer.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "net/quic/chromium/quic_chromium_connection_helper.h"
+#include "net/quic/core/crypto/quic_crypto_server_config.h"
+#include "net/quic/core/quic_config.h"
+#include "net/quic/core/quic_framer.h"
+#include "net/quic/core/quic_version_manager.h"
+#include "net/quic/platform/api/quic_socket_address.h"
 #include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_default_packet_writer.h"
+#include "net/tools/quic/quic_http_response_cache.h"
 
 namespace net {
-namespace tools {
 
 namespace test {
 class QuicServerPeer;
 }  // namespace test
 
-class ProcessPacketInterface;
 class QuicDispatcher;
 class QuicPacketReader;
 
 class QuicServer : public EpollCallbackInterface {
  public:
-  explicit QuicServer(ProofSource* proof_source);
-  QuicServer(ProofSource* proof_source,
+  QuicServer(std::unique_ptr<ProofSource> proof_source,
+             QuicHttpResponseCache* response_cache);
+  QuicServer(std::unique_ptr<ProofSource> proof_source,
              const QuicConfig& config,
-             const QuicVersionVector& supported_versions);
+             const QuicCryptoServerConfig::ConfigOptions& server_config_options,
+             const QuicVersionVector& supported_versions,
+             QuicHttpResponseCache* response_cache);
 
   ~QuicServer() override;
 
   // Start listening on the specified address.
-  bool Listen(const IPEndPoint& address);
+  bool CreateUDPSocketAndListen(const QuicSocketAddress& address);
 
   // Wait up to 50ms, and handle any events which occur.
   void WaitForEvents();
@@ -58,8 +64,8 @@ class QuicServer : public EpollCallbackInterface {
 
   void OnShutdown(EpollServer* eps, int fd) override {}
 
-  void SetStrikeRegisterNoStartupPeriod() {
-    crypto_config_.set_strike_register_no_startup_period();
+  void SetChloMultiplier(size_t multiplier) {
+    crypto_config_.set_chlo_multiplier(multiplier);
   }
 
   bool overflow_supported() { return overflow_supported_; }
@@ -74,24 +80,23 @@ class QuicServer : public EpollCallbackInterface {
   virtual QuicDispatcher* CreateQuicDispatcher();
 
   const QuicConfig& config() const { return config_; }
-  const QuicCryptoServerConfig& crypto_config() const {
-    return crypto_config_;
-  }
-  const QuicVersionVector& supported_versions() const {
-    return supported_versions_;
-  }
+  const QuicCryptoServerConfig& crypto_config() const { return crypto_config_; }
   EpollServer* epoll_server() { return &epoll_server_; }
 
   QuicDispatcher* dispatcher() { return dispatcher_.get(); }
 
+  QuicVersionManager* version_manager() { return &version_manager_; }
+
+  QuicHttpResponseCache* response_cache() { return response_cache_; }
+
  private:
-  friend class net::tools::test::QuicServerPeer;
+  friend class net::test::QuicServerPeer;
 
   // Initialize the internal state of the server.
   void Initialize();
 
   // Accepts data from the framer and demuxes clients to sessions.
-  scoped_ptr<QuicDispatcher> dispatcher_;
+  std::unique_ptr<QuicDispatcher> dispatcher_;
   // Frames incoming packets and hands them to the dispatcher.
   EpollServer epoll_server_;
 
@@ -110,27 +115,26 @@ class QuicServer : public EpollCallbackInterface {
   // because the socket would otherwise overflow.
   bool overflow_supported_;
 
-  // If true, use recvmmsg for reading.
-  bool use_recvmmsg_;
-
   // config_ contains non-crypto parameters that are negotiated in the crypto
   // handshake.
   QuicConfig config_;
   // crypto_config_ contains crypto parameters for the handshake.
   QuicCryptoServerConfig crypto_config_;
+  // crypto_config_options_ contains crypto parameters for the handshake.
+  QuicCryptoServerConfig::ConfigOptions crypto_config_options_;
 
-  // This vector contains QUIC versions which we currently support.
-  // This should be ordered such that the highest supported version is the first
-  // element, with subsequent elements in descending order (versions can be
-  // skipped as necessary).
-  QuicVersionVector supported_versions_;
+  // Used to generate current supported versions.
+  QuicVersionManager version_manager_;
 
-  scoped_ptr<QuicPacketReader> packet_reader_;
+  // Point to a QuicPacketReader object on the heap. The reader allocates more
+  // space than allowed on the stack.
+  std::unique_ptr<QuicPacketReader> packet_reader_;
+
+  QuicHttpResponseCache* response_cache_;  // unowned.
 
   DISALLOW_COPY_AND_ASSIGN(QuicServer);
 };
 
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_QUIC_SERVER_H_

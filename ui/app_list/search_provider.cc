@@ -4,6 +4,8 @@
 
 #include "ui/app_list/search_provider.h"
 
+#include <utility>
+
 #include "ui/app_list/search_result.h"
 
 namespace app_list {
@@ -13,8 +15,8 @@ SearchProvider::SearchProvider() {
 SearchProvider::~SearchProvider() {
 }
 
-void SearchProvider::Add(scoped_ptr<SearchResult> result) {
-  results_.push_back(result.Pass());
+void SearchProvider::Add(std::unique_ptr<SearchResult> result) {
+  results_.push_back(std::move(result));
   FireResultChanged();
 }
 

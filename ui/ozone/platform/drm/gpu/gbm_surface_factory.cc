@@ -6,23 +6,77 @@
 
 #include <gbm.h>
 
+#include <utility>
+
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "third_party/khronos/EGL/egl.h"
+#include "ui/gfx/buffer_format_util.h"
+#include "ui/gl/gl_surface_egl.h"
 #include "ui/ozone/common/egl_util.h"
+#include "ui/ozone/common/gl_ozone_egl.h"
+#include "ui/ozone/platform/drm/common/drm_util.h"
 #include "ui/ozone/platform/drm/gpu/drm_thread_proxy.h"
 #include "ui/ozone/platform/drm/gpu/drm_window_proxy.h"
 #include "ui/ozone/platform/drm/gpu/gbm_buffer.h"
+#include "ui/ozone/platform/drm/gpu/gbm_surface.h"
 #include "ui/ozone/platform/drm/gpu/gbm_surfaceless.h"
 #include "ui/ozone/platform/drm/gpu/proxy_helpers.h"
 #include "ui/ozone/platform/drm/gpu/screen_manager.h"
 #include "ui/ozone/public/native_pixmap.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
-#include "ui/ozone/public/surface_ozone_egl.h"
 
 namespace ui {
 
-GbmSurfaceFactory::GbmSurfaceFactory(DrmThreadProxy* drm_thread)
-    : drm_thread_(drm_thread) {}
+namespace {
+
+class GLOzoneEGLGbm : public GLOzoneEGL {
+ public:
+  GLOzoneEGLGbm(GbmSurfaceFactory* surface_factory,
+                DrmThreadProxy* drm_thread_proxy)
+      : surface_factory_(surface_factory),
+        drm_thread_proxy_(drm_thread_proxy) {}
+  ~GLOzoneEGLGbm() override {}
+
+  scoped_refptr<gl::GLSurface> CreateViewGLSurface(
+      gfx::AcceleratedWidget window) override {
+    return gl::InitializeGLSurface(new GbmSurface(
+        surface_factory_, drm_thread_proxy_->CreateDrmWindowProxy(window),
+        window));
+  }
+
+  scoped_refptr<gl::GLSurface> CreateSurfacelessViewGLSurface(
+      gfx::AcceleratedWidget window) override {
+    return gl::InitializeGLSurface(new GbmSurfaceless(
+        surface_factory_, drm_thread_proxy_->CreateDrmWindowProxy(window),
+        window));
+  }
+
+  scoped_refptr<gl::GLSurface> CreateOffscreenGLSurface(
+      const gfx::Size& size) override {
+    DCHECK_EQ(size.width(), 0);
+    DCHECK_EQ(size.height(), 0);
+    return gl::InitializeGLSurface(new gl::SurfacelessEGL(size));
+  }
+
+ protected:
+  intptr_t GetNativeDisplay() override { return EGL_DEFAULT_DISPLAY; }
+
+  bool LoadGLES2Bindings() override { return LoadDefaultEGLGLES2Bindings(); }
+
+ private:
+  GbmSurfaceFactory* surface_factory_;
+  DrmThreadProxy* drm_thread_proxy_;
+
+  DISALLOW_COPY_AND_ASSIGN(GLOzoneEGLGbm);
+};
+
+}  // namespace
+
+GbmSurfaceFactory::GbmSurfaceFactory(DrmThreadProxy* drm_thread_proxy)
+    : egl_implementation_(new GLOzoneEGLGbm(this, drm_thread_proxy)),
+      drm_thread_proxy_(drm_thread_proxy) {}
 
 GbmSurfaceFactory::~GbmSurfaceFactory() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -47,59 +101,37 @@ GbmSurfaceless* GbmSurfaceFactory::GetSurface(
   return it->second;
 }
 
-intptr_t GbmSurfaceFactory::GetNativeDisplay() {
+std::vector<gl::GLImplementation>
+GbmSurfaceFactory::GetAllowedGLImplementations() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return EGL_DEFAULT_DISPLAY;
+  std::vector<gl::GLImplementation> impls;
+  impls.push_back(gl::kGLImplementationEGLGLES2);
+  impls.push_back(gl::kGLImplementationOSMesaGL);
+  return impls;
 }
 
-const int32* GbmSurfaceFactory::GetEGLSurfaceProperties(
-    const int32* desired_list) {
+GLOzone* GbmSurfaceFactory::GetGLOzone(gl::GLImplementation implementation) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  static const int32 kConfigAttribs[] = {EGL_BUFFER_SIZE,
-                                         32,
-                                         EGL_ALPHA_SIZE,
-                                         8,
-                                         EGL_BLUE_SIZE,
-                                         8,
-                                         EGL_GREEN_SIZE,
-                                         8,
-                                         EGL_RED_SIZE,
-                                         8,
-                                         EGL_RENDERABLE_TYPE,
-                                         EGL_OPENGL_ES2_BIT,
-                                         EGL_SURFACE_TYPE,
-                                         EGL_WINDOW_BIT,
-                                         EGL_NONE};
-
-  return kConfigAttribs;
+  switch (implementation) {
+    case gl::kGLImplementationEGLGLES2:
+      return egl_implementation_.get();
+    default:
+      return nullptr;
+  }
 }
 
-bool GbmSurfaceFactory::LoadEGLGLES2Bindings(
-    AddGLLibraryCallback add_gl_library,
-    SetGLGetProcAddressProcCallback set_gl_get_proc_address) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  return LoadDefaultEGLGLES2Bindings(add_gl_library, set_gl_get_proc_address);
-}
-
-scoped_ptr<SurfaceOzoneCanvas> GbmSurfaceFactory::CreateCanvasForWidget(
+std::unique_ptr<SurfaceOzoneCanvas> GbmSurfaceFactory::CreateCanvasForWidget(
     gfx::AcceleratedWidget widget) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  LOG(FATAL) << "Software rendering mode is not supported with GBM platform";
+  LOG(ERROR) << "Software rendering mode is not supported with GBM platform";
   return nullptr;
 }
 
-scoped_ptr<SurfaceOzoneEGL> GbmSurfaceFactory::CreateEGLSurfaceForWidget(
+std::vector<gfx::BufferFormat> GbmSurfaceFactory::GetScanoutFormats(
     gfx::AcceleratedWidget widget) {
-  NOTREACHED();
-  return nullptr;
-}
-
-scoped_ptr<SurfaceOzoneEGL>
-GbmSurfaceFactory::CreateSurfacelessEGLSurfaceForWidget(
-    gfx::AcceleratedWidget widget) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  return make_scoped_ptr(
-      new GbmSurfaceless(drm_thread_->CreateDrmWindowProxy(widget), this));
+  std::vector<gfx::BufferFormat> scanout_formats;
+  drm_thread_proxy_->GetScanoutFormats(widget, &scanout_formats);
+  return scanout_formats;
 }
 
 scoped_refptr<ui::NativePixmap> GbmSurfaceFactory::CreateNativePixmap(
@@ -109,27 +141,44 @@ scoped_refptr<ui::NativePixmap> GbmSurfaceFactory::CreateNativePixmap(
     gfx::BufferUsage usage) {
 #if !defined(OS_CHROMEOS)
   // Support for memory mapping accelerated buffers requires some
-  // CrOS-specific patches (using vgem).
+  // CrOS-specific patches (using dma-buf mmap API).
   DCHECK(gfx::BufferUsage::SCANOUT == usage);
 #endif
 
   scoped_refptr<GbmBuffer> buffer =
-      drm_thread_->CreateBuffer(widget, size, format, usage);
+      drm_thread_proxy_->CreateBuffer(widget, size, format, usage);
   if (!buffer.get())
     return nullptr;
 
-  scoped_refptr<GbmPixmap> pixmap(new GbmPixmap(this));
-  if (!pixmap->InitializeFromBuffer(buffer))
-    return nullptr;
-
-  return pixmap;
+  return make_scoped_refptr(new GbmPixmap(this, buffer));
 }
 
 scoped_refptr<ui::NativePixmap> GbmSurfaceFactory::CreateNativePixmapFromHandle(
+    gfx::AcceleratedWidget widget,
+    gfx::Size size,
+    gfx::BufferFormat format,
     const gfx::NativePixmapHandle& handle) {
-  scoped_refptr<GbmPixmap> pixmap(new GbmPixmap(this));
-  pixmap->Initialize(base::ScopedFD(handle.fd.fd), handle.stride);
-  return pixmap;
+  size_t num_planes = gfx::NumberOfPlanesForBufferFormat(format);
+  if (handle.planes.size() != num_planes ||
+      (handle.fds.size() != 1 && handle.fds.size() != num_planes)) {
+    return nullptr;
+  }
+  std::vector<base::ScopedFD> scoped_fds;
+  for (auto& fd : handle.fds) {
+    scoped_fds.emplace_back(fd.fd);
+  }
+
+  std::vector<gfx::NativePixmapPlane> planes;
+
+  for (const auto& plane : handle.planes) {
+    planes.push_back(plane);
+  }
+
+  scoped_refptr<GbmBuffer> buffer = drm_thread_proxy_->CreateBufferFromFds(
+      widget, size, format, std::move(scoped_fds), planes);
+  if (!buffer)
+    return nullptr;
+  return make_scoped_refptr(new GbmPixmap(this, buffer));
 }
 
 }  // namespace ui

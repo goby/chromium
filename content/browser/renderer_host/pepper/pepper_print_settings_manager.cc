@@ -8,14 +8,18 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "ppapi/c/pp_errors.h"
-#include "printing/printing_context.h"
-#include "printing/units.h"
+#include "printing/features/features.h"
+
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#include "printing/printing_context.h"  // nogncheck
+#include "printing/units.h"  // nogncheck
+#endif
 
 namespace content {
 
 namespace {
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 // Print units conversion functions.
 int32_t DeviceUnitsInPoints(int32_t device_units,
                             int32_t device_units_per_inch) {
@@ -59,7 +63,7 @@ PepperPrintSettingsManager::Result ComputeDefaultPrintSettings() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   PrintingContextDelegate delegate;
-  scoped_ptr<printing::PrintingContext> context(
+  std::unique_ptr<printing::PrintingContext> context(
       printing::PrintingContext::Create(&delegate));
   if (!context.get() ||
       context->UseDefaultSettings() != printing::PrintingContext::OK) {

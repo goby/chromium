@@ -4,11 +4,13 @@
 
 #include "chrome/browser/chromeos/drive/download_handler.h"
 
+#include <stdint.h>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/drive/dummy_file_system.h"
+#include "components/drive/chromeos/dummy_file_system.h"
 #include "components/drive/file_system_core_util.h"
 #include "content/public/test/mock_download_item.h"
 #include "content/public/test/mock_download_manager.h"
@@ -32,8 +34,9 @@ class DownloadHandlerTestFileSystem : public DummyFileSystem {
   // FileSystemInterface overrides.
   void GetResourceEntry(const base::FilePath& file_path,
                         const GetResourceEntryCallback& callback) override {
-    callback.Run(error_, scoped_ptr<ResourceEntry>(
-        error_ == FILE_ERROR_OK ? new ResourceEntry : NULL));
+    callback.Run(error_, std::unique_ptr<ResourceEntry>(error_ == FILE_ERROR_OK
+                                                            ? new ResourceEntry
+                                                            : NULL));
   }
 
   void CreateDirectory(const base::FilePath& directory_path,
@@ -44,13 +47,13 @@ class DownloadHandlerTestFileSystem : public DummyFileSystem {
   }
 
   void FreeDiskSpaceIfNeededFor(
-      int64 num_bytes,
+      int64_t num_bytes,
       const FreeDiskSpaceCallback& callback) override {
     free_disk_space_if_needed_for_num_bytes_.push_back(num_bytes);
     callback.Run(true);
   }
 
-  std::vector<int64> free_disk_space_if_needed_for_num_bytes_;
+  std::vector<int64_t> free_disk_space_if_needed_for_num_bytes_;
 
  private:
   FileError error_;
@@ -72,13 +75,13 @@ class DownloadHandlerTestDownloadItem : public content::MockDownloadItem {
  public:
   bool IsDone() const override { return is_done_; }
 
-  int64 GetTotalBytes() const override { return total_bytes_; }
+  int64_t GetTotalBytes() const override { return total_bytes_; }
 
-  int64 GetReceivedBytes() const override { return received_bytes_; }
+  int64_t GetReceivedBytes() const override { return received_bytes_; }
 
   bool is_done_ = false;
-  int64 total_bytes_ = 0;
-  int64 received_bytes_ = 0;
+  int64_t total_bytes_ = 0;
+  int64_t received_bytes_ = 0;
 };
 
 }  // namespace
@@ -96,7 +99,7 @@ class DownloadHandlerTest : public testing::Test {
         .WillRepeatedly(testing::Return(content::DownloadItem::IN_PROGRESS));
 
     download_handler_.reset(new DownloadHandler(&test_file_system_));
-    download_handler_->Initialize(download_manager_.get(), temp_dir_.path());
+    download_handler_->Initialize(download_manager_.get(), temp_dir_.GetPath());
     download_handler_->SetFreeDiskSpaceDelayForTesting(
         base::TimeDelta::FromMilliseconds(0));
   }
@@ -105,10 +108,11 @@ class DownloadHandlerTest : public testing::Test {
   base::ScopedTempDir temp_dir_;
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile profile_;
-  scoped_ptr<DownloadHandlerTestDownloadManager> download_manager_;
-  scoped_ptr<DownloadHandlerTestDownloadManager> incognito_download_manager_;
+  std::unique_ptr<DownloadHandlerTestDownloadManager> download_manager_;
+  std::unique_ptr<DownloadHandlerTestDownloadManager>
+      incognito_download_manager_;
   DownloadHandlerTestFileSystem test_file_system_;
-  scoped_ptr<DownloadHandler> download_handler_;
+  std::unique_ptr<DownloadHandler> download_handler_;
   content::MockDownloadItem download_item_;
 };
 
@@ -145,7 +149,7 @@ TEST_F(DownloadHandlerTest, SubstituteDriveDownloadPath) {
   content::RunAllBlockingPoolTasksUntilIdle();
 
   // Check the result.
-  EXPECT_TRUE(temp_dir_.path().IsParent(substituted_path));
+  EXPECT_TRUE(temp_dir_.GetPath().IsParent(substituted_path));
   ASSERT_TRUE(download_handler_->IsDriveDownload(&download_item_));
   EXPECT_EQ(drive_path, download_handler_->GetTargetPath(&download_item_));
 }
@@ -186,7 +190,7 @@ TEST_F(DownloadHandlerTest, SubstituteDriveDownloadPathForSavePackage) {
   content::RunAllBlockingPoolTasksUntilIdle();
 
   // Check the result of SubstituteDriveDownloadPath().
-  EXPECT_TRUE(temp_dir_.path().IsParent(substituted_path));
+  EXPECT_TRUE(temp_dir_.GetPath().IsParent(substituted_path));
 
   // |download_item_| is not a drive download yet.
   EXPECT_FALSE(download_handler_->IsDriveDownload(&download_item_));

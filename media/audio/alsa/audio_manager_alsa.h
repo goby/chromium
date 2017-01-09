@@ -5,8 +5,11 @@
 #ifndef MEDIA_AUDIO_ALSA_AUDIO_MANAGER_ALSA_H_
 #define MEDIA_AUDIO_ALSA_AUDIO_MANAGER_ALSA_H_
 
+#include <memory>
 #include <string>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread.h"
 #include "media/audio/audio_manager_base.h"
@@ -17,7 +20,10 @@ class AlsaWrapper;
 
 class MEDIA_EXPORT AudioManagerAlsa : public AudioManagerBase {
  public:
-  AudioManagerAlsa(AudioLogFactory* audio_log_factory);
+  AudioManagerAlsa(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+      AudioLogFactory* audio_log_factory);
 
   static void ShowLinuxAudioInputSettings();
 
@@ -29,19 +35,24 @@ class MEDIA_EXPORT AudioManagerAlsa : public AudioManagerBase {
   void GetAudioOutputDeviceNames(AudioDeviceNames* device_names) override;
   AudioParameters GetInputStreamParameters(
       const std::string& device_id) override;
+  const char* GetName() override;
 
   // Implementation of AudioManagerBase.
   AudioOutputStream* MakeLinearOutputStream(
-      const AudioParameters& params) override;
+      const AudioParameters& params,
+      const LogCallback& log_callback) override;
   AudioOutputStream* MakeLowLatencyOutputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLinearInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
   AudioInputStream* MakeLowLatencyInputStream(
       const AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
 
  protected:
   ~AudioManagerAlsa() override;
@@ -57,14 +68,13 @@ class MEDIA_EXPORT AudioManagerAlsa : public AudioManagerBase {
   };
 
   // Gets a list of available ALSA devices.
-  void GetAlsaAudioDevices(StreamType type,
-                           media::AudioDeviceNames* device_names);
+  void GetAlsaAudioDevices(StreamType type, AudioDeviceNames* device_names);
 
   // Gets the ALSA devices' names and ids that support streams of the
   // given type.
   void GetAlsaDevicesInfo(StreamType type,
                           void** hint,
-                          media::AudioDeviceNames* device_names);
+                          AudioDeviceNames* device_names);
 
   // Checks if the specific ALSA device is available.
   static bool IsAlsaDeviceAvailable(StreamType type,
@@ -83,7 +93,7 @@ class MEDIA_EXPORT AudioManagerAlsa : public AudioManagerBase {
   AudioInputStream* MakeInputStream(const AudioParameters& params,
                                     const std::string& device_id);
 
-  scoped_ptr<AlsaWrapper> wrapper_;
+  std::unique_ptr<AlsaWrapper> wrapper_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioManagerAlsa);
 };

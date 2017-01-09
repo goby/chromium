@@ -7,26 +7,14 @@
 #ifndef CHROME_COMMON_CHROME_CONSTANTS_H_
 #define CHROME_COMMON_CHROME_CONSTANTS_H_
 
-#include "base/files/file_path.h"
+#include <stddef.h>
 
-#if defined(OS_WIN)
-#if defined(GOOGLE_CHROME_BUILD)
-#define PRODUCT_STRING_PATH L"Google\\Chrome"
-#elif defined(CHROMIUM_BUILD)
-#define PRODUCT_STRING_PATH L"Chromium"
-#else
-#error Unknown branding
-#endif
-#endif  // defined(OS_WIN)
+#include "base/files/file_path.h"
+#include "build/build_config.h"
 
 namespace chrome {
 
 extern const char kChromeVersion[];
-
-#if defined(OS_WIN)
-extern const char kChromeVersionEnvVar[];
-#endif
-
 extern const base::FilePath::CharType kBrowserProcessExecutableName[];
 extern const base::FilePath::CharType kHelperProcessExecutableName[];
 extern const base::FilePath::CharType kBrowserProcessExecutablePath[];
@@ -44,7 +32,7 @@ extern const base::FilePath::CharType kFrameworkName[];
 #endif  // OS_MACOSX
 #if defined(OS_WIN)
 extern const base::FilePath::CharType kBrowserResourcesDll[];
-extern const base::FilePath::CharType kMetroDriverDll[];
+extern const base::FilePath::CharType kChromeElfDllName[];
 extern const base::FilePath::CharType kStatusTrayWindowClass[];
 #endif  // defined(OS_WIN)
 
@@ -67,12 +55,13 @@ extern const base::FilePath::CharType kLocalStateFilename[];
 extern const base::FilePath::CharType kLocalStorePoolName[];
 extern const base::FilePath::CharType kMediaCacheDirname[];
 extern const base::FilePath::CharType kNetworkPersistentStateFilename[];
-extern const base::FilePath::CharType kOfflinePageArchviesDirname[];
+extern const base::FilePath::CharType kOfflinePageArchivesDirname[];
 extern const base::FilePath::CharType kOfflinePageMetadataDirname[];
+extern const base::FilePath::CharType kOfflinePageRequestQueueDirname[];
 extern const base::FilePath::CharType kPreferencesFilename[];
+extern const base::FilePath::CharType kPreviewsOptOutDBFilename[];
 extern const base::FilePath::CharType kProtectedPreferencesFilenameDeprecated[];
 extern const base::FilePath::CharType kReadmeFilename[];
-extern const base::FilePath::CharType kSafeBrowsingBaseFilename[];
 extern const base::FilePath::CharType kSecurePreferencesFilename[];
 extern const base::FilePath::CharType kServiceStateFileName[];
 extern const base::FilePath::CharType kSingletonCookieFilename[];
@@ -80,7 +69,6 @@ extern const base::FilePath::CharType kSingletonLockFilename[];
 extern const base::FilePath::CharType kSingletonSocketFilename[];
 extern const base::FilePath::CharType kSupervisedUserSettingsFilename[];
 extern const base::FilePath::CharType kThemePackFilename[];
-extern const base::FilePath::CharType kThemePackMaterialDesignFilename[];
 extern const base::FilePath::CharType kWebAppDirname[];
 
 #if defined(OS_WIN)
@@ -107,24 +95,6 @@ extern const float kMaxShareOfExtensionProcesses;
 // (oom_score_adj) used by the OomPriority Manager.
 extern const int kLowestRendererOomScore;
 extern const int kHighestRendererOomScore;
-#endif
-
-#if defined(OS_WIN)
-// Used by Metro Chrome to initiate navigation and search requests.
-extern const wchar_t kMetroNavigationAndSearchMessage[];
-// Used by Metro Chrome to get information about the current tab.
-extern const wchar_t kMetroGetCurrentTabInfoMessage[];
-// Used by Metro Chrome to store activation state.
-extern const wchar_t kMetroRegistryPath[];
-extern const wchar_t kLaunchModeValue[];
-// Used to store crash report metrics using
-// content/browser_watcher/crash_reporting_metrics_win.h.
-extern const wchar_t kBrowserCrashDumpAttemptsRegistryPath[];
-extern const wchar_t kBrowserCrashDumpAttemptsRegistryPathSxS[];
-// Registry location where the browser watcher stores browser exit codes.
-// This is picked up and stored in histograms by the browser on the subsequent
-// launch.
-extern const wchar_t kBrowserExitCodesRegistryPath[];
 #endif
 
 #if defined(OS_CHROMEOS)

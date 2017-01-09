@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <openssl/evp.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "components/webcrypto/algorithms/aes.h"
 #include "components/webcrypto/algorithms/util.h"
@@ -13,8 +16,8 @@
 #include "components/webcrypto/crypto_data.h"
 #include "components/webcrypto/status.h"
 #include "crypto/openssl_util.h"
-#include "crypto/scoped_openssl_types.h"
 #include "third_party/WebKit/public/platform/WebCryptoAlgorithmParams.h"
+#include "third_party/boringssl/src/include/openssl/aead.h"
 
 namespace webcrypto {
 
@@ -79,8 +82,8 @@ class AesGcmImplementation : public AesAlgorithm {
 
 }  // namespace
 
-scoped_ptr<AlgorithmImplementation> CreateAesGcmImplementation() {
-  return make_scoped_ptr(new AesGcmImplementation);
+std::unique_ptr<AlgorithmImplementation> CreateAesGcmImplementation() {
+  return base::WrapUnique(new AesGcmImplementation);
 }
 
 }  // namespace webcrypto

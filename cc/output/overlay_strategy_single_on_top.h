@@ -5,6 +5,7 @@
 #ifndef CC_OUTPUT_OVERLAY_STRATEGY_SINGLE_ON_TOP_H_
 #define CC_OUTPUT_OVERLAY_STRATEGY_SINGLE_ON_TOP_H_
 
+#include "base/macros.h"
 #include "cc/output/overlay_processor.h"
 
 namespace cc {
@@ -18,7 +19,7 @@ class CC_EXPORT OverlayStrategySingleOnTop : public OverlayProcessor::Strategy {
   ~OverlayStrategySingleOnTop() override;
 
   bool Attempt(ResourceProvider* resource_provider,
-               RenderPassList* render_passes,
+               RenderPass* render_pass,
                OverlayCandidateList* candidate_list) override;
 
  private:

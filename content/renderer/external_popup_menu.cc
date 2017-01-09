@@ -4,6 +4,9 @@
 
 #include "content/renderer/external_popup_menu.h"
 
+#include <stddef.h>
+
+#include "build/build_config.h"
 #include "content/common/frame_messages.h"
 #include "content/renderer/menu_item_builder.h"
 #include "content/renderer/render_frame_impl.h"
@@ -60,6 +63,7 @@ void ExternalPopupMenu::close()  {
   // |this| was deleted.
 }
 
+#if defined(USE_EXTERNAL_POPUP_MENU)
 #if defined(OS_MACOSX)
 void ExternalPopupMenu::DidSelectItem(int index) {
   if (!popup_menu_client_)
@@ -69,9 +73,7 @@ void ExternalPopupMenu::DidSelectItem(int index) {
   else
     popup_menu_client_->didAcceptIndex(index);
 }
-#endif
-
-#if defined(OS_ANDROID)
+#else
 void ExternalPopupMenu::DidSelectItems(bool canceled,
                                        const std::vector<int>& indices) {
   if (!popup_menu_client_)
@@ -81,6 +83,7 @@ void ExternalPopupMenu::DidSelectItems(bool canceled,
   else
     popup_menu_client_->didAcceptIndices(indices);
 }
+#endif
 #endif
 
 }  // namespace content

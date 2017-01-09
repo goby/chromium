@@ -9,14 +9,17 @@
 #include <map>
 #include <utility>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/ui_base_export.h"
 #include "ui/events/event_constants.h"
 
 namespace ui {
 
-// The AcceleratorManger is used to handle keyboard accelerators.
+class AcceleratorManagerDelegate;
+
+// AcceleratorManger handles processing of accelerators. A delegate may be
+// supplied which is notified as unique accelerators are added and removed.
 class UI_BASE_EXPORT AcceleratorManager {
  public:
   enum HandlerPriority {
@@ -24,7 +27,7 @@ class UI_BASE_EXPORT AcceleratorManager {
     kHighPriority,
   };
 
-  AcceleratorManager();
+  explicit AcceleratorManager(AcceleratorManagerDelegate* = nullptr);
   ~AcceleratorManager();
 
   // Register a keyboard accelerator for the specified target. If multiple
@@ -54,6 +57,9 @@ class UI_BASE_EXPORT AcceleratorManager {
   // Unregister all keyboard accelerator for the specified target.
   void UnregisterAll(AcceleratorTarget* target);
 
+  // Returns whether |accelerator| is already registered.
+  bool IsRegistered(const Accelerator& accelerator) const;
+
   // Activate the target associated with the specified accelerator.
   // First, AcceleratorPressed handler of the most recently registered target
   // is called, and if that handler processes the event (i.e. returns true),
@@ -62,21 +68,23 @@ class UI_BASE_EXPORT AcceleratorManager {
   // Returns true if an accelerator was activated.
   bool Process(const Accelerator& accelerator);
 
-  // Returns the AcceleratorTarget that should be activated for the specified
-  // keyboard accelerator, or NULL if no view is registered for that keyboard
-  // accelerator.
-  AcceleratorTarget* GetCurrentTarget(const Accelerator& accelerator) const;
-
   // Whether the given |accelerator| has a priority handler associated with it.
   bool HasPriorityHandler(const Accelerator& accelerator) const;
 
  private:
   // The accelerators and associated targets.
-  typedef std::list<AcceleratorTarget*> AcceleratorTargetList;
+  using AcceleratorTargetList = std::list<AcceleratorTarget*>;
   // This construct pairs together a |bool| (denoting whether the list contains
   // a priority_handler at the front) with the list of AcceleratorTargets.
-  typedef std::pair<bool, AcceleratorTargetList> AcceleratorTargets;
-  typedef std::map<Accelerator, AcceleratorTargets> AcceleratorMap;
+  using AcceleratorTargets = std::pair<bool, AcceleratorTargetList>;
+  using AcceleratorMap = std::map<Accelerator, AcceleratorTargets>;
+
+  // Implementation of Unregister(). |map_iter| points to the accelerator to
+  // remove, and |target| the AcceleratorTarget to remove.
+  void UnregisterImpl(AcceleratorMap::iterator map_iter,
+                      AcceleratorTarget* target);
+
+  AcceleratorManagerDelegate* delegate_;
   AcceleratorMap accelerators_;
 
   DISALLOW_COPY_AND_ASSIGN(AcceleratorManager);

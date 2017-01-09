@@ -4,10 +4,12 @@
 
 #include "components/query_parser/snippet.h"
 
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -153,8 +155,8 @@ bool IsNextMatchWithinSnippetWindow(icu::BreakIterator* bi,
   // heuristics to speed things up if necessary, but it's not likely that
   // we need to bother.
   bi->next(kSnippetContext);
-  int64 current = bi->current();
-  return (next_match_start < static_cast<uint64>(current) ||
+  int64_t current = bi->current();
+  return (next_match_start < static_cast<uint64_t>(current) ||
           current == icu::BreakIterator::DONE);
 }
 
@@ -206,6 +208,8 @@ void Snippet::ConvertMatchPositionsToWide(
 Snippet::Snippet() {
 }
 
+Snippet::Snippet(const Snippet& other) = default;
+
 Snippet::~Snippet() {
 }
 
@@ -222,8 +226,9 @@ void Snippet::ComputeSnippet(const MatchPositions& match_positions,
                                   document.size(), &status);
   // Locale does not matter because there's no per-locale customization
   // for character iterator.
-  scoped_ptr<icu::BreakIterator> bi(icu::BreakIterator::createCharacterInstance(
-      icu::Locale::getDefault(), status));
+  std::unique_ptr<icu::BreakIterator> bi(
+      icu::BreakIterator::createCharacterInstance(icu::Locale::getDefault(),
+                                                  status));
   bi->setText(document_utext, status);
   DCHECK(U_SUCCESS(status));
 

@@ -5,10 +5,13 @@
 #ifndef NET_WEBSOCKETS_WEBSOCKET_EXTENSION_PARSER_H_
 #define NET_WEBSOCKETS_WEBSOCKET_EXTENSION_PARSER_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 #include "net/websockets/websocket_extension.h"
@@ -46,10 +49,6 @@ class NET_EXPORT_PRIVATE WebSocketExtensionParser {
   void ConsumeSpaces();
   WARN_UNUSED_RESULT bool Lookahead(char c);
   WARN_UNUSED_RESULT bool ConsumeIfMatch(char c);
-  size_t UnconsumedBytes() const { return end_ - current_; }
-
-  static bool IsControl(char c);
-  static bool IsSeparator(char c);
 
   // The current position in the input string.
   const char* current_;

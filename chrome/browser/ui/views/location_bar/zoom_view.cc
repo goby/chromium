@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/views/location_bar/zoom_view.h"
 
+#include "base/i18n/number_formatting.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/location_bar/zoom_bubble_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/toolbar/toolbar_model.h"
-#include "components/ui/zoom/zoom_controller.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "components/zoom/zoom_controller.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/size.h"
@@ -25,20 +26,21 @@ ZoomView::ZoomView(LocationBarView::Delegate* location_bar_delegate)
 ZoomView::~ZoomView() {
 }
 
-void ZoomView::Update(ui_zoom::ZoomController* zoom_controller) {
+void ZoomView::Update(zoom::ZoomController* zoom_controller) {
   if (!zoom_controller || zoom_controller->IsAtDefaultZoom() ||
       location_bar_delegate_->GetToolbarModel()->input_in_progress()) {
     SetVisible(false);
-    ZoomBubbleView::CloseBubble();
+    ZoomBubbleView::CloseCurrentBubble();
     return;
   }
 
-  SetTooltipText(l10n_util::GetStringFUTF16Int(
-      IDS_TOOLTIP_ZOOM, zoom_controller->GetZoomPercent()));
+  SetTooltipText(l10n_util::GetStringFUTF16(
+      IDS_TOOLTIP_ZOOM,
+      base::FormatPercent(zoom_controller->GetZoomPercent())));
 
   // The icon is hidden when the zoom level is default.
   image_id_ = zoom_controller->GetZoomRelativeToDefault() ==
-                      ui_zoom::ZoomController::ZOOM_BELOW_DEFAULT_ZOOM
+                      zoom::ZoomController::ZOOM_BELOW_DEFAULT_ZOOM
                   ? gfx::VectorIconId::ZOOM_MINUS
                   : gfx::VectorIconId::ZOOM_PLUS;
   if (GetNativeTheme())
@@ -52,12 +54,12 @@ void ZoomView::OnExecuting(BubbleIconView::ExecuteSource source) {
                              ZoomBubbleView::USER_GESTURE);
 }
 
-void ZoomView::GetAccessibleState(ui::AXViewState* state) {
-  BubbleIconView::GetAccessibleState(state);
-  state->name = l10n_util::GetStringUTF16(IDS_ACCNAME_ZOOM);
+void ZoomView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  BubbleIconView::GetAccessibleNodeData(node_data);
+  node_data->SetName(l10n_util::GetStringUTF8(IDS_ACCNAME_ZOOM));
 }
 
-views::BubbleDelegateView* ZoomView::GetBubble() const {
+views::BubbleDialogDelegateView* ZoomView::GetBubble() const {
   return ZoomBubbleView::GetZoomBubble();
 }
 

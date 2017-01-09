@@ -7,6 +7,7 @@
 
 #include <objidl.h>
 #include <shlobj.h>
+#include <stddef.h>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #define IDataObjectAsyncCapability IAsyncOperation
 #endif
 
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/win/scoped_comptr.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
@@ -144,7 +146,7 @@ class UI_BASE_EXPORT OSExchangeDataProviderWin
   IDataObjectAsyncCapability* async_operation() const { return data_.get(); }
 
   // OSExchangeData::Provider methods.
-  Provider* Clone() const override;
+  std::unique_ptr<Provider> Clone() const override;
   void MarkOriginatedFromRenderer() override;
   bool DidOriginateFromRenderer() const override;
   void SetString(const base::string16& data) override;

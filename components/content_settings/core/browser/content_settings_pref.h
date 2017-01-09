@@ -5,9 +5,12 @@
 #ifndef COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_PREF_H_
 #define COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_PREF_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "base/values.h"
@@ -22,10 +25,6 @@ class PrefChangeRegistrar;
 namespace base {
 class Clock;
 class DictionaryValue;
-}
-
-namespace user_prefs {
-class PrefRegistrySyncable;
 }
 
 namespace content_settings {
@@ -48,7 +47,8 @@ class ContentSettingsPref {
                       NotifyObserversCallback notify_callback);
   ~ContentSettingsPref();
 
-  scoped_ptr<RuleIterator> GetRuleIterator(
+  // Returns nullptr to indicate the RuleIterator is empty.
+  std::unique_ptr<RuleIterator> GetRuleIterator(
       const ResourceIdentifier& resource_identifier,
       bool incognito) const;
 
@@ -56,6 +56,8 @@ class ContentSettingsPref {
                          const ContentSettingsPattern& secondary_pattern,
                          const ResourceIdentifier& resource_identifier,
                          base::Value* value);
+
+  void ClearPref();
 
   void ClearAllContentSettingsRules();
 
@@ -72,10 +74,6 @@ class ContentSettingsPref {
   bool TryLockForTesting() const;
 
  private:
-  // TODO(msramek): Currently only needed in the unittest to get the
-  // corresponding pref name. Remove once pref names are in WebsiteSettingsInfo.
-  friend class DeadlockCheckerObserver;
-
   // Reads all content settings exceptions from the preference and loads them
   // into the |value_map_|. The |value_map_| is cleared first.
   void ReadContentSettingsFromPref();

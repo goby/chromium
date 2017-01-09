@@ -7,7 +7,6 @@
  * properties.
  */
 
-/** @element cr-policy-network-indicator */
 Polymer({
   is: 'cr-policy-network-indicator',
 
@@ -38,7 +37,7 @@ Polymer({
    * @private
    */
   propertyChanged_: function(property) {
-    if (!this.isNetworkPolicyControlled(property)) {
+    if (!this.isControlled(property)) {
       this.indicatorType = CrPolicyIndicatorType.NONE;
       return;
     }
@@ -63,6 +62,8 @@ Polymer({
       this.indicatorType = CrPolicyIndicatorType.USER_POLICY;
     } else if (effective == 'DevicePolicy') {
       this.indicatorType = CrPolicyIndicatorType.DEVICE_POLICY;
+    } else if (effective == 'ActiveExtension') {
+      this.indicatorType = CrPolicyIndicatorType.EXTENSION;
     } else {
       this.indicatorType = CrPolicyIndicatorType.NONE;
     }
@@ -76,7 +77,7 @@ Polymer({
    * @private
    */
   getTooltip_: function(type, property, recommended) {
-    if (type == CrPolicyIndicatorType.NONE || typeof property != 'object')
+    if (type == CrPolicyIndicatorType.NONE)
       return '';
     if (type == CrPolicyIndicatorType.RECOMMENDED) {
       var value = property.Active;

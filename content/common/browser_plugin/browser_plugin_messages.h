@@ -6,29 +6,25 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/process/process.h"
 #include "cc/surfaces/surface.h"
 #include "content/common/content_export.h"
 #include "content/common/content_param_traits.h"
 #include "content/common/cursors/webcursor.h"
 #include "content/common/edit_command.h"
-#include "content/common/frame_param_macros.h"
-#include "content/public/common/common_param_traits.h"
 #include "content/public/common/drop_data.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_message_utils.h"
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
 #include "third_party/WebKit/public/platform/WebFocusType.h"
 #include "third_party/WebKit/public/web/WebCompositionUnderline.h"
-#include "third_party/WebKit/public/web/WebDragOperation.h"
 #include "third_party/WebKit/public/web/WebDragStatus.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
-#include "url/gurl.h"
+#include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
 
 #undef IPC_MESSAGE_EXPORT
 #define IPC_MESSAGE_EXPORT CONTENT_EXPORT
@@ -37,7 +33,6 @@
 
 
 IPC_ENUM_TRAITS_MAX_VALUE(blink::WebDragStatus, blink::WebDragStatusLast)
-IPC_ENUM_TRAITS_MAX_VALUE(blink::WebFocusType, blink::WebFocusTypeLast)
 
 IPC_STRUCT_BEGIN(BrowserPluginHostMsg_Attach_Params)
   IPC_STRUCT_MEMBER(bool, focused)
@@ -78,10 +73,15 @@ IPC_MESSAGE_CONTROL5(
     int /* selection_end */)
 
 // This message is sent from BrowserPlugin to BrowserPluginGuest to notify that
-// confirming the current composition is requested.
-IPC_MESSAGE_CONTROL3(BrowserPluginHostMsg_ImeConfirmComposition,
+// deleting the current composition and inserting specified text is requested.
+IPC_MESSAGE_CONTROL3(BrowserPluginHostMsg_ImeCommitText,
                      int /* browser_plugin_instance_id */,
                      std::string /* text */,
+                     int /* relative_cursor_pos */)
+
+// This message is sent from BrowserPlugin to BrowserPluginGuest to notify that
+// inserting the current composition is requested.
+IPC_MESSAGE_CONTROL1(BrowserPluginHostMsg_ImeFinishComposingText,
                      bool /* keep selection */)
 
 // Deletes the current selection plus the specified number of characters before
@@ -114,17 +114,9 @@ IPC_MESSAGE_CONTROL3(BrowserPluginHostMsg_SetFocus,
                      blink::WebFocusType /* focus_type */)
 
 // Sends an input event to the guest.
-IPC_MESSAGE_CONTROL3(BrowserPluginHostMsg_HandleInputEvent,
+IPC_MESSAGE_CONTROL2(BrowserPluginHostMsg_HandleInputEvent,
                      int /* browser_plugin_instance_id */,
-                     gfx::Rect /* guest_window_rect */,
                      IPC::WebInputEventPointer /* event */)
-
-// Notify the guest renderer that some resources given to the embededer
-// are not used any more.
-IPC_MESSAGE_CONTROL2(
-    BrowserPluginHostMsg_ReclaimCompositorResources,
-    int /* browser_plugin_instance_id */,
-    FrameHostMsg_ReclaimCompositorResources_Params /* params */)
 
 // Tells the guest it has been shown or hidden.
 IPC_MESSAGE_CONTROL2(BrowserPluginHostMsg_SetVisibility,
@@ -170,6 +162,9 @@ IPC_MESSAGE_ROUTED3(BrowserPluginHostMsg_RequireSequence,
 IPC_MESSAGE_CONTROL1(BrowserPluginMsg_GuestGone,
                      int /* browser_plugin_instance_id */)
 
+IPC_MESSAGE_CONTROL1(BrowserPluginMsg_GuestReady,
+                     int /* browser_plugin_instance_id */)
+
 // When the user tabs to the end of the tab stops of a guest, the browser
 // process informs the embedder to tab out of the browser plugin.
 IPC_MESSAGE_CONTROL2(BrowserPluginMsg_AdvanceFocus,
@@ -187,10 +182,6 @@ IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetCursor,
                      int /* browser_plugin_instance_id */,
                      content::WebCursor /* cursor */)
 
-IPC_MESSAGE_CONTROL2(BrowserPluginMsg_CompositorFrameSwapped,
-                     int /* browser_plugin_instance_id */,
-                     FrameMsg_CompositorFrameSwapped_Params /* params */)
-
 IPC_MESSAGE_CONTROL5(BrowserPluginMsg_SetChildFrameSurface,
                      int /* browser_plugin_instance_id */,
                      cc::SurfaceId /* surface_id */,
@@ -207,8 +198,3 @@ IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetMouseLock,
 IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetTooltipText,
                      int /* browser_plugin_instance_id */,
                      base::string16 /* tooltip_text */)
-
-// Acknowledge that we presented an ubercomp frame.
-IPC_MESSAGE_CONTROL2(BrowserPluginHostMsg_CompositorFrameSwappedACK,
-                     int /* browser_plugin_instance_id */,
-                     FrameHostMsg_CompositorFrameSwappedACK_Params /* params */)

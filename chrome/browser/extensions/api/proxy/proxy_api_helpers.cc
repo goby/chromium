@@ -13,8 +13,9 @@
 
 #include "chrome/browser/extensions/api/proxy/proxy_api_helpers.h"
 
+#include <stddef.h>
+
 #include "base/base64.h"
-#include "base/basictypes.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -77,7 +78,7 @@ bool GetProxyModeFromExtensionPref(const base::DictionaryValue* proxy_config,
 bool GetPacMandatoryFromExtensionPref(const base::DictionaryValue* proxy_config,
                                       bool* out,
                                       std::string* error,
-                                      bool* bad_message){
+                                      bool* bad_message) {
   const base::DictionaryValue* pac_dict = NULL;
   proxy_config->GetDictionary(keys::kProxyConfigPacScript, &pac_dict);
   if (!pac_dict)
@@ -363,7 +364,7 @@ base::DictionaryValue* CreateProxyRulesDict(
   ProxyPrefs::ProxyMode mode;
   CHECK(proxy_config.GetMode(&mode) && mode == ProxyPrefs::MODE_FIXED_SERVERS);
 
-  scoped_ptr<base::DictionaryValue> extension_proxy_rules(
+  std::unique_ptr<base::DictionaryValue> extension_proxy_rules(
       new base::DictionaryValue);
 
   std::string proxy_servers;
@@ -429,7 +430,7 @@ base::DictionaryValue* CreateProxyRulesDict(
 }
 
 base::DictionaryValue* CreateProxyServerDict(const net::ProxyServer& proxy) {
-  scoped_ptr<base::DictionaryValue> out(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> out(new base::DictionaryValue);
   switch (proxy.scheme()) {
     case net::ProxyServer::SCHEME_HTTP:
       out->SetString(keys::kProxyConfigRuleScheme, "http");
@@ -461,7 +462,8 @@ base::DictionaryValue* CreatePacScriptDict(
   ProxyPrefs::ProxyMode mode;
   CHECK(proxy_config.GetMode(&mode) && mode == ProxyPrefs::MODE_PAC_SCRIPT);
 
-  scoped_ptr<base::DictionaryValue> pac_script_dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> pac_script_dict(
+      new base::DictionaryValue);
   std::string pac_url;
   if (!proxy_config.GetPacUrl(&pac_url)) {
     LOG(ERROR) << "Invalid proxy configuration. Missing PAC URL.";
@@ -473,7 +475,7 @@ base::DictionaryValue* CreatePacScriptDict(
     return NULL;
   }
 
-  if (pac_url.find("data") == 0) {
+  if (base::StartsWith(pac_url, "data", base::CompareCase::SENSITIVE)) {
     std::string pac_data;
     if (!CreatePACScriptFromDataURL(pac_url, &pac_data)) {
       LOG(ERROR) << "Cannot decode base64-encoded PAC data URL: " << pac_url;
@@ -493,7 +495,7 @@ base::ListValue* TokenizeToStringList(const std::string& in,
   base::ListValue* out = new base::ListValue;
   base::StringTokenizer entries(in, delims);
   while (entries.GetNext())
-    out->Append(new base::StringValue(entries.token()));
+    out->AppendString(entries.token());
   return out;
 }
 

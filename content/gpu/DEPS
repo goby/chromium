@@ -1,10 +1,10 @@
 include_rules = [
   "+components/tracing",
   "+content/child",
+  "+content/public/gpu",
   "+libEGL",
   "+libGLESv2",
-  "+media/mojo/services",
-  "+mojo/shell",
+  "+services/service_manager",
   "+sandbox",
   "+skia",
 ]

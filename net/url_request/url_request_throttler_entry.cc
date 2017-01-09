@@ -5,6 +5,7 @@
 #include "net/url_request/url_request_throttler_entry.h"
 
 #include <cmath>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
@@ -13,7 +14,9 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "net/base/load_flags.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_capture_mode.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source_type.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_throttler_manager.h"
@@ -47,17 +50,17 @@ const int URLRequestThrottlerEntry::kDefaultMaximumBackoffMs = 15 * 60 * 1000;
 const int URLRequestThrottlerEntry::kDefaultEntryLifetimeMs = 2 * 60 * 1000;
 
 // Returns NetLog parameters when a request is rejected by throttling.
-scoped_ptr<base::Value> NetLogRejectedRequestCallback(
+std::unique_ptr<base::Value> NetLogRejectedRequestCallback(
     const std::string* url_id,
     int num_failures,
     const base::TimeDelta& release_after,
     NetLogCaptureMode /* capture_mode */) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("url", *url_id);
   dict->SetInteger("num_failures", num_failures);
   dict->SetInteger("release_after_ms",
                    static_cast<int>(release_after.InMilliseconds()));
-  return dict.Pass();
+  return std::move(dict);
 }
 
 URLRequestThrottlerEntry::URLRequestThrottlerEntry(
@@ -70,8 +73,9 @@ URLRequestThrottlerEntry::URLRequestThrottlerEntry(
       backoff_entry_(&backoff_policy_),
       manager_(manager),
       url_id_(url_id),
-      net_log_(BoundNetLog::Make(
-          manager->net_log(), NetLog::SOURCE_EXPONENTIAL_BACKOFF_THROTTLING)) {
+      net_log_(NetLogWithSource::Make(
+          manager->net_log(),
+          NetLogSourceType::EXPONENTIAL_BACKOFF_THROTTLING)) {
   DCHECK(manager_);
   Initialize();
 }
@@ -149,14 +153,11 @@ void URLRequestThrottlerEntry::DetachManager() {
 bool URLRequestThrottlerEntry::ShouldRejectRequest(
     const URLRequest& request) const {
   bool reject_request = false;
-  if (!is_backoff_disabled_ && !ExplicitUserRequest(request.load_flags()) &&
-      GetBackoffEntry()->ShouldRejectRequest()) {
-    net_log_.AddEvent(
-        NetLog::TYPE_THROTTLING_REJECTED_REQUEST,
-        base::Bind(&NetLogRejectedRequestCallback,
-                   &url_id_,
-                   GetBackoffEntry()->failure_count(),
-                   GetBackoffEntry()->GetTimeUntilRelease()));
+  if (!is_backoff_disabled_ && GetBackoffEntry()->ShouldRejectRequest()) {
+    net_log_.AddEvent(NetLogEventType::THROTTLING_REJECTED_REQUEST,
+                      base::Bind(&NetLogRejectedRequestCallback, &url_id_,
+                                 GetBackoffEntry()->failure_count(),
+                                 GetBackoffEntry()->GetTimeUntilRelease()));
     reject_request = true;
   }
 
@@ -167,7 +168,7 @@ bool URLRequestThrottlerEntry::ShouldRejectRequest(
   return reject_request;
 }
 
-int64 URLRequestThrottlerEntry::ReserveSendingTimeForNextRequest(
+int64_t URLRequestThrottlerEntry::ReserveSendingTimeForNextRequest(
     const base::TimeTicks& earliest_time) {
   base::TimeTicks now = ImplGetTimeNow();
 
@@ -281,11 +282,6 @@ const BackoffEntry* URLRequestThrottlerEntry::GetBackoffEntry() const {
 
 BackoffEntry* URLRequestThrottlerEntry::GetBackoffEntry() {
   return &backoff_entry_;
-}
-
-// static
-bool URLRequestThrottlerEntry::ExplicitUserRequest(const int load_flags) {
-  return (load_flags & LOAD_MAYBE_USER_GESTURE) != 0;
 }
 
 }  // namespace net

@@ -4,11 +4,15 @@
 
 #import "chrome/browser/ui/cocoa/extensions/extension_installed_bubble_controller.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/i18n/rtl.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/extensions/bundle_installer.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -16,11 +20,11 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/chrome_style.h"
 #include "chrome/browser/ui/cocoa/browser_window_cocoa.h"
 #include "chrome/browser/ui/cocoa/browser_window_controller.h"
+#import "chrome/browser/ui/cocoa/bubble_sync_promo_controller.h"
+#include "chrome/browser/ui/cocoa/chrome_style.h"
 #include "chrome/browser/ui/cocoa/extensions/browser_actions_controller.h"
-#include "chrome/browser/ui/cocoa/extensions/bundle_util.h"
 #include "chrome/browser/ui/cocoa/hover_close_button.h"
 #include "chrome/browser/ui/cocoa/info_bubble_view.h"
 #include "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
@@ -31,7 +35,6 @@
 #include "chrome/browser/ui/extensions/extension_installed_bubble.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/sync/sync_promo_ui.h"
-#include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/common/extensions/api/omnibox/omnibox_handler.h"
 #include "chrome/common/extensions/sync_helper.h"
 #include "chrome/common/url_constants.h"
@@ -40,18 +43,35 @@
 #include "components/bubble/bubble_controller.h"
 #include "components/bubble/bubble_ui.h"
 #include "components/signin/core/browser/signin_metrics.h"
+#include "content/public/browser/browser_thread.h"
+#include "content/public/browser/user_metrics.h"
 #include "extensions/browser/install/extension_install_ui.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/feature_switch.h"
 #import "skia/ext/skia_utils_mac.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/controls/hyperlink_text_view.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using content::BrowserThread;
-using extensions::BundleInstaller;
 using extensions::Extension;
+
+@interface ExtensionInstalledBubbleController ()
+
+- (const Extension*)extension;
+- (void)windowWillClose:(NSNotification*)notification;
+- (void)windowDidResignKey:(NSNotification*)notification;
+- (void)removePageActionPreviewIfNecessary;
+- (NSPoint)calculateArrowPoint;
+- (NSWindow*)initializeWindow;
+- (int)calculateWindowHeight;
+- (void)setMessageFrames:(int)newWindowHeight;
+- (void)updateAnchorPosition;
+
+@end  // ExtensionInstalledBubbleController ()
+
+namespace {
 
 class ExtensionInstalledBubbleBridge : public BubbleUi {
  public:
@@ -79,24 +99,6 @@ ExtensionInstalledBubbleBridge::ExtensionInstalledBubbleBridge(
 ExtensionInstalledBubbleBridge::~ExtensionInstalledBubbleBridge() {
 }
 
-// Cocoa specific implementation.
-bool ExtensionInstalledBubble::ShouldShow() {
-  return true;
-}
-
-// Implemented here to create the platform specific instance of the BubbleUi.
-scoped_ptr<BubbleUi> ExtensionInstalledBubble::BuildBubbleUi() {
-  // |controller| is owned by the parent window.
-  ExtensionInstalledBubbleController* controller =
-      [[ExtensionInstalledBubbleController alloc]
-          initWithParentWindow:browser()->window()->GetNativeWindow()
-               extensionBubble:this];
-
-  // The bridge to the C++ object that performs shared logic across platforms.
-  // This tells the controller when to show the bubble.
-  return make_scoped_ptr(new ExtensionInstalledBubbleBridge(controller));
-}
-
 void ExtensionInstalledBubbleBridge::Show(BubbleReference bubble_reference) {
   [controller_ setBubbleReference:bubble_reference];
   [controller_ showWindow:controller_];
@@ -110,10 +112,38 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
   [controller_ updateAnchorPosition];
 }
 
+}  // namespace
+
+// Cocoa specific implementation.
+bool ExtensionInstalledBubble::ShouldShow() {
+  return true;
+}
+
+// Implemented here to create the platform specific instance of the BubbleUi.
+std::unique_ptr<BubbleUi> ExtensionInstalledBubble::BuildBubbleUi() {
+  // |controller| is owned by the parent window.
+  ExtensionInstalledBubbleController* controller =
+      [[ExtensionInstalledBubbleController alloc]
+          initWithParentWindow:browser()->window()->GetNativeWindow()
+               extensionBubble:this];
+
+  // The bridge to the C++ object that performs shared logic across platforms.
+  // This tells the controller when to show the bubble.
+  return base::WrapUnique(new ExtensionInstalledBubbleBridge(controller));
+}
+
 @implementation ExtensionInstalledBubbleController
 
-@synthesize bundle = bundle_;
-// Exposed for unit test.
+@synthesize installedBubble = installedBubble_;
+// Exposed for unit tests.
+@synthesize heading = heading_;
+@synthesize closeButton = closeButton_;
+@synthesize howToUse = howToUse_;
+@synthesize howToManage = howToManage_;
+@synthesize appInstalledShortcutLink = appInstalledShortcutLink_;
+@synthesize manageShortcutLink = manageShortcutLink_;
+@synthesize promoContainer = promoContainer_;
+@synthesize iconImage = iconImage_;
 @synthesize pageActionPreviewShowing = pageActionPreviewShowing_;
 
 - (id)initWithParentWindow:(NSWindow*)parentWindow
@@ -125,71 +155,21 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
     const extensions::Extension* extension = extensionBubble->extension();
     browser_ = extensionBubble->browser();
     DCHECK(browser_);
-    icon_.reset([gfx::SkBitmapToNSImage(extensionBubble->icon()) retain]);
+    icon_.reset([skia::SkBitmapToNSImage(extensionBubble->icon()) retain]);
     pageActionPreviewShowing_ = NO;
 
-    if (extension->is_app()) {
-      type_ = extension_installed_bubble::kApp;
-    } else if (!extensions::OmniboxInfo::GetKeyword(extension).empty()) {
-      type_ = extension_installed_bubble::kOmniboxKeyword;
-    } else if (extensions::ActionInfo::GetBrowserActionInfo(extension)) {
-      type_ = extension_installed_bubble::kBrowserAction;
-    } else if (extensions::ActionInfo::GetPageActionInfo(extension) &&
-               extensions::ActionInfo::IsVerboseInstallMessage(extension)) {
-      type_ = extension_installed_bubble::kPageAction;
-    } else {
-      type_ = extension_installed_bubble::kGeneric;
-    }
+    type_ = extension->is_app() ? extension_installed_bubble::kApp :
+        extension_installed_bubble::kExtension;
 
     installedBubble_ = extensionBubble;
   }
   return self;
 }
 
-- (id)initWithParentWindow:(NSWindow*)parentWindow
-                    bundle:(const BundleInstaller*)bundle
-                   browser:(Browser*)browser {
-  if ((self = [super initWithWindowNibPath:@"ExtensionInstalledBubbleBundle"
-                              parentWindow:parentWindow
-                                anchoredAt:NSZeroPoint])) {
-    bundle_ = bundle;
-    DCHECK(browser);
-    browser_ = browser;
-    icon_.reset([gfx::SkBitmapToNSImage(SkBitmap()) retain]);
-    pageActionPreviewShowing_ = NO;
-    type_ = extension_installed_bubble::kBundle;
-    [self showWindow:self];
-  }
-  return self;
-}
-
 - (const Extension*)extension {
-  if (type_ == extension_installed_bubble::kBundle || !installedBubble_)
+  if (!installedBubble_)
     return nullptr;
   return installedBubble_->extension();
-}
-
-// Sets |promo_| based on |promoPlaceholder_|, sets |promoPlaceholder_| to nil.
-- (void)initializeLabel {
- // Replace the promo placeholder NSTextField with the real label NSTextView.
- // The former doesn't show links in a nice way, but the latter can't be added
- // in IB without a containing scroll view, so create the NSTextView
- // programmatically.
- promo_.reset([[HyperlinkTextView alloc]
-     initWithFrame:[promoPlaceholder_ frame]]);
- [promo_.get() setAutoresizingMask:[promoPlaceholder_ autoresizingMask]];
- [[promoPlaceholder_ superview]
-     replaceSubview:promoPlaceholder_ with:promo_.get()];
- promoPlaceholder_ = nil;  // Now released.
- [promo_.get() setDelegate:self];
-}
-
-// Returns YES if the sync promo should be shown in the bubble.
-- (BOOL)showSyncPromo {
-  if (type_ == extension_installed_bubble::kBundle)
-    return false;
-  return extensions::sync_helper::IsSyncable([self extension]) &&
-      SyncPromoUI::ShouldShowSyncPromo(browser_->profile());
 }
 
 - (void)windowWillClose:(NSNotification*)notification {
@@ -198,7 +178,6 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
   [self removePageActionPreviewIfNecessary];
   browser_ = nullptr;
   [closeButton_ setTrackingEnabled:NO];
-  [promo_ setDelegate:nil];
   [super windowWillClose:notification];
 }
 
@@ -218,15 +197,6 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
   bool didClose =
       [self bubbleReference]->CloseBubble(BUBBLE_CLOSE_USER_DISMISSED);
   DCHECK(didClose);
-}
-
-- (BOOL)textView:(NSTextView*)aTextView
-   clickedOnLink:(id)link
-         atIndex:(NSUInteger)charIndex {
-  DCHECK_EQ(promo_.get(), aTextView);
-  chrome::ShowBrowserSignin(browser_,
-                            signin_metrics::SOURCE_EXTENSION_INSTALL_BUBBLE);
-  return YES;
 }
 
 // Extracted to a function here so that it can be overridden for unit testing.
@@ -259,6 +229,15 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
       static_cast<BrowserWindowCocoa*>(browser_->window());
   NSPoint arrowPoint = NSZeroPoint;
 
+  auto getAppMenuButtonAnchorPoint = [window]() {
+    // Point at the bottom of the app menu menu.
+    NSView* appMenuButton =
+        [[window->cocoa_controller() toolbarController] appMenuButton];
+    const NSRect bounds = [appMenuButton bounds];
+    NSPoint anchor = NSMakePoint(NSMidX(bounds), NSMaxY(bounds));
+    return [appMenuButton convertPoint:anchor toView:nil];
+  };
+
   if (type_ == extension_installed_bubble::kApp) {
     TabStripView* view = [window->cocoa_controller() tabStripView];
     NewTabButton* button = [view getNewTabButton];
@@ -267,47 +246,46 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
         NSMidX(bounds),
         NSMaxY(bounds) - extension_installed_bubble::kAppsBubbleArrowOffset);
     arrowPoint = [button convertPoint:anchor toView:nil];
-  } else if (type_ == extension_installed_bubble::kBrowserAction ||
-             (extensions::FeatureSwitch::extension_action_redesign()->
-                  IsEnabled() &&
-              type_ != extension_installed_bubble::kBundle)) {
-    // If the toolbar redesign is enabled, all bubbles for extensions point to
-    // their toolbar action. The exception is for bundles, for which there is no
-    // single associated extension.
-    BrowserActionsController* controller =
-        [[window->cocoa_controller() toolbarController]
-            browserActionsController];
-    arrowPoint = [controller popupPointForId:[self extension]->id()];
-  } else if (type_ == extension_installed_bubble::kPageAction) {
-    LocationBarViewMac* locationBarView =
-        [window->cocoa_controller() locationBarBridge];
-
-    ExtensionAction* page_action =
-        extensions::ExtensionActionManager::Get(browser_->profile())->
-        GetPageAction(*[self extension]);
-
-    // Tell the location bar to show a preview of the page action icon,
-    // which would ordinarily only be displayed on a page of the appropriate
-    // type. We remove this preview when the extension installed bubble
-    // closes.
-    locationBarView->SetPreviewEnabledPageAction(page_action, true);
-    pageActionPreviewShowing_ = YES;
-
-    // Find the center of the bottom of the page action icon.
-    arrowPoint = locationBarView->GetPageActionBubblePoint(page_action);
-  } else if (type_ == extension_installed_bubble::kOmniboxKeyword) {
-    LocationBarViewMac* locationBarView =
-        [window->cocoa_controller() locationBarBridge];
-    arrowPoint = locationBarView->GetPageInfoBubblePoint();
   } else {
-    DCHECK(type_ == extension_installed_bubble::kBundle ||
-           type_ == extension_installed_bubble::kGeneric);
-    // Point at the bottom of the wrench menu.
-    NSView* wrenchButton =
-        [[window->cocoa_controller() toolbarController] wrenchButton];
-    const NSRect bounds = [wrenchButton bounds];
-    NSPoint anchor = NSMakePoint(NSMidX(bounds), NSMaxY(bounds));
-    arrowPoint = [wrenchButton convertPoint:anchor toView:nil];
+    DCHECK(installedBubble_);
+    switch (installedBubble_->anchor_position()) {
+      case ExtensionInstalledBubble::ANCHOR_BROWSER_ACTION: {
+        BrowserActionsController* controller =
+            [[window->cocoa_controller() toolbarController]
+                browserActionsController];
+        arrowPoint = [controller popupPointForId:[self extension]->id()];
+        break;
+      }
+      case ExtensionInstalledBubble::ANCHOR_PAGE_ACTION: {
+        LocationBarViewMac* locationBarView =
+            [window->cocoa_controller() locationBarBridge];
+
+        ExtensionAction* page_action =
+            extensions::ExtensionActionManager::Get(browser_->profile())->
+            GetPageAction(*[self extension]);
+
+        // Tell the location bar to show a preview of the page action icon,
+        // which would ordinarily only be displayed on a page of the appropriate
+        // type. We remove this preview when the extension installed bubble
+        // closes.
+        locationBarView->SetPreviewEnabledPageAction(page_action, true);
+        pageActionPreviewShowing_ = YES;
+
+        // Find the center of the bottom of the page action icon.
+        arrowPoint = locationBarView->GetPageActionBubblePoint(page_action);
+        break;
+      }
+      case ExtensionInstalledBubble::ANCHOR_OMNIBOX: {
+        LocationBarViewMac* locationBarView =
+            [window->cocoa_controller() locationBarBridge];
+        arrowPoint = locationBarView->GetPageInfoBubblePoint();
+        break;
+      }
+      case ExtensionInstalledBubble::ANCHOR_APP_MENU: {
+        arrowPoint = getAppMenuButtonAnchorPoint();
+        break;
+      }
+    }
   }
   return arrowPoint;
 }
@@ -334,6 +312,11 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
 
   // Find window origin, taking into account bubble size and arrow location.
   [self updateAnchorPosition];
+
+  if (syncPromoController_) {
+    content::RecordAction(base::UserMetricsAction(
+        "Signin_Impression_FromExtensionInstallBubble"));
+  }
   [super showWindow:sender];
 }
 
@@ -342,14 +325,13 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
 - (NSWindow*)initializeWindow {
   NSWindow* window = [self window];  // completes nib load
 
-  if (type_ == extension_installed_bubble::kOmniboxKeyword) {
+  if (installedBubble_ &&
+      installedBubble_->anchor_position() ==
+          ExtensionInstalledBubble::ANCHOR_OMNIBOX) {
     [self.bubble setArrowLocation:info_bubble::kTopLeft];
   } else {
     [self.bubble setArrowLocation:info_bubble::kTopRight];
   }
-
-  if (type_ == extension_installed_bubble::kBundle)
-    return window;
 
   // Set appropriate icon, resizing if necessary.
   if ([icon_ size].width > extension_installed_bubble::kIconSize) {
@@ -367,56 +349,37 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
 - (int)calculateWindowHeight {
   // Adjust the window height to reflect the sum height of all messages
   // and vertical padding.
-  int newWindowHeight = 2 * extension_installed_bubble::kOuterVerticalMargin;
+  // If there's few enough messages, the icon area may be larger than the
+  // messages.
+  int contentColumnHeight =
+      2 * extension_installed_bubble::kOuterVerticalMargin;
+  int iconColumnHeight = 2 * extension_installed_bubble::kOuterVerticalMargin +
+                         NSHeight([iconImage_ frame]);
 
-  // If type is bundle, list the extensions that were installed and those that
-  // failed.
-  if (type_ == extension_installed_bubble::kBundle) {
-    NSInteger installedListHeight =
-        [self addExtensionList:installedHeadingMsg_
-                     itemsView:installedItemsView_
-                         state:BundleInstaller::Item::STATE_INSTALLED];
+  CGFloat syncPromoHeight = 0;
+  if (installedBubble_->options() & ExtensionInstalledBubble::SIGN_IN_PROMO) {
+    signin_metrics::AccessPoint accessPoint =
+       signin_metrics::AccessPoint::ACCESS_POINT_EXTENSION_INSTALL_BUBBLE;
+    syncPromoController_.reset(
+        [[BubbleSyncPromoController alloc]
+            initWithBrowser:browser_
+              promoStringId:IDS_EXTENSION_INSTALLED_SYNC_PROMO_NEW
+               linkStringId:IDS_EXTENSION_INSTALLED_SYNC_PROMO_LINK_NEW
+                accessPoint:accessPoint]);
+    [promoContainer_ addSubview:[syncPromoController_ view]];
 
-    NSInteger failedListHeight =
-        [self addExtensionList:failedHeadingMsg_
-                     itemsView:failedItemsView_
-                         state:BundleInstaller::Item::STATE_FAILED];
+    // Resize the sync promo and its placeholder.
+    NSRect syncPromoPlaceholderFrame = [promoContainer_ frame];
+    CGFloat windowWidth = NSWidth([[self bubble] frame]);
+    syncPromoPlaceholderFrame.size.width = windowWidth;
+    syncPromoHeight =
+        [syncPromoController_ preferredHeightForWidth:windowWidth];
+    syncPromoPlaceholderFrame.size.height = syncPromoHeight;
 
-    newWindowHeight += installedListHeight + failedListHeight;
-
-    // Put some space between the lists if both are present.
-    if (installedListHeight > 0 && failedListHeight > 0)
-      newWindowHeight += extension_installed_bubble::kInnerVerticalMargin;
-
-    return newWindowHeight;
-  }
-
-  int sync_promo_height = 0;
-  if ([self showSyncPromo]) {
-    // First calculate the height of the sign-in promo.
-    NSFont* font = [NSFont systemFontOfSize:[NSFont smallSystemFontSize]];
-
-    NSString* link(l10n_util::GetNSStringWithFixup(
-        IDS_EXTENSION_INSTALLED_SIGNIN_PROMO_LINK));
-    NSString* message(l10n_util::GetNSStringWithFixup(
-        IDS_EXTENSION_INSTALLED_SIGNIN_PROMO));
-    message = [link stringByAppendingString:message];
-
-    HyperlinkTextView* view = promo_.get();
-    [view setMessage:message withFont:font messageColor:[NSColor blackColor]];
-    [view addLinkRange:NSMakeRange(0, [link length])
-               withURL:@"about:blank"  // using a link here is bad ui
-             linkColor:gfx::SkColorToCalibratedNSColor(
-                           chrome_style::GetLinkColor())];
-
-    // HACK! The TextView does not report correct height even after you stuff
-    // it with text (it tells you it is single-line even if it is multiline), so
-    // here the hidden howToUse_ TextField is temporarily repurposed to
-    // calculate the correct height for the TextView.
-    [[howToUse_ cell] setAttributedStringValue:[promo_ attributedString]];
-    [GTMUILocalizerAndLayoutTweaker
-          sizeToFitFixedWidthTextField:howToUse_];
-    sync_promo_height = NSHeight([howToUse_ frame]);
+    [promoContainer_ setFrame:syncPromoPlaceholderFrame];
+    [[syncPromoController_ view] setFrame:syncPromoPlaceholderFrame];
+  } else {
+    [promoContainer_ setHidden:YES];
   }
 
   // First part of extension installed message, the heading.
@@ -427,12 +390,9 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
       IDS_EXTENSION_INSTALLED_HEADING, extension_name)];
   [GTMUILocalizerAndLayoutTweaker
       sizeToFitFixedWidthTextField:heading_];
-  newWindowHeight += NSHeight([heading_ frame]) +
-      extension_installed_bubble::kInnerVerticalMargin;
+  contentColumnHeight += NSHeight([heading_ frame]);
 
-  // If type is browser/page action, include a special message about them.
-  if (type_ == extension_installed_bubble::kBrowserAction ||
-      type_ == extension_installed_bubble::kPageAction) {
+  if (installedBubble_->options() & ExtensionInstalledBubble::HOW_TO_USE) {
     [howToUse_ setStringValue:base::SysUTF16ToNSString(
          installedBubble_->GetHowToUseDescription())];
     [howToUse_ setHidden:NO];
@@ -440,20 +400,7 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
         setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [GTMUILocalizerAndLayoutTweaker
         sizeToFitFixedWidthTextField:howToUse_];
-    newWindowHeight += NSHeight([howToUse_ frame]) +
-        extension_installed_bubble::kInnerVerticalMargin;
-  }
-
-  // If type is omnibox keyword, include a special message about the keyword.
-  if (type_ == extension_installed_bubble::kOmniboxKeyword) {
-    [howToUse_ setStringValue:base::SysUTF16ToNSString(
-         installedBubble_->GetHowToUseDescription())];
-    [howToUse_ setHidden:NO];
-    [[howToUse_ cell]
-        setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
-    [GTMUILocalizerAndLayoutTweaker
-        sizeToFitFixedWidthTextField:howToUse_];
-    newWindowHeight += NSHeight([howToUse_ frame]) +
+    contentColumnHeight += NSHeight([howToUse_ frame]) +
         extension_installed_bubble::kInnerVerticalMargin;
   }
 
@@ -462,173 +409,89 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
   if (type_ == extension_installed_bubble::kApp) {
     [howToManage_ setHidden:YES];
     [appShortcutLink_ setHidden:NO];
-    newWindowHeight += 2 * extension_installed_bubble::kInnerVerticalMargin;
-    newWindowHeight += NSHeight([appShortcutLink_ frame]);
-  } else {
+    contentColumnHeight += 2 * extension_installed_bubble::kInnerVerticalMargin;
+    contentColumnHeight += NSHeight([appShortcutLink_ frame]);
+  } else if (installedBubble_->options() &
+                 ExtensionInstalledBubble::HOW_TO_MANAGE) {
     // Second part of extension installed message.
     [[howToManage_ cell]
         setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [GTMUILocalizerAndLayoutTweaker
         sizeToFitFixedWidthTextField:howToManage_];
-    newWindowHeight += NSHeight([howToManage_ frame]);
+    contentColumnHeight += NSHeight([howToManage_ frame]) +
+        extension_installed_bubble::kInnerVerticalMargin;
+  } else {
+    [howToManage_ setHidden:YES];
   }
 
   // Sync sign-in promo, if any.
-  if (sync_promo_height > 0) {
-    NSRect promo_frame = [promo_.get() frame];
-    promo_frame.size.height = sync_promo_height;
-    [promo_.get() setFrame:promo_frame];
-    newWindowHeight += extension_installed_bubble::kInnerVerticalMargin;
-    newWindowHeight += sync_promo_height;
+  if (syncPromoHeight > 0) {
+    // The sync promo goes at the bottom of the window and includes its own
+    // bottom margin. Thus, we subtract off the one of the outer margins, and
+    // apply it to both the icon area and content area.
+    int syncPromoDelta = extension_installed_bubble::kInnerVerticalMargin +
+                         syncPromoHeight -
+                         extension_installed_bubble::kOuterVerticalMargin;
+    contentColumnHeight += syncPromoDelta;
+    iconColumnHeight += syncPromoDelta;
   }
 
-  if (type_ != extension_installed_bubble::kBundle &&
-      installedBubble_->has_command_keybinding()) {
+  if (installedBubble_->options() & ExtensionInstalledBubble::SHOW_KEYBINDING) {
     [manageShortcutLink_ setHidden:NO];
     [[manageShortcutLink_ cell]
         setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
     [[manageShortcutLink_ cell]
-        setTextColor:gfx::SkColorToCalibratedNSColor(
+        setTextColor:skia::SkColorToCalibratedNSColor(
             chrome_style::GetLinkColor())];
     [GTMUILocalizerAndLayoutTweaker sizeToFitView:manageShortcutLink_];
-    newWindowHeight += extension_installed_bubble::kInnerVerticalMargin;
-    newWindowHeight += NSHeight([manageShortcutLink_ frame]);
+    contentColumnHeight += extension_installed_bubble::kInnerVerticalMargin;
+    contentColumnHeight += NSHeight([manageShortcutLink_ frame]);
   }
 
-  return newWindowHeight;
-}
-
-- (NSInteger)addExtensionList:(NSTextField*)headingMsg
-                    itemsView:(NSView*)itemsView
-                        state:(BundleInstaller::Item::State)state {
-  base::string16 heading = bundle_->GetHeadingTextFor(state);
-  bool hidden = heading.empty();
-  [headingMsg setHidden:hidden];
-  [itemsView setHidden:hidden];
-  if (hidden)
-    return 0;
-
-  [headingMsg setStringValue:base::SysUTF16ToNSString(heading)];
-  [GTMUILocalizerAndLayoutTweaker sizeToFitFixedWidthTextField:headingMsg];
-
-  CGFloat height =
-      PopulateBundleItemsList(bundle_->GetItemsWithState(state), itemsView);
-
-  NSRect frame = [itemsView frame];
-  frame.size.height = height;
-  [itemsView setFrame:frame];
-
-  return NSHeight([headingMsg frame]) +
-      extension_installed_bubble::kInnerVerticalMargin +
-      NSHeight([itemsView frame]);
+  return std::max(contentColumnHeight, iconColumnHeight);
 }
 
 // Adjust y-position of messages to sit properly in new window height.
 - (void)setMessageFrames:(int)newWindowHeight {
-  if (type_ == extension_installed_bubble::kBundle) {
-    // Layout the messages from the bottom up.
-    NSView* msgs[] = { failedItemsView_, failedHeadingMsg_,
-                       installedItemsView_, installedHeadingMsg_ };
-    NSInteger offsetFromBottom = 0;
-    BOOL isFirstVisible = YES;
-    for (size_t i = 0; i < arraysize(msgs); ++i) {
-      if ([msgs[i] isHidden])
-        continue;
-
-      NSRect frame = [msgs[i] frame];
-      NSInteger margin = isFirstVisible ?
-          extension_installed_bubble::kOuterVerticalMargin :
-          extension_installed_bubble::kInnerVerticalMargin;
-
-      frame.origin.y = offsetFromBottom + margin;
-      [msgs[i] setFrame:frame];
-      offsetFromBottom += NSHeight(frame) + margin;
-
-      isFirstVisible = NO;
-    }
-
-    // Move the close button a bit to vertically align it with the heading.
-    NSInteger closeButtonFudge = 1;
-    NSRect frame = [closeButton_ frame];
-    frame.origin.y = newWindowHeight - (NSHeight(frame) + closeButtonFudge +
-         extension_installed_bubble::kOuterVerticalMargin);
-    [closeButton_ setFrame:frame];
-
-    return;
-  }
-
   NSRect headingFrame = [heading_ frame];
   headingFrame.origin.y = newWindowHeight - (
       NSHeight(headingFrame) +
       extension_installed_bubble::kOuterVerticalMargin);
   [heading_ setFrame:headingFrame];
+  int nextY = NSMinY(headingFrame);
 
-  NSRect howToManageFrame = [howToManage_ frame];
-  if (!extensions::OmniboxInfo::GetKeyword([self extension]).empty() ||
-      extensions::ActionInfo::GetBrowserActionInfo([self extension]) ||
-      extensions::ActionInfo::IsVerboseInstallMessage([self extension])) {
-    // For browser actions, page actions and omnibox keyword show the
-    // 'how to use' message before the 'how to manage' message.
-    NSRect howToUseFrame = [howToUse_ frame];
-    howToUseFrame.origin.y = headingFrame.origin.y - (
-        NSHeight(howToUseFrame) +
-        extension_installed_bubble::kInnerVerticalMargin);
-    [howToUse_ setFrame:howToUseFrame];
-
-    howToManageFrame.origin.y = howToUseFrame.origin.y - (
-        NSHeight(howToManageFrame) +
-        extension_installed_bubble::kInnerVerticalMargin);
-  } else {
-    howToManageFrame.origin.y = NSMinY(headingFrame) - (
-        NSHeight(howToManageFrame) +
-        extension_installed_bubble::kInnerVerticalMargin);
-  }
-  [howToManage_ setFrame:howToManageFrame];
-
-  NSRect frame = howToManageFrame;
-  if ([self showSyncPromo]) {
-    frame = [promo_.get() frame];
-    frame.origin.y = NSMinY(howToManageFrame) -
+  auto adjustView = [](NSView* view, int* nextY) {
+    DCHECK(nextY);
+    NSRect frame = [view frame];
+    frame.origin.y = *nextY -
         (NSHeight(frame) + extension_installed_bubble::kInnerVerticalMargin);
-    [promo_.get() setFrame:frame];
+    [view setFrame:frame];
+    *nextY = NSMinY(frame);
+  };
+
+  if (installedBubble_->options() & ExtensionInstalledBubble::HOW_TO_USE)
+    adjustView(howToUse_, &nextY);
+
+  if (installedBubble_->options() & ExtensionInstalledBubble::HOW_TO_MANAGE)
+    adjustView(howToManage_, &nextY);
+
+  if (installedBubble_->options() & ExtensionInstalledBubble::SHOW_KEYBINDING)
+    adjustView(manageShortcutLink_, &nextY);
+
+  if (installedBubble_->options() & ExtensionInstalledBubble::SIGN_IN_PROMO) {
+    // The sync promo goes at the bottom of the bubble, but that might be
+    // different than directly below the previous content if the icon is larger
+    // than the messages. Workaround by just always setting nextY to be at the
+    // bottom.
+    nextY = NSHeight([promoContainer_ frame]) +
+            extension_installed_bubble::kInnerVerticalMargin;
+    adjustView(promoContainer_, &nextY);
   }
-
-  if (![manageShortcutLink_ isHidden]) {
-    NSRect manageShortcutFrame = [manageShortcutLink_ frame];
-    manageShortcutFrame.origin.y = NSMinY(frame) - (
-        NSHeight(manageShortcutFrame) +
-        extension_installed_bubble::kInnerVerticalMargin);
-    // Right-align the link.
-    manageShortcutFrame.origin.x = NSMaxX(frame) -
-                                   NSWidth(manageShortcutFrame);
-    [manageShortcutLink_ setFrame:manageShortcutFrame];
-  }
-}
-
-// Exposed for unit testing.
-- (NSRect)headingFrame {
-  return [heading_ frame];
-}
-
-- (NSRect)frameOfHowToUse {
-  return [howToUse_ frame];
-}
-
-- (NSRect)frameOfHowToManage {
-  return [howToManage_ frame];
-}
-
-- (NSRect)frameOfSigninPromo {
-  return [promo_ frame];
-}
-
-- (NSButton*)appInstalledShortcutLink {
-  return appShortcutLink_;
 }
 
 - (void)updateAnchorPosition {
-  self.anchorPoint =
-      [self.parentWindow convertBaseToScreen:[self calculateArrowPoint]];
+  self.anchorPoint = ui::ConvertPointFromWindowToScreen(
+      self.parentWindow, [self calculateArrowPoint]);
 }
 
 - (IBAction)onManageShortcutClicked:(id)sender {
@@ -643,7 +506,7 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
 }
 
 - (IBAction)onAppShortcutClicked:(id)sender {
-  scoped_ptr<extensions::ExtensionInstallUI> install_ui(
+  std::unique_ptr<extensions::ExtensionInstallUI> install_ui(
       extensions::CreateExtensionInstallUI(browser_->profile()));
   install_ui->OpenAppInstalledUI([self extension]->id());
 }
@@ -651,12 +514,6 @@ void ExtensionInstalledBubbleBridge::UpdateAnchorPosition() {
 - (void)doClose {
   installedBubble_ = nullptr;
   [self close];
-}
-
-- (void)awakeFromNib {
-  if (bundle_)
-    return;
-  [self initializeLabel];
 }
 
 @end

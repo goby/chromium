@@ -4,9 +4,10 @@
 
 #import "ios/web/web_state/crw_pass_kit_downloader.h"
 
-#import "base/ios/weak_nsobject.h"
+#include <memory>
+
 #include "base/mac/scoped_block.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/sys_string_conversions.h"
 #import "ios/web/crw_network_activity_indicator_manager.h"
@@ -14,6 +15,10 @@
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using net::URLFetcher;
 using net::URLFetcherDelegate;
@@ -73,7 +78,7 @@ class PassKitFetcherDelegate : public URLFetcherDelegate {
   }
 
  private:
-  base::WeakNSObject<CRWPassKitDownloader> owner_;
+  __weak CRWPassKitDownloader* owner_;
   DISALLOW_COPY_AND_ASSIGN(PassKitFetcherDelegate);
 };
 
@@ -85,10 +90,10 @@ class PassKitFetcherDelegate : public URLFetcherDelegate {
 
   // URLFetcher with which PassKit data is downloaded. It is initialized
   // whenever |downloadPassKitFileWithURL| is called.
-  scoped_ptr<URLFetcher> _fetcher;
+  std::unique_ptr<URLFetcher> _fetcher;
 
   // Delegate to bridge between URLFetcher callback and CRWPassKitDownlaoder.
-  scoped_ptr<PassKitFetcherDelegate> _fetcherDelegate;
+  std::unique_ptr<PassKitFetcherDelegate> _fetcherDelegate;
 
   // Context getter which is passed to the URLFetcher, as required by
   // URLFetcher API.
@@ -122,7 +127,6 @@ class PassKitFetcherDelegate : public URLFetcherDelegate {
 - (void)dealloc {
   [[CRWNetworkActivityIndicatorManager sharedInstance]
       clearNetworkTasksForGroup:[self networkActivityKey]];
-  [super dealloc];
 }
 
 - (BOOL)isMIMETypePassKitType:(NSString*)MIMEType {

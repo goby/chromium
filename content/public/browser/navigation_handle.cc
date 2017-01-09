@@ -4,6 +4,8 @@
 
 #include "content/public/browser/navigation_handle.h"
 
+#include <utility>
+
 #include "content/browser/frame_host/navigation_handle_impl.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
@@ -19,14 +21,29 @@ WebContents* NavigationHandle::GetWebContents() {
 }
 
 // static
-scoped_ptr<NavigationHandle> NavigationHandle::CreateNavigationHandleForTesting(
+std::unique_ptr<NavigationHandle>
+NavigationHandle::CreateNavigationHandleForTesting(
     const GURL& url,
-    RenderFrameHost* render_frame_host) {
-  scoped_ptr<NavigationHandleImpl> handle_impl = NavigationHandleImpl::Create(
-      url,
-      static_cast<RenderFrameHostImpl*>(render_frame_host)->frame_tree_node(),
-      base::TimeTicks::Now());
-  return scoped_ptr<NavigationHandle>(handle_impl.Pass());
+    RenderFrameHost* render_frame_host,
+    bool committed,
+    net::Error error,
+    bool has_user_gesture) {
+  std::unique_ptr<NavigationHandleImpl> handle_impl =
+      NavigationHandleImpl::Create(
+          url, static_cast<RenderFrameHostImpl*>(render_frame_host)
+                   ->frame_tree_node(),
+          true,   // is_renderer_initiated
+          false,  // is_same_page
+          base::TimeTicks::Now(), 0,
+          has_user_gesture ? NavigationGestureUser : NavigationGestureAuto,
+          false);  // started_from_context_menu
+  handle_impl->set_render_frame_host(
+      static_cast<RenderFrameHostImpl*>(render_frame_host));
+  if (error != net::OK)
+    handle_impl->set_net_error_code(error);
+  if (committed)
+    handle_impl->CallDidCommitNavigationForTesting(url);
+  return std::unique_ptr<NavigationHandle>(std::move(handle_impl));
 }
 
 }  // namespace content

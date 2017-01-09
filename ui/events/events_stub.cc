@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -15,10 +17,6 @@ namespace ui {
 // Stub implementations of platform-specific methods in events_util.h, built
 // on platforms that currently do not have a complete implementation of events.
 
-void UpdateDeviceList() {
-  NOTIMPLEMENTED();
-}
-
 EventType EventTypeFromNative(const base::NativeEvent& native_event) {
   NOTIMPLEMENTED();
   return ET_UNKNOWN;
@@ -29,9 +27,9 @@ int EventFlagsFromNative(const base::NativeEvent& native_event) {
   return 0;
 }
 
-base::TimeDelta EventTimeFromNative(const base::NativeEvent& native_event) {
+base::TimeTicks EventTimeFromNative(const base::NativeEvent& native_event) {
   NOTIMPLEMENTED();
-  return base::TimeDelta();
+  return base::TimeTicks();
 }
 
 gfx::Point EventLocationFromNative(const base::NativeEvent& native_event) {
@@ -84,24 +82,20 @@ int GetTouchId(const base::NativeEvent& native_event) {
   return 0;
 }
 
-float GetTouchRadiusX(const base::NativeEvent& native_event) {
-  NOTIMPLEMENTED();
-  return 0.f;
-}
-
-float GetTouchRadiusY(const base::NativeEvent& native_event) {
-  NOTIMPLEMENTED();
-  return 0.f;
-}
-
 float GetTouchAngle(const base::NativeEvent& native_event) {
   NOTIMPLEMENTED();
   return 0.f;
 }
 
-float GetTouchForce(const base::NativeEvent& native_event) {
+PointerDetails GetTouchPointerDetailsFromNative(
+    const base::NativeEvent& native_event) {
   NOTIMPLEMENTED();
-  return 0.f;
+  return PointerDetails(EventPointerType::POINTER_TYPE_UNKNOWN,
+                        /* radius_x */ 1.0,
+                        /* radius_y */ 1.0,
+                        /* force */ 0.f,
+                        /* tilt_x */ 0.f,
+                        /* tilt_y */ 0.f);
 }
 
 bool GetScrollOffsets(const base::NativeEvent& native_event,
@@ -109,7 +103,8 @@ bool GetScrollOffsets(const base::NativeEvent& native_event,
                       float* y_offset,
                       float* x_offset_ordinal,
                       float* y_offset_ordinal,
-                      int* finger_count) {
+                      int* finger_count,
+                      EventMomentumPhase* momentum_phase) {
   NOTIMPLEMENTED();
   return false;
 }
@@ -139,17 +134,17 @@ bool IsCharFromNative(const base::NativeEvent& native_event) {
   return false;
 }
 
-uint32 WindowsKeycodeFromNative(const base::NativeEvent& native_event) {
+uint32_t WindowsKeycodeFromNative(const base::NativeEvent& native_event) {
   NOTIMPLEMENTED();
   return 0;
 }
 
-uint16 TextFromNative(const base::NativeEvent& native_event) {
+uint16_t TextFromNative(const base::NativeEvent& native_event) {
   NOTIMPLEMENTED();
   return 0;
 }
 
-uint16 UnmodifiedTextFromNative(const base::NativeEvent& native_event) {
+uint16_t UnmodifiedTextFromNative(const base::NativeEvent& native_event) {
   NOTIMPLEMENTED();
   return 0;
 }

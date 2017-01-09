@@ -16,6 +16,7 @@ import ConfigParser
 import glob
 import optparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -85,8 +86,8 @@ def CompressUsingLZMA(build_dir, compressed_file, input_file, verbose):
           '-mb0:1',
           '-mb0s1:2',
           '-mb0s2:3',
-          compressed_file,
-          input_file,]
+          os.path.abspath(compressed_file),
+          os.path.abspath(input_file),]
   if os.path.exists(compressed_file):
     os.remove(compressed_file)
   RunSystemCommand(cmd, verbose)
@@ -248,11 +249,16 @@ def CreateArchiveFile(options, staging_dir, current_version, prev_version):
               ': \\\n')
       f.write('  ' + ' \\\n  '.join(path_fixup(x) for x in g_archive_inputs))
 
+  # It is important to use abspath to create the path to the directory because
+  # if you use a relative path without any .. sequences then 7za.exe uses the
+  # entire relative path as part of the file paths in the archive. If you have
+  # a .. sequence or an absolute path then only the last directory is stored as
+  # part of the file paths in the archive, which is what we want.
   cmd = [lzma_exec,
          'a',
          '-t7z',
          archive_file,
-         os.path.join(staging_dir, CHROME_DIR),
+         os.path.abspath(os.path.join(staging_dir, CHROME_DIR)),
          '-mx0',]
   # There doesnt seem to be any way in 7za.exe to override existing file so
   # we always delete before creating a new one.
@@ -422,65 +428,54 @@ def CopyIfChanged(src, target_dir):
     shutil.copyfile(src, dest)
 
 
-# Copy the relevant CRT DLLs to |build_dir|. We copy DLLs from all versions
-# of VS installed to make sure we have the correct CRT version, unused DLLs
-# should not conflict with the others anyways.
-def CopyVisualStudioRuntimeDLLs(target_arch, build_dir):
-  is_debug = os.path.basename(build_dir).startswith('Debug')
-  if not is_debug and not os.path.basename(build_dir).startswith('Release'):
-    print ("Warning: could not determine build configuration from "
-           "output directory, assuming Release build.")
+# Taken and modified from:
+# third_party\WebKit\Tools\Scripts\webkitpy\layout_tests\port\factory.py
+def _read_configuration_from_gn(build_dir):
+  """Return the configuration to used based on args.gn, if possible."""
+  path = os.path.join(build_dir, 'args.gn')
+  if not os.path.exists(path):
+    path = os.path.join(build_dir, 'toolchain.ninja')
+    if not os.path.exists(path):
+      # This does not appear to be a GN-based build directory, so we don't
+      # know how to interpret it.
+      return None
 
-  crt_dlls = []
-  sys_dll_dir = None
-  if is_debug:
-    crt_dlls = glob.glob(
-        "C:/Program Files (x86)/Microsoft Visual Studio */VC/redist/"
-        "Debug_NonRedist/" + target_arch + "/Microsoft.*.DebugCRT/*.dll")
-  else:
-    crt_dlls = glob.glob(
-        "C:/Program Files (x86)/Microsoft Visual Studio */VC/redist/" +
-        target_arch + "/Microsoft.*.CRT/*.dll")
+    # toolchain.ninja exists, but args.gn does not; this can happen when
+    # `gn gen` is run with no --args.
+    return 'Debug'
 
-  # Also handle the case where someone is building using only winsdk and
-  # doesn't have Visual Studio installed.
-  if not crt_dlls:
-    if target_arch == 'x64':
-      # check we are are on a 64bit system by existence of WOW64 dir
-      if os.access("C:/Windows/SysWOW64", os.F_OK):
-        sys_dll_dir = "C:/Windows/System32"
-      else:
-        # only support packaging of 64bit installer on 64bit system
-        # but this just as bad as not finding DLLs at all so we
-        # don't abort here to mirror behavior below
-        print ("Warning: could not find x64 CRT DLLs on x86 system.")
-    else:
-      # On a 64-bit system, 32-bit dlls are in SysWOW64 (don't ask).
-      if os.access("C:/Windows/SysWOW64", os.F_OK):
-        sys_dll_dir = "C:/Windows/SysWOW64"
-      else:
-        sys_dll_dir = "C:/Windows/System32"
+  args = open(path).read()
+  for l in args.splitlines():
+    # See the original of this function and then gn documentation for why this
+    # regular expression is correct:
+    # https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/reference.md#GN-build-language-grammar
+    m = re.match('^\s*is_debug\s*=\s*false(\s*$|\s*#.*$)', l)
+    if m:
+      return 'Release'
 
-    if sys_dll_dir is not None:
-      if is_debug:
-        crt_dlls = glob.glob(os.path.join(sys_dll_dir, "msvc*0d.dll"))
-      else:
-        crt_dlls = glob.glob(os.path.join(sys_dll_dir, "msvc*0.dll"))
+  # if is_debug is set to anything other than false, or if it
+  # does not exist at all, we should use the default value (True).
+  return 'Debug'
 
-  if not crt_dlls:
-    print ("Warning: could not find CRT DLLs to copy to build dir - target "
-           "may not run on a system that doesn't have those DLLs.")
 
-  for dll in crt_dlls:
-    CopyIfChanged(dll, build_dir)
-
+def ParseDLLsFromDeps(build_dir, runtime_deps_file):
+  """Parses the runtime_deps file and returns the set of DLLs in it, relative
+  to build_dir."""
+  build_dlls = set()
+  args = open(runtime_deps_file).read()
+  for l in args.splitlines():
+    if os.path.splitext(l)[1] == ".dll":
+      build_dlls.add(os.path.join(build_dir, l))
+  return build_dlls
 
 # Copies component build DLLs and generates required config files and manifests
 # in order for chrome.exe and setup.exe to be able to find those DLLs at
 # run-time.
 # This is meant for developer builds only and should never be used to package
 # an official build.
-def DoComponentBuildTasks(staging_dir, build_dir, target_arch, current_version):
+def DoComponentBuildTasks(staging_dir, build_dir, target_arch,
+                          setup_runtime_deps, chrome_runtime_deps,
+                          current_version):
   # Get the required directories for the upcoming operations.
   chrome_dir = os.path.join(staging_dir, CHROME_DIR)
   version_dir = os.path.join(chrome_dir, current_version)
@@ -490,43 +485,23 @@ def DoComponentBuildTasks(staging_dir, build_dir, target_arch, current_version):
   if not os.path.exists(installer_dir):
     os.mkdir(installer_dir)
 
-  # Copy the VS CRT DLLs to |build_dir|. This must be done before the general
-  # copy step below to ensure the CRT DLLs are added to the archive and marked
-  # as a dependency in the exe manifests generated below.
-  CopyVisualStudioRuntimeDLLs(target_arch, build_dir)
+  setup_component_dlls = ParseDLLsFromDeps(build_dir, setup_runtime_deps)
 
-  # Explicitly list the component DLLs setup.exe depends on (this list may
-  # contain wildcards). These will be copied to |installer_dir| in the archive.
-  setup_component_dll_globs = [ 'base.dll',
-                                'boringssl.dll',
-                                'crcrypto.dll',
-                                'icui18n.dll',
-                                'icuuc.dll',
-                                'msvc*.dll' ]
-  for setup_component_dll_glob in setup_component_dll_globs:
-    setup_component_dlls = glob.glob(os.path.join(build_dir,
-                                                  setup_component_dll_glob))
-    for setup_component_dll in setup_component_dlls:
-      g_archive_inputs.append(setup_component_dll)
-      shutil.copy(setup_component_dll, installer_dir)
+  for setup_component_dll in setup_component_dlls:
+    g_archive_inputs.append(setup_component_dll)
+    shutil.copy(setup_component_dll, installer_dir)
 
-  # Stage all the component DLLs found in |build_dir| to the |version_dir| (for
+  # Stage all the component DLLs to the |version_dir| (for
   # the version assembly to be able to refer to them below and make sure
-  # chrome.exe can find them at runtime). The component DLLs are considered to
-  # be all the DLLs which have not already been added to the |version_dir| by
-  # virtue of chrome.release.
-  build_dlls = glob.glob(os.path.join(build_dir, '*.dll'))
+  # chrome.exe can find them at runtime), except the ones that are already
+  # staged (i.e. non-component DLLs).
+  build_dlls = ParseDLLsFromDeps(build_dir, chrome_runtime_deps)
   staged_dll_basenames = [os.path.basename(staged_dll) for staged_dll in \
                           glob.glob(os.path.join(version_dir, '*.dll'))]
   component_dll_filenames = []
   for component_dll in [dll for dll in build_dlls if \
                         os.path.basename(dll) not in staged_dll_basenames]:
     component_dll_name = os.path.basename(component_dll)
-    # remoting_*.dll's don't belong in the archive (it doesn't depend on them
-    # in gyp). Trying to copy them causes a build race when creating the
-    # installer archive in component mode. See: crbug.com/180996
-    if component_dll_name.startswith('remoting_'):
-      continue
     component_dll_filenames.append(component_dll_name)
     g_archive_inputs.append(component_dll)
     shutil.copy(component_dll, version_dir)
@@ -544,7 +519,7 @@ def DoComponentBuildTasks(staging_dir, build_dir, target_arch, current_version):
 
 
 def main(options):
-  """Main method that reads input file, creates archive file and write
+  """Main method that reads input file, creates archive file and writes
   resource input file.
   """
   current_version = BuildVersion(options.build_dir)
@@ -572,7 +547,8 @@ def main(options):
 
   if options.component_build == '1':
     DoComponentBuildTasks(staging_dir, options.build_dir,
-                          options.target_arch, current_version)
+                          options.target_arch, options.setup_runtime_deps,
+                          options.chrome_runtime_deps, current_version)
 
   version_numbers = current_version.split('.')
   current_build_number = version_numbers[2] + '.' + version_numbers[3]
@@ -635,6 +611,12 @@ def _ParseOptions():
   parser.add_option('--depfile',
       help='Generate a depfile with the given name listing the implicit inputs '
            'to the archive process that can be used with a build system.')
+  parser.add_option('--chrome_runtime_deps',
+      help='A file listing runtime dependencies. This will be used to get a '
+           'list of DLLs to archive in a component build.')
+  parser.add_option('--setup_runtime_deps',
+      help='A file listing runtime dependencies for setup.exe. This will be '
+           'used to get a list of DLLs to archive in a component build.')
   parser.add_option('--target_arch', default='x86',
       help='Specify the target architecture for installer - this is used '
            'to determine which CRT runtime files to pull and package '
@@ -653,6 +635,12 @@ def _ParseOptions():
 
   if not options.input_file:
     parser.error('You must provide an input file')
+
+  is_component_build = options.component_build == '1'
+  if is_component_build and not options.chrome_runtime_deps:
+    parser.error("chrome_runtime_deps must be specified for a component build")
+  if is_component_build and not options.setup_runtime_deps:
+    parser.error("setup_runtime_deps must be specified for a component build")
 
   if not options.output_dir:
     options.output_dir = options.build_dir

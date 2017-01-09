@@ -4,11 +4,13 @@
 
 #include "components/font_service/public/cpp/mapped_font_file.h"
 
+#include <utility>
+
 #include "base/files/file_util.h"
 #include "base/threading/thread_restrictions.h"
-#include "skia/ext/refptr.h"
 #include "skia/ext/skia_utils_base.h"
 #include "third_party/skia/include/core/SkData.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkStream.h"
 
 namespace font_service {
@@ -19,18 +21,18 @@ MappedFontFile::MappedFontFile(uint32_t font_id)
 
 bool MappedFontFile::Initialize(base::File file) {
   base::ThreadRestrictions::ScopedAllowIO allow_mmap;
-  return mapped_font_file_.Initialize(file.Pass());
+  return mapped_font_file_.Initialize(std::move(file));
 }
 
 SkMemoryStream* MappedFontFile::CreateMemoryStream() {
   DCHECK(mapped_font_file_.IsValid());
-  auto data = skia::AdoptRef(
-      SkData::NewWithProc(mapped_font_file_.data(), mapped_font_file_.length(),
-                          &MappedFontFile::ReleaseProc, this));
+  sk_sp<SkData> data =
+      SkData::MakeWithProc(mapped_font_file_.data(), mapped_font_file_.length(),
+                          &MappedFontFile::ReleaseProc, this);
   if (!data)
     return nullptr;
   AddRef();
-  return new SkMemoryStream(data.get());
+  return new SkMemoryStream(std::move(data));
 }
 
 MappedFontFile::~MappedFontFile() {

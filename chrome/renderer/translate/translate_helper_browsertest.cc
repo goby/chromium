@@ -2,15 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <tuple>
+
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/time/time.h"
 #include "chrome/common/chrome_isolated_world_ids.h"
 #include "chrome/test/base/chrome_render_view_test.h"
-#include "components/translate/content/common/translate_messages.h"
+#include "components/translate/content/common/translate.mojom.h"
 #include "components/translate/content/renderer/translate_helper.h"
 #include "components/translate/core/common/translate_constants.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "extensions/common/constants.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
@@ -18,6 +24,46 @@
 using testing::AtLeast;
 using testing::Return;
 using testing::_;
+
+namespace {
+
+class FakeContentTranslateDriver
+    : public translate::mojom::ContentTranslateDriver {
+ public:
+  FakeContentTranslateDriver()
+      : called_new_page_(false), page_needs_translation_(false) {}
+  ~FakeContentTranslateDriver() override {}
+
+  void BindHandle(mojo::ScopedMessagePipeHandle handle) {
+    bindings_.AddBinding(
+        this, mojo::MakeRequest<translate::mojom::ContentTranslateDriver>(
+                  std::move(handle)));
+  }
+
+  // translate::mojom::ContentTranslateDriver implementation.
+  void RegisterPage(translate::mojom::PagePtr page,
+                    const translate::LanguageDetectionDetails& details,
+                    bool page_needs_translation) override {
+    called_new_page_ = true;
+    details_ = details;
+    page_needs_translation_ = page_needs_translation;
+  }
+
+  void ResetNewPageValues() {
+    called_new_page_ = false;
+    details_ = base::nullopt;
+    page_needs_translation_ = false;
+  }
+
+  bool called_new_page_;
+  base::Optional<translate::LanguageDetectionDetails> details_;
+  bool page_needs_translation_;
+
+ private:
+  mojo::BindingSet<translate::mojom::ContentTranslateDriver> bindings_;
+};
+
+}  // namespace
 
 class TestTranslateHelper : public translate::TranslateHelper {
  public:
@@ -36,7 +82,31 @@ class TestTranslateHelper : public translate::TranslateHelper {
   void TranslatePage(const std::string& source_lang,
                      const std::string& target_lang,
                      const std::string& translate_script) {
-    OnTranslatePage(0, translate_script, source_lang, target_lang);
+    // Reset result values firstly.
+    page_translated_ = false;
+    trans_result_cancelled_ = false;
+    trans_result_original_lang_ = base::nullopt;
+    trans_result_translated_lang_ = base::nullopt;
+    trans_result_error_type_ = translate::TranslateErrors::NONE;
+
+    // Will get new result values via OnPageTranslated.
+    Translate(translate_script, source_lang, target_lang,
+              base::Bind(&TestTranslateHelper::OnPageTranslated,
+                         base::Unretained(this)));
+  }
+
+  bool GetPageTranslatedResult(std::string* original_lang,
+                               std::string* target_lang,
+                               translate::TranslateErrors::Type* error) {
+    if (!page_translated_)
+      return false;
+    if (original_lang)
+      *original_lang = *trans_result_original_lang_;
+    if (target_lang)
+      *target_lang = *trans_result_translated_lang_;
+    if (error)
+      *error = trans_result_error_type_;
+    return true;
   }
 
   MOCK_METHOD0(IsTranslateLibAvailable, bool());
@@ -52,6 +122,23 @@ class TestTranslateHelper : public translate::TranslateHelper {
   MOCK_METHOD1(ExecuteScriptAndGetDoubleResult, double(const std::string&));
 
  private:
+  void OnPageTranslated(bool cancelled,
+                        const std::string& original_lang,
+                        const std::string& translated_lang,
+                        translate::TranslateErrors::Type error_type) {
+    page_translated_ = true;
+    trans_result_cancelled_ = cancelled;
+    trans_result_original_lang_ = original_lang;
+    trans_result_translated_lang_ = translated_lang;
+    trans_result_error_type_ = error_type;
+  }
+
+  bool page_translated_;
+  bool trans_result_cancelled_;
+  base::Optional<std::string> trans_result_original_lang_;
+  base::Optional<std::string> trans_result_translated_lang_;
+  translate::TranslateErrors::Type trans_result_error_type_;
+
   DISALLOW_COPY_AND_ASSIGN(TestTranslateHelper);
 };
 
@@ -63,6 +150,14 @@ class TranslateHelperBrowserTest : public ChromeRenderViewTest {
   void SetUp() override {
     ChromeRenderViewTest::SetUp();
     translate_helper_ = new TestTranslateHelper(view_->GetMainRenderFrame());
+
+    service_manager::InterfaceProvider* remote_interfaces =
+        view_->GetMainRenderFrame()->GetRemoteInterfaces();
+    service_manager::InterfaceProvider::TestApi test_api(remote_interfaces);
+    test_api.SetBinderForName(
+        translate::mojom::ContentTranslateDriver::Name_,
+        base::Bind(&FakeContentTranslateDriver::BindHandle,
+                   base::Unretained(&fake_translate_driver_)));
   }
 
   void TearDown() override {
@@ -70,27 +165,8 @@ class TranslateHelperBrowserTest : public ChromeRenderViewTest {
     ChromeRenderViewTest::TearDown();
   }
 
-  bool GetPageTranslatedMessage(std::string* original_lang,
-                                std::string* target_lang,
-                                translate::TranslateErrors::Type* error) {
-    const IPC::Message* message =
-        render_thread_->sink().GetUniqueMessageMatching(
-            ChromeFrameHostMsg_PageTranslated::ID);
-    if (!message)
-      return false;
-    base::Tuple<std::string, std::string, translate::TranslateErrors::Type>
-        translate_param;
-    ChromeFrameHostMsg_PageTranslated::Read(message, &translate_param);
-    if (original_lang)
-      *original_lang = base::get<0>(translate_param);
-    if (target_lang)
-      *target_lang = base::get<1>(translate_param);
-    if (error)
-      *error = base::get<2>(translate_param);
-    return true;
-  }
-
   TestTranslateHelper* translate_helper_;
+  FakeContentTranslateDriver fake_translate_driver_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TranslateHelperBrowserTest);
@@ -111,10 +187,10 @@ TEST_F(TranslateHelperBrowserTest, TranslateLibNeverReady) {
       .WillRepeatedly(Return(false));
 
   translate_helper_->TranslatePage("en", "fr", std::string());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   translate::TranslateErrors::Type error;
-  ASSERT_TRUE(GetPageTranslatedMessage(NULL, NULL, &error));
+  ASSERT_TRUE(translate_helper_->GetPageTranslatedResult(NULL, NULL, &error));
   EXPECT_EQ(translate::TranslateErrors::INITIALIZATION_ERROR, error);
 }
 
@@ -148,14 +224,13 @@ TEST_F(TranslateHelperBrowserTest, TranslateSuccess) {
   std::string original_lang("en");
   std::string target_lang("fr");
   translate_helper_->TranslatePage(original_lang, target_lang, std::string());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   std::string received_original_lang;
   std::string received_target_lang;
   translate::TranslateErrors::Type error;
-  ASSERT_TRUE(GetPageTranslatedMessage(&received_original_lang,
-                                       &received_target_lang,
-                                       &error));
+  ASSERT_TRUE(translate_helper_->GetPageTranslatedResult(
+      &received_original_lang, &received_target_lang, &error));
   EXPECT_EQ(original_lang, received_original_lang);
   EXPECT_EQ(target_lang, received_target_lang);
   EXPECT_EQ(translate::TranslateErrors::NONE, error);
@@ -191,10 +266,10 @@ TEST_F(TranslateHelperBrowserTest, TranslateFailure) {
               ExecuteScriptAndGetDoubleResult(_)).Times(2);
 
   translate_helper_->TranslatePage("en", "fr", std::string());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   translate::TranslateErrors::Type error;
-  ASSERT_TRUE(GetPageTranslatedMessage(NULL, NULL, &error));
+  ASSERT_TRUE(translate_helper_->GetPageTranslatedResult(NULL, NULL, &error));
   EXPECT_EQ(translate::TranslateErrors::TRANSLATION_ERROR, error);
 }
 
@@ -227,12 +302,13 @@ TEST_F(TranslateHelperBrowserTest, UndefinedSourceLang) {
   translate_helper_->TranslatePage(translate::kUnknownLanguageCode,
                                    "fr",
                                    std::string());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   translate::TranslateErrors::Type error;
   std::string original_lang;
   std::string target_lang;
-  ASSERT_TRUE(GetPageTranslatedMessage(&original_lang, &target_lang, &error));
+  ASSERT_TRUE(translate_helper_->GetPageTranslatedResult(&original_lang,
+                                                         &target_lang, &error));
   EXPECT_EQ("de", original_lang);
   EXPECT_EQ("fr", target_lang);
   EXPECT_EQ(translate::TranslateErrors::NONE, error);
@@ -266,14 +342,13 @@ TEST_F(TranslateHelperBrowserTest, MultipleSimilarTranslations) {
   // While this is running call again TranslatePage to make sure noting bad
   // happens.
   translate_helper_->TranslatePage(original_lang, target_lang, std::string());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   std::string received_original_lang;
   std::string received_target_lang;
   translate::TranslateErrors::Type error;
-  ASSERT_TRUE(GetPageTranslatedMessage(&received_original_lang,
-                                       &received_target_lang,
-                                       &error));
+  ASSERT_TRUE(translate_helper_->GetPageTranslatedResult(
+      &received_original_lang, &received_target_lang, &error));
   EXPECT_EQ(original_lang, received_original_lang);
   EXPECT_EQ(target_lang, received_target_lang);
   EXPECT_EQ(translate::TranslateErrors::NONE, error);
@@ -304,14 +379,13 @@ TEST_F(TranslateHelperBrowserTest, MultipleDifferentTranslations) {
   std::string new_target_lang("de");
   translate_helper_->TranslatePage(
       original_lang, new_target_lang, std::string());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   std::string received_original_lang;
   std::string received_target_lang;
   translate::TranslateErrors::Type error;
-  ASSERT_TRUE(GetPageTranslatedMessage(&received_original_lang,
-                                       &received_target_lang,
-                                       &error));
+  ASSERT_TRUE(translate_helper_->GetPageTranslatedResult(
+      &received_original_lang, &received_target_lang, &error));
   EXPECT_EQ(original_lang, received_original_lang);
   EXPECT_EQ(new_target_lang, received_target_lang);
   EXPECT_EQ(translate::TranslateErrors::NONE, error);
@@ -319,154 +393,117 @@ TEST_F(TranslateHelperBrowserTest, MultipleDifferentTranslations) {
 
 // Tests that we send the right translate language message for a page and that
 // we respect the "no translate" meta-tag.
-TEST_F(ChromeRenderViewTest, TranslatablePage) {
-  // Suppress the normal delay that occurs when the page is loaded before which
-  // the renderer sends the page contents to the browser.
-  SendContentStateImmediately();
-
+TEST_F(TranslateHelperBrowserTest, TranslatablePage) {
   LoadHTML("<html><body>A random page with random content.</body></html>");
-  const IPC::Message* message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Param params;
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_TRUE(base::get<1>(params)) << "Page should be translatable.";
-  render_thread_->sink().ClearMessages();
+
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_TRUE(fake_translate_driver_.page_needs_translation_)
+      << "Page should be translatable.";
+  fake_translate_driver_.ResetNewPageValues();
 
   // Now the page specifies the META tag to prevent translation.
   LoadHTML("<html><head><meta name=\"google\" value=\"notranslate\"></head>"
            "<body>A random page with random content.</body></html>");
-  message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_FALSE(base::get<1>(params)) << "Page should not be translatable.";
-  render_thread_->sink().ClearMessages();
+
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_FALSE(fake_translate_driver_.page_needs_translation_)
+      << "Page should not be translatable.";
+  fake_translate_driver_.ResetNewPageValues();
 
   // Try the alternate version of the META tag (content instead of value).
   LoadHTML("<html><head><meta name=\"google\" content=\"notranslate\"></head>"
            "<body>A random page with random content.</body></html>");
-  message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_FALSE(base::get<1>(params)) << "Page should not be translatable.";
+
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_FALSE(fake_translate_driver_.page_needs_translation_)
+      << "Page should not be translatable.";
 }
 
 // Tests that the language meta tag takes precedence over the CLD when reporting
 // the page's language.
-TEST_F(ChromeRenderViewTest, LanguageMetaTag) {
-  // Suppress the normal delay that occurs when the page is loaded before which
-  // the renderer sends the page contents to the browser.
-  SendContentStateImmediately();
-
+TEST_F(TranslateHelperBrowserTest, LanguageMetaTag) {
   LoadHTML("<html><head><meta http-equiv=\"content-language\" content=\"es\">"
            "</head><body>A random page with random content.</body></html>");
-  const IPC::Message* message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Param params;
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("es", base::get<0>(params).adopted_language);
-  render_thread_->sink().ClearMessages();
+
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("es", fake_translate_driver_.details_->adopted_language);
+  fake_translate_driver_.ResetNewPageValues();
 
   // Makes sure we support multiple languages specified.
   LoadHTML("<html><head><meta http-equiv=\"content-language\" "
            "content=\" fr , es,en \">"
            "</head><body>A random page with random content.</body></html>");
-  message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("fr", base::get<0>(params).adopted_language);
+
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("fr", fake_translate_driver_.details_->adopted_language);
 }
 
 // Tests that the language meta tag works even with non-all-lower-case.
 // http://code.google.com/p/chromium/issues/detail?id=145689
-TEST_F(ChromeRenderViewTest, LanguageMetaTagCase) {
-  // Suppress the normal delay that occurs when the page is loaded before which
-  // the renderer sends the page contents to the browser.
-  SendContentStateImmediately();
-
+TEST_F(TranslateHelperBrowserTest, LanguageMetaTagCase) {
   LoadHTML("<html><head><meta http-equiv=\"Content-Language\" content=\"es\">"
            "</head><body>A random page with random content.</body></html>");
-  const IPC::Message* message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Param params;
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("es", base::get<0>(params).adopted_language);
-  render_thread_->sink().ClearMessages();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("es", fake_translate_driver_.details_->adopted_language);
+  fake_translate_driver_.ResetNewPageValues();
 
   // Makes sure we support multiple languages specified.
   LoadHTML("<html><head><meta http-equiv=\"Content-Language\" "
            "content=\" fr , es,en \">"
            "</head><body>A random page with random content.</body></html>");
-  message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("fr", base::get<0>(params).adopted_language);
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("fr", fake_translate_driver_.details_->adopted_language);
 }
 
 // Tests that the language meta tag is converted to Chrome standard of dashes
 // instead of underscores and proper capitalization.
 // http://code.google.com/p/chromium/issues/detail?id=159487
-TEST_F(ChromeRenderViewTest, LanguageCommonMistakesAreCorrected) {
-  // Suppress the normal delay that occurs when the page is loaded before which
-  // the renderer sends the page contents to the browser.
-  SendContentStateImmediately();
-
+TEST_F(TranslateHelperBrowserTest, LanguageCommonMistakesAreCorrected) {
   LoadHTML("<html><head><meta http-equiv='Content-Language' content='EN_us'>"
            "</head><body>A random page with random content.</body></html>");
-  const IPC::Message* message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Param params;
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("en", base::get<0>(params).adopted_language);
-  render_thread_->sink().ClearMessages();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("en", fake_translate_driver_.details_->adopted_language);
+  fake_translate_driver_.ResetNewPageValues();
 
   LoadHTML("<html><head><meta http-equiv='Content-Language' content='ZH_tw'>"
            "</head><body>A random page with random content.</body></html>");
-  message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("zh-TW", base::get<0>(params).adopted_language);
-  render_thread_->sink().ClearMessages();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("zh-TW", fake_translate_driver_.details_->adopted_language);
 }
 
 // Tests that a back navigation gets a translate language message.
-TEST_F(ChromeRenderViewTest, BackToTranslatablePage) {
-  SendContentStateImmediately();
+TEST_F(TranslateHelperBrowserTest, BackToTranslatablePage) {
   LoadHTML("<html><head><meta http-equiv=\"content-language\" content=\"zh\">"
            "</head><body>This page is in Chinese.</body></html>");
-  const IPC::Message* message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Param params;
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("zh", base::get<0>(params).adopted_language);
-  render_thread_->sink().ClearMessages();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("zh", fake_translate_driver_.details_->adopted_language);
+  fake_translate_driver_.ResetNewPageValues();
 
   content::PageState back_state = GetCurrentPageState();
 
   LoadHTML("<html><head><meta http-equiv=\"content-language\" content=\"fr\">"
            "</head><body>This page is in French.</body></html>");
-  message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("fr", base::get<0>(params).adopted_language);
-  render_thread_->sink().ClearMessages();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("fr", fake_translate_driver_.details_->adopted_language);
+  fake_translate_driver_.ResetNewPageValues();
 
-  GoBack(back_state);
+  GoBack(GURL("data:text/html;charset=utf-8,<html><head>"
+              "<meta http-equiv=\"content-language\" content=\"zh\">"
+              "</head><body>This page is in Chinese.</body></html>"),
+         back_state);
 
-  message = render_thread_->sink().GetUniqueMessageMatching(
-      ChromeFrameHostMsg_TranslateLanguageDetermined::ID);
-  ASSERT_NE(static_cast<IPC::Message*>(NULL), message);
-  ChromeFrameHostMsg_TranslateLanguageDetermined::Read(message, &params);
-  EXPECT_EQ("zh", base::get<0>(params).adopted_language);
-  render_thread_->sink().ClearMessages();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_TRUE(fake_translate_driver_.called_new_page_);
+  EXPECT_EQ("zh", fake_translate_driver_.details_->adopted_language);
 }

@@ -4,6 +4,10 @@
 
 #include "ppapi/proxy/resource_message_test_sink.h"
 
+#include <stddef.h>
+
+#include <tuple>
+
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/resource_message_params.h"
 #include "ppapi/proxy/serialized_handle.h"
@@ -14,18 +18,18 @@ namespace proxy {
 namespace {
 
 // Backend for GetAllResource[Calls|Replies]Matching.
-template<class WrapperMessage, class Params>
-std::vector<std::pair<Params, IPC::Message> >
-GetAllResourceMessagesMatching(const ResourceMessageTestSink& sink,
-                               uint32 id) {
+template <class WrapperMessage, class Params>
+std::vector<std::pair<Params, IPC::Message>> GetAllResourceMessagesMatching(
+    const ResourceMessageTestSink& sink,
+    uint32_t id) {
   std::vector<std::pair<Params, IPC::Message> > result;
   for (size_t i = 0; i < sink.message_count(); i++) {
     const IPC::Message* msg = sink.GetMessageAt(i);
     if (msg->type() == WrapperMessage::ID) {
       typename WrapperMessage::Param params;
       WrapperMessage::Read(msg, &params);
-      Params cur_params = base::get<0>(params);
-      IPC::Message cur_msg = base::get<1>(params);
+      Params cur_params = std::get<0>(params);
+      IPC::Message cur_msg = std::get<1>(params);
       if (cur_msg.type() == id) {
         result.push_back(std::make_pair(cur_params, cur_msg));
       }
@@ -44,7 +48,7 @@ ResourceMessageTestSink::~ResourceMessageTestSink() {
 
 bool ResourceMessageTestSink::Send(IPC::Message* msg) {
   int message_id = 0;
-  scoped_ptr<IPC::MessageReplyDeserializer> reply_deserializer;
+  std::unique_ptr<IPC::MessageReplyDeserializer> reply_deserializer;
   if (msg->is_sync()) {
     reply_deserializer.reset(
         static_cast<IPC::SyncMessage*>(msg)->GetReplyDeserializer());
@@ -67,7 +71,7 @@ void ResourceMessageTestSink::SetSyncReplyMessage(IPC::Message* reply_msg) {
 }
 
 bool ResourceMessageTestSink::GetFirstResourceCallMatching(
-    uint32 id,
+    uint32_t id,
     ResourceMessageCallParams* params,
     IPC::Message* nested_msg) const {
   ResourceCallVector matching_messages =
@@ -82,7 +86,7 @@ bool ResourceMessageTestSink::GetFirstResourceCallMatching(
 }
 
 bool ResourceMessageTestSink::GetFirstResourceReplyMatching(
-    uint32 id,
+    uint32_t id,
     ResourceMessageReplyParams* params,
     IPC::Message* nested_msg) {
   ResourceReplyVector matching_messages =
@@ -97,28 +101,27 @@ bool ResourceMessageTestSink::GetFirstResourceReplyMatching(
 }
 
 ResourceMessageTestSink::ResourceCallVector
-ResourceMessageTestSink::GetAllResourceCallsMatching(uint32 id) {
+ResourceMessageTestSink::GetAllResourceCallsMatching(uint32_t id) {
   return GetAllResourceMessagesMatching<PpapiHostMsg_ResourceCall,
                                         ResourceMessageCallParams>(*this, id);
 }
 
 ResourceMessageTestSink::ResourceReplyVector
-ResourceMessageTestSink::GetAllResourceRepliesMatching(uint32 id) {
+ResourceMessageTestSink::GetAllResourceRepliesMatching(uint32_t id) {
   return GetAllResourceMessagesMatching<PpapiPluginMsg_ResourceReply,
                                         ResourceMessageReplyParams>(*this, id);
 }
 
 ResourceSyncCallHandler::ResourceSyncCallHandler(
     ResourceMessageTestSink* test_sink,
-    uint32 incoming_type,
+    uint32_t incoming_type,
     int32_t result,
     const IPC::Message& reply_msg)
     : test_sink_(test_sink),
       incoming_type_(incoming_type),
       result_(result),
       serialized_handle_(NULL),
-      reply_msg_(reply_msg) {
-}
+      reply_msg_(reply_msg) {}
 
 ResourceSyncCallHandler::~ResourceSyncCallHandler() {
 }
@@ -130,8 +133,8 @@ bool ResourceSyncCallHandler::OnMessageReceived(const IPC::Message& msg) {
   bool success = PpapiHostMsg_ResourceSyncCall::ReadSendParam(
       &msg, &send_params);
   DCHECK(success);
-  ResourceMessageCallParams call_params = base::get<0>(send_params);
-  IPC::Message call_msg = base::get<1>(send_params);
+  ResourceMessageCallParams call_params = std::get<0>(send_params);
+  IPC::Message call_msg = std::get<1>(send_params);
   if (call_msg.type() != incoming_type_)
     return false;
   IPC::Message* wrapper_reply_msg = IPC::SyncMessage::GenerateReply(&msg);

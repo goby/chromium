@@ -8,6 +8,8 @@
 #include <windows.h>
 #include <bits.h>
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
@@ -20,7 +22,6 @@
 namespace base {
 class FilePath;
 class SequencedTaskRunner;
-class SingleThreadTaskRunner;
 }
 
 namespace update_client {
@@ -40,7 +41,7 @@ class BackgroundDownloader : public CrxDownloader {
  protected:
   friend class CrxDownloader;
   BackgroundDownloader(
-      scoped_ptr<CrxDownloader> successor,
+      std::unique_ptr<CrxDownloader> successor,
       net::URLRequestContextGetter* context_getter,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner);
   ~BackgroundDownloader() override;
@@ -86,6 +87,10 @@ class BackgroundDownloader : public CrxDownloader {
   void StartTimer();
   void OnTimer();
 
+  // Returns true if the timer is running or false if the timer is not
+  // created or not running at all.
+  bool TimerIsRunning() const;
+
   HRESULT QueueBitsJob(const GURL& url, IBackgroundCopyJob** job);
   HRESULT CreateOrOpenJob(const GURL& url, IBackgroundCopyJob** job);
   HRESULT InitializeNewJob(
@@ -115,16 +120,11 @@ class BackgroundDownloader : public CrxDownloader {
   // Ensures that we are running on the same thread we created the object on.
   base::ThreadChecker thread_checker_;
 
-  // Used to post responses back to the main thread. Initialized on the main
-  // loop but accessed from the task runner.
-  scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
-
   net::URLRequestContextGetter* context_getter_;
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // The timer has thread affinity. This member is initialized and destroyed
   // on the main task runner.
-  scoped_ptr<base::OneShotTimer> timer_;
+  std::unique_ptr<base::OneShotTimer> timer_;
 
   DWORD git_cookie_bits_manager_;
   DWORD git_cookie_job_;
@@ -136,10 +136,10 @@ class BackgroundDownloader : public CrxDownloader {
   base::win::ScopedComPtr<IBackgroundCopyJob> job_;
 
   // Contains the time when the download of the current url has started.
-  base::Time download_start_time_;
+  base::TimeTicks download_start_time_;
 
   // Contains the time when the BITS job is last seen making progress.
-  base::Time job_stuck_begin_time_;
+  base::TimeTicks job_stuck_begin_time_;
 
   // Contains the path of the downloaded file if the download was successful.
   base::FilePath response_;

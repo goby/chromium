@@ -4,8 +4,11 @@
 
 #include "remoting/host/fake_desktop_environment.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "remoting/host/audio_capturer.h"
-#include "remoting/host/gnubby_auth_handler.h"
+#include "remoting/host/desktop_capturer_proxy.h"
 #include "remoting/host/input_injector.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/fake_desktop_capturer.h"
@@ -16,8 +19,7 @@ FakeInputInjector::FakeInputInjector() {}
 FakeInputInjector::~FakeInputInjector() {}
 
 void FakeInputInjector::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
-}
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {}
 
 void FakeInputInjector::InjectKeyEvent(const protocol::KeyEvent& event) {
   if (key_events_)
@@ -52,37 +54,43 @@ void FakeScreenControls::SetScreenResolution(
     const ScreenResolution& resolution) {
 }
 
-FakeDesktopEnvironment::FakeDesktopEnvironment() {}
+FakeDesktopEnvironment::FakeDesktopEnvironment(
+    scoped_refptr<base::SingleThreadTaskRunner> capture_thread)
+    : capture_thread_(std::move(capture_thread)) {}
 
-FakeDesktopEnvironment::~FakeDesktopEnvironment() {}
+FakeDesktopEnvironment::~FakeDesktopEnvironment() = default;
 
 // DesktopEnvironment implementation.
-scoped_ptr<AudioCapturer> FakeDesktopEnvironment::CreateAudioCapturer() {
+std::unique_ptr<AudioCapturer> FakeDesktopEnvironment::CreateAudioCapturer() {
   return nullptr;
 }
 
-scoped_ptr<InputInjector> FakeDesktopEnvironment::CreateInputInjector() {
-  scoped_ptr<FakeInputInjector> result(new FakeInputInjector());
+std::unique_ptr<InputInjector> FakeDesktopEnvironment::CreateInputInjector() {
+  std::unique_ptr<FakeInputInjector> result(new FakeInputInjector());
   last_input_injector_ = result->AsWeakPtr();
-  return result.Pass();
+  return std::move(result);
 }
 
-scoped_ptr<ScreenControls> FakeDesktopEnvironment::CreateScreenControls() {
-  return make_scoped_ptr(new FakeScreenControls());
+std::unique_ptr<ScreenControls> FakeDesktopEnvironment::CreateScreenControls() {
+  return base::MakeUnique<FakeScreenControls>();
 }
 
-scoped_ptr<webrtc::DesktopCapturer>
+std::unique_ptr<webrtc::DesktopCapturer>
 FakeDesktopEnvironment::CreateVideoCapturer() {
-  scoped_ptr<protocol::FakeDesktopCapturer> result(
+  std::unique_ptr<protocol::FakeDesktopCapturer> fake_capturer(
       new protocol::FakeDesktopCapturer());
   if (!frame_generator_.is_null())
-    result->set_frame_generator(frame_generator_);
-  return result.Pass();
+    fake_capturer->set_frame_generator(frame_generator_);
+
+  std::unique_ptr<DesktopCapturerProxy> result(
+      new DesktopCapturerProxy(capture_thread_));
+  result->set_capturer(std::move(fake_capturer));
+  return std::move(result);
 }
 
-scoped_ptr<webrtc::MouseCursorMonitor>
+std::unique_ptr<webrtc::MouseCursorMonitor>
 FakeDesktopEnvironment::CreateMouseCursorMonitor() {
-  return make_scoped_ptr(new FakeMouseCursorMonitor());
+  return base::MakeUnique<FakeMouseCursorMonitor>();
 }
 
 std::string FakeDesktopEnvironment::GetCapabilities() const {
@@ -91,30 +99,29 @@ std::string FakeDesktopEnvironment::GetCapabilities() const {
 
 void FakeDesktopEnvironment::SetCapabilities(const std::string& capabilities) {}
 
-scoped_ptr<GnubbyAuthHandler> FakeDesktopEnvironment::CreateGnubbyAuthHandler(
-    protocol::ClientStub* client_stub) {
-  return nullptr;
+uint32_t FakeDesktopEnvironment::GetDesktopSessionId() const {
+  return UINT32_MAX;
 }
 
-FakeDesktopEnvironmentFactory::FakeDesktopEnvironmentFactory() {}
-FakeDesktopEnvironmentFactory::~FakeDesktopEnvironmentFactory() {}
+FakeDesktopEnvironmentFactory::FakeDesktopEnvironmentFactory(
+    scoped_refptr<base::SingleThreadTaskRunner> capture_thread)
+    : capture_thread_(std::move(capture_thread)) {}
+
+FakeDesktopEnvironmentFactory::~FakeDesktopEnvironmentFactory() = default;
 
 // DesktopEnvironmentFactory implementation.
-scoped_ptr<DesktopEnvironment> FakeDesktopEnvironmentFactory::Create(
-    base::WeakPtr<ClientSessionControl> client_session_control) {
-  scoped_ptr<FakeDesktopEnvironment> result(new FakeDesktopEnvironment());
+std::unique_ptr<DesktopEnvironment> FakeDesktopEnvironmentFactory::Create(
+    base::WeakPtr<ClientSessionControl> client_session_control,
+    const DesktopEnvironmentOptions& options) {
+  std::unique_ptr<FakeDesktopEnvironment> result(
+      new FakeDesktopEnvironment(capture_thread_));
   result->set_frame_generator(frame_generator_);
   last_desktop_environment_ = result->AsWeakPtr();
-  return result.Pass();
+  return std::move(result);
 }
-
-void FakeDesktopEnvironmentFactory::SetEnableCurtaining(bool enable) {}
 
 bool FakeDesktopEnvironmentFactory::SupportsAudioCapture() const {
   return false;
 }
-
-void FakeDesktopEnvironmentFactory::SetEnableGnubbyAuth(bool enable) {}
-
 
 }  // namespace remoting

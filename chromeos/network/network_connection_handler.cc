@@ -9,7 +9,7 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/shill_service_client.h"
@@ -117,6 +117,7 @@ const char NetworkConnectionHandler::kErrorCertLoadTimeout[] =
     "cert-load-timeout";
 const char NetworkConnectionHandler::kErrorUnmanagedNetwork[] =
     "unmanaged-network";
+const char NetworkConnectionHandler::kErrorActivateFailed[] = "activate-failed";
 
 struct NetworkConnectionHandler::ConnectRequest {
   ConnectRequest(const std::string& service_path,
@@ -226,8 +227,8 @@ void NetworkConnectionHandler::ConnectToNetwork(
     const network_handler::ErrorCallback& error_callback,
     bool check_error_state) {
   NET_LOG_USER("ConnectToNetwork", service_path);
-  FOR_EACH_OBSERVER(NetworkConnectionObserver, observers_,
-                    ConnectToNetworkRequested(service_path));
+  for (auto& observer : observers_)
+    observer.ConnectToNetworkRequested(service_path);
 
   // Clear any existing queued connect request.
   queued_connect_.reset();
@@ -313,8 +314,8 @@ void NetworkConnectionHandler::DisconnectNetwork(
     const base::Closure& success_callback,
     const network_handler::ErrorCallback& error_callback) {
   NET_LOG_USER("DisconnectNetwork", service_path);
-  FOR_EACH_OBSERVER(NetworkConnectionObserver, observers_,
-                    DisconnectRequested(service_path));
+  for (auto& observer : observers_)
+    observer.DisconnectRequested(service_path);
 
   const NetworkState* network =
       network_state_handler_->GetNetworkState(service_path);
@@ -637,7 +638,7 @@ void NetworkConnectionHandler::CallShillConnect(
 void NetworkConnectionHandler::HandleConfigurationFailure(
     const std::string& service_path,
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) {
+    std::unique_ptr<base::DictionaryValue> error_data) {
   ConnectRequest* request = GetPendingRequest(service_path);
   if (!request) {
     NET_LOG_ERROR("HandleConfigurationFailure called with no pending request.",
@@ -762,8 +763,8 @@ void NetworkConnectionHandler::InvokeConnectSuccessCallback(
   NET_LOG_EVENT("Connect Request Succeeded", service_path);
   if (!success_callback.is_null())
     success_callback.Run();
-  FOR_EACH_OBSERVER(NetworkConnectionObserver, observers_,
-                    ConnectSucceeded(service_path));
+  for (auto& observer : observers_)
+    observer.ConnectSucceeded(service_path);
 }
 
 void NetworkConnectionHandler::ErrorCallbackForPendingRequest(
@@ -788,8 +789,8 @@ void NetworkConnectionHandler::InvokeConnectErrorCallback(
   NET_LOG_ERROR("Connect Failure: " + error_name, service_path);
   network_handler::RunErrorCallback(error_callback, service_path, error_name,
                                     "");
-  FOR_EACH_OBSERVER(NetworkConnectionObserver, observers_,
-                    ConnectFailed(service_path, error_name));
+  for (auto& observer : observers_)
+    observer.ConnectFailed(service_path, error_name);
 }
 
 // Disconnect

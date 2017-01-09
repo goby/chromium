@@ -9,28 +9,31 @@
 #include "wtf/Allocator.h"
 #include "wtf/Functional.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
 class PLATFORM_EXPORT ContentSettingCallbacks {
-    USING_FAST_MALLOC(ContentSettingCallbacks);
-    WTF_MAKE_NONCOPYABLE(ContentSettingCallbacks);
-public:
-    static PassOwnPtr<ContentSettingCallbacks> create(PassOwnPtr<Closure> allowed, PassOwnPtr<Closure> denied);
-    virtual ~ContentSettingCallbacks() { }
+  USING_FAST_MALLOC(ContentSettingCallbacks);
+  WTF_MAKE_NONCOPYABLE(ContentSettingCallbacks);
 
-    void onAllowed() { (*m_allowed)(); }
-    void onDenied() { (*m_denied)(); }
+ public:
+  static std::unique_ptr<ContentSettingCallbacks> create(
+      std::unique_ptr<WTF::Closure> allowed,
+      std::unique_ptr<WTF::Closure> denied);
+  virtual ~ContentSettingCallbacks() {}
 
-private:
-    ContentSettingCallbacks(PassOwnPtr<Closure> allowed, PassOwnPtr<Closure> denied);
+  void onAllowed() { (*m_allowed)(); }
+  void onDenied() { (*m_denied)(); }
 
-    OwnPtr<Closure> m_allowed;
-    OwnPtr<Closure> m_denied;
+ private:
+  ContentSettingCallbacks(std::unique_ptr<WTF::Closure> allowed,
+                          std::unique_ptr<WTF::Closure> denied);
+
+  std::unique_ptr<WTF::Closure> m_allowed;
+  std::unique_ptr<WTF::Closure> m_denied;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ContentSettingCallbacks_h
+#endif  // ContentSettingCallbacks_h

@@ -2,13 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_SYNC_INTERFACE_H_
-#define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_SYNC_INTERFACE_H_
+#ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_STORE_SYNC_H_
+#define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_STORE_SYNC_H_
+
+#include <memory>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "components/password_manager/core/browser/password_store_change.h"
+
+namespace autofill {
+struct PasswordForm;
+}
 
 namespace password_manager {
 
@@ -23,11 +30,13 @@ class PasswordStoreSync {
   // Overwrites |forms| with all stored non-blacklisted credentials. Returns
   // true on success.
   virtual bool FillAutofillableLogins(
-      ScopedVector<autofill::PasswordForm>* forms) WARN_UNUSED_RESULT = 0;
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms)
+      WARN_UNUSED_RESULT = 0;
 
   // Overwrites |forms| with all stored blacklisted credentials. Returns true on
   // success.
-  virtual bool FillBlacklistLogins(ScopedVector<autofill::PasswordForm>* forms)
+  virtual bool FillBlacklistLogins(
+      std::vector<std::unique_ptr<autofill::PasswordForm>>* forms)
       WARN_UNUSED_RESULT = 0;
 
   // Synchronous implementation to add the given login.
@@ -48,14 +57,10 @@ class PasswordStoreSync {
  protected:
   virtual ~PasswordStoreSync();
 
-  bool is_alive() { return is_alive_; }
-
  private:
-  bool is_alive_;  // TODO(vabr): Remove when http://crbug.com/514040 is fixed.
-
   DISALLOW_COPY_AND_ASSIGN(PasswordStoreSync);
 };
 
 }  // namespace password_manager
 
-#endif  // COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_SYNC_INTERFACE_H_
+#endif  // COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_STORE_SYNC_H_

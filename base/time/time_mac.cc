@@ -8,37 +8,25 @@
 #include <CoreFoundation/CFTimeZone.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/mac/mach_logging.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_mach_port.h"
+#include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
+#include "build/build_config.h"
 
 namespace {
 
-int64_t ComputeCurrentTicks() {
-#if defined(OS_IOS)
-  // On iOS mach_absolute_time stops while the device is sleeping. Instead use
-  // now - KERN_BOOTTIME to get a time difference that is not impacted by clock
-  // changes. KERN_BOOTTIME will be updated by the system whenever the system
-  // clock change.
-  struct timeval boottime;
-  int mib[2] = {CTL_KERN, KERN_BOOTTIME};
-  size_t size = sizeof(boottime);
-  int kr = sysctl(mib, arraysize(mib), &boottime, &size, NULL, 0);
-  DCHECK_EQ(KERN_SUCCESS, kr);
-  base::TimeDelta time_difference = base::Time::Now() -
-      (base::Time::FromTimeT(boottime.tv_sec) +
-       base::TimeDelta::FromMicroseconds(boottime.tv_usec));
-  return time_difference.InMicroseconds();
-#else
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+int64_t MachAbsoluteTimeToTicks(uint64_t mach_absolute_time) {
   static mach_timebase_info_data_t timebase_info;
   if (timebase_info.denom == 0) {
     // Zero-initialization of statics guarantees that denom will be 0 before
@@ -50,14 +38,10 @@ int64_t ComputeCurrentTicks() {
     MACH_DCHECK(kr == KERN_SUCCESS, kr) << "mach_timebase_info";
   }
 
-  // mach_absolute_time is it when it comes to ticks on the Mac.  Other calls
-  // with less precision (such as TickCount) just call through to
-  // mach_absolute_time.
-
   // timebase_info converts absolute time tick units into nanoseconds.  Convert
   // to microseconds up front to stave off overflows.
-  base::CheckedNumeric<uint64_t> result(
-      mach_absolute_time() / base::Time::kNanosecondsPerMicrosecond);
+  base::CheckedNumeric<uint64_t> result(mach_absolute_time /
+                                        base::Time::kNanosecondsPerMicrosecond);
   result *= timebase_info.numer;
   result /= timebase_info.denom;
 
@@ -65,6 +49,29 @@ int64_t ComputeCurrentTicks() {
   // With numer and denom = 1 (the expected case), the 64-bit absolute time
   // reported in nanoseconds is enough to last nearly 585 years.
   return base::checked_cast<int64_t>(result.ValueOrDie());
+}
+#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+
+int64_t ComputeCurrentTicks() {
+#if defined(OS_IOS)
+  // On iOS mach_absolute_time stops while the device is sleeping. Instead use
+  // now - KERN_BOOTTIME to get a time difference that is not impacted by clock
+  // changes. KERN_BOOTTIME will be updated by the system whenever the system
+  // clock change.
+  struct timeval boottime;
+  int mib[2] = {CTL_KERN, KERN_BOOTTIME};
+  size_t size = sizeof(boottime);
+  int kr = sysctl(mib, arraysize(mib), &boottime, &size, nullptr, 0);
+  DCHECK_EQ(KERN_SUCCESS, kr);
+  base::TimeDelta time_difference =
+      base::Time::Now() - (base::Time::FromTimeT(boottime.tv_sec) +
+                           base::TimeDelta::FromMicroseconds(boottime.tv_usec));
+  return time_difference.InMicroseconds();
+#else
+  // mach_absolute_time is it when it comes to ticks on the Mac.  Other calls
+  // with less precision (such as TickCount) just call through to
+  // mach_absolute_time.
+  return MachAbsoluteTimeToTicks(mach_absolute_time());
 #endif  // defined(OS_IOS)
 }
 
@@ -90,9 +97,11 @@ int64_t ComputeThreadTicks() {
   MACH_DCHECK(kr == KERN_SUCCESS, kr) << "thread_info";
 
   base::CheckedNumeric<int64_t> absolute_micros(
-      thread_info_data.user_time.seconds);
+      thread_info_data.user_time.seconds +
+      thread_info_data.system_time.seconds);
   absolute_micros *= base::Time::kMicrosecondsPerSecond;
-  absolute_micros += thread_info_data.user_time.microseconds;
+  absolute_micros += (thread_info_data.user_time.microseconds +
+                      thread_info_data.system_time.microseconds);
   return absolute_micros.ValueOrDie();
 #endif  // defined(OS_IOS)
 }
@@ -117,16 +126,16 @@ namespace base {
 //   => Thu Jan 01 00:00:00 UTC 1970
 //   irb(main):011:0> Time.at(-11644473600).getutc()
 //   => Mon Jan 01 00:00:00 UTC 1601
-static const int64 kWindowsEpochDeltaSeconds = INT64_C(11644473600);
+static const int64_t kWindowsEpochDeltaSeconds = INT64_C(11644473600);
 
 // static
-const int64 Time::kWindowsEpochDeltaMicroseconds =
+const int64_t Time::kWindowsEpochDeltaMicroseconds =
     kWindowsEpochDeltaSeconds * Time::kMicrosecondsPerSecond;
 
 // Some functions in time.cc use time_t directly, so we provide an offset
 // to convert from time_t (Unix epoch) and internal (Windows epoch).
 // static
-const int64 Time::kTimeTToMicrosecondsOffset = kWindowsEpochDeltaMicroseconds;
+const int64_t Time::kTimeTToMicrosecondsOffset = kWindowsEpochDeltaMicroseconds;
 
 // static
 Time Time::Now() {
@@ -141,9 +150,9 @@ Time Time::FromCFAbsoluteTime(CFAbsoluteTime t) {
     return Time();  // Consider 0 as a null Time.
   if (t == std::numeric_limits<CFAbsoluteTime>::infinity())
     return Max();
-  return Time(static_cast<int64>(
-      (t + kCFAbsoluteTimeIntervalSince1970) * kMicrosecondsPerSecond) +
-      kWindowsEpochDeltaMicroseconds);
+  return Time(static_cast<int64_t>((t + kCFAbsoluteTimeIntervalSince1970) *
+                                   kMicrosecondsPerSecond) +
+              kWindowsEpochDeltaMicroseconds);
 }
 
 CFAbsoluteTime Time::ToCFAbsoluteTime() const {
@@ -164,28 +173,59 @@ Time Time::NowFromSystemTime() {
 }
 
 // static
-Time Time::FromExploded(bool is_local, const Exploded& exploded) {
-  CFGregorianDate date;
-  date.second = exploded.second +
-      exploded.millisecond / static_cast<double>(kMillisecondsPerSecond);
-  date.minute = exploded.minute;
-  date.hour = exploded.hour;
-  date.day = exploded.day_of_month;
-  date.month = exploded.month;
-  date.year = exploded.year;
-
+bool Time::FromExploded(bool is_local, const Exploded& exploded, Time* time) {
   base::ScopedCFTypeRef<CFTimeZoneRef> time_zone(
-      is_local ? CFTimeZoneCopySystem() : NULL);
-  CFAbsoluteTime seconds = CFGregorianDateGetAbsoluteTime(date, time_zone) +
-      kCFAbsoluteTimeIntervalSince1970;
-  return Time(static_cast<int64>(seconds * kMicrosecondsPerSecond) +
-      kWindowsEpochDeltaMicroseconds);
+      is_local
+          ? CFTimeZoneCopySystem()
+          : CFTimeZoneCreateWithTimeIntervalFromGMT(kCFAllocatorDefault, 0));
+  base::ScopedCFTypeRef<CFCalendarRef> gregorian(CFCalendarCreateWithIdentifier(
+      kCFAllocatorDefault, kCFGregorianCalendar));
+  CFCalendarSetTimeZone(gregorian, time_zone);
+  CFAbsoluteTime absolute_time;
+  // 'S' is not defined in componentDesc in Apple documentation, but can be
+  // found at http://www.opensource.apple.com/source/CF/CF-855.17/CFCalendar.c
+  CFCalendarComposeAbsoluteTime(
+      gregorian, &absolute_time, "yMdHmsS", exploded.year, exploded.month,
+      exploded.day_of_month, exploded.hour, exploded.minute, exploded.second,
+      exploded.millisecond);
+  CFAbsoluteTime seconds = absolute_time + kCFAbsoluteTimeIntervalSince1970;
+
+  // CFAbsolutTime is typedef of double. Convert seconds to
+  // microseconds and then cast to int64. If
+  // it cannot be suited to int64, then fail to avoid overflows.
+  double microseconds =
+      (seconds * kMicrosecondsPerSecond) + kWindowsEpochDeltaMicroseconds;
+  if (microseconds > std::numeric_limits<int64_t>::max() ||
+      microseconds < std::numeric_limits<int64_t>::min()) {
+    *time = Time(0);
+    return false;
+  }
+
+  base::Time converted_time = Time(static_cast<int64_t>(microseconds));
+
+  // If |exploded.day_of_month| is set to 31
+  // on a 28-30 day month, it will return the first day of the next month.
+  // Thus round-trip the time and compare the initial |exploded| with
+  // |utc_to_exploded| time.
+  base::Time::Exploded to_exploded;
+  if (!is_local)
+    converted_time.UTCExplode(&to_exploded);
+  else
+    converted_time.LocalExplode(&to_exploded);
+
+  if (ExplodedMostlyEquals(to_exploded, exploded)) {
+    *time = converted_time;
+    return true;
+  }
+
+  *time = Time(0);
+  return false;
 }
 
 void Time::Explode(bool is_local, Exploded* exploded) const {
   // Avoid rounding issues, by only putting the integral number of seconds
   // (rounded towards -infinity) into a |CFAbsoluteTime| (which is a |double|).
-  int64 microsecond = us_ % kMicrosecondsPerSecond;
+  int64_t microsecond = us_ % kMicrosecondsPerSecond;
   if (microsecond < 0)
     microsecond += kMicrosecondsPerSecond;
   CFAbsoluteTime seconds = ((us_ - microsecond) / kMicrosecondsPerSecond) -
@@ -193,19 +233,25 @@ void Time::Explode(bool is_local, Exploded* exploded) const {
                            kCFAbsoluteTimeIntervalSince1970;
 
   base::ScopedCFTypeRef<CFTimeZoneRef> time_zone(
-      is_local ? CFTimeZoneCopySystem() : NULL);
-  CFGregorianDate date = CFAbsoluteTimeGetGregorianDate(seconds, time_zone);
-  // 1 = Monday, ..., 7 = Sunday.
-  int cf_day_of_week = CFAbsoluteTimeGetDayOfWeek(seconds, time_zone);
-
-  exploded->year = date.year;
-  exploded->month = date.month;
-  exploded->day_of_week = cf_day_of_week % 7;
-  exploded->day_of_month = date.day;
-  exploded->hour = date.hour;
-  exploded->minute = date.minute;
+      is_local
+          ? CFTimeZoneCopySystem()
+          : CFTimeZoneCreateWithTimeIntervalFromGMT(kCFAllocatorDefault, 0));
+  base::ScopedCFTypeRef<CFCalendarRef> gregorian(CFCalendarCreateWithIdentifier(
+      kCFAllocatorDefault, kCFGregorianCalendar));
+  CFCalendarSetTimeZone(gregorian, time_zone);
+  int second, day_of_week;
+  // 'E' sets the day of week, but is not defined in componentDesc in Apple
+  // documentation. It can be found in open source code here:
+  // http://www.opensource.apple.com/source/CF/CF-855.17/CFCalendar.c
+  CFCalendarDecomposeAbsoluteTime(gregorian, seconds, "yMdHmsE",
+                                  &exploded->year, &exploded->month,
+                                  &exploded->day_of_month, &exploded->hour,
+                                  &exploded->minute, &second, &day_of_week);
   // Make sure seconds are rounded down towards -infinity.
-  exploded->second = floor(date.second);
+  exploded->second = floor(second);
+  // |Exploded|'s convention for day of week is 0 = Sunday, i.e. different
+  // from CF's 1 = Sunday.
+  exploded->day_of_week = (day_of_week - 1) % 7;
   // Calculate milliseconds ourselves, since we rounded the |seconds|, making
   // sure to round towards -infinity.
   exploded->millisecond =
@@ -224,6 +270,27 @@ TimeTicks TimeTicks::Now() {
 // static
 bool TimeTicks::IsHighResolution() {
   return true;
+}
+
+// static
+bool TimeTicks::IsConsistentAcrossProcesses() {
+  return true;
+}
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+// static
+TimeTicks TimeTicks::FromMachAbsoluteTime(uint64_t mach_absolute_time) {
+  return TimeTicks(MachAbsoluteTimeToTicks(mach_absolute_time));
+}
+#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
+
+// static
+TimeTicks::Clock TimeTicks::GetClock() {
+#if defined(OS_IOS)
+  return Clock::IOS_CF_ABSOLUTE_TIME_MINUS_KERN_BOOTTIME;
+#else
+  return Clock::MAC_MACH_ABSOLUTE_TIME;
+#endif  // defined(OS_IOS)
 }
 
 // static

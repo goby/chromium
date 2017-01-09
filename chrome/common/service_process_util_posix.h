@@ -9,10 +9,13 @@
 
 #include <signal.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
 #include "chrome/common/multi_process_lock.h"
@@ -56,9 +59,9 @@ class ServiceProcessTerminateMonitor : public base::MessageLoopForIO::Watcher {
   base::Closure terminate_task_;
 };
 
-struct ServiceProcessState::StateData
-    : public base::RefCountedThreadSafe<ServiceProcessState::StateData> {
+struct ServiceProcessState::StateData {
   StateData();
+  ~StateData();
 
   // WatchFileDescriptor needs to be set up by the thread that is going
   // to be monitoring it.
@@ -69,20 +72,19 @@ struct ServiceProcessState::StateData
 
   base::ScopedCFTypeRef<CFDictionaryRef> launchd_conf;
   base::FilePathWatcher executable_watcher;
-#endif  // OS_MACOSX
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
-  scoped_ptr<MultiProcessLock> initializing_lock;
-  scoped_ptr<MultiProcessLock> running_lock;
+#else
+  std::unique_ptr<MultiProcessLock> initializing_lock;
+  std::unique_ptr<MultiProcessLock> running_lock;
 #endif
-  scoped_ptr<ServiceProcessTerminateMonitor> terminate_monitor;
+  std::unique_ptr<ServiceProcessTerminateMonitor> terminate_monitor;
   base::MessageLoopForIO::FileDescriptorWatcher watcher;
   int sockets[2];
   struct sigaction old_action;
   bool set_action;
 
- protected:
-  friend class base::RefCountedThreadSafe<ServiceProcessState::StateData>;
-  virtual ~StateData();
+  // The SingleThreadTaskRunner on which SignalReady and the destructor are
+  // invoked.
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner;
 };
 
 #endif  // CHROME_COMMON_SERVICE_PROCESS_UTIL_POSIX_H_

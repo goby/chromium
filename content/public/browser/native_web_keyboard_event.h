@@ -5,13 +5,16 @@
 #ifndef CONTENT_PUBLIC_BROWSER_NATIVE_WEB_KEYBOARD_EVENT_H_
 #define CONTENT_PUBLIC_BROWSER_NATIVE_WEB_KEYBOARD_EVENT_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/gfx/native_widget_types.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/scoped_java_ref.h"
+#endif
 
 namespace ui {
 class KeyEvent;
@@ -26,23 +29,18 @@ struct CONTENT_EXPORT NativeWebKeyboardEvent :
   NativeWebKeyboardEvent();
 
   explicit NativeWebKeyboardEvent(gfx::NativeEvent native_event);
-#if defined(OS_ANDROID) && !defined(USE_AURA)
-  NativeWebKeyboardEvent(blink::WebInputEvent::Type type,
-                         int modifiers,
-                         double time_secs,
-                         int keycode,
-                         int scancode,
-                         int unicode_character,
-                         bool is_system_key);
-  // Takes ownership of android_key_event.
-  NativeWebKeyboardEvent(jobject android_key_event,
-                         blink::WebInputEvent::Type type,
-                         int modifiers,
-                         double time_secs,
-                         int keycode,
-                         int scancode,
-                         int unicode_character,
-                         bool is_system_key);
+#if defined(OS_ANDROID)
+  // Holds a global ref to android_key_event (allowed to be null).
+  NativeWebKeyboardEvent(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& android_key_event,
+      blink::WebInputEvent::Type type,
+      int modifiers,
+      double time_secs,
+      int keycode,
+      int scancode,
+      int unicode_character,
+      bool is_system_key);
 #else
   explicit NativeWebKeyboardEvent(const ui::KeyEvent& key_event);
 #if defined(USE_AURA)
@@ -64,13 +62,6 @@ struct CONTENT_EXPORT NativeWebKeyboardEvent :
   // it is hit in ime mode.
   // Currently, it's only used by Linux and Mac ports.
   bool skip_in_browser;
-
-#if defined(USE_AURA)
-  // True if the key event matches an edit command. In order to ensure the edit
-  // command always work in web page, the browser should not pre-handle this key
-  // event as a reserved accelerator. See http://crbug.com/54573
-  bool match_edit_command;
-#endif
 };
 
 }  // namespace content

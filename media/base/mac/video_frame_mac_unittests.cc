@@ -4,11 +4,12 @@
 
 #include "media/base/mac/video_frame_mac.h"
 
+#include <stddef.h>
+
 #include <utility>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "media/base/mac/corevideo_glue.h"
 #include "media/base/video_frame.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,6 +20,7 @@ namespace {
 
 const int kWidth = 64;
 const int kHeight = 48;
+const int kVisibleRectOffset = 8;
 const base::TimeDelta kTimestamp = base::TimeDelta::FromMicroseconds(1337);
 
 struct FormatPair {
@@ -41,8 +43,8 @@ TEST(VideoFrameMac, CheckBasicAttributes) {
   auto pb = WrapVideoFrameInCVPixelBuffer(*frame);
   ASSERT_TRUE(pb.get());
 
-  gfx::Size coded_size = frame->coded_size();
-  VideoPixelFormat format = frame->format();
+  const gfx::Size coded_size = frame->coded_size();
+  const VideoPixelFormat format = frame->format();
 
   EXPECT_EQ(coded_size.width(), static_cast<int>(CVPixelBufferGetWidth(pb)));
   EXPECT_EQ(coded_size.height(), static_cast<int>(CVPixelBufferGetHeight(pb)));
@@ -50,7 +52,7 @@ TEST(VideoFrameMac, CheckBasicAttributes) {
 
   CVPixelBufferLockBaseAddress(pb, 0);
   for (size_t i = 0; i < VideoFrame::NumPlanes(format); ++i) {
-    gfx::Size plane_size = VideoFrame::PlaneSize(format, i, coded_size);
+    const gfx::Size plane_size = VideoFrame::PlaneSize(format, i, coded_size);
     EXPECT_EQ(plane_size.width(),
               static_cast<int>(CVPixelBufferGetWidthOfPlane(pb, i)));
     EXPECT_EQ(plane_size.height(),
@@ -92,7 +94,7 @@ TEST(VideoFrameMac, CheckLifetime) {
 
   int instances_destroyed = 0;
   auto wrapper_frame = VideoFrame::WrapVideoFrame(
-      frame, frame->visible_rect(), frame->natural_size());
+      frame, frame->format(), frame->visible_rect(), frame->natural_size());
   wrapper_frame->AddDestructionObserver(
       base::Bind(&Increment, &instances_destroyed));
   ASSERT_TRUE(wrapper_frame.get());
@@ -109,11 +111,10 @@ TEST(VideoFrameMac, CheckLifetime) {
 TEST(VideoFrameMac, CheckWrapperFrame) {
   const FormatPair format_pairs[] = {
       {PIXEL_FORMAT_I420, kCVPixelFormatType_420YpCbCr8Planar},
-      {PIXEL_FORMAT_NV12,
-       CoreVideoGlue::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange},
+      {PIXEL_FORMAT_NV12, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange},
   };
 
-  gfx::Size size(kWidth, kHeight);
+  const gfx::Size size(kWidth, kHeight);
   for (const auto& format_pair : format_pairs) {
     base::ScopedCFTypeRef<CVPixelBufferRef> pb;
     CVPixelBufferCreate(nullptr, kWidth, kHeight, format_pair.corevideo,
@@ -128,6 +129,68 @@ TEST(VideoFrameMac, CheckWrapperFrame) {
     frame = nullptr;
     EXPECT_EQ(1, CFGetRetainCount(pb.get()));
   }
+}
+
+static void FillFrameWithPredictableValues(const VideoFrame& frame) {
+  for (size_t i = 0; i < VideoFrame::NumPlanes(frame.format()); ++i) {
+    const gfx::Size& size =
+        VideoFrame::PlaneSize(frame.format(), i, frame.coded_size());
+    uint8_t* plane_ptr = const_cast<uint8_t*>(frame.data(i));
+    for (int h = 0; h < size.height(); ++h) {
+      const int row_index = h * frame.stride(i);
+      for (int w = 0; w < size.width(); ++w) {
+        const int index = row_index + w;
+        plane_ptr[index] = static_cast<uint8_t>(w ^ h);
+      }
+    }
+  }
+}
+
+TEST(VideoFrameMac, CorrectlyWrapsFramesWithPadding) {
+  const gfx::Size coded_size(kWidth, kHeight);
+  const gfx::Rect visible_rect(kVisibleRectOffset, kVisibleRectOffset,
+                               kWidth - 2 * kVisibleRectOffset,
+                               kHeight - 2 * kVisibleRectOffset);
+  auto frame =
+      VideoFrame::CreateFrame(PIXEL_FORMAT_I420, coded_size, visible_rect,
+                              visible_rect.size(), kTimestamp);
+  ASSERT_TRUE(frame.get());
+  FillFrameWithPredictableValues(*frame);
+
+  auto pb = WrapVideoFrameInCVPixelBuffer(*frame);
+  ASSERT_TRUE(pb.get());
+  EXPECT_EQ(kCVPixelFormatType_420YpCbCr8Planar,
+            CVPixelBufferGetPixelFormatType(pb));
+  EXPECT_EQ(visible_rect.width(), static_cast<int>(CVPixelBufferGetWidth(pb)));
+  EXPECT_EQ(visible_rect.height(),
+            static_cast<int>(CVPixelBufferGetHeight(pb)));
+
+  CVPixelBufferLockBaseAddress(pb, 0);
+  for (size_t i = 0; i < VideoFrame::NumPlanes(frame->format()); ++i) {
+    const gfx::Size plane_size =
+        VideoFrame::PlaneSize(frame->format(), i, visible_rect.size());
+    EXPECT_EQ(plane_size.width(),
+              static_cast<int>(CVPixelBufferGetWidthOfPlane(pb, i)));
+    EXPECT_EQ(plane_size.height(),
+              static_cast<int>(CVPixelBufferGetHeightOfPlane(pb, i)));
+
+    uint8_t* plane_ptr =
+        reinterpret_cast<uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(pb, i));
+    EXPECT_EQ(frame->visible_data(i), plane_ptr);
+    const int stride =
+        static_cast<int>(CVPixelBufferGetBytesPerRowOfPlane(pb, i));
+    EXPECT_EQ(frame->stride(i), stride);
+    const int offset = kVisibleRectOffset / ((i == 0) ? 1 : 2);
+    for (int h = 0; h < plane_size.height(); ++h) {
+      const int row_index = h * stride;
+      for (int w = 0; w < plane_size.width(); ++w) {
+        const int index = row_index + w;
+        EXPECT_EQ(static_cast<uint8_t>((w + offset) ^ (h + offset)),
+                  plane_ptr[index]);
+      }
+    }
+  }
+  CVPixelBufferUnlockBaseAddress(pb, 0);
 }
 
 }  // namespace media

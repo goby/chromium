@@ -6,16 +6,11 @@
 
 #include <cmath>
 
-#include "ash/display/display_info.h"
-#include "ash/display/display_manager.h"
-#include "ash/shell.h"
-#include "ash/wm/window_util.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
-#include "ui/compositor/dip_util.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/screen.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
 namespace ash {
@@ -27,11 +22,9 @@ const float kBoostForNonIntegrated = 1.20f;
 }  // namespace
 
 EventTransformationHandler::EventTransformationHandler()
-    : transformation_mode_(TRANSFORM_AUTO) {
-}
+    : transformation_mode_(TRANSFORM_AUTO) {}
 
-EventTransformationHandler::~EventTransformationHandler() {
-}
+EventTransformationHandler::~EventTransformationHandler() {}
 
 void EventTransformationHandler::OnScrollEvent(ui::ScrollEvent* event) {
   if (transformation_mode_ == TRANSFORM_NONE)
@@ -42,8 +35,8 @@ void EventTransformationHandler::OnScrollEvent(ui::ScrollEvent* event) {
   gfx::Point point_in_screen(event->location());
   aura::Window* target = static_cast<aura::Window*>(event->target());
   ::wm::ConvertPointToScreen(target, &point_in_screen);
-  const gfx::Display& display =
-      Shell::GetScreen()->GetDisplayNearestPoint(point_in_screen);
+  const display::Display& display =
+      display::Screen::GetScreen()->GetDisplayNearestPoint(point_in_screen);
 
   // Apply some additional scaling if the display is non-integrated.
   if (!display.IsInternal())

@@ -11,6 +11,7 @@ const char kAboutBlankURL[] = "about:blank";
 const char kAboutScheme[] = "about";
 const char kBlobScheme[] = "blob";
 const char kContentScheme[] = "content";
+const char kContentIDScheme[] = "cid";
 const char kDataScheme[] = "data";
 const char kFileScheme[] = "file";
 const char kFileSystemScheme[] = "filesystem";
@@ -23,6 +24,11 @@ const char kMailToScheme[] = "mailto";
 const char kWsScheme[] = "ws";
 const char kWssScheme[] = "wss";
 
+const char kHttpSuboriginScheme[] = "http-so";
+const char kHttpsSuboriginScheme[] = "https-so";
+
 const char kStandardSchemeSeparator[] = "://";
+
+const size_t kMaxURLChars = 2 * 1024 * 1024;
 
 }  // namespace url

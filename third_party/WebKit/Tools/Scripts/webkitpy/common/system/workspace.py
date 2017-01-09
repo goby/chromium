@@ -39,6 +39,7 @@ _log = logging.getLogger(__name__)
 
 
 class Workspace(object):
+
     def __init__(self, filesystem, executive):
         self._filesystem = filesystem
         self._executive = executive  # FIXME: Remove if create_zip is moved to python.
@@ -66,8 +67,8 @@ class Workspace(object):
         # So, for now we depend on the environment having "zip" installed (likely fails on Win32)
         try:
             self._executive.run_command(['zip', '-9', '-r', zip_path, '.'], cwd=source_path)
-        except ScriptError, e:
-            _log.error("Workspace.create_zip failed in %s:\n%s" % (source_path, e.message_with_output()))
+        except ScriptError as e:
+            _log.error("Workspace.create_zip failed in %s:\n%s", source_path, e.message_with_output())
             return None
 
         return zip_class(zip_path)

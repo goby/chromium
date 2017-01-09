@@ -28,7 +28,7 @@ bool DMGIterator::Open() {
   for (size_t i = 0; i < udif_.GetNumberOfPartitions(); ++i) {
     if (udif_.GetPartitionType(i) == "Apple_HFS" ||
         udif_.GetPartitionType(i) == "Apple_HFSX") {
-      partitions_.push_back(udif_.GetPartitionReadStream(i).Pass());
+      partitions_.push_back(udif_.GetPartitionReadStream(i));
     }
   }
 
@@ -75,7 +75,7 @@ base::string16 DMGIterator::GetPath() {
   return hfs_->GetPath();
 }
 
-scoped_ptr<ReadStream> DMGIterator::GetReadStream() {
+std::unique_ptr<ReadStream> DMGIterator::GetReadStream() {
   return hfs_->GetReadStream();
 }
 

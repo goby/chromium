@@ -9,16 +9,20 @@
 #include "chrome/browser/permissions/permission_request_id.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/geolocation_provider.h"
+#include "content/public/browser/permission_type.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "device/geolocation/geolocation_provider.h"
 
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/search_geolocation_disclosure_infobar_delegate.h"
+#endif
 
-GeolocationPermissionContext::GeolocationPermissionContext(
-    Profile* profile)
-    : PermissionContextBase(profile, CONTENT_SETTINGS_TYPE_GEOLOCATION),
-      extensions_context_(profile) {
-}
+GeolocationPermissionContext::GeolocationPermissionContext(Profile* profile)
+    : PermissionContextBase(profile,
+                            content::PermissionType::GEOLOCATION,
+                            CONTENT_SETTINGS_TYPE_GEOLOCATION),
+      extensions_context_(profile) {}
 
 GeolocationPermissionContext::~GeolocationPermissionContext() {
 }
@@ -49,6 +53,17 @@ void GeolocationPermissionContext::DecidePermission(
     }
     return;
   }
+
+#if defined(OS_ANDROID)
+  // If the search geolocation disclosure is open, don't pop up a permission
+  // request. Treat this as a dismissal instead.
+  if (SearchGeolocationDisclosureInfoBarDelegate::
+          IsSearchGeolocationDisclosureOpen(web_contents)) {
+    NotifyPermissionSet(id, requesting_origin, embedding_origin, callback,
+                        false /* persist */, CONTENT_SETTING_DEFAULT);
+    return;
+  }
+#endif
 
   PermissionContextBase::DecidePermission(web_contents,
                                           id,
@@ -83,11 +98,11 @@ void GeolocationPermissionContext::UpdateTabContext(
         requesting_frame.GetOrigin(), allowed);
 
   if (allowed) {
-    content::GeolocationProvider::GetInstance()
+    device::GeolocationProvider::GetInstance()
         ->UserDidOptIntoLocationServices();
   }
 }
 
 bool GeolocationPermissionContext::IsRestrictedToSecureOrigins() const {
-  return false;
+  return true;
 }

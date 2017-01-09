@@ -6,6 +6,7 @@
 
 #include "base/mac/bundle_locations.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/mac/sdk_forward_declarations.h"
 
 namespace ui {
 
@@ -17,17 +18,9 @@ NSView* GetViewFromNib(NSString* name) {
     return nil;
 
   NSArray* objects;
-  BOOL success = [nib instantiateNibWithOwner:nil
-                              topLevelObjects:&objects];
+  BOOL success = [nib instantiateWithOwner:nil topLevelObjects:&objects];
   if (!success)
     return nil;
-
-  // When loading a nib manually (as opposed to using an NSWindowController or
-  // NSViewController), all the top-level objects need to be explicitly
-  // released. See
-  // http://developer.apple.com/library/mac/documentation/Cocoa/Conceptual/LoadingResources/CocoaNibs/CocoaNibs.html#//apple_ref/doc/uid/10000051i-CH4-SW10
-  // for more information.
-  [objects makeObjectsPerformSelector:@selector(release)];
 
   // For some strange reason, even nibs that appear to have but one top-level
   // object often have more (an NSApplication, etc.). Filter out what isn't

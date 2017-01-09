@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "chrome/browser/sync/test/integration/apps_helper.h"
-#include "chrome/browser/sync/test/integration/sync_integration_test_util.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
+#include "components/browser_sync/profile_sync_service.h"
 
-using apps_helper::AllProfilesHaveSameAppsAsVerifier;
+using apps_helper::AllProfilesHaveSameApps;
 using apps_helper::InstallApp;
 using apps_helper::InstallPlatformApp;
-using sync_integration_test_util::AwaitCommitActivityCompletion;
 
 class SingleClientAppsSyncTest : public SyncTest {
  public:
@@ -25,8 +24,7 @@ class SingleClientAppsSyncTest : public SyncTest {
 
 IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithNoApps) {
   ASSERT_TRUE(SetupSync());
-
-  ASSERT_TRUE(AllProfilesHaveSameAppsAsVerifier());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithSomeLegacyApps) {
@@ -39,8 +37,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithSomeLegacyApps) {
   }
 
   ASSERT_TRUE(SetupSync());
-
-  ASSERT_TRUE(AllProfilesHaveSameAppsAsVerifier());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithSomePlatformApps) {
@@ -53,8 +50,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithSomePlatformApps) {
   }
 
   ASSERT_TRUE(SetupSync());
-
-  ASSERT_TRUE(AllProfilesHaveSameAppsAsVerifier());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, InstallSomeLegacyApps) {
@@ -66,9 +62,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, InstallSomeLegacyApps) {
     InstallApp(verifier(), i);
   }
 
-  ASSERT_TRUE(AwaitCommitActivityCompletion(GetSyncService((0))));
-
-  ASSERT_TRUE(AllProfilesHaveSameAppsAsVerifier());
+  ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, InstallSomePlatformApps) {
@@ -80,9 +75,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, InstallSomePlatformApps) {
     InstallPlatformApp(verifier(), i);
   }
 
-  ASSERT_TRUE(AwaitCommitActivityCompletion(GetSyncService((0))));
-
-  ASSERT_TRUE(AllProfilesHaveSameAppsAsVerifier());
+  ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, InstallSomeApps) {
@@ -102,7 +96,6 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, InstallSomeApps) {
     InstallPlatformApp(verifier(), i);
   }
 
-  ASSERT_TRUE(AwaitCommitActivityCompletion(GetSyncService((0))));
-
-  ASSERT_TRUE(AllProfilesHaveSameAppsAsVerifier());
+  ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
 }

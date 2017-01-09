@@ -12,8 +12,8 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button_cell.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_folder_target.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #import "chrome/browser/ui/cocoa/url_drop_target.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -21,6 +21,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
+#include "ui/base/clipboard/clipboard_util_mac.h"
 
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
@@ -111,7 +112,7 @@ const NSPoint kPoint = {10, 10};
 
 // NSPasteboard mocking functions.
 
-- (BOOL)containsURLData {
+- (BOOL)containsURLDataConvertingTextToURL:(BOOL)convertTextToURL {
   NSArray* urlTypes = [URLDropTargetHandler handledDragTypes];
   if (dragDataType_)
     return [urlTypes containsObject:dragDataType_];
@@ -142,8 +143,9 @@ const NSPoint kPoint = {10, 10};
 }
 
 - (void)getURLs:(NSArray**)outUrls
-    andTitles:(NSArray**)outTitles
-    convertingFilenames:(BOOL)convertFilenames {
+              andTitles:(NSArray**)outTitles
+    convertingFilenames:(BOOL)convertFilenames
+    convertingTextToURL:(BOOL)convertTextToURL {
 }
 
 - (BOOL)dragBookmarkData:(id<NSDraggingInfo>)info {
@@ -221,7 +223,7 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDragAndDrop) {
   [info reset];
 
   BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfile(profile());
+      BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* node =
       bookmark_model->AddURL(bookmark_model->bookmark_bar_node(),
                              0,
@@ -237,7 +239,8 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDragAndDrop) {
       [[BookmarkButton alloc] init]);
   [dragged_button setCell:button_cell];
   [info setDraggingSource:dragged_button.get()];
-  [info setDragDataType:kBookmarkButtonDragType];
+  [info setDragDataType:ui::ClipboardUtil::UTIForPasteboardType(
+                            kBookmarkButtonDragType)];
   [info setButton:dragged_button.get()];
   [info setBookmarkModel:bookmark_model];
   EXPECT_EQ([view_ draggingEntered:(id)info.get()], NSDragOperationMove);
@@ -261,7 +264,7 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDragAndDropAcrossProfiles) {
   other_profile->CreateBookmarkModel(true);
 
   BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfile(profile());
+      BookmarkModelFactory::GetForBrowserContext(profile());
   bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
 
   const BookmarkNode* node =
@@ -279,9 +282,11 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDragAndDropAcrossProfiles) {
       [[BookmarkButton alloc] init]);
   [dragged_button setCell:button_cell];
   [info setDraggingSource:dragged_button.get()];
-  [info setDragDataType:kBookmarkButtonDragType];
+  [info setDragDataType:ui::ClipboardUtil::UTIForPasteboardType(
+                            kBookmarkButtonDragType)];
   [info setButton:dragged_button.get()];
-  [info setBookmarkModel:BookmarkModelFactory::GetForProfile(other_profile)];
+  [info setBookmarkModel:BookmarkModelFactory::GetForBrowserContext(
+                             other_profile)];
   EXPECT_EQ([view_ draggingEntered:(id)info.get()], NSDragOperationMove);
   EXPECT_TRUE([view_ performDragOperation:(id)info.get()]);
   EXPECT_TRUE([info dragButtonToPong]);
@@ -317,7 +322,8 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDropIndicator) {
   base::scoped_nsobject<BookmarkButton> dragged_button(
       [[BookmarkButton alloc] init]);
   [info setDraggingSource:dragged_button.get()];
-  [info setDragDataType:kBookmarkButtonDragType];
+  [info setDragDataType:ui::ClipboardUtil::UTIForPasteboardType(
+                            kBookmarkButtonDragType)];
   EXPECT_FALSE([info draggingEnteredCalled]);
   EXPECT_EQ([view_ draggingEntered:(id)info.get()], NSDragOperationMove);
   EXPECT_TRUE([info draggingEnteredCalled]);  // Ensure controller pinged.

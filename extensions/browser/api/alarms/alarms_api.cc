@@ -4,11 +4,15 @@
 
 #include "extensions/browser/api/alarms/alarms_api.h"
 
+#include <stddef.h>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "base/values.h"
 #include "extensions/browser/api/alarms/alarm_manager.h"
+#include "extensions/browser/api/alarms/alarms_api_constants.h"
 #include "extensions/common/api/alarms.h"
 #include "extensions/common/error_utils.h"
 
@@ -23,8 +27,6 @@ const char kBothRelativeAndAbsoluteTime[] =
     "Cannot set both when and delayInMinutes.";
 const char kNoScheduledTime[] =
     "Must set at least one of when, delayInMinutes, or periodInMinutes.";
-const int kReleaseDelayMinimum = 1;
-const int kDevDelayMinimum = 0;
 
 bool ValidateAlarmCreateInfo(const std::string& alarm_name,
                              const alarms::AlarmCreateInfo& create_info,
@@ -48,37 +50,27 @@ bool ValidateAlarmCreateInfo(const std::string& alarm_name,
   // gets delayed past the boundary).  However, it's still worth warning about
   // relative delays that are shorter than we'll honor.
   if (create_info.delay_in_minutes.get()) {
-    if (*create_info.delay_in_minutes < kReleaseDelayMinimum) {
-      static_assert(kReleaseDelayMinimum == 1,
-                    "warning message must be updated");
-      if (Manifest::IsUnpackedLocation(extension->location()))
+    if (*create_info.delay_in_minutes <
+        alarms_api_constants::kReleaseDelayMinimum) {
+      if (Manifest::IsUnpackedLocation(extension->location())) {
         warnings->push_back(ErrorUtils::FormatErrorMessage(
-            "Alarm delay is less than minimum of 1 minutes."
-            " In released .crx, alarm \"*\" will fire in approximately"
-            " 1 minutes.",
-            alarm_name));
-      else
+            alarms_api_constants::kWarningMinimumDevDelay, alarm_name));
+      } else {
         warnings->push_back(ErrorUtils::FormatErrorMessage(
-            "Alarm delay is less than minimum of 1 minutes."
-            " Alarm \"*\" will fire in approximately 1 minutes.",
-            alarm_name));
+            alarms_api_constants::kWarningMinimumReleaseDelay, alarm_name));
+      }
     }
   }
   if (create_info.period_in_minutes.get()) {
-    if (*create_info.period_in_minutes < kReleaseDelayMinimum) {
-      static_assert(kReleaseDelayMinimum == 1,
-                    "warning message must be updated");
-      if (Manifest::IsUnpackedLocation(extension->location()))
+    if (*create_info.period_in_minutes <
+        alarms_api_constants::kReleaseDelayMinimum) {
+      if (Manifest::IsUnpackedLocation(extension->location())) {
         warnings->push_back(ErrorUtils::FormatErrorMessage(
-            "Alarm period is less than minimum of 1 minutes."
-            " In released .crx, alarm \"*\" will fire approximately"
-            " every 1 minutes.",
-            alarm_name));
-      else
+            alarms_api_constants::kWarningMinimumDevPeriod, alarm_name));
+      } else {
         warnings->push_back(ErrorUtils::FormatErrorMessage(
-            "Alarm period is less than minimum of 1 minutes."
-            " Alarm \"*\" will fire approximately every 1 minutes.",
-            alarm_name));
+            alarms_api_constants::kWarningMinimumReleasePeriod, alarm_name));
+      }
     }
   }
 
@@ -101,7 +93,7 @@ AlarmsCreateFunction::~AlarmsCreateFunction() {
 }
 
 bool AlarmsCreateFunction::RunAsync() {
-  scoped_ptr<alarms::Create::Params> params(
+  std::unique_ptr<alarms::Create::Params> params(
       alarms::Create::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   const std::string& alarm_name =
@@ -115,14 +107,18 @@ bool AlarmsCreateFunction::RunAsync() {
        it != warnings.end(); ++it)
     WriteToConsole(content::CONSOLE_MESSAGE_LEVEL_WARNING, *it);
 
-  Alarm alarm(alarm_name, params->alarm_info,
-              base::TimeDelta::FromMinutes(
-                  Manifest::IsUnpackedLocation(extension()->location())
-                      ? kDevDelayMinimum
-                      : kReleaseDelayMinimum),
-              clock_->Now());
+  const int kSecondsPerMinute = 60;
+  base::TimeDelta granularity =
+      base::TimeDelta::FromSecondsD(
+          (Manifest::IsUnpackedLocation(extension()->location())
+               ? alarms_api_constants::kDevDelayMinimum
+               : alarms_api_constants::kReleaseDelayMinimum)) *
+      kSecondsPerMinute;
+
+  std::unique_ptr<Alarm> alarm(
+      new Alarm(alarm_name, params->alarm_info, granularity, clock_->Now()));
   AlarmManager::Get(browser_context())
-      ->AddAlarm(extension_id(), alarm,
+      ->AddAlarm(extension_id(), std::move(alarm),
                  base::Bind(&AlarmsCreateFunction::Callback, this));
 
   return true;
@@ -133,7 +129,8 @@ void AlarmsCreateFunction::Callback() {
 }
 
 bool AlarmsGetFunction::RunAsync() {
-  scoped_ptr<alarms::Get::Params> params(alarms::Get::Params::Create(*args_));
+  std::unique_ptr<alarms::Get::Params> params(
+      alarms::Get::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   std::string name = params->name.get() ? *params->name : kDefaultAlarmName;
@@ -160,21 +157,17 @@ bool AlarmsGetAllFunction::RunAsync() {
 }
 
 void AlarmsGetAllFunction::Callback(const AlarmList* alarms) {
+  std::unique_ptr<base::ListValue> alarms_value(new base::ListValue());
   if (alarms) {
-    std::vector<linked_ptr<alarms::Alarm>> create_arg;
-    create_arg.reserve(alarms->size());
-    for (size_t i = 0, size = alarms->size(); i < size; ++i) {
-      create_arg.push_back((*alarms)[i].js_alarm);
-    }
-    results_ = alarms::GetAll::Results::Create(create_arg);
-  } else {
-    SetResult(new base::ListValue());
+    for (const std::unique_ptr<Alarm>& alarm : *alarms)
+      alarms_value->Append(alarm->js_alarm->ToValue());
   }
+  SetResult(std::move(alarms_value));
   SendResponse(true);
 }
 
 bool AlarmsClearFunction::RunAsync() {
-  scoped_ptr<alarms::Clear::Params> params(
+  std::unique_ptr<alarms::Clear::Params> params(
       alarms::Clear::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -187,7 +180,7 @@ bool AlarmsClearFunction::RunAsync() {
 }
 
 void AlarmsClearFunction::Callback(const std::string& name, bool success) {
-  SetResult(new base::FundamentalValue(success));
+  SetResult(base::MakeUnique<base::FundamentalValue>(success));
   SendResponse(true);
 }
 
@@ -199,7 +192,7 @@ bool AlarmsClearAllFunction::RunAsync() {
 }
 
 void AlarmsClearAllFunction::Callback() {
-  SetResult(new base::FundamentalValue(true));
+  SetResult(base::MakeUnique<base::FundamentalValue>(true));
   SendResponse(true);
 }
 

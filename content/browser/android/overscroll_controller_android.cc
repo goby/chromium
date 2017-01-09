@@ -6,21 +6,23 @@
 
 #include "base/android/build_info.h"
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "cc/layers/layer.h"
 #include "cc/output/compositor_frame_metadata.h"
 #include "content/browser/android/content_view_core_impl.h"
-#include "content/common/input/did_overscroll_params.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/common/content_switches.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/android/edge_effect.h"
 #include "ui/android/edge_effect_l.h"
 #include "ui/android/resources/resource_manager.h"
 #include "ui/android/window_android.h"
 #include "ui/android/window_android_compositor.h"
 #include "ui/base/l10n/l10n_util_android.h"
+#include "ui/events/blink/did_overscroll_params.h"
 
+using ui::DidOverscrollParams;
 using ui::EdgeEffect;
 using ui::EdgeEffectBase;
 using ui::EdgeEffectL;
@@ -62,43 +64,44 @@ float MinGlowAlphaToDisableRefresh() {
   return 1.01f;
 }
 
-scoped_ptr<EdgeEffectBase> CreateGlowEdgeEffect(
+std::unique_ptr<EdgeEffectBase> CreateGlowEdgeEffect(
     ui::ResourceManager* resource_manager,
     float dpi_scale) {
   DCHECK(resource_manager);
   if (IsAndroidLOrNewer())
-    return scoped_ptr<EdgeEffectBase>(new EdgeEffectL(resource_manager));
+    return std::unique_ptr<EdgeEffectBase>(new EdgeEffectL(resource_manager));
 
-  return scoped_ptr<EdgeEffectBase>(
+  return std::unique_ptr<EdgeEffectBase>(
       new EdgeEffect(resource_manager, dpi_scale));
 }
 
-scoped_ptr<OverscrollGlow> CreateGlowEffect(OverscrollGlowClient* client,
-                                            float dpi_scale) {
+std::unique_ptr<OverscrollGlow> CreateGlowEffect(OverscrollGlowClient* client,
+                                                 float dpi_scale) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableOverscrollEdgeEffect)) {
     return nullptr;
   }
 
-  return make_scoped_ptr(new OverscrollGlow(client));
+  return base::MakeUnique<OverscrollGlow>(client);
 }
 
-scoped_ptr<OverscrollRefresh> CreateRefreshEffect(
+std::unique_ptr<OverscrollRefresh> CreateRefreshEffect(
     OverscrollRefreshHandler* handler) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisablePullToRefreshEffect)) {
     return nullptr;
   }
 
-  return make_scoped_ptr(new OverscrollRefresh(handler));
+  return base::MakeUnique<OverscrollRefresh>(handler);
 }
 
 }  // namespace
 
 OverscrollControllerAndroid::OverscrollControllerAndroid(
-    ContentViewCoreImpl* content_view_core)
+    ContentViewCoreImpl* content_view_core,
+    float dpi_scale)
     : compositor_(content_view_core->GetWindowAndroid()->GetCompositor()),
-      dpi_scale_(content_view_core->GetDpiScale()),
+      dpi_scale_(dpi_scale),
       enabled_(true),
       glow_effect_(CreateGlowEffect(this, dpi_scale_)),
       refresh_effect_(CreateRefreshEffect(content_view_core)) {
@@ -268,7 +271,8 @@ void OverscrollControllerAndroid::Disable() {
   }
 }
 
-scoped_ptr<EdgeEffectBase> OverscrollControllerAndroid::CreateEdgeEffect() {
+std::unique_ptr<EdgeEffectBase>
+OverscrollControllerAndroid::CreateEdgeEffect() {
   return CreateGlowEdgeEffect(&compositor_->GetResourceManager(), dpi_scale_);
 }
 

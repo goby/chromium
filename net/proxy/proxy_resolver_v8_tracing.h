@@ -5,9 +5,10 @@
 #ifndef NET_PROXY_PROXY_RESOLVER_V8_TRACING_H_
 #define NET_PROXY_PROXY_RESOLVER_V8_TRACING_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/net_export.h"
 #include "net/proxy/proxy_resolver.h"
 #include "net/proxy/proxy_resolver_factory.h"
@@ -15,6 +16,7 @@
 namespace net {
 
 class HostResolver;
+class NetLogWithSource;
 
 // ProxyResolverV8Tracing is a non-blocking proxy resolver.
 class NET_EXPORT ProxyResolverV8Tracing {
@@ -37,9 +39,9 @@ class NET_EXPORT ProxyResolverV8Tracing {
     // Returns a HostResolver to use for DNS resolution.
     virtual HostResolver* GetHostResolver() = 0;
 
-    // Returns a BoundNetLog to be passed to the HostResolver returned by
+    // Returns a NetLogWithSource to be passed to the HostResolver returned by
     // GetHostResolver().
-    virtual BoundNetLog GetBoundNetLog() = 0;
+    virtual NetLogWithSource GetNetLogWithSource() = 0;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Bindings);
@@ -50,20 +52,13 @@ class NET_EXPORT ProxyResolverV8Tracing {
   // Gets a list of proxy servers to use for |url|. This request always
   // runs asynchronously and notifies the result by running |callback|. If the
   // result code is OK then the request was successful and |results| contains
-  // the proxy resolution information. If |request| is non-null, |*request| is
-  // written to, and can be passed to CancelRequest().
+  // the proxy resolution information.  Request can be cancelled by resetting
+  // |*request|.
   virtual void GetProxyForURL(const GURL& url,
                               ProxyInfo* results,
                               const CompletionCallback& callback,
-                              ProxyResolver::RequestHandle* request,
-                              scoped_ptr<Bindings> bindings) = 0;
-
-  // Cancels |request|.
-  virtual void CancelRequest(ProxyResolver::RequestHandle request) = 0;
-
-  // Gets the LoadState for |request|.
-  virtual LoadState GetLoadState(
-      ProxyResolver::RequestHandle request) const = 0;
+                              std::unique_ptr<ProxyResolver::Request>* request,
+                              std::unique_ptr<Bindings> bindings) = 0;
 };
 
 // A factory for ProxyResolverV8Tracing instances. The default implementation,
@@ -78,12 +73,12 @@ class NET_EXPORT ProxyResolverV8TracingFactory {
 
   virtual void CreateProxyResolverV8Tracing(
       const scoped_refptr<ProxyResolverScriptData>& pac_script,
-      scoped_ptr<ProxyResolverV8Tracing::Bindings> bindings,
-      scoped_ptr<ProxyResolverV8Tracing>* resolver,
+      std::unique_ptr<ProxyResolverV8Tracing::Bindings> bindings,
+      std::unique_ptr<ProxyResolverV8Tracing>* resolver,
       const CompletionCallback& callback,
-      scoped_ptr<ProxyResolverFactory::Request>* request) = 0;
+      std::unique_ptr<ProxyResolverFactory::Request>* request) = 0;
 
-  static scoped_ptr<ProxyResolverV8TracingFactory> Create();
+  static std::unique_ptr<ProxyResolverV8TracingFactory> Create();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ProxyResolverV8TracingFactory);

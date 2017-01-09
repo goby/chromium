@@ -14,12 +14,15 @@ namespace extensions {
 UserGesturesNativeHandler::UserGesturesNativeHandler(ScriptContext* context)
     : ObjectBackedNativeHandler(context) {
   RouteFunction("IsProcessingUserGesture",
+                "test",
                 base::Bind(&UserGesturesNativeHandler::IsProcessingUserGesture,
                            base::Unretained(this)));
   RouteFunction("RunWithUserGesture",
+                "test",
                 base::Bind(&UserGesturesNativeHandler::RunWithUserGesture,
                            base::Unretained(this)));
   RouteFunction("RunWithoutUserGesture",
+                "test",
                 base::Bind(&UserGesturesNativeHandler::RunWithoutUserGesture,
                            base::Unretained(this)));
 }
@@ -33,11 +36,11 @@ void UserGesturesNativeHandler::IsProcessingUserGesture(
 
 void UserGesturesNativeHandler::RunWithUserGesture(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
-  blink::WebScopedUserGesture user_gesture;
+  blink::WebScopedUserGesture user_gesture(context()->web_frame());
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsFunction());
-  v8::Local<v8::Value> no_args;
-  context()->CallFunction(v8::Local<v8::Function>::Cast(args[0]), 0, &no_args);
+  context()->SafeCallFunction(v8::Local<v8::Function>::Cast(args[0]), 0,
+                              nullptr);
 }
 
 void UserGesturesNativeHandler::RunWithoutUserGesture(
@@ -46,7 +49,8 @@ void UserGesturesNativeHandler::RunWithoutUserGesture(
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsFunction());
   v8::Local<v8::Value> no_args;
-  context()->CallFunction(v8::Local<v8::Function>::Cast(args[0]), 0, &no_args);
+  context()->SafeCallFunction(v8::Local<v8::Function>::Cast(args[0]), 0,
+                              nullptr);
 }
 
 }  // namespace extensions

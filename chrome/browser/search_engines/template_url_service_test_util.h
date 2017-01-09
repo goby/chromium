@@ -5,13 +5,14 @@
 #ifndef CHROME_BROWSER_SEARCH_ENGINES_TEMPLATE_URL_SERVICE_TEST_UTIL_H_
 #define CHROME_BROWSER_SEARCH_ENGINES_TEMPLATE_URL_SERVICE_TEST_UTIL_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
+#include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_service_observer.h"
 
 class GURL;
@@ -19,6 +20,15 @@ class KeywordWebDataService;
 class TemplateURLService;
 class TestingProfile;
 class TestingSearchTermsData;
+
+// Sets the managed preferences for the default search provider.
+// enabled arg enables/disables use of managed engine by DefaultSearchManager.
+void SetManagedDefaultSearchPreferences(const TemplateURLData& managed_data,
+                                        bool enabled,
+                                        TestingProfile* profile);
+
+// Removes all the managed preferences for the default search provider.
+void RemoveManagedDefaultSearchPreferences(TestingProfile* profile);
 
 class TemplateURLServiceTestUtil : public TemplateURLServiceObserver {
  public:
@@ -55,36 +65,18 @@ class TemplateURLServiceTestUtil : public TemplateURLServiceObserver {
   // Sets the google base url.  |base_url| must be valid.
   void SetGoogleBaseURL(const GURL& base_url);
 
-  // Sets the managed preferences for the default search provider and trigger
-  // notification. If |alternate_url| is empty, uses an empty list of alternate
-  // URLs, otherwise uses a list containing a single entry.
-  void SetManagedDefaultSearchPreferences(
-      bool enabled,
-      const std::string& name,
-      const std::string& keyword,
-      const std::string& search_url,
-      const std::string& suggest_url,
-      const std::string& icon_url,
-      const std::string& encodings,
-      const std::string& alternate_url,
-      const std::string& search_terms_replacement_key);
-
-  // Removes all the managed preferences for the default search provider and
-  // triggers notification.
-  void RemoveManagedDefaultSearchPreferences();
-
   KeywordWebDataService* web_data_service() { return web_data_service_.get(); }
   TemplateURLService* model() { return model_.get(); }
   TestingProfile* profile() { return profile_.get(); }
 
  private:
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   base::ScopedTempDir temp_dir_;
   int changed_count_;
   base::string16 search_term_;
   scoped_refptr<KeywordWebDataService> web_data_service_;
   TestingSearchTermsData* search_terms_data_;
-  scoped_ptr<TemplateURLService> model_;
+  std::unique_ptr<TemplateURLService> model_;
 
   DISALLOW_COPY_AND_ASSIGN(TemplateURLServiceTestUtil);
 };

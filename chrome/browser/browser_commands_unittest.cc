@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/ui/browser_command_controller.h"
@@ -14,11 +16,12 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
-#include "components/ui/zoom/page_zoom.h"
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/zoom/page_zoom.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/test_renderer_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 typedef BrowserWithTestWindowTest BrowserCommandsTest;
@@ -27,7 +30,7 @@ using bookmarks::BookmarkModel;
 using content::OpenURLParams;
 using content::Referrer;
 using content::WebContents;
-using ui_zoom::ZoomController;
+using zoom::ZoomController;
 
 // Tests IDC_SELECT_TAB_0, IDC_SELECT_NEXT_TAB, IDC_SELECT_PREVIOUS_TAB and
 // IDC_SELECT_LAST_TAB.
@@ -105,10 +108,22 @@ TEST_F(BrowserCommandsTest, DuplicateTab) {
 // Tests IDC_VIEW_SOURCE (See http://crbug.com/138140).
 TEST_F(BrowserCommandsTest, ViewSource) {
   GURL url1("http://foo/1");
+  GURL url1_subframe("http://foo/subframe");
   GURL url2("http://foo/2");
 
-  // Navigate to a URL, plus a pending URL that hasn't committed.
+  // Navigate to a URL and simulate a subframe committing.
   AddTab(browser(), url1);
+  content::RenderFrameHostTester* rfh_tester =
+      content::RenderFrameHostTester::For(
+          browser()->tab_strip_model()->GetWebContentsAt(0)->GetMainFrame());
+  content::RenderFrameHost* subframe = rfh_tester->AppendChild("subframe");
+  content::RenderFrameHostTester* subframe_tester =
+      content::RenderFrameHostTester::For(subframe);
+  subframe_tester->SimulateNavigationStart(GURL(url1_subframe));
+  subframe_tester->SimulateNavigationCommit(GURL(url1_subframe));
+  subframe_tester->SimulateNavigationStop();
+
+  // Now start a pending navigation that hasn't committed.
   content::NavigationController& orig_controller =
       browser()->tab_strip_model()->GetWebContentsAt(0)->GetController();
   orig_controller.LoadURL(
@@ -143,14 +158,15 @@ TEST_F(BrowserCommandsTest, BookmarkCurrentPage) {
   // We use profile() here, since it's a TestingProfile.
   profile()->CreateBookmarkModel(true);
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
   bookmarks::test::WaitForBookmarkModelToLoad(model);
 
   // Navigate to a url.
   GURL url1("http://foo/1");
   AddTab(browser(), url1);
-  browser()->OpenURL(OpenURLParams(
-      url1, Referrer(), CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false));
+  browser()->OpenURL(OpenURLParams(url1, Referrer(),
+                                   WindowOpenDisposition::CURRENT_TAB,
+                                   ui::PAGE_TRANSITION_TYPED, false));
 
   chrome::BookmarkCurrentPageAllowingExtensionOverrides(browser());
 
@@ -169,7 +185,7 @@ TEST_F(BrowserCommandsTest, BackForwardInNewTab) {
   NavigateAndCommitActiveTab(url2);
 
   // Go back in a new background tab.
-  chrome::GoBack(browser(), NEW_BACKGROUND_TAB);
+  chrome::GoBack(browser(), WindowOpenDisposition::NEW_BACKGROUND_TAB);
   EXPECT_EQ(0, browser()->tab_strip_model()->active_index());
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
 
@@ -195,7 +211,7 @@ TEST_F(BrowserCommandsTest, BackForwardInNewTab) {
   // (to test both codepaths).
   CommitPendingLoad(&first->GetController());
   EXPECT_EQ(1, browser()->tab_strip_model()->active_index());
-  chrome::GoForward(browser(), NEW_BACKGROUND_TAB);
+  chrome::GoForward(browser(), WindowOpenDisposition::NEW_BACKGROUND_TAB);
 
   // The previous tab should be unchanged and still in the foreground.
   EXPECT_EQ(url1, first->GetLastCommittedURL());
@@ -217,7 +233,7 @@ TEST_F(BrowserCommandsTest, BackForwardInNewTab) {
   browser()->tab_strip_model()->ActivateTabAt(2, true);
   // TODO(brettw) bug 11055: see the comment above about why we need this.
   CommitPendingLoad(&second->GetController());
-  chrome::GoBack(browser(), NEW_FOREGROUND_TAB);
+  chrome::GoBack(browser(), WindowOpenDisposition::NEW_FOREGROUND_TAB);
   ASSERT_EQ(3, browser()->tab_strip_model()->active_index());
   ASSERT_EQ(url1,
             browser()->tab_strip_model()->GetActiveWebContents()->
@@ -227,7 +243,7 @@ TEST_F(BrowserCommandsTest, BackForwardInNewTab) {
   // TODO(brettw) bug 11055: see the comment above about why we need this.
   CommitPendingLoad(&
       browser()->tab_strip_model()->GetActiveWebContents()->GetController());
-  chrome::GoForward(browser(), NEW_FOREGROUND_TAB);
+  chrome::GoForward(browser(), WindowOpenDisposition::NEW_FOREGROUND_TAB);
   ASSERT_EQ(4, browser()->tab_strip_model()->active_index());
   ASSERT_EQ(url2,
             browser()->tab_strip_model()->GetActiveWebContents()->
@@ -243,7 +259,7 @@ TEST_F(BrowserCommandsTest, OnMaxZoomIn) {
 
   // Continue to zoom in until zoom percent reaches 500.
   for (int i = 0; i < 9; ++i) {
-    ui_zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_IN);
+    zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_IN);
   }
 
   // TODO(a.sarkar.arun@gmail.com): Figure out why Zoom-In menu item is not
@@ -268,7 +284,7 @@ TEST_F(BrowserCommandsTest, OnMaxZoomOut) {
 
   // Continue to zoom out until zoom percent reaches 25.
   for (int i = 0; i < 7; ++i) {
-    ui_zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_OUT);
+    zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_OUT);
   }
 
   ZoomController* zoom_controller = ZoomController::FromWebContents(first_tab);
@@ -286,7 +302,7 @@ TEST_F(BrowserCommandsTest, OnZoomReset) {
   WebContents* first_tab = tab_strip_model->GetWebContentsAt(0);
 
   // Change the zoom percentage to 100.
-  ui_zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_RESET);
+  zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_RESET);
 
   ZoomController* zoom_controller = ZoomController::FromWebContents(first_tab);
   EXPECT_FLOAT_EQ(100.0f, zoom_controller->GetZoomPercent());
@@ -308,7 +324,7 @@ TEST_F(BrowserCommandsTest, OnZoomLevelChanged) {
 
   // Changing zoom percentage from default should enable all the zoom
   // NSMenuItems.
-  ui_zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_IN);
+  zoom::PageZoom::Zoom(first_tab, content::PAGE_ZOOM_IN);
 
   ZoomController* zoom_controller = ZoomController::FromWebContents(first_tab);
   EXPECT_FLOAT_EQ(110.0f, zoom_controller->GetZoomPercent());
@@ -339,7 +355,7 @@ TEST_F(BrowserCommandsTest, OnZoomChangedForActiveTab) {
 
   tab_strip_model->ActivateTabAt(1, true);
   EXPECT_TRUE(tab_strip_model->IsTabSelected(1));
-  ui_zoom::PageZoom::Zoom(second_tab, content::PAGE_ZOOM_OUT);
+  zoom::PageZoom::Zoom(second_tab, content::PAGE_ZOOM_OUT);
 
   zoom_controller = ZoomController::FromWebContents(second_tab);
   EXPECT_FLOAT_EQ(90.0f, zoom_controller->GetZoomPercent());
@@ -366,7 +382,7 @@ TEST_F(BrowserCommandsTest, OnDefaultZoomLevelChanged) {
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_ZOOM_MINUS));
 
   // Change the zoom level.
-  ui_zoom::PageZoom::Zoom(tab, content::PAGE_ZOOM_IN);
+  zoom::PageZoom::Zoom(tab, content::PAGE_ZOOM_IN);
 
   EXPECT_FLOAT_EQ(150.0f, zoom_controller->GetZoomPercent());
 

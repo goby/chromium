@@ -5,13 +5,14 @@
 #include "components/autofill/core/browser/autofill_ie_toolbar_import_win.h"
 
 #include <stddef.h>
+#include <stdint.h>
 #include <map>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/win/registry.h"
 #include "components/autofill/core/browser/autofill_country.h"
@@ -102,33 +103,33 @@ struct {
   ServerFieldType field_type;
   const wchar_t *reg_value_name;
 } profile_reg_values[] = {
-  { NAME_FIRST,                    L"name_first" },
-  { NAME_MIDDLE,                   L"name_middle" },
-  { NAME_LAST,                     L"name_last" },
-  { NAME_SUFFIX,                   L"name_suffix" },
-  { EMAIL_ADDRESS,                 L"email" },
-  { COMPANY_NAME,                  L"company_name" },
-  { PHONE_HOME_NUMBER,             L"phone_home_number" },
-  { PHONE_HOME_CITY_CODE,          L"phone_home_city_code" },
-  { PHONE_HOME_COUNTRY_CODE,       L"phone_home_country_code" },
-  { ADDRESS_HOME_LINE1,            L"address_home_line1" },
-  { ADDRESS_HOME_LINE2,            L"address_home_line2" },
-  { ADDRESS_HOME_CITY,             L"address_home_city" },
-  { ADDRESS_HOME_STATE,            L"address_home_state" },
-  { ADDRESS_HOME_ZIP,              L"address_home_zip" },
-  { ADDRESS_HOME_COUNTRY,          L"address_home_country" },
-  { ADDRESS_BILLING_LINE1,         L"address_billing_line1" },
-  { ADDRESS_BILLING_LINE2,         L"address_billing_line2" },
-  { ADDRESS_BILLING_CITY,          L"address_billing_city" },
-  { ADDRESS_BILLING_STATE,         L"address_billing_state" },
-  { ADDRESS_BILLING_ZIP,           L"address_billing_zip" },
-  { ADDRESS_BILLING_COUNTRY,       L"address_billing_country" },
-  { CREDIT_CARD_NAME,              L"credit_card_name" },
-  { CREDIT_CARD_NUMBER,            L"credit_card_number" },
-  { CREDIT_CARD_EXP_MONTH,         L"credit_card_exp_month" },
-  { CREDIT_CARD_EXP_4_DIGIT_YEAR,  L"credit_card_exp_4_digit_year" },
-  { CREDIT_CARD_TYPE,              L"credit_card_type" },
-  // We do not import verification code.
+    {NAME_FIRST, L"name_first"},
+    {NAME_MIDDLE, L"name_middle"},
+    {NAME_LAST, L"name_last"},
+    {NAME_SUFFIX, L"name_suffix"},
+    {EMAIL_ADDRESS, L"email"},
+    {COMPANY_NAME, L"company_name"},
+    {PHONE_HOME_NUMBER, L"phone_home_number"},
+    {PHONE_HOME_CITY_CODE, L"phone_home_city_code"},
+    {PHONE_HOME_COUNTRY_CODE, L"phone_home_country_code"},
+    {ADDRESS_HOME_LINE1, L"address_home_line1"},
+    {ADDRESS_HOME_LINE2, L"address_home_line2"},
+    {ADDRESS_HOME_CITY, L"address_home_city"},
+    {ADDRESS_HOME_STATE, L"address_home_state"},
+    {ADDRESS_HOME_ZIP, L"address_home_zip"},
+    {ADDRESS_HOME_COUNTRY, L"address_home_country"},
+    {ADDRESS_BILLING_LINE1, L"address_billing_line1"},
+    {ADDRESS_BILLING_LINE2, L"address_billing_line2"},
+    {ADDRESS_BILLING_CITY, L"address_billing_city"},
+    {ADDRESS_BILLING_STATE, L"address_billing_state"},
+    {ADDRESS_BILLING_ZIP, L"address_billing_zip"},
+    {ADDRESS_BILLING_COUNTRY, L"address_billing_country"},
+    {CREDIT_CARD_NAME_FULL, L"credit_card_name_full"},
+    {CREDIT_CARD_NUMBER, L"credit_card_number"},
+    {CREDIT_CARD_EXP_MONTH, L"credit_card_exp_month"},
+    {CREDIT_CARD_EXP_4_DIGIT_YEAR, L"credit_card_exp_4_digit_year"},
+    {CREDIT_CARD_TYPE, L"credit_card_type"},
+    // We do not import verification code.
 };
 
 typedef std::map<std::wstring, ServerFieldType> RegToFieldMap;
@@ -147,7 +148,7 @@ bool ImportSingleFormGroup(const RegKey& key,
 
   bool has_non_empty_fields = false;
 
-  for (uint32 i = 0; i < key.GetValueCount(); ++i) {
+  for (uint32_t i = 0; i < key.GetValueCount(); ++i) {
     std::wstring value_name;
     if (key.GetValueNameAt(i, &value_name) != ERROR_SUCCESS)
       continue;
@@ -245,9 +246,9 @@ bool ImportCurrentUserProfiles(const std::string& app_locale,
 
   // Create a map of possible fields for a quick access.
   RegToFieldMap reg_to_field;
-  for (size_t i = 0; i < arraysize(profile_reg_values); ++i) {
-    reg_to_field[std::wstring(profile_reg_values[i].reg_value_name)] =
-        profile_reg_values[i].field_type;
+  for (const auto& profile_reg_value : profile_reg_values) {
+    reg_to_field[std::wstring(profile_reg_value.reg_value_name)] =
+        profile_reg_value.field_type;
   }
 
   base::win::RegistryKeyIterator iterator_profiles(HKEY_CURRENT_USER,

@@ -37,21 +37,32 @@
 
 namespace blink {
 
-class SVGNumberTearOff : public SVGPropertyTearOff<SVGNumber>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGNumberTearOff> create(PassRefPtrWillBeRawPtr<SVGNumber> target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName = QualifiedName::null())
-    {
-        return adoptRefWillBeNoop(new SVGNumberTearOff(target, contextElement, propertyIsAnimVal, attributeName));
-    }
+class SVGNumberTearOff : public SVGPropertyTearOff<SVGNumber>,
+                         public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    void setValue(float, ExceptionState&);
-    float value() { return target()->value(); }
+ public:
+  static SVGNumberTearOff* create(
+      SVGNumber* target,
+      SVGElement* contextElement,
+      PropertyIsAnimValType propertyIsAnimVal,
+      const QualifiedName& attributeName = QualifiedName::null()) {
+    return new SVGNumberTearOff(target, contextElement, propertyIsAnimVal,
+                                attributeName);
+  }
 
-protected:
-    SVGNumberTearOff(PassRefPtrWillBeRawPtr<SVGNumber>, SVGElement* contextElement, PropertyIsAnimValType, const QualifiedName& attributeName = QualifiedName::null());
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+  void setValue(float, ExceptionState&);
+  float value() { return target()->value(); }
+
+ protected:
+  SVGNumberTearOff(SVGNumber*,
+                   SVGElement* contextElement,
+                   PropertyIsAnimValType,
+                   const QualifiedName& attributeName = QualifiedName::null());
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGNumberTearOff_h
+#endif  // SVGNumberTearOff_h

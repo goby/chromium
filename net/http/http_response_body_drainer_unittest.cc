@@ -11,13 +11,18 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/mock_cert_verifier.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/http/http_stream.h"
@@ -46,7 +51,7 @@ class CloseResultWaiter {
     CHECK(!waiting_for_result_);
     while (!have_result_) {
       waiting_for_result_ = true;
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
       waiting_for_result_ = false;
     }
     return result_;
@@ -78,13 +83,14 @@ class MockHttpStream : public HttpStream {
         is_sync_(false),
         is_last_chunk_zero_size_(false),
         is_complete_(false),
+        can_reuse_connection_(true),
         weak_factory_(this) {}
   ~MockHttpStream() override {}
 
   // HttpStream implementation.
   int InitializeStream(const HttpRequestInfo* request_info,
                        RequestPriority priority,
-                       const BoundNetLog& net_log,
+                       const NetLogWithSource& net_log,
                        const CompletionCallback& callback) override {
     return ERR_UNEXPECTED;
   }
@@ -93,19 +99,24 @@ class MockHttpStream : public HttpStream {
                   const CompletionCallback& callback) override {
     return ERR_UNEXPECTED;
   }
-  UploadProgress GetUploadProgress() const override { return UploadProgress(); }
   int ReadResponseHeaders(const CompletionCallback& callback) override {
     return ERR_UNEXPECTED;
   }
 
   bool IsConnectionReused() const override { return false; }
   void SetConnectionReused() override {}
-  bool CanReuseConnection() const override { return false; }
+  bool CanReuseConnection() const override { return can_reuse_connection_; }
   int64_t GetTotalReceivedBytes() const override { return 0; }
   int64_t GetTotalSentBytes() const override { return 0; }
   void GetSSLInfo(SSLInfo* ssl_info) override {}
   void GetSSLCertRequestInfo(SSLCertRequestInfo* cert_request_info) override {}
   bool GetRemoteEndpoint(IPEndPoint* endpoint) override { return false; }
+  Error GetTokenBindingSignature(crypto::ECPrivateKey* key,
+                                 TokenBindingType tb_type,
+                                 std::vector<uint8_t>* out) override {
+    ADD_FAILURE();
+    return ERR_NOT_IMPLEMENTED;
+  }
 
   // Mocked API
   int ReadResponseBody(IOBuffer* buf,
@@ -127,6 +138,8 @@ class MockHttpStream : public HttpStream {
 
   void Drain(HttpNetworkSession*) override {}
 
+  void PopulateNetErrorDetails(NetErrorDetails* details) override { return; }
+
   void SetPriority(RequestPriority priority) override {}
 
   // Methods to tweak/observer mock behavior:
@@ -137,6 +150,11 @@ class MockHttpStream : public HttpStream {
   void set_sync() { is_sync_ = true; }
 
   void set_is_last_chunk_zero_size() { is_last_chunk_zero_size_ = true; }
+
+  // Sets result value of CanReuseConnection. Defaults to true.
+  void set_can_reuse_connection(bool can_reuse_connection) {
+    can_reuse_connection_ = can_reuse_connection;
+  }
 
  private:
   int ReadResponseBodyImpl(IOBuffer* buf, int buf_len);
@@ -154,7 +172,11 @@ class MockHttpStream : public HttpStream {
   bool is_sync_;
   bool is_last_chunk_zero_size_;
   bool is_complete_;
+  bool can_reuse_connection_;
+
   base::WeakPtrFactory<MockHttpStream> weak_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(MockHttpStream);
 };
 
 int MockHttpStream::ReadResponseBody(IOBuffer* buf,
@@ -212,27 +234,32 @@ class HttpResponseBodyDrainerTest : public testing::Test {
       : proxy_service_(ProxyService::CreateDirect()),
         ssl_config_service_(new SSLConfigServiceDefaults),
         http_server_properties_(new HttpServerPropertiesImpl()),
-        transport_security_state_(new TransportSecurityState()),
         session_(CreateNetworkSession()),
         mock_stream_(new MockHttpStream(&result_waiter_)),
         drainer_(new HttpResponseBodyDrainer(mock_stream_)) {}
 
   ~HttpResponseBodyDrainerTest() override {}
 
-  HttpNetworkSession* CreateNetworkSession() const {
+  HttpNetworkSession* CreateNetworkSession() {
     HttpNetworkSession::Params params;
     params.proxy_service = proxy_service_.get();
     params.ssl_config_service = ssl_config_service_.get();
-    params.http_server_properties = http_server_properties_->GetWeakPtr();
-    params.transport_security_state = transport_security_state_.get();
+    params.http_server_properties = http_server_properties_.get();
+    params.cert_verifier = &cert_verifier_;
+    params.transport_security_state = &transport_security_state_;
+    params.cert_transparency_verifier = &ct_verifier_;
+    params.ct_policy_enforcer = &ct_policy_enforcer_;
     return new HttpNetworkSession(params);
   }
 
-  scoped_ptr<ProxyService> proxy_service_;
+  std::unique_ptr<ProxyService> proxy_service_;
   scoped_refptr<SSLConfigService> ssl_config_service_;
-  scoped_ptr<HttpServerPropertiesImpl> http_server_properties_;
-  scoped_ptr<TransportSecurityState> transport_security_state_;
-  const scoped_ptr<HttpNetworkSession> session_;
+  std::unique_ptr<HttpServerPropertiesImpl> http_server_properties_;
+  MockCertVerifier cert_verifier_;
+  TransportSecurityState transport_security_state_;
+  MultiLogCTVerifier ct_verifier_;
+  CTPolicyEnforcer ct_policy_enforcer_;
+  const std::unique_ptr<HttpNetworkSession> session_;
   CloseResultWaiter result_waiter_;
   MockHttpStream* const mock_stream_;  // Owned by |drainer_|.
   HttpResponseBodyDrainer* const drainer_;  // Deletes itself.
@@ -303,6 +330,13 @@ TEST_F(HttpResponseBodyDrainerTest, DrainBodyTooLarge) {
   too_many_chunks += 1;  // Now it's too large.
 
   mock_stream_->set_num_chunks(too_many_chunks);
+  drainer_->Start(session_.get());
+  EXPECT_TRUE(result_waiter_.WaitForResult());
+}
+
+TEST_F(HttpResponseBodyDrainerTest, DrainBodyCantReuse) {
+  mock_stream_->set_num_chunks(1);
+  mock_stream_->set_can_reuse_connection(false);
   drainer_->Start(session_.get());
   EXPECT_TRUE(result_waiter_.WaitForResult());
 }

@@ -32,8 +32,7 @@
 #define ActiveDOMCallback_h
 
 #include "core/CoreExport.h"
-#include "core/dom/ContextLifecycleObserver.h"
-#include "wtf/OwnPtr.h"
+#include "platform/heap/Handle.h"
 
 namespace blink {
 
@@ -46,15 +45,19 @@ class ExecutionContext;
 //
 // Should only be created, used, and destroyed on the script execution
 // context thread.
-class CORE_EXPORT ActiveDOMCallback : public ContextLifecycleObserver {
-public:
-    explicit ActiveDOMCallback(ExecutionContext*);
-    virtual ~ActiveDOMCallback();
+class CORE_EXPORT ActiveDOMCallback : public GarbageCollectedMixin {
+ public:
+  explicit ActiveDOMCallback(ExecutionContext*);
+  virtual ~ActiveDOMCallback();
 
-    bool canInvokeCallback() const;
-    bool isScriptControllerTerminating() const;
+  bool canInvokeCallback() const;
+
+  DECLARE_TRACE();
+
+ private:
+  Member<ExecutionContext> m_context;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ActiveDOMCallback_h
+#endif  // ActiveDOMCallback_h

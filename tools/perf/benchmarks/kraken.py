@@ -9,7 +9,7 @@ import os
 from core import perf_benchmark
 
 from telemetry import page as page_module
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry import story
 from telemetry.value import list_of_scalar_values
 from telemetry.value import scalar
@@ -69,7 +69,8 @@ def _Mean(l):
   return float(sum(l)) / len(l) if len(l) > 0 else 0.0
 
 
-class _KrakenMeasurement(page_test.PageTest):
+class _KrakenMeasurement(legacy_page_test.LegacyPageTest):
+
   def __init__(self):
     super(_KrakenMeasurement, self).__init__()
     self._power_metric = None
@@ -127,10 +128,14 @@ class Kraken(perf_benchmark.PerfBenchmark):
 
   def CreateStorySet(self, options):
     ps = story.StorySet(
-      archive_data_file='../page_sets/data/kraken.json',
-      base_dir=os.path.dirname(os.path.abspath(__file__)),
-      cloud_storage_bucket=story.PARTNER_BUCKET)
+        archive_data_file='../page_sets/data/kraken.json',
+        base_dir=os.path.dirname(os.path.abspath(__file__)),
+        cloud_storage_bucket=story.PARTNER_BUCKET)
     ps.AddStory(page_module.Page(
         'http://krakenbenchmark.mozilla.org/kraken-1.1/driver.html',
         ps, ps.base_dir))
     return ps
+
+  @classmethod
+  def ShouldDisable(cls, possible_browser):
+    return cls.IsSvelte(possible_browser)  # http://crbug.com/624411

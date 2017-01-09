@@ -1,5 +1,6 @@
 include_rules = [
-  "+device/core",
-  "+device/devices_app/usb/public",
+  "+chrome/browser/ui",
+  "+components/bubble",
+  "+device/base",
   "+device/usb",
 ]

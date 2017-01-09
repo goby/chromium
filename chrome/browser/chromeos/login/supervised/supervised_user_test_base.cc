@@ -36,14 +36,14 @@
 #include "chromeos/cryptohome/mock_homedir_methods.h"
 #include "chromeos/login/auth/key.h"
 #include "chromeos/login/auth/user_context.h"
+#include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
+#include "components/sync/model/fake_sync_change_processor.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_error_factory_mock.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
-#include "sync/api/fake_sync_change_processor.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_error_factory_mock.h"
-#include "sync/internal_api/public/attachments/attachment_service_proxy_for_test.h"
-#include "sync/protocol/sync.pb.h"
 
 using testing::_;
 using base::StringPrintf;
@@ -63,22 +63,22 @@ SupervisedUsersSyncTestAdapter::SupervisedUsersSyncTestAdapter(Profile* profile)
   service_ = SupervisedUserSyncServiceFactory::GetForProfile(profile);
   processor_ = new syncer::FakeSyncChangeProcessor();
   service_->MergeDataAndStartSyncing(
-      syncer::SUPERVISED_USERS,
-      syncer::SyncDataList(),
-      scoped_ptr<syncer::SyncChangeProcessor>(processor_),
-      scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock));
+      syncer::SUPERVISED_USERS, syncer::SyncDataList(),
+      std::unique_ptr<syncer::SyncChangeProcessor>(processor_),
+      std::unique_ptr<syncer::SyncErrorFactory>(
+          new syncer::SyncErrorFactoryMock));
 }
 
-scoped_ptr< ::sync_pb::ManagedUserSpecifics>
+std::unique_ptr<::sync_pb::ManagedUserSpecifics>
 SupervisedUsersSyncTestAdapter::GetFirstChange() {
-  scoped_ptr< ::sync_pb::ManagedUserSpecifics> result(
+  std::unique_ptr<::sync_pb::ManagedUserSpecifics> result(
       new ::sync_pb::ManagedUserSpecifics);
   CHECK(HasChanges())
       << "GetFirstChange() should only be callled if HasChanges() is true";
   const syncer::SyncData& data = processor_->changes().front().sync_data();
   EXPECT_EQ(syncer::SUPERVISED_USERS, data.GetDataType());
   result->CopyFrom(data.GetSpecifics().managed_user());
-  return result.Pass();
+  return result;
 }
 
 void SupervisedUsersSyncTestAdapter::AddChange(
@@ -112,22 +112,22 @@ SupervisedUsersSharedSettingsSyncTestAdapter::
       SupervisedUserSharedSettingsServiceFactory::GetForBrowserContext(profile);
   processor_ = new syncer::FakeSyncChangeProcessor();
   service_->MergeDataAndStartSyncing(
-      syncer::SUPERVISED_USER_SHARED_SETTINGS,
-      syncer::SyncDataList(),
-      scoped_ptr<syncer::SyncChangeProcessor>(processor_),
-      scoped_ptr<syncer::SyncErrorFactory>(new syncer::SyncErrorFactoryMock));
+      syncer::SUPERVISED_USER_SHARED_SETTINGS, syncer::SyncDataList(),
+      std::unique_ptr<syncer::SyncChangeProcessor>(processor_),
+      std::unique_ptr<syncer::SyncErrorFactory>(
+          new syncer::SyncErrorFactoryMock));
 }
 
-scoped_ptr< ::sync_pb::ManagedUserSharedSettingSpecifics>
+std::unique_ptr<::sync_pb::ManagedUserSharedSettingSpecifics>
 SupervisedUsersSharedSettingsSyncTestAdapter::GetFirstChange() {
-  scoped_ptr< ::sync_pb::ManagedUserSharedSettingSpecifics> result(
+  std::unique_ptr<::sync_pb::ManagedUserSharedSettingSpecifics> result(
       new ::sync_pb::ManagedUserSharedSettingSpecifics);
   CHECK(HasChanges())
       << "GetFirstChange() should only be callled if HasChanges() is true";
   const syncer::SyncData& data = processor_->changes().front().sync_data();
   EXPECT_EQ(syncer::SUPERVISED_USER_SHARED_SETTINGS, data.GetDataType());
   result->CopyFrom(data.GetSpecifics().managed_user_shared_setting());
-  return result.Pass();
+  return result;
 }
 
 void SupervisedUsersSharedSettingsSyncTestAdapter::AddChange(
@@ -296,7 +296,6 @@ void SupervisedUserTestBase::StartFlowLoginAsManager() {
   JSExpect("!$('supervised-user-creation-next-button').disabled");
   UserContext user_context(AccountId::FromUserEmailGaiaId(
       kTestManager, GetGaiaIDForUserID(kTestManager)));
-  user_context.SetGaiaID(GetGaiaIDForUserID(kTestManager));
   user_context.SetKey(Key(kTestManagerPassword));
   SetExpectedCredentials(user_context);
   content::WindowedNotificationObserver login_observer(
@@ -336,16 +335,23 @@ void SupervisedUserTestBase::FillNewUserData(const std::string& display_name) {
 void SupervisedUserTestBase::StartUserCreation(
     const std::string& button_id,
     const std::string& expected_display_name) {
+  base::RunLoop mount_wait_loop, add_key_wait_loop;
+  mock_homedir_methods_->set_mount_callback(mount_wait_loop.QuitClosure());
+  mock_homedir_methods_->set_add_key_callback(add_key_wait_loop.QuitClosure());
   EXPECT_CALL(*mock_homedir_methods_, MountEx(_, _, _, _)).Times(1);
   EXPECT_CALL(*mock_homedir_methods_, AddKeyEx(_, _, _, _, _)).Times(1);
 
   JSEval(std::string("$('").append(button_id).append("').click()"));
 
+  mount_wait_loop.Run();
+  add_key_wait_loop.Run();
   ::testing::Mock::VerifyAndClearExpectations(mock_homedir_methods_);
+  mock_homedir_methods_->set_mount_callback(base::Closure());
+  mock_homedir_methods_->set_add_key_callback(base::Closure());
 
   EXPECT_TRUE(registration_utility_stub_->register_was_called());
-  EXPECT_EQ(registration_utility_stub_->display_name(),
-            base::UTF8ToUTF16(expected_display_name));
+  EXPECT_EQ(base::UTF8ToUTF16(expected_display_name),
+            registration_utility_stub_->display_name());
 
   registration_utility_stub_->RunSuccessCallback("token");
 
@@ -354,6 +360,9 @@ void SupervisedUserTestBase::StartUserCreation(
 
   JSExpect(StringPrintf("%s == 'created'", kCurrentPage));
   JSEvalOrExitBrowser("$('supervised-user-creation-gotit-button').click()");
+
+  // TODO(achuith): There should probably be a wait for a specific event.
+  content::RunAllPendingInMessageLoop();
 }
 
 void SupervisedUserTestBase::SigninAsSupervisedUser(
@@ -374,9 +383,9 @@ void SupervisedUserTestBase::SigninAsSupervisedUser(
   // Clean first run flag before logging in.
   static_cast<SupervisedUserManagerImpl*>(
       ChromeUserManager::Get()->GetSupervisedUserManager())
-      ->CheckForFirstRun(user->email());
+      ->CheckForFirstRun(user->GetAccountId().GetUserEmail());
 
-  LoginUser(user->email());
+  LoginUser(user->GetAccountId().GetUserEmail());
   if (check_homedir_calls)
     ::testing::Mock::VerifyAndClearExpectations(mock_homedir_methods_);
   Profile* profile = ProfileHelper::Get()->GetProfileByUserUnsafe(user);
@@ -395,7 +404,7 @@ void SupervisedUserTestBase::SigninAsManager(int user_index) {
   // Created supervised user have to be first in a list.
   const user_manager::User* user =
       user_manager::UserManager::Get()->GetUsers().at(user_index);
-  LoginUser(user->email());
+  LoginUser(user->GetAccountId().GetUserEmail());
   Profile* profile = ProfileHelper::Get()->GetProfileByUserUnsafe(user);
   shared_settings_adapter_.reset(
       new SupervisedUsersSharedSettingsSyncTestAdapter(profile));

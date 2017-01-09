@@ -4,17 +4,21 @@
 
 #include "components/autofill/core/browser/webdata/autocomplete_syncable_service.h"
 
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/protocol/autofill_specifics.pb.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "components/webdata/common/web_database.h"
 #include "net/base/escape.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/protocol/autofill_specifics.pb.h"
-#include "sync/protocol/sync.pb.h"
 
 namespace autofill {
 namespace {
@@ -98,15 +102,15 @@ void AutocompleteSyncableService::InjectStartSyncFlare(
 syncer::SyncMergeResult AutocompleteSyncableService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> error_handler) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> error_handler) {
   DCHECK(CalledOnValidThread());
   DCHECK(!sync_processor_);
   DCHECK(sync_processor);
   DCHECK(error_handler);
 
   syncer::SyncMergeResult merge_result(type);
-  error_handler_ = error_handler.Pass();
+  error_handler_ = std::move(error_handler);
   std::vector<AutofillEntry> entries;
   if (!LoadAutofillData(&entries)) {
     merge_result.set_error(error_handler_->CreateAndUploadError(
@@ -121,7 +125,7 @@ syncer::SyncMergeResult AutocompleteSyncableService::MergeDataAndStartSyncing(
         std::make_pair(syncer::SyncChange::ACTION_ADD, it);
   }
 
-  sync_processor_ = sync_processor.Pass();
+  sync_processor_ = std::move(sync_processor);
 
   std::vector<AutofillEntry> new_synced_entries;
   // Go through and check for all the entries that sync already knows about.
@@ -154,6 +158,8 @@ syncer::SyncMergeResult AutocompleteSyncableService::MergeDataAndStartSyncing(
   // Otherwise, an item that Sync is not yet aware of might expire, causing a
   // Sync error when that item's deletion is propagated to Sync.
   web_data_backend_->RemoveExpiredFormElements();
+
+  web_data_backend_->NotifyThatSyncHasStarted(type);
 
   return merge_result;
 }
@@ -200,7 +206,7 @@ syncer::SyncError AutocompleteSyncableService::ProcessSyncChanges(
 
   // Data is loaded only if we get new ADD/UPDATE change.
   std::vector<AutofillEntry> entries;
-  scoped_ptr<AutocompleteEntryMap> db_entries;
+  std::unique_ptr<AutocompleteEntryMap> db_entries;
   std::vector<AutofillEntry> new_entries;
 
   syncer::SyncError list_processing_error;

@@ -8,9 +8,12 @@
 
 #include "extensions/renderer/script_context.h"
 #include "storage/common/fileapi/file_system_util.h"
+#include "third_party/WebKit/public/platform/URLConversion.h"
 #include "third_party/WebKit/public/web/WebDOMFileSystem.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/v8.h"
 
 namespace extensions {
@@ -19,7 +22,7 @@ MediaGalleriesCustomBindings::MediaGalleriesCustomBindings(
     ScriptContext* context)
     : ObjectBackedNativeHandler(context) {
   RouteFunction(
-      "GetMediaFileSystemObject",
+      "GetMediaFileSystemObject", "mediaGalleries",
       base::Bind(&MediaGalleriesCustomBindings::GetMediaFileSystemObject,
                  base::Unretained(this)));
 }
@@ -36,7 +39,8 @@ void MediaGalleriesCustomBindings::GetMediaFileSystemObject(
 
   blink::WebLocalFrame* webframe =
       blink::WebLocalFrame::frameForCurrentContext();
-  const GURL origin = GURL(webframe->document().securityOrigin().toString());
+  const GURL origin =
+      url::Origin(webframe->document().getSecurityOrigin()).GetURL();
   std::string fs_name =
       storage::GetFileSystemName(origin, storage::kFileSystemTypeExternal);
   fs_name.append("_");

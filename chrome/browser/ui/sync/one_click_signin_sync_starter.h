@@ -5,26 +5,33 @@
 #ifndef CHROME_BROWSER_UI_SYNC_ONE_CLICK_SIGNIN_SYNC_STARTER_H_
 #define CHROME_BROWSER_UI_SYNC_ONE_CLICK_SIGNIN_SYNC_STARTER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_list_observer.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/sync/profile_signin_confirmation_helper.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "components/signin/core/browser/signin_tracker.h"
 #include "content/public/browser/web_contents_observer.h"
 
 class Browser;
+
+namespace browser_sync {
 class ProfileSyncService;
+}  // namespace browser_sync
 
 namespace content {
 class WebContents;
 }  // namespace content
+
+namespace syncer {
+class SyncSetupInProgressHandle;
+}  // namespace syncer
 
 // Waits for successful sign-in notification from the signin manager and then
 // starts the sync machine.  Instances of this class delete themselves once
@@ -101,6 +108,7 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
                             StartSyncMode start_mode,
                             content::WebContents* web_contents,
                             ConfirmationRequired display_confirmation,
+                            const GURL& current_url,
                             const GURL& continue_url,
                             Callback callback);
 
@@ -110,9 +118,7 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // If the |browser| argument is non-null, returns the pointer directly.
   // Otherwise creates a new browser for the given profile on the given
   // desktop, adds an empty tab and makes sure the browser is visible.
-  static Browser* EnsureBrowser(Browser* browser,
-                                Profile* profile,
-                                chrome::HostDesktopType desktop_type);
+  static Browser* EnsureBrowser(Browser* browser, Profile* profile);
 
  private:
   friend class OneClickSigninSyncStarterTest;
@@ -132,9 +138,9 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   void AccountAddedToCookie(const GoogleServiceAuthError& error) override;
 
   // LoginUIService::Observer override.
-  void OnSyncConfirmationUIClosed(bool configure_sync_first) override;
+  void OnSyncConfirmationUIClosed(
+      LoginUIService::SyncConfirmationUIClosedResult result) override;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   // User input handler for the signin confirmation dialog.
   class SigninDialogDelegate
     : public ui::ProfileSigninConfirmationDelegate {
@@ -170,11 +176,8 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
 
   // Callback invoked once a profile is created, so we can complete the
   // credentials transfer, load policy, and open the first window.
-  void CompleteInitForNewProfile(chrome::HostDesktopType desktop_type,
-                                 Profile* profile,
+  void CompleteInitForNewProfile(Profile* profile,
                                  Profile::CreateStatus status);
-
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
   // Cancels the in-progress signin for this profile.
   void CancelSigninAndDelete();
@@ -197,7 +200,7 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // disabled during setup. In this case GetProfileSyncService will return NULL,
   // but we still need to call PSS::SetSetupInProgress(false). For this purpose
   // call FinishProfileSyncServiceSetup() function.
-  ProfileSyncService* GetProfileSyncService();
+  browser_sync::ProfileSyncService* GetProfileSyncService();
 
   void FinishProfileSyncServiceSetup();
 
@@ -216,26 +219,38 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // the default "You are signed in" message is displayed.
   void DisplayFinalConfirmationBubble(const base::string16& custom_message);
 
+  void DisplayModalSyncConfirmationWindow();
+
   // Loads the |continue_url_| in the current tab.
   void LoadContinueUrl();
 
   Profile* profile_;
   Browser* browser_;
-  scoped_ptr<SigninTracker> signin_tracker_;
+  std::unique_ptr<SigninTracker> signin_tracker_;
   StartSyncMode start_mode_;
-  chrome::HostDesktopType desktop_type_;
   ConfirmationRequired confirmation_required_;
+  GURL current_url_;
   GURL continue_url_;
 
   // Callback executed when sync setup succeeds or fails.
   Callback sync_setup_completed_callback_;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   // Policy credentials we keep while determining whether to create
   // a new profile for an enterprise user or not.
   std::string dm_token_;
   std::string client_id_;
-#endif
+
+  // This only cares about the first AccountAddedToCookie event. Since
+  // SigninTracker always expects an observer, this object will just disregard
+  // following AccountAddedToCookie calls triggered by account reconciliation.
+  bool first_account_added_to_cookie_;
+
+  // Prevents Sync from running until configuration is complete.
+  std::unique_ptr<syncer::SyncSetupInProgressHandle> sync_blocker_;
+
+  // Temporary flag to disable new sync confirm page if user choose to create a
+  // new profile after the corp account signin.
+  bool skip_sync_confirm_;
 
   base::WeakPtrFactory<OneClickSigninSyncStarter> weak_pointer_factory_;
 

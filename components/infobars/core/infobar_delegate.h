@@ -5,15 +5,16 @@
 #ifndef COMPONENTS_INFOBARS_CORE_INFOBAR_DELEGATE_H_
 #define COMPONENTS_INFOBARS_CORE_INFOBAR_DELEGATE_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "ui/base/window_open_disposition.h"
 
 class ConfirmInfoBarDelegate;
 class HungRendererInfoBarDelegate;
 class InsecureContentInfoBarDelegate;
 class NativeAppInfoBarDelegate;
-class PermissionInfobarDelegate;
+class PermissionInfoBarDelegate;
 class PopupBlockedInfoBarDelegate;
 class RegisterProtocolHandlerInfoBarDelegate;
 class ScreenCaptureInfoBarDelegate;
@@ -23,6 +24,10 @@ class ThreeDAPIInfoBarDelegate;
 #if defined(OS_ANDROID)
 class MediaStreamInfoBarDelegateAndroid;
 class MediaThrottleInfoBarDelegate;
+
+namespace offline_pages {
+class OfflinePageInfoBarDelegate;
+}
 #endif
 
 namespace translate {
@@ -59,6 +64,88 @@ class InfoBarDelegate {
     UNKNOWN_INFOBAR,
   };
 
+  // Unique identifier for every InfoBarDelegate subclass.
+  // KEEP IN SYNC WITH THE InfoBarIdentifier ENUM IN histograms.xml.
+  // NEW VALUES MUST BE APPENDED AND AVOID CHANGING ANY PRE-EXISTING VALUES.
+  // A Java counterpart will be generated for this enum.
+  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.infobar
+  enum InfoBarIdentifier {
+    INVALID = -1,
+    TEST_INFOBAR = 0,
+    APP_BANNER_INFOBAR_DELEGATE_ANDROID = 1,
+    APP_BANNER_INFOBAR_DELEGATE_DESKTOP = 2,
+    ANDROID_DOWNLOAD_MANAGER_DUPLICATE_INFOBAR_DELEGATE = 3,
+    CHROME_DUPLICATE_DOWNLOAD_INFOBAR_DELEGATE = 4,
+    DOWNLOAD_REQUEST_INFOBAR_DELEGATE_ANDROID = 5,
+    // Removed: FULLSCREEN_INFOBAR_DELEGATE = 6,
+    HUNG_PLUGIN_INFOBAR_DELEGATE = 7,
+    HUNG_RENDERER_INFOBAR_DELEGATE = 8,
+    MEDIA_STREAM_INFOBAR_DELEGATE_ANDROID = 9,
+    MEDIA_THROTTLE_INFOBAR_DELEGATE = 10,
+    REQUEST_QUOTA_INFOBAR_DELEGATE = 11,
+    DEV_TOOLS_CONFIRM_INFOBAR_DELEGATE = 12,
+    EXTENSION_DEV_TOOLS_INFOBAR_DELEGATE = 13,
+    INCOGNITO_CONNECTABILITY_INFOBAR_DELEGATE = 14,
+    THEME_INSTALLED_INFOBAR_DELEGATE = 15,
+    GEOLOCATION_INFOBAR_DELEGATE_ANDROID = 16,
+    THREE_D_API_INFOBAR_DELEGATE = 17,
+    // Removed: INSECURE_CONTENT_INFOBAR_DELEGATE = 18,
+    MIDI_PERMISSION_INFOBAR_DELEGATE_ANDROID = 19,
+    PROTECTED_MEDIA_IDENTIFIER_INFOBAR_DELEGATE_ANDROID = 20,
+    NACL_INFOBAR_DELEGATE = 21,
+    // Removed: DATA_REDUCTION_PROXY_INFOBAR_DELEGATE_ANDROID = 22,
+    NOTIFICATION_PERMISSION_INFOBAR_DELEGATE = 23,
+    AUTO_SIGNIN_FIRST_RUN_INFOBAR_DELEGATE = 24,
+    GENERATED_PASSWORD_SAVED_INFOBAR_DELEGATE_ANDROID = 25,
+    SAVE_PASSWORD_INFOBAR_DELEGATE = 26,
+    PEPPER_BROKER_INFOBAR_DELEGATE = 27,
+    PERMISSION_UPDATE_INFOBAR_DELEGATE = 28,
+    DURABLE_STORAGE_PERMISSION_INFOBAR_DELEGATE_ANDROID = 29,
+    // Removed: NPAPI_REMOVAL_INFOBAR_DELEGATE = 30,
+    OUTDATED_PLUGIN_INFOBAR_DELEGATE = 31,
+    PLUGIN_METRO_MODE_INFOBAR_DELEGATE = 32,
+    RELOAD_PLUGIN_INFOBAR_DELEGATE = 33,
+    PLUGIN_OBSERVER = 34,
+    SSL_ADD_CERTIFICATE = 35,
+    // Removed: SSL_ADD_CERTIFICATE_INFOBAR_DELEGATE = 36,
+    POPUP_BLOCKED_INFOBAR_DELEGATE = 37,
+    CHROME_SELECT_FILE_POLICY = 38,
+    KEYSTONE_PROMOTION_INFOBAR_DELEGATE = 39,
+    COLLECTED_COOKIES_INFOBAR_DELEGATE = 40,
+    INSTALLATION_ERROR_INFOBAR_DELEGATE = 41,
+    ALTERNATE_NAV_INFOBAR_DELEGATE = 42,
+    BAD_FLAGS_PROMPT = 43,
+    DEFAULT_BROWSER_INFOBAR_DELEGATE = 44,
+    GOOGLE_API_KEYS_INFOBAR_DELEGATE = 45,
+    OBSOLETE_SYSTEM_INFOBAR_DELEGATE = 46,
+    SESSION_CRASHED_INFOBAR_DELEGATE = 47,
+    WEBSITE_SETTINGS_INFOBAR_DELEGATE = 48,
+    AUTOFILL_CC_INFOBAR_DELEGATE = 49,
+    TRANSLATE_INFOBAR_DELEGATE = 50,
+    IOS_CHROME_SAVE_PASSWORD_INFOBAR_DELEGATE = 51,
+    NATIVE_APP_INSTALLER_INFOBAR_DELEGATE = 52,
+    NATIVE_APP_LAUNCHER_INFOBAR_DELEGATE = 53,
+    NATIVE_APP_OPEN_POLICY_INFOBAR_DELEGATE = 54,
+    RE_SIGN_IN_INFOBAR_DELEGATE = 55,
+    SHOW_PASSKIT_INFOBAR_ERROR_DELEGATE = 56,
+    READER_MODE_INFOBAR_DELEGATE_IOS = 57,
+    SYNC_ERROR_INFOBAR_DELEGATE = 58,
+    UPGRADE_INFOBAR_DELEGATE_IOS = 59,
+    CHROME_WINDOW_ERROR = 60,
+    CONFIRM_DANGEROUS_DOWNLOAD = 61,
+    // Removed: DESKTOP_SEARCH_REDIRECTION_INFOBAR_DELEGATE = 62,
+    UPDATE_PASSWORD_INFOBAR_DELEGATE = 63,
+    DATA_REDUCTION_PROMO_INFOBAR_DELEGATE_ANDROID = 64,
+    AUTOFILL_CREDIT_CARD_FILLING_INFOBAR_DELEGATE_ANDROID = 65,
+    SUBRESOURCE_FILTER_INFOBAR_DELEGATE_ANDROID = 66,
+    INSTANT_APPS_INFOBAR_DELEGATE_ANDROID = 67,
+    DATA_REDUCTION_PROXY_PREVIEW_INFOBAR_DELEGATE = 68,
+    SCREEN_CAPTURE_INFOBAR_DELEGATE_ANDROID = 69,
+    GROUPED_PERMISSION_INFOBAR_DELEGATE_ANDROID = 70,
+    OFFLINE_PAGE_INFOBAR_DELEGATE = 71,
+    SEARCH_GEOLOCATION_DISCLOSURE_INFOBAR_DELEGATE = 72,
+  };
+
   // Describes navigation events, used to decide whether infobars should be
   // dismissed.
   struct NavigationDetails {
@@ -82,6 +169,11 @@ class InfoBarDelegate {
   // Returns the type of the infobar.  The type determines the appearance (such
   // as background color) of the infobar.
   virtual Type GetInfoBarType() const;
+
+  // Returns a unique value identifying the infobar.
+  // New implementers must append a new value to the InfoBarIdentifier enum here
+  // and in histograms.xml.
+  virtual InfoBarIdentifier GetIdentifier() const = 0;
 
   virtual InfoBarAutomationType GetInfoBarAutomationType() const;
 
@@ -113,8 +205,7 @@ class InfoBarDelegate {
   // Returns true if the InfoBar should be closed automatically after the page
   // is navigated. By default this returns true if the navigation is to a new
   // page (not including reloads).  Subclasses wishing to change this behavior
-  // can override either this function or ShouldExpireInternal(), depending on
-  // what level of control they need.
+  // can override this function.
   virtual bool ShouldExpire(const NavigationDetails& details) const;
 
   // Called when the user clicks on the close button to dismiss the infobar.
@@ -125,7 +216,7 @@ class InfoBarDelegate {
   virtual HungRendererInfoBarDelegate* AsHungRendererInfoBarDelegate();
   virtual InsecureContentInfoBarDelegate* AsInsecureContentInfoBarDelegate();
   virtual NativeAppInfoBarDelegate* AsNativeAppInfoBarDelegate();
-  virtual PermissionInfobarDelegate* AsPermissionInfobarDelegate();
+  virtual PermissionInfoBarDelegate* AsPermissionInfoBarDelegate();
   virtual PopupBlockedInfoBarDelegate* AsPopupBlockedInfoBarDelegate();
   virtual RegisterProtocolHandlerInfoBarDelegate*
       AsRegisterProtocolHandlerInfoBarDelegate();
@@ -137,6 +228,8 @@ class InfoBarDelegate {
   virtual MediaStreamInfoBarDelegateAndroid*
   AsMediaStreamInfoBarDelegateAndroid();
   virtual MediaThrottleInfoBarDelegate* AsMediaThrottleInfoBarDelegate();
+  virtual offline_pages::OfflinePageInfoBarDelegate*
+  AsOfflinePageInfoBarDelegate();
 #endif
 
   void set_infobar(InfoBar* infobar) { infobar_ = infobar; }

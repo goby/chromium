@@ -5,6 +5,8 @@
 #ifndef UI_OZONE_PLATFORM_DRM_HOST_DRM_NATIVE_DISPLAY_DELEGATE_H_
 #define UI_OZONE_PLATFORM_DRM_HOST_DRM_NATIVE_DISPLAY_DELEGATE_H_
 
+#include <stdint.h>
+
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "ui/display/types/native_display_delegate.h"
@@ -48,11 +50,14 @@ class DrmNativeDisplayDelegate : public NativeDisplayDelegate {
   bool SetColorCalibrationProfile(
       const ui::DisplaySnapshot& output,
       ui::ColorCalibrationProfile new_profile) override;
-  bool SetGammaRamp(const ui::DisplaySnapshot& output,
-                    const std::vector<GammaRampRGBEntry>& lut) override;
+  bool SetColorCorrection(const ui::DisplaySnapshot& output,
+                          const std::vector<GammaRampRGBEntry>& degamma_lut,
+                          const std::vector<GammaRampRGBEntry>& gamma_lut,
+                          const std::vector<float>& correction_matrix) override;
 
   void AddObserver(NativeDisplayObserver* observer) override;
   void RemoveObserver(NativeDisplayObserver* observer) override;
+  display::FakeDisplayController* GetFakeDisplayController() override;
 
  private:
   DrmDisplayHostManager* display_manager_;  // Not owned.

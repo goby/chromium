@@ -6,13 +6,13 @@
 // DirectShow is used for capturing. DirectShow provide its own threads
 // for capturing.
 
-#ifndef MEDIA_VIDEO_CAPTURE_WIN_CAPABILITY_LIST_WIN_H_
-#define MEDIA_VIDEO_CAPTURE_WIN_CAPABILITY_LIST_WIN_H_
+#ifndef MEDIA_CAPTURE_VIDEO_WIN_CAPABILITY_LIST_WIN_H_
+#define MEDIA_CAPTURE_VIDEO_WIN_CAPABILITY_LIST_WIN_H_
 
 #include <list>
 #include <windows.h>
 
-#include "media/base/video_capture_types.h"
+#include "media/capture/video_capture_types.h"
 
 namespace media {
 
@@ -43,4 +43,4 @@ const CapabilityWin& GetBestMatchedCapability(
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_WIN_CAPABILITY_LIST_WIN_H_
+#endif  // MEDIA_CAPTURE_VIDEO_WIN_CAPABILITY_LIST_WIN_H_

@@ -5,10 +5,12 @@
 #ifndef MEDIA_BASE_CDM_PROMISE_H_
 #define MEDIA_BASE_CDM_PROMISE_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "media/base/media_export.h"
 #include "media/base/media_keys.h"
 
@@ -30,6 +32,19 @@ namespace media {
 // the pepper interface.
 class MEDIA_EXPORT CdmPromise {
  public:
+  // TODO(jrummell): Remove deprecated errors. See
+  // http://crbug.com/570216
+  enum Exception {
+    NOT_SUPPORTED_ERROR,
+    INVALID_STATE_ERROR,
+    INVALID_ACCESS_ERROR,
+    QUOTA_EXCEEDED_ERROR,
+    UNKNOWN_ERROR,
+    CLIENT_ERROR,
+    OUTPUT_ERROR,
+    EXCEPTION_MAX = OUTPUT_ERROR
+  };
+
   enum ResolveParameterType {
     VOID_TYPE,
     INT_TYPE,
@@ -44,8 +59,8 @@ class MEDIA_EXPORT CdmPromise {
   // specified. |system_code| is a Key System-specific value for the error
   // that occurred, or 0 if there is no associated status code or such status
   // codes are not supported by the Key System. |error_message| is optional.
-  virtual void reject(MediaKeys::Exception exception_code,
-                      uint32 system_code,
+  virtual void reject(Exception exception_code,
+                      uint32_t system_code,
                       const std::string& error_message) = 0;
 
   // Used to determine the template type of CdmPromiseTemplate<T> so that
@@ -88,8 +103,8 @@ class MEDIA_EXPORT CdmPromiseTemplate : public CdmPromise {
   virtual void resolve(const T&... result) = 0;
 
   // CdmPromise implementation.
-  virtual void reject(MediaKeys::Exception exception_code,
-                      uint32 system_code,
+  virtual void reject(Exception exception_code,
+                      uint32_t system_code,
                       const std::string& error_message) = 0;
 
   ResolveParameterType GetResolveParameterType() const override {
@@ -97,12 +112,25 @@ class MEDIA_EXPORT CdmPromiseTemplate : public CdmPromise {
   }
 
  protected:
+  bool IsPromiseSettled() const { return is_settled_; }
+
   // All implementations must call this method in resolve() and reject() methods
   // to indicate that the promise has been settled.
   void MarkPromiseSettled() {
     // Promise can only be settled once.
     DCHECK(!is_settled_);
     is_settled_ = true;
+  }
+
+  // Must be called by the concrete destructor if !IsPromiseSettled().
+  // Note: We can't call reject() in ~CdmPromise() because reject() is virtual.
+  void RejectPromiseOnDestruction() {
+    DCHECK(!is_settled_);
+    std::string message =
+        "Unfulfilled promise rejected automatically during destruction.";
+    DVLOG(1) << message;
+    reject(INVALID_STATE_ERROR, 0, message);
+    DCHECK(is_settled_);
   }
 
  private:

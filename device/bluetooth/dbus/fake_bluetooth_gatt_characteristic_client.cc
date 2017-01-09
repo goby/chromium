@@ -8,7 +8,7 @@
 #include "base/location.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_gatt_descriptor_client.h"
@@ -134,23 +134,24 @@ void FakeBluetoothGattCharacteristicClient::ReadValue(
     const ValueCallback& callback,
     const ErrorCallback& error_callback) {
   if (!authenticated_) {
-    error_callback.Run("org.bluez.Error.NotPaired", "Please login");
+    error_callback.Run(bluetooth_gatt_service::kErrorNotPaired, "Please login");
     return;
   }
 
   if (!authorized_) {
-    error_callback.Run("org.bluez.Error.NotAuthorized", "Authorize first");
+    error_callback.Run(bluetooth_gatt_service::kErrorNotAuthorized,
+                       "Authorize first");
     return;
   }
 
   if (object_path.value() == heart_rate_control_point_path_) {
-    error_callback.Run("org.bluez.Error.NotPermitted",
+    error_callback.Run(bluetooth_gatt_service::kErrorReadNotPermitted,
                        "Reads of this value are not allowed");
     return;
   }
 
   if (object_path.value() == heart_rate_measurement_path_) {
-    error_callback.Run("org.bluez.Error.NotSupported",
+    error_callback.Run(bluetooth_gatt_service::kErrorNotSupported,
                        "Action not supported on this characteristic");
     return;
   }
@@ -164,7 +165,7 @@ void FakeBluetoothGattCharacteristicClient::ReadValue(
       action_extra_requests_.end()) {
     DelayedCallback* delayed = action_extra_requests_["ReadValue"];
     delayed->delay_--;
-    error_callback.Run("org.bluez.Error.InProgress",
+    error_callback.Run(bluetooth_gatt_service::kErrorInProgress,
                        "Another read is currenty in progress");
     if (delayed->delay_ == 0) {
       delayed->callback_.Run();
@@ -179,7 +180,7 @@ void FakeBluetoothGattCharacteristicClient::ReadValue(
     completed_callback =
         base::Bind(error_callback, kUnknownCharacteristicError, "");
   } else {
-    std::vector<uint8> value = {0x06};  // Location is "foot".
+    std::vector<uint8_t> value = {0x06};  // Location is "foot".
     completed_callback = base::Bind(
         &FakeBluetoothGattCharacteristicClient::DelayedReadValueCallback,
         weak_ptr_factory_.GetWeakPtr(), object_path, callback, value);
@@ -196,16 +197,17 @@ void FakeBluetoothGattCharacteristicClient::ReadValue(
 
 void FakeBluetoothGattCharacteristicClient::WriteValue(
     const dbus::ObjectPath& object_path,
-    const std::vector<uint8>& value,
+    const std::vector<uint8_t>& value,
     const base::Closure& callback,
     const ErrorCallback& error_callback) {
   if (!authenticated_) {
-    error_callback.Run("org.bluez.Error.NotPaired", "Please login");
+    error_callback.Run(bluetooth_gatt_service::kErrorNotPaired, "Please login");
     return;
   }
 
   if (!authorized_) {
-    error_callback.Run("org.bluez.Error.NotAuthorized", "Authorize first");
+    error_callback.Run(bluetooth_gatt_service::kErrorNotAuthorized,
+                       "Authorize first");
     return;
   }
 
@@ -215,13 +217,13 @@ void FakeBluetoothGattCharacteristicClient::WriteValue(
   }
 
   if (object_path.value() == heart_rate_measurement_path_) {
-    error_callback.Run("org.bluez.Error.NotSupported",
+    error_callback.Run(bluetooth_gatt_service::kErrorNotSupported,
                        "Action not supported on this characteristic");
     return;
   }
 
   if (object_path.value() != heart_rate_control_point_path_) {
-    error_callback.Run("org.bluez.Error.NotPermitted",
+    error_callback.Run(bluetooth_gatt_service::kErrorWriteNotPermitted,
                        "Writes of this value are not allowed");
     return;
   }
@@ -231,7 +233,7 @@ void FakeBluetoothGattCharacteristicClient::WriteValue(
       action_extra_requests_.end()) {
     DelayedCallback* delayed = action_extra_requests_["WriteValue"];
     delayed->delay_--;
-    error_callback.Run("org.bluez.Error.InProgress",
+    error_callback.Run(bluetooth_gatt_service::kErrorInProgress,
                        "Another write is in progress");
     if (delayed->delay_ == 0) {
       delayed->callback_.Run();
@@ -242,12 +244,13 @@ void FakeBluetoothGattCharacteristicClient::WriteValue(
   }
   base::Closure completed_callback;
   if (value.size() != 1) {
-    completed_callback =
-        base::Bind(error_callback, "org.bluez.Error.InvalidValueLength",
-                   "Invalid length for write");
+    completed_callback = base::Bind(
+        error_callback, bluetooth_gatt_service::kErrorInvalidValueLength,
+        "Invalid length for write");
   } else if (value[0] > 1) {
-    completed_callback = base::Bind(error_callback, "org.bluez.Error.Failed",
-                                    "Invalid value given for write");
+    completed_callback =
+        base::Bind(error_callback, bluetooth_gatt_service::kErrorFailed,
+                   "Invalid value given for write");
   } else if (value[0] == 1) {
     // TODO(jamuraa): make this happen when the callback happens
     calories_burned_ = 0;
@@ -272,13 +275,13 @@ void FakeBluetoothGattCharacteristicClient::StartNotify(
   }
 
   if (object_path.value() != heart_rate_measurement_path_) {
-    error_callback.Run("org.bluez.Error.NotSupported",
+    error_callback.Run(bluetooth_gatt_service::kErrorNotSupported,
                        "This characteristic does not support notifications");
     return;
   }
 
   if (heart_rate_measurement_properties_->notifying.value()) {
-    error_callback.Run("org.bluez.Error.InProgress",
+    error_callback.Run(bluetooth_gatt_service::kErrorInProgress,
                        "Characteristic already notifying");
     return;
   }
@@ -302,13 +305,13 @@ void FakeBluetoothGattCharacteristicClient::StopNotify(
   }
 
   if (object_path.value() != heart_rate_measurement_path_) {
-    error_callback.Run("org.bluez.Error.NotSupported",
+    error_callback.Run(bluetooth_gatt_service::kErrorNotSupported,
                        "This characteristic does not support notifications");
     return;
   }
 
   if (!heart_rate_measurement_properties_->notifying.value()) {
-    error_callback.Run("org.bluez.Error.Failed", "Not notifying");
+    error_callback.Run(bluetooth_gatt_service::kErrorFailed, "Not notifying");
     return;
   }
 
@@ -384,11 +387,6 @@ void FakeBluetoothGattCharacteristicClient::ExposeHeartRateCharacteristics(
           kClientCharacteristicConfigurationUUID));
   DCHECK(ccc_path.IsValid());
   heart_rate_measurement_ccc_desc_path_ = ccc_path.value();
-
-  std::vector<dbus::ObjectPath> desc_paths;
-  desc_paths.push_back(ccc_path);
-
-  heart_rate_measurement_properties_->descriptors.ReplaceValue(desc_paths);
 }
 
 void FakeBluetoothGattCharacteristicClient::HideHeartRateCharacteristics() {
@@ -456,23 +454,22 @@ void FakeBluetoothGattCharacteristicClient::OnPropertyChanged(
   VLOG(2) << "Characteristic property changed: " << object_path.value() << ": "
           << property_name;
 
-  FOR_EACH_OBSERVER(
-      BluetoothGattCharacteristicClient::Observer, observers_,
-      GattCharacteristicPropertyChanged(object_path, property_name));
+  for (auto& observer : observers_)
+    observer.GattCharacteristicPropertyChanged(object_path, property_name);
 }
 
 void FakeBluetoothGattCharacteristicClient::NotifyCharacteristicAdded(
     const dbus::ObjectPath& object_path) {
   VLOG(2) << "GATT characteristic added: " << object_path.value();
-  FOR_EACH_OBSERVER(BluetoothGattCharacteristicClient::Observer, observers_,
-                    GattCharacteristicAdded(object_path));
+  for (auto& observer : observers_)
+    observer.GattCharacteristicAdded(object_path);
 }
 
 void FakeBluetoothGattCharacteristicClient::NotifyCharacteristicRemoved(
     const dbus::ObjectPath& object_path) {
   VLOG(2) << "GATT characteristic removed: " << object_path.value();
-  FOR_EACH_OBSERVER(BluetoothGattCharacteristicClient::Observer, observers_,
-                    GattCharacteristicRemoved(object_path));
+  for (auto& observer : observers_)
+    observer.GattCharacteristicRemoved(object_path);
 }
 
 void FakeBluetoothGattCharacteristicClient::
@@ -485,7 +482,7 @@ void FakeBluetoothGattCharacteristicClient::
     return;
 
   VLOG(2) << "Updating heart rate value.";
-  std::vector<uint8> measurement = GetHeartRateMeasurementValue();
+  std::vector<uint8_t> measurement = GetHeartRateMeasurementValue();
   heart_rate_measurement_properties_->value.ReplaceValue(measurement);
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
@@ -507,16 +504,16 @@ void FakeBluetoothGattCharacteristicClient::DelayedReadValueCallback(
   callback.Run(value);
 }
 
-std::vector<uint8>
+std::vector<uint8_t>
 FakeBluetoothGattCharacteristicClient::GetHeartRateMeasurementValue() {
   // TODO(armansito): We should make sure to properly pack this struct to ensure
   // correct byte alignment and endianness. It doesn't matter too much right now
   // as this is a fake and GCC on Linux seems to do the right thing.
   struct {
-    uint8 flags;
-    uint8 bpm;
-    uint16 energy_expanded;
-    uint16 rr_interval;
+    uint8_t flags;
+    uint8_t bpm;
+    uint16_t energy_expanded;
+    uint16_t rr_interval;
   } value;
 
   // Flags in LSB:     0       11   1 1 000
@@ -532,19 +529,19 @@ FakeBluetoothGattCharacteristicClient::GetHeartRateMeasurementValue() {
   value.flags |= (0x01 << 4);
 
   // Pick a value between 117 bpm and 153 bpm for heart rate.
-  value.bpm = static_cast<uint8>(base::RandInt(117, 153));
+  value.bpm = static_cast<uint8_t>(base::RandInt(117, 153));
 
   // Total calories burned in kJoules since the last reset. Increment this by 1
   // every time. It's fine if it overflows: it becomes 0 when the user resets
-  // the heart rate monitor (or pretend that he had a lot of cheeseburgers).
+  // the heart rate monitor (or pretend that they had a lot of cheeseburgers).
   value.energy_expanded = calories_burned_++;
 
   // Include one RR-Interval value, in seconds.
   value.rr_interval = 60 / value.bpm;
 
   // Return the bytes in an array.
-  uint8* bytes = reinterpret_cast<uint8*>(&value);
-  std::vector<uint8> return_value;
+  uint8_t* bytes = reinterpret_cast<uint8_t*>(&value);
+  std::vector<uint8_t> return_value;
   return_value.assign(bytes, bytes + sizeof(value));
   return return_value;
 }

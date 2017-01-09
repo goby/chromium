@@ -5,8 +5,12 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_OPERATIONS_TRUNCATE_H_
 #define CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_OPERATIONS_TRUNCATE_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/file_system_provider/operations/operation.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_info.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_interface.h"
@@ -32,22 +36,22 @@ class Truncate : public Operation {
   Truncate(extensions::EventRouter* event_router,
            const ProvidedFileSystemInfo& file_system_info,
            const base::FilePath& file_path,
-           int64 length,
+           int64_t length,
            const storage::AsyncFileUtil::StatusCallback& callback);
   ~Truncate() override;
 
   // Operation overrides.
   bool Execute(int request_id) override;
   void OnSuccess(int request_id,
-                 scoped_ptr<RequestValue> result,
+                 std::unique_ptr<RequestValue> result,
                  bool has_more) override;
   void OnError(int request_id,
-               scoped_ptr<RequestValue> result,
+               std::unique_ptr<RequestValue> result,
                base::File::Error error) override;
 
  private:
   base::FilePath file_path_;
-  int64 length_;
+  int64_t length_;
   const storage::AsyncFileUtil::StatusCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(Truncate);

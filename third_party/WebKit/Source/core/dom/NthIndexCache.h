@@ -9,84 +9,62 @@
 #include "core/dom/Element.h"
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/RefPtr.h"
 
 namespace blink {
 
 class Document;
 
-class CORE_EXPORT NthIndexData final : public NoBaseWillBeGarbageCollected<NthIndexData> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(NthIndexData);
-    WTF_MAKE_NONCOPYABLE(NthIndexData);
-    DECLARE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(NthIndexData);
-public:
-    NthIndexData() { }
+class CORE_EXPORT NthIndexData final : public GarbageCollected<NthIndexData> {
+  WTF_MAKE_NONCOPYABLE(NthIndexData);
 
-    unsigned nthIndex(Element&);
-    unsigned nthIndexOfType(Element&, const QualifiedName&);
-    unsigned nthLastIndex(Element&);
-    unsigned nthLastIndexOfType(Element&, const QualifiedName&);
+ public:
+  NthIndexData(ContainerNode&);
+  NthIndexData(ContainerNode&, const QualifiedName& type);
 
-private:
-    unsigned cacheNthIndices(Element&);
-    unsigned cacheNthIndicesOfType(Element&, const QualifiedName&);
+  unsigned nthIndex(Element&) const;
+  unsigned nthLastIndex(Element&) const;
+  unsigned nthOfTypeIndex(Element&) const;
+  unsigned nthLastOfTypeIndex(Element&) const;
 
-    WillBeHeapHashMap<RawPtrWillBeMember<Element>, unsigned> m_elementIndexMap;
-    unsigned m_count = 0;
+ private:
+  HeapHashMap<Member<Element>, unsigned> m_elementIndexMap;
+  unsigned m_count = 0;
 
-    DECLARE_TRACE();
+  DECLARE_TRACE();
 };
 
 class CORE_EXPORT NthIndexCache final {
-    STACK_ALLOCATED();
-    WTF_MAKE_NONCOPYABLE(NthIndexCache);
-public:
-    explicit NthIndexCache(Document&);
-    ~NthIndexCache();
+  STACK_ALLOCATED();
+  WTF_MAKE_NONCOPYABLE(NthIndexCache);
 
-    unsigned nthChildIndex(Element& element)
-    {
-        ASSERT(element.parentNode());
-        return ensureNthIndexDataFor(*element.parentNode()).nthIndex(element);
-    }
+ public:
+  explicit NthIndexCache(Document&);
+  ~NthIndexCache();
 
-    unsigned nthChildIndexOfType(Element& element, const QualifiedName& type)
-    {
-        ASSERT(element.parentNode());
-        return nthIndexDataWithTagName(element).nthIndexOfType(element, type);
-    }
+  static unsigned nthChildIndex(Element&);
+  static unsigned nthLastChildIndex(Element&);
+  static unsigned nthOfTypeIndex(Element&);
+  static unsigned nthLastOfTypeIndex(Element&);
 
-    unsigned nthLastChildIndex(Element& element)
-    {
-        ASSERT(element.parentNode());
-        return ensureNthIndexDataFor(*element.parentNode()).nthLastIndex(element);
-    }
+ private:
+  using IndexByType = HeapHashMap<String, Member<NthIndexData>>;
+  using ParentMap = HeapHashMap<Member<Node>, Member<NthIndexData>>;
+  using ParentMapForType = HeapHashMap<Member<Node>, Member<IndexByType>>;
 
-    unsigned nthLastChildIndexOfType(Element& element, const QualifiedName& type)
-    {
-        ASSERT(element.parentNode());
-        return nthIndexDataWithTagName(element).nthLastIndexOfType(element, type);
-    }
+  void cacheNthIndexDataForParent(Element&);
+  void cacheNthOfTypeIndexDataForParent(Element&);
+  IndexByType& ensureTypeIndexMap(ContainerNode&);
+  NthIndexData* nthTypeIndexDataForParent(Element&) const;
 
-private:
-    using IndexByType = WillBeHeapHashMap<String, OwnPtrWillBeMember<NthIndexData>>;
-    using ParentMap = WillBeHeapHashMap<RefPtrWillBeMember<Node>, OwnPtrWillBeMember<NthIndexData>>;
-    using ParentMapForType = WillBeHeapHashMap<RefPtrWillBeMember<Node>, OwnPtrWillBeMember<IndexByType>>;
+  Member<Document> m_document;
+  Member<ParentMap> m_parentMap;
+  Member<ParentMapForType> m_parentMapForType;
 
-    NthIndexData& ensureNthIndexDataFor(Node&);
-    IndexByType& ensureTypeIndexMap(Node&);
-    NthIndexData& nthIndexDataWithTagName(Element&);
-
-    RawPtrWillBeMember<Document> m_document;
-    OwnPtrWillBeMember<ParentMap> m_parentMap;
-    OwnPtrWillBeMember<ParentMapForType> m_parentMapForType;
-
-#if ENABLE(ASSERT)
-    uint64_t m_domTreeVersion;
+#if DCHECK_IS_ON()
+  uint64_t m_domTreeVersion;
 #endif
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NthIndexCache_h
+#endif  // NthIndexCache_h

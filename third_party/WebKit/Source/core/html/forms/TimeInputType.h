@@ -31,41 +31,41 @@
 #ifndef TimeInputType_h
 #define TimeInputType_h
 
-#include "core/html/forms/BaseChooserOnlyDateAndTimeInputType.h"
-#include "core/html/forms/BaseMultipleFieldsDateAndTimeInputType.h"
+#include "core/html/forms/BaseTemporalInputType.h"
 
 namespace blink {
 
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
-using BaseTimeInputType = BaseMultipleFieldsDateAndTimeInputType;
-#else
-using BaseTimeInputType = BaseChooserOnlyDateAndTimeInputType;
-#endif
+class TimeInputType final : public BaseTemporalInputType {
+ public:
+  static InputType* create(HTMLInputElement&);
 
-class TimeInputType final : public BaseTimeInputType {
-public:
-    static PassRefPtrWillBeRawPtr<InputType> create(HTMLInputElement&);
+ private:
+  explicit TimeInputType(HTMLInputElement&);
 
-private:
-    explicit TimeInputType(HTMLInputElement&);
+  void countUsage() override;
+  const AtomicString& formControlType() const override;
+  Decimal defaultValueForStepUp() const override;
+  StepRange createStepRange(AnyStepHandling) const override;
+  bool parseToDateComponentsInternal(const String&,
+                                     DateComponents*) const override;
+  bool setMillisecondToDateComponents(double, DateComponents*) const override;
+  void warnIfValueIsInvalid(const String&) const override;
+  String localizeValue(const String&) const override;
 
-    void countUsage() override;
-    const AtomicString& formControlType() const override;
-    Decimal defaultValueForStepUp() const override;
-    StepRange createStepRange(AnyStepHandling) const override;
-    bool parseToDateComponentsInternal(const String&, DateComponents*) const override;
-    bool setMillisecondToDateComponents(double, DateComponents*) const override;
-    void warnIfValueIsInvalid(const String&) const override;
-    String localizeValue(const String&) const override;
-
-#if ENABLE(INPUT_MULTIPLE_FIELDS_UI)
-    // BaseMultipleFieldsDateAndTimeInputType functions
-    String formatDateTimeFieldsState(const DateTimeFieldsState&) const override;
-    void setupLayoutParameters(DateTimeEditElement::LayoutParameters&, const DateComponents&) const override;
-    bool isValidFormat(bool hasYear, bool hasMonth, bool hasWeek, bool hasDay, bool hasAMPM, bool hasHour, bool hasMinute, bool hasSecond) const override;
-#endif
+  // BaseTemporalInputType functions
+  String formatDateTimeFieldsState(const DateTimeFieldsState&) const override;
+  void setupLayoutParameters(DateTimeEditElement::LayoutParameters&,
+                             const DateComponents&) const override;
+  bool isValidFormat(bool hasYear,
+                     bool hasMonth,
+                     bool hasWeek,
+                     bool hasDay,
+                     bool hasAMPM,
+                     bool hasHour,
+                     bool hasMinute,
+                     bool hasSecond) const override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // TimeInputType_h
+#endif  // TimeInputType_h

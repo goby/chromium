@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/json/json_reader.h"
 #include "gpu/config/gpu_control_list.h"
 #include "gpu/config/gpu_info.h"
@@ -30,7 +34,7 @@ class GpuControlListEntryTest : public testing::Test {
 
   static ScopedEntry GetEntryFromString(
       const std::string& json, bool supports_feature_type_all) {
-    scoped_ptr<base::Value> root = base::JSONReader::Read(json);
+    std::unique_ptr<base::Value> root = base::JSONReader::Read(json);
     base::DictionaryValue* value = NULL;
     if (!root || !root->GetAsDictionary(&value))
       return NULL;
@@ -795,6 +799,44 @@ TEST_F(GpuControlListEntryTest, NeedsMoreInfoForExceptionsEntry) {
   EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, true));
 }
 
+TEST_F(GpuControlListEntryTest, NeedsMoreInfoForGlVersionEntry) {
+  const std::string json = LONG_STRING_CONST(
+      {
+        "id" : 1,
+        "gl_type": "gl",
+        "gl_version": {
+          "op": "<",
+          "value" : "3.5"
+        },
+        "features" : [
+          "test_feature_1"
+        ]
+      }
+  );
+  ScopedEntry entry(GetEntryFromString(json));
+  EXPECT_TRUE(entry.get() != NULL);
+
+  GPUInfo gpu_info;
+  EXPECT_TRUE(entry->NeedsMoreInfo(gpu_info, true));
+  EXPECT_TRUE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+
+  gpu_info.gl_version = "3.1 Mesa 11.1.0";
+  EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, false));
+  EXPECT_TRUE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+
+  gpu_info.gl_version = "4.1 Mesa 12.1.0";
+  EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, false));
+  EXPECT_FALSE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+
+  gpu_info.gl_version = "OpenGL ES 2.0 Mesa 12.1.0";
+  EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, false));
+  EXPECT_FALSE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+}
+
 TEST_F(GpuControlListEntryTest, FeatureTypeAllEntry) {
   const std::string json = LONG_STRING_CONST(
       {
@@ -810,6 +852,53 @@ TEST_F(GpuControlListEntryTest, FeatureTypeAllEntry) {
   EXPECT_EQ(1u, entry->features().count(TEST_FEATURE_0));
   EXPECT_EQ(1u, entry->features().count(TEST_FEATURE_1));
   EXPECT_EQ(1u, entry->features().count(TEST_FEATURE_2));
+}
+
+TEST_F(GpuControlListEntryTest, FeatureTypeAllEntryWithExceptions) {
+  const std::string json = LONG_STRING_CONST(
+      {
+        "id": 1,
+        "features": [
+          "all",
+          {"exceptions" : [
+            "test_feature_0"
+          ]}
+        ]
+      }
+  );
+  bool supports_feature_type_all = true;
+  ScopedEntry entry(GetEntryFromString(json, supports_feature_type_all));
+  EXPECT_TRUE(entry.get() != NULL);
+  EXPECT_EQ(1u, entry->features().count(TEST_FEATURE_1));
+  EXPECT_EQ(1u, entry->features().count(TEST_FEATURE_2));
+  EXPECT_EQ(2u, entry->features().size());
+
+  supports_feature_type_all = false;
+  entry = ScopedEntry(GetEntryFromString(json, supports_feature_type_all));
+  EXPECT_TRUE(entry.get() == NULL);
+}
+
+TEST_F(GpuControlListEntryTest, FeatureTypeAllEntryWithUnknownField) {
+  const std::string json = LONG_STRING_CONST(
+      {
+        "id": 1,
+        "features": [
+          "all", {
+            "exceptions" : [
+              "test_feature_0"
+            ],
+            "unknown_field" : 0
+          }
+        ]
+      }
+  );
+  bool supports_feature_type_all = true;
+  ScopedEntry entry(GetEntryFromString(json, supports_feature_type_all));
+  EXPECT_TRUE(entry.get() == NULL);
+
+  supports_feature_type_all = false;
+  entry = ScopedEntry(GetEntryFromString(json, supports_feature_type_all));
+  EXPECT_TRUE(entry.get() == NULL);
 }
 
 TEST_F(GpuControlListEntryTest, InvalidVendorIdEntry) {
@@ -1148,8 +1237,8 @@ TEST_F(GpuControlListEntryDualGPUTest, CategoryPrimarySecondary) {
         ]
       }
   );
-  // Default is primary.
-  EntryShouldNotApply(json_default);
+  // Default is active, and the secondary Intel GPU is active.
+  EntryShouldApply(json_default);
 }
 
 TEST_F(GpuControlListEntryDualGPUTest, ActiveSecondaryGPU) {

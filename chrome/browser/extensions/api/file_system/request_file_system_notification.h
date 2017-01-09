@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_FILE_SYSTEM_REQUEST_FILE_SYSTEM_NOTIFICATION_H_
 #define CHROME_BROWSER_EXTENSIONS_API_FILE_SYSTEM_REQUEST_FILE_SYSTEM_NOTIFICATION_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/extensions/app_icon_loader.h"
+#include "chrome/browser/ui/app_icon_loader.h"
 #include "ui/message_center/notification_delegate.h"
 
 class Profile;
@@ -35,7 +36,7 @@ class Notification;
 // Shows notifications for the chrome.fileSystem.requestFileSystem() API.
 class RequestFileSystemNotification
     : public message_center::NotificationDelegate,
-      public extensions::AppIconLoader::Delegate {
+      public AppIconLoaderDelegate {
  public:
   // Shows a notification about automatically granted access to a file system.
   static void ShowAutoGrantedNotification(
@@ -50,14 +51,15 @@ class RequestFileSystemNotification
   ~RequestFileSystemNotification() override;
 
   // Shows the notification. Can be called only once.
-  void Show(scoped_ptr<message_center::Notification> notification);
+  void Show(std::unique_ptr<message_center::Notification> notification);
 
-  // extensions::AppIconLoader::Delegate overrides:
-  void SetAppImage(const std::string& id, const gfx::ImageSkia& image) override;
+  // AppIconLoaderDelegate overrides:
+  void OnAppImageUpdated(const std::string& id,
+                         const gfx::ImageSkia& image) override;
 
-  scoped_ptr<extensions::AppIconLoader> icon_loader_;
-  scoped_ptr<gfx::Image> extension_icon_;
-  scoped_ptr<message_center::Notification> pending_notification_;
+  std::unique_ptr<AppIconLoader> icon_loader_;
+  std::unique_ptr<gfx::Image> extension_icon_;
+  std::unique_ptr<message_center::Notification> pending_notification_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestFileSystemNotification);
 };

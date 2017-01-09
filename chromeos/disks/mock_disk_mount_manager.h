@@ -5,8 +5,11 @@
 #ifndef CHROMEOS_DISKS_MOCK_DISK_MOUNT_MANAGER_H_
 #define CHROMEOS_DISKS_MOCK_DISK_MOUNT_MANAGER_H_
 
+#include <stdint.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chromeos/dbus/cros_disks_client.h"
 #include "chromeos/disks/disk_mount_manager.h"
@@ -34,11 +37,16 @@ class MockDiskMountManager : public DiskMountManager {
                      const DiskMountManager::MountPointMap&(void));
   MOCK_METHOD2(EnsureMountInfoRefreshed,
                void(const EnsureMountInfoRefreshedCallback&, bool));
-  MOCK_METHOD4(MountPath, void(const std::string&, const std::string&,
-                               const std::string&, MountType));
+  MOCK_METHOD5(MountPath,
+               void(const std::string&,
+                    const std::string&,
+                    const std::string&,
+                    MountType,
+                    MountAccessMode));
   MOCK_METHOD3(UnmountPath, void(const std::string&,
                                  UnmountOptions,
                                  const DiskMountManager::UnmountPathCallback&));
+  MOCK_METHOD1(RemountAllRemovableDrives, void(MountAccessMode));
   MOCK_METHOD1(FormatMountedDevice, void(const std::string&));
   MOCK_METHOD2(
       UnmountDeviceRecursively,
@@ -63,7 +71,7 @@ class MockDiskMountManager : public DiskMountManager {
       const std::string& vendor_name,
       const std::string& product_name,
       DeviceType device_type,
-      uint64 total_size_in_bytes,
+      uint64_t total_size_in_bytes,
       bool is_parent,
       bool has_media,
       bool on_boot_device,

@@ -7,6 +7,8 @@
 #import <Accelerate/Accelerate.h>
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
+#include <stddef.h>
+#include <stdint.h>
 #import <UIKit/UIKit.h>
 #include <cmath>
 
@@ -15,10 +17,15 @@
 #include "base/mac/foundation_util.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/ui/ui_util.h"
+#include "ios/web/public/web_thread.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/gfx/ios/uikit_util.h"
 #include "ui/gfx/scoped_cg_context_save_gstate_mac.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -53,7 +60,18 @@ void GetRGBA(UIColor* color, CGFloat* r, CGFloat* g, CGFloat* b, CGFloat* a) {
   }
 }
 
+// Store a reference to the current first responder.
+UIResponder* gFirstResponder = nil;
+
 }  // namespace
+
+@implementation UIResponder (FirstResponder)
+
+- (void)cr_markSelfCurrentFirstResponder {
+  gFirstResponder = self;
+}
+
+@end
 
 void SetA11yLabelAndUiAutomationName(UIView* element,
                                      int idsAccessibilityLabel,
@@ -152,12 +170,12 @@ void AddRoundedBorderShadow(UIView* view, CGFloat radius, UIColor* color) {
 
 UIImage* CaptureViewWithOption(UIView* view,
                                CGFloat scale,
-                               BOOL afterScreenUpdate) {
+                               CaptureViewOption option) {
   UIGraphicsBeginImageContextWithOptions(view.bounds.size, YES /* opaque */,
                                          scale);
-  if (base::ios::IsRunningOnIOS9OrLater()) {
+  if (base::ios::IsRunningOnIOS9OrLater() && option != kClientSideRendering) {
     [view drawViewHierarchyInRect:view.bounds
-               afterScreenUpdates:afterScreenUpdate];
+               afterScreenUpdates:option == kAfterScreenUpdate];
   } else {
     CGContext* context = UIGraphicsGetCurrentContext();
     [view.layer renderInContext:context];
@@ -168,7 +186,7 @@ UIImage* CaptureViewWithOption(UIView* view,
 }
 
 UIImage* CaptureView(UIView* view, CGFloat scale) {
-  return CaptureViewWithOption(view, scale, NO /* afterScreenUpdate */);
+  return CaptureViewWithOption(view, scale, kNoCaptureOption);
 }
 
 UIImage* GreyImage(UIImage* image) {
@@ -385,6 +403,48 @@ UIImage* BlurImage(UIImage* image,
   return outputImage;
 }
 
+UIImage* TintImage(UIImage* image, UIColor* color) {
+  DCHECK(image);
+  DCHECK(image.CGImage);
+  DCHECK_GE(image.size.width * image.size.height, 1);
+  DCHECK(color);
+
+  CGRect rect = {CGPointZero, image.size};
+
+  UIGraphicsBeginImageContextWithOptions(rect.size /* bitmap size */,
+                                         NO /* opaque? */,
+                                         0.0 /* main screen scale */);
+  CGContextRef imageContext = UIGraphicsGetCurrentContext();
+  CGContextSetShouldAntialias(imageContext, true);
+  CGContextSetInterpolationQuality(imageContext, kCGInterpolationHigh);
+
+  // CoreGraphics and UIKit uses different axis. UIKit's y points downards,
+  // while CoreGraphic's points upwards. To keep the image correctly oriented,
+  // apply a mirror around the X axis by inverting the Y coordinates.
+  CGContextScaleCTM(imageContext, 1, -1);
+  CGContextTranslateCTM(imageContext, 0, -rect.size.height);
+
+  CGContextDrawImage(imageContext, rect, image.CGImage);
+  CGContextSetBlendMode(imageContext, kCGBlendModeSourceIn);
+  CGContextSetFillColorWithColor(imageContext, color.CGColor);
+  CGContextFillRect(imageContext, rect);
+
+  UIImage* outputImage = UIGraphicsGetImageFromCurrentImageContext();
+  UIGraphicsEndImageContext();
+
+  // Port the cap insets to the new image.
+  if (!UIEdgeInsetsEqualToEdgeInsets(image.capInsets, UIEdgeInsetsZero)) {
+    outputImage = [outputImage resizableImageWithCapInsets:image.capInsets];
+  }
+
+  // Port the flipping status to the new image.
+  if (image.flipsForRightToLeftLayoutDirection) {
+    outputImage = [outputImage imageFlippedForRightToLeftLayoutDirection];
+  }
+
+  return outputImage;
+}
+
 UIImage* CropImage(UIImage* image, const CGRect& cropRect) {
   CGImageRef cgImage = CGImageCreateWithImageInRect([image CGImage], cropRect);
   UIImage* result = [UIImage imageWithCGImage:cgImage];
@@ -397,12 +457,7 @@ UIInterfaceOrientation GetInterfaceOrientation() {
 }
 
 CGFloat CurrentKeyboardHeight(NSValue* keyboardFrameValue) {
-  CGSize keyboardSize = [keyboardFrameValue CGRectValue].size;
-  if (base::ios::IsRunningOnIOS8OrLater()) {
-    return keyboardSize.height;
-  } else {
-    return IsPortrait() ? keyboardSize.height : keyboardSize.width;
-  }
+  return [keyboardFrameValue CGRectValue].size.height;
 }
 
 UIImage* ImageWithColor(UIColor* color) {
@@ -456,26 +511,62 @@ UIColor* InterpolateFromColorToColor(UIColor* firstColor,
 }
 
 void ApplyVisualConstraints(NSArray* constraints,
-                            NSDictionary* subviewsDictionary,
-                            UIView* parentView) {
+                            NSDictionary* subviewsDictionary) {
   ApplyVisualConstraintsWithMetricsAndOptions(constraints, subviewsDictionary,
-                                              nil, 0, parentView);
+                                              nil, 0);
+}
+
+void ApplyVisualConstraints(NSArray* constraints,
+                            NSDictionary* subviewsDictionary,
+                            UIView* unused_parentView) {
+  ApplyVisualConstraints(constraints, subviewsDictionary);
+}
+
+void ApplyVisualConstraintsWithOptions(NSArray* constraints,
+                                       NSDictionary* subviewsDictionary,
+                                       NSLayoutFormatOptions options) {
+  ApplyVisualConstraintsWithMetricsAndOptions(constraints, subviewsDictionary,
+                                              nil, options);
 }
 
 void ApplyVisualConstraintsWithOptions(NSArray* constraints,
                                        NSDictionary* subviewsDictionary,
                                        NSLayoutFormatOptions options,
-                                       UIView* parentView) {
+                                       UIView* unused_parentView) {
+  ApplyVisualConstraintsWithOptions(constraints, subviewsDictionary, options);
+}
+
+void ApplyVisualConstraintsWithMetrics(NSArray* constraints,
+                                       NSDictionary* subviewsDictionary,
+                                       NSDictionary* metrics) {
   ApplyVisualConstraintsWithMetricsAndOptions(constraints, subviewsDictionary,
-                                              nil, options, parentView);
+                                              metrics, 0);
 }
 
 void ApplyVisualConstraintsWithMetrics(NSArray* constraints,
                                        NSDictionary* subviewsDictionary,
                                        NSDictionary* metrics,
-                                       UIView* parentView) {
-  ApplyVisualConstraintsWithMetricsAndOptions(constraints, subviewsDictionary,
-                                              metrics, 0, parentView);
+                                       UIView* unused_parentView) {
+  ApplyVisualConstraintsWithMetrics(constraints, subviewsDictionary, metrics);
+}
+
+void ApplyVisualConstraintsWithMetricsAndOptions(
+    NSArray* constraints,
+    NSDictionary* subviewsDictionary,
+    NSDictionary* metrics,
+    NSLayoutFormatOptions options) {
+  NSMutableArray* layoutConstraints =
+      [NSMutableArray arrayWithCapacity:constraints.count * 3];
+  for (NSString* constraint in constraints) {
+    DCHECK([constraint isKindOfClass:[NSString class]]);
+    [layoutConstraints addObjectsFromArray:
+                           [NSLayoutConstraint
+                               constraintsWithVisualFormat:constraint
+                                                   options:options
+                                                   metrics:metrics
+                                                     views:subviewsDictionary]];
+  }
+  [NSLayoutConstraint activateConstraints:layoutConstraints];
 }
 
 void ApplyVisualConstraintsWithMetricsAndOptions(
@@ -483,81 +574,50 @@ void ApplyVisualConstraintsWithMetricsAndOptions(
     NSDictionary* subviewsDictionary,
     NSDictionary* metrics,
     NSLayoutFormatOptions options,
-    UIView* parentView) {
-  for (NSString* constraint in constraints) {
-    DCHECK([constraint isKindOfClass:[NSString class]]);
-    [parentView
-        addConstraints:[NSLayoutConstraint
-                           constraintsWithVisualFormat:constraint
-                                               options:options
-                                               metrics:metrics
-                                                 views:subviewsDictionary]];
-  }
+    UIView* unused_parentView) {
+  ApplyVisualConstraintsWithMetricsAndOptions(constraints, subviewsDictionary,
+                                              metrics, options);
 }
 
-void AddSameCenterXConstraint(UIView* parentView, UIView* subview) {
-  DCHECK_EQ(parentView, [subview superview]);
-  [parentView addConstraint:[NSLayoutConstraint
-                                constraintWithItem:subview
-                                         attribute:NSLayoutAttributeCenterX
-                                         relatedBy:NSLayoutRelationEqual
-                                            toItem:parentView
-                                         attribute:NSLayoutAttributeCenterX
-                                        multiplier:1
-                                          constant:0]];
+void AddSameCenterConstraints(UIView* view1, UIView* view2) {
+  AddSameCenterXConstraint(view1, view2);
+  AddSameCenterYConstraint(view1, view2);
 }
 
-void AddSameCenterXConstraint(UIView *parentView, UIView *subview1,
-                              UIView *subview2) {
-  DCHECK_EQ(parentView, [subview1 superview]);
-  DCHECK_EQ(parentView, [subview2 superview]);
-  DCHECK_NE(subview1, subview2);
-  [parentView addConstraint:[NSLayoutConstraint
-                                constraintWithItem:subview1
-                                         attribute:NSLayoutAttributeCenterX
-                                         relatedBy:NSLayoutRelationEqual
-                                            toItem:subview2
-                                         attribute:NSLayoutAttributeCenterX
-                                        multiplier:1
-                                          constant:0]];
+void AddSameCenterXConstraint(UIView* view1, UIView* view2) {
+  [view1.centerXAnchor constraintEqualToAnchor:view2.centerXAnchor].active =
+      YES;
 }
 
-void AddSameCenterYConstraint(UIView* parentView, UIView* subview) {
-  DCHECK_EQ(parentView, [subview superview]);
-  [parentView addConstraint:[NSLayoutConstraint
-                                constraintWithItem:subview
-                                         attribute:NSLayoutAttributeCenterY
-                                         relatedBy:NSLayoutRelationEqual
-                                            toItem:parentView
-                                         attribute:NSLayoutAttributeCenterY
-                                        multiplier:1
-                                          constant:0]];
-}
-
-void AddSameCenterYConstraint(UIView* parentView,
+void AddSameCenterXConstraint(UIView* unused_parentView,
                               UIView* subview1,
                               UIView* subview2) {
-  DCHECK_EQ(parentView, [subview1 superview]);
-  DCHECK_EQ(parentView, [subview2 superview]);
-  DCHECK_NE(subview1, subview2);
-  [parentView addConstraint:[NSLayoutConstraint
-                                constraintWithItem:subview1
-                                         attribute:NSLayoutAttributeCenterY
-                                         relatedBy:NSLayoutRelationEqual
-                                            toItem:subview2
-                                         attribute:NSLayoutAttributeCenterY
-                                        multiplier:1
-                                          constant:0]];
+  AddSameCenterXConstraint(subview1, subview2);
+}
+
+void AddSameCenterYConstraint(UIView* view1, UIView* view2) {
+  [view1.centerYAnchor constraintEqualToAnchor:view2.centerYAnchor].active =
+      YES;
+}
+
+void AddSameCenterYConstraint(UIView* unused_parentView,
+                              UIView* subview1,
+                              UIView* subview2) {
+  AddSameCenterYConstraint(subview1, subview2);
+}
+
+void AddSameSizeConstraint(UIView* view1, UIView* view2) {
+  [NSLayoutConstraint activateConstraints:@[
+    [view1.leadingAnchor constraintEqualToAnchor:view2.leadingAnchor],
+    [view1.trailingAnchor constraintEqualToAnchor:view2.trailingAnchor],
+    [view1.topAnchor constraintEqualToAnchor:view2.topAnchor],
+    [view1.bottomAnchor constraintEqualToAnchor:view2.bottomAnchor]
+  ]];
 }
 
 bool IsCompact(id<UITraitEnvironment> environment) {
-  if (base::ios::IsRunningOnIOS8OrLater()) {
-    return environment.traitCollection.horizontalSizeClass ==
-           UIUserInterfaceSizeClassCompact;
-  } else {
-    // Prior to iOS 8, iPad is always regular, iPhone is always compact.
-    return !IsIPadIdiom();
-  }
+  return environment.traitCollection.horizontalSizeClass ==
+         UIUserInterfaceSizeClassCompact;
 }
 
 bool IsCompact() {
@@ -571,4 +631,18 @@ bool IsCompactTablet(id<UITraitEnvironment> environment) {
 
 bool IsCompactTablet() {
   return IsIPadIdiom() && IsCompact();
+}
+
+// Returns the current first responder.
+UIResponder* GetFirstResponder() {
+  DCHECK_CURRENTLY_ON(web::WebThread::UI);
+  DCHECK(!gFirstResponder);
+  [[UIApplication sharedApplication]
+      sendAction:@selector(cr_markSelfCurrentFirstResponder)
+              to:nil
+            from:nil
+        forEvent:nil];
+  UIResponder* firstResponder = gFirstResponder;
+  gFirstResponder = nil;
+  return firstResponder;
 }

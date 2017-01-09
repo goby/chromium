@@ -13,27 +13,28 @@ namespace blink {
 class Navigator;
 class NetworkInformation;
 
-class NavigatorNetworkInformation final : public GarbageCollectedFinalized<NavigatorNetworkInformation>, public HeapSupplement<Navigator>, public DOMWindowProperty {
-    USING_GARBAGE_COLLECTED_MIXIN(NavigatorNetworkInformation);
-public:
-    static NavigatorNetworkInformation& from(Navigator&);
-    static NavigatorNetworkInformation* toNavigatorNetworkInformation(Navigator&);
+class NavigatorNetworkInformation final
+    : public GarbageCollected<NavigatorNetworkInformation>,
+      public Supplement<Navigator>,
+      public DOMWindowProperty {
+  USING_GARBAGE_COLLECTED_MIXIN(NavigatorNetworkInformation);
 
-    virtual ~NavigatorNetworkInformation();
+ public:
+  static NavigatorNetworkInformation& from(Navigator&);
+  static NavigatorNetworkInformation* toNavigatorNetworkInformation(Navigator&);
+  static NetworkInformation* connection(Navigator&);
 
-    static NetworkInformation* connection(Navigator&);
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+ private:
+  explicit NavigatorNetworkInformation(Navigator&);
+  NetworkInformation* connection();
 
-private:
-    explicit NavigatorNetworkInformation(Navigator&);
-    NetworkInformation* connection();
+  static const char* supplementName();
 
-    static const char* supplementName();
-
-    Member<NetworkInformation> m_connection;
+  Member<NetworkInformation> m_connection;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NavigatorNetworkInformation_h
+#endif  // NavigatorNetworkInformation_h

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
@@ -33,23 +34,25 @@ class WebContents;
 // to turn on/off repeatedly and annoy the user.  AudioStreamMonitor sends UI
 // update notifications only when needed, but may be queried at any time.
 //
+// When power level monitoring is not available, audibility is approximated
+// with having active audio streams.
+//
 // Each WebContentsImpl owns an AudioStreamMonitor.
 class CONTENT_EXPORT AudioStreamMonitor {
  public:
   explicit AudioStreamMonitor(WebContents* contents);
   ~AudioStreamMonitor();
 
-  // Indicates if audio stream monitoring is available.  It's only available if
-  // AudioOutputController can and will monitor output power levels.
-  static bool monitoring_available() {
-    return media::AudioOutputController::will_monitor_audio_levels();
-  }
-
   // Returns true if audio has recently been audible from the tab.  This is
   // usually called whenever the tab data model is refreshed; but there are
   // other use cases as well (e.g., the OOM killer uses this to de-prioritize
   // the killing of tabs making sounds).
   bool WasRecentlyAudible() const;
+
+  // Returns true if the audio is currently audible from the given WebContents.
+  // The difference from WasRecentlyAudible() is that this method will return
+  // false as soon as the WebContents stop producing sound.
+  bool IsCurrentlyAudible() const;
 
   // Starts or stops audio level monitoring respectively for the stream owned by
   // the specified renderer.  Safe to call from any thread.
@@ -83,6 +86,13 @@ class CONTENT_EXPORT AudioStreamMonitor {
     kHoldOnMilliseconds = 2000
   };
 
+  // Indicates if monitoring of audio stream power level is available.
+  // It's only available if AudioOutputController can and will monitor
+  // output power levels.
+  static bool power_level_monitoring_available() {
+    return media::AudioOutputController::will_monitor_audio_levels();
+  }
+
   // Helper methods for starting and stopping monitoring which lookup the
   // identified renderer and forward calls to the correct AudioStreamMonitor.
   static void StartMonitoringHelper(
@@ -113,6 +123,11 @@ class CONTENT_EXPORT AudioStreamMonitor {
   // on, |off_timer_| is started to re-invoke this method in the future.
   void MaybeToggle();
 
+  // Helper functions to track number of active streams when power level
+  // monitoring is not available.
+  void OnStreamAdded();
+  void OnStreamRemoved();
+
   // The WebContents instance to receive indicator toggle notifications.  This
   // pointer should be valid for the lifetime of AudioStreamMonitor.
   WebContents* const web_contents_;
@@ -138,12 +153,19 @@ class CONTENT_EXPORT AudioStreamMonitor {
   // should be turned on.
   bool was_recently_audible_;
 
+  // Whether the WebContents is currently audible.
+  bool is_audible_;
+
   // Calls Poll() at regular intervals while |poll_callbacks_| is non-empty.
   base::RepeatingTimer poll_timer_;
 
   // Started only when an indicator is toggled on, to turn it off again in the
   // future.
   base::OneShotTimer off_timer_;
+
+  // Number of active streams to be used as a proxy for audibility when power
+  // level monitoring is not available.
+  size_t active_streams_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioStreamMonitor);
 };

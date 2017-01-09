@@ -23,37 +23,29 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "modules/webgl/WebGLShader.h"
 
+#include "gpu/command_buffer/client/gles2_interface.h"
 #include "modules/webgl/WebGLRenderingContextBase.h"
 
 namespace blink {
 
-WebGLShader* WebGLShader::create(WebGLRenderingContextBase* ctx, GLenum type)
-{
-    return new WebGLShader(ctx, type);
+WebGLShader* WebGLShader::create(WebGLRenderingContextBase* ctx, GLenum type) {
+  return new WebGLShader(ctx, type);
 }
 
 WebGLShader::WebGLShader(WebGLRenderingContextBase* ctx, GLenum type)
-    : WebGLSharedPlatform3DObject(ctx)
-    , m_type(type)
-    , m_source("")
-{
-    setObject(ctx->webContext()->createShader(type));
+    : WebGLSharedPlatform3DObject(ctx), m_type(type), m_source("") {
+  setObject(ctx->contextGL()->CreateShader(type));
 }
 
-WebGLShader::~WebGLShader()
-{
-    // See the comment in WebGLObject::detachAndDeleteObject().
-    detachAndDeleteObject();
+WebGLShader::~WebGLShader() {
+  runDestructor();
 }
 
-void WebGLShader::deleteObjectImpl(WebGraphicsContext3D* context3d)
-{
-    context3d->deleteShader(m_object);
-    m_object = 0;
+void WebGLShader::deleteObjectImpl(gpu::gles2::GLES2Interface* gl) {
+  gl->DeleteShader(m_object);
+  m_object = 0;
 }
 
-} // namespace blink
+}  // namespace blink

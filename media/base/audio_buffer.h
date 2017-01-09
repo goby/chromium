@@ -5,11 +5,15 @@
 #ifndef MEDIA_BASE_AUDIO_BUFFER_H_
 #define MEDIA_BASE_AUDIO_BUFFER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/aligned_memory.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_export.h"
@@ -25,7 +29,7 @@ class StructPtr;
 namespace media {
 class AudioBus;
 
-namespace interfaces {
+namespace mojom {
 class AudioBuffer;
 }
 
@@ -50,11 +54,11 @@ class MEDIA_EXPORT AudioBuffer
                                              int channel_count,
                                              int sample_rate,
                                              int frame_count,
-                                             const uint8* const* data,
+                                             const uint8_t* const* data,
                                              const base::TimeDelta timestamp);
 
   // Create an AudioBuffer with |frame_count| frames. Buffer is allocated, but
-  // not initialized. Timestamp and duration are set to kNoTimestamp().
+  // not initialized. Timestamp and duration are set to kNoTimestamp.
   static scoped_refptr<AudioBuffer> CreateBuffer(SampleFormat sample_format,
                                                  ChannelLayout channel_layout,
                                                  int channel_count,
@@ -74,6 +78,12 @@ class MEDIA_EXPORT AudioBuffer
   // is disallowed.
   static scoped_refptr<AudioBuffer> CreateEOSBuffer();
 
+  // Update sample rate and computed duration.
+  // TODO(chcunningham): Remove this upon patching FFmpeg's AAC decoder to
+  // provide the correct sample rate at the boundary of an implicit config
+  // change.
+  void AdjustSampleRate(int sample_rate);
+
   // Copy frames into |dest|. |frames_to_copy| is the number of frames to copy.
   // |source_frame_offset| specifies how many frames in the buffer to skip
   // first. |dest_frame_offset| is the frame offset in |dest|. The frames are
@@ -83,16 +93,6 @@ class MEDIA_EXPORT AudioBuffer
                   int source_frame_offset,
                   int dest_frame_offset,
                   AudioBus* dest);
-
-  // Copy |frames_to_copy| frames into |dest|, |frames_to_copy| is the number of
-  // frames to copy. The frames are converted from their source format into
-  // interleaved int32.
-  void ReadFramesInterleavedS32(int frames_to_copy, int32* dest);
-
-  // Copy |frames_to_copy| frames into |dest|, |frames_to_copy| is the number of
-  // frames to copy. The frames are converted from their source format into
-  // interleaved int16.
-  void ReadFramesInterleavedS16(int frames_to_copy, int16* dest);
 
   // Trim an AudioBuffer by removing |frames_to_trim| frames from the start.
   // Timestamp and duration are adjusted to reflect the fewer frames.
@@ -127,16 +127,22 @@ class MEDIA_EXPORT AudioBuffer
   // If there's no data in this buffer, it represents end of stream.
   bool end_of_stream() const { return end_of_stream_; }
 
-  // Access to the raw buffer for ffmpeg to write directly to. Data for planar
-  // data is grouped by channel. There is only 1 entry for interleaved formats.
-  const std::vector<uint8*>& channel_data() const { return channel_data_; }
+  // Access to the raw buffer for ffmpeg and Android MediaCodec decoders to
+  // write directly to. For planar formats the vector elements correspond to
+  // the channels. For interleaved formats the resulting vector has exactly
+  // one element which contains the buffer pointer.
+  const std::vector<uint8_t*>& channel_data() const { return channel_data_; }
+
+  // The size of allocated data memory block. For planar formats channels go
+  // sequentially in this block.
+  size_t data_size() const { return data_size_; }
 
  private:
   friend class base::RefCountedThreadSafe<AudioBuffer>;
 
   // mojo::TypeConverter added as a friend so that AudioBuffer can be
   // transferred across a mojo connection.
-  friend struct mojo::TypeConverter<mojo::StructPtr<interfaces::AudioBuffer>,
+  friend struct mojo::TypeConverter<mojo::StructPtr<mojom::AudioBuffer>,
                                     scoped_refptr<AudioBuffer>>;
 
   // Allocates aligned contiguous buffer to hold all channel data (1 block for
@@ -150,7 +156,7 @@ class MEDIA_EXPORT AudioBuffer
               int sample_rate,
               int frame_count,
               bool create_buffer,
-              const uint8* const* data,
+              const uint8_t* const* data,
               const base::TimeDelta timestamp);
 
   virtual ~AudioBuffer();
@@ -158,19 +164,18 @@ class MEDIA_EXPORT AudioBuffer
   const SampleFormat sample_format_;
   const ChannelLayout channel_layout_;
   const int channel_count_;
-  const int sample_rate_;
+  int sample_rate_;
   int adjusted_frame_count_;
-  int trim_start_;
   const bool end_of_stream_;
   base::TimeDelta timestamp_;
   base::TimeDelta duration_;
 
   // Contiguous block of channel data.
-  scoped_ptr<uint8, base::AlignedFreeDeleter> data_;
+  std::unique_ptr<uint8_t, base::AlignedFreeDeleter> data_;
   size_t data_size_;
 
   // For planar data, points to each channels data.
-  std::vector<uint8*> channel_data_;
+  std::vector<uint8_t*> channel_data_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(AudioBuffer);
 };

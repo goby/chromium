@@ -7,10 +7,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/metrics/histogram_macros.h"
+#include "build/build_config.h"
 #include "components/password_manager/core/browser/password_manager_settings_migration_experiment.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
-#include "components/sync_driver/sync_service.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync/driver/sync_service.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 
 namespace {
 
@@ -56,10 +57,10 @@ void SaveCurrentPrefState(PrefService* prefs,
 void TrackInitialAndFinalValues(PrefService* prefs,
                                 bool initial_new_pref_value,
                                 bool initial_legacy_pref_value) {
-  bool final_new_pref_value =
-      prefs->GetBoolean(password_manager::prefs::kCredentialsEnableService);
-  bool final_legacy_pref_value =
-      prefs->GetBoolean(password_manager::prefs::kPasswordManagerSavingEnabled);
+  bool final_new_pref_value = GetBooleanUserOrDefaultPrefValue(
+      prefs, password_manager::prefs::kCredentialsEnableService);
+  bool final_legacy_pref_value = GetBooleanUserOrDefaultPrefValue(
+      prefs, password_manager::prefs::kPasswordManagerSavingEnabled);
   const int kMaxInitValue = 0x10;
   int value_to_log = 0;
   const int kInitialNewValueMask = 0x8;
@@ -83,8 +84,10 @@ void TrackInitialAndFinalValues(PrefService* prefs,
 
 namespace password_manager {
 
+bool PasswordManagerSettingMigratorService::force_disabled_for_testing_ = false;
+
 PasswordManagerSettingMigratorService::PasswordManagerSettingMigratorService(
-    syncable_prefs::PrefServiceSyncable* prefs)
+    sync_preferences::PrefServiceSyncable* prefs)
     : prefs_(prefs), sync_service_(nullptr) {
   SaveCurrentPrefState(prefs_, &initial_new_pref_value_,
                        &initial_legacy_pref_value_);
@@ -94,7 +97,9 @@ PasswordManagerSettingMigratorService::
     ~PasswordManagerSettingMigratorService() {}
 
 void PasswordManagerSettingMigratorService::InitializeMigration(
-    sync_driver::SyncService* sync_service) {
+    syncer::SyncService* sync_service) {
+  if (force_disabled_for_testing_)
+    return;
   SaveCurrentPrefState(prefs_, &initial_new_pref_value_,
                        &initial_legacy_pref_value_);
   const int kMaxInitialValues = 4;

@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/service_worker/service_worker_context_request_handler.h"
+
+#include <utility>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
@@ -9,11 +13,12 @@
 #include "content/browser/fileapi/mock_url_request_delegate.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
-#include "content/browser/service_worker/service_worker_context_request_handler.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
+#include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/browser/service_worker/service_worker_write_to_cache_job.h"
 #include "content/common/service_worker/service_worker_utils.h"
+#include "content/public/browser/resource_request_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/url_request_context.h"
@@ -22,8 +27,6 @@
 namespace content {
 
 namespace {
-
-int kMockRenderProcessId = 1224;
 
 void EmptyCallback() {}
 
@@ -35,8 +38,7 @@ class ServiceWorkerContextRequestHandlerTest : public testing::Test {
       : browser_thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP) {}
 
   void SetUp() override {
-    helper_.reset(
-        new EmbeddedWorkerTestHelper(base::FilePath(), kMockRenderProcessId));
+    helper_.reset(new EmbeddedWorkerTestHelper(base::FilePath()));
 
     // A new unstored registration/version.
     scope_ = GURL("http://host/scope/");
@@ -47,12 +49,15 @@ class ServiceWorkerContextRequestHandlerTest : public testing::Test {
         registration_.get(), script_url_, 1L, context()->AsWeakPtr());
 
     // An empty host.
-    scoped_ptr<ServiceWorkerProviderHost> host(new ServiceWorkerProviderHost(
-        kMockRenderProcessId, MSG_ROUTING_NONE /* render_frame_id */,
-        1 /* provider_id */, SERVICE_WORKER_PROVIDER_FOR_WINDOW,
-        context()->AsWeakPtr(), nullptr));
+    std::unique_ptr<ServiceWorkerProviderHost> host(
+        new ServiceWorkerProviderHost(
+            helper_->mock_render_process_id(),
+            MSG_ROUTING_NONE /* render_frame_id */, 1 /* provider_id */,
+            SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+            ServiceWorkerProviderHost::FrameSecurityLevel::SECURE,
+            context()->AsWeakPtr(), nullptr));
     provider_host_ = host->AsWeakPtr();
-    context()->AddProviderHost(host.Pass());
+    context()->AddProviderHost(std::move(host));
 
     context()->storage()->LazyInitialize(base::Bind(&EmptyCallback));
     base::RunLoop().RunUntilIdle();
@@ -68,7 +73,7 @@ class ServiceWorkerContextRequestHandlerTest : public testing::Test {
 
  protected:
   TestBrowserThreadBundle browser_thread_bundle_;
-  scoped_ptr<EmbeddedWorkerTestHelper> helper_;
+  std::unique_ptr<EmbeddedWorkerTestHelper> helper_;
   scoped_refptr<ServiceWorkerRegistration> registration_;
   scoped_refptr<ServiceWorkerVersion> version_;
   base::WeakPtr<ServiceWorkerProviderHost> provider_host_;
@@ -78,7 +83,10 @@ class ServiceWorkerContextRequestHandlerTest : public testing::Test {
   GURL script_url_;
 };
 
-TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateBefore24Hours) {
+class ServiceWorkerContextRequestHandlerTestP
+    : public MojoServiceWorkerTestP<ServiceWorkerContextRequestHandlerTest> {};
+
+TEST_P(ServiceWorkerContextRequestHandlerTestP, UpdateBefore24Hours) {
   // Give the registration a very recent last update time and pretend
   // we're installing a new version.
   registration_->set_last_update_check(base::Time::Now());
@@ -87,16 +95,15 @@ TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateBefore24Hours) {
 
   // Conduct a resource fetch for the main script.
   const GURL kScriptUrl("http://host/script.js");
-  scoped_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
+  std::unique_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
       kScriptUrl, net::DEFAULT_PRIORITY, &url_request_delegate_);
-  scoped_ptr<ServiceWorkerContextRequestHandler> handler(
+  std::unique_ptr<ServiceWorkerContextRequestHandler> handler(
       new ServiceWorkerContextRequestHandler(
-          context()->AsWeakPtr(),
-          provider_host_,
+          context()->AsWeakPtr(), provider_host_,
           base::WeakPtr<storage::BlobStorageContext>(),
           RESOURCE_TYPE_SERVICE_WORKER));
-  scoped_refptr<net::URLRequestJob> job =
-      handler->MaybeCreateJob(request.get(), nullptr, nullptr);
+  std::unique_ptr<net::URLRequestJob> job(
+      handler->MaybeCreateJob(request.get(), nullptr, nullptr));
   ASSERT_TRUE(job.get());
   ServiceWorkerWriteToCacheJob* sw_job =
       static_cast<ServiceWorkerWriteToCacheJob*>(job.get());
@@ -105,7 +112,7 @@ TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateBefore24Hours) {
   EXPECT_FALSE(sw_job->net_request_->load_flags() & net::LOAD_BYPASS_CACHE);
 }
 
-TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateAfter24Hours) {
+TEST_P(ServiceWorkerContextRequestHandlerTestP, UpdateAfter24Hours) {
   // Give the registration a old update time and pretend
   // we're installing a new version.
   registration_->set_last_update_check(
@@ -115,16 +122,15 @@ TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateAfter24Hours) {
 
   // Conduct a resource fetch for the main script.
   const GURL kScriptUrl("http://host/script.js");
-  scoped_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
+  std::unique_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
       kScriptUrl, net::DEFAULT_PRIORITY, &url_request_delegate_);
-  scoped_ptr<ServiceWorkerContextRequestHandler> handler(
+  std::unique_ptr<ServiceWorkerContextRequestHandler> handler(
       new ServiceWorkerContextRequestHandler(
-          context()->AsWeakPtr(),
-          provider_host_,
+          context()->AsWeakPtr(), provider_host_,
           base::WeakPtr<storage::BlobStorageContext>(),
           RESOURCE_TYPE_SERVICE_WORKER));
-  scoped_refptr<net::URLRequestJob> job =
-      handler->MaybeCreateJob(request.get(), nullptr, nullptr);
+  std::unique_ptr<net::URLRequestJob> job(
+      handler->MaybeCreateJob(request.get(), nullptr, nullptr));
   ASSERT_TRUE(job.get());
   ServiceWorkerWriteToCacheJob* sw_job =
       static_cast<ServiceWorkerWriteToCacheJob*>(job.get());
@@ -133,7 +139,7 @@ TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateAfter24Hours) {
   EXPECT_TRUE(sw_job->net_request_->load_flags() & net::LOAD_BYPASS_CACHE);
 }
 
-TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateForceBypassCache) {
+TEST_P(ServiceWorkerContextRequestHandlerTestP, UpdateForceBypassCache) {
   // Give the registration a very recent last update time and pretend
   // we're installing a new version.
   registration_->set_last_update_check(base::Time::Now());
@@ -143,15 +149,15 @@ TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateForceBypassCache) {
 
   // Conduct a resource fetch for the main script.
   const GURL kScriptUrl("http://host/script.js");
-  scoped_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
+  std::unique_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
       kScriptUrl, net::DEFAULT_PRIORITY, &url_request_delegate_);
-  scoped_ptr<ServiceWorkerContextRequestHandler> handler(
+  std::unique_ptr<ServiceWorkerContextRequestHandler> handler(
       new ServiceWorkerContextRequestHandler(
           context()->AsWeakPtr(), provider_host_,
           base::WeakPtr<storage::BlobStorageContext>(),
           RESOURCE_TYPE_SERVICE_WORKER));
-  scoped_refptr<net::URLRequestJob> job =
-      handler->MaybeCreateJob(request.get(), nullptr, nullptr);
+  std::unique_ptr<net::URLRequestJob> job(
+      handler->MaybeCreateJob(request.get(), nullptr, nullptr));
   ASSERT_TRUE(job.get());
   ServiceWorkerWriteToCacheJob* sw_job =
       static_cast<ServiceWorkerWriteToCacheJob*>(job.get());
@@ -159,5 +165,35 @@ TEST_F(ServiceWorkerContextRequestHandlerTest, UpdateForceBypassCache) {
   // Verify the net request is initialized to bypass the browser cache.
   EXPECT_TRUE(sw_job->net_request_->load_flags() & net::LOAD_BYPASS_CACHE);
 }
+
+TEST_P(ServiceWorkerContextRequestHandlerTestP,
+       ServiceWorkerDataRequestAnnotation) {
+  version_->SetStatus(ServiceWorkerVersion::NEW);
+  provider_host_->running_hosted_version_ = version_;
+
+  // Conduct a resource fetch for the main script.
+  const GURL kScriptUrl("http://host/script.js");
+  std::unique_ptr<net::URLRequest> request = url_request_context_.CreateRequest(
+      kScriptUrl, net::DEFAULT_PRIORITY, &url_request_delegate_);
+  std::unique_ptr<ServiceWorkerContextRequestHandler> handler(
+      new ServiceWorkerContextRequestHandler(
+          context()->AsWeakPtr(), provider_host_,
+          base::WeakPtr<storage::BlobStorageContext>(),
+          RESOURCE_TYPE_SERVICE_WORKER));
+  std::unique_ptr<net::URLRequestJob> job(
+      handler->MaybeCreateJob(request.get(), nullptr, nullptr));
+  ASSERT_TRUE(job.get());
+  ServiceWorkerWriteToCacheJob* sw_job =
+      static_cast<ServiceWorkerWriteToCacheJob*>(job.get());
+
+  // Verify that the request is properly annotated as originating from a
+  // Service Worker.
+  EXPECT_TRUE(ResourceRequestInfo::OriginatedFromServiceWorker(
+      sw_job->net_request_.get()));
+}
+
+INSTANTIATE_TEST_CASE_P(ServiceWorkerContextRequestHandlerTest,
+                        ServiceWorkerContextRequestHandlerTestP,
+                        testing::Bool());
 
 }  // namespace content

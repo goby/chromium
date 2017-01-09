@@ -5,12 +5,14 @@
 #include "chrome/browser/ui/cocoa/translate/translate_bubble_controller.h"
 
 #include "base/message_loop/message_loop.h"
+#include "base/test/histogram_tester.h"
 #import "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
-#import "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
-#include "chrome/browser/ui/cocoa/run_loop_testing.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
+#include "chrome/browser/ui/cocoa/test/run_loop_testing.h"
+#include "chrome/browser/ui/translate/translate_bubble_model.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/site_instance.h"
 
@@ -22,11 +24,28 @@
 
 @end
 
+@implementation TranslateBubbleController (ForTesting)
+
+- (NSView*)errorView {
+  NSNumber* key = @(TranslateBubbleModel::VIEW_STATE_ERROR);
+  return [views_ objectForKey:key];
+}
+- (NSButton*)tryAgainButton {
+  return tryAgainButton_;
+}
+
+@end
+
 class TranslateBubbleControllerTest : public CocoaProfileTest {
  public:
   void SetUp() override {
     CocoaProfileTest::SetUp();
     site_instance_ = content::SiteInstance::Create(profile());
+
+    NSWindow* nativeWindow = browser()->window()->GetNativeWindow();
+    bwc_ =
+        [BrowserWindowController browserWindowControllerForWindow:nativeWindow];
+    web_contents_ = AppendToTabStrip();
   }
 
   content::WebContents* AppendToTabStrip() {
@@ -35,32 +54,136 @@ class TranslateBubbleControllerTest : public CocoaProfileTest {
     browser()->tab_strip_model()->AppendWebContents(
         web_contents, /*foreground=*/true);
     return web_contents;
-   }
+  }
+
+  BrowserWindowController* bwc() { return bwc_; }
+
+  TranslateBubbleController* bubble() {
+    return [bwc() translateBubbleController];
+  }
+
+  void ShowBubble() {
+    ASSERT_FALSE(bubble());
+    translate::TranslateStep step = translate::TRANSLATE_STEP_BEFORE_TRANSLATE;
+
+    [bwc_ showTranslateBubbleForWebContents:web_contents_
+                                       step:step
+                                  errorType:translate::TranslateErrors::NONE];
+
+    // Ensure that there are no closing animations.
+    InfoBubbleWindow* window = (InfoBubbleWindow*)[bubble() window];
+    [window setAllowedAnimations:info_bubble::kAnimateNone];
+  }
+
+  void SwitchToErrorView() {
+    translate::TranslateStep step = translate::TRANSLATE_STEP_TRANSLATE_ERROR;
+    [bwc_
+        showTranslateBubbleForWebContents:web_contents_
+                                     step:step
+                                errorType:translate::TranslateErrors::NETWORK];
+  }
+
+  void CloseBubble() {
+    [bubble() close];
+    chrome::testing::NSRunLoopRunAllPending();
+  }
 
  private:
   scoped_refptr<content::SiteInstance> site_instance_;
+  BrowserWindowController* bwc_;
+  content::WebContents* web_contents_;
 };
 
 TEST_F(TranslateBubbleControllerTest, ShowAndClose) {
-  NSWindow* nativeWindow = browser()->window()->GetNativeWindow();
-  BrowserWindowController* bwc =
-      [BrowserWindowController browserWindowControllerForWindow:nativeWindow];
-  content::WebContents* webContents = AppendToTabStrip();
-  translate::TranslateStep step = translate::TRANSLATE_STEP_BEFORE_TRANSLATE;
+  EXPECT_FALSE(bubble());
 
-  TranslateBubbleController* bubble = [bwc translateBubbleController];
-  EXPECT_FALSE(bubble);
+  ShowBubble();
+  EXPECT_TRUE(bubble());
 
-  [bwc showTranslateBubbleForWebContents:webContents
-                                    step:step
-                               errorType:translate::TranslateErrors::NONE];
-  bubble = [bwc translateBubbleController];
-  EXPECT_TRUE(bubble);
-  InfoBubbleWindow* window = (InfoBubbleWindow*)[bubble window];
-  [window setAllowedAnimations:info_bubble::kAnimateNone];
+  CloseBubble();
+  EXPECT_FALSE(bubble());
+}
 
-  [bubble close];
-  chrome::testing::NSRunLoopRunAllPending();
-  bubble = [bwc translateBubbleController];
-  EXPECT_FALSE(bubble);
+TEST_F(TranslateBubbleControllerTest, SwitchToErrorView) {
+  EXPECT_FALSE(bubble());
+  ShowBubble();
+  const TranslateBubbleModel* model = [bubble() model];
+
+  EXPECT_TRUE(bubble());
+  EXPECT_EQ(TranslateBubbleModel::ViewState::VIEW_STATE_BEFORE_TRANSLATE,
+            model->GetViewState());
+
+  SwitchToErrorView();
+
+  NSView* errorView = [bubble() errorView];
+  // We should have 4 subview inside the error view:
+  // A NSTextField, a NSImageView and two NSButton.
+  EXPECT_EQ(4UL, [[errorView subviews] count]);
+
+  // one of the subview should be "Try again" button.
+  EXPECT_TRUE([[errorView subviews] containsObject:[bubble() tryAgainButton]]);
+  EXPECT_EQ(TranslateBubbleModel::ViewState::VIEW_STATE_ERROR,
+            model->GetViewState());
+  EXPECT_TRUE(bubble());
+  CloseBubble();
+}
+
+TEST_F(TranslateBubbleControllerTest, SwitchViews) {
+  // A basic test which just switch between views to make sure no crash.
+  EXPECT_FALSE(bubble());
+
+  ShowBubble();
+  EXPECT_TRUE(bubble());
+
+  // Switch to during translating view.
+  [bubble()
+      switchView:(TranslateBubbleModel::ViewState::VIEW_STATE_TRANSLATING)];
+
+  EXPECT_TRUE(bubble());
+
+  // Switch to after translating view.
+  [bubble()
+      switchView:(TranslateBubbleModel::ViewState::VIEW_STATE_AFTER_TRANSLATE)];
+
+  EXPECT_TRUE(bubble());
+
+  // Switch to advanced view.
+  [bubble() switchView:(TranslateBubbleModel::ViewState::VIEW_STATE_ADVANCED)];
+
+  EXPECT_TRUE(bubble());
+
+  // Switch to before translating view.
+  [bubble() switchView:
+                (TranslateBubbleModel::ViewState::VIEW_STATE_BEFORE_TRANSLATE)];
+
+  EXPECT_TRUE(bubble());
+
+  CloseBubble();
+  EXPECT_FALSE(bubble());
+}
+
+TEST_F(TranslateBubbleControllerTest, CloseRegistersDecline) {
+  const char kDeclineTranslateDismissUI[] =
+      "Translate.DeclineTranslateDismissUI";
+  const char kDeclineTranslate[] = "Translate.DeclineTranslate";
+
+  // A simple close without any interactions registers as a dismissal.
+  {
+    base::HistogramTester histogram_tester;
+    ShowBubble();
+    CloseBubble();
+    histogram_tester.ExpectTotalCount(kDeclineTranslateDismissUI, 1);
+    histogram_tester.ExpectTotalCount(kDeclineTranslate, 0);
+  }
+
+  // A close while pressing e.g. 'x', registers as decline.
+  {
+    base::HistogramTester histogram_tester;
+    ShowBubble();
+    [bubble() handleCloseButtonPressed:nil];
+
+    CloseBubble();
+    histogram_tester.ExpectTotalCount(kDeclineTranslateDismissUI, 0);
+    histogram_tester.ExpectTotalCount(kDeclineTranslate, 1);
+  }
 }

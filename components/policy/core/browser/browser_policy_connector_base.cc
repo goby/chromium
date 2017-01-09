@@ -4,13 +4,15 @@
 
 #include "components/policy/core/browser/browser_policy_connector_base.h"
 
+#include <stddef.h>
+#include <utility>
 #include <vector>
 
 #include "base/logging.h"
 #include "components/policy/core/common/configuration_policy_provider.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_service_impl.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 
 namespace policy {
 
@@ -55,8 +57,8 @@ void BrowserPolicyConnectorBase::InitPolicyProviders() {
   if (g_testing_provider)
     g_testing_provider->Init(GetSchemaRegistry());
 
-  for (size_t i = 0; i < policy_providers_.size(); ++i)
-    policy_providers_[i]->Init(GetSchemaRegistry());
+  for (const auto& provider : policy_providers_)
+    provider->Init(GetSchemaRegistry());
 
   is_initialized_ = true;
 }
@@ -65,8 +67,8 @@ void BrowserPolicyConnectorBase::Shutdown() {
   is_initialized_ = false;
   if (g_testing_provider)
     g_testing_provider->Shutdown();
-  for (size_t i = 0; i < policy_providers_.size(); ++i)
-    policy_providers_[i]->Shutdown();
+  for (const auto& provider : policy_providers_)
+    provider->Shutdown();
   // Drop g_testing_provider so that tests executed with --single_process can
   // call SetPolicyProviderForTesting() again. It is still owned by the test.
   g_testing_provider = nullptr;
@@ -88,9 +90,10 @@ PolicyService* BrowserPolicyConnectorBase::GetPolicyService() {
     if (g_testing_provider) {
       providers.push_back(g_testing_provider);
     } else {
-      providers.resize(policy_providers_.size());
-      std::copy(policy_providers_.begin(), policy_providers_.end(),
-                providers.begin());
+      providers.reserve(policy_providers_.size());
+      for (const auto& policy : policy_providers_) {
+        providers.push_back(policy.get());
+      }
     }
     policy_service_.reset(new PolicyServiceImpl(providers));
   }
@@ -119,15 +122,15 @@ void BrowserPolicyConnectorBase::SetPolicyProviderForTesting(
 }
 
 void BrowserPolicyConnectorBase::AddPolicyProvider(
-    scoped_ptr<ConfigurationPolicyProvider> provider) {
-  policy_providers_.push_back(provider.release());
+    std::unique_ptr<ConfigurationPolicyProvider> provider) {
+  policy_providers_.push_back(std::move(provider));
 }
 
 void BrowserPolicyConnectorBase::SetPlatformPolicyProvider(
-    scoped_ptr<ConfigurationPolicyProvider> provider) {
+    std::unique_ptr<ConfigurationPolicyProvider> provider) {
   CHECK(!platform_policy_provider_);
   platform_policy_provider_ = provider.get();
-  AddPolicyProvider(provider.Pass());
+  AddPolicyProvider(std::move(provider));
 }
 
 }  // namespace policy

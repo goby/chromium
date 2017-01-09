@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_BOOKMARK_MANAGER_PRIVATE_BOOKMARK_MANAGER_PRIVATE_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_BOOKMARK_MANAGER_PRIVATE_BOOKMARK_MANAGER_PRIVATE_API_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/bookmarks/bookmarks_api.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
@@ -14,6 +16,7 @@
 #include "components/bookmarks/browser/base_bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
 #include "components/undo/bookmark_undo_service.h"
+#include "content/public/browser/web_contents_user_data.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
 
@@ -50,7 +53,7 @@ class BookmarkManagerPrivateEventRouter
   // Helper to actually dispatch an event to extension listeners.
   void DispatchEvent(events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     scoped_ptr<base::ListValue> event_args);
+                     std::unique_ptr<base::ListValue> event_args);
 
   // Remembers the previous meta info of a node before it was changed.
   bookmarks::BookmarkNode::MetaInfoMap prev_meta_info_;
@@ -85,16 +88,18 @@ class BookmarkManagerPrivateAPI : public BrowserContextKeyedAPI,
   content::BrowserContext* browser_context_;
 
   // Created lazily upon OnListenerAdded.
-  scoped_ptr<BookmarkManagerPrivateEventRouter> event_router_;
+  std::unique_ptr<BookmarkManagerPrivateEventRouter> event_router_;
 };
 
 // Class that handles the drag and drop related chrome.bookmarkManagerPrivate
 // events. This class has one instance per bookmark manager tab.
 class BookmarkManagerPrivateDragEventRouter
-    : public BookmarkTabHelper::BookmarkDrag {
+    : public BookmarkTabHelper::BookmarkDrag,
+      public content::WebContentsUserData<
+          BookmarkManagerPrivateDragEventRouter> {
  public:
-  BookmarkManagerPrivateDragEventRouter(Profile* profile,
-                                        content::WebContents* web_contents);
+  explicit BookmarkManagerPrivateDragEventRouter(
+      content::WebContents* web_contents);
   ~BookmarkManagerPrivateDragEventRouter() override;
 
   // BookmarkTabHelper::BookmarkDrag interface
@@ -114,10 +119,10 @@ class BookmarkManagerPrivateDragEventRouter
   // Helper to actually dispatch an event to extension listeners.
   void DispatchEvent(events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     scoped_ptr<base::ListValue> args);
+                     std::unique_ptr<base::ListValue> args);
 
-  Profile* profile_;
   content::WebContents* web_contents_;
+  Profile* profile_;
   bookmarks::BookmarkNodeData bookmark_drag_data_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkManagerPrivateDragEventRouter);
@@ -195,7 +200,8 @@ class BookmarkManagerPrivateSortChildrenFunction
   bool RunOnReady() override;
 };
 
-class BookmarkManagerPrivateGetStringsFunction : public AsyncExtensionFunction {
+class BookmarkManagerPrivateGetStringsFunction
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.getStrings",
                              BOOKMARKMANAGERPRIVATE_GETSTRINGS)
@@ -203,8 +209,8 @@ class BookmarkManagerPrivateGetStringsFunction : public AsyncExtensionFunction {
  protected:
   ~BookmarkManagerPrivateGetStringsFunction() override {}
 
-  // ExtensionFunction:
-  bool RunAsync() override;
+  // UIThreadExtensionFunction:
+  ResponseAction Run() override;
 };
 
 class BookmarkManagerPrivateStartDragFunction
@@ -397,19 +403,6 @@ class BookmarkManagerPrivateGetRedoInfoFunction
 
  protected:
   ~BookmarkManagerPrivateGetRedoInfoFunction() override {}
-
-  // ExtensionFunction:
-  bool RunOnReady() override;
-};
-
-class BookmarkManagerPrivateSetVersionFunction
-    : public extensions::BookmarksFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.setVersion",
-                             BOOKMARKMANAGERPRIVATE_SETVERSION);
-
- protected:
-  ~BookmarkManagerPrivateSetVersionFunction() override {}
 
   // ExtensionFunction:
   bool RunOnReady() override;

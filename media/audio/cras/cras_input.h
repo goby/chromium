@@ -6,13 +6,17 @@
 #define MEDIA_AUDIO_CRAS_CRAS_INPUT_H_
 
 #include <cras_client.h>
+#include <stddef.h>
+#include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "media/audio/agc_audio_stream.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/media_export.h"
 
 namespace media {
@@ -45,11 +49,14 @@ class MEDIA_EXPORT CrasInputStream : public AgcAudioStream<AudioInputStream> {
   bool IsMuted() override;
 
  private:
+  // Checks if |device_id| corresponds to 'Default' choice.
+  bool IsDefault(const std::string& device_id) const;
+
   // Handles requests to get samples from the provided buffer.  This will be
   // called by the audio server when it has samples ready.
   static int SamplesReady(cras_client* client,
                           cras_stream_id_t stream_id,
-                          uint8* samples,
+                          uint8_t* samples,
                           size_t frames,
                           const timespec* sample_ts,
                           void* arg);
@@ -62,7 +69,7 @@ class MEDIA_EXPORT CrasInputStream : public AgcAudioStream<AudioInputStream> {
 
   // Reads one or more buffers of audio from the device, passes on to the
   // registered callback. Called from SamplesReady().
-  void ReadAudio(size_t frames, uint8* buffer, const timespec* sample_ts);
+  void ReadAudio(size_t frames, uint8_t* buffer, const timespec* sample_ts);
 
   // Deals with an error that occured in the stream.  Called from StreamError().
   void NotifyStreamError(int err);
@@ -81,7 +88,7 @@ class MEDIA_EXPORT CrasInputStream : public AgcAudioStream<AudioInputStream> {
   AudioManagerCras* const audio_manager_;
 
   // Size of frame in bytes.
-  uint32 bytes_per_frame_;
+  uint32_t bytes_per_frame_;
 
   // Callback to pass audio samples too, valid while recording.
   AudioInputCallback* callback_;
@@ -107,7 +114,11 @@ class MEDIA_EXPORT CrasInputStream : public AgcAudioStream<AudioInputStream> {
   // True if the stream is a system-wide loopback stream.
   bool is_loopback_;
 
-  scoped_ptr<AudioBus> audio_bus_;
+  // True if we want to mute system audio during capturing.
+  bool mute_system_audio_;
+  bool mute_done_;
+
+  std::unique_ptr<AudioBus> audio_bus_;
 
   DISALLOW_COPY_AND_ASSIGN(CrasInputStream);
 };

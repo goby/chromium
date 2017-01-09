@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_SYNC_SYNC_GLOBAL_ERROR_FACTORY_H_
 #define CHROME_BROWSER_SYNC_SYNC_GLOBAL_ERROR_FACTORY_H_
 
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
@@ -17,7 +18,7 @@ class Profile;
 class SyncGlobalErrorFactory : public BrowserContextKeyedServiceFactory {
  public:
   // Returns the instance of SyncGlobalError associated with this profile,
-  // creating one if none exists. In Ash, this will return NULL.
+  // creating one if none exists. In Ash, this will return null.
   static SyncGlobalError* GetForProfile(Profile* profile);
 
   // Returns an instance of the SyncGlobalErrorFactory singleton.

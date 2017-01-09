@@ -4,6 +4,7 @@
 
 #include "net/proxy/dhcp_proxy_script_fetcher_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "net/base/net_errors.h"
 #include "net/proxy/dhcp_proxy_script_fetcher.h"
 
@@ -18,18 +19,18 @@ DhcpProxyScriptFetcherFactory::DhcpProxyScriptFetcherFactory()
   set_enabled(true);
 }
 
-scoped_ptr<DhcpProxyScriptFetcher> DhcpProxyScriptFetcherFactory::Create(
+std::unique_ptr<DhcpProxyScriptFetcher> DhcpProxyScriptFetcherFactory::Create(
     URLRequestContext* context) {
   if (!feature_enabled_) {
-    return make_scoped_ptr(new DoNothingDhcpProxyScriptFetcher());
+    return base::MakeUnique<DoNothingDhcpProxyScriptFetcher>();
   } else {
     DCHECK(IsSupported());
-    scoped_ptr<DhcpProxyScriptFetcher> ret;
+    std::unique_ptr<DhcpProxyScriptFetcher> ret;
 #if defined(OS_WIN)
     ret.reset(new DhcpProxyScriptFetcherWin(context));
 #endif
     DCHECK(ret);
-    return ret.Pass();
+    return ret;
   }
 }
 

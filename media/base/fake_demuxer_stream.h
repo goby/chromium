@@ -5,7 +5,7 @@
 #ifndef MEDIA_BASE_FAKE_DEMUXER_STREAM_H_
 #define MEDIA_BASE_FAKE_DEMUXER_STREAM_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/demuxer_stream.h"
@@ -35,6 +35,9 @@ class FakeDemuxerStream : public DemuxerStream {
   Type type() const override;
   bool SupportsConfigChanges() override;
   VideoRotation video_rotation() override;
+  bool enabled() const override;
+  void set_enabled(bool enabled, base::TimeDelta timestamp) override;
+  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override;
 
   void Initialize();
 
@@ -63,10 +66,8 @@ class FakeDemuxerStream : public DemuxerStream {
   // the stream.
   void SeekToStart();
 
-  // Sets the splice timestamp for all furture buffers returned via Read().
-  void set_splice_timestamp(base::TimeDelta splice_timestamp) {
-    splice_timestamp_ = splice_timestamp;
-  }
+  // Sets further read requests to return EOS buffers.
+  void SeekToEndOfStream();
 
  private:
   void UpdateVideoDecoderConfig();
@@ -88,7 +89,6 @@ class FakeDemuxerStream : public DemuxerStream {
 
   base::TimeDelta current_timestamp_;
   base::TimeDelta duration_;
-  base::TimeDelta splice_timestamp_;
 
   gfx::Size next_coded_size_;
   VideoDecoderConfig video_decoder_config_;

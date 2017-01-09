@@ -6,12 +6,11 @@
 #define CHROME_BROWSER_MEDIA_TEST_LICENSE_SERVER_CONFIG_H_
 
 #include <string>
-#include "base/basictypes.h"
 
+#include "base/macros.h"
 
 namespace base {
 class CommandLine;
-class FilePath;
 }
 
 // Class used to start a test license server.

@@ -5,8 +5,13 @@
 #ifndef EXTENSIONS_SHELL_BROWSER_SHELL_EXTENSIONS_BROWSER_CLIENT_H_
 #define EXTENSIONS_SHELL_BROWSER_SHELL_EXTENSIONS_BROWSER_CLIENT_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "extensions/browser/extensions_browser_client.h"
+#include "extensions/browser/kiosk/kiosk_delegate.h"
 
 class PrefService;
 
@@ -63,31 +68,33 @@ class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
       content::BrowserContext* context,
       std::vector<ExtensionPrefsObserver*>* observers) const override;
   ProcessManagerDelegate* GetProcessManagerDelegate() const override;
-  scoped_ptr<ExtensionHostDelegate> CreateExtensionHostDelegate() override;
+  std::unique_ptr<ExtensionHostDelegate> CreateExtensionHostDelegate() override;
   bool DidVersionUpdate(content::BrowserContext* context) override;
   void PermitExternalProtocolHandler() override;
   bool IsRunningInForcedAppMode() override;
   bool IsLoggedInAsPublicAccount() override;
-  ApiActivityMonitor* GetApiActivityMonitor(
-      content::BrowserContext* context) override;
   ExtensionSystemProvider* GetExtensionSystemFactory() override;
   void RegisterExtensionFunctions(
       ExtensionFunctionRegistry* registry) const override;
   void RegisterMojoServices(content::RenderFrameHost* render_frame_host,
                             const Extension* extension) const override;
-  scoped_ptr<RuntimeAPIDelegate> CreateRuntimeAPIDelegate(
+  std::unique_ptr<RuntimeAPIDelegate> CreateRuntimeAPIDelegate(
       content::BrowserContext* context) const override;
   const ComponentExtensionResourceManager*
   GetComponentExtensionResourceManager() override;
-  void BroadcastEventToRenderers(events::HistogramValue histogram_value,
-                                 const std::string& event_name,
-                                 scoped_ptr<base::ListValue> args) override;
+  void BroadcastEventToRenderers(
+      events::HistogramValue histogram_value,
+      const std::string& event_name,
+      std::unique_ptr<base::ListValue> args) override;
   net::NetLog* GetNetLog() override;
   ExtensionCache* GetExtensionCache() override;
   bool IsBackgroundUpdateAllowed() override;
   bool IsMinBrowserVersionSupported(const std::string& min_version) override;
   ExtensionWebContentsObserver* GetExtensionWebContentsObserver(
       content::WebContents* web_contents) override;
+  ExtensionNavigationUIData* GetExtensionNavigationUIData(
+      net::URLRequest* request) override;
+  KioskDelegate* GetKioskDelegate() override;
 
   // Sets the API client.
   void SetAPIClientForTest(ExtensionsAPIClient* api_client);
@@ -100,10 +107,12 @@ class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
   PrefService* pref_service_;
 
   // Support for extension APIs.
-  scoped_ptr<ExtensionsAPIClient> api_client_;
+  std::unique_ptr<ExtensionsAPIClient> api_client_;
 
   // The extension cache used for download and installation.
-  scoped_ptr<ExtensionCache> extension_cache_;
+  std::unique_ptr<ExtensionCache> extension_cache_;
+
+  std::unique_ptr<KioskDelegate> kiosk_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellExtensionsBrowserClient);
 };

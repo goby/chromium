@@ -4,6 +4,9 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/folder_creator.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
 #include "components/drive/drive_api_util.h"
@@ -44,7 +47,7 @@ void FolderCreator::Run(const FileIDCallback& callback) {
 void FolderCreator::DidCreateFolder(
     const FileIDCallback& callback,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::FileResource> entry) {
+    std::unique_ptr<google_apis::FileResource> entry) {
   SyncStatusCode status = DriveApiErrorCodeToSyncStatusCode(error);
   if (status != SYNC_STATUS_OK) {
     callback.Run(std::string(), status);
@@ -62,7 +65,7 @@ void FolderCreator::DidListFolders(
     const FileIDCallback& callback,
     ScopedVector<google_apis::FileResource> candidates,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::FileList> file_list) {
+    std::unique_ptr<google_apis::FileList> file_list) {
   SyncStatusCode status = DriveApiErrorCodeToSyncStatusCode(error);
   if (status != SYNC_STATUS_OK) {
     callback.Run(std::string(), status);
@@ -107,7 +110,7 @@ void FolderCreator::DidListFolders(
 
   std::string file_id = oldest->file_id();
 
-  status = metadata_database_->UpdateByFileResourceList(candidates.Pass());
+  status = metadata_database_->UpdateByFileResourceList(std::move(candidates));
   if (status != SYNC_STATUS_OK) {
     callback.Run(std::string(), status);
     return;

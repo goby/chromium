@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_STATE_STORE_H_
 #define CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_STATE_STORE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/macros.h"
+#include "components/prefs/scoped_user_pref_update.h"
 
 class Profile;
 
@@ -67,14 +70,14 @@ class StateStore {
     base::DictionaryValue* GetPrefDict();
 
     // Replaces the contents of the underlying dictionary value.
-    void ReplacePrefDict(scoped_ptr<base::DictionaryValue> pref_dict);
+    void ReplacePrefDict(std::unique_ptr<base::DictionaryValue> pref_dict);
 
     // The store corresponding to this transaction.
     StateStore* store_;
 
     // A ScopedUserPrefUpdate through which changes to the incidents_sent
     // preference are made.
-    scoped_ptr<DictionaryPrefUpdate> pref_update_;
+    std::unique_ptr<DictionaryPrefUpdate> pref_update_;
 
     DISALLOW_COPY_AND_ASSIGN(Transaction);
   };

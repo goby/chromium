@@ -6,21 +6,22 @@
 
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/utf_string_conversions.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field_cell.h"
-#import "chrome/browser/ui/cocoa/location_bar/ev_bubble_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/keyword_hint_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_icon_decoration.h"
+#import "chrome/browser/ui/cocoa/location_bar/security_state_bubble_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/selected_keyword_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/star_decoration.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #include "third_party/ocmock/gtest_support.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 using ::testing::Return;
 using ::testing::StrictMock;
@@ -114,12 +115,14 @@ TEST_F(AutocompleteTextFieldCellTest, DISABLED_FocusedDisplay) {
   EXPECT_NE(location_icon_decoration.GetWidthForSpace(kVeryWide),
             LocationBarDecoration::kOmittedWidth);
 
-  EVBubbleDecoration ev_bubble_decoration(&location_icon_decoration);
-  ev_bubble_decoration.SetVisible(true);
-  ev_bubble_decoration.SetImage([NSImage imageNamed:@"NSApplicationIcon"]);
-  ev_bubble_decoration.SetLabel(@"Application");
-  [cell addLeftDecoration:&ev_bubble_decoration];
-  EXPECT_NE(ev_bubble_decoration.GetWidthForSpace(kVeryWide),
+  SecurityStateBubbleDecoration security_state_bubble_decoration(
+      &location_icon_decoration, nullptr);
+  security_state_bubble_decoration.SetVisible(true);
+  security_state_bubble_decoration.SetImage(
+      [NSImage imageNamed:@"NSApplicationIcon"]);
+  security_state_bubble_decoration.SetLabel(@"Application");
+  [cell addLeftDecoration:&security_state_bubble_decoration];
+  EXPECT_NE(security_state_bubble_decoration.GetWidthForSpace(kVeryWide),
             LocationBarDecoration::kOmittedWidth);
 
   StarDecoration star_decoration(NULL);
@@ -162,7 +165,7 @@ TEST_F(AutocompleteTextFieldCellTest, TextFrame) {
   textFrame = [cell textFrameForFrame:bounds];
   EXPECT_FALSE(NSIsEmptyRect(textFrame));
   EXPECT_TRUE(NSContainsRect(bounds, textFrame));
-  EXPECT_EQ(NSMinX(bounds), NSMinX(textFrame));
+  EXPECT_EQ(1, NSMinX(textFrame));
   EXPECT_EQ(NSMaxX(bounds), NSMaxX(textFrame));
   EXPECT_TRUE(NSContainsRect(cursorFrame, textFrame));
 
@@ -261,7 +264,8 @@ TEST_F(AutocompleteTextFieldCellTest, RightDecorationFrame) {
   EXPECT_LT(NSMinX(textFrame), NSMinX(decoration1Rect));
 }
 
-// Verify -[AutocompleteTextFieldCell updateToolTipsInRect:ofView:].
+// Verify -[AutocompleteTextFieldCell
+// updateMouseTrackingAndToolTipsInRect:ofView:].
 TEST_F(AutocompleteTextFieldCellTest, UpdateToolTips) {
   NSString* tooltip = @"tooltip";
 
@@ -289,7 +293,7 @@ TEST_F(AutocompleteTextFieldCellTest, UpdateToolTips) {
   id controlView = [OCMockObject mockForClass:[AutocompleteTextField class]];
   [[controlView expect] addToolTip:tooltip forRect:leftDecorationRect];
 
-  [cell updateToolTipsInRect:bounds ofView:controlView];
+  [cell updateMouseTrackingAndToolTipsInRect:bounds ofView:controlView];
 
   EXPECT_OCMOCK_VERIFY(controlView);
 }

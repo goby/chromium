@@ -16,15 +16,13 @@
 
 // Forward declare the crypto types to avoid having to include the full
 // headers.
-#if defined(USE_OPENSSL)
 typedef struct evp_pkey_st EVP_PKEY;
-#else
-typedef struct SECKEYPublicKeyStr SECKEYPublicKey;
-#endif
 
 namespace net {
 
 namespace ct {
+struct MerkleAuditProof;
+struct MerkleConsistencyProof;
 struct SignedTreeHead;
 }  // namespace ct
 
@@ -41,10 +39,13 @@ class NET_EXPORT CTLogVerifier
   // using |public_key|, which is a DER-encoded SubjectPublicKeyInfo.
   // If |public_key| refers to an unsupported public key, returns NULL.
   // |description| is a textual description of the log.
+  // |url| is the URL of the log's HTTPS API endpoint.
+  // |dns_domain| is the DNS name of the log's DNS API endpoint, if one exists.
   static scoped_refptr<const CTLogVerifier> Create(
       const base::StringPiece& public_key,
       const base::StringPiece& description,
-      const base::StringPiece& url);
+      const base::StringPiece& url,
+      const base::StringPiece& dns_domain);
 
   // Returns the log's key ID (RFC6962, Section 3.2)
   const std::string& key_id() const { return key_id_; }
@@ -53,18 +54,42 @@ class NET_EXPORT CTLogVerifier
   // Returns the log's URL
   const GURL& url() const { return url_; }
 
-  // Verifies that |sct| contains a valid signature for |entry|.
+  // Returns the log's DNS domain for CT over DNS queries, as described in
+  // https://github.com/google/certificate-transparency-rfcs/blob/master/dns/draft-ct-over-dns.md.
+  // This will be empty if the log has no DNS API endpoint.
+  const std::string& dns_domain() const { return dns_domain_; }
+
+  // Verifies that |sct| is valid for |entry| and was signed by this log.
   bool Verify(const ct::LogEntry& entry,
               const ct::SignedCertificateTimestamp& sct) const;
 
-  // Returns true if the signature in |signed_tree_head| verifies.
+  // Verifies that |signed_tree_head| is a valid Signed Tree Head (RFC 6962,
+  // Section 3.5) for this log.
   bool VerifySignedTreeHead(const ct::SignedTreeHead& signed_tree_head) const;
+
+  // Verifies that |proof| is a valid consistency proof (RFC 6962, Section
+  // 2.1.2) for this log, and which proves that |old_tree_hash| has
+  // been fully incorporated into the Merkle tree represented by
+  // |new_tree_hash|.
+  bool VerifyConsistencyProof(const ct::MerkleConsistencyProof& proof,
+                              const std::string& old_tree_hash,
+                              const std::string& new_tree_hash) const;
+
+  // Verifies that |proof| is a valid audit proof (RFC 6962, Section 2.1.1) for
+  // this log, and which proves that the certificate represented by |leaf_hash|
+  // has been incorporated into the Merkle tree represented by |root_hash|.
+  // Returns true if verification succeeds, false otherwise.
+  bool VerifyAuditProof(const ct::MerkleAuditProof& proof,
+                        const std::string& root_hash,
+                        const std::string& leaf_hash) const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(CTLogVerifierTest, VerifySignature);
   friend class base::RefCountedThreadSafe<CTLogVerifier>;
 
-  CTLogVerifier(const base::StringPiece& description, const GURL& url);
+  CTLogVerifier(const base::StringPiece& description,
+                const GURL& url,
+                const base::StringPiece& dns_domain);
   ~CTLogVerifier();
 
   // Performs crypto-library specific initialization.
@@ -83,14 +108,11 @@ class NET_EXPORT CTLogVerifier
   std::string key_id_;
   std::string description_;
   GURL url_;
+  std::string dns_domain_;
   ct::DigitallySigned::HashAlgorithm hash_algorithm_;
   ct::DigitallySigned::SignatureAlgorithm signature_algorithm_;
 
-#if defined(USE_OPENSSL)
   EVP_PKEY* public_key_;
-#else
-  SECKEYPublicKey* public_key_;
-#endif
 };
 
 }  // namespace net

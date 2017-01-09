@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/chromeos/mobile_setup_ui.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <map>
 #include <string>
@@ -12,10 +14,11 @@
 #include "base/bind_helpers.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -25,6 +28,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
 #include "chromeos/network/device_state.h"
@@ -33,13 +37,13 @@
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -146,8 +150,7 @@ class MobileSetupUIHTMLSource : public content::URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string&) const override {
     return "text/html";
@@ -165,7 +168,7 @@ class MobileSetupUIHTMLSource : public content::URLDataSource {
       const content::URLDataSource::GotDataCallback& callback,
       const std::string& service_path,
       const std::string& error_name,
-      scoped_ptr<base::DictionaryValue> error_data);
+      std::unique_ptr<base::DictionaryValue> error_data);
 
   base::WeakPtrFactory<MobileSetupUIHTMLSource> weak_ptr_factory_;
 
@@ -212,11 +215,10 @@ class MobileSetupHandler
   void GetPropertiesAndCallGetDeviceInfo(
       const std::string& service_path,
       const base::DictionaryValue& properties);
-  void GetPropertiesFailure(
-      const std::string& service_path,
-      const std::string& callback_name,
-      const std::string& error_name,
-      scoped_ptr<base::DictionaryValue> error_data);
+  void GetPropertiesFailure(const std::string& service_path,
+                            const std::string& callback_name,
+                            const std::string& error_name,
+                            std::unique_ptr<base::DictionaryValue> error_data);
 
   // Handlers for JS WebUI messages.
   void HandleSetTransactionStatus(const base::ListValue* args);
@@ -264,8 +266,7 @@ std::string MobileSetupUIHTMLSource::GetSource() const {
 
 void MobileSetupUIHTMLSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
     const content::URLDataSource::GotDataCallback& callback) {
   NetworkHandler::Get()->network_configuration_handler()->GetShillProperties(
       path,
@@ -355,7 +356,7 @@ void MobileSetupUIHTMLSource::GetPropertiesFailure(
     const content::URLDataSource::GotDataCallback& callback,
     const std::string& service_path,
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) {
+    std::unique_ptr<base::DictionaryValue> error_data) {
   DataRequestFailed(service_path, callback);
 }
 
@@ -391,8 +392,8 @@ void MobileSetupHandler::OnActivationStateChanged(
   if (!network) {
     base::DictionaryValue device_dict;
     SetActivationStateAndError(state, error_description, &device_dict);
-    web_ui()->CallJavascriptFunction(kJsDeviceStatusChangedCallback,
-                                     device_dict);
+    web_ui()->CallJavascriptFunctionUnsafe(kJsDeviceStatusChangedCallback,
+                                           device_dict);
     return;
   }
 
@@ -413,7 +414,8 @@ void MobileSetupHandler::GetPropertiesAndCallStatusChanged(
   base::DictionaryValue device_dict;
   GetDeviceInfo(properties, &device_dict);
   SetActivationStateAndError(state, error_description, &device_dict);
-  web_ui()->CallJavascriptFunction(kJsDeviceStatusChangedCallback, device_dict);
+  web_ui()->CallJavascriptFunctionUnsafe(kJsDeviceStatusChangedCallback,
+                                         device_dict);
 }
 
 void MobileSetupHandler::RegisterMessages() {
@@ -438,7 +440,7 @@ void MobileSetupHandler::HandleStartActivation(const base::ListValue* args) {
     return;
 
   std::string path = web_ui()->GetWebContents()->GetURL().path();
-  if (!path.size())
+  if (path.empty())
     return;
 
   LOG(WARNING) << "Starting activation for service " << path;
@@ -518,8 +520,8 @@ void MobileSetupHandler::HandleGetDeviceInfo(const base::ListValue* args) {
       type_ = TYPE_PORTAL;
       // For non-LTE networks network state is ignored, so report the portal is
       // reachable, so it gets shown.
-      web_ui()->CallJavascriptFunction(kJsConnectivityChangedCallback,
-                                       base::FundamentalValue(true));
+      web_ui()->CallJavascriptFunctionUnsafe(kJsConnectivityChangedCallback,
+                                             base::FundamentalValue(true));
     }
   }
 
@@ -537,19 +539,19 @@ void MobileSetupHandler::GetPropertiesAndCallGetDeviceInfo(
     const base::DictionaryValue& properties) {
   base::DictionaryValue device_info;
   GetDeviceInfo(properties, &device_info);
-  web_ui()->CallJavascriptFunction(kJsGetDeviceInfoCallback, device_info);
+  web_ui()->CallJavascriptFunctionUnsafe(kJsGetDeviceInfoCallback, device_info);
 }
 
 void MobileSetupHandler::GetPropertiesFailure(
     const std::string& service_path,
     const std::string& callback_name,
     const std::string& error_name,
-    scoped_ptr<base::DictionaryValue> error_data) {
+    std::unique_ptr<base::DictionaryValue> error_data) {
   NET_LOG_ERROR("MobileActivator GetProperties Failed: " + error_name,
                 service_path);
   // Invoke |callback_name| with an empty dictionary.
   base::DictionaryValue device_dict;
-  web_ui()->CallJavascriptFunction(callback_name, device_dict);
+  web_ui()->CallJavascriptFunctionUnsafe(callback_name, device_dict);
 }
 
 void MobileSetupHandler::DefaultNetworkChanged(
@@ -599,8 +601,9 @@ void MobileSetupHandler::UpdatePortalReachability(
         nsh->DefaultNetwork()->connection_state() == shill::kStateOnline));
 
   if (force_notification || portal_reachable != lte_portal_reachable_) {
-    web_ui()->CallJavascriptFunction(kJsConnectivityChangedCallback,
-                                     base::FundamentalValue(portal_reachable));
+    web_ui()->CallJavascriptFunctionUnsafe(
+        kJsConnectivityChangedCallback,
+        base::FundamentalValue(portal_reachable));
   }
 
   lte_portal_reachable_ = portal_reachable;
@@ -631,8 +634,7 @@ void MobileSetupUI::DidCommitProvisionalLoadForFrame(
   if (render_frame_host->GetFrameName() != "paymentForm")
     return;
 
-  web_ui()->CallJavascriptFunction(
-        kJsPortalFrameLoadCompletedCallback);
+  web_ui()->CallJavascriptFunctionUnsafe(kJsPortalFrameLoadCompletedCallback);
 }
 
 void MobileSetupUI::DidFailProvisionalLoad(
@@ -645,6 +647,6 @@ void MobileSetupUI::DidFailProvisionalLoad(
     return;
 
   base::FundamentalValue result_value(-error_code);
-  web_ui()->CallJavascriptFunction(kJsPortalFrameLoadFailedCallback,
-                                   result_value);
+  web_ui()->CallJavascriptFunctionUnsafe(kJsPortalFrameLoadFailedCallback,
+                                         result_value);
 }

@@ -4,8 +4,12 @@
 
 #include "components/invalidation/impl/p2p_invalidator.h"
 
-#include <cstddef>
+#include <stddef.h>
 
+#include <cstddef>
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "components/invalidation/impl/fake_invalidation_handler.h"
 #include "components/invalidation/impl/invalidator_test_template.h"
 #include "components/invalidation/impl/notifier_reason_util.h"
@@ -33,11 +37,9 @@ class P2PInvalidatorTestDelegate {
     DCHECK(!fake_push_client_);
     DCHECK(!invalidator_.get());
     fake_push_client_ = new notifier::FakePushClient();
-    invalidator_.reset(
-        new P2PInvalidator(
-            scoped_ptr<notifier::PushClient>(fake_push_client_),
-            invalidator_client_id,
-            NOTIFY_OTHERS));
+    invalidator_.reset(new P2PInvalidator(base::WrapUnique(fake_push_client_),
+                                          invalidator_client_id,
+                                          NOTIFY_OTHERS));
   }
 
   P2PInvalidator* GetInvalidator() {
@@ -78,7 +80,7 @@ class P2PInvalidatorTestDelegate {
  private:
   // Owned by |invalidator_|.
   notifier::FakePushClient* fake_push_client_;
-  scoped_ptr<P2PInvalidator> invalidator_;
+  std::unique_ptr<P2PInvalidator> invalidator_;
 };
 
 class P2PInvalidatorTest : public testing::Test {

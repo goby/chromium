@@ -5,17 +5,17 @@
 #ifndef COMPONENTS_AUTOFILL_CONTENT_RENDERER_FORM_CACHE_H_
 #define COMPONENTS_AUTOFILL_CONTENT_RENDERER_FORM_CACHE_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <set>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "components/autofill/core/common/form_data.h"
 
 namespace blink {
-class WebDocument;
-class WebElement;
-class WebElementCollection;
 class WebFormControlElement;
 class WebFrame;
 class WebInputElement;

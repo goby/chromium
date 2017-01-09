@@ -6,6 +6,10 @@
 
 #include <Foundation/Foundation.h>
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 static WebClient* g_client;
@@ -44,10 +48,6 @@ bool WebClient::AllowWebViewAllocInit() const {
   return false;
 }
 
-bool WebClient::WebViewsNeedActiveStateManager() const {
-  return false;
-}
-
 base::string16 WebClient::GetPluginNotSupportedText() const {
   return base::string16();
 }
@@ -70,12 +70,22 @@ base::StringPiece WebClient::GetDataResource(
   return base::StringPiece();
 }
 
-base::RefCountedStaticMemory* WebClient::GetDataResourceBytes(
-    int resource_id) const {
+base::RefCountedMemory* WebClient::GetDataResourceBytes(int resource_id) const {
   return nullptr;
 }
 
-NSString* WebClient::GetEarlyPageScript(WebViewType web_view_type) const {
+NSString* WebClient::GetEarlyPageScript() const {
   return @"";
 }
+
+void WebClient::AllowCertificateError(
+    WebState* web_state,
+    int cert_error,
+    const net::SSLInfo& ssl_info,
+    const GURL& request_url,
+    bool overridable,
+    const base::Callback<void(bool)>& callback) {
+  callback.Run(false);
+}
+
 }  // namespace web

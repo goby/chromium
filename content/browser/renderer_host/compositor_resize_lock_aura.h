@@ -5,10 +5,11 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_COMPOSITOR_RESIZE_LOCK_AURA_H_
 #define CONTENT_BROWSER_RENDERER_HOST_COMPOSITOR_RESIZE_LOCK_AURA_H_
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "content/browser/compositor/resize_lock.h"
+#include "content/browser/renderer_host/resize_lock.h"
 
 namespace aura {
 class WindowTreeHost;

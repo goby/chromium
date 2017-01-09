@@ -6,10 +6,15 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/test_timeouts.h"
+#include "base/threading/thread_task_runner_handle.h"
 #import "testing/gtest_mac.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/events/event_utils.h"
+#include "ui/views/controls/menu/menu_runner_impl_adapter.h"
 #include "ui/views/test/views_test_base.h"
 
 namespace views {
@@ -22,6 +27,10 @@ class TestModel : public ui::SimpleMenuModel {
 
   void set_checked_command(int command) { checked_command_ = command; }
 
+  void set_menu_open_callback(const base::Closure& callback) {
+    menu_open_callback_ = callback;
+  }
+
  private:
   class Delegate : public ui::SimpleMenuModel::Delegate {
    public:
@@ -30,11 +39,12 @@ class TestModel : public ui::SimpleMenuModel {
       return command_id == model_->checked_command_;
     }
     bool IsCommandIdEnabled(int command_id) const override { return true; }
-    bool GetAcceleratorForCommandId(int command_id,
-                                    ui::Accelerator* accelerator) override {
-      return false;
-    }
     void ExecuteCommand(int command_id, int event_flags) override {}
+
+    void MenuWillShow(SimpleMenuModel* source) override {
+      if (!model_->menu_open_callback_.is_null())
+        model_->menu_open_callback_.Run();
+    }
 
    private:
     TestModel* model_;
@@ -45,13 +55,21 @@ class TestModel : public ui::SimpleMenuModel {
  private:
   int checked_command_ = -1;
   Delegate delegate_;
+  base::Closure menu_open_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(TestModel);
 };
 
+enum class MenuType { NATIVE, VIEWS };
+
+std::string MenuTypeToString(::testing::TestParamInfo<MenuType> info) {
+  return info.param == MenuType::VIEWS ? "VIEWS_MenuItemView" : "NATIVE_NSMenu";
+}
+
 }  // namespace
 
-class MenuRunnerCocoaTest : public ViewsTestBase {
+class MenuRunnerCocoaTest : public ViewsTestBase,
+                            public ::testing::WithParamInterface<MenuType> {
  public:
   enum {
     kWindowHeight = 200,
@@ -74,7 +92,12 @@ class MenuRunnerCocoaTest : public ViewsTestBase {
         gfx::Rect(kWindowOffset, kWindowOffset, kWindowWidth, kWindowHeight));
     parent_->Show();
 
-    runner_ = new internal::MenuRunnerImplCocoa(menu_.get());
+    base::Closure on_close = base::Bind(&MenuRunnerCocoaTest::MenuCloseCallback,
+                                        base::Unretained(this));
+    if (GetParam() == MenuType::NATIVE)
+      runner_ = new internal::MenuRunnerImplCocoa(menu_.get(), on_close);
+    else
+      runner_ = new internal::MenuRunnerImplAdapter(menu_.get(), on_close);
     EXPECT_FALSE(runner_->IsRunning());
   }
 
@@ -88,14 +111,25 @@ class MenuRunnerCocoaTest : public ViewsTestBase {
     ViewsTestBase::TearDown();
   }
 
-  // Runs the menu after scheduling |block| on the run loop.
-  MenuRunner::RunResult RunMenu(dispatch_block_t block) {
-    CFRunLoopPerformBlock(CFRunLoopGetCurrent(), kCFRunLoopCommonModes, ^{
-        EXPECT_TRUE(runner_->IsRunning());
-        block();
-    });
-    return runner_->RunMenuAt(parent_, NULL, gfx::Rect(), MENU_ANCHOR_TOPLEFT,
-                              MenuRunner::CONTEXT_MENU);
+  int IsAsync() const { return GetParam() == MenuType::VIEWS; }
+
+  // Runs the menu after registering |callback| as the menu open callback.
+  MenuRunner::RunResult RunMenu(const base::Closure& callback) {
+    if (IsAsync()) {
+      // Cancelling an async menu under MenuController::OpenMenuImpl() (which
+      // invokes WillShowMenu()) will cause a UAF when that same function tries
+      // to show the menu. So post a task instead.
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+    } else {
+      menu_->set_menu_open_callback(
+          base::Bind(&MenuRunnerCocoaTest::RunMenuWrapperCallback,
+                     base::Unretained(this), callback));
+    }
+
+    // Always pass ASYNC, even though native menus will be sync.
+    int run_types = MenuRunner::CONTEXT_MENU | MenuRunner::ASYNC;
+    return MaybeRunAsync(runner_->RunMenuAt(parent_, nullptr, gfx::Rect(),
+                                            MENU_ANCHOR_TOPLEFT, run_types));
   }
 
   // Runs then cancels a combobox menu and captures the frame of the anchoring
@@ -106,81 +140,198 @@ class MenuRunnerCocoaTest : public ViewsTestBase {
     // Should be one child (the compositor layer) before showing, and it should
     // go up by one (the anchor view) while the menu is shown.
     EXPECT_EQ(1u, [[parent_->GetNativeView() subviews] count]);
-    CFRunLoopPerformBlock(CFRunLoopGetCurrent(), kCFRunLoopCommonModes, ^{
-      NSArray* subviews = [parent_->GetNativeView() subviews];
-      EXPECT_EQ(2u, [subviews count]);
-      last_anchor_frame_ = [[subviews objectAtIndex:1] frame];
-      runner_->Cancel();
-    });
-    MenuRunner::RunResult result = runner_->RunMenuAt(
-        parent_, nullptr, anchor, MENU_ANCHOR_TOPLEFT, MenuRunner::COMBOBOX);
+
+    base::Closure callback =
+        base::Bind(&MenuRunnerCocoaTest::ComboboxRunMenuAtCallback,
+                   base::Unretained(this));
+    if (IsAsync())
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+    else
+      menu_->set_menu_open_callback(callback);
+
+    MenuRunner::RunResult result = MaybeRunAsync(
+        runner_->RunMenuAt(parent_, nullptr, anchor, MENU_ANCHOR_TOPLEFT,
+                           MenuRunner::COMBOBOX | MenuRunner::ASYNC));
 
     // Ensure the anchor view is removed.
     EXPECT_EQ(1u, [[parent_->GetNativeView() subviews] count]);
     return result;
   }
 
+  void MenuCancelCallback() {
+    runner_->Cancel();
+    if (IsAsync()) {
+      // Async menus report their cancellation immediately.
+      EXPECT_FALSE(runner_->IsRunning());
+    } else {
+      // For a synchronous menu, MenuRunner::IsRunning() should return true
+      // immediately after MenuRunner::Cancel() since the menu message loop has
+      // not yet terminated. It has only been marked for termination.
+      EXPECT_TRUE(runner_->IsRunning());
+    }
+  }
+
+  void MenuDeleteCallback() {
+    runner_->Release();
+    runner_ = nullptr;
+    // Deleting an async menu intentionally does not invoke MenuCloseCallback().
+    // (The callback is typically a method on something in the process of being
+    // destroyed). So invoke QuitAsyncRunLoop() here as well.
+    QuitAsyncRunLoop();
+  }
+
+  void MenuCancelAndDeleteCallback() {
+    runner_->Cancel();
+    runner_->Release();
+    runner_ = nullptr;
+  }
+
  protected:
-  scoped_ptr<TestModel> menu_;
-  internal::MenuRunnerImplCocoa* runner_ = nullptr;
+  std::unique_ptr<TestModel> menu_;
+  internal::MenuRunnerImplInterface* runner_ = nullptr;
   views::Widget* parent_ = nullptr;
   NSRect last_anchor_frame_ = NSZeroRect;
+  int menu_close_count_ = 0;
 
  private:
+  void RunMenuWrapperCallback(const base::Closure& callback) {
+    EXPECT_TRUE(runner_->IsRunning());
+    callback.Run();
+  }
+
+  void ComboboxRunMenuAtCallback() {
+    NSArray* subviews = [parent_->GetNativeView() subviews];
+    // An anchor view should only be added for Native menus.
+    if (GetParam() == MenuType::NATIVE) {
+      ASSERT_EQ(2u, [subviews count]);
+      last_anchor_frame_ = [[subviews objectAtIndex:1] frame];
+    } else {
+      EXPECT_EQ(1u, [subviews count]);
+    }
+    runner_->Cancel();
+  }
+
+  // Run a nested message loop so that async and sync menus can be tested the
+  // same way.
+  MenuRunner::RunResult MaybeRunAsync(MenuRunner::RunResult run_result) {
+    if (!IsAsync())
+      return run_result;
+
+    // Async menus should always return NORMAL_EXIT.
+    EXPECT_EQ(MenuRunner::NORMAL_EXIT, run_result);
+    base::RunLoop run_loop;
+    quit_closure_ = run_loop.QuitClosure();
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE, quit_closure_, TestTimeouts::action_timeout());
+    run_loop.Run();
+
+    // |quit_closure_| should be run by QuitAsyncRunLoop(), not the timeout.
+    EXPECT_TRUE(quit_closure_.is_null());
+    return run_result;
+  }
+
+  void QuitAsyncRunLoop() {
+    if (!IsAsync()) {
+      EXPECT_TRUE(quit_closure_.is_null());
+      return;
+    }
+    ASSERT_FALSE(quit_closure_.is_null());
+    quit_closure_.Run();
+    quit_closure_.Reset();
+  }
+
+  void MenuCloseCallback() {
+    ++menu_close_count_;
+    QuitAsyncRunLoop();
+  }
+
+  base::Closure quit_closure_;
+
   DISALLOW_COPY_AND_ASSIGN(MenuRunnerCocoaTest);
 };
 
-TEST_F(MenuRunnerCocoaTest, RunMenuAndCancel) {
-  base::TimeDelta min_time = ui::EventTimeForNow();
+TEST_P(MenuRunnerCocoaTest, RunMenuAndCancel) {
+  base::TimeTicks min_time = ui::EventTimeForNow();
 
-  MenuRunner::RunResult result = RunMenu(^{
-      runner_->Cancel();
-      EXPECT_FALSE(runner_->IsRunning());
-  });
+  MenuRunner::RunResult result = RunMenu(base::Bind(
+      &MenuRunnerCocoaTest::MenuCancelCallback, base::Unretained(this)));
 
+  EXPECT_EQ(1, menu_close_count_);
   EXPECT_EQ(MenuRunner::NORMAL_EXIT, result);
   EXPECT_FALSE(runner_->IsRunning());
 
-  EXPECT_GE(runner_->GetClosingEventTime(), min_time);
+  if (GetParam() == MenuType::VIEWS) {
+    // MenuItemView's MenuRunnerImpl gets the closing time from MenuController::
+    // closing_event_time(). This is is reset on show, but only updated when an
+    // event closes the menu -- not a cancellation.
+    EXPECT_EQ(runner_->GetClosingEventTime(), base::TimeTicks());
+  } else {
+    EXPECT_GE(runner_->GetClosingEventTime(), min_time);
+  }
   EXPECT_LE(runner_->GetClosingEventTime(), ui::EventTimeForNow());
 
   // Cancel again.
   runner_->Cancel();
   EXPECT_FALSE(runner_->IsRunning());
+  EXPECT_EQ(1, menu_close_count_);
 }
 
-TEST_F(MenuRunnerCocoaTest, RunMenuAndDelete) {
-  MenuRunner::RunResult result = RunMenu(^{
-      runner_->Release();
-      runner_ = NULL;
-  });
+TEST_P(MenuRunnerCocoaTest, RunMenuAndDelete) {
+  MenuRunner::RunResult result = RunMenu(base::Bind(
+      &MenuRunnerCocoaTest::MenuDeleteCallback, base::Unretained(this)));
+  // Note the close callback is NOT invoked for deleted menus.
+  EXPECT_EQ(0, menu_close_count_);
 
-  EXPECT_EQ(MenuRunner::MENU_DELETED, result);
-}
-
-TEST_F(MenuRunnerCocoaTest, RunMenuTwice) {
-  for (int i = 0; i < 2; ++i) {
-    MenuRunner::RunResult result = RunMenu(^{
-        runner_->Cancel();
-    });
+  // Async menus always return NORMAL from RunMenuAt().
+  if (GetParam() == MenuType::VIEWS)
     EXPECT_EQ(MenuRunner::NORMAL_EXIT, result);
-    EXPECT_FALSE(runner_->IsRunning());
+  else
+    EXPECT_EQ(MenuRunner::MENU_DELETED, result);
+}
+
+// Ensure a menu can be safely released immediately after a call to Cancel() in
+// the same run loop iteration.
+TEST_P(MenuRunnerCocoaTest, DestroyAfterCanceling) {
+  MenuRunner::RunResult result =
+      RunMenu(base::Bind(&MenuRunnerCocoaTest::MenuCancelAndDeleteCallback,
+                         base::Unretained(this)));
+
+  if (IsAsync()) {
+    EXPECT_EQ(MenuRunner::NORMAL_EXIT, result);
+    EXPECT_EQ(1, menu_close_count_);
+  } else {
+    EXPECT_EQ(MenuRunner::MENU_DELETED, result);
+    // For a synchronous menu, the deletion happens before the cancel can be
+    // processed, so the close callback will not be invoked.
+    EXPECT_EQ(0, menu_close_count_);
   }
 }
 
-TEST_F(MenuRunnerCocoaTest, CancelWithoutRunning) {
-  runner_->Cancel();
-  EXPECT_FALSE(runner_->IsRunning());
-  EXPECT_EQ(base::TimeDelta(), runner_->GetClosingEventTime());
+TEST_P(MenuRunnerCocoaTest, RunMenuTwice) {
+  for (int i = 0; i < 2; ++i) {
+    MenuRunner::RunResult result = RunMenu(base::Bind(
+        &MenuRunnerCocoaTest::MenuCancelCallback, base::Unretained(this)));
+    EXPECT_EQ(MenuRunner::NORMAL_EXIT, result);
+    EXPECT_FALSE(runner_->IsRunning());
+    EXPECT_EQ(i + 1, menu_close_count_);
+  }
 }
 
-TEST_F(MenuRunnerCocoaTest, DeleteWithoutRunning) {
+TEST_P(MenuRunnerCocoaTest, CancelWithoutRunning) {
+  runner_->Cancel();
+  EXPECT_FALSE(runner_->IsRunning());
+  EXPECT_EQ(base::TimeTicks(), runner_->GetClosingEventTime());
+  EXPECT_EQ(0, menu_close_count_);
+}
+
+TEST_P(MenuRunnerCocoaTest, DeleteWithoutRunning) {
   runner_->Release();
   runner_ = NULL;
+  EXPECT_EQ(0, menu_close_count_);
 }
 
 // Tests anchoring of the menus used for toolkit-views Comboboxes.
-TEST_F(MenuRunnerCocoaTest, ComboboxAnchoring) {
+TEST_P(MenuRunnerCocoaTest, ComboboxAnchoring) {
   // Combobox at 20,10 in the Widget.
   const gfx::Rect combobox_rect(20, 10, 80, 50);
 
@@ -189,6 +340,12 @@ TEST_F(MenuRunnerCocoaTest, ComboboxAnchoring) {
   gfx::Rect anchor_rect = combobox_rect;
   anchor_rect.Offset(kWindowOffset, kWindowOffset);
   RunMenuAt(anchor_rect);
+
+  if (GetParam() != MenuType::NATIVE) {
+    // Combobox anchoring is only implemented for native menus.
+    EXPECT_NSEQ(NSZeroRect, last_anchor_frame_);
+    return;
+  }
 
   // Nothing is checked, so the anchor view should have no height, to ensure the
   // menu goes below the anchor rect. There should also be no x-offset since the
@@ -220,6 +377,11 @@ TEST_F(MenuRunnerCocoaTest, ComboboxAnchoring) {
   RunMenuAt(anchor_rect);
   EXPECT_EQ(combobox_rect.right(), last_anchor_frame_.origin.x);
 }
+
+INSTANTIATE_TEST_CASE_P(,
+                        MenuRunnerCocoaTest,
+                        ::testing::Values(MenuType::NATIVE, MenuType::VIEWS),
+                        &MenuTypeToString);
 
 }  // namespace test
 }  // namespace views

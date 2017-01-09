@@ -27,13 +27,13 @@ function test()
                 InspectorTest.RuntimeAgent.evaluate("object1", step1);
             }
 
-            function step1(error, result, wasThrown)
+            function step1(error, result, exceptionDetails)
             {
                 obj1 = InspectorTest.runtimeModel.createRemoteObject(result);
                 InspectorTest.RuntimeAgent.evaluate("object2", step2);
             }
 
-            function step2(error, result, wasThrown)
+            function step2(error, result, exceptionDetails)
             {
                 obj2 = InspectorTest.runtimeModel.createRemoteObject(result);
                 next();
@@ -55,7 +55,7 @@ function test()
     {
         var value = propertyObject[fieldName];
         if (value)
-            propertyObject[fieldName] = { type: value.type, description: value.description.replace("function foo", "function "), objectId: value.objectId };
+            propertyObject[fieldName] = { type: value.type, description: value.description.replace(/^function [gs]et foo/, "function "), objectId: value.objectId };
     }
 
     function dumpProperty(property)

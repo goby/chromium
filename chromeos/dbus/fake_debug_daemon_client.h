@@ -5,10 +5,16 @@
 #ifndef CHROMEOS_DBUS_FAKE_DEBUG_DAEMON_CLIENT_H_
 #define CHROMEOS_DBUS_FAKE_DEBUG_DAEMON_CLIENT_H_
 
+#include <stdint.h>
+#include <sys/types.h>
+
+#include <map>
+#include <set>
+#include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chromeos/dbus/debug_daemon_client.h"
 
 namespace chromeos {
@@ -22,15 +28,17 @@ class CHROMEOS_EXPORT FakeDebugDaemonClient : public DebugDaemonClient {
 
   void Init(dbus::Bus* bus) override;
   void DumpDebugLogs(bool is_compressed,
-                     base::File file,
-                     scoped_refptr<base::TaskRunner> task_runner,
+                     int file_descriptor,
                      const GetDebugLogsCallback& callback) override;
   void SetDebugMode(const std::string& subsystem,
                     const SetDebugModeCallback& callback) override;
-  void StartSystemTracing() override;
-  bool RequestStopSystemTracing(
-      scoped_refptr<base::TaskRunner> task_runner,
-      const StopSystemTracingCallback& callback) override;
+  std::string GetTracingAgentName() override;
+  std::string GetTraceEventLabel() override;
+  void StartAgentTracing(const base::trace_event::TraceConfig& trace_config,
+                         const StartAgentTracingCallback& callback) override;
+  void StopAgentTracing(const StopAgentTracingCallback& callback) override;
+  void SetStopAgentTracingTaskRunner(
+      scoped_refptr<base::TaskRunner> task_runner) override;
   void GetRoutes(bool numeric,
                  bool ipv6,
                  const GetRoutesCallback& callback) override;
@@ -39,10 +47,12 @@ class CHROMEOS_EXPORT FakeDebugDaemonClient : public DebugDaemonClient {
   void GetWiMaxStatus(const GetWiMaxStatusCallback& callback) override;
   void GetNetworkInterfaces(
       const GetNetworkInterfacesCallback& callback) override;
-  void GetPerfOutput(uint32_t duration,
+  void GetPerfOutput(base::TimeDelta duration,
                      const std::vector<std::string>& perf_args,
-                     const GetPerfOutputCallback& callback) override;
+                     int file_descriptor,
+                     const DBusMethodErrorCallback& error_callback) override;
   void GetScrubbedLogs(const GetLogsCallback& callback) override;
+  void GetScrubbedBigLogs(const GetLogsCallback& callback) override;
   void GetAllLogs(const GetLogsCallback& callback) override;
   void GetUserLogFiles(const GetLogsCallback& callback) override;
   void TestICMP(const std::string& ip_address,
@@ -60,6 +70,17 @@ class CHROMEOS_EXPORT FakeDebugDaemonClient : public DebugDaemonClient {
       const EnableDebuggingCallback& callback) override;
   void WaitForServiceToBeAvailable(
       const WaitForServiceToBeAvailableCallback& callback) override;
+  void SetOomScoreAdj(const std::map<pid_t, int32_t>& pid_to_oom_score_adj,
+                      const SetOomScoreAdjCallback& callback) override;
+  void CupsAddPrinter(const std::string& name,
+                      const std::string& uri,
+                      const std::string& ppd_path,
+                      bool ipp_everywhere,
+                      const CupsAddPrinterCallback& callback,
+                      const base::Closure& error_callback) override;
+  void CupsRemovePrinter(const std::string& name,
+                         const CupsRemovePrinterCallback& callback,
+                         const base::Closure& error_callback) override;
 
   // Sets debugging features mask for testing.
   virtual void SetDebuggingFeaturesStatus(int featues_mask);
@@ -74,6 +95,7 @@ class CHROMEOS_EXPORT FakeDebugDaemonClient : public DebugDaemonClient {
   bool service_is_available_;
   std::vector<WaitForServiceToBeAvailableCallback>
       pending_wait_for_service_to_be_available_callbacks_;
+  std::set<std::string> printers_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeDebugDaemonClient);
 };

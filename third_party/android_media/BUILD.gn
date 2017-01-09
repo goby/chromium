@@ -10,18 +10,17 @@ android_resources("android_media_resources") {
   custom_package = "org.chromium.third_party.android.media"
   resource_dirs = [ "java/res" ]
   deps = [
-    "//third_party/android_tools:android_support_v7_appcompat_resources",
-    "//third_party/android_tools:android_support_v7_mediarouter_resources",
+    "//third_party/android_tools:android_support_v7_appcompat_java",
+    "//third_party/android_tools:android_support_v7_mediarouter_java",
   ]
 }
 
 android_library("android_media_java") {
-  DEPRECATED_java_in_dir = "java/src"
+  java_files =
+      [ "java/src/org/chromium/third_party/android/media/MediaController.java" ]
   deps = [
     ":android_media_resources",
-    "//third_party/android_tools:android_support_v13_java",
     "//third_party/android_tools:android_support_v7_appcompat_java",
     "//third_party/android_tools:android_support_v7_mediarouter_java",
-    "//third_party/android_tools:android_support_v7_mediarouter_resources",
   ]
 }

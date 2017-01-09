@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_WINDOW_NON_CLIENT_VIEW_H_
 #define UI_VIEWS_WINDOW_NON_CLIENT_VIEW_H_
 
+#include "base/macros.h"
 #include "ui/views/view.h"
 #include "ui/views/view_targeter_delegate.h"
 
@@ -41,14 +42,9 @@ class VIEWS_EXPORT NonClientFrameView : public View,
 
   ~NonClientFrameView() override;
 
-  // Sets whether the window should be rendered as active regardless of the
-  // actual active state. Used when bubbles become active to make their parent
-  // appear active. A value of true makes the window render as active always,
-  // false gives normal behavior.
-  void SetInactiveRenderingDisabled(bool disable);
-
   // Used to determine if the frame should be painted as active. Keyed off the
-  // window's actual active state and |inactive_rendering_disabled_|.
+  // window's actual active state and whether the widget should be rendered as
+  // active.
   bool ShouldPaintAsActive() const;
 
   // Helper for non-client view implementations to determine which area of the
@@ -69,6 +65,12 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   virtual gfx::Rect GetWindowBoundsForClientBounds(
       const gfx::Rect& client_bounds) const = 0;
 
+  // Gets the clip mask (in this View's parent's coordinates) that should be
+  // applied to the client view. Returns false if no special clip should be
+  // used.
+  virtual bool GetClientMask(const gfx::Size& size,
+                             gfx::Path* mask) const;
+
   // This function must ask the ClientView to do a hittest.  We don't do this in
   // the parent NonClientView because that makes it more difficult to calculate
   // hittests for regions that are partially obscured by the ClientView, e.g.
@@ -88,8 +90,11 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   // Whether the widget can be resized or maximized has changed.
   virtual void SizeConstraintsChanged() = 0;
 
+  // The widget's activation state has changed to |active|.
+  virtual void ActivationChanged(bool active);
+
   // View:
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   const char* GetClassName() const override;
 
  protected:
@@ -102,10 +107,17 @@ class VIEWS_EXPORT NonClientFrameView : public View,
   // View:
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
 
+  void set_active_state_override(bool* active_state_override) {
+    active_state_override_ = active_state_override;
+  }
+
  private:
-  // Prevents the non-client frame view from being rendered as inactive when
-  // true.
-  bool inactive_rendering_disabled_;
+  // Used to force ShouldPaintAsActive() to treat the active state a particular
+  // way.  This is normally null; when non-null, its value will override the
+  // normal "active" value computed by the function.
+  bool* active_state_override_;
+
+  DISALLOW_COPY_AND_ASSIGN(NonClientFrameView);
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -173,11 +185,6 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
   // or frame style.
   void UpdateFrame();
 
-  // Prevents the window from being rendered as deactivated when |disable| is
-  // true, until called with |disable| false. Used when a sub-window is to be
-  // shown that shouldn't visually de-activate the window.
-  void SetInactiveRenderingDisabled(bool disable);
-
   // Returns the bounds of the window required to display the content area at
   // the specified bounds.
   gfx::Rect GetWindowBoundsForClientBounds(const gfx::Rect client_bounds) const;
@@ -213,6 +220,8 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
     client_view_ = client_view;
   }
 
+  void set_mirror_client_in_rtl(bool mirror) { mirror_client_in_rtl_ = mirror; }
+
   // Layout just the frame view. This is necessary on Windows when non-client
   // metrics such as the position of the window controls changes independently
   // of a window resize message.
@@ -226,7 +235,7 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
   void Layout() override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   const char* GetClassName() const override;
 
   views::View* GetTooltipHandlerForPoint(const gfx::Point& point) override;
@@ -245,10 +254,13 @@ class VIEWS_EXPORT NonClientView : public View, public ViewTargeterDelegate {
   // implementation.
   ClientView* client_view_;
 
+  // Set to false if client_view_ position shouldn't be mirrored in RTL.
+  bool mirror_client_in_rtl_;
+
   // The NonClientFrameView that renders the non-client portions of the window.
   // This object is not owned by the view hierarchy because it can be replaced
   // dynamically as the system settings change.
-  scoped_ptr<NonClientFrameView> frame_view_;
+  std::unique_ptr<NonClientFrameView> frame_view_;
 
   // The overlay view, when non-NULL and visible, takes up the entire widget and
   // is placed on top of the ClientView and NonClientFrameView.

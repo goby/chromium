@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
@@ -23,7 +23,7 @@ class UIChromeOSTestSuite : public base::TestSuite {
  protected:
   void Initialize() override {
     base::TestSuite::Initialize();
-    gfx::GLSurfaceTestSupport::InitializeOneOff();
+    gl::GLSurfaceTestSupport::InitializeOneOff();
     ui::RegisterPathProvider();
 
     base::FilePath ui_test_pak_path;

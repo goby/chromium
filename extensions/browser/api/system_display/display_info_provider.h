@@ -5,31 +5,35 @@
 #ifndef EXTENSIONS_BROWSER_API_SYSTEM_DISPLAY_DISPLAY_INFO_PROVIDER_H_
 #define EXTENSIONS_BROWSER_API_SYSTEM_DISPLAY_DISPLAY_INFO_PROVIDER_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 
-namespace gfx {
+namespace display {
 class Display;
-class Screen;
 }
 
 namespace extensions {
 
 namespace api {
 namespace system_display {
+struct Bounds;
+struct DisplayLayout;
 struct DisplayProperties;
 struct DisplayUnitInfo;
+struct Insets;
+struct TouchCalibrationPairQuad;
 }
 }
-
-typedef std::vector<linked_ptr<api::system_display::DisplayUnitInfo>>
-    DisplayInfo;
 
 class DisplayInfoProvider {
  public:
+  using DisplayUnitInfoList = std::vector<api::system_display::DisplayUnitInfo>;
+  using DisplayLayoutList = std::vector<api::system_display::DisplayLayout>;
+
   virtual ~DisplayInfoProvider();
 
   // Returns a pointer to DisplayInfoProvider or NULL if Create()
@@ -47,17 +51,46 @@ class DisplayInfoProvider {
                        const api::system_display::DisplayProperties& info,
                        std::string* error) = 0;
 
-  // Get the screen that is always active, which will be used for monitoring
-  // display changes events.
-  virtual gfx::Screen* GetActiveScreen() = 0;
+  // Implements SetDisplayLayout methods. See system_display.idl. Returns
+  // false if the layout input is invalid.
+  virtual bool SetDisplayLayout(const DisplayLayoutList& layouts);
 
-  // Enable the unified desktop feature.
+  // Enables the unified desktop feature.
   virtual void EnableUnifiedDesktop(bool enable);
 
-  DisplayInfo GetAllDisplaysInfo();
+  // Gets display information.
+  virtual DisplayUnitInfoList GetAllDisplaysInfo();
+
+  // Gets display layout information.
+  virtual DisplayLayoutList GetDisplayLayout();
+
+  // Implements overscan calbiration methods. See system_display.idl. These
+  // return false if |id| is invalid.
+  virtual bool OverscanCalibrationStart(const std::string& id);
+  virtual bool OverscanCalibrationAdjust(
+      const std::string& id,
+      const api::system_display::Insets& delta);
+  virtual bool OverscanCalibrationReset(const std::string& id);
+  virtual bool OverscanCalibrationComplete(const std::string& id);
+
+  // Implements touch calibration methods. See system_display.idl. This returns
+  // false if |id| is invalid.
+  virtual bool TouchCalibrationStart(const std::string& id);
+  virtual bool TouchCalibrationSet(
+      const std::string& id,
+      const api::system_display::TouchCalibrationPairQuad& pairs,
+      const api::system_display::Bounds& bounds);
+  virtual bool TouchCalibrationReset(const std::string& id);
+  virtual bool IsTouchCalibrationActive(const std::string& id);
 
  protected:
   DisplayInfoProvider();
+
+  // Create a DisplayUnitInfo from a display::Display for implementations of
+  // GetAllDisplaysInfo()
+  static api::system_display::DisplayUnitInfo CreateDisplayUnitInfo(
+      const display::Display& display,
+      int64_t primary_display_id);
 
  private:
   static DisplayInfoProvider* Create();
@@ -65,7 +98,7 @@ class DisplayInfoProvider {
   // Update the content of the |unit| obtained for |display| using
   // platform specific method.
   virtual void UpdateDisplayUnitInfoForPlatform(
-      const gfx::Display& display,
+      const display::Display& display,
       api::system_display::DisplayUnitInfo* unit) = 0;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayInfoProvider);

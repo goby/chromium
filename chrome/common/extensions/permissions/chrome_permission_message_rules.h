@@ -5,9 +5,11 @@
 #ifndef CHROME_COMMON_EXTENSIONS_PERMISSIONS_CHROME_PERMISSION_MESSAGE_RULES_H_
 #define CHROME_COMMON_EXTENSIONS_PERMISSIONS_CHROME_PERMISSION_MESSAGE_RULES_H_
 
+#include <initializer_list>
 #include <set>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/api_permission_set.h"
@@ -53,6 +55,7 @@ class ChromePermissionMessageFormatter {
 // provider class and remove ownership from ChromePermissionMessageRule.
 class ChromePermissionMessageRule {
  public:
+  ChromePermissionMessageRule(const ChromePermissionMessageRule& other);
   virtual ~ChromePermissionMessageRule();
 
   // Returns all the rules used to generate permission messages for Chrome apps
@@ -67,17 +70,17 @@ class ChromePermissionMessageRule {
       const PermissionIDSet& permissions) const;
 
  private:
-  class PermissionIDSetInitializer;
-
   // Create a rule using the default formatter (display the message with ID
   // |message_id|).
-  ChromePermissionMessageRule(int message_id,
-                              const PermissionIDSetInitializer& required,
-                              const PermissionIDSetInitializer& optional);
+  ChromePermissionMessageRule(
+      int message_id,
+      const std::initializer_list<APIPermission::ID>& required,
+      const std::initializer_list<APIPermission::ID>& optional);
   // Create a rule with a custom formatter. Takes ownership of |formatter|.
-  ChromePermissionMessageRule(ChromePermissionMessageFormatter* formatter,
-                              const PermissionIDSetInitializer& required,
-                              const PermissionIDSetInitializer& optional);
+  ChromePermissionMessageRule(
+      ChromePermissionMessageFormatter* formatter,
+      const std::initializer_list<APIPermission::ID>& required,
+      const std::initializer_list<APIPermission::ID>& optional);
 
   std::set<APIPermission::ID> required_permissions_;
   std::set<APIPermission::ID> optional_permissions_;

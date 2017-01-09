@@ -5,10 +5,13 @@
 #include "chrome/browser/chromeos/enrollment_dialog_view.h"
 
 #include "base/bind.h"
+#include "base/callback.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/system_tray_client.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
@@ -50,14 +53,13 @@ class EnrollmentDialogView : public views::DialogDelegateView {
                          const base::Closure& connect);
 
   // views::DialogDelegateView overrides
-  int GetDialogButtons() const override;
   bool Accept() override;
-  void OnClosed() override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
 
   // views::WidgetDelegate overrides
   ui::ModalType GetModalType() const override;
   base::string16 GetWindowTitle() const override;
+  void WindowClosing() override;
 
   // views::View overrides
   gfx::Size GetPreferredSize() const override;
@@ -103,31 +105,21 @@ void EnrollmentDialogView::ShowDialog(gfx::NativeWindow owning_window,
                                       const base::Closure& connect) {
   EnrollmentDialogView* dialog_view =
       new EnrollmentDialogView(network_name, profile, target_uri, connect);
-  views::DialogDelegate::CreateDialogWidget(dialog_view, NULL, owning_window);
+  if (owning_window) {
+    views::DialogDelegate::CreateDialogWidget(dialog_view, nullptr,
+                                              owning_window);
+  } else {
+    SystemTrayClient::CreateUnownedDialogWidget(dialog_view);
+  }
   dialog_view->InitDialog();
   views::Widget* widget = dialog_view->GetWidget();
   DCHECK(widget);
   widget->Show();
 }
 
-int EnrollmentDialogView::GetDialogButtons() const {
-  return ui::DIALOG_BUTTON_CANCEL | ui::DIALOG_BUTTON_OK;
-}
-
 bool EnrollmentDialogView::Accept() {
   accepted_ = true;
   return true;
-}
-
-void EnrollmentDialogView::OnClosed() {
-  if (!accepted_)
-    return;
-  chrome::NavigateParams params(profile_,
-                                GURL(target_uri_),
-                                ui::PAGE_TRANSITION_LINK);
-  params.disposition = NEW_FOREGROUND_TAB;
-  params.window_action = chrome::NavigateParams::SHOW_WINDOW;
-  chrome::Navigate(&params);
 }
 
 base::string16 EnrollmentDialogView::GetDialogButtonLabel(
@@ -143,6 +135,16 @@ ui::ModalType EnrollmentDialogView::GetModalType() const {
 
 base::string16 EnrollmentDialogView::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_NETWORK_ENROLLMENT_HANDLER_TITLE);
+}
+
+void EnrollmentDialogView::WindowClosing() {
+  if (!accepted_)
+    return;
+  chrome::NavigateParams params(profile_, GURL(target_uri_),
+                                ui::PAGE_TRANSITION_LINK);
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  params.window_action = chrome::NavigateParams::SHOW_WINDOW;
+  chrome::Navigate(&params);
 }
 
 gfx::Size EnrollmentDialogView::GetPreferredSize() const {
@@ -246,8 +248,8 @@ bool DialogEnrollmentDelegate::Enroll(const std::vector<std::string>& uri_list,
   return false;
 }
 
-void EnrollmentComplete(const std::string& service_path) {
-  NET_LOG_USER("Enrollment Complete", service_path);
+void EnrollmentComplete(const std::string& network_id) {
+  NET_LOG_USER("Enrollment Complete", network_id);
 }
 
 }  // namespace
@@ -257,12 +259,13 @@ void EnrollmentComplete(const std::string& service_path) {
 
 namespace enrollment {
 
-bool CreateDialog(const std::string& service_path,
-                  gfx::NativeWindow owning_window) {
-  const NetworkState* network = NetworkHandler::Get()->network_state_handler()->
-      GetNetworkState(service_path);
+bool CreateEnrollmentDialog(const std::string& network_id,
+                            gfx::NativeWindow owning_window) {
+  const NetworkState* network =
+      NetworkHandler::Get()->network_state_handler()->GetNetworkStateFromGuid(
+          network_id);
   if (!network) {
-    NET_LOG_ERROR("Enrolling Unknown network", service_path);
+    NET_LOG_ERROR("Enrolling Unknown network", network_id);
     return false;
   }
   Browser* browser = chrome::FindBrowserWithWindow(owning_window);
@@ -274,7 +277,7 @@ bool CreateDialog(const std::string& service_path,
   const base::DictionaryValue* policy =
       NetworkHandler::Get()
           ->managed_network_configuration_handler()
-          ->FindPolicyByGUID(username_hash, network->guid(), &onc_source);
+          ->FindPolicyByGUID(username_hash, network_id, &onc_source);
 
   // We skip certificate patterns for device policy ONC so that an unmanaged
   // user can't get to the place where a cert is presented for them
@@ -289,19 +292,19 @@ bool CreateDialog(const std::string& service_path,
     return false;
 
   if (cert_config.pattern.Empty())
-    NET_LOG_ERROR("Certificate pattern is empty", service_path);
+    NET_LOG_ERROR("Certificate pattern is empty", network_id);
 
   if (cert_config.pattern.enrollment_uri_list().empty()) {
-    NET_LOG_EVENT("No enrollment URIs", service_path);
+    NET_LOG_EVENT("No enrollment URIs", network_id);
     return false;
   }
 
-  NET_LOG_USER("Enrolling", service_path);
+  NET_LOG_USER("Enrolling", network_id);
 
   DialogEnrollmentDelegate* enrollment =
       new DialogEnrollmentDelegate(owning_window, network->name(), profile);
   return enrollment->Enroll(cert_config.pattern.enrollment_uri_list(),
-                            base::Bind(&EnrollmentComplete, service_path));
+                            base::Bind(&EnrollmentComplete, network_id));
 }
 
 }  // namespace enrollment

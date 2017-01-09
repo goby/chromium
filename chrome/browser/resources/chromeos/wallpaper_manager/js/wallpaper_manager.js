@@ -285,13 +285,30 @@ function WallpaperManager(dialogDom) {
     $('set-wallpaper-layout').addEventListener(
         'change', this.onWallpaperLayoutChanged_.bind(this));
 
-    if (loadTimeData.valueExists('wallpaperAppName')) {
-      $('wallpaper-set-by-message').textContent = loadTimeData.getStringF(
-          'currentWallpaperSetByMessage', str('wallpaperAppName'));
-      $('wallpaper-grid').classList.add('small');
-    } else {
-      $('wallpaper-grid').classList.remove('small');
-    }
+    // Always prefer the value from local filesystem to avoid the time window
+    // of setting the third party app name and the third party wallpaper.
+    var getThirdPartyAppName = function(callback) {
+      Constants.WallpaperLocalStorage.get(
+          Constants.AccessLocalWallpaperInfoKey, function(items) {
+        var localInfo = items[Constants.AccessLocalWallpaperInfoKey];
+        if (localInfo && localInfo.hasOwnProperty('appName'))
+          callback(localInfo.appName);
+        else if (loadTimeData.valueExists('wallpaperAppName'))
+          callback(str('wallpaperAppName'));
+        else
+          callback('');
+      });
+    };
+
+    getThirdPartyAppName(function(appName) {
+      if (!!appName) {
+        $('wallpaper-set-by-message').textContent = loadTimeData.getStringF(
+          'currentWallpaperSetByMessage', appName);
+        $('wallpaper-grid').classList.add('small');
+      } else {
+        $('wallpaper-grid').classList.remove('small');
+      }
+    });
 
     if (this.enableOnlineWallpaper_) {
       var self = this;
@@ -415,8 +432,6 @@ function WallpaperManager(dialogDom) {
         // to be deleted.
         chrome.wallpaperPrivate.resetWallpaper();
         this.onWallpaperChanged_(null, null);
-        WallpaperUtil.saveWallpaperInfo('', '',
-                                        Constants.WallpaperSourceEnum.Default);
       } else {
         selectedIndex = Math.min(selectedIndex, customWallpaperCount - 1);
         wallpaperGrid.selectionModel.selectedIndex = selectedIndex;
@@ -538,7 +553,8 @@ function WallpaperManager(dialogDom) {
 
   /**
    * Moves the check mark to |activeItem| and hides the wallpaper set by third
-   * party message if any. Called when wallpaper changed successfully.
+   * party message if any. And saves the wallpaper's information to local & sync
+   * storage. Called when wallpaper changed successfully.
    * @param {?Object} activeItem The active item in WallpaperThumbnailsGrid's
    *     data model.
    * @param {?string} currentWallpaperURL The URL or filename of current
@@ -551,6 +567,14 @@ function WallpaperManager(dialogDom) {
     // Hides the wallpaper set by message.
     $('wallpaper-set-by-message').textContent = '';
     $('wallpaper-grid').classList.remove('small');
+
+    if (activeItem) {
+      WallpaperUtil.saveWallpaperInfo(
+          currentWallpaperURL, activeItem.layout, activeItem.source, '');
+    } else {
+      WallpaperUtil.saveWallpaperInfo(
+          '', '', Constants.WallpaperSourceEnum.Default, '');
+    }
   };
 
   /**
@@ -578,7 +602,7 @@ function WallpaperManager(dialogDom) {
                     false, selectedItem.baseURL,
                     function(thumbnailData) {
                       self.onWallpaperChanged_(selectedItem,
-                          selectedItem.baseURL, thumbnailData);
+                                               selectedItem.baseURL);
                       WallpaperUtil.storeWallpaperToSyncFS(
                           selectedItem.baseURL, e.target.result);
                       WallpaperUtil.storeWallpaperToSyncFS(
@@ -598,8 +622,6 @@ function WallpaperManager(dialogDom) {
         // Resets back to default wallpaper.
         chrome.wallpaperPrivate.resetWallpaper();
         this.onWallpaperChanged_(selectedItem, selectedItem.baseURL);
-        WallpaperUtil.saveWallpaperInfo(wallpaperURL, selectedItem.layout,
-                                        selectedItem.source);
         break;
       case Constants.WallpaperSourceEnum.Online:
         var wallpaperURL = selectedItem.baseURL +
@@ -611,8 +633,6 @@ function WallpaperManager(dialogDom) {
                                                      function(exists) {
           if (exists) {
             self.onWallpaperChanged_(selectedItem, wallpaperURL);
-            WallpaperUtil.saveWallpaperInfo(wallpaperURL, selectedItem.layout,
-                                            selectedItem.source);
             return;
           }
 
@@ -638,8 +658,6 @@ function WallpaperManager(dialogDom) {
                     self.onWallpaperChanged_(selectedItem, wallpaperURL);
                   }
                 });
-            WallpaperUtil.saveWallpaperInfo(wallpaperURL, selectedItem.layout,
-                                            selectedItem.source);
             self.wallpaperRequest_ = null;
           };
           var onFailure = function(status) {
@@ -651,6 +669,8 @@ function WallpaperManager(dialogDom) {
                                  onFailure, self.wallpaperRequest_);
         });
         break;
+      case Constants.WallpaperSourceEnum.Daily:
+      case Constants.WallpaperSourceEnum.ThirdParty:
       default:
         console.error('Unsupported wallpaper source.');
     }
@@ -965,10 +985,6 @@ function WallpaperManager(dialogDom) {
         failure();
       } else {
         success(opt_thumbnail);
-        // Custom wallpapers are not synced yet. If login on a different
-        // computer after set a custom wallpaper, wallpaper wont change by sync.
-        WallpaperUtil.saveWallpaperInfo(fileName, layout,
-                                        Constants.WallpaperSourceEnum.Custom);
       }
     };
 

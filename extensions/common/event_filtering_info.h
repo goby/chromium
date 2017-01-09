@@ -5,11 +5,12 @@
 #ifndef EXTENSIONS_COMMON_EVENT_FILTERING_INFO_H_
 #define EXTENSIONS_COMMON_EVENT_FILTERING_INFO_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "url/gurl.h"
 
 namespace base {
-class Value;
+class DictionaryValue;
 }
 
 namespace extensions {
@@ -25,6 +26,7 @@ namespace extensions {
 class EventFilteringInfo {
  public:
   EventFilteringInfo();
+  EventFilteringInfo(const EventFilteringInfo& other);
   ~EventFilteringInfo();
   void SetWindowExposedByDefault(bool exposed);
   void SetWindowType(const std::string& window_type);
@@ -58,8 +60,7 @@ class EventFilteringInfo {
   bool has_service_type() const { return !service_type_.empty(); }
   const std::string& service_type() const { return service_type_; }
 
-  scoped_ptr<base::Value> AsValue() const;
-  bool IsEmpty() const;
+  std::unique_ptr<base::DictionaryValue> AsValue() const;
 
  private:
   bool has_url_;

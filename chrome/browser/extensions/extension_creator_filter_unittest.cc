@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/extension_creator_filter.h"
+
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
-#include "chrome/browser/extensions/extension_creator_filter.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -17,7 +23,7 @@ class ExtensionCreatorFilterTest : public PlatformTest {
     PlatformTest::SetUp();
 
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    test_dir_ = temp_dir_.path();
+    test_dir_ = temp_dir_.GetPath();
 
     filter_ = new extensions::ExtensionCreatorFilter();
   }

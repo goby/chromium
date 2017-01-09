@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -32,7 +33,7 @@ class VIEWS_EXPORT ResizeArea : public View {
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnMouseCaptureLost() override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
  private:
   // Report the amount the user resized by to the delegate, accounting for

@@ -4,10 +4,12 @@
 
 #include "net/spdy/spdy_alt_svc_wire_format.h"
 
+#include <algorithm>
 #include <limits>
 #include <string>
 
 #include "base/logging.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 
 namespace net {
@@ -21,7 +23,8 @@ bool ParsePositiveIntegerImpl(StringPiece::const_iterator c,
                               StringPiece::const_iterator end,
                               T* value) {
   *value = 0;
-  for (; c != end && isdigit(*c); ++c) {
+  // TODO(mmenke):  This really should be using methods in parse_number.h.
+  for (; c != end && '0' <= *c && *c <= '9'; ++c) {
     if (*value > std::numeric_limits<T>::max() / 10) {
       return false;
     }
@@ -41,18 +44,19 @@ SpdyAltSvcWireFormat::AlternativeService::AlternativeService() {}
 SpdyAltSvcWireFormat::AlternativeService::AlternativeService(
     const std::string& protocol_id,
     const std::string& host,
-    uint16 port,
-    uint32 max_age,
-    double probability,
+    uint16_t port,
+    uint32_t max_age,
     VersionVector version)
     : protocol_id(protocol_id),
       host(host),
       port(port),
       max_age(max_age),
-      probability(probability),
       version(version) {}
 
 SpdyAltSvcWireFormat::AlternativeService::~AlternativeService() {}
+
+SpdyAltSvcWireFormat::AlternativeService::AlternativeService(
+    const AlternativeService& other) = default;
 
 // static
 bool SpdyAltSvcWireFormat::ParseHeaderFieldValue(
@@ -103,14 +107,13 @@ bool SpdyAltSvcWireFormat::ParseHeaderFieldValue(
     }
     DCHECK_EQ('"', *c);
     std::string host;
-    uint16 port;
+    uint16_t port;
     if (!ParseAltAuthority(alt_authority_begin, c, &host, &port)) {
       return false;
     }
     ++c;
     // Parse parameters.
-    uint32 max_age = 86400;
-    double probability = 1.0;
+    uint32_t max_age = 86400;
     VersionVector version;
     StringPiece::const_iterator parameters_end = std::find(c, value.end(), ',');
     while (c != parameters_end) {
@@ -146,14 +149,6 @@ bool SpdyAltSvcWireFormat::ParseHeaderFieldValue(
         if (!ParsePositiveInteger32(parameter_value_begin, c, &max_age)) {
           return false;
         }
-      } else if (parameter_name.compare("p") == 0) {
-        // Probability value is enclosed in quotation marks.
-        if (*parameter_value_begin != '"' || *(c - 1) != '"') {
-          return false;
-        }
-        if (!ParseProbability(parameter_value_begin + 1, c - 1, &probability)) {
-          return false;
-        }
       } else if (parameter_name.compare("v") == 0) {
         // Version is a comma separated list of positive integers enclosed in
         // quotation marks.  Since it can contain commas, which are not
@@ -174,7 +169,7 @@ bool SpdyAltSvcWireFormat::ParseHeaderFieldValue(
           while (v_end < c - 1 && *v_end != ',') {
             ++v_end;
           }
-          uint16 v;
+          uint16_t v;
           if (!ParsePositiveInteger16(v_begin, v_end, &v)) {
             return false;
           }
@@ -187,8 +182,7 @@ bool SpdyAltSvcWireFormat::ParseHeaderFieldValue(
         }
       }
     }
-    altsvc_vector->push_back(AlternativeService(protocol_id, host, port,
-                                                max_age, probability, version));
+    altsvc_vector->emplace_back(protocol_id, host, port, max_age, version);
     for (; c != value.end() && (*c == ' ' || *c == '\t' || *c == ','); ++c) {
     }
   }
@@ -251,9 +245,6 @@ std::string SpdyAltSvcWireFormat::SerializeHeaderFieldValue(
     if (altsvc.max_age != 86400) {
       base::StringAppendF(&value, "; ma=%d", altsvc.max_age);
     }
-    if (altsvc.probability != 1.0) {
-      base::StringAppendF(&value, "; p=\"%.2f\"", altsvc.probability);
-    }
     if (!altsvc.version.empty()) {
       value.append("; v=\"");
       for (VersionVector::const_iterator it = altsvc.version.begin();
@@ -288,22 +279,20 @@ bool SpdyAltSvcWireFormat::PercentDecode(StringPiece::const_iterator c,
     }
     DCHECK_EQ('%', *c);
     ++c;
-    if (c == end || !isxdigit(*c)) {
+    if (c == end || !base::IsHexDigit(*c)) {
       return false;
     }
-    char decoded = tolower(*c);
-    // '0' is 0, 'a' is 10.
-    decoded += isdigit(*c) ? (0 - '0') : (10 - 'a');
     // Network byte order is big-endian.
-    decoded <<= 4;
+    int decoded = base::HexDigitToInt(*c) << 4;
+
     ++c;
-    if (c == end || !isxdigit(*c)) {
+    if (c == end || !base::IsHexDigit(*c)) {
       return false;
     }
-    decoded += tolower(*c);
-    // '0' is 0, 'a' is 10.
-    decoded += isdigit(*c) ? (0 - '0') : (10 - 'a');
-    output->push_back(decoded);
+    // Network byte order is big-endian.
+    decoded += base::HexDigitToInt(*c);
+
+    output->push_back(static_cast<char>(decoded));
   }
   return true;
 }
@@ -312,22 +301,41 @@ bool SpdyAltSvcWireFormat::PercentDecode(StringPiece::const_iterator c,
 bool SpdyAltSvcWireFormat::ParseAltAuthority(StringPiece::const_iterator c,
                                              StringPiece::const_iterator end,
                                              std::string* host,
-                                             uint16* port) {
+                                             uint16_t* port) {
   host->clear();
-  for (; c != end && *c != ':'; ++c) {
-    if (*c == '"') {
-      // Port is mandatory.
-      return false;
-    }
-    if (*c == '\\') {
-      ++c;
-      if (c == end) {
+  if (c == end) {
+    return false;
+  }
+  if (*c == '[') {
+    for (; c != end && *c != ']'; ++c) {
+      if (*c == '"') {
+        // Port is mandatory.
         return false;
       }
+      host->push_back(*c);
     }
+    if (c == end) {
+      return false;
+    }
+    DCHECK_EQ(']', *c);
     host->push_back(*c);
+    ++c;
+  } else {
+    for (; c != end && *c != ':'; ++c) {
+      if (*c == '"') {
+        // Port is mandatory.
+        return false;
+      }
+      if (*c == '\\') {
+        ++c;
+        if (c == end) {
+          return false;
+        }
+      }
+      host->push_back(*c);
+    }
   }
-  if (c == end) {
+  if (c == end || *c != ':') {
     return false;
   }
   DCHECK_EQ(':', *c);
@@ -339,57 +347,16 @@ bool SpdyAltSvcWireFormat::ParseAltAuthority(StringPiece::const_iterator c,
 bool SpdyAltSvcWireFormat::ParsePositiveInteger16(
     StringPiece::const_iterator c,
     StringPiece::const_iterator end,
-    uint16* value) {
-  return ParsePositiveIntegerImpl<uint16>(c, end, value);
+    uint16_t* value) {
+  return ParsePositiveIntegerImpl<uint16_t>(c, end, value);
 }
 
 // static
 bool SpdyAltSvcWireFormat::ParsePositiveInteger32(
     StringPiece::const_iterator c,
     StringPiece::const_iterator end,
-    uint32* value) {
-  return ParsePositiveIntegerImpl<uint32>(c, end, value);
-}
-
-// Probability is a decimal fraction between 0.0 and 1.0, inclusive, with
-// optional leading zero, optional decimal point, and optional digits following
-// the decimal point, with the restriction that there has to be at least one
-// digit (that is, "" and "." are not valid).
-// static
-bool SpdyAltSvcWireFormat::ParseProbability(StringPiece::const_iterator c,
-                                            StringPiece::const_iterator end,
-                                            double* probability) {
-  // "" is invalid.
-  if (c == end) {
-    return false;
-  }
-  // "." is invalid.
-  if (end - c == 1 && *c == '.') {
-    return false;
-  }
-  if (*c == '1') {
-    *probability = 1.0;
-    ++c;
-  } else {
-    *probability = 0.0;
-    if (*c == '0') {
-      ++c;
-    }
-  }
-  if (c == end) {
-    return true;
-  }
-  if (*c != '.') {
-    return false;
-  }
-  // So far we could have had ".", "0.", or "1.".
-  ++c;
-  double place_value = 0.1;
-  for (; c != end && isdigit(*c); ++c) {
-    *probability += place_value * (*c - '0');
-    place_value *= 0.1;
-  }
-  return (c == end && *probability <= 1.0);
+    uint32_t* value) {
+  return ParsePositiveIntegerImpl<uint32_t>(c, end, value);
 }
 
 }  // namespace net

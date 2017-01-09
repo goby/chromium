@@ -4,16 +4,20 @@
 
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -145,7 +149,8 @@ class TabBlockedStateTestBrowser
 
  private:
   // TabStripModelObserver
-  void TabInsertedAt(WebContents* contents,
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     WebContents* contents,
                      int index,
                      bool foreground) override {
     web_modal::WebContentsModalDialogManager* manager =
@@ -343,7 +348,8 @@ class MockTabStripModelObserver : public TabStripModelObserver {
   }
 
   // TabStripModelObserver implementation:
-  void TabInsertedAt(WebContents* contents,
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     WebContents* contents,
                      int index,
                      bool foreground) override {
     empty_ = false;
@@ -397,7 +403,9 @@ class MockTabStripModelObserver : public TabStripModelObserver {
     s.src_contents = old_contents;
     states_.push_back(s);
   }
-  void TabPinnedStateChanged(WebContents* contents, int index) override {
+  void TabPinnedStateChanged(TabStripModel* tab_strip_model,
+                             WebContents* contents,
+                             int index) override {
     states_.push_back(State(contents, index, PINNED));
   }
   void TabStripEmpty() override { empty_ = true; }
@@ -2473,8 +2481,8 @@ TEST_F(TabStripModelTest, TabBlockedState) {
           reinterpret_cast<gfx::NativeWindow>(0), modal_dialog_manager);
   modal_dialog_manager->ShowDialogWithManager(
       reinterpret_cast<gfx::NativeWindow>(0),
-      scoped_ptr<web_modal::SingleWebContentsDialogManager>(
-          native_manager).Pass());
+      std::unique_ptr<web_modal::SingleWebContentsDialogManager>(
+          native_manager));
   EXPECT_TRUE(strip_src.IsTabBlocked(1));
 
   // Detach the tab.
@@ -2519,5 +2527,27 @@ TEST_F(TabStripModelTest, LinkClicksWithPinnedTabOrdering) {
 
   EXPECT_EQ(2, strip.GetIndexOfWebContents(page_c_contents));
   EXPECT_EQ(3, strip.GetIndexOfWebContents(page_d_contents));
+  strip.CloseAllTabs();
+}
+
+// This test covers a bug in TabStripModel::MoveWebContentsAt(). Specifically
+// if |select_after_move| was true it checked if the index
+// select_after_move (as an int) was selected rather than |to_position|.
+TEST_F(TabStripModelTest, MoveWebContentsAt) {
+  TabStripDummyDelegate delegate;
+  TabStripModel strip(&delegate, profile());
+  MockTabStripModelObserver observer(&strip);
+  strip.AppendWebContents(CreateWebContents(), false);
+  strip.AppendWebContents(CreateWebContents(), false);
+  strip.AppendWebContents(CreateWebContents(), false);
+  strip.AppendWebContents(CreateWebContents(), false);
+  strip.AddObserver(&observer);
+
+  strip.ActivateTabAt(1, true);
+  EXPECT_EQ(1, strip.active_index());
+
+  strip.MoveWebContentsAt(2, 3, true);
+  EXPECT_EQ(3, strip.active_index());
+
   strip.CloseAllTabs();
 }

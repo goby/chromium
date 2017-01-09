@@ -5,12 +5,15 @@
 #ifndef MEDIA_FILTERS_FFMPEG_AAC_BITSTREAM_CONVERTER_H_
 #define MEDIA_FILTERS_FFMPEG_AAC_BITSTREAM_CONVERTER_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include "base/macros.h"
+
 #include "media/base/media_export.h"
 #include "media/filters/ffmpeg_bitstream_converter.h"
 
 // Forward declarations for FFmpeg datatypes used.
-struct AVCodecContext;
+struct AVCodecParameters;
 struct AVPacket;
 
 namespace media {
@@ -21,10 +24,11 @@ class MEDIA_EXPORT FFmpegAACBitstreamConverter
  public:
   enum { kAdtsHeaderSize = 7 };
 
-  // The |stream_codec_context| will be used during conversion and should be the
-  // AVCodecContext for the stream sourcing these packets. A reference to
-  // |stream_codec_context| is retained, so it must outlive this class.
-  explicit FFmpegAACBitstreamConverter(AVCodecContext* stream_codec_context);
+  // The |stream_codec_parameters| will be used during conversion and should be
+  // the AVCodecParameters for the stream sourcing these packets. A reference to
+  // |stream_codec_parameters| is retained, so it must outlive this class.
+  explicit FFmpegAACBitstreamConverter(
+      AVCodecParameters* stream_codec_parameters);
   ~FFmpegAACBitstreamConverter() override;
 
   // FFmpegBitstreamConverter implementation.
@@ -35,7 +39,7 @@ class MEDIA_EXPORT FFmpegAACBitstreamConverter
  private:
   // Variable to hold a pointer to memory where we can access the global
   // data from the FFmpeg file format's global headers.
-  AVCodecContext* stream_codec_context_;
+  AVCodecParameters* stream_codec_parameters_;
 
   bool header_generated_;
   uint8_t hdr_[kAdtsHeaderSize];

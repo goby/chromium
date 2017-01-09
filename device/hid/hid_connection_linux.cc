@@ -8,15 +8,18 @@
 #include <linux/hidraw.h>
 #include <sys/ioctl.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
+#include "base/files/file_descriptor_watcher_posix.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/message_loop/message_pump_libevent.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/hid/hid_service.h"
 
@@ -31,8 +34,7 @@
 namespace device {
 
 class HidConnectionLinux::FileThreadHelper
-    : public base::MessagePumpLibevent::Watcher,
-      public base::MessageLoop::DestructionObserver {
+    : public base::MessageLoop::DestructionObserver {
  public:
   FileThreadHelper(base::PlatformFile platform_file,
                    scoped_refptr<HidDeviceInfo> device_info,
@@ -53,25 +55,22 @@ class HidConnectionLinux::FileThreadHelper
 
   // Starts the FileDescriptorWatcher that reads input events from the device.
   // Must be called on a thread that has a base::MessageLoopForIO.
-  static void Start(scoped_ptr<FileThreadHelper> self) {
+  static void Start(std::unique_ptr<FileThreadHelper> self) {
     base::ThreadRestrictions::AssertIOAllowed();
     self->thread_checker_.DetachFromThread();
 
-    if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-            self->platform_file_, true, base::MessageLoopForIO::WATCH_READ,
-            &self->file_watcher_, self.get())) {
-      HID_LOG(ERROR) << "Failed to start watching device file.";
-    }
+    self->file_watcher_ = base::FileDescriptorWatcher::WatchReadable(
+        self->platform_file_,
+        base::Bind(&FileThreadHelper::OnFileCanReadWithoutBlocking,
+                   base::Unretained(self.get())));
 
     // |self| is now owned by the current message loop.
     base::MessageLoop::current()->AddDestructionObserver(self.release());
   }
 
  private:
-  // base::MessagePumpLibevent::Watcher implementation.
-  void OnFileCanReadWithoutBlocking(int fd) override {
+  void OnFileCanReadWithoutBlocking() {
     DCHECK(thread_checker_.CalledOnValidThread());
-    DCHECK_EQ(fd, platform_file_);
 
     scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(report_buffer_size_));
     char* data = buffer->data();
@@ -92,7 +91,7 @@ class HidConnectionLinux::FileThreadHelper
         // TODO(reillyg): Investigate starting and stopping the file descriptor
         // watcher in response to pending read requests so that per-request
         // errors can be returned to the client.
-        file_watcher_.StopWatchingFileDescriptor();
+        file_watcher_.reset();
       }
       return;
     }
@@ -104,10 +103,6 @@ class HidConnectionLinux::FileThreadHelper
     task_runner_->PostTask(FROM_HERE,
                            base::Bind(&HidConnectionLinux::ProcessInputReport,
                                       connection_, buffer, bytes_read));
-  }
-
-  void OnFileCanWriteWithoutBlocking(int fd) override {
-    NOTREACHED();  // Only listening for reads.
   }
 
   // base::MessageLoop::DestructionObserver:
@@ -122,7 +117,7 @@ class HidConnectionLinux::FileThreadHelper
   bool has_report_id_;
   base::WeakPtr<HidConnectionLinux> connection_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  base::MessagePumpLibevent::FileDescriptorWatcher file_watcher_;
+  std::unique_ptr<base::FileDescriptorWatcher::Controller> file_watcher_;
 
   DISALLOW_COPY_AND_ASSIGN(FileThreadHelper);
 };
@@ -135,11 +130,11 @@ HidConnectionLinux::HidConnectionLinux(
       file_task_runner_(file_task_runner),
       weak_factory_(this) {
   task_runner_ = base::ThreadTaskRunnerHandle::Get();
-  device_file_ = device_file.Pass();
+  device_file_ = std::move(device_file);
 
   // The helper is passed a weak pointer to this connection so that it can be
   // cleaned up after the connection is closed.
-  scoped_ptr<FileThreadHelper> helper(
+  std::unique_ptr<FileThreadHelper> helper(
       new FileThreadHelper(device_file_.GetPlatformFile(), device_info,
                            weak_factory_.GetWeakPtr(), task_runner_));
   helper_ = helper.get();

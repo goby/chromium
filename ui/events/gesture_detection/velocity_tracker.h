@@ -5,8 +5,11 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_VELOCITY_TRACKER_H_
 #define UI_EVENTS_GESTURE_DETECTION_VELOCITY_TRACKER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "ui/events/gesture_detection/bitset_32.h"
 
@@ -142,7 +145,7 @@ class VelocityTracker {
   base::TimeTicks last_event_time_;
   BitSet32 current_pointer_id_bits_;
   int32_t active_pointer_id_;
-  scoped_ptr<VelocityTrackerStrategy> strategy_;
+  std::unique_ptr<VelocityTrackerStrategy> strategy_;
 
   DISALLOW_COPY_AND_ASSIGN(VelocityTracker);
 };

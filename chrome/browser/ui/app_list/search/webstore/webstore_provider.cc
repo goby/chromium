@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/app_list/search/webstore/webstore_provider.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -14,6 +15,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
+#include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
 #include "chrome/browser/ui/app_list/search/common/json_response_fetcher.h"
 #include "chrome/browser/ui/app_list/search/search_webstore_result.h"
 #include "chrome/browser/ui/app_list/search/webstore/webstore_result.h"
@@ -94,7 +96,7 @@ void WebstoreProvider::Start(bool /*is_voice_query*/,
 
   // Add a placeholder result which when clicked will run the user's query in a
   // browser. This placeholder is removed when the search results arrive.
-  Add(scoped_ptr<SearchResult>(
+  Add(std::unique_ptr<SearchResult>(
       new SearchWebstoreResult(profile_, controller_, query_)));
 }
 
@@ -113,9 +115,9 @@ void WebstoreProvider::StartQuery() {
 }
 
 void WebstoreProvider::OnWebstoreSearchFetched(
-    scoped_ptr<base::DictionaryValue> json) {
+    std::unique_ptr<base::DictionaryValue> json) {
   ProcessWebstoreSearchResults(json.get());
-  cache_->Put(WebserviceCache::WEBSTORE, query_, json.Pass());
+  cache_->Put(WebserviceCache::WEBSTORE, query_, std::move(json));
   query_pending_ = false;
 
   if (!webstore_search_fetched_callback_.is_null())
@@ -141,7 +143,7 @@ void WebstoreProvider::ProcessWebstoreSearchResults(
     if (!(*it)->GetAsDictionary(&dict))
       continue;
 
-    scoped_ptr<SearchResult> result(CreateResult(query, *dict));
+    std::unique_ptr<SearchResult> result(CreateResult(query, *dict));
     if (!result)
       continue;
 
@@ -151,11 +153,11 @@ void WebstoreProvider::ProcessWebstoreSearchResults(
       first_result = false;
     }
 
-    Add(result.Pass());
+    Add(std::move(result));
   }
 }
 
-scoped_ptr<SearchResult> WebstoreProvider::CreateResult(
+std::unique_ptr<SearchResult> WebstoreProvider::CreateResult(
     const TokenizedString& query,
     const base::DictionaryValue& dict) {
   std::string app_id;
@@ -166,12 +168,16 @@ scoped_ptr<SearchResult> WebstoreProvider::CreateResult(
       !dict.GetString(kKeyLocalizedName, &localized_name) ||
       !dict.GetString(kKeyIconUrl, &icon_url_string) ||
       !dict.GetBoolean(kKeyIsPaid, &is_paid)) {
-    return scoped_ptr<SearchResult>();
+    return std::unique_ptr<SearchResult>();
   }
+
+  // If an app is already installed, don't show it in results.
+  if (controller_->IsExtensionInstalled(profile_, app_id))
+    return std::unique_ptr<SearchResult>();
 
   GURL icon_url(icon_url_string);
   if (!icon_url.is_valid())
-    return scoped_ptr<SearchResult>();
+    return std::unique_ptr<SearchResult>();
 
   std::string item_type_string;
   dict.GetString(kKeyItemType, &item_type_string);
@@ -184,9 +190,9 @@ scoped_ptr<SearchResult> WebstoreProvider::CreateResult(
   TokenizedString title(base::UTF8ToUTF16(localized_name));
   TokenizedStringMatch match;
   if (!match.Calculate(query, title))
-    return scoped_ptr<SearchResult>();
+    return std::unique_ptr<SearchResult>();
 
-  scoped_ptr<SearchResult> result(new WebstoreResult(
+  std::unique_ptr<SearchResult> result(new WebstoreResult(
       profile_, app_id, icon_url, is_paid, item_type, controller_));
   result->UpdateFromMatch(title, match);
   return result;

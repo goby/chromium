@@ -4,25 +4,24 @@
 
 #import "ios/chrome/browser/autofill/form_input_accessory_view_controller.h"
 
+#include <memory>
+
 #include "base/ios/block_types.h"
 #include "base/ios/ios_util.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_block.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #import "components/autofill/core/browser/keyboard_accessory_metrics_logger.h"
 #import "components/autofill/ios/browser/js_suggestion_manager.h"
 #import "ios/chrome/browser/autofill/form_input_accessory_view.h"
 #import "ios/chrome/browser/autofill/form_suggestion_view.h"
 #import "ios/chrome/browser/passwords/password_generation_utils.h"
 #include "ios/chrome/browser/ui/ui_util.h"
-#include "ios/chrome/grit/ios_strings.h"
-#include "ios/web/public/test/crw_test_js_injection_receiver.h"
 #import "ios/web/public/url_scheme_util.h"
 #import "ios/web/public/web_state/crw_web_view_proxy.h"
+#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
 #include "ios/web/public/web_state/web_state.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
 namespace autofill {
@@ -180,10 +179,6 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
 // otherwise. [HACK]
 - (BOOL)executeFormAssistAction:(NSString*)actionName;
 
-// Runs |block| while allowing the keyboard to be displayed as a result of focus
-// changes caused by |block|.
-- (void)runBlockAllowingKeyboardDisplay:(ProceduralBlock)block;
-
 // Asynchronously retrieves an accessory view from |_providers|.
 - (void)retrieveAccessoryViewForForm:(const std::string&)formName
                                field:(const std::string&)fieldName
@@ -204,7 +199,7 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
 
 @implementation FormInputAccessoryViewController {
   // Bridge to observe the web state from Objective-C.
-  scoped_ptr<web::WebStateObserverBridge> _webStateObserverBridge;
+  std::unique_ptr<web::WebStateObserverBridge> _webStateObserverBridge;
 
   // Last registered keyboard rectangle.
   CGRect _keyboardFrame;
@@ -230,7 +225,7 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
   base::WeakNSProtocol<id<FormInputAccessoryViewProvider>> _currentProvider;
 
   // Logs UMA metrics for the keyboard accessory.
-  scoped_ptr<autofill::KeyboardAccessoryMetricsLogger>
+  std::unique_ptr<autofill::KeyboardAccessoryMetricsLogger>
       _keyboardAccessoryMetricsLogger;
 }
 
@@ -266,7 +261,7 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
   // There is no defined relation on the timing of JavaScript events and
   // keyboard showing up. So it is necessary to listen to the keyboard
   // notification to make sure the keyboard is updated.
-  if (base::ios::IsRunningOnIOS9OrLater() && IsIPadIdiom()) {
+  if (IsIPadIdiom()) {
     [[NSNotificationCenter defaultCenter]
         addObserver:self
            selector:@selector(keyboardWillOrDidChangeFrame:)
@@ -325,7 +320,7 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
 
 - (void)showCustomInputAccessoryView:(UIView*)view {
   DCHECK(view);
-  if (base::ios::IsRunningOnIOS9OrLater() && IsIPadIdiom()) {
+  if (IsIPadIdiom()) {
     // On iPads running iOS 9 or later, there's no inputAccessoryView available
     // so we attach the custom view directly to the keyboard view instead.
     [_customAccessoryView removeFromSuperview];
@@ -341,7 +336,7 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
     // If this is a form suggestion view and no suggestions have been triggered
     // yet, don't show the custom view.
     FormSuggestionView* formSuggestionView =
-        base::mac::ObjCCastStrict<FormSuggestionView>(view);
+        base::mac::ObjCCast<FormSuggestionView>(view);
     if (formSuggestionView) {
       int numSuggestions = [[formSuggestionView suggestions] count];
       if (!_suggestionsHaveBeenShown && numSuggestions == 0) {
@@ -379,9 +374,6 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
       [inputAccessoryView addSubview:_customAccessoryView];
     }
   }
-  UIAccessibilityPostNotification(
-      UIAccessibilityScreenChangedNotification,
-      l10n_util::GetNSString(IDS_IOS_AUTOFILL_ACCNAME_PREVIOUS_FIELD));
 }
 
 - (void)restoreDefaultInputAccessoryView {
@@ -406,23 +398,19 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
   if (!performedAction) {
     // We could not find the built-in form assist controls, so try to focus
     // the next or previous control using JavaScript.
-    [self runBlockAllowingKeyboardDisplay:^{
-      [_JSSuggestionManager closeKeyboard];
-    }];
+    [_JSSuggestionManager closeKeyboard];
   }
 }
 
 - (BOOL)executeFormAssistAction:(NSString*)actionName {
   NSArray* descendants = nil;
-  if (base::ios::IsRunningOnIOS9OrLater() && IsIPadIdiom()) {
-#if defined(__IPHONE_9_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_9_0
+  if (IsIPadIdiom()) {
     UITextInputAssistantItem* inputAssistantItem =
         [self.webViewProxy inputAssistantItem];
     if (!inputAssistantItem)
       return NO;
     descendants =
         FindDescendantToolbarItemsForActionName(inputAssistantItem, actionName);
-#endif
   } else {
     UIView* inputAccessoryView = [self.webViewProxy keyboardAccessory];
     if (!inputAccessoryView)
@@ -437,16 +425,6 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
   UIBarButtonItem* item = descendants[0];
   [[item target] performSelector:[item action] withObject:item];
   return YES;
-}
-
-- (void)runBlockAllowingKeyboardDisplay:(ProceduralBlock)block {
-  DCHECK([UIWebView
-      instancesRespondToSelector:@selector(keyboardDisplayRequiresUserAction)]);
-
-  BOOL originalValue = [self.webViewProxy keyboardDisplayRequiresUserAction];
-  [self.webViewProxy setKeyboardDisplayRequiresUserAction:NO];
-  block();
-  [self.webViewProxy setKeyboardDisplayRequiresUserAction:originalValue];
 }
 
 #pragma mark -
@@ -465,9 +443,7 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
   if (!performedAction) {
     // We could not find the built-in form assist controls, so try to focus
     // the next or previous control using JavaScript.
-    [self runBlockAllowingKeyboardDisplay:^{
-      [_JSSuggestionManager selectPreviousElement];
-    }];
+    [_JSSuggestionManager selectPreviousElement];
   }
 }
 
@@ -484,9 +460,7 @@ bool ComputeFramesOfKeyboardParts(UIView* inputAccessoryView,
   if (!performedAction) {
     // We could not find the built-in form assist controls, so try to focus
     // the next or previous control using JavaScript.
-    [self runBlockAllowingKeyboardDisplay:^{
-      [_JSSuggestionManager selectNextElement];
-    }];
+    [_JSSuggestionManager selectNextElement];
   }
 }
 

@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 from telemetry.page import page as page_module
-from telemetry.page import page_test as page_test
+from telemetry.page import legacy_page_test
 from telemetry import story
 
 
@@ -25,6 +25,7 @@ class BlobCreateThenRead(page_module.Page):
     for size_bytes in self._blob_sizes:
       with action_runner.CreateInteraction('Action_CreateAndReadBlob',
                                            repeatable=True):
+        # TODO(catapult:#3028): Fix interpolation of JavaScript values.
         action_runner.ExecuteJavaScript(
             'createAndRead(' + str(size_bytes) + ');')
         action_runner.WaitForJavaScriptCondition(
@@ -32,7 +33,7 @@ class BlobCreateThenRead(page_module.Page):
 
     errors = action_runner.EvaluateJavaScript('errors')
     if errors:
-      raise page_test.Failure('Errors on page: ' + ', '.join(errors))
+      raise legacy_page_test.Failure('Errors on page: ' + ', '.join(errors))
 
 
 class BlobMassCreate(page_module.Page):
@@ -50,6 +51,7 @@ class BlobMassCreate(page_module.Page):
     for size_bytes in self._blob_sizes:
       with action_runner.CreateInteraction('Action_CreateBlob',
                                            repeatable=True):
+        # TODO(catapult:#3028): Fix interpolation of JavaScript values.
         action_runner.ExecuteJavaScript('createBlob(' + str(size_bytes) + ');')
 
     # Read blobs
@@ -65,7 +67,7 @@ class BlobMassCreate(page_module.Page):
 
     errors = action_runner.EvaluateJavaScript('errors')
     if errors:
-      raise page_test.Failure('Errors on page: ' + ', '.join(errors))
+      raise legacy_page_test.Failure('Errors on page: ' + ', '.join(errors))
 
 
 class BlobWorkshopPageSet(story.StorySet):

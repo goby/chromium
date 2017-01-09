@@ -6,19 +6,23 @@
 #define CHROME_BROWSER_CHROMEOS_POLICY_UPLOAD_JOB_IMPL_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
+#include "base/threading/thread_checker.h"
 #include "chrome/browser/chromeos/policy/upload_job.h"
 #include "google_apis/gaia/oauth2_token_service.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "url/gurl.h"
+
+namespace base {
+class SequencedTaskRunner;
+}
 
 namespace policy {
 
@@ -35,7 +39,7 @@ class UploadJobImpl : public UploadJob,
    public:
     virtual ~MimeBoundaryGenerator();
 
-    virtual std::string GenerateBoundary(size_t length) const = 0;
+    virtual std::string GenerateBoundary() const = 0;
 
    private:
     DISALLOW_ASSIGN(MimeBoundaryGenerator);
@@ -47,27 +51,41 @@ class UploadJobImpl : public UploadJob,
    public:
     ~RandomMimeBoundaryGenerator() override;
 
-    std::string GenerateBoundary(
-        size_t length) const override;  // MimeBoundaryGenerator
+    std::string GenerateBoundary() const override;  // MimeBoundaryGenerator
   };
 
+  // |task_runner| must belong to the same thread from which the constructor and
+  // all the public methods are called.
   UploadJobImpl(const GURL& upload_url,
                 const std::string& account_id,
                 OAuth2TokenService* token_service,
                 scoped_refptr<net::URLRequestContextGetter> url_context_getter,
                 Delegate* delegate,
-                scoped_ptr<MimeBoundaryGenerator> boundary_generator);
+                std::unique_ptr<MimeBoundaryGenerator> boundary_generator,
+                const scoped_refptr<base::SequencedTaskRunner> task_runner);
   ~UploadJobImpl() override;
 
   // UploadJob:
   void AddDataSegment(const std::string& name,
                       const std::string& filename,
                       const std::map<std::string, std::string>& header_entries,
-                      scoped_ptr<std::string> data) override;
+                      std::unique_ptr<std::string> data) override;
   void Start() override;
+
+  // Sets the retry delay to a shorter time to prevent browser tests from
+  // timing out.
+  static void SetRetryDelayForTesting(long retryDelayMs);
 
  private:
   // Indicates the current state of the UploadJobImpl.
+  // State transitions for successful upload:
+  //   IDLE -> ACQUIRING_TOKEN -> PREPARING_CONTENT -> UPLOADING -> SUCCESS
+  // If error happens, state goes back to ACQUIRING_TOKEN.
+  // State transitions when error occurs once:
+  //   IDLE -> ACQUIRING_TOKEN -> PREPARING_CONTENT -> UPLOADING ->
+  //     -> ACQUIRING_TOKEN -> PREPARING_CONTENT -> UPLOADING -> SUCCESS
+  // State transitions when tried unsuccessfully kMaxRetries times:
+  //   ... -> PREPARING_CONTENT -> UPLOADING -> ERROR
   enum State {
     IDLE,               // Start() has not been called.
     ACQUIRING_TOKEN,    // Trying to acquire the access token.
@@ -87,11 +105,13 @@ class UploadJobImpl : public UploadJob,
   // net::URLFetcherDelegate:
   void OnURLFetchComplete(const net::URLFetcher* source) override;
 
+  void HandleError(ErrorCode errorCode);
+
   // Requests an access token for the upload scope.
   void RequestAccessToken();
 
   // Dispatches POST request to URLFetcher.
-  void StartUpload(const std::string& access_token);
+  void StartUpload();
 
   // Constructs the body of the POST request by concatenating the
   // |data_segments_|, separated by appropriate content-disposition headers and
@@ -123,31 +143,40 @@ class UploadJobImpl : public UploadJob,
   // An implementation of MimeBoundaryGenerator. This instance will be used to
   // generate MIME boundaries when assembling the multipart request in
   // SetUpMultipart().
-  scoped_ptr<MimeBoundaryGenerator> boundary_generator_;
+  std::unique_ptr<MimeBoundaryGenerator> boundary_generator_;
 
   // Current state the uploader is in.
   State state_;
 
   // Contains the cached MIME boundary.
-  scoped_ptr<std::string> mime_boundary_;
+  std::unique_ptr<std::string> mime_boundary_;
 
   // Contains the cached, encoded post data.
-  scoped_ptr<std::string> post_data_;
+  std::unique_ptr<std::string> post_data_;
 
   // Keeps track of the number of retries.
   int retry_;
 
   // The OAuth request to receive the access token.
-  scoped_ptr<OAuth2TokenService::Request> access_token_request_;
+  std::unique_ptr<OAuth2TokenService::Request> access_token_request_;
 
   // The OAuth access token.
   std::string access_token_;
 
   // Helper to upload the data.
-  scoped_ptr<net::URLFetcher> upload_fetcher_;
+  std::unique_ptr<net::URLFetcher> upload_fetcher_;
 
   // The data chunks to be uploaded.
   ScopedVector<DataSegment> data_segments_;
+
+  // TaskRunner used for scheduling retry attempts.
+  const scoped_refptr<base::SequencedTaskRunner> task_runner_;
+
+  base::ThreadChecker thread_checker_;
+
+  // Should remain the last member so it will be destroyed first and
+  // invalidate all weak pointers.
+  base::WeakPtrFactory<UploadJobImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(UploadJobImpl);
 };

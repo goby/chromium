@@ -4,9 +4,10 @@
 
 #include "tools/cygprofile/cygprofile.h"
 
-#include <vector>
-
+#include <stdint.h>
 #include <sys/time.h>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -60,8 +61,12 @@ TEST(CygprofileTest, ThreadLogBasic) {
 }
 
 TEST(CygprofileTest, ManagerBasic) {
-  base::WaitableEvent wait_event(true, false);
-  base::WaitableEvent notify_event(true, false);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  base::WaitableEvent notify_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   ThreadLogsManager manager(
       base::Bind(&base::WaitableEvent::Wait, base::Unretained(&wait_event)),
@@ -69,7 +74,7 @@ TEST(CygprofileTest, ManagerBasic) {
                  base::Unretained(&notify_event)));
 
   std::vector<LogEntry> entries;
-  scoped_ptr<ThreadLog> thread_log(
+  std::unique_ptr<ThreadLog> thread_log(
       new ThreadLog(base::Bind(&FlushEntries, base::Unretained(&entries))));
 
   thread_log->AddEntry(reinterpret_cast<void*>(0x2));
@@ -77,7 +82,7 @@ TEST(CygprofileTest, ManagerBasic) {
 
   // This should make the manager spawn its internal flush thread which will
   // wait for a notification before it starts doing some work.
-  manager.AddLog(thread_log.Pass());
+  manager.AddLog(std::move(thread_log));
 
   EXPECT_EQ(0U, entries.size());
   // This will wake up the internal thread.

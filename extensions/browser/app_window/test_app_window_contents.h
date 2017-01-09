@@ -5,6 +5,8 @@
 #ifndef EXTENSIONS_BROWSER_APP_WINDOW_TEST_APP_WINDOW_CONTENTS_
 #define EXTENSIONS_BROWSER_APP_WINDOW_TEST_APP_WINDOW_CONTENTS_
 
+#include <stdint.h>
+
 #include "base/macros.h"
 #include "extensions/browser/app_window/app_window.h"
 
@@ -22,17 +24,18 @@ class TestAppWindowContents : public AppWindowContents {
   ~TestAppWindowContents() override;
 
   // apps:AppWindowContents:
-  void Initialize(content::BrowserContext* context, const GURL& url) override;
-  void LoadContents(int32 creator_process_id) override;
+  void Initialize(content::BrowserContext* context,
+                  content::RenderFrameHost* creator_frame,
+                  const GURL& url) override;
+  void LoadContents(int32_t creator_process_id) override;
   void NativeWindowChanged(NativeAppWindow* native_app_window) override;
   void NativeWindowClosed() override;
-  void DispatchWindowShownForTests() const override;
   void OnWindowReady() override;
   content::WebContents* GetWebContents() const override;
   WindowController* GetWindowController() const override;
 
  private:
-  scoped_ptr<content::WebContents> web_contents_;
+  std::unique_ptr<content::WebContents> web_contents_;
 
   DISALLOW_COPY_AND_ASSIGN(TestAppWindowContents);
 };

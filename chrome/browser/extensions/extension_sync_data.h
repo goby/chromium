@@ -5,14 +5,14 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_SYNC_DATA_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_SYNC_DATA_H_
 
+#include <memory>
 #include <string>
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/version.h"
+#include "components/sync/model/string_ordinal.h"
+#include "components/sync/model/sync_change.h"
 #include "extensions/common/constants.h"
-#include "sync/api/string_ordinal.h"
-#include "sync/api/sync_change.h"
 #include "url/gurl.h"
 
 namespace syncer {
@@ -53,7 +53,8 @@ class ExtensionSyncData {
                     int disable_reasons,
                     bool incognito_enabled,
                     bool remote_install,
-                    OptionalBoolean all_urls_enabled);
+                    OptionalBoolean all_urls_enabled,
+                    bool installed_by_custodian);
   // App constructor.
   ExtensionSyncData(const Extension& extension,
                     bool enabled,
@@ -61,16 +62,18 @@ class ExtensionSyncData {
                     bool incognito_enabled,
                     bool remote_install,
                     OptionalBoolean all_urls_enabled,
+                    bool installed_by_custodian,
                     const syncer::StringOrdinal& app_launch_ordinal,
                     const syncer::StringOrdinal& page_ordinal,
                     extensions::LaunchType launch_type);
+  ExtensionSyncData(const ExtensionSyncData& other);
   ~ExtensionSyncData();
 
   // For constructing an ExtensionSyncData from received sync data.
   // May return null if the sync data was invalid.
-  static scoped_ptr<ExtensionSyncData> CreateFromSyncData(
+  static std::unique_ptr<ExtensionSyncData> CreateFromSyncData(
       const syncer::SyncData& sync_data);
-  static scoped_ptr<ExtensionSyncData> CreateFromSyncChange(
+  static std::unique_ptr<ExtensionSyncData> CreateFromSyncChange(
       const syncer::SyncChange& sync_change);
 
   // Retrieve sync data from this class.

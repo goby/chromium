@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/scoped_observer.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/webstore_installer_test.h"
 #include "chrome/browser/infobars/infobar_service.h"
@@ -12,7 +15,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
@@ -136,16 +138,24 @@ IN_PROC_BROWSER_TEST_F(WebstoreStartupInstallerTest, InstallFromHostedApp) {
 
   // We're forced to construct a hosted app dynamically because we need the
   // app to run on a declared URL, but we don't know the port ahead of time.
-  scoped_refptr<const Extension> hosted_app = ExtensionBuilder()
-      .SetManifest(DictionaryBuilder()
-          .Set("name", "hosted app")
-          .Set("version", "1")
-          .Set("app", DictionaryBuilder()
-              .Set("urls", ListBuilder().Append(kInstallUrl.spec()))
-              .Set("launch", DictionaryBuilder()
-                  .Set("web_url", kInstallUrl.spec())))
-          .Set("manifest_version", 2))
-      .Build();
+  scoped_refptr<const Extension> hosted_app =
+      ExtensionBuilder()
+          .SetManifest(
+              DictionaryBuilder()
+                  .Set("name", "hosted app")
+                  .Set("version", "1")
+                  .Set(
+                      "app",
+                      DictionaryBuilder()
+                          .Set("urls",
+                               ListBuilder().Append(kInstallUrl.spec()).Build())
+                          .Set("launch", DictionaryBuilder()
+                                             .Set("web_url", kInstallUrl.spec())
+                                             .Build())
+                          .Build())
+                  .Set("manifest_version", 2)
+                  .Build())
+          .Build();
   ASSERT_TRUE(hosted_app.get());
 
   ExtensionService* extension_service =
@@ -176,13 +186,6 @@ class WebstoreStartupInstallerSupervisedUsersTest
 
 IN_PROC_BROWSER_TEST_F(WebstoreStartupInstallerSupervisedUsersTest,
                        InstallProhibited) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   AutoAcceptInstall();
 
   ui_test_utils::NavigateToURL(

@@ -5,9 +5,11 @@
 #ifndef CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_MANAGER_IMPL_H_
 #define CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_MANAGER_IMPL_H_
 
+#include <memory>
+
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram.h"
 #include "content/browser/tracing/background_tracing_config_impl.h"
@@ -17,14 +19,13 @@
 namespace content {
 
 class BackgroundTracingRule;
-class TraceMessageFilter;
 class TracingDelegate;
 
 class BackgroundTracingManagerImpl : public BackgroundTracingManager {
  public:
   static CONTENT_EXPORT BackgroundTracingManagerImpl* GetInstance();
 
-  bool SetActiveScenario(scoped_ptr<BackgroundTracingConfig>,
+  bool SetActiveScenario(std::unique_ptr<BackgroundTracingConfig>,
                          const ReceiveCallback&,
                          DataFiltering data_filtering) override;
   void WhenIdle(IdleCallback idle_callback) override;
@@ -52,16 +53,16 @@ class BackgroundTracingManagerImpl : public BackgroundTracingManager {
   BackgroundTracingManagerImpl();
   ~BackgroundTracingManagerImpl() override;
 
-  void StartTracing(std::string, base::trace_event::TraceRecordMode);
+  void StartTracing(BackgroundTracingConfigImpl::CategoryPreset,
+                    base::trace_event::TraceRecordMode);
   void StartTracingIfConfigNeedsIt();
-  void OnFinalizeStarted(
-      scoped_ptr<const base::DictionaryValue> metadata,
-      base::RefCountedString*);
+  void OnFinalizeStarted(std::unique_ptr<const base::DictionaryValue> metadata,
+                         base::RefCountedString*);
   void OnFinalizeComplete();
   void BeginFinalizing(StartedFinalizingCallback);
   void ValidateStartupScenario();
 
-  void AddCustomMetadata(TracingControllerImpl::TraceDataSink*) const;
+  void AddCustomMetadata();
 
   std::string GetTriggerNameFromHandle(TriggerHandle handle) const;
   bool IsTriggerHandleValid(TriggerHandle handle) const;
@@ -89,12 +90,12 @@ class BackgroundTracingManagerImpl : public BackgroundTracingManager {
     StartedFinalizingCallback callback_;
   };
 
-  scoped_ptr<TracingDelegate> delegate_;
-  scoped_ptr<const content::BackgroundTracingConfigImpl> config_;
+  std::unique_ptr<TracingDelegate> delegate_;
+  std::unique_ptr<const content::BackgroundTracingConfigImpl> config_;
   std::map<TriggerHandle, std::string> trigger_handles_;
-  scoped_ptr<TracingTimer> tracing_timer_;
+  std::unique_ptr<TracingTimer> tracing_timer_;
   ReceiveCallback receive_callback_;
-
+  std::unique_ptr<base::DictionaryValue> last_triggered_rule_;
   bool is_gathering_;
   bool is_tracing_;
   bool requires_anonymized_data_;

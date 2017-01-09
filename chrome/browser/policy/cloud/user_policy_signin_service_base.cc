@@ -4,10 +4,13 @@
 
 #include "chrome/browser/policy/cloud/user_policy_signin_service_base.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -15,7 +18,6 @@
 #include "chrome/common/chrome_content_client.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
-#include "components/policy/core/common/cloud/system_policy_request_context.h"
 #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "content/public/browser/notification_source.h"
@@ -51,7 +53,7 @@ void UserPolicySigninServiceBase::FetchPolicyForSignedInUser(
     const std::string& client_id,
     scoped_refptr<net::URLRequestContextGetter> profile_request_context,
     const PolicyFetchCallback& callback) {
-  scoped_ptr<CloudPolicyClient> client =
+  std::unique_ptr<CloudPolicyClient> client =
       UserCloudPolicyManager::CreateCloudPolicyClient(
           device_management_service_, profile_request_context);
   client->SetupRegistration(dm_token, client_id);
@@ -63,7 +65,7 @@ void UserPolicySigninServiceBase::FetchPolicyForSignedInUser(
   UserCloudPolicyManager* manager = policy_manager();
   DCHECK(manager);
   DCHECK(!manager->core()->client());
-  InitializeUserCloudPolicyManager(username, client.Pass());
+  InitializeUserCloudPolicyManager(username, std::move(client));
   DCHECK(manager->IsClientRegistered());
 
   // Now initiate a policy fetch.
@@ -79,21 +81,17 @@ void UserPolicySigninServiceBase::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_PROFILE_ADDED:
-      // A new profile has been loaded - if it's signed in, then initialize the
-      // UCPM, otherwise shut down the UCPM (which deletes any cached policy
-      // data). This must be done here instead of at constructor time because
-      // the Profile is not fully initialized when this object is constructed
-      // (DoFinalInit() has not yet been called, so ProfileIOData and
-      // SSLConfigServiceManager have not been created yet).
-      // TODO(atwilson): Switch to using a timer instead, to avoid contention
-      // with other services at startup (http://crbug.com/165468).
-      InitializeOnProfileReady(content::Source<Profile>(source).ptr());
-      break;
-    default:
-      NOTREACHED();
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_PROFILE_ADDED, type);
+
+  // A new profile has been loaded - if it's signed in, then initialize the
+  // UCPM, otherwise shut down the UCPM (which deletes any cached policy
+  // data). This must be done here instead of at constructor time because
+  // the Profile is not fully initialized when this object is constructed
+  // (DoFinalInit() has not yet been called, so ProfileIOData and
+  // SSLConfigServiceManager have not been created yet).
+  // TODO(atwilson): Switch to using a timer instead, to avoid contention
+  // with other services at startup (http://crbug.com/165468).
+  InitializeOnProfileReady(content::Source<Profile>(source).ptr());
 }
 
 void UserPolicySigninServiceBase::OnInitializationCompleted(
@@ -145,21 +143,17 @@ void UserPolicySigninServiceBase::PrepareForUserCloudPolicyManagerShutdown() {
     manager->core()->service()->RemoveObserver(this);
 }
 
-scoped_ptr<CloudPolicyClient>
+std::unique_ptr<CloudPolicyClient>
 UserPolicySigninServiceBase::CreateClientForRegistrationOnly(
     const std::string& username) {
   DCHECK(!username.empty());
   // We should not be called with a client already initialized.
-#if !defined(OS_IOS)
-  // On iOS we check if an account has policy while the profile is signed in
-  // to another account.
   DCHECK(!policy_manager() || !policy_manager()->core()->client());
-#endif
 
   // If the user should not get policy, just bail out.
   if (!policy_manager() || !ShouldLoadPolicyForUser(username)) {
     DVLOG(1) << "Signed in user is not in the whitelist";
-    return scoped_ptr<CloudPolicyClient>();
+    return std::unique_ptr<CloudPolicyClient>();
   }
 
   // If the DeviceManagementService is not yet initialized, start it up now.
@@ -167,7 +161,7 @@ UserPolicySigninServiceBase::CreateClientForRegistrationOnly(
 
   // Create a new CloudPolicyClient for fetching the DMToken.
   return UserCloudPolicyManager::CreateCloudPolicyClient(
-      device_management_service_, CreateSystemRequestContext());
+      device_management_service_, system_request_context_);
 }
 
 bool UserPolicySigninServiceBase::ShouldLoadPolicyForUser(
@@ -232,14 +226,14 @@ void UserPolicySigninServiceBase::InitializeForSignedInUser(
 
 void UserPolicySigninServiceBase::InitializeUserCloudPolicyManager(
     const std::string& username,
-    scoped_ptr<CloudPolicyClient> client) {
+    std::unique_ptr<CloudPolicyClient> client) {
   DCHECK(client);
   UserCloudPolicyManager* manager = policy_manager();
   manager->SetSigninUsername(username);
   DCHECK(!manager->core()->client());
   scoped_refptr<net::URLRequestContextGetter> context =
       client->GetRequestContext();
-  manager->Connect(local_state_, context, client.Pass());
+  manager->Connect(local_state_, context, std::move(client));
   DCHECK(manager->core()->service());
 
   // Observe the client to detect errors fetching policy.
@@ -253,12 +247,6 @@ void UserPolicySigninServiceBase::ShutdownUserCloudPolicyManager() {
   UserCloudPolicyManager* manager = policy_manager();
   if (manager)
     manager->DisconnectAndRemovePolicy();
-}
-
-scoped_refptr<net::URLRequestContextGetter>
-UserPolicySigninServiceBase::CreateSystemRequestContext() {
-  return new SystemPolicyRequestContext(
-      system_request_context(), GetUserAgent());
 }
 
 }  // namespace policy

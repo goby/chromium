@@ -7,11 +7,12 @@
 
 #import <AppKit/AppKit.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_member.h"
+#include "components/prefs/pref_member.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_tray_delegate.h"
 
@@ -51,7 +52,7 @@ class MessageCenterTrayBridge :
   message_center::MessageCenter* message_center_;
 
   // C++ controller for the notification tray UI.
-  scoped_ptr<message_center::MessageCenterTray> tray_;
+  std::unique_ptr<message_center::MessageCenterTray> tray_;
 
   // Obj-C controller for the on-screen popup notifications.
   base::scoped_nsobject<MCPopupCollection> popup_collection_;

@@ -1,16 +1,7 @@
 /* Copyright 2013 Google Inc. All Rights Reserved.
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+   Distributed under MIT license.
+   See file LICENSE for detail or copy at https://opensource.org/licenses/MIT
 */
 
 /* API for Brotli decompression */
@@ -18,125 +9,113 @@
 #ifndef BROTLI_DEC_DECODE_H_
 #define BROTLI_DEC_DECODE_H_
 
-#include "./state.h"
-#include "./streams.h"
 #include "./types.h"
 
 #if defined(__cplusplus) || defined(c_plusplus)
 extern "C" {
 #endif
 
+typedef struct BrotliStateStruct BrotliState;
+
 typedef enum {
-  /* Decoding error, e.g. corrupt input or no memory */
+  /* Decoding error, e.g. corrupt input or memory allocation problem */
   BROTLI_RESULT_ERROR = 0,
-  /* Successfully completely done */
+  /* Decoding successfully completed */
   BROTLI_RESULT_SUCCESS = 1,
-  /* Partially done, but must be called again with more input */
+  /* Partially done; should be called again with more input */
   BROTLI_RESULT_NEEDS_MORE_INPUT = 2,
-  /* Partially done, but must be called again with more output */
+  /* Partially done; should be called again with more output */
   BROTLI_RESULT_NEEDS_MORE_OUTPUT = 3
 } BrotliResult;
 
-/* BROTLI_FAILURE macro unwraps to BROTLI_RESULT_ERROR in non-debug build. */
-/* In debug build it dumps file name, line and pretty function name. */
-#if defined(_MSC_VER) || !defined(BROTLI_DEBUG)
-#define BROTLI_FAILURE() BROTLI_RESULT_ERROR
-#else
-#define BROTLI_FAILURE() \
-    BrotliFailure(__FILE__, __LINE__, __PRETTY_FUNCTION__)
-static inline BrotliResult BrotliFailure(const char *f, int l, const char *fn) {
-  fprintf(stderr, "ERROR at %s:%d (%s)\n", f, l, fn);
-  fflush(stderr);
-  return BROTLI_RESULT_ERROR;
-}
-#endif
+typedef enum {
+  BROTLI_NO_ERROR = 0,
+  /* Same as BrotliResult values */
+  BROTLI_SUCCESS = 1,
+  BROTLI_NEEDS_MORE_INPUT = 2,
+  BROTLI_NEEDS_MORE_OUTPUT = 3,
 
-/* Sets *decoded_size to the decompressed size of the given encoded stream. */
-/* This function only works if the encoded buffer has a single meta block, */
-/* or if it has two meta-blocks, where the first is uncompressed and the */
-/* second is empty. */
-/* Returns 1 on success, 0 on failure. */
+  /* Errors caused by invalid input */
+  BROTLI_ERROR_FORMAT_EXUBERANT_NIBBLE = -1,
+  BROTLI_ERROR_FORMAT_RESERVED = -2,
+  BROTLI_ERROR_FORMAT_EXUBERANT_META_NIBBLE = -3,
+  BROTLI_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET = -4,
+  BROTLI_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME = -5,
+  BROTLI_ERROR_FORMAT_CL_SPACE = -6,
+  BROTLI_ERROR_FORMAT_HUFFMAN_SPACE = -7,
+  BROTLI_ERROR_FORMAT_CONTEXT_MAP_REPEAT = -8,
+  BROTLI_ERROR_FORMAT_BLOCK_LENGTH_1 = -9,
+  BROTLI_ERROR_FORMAT_BLOCK_LENGTH_2 = -10,
+  BROTLI_ERROR_FORMAT_TRANSFORM = -11,
+  BROTLI_ERROR_FORMAT_DICTIONARY = -12,
+  BROTLI_ERROR_FORMAT_WINDOW_BITS = -13,
+  BROTLI_ERROR_FORMAT_PADDING_1 = -14,
+  BROTLI_ERROR_FORMAT_PADDING_2 = -15,
+
+  /* -16..-20 codes are reserved */
+
+  /* Memory allocation problems */
+  BROTLI_ERROR_ALLOC_CONTEXT_MODES = -21,
+  BROTLI_ERROR_ALLOC_TREE_GROUPS = -22,  /* Literal, insert, distance */
+  /* -23..-24 codes are reserved for distinct tree groups */
+  BROTLI_ERROR_ALLOC_CONTEXT_MAP = -25,
+  BROTLI_ERROR_ALLOC_RING_BUFFER_1 = -26,
+  BROTLI_ERROR_ALLOC_RING_BUFFER_2 = -27,
+  /* -28..-29 codes are reserved for dynamic ringbuffer allocation */
+  BROTLI_ERROR_ALLOC_BLOCK_TYPE_TREES = -30,
+
+  /* "Impossible" states */
+  BROTLI_ERROR_UNREACHABLE_1 = -31,
+  BROTLI_ERROR_UNREACHABLE_2 = -32,
+  BROTLI_ERROR_UNREACHABLE_3 = -33,
+  BROTLI_ERROR_UNREACHABLE_4 = -34,
+  BROTLI_ERROR_UNREACHABLE_5 = -35,
+  BROTLI_ERROR_UNREACHABLE_6 = -36
+} BrotliErrorCode;
+
+#define BROTLI_LAST_ERROR_CODE BROTLI_ERROR_UNREACHABLE_6
+
+/* Creates the instance of BrotliState and initializes it. |alloc_func| and
+   |free_func| MUST be both zero or both non-zero. In the case they are both
+   zero, default memory allocators are used. |opaque| is passed to |alloc_func|
+   and |free_func| when they are called. */
+BrotliState* BrotliCreateState(
+    brotli_alloc_func alloc_func, brotli_free_func free_func, void* opaque);
+
+/* Deinitializes and frees BrotliState instance. */
+void BrotliDestroyState(BrotliState* state);
+
+/* Sets |*decoded_size| to the decompressed size of the given encoded stream.
+   This function only works if the encoded buffer has a single meta block,
+   or if it has two meta-blocks, where the first is uncompressed and the
+   second is empty.
+   Returns 1 on success, 0 on failure. */
 int BrotliDecompressedSize(size_t encoded_size,
                            const uint8_t* encoded_buffer,
                            size_t* decoded_size);
 
-/* Decompresses the data in encoded_buffer into decoded_buffer, and sets */
-/* *decoded_size to the decompressed length. */
+/* Decompresses the data in |encoded_buffer| into |decoded_buffer|, and sets
+   |*decoded_size| to the decompressed length. */
 BrotliResult BrotliDecompressBuffer(size_t encoded_size,
                                     const uint8_t* encoded_buffer,
                                     size_t* decoded_size,
                                     uint8_t* decoded_buffer);
 
-/* Same as above, but uses the specified input and output callbacks instead */
-/* of reading from and writing to pre-allocated memory buffers. */
-/* DEPRECATED */
-BrotliResult BrotliDecompress(BrotliInput input, BrotliOutput output);
+/* Decompresses the data. Supports partial input and output.
 
-/* Same as above, but supports the caller to call the decoder repeatedly with
-   partial data to support streaming. The state must be initialized with
-   BrotliStateInit and reused with every call for the same stream.
-   Return values:
-   0: failure.
-   1: success, and done.
-   2: success so far, end not reached so should call again with more input.
-   The finish parameter is used as follows, for a series of calls with the
-   same state:
-   0: Every call except the last one must be called with finish set to 0. The
-      last call may have finish set to either 0 or 1. Only if finish is 0, can
-      the function return 2. It may also return 0 or 1, in that case no more
-      calls (even with finish 1) may be made.
-   1: Only the last call may have finish set to 1. It's ok to give empty input
-      if all input was already given to previous calls. It is also ok to have
-      only one single call in total, with finish 1, and with all input
-      available immediately. That matches the non-streaming case. If finish is
-      1, the function can only return 0 or 1, never 2. After a finish, no more
-      calls may be done.
-   After everything is done, the state must be cleaned with BrotliStateCleanup
-   to free allocated resources.
-   The given BrotliOutput must always accept all output and make enough space,
-   it returning a smaller value than the amount of bytes to write always results
-   in an error.
-*/
-/* DEPRECATED */
-BrotliResult BrotliDecompressStreaming(BrotliInput input, BrotliOutput output,
-                                       int finish, BrotliState* s);
+   Must be called with an allocated input buffer in |*next_in| and an allocated
+   output buffer in |*next_out|. The values |*available_in| and |*available_out|
+   must specify the allocated size in |*next_in| and |*next_out| respectively.
 
-/* Same as above, but with memory buffers.
-   Must be called with an allocated input buffer in *next_in and an allocated
-   output buffer in *next_out. The values *available_in and *available_out
-   must specify the allocated size in *next_in and *next_out respectively.
-   The value *total_out must be 0 initially, and will be summed with the
-   amount of output bytes written after each call, so that at the end it
-   gives the complete decoded size.
-   After each call, *available_in will be decremented by the amount of input
-   bytes consumed, and the *next_in pointer will be incremented by that amount.
-   Similarly, *available_out will be decremented by the amount of output
-   bytes written, and the *next_out pointer will be incremented by that
-   amount.
+   After each call, |*available_in| will be decremented by the amount of input
+   bytes consumed, and the |*next_in| pointer will be incremented by that
+   amount. Similarly, |*available_out| will be decremented by the amount of
+   output bytes written, and the |*next_out| pointer will be incremented by that
+   amount. |total_out| will be set to the number of bytes decompressed since
+   last state initialization.
 
-   The input may be partial. With each next function call, *next_in and
-   *available_in must be updated to point to a next part of the compressed
-   input. The current implementation will always consume all input unless
-   an error occurs, so normally *available_in will always be 0 after
-   calling this function and the next adjacent part of input is desired.
-
-   In the current implementation, the function requires that there is enough
-   output buffer size to write all currently processed input, so
-   *available_out must be large enough. Since the function updates *next_out
-   each time, as long as the output buffer is large enough you can keep
-   reusing this variable. It is also possible to update *next_out and
-   *available_out yourself before a next call, e.g. to point to a new larger
-   buffer.
-*/
-/* DEPRECATED */
-BrotliResult BrotliDecompressBufferStreaming(size_t* available_in,
-                                             const uint8_t** next_in,
-                                             int finish,
-                                             size_t* available_out,
-                                             uint8_t** next_out,
-                                             size_t* total_out,
-                                             BrotliState* s);
-
+   Input is never overconsumed, so |next_in| and |available_in| could be passed
+   to the next consumer after decoding is complete. */
 BrotliResult BrotliDecompressStream(size_t* available_in,
                                     const uint8_t** next_in,
                                     size_t* available_out,
@@ -147,16 +126,28 @@ BrotliResult BrotliDecompressStream(size_t* available_in,
 /* Fills the new state with a dictionary for LZ77, warming up the ringbuffer,
    e.g. for custom static dictionaries for data formats.
    Not to be confused with the built-in transformable dictionary of Brotli.
-   The dictionary must exist in memory until decoding is done and is owned by
-   the caller. To use:
-   -initialize state with BrotliStateInit
-   -use BrotliSetCustomDictionary
-   -use BrotliDecompressBufferStreaming
-   -clean up with BrotliStateCleanup
+   |size| should be less or equal to 2^24 (16MiB), otherwise the dictionary will
+   be ignored. The dictionary must exist in memory until decoding is done and
+   is owned by the caller. To use:
+    1) Allocate and initialize state with BrotliCreateState
+    2) Use BrotliSetCustomDictionary
+    3) Use BrotliDecompressStream
+    4) Clean up and free state with BrotliDestroyState
 */
 void BrotliSetCustomDictionary(
     size_t size, const uint8_t* dict, BrotliState* s);
 
+/* Returns 1, if s is in a state where we have not read any input bytes yet,
+   and 0 otherwise */
+int BrotliStateIsStreamStart(const BrotliState* s);
+
+/* Returns 1, if s is in a state where we reached the end of the input and
+   produced all of the output, and 0 otherwise. */
+int BrotliStateIsStreamEnd(const BrotliState* s);
+
+/* Returns detailed error code after BrotliDecompressStream returns
+   BROTLI_RESULT_ERROR. */
+BrotliErrorCode BrotliGetErrorCode(const BrotliState* s);
 
 #if defined(__cplusplus) || defined(c_plusplus)
 } /* extern "C" */

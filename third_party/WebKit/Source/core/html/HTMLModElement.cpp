@@ -20,7 +20,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/html/HTMLModElement.h"
 
 #include "core/HTMLNames.h"
@@ -29,26 +28,22 @@ namespace blink {
 
 using namespace HTMLNames;
 
-inline HTMLModElement::HTMLModElement(const QualifiedName& tagName, Document& document)
-    : HTMLElement(tagName, document)
-{
-}
+inline HTMLModElement::HTMLModElement(const QualifiedName& tagName,
+                                      Document& document)
+    : HTMLElement(tagName, document) {}
 
 DEFINE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLModElement)
 
-bool HTMLModElement::isURLAttribute(const Attribute& attribute) const
-{
-    return attribute.name() == citeAttr || HTMLElement::isURLAttribute(attribute);
+bool HTMLModElement::isURLAttribute(const Attribute& attribute) const {
+  return attribute.name() == citeAttr || HTMLElement::isURLAttribute(attribute);
 }
 
-bool HTMLModElement::hasLegalLinkAttribute(const QualifiedName& name) const
-{
-    return name == citeAttr || HTMLElement::hasLegalLinkAttribute(name);
+bool HTMLModElement::hasLegalLinkAttribute(const QualifiedName& name) const {
+  return name == citeAttr || HTMLElement::hasLegalLinkAttribute(name);
 }
 
-const QualifiedName& HTMLModElement::subResourceAttributeName() const
-{
-    return citeAttr;
+const QualifiedName& HTMLModElement::subResourceAttributeName() const {
+  return citeAttr;
 }
 
-}
+}  // namespace blink

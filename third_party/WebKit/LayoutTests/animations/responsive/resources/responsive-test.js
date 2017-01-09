@@ -51,12 +51,22 @@ function assertCSSResponsive(options) {
     options,
     bindings: {
       prefixProperty(property) {
-        return property;
+        return toCamelCase(property);
       },
       createTargetContainer(container) {
+        if (options.targetTag) {
+          var svgRoot = createElement('svg', container, 'svg-root', svgNamespace);
+          svgRoot.setAttribute('width', 0);
+          svgRoot.setAttribute('height', 0);
+          return svgRoot;
+        }
+
         return createElement('div', container);
       },
       createTarget(container) {
+        if (options.targetTag)
+          return createElement(options.targetTag, container, 'target', svgNamespace);
+
         return createElement('div', container, 'target');
       },
       setValue(target, property, value) {
@@ -74,7 +84,7 @@ function assertSVGResponsive(options) {
     options,
     bindings: {
       prefixProperty(property) {
-        return 'svg' + property[0].toUpperCase() + property.slice(1);
+        return 'svg-' + property;
       },
       createTargetContainer(container) {
         var svgRoot = createElement('svg', container, 'svg-root', svgNamespace);
@@ -133,14 +143,23 @@ function createTargets(bindings, n, container) {
 }
 
 function setState(bindings, targets, property, state) {
-  if (state.inherited) {
-    var parent = targets[0].parentElement;
-    console.assert(targets.every(target => target.parentElement === parent));
-    bindings.setValue(parent, property, state.inherited);
-  }
-  if (state.underlying) {
-    for (var target of targets) {
-      bindings.setValue(target, property, state.underlying);
+  for (var item in state) {
+    switch (item) {
+    case 'inherited':
+      var parent = targets[0].parentElement;
+      console.assert(targets.every(target => target.parentElement === parent));
+      bindings.setValue(parent, property, state.inherited);
+      break;
+    case 'underlying':
+      for (var target of targets) {
+        bindings.setValue(target, property, state.underlying);
+      }
+      break;
+    default:
+      for (var target of targets) {
+        bindings.setValue(target, item, state[item]);
+      }
+      break;
     }
   }
 }
@@ -151,6 +170,15 @@ function isNeutralKeyframe(keyframe) {
 
 function keyframeText(keyframe) {
   return isNeutralKeyframe(keyframe) ? 'neutral' : `[${keyframe}]`;
+}
+
+function toCamelCase(property) {
+  for (var i = property.length - 2; i > 0; --i) {
+    if (property[i] === '-') {
+      property = property.substring(0, i) + property[i + 1].toUpperCase() + property.substring(i + 2);
+    }
+  }
+  return property;
 }
 
 function createKeyframes(prefixedProperty, from, to) {
@@ -207,19 +235,6 @@ function runPendingResponsiveTests() {
         setState(bindings, targets, property, before.state);
         var animations = createPausedAnimations(targets, keyframes, after.expect.map(expectation => expectation.at));
         stateTransitionTests.push({
-          // TODO(alancutter): Make SVG animations responsive when their interpolation fractions haven't changed.
-          wiggleFractionHack() {
-            return new Promise(resolve => {
-              animations.forEach(animation => {
-                var currentTime = animation.currentTime;
-                animation.currentTime = 1;
-                requestAnimationFrame(() => {
-                  animation.currentTime = currentTime;
-                });
-              });
-              requestAnimationFrame(resolve);
-            });
-          },
           applyStateTransition() {
             setState(bindings, targets, property, after.state);
           },
@@ -244,14 +259,12 @@ function runPendingResponsiveTests() {
         stateTransitionTest.applyStateTransition();
       }
 
-      Promise.all(stateTransitionTests.map(stateTransitionTest => stateTransitionTest.wiggleFractionHack())).then(() => {
-        requestAnimationFrame(() => {
-          for (var stateTransitionTest of stateTransitionTests) {
-            stateTransitionTest.assert();
-          }
-          resolve();
-        });
-      })
+      requestAnimationFrame(() => {
+        for (var stateTransitionTest of stateTransitionTests) {
+          stateTransitionTest.assert();
+        }
+        resolve();
+      });
     });
   });
 }

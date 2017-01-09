@@ -4,7 +4,10 @@
 
 #include "chrome/renderer/extensions/app_bindings.h"
 
+#include <memory>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -40,13 +43,16 @@ const char kInvalidCallbackIdError[] = "Invalid callbackId";
 AppBindings::AppBindings(Dispatcher* dispatcher, ScriptContext* context)
     : ObjectBackedNativeHandler(context),
       dispatcher_(dispatcher) {
-  RouteFunction("GetIsInstalled",
+  RouteFunction(
+      "GetIsInstalled", "app.getIsInstalled",
       base::Bind(&AppBindings::GetIsInstalled, base::Unretained(this)));
-  RouteFunction("GetDetails",
-      base::Bind(&AppBindings::GetDetails, base::Unretained(this)));
-  RouteFunction("GetInstallState",
+  RouteFunction("GetDetails", "app.getDetails",
+                base::Bind(&AppBindings::GetDetails, base::Unretained(this)));
+  RouteFunction(
+      "GetInstallState", "app.installState",
       base::Bind(&AppBindings::GetInstallState, base::Unretained(this)));
-  RouteFunction("GetRunningState",
+  RouteFunction(
+      "GetRunningState", "app.runningState",
       base::Bind(&AppBindings::GetRunningState, base::Unretained(this)));
 }
 
@@ -72,7 +78,7 @@ void AppBindings::GetDetails(
 
 v8::Local<v8::Value> AppBindings::GetDetailsImpl(blink::WebLocalFrame* frame) {
   v8::Isolate* isolate = frame->mainWorldScriptContext()->GetIsolate();
-  if (frame->document().securityOrigin().isUnique())
+  if (frame->document().getSecurityOrigin().isUnique())
     return v8::Null(isolate);
 
   const Extension* extension =
@@ -82,10 +88,10 @@ v8::Local<v8::Value> AppBindings::GetDetailsImpl(blink::WebLocalFrame* frame) {
   if (!extension)
     return v8::Null(isolate);
 
-  scoped_ptr<base::DictionaryValue> manifest_copy(
+  std::unique_ptr<base::DictionaryValue> manifest_copy(
       extension->manifest()->value()->DeepCopy());
   manifest_copy->SetString("id", extension->id());
-  scoped_ptr<V8ValueConverter> converter(V8ValueConverter::create());
+  std::unique_ptr<V8ValueConverter> converter(V8ValueConverter::create());
   return converter->ToV8Value(manifest_copy.get(),
                               frame->mainWorldScriptContext());
 }
@@ -116,7 +122,7 @@ void AppBindings::GetRunningState(
   // To distinguish between ready_to_run and cannot_run states, we need the app
   // from the top frame.
   blink::WebSecurityOrigin top_frame_security_origin =
-      context()->web_frame()->top()->securityOrigin();
+      context()->web_frame()->top()->getSecurityOrigin();
   const RendererExtensionRegistry* extensions =
       RendererExtensionRegistry::Get();
 
@@ -161,6 +167,9 @@ bool AppBindings::OnMessageReceived(const IPC::Message& message) {
 
 void AppBindings::OnAppInstallStateResponse(
     const std::string& state, int callback_id) {
+  if (!is_valid())
+    return;
+
   v8::Isolate* isolate = context()->isolate();
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(context()->v8_context());
@@ -168,7 +177,7 @@ void AppBindings::OnAppInstallStateResponse(
     v8::String::NewFromUtf8(isolate, state.c_str()),
     v8::Integer::New(isolate, callback_id)
   };
-  context()->module_system()->CallModuleMethod(
+  context()->module_system()->CallModuleMethodSafe(
       "app", "onInstallStateResponse", arraysize(argv), argv);
 }
 

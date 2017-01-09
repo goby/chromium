@@ -5,8 +5,10 @@
 #ifndef UI_VIEWS_CONTROLS_FOCUSABLE_BORDER_H_
 #define UI_VIEWS_CONTROLS_FOCUSABLE_BORDER_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "base/optional.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/border.h"
 #include "ui/views/view.h"
 
@@ -20,31 +22,30 @@ namespace views {
 // A Border class to draw a focused border around a field (e.g textfield).
 class VIEWS_EXPORT FocusableBorder : public Border {
  public:
+  static constexpr float kCornerRadiusDp = 2.f;
+
   FocusableBorder();
   ~FocusableBorder() override;
 
   // Sets the insets of the border.
   void SetInsets(int top, int left, int bottom, int right);
 
-  // Sets the color of this border.
-  void SetColor(SkColor color);
-  // Reverts the color of this border to the system default.
-  void UseDefaultColor();
+  // Sets the color id to use for this border. When unsupplied, the color will
+  // depend on the focus state.
+  void SetColorId(const base::Optional<ui::NativeTheme::ColorId>& color_id);
 
   // Overridden from Border:
   void Paint(const View& view, gfx::Canvas* canvas) override;
   gfx::Insets GetInsets() const override;
   gfx::Size GetMinimumSize() const override;
 
+ protected:
+  SkColor GetCurrentColor(const View& view) const;
+
  private:
   gfx::Insets insets_;
 
-  // The color to paint the border when |use_default_color_| is false.
-  SkColor override_color_;
-
-  // Whether the system border color should be used. True unless SetColor has
-  // been called.
-  bool use_default_color_;
+  base::Optional<ui::NativeTheme::ColorId> override_color_id_;
 
   DISALLOW_COPY_AND_ASSIGN(FocusableBorder);
 };

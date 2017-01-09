@@ -7,11 +7,11 @@
 #include <vector>
 
 #include "base/mac/bundle_locations.h"
-#include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
+#include "chrome/browser/content_settings/local_shared_objects_container.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
@@ -21,12 +21,13 @@
 #include "chrome/browser/ui/collected_cookies_infobar_delegate.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/theme_resources.h"
 #include "third_party/apple_sample_code/ImageAndTextCell.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
@@ -66,8 +67,7 @@ CollectedCookiesMac::CollectedCookiesMac(content::WebContents* web_contents) {
   base::scoped_nsobject<CustomConstrainedWindowSheet> sheet(
       [[CustomConstrainedWindowSheet alloc]
           initWithCustomWindow:[sheet_controller_ window]]);
-  window_.reset(new ConstrainedWindowMac(
-      this, web_contents, sheet));
+  window_ = CreateAndShowWebModalDialogMac(this, web_contents, sheet);
 }
 
 CollectedCookiesMac::~CollectedCookiesMac() {
@@ -76,7 +76,7 @@ CollectedCookiesMac::~CollectedCookiesMac() {
 void CollectedCookiesMac::Observe(int type,
                                   const content::NotificationSource& source,
                                   const content::NotificationDetails& details) {
-  DCHECK(type == chrome::NOTIFICATION_COLLECTED_COOKIES_SHOWN);
+  DCHECK_EQ(chrome::NOTIFICATION_COLLECTED_COOKIES_SHOWN, type);
   window_->CloseWebContentsModalDialog();
 }
 
@@ -86,7 +86,7 @@ void CollectedCookiesMac::PerformClose() {
 
 void CollectedCookiesMac::OnConstrainedWindowClosed(
     ConstrainedWindowMac* window) {
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 #pragma mark Window Controller
@@ -354,8 +354,11 @@ void CollectedCookiesMac::OnConstrainedWindowClosed(
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(webContents_);
 
-  allowedTreeModel_ = content_settings->CreateAllowedCookiesTreeModel();
-  blockedTreeModel_ = content_settings->CreateBlockedCookiesTreeModel();
+  allowedTreeModel_ =
+      content_settings->allowed_local_shared_objects().CreateCookiesTreeModel();
+
+  blockedTreeModel_ =
+      content_settings->blocked_local_shared_objects().CreateCookiesTreeModel();
 
   // Convert the model's icons from Skia to Cocoa.
   std::vector<gfx::ImageSkia> skiaIcons;

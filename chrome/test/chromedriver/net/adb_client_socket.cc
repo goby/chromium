@@ -4,6 +4,8 @@
 
 #include "chrome/test/chromedriver/net/adb_client_socket.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/strings/string_number_conversions.h"
@@ -12,9 +14,11 @@
 #include "base/strings/stringprintf.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_callback.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/tcp_client_socket.h"
+#include "third_party/WebKit/public/public_features.h"
 
 namespace {
 
@@ -22,7 +26,6 @@ const int kBufferSize = 16 * 1024;
 const char kOkayResponse[] = "OKAY";
 const char kHostTransportCommand[] = "host:transport:%s";
 const char kLocalAbstractCommand[] = "localabstract:%s";
-const char kLocalhost[] = "127.0.0.1";
 
 typedef base::Callback<void(int, const std::string&)> CommandCallback;
 typedef base::Callback<void(int, net::StreamSocket*)> SocketCallback;
@@ -185,7 +188,7 @@ class HttpOverAdbSocket {
         if (endline_pos != std::string::npos) {
           std::string len = response_.substr(content_pos + 15,
                                              endline_pos - content_pos - 15);
-          base::TrimWhitespace(len, base::TRIM_ALL, &len);
+          base::TrimWhitespaceASCII(len, base::TRIM_ALL, &len);
           if (!base::StringToInt(len, &expected_length)) {
             CheckNetResultOrDie(net::ERR_FAILED);
             return;
@@ -230,7 +233,7 @@ class HttpOverAdbSocket {
     return false;
   }
 
-  scoped_ptr<net::StreamSocket> socket_;
+  std::unique_ptr<net::StreamSocket> socket_;
   std::string request_;
   std::string response_;
   CommandCallback command_callback_;
@@ -270,7 +273,8 @@ class AdbQuerySocket : AdbClientSocket {
     bool is_void = current_query_ < queries_.size() - 1;
     // The |shell| command is a special case because it is the only command that
     // doesn't include a length at the beginning of the data stream.
-    bool has_length = query.find("shell:") != 0;
+    bool has_length =
+        !base::StartsWith(query, "shell:", base::CompareCase::SENSITIVE);
     SendCommand(query, is_void, has_length,
         base::Bind(&AdbQuerySocket::OnResponse, base::Unretained(this)));
   }
@@ -306,37 +310,34 @@ void AdbClientSocket::AdbQuery(int port,
   new AdbQuerySocket(port, query, callback);
 }
 
-#if defined(DEBUG_DEVTOOLS)
+#if BUILDFLAG(DEBUG_DEVTOOLS)
 static void UseTransportQueryForDesktop(const SocketCallback& callback,
                                         net::StreamSocket* socket,
                                         int result) {
   callback.Run(result, socket);
 }
-#endif  // defined(DEBUG_DEVTOOLS)
+#endif  // BUILDFLAG(DEBUG_DEVTOOLS)
 
 // static
 void AdbClientSocket::TransportQuery(int port,
                                      const std::string& serial,
                                      const std::string& socket_name,
                                      const SocketCallback& callback) {
-#if defined(DEBUG_DEVTOOLS)
+#if BUILDFLAG(DEBUG_DEVTOOLS)
   if (serial.empty()) {
     // Use plain socket for remote debugging on Desktop (debugging purposes).
-    net::IPAddressNumber ip_number;
-    net::ParseIPLiteralToNumber(kLocalhost, &ip_number);
-
     int tcp_port = 0;
     if (!base::StringToInt(socket_name, &tcp_port))
       tcp_port = 9222;
 
-    net::AddressList address_list =
-        net::AddressList::CreateFromIPAddress(ip_number, tcp_port);
+    net::AddressList address_list = net::AddressList::CreateFromIPAddress(
+        net::IPAddress::IPv4Localhost(), tcp_port);
     net::TCPClientSocket* socket = new net::TCPClientSocket(
-        address_list, NULL, net::NetLog::Source());
+        address_list, nullptr, nullptr, net::NetLogSource());
     socket->Connect(base::Bind(&UseTransportQueryForDesktop, callback, socket));
     return;
   }
-#endif  // defined(DEBUG_DEVTOOLS)
+#endif  // BUILDFLAG(DEBUG_DEVTOOLS)
   new AdbTransportSocket(port, serial, socket_name, callback);
 }
 
@@ -360,24 +361,24 @@ void AdbClientSocket::HttpQuery(int port,
       callback);
 }
 
-AdbClientSocket::AdbClientSocket(int port)
-    : host_(kLocalhost), port_(port) {
-}
+AdbClientSocket::AdbClientSocket(int port) : port_(port) {}
 
 AdbClientSocket::~AdbClientSocket() {
 }
 
 void AdbClientSocket::Connect(const net::CompletionCallback& callback) {
-  net::IPAddressNumber ip_number;
-  if (!net::ParseIPLiteralToNumber(host_, &ip_number)) {
-    callback.Run(net::ERR_FAILED);
-    return;
-  }
+  // In a IPv4/IPv6 dual stack environment, getaddrinfo for localhost could
+  // only return IPv6 address while current adb (1.0.36) will always listen
+  // on IPv4. So just try IPv4 first, then fall back to IPv6.
+  net::IPAddressList list = {net::IPAddress::IPv4Localhost(),
+                             net::IPAddress::IPv6Localhost()};
+  net::AddressList ip_list = net::AddressList::CreateFromIPAddressList(
+      list, "localhost");
+  net::AddressList address_list = net::AddressList::CopyWithPort(
+      ip_list, port_);
 
-  net::AddressList address_list =
-      net::AddressList::CreateFromIPAddress(ip_number, port_);
-  socket_.reset(new net::TCPClientSocket(address_list, NULL,
-                                         net::NetLog::Source()));
+  socket_.reset(new net::TCPClientSocket(address_list, NULL, NULL,
+                                         net::NetLogSource()));
   int result = socket_->Connect(callback);
   if (result != net::ERR_IO_PENDING)
     callback.Run(result);

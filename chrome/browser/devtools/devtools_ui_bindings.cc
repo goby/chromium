@@ -4,25 +4,32 @@
 
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
+#include "base/base64.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/json/string_escape.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/devtools/devtools_file_watcher.h"
 #include "chrome/browser/devtools/devtools_protocol.h"
-#include "chrome/browser/devtools/devtools_target_impl.h"
 #include "chrome/browser/devtools/global_confirm_info_bar.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -33,15 +40,18 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
-#include "components/ui/zoom/page_zoom.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync_preferences/pref_service_syncable.h"
+#include "components/zoom/page_zoom.h"
+#include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/devtools_external_agent_proxy.h"
 #include "content/public/browser/devtools_external_agent_proxy_delegate.h"
-#include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_source.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
@@ -49,13 +59,16 @@
 #include "content/public/common/renderer_preferences.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "ipc/ipc_channel.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/cert/x509_certificate.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_response_writer.h"
+#include "third_party/WebKit/public/public_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/page_transition_types.h"
 
@@ -90,9 +103,9 @@ typedef std::vector<DevToolsUIBindings*> DevToolsUIBindingsList;
 base::LazyInstance<DevToolsUIBindingsList>::Leaky g_instances =
     LAZY_INSTANCE_INITIALIZER;
 
-base::DictionaryValue* CreateFileSystemValue(
+std::unique_ptr<base::DictionaryValue> CreateFileSystemValue(
     DevToolsFileHelper::FileSystem file_system) {
-  base::DictionaryValue* file_system_value = new base::DictionaryValue();
+  auto file_system_value = base::MakeUnique<base::DictionaryValue>();
   file_system_value->SetString("fileSystemName", file_system.file_system_name);
   file_system_value->SetString("rootURL", file_system.root_url);
   file_system_value->SetString("fileSystemPath", file_system.file_system_path);
@@ -100,11 +113,11 @@ base::DictionaryValue* CreateFileSystemValue(
 }
 
 Browser* FindBrowser(content::WebContents* web_contents) {
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    int tab_index = it->tab_strip_model()->GetIndexOfWebContents(
+  for (auto* browser : *BrowserList::GetInstance()) {
+    int tab_index = browser->tab_strip_model()->GetIndexOfWebContents(
         web_contents);
     if (tab_index != TabStripModel::kNoTab)
-      return *it;
+      return browser;
   }
   return NULL;
 }
@@ -121,6 +134,7 @@ class DevToolsConfirmInfoBarDelegate : public ConfirmInfoBarDelegate {
   ~DevToolsConfirmInfoBarDelegate() override;
 
  private:
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   base::string16 GetMessageText() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
@@ -143,6 +157,11 @@ DevToolsConfirmInfoBarDelegate::DevToolsConfirmInfoBarDelegate(
 DevToolsConfirmInfoBarDelegate::~DevToolsConfirmInfoBarDelegate() {
   if (!callback_.is_null())
     callback_.Run(false);
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+DevToolsConfirmInfoBarDelegate::GetIdentifier() const {
+  return DEV_TOOLS_CONFIRM_INFOBAR_DELEGATE;
 }
 
 base::string16 DevToolsConfirmInfoBarDelegate::GetMessageText() const {
@@ -179,6 +198,7 @@ class DefaultBindingsDelegate : public DevToolsUIBindings::Delegate {
 
   void ActivateWindow() override;
   void CloseWindow() override {}
+  void Inspect(scoped_refptr<content::DevToolsAgentHost> host) override {}
   void SetInspectedPageBounds(const gfx::Rect& rect) override {}
   void InspectElementCompleted() override {}
   void SetIsDocked(bool is_docked) override {}
@@ -189,6 +209,7 @@ class DefaultBindingsDelegate : public DevToolsUIBindings::Delegate {
 
   void InspectedContentsClosing() override;
   void OnLoadCompleted() override {}
+  void ReadyForTest() override {}
   InfoBarService* GetInfoBarService() override;
   void RenderProcessGone(bool crashed) override {}
 
@@ -202,9 +223,9 @@ void DefaultBindingsDelegate::ActivateWindow() {
 }
 
 void DefaultBindingsDelegate::OpenInNewTab(const std::string& url) {
-  content::OpenURLParams params(
-      GURL(url), content::Referrer(), NEW_FOREGROUND_TAB,
-      ui::PAGE_TRANSITION_LINK, false);
+  content::OpenURLParams params(GURL(url), content::Referrer(),
+                                WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                                ui::PAGE_TRANSITION_LINK, false);
   Browser* browser = FindBrowser(web_contents_);
   browser->OpenURL(params);
 }
@@ -229,7 +250,7 @@ class ResponseWriter : public net::URLFetcherResponseWriter {
   int Write(net::IOBuffer* buffer,
             int num_bytes,
             const net::CompletionCallback& callback) override;
-  int Finish(const net::CompletionCallback& callback) override;
+  int Finish(int net_error, const net::CompletionCallback& callback) override;
 
  private:
   base::WeakPtr<DevToolsUIBindings> bindings_;
@@ -254,19 +275,27 @@ int ResponseWriter::Initialize(const net::CompletionCallback& callback) {
 int ResponseWriter::Write(net::IOBuffer* buffer,
                           int num_bytes,
                           const net::CompletionCallback& callback) {
+  std::string chunk = std::string(buffer->data(), num_bytes);
+  bool encoded = false;
+  if (!base::IsStringUTF8(chunk)) {
+    encoded = true;
+    base::Base64Encode(chunk, &chunk);
+  }
+
   base::FundamentalValue* id = new base::FundamentalValue(stream_id_);
-  base::StringValue* chunk =
-      new base::StringValue(std::string(buffer->data(), num_bytes));
+  base::StringValue* chunkValue = new base::StringValue(chunk);
+  base::FundamentalValue* encodedValue = new base::FundamentalValue(encoded);
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&DevToolsUIBindings::CallClientFunction,
-                 bindings_, "DevToolsAPI.streamWrite",
-                 base::Owned(id), base::Owned(chunk), nullptr));
+      base::Bind(&DevToolsUIBindings::CallClientFunction, bindings_,
+                 "DevToolsAPI.streamWrite", base::Owned(id),
+                 base::Owned(chunkValue), base::Owned(encodedValue)));
   return num_bytes;
 }
 
-int ResponseWriter::Finish(const net::CompletionCallback& callback) {
+int ResponseWriter::Finish(int net_error,
+                           const net::CompletionCallback& callback) {
   return net::OK;
 }
 
@@ -285,7 +314,8 @@ class DevToolsUIBindings::FrontendWebContentsObserver
   void RenderProcessGone(base::TerminationStatus status) override;
   void DidStartNavigationToPendingEntry(
       const GURL& url,
-      content::NavigationController::ReloadType reload_type) override;
+      content::ReloadType reload_type) override;
+  void DocumentAvailableInMainFrame() override;
   void DocumentOnLoadCompletedInMainFrame() override;
   void DidNavigateMainFrame(
       const content::LoadCommittedDetails& details,
@@ -327,14 +357,18 @@ void DevToolsUIBindings::FrontendWebContentsObserver::RenderProcessGone(
 }
 
 void DevToolsUIBindings::FrontendWebContentsObserver::
-    DidStartNavigationToPendingEntry(
-        const GURL& url,
-        content::NavigationController::ReloadType reload_type) {
+    DidStartNavigationToPendingEntry(const GURL& url,
+                                     content::ReloadType reload_type) {
   devtools_bindings_->frontend_host_.reset(
       content::DevToolsFrontendHost::Create(
           web_contents()->GetMainFrame(),
           base::Bind(&DevToolsUIBindings::HandleMessageFromDevToolsFrontend,
                      base::Unretained(devtools_bindings_))));
+}
+
+void DevToolsUIBindings::FrontendWebContentsObserver::
+    DocumentAvailableInMainFrame() {
+  devtools_bindings_->DocumentAvailableInMainFrame();
 }
 
 void DevToolsUIBindings::FrontendWebContentsObserver::
@@ -346,120 +380,6 @@ void DevToolsUIBindings::FrontendWebContentsObserver::
     DidNavigateMainFrame(const content::LoadCommittedDetails& details,
                          const content::FrameNavigateParams& params) {
   devtools_bindings_->DidNavigateMainFrame();
-}
-
-// WebSocketAPIChannel --------------------------------------------------------
-
-class WebSocketAPIChannel :
-    public content::DevToolsExternalAgentProxyDelegate {
- public :
-  WebSocketAPIChannel();
-  ~WebSocketAPIChannel() override;
-  void DispatchOnClientHost(const std::string& message);
-  void ConnectionClosed();
-  void AttachedToBindings(DevToolsUIBindings* bindings);
-
- private:
-  // content::DevToolsExternalAgentProxyDelegate implementation.
-  void Attach(content::DevToolsExternalAgentProxy* proxy) override;
-  void Detach() override;
-  void SendMessageToBackend(const std::string& message) override;
-
-  std::set<std::string> suggested_folders_;
-  content::DevToolsExternalAgentProxy* attached_proxy_;
-  DISALLOW_COPY_AND_ASSIGN(WebSocketAPIChannel);
-};
-
-// static
-WebSocketAPIChannel* g_web_socket_api_channel = nullptr;
-
-WebSocketAPIChannel::WebSocketAPIChannel()
-    : attached_proxy_(nullptr) {
-  CHECK(!g_web_socket_api_channel);
-  g_web_socket_api_channel = this;
-}
-
-WebSocketAPIChannel::~WebSocketAPIChannel() {
-  g_web_socket_api_channel = nullptr;
-}
-
-void WebSocketAPIChannel::DispatchOnClientHost(
-    const std::string& message) {
-  if (attached_proxy_)
-    attached_proxy_->DispatchOnClientHost(message);
-}
-
-void WebSocketAPIChannel::ConnectionClosed() {
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer()) {
-    bindings->CallClientFunction("DevToolsAPI.frontendAPIDetached",
-                                 nullptr, nullptr, nullptr);
-  }
-  if (attached_proxy_)
-    attached_proxy_->ConnectionClosed();
-}
-
-void WebSocketAPIChannel::AttachedToBindings(DevToolsUIBindings* bindings) {
-  bindings->CallClientFunction("DevToolsAPI.frontendAPIAttached",
-                               nullptr, nullptr, nullptr);
-}
-
-void WebSocketAPIChannel::Attach(
-    content::DevToolsExternalAgentProxy* proxy) {
-  attached_proxy_ = proxy;
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer())
-    AttachedToBindings(bindings);
-}
-
-void WebSocketAPIChannel::Detach() {
-  attached_proxy_ = nullptr;
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer()) {
-    bindings->CallClientFunction("DevToolsAPI.frontendAPIDetached",
-                                 nullptr, nullptr, nullptr);
-  }
-}
-
-void WebSocketAPIChannel::SendMessageToBackend(
-    const std::string& message) {
-  scoped_ptr<base::Value> value = base::JSONReader::Read(message);
-  if (!value || !value->IsType(base::Value::TYPE_DICTIONARY))
-    return;
-
-  int id = 0;
-  std::string method;
-  base::DictionaryValue* params = nullptr;
-  if (!DevToolsProtocol::ParseCommand(
-      static_cast<base::DictionaryValue*>(value.get()), &id, &method, &params))
-    return;
-
-  if (method == "Frontend.addFileSystem") {
-    base::ListValue* list;
-    params->GetList("paths", &list);
-    for (size_t i = 0; list && i < list->GetSize(); ++i) {
-      std::string path;
-      if (!list->GetString(i, &path))
-        continue;
-      if (suggested_folders_.find(path) != suggested_folders_.end())
-        continue;
-      suggested_folders_.insert(path);
-
-      // All bindings are synchronized via preferences, only add once.
-      DCHECK(!g_instances.Pointer()->empty());
-      (*g_instances.Pointer())[0]->AddFileSystem(path);
-    }
-    scoped_ptr<base::DictionaryValue> response =
-        DevToolsProtocol::CreateSuccessResponse(id, nullptr);
-    std::string response_message;
-    base::JSONWriter::Write(*response.get(), &response_message);
-    attached_proxy_->DispatchOnClientHost(response_message);
-    return;
-  }
-
-  // Handle rest of the commands on the front-end.
-  base::StringValue message_value(message);
-  for (DevToolsUIBindings* bindings : *g_instances.Pointer()) {
-    bindings->CallClientFunction("DevToolsAPI.dispatchFrontendAPIMessage",
-                                 &message_value, nullptr, nullptr);
-  }
 }
 
 // DevToolsUIBindings ---------------------------------------------------------
@@ -484,6 +404,7 @@ DevToolsUIBindings::DevToolsUIBindings(content::WebContents* web_contents)
       delegate_(new DefaultBindingsDelegate(web_contents_)),
       devices_updates_enabled_(false),
       frontend_loaded_(false),
+      reloading_(false),
       weak_factory_(this) {
   g_instances.Get().push_back(this);
   frontend_contents_observer_.reset(new FrontendWebContentsObserver(this));
@@ -509,7 +430,7 @@ DevToolsUIBindings::~DevToolsUIBindings() {
     delete pair.first;
 
   if (agent_host_.get())
-    agent_host_->DetachClient();
+    agent_host_->DetachClient(this);
 
   for (IndexingJobsMap::const_iterator jobs_it(indexing_jobs_.begin());
        jobs_it != indexing_jobs_.end(); ++jobs_it) {
@@ -524,20 +445,19 @@ DevToolsUIBindings::~DevToolsUIBindings() {
       std::find(instances->begin(), instances->end(), this));
   DCHECK(it != instances->end());
   instances->erase(it);
-
-  if (instances->empty() && g_web_socket_api_channel)
-    g_web_socket_api_channel->ConnectionClosed();
 }
 
 // content::DevToolsFrontendHost::Delegate implementation ---------------------
 void DevToolsUIBindings::HandleMessageFromDevToolsFrontend(
     const std::string& message) {
+  if (!web_contents_->GetURL().SchemeIs(content::kChromeDevToolsScheme))
+    return;
   std::string method;
   base::ListValue empty_params;
   base::ListValue* params = &empty_params;
 
   base::DictionaryValue* dict = NULL;
-  scoped_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
   if (!parsed_message ||
       !parsed_message->GetAsDictionary(&dict) ||
       !dict->GetString(kFrontendHostMethod, &method) ||
@@ -560,10 +480,14 @@ void DevToolsUIBindings::HandleMessageFromDevToolsFrontend(
 void DevToolsUIBindings::DispatchProtocolMessage(
     content::DevToolsAgentHost* agent_host, const std::string& message) {
   DCHECK(agent_host == agent_host_.get());
+  if (!web_contents_->GetURL().SchemeIs(content::kChromeDevToolsScheme))
+    return;
 
   if (message.length() < kMaxMessageChunkSize) {
-    base::string16 javascript = base::UTF8ToUTF16(
-        "DevToolsAPI.dispatchMessage(" + message + ");");
+    std::string param;
+    base::EscapeJSONString(message, true, &param);
+    base::string16 javascript =
+        base::UTF8ToUTF16("DevToolsAPI.dispatchMessage(" + param + ");");
     web_contents_->GetMainFrame()->ExecuteJavaScript(javascript);
     return;
   }
@@ -623,9 +547,8 @@ void DevToolsUIBindings::InspectedURLChanged(const std::string& url) {
   content::NavigationController& controller = web_contents()->GetController();
   content::NavigationEntry* entry = controller.GetActiveEntry();
   // DevTools UI is not localized.
-  entry->SetTitle(
-      base::UTF8ToUTF16(base::StringPrintf(kTitleFormat, url.c_str())));
-  web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_TITLE);
+  web_contents()->UpdateTitleForEntry(
+      entry, base::UTF8ToUTF16(base::StringPrintf(kTitleFormat, url.c_str())));
 }
 
 void DevToolsUIBindings::LoadNetworkResource(const DispatchCallback& callback,
@@ -645,8 +568,9 @@ void DevToolsUIBindings::LoadNetworkResource(const DispatchCallback& callback,
   pending_requests_[fetcher] = callback;
   fetcher->SetRequestContext(profile_->GetRequestContext());
   fetcher->SetExtraRequestHeaders(headers);
-  fetcher->SaveResponseWithWriter(scoped_ptr<net::URLFetcherResponseWriter>(
-      new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
+  fetcher->SaveResponseWithWriter(
+      std::unique_ptr<net::URLFetcherResponseWriter>(
+          new ResponseWriter(weak_factory_.GetWeakPtr(), stream_id)));
   fetcher->Start();
 }
 
@@ -764,16 +688,62 @@ void DevToolsUIBindings::SetWhitelistedShortcuts(const std::string& message) {
   delegate_->SetWhitelistedShortcuts(message);
 }
 
+void DevToolsUIBindings::ShowCertificateViewer(const std::string& cert_chain) {
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::Read(cert_chain);
+  if (!value || value->GetType() != base::Value::Type::LIST) {
+    NOTREACHED();
+    return;
+  }
+
+  std::unique_ptr<base::ListValue> list =
+      base::ListValue::From(std::move(value));
+  std::vector<std::string> decoded;
+  for (size_t i = 0; i < list->GetSize(); ++i) {
+    base::Value* item;
+    if (!list->Get(i, &item) || item->GetType() != base::Value::Type::STRING) {
+      NOTREACHED();
+      return;
+    }
+    std::string temp;
+    if (!item->GetAsString(&temp)) {
+      NOTREACHED();
+      return;
+    }
+    if (!base::Base64Decode(temp, &temp)) {
+      NOTREACHED();
+      return;
+    }
+    decoded.push_back(temp);
+  }
+
+  std::vector<base::StringPiece> cert_string_piece;
+  for (const auto& str : decoded)
+    cert_string_piece.push_back(str);
+  scoped_refptr<net::X509Certificate> cert =
+       net::X509Certificate::CreateFromDERCertChain(cert_string_piece);
+  if (!cert) {
+    NOTREACHED();
+    return;
+  }
+
+  if (!agent_host_ || !agent_host_->GetWebContents())
+    return;
+  content::WebContents* inspected_wc = agent_host_->GetWebContents();
+  web_contents_->GetDelegate()->ShowCertificateViewerInDevTools(
+      inspected_wc, cert.get());
+}
+
 void DevToolsUIBindings::ZoomIn() {
-  ui_zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_IN);
+  zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_IN);
 }
 
 void DevToolsUIBindings::ZoomOut() {
-  ui_zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_OUT);
+  zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_OUT);
 }
 
 void DevToolsUIBindings::ResetZoom() {
-  ui_zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_RESET);
+  zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_RESET);
 }
 
 void DevToolsUIBindings::SetDevicesDiscoveryConfig(
@@ -781,7 +751,7 @@ void DevToolsUIBindings::SetDevicesDiscoveryConfig(
     bool port_forwarding_enabled,
     const std::string& port_forwarding_config) {
   base::DictionaryValue* config_dict = nullptr;
-  scoped_ptr<base::Value> parsed_config =
+  std::unique_ptr<base::Value> parsed_config =
       base::JSONReader::Read(port_forwarding_config);
   if (!parsed_config || !parsed_config->GetAsDictionary(&config_dict))
     return;
@@ -846,17 +816,18 @@ void DevToolsUIBindings::PerformActionOnRemotePage(const std::string& page_id,
                                                    const std::string& action) {
   if (!remote_targets_handler_)
     return;
-  DevToolsTargetImpl* target = remote_targets_handler_->GetTarget(page_id);
-  if (!target)
+  scoped_refptr<content::DevToolsAgentHost> host =
+      remote_targets_handler_->GetTarget(page_id);
+  if (!host)
     return;
   if (action == kRemotePageActionInspect)
-    target->Inspect(profile_);
-  if (action == kRemotePageActionReload)
-    target->Reload();
-  if (action == kRemotePageActionActivate)
-    target->Activate();
-  if (action == kRemotePageActionClose)
-    target->Close();
+    delegate_->Inspect(host);
+  else if (action == kRemotePageActionReload)
+    host->Reload();
+  else if (action == kRemotePageActionActivate)
+    host->Activate();
+  else if (action == kRemotePageActionClose)
+    host->Close();
 }
 
 void DevToolsUIBindings::OpenRemotePage(const std::string& browser_id,
@@ -891,10 +862,22 @@ void DevToolsUIBindings::ClearPreferences() {
   update.Get()->Clear();
 }
 
+void DevToolsUIBindings::Reattach(const DispatchCallback& callback) {
+  if (agent_host_.get()) {
+    agent_host_->DetachClient(this);
+    agent_host_->AttachClient(this);
+  }
+  callback.Run(nullptr);
+}
+
+void DevToolsUIBindings::ReadyForTest() {
+  delegate_->ReadyForTest();
+}
+
 void DevToolsUIBindings::DispatchProtocolMessageFromDevToolsFrontend(
     const std::string& message) {
   if (agent_host_.get())
-    agent_host_->DispatchProtocolMessage(message);
+    agent_host_->DispatchProtocolMessage(this, message);
 }
 
 void DevToolsUIBindings::RecordEnumeratedHistogram(const std::string& name,
@@ -929,13 +912,6 @@ void DevToolsUIBindings::SendJsonRequest(const DispatchCallback& callback,
                  callback));
 }
 
-void DevToolsUIBindings::SendFrontendAPINotification(
-    const std::string& message) {
-  if (!g_web_socket_api_channel)
-    return;
-  g_web_socket_api_channel->DispatchOnClientHost(message);
-}
-
 void DevToolsUIBindings::JsonReceived(const DispatchCallback& callback,
                                       int result,
                                       const std::string& message) {
@@ -958,7 +934,7 @@ void DevToolsUIBindings::OnURLFetchComplete(const net::URLFetcher* source) {
   response.SetInteger("statusCode", rh ? rh->response_code() : 200);
   response.Set("headers", headers);
 
-  void* iterator = NULL;
+  size_t iterator = 0;
   std::string name;
   std::string value;
   while (rh && rh->EnumerateHeaderLines(&iterator, &name, &value))
@@ -1001,7 +977,7 @@ void DevToolsUIBindings::AppendedTo(const std::string& url) {
 
 void DevToolsUIBindings::FileSystemAdded(
     const DevToolsFileHelper::FileSystem& file_system) {
-  scoped_ptr<base::DictionaryValue> file_system_value(
+  std::unique_ptr<base::DictionaryValue> file_system_value(
       CreateFileSystemValue(file_system));
   CallClientFunction("DevToolsAPI.fileSystemAdded",
                      file_system_value.get(), NULL, NULL);
@@ -1015,10 +991,17 @@ void DevToolsUIBindings::FileSystemRemoved(
 }
 
 void DevToolsUIBindings::FilePathsChanged(
-    const std::vector<std::string>& file_paths) {
+    const std::vector<std::string>& changed_paths,
+    const std::vector<std::string>& added_paths,
+    const std::vector<std::string>& removed_paths) {
   base::ListValue list;
-  for (auto path : file_paths)
+  for (auto path : changed_paths)
     list.AppendString(path);
+  for (auto path : added_paths)
+    list.AppendString(path);
+  for (auto path : removed_paths)
+    list.AppendString(path);
+
   CallClientFunction("DevToolsAPI.fileSystemFilesChanged",
                      &list, NULL, NULL);
 }
@@ -1080,9 +1063,9 @@ void DevToolsUIBindings::ShowDevToolsConfirmInfoBar(
     callback.Run(false);
     return;
   }
-  scoped_ptr<DevToolsConfirmInfoBarDelegate> delegate(
+  std::unique_ptr<DevToolsConfirmInfoBarDelegate> delegate(
       new DevToolsConfirmInfoBarDelegate(callback, message));
-  GlobalConfirmInfoBar::Show(delegate.Pass());
+  GlobalConfirmInfoBar::Show(std::move(delegate));
 }
 
 void DevToolsUIBindings::AddDevToolsExtensionsToClient() {
@@ -1097,7 +1080,8 @@ void DevToolsUIBindings::AddDevToolsExtensionsToClient() {
     if (extensions::chrome_manifest_urls::GetDevToolsPage(extension.get())
             .is_empty())
       continue;
-    base::DictionaryValue* extension_info = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> extension_info(
+        new base::DictionaryValue());
     extension_info->Set(
         "startPage",
         new base::StringValue(extensions::chrome_manifest_urls::GetDevToolsPage(
@@ -1107,8 +1091,17 @@ void DevToolsUIBindings::AddDevToolsExtensionsToClient() {
                         new base::FundamentalValue(
                             extension->permissions_data()->HasAPIPermission(
                                 extensions::APIPermission::kExperimental)));
-    results.Append(extension_info);
+    results.Append(std::move(extension_info));
   }
+  if (!results.empty()) {
+    // At least one devtools extension exists; it will need to run in the
+    // devtools process. Grant it permission to load documents with
+    // chrome-extension:// origins.
+    content::ChildProcessSecurityPolicy::GetInstance()->GrantScheme(
+        web_contents_->GetMainFrame()->GetProcess()->GetID(),
+        extensions::kExtensionScheme);
+  }
+
   CallClientFunction("DevToolsAPI.addExtensions",
                      &results, NULL, NULL);
 }
@@ -1122,18 +1115,19 @@ void DevToolsUIBindings::AttachTo(
   if (agent_host_.get())
     Detach();
   agent_host_ = agent_host;
-  agent_host_->AttachClient(this);
+  // DevToolsUIBindings terminates existing debugging connections and starts
+  // debugging.
+  agent_host_->ForceAttachClient(this);
 }
 
-void DevToolsUIBindings::Reattach() {
-  DCHECK(agent_host_.get());
-  agent_host_->DetachClient();
-  agent_host_->AttachClient(this);
+void DevToolsUIBindings::Reload() {
+  reloading_ = true;
+  web_contents_->GetController().Reload(false);
 }
 
 void DevToolsUIBindings::Detach() {
   if (agent_host_.get())
-    agent_host_->DetachClient();
+    agent_host_->DetachClient(this);
   agent_host_ = NULL;
 }
 
@@ -1141,20 +1135,12 @@ bool DevToolsUIBindings::IsAttachedTo(content::DevToolsAgentHost* agent_host) {
   return agent_host_.get() == agent_host;
 }
 
-// static
-content::DevToolsExternalAgentProxyDelegate*
-DevToolsUIBindings::CreateWebSocketAPIChannel() {
-  if (g_web_socket_api_channel)
-    g_web_socket_api_channel->ConnectionClosed();
-  if (!g_instances.Pointer()->empty())
-    g_web_socket_api_channel = new WebSocketAPIChannel();
-  return g_web_socket_api_channel;
-}
-
 void DevToolsUIBindings::CallClientFunction(const std::string& function_name,
                                             const base::Value* arg1,
                                             const base::Value* arg2,
                                             const base::Value* arg3) {
+  if (!web_contents_->GetURL().SchemeIs(content::kChromeDevToolsScheme))
+    return;
   std::string javascript = function_name + "(";
   if (arg1) {
     std::string json;
@@ -1174,11 +1160,21 @@ void DevToolsUIBindings::CallClientFunction(const std::string& function_name,
       base::UTF8ToUTF16(javascript));
 }
 
+void DevToolsUIBindings::DocumentAvailableInMainFrame() {
+  if (!reloading_)
+    return;
+  reloading_ = false;
+  if (agent_host_.get()) {
+    agent_host_->DetachClient(this);
+    agent_host_->AttachClient(this);
+  }
+}
+
 void DevToolsUIBindings::DocumentOnLoadCompletedInMainFrame() {
   // In the DEBUG_DEVTOOLS mode, the DocumentOnLoadCompletedInMainFrame event
   // arrives before the LoadCompleted event, thus it should not trigger the
   // frontend load handling.
-#if !defined(DEBUG_DEVTOOLS)
+#if !BUILDFLAG(DEBUG_DEVTOOLS)
   FrontendLoaded();
 #endif
 }
@@ -1196,6 +1192,4 @@ void DevToolsUIBindings::FrontendLoaded() {
   delegate_->OnLoadCompleted();
 
   AddDevToolsExtensionsToClient();
-  if (g_web_socket_api_channel)
-    g_web_socket_api_channel->AttachedToBindings(this);
 }

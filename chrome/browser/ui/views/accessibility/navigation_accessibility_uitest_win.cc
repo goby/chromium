@@ -4,6 +4,7 @@
 
 #include <oleacc.h>
 
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_com_initializer.h"
@@ -216,7 +217,6 @@ IN_PROC_BROWSER_TEST_F(NavigationAccessibilityTest,
       BrowserView::GetBrowserViewForBrowser(browser())->
       toolbar()->location_bar()->omnibox_view();
   omnibox_view->SetUserText(base::UTF8ToUTF16(main_url.spec()),
-                            base::UTF8ToUTF16(main_url.spec()),
                             false);
 
   WinAccessibilityEventMonitor monitor(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS);
@@ -238,11 +238,11 @@ IN_PROC_BROWSER_TEST_F(NavigationAccessibilityTest,
               << " name=" << name;
 
     // We should get only focus events.
-    EXPECT_EQ(EVENT_OBJECT_FOCUS, event);
+    EXPECT_EQ(static_cast<DWORD>(EVENT_OBJECT_FOCUS), event);
 
     // We should get only focus events on document objects. (On a page with
     // JavaScript or autofocus, additional focus events would be expected.)
-    EXPECT_EQ(ROLE_SYSTEM_DOCUMENT, role);
+    EXPECT_EQ(static_cast<DWORD>(ROLE_SYSTEM_DOCUMENT), role);
 
     // We shouldn't get any events on the first page because from the time
     // we start monitoring, the user has already initiated a load to the

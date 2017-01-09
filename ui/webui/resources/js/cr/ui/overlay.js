@@ -13,7 +13,8 @@ cr.define('cr.ui.overlay', function() {
    * @return {HTMLElement} The overlay.
    */
   function getTopOverlay() {
-    var overlays = document.querySelectorAll('.overlay:not([hidden])');
+    var overlays = /** @type !NodeList<!HTMLElement> */(
+        document.querySelectorAll('.overlay:not([hidden])'));
     return overlays[overlays.length - 1];
   }
 
@@ -26,8 +27,8 @@ cr.define('cr.ui.overlay', function() {
    */
   function getDefaultButton(overlay) {
     function isHidden(node) { return node.hidden; }
-    var defaultButtons =
-        overlay.querySelectorAll('.page .button-strip > .default-button');
+    var defaultButtons = /** @type !NodeList<!HTMLElement> */(
+        overlay.querySelectorAll('.page .button-strip > .default-button'));
     for (var i = 0; i < defaultButtons.length; i++) {
       if (!findAncestor(defaultButtons[i], isHidden))
         return defaultButtons[i];
@@ -49,13 +50,13 @@ cr.define('cr.ui.overlay', function() {
           return;
 
         // Close the overlay on escape.
-        if (e.keyIdentifier == 'U+001B')
+        if (e.key == 'Escape')
           cr.dispatchSimpleEvent(overlay, 'cancelOverlay');
 
         // Execute the overlay's default button on enter, unless focus is on an
         // element that has standard behavior for the enter key.
         var forbiddenTagNames = /^(A|BUTTON|SELECT|TEXTAREA)$/;
-        if (e.keyIdentifier == 'Enter' &&
+        if (e.key == 'Enter' &&
             !forbiddenTagNames.test(document.activeElement.tagName)) {
           var button = getDefaultButton(overlay);
           if (button) {

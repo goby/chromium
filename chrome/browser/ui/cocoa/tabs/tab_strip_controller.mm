@@ -13,8 +13,9 @@
 #include "base/command_line.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_nsautorelease_pool.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/mac/sdk_forward_declarations.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -30,15 +31,17 @@
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #include "chrome/browser/ui/cocoa/drag_util.h"
 #import "chrome/browser/ui/cocoa/image_button_cell.h"
+#include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/new_tab_button.h"
 #import "chrome/browser/ui/cocoa/tab_contents/favicon_util_mac.h"
 #import "chrome/browser/ui/cocoa/tab_contents/tab_contents_controller.h"
-#import "chrome/browser/ui/cocoa/tabs/media_indicator_button_cocoa.h"
+#import "chrome/browser/ui/cocoa/tabs/alert_indicator_button_cocoa.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_controller.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_drag_controller.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_model_observer_bridge.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_view.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_view.h"
+#import "chrome/browser/ui/cocoa/themed_window.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
@@ -47,21 +50,24 @@
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
+#include "components/grit/components_scaled_resources.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
+#include "components/prefs/pref_service.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/components_scaled_resources.h"
-#include "grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 #include "ui/base/cocoa/animation_utils.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/tracking_area.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/theme_provider.h"
@@ -80,18 +86,11 @@ namespace {
 // view.
 const CGFloat kUseFullAvailableWidth = -1.0;
 
-// The amount by which tabs overlap.
-// Needs to be <= the x position of the favicon within a tab. Else, every time
-// the throbber is painted, the throbber's invalidation will also invalidate
-// parts of the tab to the left, and two tabs's backgrounds need to be painted
-// on each throbber frame instead of one.
-const CGFloat kTabOverlap = 19.0;
-
 // The amount by which pinned tabs are separated from normal tabs.
 const CGFloat kLastPinnedTabSpacing = 2.0;
 
 // The amount by which the new tab button is offset (from the tabs).
-const CGFloat kNewTabButtonOffset = 8.0;
+const CGFloat kNewTabButtonOffset = 10.0;
 
 // Time (in seconds) in which tabs animate to their final position.
 const NSTimeInterval kAnimationDuration = 0.125;
@@ -137,100 +136,33 @@ private:
   DISALLOW_COPY_AND_ASSIGN(ScopedNSAnimationContextGroup);
 };
 
-// Creates an NSImage with size |size| and bitmap image representations for both
-// 1x and 2x scale factors. |drawingHandler| is called once for every scale
-// factor.  This is similar to -[NSImage imageWithSize:flipped:drawingHandler:],
-// but this function always evaluates drawingHandler eagerly, and it works on
-// 10.6 and 10.7.
-NSImage* CreateImageWithSize(NSSize size,
-                             void (^drawingHandler)(NSSize)) {
-  base::scoped_nsobject<NSImage> result([[NSImage alloc] initWithSize:size]);
-  [NSGraphicsContext saveGraphicsState];
-  for (ui::ScaleFactor scale_factor : ui::GetSupportedScaleFactors()) {
-    float scale = GetScaleForScaleFactor(scale_factor);
-    NSBitmapImageRep *bmpImageRep = [[[NSBitmapImageRep alloc]
-        initWithBitmapDataPlanes:NULL
-                      pixelsWide:size.width * scale
-                      pixelsHigh:size.height * scale
-                   bitsPerSample:8
-                 samplesPerPixel:4
-                        hasAlpha:YES
-                        isPlanar:NO
-                  colorSpaceName:NSDeviceRGBColorSpace
-                     bytesPerRow:0
-                    bitsPerPixel:0] autorelease];
-    [bmpImageRep setSize:size];
-    [NSGraphicsContext setCurrentContext:
-        [NSGraphicsContext graphicsContextWithBitmapImageRep:bmpImageRep]];
-    drawingHandler(size);
-    [result addRepresentation:bmpImageRep];
-  }
-  [NSGraphicsContext restoreGraphicsState];
-
-  return result.release();
+CGFloat FlipXInView(NSView* view, CGFloat width, CGFloat x) {
+  if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout())
+    return [view frame].size.width - x - width;
+  return x;
 }
 
-// Takes a normal bitmap and a mask image and returns an image the size of the
-// mask that has pixels from |image| but alpha information from |mask|.
-NSImage* ApplyMask(NSImage* image, NSImage* mask) {
-  return [CreateImageWithSize([mask size], ^(NSSize size) {
-      // Skip a few pixels from the top of the tab background gradient, because
-      // the new tab button is not drawn at the very top of the browser window.
-      const int kYOffset = 10;
-      CGFloat width = size.width;
-      CGFloat height = size.height;
-
-      // In some themes, the tab background image is narrower than the
-      // new tab button, so tile the background image.
-      CGFloat x = 0;
-      // The floor() is to make sure images with odd widths don't draw to the
-      // same pixel twice on retina displays. (Using NSDrawThreePartImage()
-      // caused a startup perf regression, so that cannot be used.)
-      CGFloat tileWidth = floor(std::min(width, [image size].width));
-      while (x < width) {
-        [image drawAtPoint:NSMakePoint(x, 0)
-                  fromRect:NSMakeRect(0,
-                                      [image size].height - height - kYOffset,
-                                      tileWidth,
-                                      height)
-                 operation:NSCompositeCopy
-                  fraction:1.0];
-        x += tileWidth;
-      }
-
-      [mask drawAtPoint:NSZeroPoint
-               fromRect:NSMakeRect(0, 0, width, height)
-              operation:NSCompositeDestinationIn
-               fraction:1.0];
-  }) autorelease];
-}
-
-// Paints |overlay| on top of |ground|.
-NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
-  DCHECK_EQ([ground size].width, [overlay size].width);
-  DCHECK_EQ([ground size].height, [overlay size].height);
-
-  return [CreateImageWithSize([ground size], ^(NSSize size) {
-      CGFloat width = size.width;
-      CGFloat height = size.height;
-      [ground drawAtPoint:NSZeroPoint
-                 fromRect:NSMakeRect(0, 0, width, height)
-                operation:NSCompositeCopy
-                 fraction:1.0];
-      [overlay drawAtPoint:NSZeroPoint
-                  fromRect:NSMakeRect(0, 0, width, height)
-                 operation:NSCompositeSourceOver
-                  fraction:alpha];
-  }) autorelease];
+NSRect FlipRectInView(NSView* view, NSRect rect) {
+  rect.origin.x = FlipXInView(view, NSWidth(rect), NSMinX(rect));
+  return rect;
 }
 
 }  // namespace
+
+@interface NSView (PrivateAPI)
+// Called by AppKit to check if dragging this view should move the window.
+// NSButton overrides this method in the same way so dragging window buttons
+// has no effect. NSView implementation returns NSZeroRect so the whole view
+// area can be dragged.
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar;
+@end
 
 @interface TabStripController (Private)
 - (void)addSubviewToPermanentList:(NSView*)aView;
 - (void)regenerateSubviewList;
 - (NSInteger)indexForContentsView:(NSView*)view;
-- (NSImage*)iconImageForContents:(content::WebContents*)contents;
+- (NSImage*)iconImageForContents:(content::WebContents*)contents
+                         atIndex:(NSInteger)modelIndex;
 - (void)updateIconsForContents:(content::WebContents*)contents
                        atIndex:(NSInteger)modelIndex;
 - (void)layoutTabsWithAnimation:(BOOL)animate
@@ -247,12 +179,12 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 - (void)setTabTrackingAreasEnabled:(BOOL)enabled;
 - (void)droppingURLsAt:(NSPoint)point
             givesIndex:(NSInteger*)index
-           disposition:(WindowOpenDisposition*)disposition;
+           disposition:(WindowOpenDisposition*)disposition
+           activateTab:(BOOL)activateTab;
 - (void)setNewTabButtonHoverState:(BOOL)showHover;
 - (void)themeDidChangeNotification:(NSNotification*)notification;
-- (void)setNewTabImages;
 - (BOOL)doesAnyOtherWebContents:(content::WebContents*)selected
-                 haveMediaState:(TabMediaState)state;
+                 haveAlertState:(TabAlertState)state;
 @end
 
 // A simple view class that contains the traffic light buttons. This class
@@ -311,6 +243,10 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   return NO;
 }
 
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+ return [self bounds];
+}
+
 - (id)initWithFrame:(NSRect)frameRect
          controller:(TabStripController*)controller {
   if ((self = [super initWithFrame:frameRect])) {
@@ -353,7 +289,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 - (void)trackClickForWindowMove:(NSEvent*)event {
   NSWindow* window = [self window];
   NSPoint frameOrigin = [window frame].origin;
-  NSPoint lastEventLoc = [window convertBaseToScreen:[event locationInWindow]];
+  NSPoint lastEventLoc =
+      ui::ConvertPointFromWindowToScreen(window, [event locationInWindow]);
   while ((event = [NSApp nextEventMatchingMask:
       NSLeftMouseDownMask|NSLeftMouseDraggedMask|NSLeftMouseUpMask
                                     untilDate:[NSDate distantFuture]
@@ -362,7 +299,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       [event type] != NSLeftMouseUp) {
     base::mac::ScopedNSAutoreleasePool pool;
 
-    NSPoint now = [window convertBaseToScreen:[event locationInWindow]];
+    NSPoint now =
+        ui::ConvertPointFromWindowToScreen(window, [event locationInWindow]);
     frameOrigin.x += now.x - lastEventLoc.x;
     frameOrigin.y += now.y - lastEventLoc.y;
     [window setFrameOrigin:frameOrigin];
@@ -379,7 +317,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 // to let it know that |controller_| is ready to be removed from the model.
 // Since we only maintain weak references, the tab strip must call -invalidate:
 // to prevent the use of dangling pointers.
-@interface TabCloseAnimationDelegate : NSObject {
+@interface TabCloseAnimationDelegate : NSObject <CAAnimationDelegate> {
  @private
   TabStripController* strip_;  // weak; owns us indirectly
   TabController* controller_;  // weak
@@ -395,7 +333,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 // prevent attempts to call into the released object.
 - (void)invalidate;
 
-// CAAnimation delegate method
+// CAAnimation delegate methods
+- (void)animationDidStart:(CAAnimation*)animation;
 - (void)animationDidStop:(CAAnimation*)animation finished:(BOOL)finished;
 
 @end
@@ -417,6 +356,9 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   controller_ = nil;
 }
 
+- (void)animationDidStart:(CAAnimation*)theAnimation {
+  // CAAnimationDelegate method added on OSX 10.12.
+}
 - (void)animationDidStop:(CAAnimation*)animation finished:(BOOL)finished {
   [strip_ animationDidStop:animation
              forController:controller_
@@ -465,8 +407,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 
 @implementation TabStripController
 
-@synthesize leftIndentForControls = leftIndentForControls_;
-@synthesize rightIndentForControls = rightIndentForControls_;
+@synthesize leadingIndentForControls = leadingIndentForControls_;
+@synthesize trailingIndentForControls = trailingIndentForControls_;
 
 - (id)initWithView:(TabStripView*)view
         switchView:(NSView*)switchView
@@ -496,8 +438,9 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     defaultFavicon_.reset(
         rb.GetNativeImageNamed(IDR_DEFAULT_FAVICON).CopyNSImage());
 
-    [self setLeftIndentForControls:[[self class] defaultLeftIndentForControls]];
-    [self setRightIndentForControls:0];
+    [self setLeadingIndentForControls:[[self class]
+                                          defaultLeadingIndentForControls]];
+    [self setTrailingIndentForControls:0];
 
     // Add this invisible view first so that it is ordered below other views.
     dragBlockingView_.reset(
@@ -511,7 +454,6 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     [newTabButton_ setTarget:self];
     [newTabButton_ setAction:@selector(clickNewTabButton:)];
 
-    [self setNewTabImages];
     newTabButtonShowingHoverImage_ = NO;
     newTabTrackingArea_.reset(
         [[CrTrackingArea alloc] initWithRect:[newTabButton_ bounds]
@@ -634,10 +576,19 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   return [TabController defaultTabHeight];
 }
 
-+ (CGFloat)defaultLeftIndentForControls {
++ (CGFloat)defaultLeadingIndentForControls {
   // Default indentation leaves enough room so tabs don't overlap with the
   // window controls.
   return 70.0;
+}
+
++ (CGFloat)tabOverlap {
+  // The overlap value needs to be <= the x position of the favicon within a
+  // tab. Else, every time the throbber is painted, the throbber's invalidation
+  // will also invalidate parts of the tab to the left, and two tabs's
+  // backgrounds need to be painted on each throbber frame instead of one.
+  const CGFloat kTabOverlap = 18.0;
+  return kTabOverlap;
 }
 
 // Finds the TabContentsController associated with the given index into the tab
@@ -654,40 +605,22 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   // positions.
   ScopedCAActionDisabler ca_disabler;
 
-  // Resize the new view to fit the window. Calling |view| may lazily
-  // instantiate the TabContentsController from the nib. Until we call
-  // |-ensureContentsVisible|, the controller doesn't install the RWHVMac into
-  // the view hierarchy. This is in order to avoid sending the renderer a
-  // spurious default size loaded from the nib during the call to |-view|.
-  NSView* newView = [controller view];
+  // Ensure the nib is loaded. Sizing won't occur until it's added to the view
+  // hierarchy with -ensureContentsVisibleInSuperview:.
+  [controller view];
 
-  // Turns content autoresizing off, so removing and inserting views won't
-  // trigger unnecessary content relayout.
-  [controller ensureContentsSizeDoesNotChange];
+  // Remove the old view from the view hierarchy to suppress resizes. We know
+  // there's only one child of |switchView_| because we're the one who put it
+  // there. There may not be any children in the case of a tab that's been
+  // closed, in which case there's nothing removed.
+  [[[switchView_ subviews] firstObject] removeFromSuperview];
 
-  // Remove the old view from the view hierarchy. We know there's only one
-  // child of |switchView_| because we're the one who put it there. There
-  // may not be any children in the case of a tab that's been closed, in
-  // which case there's no swapping going on.
-  NSArray* subviews = [switchView_ subviews];
-  if ([subviews count]) {
-    NSView* oldView = [subviews objectAtIndex:0];
-    // Set newView frame to the oldVew frame to prevent NSSplitView hosting
-    // sidebar and tab content from resizing sidebar's content view.
-    // ensureContentsVisible (see below) sets content size and autoresizing
-    // properties.
-    [newView setFrame:[oldView frame]];
-    [switchView_ replaceSubview:oldView with:newView];
-  } else {
-    [newView setFrame:[switchView_ bounds]];
-    [switchView_ addSubview:newView];
-  }
-
-  // New content is in place, delegate should adjust itself accordingly.
+  // Prepare the container with any infobars or docked devtools it wants.
   [delegate_ onActivateTabWithContents:[controller webContents]];
 
-  // It also restores content autoresizing properties.
-  [controller ensureContentsVisible];
+  // Sizes the WebContents to match the possibly updated size of |switchView_|,
+  // then adds it and starts auto-resizing again.
+  [controller ensureContentsVisibleInSuperview:switchView_];
 }
 
 // Create a new tab view and set its cell correctly so it draws the way we want
@@ -863,7 +796,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     return;
   WebContents* contents = tabStripModel_->GetWebContentsAt(index);
   chrome::SetTabAudioMuted(contents, !contents->IsAudioMuted(),
-                           TAB_MUTED_REASON_AUDIO_INDICATOR, std::string());
+                           TabMutedReason::AUDIO_INDICATOR, std::string());
 }
 
 // Called when the user closes a tab. Asks the model to close the tab. |sender|
@@ -897,14 +830,20 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
         availableResizeWidth_ = kUseFullAvailableWidth;
       } else {
         NSView* penultimateTab = [self viewAtIndex:numberOfOpenTabs - 2];
-        availableResizeWidth_ = NSMaxX([penultimateTab frame]);
+        availableResizeWidth_ =
+            cocoa_l10n_util::ShouldDoExperimentalRTLLayout()
+                ? FlipXInView(tabStripView_, 0, NSMinX([penultimateTab frame]))
+                : NSMaxX([penultimateTab frame]);
       }
     } else {
-      // If the rightmost tab is closed, change the available width so that
+      // If the trailing tab is closed, change the available width so that
       // another tab's close button lands below the cursor (assuming the tabs
       // are currently below their maximum width and can grow).
       NSView* lastTab = [self viewAtIndex:numberOfOpenTabs - 1];
-      availableResizeWidth_ = NSMaxX([lastTab frame]);
+      availableResizeWidth_ =
+          cocoa_l10n_util::ShouldDoExperimentalRTLLayout()
+              ? FlipXInView(tabStripView_, 0, NSMinX([lastTab frame]))
+              : NSMaxX([lastTab frame]);
     }
     tabStripModel_->CloseWebContentsAt(
         index,
@@ -960,12 +899,20 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 
 - (BOOL)isTabFullyVisible:(TabView*)tab {
   NSRect frame = [tab frame];
-  return NSMinX(frame) >= [self leftIndentForControls] &&
-      NSMaxX(frame) <= [self tabAreaRightEdge];
+  if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
+    return NSMinX(frame) >= [self trailingIndentForControls] &&
+           NSMaxX(frame) <= [self tabAreaRightEdge];
+  } else {
+    return NSMinX(frame) >= [self leadingIndentForControls] &&
+           NSMaxX(frame) <= [self tabAreaRightEdge];
+  }
 }
 
 - (CGFloat)tabAreaRightEdge {
-  return NSMaxX([tabStripView_ frame]) - [self rightIndentForControls];
+  CGFloat rightEdge = cocoa_l10n_util::ShouldDoExperimentalRTLLayout()
+                          ? [self leadingIndentForControls]
+                          : [self trailingIndentForControls];
+  return NSMaxX([tabStripView_ frame]) - rightEdge;
 }
 
 - (void)showNewTabButton:(BOOL)show {
@@ -990,6 +937,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   const CGFloat kMinTabWidth = [TabController minTabWidth];
   const CGFloat kMinActiveTabWidth = [TabController minActiveTabWidth];
   const CGFloat kPinnedTabWidth = [TabController pinnedTabWidth];
+  const CGFloat kTabOverlap = [TabStripController tabOverlap];
 
   NSRect enclosingRect = NSZeroRect;
   ScopedNSAnimationContextGroup mainAnimationGroup(animate);
@@ -1012,16 +960,15 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     // Account for the width of the new tab button.
     availableSpace -=
         NSWidth([newTabButton_ frame]) + kNewTabButtonOffset - kTabOverlap;
-
-    // Account for the right-side controls if not in rapid closure mode.
+    // Account for the trailing controls if not in rapid closure mode.
     // (In rapid closure mode, the available width is set based on the
-    // position of the rightmost tab, not based on the width of the tab strip,
-    // so the right controls have already been accounted for.)
-    availableSpace -= [self rightIndentForControls];
+    // position of the trailing tab, not based on the width of the tab strip,
+    // so the trailing controls have already been accounted for.)
+    availableSpace -= [self trailingIndentForControls];
   }
 
-  // Need to leave room for the left-side controls even in rapid closure mode.
-  availableSpace -= [self leftIndentForControls];
+  // Need to leave room for the leading controls even in rapid closure mode.
+  availableSpace -= [self leadingIndentForControls];
 
   // This may be negative, but that's okay (taken care of by |MAX()| when
   // calculating tab sizes). "pinned" tabs in horizontal mode just get a special
@@ -1039,8 +986,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   CGFloat nonPinnedTabWidthFraction = 0;
   NSInteger numberOfNonPinnedTabs = MIN(
       [self numberOfOpenNonPinnedTabs],
-      (availableSpaceForNonPinned - kTabOverlap) / (kMinTabWidth -
-          kTabOverlap));
+      (availableSpaceForNonPinned - kTabOverlap) /
+          (kMinTabWidth - kTabOverlap));
 
   if (numberOfNonPinnedTabs) {
     // Find the width of a non-pinned tab. This only applies to horizontal
@@ -1063,14 +1010,12 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     // of 10.
     if (numberOfNonPinnedTabs > 1 && nonPinnedTabWidth < kMinActiveTabWidth) {
       nonPinnedTabWidth = (availableSpaceForNonPinned - kMinActiveTabWidth) /
-                            (numberOfNonPinnedTabs - 1) +
-                        kTabOverlap;
+                            (numberOfNonPinnedTabs - 1) + kTabOverlap;
       if (nonPinnedTabWidth < kMinTabWidth) {
         // The above adjustment caused the tabs to not fit, show 1 less tab.
         --numberOfNonPinnedTabs;
         nonPinnedTabWidth = ((availableSpaceForNonPinned - kTabOverlap) /
-                                numberOfNonPinnedTabs) +
-                            kTabOverlap;
+                                numberOfNonPinnedTabs) + kTabOverlap;
       }
     }
 
@@ -1082,13 +1027,15 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 
   BOOL visible = [[tabStripView_ window] isVisible];
 
-  CGFloat offset = [self leftIndentForControls];
+  CGFloat offset = [self leadingIndentForControls];
   bool hasPlaceholderGap = false;
   // Whether or not the last tab processed by the loop was a pinned tab.
   BOOL isLastTabPinned = NO;
   CGFloat tabWidthAccumulatedFraction = 0;
   NSInteger laidOutNonPinnedTabs = 0;
 
+  // Lay everything out as if it was LTR and flip at the end
+  // for RTL, if necessary.
   for (TabController* tab in tabArray_.get()) {
     // Ignore a tab that is going through a close animation.
     if ([closingControllers_ containsObject:tab])
@@ -1123,10 +1070,17 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     }
 
     if (placeholderTab_ && !hasPlaceholderGap) {
-      const CGFloat placeholderMin = NSMinX(placeholderFrame_);
-      // If the left edge is to the left of the placeholder's left, but the
-      // mid is to the right of it slide over to make space for it.
-      if (NSMidX(tabFrame) > placeholderMin) {
+      // If the back edge is behind the placeholder's back edge, but the
+      // mid is in front of it of it, slide over to make space for it.
+      bool shouldLeaveGap;
+      if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
+        const CGFloat tabMidpoint =
+            NSMidX(FlipRectInView(tabStripView_, tabFrame));
+        shouldLeaveGap = tabMidpoint < NSMaxX(placeholderFrame_);
+      } else {
+        shouldLeaveGap = NSMidX(tabFrame) > NSMinX(placeholderFrame_);
+      }
+      if (shouldLeaveGap) {
         hasPlaceholderGap = true;
         offset += NSWidth(placeholderFrame_);
         offset -= kTabOverlap;
@@ -1191,12 +1145,27 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       }
     }
 
+    tabFrame.origin.x =
+        FlipXInView(tabStripView_, tabFrame.size.width, tabFrame.origin.x);
+
     // Check the frame by identifier to avoid redundant calls to animator.
     id frameTarget = visible && animate ? [[tab view] animator] : [tab view];
     NSValue* identifier = [NSValue valueWithPointer:[tab view]];
     NSValue* oldTargetValue = [targetFrames_ objectForKey:identifier];
     if (!oldTargetValue ||
         !NSEqualRects([oldTargetValue rectValue], tabFrame)) {
+      // Redraw the tab once it moves to its final location. Because we're
+      // using Core Animation, each tab caches its contents until told to
+      // redraw. Without forcing a redraw at the end of the move, tabs will
+      // display the wrong content when using a theme that creates transparent
+      // tabs.
+      ScopedNSAnimationContextGroup subAnimationGroup(animate);
+      subAnimationGroup.SetCurrentContextDuration(kAnimationDuration);
+      NSView* tabView = [tab view];
+      [[NSAnimationContext currentContext] setCompletionHandler:^{
+        [tabView setNeedsDisplay:YES];
+      }];
+
       [frameTarget setFrame:tabFrame];
       [targetFrames_ setObject:[NSValue valueWithRect:tabFrame]
                         forKey:identifier];
@@ -1219,6 +1188,11 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     // so we don't have to check it against the available space. We do need
     // to make sure we put it after any placeholder.
     CGFloat maxTabX = MAX(offset, NSMaxX(placeholderFrame_) - kTabOverlap);
+    if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
+      maxTabX = FlipXInView(tabStripView_, [newTabButton_ frame].size.width,
+                            maxTabX) -
+                (2 * kNewTabButtonOffset);
+    }
     newTabNewFrame.origin = NSMakePoint(maxTabX + kNewTabButtonOffset, 0);
     if ([tabContentsArray_ count])
       [newTabButton_ setHidden:NO];
@@ -1233,14 +1207,17 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       [self setNewTabButtonHoverState:shouldShowHover];
 
       // Move the new tab button into place. We want to animate the new tab
-      // button if it's moving to the left (closing a tab), but not when it's
-      // moving to the right (inserting a new tab). If moving right, we need
+      // button if it's moving back (closing a tab), but not when it's
+      // moving forward (inserting a new tab). If moving forward, we need
       // to use a very small duration to make sure we cancel any in-flight
       // animation to the left.
       if (visible && animate) {
         ScopedNSAnimationContextGroup localAnimationGroup(true);
-        BOOL movingLeft = NSMinX(newTabNewFrame) < NSMinX(newTabTargetFrame_);
-        if (!movingLeft) {
+        BOOL movingBack = NSMinX(newTabNewFrame) < NSMinX(newTabTargetFrame_);
+        if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout())
+          movingBack = !movingBack;
+
+        if (!movingBack) {
           localAnimationGroup.SetCurrentContextShortestDuration();
         }
         [[newTabButton_ animator] setFrame:newTabNewFrame];
@@ -1278,9 +1255,11 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     title = l10n_util::GetStringUTF16(IDS_BROWSER_WINDOW_MAC_TAB_UNTITLED);
   [tab setTitle:base::SysUTF16ToNSString(title)];
 
-  const base::string16& toolTip = chrome::AssembleTabTooltipText(
-      title, [self mediaStateForContents:contents]);
-  [tab setToolTip:base::SysUTF16ToNSString(toolTip)];
+  NSString* toolTip = base::SysUTF16ToNSString(chrome::AssembleTabTooltipText(
+      title, [self alertStateForContents:contents]));
+  [tab setToolTip:toolTip];
+  if ([tab tabView] == hoveredTab_)
+    [toolTipView_ setToolTip:toolTip];
 }
 
 // Called when a notification is received from the model to insert a new tab
@@ -1301,7 +1280,9 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   // Make a new tab. Load the contents of this tab from the nib and associate
   // the new controller with |contents| so it can be looked up later.
   base::scoped_nsobject<TabContentsController> contentsController(
-      [[TabContentsController alloc] initWithContents:contents]);
+      [[TabContentsController alloc]
+          initWithContents:contents
+                   isPopup:browser_->is_type_popup()]);
   [tabContentsArray_ insertObject:contentsController atIndex:index];
 
   // Make a new tab and add it to the strip. Keep track of its controller.
@@ -1336,6 +1317,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   // into the right state up front as we won't be told to do it from anywhere
   // else.
   [self updateIconsForContents:contents atIndex:modelIndex];
+
+  [delegate_ onTabInsertedInForeground:inForeground];
 }
 
 // Called before |contents| is deactivated.
@@ -1358,7 +1341,6 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       TabContentsController* oldController =
           [tabContentsArray_ objectAtIndex:oldIndex];
       [oldController willBecomeUnselectedTab];
-      oldContents->WasHidden();
     }
   }
 
@@ -1368,6 +1350,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
                                           NSUInteger index,
                                           BOOL* stop) {
       [current setActive:index == activeIndex];
+      [self updateIconsForContents:newContents atIndex:modelIndex];
   }];
 
   // Tell the new tab contents it is about to become the selected tab. Here it
@@ -1384,10 +1367,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   // Swap in the contents for the new tab.
   [self swapInTabAtIndex:modelIndex];
 
-  if (newContents) {
-    newContents->WasShown();
+  if (newContents)
     newContents->RestoreFocus();
-  }
 }
 
 - (void)tabSelectionChanged {
@@ -1401,6 +1382,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     BOOL selected = iter != selection.end() &&
         [self indexFromModelIndex:*iter] == i;
     [current setSelected:selected];
+    [self updateIconsForContents:tabStripModel_->GetWebContentsAt(i) atIndex:i];
     if (selected)
       ++iter;
     ++i;
@@ -1419,7 +1401,9 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   // into the array, replacing |oldContents|.  An ActiveTabChanged notification
   // will follow, at which point we will install the new view.
   base::scoped_nsobject<TabContentsController> newController(
-      [[TabContentsController alloc] initWithContents:newContents]);
+      [[TabContentsController alloc]
+          initWithContents:newContents
+                   isPopup:browser_->is_type_popup()]);
 
   // Bye bye, |oldController|.
   [tabContentsArray_ replaceObjectAtIndex:index withObject:newController];
@@ -1474,7 +1458,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 - (void)animationDidStop:(CAAnimation*)animation
            forController:(TabController*)controller
                 finished:(BOOL)finished{
-  [[animation delegate] invalidate];
+  [(TabCloseAnimationDelegate *)[animation delegate] invalidate];
   [closingControllers_ removeObject:controller];
   [self removeTab:controller];
 }
@@ -1545,7 +1529,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 
 // A helper routine for creating an NSImageView to hold the favicon or app icon
 // for |contents|.
-- (NSImage*)iconImageForContents:(content::WebContents*)contents {
+- (NSImage*)iconImageForContents:(content::WebContents*)contents
+                         atIndex:(NSInteger)modelIndex {
   extensions::TabHelper* extensions_tab_helper =
       extensions::TabHelper::FromWebContents(contents);
   BOOL isApp = extensions_tab_helper->is_app();
@@ -1556,9 +1541,10 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   if (isApp) {
     SkBitmap* icon = extensions_tab_helper->GetExtensionAppIcon();
     if (icon)
-      image = gfx::SkBitmapToNSImageWithColorSpace(*icon, colorSpace);
+      image = skia::SkBitmapToNSImageWithColorSpace(*icon, colorSpace);
   } else {
-    image = mac::FaviconForWebContents(contents);
+    TabController* tab = [tabArray_ objectAtIndex:modelIndex];
+    image = mac::FaviconForWebContents(contents, [[tab tabView] iconColor]);
   }
 
   // Either we don't have a valid favicon or there was some issue converting it
@@ -1579,9 +1565,15 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   static NSImage* throbberWaitingImage =
       ResourceBundle::GetSharedInstance().GetNativeImageNamed(
           IDR_THROBBER_WAITING).CopyNSImage();
+  static NSImage* throbberWaitingIncognitoImage =
+      ResourceBundle::GetSharedInstance().GetNativeImageNamed(
+          IDR_THROBBER_WAITING_INCOGNITO).CopyNSImage();
   static NSImage* throbberLoadingImage =
       ResourceBundle::GetSharedInstance().GetNativeImageNamed(
           IDR_THROBBER).CopyNSImage();
+  static NSImage* throbberLoadingIncognitoImage =
+      ResourceBundle::GetSharedInstance().GetNativeImageNamed(
+          IDR_THROBBER_INCOGNITO).CopyNSImage();
   static NSImage* sadFaviconImage =
       ResourceBundle::GetSharedInstance()
           .GetNativeImageNamed(IDR_CRASH_SAD_FAVICON)
@@ -1604,10 +1596,18 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     newHasIcon = true;
   } else if (contents->IsWaitingForResponse()) {
     newState = kTabWaiting;
-    throbberImage = throbberWaitingImage;
+    if ([[[tabController view] window] hasDarkTheme]) {
+      throbberImage = throbberWaitingIncognitoImage;
+    } else {
+      throbberImage = throbberWaitingImage;
+    }
   } else if (contents->IsLoadingToDifferentDocument()) {
     newState = kTabLoading;
-    throbberImage = throbberLoadingImage;
+    if ([[[tabController view] window] hasDarkTheme]) {
+      throbberImage = throbberLoadingIncognitoImage;
+    } else {
+      throbberImage = throbberLoadingImage;
+    }
   }
 
   if (oldState != newState)
@@ -1621,7 +1621,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       oldHasIcon != newHasIcon) {
     if (newHasIcon) {
       if (newState == kTabDone) {
-        [tabController setIconImage:[self iconImageForContents:contents]];
+        [tabController setIconImage:[self iconImageForContents:contents
+                                                       atIndex:modelIndex]];
       } else if (newState == kTabCrashed) {
         [tabController setIconImage:sadFaviconImage withToastAnimation:YES];
       } else {
@@ -1632,9 +1633,9 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     }
   }
 
-  TabMediaState mediaState = [self mediaStateForContents:contents];
-  [self updateWindowMediaState:mediaState forWebContents:contents];
-  [tabController setMediaState:mediaState];
+  TabAlertState alertState = [self alertStateForContents:contents];
+  [self updateWindowAlertState:alertState forWebContents:contents];
+  [tabController setAlertState:alertState];
 
   [tabController updateVisibility];
 }
@@ -1756,8 +1757,9 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   // No placeholder, return the end of the strip.
   if (placeholderTab_ == nil)
     return count;
-
-  double placeholderX = placeholderFrame_.origin.x;
+  BOOL isRTL = cocoa_l10n_util::ShouldDoExperimentalRTLLayout();
+  double placeholderX =
+      isRTL ? NSMaxX(placeholderFrame_) : placeholderFrame_.origin.x;
   int index = 0;
   int location = 0;
   while (index < count) {
@@ -1778,7 +1780,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       index++;
       continue;
     }
-    if (placeholderX <= NSMinX([curr frame]))
+    if (isRTL ? placeholderX >= NSMaxX([curr frame])
+              : placeholderX <= NSMinX([curr frame]))
       break;
     index++;
     location++;
@@ -1948,8 +1951,8 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     [toolTipView_ setFrame:[newHoveredTab frame]];
     if (![toolTipView_ superview]) {
       [tabStripView_ addSubview:toolTipView_
-                     positioned:NSWindowBelow
-                     relativeTo:nil];
+                     positioned:NSWindowAbove
+                     relativeTo:dragBlockingView_];
     }
   }
 }
@@ -2036,14 +2039,17 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 // to the left, it inserts to the left, and similarly for the right.
 - (void)droppingURLsAt:(NSPoint)point
             givesIndex:(NSInteger*)index
-           disposition:(WindowOpenDisposition*)disposition {
+           disposition:(WindowOpenDisposition*)disposition
+           activateTab:(BOOL)activateTab {
   // Proportion of the tab which is considered the "middle" (and causes things
   // to drop on that tab).
   const double kMiddleProportion = 0.5;
   const double kLRProportion = (1.0 - kMiddleProportion) / 2.0;
+  const CGFloat kTabOverlap = [TabStripController tabOverlap];
 
   DCHECK(index && disposition);
   NSInteger i = 0;
+  BOOL isRTL = cocoa_l10n_util::ShouldDoExperimentalRTLLayout();
   for (TabController* tab in tabArray_.get()) {
     NSView* view = [tab view];
     DCHECK([view isKindOfClass:[TabView class]]);
@@ -2059,18 +2065,24 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     if (frame.size.width < 1.0)
       frame.size.width = 1.0;  // try to avoid complete failure
 
-    // Drop in a new tab to the left of tab |i|?
-    if (point.x < (frame.origin.x + kLRProportion * frame.size.width)) {
+    CGFloat rightEdge = NSMaxX(frame) - kLRProportion * frame.size.width;
+    CGFloat leftEdge = frame.origin.x + kLRProportion * frame.size.width;
+
+    // Drop in a new tab before  tab |i|?
+    if (isRTL ? point.x > rightEdge : point.x < leftEdge) {
       *index = i;
-      *disposition = NEW_FOREGROUND_TAB;
+      if (activateTab) {
+        *disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+      } else {
+        *disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
+      }
       return;
     }
 
     // Drop on tab |i|?
-    if (point.x <= (frame.origin.x +
-                       (1.0 - kLRProportion) * frame.size.width)) {
+    if (isRTL ? point.x >= leftEdge : point.x <= rightEdge) {
       *index = i;
-      *disposition = CURRENT_TAB;
+      *disposition = WindowOpenDisposition::CURRENT_TAB;
       return;
     }
 
@@ -2081,20 +2093,33 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 
   // If we've made it here, we want to append a new tab to the end.
   *index = -1;
-  *disposition = NEW_FOREGROUND_TAB;
+  if (activateTab) {
+    *disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  } else {
+    *disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
+  }
 }
 
-- (void)openURL:(GURL*)url inView:(NSView*)view at:(NSPoint)point {
+- (void)openURL:(GURL*)url
+         inView:(NSView*)view
+             at:(NSPoint)point
+    activateTab:(BOOL)activateTab {
+  // Security: Block JavaScript to prevent self-XSS.
+  if (url->SchemeIs(url::kJavaScriptScheme))
+    return;
+
   // Get the index and disposition.
   NSInteger index;
   WindowOpenDisposition disposition;
   [self droppingURLsAt:point
             givesIndex:&index
-           disposition:&disposition];
+           disposition:&disposition
+           activateTab:activateTab];
 
   // Either insert a new tab or open in a current tab.
   switch (disposition) {
-    case NEW_FOREGROUND_TAB: {
+    case WindowOpenDisposition::NEW_FOREGROUND_TAB:
+    case WindowOpenDisposition::NEW_BACKGROUND_TAB: {
       content::RecordAction(UserMetricsAction("Tab_DropURLBetweenTabs"));
       chrome::NavigateParams params(browser_, *url,
                                     ui::PAGE_TRANSITION_TYPED);
@@ -2105,10 +2130,10 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       chrome::Navigate(&params);
       break;
     }
-    case CURRENT_TAB: {
+    case WindowOpenDisposition::CURRENT_TAB: {
       content::RecordAction(UserMetricsAction("Tab_DropURLOnTab"));
-      OpenURLParams params(
-          *url, Referrer(), CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false);
+      OpenURLParams params(*url, Referrer(), WindowOpenDisposition::CURRENT_TAB,
+                           ui::PAGE_TRANSITION_TYPED, false);
       tabStripModel_->GetWebContentsAt(index)->OpenURL(params);
       tabStripModel_->ActivateTabAt(index, true);
       break;
@@ -2127,19 +2152,22 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     return;
   }
 
-  //TODO(viettrungluu): dropping multiple URLs.
-  if ([urls count] > 1)
-    NOTIMPLEMENTED();
+  for (NSInteger index = [urls count] - 1; index >= 0; index--) {
+    // Refactor this code.
+    // https://crbug.com/665261.
+    GURL url = url_formatter::FixupURL(
+        base::SysNSStringToUTF8([urls objectAtIndex:index]), std::string());
 
-  // Get the first URL and fix it up.
-  GURL url(GURL(url_formatter::FixupURL(
-      base::SysNSStringToUTF8([urls objectAtIndex:0]), std::string())));
+    // If the URL isn't valid, don't bother.
+    if (!url.is_valid())
+      continue;
 
-  // If the URL isn't valid, don't bother.
-  if (!url.is_valid())
-    return;
-
-  [self openURL:&url inView:view at:point];
+    if (index == static_cast<NSInteger>([urls count]) - 1) {
+      [self openURL:&url inView:view at:point activateTab:YES];
+    } else {
+      [self openURL:&url inView:view at:point activateTab:NO];
+    }
+  }
 }
 
 // (URLDropTargetController protocol)
@@ -2153,7 +2181,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
       metrics::OmniboxEventProto::BLANK, &match, NULL);
   GURL url(match.destination_url);
 
-  [self openURL:&url inView:view at:point];
+  [self openURL:&url inView:view at:point activateTab:YES];
 }
 
 // (URLDropTargetController protocol)
@@ -2162,28 +2190,30 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 
   // The minimum y-coordinate at which one should consider place the arrow.
   const CGFloat arrowBaseY = 25;
+  const CGFloat kTabOverlap = [TabStripController tabOverlap];
 
   NSInteger index;
   WindowOpenDisposition disposition;
   [self droppingURLsAt:point
             givesIndex:&index
-           disposition:&disposition];
+           disposition:&disposition
+           activateTab:YES];
 
   NSPoint arrowPos = NSMakePoint(0, arrowBaseY);
   if (index == -1) {
     // Append a tab at the end.
-    DCHECK(disposition == NEW_FOREGROUND_TAB);
+    DCHECK(disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB);
     NSInteger lastIndex = [tabArray_ count] - 1;
     NSRect overRect = [[[tabArray_ objectAtIndex:lastIndex] view] frame];
     arrowPos.x = overRect.origin.x + overRect.size.width - kTabOverlap / 2.0;
   } else {
     NSRect overRect = [[[tabArray_ objectAtIndex:index] view] frame];
     switch (disposition) {
-      case NEW_FOREGROUND_TAB:
+      case WindowOpenDisposition::NEW_FOREGROUND_TAB:
         // Insert tab (to the left of the given tab).
         arrowPos.x = overRect.origin.x + kTabOverlap / 2.0;
         break;
-      case CURRENT_TAB:
+      case WindowOpenDisposition::CURRENT_TAB:
         // Overwrite the given tab.
         arrowPos.x = overRect.origin.x + overRect.size.width / 2.0;
         break;
@@ -2197,7 +2227,7 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   [tabStripView_ setNeedsDisplay:YES];
 
   // Perform a delayed tab transition if hovering directly over a tab.
-  if (index != -1 && disposition == CURRENT_TAB) {
+  if (index != -1 && disposition == WindowOpenDisposition::CURRENT_TAB) {
     NSInteger modelIndex = [self modelIndexFromIndex:index];
     // Only start the transition if it has a valid model index (i.e. it's not
     // in the middle of closing).
@@ -2240,20 +2270,34 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
 }
 
 - (void)addCustomWindowControls {
+  BOOL shouldFlipWindowControls =
+      cocoa_l10n_util::ShouldFlipWindowControlsInRTL();
   if (!customWindowControls_) {
     // Make the container view.
     CGFloat height = NSHeight([tabStripView_ frame]);
-    NSRect frame = NSMakeRect(0, 0, [self leftIndentForControls], height);
+    CGFloat width = [self leadingIndentForControls];
+    if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout() &&
+        !shouldFlipWindowControls)
+      // The trailing indent is correct in this case, since the controls should
+      // stay on the left.
+      width = [self trailingIndentForControls];
+    CGFloat xOrigin =
+        shouldFlipWindowControls ? NSWidth([tabStripView_ frame]) - width : 0;
+    NSRect frame = NSMakeRect(xOrigin, 0, width, height);
     customWindowControls_.reset(
         [[CustomWindowControlsView alloc] initWithFrame:frame]);
     [customWindowControls_
-        setAutoresizingMask:NSViewMaxXMargin | NSViewHeightSizable];
+        setAutoresizingMask:shouldFlipWindowControls
+                                ? NSViewMinXMargin | NSViewHeightSizable
+                                : NSViewMaxXMargin | NSViewHeightSizable];
 
     // Add the traffic light buttons. The horizontal layout was determined by
     // manual inspection on Yosemite.
     CGFloat closeButtonX = 11;
     CGFloat pinnedButtonX = 31;
     CGFloat zoomButtonX = 51;
+    if (shouldFlipWindowControls)
+      std::swap(closeButtonX, zoomButtonX);
 
     NSUInteger styleMask = [[tabStripView_ window] styleMask];
     NSButton* closeButton = [NSWindow standardWindowButton:NSWindowCloseButton
@@ -2285,7 +2329,13 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
     [customWindowControls_
         addTrackingArea:customWindowControlsTrackingArea_.get()];
   }
-
+  if (shouldFlipWindowControls &&
+      NSMaxX([customWindowControls_ frame]) != NSMaxX([tabStripView_ frame])) {
+    NSRect frame = [customWindowControls_ frame];
+    frame.origin.x =
+        NSMaxX([tabStripView_ frame]) - [self leadingIndentForControls];
+    [customWindowControls_ setFrame:frame];
+  }
   if (![permanentSubviews_ containsObject:customWindowControls_]) {
     [self addSubviewToPermanentList:customWindowControls_];
     [self regenerateSubviewList];
@@ -2299,101 +2349,69 @@ NSImage* Overlay(NSImage* ground, NSImage* overlay, CGFloat alpha) {
   [customWindowControls_ setMouseInside:NO];
 }
 
-// Gets the tab and the media state to check whether the window
-// media state should be updated or not. If the tab media state is
-// AUDIO_PLAYING, the window media state should be set to AUDIO_PLAYING.
-// If the tab media state is AUDIO_MUTING, this method would check if the
+// Gets the tab and the alert state to check whether the window
+// alert state should be updated or not. If the tab alert state is
+// AUDIO_PLAYING, the window alert state should be set to AUDIO_PLAYING.
+// If the tab alert state is AUDIO_MUTING, this method would check if the
 // window has no other tab with state AUDIO_PLAYING, then the window
-// media state will be set to AUDIO_MUTING. If the tab media state is NONE,
+// alert state will be set to AUDIO_MUTING. If the tab alert state is NONE,
 // this method checks if the window has no playing or muting tab, then window
-// media state will be set as NONE.
-- (void)updateWindowMediaState:(TabMediaState)mediaState
+// alert state will be set as NONE.
+- (void)updateWindowAlertState:(TabAlertState)alertState
                 forWebContents:(content::WebContents*)selected {
   NSWindow* window = [tabStripView_ window];
   BrowserWindowController* windowController =
       [BrowserWindowController browserWindowControllerForWindow:window];
-  if (mediaState == TAB_MEDIA_STATE_NONE) {
+  if (alertState == TabAlertState::NONE) {
     if (![self doesAnyOtherWebContents:selected
-                        haveMediaState:TAB_MEDIA_STATE_AUDIO_PLAYING] &&
+                        haveAlertState:TabAlertState::AUDIO_PLAYING] &&
         ![self doesAnyOtherWebContents:selected
-                        haveMediaState:TAB_MEDIA_STATE_AUDIO_MUTING]) {
-      [windowController setMediaState:TAB_MEDIA_STATE_NONE];
+                        haveAlertState:TabAlertState::AUDIO_MUTING]) {
+      [windowController setAlertState:TabAlertState::NONE];
     } else if ([self doesAnyOtherWebContents:selected
-                              haveMediaState:TAB_MEDIA_STATE_AUDIO_MUTING]) {
-      [windowController setMediaState:TAB_MEDIA_STATE_AUDIO_MUTING];
+                              haveAlertState:TabAlertState::AUDIO_MUTING]) {
+      [windowController setAlertState:TabAlertState::AUDIO_MUTING];
     }
-  } else if (mediaState == TAB_MEDIA_STATE_AUDIO_MUTING) {
+  } else if (alertState == TabAlertState::AUDIO_MUTING) {
     if (![self doesAnyOtherWebContents:selected
-                        haveMediaState:TAB_MEDIA_STATE_AUDIO_PLAYING]) {
-      [windowController setMediaState:TAB_MEDIA_STATE_AUDIO_MUTING];
+                        haveAlertState:TabAlertState::AUDIO_PLAYING]) {
+      [windowController setAlertState:TabAlertState::AUDIO_MUTING];
     }
   } else {
-    [windowController setMediaState:mediaState];
+    [windowController setAlertState:alertState];
   }
 }
 
-// Checks if tabs (excluding selected) has media state equals to the second
+// Checks if tabs (excluding selected) has alert state equals to the second
 // parameter. It returns YES when it finds the first tab with the criterion.
 - (BOOL)doesAnyOtherWebContents:(content::WebContents*)selected
-                 haveMediaState:(TabMediaState)state {
+                 haveAlertState:(TabAlertState)state {
   const int existingTabCount = tabStripModel_->count();
   for (int i = 0; i < existingTabCount; ++i) {
     content::WebContents* currentContents = tabStripModel_->GetWebContentsAt(i);
     if (selected == currentContents)
       continue;
-    TabMediaState currentMediaStateForContents =
-        [self mediaStateForContents:currentContents];
-    if (currentMediaStateForContents == state)
+    TabAlertState currentAlertStateForContents =
+        [self alertStateForContents:currentContents];
+    if (currentAlertStateForContents == state)
       return YES;
   }
   return NO;
 }
 
-- (TabMediaState)mediaStateForContents:(content::WebContents*)contents {
-  return chrome::GetTabMediaStateForContents(contents);
+- (TabAlertState)alertStateForContents:(content::WebContents*)contents {
+  return chrome::GetTabAlertStateForContents(contents);
 }
 
 - (void)themeDidChangeNotification:(NSNotification*)notification {
-  [self setNewTabImages];
+  [newTabButton_ setImages];
+  for (int i = 0; i < tabStripModel_->count(); i++) {
+    [self updateIconsForContents:tabStripModel_->GetWebContentsAt(i) atIndex:i];
+  }
 }
 
-- (void)setNewTabImages {
-  ThemeService *theme =
-      static_cast<ThemeService*>([[tabStripView_ window] themeProvider]);
-  if (!theme)
-    return;
-
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-  NSImage* mask = rb.GetNativeImageNamed(IDR_NEWTAB_BUTTON_MASK).ToNSImage();
-  NSImage* normal = rb.GetNativeImageNamed(IDR_NEWTAB_BUTTON).ToNSImage();
-  NSImage* hover = rb.GetNativeImageNamed(IDR_NEWTAB_BUTTON_H).ToNSImage();
-  NSImage* pressed = rb.GetNativeImageNamed(IDR_NEWTAB_BUTTON_P).ToNSImage();
-
-  NSImage* foreground = ApplyMask(
-      theme->GetNSImageNamed(IDR_THEME_TAB_BACKGROUND), mask);
-
-  [[newTabButton_ cell] setImage:Overlay(foreground, normal, 1.0)
-                  forButtonState:image_button_cell::kDefaultState];
-  [[newTabButton_ cell] setImage:Overlay(foreground, hover, 1.0)
-                  forButtonState:image_button_cell::kHoverState];
-  [[newTabButton_ cell] setImage:Overlay(foreground, pressed, 1.0)
-                    forButtonState:image_button_cell::kPressedState];
-
-  // IDR_THEME_TAB_BACKGROUND_INACTIVE is only used with the default theme.
-  if (theme->UsingDefaultTheme()) {
-    const CGFloat alpha = tabs::kImageNoFocusAlpha;
-    NSImage* background = ApplyMask(
-        theme->GetNSImageNamed(IDR_THEME_TAB_BACKGROUND_INACTIVE), mask);
-    [[newTabButton_ cell] setImage:Overlay(background, normal, alpha)
-                    forButtonState:image_button_cell::kDefaultStateBackground];
-    [[newTabButton_ cell] setImage:Overlay(background, hover, alpha)
-                    forButtonState:image_button_cell::kHoverStateBackground];
-  } else {
-    [[newTabButton_ cell] setImage:nil
-                    forButtonState:image_button_cell::kDefaultStateBackground];
-    [[newTabButton_ cell] setImage:nil
-                    forButtonState:image_button_cell::kHoverStateBackground];
-  }
+- (void)setVisualEffectsDisabledForFullscreen:(BOOL)fullscreen {
+  [tabStripView_ setVisualEffectsDisabledForFullscreen:fullscreen];
 }
 
 @end

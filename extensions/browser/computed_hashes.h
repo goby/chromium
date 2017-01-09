@@ -5,11 +5,13 @@
 #ifndef EXTENSIONS_BROWSER_COMPUTED_HASHES_H_
 #define EXTENSIONS_BROWSER_COMPUTED_HASHES_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 
 namespace base {
 class FilePath;
@@ -57,7 +59,7 @@ class ComputedHashes {
    private:
     // Each element of this list contains the path and block hashes for one
     // file.
-    scoped_ptr<base::ListValue> file_list_;
+    std::unique_ptr<base::ListValue> file_list_;
   };
 
   // Computes the SHA256 hash of each |block_size| chunk in |contents|, placing

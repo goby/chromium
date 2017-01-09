@@ -36,6 +36,7 @@ _log = logging.getLogger(__name__)
 
 
 class MockProcess(object):
+
     def __init__(self, stdout='MOCK STDOUT\n', stderr=''):
         self.pid = 42
         self.stdout = StringIO.StringIO(stdout)
@@ -52,7 +53,11 @@ class MockProcess(object):
             return None
         return self.returncode
 
-# FIXME: This should be unified with MockExecutive2
+    def communicate(self, *_):
+        return (self.stdout.getvalue(), self.stderr.getvalue())
+
+
+# FIXME: This should be unified with MockExecutive2 (http://crbug.com/626115).
 class MockExecutive(object):
     PIPE = "MOCK PIPE"
     STDOUT = "MOCK STDOUT"
@@ -69,8 +74,9 @@ class MockExecutive(object):
         self._should_return_zero_when_run = should_return_zero_when_run or set()
         # FIXME: Once executive wraps os.getpid() we can just use a static pid for "this" process.
         self._running_pids = {'test-webkitpy': os.getpid()}
-        self._proc = None
         self.calls = []
+        self._output = "MOCK output of child process"
+        self._proc = None
 
     def check_running_pid(self, pid):
         return pid in self._running_pids.values()
@@ -81,7 +87,7 @@ class MockExecutive(object):
             if process_name_filter(process_name):
                 running_pids.append(process_pid)
 
-        _log.info("MOCK running_pids: %s" % running_pids)
+        _log.info("MOCK running_pids: %s", running_pids)
         return running_pids
 
     def command_for_printing(self, args):
@@ -92,6 +98,9 @@ class MockExecutive(object):
                     args,
                     cwd=None,
                     input=None,
+                    # pylint: disable=W0613
+                    # unused argument
+                    timeout_seconds=None,
                     error_handler=None,
                     return_exit_code=False,
                     return_stderr=True,
@@ -101,7 +110,7 @@ class MockExecutive(object):
 
         self.calls.append(args)
 
-        assert(isinstance(args, list) or isinstance(args, tuple))
+        assert isinstance(args, list) or isinstance(args, tuple)
         if self._should_log:
             env_string = ""
             if env:
@@ -109,19 +118,18 @@ class MockExecutive(object):
             input_string = ""
             if input:
                 input_string = ", input=%s" % input
-            _log.info("MOCK run_command: %s, cwd=%s%s%s" % (args, cwd, env_string, input_string))
-        output = "MOCK output of child process"
+            _log.info("MOCK run_command: %s, cwd=%s%s%s", args, cwd, env_string, input_string)
 
         if self._should_throw_when_run.intersection(args):
             raise ScriptError("Exception for %s" % args, output="MOCK command output")
 
         if self._should_throw:
-            raise ScriptError("MOCK ScriptError", output=output)
+            raise ScriptError("MOCK ScriptError", output=self._output)
 
         if return_exit_code and self._should_return_zero_when_run.intersection(args):
             return 0
 
-        return output
+        return self._output
 
     def cpu_count(self):
         return 2
@@ -133,6 +141,7 @@ class MockExecutive(object):
         pass
 
     def popen(self, args, cwd=None, env=None, **kwargs):
+        assert all(isinstance(arg, basestring) for arg in args)
         self.calls.append(args)
         if self._should_log:
             cwd_string = ""
@@ -141,14 +150,15 @@ class MockExecutive(object):
             env_string = ""
             if env:
                 env_string = ", env=%s" % env
-            _log.info("MOCK popen: %s%s%s" % (args, cwd_string, env_string))
+            _log.info("MOCK popen: %s%s%s", args, cwd_string, env_string)
         if not self._proc:
-            self._proc = MockProcess()
+            self._proc = MockProcess(self._output)
         return self._proc
 
     def call(self, args, **kwargs):
+        assert all(isinstance(arg, basestring) for arg in args)
         self.calls.append(args)
-        _log.info('Mock call: %s' % args)
+        _log.info('Mock call: %s', args)
 
     def run_in_parallel(self, commands):
         assert len(commands)
@@ -156,6 +166,7 @@ class MockExecutive(object):
         num_previous_calls = len(self.calls)
         command_outputs = []
         for cmd_line, cwd in commands:
+            assert all(isinstance(arg, basestring) for arg in cmd_line)
             command_outputs.append([0, self.run_command(cmd_line, cwd=cwd), ''])
 
         new_calls = self.calls[num_previous_calls:]
@@ -166,17 +177,20 @@ class MockExecutive(object):
     def map(self, thunk, arglist, processes=None):
         return map(thunk, arglist)
 
+    def process_dump(self):
+        return []
+
 
 class MockExecutive2(MockExecutive):
     """MockExecutive2 is like MockExecutive except it doesn't log anything."""
 
     def __init__(self, output='', exit_code=0, exception=None, run_command_fn=None, stderr=''):
+        super(MockExecutive2, self).__init__()
         self._output = output
         self._stderr = stderr
         self._exit_code = exit_code
         self._exception = exception
         self._run_command_fn = run_command_fn
-        self.calls = []
 
     def run_command(self,
                     args,
@@ -189,7 +203,8 @@ class MockExecutive2(MockExecutive):
                     env=None,
                     debug_logging=False):
         self.calls.append(args)
-        assert(isinstance(args, list) or isinstance(args, tuple))
+        assert isinstance(args, list) or isinstance(args, tuple)
+        assert all(isinstance(arg, basestring) for arg in args)
         if self._exception:
             raise self._exception  # pylint: disable=E0702
         if self._run_command_fn:

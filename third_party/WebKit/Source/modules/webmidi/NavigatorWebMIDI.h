@@ -41,22 +41,25 @@ namespace blink {
 
 class Navigator;
 
-class NavigatorWebMIDI final : public GarbageCollectedFinalized<NavigatorWebMIDI>, public HeapSupplement<Navigator>, public DOMWindowProperty {
-    USING_GARBAGE_COLLECTED_MIXIN(NavigatorWebMIDI);
-public:
-    static NavigatorWebMIDI& from(Navigator&);
-    virtual ~NavigatorWebMIDI();
+class NavigatorWebMIDI final : public GarbageCollected<NavigatorWebMIDI>,
+                               public Supplement<Navigator>,
+                               public DOMWindowProperty {
+  USING_GARBAGE_COLLECTED_MIXIN(NavigatorWebMIDI);
 
-    static ScriptPromise requestMIDIAccess(ScriptState*, Navigator&, const MIDIOptions&);
-    ScriptPromise requestMIDIAccess(ScriptState*, const MIDIOptions&);
+ public:
+  static NavigatorWebMIDI& from(Navigator&);
+  static ScriptPromise requestMIDIAccess(ScriptState*,
+                                         Navigator&,
+                                         const MIDIOptions&);
+  ScriptPromise requestMIDIAccess(ScriptState*, const MIDIOptions&);
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    explicit NavigatorWebMIDI(LocalFrame*);
-    static const char* supplementName();
+ private:
+  explicit NavigatorWebMIDI(LocalFrame*);
+  static const char* supplementName();
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NavigatorWebMIDI_h
+#endif  // NavigatorWebMIDI_h

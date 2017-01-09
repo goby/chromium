@@ -14,12 +14,13 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromeos/network/onc/onc_test_utils.h"
 #include "components/onc/onc_constants.h"
 #include "crypto/scoped_test_nss_db.h"
 #include "net/base/crypto_module.h"
+#include "net/base/hash_value.h"
 #include "net/cert/cert_type.h"
 #include "net/cert/nss_cert_database_chromeos.h"
 #include "net/cert/x509_certificate.h"
@@ -99,9 +100,9 @@ class ONCCertificateImporterImplTest : public testing::Test {
 
   void AddCertificatesFromFile(const std::string& filename,
                                bool expected_success) {
-    scoped_ptr<base::DictionaryValue> onc =
+    std::unique_ptr<base::DictionaryValue> onc =
         test_utils::ReadTestDictionary(filename);
-    scoped_ptr<base::Value> certificates_value;
+    std::unique_ptr<base::Value> certificates_value;
     base::ListValue* certificates = NULL;
     onc->RemoveWithoutPathExpansion(::onc::toplevel_config::kCertificates,
                                     &certificates_value);
@@ -153,9 +154,9 @@ class ONCCertificateImporterImplTest : public testing::Test {
   crypto::ScopedTestNSSDB private_nssdb_;
 
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  scoped_ptr<base::ThreadTaskRunnerHandle> thread_task_runner_handle_;
-  scoped_ptr<net::NSSCertDatabaseChromeOS> test_nssdb_;
-  scoped_ptr<base::ListValue> onc_certificates_;
+  std::unique_ptr<base::ThreadTaskRunnerHandle> thread_task_runner_handle_;
+  std::unique_ptr<net::NSSCertDatabaseChromeOS> test_nssdb_;
+  std::unique_ptr<base::ListValue> onc_certificates_;
   // List of certs in the nssdb's public slot.
   net::CertificateList public_list_;
   // List of certs in the nssdb's "private" slot.
@@ -182,8 +183,15 @@ class ONCCertificateImporterImplTest : public testing::Test {
     }
     CERT_DestroyCertList(cert_list);
 
-    // Sort the result so that test comparisons can be deterministic.
-    std::sort(result.begin(), result.end(), net::X509Certificate::LessThan());
+    std::sort(result.begin(), result.end(),
+              [](const scoped_refptr<net::X509Certificate>& lhs,
+                 const scoped_refptr<net::X509Certificate>& rhs) {
+                return net::SHA256HashValueLessThan()(
+                    net::X509Certificate::CalculateFingerprint256(
+                        lhs->os_cert_handle()),
+                    net::X509Certificate::CalculateFingerprint256(
+                        rhs->os_cert_handle()));
+              });
     return result;
   }
 };

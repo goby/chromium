@@ -4,6 +4,7 @@
     <title>Test PeriodicWave Normalization</title>
     <script src="../resources/js-test.js"></script>
     <script src="resources/compatibility.js"></script>
+    <script src="resources/audit-util.js"></script>
     <script src="resources/audio-testing.js"></script>
   </head>
 
@@ -13,7 +14,7 @@
       window.jsTestIsAsync = true;
 
       var sampleRate = 48000;
-      var renderFrames = sampleRate;
+      var renderFrames = 6000;
       var context;
       var audit = Audit.createTaskRunner();
 

@@ -6,18 +6,20 @@ package org.chromium.chrome.browser.infobar;
 
 import android.content.Context;
 import android.view.Gravity;
-import android.view.MotionEvent;
-import android.view.ViewGroup;
+import android.view.View;
 import android.widget.FrameLayout;
 
 import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.banners.SwipableOverlayView;
+import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabContentViewParent;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.ArrayList;
@@ -35,6 +37,9 @@ public class InfoBarContainer extends SwipableOverlayView {
     /** Top margin, including the toolbar and tabstrip height and 48dp of web contents. */
     private static final int TOP_MARGIN_PHONE_DP = 104;
     private static final int TOP_MARGIN_TABLET_DP = 144;
+
+    /** Length of the animation to fade the InfoBarContainer back into View. */
+    private static final long REATTACH_FADE_IN_MS = 250;
 
     /** Whether or not the InfoBarContainer is allowed to hide when the user scrolls. */
     private static boolean sIsAllowedToAutoHide = true;
@@ -72,14 +77,28 @@ public class InfoBarContainer extends SwipableOverlayView {
          * @param isLast Whether the infobar container is going to be empty
          */
         void onRemoveInfoBar(InfoBarContainer container, InfoBar infoBar, boolean isLast);
+
+        /**
+         * Called when the InfobarContainer is attached to the window.
+         * @param hasInfobars True if infobar container has infobars to show.
+         */
+        void onInfoBarContainerAttachedToWindow(boolean hasInfobars);
     }
+
+    /** Resets the state of the InfoBarContainer when the user navigates. */
+    private final TabObserver mTabObserver = new EmptyTabObserver() {
+        @Override
+        public void onDidNavigateMainFrame(Tab tab, String url, String baseUrl,
+                boolean isNavigationToDifferentPage, boolean isFragmentNavigation,
+                int statusCode) {
+            setIsObscuredByOtherView(false);
+        }
+    };
 
     private final InfoBarContainerLayout mLayout;
 
     /** Native InfoBarContainer pointer which will be set by nativeInit(). */
     private final long mNativeInfoBarContainer;
-
-    private final Context mContext;
 
     /** The list of all InfoBars in this container, regardless of whether they've been shown yet. */
     private final ArrayList<InfoBar> mInfoBars = new ArrayList<InfoBar>();
@@ -91,15 +110,17 @@ public class InfoBarContainer extends SwipableOverlayView {
     private int mTabId;
 
     /** Parent view that contains the InfoBarContainerLayout. */
-    private ViewGroup mParentView;
+    private TabContentViewParent mParentView;
+
+    /** Whether or not another View is occupying the same space as this one. */
+    private boolean mIsObscured;
 
     private final ObserverList<InfoBarContainerObserver> mObservers =
             new ObserverList<InfoBarContainerObserver>();
 
-    public InfoBarContainer(Context context, int tabId, ViewGroup parentView, Tab tab) {
+    public InfoBarContainer(Context context, int tabId, TabContentViewParent parentView, Tab tab) {
         super(context, null);
-        tab.addObserver(getTabObserver());
-        setIsSwipable(false);
+        tab.addObserver(mTabObserver);
 
         // TODO(newt): move this workaround into the infobar views if/when they're scrollable.
         // Workaround for http://crbug.com/407149. See explanation in onMeasure() below.
@@ -112,12 +133,12 @@ public class InfoBarContainer extends SwipableOverlayView {
         lp.topMargin = Math.round(topMarginDp * getResources().getDisplayMetrics().density);
         setLayoutParams(lp);
 
-        mContext = context;
         mTabId = tabId;
         mParentView = parentView;
 
         mLayout = new InfoBarContainerLayout(context);
-        addView(mLayout);
+        addView(mLayout, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
 
         // Chromium's InfoBarContainer may add an InfoBar immediately during this initialization
         // call, so make sure everything in the InfoBarContainer is completely ready beforehand.
@@ -169,7 +190,7 @@ public class InfoBarContainer extends SwipableOverlayView {
      * Called when the parent {@link android.view.ViewGroup} has changed for
      * this container.
      */
-    public void onParentViewChanged(int tabId, ViewGroup parentView) {
+    public void onParentViewChanged(int tabId, TabContentViewParent parentView) {
         mTabId = tabId;
         mParentView = parentView;
 
@@ -177,22 +198,12 @@ public class InfoBarContainer extends SwipableOverlayView {
         addToParentView();
     }
 
-    @Override
-    protected TabObserver createTabObserver() {
-        return new SwipableOverlayViewTabObserver() {
-            @Override
-            public void onPageLoadStarted(Tab tab, String url) {
-                onPageStarted();
-            }
-        };
-    }
-
     /**
      * Adds an InfoBar to the view hierarchy.
      * @param infoBar InfoBar to add to the View hierarchy.
      */
     @CalledByNative
-    public void addInfoBar(InfoBar infoBar) {
+    private void addInfoBar(InfoBar infoBar) {
         assert !mDestroyed;
         if (infoBar == null) {
             return;
@@ -212,7 +223,7 @@ public class InfoBarContainer extends SwipableOverlayView {
         // notify it's been added, as tests rely on this notification but expects the infobar view
         // to be available when they get the notification.
         mInfoBars.add(infoBar);
-        infoBar.setContext(mContext);
+        infoBar.setContext(getContext());
         infoBar.setInfoBarContainer(this);
         infoBar.createView();
 
@@ -229,10 +240,11 @@ public class InfoBarContainer extends SwipableOverlayView {
     }
 
     /**
-     * Removes an InfoBar from the view hierarchy.
+     * Called by {@link InfoBar} to remove itself from the view hierarchy.
+     *
      * @param infoBar InfoBar to remove from the View hierarchy.
      */
-    public void removeInfoBar(InfoBar infoBar) {
+    void removeInfoBar(InfoBar infoBar) {
         assert !mDestroyed;
 
         if (!mInfoBars.remove(infoBar)) {
@@ -256,21 +268,6 @@ public class InfoBarContainer extends SwipableOverlayView {
         return mDestroyed;
     }
 
-    // Called by the tab when it has started loading a new page.
-    public void onPageStarted() {
-        ArrayList<InfoBar> barsToRemove = new ArrayList<>();
-
-        for (InfoBar infoBar : mInfoBars) {
-            if (infoBar.shouldExpire()) {
-                barsToRemove.add(infoBar);
-            }
-        }
-
-        for (InfoBar infoBar : barsToRemove) {
-            infoBar.dismissJavaOnlyInfoBar();
-        }
-    }
-
     public void destroy() {
         mDestroyed = true;
         if (mNativeInfoBarContainer != 0) {
@@ -282,8 +279,42 @@ public class InfoBarContainer extends SwipableOverlayView {
      * @return all of the InfoBars held in this container.
      */
     @VisibleForTesting
-    public ArrayList<InfoBar> getInfoBars() {
+    public ArrayList<InfoBar> getInfoBarsForTesting() {
         return mInfoBars;
+    }
+
+    /**
+     * @return True if the container has any InfoBars.
+     */
+    @CalledByNative
+    public boolean hasInfoBars() {
+        return !mInfoBars.isEmpty();
+    }
+
+    /**
+     * @return Pointer to the native InfoBarAndroid object which is currently at the top of the
+     *         infobar stack, or 0 if there are no infobars.
+     */
+    @CalledByNative
+    private long getTopNativeInfoBarPtr() {
+        if (!hasInfoBars()) return 0;
+        return mInfoBars.get(0).getNativeInfoBarPtr();
+    }
+
+    /**
+     * Tells this class that a View with higher priority is occupying the same space.
+     *
+     * Causes this View to hide itself until the obscuring View goes away.
+     *
+     * @param isObscured Whether this View is obscured by another one.
+     */
+    public void setIsObscuredByOtherView(boolean isObscured) {
+        mIsObscured = isObscured;
+        if (isObscured) {
+            setVisibility(View.GONE);
+        } else {
+            setVisibility(View.VISIBLE);
+        }
     }
 
     /**
@@ -301,18 +332,36 @@ public class InfoBarContainer extends SwipableOverlayView {
     }
 
     @Override
-    protected void onViewSwipedAway() {
-        assert false;
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (!mIsObscured) {
+            setVisibility(VISIBLE);
+            setAlpha(0f);
+            animate().alpha(1f).setDuration(REATTACH_FADE_IN_MS);
+        }
+        // Notify observers that the container has attached to the window.
+        for (InfoBarContainerObserver observer : mObservers) {
+            observer.onInfoBarContainerAttachedToWindow(!mInfoBars.isEmpty());
+        }
     }
 
     @Override
-    protected void onViewClicked() {
-        assert false;
-    }
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        // Hide the View when the keyboard is showing.
+        boolean isShowing = (getVisibility() == View.VISIBLE);
+        if (UiUtils.isKeyboardShowing(getContext(), InfoBarContainer.this)) {
+            if (isShowing) {
+                // Set to invisible (instead of gone) so that onLayout() will be called when the
+                // keyboard is dismissed.
+                setVisibility(View.INVISIBLE);
+            }
+        } else {
+            if (!isShowing && !mIsObscured) {
+                setVisibility(View.VISIBLE);
+            }
+        }
 
-    @Override
-    protected void onViewPressed(MotionEvent event) {
-        assert false;
+        super.onLayout(changed, l, t, r, b);
     }
 
     private native long nativeInit();

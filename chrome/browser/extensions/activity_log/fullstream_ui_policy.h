@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_ACTIVITY_LOG_FULLSTREAM_UI_POLICY_H_
 #define CHROME_BROWSER_EXTENSIONS_ACTIVITY_LOG_FULLSTREAM_UI_POLICY_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "chrome/browser/extensions/activity_log/activity_database.h"
@@ -35,13 +37,13 @@ class FullStreamUIPolicy : public ActivityLogDatabasePolicy {
       const std::string& page_url,
       const std::string& arg_url,
       const int days_ago,
-      const base::Callback<void(scoped_ptr<Action::ActionVector>)>& callback)
-      override;
+      const base::Callback<void(std::unique_ptr<Action::ActionVector>)>&
+          callback) override;
 
   void Close() override;
 
   // Remove the actions stored for this policy according to the passed IDs.
-  void RemoveActions(const std::vector<int64>& action_ids) override;
+  void RemoveActions(const std::vector<int64_t>& action_ids) override;
 
   // Clean the URL data stored for this policy.
   void RemoveURLs(const std::vector<GURL>& restrict_urls) override;
@@ -78,7 +80,7 @@ class FullStreamUIPolicy : public ActivityLogDatabasePolicy {
 
   // The implementation of RemoveActions; this must only run on the database
   // thread.
-  void DoRemoveActions(const std::vector<int64>& action_ids);
+  void DoRemoveActions(const std::vector<int64_t>& action_ids);
 
   // The implementation of RemoveURLs; this must only run on the database
   // thread.
@@ -103,7 +105,7 @@ class FullStreamUIPolicy : public ActivityLogDatabasePolicy {
 
   // Internal method to read data from the database; called on the database
   // thread.
-  scoped_ptr<Action::ActionVector> DoReadFilteredData(
+  std::unique_ptr<Action::ActionVector> DoReadFilteredData(
       const std::string& extension_id,
       const Action::ActionType type,
       const std::string& api_name,

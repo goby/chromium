@@ -4,12 +4,13 @@
 
 #include "base/metrics/histogram_base.h"
 
-#include <climits>
+#include <limits.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/sparse_histogram.h"
@@ -33,9 +34,8 @@ std::string HistogramTypeToString(HistogramType type) {
       return "CUSTOM_HISTOGRAM";
     case SPARSE_HISTOGRAM:
       return "SPARSE_HISTOGRAM";
-    default:
-      NOTREACHED();
   }
+  NOTREACHED();
   return "UNKNOWN";
 }
 
@@ -61,6 +61,7 @@ HistogramBase* DeserializeHistogramInfo(PickleIterator* iter) {
 }
 
 const HistogramBase::Sample HistogramBase::kSampleType_MAX = INT_MAX;
+HistogramBase* HistogramBase::report_histogram_ = nullptr;
 
 HistogramBase::HistogramBase(const std::string& name)
     : histogram_name_(name),
@@ -72,12 +73,12 @@ void HistogramBase::CheckName(const StringPiece& name) const {
   DCHECK_EQ(histogram_name(), name);
 }
 
-void HistogramBase::SetFlags(int32 flags) {
+void HistogramBase::SetFlags(int32_t flags) {
   HistogramBase::Count old_flags = subtle::NoBarrier_Load(&flags_);
   subtle::NoBarrier_Store(&flags_, old_flags | flags);
 }
 
-void HistogramBase::ClearFlags(int32 flags) {
+void HistogramBase::ClearFlags(int32_t flags) {
   HistogramBase::Count old_flags = subtle::NoBarrier_Load(&flags_);
   subtle::NoBarrier_Store(&flags_, old_flags & ~flags);
 }
@@ -96,17 +97,17 @@ bool HistogramBase::SerializeInfo(Pickle* pickle) const {
   return SerializeInfoImpl(pickle);
 }
 
-int HistogramBase::FindCorruption(const HistogramSamples& samples) const {
+uint32_t HistogramBase::FindCorruption(const HistogramSamples& samples) const {
   // Not supported by default.
   return NO_INCONSISTENCIES;
 }
 
 void HistogramBase::WriteJSON(std::string* output) const {
   Count count;
-  int64 sum;
-  scoped_ptr<ListValue> buckets(new ListValue());
+  int64_t sum;
+  std::unique_ptr<ListValue> buckets(new ListValue());
   GetCountAndBucketData(&count, &sum, buckets.get());
-  scoped_ptr<DictionaryValue> parameters(new DictionaryValue());
+  std::unique_ptr<DictionaryValue> parameters(new DictionaryValue());
   GetParameters(parameters.get());
 
   JSONStringValueSerializer serializer(output);
@@ -117,8 +118,32 @@ void HistogramBase::WriteJSON(std::string* output) const {
   root.SetInteger("flags", flags());
   root.Set("params", std::move(parameters));
   root.Set("buckets", std::move(buckets));
-  root.SetInteger("pid", GetCurrentProcId());
+  root.SetInteger("pid", GetUniqueIdForProcess());
   serializer.Serialize(root);
+}
+
+// static
+void HistogramBase::EnableActivityReportHistogram(
+    const std::string& process_type) {
+  DCHECK(!report_histogram_);
+  size_t existing = StatisticsRecorder::GetHistogramCount();
+  if (existing != 0) {
+    DVLOG(1) << existing
+             << " histograms were created before reporting was enabled.";
+  }
+
+  std::string name =
+      "UMA.Histograms.Activity" +
+      (process_type.empty() ? process_type : "." + process_type);
+
+  // Calling FactoryGet() here rather than using a histogram-macro works
+  // around some problems with tests that could end up seeing the results
+  // histogram when not expected due to a bad interaction between
+  // HistogramTester and StatisticsRecorder.
+  report_histogram_ = LinearHistogram::FactoryGet(
+      name, 1, HISTOGRAM_REPORT_MAX, HISTOGRAM_REPORT_MAX + 1,
+      kUmaTargetedHistogramFlag);
+  report_histogram_->Add(HISTOGRAM_REPORT_CREATED);
 }
 
 void HistogramBase::FindAndRunCallback(HistogramBase::Sample sample) const {
@@ -148,18 +173,56 @@ void HistogramBase::WriteAsciiBucketGraph(double current_size,
 
 const std::string HistogramBase::GetSimpleAsciiBucketRange(
     Sample sample) const {
-  std::string result;
-  if (kHexRangePrintingFlag & flags())
-    StringAppendF(&result, "%#x", sample);
-  else
-    StringAppendF(&result, "%d", sample);
-  return result;
+  return StringPrintf("%d", sample);
 }
 
 void HistogramBase::WriteAsciiBucketValue(Count current,
                                           double scaled_sum,
                                           std::string* output) const {
   StringAppendF(output, " (%d = %3.1f%%)", current, current/scaled_sum);
+}
+
+// static
+void HistogramBase::ReportHistogramActivity(const HistogramBase& histogram,
+                                            ReportActivity activity) {
+  if (!report_histogram_)
+    return;
+
+  const int32_t flags = histogram.flags_;
+  HistogramReport report_type = HISTOGRAM_REPORT_MAX;
+  switch (activity) {
+    case HISTOGRAM_CREATED:
+      report_histogram_->Add(HISTOGRAM_REPORT_HISTOGRAM_CREATED);
+      switch (histogram.GetHistogramType()) {
+        case HISTOGRAM:
+          report_type = HISTOGRAM_REPORT_TYPE_LOGARITHMIC;
+          break;
+        case LINEAR_HISTOGRAM:
+          report_type = HISTOGRAM_REPORT_TYPE_LINEAR;
+          break;
+        case BOOLEAN_HISTOGRAM:
+          report_type = HISTOGRAM_REPORT_TYPE_BOOLEAN;
+          break;
+        case CUSTOM_HISTOGRAM:
+          report_type = HISTOGRAM_REPORT_TYPE_CUSTOM;
+          break;
+        case SPARSE_HISTOGRAM:
+          report_type = HISTOGRAM_REPORT_TYPE_SPARSE;
+          break;
+      }
+      report_histogram_->Add(report_type);
+      if (flags & kIsPersistent)
+        report_histogram_->Add(HISTOGRAM_REPORT_FLAG_PERSISTENT);
+      if ((flags & kUmaStabilityHistogramFlag) == kUmaStabilityHistogramFlag)
+        report_histogram_->Add(HISTOGRAM_REPORT_FLAG_UMA_STABILITY);
+      else if (flags & kUmaTargetedHistogramFlag)
+        report_histogram_->Add(HISTOGRAM_REPORT_FLAG_UMA_TARGETED);
+      break;
+
+    case HISTOGRAM_LOOKUP:
+      report_histogram_->Add(HISTOGRAM_REPORT_HISTOGRAM_LOOKUP);
+      break;
+  }
 }
 
 }  // namespace base

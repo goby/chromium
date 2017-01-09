@@ -8,6 +8,7 @@
 
 #include <string>
 
+#include "base/command_line.h"
 #import "base/mac/mac_util.h"
 #import "base/mac/scoped_sending_event.h"
 #include "base/mac/sdk_forward_declarations.h"
@@ -23,11 +24,13 @@
 #include "content/common/view_messages.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_view_delegate.h"
+#include "content/public/common/content_switches.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #include "ui/base/clipboard/custom_data_helper.h"
 #import "ui/base/cocoa/focus_tracker.h"
 #include "ui/base/dragdrop/cocoa_dnd_util.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 
 using blink::WebDragOperation;
@@ -37,22 +40,24 @@ using content::PopupMenuHelper;
 using content::RenderViewHostFactory;
 using content::RenderWidgetHostView;
 using content::RenderWidgetHostViewMac;
+using content::ScreenInfo;
 using content::WebContents;
 using content::WebContentsImpl;
 using content::WebContentsViewMac;
 
 // Ensure that the blink::WebDragOperation enum values stay in sync with
 // NSDragOperation constants, since the code below static_casts between 'em.
-#define STATIC_ASSERT_MATCHING_ENUM(name) \
-  static_assert(int(NS##name) == int(blink::Web##name), "enum mismatch: " #name)
-STATIC_ASSERT_MATCHING_ENUM(DragOperationNone);
-STATIC_ASSERT_MATCHING_ENUM(DragOperationCopy);
-STATIC_ASSERT_MATCHING_ENUM(DragOperationLink);
-STATIC_ASSERT_MATCHING_ENUM(DragOperationGeneric);
-STATIC_ASSERT_MATCHING_ENUM(DragOperationPrivate);
-STATIC_ASSERT_MATCHING_ENUM(DragOperationMove);
-STATIC_ASSERT_MATCHING_ENUM(DragOperationDelete);
-STATIC_ASSERT_MATCHING_ENUM(DragOperationEvery);
+#define STATIC_ASSERT_ENUM(a, b)                            \
+  static_assert(static_cast<int>(a) == static_cast<int>(b), \
+                "enum mismatch: " #a)
+STATIC_ASSERT_ENUM(NSDragOperationNone, blink::WebDragOperationNone);
+STATIC_ASSERT_ENUM(NSDragOperationCopy, blink::WebDragOperationCopy);
+STATIC_ASSERT_ENUM(NSDragOperationLink, blink::WebDragOperationLink);
+STATIC_ASSERT_ENUM(NSDragOperationGeneric, blink::WebDragOperationGeneric);
+STATIC_ASSERT_ENUM(NSDragOperationPrivate, blink::WebDragOperationPrivate);
+STATIC_ASSERT_ENUM(NSDragOperationMove, blink::WebDragOperationMove);
+STATIC_ASSERT_ENUM(NSDragOperationDelete, blink::WebDragOperationDelete);
+STATIC_ASSERT_ENUM(NSDragOperationEvery, blink::WebDragOperationEvery);
 
 @interface WebContentsViewCocoa (Private)
 - (id)initWithWebContentsViewMac:(WebContentsViewMac*)w;
@@ -60,17 +65,47 @@ STATIC_ASSERT_MATCHING_ENUM(DragOperationEvery);
 - (void)setCurrentDragOperation:(NSDragOperation)operation;
 - (DropData*)dropData;
 - (void)startDragWithDropData:(const DropData&)dropData
+                    sourceRWH:(content::RenderWidgetHostImpl*)sourceRWH
             dragOperationMask:(NSDragOperation)operationMask
                         image:(NSImage*)image
                        offset:(NSPoint)offset;
 - (void)cancelDeferredClose;
 - (void)clearWebContentsView;
 - (void)closeTabAfterEvent;
+- (void)updateWebContentsVisibility;
 - (void)viewDidBecomeFirstResponder:(NSNotification*)notification;
 - (content::WebContentsImpl*)webContents;
 @end
 
+namespace {
+
+content::ScreenInfo GetNSViewScreenInfo(NSView* view) {
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(view);
+
+  content::ScreenInfo results;
+  results.device_scale_factor = static_cast<int>(display.device_scale_factor());
+  results.icc_profile = display.icc_profile();
+  results.depth = display.color_depth();
+  results.depth_per_component = display.depth_per_component();
+  results.is_monochrome = display.is_monochrome();
+  results.rect = display.bounds();
+  results.available_rect = display.work_area();
+  results.orientation_angle = display.RotationAsDegree();
+  results.orientation_type =
+      content::RenderWidgetHostViewBase::GetOrientationTypeForDesktop(display);
+
+  return results;
+}
+
+}  // namespace
+
 namespace content {
+
+// static
+void WebContentsView::GetDefaultScreenInfo(ScreenInfo* results) {
+  *results = GetNSViewScreenInfo(nil);
+}
 
 WebContentsView* CreateWebContentsView(
     WebContentsImpl* web_contents,
@@ -113,14 +148,20 @@ gfx::NativeWindow WebContentsViewMac::GetTopLevelNativeWindow() const {
   return window ? window : delegate_->GetNativeWindow();
 }
 
-void WebContentsViewMac::GetContainerBounds(gfx::Rect* out) const {
-  // Convert bounds to window coordinate space.
-  NSRect bounds =
-      [cocoa_view_.get() convertRect:[cocoa_view_.get() bounds] toView:nil];
+void WebContentsViewMac::GetScreenInfo(ScreenInfo* results) const {
+  *results = GetNSViewScreenInfo(GetNativeView());
+}
 
-  // Convert bounds to screen coordinate space.
+void WebContentsViewMac::GetContainerBounds(gfx::Rect* out) const {
   NSWindow* window = [cocoa_view_.get() window];
-  bounds.origin = [window convertBaseToScreen:bounds.origin];
+  NSRect bounds = [cocoa_view_.get() bounds];
+  if (window)  {
+    // Convert bounds to window coordinate space.
+    bounds = [cocoa_view_.get() convertRect:bounds toView:nil];
+
+    // Convert bounds to screen coordinate space.
+    bounds = [window convertRectToScreen:bounds];
+  }
 
   // Flip y to account for screen flip.
   NSScreen* screen = [[NSScreen screens] firstObject];
@@ -134,7 +175,8 @@ void WebContentsViewMac::StartDragging(
     WebDragOperationsMask allowed_operations,
     const gfx::ImageSkia& image,
     const gfx::Vector2d& image_offset,
-    const DragEventSourceInfo& event_info) {
+    const DragEventSourceInfo& event_info,
+    RenderWidgetHostImpl* source_rwh) {
   // By allowing nested tasks, the code below also allows Close(),
   // which would deallocate |this|.  The same problem can occur while
   // processing -sendEvent:, so Close() is deferred in that case.
@@ -150,6 +192,7 @@ void WebContentsViewMac::StartDragging(
   NSPoint offset = NSPointFromCGPoint(
       gfx::PointAtOffsetFromOrigin(image_offset).ToCGPoint());
   [cocoa_view_ startDragWithDropData:drop_data
+                           sourceRWH:source_rwh
                    dragOperationMask:mask
                                image:gfx::NSImageFromImageSkia(image)
                               offset:offset];
@@ -220,8 +263,7 @@ void WebContentsViewMac::UpdateDragCursor(WebDragOperation operation) {
 }
 
 void WebContentsViewMac::GotFocus() {
-  // This is only used in the views FocusManager stuff but it bleeds through
-  // all subclasses. http://crbug.com/21875
+  web_contents_->NotifyWebContentsFocused();
 }
 
 // This is called when the renderer asks us to take focus back (i.e., it has
@@ -465,12 +507,9 @@ void WebContentsViewMac::CloseTab() {
   WebContentsImpl* webContents = [self webContents];
   if (webContents && webContents->GetDelegate()) {
     NSPoint location = [NSEvent mouseLocation];
-    if ([theEvent type] == NSMouseMoved)
-      webContents->GetDelegate()->ContentsMouseEvent(
-          webContents, gfx::Point(location.x, location.y), true);
-    if ([theEvent type] == NSMouseExited)
-      webContents->GetDelegate()->ContentsMouseEvent(
-          webContents, gfx::Point(location.x, location.y), false);
+    webContents->GetDelegate()->ContentsMouseEvent(
+        webContents, gfx::Point(location.x, location.y),
+        [theEvent type] == NSMouseMoved, [theEvent type] == NSMouseExited);
   }
 }
 
@@ -504,26 +543,26 @@ void WebContentsViewMac::CloseTab() {
 }
 
 - (void)startDragWithDropData:(const DropData&)dropData
+                    sourceRWH:(content::RenderWidgetHostImpl*)sourceRWH
             dragOperationMask:(NSDragOperation)operationMask
                         image:(NSImage*)image
                        offset:(NSPoint)offset {
   if (![self webContents])
     return;
   dragSource_.reset([[WebDragSource alloc]
-      initWithContents:[self webContents]
-                  view:self
-              dropData:&dropData
-                 image:image
-                offset:offset
-            pasteboard:[NSPasteboard pasteboardWithName:NSDragPboard]
-     dragOperationMask:operationMask]);
+       initWithContents:[self webContents]
+                   view:self
+               dropData:&dropData
+              sourceRWH:sourceRWH
+                  image:image
+                 offset:offset
+             pasteboard:[NSPasteboard pasteboardWithName:NSDragPboard]
+      dragOperationMask:operationMask]);
   [dragSource_ startDrag];
 }
 
 // NSDraggingSource methods
 
-// Returns what kind of drag operations are available. This is a required
-// method for NSDraggingSource.
 - (NSDragOperation)draggingSourceOperationMaskForLocal:(BOOL)isLocal {
   if (dragSource_)
     return [dragSource_ draggingSourceOperationMaskForLocal:isLocal];
@@ -613,13 +652,29 @@ void WebContentsViewMac::CloseTab() {
       FocusThroughTabTraversal(direction == NSSelectingPrevious);
 }
 
-// When the subviews require a layout, their size should be reset to the size
-// of this view. (It is possible for the size to get out of sync as an
-// optimization in preparation for an upcoming WebContentsView resize.
-// http://crbug.com/264207)
+- (void)updateWebContentsVisibility {
+  WebContentsImpl* webContents = [self webContents];
+  if (!webContents || webContents->IsBeingDestroyed())
+    return;
+
+  const bool viewVisible = [self window] && ![self isHiddenOrHasHiddenAncestor];
+  webContents->UpdateWebContentsVisibility(viewVisible);
+}
+
 - (void)resizeSubviewsWithOldSize:(NSSize)oldBoundsSize {
-  for (NSView* subview in self.subviews)
-    [subview setFrame:self.bounds];
+  // Subviews do not participate in auto layout unless the the size this view
+  // changes. This allows RenderWidgetHostViewMac::SetBounds(..) to select a
+  // size of the subview that differs from its superview in preparation for an
+  // upcoming WebContentsView resize.
+  // See http://crbug.com/264207 and http://crbug.com/655112.
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+  [super setFrameSize:newSize];
+
+  // Perform manual layout of subviews, e.g., when the window size changes.
+  for (NSView* subview in [self subviews])
+    [subview setFrame:[self bounds]];
 }
 
 - (void)viewWillMoveToWindow:(NSWindow*)newWindow {
@@ -628,10 +683,12 @@ void WebContentsViewMac::CloseTab() {
   NSNotificationCenter* notificationCenter =
       [NSNotificationCenter defaultCenter];
 
-  // Occlusion notification APIs are new in Mavericks.
-  bool supportsOcclusionAPIs = base::mac::IsOSMavericksOrLater();
+  // Occlusion is highly undesirable for browser tests, since it will
+  // flakily change test behavior.
+  static bool isDisabled = base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableBackgroundingOccludedWindowsForTesting);
 
-  if (supportsOcclusionAPIs) {
+  if (!isDisabled) {
     if (oldWindow) {
       [notificationCenter
           removeObserver:self
@@ -649,7 +706,6 @@ void WebContentsViewMac::CloseTab() {
 }
 
 - (void)windowChangedOcclusionState:(NSNotification*)notification {
-  DCHECK(base::mac::IsOSMavericksOrLater());
   NSWindow* window = [notification object];
   WebContentsImpl* webContents = [self webContents];
   if (window && webContents && !webContents->IsBeingDestroyed()) {
@@ -659,6 +715,18 @@ void WebContentsViewMac::CloseTab() {
       webContents->WasOccluded();
     }
   }
+}
+
+- (void)viewDidMoveToWindow {
+  [self updateWebContentsVisibility];
+}
+
+- (void)viewDidHide {
+  [self updateWebContentsVisibility];
+}
+
+- (void)viewDidUnhide {
+  [self updateWebContentsVisibility];
 }
 
 @end

@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
 
 #include "base/i18n/number_formatting.h"
 #include "base/i18n/rtl.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/icu_test_util.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/icu/source/i18n/unicode/usearch.h"
 
@@ -16,15 +21,15 @@ namespace {
 
 TEST(NumberFormattingTest, FormatNumber) {
   static const struct {
-    int64 number;
+    int64_t number;
     const char* expected_english;
     const char* expected_german;
   } cases[] = {
     {0, "0", "0"},
     {1024, "1,024", "1.024"},
-    {std::numeric_limits<int64>::max(),
+    {std::numeric_limits<int64_t>::max(),
         "9,223,372,036,854,775,807", "9.223.372.036.854.775.807"},
-    {std::numeric_limits<int64>::min(),
+    {std::numeric_limits<int64_t>::min(),
         "-9,223,372,036,854,775,808", "-9.223.372.036.854.775.808"},
     {-42, "-42", "-42"},
   };
@@ -86,6 +91,42 @@ TEST(NumberFormattingTest, FormatDouble) {
     testing::ResetFormatters();
     EXPECT_EQ(cases[i].expected_german,
               UTF16ToUTF8(FormatDouble(cases[i].number, cases[i].frac_digits)));
+  }
+}
+
+TEST(NumberFormattingTest, FormatPercent) {
+  static const struct {
+    int64_t number;
+    const char* expected_english;
+    const wchar_t* expected_german;   // Note: Space before % isn't \x20.
+    // Note: Eastern Arabic-Indic digits (U+06Fx) for Persian and
+    // Arabic-Indic digits (U+066x) for Arabic.
+    // See http://unicode.org/cldr/trac/ticket/9040 for details.
+    const wchar_t* expected_persian;
+    const wchar_t* expected_arabic;
+  } cases[] = {
+    {0, "0%", L"0\xa0%", L"\x200e\x66a\xa0\x6f0", L"\x660\xa0\x66a\x61c"},
+    {42, "42%", L"42\xa0%", L"\x200e\x66a\xa0\x6f4\x6f2",
+        L"\x664\x662\xa0\x66a\x61c"},
+    {1024, "1,024%", L"1.024\xa0%",
+        L"\x200e\x66a\xa0\x6f1\x66c\x6f0\x6f2\x6f4",
+        L"\x661\x66c\x660\x662\x664\xa0\x66a\x61c"},
+  };
+
+  test::ScopedRestoreICUDefaultLocale restore_locale;
+  for (size_t i = 0; i < arraysize(cases); ++i) {
+    i18n::SetICUDefaultLocale("en");
+    EXPECT_EQ(ASCIIToUTF16(cases[i].expected_english),
+              FormatPercent(cases[i].number));
+    i18n::SetICUDefaultLocale("de");
+    EXPECT_EQ(WideToUTF16(cases[i].expected_german),
+              FormatPercent(cases[i].number));
+    i18n::SetICUDefaultLocale("fa");
+    EXPECT_EQ(WideToUTF16(cases[i].expected_persian),
+              FormatPercent(cases[i].number));
+    i18n::SetICUDefaultLocale("ar");
+    EXPECT_EQ(WideToUTF16(cases[i].expected_arabic),
+              FormatPercent(cases[i].number));
   }
 }
 

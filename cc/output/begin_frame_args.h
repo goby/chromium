@@ -5,6 +5,8 @@
 #ifndef CC_OUTPUT_BEGIN_FRAME_ARGS_H_
 #define CC_OUTPUT_BEGIN_FRAME_ARGS_H_
 
+#include <memory>
+
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
@@ -76,7 +78,7 @@ struct CC_EXPORT BeginFrameArgs {
 
   bool IsValid() const { return interval >= base::TimeDelta(); }
 
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat> AsValue() const;
+  std::unique_ptr<base::trace_event::ConvertableToTraceFormat> AsValue() const;
   void AsValueInto(base::trace_event::TracedValue* dict) const;
 
   base::TimeTicks frame_time;

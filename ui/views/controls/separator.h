@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -37,7 +38,7 @@ class VIEWS_EXPORT Separator : public View {
 
   // Overridden from View:
   gfx::Size GetPreferredSize() const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnPaint(gfx::Canvas* canvas) override;
   const char* GetClassName() const override;
 

@@ -4,14 +4,16 @@
 
 #include "chrome/browser/browsing_data/browsing_data_file_system_helper.h"
 
+#include <memory>
 #include <set>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/features/features.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_quota_util.h"
 #include "storage/common/fileapi/file_system_types.h"
@@ -98,7 +100,7 @@ void BrowsingDataFileSystemHelperImpl::FetchFileSystemInfoInFileThread(
   const storage::FileSystemType types[] = {
     storage::kFileSystemTypeTemporary,
     storage::kFileSystemTypePersistent,
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     storage::kFileSystemTypeSyncable,
 #endif
   };
@@ -116,7 +118,7 @@ void BrowsingDataFileSystemHelperImpl::FetchFileSystemInfoInFileThread(
     for (const GURL& current : origins) {
       if (!BrowsingDataHelper::HasWebScheme(current))
         continue;  // Non-websafe state is not considered browsing data.
-      int64 usage = quota_util->GetOriginUsageOnFileTaskRunner(
+      int64_t usage = quota_util->GetOriginUsageOnFileTaskRunner(
           filesystem_context_.get(), current, type);
       OriginInfoMap::iterator inserted =
           file_system_info_map.insert(
@@ -143,6 +145,9 @@ void BrowsingDataFileSystemHelperImpl::DeleteFileSystemOriginInFileThread(
 BrowsingDataFileSystemHelper::FileSystemInfo::FileSystemInfo(
     const GURL& origin) : origin(origin) {}
 
+BrowsingDataFileSystemHelper::FileSystemInfo::FileSystemInfo(
+    const FileSystemInfo& other) = default;
+
 BrowsingDataFileSystemHelper::FileSystemInfo::~FileSystemInfo() {}
 
 // static
@@ -160,7 +165,7 @@ CannedBrowsingDataFileSystemHelper::~CannedBrowsingDataFileSystemHelper() {}
 void CannedBrowsingDataFileSystemHelper::AddFileSystem(
     const GURL& origin,
     const storage::FileSystemType type,
-    const int64 size) {
+    const int64_t size) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // This canned implementation of AddFileSystem uses an O(n^2) algorithm; which
   // is fine, as it isn't meant for use in a high-volume context. If it turns

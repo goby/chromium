@@ -5,8 +5,12 @@
 #ifndef MEDIA_AUDIO_SOUNDS_WAV_AUDIO_HANDLER_H_
 #define MEDIA_AUDIO_SOUNDS_WAV_AUDIO_HANDLER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "media/base/media_export.h"
@@ -24,7 +28,8 @@ class MEDIA_EXPORT WavAudioHandler {
   // Create a WavAudioHandler using |wav_data|. If |wav_data| cannot be parsed
   // correctly, the returned scoped_ptr will be null. The underlying memory for
   // wav_data must survive for the lifetime of this class.
-  static scoped_ptr<WavAudioHandler> Create(const base::StringPiece wav_data);
+  static std::unique_ptr<WavAudioHandler> Create(
+      const base::StringPiece wav_data);
 
   // Returns true when cursor points to the end of the track.
   bool AtEnd(size_t cursor) const;

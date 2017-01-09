@@ -12,12 +12,12 @@ using base::DictionaryValue;
 using base::ListValue;
 
 TEST(PluginFinderTest, JsonSyntax) {
-  scoped_ptr<base::DictionaryValue> plugin_list(
-    PluginFinder::LoadBuiltInPluginList());
+  std::unique_ptr<base::DictionaryValue> plugin_list(
+      PluginFinder::LoadBuiltInPluginList());
   ASSERT_TRUE(plugin_list.get());
-  scoped_ptr<base::Value> version;
+  std::unique_ptr<base::Value> version;
   ASSERT_TRUE(plugin_list->Remove("x-version", &version));
-  EXPECT_EQ(base::Value::TYPE_INTEGER, version->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, version->GetType());
 
   for (base::DictionaryValue::Iterator plugin_it(*plugin_list);
        !plugin_it.IsAtEnd(); plugin_it.Advance()) {

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/sync_file_system/extension_sync_event_observer.h"
 
+#include <utility>
+
 #include "base/lazy_instance.h"
 #include "chrome/browser/extensions/api/sync_file_system/sync_file_system_api_helpers.h"
 #include "chrome/browser/sync_file_system/sync_event_observer.h"
@@ -75,12 +77,13 @@ void ExtensionSyncEventObserver::OnSyncStateUpdated(
   api::sync_file_system::ServiceInfo service_info;
   service_info.state = SyncServiceStateToExtensionEnum(state);
   service_info.description = description;
-  scoped_ptr<base::ListValue> params(
+  std::unique_ptr<base::ListValue> params(
       api::sync_file_system::OnServiceStatusChanged::Create(service_info));
 
   BroadcastOrDispatchEvent(
       app_origin, events::SYNC_FILE_SYSTEM_ON_SERVICE_STATUS_CHANGED,
-      api::sync_file_system::OnServiceStatusChanged::kEventName, params.Pass());
+      api::sync_file_system::OnServiceStatusChanged::kEventName,
+      std::move(params));
 }
 
 void ExtensionSyncEventObserver::OnFileSynced(
@@ -89,13 +92,13 @@ void ExtensionSyncEventObserver::OnFileSynced(
     sync_file_system::SyncFileStatus status,
     sync_file_system::SyncAction action,
     sync_file_system::SyncDirection direction) {
-  scoped_ptr<base::ListValue> params(new base::ListValue());
+  std::unique_ptr<base::ListValue> params(new base::ListValue());
 
-  scoped_ptr<base::DictionaryValue> entry(
+  std::unique_ptr<base::DictionaryValue> entry(
       CreateDictionaryValueForFileSystemEntry(url, file_type));
   if (!entry)
     return;
-  params->Append(entry.release());
+  params->Append(std::move(entry));
 
   // Status, SyncAction and any optional notes to go here.
   api::sync_file_system::FileStatus status_enum =
@@ -110,27 +113,28 @@ void ExtensionSyncEventObserver::OnFileSynced(
 
   BroadcastOrDispatchEvent(
       url.origin(), events::SYNC_FILE_SYSTEM_ON_FILE_STATUS_CHANGED,
-      api::sync_file_system::OnFileStatusChanged::kEventName, params.Pass());
+      api::sync_file_system::OnFileStatusChanged::kEventName,
+      std::move(params));
 }
 
 void ExtensionSyncEventObserver::BroadcastOrDispatchEvent(
     const GURL& app_origin,
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    scoped_ptr<base::ListValue> values) {
+    std::unique_ptr<base::ListValue> values) {
   // Check to see whether the event should be broadcasted to all listening
   // extensions or sent to a specific extension ID.
   bool broadcast_mode = app_origin.is_empty();
   EventRouter* event_router = EventRouter::Get(browser_context_);
   DCHECK(event_router);
 
-  scoped_ptr<Event> event(
-      new Event(histogram_value, event_name, values.Pass()));
+  std::unique_ptr<Event> event(
+      new Event(histogram_value, event_name, std::move(values)));
   event->restrict_to_browser_context = browser_context_;
 
   // No app_origin, broadcast to all listening extensions for this event name.
   if (broadcast_mode) {
-    event_router->BroadcastEvent(event.Pass());
+    event_router->BroadcastEvent(std::move(event));
     return;
   }
 
@@ -138,7 +142,7 @@ void ExtensionSyncEventObserver::BroadcastOrDispatchEvent(
   const std::string extension_id = GetExtensionId(app_origin);
   if (extension_id.empty())
     return;
-  event_router->DispatchEventToExtension(extension_id, event.Pass());
+  event_router->DispatchEventToExtension(extension_id, std::move(event));
 }
 
 template <>

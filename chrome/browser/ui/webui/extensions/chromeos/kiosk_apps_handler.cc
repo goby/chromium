@@ -4,29 +4,36 @@
 
 #include "chrome/browser/ui/webui/extensions/chromeos/kiosk_apps_handler.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "components/crx_file/id_util.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "extensions/common/extension_urls.h"
+#include "extensions/grit/extensions_browser_resources.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "url/gurl.h"
 
@@ -37,11 +44,14 @@ namespace {
 // Populates app info dictionary with |app_data|.
 void PopulateAppDict(const KioskAppManager::App& app_data,
                      base::DictionaryValue* app_dict) {
-  std::string icon_url("chrome://theme/IDR_APP_DEFAULT_ICON");
-
-  // TODO(xiyuan): Replace data url with a URLDataSource.
-  if (!app_data.icon.isNull())
+  std::string icon_url;
+  if (app_data.icon.isNull()) {
+    icon_url = webui::GetBitmapDataUrl(*ResourceBundle::GetSharedInstance()
+                                            .GetImageNamed(IDR_APP_DEFAULT_ICON)
+                                            .ToSkBitmap());
+  } else {
     icon_url = webui::GetBitmapDataUrl(*app_data.icon.bitmap());
+  }
 
   // The items which are to be written into app_dict are also described in
   // chrome/browser/resources/extensions/chromeos/kiosk_app_list.js in @typedef
@@ -204,19 +214,30 @@ void KioskAppsHandler::OnKioskExtensionDownloadFailed(
 void KioskAppsHandler::OnGetConsumerKioskAutoLaunchStatus(
     chromeos::KioskAppManager::ConsumerKioskAutoLaunchStatus status) {
   initialized_ = true;
-  is_kiosk_enabled_ = user_manager::UserManager::Get()->IsCurrentUserOwner() ||
-                      !base::SysInfo::IsRunningOnChromeOS();
-
-  is_auto_launch_enabled_ =
-      status == KioskAppManager::CONSUMER_KIOSK_AUTO_LAUNCH_ENABLED ||
-      !base::SysInfo::IsRunningOnChromeOS();
+  if (KioskAppManager::IsConsumerKioskEnabled()) {
+    if (!base::SysInfo::IsRunningOnChromeOS()) {
+      // Enable everything when running on a dev box.
+      is_kiosk_enabled_ = true;
+      is_auto_launch_enabled_ = true;
+    } else {
+      // Enable consumer kiosk for owner and enable auto launch if configured.
+      is_kiosk_enabled_ =
+          ProfileHelper::IsOwnerProfile(Profile::FromWebUI(web_ui()));
+      is_auto_launch_enabled_ =
+          status == KioskAppManager::CONSUMER_KIOSK_AUTO_LAUNCH_ENABLED;
+    }
+  } else {
+    // Otherwise, consumer kiosk is disabled.
+    is_kiosk_enabled_ = false;
+    is_auto_launch_enabled_ = false;
+  }
 
   if (is_kiosk_enabled_) {
     base::DictionaryValue kiosk_params;
     kiosk_params.SetBoolean("kioskEnabled", is_kiosk_enabled_);
     kiosk_params.SetBoolean("autoLaunchEnabled", is_auto_launch_enabled_);
-    web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.enableKiosk",
-                                     kiosk_params);
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "extensions.KioskAppsOverlay.enableKiosk", kiosk_params);
   }
 }
 
@@ -244,18 +265,18 @@ void KioskAppsHandler::SendKioskAppSettings() {
   KioskAppManager::Apps apps;
   kiosk_app_manager_->GetApps(&apps);
 
-  scoped_ptr<base::ListValue> apps_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> apps_list(new base::ListValue);
   for (size_t i = 0; i < apps.size(); ++i) {
     const KioskAppManager::App& app_data = apps[i];
 
-    scoped_ptr<base::DictionaryValue> app_info(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> app_info(new base::DictionaryValue);
     PopulateAppDict(app_data, app_info.get());
-    apps_list->Append(app_info.release());
+    apps_list->Append(std::move(app_info));
   }
   settings.SetWithoutPathExpansion("apps", apps_list.release());
 
-  web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.setSettings",
-                                   settings);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "extensions.KioskAppsOverlay.setSettings", settings);
 }
 
 void KioskAppsHandler::HandleInitializeKioskAppSettings(
@@ -343,14 +364,14 @@ void KioskAppsHandler::UpdateApp(const std::string& app_id) {
   base::DictionaryValue app_dict;
   PopulateAppDict(app_data, &app_dict);
 
-  web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.updateApp",
-                                   app_dict);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "extensions.KioskAppsOverlay.updateApp", app_dict);
 }
 
 void KioskAppsHandler::ShowError(const std::string& app_id) {
   base::StringValue app_id_value(app_id);
-  web_ui()->CallJavascriptFunction("extensions.KioskAppsOverlay.showError",
-                                   app_id_value);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "extensions.KioskAppsOverlay.showError", app_id_value);
 
   kiosk_app_manager_->RemoveApp(app_id, owner_settings_service_);
 }

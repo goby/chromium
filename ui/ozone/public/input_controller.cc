@@ -6,6 +6,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 
 namespace ui {
 
@@ -125,12 +127,12 @@ void StubInputController::SetTapToClickPaused(bool state) {
 
 void StubInputController::GetTouchDeviceStatus(
     const GetTouchDeviceStatusReply& reply) {
-  reply.Run(scoped_ptr<std::string>(new std::string));
+  reply.Run(std::unique_ptr<std::string>(new std::string));
 }
 
 void StubInputController::GetTouchEventLog(const base::FilePath& out_dir,
                                            const GetTouchEventLogReply& reply) {
-  reply.Run(make_scoped_ptr(new std::vector<base::FilePath>));
+  reply.Run(base::WrapUnique(new std::vector<base::FilePath>));
 }
 
 void StubInputController::SetInternalTouchpadEnabled(bool enabled) {
@@ -149,8 +151,8 @@ void StubInputController::SetInternalKeyboardFilter(
 
 }  // namespace
 
-scoped_ptr<InputController> CreateStubInputController() {
-  return make_scoped_ptr(new StubInputController);
+std::unique_ptr<InputController> CreateStubInputController() {
+  return base::WrapUnique(new StubInputController);
 }
 
 }  // namespace ui

@@ -5,9 +5,12 @@
 #ifndef UI_GFX_FONT_FALLBACK_WIN_H_
 #define UI_GFX_FONT_FALLBACK_WIN_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/font_fallback.h"
 
@@ -81,10 +84,10 @@ class GFX_EXPORT LinkedFontsIterator {
 // Finds a fallback font to render the specified |text| with respect to an
 // initial |font|. Returns the resulting font via out param |result|. Returns
 // |true| if a fallback font was found.
-bool GetUniscribeFallbackFont(const Font& font,
-                              const wchar_t* text,
-                              int text_length,
-                              Font* result);
+bool GFX_EXPORT GetFallbackFont(const Font& font,
+                                const wchar_t* text,
+                                int text_length,
+                                Font* result);
 
 }  // namespace gfx
 

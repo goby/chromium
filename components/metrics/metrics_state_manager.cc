@@ -4,20 +4,24 @@
 
 #include "components/metrics/metrics_state_manager.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/guid.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/metrics/cloned_install_detector.h"
+#include "components/metrics/enabled_state_provider.h"
 #include "components/metrics/machine_id_provider.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_switches.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "components/variations/caching_permuted_entropy_provider.h"
 
 namespace metrics {
@@ -39,6 +43,12 @@ int GenerateLowEntropySource() {
   return base::RandInt(0, kMaxLowEntropySize - 1);
 }
 
+// Records the given |low_entorpy_source_value| in a histogram.
+void LogLowEntropyValue(int low_entropy_source_value) {
+  UMA_HISTOGRAM_SPARSE_SLOWLY("UMA.LowEntropySourceValue",
+                              low_entropy_source_value);
+}
+
 }  // namespace
 
 // static
@@ -46,17 +56,17 @@ bool MetricsStateManager::instance_exists_ = false;
 
 MetricsStateManager::MetricsStateManager(
     PrefService* local_state,
-    const base::Callback<bool(void)>& is_reporting_enabled_callback,
+    EnabledStateProvider* enabled_state_provider,
     const StoreClientInfoCallback& store_client_info,
     const LoadClientInfoCallback& retrieve_client_info)
     : local_state_(local_state),
-      is_reporting_enabled_callback_(is_reporting_enabled_callback),
+      enabled_state_provider_(enabled_state_provider),
       store_client_info_(store_client_info),
       load_client_info_(retrieve_client_info),
       low_entropy_source_(kLowEntropySourceNotSet),
       entropy_source_returned_(ENTROPY_SOURCE_NONE) {
   ResetMetricsIDsIfNecessary();
-  if (IsMetricsReportingEnabled())
+  if (enabled_state_provider_->IsConsentGiven())
     ForceClientIdCreation();
 
   DCHECK(!instance_exists_);
@@ -69,14 +79,19 @@ MetricsStateManager::~MetricsStateManager() {
 }
 
 bool MetricsStateManager::IsMetricsReportingEnabled() {
-  return is_reporting_enabled_callback_.Run();
+  return enabled_state_provider_->IsReportingEnabled();
 }
 
 void MetricsStateManager::ForceClientIdCreation() {
-  if (!client_id_.empty())
-    return;
+  {
+    std::string client_id_from_prefs =
+        local_state_->GetString(prefs::kMetricsClientID);
+    // If client id in prefs matches the cached copy, return early.
+    if (!client_id_from_prefs.empty() && client_id_from_prefs == client_id_)
+      return;
+    client_id_.swap(client_id_from_prefs);
+  }
 
-  client_id_ = local_state_->GetString(prefs::kMetricsClientID);
   if (!client_id_.empty()) {
     // It is technically sufficient to only save a backup of the client id when
     // it is initially generated below, but since the backup was only introduced
@@ -85,7 +100,7 @@ void MetricsStateManager::ForceClientIdCreation() {
     return;
   }
 
-  const scoped_ptr<ClientInfo> client_info_backup =
+  const std::unique_ptr<ClientInfo> client_info_backup =
       LoadClientInfoAndMaybeMigrate();
   if (client_info_backup) {
     client_id_ = client_info_backup->client_id;
@@ -143,54 +158,58 @@ void MetricsStateManager::CheckForClonedInstall(
   cloned_install_detector_->CheckForClonedInstall(local_state_, task_runner);
 }
 
-scoped_ptr<const base::FieldTrial::EntropyProvider>
-MetricsStateManager::CreateEntropyProvider() {
-  // For metrics reporting-enabled users, we combine the client ID and low
-  // entropy source to get the final entropy source. Otherwise, only use the low
-  // entropy source.
-  // This has two useful properties:
-  //  1) It makes the entropy source less identifiable for parties that do not
-  //     know the low entropy source.
-  //  2) It makes the final entropy source resettable.
-  const int low_entropy_source_value = GetLowEntropySource();
-  UMA_HISTOGRAM_SPARSE_SLOWLY("UMA.LowEntropySourceValue",
-                              low_entropy_source_value);
-  if (IsMetricsReportingEnabled()) {
+std::unique_ptr<const base::FieldTrial::EntropyProvider>
+MetricsStateManager::CreateDefaultEntropyProvider() {
+  if (enabled_state_provider_->IsConsentGiven()) {
+    // For metrics reporting-enabled users, we combine the client ID and low
+    // entropy source to get the final entropy source. Otherwise, only use the
+    // low entropy source.
+    // This has two useful properties:
+    //  1) It makes the entropy source less identifiable for parties that do not
+    //     know the low entropy source.
+    //  2) It makes the final entropy source resettable.
+    const int low_entropy_source_value = GetLowEntropySource();
+
     UpdateEntropySourceReturnedValue(ENTROPY_SOURCE_HIGH);
     const std::string high_entropy_source =
         client_id_ + base::IntToString(low_entropy_source_value);
-    return scoped_ptr<const base::FieldTrial::EntropyProvider>(
+    return std::unique_ptr<const base::FieldTrial::EntropyProvider>(
         new SHA1EntropyProvider(high_entropy_source));
   }
 
   UpdateEntropySourceReturnedValue(ENTROPY_SOURCE_LOW);
+  return CreateLowEntropyProvider();
+}
+
+std::unique_ptr<const base::FieldTrial::EntropyProvider>
+MetricsStateManager::CreateLowEntropyProvider() {
+  const int low_entropy_source_value = GetLowEntropySource();
+
 #if defined(OS_ANDROID) || defined(OS_IOS)
-  return scoped_ptr<const base::FieldTrial::EntropyProvider>(
-      new CachingPermutedEntropyProvider(local_state_,
-                                         low_entropy_source_value,
+  return std::unique_ptr<const base::FieldTrial::EntropyProvider>(
+      new CachingPermutedEntropyProvider(local_state_, low_entropy_source_value,
                                          kMaxLowEntropySize));
 #else
-  return scoped_ptr<const base::FieldTrial::EntropyProvider>(
+  return std::unique_ptr<const base::FieldTrial::EntropyProvider>(
       new PermutedEntropyProvider(low_entropy_source_value,
                                   kMaxLowEntropySize));
 #endif
 }
 
 // static
-scoped_ptr<MetricsStateManager> MetricsStateManager::Create(
+std::unique_ptr<MetricsStateManager> MetricsStateManager::Create(
     PrefService* local_state,
-    const base::Callback<bool(void)>& is_reporting_enabled_callback,
+    EnabledStateProvider* enabled_state_provider,
     const StoreClientInfoCallback& store_client_info,
     const LoadClientInfoCallback& retrieve_client_info) {
-  scoped_ptr<MetricsStateManager> result;
+  std::unique_ptr<MetricsStateManager> result;
   // Note: |instance_exists_| is updated in the constructor and destructor.
   if (!instance_exists_) {
-    result.reset(new MetricsStateManager(local_state,
-                                         is_reporting_enabled_callback,
+    result.reset(new MetricsStateManager(local_state, enabled_state_provider,
                                          store_client_info,
                                          retrieve_client_info));
   }
-  return result.Pass();
+  return result;
 }
 
 // static
@@ -214,8 +233,9 @@ void MetricsStateManager::BackUpCurrentClientInfo() {
   store_client_info_.Run(client_info);
 }
 
-scoped_ptr<ClientInfo> MetricsStateManager::LoadClientInfoAndMaybeMigrate() {
-  scoped_ptr<ClientInfo> client_info = load_client_info_.Run();
+std::unique_ptr<ClientInfo>
+MetricsStateManager::LoadClientInfoAndMaybeMigrate() {
+  std::unique_ptr<ClientInfo> client_info = load_client_info_.Run();
 
   // Prior to 2014-07, the client ID was stripped of its dashes before being
   // saved. Migrate back to a proper GUID if this is the case. This migration
@@ -241,10 +261,12 @@ scoped_ptr<ClientInfo> MetricsStateManager::LoadClientInfoAndMaybeMigrate() {
   }
 
   // The GUID retrieved (and possibly fixed above) should be valid unless
-  // retrieval failed.
-  DCHECK(!client_info || base::IsValidGUID(client_info->client_id));
+  // retrieval failed. If not, return nullptr. This will result in a new GUID
+  // being generated by the calling function ForceClientIdCreation().
+  if (client_info && !base::IsValidGUID(client_info->client_id))
+    return nullptr;
 
-  return client_info.Pass();
+  return client_info;
 }
 
 int MetricsStateManager::GetLowEntropySource() {
@@ -269,11 +291,13 @@ void MetricsStateManager::UpdateLowEntropySource() {
     // it below.
     if (value >= 0 && value < kMaxLowEntropySize) {
       low_entropy_source_ = value;
+      LogLowEntropyValue(low_entropy_source_);
       return;
     }
   }
 
   low_entropy_source_ = GenerateLowEntropySource();
+  LogLowEntropyValue(low_entropy_source_);
   local_state_->SetInteger(prefs::kMetricsLowEntropySource,
                            low_entropy_source_);
   CachingPermutedEntropyProvider::ClearCache(local_state_);

@@ -19,9 +19,8 @@ NetworkingPrivateDelegate::UIDelegate::UIDelegate() {}
 NetworkingPrivateDelegate::UIDelegate::~UIDelegate() {}
 
 NetworkingPrivateDelegate::NetworkingPrivateDelegate(
-    scoped_ptr<VerifyDelegate> verify_delegate)
-    : verify_delegate_(verify_delegate.Pass()) {
-}
+    std::unique_ptr<VerifyDelegate> verify_delegate)
+    : verify_delegate_(std::move(verify_delegate)) {}
 
 NetworkingPrivateDelegate::~NetworkingPrivateDelegate() {
 }

@@ -31,26 +31,34 @@
 #ifndef SVGAnimatedBoolean_h
 #define SVGAnimatedBoolean_h
 
+#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGBoolean.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
 
 namespace blink {
 
-class SVGAnimatedBoolean final : public SVGAnimatedProperty<SVGBoolean> {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedBoolean> create(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGBoolean> initialValue)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedBoolean(contextElement, attributeName, initialValue));
-    }
+class SVGAnimatedBoolean final : public SVGAnimatedProperty<SVGBoolean>,
+                                 public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-protected:
-    SVGAnimatedBoolean(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGBoolean> initialValue)
-        : SVGAnimatedProperty<SVGBoolean>(contextElement, attributeName, initialValue)
-    {
-    }
+ public:
+  static SVGAnimatedBoolean* create(SVGElement* contextElement,
+                                    const QualifiedName& attributeName) {
+    return new SVGAnimatedBoolean(contextElement, attributeName);
+  }
+
+  DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
+    visitor->traceWrappers(contextElement());
+  }
+
+ protected:
+  SVGAnimatedBoolean(SVGElement* contextElement,
+                     const QualifiedName& attributeName)
+      : SVGAnimatedProperty<SVGBoolean>(contextElement,
+                                        attributeName,
+                                        SVGBoolean::create()) {}
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGAnimatedBoolean_h
+#endif  // SVGAnimatedBoolean_h

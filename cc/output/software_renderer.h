@@ -5,51 +5,45 @@
 #ifndef CC_OUTPUT_SOFTWARE_RENDERER_H_
 #define CC_OUTPUT_SOFTWARE_RENDERER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
-#include "cc/output/compositor_frame.h"
 #include "cc/output/direct_renderer.h"
+#include "ui/events/latency_info.h"
 
 namespace cc {
-
-class OutputSurface;
-class RendererClient;
-class ResourceProvider;
-class SoftwareOutputDevice;
-
-class CheckerboardDrawQuad;
 class DebugBorderDrawQuad;
+class OutputSurface;
 class PictureDrawQuad;
 class RenderPassDrawQuad;
+class ResourceProvider;
+class SoftwareOutputDevice;
 class SolidColorDrawQuad;
 class TextureDrawQuad;
 class TileDrawQuad;
 
 class CC_EXPORT SoftwareRenderer : public DirectRenderer {
  public:
-  static scoped_ptr<SoftwareRenderer> Create(
-      RendererClient* client,
-      const RendererSettings* settings,
-      OutputSurface* output_surface,
-      ResourceProvider* resource_provider);
+  SoftwareRenderer(const RendererSettings* settings,
+                   OutputSurface* output_surface,
+                   ResourceProvider* resource_provider);
 
   ~SoftwareRenderer() override;
-  const RendererCapabilitiesImpl& Capabilities() const override;
-  void Finish() override;
-  void SwapBuffers(const CompositorFrameMetadata& metadata) override;
-  void DiscardBackbuffer() override;
-  void EnsureBackbuffer() override;
+
+  void SwapBuffers(std::vector<ui::LatencyInfo> latency_info) override;
+
+  void SetDisablePictureQuadImageFiltering(bool disable) {
+    disable_picture_quad_image_filtering_ = disable;
+  }
 
  protected:
+  bool CanPartialSwap() override;
   void BindFramebufferToOutputSurface(DrawingFrame* frame) override;
   bool BindFramebufferToTexture(DrawingFrame* frame,
-                                const ScopedResource* texture,
-                                const gfx::Rect& target_rect) override;
+                                const ScopedResource* texture) override;
   void SetScissorTestRect(const gfx::Rect& scissor_rect) override;
   void PrepareSurfaceForPass(DrawingFrame* frame,
                              SurfaceInitializationMode initialization_mode,
                              const gfx::Rect& render_pass_scissor) override;
-
   void DoDrawQuad(DrawingFrame* frame,
                   const DrawQuad* quad,
                   const gfx::QuadF* draw_region) override;
@@ -60,13 +54,7 @@ class CC_EXPORT SoftwareRenderer : public DirectRenderer {
   void EnsureScissorTestDisabled() override;
   void CopyCurrentRenderPassToBitmap(
       DrawingFrame* frame,
-      scoped_ptr<CopyOutputRequest> request) override;
-
-  SoftwareRenderer(RendererClient* client,
-                   const RendererSettings* settings,
-                   OutputSurface* output_surface,
-                   ResourceProvider* resource_provider);
-
+      std::unique_ptr<CopyOutputRequest> request) override;
   void DidChangeVisibility() override;
 
  private:
@@ -75,8 +63,6 @@ class CC_EXPORT SoftwareRenderer : public DirectRenderer {
   void SetClipRect(const gfx::Rect& rect);
   bool IsSoftwareResource(ResourceId resource_id) const;
 
-  void DrawCheckerboardQuad(const DrawingFrame* frame,
-                            const CheckerboardDrawQuad* quad);
   void DrawDebugBorderQuad(const DrawingFrame* frame,
                            const DebugBorderDrawQuad* quad);
   void DrawPictureQuad(const DrawingFrame* frame,
@@ -92,31 +78,33 @@ class CC_EXPORT SoftwareRenderer : public DirectRenderer {
   void DrawUnsupportedQuad(const DrawingFrame* frame,
                            const DrawQuad* quad);
   bool ShouldApplyBackgroundFilters(const RenderPassDrawQuad* quad) const;
-  SkBitmap ApplyImageFilter(SkImageFilter* filter,
-                            const RenderPassDrawQuad* quad,
-                            const SkBitmap* to_filter) const;
+  sk_sp<SkImage> ApplyImageFilter(SkImageFilter* filter,
+                                  const RenderPassDrawQuad* quad,
+                                  const SkBitmap& to_filter,
+                                  SkIRect* auto_bounds) const;
   gfx::Rect GetBackdropBoundingBoxForRenderPassQuad(
       const DrawingFrame* frame,
       const RenderPassDrawQuad* quad,
-      const gfx::Transform& contents_device_transform) const;
+      const gfx::Transform& contents_device_transform,
+      gfx::Rect* unclipped_rect) const;
   SkBitmap GetBackdropBitmap(const gfx::Rect& bounding_rect) const;
-  skia::RefPtr<SkShader> GetBackgroundFilterShader(
+  sk_sp<SkShader> GetBackgroundFilterShader(
       const DrawingFrame* frame,
       const RenderPassDrawQuad* quad,
       SkShader::TileMode content_tile_mode) const;
 
-  RendererCapabilitiesImpl capabilities_;
-  bool is_scissor_enabled_;
-  bool is_backbuffer_discarded_;
+  bool disable_picture_quad_image_filtering_ = false;
+
+  bool is_scissor_enabled_ = false;
   gfx::Rect scissor_rect_;
 
   SoftwareOutputDevice* output_device_;
-  SkCanvas* root_canvas_;
-  SkCanvas* current_canvas_;
+  SkCanvas* root_canvas_ = nullptr;
+  SkCanvas* current_canvas_ = nullptr;
   SkPaint current_paint_;
-  scoped_ptr<ResourceProvider::ScopedWriteLockSoftware>
+  std::unique_ptr<ResourceProvider::ScopedWriteLockSoftware>
       current_framebuffer_lock_;
-  skia::RefPtr<SkCanvas> current_framebuffer_canvas_;
+  std::unique_ptr<SkCanvas> current_framebuffer_canvas_;
 
   DISALLOW_COPY_AND_ASSIGN(SoftwareRenderer);
 };

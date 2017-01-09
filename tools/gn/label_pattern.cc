@@ -4,46 +4,49 @@
 
 #include "tools/gn/label_pattern.h"
 
+#include <stddef.h>
+
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "tools/gn/err.h"
 #include "tools/gn/filesystem_utils.h"
 #include "tools/gn/value.h"
 
 const char kLabelPattern_Help[] =
-    "Label patterns\n"
-    "\n"
-    "  A label pattern is a way of expressing one or more labels in a portion\n"
-    "  of the source tree. They are not general regular expressions.\n"
-    "\n"
-    "  They can take the following forms only:\n"
-    "\n"
-    "   - Explicit (no wildcard):\n"
-    "       \"//foo/bar:baz\"\n"
-    "       \":baz\"\n"
-    "\n"
-    "   - Wildcard target names:\n"
-    "       \"//foo/bar:*\" (all targets in the //foo/bar/BUILD.gn file)\n"
-    "       \":*\"  (all targets in the current build file)\n"
-    "\n"
-    "   - Wildcard directory names (\"*\" is only supported at the end)\n"
-    "       \"*\"  (all targets)\n"
-    "       \"//foo/bar/*\"  (all targets in any subdir of //foo/bar)\n"
-    "       \"./*\"  (all targets in the current build file or sub dirs)\n"
-    "\n"
-    "  Any of the above forms can additionally take an explicit toolchain.\n"
-    "  In this case, the toolchain must be fully qualified (no wildcards\n"
-    "  are supported in the toolchain name).\n"
-    "\n"
-    "    \"//foo:bar(//build/toochain:mac)\"\n"
-    "        An explicit target in an explicit toolchain.\n"
-    "\n"
-    "    \":*(//build/toolchain/linux:32bit)\"\n"
-    "        All targets in the current build file using the 32-bit Linux\n"
-    "        toolchain.\n"
-    "\n"
-    "    \"//foo/*(//build/toolchain:win)\"\n"
-    "        All targets in //foo and any subdirectory using the Windows\n"
-    "        toolchain.\n";
+    R"*(Label patterns
+
+  A label pattern is a way of expressing one or more labels in a portion of the
+  source tree. They are not general regular expressions.
+
+  They can take the following forms only:
+
+   - Explicit (no wildcard):
+       "//foo/bar:baz"
+       ":baz"
+
+   - Wildcard target names:
+       "//foo/bar:*" (all targets in the //foo/bar/BUILD.gn file)
+       ":*"  (all targets in the current build file)
+
+   - Wildcard directory names ("*" is only supported at the end)
+       "*"  (all targets)
+       "//foo/bar/*"  (all targets in any subdir of //foo/bar)
+       "./*"  (all targets in the current build file or sub dirs)
+
+  Any of the above forms can additionally take an explicit toolchain. In this
+  case, the toolchain must be fully qualified (no wildcards are supported in
+  the toolchain name).
+
+    "//foo:bar(//build/toochain:mac)"
+        An explicit target in an explicit toolchain.
+
+    ":*(//build/toolchain/linux:32bit)"
+        All targets in the current build file using the 32-bit Linux toolchain.
+
+    "//foo/*(//build/toolchain:win)"
+        All targets in //foo and any subdirectory using the Windows
+        toolchain.
+)*";
 
 LabelPattern::LabelPattern() : type_(MATCH) {
 }
@@ -57,6 +60,8 @@ LabelPattern::LabelPattern(Type type,
       dir_(dir) {
   name.CopyToString(&name_);
 }
+
+LabelPattern::LabelPattern(const LabelPattern& other) = default;
 
 LabelPattern::~LabelPattern() {
 }
@@ -125,16 +130,12 @@ LabelPattern LabelPattern::GetPattern(const SourceDir& current_dir,
   size_t offset = 0;
 #if defined(OS_WIN)
   if (IsPathAbsolute(str)) {
-    if (str[0] != '/') {
-      *err = Err(value, "Bad absolute path.",
-                 "Absolute paths must be of the form /C:\\ but this is \"" +
-                     str.as_string() + "\".");
-      return LabelPattern();
-    }
-    if (str.size() > 3 && str[2] == ':' && IsSlash(str[3]) &&
-        base::IsAsciiAlpha(str[1])) {
+    size_t drive_letter_pos = str[0] == '/' ? 1 : 0;
+    if (str.size() > drive_letter_pos + 2 && str[drive_letter_pos + 1] == ':' &&
+        IsSlash(str[drive_letter_pos + 2]) &&
+        base::IsAsciiAlpha(str[drive_letter_pos])) {
       // Skip over the drive letter colon.
-      offset = 3;
+      offset = drive_letter_pos + 2;
     }
   }
 #endif

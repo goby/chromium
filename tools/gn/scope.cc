@@ -5,7 +5,7 @@
 #include "tools/gn/scope.h"
 
 #include "base/logging.h"
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "tools/gn/parse_tree.h"
 #include "tools/gn/template.h"
 
@@ -25,6 +25,15 @@ bool IsPrivateVar(const base::StringPiece& name) {
 
 }  // namespace
 
+// Defaults to all false, which are the things least likely to cause errors.
+Scope::MergeOptions::MergeOptions()
+    : clobber_existing(false),
+      skip_private_vars(false),
+      mark_dest_used(false) {
+}
+
+Scope::MergeOptions::~MergeOptions() {
+}
 
 Scope::ProgrammaticProvider::~ProgrammaticProvider() {
   scope_->RemoveProvider(this);
@@ -55,35 +64,56 @@ Scope::Scope(const Scope* parent)
 }
 
 Scope::~Scope() {
-  STLDeleteContainerPairSecondPointers(target_defaults_.begin(),
-                                       target_defaults_.end());
+}
+
+void Scope::DetachFromContaining() {
+  const_containing_ = nullptr;
+  mutable_containing_ = nullptr;
+}
+
+bool Scope::HasValues(SearchNested search_nested) const {
+  DCHECK(search_nested == SEARCH_CURRENT);
+  return !values_.empty();
 }
 
 const Value* Scope::GetValue(const base::StringPiece& ident,
                              bool counts_as_used) {
+  const Scope* found_in_scope = nullptr;
+  return GetValueWithScope(ident, counts_as_used, &found_in_scope);
+}
+
+const Value* Scope::GetValueWithScope(const base::StringPiece& ident,
+                                      bool counts_as_used,
+                                      const Scope** found_in_scope) {
   // First check for programmatically-provided values.
-  for (const auto& provider : programmatic_providers_) {
+  for (auto* provider : programmatic_providers_) {
     const Value* v = provider->GetProgrammaticValue(ident);
-    if (v)
+    if (v) {
+      *found_in_scope = nullptr;
       return v;
+    }
   }
 
   RecordMap::iterator found = values_.find(ident);
   if (found != values_.end()) {
     if (counts_as_used)
       found->second.used = true;
+    *found_in_scope = this;
     return &found->second.value;
   }
 
   // Search in the parent scope.
   if (const_containing_)
-    return const_containing_->GetValue(ident);
-  if (mutable_containing_)
-    return mutable_containing_->GetValue(ident, counts_as_used);
+    return const_containing_->GetValueWithScope(ident, found_in_scope);
+  if (mutable_containing_) {
+    return mutable_containing_->GetValueWithScope(ident, counts_as_used,
+                                                  found_in_scope);
+  }
   return nullptr;
 }
 
 Value* Scope::GetMutableValue(const base::StringPiece& ident,
+                              SearchNested search_mode,
                               bool counts_as_used) {
   // Don't do programmatic values, which are not mutable.
   RecordMap::iterator found = values_.find(ident);
@@ -93,25 +123,10 @@ Value* Scope::GetMutableValue(const base::StringPiece& ident,
     return &found->second.value;
   }
 
-  // Search in the parent mutable scope, but not const one.
-  if (mutable_containing_)
-    return mutable_containing_->GetMutableValue(ident, counts_as_used);
-  return nullptr;
-}
-
-Value* Scope::GetValueForcedToCurrentScope(const base::StringPiece& ident,
-                                           const ParseNode* set_node) {
-  RecordMap::iterator found = values_.find(ident);
-  if (found != values_.end())
-    return &found->second.value;  // Already have in the current scope.
-
-  // Search in the parent scope.
-  if (containing()) {
-    const Value* in_containing = containing()->GetValue(ident);
-    if (in_containing) {
-      // Promote to current scope.
-      return SetValue(ident, *in_containing, set_node);
-    }
+  // Search in the parent mutable scope if requested, but not const one.
+  if (search_mode == SEARCH_NESTED && mutable_containing_) {
+    return mutable_containing_->GetMutableValue(
+        ident, Scope::SEARCH_NESTED, counts_as_used);
   }
   return nullptr;
 }
@@ -128,19 +143,27 @@ base::StringPiece Scope::GetStorageKey(const base::StringPiece& ident) const {
 }
 
 const Value* Scope::GetValue(const base::StringPiece& ident) const {
+  const Scope *found_in_scope = nullptr;
+  return GetValueWithScope(ident, &found_in_scope);
+}
+
+const Value* Scope::GetValueWithScope(const base::StringPiece& ident,
+                                      const Scope** found_in_scope) const {
   RecordMap::const_iterator found = values_.find(ident);
-  if (found != values_.end())
+  if (found != values_.end()) {
+    *found_in_scope = this;
     return &found->second.value;
+  }
   if (containing())
-    return containing()->GetValue(ident);
+    return containing()->GetValueWithScope(ident, found_in_scope);
   return nullptr;
 }
 
 Value* Scope::SetValue(const base::StringPiece& ident,
-                       const Value& v,
+                       Value v,
                        const ParseNode* set_node) {
   Record& r = values_[ident];  // Clears any existing value.
-  r.value = v;
+  r.value = std::move(v);
   r.value.set_origin(set_node);
   return &r.value;
 }
@@ -249,17 +272,23 @@ bool Scope::NonRecursiveMergeTo(Scope* dest,
                                 Err* err) const {
   // Values.
   for (const auto& pair : values_) {
-    if (options.skip_private_vars && IsPrivateVar(pair.first))
+    const base::StringPiece& current_name = pair.first;
+    if (options.skip_private_vars && IsPrivateVar(current_name))
       continue;  // Skip this private var.
+    if (!options.excluded_values.empty() &&
+        options.excluded_values.find(current_name.as_string()) !=
+            options.excluded_values.end()) {
+      continue;  // Skip this excluded value.
+    }
 
     const Value& new_value = pair.second.value;
     if (!options.clobber_existing) {
-      const Value* existing_value = dest->GetValue(pair.first);
+      const Value* existing_value = dest->GetValue(current_name);
       if (existing_value && new_value != *existing_value) {
         // Value present in both the source and the dest.
         std::string desc_string(desc_for_err);
         *err = Err(node_for_err, "Value collision.",
-            "This " + desc_string + " contains \"" + pair.first.as_string() +
+            "This " + desc_string + " contains \"" + current_name.as_string() +
             "\"");
         err->AppendSubErr(Err(pair.second.value, "defined here.",
             "Which would clobber the one in your current scope"));
@@ -269,36 +298,49 @@ bool Scope::NonRecursiveMergeTo(Scope* dest,
         return false;
       }
     }
-    dest->values_[pair.first] = pair.second;
+    dest->values_[current_name] = pair.second;
 
     if (options.mark_dest_used)
-      dest->MarkUsed(pair.first);
+      dest->MarkUsed(current_name);
   }
 
   // Target defaults are owning pointers.
   for (const auto& pair : target_defaults_) {
+    const std::string& current_name = pair.first;
+    if (!options.excluded_values.empty() &&
+        options.excluded_values.find(current_name) !=
+            options.excluded_values.end()) {
+      continue;  // Skip the excluded value.
+    }
+
     if (!options.clobber_existing) {
-      if (dest->GetTargetDefaults(pair.first)) {
-        // TODO(brettw) it would be nice to know the origin of a
-        // set_target_defaults so we can give locations for the colliding target
-        // defaults.
-        std::string desc_string(desc_for_err);
-        *err = Err(node_for_err, "Target defaults collision.",
-            "This " + desc_string + " contains target defaults for\n"
-            "\"" + pair.first + "\" which would clobber one for the\n"
-            "same target type in your current scope. It's unfortunate that I'm "
-            "too stupid\nto tell you the location of where the target defaults "
-            "were set. Usually\nthis happens in the BUILDCONFIG.gn file.");
-        return false;
+      const Scope* dest_defaults = dest->GetTargetDefaults(current_name);
+      if (dest_defaults) {
+        if (RecordMapValuesEqual(pair.second->values_,
+                                 dest_defaults->values_)) {
+          // Values of the two defaults are equivalent, just ignore the
+          // collision.
+          continue;
+        } else {
+          // TODO(brettw) it would be nice to know the origin of a
+          // set_target_defaults so we can give locations for the colliding
+          // target defaults.
+          std::string desc_string(desc_for_err);
+          *err = Err(node_for_err, "Target defaults collision.",
+              "This " + desc_string + " contains target defaults for\n"
+              "\"" + current_name + "\" which would clobber one for the\n"
+              "same target type in your current scope. It's unfortunate that "
+              "I'm too stupid\nto tell you the location of where the target "
+              "defaults were set. Usually\nthis happens in the BUILDCONFIG.gn "
+              "file or in a related .gni file.\n");
+          return false;
+        }
       }
     }
 
-    // Be careful to delete any pointer we're about to clobber.
-    Scope** dest_scope = &dest->target_defaults_[pair.first];
-    if (*dest_scope)
-      delete *dest_scope;
-    *dest_scope = new Scope(settings_);
-    pair.second->NonRecursiveMergeTo(*dest_scope, options, node_for_err,
+    std::unique_ptr<Scope>& dest_scope = dest->target_defaults_[current_name];
+    dest_scope = base::WrapUnique(new Scope(settings_));
+    pair.second->NonRecursiveMergeTo(dest_scope.get(), options, node_for_err,
                                      "<SHOULDN'T HAPPEN>", err);
   }
 
@@ -320,11 +362,17 @@ bool Scope::NonRecursiveMergeTo(Scope* dest,
 
   // Templates.
   for (const auto& pair : templates_) {
-    if (options.skip_private_vars && IsPrivateVar(pair.first))
+    const std::string& current_name = pair.first;
+    if (options.skip_private_vars && IsPrivateVar(current_name))
       continue;  // Skip this private template.
+    if (!options.excluded_values.empty() &&
+        options.excluded_values.find(current_name) !=
+            options.excluded_values.end()) {
+      continue;  // Skip the excluded value.
+    }
 
     if (!options.clobber_existing) {
-      const Template* existing_template = dest->GetTemplate(pair.first);
+      const Template* existing_template = dest->GetTemplate(current_name);
       // Since templates are refcounted, we can check if it's the same one by
       // comparing pointers.
       if (existing_template && pair.second.get() != existing_template) {
@@ -333,7 +381,7 @@ bool Scope::NonRecursiveMergeTo(Scope* dest,
         std::string desc_string(desc_for_err);
         *err = Err(node_for_err, "Template collision.",
             "This " + desc_string + " contains a template \"" +
-            pair.first + "\"");
+            current_name + "\"");
         err->AppendSubErr(Err(pair.second->GetDefinitionRange(),
             "defined here.",
             "Which would clobber the one in your current scope"));
@@ -346,14 +394,14 @@ bool Scope::NonRecursiveMergeTo(Scope* dest,
     }
 
     // Be careful to delete any pointer we're about to clobber.
-    dest->templates_[pair.first] = pair.second;
+    dest->templates_[current_name] = pair.second;
   }
 
   return true;
 }
 
-scoped_ptr<Scope> Scope::MakeClosure() const {
-  scoped_ptr<Scope> result;
+std::unique_ptr<Scope> Scope::MakeClosure() const {
+  std::unique_ptr<Scope> result;
   if (const_containing_) {
     // We reached the top of the mutable scope stack. The result scope just
     // references the const scope (which will never change).
@@ -377,26 +425,19 @@ scoped_ptr<Scope> Scope::MakeClosure() const {
   NonRecursiveMergeTo(result.get(), options, nullptr, "<SHOULDN'T HAPPEN>",
                       &err);
   DCHECK(!err.has_error());
-  return result.Pass();
+  return result;
 }
 
 Scope* Scope::MakeTargetDefaults(const std::string& target_type) {
-  if (GetTargetDefaults(target_type))
-    return nullptr;
-
-  Scope** dest = &target_defaults_[target_type];
-  if (*dest) {
-    NOTREACHED();  // Already set.
-    return *dest;
-  }
-  *dest = new Scope(settings_);
-  return *dest;
+  std::unique_ptr<Scope>& dest = target_defaults_[target_type];
+  dest = base::WrapUnique(new Scope(settings_));
+  return dest.get();
 }
 
 const Scope* Scope::GetTargetDefaults(const std::string& target_type) const {
   NamedScopeMap::const_iterator found = target_defaults_.find(target_type);
   if (found != target_defaults_.end())
-    return found->second;
+    return found->second.get();
   if (containing())
     return containing()->GetTargetDefaults(target_type);
   return nullptr;
@@ -490,4 +531,18 @@ void Scope::AddProvider(ProgrammaticProvider* p) {
 void Scope::RemoveProvider(ProgrammaticProvider* p) {
   DCHECK(programmatic_providers_.find(p) != programmatic_providers_.end());
   programmatic_providers_.erase(p);
+}
+
+// static
+bool Scope::RecordMapValuesEqual(const RecordMap& a, const RecordMap& b) {
+  if (a.size() != b.size())
+    return false;
+  for (const auto& pair : a) {
+    const auto& found_b = b.find(pair.first);
+    if (found_b == b.end())
+      return false;  // Item in 'a' but not 'b'.
+    if (pair.second.value != found_b->second.value)
+      return false;  // Values for variable in 'a' and 'b' are different.
+  }
+  return true;
 }

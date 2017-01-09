@@ -6,19 +6,21 @@
 #define MEDIA_MIDI_MIDI_MANAGER_ANDROID_H_
 
 #include <jni.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
+#include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "media/midi/midi_input_port_android.h"
 #include "media/midi/midi_manager.h"
 #include "media/midi/midi_scheduler.h"
 
-namespace media {
 namespace midi {
 
 class MidiDeviceAndroid;
@@ -34,14 +36,15 @@ class MidiManagerAndroid final : public MidiManager,
 
   // MidiManager implementation.
   void StartInitialization() override;
+  void Finalize() override;
   void DispatchSendMidiData(MidiManagerClient* client,
-                            uint32 port_index,
-                            const std::vector<uint8>& data,
+                            uint32_t port_index,
+                            const std::vector<uint8_t>& data,
                             double timestamp) override;
 
   // MidiInputPortAndroid::Delegate implementation.
   void OnReceivedData(MidiInputPortAndroid*,
-                      const uint8* data,
+                      const uint8_t* data,
                       size_t size,
                       base::TimeTicks timestamp) override;
 
@@ -49,6 +52,9 @@ class MidiManagerAndroid final : public MidiManager,
   void OnInitialized(JNIEnv* env,
                      const base::android::JavaParamRef<jobject>& caller,
                      const base::android::JavaParamRef<jobjectArray>& devices);
+  void OnInitializationFailed(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& caller);
   void OnAttached(JNIEnv* env,
                   const base::android::JavaParamRef<jobject>& caller,
                   const base::android::JavaParamRef<jobject>& device);
@@ -59,7 +65,7 @@ class MidiManagerAndroid final : public MidiManager,
   static bool Register(JNIEnv* env);
 
  private:
-  void AddDevice(scoped_ptr<MidiDeviceAndroid> device);
+  void AddDevice(std::unique_ptr<MidiDeviceAndroid> device);
   void AddInputPortAndroid(MidiInputPortAndroid* port,
                            MidiDeviceAndroid* device);
   void AddOutputPortAndroid(MidiOutputPortAndroid* port,
@@ -79,10 +85,13 @@ class MidiManagerAndroid final : public MidiManager,
   base::hash_map<MidiOutputPortAndroid*, size_t> output_port_to_index_;
 
   base::android::ScopedJavaGlobalRef<jobject> raw_manager_;
-  scoped_ptr<MidiScheduler> scheduler_;
+
+  // Lock to ensure the MidiScheduler is being destructed only once in
+  // Finalize() on Chrome_IOThread.
+  base::Lock scheduler_lock_;
+  std::unique_ptr<MidiScheduler> scheduler_;  // GUARDED_BY(scheduler_lock_)
 };
 
 }  // namespace midi
-}  // namespace media
 
 #endif  // MEDIA_MIDI_MIDI_MANAGER_ANDROID_H_

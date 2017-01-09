@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -24,12 +28,15 @@
 #include "chrome/browser/ui/find_bar/find_notification_details.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/webui/md_history_ui.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/find_in_page_observer.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -82,13 +89,6 @@ class FindInPageControllerTest : public InProcessBrowserTest {
  public:
   FindInPageControllerTest() {
     chrome::DisableFindBarAnimationsDuringTesting(true);
-  }
-
-  // Disable new downloads UI as it is very very slow. https://crbug.com/526577
-  // TODO(dbeam): remove this once the downloads UI is not slow.
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kDisableMaterialDesignDownloads);
   }
 
  protected:
@@ -303,8 +303,9 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, FindInPageFormsTextAreas) {
 
 // Verify search for text within special URLs such as chrome:history,
 // chrome://downloads, data directory
-#if defined(OS_WIN) || defined(OS_MACOSX)
-// Disabled due to crbug.com/175711 and http://crbug.com/419987
+#if defined(OS_MACOSX) || defined(OS_WIN)
+// Disabled on Mac due to http://crbug.com/419987
+// Disabled on Win due to http://crbug.com/661013
 #define MAYBE_SearchWithinSpecialURL \
         DISABLED_SearchWithinSpecialURL
 #else
@@ -312,6 +313,11 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, FindInPageFormsTextAreas) {
         SearchWithinSpecialURL
 #endif
 IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, MAYBE_SearchWithinSpecialURL) {
+  // TODO(tsergeant): Get this test working on MD History, which loads very
+  // asynchronously and causes this test to fail.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(features::kMaterialDesignHistory);
+
   WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
 
@@ -340,6 +346,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, MAYBE_SearchWithinSpecialURL) {
 
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIDownloadsURL));
   FlushHistoryService();
+  ASSERT_TRUE(content::ExecuteScript(web_contents, "Polymer.dom.flush();"));
   EXPECT_EQ(1, FindInPageASCII(web_contents, download_url.spec(),
                                kFwd, kIgnoreCase, NULL));
 }
@@ -403,8 +410,13 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, SpanAndListsSearchable) {
                                       kFwd, kIgnoreCase, NULL, NULL));
 }
 
+#if defined(OS_WIN)
+#define MAYBE_LargePage DISABLED_LargePage
+#else
+#define MAYBE_LargePage LargePage
+#endif
 // Find in a very large page.
-IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, LargePage) {
+IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, MAYBE_LargePage) {
   WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ui_test_utils::NavigateToURL(browser(), GetURL("largepage.html"));
@@ -861,7 +873,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest,
       content::Source<NavigationController>(
           &browser()->tab_strip_model()->GetActiveWebContents()->
               GetController()));
-  chrome::Reload(browser(), CURRENT_TAB);
+  chrome::Reload(browser(), WindowOpenDisposition::CURRENT_TAB);
   observer.Wait();
   EXPECT_TRUE(GetFindBarWindowInfo(&position, &fully_visible));
   EXPECT_FALSE(fully_visible);
@@ -959,7 +971,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, FindMovesWhenObscuring) {
   chrome::ShowFindBar(browser());
 
   // This is needed on GTK because the reposition operation is asynchronous.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   gfx::Point start_position;
   gfx::Point position;
@@ -1321,8 +1333,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, MAYBE_NoIncognitoPrepopulate) {
   // Open a new incognito window and navigate to the same page.
   Profile* incognito_profile = browser()->profile()->GetOffTheRecordProfile();
   Browser* incognito_browser =
-      new Browser(Browser::CreateParams(incognito_profile,
-                                        browser()->host_desktop_type()));
+      new Browser(Browser::CreateParams(incognito_profile));
   content::WindowedNotificationObserver observer(
       content::NOTIFICATION_LOAD_STOP,
       content::NotificationService::AllSources());
@@ -1383,8 +1394,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, ActivateLinkNavigatesPage) {
 }
 
 IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, FitWindow) {
-  Browser::CreateParams params(Browser::TYPE_POPUP, browser()->profile(),
-                               browser()->host_desktop_type());
+  Browser::CreateParams params(Browser::TYPE_POPUP, browser()->profile());
   params.initial_bounds = gfx::Rect(0, 0, 250, 500);
   Browser* popup = new Browser(params);
   content::WindowedNotificationObserver observer(
@@ -1397,12 +1407,12 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, FitWindow) {
   popup->window()->Show();
 
   // On GTK, bounds change is asynchronous.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EnsureFindBoxOpenForBrowser(popup);
 
   // GTK adjusts FindBar size asynchronously.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ASSERT_LE(GetFindBarWidthForBrowser(popup),
             popup->window()->GetBounds().width());
@@ -1419,7 +1429,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest,
   // Open another tab.
   GURL url = GetURL(kSimple);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, NEW_FOREGROUND_TAB,
+      browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   // Close it.
@@ -1437,7 +1447,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest,
   chrome::ToggleBookmarkBar(browser());
 
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, NEW_FOREGROUND_TAB,
+      browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   EnsureFindBoxOpen();
@@ -1445,7 +1455,7 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest,
   EXPECT_TRUE(GetFindBarWindowInfo(&position, NULL));
 
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, NEW_FOREGROUND_TAB,
+      browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   chrome::CloseTab(browser());
   EXPECT_TRUE(GetFindBarWindowInfo(&position2, NULL));

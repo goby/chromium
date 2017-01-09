@@ -5,11 +5,16 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_EMULATOR_DEVICE_EMULATOR_MESSAGE_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_EMULATOR_DEVICE_EMULATOR_MESSAGE_HANDLER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
+#include "chrome/browser/chromeos/system/pointer_device_observer.h"
 #include "chromeos/dbus/power_manager/power_supply_properties.pb.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 namespace base {
+class DictionaryValue;
 class ListValue;
 }  // namespace base
 
@@ -27,14 +32,15 @@ class FakeCrasAudioClient;
 class FakePowerManagerClient;
 
 // Handler class for the Device Emulator page operations.
-class DeviceEmulatorMessageHandler
-    : public content::WebUIMessageHandler {
+class DeviceEmulatorMessageHandler :
+    public system::PointerDeviceObserver::Observer,
+    public content::WebUIMessageHandler {
  public:
   DeviceEmulatorMessageHandler();
   ~DeviceEmulatorMessageHandler() override;
 
   // Adds |this| as an observer to all necessary objects.
-  void Init();
+  void Init(const base::ListValue* args);
 
   // Callback for the "removeBluetoothDevice" message. This is called by
   // the view to remove a bluetooth device from the FakeBluetoothDeviceClient's
@@ -70,6 +76,12 @@ class DeviceEmulatorMessageHandler
   // based on the node id.
   void HandleRemoveAudioNode(const base::ListValue* args);
 
+  // Connects or disconnects a fake touchpad.
+  void HandleSetHasTouchpad(const base::ListValue* args);
+
+  // Connects or disconnects a fake mouse.
+  void HandleSetHasMouse(const base::ListValue* args);
+
   // Callbacks for JS update methods. All these methods work
   // asynchronously.
   void UpdateBatteryPercent(const base::ListValue* args);
@@ -77,9 +89,13 @@ class DeviceEmulatorMessageHandler
   void UpdateExternalPower(const base::ListValue* args);
   void UpdateTimeToEmpty(const base::ListValue* args);
   void UpdateTimeToFull(const base::ListValue* args);
+  void UpdatePowerSources(const base::ListValue* args);
+  void UpdatePowerSourceId(const base::ListValue* args);
 
   // content::WebUIMessageHandler:
   void RegisterMessages() override;
+  void OnJavascriptAllowed() override;
+  void OnJavascriptDisallowed() override;
 
   // Callback for the "requestPowerInfo" message. This asynchronously requests
   // for power settings such as battery percentage, external power, etc. to
@@ -99,17 +115,23 @@ class DeviceEmulatorMessageHandler
 
   // Builds a dictionary with each key representing a property of the device
   // with path |object_path|.
-  scoped_ptr<base::DictionaryValue> GetDeviceInfo(
+  std::unique_ptr<base::DictionaryValue> GetDeviceInfo(
       const dbus::ObjectPath& object_path);
 
+  // system::PointerDeviceObserver::Observer:
+  void TouchpadExists(bool exists) override;
+  void MouseExists(bool exists) override;
+
   bluez::FakeBluetoothDeviceClient* fake_bluetooth_device_client_;
-  scoped_ptr<BluetoothObserver> bluetooth_observer_;
+  std::unique_ptr<BluetoothObserver> bluetooth_observer_;
 
   FakeCrasAudioClient* fake_cras_audio_client_;
-  scoped_ptr<CrasAudioObserver> cras_audio_observer_;
+  std::unique_ptr<CrasAudioObserver> cras_audio_observer_;
 
   FakePowerManagerClient* fake_power_manager_client_;
-  scoped_ptr<PowerObserver> power_observer_;
+  std::unique_ptr<PowerObserver> power_observer_;
+
+  base::WeakPtrFactory<DeviceEmulatorMessageHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceEmulatorMessageHandler);
 };

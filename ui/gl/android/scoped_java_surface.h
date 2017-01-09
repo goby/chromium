@@ -8,10 +8,10 @@
 #include <jni.h>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/move.h"
+#include "base/macros.h"
 #include "ui/gl/gl_export.h"
 
-namespace gfx {
+namespace gl {
 
 class SurfaceTexture;
 
@@ -19,8 +19,6 @@ class SurfaceTexture;
 // When going out of scope, Surface.release() is called on the Java object to
 // make sure server-side references (esp. wrt graphics memory) are released.
 class GL_EXPORT ScopedJavaSurface {
-  MOVE_ONLY_TYPE_FOR_CPP_03(ScopedJavaSurface);
-
  public:
   ScopedJavaSurface();
 
@@ -45,6 +43,9 @@ class GL_EXPORT ScopedJavaSurface {
   // Checks whether the surface is an empty one.
   bool IsEmpty() const;
 
+  // Checks whether this object references a valid surface.
+  bool IsValid() const;
+
   // Checks whether the surface is hardware protected so that no readback is
   // possible.
   bool is_protected() const { return is_protected_; }
@@ -61,8 +62,10 @@ class GL_EXPORT ScopedJavaSurface {
   bool is_protected_;
 
   base::android::ScopedJavaGlobalRef<jobject> j_surface_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedJavaSurface);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_ANDROID_SCOPED_JAVA_SURFACE_H_

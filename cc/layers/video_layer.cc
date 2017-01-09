@@ -9,22 +9,22 @@
 namespace cc {
 
 scoped_refptr<VideoLayer> VideoLayer::Create(
-    const LayerSettings& settings,
     VideoFrameProvider* provider,
     media::VideoRotation video_rotation) {
-  return make_scoped_refptr(new VideoLayer(settings, provider, video_rotation));
+  return make_scoped_refptr(new VideoLayer(provider, video_rotation));
 }
 
-VideoLayer::VideoLayer(const LayerSettings& settings,
-                       VideoFrameProvider* provider,
+VideoLayer::VideoLayer(VideoFrameProvider* provider,
                        media::VideoRotation video_rotation)
-    : Layer(settings), provider_(provider), video_rotation_(video_rotation) {
+    : provider_(provider), video_rotation_(video_rotation) {
+  SetMayContainVideo(true);
   DCHECK(provider_);
 }
 
 VideoLayer::~VideoLayer() {}
 
-scoped_ptr<LayerImpl> VideoLayer::CreateLayerImpl(LayerTreeImpl* tree_impl) {
+std::unique_ptr<LayerImpl> VideoLayer::CreateLayerImpl(
+    LayerTreeImpl* tree_impl) {
   return VideoLayerImpl::Create(tree_impl, id(), provider_, video_rotation_);
 }
 
@@ -36,9 +36,13 @@ bool VideoLayer::Update() {
   //
   // This is the inefficient legacy redraw path for videos.  It's better to
   // communicate this directly to the VideoLayerImpl.
-  updated |= !update_rect_.IsEmpty();
+  updated |= !update_rect().IsEmpty();
 
   return updated;
+}
+
+void VideoLayer::StopUsingProvider() {
+  provider_ = nullptr;
 }
 
 }  // namespace cc

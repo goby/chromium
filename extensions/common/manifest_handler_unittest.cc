@@ -2,17 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/common/manifest_handler.h"
+
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/install_warning.h"
-#include "extensions/common/manifest_handler.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -182,19 +185,22 @@ TEST_F(ManifestHandlerTest, DependentHandlers) {
       Register();
   ManifestHandler::FinalizeRegistration();
 
-  scoped_refptr<Extension> extension = ExtensionBuilder()
-      .SetManifest(DictionaryBuilder()
-                   .Set("name", "no name")
-                   .Set("version", "0")
-                   .Set("manifest_version", 2)
-                   .Set("a", 1)
-                   .Set("b", 2)
-                   .Set("c", DictionaryBuilder()
-                        .Set("d", 3)
-                        .Set("e", 4)
-                        .Set("f", 5))
-                   .Set("g", 6))
-      .Build();
+  scoped_refptr<Extension> extension =
+      ExtensionBuilder()
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "no name")
+                           .Set("version", "0")
+                           .Set("manifest_version", 2)
+                           .Set("a", 1)
+                           .Set("b", 2)
+                           .Set("c", DictionaryBuilder()
+                                         .Set("d", 3)
+                                         .Set("e", 4)
+                                         .Set("f", 5)
+                                         .Build())
+                           .Set("g", 6)
+                           .Build())
+          .Build();
 
   // A, B, C.EZ, C.D, K
   EXPECT_EQ(5u, watcher.parsed_names().size());
@@ -207,13 +213,13 @@ TEST_F(ManifestHandlerTest, FailingHandlers) {
   ScopedTestingManifestHandlerRegistry registry;
   // Can't use ExtensionBuilder, because this extension will fail to
   // be parsed.
-  scoped_ptr<base::DictionaryValue> manifest_a(
+  std::unique_ptr<base::DictionaryValue> manifest_a(
       DictionaryBuilder()
-      .Set("name", "no name")
-      .Set("version", "0")
-      .Set("manifest_version", 2)
-      .Set("a", 1)
-      .Build());
+          .Set("name", "no name")
+          .Set("version", "0")
+          .Set("manifest_version", 2)
+          .Set("a", 1)
+          .Build());
 
   // Succeeds when "a" is not recognized.
   std::string error;
@@ -243,14 +249,16 @@ TEST_F(ManifestHandlerTest, FailingHandlers) {
 
 TEST_F(ManifestHandlerTest, Validate) {
   ScopedTestingManifestHandlerRegistry registry;
-  scoped_refptr<Extension> extension = ExtensionBuilder()
-      .SetManifest(DictionaryBuilder()
-                   .Set("name", "no name")
-                   .Set("version", "0")
-                   .Set("manifest_version", 2)
-                   .Set("a", 1)
-                   .Set("b", 2))
-      .Build();
+  scoped_refptr<Extension> extension =
+      ExtensionBuilder()
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "no name")
+                           .Set("version", "0")
+                           .Set("manifest_version", 2)
+                           .Set("a", 1)
+                           .Set("b", 2)
+                           .Build())
+          .Build();
   EXPECT_TRUE(extension.get());
 
   std::string error;

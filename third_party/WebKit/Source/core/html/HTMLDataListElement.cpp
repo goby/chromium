@@ -29,7 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/HTMLDataListElement.h"
 
 #include "core/HTMLNames.h"
@@ -41,36 +40,29 @@
 namespace blink {
 
 inline HTMLDataListElement::HTMLDataListElement(Document& document)
-    : HTMLElement(HTMLNames::datalistTag, document)
-{
+    : HTMLElement(HTMLNames::datalistTag, document) {}
+
+HTMLDataListElement* HTMLDataListElement::create(Document& document) {
+  UseCounter::count(document, UseCounter::DataListElement);
+  return new HTMLDataListElement(document);
 }
 
-PassRefPtrWillBeRawPtr<HTMLDataListElement> HTMLDataListElement::create(Document& document)
-{
-    UseCounter::count(document, UseCounter::DataListElement);
-    return adoptRefWillBeNoop(new HTMLDataListElement(document));
+HTMLDataListOptionsCollection* HTMLDataListElement::options() {
+  return ensureCachedCollection<HTMLDataListOptionsCollection>(DataListOptions);
 }
 
-PassRefPtrWillBeRawPtr<HTMLDataListOptionsCollection> HTMLDataListElement::options()
-{
-    return ensureCachedCollection<HTMLDataListOptionsCollection>(DataListOptions);
-}
-
-void HTMLDataListElement::childrenChanged(const ChildrenChange& change)
-{
-    HTMLElement::childrenChanged(change);
-    if (!change.byParser)
-        treeScope().idTargetObserverRegistry().notifyObservers(getIdAttribute());
-}
-
-void HTMLDataListElement::finishParsingChildren()
-{
+void HTMLDataListElement::childrenChanged(const ChildrenChange& change) {
+  HTMLElement::childrenChanged(change);
+  if (!change.byParser)
     treeScope().idTargetObserverRegistry().notifyObservers(getIdAttribute());
 }
 
-void HTMLDataListElement::optionElementChildrenChanged()
-{
-    treeScope().idTargetObserverRegistry().notifyObservers(getIdAttribute());
+void HTMLDataListElement::finishParsingChildren() {
+  treeScope().idTargetObserverRegistry().notifyObservers(getIdAttribute());
 }
 
-} // namespace blink
+void HTMLDataListElement::optionElementChildrenChanged() {
+  treeScope().idTargetObserverRegistry().notifyObservers(getIdAttribute());
+}
+
+}  // namespace blink

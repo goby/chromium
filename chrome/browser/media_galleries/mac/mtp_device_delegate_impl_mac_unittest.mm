@@ -12,6 +12,7 @@
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/mac/sdk_forward_declarations.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
@@ -233,7 +234,8 @@ class MTPDeviceDelegateImplMacTest : public testing::Test {
 
   base::File::Error GetFileInfo(const base::FilePath& path,
                                 base::File::Info* info) {
-    base::WaitableEvent wait(true, false);
+    base::WaitableEvent wait(base::WaitableEvent::ResetPolicy::MANUAL,
+                             base::WaitableEvent::InitialState::NOT_SIGNALED);
     delegate_->GetFileInfo(
       path,
       base::Bind(&MTPDeviceDelegateImplMacTest::OnFileInfo,
@@ -250,7 +252,8 @@ class MTPDeviceDelegateImplMacTest : public testing::Test {
   }
 
   base::File::Error ReadDir(const base::FilePath& path) {
-    base::WaitableEvent wait(true, false);
+    base::WaitableEvent wait(base::WaitableEvent::ResetPolicy::MANUAL,
+                             base::WaitableEvent::InitialState::NOT_SIGNALED);
     delegate_->ReadDirectory(
         path,
         base::Bind(&MTPDeviceDelegateImplMacTest::OnReadDir,
@@ -268,7 +271,8 @@ class MTPDeviceDelegateImplMacTest : public testing::Test {
   base::File::Error DownloadFile(
       const base::FilePath& path,
       const base::FilePath& local_path) {
-    base::WaitableEvent wait(true, false);
+    base::WaitableEvent wait(base::WaitableEvent::ResetPolicy::MANUAL,
+                             base::WaitableEvent::InitialState::NOT_SIGNALED);
     delegate_->CreateSnapshotFile(
         path, local_path,
         base::Bind(&MTPDeviceDelegateImplMacTest::OnDownload,
@@ -286,9 +290,9 @@ class MTPDeviceDelegateImplMacTest : public testing::Test {
  protected:
   base::MessageLoopForUI message_loop_;
   // Note: threads must be made in this order: UI > FILE > IO
-  scoped_ptr<content::TestBrowserThread> ui_thread_;
-  scoped_ptr<content::TestBrowserThread> file_thread_;
-  scoped_ptr<content::TestBrowserThread> io_thread_;
+  std::unique_ptr<content::TestBrowserThread> ui_thread_;
+  std::unique_ptr<content::TestBrowserThread> file_thread_;
+  std::unique_ptr<content::TestBrowserThread> io_thread_;
   base::ScopedTempDir temp_dir_;
   storage_monitor::ImageCaptureDeviceManager manager_;
   MockMTPICCameraDevice* camera_;
@@ -335,7 +339,8 @@ TEST_F(MTPDeviceDelegateImplMacTest, TestOverlappedReadDir) {
   info1.creation_time = time1;
   delegate_->ItemAdded("name1", info1);
 
-  base::WaitableEvent wait(true, false);
+  base::WaitableEvent wait(base::WaitableEvent::ResetPolicy::MANUAL,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   delegate_->ReadDirectory(
       base::FilePath(kDevicePath),
@@ -540,13 +545,13 @@ TEST_F(MTPDeviceDelegateImplMacTest, TestDownload) {
 
   EXPECT_EQ(base::File::FILE_ERROR_NOT_FOUND,
             DownloadFile(base::FilePath("/ic:id/nonexist"),
-                         temp_dir_.path().Append("target")));
+                         temp_dir_.GetPath().Append("target")));
 
   EXPECT_EQ(base::File::FILE_OK,
             DownloadFile(base::FilePath("/ic:id/filename"),
-                         temp_dir_.path().Append("target")));
+                         temp_dir_.GetPath().Append("target")));
   std::string contents;
-  EXPECT_TRUE(base::ReadFileToString(temp_dir_.path().Append("target"),
-                                     &contents));
+  EXPECT_TRUE(
+      base::ReadFileToString(temp_dir_.GetPath().Append("target"), &contents));
   EXPECT_EQ(kTestFileContents, contents);
 }

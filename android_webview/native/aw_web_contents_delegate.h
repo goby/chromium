@@ -30,7 +30,7 @@ class AwWebContentsDelegate
   void CanDownload(const GURL& url,
                    const std::string& request_method,
                    const base::Callback<void(bool)>& callback) override;
-  void RunFileChooser(content::WebContents* web_contents,
+  void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   void AddNewContents(content::WebContents* source,
                       content::WebContents* new_contents,
@@ -42,6 +42,7 @@ class AwWebContentsDelegate
   void NavigationStateChanged(content::WebContents* source,
                               content::InvalidateTypes changed_flags) override;
   void WebContentsCreated(content::WebContents* source_contents,
+                          int opener_render_process_id,
                           int opener_render_frame_id,
                           const std::string& frame_name,
                           const GURL& target_url,

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "extensions/browser/app_window/native_app_window.h"
 
@@ -132,7 +133,8 @@ IN_PROC_BROWSER_TEST_F(AppWindowTest, MAYBE_RuntimeFullscreenToAlwaysOnTop) {
   CloseAppWindow(window);
 }
 
-#if defined(OS_MACOSX)
+// Flaky on Windows (see http://crbug.com/581131).
+#if defined(OS_MACOSX) || defined(OS_WIN)
 #define MAYBE_InitFullscreenAndAlwaysOnTop DISABLED_InitFullscreenAndAlwaysOnTop
 #else
 #define MAYBE_InitFullscreenAndAlwaysOnTop InitFullscreenAndAlwaysOnTop
@@ -180,6 +182,19 @@ IN_PROC_BROWSER_TEST_F(AppWindowTest, MAYBE_DisableAlwaysOnTopInFullscreen) {
   // Ensure that always-on-top remains disabled.
   window->Restore();
   EXPECT_FALSE(window->GetBaseWindow()->IsAlwaysOnTop());
+
+  CloseAppWindow(window);
+}
+
+// Tests a window created with showInShelf property enabled is indeed marked
+// as shown in shelf in AppWindow.
+IN_PROC_BROWSER_TEST_F(AppWindowTest, InitShowInShelf) {
+  AppWindow* window =
+      CreateTestAppWindow("{ \"showInShelf\": true , \"id\": \"window\" }");
+  ASSERT_TRUE(window);
+
+  // Ensure that the window created is marked as shown in shelf.
+  EXPECT_TRUE(window->show_in_shelf());
 
   CloseAppWindow(window);
 }

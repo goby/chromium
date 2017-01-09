@@ -24,29 +24,21 @@
  *
  */
 
-#include "config.h"
-
 #include "core/workers/WorkerNavigator.h"
 
 namespace blink {
 
 WorkerNavigator::WorkerNavigator(const String& userAgent)
-    : m_userAgent(userAgent)
-{
+    : m_userAgent(userAgent) {}
+
+WorkerNavigator::~WorkerNavigator() {}
+
+String WorkerNavigator::userAgent() const {
+  return m_userAgent;
 }
 
-WorkerNavigator::~WorkerNavigator()
-{
+DEFINE_TRACE(WorkerNavigator) {
+  Supplementable<WorkerNavigator>::trace(visitor);
 }
 
-String WorkerNavigator::userAgent() const
-{
-    return m_userAgent;
-}
-
-DEFINE_TRACE(WorkerNavigator)
-{
-    HeapSupplementable<WorkerNavigator>::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

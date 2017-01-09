@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/simple_enclosed_region.h"
 #include "cc/layers/layer_iterator.h"
@@ -40,6 +40,7 @@ class CC_EXPORT OcclusionTracker {
   Occlusion GetCurrentOcclusionForContributingSurface(
       const gfx::Transform& draw_transform) const;
 
+  const RenderSurfaceImpl* OcclusionSurfaceForContributingSurface() const;
   // Called at the beginning of each step in the LayerIterator's front-to-back
   // traversal.
   void EnterLayer(const LayerIteratorPosition& layer_iterator);
@@ -48,7 +49,7 @@ class CC_EXPORT OcclusionTracker {
   void LeaveLayer(const LayerIteratorPosition& layer_iterator);
 
   // Gives the region of the screen that is not occluded by something opaque.
-  Region ComputeVisibleRegionInScreen() const;
+  Region ComputeVisibleRegionInScreen(const LayerTreeImpl* layer_tree) const;
 
   void set_minimum_tracking_size(const gfx::Size& size) {
     minimum_tracking_size_ = size;
@@ -57,8 +58,8 @@ class CC_EXPORT OcclusionTracker {
  protected:
   struct StackObject {
     StackObject() : target(0) {}
-    explicit StackObject(const LayerImpl* target) : target(target) {}
-    const LayerImpl* target;
+    explicit StackObject(const RenderSurfaceImpl* target) : target(target) {}
+    const RenderSurfaceImpl* target;
     SimpleEnclosedRegion occlusion_from_outside_target;
     SimpleEnclosedRegion occlusion_from_inside_target;
   };

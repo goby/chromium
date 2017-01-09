@@ -5,9 +5,11 @@
 #include "chrome/browser/chromeos/first_run/first_run_controller.h"
 
 #include "ash/shell.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/first_run/first_run_view.h"
 #include "chrome/browser/chromeos/first_run/metrics.h"
 #include "chrome/browser/chromeos/first_run/steps/app_list_step.h"
@@ -55,7 +57,7 @@ void FirstRunController::Stop() {
     return;
   }
   g_instance->Finalize();
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, g_instance);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, g_instance);
   g_instance = NULL;
 }
 
@@ -123,9 +125,7 @@ void FirstRunController::OnNextButtonClicked(const std::string& step_name) {
 
 void FirstRunController::OnHelpButtonClicked() {
   RecordCompletion(first_run::TUTORIAL_COMPLETED_WITH_KEEP_EXPLORING);
-  on_actor_finalized_ = base::Bind(chrome::ShowHelpForProfile,
-                                   user_profile_,
-                                   chrome::HOST_DESKTOP_TYPE_ASH,
+  on_actor_finalized_ = base::Bind(chrome::ShowHelpForProfile, user_profile_,
                                    chrome::HELP_SOURCE_MENU);
   actor_->Finalize();
 }

@@ -4,10 +4,12 @@
 
 #include "extensions/browser/api/networking_private/networking_private_service_client.h"
 
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/sequenced_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/threading/worker_pool.h"
 #include "components/onc/onc_constants.h"
 #include "content/public/browser/browser_thread.h"
@@ -24,7 +26,8 @@ namespace {
 const char kNetworkingPrivateSequenceTokenName[] = "NetworkingPrivate";
 
 // Deletes WiFiService object on the worker thread.
-void ShutdownWifiServiceOnWorkerThread(scoped_ptr<WiFiService> wifi_service) {
+void ShutdownWifiServiceOnWorkerThread(
+    std::unique_ptr<WiFiService> wifi_service) {
   DCHECK(wifi_service.get());
 }
 
@@ -37,10 +40,10 @@ NetworkingPrivateServiceClient::ServiceCallbacks::~ServiceCallbacks() {
 }
 
 NetworkingPrivateServiceClient::NetworkingPrivateServiceClient(
-    scoped_ptr<WiFiService> wifi_service,
-    scoped_ptr<VerifyDelegate> verify_delegate)
-    : NetworkingPrivateDelegate(verify_delegate.Pass()),
-      wifi_service_(wifi_service.Pass()),
+    std::unique_ptr<WiFiService> wifi_service,
+    std::unique_ptr<VerifyDelegate> verify_delegate)
+    : NetworkingPrivateDelegate(std::move(verify_delegate)),
+      wifi_service_(std::move(wifi_service)),
       weak_factory_(this) {
   sequence_token_ = BrowserThread::GetBlockingPool()->GetNamedSequenceToken(
       kNetworkingPrivateSequenceTokenName);
@@ -105,7 +108,8 @@ void NetworkingPrivateServiceClient::OnNetworkChanged(
 NetworkingPrivateServiceClient::ServiceCallbacks*
 NetworkingPrivateServiceClient::AddServiceCallbacks() {
   ServiceCallbacks* service_callbacks = new ServiceCallbacks();
-  service_callbacks->id = callbacks_map_.Add(service_callbacks);
+  service_callbacks->id =
+      callbacks_map_.Add(base::WrapUnique(service_callbacks));
   return service_callbacks;
 }
 
@@ -124,7 +128,7 @@ void NetworkingPrivateServiceClient::GetProperties(
   service_callbacks->failure_callback = failure_callback;
   service_callbacks->get_properties_callback = success_callback;
 
-  scoped_ptr<base::DictionaryValue> properties(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> properties(new base::DictionaryValue);
   std::string* error = new std::string;
 
   base::DictionaryValue* properties_ptr = properties.get();
@@ -145,7 +149,7 @@ void NetworkingPrivateServiceClient::GetManagedProperties(
   service_callbacks->failure_callback = failure_callback;
   service_callbacks->get_properties_callback = success_callback;
 
-  scoped_ptr<base::DictionaryValue> properties(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> properties(new base::DictionaryValue);
   std::string* error = new std::string;
 
   base::DictionaryValue* properties_ptr = properties.get();
@@ -166,7 +170,7 @@ void NetworkingPrivateServiceClient::GetState(
   service_callbacks->failure_callback = failure_callback;
   service_callbacks->get_properties_callback = success_callback;
 
-  scoped_ptr<base::DictionaryValue> properties(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> properties(new base::DictionaryValue);
   std::string* error = new std::string;
 
   base::DictionaryValue* properties_ptr = properties.get();
@@ -181,7 +185,7 @@ void NetworkingPrivateServiceClient::GetState(
 
 void NetworkingPrivateServiceClient::SetProperties(
     const std::string& guid,
-    scoped_ptr<base::DictionaryValue> properties,
+    std::unique_ptr<base::DictionaryValue> properties,
     const VoidCallback& success_callback,
     const FailureCallback& failure_callback) {
   ServiceCallbacks* service_callbacks = AddServiceCallbacks();
@@ -201,7 +205,7 @@ void NetworkingPrivateServiceClient::SetProperties(
 
 void NetworkingPrivateServiceClient::CreateNetwork(
     bool shared,
-    scoped_ptr<base::DictionaryValue> properties,
+    std::unique_ptr<base::DictionaryValue> properties,
     const StringCallback& success_callback,
     const FailureCallback& failure_callback) {
   ServiceCallbacks* service_callbacks = AddServiceCallbacks();
@@ -239,7 +243,7 @@ void NetworkingPrivateServiceClient::GetNetworks(
   service_callbacks->failure_callback = failure_callback;
   service_callbacks->get_visible_networks_callback = success_callback;
 
-  scoped_ptr<base::ListValue> networks(new base::ListValue);
+  std::unique_ptr<base::ListValue> networks(new base::ListValue);
 
   // TODO(stevenjb/mef): Apply filters (configured, visible, limit).
 
@@ -330,22 +334,22 @@ void NetworkingPrivateServiceClient::SetCellularSimState(
   failure_callback.Run(networking_private::kErrorNotSupported);
 }
 
-scoped_ptr<base::ListValue>
+std::unique_ptr<base::ListValue>
 NetworkingPrivateServiceClient::GetEnabledNetworkTypes() {
-  scoped_ptr<base::ListValue> network_list;
+  std::unique_ptr<base::ListValue> network_list;
   network_list->AppendString(::onc::network_type::kWiFi);
-  return network_list.Pass();
+  return network_list;
 }
 
-scoped_ptr<NetworkingPrivateDelegate::DeviceStateList>
+std::unique_ptr<NetworkingPrivateDelegate::DeviceStateList>
 NetworkingPrivateServiceClient::GetDeviceStateList() {
-  scoped_ptr<DeviceStateList> device_state_list(new DeviceStateList);
-  scoped_ptr<api::networking_private::DeviceStateProperties> properties(
+  std::unique_ptr<DeviceStateList> device_state_list(new DeviceStateList);
+  std::unique_ptr<api::networking_private::DeviceStateProperties> properties(
       new api::networking_private::DeviceStateProperties);
   properties->type = api::networking_private::NETWORK_TYPE_WIFI;
   properties->state = api::networking_private::DEVICE_STATE_TYPE_ENABLED;
-  device_state_list->push_back(properties.Pass());
-  return device_state_list.Pass();
+  device_state_list->push_back(std::move(properties));
+  return device_state_list;
 }
 
 bool NetworkingPrivateServiceClient::EnableNetworkType(
@@ -370,7 +374,7 @@ bool NetworkingPrivateServiceClient::RequestScan() {
 void NetworkingPrivateServiceClient::AfterGetProperties(
     ServiceCallbacksID callback_id,
     const std::string& network_guid,
-    scoped_ptr<base::DictionaryValue> properties,
+    std::unique_ptr<base::DictionaryValue> properties,
     const std::string* error) {
   ServiceCallbacks* service_callbacks = callbacks_map_.Lookup(callback_id);
   DCHECK(service_callbacks);
@@ -379,18 +383,18 @@ void NetworkingPrivateServiceClient::AfterGetProperties(
     service_callbacks->failure_callback.Run(*error);
   } else {
     DCHECK(!service_callbacks->get_properties_callback.is_null());
-    service_callbacks->get_properties_callback.Run(properties.Pass());
+    service_callbacks->get_properties_callback.Run(std::move(properties));
   }
   RemoveServiceCallbacks(callback_id);
 }
 
 void NetworkingPrivateServiceClient::AfterGetVisibleNetworks(
     ServiceCallbacksID callback_id,
-    scoped_ptr<base::ListValue> networks) {
+    std::unique_ptr<base::ListValue> networks) {
   ServiceCallbacks* service_callbacks = callbacks_map_.Lookup(callback_id);
   DCHECK(service_callbacks);
   DCHECK(!service_callbacks->get_visible_networks_callback.is_null());
-  service_callbacks->get_visible_networks_callback.Run(networks.Pass());
+  service_callbacks->get_visible_networks_callback.Run(std::move(networks));
   RemoveServiceCallbacks(callback_id);
 }
 
@@ -458,17 +462,15 @@ void NetworkingPrivateServiceClient::AfterStartDisconnect(
 void NetworkingPrivateServiceClient::OnNetworksChangedEventOnUIThread(
     const std::vector<std::string>& network_guids) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  FOR_EACH_OBSERVER(NetworkingPrivateDelegateObserver,
-                    network_events_observers_,
-                    OnNetworksChangedEvent(network_guids));
+  for (auto& observer : network_events_observers_)
+    observer.OnNetworksChangedEvent(network_guids);
 }
 
 void NetworkingPrivateServiceClient::OnNetworkListChangedEventOnUIThread(
     const std::vector<std::string>& network_guids) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  FOR_EACH_OBSERVER(NetworkingPrivateDelegateObserver,
-                    network_events_observers_,
-                    OnNetworkListChangedEvent(network_guids));
+  for (auto& observer : network_events_observers_)
+    observer.OnNetworkListChangedEvent(network_guids);
 }
 
 }  // namespace extensions

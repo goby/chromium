@@ -10,9 +10,12 @@
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "components/certificate_reporting/cert_logger.pb.h"
+#include "components/network_time/network_time_tracker.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_info.h"
+
+using network_time::NetworkTimeTracker;
 
 namespace certificate_reporting {
 
@@ -38,6 +41,8 @@ void AddCertStatusToReportErrors(net::CertStatus cert_status,
   COPY_CERT_STATUS(VALIDITY_TOO_LONG)
   COPY_CERT_STATUS(UNABLE_TO_CHECK_REVOCATION)
   COPY_CERT_STATUS(NO_REVOCATION_MECHANISM)
+  RENAME_CERT_STATUS(CERTIFICATE_TRANSPARENCY_REQUIRED,
+                     CERTIFICATE_TRANSPARENCY_REQUIRED)
 
 #undef RENAME_CERT_STATUS
 #undef COPY_CERT_STATUS
@@ -77,6 +82,7 @@ ErrorReport::ErrorReport(const std::string& hostname,
   }
 
   cert_report_->add_pin(ssl_info.pinning_failure_log);
+  cert_report_->set_is_issued_by_known_root(ssl_info.is_issued_by_known_root);
 
   AddCertStatusToReportErrors(ssl_info.cert_status, cert_report_.get());
 }
@@ -94,7 +100,8 @@ bool ErrorReport::Serialize(std::string* output) const {
 void ErrorReport::SetInterstitialInfo(
     const InterstitialReason& interstitial_reason,
     const ProceedDecision& proceed_decision,
-    const Overridable& overridable) {
+    const Overridable& overridable,
+    const base::Time& interstitial_time) {
   CertLoggerInterstitialInfo* interstitial_info =
       cert_report_->mutable_interstitial_info();
 
@@ -115,6 +122,42 @@ void ErrorReport::SetInterstitialInfo(
 
   interstitial_info->set_user_proceeded(proceed_decision == USER_PROCEEDED);
   interstitial_info->set_overridable(overridable == INTERSTITIAL_OVERRIDABLE);
+  interstitial_info->set_interstitial_created_time_usec(
+      interstitial_time.ToInternalValue());
+}
+
+void ErrorReport::AddNetworkTimeInfo(
+    const NetworkTimeTracker* network_time_tracker) {
+  CertLoggerFeaturesInfo* features_info = cert_report_->mutable_features_info();
+  CertLoggerFeaturesInfo::NetworkTimeQueryingInfo* network_time_info =
+      features_info->mutable_network_time_querying_info();
+  network_time_info->set_network_time_queries_enabled(
+      network_time_tracker->AreTimeFetchesEnabled());
+  NetworkTimeTracker::FetchBehavior behavior =
+      network_time_tracker->GetFetchBehavior();
+  CertLoggerFeaturesInfo::NetworkTimeQueryingInfo::NetworkTimeFetchBehavior
+      report_behavior = CertLoggerFeaturesInfo::NetworkTimeQueryingInfo::
+          NETWORK_TIME_FETCHES_UNKNOWN;
+
+  switch (behavior) {
+    case NetworkTimeTracker::FETCH_BEHAVIOR_UNKNOWN:
+      report_behavior = CertLoggerFeaturesInfo::NetworkTimeQueryingInfo::
+          NETWORK_TIME_FETCHES_UNKNOWN;
+      break;
+    case NetworkTimeTracker::FETCHES_IN_BACKGROUND_ONLY:
+      report_behavior = CertLoggerFeaturesInfo::NetworkTimeQueryingInfo::
+          NETWORK_TIME_FETCHES_BACKGROUND_ONLY;
+      break;
+    case NetworkTimeTracker::FETCHES_ON_DEMAND_ONLY:
+      report_behavior = CertLoggerFeaturesInfo::NetworkTimeQueryingInfo::
+          NETWORK_TIME_FETCHES_ON_DEMAND_ONLY;
+      break;
+    case NetworkTimeTracker::FETCHES_IN_BACKGROUND_AND_ON_DEMAND:
+      report_behavior = CertLoggerFeaturesInfo::NetworkTimeQueryingInfo::
+          NETWORK_TIME_FETCHES_IN_BACKGROUND_AND_ON_DEMAND;
+      break;
+  }
+  network_time_info->set_network_time_query_behavior(report_behavior);
 }
 
 const std::string& ErrorReport::hostname() const {

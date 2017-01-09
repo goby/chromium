@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/locale_change_guard.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "base/macros.h"
@@ -17,7 +18,9 @@ namespace {
 const char* const kShowNotificationLanguages[] = {
     "af",   // Afrikaans
     "am",   // Amharic
+    "an",   // Aragonese
     "ar",   // Arabic
+    "ast",  // Asturian
     "az",   // Azerbaijani
     "be",   // Belarusian
     "bg",   // Bulgarian
@@ -121,6 +124,7 @@ const char* const kShowNotificationLanguages[] = {
     "ur",   // Urdu
     "uz",   // Uzbek
     "vi",   // Vietnamese
+    "wa",   // Walloon
     "xh",   // Xhosa
     "yi",   // Yiddish
     "yo",   // Yoruba

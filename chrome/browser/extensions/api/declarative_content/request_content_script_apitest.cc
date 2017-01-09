@@ -107,7 +107,7 @@ class RequestContentScriptAPITest : public ExtensionBrowserTest {
       PermissionOrMatcherType manifest_permission,
       PermissionOrMatcherType script_matcher);
 
-  scoped_ptr<TestExtensionDir> test_extension_dir_;
+  std::unique_ptr<TestExtensionDir> test_extension_dir_;
   const Extension* extension_;
 };
 
@@ -171,17 +171,17 @@ testing::AssertionResult RequestContentScriptAPITest::CreateAndLoadExtension(
       kBackgroundScriptSource,
       kScriptMatchers[script_matcher]);
 
-  scoped_ptr<TestExtensionDir> dir(new TestExtensionDir);
+  std::unique_ptr<TestExtensionDir> dir(new TestExtensionDir);
   dir->WriteManifest(manifest);
   dir->WriteFile(FILE_PATH_LITERAL("background.js"), background_src);
   dir->WriteFile(FILE_PATH_LITERAL("script.js"),
                  kContentScriptSource);
 
-  const Extension* extension = LoadExtension(dir->unpacked_path());
+  const Extension* extension = LoadExtension(dir->UnpackedPath());
   if (!extension)
     return testing::AssertionFailure() << "Failed to load extension.";
 
-  test_extension_dir_.reset(dir.release());
+  test_extension_dir_ = std::move(dir);
   extension_ = extension;
 
   // Wait for rules to be setup before navigating to trigger script injection.

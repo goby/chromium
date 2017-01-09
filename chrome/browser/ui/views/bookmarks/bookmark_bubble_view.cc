@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/views/bookmarks/bookmark_bubble_view.h"
 
+#include <utility>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,17 +18,19 @@
 #include "chrome/browser/ui/bookmarks/bookmark_editor.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/sync/sync_promo_ui.h"
-#include "chrome/browser/ui/views/bookmarks/bookmark_sync_promo_view.h"
+#include "chrome/browser/ui/views/harmony/layout_delegate.h"
+#include "chrome/browser/ui/views/sync/bubble_sync_promo_view.h"
+#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/user_metrics.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/bubble/bubble_frame_view.h"
-#include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
@@ -41,9 +46,6 @@ using views::ColumnSet;
 using views::GridLayout;
 
 namespace {
-
-// Width of the border of a button.
-const int kControlBorderWidth = 2;
 
 // This combobox prevents any lengthy content from stretching the bubble view.
 class UnsizedCombobox : public views::Combobox {
@@ -64,34 +66,42 @@ class UnsizedCombobox : public views::Combobox {
 BookmarkBubbleView* BookmarkBubbleView::bookmark_bubble_ = NULL;
 
 // static
-void BookmarkBubbleView::ShowBubble(views::View* anchor_view,
-                                    const gfx::Rect& anchor_rect,
-                                    gfx::NativeView parent_window,
-                                    bookmarks::BookmarkBubbleObserver* observer,
-                                    scoped_ptr<BookmarkBubbleDelegate> delegate,
-                                    Profile* profile,
-                                    const GURL& url,
-                                    bool already_bookmarked) {
+views::Widget* BookmarkBubbleView::ShowBubble(
+    views::View* anchor_view,
+    const gfx::Rect& anchor_rect,
+    gfx::NativeView parent_window,
+    bookmarks::BookmarkBubbleObserver* observer,
+    std::unique_ptr<BubbleSyncPromoDelegate> delegate,
+    Profile* profile,
+    const GURL& url,
+    bool already_bookmarked) {
   if (bookmark_bubble_)
-    return;
+    return nullptr;
 
   bookmark_bubble_ =
-      new BookmarkBubbleView(anchor_view, observer, delegate.Pass(), profile,
-                             url, !already_bookmarked);
+      new BookmarkBubbleView(anchor_view, observer, std::move(delegate),
+                             profile, url, !already_bookmarked);
+  // Bookmark bubble should always anchor TOP_RIGHT, but the
+  // LocationBarBubbleDelegateView does not know that and may use different
+  // arrow anchoring.
+  bookmark_bubble_->set_arrow(views::BubbleBorder::TOP_RIGHT);
   if (!anchor_view) {
     bookmark_bubble_->SetAnchorRect(anchor_rect);
     bookmark_bubble_->set_parent_window(parent_window);
   }
-  views::BubbleDelegateView::CreateBubble(bookmark_bubble_)->Show();
+  views::Widget* bubble_widget =
+      views::BubbleDialogDelegateView::CreateBubble(bookmark_bubble_);
+  bubble_widget->Show();
   // Select the entire title textfield contents when the bubble is first shown.
   bookmark_bubble_->title_tf_->SelectAll(true);
-  bookmark_bubble_->SetArrowPaintType(views::BubbleBorder::PAINT_NONE);
+  bookmark_bubble_->SetArrowPaintType(views::BubbleBorder::PAINT_TRANSPARENT);
 
   if (bookmark_bubble_->observer_) {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+    BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
     const BookmarkNode* node = model->GetMostRecentlyAddedUserNodeForURL(url);
     bookmark_bubble_->observer_->OnBookmarkBubbleShown(node);
   }
+  return bubble_widget;
 }
 
 void BookmarkBubbleView::Hide() {
@@ -103,7 +113,7 @@ BookmarkBubbleView::~BookmarkBubbleView() {
   if (apply_edits_) {
     ApplyEdits();
   } else if (remove_bookmark_) {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile_);
+    BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile_);
     const BookmarkNode* node = model->GetMostRecentlyAddedUserNodeForURL(url_);
     if (node)
       model->Remove(node);
@@ -138,33 +148,19 @@ bool BookmarkBubbleView::AcceleratorPressed(
     HandleButtonPressed(remove_button_);
     return true;
   }
-  if (key_code == ui::VKEY_ESCAPE) {
-    remove_bookmark_ = newly_bookmarked_;
-    apply_edits_ = false;
-  }
 
-  return BubbleDelegateView::AcceleratorPressed(accelerator);
+  return LocationBarBubbleDelegateView::AcceleratorPressed(accelerator);
 }
 
 void BookmarkBubbleView::Init() {
-  views::Label* title_label = new views::Label(
-      l10n_util::GetStringUTF16(
-          newly_bookmarked_ ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED :
-                              IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARK));
-  ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
-  title_label->SetFontList(rb->GetFontList(ui::ResourceBundle::MediumFont));
+  remove_button_ = views::MdTextButton::CreateSecondaryUiButton(
+      this, l10n_util::GetStringUTF16(IDS_BOOKMARK_BUBBLE_REMOVE_BOOKMARK));
 
-  remove_button_ = new views::LabelButton(this, l10n_util::GetStringUTF16(
-      IDS_BOOKMARK_BUBBLE_REMOVE_BOOKMARK));
-  remove_button_->SetStyle(views::Button::STYLE_BUTTON);
-
-  edit_button_ = new views::LabelButton(
+  edit_button_ = views::MdTextButton::CreateSecondaryUiButton(
       this, l10n_util::GetStringUTF16(IDS_BOOKMARK_BUBBLE_OPTIONS));
-  edit_button_->SetStyle(views::Button::STYLE_BUTTON);
 
-  close_button_ = new views::LabelButton(
+  close_button_ = views::MdTextButton::CreateSecondaryUiButton(
       this, l10n_util::GetStringUTF16(IDS_DONE));
-  close_button_->SetStyle(views::Button::STYLE_BUTTON);
   close_button_->SetIsDefault(true);
 
   views::Label* combobox_label = new views::Label(
@@ -178,24 +174,12 @@ void BookmarkBubbleView::Init() {
   GridLayout* layout = new GridLayout(this);
   SetLayoutManager(layout);
 
-  // Column sets used in the layout of the bubble.
-  enum ColumnSetID {
-    TITLE_COLUMN_SET_ID,
-    CONTENT_COLUMN_SET_ID,
-    SYNC_PROMO_COLUMN_SET_ID
-  };
-
-  ColumnSet* cs = layout->AddColumnSet(TITLE_COLUMN_SET_ID);
-  cs->AddPaddingColumn(0, views::kButtonHEdgeMarginNew);
-  cs->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0, GridLayout::USE_PREF,
-                0, 0);
-  cs->AddPaddingColumn(0, views::kButtonHEdgeMarginNew);
-
-  // The column layout used for middle and bottom rows.
-  cs = layout->AddColumnSet(CONTENT_COLUMN_SET_ID);
-  cs->AddPaddingColumn(0, views::kButtonHEdgeMarginNew);
-  cs->AddColumn(views::kControlLabelGridAlignment, GridLayout::CENTER, 0,
-                GridLayout::USE_PREF, 0, 0);
+  // This column set is used for the labels and textfields as well as the
+  // buttons at the bottom.
+  const int cs_id = 0;
+  ColumnSet* cs = layout->AddColumnSet(cs_id);
+  cs->AddColumn(LayoutDelegate::Get()->GetControlLabelGridAlignment(),
+                GridLayout::CENTER, 0, GridLayout::USE_PREF, 0, 0);
   cs->AddPaddingColumn(0, views::kUnrelatedControlHorizontalSpacing);
 
   cs->AddColumn(GridLayout::FILL, GridLayout::CENTER, 0,
@@ -207,13 +191,8 @@ void BookmarkBubbleView::Init() {
   cs->AddPaddingColumn(0, views::kRelatedButtonHSpacing);
   cs->AddColumn(GridLayout::LEADING, GridLayout::TRAILING, 0,
                 GridLayout::USE_PREF, 0, 0);
-  cs->AddPaddingColumn(0, views::kButtonHEdgeMarginNew);
 
-  layout->StartRow(0, TITLE_COLUMN_SET_ID);
-  layout->AddView(title_label);
-  layout->AddPaddingRow(0, views::kUnrelatedControlHorizontalSpacing);
-
-  layout->StartRow(0, CONTENT_COLUMN_SET_ID);
+  layout->StartRow(0, cs_id);
   views::Label* label = new views::Label(
       l10n_util::GetStringUTF16(IDS_BOOKMARK_BUBBLE_TITLE_TEXT));
   layout->AddView(label);
@@ -226,42 +205,27 @@ void BookmarkBubbleView::Init() {
 
   layout->AddPaddingRow(0, views::kUnrelatedControlHorizontalSpacing);
 
-  layout->StartRow(0, CONTENT_COLUMN_SET_ID);
+  layout->StartRow(0, cs_id);
   layout->AddView(combobox_label);
   layout->AddView(parent_combobox_, 5, 1);
 
   layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
 
-  layout->StartRow(0, CONTENT_COLUMN_SET_ID);
+  layout->StartRow(0, cs_id);
   layout->SkipColumns(2);
   layout->AddView(remove_button_);
   layout->AddView(edit_button_);
   layout->AddView(close_button_);
 
-  layout->AddPaddingRow(
-      0,
-      views::kUnrelatedControlVerticalSpacing - kControlBorderWidth);
-
-  if (SyncPromoUI::ShouldShowSyncPromo(profile_)) {
-    // The column layout used for the sync promo.
-    cs = layout->AddColumnSet(SYNC_PROMO_COLUMN_SET_ID);
-    // Use FIXED as we don't want the width of the promo to impact the overall
-    // width.
-    cs->AddColumn(GridLayout::FILL,
-                  GridLayout::FILL,
-                  1,
-                  GridLayout::FIXED,
-                  0,
-                  0);
-    layout->StartRow(0, SYNC_PROMO_COLUMN_SET_ID);
-
-    sync_promo_view_ = new BookmarkSyncPromoView(delegate_.get());
-    layout->AddView(sync_promo_view_);
-  }
-
   AddAccelerator(ui::Accelerator(ui::VKEY_RETURN, ui::EF_NONE));
   AddAccelerator(ui::Accelerator(ui::VKEY_E, ui::EF_ALT_DOWN));
   AddAccelerator(ui::Accelerator(ui::VKEY_R, ui::EF_ALT_DOWN));
+}
+
+base::string16 BookmarkBubbleView::GetWindowTitle() const {
+  return l10n_util::GetStringUTF16(newly_bookmarked_
+                                       ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED
+                                       : IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARK);
 }
 
 const char* BookmarkBubbleView::GetClassName() const {
@@ -272,39 +236,44 @@ views::View* BookmarkBubbleView::GetInitiallyFocusedView() {
   return title_tf_;
 }
 
+views::View* BookmarkBubbleView::CreateFootnoteView() {
+  if (!SyncPromoUI::ShouldShowSyncPromo(profile_))
+    return nullptr;
+
+  content::RecordAction(
+      base::UserMetricsAction("Signin_Impression_FromBookmarkBubble"));
+
+  return new BubbleSyncPromoView(delegate_.get(), IDS_BOOKMARK_SYNC_PROMO_LINK,
+                                 IDS_BOOKMARK_SYNC_PROMO_MESSAGE);
+}
+
 BookmarkBubbleView::BookmarkBubbleView(
     views::View* anchor_view,
     bookmarks::BookmarkBubbleObserver* observer,
-    scoped_ptr<BookmarkBubbleDelegate> delegate,
+    std::unique_ptr<BubbleSyncPromoDelegate> delegate,
     Profile* profile,
     const GURL& url,
     bool newly_bookmarked)
-    : BubbleDelegateView(anchor_view, views::BubbleBorder::TOP_RIGHT),
+    : LocationBarBubbleDelegateView(anchor_view, nullptr),
       observer_(observer),
-      delegate_(delegate.Pass()),
+      delegate_(std::move(delegate)),
       profile_(profile),
       url_(url),
       newly_bookmarked_(newly_bookmarked),
-      parent_model_(
-          BookmarkModelFactory::GetForProfile(profile_),
-          BookmarkModelFactory::GetForProfile(profile_)->
-              GetMostRecentlyAddedUserNodeForURL(url)),
-      remove_button_(NULL),
-      edit_button_(NULL),
-      close_button_(NULL),
-      title_tf_(NULL),
-      parent_combobox_(NULL),
-      sync_promo_view_(NULL),
+      parent_model_(BookmarkModelFactory::GetForBrowserContext(profile_),
+                    BookmarkModelFactory::GetForBrowserContext(profile_)
+                        ->GetMostRecentlyAddedUserNodeForURL(url)),
+      remove_button_(nullptr),
+      edit_button_(nullptr),
+      close_button_(nullptr),
+      title_tf_(nullptr),
+      parent_combobox_(nullptr),
       remove_bookmark_(false),
-      apply_edits_(true) {
-  set_margins(gfx::Insets(views::kPanelVertMargin, 0, 0, 0));
-  // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_view_insets(gfx::Insets(2, 0, 2, 0));
-}
+      apply_edits_(true) {}
 
 base::string16 BookmarkBubbleView::GetTitle() {
   BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfile(profile_);
+      BookmarkModelFactory::GetForBrowserContext(profile_);
   const BookmarkNode* node =
       bookmark_model->GetMostRecentlyAddedUserNodeForURL(url_);
   if (node)
@@ -314,12 +283,11 @@ base::string16 BookmarkBubbleView::GetTitle() {
   return base::string16();
 }
 
-void BookmarkBubbleView::GetAccessibleState(ui::AXViewState* state) {
-  BubbleDelegateView::GetAccessibleState(state);
-  state->name =
-      l10n_util::GetStringUTF16(
-          newly_bookmarked_ ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED :
-                              IDS_BOOKMARK_AX_BUBBLE_PAGE_BOOKMARK);
+void BookmarkBubbleView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  LocationBarBubbleDelegateView::GetAccessibleNodeData(node_data);
+  node_data->SetName(l10n_util::GetStringUTF8(
+      newly_bookmarked_ ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED
+                        : IDS_BOOKMARK_AX_BUBBLE_PAGE_BOOKMARK));
 }
 
 void BookmarkBubbleView::ButtonPressed(views::Button* sender,
@@ -351,8 +319,9 @@ void BookmarkBubbleView::HandleButtonPressed(views::Button* sender) {
 }
 
 void BookmarkBubbleView::ShowEditor() {
-  const BookmarkNode* node = BookmarkModelFactory::GetForProfile(
-      profile_)->GetMostRecentlyAddedUserNodeForURL(url_);
+  const BookmarkNode* node =
+      BookmarkModelFactory::GetForBrowserContext(profile_)
+          ->GetMostRecentlyAddedUserNodeForURL(url_);
   gfx::NativeWindow native_parent =
       anchor_widget() ? anchor_widget()->GetNativeWindow()
                       : platform_util::GetTopLevel(parent_window());
@@ -372,7 +341,7 @@ void BookmarkBubbleView::ApplyEdits() {
   // Set this to make sure we don't attempt to apply edits again.
   apply_edits_ = false;
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile_);
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile_);
   const BookmarkNode* node = model->GetMostRecentlyAddedUserNodeForURL(url_);
   if (node) {
     const base::string16 new_title = title_tf_->text();

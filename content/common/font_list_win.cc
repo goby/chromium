@@ -5,6 +5,7 @@
 #include "content/common/font_list.h"
 
 #include <windows.h>
+#include <string.h>
 
 #include <set>
 
@@ -29,7 +30,7 @@ static int CALLBACK EnumFontFamExProc(ENUMLOGFONTEXW* logical_font,
   return 1;
 }
 
-scoped_ptr<base::ListValue> GetFontList_SlowBlocking() {
+std::unique_ptr<base::ListValue> GetFontList_SlowBlocking() {
   std::set<base::string16> font_names;
 
   LOGFONTW logfont;
@@ -41,7 +42,7 @@ scoped_ptr<base::ListValue> GetFontList_SlowBlocking() {
                         (LPARAM)&font_names, 0);
   ::ReleaseDC(NULL, hdc);
 
-  scoped_ptr<base::ListValue> font_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> font_list(new base::ListValue);
   std::set<base::string16>::iterator iter;
   for (iter = font_names.begin(); iter != font_names.end(); ++iter) {
     base::ListValue* font_item = new base::ListValue();
@@ -49,7 +50,7 @@ scoped_ptr<base::ListValue> GetFontList_SlowBlocking() {
     font_item->Append(new base::StringValue(*iter));
     font_list->Append(font_item);
   }
-  return font_list.Pass();
+  return font_list;
 }
 
 }  // namespace content

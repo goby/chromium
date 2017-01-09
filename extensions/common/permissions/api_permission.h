@@ -5,18 +5,14 @@
 #ifndef EXTENSIONS_COMMON_PERMISSIONS_API_PERMISSION_H_
 #define EXTENSIONS_COMMON_PERMISSIONS_API_PERMISSION_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/pickle.h"
 #include "base/values.h"
-
-namespace IPC {
-class Message;
-}
 
 namespace extensions {
 
@@ -57,7 +53,7 @@ class APIPermission {
     kAppView,
     kAudio,
     kAudioCapture,
-    kAudioModem,
+    kDeleted_AudioModem,
     kAutofillPrivate,
     kAutomation,
     kAutoTestPrivate,
@@ -79,8 +75,8 @@ class APIPermission {
     kContentSettings,
     kContextMenus,
     kCookie,
-    kCopresence,
-    kCopresencePrivate,
+    kDeleted_Copresence,
+    kDeleted_CopresencePrivate,
     kCryptotokenPrivate,
     kDataReductionProxy,
     kDiagnostics,
@@ -161,7 +157,7 @@ class APIPermission {
     kPlugin,
     kPower,
     kPreferencesPrivate,
-    kPrincipalsPrivate,
+    kDeleted_PrincipalsPrivate,
     kPrinterProvider,
     kPrivacy,
     kProcesses,
@@ -244,6 +240,7 @@ class APIPermission {
     kCertificateProvider,
     kResourcesPrivate,
     kDisplaySource,
+    kClipboard,
     // Last entry: Add new entries above and ensure to update the
     // "ExtensionPermission3" enum in tools/metrics/histograms/histograms.xml
     // (by running update_extension_permission.py).
@@ -308,7 +305,7 @@ class APIPermission {
                          std::vector<std::string>* unhandled_permissions) = 0;
 
   // Stores this into a new created |value|.
-  virtual scoped_ptr<base::Value> ToValue() const = 0;
+  virtual std::unique_ptr<base::Value> ToValue() const = 0;
 
   // Clones this.
   virtual APIPermission* Clone() const = 0;
@@ -323,11 +320,14 @@ class APIPermission {
   virtual APIPermission* Intersect(const APIPermission* rhs) const = 0;
 
   // IPC functions
+  // Gets the size of the data to be written.
+  virtual void GetSize(base::PickleSizer* s) const = 0;
+
   // Writes this into the given IPC message |m|.
-  virtual void Write(IPC::Message* m) const = 0;
+  virtual void Write(base::Pickle* m) const = 0;
 
   // Reads from the given IPC message |m|.
-  virtual bool Read(const IPC::Message* m, base::PickleIterator* iter) = 0;
+  virtual bool Read(const base::Pickle* m, base::PickleIterator* iter) = 0;
 
   // Logs this permission.
   virtual void Log(std::string* log) const = 0;

@@ -5,15 +5,18 @@
 #ifndef REMOTING_HOST_DESKTOP_PROCESS_H_
 #define REMOTING_HOST_DESKTOP_PROCESS_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "ipc/ipc_listener.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "remoting/host/desktop_session_agent.h"
 
 namespace IPC {
@@ -23,7 +26,6 @@ class ChannelProxy;
 namespace remoting {
 
 class AutoThreadTaskRunner;
-class DesktopEnvironment;
 class DesktopEnvironmentFactory;
 class DesktopSessionAgent;
 
@@ -31,10 +33,10 @@ class DesktopProcess : public DesktopSessionAgent::Delegate,
                        public IPC::Listener,
                        public base::SupportsWeakPtr<DesktopProcess> {
  public:
-  DesktopProcess(
-      scoped_refptr<AutoThreadTaskRunner> caller_task_runner,
-      scoped_refptr<AutoThreadTaskRunner> input_task_runner,
-      const std::string& daemon_channel_name);
+  DesktopProcess(scoped_refptr<AutoThreadTaskRunner> caller_task_runner,
+                 scoped_refptr<AutoThreadTaskRunner> input_task_runner,
+                 scoped_refptr<AutoThreadTaskRunner> io_task_runner,
+                 mojo::ScopedMessagePipeHandle daemon_channel_handle);
   ~DesktopProcess() override;
 
   // DesktopSessionAgent::Delegate implementation.
@@ -43,15 +45,19 @@ class DesktopProcess : public DesktopSessionAgent::Delegate,
 
   // IPC::Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
   // Injects Secure Attention Sequence.
   void InjectSas();
 
+  // Locks the workstation for the current session.
+  void LockWorkStation();
+
   // Creates the desktop agent and required threads and IPC channels. Returns
   // true on success.
-  bool Start(scoped_ptr<DesktopEnvironmentFactory> desktop_environment_factory);
+  bool Start(
+      std::unique_ptr<DesktopEnvironmentFactory> desktop_environment_factory);
 
  private:
   // Crashes the process in response to a daemon's request. The daemon passes
@@ -67,15 +73,18 @@ class DesktopProcess : public DesktopSessionAgent::Delegate,
   // Used to run input-related tasks.
   scoped_refptr<AutoThreadTaskRunner> input_task_runner_;
 
-  // Factory used to create integration components for use by |desktop_agent_|.
-  scoped_ptr<DesktopEnvironmentFactory> desktop_environment_factory_;
+  // Used for IPC communication with Daemon process.
+  scoped_refptr<AutoThreadTaskRunner> io_task_runner_;
 
-  // Name of the IPC channel connecting the desktop process with the daemon
+  // Factory used to create integration components for use by |desktop_agent_|.
+  std::unique_ptr<DesktopEnvironmentFactory> desktop_environment_factory_;
+
+  // Handle for the IPC channel connecting the desktop process with the daemon
   // process.
-  std::string daemon_channel_name_;
+  mojo::ScopedMessagePipeHandle daemon_channel_handle_;
 
   // IPC channel connecting the desktop process with the daemon process.
-  scoped_ptr<IPC::ChannelProxy> daemon_channel_;
+  std::unique_ptr<IPC::ChannelProxy> daemon_channel_;
 
   // Provides screen/audio capturing and input injection services for
   // the network process.

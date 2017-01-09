@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
@@ -24,19 +25,20 @@ class AndroidDeviceManager : public base::NonThreadSafe {
   using CommandCallback =
       base::Callback<void(int, const std::string&)>;
   using SocketCallback =
-      base::Callback<void(int result, scoped_ptr<net::StreamSocket>)>;
+      base::Callback<void(int result, std::unique_ptr<net::StreamSocket>)>;
   // |body_head| should contain the body (WebSocket frame data) part that has
   // been read during processing the header (WebSocket handshake).
-  using HttpUpgradeCallback = base::Callback<void(
-      int result,
-      const std::string& extensions,
-      const std::string& body_head,
-      scoped_ptr<net::StreamSocket>)>;
+  using HttpUpgradeCallback =
+      base::Callback<void(int result,
+                          const std::string& extensions,
+                          const std::string& body_head,
+                          std::unique_ptr<net::StreamSocket>)>;
   using SerialsCallback =
       base::Callback<void(const std::vector<std::string>&)>;
 
   struct BrowserInfo {
     BrowserInfo();
+    BrowserInfo(const BrowserInfo& other);
 
     enum Type {
       kTypeChrome,
@@ -52,6 +54,7 @@ class AndroidDeviceManager : public base::NonThreadSafe {
 
   struct DeviceInfo {
     DeviceInfo();
+    DeviceInfo(const DeviceInfo& other);
     ~DeviceInfo();
 
     std::string model;
@@ -91,12 +94,11 @@ class AndroidDeviceManager : public base::NonThreadSafe {
     void Connected(int result,
                    const std::string& extensions,
                    const std::string& body_head,
-                   scoped_ptr<net::StreamSocket> socket);
+                   std::unique_ptr<net::StreamSocket> socket);
     void OnFrameRead(const std::string& message);
     void OnSocketClosed();
-    void Terminate();
 
-    Device* device_;
+    scoped_refptr<Device> device_;
     WebSocketImpl* socket_impl_;
     Delegate* delegate_;
     base::WeakPtrFactory<AndroidWebSocket> weak_factory_;
@@ -142,7 +144,6 @@ class AndroidDeviceManager : public base::NonThreadSafe {
     scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
     scoped_refptr<DeviceProvider> provider_;
     std::string serial_;
-    std::set<AndroidWebSocket*> sockets_;
     base::WeakPtrFactory<Device> weak_factory_;
 
     DISALLOW_COPY_AND_ASSIGN(Device);
@@ -190,7 +191,7 @@ class AndroidDeviceManager : public base::NonThreadSafe {
 
   virtual ~AndroidDeviceManager();
 
-  static scoped_ptr<AndroidDeviceManager> Create();
+  static std::unique_ptr<AndroidDeviceManager> Create();
 
   void SetDeviceProviders(const DeviceProviders& providers);
 
@@ -206,6 +207,7 @@ class AndroidDeviceManager : public base::NonThreadSafe {
 
   struct DeviceDescriptor {
     DeviceDescriptor();
+    DeviceDescriptor(const DeviceDescriptor& other);
     ~DeviceDescriptor();
 
     scoped_refptr<DeviceProvider> provider;
@@ -233,7 +235,7 @@ class AndroidDeviceManager : public base::NonThreadSafe {
   AndroidDeviceManager();
 
   void UpdateDevices(const DevicesCallback& callback,
-                     scoped_ptr<DeviceDescriptors> descriptors);
+                     std::unique_ptr<DeviceDescriptors> descriptors);
 
   typedef std::map<std::string, base::WeakPtr<Device> > DeviceWeakMap;
 

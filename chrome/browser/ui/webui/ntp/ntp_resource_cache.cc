@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,16 +9,15 @@
 
 #include "base/command_line.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -31,28 +30,28 @@
 #include "chrome/browser/ui/bookmarks/bookmark_bar_constants.h"
 #include "chrome/browser/ui/sync/sync_promo_ui.h"
 #include "chrome/browser/ui/webui/app_launcher_login_handler.h"
-#include "chrome/browser/ui/webui/ntp/new_tab_page_handler.h"
+#include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
-#include "chrome/browser/web_resource/notification_promo_helper.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/google/core/browser/google_util.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/web_resource/notification_promo.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
-#include "grit/browser_resources.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/template_expressions.h"
@@ -112,8 +111,8 @@ std::string SkColorToRGBComponents(SkColor color) {
       SkColorGetB(color));
 }
 
-SkColor GetThemeColor(ui::ThemeProvider* tp, int id) {
-  SkColor color = tp->GetColor(id);
+SkColor GetThemeColor(const ui::ThemeProvider& tp, int id) {
+  SkColor color = tp.GetColor(id);
   // If web contents are being inverted because the system is in high-contrast
   // mode, any system theme colors we use must be inverted too to cancel out.
   return color_utils::IsInvertedColorScheme() ?
@@ -122,17 +121,17 @@ SkColor GetThemeColor(ui::ThemeProvider* tp, int id) {
 
 // Get the CSS string for the background position on the new tab page for the
 // states when the bar is attached or detached.
-std::string GetNewTabBackgroundCSS(const ui::ThemeProvider* theme_provider,
+std::string GetNewTabBackgroundCSS(const ui::ThemeProvider& theme_provider,
                                    bool bar_attached) {
   // TODO(glen): This is a quick workaround to hide the notused.png image when
   // no image is provided - we don't have time right now to figure out why
   // this is painting as white.
   // http://crbug.com/17593
-  if (!theme_provider->HasCustomImage(IDR_THEME_NTP_BACKGROUND)) {
+  if (!theme_provider.HasCustomImage(IDR_THEME_NTP_BACKGROUND)) {
     return "-64px";
   }
 
-  int alignment = theme_provider->GetDisplayProperty(
+  int alignment = theme_provider.GetDisplayProperty(
       ThemeProperties::NTP_BACKGROUND_ALIGNMENT);
 
   if (bar_attached)
@@ -156,9 +155,9 @@ std::string GetNewTabBackgroundCSS(const ui::ThemeProvider* theme_provider,
 // How the background image on the new tab page should be tiled (see tiling
 // masks in theme_service.h).
 std::string GetNewTabBackgroundTilingCSS(
-    const ui::ThemeProvider* theme_provider) {
-  int repeat_mode = theme_provider->GetDisplayProperty(
-      ThemeProperties::NTP_BACKGROUND_TILING);
+    const ui::ThemeProvider& theme_provider) {
+  int repeat_mode =
+      theme_provider.GetDisplayProperty(ThemeProperties::NTP_BACKGROUND_TILING);
   return ThemeProperties::TilingToString(repeat_mode);
 }
 
@@ -171,15 +170,6 @@ NTPResourceCache::NTPResourceCache(Profile* profile)
   registrar_.Add(this, chrome::NOTIFICATION_BROWSER_THEME_CHANGED,
                  content::Source<ThemeService>(
                      ThemeServiceFactory::GetForProfile(profile)));
-  registrar_.Add(this, chrome::NOTIFICATION_PROMO_RESOURCE_STATE_CHANGED,
-                 content::NotificationService::AllSources());
-
-  web_resource::PromoResourceService* promo_service =
-      g_browser_process->promo_resource_service();
-  if (promo_service) {
-    promo_resource_subscription_ = promo_service->RegisterStateChangedCallback(
-        base::Bind(&NTPResourceCache::Invalidate, base::Unretained(this)));
-  }
 
   base::Closure callback = base::Bind(&NTPResourceCache::OnPreferenceChanged,
                                       base::Unretained(this));
@@ -194,7 +184,7 @@ NTPResourceCache::NTPResourceCache(Profile* profile)
   profile_pref_change_registrar_.Add(prefs::kHideWebStoreIcon, callback);
 
   // Some tests don't have a local state.
-#if defined(ENABLE_APP_LIST)
+#if BUILDFLAG(ENABLE_APP_LIST)
   if (g_browser_process->local_state()) {
     local_state_pref_change_registrar_.Init(g_browser_process->local_state());
     local_state_pref_change_registrar_.Add(prefs::kShowAppLauncherPromo,
@@ -280,28 +270,25 @@ base::RefCountedMemory* NTPResourceCache::GetNewTabCSS(WindowType win_type) {
 void NTPResourceCache::Observe(int type,
                                const content::NotificationSource& source,
                                const content::NotificationDetails& details) {
+  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_THEME_CHANGED, type);
+
   // Invalidate the cache.
-  if (chrome::NOTIFICATION_BROWSER_THEME_CHANGED == type ||
-      chrome::NOTIFICATION_PROMO_RESOURCE_STATE_CHANGED == type) {
-    Invalidate();
-  } else {
-    NOTREACHED();
-  }
+  Invalidate();
 }
 
 void NTPResourceCache::OnPreferenceChanged() {
   // A change occurred to one of the preferences we care about, so flush the
   // cache.
-  new_tab_incognito_html_ = NULL;
-  new_tab_html_ = NULL;
-  new_tab_css_ = NULL;
+  new_tab_incognito_html_ = nullptr;
+  new_tab_html_ = nullptr;
+  new_tab_css_ = nullptr;
 }
 
+// TODO(dbeam): why must Invalidate() and OnPreferenceChanged() both exist?
 void NTPResourceCache::Invalidate() {
   new_tab_incognito_html_ = nullptr;
   new_tab_html_ = nullptr;
   new_tab_incognito_css_ = nullptr;
-  // TODO(dbeam): Check if it is necessary to clear the CSS on promo changes.
   new_tab_css_ = nullptr;
 }
 
@@ -338,9 +325,10 @@ void NTPResourceCache::CreateNewTabIncognitoHTML() {
       profile_->GetPrefs()->GetBoolean(bookmarks::prefs::kShowBookmarkBar);
   localized_strings.SetBoolean("bookmarkbarattached", bookmark_bar_attached);
 
-  ui::ThemeProvider* tp = ThemeServiceFactory::GetForProfile(profile_);
+  const ui::ThemeProvider& tp =
+      ThemeService::GetThemeProviderForProfile(profile_);
   localized_strings.SetBoolean("hasCustomBackground",
-                               tp->HasCustomImage(IDR_THEME_NTP_BACKGROUND));
+                               tp.HasCustomImage(IDR_THEME_NTP_BACKGROUND));
 
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
   webui::SetLoadTimeDataDefaults(app_locale, &localized_strings);
@@ -456,9 +444,10 @@ void NTPResourceCache::CreateNewTabHTML() {
   load_time_data.SetString("learnMore",
       l10n_util::GetStringUTF16(IDS_LEARN_MORE));
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
-  load_time_data.SetString("webStoreLink",
-      google_util::AppendGoogleLocaleParam(
-          GURL(extension_urls::GetWebstoreLaunchURL()), app_locale).spec());
+  load_time_data.SetString(
+      "webStoreLink", google_util::AppendGoogleLocaleParam(
+                          extension_urls::GetWebstoreLaunchURL(), app_locale)
+                          .spec());
   load_time_data.SetString("appInstallHintText",
       l10n_util::GetStringUTF16(IDS_NEW_TAB_APP_INSTALL_HINT_LABEL));
   load_time_data.SetString("learn_more",
@@ -490,7 +479,7 @@ void NTPResourceCache::CreateNewTabHTML() {
   load_time_data.SetBoolean("canShowAppInfoDialog",
                             CanShowAppInfoDialog());
 
-  NewTabPageHandler::GetLocalizedValues(profile_, &load_time_data);
+  AppLauncherHandler::GetLocalizedValues(profile_, &load_time_data);
   AppLauncherLoginHandler::GetLocalizedValues(profile_, &load_time_data);
 
   webui::SetLoadTimeDataDefaults(app_locale, &load_time_data);
@@ -498,33 +487,6 @@ void NTPResourceCache::CreateNewTabHTML() {
   // Control fade and resize animations.
   load_time_data.SetBoolean("anim",
                             gfx::Animation::ShouldRenderRichAnimation());
-
-  // Disable the promo if this is the first run, otherwise set the promo string
-  // for display if there is a valid outstanding promo.
-  if (first_run::IsChromeFirstRun()) {
-    web_resource::HandleNotificationPromoClosed(
-        web_resource::NotificationPromo::NTP_NOTIFICATION_PROMO);
-  } else {
-    web_resource::NotificationPromo notification_promo(
-        g_browser_process->local_state());
-    notification_promo.InitFromPrefs(
-        web_resource::NotificationPromo::NTP_NOTIFICATION_PROMO);
-    if (notification_promo.CanShow()) {
-      load_time_data.SetString("notificationPromoText",
-                               notification_promo.promo_text());
-      DVLOG(1) << "Notification promo:" << notification_promo.promo_text();
-    }
-
-    web_resource::NotificationPromo bubble_promo(
-        g_browser_process->local_state());
-    bubble_promo.InitFromPrefs(
-        web_resource::NotificationPromo::NTP_BUBBLE_PROMO);
-    if (bubble_promo.CanShow()) {
-      load_time_data.SetString("bubblePromoText",
-                               bubble_promo.promo_text());
-      DVLOG(1) << "Bubble promo:" << bubble_promo.promo_text();
-    }
-  }
 
   load_time_data.SetBoolean(
       "isUserSignedIn",
@@ -539,17 +501,19 @@ void NTPResourceCache::CreateNewTabHTML() {
 }
 
 void NTPResourceCache::CreateNewTabIncognitoCSS() {
-  ui::ThemeProvider* tp = ThemeServiceFactory::GetForProfile(profile_);
-  DCHECK(tp);
+  // TODO(estade): this returns a subtly incorrect theme provider because
+  // |profile_| is actually not the incognito profile. See crbug.com/568388
+  const ui::ThemeProvider& tp =
+      ThemeService::GetThemeProviderForProfile(profile_);
 
   // Get our theme colors
   SkColor color_background =
-      tp->HasCustomImage(IDR_THEME_NTP_BACKGROUND)
+      tp.HasCustomImage(IDR_THEME_NTP_BACKGROUND)
           ? GetThemeColor(tp, ThemeProperties::COLOR_NTP_BACKGROUND)
           : SkColorSetRGB(0x32, 0x32, 0x32);
 
   // Generate the replacements.
-  std::map<base::StringPiece, std::string> substitutions;
+  ui::TemplateReplacements substitutions;
 
   // Cache-buster for background.
   substitutions["themeId"] =
@@ -574,8 +538,8 @@ void NTPResourceCache::CreateNewTabIncognitoCSS() {
 }
 
 void NTPResourceCache::CreateNewTabCSS() {
-  ui::ThemeProvider* tp = ThemeServiceFactory::GetForProfile(profile_);
-  DCHECK(tp);
+  const ui::ThemeProvider& tp =
+      ThemeService::GetThemeProviderForProfile(profile_);
 
   // Get our theme colors
   SkColor color_background =
@@ -601,7 +565,7 @@ void NTPResourceCache::CreateNewTabCSS() {
                      SkColorGetB(color_header));
 
   // Generate the replacements.
-  std::map<base::StringPiece, std::string> substitutions;
+  ui::TemplateReplacements substitutions;
 
   // Cache-buster for background.
   substitutions["themeId"] =
@@ -613,8 +577,6 @@ void NTPResourceCache::CreateNewTabCSS() {
   substitutions["backgroundBarAttached"] = GetNewTabBackgroundCSS(tp, true);
   substitutions["backgroundTiling"] = GetNewTabBackgroundTilingCSS(tp);
   substitutions["colorTextRgba"] = SkColorToRGBAString(color_text);
-  substitutions["colorSectionBorder"] =
-      SkColorToRGBAString(color_section_border);
   substitutions["colorTextLight"] = SkColorToRGBAString(color_text_light);
   substitutions["colorSectionBorder"] =
       SkColorToRGBComponents(color_section_border);
@@ -622,8 +584,8 @@ void NTPResourceCache::CreateNewTabCSS() {
 
   // For themes that right-align the background, we flip the attribution to the
   // left to avoid conflicts.
-  int alignment = tp->GetDisplayProperty(
-      ThemeProperties::NTP_BACKGROUND_ALIGNMENT);
+  int alignment =
+      tp.GetDisplayProperty(ThemeProperties::NTP_BACKGROUND_ALIGNMENT);
   if (alignment & ThemeProperties::ALIGN_RIGHT) {
     substitutions["leftAlignAttribution"] = "0";
     substitutions["rightAlignAttribution"] = "auto";
@@ -635,7 +597,7 @@ void NTPResourceCache::CreateNewTabCSS() {
   }
 
   substitutions["displayAttribution"] =
-      tp->HasCustomImage(IDR_THEME_NTP_ATTRIBUTION) ? "inline" : "none";
+      tp.HasCustomImage(IDR_THEME_NTP_ATTRIBUTION) ? "inline" : "none";
 
   // Get our template.
   static const base::StringPiece new_tab_theme_css(

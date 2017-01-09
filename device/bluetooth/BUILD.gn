@@ -20,6 +20,24 @@ config("bluetooth_config") {
   }
 }
 
+source_set("mojo") {
+  sources = [
+    "//device/bluetooth/public/interfaces/connect_result_type_converter.h",
+    "adapter.cc",
+    "adapter.h",
+    "adapter_factory.cc",
+    "adapter_factory.h",
+    "device.cc",
+    "device.h",
+  ]
+
+  public_deps = [
+    ":bluetooth",
+    "//device/bluetooth/public/interfaces:experimental_interfaces",
+    "//mojo/public/cpp/bindings",
+  ]
+}
+
 component("bluetooth") {
   sources = [
     "android/bluetooth_jni_registrar.cc",
@@ -32,18 +50,21 @@ component("bluetooth") {
     "bluetooth_adapter_android.h",
     "bluetooth_adapter_factory.cc",
     "bluetooth_adapter_factory.h",
+    "bluetooth_adapter_factory_wrapper.cc",
+    "bluetooth_adapter_factory_wrapper.h",
     "bluetooth_adapter_mac.h",
     "bluetooth_adapter_mac.mm",
     "bluetooth_adapter_win.cc",
     "bluetooth_adapter_win.h",
     "bluetooth_advertisement.cc",
     "bluetooth_advertisement.h",
-    "bluetooth_audio_sink.cc",
-    "bluetooth_audio_sink.h",
     "bluetooth_channel_mac.h",
     "bluetooth_channel_mac.mm",
     "bluetooth_classic_device_mac.h",
     "bluetooth_classic_device_mac.mm",
+    "bluetooth_classic_win.cc",
+    "bluetooth_classic_win.h",
+    "bluetooth_common.h",
     "bluetooth_device.cc",
     "bluetooth_device.h",
     "bluetooth_device_android.cc",
@@ -67,14 +88,18 @@ component("bluetooth") {
     "bluetooth_gatt_descriptor.h",
     "bluetooth_gatt_notify_session.cc",
     "bluetooth_gatt_notify_session.h",
-    "bluetooth_gatt_notify_session_android.cc",
-    "bluetooth_gatt_notify_session_android.h",
     "bluetooth_gatt_service.cc",
     "bluetooth_gatt_service.h",
     "bluetooth_init_win.cc",
     "bluetooth_init_win.h",
     "bluetooth_l2cap_channel_mac.h",
     "bluetooth_l2cap_channel_mac.mm",
+    "bluetooth_local_gatt_characteristic.cc",
+    "bluetooth_local_gatt_characteristic.h",
+    "bluetooth_local_gatt_descriptor.cc",
+    "bluetooth_local_gatt_descriptor.h",
+    "bluetooth_local_gatt_service.cc",
+    "bluetooth_local_gatt_service.h",
     "bluetooth_low_energy_central_manager_delegate.h",
     "bluetooth_low_energy_central_manager_delegate.mm",
     "bluetooth_low_energy_defs_win.cc",
@@ -83,12 +108,32 @@ component("bluetooth") {
     "bluetooth_low_energy_device_mac.mm",
     "bluetooth_low_energy_discovery_manager_mac.h",
     "bluetooth_low_energy_discovery_manager_mac.mm",
+    "bluetooth_low_energy_peripheral_delegate.h",
+    "bluetooth_low_energy_peripheral_delegate.mm",
     "bluetooth_low_energy_win.cc",
     "bluetooth_low_energy_win.h",
+    "bluetooth_remote_gatt_characteristic.cc",
+    "bluetooth_remote_gatt_characteristic.h",
     "bluetooth_remote_gatt_characteristic_android.cc",
     "bluetooth_remote_gatt_characteristic_android.h",
+    "bluetooth_remote_gatt_characteristic_mac.h",
+    "bluetooth_remote_gatt_characteristic_mac.mm",
+    "bluetooth_remote_gatt_characteristic_win.cc",
+    "bluetooth_remote_gatt_characteristic_win.h",
+    "bluetooth_remote_gatt_descriptor.cc",
+    "bluetooth_remote_gatt_descriptor.h",
+    "bluetooth_remote_gatt_descriptor_android.cc",
+    "bluetooth_remote_gatt_descriptor_android.h",
+    "bluetooth_remote_gatt_descriptor_win.cc",
+    "bluetooth_remote_gatt_descriptor_win.h",
+    "bluetooth_remote_gatt_service.cc",
+    "bluetooth_remote_gatt_service.h",
     "bluetooth_remote_gatt_service_android.cc",
     "bluetooth_remote_gatt_service_android.h",
+    "bluetooth_remote_gatt_service_mac.h",
+    "bluetooth_remote_gatt_service_mac.mm",
+    "bluetooth_remote_gatt_service_win.cc",
+    "bluetooth_remote_gatt_service_win.h",
     "bluetooth_rfcomm_channel_mac.h",
     "bluetooth_rfcomm_channel_mac.mm",
     "bluetooth_service_record_win.cc",
@@ -107,6 +152,8 @@ component("bluetooth") {
     "bluetooth_task_manager_win.h",
     "bluetooth_uuid.cc",
     "bluetooth_uuid.h",
+    "string_util_icu.cc",
+    "string_util_icu.h",
   ]
 
   defines = [ "DEVICE_BLUETOOTH_IMPLEMENTATION" ]
@@ -132,40 +179,61 @@ component("bluetooth") {
   }
 
   if (is_mac) {
-    libs = [ "IOBluetooth.framework" ]
+    libs = [
+      "IOBluetooth.framework",
+      "Foundation.framework",
+    ]
   }
 
   if (is_win) {
-    libs = [ "setupapi.lib" ]
+    libs = [
+      # Bthprops must be listed before BluetoothApis or else delay loading
+      # crashes.
+      "Bthprops.lib",
+      "BluetoothApis.lib",
+      "setupapi.lib",
+    ]
   }
 
   if (is_chromeos || is_linux) {
     if (use_dbus) {
       sources += [
-        "bluetooth_adapter_bluez.cc",
-        "bluetooth_adapter_bluez.h",
-        "bluetooth_adapter_profile_bluez.cc",
-        "bluetooth_adapter_profile_bluez.h",
-        "bluetooth_advertisement_bluez.cc",
-        "bluetooth_advertisement_bluez.h",
-        "bluetooth_audio_sink_bluez.cc",
-        "bluetooth_audio_sink_bluez.h",
-        "bluetooth_device_bluez.cc",
-        "bluetooth_device_bluez.h",
-        "bluetooth_gatt_connection_bluez.cc",
-        "bluetooth_gatt_connection_bluez.h",
-        "bluetooth_gatt_notify_session_bluez.cc",
-        "bluetooth_gatt_notify_session_bluez.h",
-        "bluetooth_pairing_bluez.cc",
-        "bluetooth_pairing_bluez.h",
-        "bluetooth_remote_gatt_characteristic_bluez.cc",
-        "bluetooth_remote_gatt_characteristic_bluez.h",
-        "bluetooth_remote_gatt_descriptor_bluez.cc",
-        "bluetooth_remote_gatt_descriptor_bluez.h",
-        "bluetooth_remote_gatt_service_bluez.cc",
-        "bluetooth_remote_gatt_service_bluez.h",
-        "bluetooth_socket_bluez.cc",
-        "bluetooth_socket_bluez.h",
+        "bluez/bluetooth_adapter_bluez.cc",
+        "bluez/bluetooth_adapter_bluez.h",
+        "bluez/bluetooth_adapter_profile_bluez.cc",
+        "bluez/bluetooth_adapter_profile_bluez.h",
+        "bluez/bluetooth_advertisement_bluez.cc",
+        "bluez/bluetooth_advertisement_bluez.h",
+        "bluez/bluetooth_device_bluez.cc",
+        "bluez/bluetooth_device_bluez.h",
+        "bluez/bluetooth_gatt_characteristic_bluez.cc",
+        "bluez/bluetooth_gatt_characteristic_bluez.h",
+        "bluez/bluetooth_gatt_connection_bluez.cc",
+        "bluez/bluetooth_gatt_connection_bluez.h",
+        "bluez/bluetooth_gatt_descriptor_bluez.cc",
+        "bluez/bluetooth_gatt_descriptor_bluez.h",
+        "bluez/bluetooth_gatt_service_bluez.cc",
+        "bluez/bluetooth_gatt_service_bluez.h",
+        "bluez/bluetooth_local_gatt_characteristic_bluez.cc",
+        "bluez/bluetooth_local_gatt_characteristic_bluez.h",
+        "bluez/bluetooth_local_gatt_descriptor_bluez.cc",
+        "bluez/bluetooth_local_gatt_descriptor_bluez.h",
+        "bluez/bluetooth_local_gatt_service_bluez.cc",
+        "bluez/bluetooth_local_gatt_service_bluez.h",
+        "bluez/bluetooth_pairing_bluez.cc",
+        "bluez/bluetooth_pairing_bluez.h",
+        "bluez/bluetooth_remote_gatt_characteristic_bluez.cc",
+        "bluez/bluetooth_remote_gatt_characteristic_bluez.h",
+        "bluez/bluetooth_remote_gatt_descriptor_bluez.cc",
+        "bluez/bluetooth_remote_gatt_descriptor_bluez.h",
+        "bluez/bluetooth_remote_gatt_service_bluez.cc",
+        "bluez/bluetooth_remote_gatt_service_bluez.h",
+        "bluez/bluetooth_service_attribute_value_bluez.cc",
+        "bluez/bluetooth_service_attribute_value_bluez.h",
+        "bluez/bluetooth_service_record_bluez.cc",
+        "bluez/bluetooth_service_record_bluez.h",
+        "bluez/bluetooth_socket_bluez.cc",
+        "bluez/bluetooth_socket_bluez.h",
         "dbus/bluetooth_adapter_client.cc",
         "dbus/bluetooth_adapter_client.h",
         "dbus/bluetooth_agent_manager_client.cc",
@@ -176,20 +244,38 @@ component("bluetooth") {
         "dbus/bluetooth_dbus_client_bundle.h",
         "dbus/bluetooth_device_client.cc",
         "dbus/bluetooth_device_client.h",
+        "dbus/bluetooth_gatt_application_service_provider.cc",
+        "dbus/bluetooth_gatt_application_service_provider.h",
+        "dbus/bluetooth_gatt_application_service_provider_impl.cc",
+        "dbus/bluetooth_gatt_application_service_provider_impl.h",
+        "dbus/bluetooth_gatt_attribute_helpers.cc",
+        "dbus/bluetooth_gatt_attribute_helpers.h",
+        "dbus/bluetooth_gatt_attribute_value_delegate.cc",
+        "dbus/bluetooth_gatt_attribute_value_delegate.h",
         "dbus/bluetooth_gatt_characteristic_client.cc",
         "dbus/bluetooth_gatt_characteristic_client.h",
+        "dbus/bluetooth_gatt_characteristic_delegate_wrapper.cc",
+        "dbus/bluetooth_gatt_characteristic_delegate_wrapper.h",
         "dbus/bluetooth_gatt_characteristic_service_provider.cc",
         "dbus/bluetooth_gatt_characteristic_service_provider.h",
+        "dbus/bluetooth_gatt_characteristic_service_provider_impl.cc",
+        "dbus/bluetooth_gatt_characteristic_service_provider_impl.h",
         "dbus/bluetooth_gatt_descriptor_client.cc",
         "dbus/bluetooth_gatt_descriptor_client.h",
+        "dbus/bluetooth_gatt_descriptor_delegate_wrapper.cc",
+        "dbus/bluetooth_gatt_descriptor_delegate_wrapper.h",
         "dbus/bluetooth_gatt_descriptor_service_provider.cc",
         "dbus/bluetooth_gatt_descriptor_service_provider.h",
+        "dbus/bluetooth_gatt_descriptor_service_provider_impl.cc",
+        "dbus/bluetooth_gatt_descriptor_service_provider_impl.h",
         "dbus/bluetooth_gatt_manager_client.cc",
         "dbus/bluetooth_gatt_manager_client.h",
         "dbus/bluetooth_gatt_service_client.cc",
         "dbus/bluetooth_gatt_service_client.h",
         "dbus/bluetooth_gatt_service_service_provider.cc",
         "dbus/bluetooth_gatt_service_service_provider.h",
+        "dbus/bluetooth_gatt_service_service_provider_impl.cc",
+        "dbus/bluetooth_gatt_service_service_provider_impl.h",
         "dbus/bluetooth_input_client.cc",
         "dbus/bluetooth_input_client.h",
         "dbus/bluetooth_le_advertisement_service_provider.cc",
@@ -209,8 +295,6 @@ component("bluetooth") {
         "dbus/bluez_dbus_client.h",
         "dbus/bluez_dbus_manager.cc",
         "dbus/bluez_dbus_manager.h",
-        "dbus/dbus_thread_manager_linux.cc",
-        "dbus/dbus_thread_manager_linux.h",
         "dbus/fake_bluetooth_adapter_client.cc",
         "dbus/fake_bluetooth_adapter_client.h",
         "dbus/fake_bluetooth_agent_manager_client.cc",
@@ -219,6 +303,8 @@ component("bluetooth") {
         "dbus/fake_bluetooth_agent_service_provider.h",
         "dbus/fake_bluetooth_device_client.cc",
         "dbus/fake_bluetooth_device_client.h",
+        "dbus/fake_bluetooth_gatt_application_service_provider.cc",
+        "dbus/fake_bluetooth_gatt_application_service_provider.h",
         "dbus/fake_bluetooth_gatt_characteristic_client.cc",
         "dbus/fake_bluetooth_gatt_characteristic_client.h",
         "dbus/fake_bluetooth_gatt_characteristic_service_provider.cc",
@@ -250,10 +336,23 @@ component("bluetooth") {
         "dbus/fake_bluetooth_profile_service_provider.cc",
         "dbus/fake_bluetooth_profile_service_provider.h",
       ]
-
+      if (is_linux) {
+        sources += [
+          "dbus/dbus_bluez_manager_wrapper_linux.cc",
+          "dbus/dbus_bluez_manager_wrapper_linux.h",
+          "dbus/dbus_thread_manager_linux.cc",
+          "dbus/dbus_thread_manager_linux.h",
+        ]
+      }
       deps += [ "//dbus" ]
     } else {  # !use_dbus
       sources += [ "bluetooth_adapter_stub.cc" ]
+      if (is_linux) {
+        sources += [
+          "dbus/dbus_bluez_manager_wrapper_linux.h",
+          "dbus/dbus_bluez_manager_wrapper_stub_linux.cc",
+        ]
+      }
     }
   }
 }
@@ -265,8 +364,6 @@ static_library("mocks") {
     "test/mock_bluetooth_adapter.h",
     "test/mock_bluetooth_advertisement.cc",
     "test/mock_bluetooth_advertisement.h",
-    "test/mock_bluetooth_central_manager_mac.h",
-    "test/mock_bluetooth_central_manager_mac.mm",
     "test/mock_bluetooth_device.cc",
     "test/mock_bluetooth_device.h",
     "test/mock_bluetooth_discovery_session.cc",
@@ -298,6 +395,7 @@ if (is_android) {
     "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothAdapter.java",
     "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothDevice.java",
     "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothRemoteGattCharacteristic.java",
+    "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothRemoteGattDescriptor.java",
     "android/java/src/org/chromium/device/bluetooth/ChromeBluetoothRemoteGattService.java",
     "android/java/src/org/chromium/device/bluetooth/Wrappers.java",
   ]
@@ -311,6 +409,7 @@ if (is_android) {
     java_files = java_sources_needing_jni
     deps = [
       "//base:base_java",
+      "//components/location/android:location_java",
     ]
   }
 }

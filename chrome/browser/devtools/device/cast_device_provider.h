@@ -6,27 +6,22 @@
 #define CHROME_BROWSER_DEVTOOLS_DEVICE_CAST_DEVICE_PROVIDER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/single_thread_task_runner.h"
 #include "chrome/browser/devtools/device/android_device_manager.h"
 #include "chrome/browser/devtools/device/tcp_device_provider.h"
 #include "chrome/browser/local_discovery/service_discovery_device_lister.h"
-#include "chrome/browser/local_discovery/service_discovery_shared_client.h"
 #include "content/public/browser/browser_thread.h"
-
-using local_discovery::ServiceDescription;
-using local_discovery::ServiceDiscoveryDeviceLister;
-using local_discovery::ServiceDiscoverySharedClient;
 
 // Supplies Cast device information for the purposes of remote debugging Cast
 // applications over ADB.
-class CastDeviceProvider : public AndroidDeviceManager::DeviceProvider,
-                           public ServiceDiscoveryDeviceLister::Delegate {
+class CastDeviceProvider
+    : public AndroidDeviceManager::DeviceProvider,
+      public local_discovery::ServiceDiscoveryDeviceLister::Delegate {
  public:
   CastDeviceProvider();
 
@@ -39,8 +34,9 @@ class CastDeviceProvider : public AndroidDeviceManager::DeviceProvider,
                   const SocketCallback& callback) override;
 
   // ServiceDiscoveryDeviceLister::Delegate implementation:
-  void OnDeviceChanged(bool added,
-                       const ServiceDescription& service_description) override;
+  void OnDeviceChanged(
+      bool added,
+      const local_discovery::ServiceDescription& service_description) override;
   void OnDeviceRemoved(const std::string& service_name) override;
   void OnDeviceCacheFlushed() override;
 
@@ -50,7 +46,8 @@ class CastDeviceProvider : public AndroidDeviceManager::DeviceProvider,
   ~CastDeviceProvider() override;
 
   scoped_refptr<TCPDeviceProvider> tcp_provider_;
-  scoped_ptr<DeviceListerDelegate, content::BrowserThread::DeleteOnUIThread>
+  std::unique_ptr<DeviceListerDelegate,
+                  content::BrowserThread::DeleteOnUIThread>
       lister_delegate_;
 
   // Keyed on the hostname (IP address).

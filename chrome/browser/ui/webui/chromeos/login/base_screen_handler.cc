@@ -5,11 +5,13 @@
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
+#include "chrome/browser/chromeos/login/screens/base_screen.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "components/login/localized_values_builder.h"
 #include "content/public/browser/web_ui.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace chromeos {
 
@@ -41,7 +43,7 @@ void BaseScreenHandler::InitializeBase() {
 }
 
 void BaseScreenHandler::GetLocalizedStrings(base::DictionaryValue* dict) {
-  auto builder = make_scoped_ptr(new ::login::LocalizedValuesBuilder(dict));
+  auto builder = base::MakeUnique<::login::LocalizedValuesBuilder>(dict);
   DeclareLocalizedValues(builder.get());
   GetAdditionalParameters(dict);
 }
@@ -66,22 +68,38 @@ void BaseScreenHandler::GetAdditionalParameters(base::DictionaryValue* dict) {
 }
 
 void BaseScreenHandler::CallJS(const std::string& method) {
-  web_ui()->CallJavascriptFunction(FullMethodPath(method));
+  web_ui()->CallJavascriptFunctionUnsafe(FullMethodPath(method));
 }
 
-void BaseScreenHandler::ShowScreen(const char* screen_name,
-                                   const base::DictionaryValue* data) {
+void BaseScreenHandler::ShowScreen(OobeScreen screen) {
+  ShowScreenWithData(screen, nullptr);
+}
+
+void BaseScreenHandler::ShowScreenWithData(OobeScreen screen,
+                                           const base::DictionaryValue* data) {
   if (!web_ui())
     return;
   base::DictionaryValue screen_params;
-  screen_params.SetString("id", screen_name);
+  screen_params.SetString("id", GetOobeScreenName(screen));
   if (data)
     screen_params.SetWithoutPathExpansion("data", data->DeepCopy());
-  web_ui()->CallJavascriptFunction("cr.ui.Oobe.showScreen", screen_params);
+  web_ui()->CallJavascriptFunctionUnsafe("cr.ui.Oobe.showScreen",
+                                         screen_params);
+}
+
+OobeUI* BaseScreenHandler::GetOobeUI() const {
+  return static_cast<OobeUI*>(web_ui()->GetController());
+}
+
+OobeScreen BaseScreenHandler::GetCurrentScreen() const {
+  OobeUI* oobe_ui = GetOobeUI();
+  if (!oobe_ui)
+    return OobeScreen::SCREEN_UNKNOWN;
+  return oobe_ui->current_screen();
 }
 
 gfx::NativeWindow BaseScreenHandler::GetNativeWindow() {
-  return LoginDisplayHostImpl::default_host()->GetNativeWindow();
+  return LoginDisplayHost::default_host()->GetNativeWindow();
 }
 
 void BaseScreenHandler::SetBaseScreen(BaseScreen* base_screen) {

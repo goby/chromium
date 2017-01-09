@@ -8,7 +8,7 @@ cr.define('help', function() {
 
   /**
    * Encapsulated handling of the About page. Called 'help' internally to avoid
-   * confusion with generic AboutUI (about:memory, about:sandbox, etc.).
+   * confusion with generic AboutUI (about:version, about:sandbox, etc.).
    */
   function HelpPage() {
     var id = loadTimeData.valueExists('aboutOverlayTabTitle') ?
@@ -56,7 +56,25 @@ cr.define('help', function() {
      * True if user is allowed to change channels, false otherwise.
      * @private
      */
-    can_change_channel_: false,
+    canChangeChannel_: false,
+
+    /**
+     * True if we have never checked for available updates.
+     * @private
+     */
+    haveNeverCheckedForUpdates_: true,
+
+    /**
+     *  Last EndofLife status received from the version updater.
+     *  @private
+     */
+    eolStatus_: null,
+
+    /**
+     *  Last EndofLife message received from the version updater.
+     * @private
+     */
+    eolMessage_: null,
 
     /** @override */
     initializePage: function() {
@@ -66,6 +84,7 @@ cr.define('help', function() {
       if (cr.isChromeOS) {
         $('product-os-license').innerHTML =
             loadTimeData.getString('productOsLicense');
+        $('eol-learnMore').innerHTML = loadTimeData.getString('eolLearnMore');
       }
 
       var productTOS = $('product-tos');
@@ -160,12 +179,30 @@ cr.define('help', function() {
         $('regulatory-label').onload = function() {
           $('regulatory-label-container').hidden = false;
         };
+
+        $('controlled-feature-icon').onclick = function(e) {
+          var content = /** @type {HTMLElement} */(
+              document.createElement('div'));
+          content.textContent =
+              loadTimeData.getString('updateDisabledByPolicy');
+          var bubble = new cr.ui.AutoCloseBubble;
+          bubble.id = 'controlled-feature-bubble';
+          bubble.anchorNode = $('controlled-feature-icon');
+          bubble.domSibling = $('controlled-feature-icon');
+          bubble.arrowLocation = cr.ui.ArrowLocation.TOP_END;
+          bubble.content = content;
+          bubble.show();
+        };
       }
 
       var logo = $('product-logo');
       logo.onclick = function(e) {
-        logo.classList.remove('spin');
-        setTimeout(function() { logo.classList.add('spin'); }, 0);
+        logo.animate({
+          transform: ['none', 'rotate(-10turn)'],
+        }, /** @type {!KeyframeEffectOptions} */({
+          duration: 500,
+          easing: 'cubic-bezier(1, 0, 0, 1)',
+        }));
       };
 
       // Attempt to update.
@@ -267,8 +304,30 @@ cr.define('help', function() {
      * @private
      */
     setUpdateStatus_: function(status, message) {
+      var oldStatus = this.status_;
       this.status_ = status;
+
+      if (oldStatus != status && oldStatus == 'disabled_by_admin') {
+        // If the auto update policy was recently re-enabled, then we'll
+        // re-enable the 'request-update' button.
+        this.haveNeverCheckedForUpdates_ = true;
+      }
+
+      if (status == 'checking')
+        this.haveNeverCheckedForUpdates_ = false;
       this.message_ = message;
+
+      this.updateUI_();
+    },
+
+    /**
+     * @param {string} eolStatus: The EndofLife status of the device.
+     * @param {string} eolMessage: The EndofLife message to display.
+     * @private
+     */
+    updateEolMessage_: function(eolStatus, eolMessage) {
+      this.eolStatus_ = eolStatus;
+      this.eolMessage_ = eolMessage;
 
       this.updateUI_();
     },
@@ -281,11 +340,15 @@ cr.define('help', function() {
       var status = this.status_;
       var message = this.message_;
       var channel = this.targetChannel_;
+      var eolStatus = this.eolStatus_;
+      var eolMessage = this.eolMessage_;
 
       if (this.channelList_.indexOf(channel) >= 0) {
         $('current-channel').textContent = loadTimeData.getStringF(
             'currentChannel', this.channelTable_[channel].label);
         this.updateChannelChangePageContainerVisibility_();
+        if (cr.isChromeOS)
+          $('dev-channel-disclaimer').hidden = (channel != 'dev-channel');
       }
 
       if (status == null)
@@ -331,14 +394,24 @@ cr.define('help', function() {
         this.setUpdateImage_('failed');
         $('update-status-message').innerHTML = message;
       } else if (status == 'disabled_by_admin') {
+        // This is the general behavior for non-chromeos.
         this.setUpdateImage_('disabled-by-admin');
         $('update-status-message').innerHTML = message;
       }
 
+      // Show EndofLife Strings if applicable
+      if (eolStatus == 'device_supported') {
+          $('eol-status-container').hidden = true;
+      } else if (eolStatus == 'device_endoflife') {
+          $('eol-message').innerHTML = eolMessage;
+          $('eol-status-container').hidden = false;
+      }
+
+
       if (cr.isChromeOS) {
-        $('change-channel').disabled = !this.can_change_channel_ ||
+        $('change-channel').disabled = !this.canChangeChannel_ ||
             status == 'nearly_updated';
-        $('channel-change-disallowed-icon').hidden = this.can_change_channel_;
+        $('channel-change-disallowed-icon').hidden = this.canChangeChannel_;
       }
 
       // Following invariant must be established at the end of this function:
@@ -354,13 +427,21 @@ cr.define('help', function() {
       }
 
       if (cr.isChromeOS) {
-        // Only enable the update button if it hasn't been used yet or the
-        // status isn't 'updated'.
-        if (!$('request-update').disabled || status != 'updated') {
-          // Disable the button if an update is already in progress.
-          $('request-update').disabled =
-            ['checking', 'updating', 'nearly_updated'].indexOf(status) > -1;
-        }
+        // Re-enable the update button if we are in a stale 'updated' status or
+        // update has failed, and disable it if there's an update in progress or
+        // updates are disabled by policy.
+        // In addition, Update button will be disabled when device is in eol
+        // status
+        $('request-update').disabled =
+            !((this.haveNeverCheckedForUpdates_ && status == 'updated') ||
+                   status == 'failed') || (eolStatus == 'device_endoflife');
+        // If updates are disabled by policy, unhide the
+        // controlled-feature-icon.
+        $('controlled-feature-icon').hidden = (status != 'disabled_by_admin');
+        // If updates are no longer disabled by policy and the tooltip bubble
+        // is present, we hide it.
+        if (status != 'disabled_by_admin' && $('controlled-feature-bubble'))
+          $('controlled-feature-bubble').hide();
       }
 
       var container = $('update-status-container');
@@ -371,8 +452,11 @@ cr.define('help', function() {
 
         if (cr.isChromeOS) {
           // Assume the "updated" status is stale if we haven't checked yet.
-          if (status == 'updated' && !$('request-update').disabled)
+          if (status == 'updated' && this.haveNeverCheckedForUpdates_ ||
+              status == 'disabled_by_admin' ||
+              eolStatus == 'device_endoflife') {
             container.hidden = true;
+          }
 
           // Hide the request update button if auto-updating is disabled or
           // a relaunch button is showing.
@@ -464,6 +548,18 @@ cr.define('help', function() {
     },
 
     /**
+     * @param {string} version Version of ARC.
+     * @private
+     */
+    setARCVersion_: function(version) {
+      if (!cr.isChromeOS)
+        console.error('ARC version unsupported on non-CrOS');
+
+      $('arc-version').parentNode.hidden = (version == '');
+      $('arc-version').textContent = version;
+    },
+
+    /**
      * @param {string} firmware Firmware on Chrome OS.
      * @private
      */
@@ -520,7 +616,7 @@ cr.define('help', function() {
      */
     updateEnableReleaseChannel_: function(enabled) {
       this.updateChannelChangerContainerVisibility_(enabled);
-      this.can_change_channel_ = enabled;
+      this.canChangeChannel_ = enabled;
       this.updateUI_();
     },
 
@@ -629,6 +725,10 @@ cr.define('help', function() {
     HelpPage.getInstance().setOSVersion_(version);
   };
 
+  HelpPage.setARCVersion = function(version) {
+    HelpPage.getInstance().setARCVersion_(version);
+  };
+
   HelpPage.setOSFirmware = function(firmware) {
     HelpPage.getInstance().setOSFirmware_(firmware);
   };
@@ -671,6 +771,11 @@ cr.define('help', function() {
   HelpPage.setRegulatoryLabelText = function(text) {
     assert(cr.isChromeOS);
     HelpPage.getInstance().setRegulatoryLabelText_(text);
+  };
+
+  HelpPage.updateEolMessage = function(eolStatus, eolMessage) {
+    assert(cr.isChromeOS);
+    HelpPage.getInstance().updateEolMessage_(eolStatus, eolMessage);
   };
 
   // Export

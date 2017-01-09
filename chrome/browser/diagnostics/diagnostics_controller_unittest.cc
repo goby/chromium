@@ -4,12 +4,15 @@
 
 #include "chrome/browser/diagnostics/diagnostics_controller.h"
 
+#include <memory>
+
 #include "base/base_paths.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/path_service.h"
+#include "build/build_config.h"
 #include "chrome/browser/diagnostics/diagnostics_model.h"
 #include "chrome/browser/diagnostics/diagnostics_writer.h"
 #include "chrome/browser/diagnostics/sqlite_diagnostics.h"
@@ -34,8 +37,8 @@ class DiagnosticsControllerTest : public testing::Test {
     PathService::Get(chrome::DIR_TEST_DATA, &test_data);
     test_data = test_data.Append(FILE_PATH_LITERAL("diagnostics"));
     test_data = test_data.Append(FILE_PATH_LITERAL("user"));
-    base::CopyDirectory(test_data, temp_dir_.path(), true);
-    profile_dir_ = temp_dir_.path().Append(FILE_PATH_LITERAL("user"));
+    base::CopyDirectory(test_data, temp_dir_.GetPath(), true);
+    profile_dir_ = temp_dir_.GetPath().Append(FILE_PATH_LITERAL("user"));
 
 #if defined(OS_CHROMEOS)
     // Redirect the home dir to the profile directory. We have to do this
@@ -69,10 +72,10 @@ class DiagnosticsControllerTest : public testing::Test {
     base::WriteFile(path, bogus_data, arraysize(bogus_data));
   }
 
-  scoped_ptr<DiagnosticsModel> model_;
+  std::unique_ptr<DiagnosticsModel> model_;
   base::CommandLine cmdline_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<DiagnosticsWriter> writer_;
+  std::unique_ptr<DiagnosticsWriter> writer_;
   base::FilePath profile_dir_;
 
 #if defined(OS_CHROMEOS)

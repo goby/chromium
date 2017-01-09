@@ -4,9 +4,13 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/extension_data_collection.h"
 
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/install_signer.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -17,7 +21,8 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_prefs.h"
@@ -25,7 +30,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_set.h"
-
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -87,7 +91,8 @@ void ExtensionTestingProfile::AddExtension(std::string extension_id,
                            .Set("version", version)
                            .Set("manifest_version", 2)
                            .Set("description", description)
-                           .Set("update_url", update_url))
+                           .Set("update_url", update_url)
+                           .Build())
           .Build();
 
   // Install the extension on the faked extension service.
@@ -135,31 +140,31 @@ class ExtensionDataCollectionTest : public testing::Test {
     testing::Test::TearDown();
   }
 
-  scoped_ptr<ExtensionTestingProfile> CreateProfile(
+  std::unique_ptr<ExtensionTestingProfile> CreateProfile(
       SafeBrowsingDisposition safe_browsing_opt_in) {
     std::string profile_name("profile");
     profile_name.append(base::IntToString(++profile_number_));
 
     // Create prefs for the profile with safe browsing enabled or not.
-    scoped_ptr<syncable_prefs::TestingPrefServiceSyncable> prefs(
-        new syncable_prefs::TestingPrefServiceSyncable);
+    std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> prefs(
+        new sync_preferences::TestingPrefServiceSyncable);
     chrome::RegisterUserProfilePrefs(prefs->registry());
     prefs->SetBoolean(prefs::kSafeBrowsingEnabled,
                       safe_browsing_opt_in == SAFE_BROWSING_OPT_IN);
-    prefs->SetBoolean(prefs::kSafeBrowsingExtendedReportingEnabled,
-                      safe_browsing_opt_in == SAFE_BROWSING_OPT_IN);
+    safe_browsing::SetExtendedReportingPref(
+        prefs.get(), safe_browsing_opt_in == SAFE_BROWSING_OPT_IN);
     TestingProfile* profile = profile_manager_->CreateTestingProfile(
-        profile_name, prefs.Pass(),
+        profile_name, std::move(prefs),
         base::UTF8ToUTF16(profile_name),  // user_name
         0,                                // avatar_id
         std::string(),                    // supervised_user_id
         TestingProfile::TestingFactories());
 
-    return make_scoped_ptr(new ExtensionTestingProfile(profile));
+    return base::MakeUnique<ExtensionTestingProfile>(profile);
   }
 
   content::TestBrowserThreadBundle browser_thread_bundle_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
 
  private:
   int profile_number_;
@@ -172,7 +177,7 @@ class ExtensionDataCollectionTest : public testing::Test {
 };
 
 TEST_F(ExtensionDataCollectionTest, CollectExtensionDataNoExtensions) {
-  scoped_ptr<ExtensionTestingProfile> profile =
+  std::unique_ptr<ExtensionTestingProfile> profile =
       CreateProfile(SAFE_BROWSING_OPT_IN);
 
   ClientIncidentReport_ExtensionData data;
@@ -182,7 +187,7 @@ TEST_F(ExtensionDataCollectionTest, CollectExtensionDataNoExtensions) {
 }
 
 TEST_F(ExtensionDataCollectionTest, CollectExtensionDataNoSafeBrowsing) {
-  scoped_ptr<ExtensionTestingProfile> profile =
+  std::unique_ptr<ExtensionTestingProfile> profile =
       CreateProfile(SAFE_BROWSING_OPT_OUT);
   profile->AddExtension();
 
@@ -201,7 +206,7 @@ TEST_F(ExtensionDataCollectionTest, CollectExtensionDataWithExtension) {
   std::string update_url = "https://www.chromium.org";
   int state = extensions::Extension::State::ENABLED;
 
-  scoped_ptr<ExtensionTestingProfile> profile =
+  std::unique_ptr<ExtensionTestingProfile> profile =
       CreateProfile(SAFE_BROWSING_OPT_IN);
   profile->AddExtension(extension_id, extension_name, install_time, version,
                         description, update_url, state);
@@ -242,7 +247,7 @@ TEST_F(ExtensionDataCollectionTest, CollectsLastInstalledExtension) {
   std::string extension_name = "extension_2";
   base::Time install_time = base::Time::Now() - base::TimeDelta::FromMinutes(3);
 
-  scoped_ptr<ExtensionTestingProfile> profile =
+  std::unique_ptr<ExtensionTestingProfile> profile =
       CreateProfile(SAFE_BROWSING_OPT_IN);
   profile->AddExtension("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "extension_1",
                         base::Time::Now() - base::TimeDelta::FromDays(2));
@@ -266,13 +271,13 @@ TEST_F(ExtensionDataCollectionTest, IgnoresExtensionsIfNoSafeBrowsing) {
   std::string extension_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   std::string extension_name = "extension_2";
 
-  scoped_ptr<ExtensionTestingProfile> profile =
+  std::unique_ptr<ExtensionTestingProfile> profile =
       CreateProfile(SAFE_BROWSING_OPT_IN);
 
   profile->AddExtension(extension_id, extension_name,
                         base::Time::Now() - base::TimeDelta::FromDays(3));
 
-  scoped_ptr<ExtensionTestingProfile> profile_without_safe_browsing =
+  std::unique_ptr<ExtensionTestingProfile> profile_without_safe_browsing =
       CreateProfile(SAFE_BROWSING_OPT_OUT);
   profile_without_safe_browsing->AddExtension(
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "extension_1",

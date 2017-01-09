@@ -5,15 +5,12 @@
 #ifndef COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DB_SERVICE_H_
 #define COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DB_SERVICE_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-
-namespace base {
-class FilePath;
-}  // namespace base
 
 namespace data_reduction_proxy {
 class DataStore;
@@ -21,18 +18,18 @@ class DataUsageBucket;
 class DataUsageStore;
 
 // Callback for loading the historical data usage.
-typedef base::Callback<void(scoped_ptr<std::vector<DataUsageBucket>>)>
+typedef base::Callback<void(std::unique_ptr<std::vector<DataUsageBucket>>)>
     HistoricalDataUsageCallback;
 
 // Callback for loading data usage for the current bucket.
-typedef base::Callback<void(scoped_ptr<DataUsageBucket>)>
+typedef base::Callback<void(std::unique_ptr<DataUsageBucket>)>
     LoadCurrentDataUsageCallback;
 
 // Contains and initializes all Data Reduction Proxy objects that have a
 // lifetime based on the DB task runner.
 class DBDataOwner {
  public:
-  explicit DBDataOwner(scoped_ptr<DataStore> store);
+  explicit DBDataOwner(std::unique_ptr<DataStore> store);
   virtual ~DBDataOwner();
 
   // Initializes all the DB objects. Must be called on the DB task runner.
@@ -45,7 +42,7 @@ class DBDataOwner {
   void LoadCurrentDataUsageBucket(DataUsageBucket* bucket);
 
   // Stores |current| to |DataStore|.
-  void StoreCurrentDataUsageBucket(scoped_ptr<DataUsageBucket> current);
+  void StoreCurrentDataUsageBucket(std::unique_ptr<DataUsageBucket> current);
 
   // Deletes all historical data usage from storage.
   void DeleteHistoricalDataUsage();
@@ -57,8 +54,8 @@ class DBDataOwner {
   base::WeakPtr<DBDataOwner> GetWeakPtr();
 
  private:
-  scoped_ptr<DataStore> store_;
-  scoped_ptr<DataUsageStore> data_usage_;
+  std::unique_ptr<DataStore> store_;
+  std::unique_ptr<DataUsageStore> data_usage_;
   base::SequenceChecker sequence_checker_;
   base::WeakPtrFactory<DBDataOwner> weak_factory_;
 

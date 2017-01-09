@@ -2,6 +2,7 @@
 // results once at the end of the test instead of building them up. To enable
 // this option, call setPrintTestResultsLazily() before running any tests.
 var _lazyTestResults; // Set by setPrintTestResultsLazily().
+var _lazyDescription; // Set by description() after setPrintTestResultsLazily().
 
 // svg/dynamic-updates tests set enablePixelTesting=true, as we want to dump text + pixel results
 if (self.testRunner) {
@@ -13,7 +14,7 @@ if (self.testRunner) {
 
 var isJsTest = true;
 
-var description, debug, successfullyParsed;
+var description, debug, successfullyParsed, getOrCreateTestElement;
 
 var expectingError; // set by shouldHaveError()
 var expectedErrorMessage; // set by onerror when expectingError is true
@@ -21,7 +22,7 @@ var unexpectedErrorMessage; // set by onerror when expectingError is not true
 
 (function() {
 
-    function getOrCreate(id, tagName)
+    getOrCreateTestElement = function(id, tagName)
     {
         var element = document.getElementById(id);
         if (element)
@@ -32,7 +33,7 @@ var unexpectedErrorMessage; // set by onerror when expectingError is not true
         var refNode;
         var parent = document.body || document.documentElement;
         if (id == "description")
-            refNode = getOrCreate("console", "div");
+            refNode = getOrCreateTestElement("console", "div");
         else
             refNode = parent.firstChild;
 
@@ -49,7 +50,12 @@ var unexpectedErrorMessage; // set by onerror when expectingError is not true
         else
             span.innerHTML = '<p>' + msg + '</p><p>On success, you will see a series of "<span class="pass">PASS</span>" messages, followed by "<span class="pass">TEST COMPLETE</span>".</p>';
 
-        var description = getOrCreate("description", "p");
+        if (_lazyTestResults) {
+          _lazyDescription = span;
+          return;
+        }
+
+        var description = getOrCreateTestElement("description", "p");
         if (description.firstChild)
             description.replaceChild(span, description.firstChild);
         else
@@ -62,7 +68,8 @@ var unexpectedErrorMessage; // set by onerror when expectingError is not true
             self._lazyTestResults.push(msg);
         } else {
             var span = document.createElement("span");
-            getOrCreate("console", "div").appendChild(span); // insert it first so XHTML knows the namespace
+            // insert it first so XHTML knows the namespace;
+            getOrCreateTestElement("console", "div").appendChild(span);
             span.innerHTML = msg + '<br />';
         }
     };
@@ -207,23 +214,6 @@ function stringify(v)
     if (v === 0 && 1/v < 0)
         return "-0";
     else return "" + v;
-}
-
-// Stringifies a DOM object.  This function stringifies not only own properties
-// but also DOM attributes which are on a prototype chain.  Note that
-// JSON.stringify only stringifies own properties.
-function stringifyDOMObject(object)
-{
-    function deepCopy(src) {
-        if (typeof src != "object")
-            return src;
-        var dst = Array.isArray(src) ? [] : {};
-        for (var property in src) {
-            dst[property] = deepCopy(src[property]);
-        }
-        return dst;
-    }
-    return JSON.stringify(deepCopy(object));
 }
 
 function evalAndLog(_a, _quiet)
@@ -516,6 +506,23 @@ function shouldEvaluateTo(actual, expected, opt_tolerance) {
   }
 }
 
+function shouldEvaluateToSameObject(actual, expected, quiet) {
+  if (typeof actual != "string")
+    debug("WARN: shouldEvaluateToSameObject() expects the first argument (actual) to be a string.");
+  try {
+    actualEvaled = eval(actual);
+  } catch (e) {
+    testFailed("Evaluating " + actual + ": Threw exception " + e);
+    return;
+  }
+  if (isResultCorrect(actualEvaled, expected)) {
+    if (!quiet)
+      testPassed(actual + " is " + stringify(expected));
+  } else {
+    testFailed(actual + " should be " + stringify(expected) + ". Was " + stringify(actualEvaled));
+  }
+}
+
 function shouldBeNonZero(_a)
 {
   var _exception;
@@ -741,9 +748,16 @@ function shouldHaveHadError(message)
 // that something is dead need to use this asynchronous collectGarbage
 // function.
 function asyncGC(callback) {
+    var documentsBefore = window.internals.numberOfLiveDocuments();
     GCController.collectAll();
     // FIXME: we need a better way of waiting for chromium events to happen
-    setTimeout(callback, 0);
+    setTimeout(function () {
+        var documentsAfter = window.internals.numberOfLiveDocuments();
+        if (documentsAfter < documentsBefore)
+            asyncGC(callback);
+        else
+            callback();
+    }, 0);
 }
 
 function gc() {
@@ -794,18 +808,15 @@ function finishJSTest()
         return;
     isSuccessfullyParsed();
 
+    if (self._lazyDescription)
+      getOrCreateTestElement("description", "p").appendChild(self._lazyDescription);
+
     if (self._lazyTestResults && self._lazyTestResults.length > 0) {
-        var consoleElement = document.getElementById("console");
-        if (!consoleElement) {
-            consoleElement = document.createElement("div");
-            consoleElement.id = "console";
-            var parent = document.body || document.documentElement;
-            parent.insertBefore(consoleElement, parent.firstChild);
-        }
+        var consoleElement = getOrCreateTestElement("console", "div");
         self._lazyTestResults.forEach(function(msg) {
             var span = document.createElement("span");
-            span.innerHTML = msg + '<br />';
             consoleElement.appendChild(span);
+            span.innerHTML = msg + '<br />';
         });
     }
 

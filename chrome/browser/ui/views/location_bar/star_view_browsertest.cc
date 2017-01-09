@@ -5,16 +5,18 @@
 #include "chrome/browser/ui/views/location_bar/star_view.h"
 
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_bubble_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "ui/base/ui_base_switches.h"
@@ -39,8 +41,7 @@ typedef InProcessBrowserTest StarViewTest;
 IN_PROC_BROWSER_TEST_F(StarViewTest, MAYBE_HideOnSecondClick) {
   BrowserView* browser_view = reinterpret_cast<BrowserView*>(
       browser()->window());
-  views::View* star_view =
-      browser_view->GetToolbarView()->location_bar()->star_view();
+  views::View* star_view = browser_view->toolbar()->location_bar()->star_view();
 
   ui::MouseEvent pressed_event(
       ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(), ui::EventTimeForNow(),
@@ -61,7 +62,7 @@ IN_PROC_BROWSER_TEST_F(StarViewTest, MAYBE_HideOnSecondClick) {
   // Hide the bubble manually. In the browser this would normally happen during
   // the event processing.
   BookmarkBubbleView::Hide();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(BookmarkBubbleView::bookmark_bubble());
   star_view->OnMouseReleased(released_event);
   EXPECT_FALSE(BookmarkBubbleView::bookmark_bubble());

@@ -7,10 +7,13 @@
 #include <iostream>
 
 #include "base/callback_helpers.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/sys_byteorder.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "blimp/net/blimp_stats.h"
 #include "blimp/net/common.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -35,7 +38,10 @@ std::ostream& operator<<(std::ostream& out,
 }
 
 StreamPacketReader::StreamPacketReader(net::StreamSocket* socket)
-    : read_state_(ReadState::IDLE), socket_(socket), weak_factory_(this) {
+    : read_state_(ReadState::IDLE),
+      socket_(socket),
+      payload_size_(0),
+      weak_factory_(this) {
   DCHECK(socket_);
   header_buffer_ = new net::GrowableIOBuffer;
   header_buffer_->SetCapacity(kPacketHeaderSizeBytes);
@@ -47,7 +53,9 @@ void StreamPacketReader::ReadPacket(
     const scoped_refptr<net::GrowableIOBuffer>& buf,
     const net::CompletionCallback& callback) {
   DCHECK_EQ(ReadState::IDLE, read_state_);
-  DCHECK_GT(buf->capacity(), 0);
+  if (static_cast<size_t>(buf->capacity()) < kPacketHeaderSizeBytes) {
+    buf->SetCapacity(kPacketHeaderSizeBytes);
+  }
 
   header_buffer_->set_offset(0);
   payload_buffer_ = buf;
@@ -61,8 +69,9 @@ void StreamPacketReader::ReadPacket(
     payload_buffer_ = nullptr;
 
     // Adapt synchronous completion to an asynchronous style.
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback, result));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::Bind(callback, result == net::OK ? payload_size_ : result));
   } else {
     callback_ = callback;
   }
@@ -103,19 +112,19 @@ int StreamPacketReader::DoReadHeader(int result) {
   header_buffer_->set_offset(header_buffer_->offset() + result);
   if (static_cast<size_t>(header_buffer_->offset()) < kPacketHeaderSizeBytes) {
     // There is more header to read.
-    return socket_->Read(header_buffer_.get(),
-                         kPacketHeaderSizeBytes - header_buffer_->offset(),
-                         base::Bind(&StreamPacketReader::OnReadComplete,
-                                    weak_factory_.GetWeakPtr()));
+    return DoRead(header_buffer_.get(),
+                  kPacketHeaderSizeBytes - header_buffer_->offset());
   }
 
   // Finished reading the header. Parse the size and prepare for payload read.
   payload_size_ = base::NetToHost32(
-      *reinterpret_cast<uint32*>(header_buffer_->StartOfBuffer()));
-  if (payload_size_ > static_cast<size_t>(payload_buffer_->capacity()) ||
-      payload_size_ == 0) {
+      *reinterpret_cast<uint32_t*>(header_buffer_->StartOfBuffer()));
+  if (payload_size_ == 0 || payload_size_ > kMaxPacketPayloadSizeBytes) {
     DLOG(ERROR) << "Illegal payload size: " << payload_size_;
     return net::ERR_INVALID_RESPONSE;
+  }
+  if (static_cast<size_t>(payload_buffer_->capacity()) < payload_size_) {
+    payload_buffer_->SetCapacity(payload_size_);
   }
   read_state_ = ReadState::PAYLOAD;
   return net::OK;
@@ -127,21 +136,27 @@ int StreamPacketReader::DoReadPayload(int result) {
 
   payload_buffer_->set_offset(payload_buffer_->offset() + result);
   if (static_cast<size_t>(payload_buffer_->offset()) < payload_size_) {
-    return socket_->Read(payload_buffer_.get(),
-                         payload_size_ - payload_buffer_->offset(),
-                         base::Bind(&StreamPacketReader::OnReadComplete,
-                                    weak_factory_.GetWeakPtr()));
+    return DoRead(payload_buffer_.get(),
+                  payload_size_ - payload_buffer_->offset());
   }
+  BlimpStats::GetInstance()->Add(BlimpStats::BYTES_RECEIVED, payload_size_);
 
   // Finished reading the payload.
   read_state_ = ReadState::IDLE;
-  return net::OK;
+  payload_buffer_->set_offset(0);
+  return payload_size_;
 }
 
 void StreamPacketReader::OnReadComplete(int result) {
   DCHECK_NE(net::ERR_IO_PENDING, result);
 
-  // If the read was succesful, then process the result.
+  if (result == 0 /* EOF */) {
+    payload_buffer_ = nullptr;
+    base::ResetAndReturn(&callback_).Run(net::ERR_CONNECTION_CLOSED);
+    return;
+  }
+
+  // If the read was successful, then process the result.
   if (result > 0) {
     result = DoReadLoop(result);
   }
@@ -152,6 +167,13 @@ void StreamPacketReader::OnReadComplete(int result) {
     payload_buffer_ = nullptr;
     base::ResetAndReturn(&callback_).Run(result);
   }
+}
+
+int StreamPacketReader::DoRead(net::IOBuffer* buf, int buf_len) {
+  int result = socket_->Read(buf, buf_len,
+                             base::Bind(&StreamPacketReader::OnReadComplete,
+                                        weak_factory_.GetWeakPtr()));
+  return (result != 0 ? result : net::ERR_CONNECTION_CLOSED);
 }
 
 }  // namespace blimp

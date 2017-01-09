@@ -4,35 +4,18 @@
 
 #include "content/browser/device_sensors/data_fetcher_shared_memory.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
 #include "content/browser/device_sensors/ambient_light_mac.h"
+#include "device/sensors/public/cpp/device_util_mac.h"
 #include "third_party/sudden_motion_sensor/sudden_motion_sensor_mac.h"
 
 namespace {
 
 const double kMeanGravity = 9.80665;
-
-double LMUvalueToLux(uint64_t raw_value) {
-  // Conversion formula from regression.
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=793728
-  // Let x = raw_value, then
-  // lux = -2.978303814*(10^-27)*x^4 + 2.635687683*(10^-19)*x^3 -
-  //       3.459747434*(10^-12)*x^2 + 3.905829689*(10^-5)*x - 0.1932594532
-
-  static const long double k4 = pow(10.L, -7);
-  static const long double k3 = pow(10.L, -4);
-  static const long double k2 = pow(10.L, -2);
-  static const long double k1 = pow(10.L, 5);
-  long double scaled_value = raw_value / k1;
-
-  long double lux_value =
-      (-3 * k4 * pow(scaled_value, 4)) + (2.6 * k3 * pow(scaled_value, 3)) +
-      (-3.4 * k2 * pow(scaled_value, 2)) + (3.9 * scaled_value) - 0.19;
-
-  double lux = ceil(static_cast<double>(lux_value));
-  return lux > 0 ? lux : 0;
-}
 
 void FetchLight(content::AmbientLightSensor* sensor,
                 content::DeviceLightHardwareBuffer* buffer) {
@@ -45,7 +28,7 @@ void FetchLight(content::AmbientLightSensor* sensor,
   if (!sensor->ReadSensorValue(lux_value))
     return;
   uint64_t mean = (lux_value[0] + lux_value[1]) / 2;
-  double lux = LMUvalueToLux(mean);
+  double lux = device::LMUvalueToLux(mean);
   buffer->seqlock.WriteBegin();
   buffer->data.value = lux;
   buffer->seqlock.WriteEnd();
@@ -139,7 +122,7 @@ DataFetcherSharedMemory::~DataFetcherSharedMemory() {
 }
 
 void DataFetcherSharedMemory::Fetch(unsigned consumer_bitmask) {
-  DCHECK(base::MessageLoop::current() == GetPollingMessageLoop());
+  DCHECK(GetPollingMessageLoop()->task_runner()->BelongsToCurrentThread());
   DCHECK(consumer_bitmask & CONSUMER_TYPE_ORIENTATION ||
          consumer_bitmask & CONSUMER_TYPE_MOTION ||
          consumer_bitmask & CONSUMER_TYPE_LIGHT);
@@ -157,7 +140,7 @@ DataFetcherSharedMemory::FetcherType DataFetcherSharedMemory::GetType() const {
 }
 
 bool DataFetcherSharedMemory::Start(ConsumerType consumer_type, void* buffer) {
-  DCHECK(base::MessageLoop::current() == GetPollingMessageLoop());
+  DCHECK(GetPollingMessageLoop()->task_runner()->BelongsToCurrentThread());
   DCHECK(buffer);
 
   switch (consumer_type) {
@@ -192,7 +175,6 @@ bool DataFetcherSharedMemory::Start(ConsumerType consumer_type, void* buffer) {
         // On Mac we cannot provide absolute orientation.
         orientation_buffer_->seqlock.WriteBegin();
         orientation_buffer_->data.absolute = false;
-        orientation_buffer_->data.hasAbsolute = true;
         orientation_buffer_->seqlock.WriteEnd();
       } else {
         // No motion sensor available, fire an all-null event.
@@ -203,8 +185,15 @@ bool DataFetcherSharedMemory::Start(ConsumerType consumer_type, void* buffer) {
       return sudden_motion_sensor_available;
     }
     case CONSUMER_TYPE_ORIENTATION_ABSOLUTE: {
-      NOTIMPLEMENTED();
-      break;
+      orientation_absolute_buffer_ =
+          static_cast<DeviceOrientationHardwareBuffer*>(buffer);
+      // Absolute device orientation not available on Mac, let the
+      // implementation fire an all-null event to signal this to blink.
+      orientation_absolute_buffer_->seqlock.WriteBegin();
+      orientation_absolute_buffer_->data.absolute = true;
+      orientation_absolute_buffer_->data.allAvailableSensorsAreActive = true;
+      orientation_absolute_buffer_->seqlock.WriteEnd();
+      return false;
     }
     case CONSUMER_TYPE_LIGHT: {
       if (!ambient_light_sensor_)
@@ -227,7 +216,7 @@ bool DataFetcherSharedMemory::Start(ConsumerType consumer_type, void* buffer) {
 }
 
 bool DataFetcherSharedMemory::Stop(ConsumerType consumer_type) {
-  DCHECK(base::MessageLoop::current() == GetPollingMessageLoop());
+  DCHECK(GetPollingMessageLoop()->task_runner()->BelongsToCurrentThread());
 
   switch (consumer_type) {
     case CONSUMER_TYPE_MOTION:
@@ -247,8 +236,13 @@ bool DataFetcherSharedMemory::Stop(ConsumerType consumer_type) {
       }
       return true;
     case CONSUMER_TYPE_ORIENTATION_ABSOLUTE:
-      NOTIMPLEMENTED();
-      break;
+      if (orientation_absolute_buffer_) {
+        orientation_absolute_buffer_->seqlock.WriteBegin();
+        orientation_absolute_buffer_->data.allAvailableSensorsAreActive = false;
+        orientation_absolute_buffer_->seqlock.WriteEnd();
+        orientation_absolute_buffer_ = nullptr;
+      }
+      return true;
     case CONSUMER_TYPE_LIGHT:
       if (light_buffer_) {
         light_buffer_->seqlock.WriteBegin();

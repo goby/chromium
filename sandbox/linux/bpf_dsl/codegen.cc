@@ -4,6 +4,9 @@
 
 #include "sandbox/linux/bpf_dsl/codegen.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
 #include <utility>
 
@@ -139,20 +142,6 @@ CodeGen::Node CodeGen::Append(uint16_t code, uint32_t k, size_t jt, size_t jf) {
 size_t CodeGen::Offset(Node target) const {
   CHECK_LT(target, program_.size()) << "Bogus offset target node";
   return (program_.size() - 1) - target;
-}
-
-// TODO(mdempsky): Move into a general base::Tuple helper library.
-bool CodeGen::MemoKeyLess::operator()(const MemoKey& lhs,
-                                      const MemoKey& rhs) const {
-  if (base::get<0>(lhs) != base::get<0>(rhs))
-    return base::get<0>(lhs) < base::get<0>(rhs);
-  if (base::get<1>(lhs) != base::get<1>(rhs))
-    return base::get<1>(lhs) < base::get<1>(rhs);
-  if (base::get<2>(lhs) != base::get<2>(rhs))
-    return base::get<2>(lhs) < base::get<2>(rhs);
-  if (base::get<3>(lhs) != base::get<3>(rhs))
-    return base::get<3>(lhs) < base::get<3>(rhs);
-  return false;
 }
 
 }  // namespace sandbox

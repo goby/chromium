@@ -39,23 +39,23 @@ function test()
         InspectorTest.addResult("KeyValue pairs: " + rows.join(''));
     }
 
-    InspectorTest.runAfterPendingDispatches(function() {
+    InspectorTest.deprecatedRunAfterPendingDispatches(function() {
         var storages = InspectorTest.domStorageModel().storages();
         if (storages) {
             for (var i = 0; i < storages.length; i++) {
                 var storage = storages[i];
-                WebInspector.panels.resources._showDOMStorage(storage);
+                UI.panels.resources._showDOMStorage(storage);
                 InspectorTest.addResult("Did show: " + name(storage));
             }
         } else
             InspectorTest.addResult("FAIL: no DOM storages found.");
 
-        InspectorTest.runAfterPendingDispatches(function() {
+        InspectorTest.deprecatedRunAfterPendingDispatches(function() {
             var storages = InspectorTest.domStorageModel().storages();
             for (var i = 0; i < storages.length; i++) {
                 var storage = storages[i];
                 InspectorTest.addResult(name(storage) + " content: ");
-                var view = WebInspector.panels.resources._domStorageViews.get(storage);
+                var view = UI.panels.resources._domStorageViews.get(storage);
                 dumpDataGridContent(view._dataGrid);
             }
             InspectorTest.addResult("DONE");

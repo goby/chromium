@@ -5,9 +5,10 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_SYNTHETIC_TAP_GESTURE_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_SYNTHETIC_TAP_GESTURE_H_
 
+#include "base/macros.h"
 #include "content/browser/renderer_host/input/synthetic_gesture.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target.h"
-#include "content/browser/renderer_host/input/synthetic_pointer.h"
+#include "content/browser/renderer_host/input/synthetic_pointer_driver.h"
 #include "content/common/content_export.h"
 #include "content/common/input/synthetic_tap_gesture_params.h"
 
@@ -36,7 +37,7 @@ class CONTENT_EXPORT SyntheticTapGesture : public SyntheticGesture {
   base::TimeDelta GetDuration() const;
 
   SyntheticTapGestureParams params_;
-  scoped_ptr<SyntheticPointer> synthetic_pointer_;
+  std::unique_ptr<SyntheticPointerDriver> synthetic_pointer_driver_;
   base::TimeTicks start_time_;
   SyntheticGestureParams::GestureSourceType gesture_source_type_;
   GestureState state_;

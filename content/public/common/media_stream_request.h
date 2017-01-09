@@ -5,15 +5,16 @@
 #ifndef CONTENT_PUBLIC_COMMON_MEDIA_STREAM_REQUEST_H_
 #define CONTENT_PUBLIC_COMMON_MEDIA_STREAM_REQUEST_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/content_export.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 
@@ -37,11 +38,6 @@ enum MediaStreamType {
   // Capture system audio (post-mix loopback stream).
   MEDIA_DESKTOP_AUDIO_CAPTURE,
 
-  // This is used for enumerating audio output devices.
-  // TODO(grunell): Output isn't really a part of media streams. Device
-  // enumeration should be decoupled from media streams and related code.
-  MEDIA_DEVICE_AUDIO_OUTPUT,
-
   NUM_MEDIA_TYPES
 };
 
@@ -49,7 +45,6 @@ enum MediaStreamType {
 enum MediaStreamRequestType {
   MEDIA_DEVICE_ACCESS = 0,
   MEDIA_GENERATE_STREAM,
-  MEDIA_ENUMERATE_DEVICES,
   MEDIA_OPEN_DEVICE_PEPPER_ONLY  // Only used in requests made by Pepper.
 };
 
@@ -86,24 +81,25 @@ enum MediaStreamRequestResult {
 // audio or some video device.
 CONTENT_EXPORT bool IsAudioInputMediaType(MediaStreamType type);
 CONTENT_EXPORT bool IsVideoMediaType(MediaStreamType type);
+CONTENT_EXPORT bool IsScreenCaptureMediaType(MediaStreamType type);
 
 // TODO(xians): Change the structs to classes.
 // Represents one device in a request for media stream(s).
 struct CONTENT_EXPORT MediaStreamDevice {
   MediaStreamDevice();
 
-  MediaStreamDevice(
-      MediaStreamType type,
-      const std::string& id,
-      const std::string& name);
+  MediaStreamDevice(MediaStreamType type,
+                    const std::string& id,
+                    const std::string& name);
 
-  MediaStreamDevice(
-      MediaStreamType type,
-      const std::string& id,
-      const std::string& name,
-      int sample_rate,
-      int channel_layout,
-      int frames_per_buffer);
+  MediaStreamDevice(MediaStreamType type,
+                    const std::string& id,
+                    const std::string& name,
+                    int sample_rate,
+                    int channel_layout,
+                    int frames_per_buffer);
+
+  MediaStreamDevice(const MediaStreamDevice& other);
 
   ~MediaStreamDevice();
 
@@ -133,6 +129,7 @@ struct CONTENT_EXPORT MediaStreamDevice {
     AudioDeviceParameters(int sample_rate,
                           int channel_layout,
                           int frames_per_buffer);
+    AudioDeviceParameters(const AudioDeviceParameters& other);
 
     ~AudioDeviceParameters();
 
@@ -190,17 +187,19 @@ typedef std::map<MediaStreamType, MediaStreamDevices> MediaStreamDeviceMap;
 // Tab-only stuff and Pepper-only stuff being passed around to all clients,
 // which is icky.
 struct CONTENT_EXPORT MediaStreamRequest {
-  MediaStreamRequest(
-      int render_process_id,
-      int render_frame_id,
-      int page_request_id,
-      const GURL& security_origin,
-      bool user_gesture,
-      MediaStreamRequestType request_type,
-      const std::string& requested_audio_device_id,
-      const std::string& requested_video_device_id,
-      MediaStreamType audio_type,
-      MediaStreamType video_type);
+  MediaStreamRequest(int render_process_id,
+                     int render_frame_id,
+                     int page_request_id,
+                     const GURL& security_origin,
+                     bool user_gesture,
+                     MediaStreamRequestType request_type,
+                     const std::string& requested_audio_device_id,
+                     const std::string& requested_video_device_id,
+                     MediaStreamType audio_type,
+                     MediaStreamType video_type,
+                     bool disable_local_echo);
+
+  MediaStreamRequest(const MediaStreamRequest& other);
 
   ~MediaStreamRequest();
 
@@ -240,6 +239,10 @@ struct CONTENT_EXPORT MediaStreamRequest {
   // Flag to indicate if the request contains video.
   MediaStreamType video_type;
 
+  // Flag for desktop or tab share to indicate whether to prevent the captured
+  // audio being played out locally.
+  bool disable_local_echo;
+
   // True if all ancestors of the requesting frame have the same origin.
   bool all_ancestors_have_same_origin;
 };
@@ -258,10 +261,10 @@ class MediaStreamUI {
 };
 
 // Callback used return results of media access requests.
-typedef base::Callback<void(
-    const MediaStreamDevices& devices,
-    content::MediaStreamRequestResult result,
-    scoped_ptr<MediaStreamUI> ui)> MediaResponseCallback;
+typedef base::Callback<void(const MediaStreamDevices& devices,
+                            content::MediaStreamRequestResult result,
+                            std::unique_ptr<MediaStreamUI> ui)>
+    MediaResponseCallback;
 
 }  // namespace content
 

@@ -5,6 +5,7 @@
 #include "ui/gfx/animation/linear_animation.h"
 
 #include <math.h>
+#include <stdint.h>
 
 #include <algorithm>
 
@@ -23,19 +24,13 @@ static TimeDelta CalculateInterval(int frame_rate) {
   return TimeDelta::FromMicroseconds(timer_interval);
 }
 
-LinearAnimation::LinearAnimation(int frame_rate,
-                                 AnimationDelegate* delegate)
-    : Animation(CalculateInterval(frame_rate)),
-      state_(0.0),
-      in_end_(false) {
-  set_delegate(delegate);
-}
+LinearAnimation::LinearAnimation(AnimationDelegate* delegate, int frame_rate)
+    : LinearAnimation(0, frame_rate, delegate) {}
 
 LinearAnimation::LinearAnimation(int duration,
                                  int frame_rate,
                                  AnimationDelegate* delegate)
     : Animation(CalculateInterval(frame_rate)),
-      duration_(TimeDelta::FromMilliseconds(duration)),
       state_(0.0),
       in_end_(false) {
   set_delegate(delegate);
@@ -50,7 +45,7 @@ double LinearAnimation::GetCurrentValue() const {
 void LinearAnimation::SetCurrentValue(double new_value) {
   new_value = std::max(0.0, std::min(1.0, new_value));
   base::TimeDelta time_delta = base::TimeDelta::FromMicroseconds(
-      static_cast<int64>(duration_.InMicroseconds() * (new_value - state_)));
+      static_cast<int64_t>(duration_.InMicroseconds() * (new_value - state_)));
   SetStartTime(start_time() - time_delta);
   state_ = new_value;
 }

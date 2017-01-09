@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chromeos/network/onc/onc_translator.h"
-
 #include <string>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chromeos/network/network_profile_handler.h"
@@ -17,6 +16,7 @@
 #include "chromeos/network/network_util.h"
 #include "chromeos/network/onc/onc_signature.h"
 #include "chromeos/network/onc/onc_translation_tables.h"
+#include "chromeos/network/onc/onc_translator.h"
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/shill_property_util.h"
 #include "components/onc/onc_constants.h"
@@ -29,10 +29,10 @@ namespace {
 
 // Converts |str| to a base::Value of the given |type|. If the conversion fails,
 // returns NULL.
-scoped_ptr<base::Value> ConvertStringToValue(const std::string& str,
-                                             base::Value::Type type) {
-  scoped_ptr<base::Value> value;
-  if (type == base::Value::TYPE_STRING) {
+std::unique_ptr<base::Value> ConvertStringToValue(const std::string& str,
+                                                  base::Value::Type type) {
+  std::unique_ptr<base::Value> value;
+  if (type == base::Value::Type::STRING) {
     value.reset(new base::StringValue(str));
   } else {
     value = base::JSONReader::Read(str);
@@ -73,7 +73,7 @@ class ShillToONCTranslator {
 
   // Translates the associated Shill dictionary and creates an ONC object of the
   // given signature.
-  scoped_ptr<base::DictionaryValue> CreateTranslatedONCObject();
+  std::unique_ptr<base::DictionaryValue> CreateTranslatedONCObject();
 
  private:
   void TranslateEthernet();
@@ -144,13 +144,13 @@ class ShillToONCTranslator {
   ::onc::ONCSource onc_source_;
   const OncValueSignature* onc_signature_;
   const FieldTranslationEntry* field_translation_table_;
-  scoped_ptr<base::DictionaryValue> onc_object_;
+  std::unique_ptr<base::DictionaryValue> onc_object_;
   const NetworkState* network_state_;
 
   DISALLOW_COPY_AND_ASSIGN(ShillToONCTranslator);
 };
 
-scoped_ptr<base::DictionaryValue>
+std::unique_ptr<base::DictionaryValue>
 ShillToONCTranslator::CreateTranslatedONCObject() {
   onc_object_.reset(new base::DictionaryValue);
   if (onc_signature_ == &kNetworkWithStateSignature) {
@@ -183,7 +183,7 @@ ShillToONCTranslator::CreateTranslatedONCObject() {
   } else {
     CopyPropertiesAccordingToSignature();
   }
-  return onc_object_.Pass();
+  return std::move(onc_object_);
 }
 
 void ShillToONCTranslator::TranslateEthernet() {
@@ -206,7 +206,7 @@ void ShillToONCTranslator::TranslateOpenVPN() {
   std::string certKU;
   if (shill_dictionary_->GetStringWithoutPathExpansion(
           shill::kOpenVPNRemoteCertKUProperty, &certKU)) {
-    scoped_ptr<base::ListValue> certKUs(new base::ListValue);
+    std::unique_ptr<base::ListValue> certKUs(new base::ListValue);
     certKUs->AppendString(certKU);
     onc_object_->SetWithoutPathExpansion(::onc::openvpn::kRemoteCertKU,
                                          certKUs.release());
@@ -231,7 +231,7 @@ void ShillToONCTranslator::TranslateOpenVPN() {
       continue;
     }
 
-    scoped_ptr<base::Value> translated;
+    std::unique_ptr<base::Value> translated;
     std::string shill_str;
     if (shill_value->GetAsString(&shill_str)) {
       // Shill wants all Provider/VPN fields to be strings. Translates these
@@ -402,7 +402,7 @@ void ShillToONCTranslator::TranslateCellularWithState() {
     ShillToONCTranslator nested_translator(
         *device_dictionary, onc_source_, kCellularWithStateSignature,
         kCellularDeviceTable, network_state_);
-    scoped_ptr<base::DictionaryValue> nested_object =
+    std::unique_ptr<base::DictionaryValue> nested_object =
         nested_translator.CreateTranslatedONCObject();
     onc_object_->MergeDictionary(nested_object.get());
 
@@ -579,10 +579,10 @@ void ShillToONCTranslator::TranslateNetworkWithState() {
   if (shill_dictionary_->GetStringWithoutPathExpansion(
           shill::kProxyConfigProperty, &proxy_config_str) &&
       !proxy_config_str.empty()) {
-    scoped_ptr<base::DictionaryValue> proxy_config_value(
+    std::unique_ptr<base::DictionaryValue> proxy_config_value(
         ReadDictionaryFromJson(proxy_config_str));
     if (proxy_config_value) {
-      scoped_ptr<base::DictionaryValue> proxy_settings =
+      std::unique_ptr<base::DictionaryValue> proxy_settings =
           ConvertProxyConfigToOncProxySettings(*proxy_config_value);
       if (proxy_settings) {
         onc_object_->SetWithoutPathExpansion(
@@ -647,7 +647,7 @@ void ShillToONCTranslator::TranslateAndAddNestedObject(
   ShillToONCTranslator nested_translator(dictionary, onc_source_,
                                          *field_signature->value_signature,
                                          network_state_);
-  scoped_ptr<base::DictionaryValue> nested_object =
+  std::unique_ptr<base::DictionaryValue> nested_object =
       nested_translator.CreateTranslatedONCObject();
   if (nested_object->empty())
     return;
@@ -672,14 +672,14 @@ void ShillToONCTranslator::TranslateAndAddListOfObjects(
     const base::ListValue& list) {
   const OncFieldSignature* field_signature =
       GetFieldSignature(*onc_signature_, onc_field_name);
-  if (field_signature->value_signature->onc_type != base::Value::TYPE_LIST) {
+  if (field_signature->value_signature->onc_type != base::Value::Type::LIST) {
     LOG(ERROR) << "ONC Field name: '" << onc_field_name << "' has type '"
                << field_signature->value_signature->onc_type
-               << "', expected: base::Value::TYPE_LIST: " << GetName();
+               << "', expected: base::Value::Type::LIST: " << GetName();
     return;
   }
   DCHECK(field_signature->value_signature->onc_array_entry_signature);
-  scoped_ptr<base::ListValue> result(new base::ListValue());
+  std::unique_ptr<base::ListValue> result(new base::ListValue());
   for (base::ListValue::const_iterator it = list.begin(); it != list.end();
        ++it) {
     const base::DictionaryValue* shill_value = NULL;
@@ -689,12 +689,12 @@ void ShillToONCTranslator::TranslateAndAddListOfObjects(
         *shill_value, onc_source_,
         *field_signature->value_signature->onc_array_entry_signature,
         network_state_);
-    scoped_ptr<base::DictionaryValue> nested_object =
+    std::unique_ptr<base::DictionaryValue> nested_object =
         nested_translator.CreateTranslatedONCObject();
     // If the nested object couldn't be parsed, simply omit it.
     if (nested_object->empty())
       continue;
-    result->Append(nested_object.release());
+    result->Append(std::move(nested_object));
   }
   // If there are no entries in the list, there is no need to expose this field.
   if (result->empty())
@@ -771,7 +771,7 @@ std::string ShillToONCTranslator::GetName() {
 
 }  // namespace
 
-scoped_ptr<base::DictionaryValue> TranslateShillServiceToONCPart(
+std::unique_ptr<base::DictionaryValue> TranslateShillServiceToONCPart(
     const base::DictionaryValue& shill_dictionary,
     ::onc::ONCSource onc_source,
     const OncValueSignature* onc_signature,

@@ -5,6 +5,7 @@
 #ifndef CC_LAYERS_SURFACE_LAYER_H_
 #define CC_LAYERS_SURFACE_LAYER_H_
 
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer.h"
 #include "cc/surfaces/surface_id.h"
@@ -20,27 +21,35 @@ class CC_EXPORT SurfaceLayer : public Layer {
   // This callback is run when a SurfaceSequence needs to be satisfied, but
   // the parent compositor is unable to. It can be called on either the main
   // or impl threads.
-  using SatisfyCallback = base::Callback<void(SurfaceSequence)>;
+  using SatisfyCallback = base::Callback<void(const SurfaceSequence&)>;
 
   // This callback is run to require that a specific SurfaceSequence is
   // received before a SurfaceId is destroyed.
-  using RequireCallback = base::Callback<void(SurfaceId, SurfaceSequence)>;
+  using RequireCallback =
+      base::Callback<void(const SurfaceId&, const SurfaceSequence&)>;
 
   static scoped_refptr<SurfaceLayer> Create(
-      const LayerSettings& settings,
       const SatisfyCallback& satisfy_callback,
       const RequireCallback& require_callback);
 
-  void SetSurfaceId(SurfaceId surface_id, float scale, const gfx::Size& size);
+  void SetSurfaceId(const SurfaceId& surface_id,
+                    float scale,
+                    const gfx::Size& size);
 
   // Layer overrides.
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
   void SetLayerTreeHost(LayerTreeHost* host) override;
   void PushPropertiesTo(LayerImpl* layer) override;
 
+  SurfaceId surface_id() const { return surface_id_; }
+  const gfx::Size& surface_size() const { return surface_size_; }
+  float surface_scale() const { return surface_scale_; }
+
+  const SatisfyCallback& satisfy_callback() const { return satisfy_callback_; }
+  const RequireCallback& require_callback() const { return require_callback_; }
+
  protected:
-  SurfaceLayer(const LayerSettings& settings,
-               const SatisfyCallback& satisfy_callback,
+  SurfaceLayer(const SatisfyCallback& satisfy_callback,
                const RequireCallback& require_callback);
   bool HasDrawableContent() const override;
 

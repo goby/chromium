@@ -5,23 +5,28 @@
 #ifndef ANDROID_WEBVIEW_LIB_MAIN_AW_MAIN_DELEGATE_H_
 #define ANDROID_WEBVIEW_LIB_MAIN_AW_MAIN_DELEGATE_H_
 
+#include <memory>
+
 #include "android_webview/browser/jni_dependency_factory.h"
 #include "android_webview/common/aw_content_client.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/app/content_main_delegate.h"
 
 namespace content {
 class BrowserMainRunner;
-class ExternalVideoSurfaceContainel;
 }
 
 namespace android_webview {
 
 class AwContentBrowserClient;
+class AwContentGpuClient;
 class AwContentRendererClient;
 
-// Android WebView implementation of ContentMainDelegate.
+// Android WebView implementation of ContentMainDelegate. The methods in
+// this class runs per process, (browser and renderer) so when making changes
+// make sure to properly conditionalize for browser vs. renderer wherever
+// needed.
 class AwMainDelegate : public content::ContentMainDelegate,
                        public JniDependencyFactory {
  public:
@@ -37,6 +42,7 @@ class AwMainDelegate : public content::ContentMainDelegate,
       const content::MainFunctionParams& main_function_params) override;
   void ProcessExiting(const std::string& process_type) override;
   content::ContentBrowserClient* CreateContentBrowserClient() override;
+  content::ContentGpuClient* CreateContentGpuClient() override;
   content::ContentRendererClient* CreateContentRendererClient() override;
 
   // JniDependencyFactory implementation.
@@ -45,17 +51,13 @@ class AwMainDelegate : public content::ContentMainDelegate,
   content::WebContentsViewDelegate* CreateViewDelegate(
       content::WebContents* web_contents) override;
   AwWebPreferencesPopulater* CreateWebPreferencesPopulater() override;
-  AwMessagePortService* CreateAwMessagePortService() override;
   AwLocaleManager* CreateAwLocaleManager() override;
-#if defined(VIDEO_HOLE)
-  content::ExternalVideoSurfaceContainer* CreateExternalVideoSurfaceContainer(
-      content::WebContents* web_contents) override;
-#endif
 
-  scoped_ptr<content::BrowserMainRunner> browser_runner_;
+  std::unique_ptr<content::BrowserMainRunner> browser_runner_;
   AwContentClient content_client_;
-  scoped_ptr<AwContentBrowserClient> content_browser_client_;
-  scoped_ptr<AwContentRendererClient> content_renderer_client_;
+  std::unique_ptr<AwContentBrowserClient> content_browser_client_;
+  std::unique_ptr<AwContentGpuClient> content_gpu_client_;
+  std::unique_ptr<AwContentRendererClient> content_renderer_client_;
 
   DISALLOW_COPY_AND_ASSIGN(AwMainDelegate);
 };

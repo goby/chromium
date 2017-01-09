@@ -31,29 +31,46 @@
 #ifndef SVGAnimatedLength_h
 #define SVGAnimatedLength_h
 
+#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGLengthTearOff.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
 
 namespace blink {
 
-class SVGAnimatedLength : public SVGAnimatedProperty<SVGLength> {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedLength> create(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGLength> initialValue)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedLength(contextElement, attributeName, initialValue));
-    }
+class SVGAnimatedLength : public SVGAnimatedProperty<SVGLength>,
+                          public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    void setDefaultValueAsString(const String&);
-    void setBaseValueAsString(const String&, SVGParsingError&) override;
+ public:
+  static SVGAnimatedLength* create(
+      SVGElement* contextElement,
+      const QualifiedName& attributeName,
+      SVGLength* initialValue,
+      CSSPropertyID cssPropertyId = CSSPropertyInvalid) {
+    return new SVGAnimatedLength(contextElement, attributeName, initialValue,
+                                 cssPropertyId);
+  }
 
-protected:
-    SVGAnimatedLength(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGLength> initialValue)
-        : SVGAnimatedProperty<SVGLength>(contextElement, attributeName, initialValue)
-    {
-    }
+  void setDefaultValueAsString(const String&);
+  SVGParsingError setBaseValueAsString(const String&) override;
+
+  const CSSValue* cssValue() const {
+    return &currentValue()->asCSSPrimitiveValue();
+  }
+
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+ protected:
+  SVGAnimatedLength(SVGElement* contextElement,
+                    const QualifiedName& attributeName,
+                    SVGLength* initialValue,
+                    CSSPropertyID cssPropertyId = CSSPropertyInvalid)
+      : SVGAnimatedProperty<SVGLength>(contextElement,
+                                       attributeName,
+                                       initialValue,
+                                       cssPropertyId) {}
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGAnimatedLength_h
+#endif  // SVGAnimatedLength_h

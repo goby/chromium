@@ -4,11 +4,13 @@
 
 #include "components/dom_distiller/core/task_tracker.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/auto_reset.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/dom_distiller/core/distilled_content_store.h"
 #include "components/dom_distiller/core/proto/distilled_article.pb.h"
 #include "components/dom_distiller/core/proto/distilled_page.pb.h"
@@ -41,8 +43,9 @@ TaskTracker::~TaskTracker() {
   DCHECK(viewers_.empty());
 }
 
-void TaskTracker::StartDistiller(DistillerFactory* factory,
-                                 scoped_ptr<DistillerPage> distiller_page) {
+void TaskTracker::StartDistiller(
+    DistillerFactory* factory,
+    std::unique_ptr<DistillerPage> distiller_page) {
   if (distiller_) {
     return;
   }
@@ -53,8 +56,7 @@ void TaskTracker::StartDistiller(DistillerFactory* factory,
   DCHECK(url.is_valid());
 
   distiller_ = factory->CreateDistillerForUrl(url);
-  distiller_->DistillPage(url,
-                          distiller_page.Pass(),
+  distiller_->DistillPage(url, std::move(distiller_page),
                           base::Bind(&TaskTracker::OnDistillerFinished,
                                      weak_ptr_factory_.GetWeakPtr()),
                           base::Bind(&TaskTracker::OnArticleDistillationUpdated,
@@ -80,7 +82,8 @@ void TaskTracker::AddSaveCallback(const SaveCallback& callback) {
   }
 }
 
-scoped_ptr<ViewerHandle> TaskTracker::AddViewer(ViewRequestDelegate* delegate) {
+std::unique_ptr<ViewerHandle> TaskTracker::AddViewer(
+    ViewRequestDelegate* delegate) {
   viewers_.push_back(delegate);
   if (content_ready_) {
     // Distillation for this task has already completed, and so the delegate can
@@ -89,7 +92,7 @@ scoped_ptr<ViewerHandle> TaskTracker::AddViewer(ViewRequestDelegate* delegate) {
         FROM_HERE, base::Bind(&TaskTracker::NotifyViewer,
                               weak_ptr_factory_.GetWeakPtr(), delegate));
   }
-  return scoped_ptr<ViewerHandle>(new ViewerHandle(base::Bind(
+  return std::unique_ptr<ViewerHandle>(new ViewerHandle(base::Bind(
       &TaskTracker::RemoveViewer, weak_ptr_factory_.GetWeakPtr(), delegate)));
 }
 
@@ -138,39 +141,41 @@ void TaskTracker::ScheduleSaveCallbacks(bool distillation_succeeded) {
 }
 
 void TaskTracker::OnDistillerFinished(
-    scoped_ptr<DistilledArticleProto> distilled_article) {
+    std::unique_ptr<DistilledArticleProto> distilled_article) {
   if (content_ready_) {
     return;
   }
 
-  DistilledArticleReady(distilled_article.Pass());
+  DistilledArticleReady(std::move(distilled_article));
   if (content_ready_) {
     AddDistilledContentToStore(*distilled_article_);
   }
 
   // 'distiller_ != null' is used as a signal that distillation is in progress,
   // so it needs to be released so that we know distillation is done.
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, distiller_.release());
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE,
+                                                  distiller_.release());
 
   ContentSourceFinished();
 }
 
 void TaskTracker::CancelPendingSources() {
   if (distiller_) {
-    base::MessageLoop::current()->DeleteSoon(FROM_HERE, distiller_.release());
+    base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE,
+                                                    distiller_.release());
   }
 }
 
 void TaskTracker::OnBlobFetched(
     bool success,
-    scoped_ptr<DistilledArticleProto> distilled_article) {
+    std::unique_ptr<DistilledArticleProto> distilled_article) {
   blob_fetcher_running_ = false;
 
   if (content_ready_) {
     return;
   }
 
-  DistilledArticleReady(distilled_article.Pass());
+  DistilledArticleReady(std::move(distilled_article));
 
   ContentSourceFinished();
 }
@@ -189,7 +194,7 @@ void TaskTracker::ContentSourceFinished() {
 }
 
 void TaskTracker::DistilledArticleReady(
-    scoped_ptr<DistilledArticleProto> distilled_article) {
+    std::unique_ptr<DistilledArticleProto> distilled_article) {
   DCHECK(!content_ready_);
 
   if (distilled_article->pages_size() == 0) {
@@ -198,7 +203,7 @@ void TaskTracker::DistilledArticleReady(
 
   content_ready_ = true;
 
-  distilled_article_ = distilled_article.Pass();
+  distilled_article_ = std::move(distilled_article);
   entry_.set_title(distilled_article_->title());
   entry_.clear_pages();
   for (int i = 0; i < distilled_article_->pages_size(); ++i) {

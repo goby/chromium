@@ -4,6 +4,8 @@
 
 #include "device/bluetooth/bluetooth_l2cap_channel_mac.h"
 
+#include <memory>
+
 #include "base/logging.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "device/bluetooth/bluetooth_classic_device_mac.h"
@@ -76,13 +78,13 @@ BluetoothL2capChannelMac::~BluetoothL2capChannelMac() {
 }
 
 // static
-scoped_ptr<BluetoothL2capChannelMac> BluetoothL2capChannelMac::OpenAsync(
+std::unique_ptr<BluetoothL2capChannelMac> BluetoothL2capChannelMac::OpenAsync(
     BluetoothSocketMac* socket,
     IOBluetoothDevice* device,
     BluetoothL2CAPPSM psm,
     IOReturn* status) {
   DCHECK(socket);
-  scoped_ptr<BluetoothL2capChannelMac> channel(
+  std::unique_ptr<BluetoothL2capChannelMac> channel(
       new BluetoothL2capChannelMac(socket, nil));
 
   // Retain the delegate, because IOBluetoothDevice's
@@ -99,7 +101,7 @@ scoped_ptr<BluetoothL2capChannelMac> BluetoothL2capChannelMac::OpenAsync(
   else
     channel.reset();
 
-  return channel.Pass();
+  return channel;
 }
 
 void BluetoothL2capChannelMac::SetSocket(BluetoothSocketMac* socket) {
@@ -116,7 +118,7 @@ void BluetoothL2capChannelMac::SetSocket(BluetoothSocketMac* socket) {
 }
 
 IOBluetoothDevice* BluetoothL2capChannelMac::GetDevice() {
-  return [channel_ getDevice];
+  return [channel_ device];
 }
 
 uint16_t BluetoothL2capChannelMac::GetOutgoingMTU() {
@@ -142,7 +144,7 @@ void BluetoothL2capChannelMac::OnChannelOpenComplete(
   }
 
   socket()->OnChannelOpenComplete(
-      BluetoothClassicDeviceMac::GetDeviceAddress([channel getDevice]), status);
+      BluetoothClassicDeviceMac::GetDeviceAddress([channel device]), status);
 }
 
 void BluetoothL2capChannelMac::OnChannelClosed(

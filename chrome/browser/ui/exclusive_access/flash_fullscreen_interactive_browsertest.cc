@@ -4,9 +4,13 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/location.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -16,6 +20,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_utils.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 namespace {
@@ -36,7 +41,7 @@ bool RunLoopUntil(const base::Callback<bool()>& condition) {
       return false;
     }
 
-    base::MessageLoop::current()->task_runner()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
         base::TimeDelta::FromMilliseconds(20));
     content::RunMessageLoop();
@@ -72,6 +77,38 @@ class FlashFullscreenInteractiveBrowserTest : public OutOfProcessPPAPITest {
     // plugin.  It will block until the plugin has completed an attempt to enter
     // Flash fullscreen mode.
     OutOfProcessPPAPITest::RunTest("FlashFullscreenForBrowserUI");
+
+    if (::testing::Test::HasFailure()) {
+      ADD_FAILURE() << ("Failed to launch simulated fullscreen Flash plugin.  "
+                        "Interactive UI testing cannot proceed.");
+      return false;
+    }
+
+    EXPECT_TRUE(ObserveTabIsInFullscreen(true));
+
+    return !::testing::Test::HasFailure();
+  }
+
+  bool LaunchFlashFullscreenInSubframe() {
+    // Start the embedded test server and set it up to serve PPAPI test case
+    // URLs.
+    base::FilePath document_root;
+    EXPECT_TRUE(ui_test_utils::GetRelativeBuildDirectory(&document_root));
+    embedded_test_server()->AddDefaultHandlers(document_root);
+    if (!embedded_test_server()->Start()) {
+      ADD_FAILURE() << "Failed to launch embedded test server.";
+      return false;
+    }
+
+    // Load a page with an <iframe> that points to the test case URL, which
+    // runs the simulated fullscreen Flash plugin.  In OOPIF modes, the frame
+    // will render in a separate process.  Block until the plugin has completed
+    // an attempt to enter Flash fullscreen mode.
+    GURL test_url = GetTestURL(*embedded_test_server(),
+                               "FlashFullscreenForBrowserUI", std::string());
+    GURL main_url("data:text/html,<iframe src='" + test_url.spec() +
+                  "'></iframe>");
+    OutOfProcessPPAPITest::RunTestURL(main_url);
 
     if (::testing::Test::HasFailure()) {
       ADD_FAILURE() << ("Failed to launch simulated fullscreen Flash plugin.  "
@@ -261,6 +298,23 @@ IN_PROC_BROWSER_TEST_F(FlashFullscreenInteractiveBrowserTest,
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
   StartFakingTabCapture();
   ASSERT_TRUE(LaunchFlashFullscreen());
+  content::WebContents* const first_tab_contents = GetActiveWebContents();
+  EXPECT_TRUE(ObserveFlashHasFocus(first_tab_contents, true));
+  PressEscape();
+  EXPECT_TRUE(ObserveTabIsInFullscreen(false));
+}
+
+// Flaky on Linux, see https://crbug.com/648406.
+#if defined(OS_LINUX)
+#define MAYBE_FullscreenFromSubframe DISABLED_FullscreenFromSubframe
+#else
+#define MAYBE_FullscreenFromSubframe FullscreenFromSubframe
+#endif
+IN_PROC_BROWSER_TEST_F(FlashFullscreenInteractiveBrowserTest,
+                       MAYBE_FullscreenFromSubframe) {
+  ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
+  StartFakingTabCapture();
+  ASSERT_TRUE(LaunchFlashFullscreenInSubframe());
   content::WebContents* const first_tab_contents = GetActiveWebContents();
   EXPECT_TRUE(ObserveFlashHasFocus(first_tab_contents, true));
   PressEscape();

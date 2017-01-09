@@ -4,6 +4,10 @@
 
 #include "google_apis/drive/drive_api_url_generator.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "google_apis/drive/test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -14,7 +18,6 @@ namespace {
 // The URLs used for production may be different for Chromium OS and Chrome
 // OS, so use testing base urls.
 const char kBaseUrlForTesting[] = "https://www.example.com";
-const char kBaseDownloadUrlForTesting[] = "https://download.example.com/p/";
 const char kBaseThumbnailUrlForTesting[] = "https://thumbnail.example.com";
 }  // namespace
 
@@ -22,7 +25,6 @@ class DriveApiUrlGeneratorTest : public testing::Test {
  public:
   DriveApiUrlGeneratorTest()
       : url_generator_(GURL(kBaseUrlForTesting),
-                       GURL(kBaseDownloadUrlForTesting),
                        GURL(kBaseThumbnailUrlForTesting)) {}
 
  protected:
@@ -201,7 +203,7 @@ TEST_F(DriveApiUrlGeneratorTest, GetChangesListUrl) {
     bool include_deleted;
     int max_results;
     const std::string page_token;
-    int64 start_change_id;
+    int64_t start_change_id;
     const std::string expected_query;
   };
   const TestPattern kTestPatterns[] = {
@@ -358,10 +360,12 @@ TEST_F(DriveApiUrlGeneratorTest, GetMultipartUploadExistingFileUrl) {
 }
 
 TEST_F(DriveApiUrlGeneratorTest, GenerateDownloadFileUrl) {
-  EXPECT_EQ("https://download.example.com/p/host/resourceId",
-            url_generator_.GenerateDownloadFileUrl("resourceId").spec());
-  EXPECT_EQ("https://download.example.com/p/host/file%3AresourceId",
-            url_generator_.GenerateDownloadFileUrl("file:resourceId").spec());
+  EXPECT_EQ(
+      "https://www.example.com/drive/v2/files/resourceId?alt=media",
+      url_generator_.GenerateDownloadFileUrl("resourceId").spec());
+  EXPECT_EQ(
+      "https://www.example.com/drive/v2/files/file%3AresourceId?alt=media",
+      url_generator_.GenerateDownloadFileUrl("file:resourceId").spec());
 }
 
 TEST_F(DriveApiUrlGeneratorTest, GeneratePermissionsInsertUrl) {

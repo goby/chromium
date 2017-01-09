@@ -12,7 +12,7 @@ class TestWebGraphicsContext3D;
 
 class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
  public:
-  explicit TestGLES2Interface(TestWebGraphicsContext3D* test_context);
+  TestGLES2Interface();
   ~TestGLES2Interface() override;
 
   void GenTextures(GLsizei n, GLuint* textures) override;
@@ -90,11 +90,6 @@ class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
                        GLenum internalformat,
                        GLsizei width,
                        GLsizei height) override;
-  void TexImageIOSurface2DCHROMIUM(GLenum target,
-                                   GLsizei width,
-                                   GLsizei height,
-                                   GLuint io_surface_id,
-                                   GLuint plane) override;
   void TexParameteri(GLenum target, GLenum pname, GLint param) override;
 
   void CompressedTexImage2D(GLenum target,
@@ -137,8 +132,11 @@ class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
                   const void* data,
                   GLenum usage) override;
 
-  GLuint InsertSyncPointCHROMIUM() override;
-
+  GLuint64 InsertFenceSyncCHROMIUM() override;
+  void GenSyncTokenCHROMIUM(GLuint64 fence_sync, GLbyte* sync_token) override;
+  void GenUnverifiedSyncTokenCHROMIUM(GLuint64 fence_sync,
+                                      GLbyte* sync_token) override;
+  void VerifySyncTokensCHROMIUM(GLbyte** sync_tokens, GLsizei count) override;
   void WaitSyncTokenCHROMIUM(const GLbyte* sync_token) override;
 
   void BeginQueryEXT(GLenum target, GLuint id) override;
@@ -164,8 +162,13 @@ class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
   void LoseContextCHROMIUM(GLenum current, GLenum other) override;
   GLenum GetGraphicsResetStatusKHR() override;
 
- private:
-  TestWebGraphicsContext3D* test_context_;
+  void set_test_context(TestWebGraphicsContext3D* context);
+
+ protected:
+  virtual void InitializeTestContext(TestWebGraphicsContext3D* context) {}
+
+ protected:
+  TestWebGraphicsContext3D* test_context_ = nullptr;
 };
 
 }  // namespace cc

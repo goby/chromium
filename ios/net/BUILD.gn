@@ -2,13 +2,18 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//ios/build/config.gni")
 import("//testing/test.gni")
+import("//url/features.gni")
 
 source_set("net") {
   deps = [
     "//base",
     "//net",
+    "//url:url_features",
   ]
+
+  configs += [ "//build/config/compiler:enable_arc" ]
 
   sources = [
     "clients/crn_forwarding_network_client.h",
@@ -37,6 +42,8 @@ source_set("net") {
     "crn_http_url_response.mm",
     "empty_nsurlcache.h",
     "empty_nsurlcache.mm",
+    "http_cache_helper.cc",
+    "http_cache_helper.h",
     "http_protocol_logging.h",
     "http_protocol_logging.mm",
     "http_response_headers_util.h",
@@ -50,6 +57,10 @@ source_set("net") {
     "url_scheme_util.h",
     "url_scheme_util.mm",
   ]
+
+  if (!use_platform_icu_alternatives) {
+    deps += [ "//base:i18n" ]
+  }
 }
 
 test("ios_net_unittests") {
@@ -73,4 +84,6 @@ test("ios_net_unittests") {
     "protocol_handler_util_unittest.mm",
     "url_scheme_util_unittest.mm",
   ]
+
+  assert_no_deps = ios_assert_no_deps
 }

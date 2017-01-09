@@ -5,6 +5,7 @@
 #include "extensions/browser/api/storage/settings_test_util.h"
 
 #include "base/files/file_path.h"
+#include "base/run_loop.h"
 #include "extensions/browser/api/storage/storage_frontend.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system_provider.h"
@@ -17,21 +18,21 @@ namespace extensions {
 namespace settings_test_util {
 
 // Creates a kilobyte of data.
-scoped_ptr<base::Value> CreateKilobyte() {
+std::unique_ptr<base::Value> CreateKilobyte() {
   std::string kilobyte_string;
   for (int i = 0; i < 1024; ++i) {
     kilobyte_string += "a";
   }
-  return scoped_ptr<base::Value>(new base::StringValue(kilobyte_string));
+  return std::unique_ptr<base::Value>(new base::StringValue(kilobyte_string));
 }
 
 // Creates a megabyte of data.
-scoped_ptr<base::Value> CreateMegabyte() {
+std::unique_ptr<base::Value> CreateMegabyte() {
   base::ListValue* megabyte = new base::ListValue();
   for (int i = 0; i < 1000; ++i) {
-    megabyte->Append(CreateKilobyte().release());
+    megabyte->Append(CreateKilobyte());
   }
-  return scoped_ptr<base::Value>(megabyte);
+  return std::unique_ptr<base::Value>(megabyte);
 }
 
 // Intended as a StorageCallback from GetStorage.
@@ -45,7 +46,7 @@ ValueStore* GetStorage(scoped_refptr<const Extension> extension,
   ValueStore* storage = NULL;
   frontend->RunWithStorage(
       extension, settings_namespace, base::Bind(&AssignStorage, &storage));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   return storage;
 }
 
@@ -71,10 +72,10 @@ scoped_refptr<const Extension> AddExtensionWithIdAndPermissions(
   manifest.SetString("name", std::string("Test extension ") + id);
   manifest.SetString("version", "1.0");
 
-  scoped_ptr<base::ListValue> permissions(new base::ListValue());
+  std::unique_ptr<base::ListValue> permissions(new base::ListValue());
   for (std::set<std::string>::const_iterator it = permissions_set.begin();
       it != permissions_set.end(); ++it) {
-    permissions->Append(new base::StringValue(*it));
+    permissions->AppendString(*it);
   }
   manifest.Set("permissions", permissions.release());
 
@@ -116,34 +117,6 @@ scoped_refptr<const Extension> AddExtensionWithIdAndPermissions(
   }
 
   return extension;
-}
-
-// ScopedSettingsFactory
-
-ScopedSettingsStorageFactory::ScopedSettingsStorageFactory() {}
-
-ScopedSettingsStorageFactory::ScopedSettingsStorageFactory(
-    const scoped_refptr<SettingsStorageFactory>& delegate)
-    : delegate_(delegate) {}
-
-ScopedSettingsStorageFactory::~ScopedSettingsStorageFactory() {}
-
-void ScopedSettingsStorageFactory::Reset(
-    const scoped_refptr<SettingsStorageFactory>& delegate) {
-  delegate_ = delegate;
-}
-
-ValueStore* ScopedSettingsStorageFactory::Create(
-    const base::FilePath& base_path,
-    const std::string& extension_id) {
-  DCHECK(delegate_.get());
-  return delegate_->Create(base_path, extension_id);
-}
-
-void ScopedSettingsStorageFactory::DeleteDatabaseIfExists(
-    const base::FilePath& base_path,
-    const std::string& extension_id) {
-  delegate_->DeleteDatabaseIfExists(base_path, extension_id);
 }
 
 }  // namespace settings_test_util

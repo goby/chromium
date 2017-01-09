@@ -4,18 +4,22 @@
 
 #include "chrome/browser/themes/theme_syncable_service.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/strings/stringprintf.h"
 #include "base/version.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/common/extensions/sync_helper.h"
+#include "components/sync/protocol/sync.pb.h"
+#include "components/sync/protocol/theme_specifics.pb.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_url_handlers.h"
-#include "sync/protocol/sync.pb.h"
-#include "sync/protocol/theme_specifics.pb.h"
 
 using std::string;
 
@@ -56,16 +60,16 @@ void ThemeSyncableService::OnThemeChange() {
 syncer::SyncMergeResult ThemeSyncableService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> error_handler) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> error_handler) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!sync_processor_.get());
   DCHECK(sync_processor.get());
   DCHECK(error_handler.get());
 
   syncer::SyncMergeResult merge_result(type);
-  sync_processor_ = sync_processor.Pass();
-  sync_error_handler_ = error_handler.Pass();
+  sync_processor_ = std::move(sync_processor);
+  sync_error_handler_ = std::move(error_handler);
 
   if (initial_sync_data.size() > 1) {
     sync_error_handler_->CreateAndUploadError(
@@ -232,14 +236,12 @@ void ThemeSyncableService::SetCurrentThemeFromThemeSpecifics(
       // so by adding it as a pending extension and then triggering an
       // auto-update cycle.
       const bool kRemoteInstall = false;
-      const bool kInstalledByCustodian = false;
       if (!extensions_service->pending_extension_manager()->AddFromSync(
               id,
               update_url,
               base::Version(),
               &IsTheme,
-              kRemoteInstall,
-              kInstalledByCustodian)) {
+              kRemoteInstall)) {
         LOG(WARNING) << "Could not add pending extension for " << id;
         return;
       }

@@ -5,14 +5,16 @@
 #ifndef EXTENSIONS_BROWSER_EXTENSION_THROTTLE_ENTRY_H_
 #define EXTENSIONS_BROWSER_EXTENSION_THROTTLE_ENTRY_H_
 
+#include <stdint.h>
+
 #include <queue>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "extensions/browser/extension_throttle_entry_interface.h"
 #include "net/base/backoff_entry.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 
 namespace extensions {
 
@@ -86,7 +88,7 @@ class ExtensionThrottleEntry : public ExtensionThrottleEntryInterface {
 
   // Implementation of ExtensionThrottleEntryInterface.
   bool ShouldRejectRequest(const net::URLRequest& request) const override;
-  int64 ReserveSendingTimeForNextRequest(
+  int64_t ReserveSendingTimeForNextRequest(
       const base::TimeTicks& earliest_time) override;
   base::TimeTicks GetExponentialBackoffReleaseTime() const override;
   void UpdateWithResponse(int status_code) override;
@@ -153,7 +155,7 @@ class ExtensionThrottleEntry : public ExtensionThrottleEntryInterface {
   // Canonicalized URL string that this entry is for; used for logging only.
   std::string url_id_;
 
-  net::BoundNetLog net_log_;
+  net::NetLogWithSource net_log_;
   bool ignore_user_gesture_load_flag_for_tests_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionThrottleEntry);

@@ -4,6 +4,7 @@
 
 #include "remoting/host/host_mock_objects.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "net/base/ip_endpoint.h"
 #include "remoting/base/auto_thread_task_runner.h"
@@ -23,41 +24,36 @@ MockDesktopEnvironment::MockDesktopEnvironment() {}
 
 MockDesktopEnvironment::~MockDesktopEnvironment() {}
 
-scoped_ptr<AudioCapturer> MockDesktopEnvironment::CreateAudioCapturer() {
-  return make_scoped_ptr(CreateAudioCapturerPtr());
+std::unique_ptr<AudioCapturer> MockDesktopEnvironment::CreateAudioCapturer() {
+  return base::WrapUnique(CreateAudioCapturerPtr());
 }
 
-scoped_ptr<InputInjector> MockDesktopEnvironment::CreateInputInjector() {
-  return make_scoped_ptr(CreateInputInjectorPtr());
+std::unique_ptr<InputInjector> MockDesktopEnvironment::CreateInputInjector() {
+  return base::WrapUnique(CreateInputInjectorPtr());
 }
 
-scoped_ptr<ScreenControls> MockDesktopEnvironment::CreateScreenControls() {
-  return make_scoped_ptr(CreateScreenControlsPtr());
+std::unique_ptr<ScreenControls> MockDesktopEnvironment::CreateScreenControls() {
+  return base::WrapUnique(CreateScreenControlsPtr());
 }
 
-scoped_ptr<webrtc::DesktopCapturer>
+std::unique_ptr<webrtc::DesktopCapturer>
 MockDesktopEnvironment::CreateVideoCapturer() {
-  return make_scoped_ptr(CreateVideoCapturerPtr());
+  return base::WrapUnique(CreateVideoCapturerPtr());
 }
 
-scoped_ptr<GnubbyAuthHandler>
-MockDesktopEnvironment::CreateGnubbyAuthHandler(
-    protocol::ClientStub* client_stub) {
-  return make_scoped_ptr(CreateGnubbyAuthHandlerPtr(client_stub));
-}
-
-scoped_ptr<webrtc::MouseCursorMonitor>
+std::unique_ptr<webrtc::MouseCursorMonitor>
 MockDesktopEnvironment::CreateMouseCursorMonitor() {
-  return make_scoped_ptr(CreateMouseCursorMonitorPtr());
+  return base::WrapUnique(CreateMouseCursorMonitorPtr());
 }
 
 MockDesktopEnvironmentFactory::MockDesktopEnvironmentFactory() {}
 
 MockDesktopEnvironmentFactory::~MockDesktopEnvironmentFactory() {}
 
-scoped_ptr<DesktopEnvironment> MockDesktopEnvironmentFactory::Create(
-    base::WeakPtr<ClientSessionControl> client_session_control) {
-  return make_scoped_ptr(CreatePtr());
+std::unique_ptr<DesktopEnvironment> MockDesktopEnvironmentFactory::Create(
+    base::WeakPtr<ClientSessionControl> client_session_control,
+    const DesktopEnvironmentOptions& options) {
+  return base::WrapUnique(CreatePtr());
 }
 
 MockInputInjector::MockInputInjector() {}
@@ -65,13 +61,17 @@ MockInputInjector::MockInputInjector() {}
 MockInputInjector::~MockInputInjector() {}
 
 void MockInputInjector::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   StartPtr(client_clipboard.get());
 }
 
 MockClientSessionControl::MockClientSessionControl() {}
 
 MockClientSessionControl::~MockClientSessionControl() {}
+
+MockClientSessionDetails::MockClientSessionDetails() {}
+
+MockClientSessionDetails::~MockClientSessionDetails() {}
 
 MockClientSessionEventHandler::MockClientSessionEventHandler() {}
 
@@ -81,9 +81,19 @@ MockHostStatusObserver::MockHostStatusObserver() {}
 
 MockHostStatusObserver::~MockHostStatusObserver() {}
 
-MockGnubbyAuthHandler::MockGnubbyAuthHandler() {}
+MockSecurityKeyAuthHandler::MockSecurityKeyAuthHandler() {}
 
-MockGnubbyAuthHandler::~MockGnubbyAuthHandler() {}
+MockSecurityKeyAuthHandler::~MockSecurityKeyAuthHandler() {}
+
+void MockSecurityKeyAuthHandler::SetSendMessageCallback(
+    const SecurityKeyAuthHandler::SendMessageCallback& callback) {
+  callback_ = callback;
+}
+
+const SecurityKeyAuthHandler::SendMessageCallback&
+MockSecurityKeyAuthHandler::GetSendMessageCallback() {
+  return callback_;
+}
 
 MockMouseCursorMonitor::MockMouseCursorMonitor() {}
 

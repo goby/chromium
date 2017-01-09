@@ -18,52 +18,46 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
-
 #include "core/layout/svg/LayoutSVGResourceLinearGradient.h"
 
 #include "core/svg/SVGLinearGradientElement.h"
 
 namespace blink {
 
-LayoutSVGResourceLinearGradient::LayoutSVGResourceLinearGradient(SVGLinearGradientElement* node)
-    : LayoutSVGResourceGradient(node)
-#if ENABLE(OILPAN)
-    , m_attributesWrapper(LinearGradientAttributesWrapper::create())
-#endif
-{
+LayoutSVGResourceLinearGradient::LayoutSVGResourceLinearGradient(
+    SVGLinearGradientElement* node)
+    : LayoutSVGResourceGradient(node),
+      m_attributesWrapper(LinearGradientAttributesWrapper::create()) {}
+
+LayoutSVGResourceLinearGradient::~LayoutSVGResourceLinearGradient() {}
+
+bool LayoutSVGResourceLinearGradient::collectGradientAttributes(
+    SVGGradientElement* gradientElement) {
+  m_attributesWrapper->set(LinearGradientAttributes());
+  return toSVGLinearGradientElement(gradientElement)
+      ->collectGradientAttributes(mutableAttributes());
 }
 
-LayoutSVGResourceLinearGradient::~LayoutSVGResourceLinearGradient()
-{
+FloatPoint LayoutSVGResourceLinearGradient::startPoint(
+    const LinearGradientAttributes& attributes) const {
+  return SVGLengthContext::resolvePoint(element(), attributes.gradientUnits(),
+                                        *attributes.x1(), *attributes.y1());
 }
 
-bool LayoutSVGResourceLinearGradient::collectGradientAttributes(SVGGradientElement* gradientElement)
-{
-#if ENABLE(OILPAN)
-    m_attributesWrapper->set(LinearGradientAttributes());
-#else
-    m_attributes = LinearGradientAttributes();
-#endif
-    return toSVGLinearGradientElement(gradientElement)->collectGradientAttributes(mutableAttributes());
+FloatPoint LayoutSVGResourceLinearGradient::endPoint(
+    const LinearGradientAttributes& attributes) const {
+  return SVGLengthContext::resolvePoint(element(), attributes.gradientUnits(),
+                                        *attributes.x2(), *attributes.y2());
 }
 
-FloatPoint LayoutSVGResourceLinearGradient::startPoint(const LinearGradientAttributes& attributes) const
-{
-    return SVGLengthContext::resolvePoint(element(), attributes.gradientUnits(), *attributes.x1(), *attributes.y1());
+PassRefPtr<Gradient> LayoutSVGResourceLinearGradient::buildGradient() const {
+  const LinearGradientAttributes& attributes = this->attributes();
+  RefPtr<Gradient> gradient =
+      Gradient::create(startPoint(attributes), endPoint(attributes));
+  gradient->setSpreadMethod(
+      platformSpreadMethodFromSVGType(attributes.spreadMethod()));
+  addStops(*gradient, attributes.stops());
+  return gradient.release();
 }
 
-FloatPoint LayoutSVGResourceLinearGradient::endPoint(const LinearGradientAttributes& attributes) const
-{
-    return SVGLengthContext::resolvePoint(element(), attributes.gradientUnits(), *attributes.x2(), *attributes.y2());
-}
-
-void LayoutSVGResourceLinearGradient::buildGradient(GradientData* gradientData) const
-{
-    const LinearGradientAttributes& attributes = this->attributes();
-    gradientData->gradient = Gradient::create(startPoint(attributes), endPoint(attributes));
-    gradientData->gradient->setSpreadMethod(platformSpreadMethodFromSVGType(attributes.spreadMethod()));
-    addStops(gradientData, attributes.stops());
-}
-
-}
+}  // namespace blink

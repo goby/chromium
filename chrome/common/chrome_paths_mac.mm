@@ -2,20 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/common/chrome_paths_internal.h"
-
 #import <Foundation/Foundation.h>
 #include <string.h>
 
+#include <memory>
 #include <string>
 
 #include "base/base_paths.h"
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
 #import "base/mac/scoped_nsautorelease_pool.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/free_deleter.h"
 #include "base/path_service.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_paths_internal.h"
 
 namespace {
 
@@ -215,14 +216,6 @@ bool GetLocalLibraryDirectory(base::FilePath* result) {
   return base::mac::GetLocalDirectory(NSLibraryDirectory, result);
 }
 
-bool GetUserLibraryDirectory(base::FilePath* result) {
-  return base::mac::GetUserDirectory(NSLibraryDirectory, result);
-}
-
-bool GetUserApplicationsDirectory(base::FilePath* result) {
-  return base::mac::GetUserDirectory(NSApplicationDirectory, result);
-}
-
 bool GetGlobalApplicationSupportDirectory(base::FilePath* result) {
   return base::mac::GetLocalDirectory(NSApplicationSupportDirectory, result);
 }
@@ -236,8 +229,8 @@ NSBundle* OuterAppBundle() {
 
 bool GetUserDataDirectoryForBrowserBundle(NSBundle* bundle,
                                           base::FilePath* result) {
-  scoped_ptr<char, base::FreeDeleter>
-      product_dir_name(ProductDirNameForBundle(bundle));
+  std::unique_ptr<char, base::FreeDeleter> product_dir_name(
+      ProductDirNameForBundle(bundle));
   return GetDefaultUserDataDirectoryForProduct(product_dir_name.get(), result);
 }
 

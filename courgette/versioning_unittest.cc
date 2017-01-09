@@ -4,12 +4,13 @@
 
 #include "courgette/base_test_unittest.h"
 
+#include <stddef.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "courgette/courgette.h"
 #include "courgette/streams.h"
-#include "courgette/third_party/bsdiff.h"
+#include "courgette/third_party/bsdiff/bsdiff.h"
 
 class VersioningTest : public BaseTest {
  public:
@@ -33,10 +34,10 @@ void VersioningTest::TestApplyingOldBsDiffPatch(
 
   courgette::SinkStream generated_stream;
 
-  courgette::BSDiffStatus status = courgette::ApplyBinaryPatch(
+  bsdiff::BSDiffStatus status = bsdiff::ApplyBinaryPatch(
       &old_stream, &patch_stream, &generated_stream);
 
-  EXPECT_EQ(status, courgette::OK);
+  EXPECT_EQ(status, bsdiff::OK);
 
   size_t expected_length = expected_buffer.size();
   size_t generated_length = generated_stream.Length();

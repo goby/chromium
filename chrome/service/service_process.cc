@@ -5,24 +5,28 @@
 #include "chrome/service/service_process.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/base_switches.h"
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/i18n/rtl.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
-#include "base/prefs/json_pref_store.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/task_scheduler/task_scheduler.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -35,9 +39,16 @@
 #include "chrome/service/cloud_print/cloud_print_proxy.h"
 #include "chrome/service/net/service_url_request_context_getter.h"
 #include "chrome/service/service_process_prefs.h"
+#include "components/prefs/json_pref_store.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/named_platform_handle.h"
+#include "mojo/edk/embedder/named_platform_handle_utils.h"
+#include "mojo/edk/embedder/platform_handle_utils.h"
+#include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "net/base/network_change_notifier.h"
 #include "net/url_request/url_fetcher.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
 
@@ -82,7 +93,7 @@ void ServiceIOThread::CleanUp() {
 // chrome executable's lifetime.
 void PrepareRestartOnCrashEnviroment(
     const base::CommandLine& parsed_command_line) {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   // Clear this var so child processes don't show the dialog by default.
   env->UnSetVar(env_vars::kShowRestart);
 
@@ -116,7 +127,8 @@ void PrepareRestartOnCrashEnviroment(
 }  // namespace
 
 ServiceProcess::ServiceProcess()
-    : shutdown_event_(true /* manual_reset */, false /* initially_signaled */),
+    : shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
       main_message_loop_(NULL),
       enabled_services_(0),
       update_available_(false) {
@@ -147,7 +159,20 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
     Teardown();
     return false;
   }
-  blocking_pool_ = new base::SequencedWorkerPool(3, "ServiceBlocking");
+
+  // Initialize TaskScheduler and redirect SequencedWorkerPool tasks to it.
+  constexpr int kMaxTaskSchedulerThreads = 3;
+  base::TaskScheduler::CreateAndSetSimpleTaskScheduler(
+      kMaxTaskSchedulerThreads);
+  base::SequencedWorkerPool::EnableWithRedirectionToTaskSchedulerForProcess();
+
+  blocking_pool_ = new base::SequencedWorkerPool(
+      3, "ServiceBlocking", base::TaskPriority::USER_VISIBLE);
+
+  // Initialize Mojo early so things can use it.
+  mojo::edk::Init();
+  mojo_ipc_support_.reset(
+      new mojo::edk::ScopedIPCSupport(io_thread_->task_runner()));
 
   request_context_getter_ = new ServiceURLRequestContextGetter();
 
@@ -179,6 +204,7 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
     if (locale.empty())
       locale = kDefaultServiceProcessLocale;
   }
+  ui::MaterialDesignController::Initialize();
   ui::ResourceBundle::InitSharedInstanceWithLocale(
       locale, NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
 
@@ -192,13 +218,12 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   }
 
   VLOG(1) << "Starting Service Process IPC Server";
-  ipc_server_.reset(new ServiceIPCServer(
-      this /* client */,
-      io_task_runner(),
-      service_process_state_->GetServiceProcessChannel(),
-      &shutdown_event_));
-  ipc_server_->AddMessageHandler(make_scoped_ptr(
-      new cloud_print::CloudPrintMessageHandler(ipc_server_.get(), this)));
+
+  ipc_server_.reset(new ServiceIPCServer(this /* client */, io_task_runner(),
+                                         &shutdown_event_));
+  ipc_server_->AddMessageHandler(
+      base::MakeUnique<cloud_print::CloudPrintMessageHandler>(ipc_server_.get(),
+                                                              this));
   ipc_server_->Init();
 
   // After the IPC server has started we signal that the service process is
@@ -219,7 +244,13 @@ bool ServiceProcess::Teardown() {
   service_prefs_.reset();
   cloud_print_proxy_.reset();
 
+  mojo_ipc_support_.reset();
   ipc_server_.reset();
+
+  // On POSIX, this must be called before joining |io_thread_| because it posts
+  // a DeleteSoon() task to that thread.
+  service_process_state_->SignalStopped();
+
   // Signal this event before shutting down the service process. That way all
   // background threads can cleanup.
   shutdown_event_.Signal();
@@ -236,11 +267,13 @@ bool ServiceProcess::Teardown() {
     blocking_pool_ = NULL;
   }
 
+  if (base::TaskScheduler::GetInstance())
+    base::TaskScheduler::GetInstance()->Shutdown();
+
   // The NetworkChangeNotifier must be destroyed after all other threads that
   // might use it have been shut down.
   network_change_notifier_.reset();
 
-  service_process_state_->SignalStopped();
   return true;
 }
 
@@ -285,6 +318,35 @@ bool ServiceProcess::OnIPCClientDisconnect() {
     return false;
   }
   return true;
+}
+
+mojo::ScopedMessagePipeHandle ServiceProcess::CreateChannelMessagePipe() {
+  if (!server_handle_.is_valid()) {
+#if defined(OS_MACOSX)
+    mojo::edk::PlatformHandle platform_handle(
+        service_process_state_->GetServiceProcessChannel().release());
+    platform_handle.needs_connection = true;
+    server_handle_.reset(platform_handle);
+#elif defined(OS_POSIX)
+    server_handle_ = mojo::edk::CreateServerHandle(
+        service_process_state_->GetServiceProcessChannel());
+#elif defined(OS_WIN)
+    server_handle_ = service_process_state_->GetServiceProcessChannel();
+#endif
+    DCHECK(server_handle_.is_valid());
+  }
+
+  mojo::edk::ScopedPlatformHandle channel_handle;
+#if defined(OS_POSIX)
+  channel_handle = mojo::edk::DuplicatePlatformHandle(server_handle_.get());
+#elif defined(OS_WIN)
+  mojo::edk::CreateServerHandleOptions options;
+  options.enforce_uniqueness = false;
+  channel_handle = mojo::edk::CreateServerHandle(server_handle_, options);
+#endif
+  CHECK(channel_handle.is_valid());
+
+  return mojo::edk::ConnectToPeerProcess(std::move(channel_handle));
 }
 
 cloud_print::CloudPrintProxy* ServiceProcess::GetCloudPrintProxy() {

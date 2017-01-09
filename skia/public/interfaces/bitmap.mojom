@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 // This file contains structures used to represent SkBitmaps in Mojo.
-module skia;
+module skia.mojom;
 
 // Mirror of SkColorType.
 enum ColorType {
@@ -20,12 +20,13 @@ enum ColorType {
 // Mirror of SkAlphaType.
 enum AlphaType {
   UNKNOWN,
-  OPAQUE,
+  ALPHA_TYPE_OPAQUE,
   PREMUL,
   UNPREMUL,
 };
 
-// Mirror of SkColorProfileType.
+// Capture of the (simple) gamma of SkColorSpace. Need to eventually
+// serialize the actual colorspace object.
 enum ColorProfileType {
   LINEAR,
   SRGB,
@@ -38,6 +39,7 @@ struct Bitmap {
 
   uint32 width;
   uint32 height;
+  uint64 row_bytes;
 
   array<uint8> pixel_data;
 };

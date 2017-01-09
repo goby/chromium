@@ -4,24 +4,28 @@
 
 #include "chrome/browser/extensions/install_signer.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process_info.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/crx_file/constants.h"
 #include "crypto/random.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
@@ -87,14 +91,14 @@ bool HashWithMachineId(const std::string& salt, std::string* result) {
   machine_id = "unknown";
 #endif
 
-  scoped_ptr<crypto::SecureHash> hash(
+  std::unique_ptr<crypto::SecureHash> hash(
       crypto::SecureHash::Create(crypto::SecureHash::SHA256));
 
   hash->Update(machine_id.data(), machine_id.size());
   hash->Update(salt.data(), salt.size());
 
   std::string result_bytes(crypto::kSHA256Length, 0);
-  hash->Finish(string_as_array(&result_bytes), result_bytes.size());
+  hash->Finish(base::string_as_array(&result_bytes), result_bytes.size());
 
   base::Base64Encode(result_bytes, result);
   return true;
@@ -154,6 +158,7 @@ namespace extensions {
 
 InstallSignature::InstallSignature() {
 }
+InstallSignature::InstallSignature(const InstallSignature& other) = default;
 InstallSignature::~InstallSignature() {
 }
 
@@ -175,10 +180,9 @@ void InstallSignature::ToValue(base::DictionaryValue* value) const {
 }
 
 // static
-scoped_ptr<InstallSignature> InstallSignature::FromValue(
+std::unique_ptr<InstallSignature> InstallSignature::FromValue(
     const base::DictionaryValue& value) {
-
-  scoped_ptr<InstallSignature> result(new InstallSignature);
+  std::unique_ptr<InstallSignature> result(new InstallSignature);
 
   // For now we don't want to support any backwards compability, but in the
   // future if we do, we would want to put the migration code here.
@@ -186,7 +190,7 @@ scoped_ptr<InstallSignature> InstallSignature::FromValue(
   if (!value.GetInteger(kSignatureFormatVersionKey, &format_version) ||
       format_version != kSignatureFormatVersion) {
     result.reset();
-    return result.Pass();
+    return result;
   }
 
   std::string salt_base64;
@@ -197,18 +201,18 @@ scoped_ptr<InstallSignature> InstallSignature::FromValue(
       !base::Base64Decode(salt_base64, &result->salt) ||
       !base::Base64Decode(signature_base64, &result->signature)) {
     result.reset();
-    return result.Pass();
+    return result;
   }
 
   // Note: earlier versions of the code did not write out a timestamp value
   // so older entries will not necessarily have this.
   if (value.HasKey(kTimestampKey)) {
     std::string timestamp;
-    int64 timestamp_value = 0;
+    int64_t timestamp_value = 0;
     if (!value.GetString(kTimestampKey, &timestamp) ||
         !base::StringToInt64(timestamp, &timestamp_value)) {
       result.reset();
-      return result.Pass();
+      return result;
     }
     result->timestamp = base::Time::FromInternalValue(timestamp_value);
   }
@@ -216,10 +220,10 @@ scoped_ptr<InstallSignature> InstallSignature::FromValue(
   if (!GetExtensionIdSet(value, kIdsKey, &result->ids) ||
       !GetExtensionIdSet(value, kInvalidIdsKey, &result->invalid_ids)) {
     result.reset();
-    return result.Pass();
+    return result;
   }
 
-  return result.Pass();
+  return result;
 }
 
 
@@ -253,16 +257,15 @@ bool InstallSigner::VerifySignature(const InstallSignature& signature) {
     return false;
 
   crypto::SignatureVerifier verifier;
-  if (!verifier.VerifyInit(crx_file::kSignatureAlgorithm,
-                           sizeof(crx_file::kSignatureAlgorithm),
-                           reinterpret_cast<const uint8*>(
-                               signature.signature.data()),
-                           signature.signature.size(),
-                           reinterpret_cast<const uint8*>(public_key.data()),
-                           public_key.size()))
+  if (!verifier.VerifyInit(
+          crypto::SignatureVerifier::RSA_PKCS1_SHA1,
+          reinterpret_cast<const uint8_t*>(signature.signature.data()),
+          signature.signature.size(),
+          reinterpret_cast<const uint8_t*>(public_key.data()),
+          public_key.size()))
     return false;
 
-  verifier.VerifyUpdate(reinterpret_cast<const uint8*>(signed_data.data()),
+  verifier.VerifyUpdate(reinterpret_cast<const uint8_t*>(signed_data.data()),
                         signed_data.size());
   return verifier.VerifyFinal();
 }
@@ -346,13 +349,13 @@ void InstallSigner::GetSignature(const SignatureCallback& callback) {
   // call to the server.
   if (ids_.empty()) {
     if (!callback_.is_null())
-      callback_.Run(scoped_ptr<InstallSignature>(new InstallSignature()));
+      callback_.Run(std::unique_ptr<InstallSignature>(new InstallSignature()));
     return;
   }
 
   salt_ = std::string(kSaltBytes, 0);
   DCHECK_EQ(kSaltBytes, salt_.size());
-  crypto::RandBytes(string_as_array(&salt_), salt_.size());
+  crypto::RandBytes(base::string_as_array(&salt_), salt_.size());
 
   std::string hash_base64;
   if (!HashWithMachineId(salt_, &hash_base64)) {
@@ -382,7 +385,7 @@ void InstallSigner::GetSignature(const SignatureCallback& callback) {
   base::DictionaryValue dictionary;
   dictionary.SetInteger(kProtocolVersionKey, 1);
   dictionary.SetString(kHashKey, hash_base64);
-  scoped_ptr<base::ListValue> id_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> id_list(new base::ListValue);
   for (ExtensionIdSet::const_iterator i = ids_.begin(); i != ids_.end(); ++i) {
     id_list->AppendString(*i);
   }
@@ -403,7 +406,7 @@ void InstallSigner::GetSignature(const SignatureCallback& callback) {
 void InstallSigner::ReportErrorViaCallback() {
   InstallSignature* null_signature = NULL;
   if (!callback_.is_null())
-    callback_.Run(scoped_ptr<InstallSignature>(null_signature));
+    callback_.Run(std::unique_ptr<InstallSignature>(null_signature));
 }
 
 void InstallSigner::ParseFetchResponse() {
@@ -434,7 +437,7 @@ void InstallSigner::ParseFetchResponse() {
   // could not be verified to be in the webstore.
 
   base::DictionaryValue* dictionary = NULL;
-  scoped_ptr<base::Value> parsed = base::JSONReader::Read(response);
+  std::unique_ptr<base::Value> parsed = base::JSONReader::Read(response);
   bool json_success = parsed.get() && parsed->GetAsDictionary(&dictionary);
   UMA_HISTOGRAM_BOOLEAN("ExtensionInstallSigner.ParseJsonSuccess",
                         json_success);
@@ -485,7 +488,7 @@ void InstallSigner::HandleSignatureResult(const std::string& signature,
   ExtensionIdSet valid_ids =
       base::STLSetDifference<ExtensionIdSet>(ids_, invalid_ids);
 
-  scoped_ptr<InstallSignature> result;
+  std::unique_ptr<InstallSignature> result;
   if (!signature.empty()) {
     result.reset(new InstallSignature);
     result->ids = valid_ids;
@@ -503,7 +506,7 @@ void InstallSigner::HandleSignatureResult(const std::string& signature,
   }
 
   if (!callback_.is_null())
-    callback_.Run(result.Pass());
+    callback_.Run(std::move(result));
 }
 
 

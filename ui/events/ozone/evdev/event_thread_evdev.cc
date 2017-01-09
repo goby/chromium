@@ -4,12 +4,15 @@
 
 #include "ui/events/ozone/evdev/event_thread_evdev.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/events/ozone/evdev/cursor_delegate_evdev.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 #include "ui/events/ozone/evdev/input_device_factory_evdev.h"
 #include "ui/events/ozone/evdev/input_device_factory_evdev_proxy.h"
@@ -21,11 +24,11 @@ namespace {
 // Internal base::Thread subclass for events thread.
 class EvdevThread : public base::Thread {
  public:
-  EvdevThread(scoped_ptr<DeviceEventDispatcherEvdev> dispatcher,
+  EvdevThread(std::unique_ptr<DeviceEventDispatcherEvdev> dispatcher,
               CursorDelegateEvdev* cursor,
               const EventThreadStartCallback& callback)
       : base::Thread("evdev"),
-        dispatcher_(dispatcher.Pass()),
+        dispatcher_(std::move(dispatcher)),
         cursor_(cursor),
         init_callback_(callback),
         init_runner_(base::ThreadTaskRunnerHandle::Get()) {}
@@ -34,11 +37,13 @@ class EvdevThread : public base::Thread {
   void Init() override {
     TRACE_EVENT0("evdev", "EvdevThread::Init");
     input_device_factory_ =
-        new InputDeviceFactoryEvdev(dispatcher_.Pass(), cursor_);
+        new InputDeviceFactoryEvdev(std::move(dispatcher_), cursor_);
 
-    scoped_ptr<InputDeviceFactoryEvdevProxy> proxy(
+    std::unique_ptr<InputDeviceFactoryEvdevProxy> proxy(
         new InputDeviceFactoryEvdevProxy(base::ThreadTaskRunnerHandle::Get(),
                                          input_device_factory_->GetWeakPtr()));
+
+    cursor_->InitializeOnEvdev();
 
     init_runner_->PostTask(FROM_HERE,
                            base::Bind(init_callback_, base::Passed(&proxy)));
@@ -51,7 +56,7 @@ class EvdevThread : public base::Thread {
 
  private:
   // Initialization bits passed from main thread.
-  scoped_ptr<DeviceEventDispatcherEvdev> dispatcher_;
+  std::unique_ptr<DeviceEventDispatcherEvdev> dispatcher_;
   CursorDelegateEvdev* cursor_;
   EventThreadStartCallback init_callback_;
   scoped_refptr<base::SingleThreadTaskRunner> init_runner_;
@@ -68,13 +73,16 @@ EventThreadEvdev::EventThreadEvdev() {
 EventThreadEvdev::~EventThreadEvdev() {
 }
 
-void EventThreadEvdev::Start(scoped_ptr<DeviceEventDispatcherEvdev> dispatcher,
-                             CursorDelegateEvdev* cursor,
-                             const EventThreadStartCallback& callback) {
+void EventThreadEvdev::Start(
+    std::unique_ptr<DeviceEventDispatcherEvdev> dispatcher,
+    CursorDelegateEvdev* cursor,
+    const EventThreadStartCallback& callback) {
   TRACE_EVENT0("evdev", "EventThreadEvdev::Start");
-  thread_.reset(new EvdevThread(dispatcher.Pass(), cursor, callback));
-  if (!thread_->StartWithOptions(
-          base::Thread::Options(base::MessageLoop::TYPE_UI, 0)))
+  thread_.reset(new EvdevThread(std::move(dispatcher), cursor, callback));
+  base::Thread::Options thread_options;
+  thread_options.message_loop_type = base::MessageLoop::TYPE_UI;
+  thread_options.priority = base::ThreadPriority::DISPLAY;
+  if (!thread_->StartWithOptions(thread_options))
     LOG(FATAL) << "Failed to create input thread";
 }
 

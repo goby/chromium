@@ -16,7 +16,6 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "sandbox/linux/system_headers/capability.h"
 #include "sandbox/sandbox_export.h"
 
@@ -94,6 +93,9 @@ class SANDBOX_EXPORT Credentials {
   // system can be recovered.
   //   - DropAllCapabilities() must be called to prevent escapes.
   static bool DropFileSystemAccess(int proc_fd) WARN_UNUSED_RESULT;
+
+  // This function returns true if the process can still access the filesystem.
+  static bool HasFileSystemAccess();
 
   // Forks and drops capabilities in the child.
   static pid_t ForkAndDropCapabilitiesInChild();

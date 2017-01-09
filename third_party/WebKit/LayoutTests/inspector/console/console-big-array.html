@@ -59,9 +59,9 @@ function onload()
 
 function test()
 {
-    WebInspector.ArrayGroupingTreeElement._bucketThreshold = 20;
+    Components.ArrayGroupingTreeElement._bucketThreshold = 20;
 
-    var messages = WebInspector.ConsolePanel._view()._visibleViewMessages;
+    var messages = Console.ConsoleView.instance()._visibleViewMessages;
     var sections = [];
     for (var i = 0; i < messages.length; ++i) {
         var consoleMessage = messages[i].consoleMessage();
@@ -76,14 +76,14 @@ function test()
         }
     }
 
-    InspectorTest.addSniffer(WebInspector.ArrayGroupingTreeElement.prototype, "onpopulate", populateCalled, true);
+    InspectorTest.addSniffer(Components.ArrayGroupingTreeElement.prototype, "onpopulate", populateCalled, true);
     var populated = false;
     function populateCalled()
     {
         populated = true;
     }
 
-    InspectorTest.runAfterPendingDispatches(expandRecursively);
+    InspectorTest.deprecatedRunAfterPendingDispatches(expandRecursively);
 
     function expandRecursively()
     {
@@ -97,9 +97,9 @@ function test()
             }
         }
         if (populated)
-            InspectorTest.runAfterPendingDispatches(completeTest);
+            InspectorTest.deprecatedRunAfterPendingDispatches(completeTest);
         else
-            InspectorTest.runAfterPendingDispatches(expandRecursively);
+            InspectorTest.deprecatedRunAfterPendingDispatches(expandRecursively);
     }
 
     function completeTest()

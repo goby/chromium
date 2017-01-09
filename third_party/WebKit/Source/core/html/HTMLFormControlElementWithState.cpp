@@ -22,7 +22,6 @@
  *
  */
 
-#include "config.h"
 #include "core/html/HTMLFormControlElementWithState.h"
 
 #include "core/frame/FrameHost.h"
@@ -34,65 +33,59 @@
 
 namespace blink {
 
-HTMLFormControlElementWithState::HTMLFormControlElementWithState(const QualifiedName& tagName, Document& doc, HTMLFormElement* f)
-    : HTMLFormControlElement(tagName, doc, f)
-{
+HTMLFormControlElementWithState::HTMLFormControlElementWithState(
+    const QualifiedName& tagName,
+    Document& doc)
+    : HTMLFormControlElement(tagName, doc) {}
+
+HTMLFormControlElementWithState::~HTMLFormControlElementWithState() {}
+
+Node::InsertionNotificationRequest
+HTMLFormControlElementWithState::insertedInto(ContainerNode* insertionPoint) {
+  if (insertionPoint->isConnected() && !containingShadowRoot())
+    document().formController().registerStatefulFormControl(*this);
+  return HTMLFormControlElement::insertedInto(insertionPoint);
 }
 
-HTMLFormControlElementWithState::~HTMLFormControlElementWithState()
-{
+void HTMLFormControlElementWithState::removedFrom(
+    ContainerNode* insertionPoint) {
+  if (insertionPoint->isConnected() && !containingShadowRoot() &&
+      !insertionPoint->containingShadowRoot())
+    document().formController().unregisterStatefulFormControl(*this);
+  HTMLFormControlElement::removedFrom(insertionPoint);
 }
 
-Node::InsertionNotificationRequest HTMLFormControlElementWithState::insertedInto(ContainerNode* insertionPoint)
-{
-    if (insertionPoint->inDocument() && !containingShadowRoot())
-        document().formController().registerStatefulFormControl(*this);
-    return HTMLFormControlElement::insertedInto(insertionPoint);
-}
-
-void HTMLFormControlElementWithState::removedFrom(ContainerNode* insertionPoint)
-{
-    if (insertionPoint->inDocument() && !containingShadowRoot() && !insertionPoint->containingShadowRoot())
-        document().formController().unregisterStatefulFormControl(*this);
-    HTMLFormControlElement::removedFrom(insertionPoint);
-}
-
-bool HTMLFormControlElementWithState::shouldAutocomplete() const
-{
-    if (!form())
-        return true;
-    return form()->shouldAutocomplete();
-}
-
-void HTMLFormControlElementWithState::notifyFormStateChanged()
-{
-    // This can be called during fragment parsing as a result of option
-    // selection before the document is active (or even in a frame).
-    if (!document().isActive())
-        return;
-    document().frame()->loader().client()->didUpdateCurrentHistoryItem();
-}
-
-bool HTMLFormControlElementWithState::shouldSaveAndRestoreFormControlState() const
-{
-    // We don't save/restore control state in a form with autocomplete=off.
-    return inDocument() && shouldAutocomplete();
-}
-
-FormControlState HTMLFormControlElementWithState::saveFormControlState() const
-{
-    return FormControlState();
-}
-
-void HTMLFormControlElementWithState::finishParsingChildren()
-{
-    HTMLFormControlElement::finishParsingChildren();
-    document().formController().restoreControlStateFor(*this);
-}
-
-bool HTMLFormControlElementWithState::isFormControlElementWithState() const
-{
+bool HTMLFormControlElementWithState::shouldAutocomplete() const {
+  if (!form())
     return true;
+  return form()->shouldAutocomplete();
 }
 
-} // namespace blink
+void HTMLFormControlElementWithState::notifyFormStateChanged() {
+  // This can be called during fragment parsing as a result of option
+  // selection before the document is active (or even in a frame).
+  if (!document().isActive())
+    return;
+  document().frame()->loader().client()->didUpdateCurrentHistoryItem();
+}
+
+bool HTMLFormControlElementWithState::shouldSaveAndRestoreFormControlState()
+    const {
+  // We don't save/restore control state in a form with autocomplete=off.
+  return isConnected() && shouldAutocomplete();
+}
+
+FormControlState HTMLFormControlElementWithState::saveFormControlState() const {
+  return FormControlState();
+}
+
+void HTMLFormControlElementWithState::finishParsingChildren() {
+  HTMLFormControlElement::finishParsingChildren();
+  document().formController().restoreControlStateFor(*this);
+}
+
+bool HTMLFormControlElementWithState::isFormControlElementWithState() const {
+  return true;
+}
+
+}  // namespace blink

@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/drive/file_system/download_operation.h"
+#include "components/drive/chromeos/file_system/download_operation.h"
+
+#include <stddef.h>
+#include <stdint.h>
 
 #include "base/files/file_util.h"
 #include "base/task_runner_util.h"
-#include "components/drive/fake_free_disk_space_getter.h"
-#include "components/drive/file_cache.h"
+#include "components/drive/chromeos/fake_free_disk_space_getter.h"
+#include "components/drive/chromeos/file_cache.h"
 #include "components/drive/file_change.h"
 #include "components/drive/file_system/operation_test_base.h"
 #include "components/drive/file_system_core_util.h"
@@ -30,7 +33,7 @@ class DownloadOperationTest : public OperationTestBase {
         temp_dir()));
   }
 
-  scoped_ptr<DownloadOperation> operation_;
+  std::unique_ptr<DownloadOperation> operation_;
 };
 
 TEST_F(DownloadOperationTest,
@@ -38,7 +41,7 @@ TEST_F(DownloadOperationTest,
   base::FilePath file_in_root(FILE_PATH_LITERAL("drive/root/File 1.txt"));
   ResourceEntry src_entry;
   ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(file_in_root, &src_entry));
-  const int64 file_size = src_entry.file_info().size();
+  const int64_t file_size = src_entry.file_info().size();
 
   // Pretend we have enough space.
   fake_free_disk_space_getter()->set_default_value(
@@ -46,7 +49,7 @@ TEST_F(DownloadOperationTest,
 
   FileError error = FILE_ERROR_FAILED;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByPath(
       file_in_root,
       ClientContext(USER_INITIATED),
@@ -75,7 +78,7 @@ TEST_F(DownloadOperationTest,
 
   FileError error = FILE_ERROR_OK;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByPath(
       file_in_root,
       ClientContext(USER_INITIATED),
@@ -93,7 +96,7 @@ TEST_F(DownloadOperationTest,
   base::FilePath file_in_root(FILE_PATH_LITERAL("drive/root/File 1.txt"));
   ResourceEntry src_entry;
   ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(file_in_root, &src_entry));
-  const int64 file_size = src_entry.file_info().size();
+  const int64_t file_size = src_entry.file_info().size();
 
   // Make another file cached.
   // This file's cache file will be removed to free up the disk space.
@@ -101,7 +104,7 @@ TEST_F(DownloadOperationTest,
       FILE_PATH_LITERAL("drive/root/Duplicate Name.txt"));
   FileError error = FILE_ERROR_FAILED;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByPath(
       cached_file,
       ClientContext(USER_INITIATED),
@@ -154,7 +157,7 @@ TEST_F(DownloadOperationTest,
   base::FilePath file_in_root(FILE_PATH_LITERAL("drive/root/File 1.txt"));
   ResourceEntry src_entry;
   ASSERT_EQ(FILE_ERROR_OK, GetLocalResourceEntry(file_in_root, &src_entry));
-  const int64 file_size = src_entry.file_info().size();
+  const int64_t file_size = src_entry.file_info().size();
 
   // Pretend we have enough space first (checked before downloading a file),
   // but then start reporting we have not enough space. This is to emulate that
@@ -167,7 +170,7 @@ TEST_F(DownloadOperationTest,
 
   FileError error = FILE_ERROR_OK;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByPath(
       file_in_root,
       ClientContext(USER_INITIATED),
@@ -204,7 +207,7 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByPath_FromCache) {
   EXPECT_EQ(FILE_ERROR_OK, error);
 
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByPath(
       file_in_root,
       ClientContext(USER_INITIATED),
@@ -225,7 +228,7 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByPath_HostedDocument) {
 
   FileError error = FILE_ERROR_FAILED;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByPath(
       file_in_root,
       ClientContext(USER_INITIATED),
@@ -253,7 +256,7 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByLocalId) {
 
   FileError error = FILE_ERROR_OK;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByLocalId(
       GetLocalId(file_in_root),
       ClientContext(USER_INITIATED),
@@ -279,7 +282,7 @@ TEST_F(DownloadOperationTest,
 
   {
     FileError initialized_error = FILE_ERROR_FAILED;
-    scoped_ptr<ResourceEntry> entry, entry_dontcare;
+    std::unique_ptr<ResourceEntry> entry, entry_dontcare;
     base::FilePath local_path, local_path_dontcare;
     google_apis::test_util::TestGetContentCallback get_content_callback;
     FileError completion_error = FILE_ERROR_FAILED;
@@ -312,7 +315,7 @@ TEST_F(DownloadOperationTest,
 
   {
     FileError initialized_error = FILE_ERROR_FAILED;
-    scoped_ptr<ResourceEntry> entry, entry_dontcare;
+    std::unique_ptr<ResourceEntry> entry, entry_dontcare;
     base::FilePath local_path, local_path_dontcare;
     google_apis::test_util::TestGetContentCallback get_content_callback;
     FileError completion_error = FILE_ERROR_FAILED;
@@ -334,7 +337,7 @@ TEST_F(DownloadOperationTest,
     EXPECT_FALSE(cancel_download.is_null());
     // The content is available from the cache file.
     EXPECT_TRUE(get_content_callback.data().empty());
-    int64 local_file_size = 0;
+    int64_t local_file_size = 0;
     base::GetFileSize(local_path, &local_file_size);
     EXPECT_EQ(entry->file_info().size(), local_file_size);
     EXPECT_EQ(FILE_ERROR_OK, completion_error);
@@ -369,7 +372,7 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByLocalId_FromCache) {
   fake_service()->set_offline(true);
 
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByLocalId(
       GetLocalId(file_in_root),
       ClientContext(USER_INITIATED),
@@ -414,9 +417,9 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByPath_DirtyCache) {
   // Record values passed to GetFileContentInitializedCallback().
   FileError init_error;
   base::FilePath init_path;
-  scoped_ptr<ResourceEntry> init_entry;
+  std::unique_ptr<ResourceEntry> init_entry;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   base::Closure cancel_callback = operation_->EnsureFileDownloadedByPath(
       file_in_root,
       ClientContext(USER_INITIATED),
@@ -429,8 +432,8 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByPath_DirtyCache) {
 
   EXPECT_EQ(FILE_ERROR_OK, error);
   // Check that the result of local modification is propagated.
-  EXPECT_EQ(static_cast<int64>(dirty_size), init_entry->file_info().size());
-  EXPECT_EQ(static_cast<int64>(dirty_size), entry->file_info().size());
+  EXPECT_EQ(static_cast<int64_t>(dirty_size), init_entry->file_info().size());
+  EXPECT_EQ(static_cast<int64_t>(dirty_size), entry->file_info().size());
 }
 
 TEST_F(DownloadOperationTest, EnsureFileDownloadedByPath_LocallyCreatedFile) {
@@ -458,7 +461,7 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByPath_LocallyCreatedFile) {
 
   // Empty cache file should be returned.
   base::FilePath cache_file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   operation_->EnsureFileDownloadedByPath(
       file_path,
       ClientContext(USER_INITIATED),
@@ -469,9 +472,9 @@ TEST_F(DownloadOperationTest, EnsureFileDownloadedByPath_LocallyCreatedFile) {
   content::RunAllBlockingPoolTasksUntilIdle();
   EXPECT_EQ(FILE_ERROR_OK, error);
 
-  int64 cache_file_size = 0;
+  int64_t cache_file_size = 0;
   EXPECT_TRUE(base::GetFileSize(cache_file_path, &cache_file_size));
-  EXPECT_EQ(static_cast<int64>(0), cache_file_size);
+  EXPECT_EQ(static_cast<int64_t>(0), cache_file_size);
   ASSERT_TRUE(entry);
   EXPECT_EQ(cache_file_size, entry->file_info().size());
 }
@@ -484,7 +487,7 @@ TEST_F(DownloadOperationTest, CancelBeforeDownloadStarts) {
   // Start operation.
   FileError error = FILE_ERROR_OK;
   base::FilePath file_path;
-  scoped_ptr<ResourceEntry> entry;
+  std::unique_ptr<ResourceEntry> entry;
   base::Closure cancel_closure = operation_->EnsureFileDownloadedByLocalId(
       GetLocalId(file_in_root),
       ClientContext(USER_INITIATED),

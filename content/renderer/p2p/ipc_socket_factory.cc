@@ -4,16 +4,20 @@
 
 #include "content/renderer/p2p/ipc_socket_factory.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <list>
 
 #include "base/compiler_specific.h"
-#include "base/message_loop/message_loop.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_checker.h"
 #include "base/trace_event/trace_event.h"
 #include "content/renderer/media/webrtc_logging.h"
 #include "content/renderer/p2p/host_address_request.h"
@@ -21,6 +25,7 @@
 #include "content/renderer/p2p/socket_client_impl.h"
 #include "content/renderer/p2p/socket_dispatcher.h"
 #include "jingle/glue/utils.h"
+#include "net/base/ip_address.h"
 #include "third_party/webrtc/base/asyncpacketsocket.h"
 
 namespace content {
@@ -89,8 +94,11 @@ class IpcPacketSocket : public rtc::AsyncPacketSocket,
   typedef std::list<InFlightPacketRecord> InFlightPacketList;
 
   // Always takes ownership of client even if initialization fails.
-  bool Init(P2PSocketType type, P2PSocketClientImpl* client,
+  bool Init(P2PSocketType type,
+            P2PSocketClientImpl* client,
             const rtc::SocketAddress& local_address,
+            uint16_t min_port,
+            uint16_t max_port,
             const rtc::SocketAddress& remote_address);
 
   // rtc::AsyncPacketSocket interface.
@@ -151,8 +159,8 @@ class IpcPacketSocket : public rtc::AsyncPacketSocket,
 
   P2PSocketType type_;
 
-  // Message loop on which this socket was created and being used.
-  base::MessageLoop* message_loop_;
+  // Used to verify that a method runs on the thread that created this socket.
+  base::ThreadChecker thread_checker_;
 
   // Corresponding P2P socket client.
   scoped_refptr<P2PSocketClient> client_;
@@ -228,7 +236,6 @@ class AsyncAddressResolverImpl :  public base::NonThreadSafe,
 
 IpcPacketSocket::IpcPacketSocket()
     : type_(P2P_SOCKET_UDP),
-      message_loop_(base::MessageLoop::current()),
       state_(IS_UNINITIALIZED),
       send_bytes_available_(kMaximumInFlightBytes),
       writable_signal_expected_(false),
@@ -288,8 +295,10 @@ void IpcPacketSocket::AdjustUdpSendBufferSize() {
 bool IpcPacketSocket::Init(P2PSocketType type,
                            P2PSocketClientImpl* client,
                            const rtc::SocketAddress& local_address,
+                           uint16_t min_port,
+                           uint16_t max_port,
                            const rtc::SocketAddress& remote_address) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_EQ(state_, IS_UNINITIALIZED);
 
   type_ = type;
@@ -314,7 +323,7 @@ bool IpcPacketSocket::Init(P2PSocketType type,
 
     if (remote_address.IsUnresolvedIP()) {
       remote_endpoint =
-          net::IPEndPoint(net::IPAddressNumber(), remote_address.port());
+          net::IPEndPoint(net::IPAddress(), remote_address.port());
     } else {
       if (!jingle_glue::SocketAddressToIPEndPoint(remote_address,
                                                   &remote_endpoint)) {
@@ -328,7 +337,7 @@ bool IpcPacketSocket::Init(P2PSocketType type,
   // Certificate will be tied to domain name not to IP address.
   P2PHostAndIPEndPoint remote_info(remote_address.hostname(), remote_endpoint);
 
-  client->Init(type, local_endpoint, remote_info, this);
+  client->Init(type, local_endpoint, min_port, max_port, remote_info, this);
 
   return true;
 }
@@ -337,7 +346,7 @@ void IpcPacketSocket::InitAcceptedTcp(
     P2PSocketClient* client,
     const rtc::SocketAddress& local_address,
     const rtc::SocketAddress& remote_address) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_EQ(state_, IS_UNINITIALIZED);
 
   client_ = client;
@@ -350,25 +359,25 @@ void IpcPacketSocket::InitAcceptedTcp(
 
 // rtc::AsyncPacketSocket interface.
 rtc::SocketAddress IpcPacketSocket::GetLocalAddress() const {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   return local_address_;
 }
 
 rtc::SocketAddress IpcPacketSocket::GetRemoteAddress() const {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   return remote_address_;
 }
 
 int IpcPacketSocket::Send(const void *data, size_t data_size,
                           const rtc::PacketOptions& options) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   return SendTo(data, data_size, remote_address_, options);
 }
 
 int IpcPacketSocket::SendTo(const void *data, size_t data_size,
                             const rtc::SocketAddress& address,
                             const rtc::PacketOptions& options) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   switch (state_) {
     case IS_UNINITIALIZED:
@@ -417,7 +426,7 @@ int IpcPacketSocket::SendTo(const void *data, size_t data_size,
 
   net::IPEndPoint address_chrome;
   if (address.IsUnresolvedIP()) {
-    address_chrome = net::IPEndPoint(net::IPAddressNumber(), address.port());
+    address_chrome = net::IPEndPoint(net::IPAddress(), address.port());
   } else {
     if (!jingle_glue::SocketAddressToIPEndPoint(address, &address_chrome)) {
       LOG(WARNING) << "Failed to convert remote address to IPEndPoint: address="
@@ -449,7 +458,7 @@ int IpcPacketSocket::SendTo(const void *data, size_t data_size,
 }
 
 int IpcPacketSocket::Close() {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   client_->Close();
   state_ = IS_CLOSED;
@@ -458,7 +467,7 @@ int IpcPacketSocket::Close() {
 }
 
 rtc::AsyncPacketSocket::State IpcPacketSocket::GetState() const {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   switch (state_) {
     case IS_UNINITIALIZED:
@@ -496,7 +505,7 @@ int IpcPacketSocket::GetOption(rtc::Socket::Option option, int* value) {
 }
 
 int IpcPacketSocket::SetOption(rtc::Socket::Option option, int value) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   P2PSocketOption p2p_socket_option = P2P_SOCKET_OPT_MAX;
   if (!JingleSocketOptionToP2PSocketOption(option, &p2p_socket_option)) {
@@ -514,7 +523,7 @@ int IpcPacketSocket::SetOption(rtc::Socket::Option option, int value) {
 }
 
 int IpcPacketSocket::DoSetOption(P2PSocketOption option, int value) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_EQ(state_, IS_OPEN);
 
   client_->SetOption(option, value);
@@ -522,18 +531,18 @@ int IpcPacketSocket::DoSetOption(P2PSocketOption option, int value) {
 }
 
 int IpcPacketSocket::GetError() const {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   return error_;
 }
 
 void IpcPacketSocket::SetError(int error) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   error_ = error;
 }
 
 void IpcPacketSocket::OnOpen(const net::IPEndPoint& local_address,
                              const net::IPEndPoint& remote_address) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!jingle_glue::IPEndPointToSocketAddress(local_address, &local_address_)) {
     // Always expect correct IPv4 address to be allocated.
@@ -577,9 +586,9 @@ void IpcPacketSocket::OnOpen(const net::IPEndPoint& local_address,
 void IpcPacketSocket::OnIncomingTcpConnection(
     const net::IPEndPoint& address,
     P2PSocketClient* client) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
-  scoped_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
+  std::unique_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
 
   rtc::SocketAddress remote_address;
   if (!jingle_glue::IPEndPointToSocketAddress(address, &remote_address)) {
@@ -591,7 +600,7 @@ void IpcPacketSocket::OnIncomingTcpConnection(
 }
 
 void IpcPacketSocket::OnSendComplete(const P2PSendPacketMetrics& send_metrics) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   CHECK(!in_flight_packet_records_.empty());
 
@@ -628,7 +637,7 @@ void IpcPacketSocket::OnSendComplete(const P2PSendPacketMetrics& send_metrics) {
 }
 
 void IpcPacketSocket::OnError() {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   bool was_closed = (state_ == IS_ERROR || state_ == IS_CLOSED);
   state_ = IS_ERROR;
   error_ = ECONNABORTED;
@@ -640,7 +649,7 @@ void IpcPacketSocket::OnError() {
 void IpcPacketSocket::OnDataReceived(const net::IPEndPoint& address,
                                      const std::vector<char>& data,
                                      const base::TimeTicks& timestamp) {
-  DCHECK_EQ(base::MessageLoop::current(), message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   rtc::SocketAddress address_lj;
 
@@ -736,22 +745,23 @@ IpcPacketSocketFactory::~IpcPacketSocketFactory() {
 }
 
 rtc::AsyncPacketSocket* IpcPacketSocketFactory::CreateUdpSocket(
-    const rtc::SocketAddress& local_address, uint16 min_port, uint16 max_port) {
-  rtc::SocketAddress crome_address;
+    const rtc::SocketAddress& local_address,
+    uint16_t min_port,
+    uint16_t max_port) {
   P2PSocketClientImpl* socket_client =
       new P2PSocketClientImpl(socket_dispatcher_);
-  scoped_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
-  // TODO(sergeyu): Respect local_address and port limits here (need
-  // to pass them over IPC channel to the browser).
-  if (!socket->Init(P2P_SOCKET_UDP, socket_client,
-                    local_address, rtc::SocketAddress())) {
-    return NULL;
+  std::unique_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
+  if (!socket->Init(P2P_SOCKET_UDP, socket_client, local_address, min_port,
+                    max_port, rtc::SocketAddress())) {
+    return nullptr;
   }
   return socket.release();
 }
 
 rtc::AsyncPacketSocket* IpcPacketSocketFactory::CreateServerTcpSocket(
-    const rtc::SocketAddress& local_address, uint16 min_port, uint16 max_port,
+    const rtc::SocketAddress& local_address,
+    uint16_t min_port,
+    uint16_t max_port,
     int opts) {
   // TODO(sergeyu): Implement SSL support.
   if (opts & rtc::PacketSocketFactory::OPT_SSLTCP)
@@ -761,8 +771,8 @@ rtc::AsyncPacketSocket* IpcPacketSocketFactory::CreateServerTcpSocket(
       P2P_SOCKET_STUN_TCP_SERVER : P2P_SOCKET_TCP_SERVER;
   P2PSocketClientImpl* socket_client =
       new P2PSocketClientImpl(socket_dispatcher_);
-  scoped_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
-  if (!socket->Init(type, socket_client, local_address,
+  std::unique_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
+  if (!socket->Init(type, socket_client, local_address, min_port, max_port,
                     rtc::SocketAddress())) {
     return NULL;
   }
@@ -787,16 +797,16 @@ rtc::AsyncPacketSocket* IpcPacketSocketFactory::CreateClientTcpSocket(
   }
   P2PSocketClientImpl* socket_client =
       new P2PSocketClientImpl(socket_dispatcher_);
-  scoped_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
-  if (!socket->Init(type, socket_client, local_address, remote_address))
+  std::unique_ptr<IpcPacketSocket> socket(new IpcPacketSocket());
+  if (!socket->Init(type, socket_client, local_address, 0, 0, remote_address))
     return NULL;
   return socket.release();
 }
 
 rtc::AsyncResolverInterface*
 IpcPacketSocketFactory::CreateAsyncResolver() {
-  scoped_ptr<AsyncAddressResolverImpl> resolver(
-    new AsyncAddressResolverImpl(socket_dispatcher_));
+  std::unique_ptr<AsyncAddressResolverImpl> resolver(
+      new AsyncAddressResolverImpl(socket_dispatcher_));
   return resolver.release();
 }
 

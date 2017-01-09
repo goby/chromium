@@ -5,10 +5,9 @@
 #ifndef BASE_MESSAGE_LOOP_MESSAGE_PUMP_LIBEVENT_H_
 #define BASE_MESSAGE_LOOP_MESSAGE_PUMP_LIBEVENT_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/message_loop/message_pump.h"
-#include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 
@@ -22,21 +21,6 @@ namespace base {
 // TODO(dkegel): add support for background file IO somehow
 class BASE_EXPORT MessagePumpLibevent : public MessagePump {
  public:
-  class IOObserver {
-   public:
-    IOObserver() {}
-
-    // An IOObserver is an object that receives IO notifications from the
-    // MessagePump.
-    //
-    // NOTE: An IOObserver implementation should be extremely fast!
-    virtual void WillProcessIOEvent() = 0;
-    virtual void DidProcessIOEvent() = 0;
-
-   protected:
-    virtual ~IOObserver() {}
-  };
-
   // Used with WatchFileDescriptor to asynchronously monitor the I/O readiness
   // of a file descriptor.
   class Watcher {
@@ -116,11 +100,8 @@ class BASE_EXPORT MessagePumpLibevent : public MessagePump {
   bool WatchFileDescriptor(int fd,
                            bool persistent,
                            int mode,
-                           FileDescriptorWatcher *controller,
-                           Watcher *delegate);
-
-  void AddIOObserver(IOObserver* obs);
-  void RemoveIOObserver(IOObserver* obs);
+                           FileDescriptorWatcher* controller,
+                           Watcher* delegate);
 
   // MessagePump methods:
   void Run(Delegate* delegate) override;
@@ -131,15 +112,11 @@ class BASE_EXPORT MessagePumpLibevent : public MessagePump {
  private:
   friend class MessagePumpLibeventTest;
 
-  void WillProcessIOEvent();
-  void DidProcessIOEvent();
-
   // Risky part of constructor.  Returns true on success.
   bool Init();
 
   // Called by libevent to tell us a registered FD can be read/written to.
-  static void OnLibeventNotification(int fd, short flags,
-                                     void* context);
+  static void OnLibeventNotification(int fd, short flags, void* context);
 
   // Unix pipe used to implement ScheduleWork()
   // ... callback; called by libevent inside Run() when pipe is ready to read
@@ -168,7 +145,6 @@ class BASE_EXPORT MessagePumpLibevent : public MessagePump {
   // ... libevent wrapper for read end
   event* wakeup_event_;
 
-  ObserverList<IOObserver> io_observers_;
   ThreadChecker watch_file_descriptor_caller_checker_;
   DISALLOW_COPY_AND_ASSIGN(MessagePumpLibevent);
 };

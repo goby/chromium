@@ -5,10 +5,11 @@
 #ifndef ASH_WM_ASH_NATIVE_CURSOR_MANAGER_H_
 #define ASH_WM_ASH_NATIVE_CURSOR_MANAGER_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/native_widget_types.h"
@@ -29,8 +30,7 @@ class CursorManagerTestApi;
 // visibility. It communicates back with the CursorManager through the
 // NativeCursorManagerDelegate interface, which receives messages about what
 // changes were acted on.
-class ASH_EXPORT AshNativeCursorManager
-    : public ::wm::NativeCursorManager {
+class ASH_EXPORT AshNativeCursorManager : public ::wm::NativeCursorManager {
  public:
   AshNativeCursorManager();
   ~AshNativeCursorManager() override;
@@ -45,7 +45,7 @@ class ASH_EXPORT AshNativeCursorManager
   friend class test::CursorManagerTestApi;
 
   // Overridden from ::wm::NativeCursorManager:
-  void SetDisplay(const gfx::Display& display,
+  void SetDisplay(const display::Display& display,
                   ::wm::NativeCursorManagerDelegate* delegate) override;
   void SetCursor(gfx::NativeCursor cursor,
                  ::wm::NativeCursorManagerDelegate* delegate) override;
@@ -62,7 +62,7 @@ class ASH_EXPORT AshNativeCursorManager
 
   bool native_cursor_enabled_;
 
-  scoped_ptr<ui::ImageCursors> image_cursors_;
+  std::unique_ptr<ui::ImageCursors> image_cursors_;
 
   DISALLOW_COPY_AND_ASSIGN(AshNativeCursorManager);
 };

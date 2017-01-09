@@ -5,6 +5,7 @@
 #include "extensions/browser/api/webcam_private/webcam_private_api.h"
 
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/media_device_id.h"
 #include "content/public/browser/resource_context.h"
@@ -13,6 +14,7 @@
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_manager_factory.h"
 #include "extensions/common/api/webcam_private.h"
+#include "url/origin.h"
 
 namespace webcam_private = extensions::api::webcam_private;
 
@@ -113,8 +115,8 @@ void WebcamPrivateAPI::OnOpenSerialWebcam(
 bool WebcamPrivateAPI::GetDeviceId(const std::string& extension_id,
                                    const std::string& webcam_id,
                                    std::string* device_id) {
-  GURL security_origin =
-      extensions::Extension::GetBaseURLFromExtensionId(extension_id);
+  url::Origin security_origin(
+      extensions::Extension::GetBaseURLFromExtensionId(extension_id));
 
   return content::GetMediaDeviceIDForHMAC(
       content::MEDIA_DEVICE_VIDEO_CAPTURE,
@@ -126,8 +128,8 @@ bool WebcamPrivateAPI::GetDeviceId(const std::string& extension_id,
 
 std::string WebcamPrivateAPI::GetWebcamId(const std::string& extension_id,
                                           const std::string& device_id) {
-  GURL security_origin =
-      extensions::Extension::GetBaseURLFromExtensionId(extension_id);
+  url::Origin security_origin(
+      extensions::Extension::GetBaseURLFromExtensionId(extension_id));
 
   return content::GetHMACForMediaDeviceID(
       browser_context_->GetResourceContext()->GetMediaDeviceIDSalt(),
@@ -183,7 +185,7 @@ WebcamPrivateOpenSerialWebcamFunction::
 }
 
 bool WebcamPrivateOpenSerialWebcamFunction::RunAsync() {
-  scoped_ptr<webcam_private::OpenSerialWebcam::Params> params(
+  std::unique_ptr<webcam_private::OpenSerialWebcam::Params> params(
       webcam_private::OpenSerialWebcam::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -203,7 +205,7 @@ void WebcamPrivateOpenSerialWebcamFunction::OnOpenWebcam(
     const std::string& webcam_id,
     bool success) {
   if (success) {
-    SetResult(new base::StringValue(webcam_id));
+    SetResult(base::MakeUnique<base::StringValue>(webcam_id));
     SendResponse(true);
   } else {
     SetError(kOpenSerialWebcamError);
@@ -218,7 +220,7 @@ WebcamPrivateCloseWebcamFunction::~WebcamPrivateCloseWebcamFunction() {
 }
 
 bool WebcamPrivateCloseWebcamFunction::RunAsync() {
-  scoped_ptr<webcam_private::CloseWebcam::Params> params(
+  std::unique_ptr<webcam_private::CloseWebcam::Params> params(
       webcam_private::CloseWebcam::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -233,7 +235,7 @@ WebcamPrivateSetFunction::~WebcamPrivateSetFunction() {
 }
 
 bool WebcamPrivateSetFunction::RunAsync() {
-  scoped_ptr<webcam_private::Set::Params> params(
+  std::unique_ptr<webcam_private::Set::Params> params(
       webcam_private::Set::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -333,7 +335,7 @@ WebcamPrivateGetFunction::~WebcamPrivateGetFunction() {
 }
 
 bool WebcamPrivateGetFunction::RunAsync() {
-  scoped_ptr<webcam_private::Get::Params> params(
+  std::unique_ptr<webcam_private::Get::Params> params(
       webcam_private::Get::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -384,7 +386,7 @@ void WebcamPrivateGetFunction::OnGetWebcamParameters(InquiryType type,
       result.pan.reset(new double(pan_));
       result.tilt.reset(new double(tilt_));
       result.zoom.reset(new double(zoom_));
-      SetResult(result.ToValue().release());
+      SetResult(result.ToValue());
       SendResponse(true);
     }
   }
@@ -397,7 +399,7 @@ WebcamPrivateResetFunction::~WebcamPrivateResetFunction() {
 }
 
 bool WebcamPrivateResetFunction::RunAsync() {
-  scoped_ptr<webcam_private::Reset::Params> params(
+  std::unique_ptr<webcam_private::Reset::Params> params(
       webcam_private::Reset::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -408,7 +410,8 @@ bool WebcamPrivateResetFunction::RunAsync() {
     return false;
   }
 
-  webcam->Reset(params->config.pan, params->config.tilt, params->config.zoom,
+  webcam->Reset(params->config.pan != nullptr, params->config.tilt != nullptr,
+                params->config.zoom != nullptr,
                 base::Bind(&WebcamPrivateResetFunction::OnResetWebcam, this));
 
   return true;

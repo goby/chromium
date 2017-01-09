@@ -7,10 +7,11 @@
 #include <string>
 
 #include "apps/launcher.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
-#include "chrome/browser/apps/per_app_settings_service.h"
-#include "chrome/browser/apps/per_app_settings_service_factory.h"
+#include "chrome/browser/engagement/site_engagement_service.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/extensions/tab_helper.h"
@@ -54,10 +55,9 @@ using extensions::ExtensionRegistry;
 
 namespace {
 
-// Shows the app list for |desktop_type| and returns the app list's window.
-gfx::NativeWindow ShowAppListAndGetNativeWindow(
-      chrome::HostDesktopType desktop_type) {
-  AppListService* app_list_service = AppListService::Get(desktop_type);
+// Shows the app list and returns the app list's window.
+gfx::NativeWindow ShowAppListAndGetNativeWindow() {
+  AppListService* app_list_service = AppListService::Get();
   app_list_service->Show();
   return app_list_service->GetAppListWindow();
 }
@@ -107,7 +107,7 @@ class EnableViaDialogFlow : public ExtensionEnableFlowDelegate {
   std::string extension_id_;
   base::Callback<gfx::NativeWindow(void)> parent_window_getter_;
   base::Closure callback_;
-  scoped_ptr<ExtensionEnableFlow> flow_;
+  std::unique_ptr<ExtensionEnableFlow> flow_;
 
   DISALLOW_COPY_AND_ASSIGN(EnableViaDialogFlow);
 };
@@ -192,12 +192,8 @@ WebContents* OpenApplicationWindow(const AppLaunchParams& params,
         extensions::AppLaunchInfo::GetLaunchHeight(extension));
   }
 
-  Browser::CreateParams browser_params(
-      Browser::CreateParams::CreateForApp(app_name,
-                                          true /* trusted_source */,
-                                          initial_bounds,
-                                          profile,
-                                          params.desktop_type));
+  Browser::CreateParams browser_params(Browser::CreateParams::CreateForApp(
+      app_name, true /* trusted_source */, initial_bounds, profile));
 
   browser_params.initial_show_state = DetermineWindowShowState(profile,
                                                                params.container,
@@ -228,18 +224,14 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
   Profile* const profile = launch_params.profile;
   WindowOpenDisposition disposition = launch_params.disposition;
 
-  Browser* browser = chrome::FindTabbedBrowser(profile,
-                                               false,
-                                               launch_params.desktop_type);
+  Browser* browser = chrome::FindTabbedBrowser(profile, false);
   WebContents* contents = NULL;
   if (!browser) {
     // No browser for this profile, need to open a new one.
-    browser = new Browser(Browser::CreateParams(Browser::TYPE_TABBED,
-                                                profile,
-                                                launch_params.desktop_type));
+    browser = new Browser(Browser::CreateParams(Browser::TYPE_TABBED, profile));
     browser->window()->Show();
     // There's no current tab in this browser window, so add a new one.
-    disposition = NEW_FOREGROUND_TAB;
+    disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   } else {
     // For existing browser, ensure its window is shown and activated.
     browser->window()->Show();
@@ -259,7 +251,7 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
   params.tabstrip_add_types = add_type;
   params.disposition = disposition;
 
-  if (disposition == CURRENT_TAB) {
+  if (disposition == WindowOpenDisposition::CURRENT_TAB) {
     WebContents* existing_tab =
         browser->tab_strip_model()->GetActiveWebContents();
     TabStripModel* model = browser->tab_strip_model();
@@ -286,27 +278,20 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
     contents = params.target_contents;
   }
 
-  // On Chrome OS the host desktop type for a browser window is always set to
-  // HOST_DESKTOP_TYPE_ASH. On Windows 8 it is only the case for Chrome ASH
-  // in metro mode.
-  if (browser->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH) {
-    // In ash, LAUNCH_FULLSCREEN launches in the OpenApplicationWindow function
-    // i.e. it should not reach here.
-    DCHECK(launch_type != extensions::LAUNCH_TYPE_FULLSCREEN);
-  } else {
-    // TODO(skerner):  If we are already in full screen mode, and the user
-    // set the app to open as a regular or pinned tab, what should happen?
-    // Today we open the tab, but stay in full screen mode.  Should we leave
-    // full screen mode in this case?
-    if (launch_type == extensions::LAUNCH_TYPE_FULLSCREEN &&
-        !browser->window()->IsFullscreen()) {
-#if defined(OS_MACOSX)
-      chrome::ToggleFullscreenWithToolbarOrFallback(browser);
+#if defined(USE_ASH)
+  // In ash, LAUNCH_FULLSCREEN launches in the OpenApplicationWindow function
+  // i.e. it should not reach here.
+  DCHECK(launch_type != extensions::LAUNCH_TYPE_FULLSCREEN);
 #else
-      chrome::ToggleFullscreenMode(browser);
-#endif
-    }
+  // TODO(skerner):  If we are already in full screen mode, and the user set the
+  // app to open as a regular or pinned tab, what should happen? Today we open
+  // the tab, but stay in full screen mode.  Should we leave full screen mode in
+  // this case?
+  if (launch_type == extensions::LAUNCH_TYPE_FULLSCREEN &&
+      !browser->window()->IsFullscreen()) {
+    chrome::ToggleFullscreenMode(browser);
   }
+#endif  // USE_ASH
   return contents;
 }
 
@@ -314,23 +299,15 @@ WebContents* OpenEnabledApplication(const AppLaunchParams& params) {
   const Extension* extension = GetExtension(params);
   if (!extension)
     return NULL;
-  Profile* profile = params.profile;
 
   WebContents* tab = NULL;
-  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile);
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(params.profile);
   prefs->SetActiveBit(extension->id(), true);
 
   if (CanLaunchViaEvent(extension)) {
-    // Remember what desktop the launch happened on so that when the app opens a
-    // window we can open them on the right desktop.
-    PerAppSettingsServiceFactory::GetForBrowserContext(profile)->
-        SetDesktopLastLaunchedFrom(extension->id(), params.desktop_type);
-
-    apps::LaunchPlatformAppWithCommandLine(profile,
-                                           extension,
-                                           params.command_line,
-                                           params.current_directory,
-                                           params.source);
+    apps::LaunchPlatformAppWithCommandLine(
+        params.profile, extension, params.command_line,
+        params.current_directory, params.source, params.play_store_status);
     return NULL;
   }
 
@@ -338,17 +315,22 @@ WebContents* OpenEnabledApplication(const AppLaunchParams& params) {
                             params.container,
                             extensions::NUM_LAUNCH_CONTAINERS);
 
+  GURL url = UrlForExtension(extension, params.override_url);
   if (extension->from_bookmark()) {
     UMA_HISTOGRAM_ENUMERATION("Extensions.BookmarkAppLaunchContainer",
                               params.container,
                               extensions::NUM_LAUNCH_CONTAINERS);
+
+    // Record the launch time in the site engagement service. A recent bookmark
+    // app launch will provide an engagement boost to the origin.
+    SiteEngagementService* service = SiteEngagementService::Get(params.profile);
+    service->SetLastShortcutLaunchTime(url);
   }
 
   // Record v1 app launch. Platform app launch is recorded when dispatching
   // the onLaunched event.
   prefs->SetLastLaunchTime(extension->id(), base::Time::Now());
 
-  GURL url = UrlForExtension(extension, params.override_url);
   switch (params.container) {
     case extensions::LAUNCH_CONTAINER_NONE: {
       NOTREACHED();
@@ -389,8 +371,7 @@ void OpenApplicationWithReenablePrompt(const AppLaunchParams& params) {
   base::Callback<gfx::NativeWindow(void)> dialog_parent_window_getter;
   // TODO(pkotwicz): Figure out which window should be used as the parent for
   // the "enable application" dialog in Athena.
-  dialog_parent_window_getter =
-      base::Bind(&ShowAppListAndGetNativeWindow, params.desktop_type);
+  dialog_parent_window_getter = base::Bind(&ShowAppListAndGetNativeWindow);
     (new EnableViaDialogFlow(
         service, profile, extension->id(), dialog_parent_window_getter,
         base::Bind(base::IgnoreResult(OpenEnabledApplication), params)))->Run();
@@ -404,7 +385,8 @@ WebContents* OpenAppShortcutWindow(Profile* profile,
                                    const GURL& url) {
   AppLaunchParams launch_params(profile,
                                 NULL,  // this is a URL app.  No extension.
-                                extensions::LAUNCH_CONTAINER_WINDOW, NEW_WINDOW,
+                                extensions::LAUNCH_CONTAINER_WINDOW,
+                                WindowOpenDisposition::NEW_WINDOW,
                                 extensions::SOURCE_COMMAND_LINE);
   launch_params.override_url = url;
 
@@ -421,5 +403,5 @@ WebContents* OpenAppShortcutWindow(Profile* profile,
 bool CanLaunchViaEvent(const extensions::Extension* extension) {
   const extensions::Feature* feature =
       extensions::FeatureProvider::GetAPIFeature("app.runtime");
-  return feature->IsAvailableToExtension(extension).is_available();
+  return feature && feature->IsAvailableToExtension(extension).is_available();
 }

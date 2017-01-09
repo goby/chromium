@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/display/display_manager.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
+#include "ui/display/manager/display_manager.h"
 
 namespace ash {
 
@@ -14,8 +14,6 @@ class ScreenAshTest : public test::AshTestBase {
  public:
   ScreenAshTest() {}
   ~ScreenAshTest() override {}
-
-  static gfx::Screen* Screen() { return Shell::GetScreen(); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ScreenAshTest);
@@ -30,16 +28,18 @@ TEST_F(ScreenAshTest, TestGetWindowAtScreenPoint) {
   UpdateDisplay("200x200,400x400");
 
   aura::test::TestWindowDelegate delegate;
-  scoped_ptr<aura::Window> win1(CreateTestWindowInShellWithDelegate(
+  std::unique_ptr<aura::Window> win1(CreateTestWindowInShellWithDelegate(
       &delegate, 0, gfx::Rect(0, 0, 200, 200)));
 
-  scoped_ptr<aura::Window> win2(CreateTestWindowInShellWithDelegate(
+  std::unique_ptr<aura::Window> win2(CreateTestWindowInShellWithDelegate(
       &delegate, 1, gfx::Rect(200, 200, 100, 100)));
 
   ASSERT_NE(win1->GetRootWindow(), win2->GetRootWindow());
 
-  EXPECT_EQ(win1.get(), Screen()->GetWindowAtScreenPoint(gfx::Point(50, 60)));
-  EXPECT_EQ(win2.get(), Screen()->GetWindowAtScreenPoint(gfx::Point(250, 260)));
+  EXPECT_EQ(win1.get(), display::Screen::GetScreen()->GetWindowAtScreenPoint(
+                            gfx::Point(50, 60)));
+  EXPECT_EQ(win2.get(), display::Screen::GetScreen()->GetWindowAtScreenPoint(
+                            gfx::Point(250, 260)));
 }
 
 }  // namespace ash

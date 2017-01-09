@@ -5,10 +5,10 @@
 #ifndef EXTENSIONS_BROWSER_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_API_H_
 #define EXTENSIONS_BROWSER_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_API_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "extensions/browser/extension_function.h"
 
@@ -40,7 +40,7 @@ class NetworkingPrivateGetPropertiesFunction : public AsyncExtensionFunction {
   bool RunAsync() override;
 
  private:
-  void Success(scoped_ptr<base::DictionaryValue> result);
+  void Success(std::unique_ptr<base::DictionaryValue> result);
   void Failure(const std::string& error_name);
 
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateGetPropertiesFunction);
@@ -61,7 +61,7 @@ class NetworkingPrivateGetManagedPropertiesFunction
   bool RunAsync() override;
 
  private:
-  void Success(scoped_ptr<base::DictionaryValue> result);
+  void Success(std::unique_ptr<base::DictionaryValue> result);
   void Failure(const std::string& error);
 
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateGetManagedPropertiesFunction);
@@ -81,7 +81,7 @@ class NetworkingPrivateGetStateFunction : public AsyncExtensionFunction {
   bool RunAsync() override;
 
  private:
-  void Success(scoped_ptr<base::DictionaryValue> result);
+  void Success(std::unique_ptr<base::DictionaryValue> result);
   void Failure(const std::string& error);
 
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateGetStateFunction);
@@ -161,7 +161,7 @@ class NetworkingPrivateGetNetworksFunction : public AsyncExtensionFunction {
   bool RunAsync() override;
 
  private:
-  void Success(scoped_ptr<base::ListValue> network_list);
+  void Success(std::unique_ptr<base::ListValue> network_list);
   void Failure(const std::string& error);
 
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateGetNetworksFunction);
@@ -182,7 +182,7 @@ class NetworkingPrivateGetVisibleNetworksFunction
   bool RunAsync() override;
 
  private:
-  void Success(scoped_ptr<base::ListValue> network_list);
+  void Success(std::unique_ptr<base::ListValue> network_list);
   void Failure(const std::string& error);
 
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateGetVisibleNetworksFunction);
@@ -190,7 +190,7 @@ class NetworkingPrivateGetVisibleNetworksFunction
 
 // Implements the chrome.networkingPrivate.getEnabledNetworkTypes method.
 class NetworkingPrivateGetEnabledNetworkTypesFunction
-    : public SyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   NetworkingPrivateGetEnabledNetworkTypesFunction() {}
   DECLARE_EXTENSION_FUNCTION("networkingPrivate.getEnabledNetworkTypes",
@@ -199,15 +199,16 @@ class NetworkingPrivateGetEnabledNetworkTypesFunction
  protected:
   ~NetworkingPrivateGetEnabledNetworkTypesFunction() override;
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateGetEnabledNetworkTypesFunction);
 };
 
 // Implements the chrome.networkingPrivate.getDeviceStates method.
-class NetworkingPrivateGetDeviceStatesFunction : public SyncExtensionFunction {
+class NetworkingPrivateGetDeviceStatesFunction
+    : public UIThreadExtensionFunction {
  public:
   NetworkingPrivateGetDeviceStatesFunction() {}
   DECLARE_EXTENSION_FUNCTION("networkingPrivate.getDeviceStates",
@@ -216,8 +217,8 @@ class NetworkingPrivateGetDeviceStatesFunction : public SyncExtensionFunction {
  protected:
   ~NetworkingPrivateGetDeviceStatesFunction() override;
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateGetDeviceStatesFunction);
@@ -225,7 +226,7 @@ class NetworkingPrivateGetDeviceStatesFunction : public SyncExtensionFunction {
 
 // Implements the chrome.networkingPrivate.enableNetworkType method.
 class NetworkingPrivateEnableNetworkTypeFunction
-    : public SyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   NetworkingPrivateEnableNetworkTypeFunction() {}
   DECLARE_EXTENSION_FUNCTION("networkingPrivate.enableNetworkType",
@@ -234,8 +235,8 @@ class NetworkingPrivateEnableNetworkTypeFunction
  protected:
   ~NetworkingPrivateEnableNetworkTypeFunction() override;
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateEnableNetworkTypeFunction);
@@ -243,7 +244,7 @@ class NetworkingPrivateEnableNetworkTypeFunction
 
 // Implements the chrome.networkingPrivate.disableNetworkType method.
 class NetworkingPrivateDisableNetworkTypeFunction
-    : public SyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   NetworkingPrivateDisableNetworkTypeFunction() {}
   DECLARE_EXTENSION_FUNCTION("networkingPrivate.disableNetworkType",
@@ -252,8 +253,8 @@ class NetworkingPrivateDisableNetworkTypeFunction
  protected:
   ~NetworkingPrivateDisableNetworkTypeFunction() override;
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateDisableNetworkTypeFunction);
@@ -261,7 +262,7 @@ class NetworkingPrivateDisableNetworkTypeFunction
 
 // Implements the chrome.networkingPrivate.requestNetworkScan method.
 class NetworkingPrivateRequestNetworkScanFunction
-    : public SyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   NetworkingPrivateRequestNetworkScanFunction() {}
   DECLARE_EXTENSION_FUNCTION("networkingPrivate.requestNetworkScan",
@@ -270,8 +271,8 @@ class NetworkingPrivateRequestNetworkScanFunction
  protected:
   ~NetworkingPrivateRequestNetworkScanFunction() override;
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateRequestNetworkScanFunction);

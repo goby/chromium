@@ -13,7 +13,6 @@
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
-#include "grit/theme_resources.h"
 #include "skia/ext/image_operations.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
@@ -34,11 +33,10 @@ namespace {
 // around the original bitmap.
 static SkBitmap ApplyPadding(const SkBitmap& source,
                              const gfx::Insets& padding) {
-  scoped_ptr<gfx::Canvas> result(
+  std::unique_ptr<gfx::Canvas> result(
       new gfx::Canvas(gfx::Size(source.width() + padding.width(),
                                 source.height() + padding.height()),
-                      1.0f,
-                      false));
+                      1.0f, false));
   result->DrawImageInt(
       gfx::ImageSkia::CreateFrom1xBitmap(source),
       0, 0, source.width(), source.height(),
@@ -80,7 +78,7 @@ void ExtensionIconManager::LoadIcon(content::BrowserContext* context,
 
 const SkBitmap& ExtensionIconManager::GetIcon(const std::string& extension_id) {
   const SkBitmap* result = NULL;
-  if (ContainsKey(icons_, extension_id)) {
+  if (base::ContainsKey(icons_, extension_id)) {
     result = &icons_[extension_id];
   } else {
     EnsureDefaultIcon();
@@ -104,7 +102,7 @@ void ExtensionIconManager::OnImageLoaded(const std::string& extension_id,
 
   // We may have removed the icon while waiting for it to load. In that case,
   // do nothing.
-  if (!ContainsKey(pending_icons_, extension_id))
+  if (!base::ContainsKey(pending_icons_, extension_id))
     return;
 
   pending_icons_.erase(extension_id);

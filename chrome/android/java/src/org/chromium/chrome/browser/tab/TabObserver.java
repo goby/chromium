@@ -50,20 +50,6 @@ public interface TabObserver {
     void onContentChanged(Tab tab);
 
     /**
-     * Called when a {@link ContentViewCore} overlay is attached to {@code tab}.
-     * @param tab     The notifying {@link Tab}.
-     * @param content The {@link ContentViewCore} being added.
-     */
-    void onOverlayContentViewCoreAdded(Tab tab, ContentViewCore content);
-
-    /**
-     * Called when a {@link ContentViewCore} overlay is detached from {@code tab}.
-     * @param tab     The notifying {@link Tab}.
-     * @param content The {@link ContentViewCore} being removed.
-     */
-    void onOverlayContentViewCoreRemoved(Tab tab, ContentViewCore content);
-
-    /**
      * Called when loadUrl is triggered on a a {@link Tab}.
      * @param tab      The notifying {@link Tab}.
      * @param params   The params describe the page being loaded.
@@ -162,11 +148,6 @@ public interface TabObserver {
      */
     void onContextualActionBarVisibilityChanged(Tab tab, boolean visible);
 
-    /**
-     * Called when the WebContents Instant support is disabled.
-     */
-    void onWebContentsInstantSupportDisabled();
-
     // WebContentsDelegateAndroid methods ---------------------------------------------------------
 
     /**
@@ -225,17 +206,11 @@ public interface TabObserver {
     /**
      * Called when load is started for a given frame.
      * @param tab            The notifying {@link Tab}.
-     * @param frameId        A positive, non-zero integer identifying the navigating frame.
-     * @param parentFrameId  The frame identifier of the frame containing the navigating frame,
-     *                       or -1 if the frame is not contained in another frame.
      * @param isMainFrame    Whether the load is happening for the main frame.
      * @param validatedUrl   The validated URL that is being navigated to.
-     * @param isErrorPage    Whether this is navigating to an error page.
-     * @param isIframeSrcdoc Whether this is navigating to about:srcdoc.
      */
     public void onDidStartProvisionalLoadForFrame(
-            Tab tab, long frameId, long parentFrameId, boolean isMainFrame, String validatedUrl,
-            boolean isErrorPage, boolean isIframeSrcdoc);
+            Tab tab, boolean isMainFrame, String validatedUrl);
 
     /**
      * Notifies that the provisional load was successfully committed. The RenderViewHost is now
@@ -307,13 +282,21 @@ public interface TabObserver {
 
     /**
      * Called when a {@link WebContents} object has been created.
-     * @param tab                 The notifying {@link Tab}.
-     * @param sourceWebContents   The {@link WebContents} that triggered the creation.
-     * @param openerRenderFrameId The opener render frame id.
-     * @param frameName           The name of the frame.
-     * @param targetUrl           The target url.
-     * @param newWebContents      The newly created {@link WebContents}.
+     * @param tab                    The notifying {@link Tab}.
+     * @param sourceWebContents      The {@link WebContents} that triggered the creation.
+     * @param openerRenderProcessId  The opener render process id.
+     * @param openerRenderFrameId    The opener render frame id.
+     * @param frameName              The name of the frame.
+     * @param targetUrl              The target url.
+     * @param newWebContents         The newly created {@link WebContents}.
      */
-    public void webContentsCreated(Tab tab, WebContents sourceWebContents, long openerRenderFrameId,
-            String frameName, String targetUrl, WebContents newWebContents);
+    public void webContentsCreated(Tab tab, WebContents sourceWebContents,
+            long openerRenderProcessId, long openerRenderFrameId, String frameName,
+            String targetUrl, WebContents newWebContents);
+
+    /**
+     * Called when the tab reparenting process has finished.
+     * @param tab The notifying {@link Tab}.
+     */
+    public void onReparentingFinished(Tab tab);
 }

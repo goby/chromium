@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "key_system_config_selector.h"
+#include "media/blink/key_system_config_selector.h"
+
+#include <stddef.h>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
@@ -13,11 +16,13 @@
 #include "media/base/media_permission.h"
 #include "media/base/mime_util.h"
 #include "media/blink/webmediaplayer_util.h"
+#include "third_party/WebKit/public/platform/URLConversion.h"
 #include "third_party/WebKit/public/platform/WebMediaKeySystemConfiguration.h"
 #include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace media {
 
@@ -123,6 +128,23 @@ static EmeConfigRule GetPersistentStateConfigRule(
     return EmeConfigRule::PERSISTENCE_NOT_ALLOWED;
   }
   return EmeConfigRule::PERSISTENCE_REQUIRED;
+}
+
+static bool IsPersistentSessionType(
+    blink::WebEncryptedMediaSessionType sessionType) {
+  switch (sessionType) {
+    case blink::WebEncryptedMediaSessionType::Temporary:
+      return false;
+    case blink::WebEncryptedMediaSessionType::PersistentLicense:
+      return true;
+    case blink::WebEncryptedMediaSessionType::PersistentReleaseMessage:
+      return true;
+    case blink::WebEncryptedMediaSessionType::Unknown:
+      break;
+  }
+
+  NOTREACHED();
+  return false;
 }
 
 }  // namespace
@@ -273,25 +295,63 @@ KeySystemConfigSelector::KeySystemConfigSelector(
 KeySystemConfigSelector::~KeySystemConfigSelector() {
 }
 
+bool IsSupportedMediaFormat(const std::string& container_mime_type,
+                            const std::string& codecs,
+                            bool use_aes_decryptor) {
+  std::vector<std::string> codec_vector;
+  ParseCodecString(codecs, &codec_vector, false);
+  // AesDecryptor decrypts the stream in the demuxer before it reaches the
+  // decoder so check whether the media format is supported when clear.
+  SupportsType support_result =
+      use_aes_decryptor
+          ? IsSupportedMediaFormat(container_mime_type, codec_vector)
+          : IsSupportedEncryptedMediaFormat(container_mime_type, codec_vector);
+  switch (support_result) {
+    case IsSupported:
+      return true;
+    case MayBeSupported:
+      // If no codecs were specified, the best possible result is
+      // MayBeSupported, indicating support for the container.
+      return codec_vector.empty();
+    case IsNotSupported:
+      return false;
+  }
+  NOTREACHED();
+  return false;
+}
+
+// TODO(sandersd): Move contentType parsing from Blink to here so that invalid
+// parameters can be rejected. http://crbug.com/417561
 bool KeySystemConfigSelector::IsSupportedContentType(
     const std::string& key_system,
     EmeMediaType media_type,
     const std::string& container_mime_type,
     const std::string& codecs,
     KeySystemConfigSelector::ConfigState* config_state) {
-  // TODO(sandersd): Move contentType parsing from Blink to here so that invalid
-  // parameters can be rejected. http://crbug.com/417561
+  // From RFC6838: "Both top-level type and subtype names are case-insensitive."
   std::string container_lower = base::ToLowerASCII(container_mime_type);
+
+  // contentTypes must provide a codec string unless the container implies a
+  // particular codec. For EME, none of the currently supported containers
+  // imply a codec, so |codecs| must be provided.
+  if (codecs.empty()) {
+    // Since the spec didn't initially require this, add an exemption for
+    // some existing containers to give clients time to adapt.
+    // TODO(jrummell): Remove this exemption once the number of contentTypes
+    // without codecs drops low enough (UMA added in the blink code).
+    // http://crbug.com/605661.
+    if (container_lower != "audio/webm" && container_lower != "video/webm" &&
+        container_lower != "audio/mp4" && container_lower != "video/mp4") {
+      return false;
+    }
+  }
 
   // Check that |container_mime_type| and |codecs| are supported by Chrome. This
   // is done primarily to validate extended codecs, but it also ensures that the
   // CDM cannot support codecs that Chrome does not (which could complicate the
   // robustness algorithm).
-  std::vector<std::string> codec_vector;
-  media::ParseCodecString(codecs, &codec_vector, false);
-  if (!codec_vector.empty() &&
-      (media::IsSupportedMediaFormat(container_lower, codec_vector) !=
-       media::IsSupported)) {
+  if (!IsSupportedMediaFormat(container_lower, codecs,
+                              CanUseAesDecryptor(key_system))) {
     return false;
   }
 
@@ -299,7 +359,7 @@ bool KeySystemConfigSelector::IsSupportedContentType(
   // This check does not handle extended codecs, so extended codec information
   // is stripped (extended codec information was checked above).
   std::vector<std::string> stripped_codec_vector;
-  media::ParseCodecString(codecs, &stripped_codec_vector, true);
+  ParseCodecString(codecs, &stripped_codec_vector, true);
   EmeConfigRule codecs_rule = key_systems_->GetContentTypeConfigRule(
       key_system, media_type, container_lower, stripped_codec_vector);
   if (!config_state->IsRuleSupported(codecs_rule))
@@ -342,12 +402,9 @@ bool KeySystemConfigSelector::GetSupportedCapabilities(
     ConfigState proposed_config_state = *config_state;
     if (!base::IsStringASCII(capability.mimeType) ||
         !base::IsStringASCII(capability.codecs) ||
-        !IsSupportedContentType(key_system, media_type,
-                                base::UTF16ToASCII(
-                                    base::StringPiece16(capability.mimeType)),
-                                base::UTF16ToASCII(
-                                    base::StringPiece16(capability.codecs)),
-                                &proposed_config_state)) {
+        !IsSupportedContentType(
+            key_system, media_type, capability.mimeType.ascii(),
+            capability.codecs.ascii(), &proposed_config_state)) {
       continue;
     }
     // 3.12. If robustness is not the empty string, run the following steps:
@@ -358,8 +415,7 @@ bool KeySystemConfigSelector::GetSupportedCapabilities(
       if (!base::IsStringASCII(capability.robustness))
         continue;
       EmeConfigRule robustness_rule = key_systems_->GetRobustnessConfigRule(
-          key_system, media_type, base::UTF16ToASCII(
-              base::StringPiece16(capability.robustness)));
+          key_system, media_type, capability.robustness.ascii());
       if (!proposed_config_state.IsRuleSupported(robustness_rule))
         continue;
       proposed_config_state.AddRule(robustness_rule);
@@ -392,20 +448,27 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     const blink::WebMediaKeySystemConfiguration& candidate,
     ConfigState* config_state,
     blink::WebMediaKeySystemConfiguration* accumulated_configuration) {
-  // From https://w3c.github.io/encrypted-media/#get-supported-configuration
-  // 1. Let accumulated configuration be empty. (Done by caller.)
-  // 2. If the initDataTypes member is present in candidate configuration, run
-  //    the following steps:
-  if (candidate.hasInitDataTypes) {
-    // 2.1. Let supported types be empty.
+  // From
+  // http://w3c.github.io/encrypted-media/#get-supported-configuration-and-consent
+  // 1. Let accumulated configuration be a new MediaKeySystemConfiguration
+  //    dictionary. (Done by caller.)
+  // 2. Set the label member of accumulated configuration to equal the label
+  //    member of candidate configuration.
+  accumulated_configuration->label = candidate.label;
+
+  // 3. If the initDataTypes member of candidate configuration is non-empty,
+  //    run the following steps:
+  if (!candidate.initDataTypes.isEmpty()) {
+    // 3.1. Let supported types be an empty sequence of DOMStrings.
     std::vector<blink::WebEncryptedMediaInitDataType> supported_types;
 
-    // 2.2. For each value in candidate configuration's initDataTypes member:
+    // 3.2. For each value in candidate configuration's initDataTypes member:
     for (size_t i = 0; i < candidate.initDataTypes.size(); i++) {
-      // 2.2.1. Let initDataType be the value.
+      // 3.2.1. Let initDataType be the value.
       blink::WebEncryptedMediaInitDataType init_data_type =
           candidate.initDataTypes[i];
-      // 2.2.2. If the implementation supports generating requests based on
+
+      // 3.2.2. If the implementation supports generating requests based on
       //        initDataType, add initDataType to supported types. String
       //        comparison is case-sensitive. The empty string is never
       //        supported.
@@ -415,31 +478,49 @@ KeySystemConfigSelector::GetSupportedConfiguration(
       }
     }
 
-    // 2.3. If supported types is empty, return null.
+    // 3.3. If supported types is empty, return null.
     if (supported_types.empty()) {
       DVLOG(2) << "Rejecting requested configuration because "
                << "no initDataType values were supported.";
       return CONFIGURATION_NOT_SUPPORTED;
     }
 
-    // 2.4. Add supported types to accumulated configuration.
+    // 3.4. Set the initDataTypes member of accumulated configuration to
+    //      supported types.
     accumulated_configuration->initDataTypes = supported_types;
   }
 
-  // 3. Follow the steps for the value of candidate configuration's
-  //    distinctiveIdentifier member from the following list:
-  //      - "required": If the implementation does not support a persistent
-  //        Distinctive Identifier in combination with accumulated
-  //        configuration, return null.
-  //      - "optional": Continue.
-  //      - "not-allowed": If the implementation requires a Distinctive
-  //        Identifier in combination with accumulated configuration, return
-  //        null.
+  // 4. Let distinctive identifier requirement be the value of candidate
+  //    configuration's distinctiveIdentifier member.
+  EmeFeatureRequirement distinctive_identifier =
+      candidate.distinctiveIdentifier;
+
+  // 5. If distinctive identifier requirement is "optional" and Distinctive
+  //    Identifiers are not allowed according to restrictions, set distinctive
+  //    identifier requirement to "not-allowed".
+  EmeFeatureSupport distinctive_identifier_support =
+      key_systems_->GetDistinctiveIdentifierSupport(key_system);
+  if (distinctive_identifier == EmeFeatureRequirement::Optional) {
+    if (distinctive_identifier_support == EmeFeatureSupport::INVALID ||
+        distinctive_identifier_support == EmeFeatureSupport::NOT_SUPPORTED) {
+      distinctive_identifier = EmeFeatureRequirement::NotAllowed;
+    }
+  }
+
+  // 6. Follow the steps for distinctive identifier requirement from the
+  //    following list:
+  //      - "required": If the implementation does not support use of
+  //         Distinctive Identifier(s) in combination with accumulated
+  //         configuration and restrictions, return NotSupported.
+  //      - "optional": Continue with the following steps.
+  //      - "not-allowed": If the implementation requires use Distinctive
+  //        Identifier(s) or Distinctive Permanent Identifier(s) in
+  //        combination with accumulated configuration and restrictions,
+  //        return NotSupported.
   // We also reject OPTIONAL when distinctive identifiers are ALWAYS_ENABLED and
-  // permission has already been denied. This would happen anyway at step 11.
+  // permission has already been denied. This would happen anyway later.
   EmeConfigRule di_rule = GetDistinctiveIdentifierConfigRule(
-      key_systems_->GetDistinctiveIdentifierSupport(key_system),
-      candidate.distinctiveIdentifier);
+      distinctive_identifier_support, distinctive_identifier);
   if (!config_state->IsRuleSupported(di_rule)) {
     DVLOG(2) << "Rejecting requested configuration because "
              << "the distinctiveIdentifier requirement was not supported.";
@@ -447,21 +528,37 @@ KeySystemConfigSelector::GetSupportedConfiguration(
   }
   config_state->AddRule(di_rule);
 
-  // 4. Add the value of the candidate configuration's distinctiveIdentifier
-  //    member to accumulated configuration.
-  accumulated_configuration->distinctiveIdentifier =
-      candidate.distinctiveIdentifier;
+  // 7. Set the distinctiveIdentifier member of accumulated configuration to
+  //    equal distinctive identifier requirement.
+  accumulated_configuration->distinctiveIdentifier = distinctive_identifier;
 
-  // 5. Follow the steps for the value of candidate configuration's
-  //    persistentState member from the following list:
-  //      - "required": If the implementation does not support persisting state
-  //        in combination with accumulated configuration, return null.
-  //      - "optional": Continue.
-  //      - "not-allowed": If the implementation requires persisting state in
-  //        combination with accumulated configuration, return null.
-  EmeConfigRule ps_rule = GetPersistentStateConfigRule(
-      key_systems_->GetPersistentStateSupport(key_system),
-      candidate.persistentState);
+  // 8. Let persistent state requirement be equal to the value of candidate
+  //    configuration's persistentState member.
+  EmeFeatureRequirement persistent_state = candidate.persistentState;
+
+  // 9. If persistent state requirement is "optional" and persisting state is
+  //    not allowed according to restrictions, set persistent state requirement
+  //    to "not-allowed".
+  EmeFeatureSupport persistent_state_support =
+      key_systems_->GetPersistentStateSupport(key_system);
+  if (persistent_state == EmeFeatureRequirement::Optional) {
+    if (persistent_state_support == EmeFeatureSupport::INVALID ||
+        persistent_state_support == EmeFeatureSupport::NOT_SUPPORTED) {
+      persistent_state = EmeFeatureRequirement::NotAllowed;
+    }
+  }
+
+  // 10. Follow the steps for persistent state requirement from the following
+  //     list:
+  //       - "required": If the implementation does not support persisting
+  //         state in combination with accumulated configuration and
+  //         restrictions, return NotSupported.
+  //       - "optional": Continue with the following steps.
+  //       - "not-allowed": If the implementation requires persisting state in
+  //         combination with accumulated configuration and restrictions,
+  //         return NotSupported.
+  EmeConfigRule ps_rule =
+      GetPersistentStateConfigRule(persistent_state_support, persistent_state);
   if (!config_state->IsRuleSupported(ps_rule)) {
     DVLOG(2) << "Rejecting requested configuration because "
              << "the persistentState requirement was not supported.";
@@ -469,42 +566,47 @@ KeySystemConfigSelector::GetSupportedConfiguration(
   }
   config_state->AddRule(ps_rule);
 
-  // 6. Add the value of the candidate configuration's persistentState
-  //    member to accumulated configuration.
-  accumulated_configuration->persistentState = candidate.persistentState;
+  // 11. Set the persistentState member of accumulated configuration to equal
+  //     the value of persistent state requirement.
+  accumulated_configuration->persistentState = persistent_state;
 
-  // 7. Follow the steps for the first matching condition from the following
-  //    list:
-  //      - If the sessionTypes member is present in candidate configuration,
-  //        let session types be candidate configuration's sessionTypes member.
-  //      - Otherwise, let session types be [ "temporary" ].
-  blink::WebVector<blink::WebEncryptedMediaSessionType> session_types;
-  if (candidate.hasSessionTypes) {
-    session_types = candidate.sessionTypes;
-  } else {
-    std::vector<blink::WebEncryptedMediaSessionType> temporary(1);
-    temporary[0] = blink::WebEncryptedMediaSessionType::Temporary;
-    session_types = temporary;
-  }
+  // 12. Follow the steps for the first matching condition from the following
+  //     list:
+  //       - If the sessionTypes member is present in candidate configuration,
+  //         let session types be candidate configuration's sessionTypes member.
+  //       - Otherwise, let session types be [ "temporary" ].
+  //         (Done in MediaKeySystemAccessInitializer.)
+  blink::WebVector<blink::WebEncryptedMediaSessionType> session_types =
+      candidate.sessionTypes;
 
-  // 8. For each value in session types:
+  // 13. For each value in session types:
   for (size_t i = 0; i < session_types.size(); i++) {
-    // 8.1. Let session type be the value.
+    // 13.1. Let session type be the value.
     blink::WebEncryptedMediaSessionType session_type = session_types[i];
-    // 8.2. If the implementation does not support session type in combination
-    //      with accumulated configuration, return null.
-    // 8.3. If session type is "persistent-license" or
-    //      "persistent-release-message", follow the steps for accumulated
-    //      configuration's persistentState value from the following list:
-    //        - "required": Continue.
-    //        - "optional": Change accumulated configuration's persistentState
-    //          value to "required".
-    //        - "not-allowed": Return null.
+    if (session_type == blink::WebEncryptedMediaSessionType::Unknown) {
+      DVLOG(2) << "Rejecting requested configuration because "
+               << "session type was not recognized.";
+      return CONFIGURATION_NOT_SUPPORTED;
+    }
+
+    // 13.2. If accumulated configuration's persistentState value is
+    //       "not-allowed" and the Is persistent session type? algorithm
+    //       returns true for session type return NotSupported.
+    if (accumulated_configuration->persistentState ==
+            EmeFeatureRequirement::NotAllowed &&
+        IsPersistentSessionType(session_type)) {
+      DVLOG(2) << "Rejecting requested configuration because persistent "
+                  "sessions are not allowed.";
+      return CONFIGURATION_NOT_SUPPORTED;
+    }
+
+    // 13.3. If the implementation does not support session type in combination
+    //       with accumulated configuration and restrictions for other reasons,
+    //       return NotSupported.
     EmeConfigRule session_type_rule = EmeConfigRule::NOT_SUPPORTED;
     switch (session_type) {
       case blink::WebEncryptedMediaSessionType::Unknown:
-        DVLOG(2) << "Rejecting requested configuration because "
-                 << "a required session type was not recognized.";
+        NOTREACHED();
         return CONFIGURATION_NOT_SUPPORTED;
       case blink::WebEncryptedMediaSessionType::Temporary:
         session_type_rule = EmeConfigRule::SUPPORTED;
@@ -519,63 +621,94 @@ KeySystemConfigSelector::GetSupportedConfiguration(
                 key_system));
         break;
     }
+
     if (!config_state->IsRuleSupported(session_type_rule)) {
       DVLOG(2) << "Rejecting requested configuration because "
                << "a required session type was not supported.";
       return CONFIGURATION_NOT_SUPPORTED;
     }
     config_state->AddRule(session_type_rule);
+
+    // 13.4. If accumulated configuration's persistentState value is "optional"
+    //       and the result of running the Is persistent session type?
+    //       algorithm on session type is true, change accumulated
+    //       configuration's persistentState value to "required".
+    if (accumulated_configuration->persistentState ==
+            EmeFeatureRequirement::Optional &&
+        IsPersistentSessionType(session_type)) {
+      accumulated_configuration->persistentState =
+          EmeFeatureRequirement::Required;
+    }
   }
 
-  // 9. Add session types to accumulated configuration.
+  // 14. Set the sessionTypes member of accumulated configuration to
+  //     session types.
   accumulated_configuration->sessionTypes = session_types;
 
-  // 10. If the videoCapabilities member is present in candidate configuration:
-  if (candidate.hasVideoCapabilities) {
-    // 10.1. Let video capabilities be the result of executing the Get Supported
-    //       Capabilities for Media Type algorithm on Video, candidate
-    //       configuration's videoCapabilities member, and accumulated
-    //       configuration.
-    // 10.2. If video capabilities is null, return null.
-    std::vector<blink::WebMediaKeySystemMediaCapability> video_capabilities;
+  // 15. If the videoCapabilities and audioCapabilities members in candidate
+  //     configuration are both empty, return NotSupported.
+  // TODO(jrummell): Enforce this once the deprecation warning is removed.
+  // See http://crbug.com/616233.
+
+  // 16. If the videoCapabilities member in candidate configuration is
+  //     non-empty:
+  std::vector<blink::WebMediaKeySystemMediaCapability> video_capabilities;
+  if (!candidate.videoCapabilities.isEmpty()) {
+    // 16.1. Let video capabilities be the result of executing the Get
+    //       Supported Capabilities for Audio/Video Type algorithm on Video,
+    //       candidate configuration's videoCapabilities member, accumulated
+    //       configuration, and restrictions.
+    // 16.2. If video capabilities is null, return NotSupported.
     if (!GetSupportedCapabilities(key_system, EmeMediaType::VIDEO,
                                   candidate.videoCapabilities, config_state,
                                   &video_capabilities)) {
       return CONFIGURATION_NOT_SUPPORTED;
     }
 
-    // 10.3. Add video capabilities to accumulated configuration.
+    // 16.3. Set the videoCapabilities member of accumulated configuration
+    //       to video capabilities.
+    accumulated_configuration->videoCapabilities = video_capabilities;
+  } else {
+    // Otherwise set the videoCapabilities member of accumulated configuration
+    // to an empty sequence.
     accumulated_configuration->videoCapabilities = video_capabilities;
   }
 
-  // 11. If the audioCapabilities member is present in candidate configuration:
-  if (candidate.hasAudioCapabilities) {
-    // 11.1. Let audio capabilities be the result of executing the Get Supported
-    //       Capabilities for Media Type algorithm on Audio, candidate
-    //       configuration's audioCapabilities member, and accumulated
-    //       configuration.
-    // 11.2. If audio capabilities is null, return null.
-    std::vector<blink::WebMediaKeySystemMediaCapability> audio_capabilities;
+  // 17. If the audioCapabilities member in candidate configuration is
+  //     non-empty:
+  std::vector<blink::WebMediaKeySystemMediaCapability> audio_capabilities;
+  if (!candidate.audioCapabilities.isEmpty()) {
+    // 17.1. Let audio capabilities be the result of executing the Get
+    //       Supported Capabilities for Audio/Video Type algorithm on Audio,
+    //       candidate configuration's audioCapabilities member, accumulated
+    //       configuration, and restrictions.
+    // 17.2. If audio capabilities is null, return NotSupported.
     if (!GetSupportedCapabilities(key_system, EmeMediaType::AUDIO,
                                   candidate.audioCapabilities, config_state,
                                   &audio_capabilities)) {
       return CONFIGURATION_NOT_SUPPORTED;
     }
 
-    // 11.3. Add audio capabilities to accumulated configuration.
+    // 17.3. Set the audioCapabilities member of accumulated configuration
+    //       to audio capabilities.
+    accumulated_configuration->audioCapabilities = audio_capabilities;
+  } else {
+    // Otherwise set the audioCapabilities member of accumulated configuration
+    // to an empty sequence.
     accumulated_configuration->audioCapabilities = audio_capabilities;
   }
 
-  // 12. If accumulated configuration's distinctiveIdentifier value is
-  //     "optional", follow the steps for the first matching condition from the
-  //     following list:
-  //       - If the implementation requires a Distinctive Identifier for any of
-  //         the combinations in accumulated configuration, change accumulated
-  //         configuration's distinctiveIdentifier value to "required".
-  //       - Otherwise, change accumulated configuration's distinctiveIdentifier
-  //         value to "not-allowed".
+  // 18. If accumulated configuration's distinctiveIdentifier value is
+  //     "optional", follow the steps for the first matching condition
+  //      from the following list:
+  //       - If the implementation requires use Distinctive Identifier(s) or
+  //         Distinctive Permanent Identifier(s) for any of the combinations
+  //         in accumulated configuration, change accumulated configuration's
+  //         distinctiveIdentifier value to "required".
+  //       - Otherwise, change accumulated configuration's
+  //         distinctiveIdentifier value to "not-allowed".
   if (accumulated_configuration->distinctiveIdentifier ==
-      blink::WebMediaKeySystemConfiguration::Requirement::Optional) {
+      EmeFeatureRequirement::Optional) {
     EmeConfigRule not_allowed_rule = GetDistinctiveIdentifierConfigRule(
         key_systems_->GetDistinctiveIdentifierSupport(key_system),
         EmeFeatureRequirement::NotAllowed);
@@ -593,29 +726,29 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     }
     if (not_allowed_supported) {
       accumulated_configuration->distinctiveIdentifier =
-          blink::WebMediaKeySystemConfiguration::Requirement::NotAllowed;
+          EmeFeatureRequirement::NotAllowed;
       config_state->AddRule(not_allowed_rule);
     } else if (required_supported) {
       accumulated_configuration->distinctiveIdentifier =
-          blink::WebMediaKeySystemConfiguration::Requirement::Required;
+          EmeFeatureRequirement::Required;
       config_state->AddRule(required_rule);
     } else {
-      // We should not have passed step 3.
+      // We should not have passed step 6.
       NOTREACHED();
       return CONFIGURATION_NOT_SUPPORTED;
     }
   }
 
-  // 13. If accumulated configuration's persistentState value is "optional",
+  // 19. If accumulated configuration's persistentState value is "optional",
   //     follow the steps for the first matching condition from the following
   //     list:
   //       - If the implementation requires persisting state for any of the
   //         combinations in accumulated configuration, change accumulated
   //         configuration's persistentState value to "required".
-  //       - Otherwise, change accumulated configuration's persistentState value
-  //         to "not-allowed".
+  //       - Otherwise, change accumulated configuration's persistentState
+  //         value to "not-allowed".
   if (accumulated_configuration->persistentState ==
-      blink::WebMediaKeySystemConfiguration::Requirement::Optional) {
+      EmeFeatureRequirement::Optional) {
     EmeConfigRule not_allowed_rule = GetPersistentStateConfigRule(
         key_systems_->GetPersistentStateSupport(key_system),
         EmeFeatureRequirement::NotAllowed);
@@ -632,11 +765,11 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     bool required_supported = config_state->IsRuleSupported(required_rule);
     if (not_allowed_supported) {
       accumulated_configuration->persistentState =
-          blink::WebMediaKeySystemConfiguration::Requirement::NotAllowed;
+          EmeFeatureRequirement::NotAllowed;
       config_state->AddRule(not_allowed_rule);
     } else if (required_supported) {
       accumulated_configuration->persistentState =
-          blink::WebMediaKeySystemConfiguration::Requirement::Required;
+          EmeFeatureRequirement::Required;
       config_state->AddRule(required_rule);
     } else {
       // We should not have passed step 5.
@@ -645,25 +778,44 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     }
   }
 
-  // 14. If implementation in the configuration specified by the combination of
+  // 20. If implementation in the configuration specified by the combination of
   //     the values in accumulated configuration is not supported or not allowed
-  //     in the origin, return null.
-  // 15. If accumulated configuration's distinctiveIdentifier value is
-  //     "required", [prompt the user for consent].
+  //     in the origin, return NotSupported.
+  // TODO(jrummell): can we check that the CDM can't be loaded by the origin?
+
+  // 21. If accumulated configuration's distinctiveIdentifier value is
+  //     "required" and the Distinctive Identifier(s) associated with
+  //     accumulated configuration are not unique per origin and profile
+  //     and clearable:
+  // 21.1. Update restrictions to reflect that all configurations described
+  //       by accumulated configuration do not have user consent.
+  // 21.2. Return ConsentDenied and restrictions.
+  // (Not required as data is unique per origin and clearable.)
+
+  // 22. Let consent status and updated restrictions be the result of running
+  //     the Get Consent Status algorithm on accumulated configuration,
+  //     restrictions and origin and follow the steps for the value of consent
+  //     status from the following list:
+  //       - "ConsentDenied": Return ConsentDenied and updated restrictions.
+  //       - "InformUser": Inform the user that accumulated configuration is
+  //         in use in the origin including, specifically, the information
+  //         that Distinctive Identifier(s) and/or Distinctive Permanent
+  //         Identifier(s) as appropriate will be used if the
+  //         distinctiveIdentifier member of accumulated configuration is
+  //         "required". Continue to the next step.
+  //       - "Allowed": Continue to the next step.
+  // Accumulated configuration's distinctiveIdentifier should be "required" or
+  // "notallowed"" due to step 18. If it is "required", prompt the user for
+  // consent unless it has already been granted.
   if (accumulated_configuration->distinctiveIdentifier ==
-      blink::WebMediaKeySystemConfiguration::Requirement::Required) {
+      EmeFeatureRequirement::Required) {
     // The caller is responsible for resolving what to do if permission is
     // required but has been denied (it should treat it as NOT_SUPPORTED).
     if (!config_state->IsPermissionGranted())
       return CONFIGURATION_REQUIRES_PERMISSION;
   }
 
-  // 16. If the label member is present in candidate configuration, add the
-  //     value of the candidate configuration's label member to accumulated
-  //     configuration.
-  accumulated_configuration->label = candidate.label;
-
-  // 17. Return accumulated configuration.
+  // 23. Return accumulated configuration.
   return CONFIGURATION_SUPPORTED;
 }
 
@@ -676,51 +828,50 @@ void KeySystemConfigSelector::SelectConfig(
     base::Callback<void(const blink::WebMediaKeySystemConfiguration&,
                         const CdmConfig&)> succeeded_cb,
     base::Callback<void(const blink::WebString&)> not_supported_cb) {
-  // Continued from requestMediaKeySystemAccess(), step 7, from
+  // Continued from requestMediaKeySystemAccess(), step 6, from
   // https://w3c.github.io/encrypted-media/#requestmediakeysystemaccess
   //
-  // 7.1. If keySystem is not one of the Key Systems supported by the user
-  //      agent, reject promise with with a new DOMException whose name is
-  //      NotSupportedError. String comparison is case-sensitive.
-  if (!base::IsStringASCII(key_system)) {
+  // 6.1 If keySystem is not one of the Key Systems supported by the user
+  //     agent, reject promise with a NotSupportedError. String comparison
+  //     is case-sensitive.
+  if (!key_system.containsOnlyASCII()) {
     not_supported_cb.Run("Only ASCII keySystems are supported");
     return;
   }
 
-  std::string key_system_ascii =
-      base::UTF16ToASCII(base::StringPiece16(key_system));
+  std::string key_system_ascii = key_system.ascii();
   if (!key_systems_->IsSupportedKeySystem(key_system_ascii)) {
     not_supported_cb.Run("Unsupported keySystem");
     return;
   }
 
-  // 7.2-7.4. Implemented by OnSelectConfig().
+  // 6.2-6.4. Implemented by OnSelectConfig().
   // TODO(sandersd): This should be async, ideally not on the main thread.
-  scoped_ptr<SelectionRequest> request(new SelectionRequest());
+  std::unique_ptr<SelectionRequest> request(new SelectionRequest());
   request->key_system = key_system_ascii;
   request->candidate_configurations = candidate_configurations;
   request->security_origin = security_origin;
   request->are_secure_codecs_supported = are_secure_codecs_supported;
   request->succeeded_cb = succeeded_cb;
   request->not_supported_cb = not_supported_cb;
-  SelectConfigInternal(request.Pass());
+  SelectConfigInternal(std::move(request));
 }
 
 void KeySystemConfigSelector::SelectConfigInternal(
-    scoped_ptr<SelectionRequest> request) {
-  // Continued from requestMediaKeySystemAccess(), step 7.1, from
+    std::unique_ptr<SelectionRequest> request) {
+  // Continued from requestMediaKeySystemAccess(), step 6, from
   // https://w3c.github.io/encrypted-media/#requestmediakeysystemaccess
   //
-  // 7.2. Let implementation be the implementation of keySystem.
+  // 6.2. Let implementation be the implementation of keySystem.
   //      (|key_systems_| fills this role.)
-  // 7.3. For each value in supportedConfigurations:
+  // 6.3. For each value in supportedConfigurations:
   for (size_t i = 0; i < request->candidate_configurations.size(); i++) {
-    // 7.3.1. Let candidate configuration be the value.
-    // 7.3.2. Let supported configuration be the result of executing the Get
+    // 6.3.1. Let candidate configuration be the value.
+    // 6.3.2. Let supported configuration be the result of executing the Get
     //        Supported Configuration algorithm on implementation, candidate
     //        configuration, and origin.
-    // 7.3.3. If supported configuration is not null, [initialize and return a
-    //        new MediaKeySystemAccess object.]
+    // 6.3.3. If supported configuration is not NotSupported, [initialize
+    //        and return a new MediaKeySystemAccess object.]
     ConfigState config_state(request->was_permission_requested,
                              request->is_permission_granted);
     DCHECK(config_state.IsRuleSupported(
@@ -744,7 +895,7 @@ void KeySystemConfigSelector::SelectConfigInternal(
         {
           // Note: the GURL must not be constructed inline because
           // base::Passed(&request) sets |request| to null.
-          GURL security_origin(request->security_origin.toString());
+          GURL security_origin(url::Origin(request->security_origin).GetURL());
           media_permission_->RequestPermission(
               MediaPermission::PROTECTED_MEDIA_IDENTIFIER, security_origin,
               base::Bind(&KeySystemConfigSelector::OnPermissionResult,
@@ -754,10 +905,10 @@ void KeySystemConfigSelector::SelectConfigInternal(
       case CONFIGURATION_SUPPORTED:
         cdm_config.allow_distinctive_identifier =
             (accumulated_configuration.distinctiveIdentifier ==
-             blink::WebMediaKeySystemConfiguration::Requirement::Required);
+             EmeFeatureRequirement::Required);
         cdm_config.allow_persistent_state =
             (accumulated_configuration.persistentState ==
-             blink::WebMediaKeySystemConfiguration::Requirement::Required);
+             EmeFeatureRequirement::Required);
         cdm_config.use_hw_secure_codecs =
             config_state.AreHwSecureCodecsRequired();
         request->succeeded_cb.Run(accumulated_configuration, cdm_config);
@@ -765,18 +916,17 @@ void KeySystemConfigSelector::SelectConfigInternal(
     }
   }
 
-  // 7.4. Reject promise with a new DOMException whose name is
-  //      NotSupportedError.
+  // 6.4. Reject promise with a NotSupportedError.
   request->not_supported_cb.Run(
       "None of the requested configurations were supported.");
 }
 
 void KeySystemConfigSelector::OnPermissionResult(
-    scoped_ptr<SelectionRequest> request,
+    std::unique_ptr<SelectionRequest> request,
     bool is_permission_granted) {
   request->was_permission_requested = true;
   request->is_permission_granted = is_permission_granted;
-  SelectConfigInternal(request.Pass());
+  SelectConfigInternal(std::move(request));
 }
 
 }  // namespace media

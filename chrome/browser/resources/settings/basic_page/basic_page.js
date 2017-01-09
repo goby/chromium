@@ -5,35 +5,45 @@
 /**
  * @fileoverview
  * 'settings-basic-page' is the settings page containing the basic settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-basic-page prefs="{{prefs}}"></settings-basic-page>
- *      ... other pages ...
- *    </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-basic-page
  */
 Polymer({
   is: 'settings-basic-page',
 
+  behaviors: [SettingsPageVisibility, MainPageBehavior],
+
   properties: {
-    /**
-     * Preferences state.
-     */
+    /** Preferences state. */
     prefs: {
       type: Object,
       notify: true,
     },
 
+    showAndroidApps: Boolean,
+
     /**
-     * The current active route.
+     * True if the basic page should currently display the reset profile banner.
+     * @private {boolean}
      */
-    currentRoute: {
-      type: Object,
-      notify: true,
+    showResetProfileBanner_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('showResetProfileBanner');
+      },
     },
+  },
+
+  /** @private */
+  onResetDone_: function() {
+    this.showResetProfileBanner_ = false;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowAndroidApps_: function() {
+    var visibility = /** @type {boolean|undefined} */ (
+        this.get('pageVisibility.androidApps'));
+    return this.showAndroidApps && this.showPage(visibility);
   },
 });

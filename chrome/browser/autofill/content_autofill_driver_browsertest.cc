@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -13,7 +14,7 @@
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
@@ -47,7 +48,7 @@ class MockAutofillClient : public TestAutofillClient {
   MOCK_METHOD0(HideAutofillPopup, void());
 
  private:
-  syncable_prefs::TestingPrefServiceSyncable prefs_;
+  sync_preferences::TestingPrefServiceSyncable prefs_;
 
   DISALLOW_COPY_AND_ASSIGN(MockAutofillClient);
 };
@@ -97,8 +98,8 @@ class ContentAutofillDriverBrowserTest : public InProcessBrowserTest,
       web_contents_hidden_callback_.Run();
   }
 
-  void NavigationEntryCommitted(
-      const content::LoadCommittedDetails& load_details) override {
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override {
     if (!nav_entry_committed_callback_.is_null())
       nav_entry_committed_callback_.Run();
   }
@@ -135,16 +136,12 @@ IN_PROC_BROWSER_TEST_F(ContentAutofillDriverBrowserTest,
   scoped_refptr<content::MessageLoopRunner> runner =
       new content::MessageLoopRunner;
   nav_entry_committed_callback_ = runner->QuitClosure();
-  browser()->OpenURL(content::OpenURLParams(GURL(chrome::kChromeUIBookmarksURL),
-                                            content::Referrer(),
-                                            CURRENT_TAB,
-                                            ui::PAGE_TRANSITION_TYPED,
-                                            false));
-  browser()->OpenURL(content::OpenURLParams(GURL(chrome::kChromeUIAboutURL),
-                                            content::Referrer(),
-                                            CURRENT_TAB,
-                                            ui::PAGE_TRANSITION_TYPED,
-                                            false));
+  browser()->OpenURL(content::OpenURLParams(
+      GURL(chrome::kChromeUIBookmarksURL), content::Referrer(),
+      WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false));
+  browser()->OpenURL(content::OpenURLParams(
+      GURL(chrome::kChromeUIAboutURL), content::Referrer(),
+      WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false));
   runner->Run();
   nav_entry_committed_callback_.Reset();
 }

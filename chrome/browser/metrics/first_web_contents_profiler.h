@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_METRICS_FIRST_WEB_CONTENTS_PROFILER_H_
 #define CHROME_BROWSER_METRICS_FIRST_WEB_CONTENTS_PROFILER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "content/public/browser/web_contents_observer.h"
 
 namespace content {
@@ -41,7 +43,6 @@ class FirstWebContentsProfiler : public content::WebContentsObserver {
     ABANDON_NAVIGATION_ERROR = 5,
     ENUM_MAX
   };
-
   explicit FirstWebContentsProfiler(content::WebContents* web_contents);
   ~FirstWebContentsProfiler() override = default;
 
@@ -74,11 +75,6 @@ class FirstWebContentsProfiler : public content::WebContentsObserver {
 
   // Whether an attempt was made to collect the "MainNavigationFinished" metric.
   bool collected_main_navigation_finished_metric_;
-
-  // Whether core metric collection is complete. Used to keep reporting old
-  // stats post abandon to give us an intra-milestone comparison basis initially
-  // between the old and new stats. TODO(gab): Remove this in M49.
-  bool finished_;
 
   DISALLOW_COPY_AND_ASSIGN(FirstWebContentsProfiler);
 };

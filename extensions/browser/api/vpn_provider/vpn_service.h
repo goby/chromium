@@ -6,12 +6,12 @@
 #define EXTENSIONS_BROWSER_API_VPN_PROVIDER_VPN_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chromeos/network/network_configuration_observer.h"
 #include "chromeos/network/network_state_handler_observer.h"
@@ -30,6 +30,8 @@ class ListValue;
 namespace content {
 
 class BrowserContext;
+class PepperVpnProviderResourceHostProxy;
+class VpnServiceProxy;
 
 }  // namespace content
 
@@ -162,22 +164,30 @@ class VpnService : public KeyedService,
   static std::string GetKey(const std::string& extension_id,
                             const std::string& configuration_name);
 
+  // Creates a new VpnServiceProxy. The caller owns the returned value. It's
+  // valid to return nullptr.
+  std::unique_ptr<content::VpnServiceProxy> GetVpnServiceProxy();
+
  private:
   class VpnConfiguration;
+  class VpnServiceProxyImpl;
 
   using StringToConfigurationMap = std::map<std::string, VpnConfiguration*>;
+  using StringToOwnedConfigurationMap =
+      std::map<std::string, std::unique_ptr<VpnConfiguration>>;
 
   // Callback used to indicate that configuration was successfully created.
   void OnCreateConfigurationSuccess(const SuccessCallback& callback,
                                     VpnConfiguration* configuration,
-                                    const std::string& service_path);
+                                    const std::string& service_path,
+                                    const std::string& guid);
 
   // Callback used to indicate that configuration creation failed.
   void OnCreateConfigurationFailure(
       const FailureCallback& callback,
       VpnConfiguration* configuration,
       const std::string& error_name,
-      scoped_ptr<base::DictionaryValue> error_data);
+      std::unique_ptr<base::DictionaryValue> error_data);
 
   // Callback used to indicate that removing a configuration succeeded.
   void OnRemoveConfigurationSuccess(const SuccessCallback& callback);
@@ -186,15 +196,16 @@ class VpnService : public KeyedService,
   void OnRemoveConfigurationFailure(
       const FailureCallback& callback,
       const std::string& error_name,
-      scoped_ptr<base::DictionaryValue> error_data);
+      std::unique_ptr<base::DictionaryValue> error_data);
 
   // Callback used to indicate that GetProperties was successful.
   void OnGetPropertiesSuccess(const std::string& service_path,
                               const base::DictionaryValue& dictionary);
 
   // Callback used to indicate that GetProperties failed.
-  void OnGetPropertiesFailure(const std::string& error_name,
-                              scoped_ptr<base::DictionaryValue> error_data);
+  void OnGetPropertiesFailure(
+      const std::string& error_name,
+      std::unique_ptr<base::DictionaryValue> error_data);
 
   // Creates and adds the configuration to the internal store.
   VpnConfiguration* CreateConfigurationInternal(
@@ -215,7 +226,7 @@ class VpnService : public KeyedService,
   void SendSignalToExtension(const std::string& extension_id,
                              extensions::events::HistogramValue histogram_value,
                              const std::string& event_name,
-                             scoped_ptr<base::ListValue> event_args);
+                             std::unique_ptr<base::ListValue> event_args);
 
   // Destroy configurations belonging to the extension.
   void DestroyConfigurationsForExtension(
@@ -223,6 +234,14 @@ class VpnService : public KeyedService,
 
   // Set the active configuration.
   void SetActiveConfiguration(VpnConfiguration* configuration);
+
+  void Bind(const std::string& extension_id,
+            const std::string& configuration_id,
+            const std::string& configuration_name,
+            const SuccessCallback& success,
+            const FailureCallback& failure,
+            std::unique_ptr<content::PepperVpnProviderResourceHostProxy>
+                pepper_vpn_provider_proxy);
 
   content::BrowserContext* browser_context_;
   std::string userid_hash_;
@@ -236,8 +255,7 @@ class VpnService : public KeyedService,
 
   VpnConfiguration* active_configuration_;
 
-  // Key map owns the VpnConfigurations.
-  StringToConfigurationMap key_to_configuration_map_;
+  StringToOwnedConfigurationMap key_to_configuration_map_;
 
   // Service path does not own the VpnConfigurations.
   StringToConfigurationMap service_path_to_configuration_map_;

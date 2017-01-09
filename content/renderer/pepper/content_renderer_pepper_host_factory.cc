@@ -4,8 +4,12 @@
 
 #include "content/renderer/pepper/content_renderer_pepper_host_factory.h"
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "content/common/content_switches_internal.h"
 #include "content/public/common/content_client.h"
 #include "content/public/renderer/content_renderer_client.h"
@@ -28,6 +32,7 @@
 #include "content/renderer/pepper/pepper_websocket_host.h"
 #include "content/renderer/pepper/ppb_image_data_impl.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
+#include "media/media_features.h"
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/ppapi_message_utils.h"
 #include "ppapi/proxy/ppapi_messages.h"
@@ -35,7 +40,6 @@
 #include "ppapi/shared_impl/ppb_image_data_shared.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 
 #if defined(OS_WIN)
@@ -49,19 +53,19 @@ namespace content {
 
 namespace {
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
 bool CanUseMediaStreamAPI(const RendererPpapiHost* host, PP_Instance instance) {
   blink::WebPluginContainer* container =
       host->GetContainerForInstance(instance);
   if (!container)
     return false;
 
-  GURL document_url = container->element().document().url();
+  GURL document_url = container->document().url();
   ContentRendererClient* content_renderer_client =
       GetContentClient()->renderer();
   return content_renderer_client->AllowPepperMediaStreamAPI(document_url);
 }
-#endif  // defined(ENABLE_WEBRTC)
+#endif  // BUILDFLAG(ENABLE_WEBRTC)
 
 static bool CanUseCameraDeviceAPI(const RendererPpapiHost* host,
                                   PP_Instance instance) {
@@ -70,7 +74,7 @@ static bool CanUseCameraDeviceAPI(const RendererPpapiHost* host,
   if (!container)
     return false;
 
-  GURL document_url = container->element().document().url();
+  GURL document_url = container->document().url();
   ContentRendererClient* content_renderer_client =
       GetContentClient()->renderer();
   return content_renderer_client->IsPluginAllowedToUseCameraDeviceAPI(
@@ -83,7 +87,7 @@ bool CanUseCompositorAPI(const RendererPpapiHost* host, PP_Instance instance) {
   if (!container)
     return false;
 
-  GURL document_url = container->element().document().url();
+  GURL document_url = container->document().url();
   ContentRendererClient* content_renderer_client =
       GetContentClient()->renderer();
   return content_renderer_client->IsPluginAllowedToUseCompositorAPI(
@@ -98,7 +102,8 @@ ContentRendererPepperHostFactory::ContentRendererPepperHostFactory(
 
 ContentRendererPepperHostFactory::~ContentRendererPepperHostFactory() {}
 
-scoped_ptr<ResourceHost> ContentRendererPepperHostFactory::CreateResourceHost(
+std::unique_ptr<ResourceHost>
+ContentRendererPepperHostFactory::CreateResourceHost(
     ppapi::host::PpapiHost* host,
     PP_Resource resource,
     PP_Instance instance,
@@ -107,20 +112,19 @@ scoped_ptr<ResourceHost> ContentRendererPepperHostFactory::CreateResourceHost(
 
   // Make sure the plugin is giving us a valid instance for this resource.
   if (!host_->IsValidInstance(instance))
-    return scoped_ptr<ResourceHost>();
+    return nullptr;
 
   PepperPluginInstanceImpl* instance_impl =
       host_->GetPluginInstanceImpl(instance);
   if (!instance_impl->render_frame())
-    return scoped_ptr<ResourceHost>();
+    return nullptr;
 
   // Public interfaces.
   switch (message.type()) {
     case PpapiHostMsg_Compositor_Create::ID: {
       if (!CanUseCompositorAPI(host_, instance))
-        return scoped_ptr<ResourceHost>();
-      return scoped_ptr<ResourceHost>(
-          new PepperCompositorHost(host_, instance, resource));
+        return nullptr;
+      return base::MakeUnique<PepperCompositorHost>(host_, instance, resource);
     }
     case PpapiHostMsg_FileRef_CreateForFileAPI::ID: {
       PP_Resource file_system;
@@ -128,20 +132,20 @@ scoped_ptr<ResourceHost> ContentRendererPepperHostFactory::CreateResourceHost(
       if (!UnpackMessage<PpapiHostMsg_FileRef_CreateForFileAPI>(
               message, &file_system, &internal_path)) {
         NOTREACHED();
-        return scoped_ptr<ResourceHost>();
+        return nullptr;
       }
-      return scoped_ptr<ResourceHost>(new PepperFileRefRendererHost(
-          host_, instance, resource, file_system, internal_path));
+      return base::MakeUnique<PepperFileRefRendererHost>(
+          host_, instance, resource, file_system, internal_path);
     }
     case PpapiHostMsg_FileSystem_Create::ID: {
       PP_FileSystemType file_system_type;
       if (!UnpackMessage<PpapiHostMsg_FileSystem_Create>(message,
                                                          &file_system_type)) {
         NOTREACHED();
-        return scoped_ptr<ResourceHost>();
+        return nullptr;
       }
-      return scoped_ptr<ResourceHost>(new PepperFileSystemHost(
-          host_, instance, resource, file_system_type));
+      return base::MakeUnique<PepperFileSystemHost>(host_, instance, resource,
+                                                    file_system_type);
     }
     case PpapiHostMsg_Graphics2D_Create::ID: {
       PP_Size size;
@@ -149,7 +153,7 @@ scoped_ptr<ResourceHost> ContentRendererPepperHostFactory::CreateResourceHost(
       if (!UnpackMessage<PpapiHostMsg_Graphics2D_Create>(
               message, &size, &is_always_opaque)) {
         NOTREACHED();
-        return scoped_ptr<ResourceHost>();
+        return nullptr;
       }
       ppapi::PPB_ImageData_Shared::ImageDataType image_type =
           ppapi::PPB_ImageData_Shared::PLATFORM;
@@ -161,64 +165,59 @@ scoped_ptr<ResourceHost> ContentRendererPepperHostFactory::CreateResourceHost(
       // TODO(ananta)
       // Look into whether this causes a loss of functionality. From cursory
       // testing things seem to work well.
-      if (IsWin32kRendererLockdownEnabled())
+      if (IsWin32kLockdownEnabled())
         image_type = ppapi::PPB_ImageData_Shared::SIMPLE;
 #endif
       scoped_refptr<PPB_ImageData_Impl> image_data(new PPB_ImageData_Impl(
           instance, image_type));
-      return scoped_ptr<ResourceHost>(PepperGraphics2DHost::Create(
+      return base::WrapUnique(PepperGraphics2DHost::Create(
           host_, instance, resource, size, is_always_opaque, image_data));
     }
     case PpapiHostMsg_URLLoader_Create::ID:
-      return scoped_ptr<ResourceHost>(
-          new PepperURLLoaderHost(host_, false, instance, resource));
+      return base::MakeUnique<PepperURLLoaderHost>(host_, false, instance,
+                                                   resource);
     case PpapiHostMsg_VideoDecoder_Create::ID:
-      return scoped_ptr<ResourceHost>(
-          new PepperVideoDecoderHost(host_, instance, resource));
+      return base::MakeUnique<PepperVideoDecoderHost>(host_, instance,
+                                                      resource);
     case PpapiHostMsg_VideoEncoder_Create::ID:
-      return scoped_ptr<ResourceHost>(
-          new PepperVideoEncoderHost(host_, instance, resource));
+      return base::MakeUnique<PepperVideoEncoderHost>(host_, instance,
+                                                      resource);
     case PpapiHostMsg_WebSocket_Create::ID:
-      return scoped_ptr<ResourceHost>(
-          new PepperWebSocketHost(host_, instance, resource));
-#if defined(ENABLE_WEBRTC)
+      return base::MakeUnique<PepperWebSocketHost>(host_, instance, resource);
+#if BUILDFLAG(ENABLE_WEBRTC)
     case PpapiHostMsg_MediaStreamVideoTrack_Create::ID:
-      return scoped_ptr<ResourceHost>(
-          new PepperMediaStreamVideoTrackHost(host_, instance, resource));
+      return base::MakeUnique<PepperMediaStreamVideoTrackHost>(host_, instance,
+                                                               resource);
     // These private MediaStream interfaces are exposed as if they were public
     // so they can be used by NaCl plugins. However, they are available only
     // for whitelisted apps.
     case PpapiHostMsg_VideoDestination_Create::ID:
       if (CanUseMediaStreamAPI(host_, instance))
-        return scoped_ptr<ResourceHost>(
-            new PepperVideoDestinationHost(host_, instance, resource));
+        return base::MakeUnique<PepperVideoDestinationHost>(host_, instance,
+                                                            resource);
     case PpapiHostMsg_VideoSource_Create::ID:
       if (CanUseMediaStreamAPI(host_, instance))
-        return scoped_ptr<ResourceHost>(
-            new PepperVideoSourceHost(host_, instance, resource));
-#endif  // defined(ENABLE_WEBRTC)
+        return base::MakeUnique<PepperVideoSourceHost>(host_, instance,
+                                                       resource);
+#endif  // BUILDFLAG(ENABLE_WEBRTC)
   }
 
   // Dev interfaces.
   if (GetPermissions().HasPermission(ppapi::PERMISSION_DEV)) {
     switch (message.type()) {
       case PpapiHostMsg_AudioEncoder_Create::ID:
-        return scoped_ptr<ResourceHost>(
-            new PepperAudioEncoderHost(host_, instance, resource));
+        return base::MakeUnique<PepperAudioEncoderHost>(host_, instance,
+                                                        resource);
       case PpapiHostMsg_AudioInput_Create::ID:
-        return scoped_ptr<ResourceHost>(
-            new PepperAudioInputHost(host_, instance, resource));
+        return base::MakeUnique<PepperAudioInputHost>(host_, instance,
+                                                      resource);
       case PpapiHostMsg_FileChooser_Create::ID:
-        return scoped_ptr<ResourceHost>(
-            new PepperFileChooserHost(host_, instance, resource));
+        return base::MakeUnique<PepperFileChooserHost>(host_, instance,
+                                                       resource);
       case PpapiHostMsg_VideoCapture_Create::ID: {
-        PepperVideoCaptureHost* host =
-            new PepperVideoCaptureHost(host_, instance, resource);
-        if (!host->Init()) {
-          delete host;
-          return scoped_ptr<ResourceHost>();
-        }
-        return scoped_ptr<ResourceHost>(host);
+        std::unique_ptr<PepperVideoCaptureHost> host(
+            new PepperVideoCaptureHost(host_, instance, resource));
+        return host->Init() ? std::move(host) : nullptr;
       }
     }
   }
@@ -229,12 +228,12 @@ scoped_ptr<ResourceHost> ContentRendererPepperHostFactory::CreateResourceHost(
     if (!GetPermissions().HasPermission(ppapi::PERMISSION_PRIVATE) &&
         !CanUseCameraDeviceAPI(host_, instance))
       return nullptr;
-    scoped_ptr<PepperCameraDeviceHost> host(
+    std::unique_ptr<PepperCameraDeviceHost> host(
         new PepperCameraDeviceHost(host_, instance, resource));
-    return host->Init() ? host.Pass() : nullptr;
+    return host->Init() ? std::move(host) : nullptr;
   }
 
-  return scoped_ptr<ResourceHost>();
+  return nullptr;
 }
 
 const ppapi::PpapiPermissions&

@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "chrome/browser/importer/profile_writer.h"
@@ -17,14 +17,12 @@
 
 class GURL;
 struct ImportedBookmarkEntry;
-struct FaviconUsageData;
 class ExternalProcessImporterHost;
 
 namespace importer {
 #if defined(OS_WIN)
 struct ImporterIE7PasswordInfo;
 #endif
-struct ImporterURlRow;
 struct SearchEngineInfo;
 }
 

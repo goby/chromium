@@ -4,6 +4,8 @@
 
 #include "remoting/host/pairing_registry_delegate_linux.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
@@ -11,6 +13,7 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "remoting/host/branding.h"
@@ -35,8 +38,8 @@ PairingRegistryDelegateLinux::PairingRegistryDelegateLinux() {
 PairingRegistryDelegateLinux::~PairingRegistryDelegateLinux() {
 }
 
-scoped_ptr<base::ListValue> PairingRegistryDelegateLinux::LoadAll() {
-  scoped_ptr<base::ListValue> pairings(new base::ListValue());
+std::unique_ptr<base::ListValue> PairingRegistryDelegateLinux::LoadAll() {
+  std::unique_ptr<base::ListValue> pairings(new base::ListValue());
 
   // Enumerate all pairing files in the pairing registry.
   base::FilePath registry_path = GetRegistryPath();
@@ -49,7 +52,7 @@ scoped_ptr<base::ListValue> PairingRegistryDelegateLinux::LoadAll() {
     JSONFileValueDeserializer deserializer(pairing_file);
     int error_code;
     std::string error_message;
-    scoped_ptr<base::Value> pairing_json =
+    std::unique_ptr<base::Value> pairing_json =
         deserializer.Deserialize(&error_code, &error_message);
     if (!pairing_json) {
       LOG(WARNING) << "Failed to load '" << pairing_file.value() << "' ("
@@ -57,10 +60,10 @@ scoped_ptr<base::ListValue> PairingRegistryDelegateLinux::LoadAll() {
       continue;
     }
 
-    pairings->Append(pairing_json.release());
+    pairings->Append(std::move(pairing_json));
   }
 
-  return pairings.Pass();
+  return pairings;
 }
 
 bool PairingRegistryDelegateLinux::DeleteAll() {
@@ -88,7 +91,7 @@ PairingRegistry::Pairing PairingRegistryDelegateLinux::Load(
   JSONFileValueDeserializer deserializer(pairing_file);
   int error_code;
   std::string error_message;
-  scoped_ptr<base::Value> pairing =
+  std::unique_ptr<base::Value> pairing =
       deserializer.Deserialize(&error_code, &error_message);
   if (!pairing) {
     LOG(WARNING) << "Failed to load pairing information: " << error_message
@@ -155,9 +158,8 @@ void PairingRegistryDelegateLinux::SetRegistryPathForTesting(
   registry_path_for_testing_ = registry_path;
 }
 
-
-scoped_ptr<PairingRegistry::Delegate> CreatePairingRegistryDelegate() {
-  return make_scoped_ptr(new PairingRegistryDelegateLinux());
+std::unique_ptr<PairingRegistry::Delegate> CreatePairingRegistryDelegate() {
+  return base::MakeUnique<PairingRegistryDelegateLinux>();
 }
 
 }  // namespace remoting

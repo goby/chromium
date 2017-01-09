@@ -5,10 +5,13 @@
 #ifndef CONTENT_BROWSER_APPCACHE_APPCACHE_INTERNALS_UI_H_
 #define CONTENT_BROWSER_APPCACHE_APPCACHE_INTERNALS_UI_H_
 
-#include <list>
+#include <stdint.h>
 
+#include <list>
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_storage.h"
 #include "content/browser/appcache/chrome_appcache_service.h"
@@ -40,8 +43,8 @@ class AppCacheInternalsUI : public WebUIController {
 
     struct ResponseEnquiry {
       std::string manifest_url;
-      int64 group_id;
-      int64 response_id;
+      int64_t group_id;
+      int64_t response_id;
     };
 
    private:
@@ -64,11 +67,11 @@ class AppCacheInternalsUI : public WebUIController {
     void OnGroupLoaded(AppCacheGroup* appcache_group,
                        const GURL& manifest_gurl) override;
     void OnResponseInfoLoaded(AppCacheResponseInfo* response_info,
-                              int64 response_id) override;
+                              int64_t response_id) override;
     void OnResponseDataReadComplete(
         const ResponseEnquiry& response_enquiry,
         scoped_refptr<AppCacheResponseInfo> response_info,
-        scoped_ptr<AppCacheResponseReader> reader,
+        std::unique_ptr<AppCacheResponseReader> reader,
         scoped_refptr<net::IOBuffer> response_data,
         int net_result_code);
     void Initialize(
@@ -77,7 +80,6 @@ class AppCacheInternalsUI : public WebUIController {
 
     base::WeakPtr<AppCacheInternalsUI> appcache_internals_ui_;
     base::WeakPtr<AppCacheServiceImpl> appcache_service_;
-    AppCacheStorage* appcache_storage_;
     base::FilePath partition_path_;
     scoped_refptr<AppCacheStorageReference> disabled_appcache_storage_ref_;
     std::list<ResponseEnquiry> response_enquiries_;
@@ -106,7 +108,7 @@ class AppCacheInternalsUI : public WebUIController {
   void OnAppCacheDetailsReady(
       const base::FilePath& partition_path,
       const std::string& manifest_url,
-      scoped_ptr<AppCacheResourceInfoVector> resource_info_vector);
+      std::unique_ptr<AppCacheResourceInfoVector> resource_info_vector);
   void OnFileDetailsReady(const Proxy::ResponseEnquiry& response_enquiry,
                           scoped_refptr<AppCacheResponseInfo> response_info,
                           scoped_refptr<net::IOBuffer> response_data,

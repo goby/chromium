@@ -9,13 +9,12 @@
 
 #include "android_webview/common/aw_hit_test_data.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/size_f.h"
-
-class GURL;
 
 namespace content {
 struct FrameNavigateParams;
@@ -85,24 +84,34 @@ class AwRenderViewHostExt : public content::WebContentsObserver,
  private:
   // content::WebContentsObserver implementation.
   void RenderViewCreated(content::RenderViewHost* view_host) override;
-  void RenderProcessGone(base::TerminationStatus status) override;
+  void RenderViewHostChanged(content::RenderViewHost* old_host,
+                             content::RenderViewHost* new_host) override;
+  void RenderFrameCreated(content::RenderFrameHost* frame_host) override;
   void DidNavigateAnyFrame(content::RenderFrameHost* render_frame_host,
                            const content::LoadCommittedDetails& details,
                            const content::FrameNavigateParams& params) override;
   void OnPageScaleFactorChanged(float page_scale_factor) override;
-  bool OnMessageReceived(const IPC::Message& message) override;
+  bool OnMessageReceived(const IPC::Message& message,
+                         content::RenderFrameHost* render_frame_host) override;
 
-  void OnDocumentHasImagesResponse(int msg_id, bool has_images);
-  void OnUpdateHitTestData(const AwHitTestData& hit_test_data);
-  void OnContentsSizeChanged(const gfx::Size& contents_size);
+  void OnDocumentHasImagesResponse(content::RenderFrameHost* render_frame_host,
+                                   int msg_id,
+                                   bool has_images);
+  void OnUpdateHitTestData(content::RenderFrameHost* render_frame_host,
+                           const AwHitTestData& hit_test_data);
+  void OnContentsSizeChanged(content::RenderFrameHost* render_frame_host,
+                             const gfx::Size& contents_size);
 
   bool IsRenderViewReady() const;
+  void ClearImageRequests();
 
   AwRenderViewHostExtClient* client_;
 
   SkColor background_color_;
 
-  std::map<int, DocumentHasImagesResult> pending_document_has_images_requests_;
+  // A map from message id to result callback. Messages here are all for the
+  // *current* RVH.
+  std::map<int, DocumentHasImagesResult> image_requests_callback_map_;
 
   // Master copy of hit test data on the browser side. This is updated
   // as a result of DoHitTest called explicitly or when the FocusedNodeChanged

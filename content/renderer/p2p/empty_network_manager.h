@@ -5,10 +5,12 @@
 #ifndef CONTENT_RENDERER_P2P_EMPTY_NETWORK_MANAGER_H_
 #define CONTENT_RENDERER_P2P_EMPTY_NETWORK_MANAGER_H_
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "third_party/webrtc/base/network.h"
+#include "third_party/webrtc/base/sigslot.h"
 
 namespace rtc {
 class IPAddress;
@@ -18,8 +20,9 @@ namespace content {
 
 // A NetworkManager implementation which handles the case where local address
 // enumeration is not requested and just returns empty network lists. This class
-// is not thread safe and should only be used by WebRTC's worker thread.
-class EmptyNetworkManager : public rtc::NetworkManagerBase {
+// is not thread safe and should only be used by WebRTC's network thread.
+class EmptyNetworkManager : public rtc::NetworkManagerBase,
+                            public sigslot::has_slots<> {
  public:
   // This class is created by WebRTC's signaling thread but used by WebRTC's
   // worker thread |task_runner|.
@@ -35,13 +38,22 @@ class EmptyNetworkManager : public rtc::NetworkManagerBase {
                               rtc::IPAddress* ipaddress) const override;
 
  private:
-  void FireEvent();
-  void SendNetworksChangedSignal();
+  // Receive callback from the wrapped NetworkManager when the underneath
+  // network list is changed.
+  //
+  // We wait for this so that we don't signal networks changed before we have
+  // default IP addresses.
+  void OnNetworksChanged();
 
   base::ThreadChecker thread_checker_;
 
-  // Track whether StartUpdating() has been called before.
-  bool updating_started_ = false;
+  // Whether we have fired the first SignalNetworksChanged.
+  // Used to ensure we only report metrics once.
+  bool sent_first_update_ = false;
+
+  // SignalNetworksChanged will only be fired if there is any outstanding
+  // StartUpdating.
+  int start_count_ = 0;
 
   // |network_manager_| is just a reference, owned by
   // PeerConnectionDependencyFactory.

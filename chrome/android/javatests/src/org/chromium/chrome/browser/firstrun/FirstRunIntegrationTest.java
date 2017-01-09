@@ -4,14 +4,19 @@
 
 package org.chromium.chrome.browser.firstrun;
 
+import android.annotation.TargetApi;
+import android.os.Build;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.view.KeyEvent;
 
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tabmodel.TabList;
 import org.chromium.chrome.test.ChromeTabbedActivityTestBase;
+import org.chromium.content.browser.test.util.Criteria;
+import org.chromium.content.browser.test.util.CriteriaHelper;
 
 /**
  * Integration test suite for the first run experience.
@@ -25,21 +30,30 @@ public class FirstRunIntegrationTest extends ChromeTabbedActivityTestBase {
      */
     @SmallTest
     @Feature({"FirstRunExperience"})
-    public void testExitFirstRunExperience() {
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
+    @RetryOnFailure
+    public void testExitFirstRunExperience() throws InterruptedException {
         if (FirstRunStatus.getFirstRunFlowComplete(getActivity())) {
             return;
         }
 
         sendKeys(KeyEvent.KEYCODE_BACK);
-        getInstrumentation().waitForIdleSync();
 
-        assertEquals("Expected no tabs to be present",
-                0, getActivity().getCurrentTabModel().getCount());
+        CriteriaHelper.pollInstrumentationThread(new Criteria("Expected no tabs to be present") {
+            @Override
+            public boolean isSatisfied() {
+                return 0 == getActivity().getCurrentTabModel().getCount();
+            }
+        });
         TabList fullModel = getActivity().getCurrentTabModel().getComprehensiveModel();
         assertEquals("Expected no tabs to be present in the comprehensive model",
                 0, fullModel.getCount());
-        assertTrue("Activity was not closed.",
-                getActivity().isFinishing() || getActivity().isDestroyed());
+        CriteriaHelper.pollInstrumentationThread(new Criteria("Activity was not closed.") {
+            @Override
+            public boolean isSatisfied() {
+                return getActivity().isFinishing() || getActivity().isDestroyed();
+            }
+        });
     }
 
     @Override

@@ -5,17 +5,23 @@
 #ifndef CONTENT_BROWSER_PUSH_MESSAGING_PUSH_MESSAGING_ROUTER_H_
 #define CONTENT_BROWSER_PUSH_MESSAGING_PUSH_MESSAGING_ROUTER_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 #include "content/public/common/push_messaging_status.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerEventResult.h"
 #include "url/gurl.h"
 
 namespace content {
 
 class BrowserContext;
+struct PushEventPayload;
 class ServiceWorkerContextWrapper;
 class ServiceWorkerRegistration;
+class ServiceWorkerVersion;
 
 class PushMessagingRouter {
  public:
@@ -27,8 +33,8 @@ class PushMessagingRouter {
   static void DeliverMessage(
       BrowserContext* browser_context,
       const GURL& origin,
-      int64 service_worker_registration_id,
-      const std::string& data,
+      int64_t service_worker_registration_id,
+      const PushEventPayload& payload,
       const DeliverMessageCallback& deliver_message_callback);
 
  private:
@@ -36,8 +42,8 @@ class PushMessagingRouter {
   // dispatched. Must be called on the IO thread.
   static void FindServiceWorkerRegistration(
       const GURL& origin,
-      int64 service_worker_registration_id,
-      const std::string& data,
+      int64_t service_worker_registration_id,
+      const PushEventPayload& payload,
       const DeliverMessageCallback& deliver_message_callback,
       scoped_refptr<ServiceWorkerContextWrapper> service_worker_context);
 
@@ -45,11 +51,19 @@ class PushMessagingRouter {
   // |data| on the Service Worker identified by |service_worker_registration|.
   // Must be called on the IO thread.
   static void FindServiceWorkerRegistrationCallback(
-      const std::string& data,
+      const PushEventPayload& payload,
       const DeliverMessageCallback& deliver_message_callback,
       ServiceWorkerStatusCode service_worker_status,
+      scoped_refptr<ServiceWorkerRegistration> service_worker_registration);
+
+  // Delivers a push message with |data| to a specific |service_worker|. Must be
+  // called on the IO thread, with the the worker running.
+  static void DeliverMessageToWorker(
+      const scoped_refptr<ServiceWorkerVersion>& service_worker,
       const scoped_refptr<ServiceWorkerRegistration>&
-          service_worker_registration);
+          service_worker_registration,
+      const PushEventPayload& payload,
+      const DeliverMessageCallback& deliver_message_callback);
 
   // Gets called asynchronously after the Service Worker has dispatched the push
   // event. Must be called on the IO thread.

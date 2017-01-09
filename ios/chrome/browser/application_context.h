@@ -41,19 +41,20 @@ namespace network_time {
 class NetworkTimeTracker;
 }
 
+namespace physical_web {
+class PhysicalWebDataSource;
+}
+
 namespace rappor {
-class RapporService;
+class RapporServiceImpl;
 }
 
 namespace variations {
 class VariationsService;
 }
 
-namespace web_resource {
-class PromoResourceService;
-}
-
 class ApplicationContext;
+class CRLSetFetcher;
 class IOSChromeIOThread;
 class PrefService;
 
@@ -101,8 +102,8 @@ class ApplicationContext {
   // Gets the VariationsService used by this application.
   virtual variations::VariationsService* GetVariationsService() = 0;
 
-  // Gets the RapporService. May return null.
-  virtual rappor::RapporService* GetRapporService() = 0;
+  // Gets the RapporServiceImpl. May return null.
+  virtual rappor::RapporServiceImpl* GetRapporServiceImpl() = 0;
 
   // Gets the ChromeNetLog.
   virtual net_log::ChromeNetLog* GetNetLog() = 0;
@@ -116,12 +117,15 @@ class ApplicationContext {
   // Gets the GCMDriver.
   virtual gcm::GCMDriver* GetGCMDriver() = 0;
 
-  // Gets the PromoResourceService.
-  virtual web_resource::PromoResourceService* GetPromoResourceService() = 0;
-
   // Gets the ComponentUpdateService.
   virtual component_updater::ComponentUpdateService*
   GetComponentUpdateService() = 0;
+
+  // Gets the CRLSetFetcher.
+  virtual CRLSetFetcher* GetCRLSetFetcher() = 0;
+
+  // Gets the PhysicalWebDataSource.
+  virtual physical_web::PhysicalWebDataSource* GetPhysicalWebDataSource() = 0;
 
  protected:
   // Sets the global ApplicationContext instance.

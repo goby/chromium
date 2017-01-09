@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/gpu/shader_disk_cache.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -23,11 +25,14 @@ class ShaderDiskCacheTest : public testing::Test {
  public:
   ShaderDiskCacheTest()
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {
+    ShaderCacheFactory::InitInstance(
+        base::ThreadTaskRunnerHandle::Get(),
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::CACHE));
   }
 
   ~ShaderDiskCacheTest() override {}
 
-  const base::FilePath& cache_path() { return temp_dir_.path(); }
+  const base::FilePath& cache_path() { return temp_dir_.GetPath(); }
 
   void InitCache() {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());

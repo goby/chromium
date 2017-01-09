@@ -7,9 +7,10 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/scoped_observer.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
+#include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "extensions/browser/api/runtime/runtime_api_delegate.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/extension_function.h"
@@ -27,6 +28,8 @@ namespace content {
 class BrowserContext;
 }
 
+class PrefRegistrySimple;
+
 namespace extensions {
 
 namespace api {
@@ -43,20 +46,34 @@ class ExtensionRegistry;
 // extensions. There is one instance shared between a browser context and
 // its related incognito instance.
 class RuntimeAPI : public BrowserContextKeyedAPI,
-                   public content::NotificationObserver,
                    public ExtensionRegistryObserver,
                    public UpdateObserver,
                    public ProcessManagerObserver {
  public:
+  // The status of the restartAfterDelay request.
+  enum class RestartAfterDelayStatus {
+    // The request was made by a different extension other than the first one to
+    // invoke the restartAfterDelay runtime API.
+    FAILED_NOT_FIRST_EXTENSION,
+
+    // The request came too soon after a previous restart induced by the
+    // restartAfterDelay API. It failed to be scheduled as requested, and was
+    // instead throttled.
+    FAILED_THROTTLED,
+
+    // Any previously scheduled restart was successfully canceled.
+    SUCCESS_RESTART_CANCELED,
+
+    // A restart was successfully scheduled.
+    SUCCESS_RESTART_SCHEDULED,
+  };
+
   static BrowserContextKeyedAPIFactory<RuntimeAPI>* GetFactoryInstance();
+
+  static void RegisterPrefs(PrefRegistrySimple* registry);
 
   explicit RuntimeAPI(content::BrowserContext* context);
   ~RuntimeAPI() override;
-
-  // content::NotificationObserver overrides:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
 
   void ReloadExtension(const std::string& extension_id);
   bool CheckForUpdates(const std::string& extension_id,
@@ -64,10 +81,16 @@ class RuntimeAPI : public BrowserContextKeyedAPI,
   void OpenURL(const GURL& uninstall_url);
   bool GetPlatformInfo(api::runtime::PlatformInfo* info);
   bool RestartDevice(std::string* error_message);
+
+  RestartAfterDelayStatus RestartDeviceAfterDelay(
+      const std::string& extension_id,
+      int seconds_from_now);
+
   bool OpenOptionsPage(const Extension* extension);
 
  private:
   friend class BrowserContextKeyedAPIFactory<RuntimeAPI>;
+  friend class RestartAfterDelayApiTest;
 
   // ExtensionRegistryObserver implementation.
   void OnExtensionLoaded(content::BrowserContext* browser_context,
@@ -75,11 +98,23 @@ class RuntimeAPI : public BrowserContextKeyedAPI,
   void OnExtensionWillBeInstalled(content::BrowserContext* browser_context,
                                   const Extension* extension,
                                   bool is_update,
-                                  bool from_ephemeral,
                                   const std::string& old_name) override;
   void OnExtensionUninstalled(content::BrowserContext* browser_context,
                               const Extension* extension,
                               UninstallReason reason) override;
+
+  // Cancels any previously scheduled restart request.
+  void MaybeCancelRunningDelayedRestartTimer();
+
+  // Handler for the signal from ExtensionSystem::ready().
+  void OnExtensionsReady();
+
+  RestartAfterDelayStatus ScheduleDelayedRestart(const base::Time& now,
+                                                 int seconds_from_now);
+
+  // Called when the delayed restart timer times out so that it attempts to
+  // execute the restart request scheduled earlier.
+  void OnDelayedRestartTimerTimeout();
 
   // BrowserContextKeyedAPI implementation:
   static const char* service_name() { return "RuntimeAPI"; }
@@ -94,13 +129,23 @@ class RuntimeAPI : public BrowserContextKeyedAPI,
   // ProcessManagerObserver implementation:
   void OnBackgroundHostStartup(const Extension* extension) override;
 
-  scoped_ptr<RuntimeAPIDelegate> delegate_;
+  // Pref related functions that deals with info about installed extensions that
+  // has not been loaded yet.
+  // Used to send chrome.runtime.onInstalled event upon loading the extensions.
+  bool ReadPendingOnInstallInfoFromPref(const ExtensionId& extension_id,
+                                        base::Version* previous_version);
+  void RemovePendingOnInstallInfoFromPref(const ExtensionId& extension_id);
+  void StorePendingOnInstallInfoToPref(const Extension* extension);
+
+  void AllowNonKioskAppsInRestartAfterDelayForTesting();
+
+  void set_min_duration_between_restarts_for_testing(base::TimeDelta delta) {
+    minimum_duration_between_restarts_ = delta;
+  }
+
+  std::unique_ptr<RuntimeAPIDelegate> delegate_;
 
   content::BrowserContext* browser_context_;
-
-  // True if we should dispatch the chrome.runtime.onInstalled event with
-  // reason "chrome_update" upon loading each extension.
-  bool dispatch_chrome_updated_event_;
 
   content::NotificationRegistrar registrar_;
 
@@ -109,6 +154,30 @@ class RuntimeAPI : public BrowserContextKeyedAPI,
       extension_registry_observer_;
   ScopedObserver<ProcessManager, ProcessManagerObserver>
       process_manager_observer_;
+
+  // The ID of the first extension to call the restartAfterDelay API. Any other
+  // extensions to call this API after that will fail.
+  std::string schedule_restart_first_extension_id_;
+
+  // The timer that will trigger a device restart when it times out.
+  base::OneShotTimer restart_after_delay_timer_;
+
+  // The minimum allowed duration between two successive restarts caused by
+  // restartAfterDelay calls.
+  base::TimeDelta minimum_duration_between_restarts_;
+
+  // The last restart time which was a result of a successful call to
+  // chrome.runtime.restartAfterDelay().
+  base::Time last_delayed_restart_time_;
+
+  // True if we should dispatch the chrome.runtime.onInstalled event with
+  // reason "chrome_update" upon loading each extension.
+  bool dispatch_chrome_updated_event_;
+
+  bool did_read_delayed_restart_preferences_;
+  bool was_last_restart_due_to_delayed_restart_api_;
+
+  base::WeakPtrFactory<RuntimeAPI> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(RuntimeAPI);
 };
@@ -209,6 +278,16 @@ class RuntimeRestartFunction : public UIThreadExtensionFunction {
 
  protected:
   ~RuntimeRestartFunction() override {}
+  ResponseAction Run() override;
+};
+
+class RuntimeRestartAfterDelayFunction : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("runtime.restartAfterDelay",
+                             RUNTIME_RESTARTAFTERDELAY)
+
+ protected:
+  ~RuntimeRestartAfterDelayFunction() override {}
   ResponseAction Run() override;
 };
 

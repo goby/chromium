@@ -4,8 +4,11 @@
 
 #include "chrome/test/chromedriver/chrome/browser_info.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -13,26 +16,27 @@
 
 namespace {
 
-const std::string kVersionPrefix = "Chrome/";
+const char kVersionPrefix[] = "Chrome/";
+const size_t kVersionPrefixLen = sizeof(kVersionPrefix) - 1;
 
 }  // namespace
 
 BrowserInfo::BrowserInfo()
-    : browser_name(std::string()),
-      browser_version(std::string()),
-      major_version(0),
+    : major_version(0),
       build_no(kToTBuildNo),
       blink_revision(kToTBlinkRevision),
       is_android(false) {
 }
 
-BrowserInfo::BrowserInfo(std::string browser_name,
+BrowserInfo::BrowserInfo(std::string android_package,
+                         std::string browser_name,
                          std::string browser_version,
                          int major_version,
                          int build_no,
                          int blink_revision,
                          bool is_android)
-    : browser_name(browser_name),
+    : android_package(android_package),
+      browser_name(browser_name),
       browser_version(browser_version),
       major_version(major_version),
       build_no(build_no),
@@ -41,7 +45,7 @@ BrowserInfo::BrowserInfo(std::string browser_name,
 }
 
 Status ParseBrowserInfo(const std::string& data, BrowserInfo* browser_info) {
-  scoped_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
   if (!value.get())
     return Status(kUnknownError, "version info not in JSON");
 
@@ -50,6 +54,11 @@ Status ParseBrowserInfo(const std::string& data, BrowserInfo* browser_info) {
     return Status(kUnknownError, "version info not a dictionary");
 
   bool has_android_package = dict->HasKey("Android-Package");
+  if (has_android_package) {
+    if (!dict->GetString("Android-Package", &browser_info->android_package))
+      return Status(kUnknownError, "'Android-Package' is not a string");
+  }
+
   std::string browser_string;
   if (!dict->GetString("Browser", &browser_string))
     return Status(kUnknownError, "version doesn't include 'Browser'");
@@ -78,8 +87,9 @@ Status ParseBrowserString(bool has_android_package,
   }
 
   int build_no = 0;
-  if (browser_string.find(kVersionPrefix) == 0u) {
-    std::string version = browser_string.substr(kVersionPrefix.length());
+  if (base::StartsWith(browser_string, kVersionPrefix,
+                       base::CompareCase::SENSITIVE)) {
+    std::string version = browser_string.substr(kVersionPrefixLen);
 
     Status status = ParseBrowserVersionString(
         version, &browser_info->major_version, &build_no);
@@ -100,7 +110,7 @@ Status ParseBrowserString(bool has_android_package,
     if (pos != std::string::npos) {
       browser_info->browser_name = "webview";
       browser_info->browser_version =
-          browser_string.substr(pos + kVersionPrefix.length());
+          browser_string.substr(pos + kVersionPrefixLen);
       browser_info->is_android = true;
       return ParseBrowserVersionString(browser_info->browser_version,
                                        &browser_info->major_version, &build_no);

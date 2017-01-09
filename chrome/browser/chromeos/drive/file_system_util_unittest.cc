@@ -11,7 +11,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -131,7 +131,7 @@ TEST_F(ProfileRelatedFileSystemUtilTest, ExtractDrivePathFromFileSystemUrl) {
           NULL,  // quota_manager_proxy,
           ScopedVector<storage::FileSystemBackend>(),
           std::vector<storage::URLRequestAutoMountHandler>(),
-          temp_dir_.path(),  // partition_path
+          temp_dir_.GetPath(),  // partition_path
           content::CreateAllowFileAccessOptions()));
 
   // Type:"external" + virtual_path:"drive/foo/bar" resolves to "drive/foo/bar".
@@ -158,7 +158,7 @@ TEST_F(ProfileRelatedFileSystemUtilTest, ExtractDrivePathFromFileSystemUrl) {
   // Type:"external" + virtual_path:"Downloads/foo" is not a Drive path.
   mount_points->RegisterFileSystem(
       "Downloads", storage::kFileSystemTypeNativeLocal,
-      storage::FileSystemMountOption(), temp_dir_.path());
+      storage::FileSystemMountOption(), temp_dir_.GetPath());
   EXPECT_EQ(
       base::FilePath(),
       ExtractDrivePathFromFileSystemUrl(context->CrackURL(GURL(

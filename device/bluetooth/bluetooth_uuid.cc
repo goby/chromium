@@ -4,17 +4,17 @@
 
 #include "device/bluetooth/bluetooth_uuid.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/strings/string_util.h"
-#include "ipc/ipc_message.h"
 
 namespace device {
 
 namespace {
 
-const char* kCommonUuidPostfix = "-0000-1000-8000-00805f9b34fb";
-const char* kCommonUuidPrefix = "0000";
+const char kCommonUuidPostfix[] = "-0000-1000-8000-00805f9b34fb";
+const char kCommonUuidPrefix[] = "0000";
 
 // Returns the canonical, 128-bit canonical, and the format of the UUID
 // in |canonical|, |canonical_128|, and |format| based on |uuid|.
@@ -30,8 +30,10 @@ void GetCanonicalUuid(std::string uuid,
   if (uuid.empty())
     return;
 
-  if (uuid.size() < 11 && uuid.find("0x") == 0)
+  if (uuid.size() < 11 &&
+      base::StartsWith(uuid, "0x", base::CompareCase::SENSITIVE)) {
     uuid = uuid.substr(2);
+  }
 
   if (!(uuid.size() == 4 || uuid.size() == 8 || uuid.size() == 36))
     return;
@@ -94,27 +96,3 @@ void PrintTo(const BluetoothUUID& uuid, std::ostream* out) {
 }
 
 }  // namespace device
-
-void IPC::ParamTraits<device::BluetoothUUID>::Write(Message* m,
-                                                    const param_type& p) {
-  m->WriteString(p.canonical_value());
-}
-
-bool IPC::ParamTraits<device::BluetoothUUID>::Read(const Message* m,
-                                                   base::PickleIterator* iter,
-                                                   param_type* r) {
-  std::string value;
-  if (!iter->ReadString(&value))
-    return false;
-  *r = device::BluetoothUUID(value);
-  // If the format isn't 128-bit, .value() would return a different answer than
-  // .canonical_value(). Then if browser-side code accidentally checks .value()
-  // against a 128-bit string literal, a hostile renderer could use the 16- or
-  // 32-bit format and evade the check.
-  return r->format() == device::BluetoothUUID::kFormat128Bit;
-}
-
-void IPC::ParamTraits<device::BluetoothUUID>::Log(const param_type& p,
-                                                  std::string* l) {
-  l->append(p.canonical_value());
-}

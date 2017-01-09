@@ -128,7 +128,7 @@ cr.define('ntp', function() {
 
     /**
      * Does all the necessary setup to show the menu for the given app.
-     * @param {App} app The App object that will be showing a context menu.
+     * @param {ntp.App} app The App object that will be showing a context menu.
      */
     setupForApp: function(app) {
       this.app_ = app;
@@ -309,6 +309,11 @@ cr.define('ntp', function() {
     /**
      * Removes the app tile from the page. Should be called after the app has
      * been uninstalled.
+     *
+     * TODO(dbeam): this method now conflicts with HTMLElement#remove(), which
+     * is why the param is optional. Rename.
+     *
+     * @param {boolean=} opt_animate Whether the removal should be animated.
      */
     remove: function(opt_animate) {
       // Unset the ID immediately, because the app is already gone. But leave
@@ -385,17 +390,14 @@ cr.define('ntp', function() {
 
     /**
      * Invoked when an app is clicked.
-     * @param {Event} e The click event.
+     * @param {Event} e The click/auxclick event.
      * @private
      */
     onClick_: function(e) {
-      var url = !this.appData_.is_webstore ? '' :
-          appendParam(this.appData_.url,
-                      'utm_source',
-                      'chrome-ntp-icon');
+      if (/** @type {MouseEvent} */(e).button > 1) return;
 
       chrome.send('launchApp',
-                  [this.appId, APP_LAUNCH.NTP_APPS_MAXIMIZED, url,
+                  [this.appId, APP_LAUNCH.NTP_APPS_MAXIMIZED, 'chrome-ntp-icon',
                    e.button, e.altKey, e.ctrlKey, e.metaKey, e.shiftKey]);
 
       // Don't allow the click to trigger a link or anything
@@ -408,7 +410,7 @@ cr.define('ntp', function() {
      * @private
      */
     onKeydown_: function(e) {
-      if (e.keyIdentifier == 'Enter') {
+      if (e.key == 'Enter') {
         chrome.send('launchApp',
                     [this.appId, APP_LAUNCH.NTP_APPS_MAXIMIZED, '',
                      0, e.altKey, e.ctrlKey, e.metaKey, e.shiftKey]);
@@ -428,6 +430,7 @@ cr.define('ntp', function() {
     addLaunchClickTarget_: function(node) {
       node.classList.add('launch-click-target');
       node.addEventListener('click', this.onClick_.bind(this));
+      node.addEventListener('auxclick', this.onClick_.bind(this));
     },
 
     /**
@@ -701,9 +704,9 @@ cr.define('ntp', function() {
       if (html) {
         // It's important that we don't attach this node to the document
         // because it might contain scripts.
-        var node = this.ownerDocument.createElement('div');
-        node.innerHTML = html;
-        title = node.textContent;
+        var doc = document.implementation.createHTMLDocument();
+        doc.body.innerHTML = html;
+        title = doc.body.textContent;
       }
 
       // Make sure title is >=1 and <=45 characters for Chrome app limits.
@@ -768,6 +771,7 @@ cr.define('ntp', function() {
 
   return {
     APP_LAUNCH: APP_LAUNCH,
+    App: App,
     AppsPage: AppsPage,
     launchAppAfterEnable: launchAppAfterEnable,
   };

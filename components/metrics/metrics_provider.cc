@@ -12,6 +12,9 @@ MetricsProvider::MetricsProvider() {
 MetricsProvider::~MetricsProvider() {
 }
 
+void MetricsProvider::Init() {
+}
+
 void MetricsProvider::OnDidCreateMetricsLog() {
 }
 
@@ -19,6 +22,9 @@ void MetricsProvider::OnRecordingEnabled() {
 }
 
 void MetricsProvider::OnRecordingDisabled() {
+}
+
+void MetricsProvider::OnAppEnterBackground() {
 }
 
 void MetricsProvider::ProvideSystemProfileMetrics(
@@ -42,6 +48,17 @@ void MetricsProvider::ClearSavedStabilityMetrics() {
 
 void MetricsProvider::ProvideGeneralMetrics(
     ChromeUserMetricsExtension* uma_proto) {
+}
+
+void MetricsProvider::MergeHistogramDeltas() {
+}
+
+void MetricsProvider::RecordHistogramSnapshots(
+    base::HistogramSnapshotManager* snapshot_manager) {
+}
+
+void MetricsProvider::RecordInitialHistogramSnapshots(
+    base::HistogramSnapshotManager* snapshot_manager) {
 }
 
 }  // namespace metrics

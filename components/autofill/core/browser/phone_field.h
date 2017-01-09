@@ -5,11 +5,14 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_PHONE_FIELD_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_PHONE_FIELD_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/form_field.h"
 #include "components/autofill/core/browser/phone_number.h"
@@ -27,11 +30,10 @@ class PhoneField : public FormField {
  public:
   ~PhoneField() override;
 
-  static scoped_ptr<FormField> Parse(AutofillScanner* scanner);
+  static std::unique_ptr<FormField> Parse(AutofillScanner* scanner);
 
  protected:
-  // FormField:
-  bool ClassifyField(ServerFieldTypeMap* map) const override;
+  void AddClassifications(FieldCandidatesMap* field_candidates) const override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(PhoneFieldTest, ParseOneLinePhone);

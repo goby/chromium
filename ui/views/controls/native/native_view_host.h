@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/view.h"
 
@@ -107,7 +108,7 @@ class VIEWS_EXPORT NativeViewHost : public View {
 
   // A platform-specific wrapper that does the OS-level manipulation of the
   // attached gfx::NativeView.
-  scoped_ptr<NativeViewHostWrapper> native_wrapper_;
+  std::unique_ptr<NativeViewHostWrapper> native_wrapper_;
 
   // The preferred size of this View
   gfx::Size preferred_size_;

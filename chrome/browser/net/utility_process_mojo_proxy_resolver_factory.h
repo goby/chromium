@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_NET_UTILITY_PROCESS_MOJO_PROXY_RESOLVER_FACTORY_H_
 #define CHROME_BROWSER_NET_UTILITY_PROCESS_MOJO_PROXY_RESOLVER_FACTORY_H_
 
+#include <stddef.h>
+
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
@@ -29,8 +31,8 @@ class UtilityProcessMojoProxyResolverFactory
   static UtilityProcessMojoProxyResolverFactory* GetInstance();
 
   // Overridden from net::MojoProxyResolverFactory:
-  scoped_ptr<base::ScopedClosureRunner> CreateResolver(
-      const mojo::String& pac_script,
+  std::unique_ptr<base::ScopedClosureRunner> CreateResolver(
+      const std::string& pac_script,
       mojo::InterfaceRequest<net::interfaces::ProxyResolver> req,
       net::interfaces::ProxyResolverFactoryRequestClientPtr client) override;
 

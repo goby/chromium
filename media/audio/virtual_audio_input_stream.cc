@@ -10,42 +10,9 @@
 #include "base/bind.h"
 #include "base/single_thread_task_runner.h"
 #include "media/audio/virtual_audio_output_stream.h"
+#include "media/base/loopback_audio_converter.h"
 
 namespace media {
-
-// LoopbackAudioConverter works similar to AudioConverter and converts input
-// streams to different audio parameters. Then, the LoopbackAudioConverter can
-// be used as an input to another AudioConverter. This allows us to
-// use converted audio from AudioOutputStreams as input to an AudioConverter.
-// For example, this allows converting multiple streams into a common format and
-// using the converted audio as input to another AudioConverter (i.e. a mixer).
-class LoopbackAudioConverter : public AudioConverter::InputCallback {
- public:
-  LoopbackAudioConverter(const AudioParameters& input_params,
-                         const AudioParameters& output_params)
-      : audio_converter_(input_params, output_params, false) {}
-
-  ~LoopbackAudioConverter() override {}
-
-  void AddInput(AudioConverter::InputCallback* input) {
-    audio_converter_.AddInput(input);
-  }
-
-  void RemoveInput(AudioConverter::InputCallback* input) {
-    audio_converter_.RemoveInput(input);
-  }
-
- private:
-  double ProvideInput(AudioBus* audio_bus,
-                      base::TimeDelta buffer_delay) override {
-    audio_converter_.ConvertWithDelay(buffer_delay, audio_bus);
-    return 1.0;
-  }
-
-  AudioConverter audio_converter_;
-
-  DISALLOW_COPY_AND_ASSIGN(LoopbackAudioConverter);
-};
 
 VirtualAudioInputStream::VirtualAudioInputStream(
     const AudioParameters& params,
@@ -54,7 +21,6 @@ VirtualAudioInputStream::VirtualAudioInputStream(
     : worker_task_runner_(worker_task_runner),
       after_close_cb_(after_close_cb),
       callback_(NULL),
-      buffer_(new uint8[params.GetBytesPerBuffer()]),
       params_(params),
       mixer_(params_, params_, false),
       num_attached_output_streams_(0),
@@ -83,7 +49,6 @@ VirtualAudioInputStream::~VirtualAudioInputStream() {
 
 bool VirtualAudioInputStream::Open() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  memset(buffer_.get(), 0, params_.GetBytesPerBuffer());
   return true;
 }
 
@@ -100,34 +65,36 @@ void VirtualAudioInputStream::Stop() {
   callback_ = NULL;
 }
 
-void VirtualAudioInputStream::AddOutputStream(
-    VirtualAudioOutputStream* stream, const AudioParameters& output_params) {
+void VirtualAudioInputStream::AddInputProvider(
+    AudioConverter::InputCallback* input,
+    const AudioParameters& params) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   base::AutoLock scoped_lock(converter_network_lock_);
 
-  AudioConvertersMap::iterator converter = converters_.find(output_params);
+  AudioConvertersMap::iterator converter = converters_.find(params);
   if (converter == converters_.end()) {
-    std::pair<AudioConvertersMap::iterator, bool> result = converters_.insert(
-        std::make_pair(output_params,
-                       new LoopbackAudioConverter(output_params, params_)));
+    std::pair<AudioConvertersMap::iterator, bool> result =
+        converters_.insert(std::make_pair(
+            params, new LoopbackAudioConverter(params, params_, false)));
     converter = result.first;
 
     // Add to main mixer if we just added a new AudioTransform.
     mixer_.AddInput(converter->second);
   }
-  converter->second->AddInput(stream);
+  converter->second->AddInput(input);
   ++num_attached_output_streams_;
 }
 
-void VirtualAudioInputStream::RemoveOutputStream(
-    VirtualAudioOutputStream* stream, const AudioParameters& output_params) {
+void VirtualAudioInputStream::RemoveInputProvider(
+    AudioConverter::InputCallback* input,
+    const AudioParameters& params) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   base::AutoLock scoped_lock(converter_network_lock_);
 
-  DCHECK(converters_.find(output_params) != converters_.end());
-  converters_[output_params]->RemoveInput(stream);
+  DCHECK(converters_.find(params) != converters_.end());
+  converters_[params]->RemoveInput(input);
 
   --num_attached_output_streams_;
   DCHECK_LE(0, num_attached_output_streams_);
@@ -140,7 +107,7 @@ void VirtualAudioInputStream::PumpAudio() {
     base::AutoLock scoped_lock(converter_network_lock_);
     // Because the audio is being looped-back, the delay until it will be played
     // out is zero.
-    mixer_.ConvertWithDelay(base::TimeDelta(), audio_bus_.get());
+    mixer_.ConvertWithDelay(0, audio_bus_.get());
   }
   // Because the audio is being looped-back, the delay since since it was
   // recorded is zero.

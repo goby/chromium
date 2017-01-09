@@ -5,9 +5,10 @@
 #ifndef UI_MESSAGE_CENTER_FAKE_MESSAGE_CENTER_TRAY_DELEGATE_H_
 #define UI_MESSAGE_CENTER_FAKE_MESSAGE_CENTER_TRAY_DELEGATE_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/message_center/message_center_tray_delegate.h"
 
 namespace message_center {
@@ -32,9 +33,8 @@ class FakeMessageCenterTrayDelegate : public MessageCenterTrayDelegate {
   MessageCenterTray* GetMessageCenterTray() override;
 
  private:
-  scoped_ptr<MessageCenterTray> tray_;
+  std::unique_ptr<MessageCenterTray> tray_;
   base::Closure quit_closure_;
-  bool displayed_first_run_balloon_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeMessageCenterTrayDelegate);
 };

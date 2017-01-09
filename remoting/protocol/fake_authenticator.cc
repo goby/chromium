@@ -4,8 +4,11 @@
 
 #include "remoting/protocol/fake_authenticator.h"
 
+#include <utility>
+
 #include "base/base64.h"
 #include "base/callback_helpers.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -22,22 +25,18 @@ namespace protocol {
 FakeChannelAuthenticator::FakeChannelAuthenticator(bool accept, bool async)
     : result_(accept ? net::OK : net::ERR_FAILED),
       async_(async),
-      did_read_bytes_(false),
-      did_write_bytes_(false),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
-FakeChannelAuthenticator::~FakeChannelAuthenticator() {
-}
+FakeChannelAuthenticator::~FakeChannelAuthenticator() {}
 
 void FakeChannelAuthenticator::SecureAndAuthenticate(
-    scoped_ptr<P2PStreamSocket> socket,
+    std::unique_ptr<P2PStreamSocket> socket,
     const DoneCallback& done_callback) {
-  socket_ = socket.Pass();
+  socket_ = std::move(socket);
+
+  done_callback_ = done_callback;
 
   if (async_) {
-    done_callback_ = done_callback;
-
     if (result_ != net::OK) {
       // Don't write anything if we are going to reject auth to make test
       // ordering deterministic.
@@ -87,30 +86,31 @@ void FakeChannelAuthenticator::OnAuthBytesRead(int result) {
 void FakeChannelAuthenticator::CallDoneCallback() {
   if (result_ != net::OK)
     socket_.reset();
-  base::ResetAndReturn(&done_callback_).Run(result_, socket_.Pass());
+  base::ResetAndReturn(&done_callback_).Run(result_, std::move(socket_));
 }
 
 FakeAuthenticator::FakeAuthenticator(Type type,
                                      int round_trips,
                                      Action action,
                                      bool async)
-    : type_(type),
-      round_trips_(round_trips),
-      action_(action),
-      async_(async),
-      messages_(0),
-      messages_till_started_(0) {
-}
+    : type_(type), round_trips_(round_trips), action_(action), async_(async) {}
 
-FakeAuthenticator::~FakeAuthenticator() {
-}
+FakeAuthenticator::~FakeAuthenticator() {}
 
 void FakeAuthenticator::set_messages_till_started(int messages) {
   messages_till_started_ = messages;
 }
 
+void FakeAuthenticator::Resume() {
+  base::ResetAndReturn(&resume_closure_).Run();
+}
+
 Authenticator::State FakeAuthenticator::state() const {
   EXPECT_LE(messages_, round_trips_ * 2);
+
+  if (messages_ == pause_message_index_ && !resume_closure_.is_null())
+    return PROCESSING_MESSAGE;
+
   if (messages_ >= round_trips_ * 2) {
     if (action_ == REJECT) {
       return REJECTED;
@@ -160,13 +160,17 @@ void FakeAuthenticator::ProcessMessage(const buzz::XmlElement* message,
   }
 
   ++messages_;
+  if (messages_ == pause_message_index_) {
+    resume_closure_ = resume_callback;
+    return;
+  }
   resume_callback.Run();
 }
 
-scoped_ptr<buzz::XmlElement> FakeAuthenticator::GetNextMessage() {
+std::unique_ptr<buzz::XmlElement> FakeAuthenticator::GetNextMessage() {
   EXPECT_EQ(MESSAGE_READY, state());
 
-  scoped_ptr<buzz::XmlElement> result(new buzz::XmlElement(
+  std::unique_ptr<buzz::XmlElement> result(new buzz::XmlElement(
       buzz::QName(kChromotingXmlNamespace, "authentication")));
   buzz::XmlElement* id = new buzz::XmlElement(
       buzz::QName(kChromotingXmlNamespace, "id"));
@@ -185,42 +189,41 @@ scoped_ptr<buzz::XmlElement> FakeAuthenticator::GetNextMessage() {
   }
 
   ++messages_;
-  return result.Pass();
+  return result;
 }
 
 const std::string& FakeAuthenticator::GetAuthKey() const {
   EXPECT_EQ(ACCEPTED, state());
+  DCHECK(!auth_key_.empty());
   return auth_key_;
 }
 
-scoped_ptr<ChannelAuthenticator>
+std::unique_ptr<ChannelAuthenticator>
 FakeAuthenticator::CreateChannelAuthenticator() const {
   EXPECT_EQ(ACCEPTED, state());
-  return make_scoped_ptr(
-      new FakeChannelAuthenticator(action_ != REJECT_CHANNEL, async_));
+  return base::MakeUnique<FakeChannelAuthenticator>(action_ != REJECT_CHANNEL,
+                                                    async_);
 }
 
 FakeHostAuthenticatorFactory::FakeHostAuthenticatorFactory(
-    int round_trips, int messages_till_started,
-    FakeAuthenticator::Action action, bool async)
+    int round_trips,
+    int messages_till_started,
+    FakeAuthenticator::Action action,
+    bool async)
     : round_trips_(round_trips),
       messages_till_started_(messages_till_started),
-      action_(action), async_(async) {
-}
+      action_(action),
+      async_(async) {}
+FakeHostAuthenticatorFactory::~FakeHostAuthenticatorFactory() {}
 
-FakeHostAuthenticatorFactory::~FakeHostAuthenticatorFactory() {
-}
-
-scoped_ptr<Authenticator> FakeHostAuthenticatorFactory::CreateAuthenticator(
+std::unique_ptr<Authenticator>
+FakeHostAuthenticatorFactory::CreateAuthenticator(
     const std::string& local_jid,
-    const std::string& remote_jid,
-    const buzz::XmlElement* first_message) {
-  FakeAuthenticator* authenticator = new FakeAuthenticator(
-      FakeAuthenticator::HOST, round_trips_, action_, async_);
+    const std::string& remote_jid) {
+  std::unique_ptr<FakeAuthenticator> authenticator(new FakeAuthenticator(
+      FakeAuthenticator::HOST, round_trips_, action_, async_));
   authenticator->set_messages_till_started(messages_till_started_);
-
-  scoped_ptr<Authenticator> result(authenticator);
-  return result.Pass();
+  return std::move(authenticator);
 }
 
 }  // namespace protocol

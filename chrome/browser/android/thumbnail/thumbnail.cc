@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/android/thumbnail/thumbnail.h"
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/thread_task_runner_handle.h"
-#include "chrome/browser/android/thumbnail/thumbnail.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/android/resources/ui_resource_provider.h"
@@ -16,9 +18,9 @@ namespace {
 
 SkBitmap CreateSmallHolderBitmap() {
   SkBitmap small_bitmap;
-  SkCanvas canvas(small_bitmap);
   small_bitmap.allocPixels(
       SkImageInfo::Make(1, 1, kRGBA_8888_SkColorType, kOpaque_SkAlphaType));
+  SkCanvas canvas(small_bitmap);
   canvas.drawColor(SK_ColorWHITE);
   small_bitmap.setImmutable();
   return small_bitmap;
@@ -26,13 +28,13 @@ SkBitmap CreateSmallHolderBitmap() {
 
 }  // anonymous namespace
 
-scoped_ptr<Thumbnail> Thumbnail::Create(
+std::unique_ptr<Thumbnail> Thumbnail::Create(
     TabId tab_id,
     const base::Time& time_stamp,
     float scale,
     ui::UIResourceProvider* ui_resource_provider,
     ThumbnailDelegate* thumbnail_delegate) {
-  return make_scoped_ptr(new Thumbnail(
+  return base::WrapUnique(new Thumbnail(
       tab_id, time_stamp, scale, ui_resource_provider, thumbnail_delegate));
 }
 
@@ -66,7 +68,7 @@ void Thumbnail::SetBitmap(const SkBitmap& bitmap) {
   bitmap_ = cc::UIResourceBitmap(bitmap);
 }
 
-void Thumbnail::SetCompressedBitmap(skia::RefPtr<SkPixelRef> compressed_bitmap,
+void Thumbnail::SetCompressedBitmap(sk_sp<SkPixelRef> compressed_bitmap,
                                     const gfx::Size& content_size) {
   DCHECK(compressed_bitmap);
   DCHECK(!content_size.IsEmpty());
@@ -76,7 +78,7 @@ void Thumbnail::SetCompressedBitmap(skia::RefPtr<SkPixelRef> compressed_bitmap,
                       compressed_bitmap->info().height());
   scaled_content_size_ = gfx::ScaleSize(gfx::SizeF(content_size), 1.f / scale_);
   scaled_data_size_ = gfx::ScaleSize(gfx::SizeF(data_size), 1.f / scale_);
-  bitmap_ = cc::UIResourceBitmap(compressed_bitmap, data_size);
+  bitmap_ = cc::UIResourceBitmap(std::move(compressed_bitmap), data_size);
 }
 
 void Thumbnail::CreateUIResource() {

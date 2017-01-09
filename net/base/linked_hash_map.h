@@ -12,15 +12,19 @@
 // Iterators should be stable in the face of mutations, except for an
 // iterator pointing to an element that was just deleted.
 
-#ifndef UTIL_GTL_LINKED_HASH_MAP_H_
-#define UTIL_GTL_LINKED_HASH_MAP_H_
+#ifndef NET_BASE_LINKED_HASH_MAP_H_
+#define NET_BASE_LINKED_HASH_MAP_H_
+
+#include <stddef.h>
 
 #include <list>
+#include <unordered_map>
 #include <utility>
 
-#include "base/containers/hash_tables.h"
 #include "base/logging.h"
 #include "base/macros.h"
+
+namespace net {
 
 // This holds a list of pair<Key, Value> items.  This list is what gets
 // traversed, and it's iterators from this list that we return from
@@ -28,11 +32,11 @@
 //
 // We also keep a map<Key, list::iterator> for find.  Since std::list is a
 // doubly-linked list, the iterators should remain stable.
-template<class Key, class Value>
+template <class Key, class Value, class Hash = std::hash<Key>>
 class linked_hash_map {
  private:
   typedef std::list<std::pair<Key, Value> > ListType;
-  typedef base::hash_map<Key, typename ListType::iterator> MapType;
+  typedef std::unordered_map<Key, typename ListType::iterator, Hash> MapType;
 
  public:
   typedef typename ListType::iterator iterator;
@@ -112,6 +116,9 @@ class linked_hash_map {
   bool empty() const {
     return list_.empty();
   }
+
+  // Removes the first element from the list.
+  void pop_front() { erase(begin()); }
 
   // Erases values with the provided key.  Returns the number of elements
   // erased.  In this implementation, this will be 0 or 1.
@@ -222,6 +229,19 @@ class linked_hash_map {
     return list_.size();
   }
 
+  template <typename... Args>
+  std::pair<iterator, bool> emplace(Args&&... args) {
+    ListType node_donor;
+    auto node_pos =
+        node_donor.emplace(node_donor.end(), std::forward<Args>(args)...);
+    const auto& k = node_pos->first;
+    auto ins = map_.insert({k, node_pos});
+    if (!ins.second)
+      return {ins.first->second, false};
+    list_.splice(list_.end(), node_donor, node_pos);
+    return {ins.first->second, true};
+  }
+
   void swap(linked_hash_map& other) {
     map_.swap(other.map_);
     list_.swap(other.list_);
@@ -239,4 +259,6 @@ class linked_hash_map {
   DISALLOW_COPY_AND_ASSIGN(linked_hash_map);
 };
 
-#endif  // UTIL_GTL_LINKED_HASH_MAP_H_
+}  // namespace net
+
+#endif  // NET_BASE_LINKED_HASH_MAP_H_

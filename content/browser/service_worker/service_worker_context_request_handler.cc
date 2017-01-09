@@ -60,7 +60,7 @@ net::URLRequestJob* ServiceWorkerContextRequestHandler::MaybeCreateJob(
         context_->GetLiveRegistration(version_->registration_id());
     DCHECK(registration);  // We're registering or updating so must be there.
 
-    int64 resource_id = context_->storage()->NewResourceId();
+    int64_t resource_id = context_->storage()->NewResourceId();
     if (resource_id == kInvalidServiceWorkerResourceId)
       return NULL;
 
@@ -78,18 +78,22 @@ net::URLRequestJob* ServiceWorkerContextRequestHandler::MaybeCreateJob(
     ServiceWorkerVersion* stored_version = registration->waiting_version()
                                                ? registration->waiting_version()
                                                : registration->active_version();
-    int64 incumbent_resource_id = kInvalidServiceWorkerResourceId;
+    int64_t incumbent_resource_id = kInvalidServiceWorkerResourceId;
     if (stored_version && stored_version->script_url() == request->url()) {
       incumbent_resource_id =
           stored_version->script_cache_map()->LookupResourceId(request->url());
     }
+    if (resource_type_ == RESOURCE_TYPE_SERVICE_WORKER)
+      version_->embedded_worker()->OnURLJobCreatedForMainScript();
     return new ServiceWorkerWriteToCacheJob(
         request, network_delegate, resource_type_, context_, version_.get(),
         extra_load_flags, resource_id, incumbent_resource_id);
   }
 
-  int64 resource_id = kInvalidServiceWorkerResourceId;
+  int64_t resource_id = kInvalidServiceWorkerResourceId;
   if (ShouldReadFromScriptCache(request->url(), &resource_id)) {
+    if (resource_type_ == RESOURCE_TYPE_SERVICE_WORKER)
+      version_->embedded_worker()->OnURLJobCreatedForMainScript();
     return new ServiceWorkerReadFromCacheJob(request, network_delegate,
                                              resource_type_, context_, version_,
                                              resource_id);
@@ -97,15 +101,6 @@ net::URLRequestJob* ServiceWorkerContextRequestHandler::MaybeCreateJob(
 
   // NULL means use the network.
   return NULL;
-}
-
-void ServiceWorkerContextRequestHandler::GetExtraResponseInfo(
-    ResourceResponseInfo* response_info) const {
-  response_info->was_fetched_via_service_worker = false;
-  response_info->was_fallback_required_by_service_worker = false;
-  response_info->original_url_via_service_worker = GURL();
-  response_info->response_type_via_service_worker =
-      blink::WebServiceWorkerResponseTypeDefault;
 }
 
 bool ServiceWorkerContextRequestHandler::ShouldAddToScriptCache(
@@ -121,7 +116,7 @@ bool ServiceWorkerContextRequestHandler::ShouldAddToScriptCache(
 
 bool ServiceWorkerContextRequestHandler::ShouldReadFromScriptCache(
     const GURL& url,
-    int64* resource_id_out) {
+    int64_t* resource_id_out) {
   // We don't read from the script cache until the version is INSTALLED.
   if (version_->status() == ServiceWorkerVersion::NEW ||
       version_->status() == ServiceWorkerVersion::INSTALLING)

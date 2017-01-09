@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/device/input_service_proxy.h"
 
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/task_runner_util.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -86,8 +87,7 @@ class InputServiceProxy::ServiceObserver : public InputServiceLinux::Observer {
 
 InputServiceProxy::InputServiceProxy()
     : service_observer_(new ServiceObserver()),
-      task_runner_(BrowserThread::GetMessageLoopProxyForThread(
-          thread_identifier_)),
+      task_runner_(BrowserThread::GetTaskRunnerForThread(thread_identifier_)),
       weak_factory_(this) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   task_runner_->PostTask(
@@ -146,12 +146,14 @@ void InputServiceProxy::SetThreadIdForTesting(BrowserThread::ID thread_id) {
 void InputServiceProxy::OnDeviceAdded(
     const InputServiceLinux::InputDeviceInfo& info) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(Observer, observers_, OnInputDeviceAdded(info));
+  for (auto& observer : observers_)
+    observer.OnInputDeviceAdded(info);
 }
 
 void InputServiceProxy::OnDeviceRemoved(const std::string& id) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(Observer, observers_, OnInputDeviceRemoved(id));
+  for (auto& observer : observers_)
+    observer.OnInputDeviceRemoved(id);
 }
 
 }  // namespace chromeos

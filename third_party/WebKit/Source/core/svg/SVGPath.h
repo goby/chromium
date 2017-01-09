@@ -31,59 +31,60 @@
 #ifndef SVGPath_h
 #define SVGPath_h
 
+#include "core/css/CSSPathValue.h"
+#include "core/svg/SVGParsingError.h"
 #include "core/svg/SVGPathByteStream.h"
 #include "core/svg/properties/SVGProperty.h"
 
 namespace blink {
 
-class ExceptionState;
-class Path;
+class SVGPath final : public SVGPropertyBase {
+ public:
+  typedef void TearOffType;
 
-class SVGPath : public SVGPropertyBase {
-public:
-    typedef void TearOffType;
+  static SVGPath* create() { return new SVGPath(); }
+  static SVGPath* create(CSSPathValue* pathValue) {
+    return new SVGPath(pathValue);
+  }
 
-    static PassRefPtrWillBeRawPtr<SVGPath> create()
-    {
-        return adoptRefWillBeNoop(new SVGPath());
-    }
-    static PassRefPtrWillBeRawPtr<SVGPath> create(PassOwnPtr<SVGPathByteStream> pathByteStream)
-    {
-        return adoptRefWillBeNoop(new SVGPath(pathByteStream));
-    }
+  ~SVGPath() override;
 
-    ~SVGPath() override;
+  const SVGPathByteStream& byteStream() const {
+    return m_pathValue->byteStream();
+  }
+  StylePath* stylePath() const { return m_pathValue->stylePath(); }
+  CSSPathValue* pathValue() const { return m_pathValue.get(); }
 
-    const Path& path() const;
+  // SVGPropertyBase:
+  SVGPath* clone() const;
+  SVGPropertyBase* cloneForAnimation(const String&) const override;
+  String valueAsString() const override;
+  SVGParsingError setValueAsString(const String&);
 
-    const SVGPathByteStream& byteStream() const;
+  void add(SVGPropertyBase*, SVGElement*) override;
+  void calculateAnimatedValue(SVGAnimationElement*,
+                              float percentage,
+                              unsigned repeatCount,
+                              SVGPropertyBase* fromValue,
+                              SVGPropertyBase* toValue,
+                              SVGPropertyBase* toAtEndOfDurationValue,
+                              SVGElement*) override;
+  float calculateDistance(SVGPropertyBase* to, SVGElement*) override;
 
-    // SVGPropertyBase:
-    PassRefPtrWillBeRawPtr<SVGPath> clone() const;
-    PassRefPtrWillBeRawPtr<SVGPropertyBase> cloneForAnimation(const String&) const override;
-    String valueAsString() const override;
-    void setValueAsString(const String&, ExceptionState&);
+  static AnimatedPropertyType classType() { return AnimatedPath; }
+  AnimatedPropertyType type() const override { return classType(); }
 
-    void add(PassRefPtrWillBeRawPtr<SVGPropertyBase>, SVGElement*) override;
-    void calculateAnimatedValue(SVGAnimationElement*, float percentage, unsigned repeatCount, PassRefPtrWillBeRawPtr<SVGPropertyBase> fromValue, PassRefPtrWillBeRawPtr<SVGPropertyBase> toValue, PassRefPtrWillBeRawPtr<SVGPropertyBase> toAtEndOfDurationValue, SVGElement*) override;
-    float calculateDistance(PassRefPtrWillBeRawPtr<SVGPropertyBase> to, SVGElement*) override;
+  DECLARE_VIRTUAL_TRACE();
 
-    static AnimatedPropertyType classType() { return AnimatedPath; }
+ private:
+  SVGPath();
+  explicit SVGPath(CSSPathValue*);
 
-private:
-    SVGPath();
-    explicit SVGPath(PassOwnPtr<SVGPathByteStream>);
-
-    SVGPathByteStream& ensureByteStream();
-    void byteStreamChanged();
-    void setValueAsByteStream(PassOwnPtr<SVGPathByteStream>);
-
-    OwnPtr<SVGPathByteStream> m_byteStream;
-    mutable OwnPtr<Path> m_cachedPath;
+  Member<CSSPathValue> m_pathValue;
 };
 
 DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGPath);
 
-} // namespace blink
+}  // namespace blink
 
 #endif

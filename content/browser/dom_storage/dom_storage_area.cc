@@ -4,20 +4,27 @@
 
 #include "content/browser/dom_storage/dom_storage_area.h"
 
+#include <inttypes.h>
+
 #include <algorithm>
+#include <cctype>  // for std::isalnum
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process_info.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/process_memory_dump.h"
 #include "content/browser/dom_storage/dom_storage_namespace.h"
 #include "content/browser/dom_storage/dom_storage_task_runner.h"
 #include "content/browser/dom_storage/local_storage_database_adapter.h"
 #include "content/browser/dom_storage/session_storage_database.h"
 #include "content/browser/dom_storage/session_storage_database_adapter.h"
+#include "content/browser/leveldb_wrapper_impl.h"
 #include "content/common/dom_storage/dom_storage_map.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "content/public/browser/browser_thread.h"
@@ -94,6 +101,7 @@ GURL DOMStorageArea::OriginFromDatabaseFileName(const base::FilePath& name) {
 
 void DOMStorageArea::EnableAggressiveCommitDelay() {
   s_aggressive_flushing_enabled_ = true;
+  LevelDBWrapperImpl::EnableAggressiveCommitDelay();
 }
 
 DOMStorageArea::DOMStorageArea(const GURL& origin,
@@ -118,7 +126,7 @@ DOMStorageArea::DOMStorageArea(const GURL& origin,
   }
 }
 
-DOMStorageArea::DOMStorageArea(int64 namespace_id,
+DOMStorageArea::DOMStorageArea(int64_t namespace_id,
                                const std::string& persistent_namespace_id,
                                const GURL& origin,
                                SessionStorageDatabase* session_storage_backing,
@@ -187,7 +195,8 @@ bool DOMStorageArea::SetItem(const base::string16& key,
   if (success && backing_ &&
       (old_value->is_null() || old_value->string() != value)) {
     CommitBatch* commit_batch = CreateCommitBatchIfNeeded();
-    commit_batch->changed_values[key] = base::NullableString16(value, false);
+    // Values are populated later to avoid holding duplicate memory.
+    commit_batch->changed_values[key] = base::NullableString16();
   }
   return success;
 }
@@ -247,7 +256,7 @@ void DOMStorageArea::FastClear() {
 }
 
 DOMStorageArea* DOMStorageArea::ShallowCopy(
-    int64 destination_namespace_id,
+    int64_t destination_namespace_id,
     const std::string& destination_persistent_namespace_id) {
   DCHECK_NE(kLocalStorageNamespaceId, namespace_id_);
   DCHECK_NE(kLocalStorageNamespaceId, destination_namespace_id);
@@ -317,8 +326,15 @@ void DOMStorageArea::PurgeMemory() {
 }
 
 void DOMStorageArea::Shutdown() {
-  DCHECK(!is_shutdown_);
+  if (is_shutdown_)
+    return;
   is_shutdown_ = true;
+
+  if (commit_batch_) {
+    DCHECK(backing_);
+    PopulateCommitBatchValues();
+  }
+
   map_ = NULL;
   if (!backing_)
     return;
@@ -328,6 +344,51 @@ void DOMStorageArea::Shutdown() {
       DOMStorageTaskRunner::COMMIT_SEQUENCE,
       base::Bind(&DOMStorageArea::ShutdownInCommitSequence, this));
   DCHECK(success);
+}
+
+void DOMStorageArea::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) {
+  task_runner_->AssertIsRunningOnPrimarySequence();
+  if (!is_initial_import_done_)
+    return;
+
+  // Limit the url length to 50 and strip special characters.
+  std::string url = origin_.spec().substr(0, 50);
+  for (size_t index = 0; index < url.size(); ++index) {
+    if (!std::isalnum(url[index]))
+      url[index] = '_';
+  }
+  std::string name =
+      base::StringPrintf("dom_storage/%s/0x%" PRIXPTR, url.c_str(),
+                         reinterpret_cast<uintptr_t>(this));
+
+  const char* system_allocator_name =
+      base::trace_event::MemoryDumpManager::GetInstance()
+          ->system_allocator_pool_name();
+  if (commit_batch_) {
+    auto* commit_batch_mad = pmd->CreateAllocatorDump(name + "/commit_batch");
+    commit_batch_mad->AddScalar(
+        base::trace_event::MemoryAllocatorDump::kNameSize,
+        base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+        commit_batch_->GetDataSize());
+    if (system_allocator_name)
+      pmd->AddSuballocation(commit_batch_mad->guid(), system_allocator_name);
+  }
+
+  // Report memory usage for local storage backing. The session storage usage
+  // will be reported by DOMStorageContextImpl.
+  if (namespace_id_ == kLocalStorageNamespaceId && backing_)
+    backing_->ReportMemoryUsage(pmd, name + "/local_storage");
+
+  // Do not add storage map usage if less than 1KB.
+  if (map_->bytes_used() < 1024)
+    return;
+
+  auto* map_mad = pmd->CreateAllocatorDump(name + "/storage_map");
+  map_mad->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                     base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                     map_->bytes_used());
+  if (system_allocator_name)
+    pmd->AddSuballocation(map_mad->guid(), system_allocator_name);
 }
 
 void DOMStorageArea::InitialImportIfNeeded() {
@@ -351,7 +412,7 @@ void DOMStorageArea::InitialImportIfNeeded() {
   // above what we see in practice, since histograms can't change.
   UMA_HISTOGRAM_CUSTOM_COUNTS("LocalStorage.BrowserLocalStorageSizeInKB",
                               local_storage_size_kb,
-                              0, 6 * 1024, 50);
+                              1, 6 * 1024, 50);
   if (local_storage_size_kb < 100) {
     UMA_HISTOGRAM_TIMES(
         "LocalStorage.BrowserTimeToPrimeLocalStorageUnder100KB",
@@ -376,6 +437,12 @@ DOMStorageArea::CommitBatch* DOMStorageArea::CreateCommitBatchIfNeeded() {
         base::Bind(&DOMStorageArea::StartCommitTimer, this));
   }
   return commit_batch_.get();
+}
+
+void DOMStorageArea::PopulateCommitBatchValues() {
+  task_runner_->AssertIsRunningOnPrimarySequence();
+  for (auto& key_value : commit_batch_->changed_values)
+    key_value.second = map_->GetItem(key_value.first);
 }
 
 void DOMStorageArea::StartCommitTimer() {
@@ -424,12 +491,13 @@ void DOMStorageArea::PostCommitTask() {
 
   DCHECK(backing_.get());
 
+  PopulateCommitBatchValues();
   commit_rate_limiter_.add_samples(1);
   data_rate_limiter_.add_samples(commit_batch_->GetDataSize());
 
   // This method executes on the primary sequence, we schedule
   // a task for immediate execution on the commit sequence.
-  DCHECK(task_runner_->IsRunningOnPrimarySequence());
+  task_runner_->AssertIsRunningOnPrimarySequence();
   bool success = task_runner_->PostShutdownBlockingTask(
       FROM_HERE,
       DOMStorageTaskRunner::COMMIT_SEQUENCE,
@@ -441,7 +509,7 @@ void DOMStorageArea::PostCommitTask() {
 
 void DOMStorageArea::CommitChanges(const CommitBatch* commit_batch) {
   // This method executes on the commit sequence.
-  DCHECK(task_runner_->IsRunningOnCommitSequence());
+  task_runner_->AssertIsRunningOnCommitSequence();
   backing_->CommitChanges(commit_batch->clear_all_first,
                           commit_batch->changed_values);
   // TODO(michaeln): what if CommitChanges returns false (e.g., we're trying to
@@ -453,7 +521,7 @@ void DOMStorageArea::CommitChanges(const CommitBatch* commit_batch) {
 
 void DOMStorageArea::OnCommitComplete() {
   // We're back on the primary sequence in this method.
-  DCHECK(task_runner_->IsRunningOnPrimarySequence());
+  task_runner_->AssertIsRunningOnPrimarySequence();
   --commit_batches_in_flight_;
   if (is_shutdown_)
     return;
@@ -467,7 +535,7 @@ void DOMStorageArea::OnCommitComplete() {
 
 void DOMStorageArea::ShutdownInCommitSequence() {
   // This method executes on the commit sequence.
-  DCHECK(task_runner_->IsRunningOnCommitSequence());
+  task_runner_->AssertIsRunningOnCommitSequence();
   DCHECK(backing_.get());
   if (commit_batch_) {
     // Commit any changes that accrued prior to the timer firing.

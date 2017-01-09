@@ -5,8 +5,10 @@
 #ifndef BASE_DEBUG_TASK_ANNOTATOR_H_
 #define BASE_DEBUG_TASK_ANNOTATOR_H_
 
+#include <stdint.h>
+
 #include "base/base_export.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace base {
 struct PendingTask;
@@ -26,21 +28,16 @@ class BASE_EXPORT TaskAnnotator {
 
   // Run a previously queued task. |queue_function| should match what was
   // passed into |DidQueueTask| for this task.
-  void RunTask(const char* queue_function, const PendingTask& pending_task);
+  void RunTask(const char* queue_function, PendingTask* pending_task);
 
  private:
   // Creates a process-wide unique ID to represent this task in trace events.
   // This will be mangled with a Process ID hash to reduce the likelyhood of
   // colliding with TaskAnnotator pointers on other processes.
-  uint64 GetTaskTraceID(const PendingTask& task) const;
+  uint64_t GetTaskTraceID(const PendingTask& task) const;
 
   DISALLOW_COPY_AND_ASSIGN(TaskAnnotator);
 };
-
-#define TRACE_TASK_EXECUTION(run_function, task)           \
-  TRACE_EVENT2("toplevel", (run_function), "src_file",     \
-               (task).posted_from.file_name(), "src_func", \
-               (task).posted_from.function_name());
 
 }  // namespace debug
 }  // namespace base

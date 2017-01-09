@@ -6,13 +6,13 @@
 #define COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_REGISTRY_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/content_settings/core/browser/content_settings_info.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/website_settings_info.h"
@@ -29,7 +29,8 @@ class WebsiteSettingsRegistry;
 // const.
 class ContentSettingsRegistry {
  public:
-  using Map = std::map<ContentSettingsType, scoped_ptr<ContentSettingsInfo>>;
+  using Map =
+      std::map<ContentSettingsType, std::unique_ptr<ContentSettingsInfo>>;
   using const_iterator = MapValueIterator<typename Map::const_iterator,
                                           const ContentSettingsInfo*>;
 
@@ -53,6 +54,8 @@ class ContentSettingsRegistry {
 
   void Init();
 
+  typedef uint32_t Platforms;
+
   // Register a new content setting. This maps an origin to an ALLOW/ASK/BLOCK
   // value (see the ContentSetting enum).
   void Register(ContentSettingsType type,
@@ -61,7 +64,9 @@ class ContentSettingsRegistry {
                 WebsiteSettingsInfo::SyncStatus sync_status,
                 const std::vector<std::string>& whitelisted_schemes,
                 const std::set<ContentSetting>& valid_settings,
-                WebsiteSettingsInfo::ScopingType scoping_type);
+                WebsiteSettingsInfo::ScopingType scoping_type,
+                Platforms platforms,
+                ContentSettingsInfo::IncognitoBehavior incognito_behavior);
 
   Map content_settings_info_;
   WebsiteSettingsRegistry* website_settings_registry_;

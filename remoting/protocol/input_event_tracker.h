@@ -5,10 +5,12 @@
 #ifndef REMOTING_PROTOCOL_INPUT_EVENT_TRACKER_H_
 #define REMOTING_PROTOCOL_INPUT_EVENT_TRACKER_H_
 
+#include <stdint.h>
+
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "remoting/protocol/input_stub.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -21,8 +23,13 @@ namespace protocol {
 // |input_stub| for all currently-pressed keys and buttons when necessary.
 class InputEventTracker : public InputStub {
  public:
-  explicit InputEventTracker(protocol::InputStub* input_stub);
+  InputEventTracker();
+  explicit InputEventTracker(InputStub* input_stub);
   ~InputEventTracker() override;
+
+  void set_input_stub(InputStub* input_stub) {
+    input_stub_ = input_stub;
+  }
 
   // Returns true if the key with the specified USB code is currently pressed.
   bool IsKeyPressed(ui::DomCode usb_keycode) const;
@@ -47,14 +54,14 @@ class InputEventTracker : public InputStub {
   void InjectTouchEvent(const TouchEvent& event) override;
 
  private:
-  protocol::InputStub* input_stub_;
+  InputStub* input_stub_ = nullptr;
 
   std::set<ui::DomCode> pressed_keys_;
 
   webrtc::DesktopVector mouse_pos_;
-  uint32 mouse_button_state_;
+  uint32_t mouse_button_state_ = 0;
 
-  std::set<uint32> touch_point_ids_;
+  std::set<uint32_t> touch_point_ids_;
 
   DISALLOW_COPY_AND_ASSIGN(InputEventTracker);
 };

@@ -24,127 +24,154 @@
 #define ImageResource_h
 
 #include "core/CoreExport.h"
-#include "core/fetch/ResourcePtr.h"
-#include "platform/geometry/IntRect.h"
-#include "platform/geometry/IntSizeHash.h"
-#include "platform/geometry/LayoutSize.h"
-#include "platform/graphics/ImageObserver.h"
-#include "platform/graphics/ImageOrientation.h"
-#include "wtf/HashMap.h"
+#include "core/fetch/ImageResourceInfo.h"
+#include "core/fetch/MultipartImageResourceParser.h"
+#include "core/fetch/Resource.h"
+#include "platform/Timer.h"
+#include "platform/heap/Handle.h"
+#include <memory>
 
 namespace blink {
 
-class ImageResourceClient;
 class FetchRequest;
+class ImageResourceContent;
+class ResourceClient;
 class ResourceFetcher;
-class FloatSize;
-class Length;
-class MemoryCache;
 class SecurityOrigin;
 
-class CORE_EXPORT ImageResource final : public Resource, public ImageObserver {
-    friend class MemoryCache;
+// ImageResource implements blink::Resource interface and image-specific logic
+// for loading images.
+// Image-related things (blink::Image and ImageResourceObserver) are handled by
+// ImageResourceContent.
+// Most users should use ImageResourceContent instead of ImageResource.
+// https://docs.google.com/document/d/1O-fB83mrE0B_V8gzXNqHgmRLCvstTB4MMi3RnVLr8bE/edit?usp=sharing
+//
+// As for the lifetimes of ImageResourceContent::m_image and m_data, see this
+// document:
+// https://docs.google.com/document/d/1v0yTAZ6wkqX2U_M6BNIGUJpM1s0TIw1VsqpxoL7aciY/edit?usp=sharing
+class CORE_EXPORT ImageResource final
+    : public Resource,
+      public MultipartImageResourceParser::Client {
+  USING_GARBAGE_COLLECTED_MIXIN(ImageResource);
 
-public:
-    typedef ImageResourceClient ClientType;
+ public:
+  using ClientType = ResourceClient;
 
-    static ResourcePtr<ImageResource> fetch(FetchRequest&, ResourceFetcher*);
+  // Use ImageResourceContent::fetch() unless ImageResource is required.
+  // TODO(hiroshige): Make fetch() private.
+  static ImageResource* fetch(FetchRequest&, ResourceFetcher*);
 
-    ImageResource(blink::Image*);
-    // Exposed for testing
-    ImageResource(const ResourceRequest&, blink::Image*);
-    ~ImageResource() override;
+  // TODO(hiroshige): Make create() test-only by refactoring ImageDocument.
+  static ImageResource* create(const ResourceRequest&);
 
-    void load(ResourceFetcher*, const ResourceLoaderOptions&) override;
+  ~ImageResource() override;
 
-    blink::Image* image(); // Returns the nullImage() if the image is not available yet.
-    bool hasImage() const { return m_image.get(); }
+  ImageResourceContent* getContent();
+  const ImageResourceContent* getContent() const;
 
-    static std::pair<blink::Image*, float> brokenImage(float deviceScaleFactor); // Returns an image and the image's resolution scale factor.
-    bool willPaintBrokenImage() const;
+  enum class ReloadCachePolicy {
+    UseExistingPolicy = 0,  // Don't modify the request's cache policy.
+    BypassCache,  // Modify the request so that the reload bypasses the cache.
+  };
 
-    // Assumes that image rotation or scale doesn't effect the image size being empty or not.
-    bool canRender() { return !errorOccurred() && !imageSize(DoNotRespectImageOrientation, 1).isEmpty(); }
+  // If this ImageResource has the Lo-Fi response headers or is a placeholder,
+  // reload the full original image with the Lo-Fi state set to off and
+  // optionally bypassing the cache.
+  void reloadIfLoFiOrPlaceholder(
+      ResourceFetcher*,
+      ReloadCachePolicy = ReloadCachePolicy::BypassCache);
 
-    bool usesImageContainerSize() const;
-    bool imageHasRelativeWidth() const;
-    bool imageHasRelativeHeight() const;
-    // The device pixel ratio we got from the server for this image, or 1.0.
-    float devicePixelRatioHeaderValue() const { return m_devicePixelRatioHeaderValue; }
-    bool hasDevicePixelRatioHeaderValue() const { return m_hasDevicePixelRatioHeaderValue; }
+  void didAddClient(ResourceClient*) override;
 
-    enum SizeType {
-        IntrinsicSize, // Report the intrinsic size.
-        IntrinsicCorrectedToDPR, // Report the intrinsic size corrected to account for image density.
-    };
-    // This method takes a zoom multiplier that can be used to increase the natural size of the image by the zoom.
-    LayoutSize imageSize(RespectImageOrientationEnum shouldRespectImageOrientation, float multiplier, SizeType = IntrinsicSize);
-    void computeIntrinsicDimensions(Length& intrinsicWidth, Length& intrinsicHeight, FloatSize& intrinsicRatio);
+  ResourcePriority priorityFromObservers() override;
 
-    bool isAccessAllowed(SecurityOrigin*);
+  void allClientsAndObserversRemoved() override;
 
-    void updateImageAnimationPolicy();
+  PassRefPtr<const SharedBuffer> resourceBuffer() const override;
+  void appendData(const char*, size_t) override;
+  void error(const ResourceError&) override;
+  void responseReceived(const ResourceResponse&,
+                        std::unique_ptr<WebDataConsumerHandle>) override;
+  void finish(double finishTime = 0.0) override;
 
-    void didAddClient(ResourceClient*) override;
-    void didRemoveClient(ResourceClient*) override;
+  // For compatibility, images keep loading even if there are HTTP errors.
+  bool shouldIgnoreHTTPStatusCodeErrors() const override { return true; }
 
-    void allClientsRemoved() override;
+  bool isImage() const override { return true; }
 
-    void appendData(const char*, unsigned) override;
-    void error(Resource::Status) override;
-    void responseReceived(const ResourceResponse&, PassOwnPtr<WebDataConsumerHandle>) override;
-    void finishOnePart() override;
+  // MultipartImageResourceParser::Client
+  void onePartInMultipartReceived(const ResourceResponse&) final;
+  void multipartDataReceived(const char*, size_t) final;
 
-    // For compatibility, images keep loading even if there are HTTP errors.
-    bool shouldIgnoreHTTPStatusCodeErrors() const override { return true; }
+  // Used by tests.
+  bool isPlaceholder() const { return m_isPlaceholder; }
 
-    bool isImage() const override { return true; }
-    bool stillNeedsLoad() const override { return !errorOccurred() && status() == Unknown && !isLoading(); }
+  bool shouldReloadBrokenPlaceholder() const {
+    return m_isPlaceholder && willPaintBrokenImage();
+  }
 
-    // ImageObserver
-    void decodedSizeChanged(const blink::Image*, int delta) override;
-    void didDraw(const blink::Image*) override;
+  DECLARE_VIRTUAL_TRACE();
 
-    bool shouldPauseAnimation(const blink::Image*) override;
-    void animationAdvanced(const blink::Image*) override;
-    void changedInRect(const blink::Image*, const IntRect&) override;
+ private:
+  enum class MultipartParsingState : uint8_t {
+    WaitingForFirstPart,
+    ParsingFirstPart,
+    FinishedParsingFirstPart,
+  };
 
-protected:
-    bool isSafeToUnlock() const override;
-    void destroyDecodedDataIfPossible() override;
-    void destroyDecodedDataForFailedRevalidation() override;
+  class ImageResourceInfoImpl;
+  class ImageResourceFactory;
 
-private:
-    class ImageResourceFactory : public ResourceFactory {
-    public:
-        ImageResourceFactory()
-            : ResourceFactory(Resource::Image) { }
+  ImageResource(const ResourceRequest&,
+                const ResourceLoaderOptions&,
+                ImageResourceContent*,
+                bool isPlaceholder);
 
-        Resource* create(const ResourceRequest& request, const String&) const override
-        {
-            return new ImageResource(request);
-        }
-    };
-    ImageResource(const ResourceRequest&);
+  // Only for ImageResourceInfoImpl.
+  void decodeError(bool allDataReceived);
+  bool isAccessAllowed(
+      SecurityOrigin*,
+      ImageResourceInfo::DoesCurrentFrameHaveSingleSecurityOrigin) const;
 
-    void clear();
+  bool hasClientsOrObservers() const override;
 
-    void setCustomAcceptHeader();
-    void createImage();
-    void updateImage(bool allDataReceived);
-    void clearImage();
-    // If not null, changeRect is the changed part of the image.
-    void notifyObservers(const IntRect* changeRect = nullptr);
-    bool loadingMultipartContent() const;
+  void updateImageAndClearBuffer();
 
-    float m_devicePixelRatioHeaderValue;
+  void checkNotify() override;
 
-    RefPtr<blink::Image> m_image;
-    bool m_hasDevicePixelRatioHeaderValue;
+  void destroyDecodedDataIfPossible() override;
+  void destroyDecodedDataForFailedRevalidation() override;
+
+  void flushImageIfNeeded(TimerBase*);
+
+  bool willPaintBrokenImage() const;
+
+  Member<ImageResourceContent> m_content;
+
+  // TODO(hiroshige): move |m_devicePixelRatioHeaderValue| and
+  // |m_hasDevicePixelRatioHeaderValue| to ImageResourceContent and update
+  // it via ImageResourceContent::updateImage().
+  float m_devicePixelRatioHeaderValue;
+
+  Member<MultipartImageResourceParser> m_multipartParser;
+  MultipartParsingState m_multipartParsingState =
+      MultipartParsingState::WaitingForFirstPart;
+  bool m_hasDevicePixelRatioHeaderValue;
+
+  // Indicates if the ImageResource is currently scheduling a reload, e.g.
+  // because reloadIfLoFi() was called.
+  bool m_isSchedulingReload;
+
+  // Indicates if this ImageResource is either attempting to load a placeholder
+  // image, or is a (possibly broken) placeholder image.
+  bool m_isPlaceholder;
+
+  Timer<ImageResource> m_flushTimer;
+  double m_lastFlushTime = 0.;
 };
 
 DEFINE_RESOURCE_TYPE_CASTS(Image);
 
-}
+}  // namespace blink
 
 #endif

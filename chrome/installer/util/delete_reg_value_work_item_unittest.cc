@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/installer/util/delete_reg_value_work_item.h"
+
 #include <windows.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/win/registry.h"
-#include "chrome/installer/util/delete_reg_value_work_item.h"
 #include "chrome/installer/util/work_item.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,13 +54,13 @@ TEST_F(DeleteRegValueWorkItemTest, DeleteExistingValue) {
   ASSERT_EQ(ERROR_SUCCESS,
             RegSetValueEx(key.Handle(), kNameEmpty, NULL, REG_SZ, NULL, 0));
 
-  scoped_ptr<DeleteRegValueWorkItem> work_item1(
+  std::unique_ptr<DeleteRegValueWorkItem> work_item1(
       WorkItem::CreateDeleteRegValueWorkItem(
           HKEY_CURRENT_USER, kTestKey, WorkItem::kWow64Default, kNameStr));
-  scoped_ptr<DeleteRegValueWorkItem> work_item2(
+  std::unique_ptr<DeleteRegValueWorkItem> work_item2(
       WorkItem::CreateDeleteRegValueWorkItem(
           HKEY_CURRENT_USER, kTestKey, WorkItem::kWow64Default, kNameDword));
-  scoped_ptr<DeleteRegValueWorkItem> work_item3(
+  std::unique_ptr<DeleteRegValueWorkItem> work_item3(
       WorkItem::CreateDeleteRegValueWorkItem(
           HKEY_CURRENT_USER, kTestKey, WorkItem::kWow64Default, kNameEmpty));
 
@@ -92,8 +95,8 @@ TEST_F(DeleteRegValueWorkItemTest, DeleteExistingValue) {
   DWORD type = 0;
   DWORD size = 0;
   EXPECT_EQ(ERROR_SUCCESS, key.ReadValue(kNameEmpty, NULL, &size, &type));
-  EXPECT_EQ(REG_SZ, type);
-  EXPECT_EQ(0, size);
+  EXPECT_EQ(static_cast<DWORD>(REG_SZ), type);
+  EXPECT_EQ(0u, size);
 }
 
 // Try deleting a value that doesn't exist.
@@ -104,10 +107,10 @@ TEST_F(DeleteRegValueWorkItemTest, DeleteNonExistentValue) {
   EXPECT_FALSE(key.HasValue(kNameStr));
   EXPECT_FALSE(key.HasValue(kNameDword));
 
-  scoped_ptr<DeleteRegValueWorkItem> work_item1(
+  std::unique_ptr<DeleteRegValueWorkItem> work_item1(
       WorkItem::CreateDeleteRegValueWorkItem(
           HKEY_CURRENT_USER, kTestKey, WorkItem::kWow64Default, kNameStr));
-  scoped_ptr<DeleteRegValueWorkItem> work_item2(
+  std::unique_ptr<DeleteRegValueWorkItem> work_item2(
       WorkItem::CreateDeleteRegValueWorkItem(
           HKEY_CURRENT_USER, kTestKey, WorkItem::kWow64Default, kNameDword));
 
@@ -131,10 +134,10 @@ TEST_F(DeleteRegValueWorkItemTest, DeleteValueInNonExistentKey) {
   ASSERT_EQ(ERROR_FILE_NOT_FOUND,
             key.Open(HKEY_CURRENT_USER, kTestKey, KEY_READ));
 
-  scoped_ptr<DeleteRegValueWorkItem> work_item1(
+  std::unique_ptr<DeleteRegValueWorkItem> work_item1(
       WorkItem::CreateDeleteRegValueWorkItem(
           HKEY_CURRENT_USER, kTestKey, WorkItem::kWow64Default, kNameStr));
-  scoped_ptr<DeleteRegValueWorkItem> work_item2(
+  std::unique_ptr<DeleteRegValueWorkItem> work_item2(
       WorkItem::CreateDeleteRegValueWorkItem(
           HKEY_CURRENT_USER, kTestKey, WorkItem::kWow64Default, kNameDword));
 

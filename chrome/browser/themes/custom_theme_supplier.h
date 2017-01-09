@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_THEMES_CUSTOM_THEME_SUPPLIER_H_
 #define CHROME_BROWSER_THEMES_CUSTOM_THEME_SUPPLIER_H_
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/public/browser/browser_thread.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -56,6 +57,7 @@ class CustomThemeSupplier : public base::RefCountedThreadSafe<
 
   // Returns the theme image for |id|. Returns an empty image if no image is
   // found for |id|.
+  // TODO(estade): Remove this function; it's not used in Material Design.
   virtual gfx::Image GetImageNamed(int id);
 
   // Returns the raw PNG encoded data for IDR_THEME_NTP_*. This method only

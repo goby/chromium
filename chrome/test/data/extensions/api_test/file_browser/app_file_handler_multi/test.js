@@ -52,6 +52,22 @@ function prepareFile(filesystem, name, contents) {
 }
 
 /**
+ * Prepares a directory on the file system.
+ * @param {FileSystem} filesystem File system.
+ * @param {string} name Name of the directory.
+ * @param {Blob} contents Contents of the file.
+ * @return {Promise} Promise to be fulfilled with DirectoryEntry of the new
+ *     directory.
+ */
+function prepareDirectory(filesystem, name) {
+  return new Promise(function(fulfill, reject) {
+    filesystem.root.getDirectory(name, {create: true}, function(dirEntry) {
+      fulfill(dirEntry);
+    }, reject);
+  });
+}
+
+/**
  * Prepares two test files on the file system.
  * @param {FileSystem} filesystem File system.
  * @return {Promise} Promise to be fullfilled with an object {filesystem:
@@ -69,6 +85,21 @@ function prepareFiles(filesystem) {
 }
 
 /**
+ * Prepares two test directories on the file system.
+ * @param {FileSystem} filesystem File system.
+ * @return {Promise} Promise to be fullfilled with an object {filesystem:
+ *     FileSystem, entries: Array<DirectoryEntry>} that contains the passed file
+ *     system and the created entries.
+ */
+function prepareDirectories(filesystem) {
+  var testDirA = prepareDirectory(filesystem, 'dir1');
+  var testDirB = prepareDirectory(filesystem, 'dir2');
+  return Promise.all([testDirA, testDirB]).then(function(entries) {
+    return {filesystem: filesystem, entries: entries};
+  });
+}
+
+/**
  * Contents of the test file.
  * @type {Blob}
  * @const
@@ -76,16 +107,28 @@ function prepareFiles(filesystem) {
 var TEST_FILE_CONTENTS = new Blob(['This is a test file.']);
 
 /**
- * File system of the drive volume.
+ * File system of the drive volume for files.
  * @type {Promise}
  */
 var driveFileSystemPromise = getFileSystem('drive').then(prepareFiles);
 
 /**
- * File system of the local volume.
+ * File system of the local volume for files.
  * @type {Promise}
  */
 var localFileSystemPromise = getFileSystem('testing').then(prepareFiles);
+
+/**
+ * File system of the drive volume for directories.
+ * @type {Promise}
+ */
+var driveDirSystemPromise = getFileSystem('drive').then(prepareDirectories);
+
+/**
+ * File system of the local volume for directories.
+ * @type {Promise}
+ */
+var localDirSystemPromise = getFileSystem('drive').then(prepareDirectories);
 
 /**
  * Calls test functions depends on the result of the promise.
@@ -123,6 +166,8 @@ function launchWithEntries(isolatedEntries) {
               chrome.fileManagerPrivate.getFileTasks(entries, fulfill);
             }).then(function(tasks) {
               chrome.test.assertEq(1, tasks.length);
+              chrome.test.assertEq("ChromeOS File handler extension",
+                                   tasks[0].title);
               chrome.test.assertEq(
                   'pkplfbidichfdicaijlchgnapepdginl|app|textAction',
                   tasks[0].taskId);
@@ -195,14 +240,34 @@ function testForDriveFiles() {
 }
 
 /**
- * Tests the file handler with entries both on the local and on the drive
- * volumes.
+ * Tests the directory handler feature with entries on the local volume.
  */
-function testForMixedFiles() {
+function testForLocalDirectories() {
+  testPromise(localDirSystemPromise.then(function(volume) {
+    return launchWithEntries(volume.entries);
+  }));
+}
+
+/**
+ * Tests the directory handler feature with entries on the local volume.
+ */
+function testForDriveDirectories() {
+  testPromise(driveDirSystemPromise.then(function(volume) {
+    return launchWithEntries(volume.entries);
+  }));
+}
+
+/**
+ * Tests the file and directory handler with entries both on the local and on
+ * the drive volumes.
+ */
+function testForMixedFilesAndDirectories() {
   testPromise(
-      Promise.all([localFileSystemPromise, driveFileSystemPromise]).then(
+      Promise.all([localFileSystemPromise, driveFileSystemPromise,
+                   localDirSystemPromise, driveDirSystemPromise]).then(
           function(args) {
-            return launchWithEntries(args[0].entries.concat(args[1].entries));
+            return launchWithEntries(args[0].entries.concat(args[1].entries)
+                .concat(args[2].entries).concat(args[3].entries));
           }));
 }
 
@@ -210,5 +275,7 @@ function testForMixedFiles() {
 chrome.test.runTests([
   testForLocalFiles,
   testForDriveFiles,
-  testForMixedFiles
+  testForLocalDirectories,
+  testForDriveDirectories,
+  testForMixedFilesAndDirectories,
 ]);

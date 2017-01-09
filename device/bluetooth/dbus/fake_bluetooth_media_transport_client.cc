@@ -4,14 +4,16 @@
 
 #include "device/bluetooth/dbus/fake_bluetooth_media_transport_client.h"
 
-#include <unistd.h>
+#include <stddef.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
+#include <memory>
 #include <sstream>
 
 #include "base/bind.h"
-#include "base/stl_util.h"
-#include "dbus/file_descriptor.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "device/bluetooth/dbus/bluetooth_media_client.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_adapter_client.h"
@@ -90,18 +92,14 @@ void FakeBluetoothMediaTransportClient::Properties::Set(
 
 FakeBluetoothMediaTransportClient::Transport::Transport(
     const ObjectPath& transport_path,
-    Properties* transport_properties)
-    : path(transport_path) {
-  properties.reset(transport_properties);
-}
+    std::unique_ptr<Properties> transport_properties)
+    : path(transport_path), properties(std::move(transport_properties)) {}
 
 FakeBluetoothMediaTransportClient::Transport::~Transport() {}
 
 FakeBluetoothMediaTransportClient::FakeBluetoothMediaTransportClient() {}
 
-FakeBluetoothMediaTransportClient::~FakeBluetoothMediaTransportClient() {
-  STLDeleteValues(&endpoint_to_transport_map_);
-}
+FakeBluetoothMediaTransportClient::~FakeBluetoothMediaTransportClient() {}
 
 // DBusClient override.
 void FakeBluetoothMediaTransportClient::Init(dbus::Bus* bus) {}
@@ -166,7 +164,7 @@ void FakeBluetoothMediaTransportClient::SetValid(
             << " is created for endpoint " << endpoint_path.value();
 
     // Sets the fake property set with default values.
-    scoped_ptr<Properties> properties(new Properties(
+    std::unique_ptr<Properties> properties(new Properties(
         base::Bind(&FakeBluetoothMediaTransportClient::OnPropertyChanged,
                    base::Unretained(this))));
     properties->device.ReplaceValue(ObjectPath(kTransportDevicePath));
@@ -180,7 +178,7 @@ void FakeBluetoothMediaTransportClient::SetValid(
     properties->volume.ReplaceValue(kTransportVolume);
 
     endpoint_to_transport_map_[endpoint_path] =
-        new Transport(transport_path, properties.release());
+        base::MakeUnique<Transport>(transport_path, std::move(properties));
     transport_to_endpoint_map_[transport_path] = endpoint_path;
     return;
   }
@@ -191,11 +189,10 @@ void FakeBluetoothMediaTransportClient::SetValid(
   ObjectPath transport_path = transport->path;
 
   // Notifies observers about the state change of the transport.
-  FOR_EACH_OBSERVER(BluetoothMediaTransportClient::Observer, observers_,
-                    MediaTransportRemoved(transport_path));
+  for (auto& observer : observers_)
+    observer.MediaTransportRemoved(transport_path);
 
   endpoint->ClearConfiguration(transport_path);
-  delete transport;
   endpoint_to_transport_map_.erase(endpoint_path);
   transport_to_endpoint_map_.erase(transport_path);
 }
@@ -210,10 +207,10 @@ void FakeBluetoothMediaTransportClient::SetState(
     return;
 
   transport->properties->state.ReplaceValue(state);
-  FOR_EACH_OBSERVER(
-      BluetoothMediaTransportClient::Observer, observers_,
-      MediaTransportPropertyChanged(
-          transport->path, BluetoothMediaTransportClient::kStateProperty));
+  for (auto& observer : observers_) {
+    observer.MediaTransportPropertyChanged(
+        transport->path, BluetoothMediaTransportClient::kStateProperty);
+  }
 }
 
 void FakeBluetoothMediaTransportClient::SetVolume(
@@ -224,10 +221,10 @@ void FakeBluetoothMediaTransportClient::SetVolume(
     return;
 
   transport->properties->volume.ReplaceValue(volume);
-  FOR_EACH_OBSERVER(
-      BluetoothMediaTransportClient::Observer, observers_,
-      MediaTransportPropertyChanged(
-          transport->path, BluetoothMediaTransportClient::kVolumeProperty));
+  for (auto& observer : observers_) {
+    observer.MediaTransportPropertyChanged(
+        transport->path, BluetoothMediaTransportClient::kVolumeProperty);
+  }
 }
 
 void FakeBluetoothMediaTransportClient::WriteData(
@@ -280,7 +277,7 @@ FakeBluetoothMediaTransportClient::Transport*
 FakeBluetoothMediaTransportClient::GetTransport(
     const ObjectPath& endpoint_path) {
   const auto& it = endpoint_to_transport_map_.find(endpoint_path);
-  return (it != endpoint_to_transport_map_.end()) ? it->second : nullptr;
+  return (it != endpoint_to_transport_map_.end()) ? it->second.get() : nullptr;
 }
 
 FakeBluetoothMediaTransportClient::Transport*
@@ -320,8 +317,8 @@ void FakeBluetoothMediaTransportClient::AcquireInternal(
   DCHECK((fds[0] > kInvalidFd) && (fds[1] > kInvalidFd));
   transport->input_fd.reset(new base::File(fds[0]));
 
-  dbus::FileDescriptor out_fd(fds[1]);
-  callback.Run(&out_fd, kDefaultReadMtu, kDefaultWriteMtu);
+  base::ScopedFD out_fd(fds[1]);
+  callback.Run(std::move(out_fd), kDefaultReadMtu, kDefaultWriteMtu);
   SetState(endpoint_path, "active");
 }
 

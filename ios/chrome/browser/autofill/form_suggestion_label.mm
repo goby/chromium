@@ -4,17 +4,19 @@
 
 #import "ios/chrome/browser/autofill/form_suggestion_label.h"
 
+#import <QuartzCore/QuartzCore.h>
+#include <stddef.h>
+
 #include <cmath>
 
-#import <QuartzCore/QuartzCore.h>
-
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/autofill/core/browser/credit_card.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
 #import "ios/chrome/browser/autofill/form_suggestion_view_client.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ios/chrome/browser/ui/ui_util.h"
+#import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -51,6 +53,7 @@ const IconImageMap kCreditCardIconImageMap[] = {
     {autofill::kAmericanExpressCard, @"autofill_card_american_express"},
     {autofill::kDiscoverCard, @"autofill_card_discover"},
     {autofill::kMasterCard, @"autofill_card_mastercard"},
+    {autofill::kMirCard, @"autofill_card_mir"},
     {autofill::kVisaCard, @"autofill_card_visa"},
     {autofill::kDinersCard, @"autofill_card_diners"},
     {autofill::kGenericCard, @"autofill_card_generic"},

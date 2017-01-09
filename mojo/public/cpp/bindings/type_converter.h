@@ -5,6 +5,8 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_TYPE_CONVERTER_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_TYPE_CONVERTER_H_
 
+#include <stdint.h>
+
 namespace mojo {
 
 // Specialize the following class:
@@ -30,8 +32,8 @@ namespace mojo {
 //
 //   module geometry {
 //   struct Point {
-//     int32 x;
-//     int32 y;
+//     int32_t x;
+//     int32_t y;
 //   };
 //   }
 //
@@ -45,7 +47,7 @@ namespace mojo {
 //       geometry::PointPtr result;
 //       result->x = input.x();
 //       result->y = input.y();
-//       return result.Pass();
+//       return result;
 //     }
 //   };
 //   template <>

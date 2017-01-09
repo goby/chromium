@@ -4,6 +4,8 @@
 
 #include "chromeos/system/name_value_pairs_parser.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -46,7 +48,7 @@ NameValuePairsParser::NameValuePairsParser(NameValueMap* map)
 
 void NameValuePairsParser::AddNameValuePair(const std::string& key,
                                             const std::string& value) {
-  if (!ContainsKey(*map_, key)) {
+  if (!base::ContainsKey(*map_, key)) {
     (*map_)[key] = value;
     VLOG(1) << "name: " << key << ", value: " << value;
   } else {

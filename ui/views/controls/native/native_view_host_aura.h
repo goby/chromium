@@ -5,8 +5,8 @@
 #ifndef UI_VIEWS_CONTROLS_NATIVE_NATIVE_VIEW_HOST_AURA_H_
 #define UI_VIEWS_CONTROLS_NATIVE_NATIVE_VIEW_HOST_AURA_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/views/controls/native/native_view_host_wrapper.h"
@@ -57,13 +57,13 @@ class VIEWS_EXPORT NativeViewHostAura : public NativeViewHostWrapper,
   // Our associated NativeViewHost.
   NativeViewHost* host_;
 
-  scoped_ptr<ClippingWindowDelegate> clipping_window_delegate_;
+  std::unique_ptr<ClippingWindowDelegate> clipping_window_delegate_;
 
   // Window that exists between the native view and the parent that allows for
   // clipping to occur. This is positioned in the coordinate space of
   // host_->GetWidget().
   aura::Window clipping_window_;
-  scoped_ptr<gfx::Rect> clip_rect_;
+  std::unique_ptr<gfx::Rect> clip_rect_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeViewHostAura);
 };

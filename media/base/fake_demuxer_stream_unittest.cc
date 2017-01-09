@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include "media/base/fake_demuxer_stream.h"
+
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer_stream.h"
-#include "media/base/fake_demuxer_stream.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -102,7 +105,7 @@ class FakeDemuxerStreamTest : public testing::Test {
     read_pending_ = true;
     stream_->Read(base::Bind(&FakeDemuxerStreamTest::BufferReady,
                              base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     ExpectReadResult(result);
   }
 
@@ -111,7 +114,7 @@ class FakeDemuxerStreamTest : public testing::Test {
       read_pending_ = true;
       stream_->Read(base::Bind(&FakeDemuxerStreamTest::BufferReady,
                                base::Unretained(this)));
-      message_loop_.RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
       if (read_pending_)
         break;
     }
@@ -120,14 +123,14 @@ class FakeDemuxerStreamTest : public testing::Test {
   void SatisfyReadAndExpect(ReadResult result) {
     EXPECT_TRUE(read_pending_);
     stream_->SatisfyRead();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     ExpectReadResult(result);
   }
 
   void Reset() {
     bool had_read_pending = read_pending_;
     stream_->Reset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     EXPECT_FALSE(read_pending_);
     if (had_read_pending)
@@ -168,7 +171,7 @@ class FakeDemuxerStreamTest : public testing::Test {
   }
 
   base::MessageLoop message_loop_;
-  scoped_ptr<FakeDemuxerStream> stream_;
+  std::unique_ptr<FakeDemuxerStream> stream_;
 
   DemuxerStream::Status status_;
   scoped_refptr<DecoderBuffer> buffer_;

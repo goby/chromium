@@ -7,14 +7,15 @@
 
 #include "components/password_manager/core/browser/affiliation_service.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/password_manager/core/browser/fake_affiliation_api.h"
 #include "components/password_manager/core/browser/mock_affiliation_consumer.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -95,7 +96,7 @@ class AffiliationServiceTest : public testing::Test {
   ScopedFakeAffiliationAPI fake_affiliation_api_;
   MockAffiliationConsumer mock_consumer_;
 
-  scoped_ptr<AffiliationService> service_;
+  std::unique_ptr<AffiliationService> service_;
 
   DISALLOW_COPY_AND_ASSIGN(AffiliationServiceTest);
 };

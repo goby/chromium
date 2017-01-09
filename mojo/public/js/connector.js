@@ -16,17 +16,20 @@ define("mojo/public/js/connector", [
     this.dropWrites_ = false;
     this.error_ = false;
     this.incomingReceiver_ = null;
-    this.readWaitCookie_ = null;
+    this.readWatcher_ = null;
     this.errorHandler_ = null;
 
-    if (handle)
-      this.waitToReadMore_();
+    if (handle) {
+      this.readWatcher_ = support.watch(handle,
+                                        core.HANDLE_SIGNAL_READABLE,
+                                        this.readMore_.bind(this));
+    }
   }
 
   Connector.prototype.close = function() {
-    if (this.readWaitCookie_) {
-      support.cancelWait(this.readWaitCookie_);
-      this.readWaitCookie_ = null;
+    if (this.readWatcher_) {
+      support.cancelWatch(this.readWatcher_);
+      this.readWatcher_ = null;
     }
     if (this.handle_ != null) {
       core.close(this.handle_);
@@ -79,22 +82,14 @@ define("mojo/public/js/connector", [
     return this.error_;
   };
 
-  Connector.prototype.waitToReadMore_ = function() {
-    this.readWaitCookie_ = support.asyncWait(this.handle_,
-                                             core.HANDLE_SIGNAL_READABLE,
-                                             this.readMore_.bind(this));
-  };
-
   Connector.prototype.readMore_ = function(result) {
     for (;;) {
       var read = core.readMessage(this.handle_,
                                   core.READ_MESSAGE_FLAG_NONE);
       if (this.handle_ == null) // The connector has been closed.
         return;
-      if (read.result == core.RESULT_SHOULD_WAIT) {
-        this.waitToReadMore_();
+      if (read.result == core.RESULT_SHOULD_WAIT)
         return;
-      }
       if (read.result != core.RESULT_OK) {
         this.error_ = true;
         if (this.errorHandler_)
@@ -110,19 +105,18 @@ define("mojo/public/js/connector", [
   };
 
   // The TestConnector subclass is only intended to be used in unit tests. It
-  // enables delivering a message to the pipe's handle without an async wait.
-
+  // doesn't automatically listen for input messages. Instead, you need to
+  // call waitForNextMessage to block and wait for the next incoming message.
   function TestConnector(handle) {
     Connector.call(this, handle);
   }
 
   TestConnector.prototype = Object.create(Connector.prototype);
 
-  TestConnector.prototype.waitToReadMore_ = function() {
-  };
-
-  TestConnector.prototype.deliverMessage = function() {
-    this.readMore_(core.RESULT_OK);
+  TestConnector.prototype.waitForNextMessage = function() {
+    var wait = core.wait(this.handle_, core.HANDLE_SIGNAL_READABLE,
+                         core.DEADLINE_INDEFINITE);
+    this.readMore_(wait.result);
   }
 
   var exports = {};

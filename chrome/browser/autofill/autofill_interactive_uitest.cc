@@ -4,17 +4,17 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/rand_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/autofill/autofill_uitest_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
@@ -53,6 +53,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
 using base::ASCIIToUTF16;
@@ -101,6 +102,66 @@ static const char kTestPasswordFormString[] =
              "onfocus=\"domAutomationController.send(true)\">"
     "<br>"
     "<input type=\"submit\" value=\"Submit\">"
+    "</form>";
+
+// TODO(crbug.com/609861): Remove the autocomplete attribute from the textarea
+// field when the bug is fixed.
+static const char kTestEventFormString[] =
+    "<script type=\"text/javascript\">"
+    "var inputfocus = false;"
+    "var inputkeydown = false;"
+    "var inputinput = false;"
+    "var inputchange = false;"
+    "var inputkeyup = false;"
+    "var inputblur = false;"
+    "var textfocus = false;"
+    "var textkeydown = false;"
+    "var textinput= false;"
+    "var textchange = false;"
+    "var textkeyup = false;"
+    "var textblur = false;"
+    "var selectfocus = false;"
+    "var selectinput = false;"
+    "var selectchange = false;"
+    "var selectblur = false;"
+    "</script>"
+    "<form action=\"http://www.example.com/\" method=\"POST\">"
+    "<label for=\"firstname\">First name:</label>"
+    " <input type=\"text\" id=\"firstname\""
+    "        onfocus=\"domAutomationController.send(true)\"><br>"
+    "<label for=\"lastname\">Last name:</label>"
+    " <input type=\"text\" id=\"lastname\""
+    " onfocus=\"inputfocus = true\" onkeydown=\"inputkeydown = true\""
+    " oninput=\"inputinput = true\" onchange=\"inputchange = true\""
+    " onkeyup=\"inputkeyup = true\" onblur=\"inputblur = true\" ><br>"
+    "<label for=\"address1\">Address line 1:</label>"
+    " <input type=\"text\" id=\"address1\"><br>"
+    "<label for=\"address2\">Address line 2:</label>"
+    " <input type=\"text\" id=\"address2\"><br>"
+    "<label for=\"city\">City:</label>"
+    " <textarea rows=\"4\" cols=\"50\" id=\"city\" name=\"city\""
+    " autocomplete=\"address-level2\" onfocus=\"textfocus = true\""
+    " onkeydown=\"textkeydown = true\" oninput=\"textinput = true\""
+    " onchange=\"textchange = true\" onkeyup=\"textkeyup = true\""
+    " onblur=\"textblur = true\"></textarea><br>"
+    "<label for=\"state\">State:</label>"
+    " <select id=\"state\""
+    " onfocus=\"selectfocus = true\" oninput=\"selectinput = true\""
+    " onchange=\"selectchange = true\" onblur=\"selectblur = true\" >"
+    " <option value=\"\" selected=\"yes\">--</option>"
+    " <option value=\"CA\">California</option>"
+    " <option value=\"TX\">Texas</option>"
+    " </select><br>"
+    "<label for=\"zip\">ZIP code:</label>"
+    " <input type=\"text\" id=\"zip\"><br>"
+    "<label for=\"country\">Country:</label>"
+    " <select id=\"country\">"
+    " <option value=\"\" selected=\"yes\">--</option>"
+    " <option value=\"CA\">Canada</option>"
+    " <option value=\"US\">United States</option>"
+    " </select><br>"
+    "<label for=\"phone\">Phone number:</label>"
+    " <input type=\"text\" id=\"phone\"><br>"
     "</form>";
 
 // AutofillManagerTestDelegateImpl --------------------------------------------
@@ -198,6 +259,7 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
             ->DriverForFrame(web_contents->GetMainFrame())
             ->autofill_manager();
     autofill_manager->client()->HideAutofillPopup();
+    test::ReenableSystemServices();
   }
 
   content::WebContents* GetWebContents() {
@@ -225,9 +287,9 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     std::string js("document.getElementById('" + field_id + "').focus();");
     ASSERT_TRUE(content::ExecuteScript(GetRenderViewHost(), js));
 
-    SendKeyToPageAndWait(ui::VKEY_DOWN);
-    SendKeyToPopupAndWait(ui::VKEY_DOWN);
-    SendKeyToPopupAndWait(ui::VKEY_RETURN);
+    SendKeyToPageAndWait(ui::DomKey::ARROW_DOWN);
+    SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
+    SendKeyToPopupAndWait(ui::DomKey::ENTER);
   }
 
   void ExpectFieldValue(const std::string& field_name,
@@ -336,7 +398,7 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
         &y));
     content::SimulateMouseClickAt(GetWebContents(),
                                   0,
-                                  blink::WebMouseEvent::ButtonLeft,
+                                  blink::WebMouseEvent::Button::Left,
                                   gfx::Point(x, y));
   }
 
@@ -365,10 +427,18 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     ExpectFieldValue("phone", "5125551234");
   }
 
-  void SendKeyToPageAndWait(ui::KeyboardCode key) {
+  void SendKeyToPageAndWait(ui::DomKey key) {
+    ui::KeyboardCode key_code = ui::NonPrintableDomKeyToKeyboardCode(key);
+    ui::DomCode code = ui::UsLayoutKeyboardCodeToDomCode(key_code);
+    SendKeyToPageAndWait(key, code, key_code);
+  }
+
+  void SendKeyToPageAndWait(ui::DomKey key,
+                            ui::DomCode code,
+                            ui::KeyboardCode key_code) {
     test_delegate_.Reset();
-    content::SimulateKeyPress(
-        GetWebContents(), key, false, false, false, false);
+    content::SimulateKeyPress(GetWebContents(), key, code, key_code, false,
+                              false, false, false);
     test_delegate_.Wait();
   }
 
@@ -386,10 +456,20 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     return true;
   }
 
-  void SendKeyToPopupAndWait(ui::KeyboardCode key) {
+  void SendKeyToPopupAndWait(ui::DomKey key) {
+    ui::KeyboardCode key_code = ui::NonPrintableDomKeyToKeyboardCode(key);
+    ui::DomCode code = ui::UsLayoutKeyboardCodeToDomCode(key_code);
+    SendKeyToPopupAndWait(key, code, key_code);
+  }
+
+  void SendKeyToPopupAndWait(ui::DomKey key,
+                             ui::DomCode code,
+                             ui::KeyboardCode key_code) {
     // Route popup-targeted key presses via the render view host.
     content::NativeWebKeyboardEvent event;
-    event.windowsKeyCode = key;
+    event.windowsKeyCode = key_code;
+    event.domCode = static_cast<int>(code);
+    event.domKey = key;
     event.type = blink::WebKeyboardEvent::RawKeyDown;
     test_delegate_.Reset();
     // Install the key press event sink to ensure that any events that are not
@@ -402,12 +482,22 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
         key_press_event_sink_);
   }
 
+  void SendKeyToDataListPopup(ui::DomKey key) {
+    ui::KeyboardCode key_code = ui::NonPrintableDomKeyToKeyboardCode(key);
+    ui::DomCode code = ui::UsLayoutKeyboardCodeToDomCode(key_code);
+    SendKeyToDataListPopup(key, code, key_code);
+  }
+
   // Datalist does not support autofill preview. There is no need to start
   // message loop for Datalist.
-  void SendKeyToDataListPopup(ui::KeyboardCode key) {
+  void SendKeyToDataListPopup(ui::DomKey key,
+                              ui::DomCode code,
+                              ui::KeyboardCode key_code) {
     // Route popup-targeted key presses via the render view host.
     content::NativeWebKeyboardEvent event;
-    event.windowsKeyCode = key;
+    event.windowsKeyCode = key_code;
+    event.domCode = static_cast<int>(code);
+    event.domKey = key;
     event.type = blink::WebKeyboardEvent::RawKeyDown;
     // Install the key press event sink to ensure that any events that are not
     // handled by the installed callbacks do not end up crashing the test.
@@ -423,11 +513,12 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
 
     // Start filling the first name field with "M" and wait for the popup to be
     // shown.
-    SendKeyToPageAndWait(ui::VKEY_M);
+    SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
+                         ui::VKEY_M);
 
     // Press the down arrow to select the suggestion and preview the autofilled
     // form.
-    SendKeyToPopupAndWait(ui::VKEY_DOWN);
+    SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 
     // The previewed values should not be accessible to JavaScript.
     ExpectFieldValue("firstname", "M");
@@ -443,7 +534,7 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     // displayed: http://crbug.com/57220
 
     // Press Enter to accept the autofill suggestions.
-    SendKeyToPopupAndWait(ui::VKEY_RETURN);
+    SendKeyToPopupAndWait(ui::DomKey::ENTER);
 
     // The form should be filled.
     ExpectFilledTestForm();
@@ -468,7 +559,14 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
 };
 
 // Test that basic form fill is working.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, BasicFormFill) {
+// Flakily times out on ChromeOS http://crbug.com/585885
+// Flakily fails on Windows http://crbug.com/639940
+#if defined(OS_CHROMEOS) || defined(OS_WIN)
+#define MAYBE_BasicFormFill DISABLED_BasicFormFill
+#else
+#define MAYBE_BasicFormFill BasicFormFill
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_BasicFormFill) {
   CreateTestProfile();
 
   // Load the test page.
@@ -479,8 +577,14 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, BasicFormFill) {
   TryBasicFormFill();
 }
 
+// Flaky. See http://crbug.com/516052.
+#if defined(OS_CHROMEOS)
+#define MAYBE_AutofillViaDownArrow DISABLED_AutofillViaDownArrow
+#else
+#define MAYBE_AutofillViaDownArrow AutofillViaDownArrow
+#endif
 // Test that form filling can be initiated by pressing the down arrow.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillViaDownArrow) {
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_AutofillViaDownArrow) {
   CreateTestProfile();
 
   // Load the test page.
@@ -492,14 +596,14 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillViaDownArrow) {
 
   // Press the down arrow to initiate Autofill and wait for the popup to be
   // shown.
-  SendKeyToPageAndWait(ui::VKEY_DOWN);
+  SendKeyToPageAndWait(ui::DomKey::ARROW_DOWN);
 
   // Press the down arrow to select the suggestion and preview the autofilled
   // form.
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 
   // Press Enter to accept the autofill suggestions.
-  SendKeyToPopupAndWait(ui::VKEY_RETURN);
+  SendKeyToPopupAndWait(ui::DomKey::ENTER);
 
   // The form should be filled.
   ExpectFilledTestForm();
@@ -523,14 +627,14 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_AutofillSelectViaTab) {
 
   // Press the down arrow to initiate Autofill and wait for the popup to be
   // shown.
-  SendKeyToPageAndWait(ui::VKEY_DOWN);
+  SendKeyToPageAndWait(ui::DomKey::ARROW_DOWN);
 
   // Press the down arrow to select the suggestion and preview the autofilled
   // form.
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 
   // Press tab to accept the autofill suggestions.
-  SendKeyToPopupAndWait(ui::VKEY_TAB);
+  SendKeyToPopupAndWait(ui::DomKey::TAB);
 
   // The form should be filled.
   ExpectFilledTestForm();
@@ -558,10 +662,10 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_AutofillViaClick) {
 
   // Press the down arrow to select the suggestion and preview the autofilled
   // form.
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 
   // Press Enter to accept the autofill suggestions.
-  SendKeyToPopupAndWait(ui::VKEY_RETURN);
+  SendKeyToPopupAndWait(ui::DomKey::ENTER);
 
   // The form should be filled.
   ExpectFilledTestForm();
@@ -614,7 +718,14 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, DontAutofillForOutsideClick) {
 
 // Test that a field is still autofillable after the previously autofilled
 // value is deleted.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnDeleteValueAfterAutofill) {
+// TODO(crbug.com/603488) Test is timing out flakily on CrOS.
+#if defined(OS_CHROMEOS)
+#define MAYBE_OnDeleteValueAfterAutofill DISABLED_OnDeleteValueAfterAutofill
+#else
+#define MAYBE_OnDeleteValueAfterAutofill OnDeleteValueAfterAutofill
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
+                       MAYBE_OnDeleteValueAfterAutofill) {
   CreateTestProfile();
 
   // Load the test page.
@@ -623,9 +734,10 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnDeleteValueAfterAutofill) {
 
   // Invoke and accept the Autofill popup and verify the form was filled.
   FocusFirstNameField();
-  SendKeyToPageAndWait(ui::VKEY_M);
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
-  SendKeyToPopupAndWait(ui::VKEY_RETURN);
+  SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
+                       ui::VKEY_M);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ENTER);
   ExpectFilledTestForm();
 
   // Delete the value of a filled field.
@@ -635,17 +747,19 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnDeleteValueAfterAutofill) {
   ExpectFieldValue("firstname", "");
 
   // Invoke and accept the Autofill popup and verify the field was filled.
-  SendKeyToPageAndWait(ui::VKEY_M);
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
-  SendKeyToPopupAndWait(ui::VKEY_RETURN);
+  SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
+                       ui::VKEY_M);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ENTER);
   ExpectFieldValue("firstname", "Milton");
 }
 
 // Test that an input field is not rendered with the yellow autofilled
 // background color when choosing an option from the datalist suggestion list.
-#if defined(OS_MACOSX)
-// Flakily triggers and assert on Mac.
-// http://crbug.com/419868
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+// Flakily triggers and assert on Mac; flakily gets empty string instead
+// of "Adam" on ChromeOS.
+// http://crbug.com/419868, http://crbug.com/595385.
 #define MAYBE_OnSelectOptionFromDatalist DISABLED_OnSelectOptionFromDatalist
 #else
 #define MAYBE_OnSelectOptionFromDatalist OnSelectOptionFromDatalist
@@ -669,9 +783,9 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
   GetFieldBackgroundColor("firstname", &orginalcolor);
 
   FocusFirstNameField();
-  SendKeyToPageAndWait(ui::VKEY_DOWN);
-  SendKeyToDataListPopup(ui::VKEY_DOWN);
-  SendKeyToDataListPopup(ui::VKEY_RETURN);
+  SendKeyToPageAndWait(ui::DomKey::ARROW_DOWN);
+  SendKeyToDataListPopup(ui::DomKey::ARROW_DOWN);
+  SendKeyToDataListPopup(ui::DomKey::ENTER);
   ExpectFieldValue("firstname", "Adam");
   std::string color;
   GetFieldBackgroundColor("firstname", &color);
@@ -679,7 +793,13 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
 }
 
 // Test that a JavaScript oninput event is fired after auto-filling a form.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnInputAfterAutofill) {
+// Flakily times out on ChromeOS http://crbug.com/585885
+#if defined(OS_CHROMEOS)
+#define MAYBE_OnInputAfterAutofill DISABLED_OnInputAfterAutofill
+#else
+#define MAYBE_OnInputAfterAutofill OnInputAfterAutofill
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_OnInputAfterAutofill) {
   CreateTestProfile();
 
   const char kOnInputScript[] =
@@ -712,14 +832,15 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnInputAfterAutofill) {
 
   // Start filling the first name field with "M" and wait for the popup to be
   // shown.
-  SendKeyToPageAndWait(ui::VKEY_M);
+  SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
+                       ui::VKEY_M);
 
   // Press the down arrow to select the suggestion and preview the autofilled
   // form.
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 
   // Press Enter to accept the autofill suggestions.
-  SendKeyToPopupAndWait(ui::VKEY_RETURN);
+  SendKeyToPopupAndWait(ui::DomKey::ENTER);
 
   // The form should be filled.
   ExpectFilledTestForm();
@@ -751,7 +872,13 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnInputAfterAutofill) {
 }
 
 // Test that a JavaScript onchange event is fired after auto-filling a form.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnChangeAfterAutofill) {
+// Flaky on CrOS only.  http://crbug.com/578095
+#if defined(OS_CHROMEOS)
+#define MAYBE_OnChangeAfterAutofill DISABLED_OnChangeAfterAutofill
+#else
+#define MAYBE_OnChangeAfterAutofill OnChangeAfterAutofill
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_OnChangeAfterAutofill) {
   CreateTestProfile();
 
   const char kOnChangeScript[] =
@@ -784,14 +911,15 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnChangeAfterAutofill) {
 
   // Start filling the first name field with "M" and wait for the popup to be
   // shown.
-  SendKeyToPageAndWait(ui::VKEY_M);
+  SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
+                       ui::VKEY_M);
 
   // Press the down arrow to select the suggestion and preview the autofilled
   // form.
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 
   // Press Enter to accept the autofill suggestions.
-  SendKeyToPopupAndWait(ui::VKEY_RETURN);
+  SendKeyToPopupAndWait(ui::DomKey::ENTER);
 
   // The form should be filled.
   ExpectFilledTestForm();
@@ -822,7 +950,13 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, OnChangeAfterAutofill) {
   EXPECT_FALSE(unchanged_select_fired);
 }
 
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, InputFiresBeforeChange) {
+// Flakily times out on ChromeOS http://crbug.com/585885
+#if defined(OS_CHROMEOS)
+#define MAYBE_InputFiresBeforeChange DISABLED_InputFiresBeforeChange
+#else
+#define MAYBE_InputFiresBeforeChange InputFiresBeforeChange
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_InputFiresBeforeChange) {
   CreateTestProfile();
 
   const char kInputFiresBeforeChangeScript[] =
@@ -850,9 +984,10 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, InputFiresBeforeChange) {
 
   // Invoke and accept the Autofill popup and verify the form was filled.
   FocusFirstNameField();
-  SendKeyToPageAndWait(ui::VKEY_M);
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
-  SendKeyToPopupAndWait(ui::VKEY_RETURN);
+  SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
+                       ui::VKEY_M);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ENTER);
   ExpectFilledTestForm();
 
   int num_input_element_events = -1;
@@ -901,8 +1036,14 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, InputFiresBeforeChange) {
 }
 
 // Test that we can autofill forms distinguished only by their |id| attribute.
+// Flaky on CrOS only.  http://crbug.com/578095
+#if defined(OS_CHROMEOS)
+#define MAYBE_AutofillFormsDistinguishedById DISABLED_AutofillFormsDistinguishedById
+#else
+#define MAYBE_AutofillFormsDistinguishedById AutofillFormsDistinguishedById
+#endif
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
-                       AutofillFormsDistinguishedById) {
+                       MAYBE_AutofillFormsDistinguishedById) {
   CreateTestProfile();
 
   // Load the test page.
@@ -927,7 +1068,15 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
 // In the wild, the repeated fields are typically either email fields
 // (duplicated for "confirmation"); or variants that are hot-swapped via
 // JavaScript, with only one actually visible at any given time.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillFormWithRepeatedField) {
+// Flakily times out on ChromeOS http://crbug.com/585885
+#if defined(OS_CHROMEOS)
+#define MAYBE_AutofillFormWithRepeatedField \
+  DISABLED_AutofillFormWithRepeatedField
+#else
+#define MAYBE_AutofillFormWithRepeatedField AutofillFormWithRepeatedField
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
+                       MAYBE_AutofillFormWithRepeatedField) {
   CreateTestProfile();
 
   // Load the test page.
@@ -971,9 +1120,17 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillFormWithRepeatedField) {
   ExpectFieldValue("state_freeform", std::string());
 }
 
+// TODO(crbug.com/603488) Test is timing out flakily on CrOS.
+#if defined(OS_CHROMEOS)
+#define MAYBE_AutofillFormWithNonAutofillableField \
+  DISABLED_AutofillFormWithNonAutofillableField
+#else
+#define MAYBE_AutofillFormWithNonAutofillableField \
+  AutofillFormWithNonAutofillableField
+#endif
 // Test that we properly autofill forms with non-autofillable fields.
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
-                       AutofillFormWithNonAutofillableField) {
+                       MAYBE_AutofillFormWithNonAutofillableField) {
   CreateTestProfile();
 
   // Load the test page.
@@ -1015,8 +1172,14 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
   TryBasicFormFill();
 }
 
+// Flakily fails on ChromeOS (crbug.com/646576).
+#if defined(OS_CHROMEOS)
+#define MAYBE_DynamicFormFill DISABLED_DynamicFormFill
+#else
+#define MAYBE_DynamicFormFill DynamicFormFill
+#endif
 // Test that we can Autofill dynamically generated forms.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, DynamicFormFill) {
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_DynamicFormFill) {
   CreateTestProfile();
 
   // Load the test page.
@@ -1118,6 +1281,111 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillAfterReload) {
 
   // Invoke Autofill.
   TryBasicFormFill();
+}
+
+// Test that filling a form sends all the expected events to the different
+// fields being filled.
+// Flakily fails on ChromeOS (crbug.com/646576).
+#if defined(OS_CHROMEOS)
+#define MAYBE_AutofillEvents DISABLED_AutofillEvents
+#else
+#define MAYBE_AutofillEvents AutofillEvents
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_AutofillEvents) {
+  CreateTestProfile();
+
+  // Load the test page.
+  ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(
+      browser(), GURL(std::string(kDataURIPrefix) + kTestEventFormString)));
+
+  // Invoke Autofill.
+  TryBasicFormFill();
+
+  // Checks that all the events were fired for the input field.
+  bool input_focus_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(inputfocus);",
+      &input_focus_triggered));
+  EXPECT_TRUE(input_focus_triggered);
+  bool input_keydown_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(inputkeydown);",
+      &input_keydown_triggered));
+  EXPECT_TRUE(input_keydown_triggered);
+  bool input_input_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(inputinput);",
+      &input_input_triggered));
+  EXPECT_TRUE(input_input_triggered);
+  bool input_change_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(inputchange);",
+      &input_change_triggered));
+  EXPECT_TRUE(input_change_triggered);
+  bool input_keyup_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(inputkeyup);",
+      &input_keyup_triggered));
+  EXPECT_TRUE(input_keyup_triggered);
+  bool input_blur_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(inputblur);",
+      &input_blur_triggered));
+  EXPECT_TRUE(input_blur_triggered);
+
+  // Checks that all the events were fired for the textarea field.
+  bool text_focus_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(textfocus);",
+      &text_focus_triggered));
+  EXPECT_TRUE(text_focus_triggered);
+  bool text_keydown_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(textkeydown);",
+      &text_keydown_triggered));
+  EXPECT_TRUE(text_keydown_triggered);
+  bool text_input_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(textinput);",
+      &text_input_triggered));
+  EXPECT_TRUE(text_input_triggered);
+  bool text_change_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(textchange);",
+      &text_change_triggered));
+  EXPECT_TRUE(text_change_triggered);
+  bool text_keyup_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(textkeyup);",
+      &text_keyup_triggered));
+  EXPECT_TRUE(text_keyup_triggered);
+  bool text_blur_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(textblur);",
+      &text_blur_triggered));
+  EXPECT_TRUE(text_blur_triggered);
+
+  // Checks that all the events were fired for the select field.
+  bool select_focus_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(selectfocus);",
+      &select_focus_triggered));
+  EXPECT_TRUE(select_focus_triggered);
+  bool select_input_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(selectinput);",
+      &select_input_triggered));
+  EXPECT_TRUE(select_input_triggered);
+  bool select_change_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(selectchange);",
+      &select_change_triggered));
+  EXPECT_TRUE(select_change_triggered);
+  bool select_blur_triggered;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      GetRenderViewHost(), "domAutomationController.send(selectblur);",
+      &select_blur_triggered));
+  EXPECT_TRUE(select_blur_triggered);
 }
 
 // Test fails on Linux ASAN, see http://crbug.com/532737
@@ -1257,11 +1525,12 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_ComparePhoneNumbers) {
 
 // Test that Autofill does not fill in read-only fields.
 // Flaky on the official cros-trunk. crbug.com/516052
-#if defined(OFFICIAL_BUILD)
+// Also flaky on ChromiumOS generally. crbug.com/585885
+#if defined(OFFICIAL_BUILD) || defined(OS_CHROMEOS)
 #define MAYBE_NoAutofillForReadOnlyFields DISABLED_NoAutofillForReadOnlyFields
 #else
 #define MAYBE_NoAutofillForReadOnlyFields NoAutofillForReadOnlyFields
-#endif  // defined(OFFICIAL_BUILD)
+#endif  // defined(OFFICIAL_BUILD) || defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
                        MAYBE_NoAutofillForReadOnlyFields) {
   std::string addr_line1("1234 H St.");
@@ -1421,8 +1690,15 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
 // Test that Chrome doesn't crash when autocomplete is disabled while the user
 // is interacting with the form.  This is a regression test for
 // http://crbug.com/160476
+// Flakily times out on ChromeOS http://crbug.com/585885
+#if defined(OS_CHROMEOS)
+#define MAYBE_DisableAutocompleteWhileFilling \
+  DISABLED_DisableAutocompleteWhileFilling
+#else
+#define MAYBE_DisableAutocompleteWhileFilling DisableAutocompleteWhileFilling
+#endif
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
-                       DisableAutocompleteWhileFilling) {
+                       MAYBE_DisableAutocompleteWhileFilling) {
   CreateTestProfile();
 
   // Load the test page.
@@ -1432,7 +1708,8 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
   // Invoke Autofill: Start filling the first name field with "M" and wait for
   // the popup to be shown.
   FocusFirstNameField();
-  SendKeyToPageAndWait(ui::VKEY_M);
+  SendKeyToPageAndWait(ui::DomKey::FromCharacter('M'), ui::DomCode::US_M,
+                       ui::VKEY_M);
 
   // Now that the popup with suggestions is showing, disable autocomplete for
   // the active field.
@@ -1442,7 +1719,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
 
   // Press the down arrow to select the suggestion and attempt to preview the
   // autofilled form.
-  SendKeyToPopupAndWait(ui::VKEY_DOWN);
+  SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 }
 
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,

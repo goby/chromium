@@ -5,11 +5,14 @@
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
 
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/command_line.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/sequenced_task_runner.h"
 #include "base/values.h"
@@ -23,16 +26,17 @@
 #include "chrome/browser/chromeos/policy/wildcard_login_checker.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/common/chrome_content_client.h"
+#include "chromeos/chromeos_switches.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
-#include "components/policy/core/common/cloud/system_policy_request_context.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/policy/policy_constants.h"
+#include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "policy/policy_constants.h"
 #include "url/gurl.h"
 
 namespace em = enterprise_management;
@@ -78,8 +82,8 @@ void OnWildcardCheckCompleted(const std::string& username,
 }  // namespace
 
 UserCloudPolicyManagerChromeOS::UserCloudPolicyManagerChromeOS(
-    scoped_ptr<CloudPolicyStore> store,
-    scoped_ptr<CloudExternalDataManager> external_data_manager,
+    std::unique_ptr<CloudPolicyStore> store,
+    std::unique_ptr<CloudExternalDataManager> external_data_manager,
     const base::FilePath& component_policy_cache_path,
     bool wait_for_policy_fetch,
     base::TimeDelta initial_policy_fetch_timeout,
@@ -92,19 +96,35 @@ UserCloudPolicyManagerChromeOS::UserCloudPolicyManagerChromeOS(
                          task_runner,
                          file_task_runner,
                          io_task_runner),
-      store_(store.Pass()),
-      external_data_manager_(external_data_manager.Pass()),
+      store_(std::move(store)),
+      external_data_manager_(std::move(external_data_manager)),
       component_policy_cache_path_(component_policy_cache_path),
       wait_for_policy_fetch_(wait_for_policy_fetch),
       policy_fetch_timeout_(false, false) {
   time_init_started_ = base::Time::Now();
-  if (wait_for_policy_fetch_ && !initial_policy_fetch_timeout.is_max()) {
+
+  // Caller should pass a non-zero policy_fetch_timeout iff
+  // |wait_for_policy_fetch| is true.
+  DCHECK_NE(wait_for_policy_fetch_, initial_policy_fetch_timeout.is_zero());
+  allow_failed_policy_fetches_ =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kAllowFailedPolicyFetchForTest) ||
+      !initial_policy_fetch_timeout.is_max();
+  if (wait_for_policy_fetch_ && allow_failed_policy_fetches_) {
     policy_fetch_timeout_.Start(
         FROM_HERE,
         initial_policy_fetch_timeout,
         base::Bind(&UserCloudPolicyManagerChromeOS::OnBlockingFetchTimeout,
                    base::Unretained(this)));
   }
+}
+
+void UserCloudPolicyManagerChromeOS::ForceTimeoutForTest() {
+  DCHECK(policy_fetch_timeout_.IsRunning());
+  // Stop the timer to mimic what happens when a real timer fires, then invoke
+  // the timer callback directly.
+  policy_fetch_timeout_.Stop();
+  OnBlockingFetchTimeout();
 }
 
 UserCloudPolicyManagerChromeOS::~UserCloudPolicyManagerChromeOS() {}
@@ -116,26 +136,22 @@ void UserCloudPolicyManagerChromeOS::Connect(
   DCHECK(device_management_service);
   DCHECK(local_state);
   local_state_ = local_state;
-  scoped_refptr<net::URLRequestContextGetter> request_context;
-  if (system_request_context.get()) {
-    // |system_request_context| can be null for tests.
-    // Use the system request context here instead of a context derived
-    // from the Profile because Connect() is called before the profile is
-    // fully initialized (required so we can perform the initial policy load).
-    // TODO(atwilson): Change this to use a UserPolicyRequestContext once
-    // Connect() is called after profile initialization. http://crbug.com/323591
-    request_context = new SystemPolicyRequestContext(
-        system_request_context, GetUserAgent());
-  }
-  scoped_ptr<CloudPolicyClient> cloud_policy_client(new CloudPolicyClient(
-      std::string(), std::string(), kPolicyVerificationKeyHash,
-      device_management_service, request_context));
-  CreateComponentCloudPolicyService(component_policy_cache_path_,
-                                    request_context, cloud_policy_client.get());
-  core()->Connect(cloud_policy_client.Pass());
+  // Note: |system_request_context| can be null for tests.
+  // Use the system request context here instead of a context derived
+  // from the Profile because Connect() is called before the profile is
+  // fully initialized (required so we can perform the initial policy load).
+  std::unique_ptr<CloudPolicyClient> cloud_policy_client =
+      base::MakeUnique<CloudPolicyClient>(
+          std::string() /* machine_id */, std::string() /* machine_model */,
+          device_management_service, system_request_context,
+          nullptr /* signing_service */);
+  CreateComponentCloudPolicyService(
+      dm_protocol::kChromeExtensionPolicyType, component_policy_cache_path_,
+      system_request_context, cloud_policy_client.get(), schema_registry());
+  core()->Connect(std::move(cloud_policy_client));
   client()->AddObserver(this);
 
-  external_data_manager_->Connect(request_context);
+  external_data_manager_->Connect(system_request_context);
 
   // Determine the next step after the CloudPolicyService initializes.
   if (service()->IsInitializationComplete()) {
@@ -259,7 +275,7 @@ void UserCloudPolicyManagerChromeOS::OnRegistrationStateChanged(
     } else {
       // If the client has switched to not registered, we bail out as this
       // indicates the cloud policy setup flow has been aborted.
-      CancelWaitForPolicyFetch();
+      CancelWaitForPolicyFetch(true);
     }
   }
 }
@@ -271,7 +287,18 @@ void UserCloudPolicyManagerChromeOS::OnClientError(
     UMA_HISTOGRAM_SPARSE_SLOWLY(kUMAInitialFetchClientError,
                                 cloud_policy_client->status());
   }
-  CancelWaitForPolicyFetch();
+  switch (client()->status()) {
+    case DM_STATUS_SUCCESS:
+    case DM_STATUS_SERVICE_MANAGEMENT_NOT_SUPPORTED:
+      // If management is not supported for this user, then a registration
+      // error is to be expected.
+      CancelWaitForPolicyFetch(true);
+      break;
+    default:
+      // Unexpected error fetching policy.
+      CancelWaitForPolicyFetch(false);
+      break;
+  }
 }
 
 void UserCloudPolicyManagerChromeOS::OnComponentCloudPolicyUpdated() {
@@ -286,6 +313,7 @@ void UserCloudPolicyManagerChromeOS::OnStoreLoaded(
   em::PolicyData const* const policy_data = cloud_policy_store->policy();
 
   if (policy_data) {
+    DCHECK(policy_data->has_username());
     chromeos::AffiliationIDSet set_of_user_affiliation_ids(
         policy_data->user_affiliation_ids().begin(),
         policy_data->user_affiliation_ids().end());
@@ -311,7 +339,7 @@ void UserCloudPolicyManagerChromeOS::FetchPolicyOAuthToken() {
                                          ->user_context()
                                          .GetRefreshToken();
   if (!refresh_token.empty()) {
-    token_fetcher_.reset(new PolicyOAuth2TokenFetcher());
+    token_fetcher_.reset(PolicyOAuth2TokenFetcher::CreateInstance());
     token_fetcher_->StartWithRefreshToken(
         refresh_token, g_browser_process->system_request_context(),
         base::Bind(&UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched,
@@ -328,7 +356,7 @@ void UserCloudPolicyManagerChromeOS::FetchPolicyOAuthToken() {
     return;
   }
 
-  token_fetcher_.reset(new PolicyOAuth2TokenFetcher());
+  token_fetcher_.reset(PolicyOAuth2TokenFetcher::CreateInstance());
   token_fetcher_->StartWithSigninContext(
       signin_context.get(), g_browser_process->system_request_context(),
       base::Bind(&UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched,
@@ -353,9 +381,6 @@ void UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched(
                        policy_token, std::string(), std::string(),
                        std::string());
   } else {
-    // Failed to get a token, stop waiting and use an empty policy.
-    CancelWaitForPolicyFetch();
-
     UMA_HISTOGRAM_ENUMERATION(kUMAInitialFetchOAuth2Error,
                               error.state(),
                               GoogleServiceAuthError::NUM_STATES);
@@ -365,6 +390,9 @@ void UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched(
       UMA_HISTOGRAM_SPARSE_SLOWLY(kUMAInitialFetchOAuth2NetworkError,
                                   -error.network_error());
     }
+    // Failed to get a token, stop waiting if policy is not required for this
+    // user.
+    CancelWaitForPolicyFetch(false);
   }
 
   token_fetcher_.reset();
@@ -377,23 +405,37 @@ void UserCloudPolicyManagerChromeOS::OnInitialPolicyFetchComplete(
                              now - time_client_registered_);
   UMA_HISTOGRAM_MEDIUM_TIMES(kUMAInitialFetchDelayTotal,
                              now - time_init_started_);
-  CancelWaitForPolicyFetch();
+  CancelWaitForPolicyFetch(success);
 }
 
 void UserCloudPolicyManagerChromeOS::OnBlockingFetchTimeout() {
   if (!wait_for_policy_fetch_)
     return;
-  LOG(WARNING) << "Timed out while waiting for the initial policy fetch. "
-               << "The first session will start without policy.";
-  CancelWaitForPolicyFetch();
+  LOG(WARNING) << "Timed out while waiting for the policy fetch. "
+               << "The session will start with the cached policy.";
+  CancelWaitForPolicyFetch(false);
 }
 
-void UserCloudPolicyManagerChromeOS::CancelWaitForPolicyFetch() {
+void UserCloudPolicyManagerChromeOS::CancelWaitForPolicyFetch(bool success) {
   if (!wait_for_policy_fetch_)
     return;
 
-  wait_for_policy_fetch_ = false;
   policy_fetch_timeout_.Stop();
+
+  // If there was an error, and we don't want to allow profile initialization
+  // to go forward after a failed policy fetch, then just return (profile
+  // initialization will not complete).
+  // TODO(atwilson): Add code to retry policy fetching.
+  if (!success && !allow_failed_policy_fetches_) {
+    LOG(ERROR) << "Policy fetch failed for the user. "
+                  "Aborting profile initialization";
+    // Need to exit the current user, because we've already started this user's
+    // session.
+    chrome::AttemptUserExit();
+    return;
+  }
+
+  wait_for_policy_fetch_ = false;
   CheckAndPublishPolicy();
   // Now that |wait_for_policy_fetch_| is guaranteed to be false, the scheduler
   // can be started.

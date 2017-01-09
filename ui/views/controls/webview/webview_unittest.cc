@@ -4,19 +4,27 @@
 
 #include "ui/views/controls/webview/webview.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/web_contents_tester.h"
 #include "content/test/test_content_browser_client.h"
-#include "ui/aura/window.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/test/test_views_delegate.h"
 #include "ui/views/test/widget_test.h"
+
+#if defined(USE_AURA)
+#include "ui/aura/window.h"
+#endif
 
 namespace views {
 
@@ -40,7 +48,7 @@ class WebViewTestViewsDelegate : public views::TestViewsDelegate {
   DISALLOW_COPY_AND_ASSIGN(WebViewTestViewsDelegate);
 };
 
-// Provides functionaity to observe events on a WebContents like WasShown/
+// Provides functionality to observe events on a WebContents like WasShown/
 // WasHidden/WebContentsDestroyed.
 class WebViewTestWebContentsObserver : public content::WebContentsObserver {
  public:
@@ -48,7 +56,8 @@ class WebViewTestWebContentsObserver : public content::WebContentsObserver {
       : web_contents_(web_contents),
         was_shown_(false),
         shown_count_(0),
-        hidden_count_(0) {
+        hidden_count_(0),
+        valid_root_while_shown_(true) {
     content::WebContentsObserver::Observe(web_contents);
   }
 
@@ -64,8 +73,10 @@ class WebViewTestWebContentsObserver : public content::WebContentsObserver {
   }
 
   void WasShown() override {
+#if defined(USE_AURA)
     valid_root_while_shown_ =
         web_contents()->GetNativeView()->GetRootWindow() != NULL;
+#endif
     was_shown_ = true;
     ++shown_count_;
   }
@@ -86,8 +97,8 @@ class WebViewTestWebContentsObserver : public content::WebContentsObserver {
  private:
   content::WebContents* web_contents_;
   bool was_shown_;
-  int32 shown_count_;
-  int32 hidden_count_;
+  int32_t shown_count_;
+  int32_t hidden_count_;
   // Set to true if the view containing the webcontents has a valid root window.
   bool valid_root_while_shown_;
 
@@ -129,7 +140,7 @@ class WebViewUnitTest : public views::test::WidgetTest {
   ~WebViewUnitTest() override {}
 
   void SetUp() override {
-    set_views_delegate(make_scoped_ptr(new WebViewTestViewsDelegate));
+    set_views_delegate(base::WrapUnique(new WebViewTestViewsDelegate));
     browser_context_.reset(new content::TestBrowserContext);
     WidgetTest::SetUp();
     // Set the test content browser client to avoid pulling in needless
@@ -165,8 +176,8 @@ class WebViewUnitTest : public views::test::WidgetTest {
   WebView* web_view() const { return web_view_; }
   NativeViewHost* holder() const { return web_view_->holder_; }
 
-  scoped_ptr<content::WebContents> CreateWebContents() const {
-    return make_scoped_ptr(content::WebContents::Create(
+  std::unique_ptr<content::WebContents> CreateWebContents() const {
+    return base::WrapUnique(content::WebContents::Create(
         content::WebContents::CreateParams(browser_context_.get())));
   }
 
@@ -174,7 +185,7 @@ class WebViewUnitTest : public views::test::WidgetTest {
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread file_blocking_thread_;
   content::TestBrowserThread io_thread_;
-  scoped_ptr<content::TestBrowserContext> browser_context_;
+  std::unique_ptr<content::TestBrowserContext> browser_context_;
   content::TestContentBrowserClient test_browser_client_;
 
   Widget* top_level_widget_;
@@ -188,13 +199,16 @@ class WebViewUnitTest : public views::test::WidgetTest {
 TEST_F(WebViewUnitTest, TestWebViewAttachDetachWebContents) {
   // Case 1: Create a new WebContents and set it in the webview via
   // SetWebContents. This should make the WebContents visible.
-  const scoped_ptr<content::WebContents> web_contents1(CreateWebContents());
+  const std::unique_ptr<content::WebContents> web_contents1(
+      CreateWebContents());
   WebViewTestWebContentsObserver observer1(web_contents1.get());
   EXPECT_FALSE(observer1.was_shown());
 
   web_view()->SetWebContents(web_contents1.get());
   EXPECT_TRUE(observer1.was_shown());
+#if defined(USE_AURA)
   EXPECT_TRUE(web_contents1->GetNativeView()->IsVisible());
+#endif
   EXPECT_EQ(observer1.shown_count(), 1);
   EXPECT_EQ(observer1.hidden_count(), 0);
   EXPECT_TRUE(observer1.valid_root_while_shown());
@@ -202,7 +216,8 @@ TEST_F(WebViewUnitTest, TestWebViewAttachDetachWebContents) {
   // Case 2: Create another WebContents and replace the current WebContents
   // via SetWebContents(). This should hide the current WebContents and show
   // the new one.
-  const scoped_ptr<content::WebContents> web_contents2(CreateWebContents());
+  const std::unique_ptr<content::WebContents> web_contents2(
+      CreateWebContents());
   WebViewTestWebContentsObserver observer2(web_contents2.get());
   EXPECT_FALSE(observer2.was_shown());
 
@@ -232,6 +247,7 @@ TEST_F(WebViewUnitTest, TestWebViewAttachDetachWebContents) {
   EXPECT_EQ(1, observer2.shown_count());
   EXPECT_EQ(1, observer2.hidden_count());
 
+#if defined(USE_AURA)
   // Case 4: Test that making the webview visible when a window has an invisible
   // parent does not make the web contents visible.
   top_level_widget()->Hide();
@@ -243,7 +259,18 @@ TEST_F(WebViewUnitTest, TestWebViewAttachDetachWebContents) {
   EXPECT_EQ(2, observer1.shown_count());
   top_level_widget()->Hide();
   EXPECT_EQ(2, observer1.hidden_count());
-
+#else
+  // On Mac, changes to window visibility do not trigger calls to WebContents::
+  // WasShown() or WasHidden(), since the OS does not provide good signals for
+  // window visibility. However, we can still test that moving a visible WebView
+  // whose WebContents is not currently showing to a new, visible window will
+  // show the WebContents. Simulate the "hide window with visible WebView" step
+  // simply by detaching the WebContents.
+  web_view()->SetVisible(true);
+  EXPECT_EQ(2, observer1.shown_count());
+  web_view()->holder()->Detach();
+  EXPECT_EQ(2, observer1.hidden_count());
+#endif
   // Case 5: Test that moving from a hidden parent to a visible parent makes the
   // web contents visible.
   Widget* parent2 = CreateTopLevelFramelessPlatformWidget();
@@ -265,7 +292,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Layout) {
   web_view()->SetEmbedFullscreenWidgetMode(true);
   ASSERT_EQ(1, web_view()->child_count());
 
-  const scoped_ptr<content::WebContents> web_contents(CreateWebContents());
+  const std::unique_ptr<content::WebContents> web_contents(CreateWebContents());
   WebViewTestWebContentsDelegate delegate;
   web_contents->SetDelegate(&delegate);
   web_view()->SetWebContents(web_contents.get());
@@ -278,13 +305,13 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Layout) {
   // WebView like before.
   delegate.set_is_fullscreened(true);
   static_cast<content::WebContentsObserver*>(web_view())->
-      DidToggleFullscreenModeForTab(true);
+      DidToggleFullscreenModeForTab(true, false);
   EXPECT_EQ(gfx::Rect(0, 0, 100, 100), holder()->bounds());
 
   // ...and transition back out of fullscreen mode.
   delegate.set_is_fullscreened(false);
   static_cast<content::WebContentsObserver*>(web_view())->
-      DidToggleFullscreenModeForTab(false);
+      DidToggleFullscreenModeForTab(false, false);
   EXPECT_EQ(gfx::Rect(0, 0, 100, 100), holder()->bounds());
 
   // Now, begin screen capture of the WebContents and then enter fullscreen
@@ -294,7 +321,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Layout) {
   web_contents->IncrementCapturerCount(capture_size);
   delegate.set_is_fullscreened(true);
   static_cast<content::WebContentsObserver*>(web_view())->
-      DidToggleFullscreenModeForTab(true);
+      DidToggleFullscreenModeForTab(true, false);
   EXPECT_EQ(gfx::Rect(18, 26, 64, 48), holder()->bounds());
 
   // Resize the WebView so that its width is smaller than the capture width.
@@ -306,7 +333,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Layout) {
   // of the holder fill the entire WebView once again.
   delegate.set_is_fullscreened(false);
   static_cast<content::WebContentsObserver*>(web_view())->
-      DidToggleFullscreenModeForTab(false);
+      DidToggleFullscreenModeForTab(false, false);
   EXPECT_EQ(gfx::Rect(0, 0, 32, 32), holder()->bounds());
 }
 
@@ -318,10 +345,12 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Switching) {
   const gfx::NativeView unset_native_view = holder()->native_view();
 
   // Create two WebContentses to switch between.
-  const scoped_ptr<content::WebContents> web_contents1(CreateWebContents());
+  const std::unique_ptr<content::WebContents> web_contents1(
+      CreateWebContents());
   WebViewTestWebContentsDelegate delegate1;
   web_contents1->SetDelegate(&delegate1);
-  const scoped_ptr<content::WebContents> web_contents2(CreateWebContents());
+  const std::unique_ptr<content::WebContents> web_contents2(
+      CreateWebContents());
   WebViewTestWebContentsDelegate delegate2;
   web_contents2->SetDelegate(&delegate2);
 
@@ -337,7 +366,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Switching) {
   web_contents1->IncrementCapturerCount(capture_size);
   delegate1.set_is_fullscreened(true);
   static_cast<content::WebContentsObserver*>(web_view())->
-      DidToggleFullscreenModeForTab(true);
+      DidToggleFullscreenModeForTab(true, false);
   EXPECT_EQ(web_contents1->GetNativeView(), holder()->native_view());
   EXPECT_EQ(gfx::Rect(18, 26, 64, 48), holder()->bounds());
 
@@ -372,13 +401,13 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_ClickToFocus) {
   web_view()->SetBoundsRect(gfx::Rect(0, 0, 100, 90));
   views::View* const something_to_focus = new views::View();
   something_to_focus->SetBoundsRect(gfx::Rect(0, 90, 100, 10));
-  something_to_focus->SetFocusable(true);
+  something_to_focus->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   top_level_widget()->GetContentsView()->AddChildView(something_to_focus);
 
   web_view()->SetEmbedFullscreenWidgetMode(true);
   ASSERT_EQ(1, web_view()->child_count());
 
-  const scoped_ptr<content::WebContents> web_contents(CreateWebContents());
+  const std::unique_ptr<content::WebContents> web_contents(CreateWebContents());
   WebViewTestWebContentsDelegate delegate;
   web_contents->SetDelegate(&delegate);
   web_view()->SetWebContents(web_contents.get());
@@ -390,7 +419,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_ClickToFocus) {
   web_contents->IncrementCapturerCount(capture_size);
   delegate.set_is_fullscreened(true);
   static_cast<content::WebContentsObserver*>(web_view())->
-      DidToggleFullscreenModeForTab(true);
+      DidToggleFullscreenModeForTab(true, false);
   EXPECT_EQ(gfx::Rect(18, 21, 64, 48), holder()->bounds());
 
   // Focus the other widget.
@@ -432,6 +461,25 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_ClickToFocus) {
   EXPECT_FALSE(web_view()->HasFocus());
   EXPECT_FALSE(holder()->HasFocus());
   EXPECT_TRUE(something_to_focus->HasFocus());
+}
+
+// Verifies that there is no crash in WebView destructor
+// if WebView is already removed from Widget.
+TEST_F(WebViewUnitTest, DetachedWebViewDestructor) {
+  // Init WebView with attached NativeView.
+  const std::unique_ptr<content::WebContents> web_contents(CreateWebContents());
+  std::unique_ptr<WebView> webview(
+      new WebView(web_contents->GetBrowserContext()));
+  View* contents_view = top_level_widget()->GetContentsView();
+  contents_view->AddChildView(webview.get());
+  webview->SetWebContents(web_contents.get());
+
+  // Remove WebView from views hierarchy. NativeView should be detached
+  // from Widget.
+  contents_view->RemoveChildView(webview.get());
+  // Destroy WebView. NativeView should be detached secondary.
+  // There should be no crash.
+  webview.reset();
 }
 
 }  // namespace views

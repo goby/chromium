@@ -4,6 +4,8 @@
 
 #include "extensions/common/manifest_test.h"
 
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
@@ -20,7 +22,7 @@ namespace extensions {
 namespace {
 
 // |manifest_path| is an absolute path to a manifest file.
-scoped_ptr<base::DictionaryValue> LoadManifestFile(
+std::unique_ptr<base::DictionaryValue> LoadManifestFile(
     const base::FilePath& manifest_path,
     std::string* error) {
   base::FilePath extension_path = manifest_path.DirName();
@@ -29,7 +31,7 @@ scoped_ptr<base::DictionaryValue> LoadManifestFile(
       "Couldn't find " << manifest_path.value();
 
   JSONFileValueDeserializer deserializer(manifest_path);
-  scoped_ptr<base::DictionaryValue> manifest =
+  std::unique_ptr<base::DictionaryValue> manifest =
       base::DictionaryValue::From(deserializer.Deserialize(NULL, error));
 
   // Most unit tests don't need localization, and they'll fail if we try to
@@ -67,17 +69,17 @@ ManifestTest::ManifestData::ManifestData(base::DictionaryValue* manifest,
 }
 
 ManifestTest::ManifestData::ManifestData(
-    scoped_ptr<base::DictionaryValue> manifest)
-    : manifest_(manifest.get()), manifest_holder_(manifest.Pass()) {
+    std::unique_ptr<base::DictionaryValue> manifest)
+    : manifest_(manifest.get()), manifest_holder_(std::move(manifest)) {
   CHECK(manifest_) << "Manifest NULL";
 }
 
 ManifestTest::ManifestData::ManifestData(
-    scoped_ptr<base::DictionaryValue> manifest,
+    std::unique_ptr<base::DictionaryValue> manifest,
     const char* name)
     : name_(name),
       manifest_(manifest.get()),
-      manifest_holder_(manifest.Pass()) {
+      manifest_holder_(std::move(manifest)) {
   CHECK(manifest_) << "Manifest NULL";
 }
 
@@ -89,7 +91,8 @@ ManifestTest::ManifestData::~ManifestData() {
 }
 
 base::DictionaryValue* ManifestTest::ManifestData::GetManifest(
-    base::FilePath test_data_dir, std::string* error) const {
+    const base::FilePath& test_data_dir,
+    std::string* error) const {
   if (manifest_)
     return manifest_;
 
@@ -109,8 +112,9 @@ base::FilePath ManifestTest::GetTestDataDir() {
   return path.AppendASCII("manifest_tests");
 }
 
-scoped_ptr<base::DictionaryValue> ManifestTest::LoadManifest(
-    char const* manifest_name, std::string* error) {
+std::unique_ptr<base::DictionaryValue> ManifestTest::LoadManifest(
+    char const* manifest_name,
+    std::string* error) {
   base::FilePath manifest_path = GetTestDataDir().AppendASCII(manifest_name);
   return LoadManifestFile(manifest_path, error);
 }

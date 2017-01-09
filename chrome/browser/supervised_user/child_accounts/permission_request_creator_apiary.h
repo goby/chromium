@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_SUPERVISED_USER_CHILD_ACCOUNTS_PERMISSION_REQUEST_CREATOR_APIARY_H_
 #define CHROME_BROWSER_SUPERVISED_USER_CHILD_ACCOUNTS_PERMISSION_REQUEST_CREATOR_APIARY_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "chrome/browser/supervised_user/permission_request_creator.h"
 #include "google_apis/gaia/oauth2_token_service.h"
@@ -35,13 +36,15 @@ class PermissionRequestCreatorApiary : public PermissionRequestCreator,
       net::URLRequestContextGetter* context);
   ~PermissionRequestCreatorApiary() override;
 
-  static scoped_ptr<PermissionRequestCreator> CreateWithProfile(
+  static std::unique_ptr<PermissionRequestCreator> CreateWithProfile(
       Profile* profile);
 
   // PermissionRequestCreator implementation:
   bool IsEnabled() const override;
   void CreateURLAccessRequest(const GURL& url_requested,
                               const SuccessCallback& callback) override;
+  void CreateExtensionInstallRequest(const std::string& id,
+                                     const SuccessCallback& callback) override;
   void CreateExtensionUpdateRequest(const std::string& id,
                                     const SuccessCallback& callback) override;
 

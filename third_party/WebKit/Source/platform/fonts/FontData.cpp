@@ -23,13 +23,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/fonts/FontData.h"
 
 namespace blink {
 
-FontData::~FontData()
-{
-}
+FontData::~FontData() {}
 
-} // namespace blink
+}  // namespace blink

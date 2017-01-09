@@ -13,39 +13,34 @@ namespace blink {
 
 // Represents the non-keyword subset of <color>.
 class CSSColorValue : public CSSValue {
-public:
-    static PassRefPtrWillBeRawPtr<CSSColorValue> create(Color color)
-    {
-        return adoptRefWillBeNoop(new CSSColorValue(color));
-    }
+ public:
+  // TODO(sashab): Make this create() method take a Color instead.
+  static CSSColorValue* create(RGBA32 color);
 
-    String customCSSText() const
-    {
-        return m_color.serializedAsCSSComponentValue();
-    }
+  String customCSSText() const {
+    return m_color.serializedAsCSSComponentValue();
+  }
 
-    Color value() const { return m_color; }
+  Color value() const { return m_color; }
 
-    bool equals(const CSSColorValue& other) const
-    {
-        return m_color == other.m_color;
-    }
+  bool equals(const CSSColorValue& other) const {
+    return m_color == other.m_color;
+  }
 
-    DEFINE_INLINE_TRACE_AFTER_DISPATCH()
-    {
-        CSSValue::traceAfterDispatch(visitor);
-    }
+  DEFINE_INLINE_TRACE_AFTER_DISPATCH() {
+    CSSValue::traceAfterDispatch(visitor);
+  }
 
-private:
-    CSSColorValue(Color color)
-        : CSSValue(ColorClass)
-        , m_color(color) { }
+ private:
+  friend class CSSValuePool;
 
-    Color m_color;
+  CSSColorValue(Color color) : CSSValue(ColorClass), m_color(color) {}
+
+  Color m_color;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSColorValue, isColorValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSColorValue_h
+#endif  // CSSColorValue_h

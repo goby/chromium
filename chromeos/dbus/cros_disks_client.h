@@ -5,11 +5,13 @@
 #ifndef CHROMEOS_DBUS_CROS_DISKS_CLIENT_H_
 #define CHROMEOS_DBUS_CROS_DISKS_CLIENT_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_client_implementation_type.h"
@@ -19,7 +21,6 @@ class FilePath;
 }
 
 namespace dbus {
-class MessageReader;
 class Response;
 }
 
@@ -100,6 +101,24 @@ enum UnmountOptions {
   UNMOUNT_OPTIONS_LAZY,  // Do lazy unmount.
 };
 
+// Mount option to control write permission to a device.
+enum MountAccessMode {
+  MOUNT_ACCESS_MODE_READ_WRITE,
+  MOUNT_ACCESS_MODE_READ_ONLY,
+};
+
+// Whether to mount to a new path or remount a device already mounted.
+enum RemountOption {
+  // Mount a new device. If the device is already mounted, the mount status is
+  // unchanged and the callback for MountCompleted will receive
+  // MOUNT_ERROR_PATH_ALREADY_MOUNTED error code.
+  REMOUNT_OPTION_MOUNT_NEW_DEVICE,
+  // Remount a device that is already mounted. If the device is not mounted
+  // yet, it will do nothing and the callback for MountCompleted will receive
+  // MOUNT_ERROR_PATH_NOT_MOUNTED error code.
+  REMOUNT_OPTION_REMOUNT_EXISTING_DEVICE,
+};
+
 // A class to represent information about a disk sent from cros-disks.
 class CHROMEOS_EXPORT DiskInfo {
  public:
@@ -153,7 +172,7 @@ class CHROMEOS_EXPORT DiskInfo {
   DeviceType device_type() const { return device_type_; }
 
   // Total size of the disk in bytes.
-  uint64 total_size_in_bytes() const { return total_size_in_bytes_; }
+  uint64_t total_size_in_bytes() const { return total_size_in_bytes_; }
 
   // Is the device read-only.
   bool is_read_only() const { return is_read_only_; }
@@ -183,7 +202,7 @@ class CHROMEOS_EXPORT DiskInfo {
   std::string product_name_;
   std::string drive_model_;
   DeviceType device_type_;
-  uint64 total_size_in_bytes_;
+  uint64_t total_size_in_bytes_;
   bool is_read_only_;
   bool is_hidden_;
   std::string uuid_;
@@ -269,6 +288,8 @@ class CHROMEOS_EXPORT CrosDisksClient : public DBusClient {
   virtual void Mount(const std::string& source_path,
                      const std::string& source_format,
                      const std::string& mount_label,
+                     MountAccessMode access_mode,
+                     RemountOption remount,
                      const base::Closure& callback,
                      const base::Closure& error_callback) = 0;
 
@@ -328,6 +349,12 @@ class CHROMEOS_EXPORT CrosDisksClient : public DBusClient {
 
   // Returns the path of the mount point for removable disks.
   static base::FilePath GetRemovableDiskMountPoint();
+
+  // Composes a list of mount options.
+  static std::vector<std::string> ComposeMountOptions(
+      const std::string& mount_label,
+      MountAccessMode access_mode,
+      RemountOption remount);
 
  protected:
   // Create() should be used instead.

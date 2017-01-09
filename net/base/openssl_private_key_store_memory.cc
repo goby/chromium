@@ -6,11 +6,11 @@
 
 #include "net/base/openssl_private_key_store.h"
 
-#include <openssl/evp.h>
-
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/synchronization/lock.h"
+#include "third_party/boringssl/src/include/openssl/evp.h"
 
 namespace net {
 
@@ -71,4 +71,3 @@ bool OpenSSLPrivateKeyStore::HasPrivateKey(EVP_PKEY* pub_key) {
 }
 
 } // namespace net
-

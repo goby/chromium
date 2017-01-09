@@ -4,6 +4,8 @@
 
 #include "chrome/browser/safe_browsing/sandboxed_dmg_analyzer_mac.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "chrome/common/chrome_utility_messages.h"
 #include "chrome/common/safe_browsing/zip_analyzer_results.h"
@@ -56,43 +58,34 @@ void SandboxedDMGAnalyzer::OpenDMGFile() {
 void SandboxedDMGAnalyzer::StartAnalysis() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  utility_process_host_ =
-      content::UtilityProcessHost::Create(this,
-          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO))
-      ->AsWeakPtr();
+  content::UtilityProcessHost* utility_process_host =
+      content::UtilityProcessHost::Create(
+          this, BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
 
-  utility_process_host_->SetName(l10n_util::GetStringUTF16(
+  utility_process_host->SetName(l10n_util::GetStringUTF16(
       IDS_UTILITY_PROCESS_SAFE_BROWSING_ZIP_FILE_ANALYZER_NAME));
-  utility_process_host_->Send(new ChromeUtilityMsg_StartupPing);
+  utility_process_host->Send(
+      new ChromeUtilityMsg_AnalyzeDmgFileForDownloadProtection(
+          IPC::TakePlatformFileForTransit(std::move(file_))));
+}
+
+void SandboxedDMGAnalyzer::OnProcessCrashed(int exit_code) {
+  OnAnalysisFinished(zip_analyzer::Results());
+}
+
+void SandboxedDMGAnalyzer::OnProcessLaunchFailed(int error_code) {
+  OnAnalysisFinished(zip_analyzer::Results());
 }
 
 bool SandboxedDMGAnalyzer::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(SandboxedDMGAnalyzer, message)
-    IPC_MESSAGE_HANDLER(ChromeUtilityHostMsg_ProcessStarted,
-                        OnUtilityProcessStarted)
     IPC_MESSAGE_HANDLER(
         ChromeUtilityHostMsg_AnalyzeDmgFileForDownloadProtection_Finished,
         OnAnalysisFinished)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
-}
-
-void SandboxedDMGAnalyzer::OnUtilityProcessStarted() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  base::ProcessHandle utility_process =
-      content::RenderProcessHost::run_renderer_in_process() ?
-          base::GetCurrentProcessHandle() :
-          utility_process_host_->GetData().handle;
-  if (utility_process == base::kNullProcessHandle) {
-    DLOG(ERROR) << "Child process handle is null";
-  }
-
-  utility_process_host_->Send(
-      new ChromeUtilityMsg_AnalyzeDmgFileForDownloadProtection(
-          IPC::TakeFileHandleForProcess(file_.Pass(), utility_process)));
 }
 
 void SandboxedDMGAnalyzer::OnAnalysisFinished(

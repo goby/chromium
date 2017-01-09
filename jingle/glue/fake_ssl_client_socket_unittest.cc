@@ -4,16 +4,22 @@
 
 #include "jingle/glue/fake_ssl_client_socket.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/test_completion_callback.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/socket_test_util.h"
 #include "net/socket/stream_socket.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -50,20 +56,20 @@ class MockClientSocket : public net::StreamSocket {
                          const net::CompletionCallback&));
   MOCK_METHOD3(Write, int(net::IOBuffer*, int,
                           const net::CompletionCallback&));
-  MOCK_METHOD1(SetReceiveBufferSize, int(int32));
-  MOCK_METHOD1(SetSendBufferSize, int(int32));
+  MOCK_METHOD1(SetReceiveBufferSize, int(int32_t));
+  MOCK_METHOD1(SetSendBufferSize, int(int32_t));
   MOCK_METHOD1(Connect, int(const net::CompletionCallback&));
   MOCK_METHOD0(Disconnect, void());
   MOCK_CONST_METHOD0(IsConnected, bool());
   MOCK_CONST_METHOD0(IsConnectedAndIdle, bool());
   MOCK_CONST_METHOD1(GetPeerAddress, int(net::IPEndPoint*));
   MOCK_CONST_METHOD1(GetLocalAddress, int(net::IPEndPoint*));
-  MOCK_CONST_METHOD0(NetLog, const net::BoundNetLog&());
+  MOCK_CONST_METHOD0(NetLog, const net::NetLogWithSource&());
   MOCK_METHOD0(SetSubresourceSpeculation, void());
   MOCK_METHOD0(SetOmniboxSpeculation, void());
   MOCK_CONST_METHOD0(WasEverUsed, bool());
   MOCK_CONST_METHOD0(UsingTCPFastOpen, bool());
-  MOCK_CONST_METHOD0(NumBytesRead, int64());
+  MOCK_CONST_METHOD0(NumBytesRead, int64_t());
   MOCK_CONST_METHOD0(GetConnectTimeMicros, base::TimeDelta());
   MOCK_CONST_METHOD0(WasNpnNegotiated, bool());
   MOCK_CONST_METHOD0(GetNegotiatedProtocol, net::NextProto());
@@ -95,9 +101,9 @@ class FakeSSLClientSocketTest : public testing::Test {
 
   ~FakeSSLClientSocketTest() override {}
 
-  scoped_ptr<net::StreamSocket> MakeClientSocket() {
+  std::unique_ptr<net::StreamSocket> MakeClientSocket() {
     return mock_client_socket_factory_.CreateTransportClientSocket(
-        net::AddressList(), NULL, net::NetLog::Source());
+        net::AddressList(), NULL, NULL, net::NetLogSource());
   }
 
   void SetData(const net::MockConnect& mock_connect,
@@ -269,16 +275,16 @@ class FakeSSLClientSocketTest : public testing::Test {
   base::MessageLoop message_loop_;
 
   net::MockClientSocketFactory mock_client_socket_factory_;
-  scoped_ptr<net::StaticSocketDataProvider> static_socket_data_provider_;
+  std::unique_ptr<net::StaticSocketDataProvider> static_socket_data_provider_;
 };
 
 TEST_F(FakeSSLClientSocketTest, PassThroughMethods) {
-  scoped_ptr<MockClientSocket> mock_client_socket(new MockClientSocket());
+  std::unique_ptr<MockClientSocket> mock_client_socket(new MockClientSocket());
   const int kReceiveBufferSize = 10;
   const int kSendBufferSize = 20;
-  net::IPEndPoint ip_endpoint(net::IPAddressNumber(net::kIPv4AddressSize), 80);
+  net::IPEndPoint ip_endpoint(net::IPAddress::IPv4AllZeros(), 80);
   const int kPeerAddress = 30;
-  net::BoundNetLog net_log;
+  net::NetLogWithSource net_log;
   EXPECT_CALL(*mock_client_socket, SetReceiveBufferSize(kReceiveBufferSize));
   EXPECT_CALL(*mock_client_socket, SetSendBufferSize(kSendBufferSize));
   EXPECT_CALL(*mock_client_socket, GetPeerAddress(&ip_endpoint)).
@@ -288,7 +294,7 @@ TEST_F(FakeSSLClientSocketTest, PassThroughMethods) {
   EXPECT_CALL(*mock_client_socket, SetOmniboxSpeculation());
 
   // Takes ownership of |mock_client_socket|.
-  FakeSSLClientSocket fake_ssl_client_socket(mock_client_socket.Pass());
+  FakeSSLClientSocket fake_ssl_client_socket(std::move(mock_client_socket));
   fake_ssl_client_socket.SetReceiveBufferSize(kReceiveBufferSize);
   fake_ssl_client_socket.SetSendBufferSize(kSendBufferSize);
   EXPECT_EQ(kPeerAddress,

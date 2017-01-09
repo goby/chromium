@@ -4,13 +4,14 @@
 
 #include "ash/content/keyboard_overlay/keyboard_overlay_delegate.h"
 
-#include "ash/shelf/shelf_types.h"
+#include "ash/common/shelf/wm_shelf.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -35,34 +36,35 @@ TEST_P(KeyboardOverlayDelegateTest, ShowAndClose) {
     return;
 
   UpdateDisplay("500x400,300x200");
-  ash::Shell* shell = ash::Shell::GetInstance();
-  shell->SetShelfAlignment(shelf_alignment(), shell->GetPrimaryRootWindow());
+  GetPrimaryShelf()->SetAlignment(shelf_alignment());
   KeyboardOverlayDelegate delegate(base::ASCIIToUTF16("Title"),
                                    GURL("chrome://keyboardoverlay/"));
   // Showing the dialog creates a widget.
-  views::Widget* widget = delegate.Show(NULL);
+  views::Widget* widget = delegate.Show(nullptr);
   EXPECT_TRUE(widget);
 
   // The widget is on the primary root window.
   EXPECT_EQ(Shell::GetPrimaryRootWindow(),
             widget->GetNativeWindow()->GetRootWindow());
 
-  // The widget is horizontally centered at the bottom of the work area.
-  gfx::Rect work_area = Shell::GetScreen()->GetPrimaryDisplay().work_area();
+  // The widget is horizontally and vertically centered in the work area.
+  gfx::Rect work_area =
+      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
   gfx::Rect bounds = widget->GetRestoredBounds();
   EXPECT_EQ(work_area.CenterPoint().x(), bounds.CenterPoint().x());
-  EXPECT_EQ(work_area.bottom(), bounds.bottom());
+  EXPECT_EQ(work_area.y() + (work_area.height() - bounds.height()) / 2,
+            bounds.y());
 
   // Clean up.
   widget->CloseNow();
 }
 
-// Tests run three times - for all possible values of shelf alignment
+// Tests run four times - for all possible values of shelf alignment
 INSTANTIATE_TEST_CASE_P(ShelfAlignmentAny,
                         KeyboardOverlayDelegateTest,
                         testing::Values(SHELF_ALIGNMENT_BOTTOM,
                                         SHELF_ALIGNMENT_LEFT,
                                         SHELF_ALIGNMENT_RIGHT,
-                                        SHELF_ALIGNMENT_TOP));
+                                        SHELF_ALIGNMENT_BOTTOM_LOCKED));
 
 }  // namespace ash

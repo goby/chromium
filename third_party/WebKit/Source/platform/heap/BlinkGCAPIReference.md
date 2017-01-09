@@ -1,6 +1,10 @@
 # Blink GC API reference
 
-This document is work in progress.
+This is a through document for Oilpan API usage.
+If you want to learn the API usage quickly, look at
+[this tutorial](https://docs.google.com/presentation/d/1XPu03ymz8W295mCftEC9KshH9Icxfq81YwIJQzQrvxo/edit#slide=id.p).
+If you're just interested in wrapper tracing,
+see [Wrapper Tracing Reference](../../bindings/core/v8/TraceWrapperReference.md).
 
 [TOC]
 
@@ -175,7 +179,7 @@ with a destructor.
 A pre-finalizer must have the following function signature: `void preFinalizer()`. You can change the function name.
 
 A pre-finalizer must be registered in the constructor by using the following statement:
-"`ThreadState::current()->registerPreFinalizer(preFinalizerName);`".
+"`ThreadState::current()->registerPreFinalizer(this);`".
 
 ```c++
 class YourClass : public GarbageCollectedFinalized<YourClass> {
@@ -183,7 +187,7 @@ class YourClass : public GarbageCollectedFinalized<YourClass> {
 public:
     YourClass()
     {
-        ThreadState::current()->registerPreFinalizer(dispose);
+        ThreadState::current()->registerPreFinalizer(this);
     }
     void dispose()
     {
@@ -228,17 +232,6 @@ void someFunction()
 }
 // OK to leave the object behind. The Blink GC system will free it up when it becomes unused.
 ```
-
-*** aside
-*Transitional only*
-
-`RawPtr<T>` is a simple wrapper of a raw pointer `T*` equipped with common member functions defined in other smart
-pointer templates, such as `get()` or `clear()`. `RawPtr<T>` is only meant to be used during the transition period;
-it is only used in the forms like `OwnPtrWillBeRawPtr<T>` or `RefPtrWillBeRawPtr<T>` so you can share as much code
-as possible in both pre- and post-Oilpan worlds.
-
-`RawPtr<T>` is declared and defined in `wtf/RawPtr.h`.
-***
 
 ### Member, WeakMember
 
@@ -344,8 +337,10 @@ Specifically, if your class needs a tracing method, you need to:
 The function implementation must contain:
 
 *   For each on-heap object `m_object` in your class, a tracing call: "```visitor->trace(m_object);```".
+*   If your class has one or more weak references (`WeakMember<T>`), you have the option of
+    registering a *weak callback* for the object. See details below for how.
 *   For each base class of your class `BaseClass` that is a descendant of `GarbageCollected<T>` or
-    `GarbageCollectedMixin`, delegation call to base class: "```BaseClass::trace(visitor);```"
+    `GarbageCollectedMixin`, a delegation call to base class: "```BaseClass::trace(visitor);```"
 
 It is recommended that the delegation call, if any, is put at the end of a tracing method.
 
@@ -391,4 +386,85 @@ DEFINE_TRACE(C)
 }
 ```
 
+Given that the class `C` above contained a `WeakMember<Y>` field, you could alternatively
+register a *weak callback* in the trace method, and have it be invoked after the marking
+phase:
+
+```c++
+
+void C::clearWeakMembers(Visitor* visitor)
+{
+    if (ThreadHeap::isHeapObjectAlive(m_y))
+        return;
+
+    // |m_y| is not referred to by anyone else, clear the weak
+    // reference along with updating state / clearing any other
+    // resources at the same time. None of those operations are
+    // allowed to perform heap allocations:
+    m_y->detach();
+
+    // Note: if the weak callback merely clears the weak reference,
+    // it is much simpler to just |trace| the field rather than
+    // install a custom weak callback.
+    m_y = nullptr;
+}
+
+DEFINE_TRACE(C)
+{
+    visitor->template registerWeakMembers<C, &C::clearWeakMembers>(this);
+    visitor->trace(m_x);
+    visitor->trace(m_z); // Heap collection does, too.
+    B::trace(visitor); // Delegate to the parent. In this case it's empty, but this is required.
+}
+```
+
+Please notice that if the object (of type `C`) is also not reachable, its `trace` method
+will not be invoked and any follow-on weak processing will not be done. Hence, if the
+object must always perform some operation when the weak reference is cleared, that
+needs to (also) happen during finalization.
+
+Weak callbacks have so far seen little use in Blink, but a mechanism that's available.
+
 ## Heap collections
+
+Heap collections are WTF collection types that support `Member<T>`, `WeakMember<T>`(see [below](#Weak collections)), and garbage collected objects as its elements.
+
+Here is the complete list:
+
+- WTF::Vector → blink::HeapVector
+- WTF::Deque → blink::HeapDeque
+- WTF::HashMap → blink::HeapHashMap
+- WTF::HashSet → blink::HeapHashSet
+- WTF::LinkedHashSet → blink::HeapLinkedHashSet
+- WTF::ListHashSet → blink::HeapListHashSet
+- WTF::HashCountedSet → blink::HeapHashCountedSet
+
+These heap collections work mostly the same way as their WTF collection counterparts but there are some things to keep in mind.
+
+Heap collections are special in that the types themselves do not inherit from GarbageCollected (hence they are not allocated on the Oilpan heap) but they still *need to be traced* from the trace method (because we need to trace the backing store which is on the Oilpan heap).
+
+```c++
+class MyGarbageCollectedClass : public GarbageCollected<MyGarbageCollectedClass> {
+public:
+    DEFINE_INLINE_TRACE() { visitor->trace(m_list); }
+private:
+    HeapVector<Member<AnotherGarbageCollectedClass>> m_list;
+};
+```
+
+When you want to add a heap collection as a member of a non-garbage-collected class, please use the persistent variants (just prefix the type with Persistent e.g. PersistentHeapVector, PersistentHeapHashMap, etc.).
+
+```c++
+class MyNotGarbageCollectedClass {
+private:
+    PersistentHeapVector<Member<MyGarbageCollectedClass>> m_list;
+};
+```
+
+Please be very cautious if you want to use a heap collection from multiple threads. Reference to heap collections may be passed to another thread using CrossThreadPersistents, but *you may not modify the collection from the non-owner thread*. This is because modifications to collections may trigger backing store reallocations, and Oilpan's per thread heap requires that modifications to a heap happen on its owner thread.
+
+### Weak collections
+
+You can put `WeakMember<T>` in heap collections except for `HeapVector` and `HeapDeque` which we do not support.
+
+During an Oilpan GC, the weak members that refernce a collected object will be removed from its heap collection, meaning the size of the collection will shrink and you do not have to check for null weak members when iterating through the collection.

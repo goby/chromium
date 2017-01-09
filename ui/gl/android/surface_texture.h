@@ -9,12 +9,13 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "ui/gl/gl_export.h"
 
 struct ANativeWindow;
 
-namespace gfx {
+namespace gl {
 
 // This class serves as a bridge for native code to call java functions inside
 // android SurfaceTexture class.
@@ -29,6 +30,12 @@ class GL_EXPORT SurfaceTexture
   // being referenced from the callback, the only robust way here is to create
   // the callback from a weak pointer to your object.
   void SetFrameAvailableCallback(const base::Closure& callback);
+
+  // Set the listener callback, but allow it to be invoked on any thread.  The
+  // same caveats apply as SetFrameAvailableCallback, plus whatever other issues
+  // show up due to multithreading (e.g., don't bind the Closure to a method
+  // via a weak ref).
+  void SetFrameAvailableCallbackOnAnyThread(const base::Closure& callback);
 
   // Update the texture image to the most recent frame from the image stream.
   void UpdateTexImage();
@@ -50,11 +57,14 @@ class GL_EXPORT SurfaceTexture
   // by calling ANativeWindow_release().
   ANativeWindow* CreateSurface();
 
+  // Release the SurfaceTexture back buffers.  The SurfaceTexture is no longer
+  // usable after calling this.  Note that this is not called 'Release', like
+  // the android API, because scoped_refptr<> calls that quite a bit.
+  void ReleaseSurfaceTexture();
+
   const base::android::JavaRef<jobject>& j_surface_texture() const {
     return j_surface_texture_;
   }
-
-  static bool RegisterSurfaceTexture(JNIEnv* env);
 
  protected:
   explicit SurfaceTexture(
@@ -70,6 +80,6 @@ class GL_EXPORT SurfaceTexture
   DISALLOW_COPY_AND_ASSIGN(SurfaceTexture);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_ANDROID_SURFACE_TEXTURE_H_

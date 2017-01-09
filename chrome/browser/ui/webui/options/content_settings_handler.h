@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_CONTENT_SETTINGS_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_CONTENT_SETTINGS_HANDLER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/values.h"
 #include "chrome/browser/pepper_flash_settings_manager.h"
@@ -17,12 +19,18 @@
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
 class HostContentSettingsMap;
+class Profile;
 class ProtocolHandlerRegistry;
+
+namespace site_settings {
+struct ChooserTypeNameEntry;
+}
 
 namespace options {
 
@@ -31,8 +39,6 @@ class ContentSettingsHandler : public OptionsPageUIHandler,
                                public content::NotificationObserver,
                                public PepperFlashSettingsManager::Client {
  public:
-  struct ChooserTypeNameEntry;
-
   ContentSettingsHandler();
   ~ContentSettingsHandler() override;
 
@@ -55,13 +61,10 @@ class ContentSettingsHandler : public OptionsPageUIHandler,
 
   // PepperFlashSettingsManager::Client implementation.
   void OnGetPermissionSettingsCompleted(
-      uint32 request_id,
+      uint32_t request_id,
       bool success,
       PP_Flash_BrowserOperations_Permission default_permission,
       const ppapi::FlashSiteSettings& sites) override;
-
-  // Gets a string identifier for the group name, for use in HTML.
-  static std::string ContentSettingsTypeToGroupName(ContentSettingsType type);
 
  private:
   // Used to determine whether we should show links to Flash camera and
@@ -154,10 +157,17 @@ class ContentSettingsHandler : public OptionsPageUIHandler,
   // Clobbers and rebuilds all chooser-based exception tables.
   void UpdateAllChooserExceptionsViewsFromModel();
 
+  // As above, but only OTR tables.
+  void UpdateAllOTRChooserExceptionsViewsFromModel();
+
   // Clobbers and rebuilds the exception table for a particular chooser-based
   // permission.
   void UpdateChooserExceptionsViewFromModel(
-      const ChooserTypeNameEntry& chooser_type);
+      const site_settings::ChooserTypeNameEntry& chooser_type);
+
+  // As above, but only OTR tables.
+  void UpdateOTRChooserExceptionsViewFromModel(
+      const site_settings::ChooserTypeNameEntry& chooser_type);
 
   // Modifies the zoom level exceptions list to display correct chrome
   // signin page entry. When the legacy (non-WebView-based) signin page
@@ -199,8 +209,9 @@ class ContentSettingsHandler : public OptionsPageUIHandler,
 
   // Removes one exception for a chooser-based permission. |args| contains the
   // parameters passed to RemoveException().
-  void RemoveChooserException(const ChooserTypeNameEntry* chooser_type,
-                              const base::ListValue* args);
+  void RemoveChooserException(
+      const site_settings::ChooserTypeNameEntry* chooser_type,
+      const base::ListValue* args);
 
   // Callbacks used by the page ------------------------------------------------
 
@@ -228,29 +239,17 @@ class ContentSettingsHandler : public OptionsPageUIHandler,
   void ApplyWhitelist(ContentSettingsType content_type,
                       ContentSetting default_setting);
 
-  // Gets the HostContentSettingsMap for the normal profile.
-  HostContentSettingsMap* GetContentSettingsMap();
+  // Gets the normal profile.
+  Profile* GetProfile();
 
-  // Gets the HostContentSettingsMap for the incognito profile, or NULL if there
-  // is no active incognito session.
-  HostContentSettingsMap* GetOTRContentSettingsMap();
+  // Gets the incognito profile, or nullptr if there is no active incognito
+  // session.
+  Profile* GetOTRProfile();
 
   // Gets the ProtocolHandlerRegistry for the normal profile.
   ProtocolHandlerRegistry* GetProtocolHandlerRegistry();
 
   void RefreshFlashMediaSettings();
-
-  // Returns exceptions constructed from the policy-set allowed URLs
-  // for the content settings |type| mic or camera.
-  void GetPolicyAllowedUrls(
-      ContentSettingsType type,
-      std::vector<scoped_ptr<base::DictionaryValue>>* exceptions);
-
-  // Fills in |exceptions| with Values for the given |type| from |map|.
-  void GetExceptionsFromHostContentSettingsMap(
-      const HostContentSettingsMap* map,
-      ContentSettingsType type,
-      base::ListValue* exceptions);
 
   void OnPepperFlashPrefChanged();
 
@@ -270,10 +269,11 @@ class ContentSettingsHandler : public OptionsPageUIHandler,
 
   content::NotificationRegistrar notification_registrar_;
   PrefChangeRegistrar pref_change_registrar_;
-  scoped_ptr<PepperFlashSettingsManager> flash_settings_manager_;
-  scoped_ptr<MediaSettingsInfo> media_settings_;
-  scoped_ptr<content::HostZoomMap::Subscription> host_zoom_map_subscription_;
-  scoped_ptr<content::HostZoomMap::Subscription>
+  std::unique_ptr<PepperFlashSettingsManager> flash_settings_manager_;
+  std::unique_ptr<MediaSettingsInfo> media_settings_;
+  std::unique_ptr<content::HostZoomMap::Subscription>
+      host_zoom_map_subscription_;
+  std::unique_ptr<content::HostZoomMap::Subscription>
       signin_host_zoom_map_subscription_;
   ScopedObserver<HostContentSettingsMap, content_settings::Observer> observer_;
 

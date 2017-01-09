@@ -8,19 +8,18 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/startup/startup_tab.h"
 #include "chrome/browser/ui/startup/startup_types.h"
 #include "url/gurl.h"
 
-class Browser;
 class GURL;
 class PrefRegistrySimple;
-class PrefService;
 
 namespace base {
 class CommandLine;
@@ -102,52 +101,32 @@ class StartupBrowserCreator {
   static void ClearLaunchedProfilesForTesting();
 
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
-
-#if defined(OS_WIN)
-  // Setting Chrome as the default browser in Windows 10+ requires a specific
-  // url to be opened through openwith.exe. This url is intercepted in
-  // ProcessCmdLineImpl when the callback is set. See DefaultBrowserWorker in
-  // shell_integration.h for more details. Only call this on the UI
-  // thread.
-  //
-  // Returns false when the default browser callback was already set which
-  // results in a no-op.
-  static bool SetDefaultBrowserCallback(const base::Closure& callback);
-
-  // Clears the callback when it isn't needed anymore. Only call this on the UI
-  // thread.
-  static void ClearDefaultBrowserCallback();
-
-  // Returns the url used to set Chrome as the default browser asynchronously.
-  static const wchar_t* GetDefaultBrowserUrl();
-#endif  // defined(OS_WIN)
+  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
  private:
   friend class CloudPrintProxyPolicyTest;
   friend class CloudPrintProxyPolicyStartupTest;
   friend class StartupBrowserCreatorImpl;
+  // TODO(crbug.com/642442): Remove this when first_run_tabs gets refactored.
+  friend class StartupTabProviderImpl;
   FRIEND_TEST_ALL_PREFIXES(StartupBrowserCreatorTest,
                            ReadingWasRestartedAfterNormalStart);
   FRIEND_TEST_ALL_PREFIXES(StartupBrowserCreatorTest,
                            ReadingWasRestartedAfterRestart);
   FRIEND_TEST_ALL_PREFIXES(StartupBrowserCreatorTest, UpdateWithTwoProfiles);
   FRIEND_TEST_ALL_PREFIXES(StartupBrowserCreatorTest, LastUsedProfileActivated);
-  FRIEND_TEST_ALL_PREFIXES(StartupBrowserCreatorWinTest,
-                           GetURLsFromCommandLineWithDesktopSearchURL);
 
-  // Returns the list of URLs to open from the command line. The returned
-  // vector is empty if the user didn't specify any URLs on the command line.
+  bool ProcessCmdLineImpl(const base::CommandLine& command_line,
+                          const base::FilePath& cur_dir,
+                          bool process_startup,
+                          Profile* last_used_profile,
+                          const Profiles& last_opened_profiles);
+
+  // Returns the list of URLs to open from the command line.
   static std::vector<GURL> GetURLsFromCommandLine(
       const base::CommandLine& command_line,
       const base::FilePath& cur_dir,
       Profile* profile);
-
-  static bool ProcessCmdLineImpl(const base::CommandLine& command_line,
-                                 const base::FilePath& cur_dir,
-                                 bool process_startup,
-                                 Profile* last_used_profile,
-                                 const Profiles& last_opened_profiles,
-                                 StartupBrowserCreator* browser_creator);
 
   // This function performs command-line handling and is invoked only after
   // start up (for example when we get a start request for another process).
@@ -200,5 +179,22 @@ bool HasPendingUncleanExit(Profile* profile);
 // startup.
 base::FilePath GetStartupProfilePath(const base::FilePath& user_data_dir,
                                      const base::CommandLine& command_line);
+
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+// Returns the profile that should be loaded on process startup. This is either
+// the profile returned by GetStartupProfilePath, or the guest profile if the
+// above profile is locked. The guest profile denotes that we should open the
+// user manager. Returns null if the above profile cannot be opened. In case of
+// opening the user manager, returns null if either the guest profile or the
+// system profile cannot be opened.
+Profile* GetStartupProfile(const base::FilePath& user_data_dir,
+                           const base::CommandLine& command_line);
+
+// Returns the profile that should be loaded on process startup when
+// GetStartupProfile() returns null. As with GetStartupProfile(), returning the
+// guest profile means the caller should open the user manager. This may return
+// null if neither any profile nor the user manager can be opened.
+Profile* GetFallbackStartupProfile();
+#endif  // !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
 
 #endif  // CHROME_BROWSER_UI_STARTUP_STARTUP_BROWSER_CREATOR_H_

@@ -6,12 +6,11 @@
 #define COMPONENTS_GCM_DRIVER_REGISTRATION_INFO_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace gcm  {
 
@@ -25,7 +24,7 @@ struct RegistrationInfo {
   // Returns the appropriate RegistrationInfo instance based on the serialized
   // key and value.
   // |registration_id| can be NULL if no interest to it.
-  static scoped_ptr<RegistrationInfo> BuildFromString(
+  static std::unique_ptr<RegistrationInfo> BuildFromString(
       const std::string& serialized_key,
       const std::string& serialized_value,
       std::string* registration_id);
@@ -106,7 +105,8 @@ struct InstanceIDTokenInfo : public RegistrationInfo {
   std::string scope;
 
   // Allows including a small number of string key/value pairs that will be
-  // associated with the token and may be used in processing the request.
+  // associated with the token and may be used in processing the request. These
+  // are not serialized/deserialized.
   std::map<std::string, std::string> options;
 };
 

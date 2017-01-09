@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "ui/base/touch/touch_device.h"
 #include "url/gurl.h"
@@ -51,6 +52,19 @@ enum ImageAnimationPolicy {
   IMAGE_ANIMATION_POLICY_NO_ANIMATION
 };
 
+enum class ViewportStyle { DEFAULT, MOBILE, TELEVISION, LAST = TELEVISION };
+
+// Controls when the progress bar reports itself as complete. See
+// third_party/WebKit/Source/core/loader/ProgressTracker.cpp for most of its
+// effects.
+enum class ProgressBarCompletion {
+  LOAD_EVENT,
+  RESOURCES_BEFORE_DCL,
+  DOM_CONTENT_LOADED,
+  RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES,
+  LAST = RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES
+};
+
 // The ISO 15924 script code for undetermined script aka Common. It's the
 // default used on WebKit's side to get/set a font setting when no script is
 // specified.
@@ -84,7 +98,6 @@ struct CONTENT_EXPORT WebPreferences {
   bool plugins_enabled;
   bool dom_paste_enabled;
   bool shrinks_standalone_images_to_fit;
-  bool uses_universal_detector;
   bool text_areas_are_resizable;
   bool allow_scripts_to_close_windows;
   bool remote_fonts_enabled;
@@ -95,34 +108,35 @@ struct CONTENT_EXPORT WebPreferences {
   // we disable the feature at a lower layer so that we catch non-WebKit uses
   // of DNS prefetch as well.
   bool dns_prefetching_enabled;
+  // Preference to save data. When enabled, requests will contain the header
+  // 'Save-Data: on'.
+  bool data_saver_enabled;
   bool local_storage_enabled;
   bool databases_enabled;
   bool application_cache_enabled;
   bool tabs_to_links;
-  bool caret_browsing_enabled;
+  bool history_entry_requires_user_gesture;
   bool hyperlink_auditing_enabled;
   bool allow_universal_access_from_file_urls;
   bool allow_file_access_from_file_urls;
-  bool webaudio_enabled;
   bool experimental_webgl_enabled;
   bool pepper_3d_enabled;
   bool flash_3d_enabled;
   bool flash_stage3d_enabled;
   bool flash_stage3d_baseline_enabled;
-  bool gl_multisampling_enabled;
   bool privileged_webgl_extensions_enabled;
   bool webgl_errors_to_console_enabled;
   bool mock_scrollbars_enabled;
-  bool unified_textchecker_enabled;
+  bool hide_scrollbars;
   bool accelerated_2d_canvas_enabled;
   int minimum_accelerated_2d_canvas_size;
+  bool disable_2d_canvas_copy_on_write;
   bool antialiased_2d_canvas_disabled;
   bool antialiased_clips_2d_canvas_enabled;
   int accelerated_2d_canvas_msaa_sample_count;
   bool accelerated_filters_enabled;
   bool deferred_filters_enabled;
   bool container_culling_enabled;
-  bool allow_displaying_insecure_content;
   bool allow_running_insecure_content;
   // If true, taints all <canvas> elements, regardless of origin.
   bool disable_reading_from_canvas;
@@ -131,9 +145,11 @@ struct CONTENT_EXPORT WebPreferences {
   // requested (thereby preventing user override).
   bool strict_mixed_content_checking;
   // Strict powerful feature restrictions block insecure usage of powerful
-  // features (like geolocation) that we haven't yet disabled for the web at
-  // large.
+  // features (like device orientation) that we haven't yet disabled for the web
+  // at large.
   bool strict_powerful_feature_restrictions;
+  // TODO(jww): Remove when WebView no longer needs this exception.
+  bool allow_geolocation_on_insecure_origins;
   // Disallow user opt-in for blockable mixed content.
   bool strictly_block_blockable_mixed_content;
   bool block_mixed_plugin_content;
@@ -142,7 +158,7 @@ struct CONTENT_EXPORT WebPreferences {
   bool should_clear_document_background;
   bool enable_scroll_animator;
   bool css_variables_enabled;
-  bool touch_enabled;
+  bool touch_event_feature_detection_enabled;
   // TODO(mustaq): Nuke when the new API is ready
   bool device_supports_touch;
   // TODO(mustaq): Nuke when the new API is ready
@@ -154,22 +170,26 @@ struct CONTENT_EXPORT WebPreferences {
   int available_hover_types;
   ui::HoverType primary_hover_type;
   bool sync_xhr_in_documents_enabled;
-  bool image_color_profiles_enabled;
+  bool color_correct_rendering_enabled = false;
+  bool true_color_rendering_enabled = false;
   bool should_respect_image_orientation;
   int number_of_cpu_cores;
   EditingBehavior editing_behavior;
   bool supports_multiple_windows;
   bool viewport_enabled;
   bool viewport_meta_enabled;
+  bool shrinks_viewport_contents_to_fit;
+  ViewportStyle viewport_style;
+  bool always_show_context_menu_on_touch;
   bool main_frame_resizes_are_orientation_changes;
   bool initialize_at_minimum_page_scale;
   bool smart_insert_delete_enabled;
   bool spatial_navigation_enabled;
-  int pinch_overlay_scrollbar_thickness;
   bool use_solid_color_scrollbars;
   bool navigate_on_drag_drop;
   V8CacheOptions v8_cache_options;
-  bool slimming_paint_v2_enabled;
+  bool inert_visual_viewport;
+  bool record_whole_document;
 
   // This flags corresponds to a Page's Settings' setCookieEnabled state. It
   // only controls whether or not the "document.cookie" field is properly
@@ -183,6 +203,21 @@ struct CONTENT_EXPORT WebPreferences {
   bool pepper_accelerated_video_decode_enabled;
 
   ImageAnimationPolicy animation_policy;
+
+  bool user_gesture_required_for_presentation;
+
+  // Specifies the margin for WebVTT text tracks as a percentage of media
+  // element height/width (for horizontal/vertical text respectively).
+  // Cues will not be placed in this margin area.
+  float text_track_margin_percentage;
+
+  // Specifies aggressiveness of background tab throttling.
+  // expensive_background_throttling_cpu_budget is given in percentages,
+  // other values are in seconds.
+  float expensive_background_throttling_cpu_budget;
+  float expensive_background_throttling_initial_budget;
+  float expensive_background_throttling_max_budget;
+  float expensive_background_throttling_max_delay;
 
 #if defined(OS_ANDROID)
   bool text_autosizing_enabled;
@@ -205,9 +240,18 @@ struct CONTENT_EXPORT WebPreferences {
   bool clobber_user_agent_initial_scale_quirk;
   bool ignore_main_frame_overflow_hidden_quirk;
   bool report_screen_size_in_physical_pixels_quirk;
-  bool record_whole_document;
-  std::string autoplay_experiment_mode;
-#endif
+  // Used by Android_WebView only to support legacy apps that inject script into
+  // a top-level initial empty document and expect it to persist on navigation.
+  bool resue_global_for_unowned_main_frame;
+  ProgressBarCompletion progress_bar_completion;
+  // Specifies default setting for spellcheck when the spellcheck attribute is
+  // not explicitly specified.
+  bool spellcheck_enabled_by_default;
+  // If enabled, when a video goes fullscreen, the orientation should be locked.
+  bool video_fullscreen_orientation_lock_enabled;
+#else  // defined(OS_ANDROID)
+  bool cross_origin_media_playback_requires_user_gesture;
+#endif  // defined(OS_ANDROID)
 
   // Default (used if the page or UA doesn't override these) values for page
   // scale limits. These are set directly on the WebView so there's no analogue
@@ -215,10 +259,20 @@ struct CONTENT_EXPORT WebPreferences {
   float default_minimum_page_scale_factor;
   float default_maximum_page_scale_factor;
 
+  // Whether download UI should be hidden on this page.
+  bool hide_download_ui;
+
+  // If enabled, disabled video track when the video is in the background.
+  bool background_video_track_optimization_enabled;
+
+  // Whether it is a presentation receiver.
+  bool presentation_receiver;
+
   // We try to keep the default values the same as the default values in
   // chrome, except for the cases where it would require lots of extra work for
   // the embedder to use the same default value.
   WebPreferences();
+  WebPreferences(const WebPreferences& other);
   ~WebPreferences();
 };
 

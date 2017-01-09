@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/autofill/password_generation_popup_view.h"
 
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/autofill/password_generation_popup_controller_impl.h"
 #include "chrome/browser/ui/autofill/password_generation_popup_view_tester.h"
 #include "chrome/browser/ui/browser.h"
@@ -48,8 +49,8 @@ class PasswordGenerationPopupViewTest : public InProcessBrowserTest {
     return GetWebContents()->GetNativeView();
   }
 
-  scoped_ptr<PasswordGenerationPopupViewTester> GetViewTester() {
-    return PasswordGenerationPopupViewTester::For(controller_->view()).Pass();
+  std::unique_ptr<PasswordGenerationPopupViewTester> GetViewTester() {
+    return PasswordGenerationPopupViewTester::For(controller_->view());
   }
 
  protected:

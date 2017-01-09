@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/policy/cloud/cloud_policy_invalidator.h"
+
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/sample_map.h"
 #include "base/metrics/statistics_recorder.h"
@@ -17,9 +21,9 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "chrome/browser/invalidation/fake_invalidation_service.h"
-#include "chrome/browser/policy/cloud/cloud_policy_invalidator.h"
+#include "build/build_config.h"
 #include "chrome/browser/policy/cloud/user_cloud_policy_invalidator.h"
+#include "components/invalidation/impl/fake_invalidation_service.h"
 #include "components/invalidation/public/invalidation_util.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
@@ -28,7 +32,7 @@
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -56,7 +60,7 @@ class CloudPolicyInvalidatorTest : public testing::Test {
   // that was handled already before this invalidator was created.
   void StartInvalidator(bool initialize,
                         bool start_refresh_scheduler,
-                        int64 highest_handled_invalidation_version);
+                        int64_t highest_handled_invalidation_version);
   void StartInvalidator() {
     StartInvalidator(true, /* initialize */
                      true, /* start_refresh_scheduler */
@@ -89,21 +93,19 @@ class CloudPolicyInvalidatorTest : public testing::Test {
   // |policy_changed| determines whether a policy value different from the
   // current value will be stored.
   // |time| determines the timestamp the store will report.
-  void StorePolicy(
-      PolicyObject object,
-      int64 invalidation_version,
-      bool policy_changed,
-      const base::Time& time);
-  void StorePolicy(
-      PolicyObject object,
-      int64 invalidation_version,
-      bool policy_changed) {
+  void StorePolicy(PolicyObject object,
+                   int64_t invalidation_version,
+                   bool policy_changed,
+                   const base::Time& time);
+  void StorePolicy(PolicyObject object,
+                   int64_t invalidation_version,
+                   bool policy_changed) {
     StorePolicy(object,
                 invalidation_version,
                 policy_changed,
                 Now() - base::TimeDelta::FromMinutes(5));
   }
-  void StorePolicy(PolicyObject object, int64 invalidation_version) {
+  void StorePolicy(PolicyObject object, int64_t invalidation_version) {
     StorePolicy(object, invalidation_version, false);
   }
   void StorePolicy(PolicyObject object) {
@@ -117,17 +119,16 @@ class CloudPolicyInvalidatorTest : public testing::Test {
   void EnableInvalidationService();
 
   // Causes the invalidation service to fire an invalidation.
-  syncer::Invalidation FireInvalidation(
-      PolicyObject object,
-      int64 version,
-      const std::string& payload);
+  syncer::Invalidation FireInvalidation(PolicyObject object,
+                                        int64_t version,
+                                        const std::string& payload);
 
   // Causes the invalidation service to fire an invalidation with unknown
   // version.
   syncer::Invalidation FireUnknownVersionInvalidation(PolicyObject object);
 
   // Checks the expected value of the currently set invalidation info.
-  bool CheckInvalidationInfo(int64 version, const std::string& payload);
+  bool CheckInvalidationInfo(int64_t version, const std::string& payload);
 
   // Checks that the policy was not refreshed due to an invalidation.
   bool CheckPolicyNotRefreshed();
@@ -154,7 +155,7 @@ class CloudPolicyInvalidatorTest : public testing::Test {
 
   // Returns the highest invalidation version that was handled already according
   // to the |invalidator_|.
-  int64 GetHighestHandledInvalidationVersion() const;
+  int64_t GetHighestHandledInvalidationVersion() const;
 
   // Advance the test clock.
   void AdvanceClock(base::TimeDelta delta);
@@ -164,10 +165,10 @@ class CloudPolicyInvalidatorTest : public testing::Test {
 
   // Translate a version number into an appropriate invalidation version (which
   // is based on the current time).
-  int64 V(int version);
+  int64_t V(int version);
 
   // Get an invalidation version for the given time.
-  int64 GetVersion(base::Time time);
+  int64_t GetVersion(base::Time time);
 
   // Get the policy type that the |invalidator_| is responsible for.
   virtual em::DeviceRegisterRequest::Type GetPolicyType() const;
@@ -194,7 +195,7 @@ class CloudPolicyInvalidatorTest : public testing::Test {
   base::SimpleTestClock* clock_;
 
   // The invalidator which will be tested.
-  scoped_ptr<CloudPolicyInvalidator> invalidator_;
+  std::unique_ptr<CloudPolicyInvalidator> invalidator_;
 
   // Object ids for the test policy objects.
   invalidation::ObjectId object_id_a_;
@@ -235,13 +236,11 @@ void CloudPolicyInvalidatorTest::TearDown() {
 void CloudPolicyInvalidatorTest::StartInvalidator(
     bool initialize,
     bool start_refresh_scheduler,
-    int64 highest_handled_invalidation_version) {
-  invalidator_.reset(new CloudPolicyInvalidator(
-      GetPolicyType(),
-      &core_,
-      task_runner_,
-      scoped_ptr<base::Clock>(clock_),
-      highest_handled_invalidation_version));
+    int64_t highest_handled_invalidation_version) {
+  invalidator_.reset(
+      new CloudPolicyInvalidator(GetPolicyType(), &core_, task_runner_,
+                                 std::unique_ptr<base::Clock>(clock_),
+                                 highest_handled_invalidation_version));
   if (start_refresh_scheduler) {
     ConnectCore();
     StartRefreshScheduler();
@@ -265,7 +264,7 @@ void CloudPolicyInvalidatorTest::DestroyInvalidator() {
 void CloudPolicyInvalidatorTest::ConnectCore() {
   client_ = new MockCloudPolicyClient();
   client_->SetDMToken("dm");
-  core_.Connect(scoped_ptr<CloudPolicyClient>(client_));
+  core_.Connect(std::unique_ptr<CloudPolicyClient>(client_));
 }
 
 void CloudPolicyInvalidatorTest::StartRefreshScheduler() {
@@ -277,11 +276,10 @@ void CloudPolicyInvalidatorTest::DisconnectCore() {
   core_.Disconnect();
 }
 
-void CloudPolicyInvalidatorTest::StorePolicy(
-    PolicyObject object,
-    int64 invalidation_version,
-    bool policy_changed,
-    const base::Time& time) {
+void CloudPolicyInvalidatorTest::StorePolicy(PolicyObject object,
+                                             int64_t invalidation_version,
+                                             bool policy_changed,
+                                             const base::Time& time) {
   em::PolicyData* data = new em::PolicyData();
   if (object != POLICY_OBJECT_NONE) {
     data->set_invalidation_source(GetPolicyObjectId(object).source());
@@ -318,7 +316,7 @@ void CloudPolicyInvalidatorTest::EnableInvalidationService() {
 
 syncer::Invalidation CloudPolicyInvalidatorTest::FireInvalidation(
     PolicyObject object,
-    int64 version,
+    int64_t version,
     const std::string& payload) {
   syncer::Invalidation invalidation = syncer::Invalidation::Init(
       GetPolicyObjectId(object),
@@ -337,7 +335,7 @@ syncer::Invalidation CloudPolicyInvalidatorTest::FireUnknownVersionInvalidation(
 }
 
 bool CloudPolicyInvalidatorTest::CheckInvalidationInfo(
-    int64 version,
+    int64_t version,
     const std::string& payload) {
   MockCloudPolicyClient* client =
       static_cast<MockCloudPolicyClient*>(core_.client());
@@ -372,7 +370,7 @@ bool CloudPolicyInvalidatorTest::IsInvalidationAcknowledged(
   // The acknowledgement task is run through a WeakHandle that posts back to our
   // own thread.  We need to run any posted tasks before we can check
   // acknowledgement status.
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(IsUnsent(invalidation));
   return !invalidation_service_.GetMockAckHandler()->IsUnacked(invalidation);
@@ -383,7 +381,8 @@ bool CloudPolicyInvalidatorTest::IsInvalidatorRegistered() {
       .GetRegisteredIds(invalidator_.get()).empty();
 }
 
-int64 CloudPolicyInvalidatorTest::GetHighestHandledInvalidationVersion() const {
+int64_t CloudPolicyInvalidatorTest::GetHighestHandledInvalidationVersion()
+    const {
   return invalidator_->highest_handled_invalidation_version();
 }
 
@@ -395,11 +394,11 @@ base::Time CloudPolicyInvalidatorTest::Now() {
   return clock_->Now();
 }
 
-int64 CloudPolicyInvalidatorTest::V(int version) {
+int64_t CloudPolicyInvalidatorTest::V(int version) {
   return GetVersion(Now()) + version;
 }
 
-int64 CloudPolicyInvalidatorTest::GetVersion(base::Time time) {
+int64_t CloudPolicyInvalidatorTest::GetVersion(base::Time time) {
   return (time - base::Time::UnixEpoch()).InMicroseconds();
 }
 
@@ -412,9 +411,9 @@ bool CloudPolicyInvalidatorTest::CheckPolicyRefreshed(base::TimeDelta delay) {
   base::TimeDelta max_delay = delay + base::TimeDelta::FromMilliseconds(
       CloudPolicyInvalidator::kMaxFetchDelayMin);
 
-  if (task_runner_->GetPendingTasks().empty())
+  if (!task_runner_->HasPendingTask())
     return false;
-  base::TimeDelta actual_delay = task_runner_->GetPendingTasks().back().delay;
+  base::TimeDelta actual_delay = task_runner_->FinalPendingTaskDelay();
   EXPECT_GE(actual_delay, delay);
   EXPECT_LE(actual_delay, max_delay);
 
@@ -865,14 +864,14 @@ class CloudPolicyInvalidatorUserTypedTest
   em::DeviceRegisterRequest::Type GetPolicyType() const override;
 
   // Get histogram samples for the given histogram.
-  scoped_ptr<base::HistogramSamples> GetHistogramSamples(
+  std::unique_ptr<base::HistogramSamples> GetHistogramSamples(
       const std::string& name) const;
 
   // Stores starting histogram counts for kMetricPolicyRefresh.
-  scoped_ptr<base::HistogramSamples> refresh_samples_;
+  std::unique_ptr<base::HistogramSamples> refresh_samples_;
 
   // Stores starting histogram counts for kMetricPolicyInvalidations.
-  scoped_ptr<base::HistogramSamples> invalidations_samples_;
+  std::unique_ptr<base::HistogramSamples> invalidations_samples_;
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyInvalidatorUserTypedTest);
 };
@@ -915,13 +914,13 @@ CloudPolicyInvalidatorUserTypedTest::GetPolicyType() const {
   return GetParam();
 }
 
-scoped_ptr<base::HistogramSamples>
+std::unique_ptr<base::HistogramSamples>
 CloudPolicyInvalidatorUserTypedTest::GetHistogramSamples(
     const std::string& name) const {
   base::HistogramBase* histogram =
       base::StatisticsRecorder::FindHistogram(name);
   if (!histogram)
-    return scoped_ptr<base::HistogramSamples>(new base::SampleMap());
+    return std::unique_ptr<base::HistogramSamples>(new base::SampleMap());
   return histogram->SnapshotSamples();
 }
 
@@ -1095,11 +1094,6 @@ INSTANTIATE_TEST_CASE_P(
     CloudPolicyInvalidatorUserTypedTestInstance,
     CloudPolicyInvalidatorUserTypedTest,
     testing::Values(em::DeviceRegisterRequest::ANDROID_BROWSER));
-#elif defined(OS_IOS)
-INSTANTIATE_TEST_CASE_P(
-    CloudPolicyInvalidatorUserTypedTestInstance,
-    CloudPolicyInvalidatorUserTypedTest,
-    testing::Values(em::DeviceRegisterRequest::IOS_BROWSER));
 #else
 INSTANTIATE_TEST_CASE_P(
     CloudPolicyInvalidatorUserTypedTestInstance,

@@ -8,7 +8,9 @@
 #include <set>
 #include <string>
 
+#include "base/macros.h"
 #include "base/supports_user_data.h"
+#include "content/browser/loader/global_routing_id.h"
 #include "content/public/browser/web_contents_observer.h"
 
 namespace content {
@@ -46,8 +48,7 @@ class WebContentsObserverSanityChecker : public WebContentsObserver,
   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
   void DidStartProvisionalLoadForFrame(RenderFrameHost* render_frame_host,
                                        const GURL& validated_url,
-                                       bool is_error_page,
-                                       bool is_iframe_srcdoc) override;
+                                       bool is_error_page) override;
   void DidCommitProvisionalLoadForFrame(
       RenderFrameHost* render_frame_host,
       const GURL& url,
@@ -72,18 +73,21 @@ class WebContentsObserverSanityChecker : public WebContentsObserver,
                    int error_code,
                    const base::string16& error_description,
                    bool was_ignored_by_handler) override;
-  void DidGetRedirectForResourceRequest(
-      RenderFrameHost* render_frame_host,
-      const ResourceRedirectDetails& details) override;
   void DidOpenRequestedURL(WebContents* new_contents,
                            RenderFrameHost* source_render_frame_host,
                            const GURL& url,
                            const Referrer& referrer,
                            WindowOpenDisposition disposition,
                            ui::PageTransition transition) override;
+  void MediaStartedPlaying(const MediaPlayerInfo& media_info,
+                           const MediaPlayerId& id) override;
+  void MediaStoppedPlaying(const MediaPlayerInfo& media_info,
+                           const MediaPlayerId& id) override;
   bool OnMessageReceived(const IPC::Message& message,
                          RenderFrameHost* render_frame_host) override;
   void WebContentsDestroyed() override;
+  void DidStartLoading() override;
+  void DidStopLoading() override;
 
  private:
   explicit WebContentsObserverSanityChecker(WebContents* web_contents);
@@ -95,11 +99,20 @@ class WebContentsObserverSanityChecker : public WebContentsObserver,
 
   bool NavigationIsOngoing(NavigationHandle* navigation_handle);
 
-  std::set<std::pair<int, int>> current_hosts_;
-  std::set<std::pair<int, int>> live_routes_;
-  std::set<std::pair<int, int>> deleted_routes_;
+  void EnsureStableParentValue(RenderFrameHost* render_frame_host);
+  bool HasAnyChildren(RenderFrameHost* render_frame_host);
+
+  std::set<GlobalRoutingID> current_hosts_;
+  std::set<GlobalRoutingID> live_routes_;
+  std::set<GlobalRoutingID> deleted_routes_;
 
   std::set<NavigationHandle*> ongoing_navigations_;
+  std::vector<MediaPlayerId> active_media_players_;
+
+  // Remembers parents to make sure RenderFrameHost::GetParent() never changes.
+  std::map<GlobalRoutingID, GlobalRoutingID> parent_ids_;
+
+  bool is_loading_;
 
   bool web_contents_destroyed_;
 

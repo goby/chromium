@@ -16,6 +16,10 @@ const base::FilePath::CharType
         FILE_PATH_LITERAL("third_party/accessibility-audit/axs_testing.js");
 
 // static
+const base::FilePath::CharType JavaScriptBrowserTest::kChaiJSPath[] =
+    FILE_PATH_LITERAL("third_party/chaijs/chai.js");
+
+// static
 const base::FilePath::CharType JavaScriptBrowserTest::kMockJSPath[] =
     FILE_PATH_LITERAL("chrome/third_party/mock4js/mock4js.js");
 
@@ -53,6 +57,7 @@ void JavaScriptBrowserTest::SetUpOnMainThread() {
   library_search_paths_.push_back(source_root_directory);
 
   AddLibrary(base::FilePath(kMockJSPath));
+  AddLibrary(base::FilePath(kChaiJSPath));
   AddLibrary(base::FilePath(kWebUILibraryJS));
 }
 
@@ -107,11 +112,8 @@ base::string16 JavaScriptBrowserTest::BuildRunTestJSCall(
   arguments.push_back(function_name_arg);
   base::ListValue* baked_argument_list = new base::ListValue();
   ConstValueVector::const_iterator arguments_iterator;
-  for (arguments_iterator = test_func_args.begin();
-       arguments_iterator != test_func_args.end();
-       ++arguments_iterator) {
-    baked_argument_list->Append((*arguments_iterator)->DeepCopy());
-  }
+  for (auto* arg : test_func_args)
+    baked_argument_list->Append(arg->CreateDeepCopy());
   arguments.push_back(baked_argument_list);
   return content::WebUI::GetJavascriptCall(std::string("runTest"),
                                            arguments.get());

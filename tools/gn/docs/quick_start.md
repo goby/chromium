@@ -72,7 +72,6 @@ See [GNCrossCompiles](cross_compiles.md) for more info.
 
 ## Configuring goma
 
-
 Run `gn args out/Default` (substituting your build directory as needed).
 Add:
 
@@ -266,10 +265,10 @@ static_library("hello") {
 ```
 
 This applies the `hello_config` to the `hello` target itself, plus all
-targets that depend on transitively depend on the current one. Now
-everybody that depends on us will get our settings. You can also set
-`public_configs` which applies only to targets that directly
-depend on your target (not transitively).
+targets that transitively depend on the current one. Now everybody that
+depends on us will get our settings. You can also set `public_configs`
+which applies only to targets that directly depend on your target (not
+transitively).
 
 Now if you compile and run, you'll see the new version with two people:
 
@@ -281,6 +280,24 @@ ninja: Entering directory 'out/Default'
 > out/Default/say_hello
 Hello, Bill and Joy.
 ```
+
+## Add a new build argument
+
+You declare which arguments you accept and specify default values via
+`declare_args`.
+
+```
+declare_args() {
+  enable_teleporter = true
+  enable_doom_melon = false
+}
+```
+
+See `gn help buildargs` for an overview of how this works.
+See `gn help declare_args` for specifics on declaring them.
+
+It is an error to declare a given argument more than once in a given scope, so
+care should be used in scoping and naming arguments.
 
 ## Don't know what's going on?
 
@@ -323,7 +340,7 @@ came from on the `say_hello` target:
 ```
 
 You can see that `TWO_PEOPLE` was defined by a config, and you can also
-see the which like caused that config to be applied to your target (in
+see the which line caused that config to be applied to your target (in
 this case, the `all_dependent_configs` line).
 
 Another particularly interesting variation:

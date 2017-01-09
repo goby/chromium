@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/worker_pool.h"
@@ -111,9 +112,7 @@ bool ExampleEmployer::DoSomething(const CompletionCallback& callback) {
 
   // Dispatch to worker thread...
   if (!base::WorkerPool::PostTask(
-          FROM_HERE,
-          base::Bind(&ExampleWorker::DoWork, request_.get()),
-          true)) {
+          FROM_HERE, base::Bind(&ExampleWorker::DoWork, request_), true)) {
     NOTREACHED();
     request_ = NULL;
     return false;

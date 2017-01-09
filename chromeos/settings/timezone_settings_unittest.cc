@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "base/stl_util.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "chromeos/settings/timezone_settings_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
@@ -35,14 +36,13 @@ class KnownTimeZoneTest : public testing::Test {
 
   void SetUp() override {
     for (const char* id : kTimeZones) {
-      timezones_.push_back(TimeZone::createTimeZone(UnicodeString(id)));
+      timezones_.push_back(
+          base::WrapUnique(TimeZone::createTimeZone(UnicodeString(id))));
     }
   }
 
-  void TearDown() override { STLDeleteElements(&timezones_); }
-
  protected:
-  std::vector<TimeZone*> timezones_;
+  std::vector<std::unique_ptr<TimeZone>> timezones_;
 };
 
 TEST_F(KnownTimeZoneTest, IdMatch) {
@@ -66,9 +66,9 @@ TEST_F(KnownTimeZoneTest, IdMatch) {
   };
 
   for (const auto& pair : timezone_match_list) {
-    scoped_ptr<TimeZone> input(
+    std::unique_ptr<TimeZone> input(
         TimeZone::createTimeZone(UnicodeString(pair.id)));
-    scoped_ptr<TimeZone> expected(
+    std::unique_ptr<TimeZone> expected(
         TimeZone::createTimeZone(UnicodeString(pair.matched)));
     const TimeZone* actual = GetKnownTimezoneOrNull(*input, timezones_);
     EXPECT_NE(nullptr, actual) << "input=" << pair.id;
@@ -94,7 +94,8 @@ TEST_F(KnownTimeZoneTest, NoMatch) {
       "Asia/Tokyo",                 // Historically != Asia/Seoul
   };
   for (const char* id : no_match_list) {
-    scoped_ptr<TimeZone> input(TimeZone::createTimeZone(UnicodeString(id)));
+    std::unique_ptr<TimeZone> input(
+        TimeZone::createTimeZone(UnicodeString(id)));
     EXPECT_EQ(NULL, GetKnownTimezoneOrNull(*input, timezones_))
         << "input=" << id;
   }

@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_RENDERER_HOST_PEPPER_PEPPER_FLASH_BROWSER_HOST_H_
 #define CHROME_BROWSER_RENDERER_HOST_PEPPER_PEPPER_FLASH_BROWSER_HOST_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/resource_host.h"
 
@@ -17,11 +20,14 @@ class Time;
 
 namespace content {
 class BrowserPpapiHost;
-class ResourceContext;
 }
 
 namespace content_settings {
 class CookieSettings;
+}
+
+namespace device {
+class PowerSaveBlocker;
 }
 
 class GURL;
@@ -41,6 +47,7 @@ class PepperFlashBrowserHost : public ppapi::host::ResourceHost {
       ppapi::host::HostMessageContext* context) override;
 
  private:
+  void OnDelayTimerFired();
   int32_t OnUpdateActivity(ppapi::host::HostMessageContext* host_context);
   int32_t OnGetLocalTimeZoneOffset(
       ppapi::host::HostMessageContext* host_context,
@@ -55,6 +62,12 @@ class PepperFlashBrowserHost : public ppapi::host::ResourceHost {
 
   content::BrowserPpapiHost* host_;
   int render_process_id_;
+
+  // A power save blocker to prevent going to sleep, and a timer to destroy it
+  // after a certain amount of time has elapsed without an UpdateActivity.
+  std::unique_ptr<device::PowerSaveBlocker> power_save_blocker_;
+  base::DelayTimer delay_timer_;
+
   // For fetching the Flash LSO settings.
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;
   base::WeakPtrFactory<PepperFlashBrowserHost> weak_factory_;

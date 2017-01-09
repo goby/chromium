@@ -4,7 +4,9 @@
 
 #include "ui/views/examples/widget_example.h"
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
@@ -26,7 +28,6 @@ class DialogExample : public DialogDelegateView {
   ~DialogExample() override;
   base::string16 GetWindowTitle() const override;
   View* CreateExtraView() override;
-  View* CreateTitlebarExtraView() override;
   View* CreateFootnoteView() override;
 };
 
@@ -59,12 +60,6 @@ View* DialogExample::CreateExtraView() {
   return button;
 }
 
-View* DialogExample::CreateTitlebarExtraView() {
-  Label* label = new Label(ASCIIToUTF16("Extra view!"));
-  label->SetEnabledColor(SK_ColorBLUE);
-  return label;
-}
-
 View* DialogExample::CreateFootnoteView() {
   return new Label(ASCIIToUTF16("Footnote label!"));
 }
@@ -92,7 +87,8 @@ void WidgetExample::BuildButton(View* container,
                                 const std::string& label,
                                 int tag) {
   LabelButton* button = new LabelButton(this, ASCIIToUTF16(label));
-  button->SetFocusable(true);
+  button->SetFocusForPlatform();
+  button->set_request_focus_on_press(true);
   button->set_tag(tag);
   container->AddChildView(button);
 }

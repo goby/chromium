@@ -5,11 +5,13 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_CACHE_WRITER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_CACHE_WRITER_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "net/base/io_buffer.h"
@@ -18,10 +20,8 @@
 namespace content {
 
 struct HttpResponseInfoIOBuffer;
-class ServiceWorkerCacheWriterCore;
 class ServiceWorkerResponseReader;
 class ServiceWorkerResponseWriter;
-class ServiceWorkerStorage;
 
 // This class is responsible for possibly updating the ServiceWorker script
 // cache for an installed ServiceWorker main script. If there is no existing
@@ -39,22 +39,13 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
  public:
   using OnWriteCompleteCallback = base::Callback<void(net::Error)>;
 
-  // The types for the factory functions passed into the constructor. These are
-  // responsible for creating readers from the existing cache entry and writers
-  // to the new cache entry when called. These are passed in as factories
-  // instead of passing readers and writers in directly to avoid creating
-  // writers to entries that won't be updated, and because this class may need
-  // multiple readers internally.
-  using ResponseReaderCreator =
-      base::Callback<scoped_ptr<ServiceWorkerResponseReader>(void)>;
-  using ResponseWriterCreator =
-      base::Callback<scoped_ptr<ServiceWorkerResponseWriter>(void)>;
-
-  // The existing reader may be null, in which case this instance will
+  // The |compare_reader| may be null, in which case this instance will
   // unconditionally write back data supplied to |MaybeWriteHeaders| and
   // |MaybeWriteData|.
-  ServiceWorkerCacheWriter(const ResponseReaderCreator& reader_creator,
-                           const ResponseWriterCreator& writer_creator);
+  ServiceWorkerCacheWriter(
+      std::unique_ptr<ServiceWorkerResponseReader> compare_reader,
+      std::unique_ptr<ServiceWorkerResponseReader> copy_reader,
+      std::unique_ptr<ServiceWorkerResponseWriter> writer);
 
   ~ServiceWorkerCacheWriter();
 
@@ -174,16 +165,18 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
   //   a) Return ERR_IO_PENDING, and schedule a callback to run the state
   //      machine's Run() later, or
   //   b) Return some other value and do not schedule a callback.
-  int ReadInfoHelper(const scoped_ptr<ServiceWorkerResponseReader>& reader,
+  int ReadInfoHelper(const std::unique_ptr<ServiceWorkerResponseReader>& reader,
                      HttpResponseInfoIOBuffer* buf);
-  int ReadDataHelper(const scoped_ptr<ServiceWorkerResponseReader>& reader,
+  int ReadDataHelper(const std::unique_ptr<ServiceWorkerResponseReader>& reader,
                      net::IOBuffer* buf,
                      int buf_len);
-  int WriteInfoHelper(const scoped_ptr<ServiceWorkerResponseWriter>& writer,
-                      HttpResponseInfoIOBuffer* buf);
-  int WriteDataHelper(const scoped_ptr<ServiceWorkerResponseWriter>& writer,
-                      net::IOBuffer* buf,
-                      int buf_len);
+  int WriteInfoHelper(
+      const std::unique_ptr<ServiceWorkerResponseWriter>& writer,
+      HttpResponseInfoIOBuffer* buf);
+  int WriteDataHelper(
+      const std::unique_ptr<ServiceWorkerResponseWriter>& writer,
+      net::IOBuffer* buf,
+      int buf_len);
 
   // Callback used by the above helpers for their IO operations. This is only
   // run when those IO operations complete asynchronously, in which case it
@@ -217,11 +210,9 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
 
   size_t compare_offset_;
 
-  ResponseReaderCreator reader_creator_;
-  ResponseWriterCreator writer_creator_;
-  scoped_ptr<ServiceWorkerResponseReader> compare_reader_;
-  scoped_ptr<ServiceWorkerResponseReader> copy_reader_;
-  scoped_ptr<ServiceWorkerResponseWriter> writer_;
+  std::unique_ptr<ServiceWorkerResponseReader> compare_reader_;
+  std::unique_ptr<ServiceWorkerResponseReader> copy_reader_;
+  std::unique_ptr<ServiceWorkerResponseWriter> writer_;
   base::WeakPtrFactory<ServiceWorkerCacheWriter> weak_factory_;
 };
 

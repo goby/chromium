@@ -15,10 +15,12 @@
 #include "net/cert/ct_objects_extractor.h"
 #include "net/cert/ct_serialization.h"
 #include "net/cert/ct_signed_certificate_timestamp_log_param.h"
-#include "net/cert/ct_verify_result.h"
 #include "net/cert/sct_status_flags.h"
+#include "net/cert/signed_certificate_timestamp_and_status.h"
 #include "net/cert/x509_certificate.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_parameters_callback.h"
+#include "net/log/net_log_with_source.h"
 
 namespace net {
 
@@ -27,8 +29,12 @@ namespace {
 // Record SCT verification status. This metric would help detecting presence
 // of unknown CT logs as well as bad deployments (invalid SCTs).
 void LogSCTStatusToUMA(ct::SCTVerifyStatus status) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Net.CertificateTransparency.SCTStatus", status, ct::SCT_STATUS_MAX);
+  // Note SCT_STATUS_MAX + 1 is passed to the UMA_HISTOGRAM_ENUMERATION as that
+  // macro requires the values to be strictly less than the boundary value,
+  // and SCT_STATUS_MAX is the last valid value of the SCTVerifyStatus enum
+  // (since that enum is used for IPC as well).
+  UMA_HISTOGRAM_ENUMERATION("Net.CertificateTransparency.SCTStatus", status,
+                            ct::SCT_STATUS_MAX + 1);
 }
 
 // Record SCT origin enum. This metric measure the popularity
@@ -44,14 +50,16 @@ void LogSCTOriginToUMA(ct::SignedCertificateTimestamp::Origin origin) {
 // This metric would allow measuring:
 // * Of all SSL connections, how many had SCTs available for validation.
 // * When SCTs are available, how many are available per connection.
-void LogNumSCTsToUMA(const ct::CTVerifyResult& result) {
+void LogNumSCTsToUMA(const SignedCertificateTimestampAndStatusList& scts) {
   UMA_HISTOGRAM_CUSTOM_COUNTS("Net.CertificateTransparency.SCTsPerConnection",
-                              result.invalid_scts.size() +
-                                  result.verified_scts.size() +
-                                  result.unknown_logs_scts.size(),
-                              1,
-                              10,
-                              11);
+                              scts.size(), 1, 10, 11);
+}
+
+void AddSCTAndLogStatus(scoped_refptr<ct::SignedCertificateTimestamp> sct,
+                        ct::SCTVerifyStatus status,
+                        SignedCertificateTimestampAndStatusList* sct_list) {
+  LogSCTStatusToUMA(status);
+  sct_list->push_back(SignedCertificateTimestampAndStatus(sct, status));
 }
 
 }  // namespace
@@ -77,14 +85,12 @@ int MultiLogCTVerifier::Verify(
     X509Certificate* cert,
     const std::string& stapled_ocsp_response,
     const std::string& sct_list_from_tls_extension,
-    ct::CTVerifyResult* result,
-    const BoundNetLog& net_log)  {
+    SignedCertificateTimestampAndStatusList* output_scts,
+    const NetLogWithSource& net_log) {
   DCHECK(cert);
-  DCHECK(result);
+  DCHECK(output_scts);
 
-  result->verified_scts.clear();
-  result->invalid_scts.clear();
-  result->unknown_logs_scts.clear();
+  output_scts->clear();
 
   bool has_verified_scts = false;
 
@@ -100,7 +106,8 @@ int MultiLogCTVerifier::Verify(
                                cert->GetIntermediateCertificates().front(),
                                &precert_entry) &&
         VerifySCTs(embedded_scts, precert_entry,
-                   ct::SignedCertificateTimestamp::SCT_EMBEDDED, cert, result);
+                   ct::SignedCertificateTimestamp::SCT_EMBEDDED, cert,
+                   output_scts);
   }
 
   std::string sct_list_from_ocsp;
@@ -113,33 +120,33 @@ int MultiLogCTVerifier::Verify(
 
   // Log to Net Log, after extracting SCTs but before possibly failing on
   // X.509 entry creation.
-  NetLog::ParametersCallback net_log_callback =
-      base::Bind(&NetLogRawSignedCertificateTimestampCallback,
-          &embedded_scts, &sct_list_from_ocsp, &sct_list_from_tls_extension);
+  NetLogParametersCallback net_log_callback =
+      base::Bind(&NetLogRawSignedCertificateTimestampCallback, &embedded_scts,
+                 &sct_list_from_ocsp, &sct_list_from_tls_extension);
 
-  net_log.AddEvent(
-      NetLog::TYPE_SIGNED_CERTIFICATE_TIMESTAMPS_RECEIVED,
-      net_log_callback);
+  net_log.AddEvent(NetLogEventType::SIGNED_CERTIFICATE_TIMESTAMPS_RECEIVED,
+                   net_log_callback);
 
   ct::LogEntry x509_entry;
   if (ct::GetX509LogEntry(cert->os_cert_handle(), &x509_entry)) {
-    has_verified_scts |= VerifySCTs(
-        sct_list_from_ocsp, x509_entry,
-        ct::SignedCertificateTimestamp::SCT_FROM_OCSP_RESPONSE, cert, result);
+    has_verified_scts |=
+        VerifySCTs(sct_list_from_ocsp, x509_entry,
+                   ct::SignedCertificateTimestamp::SCT_FROM_OCSP_RESPONSE, cert,
+                   output_scts);
 
-    has_verified_scts |= VerifySCTs(
-        sct_list_from_tls_extension, x509_entry,
-        ct::SignedCertificateTimestamp::SCT_FROM_TLS_EXTENSION, cert, result);
+    has_verified_scts |=
+        VerifySCTs(sct_list_from_tls_extension, x509_entry,
+                   ct::SignedCertificateTimestamp::SCT_FROM_TLS_EXTENSION, cert,
+                   output_scts);
   }
 
-  NetLog::ParametersCallback net_log_checked_callback =
-      base::Bind(&NetLogSignedCertificateTimestampCallback, result);
+  NetLogParametersCallback net_log_checked_callback =
+      base::Bind(&NetLogSignedCertificateTimestampCallback, output_scts);
 
-  net_log.AddEvent(
-      NetLog::TYPE_SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED,
-      net_log_checked_callback);
+  net_log.AddEvent(NetLogEventType::SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED,
+                   net_log_checked_callback);
 
-  LogNumSCTsToUMA(*result);
+  LogNumSCTsToUMA(*output_scts);
 
   if (has_verified_scts)
     return OK;
@@ -152,7 +159,7 @@ bool MultiLogCTVerifier::VerifySCTs(
     const ct::LogEntry& expected_entry,
     ct::SignedCertificateTimestamp::Origin origin,
     X509Certificate* cert,
-    ct::CTVerifyResult* result) {
+    SignedCertificateTimestampAndStatusList* output_scts) {
   if (logs_.empty())
     return false;
 
@@ -176,7 +183,7 @@ bool MultiLogCTVerifier::VerifySCTs(
     }
     decoded_sct->origin = origin;
 
-    verified |= VerifySingleSCT(decoded_sct, expected_entry, cert, result);
+    verified |= VerifySingleSCT(decoded_sct, expected_entry, cert, output_scts);
   }
 
   return verified;
@@ -186,13 +193,12 @@ bool MultiLogCTVerifier::VerifySingleSCT(
     scoped_refptr<ct::SignedCertificateTimestamp> sct,
     const ct::LogEntry& expected_entry,
     X509Certificate* cert,
-    ct::CTVerifyResult* result) {
+    SignedCertificateTimestampAndStatusList* output_scts) {
   // Assume this SCT is untrusted until proven otherwise.
   const auto& it = logs_.find(sct->log_id);
   if (it == logs_.end()) {
     DVLOG(1) << "SCT does not match any known log.";
-    result->unknown_logs_scts.push_back(sct);
-    LogSCTStatusToUMA(ct::SCT_STATUS_LOG_UNKNOWN);
+    AddSCTAndLogStatus(sct, ct::SCT_STATUS_LOG_UNKNOWN, output_scts);
     return false;
   }
 
@@ -200,21 +206,18 @@ bool MultiLogCTVerifier::VerifySingleSCT(
 
   if (!it->second->Verify(expected_entry, *sct.get())) {
     DVLOG(1) << "Unable to verify SCT signature.";
-    result->invalid_scts.push_back(sct);
-    LogSCTStatusToUMA(ct::SCT_STATUS_INVALID);
+    AddSCTAndLogStatus(sct, ct::SCT_STATUS_INVALID_SIGNATURE, output_scts);
     return false;
   }
 
   // SCT verified ok, just make sure the timestamp is legitimate.
   if (sct->timestamp > base::Time::Now()) {
     DVLOG(1) << "SCT is from the future!";
-    result->invalid_scts.push_back(sct);
-    LogSCTStatusToUMA(ct::SCT_STATUS_INVALID);
+    AddSCTAndLogStatus(sct, ct::SCT_STATUS_INVALID_TIMESTAMP, output_scts);
     return false;
   }
 
-  LogSCTStatusToUMA(ct::SCT_STATUS_OK);
-  result->verified_scts.push_back(sct);
+  AddSCTAndLogStatus(sct, ct::SCT_STATUS_OK, output_scts);
   if (observer_)
     observer_->OnSCTVerified(cert, sct.get());
   return true;

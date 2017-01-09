@@ -5,11 +5,12 @@
 #ifndef UI_UI_VIEWS_TOUCHUI_TOUCH_SELECTION_CONTROLLER_IMPL_H_
 #define UI_UI_VIEWS_TOUCHUI_TOUCH_SELECTION_CONTROLLER_IMPL_H_
 
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "ui/aura/window_observer.h"
-#include "ui/base/touch/selection_bound.h"
 #include "ui/base/touch/touch_editing_controller.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/selection_bound.h"
 #include "ui/touch_selection/touch_selection_menu_runner.h"
 #include "ui/views/view.h"
 #include "ui/views/views_export.h"
@@ -64,12 +65,12 @@ class VIEWS_EXPORT TouchSelectionControllerImpl
   // Convenience method to set a handle's selection bound and hide it if it is
   // located out of client view.
   void SetHandleBound(EditingHandleView* handle,
-                      const ui::SelectionBound& bound,
-                      const ui::SelectionBound& bound_in_screen);
+                      const gfx::SelectionBound& bound,
+                      const gfx::SelectionBound& bound_in_screen);
 
   // Checks if handle should be shown for selection bound.
   // |bound| should be the clipped version of the selection bound.
-  bool ShouldShowHandleFor(const ui::SelectionBound& bound) const;
+  bool ShouldShowHandleFor(const gfx::SelectionBound& bound) const;
 
   // Overridden from ui::TouchSelectionMenuClient.
   bool IsCommandIdEnabled(int command_id) const override;
@@ -109,21 +110,22 @@ class VIEWS_EXPORT TouchSelectionControllerImpl
 
   // Convenience methods for testing.
   gfx::NativeView GetCursorHandleNativeView();
+  gfx::SelectionBound::Type GetSelectionHandle1Type();
   gfx::Rect GetSelectionHandle1Bounds();
   gfx::Rect GetSelectionHandle2Bounds();
   gfx::Rect GetCursorHandleBounds();
   bool IsSelectionHandle1Visible();
   bool IsSelectionHandle2Visible();
   bool IsCursorHandleVisible();
-  gfx::Rect GetExpectedHandleBounds(const ui::SelectionBound& bound);
+  gfx::Rect GetExpectedHandleBounds(const gfx::SelectionBound& bound);
   views::WidgetDelegateView* GetHandle1View();
   views::WidgetDelegateView* GetHandle2View();
 
   ui::TouchEditable* client_view_;
   Widget* client_widget_;
-  scoped_ptr<EditingHandleView> selection_handle_1_;
-  scoped_ptr<EditingHandleView> selection_handle_2_;
-  scoped_ptr<EditingHandleView> cursor_handle_;
+  std::unique_ptr<EditingHandleView> selection_handle_1_;
+  std::unique_ptr<EditingHandleView> selection_handle_2_;
+  std::unique_ptr<EditingHandleView> cursor_handle_;
   bool command_executed_;
   base::TimeTicks selection_start_time_;
 
@@ -140,12 +142,12 @@ class VIEWS_EXPORT TouchSelectionControllerImpl
   // |selection_handle_2_|, respectively. These values should be used when
   // selection bounds needed rather than position of handles which might be
   // invalid when handles are hidden.
-  ui::SelectionBound selection_bound_1_;
-  ui::SelectionBound selection_bound_2_;
+  gfx::SelectionBound selection_bound_1_;
+  gfx::SelectionBound selection_bound_2_;
 
   // Selection bounds, clipped to client view's boundaries.
-  ui::SelectionBound selection_bound_1_clipped_;
-  ui::SelectionBound selection_bound_2_clipped_;
+  gfx::SelectionBound selection_bound_1_clipped_;
+  gfx::SelectionBound selection_bound_2_clipped_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchSelectionControllerImpl);
 };

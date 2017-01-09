@@ -3,12 +3,15 @@
 // found in the LICENSE file.
 #include "chromeos/dbus/gsm_sms_client.h"
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
@@ -57,7 +60,7 @@ class SMSProxy {
   }
 
   // Calls Delete method.
-  void Delete(uint32 index, const DeleteCallback& callback) {
+  void Delete(uint32_t index, const DeleteCallback& callback) {
     dbus::MethodCall method_call(modemmanager::kModemManagerSMSInterface,
                                  modemmanager::kSMSDeleteFunction);
     dbus::MessageWriter writer(&method_call);
@@ -69,7 +72,7 @@ class SMSProxy {
   }
 
   // Calls Get method.
-  void Get(uint32 index, const GetCallback& callback) {
+  void Get(uint32_t index, const GetCallback& callback) {
     dbus::MethodCall method_call(modemmanager::kModemManagerSMSInterface,
                                  modemmanager::kSMSGetFunction);
     dbus::MessageWriter writer(&method_call);
@@ -93,7 +96,7 @@ class SMSProxy {
  private:
   // Handles SmsReceived signal.
   void OnSmsReceived(dbus::Signal* signal) {
-    uint32 index = 0;
+    uint32_t index = 0;
     bool complete = false;
     dbus::MessageReader reader(signal);
     if (!reader.PopUint32(&index) ||
@@ -125,7 +128,7 @@ class SMSProxy {
     if (!response)
       return;
     dbus::MessageReader reader(response);
-    scoped_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
+    std::unique_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
     base::DictionaryValue* dictionary_value = NULL;
     if (!value.get() || !value->GetAsDictionary(&dictionary_value)) {
       LOG(WARNING) << "Invalid response: " << response->ToString();
@@ -139,7 +142,7 @@ class SMSProxy {
     if (!response)
       return;
     dbus::MessageReader reader(response);
-    scoped_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
+    std::unique_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
     base::ListValue* list_value = NULL;
     if (!value.get() || !value->GetAsList(&list_value)) {
       LOG(WARNING) << "Invalid response: " << response->ToString();
@@ -179,7 +182,7 @@ class GsmSMSClientImpl : public GsmSMSClient {
   // GsmSMSClient override.
   void Delete(const std::string& service_name,
               const dbus::ObjectPath& object_path,
-              uint32 index,
+              uint32_t index,
               const DeleteCallback& callback) override {
     GetProxy(service_name, object_path)->Delete(index, callback);
   }
@@ -187,7 +190,7 @@ class GsmSMSClientImpl : public GsmSMSClient {
   // GsmSMSClient override.
   void Get(const std::string& service_name,
            const dbus::ObjectPath& object_path,
-           uint32 index,
+           uint32_t index,
            const GetCallback& callback) override {
     GetProxy(service_name, object_path)->Get(index, callback);
   }
@@ -208,7 +211,7 @@ class GsmSMSClientImpl : public GsmSMSClient {
 
  private:
   using ProxyMap =
-      std::map<std::pair<std::string, std::string>, scoped_ptr<SMSProxy>>;
+      std::map<std::pair<std::string, std::string>, std::unique_ptr<SMSProxy>>;
 
   // Returns a SMSProxy for the given service name and object path.
   SMSProxy* GetProxy(const std::string& service_name,
@@ -219,7 +222,8 @@ class GsmSMSClientImpl : public GsmSMSClient {
       return it->second.get();
 
     // There is no proxy for the service_name and object_path, create it.
-    scoped_ptr<SMSProxy> proxy(new SMSProxy(bus_, service_name, object_path));
+    std::unique_ptr<SMSProxy> proxy(
+        new SMSProxy(bus_, service_name, object_path));
     SMSProxy* proxy_ptr = proxy.get();
     proxies_[key] = std::move(proxy);
     return proxy_ptr;

@@ -13,10 +13,12 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/process_iterator.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
+#include "build/build_config.h"
 
 namespace base {
 
@@ -50,6 +52,8 @@ TerminationStatus GetTerminationStatusImpl(ProcessHandle handle,
       case SIGFPE:
       case SIGILL:
       case SIGSEGV:
+      case SIGTRAP:
+      case SIGSYS:
         return TERMINATION_STATUS_PROCESS_CRASHED;
       case SIGKILL:
 #if defined(OS_CHROMEOS)

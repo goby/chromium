@@ -7,7 +7,9 @@
 
 #include <windows.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/extensions/global_shortcut_listener.h"
 #include "ui/gfx/win/singleton_hwnd_observer.h"
 
@@ -38,7 +40,7 @@ class GlobalShortcutListenerWin : public GlobalShortcutListener {
   typedef std::map<ui::Accelerator, int> HotkeyIdMap;
   HotkeyIdMap hotkey_ids_;
 
-  scoped_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
+  std::unique_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(GlobalShortcutListenerWin);
 };

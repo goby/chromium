@@ -7,15 +7,11 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/javascript_test_observer.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-
-namespace content {
-class RenderViewHost;
-}
 
 class PPAPITestMessageHandler : public content::TestMessageHandler {
  public:

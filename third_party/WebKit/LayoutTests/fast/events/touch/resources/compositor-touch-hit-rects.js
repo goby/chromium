@@ -28,12 +28,15 @@ function sortRects(a, b) {
 var preRunHandlerForTest = {};
 
 function testElement(element) {
-    element.addEventListener('touchstart', listener, false);
+    element.addEventListener('touchstart', listener, {passive: false});
 
     // Run any test-specific handler AFTER adding the touch event listener
     // (which itself causes rects to be recomputed).
     if (element.id in preRunHandlerForTest)
         preRunHandlerForTest[element.id](element);
+
+    if (window.internals)
+        internals.forceCompositingUpdate(document);
 
     logRects(element.id);
 
@@ -108,21 +111,6 @@ function logRects(testName, opt_noOverlay) {
     log('');
 }
 
-function checkForRectUpdate(expectUpdate, operation) {
-    if (window.internals)
-        var oldCount = window.internals
-                .touchEventTargetLayerRectsUpdateCount(document);
-
-    operation();
-
-    if (window.internals) {
-        var newCount = window.internals
-                .touchEventTargetLayerRectsUpdateCount(document);
-        if ((oldCount != newCount) != !!expectUpdate)
-            log('FAIL: ' + (expectUpdate ? 'rects not updated' : 'rects updated unexpectedly'));
-    }
-}
-
 // Set this to true in order to visualize the results in an image.
 // Elements that are expected to be included in hit rects have a red border.
 // The actual hit rects are in a green tranlucent overlay.
@@ -148,6 +136,12 @@ if (window.internals) {
 window.onload = function() {
     // Run each general test case.
     var tests = document.querySelectorAll('.testcase');
+
+    // Add document wide touchend and touchcancel listeners and ensure the
+    // listeners do not affect compositor hit test rects.
+    document.documentElement.addEventListener('touchend', listener, false);
+    document.documentElement.addEventListener('touchcancel', listener, false);
+
     for ( var i = 0; i < tests.length; i++) {
         // Force a compositing update before testing each case to ensure that
         // any subsequent touch rect updates are actually done because of

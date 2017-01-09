@@ -7,8 +7,8 @@
 
 #include <map>
 
-#include "base/basictypes.h"
-#include "components/test_runner/web_task.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "third_party/WebKit/public/platform/WebRTCPeerConnectionHandler.h"
 #include "third_party/WebKit/public/platform/WebRTCSessionDescription.h"
 #include "third_party/WebKit/public/platform/WebRTCSessionDescriptionRequest.h"
@@ -40,6 +40,8 @@ class MockWebRTCPeerConnectionHandler
                    const blink::WebRTCOfferOptions& options) override;
   void createAnswer(const blink::WebRTCSessionDescriptionRequest& request,
                     const blink::WebMediaConstraints& constraints) override;
+  void createAnswer(const blink::WebRTCSessionDescriptionRequest& request,
+                    const blink::WebRTCAnswerOptions& options) override;
   void setLocalDescription(
       const blink::WebRTCVoidRequest& request,
       const blink::WebRTCSessionDescription& local_description) override;
@@ -48,8 +50,8 @@ class MockWebRTCPeerConnectionHandler
       const blink::WebRTCSessionDescription& remote_description) override;
   blink::WebRTCSessionDescription localDescription() override;
   blink::WebRTCSessionDescription remoteDescription() override;
-  bool updateICE(const blink::WebRTCConfiguration& configuration,
-                 const blink::WebMediaConstraints& constraints) override;
+  bool updateICE(const blink::WebRTCConfiguration& configuration) override;
+  void logSelectedRtcpMuxPolicy(blink::RtcpMuxPolicy) override;
   bool addICECandidate(const blink::WebRTCICECandidate& ice_candidate) override;
   bool addICECandidate(const blink::WebRTCVoidRequest& request,
                        const blink::WebRTCICECandidate& ice_candidate) override;
@@ -57,15 +59,13 @@ class MockWebRTCPeerConnectionHandler
                  const blink::WebMediaConstraints& constraints) override;
   void removeStream(const blink::WebMediaStream& stream) override;
   void getStats(const blink::WebRTCStatsRequest& request) override;
+  void getStats(std::unique_ptr<blink::WebRTCStatsReportCallback>) override;
   blink::WebRTCDataChannelHandler* createDataChannel(
       const blink::WebString& label,
       const blink::WebRTCDataChannelInit& init) override;
   blink::WebRTCDTMFSenderHandler* createDTMFSender(
       const blink::WebMediaStreamTrack& track) override;
   void stop() override;
-
-  // WebTask related methods
-  WebTaskList* mutable_task_list() { return &task_list_; }
 
  private:
   MockWebRTCPeerConnectionHandler();
@@ -76,9 +76,19 @@ class MockWebRTCPeerConnectionHandler
   // is called.
   void UpdateRemoteStreams();
 
+  void ReportInitializeCompleted();
+  void ReportCreationOfDataChannel();
+
+  void PostRequestResult(
+      const blink::WebRTCSessionDescriptionRequest& request,
+      const blink::WebRTCSessionDescription& session_description);
+  void PostRequestFailure(
+      const blink::WebRTCSessionDescriptionRequest& request);
+  void PostRequestResult(const blink::WebRTCVoidRequest& request);
+  void PostRequestFailure(const blink::WebRTCVoidRequest& request);
+
   blink::WebRTCPeerConnectionHandlerClient* client_;
   bool stopped_;
-  WebTaskList task_list_;
   blink::WebRTCSessionDescription local_description_;
   blink::WebRTCSessionDescription remote_description_;
   int stream_count_;
@@ -86,6 +96,8 @@ class MockWebRTCPeerConnectionHandler
   typedef std::map<std::string, blink::WebMediaStream> StreamMap;
   StreamMap local_streams_;
   StreamMap remote_streams_;
+
+  base::WeakPtrFactory<MockWebRTCPeerConnectionHandler> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MockWebRTCPeerConnectionHandler);
 };

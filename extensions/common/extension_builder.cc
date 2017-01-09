@@ -4,6 +4,8 @@
 
 #include "extensions/common/extension_builder.h"
 
+#include <utility>
+
 #include "extensions/common/extension.h"
 
 namespace extensions {
@@ -13,6 +15,22 @@ ExtensionBuilder::ExtensionBuilder()
       flags_(Extension::NO_FLAGS) {
 }
 ExtensionBuilder::~ExtensionBuilder() {}
+
+ExtensionBuilder::ExtensionBuilder(ExtensionBuilder&& other)
+    : path_(std::move(other.path_)),
+      location_(other.location_),
+      manifest_(std::move(other.manifest_)),
+      flags_(other.flags_),
+      id_(std::move(other.id_)) {}
+
+ExtensionBuilder& ExtensionBuilder::operator=(ExtensionBuilder&& other) {
+  path_ = std::move(other.path_);
+  location_ = other.location_;
+  manifest_ = std::move(other.manifest_);
+  flags_ = other.flags_;
+  id_ = std::move(other.id_);
+  return *this;
+}
 
 scoped_refptr<Extension> ExtensionBuilder::Build() {
   std::string error;
@@ -38,13 +56,14 @@ ExtensionBuilder& ExtensionBuilder::SetLocation(Manifest::Location location) {
 }
 
 ExtensionBuilder& ExtensionBuilder::SetManifest(
-    scoped_ptr<base::DictionaryValue> manifest) {
-  manifest_ = manifest.Pass();
+    std::unique_ptr<base::DictionaryValue> manifest) {
+  manifest_ = std::move(manifest);
   return *this;
 }
 
-ExtensionBuilder& ExtensionBuilder::MergeManifest(DictionaryBuilder& builder) {
-  manifest_->MergeDictionary(builder.Build().get());
+ExtensionBuilder& ExtensionBuilder::MergeManifest(
+    std::unique_ptr<base::DictionaryValue> manifest) {
+  manifest_->MergeDictionary(manifest.get());
   return *this;
 }
 

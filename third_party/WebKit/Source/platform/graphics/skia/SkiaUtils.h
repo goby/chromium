@@ -28,28 +28,43 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// All of the functions in this file should move to new homes and this file should be deleted.
+// All of the functions in this file should move to new homes and this file
+// should be deleted.
 
 #ifndef SkiaUtils_h
 #define SkiaUtils_h
 
 #include "platform/PlatformExport.h"
-#include "platform/geometry/FloatRect.h"
-#include "platform/graphics/Color.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/Image.h"
 #include "platform/transforms/AffineTransform.h"
 #include "third_party/skia/include/core/SkCanvas.h"
-#include "third_party/skia/include/effects/SkCornerPathEffect.h"
+#include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
+#include "third_party/skia/include/core/SkScalar.h"
 #include "wtf/MathExtras.h"
 
 namespace blink {
 
 class GraphicsContext;
 
-SkXfermode::Mode PLATFORM_EXPORT WebCoreCompositeToSkiaComposite(CompositeOperator, WebBlendMode = WebBlendModeNormal);
-CompositeOperator PLATFORM_EXPORT compositeOperatorFromSkia(SkXfermode::Mode);
-WebBlendMode PLATFORM_EXPORT blendModeFromSkia(SkXfermode::Mode);
+/**** constants ****/
+
+enum {
+  // Firefox limits width/height to 32767 pixels, but slows down dramatically
+  // before it reaches that limit. We limit by area instead, giving us larger
+  // maximum dimensions, in exchange for a smaller maximum canvas size.
+  kMaxCanvasArea = 32768 * 8192,  // Maximum canvas area in CSS pixels
+
+  // In Skia, we will also limit width/height to 32767.
+  kMaxSkiaDim = 32767  // Maximum width/height in CSS pixels.
+};
+
+SkBlendMode PLATFORM_EXPORT
+    WebCoreCompositeToSkiaComposite(CompositeOperator,
+                                    WebBlendMode = WebBlendModeNormal);
+CompositeOperator PLATFORM_EXPORT compositeOperatorFromSkia(SkBlendMode);
+WebBlendMode PLATFORM_EXPORT blendModeFromSkia(SkBlendMode);
 
 // Map alpha values from [0, 1] to [0, 256] for alpha blending.
 int PLATFORM_EXPORT clampedAlphaForBlending(float);
@@ -63,73 +78,105 @@ SkColor PLATFORM_EXPORT scaleAlpha(SkColor, float);
 SkColor PLATFORM_EXPORT scaleAlpha(SkColor, int);
 
 // Skia has problems when passed infinite, etc floats, filter them to 0.
-inline SkScalar WebCoreFloatToSkScalar(float f)
-{
-    return SkFloatToScalar(std::isfinite(f) ? f : 0);
+inline SkScalar WebCoreFloatToSkScalar(float f) {
+  return SkFloatToScalar(std::isfinite(f) ? f : 0);
 }
 
-inline SkScalar WebCoreDoubleToSkScalar(double d)
-{
-    return SkDoubleToScalar(std::isfinite(d) ? d : 0);
+inline SkScalar WebCoreDoubleToSkScalar(double d) {
+  return SkDoubleToScalar(std::isfinite(d) ? d : 0);
 }
 
-inline bool WebCoreFloatNearlyEqual(float a, float b)
-{
-    return SkScalarNearlyEqual(WebCoreFloatToSkScalar(a), WebCoreFloatToSkScalar(b));
+inline bool WebCoreFloatNearlyEqual(float a, float b) {
+  return SkScalarNearlyEqual(WebCoreFloatToSkScalar(a),
+                             WebCoreFloatToSkScalar(b));
 }
 
-inline SkPath::FillType WebCoreWindRuleToSkFillType(WindRule rule)
-{
-    return static_cast<SkPath::FillType>(rule);
+inline SkPath::FillType WebCoreWindRuleToSkFillType(WindRule rule) {
+  return static_cast<SkPath::FillType>(rule);
 }
 
-inline WindRule SkFillTypeToWindRule(SkPath::FillType fillType)
-{
-    switch (fillType) {
+inline WindRule SkFillTypeToWindRule(SkPath::FillType fillType) {
+  switch (fillType) {
     case SkPath::kWinding_FillType:
     case SkPath::kEvenOdd_FillType:
-        return static_cast<WindRule>(fillType);
+      return static_cast<WindRule>(fillType);
     default:
-        ASSERT_NOT_REACHED();
-        break;
-    }
-    return RULE_NONZERO;
+      ASSERT_NOT_REACHED();
+      break;
+  }
+  return RULE_NONZERO;
 }
-
-// Determine if a given WebKit point is contained in a path
-bool SkPathContainsPoint(const SkPath&, const FloatPoint&, SkPath::FillType);
 
 SkMatrix PLATFORM_EXPORT affineTransformToSkMatrix(const AffineTransform&);
 
 bool nearlyIntegral(float value);
 
-InterpolationQuality limitInterpolationQuality(const GraphicsContext*, InterpolationQuality resampling);
+InterpolationQuality limitInterpolationQuality(const GraphicsContext&,
+                                               InterpolationQuality resampling);
 
-InterpolationQuality computeInterpolationQuality(
-    float srcWidth,
-    float srcHeight,
-    float destWidth,
-    float destHeight,
-    bool isDataComplete = true);
+InterpolationQuality computeInterpolationQuality(float srcWidth,
+                                                 float srcHeight,
+                                                 float destWidth,
+                                                 float destHeight,
+                                                 bool isDataComplete = true);
 
-// This replicates the old skia behavior when it used to take radius for blur. Now it takes sigma.
-inline SkScalar skBlurRadiusToSigma(SkScalar radius)
-{
-    SkASSERT(radius >= 0);
-    return 0.288675f * radius + 0.5f;
+// This replicates the old skia behavior when it used to take radius for blur.
+// Now it takes sigma.
+inline SkScalar skBlurRadiusToSigma(SkScalar radius) {
+  SkASSERT(radius >= 0);
+  if (radius == 0)
+    return 0.0f;
+  return 0.288675f * radius + 0.5f;
 }
 
-template<typename PrimitiveType>
-void drawPlatformFocusRing(const PrimitiveType&, SkCanvas*, SkColor, int width);
+template <typename PrimitiveType>
+void drawPlatformFocusRing(const PrimitiveType&,
+                           SkCanvas*,
+                           SkColor,
+                           float width);
 
 // TODO(fmalita): remove in favor of direct SrcRectConstraint use.
-inline SkCanvas::SrcRectConstraint WebCoreClampingModeToSkiaRectConstraint(Image::ImageClampingMode clampMode)
-{
-    return clampMode == Image::ClampImageToSourceRect
-        ? SkCanvas::kStrict_SrcRectConstraint
-        : SkCanvas::kFast_SrcRectConstraint;
+inline SkCanvas::SrcRectConstraint WebCoreClampingModeToSkiaRectConstraint(
+    Image::ImageClampingMode clampMode) {
+  return clampMode == Image::ClampImageToSourceRect
+             ? SkCanvas::kStrict_SrcRectConstraint
+             : SkCanvas::kFast_SrcRectConstraint;
 }
 
-} // namespace blink
+// Skia's smart pointer APIs are preferable over their legacy raw pointer
+// counterparts.
+//
+// General guidelines
+//
+// When receiving ref counted objects from Skia:
+//
+//   1) Use sk_sp-based Skia factories if available (e.g. SkShader::MakeFoo()
+//      instead of SkShader::CreateFoo()).
+//   2) Use sk_sp<T> locals for all objects.
+//
+// When passing ref counted objects to Skia:
+//
+//   1) Use sk_sp-based Skia APIs when available (e.g.
+//      SkPaint::setShader(sk_sp<SkShader>) instead of
+//      SkPaint::setShader(SkShader*)).
+//   2) If object ownership is being passed to Skia, use std::move(sk_sp<T>).
+//
+// Example (creating a SkShader and setting it on SkPaint):
+//
+// a) ownership transferred
+//
+//     // using Skia smart pointer locals
+//     sk_sp<SkShader> shader = SkShader::MakeFoo(...);
+//     paint.setShader(std::move(shader));
+//
+//     // using no locals
+//     paint.setShader(SkShader::MakeFoo(...));
+//
+// b) shared ownership
+//
+//     sk_sp<SkShader> shader = SkShader::MakeFoo(...);
+//     paint.setShader(shader);
+
+}  // namespace blink
 
 #endif  // SkiaUtils_h

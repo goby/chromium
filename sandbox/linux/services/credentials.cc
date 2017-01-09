@@ -5,7 +5,9 @@
 #include "sandbox/linux/services/credentials.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/syscall.h>
@@ -14,12 +16,13 @@
 #include <unistd.h>
 
 #include "base/bind.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/launch.h"
-#include "base/template_util.h"
 #include "base/third_party/valgrind/valgrind.h"
 #include "build/build_config.h"
 #include "sandbox/linux/services/namespace_utils.h"
@@ -91,9 +94,9 @@ bool ChrootToSafeEmptyDir() {
   // /proc/tid directory for the thread (since /proc may not be aware of the
   // PID namespace). With a process, we can just use /proc/self.
   pid_t pid = -1;
-  char stack_buf[PTHREAD_STACK_MIN];
+  char stack_buf[PTHREAD_STACK_MIN] ALIGNAS(16);
 #if defined(ARCH_CPU_X86_FAMILY) || defined(ARCH_CPU_ARM_FAMILY) || \
-    defined(ARCH_CPU_MIPS64_FAMILY) || defined(ARCH_CPU_MIPS_FAMILY)
+    defined(ARCH_CPU_MIPS_FAMILY)
   // The stack grows downward.
   void* stack = stack_buf + sizeof(stack_buf);
 #else
@@ -312,10 +315,14 @@ bool Credentials::DropFileSystemAccess(int proc_fd) {
   CHECK_LE(0, proc_fd);
 
   CHECK(ChrootToSafeEmptyDir());
-  CHECK(!base::DirectoryExists(base::FilePath("/proc")));
+  CHECK(!HasFileSystemAccess());
   CHECK(!ProcUtil::HasOpenDirectory(proc_fd));
   // We never let this function fail.
   return true;
+}
+
+bool Credentials::HasFileSystemAccess() {
+  return base::DirectoryExists(base::FilePath("/proc"));
 }
 
 pid_t Credentials::ForkAndDropCapabilitiesInChild() {

@@ -6,6 +6,7 @@
 
 #include <cmath>
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/animation/animation_curve.h"
@@ -20,42 +21,31 @@ static const char* const s_runStateNames[] = {"WAITING_FOR_TARGET_AVAILABILITY",
                                               "RUNNING",
                                               "PAUSED",
                                               "FINISHED",
-                                              "ABORTED"};
+                                              "ABORTED",
+                                              "ABORTED_BUT_NEEDS_COMPLETION"};
 
 static_assert(static_cast<int>(cc::Animation::LAST_RUN_STATE) + 1 ==
                   arraysize(s_runStateNames),
               "RunStateEnumSize should equal the number of elements in "
               "s_runStateNames");
 
-// This should match the TargetProperty enum.
-static const char* const s_targetPropertyNames[] = {"TRANSFORM",
-                                                    "OPACITY",
-                                                    "FILTER",
-                                                    "SCROLL_OFFSET",
-                                                    "BACKGROUND_COLOR"};
-
-static_assert(static_cast<int>(cc::Animation::LAST_TARGET_PROPERTY) + 1 ==
-                  arraysize(s_targetPropertyNames),
-              "TargetPropertyEnumSize should equal the number of elements in "
-              "s_targetPropertyNames");
-
 }  // namespace
 
 namespace cc {
 
-scoped_ptr<Animation> Animation::Create(
-    scoped_ptr<AnimationCurve> curve,
+std::unique_ptr<Animation> Animation::Create(
+    std::unique_ptr<AnimationCurve> curve,
     int animation_id,
     int group_id,
-    TargetProperty target_property) {
-  return make_scoped_ptr(
+    TargetProperty::Type target_property) {
+  return base::WrapUnique(
       new Animation(std::move(curve), animation_id, group_id, target_property));
 }
 
-Animation::Animation(scoped_ptr<AnimationCurve> curve,
+Animation::Animation(std::unique_ptr<AnimationCurve> curve,
                      int animation_id,
                      int group_id,
-                     TargetProperty target_property)
+                     TargetProperty::Type target_property)
     : curve_(std::move(curve)),
       id_(animation_id),
       group_(group_id),
@@ -63,16 +53,16 @@ Animation::Animation(scoped_ptr<AnimationCurve> curve,
       run_state_(WAITING_FOR_TARGET_AVAILABILITY),
       iterations_(1),
       iteration_start_(0),
-      direction_(DIRECTION_NORMAL),
+      direction_(Direction::NORMAL),
       playback_rate_(1),
-      fill_mode_(FILL_MODE_BOTH),
+      fill_mode_(FillMode::BOTH),
       needs_synchronized_start_time_(false),
       received_finished_event_(false),
       suspended_(false),
       is_controlling_instance_(false),
       is_impl_only_(false),
-      affects_active_observers_(true),
-      affects_pending_observers_(true) {}
+      affects_active_elements_(true),
+      affects_pending_elements_(true) {}
 
 Animation::~Animation() {
   if (run_state_ == RUNNING || run_state_ == PAUSED)
@@ -85,11 +75,8 @@ void Animation::SetRunState(RunState run_state,
     return;
 
   char name_buffer[256];
-  base::snprintf(name_buffer,
-                 sizeof(name_buffer),
-                 "%s-%d",
-                 s_targetPropertyNames[target_property_],
-                 group_);
+  base::snprintf(name_buffer, sizeof(name_buffer), "%s-%d",
+                 TargetProperty::GetName(target_property_), group_);
 
   bool is_waiting_to_start =
       run_state_ == WAITING_FOR_TARGET_AVAILABILITY || run_state_ == STARTING;
@@ -121,13 +108,9 @@ void Animation::SetRunState(RunState run_state,
                  old_run_state_name,
                  new_run_state_name);
 
-  TRACE_EVENT_INSTANT2("cc",
-                       "LayerAnimationController::SetRunState",
-                       TRACE_EVENT_SCOPE_THREAD,
-                       "Name",
-                       TRACE_STR_COPY(name_buffer),
-                       "State",
-                       TRACE_STR_COPY(state_buffer));
+  TRACE_EVENT_INSTANT2(
+      "cc", "ElementAnimations::SetRunState", TRACE_EVENT_SCOPE_THREAD, "Name",
+      TRACE_STR_COPY(name_buffer), "State", TRACE_STR_COPY(state_buffer));
 }
 
 void Animation::Suspend(base::TimeTicks monotonic_time) {
@@ -158,7 +141,7 @@ bool Animation::IsFinishedAt(base::TimeTicks monotonic_time) const {
 
 bool Animation::InEffect(base::TimeTicks monotonic_time) const {
   return ConvertToActiveTime(monotonic_time) >= base::TimeDelta() ||
-         (fill_mode_ == FILL_MODE_BOTH || fill_mode_ == FILL_MODE_BACKWARDS);
+         (fill_mode_ == FillMode::BOTH || fill_mode_ == FillMode::BACKWARDS);
 }
 
 base::TimeDelta Animation::ConvertToActiveTime(
@@ -242,9 +225,9 @@ base::TimeDelta Animation::TrimTimeToCurrentIteration(
   // Check if we are running the animation in reverse direction for the current
   // iteration
   bool reverse =
-      (direction_ == DIRECTION_REVERSE) ||
-      (direction_ == DIRECTION_ALTERNATE && iteration % 2 == 1) ||
-      (direction_ == DIRECTION_ALTERNATE_REVERSE && iteration % 2 == 0);
+      (direction_ == Direction::REVERSE) ||
+      (direction_ == Direction::ALTERNATE_NORMAL && iteration % 2 == 1) ||
+      (direction_ == Direction::ALTERNATE_REVERSE && iteration % 2 == 0);
 
   // If we are running the animation in reverse direction, reverse the result
   if (reverse)
@@ -253,9 +236,9 @@ base::TimeDelta Animation::TrimTimeToCurrentIteration(
   return iteration_time;
 }
 
-scoped_ptr<Animation> Animation::CloneAndInitialize(
+std::unique_ptr<Animation> Animation::CloneAndInitialize(
     RunState initial_run_state) const {
-  scoped_ptr<Animation> to_return(
+  std::unique_ptr<Animation> to_return(
       new Animation(curve_->Clone(), id_, group_, target_property_));
   to_return->run_state_ = initial_run_state;
   to_return->iterations_ = iterations_;

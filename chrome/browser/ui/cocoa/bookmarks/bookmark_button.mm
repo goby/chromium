@@ -9,13 +9,20 @@
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #import "base/mac/scoped_nsobject.h"
+#include "base/mac/sdk_forward_declarations.h"
+#import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_folder_window.h"
+#import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_view_cocoa.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button_cell.h"
+#import "chrome/browser/ui/cocoa/bookmarks/bookmark_folder_target.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/view_id_util.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "content/public/browser/user_metrics.h"
+#include "ui/base/clipboard/clipboard_util_mac.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/nsview_additions.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 
 using base::UserMetricsAction;
@@ -32,7 +39,14 @@ namespace {
 BookmarkButton* gDraggedButton = nil; // Weak
 };
 
-@interface BookmarkButton(Private)
+@interface BookmarkButton()
+
+// NSDraggingSource:
+- (void)draggingSession:(NSDraggingSession*)session
+           endedAtPoint:(NSPoint)aPoint
+              operation:(NSDragOperation)operation;
+- (NSDragOperation)draggingSession:(NSDraggingSession*)session
+    sourceOperationMaskForDraggingContext:(NSDraggingContext)context;
 
 // Make a drag image for the button.
 - (NSImage*)dragImage;
@@ -41,11 +55,11 @@ BookmarkButton* gDraggedButton = nil; // Weak
 
 @end  // @interface BookmarkButton(Private)
 
-
 @implementation BookmarkButton
 
 @synthesize delegate = delegate_;
 @synthesize acceptsTrackIn = acceptsTrackIn_;
+@synthesize backgroundColor = backgroundColor_;
 
 - (id)initWithFrame:(NSRect)frameRect {
   // BookmarkButton's ViewID may be changed to VIEW_ID_OTHER_BOOKMARKS in
@@ -68,6 +82,8 @@ BookmarkButton* gDraggedButton = nil; // Weak
     [area_ release];
   }
 
+  [backgroundColor_ release];
+
   [super dealloc];
 }
 
@@ -84,12 +100,12 @@ BookmarkButton* gDraggedButton = nil; // Weak
   return [self bookmarkNode] ? NO : YES;
 }
 
-- (void)setIsContinuousPulsing:(BOOL)flag {
-  [[self cell] setIsContinuousPulsing:flag];
+- (void)setPulseIsStuckOn:(BOOL)flag {
+  [[self cell] setPulseIsStuckOn:flag];
 }
 
-- (BOOL)isContinuousPulsing {
-  return [[self cell] isContinuousPulsing];
+- (BOOL)isPulseStuckOn {
+  return [[self cell] isPulseStuckOn];
 }
 
 - (NSPoint)screenLocationForRemoveAnimation {
@@ -109,7 +125,7 @@ BookmarkButton* gDraggedButton = nil; // Weak
     NSRect bounds = [self bounds];
     point = NSMakePoint(NSMidX(bounds), NSMidY(bounds));
     point = [self convertPoint:point toView:nil];
-    point = [[self window] convertBaseToScreen:point];
+    point = ui::ConvertPointFromWindowToScreen([self window], point);
   }
 
   return point;
@@ -174,10 +190,6 @@ BookmarkButton* gDraggedButton = nil; // Weak
   // the stack.
   [self retain];
 
-  // Ask our delegate to fill the pasteboard for us.
-  NSPasteboard* pboard = [NSPasteboard pasteboardWithName:NSDragPboard];
-  [[self delegate] fillPasteboard:pboard forDragOfButton:self];
-
   // Lock bar visibility, forcing the overlay to stay visible if we are in
   // fullscreen mode.
   if ([[self delegate] dragShouldLockBarVisibility]) {
@@ -185,12 +197,10 @@ BookmarkButton* gDraggedButton = nil; // Weak
     NSWindow* window = [[self delegate] browserWindow];
     visibilityDelegate_ =
         [BrowserWindowController browserWindowControllerForWindow:window];
-    [visibilityDelegate_ lockBarVisibilityForOwner:self
-                                     withAnimation:NO
-                                             delay:NO];
+    [visibilityDelegate_ lockToolbarVisibilityForOwner:self withAnimation:NO];
   }
   const BookmarkNode* node = [self bookmarkNode];
-  const BookmarkNode* parent = node ? node->parent() : NULL;
+  const BookmarkNode* parent = node->parent();
   if (parent && parent->type() == BookmarkNode::FOLDER) {
     content::RecordAction(UserMetricsAction("BookmarkBarFolder_DragStart"));
   } else {
@@ -201,12 +211,24 @@ BookmarkButton* gDraggedButton = nil; // Weak
   dragPending_ = YES;
   gDraggedButton = self;
 
-  CGFloat yAt = [self bounds].size.height;
-  NSSize dragOffset = NSMakeSize(0.0, 0.0);
   NSImage* image = [self dragImage];
   [self setHidden:YES];
-  [self dragImage:image at:NSMakePoint(0, yAt) offset:dragOffset
-            event:event pasteboard:pboard source:self slideBack:YES];
+
+  NSPasteboardItem* item = [[self delegate] pasteboardItemForDragOfButton:self];
+  if ([[self delegate] respondsToSelector:@selector(willBeginPasteboardDrag)])
+    [[self delegate] willBeginPasteboardDrag];
+
+  base::scoped_nsobject<NSDraggingItem> dragItem(
+      [[NSDraggingItem alloc] initWithPasteboardWriter:item]);
+  [dragItem setDraggingFrame:[self bounds] contents:image];
+
+  [self beginDraggingSessionWithItems:@[ dragItem.get() ]
+                                event:event
+                               source:self];
+  while (gDraggedButton != nil) {
+    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                             beforeDate:[NSDate distantFuture]];
+  }
   [self setHidden:NO];
 
   // And we're done.
@@ -216,33 +238,33 @@ BookmarkButton* gDraggedButton = nil; // Weak
   [self autorelease];
 }
 
+- (NSDragOperation)draggingSession:(NSDraggingSession*)session
+    sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+  NSDragOperation operation = NSDragOperationCopy;
+
+  if (context == NSDraggingContextWithinApplication)
+    operation |= NSDragOperationMove;
+
+  if ([delegate_ canDragBookmarkButtonToTrash:self])
+    operation |= NSDragOperationDelete;
+
+  return operation;
+}
+
 // Overridden to release bar visibility.
 - (DraggableButtonResult)endDrag {
   gDraggedButton = nil;
 
   // visibilityDelegate_ can be nil if we're detached, and that's fine.
-  [visibilityDelegate_ releaseBarVisibilityForOwner:self
-                                      withAnimation:YES
-                                              delay:YES];
+  [visibilityDelegate_ releaseToolbarVisibilityForOwner:self withAnimation:YES];
   visibilityDelegate_ = nil;
 
   return kDraggableButtonImplUseBase;
 }
 
-- (NSDragOperation)draggingSourceOperationMaskForLocal:(BOOL)isLocal {
-  NSDragOperation operation = NSDragOperationCopy;
-  if (isLocal) {
-    operation |= NSDragOperationMove;
-  }
-  if ([delegate_ canDragBookmarkButtonToTrash:self]) {
-    operation |= NSDragOperationDelete;
-  }
-  return operation;
-}
-
-- (void)draggedImage:(NSImage *)anImage
-             endedAt:(NSPoint)aPoint
-           operation:(NSDragOperation)operation {
+- (void)draggingSession:(NSDraggingSession*)session
+           endedAtPoint:(NSPoint)aPoint
+              operation:(NSDragOperation)operation {
   gDraggedButton = nil;
   // Inform delegate of drag source that we're finished dragging,
   // so it can close auto-opened bookmark folders etc.
@@ -324,8 +346,6 @@ BookmarkButton* gDraggedButton = nil; // Weak
   return kDraggableButtonMixinDidWork;
 }
 
-
-
 // mouseEntered: and mouseExited: are called from our
 // BookmarkButtonCell.  We redirect this information to our delegate.
 // The controller can then perform menu-like actions (e.g. "hover over
@@ -349,17 +369,23 @@ BookmarkButton* gDraggedButton = nil; // Weak
     [id(delegate_) mouseDragged:theEvent];
 }
 
-- (void)rightMouseDown:(NSEvent*)event {
-  // Ensure that right-clicking on a button while a context menu is open
+- (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
+  // Ensure that right-clicking on a button while a context menu is already open
   // highlights the new button.
+  [delegate_ mouseEnteredButton:self event:event];
+
   GradientButtonCell* cell =
       base::mac::ObjCCastStrict<GradientButtonCell>([self cell]);
-  [delegate_ mouseEnteredButton:self event:event];
-  [cell setMouseInside:YES animate:YES];
+  // Opt for animate:NO, otherwise the upcoming contextual menu's modal loop
+  // will block the animation and the button's state will visually never change
+  // ( https://crbug.com/649256 ).
+  [cell setMouseInside:YES animate:NO];
+}
 
-  // Keep a ref to |self|, in case -rightMouseDown: deletes this bookmark.
-  base::scoped_nsobject<BookmarkButton> keepAlive([self retain]);
-  [super rightMouseDown:event];
+- (void)didCloseMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
+  // Update the highlight after the contextual menu closes.
+  GradientButtonCell* cell =
+      base::mac::ObjCCastStrict<GradientButtonCell>([self cell]);
 
   if (![cell isMouseReallyInside]) {
     [cell setMouseInside:NO animate:YES];
@@ -403,8 +429,43 @@ BookmarkButton* gDraggedButton = nil; // Weak
 
 - (void)drawRect:(NSRect)rect {
   NSView* bookmarkBarToolbarView = [[self superview] superview];
-  [self cr_drawUsingAncestor:bookmarkBarToolbarView inRect:(NSRect)rect];
+  if (backgroundColor_) {
+    [backgroundColor_ set];
+    NSRectFill(rect);
+  } else {
+    [self cr_drawUsingAncestor:bookmarkBarToolbarView inRect:(NSRect)rect];
+  }
   [super drawRect:rect];
+}
+
+- (void)updateIconToMatchTheme {
+  // During testing, the window might not be a browser window, and the
+  // superview might not be a BookmarkBarView.
+  if (![[self window] respondsToSelector:@selector(hasDarkTheme)] ||
+      ![[self superview] isKindOfClass:[BookmarkBarView class]]) {
+    return;
+  }
+
+  BookmarkBarView* bookmarkBarView =
+      base::mac::ObjCCastStrict<BookmarkBarView>([self superview]);
+  BookmarkBarController* bookmarkBarController = [bookmarkBarView controller];
+
+  // The apps page shortcut button does not need to be updated.
+  if (self == [bookmarkBarController appsPageShortcutButton]) {
+    return;
+  }
+
+  BOOL darkTheme = [[self window] hasDarkTheme];
+  NSImage* theImage = nil;
+  // Make sure the "off the side" button gets the chevron icon.
+  if ([bookmarkBarController offTheSideButton] == self) {
+    theImage = [bookmarkBarController offTheSideButtonImage:darkTheme];
+  } else {
+    theImage = [bookmarkBarController faviconForNode:[self bookmarkNode]
+                                       forADarkTheme:darkTheme];
+  }
+
+  [[self cell] setImage:theImage];
 }
 
 - (void)viewDidMoveToWindow {
@@ -413,6 +474,7 @@ BookmarkButton* gDraggedButton = nil; // Weak
     // The new window may have different main window status.
     // This happens when the view is moved into a TabWindowOverlayWindow for
     // tab dragging.
+    [self updateIconToMatchTheme];
     [self windowDidChangeActive];
   }
 }
@@ -420,17 +482,13 @@ BookmarkButton* gDraggedButton = nil; // Weak
 // ThemedWindowDrawing implementation.
 
 - (void)windowDidChangeTheme {
+  [self updateIconToMatchTheme];
   [self setNeedsDisplay:YES];
 }
 
 - (void)windowDidChangeActive {
   [self setNeedsDisplay:YES];
 }
-
-@end
-
-@implementation BookmarkButton(Private)
-
 
 - (void)installCustomTrackingArea {
   const NSTrackingAreaOptions options =
@@ -449,7 +507,6 @@ BookmarkButton* gDraggedButton = nil; // Weak
                                       userInfo:nil];
   [self addTrackingArea:area_];
 }
-
 
 - (NSImage*)dragImage {
   NSRect bounds = [self bounds];
@@ -473,4 +530,4 @@ BookmarkButton* gDraggedButton = nil; // Weak
   return image.autorelease();
 }
 
-@end  // @implementation BookmarkButton(Private)
+@end

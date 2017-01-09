@@ -42,32 +42,25 @@ function FileManagerUI(providersModel, element, launchParam) {
 
   /**
    * Alert dialog.
-   * @type {!cr.ui.dialogs.AlertDialog}
+   * @type {!FilesAlertDialog}
    * @const
    */
-  this.alertDialog = new cr.ui.dialogs.AlertDialog(this.element);
+  this.alertDialog = new FilesAlertDialog(this.element);
 
   /**
    * Confirm dialog.
-   * @type {!cr.ui.dialogs.ConfirmDialog}
+   * @type {!FilesConfirmDialog}
    * @const
    */
-  this.confirmDialog = new cr.ui.dialogs.ConfirmDialog(this.element);
+  this.confirmDialog = new FilesConfirmDialog(this.element);
 
   /**
    * Confirm dialog for delete.
-   * @type {!cr.ui.dialogs.ConfirmDialog}
+   * @type {!FilesConfirmDialog}
    * @const
    */
-  this.deleteConfirmDialog = new cr.ui.dialogs.ConfirmDialog(this.element);
+  this.deleteConfirmDialog = new FilesConfirmDialog(this.element);
   this.deleteConfirmDialog.setOkLabel(str('DELETE_BUTTON_LABEL'));
-
-  /**
-   * Prompt dialog.
-   * @type {!cr.ui.dialogs.PromptDialog}
-   * @const
-   */
-  this.promptDialog = new cr.ui.dialogs.PromptDialog(this.element);
 
   /**
    * Share dialog.
@@ -98,13 +91,6 @@ function FileManagerUI(providersModel, element, launchParam) {
    */
   this.suggestAppsDialog = new SuggestAppsDialog(
       providersModel, this.element, launchParam.suggestAppsDialogState);
-
-  /**
-   * Conflict dialog.
-   * @type {!ConflictDialog}
-   * @const
-   */
-  this.conflictDialog = new ConflictDialog(this.element);
 
   /**
    * The container element of the dialog.
@@ -150,8 +136,7 @@ function FileManagerUI(providersModel, element, launchParam) {
    */
   this.searchBox = new SearchBox(
       queryRequiredElement('#search-box', this.element),
-      queryRequiredElement('#search-button', this.element),
-      queryRequiredElement('#no-search-results', this.element));
+      queryRequiredElement('#search-button', this.element));
 
   /**
    * Empty folder UI.
@@ -331,8 +316,7 @@ function FileManagerUI(providersModel, element, launchParam) {
  * @param {!FileGrid} grid
  * @param {!LocationLine} locationLine
  */
-FileManagerUI.prototype.initAdditionalUI = function(
-    table, grid, locationLine) {
+FileManagerUI.prototype.initAdditionalUI = function(table, grid, locationLine) {
   // List container.
   this.listContainer = new ListContainer(
       queryRequiredElement('#list-container', this.element), table, grid);
@@ -479,9 +463,11 @@ FileManagerUI.prototype.onExternalLinkClick_ = function(event) {
 /**
  * Decorates the given splitter element.
  * @param {!HTMLElement} splitterElement
+ * @param {boolean=} opt_resizeNextElement
  * @private
  */
-FileManagerUI.prototype.decorateSplitter_ = function(splitterElement) {
+FileManagerUI.prototype.decorateSplitter_ = function(splitterElement,
+    opt_resizeNextElement) {
   var self = this;
   var Splitter = cr.ui.Splitter;
   var customSplitter = cr.ui.define('div');
@@ -506,4 +492,42 @@ FileManagerUI.prototype.decorateSplitter_ = function(splitterElement) {
   };
 
   customSplitter.decorate(splitterElement);
+  splitterElement.resizeNextElement = !!opt_resizeNextElement;
+};
+
+/**
+ * Sets up and shows the alert to inform a user the task is opened in the
+ * desktop of the running profile.
+ *
+ * @param {Array<Entry>} entries List of opened entries.
+ */
+FileManagerUI.prototype.showOpenInOtherDesktopAlert = function(entries) {
+  if (!entries.length)
+    return;
+  chrome.fileManagerPrivate.getProfiles(
+    function(profiles, currentId, displayedId) {
+      // Find strings.
+      var displayName;
+      for (var i = 0; i < profiles.length; i++) {
+        if (profiles[i].profileId === currentId) {
+          displayName = profiles[i].displayName;
+          break;
+        }
+      }
+      if (!displayName) {
+        console.warn('Display name is not found.');
+        return;
+      }
+
+      var title = entries.length > 1 ?
+          entries[0].name + '\u2026' /* ellipsis */ : entries[0].name;
+      var message = strf(entries.length > 1 ?
+                         'OPEN_IN_OTHER_DESKTOP_MESSAGE_PLURAL' :
+                         'OPEN_IN_OTHER_DESKTOP_MESSAGE',
+                         displayName,
+                         currentId);
+
+      // Show the dialog.
+      this.alertDialog.showWithTitle(title, message, null, null, null);
+    }.bind(this));
 };

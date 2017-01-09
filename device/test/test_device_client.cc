@@ -4,6 +4,8 @@
 
 #include "device/test/test_device_client.h"
 
+#include "build/build_config.h"
+
 // This file unconditionally includes these headers despite conditionally
 // depending on the corresponding targets. The code below needs the destructors
 // of the classes defined even when the classes are never instantiated.
@@ -17,7 +19,12 @@ TestDeviceClient::TestDeviceClient(
     scoped_refptr<base::SingleThreadTaskRunner> blocking_task_runner)
     : blocking_task_runner_(blocking_task_runner) {}
 
-TestDeviceClient::~TestDeviceClient() {}
+TestDeviceClient::~TestDeviceClient() {
+  if (hid_service_)
+    hid_service_->Shutdown();
+  if (usb_service_)
+    usb_service_->Shutdown();
+}
 
 HidService* TestDeviceClient::GetHidService() {
 #if !defined(OS_ANDROID) && !defined(OS_IOS) && \

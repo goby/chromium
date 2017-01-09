@@ -28,15 +28,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/quota/StorageInfo.h"
 
 namespace blink {
 
 StorageInfo::StorageInfo(unsigned long long usage, unsigned long long quota)
-    : m_usage(usage)
-    , m_quota(quota)
-{
-}
+    : m_usage(usage), m_quota(quota) {}
 
-} // namespace blink
+}  // namespace blink

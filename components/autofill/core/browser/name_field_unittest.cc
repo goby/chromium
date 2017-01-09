@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include "components/autofill/core/browser/name_field.h"
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_scanner.h"
-#include "components/autofill/core/browser/name_field.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -21,13 +25,13 @@ class NameFieldTest : public testing::Test {
 
  protected:
   ScopedVector<AutofillField> list_;
-  scoped_ptr<NameField> field_;
-  ServerFieldTypeMap field_type_map_;
+  std::unique_ptr<NameField> field_;
+  FieldCandidatesMap field_candidates_map_;
 
   // Downcast for tests.
-  static scoped_ptr<NameField> Parse(AutofillScanner* scanner) {
-    scoped_ptr<FormField> field = NameField::Parse(scanner);
-    return make_scoped_ptr(static_cast<NameField*>(field.release()));
+  static std::unique_ptr<NameField> Parse(AutofillScanner* scanner) {
+    std::unique_ptr<FormField> field = NameField::Parse(scanner);
+    return base::WrapUnique(static_cast<NameField*>(field.release()));
   }
 
  private:
@@ -53,16 +57,19 @@ TEST_F(NameFieldTest, FirstMiddleLast) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_MIDDLE, field_type_map_[ASCIIToUTF16("name2")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name3")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name3")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_MIDDLE,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name3")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name3")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, FirstMiddleLast2) {
@@ -84,16 +91,19 @@ TEST_F(NameFieldTest, FirstMiddleLast2) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_MIDDLE, field_type_map_[ASCIIToUTF16("name2")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name3")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name3")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_MIDDLE,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name3")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name3")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, FirstLast) {
@@ -111,13 +121,15 @@ TEST_F(NameFieldTest, FirstLast) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name2")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, FirstLast2) {
@@ -135,13 +147,15 @@ TEST_F(NameFieldTest, FirstLast2) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name2")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, FirstLastMiddleWithSpaces) {
@@ -163,16 +177,19 @@ TEST_F(NameFieldTest, FirstLastMiddleWithSpaces) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_MIDDLE, field_type_map_[ASCIIToUTF16("name2")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name3")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name3")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_MIDDLE,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name3")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name3")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, FirstLastEmpty) {
@@ -190,13 +207,15 @@ TEST_F(NameFieldTest, FirstLastEmpty) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name2")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, FirstMiddleLastEmpty) {
@@ -218,16 +237,19 @@ TEST_F(NameFieldTest, FirstMiddleLastEmpty) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_MIDDLE_INITIAL, field_type_map_[ASCIIToUTF16("name2")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name3")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name3")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_MIDDLE_INITIAL,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name3")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name3")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, MiddleInitial) {
@@ -249,16 +271,19 @@ TEST_F(NameFieldTest, MiddleInitial) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_MIDDLE_INITIAL, field_type_map_[ASCIIToUTF16("name2")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name3")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name3")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_MIDDLE_INITIAL,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name3")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name3")].BestHeuristicType());
 }
 
 TEST_F(NameFieldTest, MiddleInitialNoLastName) {
@@ -299,16 +324,19 @@ TEST_F(NameFieldTest, MiddleInitialAtEnd) {
   AutofillScanner scanner(list_.get());
   field_ = Parse(&scanner);
   ASSERT_NE(nullptr, field_.get());
-  ASSERT_TRUE(field_->ClassifyField(&field_type_map_));
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name1")) != field_type_map_.end());
-  EXPECT_EQ(NAME_FIRST, field_type_map_[ASCIIToUTF16("name1")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name2")) != field_type_map_.end());
-  EXPECT_EQ(NAME_MIDDLE_INITIAL, field_type_map_[ASCIIToUTF16("name2")]);
-  ASSERT_TRUE(
-      field_type_map_.find(ASCIIToUTF16("name3")) != field_type_map_.end());
-  EXPECT_EQ(NAME_LAST, field_type_map_[ASCIIToUTF16("name3")]);
+  field_->AddClassifications(&field_candidates_map_);
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name1")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_FIRST,
+            field_candidates_map_[ASCIIToUTF16("name1")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name2")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_MIDDLE_INITIAL,
+            field_candidates_map_[ASCIIToUTF16("name2")].BestHeuristicType());
+  ASSERT_TRUE(field_candidates_map_.find(ASCIIToUTF16("name3")) !=
+              field_candidates_map_.end());
+  EXPECT_EQ(NAME_LAST,
+            field_candidates_map_[ASCIIToUTF16("name3")].BestHeuristicType());
 }
 
 }  // namespace autofill

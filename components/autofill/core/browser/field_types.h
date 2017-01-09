@@ -72,7 +72,7 @@ enum ServerFieldType {
 
   // ADDRESS_SHIPPING values [44,50] are deprecated.
 
-  CREDIT_CARD_NAME = 51,
+  CREDIT_CARD_NAME_FULL = 51,
   CREDIT_CARD_NUMBER = 52,
   CREDIT_CARD_EXP_MONTH = 53,
   CREDIT_CARD_EXP_2_DIGIT_YEAR = 54,
@@ -149,17 +149,26 @@ enum ServerFieldType {
   PROBABLY_NEW_PASSWORD = 89,
   NOT_NEW_PASSWORD = 90,
 
+  // Additional field types for credit card fields.
+  CREDIT_CARD_NAME_FIRST = 91,
+  CREDIT_CARD_NAME_LAST = 92,
+
+  PHONE_HOME_EXTENSION = 93,
+
+  // The first password field in a form that looks like account creation form
+  // for local heuristics.
+  PROBABLY_ACCOUNT_CREATION_PASSWORD = 94,
+
   // No new types can be added without a corresponding change to the Autofill
   // server.
-
-  MAX_VALID_FIELD_TYPE = 91,
+  MAX_VALID_FIELD_TYPE = 95,
 };
 
 // The list of all HTML autocomplete field type hints supported by Chrome.
 // See [ http://is.gd/whatwg_autocomplete ] for the full list of specced hints.
 enum HtmlFieldType {
   // Default type.
-  HTML_TYPE_UNKNOWN,
+  HTML_TYPE_UNSPECIFIED,
 
   // Name types.
   HTML_TYPE_NAME,
@@ -181,10 +190,12 @@ enum HtmlFieldType {
   HTML_TYPE_COUNTRY_CODE,    // The ISO 3166-1-alpha-2 country code.
   HTML_TYPE_COUNTRY_NAME,    // The localized country name.
   HTML_TYPE_POSTAL_CODE,
-  HTML_TYPE_FULL_ADDRESS,    // The complete address, formatted for display.
+  HTML_TYPE_FULL_ADDRESS,  // The complete address, formatted for display.
 
   // Credit card types.
-  HTML_TYPE_CREDIT_CARD_NAME,
+  HTML_TYPE_CREDIT_CARD_NAME_FULL,
+  HTML_TYPE_CREDIT_CARD_NAME_FIRST,
+  HTML_TYPE_CREDIT_CARD_NAME_LAST,
   HTML_TYPE_CREDIT_CARD_NUMBER,
   HTML_TYPE_CREDIT_CARD_EXP,
   HTML_TYPE_CREDIT_CARD_EXP_MONTH,
@@ -200,6 +211,7 @@ enum HtmlFieldType {
   HTML_TYPE_TEL_LOCAL,
   HTML_TYPE_TEL_LOCAL_PREFIX,
   HTML_TYPE_TEL_LOCAL_SUFFIX,
+  HTML_TYPE_TEL_EXTENSION,
 
   // Email.
   HTML_TYPE_EMAIL,
@@ -217,6 +229,9 @@ enum HtmlFieldType {
   HTML_TYPE_CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR,
   HTML_TYPE_CREDIT_CARD_EXP_2_DIGIT_YEAR,
   HTML_TYPE_CREDIT_CARD_EXP_4_DIGIT_YEAR,
+
+  // Non standard autcomplete types.
+  HTML_TYPE_UNRECOGNIZED,
 };
 
 // The list of all HTML autocomplete field mode hints supported by Chrome.
@@ -244,7 +259,6 @@ enum FieldTypeGroup {
 };
 
 typedef std::set<ServerFieldType> ServerFieldTypeSet;
-typedef std::map<base::string16, ServerFieldType> ServerFieldTypeMap;
 
 }  // namespace autofill
 

@@ -99,7 +99,7 @@ cr.define('options', function() {
 
     /** @override */
     handleKeyDown: function(e) {
-      if (e.keyIdentifier == 'Enter')
+      if (e.key == 'Enter')
         cr.dispatchSimpleEvent(this.grid_, 'activate');
       else
         GridSelectionController.prototype.handleKeyDown.call(this, e);
@@ -289,7 +289,7 @@ cr.define('options', function() {
     },
 
     /**
-     * Handles camera stream update. Called regularly (at rate no greater then
+     * Handles camera stream update. Called regularly (at rate no greater than
      * 4/sec) while camera stream is live.
      * @private
      */

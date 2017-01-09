@@ -27,38 +27,36 @@
 #define WebGLActiveInfo_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
-#include "platform/graphics/GraphicsTypes3D.h"
+#include "third_party/khronos/GLES2/gl2.h"
 
 namespace blink {
 
-class WebGLActiveInfo final : public GarbageCollectedFinalized<WebGLActiveInfo>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static WebGLActiveInfo* create(const String& name, GLenum type, GLint size)
-    {
-        return new WebGLActiveInfo(name, type, size);
-    }
-    String name() const { return m_name; }
-    GLenum type() const { return m_type; }
-    GLint size() const { return m_size; }
+class WebGLActiveInfo final : public GarbageCollectedFinalized<WebGLActiveInfo>,
+                              public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    DEFINE_INLINE_TRACE() { }
+ public:
+  static WebGLActiveInfo* create(const String& name, GLenum type, GLint size) {
+    return new WebGLActiveInfo(name, type, size);
+  }
+  String name() const { return m_name; }
+  GLenum type() const { return m_type; }
+  GLint size() const { return m_size; }
 
-private:
-    WebGLActiveInfo(const String& name, GLenum type, GLint size)
-        : m_name(name)
-        , m_type(type)
-        , m_size(size)
-    {
-        ASSERT(name.length());
-        ASSERT(type);
-        ASSERT(size);
-    }
-    String m_name;
-    GLenum m_type;
-    GLint m_size;
+  DEFINE_INLINE_TRACE() {}
+
+ private:
+  WebGLActiveInfo(const String& name, GLenum type, GLint size)
+      : m_name(name), m_type(type), m_size(size) {
+    ASSERT(name.length());
+    ASSERT(type);
+    ASSERT(size);
+  }
+  String m_name;
+  GLenum m_type;
+  GLint m_size;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebGLActiveInfo_h
+#endif  // WebGLActiveInfo_h

@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "content/public/renderer/render_view_observer.h"
 
 namespace extensions {
@@ -22,6 +23,7 @@ class ExtensionHelper : public content::RenderViewObserver {
   // RenderViewObserver implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
   void DraggableRegionsChanged(blink::WebFrame* frame) override;
+  void OnDestruct() override;
 
   void OnAppWindowClosed();
   void OnSetFrameName(const std::string& name);

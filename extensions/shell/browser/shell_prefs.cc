@@ -4,12 +4,13 @@
 
 #include "extensions/shell/browser/shell_prefs.h"
 
-#include "base/prefs/json_pref_store.h"
-#include "base/prefs/pref_filter.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/pref_service_factory.h"
+#include "build/build_config.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/json_pref_store.h"
+#include "components/prefs/pref_filter.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/pref_service_factory.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -38,7 +39,7 @@ scoped_refptr<JsonPrefStore> CreateAndLoadPrefStore(const FilePath& filepath) {
       JsonPrefStore::GetTaskRunnerForFile(
           filepath, content::BrowserThread::GetBlockingPool());
   scoped_refptr<JsonPrefStore> pref_store =
-      new JsonPrefStore(filepath, task_runner, scoped_ptr<PrefFilter>());
+      new JsonPrefStore(filepath, task_runner, std::unique_ptr<PrefFilter>());
   pref_store->ReadPrefs();  // Synchronous.
   return pref_store;
 }
@@ -47,12 +48,12 @@ scoped_refptr<JsonPrefStore> CreateAndLoadPrefStore(const FilePath& filepath) {
 
 namespace shell_prefs {
 
-scoped_ptr<PrefService> CreateLocalState(const FilePath& data_dir) {
+std::unique_ptr<PrefService> CreateLocalState(const FilePath& data_dir) {
   FilePath filepath = data_dir.AppendASCII("local_state.json");
   scoped_refptr<JsonPrefStore> pref_store = CreateAndLoadPrefStore(filepath);
 
   // Local state is considered "user prefs" from the factory's perspective.
-  base::PrefServiceFactory factory;
+  PrefServiceFactory factory;
   factory.set_user_prefs(pref_store);
 
   // Local state preferences are not syncable.
@@ -62,12 +63,12 @@ scoped_ptr<PrefService> CreateLocalState(const FilePath& data_dir) {
   return factory.Create(registry);
 }
 
-scoped_ptr<PrefService> CreateUserPrefService(
+std::unique_ptr<PrefService> CreateUserPrefService(
     content::BrowserContext* browser_context) {
   FilePath filepath = browser_context->GetPath().AppendASCII("user_prefs.json");
   scoped_refptr<JsonPrefStore> pref_store = CreateAndLoadPrefStore(filepath);
 
-  base::PrefServiceFactory factory;
+  PrefServiceFactory factory;
   factory.set_user_prefs(pref_store);
 
   // TODO(jamescook): If we want to support prefs that are set by extensions
@@ -80,7 +81,7 @@ scoped_ptr<PrefService> CreateUserPrefService(
   PrefRegistrySyncable* pref_registry = new PrefRegistrySyncable;
   ExtensionPrefs::RegisterProfilePrefs(pref_registry);
 
-  scoped_ptr<PrefService> pref_service = factory.Create(pref_registry);
+  std::unique_ptr<PrefService> pref_service = factory.Create(pref_registry);
   user_prefs::UserPrefs::Set(browser_context, pref_service.get());
   return pref_service;
 }

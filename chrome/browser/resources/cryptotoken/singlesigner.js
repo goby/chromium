@@ -74,6 +74,9 @@ function SingleGnubbySigner(gnubbyId, forEnroll, completeCb, timer,
 
   /** @private {!Object<string, number>} */
   this.cachedError_ = [];
+
+  /** @private {(function()|undefined)} */
+  this.openCanceller_;
 }
 
 /** @enum {number} */
@@ -107,6 +110,11 @@ SingleGnubbySigner.prototype.getDeviceId = function() {
  * Closes this signer's gnubby, if it's held.
  */
 SingleGnubbySigner.prototype.close = function() {
+  if (this.state_ == SingleGnubbySigner.State.OPENING) {
+    if (this.openCanceller_)
+      this.openCanceller_();
+  }
+
   if (!this.gnubby_) return;
   this.state_ = SingleGnubbySigner.State.CLOSING;
   this.gnubby_.closeWhenIdle(this.closed_.bind(this));
@@ -185,12 +193,13 @@ SingleGnubbySigner.prototype.open_ = function() {
   }
   if (this.state_ == SingleGnubbySigner.State.INIT) {
     this.state_ = SingleGnubbySigner.State.OPENING;
-    DEVICE_FACTORY_REGISTRY.getGnubbyFactory().openGnubby(
+    this.openCanceller_ = DEVICE_FACTORY_REGISTRY.getGnubbyFactory().openGnubby(
         this.gnubbyId_,
         this.forEnroll_,
         this.openCallback_.bind(this),
         appIdHash,
-        this.logMsgUrl_);
+        this.logMsgUrl_,
+        'singlesigner.js:SingleGnubbySigner.prototype.open_');
   }
 };
 
@@ -233,11 +242,13 @@ SingleGnubbySigner.prototype.openCallback_ = function(rc, gnubby) {
         var self = this;
         window.setTimeout(function() {
           if (self.gnubby_) {
-            DEVICE_FACTORY_REGISTRY.getGnubbyFactory().openGnubby(
+            this.openCanceller_ = DEVICE_FACTORY_REGISTRY
+              .getGnubbyFactory().openGnubby(
                 self.gnubbyId_,
                 self.forEnroll_,
                 self.openCallback_.bind(self),
-                self.logMsgUrl_);
+                self.logMsgUrl_,
+                'singlesigner.js:SingleGnubbySigner.prototype.openCallback_');
           }
         }, SingleGnubbySigner.OPEN_DELAY_MILLIS);
       } else {
@@ -452,12 +463,13 @@ SingleGnubbySigner.prototype.goToError_ = function(code, opt_warn) {
   var logFn = opt_warn ? console.warn.bind(console) : console.log.bind(console);
   logFn(UTIL_fmt('failed (' + code.toString(16) + ')'));
   var result = { code: code };
-  if (!this.forEnroll_ && code == DeviceStatusCodes.WRONG_DATA_STATUS) {
-    // When a device yields WRONG_DATA to all sign challenges, and this is a
-    // sign request, we don't want to yield to the web page that it's not
-    // enrolled just yet: we want the user to tap the device first. We'll
-    // report the gnubby to the caller and let it close it instead of closing
-    // it here.
+  if (!this.forEnroll_ &&
+      SingleGnubbySigner.signErrorIndicatesInvalidKeyHandle(code)) {
+    // When a device yields an idempotent bad key handle error to all sign
+    // challenges, and this is a sign request, we don't want to yield to the
+    // web page that it's not enrolled just yet: we want the user to tap the
+    // device first. We'll report the gnubby to the caller and let it close it
+    // instead of closing it here.
     result.gnubby = this.gnubby_;
   } else {
     // Since this gnubby can no longer produce a useful result, go ahead and

@@ -6,7 +6,8 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/filename_util.h"
@@ -51,7 +52,7 @@ void SniffMimeType(const base::FilePath& local_path, std::string* result) {
 // Converts a result passed as a scoped pointer to a dereferenced value passed
 // to |callback|.
 void OnGetMimeTypeFromFileForNonNativeLocalPathCompleted(
-    scoped_ptr<std::string> mime_type,
+    std::unique_ptr<std::string> mime_type,
     const base::Callback<void(const std::string&)>& callback) {
   callback.Run(*mime_type);
 }
@@ -71,7 +72,7 @@ void OnGetMimeTypeFromMetadataForNonNativeLocalPathCompleted(
 
   // MIME type not available with metadata, hence try to guess it from the
   // file's extension.
-  scoped_ptr<std::string> mime_type_from_extension(new std::string);
+  std::unique_ptr<std::string> mime_type_from_extension(new std::string);
   std::string* const mime_type_from_extension_ptr =
       mime_type_from_extension.get();
   BrowserThread::PostBlockingPoolTaskAndReply(
@@ -87,7 +88,7 @@ void OnGetMimeTypeFromMetadataForNonNativeLocalPathCompleted(
 
 // Called when sniffing for MIME type in the native local file is completed.
 void OnSniffMimeTypeForNativeLocalPathCompleted(
-    scoped_ptr<std::string> mime_type,
+    std::unique_ptr<std::string> mime_type,
     const base::Callback<void(const std::string&)>& callback) {
   // Do not return application/zip as sniffed result. If the file has .zip
   // extension, it should be already returned as application/zip. If the file
@@ -108,14 +109,14 @@ void OnSniffMimeTypeForNativeLocalPathCompleted(
 // to sniffing.
 void OnGetMimeTypeFromFileForNativeLocalPathCompleted(
     const base::FilePath& local_path,
-    scoped_ptr<std::string> mime_type,
+    std::unique_ptr<std::string> mime_type,
     const base::Callback<void(const std::string&)>& callback) {
   if (!mime_type->empty()) {
     callback.Run(*mime_type);
     return;
   }
 
-  scoped_ptr<std::string> sniffed_mime_type(
+  std::unique_ptr<std::string> sniffed_mime_type(
       new std::string(kMimeTypeApplicationOctetStream));
   std::string* const sniffed_mime_type_ptr = sniffed_mime_type.get();
   BrowserThread::PostBlockingPoolTaskAndReply(
@@ -148,7 +149,7 @@ void GetMimeTypeForLocalPath(
 
   // For native local files, try to guess the mime from the extension. If
   // not available, then try to sniff if.
-  scoped_ptr<std::string> mime_type_from_extension(new std::string);
+  std::unique_ptr<std::string> mime_type_from_extension(new std::string);
   std::string* const mime_type_from_extension_ptr =
       mime_type_from_extension.get();
   BrowserThread::PostBlockingPoolTaskAndReply(

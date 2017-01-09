@@ -4,9 +4,10 @@
 
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
@@ -15,14 +16,16 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/url_formatter/url_formatter.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/features/features.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_set.h"
@@ -36,7 +39,7 @@
 
 #if defined(OS_WIN)
 #include "chrome/grit/theme_resources.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #endif
 
@@ -57,7 +60,7 @@ enum BookmarkShortcutDisposition {
 // Indicates how the bookmark shortcut has been changed by extensions associated
 // with |profile|, if at all.
 BookmarkShortcutDisposition GetBookmarkShortcutDisposition(Profile* profile) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::CommandService* command_service =
       extensions::CommandService::Get(profile);
 
@@ -91,9 +94,9 @@ BookmarkShortcutDisposition GetBookmarkShortcutDisposition(Profile* profile) {
   return BOOKMARK_SHORTCUT_DISPOSITION_UNCHANGED;
 }
 
-#if defined(TOOLKIT_VIEWS)
+#if defined(TOOLKIT_VIEWS) && !defined(OS_WIN)
 gfx::ImageSkia GetFolderIcon(gfx::VectorIconId id, SkColor text_color) {
-  return gfx::CreateVectorIcon(id, 16,
+  return gfx::CreateVectorIcon(id,
                                color_utils::DeriveDefaultIconColor(text_color));
 }
 #endif
@@ -122,40 +125,40 @@ void ToggleBookmarkBarWhenVisible(content::BrowserContext* browser_context) {
   prefs->SetBoolean(bookmarks::prefs::kShowBookmarkBar, always_show);
 }
 
-base::string16 FormatBookmarkURLForDisplay(const GURL& url,
-                                           const PrefService* prefs) {
-  std::string languages;
-  if (prefs)
-    languages = prefs->GetString(prefs::kAcceptLanguages);
-
+base::string16 FormatBookmarkURLForDisplay(const GURL& url) {
   // Because this gets re-parsed by FixupURL(), it's safe to omit the scheme
-  // and trailing slash, and unescape most characters.  However, it's
+  // and trailing slash, and unescape most characters. However, it's
   // important not to drop any username/password, or unescape anything that
   // changes the URL's meaning.
-  return url_formatter::FormatUrl(
-      url, languages, url_formatter::kFormatUrlOmitAll &
-                          ~url_formatter::kFormatUrlOmitUsernamePassword,
-      net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
+  url_formatter::FormatUrlTypes format_types =
+      url_formatter::kFormatUrlOmitAll &
+      ~url_formatter::kFormatUrlOmitUsernamePassword;
+
+  // If username is present, we must not omit the scheme because FixupURL() will
+  // subsequently interpret the username as a scheme. crbug.com/639126
+  if (url.has_username())
+    format_types &= ~url_formatter::kFormatUrlOmitHTTP;
+
+  return url_formatter::FormatUrl(url, format_types, net::UnescapeRule::SPACES,
+                                  nullptr, nullptr, nullptr);
 }
 
-bool IsAppsShortcutEnabled(Profile* profile,
-                           chrome::HostDesktopType host_desktop_type) {
+bool IsAppsShortcutEnabled(Profile* profile) {
   // Legacy supervised users can not have apps installed currently so there's no
   // need to show the apps shortcut.
   if (profile->IsLegacySupervised())
     return false;
 
+#if defined(USE_ASH)
   // Don't show the apps shortcut in ash since the app launcher is enabled.
-  if (host_desktop_type == chrome::HOST_DESKTOP_TYPE_ASH)
-    return false;
-
+  return false;
+#else
   return search::IsInstantExtendedAPIEnabled() && !profile->IsOffTheRecord();
+#endif
 }
 
-bool ShouldShowAppsShortcutInBookmarkBar(
-  Profile* profile,
-  chrome::HostDesktopType host_desktop_type) {
-  return IsAppsShortcutEnabled(profile, host_desktop_type) &&
+bool ShouldShowAppsShortcutInBookmarkBar(Profile* profile) {
+  return IsAppsShortcutEnabled(profile) &&
          profile->GetPrefs()->GetBoolean(
              bookmarks::prefs::kShowAppsShortcutInBookmarkBar);
 }
@@ -166,7 +169,7 @@ bool ShouldRemoveBookmarkThisPageUI(Profile* profile) {
 }
 
 bool ShouldRemoveBookmarkOpenPagesUI(Profile* profile) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::ExtensionRegistry* registry =
       extensions::ExtensionRegistry::Get(profile);
   if (!registry)
@@ -189,8 +192,8 @@ bool ShouldRemoveBookmarkOpenPagesUI(Profile* profile) {
 int GetBookmarkDragOperation(content::BrowserContext* browser_context,
                              const BookmarkNode* node) {
   PrefService* prefs = user_prefs::UserPrefs::Get(browser_context);
-  Profile* profile = Profile::FromBrowserContext(browser_context);
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+  BookmarkModel* model =
+      BookmarkModelFactory::GetForBrowserContext(browser_context);
 
   int move = ui::DragDropTypes::DRAG_MOVE;
   if (!prefs->GetBoolean(bookmarks::prefs::kEditBookmarksEnabled) ||
@@ -229,7 +232,7 @@ int GetBookmarkDropOperation(Profile* profile,
   if (!IsValidBookmarkDropLocation(profile, data, parent, index))
     return ui::DragDropTypes::DRAG_NONE;
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
   if (!model->client()->CanBeEditedByUser(parent))
     return ui::DragDropTypes::DRAG_NONE;
 
@@ -262,7 +265,7 @@ bool IsValidBookmarkDropLocation(Profile* profile,
   if (!data.is_valid())
     return false;
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
   if (!model->client()->CanBeEditedByUser(drop_parent))
     return false;
 
@@ -289,37 +292,32 @@ bool IsValidBookmarkDropLocation(Profile* profile,
 }
 
 #if defined(TOOLKIT_VIEWS)
+// TODO(bsep): vectorize the Windows versions: crbug.com/564112
 gfx::ImageSkia GetBookmarkFolderIcon(SkColor text_color) {
 #if defined(OS_WIN)
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-        IDR_BOOKMARK_BAR_FOLDER);
-  }
-#endif
-
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+      IDR_BOOKMARK_BAR_FOLDER);
+#else
   return GetFolderIcon(gfx::VectorIconId::FOLDER, text_color);
+#endif
 }
 
 gfx::ImageSkia GetBookmarkSupervisedFolderIcon(SkColor text_color) {
 #if defined(OS_WIN)
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-        IDR_BOOKMARK_BAR_FOLDER_SUPERVISED);
-  }
-#endif
-
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+      IDR_BOOKMARK_BAR_FOLDER_SUPERVISED);
+#else
   return GetFolderIcon(gfx::VectorIconId::FOLDER_SUPERVISED, text_color);
+#endif
 }
 
 gfx::ImageSkia GetBookmarkManagedFolderIcon(SkColor text_color) {
 #if defined(OS_WIN)
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-        IDR_BOOKMARK_BAR_FOLDER_MANAGED);
-  }
-#endif
-
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+      IDR_BOOKMARK_BAR_FOLDER_MANAGED);
+#else
   return GetFolderIcon(gfx::VectorIconId::FOLDER_MANAGED, text_color);
+#endif
 }
 #endif
 

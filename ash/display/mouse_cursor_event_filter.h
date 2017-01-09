@@ -5,21 +5,26 @@
 #ifndef ASH_DISPLAY_MOUSE_CURSOR_EVENT_FILTER_H
 #define ASH_DISPLAY_MOUSE_CURSOR_EVENT_FILTER_H
 
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace aura {
-class RootWindow;
 class Window;
 }
 
 namespace ash {
-class DisplayEdgeController;
+class MouseWarpController;
+
+namespace test {
+class AshTestBase;
+}
 
 // An event filter that controls mouse location in extended desktop
 // environment.
@@ -45,7 +50,7 @@ class ASH_EXPORT MouseCursorEventFilter
   void OnMouseEvent(ui::MouseEvent* event) override;
 
  private:
-  friend class test::DisplayManagerTestApi;
+  friend class test::AshTestBase;
   friend class ExtendedMouseWarpControllerTest;
   friend class MouseCursorEventFilterTest;
   friend class UnifiedMouseWarpControllerTest;
@@ -61,7 +66,7 @@ class ASH_EXPORT MouseCursorEventFilter
 
   bool mouse_warp_enabled_;
 
-  scoped_ptr<MouseWarpController> mouse_warp_controller_;
+  std::unique_ptr<MouseWarpController> mouse_warp_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(MouseCursorEventFilter);
 };

@@ -23,7 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/editing/commands/EditCommand.h"
 
 #include "core/dom/Document.h"
@@ -36,97 +35,101 @@
 namespace blink {
 
 EditCommand::EditCommand(Document& document)
-    : m_document(&document)
-    , m_parent(nullptr)
-{
-    ASSERT(m_document);
-    ASSERT(m_document->frame());
-    setStartingSelection(m_document->frame()->selection().selection());
-    setEndingSelection(m_startingSelection);
+    : m_document(&document), m_parent(nullptr) {
+  DCHECK(m_document);
+  DCHECK(m_document->frame());
+  setStartingSelection(m_document->frame()->selection().selection());
+  setEndingVisibleSelection(m_startingSelection);
 }
 
-EditCommand::~EditCommand()
-{
+EditCommand::~EditCommand() {}
+
+InputEvent::InputType EditCommand::inputType() const {
+  return InputEvent::InputType::None;
 }
 
-EditAction EditCommand::editingAction() const
-{
-    return EditActionUnspecified;
+String EditCommand::textDataForInputEvent() const {
+  return nullAtom;
 }
 
-static inline EditCommandComposition* compositionIfPossible(EditCommand* command)
-{
-    if (!command->isCompositeEditCommand())
-        return 0;
-    return toCompositeEditCommand(command)->composition();
+static inline EditCommandComposition* compositionIfPossible(
+    EditCommand* command) {
+  if (!command->isCompositeEditCommand())
+    return 0;
+  return toCompositeEditCommand(command)->composition();
 }
 
-void EditCommand::setStartingSelection(const VisibleSelection& selection)
-{
-    for (EditCommand* command = this; ; command = command->m_parent) {
-        if (EditCommandComposition* composition = compositionIfPossible(command)) {
-            ASSERT(command->isTopLevelCommand());
-            composition->setStartingSelection(selection);
-        }
-        command->m_startingSelection = selection;
-        if (!command->m_parent || command->m_parent->isFirstCommand(command))
-            break;
+void EditCommand::setStartingSelection(const VisibleSelection& selection) {
+  for (EditCommand* command = this;; command = command->m_parent) {
+    if (EditCommandComposition* composition = compositionIfPossible(command)) {
+      DCHECK(command->isTopLevelCommand());
+      composition->setStartingSelection(selection);
     }
+    command->m_startingSelection = selection;
+    if (!command->m_parent || command->m_parent->isFirstCommand(command))
+      break;
+  }
 }
 
-void EditCommand::setEndingSelection(const VisibleSelection& selection)
-{
-    for (EditCommand* command = this; command; command = command->m_parent) {
-        if (EditCommandComposition* composition = compositionIfPossible(command)) {
-            ASSERT(command->isTopLevelCommand());
-            composition->setEndingSelection(selection);
-        }
-        command->m_endingSelection = selection;
+// TODO(yosin): We will make |SelectionInDOMTree| version of
+// |setEndingSelection()| as primary function instead of wrapper, once
+// |EditCommand| holds other than |VisibleSelection|.
+void EditCommand::setEndingSelection(const SelectionInDOMTree& selection) {
+  // TODO(editing-dev): The use of
+  // updateStyleAndLayoutIgnorePendingStylesheets
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  document().updateStyleAndLayoutIgnorePendingStylesheets();
+  setEndingVisibleSelection(createVisibleSelection(selection));
+}
+
+// TODO(yosin): We will make |SelectionInDOMTree| version of
+// |setEndingSelection()| as primary function instead of wrapper.
+void EditCommand::setEndingVisibleSelection(const VisibleSelection& selection) {
+  for (EditCommand* command = this; command; command = command->m_parent) {
+    if (EditCommandComposition* composition = compositionIfPossible(command)) {
+      DCHECK(command->isTopLevelCommand());
+      composition->setEndingSelection(selection);
     }
+    command->m_endingSelection = selection;
+  }
 }
 
-void EditCommand::setEndingSelection(const VisiblePosition& position)
-{
-    setEndingSelection(VisibleSelection(position));
+bool EditCommand::isRenderedCharacter(const Position& position) {
+  if (position.isNull())
+    return false;
+  DCHECK(position.isOffsetInAnchor()) << position;
+  if (!position.anchorNode()->isTextNode())
+    return false;
+
+  LayoutObject* layoutObject = position.anchorNode()->layoutObject();
+  if (!layoutObject)
+    return false;
+
+  return toLayoutText(layoutObject)
+      ->isRenderedCharacter(position.offsetInContainerNode());
 }
 
-bool EditCommand::isRenderedCharacter(const Position& position)
-{
-    if (position.isNull())
-        return false;
-    ASSERT(position.isOffsetInAnchor());
-    if (!position.anchorNode()->isTextNode())
-        return false;
-
-    LayoutObject* layoutObject = position.anchorNode()->layoutObject();
-    if (!layoutObject)
-        return false;
-
-    return toLayoutText(layoutObject)->isRenderedCharacter(position.offsetInContainerNode());
+void EditCommand::setParent(CompositeEditCommand* parent) {
+  DCHECK((parent && !m_parent) || (!parent && m_parent));
+  DCHECK(!parent || !isCompositeEditCommand() ||
+         !toCompositeEditCommand(this)->composition());
+  m_parent = parent;
+  if (parent) {
+    m_startingSelection = parent->m_endingSelection;
+    m_endingSelection = parent->m_endingSelection;
+  }
 }
 
-void EditCommand::setParent(CompositeEditCommand* parent)
-{
-    ASSERT((parent && !m_parent) || (!parent && m_parent));
-    ASSERT(!parent || !isCompositeEditCommand() || !toCompositeEditCommand(this)->composition());
-    m_parent = parent;
-    if (parent) {
-        m_startingSelection = parent->m_endingSelection;
-        m_endingSelection = parent->m_endingSelection;
-    }
+void SimpleEditCommand::doReapply() {
+  EditingState editingState;
+  doApply(&editingState);
 }
 
-void SimpleEditCommand::doReapply()
-{
-    doApply();
+DEFINE_TRACE(EditCommand) {
+  visitor->trace(m_document);
+  visitor->trace(m_startingSelection);
+  visitor->trace(m_endingSelection);
+  visitor->trace(m_parent);
 }
 
-DEFINE_TRACE(EditCommand)
-{
-    visitor->trace(m_document);
-    visitor->trace(m_startingSelection);
-    visitor->trace(m_endingSelection);
-    visitor->trace(m_parent);
-}
-
-} // namespace blink
+}  // namespace blink

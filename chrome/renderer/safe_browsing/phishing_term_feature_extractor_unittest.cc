@@ -4,19 +4,24 @@
 
 #include "chrome/renderer/safe_browsing/phishing_term_feature_extractor.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/renderer/safe_browsing/features.h"
 #include "chrome/renderer/safe_browsing/mock_feature_extractor_clock.h"
 #include "chrome/renderer/safe_browsing/murmurhash3_util.h"
@@ -28,8 +33,7 @@
 using base::ASCIIToUTF16;
 using ::testing::Return;
 
-
-static const uint32 kMurmurHash3Seed = 2777808611U;
+static const uint32_t kMurmurHash3Seed = 2777808611U;
 
 namespace safe_browsing {
 
@@ -91,7 +95,7 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
   // completion callback.  Returns the success boolean from the callback.
   bool ExtractFeatures(const base::string16* page_text,
                        FeatureMap* features,
-                       std::set<uint32>* shingle_hashes) {
+                       std::set<uint32_t>* shingle_hashes) {
     success_ = false;
     extractor_->ExtractFeatures(
         page_text,
@@ -99,13 +103,13 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
         shingle_hashes,
         base::Bind(&PhishingTermFeatureExtractorTest::ExtractionDone,
                    base::Unretained(this)));
-    msg_loop_.Run();
+    base::RunLoop().Run();
     return success_;
   }
 
   void PartialExtractFeatures(const base::string16* page_text,
                               FeatureMap* features,
-                              std::set<uint32>* shingle_hashes) {
+                              std::set<uint32_t>* shingle_hashes) {
     extractor_->ExtractFeatures(
         page_text,
         features,
@@ -115,7 +119,7 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
     msg_loop_.task_runner()->PostTask(
         FROM_HERE, base::Bind(&PhishingTermFeatureExtractorTest::QuitExtraction,
                               base::Unretained(this)));
-    msg_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   // Completion callback for feature extraction.
@@ -131,9 +135,9 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
 
   base::MessageLoop msg_loop_;
   MockFeatureExtractorClock clock_;
-  scoped_ptr<PhishingTermFeatureExtractor> extractor_;
+  std::unique_ptr<PhishingTermFeatureExtractor> extractor_;
   base::hash_set<std::string> term_hashes_;
-  base::hash_set<uint32> word_hashes_;
+  base::hash_set<uint32_t> word_hashes_;
   bool success_;  // holds the success value from ExtractFeatures
 };
 
@@ -143,10 +147,10 @@ TEST_F(PhishingTermFeatureExtractorTest, ExtractFeatures) {
 
   base::string16 page_text = ASCIIToUTF16("blah");
   FeatureMap expected_features;  // initially empty
-  std::set<uint32> expected_shingle_hashes;
+  std::set<uint32_t> expected_shingle_hashes;
 
   FeatureMap features;
-  std::set<uint32> shingle_hashes;
+  std::set<uint32_t> shingle_hashes;
   ASSERT_TRUE(ExtractFeatures(&page_text, &features, &shingle_hashes));
   ExpectFeatureMapsAreEqual(features, expected_features);
   EXPECT_THAT(expected_shingle_hashes, testing::ContainerEq(shingle_hashes));
@@ -239,7 +243,7 @@ TEST_F(PhishingTermFeatureExtractorTest, ExtractFeatures) {
                                                    kMurmurHash3Seed));
   expected_shingle_hashes.insert(MurmurHash3String("way too many words ",
                                                    kMurmurHash3Seed));
-  std::set<uint32>::iterator it = expected_shingle_hashes.end();
+  std::set<uint32_t>::iterator it = expected_shingle_hashes.end();
   expected_shingle_hashes.erase(--it);
 
   features.Clear();
@@ -331,7 +335,7 @@ TEST_F(PhishingTermFeatureExtractorTest, Continuation) {
                                       std::string("one"));
   expected_features.AddBooleanFeature(features::kPageTerm +
                                       std::string("two"));
-  std::set<uint32> expected_shingle_hashes;
+  std::set<uint32_t> expected_shingle_hashes;
   expected_shingle_hashes.insert(
       MurmurHash3String("one 0 1 2 ", kMurmurHash3Seed));
   expected_shingle_hashes.insert(
@@ -388,7 +392,7 @@ TEST_F(PhishingTermFeatureExtractorTest, Continuation) {
       MurmurHash3String("25 26 27 two ", kMurmurHash3Seed));
 
   FeatureMap features;
-  std::set<uint32> shingle_hashes;
+  std::set<uint32_t> shingle_hashes;
   ASSERT_TRUE(ExtractFeatures(&page_text, &features, &shingle_hashes));
   ExpectFeatureMapsAreEqual(features, expected_features);
   EXPECT_THAT(expected_shingle_hashes, testing::ContainerEq(shingle_hashes));
@@ -419,7 +423,7 @@ TEST_F(PhishingTermFeatureExtractorTest, Continuation) {
 }
 
 TEST_F(PhishingTermFeatureExtractorTest, PartialExtractionTest) {
-  scoped_ptr<base::string16> page_text(
+  std::unique_ptr<base::string16> page_text(
       new base::string16(ASCIIToUTF16("one ")));
   for (int i = 0; i < 28; ++i) {
     page_text->append(ASCIIToUTF16(base::StringPrintf("%d ", i)));
@@ -438,7 +442,7 @@ TEST_F(PhishingTermFeatureExtractorTest, PartialExtractionTest) {
       .WillOnce(Return(now + base::TimeDelta::FromMilliseconds(14)));
 
   FeatureMap features;
-  std::set<uint32> shingle_hashes;
+  std::set<uint32_t> shingle_hashes;
   // Extract first 10 words then stop.
   PartialExtractFeatures(page_text.get(), &features, &shingle_hashes);
 

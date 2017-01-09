@@ -8,9 +8,10 @@
 #include <functional>
 #include <vector>
 
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_match.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/metrics/proto/omnibox_input_type.pb.h"
@@ -18,13 +19,13 @@
 #include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/browser/history_provider.h"
 #include "components/omnibox/browser/url_prefix.h"
+#include "components/prefs/pref_service.h"
 #include "components/url_formatter/url_formatter.h"
 #include "url/url_constants.h"
 
 using bookmarks::BookmarkMatch;
+using BookmarkMatches = std::vector<BookmarkMatch>;
 using bookmarks::BookmarkNode;
-
-typedef std::vector<BookmarkMatch> BookmarkMatches;
 
 namespace {
 
@@ -55,21 +56,16 @@ void CorrectTitleAndMatchPositions(
 BookmarkProvider::BookmarkProvider(AutocompleteProviderClient* client)
     : AutocompleteProvider(AutocompleteProvider::TYPE_BOOKMARK),
       client_(client),
-      bookmark_model_(NULL) {
-  if (client_) {
-    bookmark_model_ = client_->GetBookmarkModel();
-    languages_ = client_->GetAcceptLanguages();
-  }
-}
+      bookmark_model_(client ? client_->GetBookmarkModel() : nullptr) {}
 
 void BookmarkProvider::Start(const AutocompleteInput& input,
                              bool minimal_changes) {
+  TRACE_EVENT0("omnibox", "BookmarkProvider::Start");
   if (minimal_changes)
     return;
   matches_.clear();
 
-  if (input.from_omnibox_focus() || input.text().empty() ||
-      (input.type() == metrics::OmniboxInputType::FORCED_QUERY))
+  if (input.from_omnibox_focus() || input.text().empty())
     return;
 
   DoAutocomplete(input);
@@ -168,11 +164,11 @@ AutocompleteMatch BookmarkProvider::BookmarkMatchToACMatch(
   // unlikely to be what the user intends.
   AutocompleteMatch match(this, 0, false,
                           AutocompleteMatchType::BOOKMARK_TITLE);
-  base::string16 title(bookmark_match.node->GetTitle());
+  base::string16 title(bookmark_match.node->GetTitledUrlNodeTitle());
   BookmarkMatch::MatchPositions new_title_match_positions =
       bookmark_match.title_match_positions;
   CorrectTitleAndMatchPositions(&title, &new_title_match_positions);
-  const GURL& url(bookmark_match.node->url());
+  const GURL& url(bookmark_match.node->GetTitledUrlNodeUrl());
   const base::string16& url_utf16 = base::UTF8ToUTF16(url.spec());
   size_t inline_autocomplete_offset = URLPrefix::GetInlineAutocompleteOffset(
       input.text(), fixed_up_input_text, false, url_utf16);
@@ -189,8 +185,8 @@ AutocompleteMatch BookmarkProvider::BookmarkMatchToACMatch(
   // end.
   offsets.push_back(inline_autocomplete_offset);
   match.contents = url_formatter::FormatUrlWithOffsets(
-      url, languages_, url_formatter::kFormatUrlOmitAll &
-                           ~(trim_http ? 0 : url_formatter::kFormatUrlOmitHTTP),
+      url, url_formatter::kFormatUrlOmitAll &
+               ~(trim_http ? 0 : url_formatter::kFormatUrlOmitHTTP),
       net::UnescapeRule::SPACES, nullptr, nullptr, &offsets);
   inline_autocomplete_offset = offsets.back();
   offsets.pop_back();
@@ -284,7 +280,8 @@ AutocompleteMatch BookmarkProvider::BookmarkMatchToACMatch(
   ScoringFunctor url_position_functor =
       for_each(bookmark_match.url_match_positions.begin(),
                bookmark_match.url_match_positions.end(),
-               ScoringFunctor(bookmark_match.node->url().spec().length()));
+               ScoringFunctor(
+                   bookmark_match.node->GetTitledUrlNodeUrl().spec().length()));
   const double title_match_strength = title_position_functor.ScoringFactor();
   const double summed_factors = title_match_strength +
       url_position_functor.ScoringFactor();

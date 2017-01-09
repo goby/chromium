@@ -4,6 +4,8 @@
 
 #include "chromeos/system/version_loader.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -26,6 +28,9 @@ const char kFullVersionKey[] = "CHROMEOS_RELEASE_DESCRIPTION";
 
 // Same but for short version (x.x.xx.x).
 const char kVersionKey[] = "CHROMEOS_RELEASE_VERSION";
+
+// Same but for ARC version.
+const char kArcVersionKey[] = "CHROMEOS_ARC_VERSION";
 
 // Beginning of line we look for that gives the firmware version.
 const char kFirmwarePrefix[] = "version";
@@ -53,6 +58,15 @@ std::string GetVersion(VersionFormat format) {
                                   ctime.day_of_month);
   }
 
+  return version;
+}
+
+std::string GetARCVersion() {
+  std::string version;
+  if (!base::SysInfo::GetLsbReleaseValue(kArcVersionKey, &version)) {
+    LOG_IF(ERROR, base::SysInfo::IsRunningOnChromeOS())
+        << "No LSB version key: " << kArcVersionKey;
+  }
   return version;
 }
 

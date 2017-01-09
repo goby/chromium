@@ -21,7 +21,6 @@ namespace {
 ContentSettingsUsagesState::CommittedDetails CreateDetailsWithURL(
     const GURL& url) {
   ContentSettingsUsagesState::CommittedDetails details;
-  details.current_url_valid = true;
   details.current_url = url;
   return details;
 }
@@ -36,31 +35,22 @@ class ContentSettingsUsagesStateTests : public testing::Test {
   void ClearOnNewOrigin(ContentSettingsType type) {
     TestingProfile profile;
     ContentSettingsUsagesState state(
-        HostContentSettingsMapFactory::GetForProfile(&profile),
-        type,
-        prefs::kAcceptLanguages,
-        profile.GetPrefs());
+        HostContentSettingsMapFactory::GetForProfile(&profile), type);
     GURL url_0("http://www.example.com");
 
     ContentSettingsUsagesState::CommittedDetails details =
         CreateDetailsWithURL(url_0);
     state.DidNavigate(details);
 
-    HostContentSettingsMapFactory::GetForProfile(&profile)->SetContentSetting(
-        ContentSettingsPattern::FromURLNoWildcard(url_0),
-        ContentSettingsPattern::FromURLNoWildcard(url_0),
-        type,
-        std::string(),
-        CONTENT_SETTING_ALLOW);
+    HostContentSettingsMapFactory::GetForProfile(&profile)
+        ->SetContentSettingDefaultScope(url_0, url_0, type, std::string(),
+                                        CONTENT_SETTING_ALLOW);
     state.OnPermissionSet(url_0, true);
 
     GURL url_1("http://www.example1.com");
-    HostContentSettingsMapFactory::GetForProfile(&profile)->SetContentSetting(
-        ContentSettingsPattern::FromURLNoWildcard(url_1),
-        ContentSettingsPattern::FromURLNoWildcard(url_0),
-        type,
-        std::string(),
-        CONTENT_SETTING_BLOCK);
+    HostContentSettingsMapFactory::GetForProfile(&profile)
+        ->SetContentSettingDefaultScope(url_1, url_0, type, std::string(),
+                                        CONTENT_SETTING_BLOCK);
     state.OnPermissionSet(url_1, false);
 
     ContentSettingsUsagesState::StateMap state_map =
@@ -142,40 +132,28 @@ class ContentSettingsUsagesStateTests : public testing::Test {
   void ShowPortOnSameHost(ContentSettingsType type) {
     TestingProfile profile;
     ContentSettingsUsagesState state(
-        HostContentSettingsMapFactory::GetForProfile(&profile),
-        type,
-        prefs::kAcceptLanguages,
-        profile.GetPrefs());
+        HostContentSettingsMapFactory::GetForProfile(&profile), type);
     GURL url_0("http://www.example.com");
 
     ContentSettingsUsagesState::CommittedDetails details =
         CreateDetailsWithURL(url_0);
     state.DidNavigate(details);
 
-    HostContentSettingsMapFactory::GetForProfile(&profile)->SetContentSetting(
-        ContentSettingsPattern::FromURLNoWildcard(url_0),
-        ContentSettingsPattern::FromURLNoWildcard(url_0),
-        type,
-        std::string(),
-        CONTENT_SETTING_ALLOW);
+    HostContentSettingsMapFactory::GetForProfile(&profile)
+        ->SetContentSettingDefaultScope(url_0, url_0, type, std::string(),
+                                        CONTENT_SETTING_ALLOW);
     state.OnPermissionSet(url_0, true);
 
     GURL url_1("https://www.example.com");
-    HostContentSettingsMapFactory::GetForProfile(&profile)->SetContentSetting(
-        ContentSettingsPattern::FromURLNoWildcard(url_1),
-        ContentSettingsPattern::FromURLNoWildcard(url_0),
-        type,
-        std::string(),
-        CONTENT_SETTING_ALLOW);
+    HostContentSettingsMapFactory::GetForProfile(&profile)
+        ->SetContentSettingDefaultScope(url_1, url_0, type, std::string(),
+                                        CONTENT_SETTING_ALLOW);
     state.OnPermissionSet(url_1, true);
 
     GURL url_2("http://www.example1.com");
-    HostContentSettingsMapFactory::GetForProfile(&profile)->SetContentSetting(
-        ContentSettingsPattern::FromURLNoWildcard(url_2),
-        ContentSettingsPattern::FromURLNoWildcard(url_0),
-        type,
-        std::string(),
-        CONTENT_SETTING_ALLOW);
+    HostContentSettingsMapFactory::GetForProfile(&profile)
+        ->SetContentSettingDefaultScope(url_2, url_0, type, std::string(),
+                                        CONTENT_SETTING_ALLOW);
     state.OnPermissionSet(url_2, true);
 
     ContentSettingsUsagesState::StateMap state_map =

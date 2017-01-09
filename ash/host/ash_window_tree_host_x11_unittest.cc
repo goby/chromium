@@ -84,19 +84,21 @@ class AshWindowTreeHostX11Test : public aura::test::AuraTestBase {
 
 // Fails on ChromeOS valgrind bot. http://crbug.com/499997
 #if defined(OS_CHROMEOS)
-#define MAYBE_DispatchTouchEventToOneRootWindow DISABLED_DispatchTouchEventToOneRootWindow
+#define MAYBE_DispatchTouchEventToOneRootWindow \
+  DISABLED_DispatchTouchEventToOneRootWindow
 #else
-#define MAYBE_DispatchTouchEventToOneRootWindow DispatchTouchEventToOneRootWindow
+#define MAYBE_DispatchTouchEventToOneRootWindow \
+  DispatchTouchEventToOneRootWindow
 #endif
 
 // Send X touch events to one WindowTreeHost. The WindowTreeHost's
 // delegate will get corresponding ui::TouchEvent if the touch events
 // are targeting this WindowTreeHost.
 TEST_F(AshWindowTreeHostX11Test, MAYBE_DispatchTouchEventToOneRootWindow) {
-  scoped_ptr<aura::WindowTreeHostX11> window_tree_host(
+  std::unique_ptr<aura::WindowTreeHostX11> window_tree_host(
       new AshWindowTreeHostX11(gfx::Rect(0, 0, 2560, 1700)));
   window_tree_host->InitHost();
-  scoped_ptr<RootWindowEventHandler> handler(
+  std::unique_ptr<RootWindowEventHandler> handler(
       new RootWindowEventHandler(window_tree_host.get()));
 
   std::vector<int> devices;
@@ -109,8 +111,8 @@ TEST_F(AshWindowTreeHostX11Test, MAYBE_DispatchTouchEventToOneRootWindow) {
 
   ui::ScopedXI2Event scoped_xevent;
   // This touch is out of bounds.
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchBegin, 5, gfx::Point(1500, 2500), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchBegin, 5, gfx::Point(1500, 2500),
+                               valuators);
   if (window_tree_host->CanDispatchEvent(scoped_xevent))
     window_tree_host->DispatchEvent(scoped_xevent);
   EXPECT_EQ(ui::ET_UNKNOWN, handler->last_touch_type());
@@ -118,24 +120,24 @@ TEST_F(AshWindowTreeHostX11Test, MAYBE_DispatchTouchEventToOneRootWindow) {
   EXPECT_EQ(gfx::Point(0, 0), handler->last_touch_location());
 
   // Following touchs are within bounds and are passed to delegate.
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchBegin, 5, gfx::Point(1500, 1500), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchBegin, 5, gfx::Point(1500, 1500),
+                               valuators);
   if (window_tree_host->CanDispatchEvent(scoped_xevent))
     window_tree_host->DispatchEvent(scoped_xevent);
   EXPECT_EQ(ui::ET_TOUCH_PRESSED, handler->last_touch_type());
   EXPECT_EQ(0, handler->last_touch_id());
   EXPECT_EQ(gfx::Point(1500, 1500), handler->last_touch_location());
 
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchUpdate, 5, gfx::Point(1500, 1600), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchUpdate, 5, gfx::Point(1500, 1600),
+                               valuators);
   if (window_tree_host->CanDispatchEvent(scoped_xevent))
     window_tree_host->DispatchEvent(scoped_xevent);
   EXPECT_EQ(ui::ET_TOUCH_MOVED, handler->last_touch_type());
   EXPECT_EQ(0, handler->last_touch_id());
   EXPECT_EQ(gfx::Point(1500, 1600), handler->last_touch_location());
 
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchEnd, 5, gfx::Point(1500, 1600), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchEnd, 5, gfx::Point(1500, 1600),
+                               valuators);
   if (window_tree_host->CanDispatchEvent(scoped_xevent))
     window_tree_host->DispatchEvent(scoped_xevent);
   EXPECT_EQ(ui::ET_TOUCH_RELEASED, handler->last_touch_type());
@@ -149,17 +151,17 @@ TEST_F(AshWindowTreeHostX11Test, MAYBE_DispatchTouchEventToOneRootWindow) {
 // the event target of the X touch events should generate the corresponding
 // ui::TouchEvent for its delegate.
 TEST_F(AshWindowTreeHostX11Test, DispatchTouchEventToTwoRootWindow) {
-  scoped_ptr<aura::WindowTreeHostX11> window_tree_host1(
+  std::unique_ptr<aura::WindowTreeHostX11> window_tree_host1(
       new AshWindowTreeHostX11(gfx::Rect(0, 0, 2560, 1700)));
   window_tree_host1->InitHost();
-  scoped_ptr<RootWindowEventHandler> handler1(
+  std::unique_ptr<RootWindowEventHandler> handler1(
       new RootWindowEventHandler(window_tree_host1.get()));
 
   int host2_y_offset = 1700;
-  scoped_ptr<aura::WindowTreeHostX11> window_tree_host2(
+  std::unique_ptr<aura::WindowTreeHostX11> window_tree_host2(
       new AshWindowTreeHostX11(gfx::Rect(0, host2_y_offset, 1920, 1080)));
   window_tree_host2->InitHost();
-  scoped_ptr<RootWindowEventHandler> handler2(
+  std::unique_ptr<RootWindowEventHandler> handler2(
       new RootWindowEventHandler(window_tree_host2.get()));
 
   std::vector<int> devices;
@@ -174,8 +176,8 @@ TEST_F(AshWindowTreeHostX11Test, DispatchTouchEventToTwoRootWindow) {
 
   // 2 Touch events are targeted at the second WindowTreeHost.
   ui::ScopedXI2Event scoped_xevent;
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchBegin, 5, gfx::Point(1500, 2500), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchBegin, 5, gfx::Point(1500, 2500),
+                               valuators);
   if (window_tree_host1->CanDispatchEvent(scoped_xevent))
     window_tree_host1->DispatchEvent(scoped_xevent);
   if (window_tree_host2->CanDispatchEvent(scoped_xevent))
@@ -187,8 +189,8 @@ TEST_F(AshWindowTreeHostX11Test, DispatchTouchEventToTwoRootWindow) {
   EXPECT_EQ(0, handler2->last_touch_id());
   EXPECT_EQ(gfx::Point(1500, 2500), handler2->last_touch_location());
 
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchBegin, 6, gfx::Point(1600, 2600), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchBegin, 6, gfx::Point(1600, 2600),
+                               valuators);
   if (window_tree_host1->CanDispatchEvent(scoped_xevent))
     window_tree_host1->DispatchEvent(scoped_xevent);
   if (window_tree_host2->CanDispatchEvent(scoped_xevent))
@@ -200,8 +202,8 @@ TEST_F(AshWindowTreeHostX11Test, DispatchTouchEventToTwoRootWindow) {
   EXPECT_EQ(1, handler2->last_touch_id());
   EXPECT_EQ(gfx::Point(1600, 2600), handler2->last_touch_location());
 
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchUpdate, 5, gfx::Point(1500, 2550), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchUpdate, 5, gfx::Point(1500, 2550),
+                               valuators);
   if (window_tree_host1->CanDispatchEvent(scoped_xevent))
     window_tree_host1->DispatchEvent(scoped_xevent);
   if (window_tree_host2->CanDispatchEvent(scoped_xevent))
@@ -213,8 +215,8 @@ TEST_F(AshWindowTreeHostX11Test, DispatchTouchEventToTwoRootWindow) {
   EXPECT_EQ(0, handler2->last_touch_id());
   EXPECT_EQ(gfx::Point(1500, 2550), handler2->last_touch_location());
 
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchUpdate, 6, gfx::Point(1600, 2650), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchUpdate, 6, gfx::Point(1600, 2650),
+                               valuators);
   if (window_tree_host1->CanDispatchEvent(scoped_xevent))
     window_tree_host1->DispatchEvent(scoped_xevent);
   if (window_tree_host2->CanDispatchEvent(scoped_xevent))
@@ -226,8 +228,8 @@ TEST_F(AshWindowTreeHostX11Test, DispatchTouchEventToTwoRootWindow) {
   EXPECT_EQ(1, handler2->last_touch_id());
   EXPECT_EQ(gfx::Point(1600, 2650), handler2->last_touch_location());
 
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchEnd, 5, gfx::Point(1500, 2550), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchEnd, 5, gfx::Point(1500, 2550),
+                               valuators);
   if (window_tree_host1->CanDispatchEvent(scoped_xevent))
     window_tree_host1->DispatchEvent(scoped_xevent);
   if (window_tree_host2->CanDispatchEvent(scoped_xevent))
@@ -239,8 +241,8 @@ TEST_F(AshWindowTreeHostX11Test, DispatchTouchEventToTwoRootWindow) {
   EXPECT_EQ(0, handler2->last_touch_id());
   EXPECT_EQ(gfx::Point(1500, 2550), handler2->last_touch_location());
 
-  scoped_xevent.InitTouchEvent(
-      0, XI_TouchEnd, 6, gfx::Point(1600, 2650), valuators);
+  scoped_xevent.InitTouchEvent(0, XI_TouchEnd, 6, gfx::Point(1600, 2650),
+                               valuators);
   if (window_tree_host1->CanDispatchEvent(scoped_xevent))
     window_tree_host1->DispatchEvent(scoped_xevent);
   if (window_tree_host2->CanDispatchEvent(scoped_xevent))

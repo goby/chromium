@@ -28,76 +28,63 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/scroll/ScrollAnimatorBase.h"
 
 #include "platform/RuntimeEnabledFeatures.h"
-#include "platform/geometry/FloatPoint.h"
 #include "platform/scroll/ScrollableArea.h"
-#include "wtf/PassOwnPtr.h"
-#include <algorithm>
+#include "wtf/MathExtras.h"
 
 namespace blink {
 
 ScrollAnimatorBase::ScrollAnimatorBase(ScrollableArea* scrollableArea)
-    : m_scrollableArea(scrollableArea)
-    , m_currentPosX(0)
-    , m_currentPosY(0)
-{
+    : m_scrollableArea(scrollableArea) {}
+
+ScrollAnimatorBase::~ScrollAnimatorBase() {}
+
+ScrollOffset ScrollAnimatorBase::computeDeltaToConsume(
+    const ScrollOffset& delta) const {
+  ScrollOffset newPos =
+      m_scrollableArea->clampScrollOffset(m_currentOffset + delta);
+  return newPos - m_currentOffset;
 }
 
-ScrollAnimatorBase::~ScrollAnimatorBase()
-{
+ScrollResult ScrollAnimatorBase::userScroll(ScrollGranularity,
+                                            const ScrollOffset& delta) {
+  ScrollOffset consumedDelta = computeDeltaToConsume(delta);
+  ScrollOffset newPos = m_currentOffset + consumedDelta;
+  if (m_currentOffset == newPos)
+    return ScrollResult(false, false, delta.width(), delta.height());
+
+  m_currentOffset = newPos;
+
+  notifyOffsetChanged();
+
+  return ScrollResult(consumedDelta.width(), consumedDelta.height(),
+                      delta.width() - consumedDelta.width(),
+                      delta.height() - consumedDelta.height());
 }
 
-ScrollResultOneDimensional ScrollAnimatorBase::userScroll(ScrollbarOrientation orientation, ScrollGranularity, float step, float delta)
-{
-    float& currentPos = (orientation == HorizontalScrollbar) ? m_currentPosX : m_currentPosY;
-    float newPos = clampScrollPosition(orientation, currentPos + step * delta);
-    if (currentPos == newPos)
-        return ScrollResultOneDimensional(false, delta);
-
-    float usedDelta = (newPos - currentPos) / step;
-    currentPos = newPos;
-
-    notifyPositionChanged();
-
-    return ScrollResultOneDimensional(true, delta - usedDelta);
+void ScrollAnimatorBase::scrollToOffsetWithoutAnimation(
+    const ScrollOffset& offset) {
+  m_currentOffset = offset;
+  notifyOffsetChanged();
 }
 
-void ScrollAnimatorBase::scrollToOffsetWithoutAnimation(const FloatPoint& offset)
-{
-    m_currentPosX = offset.x();
-    m_currentPosY = offset.y();
-    notifyPositionChanged();
+void ScrollAnimatorBase::setCurrentOffset(const ScrollOffset& offset) {
+  m_currentOffset = offset;
 }
 
-void ScrollAnimatorBase::setCurrentPosition(const FloatPoint& position)
-{
-    m_currentPosX = position.x();
-    m_currentPosY = position.y();
+ScrollOffset ScrollAnimatorBase::currentOffset() const {
+  return m_currentOffset;
 }
 
-FloatPoint ScrollAnimatorBase::currentPosition() const
-{
-    return FloatPoint(m_currentPosX, m_currentPosY);
+void ScrollAnimatorBase::notifyOffsetChanged() {
+  scrollOffsetChanged(m_currentOffset, UserScroll);
 }
 
-void ScrollAnimatorBase::notifyPositionChanged()
-{
-    m_scrollableArea->scrollPositionChanged(DoublePoint(m_currentPosX, m_currentPosY), UserScroll);
+DEFINE_TRACE(ScrollAnimatorBase) {
+  visitor->trace(m_scrollableArea);
+  ScrollAnimatorCompositorCoordinator::trace(visitor);
 }
 
-float ScrollAnimatorBase::clampScrollPosition(ScrollbarOrientation orientation, float pos)
-{
-    float maxScrollPos = m_scrollableArea->maximumScrollPosition(orientation);
-    float minScrollPos = m_scrollableArea->minimumScrollPosition(orientation);
-    return std::max(std::min(pos, maxScrollPos), minScrollPos);
-}
-
-DEFINE_TRACE(ScrollAnimatorBase)
-{
-    visitor->trace(m_scrollableArea);
-}
-
-} // namespace blink
+}  // namespace blink

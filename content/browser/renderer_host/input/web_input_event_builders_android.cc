@@ -4,9 +4,12 @@
 
 #include "content/browser/renderer_host/input/web_input_event_builders_android.h"
 
+#include <android/input.h>
+
 #include "base/logging.h"
-#include "content/browser/renderer_host/input/web_input_event_util.h"
+#include "ui/events/android/key_event_utils.h"
 #include "ui/events/android/motion_event_android.h"
+#include "ui/events/blink/blink_event_util.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
@@ -18,6 +21,7 @@ using blink::WebKeyboardEvent;
 using blink::WebGestureEvent;
 using blink::WebMouseEvent;
 using blink::WebMouseWheelEvent;
+using blink::WebPointerProperties;
 using blink::WebTouchEvent;
 using blink::WebTouchPoint;
 
@@ -25,7 +29,41 @@ namespace content {
 
 namespace {
 
-ui::DomKey GetDomKeyFromEvent(int keycode, int unicode_character) {
+int WebInputEventToAndroidModifier(int web_modifier) {
+  int android_modifier = 0;
+  // Currently only Shift, CapsLock are used, add other modifiers if required.
+  if (web_modifier & WebInputEvent::ShiftKey)
+    android_modifier |= AMETA_SHIFT_ON;
+  if (web_modifier & WebInputEvent::CapsLockOn)
+    android_modifier |= AMETA_CAPS_LOCK_ON;
+  return android_modifier;
+}
+
+ui::DomKey GetDomKeyFromEvent(
+    JNIEnv* env,
+    const base::android::JavaRef<jobject>& android_key_event,
+    int keycode,
+    int modifiers,
+    int unicode_character) {
+  // Synthetic key event, not enough information to get DomKey.
+  if (android_key_event.is_null() && !unicode_character)
+    return ui::DomKey::UNIDENTIFIED;
+
+  if (!unicode_character && env) {
+    // According to spec |kAllowedModifiers| should be Shift and AltGr, however
+    // Android doesn't have AltGr key and ImeAdapter::getModifiers won't pass it
+    // either.
+    // According to discussion we want to honor CapsLock and possibly NumLock as
+    // well. https://github.com/w3c/uievents/issues/70
+    const int kAllowedModifiers =
+        WebInputEvent::ShiftKey | WebInputEvent::CapsLockOn;
+    int fallback_modifiers =
+        WebInputEventToAndroidModifier(modifiers & kAllowedModifiers);
+
+    unicode_character = ui::events::android::GetKeyEventUnicodeChar(
+        env, android_key_event, fallback_modifiers);
+  }
+
   ui::DomKey key = ui::GetDomKeyFromAndroidEvent(keycode, unicode_character);
   if (key != ui::DomKey::NONE)
     return key;
@@ -34,13 +72,16 @@ ui::DomKey GetDomKeyFromEvent(int keycode, int unicode_character) {
 
 }  // namespace
 
-WebKeyboardEvent WebKeyboardEventBuilder::Build(WebInputEvent::Type type,
-                                                int modifiers,
-                                                double time_sec,
-                                                int keycode,
-                                                int scancode,
-                                                int unicode_character,
-                                                bool is_system_key) {
+WebKeyboardEvent WebKeyboardEventBuilder::Build(
+    JNIEnv* env,
+    const base::android::JavaRef<jobject>& android_key_event,
+    WebInputEvent::Type type,
+    int modifiers,
+    double time_sec,
+    int keycode,
+    int scancode,
+    int unicode_character,
+    bool is_system_key) {
   DCHECK(WebInputEvent::isKeyboardEventType(type));
   WebKeyboardEvent result;
 
@@ -52,10 +93,11 @@ WebKeyboardEvent WebKeyboardEventBuilder::Build(WebInputEvent::Type type,
   result.timeStampSeconds = time_sec;
   result.windowsKeyCode = ui::LocatedToNonLocatedKeyboardCode(
       ui::KeyboardCodeFromAndroidKeyCode(keycode));
-  result.modifiers |= DomCodeToWebInputEventModifiers(dom_code);
+  result.modifiers |= ui::DomCodeToWebInputEventModifiers(dom_code);
   result.nativeKeyCode = keycode;
   result.domCode = static_cast<int>(dom_code);
-  result.domKey = GetDomKeyFromEvent(keycode, unicode_character);
+  result.domKey = GetDomKeyFromEvent(env, android_key_event, keycode, modifiers,
+                                     unicode_character);
   result.unmodifiedText[0] = unicode_character;
   if (result.windowsKeyCode == ui::VKEY_RETURN) {
     // This is the same behavior as GTK:
@@ -65,18 +107,24 @@ WebKeyboardEvent WebKeyboardEventBuilder::Build(WebInputEvent::Type type,
   }
   result.text[0] = result.unmodifiedText[0];
   result.isSystemKey = is_system_key;
-  result.setKeyIdentifierFromWindowsKeyCode();
 
   return result;
 }
 
-WebMouseEvent WebMouseEventBuilder::Build(blink::WebInputEvent::Type type,
-                                          WebMouseEvent::Button button,
-                                          double time_sec,
-                                          int window_x,
-                                          int window_y,
-                                          int modifiers,
-                                          int click_count) {
+WebMouseEvent WebMouseEventBuilder::Build(
+      WebInputEvent::Type type,
+      double time_sec,
+      int window_x,
+      int window_y,
+      int modifiers,
+      int click_count,
+      int pointer_id,
+      float pressure,
+      float orientation_rad,
+      float tilt_rad,
+      int changed_button,
+      int tool_type) {
+
   DCHECK(WebInputEvent::isMouseEventType(type));
   WebMouseEvent result;
 
@@ -87,12 +135,16 @@ WebMouseEvent WebMouseEventBuilder::Build(blink::WebInputEvent::Type type,
   result.windowY = window_y;
   result.timeStampSeconds = time_sec;
   result.clickCount = click_count;
-  result.modifiers = modifiers;
+  result.modifiers = ui::EventFlagsToWebEventModifiers(modifiers);
 
-  if (type == WebInputEvent::MouseDown || type == WebInputEvent::MouseUp)
-    result.button = button;
-  else
-    result.button = WebMouseEvent::ButtonNone;
+  ui::SetWebPointerPropertiesFromMotionEventData(
+      result,
+      pointer_id,
+      pressure,
+      orientation_rad,
+      tilt_rad,
+      changed_button,
+      tool_type);
 
   return result;
 }
@@ -111,7 +163,7 @@ WebMouseWheelEvent WebMouseWheelEventBuilder::Build(float ticks_x,
   result.windowX = window_x;
   result.windowY = window_y;
   result.timeStampSeconds = time_sec;
-  result.button = WebMouseEvent::ButtonNone;
+  result.button = WebMouseEvent::Button::NoButton;
   result.hasPreciseScrollingDeltas = true;
   result.deltaX = ticks_x * tick_multiplier;
   result.deltaY = ticks_y * tick_multiplier;

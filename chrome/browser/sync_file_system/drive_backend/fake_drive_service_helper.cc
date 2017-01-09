@@ -4,6 +4,8 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/fake_drive_service_helper.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/message_loop/message_loop.h"
@@ -28,14 +30,14 @@ namespace drive_backend {
 namespace {
 
 void UploadResultCallback(DriveApiErrorCode* error_out,
-                          scoped_ptr<FileResource>* entry_out,
+                          std::unique_ptr<FileResource>* entry_out,
                           DriveApiErrorCode error,
                           const GURL& upload_location,
-                          scoped_ptr<FileResource> entry) {
+                          std::unique_ptr<FileResource> entry) {
   ASSERT_TRUE(error_out);
   ASSERT_TRUE(entry_out);
   *error_out = error;
-  *entry_out = entry.Pass();
+  *entry_out = std::move(entry);
 }
 
 void DownloadResultCallback(DriveApiErrorCode* error_out,
@@ -84,7 +86,7 @@ DriveApiErrorCode FakeDriveServiceHelper::AddFolder(
     const std::string& title,
     std::string* folder_id) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> folder;
+  std::unique_ptr<FileResource> folder;
   drive::AddNewDirectoryOptions options;
   options.visibility = google_apis::drive::FILE_VISIBILITY_PRIVATE;
   fake_drive_service_->AddNewDirectory(parent_folder_id, title, options,
@@ -104,7 +106,7 @@ DriveApiErrorCode FakeDriveServiceHelper::AddFile(
   base::FilePath temp_file = WriteToTempFile(content);
 
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> file;
+  std::unique_ptr<FileResource> file;
   drive_uploader_->UploadNewFile(
       parent_folder_id, temp_file, title, "application/octet-stream",
       drive::UploadNewFileOptions(),
@@ -122,7 +124,7 @@ DriveApiErrorCode FakeDriveServiceHelper::UpdateFile(
     const std::string& content) {
   base::FilePath temp_file = WriteToTempFile(content);
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> file;
+  std::unique_ptr<FileResource> file;
   drive_uploader_->UploadExistingFile(
       file_id, temp_file, "application/octet-stream",
       drive::UploadExistingFileOptions(),
@@ -157,7 +159,7 @@ DriveApiErrorCode FakeDriveServiceHelper::UpdateModificationTime(
     const std::string& file_id,
     const base::Time& modification_time) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> entry;
+  std::unique_ptr<FileResource> entry;
   error = GetFileResource(file_id, &entry);
   if (error != google_apis::HTTP_SUCCESS)
     return error;
@@ -174,7 +176,7 @@ DriveApiErrorCode FakeDriveServiceHelper::RenameResource(
     const std::string& file_id,
     const std::string& new_title) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileResource> entry;
+  std::unique_ptr<FileResource> entry;
   fake_drive_service_->UpdateResource(
       file_id, std::string(), new_title, base::Time(), base::Time(),
       google_apis::drive::Properties(), CreateResultReceiver(&error, &entry));
@@ -207,7 +209,7 @@ DriveApiErrorCode FakeDriveServiceHelper::RemoveResourceFromDirectory(
 DriveApiErrorCode FakeDriveServiceHelper::GetSyncRootFolderID(
     std::string* sync_root_folder_id) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileList> resource_list;
+  std::unique_ptr<FileList> resource_list;
   fake_drive_service_->SearchByTitle(
       sync_root_folder_title_, std::string(),
       CreateResultReceiver(&error, &resource_list));
@@ -231,7 +233,7 @@ DriveApiErrorCode FakeDriveServiceHelper::ListFilesInFolder(
     const std::string& folder_id,
     ScopedVector<FileResource>* entries) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileList> list;
+  std::unique_ptr<FileList> list;
   fake_drive_service_->GetFileListInDirectory(
       folder_id,
       CreateResultReceiver(&error, &list));
@@ -239,7 +241,7 @@ DriveApiErrorCode FakeDriveServiceHelper::ListFilesInFolder(
   if (error != google_apis::HTTP_SUCCESS)
     return error;
 
-  return CompleteListing(list.Pass(), entries);
+  return CompleteListing(std::move(list), entries);
 }
 
 DriveApiErrorCode FakeDriveServiceHelper::SearchByTitle(
@@ -247,7 +249,7 @@ DriveApiErrorCode FakeDriveServiceHelper::SearchByTitle(
     const std::string& title,
     ScopedVector<FileResource>* entries) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
-  scoped_ptr<FileList> list;
+  std::unique_ptr<FileList> list;
   fake_drive_service_->SearchByTitle(
       title, folder_id,
       CreateResultReceiver(&error, &list));
@@ -255,12 +257,12 @@ DriveApiErrorCode FakeDriveServiceHelper::SearchByTitle(
   if (error != google_apis::HTTP_SUCCESS)
     return error;
 
-  return CompleteListing(list.Pass(), entries);
+  return CompleteListing(std::move(list), entries);
 }
 
 DriveApiErrorCode FakeDriveServiceHelper::GetFileResource(
     const std::string& file_id,
-    scoped_ptr<FileResource>* entry) {
+    std::unique_ptr<FileResource>* entry) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
   fake_drive_service_->GetFileResource(
       file_id,
@@ -280,7 +282,7 @@ DriveApiErrorCode FakeDriveServiceHelper::GetFileVisibility(
 DriveApiErrorCode FakeDriveServiceHelper::ReadFile(
     const std::string& file_id,
     std::string* file_content) {
-  scoped_ptr<google_apis::FileResource> file;
+  std::unique_ptr<google_apis::FileResource> file;
   DriveApiErrorCode error = GetFileResource(file_id, &file);
   if (error != google_apis::HTTP_SUCCESS)
     return error;
@@ -304,7 +306,7 @@ DriveApiErrorCode FakeDriveServiceHelper::ReadFile(
 }
 
 DriveApiErrorCode FakeDriveServiceHelper::GetAboutResource(
-    scoped_ptr<AboutResource>* about_resource) {
+    std::unique_ptr<AboutResource>* about_resource) {
   DriveApiErrorCode error = google_apis::DRIVE_OTHER_ERROR;
   fake_drive_service_->GetAboutResource(
       CreateResultReceiver(&error, about_resource));
@@ -313,7 +315,7 @@ DriveApiErrorCode FakeDriveServiceHelper::GetAboutResource(
 }
 
 DriveApiErrorCode FakeDriveServiceHelper::CompleteListing(
-    scoped_ptr<FileList> list,
+    std::unique_ptr<FileList> list,
     ScopedVector<FileResource>* entries) {
   while (true) {
     entries->reserve(entries->size() + list->items().size());
@@ -341,7 +343,7 @@ DriveApiErrorCode FakeDriveServiceHelper::CompleteListing(
 
 void FakeDriveServiceHelper::Initialize() {
   ASSERT_TRUE(base_dir_.CreateUniqueTempDir());
-  temp_dir_ = base_dir_.path().Append(FPL("tmp"));
+  temp_dir_ = base_dir_.GetPath().Append(FPL("tmp"));
   ASSERT_TRUE(base::CreateDirectory(temp_dir_));
 }
 

@@ -5,13 +5,14 @@
 #ifndef CONTENT_PUBLIC_RENDERER_PLUGIN_INSTANCE_THROTTLER_H_
 #define CONTENT_PUBLIC_RENDERER_PLUGIN_INSTANCE_THROTTLER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/content_export.h"
+#include "content/public/renderer/render_frame.h"
 
 namespace blink {
 class WebPlugin;
-struct WebPluginParams;
 }
 
 namespace gfx {
@@ -53,6 +54,7 @@ class CONTENT_EXPORT PluginInstanceThrottler {
     UNTHROTTLE_METHOD_BY_WHITELIST = 2,
     UNTHROTTLE_METHOD_BY_AUDIO = 3,
     UNTHROTTLE_METHOD_BY_SIZE_CHANGE = 4,
+    UNTHROTTLE_METHOD_BY_OMNIBOX_ICON = 5,
     UNTHROTTLE_METHOD_NUM_ITEMS
   };
 
@@ -71,7 +73,8 @@ class CONTENT_EXPORT PluginInstanceThrottler {
     virtual void OnThrottlerDestroyed() {}
   };
 
-  static scoped_ptr<PluginInstanceThrottler> Create();
+  static std::unique_ptr<PluginInstanceThrottler> Create(
+      RenderFrame::RecordPeripheralDecision record_decision);
 
   static void RecordUnthrottleMethodMetric(PowerSaverUnthrottleMethod method);
 

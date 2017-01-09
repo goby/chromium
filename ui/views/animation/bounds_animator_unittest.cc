@@ -4,6 +4,8 @@
 
 #include "ui/views/animation/bounds_animator.h"
 
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/animation/test_animation_delegate.h"
@@ -113,14 +115,15 @@ TEST_F(BoundsAnimatorTest, AnimateViewTo) {
   gfx::Rect target_bounds(10, 10, 20, 20);
   animator()->AnimateViewTo(child(), target_bounds);
   animator()->SetAnimationDelegate(
-      child(), scoped_ptr<gfx::AnimationDelegate>(new TestAnimationDelegate()));
+      child(),
+      std::unique_ptr<gfx::AnimationDelegate>(new TestAnimationDelegate()));
 
   // The animator should be animating now.
   EXPECT_TRUE(animator()->IsAnimating());
 
   // Run the message loop; the delegate exits the loop when the animation is
   // done.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // Make sure the bounds match of the view that was animated match.
   EXPECT_EQ(target_bounds, child()->bounds());
@@ -135,7 +138,7 @@ TEST_F(BoundsAnimatorTest, AnimateViewTo) {
 TEST_F(BoundsAnimatorTest, DeleteDelegateOnCancel) {
   animator()->AnimateViewTo(child(), gfx::Rect(0, 0, 10, 10));
   animator()->SetAnimationDelegate(
-      child(), scoped_ptr<gfx::AnimationDelegate>(new OwnedDelegate()));
+      child(), std::unique_ptr<gfx::AnimationDelegate>(new OwnedDelegate()));
 
   animator()->Cancel();
 
@@ -152,7 +155,7 @@ TEST_F(BoundsAnimatorTest, DeleteDelegateOnCancel) {
 TEST_F(BoundsAnimatorTest, DeleteDelegateOnNewAnimate) {
   animator()->AnimateViewTo(child(), gfx::Rect(0, 0, 10, 10));
   animator()->SetAnimationDelegate(
-      child(), scoped_ptr<gfx::AnimationDelegate>(new OwnedDelegate()));
+      child(), std::unique_ptr<gfx::AnimationDelegate>(new OwnedDelegate()));
 
   animator()->AnimateViewTo(child(), gfx::Rect(0, 0, 10, 10));
 
@@ -163,11 +166,11 @@ TEST_F(BoundsAnimatorTest, DeleteDelegateOnNewAnimate) {
 
 // Makes sure StopAnimating works.
 TEST_F(BoundsAnimatorTest, StopAnimating) {
-  scoped_ptr<OwnedDelegate> delegate(new OwnedDelegate());
+  std::unique_ptr<OwnedDelegate> delegate(new OwnedDelegate());
 
   animator()->AnimateViewTo(child(), gfx::Rect(0, 0, 10, 10));
   animator()->SetAnimationDelegate(
-      child(), scoped_ptr<gfx::AnimationDelegate>(new OwnedDelegate()));
+      child(), std::unique_ptr<gfx::AnimationDelegate>(new OwnedDelegate()));
 
   animator()->StopAnimatingView(child());
 

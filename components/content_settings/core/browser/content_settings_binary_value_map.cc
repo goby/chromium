@@ -4,6 +4,8 @@
 
 #include "components/content_settings/core/browser/content_settings_binary_value_map.h"
 
+#include <utility>
+
 #include "base/synchronization/lock.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -14,14 +16,13 @@ namespace {
 
 class RuleIteratorBinary : public RuleIterator {
  public:
-  explicit RuleIteratorBinary(bool is_enabled,
-                              scoped_ptr<base::AutoLock> auto_lock)
-      : is_done_(is_enabled), auto_lock_(auto_lock.Pass()) {}
+  RuleIteratorBinary(bool is_enabled, std::unique_ptr<base::AutoLock> auto_lock)
+      : is_done_(is_enabled), auto_lock_(std::move(auto_lock)) {}
 
   bool HasNext() const override { return !is_done_; }
 
   Rule Next() override {
-    DCHECK(!is_done_);
+    DCHECK(HasNext());
     is_done_ = true;
     return Rule(ContentSettingsPattern::Wildcard(),
                 ContentSettingsPattern::Wildcard(),
@@ -30,7 +31,7 @@ class RuleIteratorBinary : public RuleIterator {
 
  private:
   bool is_done_;
-  scoped_ptr<base::AutoLock> auto_lock_;
+  std::unique_ptr<base::AutoLock> auto_lock_;
 };
 
 }  // namespace
@@ -39,15 +40,14 @@ BinaryValueMap::BinaryValueMap() {}
 
 BinaryValueMap::~BinaryValueMap() {}
 
-scoped_ptr<RuleIterator> BinaryValueMap::GetRuleIterator(
+std::unique_ptr<RuleIterator> BinaryValueMap::GetRuleIterator(
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
-    scoped_ptr<base::AutoLock> auto_lock) const {
-  if (resource_identifier.empty()) {
-    return scoped_ptr<RuleIterator>(new RuleIteratorBinary(
-        IsContentSettingEnabled(content_type), auto_lock.Pass()));
-  }
-  return scoped_ptr<RuleIterator>(new EmptyRuleIterator());
+    std::unique_ptr<base::AutoLock> auto_lock) const {
+  if (!resource_identifier.empty())
+    return nullptr;
+  return std::unique_ptr<RuleIterator>(new RuleIteratorBinary(
+      IsContentSettingEnabled(content_type), std::move(auto_lock)));
 }
 
 void BinaryValueMap::SetContentSettingDisabled(ContentSettingsType content_type,
@@ -58,9 +58,7 @@ void BinaryValueMap::SetContentSettingDisabled(ContentSettingsType content_type,
 bool BinaryValueMap::IsContentSettingEnabled(
     ContentSettingsType content_type) const {
   auto it = is_enabled_.find(content_type);
-  if (it == is_enabled_.end())
-    return true;
-  return it->second;
+  return it == is_enabled_.end() || it->second;
 }
 
 }  // namespace content_settings

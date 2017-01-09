@@ -5,13 +5,14 @@
 #ifndef COMPONENTS_PROXIMITY_AUTH_PROXIMITY_MONITOR_IMPL_H
 #define COMPONENTS_PROXIMITY_AUTH_PROXIMITY_MONITOR_IMPL_H
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/proximity_monitor.h"
-#include "components/proximity_auth/remote_device.h"
 #include "device/bluetooth/bluetooth_device.h"
 
 namespace base {
@@ -31,8 +32,8 @@ class ProximityMonitorObserver;
 class ProximityMonitorImpl : public ProximityMonitor {
  public:
   // The |observer| is not owned, and must outlive |this| instance.
-  ProximityMonitorImpl(const RemoteDevice& remote_device,
-                       scoped_ptr<base::TickClock> clock);
+  ProximityMonitorImpl(const cryptauth::RemoteDevice& remote_device,
+                       std::unique_ptr<base::TickClock> clock);
   ~ProximityMonitorImpl() override;
 
   // ProximityMonitor:
@@ -103,7 +104,7 @@ class ProximityMonitorImpl : public ProximityMonitor {
   void CheckForProximityStateChange();
 
   // The remote device being monitored.
-  const RemoteDevice remote_device_;
+  const cryptauth::RemoteDevice remote_device_;
 
   // The observers attached to the ProximityMonitor.
   base::ObserverList<ProximityMonitorObserver> observers_;
@@ -126,22 +127,22 @@ class ProximityMonitorImpl : public ProximityMonitor {
   // RSSI readings. Null if the monitor is inactive, has not recently observed
   // an RSSI reading, or the most recent connection info included an invalid
   // measurement.
-  scoped_ptr<double> rssi_rolling_average_;
+  std::unique_ptr<double> rssi_rolling_average_;
 
   // The last TX power reading. Null if the monitor is inactive, has not
   // recently observed a TX power reading, or the most recent connection info
   // included an invalid measurement.
-  scoped_ptr<TransmitPowerReading> last_transmit_power_reading_;
+  std::unique_ptr<TransmitPowerReading> last_transmit_power_reading_;
 
   // The timestamp of the last zero RSSI reading. An RSSI value of 0 is special
   // because both devices adjust their transmit powers such that the RSSI is in
   // this golden range, if possible. Null if the monitor is inactive, has not
   // recently observed an RSSI reading, or the most recent connection info
   // included an invalid measurement.
-  scoped_ptr<base::TimeTicks> last_zero_rssi_timestamp_;
+  std::unique_ptr<base::TimeTicks> last_zero_rssi_timestamp_;
 
   // Used to access non-decreasing time measurements.
-  scoped_ptr<base::TickClock> clock_;
+  std::unique_ptr<base::TickClock> clock_;
 
   // Used to vend weak pointers for polling. Using a separate factory for these
   // weak pointers allows the weak pointers to be invalidated when polling

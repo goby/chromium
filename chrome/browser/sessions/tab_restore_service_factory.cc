@@ -4,6 +4,9 @@
 
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
 
+#include <utility>
+
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/chrome_tab_restore_service_client.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -55,12 +58,12 @@ KeyedService* TabRestoreServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* browser_context) const {
   Profile* profile = Profile::FromBrowserContext(browser_context);
   DCHECK(!profile->IsOffTheRecord());
-  scoped_ptr<sessions::TabRestoreServiceClient> client(
+  std::unique_ptr<sessions::TabRestoreServiceClient> client(
       new ChromeTabRestoreServiceClient(profile));
 
 #if defined(OS_ANDROID)
-  return new sessions::InMemoryTabRestoreService(client.Pass(), nullptr);
+  return new sessions::InMemoryTabRestoreService(std::move(client), nullptr);
 #else
-  return new sessions::PersistentTabRestoreService(client.Pass(), nullptr);
+  return new sessions::PersistentTabRestoreService(std::move(client), nullptr);
 #endif
 }

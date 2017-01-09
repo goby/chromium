@@ -9,13 +9,15 @@
 #include "chrome/browser/ui/views/frame/native_browser_frame.h"
 #include "ui/views/mus/native_widget_mus.h"
 
+class BrowserView;
+
 class BrowserFrameMus : public NativeBrowserFrame,
                         public views::NativeWidgetMus {
  public:
   BrowserFrameMus(BrowserFrame* browser_frame, BrowserView* browser_view);
   ~BrowserFrameMus() override;
 
-  mus::Window* mus_window();
+  ui::Window* mus_window();
 
  private:
   // Overridden from NativeBrowserFrame:
@@ -25,6 +27,10 @@ class BrowserFrameMus : public NativeBrowserFrame,
   bool ShouldSaveWindowPlacement() const override;
   void GetWindowPlacement(gfx::Rect* bounds,
                           ui::WindowShowState* show_state) const override;
+  bool PreHandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
   int GetMinimizeButtonOffset() const override;
 
   // Overriden from NativeWidgetMus:

@@ -5,11 +5,12 @@
 #ifndef CONTENT_CHILD_CHILD_HISTOGRAM_MESSAGE_FILTER_H_
 #define CONTENT_CHILD_CHILD_HISTOGRAM_MESSAGE_FILTER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/shared_memory.h"
 #include "ipc/message_filter.h"
 
 namespace base {
@@ -24,11 +25,9 @@ class ChildHistogramMessageFilter : public IPC::MessageFilter {
   ChildHistogramMessageFilter();
 
   // IPC::MessageFilter implementation.
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   bool OnMessageReceived(const IPC::Message& message) override;
-
-  void SendHistograms(int sequence_number);
 
  private:
   typedef std::vector<std::string> HistogramPickledList;
@@ -36,9 +35,11 @@ class ChildHistogramMessageFilter : public IPC::MessageFilter {
   ~ChildHistogramMessageFilter() override;
 
   // Message handlers.
-  virtual void OnGetChildHistogramData(int sequence_number);
+  void OnSetHistogramMemory(const base::SharedMemoryHandle& memory_handle,
+                            int memory_size);
+  void OnGetChildHistogramData(int sequence_number);
 
-  // Extract snapshot data and then send it off the the Browser process.
+  // Extract snapshot data and then send it off to the Browser process.
   // Send only a delta to what we have already sent.
   void UploadAllHistograms(int sequence_number);
 
@@ -47,7 +48,8 @@ class ChildHistogramMessageFilter : public IPC::MessageFilter {
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
 
   // Prepares histogram deltas for transmission.
-  scoped_ptr<base::HistogramDeltaSerialization> histogram_delta_serialization_;
+  std::unique_ptr<base::HistogramDeltaSerialization>
+      histogram_delta_serialization_;
 
   DISALLOW_COPY_AND_ASSIGN(ChildHistogramMessageFilter);
 };

@@ -6,6 +6,7 @@
 #define MEDIA_CAST_RECEIVER_AUDIO_DECODER_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "media/base/audio_bus.h"
 #include "media/cast/cast_environment.h"
@@ -23,8 +24,9 @@ class AudioDecoder {
   // be false if the decoder has detected a frame skip since the last decode
   // operation; and the client should take steps to smooth audio discontinuities
   // in this case.
-  typedef base::Callback<void(scoped_ptr<AudioBus> audio_bus,
-                              bool is_continuous)> DecodeFrameCallback;
+  typedef base::Callback<void(std::unique_ptr<AudioBus> audio_bus,
+                              bool is_continuous)>
+      DecodeFrameCallback;
 
   AudioDecoder(const scoped_refptr<CastEnvironment>& cast_environment,
                int channels,
@@ -44,7 +46,7 @@ class AudioDecoder {
   // monotonically-increasing by 1 for each successive call to this method.
   // When it is not, the decoder will assume one or more frames have been
   // dropped (e.g., due to packet loss), and will perform recovery actions.
-  void DecodeFrame(scoped_ptr<EncodedFrame> encoded_frame,
+  void DecodeFrame(std::unique_ptr<EncodedFrame> encoded_frame,
                    const DecodeFrameCallback& callback);
 
  private:

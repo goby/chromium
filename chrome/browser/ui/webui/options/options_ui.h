@@ -5,24 +5,27 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_OPTIONS_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_OPTIONS_UI_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_list.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/time/time.h"
+#include "build/build_config.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "ui/base/layout.h"
 
 class AutocompleteResult;
 
 namespace base {
 class DictionaryValue;
 class ListValue;
-class RefCountedMemory;
 }
 
 #if defined(OS_CHROMEOS)
@@ -38,9 +41,6 @@ namespace options {
 // The base class handler of Javascript messages of options pages.
 class OptionsPageUIHandler : public content::WebUIMessageHandler {
  public:
-  // Key for identifying the Settings App localized_strings in loadTimeData.
-  static const char kSettingsAppKey[];
-
   OptionsPageUIHandler();
   ~OptionsPageUIHandler() override;
 
@@ -119,8 +119,8 @@ class OptionsUI : public content::WebUIController,
 
   // Registers a callback to be called once the settings frame has finished
   // loading on the HTML/JS side.
-  scoped_ptr<OnFinishedLoadingCallbackList::Subscription>
-      RegisterOnFinishedLoadingCallback(const base::Closure& callback);
+  std::unique_ptr<OnFinishedLoadingCallbackList::Subscription>
+  RegisterOnFinishedLoadingCallback(const base::Closure& callback);
 
   // Takes the suggestions from |result| and adds them to |suggestions| so that
   // they can be passed to a JavaScript function.
@@ -128,15 +128,14 @@ class OptionsUI : public content::WebUIController,
       const AutocompleteResult& result,
       base::ListValue* const suggestions);
 
-  static base::RefCountedMemory* GetFaviconResourceBytes(
-      ui::ScaleFactor scale_factor);
-
   // Overridden from content::WebContentsObserver:
   void DidStartProvisionalLoadForFrame(
       content::RenderFrameHost* render_frame_host,
       const GURL& validated_url,
-      bool is_error_page,
-      bool is_iframe_srcdoc) override;
+      bool is_error_page) override;
+  void DocumentLoadedInFrame(
+      content::RenderFrameHost *render_frame_host) override;
+  void DocumentOnLoadCompletedInMainFrame() override;
 
   // Overridden from OptionsPageUIHandlerHost:
   void InitializeHandlers() override;
@@ -153,9 +152,11 @@ class OptionsUI : public content::WebUIController,
   OnFinishedLoadingCallbackList on_finished_loading_callbacks_;
 
 #if defined(OS_CHROMEOS)
-  scoped_ptr<chromeos::system::PointerDeviceObserver>
+  std::unique_ptr<chromeos::system::PointerDeviceObserver>
       pointer_device_observer_;
 #endif
+
+  base::Time load_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(OptionsUI);
 };

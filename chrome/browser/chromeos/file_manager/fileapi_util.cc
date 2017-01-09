@@ -4,8 +4,12 @@
 
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/filesystem_api_util.h"
@@ -71,12 +75,13 @@ class FileDefinitionListConverter {
   // Converts the element under the iterator to an entry. First, converts
   // the virtual path to an URL, and calls OnResolvedURL(). In case of error
   // calls OnIteratorConverted with an error entry definition.
-  void ConvertNextIterator(scoped_ptr<FileDefinitionListConverter> self_deleter,
-                           FileDefinitionList::const_iterator iterator);
+  void ConvertNextIterator(
+      std::unique_ptr<FileDefinitionListConverter> self_deleter,
+      FileDefinitionList::const_iterator iterator);
 
   // Creates an entry definition from the URL as well as the file definition.
   // Then, calls OnIteratorConverted with the created entry definition.
-  void OnResolvedURL(scoped_ptr<FileDefinitionListConverter> self_deleter,
+  void OnResolvedURL(std::unique_ptr<FileDefinitionListConverter> self_deleter,
                      FileDefinitionList::const_iterator iterator,
                      base::File::Error error,
                      const storage::FileSystemInfo& info,
@@ -85,15 +90,16 @@ class FileDefinitionListConverter {
 
   // Called when the iterator is converted. Adds the |entry_definition| to
   // |results_| and calls ConvertNextIterator() for the next element.
-  void OnIteratorConverted(scoped_ptr<FileDefinitionListConverter> self_deleter,
-                           FileDefinitionList::const_iterator iterator,
-                           const EntryDefinition& entry_definition);
+  void OnIteratorConverted(
+      std::unique_ptr<FileDefinitionListConverter> self_deleter,
+      FileDefinitionList::const_iterator iterator,
+      const EntryDefinition& entry_definition);
 
   scoped_refptr<storage::FileSystemContext> file_system_context_;
   const std::string extension_id_;
   const FileDefinitionList file_definition_list_;
   const EntryDefinitionListCallback callback_;
-  scoped_ptr<EntryDefinitionList> result_;
+  std::unique_ptr<EntryDefinitionList> result_;
 };
 
 FileDefinitionListConverter::FileDefinitionListConverter(
@@ -118,23 +124,22 @@ FileDefinitionListConverter::FileDefinitionListConverter(
   // Deletes the converter, once the scoped pointer gets out of scope. It is
   // either, if the conversion is finished, or ResolveURL() is terminated, and
   // the callback not called because of shutdown.
-  scoped_ptr<FileDefinitionListConverter> self_deleter(this);
-  ConvertNextIterator(self_deleter.Pass(), file_definition_list_.begin());
+  std::unique_ptr<FileDefinitionListConverter> self_deleter(this);
+  ConvertNextIterator(std::move(self_deleter), file_definition_list_.begin());
 }
 
 void FileDefinitionListConverter::ConvertNextIterator(
-    scoped_ptr<FileDefinitionListConverter> self_deleter,
+    std::unique_ptr<FileDefinitionListConverter> self_deleter,
     FileDefinitionList::const_iterator iterator) {
   if (iterator == file_definition_list_.end()) {
     // The converter object will be destroyed since |self_deleter| gets out of
     // scope.
-    callback_.Run(result_.Pass());
+    callback_.Run(std::move(result_));
     return;
   }
 
   if (!file_system_context_.get()) {
-    OnIteratorConverted(self_deleter.Pass(),
-                        iterator,
+    OnIteratorConverted(std::move(self_deleter), iterator,
                         CreateEntryDefinitionWithError(
                             base::File::FILE_ERROR_INVALID_OPERATION));
     return;
@@ -157,7 +162,7 @@ void FileDefinitionListConverter::ConvertNextIterator(
 }
 
 void FileDefinitionListConverter::OnResolvedURL(
-    scoped_ptr<FileDefinitionListConverter> self_deleter,
+    std::unique_ptr<FileDefinitionListConverter> self_deleter,
     FileDefinitionList::const_iterator iterator,
     base::File::Error error,
     const storage::FileSystemInfo& info,
@@ -166,8 +171,7 @@ void FileDefinitionListConverter::OnResolvedURL(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (error != base::File::FILE_OK) {
-    OnIteratorConverted(self_deleter.Pass(),
-                        iterator,
+    OnIteratorConverted(std::move(self_deleter), iterator,
                         CreateEntryDefinitionWithError(error));
     return;
   }
@@ -198,22 +202,22 @@ void FileDefinitionListConverter::OnResolvedURL(
   root_virtual_path.AppendRelativePath(iterator->virtual_path, &full_path);
   entry_definition.full_path = full_path;
 
-  OnIteratorConverted(self_deleter.Pass(), iterator, entry_definition);
+  OnIteratorConverted(std::move(self_deleter), iterator, entry_definition);
 }
 
 void FileDefinitionListConverter::OnIteratorConverted(
-    scoped_ptr<FileDefinitionListConverter> self_deleter,
+    std::unique_ptr<FileDefinitionListConverter> self_deleter,
     FileDefinitionList::const_iterator iterator,
     const EntryDefinition& entry_definition) {
   result_->push_back(entry_definition);
-  ConvertNextIterator(self_deleter.Pass(), ++iterator);
+  ConvertNextIterator(std::move(self_deleter), ++iterator);
 }
 
 // Helper function to return the converted definition entry directly, without
 // the redundant container.
 void OnConvertFileDefinitionDone(
     const EntryDefinitionCallback& callback,
-    scoped_ptr<EntryDefinitionList> entry_definition_list) {
+    std::unique_ptr<EntryDefinitionList> entry_definition_list) {
   DCHECK_EQ(1u, entry_definition_list->size());
   callback.Run(entry_definition_list->at(0));
 }
@@ -239,7 +243,8 @@ class ConvertSelectedFileInfoListToFileChooserFileInfoListImpl {
   // The scoped pointer to control lifetime of the instance itself. The pointer
   // is passed to callback functions and binds the lifetime of the instance to
   // the callback's lifetime.
-  typedef scoped_ptr<ConvertSelectedFileInfoListToFileChooserFileInfoListImpl>
+  typedef std::unique_ptr<
+      ConvertSelectedFileInfoListToFileChooserFileInfoListImpl>
       Lifetime;
 
   ConvertSelectedFileInfoListToFileChooserFileInfoListImpl(
@@ -279,14 +284,14 @@ class ConvertSelectedFileInfoListToFileChooserFileInfoListImpl {
       base::FilePath virtual_path;
       if (!context->external_backend()->GetVirtualPath(
               selected_info_list[i].file_path, &virtual_path)) {
-        NotifyError(lifetime.Pass());
+        NotifyError(std::move(lifetime));
         return;
       }
 
       const GURL url = CreateIsolatedURLFromVirtualPath(
                            *context_, origin, virtual_path).ToGURL();
       if (!url.is_valid()) {
-        NotifyError(lifetime.Pass());
+        NotifyError(std::move(lifetime));
         return;
       }
 
@@ -310,7 +315,7 @@ class ConvertSelectedFileInfoListToFileChooserFileInfoListImpl {
       return;
     }
 
-    NotifyComplete(lifetime.Pass());
+    NotifyComplete(std::move(lifetime));
   }
 
   ~ConvertSelectedFileInfoListToFileChooserFileInfoListImpl() {
@@ -343,7 +348,7 @@ class ConvertSelectedFileInfoListToFileChooserFileInfoListImpl {
     }
 
     if (!it->file_system_url.is_valid()) {
-      FillMetadataOnIOThread(lifetime.Pass(), it + 1);
+      FillMetadataOnIOThread(std::move(lifetime), it + 1);
       return;
     }
 
@@ -378,7 +383,7 @@ class ConvertSelectedFileInfoListToFileChooserFileInfoListImpl {
     it->length = file_info.size;
     it->modification_time = file_info.last_modified;
     it->is_directory = file_info.is_directory;
-    FillMetadataOnIOThread(lifetime.Pass(), it + 1);
+    FillMetadataOnIOThread(std::move(lifetime), it + 1);
   }
 
   // Returns a result to the |callback_|.
@@ -397,7 +402,7 @@ class ConvertSelectedFileInfoListToFileChooserFileInfoListImpl {
   }
 
   scoped_refptr<storage::FileSystemContext> context_;
-  scoped_ptr<FileChooserFileInfoList> chooser_info_list_;
+  std::unique_ptr<FileChooserFileInfoList> chooser_info_list_;
   const FileChooserFileInfoListCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(
@@ -408,6 +413,8 @@ class ConvertSelectedFileInfoListToFileChooserFileInfoListImpl {
 
 EntryDefinition::EntryDefinition() {
 }
+
+EntryDefinition::EntryDefinition(const EntryDefinition& other) = default;
 
 EntryDefinition::~EntryDefinition() {
 }

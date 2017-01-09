@@ -10,11 +10,11 @@
 #include "components/domain_reliability/config.h"
 
 #include <stdint.h>
+#include <utility>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_value_converter.h"
 #include "base/profiler/scoped_tracker.h"
-#include "base/rand_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 
@@ -50,16 +50,17 @@ DomainReliabilityConfig::DomainReliabilityConfig()
 DomainReliabilityConfig::~DomainReliabilityConfig() {}
 
 // static
-scoped_ptr<const DomainReliabilityConfig> DomainReliabilityConfig::FromJSON(
-    const base::StringPiece& json) {
-  scoped_ptr<base::Value> value = base::JSONReader::Read(json);
+std::unique_ptr<const DomainReliabilityConfig>
+DomainReliabilityConfig::FromJSON(const base::StringPiece& json) {
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
   base::JSONValueConverter<DomainReliabilityConfig> converter;
-  scoped_ptr<DomainReliabilityConfig> config(new DomainReliabilityConfig());
+  std::unique_ptr<DomainReliabilityConfig> config(
+      new DomainReliabilityConfig());
 
   // If we can parse and convert the JSON into a valid config, return that.
   if (value && converter.Convert(*value, config.get()) && config->IsValid())
-    return config.Pass();
-  return scoped_ptr<const DomainReliabilityConfig>();
+    return std::move(config);
+  return std::unique_ptr<const DomainReliabilityConfig>();
 }
 
 bool DomainReliabilityConfig::IsValid() const {
@@ -69,7 +70,7 @@ bool DomainReliabilityConfig::IsValid() const {
     return false;
   }
 
-  for (const auto& url : collectors) {
+  for (const auto* url : collectors) {
     if (!url->is_valid())
       return false;
   }
@@ -77,9 +78,29 @@ bool DomainReliabilityConfig::IsValid() const {
   return true;
 }
 
-bool DomainReliabilityConfig::DecideIfShouldReportRequest(bool success) const {
-  double sample_rate = success ? success_sample_rate : failure_sample_rate;
-  return base::RandDouble() < sample_rate;
+bool DomainReliabilityConfig::Equals(const DomainReliabilityConfig& other)
+    const {
+  if (include_subdomains != other.include_subdomains ||
+      collectors.size() != other.collectors.size() ||
+      success_sample_rate != other.success_sample_rate ||
+      failure_sample_rate != other.failure_sample_rate ||
+      path_prefixes.size() != other.path_prefixes.size()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < collectors.size(); ++i)
+    if (*collectors[i] != *other.collectors[i])
+      return false;
+
+  for (size_t i = 0; i < path_prefixes.size(); ++i)
+    if (*path_prefixes[i] != *other.path_prefixes[i])
+      return false;
+
+  return true;
+}
+
+double DomainReliabilityConfig::GetSampleRate(bool request_successful) const {
+  return request_successful ? success_sample_rate : failure_sample_rate;
 }
 
 // static

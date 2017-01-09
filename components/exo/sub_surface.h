@@ -5,8 +5,9 @@
 #ifndef COMPONENTS_EXO_SUB_SURFACE_H_
 #define COMPONENTS_EXO_SUB_SURFACE_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
 #include "components/exo/surface_delegate.h"
 #include "components/exo/surface_observer.h"
 #include "ui/gfx/geometry/point.h"
@@ -45,7 +46,7 @@ class SubSurface : public SurfaceDelegate, public SurfaceObserver {
   void SetCommitBehavior(bool synchronized);
 
   // Returns a trace value representing the state of the surface.
-  scoped_refptr<base::trace_event::TracedValue> AsTracedValue() const;
+  std::unique_ptr<base::trace_event::TracedValue> AsTracedValue() const;
 
   // Overridden from SurfaceDelegate:
   void OnSurfaceCommit() override;
@@ -57,7 +58,7 @@ class SubSurface : public SurfaceDelegate, public SurfaceObserver {
  private:
   Surface* surface_;
   Surface* parent_;
-  bool is_synchronized_;
+  bool is_synchronized_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(SubSurface);
 };

@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/skia_util.h"
@@ -21,6 +20,29 @@ TEST(RectTest, SkiaRectConversions) {
 
   skrect = RectFToSkRect(fsrc);
   EXPECT_EQ(fsrc.ToString(), SkRectToRectF(skrect).ToString());
+}
+
+TEST(RectTest, SkIRectToRectClamping) {
+  // This clamping only makes sense if SkIRect and gfx::Rect have the same size.
+  // Otherwise, either other overflows can occur that we don't handle, or no
+  // overflows can ocur.
+  if (sizeof(int) != sizeof(int32_t))
+    return;
+  using Limits = std::numeric_limits<int>;
+
+  // right-left and bottom-top would overflow.
+  // These should be mapped to max width/height, which is as close as gfx::Rect
+  // can represent.
+  EXPECT_EQ(
+      gfx::Rect(Limits::min(), Limits::min(), Limits::max(), Limits::max()),
+      SkIRectToRect(SkIRect::MakeLTRB(Limits::min(), Limits::min(),
+                                      Limits::max(), Limits::max())));
+
+  // right-left and bottom-top would underflow.
+  // These should be mapped to zero, like all negative values.
+  EXPECT_EQ(gfx::Rect(Limits::max(), Limits::max(), 0, 0),
+            SkIRectToRect(SkIRect::MakeLTRB(Limits::max(), Limits::max(),
+                                            Limits::min(), Limits::min())));
 }
 
 }  // namespace gfx

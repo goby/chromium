@@ -8,64 +8,37 @@
 #include "base/macros.h"
 #include "components/filesystem/directory_impl.h"
 #include "components/filesystem/file_system_impl.h"
+#include "components/filesystem/lock_table.h"
 #include "components/filesystem/public/interfaces/file_system.mojom.h"
-#include "mojo/application/public/cpp/application_delegate.h"
-#include "mojo/application/public/cpp/interface_factory.h"
-#include "mojo/services/tracing/public/cpp/tracing_impl.h"
-
-namespace mojo {
-class ApplicationImpl;
-}
+#include "services/service_manager/public/cpp/interface_factory.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "services/tracing/public/cpp/provider.h"
 
 namespace filesystem {
 
-class FileSystemApp : public mojo::ApplicationDelegate,
-                      public mojo::InterfaceFactory<FileSystem> {
+class FileSystemApp
+    : public service_manager::Service,
+      public service_manager::InterfaceFactory<mojom::FileSystem> {
  public:
   FileSystemApp();
   ~FileSystemApp() override;
 
-  // Called by individual FileSystem objects to register lifetime events.
-  void RegisterDirectoryToClient(DirectoryImpl* directory,
-                                 FileSystemClientPtr client);
-
  private:
-  // We set the DirectoryImpl's error handler to this function. We do this so
-  // that we can QuitNow() once the last DirectoryImpl has closed itself.
-  void OnDirectoryConnectionError(DirectoryImpl* directory);
+  // Gets the system specific toplevel profile directory.
+  static base::FilePath GetUserDataDir();
 
-  // |ApplicationDelegate| override:
-  void Initialize(mojo::ApplicationImpl* app) override;
-  bool ConfigureIncomingConnection(
-      mojo::ApplicationConnection* connection) override;
-  bool OnShellConnectionError() override;
+  // |service_manager::Service| override:
+  void OnStart() override;
+  bool OnConnect(const service_manager::ServiceInfo& remote_info,
+                 service_manager::InterfaceRegistry* registry) override;
 
   // |InterfaceFactory<Files>| implementation:
-  void Create(mojo::ApplicationConnection* connection,
-              mojo::InterfaceRequest<FileSystem> request) override;
+  void Create(const service_manager::Identity& remote_identity,
+              mojo::InterfaceRequest<mojom::FileSystem> request) override;
 
-  // Use a vector to work around map not letting us use FileSystemClientPtr as
-  // a value in a std::map. The move constructors are to allow us to deal with
-  // FileSystemClientPtr inside a vector.
-  struct Client {
-    Client(DirectoryImpl* directory, FileSystemClientPtr fs_client);
-    Client(Client&& rhs);
-    ~Client();
+  tracing::Provider tracing_;
 
-    Client& operator=(Client&& rhs);
-
-    DirectoryImpl* directory_;
-    FileSystemClientPtr fs_client_;
-  };
-  std::vector<Client> client_mapping_;
-
-  mojo::ApplicationImpl* app_;
-  mojo::TracingImpl tracing_;
-
-  // Set to true when our shell connection is closed. On connection error, we
-  // then broadcast a notification to all FileSystemClients that they should
-  // shut down. Once the final one does, then we QuitNow().
-  bool in_shutdown_;
+  scoped_refptr<LockTable> lock_table_;
 
   DISALLOW_COPY_AND_ASSIGN(FileSystemApp);
 };

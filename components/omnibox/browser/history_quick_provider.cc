@@ -4,19 +4,18 @@
 
 #include "components/omnibox/browser/history_quick_provider.h"
 
+#include <stddef.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/debug/crash_logging.h"
 #include "base/i18n/break_iterator.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_model.h"
-#include "components/crash/core/common/crash_keys.h"
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/metrics/proto/omnibox_input_type.pb.h"
@@ -27,6 +26,8 @@
 #include "components/omnibox/browser/in_memory_url_index.h"
 #include "components/omnibox/browser/in_memory_url_index_types.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/browser/url_prefix.h"
+#include "components/prefs/pref_service.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/escape.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -37,19 +38,18 @@ bool HistoryQuickProvider::disabled_ = false;
 
 HistoryQuickProvider::HistoryQuickProvider(AutocompleteProviderClient* client)
     : HistoryProvider(AutocompleteProvider::TYPE_HISTORY_QUICK, client),
-      languages_(client->GetAcceptLanguages()),
       in_memory_url_index_(client->GetInMemoryURLIndex()) {
 }
 
 void HistoryQuickProvider::Start(const AutocompleteInput& input,
                                  bool minimal_changes) {
+  TRACE_EVENT0("omnibox", "HistoryQuickProvider::Start");
   matches_.clear();
   if (disabled_ || input.from_omnibox_focus())
     return;
 
-  // Don't bother with INVALID and FORCED_QUERY.
-  if ((input.type() == metrics::OmniboxInputType::INVALID) ||
-      (input.type() == metrics::OmniboxInputType::FORCED_QUERY))
+  // Don't bother with INVALID.
+  if ((input.type() == metrics::OmniboxInputType::INVALID))
     return;
 
   autocomplete_input_ = input;
@@ -141,19 +141,18 @@ void HistoryQuickProvider::DoAutocomplete() {
              !autocomplete_input_.parts().ref.is_nonempty()) {
           // Not visited, but we've seen the host before.
           will_have_url_what_you_typed_match_first = true;
-          const size_t registry_length =
-              net::registry_controlled_domains::GetRegistryLength(
+          if (net::registry_controlled_domains::HostHasRegistryControlledDomain(
                   host,
                   net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
-                  net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
-          if (registry_length == 0) {
-            // Known intranet hosts get one score.
-            url_what_you_typed_match_score =
-                HistoryURLProvider::kScoreForUnvisitedIntranetResult;
-          } else {
-            // Known internet hosts get another.
+                  net::registry_controlled_domains::
+                      EXCLUDE_PRIVATE_REGISTRIES)) {
+            // Known internet host.
             url_what_you_typed_match_score =
                 HistoryURLProvider::kScoreForWhatYouTypedResult;
+          } else {
+            // An intranet host.
+            url_what_you_typed_match_score =
+                HistoryURLProvider::kScoreForUnvisitedIntranetResult;
           }
         }
       }
@@ -197,48 +196,42 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
   match.typed_count = info.typed_count();
   match.destination_url = info.url();
   DCHECK(match.destination_url.is_valid());
+  size_t inline_autocomplete_offset = URLPrefix::GetInlineAutocompleteOffset(
+      autocomplete_input_.text(), FixupUserInput(autocomplete_input_).second,
+      false, base::UTF8ToUTF16(info.url().spec()));
 
   // Format the URL autocomplete presentation.
   const url_formatter::FormatUrlTypes format_types =
       url_formatter::kFormatUrlOmitAll &
       ~(!history_match.match_in_scheme ? 0 : url_formatter::kFormatUrlOmitHTTP);
-  match.fill_into_edit =
-      AutocompleteInput::FormattedStringWithEquivalentMeaning(
-          info.url(), url_formatter::FormatUrl(
-                          info.url(), languages_, format_types,
-                          net::UnescapeRule::SPACES, nullptr, nullptr, nullptr),
-          client()->GetSchemeClassifier());
-  std::vector<size_t> offsets =
-      OffsetsFromTermMatches(history_match.url_matches);
   base::OffsetAdjuster::Adjustments adjustments;
   match.contents = url_formatter::FormatUrlWithAdjustments(
-      info.url(), languages_, format_types, net::UnescapeRule::SPACES, nullptr,
+      info.url(), format_types, net::UnescapeRule::SPACES, nullptr,
       nullptr, &adjustments);
+  match.fill_into_edit =
+      AutocompleteInput::FormattedStringWithEquivalentMeaning(
+          info.url(), match.contents, client()->GetSchemeClassifier());
+  std::vector<size_t> offsets =
+      OffsetsFromTermMatches(history_match.url_matches);
+  // In addition to knowing how |offsets| is transformed, we need to know how
+  // |inline_autocomplete_offset| is transformed.  We add it to the end of
+  // |offsets|, compute how everything is transformed, then remove it from the
+  // end.
+  offsets.push_back(inline_autocomplete_offset);
   base::OffsetAdjuster::AdjustOffsets(adjustments, &offsets);
+  inline_autocomplete_offset = offsets.back();
+  offsets.pop_back();
   TermMatches new_matches =
       ReplaceOffsetsInTermMatches(history_match.url_matches, offsets);
   match.contents_class =
       SpansFromTermMatch(new_matches, match.contents.length(), true);
 
   // Set |inline_autocompletion| and |allowed_to_be_default_match| if possible.
-  if (history_match.can_inline) {
-    // TODO(mpearson): remove this and all dependency of //components/omnibox
-    // on //components/crash/core/common once http://crbug.com/464926 is fixed
-    // (i.e. remove #include, exception in components/omnibox/DEPS, and deps
-    // in components/omnibox.gypi and components/omnibox/browser/BUILD.gn).
-    base::debug::ScopedCrashKey crash_info(
-        crash_keys::kBug464926CrashKey,
-        info.url().spec().substr(0, 30) + " " +
-            base::UTF16ToUTF8(autocomplete_input_.text()).substr(0, 20) + " " +
-            base::SizeTToString(history_match.url_matches.size()) + " " +
-            base::SizeTToString(offsets.size()));
-    CHECK(!new_matches.empty());
-    size_t inline_autocomplete_offset = new_matches[0].offset +
-        new_matches[0].length;
+  if (inline_autocomplete_offset != base::string16::npos) {
     // |inline_autocomplete_offset| may be beyond the end of the
-    // |fill_into_edit| if the user has typed an URL with a scheme and the
+    // |match.fill_into_edit| if the user has typed an URL with a scheme and the
     // last character typed is a slash.  That slash is removed by the
-    // FormatURLWithOffsets call above.
+    // FormatURLWithAdjustments call above.
     if (inline_autocomplete_offset < match.fill_into_edit.length()) {
       match.inline_autocompletion =
           match.fill_into_edit.substr(inline_autocomplete_offset);
@@ -246,10 +239,8 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
     match.allowed_to_be_default_match = match.inline_autocompletion.empty() ||
         !PreventInlineAutocomplete(autocomplete_input_);
   }
-  match.EnsureUWYTIsAllowedToBeDefault(
-      autocomplete_input_,
-      client()->GetAcceptLanguages(),
-      client()->GetTemplateURLService());
+  match.EnsureUWYTIsAllowedToBeDefault(autocomplete_input_,
+                                       client()->GetTemplateURLService());
 
   // Format the description autocomplete presentation.
   match.description = info.title();

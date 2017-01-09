@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/workers/AbstractWorker.h"
 
 #include "bindings/core/v8/ExceptionState.h"
@@ -40,41 +39,52 @@
 namespace blink {
 
 AbstractWorker::AbstractWorker(ExecutionContext* context)
-    : ActiveDOMObject(context)
-{
+    : SuspendableObject(context) {}
+
+AbstractWorker::~AbstractWorker() {}
+
+KURL AbstractWorker::resolveURL(const String& url,
+                                ExceptionState& exceptionState,
+                                WebURLRequest::RequestContext requestContext) {
+  // FIXME: This should use the dynamic global scope (bug #27887)
+  KURL scriptURL = getExecutionContext()->completeURL(url);
+  if (!scriptURL.isValid()) {
+    exceptionState.throwDOMException(SyntaxError,
+                                     "'" + url + "' is not a valid URL.");
+    return KURL();
+  }
+
+  // We can safely expose the URL in the following exceptions, as these checks
+  // happen synchronously before redirection. JavaScript receives no new
+  // information.
+  if (!getExecutionContext()->getSecurityOrigin()->canRequestNoSuborigin(
+          scriptURL)) {
+    exceptionState.throwSecurityError(
+        "Script at '" + scriptURL.elidedString() +
+        "' cannot be accessed from origin '" +
+        getExecutionContext()->getSecurityOrigin()->toString() + "'.");
+    return KURL();
+  }
+
+  if (getExecutionContext()->contentSecurityPolicy() &&
+      !(getExecutionContext()
+            ->contentSecurityPolicy()
+            ->allowRequestWithoutIntegrity(requestContext, scriptURL) &&
+        getExecutionContext()
+            ->contentSecurityPolicy()
+            ->allowWorkerContextFromSource(scriptURL))) {
+    exceptionState.throwSecurityError(
+        "Access to the script at '" + scriptURL.elidedString() +
+        "' is denied by the document's Content Security Policy.");
+    return KURL();
+  }
+
+  return scriptURL;
 }
 
-AbstractWorker::~AbstractWorker()
-{
+DEFINE_TRACE(AbstractWorker) {
+  EventTargetWithInlineData::trace(visitor);
+  SuspendableObject::trace(visitor);
 }
 
-KURL AbstractWorker::resolveURL(const String& url, ExceptionState& exceptionState)
-{
-    // FIXME: This should use the dynamic global scope (bug #27887)
-    KURL scriptURL = executionContext()->completeURL(url);
-    if (!scriptURL.isValid()) {
-        exceptionState.throwDOMException(SyntaxError, "'" + url + "' is not a valid URL.");
-        return KURL();
-    }
-
-    // We can safely expose the URL in the following exceptions, as these checks happen synchronously before redirection. JavaScript receives no new information.
-    if (!executionContext()->securityOrigin()->canRequestNoSuborigin(scriptURL)) {
-        exceptionState.throwSecurityError("Script at '" + scriptURL.elidedString() + "' cannot be accessed from origin '" + executionContext()->securityOrigin()->toString() + "'.");
-        return KURL();
-    }
-
-    if (executionContext()->contentSecurityPolicy() && !executionContext()->contentSecurityPolicy()->allowWorkerContextFromSource(scriptURL)) {
-        exceptionState.throwSecurityError("Access to the script at '" + scriptURL.elidedString() + "' is denied by the document's Content Security Policy.");
-        return KURL();
-    }
-
-    return scriptURL;
-}
-
-DEFINE_TRACE(AbstractWorker)
-{
-    RefCountedGarbageCollectedEventTargetWithInlineData<AbstractWorker>::trace(visitor);
-    ActiveDOMObject::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

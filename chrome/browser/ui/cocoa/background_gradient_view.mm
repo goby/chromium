@@ -7,18 +7,15 @@
 #import "chrome/browser/themes/theme_properties.h"
 #import "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #import "ui/base/cocoa/nsgraphics_context_additions.h"
 #import "ui/base/cocoa/nsview_additions.h"
-
-@interface BackgroundGradientView (Private)
-- (void)commonInit;
-- (NSColor*)backgroundImageColor;
-@end
+#include "ui/base/material_design/material_design_controller.h"
 
 @implementation BackgroundGradientView
 
 @synthesize showsDivider = showsDivider_;
+@synthesize dividerEdge = dividerEdge_;
 
 - (id)initWithFrame:(NSRect)frameRect {
   if ((self = [super initWithFrame:frameRect])) {
@@ -36,12 +33,20 @@
 
 - (void)commonInit {
   showsDivider_ = YES;
+  dividerEdge_ = NSMinYEdge;
 }
 
 - (void)setShowsDivider:(BOOL)show {
   if (showsDivider_ == show)
     return;
   showsDivider_ = show;
+  [self setNeedsDisplay:YES];
+}
+
+- (void)setDividerEdge:(NSRectEdge)dividerEdge {
+  if (dividerEdge_ == dividerEdge)
+    return;
+  dividerEdge_ = dividerEdge;
   [self setNeedsDisplay:YES];
 }
 
@@ -55,7 +60,7 @@
       cr_setPatternPhase:[self patternPhase]
                  forView:[self cr_viewBeingDrawnTo]];
 
-  ui::ThemeProvider* themeProvider = [[self window] themeProvider];
+  const ui::ThemeProvider* themeProvider = [[self window] themeProvider];
   if (themeProvider && !themeProvider->UsingSystemTheme()) {
     // If the background image is semi transparent then we need something
     // to blend against. Using 20% black gives us a color similar to Windows.
@@ -67,10 +72,10 @@
   NSRectFillUsingOperation(dirtyRect, NSCompositeSourceOver);
 
   if (showsDivider_) {
-    // Draw bottom stroke
+    // Draw stroke
     NSRect borderRect, contentRect;
     NSDivideRect([self bounds], &borderRect, &contentRect, [self cr_lineWidth],
-                 NSMinYEdge);
+                 dividerEdge_);
     if (NSIntersectsRect(borderRect, dirtyRect)) {
       [[self strokeColor] set];
       NSRectFillUsingOperation(NSIntersectionRect(borderRect, dirtyRect),
@@ -89,18 +94,16 @@
   // anyway).
   if ([window parentWindow])
     window = [window parentWindow];
-  BOOL isActive = [window isMainWindow];
 
-  ui::ThemeProvider* themeProvider = [window themeProvider];
+  const ui::ThemeProvider* themeProvider = [window themeProvider];
   if (!themeProvider)
     return [NSColor blackColor];
   return themeProvider->GetNSColor(
-      isActive ? ThemeProperties::COLOR_TOOLBAR_STROKE :
-                 ThemeProperties::COLOR_TOOLBAR_STROKE_INACTIVE);
+             ThemeProperties::COLOR_DETACHED_BOOKMARK_BAR_SEPARATOR);
 }
 
 - (NSColor*)backgroundImageColor {
-  ui::ThemeProvider* themeProvider = [[self window] themeProvider];
+  const ui::ThemeProvider* themeProvider = [[self window] themeProvider];
   if (!themeProvider)
     return [[self window] backgroundColor];
 
@@ -131,7 +134,7 @@
 - (void)viewWillStartLiveResize {
   [super viewWillStartLiveResize];
 
-  ui::ThemeProvider* themeProvider = [[self window] themeProvider];
+  const ui::ThemeProvider* themeProvider = [[self window] themeProvider];
   if (themeProvider && themeProvider->UsingSystemTheme()) {
     // The default theme's background image is a subtle texture pattern that
     // we can scale without being easily noticed. Optimize this case by

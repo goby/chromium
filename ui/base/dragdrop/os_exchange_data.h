@@ -5,18 +5,18 @@
 #ifndef UI_BASE_DRAGDROP_OS_EXCHANGE_DATA_H_
 #define UI_BASE_DRAGDROP_OS_EXCHANGE_DATA_H_
 
-#include "build/build_config.h"
-
+#include <memory>
 #include <set>
 #include <string>
+
+#include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include <objidl.h>
 #endif
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/dragdrop/download_file_interface.h"
 #include "ui/base/ui_base_export.h"
@@ -87,7 +87,7 @@ class UI_BASE_EXPORT OSExchangeData {
     Provider() {}
     virtual ~Provider() {}
 
-    virtual Provider* Clone() const = 0;
+    virtual std::unique_ptr<Provider> Clone() const = 0;
 
     virtual void MarkOriginatedFromRenderer() = 0;
     virtual bool DidOriginateFromRenderer() const = 0;
@@ -130,7 +130,7 @@ class UI_BASE_EXPORT OSExchangeData {
     virtual bool HasHtml() const = 0;
 #endif
 
-#if defined(USE_AURA)
+#if defined(USE_AURA) || defined(OS_MACOSX)
     virtual void SetDragImage(const gfx::ImageSkia& image,
                               const gfx::Vector2d& cursor_offset) = 0;
     virtual const gfx::ImageSkia& GetDragImage() const = 0;
@@ -138,13 +138,10 @@ class UI_BASE_EXPORT OSExchangeData {
 #endif
   };
 
-  // Creates the platform specific Provider.
-  static Provider* CreateProvider();
-
   OSExchangeData();
   // Creates an OSExchangeData with the specified provider. OSExchangeData
   // takes ownership of the supplied provider.
-  explicit OSExchangeData(Provider* provider);
+  explicit OSExchangeData(std::unique_ptr<Provider> provider);
 
   ~OSExchangeData();
 
@@ -229,7 +226,7 @@ class UI_BASE_EXPORT OSExchangeData {
 
  private:
   // Provides the actual data.
-  scoped_ptr<Provider> provider_;
+  std::unique_ptr<Provider> provider_;
 
   DISALLOW_COPY_AND_ASSIGN(OSExchangeData);
 };

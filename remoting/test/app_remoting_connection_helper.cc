@@ -4,10 +4,12 @@
 
 #include "remoting/test/app_remoting_connection_helper.h"
 
+#include <utility>
+
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "remoting/protocol/host_stub.h"
@@ -45,8 +47,8 @@ AppRemotingConnectionHelper::~AppRemotingConnectionHelper() {
 }
 
 void AppRemotingConnectionHelper::Initialize(
-    scoped_ptr<TestChromotingClient> test_chromoting_client) {
-  client_ = test_chromoting_client.Pass();
+    std::unique_ptr<TestChromotingClient> test_chromoting_client) {
+  client_ = std::move(test_chromoting_client);
   client_->AddRemoteConnectionObserver(this);
 }
 
@@ -73,9 +75,11 @@ bool AppRemotingConnectionHelper::StartConnection() {
   timer_->Start(FROM_HERE, base::TimeDelta::FromSeconds(30),
                 run_loop_->QuitClosure());
 
-  client_->StartConnection(remote_host_info.GenerateConnectionSetupInfo(
-      AppRemotingSharedData->access_token(),
-      AppRemotingSharedData->user_name()));
+  client_->StartConnection(
+      /*use_test_api_settings=*/false,
+      remote_host_info.GenerateConnectionSetupInfo(
+          AppRemotingSharedData->access_token(),
+          AppRemotingSharedData->user_name()));
 
   run_loop_->Run();
   timer_->Stop();
@@ -159,8 +163,8 @@ void AppRemotingConnectionHelper::SendClientConnectionDetailsToHost() {
 
   // Next send the host a description of the client screen size.
   protocol::ClientResolution client_resolution;
-  client_resolution.set_width(kDefaultWidth);
-  client_resolution.set_height(kDefaultHeight);
+  client_resolution.set_width_deprecated(kDefaultWidth);
+  client_resolution.set_height_deprecated(kDefaultHeight);
   client_resolution.set_x_dpi(kDefaultDPI);
   client_resolution.set_y_dpi(kDefaultDPI);
   client_resolution.set_dips_width(kDefaultWidth);
@@ -182,7 +186,8 @@ void AppRemotingConnectionHelper::HandleOnWindowAddedMessage(
   DCHECK_EQ(message.type(), "onWindowAdded");
 
   const base::DictionaryValue* message_data = nullptr;
-  scoped_ptr<base::Value> host_message = base::JSONReader::Read(message.data());
+  std::unique_ptr<base::Value> host_message =
+      base::JSONReader::Read(message.data());
   if (!host_message.get() || !host_message->GetAsDictionary(&message_data)) {
     LOG(ERROR) << "onWindowAdded message received was not valid JSON.";
     if (run_loop_) {

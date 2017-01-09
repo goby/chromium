@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_PHONE_NUMBER_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_PHONE_NUMBER_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -24,6 +26,8 @@ class PhoneNumber : public FormGroup {
   ~PhoneNumber() override;
 
   PhoneNumber& operator=(const PhoneNumber& number);
+  bool operator==(const PhoneNumber& other) const;
+  bool operator!=(const PhoneNumber& other) const { return !operator==(other); }
 
   void set_profile(AutofillProfile* profile) { profile_ = profile; }
 

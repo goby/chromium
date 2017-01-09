@@ -4,9 +4,12 @@
 
 #include "components/signin/core/browser/signin_error_controller.h"
 
-#include <functional>
+#include <stddef.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <functional>
+#include <memory>
+
+#include "base/macros.h"
 #include "components/signin/core/browser/fake_auth_status_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -19,11 +22,11 @@ class SigninErrorControllerTest : public testing::Test {
     error_controller_.reset(new SigninErrorController());
   }
 
-  scoped_ptr<SigninErrorController> error_controller_;
+  std::unique_ptr<SigninErrorController> error_controller_;
 };
 
 TEST_F(SigninErrorControllerTest, NoErrorAuthStatusProviders) {
-  scoped_ptr<FakeAuthStatusProvider> provider;
+  std::unique_ptr<FakeAuthStatusProvider> provider;
 
   // No providers.
   ASSERT_FALSE(error_controller_->HasError());
@@ -38,8 +41,8 @@ TEST_F(SigninErrorControllerTest, NoErrorAuthStatusProviders) {
 }
 
 TEST_F(SigninErrorControllerTest, ErrorAuthStatusProvider) {
-  scoped_ptr<FakeAuthStatusProvider> provider;
-  scoped_ptr<FakeAuthStatusProvider> error_provider;
+  std::unique_ptr<FakeAuthStatusProvider> provider;
+  std::unique_ptr<FakeAuthStatusProvider> error_provider;
 
   provider.reset(new FakeAuthStatusProvider(error_controller_.get()));
   ASSERT_FALSE(error_controller_->HasError());
@@ -60,9 +63,9 @@ TEST_F(SigninErrorControllerTest, ErrorAuthStatusProvider) {
 }
 
 TEST_F(SigninErrorControllerTest, AuthStatusProviderErrorTransition) {
-  scoped_ptr<FakeAuthStatusProvider> provider0(
+  std::unique_ptr<FakeAuthStatusProvider> provider0(
       new FakeAuthStatusProvider(error_controller_.get()));
-  scoped_ptr<FakeAuthStatusProvider> provider1(
+  std::unique_ptr<FakeAuthStatusProvider> provider1(
       new FakeAuthStatusProvider(error_controller_.get()));
 
   ASSERT_FALSE(error_controller_->HasError());
@@ -90,9 +93,9 @@ TEST_F(SigninErrorControllerTest, AuthStatusProviderErrorTransition) {
 }
 
 TEST_F(SigninErrorControllerTest, AuthStatusProviderAccountTransition) {
-  scoped_ptr<FakeAuthStatusProvider> provider0(
+  std::unique_ptr<FakeAuthStatusProvider> provider0(
       new FakeAuthStatusProvider(error_controller_.get()));
-  scoped_ptr<FakeAuthStatusProvider> provider1(
+  std::unique_ptr<FakeAuthStatusProvider> provider1(
       new FakeAuthStatusProvider(error_controller_.get()));
 
   ASSERT_FALSE(error_controller_->HasError());
@@ -150,7 +153,7 @@ TEST_F(SigninErrorControllerTest, AuthStatusEnumerateAllErrors) {
     { GoogleServiceAuthError::SERVICE_UNAVAILABLE, true },
     { GoogleServiceAuthError::TWO_FACTOR, true },
     { GoogleServiceAuthError::REQUEST_CANCELED, true },
-    { GoogleServiceAuthError::HOSTED_NOT_ALLOWED, true },
+    { GoogleServiceAuthError::HOSTED_NOT_ALLOWED_DEPRECATED, false },
     { GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE, true },
     { GoogleServiceAuthError::SERVICE_ERROR, true },
     { GoogleServiceAuthError::WEB_LOGIN_REQUIRED, true },
@@ -159,6 +162,8 @@ TEST_F(SigninErrorControllerTest, AuthStatusEnumerateAllErrors) {
       "table array does not match the number of auth error types");
 
   for (size_t i = 0; i < arraysize(table); ++i) {
+    if (GoogleServiceAuthError::IsDeprecated(table[i].error_state))
+      continue;
     FakeAuthStatusProvider provider(error_controller_.get());
     provider.SetAuthError(kTestAccountId,
                           GoogleServiceAuthError(table[i].error_state));
@@ -181,9 +186,9 @@ TEST_F(SigninErrorControllerTest, AuthStatusEnumerateAllErrors) {
 
 // Verify that existing error is not replaced by new error.
 TEST_F(SigninErrorControllerTest, AuthStatusChange) {
-  scoped_ptr<FakeAuthStatusProvider> fake_provider0(
+  std::unique_ptr<FakeAuthStatusProvider> fake_provider0(
       new FakeAuthStatusProvider(error_controller_.get()));
-  scoped_ptr<FakeAuthStatusProvider> fake_provider1(
+  std::unique_ptr<FakeAuthStatusProvider> fake_provider1(
       new FakeAuthStatusProvider(error_controller_.get()));
 
   // If there are multiple providers in the provider set...

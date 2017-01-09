@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "storage/browser/fileapi/sandbox_isolated_origin_database.h"
@@ -22,7 +21,7 @@ TEST(SandboxIsolatedOriginDatabaseTest, BasicTest) {
   ASSERT_TRUE(dir.CreateUniqueTempDir());
 
   std::string kOrigin("origin");
-  SandboxIsolatedOriginDatabase database(kOrigin, dir.path(),
+  SandboxIsolatedOriginDatabase database(kOrigin, dir.GetPath(),
                                          base::FilePath(kOriginDirectory));
 
   EXPECT_TRUE(database.HasOriginPath(kOrigin));

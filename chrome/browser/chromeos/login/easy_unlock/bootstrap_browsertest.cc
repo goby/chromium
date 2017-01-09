@@ -4,7 +4,9 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/path_service.h"
+#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/easy_unlock/bootstrap_user_context_initializer.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager_test_api.h"
@@ -27,7 +29,7 @@ namespace chromeos {
 namespace {
 
 const char kFakeGaiaId[] = "123456";
-const char kFakeUser[] = "test_user@example.com";
+const char kFakeUser[] = "test_user@consumer.example.com";
 const char kFakeSid[] = "fake-sid";
 const char kFakeLsid[] = "fake-lsid";
 const char kFakeRefreshToken[] = "fake-refresh-token";
@@ -116,7 +118,7 @@ class BootstrapTest : public OobeBaseTest {
         WizardController::default_controller();
     ASSERT_TRUE(wizard_controller);
     wizard_controller->SkipToLoginForTesting(LoginScreenContext());
-    OobeScreenWaiter(OobeDisplay::SCREEN_GAIA_SIGNIN).Wait();
+    OobeScreenWaiter(OobeScreen::SCREEN_GAIA_SIGNIN).Wait();
   }
 
   void OnBootstrapInitialized(bool success, const UserContext& user_context) {

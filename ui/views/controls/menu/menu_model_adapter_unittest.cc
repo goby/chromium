@@ -4,6 +4,7 @@
 
 #include "ui/views/controls/menu/menu_model_adapter.h"
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/base/models/menu_model_delegate.h"
@@ -84,7 +85,7 @@ class MenuModelBase : public ui::MenuModel {
 
   void MenuWillShow() override {}
 
-  void MenuClosed() override {}
+  void MenuWillClose() override {}
 
   void SetMenuModelDelegate(ui::MenuModelDelegate* delegate) override {}
 
@@ -153,7 +154,7 @@ class RootModel : public MenuModelBase {
   ~RootModel() override {}
 
  private:
-  scoped_ptr<MenuModel> submenu_model_;
+  std::unique_ptr<MenuModel> submenu_model_;
 
   DISALLOW_COPY_AND_ASSIGN(RootModel);
 };
@@ -172,7 +173,7 @@ TEST_F(MenuModelAdapterTest, BasicTest) {
   // Create menu.  Build menu twice to check that rebuilding works properly.
   MenuItemView* menu = new views::MenuItemView(&delegate);
   // MenuRunner takes ownership of menu.
-  scoped_ptr<MenuRunner> menu_runner(new MenuRunner(menu, 0));
+  std::unique_ptr<MenuRunner> menu_runner(new MenuRunner(menu, 0));
   delegate.BuildMenu(menu);
   delegate.BuildMenu(menu);
   EXPECT_TRUE(menu->HasSubmenu());

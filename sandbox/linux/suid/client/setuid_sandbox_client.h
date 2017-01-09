@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef SANDBOX_LINUX_SUID_SETUID_SANDBOX_CLIENT_H_
-#define SANDBOX_LINUX_SUID_SETUID_SANDBOX_CLIENT_H_
+#ifndef SANDBOX_LINUX_SUID_CLIENT_SETUID_SANDBOX_CLIENT_H_
+#define SANDBOX_LINUX_SUID_CLIENT_SETUID_SANDBOX_CLIENT_H_
+
+#include <memory>
 
 #include "base/environment.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "sandbox/sandbox_export.h"
 
 namespace sandbox {
@@ -57,10 +58,10 @@ class SANDBOX_EXPORT SetuidSandboxClient {
   bool IsSandboxed() const;
 
  private:
-  explicit SetuidSandboxClient(base::Environment* env);
+  explicit SetuidSandboxClient(std::unique_ptr<base::Environment> env);
 
   // Holds the environment. Will never be NULL.
-  scoped_ptr<base::Environment> env_;
+  std::unique_ptr<base::Environment> env_;
   bool sandboxed_;
 
   DISALLOW_COPY_AND_ASSIGN(SetuidSandboxClient);
@@ -68,4 +69,4 @@ class SANDBOX_EXPORT SetuidSandboxClient {
 
 }  // namespace sandbox
 
-#endif  // SANDBOX_LINUX_SUID_SETUID_SANDBOX_CLIENT_H_
+#endif  // SANDBOX_LINUX_SUID_CLIENT_SETUID_SANDBOX_CLIENT_H_

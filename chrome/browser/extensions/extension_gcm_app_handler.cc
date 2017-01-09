@@ -8,7 +8,7 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
 #include "chrome/browser/profiles/profile.h"
@@ -66,6 +66,11 @@ ExtensionGCMAppHandler::~ExtensionGCMAppHandler() {
 
 void ExtensionGCMAppHandler::ShutdownHandler() {
   js_event_router_.reset();
+}
+
+void ExtensionGCMAppHandler::OnStoreReset() {
+  // TODO(crbug.com/661660): Notify the extension somehow that its registration
+  // was invalidated and deleted?
 }
 
 void ExtensionGCMAppHandler::OnMessage(const std::string& app_id,

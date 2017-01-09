@@ -5,8 +5,10 @@
 #import "chrome/browser/ui/cocoa/extensions/extension_popup_controller.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/extensions/extension_view_host.h"
 #include "chrome/browser/extensions/extension_view_host_factory.h"
@@ -18,9 +20,11 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/devtools_agent_host_observer.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "extensions/browser/notification_types.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/cocoa/window_size_constants.h"
 
 using content::BrowserContext;
@@ -54,7 +58,7 @@ BOOL gAnimationsEnabled = true;
                    devMode:(BOOL)devMode;
 
 // Set the ExtensionViewHost, taking ownership.
-- (void)setExtensionViewHost:(scoped_ptr<ExtensionViewHost>)host;
+- (void)setExtensionViewHost:(std::unique_ptr<ExtensionViewHost>)host;
 
 // Called when the extension's hosted NSView has been resized.
 - (void)extensionViewFrameChanged;
@@ -64,9 +68,6 @@ BOOL gAnimationsEnabled = true;
 
 // Called when the extension view is shown.
 - (void)onViewDidShow;
-
-// Called when the window moves or resizes. Notifies the extension.
-- (void)onWindowChanged;
 
 @end
 
@@ -90,38 +91,39 @@ class ExtensionPopupContainer : public ExtensionViewMac::Container {
   ExtensionPopupController* controller_; // Weak; owns this.
 };
 
-class ExtensionPopupNotificationBridge : public content::NotificationObserver {
+class ExtensionPopupNotificationBridge :
+    public content::NotificationObserver,
+    public content::DevToolsAgentHostObserver {
  public:
   ExtensionPopupNotificationBridge(ExtensionPopupController* controller,
                                    ExtensionViewHost* view_host)
     : controller_(controller),
       view_host_(view_host),
-      web_contents_(view_host_->host_contents()),
-      devtools_callback_(base::Bind(
-          &ExtensionPopupNotificationBridge::OnDevToolsStateChanged,
-          base::Unretained(this))) {
-    content::DevToolsAgentHost::AddAgentStateCallback(devtools_callback_);
+      web_contents_(view_host_->host_contents()) {
+    content::DevToolsAgentHost::AddObserver(this);
   }
 
   ~ExtensionPopupNotificationBridge() override {
-    content::DevToolsAgentHost::RemoveAgentStateCallback(devtools_callback_);
+    content::DevToolsAgentHost::RemoveObserver(this);
   }
 
-  void OnDevToolsStateChanged(content::DevToolsAgentHost* agent_host,
-                              bool attached) {
+  void DevToolsAgentHostAttached(
+      content::DevToolsAgentHost* agent_host) override {
     if (agent_host->GetWebContents() != web_contents_)
       return;
+    // Set the flag on the controller so the popup is not hidden when
+    // the dev tools get focus.
+    [controller_ setBeingInspected:YES];
+  }
 
-    if (attached) {
-      // Set the flag on the controller so the popup is not hidden when
-      // the dev tools get focus.
-      [controller_ setBeingInspected:YES];
-    } else {
-      // Allow the devtools to finish detaching before we close the popup.
-      [controller_ performSelector:@selector(close)
-                        withObject:nil
-                        afterDelay:0.0];
-    }
+  void DevToolsAgentHostDetached(
+      content::DevToolsAgentHost* agent_host) override {
+    if (agent_host->GetWebContents() != web_contents_)
+      return;
+    // Allow the devtools to finish detaching before we close the popup.
+    [controller_ performSelector:@selector(close)
+                      withObject:nil
+                      afterDelay:0.0];
   }
 
   void Observe(int type,
@@ -153,7 +155,6 @@ class ExtensionPopupNotificationBridge : public content::NotificationObserver {
   // know what it is for notifications, but our ExtensionViewHost may not be
   // valid.
   WebContents* web_contents_;
-  base::Callback<void(content::DevToolsAgentHost*, bool)> devtools_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionPopupNotificationBridge);
 };
@@ -174,7 +175,7 @@ class ExtensionPopupNotificationBridge : public content::NotificationObserver {
   if (!window.get())
     return nil;
 
-  anchoredAt = [parentWindow convertBaseToScreen:anchoredAt];
+  anchoredAt = ui::ConvertPointFromWindowToScreen(parentWindow, anchoredAt);
   if ((self = [super initWithWindow:window
                        parentWindow:parentWindow
                          anchoredAt:anchoredAt])) {
@@ -254,11 +255,11 @@ class ExtensionPopupNotificationBridge : public content::NotificationObserver {
   beingInspected_ = beingInspected;
 }
 
-+ (ExtensionPopupController*)host:(scoped_ptr<ExtensionViewHost>)host
++ (ExtensionPopupController*)host:(std::unique_ptr<ExtensionViewHost>)host
                         inBrowser:(Browser*)browser
                        anchoredAt:(NSPoint)anchoredAt
-                    arrowLocation:(info_bubble::BubbleArrowLocation)
-                                      arrowLocation
+                    arrowLocation:
+                        (info_bubble::BubbleArrowLocation)arrowLocation
                           devMode:(BOOL)devMode {
   DCHECK([NSThread isMainThread]);
   DCHECK(browser);
@@ -275,7 +276,7 @@ class ExtensionPopupNotificationBridge : public content::NotificationObserver {
                 anchoredAt:anchoredAt
              arrowLocation:arrowLocation
                    devMode:devMode];
-  [gPopup setExtensionViewHost:host.Pass()];
+  [gPopup setExtensionViewHost:std::move(host)];
   return gPopup;
 }
 
@@ -283,7 +284,7 @@ class ExtensionPopupNotificationBridge : public content::NotificationObserver {
   return gPopup;
 }
 
-- (void)setExtensionViewHost:(scoped_ptr<ExtensionViewHost>)host {
+- (void)setExtensionViewHost:(std::unique_ptr<ExtensionViewHost>)host {
   DCHECK(!host_);
   DCHECK(host);
   host_.swap(host);
@@ -401,27 +402,6 @@ class ExtensionPopupNotificationBridge : public content::NotificationObserver {
 
 - (void)onViewDidShow {
   [self onSizeChanged:pendingSize_];
-}
-
-- (void)onWindowChanged {
-  // The window is positioned before creating the host, to ensure the host is
-  // created with the correct screen information.
-  if (!host_)
-    return;
-
-  ExtensionViewMac* extensionView =
-      static_cast<ExtensionViewMac*>(host_->view());
-  // Let the extension view know, so that it can tell plugins.
-  if (extensionView)
-    extensionView->WindowFrameChanged();
-}
-
-- (void)windowDidResize:(NSNotification*)notification {
-  [self onWindowChanged];
-}
-
-- (void)windowDidMove:(NSNotification*)notification {
-  [self onWindowChanged];
 }
 
 // Private (TestingAPI)

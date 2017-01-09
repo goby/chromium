@@ -6,22 +6,23 @@
 #define CHROME_TEST_BASE_TESTING_PROFILE_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_profile.h"
 
 class ProfileInfoCache;
+class ProfileAttributesStorage;
 class ProfileManager;
 class TestingBrowserProcess;
-class TestingProfile;
 
-namespace syncable_prefs {
+namespace sync_preferences {
 class PrefServiceSyncable;
 }
 
@@ -54,7 +55,7 @@ class TestingProfileManager {
   // |factories| contains BCKSs to use with the newly created profile.
   TestingProfile* CreateTestingProfile(
       const std::string& profile_name,
-      scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs,
+      std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs,
       const base::string16& user_name,
       int avatar_id,
       const std::string& supervised_user_id,
@@ -103,15 +104,22 @@ class TestingProfileManager {
   // Helper accessors.
   const base::FilePath& profiles_dir();
   ProfileManager* profile_manager();
-  ProfileInfoCache* profile_info_cache();
+  ProfileAttributesStorage* profile_attributes_storage();
 
  private:
+  friend class ProfileAttributesStorageTest;
+  friend class ProfileInfoCacheTest;
+  friend class ProfileNameVerifierObserver;
+
   typedef std::map<std::string, TestingProfile*> TestingProfilesMap;
 
   // Does the actual ASSERT-checked SetUp work. This function cannot have a
   // return value, so it sets the |called_set_up_| flag on success and that is
   // returned in the public SetUp.
   void SetUpInternal();
+
+  // Deprecated helper accessor. Use profile_attributes_storage() instead.
+  ProfileInfoCache* profile_info_cache();
 
   // Whether SetUp() was called to put the object in a valid state.
   bool called_set_up_;

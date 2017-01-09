@@ -50,7 +50,11 @@
 #include <string>
 #include <vector>
 
+#include <stdint.h>
+
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
+#include "base/strings/string_piece.h"
 #include "net/proxy/proxy_service.h"
 
 namespace net {
@@ -72,7 +76,7 @@ class DataReductionProxyTamperDetection {
   // response had been tampered with.
   static bool DetectAndReport(const net::HttpResponseHeaders* headers,
                               bool scheme_is_https,
-                              int64 content_length);
+                              int64_t content_length);
 
   // Tamper detection checks |response_headers|. Histogram events are reported
   // by |carrier_id|; |scheme_is_https| determines which histogram to report
@@ -105,13 +109,15 @@ class DataReductionProxyTamperDetection {
                            HistogramCount);
   FRIEND_TEST_ALL_PREFIXES(DataReductionProxyTamperDetectionTest,
                            DetectAndReport);
+  FRIEND_TEST_ALL_PREFIXES(DataReductionProxyTamperDetectionTest,
+                           CompressionRatio);
 
   // Reports UMA for the numbers of responses with valid fingerprints, separated
   // by MIME type.
-  void ReportUMAForTamperDetectionCount(int64 original_content_length) const;
+  void ReportUMAForTamperDetectionCount(int64_t original_content_length) const;
 
   // Returns the result of validating Chrome-Proxy header.
-  bool ValidateChromeProxyHeader(const std::string& fingerprint) const;
+  bool ValidateChromeProxyHeader(base::StringPiece fingerprint) const;
 
   // Reports UMA for tampering of the Chrome-Proxy header.
   void ReportUMAForChromeProxyHeaderValidation() const;
@@ -119,7 +125,7 @@ class DataReductionProxyTamperDetection {
   // Returns the result of validating the Via header.
   // |has_chrome_proxy_via_header| indicates that the Data Reduction Proxy's
   // Via header occurs or not.
-  bool ValidateViaHeader(const std::string& fingerprint,
+  bool ValidateViaHeader(base::StringPiece fingerprint,
                          bool* has_chrome_proxy_via_header) const;
 
   // Reports UMA for tampering of the Via header.
@@ -137,30 +143,31 @@ class DataReductionProxyTamperDetection {
   // client. The content length sent by the Data Reduction Proxy is retuned as
   // |original_content_length| for future use, |original_content_length| cannot
   // be NULL.
-  bool ValidateContentLength(const std::string& fingerprint,
-                             int64 received_content_length,
-                             int64* original_content_length) const;
+  bool ValidateContentLength(base::StringPiece fingerprint,
+                             int64_t received_content_length,
+                             int64_t* original_content_length) const;
 
   // Reports UMA for tampering of the contents and the compression ratio. The
   // compression ratio is calculated from |content_length|, which is the
   // content length received by the Chromium client, and
   // |original_content_length|, which is the content length sent by the Data
   // Reduction Proxy.
-  void ReportUMAForContentLength(int64 content_length,
-                                 int64 original_content_length) const;
+  void ReportUMAForContentLength(int64_t content_length,
+                                 int64_t original_content_length) const;
 
-  // Returns a string representation of |values|.
+  // Returns a string representation of |values| in sorted order separated by
+  // commas, including a trailing comma at the end of the string.
   static std::string ValuesToSortedString(std::vector<std::string>* values);
 
   // Returns raw MD5 hash value for a given string |input|. It is different to
   // base::MD5String which is base16 encoded.
-  static void GetMD5(const std::string& input, std::string* output);
+  static void GetMD5(base::StringPiece input, std::string* output);
 
   // Returns all the values of |header_name| of the response |headers| as a
   // vector. This function is used for values that need to be sorted later.
   static std::vector<std::string> GetHeaderValues(
       const net::HttpResponseHeaders* headers,
-      const std::string& header_name);
+      base::StringPiece header_name);
 
   // Pointer to response headers.
   const net::HttpResponseHeaders* response_headers_;

@@ -6,8 +6,9 @@ extern "C" {
 #include <X11/Xlib.h>
 }
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_image_glx.h"
 #include "ui/gl/gl_surface_glx.h"
@@ -103,11 +104,12 @@ GLImageGLX::GLImageGLX(const gfx::Size& size, unsigned internalformat)
     : glx_pixmap_(0), size_(size), internalformat_(internalformat) {}
 
 GLImageGLX::~GLImageGLX() {
-  DCHECK_EQ(0u, glx_pixmap_);
+  if (glx_pixmap_)
+    glXDestroyGLXPixmap(gfx::GetXDisplay(), glx_pixmap_);
 }
 
 bool GLImageGLX::Initialize(XID pixmap) {
-  if (!gfx::GLSurfaceGLX::IsTextureFromPixmapSupported()) {
+  if (!GLSurfaceGLX::IsTextureFromPixmapSupported()) {
     DVLOG(0) << "GLX_EXT_texture_from_pixmap not supported.";
     return false;
   }
@@ -149,13 +151,6 @@ bool GLImageGLX::Initialize(XID pixmap) {
   }
 
   return true;
-}
-
-void GLImageGLX::Destroy(bool have_context) {
-  if (glx_pixmap_) {
-    glXDestroyGLXPixmap(gfx::GetXDisplay(), glx_pixmap_);
-    glx_pixmap_ = 0;
-  }
 }
 
 gfx::Size GLImageGLX::GetSize() {

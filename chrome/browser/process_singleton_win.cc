@@ -4,28 +4,27 @@
 
 #include "chrome/browser/process_singleton.h"
 
+#include <windows.h>
 #include <shellapi.h>
+#include <stddef.h>
 
 #include "base/base_paths.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process.h"
 #include "base/process/process_info.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "base/win/metro.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
-#include "chrome/browser/chrome_process_finder_win.h"
-#include "chrome/browser/metro_utils/metro_chrome_win.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/simple_message_box.h"
+#include "chrome/browser/win/chrome_process_finder.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_paths_internal.h"
@@ -40,8 +39,6 @@
 namespace {
 
 const char kLockfile[] = "lockfile";
-
-const int kMetroChromeActivationTimeoutMs = 3000;
 
 // A helper class that acquires the given |mutex| while the AutoLockMutex is in
 // scope.
@@ -174,30 +171,10 @@ bool ProcessLaunchNotification(
   return true;
 }
 
-// Returns true if Chrome needs to be relaunched into Windows 8 immersive mode.
-// Following conditions apply:-
-// 1. Windows 8 or greater.
-// 2. Not in Windows 8 immersive mode.
-// 3. Chrome is default browser.
-// 4. Process integrity level is not high.
-// 5. The profile data directory is the default directory.
-// 6. Last used mode was immersive/machine is a tablet.
-// TODO(ananta)
-// Move this function to a common place as the Windows 8 delegate_execute
-// handler can possibly use this.
-bool ShouldLaunchInWindows8ImmersiveMode(const base::FilePath& user_data_dir) {
-  // Returning false from this function doesn't mean we don't launch immersive
-  // mode in Aura. This function is specifically called in case when we need
-  // to relaunch desktop launched chrome into immersive mode through 'relaunch'
-  // menu. In case of Aura, we will use delegate_execute to do the relaunch.
-  return false;
-}
-
 bool DisplayShouldKillMessageBox() {
-  return chrome::ShowMessageBox(
+  return chrome::ShowQuestionMessageBox(
              NULL, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-             l10n_util::GetStringUTF16(IDS_BROWSER_HUNGBROWSER_MESSAGE),
-             chrome::MESSAGE_BOX_TYPE_QUESTION) !=
+             l10n_util::GetStringUTF16(IDS_BROWSER_HUNGBROWSER_MESSAGE)) !=
          chrome::MESSAGE_BOX_RESULT_NO;
 }
 
@@ -271,15 +248,20 @@ ProcessSingleton::NotifyResult ProcessSingleton::NotifyOtherProcess() {
       break;
   }
 
+  // The window is hung.
   DWORD process_id = 0;
   DWORD thread_id = ::GetWindowThreadProcessId(remote_window_, &process_id);
   if (!thread_id || !process_id) {
     remote_window_ = NULL;
     return PROCESS_NONE;
   }
+
+  // Get a handle to the process that created the window.
   base::Process process = base::Process::Open(process_id);
 
-  // The window is hung. Scan for every window to find a visible one.
+  // TODO(manzagop): capture a hang report.
+
+  // Scan for every window to find a visible one.
   bool visible_window = false;
   ::EnumThreadWindows(thread_id,
                       &BrowserWindowEnumeration,
@@ -299,16 +281,35 @@ ProcessSingleton::NotifyResult ProcessSingleton::NotifyOtherProcess() {
 
 ProcessSingleton::NotifyResult
 ProcessSingleton::NotifyOtherProcessOrCreate() {
-  ProcessSingleton::NotifyResult result = PROCESS_NONE;
-  if (!Create()) {
-    result = NotifyOtherProcess();
-    if (result == PROCESS_NONE)
-      result = PROFILE_IN_USE;
-  } else {
-    g_browser_process->platform_part()->PlatformSpecificCommandLineProcessing(
-        *base::CommandLine::ForCurrentProcess());
+  const base::TimeTicks begin_ticks = base::TimeTicks::Now();
+  for (int i = 0; i < 2; ++i) {
+    if (Create()) {
+      UMA_HISTOGRAM_MEDIUM_TIMES("Chrome.ProcessSingleton.TimeToCreate",
+                                 base::TimeTicks::Now() - begin_ticks);
+      return PROCESS_NONE;  // This is the single browser process.
+    }
+    ProcessSingleton::NotifyResult result = NotifyOtherProcess();
+    if (result == PROCESS_NOTIFIED || result == LOCK_ERROR) {
+      if (result == PROCESS_NOTIFIED) {
+        UMA_HISTOGRAM_MEDIUM_TIMES("Chrome.ProcessSingleton.TimeToNotify",
+                                   base::TimeTicks::Now() - begin_ticks);
+      } else {
+        UMA_HISTOGRAM_MEDIUM_TIMES("Chrome.ProcessSingleton.TimeToFailure",
+                                   base::TimeTicks::Now() - begin_ticks);
+      }
+      // The single browser process was notified, the user chose not to
+      // terminate a hung browser, or the lock file could not be created.
+      // Nothing more to do.
+      return result;
+    }
+    DCHECK_EQ(PROCESS_NONE, result);
+    // The process could not be notified for some reason, or it was hung and
+    // terminated. Retry once if this is the first time; otherwise, fall through
+    // to report that the process must exit because the profile is in use.
   }
-  return result;
+  UMA_HISTOGRAM_MEDIUM_TIMES("Chrome.ProcessSingleton.TimeToFailure",
+                             base::TimeTicks::Now() - begin_ticks);
+  return PROFILE_IN_USE;
 }
 
 // Look for a Chrome instance that uses the same profile directory. If there
@@ -316,8 +317,6 @@ ProcessSingleton::NotifyOtherProcessOrCreate() {
 // directory path.
 bool ProcessSingleton::Create() {
   static const wchar_t kMutexName[] = L"Local\\ChromeProcessSingletonStartup!";
-  static const wchar_t kMetroActivationEventName[] =
-      L"Local\\ChromeProcessSingletonStartupMetroActivation!";
 
   remote_window_ = chrome::FindRunningChromeWindow(user_data_dir_);
   if (!remote_window_ && !EscapeVirtualization(user_data_dir_)) {
@@ -339,57 +338,6 @@ bool ProcessSingleton::Create() {
     // between the time where we looked for it above and the time the mutex
     // was given to us.
     remote_window_ = chrome::FindRunningChromeWindow(user_data_dir_);
-
-
-    // In Win8+, a new Chrome process launched in Desktop mode may need to be
-    // transmuted into Metro Chrome (see ShouldLaunchInWindows8ImmersiveMode for
-    // heuristics). To accomplish this, the current Chrome activates Metro
-    // Chrome, releases the startup mutex, and waits for metro Chrome to take
-    // the singleton. From that point onward, the command line for this Chrome
-    // process will be sent to Metro Chrome by the usual channels.
-    if (!remote_window_ && base::win::GetVersion() >= base::win::VERSION_WIN8 &&
-        !base::win::IsMetroProcess()) {
-      // |metro_activation_event| is created right before activating a Metro
-      // Chrome (note that there can only be one Metro Chrome process; by OS
-      // design); all following Desktop processes will then wait for this event
-      // to be signaled by Metro Chrome which will do so as soon as it grabs
-      // this singleton (should any of the waiting processes timeout waiting for
-      // the signal they will try to grab the singleton for themselves which
-      // will result in a forced Desktop Chrome launch in the worst case).
-      base::win::ScopedHandle metro_activation_event(
-          ::OpenEvent(SYNCHRONIZE, FALSE, kMetroActivationEventName));
-      if (!metro_activation_event.IsValid() &&
-          ShouldLaunchInWindows8ImmersiveMode(user_data_dir_)) {
-        // No Metro activation is under way, but the desire is to launch in
-        // Metro mode: activate and rendez-vous with the activated process.
-        metro_activation_event.Set(
-            ::CreateEvent(NULL, TRUE, FALSE, kMetroActivationEventName));
-        if (!chrome::ActivateMetroChrome()) {
-          // Failed to launch immersive Chrome, default to launching on Desktop.
-          LOG(ERROR) << "Failed to launch immersive chrome";
-          metro_activation_event.Close();
-        }
-      }
-
-      if (metro_activation_event.IsValid()) {
-        // Release |only_me| (to let Metro Chrome grab this singleton) and wait
-        // until the event is signaled (i.e. Metro Chrome was successfully
-        // activated). Ignore timeout waiting for |metro_activation_event|.
-        {
-          AutoUnlockMutex auto_unlock_only_me(only_me.Get());
-
-          DWORD result = ::WaitForSingleObject(metro_activation_event.Get(),
-                                               kMetroChromeActivationTimeoutMs);
-          DPCHECK(result == WAIT_OBJECT_0 || result == WAIT_TIMEOUT)
-              << "Result = " << result;
-        }
-
-        // Check if this singleton was successfully grabbed by another process
-        // (hopefully Metro Chrome). Failing to do so, this process will grab
-        // the singleton and launch in Desktop mode.
-        remote_window_ = chrome::FindRunningChromeWindow(user_data_dir_);
-      }
-    }
 
     if (!remote_window_) {
       // We have to make sure there is no Chrome instance running on another
@@ -416,15 +364,6 @@ bool ProcessSingleton::Create() {
             base::Bind(&ProcessLaunchNotification, notification_callback_),
             user_data_dir_.value());
         CHECK(result && window_.hwnd());
-      }
-
-      if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
-        // Make sure no one is still waiting on Metro activation whether it
-        // succeeded (i.e., this is the Metro process) or failed.
-        base::win::ScopedHandle metro_activation_event(
-            ::OpenEvent(EVENT_MODIFY_STATE, FALSE, kMetroActivationEventName));
-        if (metro_activation_event.IsValid())
-          ::SetEvent(metro_activation_event.Get());
       }
     }
   }

@@ -5,100 +5,69 @@
 /**
  * @fileoverview 'settings-startup-urls-page' is the settings page
  * containing the urls that will be opened when chrome is started.
- *
- * Example:
- *
- *    <neon-animated-pages>
- *      <settings-startup-urls-page prefs="{{prefs}}">
- *      </settings-startup-urls-page>
- *      ... other pages ...
- *    </neon-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-startup-urls-page
  */
+
 Polymer({
   is: 'settings-startup-urls-page',
 
+  behaviors: [CrScrollableBehavior, WebUIListenerBehavior],
+
   properties: {
+    prefs: Object,
+
+    /** @type {settings.StartupUrlsPageBrowserProxy} */
+    browserProxy_: Object,
+
     /**
-     * Preferences state.
+     * Pages to load upon browser startup.
+     * @private {!Array<!StartupPageInfo>}
      */
-    prefs: {
-      type: Object,
-      notify: true,
-    },
+    startupPages_: Array,
 
-    newUrl: {
-      type: String,
-    },
+    /** @private */
+    showStartupUrlDialog_: Boolean,
 
-    /** @type {!Array<string>} */
-    savedUrlList: {
-      type: Array,
-    },
+    /** @private {?StartupPageInfo} */
+    startupUrlDialogModel_: Object,
   },
 
-  observers: [
-    'prefsChanged_(prefs.session.startup_urls.value.*)',
-  ],
-
+  /** @override */
   attached: function() {
-    var self = this;
-    cr.define('Settings', function() {
-      return {
-        updateStartupPages: function() {
-          return self.updateStartupPages_.apply(self, arguments);
-        },
-      };
-    });
+    this.browserProxy_ = settings.StartupUrlsPageBrowserProxyImpl.getInstance();
+    this.addWebUIListener('update-startup-pages', function(startupPages) {
+      // If an "edit" URL dialog was open, close it, because the underlying page
+      // might have just been removed (and model indices have changed anyway).
+      if (this.startupUrlDialogModel_)
+        this.destroyUrlDialog_();
+      this.startupPages_ = startupPages;
+      this.updateScrollableContents();
+    }.bind(this));
+    this.browserProxy_.loadStartupPages();
+
+    this.addEventListener(settings.EDIT_STARTUP_URL_EVENT, function(event) {
+      this.startupUrlDialogModel_ = event.detail;
+      this.showStartupUrlDialog_ = true;
+      event.stopPropagation();
+    }.bind(this));
   },
 
-
-  /** @private */
-  prefsChanged_: function(change) {
-    if (!this.savedUrlList) {
-      var pref = /** @type {chrome.settingsPrivate.PrefObject} */(
-          this.get('prefs.session.startup_urls'));
-      if (pref)
-        this.savedUrlList = pref.value.slice();
-    }
+  /**
+   * @param {!Event} e
+   * @private
+   */
+  onAddPageTap_: function(e) {
+    e.preventDefault();
+    this.showStartupUrlDialog_ = true;
   },
 
   /** @private */
-  updateStartupPages_: function(data) {
-    var urlArray = [];
-    for (var i = 0; i < data.length; ++i)
-      urlArray.push(data[i].url);
-    this.set('prefs.session.startup_urls.value', urlArray);
+  destroyUrlDialog_: function() {
+    this.showStartupUrlDialog_ = false;
+    this.startupUrlDialogModel_ = null;
   },
 
   /** @private */
   onUseCurrentPagesTap_: function() {
-    chrome.send('setStartupPagesToCurrentPages');
-  },
-
-  /** @private */
-  onCancelTap_: function() {
-    if (this.savedUrlList !== undefined) {
-      this.set('prefs.session.startup_urls.value', this.savedUrlList.slice());
-    }
-  },
-
-  /** @private */
-  onOkTap_: function() {
-    var value = this.newUrl && this.newUrl.trim();
-    if (!value)
-      return;
-    this.push('prefs.session.startup_urls.value', value);
-    this.newUrl = '';
-  },
-
-  /**
-   * @param {!{model: !{index: number}}} e
-   * @private
-   */
-  onRemoveUrlTap_: function(e) {
-    this.splice('prefs.session.startup_urls.value', e.model.index, 1);
+    this.browserProxy_.useCurrentPages();
   },
 });

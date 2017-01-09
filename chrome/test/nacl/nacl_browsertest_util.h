@@ -5,8 +5,11 @@
 #ifndef CHROME_TEST_NACL_NACL_BROWSERTEST_UTIL_H_
 #define CHROME_TEST_NACL_NACL_BROWSERTEST_UTIL_H_
 
+#include <memory>
+
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/javascript_test_observer.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -104,7 +107,7 @@ class NaClBrowserTestBase : public InProcessBrowserTest {
  private:
   bool StartTestServer();
 
-  scoped_ptr<net::EmbeddedTestServer> test_server_;
+  std::unique_ptr<net::EmbeddedTestServer> test_server_;
 };
 
 class NaClBrowserTestNewlib : public NaClBrowserTestBase {
@@ -174,7 +177,7 @@ class NaClBrowserTestGLibcExtension : public NaClBrowserTestGLibc {
 #endif
 
 // NaCl glibc toolchain is not available on MIPS
-#if defined(ARCH_CPU_MIPS_FAMILY) || defined(DISABLE_NACL_BROWSERTESTS)
+#if defined(ARCH_CPU_MIPS_FAMILY)
 #  define MAYBE_GLIBC(test_name) DISABLED_##test_name
 #else
 #  define MAYBE_GLIBC(test_name) test_name
@@ -193,9 +196,10 @@ class NaClBrowserTestGLibcExtension : public NaClBrowserTestGLibc {
 
 // Similar to MAYBE_NONSFI, this is available only on x86-32, x86-64 or
 // ARM linux.
-#if defined(OS_LINUX) && \
-    (defined(ARCH_CPU_X86_FAMILY) || defined(ARCH_CPU_ARMEL)) && \
-    !defined(DISABLE_NACL_BROWSERTESTS)
+#if defined(OS_LINUX) && !defined(ADDRESS_SANITIZER) && \
+    !defined(THREAD_SANITIZER) && !defined(MEMORY_SANITIZER) && \
+    !defined(LEAK_SANITIZER) && \
+    (defined(ARCH_CPU_X86_FAMILY) || defined(ARCH_CPU_ARMEL))
 #  define MAYBE_PNACL_NONSFI(test_case) test_case
 #else
 #  define MAYBE_PNACL_NONSFI(test_case) DISABLED_##test_case

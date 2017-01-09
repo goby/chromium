@@ -18,11 +18,11 @@
 #ifndef MEDIA_AUDIO_AUDIO_OUTPUT_DISPATCHER_H_
 #define MEDIA_AUDIO_AUDIO_OUTPUT_DISPATCHER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 
 namespace base {
 class SingleThreadTaskRunner;

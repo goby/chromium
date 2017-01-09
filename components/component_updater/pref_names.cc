@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "components/component_updater/pref_names.h"
 
 namespace prefs {
@@ -21,6 +22,10 @@ const char kSwReporterLastExitCode[] = "software_reporter.last_exit_code";
 // The last time SwReporter was triggered. Saved in local state.
 const char kSwReporterLastTimeTriggered[] =
     "software_reporter.last_time_triggered";
+
+// The last time SwReporter ran in send report mode. Saved in local state.
+const char kSwReporterLastTimeSentReport[] =
+    "software_reporter.last_time_sent_report";
 
 // Identify whether there is a pending prompt to be added to the Chrome menu.
 const char kSwReporterPendingPrompt[] = "software_reporter.pending_prompt";

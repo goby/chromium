@@ -4,11 +4,15 @@
 
 #include "chrome/browser/predictors/autocomplete_action_predictor.h"
 
+#include <stddef.h>
+
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/guid.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -93,7 +97,7 @@ class AutocompleteActionPredictorTest : public testing::Test {
   ~AutocompleteActionPredictorTest() override {
     predictor_.reset(NULL);
     profile_.reset(NULL);
-    loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SetUp() override {
@@ -217,8 +221,8 @@ class AutocompleteActionPredictorTest : public testing::Test {
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread db_thread_;
   content::TestBrowserThread file_thread_;
-  scoped_ptr<TestingProfile> profile_;
-  scoped_ptr<AutocompleteActionPredictor> predictor_;
+  std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<AutocompleteActionPredictor> predictor_;
 };
 
 

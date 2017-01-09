@@ -7,6 +7,7 @@
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "ui/base/user_activity/user_activity_observer.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/platform/platform_event_source.h"
@@ -20,9 +21,9 @@ UserActivityDetector* g_instance = nullptr;
 // Returns a string describing |event|.
 std::string GetEventDebugString(const ui::Event* event) {
   std::string details = base::StringPrintf(
-      "type=%d name=%s flags=%d time=%" PRId64,
-      event->type(), event->name().c_str(), event->flags(),
-      event->time_stamp().InMilliseconds());
+      "type=%d name=%s flags=%d time=%" PRId64, event->type(),
+      event->name().c_str(), event->flags(),
+      (event->time_stamp() - base::TimeTicks()).InMilliseconds());
 
   if (event->IsKeyEvent()) {
     details += base::StringPrintf(" key_code=%d",
@@ -52,9 +53,7 @@ UserActivityDetector::UserActivityDetector() {
 
   ui::PlatformEventSource* platform_event_source =
       ui::PlatformEventSource::GetInstance();
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
-  CHECK(platform_event_source);
-#endif
+  // TODO(sad): Need a PES for mus.
   if (platform_event_source)
     platform_event_source->AddPlatformEventObserver(this);
 }
@@ -62,9 +61,6 @@ UserActivityDetector::UserActivityDetector() {
 UserActivityDetector::~UserActivityDetector() {
   ui::PlatformEventSource* platform_event_source =
       ui::PlatformEventSource::GetInstance();
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
-  CHECK(platform_event_source);
-#endif
   if (platform_event_source)
     platform_event_source->RemovePlatformEventObserver(this);
   g_instance = nullptr;
@@ -95,7 +91,7 @@ void UserActivityDetector::OnDisplayPowerChanging() {
 
 void UserActivityDetector::DidProcessEvent(
     const PlatformEvent& platform_event) {
-  scoped_ptr<ui::Event> event(ui::EventFromNative(platform_event));
+  std::unique_ptr<ui::Event> event(ui::EventFromNative(platform_event));
   ProcessReceivedEvent(event.get());
 }
 
@@ -121,12 +117,14 @@ void UserActivityDetector::ProcessReceivedEvent(const ui::Event* event) {
 void UserActivityDetector::HandleActivity(const ui::Event* event) {
   base::TimeTicks now = GetCurrentTime();
   last_activity_time_ = now;
+  last_activity_name_ = event->name();
   if (last_observer_notification_time_.is_null() ||
       (now - last_observer_notification_time_).InMillisecondsF() >=
       kNotifyIntervalMs) {
     if (VLOG_IS_ON(1))
       VLOG(1) << "Reporting user activity: " << GetEventDebugString(event);
-    FOR_EACH_OBSERVER(UserActivityObserver, observers_, OnUserActivity(event));
+    for (UserActivityObserver& observer : observers_)
+      observer.OnUserActivity(event);
     last_observer_notification_time_ = now;
   }
 }

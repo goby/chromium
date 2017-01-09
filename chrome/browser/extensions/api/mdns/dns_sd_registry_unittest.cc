@@ -31,7 +31,7 @@ class TestDnsSdRegistry : public DnsSdRegistry {
     if (service_data_map_.find(service_type) == service_data_map_.end())
       return 0;
 
-    return service_data_map_[service_type].get()->GetListenerCount();
+    return service_data_map_[service_type]->GetListenerCount();
   }
 
   MockDnsSdDeviceLister* GetLister(const std::string& service_type) {
@@ -79,7 +79,7 @@ class DnsSdRegistryTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<TestDnsSdRegistry> registry_;
+  std::unique_ptr<TestDnsSdRegistry> registry_;
   MockDnsSdObserver observer_;
 };
 

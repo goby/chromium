@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,15 +15,13 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/cache_type.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
@@ -45,16 +44,16 @@ const char kKb[] = "kB";
 
 struct CacheSpec {
  public:
-  static scoped_ptr<CacheSpec> Parse(const std::string& spec_string) {
+  static std::unique_ptr<CacheSpec> Parse(const std::string& spec_string) {
     std::vector<std::string> tokens = base::SplitString(
         spec_string, ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
     if (tokens.size() != 3)
-      return scoped_ptr<CacheSpec>();
+      return std::unique_ptr<CacheSpec>();
     if (tokens[0] != kBlockFileBackendType && tokens[0] != kSimpleBackendType)
-      return scoped_ptr<CacheSpec>();
+      return std::unique_ptr<CacheSpec>();
     if (tokens[1] != kDiskCacheType && tokens[1] != kAppCacheType)
-      return scoped_ptr<CacheSpec>();
-    return scoped_ptr<CacheSpec>(new CacheSpec(
+      return std::unique_ptr<CacheSpec>();
+    return std::unique_ptr<CacheSpec>(new CacheSpec(
         tokens[0] == kBlockFileBackendType ? net::CACHE_BACKEND_BLOCKFILE
                                            : net::CACHE_BACKEND_SIMPLE,
         tokens[1] == kDiskCacheType ? net::DISK_CACHE : net::APP_CACHE,
@@ -86,9 +85,9 @@ void SetSuccessCodeOnCompletion(base::RunLoop* run_loop,
   run_loop->Quit();
 }
 
-scoped_ptr<Backend> CreateAndInitBackend(const CacheSpec& spec) {
-  scoped_ptr<Backend> result;
-  scoped_ptr<Backend> backend;
+std::unique_ptr<Backend> CreateAndInitBackend(const CacheSpec& spec) {
+  std::unique_ptr<Backend> result;
+  std::unique_ptr<Backend> backend;
   bool succeeded = false;
   base::RunLoop run_loop;
   const net::CompletionCallback callback = base::Bind(
@@ -105,7 +104,7 @@ scoped_ptr<Backend> CreateAndInitBackend(const CacheSpec& spec) {
   if (!succeeded) {
     LOG(ERROR) << "Could not initialize backend in "
                << spec.path.LossyDisplayName();
-    return result.Pass();
+    return result;
   }
   // For the simple cache, the index may not be initialized yet.
   if (spec.backend_type == net::CACHE_BACKEND_SIMPLE) {
@@ -125,12 +124,12 @@ scoped_ptr<Backend> CreateAndInitBackend(const CacheSpec& spec) {
     if (!succeeded) {
       LOG(ERROR) << "Could not initialize Simple Cache in "
                  << spec.path.LossyDisplayName();
-      return result.Pass();
+      return result;
     }
   }
   DCHECK(backend);
   result.swap(backend);
-  return result.Pass();
+  return result;
 }
 
 // Parses range lines from /proc/<PID>/smaps, e.g. (anonymous read write):
@@ -162,7 +161,7 @@ bool ParseRangeLine(const std::string& line,
 // only if parsing succeeded.
 bool ParseRangeProperty(const std::string& line,
                         std::vector<std::string>* tokens,
-                        uint64* size,
+                        uint64_t* size,
                         bool* is_private_dirty) {
   *tokens = base::SplitString(line, base::kWhitespaceASCII,
                               base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
@@ -183,7 +182,7 @@ bool ParseRangeProperty(const std::string& line,
     return true;
   }
   const std::string& size_str = (*tokens)[1];
-  uint64 map_size = 0;
+  uint64_t map_size = 0;
   if (!base::StringToUint64(size_str, &map_size))
     return true;
   *is_private_dirty = true;
@@ -191,7 +190,7 @@ bool ParseRangeProperty(const std::string& line,
   return true;
 }
 
-uint64 GetMemoryConsumption() {
+uint64_t GetMemoryConsumption() {
   std::ifstream maps_file(
       base::StringPrintf("/proc/%d/smaps", getpid()).c_str());
   if (!maps_file.good()) {
@@ -200,7 +199,7 @@ uint64 GetMemoryConsumption() {
   }
   std::string line;
   std::vector<std::string> tokens;
-  uint64 total_size = 0;
+  uint64_t total_size = 0;
   if (!std::getline(maps_file, line) || line.empty())
     return total_size;
   while (true) {
@@ -211,7 +210,7 @@ uint64 GetMemoryConsumption() {
     if (!std::getline(maps_file, line) || line.empty())
       return total_size;
     bool is_private_dirty = false;
-    uint64 size = 0;
+    uint64_t size = 0;
     while (ParseRangeProperty(line, &tokens, &size, &is_private_dirty)) {
       if (is_anonymous_read_write && is_private_dirty) {
         total_size += size;
@@ -224,18 +223,17 @@ uint64 GetMemoryConsumption() {
   return total_size;
 }
 
-bool CacheMemTest(const ScopedVector<CacheSpec>& specs) {
-  ScopedVector<Backend> backends;
-  ScopedVector<CacheSpec>::const_iterator it;
-  for (it = specs.begin(); it != specs.end(); ++it) {
-    scoped_ptr<Backend> backend = CreateAndInitBackend(**it);
+bool CacheMemTest(const std::vector<std::unique_ptr<CacheSpec>>& specs) {
+  std::vector<std::unique_ptr<Backend>> backends;
+  for (const auto& it : specs) {
+    std::unique_ptr<Backend> backend = CreateAndInitBackend(*it);
     if (!backend)
       return false;
-    std::cout << "Number of entries in " << (*it)->path.LossyDisplayName()
-              << " : " << backend->GetEntryCount() << std::endl;
-    backends.push_back(backend.release());
+    std::cout << "Number of entries in " << it->path.LossyDisplayName() << " : "
+              << backend->GetEntryCount() << std::endl;
+    backends.push_back(std::move(backend));
   }
-  const uint64 memory_consumption = GetMemoryConsumption();
+  const uint64_t memory_consumption = GetMemoryConsumption();
   std::cout << "Private dirty memory: " << memory_consumption << " kB"
             << std::endl;
   return true;
@@ -254,13 +252,13 @@ void PrintUsage(std::ostream* stream) {
 }
 
 bool ParseAndStoreSpec(const std::string& spec_str,
-                       ScopedVector<CacheSpec>* specs) {
-  scoped_ptr<CacheSpec> spec = CacheSpec::Parse(spec_str);
+                       std::vector<std::unique_ptr<CacheSpec>>* specs) {
+  std::unique_ptr<CacheSpec> spec = CacheSpec::Parse(spec_str);
   if (!spec) {
     PrintUsage(&std::cerr);
     return false;
   }
-  specs->push_back(spec.release());
+  specs->push_back(std::move(spec));
   return true;
 }
 
@@ -282,7 +280,7 @@ bool Main(int argc, char** argv) {
     PrintUsage(&std::cerr);
     return false;
   }
-  ScopedVector<CacheSpec> specs;
+  std::vector<std::unique_ptr<CacheSpec>> specs;
   const std::string spec_str_1 = command_line.GetSwitchValueASCII("spec-1");
   if (!ParseAndStoreSpec(spec_str_1, &specs))
     return false;

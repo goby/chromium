@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/page/PagePopupController.h"
 
 #include "core/page/PagePopup.h"
@@ -38,92 +37,82 @@
 
 namespace blink {
 
-PagePopupController::PagePopupController(PagePopup& popup, PagePopupClient* client)
-    : m_popup(popup)
-    , m_popupClient(client)
-{
-    ASSERT(client);
+PagePopupController::PagePopupController(PagePopup& popup,
+                                         PagePopupClient* client)
+    : m_popup(popup), m_popupClient(client) {
+  ASSERT(client);
 }
 
-PassRefPtrWillBeRawPtr<PagePopupController> PagePopupController::create(PagePopup& popup, PagePopupClient* client)
-{
-    return adoptRefWillBeNoop(new PagePopupController(popup, client));
+PagePopupController* PagePopupController::create(PagePopup& popup,
+                                                 PagePopupClient* client) {
+  return new PagePopupController(popup, client);
 }
 
-void PagePopupController::setValueAndClosePopup(int numValue, const String& stringValue)
-{
-    if (m_popupClient)
-        m_popupClient->setValueAndClosePopup(numValue, stringValue);
+void PagePopupController::setValueAndClosePopup(int numValue,
+                                                const String& stringValue) {
+  if (m_popupClient)
+    m_popupClient->setValueAndClosePopup(numValue, stringValue);
 }
 
-void PagePopupController::setValue(const String& value)
-{
-    if (m_popupClient)
-        m_popupClient->setValue(value);
+void PagePopupController::setValue(const String& value) {
+  if (m_popupClient)
+    m_popupClient->setValue(value);
 }
 
-void PagePopupController::closePopup()
-{
-    if (m_popupClient)
-        m_popupClient->closePopup();
+void PagePopupController::closePopup() {
+  if (m_popupClient)
+    m_popupClient->closePopup();
 }
 
-void PagePopupController::selectFontsFromOwnerDocument(Document* targetDocument)
-{
-    ASSERT(targetDocument);
-    if (m_popupClient)
-        m_popupClient->selectFontsFromOwnerDocument(*targetDocument);
+void PagePopupController::selectFontsFromOwnerDocument(
+    Document* targetDocument) {
+  ASSERT(targetDocument);
+  if (m_popupClient)
+    m_popupClient->selectFontsFromOwnerDocument(*targetDocument);
 }
 
-String PagePopupController::localizeNumberString(const String& numberString)
-{
-    if (m_popupClient)
-        return m_popupClient->locale().convertToLocalizedNumber(numberString);
-    return numberString;
+String PagePopupController::localizeNumberString(const String& numberString) {
+  if (m_popupClient)
+    return m_popupClient->locale().convertToLocalizedNumber(numberString);
+  return numberString;
 }
 
-String PagePopupController::formatMonth(int year, int zeroBaseMonth)
-{
-    if (!m_popupClient)
-        return emptyString();
-    DateComponents date;
-    date.setMonthsSinceEpoch((year - 1970) * 12.0 + zeroBaseMonth);
-    return m_popupClient->locale().formatDateTime(date, Locale::FormatTypeMedium);
+String PagePopupController::formatMonth(int year, int zeroBaseMonth) {
+  if (!m_popupClient)
+    return emptyString();
+  DateComponents date;
+  date.setMonthsSinceEpoch((year - 1970) * 12.0 + zeroBaseMonth);
+  return m_popupClient->locale().formatDateTime(date, Locale::FormatTypeMedium);
 }
 
-String PagePopupController::formatShortMonth(int year, int zeroBaseMonth)
-{
-    if (!m_popupClient)
-        return emptyString();
-    DateComponents date;
-    date.setMonthsSinceEpoch((year - 1970) * 12.0 + zeroBaseMonth);
-    return m_popupClient->locale().formatDateTime(date, Locale::FormatTypeShort);
+String PagePopupController::formatShortMonth(int year, int zeroBaseMonth) {
+  if (!m_popupClient)
+    return emptyString();
+  DateComponents date;
+  date.setMonthsSinceEpoch((year - 1970) * 12.0 + zeroBaseMonth);
+  return m_popupClient->locale().formatDateTime(date, Locale::FormatTypeShort);
 }
 
-String PagePopupController::formatWeek(int year, int weekNumber, const String& localizedDateString)
-{
-    if (!m_popupClient)
-        return emptyString();
-    DateComponents week;
-    bool setWeekResult = week.setWeek(year, weekNumber);
-    ASSERT_UNUSED(setWeekResult, setWeekResult);
-    String localizedWeek = m_popupClient->locale().formatDateTime(week);
-    return m_popupClient->locale().queryString(WebLocalizedString::AXCalendarWeekDescription, localizedWeek, localizedDateString);
+String PagePopupController::formatWeek(int year,
+                                       int weekNumber,
+                                       const String& localizedDateString) {
+  if (!m_popupClient)
+    return emptyString();
+  DateComponents week;
+  bool setWeekResult = week.setWeek(year, weekNumber);
+  DCHECK(setWeekResult);
+  String localizedWeek = m_popupClient->locale().formatDateTime(week);
+  return m_popupClient->locale().queryString(
+      WebLocalizedString::AXCalendarWeekDescription, localizedWeek,
+      localizedDateString);
 }
 
-void PagePopupController::clearPagePopupClient()
-{
-    m_popupClient = nullptr;
+void PagePopupController::clearPagePopupClient() {
+  m_popupClient = nullptr;
 }
 
-void PagePopupController::histogramEnumeration(const String& name, int sample, int boundaryValue)
-{
-    Platform::current()->histogramEnumeration(name.utf8().data(), sample, boundaryValue);
+void PagePopupController::setWindowRect(int x, int y, int width, int height) {
+  m_popup.setWindowRect(IntRect(x, y, width, height));
 }
 
-void PagePopupController::setWindowRect(int x, int y, int width, int height)
-{
-    m_popup.setWindowRect(IntRect(x, y, width, height));
-}
-
-} // namespace blink
+}  // namespace blink

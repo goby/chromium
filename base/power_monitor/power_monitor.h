@@ -6,7 +6,7 @@
 #define BASE_POWER_MONITOR_POWER_MONITOR_H_
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list_threadsafe.h"
 #include "base/power_monitor/power_observer.h"
@@ -20,7 +20,7 @@ class PowerMonitorSource;
 class BASE_EXPORT PowerMonitor {
  public:
   // Takes ownership of |source|.
-  explicit PowerMonitor(scoped_ptr<PowerMonitorSource> source);
+  explicit PowerMonitor(std::unique_ptr<PowerMonitorSource> source);
   ~PowerMonitor();
 
   // Get the process-wide PowerMonitor (if not present, returns NULL).
@@ -45,7 +45,7 @@ class BASE_EXPORT PowerMonitor {
   void NotifyResume();
 
   scoped_refptr<ObserverListThreadSafe<PowerObserver> > observers_;
-  scoped_ptr<PowerMonitorSource> source_;
+  std::unique_ptr<PowerMonitorSource> source_;
 
   DISALLOW_COPY_AND_ASSIGN(PowerMonitor);
 };

@@ -4,6 +4,9 @@
 
 #include "components/dom_distiller/core/distillable_page_detector.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/logging.h"
 #include "grit/components_resources.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -17,9 +20,9 @@ const DistillablePageDetector* DistillablePageDetector::GetDefault() {
         ResourceBundle::GetSharedInstance()
             .GetRawDataResource(IDR_DISTILLABLE_PAGE_SERIALIZED_MODEL)
             .as_string();
-    scoped_ptr<AdaBoostProto> proto(new AdaBoostProto);
+    std::unique_ptr<AdaBoostProto> proto(new AdaBoostProto);
     CHECK(proto->ParseFromString(serialized_proto));
-    detector = new DistillablePageDetector(proto.Pass());
+    detector = new DistillablePageDetector(std::move(proto));
   }
   return detector;
 }
@@ -31,16 +34,30 @@ const DistillablePageDetector* DistillablePageDetector::GetNewModel() {
         ResourceBundle::GetSharedInstance()
             .GetRawDataResource(IDR_DISTILLABLE_PAGE_SERIALIZED_MODEL_NEW)
             .as_string();
-    scoped_ptr<AdaBoostProto> proto(new AdaBoostProto);
+    std::unique_ptr<AdaBoostProto> proto(new AdaBoostProto);
     CHECK(proto->ParseFromString(serialized_proto));
-    detector = new DistillablePageDetector(proto.Pass());
+    detector = new DistillablePageDetector(std::move(proto));
+  }
+  return detector;
+}
+
+const DistillablePageDetector* DistillablePageDetector::GetLongPageModel() {
+  static DistillablePageDetector* detector = nullptr;
+  if (!detector) {
+    std::string serialized_proto =
+        ResourceBundle::GetSharedInstance()
+            .GetRawDataResource(IDR_LONG_PAGE_SERIALIZED_MODEL)
+            .as_string();
+    std::unique_ptr<AdaBoostProto> proto(new AdaBoostProto);
+    CHECK(proto->ParseFromString(serialized_proto));
+    detector = new DistillablePageDetector(std::move(proto));
   }
   return detector;
 }
 
 DistillablePageDetector::DistillablePageDetector(
-    scoped_ptr<AdaBoostProto> proto)
-    : proto_(proto.Pass()), threshold_(0.0) {
+    std::unique_ptr<AdaBoostProto> proto)
+    : proto_(std::move(proto)), threshold_(0.0) {
   CHECK(proto_->num_stumps() == proto_->stump_size());
   for (int i = 0; i < proto_->num_stumps(); ++i) {
     const StumpProto& stump = proto_->stump(i);

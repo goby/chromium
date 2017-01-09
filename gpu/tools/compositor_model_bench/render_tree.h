@@ -8,11 +8,14 @@
 #ifndef GPU_TOOLS_COMPOSITOR_MODEL_BENCH_RENDER_TREE_H_
 #define GPU_TOOLS_COMPOSITOR_MODEL_BENCH_RENDER_TREE_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_vector.h"
+#include "base/memory/ptr_util.h"
 #include "gpu/tools/compositor_model_bench/shaders.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_implementation.h"
@@ -144,11 +147,11 @@ class ContentLayerNode : public RenderNode {
   }
 
   void add_child(RenderNode* child) {
-    children_.push_back(child);
+    children_.push_back(base::WrapUnique(child));
   }
 
  private:
-  ScopedVector<RenderNode> children_;
+  std::vector<std::unique_ptr<RenderNode>> children_;
   bool skipsDraw_;
 };
 
@@ -205,7 +208,7 @@ class RenderNodeVisitor {
   virtual void EndVisitCCNode(CCNode* v);
 };
 
-RenderNode* BuildRenderTreeFromFile(const base::FilePath& path);
+std::unique_ptr<RenderNode> BuildRenderTreeFromFile(const base::FilePath& path);
 
 #endif  // GPU_TOOLS_COMPOSITOR_MODEL_BENCH_RENDER_TREE_H_
 

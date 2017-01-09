@@ -4,6 +4,10 @@
 
 #include "sql/test/test_helpers.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/files/file_util.h"
@@ -95,6 +99,19 @@ bool CorruptSizeInHeader(const base::FilePath& db_path) {
   return true;
 }
 
+bool CorruptSizeInHeaderWithLock(const base::FilePath& db_path) {
+  sql::Connection db;
+  if (!db.Open(db_path))
+    return false;
+
+  // Prevent anyone else from using the database.  The transaction is
+  // rolled back when |db| is destroyed.
+  if (!db.Execute("BEGIN EXCLUSIVE"))
+    return false;
+
+  return CorruptSizeInHeader(db_path);
+}
+
 void CorruptSizeInHeaderMemory(unsigned char* header, int64_t db_size) {
   const size_t kPageSizeOffset = 16;
   const size_t kFileChangeCountOffset = 24;
@@ -132,7 +149,7 @@ bool CorruptTableOrIndex(const base::FilePath& db_path,
 
   // SQLite uses 1-based page numbering.
   const long int page_ofs = (page_number - 1) * page_size;
-  scoped_ptr<char[]> page_buf(new char[page_size]);
+  std::unique_ptr<char[]> page_buf(new char[page_size]);
 
   // Get the page into page_buf.
   base::ScopedFILE file(base::OpenFile(db_path, "rb+"));
@@ -159,7 +176,7 @@ bool CorruptTableOrIndex(const base::FilePath& db_path,
 
   // Check that the stored page actually changed.  This catches usage
   // errors where |update_sql| is not related to |tree_name|.
-  scoped_ptr<char[]> check_page_buf(new char[page_size]);
+  std::unique_ptr<char[]> check_page_buf(new char[page_size]);
   // The on-disk data should have changed.
   if (0 != fflush(file.get()))
     return false;
@@ -251,6 +268,29 @@ std::string IntegrityCheck(sql::Connection* db) {
   EXPECT_TRUE(statement.Step());
 
   return statement.ColumnString(0);
+}
+
+std::string ExecuteWithResult(sql::Connection* db, const char* sql) {
+  sql::Statement s(db->GetUniqueStatement(sql));
+  return s.Step() ? s.ColumnString(0) : std::string();
+}
+
+std::string ExecuteWithResults(sql::Connection* db,
+                               const char* sql,
+                               const char* column_sep,
+                               const char* row_sep) {
+  sql::Statement s(db->GetUniqueStatement(sql));
+  std::string ret;
+  while (s.Step()) {
+    if (!ret.empty())
+      ret += row_sep;
+    for (int i = 0; i < s.ColumnCount(); ++i) {
+      if (i > 0)
+        ret += column_sep;
+      ret += s.ColumnString(i);
+    }
+  }
+  return ret;
 }
 
 }  // namespace test

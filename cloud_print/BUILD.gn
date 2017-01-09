@@ -7,9 +7,6 @@ import("//testing/test.gni")
 group("cloud_print") {
   if (is_win) {
     public_deps = [
-      "//cloud_print/service/win:cloud_print_service",
-      "//cloud_print/service/win:cloud_print_service_config",
-      "//cloud_print/service/win:cloud_print_service_setup",
       "//cloud_print/virtual_driver/win/install:virtual_driver_setup",
       "//cloud_print/virtual_driver/win/port_monitor",
     ]
@@ -24,23 +21,16 @@ group("cloud_print") {
 
 test("cloud_print_unittests") {
   sources = [
-    "service/service_state_unittest.cc",
+    "virtual_driver/win/port_monitor/port_monitor_unittest.cc",
   ]
 
   deps = [
     "//base",
     "//base/test:run_all_unittests",
-    "//cloud_print/service:lib",
+    "//cloud_print/virtual_driver/win/port_monitor:lib",
     "//testing/gmock",
     "//testing/gtest",
   ]
 
-  if (is_win) {
-    sources += [
-      "service/win/service_ipc_unittest.cc",
-      "virtual_driver/win/port_monitor/port_monitor_unittest.cc",
-    ]
-    deps += [ "//cloud_print/virtual_driver/win/port_monitor:lib" ]
-    libs = [ "secur32.lib" ]
-  }
+  libs = [ "secur32.lib" ]
 }

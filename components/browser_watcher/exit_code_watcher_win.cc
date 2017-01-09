@@ -4,6 +4,8 @@
 
 #include "components/browser_watcher/exit_code_watcher_win.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/process/kill.h"
 #include "base/strings/stringprintf.h"
@@ -22,9 +24,8 @@ base::string16 GetValueName(const base::Time creation_time,
 
 }  // namespace
 
-ExitCodeWatcher::ExitCodeWatcher(const base::char16* registry_path) :
-    registry_path_(registry_path), exit_code_(STILL_ACTIVE) {
-}
+ExitCodeWatcher::ExitCodeWatcher(base::StringPiece16 registry_path)
+    : registry_path_(registry_path.as_string()), exit_code_(STILL_ACTIVE) {}
 
 ExitCodeWatcher::~ExitCodeWatcher() {
 }
@@ -50,7 +51,7 @@ bool ExitCodeWatcher::Initialize(base::Process process) {
   }
 
   // Success, take ownership of the process.
-  process_ = process.Pass();
+  process_ = std::move(process);
   process_creation_time_ = base::Time::FromFileTime(creation_time);
 
   // Start by writing the value STILL_ACTIVE to registry, to allow detection

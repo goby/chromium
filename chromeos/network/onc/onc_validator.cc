@@ -4,10 +4,14 @@
 
 #include "chromeos/network/onc/onc_validator.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -26,15 +30,6 @@ std::vector<T> toVector(T const (&array)[N]) {
   return std::vector<T>(array, array + N);
 }
 
-// Copied from policy/configuration_policy_handler.cc.
-// TODO(pneubeck): move to a common place like base/.
-std::string ValueTypeToString(base::Value::Type type) {
-  const char* const strings[] = {"null",   "boolean", "integer",    "double",
-                                 "string", "binary",  "dictionary", "list"};
-  CHECK(static_cast<size_t>(type) < arraysize(strings));
-  return strings[type];
-}
-
 }  // namespace
 
 Validator::Validator(bool error_on_unknown_field,
@@ -49,7 +44,7 @@ Validator::Validator(bool error_on_unknown_field,
 
 Validator::~Validator() {}
 
-scoped_ptr<base::DictionaryValue> Validator::ValidateAndRepairObject(
+std::unique_ptr<base::DictionaryValue> Validator::ValidateAndRepairObject(
     const OncValueSignature* object_signature,
     const base::DictionaryValue& onc_object,
     Result* result) {
@@ -57,7 +52,7 @@ scoped_ptr<base::DictionaryValue> Validator::ValidateAndRepairObject(
   *result = VALID;
   error_or_warning_found_ = false;
   bool error = false;
-  scoped_ptr<base::Value> result_value =
+  std::unique_ptr<base::Value> result_value =
       MapValue(*object_signature, onc_object, &error);
   if (error) {
     *result = INVALID;
@@ -66,41 +61,36 @@ scoped_ptr<base::DictionaryValue> Validator::ValidateAndRepairObject(
     *result = VALID_WITH_WARNINGS;
   }
   // The return value should be NULL if, and only if, |result| equals INVALID.
-  DCHECK_EQ(result_value.get() == NULL, *result == INVALID);
-
-  base::DictionaryValue* result_dict = NULL;
-  if (result_value) {
-    result_value.release()->GetAsDictionary(&result_dict);
-    CHECK(result_dict);
-  }
-
-  return make_scoped_ptr(result_dict);
+  DCHECK_EQ(!result_value, *result == INVALID);
+  return base::DictionaryValue::From(std::move(result_value));
 }
 
-scoped_ptr<base::Value> Validator::MapValue(const OncValueSignature& signature,
-                                            const base::Value& onc_value,
-                                            bool* error) {
+std::unique_ptr<base::Value> Validator::MapValue(
+    const OncValueSignature& signature,
+    const base::Value& onc_value,
+    bool* error) {
   if (onc_value.GetType() != signature.onc_type) {
     LOG(ERROR) << MessageHeader() << "Found value '" << onc_value
-               << "' of type '" << ValueTypeToString(onc_value.GetType())
-               << "', but type '" << ValueTypeToString(signature.onc_type)
+               << "' of type '" << base::Value::GetTypeName(onc_value.GetType())
+               << "', but type '"
+               << base::Value::GetTypeName(signature.onc_type)
                << "' is required.";
     error_or_warning_found_ = *error = true;
-    return scoped_ptr<base::Value>();
+    return std::unique_ptr<base::Value>();
   }
 
-  scoped_ptr<base::Value> repaired =
+  std::unique_ptr<base::Value> repaired =
       Mapper::MapValue(signature, onc_value, error);
   if (repaired)
     CHECK_EQ(repaired->GetType(), signature.onc_type);
-  return repaired.Pass();
+  return repaired;
 }
 
-scoped_ptr<base::DictionaryValue> Validator::MapObject(
+std::unique_ptr<base::DictionaryValue> Validator::MapObject(
     const OncValueSignature& signature,
     const base::DictionaryValue& onc_object,
     bool* error) {
-  scoped_ptr<base::DictionaryValue> repaired(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> repaired(new base::DictionaryValue);
 
   bool valid = ValidateObjectDefault(signature, onc_object, repaired.get());
   if (valid) {
@@ -141,16 +131,15 @@ scoped_ptr<base::DictionaryValue> Validator::MapObject(
     }
   }
 
-  if (valid) {
-    return repaired.Pass();
-  } else {
-    DCHECK(error_or_warning_found_);
-    error_or_warning_found_ = *error = true;
-    return scoped_ptr<base::DictionaryValue>();
-  }
+  if (valid)
+    return repaired;
+
+  DCHECK(error_or_warning_found_);
+  error_or_warning_found_ = *error = true;
+  return std::unique_ptr<base::DictionaryValue>();
 }
 
-scoped_ptr<base::Value> Validator::MapField(
+std::unique_ptr<base::Value> Validator::MapField(
     const std::string& field_name,
     const OncValueSignature& object_signature,
     const base::Value& onc_value,
@@ -158,7 +147,7 @@ scoped_ptr<base::Value> Validator::MapField(
     bool* error) {
   path_.push_back(field_name);
   bool current_field_unknown = false;
-  scoped_ptr<base::Value> result = Mapper::MapField(
+  std::unique_ptr<base::Value> result = Mapper::MapField(
       field_name, object_signature, onc_value, &current_field_unknown, error);
 
   DCHECK_EQ(field_name, path_.back());
@@ -174,15 +163,15 @@ scoped_ptr<base::Value> Validator::MapField(
       LOG(WARNING) << message;
   }
 
-  return result.Pass();
+  return result;
 }
 
-scoped_ptr<base::ListValue> Validator::MapArray(
+std::unique_ptr<base::ListValue> Validator::MapArray(
     const OncValueSignature& array_signature,
     const base::ListValue& onc_array,
     bool* nested_error) {
   bool nested_error_in_current_array = false;
-  scoped_ptr<base::ListValue> result = Mapper::MapArray(
+  std::unique_ptr<base::ListValue> result = Mapper::MapArray(
       array_signature, onc_array, &nested_error_in_current_array);
 
   // Drop individual networks and certificates instead of rejecting all of
@@ -192,20 +181,21 @@ scoped_ptr<base::ListValue> Validator::MapArray(
       &array_signature != &kCertificateListSignature) {
     *nested_error = nested_error_in_current_array;
   }
-  return result.Pass();
+  return result;
 }
 
-scoped_ptr<base::Value> Validator::MapEntry(int index,
-                                            const OncValueSignature& signature,
-                                            const base::Value& onc_value,
-                                            bool* error) {
+std::unique_ptr<base::Value> Validator::MapEntry(
+    int index,
+    const OncValueSignature& signature,
+    const base::Value& onc_value,
+    bool* error) {
   std::string str = base::IntToString(index);
   path_.push_back(str);
-  scoped_ptr<base::Value> result =
+  std::unique_ptr<base::Value> result =
       Mapper::MapEntry(index, signature, onc_value, error);
   DCHECK_EQ(str, path_.back());
   path_.pop_back();
-  return result.Pass();
+  return result;
 }
 
 bool Validator::ValidateObjectDefault(const OncValueSignature& signature,
@@ -232,7 +222,7 @@ bool Validator::ValidateRecommendedField(
     base::DictionaryValue* result) {
   CHECK(result);
 
-  scoped_ptr<base::Value> recommended_value;
+  std::unique_ptr<base::Value> recommended_value;
   // This remove passes ownership to |recommended_value|.
   if (!result->RemoveWithoutPathExpansion(::onc::kRecommended,
                                           &recommended_value)) {
@@ -251,8 +241,8 @@ bool Validator::ValidateRecommendedField(
     return true;
   }
 
-  scoped_ptr<base::ListValue> repaired_recommended(new base::ListValue);
-  for (const base::Value* entry : *recommended_list) {
+  std::unique_ptr<base::ListValue> repaired_recommended(new base::ListValue);
+  for (const auto& entry : *recommended_list) {
     std::string field_name;
     if (!entry->GetAsString(&field_name)) {
       NOTREACHED();  // The types of field values are already verified.
@@ -268,7 +258,7 @@ bool Validator::ValidateRecommendedField(
       found_error = true;
       error_cause = "unknown";
     } else if (field_signature->value_signature->onc_type ==
-               base::Value::TYPE_DICTIONARY) {
+               base::Value::Type::DICTIONARY) {
       found_error = true;
       error_cause = "dictionary-typed";
     }
@@ -282,10 +272,10 @@ bool Validator::ValidateRecommendedField(
       if (error_on_wrong_recommended_) {
         LOG(ERROR) << message;
         return false;
-      } else {
-        LOG(WARNING) << message;
-        continue;
       }
+
+      LOG(WARNING) << message;
+      continue;
     }
 
     repaired_recommended->AppendString(field_name);
@@ -412,7 +402,7 @@ bool Validator::ListFieldContainsValidValues(
   const base::ListValue* list = NULL;
   if (object.GetListWithoutPathExpansion(field_name, &list)) {
     path_.push_back(field_name);
-    for (const base::Value* entry : *list) {
+    for (const auto& entry : *list) {
       std::string value;
       if (!entry->GetAsString(&value)) {
         NOTREACHED();  // The types of field values are already verified.
@@ -440,19 +430,18 @@ bool Validator::ValidateSSIDAndHexSSID(base::DictionaryValue* object) {
     // If the HexSSID field is present, ignore errors in SSID because these
     // might be caused by the usage of a non-UTF-8 encoding when the SSID
     // field was automatically added (see FillInHexSSIDField).
-    if (object->HasKey(::onc::wifi::kHexSSID)) {
-      LOG(WARNING) << msg;
-    } else {
+    if (!object->HasKey(::onc::wifi::kHexSSID)) {
       LOG(ERROR) << msg;
       return false;
     }
+    LOG(WARNING) << msg;
   }
 
   // Check HexSSID validity.
   std::string hex_ssid_string;
   if (object->GetStringWithoutPathExpansion(::onc::wifi::kHexSSID,
                                             &hex_ssid_string)) {
-    std::vector<uint8> decoded_ssid;
+    std::vector<uint8_t> decoded_ssid;
     if (!base::HexStringToBytes(hex_ssid_string, &decoded_ssid)) {
       LOG(ERROR) << MessageHeader() << "Field " << ::onc::wifi::kHexSSID
                  << " is not a valid hex representation: \"" << hex_ssid_string

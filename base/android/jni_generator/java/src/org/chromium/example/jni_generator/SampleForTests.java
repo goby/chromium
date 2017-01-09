@@ -10,6 +10,7 @@ import org.chromium.base.annotations.AccessedByNative;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.CalledByNativeUnchecked;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.NativeCall;
 import org.chromium.base.annotations.NativeClassQualifiedName;
 
 import java.util.ArrayList;
@@ -19,7 +20,7 @@ import java.util.List;
 // This class serves as a reference test for the bindings generator, and as example documentation
 // for how to use the jni generator.
 // The C++ counter-part is sample_for_tests.cc.
-// jni_generator.gyp has a jni_generator_tests target that will:
+// jni_generator/BUILD.gn has a jni_generator_tests target that will:
 //   * Generate a header file for the JNI bindings based on this file.
 //   * Compile sample_for_tests.cc using the generated header file.
 //   * link a native executable to prove the generated header + cc file are self-contained.
@@ -125,14 +126,14 @@ class SampleForTests {
     // This is triggered by the @CalledByNative annotation; the methods may be named as you wish.
 
     // Exported to C++ as:
-    // Java_Example_javaMethod(JNIEnv* env, jobject caller, jint foo, jint bar)
+    // Java_SampleForTests_javaMethod(JNIEnv* env, jobject caller, jint foo, jint bar)
     // Typically the C++ code would have obtained the jobject via the Init() call described above.
     @CalledByNative
     public int javaMethod(int foo, int bar) {
         return 0;
     }
 
-    // Exported to C++ as Java_Example_staticJavaMethod(JNIEnv* env)
+    // Exported to C++ as Java_SampleForTests_staticJavaMethod(JNIEnv* env)
     // Note no jobject argument, as it is static.
     @CalledByNative
     public static boolean staticJavaMethod() {
@@ -163,6 +164,13 @@ class SampleForTests {
 
     // String constants that look like comments don't confuse the generator:
     private String mArrgh = "*/*";
+
+    private @interface SomeAnnotation {}
+
+    // The generator is not confused by @Annotated parameters.
+    @CalledByNative
+    void javaMethodWithAnnotatedParam(@SomeAnnotation int foo) {
+    }
 
     // ---------------------------------------------------------------------------------------------
     // Java fields which are accessed from C++ code only must be annotated with @AccessedByNative to
@@ -301,4 +309,10 @@ class SampleForTests {
     native void nativeAddStructB(long nativeCPPClass, InnerStructB b);
     native void nativeIterateAndDoSomethingWithStructB(long nativeCPPClass);
     native String nativeReturnAString(long nativeCPPClass);
+
+    // This inner class shows how to annotate native methods on inner classes.
+    static class InnerClass {
+        @NativeCall("InnerClass")
+        private static native int nativeGetInnerIntFunction();
+    }
 }

@@ -18,86 +18,70 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
-
 #include "core/svg/SVGCursorElement.h"
 
 #include "core/SVGNames.h"
-#include "core/XLinkNames.h"
+#include "core/dom/StyleChangeReason.h"
+#include "core/frame/UseCounter.h"
 
 namespace blink {
 
 inline SVGCursorElement::SVGCursorElement(Document& document)
-    : SVGElement(SVGNames::cursorTag, document)
-    , SVGTests(this)
-    , SVGURIReference(this)
-    , m_x(SVGAnimatedLength::create(this, SVGNames::xAttr, SVGLength::create(SVGLengthMode::Width)))
-    , m_y(SVGAnimatedLength::create(this, SVGNames::yAttr, SVGLength::create(SVGLengthMode::Height)))
-{
-    addToPropertyMap(m_x);
-    addToPropertyMap(m_y);
+    : SVGElement(SVGNames::cursorTag, document),
+      SVGTests(this),
+      SVGURIReference(this),
+      m_x(SVGAnimatedLength::create(this,
+                                    SVGNames::xAttr,
+                                    SVGLength::create(SVGLengthMode::Width))),
+      m_y(SVGAnimatedLength::create(this,
+                                    SVGNames::yAttr,
+                                    SVGLength::create(SVGLengthMode::Height))) {
+  addToPropertyMap(m_x);
+  addToPropertyMap(m_y);
+
+  UseCounter::count(document, UseCounter::SVGCursorElement);
 }
 
 DEFINE_NODE_FACTORY(SVGCursorElement)
 
-SVGCursorElement::~SVGCursorElement()
-{
-    // The below teardown is all handled by weak pointer processing in oilpan.
-#if !ENABLE(OILPAN)
+SVGCursorElement::~SVGCursorElement() {}
+
+void SVGCursorElement::addClient(SVGElement* element) {
+  UseCounter::count(document(), UseCounter::SVGCursorElementHasClient);
+
+  m_clients.add(element);
+  element->setCursorElement(this);
+}
+
+void SVGCursorElement::removeReferencedElement(SVGElement* element) {
+  m_clients.remove(element);
+}
+
+void SVGCursorElement::svgAttributeChanged(const QualifiedName& attrName) {
+  if (attrName == SVGNames::xAttr || attrName == SVGNames::yAttr ||
+      SVGTests::isKnownAttribute(attrName) ||
+      SVGURIReference::isKnownAttribute(attrName)) {
+    SVGElement::InvalidationGuard invalidationGuard(this);
+
+    // Any change of a cursor specific attribute triggers this recalc.
     for (const auto& client : m_clients)
-        client->cursorElementRemoved();
-#endif
+      client->setNeedsStyleRecalc(
+          LocalStyleChange,
+          StyleChangeReasonForTracing::create(StyleChangeReason::SVGCursor));
+
+    return;
+  }
+
+  SVGElement::svgAttributeChanged(attrName);
 }
 
-void SVGCursorElement::addClient(SVGElement* element)
-{
-    m_clients.add(element);
-    element->setCursorElement(this);
+DEFINE_TRACE(SVGCursorElement) {
+  visitor->trace(m_x);
+  visitor->trace(m_y);
+  visitor->trace(m_clients);
+  SVGElement::trace(visitor);
+  SVGTests::trace(visitor);
+  SVGURIReference::trace(visitor);
 }
 
-#if !ENABLE(OILPAN)
-void SVGCursorElement::removeClient(SVGElement* element)
-{
-    HashSet<RawPtr<SVGElement>>::iterator it = m_clients.find(element);
-    if (it != m_clients.end()) {
-        m_clients.remove(it);
-        element->cursorElementRemoved();
-    }
-}
-#endif
-
-void SVGCursorElement::removeReferencedElement(SVGElement* element)
-{
-    m_clients.remove(element);
-}
-
-void SVGCursorElement::svgAttributeChanged(const QualifiedName& attrName)
-{
-    if (attrName == SVGNames::xAttr || attrName == SVGNames::yAttr
-        || SVGTests::isKnownAttribute(attrName)
-        || SVGURIReference::isKnownAttribute(attrName)) {
-        SVGElement::InvalidationGuard invalidationGuard(this);
-
-        // Any change of a cursor specific attribute triggers this recalc.
-        for (const auto& client : m_clients)
-            client->setNeedsStyleRecalc(LocalStyleChange, StyleChangeReasonForTracing::create(StyleChangeReason::SVGCursor));
-
-        return;
-    }
-
-    SVGElement::svgAttributeChanged(attrName);
-}
-
-DEFINE_TRACE(SVGCursorElement)
-{
-#if ENABLE(OILPAN)
-    visitor->trace(m_x);
-    visitor->trace(m_y);
-    visitor->trace(m_clients);
-#endif
-    SVGElement::trace(visitor);
-    SVGTests::trace(visitor);
-    SVGURIReference::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

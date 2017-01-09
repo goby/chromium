@@ -29,56 +29,63 @@
 #ifndef InspectorDatabaseAgent_h
 #define InspectorDatabaseAgent_h
 
-#include "core/InspectorFrontend.h"
 #include "core/inspector/InspectorBaseAgent.h"
+#include "core/inspector/protocol/Database.h"
 #include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
 class Database;
 class InspectorDatabaseResource;
-class InspectorFrontend;
 class Page;
 
-typedef String ErrorString;
+class MODULES_EXPORT InspectorDatabaseAgent final
+    : public InspectorBaseAgent<protocol::Database::Metainfo> {
+  WTF_MAKE_NONCOPYABLE(InspectorDatabaseAgent);
 
-class MODULES_EXPORT InspectorDatabaseAgent final : public InspectorBaseAgent<InspectorDatabaseAgent, InspectorFrontend::Database>, public InspectorBackendDispatcher::DatabaseCommandHandler {
-    WTF_MAKE_NONCOPYABLE(InspectorDatabaseAgent);
-public:
-    static PassOwnPtrWillBeRawPtr<InspectorDatabaseAgent> create(Page* page)
-    {
-        return adoptPtrWillBeNoop(new InspectorDatabaseAgent(page));
-    }
-    ~InspectorDatabaseAgent() override;
-    DECLARE_VIRTUAL_TRACE();
+ public:
+  static InspectorDatabaseAgent* create(Page* page) {
+    return new InspectorDatabaseAgent(page);
+  }
+  ~InspectorDatabaseAgent() override;
+  DECLARE_VIRTUAL_TRACE();
 
-    void disable(ErrorString*) override;
-    void restore() override;
-    void didCommitLoadForLocalFrame(LocalFrame*) override;
+  Response disable() override;
+  void restore() override;
+  void didCommitLoadForLocalFrame(LocalFrame*) override;
 
-    // Called from the front-end.
-    void enable(ErrorString*) override;
-    void getDatabaseTableNames(ErrorString*, const String& databaseId, RefPtr<TypeBuilder::Array<String>>& names) override;
-    void executeSQL(ErrorString*, const String& databaseId, const String& query, PassRefPtrWillBeRawPtr<ExecuteSQLCallback>) override;
+  // Called from the front-end.
+  Response enable() override;
+  Response getDatabaseTableNames(
+      const String& databaseId,
+      std::unique_ptr<protocol::Array<String>>* names) override;
+  void executeSQL(const String& databaseId,
+                  const String& query,
+                  std::unique_ptr<ExecuteSQLCallback>) override;
 
-    void didOpenDatabase(Database*, const String& domain, const String& name, const String& version);
-private:
-    explicit InspectorDatabaseAgent(Page*);
+  void didOpenDatabase(blink::Database*,
+                       const String& domain,
+                       const String& name,
+                       const String& version);
 
-    Database* databaseForId(const String& databaseId);
-    InspectorDatabaseResource* findByFileName(const String& fileName);
+ private:
+  explicit InspectorDatabaseAgent(Page*);
+  void registerDatabaseOnCreation(blink::Database*);
 
-    RawPtrWillBeMember<Page> m_page;
-    typedef PersistentHeapHashMapWillBeHeapHashMap<String, Member<InspectorDatabaseResource>> DatabaseResourcesHeapMap;
-    DatabaseResourcesHeapMap m_resources;
-    bool m_enabled;
+  blink::Database* databaseForId(const String& databaseId);
+  InspectorDatabaseResource* findByFileName(const String& fileName);
+
+  Member<Page> m_page;
+  typedef HeapHashMap<String, Member<InspectorDatabaseResource>>
+      DatabaseResourcesHeapMap;
+  DatabaseResourcesHeapMap m_resources;
+  bool m_enabled;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // !defined(InspectorDatabaseAgent_h)
+#endif  // !defined(InspectorDatabaseAgent_h)

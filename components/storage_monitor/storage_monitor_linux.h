@@ -16,21 +16,20 @@
 #endif
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "components/storage_monitor/mtab_watcher_linux.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace storage_monitor {
-
-class MediaTransferProtocolDeviceObserverLinux;
 
 class StorageMonitorLinux : public StorageMonitor,
                             public MtabWatcherLinux::Delegate {
@@ -46,15 +45,12 @@ class StorageMonitorLinux : public StorageMonitor,
 
  protected:
   // Gets device information given a |device_path| and |mount_point|.
-  typedef base::Callback<scoped_ptr<StorageInfo>(
+  using GetDeviceInfoCallback = base::Callback<std::unique_ptr<StorageInfo>(
       const base::FilePath& device_path,
-      const base::FilePath& mount_point)> GetDeviceInfoCallback;
+      const base::FilePath& mount_point)>;
 
   void SetGetDeviceInfoCallbackForTest(
       const GetDeviceInfoCallback& get_device_info_callback);
-
-  void SetMediaTransferProtocolManagerForTest(
-      device::MediaTransferProtocolManager* test_manager);
 
   // MtabWatcherLinux::Delegate implementation.
   void UpdateMtab(
@@ -68,7 +64,7 @@ class StorageMonitorLinux : public StorageMonitor,
     StorageInfo storage_info;
   };
 
-  // For use with scoped_ptr.
+  // For use with std::unique_ptr.
   struct MtabWatcherLinuxDeleter {
     void operator()(MtabWatcherLinux* mtab_watcher) {
       content::BrowserThread::DeleteSoon(content::BrowserThread::FILE,
@@ -94,8 +90,6 @@ class StorageMonitorLinux : public StorageMonitor,
                              StorageInfo* device_info) const override;
   void EjectDevice(const std::string& device_id,
                    base::Callback<void(EjectStatus)> callback) override;
-  device::MediaTransferProtocolManager* media_transfer_protocol_manager()
-      override;
 
   // Called when the MtabWatcher has been created.
   void OnMtabWatcherCreated(MtabWatcherLinux* watcher);
@@ -109,7 +103,7 @@ class StorageMonitorLinux : public StorageMonitor,
 
   // Adds |mount_device| to the mappings and notify listeners, if any.
   void AddNewMount(const base::FilePath& mount_device,
-                   scoped_ptr<StorageInfo> storage_info);
+                   std::unique_ptr<StorageInfo> storage_info);
 
   // Mtab file that lists the mount points.
   const base::FilePath mtab_path_;
@@ -129,12 +123,7 @@ class StorageMonitorLinux : public StorageMonitor,
   // points.
   MountPriorityMap mount_priority_map_;
 
-  scoped_ptr<device::MediaTransferProtocolManager>
-      media_transfer_protocol_manager_;
-  scoped_ptr<MediaTransferProtocolDeviceObserverLinux>
-      media_transfer_protocol_device_observer_;
-
-  scoped_ptr<MtabWatcherLinux, MtabWatcherLinuxDeleter> mtab_watcher_;
+  std::unique_ptr<MtabWatcherLinux, MtabWatcherLinuxDeleter> mtab_watcher_;
 
   base::WeakPtrFactory<StorageMonitorLinux> weak_ptr_factory_;
 

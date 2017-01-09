@@ -8,7 +8,7 @@
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon/core/favicon_service.h"
@@ -74,8 +74,7 @@ class FaviconSource : public content::URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string&) const override;
   bool ShouldReplaceExistingSource() const override;
@@ -88,6 +87,7 @@ class FaviconSource : public content::URLDataSource {
                 const GURL& path,
                 int size,
                 float scale);
+    IconRequest(const IconRequest& other);
     ~IconRequest();
 
     content::URLDataSource::GotDataCallback callback;
@@ -126,10 +126,6 @@ class FaviconSource : public content::URLDataSource {
   void SendDefaultResponse(const IconRequest& request);
 
   base::CancelableTaskTracker cancelable_task_tracker_;
-
-  // Raw PNG representations of favicons of each size to show when the favicon
-  // database doesn't have a favicon for a webpage. Indexed by IconSize values.
-  scoped_refptr<base::RefCountedMemory> default_favicons_[NUM_SIZES];
 
   // The favicon_base::IconTypes of icon that this FaviconSource handles.
   int icon_types_;

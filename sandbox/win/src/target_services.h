@@ -5,7 +5,7 @@
 #ifndef SANDBOX_SRC_TARGET_SERVICES_H__
 #define SANDBOX_SRC_TARGET_SERVICES_H__
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "sandbox/win/src/sandbox.h"
 #include "sandbox/win/src/win_utils.h"
 
@@ -46,11 +46,6 @@ class TargetServicesBase : public TargetServices {
   ResultCode Init() override;
   void LowerToken() override;
   ProcessState* GetState() override;
-  ResultCode DuplicateHandle(HANDLE source_handle,
-                             DWORD target_process_id,
-                             HANDLE* target_handle,
-                             DWORD desired_access,
-                             DWORD options) override;
 
   // Factory method.
   static TargetServicesBase* GetInstance();

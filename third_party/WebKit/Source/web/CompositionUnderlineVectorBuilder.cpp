@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "web/CompositionUnderlineVectorBuilder.h"
 
 #include "web/CompositionUnderlineBuilder.h"
@@ -36,12 +35,11 @@
 namespace blink {
 
 CompositionUnderlineVectorBuilder::CompositionUnderlineVectorBuilder(
-    const WebVector<WebCompositionUnderline>& underlines)
-{
-    size_t size = underlines.size();
-    reserveCapacity(size);
-    for (size_t i = 0; i < size; ++i)
-        append(CompositionUnderlineBuilder(underlines[i]));
+    const WebVector<WebCompositionUnderline>& underlines) {
+  size_t size = underlines.size();
+  reserveCapacity(size);
+  for (size_t i = 0; i < size; ++i)
+    append(CompositionUnderlineBuilder(underlines[i]));
 }
 
-} // namespace blink
+}  // namespace blink

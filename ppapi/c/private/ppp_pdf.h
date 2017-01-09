@@ -5,6 +5,8 @@
 #ifndef PPAPI_C_PRIVATE_PPP_PDF_H_
 #define PPAPI_C_PRIVATE_PPP_PDF_H_
 
+#include <stdint.h>
+
 #include "ppapi/c/dev/pp_print_settings_dev.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/c/pp_point.h"
@@ -61,6 +63,8 @@ struct PPP_Pdf_1_1 {
   PP_Bool (*GetPrintPresetOptionsFromDocument)(
       PP_Instance instance,
       PP_PdfPrintPresetOptions_Dev* options);
+
+  void (*EnableAccessibility)(PP_Instance instance);
 };
 
 typedef PPP_Pdf_1_1 PPP_Pdf;

@@ -5,11 +5,10 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_UTIL_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_UTIL_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "ui/gfx/native_widget_types.h"
@@ -18,7 +17,7 @@ namespace autofill {
 struct PasswordForm;
 }
 
-namespace sync_driver {
+namespace syncer {
 class SyncService;
 }
 
@@ -27,7 +26,7 @@ namespace password_manager_util {
 // Reports whether and how passwords are currently synced. In particular, for a
 // null |sync_service| returns NOT_SYNCING_PASSWORDS.
 password_manager::PasswordSyncState GetPasswordSyncState(
-    const sync_driver::SyncService* sync_service);
+    const syncer::SyncService* sync_service);
 
 // Finds the forms with a duplicate sync tags in |forms|. The first one of
 // the duplicated entries stays in |forms|, the others are moved to
@@ -43,11 +42,11 @@ void FindDuplicates(
 // Removes Android username-only credentials from |android_credentials|.
 // Transforms federated credentials into non zero-click ones.
 void TrimUsernameOnlyCredentials(
-    ScopedVector<autofill::PasswordForm>* android_credentials);
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* android_credentials);
 
 // TODO(crbug.com/555132): Remove this when the migration from ScopedVector is
 // finished for PasswordForm.
-std::vector<scoped_ptr<autofill::PasswordForm>> ConvertScopedVector(
+std::vector<std::unique_ptr<autofill::PasswordForm>> ConvertScopedVector(
     ScopedVector<autofill::PasswordForm> old_vector);
 
 // A convenience function for testing that |client| has a non-null LogManager

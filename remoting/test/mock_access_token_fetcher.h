@@ -5,10 +5,11 @@
 #ifndef REMOTING_TEST_MOCK_ACCESS_TOKEN_FETCHER_H_
 #define REMOTING_TEST_MOCK_ACCESS_TOKEN_FETCHER_H_
 
-#include <string>
-
 #include "remoting/test/access_token_fetcher.h"
 
+#include <string>
+
+#include "base/macros.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -34,10 +35,10 @@ class MockAccessTokenFetcher : public AccessTokenFetcher {
   // Stores an access token fetcher object and wires up the mock methods to call
   // through to the appropriate method on it.  This method is typically used to
   // pass a FakeAccessTokenFetcher.
-  void SetAccessTokenFetcher(scoped_ptr<AccessTokenFetcher> fetcher);
+  void SetAccessTokenFetcher(std::unique_ptr<AccessTokenFetcher> fetcher);
 
  private:
-  scoped_ptr<AccessTokenFetcher> internal_access_token_fetcher_;
+  std::unique_ptr<AccessTokenFetcher> internal_access_token_fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(MockAccessTokenFetcher);
 };

@@ -5,21 +5,24 @@
 #ifndef CONTENT_RENDERER_MEDIA_ANDROID_MEDIA_INFO_LOADER_H_
 #define CONTENT_RENDERER_MEDIA_ANDROID_MEDIA_INFO_LOADER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "media/blink/active_loader.h"
 #include "third_party/WebKit/public/platform/WebMediaPlayer.h"
-#include "third_party/WebKit/public/platform/WebURLLoaderClient.h"
+#include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "url/gurl.h"
 
 namespace blink {
+class WebAssociatedURLLoader;
 class WebFrame;
-class WebURLLoader;
 class WebURLRequest;
 }
 
@@ -28,7 +31,8 @@ namespace content {
 // This class provides additional information about a media URL. Currently it
 // can be used to determine if a media URL has a single security origin and
 // whether the URL passes a CORS access check.
-class CONTENT_EXPORT MediaInfoLoader : private blink::WebURLLoaderClient {
+class CONTENT_EXPORT MediaInfoLoader
+    : private blink::WebAssociatedURLLoaderClient {
  public:
   // Status codes for start operations on MediaInfoLoader.
   enum Status {
@@ -59,7 +63,7 @@ class CONTENT_EXPORT MediaInfoLoader : private blink::WebURLLoaderClient {
       const GURL& url,
       blink::WebMediaPlayer::CORSMode cors_mode,
       const ReadyCB& ready_cb);
-  virtual ~MediaInfoLoader();
+  ~MediaInfoLoader() override;
 
   // Start loading media info.
   void Start(blink::WebFrame* frame);
@@ -75,45 +79,26 @@ class CONTENT_EXPORT MediaInfoLoader : private blink::WebURLLoaderClient {
  private:
   friend class MediaInfoLoaderTest;
 
-  // blink::WebURLLoaderClient implementation.
-  virtual void willSendRequest(
-      blink::WebURLLoader* loader,
-      blink::WebURLRequest& newRequest,
-      const blink::WebURLResponse& redirectResponse);
-  virtual void didSendData(
-      blink::WebURLLoader* loader,
-      unsigned long long bytesSent,
-      unsigned long long totalBytesToBeSent);
-  virtual void didReceiveResponse(
-      blink::WebURLLoader* loader,
-      const blink::WebURLResponse& response);
-  virtual void didDownloadData(
-      blink::WebURLLoader* loader,
-      int data_length,
-      int encodedDataLength);
-  virtual void didReceiveData(
-      blink::WebURLLoader* loader,
-      const char* data,
-      int data_length,
-      int encoded_data_length);
-  virtual void didReceiveCachedMetadata(
-      blink::WebURLLoader* loader,
-      const char* data, int dataLength);
-  virtual void didFinishLoading(
-      blink::WebURLLoader* loader,
-      double finishTime,
-      int64_t total_encoded_data_length);
-  virtual void didFail(
-      blink::WebURLLoader* loader,
-      const blink::WebURLError&);
+  // blink::WebAssociatedURLLoaderClient implementation.
+  bool willFollowRedirect(
+      const blink::WebURLRequest& newRequest,
+      const blink::WebURLResponse& redirectResponse) override;
+  void didSendData(unsigned long long bytesSent,
+                   unsigned long long totalBytesToBeSent) override;
+  void didReceiveResponse(const blink::WebURLResponse& response) override;
+  void didDownloadData(int data_length) override;
+  void didReceiveData(const char* data, int data_length) override;
+  void didReceiveCachedMetadata(const char* data, int dataLength) override;
+  void didFinishLoading(double finishTime) override;
+  void didFail(const blink::WebURLError&) override;
 
   void DidBecomeReady(Status status);
 
-  // Injected WebURLLoader instance for testing purposes.
-  scoped_ptr<blink::WebURLLoader> test_loader_;
+  // Injected WebAssociatedURLLoader instance for testing purposes.
+  std::unique_ptr<blink::WebAssociatedURLLoader> test_loader_;
 
-  // Keeps track of an active WebURLLoader and associated state.
-  scoped_ptr<media::ActiveLoader> active_loader_;
+  // Keeps track of an active WebAssociatedURLLoader and associated state.
+  std::unique_ptr<media::ActiveLoader> active_loader_;
 
   bool loader_failed_;
   GURL url_;

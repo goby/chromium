@@ -4,6 +4,8 @@
 
 #include "chrome/browser/policy/cloud/user_policy_signin_service.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
@@ -76,8 +78,8 @@ void UserPolicySigninService::RegisterForPolicy(
   DCHECK(!oauth2_refresh_token.empty());
 
   // Create a new CloudPolicyClient for fetching the DMToken.
-  scoped_ptr<CloudPolicyClient> policy_client = CreateClientForRegistrationOnly(
-      username);
+  std::unique_ptr<CloudPolicyClient> policy_client =
+      CreateClientForRegistrationOnly(username);
   if (!policy_client) {
     callback.Run(std::string(), std::string());
     return;
@@ -100,7 +102,7 @@ void UserPolicySigninService::RegisterForPolicy(
 }
 
 void UserPolicySigninService::CallPolicyRegistrationCallback(
-    scoped_ptr<CloudPolicyClient> client,
+    std::unique_ptr<CloudPolicyClient> client,
     PolicyRegistrationCallback callback) {
   registration_helper_.reset();
   callback.Run(client->dm_token(), client->client_id());
@@ -134,9 +136,9 @@ void UserPolicySigninService::OnRefreshTokenAvailable(
 
 void UserPolicySigninService::InitializeUserCloudPolicyManager(
     const std::string& username,
-    scoped_ptr<CloudPolicyClient> client) {
-  UserPolicySigninServiceBase::InitializeUserCloudPolicyManager(username,
-                                                                client.Pass());
+    std::unique_ptr<CloudPolicyClient> client) {
+  UserPolicySigninServiceBase::InitializeUserCloudPolicyManager(
+      username, std::move(client));
   ProhibitSignoutIfNeeded();
 }
 

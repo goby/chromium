@@ -1,19 +1,6 @@
 if (self.importScripts) {
   importScripts('../resources/fetch-test-helpers.js');
-}
-
-function consume(reader) {
-  var chunks = [];
-  function rec(reader) {
-    return reader.read().then(function(r) {
-        if (r.done) {
-          return chunks;
-        }
-        chunks.push(r.value);
-        return rec(reader);
-      });
-  }
-  return rec(reader);
+  importScripts('/streams/resources/rs-utils.js');
 }
 
 function decode(chunks) {
@@ -31,6 +18,7 @@ test(function() {
     assert_equals(response.type, 'default',
                   'Default Response.type should be \'default\'');
     assert_equals(response.url, '', 'Response.url should be the empty string');
+    assert_false(response.redirected, 'Response.redirected should be false.');
     assert_equals(response.status, 200,
                   'Default Response.status should be 200');
     assert_true(response.ok, 'Default Response.ok must be true');
@@ -38,6 +26,11 @@ test(function() {
                   'Default Response.statusText should be \'OK\'');
     assert_equals(size(response.headers), 0,
                   'Default Response should not have any header.');
+    if (self.internals) {
+      var urlList = self.internals.getInternalResponseURLList(response);
+      assert_equals(urlList.length, 0,
+                    'The URL list of Default Response should be empty.');
+    }
 
     response.status = 394;
     response.statusText = 'Sesame Street';
@@ -54,6 +47,26 @@ test(function() {
     assert_equals(response.body, null, 'Cloning a null body response: src');
     assert_equals(cloned.body, null, 'Closing a null body response: dest');
   }, 'Response default value test');
+
+test(() => {
+    // No exception is thrown due to null body status.
+    var response = new Response(undefined, {status: 204});
+
+    assert_equals(response.body, null,
+                  'Response.body should be null when passing undefined.');
+    assert_equals(response.status, 204,
+                  'Response.status is set even when body is omitted.');
+  }, 'Construct a Response with null body using undefined.');
+
+test(() => {
+    // No exception is thrown due to null body status.
+    var response = new Response(null, {status: 204});
+
+    assert_equals(response.body, null,
+                  'Response.body should be null when passing null.');
+    assert_equals(response.status, 204,
+                  'Response.status is set even when null body is passed.');
+  }, 'Construct a Response with null body using null.');
 
 test(function() {
     var headersInit = new Headers;
@@ -91,6 +104,11 @@ test(function() {
                   'Response.headers should have Content-Type');
     assert_equals(response.headers.get('Content-Type'), 'audio/wav',
                   'Content-Type of Response.headers should be set');
+    if (self.internals) {
+      var urlList = self.internals.getInternalResponseURLList(response);
+      assert_equals(urlList.length, 0,
+                    'The URL list of generated Response should be empty.');
+    }
 
     response = new Response(new Blob(['dummy'], {type: 'audio/wav'}),
                             {
@@ -294,12 +312,12 @@ promise_test(function(t) {
     assert_not_equals(res.body, clone.body);
     assert_not_equals(body, clone.body);
     assert_throws({name: 'TypeError'}, function() { body.getReader(); });
-    var reader1 = res.body.getReader();
-    var reader2 = clone.body.getReader();
-    return Promise.all([consume(reader1), consume(reader2)]).then(function(r) {
-        assert_equals(decode(r[0]), 'hello');
-        assert_equals(decode(r[1]), 'hello');
-      });
+    return Promise.all(
+      [readableStreamToArray(res.body), readableStreamToArray(clone.body)])
+      .then(r => {
+          assert_equals(decode(r[0]), 'hello');
+          assert_equals(decode(r[1]), 'hello');
+        });
   }, 'Clone on Response (manual read)');
 
 test(() => {
@@ -311,9 +329,10 @@ test(() => {
 
 test(() => {
     var res = new Response('hello');
-    res.body.getReader();
+    const reader = res.body.getReader();
     assert_false(res.bodyUsed);
     assert_throws({name: 'TypeError'}, () => res.clone());
+    reader.releaseLock();
   }, 'Locked => clone');
 
 // Tests for MIME types.

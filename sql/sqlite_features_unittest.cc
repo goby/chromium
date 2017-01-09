@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/files/memory_mapped_file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "sql/connection.h"
 #include "sql/statement.h"
@@ -13,6 +17,10 @@
 #include "sql/test/test_helpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/sqlite/sqlite3.h"
+
+#if defined(OS_IOS)
+#include "base/ios/ios_util.h"
+#endif
 
 // Test that certain features are/are-not enabled in our SQLite.
 
@@ -141,6 +149,158 @@ TEST_F(SQLiteFeaturesTest, ForeignKeySupport) {
   ASSERT_TRUE(db().Execute("DELETE FROM parents"));
   EXPECT_TRUE(sql::test::CountTableRows(&db(), "children", &rows));
   EXPECT_EQ(0u, rows);
+}
+
+#if defined(MOJO_APPTEST_IMPL) || defined(OS_IOS)
+// If the platform cannot support SQLite mmap'ed I/O, make sure SQLite isn't
+// offering to support it.
+TEST_F(SQLiteFeaturesTest, NoMmap) {
+#if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
+  if (base::ios::IsRunningOnIOS10OrLater()) {
+    // iOS 10 added mmap support for sqlite.
+    return;
+  }
+#endif
+
+  // For recent versions of SQLite, SQLITE_MAX_MMAP_SIZE=0 can be used to
+  // disable mmap support.  Alternately, sqlite3_config() could be used.  In
+  // that case, the pragma will run successfully, but the size will always be 0.
+  //
+  // The SQLite embedded in older iOS releases predates the addition of mmap
+  // support.  In that case the pragma will run without error, but no results
+  // are returned when querying the value.
+  //
+  // MojoVFS implements a no-op for xFileControl().  PRAGMA mmap_size is
+  // implemented in terms of SQLITE_FCNTL_MMAP_SIZE.  In that case, the pragma
+  // will succeed but with no effect.
+  ignore_result(db().Execute("PRAGMA mmap_size = 1048576"));
+  sql::Statement s(db().GetUniqueStatement("PRAGMA mmap_size"));
+  ASSERT_TRUE(!s.Step() || !s.ColumnInt64(0));
+}
+#endif
+
+#if !defined(MOJO_APPTEST_IMPL)
+// Verify that OS file writes are reflected in the memory mapping of a
+// memory-mapped file.  Normally SQLite writes to memory-mapped files using
+// memcpy(), which should stay consistent.  Our SQLite is slightly patched to
+// mmap read only, then write using OS file writes.  If the memory-mapped
+// version doesn't reflect the OS file writes, SQLite's memory-mapped I/O should
+// be disabled on this platform using SQLITE_MAX_MMAP_SIZE=0.
+TEST_F(SQLiteFeaturesTest, Mmap) {
+#if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
+  if (!base::ios::IsRunningOnIOS10OrLater()) {
+    // iOS9's sqlite does not support mmap, so this test must be skipped.
+    return;
+  }
+#endif
+
+  // Try to turn on mmap'ed I/O.
+  ignore_result(db().Execute("PRAGMA mmap_size = 1048576"));
+  {
+    sql::Statement s(db().GetUniqueStatement("PRAGMA mmap_size"));
+
+#if !defined(USE_SYSTEM_SQLITE)
+    // With Chromium's version of SQLite, the setting should always be non-zero.
+    ASSERT_TRUE(s.Step());
+    ASSERT_GT(s.ColumnInt64(0), 0);
+#else
+    // With the system SQLite, don't verify underlying mmap functionality if the
+    // SQLite is too old to support mmap, or if mmap is disabled (see NoMmap
+    // test).  USE_SYSTEM_SQLITE is not bundled into the NoMmap case because
+    // whether mmap is enabled or not is outside of Chromium's control.
+    if (!s.Step() || !s.ColumnInt64(0))
+      return;
+#endif
+  }
+  db().Close();
+
+  const uint32_t kFlags =
+      base::File::FLAG_OPEN | base::File::FLAG_READ | base::File::FLAG_WRITE;
+  char buf[4096];
+
+  // Create a file with a block of '0', a block of '1', and a block of '2'.
+  {
+    base::File f(db_path(), kFlags);
+    ASSERT_TRUE(f.IsValid());
+    memset(buf, '0', sizeof(buf));
+    ASSERT_EQ(f.Write(0*sizeof(buf), buf, sizeof(buf)), (int)sizeof(buf));
+
+    memset(buf, '1', sizeof(buf));
+    ASSERT_EQ(f.Write(1*sizeof(buf), buf, sizeof(buf)), (int)sizeof(buf));
+
+    memset(buf, '2', sizeof(buf));
+    ASSERT_EQ(f.Write(2*sizeof(buf), buf, sizeof(buf)), (int)sizeof(buf));
+  }
+
+  // mmap the file and verify that everything looks right.
+  {
+    base::MemoryMappedFile m;
+    ASSERT_TRUE(m.Initialize(db_path()));
+
+    memset(buf, '0', sizeof(buf));
+    ASSERT_EQ(0, memcmp(buf, m.data() + 0*sizeof(buf), sizeof(buf)));
+
+    memset(buf, '1', sizeof(buf));
+    ASSERT_EQ(0, memcmp(buf, m.data() + 1*sizeof(buf), sizeof(buf)));
+
+    memset(buf, '2', sizeof(buf));
+    ASSERT_EQ(0, memcmp(buf, m.data() + 2*sizeof(buf), sizeof(buf)));
+
+    // Scribble some '3' into the first page of the file, and verify that it
+    // looks the same in the memory mapping.
+    {
+      base::File f(db_path(), kFlags);
+      ASSERT_TRUE(f.IsValid());
+      memset(buf, '3', sizeof(buf));
+      ASSERT_EQ(f.Write(0*sizeof(buf), buf, sizeof(buf)), (int)sizeof(buf));
+    }
+    ASSERT_EQ(0, memcmp(buf, m.data() + 0*sizeof(buf), sizeof(buf)));
+
+    // Repeat with a single '4' in case page-sized blocks are different.
+    const size_t kOffset = 1*sizeof(buf) + 123;
+    ASSERT_NE('4', m.data()[kOffset]);
+    {
+      base::File f(db_path(), kFlags);
+      ASSERT_TRUE(f.IsValid());
+      buf[0] = '4';
+      ASSERT_EQ(f.Write(kOffset, buf, 1), 1);
+    }
+    ASSERT_EQ('4', m.data()[kOffset]);
+  }
+}
+#endif
+
+// Verify that http://crbug.com/248608 is fixed.  In this bug, the
+// compiled regular expression is effectively cached with the prepared
+// statement, causing errors if the regular expression is rebound.
+TEST_F(SQLiteFeaturesTest, CachedRegexp) {
+  ASSERT_TRUE(db().Execute("CREATE TABLE r (id INTEGER UNIQUE, x TEXT)"));
+  ASSERT_TRUE(db().Execute("INSERT INTO r VALUES (1, 'this is a test')"));
+  ASSERT_TRUE(db().Execute("INSERT INTO r VALUES (2, 'that was a test')"));
+  ASSERT_TRUE(db().Execute("INSERT INTO r VALUES (3, 'this is a stickup')"));
+  ASSERT_TRUE(db().Execute("INSERT INTO r VALUES (4, 'that sucks')"));
+
+  const char* kSimpleSql = "SELECT SUM(id) FROM r WHERE x REGEXP ?";
+  sql::Statement s(db().GetCachedStatement(SQL_FROM_HERE, kSimpleSql));
+
+  s.BindString(0, "this.*");
+  ASSERT_TRUE(s.Step());
+  EXPECT_EQ(4, s.ColumnInt(0));
+
+  s.Reset(true);
+  s.BindString(0, "that.*");
+  ASSERT_TRUE(s.Step());
+  EXPECT_EQ(6, s.ColumnInt(0));
+
+  s.Reset(true);
+  s.BindString(0, ".*test");
+  ASSERT_TRUE(s.Step());
+  EXPECT_EQ(3, s.ColumnInt(0));
+
+  s.Reset(true);
+  s.BindString(0, ".* s[a-z]+");
+  ASSERT_TRUE(s.Step());
+  EXPECT_EQ(7, s.ColumnInt(0));
 }
 
 }  // namespace

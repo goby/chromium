@@ -4,7 +4,8 @@
 
 #include "ui/content_accelerators/accelerator_util.h"
 
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "build/build_config.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 
@@ -25,6 +26,10 @@ int GetModifiersFromNativeWebKeyboardEvent(
   if (event.modifiers & content::NativeWebKeyboardEvent::MetaKey)
     modifiers |= ui::EF_COMMAND_DOWN;
 #endif
+#if defined(USE_AURA)
+  if (event.os_event && static_cast<ui::KeyEvent*>(event.os_event)->is_repeat())
+    modifiers |= ui::EF_IS_REPEAT;
+#endif
   return modifiers;
 }
 
@@ -37,10 +42,6 @@ ui::Accelerator GetAcceleratorFromNativeWebKeyboardEvent(
       GetModifiersFromNativeWebKeyboardEvent(event));
   if (event.type == blink::WebInputEvent::KeyUp)
     accelerator.set_type(ui::ET_KEY_RELEASED);
-#if defined(USE_AURA)
-  if (event.os_event && event.os_event->IsRepeat())
-    accelerator.set_is_repeat(true);
-#endif
   return accelerator;
 }
 

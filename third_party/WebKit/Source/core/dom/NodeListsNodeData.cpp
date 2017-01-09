@@ -28,30 +28,29 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/dom/NodeListsNodeData.h"
 
 namespace blink {
 
-void NodeListsNodeData::invalidateCaches(const QualifiedName* attrName)
-{
-    for (const auto& cache : m_atomicNameCaches)
-        cache.value->invalidateCacheForAttribute(attrName);
+void NodeListsNodeData::invalidateCaches(const QualifiedName* attrName) {
+  for (const auto& cache : m_atomicNameCaches)
+    cache.value->invalidateCacheForAttribute(attrName);
 
-    if (attrName)
-        return;
+  if (attrName)
+    return;
 
-    for (auto& cache : m_tagCollectionCacheNS)
-        cache.value->invalidateCache();
+  for (auto& cache : m_tagCollectionCacheNS)
+    cache.value->invalidateCache();
 }
 
-DEFINE_TRACE(NodeListsNodeData)
-{
-#if ENABLE(OILPAN)
-    visitor->trace(m_childNodeList);
-    visitor->trace(m_atomicNameCaches);
-    visitor->trace(m_tagCollectionCacheNS);
-#endif
+DEFINE_TRACE(NodeListsNodeData) {
+  visitor->trace(m_childNodeList);
+  visitor->trace(m_atomicNameCaches);
+  visitor->trace(m_tagCollectionCacheNS);
 }
 
-} // namespace blink
+DEFINE_TRACE_WRAPPERS(NodeListsNodeData) {
+  visitor->traceWrappersWithManualWriteBarrier(m_childNodeList);
+}
+
+}  // namespace blink

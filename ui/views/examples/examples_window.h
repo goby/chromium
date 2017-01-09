@@ -5,14 +5,11 @@
 #ifndef UI_VIEWS_EXAMPLES_EXAMPLES_WINDOW_H_
 #define UI_VIEWS_EXAMPLES_EXAMPLES_WINDOW_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/memory/scoped_vector.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/examples/views_examples_export.h"
-
-namespace aura {
-class Window;
-}
 
 namespace views {
 namespace examples {
@@ -30,7 +27,7 @@ enum Operation {
 VIEWS_EXAMPLES_EXPORT void ShowExamplesWindow(
     Operation operation,
     gfx::NativeWindow window_context,
-    scoped_ptr<ScopedVector<ExampleBase> > extra_examples);
+    std::unique_ptr<ScopedVector<ExampleBase>> extra_examples);
 
 }  // namespace examples
 }  // namespace views

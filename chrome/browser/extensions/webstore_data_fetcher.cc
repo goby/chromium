@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/webstore_data_fetcher.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/webstore_data_fetcher_delegate.h"
@@ -53,14 +55,15 @@ void WebstoreDataFetcher::Start() {
 }
 
 void WebstoreDataFetcher::OnJsonParseSuccess(
-    scoped_ptr<base::Value> parsed_json) {
-  if (!parsed_json->IsType(base::Value::TYPE_DICTIONARY)) {
+    std::unique_ptr<base::Value> parsed_json) {
+  if (!parsed_json->IsType(base::Value::Type::DICTIONARY)) {
     OnJsonParseFailure(kInvalidWebstoreResponseError);
     return;
   }
 
-  delegate_->OnWebstoreResponseParseSuccess(scoped_ptr<base::DictionaryValue>(
-      static_cast<base::DictionaryValue*>(parsed_json.release())));
+  delegate_->OnWebstoreResponseParseSuccess(
+      std::unique_ptr<base::DictionaryValue>(
+          static_cast<base::DictionaryValue*>(parsed_json.release())));
 }
 
 void WebstoreDataFetcher::OnJsonParseFailure(
@@ -71,7 +74,8 @@ void WebstoreDataFetcher::OnJsonParseFailure(
 void WebstoreDataFetcher::OnURLFetchComplete(const net::URLFetcher* source) {
   CHECK_EQ(webstore_data_url_fetcher_.get(), source);
 
-  scoped_ptr<net::URLFetcher> fetcher(webstore_data_url_fetcher_.Pass());
+  std::unique_ptr<net::URLFetcher> fetcher(
+      std::move(webstore_data_url_fetcher_));
 
   if (!fetcher->GetStatus().is_success() ||
       fetcher->GetResponseCode() != 200) {

@@ -31,12 +31,10 @@
 #define InspectorLayerTreeAgent_h
 
 #include "core/CoreExport.h"
-#include "core/InspectorFrontend.h"
-#include "core/InspectorTypeBuilder.h"
 #include "core/inspector/InspectorBaseAgent.h"
+#include "core/inspector/protocol/LayerTree.h"
 #include "platform/Timer.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/text/WTFString.h"
 
@@ -45,72 +43,92 @@ namespace blink {
 class GraphicsContext;
 class GraphicsLayer;
 class InspectedFrames;
-class LayoutObject;
 class LayoutRect;
 class PictureSnapshot;
 class PaintLayer;
 class PaintLayerCompositor;
 
-typedef String ErrorString;
+class CORE_EXPORT InspectorLayerTreeAgent final
+    : public InspectorBaseAgent<protocol::LayerTree::Metainfo> {
+  WTF_MAKE_NONCOPYABLE(InspectorLayerTreeAgent);
 
-class CORE_EXPORT InspectorLayerTreeAgent final : public InspectorBaseAgent<InspectorLayerTreeAgent, InspectorFrontend::LayerTree>, public InspectorBackendDispatcher::LayerTreeCommandHandler {
-    WTF_MAKE_NONCOPYABLE(InspectorLayerTreeAgent);
-public:
-    static PassOwnPtrWillBeRawPtr<InspectorLayerTreeAgent> create(InspectedFrames* inspectedFrames)
-    {
-        return adoptPtrWillBeNoop(new InspectorLayerTreeAgent(inspectedFrames));
-    }
-    ~InspectorLayerTreeAgent() override;
-    DECLARE_VIRTUAL_TRACE();
+ public:
+  static InspectorLayerTreeAgent* create(InspectedFrames* inspectedFrames) {
+    return new InspectorLayerTreeAgent(inspectedFrames);
+  }
+  ~InspectorLayerTreeAgent() override;
+  DECLARE_VIRTUAL_TRACE();
 
-    void disable(ErrorString*) override;
-    void restore() override;
+  void restore() override;
 
-    // Called from InspectorController
-    void willAddPageOverlay(const GraphicsLayer*);
-    void didRemovePageOverlay(const GraphicsLayer*);
+  // Called from InspectorController
+  void willAddPageOverlay(const GraphicsLayer*);
+  void didRemovePageOverlay(const GraphicsLayer*);
 
-    // Called from InspectorInstrumentation
-    void layerTreeDidChange();
-    void didPaint(LayoutObject*, const GraphicsLayer*, GraphicsContext*, const LayoutRect&);
+  // Called from InspectorInstrumentation
+  void layerTreeDidChange();
+  void didPaint(const GraphicsLayer*, GraphicsContext&, const LayoutRect&);
 
-    // Called from the front-end.
-    void enable(ErrorString*) override;
-    void compositingReasons(ErrorString*, const String& layerId, RefPtr<TypeBuilder::Array<String>>&) override;
-    void makeSnapshot(ErrorString*, const String& layerId, String* snapshotId) override;
-    void loadSnapshot(ErrorString*, const RefPtr<JSONArray>& tiles, String* snapshotId) override;
-    void releaseSnapshot(ErrorString*, const String& snapshotId) override;
-    void replaySnapshot(ErrorString*, const String& snapshotId, const int* fromStep, const int* toStep, const double* scale, String* dataURL) override;
-    void profileSnapshot(ErrorString*, const String& snapshotId, const int* minRepeatCount, const double* minDuration, const RefPtr<JSONObject>* clipRect, RefPtr<TypeBuilder::Array<TypeBuilder::Array<double>>>&) override;
-    void snapshotCommandLog(ErrorString*, const String& snapshotId, RefPtr<TypeBuilder::Array<JSONObject>>&) override;
+  // Called from the front-end.
+  Response enable() override;
+  Response disable() override;
+  Response compositingReasons(
+      const String& layerId,
+      std::unique_ptr<protocol::Array<String>>* compositingReasons) override;
+  Response makeSnapshot(const String& layerId, String* snapshotId) override;
+  Response loadSnapshot(
+      std::unique_ptr<protocol::Array<protocol::LayerTree::PictureTile>> tiles,
+      String* snapshotId) override;
+  Response releaseSnapshot(const String& snapshotId) override;
+  Response profileSnapshot(
+      const String& snapshotId,
+      Maybe<int> minRepeatCount,
+      Maybe<double> minDuration,
+      Maybe<protocol::DOM::Rect> clipRect,
+      std::unique_ptr<protocol::Array<protocol::Array<double>>>* timings)
+      override;
+  Response replaySnapshot(const String& snapshotId,
+                          Maybe<int> fromStep,
+                          Maybe<int> toStep,
+                          Maybe<double> scale,
+                          String* dataURL) override;
+  Response snapshotCommandLog(
+      const String& snapshotId,
+      std::unique_ptr<protocol::Array<protocol::DictionaryValue>>* commandLog)
+      override;
 
-    // Called by other agents.
-    PassRefPtr<TypeBuilder::Array<TypeBuilder::LayerTree::Layer> > buildLayerTree();
+  // Called by other agents.
+  std::unique_ptr<protocol::Array<protocol::LayerTree::Layer>> buildLayerTree();
 
-private:
-    static unsigned s_lastSnapshotId;
+ private:
+  static unsigned s_lastSnapshotId;
 
-    explicit InspectorLayerTreeAgent(InspectedFrames*);
+  explicit InspectorLayerTreeAgent(InspectedFrames*);
 
-    GraphicsLayer* rootGraphicsLayer();
+  GraphicsLayer* rootGraphicsLayer();
 
-    PaintLayerCompositor* paintLayerCompositor();
-    GraphicsLayer* layerById(ErrorString*, const String& layerId);
-    const PictureSnapshot* snapshotById(ErrorString*, const String& snapshotId);
+  PaintLayerCompositor* paintLayerCompositor();
+  Response layerById(const String& layerId, GraphicsLayer*&);
+  Response snapshotById(const String& snapshotId, const PictureSnapshot*&);
 
-    typedef HashMap<int, int> LayerIdToNodeIdMap;
-    void buildLayerIdToNodeIdMap(PaintLayer*, LayerIdToNodeIdMap&);
-    void gatherGraphicsLayers(GraphicsLayer*, HashMap<int, int>& layerIdToNodeIdMap, RefPtr<TypeBuilder::Array<TypeBuilder::LayerTree::Layer> >&);
-    int idForNode(Node*);
+  typedef HashMap<int, int> LayerIdToNodeIdMap;
+  void buildLayerIdToNodeIdMap(PaintLayer*, LayerIdToNodeIdMap&);
+  void gatherGraphicsLayers(
+      GraphicsLayer*,
+      HashMap<int, int>& layerIdToNodeIdMap,
+      std::unique_ptr<protocol::Array<protocol::LayerTree::Layer>>&,
+      bool hasWheelEventHandlers,
+      int scrollingRootLayerId);
+  int idForNode(Node*);
 
-    RawPtrWillBeMember<InspectedFrames> m_inspectedFrames;
-    Vector<int, 2> m_pageOverlayLayerIds;
+  Member<InspectedFrames> m_inspectedFrames;
+  Vector<int, 2> m_pageOverlayLayerIds;
 
-    typedef HashMap<String, RefPtr<PictureSnapshot> > SnapshotById;
-    SnapshotById m_snapshotById;
+  typedef HashMap<String, RefPtr<PictureSnapshot>> SnapshotById;
+  SnapshotById m_snapshotById;
+  bool m_suppressLayerPaintEvents;
 };
 
-} // namespace blink
+}  // namespace blink
 
-
-#endif // !defined(InspectorLayerTreeAgent_h)
+#endif  // !defined(InspectorLayerTreeAgent_h)

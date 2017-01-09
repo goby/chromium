@@ -6,9 +6,9 @@
 
 #include <vector>
 
+#include "cc/animation/animation_host.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_impl.h"
-#include "cc/layers/layer_settings.h"
 #include "cc/proto/layer_position_constraint.pb.h"
 #include "cc/test/fake_layer_tree_host.h"
 #include "cc/test/fake_proxy.h"
@@ -22,8 +22,7 @@ namespace {
 
 class LayerWithForcedDrawsContent : public Layer {
  public:
-  explicit LayerWithForcedDrawsContent(const LayerSettings& settings)
-      : Layer(settings) {}
+  LayerWithForcedDrawsContent() {}
 
   bool DrawsContent() const override;
 
@@ -50,23 +49,23 @@ void SetLayerPropertiesForTesting(Layer* layer,
 
 void ExecuteCalculateDrawProperties(LayerImpl* root_layer) {
   std::vector<LayerImpl*> dummy_render_surface_layer_list;
-  root_layer->layer_tree_impl()->IncrementRenderSurfaceListIdForTesting();
   LayerTreeHostCommon::CalcDrawPropsImplInputsForTesting inputs(
-      root_layer, root_layer->bounds(), &dummy_render_surface_layer_list,
-      root_layer->layer_tree_impl()->current_render_surface_list_id());
+      root_layer, root_layer->bounds(), &dummy_render_surface_layer_list);
   inputs.inner_viewport_scroll_layer =
       root_layer->layer_tree_impl()->InnerViewportScrollLayer();
   inputs.outer_viewport_scroll_layer =
       root_layer->layer_tree_impl()->OuterViewportScrollLayer();
+  EXPECT_FALSE(root_layer->layer_tree_impl()->property_trees()->needs_rebuild);
   LayerTreeHostCommon::CalculateDrawProperties(&inputs);
 }
 
 class LayerPositionConstraintTest : public testing::Test {
  public:
   LayerPositionConstraintTest()
-      : fake_client_(FakeLayerTreeHostClient::DIRECT_3D),
-        layer_tree_host_(
-            FakeLayerTreeHost::Create(&fake_client_, &task_graph_runner_)),
+      : animation_host_(AnimationHost::CreateForTesting(ThreadInstance::MAIN)),
+        layer_tree_host_(FakeLayerTreeHost::Create(&fake_client_,
+                                                   &task_graph_runner_,
+                                                   animation_host_.get())),
         root_impl_(nullptr),
         inner_viewport_container_layer_impl_(nullptr),
         scroll_layer_impl_(nullptr),
@@ -77,7 +76,7 @@ class LayerPositionConstraintTest : public testing::Test {
         great_grand_child_impl_(nullptr) {
     layer_tree_host_->InitializeForTesting(
         TaskRunnerProvider::Create(nullptr, nullptr),
-        scoped_ptr<Proxy>(new FakeProxy));
+        std::unique_ptr<Proxy>(new FakeProxy));
     CreateTreeForTest();
     fixed_to_top_left_.set_is_fixed_position(true);
     fixed_to_bottom_right_.set_is_fixed_position(true);
@@ -88,16 +87,14 @@ class LayerPositionConstraintTest : public testing::Test {
   void CreateTreeForTest() {
     // scroll_layer_ is the inner viewport scroll layer and child_ is the outer
     // viewport scroll layer.
-    root_ = Layer::Create(layer_settings_);
-    inner_viewport_container_layer_ = Layer::Create(layer_settings_);
-    scroll_layer_ = Layer::Create(layer_settings_);
-    outer_viewport_container_layer_ = Layer::Create(layer_settings_);
-    child_transform_layer_ = Layer::Create(layer_settings_);
-    child_ = Layer::Create(layer_settings_);
-    grand_child_ =
-        make_scoped_refptr(new LayerWithForcedDrawsContent(layer_settings_));
-    great_grand_child_ =
-        make_scoped_refptr(new LayerWithForcedDrawsContent(layer_settings_));
+    root_ = Layer::Create();
+    inner_viewport_container_layer_ = Layer::Create();
+    scroll_layer_ = Layer::Create();
+    outer_viewport_container_layer_ = Layer::Create();
+    child_transform_layer_ = Layer::Create();
+    child_ = Layer::Create();
+    grand_child_ = make_scoped_refptr(new LayerWithForcedDrawsContent());
+    great_grand_child_ = make_scoped_refptr(new LayerWithForcedDrawsContent());
 
     gfx::Transform IdentityMatrix;
     gfx::Point3F transform_origin;
@@ -138,44 +135,46 @@ class LayerPositionConstraintTest : public testing::Test {
     root_->AddChild(inner_viewport_container_layer_);
 
     layer_tree_host_->SetRootLayer(root_);
-    layer_tree_host_->RegisterViewportLayers(nullptr, root_, scroll_layer_,
-                                             child_);
+    layer_tree_host_->GetLayerTree()->RegisterViewportLayers(
+        nullptr, root_, scroll_layer_, child_);
   }
 
   void CommitAndUpdateImplPointers() {
-    LayerTreeHostCommon::CalcDrawPropsMainInputs inputs(root_.get(),
-                                                        root_->bounds());
+    LayerTreeHostCommon::CalcDrawPropsMainInputsForTesting inputs(
+        root_.get(), root_->bounds());
     inputs.inner_viewport_scroll_layer =
-        layer_tree_host_->inner_viewport_scroll_layer();
+        layer_tree_host_->GetLayerTree()->inner_viewport_scroll_layer();
     inputs.outer_viewport_scroll_layer =
-        layer_tree_host_->outer_viewport_scroll_layer();
-    LayerTreeHostCommon::CalculateDrawProperties(&inputs);
+        layer_tree_host_->GetLayerTree()->outer_viewport_scroll_layer();
+    LayerTreeHostCommon::CalculateDrawPropertiesForTesting(&inputs);
 
     // Since scroll deltas aren't sent back to the main thread in this test
     // setup, clear them to maintain consistent state.
     if (root_impl_) {
-      scroll_layer_impl_->SetScrollDelta(gfx::Vector2dF());
-      child_impl_->SetScrollDelta(gfx::Vector2dF());
-      grand_child_impl_->SetScrollDelta(gfx::Vector2dF());
+      SetScrollOffsetDelta(scroll_layer_impl_, gfx::Vector2dF());
+      SetScrollOffsetDelta(child_impl_, gfx::Vector2dF());
+      SetScrollOffsetDelta(grand_child_impl_, gfx::Vector2dF());
     }
     root_impl_ = layer_tree_host_->CommitAndCreateLayerImplTree();
-    inner_viewport_container_layer_impl_ = root_impl_->children()[0].get();
-    scroll_layer_impl_ =
-        inner_viewport_container_layer_impl_->children()[0].get();
+    layer_tree_impl_ = root_impl_->layer_tree_impl();
+    inner_viewport_container_layer_impl_ =
+        layer_tree_impl_->LayerById(inner_viewport_container_layer_->id());
+    scroll_layer_impl_ = layer_tree_impl_->LayerById(scroll_layer_->id());
     outer_viewport_container_layer_impl_ =
-        scroll_layer_impl_->children()[0].get();
+        layer_tree_impl_->LayerById(outer_viewport_container_layer_->id());
     child_transform_layer_impl_ =
-        outer_viewport_container_layer_impl_->children()[0].get();
-    child_impl_ = child_transform_layer_impl_->children()[0].get();
-    grand_child_impl_ = child_impl_->children()[0].get();
-    great_grand_child_impl_ = grand_child_impl_->children()[0].get();
+        layer_tree_impl_->LayerById(child_transform_layer_->id());
+    child_impl_ = layer_tree_impl_->LayerById(child_->id());
+    grand_child_impl_ = layer_tree_impl_->LayerById(grand_child_->id());
+    great_grand_child_impl_ =
+        layer_tree_impl_->LayerById(great_grand_child_->id());
   }
 
  protected:
   FakeLayerTreeHostClient fake_client_;
   TestTaskGraphRunner task_graph_runner_;
-  scoped_ptr<FakeLayerTreeHost> layer_tree_host_;
-  LayerSettings layer_settings_;
+  std::unique_ptr<AnimationHost> animation_host_;
+  std::unique_ptr<FakeLayerTreeHost> layer_tree_host_;
   scoped_refptr<Layer> root_;
   scoped_refptr<Layer> inner_viewport_container_layer_;
   scoped_refptr<Layer> scroll_layer_;
@@ -184,6 +183,7 @@ class LayerPositionConstraintTest : public testing::Test {
   scoped_refptr<Layer> child_;
   scoped_refptr<Layer> grand_child_;
   scoped_refptr<Layer> great_grand_child_;
+  LayerTreeImpl* layer_tree_impl_;
   LayerImpl* root_impl_;
   LayerImpl* inner_viewport_container_layer_impl_;
   LayerImpl* scroll_layer_impl_;
@@ -195,6 +195,17 @@ class LayerPositionConstraintTest : public testing::Test {
 
   LayerPositionConstraint fixed_to_top_left_;
   LayerPositionConstraint fixed_to_bottom_right_;
+
+  // LayerImpl should not be aware of synced property logics, this function is
+  // a hack for the test to arbitrarily set the scroll delta for setting up.
+  static void SetScrollOffsetDelta(LayerImpl* layer_impl,
+                                   const gfx::Vector2dF& delta) {
+    if (layer_impl->layer_tree_impl()
+            ->property_trees()
+            ->scroll_tree.SetScrollOffsetDeltaForTesting(layer_impl->id(),
+                                                         delta))
+      layer_impl->layer_tree_impl()->DidUpdateScrollOffset(layer_impl->id());
+  }
 };
 
 namespace {
@@ -219,7 +230,7 @@ TEST_F(LayerPositionConstraintTest,
   CommitAndUpdateImplPointers();
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   ExecuteCalculateDrawProperties(root_impl_);
 
   gfx::Transform expected_child_transform;
@@ -231,7 +242,7 @@ TEST_F(LayerPositionConstraintTest,
                                   grand_child_impl_->DrawTransform());
 
   // Case 2: scroll delta of 10, 10
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -259,7 +270,7 @@ TEST_F(LayerPositionConstraintTest,
   grand_child_->SetPositionConstraint(fixed_to_bottom_right_);
   CommitAndUpdateImplPointers();
 
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   SetFixedContainerSizeDelta(child_impl_, gfx::Vector2d(20, 20));
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -285,7 +296,7 @@ TEST_F(LayerPositionConstraintTest,
   CommitAndUpdateImplPointers();
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -304,7 +315,7 @@ TEST_F(LayerPositionConstraintTest,
                                   great_grand_child_impl_->DrawTransform());
 
   // Case 2: scroll delta of 10, 10
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   ExecuteCalculateDrawProperties(root_impl_);
 
   // Here the child and grand_child are affected by scroll delta, but the fixed
@@ -335,7 +346,7 @@ TEST_F(LayerPositionConstraintTest,
   // Case 4: Bottom-right fixed-position layer.
   great_grand_child_->SetPositionConstraint(fixed_to_bottom_right_);
   CommitAndUpdateImplPointers();
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   SetFixedContainerSizeDelta(child_impl_, gfx::Vector2d(20, 20));
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -370,7 +381,7 @@ TEST_F(LayerPositionConstraintTest,
   CommitAndUpdateImplPointers();
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -394,8 +405,8 @@ TEST_F(LayerPositionConstraintTest,
                                   great_grand_child_impl_->DrawTransform());
 
   // Case 2: scroll delta of 10, 20
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 0));
-  grand_child_impl_->SetScrollDelta(gfx::Vector2d(5, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 0));
+  SetScrollOffsetDelta(grand_child_impl_, gfx::Vector2d(5, 0));
   ExecuteCalculateDrawProperties(root_impl_);
 
   // Here the child and grand_child are affected by scroll delta, but the fixed
@@ -430,7 +441,7 @@ TEST_F(LayerPositionConstraintTest,
   // for when checking the scroll delta.
   child_->SetIsContainerForFixedPositionLayers(true);
   grand_child_->SetPosition(gfx::PointF(8.f, 6.f));
-  grand_child_->SetForceRenderSurface(true);
+  grand_child_->SetForceRenderSurfaceForTesting(true);
   great_grand_child_->SetPositionConstraint(fixed_to_top_left_);
 
   gfx::Transform rotation_about_z;
@@ -440,7 +451,7 @@ TEST_F(LayerPositionConstraintTest,
   CommitAndUpdateImplPointers();
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   ExecuteCalculateDrawProperties(root_impl_);
 
   gfx::Transform expected_child_transform;
@@ -461,7 +472,7 @@ TEST_F(LayerPositionConstraintTest,
                                   great_grand_child_impl_->DrawTransform());
 
   // Case 2: scroll delta of 10, 30
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 30));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 30));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -513,7 +524,7 @@ TEST_F(LayerPositionConstraintTest,
   great_grand_child_->SetPositionConstraint(fixed_to_bottom_right_);
 
   CommitAndUpdateImplPointers();
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 30));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 30));
   SetFixedContainerSizeDelta(child_impl_, gfx::Vector2d(20, 20));
 
   ExecuteCalculateDrawProperties(root_impl_);
@@ -545,7 +556,7 @@ TEST_F(LayerPositionConstraintTest,
 
   // Add one more layer to the test tree for this scenario.
   scoped_refptr<Layer> fixed_position_child =
-      make_scoped_refptr(new LayerWithForcedDrawsContent(layer_settings_));
+      make_scoped_refptr(new LayerWithForcedDrawsContent());
   SetLayerPropertiesForTesting(fixed_position_child.get(), gfx::Transform(),
                                gfx::Point3F(), gfx::PointF(),
                                gfx::Size(100, 100), true);
@@ -554,9 +565,9 @@ TEST_F(LayerPositionConstraintTest,
   // Actually set up the scenario here.
   child_->SetIsContainerForFixedPositionLayers(true);
   grand_child_->SetPosition(gfx::PointF(8.f, 6.f));
-  grand_child_->SetForceRenderSurface(true);
+  grand_child_->SetForceRenderSurfaceForTesting(true);
   great_grand_child_->SetPosition(gfx::PointF(40.f, 60.f));
-  great_grand_child_->SetForceRenderSurface(true);
+  great_grand_child_->SetForceRenderSurfaceForTesting(true);
   fixed_position_child->SetPositionConstraint(fixed_to_top_left_);
 
   // The additional rotation, which is non-commutative with translations, helps
@@ -571,10 +582,10 @@ TEST_F(LayerPositionConstraintTest,
 
   CommitAndUpdateImplPointers();
   LayerImpl* fixed_position_child_impl =
-      great_grand_child_impl_->children()[0].get();
+      layer_tree_impl_->LayerById(fixed_position_child->id());
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -611,7 +622,7 @@ TEST_F(LayerPositionConstraintTest,
                                   fixed_position_child_impl->DrawTransform());
 
   // Case 2: scroll delta of 10, 30
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 30));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 30));
   ExecuteCalculateDrawProperties(root_impl_);
 
   expected_child_transform.MakeIdentity();
@@ -667,8 +678,9 @@ TEST_F(LayerPositionConstraintTest,
   // Case 4: Bottom-right fixed-position layer.
   fixed_position_child->SetPositionConstraint(fixed_to_bottom_right_);
   CommitAndUpdateImplPointers();
-  fixed_position_child_impl = great_grand_child_impl_->children()[0].get();
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 30));
+  fixed_position_child_impl =
+      layer_tree_impl_->LayerById(fixed_position_child->id());
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 30));
   SetFixedContainerSizeDelta(child_impl_, gfx::Vector2d(20, 20));
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -702,7 +714,7 @@ TEST_F(
 
   // Add one more layer to the test tree for this scenario.
   scoped_refptr<Layer> fixed_position_child =
-      make_scoped_refptr(new LayerWithForcedDrawsContent(layer_settings_));
+      make_scoped_refptr(new LayerWithForcedDrawsContent());
   SetLayerPropertiesForTesting(fixed_position_child.get(), gfx::Transform(),
                                gfx::Point3F(), gfx::PointF(),
                                gfx::Size(100, 100), true);
@@ -711,9 +723,9 @@ TEST_F(
   // Actually set up the scenario here.
   child_transform_layer_->SetIsContainerForFixedPositionLayers(true);
   grand_child_->SetPosition(gfx::PointF(8.f, 6.f));
-  grand_child_->SetForceRenderSurface(true);
+  grand_child_->SetForceRenderSurfaceForTesting(true);
   great_grand_child_->SetPosition(gfx::PointF(40.f, 60.f));
-  great_grand_child_->SetForceRenderSurface(true);
+  great_grand_child_->SetForceRenderSurfaceForTesting(true);
   fixed_position_child->SetPositionConstraint(fixed_to_top_left_);
 
   // The additional rotations, which are non-commutative with translations, help
@@ -729,10 +741,10 @@ TEST_F(
 
   CommitAndUpdateImplPointers();
   LayerImpl* fixed_position_child_impl =
-      great_grand_child_impl_->children()[0].get();
+      layer_tree_impl_->LayerById(fixed_position_child->id());
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -772,7 +784,7 @@ TEST_F(
                                   fixed_position_child_impl->DrawTransform());
 
   // Case 2: scroll delta of 10, 30
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 30));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 30));
   ExecuteCalculateDrawProperties(root_impl_);
 
   expected_child_transform.MakeIdentity();
@@ -825,13 +837,13 @@ TEST_F(LayerPositionConstraintTest,
   // that render target is completely irrelevant; it should not affect the
   // scroll compensation.
   child_->SetIsContainerForFixedPositionLayers(true);
-  child_->SetForceRenderSurface(true);
+  child_->SetForceRenderSurfaceForTesting(true);
   grand_child_->SetPositionConstraint(fixed_to_top_left_);
 
   CommitAndUpdateImplPointers();
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   ExecuteCalculateDrawProperties(root_impl_);
 
   gfx::Transform expected_surface_draw_transform;
@@ -847,7 +859,7 @@ TEST_F(LayerPositionConstraintTest,
                                   grand_child_impl_->DrawTransform());
 
   // Case 2: scroll delta of 10, 10
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   ExecuteCalculateDrawProperties(root_impl_);
 
   // The surface is translated by scroll delta, the child transform doesn't
@@ -880,7 +892,7 @@ TEST_F(LayerPositionConstraintTest,
   // Case 4: Bottom-right fixed-position layer.
   grand_child_->SetPositionConstraint(fixed_to_bottom_right_);
   CommitAndUpdateImplPointers();
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   SetFixedContainerSizeDelta(child_impl_, gfx::Vector2d(20, 20));
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -914,7 +926,7 @@ TEST_F(LayerPositionConstraintTest,
   CommitAndUpdateImplPointers();
 
   // Case 1: scroll delta of 0, 0
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -926,7 +938,7 @@ TEST_F(LayerPositionConstraintTest,
                                   grand_child_impl_->DrawTransform());
 
   // Case 2: scroll delta of 10, 10
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   ExecuteCalculateDrawProperties(root_impl_);
 
   // Here the child is affected by scroll delta, but the fixed position
@@ -951,7 +963,7 @@ TEST_F(LayerPositionConstraintTest,
   // Case 4: Bottom-right fixed-position layer.
   grand_child_->SetPositionConstraint(fixed_to_bottom_right_);
   CommitAndUpdateImplPointers();
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   SetFixedContainerSizeDelta(child_impl_, gfx::Vector2d(20, 20));
 
   ExecuteCalculateDrawProperties(root_impl_);
@@ -985,7 +997,7 @@ TEST_F(LayerPositionConstraintTest,
   CommitAndUpdateImplPointers();
 
   // Case 1: scrollDelta
-  child_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(10, 10));
   child_impl_->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -1005,7 +1017,7 @@ TEST_F(LayerPositionConstraintTest,
                                   great_grand_child_impl_->DrawTransform());
 
   // Case 2: sizeDelta
-  child_impl_->SetScrollDelta(gfx::Vector2d(0, 0));
+  SetScrollOffsetDelta(child_impl_, gfx::Vector2d(0, 0));
   SetFixedContainerSizeDelta(child_impl_, gfx::Vector2d(20, 20));
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -1034,7 +1046,7 @@ TEST_F(LayerPositionConstraintTest,
 
   // Add one more layer to the hierarchy for this test.
   scoped_refptr<Layer> great_great_grand_child =
-      make_scoped_refptr(new LayerWithForcedDrawsContent(layer_settings_));
+      make_scoped_refptr(new LayerWithForcedDrawsContent());
   great_grand_child_->AddChild(great_great_grand_child);
 
   child_->SetIsContainerForFixedPositionLayers(true);
@@ -1048,11 +1060,12 @@ TEST_F(LayerPositionConstraintTest,
   LayerImpl* container1 = child_impl_;
   LayerImpl* fixed_to_container1 = grand_child_impl_;
   LayerImpl* container2 = great_grand_child_impl_;
-  LayerImpl* fixed_to_container2 = container2->children()[0].get();
+  LayerImpl* fixed_to_container2 =
+      layer_tree_impl_->LayerById(great_great_grand_child->id());
 
-  container1->SetScrollDelta(gfx::Vector2d(0, 15));
+  SetScrollOffsetDelta(container1, gfx::Vector2d(0, 15));
   container1->SetDrawsContent(true);
-  container2->SetScrollDelta(gfx::Vector2d(30, 0));
+  SetScrollOffsetDelta(container2, gfx::Vector2d(30, 0));
   container2->SetDrawsContent(true);
   ExecuteCalculateDrawProperties(root_impl_);
 
@@ -1087,7 +1100,7 @@ TEST_F(LayerPositionConstraintTest,
   // This test checks for correct scroll compensation when the fixed-position
   // container is the inner viewport scroll layer and has non-zero bounds delta.
   scoped_refptr<Layer> fixed_child =
-      make_scoped_refptr(new LayerWithForcedDrawsContent(layer_settings_));
+      make_scoped_refptr(new LayerWithForcedDrawsContent());
   fixed_child->SetBounds(gfx::Size(300, 300));
   scroll_layer_->AddChild(fixed_child);
   fixed_child->SetPositionConstraint(fixed_to_top_left_);
@@ -1098,7 +1111,7 @@ TEST_F(LayerPositionConstraintTest,
       root_impl_->layer_tree_impl()->FindActiveTreeLayerById(fixed_child->id());
 
   // Case 1: fixed-container size delta of 20, 20
-  scroll_layer_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(scroll_layer_impl_, gfx::Vector2d(10, 10));
   scroll_layer_impl_->SetDrawsContent(true);
   SetFixedContainerSizeDelta(scroll_layer_impl_, gfx::Vector2d(20, 20));
   gfx::Transform expected_scroll_layer_transform;
@@ -1119,7 +1132,7 @@ TEST_F(LayerPositionConstraintTest,
   fixed_child_impl =
       root_impl_->layer_tree_impl()->FindActiveTreeLayerById(fixed_child->id());
 
-  scroll_layer_impl_->SetScrollDelta(gfx::Vector2d(10, 10));
+  SetScrollOffsetDelta(scroll_layer_impl_, gfx::Vector2d(10, 10));
   SetFixedContainerSizeDelta(scroll_layer_impl_, gfx::Vector2d(20, 20));
   ExecuteCalculateDrawProperties(root_impl_);
 

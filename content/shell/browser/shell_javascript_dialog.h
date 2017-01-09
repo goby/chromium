@@ -5,6 +5,8 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_JAVASCRIPT_DIALOG_H_
 #define CONTENT_SHELL_BROWSER_SHELL_JAVASCRIPT_DIALOG_H_
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 
 #if defined(OS_MACOSX)
@@ -34,12 +36,12 @@ class ShellJavaScriptDialog {
   void Cancel();
 
  private:
-  ShellJavaScriptDialogManager* manager_;
   JavaScriptDialogManager::DialogClosedCallback callback_;
 
 #if defined(OS_MACOSX)
   ShellJavaScriptDialogHelper* helper_;  // owned
 #elif defined(OS_WIN)
+  ShellJavaScriptDialogManager* manager_;
   JavaScriptMessageType message_type_;
   HWND dialog_win_;
   base::string16 message_text_;

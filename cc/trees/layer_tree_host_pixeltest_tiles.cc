@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/output/copy_output_request.h"
@@ -9,7 +11,6 @@
 #include "cc/playback/display_item_list_settings.h"
 #include "cc/playback/drawing_display_item.h"
 #include "cc/test/layer_tree_pixel_test.h"
-#include "cc/test/test_gpu_memory_buffer_manager.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
 
@@ -66,7 +67,7 @@ class LayerTreeHostTilesPixelTest : public LayerTreePixelTest {
 
   void DoReadback() {
     Layer* target =
-        readback_target_ ? readback_target_ : layer_tree_host()->root_layer();
+        readback_target_ ? readback_target_ : layer_tree()->root_layer();
     target->RequestCopyOfOutput(CreateCopyOutputRequest());
   }
 
@@ -96,7 +97,7 @@ class LayerTreeHostTilesPixelTest : public LayerTreePixelTest {
   }
 
   base::FilePath ref_file_;
-  scoped_ptr<SkBitmap> result_bitmap_;
+  std::unique_ptr<SkBitmap> result_bitmap_;
   RasterMode raster_mode_;
 };
 
@@ -111,11 +112,11 @@ class BlueYellowClient : public ContentLayerClient {
     DisplayItemListSettings settings;
     settings.use_cached_picture = false;
     scoped_refptr<DisplayItemList> display_list =
-        DisplayItemList::Create(PaintableRegion(), settings);
+        DisplayItemList::Create(settings);
 
     SkPictureRecorder recorder;
-    skia::RefPtr<SkCanvas> canvas = skia::SharePtr(
-        recorder.beginRecording(gfx::RectToSkRect(gfx::Rect(size_))));
+    SkCanvas* canvas =
+        recorder.beginRecording(gfx::RectToSkRect(gfx::Rect(size_)));
     gfx::Rect top(0, 0, size_.width(), size_.height() / 2);
     gfx::Rect bottom(0, size_.height() / 2, size_.width(), size_.height() / 2);
 
@@ -130,13 +131,8 @@ class BlueYellowClient : public ContentLayerClient {
     paint.setColor(SK_ColorYELLOW);
     canvas->drawRect(gfx::RectToSkRect(yellow_rect), paint);
 
-    skia::RefPtr<SkPicture> picture =
-        skia::AdoptRef(recorder.endRecordingAsPicture());
-
-    auto* item = display_list->CreateAndAppendItem<DrawingDisplayItem>(
-        PaintableRegion());
-    item->SetNew(std::move(picture));
-
+    display_list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
+        PaintableRegion(), recorder.finishRecordingAsPicture());
     display_list->Finalize();
     return display_list;
   }
@@ -156,13 +152,13 @@ class LayerTreeHostTilesTestPartialInvalidation
  public:
   LayerTreeHostTilesTestPartialInvalidation()
       : client_(gfx::Size(200, 200)),
-        picture_layer_(PictureLayer::Create(layer_settings(), &client_)) {
+        picture_layer_(PictureLayer::Create(&client_)) {
     picture_layer_->SetBounds(gfx::Size(200, 200));
     picture_layer_->SetIsDrawable(true);
   }
 
   void DidCommitAndDrawFrame() override {
-    switch (layer_tree_host()->source_frame_number()) {
+    switch (layer_tree_host()->SourceFrameNumber()) {
       case 1:
         // We have done one frame, so the layer's content has been rastered.
         // Now we change the picture behind it to record something completely

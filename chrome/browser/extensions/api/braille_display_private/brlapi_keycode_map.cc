@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/braille_display_private/brlapi_keycode_map.h"
 
+#include <stdint.h>
+
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversion_utils.h"
 
@@ -46,7 +48,7 @@ void MapKeySym(brlapi_keyCode_t code, KeyEvent* event) {
   brlapi_keyCode_t key_sym = code & BRLAPI_KEY_CODE_MASK;
   if (key_sym < kMaxLatin1KeySym ||
       (key_sym & BRLAPI_KEY_SYM_UNICODE) != 0) {
-    uint32 code_point = key_sym & ~BRLAPI_KEY_SYM_UNICODE;
+    uint32_t code_point = key_sym & ~BRLAPI_KEY_SYM_UNICODE;
     if (!base::IsValidCharacter(code_point))
       return;
     event->standard_key_char.reset(new std::string);
@@ -140,8 +142,14 @@ void MapCommand(brlapi_keyCode_t code, KeyEvent* event) {
           event->display_position.reset(new int(argument));
           break;
         case BRLAPI_KEY_CMD_PASSDOTS:
-          event->command = KEY_COMMAND_DOTS;
-          event->braille_dots.reset(new int(argument & kAllDots));
+          unsigned int dots = argument & kAllDots;
+          event->braille_dots.reset(new int(dots));
+
+          // BRLAPI_DOTC represents when the braille space key is pressed.
+          if (dots && (argument & BRLAPI_DOTC))
+            event->command = KEY_COMMAND_CHORD;
+          else
+            event->command = KEY_COMMAND_DOTS;
           MapModifierFlags(code, event);
           break;
       }
@@ -150,8 +158,8 @@ void MapCommand(brlapi_keyCode_t code, KeyEvent* event) {
 
 }  // namespace
 
-scoped_ptr<KeyEvent> BrlapiKeyCodeToEvent(brlapi_keyCode_t code) {
-  scoped_ptr<KeyEvent> result(new KeyEvent);
+std::unique_ptr<KeyEvent> BrlapiKeyCodeToEvent(brlapi_keyCode_t code) {
+  std::unique_ptr<KeyEvent> result(new KeyEvent);
   result->command = KEY_COMMAND_NONE;
   switch (code & BRLAPI_KEY_TYPE_MASK) {
     case BRLAPI_KEY_TYPE_SYM:
@@ -163,7 +171,7 @@ scoped_ptr<KeyEvent> BrlapiKeyCodeToEvent(brlapi_keyCode_t code) {
   }
   if (result->command == KEY_COMMAND_NONE)
     result.reset();
-  return result.Pass();
+  return result;
 }
 
 }  // namespace braille_display_private

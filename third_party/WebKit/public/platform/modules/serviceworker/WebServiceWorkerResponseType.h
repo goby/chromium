@@ -7,16 +7,17 @@
 
 namespace blink {
 
+// This enum is used for histograms so append only.
 enum WebServiceWorkerResponseType {
-    WebServiceWorkerResponseTypeBasic,
-    WebServiceWorkerResponseTypeCORS,
-    WebServiceWorkerResponseTypeDefault,
-    WebServiceWorkerResponseTypeError,
-    WebServiceWorkerResponseTypeOpaque,
-    WebServiceWorkerResponseTypeOpaqueRedirect,
-    WebServiceWorkerResponseTypeLast = WebServiceWorkerResponseTypeOpaqueRedirect
+  WebServiceWorkerResponseTypeBasic,
+  WebServiceWorkerResponseTypeCORS,
+  WebServiceWorkerResponseTypeDefault,
+  WebServiceWorkerResponseTypeError,
+  WebServiceWorkerResponseTypeOpaque,
+  WebServiceWorkerResponseTypeOpaqueRedirect,
+  WebServiceWorkerResponseTypeLast = WebServiceWorkerResponseTypeOpaqueRedirect
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebServiceWorkerResponseType_h
+#endif  // WebServiceWorkerResponseType_h

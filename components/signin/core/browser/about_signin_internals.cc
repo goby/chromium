@@ -4,16 +4,23 @@
 
 #include "components/signin/core/browser/about_signin_internals.h"
 
+#include <stddef.h>
+
+#include <tuple>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/hash.h"
 #include "base/i18n/time_formatting.h"
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_client.h"
@@ -34,12 +41,12 @@ std::string GetTimeStr(base::Time time) {
 
 base::ListValue* AddSection(base::ListValue* parent_list,
                             const std::string& title) {
-  scoped_ptr<base::DictionaryValue> section(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> section(new base::DictionaryValue());
   base::ListValue* section_contents = new base::ListValue();
 
   section->SetString("title", title);
   section->Set("data", section_contents);
-  parent_list->Append(section.release());
+  parent_list->Append(std::move(section));
   return section_contents;
 }
 
@@ -47,22 +54,22 @@ void AddSectionEntry(base::ListValue* section_list,
                      const std::string& field_name,
                      const std::string& field_status,
                      const std::string& field_time = "") {
-  scoped_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
   entry->SetString("label", field_name);
   entry->SetString("status", field_status);
   entry->SetString("time", field_time);
-  section_list->Append(entry.release());
+  section_list->Append(std::move(entry));
 }
 
 void AddCookieEntry(base::ListValue* accounts_list,
                      const std::string& field_email,
                      const std::string& field_gaia_id,
                      const std::string& field_valid) {
-  scoped_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
   entry->SetString("email", field_email);
   entry->SetString("gaia_id", field_gaia_id);
   entry->SetString("valid", field_valid);
-  accounts_list->Append(entry.release());
+  accounts_list->Append(std::move(entry));
 }
 
 std::string SigninStatusFieldToLabel(UntimedSigninStatusField field) {
@@ -266,13 +273,10 @@ void AboutSigninInternals::NotifyObservers() {
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "422460 AboutSigninInternals::NotifyObservers 0.5"));
 
-  scoped_ptr<base::DictionaryValue> signin_status_value =
-      signin_status_.ToValue(account_tracker_,
-                             signin_manager_,
-                             signin_error_controller_,
-                             token_service_,
-                             cookie_manager_service_,
-                             product_version);
+  std::unique_ptr<base::DictionaryValue> signin_status_value =
+      signin_status_.ToValue(account_tracker_, signin_manager_,
+                             signin_error_controller_, token_service_,
+                             cookie_manager_service_, product_version);
 
   // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
   // fixed.
@@ -280,18 +284,14 @@ void AboutSigninInternals::NotifyObservers() {
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "422460 AboutSigninInternals::NotifyObservers1"));
 
-  FOR_EACH_OBSERVER(AboutSigninInternals::Observer,
-                    signin_observers_,
-                    OnSigninStateChanged(signin_status_value.get()));
+  for (auto& observer : signin_observers_)
+    observer.OnSigninStateChanged(signin_status_value.get());
 }
 
-scoped_ptr<base::DictionaryValue> AboutSigninInternals::GetSigninStatus() {
-  return signin_status_.ToValue(account_tracker_,
-                                signin_manager_,
-                                signin_error_controller_,
-                                token_service_,
-                                cookie_manager_service_,
-                                client_->GetProductVersion()).Pass();
+std::unique_ptr<base::DictionaryValue> AboutSigninInternals::GetSigninStatus() {
+  return signin_status_.ToValue(
+      account_tracker_, signin_manager_, signin_error_controller_,
+      token_service_, cookie_manager_service_, client_->GetProductVersion());
 }
 
 void AboutSigninInternals::OnAccessTokenRequested(
@@ -308,8 +308,8 @@ void AboutSigninInternals::OnAccessTokenRequested(
   if (token) {
     *token = TokenInfo(consumer_id, scopes);
   } else {
-    token = new TokenInfo(consumer_id, scopes);
-    signin_status_.token_info_map[account_id].push_back(token);
+    signin_status_.token_info_map[account_id].push_back(
+        base::MakeUnique<TokenInfo>(consumer_id, scopes));
   }
 
   NotifyObservers();
@@ -337,9 +337,8 @@ void AboutSigninInternals::OnFetchAccessTokenComplete(
 void AboutSigninInternals::OnTokenRemoved(
     const std::string& account_id,
     const OAuth2TokenService::ScopeSet& scopes) {
-  for (size_t i = 0; i < signin_status_.token_info_map[account_id].size();
-       ++i) {
-    TokenInfo* token = signin_status_.token_info_map[account_id][i];
+  for (const std::unique_ptr<TokenInfo>& token :
+       signin_status_.token_info_map[account_id]) {
     if (token->scopes == scopes)
       token->Invalidate();
   }
@@ -377,6 +376,7 @@ void AboutSigninInternals::GoogleSignedOut(const std::string& account_id,
 
 void AboutSigninInternals::OnGaiaAccountsInCookieUpdated(
     const std::vector<gaia::ListedAccount>& gaia_accounts,
+    const std::vector<gaia::ListedAccount>& signed_out_account,
     const GoogleServiceAuthError& error) {
   if (error.state() != GoogleServiceAuthError::NONE)
     return;
@@ -400,9 +400,8 @@ void AboutSigninInternals::OnGaiaAccountsInCookieUpdated(
   }
 
   // Update the observers that the cookie's accounts are updated.
-  FOR_EACH_OBSERVER(AboutSigninInternals::Observer,
-                    signin_observers_,
-                    OnCookieAccountsFetched(&cookie_status));
+  for (auto& observer : signin_observers_)
+    observer.OnCookieAccountsFetched(&cookie_status);
 }
 
 AboutSigninInternals::TokenInfo::TokenInfo(
@@ -416,21 +415,19 @@ AboutSigninInternals::TokenInfo::TokenInfo(
 
 AboutSigninInternals::TokenInfo::~TokenInfo() {}
 
-bool AboutSigninInternals::TokenInfo::LessThan(const TokenInfo* a,
-                                               const TokenInfo* b) {
-  if (a->request_time == b->request_time) {
-    if (a->consumer_id == b->consumer_id) {
-      return a->scopes < b->scopes;
-    }
-    return a->consumer_id < b->consumer_id;
-  }
-  return a->request_time < b->request_time;
+bool AboutSigninInternals::TokenInfo::LessThan(
+    const std::unique_ptr<TokenInfo>& a,
+    const std::unique_ptr<TokenInfo>& b) {
+  return std::tie(a->request_time, a->consumer_id, a->scopes) <
+         std::tie(b->request_time, b->consumer_id, b->scopes);
 }
 
 void AboutSigninInternals::TokenInfo::Invalidate() { removed_ = true; }
 
-base::DictionaryValue* AboutSigninInternals::TokenInfo::ToValue() const {
-  scoped_ptr<base::DictionaryValue> token_info(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue>
+AboutSigninInternals::TokenInfo::ToValue() const {
+  std::unique_ptr<base::DictionaryValue> token_info(
+      new base::DictionaryValue());
   token_info->SetString("service", consumer_id);
 
   std::string scopes_str;
@@ -470,33 +467,27 @@ base::DictionaryValue* AboutSigninInternals::TokenInfo::ToValue() const {
     token_info->SetString("status", "Waiting for response");
   }
 
-  return token_info.release();
+  return token_info;
 }
 
 AboutSigninInternals::SigninStatus::SigninStatus()
     : timed_signin_fields(TIMED_FIELDS_COUNT) {}
 
-AboutSigninInternals::SigninStatus::~SigninStatus() {
-  for (TokenInfoMap::iterator it = token_info_map.begin();
-       it != token_info_map.end();
-       ++it) {
-    STLDeleteElements(&it->second);
-  }
-}
+AboutSigninInternals::SigninStatus::~SigninStatus() {}
 
 AboutSigninInternals::TokenInfo* AboutSigninInternals::SigninStatus::FindToken(
     const std::string& account_id,
     const std::string& consumer_id,
     const OAuth2TokenService::ScopeSet& scopes) {
-  for (size_t i = 0; i < token_info_map[account_id].size(); ++i) {
-    TokenInfo* tmp = token_info_map[account_id][i];
-    if (tmp->consumer_id == consumer_id && tmp->scopes == scopes)
-      return tmp;
+  for (const std::unique_ptr<TokenInfo>& token : token_info_map[account_id]) {
+    if (token->consumer_id == consumer_id && token->scopes == scopes)
+      return token.get();
   }
-  return NULL;
+  return nullptr;
 }
 
-scoped_ptr<base::DictionaryValue> AboutSigninInternals::SigninStatus::ToValue(
+std::unique_ptr<base::DictionaryValue>
+AboutSigninInternals::SigninStatus::ToValue(
     AccountTrackerService* account_tracker,
     SigninManagerBase* signin_manager,
     SigninErrorController* signin_error_controller,
@@ -509,15 +500,14 @@ scoped_ptr<base::DictionaryValue> AboutSigninInternals::SigninStatus::ToValue(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "422460 AboutSigninInternals::SigninStatus::ToValue1"));
 
-  scoped_ptr<base::DictionaryValue> signin_status(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> signin_status(
+      new base::DictionaryValue());
   base::ListValue* signin_info = new base::ListValue();
   signin_status->Set("signin_info", signin_info);
 
   // A summary of signin related info first.
   base::ListValue* basic_info = AddSection(signin_info, "Basic Information");
   AddSectionEntry(basic_info, "Chrome Version", product_version);
-  AddSectionEntry(basic_info, "Webview Based Signin?",
-      switches::IsEnableWebviewBasedSignin() == true ? "On" : "Off");
   AddSectionEntry(basic_info, "New Profile Management?",
       switches::IsNewProfileManagement() == true ? "On" : "Off");
   AddSectionEntry(basic_info, "Account Consistency?",
@@ -625,9 +615,7 @@ scoped_ptr<base::DictionaryValue> AboutSigninInternals::SigninStatus::ToValue(
   // Token information for all services.
   base::ListValue* token_info = new base::ListValue();
   signin_status->Set("token_info", token_info);
-  for (TokenInfoMap::iterator it = token_info_map.begin();
-       it != token_info_map.end();
-       ++it) {
+  for (auto it = token_info_map.begin(); it != token_info_map.end(); ++it) {
     // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460
     // is fixed.
     tracked_objects::ScopedTracker tracking_profile41(
@@ -643,7 +631,7 @@ scoped_ptr<base::DictionaryValue> AboutSigninInternals::SigninStatus::ToValue(
             "422460 AboutSigninInternals::SigninStatus::ToValue42"));
 
     std::sort(it->second.begin(), it->second.end(), TokenInfo::LessThan);
-    const std::vector<TokenInfo*>& tokens = it->second;
+    const auto& tokens = it->second;
 
     // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460
     // is fixed.
@@ -651,9 +639,8 @@ scoped_ptr<base::DictionaryValue> AboutSigninInternals::SigninStatus::ToValue(
         FROM_HERE_WITH_EXPLICIT_FUNCTION(
             "422460 AboutSigninInternals::SigninStatus::ToValue43"));
 
-    for (size_t i = 0; i < tokens.size(); ++i) {
-      base::DictionaryValue* token_info = tokens[i]->ToValue();
-      token_details->Append(token_info);
+    for (const std::unique_ptr<TokenInfo>& token : tokens) {
+      token_details->Append(token->ToValue());
     }
   }
 
@@ -663,16 +650,17 @@ scoped_ptr<base::DictionaryValue> AboutSigninInternals::SigninStatus::ToValue(
       token_service->GetAccounts();
 
   if(accounts_in_token_service.size() == 0) {
-    base::DictionaryValue* no_token_entry = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> no_token_entry(
+        new base::DictionaryValue());
     no_token_entry->SetString("accountId", "No token in Token Service.");
-    account_info->Append(no_token_entry);
+    account_info->Append(std::move(no_token_entry));
   }
 
   for(const std::string& account_id : accounts_in_token_service) {
-    base::DictionaryValue* entry = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
     entry->SetString("accountId", account_id);
-    account_info->Append(entry);
+    account_info->Append(std::move(entry));
   }
 
-  return signin_status.Pass();
+  return signin_status;
 }

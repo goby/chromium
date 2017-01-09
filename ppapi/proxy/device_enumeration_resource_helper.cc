@@ -4,9 +4,12 @@
 
 #include "ppapi/proxy/device_enumeration_resource_helper.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
 #include "ppapi/c/pp_array_output.h"
@@ -145,7 +148,7 @@ void DeviceEnumerationResourceHelper::OnPluginMsgNotifyDeviceChange(
 
   CHECK(monitor_callback_.get());
 
-  scoped_ptr<PP_Resource[]> elements;
+  std::unique_ptr<PP_Resource[]> elements;
   uint32_t size = static_cast<uint32_t>(devices.size());
   if (size > 0) {
     elements.reset(new PP_Resource[size]);

@@ -4,13 +4,12 @@
 
 #include "ui/ozone/platform/drm/gpu/mock_drm_device.h"
 
-#include <drm_fourcc.h>
 #include <xf86drm.h>
-#include <xf86drmMode.h>
 
 #include "base/logging.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
-#include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager_legacy.h"
+#include "ui/ozone/platform/drm/gpu/mock_hardware_display_plane_manager.h"
 
 namespace ui {
 
@@ -20,28 +19,6 @@ template <class Object>
 Object* DrmAllocator() {
   return static_cast<Object*>(drmMalloc(sizeof(Object)));
 }
-
-class MockHardwareDisplayPlaneManager
-    : public HardwareDisplayPlaneManagerLegacy {
- public:
-  MockHardwareDisplayPlaneManager(DrmDevice* drm,
-                                  std::vector<uint32_t> crtcs,
-                                  size_t planes_per_crtc) {
-    const int kPlaneBaseId = 50;
-    drm_ = drm;
-    crtcs_.swap(crtcs);
-    for (size_t crtc_idx = 0; crtc_idx < crtcs_.size(); crtc_idx++) {
-      for (size_t i = 0; i < planes_per_crtc; i++) {
-        scoped_ptr<HardwareDisplayPlane> plane(
-            new HardwareDisplayPlane(kPlaneBaseId + i, 1 << crtc_idx));
-        // Add support to test more formats.
-        plane->Initialize(drm, std::vector<uint32_t>(1, DRM_FORMAT_XRGB8888),
-                          false, true);
-        planes_.push_back(plane.Pass());
-      }
-    }
-  }
-};
 
 }  // namespace
 
@@ -208,8 +185,7 @@ bool MockDrmDevice::CreateDumbBuffer(const SkImageInfo& info,
   *handle = allocate_buffer_count_++;
   *stride = info.minRowBytes();
   void* pixels = new char[info.getSafeSize(*stride)];
-  buffers_.push_back(
-      skia::AdoptRef(SkSurface::NewRasterDirect(info, pixels, *stride)));
+  buffers_.push_back(SkSurface::MakeRasterDirect(info, pixels, *stride));
   buffers_[*handle]->getCanvas()->clear(SK_ColorBLACK);
 
   return true;
@@ -219,7 +195,7 @@ bool MockDrmDevice::DestroyDumbBuffer(uint32_t handle) {
   if (handle >= buffers_.size() || !buffers_[handle])
     return false;
 
-  buffers_[handle].clear();
+  buffers_[handle].reset();
   return true;
 }
 
@@ -227,7 +203,9 @@ bool MockDrmDevice::MapDumbBuffer(uint32_t handle, size_t size, void** pixels) {
   if (handle >= buffers_.size() || !buffers_[handle])
     return false;
 
-  *pixels = const_cast<void*>(buffers_[handle]->peekPixels(nullptr, nullptr));
+  SkPixmap pixmap;
+  buffers_[handle]->peekPixels(&pixmap);
+  *pixels = const_cast<void*>(pixmap.addr());
   return true;
 }
 
@@ -246,8 +224,11 @@ bool MockDrmDevice::CommitProperties(drmModeAtomicReq* properties,
   return false;
 }
 
-bool MockDrmDevice::SetGammaRamp(uint32_t crtc_id,
-                                 const std::vector<GammaRampRGBEntry>& lut) {
+bool MockDrmDevice::SetColorCorrection(
+    uint32_t crtc_id,
+    const std::vector<GammaRampRGBEntry>& degamma_lut,
+    const std::vector<GammaRampRGBEntry>& gamma_lut,
+    const std::vector<float>& correction_matrix) {
   return true;
 }
 

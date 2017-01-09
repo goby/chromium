@@ -5,9 +5,8 @@
 #import "chrome/browser/ui/cocoa/extensions/media_gallery_list_entry_view.h"
 
 #include "base/strings/sys_string_conversions.h"
-#include "chrome/browser/ui/chrome_style.h"
+#include "chrome/browser/ui/cocoa/chrome_style.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_control_utils.h"
-#include "grit/theme_resources.h"
 #import "ui/base/cocoa/menu_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -62,8 +61,7 @@ ui::MenuModel* MediaGalleryListEntryController::GetContextMenu(
 
 - (id)initWithFrame:(NSRect)frameRect
          controller:(MediaGalleryListEntryController*)controller
-           prefInfo:(const MediaGalleryPrefInfo&)prefInfo
-   showFolderViewer:(bool)showFolderViewer {
+           prefInfo:(const MediaGalleryPrefInfo&)prefInfo {
   if ((self = [super initWithFrame:frameRect])) {
     controller_ = controller;
     prefId_ = prefInfo.pref_id;
@@ -86,24 +84,6 @@ ui::MenuModel* MediaGalleryListEntryController::GetContextMenu(
         base::SysUTF16ToNSString(prefInfo.GetGalleryDisplayName())];
     [checkbox_ setToolTip:nsTooltip];
     [self addSubview:checkbox_];
-
-    // Folder viewer button.
-    if (showFolderViewer) {
-      folderViewer_.reset(
-          [[MediaGalleryButton alloc] initWithFrame:NSZeroRect
-                                         controller:self]);
-      [folderViewer_ setButtonType:NSMomentaryChangeButton];
-      [folderViewer_ setTarget:self];
-      [folderViewer_ setAction:@selector(onFolderViewerClicked:)];
-
-      ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-      [folderViewer_ setImage:rb.GetNativeImageNamed(
-          IDR_FILE_FOLDER).ToNSImage()];
-      [folderViewer_ setTitle:nil];
-      [folderViewer_ setBordered:false];
-      [folderViewer_ setToolTip:nsTooltip];
-      [self addSubview:folderViewer_];
-    }
 
     // Additional details text.
     base::string16 subscript = prefInfo.GetGalleryAdditionalDetails();
@@ -164,7 +144,6 @@ ui::MenuModel* MediaGalleryListEntryController::GetContextMenu(
     bounds.size = NSMakeSize(10000, 10000);
 
   [checkbox_ sizeToFit];
-  [folderViewer_ sizeToFit];
   [details_ sizeToFit];
 
   // Auto size everything and lay it out horizontally.
@@ -197,11 +176,6 @@ ui::MenuModel* MediaGalleryListEntryController::GetContextMenu(
     if (overflow > 0) {
       checkboxFrame.size.width -= overflow;
       [checkbox_ setFrameSize:checkboxFrame.size];
-      if (folderViewer_.get()) {
-        NSRect folderViewerFrame = [folderViewer_ frame];
-        folderViewerFrame.origin.x -= overflow;
-        [folderViewer_ setFrameOrigin:folderViewerFrame.origin];
-      }
       if (details_.get()) {
         detailsFrame.origin.x -= overflow;
         [details_ setFrameOrigin:detailsFrame.origin];

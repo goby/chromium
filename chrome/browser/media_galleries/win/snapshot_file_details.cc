@@ -4,7 +4,9 @@
 
 #include "chrome/browser/media_galleries/win/snapshot_file_details.h"
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <limits>
 
 ///////////////////////////////////////////////////////////////////////////////
 //                       SnapshotRequestInfo                                 //
@@ -22,6 +24,9 @@ SnapshotRequestInfo::SnapshotRequestInfo(
       error_callback(error_callback) {
 }
 
+SnapshotRequestInfo::SnapshotRequestInfo(const SnapshotRequestInfo& other) =
+    default;
+
 SnapshotRequestInfo::~SnapshotRequestInfo() {
 }
 
@@ -35,6 +40,9 @@ SnapshotFileDetails::SnapshotFileDetails(
       optimal_transfer_size_(0),
       bytes_written_(0) {
 }
+
+SnapshotFileDetails::SnapshotFileDetails(const SnapshotFileDetails& other) =
+    default;
 
 SnapshotFileDetails::~SnapshotFileDetails() {
   file_stream_.Release();
@@ -60,7 +68,7 @@ bool SnapshotFileDetails::IsSnapshotFileWriteComplete() const {
 
 bool SnapshotFileDetails::AddBytesWritten(DWORD bytes_written) {
   if ((bytes_written == 0) ||
-      (bytes_written_ > kuint64max - bytes_written) ||
+      (bytes_written_ > std::numeric_limits<uint64_t>::max() - bytes_written) ||
       (bytes_written_ + bytes_written > file_info_.size))
     return false;
 

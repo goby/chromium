@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -41,7 +41,7 @@ std::string GetDataContent(const HistoryData::Data& data) {
 
 class HistoryDataStoreTest : public testing::Test {
  public:
-  HistoryDataStoreTest() : worker_pool_owner_(1, "AppLanucherTest") {}
+  HistoryDataStoreTest() : worker_pool_owner_(2, "AppLanucherTest") {}
 
   // testing::Test overrides:
   void SetUp() override {
@@ -53,7 +53,7 @@ class HistoryDataStoreTest : public testing::Test {
   }
 
   void OpenStore(const std::string& file_name) {
-    data_file_ = temp_dir_.path().AppendASCII(file_name);
+    data_file_ = temp_dir_.GetPath().AppendASCII(file_name);
     store_ = new HistoryDataStore(scoped_refptr<DictionaryDataStore>(
         new DictionaryDataStore(data_file_, worker_pool_owner_.pool().get())));
     Load();
@@ -70,8 +70,8 @@ class HistoryDataStoreTest : public testing::Test {
   }
 
   void WriteDataFile(const std::string& file_name, const std::string& data) {
-    base::WriteFile(
-        temp_dir_.path().AppendASCII(file_name), data.c_str(), data.size());
+    base::WriteFile(temp_dir_.GetPath().AppendASCII(file_name), data.c_str(),
+                    data.size());
   }
 
   HistoryDataStore* store() { return store_.get(); }
@@ -80,7 +80,7 @@ class HistoryDataStoreTest : public testing::Test {
   }
 
  private:
-  void OnRead(scoped_ptr<HistoryData::Associations> associations) {
+  void OnRead(std::unique_ptr<HistoryData::Associations> associations) {
     associations_.clear();
     if (associations)
       associations->swap(associations_);
@@ -92,7 +92,7 @@ class HistoryDataStoreTest : public testing::Test {
   base::MessageLoopForUI message_loop_;
   base::ScopedTempDir temp_dir_;
   base::FilePath data_file_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   base::SequencedWorkerPoolOwner worker_pool_owner_;
 
   scoped_refptr<HistoryDataStore> store_;

@@ -7,7 +7,7 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_engine.h"
 
@@ -33,7 +33,7 @@ void TaskUpdate::Run() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (ids_.empty()) {
-    TaskComplete(Error::ERROR_UPDATE_INVALID_ARGUMENT);
+    TaskComplete(Error::INVALID_ARGUMENT);
     return;
   }
 
@@ -45,14 +45,14 @@ void TaskUpdate::Run() {
 void TaskUpdate::Cancel() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  TaskComplete(Error::ERROR_UPDATE_CANCELED);
+  TaskComplete(Error::UPDATE_CANCELED);
 }
 
 std::vector<std::string> TaskUpdate::GetIds() const {
   return ids_;
 }
 
-void TaskUpdate::TaskComplete(int error) {
+void TaskUpdate::TaskComplete(Error error) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(

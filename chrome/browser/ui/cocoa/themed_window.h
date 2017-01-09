@@ -33,8 +33,14 @@ enum ThemeImageAlignment {
 
 // Implemented by windows that support theming.
 @interface NSWindow (ThemeProvider)
-- (ThemeProvider*)themeProvider;
+- (const ThemeProvider*)themeProvider;
 - (ThemedWindowStyle)themedWindowStyle;
+- (BOOL)inIncognitoMode;
+// Return YES if using the system (i.e. non-custom) theme and Incognito mode.
+- (BOOL)inIncognitoModeWithSystemTheme;
+// Return YES if Incongnito, or a custom theme with a dark toolbar color or
+// light tab text.
+- (BOOL)hasDarkTheme;
 
 // Returns the position in window coordinates that the top left of a theme
 // image with |alignment| should be painted at. The result of this method can

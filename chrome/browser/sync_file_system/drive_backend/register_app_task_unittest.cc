@@ -4,14 +4,20 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/register_app_task.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <utility>
 #include <vector>
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/format_macros.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
 #include "chrome/browser/sync_file_system/drive_backend/fake_drive_service_helper.h"
@@ -33,7 +39,7 @@ namespace sync_file_system {
 namespace drive_backend {
 
 namespace {
-const int64 kSyncRootTrackerID = 100;
+const int64_t kSyncRootTrackerID = 100;
 }  // namespace
 
 class RegisterAppTaskTest : public testing::Test {
@@ -47,23 +53,20 @@ class RegisterAppTaskTest : public testing::Test {
     ASSERT_TRUE(database_dir_.CreateUniqueTempDir());
     in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
 
-    scoped_ptr<drive::FakeDriveService>
-        fake_drive_service(new drive::FakeDriveService);
-    scoped_ptr<drive::DriveUploaderInterface>
-        drive_uploader(new drive::DriveUploader(
-            fake_drive_service.get(),
-            base::ThreadTaskRunnerHandle::Get()));
+    std::unique_ptr<drive::FakeDriveService> fake_drive_service(
+        new drive::FakeDriveService);
+    std::unique_ptr<drive::DriveUploaderInterface> drive_uploader(
+        new drive::DriveUploader(fake_drive_service.get(),
+                                 base::ThreadTaskRunnerHandle::Get()));
 
     fake_drive_service_helper_.reset(new FakeDriveServiceHelper(
         fake_drive_service.get(), drive_uploader.get(),
         kSyncRootFolderTitle));
 
-    context_.reset(new SyncEngineContext(fake_drive_service.Pass(),
-                                         drive_uploader.Pass(),
-                                         nullptr /* task_logger */,
-                                         base::ThreadTaskRunnerHandle::Get(),
-                                         base::ThreadTaskRunnerHandle::Get(),
-                                         nullptr /* worker_pool */));
+    context_.reset(new SyncEngineContext(
+        std::move(fake_drive_service), std::move(drive_uploader),
+        nullptr /* task_logger */, base::ThreadTaskRunnerHandle::Get(),
+        base::ThreadTaskRunnerHandle::Get(), nullptr /* worker_pool */));
 
     ASSERT_EQ(google_apis::HTTP_CREATED,
               fake_drive_service_helper_->AddOrphanedFolder(
@@ -76,15 +79,15 @@ class RegisterAppTaskTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<LevelDBWrapper> OpenLevelDB() {
+  std::unique_ptr<LevelDBWrapper> OpenLevelDB() {
     leveldb::DB* db = nullptr;
     leveldb::Options options;
     options.create_if_missing = true;
     options.env = in_memory_env_.get();
     leveldb::Status status =
-        leveldb::DB::Open(options, database_dir_.path().AsUTF8Unsafe(), &db);
+        leveldb::DB::Open(options, database_dir_.GetPath().AsUTF8Unsafe(), &db);
     EXPECT_TRUE(status.ok());
-    return make_scoped_ptr(new LevelDBWrapper(make_scoped_ptr(db)));
+    return base::MakeUnique<LevelDBWrapper>(base::WrapUnique(db));
   }
 
   void SetUpInitialData(LevelDBWrapper* db) {
@@ -118,14 +121,15 @@ class RegisterAppTaskTest : public testing::Test {
     EXPECT_TRUE(db->Commit().ok());
   }
 
-  void CreateMetadataDatabase(scoped_ptr<LevelDBWrapper> db) {
+  void CreateMetadataDatabase(std::unique_ptr<LevelDBWrapper> db) {
     ASSERT_TRUE(db);
     ASSERT_FALSE(context_->GetMetadataDatabase());
-    scoped_ptr<MetadataDatabase> metadata_db;
-    ASSERT_EQ(SYNC_STATUS_OK,
-              MetadataDatabase::CreateForTesting(
-                  db.Pass(), true /* enable_on_disk_index */, &metadata_db));
-    context_->SetMetadataDatabase(metadata_db.Pass());
+    std::unique_ptr<MetadataDatabase> metadata_db;
+    ASSERT_EQ(
+        SYNC_STATUS_OK,
+        MetadataDatabase::CreateForTesting(
+            std::move(db), true /* enable_on_disk_index */, &metadata_db));
+    context_->SetMetadataDatabase(std::move(metadata_db));
   }
 
   SyncStatusCode RunRegisterAppTask(const std::string& app_id) {
@@ -228,7 +232,7 @@ class RegisterAppTaskTest : public testing::Test {
     if (!GetAppRootFolderID(app_id, &app_root_folder_id))
       return false;
 
-    scoped_ptr<google_apis::FileResource> entry;
+    std::unique_ptr<google_apis::FileResource> entry;
     if (google_apis::HTTP_SUCCESS !=
         fake_drive_service_helper_->GetFileResource(app_root_folder_id, &entry))
       return false;
@@ -257,31 +261,31 @@ class RegisterAppTaskTest : public testing::Test {
     return base::StringPrintf("file_id_%" PRId64, next_file_id_++);
   }
 
-  scoped_ptr<leveldb::Env> in_memory_env_;
+  std::unique_ptr<leveldb::Env> in_memory_env_;
 
   std::string sync_root_folder_id_;
 
-  int64 next_file_id_;
-  int64 next_tracker_id_;
+  int64_t next_file_id_;
+  int64_t next_tracker_id_;
 
   content::TestBrowserThreadBundle browser_threads_;
   base::ScopedTempDir database_dir_;
 
-  scoped_ptr<SyncEngineContext> context_;
-  scoped_ptr<FakeDriveServiceHelper> fake_drive_service_helper_;
+  std::unique_ptr<SyncEngineContext> context_;
+  std::unique_ptr<FakeDriveServiceHelper> fake_drive_service_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(RegisterAppTaskTest);
 };
 
 TEST_F(RegisterAppTaskTest, AlreadyRegistered) {
-  scoped_ptr<LevelDBWrapper> db = OpenLevelDB();
+  std::unique_ptr<LevelDBWrapper> db = OpenLevelDB();
   ASSERT_TRUE(db);
   SetUpInitialData(db.get());
 
   const std::string kAppID = "app_id";
   SetUpRegisteredAppRoot(kAppID, db.get());
 
-  CreateMetadataDatabase(db.Pass());
+  CreateMetadataDatabase(std::move(db));
   EXPECT_EQ(SYNC_STATUS_OK, RunRegisterAppTask(kAppID));
 
   EXPECT_EQ(1u, CountRegisteredAppRoot());
@@ -289,12 +293,12 @@ TEST_F(RegisterAppTaskTest, AlreadyRegistered) {
 }
 
 TEST_F(RegisterAppTaskTest, CreateAppFolder) {
-  scoped_ptr<LevelDBWrapper> db = OpenLevelDB();
+  std::unique_ptr<LevelDBWrapper> db = OpenLevelDB();
   ASSERT_TRUE(db);
   SetUpInitialData(db.get());
 
   const std::string kAppID = "app_id";
-  CreateMetadataDatabase(db.Pass());
+  CreateMetadataDatabase(std::move(db));
   RunRegisterAppTask(kAppID);
 
   EXPECT_EQ(1u, CountRegisteredAppRoot());
@@ -306,14 +310,14 @@ TEST_F(RegisterAppTaskTest, CreateAppFolder) {
 }
 
 TEST_F(RegisterAppTaskTest, RegisterExistingFolder) {
-  scoped_ptr<LevelDBWrapper> db = OpenLevelDB();
+  std::unique_ptr<LevelDBWrapper> db = OpenLevelDB();
   ASSERT_TRUE(db);
   SetUpInitialData(db.get());
 
   const std::string kAppID = "app_id";
   SetUpUnregisteredAppRoot(kAppID, db.get());
 
-  CreateMetadataDatabase(db.Pass());
+  CreateMetadataDatabase(std::move(db));
   RunRegisterAppTask(kAppID);
 
   EXPECT_EQ(1u, CountRegisteredAppRoot());
@@ -321,7 +325,7 @@ TEST_F(RegisterAppTaskTest, RegisterExistingFolder) {
 }
 
 TEST_F(RegisterAppTaskTest, RegisterExistingFolder_MultipleCandidate) {
-  scoped_ptr<LevelDBWrapper> db = OpenLevelDB();
+  std::unique_ptr<LevelDBWrapper> db = OpenLevelDB();
   ASSERT_TRUE(db);
   SetUpInitialData(db.get());
 
@@ -329,7 +333,7 @@ TEST_F(RegisterAppTaskTest, RegisterExistingFolder_MultipleCandidate) {
   SetUpUnregisteredAppRoot(kAppID, db.get());
   SetUpUnregisteredAppRoot(kAppID, db.get());
 
-  CreateMetadataDatabase(db.Pass());
+  CreateMetadataDatabase(std::move(db));
   RunRegisterAppTask(kAppID);
 
   EXPECT_EQ(1u, CountRegisteredAppRoot());

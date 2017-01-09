@@ -53,23 +53,24 @@
 <if expr="chromeos">
 <link rel="stylesheet" href="chromeos/third_party_ime_confirm_overlay.css">
 <link rel="stylesheet" href="chromeos/accounts_options_page.css">
+<link rel="stylesheet" href="chromeos/arc_opt_out_confirm_overlay.css">
 <link rel="stylesheet" href="chromeos/bluetooth.css">
 <link rel="stylesheet" href="chromeos/change_picture_options.css">
-<link rel="stylesheet" href="chromeos/consumer_management_overlay.css">
 <link rel="stylesheet" href="chromeos/display_options.css">
 <link rel="stylesheet" href="chromeos/display_overscan.css">
 <link rel="stylesheet" href="chromeos/internet_detail.css">
 <link rel="stylesheet" href="chromeos/keyboard_overlay.css">
+<link rel="stylesheet" href="chromeos/stylus_overlay.css">
 <link rel="stylesheet" href="chromeos/pointer_overlay.css">
+<link rel="stylesheet" href="chromeos/quick_unlock_configure_overlay.css">
+<link rel="stylesheet" href="chromeos/storage_clear_drive_cache_overlay.css">
+<link rel="stylesheet" href="chromeos/storage_manager.css">
 <link rel="stylesheet" href="factory_reset_overlay.css">
 <link rel="stylesheet" href="../help/channel_change_page.css">
 </if>
 <if expr="use_nss_certs">
 <link rel="stylesheet" href="certificate_manager.css">
 <link rel="stylesheet" href="certificate_tree.css">
-</if>
-<if expr="enable_settings_app">
-<link rel="stylesheet" href="options_settings_app.css">
 </if>
 <script src="chrome://resources/js/action_link.js"></script>
 <script src="chrome://resources/js/cr.js"></script>
@@ -99,6 +100,7 @@
 <script src="chrome://resources/js/cr/ui/tree.js"></script>
 <script src="chrome://resources/js/cr/ui/page_manager/page_manager.js"></script>
 <script src="chrome://resources/js/cr/ui/page_manager/page.js"></script>
+<script src="chrome://resources/js/icon.js"></script>
 <script src="chrome://resources/js/load_time_data.js"></script>
 <script src="chrome://resources/js/parse_html_subset.js"></script>
 <script src="chrome://resources/js/util.js"></script>
@@ -130,14 +132,17 @@
   <include src="sync_setup_overlay.html">
 <if expr="chromeos">
   <include src="chromeos/accounts_options.html">
+  <include src="chromeos/arc_opt_out_confirm_overlay.html">
   <include src="chromeos/bluetooth_add_device_overlay.html">
   <include src="chromeos/bluetooth_pair_device_overlay.html">
   <include src="chromeos/change_picture_options.html">
-  <include src="chromeos/consumer_management_overlay.html">
   <include src="chromeos/display_options.html">
   <include src="chromeos/keyboard_overlay.html">
+  <include src="chromeos/stylus_overlay.html">
   <include src="chromeos/pointer_overlay.html">
   <include src="chromeos/power_overlay.html">
+  <include src="chromeos/quick_unlock_configure_overlay.html">
+  <include src="chromeos/storage_manager.html">
   <include src="factory_reset_overlay.html">
 </if>
 <if expr="use_nss_certs">
@@ -148,6 +153,7 @@
   <include src="alert_overlay.html">
   <include src="autofill_edit_address_overlay.html">
   <include src="autofill_edit_creditcard_overlay.html">
+  <include src="clear_browser_data_history_notice_overlay.html">
   <include src="content_settings_exceptions_area.html">
   <include src="cookies_view.html">
   <include src="handler_options.html">
@@ -161,6 +167,7 @@
   <include src="chromeos/display_overscan.html">
   <include src="chromeos/internet_detail.html">
   <include src="chromeos/preferred_networks.html">
+  <include src="chromeos/storage_clear_drive_cache_overlay.html">
   <include src="chromeos/third_party_ime_confirm_overlay.html">
   <include src="../help/channel_change_page.html">
 </if>

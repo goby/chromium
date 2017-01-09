@@ -2,34 +2,59 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/build_time.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "build/build_config.h"
 #include "crypto/nss_util.h"
 #include "net/socket/client_socket_pool_base.h"
-#include "net/socket/ssl_server_socket.h"
-#include "net/spdy/spdy_session.h"
 #include "net/test/net_test_suite.h"
+#include "url/url_features.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
 #include "base/android/jni_registrar.h"
-#include "base/test/test_file_util.h"
-#include "base/test/test_ui_thread_android.h"
 #include "net/android/dummy_spnego_authenticator.h"
 #include "net/android/net_jni_registrar.h"
 #endif
 
-#if defined(USE_ICU_ALTERNATIVES_ON_ANDROID)
-#include "url/android/url_jni_registrar.h"
-#endif
-
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-#include "third_party/mojo/src/mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/embedder.h"  // nogncheck
 #endif
 
 using net::internal::ClientSocketPoolBaseHelper;
-using net::SpdySession;
+
+namespace {
+
+bool VerifyBuildIsTimely() {
+  // This lines up with various //net security features, like Certificate
+  // Transparency or HPKP, in that they require the build time be less than 70
+  // days old. Moreover, operating on the assumption that tests are run against
+  // recently compiled builds, this also serves as a sanity check for the
+  // system clock, which should be close to the build date.
+  base::TimeDelta kMaxAge = base::TimeDelta::FromDays(70);
+
+  base::Time build_time = base::GetBuildTime();
+  base::Time now = base::Time::Now();
+
+  if ((now - build_time).magnitude() <= kMaxAge)
+    return true;
+
+  std::cerr
+      << "ERROR: This build is more than " << kMaxAge.InDays()
+      << " days out of date.\n"
+         "This could indicate a problem with the device's clock, or the build "
+         "is simply too old.\n"
+         "See crbug.com/666821 for why this is a problem\n"
+      << "    base::Time::Now() --> " << now << " (" << now.ToInternalValue()
+      << ")\n"
+      << "    base::GetBuildTime() --> " << build_time << " ("
+      << build_time.ToInternalValue() << ")\n";
+
+  return false;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   // Record histograms, so we can get histograms data in tests.
@@ -40,11 +65,6 @@ int main(int argc, char** argv) {
     {"DummySpnegoAuthenticator",
      net::android::DummySpnegoAuthenticator::RegisterJni},
     {"NetAndroid", net::android::RegisterJni},
-    {"TestFileUtil", base::RegisterContentUriTestUtils},
-    {"TestUiThreadAndroid", base::RegisterTestUiThreadAndroid},
-#if defined(USE_ICU_ALTERNATIVES_ON_ANDROID)
-    {"UrlAndroid", url::android::RegisterJni},
-#endif
   };
 
   // Register JNI bindings for android. Doing it early as the test suite setup
@@ -55,20 +75,14 @@ int main(int argc, char** argv) {
       arraysize(kNetTestRegisteredMethods));
 #endif
 
+  if (!VerifyBuildIsTimely())
+    return 1;
+
   NetTestSuite test_suite(argc, argv);
   ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
 
-#if defined(OS_WIN) && !defined(USE_OPENSSL)
-  // We want to be sure to init NSPR on the main thread.
-  crypto::EnsureNSPRInit();
-#endif
-
-  // Enable support for SSL server sockets, which must be done while
-  // single-threaded.
-  net::EnableSSLServerSockets();
-
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-  mojo::embedder::Init();
+  mojo::edk::Init();
 #endif
 
   return base::LaunchUnitTests(

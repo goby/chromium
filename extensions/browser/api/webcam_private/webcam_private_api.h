@@ -6,8 +6,9 @@
 #define EXTENSIONS_BROWSER_API_WEBCAM_PRIVATE_WEBCAM_PRIVATE_API_H_
 
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/api/webcam_private/webcam.h"
@@ -15,11 +16,7 @@
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/process_manager_observer.h"
 
-class Profile;
-
 namespace extensions {
-
-class ProcessManager;
 
 class WebcamPrivateAPI : public BrowserContextKeyedAPI {
  public:
@@ -72,7 +69,7 @@ class WebcamPrivateAPI : public BrowserContextKeyedAPI {
   static const bool kServiceRedirectedInIncognito = true;
 
   content::BrowserContext* const browser_context_;
-  scoped_ptr<ApiResourceManager<WebcamResource>> webcam_resource_manager_;
+  std::unique_ptr<ApiResourceManager<WebcamResource>> webcam_resource_manager_;
 
   base::WeakPtrFactory<WebcamPrivateAPI> weak_ptr_factory_;
 

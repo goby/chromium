@@ -4,7 +4,10 @@
 
 #include "extensions/browser/guest_view/app_view/app_view_guest.h"
 
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/renderer_preferences.h"
@@ -50,7 +53,7 @@ struct ResponseInfo {
   ~ResponseInfo() {}
 };
 
-typedef std::map<int, linked_ptr<ResponseInfo> > PendingResponseMap;
+using PendingResponseMap = std::map<int, std::unique_ptr<ResponseInfo>>;
 static base::LazyInstance<PendingResponseMap> pending_response_map =
     LAZY_INSTANCE_INITIALIZER;
 
@@ -76,7 +79,7 @@ bool AppViewGuest::CompletePendingRequest(
     return false;
   }
 
-  linked_ptr<ResponseInfo> response_info = it->second;
+  ResponseInfo* response_info = it->second.get();
   if (!response_info->app_view_guest ||
       (response_info->guest_extension->id() != guest_extension_id)) {
     // The app is trying to communicate with an <appview> not assigned to it, or
@@ -188,23 +191,19 @@ void AppViewGuest::CreateWebContents(
     return;
   }
 
-  pending_response_map.Get().insert(
-      std::make_pair(guest_instance_id(),
-                     make_linked_ptr(new ResponseInfo(
-                                        guest_extension,
-                                        weak_ptr_factory_.GetWeakPtr(),
-                                        callback))));
+  pending_response_map.Get().insert(std::make_pair(
+      guest_instance_id(),
+      base::MakeUnique<ResponseInfo>(
+          guest_extension, weak_ptr_factory_.GetWeakPtr(), callback)));
 
   LazyBackgroundTaskQueue* queue =
       LazyBackgroundTaskQueue::Get(browser_context());
   if (queue->ShouldEnqueueTask(browser_context(), guest_extension)) {
-    queue->AddPendingTask(browser_context(),
-                          guest_extension->id(),
-                          base::Bind(
-                              &AppViewGuest::LaunchAppAndFireEvent,
-                              weak_ptr_factory_.GetWeakPtr(),
-                              base::Passed(make_scoped_ptr(data->DeepCopy())),
-                              callback));
+    queue->AddPendingTask(
+        browser_context(), guest_extension->id(),
+        base::Bind(&AppViewGuest::LaunchAppAndFireEvent,
+                   weak_ptr_factory_.GetWeakPtr(),
+                   base::Passed(base::WrapUnique(data->DeepCopy())), callback));
     return;
   }
 
@@ -212,7 +211,7 @@ void AppViewGuest::CreateWebContents(
   ExtensionHost* host =
       process_manager->GetBackgroundHostForExtension(guest_extension->id());
   DCHECK(host);
-  LaunchAppAndFireEvent(make_scoped_ptr(data->DeepCopy()), callback, host);
+  LaunchAppAndFireEvent(base::WrapUnique(data->DeepCopy()), callback, host);
 }
 
 void AppViewGuest::DidInitialize(const base::DictionaryValue& create_params) {
@@ -253,7 +252,7 @@ void AppViewGuest::CompleteCreateWebContents(
 }
 
 void AppViewGuest::LaunchAppAndFireEvent(
-    scoped_ptr<base::DictionaryValue> data,
+    std::unique_ptr<base::DictionaryValue> data,
     const WebContentsCreatedCallback& callback,
     ExtensionHost* extension_host) {
   bool has_event_listener = EventRouter::Get(browser_context())
@@ -265,12 +264,13 @@ void AppViewGuest::LaunchAppAndFireEvent(
     return;
   }
 
-  scoped_ptr<base::DictionaryValue> embed_request(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> embed_request(
+      new base::DictionaryValue());
   embed_request->SetInteger(appview::kGuestInstanceID, guest_instance_id());
   embed_request->SetString(appview::kEmbedderID, owner_host());
   embed_request->Set(appview::kData, data.release());
   AppRuntimeEventRouter::DispatchOnEmbedRequestedEvent(
-      browser_context(), embed_request.Pass(), extension_host->extension());
+      browser_context(), std::move(embed_request), extension_host->extension());
 }
 
 void AppViewGuest::SetAppDelegateForTest(AppDelegate* delegate) {

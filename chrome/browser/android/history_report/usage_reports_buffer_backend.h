@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_ANDROID_HISTORY_REPORT_USAGE_REPORTS_BUFFER_BACKEND_H_
 #define CHROME_BROWSER_ANDROID_HISTORY_REPORT_USAGE_REPORTS_BUFFER_BACKEND_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace base {
 class FilePath;
@@ -33,10 +36,10 @@ class UsageReportsBufferBackend {
   // Creates and initializes the internal data structures.
   bool Init();
 
-  void AddVisit(const std::string& id, int64 timestamp_ms, bool typed_visit);
+  void AddVisit(const std::string& id, int64_t timestamp_ms, bool typed_visit);
 
   // Returns a set of up to |amount| usage reports.
-  scoped_ptr<std::vector<UsageReport> > GetUsageReportsBatch(int amount);
+  std::unique_ptr<std::vector<UsageReport>> GetUsageReportsBatch(int amount);
 
   void Remove(const std::vector<std::string>& reports);
 
@@ -48,7 +51,7 @@ class UsageReportsBufferBackend {
 
  private:
   // NULL until Init method is called.
-  scoped_ptr<leveldb::DB> db_;
+  std::unique_ptr<leveldb::DB> db_;
   base::FilePath db_file_name_;
 
   DISALLOW_COPY_AND_ASSIGN(UsageReportsBufferBackend);

@@ -5,19 +5,18 @@
 #include "ui/gfx/geometry/insets.h"
 
 #include "base/strings/stringprintf.h"
+#include "ui/gfx/geometry/vector2d.h"
 
 namespace gfx {
-
-Insets::Insets() : Insets(0, 0, 0, 0) {}
-
-Insets::Insets(int top, int left, int bottom, int right)
-    : top_(top), left_(left), bottom_(bottom), right_(right) {}
-
-Insets::~Insets() {}
 
 std::string Insets::ToString() const {
   // Print members in the same order of the constructor parameters.
   return base::StringPrintf("%d,%d,%d,%d", top(),  left(), bottom(), right());
+}
+
+Insets Insets::Offset(const gfx::Vector2d& vector) const {
+  return gfx::Insets(top() + vector.y(), left() + vector.x(),
+                     bottom() - vector.y(), right() - vector.x());
 }
 
 }  // namespace gfx

@@ -4,20 +4,23 @@
 
 #include "chrome/browser/signin/chrome_signin_status_metrics_provider_delegate.h"
 
+#include <utility>
+
+#include "build/build_config.h"
 #include "components/signin/core/browser/signin_status_metrics_provider.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
 TEST(ChromeSigninStatusMetricsProviderDelegateTest,
      UpdateStatusWhenBrowserAdded) {
   content::TestBrowserThreadBundle thread_bundle;
 
-  scoped_ptr<ChromeSigninStatusMetricsProviderDelegate> delegate(
+  std::unique_ptr<ChromeSigninStatusMetricsProviderDelegate> delegate(
       new ChromeSigninStatusMetricsProviderDelegate);
   ChromeSigninStatusMetricsProviderDelegate* raw_delegate = delegate.get();
-  scoped_ptr<SigninStatusMetricsProvider> metrics_provider(
-      SigninStatusMetricsProvider::CreateInstance(delegate.Pass()));
+  std::unique_ptr<SigninStatusMetricsProvider> metrics_provider(
+      SigninStatusMetricsProvider::CreateInstance(std::move(delegate)));
 
   // Initial status is all signed in and then a signed-in browser is opened.
   metrics_provider->UpdateInitialSigninStatusForTesting(2, 2);

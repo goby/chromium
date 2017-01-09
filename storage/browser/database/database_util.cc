@@ -4,7 +4,8 @@
 
 #include "storage/browser/database/database_util.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/strings/utf_string_conversions.h"
 #include "storage/browser/database/database_tracker.h"
 #include "storage/browser/database/vfs_backend.h"
@@ -98,11 +99,6 @@ base::FilePath DatabaseUtil::GetFullFilePathForVfsFile(
           base::FilePath::StringType::npos)
     return base::FilePath();
   return full_path;
-}
-
-bool DatabaseUtil::IsValidOriginIdentifier(
-    const std::string& origin_identifier) {
-  return GetOriginFromIdentifier(origin_identifier).is_valid();
 }
 
 }  // namespace storage

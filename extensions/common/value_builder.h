@@ -6,22 +6,12 @@
 // aren't specific to extensions and could move up to base/ if there's interest
 // from other sub-projects.
 //
-// The general pattern is to write:
+// The pattern is to write:
 //
-//  scoped_ptr<BuiltType> result(FooBuilder()
+//  std::unique_ptr<BuiltType> result(FooBuilder()
 //                               .Set(args)
 //                               .Set(args)
 //                               .Build());
-//
-// For methods that take other built types, you can pass the builder directly
-// to the setter without calling Build():
-//
-// DictionaryBuilder().Set("key", ListBuilder()
-//                         .Append("foo").Append("bar") /* No .Build() */);
-//
-// Because of limitations in C++03, and to avoid extra copies, you can't pass a
-// just-constructed Builder into another Builder's method directly. Use the
-// Pass() method.
 //
 // The Build() method invalidates its builder, and returns ownership of the
 // built value.
@@ -33,11 +23,18 @@
 #ifndef EXTENSIONS_COMMON_VALUE_BUILDER_H_
 #define EXTENSIONS_COMMON_VALUE_BUILDER_H_
 
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
-#include "base/values.h"
+
+namespace base {
+class DictionaryValue;
+class ListValue;
+class Value;
+}
 
 namespace extensions {
 
@@ -49,12 +46,8 @@ class DictionaryBuilder {
   explicit DictionaryBuilder(const base::DictionaryValue& init);
   ~DictionaryBuilder();
 
-  // Workaround to allow you to pass rvalue ExtensionBuilders by reference to
-  // other functions.
-  DictionaryBuilder& Pass() { return *this; }
-
   // Can only be called once, after which it's invalid to use the builder.
-  scoped_ptr<base::DictionaryValue> Build() { return dict_.Pass(); }
+  std::unique_ptr<base::DictionaryValue> Build() { return std::move(dict_); }
 
   // Immediately serializes the current state to JSON. Can be called as many
   // times as you like.
@@ -65,17 +58,15 @@ class DictionaryBuilder {
   DictionaryBuilder& Set(const std::string& path, const std::string& in_value);
   DictionaryBuilder& Set(const std::string& path,
                          const base::string16& in_value);
-  DictionaryBuilder& Set(const std::string& path, DictionaryBuilder& in_value);
-  DictionaryBuilder& Set(const std::string& path, ListBuilder& in_value);
   DictionaryBuilder& Set(const std::string& path,
-                         scoped_ptr<base::Value> in_value);
+                         std::unique_ptr<base::Value> in_value);
 
   // Named differently because overload resolution is too eager to
   // convert implicitly to bool.
   DictionaryBuilder& SetBoolean(const std::string& path, bool in_value);
 
  private:
-  scoped_ptr<base::DictionaryValue> dict_;
+  std::unique_ptr<base::DictionaryValue> dict_;
 };
 
 class ListBuilder {
@@ -84,26 +75,23 @@ class ListBuilder {
   explicit ListBuilder(const base::ListValue& init);
   ~ListBuilder();
 
-  // Workaround to allow you to pass rvalue ExtensionBuilders by reference to
-  // other functions.
-  ListBuilder& Pass() { return *this; }
-
   // Can only be called once, after which it's invalid to use the builder.
-  scoped_ptr<base::ListValue> Build() { return list_.Pass(); }
+  std::unique_ptr<base::ListValue> Build() { return std::move(list_); }
 
   ListBuilder& Append(int in_value);
   ListBuilder& Append(double in_value);
   ListBuilder& Append(const std::string& in_value);
   ListBuilder& Append(const base::string16& in_value);
-  ListBuilder& Append(DictionaryBuilder& in_value);
-  ListBuilder& Append(ListBuilder& in_value);
+  ListBuilder& Append(std::unique_ptr<base::Value> in_value);
 
   // Named differently because overload resolution is too eager to
   // convert implicitly to bool.
   ListBuilder& AppendBoolean(bool in_value);
 
  private:
-  scoped_ptr<base::ListValue> list_;
+  std::unique_ptr<base::ListValue> list_;
+
+  DISALLOW_COPY_AND_ASSIGN(ListBuilder);
 };
 
 }  // namespace extensions

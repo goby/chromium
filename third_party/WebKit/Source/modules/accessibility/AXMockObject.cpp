@@ -23,7 +23,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/accessibility/AXMockObject.h"
 
 #include "modules/accessibility/AXObjectCacheImpl.h"
@@ -31,17 +30,13 @@
 namespace blink {
 
 AXMockObject::AXMockObject(AXObjectCacheImpl& axObjectCache)
-    : AXObject(axObjectCache)
-{
+    : AXObject(axObjectCache) {}
+
+AXMockObject::~AXMockObject() {}
+
+bool AXMockObject::computeAccessibilityIsIgnored(
+    IgnoredReasons* ignoredReasons) const {
+  return accessibilityIsIgnoredByDefault(ignoredReasons);
 }
 
-AXMockObject::~AXMockObject()
-{
-}
-
-bool AXMockObject::computeAccessibilityIsIgnored(IgnoredReasons* ignoredReasons) const
-{
-    return accessibilityIsIgnoredByDefault(ignoredReasons);
-}
-
-}
+}  // namespace blink

@@ -5,20 +5,49 @@
 #ifndef CHROME_BROWSER_SYNC_TEST_INTEGRATION_SYNC_INTEGRATION_TEST_UTIL_H_
 #define CHROME_BROWSER_SYNC_TEST_INTEGRATION_SYNC_INTEGRATION_TEST_UTIL_H_
 
+#include <string>
+
+#include "chrome/browser/sync/test/integration/fake_server_match_status_checker.h"
+#include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
+#include "components/sync/base/model_type.h"
+
+namespace browser_sync {
 class ProfileSyncService;
+}  // namespace browser_sync
 
-namespace sync_integration_test_util {
+// Checker to block until the server has a given number of entities.
+class ServerCountMatchStatusChecker
+    : public fake_server::FakeServerMatchStatusChecker {
+ public:
+  ServerCountMatchStatusChecker(syncer::ModelType type, size_t count);
 
-// Wait until the provided |service| is blocked waiting for a passphrase.
-bool AwaitPassphraseRequired(ProfileSyncService* service);
+  // StatusChangeChecker implementation.
+  bool IsExitConditionSatisfied() override;
+  std::string GetDebugMessage() const override;
 
-// Wait until the provided |service| has accepted the new passphrase.
-bool AwaitPassphraseAccepted(ProfileSyncService* service);
+ private:
+  const syncer::ModelType type_;
+  const size_t count_;
+};
 
-// Wait until the |service| is fully synced.
-// This can be a bit flaky.  See UpdatedProgressMarkerChecker for details.
-bool AwaitCommitActivityCompletion(ProfileSyncService* service);
+// Checker to block until service is waiting for a passphrase.
+class PassphraseRequiredChecker : public SingleClientStatusChangeChecker {
+ public:
+  explicit PassphraseRequiredChecker(browser_sync::ProfileSyncService* service);
 
-}  // namespace sync_integration_test_util
+  // StatusChangeChecker implementation.
+  bool IsExitConditionSatisfied() override;
+  std::string GetDebugMessage() const override;
+};
+
+// Checker to block until service has accepted a new passphrase.
+class PassphraseAcceptedChecker : public SingleClientStatusChangeChecker {
+ public:
+  explicit PassphraseAcceptedChecker(browser_sync::ProfileSyncService* service);
+
+  // StatusChangeChecker implementation.
+  bool IsExitConditionSatisfied() override;
+  std::string GetDebugMessage() const override;
+};
 
 #endif  // CHROME_BROWSER_SYNC_TEST_INTEGRATION_SYNC_INTEGRATION_TEST_UTIL_H_

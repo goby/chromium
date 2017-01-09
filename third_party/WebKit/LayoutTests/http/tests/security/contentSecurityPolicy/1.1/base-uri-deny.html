@@ -10,8 +10,8 @@
         var expectations = {
             'documentURI': document.location.toString(),
             'referrer': document.referrer,
-            'blockedURI': 'http://example.com',
-            'violatedDirective': 'base-uri \'self\'',
+            'blockedURI': 'http://example.com/base',
+            'violatedDirective': 'base-uri',
             'effectiveDirective': 'base-uri',
             'originalPolicy': 'base-uri \'self\'',
             'sourceFile': document.location.toString(),
@@ -20,7 +20,7 @@
 
         function run() {
             var base = document.createElement('base');
-            base.href = 'http://example.com/';
+            base.href = 'http://example.com/base';
             document.head.appendChild(base);
 
             shouldBe('document.baseURI', 'document.location.href');

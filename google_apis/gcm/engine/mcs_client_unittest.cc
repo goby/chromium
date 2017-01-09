@@ -4,11 +4,17 @@
 
 #include "google_apis/gcm/engine/mcs_client.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -26,8 +32,8 @@ namespace gcm {
 
 namespace {
 
-const uint64 kAndroidId = 54321;
-const uint64 kSecurityToken = 12345;
+const uint64_t kAndroidId = 54321;
+const uint64_t kSecurityToken = 12345;
 
 // Number of messages to send when testing batching.
 // Note: must be even for tests that split batches in half.
@@ -55,10 +61,10 @@ MCSMessage BuildDataMessage(const std::string& from,
                             int last_stream_id_received,
                             const std::string& persistent_id,
                             int ttl,
-                            uint64 sent,
+                            uint64_t sent,
                             int queued,
                             const std::string& token,
-                            const uint64& user_id,
+                            const uint64_t& user_id,
                             RequestImmediateAck immediate_ack) {
   mcs_proto::DataMessageStanza data_message;
   data_message.set_id(message_id);
@@ -94,7 +100,7 @@ class TestMCSClient : public MCSClient {
   }
 
  private:
-  uint32 next_id_;
+  uint32_t next_id_;
 };
 
 class TestConnectionListener : public ConnectionFactory::ConnectionListener {
@@ -136,8 +142,8 @@ class MCSClientTest : public testing::Test {
     return &connection_factory_;
   }
   bool init_success() const { return init_success_; }
-  uint64 restored_android_id() const { return restored_android_id_; }
-  uint64 restored_security_token() const { return restored_security_token_; }
+  uint64_t restored_android_id() const { return restored_android_id_; }
+  uint64_t restored_security_token() const { return restored_security_token_; }
   MCSMessage* received_message() const { return received_message_.get(); }
   std::string sent_message_id() const { return sent_message_id_;}
   MCSClient::MessageSendStatus message_send_status() const {
@@ -154,7 +160,7 @@ class MCSClientTest : public testing::Test {
  private:
   void ErrorCallback();
   void MessageReceivedCallback(const MCSMessage& message);
-  void MessageSentCallback(int64 user_serial_number,
+  void MessageSentCallback(int64_t user_serial_number,
                            const std::string& app_id,
                            const std::string& message_id,
                            MCSClient::MessageSendStatus status);
@@ -163,15 +169,15 @@ class MCSClientTest : public testing::Test {
 
   base::ScopedTempDir temp_directory_;
   base::MessageLoop message_loop_;
-  scoped_ptr<base::RunLoop> run_loop_;
-  scoped_ptr<GCMStore> gcm_store_;
+  std::unique_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<GCMStore> gcm_store_;
 
   FakeConnectionFactory connection_factory_;
-  scoped_ptr<TestMCSClient> mcs_client_;
+  std::unique_ptr<TestMCSClient> mcs_client_;
   bool init_success_;
-  uint64 restored_android_id_;
-  uint64 restored_security_token_;
-  scoped_ptr<MCSMessage> received_message_;
+  uint64_t restored_android_id_;
+  uint64_t restored_security_token_;
+  std::unique_ptr<MCSMessage> received_message_;
   std::string sent_message_id_;
   MCSClient::MessageSendStatus message_send_status_;
 
@@ -198,10 +204,9 @@ void MCSClientTest::SetUp() {
 }
 
 void MCSClientTest::BuildMCSClient() {
-  gcm_store_.reset(new GCMStoreImpl(
-      temp_directory_.path(),
-      message_loop_.task_runner(),
-      make_scoped_ptr<Encryptor>(new FakeEncryptor)));
+  gcm_store_.reset(
+      new GCMStoreImpl(temp_directory_.GetPath(), message_loop_.task_runner(),
+                       base::WrapUnique<Encryptor>(new FakeEncryptor)));
   mcs_client_.reset(new TestMCSClient(&clock_,
                                       &connection_factory_,
                                       gcm_store_.get(),
@@ -238,7 +243,7 @@ void MCSClientTest::LoginClientWithHeartbeat(
 void MCSClientTest::AddExpectedLoginRequest(
     const std::vector<std::string>& acknowledged_ids,
     int heartbeat_interval_ms) {
-  scoped_ptr<mcs_proto::LoginRequest> login_request =
+  std::unique_ptr<mcs_proto::LoginRequest> login_request =
       BuildLoginRequest(kAndroidId, kSecurityToken, "");
   for (size_t i = 0; i < acknowledged_ids.size(); ++i)
     login_request->add_received_persistent_id(acknowledged_ids[i]);
@@ -248,7 +253,7 @@ void MCSClientTest::AddExpectedLoginRequest(
     setting->set_value(base::IntToString(heartbeat_interval_ms));
   }
   GetFakeHandler()->ExpectOutgoingMessage(
-      MCSMessage(kLoginRequestTag, login_request.Pass()));
+      MCSMessage(kLoginRequestTag, std::move(login_request)));
 }
 
 void MCSClientTest::StoreCredentials() {
@@ -287,7 +292,7 @@ void MCSClientTest::MessageReceivedCallback(const MCSMessage& message) {
   run_loop_->Quit();
 }
 
-void MCSClientTest::MessageSentCallback(int64 user_serial_number,
+void MCSClientTest::MessageSentCallback(int64_t user_serial_number,
                                         const std::string& app_id,
                                         const std::string& message_id,
                                         MCSClient::MessageSendStatus status) {
@@ -424,9 +429,9 @@ TEST_F(MCSClientTest, SendMessageRMQWhileDisconnected) {
   PumpLoop();         // Wait for the send to happen.
 
   // Receive the ack.
-  scoped_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
+  std::unique_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
   ack->set_last_stream_id_received(2);
-  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, ack.Pass()));
+  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, std::move(ack)));
   WaitForMCSEvent();
 
   EXPECT_EQ(MCSClient::SENT, message_send_status());
@@ -486,9 +491,9 @@ TEST_F(MCSClientTest, SendMessageRMQWithStreamAck) {
   EXPECT_TRUE(GetFakeHandler()->AllOutgoingMessagesReceived());
 
   // Receive the ack.
-  scoped_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
+  std::unique_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
   ack->set_last_stream_id_received(kMessageBatchSize + 1);
-  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, ack.Pass()));
+  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, std::move(ack)));
   WaitForMCSEvent();
 
   // Reconnect and ensure no messages are resent.
@@ -525,8 +530,8 @@ TEST_F(MCSClientTest, SendMessageRMQAckOnReconnect) {
   BuildMCSClient();
   InitializeClient();
   LoginClient(std::vector<std::string>());
-  scoped_ptr<mcs_proto::IqStanza> ack(BuildSelectiveAck(id_list));
-  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, ack.Pass()));
+  std::unique_ptr<mcs_proto::IqStanza> ack(BuildSelectiveAck(id_list));
+  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, std::move(ack)));
   EXPECT_TRUE(GetFakeHandler()->AllOutgoingMessagesReceived());
 }
 
@@ -571,8 +576,8 @@ TEST_F(MCSClientTest, SendMessageRMQPartialAckOnReconnect) {
         kTTLValue, 1, 0, "", 0, IMMEDIATE_ACK_NO));
     GetFakeHandler()->ExpectOutgoingMessage(message);
   }
-  scoped_ptr<mcs_proto::IqStanza> ack(BuildSelectiveAck(acked_ids));
-  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, ack.Pass()));
+  std::unique_ptr<mcs_proto::IqStanza> ack(BuildSelectiveAck(acked_ids));
+  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, std::move(ack)));
   WaitForMCSEvent();
   PumpLoop();
   EXPECT_TRUE(GetFakeHandler()->AllOutgoingMessagesReceived());
@@ -634,8 +639,8 @@ TEST_F(MCSClientTest, SelectiveAckMidStream) {
                                         IMMEDIATE_ACK_NO));
   GetFakeHandler()->ExpectOutgoingMessage(cMessage3);
   std::vector<std::string> acked_ids(1, "1");
-  scoped_ptr<mcs_proto::IqStanza> ack(BuildSelectiveAck(acked_ids));
-  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, ack.Pass()));
+  std::unique_ptr<mcs_proto::IqStanza> ack(BuildSelectiveAck(acked_ids));
+  GetFakeHandler()->ReceiveMessage(MCSMessage(kIqStanzaTag, std::move(ack)));
   WaitForMCSEvent();
   PumpLoop();
   EXPECT_TRUE(GetFakeHandler()->AllOutgoingMessagesReceived());
@@ -720,9 +725,10 @@ TEST_F(MCSClientTest, AckWhenLimitReachedWithHeartbeat) {
   LoginClient(std::vector<std::string>());
 
   // The stream ack.
-  scoped_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
+  std::unique_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
   ack->set_last_stream_id_received(kAckLimitSize + 1);
-  GetFakeHandler()->ExpectOutgoingMessage(MCSMessage(kIqStanzaTag, ack.Pass()));
+  GetFakeHandler()->ExpectOutgoingMessage(
+      MCSMessage(kIqStanzaTag, std::move(ack)));
 
   // Receive some messages.
   std::vector<std::string> id_list;
@@ -738,18 +744,18 @@ TEST_F(MCSClientTest, AckWhenLimitReachedWithHeartbeat) {
   EXPECT_TRUE(GetFakeHandler()->AllOutgoingMessagesReceived());
 
   // Receive a heartbeat confirming the ack (and receive the heartbeat ack).
-  scoped_ptr<mcs_proto::HeartbeatPing> heartbeat(
+  std::unique_ptr<mcs_proto::HeartbeatPing> heartbeat(
       new mcs_proto::HeartbeatPing());
   heartbeat->set_last_stream_id_received(2);
 
-  scoped_ptr<mcs_proto::HeartbeatAck> heartbeat_ack(
+  std::unique_ptr<mcs_proto::HeartbeatAck> heartbeat_ack(
       new mcs_proto::HeartbeatAck());
   heartbeat_ack->set_last_stream_id_received(kAckLimitSize + 2);
   GetFakeHandler()->ExpectOutgoingMessage(
-      MCSMessage(kHeartbeatAckTag, heartbeat_ack.Pass()));
+      MCSMessage(kHeartbeatAckTag, std::move(heartbeat_ack)));
 
   GetFakeHandler()->ReceiveMessage(
-      MCSMessage(kHeartbeatPingTag, heartbeat.Pass()));
+      MCSMessage(kHeartbeatPingTag, std::move(heartbeat)));
   PumpLoop();
   EXPECT_TRUE(GetFakeHandler()->AllOutgoingMessagesReceived());
 
@@ -1149,9 +1155,10 @@ TEST_F(MCSClientTest, AckWhenImmediateAckRequested) {
   LoginClient(std::vector<std::string>());
 
   // The stream ack.
-  scoped_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
+  std::unique_ptr<mcs_proto::IqStanza> ack = BuildStreamAck();
   ack->set_last_stream_id_received(kAckLimitSize - 1);
-  GetFakeHandler()->ExpectOutgoingMessage(MCSMessage(kIqStanzaTag, ack.Pass()));
+  GetFakeHandler()->ExpectOutgoingMessage(
+      MCSMessage(kIqStanzaTag, std::move(ack)));
 
   // Receive some messages.
   for (int i = 1; i < kAckLimitSize - 2; ++i) {

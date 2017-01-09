@@ -5,6 +5,9 @@
 #ifndef CHROME_COMMON_EXTENSIONS_MANIFEST_HANDLERS_SETTINGS_OVERRIDES_HANDLER_H_
 #define CHROME_COMMON_EXTENSIONS_MANIFEST_HANDLERS_SETTINGS_OVERRIDES_HANDLER_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/common/extensions/api/manifest_types.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handler.h"
@@ -17,8 +20,6 @@ enum SettingsApiOverrideType {
   BUBBLE_TYPE_STARTUP_PAGES,
 };
 
-class ManifestPermission;
-
 // SettingsOverride is associated with "chrome_settings_overrides" manifest key.
 // An extension can add a search engine as default or non-default, overwrite the
 // homepage and append a startup page to the list.
@@ -28,9 +29,9 @@ struct SettingsOverrides : public Extension::ManifestData {
 
   static const SettingsOverrides* Get(const Extension* extension);
 
-  scoped_ptr<api::manifest_types::ChromeSettingsOverrides::Search_provider>
+  std::unique_ptr<api::manifest_types::ChromeSettingsOverrides::Search_provider>
       search_engine;
-  scoped_ptr<GURL> homepage;
+  std::unique_ptr<GURL> homepage;
   std::vector<GURL> startup_pages;
 
  private:

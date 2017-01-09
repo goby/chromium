@@ -5,14 +5,15 @@
 #include "components/omnibox/browser/suggestion_answer.h"
 
 #include "base/json/json_reader.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-scoped_ptr<SuggestionAnswer> ParseAnswer(const std::string& answer_json) {
-  scoped_ptr<base::Value> value = base::JSONReader::Read(answer_json);
+std::unique_ptr<SuggestionAnswer> ParseAnswer(const std::string& answer_json) {
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(answer_json);
   base::DictionaryValue* dict;
   if (!value || !value->GetAsDictionary(&dict))
     return nullptr;
@@ -32,7 +33,7 @@ TEST(SuggestionAnswerTest, CopiesAreEqual) {
   SuggestionAnswer answer1;
   EXPECT_TRUE(answer1.Equals(SuggestionAnswer(answer1)));
 
-  auto answer2 = make_scoped_ptr(new SuggestionAnswer);
+  auto answer2 = base::WrapUnique(new SuggestionAnswer);
   answer2->set_type(832345);
   EXPECT_TRUE(answer2->Equals(SuggestionAnswer(*answer2)));
 
@@ -56,11 +57,12 @@ TEST(SuggestionAnswerTest, DifferentValuesAreUnequal) {
       "              \"at\": { \"t\": \"slatfatf\", \"tt\": 42 }, "
       "              \"st\": { \"t\": \"oh hi, Mark\", \"tt\": 729347 } } } "
       "] }";
-  scoped_ptr<SuggestionAnswer> answer1 = ParseAnswer(json);
+  std::unique_ptr<SuggestionAnswer> answer1 = ParseAnswer(json);
   ASSERT_TRUE(answer1);
 
   // Same but with a different answer type.
-  scoped_ptr<SuggestionAnswer> answer2 = SuggestionAnswer::copy(answer1.get());
+  std::unique_ptr<SuggestionAnswer> answer2 =
+      SuggestionAnswer::copy(answer1.get());
   EXPECT_TRUE(answer1->Equals(*answer2));
   answer2->set_type(44);
   EXPECT_FALSE(answer1->Equals(*answer2));
@@ -200,11 +202,11 @@ TEST(SuggestionAnswerTest, ValidPropertyValues) {
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }, "
       "                      { \"t\": \"moar text\", \"tt\": 0 }], "
       "              \"i\": { \"d\": \"//example.com/foo.jpg\" } } }, "
-      "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }], "
+      "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5, \"ln\": 3 }], "
       "              \"at\": { \"t\": \"slatfatf\", \"tt\": 42 }, "
       "              \"st\": { \"t\": \"oh hi, Mark\", \"tt\": 729347 } } } "
       "] }";
-  scoped_ptr<SuggestionAnswer> answer = ParseAnswer(json);
+  std::unique_ptr<SuggestionAnswer> answer = ParseAnswer(json);
   ASSERT_TRUE(answer);
   answer->set_type(420527);
   EXPECT_EQ(420527, answer->type());
@@ -215,6 +217,8 @@ TEST(SuggestionAnswerTest, ValidPropertyValues) {
   EXPECT_EQ(8, first_line.text_fields()[0].type());
   EXPECT_EQ(base::UTF8ToUTF16("moar text"), first_line.text_fields()[1].text());
   EXPECT_EQ(0, first_line.text_fields()[1].type());
+  EXPECT_FALSE(first_line.text_fields()[1].has_num_lines());
+  EXPECT_EQ(1, first_line.num_text_lines());
 
   EXPECT_FALSE(first_line.additional_text());
   EXPECT_FALSE(first_line.status_text());
@@ -227,6 +231,9 @@ TEST(SuggestionAnswerTest, ValidPropertyValues) {
   EXPECT_EQ(
       base::UTF8ToUTF16("other text"), second_line.text_fields()[0].text());
   EXPECT_EQ(5, second_line.text_fields()[0].type());
+  EXPECT_TRUE(second_line.text_fields()[0].has_num_lines());
+  EXPECT_EQ(3, second_line.text_fields()[0].num_lines());
+  EXPECT_EQ(3, second_line.num_text_lines());
 
   EXPECT_TRUE(second_line.additional_text());
   EXPECT_EQ(
@@ -247,7 +254,7 @@ TEST(SuggestionAnswerTest, AddImageURLsTo) {
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }] } }, "
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }] } }] }";
-  scoped_ptr<SuggestionAnswer> answer = ParseAnswer(json);
+  std::unique_ptr<SuggestionAnswer> answer = ParseAnswer(json);
   ASSERT_TRUE(answer);
   answer->AddImageURLsTo(&urls);
   ASSERT_EQ(0U, urls.size());

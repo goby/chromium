@@ -4,14 +4,17 @@
 
 #include "courgette/encoded_program.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/environment.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
@@ -19,15 +22,10 @@
 #include "courgette/courgette.h"
 #include "courgette/disassembler_elf_32_arm.h"
 #include "courgette/streams.h"
-#include "courgette/types_elf.h"
 
 namespace courgette {
 
-// Constructor is here rather than in the header.  Although the constructor
-// appears to do nothing it is fact quite large because of the implicit calls to
-// field constructors.  Ditto for the destructor.
-EncodedProgram::EncodedProgram() : image_base_(0) {}
-EncodedProgram::~EncodedProgram() {}
+namespace {
 
 // Serializes a vector of integral values using Varint32 coding.
 template<typename V>
@@ -42,7 +40,7 @@ CheckBool WriteVector(const V& items, SinkStream* buffer) {
 
 template<typename V>
 bool ReadVector(V* items, SourceStream* buffer) {
-  uint32 count;
+  uint32_t count;
   if (!buffer->ReadVarint32(&count))
     return false;
 
@@ -50,7 +48,7 @@ bool ReadVector(V* items, SourceStream* buffer) {
 
   bool ok = items->reserve(count);
   for (size_t i = 0;  ok && i < count;  ++i) {
-    uint32 item;
+    uint32_t item;
     ok = buffer->ReadVarint32(&item);
     if (ok)
       ok = items->push_back(static_cast<typename V::value_type>(item));
@@ -64,10 +62,10 @@ template<typename V>
 CheckBool WriteSigned32Delta(const V& set, SinkStream* buffer) {
   size_t count = set.size();
   bool ok = buffer->WriteSizeVarint32(count);
-  uint32 prev = 0;
+  uint32_t prev = 0;
   for (size_t i = 0; ok && i < count; ++i) {
-    uint32 current = set[i];
-    int32 delta = current - prev;
+    uint32_t current = set[i];
+    int32_t delta = current - prev;
     ok = buffer->WriteVarint32Signed(delta);
     prev = current;
   }
@@ -76,19 +74,19 @@ CheckBool WriteSigned32Delta(const V& set, SinkStream* buffer) {
 
 template <typename V>
 static CheckBool ReadSigned32Delta(V* set, SourceStream* buffer) {
-  uint32 count;
+  uint32_t count;
 
   if (!buffer->ReadVarint32(&count))
     return false;
 
   set->clear();
   bool ok = set->reserve(count);
-  uint32 prev = 0;
+  uint32_t prev = 0;
   for (size_t i = 0; ok && i < count; ++i) {
-    int32 delta;
+    int32_t delta;
     ok = buffer->ReadVarint32Signed(&delta);
     if (ok) {
-      uint32 current = static_cast<uint32>(prev + delta);
+      uint32_t current = static_cast<uint32_t>(prev + delta);
       ok = set->push_back(current);
       prev = current;
     }
@@ -116,7 +114,7 @@ CheckBool WriteVectorU8(const V& items, SinkStream* buffer) {
 
 template<typename V>
 bool ReadVectorU8(V* items, SourceStream* buffer) {
-  uint32 count;
+  uint32_t count;
   if (!buffer->ReadVarint32(&count))
     return false;
 
@@ -129,60 +127,26 @@ bool ReadVectorU8(V* items, SourceStream* buffer) {
   return ok;
 }
 
+}  // namespace
+
 ////////////////////////////////////////////////////////////////////////////////
 
-CheckBool EncodedProgram::DefineRel32Label(int index, RVA value) {
-  return DefineLabelCommon(&rel32_rva_, index, value);
-}
+// Constructor is here rather than in the header. Although the constructor
+// appears to do nothing it is fact quite large because of the implicit calls to
+// field constructors. Ditto for the destructor.
+EncodedProgram::EncodedProgram() {}
+EncodedProgram::~EncodedProgram() {}
 
-CheckBool EncodedProgram::DefineAbs32Label(int index, RVA value) {
-  return DefineLabelCommon(&abs32_rva_, index, value);
-}
-
-static const RVA kUnassignedRVA = static_cast<RVA>(-1);
-
-CheckBool EncodedProgram::DefineLabelCommon(RvaVector* rvas,
-                                            int index,
-                                            RVA rva) {
-  bool ok = true;
-
-  // Resize |rvas| to accommodate |index|. If we naively call resize(), in the
-  // worst case we'd encounter |index| in increasing order, and then we'd
-  // require reallocation every time. Turns out this worst case is the typical
-  // scenario, and noticeable slowness (~5x slow down) ensues. The solution is
-  // to exponentially increase capacity. We use a factor of 1.01 to be frugal.
-  if (static_cast<int>(rvas->capacity()) <= index)
-    ok = rvas->reserve((index + 1) * 1.01);
-  if (ok && static_cast<int>(rvas->size()) <= index)
-    ok = rvas->resize(index + 1, kUnassignedRVA);
-
-  if (ok) {
-    DCHECK_EQ((*rvas)[index], kUnassignedRVA)
-        << "DefineLabel double assigned " << index;
-    (*rvas)[index] = rva;
+CheckBool EncodedProgram::ImportLabels(
+    const LabelManager& abs32_label_manager,
+    const LabelManager& rel32_label_manager) {
+  if (!WriteRvasToList(abs32_label_manager, &abs32_rva_) ||
+      !WriteRvasToList(rel32_label_manager, &rel32_rva_)) {
+    return false;
   }
-
-  return ok;
-}
-
-void EncodedProgram::EndLabels() {
-  FinishLabelsCommon(&abs32_rva_);
-  FinishLabelsCommon(&rel32_rva_);
-}
-
-void EncodedProgram::FinishLabelsCommon(RvaVector* rvas) {
-  // Replace all unassigned slots with the value at the previous index so they
-  // delta-encode to zero.  (There might be better values than zero.  The way to
-  // get that is have the higher level assembly program assign the unassigned
-  // slots.)
-  RVA previous = 0;
-  size_t size = rvas->size();
-  for (size_t i = 0;  i < size;  ++i) {
-    if ((*rvas)[i] == kUnassignedRVA)
-      (*rvas)[i] = previous;
-    else
-      previous = (*rvas)[i];
-  }
+  FillUnassignedRvaSlots(&abs32_rva_);
+  FillUnassignedRvaSlots(&rel32_rva_);
+  return true;
 }
 
 CheckBool EncodedProgram::AddOrigin(RVA origin) {
@@ -190,7 +154,7 @@ CheckBool EncodedProgram::AddOrigin(RVA origin) {
 }
 
 CheckBool EncodedProgram::AddCopy(size_t count, const void* bytes) {
-  const uint8* source = static_cast<const uint8*>(bytes);
+  const uint8_t* source = static_cast<const uint8_t*>(bytes);
 
   bool ok = true;
 
@@ -240,7 +204,7 @@ CheckBool EncodedProgram::AddRel32(int label_index) {
   return ops_.push_back(REL32) && rel32_ix_.push_back(label_index);
 }
 
-CheckBool EncodedProgram::AddRel32ARM(uint16 op, int label_index) {
+CheckBool EncodedProgram::AddRel32ARM(uint16_t op, int label_index) {
   return ops_.push_back(static_cast<OP>(op)) &&
       rel32_ix_.push_back(label_index);
 }
@@ -292,10 +256,10 @@ enum FieldSelect {
 
 static FieldSelect GetFieldSelect() {
   // TODO(sra): Use better configuration.
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   std::string s;
   env->GetVar("A_FIELDS", &s);
-  uint64 fields;
+  uint64_t fields;
   if (!base::StringToUint64(s, &fields))
     return static_cast<FieldSelect>(~0);
   return static_cast<FieldSelect>(fields);
@@ -314,8 +278,8 @@ CheckBool EncodedProgram::WriteTo(SinkStreamSet* streams) {
   // the rest can be interleaved.
 
   if (select & INCLUDE_MISC) {
-    uint32 high = static_cast<uint32>(image_base_ >> 32);
-    uint32 low = static_cast<uint32>(image_base_ & 0xffffffffU);
+    uint32_t high = static_cast<uint32_t>(image_base_ >> 32);
+    uint32_t low = static_cast<uint32_t>(image_base_ & 0xffffffffU);
 
     if (!streams->stream(kStreamMisc)->WriteVarint32(high) ||
         !streams->stream(kStreamMisc)->WriteVarint32(low)) {
@@ -360,14 +324,14 @@ CheckBool EncodedProgram::WriteTo(SinkStreamSet* streams) {
 }
 
 bool EncodedProgram::ReadFrom(SourceStreamSet* streams) {
-  uint32 high;
-  uint32 low;
+  uint32_t high;
+  uint32_t low;
 
   if (!streams->stream(kStreamMisc)->ReadVarint32(&high) ||
       !streams->stream(kStreamMisc)->ReadVarint32(&low)) {
     return false;
   }
-  image_base_ = (static_cast<uint64>(high) << 32) | low;
+  image_base_ = (static_cast<uint64_t>(high) << 32) | low;
 
   if (!ReadSigned32Delta(&abs32_rva_, streams->stream(kStreamAbs32Addresses)))
     return false;
@@ -411,58 +375,56 @@ CheckBool EncodedProgram::EvaluateRel32ARM(OP op,
                                            SinkStream* output) {
   switch (op & 0x0000F000) {
     case REL32ARM8: {
-      uint32 index;
+      uint32_t index;
       if (!VectorAt(rel32_ix_, ix_rel32_ix, &index))
         return false;
       ++ix_rel32_ix;
       RVA rva;
       if (!VectorAt(rel32_rva_, index, &rva))
         return false;
-      uint32 decompressed_op;
-      if (!DisassemblerElf32ARM::Decompress(ARM_OFF8,
-                                            static_cast<uint16>(op),
-                                            static_cast<uint32>(rva -
-                                                                current_rva),
-                                            &decompressed_op)) {
+      uint32_t decompressed_op;
+      if (!DisassemblerElf32ARM::Decompress(
+              ARM_OFF8, static_cast<uint16_t>(op),
+              static_cast<uint32_t>(rva - current_rva), &decompressed_op)) {
         return false;
       }
-      uint16 op16 = static_cast<uint16>(decompressed_op);
+      uint16_t op16 = static_cast<uint16_t>(decompressed_op);
       if (!output->Write(&op16, 2))
         return false;
       current_rva += 2;
       break;
     }
     case REL32ARM11: {
-      uint32 index;
+      uint32_t index;
       if (!VectorAt(rel32_ix_, ix_rel32_ix, &index))
         return false;
       ++ix_rel32_ix;
       RVA rva;
       if (!VectorAt(rel32_rva_, index, &rva))
         return false;
-      uint32 decompressed_op;
-      if (!DisassemblerElf32ARM::Decompress(ARM_OFF11, (uint16) op,
-                                            (uint32) (rva - current_rva),
+      uint32_t decompressed_op;
+      if (!DisassemblerElf32ARM::Decompress(ARM_OFF11, (uint16_t)op,
+                                            (uint32_t)(rva - current_rva),
                                             &decompressed_op)) {
         return false;
       }
-      uint16 op16 = static_cast<uint16>(decompressed_op);
+      uint16_t op16 = static_cast<uint16_t>(decompressed_op);
       if (!output->Write(&op16, 2))
         return false;
       current_rva += 2;
       break;
     }
     case REL32ARM24: {
-      uint32 index;
+      uint32_t index;
       if (!VectorAt(rel32_ix_, ix_rel32_ix, &index))
         return false;
       ++ix_rel32_ix;
       RVA rva;
       if (!VectorAt(rel32_rva_, index, &rva))
         return false;
-      uint32 decompressed_op;
-      if (!DisassemblerElf32ARM::Decompress(ARM_OFF24, (uint16) op,
-                                            (uint32) (rva - current_rva),
+      uint32_t decompressed_op;
+      if (!DisassemblerElf32ARM::Decompress(ARM_OFF24, (uint16_t)op,
+                                            (uint32_t)(rva - current_rva),
                                             &decompressed_op)) {
         return false;
       }
@@ -472,40 +434,40 @@ CheckBool EncodedProgram::EvaluateRel32ARM(OP op,
       break;
     }
     case REL32ARM25: {
-      uint32 index;
+      uint32_t index;
       if (!VectorAt(rel32_ix_, ix_rel32_ix, &index))
         return false;
       ++ix_rel32_ix;
       RVA rva;
       if (!VectorAt(rel32_rva_, index, &rva))
         return false;
-      uint32 decompressed_op;
-      if (!DisassemblerElf32ARM::Decompress(ARM_OFF25, (uint16) op,
-                                            (uint32) (rva - current_rva),
+      uint32_t decompressed_op;
+      if (!DisassemblerElf32ARM::Decompress(ARM_OFF25, (uint16_t)op,
+                                            (uint32_t)(rva - current_rva),
                                             &decompressed_op)) {
         return false;
       }
-      uint32 words = (decompressed_op << 16) | (decompressed_op >> 16);
+      uint32_t words = (decompressed_op << 16) | (decompressed_op >> 16);
       if (!output->Write(&words, 4))
         return false;
       current_rva += 4;
       break;
     }
     case REL32ARM21: {
-      uint32 index;
+      uint32_t index;
       if (!VectorAt(rel32_ix_, ix_rel32_ix, &index))
         return false;
       ++ix_rel32_ix;
       RVA rva;
       if (!VectorAt(rel32_rva_, index, &rva))
         return false;
-      uint32 decompressed_op;
-      if (!DisassemblerElf32ARM::Decompress(ARM_OFF21, (uint16) op,
-                                            (uint32) (rva - current_rva),
+      uint32_t decompressed_op;
+      if (!DisassemblerElf32ARM::Decompress(ARM_OFF21, (uint16_t)op,
+                                            (uint32_t)(rva - current_rva),
                                             &decompressed_op)) {
         return false;
       }
-      uint32 words = (decompressed_op << 16) | (decompressed_op >> 16);
+      uint32_t words = (decompressed_op << 16) | (decompressed_op >> 16);
       if (!output->Write(&words, 4))
         return false;
       current_rva += 4;
@@ -530,7 +492,7 @@ CheckBool EncodedProgram::AssembleTo(SinkStream* final_buffer) {
   RVA current_rva = 0;
 
   bool pending_pe_relocation_table = false;
-  uint8 pending_pe_relocation_table_type = 0x03;  // IMAGE_REL_BASED_HIGHLOW
+  uint8_t pending_pe_relocation_table_type = 0x03;  // IMAGE_REL_BASED_HIGHLOW
   Elf32_Word pending_elf_relocation_table_type = 0;
   SinkStream bytes_following_relocation_table;
 
@@ -560,7 +522,7 @@ CheckBool EncodedProgram::AssembleTo(SinkStream* final_buffer) {
           return false;
         ++ix_copy_counts;
         for (size_t i = 0;  i < count;  ++i) {
-          uint8 b;
+          uint8_t b;
           if (!VectorAt(copy_bytes_, ix_copy_bytes, &b))
             return false;
           ++ix_copy_bytes;
@@ -572,7 +534,7 @@ CheckBool EncodedProgram::AssembleTo(SinkStream* final_buffer) {
       }
 
       case COPY1: {
-        uint8 b;
+        uint8_t b;
         if (!VectorAt(copy_bytes_, ix_copy_bytes, &b))
           return false;
         ++ix_copy_bytes;
@@ -583,14 +545,14 @@ CheckBool EncodedProgram::AssembleTo(SinkStream* final_buffer) {
       }
 
       case REL32: {
-        uint32 index;
+        uint32_t index;
         if (!VectorAt(rel32_ix_, ix_rel32_ix, &index))
           return false;
         ++ix_rel32_ix;
         RVA rva;
         if (!VectorAt(rel32_rva_, index, &rva))
           return false;
-        uint32 offset = (rva - (current_rva + 4));
+        uint32_t offset = (rva - (current_rva + 4));
         if (!output->Write(&offset, 4))
           return false;
         current_rva += 4;
@@ -599,7 +561,7 @@ CheckBool EncodedProgram::AssembleTo(SinkStream* final_buffer) {
 
       case ABS32:
       case ABS64: {
-        uint32 index;
+        uint32_t index;
         if (!VectorAt(abs32_ix_, ix_abs32_ix, &index))
           return false;
         ++ix_abs32_ix;
@@ -607,18 +569,18 @@ CheckBool EncodedProgram::AssembleTo(SinkStream* final_buffer) {
         if (!VectorAt(abs32_rva_, index, &rva))
           return false;
         if (op == ABS32) {
-          base::CheckedNumeric<uint32> abs32 = image_base_;
+          base::CheckedNumeric<uint32_t> abs32 = image_base_;
           abs32 += rva;
-          uint32 safe_abs32 = abs32.ValueOrDie();
+          uint32_t safe_abs32 = abs32.ValueOrDie();
           if (!abs32_relocs_.push_back(current_rva) ||
               !output->Write(&safe_abs32, 4)) {
             return false;
           }
           current_rva += 4;
         } else {
-          base::CheckedNumeric<uint64> abs64 = image_base_;
+          base::CheckedNumeric<uint64_t> abs64 = image_base_;
           abs64 += rva;
-          uint64 safe_abs64 = abs64.ValueOrDie();
+          uint64_t safe_abs64 = abs64.ValueOrDie();
           if (!abs32_relocs_.push_back(current_rva) ||
               !output->Write(&safe_abs64, 8)) {
             return false;
@@ -715,9 +677,9 @@ CheckBool EncodedProgram::AssembleTo(SinkStream* final_buffer) {
 // table file format.
 //
 struct RelocBlockPOD {
-  uint32 page_rva;
-  uint32 block_size;
-  uint16 relocs[4096];  // Allow up to one relocation per byte of a 4k page.
+  uint32_t page_rva;
+  uint32_t block_size;
+  uint16_t relocs[4096];  // Allow up to one relocation per byte of a 4k page.
 };
 
 static_assert(offsetof(RelocBlockPOD, relocs) == 8, "reloc block header size");
@@ -729,7 +691,7 @@ class RelocBlock {
     pod.block_size = 8;
   }
 
-  void Add(uint16 item) {
+  void Add(uint16_t item) {
     pod.relocs[(pod.block_size-8)/2] = item;
     pod.block_size += 2;
   }
@@ -748,22 +710,60 @@ class RelocBlock {
   RelocBlockPOD pod;
 };
 
+// static
+// Updates |rvas| so |rvas[label.index_] == label.rva_| for each |label| in
+// |label_manager|, assuming |label.index_| is properly assigned. Takes care of
+// |rvas| resizing. Unused slots in |rvas| are assigned |kUnassignedRVA|.
+// Returns true on success, and false otherwise.
+CheckBool EncodedProgram::WriteRvasToList(const LabelManager& label_manager,
+                                          RvaVector* rvas) {
+  rvas->clear();
+  int index_bound = LabelManager::GetLabelIndexBound(label_manager.Labels());
+  if (!rvas->resize(index_bound, kUnassignedRVA))
+    return false;
+
+  // For each Label, write its RVA to assigned index.
+  for (const Label& label : label_manager.Labels()) {
+    DCHECK_NE(label.index_, Label::kNoIndex);
+    DCHECK_EQ((*rvas)[label.index_], kUnassignedRVA)
+        << "ExportToList() double assigned " << label.index_;
+    (*rvas)[label.index_] = label.rva_;
+  }
+  return true;
+}
+
+// static
+// Replaces all unassigned slots in |rvas| with the value at the previous index
+// so they delta-encode to zero. (There might be better values than zero. The
+// way to get that is have the higher level assembly program assign the
+// unassigned slots.)
+void EncodedProgram::FillUnassignedRvaSlots(RvaVector* rvas) {
+  RVA previous = 0;
+  for (RVA& rva : *rvas) {
+    if (rva == kUnassignedRVA)
+      rva = previous;
+    else
+      previous = rva;
+  }
+}
+
 CheckBool EncodedProgram::GeneratePeRelocations(SinkStream* buffer,
-                                                uint8 type) {
+                                                uint8_t type) {
   std::sort(abs32_relocs_.begin(), abs32_relocs_.end());
+  DCHECK(abs32_relocs_.empty() || abs32_relocs_.back() != kUnassignedRVA);
 
   RelocBlock block;
 
   bool ok = true;
   for (size_t i = 0;  ok && i < abs32_relocs_.size();  ++i) {
-    uint32 rva = abs32_relocs_[i];
-    uint32 page_rva = rva & ~0xFFF;
+    uint32_t rva = abs32_relocs_[i];
+    uint32_t page_rva = rva & ~0xFFF;
     if (page_rva != block.pod.page_rva) {
       ok &= block.Flush(buffer);
       block.pod.page_rva = page_rva;
     }
     if (ok)
-      block.Add(((static_cast<uint16>(type)) << 12) | (rva & 0xFFF));
+      block.Add(((static_cast<uint16_t>(type)) << 12) | (rva & 0xFFF));
   }
   ok &= block.Flush(buffer);
   return ok;
@@ -772,6 +772,7 @@ CheckBool EncodedProgram::GeneratePeRelocations(SinkStream* buffer,
 CheckBool EncodedProgram::GenerateElfRelocations(Elf32_Word r_info,
                                                  SinkStream* buffer) {
   std::sort(abs32_relocs_.begin(), abs32_relocs_.end());
+  DCHECK(abs32_relocs_.empty() || abs32_relocs_.back() != kUnassignedRVA);
 
   Elf32_Rel relocation_block;
 
@@ -793,14 +794,15 @@ Status WriteEncodedProgram(EncodedProgram* encoded, SinkStreamSet* sink) {
   return C_OK;
 }
 
-Status ReadEncodedProgram(SourceStreamSet* streams, EncodedProgram** output) {
-  EncodedProgram* encoded = new EncodedProgram();
-  if (encoded->ReadFrom(streams)) {
-    *output = encoded;
-    return C_OK;
-  }
-  delete encoded;
-  return C_DESERIALIZATION_FAILED;
+Status ReadEncodedProgram(SourceStreamSet* streams,
+                          std::unique_ptr<EncodedProgram>* output) {
+  output->reset();
+  std::unique_ptr<EncodedProgram> encoded(new EncodedProgram());
+  if (!encoded->ReadFrom(streams))
+    return C_DESERIALIZATION_FAILED;
+
+  *output = std::move(encoded);
+  return C_OK;
 }
 
 Status Assemble(EncodedProgram* encoded, SinkStream* buffer) {
@@ -808,10 +810,6 @@ Status Assemble(EncodedProgram* encoded, SinkStream* buffer) {
   if (assembled)
     return C_OK;
   return C_ASSEMBLY_FAILED;
-}
-
-void DeleteEncodedProgram(EncodedProgram* encoded) {
-  delete encoded;
 }
 
 }  // namespace courgette

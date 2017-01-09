@@ -4,12 +4,13 @@
 
 package org.chromium.content.browser.input;
 
-import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.res.TypedArray;
 import android.util.SparseBooleanArray;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ListView;
@@ -34,18 +35,19 @@ public class SelectPopupDialog implements SelectPopup {
 
     private boolean mSelectionNotified;
 
-    public SelectPopupDialog(ContentViewCore contentViewCore, List<SelectPopupItem> items,
-            boolean multiple, int[] selected) {
+    public SelectPopupDialog(ContentViewCore contentViewCore, Context windowContext,
+            List<SelectPopupItem> items, boolean multiple, int[] selected) {
         mContentViewCore = contentViewCore;
-        Activity activity =  mContentViewCore.getWindowAndroid().getActivity().get();
-        assert activity != null;
 
-        final ListView listView = new ListView(mContentViewCore.getContext());
+        final ListView listView = new ListView(windowContext);
+        // setCacheColorHint(0) is required to prevent a black background in WebView on Lollipop:
+        // crbug.com/653026
         listView.setCacheColorHint(0);
-        AlertDialog.Builder b = new AlertDialog.Builder(activity)
+
+        AlertDialog.Builder b = new AlertDialog.Builder(windowContext)
                 .setView(listView)
-                .setCancelable(true)
-                .setInverseBackgroundForced(true);
+                .setCancelable(true);
+        setInverseBackgroundForced(b);
 
         if (multiple) {
             b.setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
@@ -64,7 +66,7 @@ public class SelectPopupDialog implements SelectPopup {
         }
         mListBoxPopup = b.create();
         final SelectPopupAdapter adapter = new SelectPopupAdapter(
-                mContentViewCore.getContext(), getSelectDialogLayout(multiple), items);
+                mListBoxPopup.getContext(), getSelectDialogLayout(multiple), items);
         listView.setAdapter(adapter);
         listView.setFocusableInTouchMode(true);
 
@@ -96,9 +98,17 @@ public class SelectPopupDialog implements SelectPopup {
         });
     }
 
+    @SuppressWarnings("deprecation")
+    private static void setInverseBackgroundForced(AlertDialog.Builder builder) {
+        // This is needed for pre-Holo themes (e.g. android:Theme.Black), which can be used in
+        // WebView. See http://crbug.com/596626. This can be removed if/when this class starts
+        // using android.support.v7.app.AlertDialog.
+        builder.setInverseBackgroundForced(true);
+    }
+
     private int getSelectDialogLayout(boolean isMultiChoice) {
         int resourceId;
-        TypedArray styledAttributes = mContentViewCore.getContext().obtainStyledAttributes(
+        TypedArray styledAttributes = mListBoxPopup.getContext().obtainStyledAttributes(
                 R.style.SelectPopupDialog, SELECT_DIALOG_ATTRS);
         resourceId = styledAttributes.getResourceId(isMultiChoice ? 0 : 1, 0);
         styledAttributes.recycle();
@@ -130,12 +140,21 @@ public class SelectPopupDialog implements SelectPopup {
 
     @Override
     public void show() {
-        mListBoxPopup.show();
+        try {
+            mListBoxPopup.show();
+        } catch (WindowManager.BadTokenException e) {
+            notifySelection(null);
+        }
     }
 
     @Override
-    public void hide() {
-        mListBoxPopup.cancel();
-        notifySelection(null);
+    public void hide(boolean sendsCancelMessage) {
+        if (sendsCancelMessage) {
+            mListBoxPopup.cancel();
+            notifySelection(null);
+        } else {
+            mSelectionNotified = true;
+            mListBoxPopup.cancel();
+        }
     }
 }

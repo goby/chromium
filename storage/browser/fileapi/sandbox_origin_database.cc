@@ -4,6 +4,9 @@
 
 #include "storage/browser/fileapi/sandbox_origin_database.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -12,7 +15,7 @@
 #include "base/format_macros.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -27,7 +30,7 @@ const base::FilePath::CharType kOriginDatabaseName[] =
     FILE_PATH_LITERAL("Origins");
 const char kOriginKeyPrefix[] = "ORIGIN:";
 const char kLastPathKey[] = "LAST_PATH";
-const int64 kMinimumReportIntervalHours = 1;
+const int64_t kMinimumReportIntervalHours = 1;
 const char kInitStatusHistogramLabel[] = "FileSystem.OriginDatabaseInit";
 const char kDatabaseRepairHistogramLabel[] = "FileSystem.OriginDatabaseRepair";
 
@@ -287,7 +290,8 @@ bool SandboxOriginDatabase::ListAllOrigins(
     origins->clear();
     return false;
   }
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> iter(
+      db_->NewIterator(leveldb::ReadOptions()));
   std::string origin_key_prefix = OriginToOriginKey(std::string());
   iter->Seek(origin_key_prefix);
   origins->clear();
@@ -329,16 +333,19 @@ bool SandboxOriginDatabase::GetLastPathNumber(int* number) {
     return false;
   }
   // Verify that this is a totally new database, and initialize it.
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(leveldb::ReadOptions()));
-  iter->SeekToFirst();
-  if (iter->Valid()) {  // DB was not empty, but had no last path number!
-    LOG(ERROR) << "File system origin database is corrupt!";
-    return false;
+  {
+    // Scope the iterator to ensure it is deleted before database is closed.
+    std::unique_ptr<leveldb::Iterator> iter(
+        db_->NewIterator(leveldb::ReadOptions()));
+    iter->SeekToFirst();
+    if (iter->Valid()) {  // DB was not empty, but had no last path number!
+      LOG(ERROR) << "File system origin database is corrupt!";
+      return false;
+    }
   }
   // This is always the first write into the database.  If we ever add a
   // version number, they should go in in a single transaction.
-  status =
-      db_->Put(leveldb::WriteOptions(), LastPathKey(), std::string("-1"));
+  status = db_->Put(leveldb::WriteOptions(), LastPathKey(), std::string("-1"));
   if (!status.ok()) {
     HandleError(FROM_HERE, status);
     return false;

@@ -8,12 +8,14 @@
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/host/token_validator_base.h"
 #include "remoting/protocol/token_validator.h"
 
 namespace remoting {
+
+class RsaKeyPair;
 
 // This class dispenses |TokenValidator| implementations that use a UrlFetcher
 // to contact a |token_validation_url| and exchange the |token| for a
@@ -28,14 +30,14 @@ class TokenValidatorFactoryImpl : public protocol::TokenValidatorFactory {
       scoped_refptr<RsaKeyPair> key_pair,
       scoped_refptr<net::URLRequestContextGetter> request_context_getter);
 
-  ~TokenValidatorFactoryImpl() override;
-
   // TokenValidatorFactory interface.
-  scoped_ptr<protocol::TokenValidator> CreateTokenValidator(
+  std::unique_ptr<protocol::TokenValidator> CreateTokenValidator(
       const std::string& local_jid,
       const std::string& remote_jid) override;
 
  private:
+  ~TokenValidatorFactoryImpl() override;
+
   ThirdPartyAuthConfig third_party_auth_config_;
   scoped_refptr<RsaKeyPair> key_pair_;
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;

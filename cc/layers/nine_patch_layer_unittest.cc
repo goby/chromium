@@ -4,7 +4,7 @@
 
 #include "cc/layers/nine_patch_layer.h"
 
-#include "cc/layers/layer_settings.h"
+#include "cc/animation/animation_host.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/resources/scoped_ui_resource.h"
 #include "cc/test/fake_layer_tree_host.h"
@@ -28,13 +28,11 @@ namespace cc {
 namespace {
 
 class NinePatchLayerTest : public testing::Test {
- public:
-  NinePatchLayerTest() : fake_client_(FakeLayerTreeHostClient::DIRECT_3D) {}
-
  protected:
   void SetUp() override {
-    layer_tree_host_ =
-        FakeLayerTreeHost::Create(&fake_client_, &task_graph_runner_);
+    animation_host_ = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+    layer_tree_host_ = FakeLayerTreeHost::Create(
+        &fake_client_, &task_graph_runner_, animation_host_.get());
   }
 
   void TearDown() override {
@@ -43,19 +41,19 @@ class NinePatchLayerTest : public testing::Test {
 
   FakeLayerTreeHostClient fake_client_;
   TestTaskGraphRunner task_graph_runner_;
-  scoped_ptr<FakeLayerTreeHost> layer_tree_host_;
+  std::unique_ptr<AnimationHost> animation_host_;
+  std::unique_ptr<FakeLayerTreeHost> layer_tree_host_;
 };
 
 TEST_F(NinePatchLayerTest, SetLayerProperties) {
-  scoped_refptr<NinePatchLayer> test_layer =
-      NinePatchLayer::Create(LayerSettings());
+  scoped_refptr<NinePatchLayer> test_layer = NinePatchLayer::Create();
   ASSERT_TRUE(test_layer.get());
   test_layer->SetIsDrawable(true);
   test_layer->SetBounds(gfx::Size(100, 100));
 
   layer_tree_host_->SetRootLayer(test_layer);
   Mock::VerifyAndClearExpectations(layer_tree_host_.get());
-  EXPECT_EQ(test_layer->layer_tree_host(), layer_tree_host_.get());
+  EXPECT_EQ(test_layer->GetLayerTreeHostForTesting(), layer_tree_host_.get());
 
   gfx::Rect screen_space_clip_rect;
   test_layer->SavePaintProperties();
@@ -64,8 +62,9 @@ TEST_F(NinePatchLayerTest, SetLayerProperties) {
   EXPECT_FALSE(test_layer->DrawsContent());
 
   bool is_opaque = false;
-  scoped_ptr<ScopedUIResource> resource = ScopedUIResource::Create(
-      layer_tree_host_.get(), UIResourceBitmap(gfx::Size(10, 10), is_opaque));
+  std::unique_ptr<ScopedUIResource> resource =
+      ScopedUIResource::Create(layer_tree_host_->GetUIResourceManager(),
+                               UIResourceBitmap(gfx::Size(10, 10), is_opaque));
   gfx::Rect aperture(5, 5, 1, 1);
   bool fill_center = true;
   test_layer->SetAperture(aperture);

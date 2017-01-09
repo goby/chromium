@@ -5,19 +5,24 @@
 #ifndef EXTENSIONS_BROWSER_API_DECLARATIVE_RULES_REGISTRY_H__
 #define EXTENSIONS_BROWSER_API_DECLARATIVE_RULES_REGISTRY_H__
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/common/api/events.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/one_shot_event.h"
 
 namespace content {
@@ -152,7 +157,6 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
   friend class base::RefCountedThreadSafe<RulesRegistry>;
   friend class RulesCacheDelegate;
 
-  typedef std::string ExtensionId;
   typedef std::string RuleId;
   typedef std::pair<ExtensionId, RuleId> RulesDictionaryKey;
   typedef std::map<RulesDictionaryKey, linked_ptr<api::events::Rule>>
@@ -220,7 +224,7 @@ class RulesRegistry : public base::RefCountedThreadSafe<RulesRegistry> {
   // Deserialize the rules from the given Value object and add them to the
   // RulesRegistry.
   void DeserializeAndAddRules(const std::string& extension_id,
-                              scoped_ptr<base::Value> rules);
+                              std::unique_ptr<base::Value> rules);
 
   // Reports an internal error with the specified params to the extensions
   // client.

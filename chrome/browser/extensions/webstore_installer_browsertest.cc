@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/webstore_installer.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -37,10 +39,14 @@ class TestWebstoreInstaller : public WebstoreInstaller {
                         Delegate* delegate,
                         content::WebContents* web_contents,
                         const std::string& id,
-                        scoped_ptr<Approval> approval,
+                        std::unique_ptr<Approval> approval,
                         InstallSource source)
-      : WebstoreInstaller(
-          profile, delegate, web_contents, id, approval.Pass(), source) {}
+      : WebstoreInstaller(profile,
+                          delegate,
+                          web_contents,
+                          id,
+                          std::move(approval),
+                          source) {}
 
   void SetDeletedClosure(const base::Closure& cb) { deleted_closure_ = cb; }
 
@@ -111,38 +117,30 @@ void WebstoreInstallerBrowserTest::OnExtensionInstallFailure(
 }
 
 IN_PROC_BROWSER_TEST_F(WebstoreInstallerBrowserTest, WebstoreInstall) {
-  scoped_ptr<base::DictionaryValue> manifest(
-      DictionaryBuilder().Set("name", kExtensionName)
-                         .Set("description", "Foo")
-                         .Set("manifest_version", 2)
-                         .Set("version", "1.0")
-                         .Set("permissions",
-                              ListBuilder().Append("tabs"))
-                         .Build());
+  std::unique_ptr<base::DictionaryValue> manifest(
+      DictionaryBuilder()
+          .Set("name", kExtensionName)
+          .Set("description", "Foo")
+          .Set("manifest_version", 2)
+          .Set("version", "1.0")
+          .Set("permissions", ListBuilder().Append("tabs").Build())
+          .Build());
 
   content::WebContents* active_web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(active_web_contents);
 
   // Create an approval.
-  scoped_ptr<WebstoreInstaller::Approval> approval =
+  std::unique_ptr<WebstoreInstaller::Approval> approval =
       WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
-          browser()->profile(),
-          kTestExtensionId,
-          manifest.Pass(),
-          false);
+          browser()->profile(), kTestExtensionId, std::move(manifest), false);
 
   // Create and run a WebstoreInstaller.
   base::RunLoop run_loop;
   SetDoneClosure(run_loop.QuitClosure());
-  TestWebstoreInstaller* installer =
-      new TestWebstoreInstaller(
-          browser()->profile(),
-          this,
-          active_web_contents,
-          kTestExtensionId,
-          approval.Pass(),
-          WebstoreInstaller::INSTALL_SOURCE_OTHER);
+  TestWebstoreInstaller* installer = new TestWebstoreInstaller(
+      browser()->profile(), this, active_web_contents, kTestExtensionId,
+      std::move(approval), WebstoreInstaller::INSTALL_SOURCE_OTHER);
   installer->Start();
   run_loop.Run();
 
@@ -152,46 +150,40 @@ IN_PROC_BROWSER_TEST_F(WebstoreInstallerBrowserTest, WebstoreInstall) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebstoreInstallerBrowserTest, SimultaneousInstall) {
-  scoped_ptr<base::DictionaryValue> manifest(
-      DictionaryBuilder().Set("name", kExtensionName)
-                         .Set("description", "Foo")
-                         .Set("manifest_version", 2)
-                         .Set("version", "1.0")
-                         .Set("permissions",
-                              ListBuilder().Append("tabs"))
-                         .Build());
+  std::unique_ptr<base::DictionaryValue> manifest(
+      DictionaryBuilder()
+          .Set("name", kExtensionName)
+          .Set("description", "Foo")
+          .Set("manifest_version", 2)
+          .Set("version", "1.0")
+          .Set("permissions", ListBuilder().Append("tabs").Build())
+          .Build());
 
   content::WebContents* active_web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(active_web_contents);
 
   // Create an approval.
-  scoped_ptr<WebstoreInstaller::Approval> approval =
+  std::unique_ptr<WebstoreInstaller::Approval> approval =
       WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
-          browser()->profile(),
-          kTestExtensionId,
-          scoped_ptr<base::DictionaryValue>(manifest->DeepCopy()),
-          false);
+          browser()->profile(), kTestExtensionId,
+          std::unique_ptr<base::DictionaryValue>(manifest->DeepCopy()), false);
 
   // Create and run a WebstoreInstaller.
   base::RunLoop run_loop;
   SetDoneClosure(run_loop.QuitClosure());
-  scoped_refptr<TestWebstoreInstaller> installer =
-      new TestWebstoreInstaller(
-          browser()->profile(),
-          this,
-          active_web_contents,
-          kTestExtensionId,
-          approval.Pass(),
-          WebstoreInstaller::INSTALL_SOURCE_OTHER);
+  scoped_refptr<TestWebstoreInstaller> installer = new TestWebstoreInstaller(
+      browser()->profile(), this, active_web_contents, kTestExtensionId,
+      std::move(approval), WebstoreInstaller::INSTALL_SOURCE_OTHER);
   installer->Start();
 
   // Simulate another mechanism installing the same extension.
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder().SetLocation(Manifest::INTERNAL)
-                      .SetID(kTestExtensionId)
-                      .SetManifest(manifest.Pass())
-                      .Build();
+      ExtensionBuilder()
+          .SetLocation(Manifest::INTERNAL)
+          .SetID(kTestExtensionId)
+          .SetManifest(std::move(manifest))
+          .Build();
   extension_service()->OnExtensionInstalled(extension.get(),
                                             syncer::StringOrdinal(),
                                             0);

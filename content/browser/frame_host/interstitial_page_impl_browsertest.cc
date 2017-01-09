@@ -4,20 +4,21 @@
 
 #include "content/browser/frame_host/interstitial_page_impl.h"
 
+#include <tuple>
+
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/synchronization/waitable_event.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/clipboard_messages.h"
 #include "content/common/frame_messages.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/interstitial_page_delegate.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "ipc/message_filter.h"
-#include "ui/base/clipboard/scoped_clipboard_writer.h"
-#include "ui/base/test/test_clipboard.h"
 
 namespace content {
 
@@ -49,66 +50,15 @@ class TestInterstitialPageDelegate : public InterstitialPageDelegate {
            "  window.domAutomationController.send("
            "      window.getSelection().toString());"
            "}"
+           "function set_selection_change_listener() {"
+           "  document.addEventListener('selectionchange',"
+           "    function() { document.title='SELECTION_CHANGED'; })"
+           "}"
            "</script>"
            "</head>"
            "<body>original body text</body>"
            "</html>";
   }
-};
-
-// A title watcher for interstitial pages. The existing TitleWatcher does not
-// work for interstitial pages. Note that this title watcher waits for the
-// title update IPC message not the actual title update. So, the new title is
-// probably not propagated completely, yet.
-class InterstitialTitleUpdateWatcher : public BrowserMessageFilter {
- public:
-  explicit InterstitialTitleUpdateWatcher(InterstitialPage* interstitial)
-      : BrowserMessageFilter(FrameMsgStart) {
-    interstitial->GetMainFrame()->GetProcess()->AddFilter(this);
-  }
-
-  void InitWait(const std::string& expected_title) {
-    DCHECK(!run_loop_);
-    expected_title_ = base::UTF8ToUTF16(expected_title);
-    run_loop_.reset(new base::RunLoop());
-  }
-
-  void Wait() {
-    DCHECK(run_loop_);
-    run_loop_->Run();
-    run_loop_.reset();
-  }
-
- private:
-  ~InterstitialTitleUpdateWatcher() override {}
-
-  void OnTitleUpdateReceived(const base::string16& title) {
-    DCHECK(run_loop_);
-    if (title == expected_title_)
-      run_loop_->Quit();
-  }
-
-  // BrowserMessageFilter:
-  bool OnMessageReceived(const IPC::Message& message) override {
-    if (!run_loop_)
-      return false;
-
-    if (message.type() == FrameHostMsg_UpdateTitle::ID) {
-      FrameHostMsg_UpdateTitle::Param params;
-      if (FrameHostMsg_UpdateTitle::Read(&message, &params)) {
-        BrowserThread::PostTask(
-            BrowserThread::UI, FROM_HERE,
-            base::Bind(&InterstitialTitleUpdateWatcher::OnTitleUpdateReceived,
-                       this, base::get<0>(params)));
-      }
-    }
-    return false;
-  }
-
-  base::string16 expected_title_;
-  scoped_ptr<base::RunLoop> run_loop_;
-
-  DISALLOW_COPY_AND_ASSIGN(InterstitialTitleUpdateWatcher);
 };
 
 // A message filter that watches for WriteText and CommitWrite clipboard IPC
@@ -154,7 +104,7 @@ class ClipboardMessageWatcher : public IPC::MessageFilter {
         BrowserThread::PostTask(
             BrowserThread::UI, FROM_HERE,
             base::Bind(&ClipboardMessageWatcher::OnWriteText, this,
-                       base::UTF16ToUTF8(base::get<1>(params))));
+                       base::UTF16ToUTF8(std::get<1>(params))));
       }
       return true;
     }
@@ -167,7 +117,7 @@ class ClipboardMessageWatcher : public IPC::MessageFilter {
     return false;
   }
 
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   std::string last_text_;
 
   DISALLOW_COPY_AND_ASSIGN(ClipboardMessageWatcher);
@@ -182,46 +132,6 @@ class InterstitialPageImplTest : public ContentBrowserTest {
   ~InterstitialPageImplTest() override {}
 
  protected:
-  void SetUpTestClipboard() {
-#if defined(OS_WIN)
-    // On Windows, clipboard reads are handled on the IO thread. So, the test
-    // clipboard should be created for the IO thread.
-    if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-      RunTaskOnIOThreadAndWait(
-          base::Bind(&InterstitialPageImplTest::SetUpTestClipboard, this));
-      return;
-    }
-#endif
-    ui::TestClipboard::CreateForCurrentThread();
-  }
-
-  void TearDownTestClipboard() {
-#if defined(OS_WIN)
-    // On Windows, test clipboard is created for the IO thread. So, destroy it
-    // for the IO thread, too.
-    if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-      RunTaskOnIOThreadAndWait(
-          base::Bind(&InterstitialPageImplTest::TearDownTestClipboard, this));
-      return;
-    }
-#endif
-    ui::Clipboard::DestroyClipboardForCurrentThread();
-  }
-
-  void SetClipboardText(const std::string& text) {
-#if defined(OS_WIN)
-    // On Windows, clipboard reads are handled on the IO thread. So, set the
-    // text for the IO thread clipboard.
-    if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-      RunTaskOnIOThreadAndWait(
-          base::Bind(&InterstitialPageImplTest::SetClipboardText, this, text));
-      return;
-    }
-#endif
-    ui::ScopedClipboardWriter clipboard_writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
-    clipboard_writer.WriteText(base::ASCIIToUTF16(text));
-  }
-
   void SetUpInterstitialPage() {
     WebContentsImpl* web_contents =
         static_cast<WebContentsImpl*>(shell()->web_contents());
@@ -239,12 +149,11 @@ class InterstitialPageImplTest : public ContentBrowserTest {
     // Focus the interstitial frame
     FrameTree* frame_tree = static_cast<RenderViewHostDelegate*>(
                                 interstitial_.get())->GetFrameTree();
-    frame_tree->SetFocusedFrame(frame_tree->root());
+    frame_tree->SetFocusedFrame(frame_tree->root(),
+                                frame_tree->GetMainFrame()->GetSiteInstance());
 
     clipboard_message_watcher_ =
         new ClipboardMessageWatcher(interstitial_.get());
-    title_update_watcher_ =
-        new InterstitialTitleUpdateWatcher(interstitial_.get());
 
     // Wait until page loads completely.
     ASSERT_TRUE(WaitForRenderFrameReady(interstitial_->GetMainFrame()));
@@ -276,14 +185,21 @@ class InterstitialPageImplTest : public ContentBrowserTest {
                          "create_input_and_set_text('" + text + "')");
   }
 
+  bool SetSelectionChangeListener() {
+    return ExecuteScript(interstitial_->GetMainFrame(),
+                         "set_selection_change_listener()");
+  }
+
   std::string PerformCut() {
     clipboard_message_watcher_->InitWait();
-    title_update_watcher_->InitWait("TEXT_CHANGED");
+    const base::string16 expected_title = base::UTF8ToUTF16("TEXT_CHANGED");
+    content::TitleWatcher title_watcher(shell()->web_contents(),
+                                        expected_title);
     RenderFrameHostImpl* rfh =
         static_cast<RenderFrameHostImpl*>(interstitial_->GetMainFrame());
     rfh->GetRenderWidgetHost()->delegate()->Cut();
     clipboard_message_watcher_->WaitForWriteCommit();
-    title_update_watcher_->Wait();
+    EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
     return clipboard_message_watcher_->last_text();
   }
 
@@ -297,41 +213,40 @@ class InterstitialPageImplTest : public ContentBrowserTest {
   }
 
   void PerformPaste() {
-    title_update_watcher_->InitWait("TEXT_CHANGED");
+    const base::string16 expected_title = base::UTF8ToUTF16("TEXT_CHANGED");
+    content::TitleWatcher title_watcher(shell()->web_contents(),
+                                        expected_title);
     RenderFrameHostImpl* rfh =
         static_cast<RenderFrameHostImpl*>(interstitial_->GetMainFrame());
     rfh->GetRenderWidgetHost()->delegate()->Paste();
-    title_update_watcher_->Wait();
+    EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
   }
 
   void PerformSelectAll() {
+    const base::string16 expected_title =
+        base::UTF8ToUTF16("SELECTION_CHANGED");
+    content::TitleWatcher title_watcher(shell()->web_contents(),
+                                        expected_title);
     RenderFrameHostImpl* rfh =
         static_cast<RenderFrameHostImpl*>(interstitial_->GetMainFrame());
     rfh->GetRenderWidgetHost()->delegate()->SelectAll();
+    EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
   }
 
  private:
-  void RunTaskOnIOThreadAndWait(const base::Closure& task) {
-    base::WaitableEvent completion(false, false);
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::Bind(&InterstitialPageImplTest::RunTask, this,
-                                       task, &completion));
-    completion.Wait();
-  }
-
-  void RunTask(const base::Closure& task, base::WaitableEvent* completion) {
-    task.Run();
-    completion->Signal();
-  }
-
-  scoped_ptr<InterstitialPageImpl> interstitial_;
+  std::unique_ptr<InterstitialPageImpl> interstitial_;
   scoped_refptr<ClipboardMessageWatcher> clipboard_message_watcher_;
-  scoped_refptr<InterstitialTitleUpdateWatcher> title_update_watcher_;
 
   DISALLOW_COPY_AND_ASSIGN(InterstitialPageImplTest);
 };
 
-IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, Cut) {
+// Has errors on TSan. See https://crbug.com/631322.
+#if defined(THREAD_SANITIZER)
+#define MAYBE_Cut DISABLED_Cut
+#else
+#define MAYBE_Cut Cut
+#endif
+IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, MAYBE_Cut) {
   SetUpInterstitialPage();
 
   ASSERT_TRUE(CreateInputAndSetText("text-to-cut"));
@@ -364,10 +279,10 @@ IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, Copy) {
 }
 
 IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, Paste) {
-  SetUpTestClipboard();
+  BrowserTestClipboardScope clipboard;
   SetUpInterstitialPage();
 
-  SetClipboardText("text-to-paste");
+  clipboard.SetText("text-to-paste");
 
   ASSERT_TRUE(CreateInputAndSetText(std::string()));
   ASSERT_TRUE(FocusInputAndSelectText());
@@ -379,17 +294,18 @@ IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, Paste) {
   EXPECT_EQ("text-to-paste", input_text);
 
   TearDownInterstitialPage();
-  TearDownTestClipboard();
 }
 
 IN_PROC_BROWSER_TEST_F(InterstitialPageImplTest, SelectAll) {
   SetUpInterstitialPage();
+  ASSERT_TRUE(SetSelectionChangeListener());
 
   std::string input_text;
   ASSERT_TRUE(GetSelection(&input_text));
   EXPECT_EQ(std::string(), input_text);
 
   PerformSelectAll();
+
   ASSERT_TRUE(GetSelection(&input_text));
   EXPECT_EQ("original body text", input_text);
 

@@ -4,8 +4,7 @@
 
 #include "chrome/browser/ui/views/location_bar/star_view.h"
 
-#include "base/metrics/histogram.h"
-#include "base/strings/utf_string_conversions.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/browser.h"
@@ -13,10 +12,8 @@
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_bubble_view.h"
 #include "chrome/grit/generated_resources.h"
-#include "grit/theme_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/vector_icons_public.h"
 
 StarView::StarView(CommandUpdater* command_updater, Browser* browser)
@@ -61,17 +58,8 @@ void StarView::ExecuteCommand(ExecuteSource source) {
   }
 }
 
-views::BubbleDelegateView* StarView::GetBubble() const {
+views::BubbleDialogDelegateView* StarView::GetBubble() const {
   return BookmarkBubbleView::bookmark_bubble();
-}
-
-bool StarView::SetRasterIcon() {
-  if (ui::MaterialDesignController::IsModeMaterial())
-    return false;
-
-  SetImage(ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-      active() ? IDR_STAR_LIT : IDR_STAR));
-  return true;
 }
 
 gfx::VectorIconId StarView::GetVectorIcon() const {

@@ -5,9 +5,12 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REGISTER_JOB_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_REGISTER_JOB_H_
 
+#include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "content/browser/service_worker/embedded_worker_instance.h"
 #include "content/browser/service_worker/service_worker_register_job_base.h"
 #include "content/browser/service_worker/service_worker_registration.h"
@@ -15,9 +18,6 @@
 #include "url/gurl.h"
 
 namespace content {
-
-class ServiceWorkerJobCoordinator;
-class ServiceWorkerStorage;
 
 // Handles the initial registration of a Service Worker and the
 // subsequent update of existing registrations.
@@ -33,7 +33,8 @@ class ServiceWorkerStorage;
 //  - waiting for older ServiceWorkerVersions to deactivate
 //  - designating the new version to be the 'active' version
 //  - updating storage
-class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
+class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase,
+                                 public EmbeddedWorkerInstance::Listener {
  public:
   typedef base::Callback<void(ServiceWorkerStatusCode status,
                               const std::string& status_message,
@@ -93,8 +94,7 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
     scoped_refptr<ServiceWorkerVersion> new_version;
   };
 
-  void set_registration(
-      const scoped_refptr<ServiceWorkerRegistration>& registration);
+  void set_registration(scoped_refptr<ServiceWorkerRegistration> registration);
   ServiceWorkerRegistration* registration();
   void set_new_version(ServiceWorkerVersion* version);
   ServiceWorkerVersion* new_version();
@@ -104,24 +104,27 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
   void StartImpl();
   void ContinueWithRegistration(
       ServiceWorkerStatusCode status,
-      const scoped_refptr<ServiceWorkerRegistration>& registration);
+      scoped_refptr<ServiceWorkerRegistration> registration);
   void ContinueWithUpdate(
       ServiceWorkerStatusCode status,
-      const scoped_refptr<ServiceWorkerRegistration>& registration);
+      scoped_refptr<ServiceWorkerRegistration> registration);
   void RegisterAndContinue();
   void ContinueWithUninstallingRegistration(
-      const scoped_refptr<ServiceWorkerRegistration>& existing_registration,
+      scoped_refptr<ServiceWorkerRegistration> existing_registration,
       ServiceWorkerStatusCode status);
   void ContinueWithRegistrationForSameScriptUrl(
-      const scoped_refptr<ServiceWorkerRegistration>& existing_registration,
+      scoped_refptr<ServiceWorkerRegistration> existing_registration,
       ServiceWorkerStatusCode status);
   void UpdateAndContinue();
   void OnStartWorkerFinished(ServiceWorkerStatusCode status);
   void OnStoreRegistrationComplete(ServiceWorkerStatusCode status);
   void InstallAndContinue();
-  void OnInstallFinished(ServiceWorkerStatusCode status);
-  void ActivateAndContinue();
-  void OnActivateFinished(ServiceWorkerStatusCode status);
+  void DispatchInstallEvent();
+  void OnInstallFinished(int request_id,
+                         blink::WebServiceWorkerEventResult result,
+                         bool has_fetch_handler,
+                         base::Time dispatch_event_time);
+  void OnInstallFailed(ServiceWorkerStatusCode status);
   void Complete(ServiceWorkerStatusCode status);
   void Complete(ServiceWorkerStatusCode status,
                 const std::string& status_message);
@@ -134,12 +137,17 @@ class ServiceWorkerRegisterJob : public ServiceWorkerRegisterJobBase {
   void AddRegistrationToMatchingProviderHosts(
       ServiceWorkerRegistration* registration);
 
+  // EmbeddedWorkerInstance::Listener implementation:
+  void OnScriptLoaded() override;
+
+  void BumpLastUpdateCheckTimeIfNeeded();
+
   // The ServiceWorkerContextCore object should always outlive this.
   base::WeakPtr<ServiceWorkerContextCore> context_;
 
   RegistrationJobType job_type_;
   const GURL pattern_;
-  const GURL script_url_;
+  GURL script_url_;
   std::vector<RegistrationCallback> callbacks_;
   Phase phase_;
   Internal internal_;

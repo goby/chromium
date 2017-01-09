@@ -4,6 +4,8 @@
 
 #include "components/policy/core/common/async_policy_loader.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/sequenced_task_runner.h"
@@ -49,7 +51,7 @@ void AsyncPolicyLoader::Reload(bool force) {
     return;
   }
 
-  scoped_ptr<PolicyBundle> bundle(Load());
+  std::unique_ptr<PolicyBundle> bundle(Load());
 
   // Check if there was a modification while reading.
   if (!force && !IsSafeToReload(now, &delay)) {
@@ -60,21 +62,21 @@ void AsyncPolicyLoader::Reload(bool force) {
   // Filter out mismatching policies.
   schema_map_->FilterBundle(bundle.get());
 
-  update_callback_.Run(bundle.Pass());
+  update_callback_.Run(std::move(bundle));
   ScheduleNextReload(TimeDelta::FromSeconds(kReloadIntervalSeconds));
 }
 
-scoped_ptr<PolicyBundle> AsyncPolicyLoader::InitialLoad(
+std::unique_ptr<PolicyBundle> AsyncPolicyLoader::InitialLoad(
     const scoped_refptr<SchemaMap>& schema_map) {
   // This is the first load, early during startup. Use this to record the
   // initial |last_modification_time_|, so that potential changes made before
   // installing the watches can be detected.
   last_modification_time_ = LastModificationTime();
   schema_map_ = schema_map;
-  scoped_ptr<PolicyBundle> bundle(Load());
+  std::unique_ptr<PolicyBundle> bundle(Load());
   // Filter out mismatching policies.
   schema_map_->FilterBundle(bundle.get());
-  return bundle.Pass();
+  return bundle;
 }
 
 void AsyncPolicyLoader::Init(const UpdateCallback& update_callback) {

@@ -9,17 +9,18 @@
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/prefs/pref_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/blacklist_factory.h"
 #include "chrome/browser/extensions/blacklist_state_fetcher.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/safe_browsing/safe_browsing_util.h"
+#include "components/prefs/pref_service.h"
+#include "components/safe_browsing_db/util.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "extensions/browser/extension_prefs.h"
@@ -303,7 +304,7 @@ void Blacklist::OnBlacklistStateReceived(const std::string& id,
     for (std::vector<std::string>::const_iterator ids_it = ids.begin();
          ids_it != ids.end();
          ++ids_it) {
-      if (!ContainsKey(blacklist_state_cache_, *ids_it)) {
+      if (!base::ContainsKey(blacklist_state_cache_, *ids_it)) {
         have_all_in_cache = false;
         break;
       }
@@ -352,7 +353,8 @@ void Blacklist::Observe(int type,
                         const content::NotificationSource& source,
                         const content::NotificationDetails& details) {
   DCHECK_EQ(chrome::NOTIFICATION_SAFE_BROWSING_UPDATE_COMPLETE, type);
-  FOR_EACH_OBSERVER(Observer, observers_, OnBlacklistUpdated());
+  for (auto& observer : observers_)
+    observer.OnBlacklistUpdated();
 }
 
 }  // namespace extensions

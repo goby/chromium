@@ -34,36 +34,36 @@ namespace blink {
 
 class AffineTransform;
 
-class SVGFitToViewBox : public WillBeGarbageCollectedMixin {
-public:
-    enum PropertyMapPolicy {
-        PropertyMapPolicyAdd,
-        PropertyMapPolicySkip,
-    };
+class SVGFitToViewBox : public GarbageCollectedMixin {
+ public:
+  static AffineTransform viewBoxToViewTransform(const FloatRect& viewBoxRect,
+                                                SVGPreserveAspectRatio*,
+                                                float viewWidth,
+                                                float viewHeight);
 
-    static AffineTransform viewBoxToViewTransform(const FloatRect& viewBoxRect, PassRefPtrWillBeRawPtr<SVGPreserveAspectRatio>, float viewWidth, float viewHeight);
+  static bool isKnownAttribute(const QualifiedName&);
 
-    static bool isKnownAttribute(const QualifiedName&);
+  bool hasEmptyViewBox() const {
+    return m_viewBox->currentValue()->isValid() &&
+           m_viewBox->currentValue()->value().isEmpty();
+  }
 
-    bool hasEmptyViewBox() const { return m_viewBox->currentValue()->isValid() && m_viewBox->currentValue()->value().isEmpty(); }
+  // JS API
+  SVGAnimatedRect* viewBox() const { return m_viewBox.get(); }
+  SVGAnimatedPreserveAspectRatio* preserveAspectRatio() const {
+    return m_preserveAspectRatio.get();
+  }
 
-    // JS API
-    SVGAnimatedRect* viewBox() const { return m_viewBox.get(); }
-    SVGAnimatedPreserveAspectRatio* preserveAspectRatio() const { return m_preserveAspectRatio.get(); }
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+ protected:
+  explicit SVGFitToViewBox(SVGElement*);
 
-protected:
-    explicit SVGFitToViewBox(SVGElement*, PropertyMapPolicy = PropertyMapPolicyAdd);
-    void updateViewBox(const FloatRect&);
-    void clearViewBox() { m_viewBox = nullptr; }
-    void clearPreserveAspectRatio() { m_preserveAspectRatio = nullptr; }
-
-private:
-    RefPtrWillBeMember<SVGAnimatedRect> m_viewBox;
-    RefPtrWillBeMember<SVGAnimatedPreserveAspectRatio> m_preserveAspectRatio;
+ private:
+  Member<SVGAnimatedRect> m_viewBox;
+  Member<SVGAnimatedPreserveAspectRatio> m_preserveAspectRatio;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGFitToViewBox_h
+#endif  // SVGFitToViewBox_h

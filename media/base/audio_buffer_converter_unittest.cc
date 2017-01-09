@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "media/base/audio_buffer.h"
 #include "media/base/audio_buffer_converter.h"
+
+#include <stdint.h>
+
+#include <memory>
+
+#include "media/base/audio_buffer.h"
 #include "media/base/sinc_resampler.h"
 #include "media/base/test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -22,14 +26,9 @@ static scoped_refptr<AudioBuffer> MakeTestBuffer(int sample_rate,
                                                  ChannelLayout channel_layout,
                                                  int channel_count,
                                                  int frames) {
-  return MakeAudioBuffer<uint8>(kSampleFormatU8,
-                                channel_layout,
-                                channel_count,
-                                sample_rate,
-                                0,
-                                1,
-                                frames,
-                                base::TimeDelta::FromSeconds(0));
+  return MakeAudioBuffer<uint8_t>(kSampleFormatU8, channel_layout,
+                                  channel_count, sample_rate, 0, 1, frames,
+                                  base::TimeDelta::FromSeconds(0));
 }
 
 class AudioBufferConverterTest : public ::testing::Test {
@@ -83,7 +82,7 @@ class AudioBufferConverterTest : public ::testing::Test {
   }
 
  protected:
-  scoped_ptr<AudioBufferConverter> audio_buffer_converter_;
+  std::unique_ptr<AudioBufferConverter> audio_buffer_converter_;
 
   int input_frames_;
   double expected_output_frames_;

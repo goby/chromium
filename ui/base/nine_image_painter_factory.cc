@@ -4,6 +4,9 @@
 
 #include "ui/base/nine_image_painter_factory.h"
 
+#include <stddef.h>
+
+#include "base/memory/ptr_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/nine_image_painter.h"
 
@@ -12,6 +15,7 @@ namespace ui {
 namespace {
 
 std::vector<gfx::ImageSkia> ImageIdsToImages(const int image_ids[]) {
+  DCHECK(image_ids);
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   std::vector<gfx::ImageSkia> images(9);
   for (size_t i = 0; i < 9; ++i) {
@@ -23,10 +27,9 @@ std::vector<gfx::ImageSkia> ImageIdsToImages(const int image_ids[]) {
 
 }  // namespace
 
-scoped_ptr<gfx::NineImagePainter> CreateNineImagePainter(
+std::unique_ptr<gfx::NineImagePainter> CreateNineImagePainter(
     const int image_ids[]) {
-  return make_scoped_ptr(
-      new gfx::NineImagePainter(ImageIdsToImages(image_ids)));
+  return base::MakeUnique<gfx::NineImagePainter>(ImageIdsToImages(image_ids));
 }
 
 }  // namespace ui

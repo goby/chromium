@@ -8,20 +8,14 @@
 #include <string>
 
 #include "net/base/net_export.h"
+#include "net/cert/signed_certificate_timestamp_and_status.h"
 
 namespace net {
 
-namespace ct {
-struct CTVerifyResult;
-struct SignedCertificateTimestamp;
-}  // namespace ct
-
-class BoundNetLog;
-class CTLogVerifier;
+class NetLogWithSource;
 class X509Certificate;
 
 // Interface for verifying Signed Certificate Timestamps over a certificate.
-// The only known (non-test) implementation currently is MultiLogCTVerifier.
 class NET_EXPORT CTVerifier {
  public:
   class NET_EXPORT Observer {
@@ -35,6 +29,9 @@ class NET_EXPORT CTVerifier {
     // net/) may store the observed |cert| and |sct|.
     virtual void OnSCTVerified(X509Certificate* cert,
                                const ct::SignedCertificateTimestamp* sct) = 0;
+
+   protected:
+    virtual ~Observer() {}
   };
 
   virtual ~CTVerifier() {}
@@ -52,8 +49,8 @@ class NET_EXPORT CTVerifier {
   virtual int Verify(X509Certificate* cert,
                      const std::string& stapled_ocsp_response,
                      const std::string& sct_list_from_tls_extension,
-                     ct::CTVerifyResult* result,
-                     const BoundNetLog& net_log) = 0;
+                     SignedCertificateTimestampAndStatusList* output_scts,
+                     const NetLogWithSource& net_log) = 0;
 
   // Registers |observer| to receive notifications of validated SCTs. Does not
   // take ownership of the observer as the observer may be performing

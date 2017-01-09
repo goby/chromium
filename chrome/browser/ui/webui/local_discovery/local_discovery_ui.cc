@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/local_discovery/local_discovery_ui.h"
 
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -11,11 +12,13 @@
 #include "chrome/browser/ui/webui/metrics_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "grit/browser_resources.h"
+#include "printing/features/features.h"
 
 namespace {
 
@@ -97,7 +100,7 @@ content::WebUIDataSource* CreateLocalDiscoveryHTMLSource() {
   source->AddLocalizedString("backButton", IDS_SETTINGS_TITLE);
 
   // Cloud print connector-related strings.
-#if defined(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
   source->AddLocalizedString("cloudPrintConnectorEnablingButton",
                              IDS_OPTIONS_CLOUD_PRINT_CONNECTOR_ENABLING_BUTTON);
   source->AddLocalizedString("cloudPrintConnectorDisabledButton",

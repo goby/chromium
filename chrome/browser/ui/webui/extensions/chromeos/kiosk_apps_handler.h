@@ -8,13 +8,13 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager_observer.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 namespace base {
-class DictionaryValue;
 class ListValue;
 }
 

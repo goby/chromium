@@ -4,7 +4,7 @@
 
 #import "chrome/browser/ui/cocoa/autofill/autofill_section_view.h"
 
-#import "chrome/browser/ui/chrome_style.h"
+#import "chrome/browser/ui/cocoa/chrome_style.h"
 #include "skia/ext/skia_utils_mac.h"
 
 namespace {
@@ -44,7 +44,7 @@ SkColor kShadingColor = 0x07000000;  // SkColorSetARGB(7, 0, 0, 0);
 
 - (NSColor*)hoverColor {
   // Shading color is specified as a alpha component color, so premultiply.
-  NSColor* shadingColor = gfx::SkColorToCalibratedNSColor(kShadingColor);
+  NSColor* shadingColor = skia::SkColorToCalibratedNSColor(kShadingColor);
   NSColor* blendedColor = [[[self window] backgroundColor]
       blendedColorWithFraction:[shadingColor alphaComponent]
                        ofColor:shadingColor];

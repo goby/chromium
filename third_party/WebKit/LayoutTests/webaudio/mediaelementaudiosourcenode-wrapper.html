@@ -3,6 +3,7 @@
 <head>
 <script src="../resources/js-test.js"></script>
 <script src="resources/compatibility.js"></script>
+<script src="resources/audit-util.js"></script>
 <script src="resources/audio-testing.js"></script>
 </head>
 <body>
@@ -12,7 +13,7 @@ description("Verifies that for .mediaElement getters, a wrapper that corresponds
 var source;
 function testMediaWrapper(kind) {
     var element = document.createElement(kind);
-    var context = new OfflineAudioContext(1, 1000, 44100);
+    var context = new AudioContext();
 
     source = context.createMediaElementSource(element);
     element = context = null;

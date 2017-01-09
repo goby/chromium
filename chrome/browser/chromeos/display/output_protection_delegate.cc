@@ -5,28 +5,27 @@
 #include "chrome/browser/chromeos/display/output_protection_delegate.h"
 
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
 #include "build/build_config.h"
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 
 namespace chromeos {
 
 namespace {
 
-bool GetCurrentDisplayId(content::RenderFrameHost* rfh, int64* display_id) {
+bool GetCurrentDisplayId(content::RenderFrameHost* rfh, int64_t* display_id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(rfh);
   DCHECK(display_id);
 
-  gfx::NativeView native_view = rfh->GetNativeView();
-  gfx::Screen* screen = gfx::Screen::GetScreenFor(native_view);
+  display::Screen* screen = display::Screen::GetScreen();
   if (!screen)
     return false;
-  gfx::Display display = screen->GetDisplayNearestWindow(native_view);
+  display::Display display =
+      screen->GetDisplayNearestWindow(rfh->GetNativeView());
   *display_id = display.id();
   return true;
 }
@@ -44,7 +43,7 @@ OutputProtectionDelegate::OutputProtectionDelegate(int render_process_id,
       client_id_(ui::DisplayConfigurator::kInvalidClientId),
       display_id_(0),
       weak_ptr_factory_(this) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+  // This can be constructed on IO or UI thread.
 }
 
 OutputProtectionDelegate::~OutputProtectionDelegate() {
@@ -124,27 +123,15 @@ void OutputProtectionDelegate::QueryStatusComplete(
 
   content::RenderFrameHost* rfh =
       content::RenderFrameHost::FromID(render_process_id_, render_frame_id_);
+  // TODO(xjz): Investigate whether this check (and the other one above) should
+  // be removed.
   if (!rfh) {
     LOG(WARNING) << "RenderFrameHost is not alive.";
     callback.Run(false, 0, 0);
     return;
   }
 
-  uint32_t link_mask = response.link_mask;
-  // If we successfully retrieved the device level status, check for capturers.
-  if (response.success) {
-    const bool capture_detected =
-        // Check for tab capture on the current tab.
-        content::WebContents::FromRenderFrameHost(rfh)->GetCapturerCount() >
-            0 ||
-        // Check for desktop capture.
-        MediaCaptureDevicesDispatcher::GetInstance()
-            ->IsDesktopCaptureInProgress();
-    if (capture_detected)
-      link_mask |= ui::DISPLAY_CONNECTION_TYPE_NETWORK;
-  }
-
-  callback.Run(response.success, link_mask, response.protection_mask);
+  callback.Run(response.success, response.link_mask, response.protection_mask);
 }
 
 void OutputProtectionDelegate::EnableProtectionComplete(
@@ -164,7 +151,7 @@ void OutputProtectionDelegate::OnWindowHierarchyChanged(
     return;
   }
 
-  int64 new_display_id = 0;
+  int64_t new_display_id = 0;
   if (!GetCurrentDisplayId(rfh, &new_display_id))
     return;
   if (display_id_ == new_display_id)

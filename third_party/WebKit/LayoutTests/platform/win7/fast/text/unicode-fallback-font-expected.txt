@@ -7,7 +7,7 @@ layer at (0,0) size 785x1240 backgroundClip at (0,0) size 785x600 clip at (0,0) 
         LayoutText {#text} at (0,0) size 236x36
           text run at (0,0) width 236: "Unicode Symbols"
       LayoutBlockFlow {PRE} at (0,58.44) size 769x1092
-        LayoutText {#text} at (0,0) size 284x124
+        LayoutText {#text} at (0,0) size 291x124
           text run at (0,0) width 0: " "
           text run at (0,18) width 284: "U+16Ax \x{16A0} \x{16A1} \x{16A2} \x{16A3} \x{16A4} \x{16A5} \x{16A6} \x{16A7} \x{16A8} \x{16A9} \x{16AA} \x{16AB} \x{16AC} \x{16AD} \x{16AE} \x{16AF}"
           text run at (284,18) width 0: " "
@@ -17,8 +17,8 @@ layer at (0,0) size 785x1240 backgroundClip at (0,0) size 785x600 clip at (0,0) 
           text run at (261,54) width 0: " "
           text run at (0,72) width 274: "U+16Dx \x{16D0} \x{16D1} \x{16D2} \x{16D3} \x{16D4} \x{16D5} \x{16D6} \x{16D7} \x{16D8} \x{16D9} \x{16DA} \x{16DB} \x{16DC} \x{16DD} \x{16DE} \x{16DF}"
           text run at (274,72) width 0: " "
-          text run at (0,90) width 276: "U+16Ex \x{16E0} \x{16E1} \x{16E2} \x{16E3} \x{16E4} \x{16E5} \x{16E6} \x{16E7} \x{16E8} \x{16E9} \x{16EA} \x{16EB} \x{16EC} \x{16ED} \x{16EE} \x{16EF}"
-          text run at (276,90) width 0: " "
+          text run at (0,90) width 291: "U+16Ex \x{16E0} \x{16E1} \x{16E2} \x{16E3} \x{16E4} \x{16E5} \x{16E6} \x{16E7} \x{16E8} \x{16E9} \x{16EA} \x{16EB} \x{16EC} \x{16ED} \x{16EE} \x{16EF}"
+          text run at (291,90) width 0: " "
           text run at (0,108) width 63: "U+16Fx \x{16F0}"
           text run at (63,108) width 0: " "
         LayoutText {#text} at (0,124) size 330x144
@@ -26,8 +26,8 @@ layer at (0,0) size 785x1240 backgroundClip at (0,0) size 785x600 clip at (0,0) 
           text run at (0,140) width 241: "U+200x \x{2000} \x{2001} \x{2002} \x{2003} \x{2004} \x{2004} \x{2004} \x{2004} \x{2004} \x{2009} \x{200A} \x{200B} \x{200C} \x{200D} \x{200E} "
           text run at (240,140) width 1 RTL: "\x{200F}"
           text run at (240,140) width 1: " "
-          text run at (0,158) width 296: "U+201x \x{2010} \x{2011} \x{2012} \x{2013} \x{2014} \x{2015} \x{2016} \x{2017} \x{2018} \x{2019} \x{201A} \x{201B} \x{201C} \x{201D} \x{201E} \x{201F}"
-          text run at (296,158) width 0: " "
+          text run at (0,158) width 292: "U+201x \x{2010} \x{2011} \x{2012} \x{2013} \x{2014} \x{2015} \x{2016} \x{2017} \x{2018} \x{2019} \x{201A} \x{201B} \x{201C} \x{201D} \x{201E} \x{201F}"
+          text run at (292,158) width 0: " "
           text run at (0,178) width 190: "U+202x \x{2020} \x{2021} \x{2022} \x{2023} \x{2024} \x{2025} \x{2026} \x{2027} \x{2028} \x{2029} "
           text run at (190,178) width 8: "\x{202A} "
           text run at (198,178) width 8 RTL: "\x{202B} "

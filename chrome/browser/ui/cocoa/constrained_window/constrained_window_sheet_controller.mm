@@ -7,6 +7,7 @@
 #include <map>
 
 #include "base/logging.h"
+#include "base/mac/sdk_forward_declarations.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_sheet.h"
 #include "chrome/browser/ui/cocoa/constrained_window/constrained_window_sheet_info.h"
 #import "chrome/browser/ui/cocoa/web_contents_modal_dialog_host_cocoa.h"
@@ -193,9 +194,29 @@ NSRect GetSheetParentBoundsForParentView(NSView* view) {
   [info showSheet];
 }
 
-- (void)hideSheet {
-  [[self findSheetInfoForParentView:activeView_] hideSheet];
-  activeView_.reset();
+- (void)hideSheet:(id<ConstrainedWindowSheet>)sheet {
+  ConstrainedWindowSheetInfo* info = [self findSheetInfoForSheet:sheet];
+  // Method can be called for already hidden sheet. http://crbug.com/589074.
+  if ([[info parentView] isEqual:activeView_]) {
+    [info hideSheet];
+    activeView_.reset();
+  }
+}
+
+- (void)hideSheetForFullscreenTransition {
+  if (ConstrainedWindowSheetInfo* sheetInfo =
+          [self findSheetInfoForParentView:activeView_]) {
+    [sheetInfo hideSheet];
+    isSheetHiddenForFullscreen_ = YES;
+  }
+}
+
+- (void)unhideSheetForFullscreenTransition {
+  isSheetHiddenForFullscreen_ = NO;
+  if (ConstrainedWindowSheetInfo* sheetInfo =
+          [self findSheetInfoForParentView:activeView_]) {
+    [self showSheet:[sheetInfo sheet] forParentView:activeView_];
+  }
 }
 
 - (NSPoint)originForSheet:(id<ConstrainedWindowSheet>)sheet
@@ -267,6 +288,9 @@ NSRect GetSheetParentBoundsForParentView(NSView* view) {
 }
 
 - (void)onParentWindowSizeDidChange:(NSNotification*)note {
+  if (isSheetHiddenForFullscreen_)
+    return;
+
   [self updateSheetPosition:activeView_];
 }
 
@@ -298,7 +322,7 @@ NSRect GetSheetParentBoundsForParentView(NSView* view) {
     viewFrame.size.height += NSMinY(customSheetFrame) - NSMinY(sheetFrame);
   }
 
-  viewFrame.origin = [[parentView window] convertBaseToScreen:viewFrame.origin];
+  viewFrame = [[parentView window] convertRectToScreen:viewFrame];
   return viewFrame;
 }
 

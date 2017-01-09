@@ -89,7 +89,7 @@ hb_ot_map_builder_t::hb_ot_map_builder_t (hb_face_t *face_,
 
   for (unsigned int table_index = 0; table_index < 2; table_index++) {
     hb_tag_t table_tag = table_tags[table_index];
-    found_script[table_index] = hb_ot_layout_table_choose_script (face, table_tag, script_tags, &script_index[table_index], &chosen_script[table_index]);
+    found_script[table_index] = (bool) hb_ot_layout_table_choose_script (face, table_tag, script_tags, &script_index[table_index], &chosen_script[table_index]);
     hb_ot_layout_script_find_language (face, table_tag, script_index[table_index], language_tag, &language_index[table_index]);
   }
 }
@@ -193,7 +193,8 @@ hb_ot_map_builder_t::compile (hb_ot_map_t &m)
       /* Uses the global bit */
       bits_needed = 0;
     else
-      bits_needed = _hb_bit_storage (info->max_value);
+      /* Limit to 8 bits per feature. */
+      bits_needed = MIN(8u, _hb_bit_storage (info->max_value));
 
     if (!info->max_value || next_bit + bits_needed > 8 * sizeof (hb_mask_t))
       continue; /* Feature disabled, or not enough bits. */
@@ -204,11 +205,8 @@ hb_ot_map_builder_t::compile (hb_ot_map_t &m)
     for (unsigned int table_index = 0; table_index < 2; table_index++)
     {
       if (required_feature_tag[table_index] == info->tag)
-      {
 	required_feature_stage[table_index] = info->stage[table_index];
-	found = true;
-	continue;
-      }
+
       found |= hb_ot_layout_language_find_feature (face,
 						   table_tags[table_index],
 						   script_index[table_index],
@@ -246,11 +244,11 @@ hb_ot_map_builder_t::compile (hb_ot_map_t &m)
       map->mask = 1;
     } else {
       map->shift = next_bit;
-      map->mask = (1 << (next_bit + bits_needed)) - (1 << next_bit);
+      map->mask = (1u << (next_bit + bits_needed)) - (1u << next_bit);
       next_bit += bits_needed;
       m.global_mask |= (info->default_value << map->shift) & map->mask;
     }
-    map->_1_mask = (1 << map->shift) & map->mask;
+    map->_1_mask = (1u << map->shift) & map->mask;
     map->needs_fallback = !found;
 
   }

@@ -4,20 +4,20 @@
 
 #include "chrome/browser/extensions/error_console/error_console.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
-#include "base/prefs/pref_service.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/error_console/error_console_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/pref_names.h"
 #include "components/crx_file/id_util.h"
+#include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
@@ -29,6 +29,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/feature_switch.h"
+#include "extensions/common/features/feature_channel.h"
 
 namespace extensions {
 
@@ -74,7 +75,8 @@ ErrorConsole::ErrorConsole(Profile* profile)
 }
 
 ErrorConsole::~ErrorConsole() {
-  FOR_EACH_OBSERVER(Observer, observers_, OnErrorConsoleDestroyed());
+  for (auto& observer : observers_)
+    observer.OnErrorConsoleDestroyed();
 }
 
 // static
@@ -135,7 +137,7 @@ void ErrorConsole::UseDefaultReportingForExtension(
   prefs_->UpdateExtensionPref(extension_id, kStoreExtensionErrorsPref, NULL);
 }
 
-void ErrorConsole::ReportError(scoped_ptr<ExtensionError> error) {
+void ErrorConsole::ReportError(std::unique_ptr<ExtensionError> error) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!enabled_ || !crx_file::id_util::IdIsValid(error->extension_id()))
     return;
@@ -144,14 +146,16 @@ void ErrorConsole::ReportError(scoped_ptr<ExtensionError> error) {
   if (!(mask & (1 << error->type())))
     return;
 
-  const ExtensionError* weak_error = errors_.AddError(error.Pass());
-  FOR_EACH_OBSERVER(Observer, observers_, OnErrorAdded(weak_error));
+  const ExtensionError* weak_error = errors_.AddError(std::move(error));
+  for (auto& observer : observers_)
+    observer.OnErrorAdded(weak_error);
 }
 
 void ErrorConsole::RemoveErrors(const ErrorMap::Filter& filter) {
   std::set<std::string> affected_ids;
   errors_.RemoveErrors(filter, &affected_ids);
-  FOR_EACH_OBSERVER(Observer, observers_, OnErrorsRemoved(affected_ids));
+  for (auto& observer : observers_)
+    observer.OnErrorsRemoved(affected_ids);
 }
 
 const ErrorList& ErrorConsole::GetErrorsForExtension(
@@ -262,11 +266,9 @@ void ErrorConsole::AddManifestErrorsForExtension(const Extension* extension) {
       extension->install_warnings();
   for (std::vector<InstallWarning>::const_iterator iter = warnings.begin();
        iter != warnings.end(); ++iter) {
-    ReportError(scoped_ptr<ExtensionError>(new ManifestError(
-        extension->id(),
-        base::UTF8ToUTF16(iter->message),
-        base::UTF8ToUTF16(iter->key),
-        base::UTF8ToUTF16(iter->specific))));
+    ReportError(std::unique_ptr<ExtensionError>(new ManifestError(
+        extension->id(), base::UTF8ToUTF16(iter->message),
+        base::UTF8ToUTF16(iter->key), base::UTF8ToUTF16(iter->specific))));
   }
 }
 

@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "components/gcm_driver/gcm_client.h"
@@ -15,13 +16,13 @@
 #include "components/gcm_driver/gcm_internals_constants.h"
 #include "components/gcm_driver/gcm_internals_helper.h"
 #include "components/gcm_driver/gcm_profile_service.h"
-#include "grit/components_resources.h"
+#include "components/grit/components_resources.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/services/gcm/ios_chrome_gcm_profile_service_factory.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/public/provider/web/web_ui_ios.h"
-#include "ios/public/provider/web/web_ui_ios_message_handler.h"
 #include "ios/web/public/web_ui_ios_data_source.h"
+#include "ios/web/public/webui/web_ui_ios.h"
+#include "ios/web/public/webui/web_ui_ios_message_handler.h"
 
 namespace {
 
@@ -82,6 +83,9 @@ void GcmInternalsUIMessageHandler::RequestAllInfo(const base::ListValue* args) {
     return;
   }
 
+  gcm::GCMDriver::ClearActivityLogs clear_activity_logs =
+      clear_logs ? gcm::GCMDriver::CLEAR_LOGS : gcm::GCMDriver::KEEP_LOGS;
+
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromWebUIIOS(web_ui());
   gcm::GCMProfileService* profile_service =
@@ -93,7 +97,7 @@ void GcmInternalsUIMessageHandler::RequestAllInfo(const base::ListValue* args) {
     profile_service->driver()->GetGCMStatistics(
         base::Bind(&GcmInternalsUIMessageHandler::RequestGCMStatisticsFinished,
                    weak_ptr_factory_.GetWeakPtr()),
-        clear_logs);
+        clear_activity_logs);
   }
 }
 

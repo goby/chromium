@@ -5,7 +5,10 @@
 #ifndef PPAPI_PROXY_GRAPHICS_2D_RESOURCE_H_
 #define PPAPI_PROXY_GRAPHICS_2D_RESOURCE_H_
 
+#include <stdint.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ppapi/proxy/plugin_resource.h"
 #include "ppapi/proxy/ppapi_proxy_export.h"
 #include "ppapi/thunk/ppb_graphics_2d_api.h"
@@ -39,6 +42,9 @@ class PPAPI_PROXY_EXPORT Graphics2DResource
   void ReplaceContents(PP_Resource image_data) override;
   PP_Bool SetScale(float scale) override;
   float GetScale() override;
+  PP_Bool SetLayerTransform(float scale,
+                            const PP_Point* origin,
+                            const PP_Point* translate) override;
   int32_t Flush(scoped_refptr<TrackedCallback> callback) override;
   bool ReadImageData(PP_Resource image, const PP_Point* top_left) override;
 

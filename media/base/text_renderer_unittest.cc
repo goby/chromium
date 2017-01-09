@@ -2,17 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/base/text_renderer.h"
+
+#include <stddef.h>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/fake_text_track_stream.h"
-#include "media/base/text_renderer.h"
 #include "media/base/text_track_config.h"
 #include "media/base/video_decoder_config.h"
 #include "media/filters/webvtt_util.h"
@@ -63,7 +69,7 @@ class TextRendererTest : public testing::Test {
 
   void Destroy() {
     text_renderer_.reset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void AddTextTrack(TextKind kind,
@@ -78,7 +84,7 @@ class TextRendererTest : public testing::Test {
 
     const TextTrackConfig config(kind, name, language, std::string());
     text_renderer_->AddTextStream(text_track_streams_.back(), config);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     EXPECT_EQ(text_tracks_.size(), text_track_streams_.size());
     FakeTextTrack* const text_track = text_tracks_.back();
@@ -96,8 +102,8 @@ class TextRendererTest : public testing::Test {
     // here so we can inspect them.  They get removed from our cache when the
     // text renderer deallocates them.
     text_tracks_.push_back(new FakeTextTrack(destroy_cb, config));
-    scoped_ptr<TextTrack> text_track(text_tracks_.back());
-    done_cb.Run(text_track.Pass());
+    std::unique_ptr<TextTrack> text_track(text_tracks_.back());
+    done_cb.Run(std::move(text_track));
   }
 
   void RemoveTextTrack(unsigned idx) {
@@ -120,7 +126,7 @@ class TextRendererTest : public testing::Test {
   void AbortPendingRead(unsigned idx) {
     FakeTextTrackStream* const stream = text_track_streams_[idx];
     stream->AbortPendingRead();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void AbortPendingReads() {
@@ -132,7 +138,7 @@ class TextRendererTest : public testing::Test {
   void SendEosNotification(unsigned idx) {
     FakeTextTrackStream* const stream = text_track_streams_[idx];
     stream->SendEosNotification();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SendEosNotifications() {
@@ -160,7 +166,7 @@ class TextRendererTest : public testing::Test {
     }
 
     text_stream->SatisfyPendingRead(start, duration, id, content, settings);
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void SendCues(bool expect_cue) {
@@ -180,7 +186,7 @@ class TextRendererTest : public testing::Test {
   void Pause() {
     text_renderer_->Pause(base::Bind(&TextRendererTest::OnPause,
                                      base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void Flush() {
@@ -206,7 +212,7 @@ class TextRendererTest : public testing::Test {
   typedef std::vector<FakeTextTrack*> TextTracks;
   TextTracks text_tracks_;
 
-  scoped_ptr<TextRenderer> text_renderer_;
+  std::unique_ptr<TextRenderer> text_renderer_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TextRendererTest);

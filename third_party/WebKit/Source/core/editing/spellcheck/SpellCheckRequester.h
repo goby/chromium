@@ -44,101 +44,96 @@ class SpellCheckRequester;
 class TextCheckerClient;
 
 class SpellCheckRequest final : public TextCheckingRequest {
-public:
-    static PassRefPtrWillBeRawPtr<SpellCheckRequest> create(TextCheckingTypeMask, TextCheckingProcessType, const EphemeralRange& checkingRange, const EphemeralRange& paragraphRange, int requestNumber = 0);
+ public:
+  static SpellCheckRequest* create(const EphemeralRange& checkingRange,
+                                   int requestNumber = 0);
 
-    ~SpellCheckRequest() override;
-    void dispose();
+  ~SpellCheckRequest() override;
+  void dispose();
 
-    PassRefPtrWillBeRawPtr<Range> checkingRange() const { return m_checkingRange; }
-    PassRefPtrWillBeRawPtr<Range> paragraphRange() const { return m_paragraphRange; }
-    PassRefPtrWillBeRawPtr<Element> rootEditableElement() const { return m_rootEditableElement; }
+  Range* checkingRange() const { return m_checkingRange; }
+  Element* rootEditableElement() const { return m_rootEditableElement; }
 
-    void setCheckerAndSequence(SpellCheckRequester*, int sequence);
-#if !ENABLE(OILPAN)
-    void requesterDestroyed();
-#endif
+  void setCheckerAndSequence(SpellCheckRequester*, int sequence);
 
-    const TextCheckingRequestData& data() const override;
-    bool isValid() const;
-    void didSucceed(const Vector<TextCheckingResult>&) override;
-    void didCancel() override;
+  const TextCheckingRequestData& data() const override;
+  bool isValid() const;
+  void didSucceed(const Vector<TextCheckingResult>&) override;
+  void didCancel() override;
 
-    int requestNumber() const { return m_requestNumber; }
+  int requestNumber() const { return m_requestNumber; }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    SpellCheckRequest(PassRefPtrWillBeRawPtr<Range> checkingRange, PassRefPtrWillBeRawPtr<Range> paragraphRange, const String&, TextCheckingTypeMask, TextCheckingProcessType, const Vector<uint32_t>& documentMarkersInRange, const Vector<unsigned>& documentMarkerOffsets, int requestNumber);
+ private:
+  SpellCheckRequest(Range* checkingRange,
+                    const String&,
+                    const Vector<uint32_t>& documentMarkersInRange,
+                    const Vector<unsigned>& documentMarkerOffsets,
+                    int requestNumber);
 
-    RawPtrWillBeMember<SpellCheckRequester> m_requester;
-    RefPtrWillBeMember<Range> m_checkingRange;
-    RefPtrWillBeMember<Range> m_paragraphRange;
-    RefPtrWillBeMember<Element> m_rootEditableElement;
-    TextCheckingRequestData m_requestData;
-    int m_requestNumber;
+  Member<SpellCheckRequester> m_requester;
+  Member<Range> m_checkingRange;
+  Member<Element> m_rootEditableElement;
+  TextCheckingRequestData m_requestData;
+  int m_requestNumber;
 };
 
-class SpellCheckRequester final : public NoBaseWillBeGarbageCollectedFinalized<SpellCheckRequester> {
-    WTF_MAKE_NONCOPYABLE(SpellCheckRequester); USING_FAST_MALLOC_WILL_BE_REMOVED(SpellCheckRequester);
-public:
-    static PassOwnPtrWillBeRawPtr<SpellCheckRequester> create(LocalFrame& frame)
-    {
-        return adoptPtrWillBeNoop(new SpellCheckRequester(frame));
-    }
+class SpellCheckRequester final
+    : public GarbageCollectedFinalized<SpellCheckRequester> {
+  WTF_MAKE_NONCOPYABLE(SpellCheckRequester);
 
-    ~SpellCheckRequester();
-    DECLARE_TRACE();
+ public:
+  static SpellCheckRequester* create(LocalFrame& frame) {
+    return new SpellCheckRequester(frame);
+  }
 
-    bool isCheckable(Range*) const;
+  ~SpellCheckRequester();
+  DECLARE_TRACE();
 
-    void requestCheckingFor(PassRefPtrWillBeRawPtr<SpellCheckRequest>);
-    void cancelCheck();
+  void requestCheckingFor(SpellCheckRequest*);
+  void cancelCheck();
 
-    int lastRequestSequence() const
-    {
-        return m_lastRequestSequence;
-    }
+  int lastRequestSequence() const { return m_lastRequestSequence; }
 
-    int lastProcessedSequence() const
-    {
-        return m_lastProcessedSequence;
-    }
+  int lastProcessedSequence() const { return m_lastProcessedSequence; }
 
-private:
-    friend class SpellCheckRequest;
+  // Exposed for leak detector only, see comment for corresponding
+  // SpellChecker method.
+  void prepareForLeakDetection();
 
-    explicit SpellCheckRequester(LocalFrame&);
+ private:
+  friend class SpellCheckRequest;
 
-    bool canCheckAsynchronously(Range*) const;
-    TextCheckerClient& client() const;
-    void timerFiredToProcessQueuedRequest(Timer<SpellCheckRequester>*);
-    void invokeRequest(PassRefPtrWillBeRawPtr<SpellCheckRequest>);
-    void enqueueRequest(PassRefPtrWillBeRawPtr<SpellCheckRequest>);
-    void didCheckSucceed(int sequence, const Vector<TextCheckingResult>&);
-    void didCheckCancel(int sequence);
-    void didCheck(int sequence, const Vector<TextCheckingResult>&);
+  explicit SpellCheckRequester(LocalFrame&);
 
-    void clearProcessingRequest();
+  TextCheckerClient& client() const;
+  void timerFiredToProcessQueuedRequest(TimerBase*);
+  void invokeRequest(SpellCheckRequest*);
+  void enqueueRequest(SpellCheckRequest*);
+  void didCheckSucceed(int sequence, const Vector<TextCheckingResult>&);
+  void didCheckCancel(int sequence);
+  void didCheck(int sequence, const Vector<TextCheckingResult>&);
 
-    RawPtrWillBeMember<LocalFrame> m_frame;
-    LocalFrame& frame() const
-    {
-        ASSERT(m_frame);
-        return *m_frame;
-    }
+  void clearProcessingRequest();
 
-    int m_lastRequestSequence;
-    int m_lastProcessedSequence;
+  Member<LocalFrame> m_frame;
+  LocalFrame& frame() const {
+    DCHECK(m_frame);
+    return *m_frame;
+  }
 
-    Timer<SpellCheckRequester> m_timerToProcessQueuedRequest;
+  int m_lastRequestSequence;
+  int m_lastProcessedSequence;
 
-    RefPtrWillBeMember<SpellCheckRequest> m_processingRequest;
+  Timer<SpellCheckRequester> m_timerToProcessQueuedRequest;
 
-    typedef WillBeHeapDeque<RefPtrWillBeMember<SpellCheckRequest>> RequestQueue;
-    RequestQueue m_requestQueue;
+  Member<SpellCheckRequest> m_processingRequest;
+
+  typedef HeapDeque<Member<SpellCheckRequest>> RequestQueue;
+  RequestQueue m_requestQueue;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SpellCheckRequester_h
+#endif  // SpellCheckRequester_h

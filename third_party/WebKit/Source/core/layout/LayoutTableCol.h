@@ -26,7 +26,7 @@
 #ifndef LayoutTableCol_h
 #define LayoutTableCol_h
 
-#include "core/layout/LayoutBox.h"
+#include "core/layout/LayoutTableBoxComponent.h"
 
 namespace blink {
 
@@ -57,69 +57,62 @@ class LayoutTableCell;
 // Because table columns and column groups are placeholder elements (see
 // previous paragraph), they are never laid out and layout() should not be
 // called on them.
-class LayoutTableCol final : public LayoutBox {
-public:
-    explicit LayoutTableCol(Element*);
+class LayoutTableCol final : public LayoutTableBoxComponent {
+ public:
+  explicit LayoutTableCol(Element*);
 
-    LayoutObject* firstChild() const { ASSERT(children() == virtualChildren()); return children()->firstChild(); }
+  void clearPreferredLogicalWidthsDirtyBits();
 
-    // If you have a LayoutTableCol, use firstChild or lastChild instead.
-    void slowFirstChild() const = delete;
-    void slowLastChild() const = delete;
+  // The 'span' attribute in HTML.
+  // For CSS table columns or colgroups, this is always 1.
+  unsigned span() const { return m_span; }
 
-    const LayoutObjectChildList* children() const { return &m_children; }
-    LayoutObjectChildList* children() { return &m_children; }
+  bool isTableColumnGroupWithColumnChildren() { return firstChild(); }
+  bool isTableColumn() const {
+    return style()->display() == EDisplay::TableColumn;
+  }
+  bool isTableColumnGroup() const {
+    return style()->display() == EDisplay::TableColumnGroup;
+  }
 
-    void clearPreferredLogicalWidthsDirtyBits();
+  LayoutTableCol* enclosingColumnGroup() const;
 
-    // The 'span' attribute in HTML.
-    // For CSS table columns or colgroups, this is always 1.
-    unsigned span() const { return m_span; }
+  // Returns the next column or column-group.
+  LayoutTableCol* nextColumn() const;
 
-    bool isTableColumnGroupWithColumnChildren() { return firstChild(); }
-    bool isTableColumn() const { return style()->display() == TABLE_COLUMN; }
-    bool isTableColumnGroup() const { return style()->display() == TABLE_COLUMN_GROUP; }
+  const BorderValue& borderAdjoiningCellStartBorder(
+      const LayoutTableCell*) const;
+  const BorderValue& borderAdjoiningCellEndBorder(const LayoutTableCell*) const;
+  const BorderValue& borderAdjoiningCellBefore(const LayoutTableCell*) const;
+  const BorderValue& borderAdjoiningCellAfter(const LayoutTableCell*) const;
 
-    LayoutTableCol* enclosingColumnGroup() const;
+  const char* name() const override { return "LayoutTableCol"; }
 
-    // Returns the next column or column-group.
-    LayoutTableCol* nextColumn() const;
+ private:
+  bool isOfType(LayoutObjectType type) const override {
+    return type == LayoutObjectLayoutTableCol || LayoutBox::isOfType(type);
+  }
+  void updateFromElement() override;
+  void computePreferredLogicalWidths() override { ASSERT_NOT_REACHED(); }
 
-    const BorderValue& borderAdjoiningCellStartBorder(const LayoutTableCell*) const;
-    const BorderValue& borderAdjoiningCellEndBorder(const LayoutTableCell*) const;
-    const BorderValue& borderAdjoiningCellBefore(const LayoutTableCell*) const;
-    const BorderValue& borderAdjoiningCellAfter(const LayoutTableCell*) const;
+  void insertedIntoTree() override;
+  void willBeRemovedFromTree() override;
 
-    const char* name() const override { return "LayoutTableCol"; }
+  bool isChildAllowed(LayoutObject*, const ComputedStyle&) const override;
+  bool canHaveChildren() const override;
+  PaintLayerType layerTypeRequired() const override { return NoPaintLayer; }
 
-private:
-    LayoutObjectChildList* virtualChildren() override { return children(); }
-    const LayoutObjectChildList* virtualChildren() const override { return children(); }
+  LayoutRect localVisualRect() const override;
 
-    bool isOfType(LayoutObjectType type) const override { return type == LayoutObjectLayoutTableCol || LayoutBox::isOfType(type); }
-    void updateFromElement() override;
-    void computePreferredLogicalWidths() override { ASSERT_NOT_REACHED(); }
+  void styleDidChange(StyleDifference, const ComputedStyle* oldStyle) override;
 
-    void insertedIntoTree() override;
-    void willBeRemovedFromTree() override;
+  LayoutTable* table() const;
 
-    bool isChildAllowed(LayoutObject*, const ComputedStyle&) const override;
-    bool canHaveChildren() const override;
-    PaintLayerType layerTypeRequired() const override { return NoPaintLayer; }
-
-    LayoutRect clippedOverflowRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer, const PaintInvalidationState* = nullptr) const override;
-    void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
-
-    void styleDidChange(StyleDifference, const ComputedStyle* oldStyle) override;
-
-    LayoutTable* table() const;
-
-    LayoutObjectChildList m_children;
-    unsigned m_span;
+  unsigned m_span;
 };
 
 DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutTableCol, isLayoutTableCol());
 
-}
+}  // namespace blink
 
 #endif

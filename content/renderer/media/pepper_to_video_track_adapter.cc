@@ -8,6 +8,7 @@
 
 #include "base/base64.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/rand_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -17,8 +18,8 @@
 #include "content/renderer/media/media_stream_video_track.h"
 #include "content/renderer/pepper/ppb_image_data_impl.h"
 #include "content/renderer/render_thread_impl.h"
-#include "media/base/video_capture_types.h"
 #include "media/base/video_frame_pool.h"
+#include "media/capture/video_capture_types.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebMediaStreamRegistry.h"
@@ -40,7 +41,7 @@ class PpFrameWriter : public MediaStreamVideoSource,
 
   // FrameWriterInterface implementation.
   // This method will be called by the Pepper host from render thread.
-  void PutFrame(PPB_ImageData_Impl* image_data, int64 time_stamp_ns) override;
+  void PutFrame(PPB_ImageData_Impl* image_data, int64_t time_stamp_ns) override;
 
  protected:
   // MediaStreamVideoSource implementation.
@@ -145,7 +146,7 @@ void PpFrameWriter::StopSourceImpl() {
 // Note: PutFrame must copy or process image_data directly in this function,
 // because it may be overwritten as soon as we return from this function.
 void PpFrameWriter::PutFrame(PPB_ImageData_Impl* image_data,
-                             int64 time_stamp_ns) {
+                             int64_t time_stamp_ns) {
   DCHECK(CalledOnValidThread());
   TRACE_EVENT0("video", "PpFrameWriter::PutFrame");
   DVLOG(3) << "PpFrameWriter::PutFrame()";
@@ -160,17 +161,18 @@ void PpFrameWriter::PutFrame(PPB_ImageData_Impl* image_data,
                << "The image could not be mapped and is unusable.";
     return;
   }
-  const SkBitmap* bitmap = image_data->GetMappedBitmap();
-  if (!bitmap) {
+  SkBitmap bitmap(image_data->GetMappedBitmap());
+  if (bitmap.empty()) {
     LOG(ERROR) << "PpFrameWriter::PutFrame - "
-               << "The image_data's mapped bitmap is NULL.";
+               << "The image_data's mapped bitmap failed.";
     return;
   }
 
-  const uint8* src_data = static_cast<uint8*>(bitmap->getPixels());
-  const int src_stride = static_cast<int>(bitmap->rowBytes());
-  const int width = bitmap->width();
-  const int height = bitmap->height();
+  SkAutoLockPixels src_lock(bitmap);
+  const uint8_t* src_data = static_cast<uint8_t*>(bitmap.getPixels());
+  const int src_stride = static_cast<int>(bitmap.rowBytes());
+  const int width = bitmap.width();
+  const int height = bitmap.height();
 
   // We only support PP_IMAGEDATAFORMAT_BGRA_PREMUL at the moment.
   DCHECK(image_data->format() == PP_IMAGEDATAFORMAT_BGRA_PREMUL);
@@ -208,12 +210,13 @@ class PpFrameWriterProxy : public FrameWriterInterface {
  public:
   explicit PpFrameWriterProxy(const base::WeakPtr<PpFrameWriter>& writer)
       : writer_(writer) {
-    DCHECK(writer_ != NULL);
+    DCHECK(writer_);
   }
 
   ~PpFrameWriterProxy() override {}
 
-  void PutFrame(PPB_ImageData_Impl* image_data, int64 time_stamp_ns) override {
+  void PutFrame(PPB_ImageData_Impl* image_data,
+                int64_t time_stamp_ns) override {
     writer_->PutFrame(image_data, time_stamp_ns);
   }
 
@@ -256,7 +259,7 @@ bool PepperToVideoTrackAdapter::Open(MediaStreamRegistryInterface* registry,
       blink::WebMediaStreamSource::TypeVideo;
   blink::WebString webkit_track_id = base::UTF8ToUTF16(track_id);
   webkit_source.initialize(webkit_track_id, type, webkit_track_id,
-                           false /* remote */, true /* readonly */);
+                           false /* remote */);
   webkit_source.setExtraData(writer);
 
   blink::WebMediaConstraints constraints;

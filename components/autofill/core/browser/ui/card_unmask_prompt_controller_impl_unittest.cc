@@ -4,9 +4,12 @@
 
 #include "components/autofill/core/browser/ui/card_unmask_prompt_controller_impl.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "components/autofill/core/browser/autofill_client.h"
@@ -14,6 +17,8 @@
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/ui/card_unmask_prompt_view.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace autofill {
@@ -94,12 +99,14 @@ class CardUnmaskPromptControllerImplTest : public testing::Test {
   void ShowPrompt() {
     controller_->ShowPrompt(test_unmask_prompt_view_.get(),
                             test::GetMaskedServerCard(),
+                            AutofillClient::UNMASK_FOR_AUTOFILL,
                             delegate_->GetWeakPtr());
   }
 
   void ShowPromptAmex() {
     controller_->ShowPrompt(test_unmask_prompt_view_.get(),
                             test::GetMaskedServerCardAmex(),
+                            AutofillClient::UNMASK_FOR_AUTOFILL,
                             delegate_->GetWeakPtr());
   }
 
@@ -107,7 +114,7 @@ class CardUnmaskPromptControllerImplTest : public testing::Test {
     ShowPrompt();
     controller_->OnUnmaskResponse(ASCIIToUTF16("444"),
                                   ASCIIToUTF16("01"),
-                                  ASCIIToUTF16("2015"),
+                                  ASCIIToUTF16("2050"),
                                   should_store_pan);
     EXPECT_EQ(
         should_store_pan,
@@ -121,10 +128,10 @@ class CardUnmaskPromptControllerImplTest : public testing::Test {
         prefs::kAutofillWalletImportStorageCheckboxState, value);
   }
 
-  scoped_ptr<TestCardUnmaskPromptView> test_unmask_prompt_view_;
-  scoped_ptr<TestingPrefServiceSimple> pref_service_;
-  scoped_ptr<TestCardUnmaskPromptController> controller_;
-  scoped_ptr<TestCardUnmaskDelegate> delegate_;
+  std::unique_ptr<TestCardUnmaskPromptView> test_unmask_prompt_view_;
+  std::unique_ptr<TestingPrefServiceSimple> pref_service_;
+  std::unique_ptr<TestCardUnmaskPromptController> controller_;
+  std::unique_ptr<TestCardUnmaskDelegate> delegate_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CardUnmaskPromptControllerImplTest);
@@ -206,7 +213,7 @@ TEST_F(CardUnmaskPromptControllerImplTest, LogUnmaskedCardAfterFailure) {
   controller_->OnVerificationResult(AutofillClient::TRY_AGAIN_FAILURE);
   controller_->OnUnmaskResponse(ASCIIToUTF16("444"),
                                 ASCIIToUTF16("01"),
-                                ASCIIToUTF16("2015"),
+                                ASCIIToUTF16("2050"),
                                 false /* should_store_pan */);
   base::HistogramTester histogram_tester;
 
@@ -359,7 +366,7 @@ TEST_F(CardUnmaskPromptControllerImplTest,
   controller_->OnVerificationResult(AutofillClient::TRY_AGAIN_FAILURE);
   controller_->OnUnmaskResponse(
       base::ASCIIToUTF16("444"), base::ASCIIToUTF16("01"),
-      base::ASCIIToUTF16("2015"), false /* should_store_pan */);
+      base::ASCIIToUTF16("2050"), false /* should_store_pan */);
   base::HistogramTester histogram_tester;
 
   controller_->OnVerificationResult(AutofillClient::SUCCESS);
@@ -442,15 +449,16 @@ TEST_F(CardUnmaskPromptControllerImplTest, CvcInputValidation) {
 
   ShowPrompt();
 
-  for (size_t i = 0; i < arraysize(cvc_cases); ++i) {
-    EXPECT_EQ(cvc_cases[i].valid,
-              controller_->InputCvcIsValid(ASCIIToUTF16(cvc_cases[i].input)));
-    if (!cvc_cases[i].valid)
+  for (const CvcCase& cvc_case : cvc_cases) {
+    EXPECT_EQ(cvc_case.valid,
+              controller_->InputCvcIsValid(ASCIIToUTF16(cvc_case.input)));
+    if (!cvc_case.valid)
       continue;
 
-    controller_->OnUnmaskResponse(ASCIIToUTF16(cvc_cases[i].input),
-                                  base::string16(), base::string16(), false);
-    EXPECT_EQ(ASCIIToUTF16(cvc_cases[i].canonicalized_input),
+    controller_->OnUnmaskResponse(ASCIIToUTF16(cvc_case.input),
+                                  ASCIIToUTF16("1"), ASCIIToUTF16("2050"),
+                                  false);
+    EXPECT_EQ(ASCIIToUTF16(cvc_case.canonicalized_input),
               delegate_->response().cvc);
   }
 
@@ -465,16 +473,15 @@ TEST_F(CardUnmaskPromptControllerImplTest, CvcInputValidation) {
 
   ShowPromptAmex();
 
-  for (size_t i = 0; i < arraysize(cvc_cases_amex); ++i) {
-    EXPECT_EQ(
-        cvc_cases_amex[i].valid,
-        controller_->InputCvcIsValid(ASCIIToUTF16(cvc_cases_amex[i].input)));
-    if (!cvc_cases_amex[i].valid)
+  for (const CvcCase& cvc_case_amex : cvc_cases_amex) {
+    EXPECT_EQ(cvc_case_amex.valid,
+              controller_->InputCvcIsValid(ASCIIToUTF16(cvc_case_amex.input)));
+    if (!cvc_case_amex.valid)
       continue;
 
-    controller_->OnUnmaskResponse(ASCIIToUTF16(cvc_cases_amex[i].input),
+    controller_->OnUnmaskResponse(ASCIIToUTF16(cvc_case_amex.input),
                                   base::string16(), base::string16(), false);
-    EXPECT_EQ(ASCIIToUTF16(cvc_cases_amex[i].canonicalized_input),
+    EXPECT_EQ(ASCIIToUTF16(cvc_case_amex.canonicalized_input),
               delegate_->response().cvc);
   }
 }
@@ -495,10 +502,10 @@ TEST_F(CardUnmaskPromptControllerImplTest, ExpirationDateValidation) {
 
   ShowPrompt();
 
-  for (size_t i = 0; i < arraysize(exp_cases); ++i) {
-    EXPECT_EQ(exp_cases[i].valid, controller_->InputExpirationIsValid(
-                                      ASCIIToUTF16(exp_cases[i].input_month),
-                                      ASCIIToUTF16(exp_cases[i].input_year)));
+  for (const auto& exp_case : exp_cases) {
+    EXPECT_EQ(exp_case.valid, controller_->InputExpirationIsValid(
+                                  ASCIIToUTF16(exp_case.input_month),
+                                  ASCIIToUTF16(exp_case.input_year)));
   }
 }
 

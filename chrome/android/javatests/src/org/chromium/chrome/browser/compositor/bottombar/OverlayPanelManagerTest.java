@@ -32,26 +32,15 @@ public class OverlayPanelManagerTest extends InstrumentationTestCase {
 
         private PanelPriority mPriority;
         private boolean mCanBeSuppressed;
-        private OverlayPanelHost mHost;
         private ViewGroup mContainerView;
         private DynamicResourceLoader mResourceLoader;
 
         public MockOverlayPanel(Context context, LayoutUpdateHost updateHost,
                 OverlayPanelManager panelManager, PanelPriority priority,
                 boolean canBeSuppressed) {
-            super(context, updateHost, panelManager);
+            super(context, updateHost, null, panelManager);
             mPriority = priority;
             mCanBeSuppressed = canBeSuppressed;
-        }
-
-        @Override
-        public void setHost(OverlayPanelHost host) {
-            super.setHost(host);
-            mHost = host;
-        }
-
-        public OverlayPanelHost getHost() {
-            return mHost;
         }
 
         @Override
@@ -105,12 +94,6 @@ public class OverlayPanelManagerTest extends InstrumentationTestCase {
 
             @Override
             public void removeLastHistoryEntry(String url, long timeInMs) {}
-        }
-
-        @Override
-        protected float getPeekPromoHeight() {
-            // Android Views are not used in this test so we cannot get the actual height.
-            return 0.f;
         }
     }
 
@@ -216,7 +199,85 @@ public class OverlayPanelManagerTest extends InstrumentationTestCase {
         lowPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
         highPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
 
+        assertEquals(null, panelManager.getActivePanel());
+        assertEquals(0, panelManager.getSuppressedQueueSize());
+    }
+
+    @SmallTest
+    @Feature({"OverlayPanel"})
+    public void testSuppressedPanelPriority() {
+        Context context = getInstrumentation().getTargetContext();
+
+        OverlayPanelManager panelManager = new OverlayPanelManager();
+        OverlayPanel lowPriorityPanel =
+                new MockOverlayPanel(context, null, panelManager, PanelPriority.LOW, true);
+        OverlayPanel mediumPriorityPanel =
+                new MockOverlayPanel(context, null, panelManager, PanelPriority.MEDIUM, true);
+        OverlayPanel highPriorityPanel =
+                new MockOverlayPanel(context, null, panelManager, PanelPriority.HIGH, false);
+
+        // Only one panel is showing, should be medium priority.
+        mediumPriorityPanel.requestPanelShow(StateChangeReason.UNKNOWN);
+        assertEquals(panelManager.getActivePanel(), mediumPriorityPanel);
+
+        // High priority should have taken preciedence.
+        highPriorityPanel.requestPanelShow(StateChangeReason.UNKNOWN);
+        assertEquals(panelManager.getActivePanel(), highPriorityPanel);
+
+        // Low priority will be suppressed; high priority should still be showing.
+        lowPriorityPanel.requestPanelShow(StateChangeReason.UNKNOWN);
+        assertEquals(panelManager.getActivePanel(), highPriorityPanel);
+
+        // Start closing panels.
+        highPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
+
+        // After high priority is closed, the medium priority panel should be visible.
+        assertEquals(panelManager.getActivePanel(), mediumPriorityPanel);
+        mediumPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
+
+        // Finally the low priority panel should be showing.
+        assertEquals(panelManager.getActivePanel(), lowPriorityPanel);
+        lowPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
+
+        // All panels are closed now.
+        assertEquals(null, panelManager.getActivePanel());
+        assertEquals(0, panelManager.getSuppressedQueueSize());
+    }
+
+    @SmallTest
+    @Feature({"OverlayPanel"})
+    public void testSuppressedPanelOrder() {
+        Context context = getInstrumentation().getTargetContext();
+
+        OverlayPanelManager panelManager = new OverlayPanelManager();
+        OverlayPanel lowPriorityPanel =
+                new MockOverlayPanel(context, null, panelManager, PanelPriority.LOW, true);
+        OverlayPanel mediumPriorityPanel =
+                new MockOverlayPanel(context, null, panelManager, PanelPriority.MEDIUM, true);
+        OverlayPanel highPriorityPanel =
+                new MockOverlayPanel(context, null, panelManager, PanelPriority.HIGH, false);
+
+        // Odd ordering for showing panels should still produce ordered suppression.
+        highPriorityPanel.requestPanelShow(StateChangeReason.UNKNOWN);
+        lowPriorityPanel.requestPanelShow(StateChangeReason.UNKNOWN);
+        mediumPriorityPanel.requestPanelShow(StateChangeReason.UNKNOWN);
+
+        assertEquals(2, panelManager.getSuppressedQueueSize());
+
+        // Start closing panels.
+        highPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
+
+        // After high priority is closed, the medium priority panel should be visible.
+        assertEquals(panelManager.getActivePanel(), mediumPriorityPanel);
+        mediumPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
+
+        // Finally the low priority panel should be showing.
+        assertEquals(panelManager.getActivePanel(), lowPriorityPanel);
+        lowPriorityPanel.closePanel(StateChangeReason.UNKNOWN, false);
+
+        // All panels are closed now.
         assertTrue(panelManager.getActivePanel() == null);
+        assertEquals(0, panelManager.getSuppressedQueueSize());
     }
 
     @SmallTest
@@ -228,22 +289,13 @@ public class OverlayPanelManagerTest extends InstrumentationTestCase {
         MockOverlayPanel earlyPanel =
                 new MockOverlayPanel(context, null, panelManager, PanelPriority.MEDIUM, true);
 
-        OverlayPanelHost host = new OverlayPanelHost() {
-                    @Override
-                    public void hideLayout(boolean immediately) {
-                        // Intentionally do nothing.
-                    }
-                };
-
         // Set necessary vars before any other panels are registered in the manager.
-        panelManager.setPanelHost(host);
         panelManager.setContainerView(new LinearLayout(getInstrumentation().getTargetContext()));
         panelManager.setDynamicResourceLoader(new DynamicResourceLoader(0, null));
 
         MockOverlayPanel latePanel =
                 new MockOverlayPanel(context, null, panelManager, PanelPriority.MEDIUM, true);
 
-        assertTrue(earlyPanel.getHost() == latePanel.getHost());
         assertTrue(earlyPanel.getContainerView() == latePanel.getContainerView());
         assertTrue(earlyPanel.getDynamicResourceLoader() == latePanel.getDynamicResourceLoader());
     }

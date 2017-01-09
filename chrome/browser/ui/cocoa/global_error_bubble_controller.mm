@@ -52,15 +52,15 @@ class Bridge : public GlobalErrorBubbleViewBase {
   NSWindow* parentWindow = browser->window()->GetNativeWindow();
   BrowserWindowController* bwc = [BrowserWindowController
       browserWindowControllerForWindow:parentWindow];
-  NSView* wrenchButton = [[bwc toolbarController] wrenchButton];
+  NSView* appMenuButton = [[bwc toolbarController] appMenuButton];
   NSPoint offset = NSMakePoint(
-      NSMidX([wrenchButton bounds]),
+      NSMidX([appMenuButton bounds]),
       app_menu_controller::kAppMenuBubblePointOffsetY);
 
   // The bubble will be automatically deleted when the window is closed.
   GlobalErrorBubbleController* bubble = [[GlobalErrorBubbleController alloc]
       initWithWindowNibPath:@"GlobalErrorBubble"
-             relativeToView:wrenchButton
+             relativeToView:appMenuButton
                      offset:offset];
   bubble->error_ = error;
   bubble->bridge_.reset(new GlobalErrorBubbleControllerInternal::Bridge(
@@ -127,7 +127,7 @@ class Bridge : public GlobalErrorBubbleViewBase {
 - (void)showWindow:(id)sender {
   BrowserWindowController* bwc = [BrowserWindowController
       browserWindowControllerForWindow:[self parentWindow]];
-  [bwc lockBarVisibilityForOwner:self withAnimation:NO delay:NO];
+  [bwc lockToolbarVisibilityForOwner:self withAnimation:NO];
   [super showWindow:sender];
 }
 
@@ -137,7 +137,7 @@ class Bridge : public GlobalErrorBubbleViewBase {
   bridge_.reset();
   BrowserWindowController* bwc = [BrowserWindowController
       browserWindowControllerForWindow:[self parentWindow]];
-  [bwc releaseBarVisibilityForOwner:self withAnimation:YES delay:NO];
+  [bwc releaseToolbarVisibilityForOwner:self withAnimation:YES];
   [super close];
 }
 

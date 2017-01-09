@@ -25,12 +25,12 @@ cr.exportPath('options');
  *             passwordsEnforced: boolean,
  *             passwordsRegistered: boolean,
  *             passwordsSynced: boolean,
+ *             paymentsIntegrationEnabled: boolean,
  *             preferencesEnforced: boolean,
  *             preferencesRegistered: boolean,
  *             preferencesSynced: boolean,
  *             showPassphrase: boolean,
  *             syncAllDataTypes: boolean,
- *             syncNothing: boolean,
  *             tabsEnforced: boolean,
  *             tabsRegistered: boolean,
  *             tabsSynced: boolean,
@@ -40,9 +40,7 @@ cr.exportPath('options');
  *             typedUrlsEnforced: boolean,
  *             typedUrlsRegistered: boolean,
  *             typedUrlsSynced: boolean,
- *             usePassphrase: boolean,
- *             wifiCredentialsEnforced: (boolean|undefined),
- *             wifiCredentialsSynced: (boolean|undefined)}}
+ *             usePassphrase: boolean}}
  */
 var SyncConfig;
 
@@ -54,7 +52,6 @@ var SyncConfig;
 options.DataTypeSelection = {
   SYNC_EVERYTHING: 0,
   CHOOSE_WHAT_TO_SYNC: 1,
-  SYNC_NOTHING: 2
 };
 
 cr.define('options', function() {
@@ -143,6 +140,10 @@ cr.define('options', function() {
           $('sync-spinner-cancel').onclick = function() {
         self.closeOverlay_();
       };
+      $('activity-controls').onclick = function() {
+        chrome.metricsPrivate.recordUserAction(
+            'Signin_AccountSettings_GoogleActivityControlsClicked');
+      };
       $('confirm-everything-ok').onclick = function() {
         self.sendConfiguration_();
       };
@@ -158,6 +159,11 @@ cr.define('options', function() {
       };
       $('use-default-link').onclick = function() {
         self.showSyncEverythingPage_();
+      };
+      $('autofill-checkbox').onclick = function() {
+        var autofillSyncEnabled = $('autofill-checkbox').checked;
+        $('payments-integration-checkbox').checked = autofillSyncEnabled;
+        $('payments-integration-checkbox').disabled = !autofillSyncEnabled;
       };
     },
 
@@ -210,6 +216,7 @@ cr.define('options', function() {
       for (var i = 0; i < checkboxes.length; i++) {
         checkboxes[i].checked = value;
       }
+      $('payments-integration-checkbox').checked = value;
     },
 
     /**
@@ -328,22 +335,20 @@ cr.define('options', function() {
       // sync_setup_handler.cc:GetConfiguration().
       var syncAll = $('sync-select-datatypes').selectedIndex ==
                     options.DataTypeSelection.SYNC_EVERYTHING;
-      var syncNothing = $('sync-select-datatypes').selectedIndex ==
-                        options.DataTypeSelection.SYNC_NOTHING;
+      var autofillSynced = syncAll || $('autofill-checkbox').checked;
       var result = JSON.stringify({
         'syncAllDataTypes': syncAll,
-        'syncNothing': syncNothing,
         'bookmarksSynced': syncAll || $('bookmarks-checkbox').checked,
         'preferencesSynced': syncAll || $('preferences-checkbox').checked,
         'themesSynced': syncAll || $('themes-checkbox').checked,
         'passwordsSynced': syncAll || $('passwords-checkbox').checked,
-        'autofillSynced': syncAll || $('autofill-checkbox').checked,
+        'autofillSynced': autofillSynced,
         'extensionsSynced': syncAll || $('extensions-checkbox').checked,
         'typedUrlsSynced': syncAll || $('typed-urls-checkbox').checked,
         'appsSynced': syncAll || $('apps-checkbox').checked,
         'tabsSynced': syncAll || $('tabs-checkbox').checked,
-        'wifiCredentialsSynced': syncAll ||
-                                 $('wifi-credentials-checkbox').checked,
+        'paymentsIntegrationEnabled': syncAll ||
+            (autofillSynced && $('payments-integration-checkbox').checked),
         'encryptAllData': encryptAllData,
         'usePassphrase': usePassphrase,
         'isGooglePassphrase': googlePassphrase,
@@ -367,6 +372,7 @@ cr.define('options', function() {
       for (var i = 0; i < configureElements.length; i++)
         configureElements[i].disabled = disabled;
       $('sync-select-datatypes').disabled = disabled;
+      $('payments-integration-checkbox').disabled = disabled;
 
       $('customize-link').hidden = disabled;
       $('customize-link').disabled = disabled;
@@ -420,9 +426,15 @@ cr.define('options', function() {
         this.dataTypeBoxesChecked_['autofill-checkbox'] = args.autofillSynced;
         this.dataTypeBoxesDisabled_['autofill-checkbox'] =
             args.autofillEnforced;
+        this.dataTypeBoxesChecked_['payments-integration-checkbox'] =
+            args.autofillSynced && args.paymentsIntegrationEnabled;
+        this.dataTypeBoxesDisabled_['payments-integration-checkbox'] =
+            !args.autofillSynced;
         $('autofill-item').hidden = false;
+        $('payments-integration-setting-area').hidden = false;
       } else {
         $('autofill-item').hidden = true;
+        $('payments-integration-setting-area').hidden = true;
       }
       if (args.extensionsRegistered) {
         $('extensions-checkbox').checked = args.extensionsSynced;
@@ -459,16 +471,6 @@ cr.define('options', function() {
         $('tabs-item').hidden = false;
       } else {
         $('tabs-item').hidden = true;
-      }
-      if (args.wifiCredentialsRegistered) {
-        $('wifi-credentials-checkbox').checked = args.wifiCredentialsSynced;
-        this.dataTypeBoxesChecked_['wifi-credentials-checkbox'] =
-            args.wifiCredentialsSynced;
-        this.dataTypeBoxesDisabled_['wifi-credentials-checkbox'] =
-            args.wifiCredentialsEnforced;
-        $('wifi-credentials-item').hidden = false;
-      } else {
-        $('wifi-credentials-item').hidden = true;
       }
 
       $('choose-data-types-body').onchange =
@@ -532,20 +534,15 @@ cr.define('options', function() {
       // between its drop-down menu items as follows:
       // "Sync everything": Show encryption and passphrase sections, and disable
       // and check all data type checkboxes.
-      // "Sync nothing": Hide encryption and passphrase sections, and disable
-      // and uncheck all data type checkboxes.
       // "Choose what to sync": Show encryption and passphrase sections, enable
       // data type checkboxes, and restore their checked state to the last time
       // the "Choose what to sync" was selected while the dialog was still up.
       datatypeSelect.onchange = function() {
-        if (this.selectedIndex == options.DataTypeSelection.SYNC_NOTHING) {
-          self.showSyncNothingPage_();
+        self.showCustomizePage_(self.syncConfigureArgs_, this.selectedIndex);
+        if (this.selectedIndex == options.DataTypeSelection.SYNC_EVERYTHING) {
+          self.checkAllDataTypeCheckboxes_(true);
         } else {
-          self.showCustomizePage_(self.syncConfigureArgs_, this.selectedIndex);
-          if (this.selectedIndex == options.DataTypeSelection.SYNC_EVERYTHING)
-            self.checkAllDataTypeCheckboxes_(true);
-          else
-            self.restoreDataTypeCheckboxes_();
+          self.restoreDataTypeCheckboxes_();
         }
       };
 
@@ -610,30 +607,6 @@ cr.define('options', function() {
     },
 
     /**
-     * Reveals the UI for when the user chooses not to sync any data types.
-     * This happens when the user signs in and selects "Sync nothing" in the
-     * advanced sync settings dialog.
-     * @private
-     */
-    showSyncNothingPage_: function() {
-      // Reset the selection to 'Sync nothing'.
-      $('sync-select-datatypes').selectedIndex =
-          options.DataTypeSelection.SYNC_NOTHING;
-
-      // Uncheck and disable the individual data type checkboxes.
-      this.checkAllDataTypeCheckboxes_(false);
-      this.setDataTypeCheckboxesEnabled_(false);
-
-      // Hide the encryption section.
-      $('customize-sync-encryption-new').hidden = true;
-      $('sync-custom-passphrase-container').hidden = true;
-      $('sync-existing-passphrase-container').hidden = true;
-
-      // Hide the "use default settings" link.
-      $('use-default-link').hidden = true;
-    },
-
-    /**
      * Reveals the UI for entering a custom passphrase during initial setup.
      * This happens if the user has previously enabled a custom passphrase on a
      * different machine.
@@ -685,6 +658,7 @@ cr.define('options', function() {
       $('sync-custom-passphrase-container').hidden = false;
       $('sync-new-encryption-section-container').hidden = false;
       $('customize-sync-encryption-new').hidden = !args.encryptAllDataAllowed;
+      $('personalize-google-services').hidden = false;
 
       $('sync-existing-passphrase-container').hidden = true;
 
@@ -825,10 +799,11 @@ cr.define('options', function() {
     /**
      * Starts the signin process for the user. Does nothing if the user is
      * already signed in.
+     * @param {boolean} creatingSupervisedUser
      * @private
      */
-    startSignIn_: function() {
-      chrome.send('SyncSetupStartSignIn');
+    startSignIn_: function(creatingSupervisedUser) {
+      chrome.send('SyncSetupStartSignIn', [creatingSupervisedUser]);
     },
 
     /**
@@ -836,38 +811,20 @@ cr.define('options', function() {
      * @private
      */
     doSignOutOnAuthError_: function() {
-      chrome.send('SyncSetupDoSignOutOnAuthError');
+      chrome.send('AttemptUserExit');
     },
   };
 
-  // These methods are for general consumption.
-  SyncSetupOverlay.closeOverlay = function() {
-    SyncSetupOverlay.getInstance().closeOverlay_();
-  };
-
-  SyncSetupOverlay.showSetupUI = function() {
-    SyncSetupOverlay.getInstance().showSetupUI_();
-  };
-
-  SyncSetupOverlay.startSignIn = function() {
-    SyncSetupOverlay.getInstance().startSignIn_();
-  };
-
-  SyncSetupOverlay.doSignOutOnAuthError = function() {
-    SyncSetupOverlay.getInstance().doSignOutOnAuthError_();
-  };
-
-  SyncSetupOverlay.showSyncSetupPage = function(page, args) {
-    SyncSetupOverlay.getInstance().showSyncSetupPage_(page, args);
-  };
-
-  SyncSetupOverlay.showCustomizePage = function(args, index) {
-    SyncSetupOverlay.getInstance().showCustomizePage_(args, index);
-  };
-
-  SyncSetupOverlay.showStopSyncingUI = function() {
-    SyncSetupOverlay.getInstance().showStopSyncingUI_();
-  };
+  // Forward public APIs to private implementations.
+  cr.makePublic(SyncSetupOverlay, [
+    'closeOverlay',
+    'showSetupUI',
+    'startSignIn',
+    'doSignOutOnAuthError',
+    'showSyncSetupPage',
+    'showCustomizePage',
+    'showStopSyncingUI',
+  ]);
 
   // Export
   return {

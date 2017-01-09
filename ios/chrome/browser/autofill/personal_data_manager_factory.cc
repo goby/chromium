@@ -4,6 +4,8 @@
 
 #include "ios/chrome/browser/autofill/personal_data_manager_factory.h"
 
+#include <utility>
+
 #include "base/memory/singleton.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
@@ -12,15 +14,17 @@
 #include "components/signin/core/browser/signin_manager.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/browser_state_otr_helper.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/signin/account_tracker_service_factory.h"
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/browser/web_data_service_factory.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
+
+namespace autofill {
 
 // static
-autofill::PersonalDataManager* PersonalDataManagerFactory::GetForBrowserState(
+PersonalDataManager* PersonalDataManagerFactory::GetForBrowserState(
     ios::ChromeBrowserState* browser_state) {
-  return static_cast<autofill::PersonalDataManager*>(
+  return static_cast<PersonalDataManager*>(
       GetInstance()->GetServiceForBrowserState(browser_state, true));
 }
 
@@ -40,13 +44,13 @@ PersonalDataManagerFactory::PersonalDataManagerFactory()
 
 PersonalDataManagerFactory::~PersonalDataManagerFactory() {}
 
-scoped_ptr<KeyedService> PersonalDataManagerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+PersonalDataManagerFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* chrome_browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  scoped_ptr<autofill::PersonalDataManager> service(
-      new autofill::PersonalDataManager(
-          GetApplicationContext()->GetApplicationLocale()));
+  std::unique_ptr<PersonalDataManager> service(
+      new PersonalDataManager(GetApplicationContext()->GetApplicationLocale()));
   service->Init(
       ios::WebDataServiceFactory::GetAutofillWebDataForBrowserState(
           chrome_browser_state, ServiceAccessType::EXPLICIT_ACCESS),
@@ -55,5 +59,7 @@ scoped_ptr<KeyedService> PersonalDataManagerFactory::BuildServiceInstanceFor(
           chrome_browser_state),
       ios::SigninManagerFactory::GetForBrowserState(chrome_browser_state),
       chrome_browser_state->IsOffTheRecord());
-  return service.Pass();
+  return std::move(service);
 }
+
+}  // namespace autofill

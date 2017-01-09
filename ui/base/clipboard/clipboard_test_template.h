@@ -12,17 +12,17 @@
 // TODO(dcheng): This is really horrible. In general, all tests should run on
 // all platforms, to avoid this mess.
 
-#include "build/build_config.h"
+#include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -56,13 +56,15 @@ class ClipboardTest : public PlatformTest {
  public:
 #if defined(USE_AURA)
   ClipboardTest()
-      : event_source_(PlatformEventSource::CreateDefault()),
+      : event_source_(ClipboardTraits::GetEventSource()),
         clipboard_(ClipboardTraits::Create()) {}
 #else
   ClipboardTest() : clipboard_(ClipboardTraits::Create()) {}
 #endif
 
   ~ClipboardTest() override { ClipboardTraits::Destroy(clipboard_); }
+
+  bool IsMusTest() { return ClipboardTraits::IsMusTest(); }
 
  protected:
   Clipboard& clipboard() { return *clipboard_; }
@@ -77,7 +79,7 @@ class ClipboardTest : public PlatformTest {
  private:
   base::MessageLoopForUI message_loop_;
 #if defined(USE_AURA)
-  scoped_ptr<PlatformEventSource> event_source_;
+  std::unique_ptr<PlatformEventSource> event_source_;
 #endif
   // ui::Clipboard has a protected destructor, so scoped_ptr doesn't work here.
   Clipboard* const clipboard_;
@@ -86,6 +88,7 @@ class ClipboardTest : public PlatformTest {
 // Hack for tests that need to call static methods of ClipboardTest.
 struct NullClipboardTraits {
   static Clipboard* Create() { return nullptr; }
+  static bool IsMusTest() { return false; }
   static void Destroy(Clipboard*) {}
 };
 
@@ -143,8 +146,8 @@ TYPED_TEST(ClipboardTest, HTMLTest) {
               Contains(ASCIIToUTF16(Clipboard::kMimeTypeHTML)));
   EXPECT_TRUE(this->clipboard().IsFormatAvailable(
       Clipboard::GetHtmlFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
-  uint32 fragment_start;
-  uint32 fragment_end;
+  uint32_t fragment_start;
+  uint32_t fragment_end;
   this->clipboard().ReadHTML(CLIPBOARD_TYPE_COPY_PASTE, &markup_result,
                              &url_result, &fragment_start, &fragment_end);
   EXPECT_LE(markup.size(), fragment_end - fragment_start);
@@ -214,8 +217,8 @@ TYPED_TEST(ClipboardTest, MultipleBufferTest) {
   EXPECT_EQ(text, text_result);
 
   base::string16 markup_result;
-  uint32 fragment_start;
-  uint32 fragment_end;
+  uint32_t fragment_start;
+  uint32_t fragment_end;
   this->clipboard().ReadHTML(CLIPBOARD_TYPE_SELECTION, &markup_result,
                              &url_result, &fragment_start, &fragment_end);
   EXPECT_LE(markup.size(), fragment_end - fragment_start);
@@ -240,8 +243,8 @@ TYPED_TEST(ClipboardTest, TrickyHTMLTest) {
               Contains(ASCIIToUTF16(Clipboard::kMimeTypeHTML)));
   EXPECT_TRUE(this->clipboard().IsFormatAvailable(
       Clipboard::GetHtmlFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
-  uint32 fragment_start;
-  uint32 fragment_end;
+  uint32_t fragment_start;
+  uint32_t fragment_end;
   this->clipboard().ReadHTML(CLIPBOARD_TYPE_COPY_PASTE, &markup_result,
                              &url_result, &fragment_start, &fragment_end);
   EXPECT_LE(markup.size(), fragment_end - fragment_start);
@@ -270,8 +273,8 @@ TYPED_TEST(ClipboardTest, UnicodeHTMLTest) {
               Contains(ASCIIToUTF16(Clipboard::kMimeTypeHTML)));
   EXPECT_TRUE(this->clipboard().IsFormatAvailable(
       Clipboard::GetHtmlFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
-  uint32 fragment_start;
-  uint32 fragment_end;
+  uint32_t fragment_start;
+  uint32_t fragment_end;
   this->clipboard().ReadHTML(CLIPBOARD_TYPE_COPY_PASTE, &markup_result,
                              &url_result, &fragment_start, &fragment_end);
   EXPECT_LE(markup.size(), fragment_end - fragment_start);
@@ -323,8 +326,8 @@ TYPED_TEST(ClipboardTest, MultiFormatTest) {
       Clipboard::GetPlainTextWFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
   EXPECT_TRUE(this->clipboard().IsFormatAvailable(
       Clipboard::GetPlainTextFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
-  uint32 fragment_start;
-  uint32 fragment_end;
+  uint32_t fragment_start;
+  uint32_t fragment_end;
   this->clipboard().ReadHTML(CLIPBOARD_TYPE_COPY_PASTE, &markup_result,
                              &url_result, &fragment_start, &fragment_end);
   EXPECT_LE(markup.size(), fragment_end - fragment_start);
@@ -366,15 +369,17 @@ TYPED_TEST(ClipboardTest, URLTest) {
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID) && \
     !defined(OS_CHROMEOS)
-  ascii_text.clear();
-  this->clipboard().ReadAsciiText(CLIPBOARD_TYPE_SELECTION, &ascii_text);
-  EXPECT_EQ(UTF16ToUTF8(url), ascii_text);
+  if (!this->IsMusTest()) {
+    ascii_text.clear();
+    this->clipboard().ReadAsciiText(CLIPBOARD_TYPE_SELECTION, &ascii_text);
+    EXPECT_EQ(UTF16ToUTF8(url), ascii_text);
+  }
 #endif
 }
 
 static void TestBitmapWrite(Clipboard* clipboard,
                             const gfx::Size& size,
-                            const uint32* bitmap_data) {
+                            const uint32_t* bitmap_data) {
   {
     ScopedClipboardWriter scw(CLIPBOARD_TYPE_COPY_PASTE);
     SkBitmap bitmap;
@@ -391,7 +396,7 @@ static void TestBitmapWrite(Clipboard* clipboard,
   EXPECT_EQ(size, gfx::Size(image.width(), image.height()));
   SkAutoLockPixels image_lock(image);
   for (int j = 0; j < image.height(); ++j) {
-    const uint32* row_address = image.getAddr32(0, j);
+    const uint32_t* row_address = image.getAddr32(0, j);
     for (int i = 0; i < image.width(); ++i) {
       int offset = i + j * image.width();
       EXPECT_EQ(bitmap_data[offset], row_address[i]) << "i = " << i
@@ -401,7 +406,7 @@ static void TestBitmapWrite(Clipboard* clipboard,
 }
 
 TYPED_TEST(ClipboardTest, SharedBitmapTest) {
-  const uint32 fake_bitmap_1[] = {
+  const uint32_t fake_bitmap_1[] = {
       0x46061626, 0xf69f5988, 0x793f2937, 0xfa55b986,
       0x78772152, 0x87692a30, 0x36322a25, 0x4320401b,
       0x91848c21, 0xc3177b3c, 0x6946155c, 0x64171952,
@@ -411,7 +416,7 @@ TYPED_TEST(ClipboardTest, SharedBitmapTest) {
     TestBitmapWrite(&this->clipboard(), gfx::Size(4, 3), fake_bitmap_1);
   }
 
-  const uint32 fake_bitmap_2[] = {
+  const uint32_t fake_bitmap_2[] = {
       0x46061626, 0xf69f5988,
       0x793f2937, 0xfa55b986,
       0x78772152, 0x87692a30,
@@ -444,7 +449,7 @@ TYPED_TEST(ClipboardTest, DataTest) {
   this->clipboard().ReadData(kFormat, &output);
   ASSERT_FALSE(output.empty());
 
-  base::Pickle read_pickle(output.data(), output.size());
+  base::Pickle read_pickle(output.data(), static_cast<int>(output.size()));
   base::PickleIterator iter(read_pickle);
   std::string unpickled_string;
   ASSERT_TRUE(iter.ReadString(&unpickled_string));
@@ -479,7 +484,7 @@ TYPED_TEST(ClipboardTest, MultipleDataTest) {
   this->clipboard().ReadData(kFormat2, &output2);
   ASSERT_FALSE(output2.empty());
 
-  base::Pickle read_pickle2(output2.data(), output2.size());
+  base::Pickle read_pickle2(output2.data(), static_cast<int>(output2.size()));
   base::PickleIterator iter2(read_pickle2);
   std::string unpickled_string2;
   ASSERT_TRUE(iter2.ReadString(&unpickled_string2));
@@ -500,7 +505,7 @@ TYPED_TEST(ClipboardTest, MultipleDataTest) {
   this->clipboard().ReadData(kFormat1, &output1);
   ASSERT_FALSE(output1.empty());
 
-  base::Pickle read_pickle1(output1.data(), output1.size());
+  base::Pickle read_pickle1(output1.data(), static_cast<int>(output1.size()));
   base::PickleIterator iter1(read_pickle1);
   std::string unpickled_string1;
   ASSERT_TRUE(iter1.ReadString(&unpickled_string1));
@@ -524,8 +529,8 @@ TYPED_TEST(ClipboardTest, HyperlinkTest) {
 
   EXPECT_TRUE(this->clipboard().IsFormatAvailable(
       Clipboard::GetHtmlFormatType(), CLIPBOARD_TYPE_COPY_PASTE));
-  uint32 fragment_start;
-  uint32 fragment_end;
+  uint32_t fragment_start;
+  uint32_t fragment_end;
   this->clipboard().ReadHTML(CLIPBOARD_TYPE_COPY_PASTE, &html_result,
                              &url_result, &fragment_start, &fragment_end);
   EXPECT_EQ(kExpectedHtml,
@@ -615,7 +620,7 @@ TYPED_TEST(ClipboardTest, WriteEverything) {
 // written to.
 // TODO(dcheng): Add a version to test CLIPBOARD_TYPE_SELECTION.
 TYPED_TEST(ClipboardTest, GetSequenceNumber) {
-  const uint64 first_sequence_number =
+  const uint64_t first_sequence_number =
       this->clipboard().GetSequenceNumber(CLIPBOARD_TYPE_COPY_PASTE);
 
   {
@@ -627,7 +632,7 @@ TYPED_TEST(ClipboardTest, GetSequenceNumber) {
   // the message loop to make sure we get the notification.
   base::RunLoop().RunUntilIdle();
 
-  const uint64 second_sequence_number =
+  const uint64_t second_sequence_number =
       this->clipboard().GetSequenceNumber(CLIPBOARD_TYPE_COPY_PASTE);
 
   EXPECT_NE(first_sequence_number, second_sequence_number);

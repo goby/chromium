@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_UI_APPS_CHROME_APP_DELEGATE_H_
 #define CHROME_BROWSER_UI_APPS_CHROME_APP_DELEGATE_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -19,9 +21,9 @@ class ScopedKeepAlive;
 class ChromeAppDelegate : public extensions::AppDelegate,
                           public content::NotificationObserver {
  public:
-  // Pass a ScopedKeepAlive to prevent the browser process from shutting down
-  // while this object exists.
-  explicit ChromeAppDelegate(scoped_ptr<ScopedKeepAlive> keep_alive);
+  // Params:
+  //   keep_alive: Whether this object should keep the browser alive.
+  explicit ChromeAppDelegate(bool keep_alive);
   ~ChromeAppDelegate() override;
 
   static void DisableExternalOpenForTesting();
@@ -49,7 +51,7 @@ class ChromeAppDelegate : public extensions::AppDelegate,
                       bool* was_blocked) override;
   content::ColorChooser* ShowColorChooser(content::WebContents* web_contents,
                                           SkColor initial_color) override;
-  void RunFileChooser(content::WebContents* tab,
+  void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   void RequestMediaAccessPermission(
       content::WebContents* web_contents,
@@ -76,8 +78,8 @@ class ChromeAppDelegate : public extensions::AppDelegate,
 
   bool has_been_shown_;
   bool is_hidden_;
-  scoped_ptr<ScopedKeepAlive> keep_alive_;
-  scoped_ptr<NewWindowContentsDelegate> new_window_contents_delegate_;
+  std::unique_ptr<ScopedKeepAlive> keep_alive_;
+  std::unique_ptr<NewWindowContentsDelegate> new_window_contents_delegate_;
   base::Closure terminating_callback_;
   content::NotificationRegistrar registrar_;
   base::WeakPtrFactory<ChromeAppDelegate> weak_factory_;

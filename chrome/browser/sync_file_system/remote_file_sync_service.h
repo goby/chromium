@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_REMOTE_FILE_SYNC_SERVICE_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_REMOTE_FILE_SYNC_SERVICE_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/sync_file_system/conflict_resolution_policy.h"
 #include "chrome/browser/sync_file_system/sync_callbacks.h"
 #include "chrome/browser/sync_file_system/sync_file_metadata.h"
@@ -92,7 +94,7 @@ class RemoteFileSyncService {
     // |pending_changes_hint| indicates the pending queue length to help sync
     // scheduling but the value may not be accurately reflect the real-time
     // value.
-    virtual void OnRemoteChangeQueueUpdated(int64 pending_changes_hint) = 0;
+    virtual void OnRemoteChangeQueueUpdated(int64_t pending_changes_hint) = 0;
 
     // This is called when RemoteFileSyncService updates its state.
     virtual void OnRemoteServiceStateUpdated(
@@ -115,7 +117,7 @@ class RemoteFileSyncService {
 
   // For GetOriginStatusMap.
   typedef std::map<GURL, std::string> OriginStatusMap;
-  typedef base::Callback<void(scoped_ptr<OriginStatusMap> status_map)>
+  typedef base::Callback<void(std::unique_ptr<OriginStatusMap> status_map)>
       StatusMapCallback;
 
   // For GetRemoteVersions.
@@ -127,11 +129,12 @@ class RemoteFileSyncService {
       DownloadVersionCallback;
 
   // For DumpFile.
-  typedef base::Callback<void(scoped_ptr<base::ListValue> list)> ListCallback;
+  typedef base::Callback<void(std::unique_ptr<base::ListValue> list)>
+      ListCallback;
 
   // Creates an initialized RemoteFileSyncService for backend |version|
   // for |context|.
-  static scoped_ptr<RemoteFileSyncService> CreateForBrowserContext(
+  static std::unique_ptr<RemoteFileSyncService> CreateForBrowserContext(
       content::BrowserContext* context,
       TaskLogger* task_logger);
 

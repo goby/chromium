@@ -5,27 +5,22 @@
 #include "base/memory/shared_memory_handle.h"
 
 #include <mach/mach_vm.h>
+#include <stddef.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 #include "base/mac/mac_util.h"
+#include "base/mac/mach_logging.h"
 #include "base/posix/eintr_wrapper.h"
 
 namespace base {
 
-static_assert(sizeof(SharedMemoryHandle::Type) <=
-                  sizeof(SharedMemoryHandle::TypeWireFormat),
-              "Size of enum SharedMemoryHandle::Type exceeds size of type "
-              "transmitted over wire.");
-
-SharedMemoryHandle::SharedMemoryHandle() : type_(POSIX), file_descriptor_() {}
+SharedMemoryHandle::SharedMemoryHandle()
+    : type_(MACH), memory_object_(MACH_PORT_NULL) {}
 
 SharedMemoryHandle::SharedMemoryHandle(
     const base::FileDescriptor& file_descriptor)
     : type_(POSIX), file_descriptor_(file_descriptor) {}
-
-SharedMemoryHandle::SharedMemoryHandle(int fd, bool auto_close)
-    : type_(POSIX), file_descriptor_(fd, auto_close) {}
 
 SharedMemoryHandle::SharedMemoryHandle(mach_vm_size_t size) {
   type_ = MACH;
@@ -57,8 +52,7 @@ SharedMemoryHandle::SharedMemoryHandle(mach_port_t memory_object,
       pid_(pid),
       ownership_passes_to_ipc_(false) {}
 
-SharedMemoryHandle::SharedMemoryHandle(const SharedMemoryHandle& handle)
-    : type_(handle.type_) {
+SharedMemoryHandle::SharedMemoryHandle(const SharedMemoryHandle& handle) {
   CopyRelevantData(handle);
 }
 
@@ -73,27 +67,16 @@ SharedMemoryHandle& SharedMemoryHandle::operator=(
 }
 
 SharedMemoryHandle SharedMemoryHandle::Duplicate() const {
-  switch (type_) {
-    case POSIX: {
-      if (!IsValid())
-        return SharedMemoryHandle();
+  if (!IsValid())
+    return SharedMemoryHandle(MACH_PORT_NULL, 0, 0);
 
-      int duped_fd = HANDLE_EINTR(dup(file_descriptor_.fd));
-      if (duped_fd < 0)
-        return SharedMemoryHandle();
-      return SharedMemoryHandle(duped_fd, true);
-    }
-    case MACH: {
-      if (!IsValid())
-        return SharedMemoryHandle(MACH_PORT_NULL, 0, 0);
-
-      // Increment the ref count.
-      kern_return_t kr = mach_port_mod_refs(mach_task_self(), memory_object_,
-                                            MACH_PORT_RIGHT_SEND, 1);
-      DCHECK_EQ(kr, KERN_SUCCESS);
-      return SharedMemoryHandle(*this);
-    }
-  }
+  // Increment the ref count.
+  kern_return_t kr = mach_port_mod_refs(mach_task_self(), memory_object_,
+                                        MACH_PORT_RIGHT_SEND, 1);
+  DCHECK_EQ(kr, KERN_SUCCESS);
+  SharedMemoryHandle handle(*this);
+  handle.SetOwnershipPassesToIPC(true);
+  return handle;
 }
 
 bool SharedMemoryHandle::operator==(const SharedMemoryHandle& handle) const {
@@ -105,7 +88,7 @@ bool SharedMemoryHandle::operator==(const SharedMemoryHandle& handle) const {
 
   switch (type_) {
     case POSIX:
-      return file_descriptor_ == handle.file_descriptor_;
+      return file_descriptor_.fd == handle.file_descriptor_.fd;
     case MACH:
       return memory_object_ == handle.memory_object_ && size_ == handle.size_ &&
              pid_ == handle.pid_;
@@ -114,10 +97,6 @@ bool SharedMemoryHandle::operator==(const SharedMemoryHandle& handle) const {
 
 bool SharedMemoryHandle::operator!=(const SharedMemoryHandle& handle) const {
   return !(*this == handle);
-}
-
-SharedMemoryHandle::Type SharedMemoryHandle::GetType() const {
-  return type_;
 }
 
 bool SharedMemoryHandle::IsValid() const {
@@ -129,26 +108,16 @@ bool SharedMemoryHandle::IsValid() const {
   }
 }
 
-void SharedMemoryHandle::SetFileHandle(int fd, bool auto_close) {
-  DCHECK(!IsValid());
-  file_descriptor_.fd = fd;
-  file_descriptor_.auto_close = auto_close;
-  type_ = POSIX;
-}
-
-const FileDescriptor SharedMemoryHandle::GetFileDescriptor() const {
-  DCHECK_EQ(type_, POSIX);
-  return file_descriptor_;
-}
-
 mach_port_t SharedMemoryHandle::GetMemoryObject() const {
   DCHECK_EQ(type_, MACH);
   return memory_object_;
 }
 
 bool SharedMemoryHandle::GetSize(size_t* size) const {
-  if (!IsValid())
-    return false;
+  if (!IsValid()) {
+    *size = 0;
+    return true;
+  }
 
   switch (type_) {
     case SharedMemoryHandle::POSIX:
@@ -174,12 +143,8 @@ bool SharedMemoryHandle::MapAt(off_t offset,
     case SharedMemoryHandle::POSIX:
       *memory = mmap(nullptr, bytes, PROT_READ | (read_only ? 0 : PROT_WRITE),
                      MAP_SHARED, file_descriptor_.fd, offset);
-
-      return *memory && *memory != reinterpret_cast<void*>(-1);
+      return *memory != MAP_FAILED;
     case SharedMemoryHandle::MACH:
-      // The flag VM_PROT_IS_MASK is only supported on OSX 10.7+.
-      DCHECK(mac::IsOSLionOrLater());
-
       DCHECK_EQ(pid_, GetCurrentProcId());
       kern_return_t kr = mach_vm_map(
           mach_task_self(),
@@ -204,12 +169,12 @@ void SharedMemoryHandle::Close() const {
   switch (type_) {
     case POSIX:
       if (IGNORE_EINTR(close(file_descriptor_.fd)) < 0)
-        DPLOG(ERROR) << "Error closing fd.";
+        DPLOG(ERROR) << "Error closing fd";
       break;
     case MACH:
       kern_return_t kr = mach_port_deallocate(mach_task_self(), memory_object_);
       if (kr != KERN_SUCCESS)
-        DPLOG(ERROR) << "Error deallocating mach port: " << kr;
+        MACH_DLOG(ERROR, kr) << "Error deallocating mach port";
       break;
   }
 }
@@ -225,6 +190,7 @@ bool SharedMemoryHandle::OwnershipPassesToIPC() const {
 }
 
 void SharedMemoryHandle::CopyRelevantData(const SharedMemoryHandle& handle) {
+  type_ = handle.type_;
   switch (type_) {
     case POSIX:
       file_descriptor_ = handle.file_descriptor_;

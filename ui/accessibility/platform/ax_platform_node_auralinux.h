@@ -7,6 +7,7 @@
 
 #include <atk/atk.h>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
@@ -44,7 +45,6 @@ class AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
       AtkCoordType coord_type);
 
   // AXPlatformNode overrides.
-  void Destroy() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   void NotifyAccessibilityEvent(ui::AXEvent event_type) override;
 

@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -42,6 +43,10 @@ class HistoryBackendClient {
 
   // Returns whether database errors should be reported to the crash server.
   virtual bool ShouldReportDatabaseError() = 0;
+
+  // Returns whether |url| should be considered web-safe (see
+  // content::ChildProcessSecurityPolicy).
+  virtual bool IsWebSafe(const GURL& url) = 0;
 
 #if defined(OS_ANDROID)
   // Called upon initialization of the HistoryBackend.

@@ -18,6 +18,7 @@
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "content/public/browser/user_metrics.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
+#include "ui/base/clipboard/clipboard_util_mac.h"
 #import "ui/base/cocoa/nsview_additions.h"
 
 using base::UserMetricsAction;
@@ -26,7 +27,7 @@ using bookmarks::BookmarkNode;
 
 @interface BookmarkBarView (Private)
 - (void)themeDidChangeNotification:(NSNotification*)aNotification;
-- (void)updateTheme:(ui::ThemeProvider*)themeProvider;
+- (void)updateTheme:(const ui::ThemeProvider*)themeProvider;
 
 // NSView override.
 - (void)setFrameSize:(NSSize)size;
@@ -68,13 +69,11 @@ using bookmarks::BookmarkNode;
                       object:nil];
 
   DCHECK(controller_) << "Expected this to be hooked up via Interface Builder";
-  NSArray* types = [NSArray arrayWithObjects:
-                    NSStringPboardType,
-                    NSHTMLPboardType,
-                    NSURLPboardType,
-                    kBookmarkButtonDragType,
-                    kBookmarkDictionaryListPboardType,
-                    nil];
+  NSArray* types = @[
+    NSStringPboardType, NSHTMLPboardType, NSURLPboardType,
+    ui::ClipboardUtil::UTIForPasteboardType(kBookmarkButtonDragType),
+    ui::ClipboardUtil::UTIForPasteboardType(kBookmarkDictionaryListPboardType)
+  ];
   [self registerForDraggedTypes:types];
 }
 
@@ -82,7 +81,7 @@ using bookmarks::BookmarkNode;
 // controller desn't have access to it until it's placed in the view
 // hierarchy.  This is the spot where we close the loop.
 - (void)viewWillMoveToWindow:(NSWindow*)window {
-  ui::ThemeProvider* themeProvider = [window themeProvider];
+  const ui::ThemeProvider* themeProvider = [window themeProvider];
   [self updateTheme:themeProvider];
   [controller_ updateTheme:themeProvider];
   [super viewWillMoveToWindow:window];
@@ -99,7 +98,7 @@ using bookmarks::BookmarkNode;
 
 // Adapt appearance to the current theme. Called after theme changes and before
 // this is shown for the first time.
-- (void)updateTheme:(ui::ThemeProvider*)themeProvider {
+- (void)updateTheme:(const ui::ThemeProvider*)themeProvider {
   if (!themeProvider)
     return;
 
@@ -141,9 +140,11 @@ using bookmarks::BookmarkNode;
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
   if (![controller_ draggingAllowed:info])
     return NSDragOperationNone;
-  if ([[info draggingPasteboard] dataForType:kBookmarkButtonDragType] ||
+  if ([[info draggingPasteboard]
+          dataForType:ui::ClipboardUtil::UTIForPasteboardType(
+                          kBookmarkButtonDragType)] ||
       bookmarks::PasteboardContainsBookmarks(ui::CLIPBOARD_TYPE_DRAG) ||
-      [[info draggingPasteboard] containsURLData]) {
+      [[info draggingPasteboard] containsURLDataConvertingTextToURL:YES]) {
     // We only show the drop indicator if we're not in a position to
     // perform a hover-open since it doesn't make sense to do both.
     BOOL showIt = [controller_ shouldShowIndicatorShownForPoint:
@@ -211,11 +212,14 @@ using bookmarks::BookmarkNode;
 // performDragOperation: for URLs.
 - (BOOL)performDragOperationForURL:(id<NSDraggingInfo>)info {
   NSPasteboard* pboard = [info draggingPasteboard];
-  DCHECK([pboard containsURLData]);
+  DCHECK([pboard containsURLDataConvertingTextToURL:YES]);
 
   NSArray* urls = nil;
   NSArray* titles = nil;
-  [pboard getURLs:&urls andTitles:&titles convertingFilenames:YES];
+  [pboard getURLs:&urls
+                andTitles:&titles
+      convertingFilenames:YES
+      convertingTextToURL:YES];
 
   return [controller_ addURLs:urls
                    withTitles:titles
@@ -227,7 +231,8 @@ using bookmarks::BookmarkNode;
 - (BOOL)performDragOperationForBookmarkButton:(id<NSDraggingInfo>)info {
   BOOL rtn = NO;
   NSData* data = [[info draggingPasteboard]
-                  dataForType:kBookmarkButtonDragType];
+      dataForType:ui::ClipboardUtil::UTIForPasteboardType(
+                      kBookmarkButtonDragType)];
   // [info draggingSource] is nil if not the same application.
   if (data && [info draggingSource]) {
     BookmarkButton* button = nil;
@@ -259,12 +264,13 @@ using bookmarks::BookmarkNode;
   if ([controller_ dragBookmarkData:info])
     return YES;
   NSPasteboard* pboard = [info draggingPasteboard];
-  if ([pboard dataForType:kBookmarkButtonDragType]) {
+  if ([pboard dataForType:ui::ClipboardUtil::UTIForPasteboardType(
+                              kBookmarkButtonDragType)]) {
     if ([self performDragOperationForBookmarkButton:info])
       return YES;
     // Fall through....
   }
-  if ([pboard containsURLData]) {
+  if ([pboard containsURLDataConvertingTextToURL:YES]) {
     if ([self performDragOperationForURL:info])
       return YES;
   }

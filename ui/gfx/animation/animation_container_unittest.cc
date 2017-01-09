@@ -4,7 +4,10 @@
 
 #include "ui/gfx/animation/animation_container.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/animation/animation_container_observer.h"
 #include "ui/gfx/animation/linear_animation.h"
@@ -64,7 +67,7 @@ class AnimationContainerTest: public testing::Test {
 TEST_F(AnimationContainerTest, Ownership) {
   TestAnimationDelegate delegate;
   scoped_refptr<AnimationContainer> container(new AnimationContainer());
-  scoped_ptr<Animation> animation(new TestAnimation(&delegate));
+  std::unique_ptr<Animation> animation(new TestAnimation(&delegate));
   animation->SetContainer(container.get());
   // Setting the container should up the ref count.
   EXPECT_FALSE(container->HasOneRef());
@@ -93,7 +96,7 @@ TEST_F(AnimationContainerTest, Multi) {
   EXPECT_TRUE(container->is_running());
 
   // Run the message loop the delegate quits the message loop when notified.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // Both timers should have finished.
   EXPECT_TRUE(delegate1.finished());
@@ -118,7 +121,7 @@ TEST_F(AnimationContainerTest, Observer) {
   EXPECT_TRUE(container->is_running());
 
   // Run the message loop. The delegate quits the message loop when notified.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(1, observer.progressed_count());
 

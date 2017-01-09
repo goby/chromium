@@ -7,15 +7,12 @@
 
 #include <queue>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
 #include "net/url_request/url_request_context_getter.h"
 
 #include "remoting/host/setup/oauth_client.h"
-
-namespace net {
-class URLRequestContext;
-}
 
 namespace remoting {
 
@@ -59,6 +56,7 @@ class GaiaOAuthClient : public OAuthClient,
             const std::string& auth_code,
             bool need_user_email,
             CompletionCallback on_done);
+    Request(const Request& other);
     virtual ~Request();
     gaia::OAuthClientInfo oauth_client_info;
     std::string auth_code;

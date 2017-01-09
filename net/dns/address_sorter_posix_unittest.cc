@@ -6,24 +6,27 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/test_completion_callback.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_factory.h"
+#include "net/socket/datagram_client_socket.h"
+#include "net/socket/socket_performance_watcher.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/stream_socket.h"
-#include "net/udp/datagram_client_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
 namespace {
 
 // Used to map destination address to source address.
-typedef std::map<IPAddressNumber, IPAddressNumber> AddressMapping;
+typedef std::map<IPAddress, IPAddress> AddressMapping;
 
-IPAddressNumber ParseIP(const std::string& str) {
-  IPAddressNumber addr;
-  CHECK(ParseIPLiteralToNumber(str, &addr));
+IPAddress ParseIP(const std::string& str) {
+  IPAddress addr;
+  CHECK(addr.AssignFromIPLiteral(str));
   return addr;
 }
 
@@ -43,8 +46,9 @@ class TestUDPClientSocket : public DatagramClientSocket {
     NOTIMPLEMENTED();
     return OK;
   }
-  int SetReceiveBufferSize(int32) override { return OK; }
-  int SetSendBufferSize(int32) override { return OK; }
+  int SetReceiveBufferSize(int32_t) override { return OK; }
+  int SetSendBufferSize(int32_t) override { return OK; }
+  int SetDoNotFragment() override { return OK; }
 
   void Close() override {}
   int GetPeerAddress(IPEndPoint* address) const override {
@@ -57,9 +61,18 @@ class TestUDPClientSocket : public DatagramClientSocket {
     *address = local_endpoint_;
     return OK;
   }
-  int BindToNetwork(NetworkChangeNotifier::NetworkHandle network) override {
+  void UseNonBlockingIO() override {}
+  int ConnectUsingNetwork(NetworkChangeNotifier::NetworkHandle network,
+                          const IPEndPoint& address) override {
     NOTIMPLEMENTED();
-    return OK;
+    return ERR_NOT_IMPLEMENTED;
+  }
+  int ConnectUsingDefaultNetwork(const IPEndPoint& address) override {
+    NOTIMPLEMENTED();
+    return ERR_NOT_IMPLEMENTED;
+  }
+  NetworkChangeNotifier::NetworkHandle GetBoundNetwork() const override {
+    return NetworkChangeNotifier::kInvalidNetworkHandle;
   }
 
   int Connect(const IPEndPoint& remote) override {
@@ -73,10 +86,10 @@ class TestUDPClientSocket : public DatagramClientSocket {
     return OK;
   }
 
-  const BoundNetLog& NetLog() const override { return net_log_; }
+  const NetLogWithSource& NetLog() const override { return net_log_; }
 
  private:
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
   const AddressMapping* mapping_;
   bool connected_;
   IPEndPoint local_endpoint_;
@@ -90,31 +103,33 @@ class TestSocketFactory : public ClientSocketFactory {
   TestSocketFactory() {}
   ~TestSocketFactory() override {}
 
-  scoped_ptr<DatagramClientSocket> CreateDatagramClientSocket(
+  std::unique_ptr<DatagramClientSocket> CreateDatagramClientSocket(
       DatagramSocket::BindType,
       const RandIntCallback&,
       NetLog*,
-      const NetLog::Source&) override {
-    return scoped_ptr<DatagramClientSocket>(new TestUDPClientSocket(&mapping_));
+      const NetLogSource&) override {
+    return std::unique_ptr<DatagramClientSocket>(
+        new TestUDPClientSocket(&mapping_));
   }
-  scoped_ptr<StreamSocket> CreateTransportClientSocket(
+  std::unique_ptr<StreamSocket> CreateTransportClientSocket(
       const AddressList&,
+      std::unique_ptr<SocketPerformanceWatcher>,
       NetLog*,
-      const NetLog::Source&) override {
+      const NetLogSource&) override {
     NOTIMPLEMENTED();
-    return scoped_ptr<StreamSocket>();
+    return std::unique_ptr<StreamSocket>();
   }
-  scoped_ptr<SSLClientSocket> CreateSSLClientSocket(
-      scoped_ptr<ClientSocketHandle>,
+  std::unique_ptr<SSLClientSocket> CreateSSLClientSocket(
+      std::unique_ptr<ClientSocketHandle>,
       const HostPortPair&,
       const SSLConfig&,
       const SSLClientSocketContext&) override {
     NOTIMPLEMENTED();
-    return scoped_ptr<SSLClientSocket>();
+    return std::unique_ptr<SSLClientSocket>();
   }
   void ClearSSLSessionCache() override { NOTIMPLEMENTED(); }
 
-  void AddMapping(const IPAddressNumber& dst, const IPAddressNumber& src) {
+  void AddMapping(const IPAddress& dst, const IPAddress& src) {
     mapping_[dst] = src;
   }
 
@@ -146,7 +161,7 @@ class AddressSorterPosixTest : public testing::Test {
 
   AddressSorterPosix::SourceAddressInfo* GetSourceInfo(
       const std::string& addr) {
-    IPAddressNumber address = ParseIP(addr);
+    IPAddress address = ParseIP(addr);
     AddressSorterPosix::SourceAddressInfo* info = &sorter_.source_map_[address];
     if (info->scope == AddressSorterPosix::SCOPE_UNDEFINED)
       sorter_.FillPolicy(address, info);

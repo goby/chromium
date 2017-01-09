@@ -5,6 +5,7 @@
 package org.chromium.chrome.test.util;
 
 import android.annotation.TargetApi;
+import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
@@ -14,12 +15,17 @@ import android.os.PowerManager;
 import junit.framework.Assert;
 import junit.framework.AssertionFailedError;
 
+import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.omaha.OmahaClient;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
+
+import java.util.concurrent.Callable;
 
 /**
  * Methods used for testing Chrome at the Application-level.
@@ -32,7 +38,7 @@ public class ApplicationTestUtils {
 
     // TODO(jbudorick): fix deprecation warning crbug.com/537347
     @SuppressWarnings("deprecation")
-    public static void setUp(Context context, boolean clearAppData, boolean checkHttpServer)
+    public static void setUp(Context context, boolean clearAppData)
             throws Exception {
         if (clearAppData) {
             // Clear data and remove any tasks listed in Android's Overview menu between test runs.
@@ -51,8 +57,6 @@ public class ApplicationTestUtils {
         // Disable Omaha related activities.
         OmahaClient.setEnableCommunication(false);
         OmahaClient.setEnableUpdateDetection(false);
-
-        if (checkHttpServer) TestHttpServerClient.checkServerIsUp();
     }
 
     public static void tearDown(Context context) throws Exception {
@@ -96,7 +100,7 @@ public class ApplicationTestUtils {
 
     /** Waits until Chrome is in the background. */
     public static void waitUntilChromeInBackground() throws Exception {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 int state = ApplicationStatus.getStateForApplication();
@@ -108,31 +112,75 @@ public class ApplicationTestUtils {
 
     /** Waits until Chrome is in the foreground. */
     public static void waitUntilChromeInForeground() throws Exception {
-        CriteriaHelper.pollForCriteria(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                int state = ApplicationStatus.getStateForApplication();
-                return state == ApplicationState.HAS_RUNNING_ACTIVITIES;
+        CriteriaHelper.pollInstrumentationThread(
+                Criteria.equals(ApplicationState.HAS_RUNNING_ACTIVITIES, new Callable<Integer>() {
+                    @Override
+                    public Integer call() {
+                        return ApplicationStatus.getStateForApplication();
+                    }
+                }));
+    }
+
+    /** Finishes the given activity and waits for its onDestroy() to be called. */
+    public static void finishActivity(final Activity activity) throws Exception {
+        final CallbackHelper callbackHelper = new CallbackHelper();
+        final ApplicationStatus.ActivityStateListener activityStateListener =
+                new ApplicationStatus.ActivityStateListener() {
+                    @Override
+                    public void onActivityStateChange(Activity activity, int newState) {
+                        if (newState == ActivityState.DESTROYED) {
+                            callbackHelper.notifyCalled();
+                        }
+                    }
+                };
+        try {
+            boolean alreadyDestroyed = ThreadUtils.runOnUiThreadBlocking(new Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    if (ApplicationStatus.getStateForActivity(activity)
+                            == ActivityState.DESTROYED) {
+                        return true;
+                    }
+                    ApplicationStatus.registerStateListenerForActivity(
+                            activityStateListener, activity);
+                    activity.finish();
+                    return false;
+                }
+            });
+            if (!alreadyDestroyed) {
+                callbackHelper.waitForCallback(0);
             }
-        });
+        } finally {
+            ApplicationStatus.unregisterActivityStateListener(activityStateListener);
+        }
     }
 
     /** Finishes all tasks Chrome has listed in Android's Overview. */
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     public static void finishAllChromeTasks(final Context context) throws Exception {
-        // Close all of the tasks one by one.
-        ActivityManager activityManager =
-                (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
-            task.finishAndRemoveTask();
-        }
-
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
-            public boolean isSatisfied() {
-                return getNumChromeTasks(context) == 0;
+            public void run() {
+                try {
+                    // Close all of the tasks one by one.
+                    ActivityManager activityManager =
+                            (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+                    for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
+                        task.finishAndRemoveTask();
+                    }
+                } catch (Exception e) {
+                    // Ignore any exceptions the Android framework throws so that otherwise passing
+                    // tests don't fail during tear down. See crbug.com/653731.
+                }
             }
         });
+
+        CriteriaHelper.pollUiThread(Criteria.equals(0, new Callable<Integer>() {
+            @Override
+            public Integer call() {
+                return getNumChromeTasks(context);
+            }
+        }));
     }
 
     /** Counts how many tasks Chrome has listed in Android's Overview. */
@@ -161,7 +209,7 @@ public class ApplicationTestUtils {
     public static void assertWaitForPageScaleFactorMatch(final ChromeActivity activity,
             final float expectedScale, boolean waitLongerForLoad) throws InterruptedException {
         long waitTimeInMs = waitLongerForLoad ? 10000 : CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL;
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 if (activity.getCurrentContentViewCore() == null) return false;

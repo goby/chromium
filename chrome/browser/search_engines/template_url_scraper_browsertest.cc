@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,7 +21,6 @@
 #include "components/search_engines/template_url_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
-#include "net/base/net_util.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -34,9 +37,8 @@ class TemplateURLServiceLoader {
 
     scoped_refptr<content::MessageLoopRunner> message_loop_runner =
         new content::MessageLoopRunner;
-    scoped_ptr<TemplateURLService::Subscription> subscription =
-        model_->RegisterOnLoadedCallback(
-            message_loop_runner->QuitClosure());
+    std::unique_ptr<TemplateURLService::Subscription> subscription =
+        model_->RegisterOnLoadedCallback(message_loop_runner->QuitClosure());
     model_->Load();
     message_loop_runner->Run();
   }
@@ -47,7 +49,7 @@ class TemplateURLServiceLoader {
   DISALLOW_COPY_AND_ASSIGN(TemplateURLServiceLoader);
 };
 
-scoped_ptr<net::test_server::HttpResponse> SendResponse(
+std::unique_ptr<net::test_server::HttpResponse> SendResponse(
     const net::test_server::HttpRequest& request) {
   base::FilePath test_data_dir;
   PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
@@ -56,10 +58,10 @@ scoped_ptr<net::test_server::HttpResponse> SendResponse(
                                            .AppendASCII("index.html");
   std::string file_contents;
   EXPECT_TRUE(base::ReadFileToString(index_file, &file_contents));
-  scoped_ptr<net::test_server::BasicHttpResponse> response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> response(
       new net::test_server::BasicHttpResponse);
   response->set_content(file_contents);
-  return response.Pass();
+  return std::move(response);
 }
 
 }  // namespace
@@ -80,10 +82,9 @@ IN_PROC_BROWSER_TEST_F(TemplateURLScraperTest, ScrapeWithOnSubmit) {
   // We need to substract the default pre-populated engines that the profile is
   // set up with.
   size_t default_index = 0;
-  ScopedVector<TemplateURLData> prepopulate_urls =
+  std::vector<std::unique_ptr<TemplateURLData>> prepopulate_urls =
       TemplateURLPrepopulateData::GetPrepopulatedEngines(
-          browser()->profile()->GetPrefs(),
-          &default_index);
+          browser()->profile()->GetPrefs(), &default_index);
 
   EXPECT_EQ(prepopulate_urls.size(), all_urls.size());
 

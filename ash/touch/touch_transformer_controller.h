@@ -5,9 +5,12 @@
 #ifndef ASH_TOUCH_TOUCH_TRANSFORMER_CONTROLLER_H_
 #define ASH_TOUCH_TOUCH_TRANSFORMER_CONTROLLER_H_
 
+#include <stdint.h>
+
 #include "ash/ash_export.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "ui/gfx/transform.h"
 
 namespace ui {
@@ -50,20 +53,21 @@ class ASH_EXPORT TouchTransformerController
   // |framebuffer_size| is used for scaling.
   // On Ozone events are reported in the touchscreen's resolution, so
   // |touch_display| is used to determine the size and scale the event.
-  gfx::Transform GetTouchTransform(const DisplayInfo& display,
-                                   const DisplayInfo& touch_display,
-                                   const ui::TouchscreenDevice& touchscreen,
-                                   const gfx::Size& framebuffer_size) const;
+  gfx::Transform GetTouchTransform(
+      const display::ManagedDisplayInfo& display,
+      const display::ManagedDisplayInfo& touch_display,
+      const ui::TouchscreenDevice& touchscreen,
+      const gfx::Size& framebuffer_size) const;
 
   // Returns the scaling factor for the touch radius such that it scales the
   // radius from |touch_device|'s coordinate system to the |touch_display|'s
   // coordinate system.
   double GetTouchResolutionScale(
-      const DisplayInfo& touch_display,
+      const display::ManagedDisplayInfo& touch_display,
       const ui::TouchscreenDevice& touch_device) const;
 
   // For the provided |display| update the touch radius mapping.
-  void UpdateTouchRadius(const DisplayInfo& display) const;
+  void UpdateTouchRadius(const display::ManagedDisplayInfo& display) const;
 
   // For a given |target_display| and |target_display_id| update the touch
   // transformation based on the touchscreen associated with |touch_display|.
@@ -73,9 +77,10 @@ class ASH_EXPORT TouchTransformerController
   // from which the events arrive.
   // |target_display| provides the dimensions to which the touch event will be
   // transformed.
-  void UpdateTouchTransform(int64_t target_display_id,
-                            const DisplayInfo& touch_display,
-                            const DisplayInfo& target_display) const;
+  void UpdateTouchTransform(
+      int64_t target_display_id,
+      const display::ManagedDisplayInfo& touch_display,
+      const display::ManagedDisplayInfo& target_display) const;
 
   DISALLOW_COPY_AND_ASSIGN(TouchTransformerController);
 };

@@ -5,17 +5,20 @@
 #include "chrome/browser/themes/theme_service_factory.h"
 
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/common/pref_names.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_factory.h"
 
-#if defined(USE_AURA) && defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(OS_WIN)
+#include "chrome/browser/themes/theme_service_win.h"
+#elif defined(USE_AURA) && defined(USE_X11) && !defined(OS_CHROMEOS)
 #include "chrome/browser/themes/theme_service_aurax11.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #endif
@@ -54,7 +57,9 @@ ThemeServiceFactory::~ThemeServiceFactory() {}
 KeyedService* ThemeServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
   ThemeService* provider = NULL;
-#if defined(USE_AURA) && defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(OS_WIN)
+  provider = new ThemeServiceWin;
+#elif defined(USE_AURA) && defined(USE_X11) && !defined(OS_CHROMEOS)
   provider = new ThemeServiceAuraX11;
 #else
   provider = new ThemeService;

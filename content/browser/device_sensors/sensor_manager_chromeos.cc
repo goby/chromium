@@ -35,7 +35,7 @@ void SensorManagerChromeOS::StartFetchingDeviceMotionData(
   // The interval between updates is the longer of the rate set on the buffer,
   // and the rate at which AccelerometerReader polls the sensor.
   motion_buffer_->data.interval =
-      std::max(kInertialSensorIntervalMicroseconds / 1000,
+      std::max(kDeviceSensorIntervalMicroseconds / 1000,
                chromeos::AccelerometerReader::kDelayBetweenReadsMs);
   motion_buffer_->seqlock.WriteEnd();
 
@@ -69,7 +69,6 @@ void SensorManagerChromeOS::StartFetchingDeviceOrientationData(
   // No compass information, so we cannot provide absolute orientation.
   orientation_buffer_->seqlock.WriteBegin();
   orientation_buffer_->data.absolute = false;
-  orientation_buffer_->data.hasAbsolute = true;
   orientation_buffer_->seqlock.WriteEnd();
 
   if (!motion_buffer_)

@@ -13,7 +13,7 @@
 #include "content/browser/media/capture/cursor_renderer.h"
 #include "content/common/content_export.h"
 #include "media/base/video_frame.h"
-#include "skia/ext/image_operations.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/aura/window.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/events/event_handler.h"
@@ -23,13 +23,21 @@
 
 namespace content {
 
+// Setting to control cursor display based on either mouse movement or always
+// forced to be enabled.
+enum CursorDisplaySetting {
+  kCursorAlwaysEnabled,
+  kCursorEnabledOnMouseMovement
+};
+
 // Tracks state for making decisions on cursor display on a captured video
 // frame.
 class CONTENT_EXPORT CursorRendererAura : public CursorRenderer,
                                           public ui::EventHandler,
                                           public aura::WindowObserver {
  public:
-  explicit CursorRendererAura(aura::Window* window);
+  explicit CursorRendererAura(aura::Window* window,
+                              CursorDisplaySetting cursor_display);
   ~CursorRendererAura() final;
 
   // CursorRender implementation.
@@ -59,10 +67,13 @@ class CONTENT_EXPORT CursorRendererAura : public CursorRenderer,
 
   // Updated in mouse event listener and used to make a decision on
   // when the cursor is rendered.
-  base::TimeDelta last_mouse_movement_timestamp_;
+  base::TimeTicks last_mouse_movement_timestamp_;
   float last_mouse_position_x_;
   float last_mouse_position_y_;
   bool cursor_displayed_;
+
+  // Controls whether cursor is displayed based on active mouse movement.
+  const CursorDisplaySetting cursor_display_setting_;
 
   // Allows tests to replace the clock.
   base::DefaultTickClock default_tick_clock_;

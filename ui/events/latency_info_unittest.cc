@@ -4,6 +4,8 @@
 
 #include "ui/events/latency_info.h"
 
+#include <stddef.h>
+
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace ui {
@@ -65,16 +67,17 @@ TEST(LatencyInfoTest, AddTwoSameEvent) {
   EXPECT_EQ(component.event_time.ToInternalValue(), (100 * 2 + 200 * 3) / 5);
 }
 
-TEST(LatencyInfoTest, AddCoalescedEventTimestamp) {
+TEST(LatencyInfoTest, RemoveLatency) {
   LatencyInfo info;
-  ASSERT_EQ(0u, info.coalesced_events_size());
-  for (size_t i = 0; i < LatencyInfo::kMaxCoalescedEventTimestamps; i++)
-    EXPECT_TRUE(info.AddCoalescedEventTimestamp(i * 10.0));
-  EXPECT_FALSE(info.AddCoalescedEventTimestamp(99.0));
-  EXPECT_EQ(LatencyInfo::kMaxCoalescedEventTimestamps,
-            info.coalesced_events_size());
-  for (size_t i = 0; i < info.coalesced_events_size(); i++)
-    EXPECT_EQ(i * 10.0, info.timestamps_of_coalesced_events()[i]);
+  info.AddLatencyNumber(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0, 0);
+  info.AddLatencyNumber(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 1, 0);
+  info.AddLatencyNumber(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0);
+
+  info.RemoveLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT);
+
+  EXPECT_FALSE(info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0, 0));
+  EXPECT_FALSE(info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 1, 0));
+  EXPECT_TRUE(info.FindLatency(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0));
 }
 
 }  // namespace ui

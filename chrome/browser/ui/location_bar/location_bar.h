@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_UI_LOCATION_BAR_LOCATION_BAR_H_
 #define CHROME_BROWSER_UI_LOCATION_BAR_LOCATION_BAR_H_
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
@@ -29,6 +32,10 @@ class Extension;
 // location bar to be mocked for testing.
 class LocationBar {
  public:
+  // The parameters for the Security Chip Feature.
+  static const char kSecurityChipFeatureVisibilityParam[];
+  static const char kSecurityChipFeatureAnimationParam[];
+
   explicit LocationBar(Profile* profile);
 
   // Shows the first run bubble anchored to the location bar.
@@ -45,8 +52,7 @@ class LocationBar {
   // Focuses the location bar.  Optionally also selects its contents.
   virtual void FocusLocation(bool select_all) = 0;
 
-  // Clears the location bar, inserts an annoying little "?" turd and sets
-  // focus to it.
+  // Puts the user into keyword mode with their default search provider.
   virtual void FocusSearch() = 0;
 
   // Updates the state of the images showing the content settings status.

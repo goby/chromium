@@ -2,13 +2,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("suggestions") {
+static_library("suggestions") {
   sources = [
     "blacklist_store.cc",
     "blacklist_store.h",
     "image_encoder.h",
-    "image_fetcher.h",
-    "image_fetcher_delegate.h",
     "image_manager.cc",
     "image_manager.h",
     "suggestions_pref_names.cc",
@@ -17,13 +15,11 @@ source_set("suggestions") {
     "suggestions_service.h",
     "suggestions_store.cc",
     "suggestions_store.h",
-    "suggestions_utils.cc",
-    "suggestions_utils.h",
   ]
 
   public_deps = [
     "//base",
-    "//base:prefs",
+    "//components/prefs",
     "//components/suggestions/proto",
     "//net",
     "//ui/gfx",
@@ -31,11 +27,16 @@ source_set("suggestions") {
   ]
   deps = [
     "//components/data_use_measurement/core",
+    "//components/google/core/browser",
+    "//components/image_fetcher",
     "//components/keyed_service/core",
     "//components/leveldb_proto",
     "//components/pref_registry",
+    "//components/signin/core/browser",
+    "//components/sync",
     "//components/variations",
     "//components/variations/net",
+    "//google_apis",
   ]
 
   if (is_ios) {
@@ -56,8 +57,12 @@ source_set("unit_tests") {
   deps = [
     ":suggestions",
     "//base/test:test_support",
+    "//components/image_fetcher",
     "//components/leveldb_proto:test_support",
-    "//components/pref_registry:test_support",
+    "//components/signin/core/browser:test_support",
+    "//components/sync",
+    "//components/sync:test_support_driver",
+    "//components/sync_preferences:test_support",
     "//net:test_support",
     "//testing/gmock",
     "//testing/gtest",

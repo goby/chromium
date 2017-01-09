@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/cdm/ppapi/external_clear_key/cdm_video_decoder.h"
 
 #if defined(CLEAR_KEY_CDM_USE_FAKE_VIDEO_DECODER)
@@ -20,9 +18,10 @@
 
 namespace media {
 
-scoped_ptr<CdmVideoDecoder> CreateVideoDecoder(
-    ClearKeyCdmHost* host, const cdm::VideoDecoderConfig& config) {
-  scoped_ptr<CdmVideoDecoder> video_decoder;
+std::unique_ptr<CdmVideoDecoder> CreateVideoDecoder(
+    ClearKeyCdmHost* host,
+    const cdm::VideoDecoderConfig& config) {
+  std::unique_ptr<CdmVideoDecoder> video_decoder;
 #if defined(CLEAR_KEY_CDM_USE_FAKE_VIDEO_DECODER)
   video_decoder.reset(new FakeCdmVideoDecoder(host));
 
@@ -38,7 +37,7 @@ scoped_ptr<CdmVideoDecoder> CreateVideoDecoder(
     if (!video_decoder->Initialize(config))
       video_decoder.reset();
 
-    return video_decoder.Pass();
+    return video_decoder;
   }
 #endif
 
@@ -51,7 +50,7 @@ scoped_ptr<CdmVideoDecoder> CreateVideoDecoder(
 
 #endif  // CLEAR_KEY_CDM_USE_FAKE_VIDEO_DECODER
 
-  return video_decoder.Pass();
+  return video_decoder;
 }
 
 }  // namespace media

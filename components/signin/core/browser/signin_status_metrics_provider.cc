@@ -4,38 +4,19 @@
 
 #include "components/signin/core/browser/signin_status_metrics_provider.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/metrics/histogram.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/signin/core/browser/signin_manager.h"
 
-namespace {
-
-// The event of calling function ComputeCurrentSigninStatus and the errors
-// occurred during the function execution.
-enum ComputeSigninStatus {
-  ENTERED_COMPUTE_SIGNIN_STATUS,
-  ERROR_NO_PROFILE_FOUND,
-  NO_BROWSER_OPENED,
-  USER_SIGNIN_WHEN_STATUS_UNKNOWN,
-  USER_SIGNOUT_WHEN_STATUS_UNKNOWN,
-  TRY_TO_OVERRIDE_ERROR_STATUS,
-  COMPUTE_SIGNIN_STATUS_MAX,
-};
-
-void RecordComputeSigninStatusHistogram(ComputeSigninStatus status) {
-  UMA_HISTOGRAM_ENUMERATION("UMA.ComputeCurrentSigninStatus", status,
-                            COMPUTE_SIGNIN_STATUS_MAX);
-}
-
-}  // namespace
-
 SigninStatusMetricsProvider::SigninStatusMetricsProvider(
-    scoped_ptr<SigninStatusMetricsProviderDelegate> delegate,
+    std::unique_ptr<SigninStatusMetricsProviderDelegate> delegate,
     bool is_test)
-    : delegate_(delegate.Pass()),
+    : delegate_(std::move(delegate)),
       scoped_observer_(this),
       is_test_(is_test),
       weak_ptr_factory_(this) {
@@ -65,8 +46,8 @@ void SigninStatusMetricsProvider::ProvideGeneralMetrics(
 
 // static
 SigninStatusMetricsProvider* SigninStatusMetricsProvider::CreateInstance(
-    scoped_ptr<SigninStatusMetricsProviderDelegate> delegate) {
-  return new SigninStatusMetricsProvider(delegate.Pass(), false);
+    std::unique_ptr<SigninStatusMetricsProviderDelegate> delegate) {
+  return new SigninStatusMetricsProvider(std::move(delegate), false);
 }
 
 void SigninStatusMetricsProvider::OnSigninManagerCreated(
@@ -102,7 +83,6 @@ void SigninStatusMetricsProvider::GoogleSigninSucceeded(
     // There should have at least one browser opened if the user can sign in, so
     // signin_status_ value should not be unknown.
     UpdateSigninStatus(ERROR_GETTING_SIGNIN_STATUS);
-    RecordComputeSigninStatusHistogram(USER_SIGNIN_WHEN_STATUS_UNKNOWN);
   }
 }
 
@@ -115,7 +95,6 @@ void SigninStatusMetricsProvider::GoogleSignedOut(const std::string& account_id,
     // There should have at least one browser opened if the user can sign out,
     // so signin_status_ value should not be unknown.
     UpdateSigninStatus(ERROR_GETTING_SIGNIN_STATUS);
-    RecordComputeSigninStatusHistogram(USER_SIGNOUT_WHEN_STATUS_UNKNOWN);
   }
 }
 
@@ -152,17 +131,12 @@ void SigninStatusMetricsProvider::UpdateInitialSigninStatus(
 }
 
 void SigninStatusMetricsProvider::ComputeCurrentSigninStatus() {
-  RecordComputeSigninStatusHistogram(ENTERED_COMPUTE_SIGNIN_STATUS);
-
   AccountsStatus accounts_status = delegate_->GetStatusOfAllAccounts();
   if (accounts_status.num_accounts == 0) {
-    // This should not happen. If it does, record it in histogram.
-    RecordComputeSigninStatusHistogram(ERROR_NO_PROFILE_FOUND);
     UpdateSigninStatus(ERROR_GETTING_SIGNIN_STATUS);
   } else if (accounts_status.num_opened_accounts == 0) {
     // The code indicates that Chrome is running in the background but no
     // browser window is opened.
-    RecordComputeSigninStatusHistogram(NO_BROWSER_OPENED);
     UpdateSigninStatus(UNKNOWN_SIGNIN_STATUS);
   } else {
     UpdateInitialSigninStatus(accounts_status.num_opened_accounts,

@@ -4,7 +4,6 @@
 
 #include "ui/native_theme/native_theme_android.h"
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -20,6 +19,11 @@ const int kCheckboxAndRadioHeight = 16;
 // static
 NativeTheme* NativeTheme::GetInstanceForWeb() {
   return NativeThemeAndroid::instance();
+}
+
+NativeTheme* NativeTheme::GetInstanceForNativeUi() {
+  NOTREACHED();
+  return nullptr;
 }
 #endif
 

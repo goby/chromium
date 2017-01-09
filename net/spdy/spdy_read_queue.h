@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_SPDY_SPDY_BUFFER_QUEUE_H_
-#define NET_SPDY_SPDY_BUFFER_QUEUE_H_
+#ifndef NET_SPDY_SPDY_READ_QUEUE_H_
+#define NET_SPDY_SPDY_READ_QUEUE_H_
 
 #include <cstddef>
 #include <deque>
+#include <memory>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
 
 namespace net {
@@ -30,7 +30,7 @@ class NET_EXPORT_PRIVATE SpdyReadQueue {
   size_t GetTotalSize() const;
 
   // Enqueues the bytes in |buffer|.
-  void Enqueue(scoped_ptr<SpdyBuffer> buffer);
+  void Enqueue(std::unique_ptr<SpdyBuffer> buffer);
 
   // Dequeues up to |len| (which must be positive) bytes into
   // |out|. Returns the number of bytes dequeued.
@@ -40,7 +40,9 @@ class NET_EXPORT_PRIVATE SpdyReadQueue {
   void Clear();
 
  private:
-  std::deque<SpdyBuffer*> queue_;
+  // Class invariant:
+  // |total_size_| is the sum of GetRemainingSize() of |queue_|'s elements.
+  std::deque<std::unique_ptr<SpdyBuffer>> queue_;
   size_t total_size_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdyReadQueue);
@@ -48,4 +50,4 @@ class NET_EXPORT_PRIVATE SpdyReadQueue {
 
 }  // namespace net
 
-#endif  // NET_SPDY_SPDY_BUFFER_QUEUE_H_
+#endif  // NET_SPDY_SPDY_READ_QUEUE_H_

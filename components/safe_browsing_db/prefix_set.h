@@ -49,12 +49,15 @@
 #ifndef COMPONENTS_SAFE_BROWSING_DB_PREFIX_SET_H_
 #define COMPONENTS_SAFE_BROWSING_DB_PREFIX_SET_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/safe_browsing_db/util.h"
 
 namespace base {
@@ -72,7 +75,7 @@ class PrefixSet {
   bool Exists(const SBFullHash& hash) const;
 
   // Persist the set on disk.
-  static scoped_ptr<const PrefixSet> LoadFile(
+  static std::unique_ptr<const PrefixSet> LoadFile(
       const base::FilePath& filter_name);
   bool WriteFile(const base::FilePath& filter_name) const;
 
@@ -105,14 +108,15 @@ class PrefixSet {
   static const size_t kMaxRun = 100;
 
   // Helpers to make |index_| easier to deal with.
-  typedef std::pair<SBPrefix, uint32> IndexPair;
+  typedef std::pair<SBPrefix, uint32_t> IndexPair;
   typedef std::vector<IndexPair> IndexVector;
   static bool PrefixLess(const IndexPair& a, const IndexPair& b);
 
   // Helper to let |PrefixSetBuilder| add a run of data.  |index_prefix| is
   // added to |index_|, with the other elements added into |deltas_|.
   void AddRun(SBPrefix index_prefix,
-              const uint16* run_begin, const uint16* run_end);
+              const uint16_t* run_begin,
+              const uint16_t* run_end);
 
   // |true| if |prefix| is one of the prefixes passed to the set's builder.
   // Provided for testing purposes.
@@ -127,7 +131,7 @@ class PrefixSet {
 
   // Helper for |LoadFile()|.  Steals vector contents using |swap()|.
   PrefixSet(IndexVector* index,
-            std::vector<uint16>* deltas,
+            std::vector<uint16_t>* deltas,
             std::vector<SBFullHash>* full_hashes);
 
   // Top-level index of prefix to offset in |deltas_|.  Each pair
@@ -139,7 +143,7 @@ class PrefixSet {
   // Deltas which are added to the prefix in |index_| to generate
   // prefixes.  Deltas are only valid between consecutive items from
   // |index_|, or the end of |deltas_| for the last |index_| pair.
-  std::vector<uint16> deltas_;
+  std::vector<uint16_t> deltas_;
 
   // Full hashes ordered by SBFullHashLess.
   std::vector<SBFullHash> full_hashes_;
@@ -163,12 +167,12 @@ class PrefixSetBuilder {
   // Flush any buffered prefixes, and return the final PrefixSet instance.
   // |hashes| are sorted and stored in |full_hashes_|.  Any call other than the
   // destructor is illegal after this call.
-  scoped_ptr<const PrefixSet> GetPrefixSet(
+  std::unique_ptr<const PrefixSet> GetPrefixSet(
       const std::vector<SBFullHash>& hashes);
 
   // Helper for clients which only track prefixes.  Calls GetPrefixSet() with
   // empty hash vector.
-  scoped_ptr<const PrefixSet> GetPrefixSetNoHashes();
+  std::unique_ptr<const PrefixSet> GetPrefixSetNoHashes();
 
  private:
   // Encode a run of deltas for |AddRun()|.  The run is broken by a too-large
@@ -179,7 +183,7 @@ class PrefixSetBuilder {
   std::vector<SBPrefix> buffer_;
 
   // The PrefixSet being built.
-  scoped_ptr<PrefixSet> prefix_set_;
+  std::unique_ptr<PrefixSet> prefix_set_;
 };
 
 }  // namespace safe_browsing

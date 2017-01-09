@@ -4,15 +4,20 @@
 
 #include "chrome/browser/ui/ash/launcher/app_shortcut_launcher_item_controller.h"
 
-#include "ash/shelf/shelf_model.h"
-#include "ash/shell.h"
+#include <stddef.h>
+
 #include "ash/wm/window_util.h"
+#include "chrome/browser/chromeos/arc/arc_support_host.h"
 #include "chrome/browser/extensions/launch_util.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ui/ash/launcher/arc_playstore_shortcut_launcher_item_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_app_menu_item.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_app_menu_item_tab.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
+#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_util.h"
 #include "chrome/browser/ui/ash/launcher/launcher_application_menu_item_model.h"
 #include "chrome/browser/ui/ash/launcher/launcher_context_menu.h"
+#include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
 #include "chrome/browser/ui/ash/launcher/launcher_item_controller.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
@@ -20,7 +25,6 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
@@ -43,8 +47,8 @@ const int kClickSuppressionInMS = 1000;
 
 // Check if a browser can be used for activation. This addresses a special use
 // case in the M31 multi profile mode where a user activates a V1 app which only
-// exists yet on another users desktop, but he expects to get only his own app
-// items and not the ones from other users through activation.
+// exists yet on another users desktop, but they expect to get only their own
+// app items and not the ones from other users through activation.
 // TODO(skuhne): Remove this function and replace the call with
 // launcher_controller()->IsBrowserFromActiveUser(browser) once this experiment
 // goes away.
@@ -58,18 +62,29 @@ bool CanBrowserBeUsedForDirectActivation(Browser* browser,
 
 }  // namespace
 
+// static
+AppShortcutLauncherItemController* AppShortcutLauncherItemController::Create(
+    const std::string& app_id,
+    const std::string& launch_id,
+    ChromeLauncherController* controller) {
+  if (app_id == ArcSupportHost::kHostAppId || app_id == arc::kPlayStoreAppId)
+    return new ArcPlaystoreShortcutLauncherItemController(controller);
+  return new AppShortcutLauncherItemController(app_id, launch_id, controller);
+}
+
 // Item controller for an app shortcut. Shortcuts track app and launcher ids,
 // but do not have any associated windows (opening a shortcut will replace the
 // item with the appropriate LauncherItemController type).
 AppShortcutLauncherItemController::AppShortcutLauncherItemController(
     const std::string& app_id,
+    const std::string& launch_id,
     ChromeLauncherController* controller)
-    : LauncherItemController(TYPE_SHORTCUT, app_id, controller),
+    : LauncherItemController(app_id, launch_id, controller),
       chrome_launcher_controller_(controller) {
   // To detect V1 applications we use their domain and match them against the
   // used URL. This will also work with applications like Google Drive.
   const Extension* extension =
-      launcher_controller()->GetExtensionForAppID(app_id);
+      GetExtensionForAppID(app_id, controller->profile());
   // Some unit tests have no real extension.
   if (extension) {
     set_refocus_url(GURL(
@@ -78,11 +93,6 @@ AppShortcutLauncherItemController::AppShortcutLauncherItemController(
 }
 
 AppShortcutLauncherItemController::~AppShortcutLauncherItemController() {
-}
-
-bool AppShortcutLauncherItemController::IsOpen() const {
-  return !chrome_launcher_controller_->
-      GetV1ApplicationsFromAppId(app_id()).empty();
 }
 
 bool AppShortcutLauncherItemController::IsVisible() const {
@@ -128,7 +138,7 @@ void AppShortcutLauncherItemController::Close() {
       launcher_controller()->GetV1ApplicationsFromAppId(app_id());
   for (size_t i = 0; i < content.size(); i++) {
     Browser* browser = chrome::FindBrowserWithWebContents(content[i]);
-    if (!browser || !launcher_controller()->IsBrowserFromActiveUser(browser))
+    if (!browser || !IsBrowserFromActiveUser(browser))
       continue;
     TabStripModel* tab_strip = browser->tab_strip_model();
     int index = tab_strip->GetIndexOfWebContents(content[i]);
@@ -153,7 +163,7 @@ AppShortcutLauncherItemController::GetApplicationList(int event_flags) {
     items.push_back(new ChromeLauncherAppMenuItemTab(
         title, &app_icon, web_contents, i == 0));
   }
-  return items.Pass();
+  return items;
 }
 
 std::vector<content::WebContents*>
@@ -169,18 +179,14 @@ AppShortcutLauncherItemController::GetRunningApplications() {
   }
 
   const Extension* extension =
-      launcher_controller()->GetExtensionForAppID(app_id());
+      GetExtensionForAppID(app_id(), launcher_controller()->profile());
 
   // It is possible to come here While an extension gets loaded.
   if (!extension)
     return items;
 
-  const BrowserList* ash_browser_list =
-      BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
-  for (BrowserList::const_iterator it = ash_browser_list->begin();
-       it != ash_browser_list->end(); ++it) {
-    Browser* browser = *it;
-    if (!launcher_controller()->IsBrowserFromActiveUser(browser))
+  for (auto* browser : *BrowserList::GetInstance()) {
+    if (!IsBrowserFromActiveUser(browser))
       continue;
     TabStripModel* tab_strip = browser->tab_strip_model();
     for (int index = 0; index < tab_strip->count(); index++) {
@@ -205,14 +211,8 @@ AppShortcutLauncherItemController::ItemSelected(const ui::Event& event) {
 }
 
 base::string16 AppShortcutLauncherItemController::GetTitle() {
-  return GetAppTitle();
-}
-
-ui::MenuModel* AppShortcutLauncherItemController::CreateContextMenu(
-    aura::Window* root_window) {
-  ash::ShelfItem item =
-      *(launcher_controller()->model()->ItemByID(shelf_id()));
-  return new LauncherContextMenu(launcher_controller(), &item, root_window);
+  return LauncherControllerHelper::GetAppTitle(launcher_controller()->profile(),
+                                               app_id());
 }
 
 ash::ShelfMenuModel* AppShortcutLauncherItemController::CreateApplicationMenu(
@@ -221,15 +221,12 @@ ash::ShelfMenuModel* AppShortcutLauncherItemController::CreateApplicationMenu(
 }
 
 bool AppShortcutLauncherItemController::IsDraggable() {
-  return CanPin();
+  return true;
 }
 
 bool AppShortcutLauncherItemController::CanPin() const {
-  return launcher_controller()->CanPin(app_id());
-}
-
-bool AppShortcutLauncherItemController::ShouldShowTooltip() {
-  return true;
+  return GetPinnableForAppID(app_id(), launcher_controller()->profile()) ==
+         AppListControllerDelegate::PIN_EDITABLE;
 }
 
 content::WebContents* AppShortcutLauncherItemController::GetLRUApplication() {
@@ -242,17 +239,16 @@ content::WebContents* AppShortcutLauncherItemController::GetLRUApplication() {
   }
 
   const Extension* extension =
-      launcher_controller()->GetExtensionForAppID(app_id());
+      GetExtensionForAppID(app_id(), launcher_controller()->profile());
 
   // We may get here while the extension is loading (and NULL).
   if (!extension)
     return NULL;
 
-  const BrowserList* ash_browser_list =
-      BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
-  for (BrowserList::const_reverse_iterator
-       it = ash_browser_list->begin_last_active();
-       it != ash_browser_list->end_last_active(); ++it) {
+  const BrowserList* browser_list = BrowserList::GetInstance();
+  for (BrowserList::const_reverse_iterator it =
+           browser_list->begin_last_active();
+       it != browser_list->end_last_active(); ++it) {
     Browser* browser = *it;
     if (!CanBrowserBeUsedForDirectActivation(browser, launcher_controller()))
       continue;
@@ -270,8 +266,8 @@ content::WebContents* AppShortcutLauncherItemController::GetLRUApplication() {
   // Coming here our application was not in the LRU list. This could have
   // happened because it did never get activated yet. So check the browser list
   // as well.
-  for (BrowserList::const_iterator it = ash_browser_list->begin();
-       it != ash_browser_list->end(); ++it) {
+  for (BrowserList::const_iterator it = browser_list->begin();
+       it != browser_list->end(); ++it) {
     Browser* browser = *it;
     if (!CanBrowserBeUsedForDirectActivation(browser, launcher_controller()))
       continue;
@@ -366,7 +362,7 @@ bool AppShortcutLauncherItemController::AdvanceToNextApp() {
 
 bool AppShortcutLauncherItemController::IsV2App() {
   const Extension* extension =
-      launcher_controller()->GetExtensionForAppID(app_id());
+      GetExtensionForAppID(app_id(), launcher_controller()->profile());
   return extension && extension->is_platform_app();
 }
 

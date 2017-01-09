@@ -72,6 +72,11 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   // |extension_name| is a directory in "test/data/extensions/api_test".
   bool RunExtensionTest(const std::string& extension_name);
 
+  // Similar to RunExtensionTest, except sets an additional string argument
+  // |customArg| to the test config object.
+  bool RunExtensionTestWithArg(const std::string& extension_name,
+                               const char* custom_arg);
+
   // Same as RunExtensionTest, but enables the extension for incognito mode.
   bool RunExtensionTestIncognito(const std::string& extension_name);
 
@@ -129,14 +134,41 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   bool RunPlatformAppTestWithArg(
       const std::string& extension_name, const char* custom_arg);
 
+
   // Similar to RunPlatformAppTest, with custom |flags| (as defined in the Flags
   // enum). The kFlagLaunchPlatformApp flag is automatically added.
   bool RunPlatformAppTestWithFlags(const std::string& extension_name,
                                    int flags);
 
-  // Start the test server, and store details of its state.  Those details
-  // will be available to javascript tests using chrome.test.getConfig().
+  // Similar to RunPlatformAppTestWithFlags above, except it has an additional
+  // string argument |customArg| to the test config object.
+  bool RunPlatformAppTestWithFlags(const std::string& extension_name,
+                                   const char* custom_arg,
+                                   int flags);
+
+  // Start the test server, and store details of its state. Those details
+  // will be available to JavaScript tests using chrome.test.getConfig().
   bool StartEmbeddedTestServer();
+
+  // Initialize the test server and store details of its state. Those details
+  // will be available to JavaScript tests using chrome.test.getConfig().
+  //
+  // Starting the test server is done in two steps; first the server socket is
+  // created and starts listening, followed by the start of an IO thread on
+  // which the test server will accept connectons.
+  //
+  // In general you can start the test server using StartEmbeddedTestServer()
+  // which handles both steps. When you need to register request handlers that
+  // need the server's base URL (either directly or through GetURL()), you will
+  // have to initialize the test server via this method first, get the URL and
+  // register the handler, and finally start accepting connections on the test
+  // server via InitializeEmbeddedTestServer().
+  bool InitializeEmbeddedTestServer();
+
+  // Start accepting connections on the test server. Initialize the test server
+  // before calling this method via InitializeEmbeddedTestServer(), or use
+  // StartEmbeddedTestServer() instead.
+  void EmbeddedTestServerAcceptConnections();
 
   // Start the test WebSocket server, and store details of its state. Those
   // details will be available to javascript tests using
@@ -166,13 +198,13 @@ class ExtensionApiTest : public ExtensionBrowserTest {
 
   // Hold details of the test, set in C++, which can be accessed by
   // javascript using chrome.test.getConfig().
-  scoped_ptr<base::DictionaryValue> test_config_;
+  std::unique_ptr<base::DictionaryValue> test_config_;
 
   // Hold the test WebSocket server.
-  scoped_ptr<net::SpawnedTestServer> websocket_server_;
+  std::unique_ptr<net::SpawnedTestServer> websocket_server_;
 
   // Hold the test FTP server.
-  scoped_ptr<net::SpawnedTestServer> ftp_server_;
+  std::unique_ptr<net::SpawnedTestServer> ftp_server_;
 };
 
 #endif  // CHROME_BROWSER_EXTENSIONS_EXTENSION_APITEST_H_

@@ -6,10 +6,14 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/command_line.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -17,12 +21,17 @@
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_delegate.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
+#include "chrome/browser/ui/browser_navigator.h"
+#include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/webstore_widget_private.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "chrome/common/url_constants.cc"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
-#include "device/core/device_client.h"
+#include "device/base/device_client.h"
 #include "device/usb/usb_device.h"
 #include "device/usb/usb_device_filter.h"
 #include "device/usb/usb_ids.h"
@@ -36,7 +45,6 @@
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/permissions/usb_device_permission.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -51,9 +59,12 @@ const char kPrinterProviderFoundNotificationID[] =
 const char kNoPrinterProviderNotificationID[] =
     "chrome://settings/printer/no_printer_app";
 
+const char kUSBPrinterFoundNotificationID[] =
+    "chrome://settings/cupsPrinters/printer_found";
+
 // Base class used for printer USB interfaces
 // (https://www.usb.org/developers/defined_class).
-const uint8 kPrinterInterfaceClass = 7;
+const uint8_t kPrinterInterfaceClass = 7;
 
 enum PrinterServiceEvent {
   PRINTER_ADDED,
@@ -64,7 +75,7 @@ enum PrinterServiceEvent {
   PRINTER_SERVICE_EVENT_MAX,
 };
 
-base::string16 GetNotificationTitle(uint16 vendor_id, uint16 product_id) {
+base::string16 GetNotificationTitle(uint16_t vendor_id, uint16_t product_id) {
   const char* vendor_name = device::UsbIds::GetVendorName(vendor_id);
   if (vendor_name) {
     return l10n_util::GetStringFUTF16(IDS_PRINTER_DETECTED_NOTIFICATION_TITLE,
@@ -101,11 +112,11 @@ bool HasAppThatSupportsPrinter(Profile* profile,
       return true;
     }
 
-    extensions::UsbDevicePermission::CheckParam param(
-        device->vendor_id(), device->product_id(),
-        extensions::UsbDevicePermissionData::UNSPECIFIED_INTERFACE);
+    std::unique_ptr<extensions::UsbDevicePermission::CheckParam> param =
+        extensions::UsbDevicePermission::CheckParam::ForUsbDevice(
+            extension.get(), device.get());
     if (extension->permissions_data()->CheckAPIPermissionWithParam(
-            extensions::APIPermission::kUsbDevice, &param)) {
+            extensions::APIPermission::kUsbDevice, param.get())) {
       return true;
     }
   }
@@ -142,9 +153,9 @@ class PrinterProviderExistsNotificationDelegate : public NotificationDelegate {
 class SearchPrinterAppNotificationDelegate : public NotificationDelegate {
  public:
   SearchPrinterAppNotificationDelegate(content::BrowserContext* browser_context,
-                                       uint16 vendor_id,
+                                       uint16_t vendor_id,
                                        const std::string& vendor_id_str,
-                                       uint16 product_id,
+                                       uint16_t product_id,
                                        const std::string& product_id_str)
       : browser_context_(browser_context),
         vendor_id_(vendor_id),
@@ -170,21 +181,21 @@ class SearchPrinterAppNotificationDelegate : public NotificationDelegate {
 
     extensions::EventRouter* event_router =
         extensions::EventRouter::Get(browser_context_);
-    scoped_ptr<extensions::Event> event(new extensions::Event(
+    std::unique_ptr<extensions::Event> event(new extensions::Event(
         extensions::events::WEBSTORE_WIDGET_PRIVATE_ON_SHOW_WIDGET,
         webstore_widget_private_api::OnShowWidget::kEventName,
         webstore_widget_private_api::OnShowWidget::Create(options)));
     event_router->DispatchEventToExtension(extension_misc::kWebstoreWidgetAppId,
-                                           event.Pass());
+                                           std::move(event));
   }
 
  private:
   ~SearchPrinterAppNotificationDelegate() override = default;
 
   content::BrowserContext* browser_context_;
-  uint16 vendor_id_;
+  uint16_t vendor_id_;
   std::string vendor_id_str_;
-  uint16 product_id_;
+  uint16_t product_id_;
   std::string product_id_str_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchPrinterAppNotificationDelegate);
@@ -200,7 +211,7 @@ void ShowPrinterPluggedNotification(
     NotificationUIManager* notification_ui_manager,
     const scoped_refptr<device::UsbDevice>& device) {
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-  scoped_ptr<Notification> notification;
+  std::unique_ptr<Notification> notification;
 
   const std::string kVendorIdStr = base::IntToString(device->vendor_id());
   const std::string kProductIdStr = base::IntToString(device->product_id());
@@ -247,6 +258,28 @@ void ShowPrinterPluggedNotification(
   notification_ui_manager->Add(*notification, profile);
 }
 
+class USBPrinterSetupNotificationDelegate : public NotificationDelegate {
+ public:
+  explicit USBPrinterSetupNotificationDelegate(chromeos::PrinterDetector* item)
+      : item_(item) {}
+
+  // NotificationDelegate override:
+  std::string id() const override { return kUSBPrinterFoundNotificationID; }
+
+  void ButtonClick(int button_index) override {
+    item_->ClickOnNotificationButton(button_index);
+  }
+
+  bool HasClickedListener() override { return true; }
+
+ private:
+  ~USBPrinterSetupNotificationDelegate() override = default;
+
+  chromeos::PrinterDetector* item_;
+
+  DISALLOW_COPY_AND_ASSIGN(USBPrinterSetupNotificationDelegate);
+};
+
 }  // namespace
 
 namespace chromeos {
@@ -289,19 +322,113 @@ void PrinterDetector::OnDeviceAdded(scoped_refptr<device::UsbDevice> device) {
     return;
   }
 
-  UMA_HISTOGRAM_ENUMERATION("PrinterService.PrinterServiceEvent", PRINTER_ADDED,
-                            PRINTER_SERVICE_EVENT_MAX);
+  notification_ui_manager_ = notification_ui_manager_
+                                 ? notification_ui_manager_
+                                 : g_browser_process->notification_ui_manager();
 
-  ShowPrinterPluggedNotification(
-      profile_,
-      notification_ui_manager_ ? notification_ui_manager_
-                               : g_browser_process->notification_ui_manager(),
-      device);
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          ::switches::kEnableNativeCups)) {
+    ShowUSBPrinterSetupNotification(device);
+  } else {
+    // TODO(xdai): Clean up the printer provider app notification related codes
+    // after CUPS printing support is launched.
+    UMA_HISTOGRAM_ENUMERATION("PrinterService.PrinterServiceEvent",
+                              PRINTER_ADDED, PRINTER_SERVICE_EVENT_MAX);
+    ShowPrinterPluggedNotification(profile_, notification_ui_manager_, device);
+  }
 }
 
 void PrinterDetector::SetNotificationUIManagerForTesting(
     NotificationUIManager* manager) {
   notification_ui_manager_ = manager;
+}
+
+void PrinterDetector::ShowUSBPrinterSetupNotification(
+    scoped_refptr<device::UsbDevice> device) {
+  base::string16 printer_name = device->manufacturer_string() +
+                                base::UTF8ToUTF16(" ") +
+                                device->product_string();
+  ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
+  message_center::RichNotificationData data;
+  data.buttons.push_back(message_center::ButtonInfo(l10n_util::GetStringUTF16(
+      IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_BUTTON)));
+  notification_.reset(new Notification(
+      message_center::NOTIFICATION_TYPE_SIMPLE,
+      l10n_util::GetStringUTF16(
+          IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_TITLE),      // title
+      printer_name,                                             // body
+      bundle.GetImageNamed(IDR_PRINTER_DETECTED_NOTIFICATION),  // icon
+      message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
+                                 kUSBPrinterFoundNotificationID),
+      base::string16(),  // display_source
+      GURL(), kUSBPrinterFoundNotificationID, data,
+      new USBPrinterSetupNotificationDelegate(this)));
+  notification_->SetSystemPriority();
+  command_ = ButtonCommand::SETUP;
+
+  DCHECK(notification_ui_manager_);
+  notification_ui_manager_->Add(*notification_, profile_);
+}
+
+void PrinterDetector::ClickOnNotificationButton(int button_index) {
+  // Remove the old notification first.
+  const ProfileID profile_id = NotificationUIManager::GetProfileID(profile_);
+  DCHECK(notification_ui_manager_);
+  notification_ui_manager_->CancelById(kUSBPrinterFoundNotificationID,
+                                       profile_id);
+
+  if (command_ == ButtonCommand::SETUP) {
+    OnSetUpUSBPrinterStarted();
+    // TODO(skau/xdai): call the CUPS backend to set up the USB printer and
+    // then call OnSetUpPrinterDone() or OnSetUpPrinterError() depending on
+    // the setup result.
+  } else if (command_ == ButtonCommand::CANCEL_SETUP) {
+    // TODO(skau/xdai): call the CUPS backend to cancel the printer setup.
+  } else if (command_ == ButtonCommand::GET_HELP) {
+    chrome::NavigateParams params(profile_,
+                                  GURL(chrome::kChromeUIMdCupsSettingsURL),
+                                  ui::PAGE_TRANSITION_LINK);
+    params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+    params.window_action = chrome::NavigateParams::SHOW_WINDOW;
+    chrome::Navigate(&params);
+  }
+}
+
+void PrinterDetector::OnSetUpUSBPrinterStarted() {
+  notification_->set_title(l10n_util::GetStringUTF16(
+      IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_IN_PROGRESS_TITLE));
+  notification_->set_type(message_center::NOTIFICATION_TYPE_PROGRESS);
+  notification_->set_progress(-1);
+  std::vector<message_center::ButtonInfo> buttons;
+  buttons.push_back(message_center::ButtonInfo(l10n_util::GetStringUTF16(
+      IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_CANCEL_BUTTON)));
+  notification_->set_buttons(buttons);
+  command_ = ButtonCommand::CANCEL_SETUP;
+  notification_ui_manager_->Add(*notification_, profile_);
+}
+
+void PrinterDetector::OnSetUpUSBPrinterDone() {
+  notification_->set_title(l10n_util::GetStringUTF16(
+      IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_SUCCESS_TITLE));
+  notification_->set_type(message_center::NOTIFICATION_TYPE_SIMPLE);
+  std::vector<message_center::ButtonInfo> buttons;
+  buttons.push_back(message_center::ButtonInfo(l10n_util::GetStringUTF16(
+      IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_CLOSE_BUTTON)));
+  notification_->set_buttons(buttons);
+  command_ = ButtonCommand::CLOSE;
+  notification_ui_manager_->Add(*notification_, profile_);
+}
+
+void PrinterDetector::OnSetUpUSBPrinterError() {
+  notification_->set_title(l10n_util::GetStringUTF16(
+      IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_FAILED_TITLE));
+  notification_->set_type(message_center::NOTIFICATION_TYPE_SIMPLE);
+  std::vector<message_center::ButtonInfo> buttons;
+  buttons.push_back(message_center::ButtonInfo(l10n_util::GetStringUTF16(
+      IDS_PRINTER_DETECTED_NOTIFICATION_SET_UP_GET_HELP_BUTTON)));
+  notification_->set_buttons(buttons);
+  command_ = ButtonCommand::GET_HELP;
+  notification_ui_manager_->Add(*notification_, profile_);
 }
 
 }  // namespace chromeos

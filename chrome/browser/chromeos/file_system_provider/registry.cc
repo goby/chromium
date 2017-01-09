@@ -5,8 +5,7 @@
 #include "chrome/browser/chromeos/file_system_provider/registry.h"
 
 #include "base/files/file_path.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/browser/chromeos/file_system_provider/mount_path_util.h"
 #include "chrome/browser/chromeos/file_system_provider/observer.h"
@@ -16,6 +15,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "storage/browser/fileapi/external_mount_points.h"
@@ -115,11 +116,11 @@ void Registry::ForgetFileSystem(const std::string& extension_id,
     return;  // Nothing to forget.
 
   file_systems_per_extension->RemoveWithoutPathExpansion(file_system_id, NULL);
-  if (!file_systems_per_extension->size())
+  if (file_systems_per_extension->empty())
     dict_update->Remove(extension_id, NULL);
 }
 
-scoped_ptr<Registry::RestoredFileSystems> Registry::RestoreFileSystems(
+std::unique_ptr<Registry::RestoredFileSystems> Registry::RestoreFileSystems(
     const std::string& extension_id) {
   PrefService* const pref_service = profile_->GetPrefs();
   DCHECK(pref_service);
@@ -131,10 +132,10 @@ scoped_ptr<Registry::RestoredFileSystems> Registry::RestoreFileSystems(
   const base::DictionaryValue* file_systems_per_extension = NULL;
   if (!file_systems->GetDictionaryWithoutPathExpansion(
           extension_id, &file_systems_per_extension)) {
-    return make_scoped_ptr(new RestoredFileSystems);  // Nothing to restore.
+    return base::WrapUnique(new RestoredFileSystems);  // Nothing to restore.
   }
 
-  scoped_ptr<RestoredFileSystems> restored_file_systems(
+  std::unique_ptr<RestoredFileSystems> restored_file_systems(
       new RestoredFileSystems);
 
   for (base::DictionaryValue::Iterator it(*file_systems_per_extension);
@@ -239,7 +240,7 @@ scoped_ptr<Registry::RestoredFileSystems> Registry::RestoreFileSystems(
     restored_file_systems->push_back(restored_file_system);
   }
 
-  return restored_file_systems.Pass();
+  return restored_file_systems;
 }
 
 void Registry::UpdateWatcherTag(const ProvidedFileSystemInfo& file_system_info,

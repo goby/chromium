@@ -5,6 +5,7 @@
 #include "android_webview/browser/aw_form_database_service.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/webdata/common/webdata_constants.h"
@@ -17,7 +18,8 @@ namespace {
 
 // Callback to handle database error. It seems chrome uses this to
 // display an error dialog box only.
-void DatabaseErrorCallback(sql::InitStatus status) {
+void DatabaseErrorCallback(sql::InitStatus init_status,
+                           const std::string& diagnostics) {
   LOG(WARNING) << "initializing autocomplete database failed";
 }
 
@@ -27,16 +29,16 @@ namespace android_webview {
 
 AwFormDatabaseService::AwFormDatabaseService(const base::FilePath path) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  web_database_ = new WebDatabaseService(path.Append(kWebDataFilename),
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI),
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::DB));
-  web_database_->AddTable(make_scoped_ptr(new autofill::AutofillTable));
+  web_database_ = new WebDatabaseService(
+      path.Append(kWebDataFilename),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::DB));
+  web_database_->AddTable(base::WrapUnique(new autofill::AutofillTable));
   web_database_->LoadDatabase();
 
   autofill_data_ = new autofill::AutofillWebDataService(
-      web_database_,
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI),
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::DB),
+      web_database_, BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::DB),
       base::Bind(&DatabaseErrorCallback));
   autofill_data_->Init();
 }
@@ -76,7 +78,8 @@ void AwFormDatabaseService::ClearFormDataImpl() {
 }
 
 bool AwFormDatabaseService::HasFormData() {
-  WaitableEvent completion(false, false);
+  WaitableEvent completion(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                           base::WaitableEvent::InitialState::NOT_SIGNALED);
   bool result = false;
   BrowserThread::PostTask(
       BrowserThread::DB,
@@ -103,14 +106,13 @@ void AwFormDatabaseService::HasFormDataImpl(
 
 void AwFormDatabaseService::OnWebDataServiceRequestDone(
     WebDataServiceBase::Handle h,
-    const WDTypedResult* result) {
-
+    std::unique_ptr<WDTypedResult> result) {
   DCHECK_CURRENTLY_ON(BrowserThread::DB);
   bool has_form_data = false;
   if (result) {
     DCHECK_EQ(AUTOFILL_VALUE_RESULT, result->GetType());
     const WDResult<int>* autofill_result =
-        static_cast<const WDResult<int>*>(result);
+        static_cast<const WDResult<int>*>(result.get());
     has_form_data = autofill_result->GetValue() > 0;
   }
   QueryMap::const_iterator it = result_map_.find(h);

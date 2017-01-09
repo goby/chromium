@@ -5,43 +5,44 @@
 #ifndef COMPONENTS_SYNC_BOOKMARKS_BOOKMARK_CHANGE_PROCESSOR_H_
 #define COMPONENTS_SYNC_BOOKMARKS_BOOKMARK_CHANGE_PROCESSOR_H_
 
+#include <stdint.h>
+
+#include <memory>
+#include <set>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "components/bookmarks/browser/bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node.h"
+#include "components/sync/model/change_processor.h"
+#include "components/sync/model/data_type_error_handler.h"
 #include "components/sync_bookmarks/bookmark_model_associator.h"
-#include "components/sync_driver/change_processor.h"
-#include "components/sync_driver/data_type_error_handler.h"
-
-class Profile;
 
 namespace base {
 class RefCountedMemory;
-}
+}  // namespace base
 
 namespace syncer {
+class SyncClient;
 class WriteNode;
 class WriteTransaction;
 }  // namespace syncer
 
-namespace sync_driver {
-class SyncClient;
-}
-
-namespace browser_sync {
+namespace sync_bookmarks {
 
 // This class is responsible for taking changes from the BookmarkModel
 // and applying them to the sync API 'syncable' model, and vice versa.
 // All operations and use of this class are from the UI thread.
 // This is currently bookmarks specific.
 class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
-                                public sync_driver::ChangeProcessor {
+                                public syncer::ChangeProcessor {
  public:
-  BookmarkChangeProcessor(sync_driver::SyncClient* sync_client,
-                          BookmarkModelAssociator* model_associator,
-                          sync_driver::DataTypeErrorHandler* error_handler);
+  BookmarkChangeProcessor(
+      syncer::SyncClient* sync_client,
+      BookmarkModelAssociator* model_associator,
+      std::unique_ptr<syncer::DataTypeErrorHandler> error_handler);
   ~BookmarkChangeProcessor() override;
 
   // bookmarks::BookmarkModelObserver:
@@ -82,7 +83,7 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   // the sync model to the bookmarks model.
   void ApplyChangesFromSyncModel(
       const syncer::BaseTransaction* trans,
-      int64 model_version,
+      int64_t model_version,
       const syncer::ImmutableChangeRecordList& changes) override;
 
   // The following methods are static and hence may be invoked at any time, and
@@ -94,7 +95,7 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   static void UpdateBookmarkWithSyncData(const syncer::BaseNode& sync_node,
                                          bookmarks::BookmarkModel* model,
                                          const bookmarks::BookmarkNode* node,
-                                         sync_driver::SyncClient* sync_client);
+                                         syncer::SyncClient* sync_client);
 
   // Creates a bookmark node under the given parent node from the given sync
   // node. Returns the newly created node.  The created node is placed at the
@@ -103,7 +104,7 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
       const syncer::BaseNode* sync_node,
       const bookmarks::BookmarkNode* parent,
       bookmarks::BookmarkModel* model,
-      sync_driver::SyncClient* sync_client,
+      syncer::SyncClient* sync_client,
       int index);
 
   // Overload of CreateBookmarkNode function above that helps to avoid
@@ -114,7 +115,7 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
       const syncer::BaseNode* sync_node,
       const bookmarks::BookmarkNode* parent,
       bookmarks::BookmarkModel* model,
-      sync_driver::SyncClient* sync_client,
+      syncer::SyncClient* sync_client,
       int index);
 
   // Sets the favicon of the given bookmark node from the given sync node.
@@ -124,14 +125,14 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   static bool SetBookmarkFavicon(const syncer::BaseNode* sync_node,
                                  const bookmarks::BookmarkNode* bookmark_node,
                                  bookmarks::BookmarkModel* model,
-                                 sync_driver::SyncClient* sync_client);
+                                 syncer::SyncClient* sync_client);
 
   // Applies the 1x favicon |bitmap_data| and |icon_url| to |bookmark_node|.
   // |profile| is the profile that contains the HistoryService and BookmarkModel
   // for the bookmark in question.
   static void ApplyBookmarkFavicon(
       const bookmarks::BookmarkNode* bookmark_node,
-      sync_driver::SyncClient* sync_client,
+      syncer::SyncClient* sync_client,
       const GURL& icon_url,
       const scoped_refptr<base::RefCountedMemory>& bitmap_data);
 
@@ -145,19 +146,19 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   // will be transferred to the new node.  A node corresponding to |parent|
   // must already exist and be associated for this call to succeed.  Returns
   // the ID of the just-created node, or if creation fails, kInvalidID.
-  static int64 CreateSyncNode(const bookmarks::BookmarkNode* parent,
-                              bookmarks::BookmarkModel* model,
-                              int index,
-                              syncer::WriteTransaction* trans,
-                              BookmarkModelAssociator* associator,
-                              sync_driver::DataTypeErrorHandler* error_handler);
+  static int64_t CreateSyncNode(const bookmarks::BookmarkNode* parent,
+                                bookmarks::BookmarkModel* model,
+                                int index,
+                                syncer::WriteTransaction* trans,
+                                BookmarkModelAssociator* associator,
+                                syncer::DataTypeErrorHandler* error_handler);
 
   // Update |bookmark_node|'s sync node.
-  static int64 UpdateSyncNode(const bookmarks::BookmarkNode* bookmark_node,
-                              bookmarks::BookmarkModel* model,
-                              syncer::WriteTransaction* trans,
-                              BookmarkModelAssociator* associator,
-                              sync_driver::DataTypeErrorHandler* error_handler);
+  static int64_t UpdateSyncNode(const bookmarks::BookmarkNode* bookmark_node,
+                                bookmarks::BookmarkModel* model,
+                                syncer::WriteTransaction* trans,
+                                BookmarkModelAssociator* associator,
+                                syncer::DataTypeErrorHandler* error_handler);
 
   // Tombstone |topmost_sync_node| node and all its children in the sync domain
   // using transaction |trans|. Returns the number of removed nodes.
@@ -168,7 +169,7 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   // Update transaction version of |model| and |nodes| to |new_version| if
   // it's valid.
   static void UpdateTransactionVersion(
-      int64 new_version,
+      int64_t new_version,
       bookmarks::BookmarkModel* model,
       const std::vector<const bookmarks::BookmarkNode*>& nodes);
 
@@ -182,8 +183,8 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   };
 
   // Retrieves the meta info from the given sync node.
-  static scoped_ptr<bookmarks::BookmarkNode::MetaInfoMap> GetBookmarkMetaInfo(
-      const syncer::BaseNode* sync_node);
+  static std::unique_ptr<bookmarks::BookmarkNode::MetaInfoMap>
+  GetBookmarkMetaInfo(const syncer::BaseNode* sync_node);
 
   // Sets the meta info of the given sync node from the given bookmark node.
   static void SetSyncNodeMetaInfo(const bookmarks::BookmarkNode* node,
@@ -209,7 +210,7 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
       const bookmarks::BookmarkNode* src,
       bookmarks::BookmarkModel* model,
       syncer::WriteNode* dst,
-      sync_driver::DataTypeErrorHandler* error_handler);
+      syncer::DataTypeErrorHandler* error_handler);
 
   // Helper function to encode a bookmark's favicon into raw PNG data.
   static void EncodeFavicon(const bookmarks::BookmarkNode* src,
@@ -225,7 +226,7 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   // Remove all children of |sync_node|. Returns the number of removed
   // children.
   static int RemoveAllChildNodes(syncer::WriteTransaction* trans,
-                                 int64 sync_id,
+                                 int64_t sync_id,
                                  BookmarkModelAssociator* associator);
 
   // Remove |sync_node|. It should not have any children.
@@ -240,11 +241,11 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
 
   base::ThreadChecker thread_checker_;
 
-  // The bookmark model we are processing changes from.  Non-NULL when
+  // The bookmark model we are processing changes from.  Non-null when
   // |running_| is true.
   bookmarks::BookmarkModel* bookmark_model_;
 
-  sync_driver::SyncClient* sync_client_;
+  syncer::SyncClient* sync_client_;
 
   // The two models should be associated according to this ModelAssociator.
   BookmarkModelAssociator* model_associator_;
@@ -252,6 +253,6 @@ class BookmarkChangeProcessor : public bookmarks::BookmarkModelObserver,
   DISALLOW_COPY_AND_ASSIGN(BookmarkChangeProcessor);
 };
 
-}  // namespace browser_sync
+}  // namespace sync_bookmarks
 
 #endif  // COMPONENTS_SYNC_BOOKMARKS_BOOKMARK_CHANGE_PROCESSOR_H_

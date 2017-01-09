@@ -7,7 +7,9 @@
 
 #include <directmanipulation.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/win/scoped_comptr.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/gfx_export.h"
@@ -41,7 +43,7 @@ class GFX_EXPORT DirectManipulationHelper {
  public:
   // Creates an instance of this class if Direct Manipulation is enabled on
   // the platform. If not returns NULL.
-  static scoped_ptr<DirectManipulationHelper> CreateInstance();
+  static std::unique_ptr<DirectManipulationHelper> CreateInstance();
 
   // This function instantiates Direct Manipulation and creates a viewport for
   // the passed in |window|.

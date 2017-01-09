@@ -4,7 +4,6 @@
 
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_editor_controller.h"
 
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
@@ -66,11 +65,8 @@ using bookmarks::BookmarkNode;
   // from an "Add Page..." item in a context menu.
   if (node_) {
     [self setInitialName:base::SysUTF16ToNSString(node_->GetTitle())];
-    PrefService* prefs = [self profile] ?
-        user_prefs::UserPrefs::Get([self profile]) :
-        NULL;
     base::string16 urlString =
-        chrome::FormatBookmarkURLForDisplay(node_->url(), prefs);
+        chrome::FormatBookmarkURLForDisplay(node_->url());
     initialUrl_.reset([base::SysUTF16ToNSString(urlString) retain]);
   } else {
     GURL url = [self url];

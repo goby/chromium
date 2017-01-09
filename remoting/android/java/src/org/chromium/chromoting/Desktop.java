@@ -5,20 +5,15 @@
 package org.chromium.chromoting;
 
 import android.annotation.SuppressLint;
-import android.app.AlertDialog;
-import android.content.DialogInterface;
-import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import android.content.pm.PackageManager.NameNotFoundException;
-import android.graphics.Rect;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v7.app.ActionBar.OnMenuVisibilityListener;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
-import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -26,16 +21,16 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.View.OnLayoutChangeListener;
 import android.view.View.OnTouchListener;
+import android.view.animation.Animation;
+import android.view.animation.AnimationUtils;
 import android.view.inputmethod.InputMethodManager;
 
-import org.chromium.chromoting.cardboard.DesktopActivity;
 import org.chromium.chromoting.help.HelpContext;
 import org.chromium.chromoting.help.HelpSingleton;
-import org.chromium.chromoting.jni.JniInterface;
+import org.chromium.chromoting.jni.Client;
+import org.chromium.ui.UiUtils;
 
 import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
 
 /**
  * A simple screen that does nothing except display a DesktopView and notify it of rotations.
@@ -54,28 +49,25 @@ public class Desktop
         }
     }
 
-    /**
-     * Preference used for displaying an interestitial dialog only when the user first accesses the
-     * Cardboard function.
-     */
-    private static final String PREFERENCE_CARDBOARD_DIALOG_SEEN = "cardboard_dialog_seen";
-
     /** Preference used to track the last input mode selected by the user. */
     private static final String PREFERENCE_INPUT_MODE = "input_mode";
 
-    /** The amount of time to wait to hide the Actionbar after user input is seen. */
+    /** The amount of time to wait to hide the ActionBar after user input is seen. */
     private static final int ACTIONBAR_AUTO_HIDE_DELAY_MS = 3000;
 
-    /** The surface that displays the remote host's desktop feed. */
-    private DesktopView mRemoteHostDesktop;
+    /** Duration for fade-in and fade-out animations for the ActionBar. */
+    private static final int ACTIONBAR_ANIMATION_DURATION_MS = 250;
 
-    /** Set of pressed keys for which we've sent TextEvent. */
-    private Set<Integer> mPressedTextKeys = new TreeSet<Integer>();
+    private final Event.Raisable<SystemUiVisibilityChangedEventParameter>
+            mOnSystemUiVisibilityChanged = new Event.Raisable<>();
+
+    private final Event.Raisable<InputModeChangedEventParameter> mOnInputModeChanged =
+            new Event.Raisable<>();
+
+    private Client mClient;
+    private InputEventSender mInjector;
 
     private ActivityLifecycleListener mActivityLifecycleListener;
-
-    /** Flag to indicate whether the current activity is switching to Cardboard desktop activity. */
-    private boolean mSwitchToCardboardDesktopActivity;
 
     /** Indicates whether a Soft Input UI (such as a keyboard) is visible. */
     private boolean mSoftInputVisible = false;
@@ -93,18 +85,35 @@ public class Desktop
     private CapabilityManager.HostCapability mHostTouchCapability =
             CapabilityManager.HostCapability.UNKNOWN;
 
+    private DesktopView mRemoteHostDesktop;
+
+    /**
+     * Indicates whether the device is connected to a non-hidden physical qwerty keyboard. This is
+     * set by {@link Desktop#setKeyboardState(Configuration)}. DO NOT request a soft keyboard when a
+     * physical keyboard exists, otherwise the activity will enter an undefined state where the soft
+     * keyboard never shows up meanwhile request to hide status bar always fails.
+     */
+    private boolean mHasPhysicalKeyboard;
+
+    /** Tracks whether the activity is in windowed mode. */
+    private boolean mIsInWindowedMode = false;
+
     /** Called when the activity is first created. */
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.desktop);
 
+        mClient = Client.getInstance();
+        mInjector = new InputEventSender(mClient);
+
+        Preconditions.notNull(mClient);
+
         mToolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(mToolbar);
 
         mRemoteHostDesktop = (DesktopView) findViewById(R.id.desktop_view);
-        mRemoteHostDesktop.setDesktop(this);
-        mSwitchToCardboardDesktopActivity = false;
+        mRemoteHostDesktop.init(mClient, this, mClient.getRenderStub());
 
         getSupportActionBar().setDisplayShowTitleEnabled(false);
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
@@ -116,30 +125,25 @@ public class Desktop
         // The action bar is already shown when the activity is started however calling the
         // function below will set our preferred system UI flags which will adjust the layout
         // size of the canvas and we can avoid an initial resize event.
-        showActionBar();
+        showSystemUi();
 
         View decorView = getWindow().getDecorView();
         decorView.setOnSystemUiVisibilityChangeListener(this);
 
-        mActivityLifecycleListener = CapabilityManager.getInstance().onActivityAcceptingListener(
+        // The background color is displayed when the user resizes the window in split-screen past
+        // the boundaries of the image we render.  The default background is white and we use black
+        // for our canvas, thus there is a visual artifact when we draw the canvas over the
+        // background.  Setting the background color to match our canvas will prevent the flash.
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+
+        mActivityLifecycleListener = mClient.getCapabilityManager().onActivityAcceptingListener(
                 this, Capabilities.CAST_CAPABILITY);
         mActivityLifecycleListener.onActivityCreated(this, savedInstanceState);
 
         mInputMode = getInitialInputModeValue();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            attachKeyboardVisibilityListener();
-
-            // Only create an Autohide task if the system supports immersive fullscreen mode.  Older
-            // versions of the OS benefit less from this functionality and we don't want to change
-            // the experience for them.
-            mActionBarAutoHideTask = new Runnable() {
-                public void run() {
-                    if (!mToolbar.isOverflowMenuShowing()) {
-                        hideActionBar();
-                    }
-                }
-            };
+            attachSystemUiResizeListener();
 
             // Suspend the ActionBar timer when the user interacts with the options menu.
             getSupportActionBar().addOnMenuVisibilityListener(new OnMenuVisibilityListener() {
@@ -160,38 +164,69 @@ public class Desktop
     protected void onStart() {
         super.onStart();
         mActivityLifecycleListener.onActivityStarted(this);
-        JniInterface.enableVideoChannel(true);
-        mRemoteHostDesktop.attachRedrawCallback();
-        CapabilityManager.getInstance().addListener(this);
-    }
-
-    @Override
-    protected void onPause() {
-        if (isFinishing()) mActivityLifecycleListener.onActivityPaused(this);
-        super.onPause();
-        if (!mSwitchToCardboardDesktopActivity) {
-            JniInterface.enableVideoChannel(false);
-        }
-        stopActionBarAutoHideTimer();
+        mClient.enableVideoChannel(true);
+        mClient.getCapabilityManager().addListener(this);
     }
 
     @Override
     public void onResume() {
         super.onResume();
         mActivityLifecycleListener.onActivityResumed(this);
-        JniInterface.enableVideoChannel(true);
-        startActionBarAutoHideTimer();
+        mClient.enableVideoChannel(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            // We want to call the change handler with an initial value as onMultiWindowModeChanged
+            // won't be called if the state hasn't changed, such as when the user resizes in
+            // split-screen, and we want to ensure we have a default value set (even though it may
+            // change soon after).
+            onMultiWindowModeChanged(isInMultiWindowMode());
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            setUpAutoHideToolbar();
+            syncActionBarToSystemUiState();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        if (isFinishing()) {
+            mActivityLifecycleListener.onActivityPaused(this);
+        }
+        super.onPause();
+        // The activity is paused in windowed mode when the user switches to another window.  In
+        // that case we should leave the video channel running so they continue to see updates from
+        // their remote machine.  The video channel will be stopped when onStop() is called.
+        if (!mIsInWindowedMode) {
+            mClient.enableVideoChannel(false);
+        }
+        stopActionBarAutoHideTimer();
     }
 
     @Override
     protected void onStop() {
-        CapabilityManager.getInstance().removeListener(this);
+        mClient.getCapabilityManager().removeListener(this);
         mActivityLifecycleListener.onActivityStopped(this);
         super.onStop();
-        if (mSwitchToCardboardDesktopActivity) {
-            mSwitchToCardboardDesktopActivity = false;
-        } else {
-            JniInterface.enableVideoChannel(false);
+        mClient.enableVideoChannel(false);
+    }
+
+    @Override
+    protected void onDestroy() {
+        mRemoteHostDesktop.destroy();
+        super.onDestroy();
+    }
+
+    @Override
+    public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode);
+
+        mIsInWindowedMode = isInMultiWindowMode;
+        if (!mIsInWindowedMode) {
+            setUpAutoHideToolbar();
+            syncActionBarToSystemUiState();
+        } else if (mActionBarAutoHideTask != null) {
+            stopActionBarAutoHideTimer();
+            mActionBarAutoHideTask = null;
+            showSystemUi();
+            syncActionBarToSystemUiState();
         }
     }
 
@@ -201,19 +236,6 @@ public class Desktop
         getMenuInflater().inflate(R.menu.desktop_actionbar, menu);
 
         mActivityLifecycleListener.onActivityCreatedOptionsMenu(this, menu);
-
-        boolean enableCardboard = false;
-        try {
-            ApplicationInfo ai = getPackageManager()
-                    .getApplicationInfo(getPackageName(), PackageManager.GET_META_DATA);
-            Bundle bundle = ai.metaData;
-            enableCardboard = bundle.getInt("enable_cardboard") == 1;
-        } catch (NameNotFoundException e) {
-            // Does nothing since by default Cardboard activity is turned off.
-        }
-
-        MenuItem item = menu.findItem(R.id.actionbar_cardboard);
-        item.setVisible(enableCardboard);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             // We don't need to show a hide ActionBar button if immersive fullscreen is supported.
@@ -242,15 +264,35 @@ public class Desktop
             });
         }
 
-        // TODO(joedow): Remove this line when touch input mode has been implemented.
-        menu.findItem(R.id.actionbar_input_mode).setVisible(false);
-
         ChromotingUtil.tintMenuIcons(this, menu);
 
         // Wait to set the input mode until after the default tinting has been applied.
         setInputMode(mInputMode);
 
+        // Keyboard state must be set after the keyboard icon has been added to the menu.
+        setKeyboardState(getResources().getConfiguration());
+
         return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration config) {
+        super.onConfigurationChanged(config);
+        setKeyboardState(config);
+    }
+
+    private void setKeyboardState(Configuration configuration) {
+        mHasPhysicalKeyboard = (configuration.keyboard == Configuration.KEYBOARD_QWERTY)
+                && (configuration.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO);
+        mToolbar.getMenu().findItem(R.id.actionbar_keyboard).setVisible(!mHasPhysicalKeyboard);
+    }
+
+    public Event<SystemUiVisibilityChangedEventParameter> onSystemUiVisibilityChanged() {
+        return mOnSystemUiVisibilityChanged;
+    }
+
+    public Event<InputModeChangedEventParameter> onInputModeChanged() {
+        return mOnInputModeChanged;
     }
 
     private InputMode getInitialInputModeValue() {
@@ -271,23 +313,16 @@ public class Desktop
         return inputMode;
     }
 
-    private void toggleInputMode() {
-        if (mInputMode == InputMode.TRACKPAD) {
-            setInputMode(InputMode.TOUCH);
-        } else if (mInputMode == InputMode.TOUCH) {
-            setInputMode(InputMode.TRACKPAD);
-        }
-    }
-
     private void setInputMode(InputMode inputMode) {
-        String titleText;
-        int inputModeItemColorId;
+        Menu menu = mToolbar.getMenu();
+        MenuItem trackpadModeMenuItem = menu.findItem(R.id.actionbar_trackpad_mode);
+        MenuItem touchModeMenuItem = menu.findItem(R.id.actionbar_touch_mode);
         if (inputMode == InputMode.TRACKPAD) {
-            titleText = getString(R.string.select_trackpad_mode);
-            inputModeItemColorId = R.attr.colorControlNormal;
+            trackpadModeMenuItem.setVisible(true);
+            touchModeMenuItem.setVisible(false);
         } else if (inputMode == InputMode.TOUCH) {
-            titleText = getString(R.string.select_touch_mode);
-            inputModeItemColorId = R.attr.colorControlActivated;
+            touchModeMenuItem.setVisible(true);
+            trackpadModeMenuItem.setVisible(false);
         } else {
             assert false : "Unreached";
             return;
@@ -299,15 +334,8 @@ public class Desktop
                 .putString(PREFERENCE_INPUT_MODE, mInputMode.name())
                 .apply();
 
-        Menu menu = mToolbar.getMenu();
-        MenuItem inputModeMenuItem = menu.findItem(R.id.actionbar_input_mode);
-        if (inputModeMenuItem != null) {
-            inputModeMenuItem.setTitle(titleText);
-            int color = ChromotingUtil.getColorAttribute(this, inputModeItemColorId);
-            ChromotingUtil.tintMenuIcon(inputModeMenuItem, color);
-        }
-
-        mRemoteHostDesktop.changeInputMode(mInputMode, mHostTouchCapability);
+        mOnInputModeChanged.raise(
+                new InputModeChangedEventParameter(mInputMode, mHostTouchCapability));
     }
 
     @Override
@@ -318,7 +346,8 @@ public class Desktop
             mHostTouchCapability = CapabilityManager.HostCapability.UNSUPPORTED;
         }
 
-        mRemoteHostDesktop.changeInputMode(mInputMode, mHostTouchCapability);
+        mOnInputModeChanged.raise(
+                new InputModeChangedEventParameter(mInputMode, mHostTouchCapability));
     }
 
     // Any time an onTouchListener is attached, a lint warning about filtering touch events is
@@ -348,6 +377,20 @@ public class Desktop
         });
     }
 
+    private void setUpAutoHideToolbar() {
+        if (mActionBarAutoHideTask != null) {
+            return;
+        }
+
+        mActionBarAutoHideTask = new Runnable() {
+            public void run() {
+                if (!mToolbar.isOverflowMenuShowing()) {
+                    hideSystemUi();
+                }
+            }
+        };
+    }
+
     // Posts a deplayed task to hide the ActionBar.  If an existing task has already been scheduled,
     // then the previous task is removed and the new one scheduled, effectively resetting the timer.
     private void startActionBarAutoHideTimer() {
@@ -365,27 +408,40 @@ public class Desktop
         }
     }
 
+    // Updates the ActionBar visibility to match the System UI elements.  This is useful after a
+    // power or activity lifecycle event in which the current System UI state has changed but we
+    // never received the notification.
+    private void syncActionBarToSystemUiState() {
+        onSystemUiVisibilityChange(getWindow().getDecorView().getSystemUiVisibility());
+    }
+
+    private boolean isActionBarVisible() {
+        return getSupportActionBar() != null && getSupportActionBar().isShowing();
+    }
+
+    private boolean isSystemUiVisible() {
+        return (getWindow().getDecorView().getSystemUiVisibility() & getFullscreenFlags()) == 0;
+    }
+
     /** Called whenever the visibility of the system status bar or navigation bar changes. */
     @Override
     public void onSystemUiVisibilityChange(int visibility) {
         // Ensure the action-bar's visibility matches that of the system controls. This
         // minimizes the number of states the UI can be in, to keep things simple for the user.
 
-        // Determine if the system is in fullscreen/lights-out mode. LOW_PROFILE is needed since
-        // it's the only flag supported in 4.0. But it is not sufficient in itself; when
-        // IMMERSIVE_STICKY mode is used, the system clears this flag (leaving the FULLSCREEN flag
-        // set) when the user swipes the edge to reveal the bars temporarily. When this happens,
-        // the action-bar should remain hidden.
+        // Check if the system is in fullscreen/lights-out mode then update the ActionBar to match.
         int fullscreenFlags = getFullscreenFlags();
         if ((visibility & fullscreenFlags) != 0) {
-            hideActionBarWithoutSystemUi();
+            hideActionBar();
         } else {
-            showActionBarWithoutSystemUi();
+            showActionBar();
         }
     }
 
     @SuppressLint("InlinedApi")
     private static int getFullscreenFlags() {
+        // LOW_PROFILE gives the status and navigation bars a "lights-out" appearance.
+        // FULLSCREEN hides the status bar on supported devices (4.1 and above).
         int flags = View.SYSTEM_UI_FLAG_LOW_PROFILE;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
             flags |= View.SYSTEM_UI_FLAG_FULLSCREEN;
@@ -394,7 +450,7 @@ public class Desktop
     }
 
     @SuppressLint("InlinedApi")
-    private static int getImmersiveLayoutFlags() {
+    private static int getLayoutFlags() {
         int flags = 0;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             flags |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
@@ -404,64 +460,76 @@ public class Desktop
         return flags;
     }
 
-    public void showActionBar() {
+    /**
+     * Shows the soft keyboard if no physical keyboard is attached.
+     */
+    public void showKeyboard() {
+        if (!mHasPhysicalKeyboard) {
+            UiUtils.showKeyboard(mRemoteHostDesktop);
+        }
+    }
+
+    public void showSystemUi() {
         // Request exit from any fullscreen mode. The action-bar controls will be shown in response
         // to the SystemUiVisibility notification. The visibility of the action-bar should be tied
         // to the fullscreen state of the system, so there's no need to explicitly show it here.
-        int flags = View.SYSTEM_UI_FLAG_VISIBLE | getImmersiveLayoutFlags();
+        int flags = View.SYSTEM_UI_FLAG_VISIBLE | getLayoutFlags();
         getWindow().getDecorView().setSystemUiVisibility(flags);
 
-        // The OS will not call onSystemUiVisibilityChange() if the keyboard is visible which means
-        // our ActionBar will not be visible until then.  This check allows us to work around this
-        // issue and still allow the system to show the ActionBar normally with the soft keyboard.
+        // The OS will not call onSystemUiVisibilityChange() if the soft keyboard is visible which
+        // means our ActionBar will not be shown if this function is called in that scenario.
         if (mSoftInputVisible) {
-            showActionBarWithoutSystemUi();
+            showActionBar();
         }
     }
 
     /** Shows the action bar without changing SystemUiVisibility. */
-    private void showActionBarWithoutSystemUi() {
+    private void showActionBar() {
+        Animation animation = AnimationUtils.loadAnimation(this, android.R.anim.fade_in);
+        animation.setDuration(ACTIONBAR_ANIMATION_DURATION_MS);
+        mToolbar.startAnimation(animation);
+
         getSupportActionBar().show();
         startActionBarAutoHideTimer();
     }
 
     @SuppressLint("InlinedApi")
-    public void hideActionBar() {
+    public void hideSystemUi() {
+        // If a soft input device is present, then hide the ActionBar but do not hide the rest of
+        // system UI.  A second call will be made once the soft input device is hidden.
+        if (mSoftInputVisible) {
+            hideActionBar();
+            return;
+        }
+
         // Request the device to enter fullscreen mode. Don't hide the controls yet, because the
         // system might not honor the fullscreen request immediately (for example, if the
         // keyboard is visible, the system might delay fullscreen until the keyboard is hidden).
         // The controls will be hidden in response to the SystemUiVisibility notification.
         // This helps ensure that the visibility of the controls is synchronized with the
         // fullscreen state.
-
-        // LOW_PROFILE gives the status and navigation bars a "lights-out" appearance.
-        // FULLSCREEN hides the status bar on supported devices (4.1 and above).
         int flags = getFullscreenFlags();
 
         // HIDE_NAVIGATION hides the navigation bar. However, if the user touches the screen, the
         // event is not seen by the application and instead the navigation bar is re-shown.
-        // IMMERSIVE(_STICKY) fixes this problem and allows the user to interact with the app while
+        // IMMERSIVE fixes this problem and allows the user to interact with the app while
         // keeping the navigation controls hidden. This flag was introduced in 4.4, later than
         // HIDE_NAVIGATION, and so a runtime check is needed before setting either of these flags.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             flags |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
             flags |= View.SYSTEM_UI_FLAG_IMMERSIVE;
-            flags |= getImmersiveLayoutFlags();
         }
+        flags |= getLayoutFlags();
 
         getWindow().getDecorView().setSystemUiVisibility(flags);
-
-        // The OS will not call onSystemUiVisibilityChange() until the keyboard has been dismissed
-        // which means our ActionBar will still be visible.  This check allows us to work around
-        // this issue when the keyboard is visible and the user wants additional space on the screen
-        // and still allow the system to hide the ActionBar normally when no keyboard is present.
-        if (mSoftInputVisible) {
-            hideActionBarWithoutSystemUi();
-        }
     }
 
     /** Hides the action bar without changing SystemUiVisibility. */
-    private void hideActionBarWithoutSystemUi() {
+    private void hideActionBar() {
+        Animation animation = AnimationUtils.loadAnimation(this, android.R.anim.fade_out);
+        animation.setDuration(ACTIONBAR_ANIMATION_DURATION_MS);
+        mToolbar.startAnimation(animation);
+
         getSupportActionBar().hide();
         stopActionBarAutoHideTimer();
     }
@@ -473,12 +541,14 @@ public class Desktop
 
         mActivityLifecycleListener.onActivityOptionsItemSelected(this, item);
 
-        if (id == R.id.actionbar_cardboard) {
-            onCardboardItemSelected();
+        if (id == R.id.actionbar_trackpad_mode) {
+            // When the trackpad icon is tapped, we want to switch the input mode to touch.
+            setInputMode(InputMode.TOUCH);
             return true;
         }
-        if (id == R.id.actionbar_input_mode) {
-            toggleInputMode();
+        if (id == R.id.actionbar_touch_mode) {
+            // When the touch icon is tapped, we want to switch the input mode to trackpad.
+            setInputMode(InputMode.TRACKPAD);
             return true;
         }
         if (id == R.id.actionbar_keyboard) {
@@ -486,25 +556,15 @@ public class Desktop
             return true;
         }
         if (id == R.id.actionbar_hide) {
-            hideActionBar();
+            hideSystemUi();
             return true;
         }
         if (id == R.id.actionbar_disconnect || id == android.R.id.home) {
-            JniInterface.disconnectFromHost();
+            mClient.destroy();
             return true;
         }
         if (id == R.id.actionbar_send_ctrl_alt_del) {
-            int[] keys = {
-                KeyEvent.KEYCODE_CTRL_LEFT,
-                KeyEvent.KEYCODE_ALT_LEFT,
-                KeyEvent.KEYCODE_FORWARD_DEL,
-            };
-            for (int key : keys) {
-                JniInterface.sendKeyEvent(0, key, true);
-            }
-            for (int key : keys) {
-                JniInterface.sendKeyEvent(0, key, false);
-            }
+            mInjector.sendCtrlAltDel();
             return true;
         }
         if (id == R.id.actionbar_help) {
@@ -514,9 +574,9 @@ public class Desktop
         return super.onOptionsItemSelected(item);
     }
 
-    private void attachKeyboardVisibilityListener() {
-        View keyboardVisibilityDetector = findViewById(R.id.resize_detector);
-        keyboardVisibilityDetector.addOnLayoutChangeListener(new OnLayoutChangeListener() {
+    private void attachSystemUiResizeListener() {
+        View systemUiResizeDetector = findViewById(R.id.resize_detector);
+        systemUiResizeDetector.addOnLayoutChangeListener(new OnLayoutChangeListener() {
             // Tracks the maximum 'bottom' value seen during layout changes.  This value represents
             // the top of the SystemUI displayed at the bottom of the screen.
             // Note: This value is a screen coordinate so a larger value means lower on the screen.
@@ -538,138 +598,56 @@ public class Desktop
                     return;
                 }
 
-                // If the delta between lowest bound we have seen (should be a systemUI such as
+                // If the delta between lowest bound we have seen (should be a System UI such as
                 // the navigation bar) and the current bound does not match, then we have a form
                 // of soft input displayed.  Note that the size of a soft input device can change
                 // when the input method is changed so we want to send updates to the image canvas
                 // whenever they occur.
+                boolean oldSoftInputVisible = mSoftInputVisible;
                 mSoftInputVisible = (bottom < mMaxBottomValue);
-                mRemoteHostDesktop.onSoftInputMethodVisibilityChanged(
-                        mSoftInputVisible, new Rect(left, top, right, bottom));
+
+                // Send the System UI sizes if either the Soft Keyboard is displayed or if we are in
+                // windowed mode and there is System UI present.  The user needs to be able to move
+                // the canvas so they can see where they are typing in the first case and in the
+                // second, the System UI is always present so the user needs a way to position the
+                // canvas so all parts of the desktop can be made visible.
+                if (mSoftInputVisible || (mIsInWindowedMode && isSystemUiVisible())) {
+                    mOnSystemUiVisibilityChanged.raise(
+                            new SystemUiVisibilityChangedEventParameter(left, top, right, bottom));
+                } else {
+                    mOnSystemUiVisibilityChanged.raise(
+                            new SystemUiVisibilityChangedEventParameter(0, 0, 0, 0));
+                }
+
+                boolean softInputVisibilityChanged = oldSoftInputVisible != mSoftInputVisible;
+                if (!mSoftInputVisible && softInputVisibilityChanged && !isActionBarVisible()) {
+                    // Queue a task which will run after the current action (OSK dismiss) has
+                    // completed, otherwise the hide request will not take effect.
+                    new Handler().post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!mSoftInputVisible && !isActionBarVisible()) {
+                                hideSystemUi();
+                            }
+                        }
+                    });
+                }
             }
         });
     }
 
-    private void onCardboardItemSelected() {
-        if (getPreferences(MODE_PRIVATE).getBoolean(PREFERENCE_CARDBOARD_DIALOG_SEEN, false)) {
-            switchToCardboardMode();
-            return;
-        }
-
-        new AlertDialog.Builder(this)
-                .setTitle(getTitle())
-                .setMessage(R.string.cardboard_warning_message)
-                .setIcon(R.drawable.ic_cardboard)
-                .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int id) {
-                        getPreferences(MODE_PRIVATE)
-                                .edit()
-                                .putBoolean(PREFERENCE_CARDBOARD_DIALOG_SEEN, true)
-                                .apply();
-                        switchToCardboardMode();
-                    }
-                })
-                .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int id) {
-                    }
-                })
-                .create()
-                .show();
-    }
-
-    private void switchToCardboardMode() {
-        mSwitchToCardboardDesktopActivity = true;
-        Intent intent = new Intent(this, DesktopActivity.class);
-        startActivityForResult(intent, Chromoting.CARDBOARD_DESKTOP_ACTIVITY);
-    }
-
     /**
      * Called once when a keyboard key is pressed, then again when that same key is released. This
-     * is not guaranteed to be notified of all soft keyboard events: certian keyboards might not
+     * is not guaranteed to be notified of all soft keyboard events: certain keyboards might not
      * call it at all, while others might skip it in certain situations (e.g. swipe input).
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        int keyCode = event.getKeyCode();
-
-        // Dispatch the back button to the system to handle navigation
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            JniInterface.disconnectFromHost();
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            mClient.destroy();
             return super.dispatchKeyEvent(event);
         }
 
-        boolean pressed = event.getAction() == KeyEvent.ACTION_DOWN;
-
-        // Physical keyboard must work as if it is connected to the remote host
-        // and so events coming from physical keyboard never generate text
-        // events. Also scan codes must be used instead of key code, so that
-        // the keyboard layout selected on the client doesn't affect the key
-        // codes sent to the host.
-        if (event.getDeviceId() != KeyCharacterMap.VIRTUAL_KEYBOARD) {
-            return JniInterface.sendKeyEvent(event.getScanCode(), 0, pressed);
-        }
-
-        // Events received from software keyboards generate TextEvent in two
-        // cases:
-        //   1. This is an ACTION_MULTIPLE event.
-        //   2. Ctrl, Alt and Meta are not pressed.
-        // This ensures that on-screen keyboard always injects input that
-        // correspond to what user sees on the screen, while physical keyboard
-        // acts as if it is connected to the remote host.
-        if (event.getAction() == KeyEvent.ACTION_MULTIPLE) {
-            JniInterface.sendTextEvent(event.getCharacters());
-            return true;
-        }
-
-        // For Enter getUnicodeChar() returns 10 (line feed), but we still
-        // want to send it as KeyEvent.
-        int unicode = keyCode != KeyEvent.KEYCODE_ENTER ? event.getUnicodeChar() : 0;
-
-        boolean no_modifiers = !event.isAltPressed()
-                && !event.isCtrlPressed() && !event.isMetaPressed();
-
-        if (pressed && unicode != 0 && no_modifiers) {
-            mPressedTextKeys.add(keyCode);
-            int[] codePoints = { unicode };
-            JniInterface.sendTextEvent(new String(codePoints, 0, 1));
-            return true;
-        }
-
-        if (!pressed && mPressedTextKeys.contains(keyCode)) {
-            mPressedTextKeys.remove(keyCode);
-            return true;
-        }
-
-        switch (keyCode) {
-            // KEYCODE_AT, KEYCODE_POUND, KEYCODE_STAR and KEYCODE_PLUS are
-            // deprecated, but they still need to be here for older devices and
-            // third-party keyboards that may still generate these events. See
-            // https://source.android.com/devices/input/keyboard-devices.html#legacy-unsupported-keys
-            case KeyEvent.KEYCODE_AT:
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_SHIFT_LEFT, pressed);
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_2, pressed);
-                return true;
-
-            case KeyEvent.KEYCODE_POUND:
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_SHIFT_LEFT, pressed);
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_3, pressed);
-                return true;
-
-            case KeyEvent.KEYCODE_STAR:
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_SHIFT_LEFT, pressed);
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_8, pressed);
-                return true;
-
-            case KeyEvent.KEYCODE_PLUS:
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_SHIFT_LEFT, pressed);
-                JniInterface.sendKeyEvent(0, KeyEvent.KEYCODE_EQUALS, pressed);
-                return true;
-
-            default:
-                // We try to send all other key codes to the host directly.
-                return JniInterface.sendKeyEvent(0, keyCode, pressed);
-        }
+        return mInjector.sendKeyEvent(event);
     }
 }

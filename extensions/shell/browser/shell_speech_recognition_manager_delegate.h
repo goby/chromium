@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_SHELL_BROWSER_SHELL_SPEECH_RECOGNITION_MANAGER_DELEGATE_H_
 #define EXTENSIONS_SHELL_BROWSER_SHELL_SPEECH_RECOGNITION_MANAGER_DELEGATE_H_
 
+#include "base/macros.h"
 #include "content/public/browser/speech_recognition_event_listener.h"
 #include "content/public/browser/speech_recognition_manager_delegate.h"
 
@@ -38,8 +39,6 @@ class ShellSpeechRecognitionManagerDelegate
                            float noise_volume) override;
 
   // SpeechRecognitionManagerDelegate methods.
-  void GetDiagnosticInformation(bool* can_report_metrics,
-                                std::string* hardware_info) override;
   void CheckRecognitionIsAllowed(
       int session_id,
       base::Callback<void(bool ask_user, bool is_allowed)> callback) override;

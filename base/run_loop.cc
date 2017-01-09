@@ -6,10 +6,7 @@
 
 #include "base/bind.h"
 #include "base/tracked_objects.h"
-
-#if defined(OS_WIN)
-#include "base/message_loop/message_pump_dispatcher.h"
-#endif
+#include "build/build_config.h"
 
 namespace base {
 
@@ -22,29 +19,13 @@ RunLoop::RunLoop()
       running_(false),
       quit_when_idle_received_(false),
       weak_factory_(this) {
-#if defined(OS_WIN)
-   dispatcher_ = NULL;
-#endif
 }
-
-#if defined(OS_WIN)
-RunLoop::RunLoop(MessagePumpDispatcher* dispatcher)
-    : loop_(MessageLoop::current()),
-      previous_run_loop_(NULL),
-      dispatcher_(dispatcher),
-      run_depth_(0),
-      run_called_(false),
-      quit_called_(false),
-      running_(false),
-      quit_when_idle_received_(false),
-      weak_factory_(this) {
-}
-#endif
 
 RunLoop::~RunLoop() {
 }
 
 void RunLoop::Run() {
+  DCHECK(thread_checker_.CalledOnValidThread());
   if (!BeforeRun())
     return;
 
@@ -64,6 +45,7 @@ void RunLoop::RunUntilIdle() {
 }
 
 void RunLoop::Quit() {
+  DCHECK(thread_checker_.CalledOnValidThread());
   quit_called_ = true;
   if (running_ && loop_->run_loop_ == this) {
     // This is the inner-most RunLoop, so quit now.
@@ -71,8 +53,17 @@ void RunLoop::Quit() {
   }
 }
 
+void RunLoop::QuitWhenIdle() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  quit_when_idle_received_ = true;
+}
+
 base::Closure RunLoop::QuitClosure() {
   return base::Bind(&RunLoop::Quit, weak_factory_.GetWeakPtr());
+}
+
+base::Closure RunLoop::QuitWhenIdleClosure() {
+  return base::Bind(&RunLoop::QuitWhenIdle, weak_factory_.GetWeakPtr());
 }
 
 bool RunLoop::BeforeRun() {
@@ -87,6 +78,9 @@ bool RunLoop::BeforeRun() {
   previous_run_loop_ = loop_->run_loop_;
   run_depth_ = previous_run_loop_? previous_run_loop_->run_depth_ + 1 : 1;
   loop_->run_loop_ = this;
+
+  if (run_depth_ > 1)
+    loop_->NotifyBeginNestedLoop();
 
   running_ = true;
   return true;

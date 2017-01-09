@@ -4,13 +4,13 @@
 
 #include "chrome/browser/browsing_data/browsing_data_cookie_helper.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -68,26 +68,16 @@ void BrowsingDataCookieHelper::FetchCookiesOnIOThread(
     const FetchCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!callback.is_null());
-  scoped_refptr<net::CookieMonster> cookie_monster =
-      request_context_getter_->GetURLRequestContext()->
-      cookie_store()->GetCookieMonster();
-  if (cookie_monster.get()) {
-    cookie_monster->GetAllCookiesAsync(base::Bind(&OnFetchComplete, callback));
-  } else {
-    OnFetchComplete(callback, net::CookieList());
-  }
+  request_context_getter_->GetURLRequestContext()->cookie_store()->
+      GetAllCookiesAsync(base::Bind(&OnFetchComplete, callback));
 }
 
 void BrowsingDataCookieHelper::DeleteCookieOnIOThread(
     const net::CanonicalCookie& cookie) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  scoped_refptr<net::CookieMonster> cookie_monster =
-      request_context_getter_->GetURLRequestContext()->
-      cookie_store()->GetCookieMonster();
-  if (cookie_monster.get()) {
-    cookie_monster->DeleteCanonicalCookieAsync(
-        cookie, net::CookieMonster::DeleteCookieCallback());
-  }
+  request_context_getter_->GetURLRequestContext()->cookie_store()->
+      DeleteCanonicalCookieAsync(
+          cookie, net::CookieStore::DeleteCallback());
 }
 
 CannedBrowsingDataCookieHelper::CannedBrowsingDataCookieHelper(
@@ -112,15 +102,13 @@ void CannedBrowsingDataCookieHelper::AddChangedCookie(
     const GURL& url,
     const std::string& cookie_line,
     const net::CookieOptions& options) {
-  scoped_ptr<net::CanonicalCookie> cookie(net::CanonicalCookie::Create(
+  std::unique_ptr<net::CanonicalCookie> cookie(net::CanonicalCookie::Create(
       url, cookie_line, base::Time::Now(), options));
   if (cookie.get())
     AddCookie(frame_url, *cookie);
 }
 
 void CannedBrowsingDataCookieHelper::Reset() {
-  STLDeleteContainerPairSecondPointers(origin_cookie_set_map_.begin(),
-                                       origin_cookie_set_map_.end());
   origin_cookie_set_map_.clear();
 }
 
@@ -142,7 +130,7 @@ size_t CannedBrowsingDataCookieHelper::GetCookieCount() const {
 
 
 void CannedBrowsingDataCookieHelper::StartFetching(
-    const net::CookieMonster::GetCookieListCallback& callback) {
+    const net::CookieStore::GetCookieListCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   net::CookieList cookie_list;
   for (const auto& pair : origin_cookie_set_map_) {
@@ -155,7 +143,7 @@ void CannedBrowsingDataCookieHelper::StartFetching(
 void CannedBrowsingDataCookieHelper::DeleteCookie(
     const net::CanonicalCookie& cookie) {
   for (const auto& pair : origin_cookie_set_map_)
-    DeleteMatchingCookie(cookie, pair.second);
+    DeleteMatchingCookie(cookie, pair.second.get());
   BrowsingDataCookieHelper::DeleteCookie(cookie);
 }
 
@@ -167,17 +155,13 @@ bool CannedBrowsingDataCookieHelper::DeleteMatchingCookie(
 
 canonical_cookie::CookieHashSet* CannedBrowsingDataCookieHelper::GetCookiesFor(
     const GURL& first_party_origin) {
-  OriginCookieSetMap::iterator it =
-      origin_cookie_set_map_.find(first_party_origin);
-  if (it == origin_cookie_set_map_.end()) {
-    canonical_cookie::CookieHashSet* cookies =
-        new canonical_cookie::CookieHashSet;
-    origin_cookie_set_map_.insert(
-        std::pair<GURL, canonical_cookie::CookieHashSet*>(first_party_origin,
-                                                          cookies));
-    return cookies;
-  }
-  return it->second;
+  std::unique_ptr<canonical_cookie::CookieHashSet>& entry =
+      origin_cookie_set_map_[first_party_origin];
+  if (entry)
+    return entry.get();
+
+  entry = base::MakeUnique<canonical_cookie::CookieHashSet>();
+  return entry.get();
 }
 
 void CannedBrowsingDataCookieHelper::AddCookie(

@@ -4,7 +4,7 @@
 
 import("//testing/test.gni")
 
-source_set("proximity_auth") {
+static_library("proximity_auth") {
   sources = [
     "authenticator.h",
     "bluetooth_connection.cc",
@@ -46,8 +46,6 @@ source_set("proximity_auth") {
     "proximity_monitor_impl.cc",
     "proximity_monitor_impl.h",
     "proximity_monitor_observer.h",
-    "remote_device.cc",
-    "remote_device.h",
     "remote_device_life_cycle.h",
     "remote_device_life_cycle_impl.cc",
     "remote_device_life_cycle_impl.h",
@@ -71,10 +69,11 @@ source_set("proximity_auth") {
 
   deps = [
     "//base",
-    "//base:prefs",
+    "//components/cryptauth",
+    "//components/prefs",
     "//components/proximity_auth/ble",
-    "//components/proximity_auth/cryptauth",
     "//components/proximity_auth/logging",
+    "//components/signin/core/account_id:account_id",
     "//device/bluetooth",
     "//net",
   ]
@@ -82,17 +81,14 @@ source_set("proximity_auth") {
   # TODO(https://crbug.com/562683): This whitelists a circular include
   # dependency between this target and the following targets which should not
   # exist.
-  allow_circular_includes_from = [
-    "//components/proximity_auth/ble",
-    "//components/proximity_auth/cryptauth",
-  ]
+  allow_circular_includes_from = [ "//components/proximity_auth/ble" ]
 
   if (is_chromeos) {
     deps += [ "//chromeos" ]
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
 
   sources = [
@@ -114,7 +110,7 @@ source_set("test_support") {
 
   deps = [
     "//base",
-    "//components/proximity_auth/cryptauth:test_support",
+    "//components/cryptauth:test_support",
     "//components/proximity_auth/logging",
     "//testing/gmock",
   ]
@@ -148,11 +144,11 @@ source_set("unit_tests") {
     ":proximity_auth",
     ":test_support",
     "//base",
-    "//base:prefs_test_support",
     "//base/test:test_support",
+    "//components/cryptauth:test_support",
+    "//components/cryptauth:unit_tests",
+    "//components/prefs:test_support",
     "//components/proximity_auth/ble:unit_tests",
-    "//components/proximity_auth/cryptauth:test_support",
-    "//components/proximity_auth/cryptauth:unit_tests",
     "//components/proximity_auth/logging",
     "//components/proximity_auth/logging:unit_tests",
     "//device/bluetooth:mocks",

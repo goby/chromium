@@ -4,12 +4,14 @@
 
 #include "google_apis/gcm/engine/gcm_store_impl.h"
 
-#include "base/basictypes.h"
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/sequenced_task_runner.h"
@@ -18,7 +20,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/tracked_objects.h"
 #include "google_apis/gcm/base/encryptor.h"
@@ -176,6 +178,13 @@ leveldb::Slice MakeSlice(const base::StringPiece& s) {
   return leveldb::Slice(s.begin(), s.size());
 }
 
+bool DatabaseExists(const base::FilePath& path) {
+  // It's not enough to check that the directory exists, since DestroyDB
+  // sometimes leaves behind an empty directory
+  // (https://github.com/google/leveldb/issues/215).
+  return base::PathExists(path.Append(FILE_PATH_LITERAL("CURRENT")));
+}
+
 }  // namespace
 
 class GCMStoreImpl::Backend
@@ -183,14 +192,14 @@ class GCMStoreImpl::Backend
  public:
   Backend(const base::FilePath& path,
           scoped_refptr<base::SequencedTaskRunner> foreground_runner,
-          scoped_ptr<Encryptor> encryptor);
+          std::unique_ptr<Encryptor> encryptor);
 
   // Blocking implementations of GCMStoreImpl methods.
   void Load(StoreOpenMode open_mode, const LoadCallback& callback);
   void Close();
   void Destroy(const UpdateCallback& callback);
-  void SetDeviceCredentials(uint64 device_android_id,
-                            uint64 device_security_token,
+  void SetDeviceCredentials(uint64_t device_android_id,
+                            uint64_t device_security_token,
                             const UpdateCallback& callback);
   void AddRegistration(const std::string& serialized_key,
                        const std::string& serialized_value,
@@ -209,7 +218,7 @@ class GCMStoreImpl::Backend
       const base::Callback<void(bool, const AppIdToMessageCountMap&)>
           callback);
   void AddUserSerialNumber(const std::string& username,
-                           int64 serial_number,
+                           int64_t serial_number,
                            const UpdateCallback& callback);
   void RemoveUserSerialNumber(const std::string& username,
                               const UpdateCallback& callback);
@@ -245,7 +254,7 @@ class GCMStoreImpl::Backend
   ~Backend();
 
   LoadStatus OpenStoreAndLoadData(StoreOpenMode open_mode, LoadResult* result);
-  bool LoadDeviceCredentials(uint64* android_id, uint64* security_token);
+  bool LoadDeviceCredentials(uint64_t* android_id, uint64_t* security_token);
   bool LoadRegistrations(std::map<std::string, std::string>* registrations);
   bool LoadIncomingMessages(std::vector<std::string>* incoming_messages);
   bool LoadOutgoingMessages(OutgoingMessageMap* outgoing_messages);
@@ -260,19 +269,18 @@ class GCMStoreImpl::Backend
 
   const base::FilePath path_;
   scoped_refptr<base::SequencedTaskRunner> foreground_task_runner_;
-  scoped_ptr<Encryptor> encryptor_;
+  std::unique_ptr<Encryptor> encryptor_;
 
-  scoped_ptr<leveldb::DB> db_;
+  std::unique_ptr<leveldb::DB> db_;
 };
 
 GCMStoreImpl::Backend::Backend(
     const base::FilePath& path,
     scoped_refptr<base::SequencedTaskRunner> foreground_task_runner,
-    scoped_ptr<Encryptor> encryptor)
+    std::unique_ptr<Encryptor> encryptor)
     : path_(path),
       foreground_task_runner_(foreground_task_runner),
-      encryptor_(encryptor.Pass()) {
-}
+      encryptor_(std::move(encryptor)) {}
 
 GCMStoreImpl::Backend::~Backend() {}
 
@@ -286,7 +294,7 @@ LoadStatus GCMStoreImpl::Backend::OpenStoreAndLoadData(StoreOpenMode open_mode,
 
   // Checks if the store exists or not. Calling DB::Open with create_if_missing
   // not set will still create a new directory if the store does not exist.
-  if (open_mode == DO_NOT_CREATE && !base::DirectoryExists(path_)) {
+  if (open_mode == DO_NOT_CREATE && !DatabaseExists(path_)) {
     DVLOG(2) << "Database " << path_.value() << " does not exist";
     return STORE_DOES_NOT_EXIST;
   }
@@ -340,7 +348,7 @@ LoadStatus GCMStoreImpl::Backend::OpenStoreAndLoadData(StoreOpenMode open_mode,
 
 void GCMStoreImpl::Backend::Load(StoreOpenMode open_mode,
                                  const LoadCallback& callback) {
-  scoped_ptr<LoadResult> result(new LoadResult());
+  std::unique_ptr<LoadResult> result(new LoadResult());
   LoadStatus load_status = OpenStoreAndLoadData(open_mode, result.get());
   UMA_HISTOGRAM_ENUMERATION("GCM.LoadStatus", load_status, LOAD_STATUS_COUNT);
   if (load_status != LOADING_SUCCEEDED) {
@@ -366,7 +374,7 @@ void GCMStoreImpl::Backend::Load(StoreOpenMode open_mode,
 
   // Only record histograms if GCM had already been set up for this device.
   if (result->device_android_id != 0 && result->device_security_token != 0) {
-    int64 file_size = 0;
+    int64_t file_size = 0;
     if (base::GetFileSize(path_, &file_size)) {
       UMA_HISTOGRAM_COUNTS("GCM.StoreSizeKB",
                            static_cast<int>(file_size / 1024));
@@ -418,8 +426,8 @@ void GCMStoreImpl::Backend::Destroy(const UpdateCallback& callback) {
 }
 
 void GCMStoreImpl::Backend::SetDeviceCredentials(
-    uint64 device_android_id,
-    uint64 device_security_token,
+    uint64_t device_android_id,
+    uint64_t device_security_token,
     const UpdateCallback& callback) {
   DVLOG(1) << "Saving device credentials with AID " << device_android_id;
   if (!db_.get()) {
@@ -636,7 +644,7 @@ void GCMStoreImpl::Backend::SetLastCheckinInfo(
     const UpdateCallback& callback) {
   leveldb::WriteBatch write_batch;
 
-  int64 last_checkin_time_internal = time.ToInternalValue();
+  int64_t last_checkin_time_internal = time.ToInternalValue();
   write_batch.Put(MakeSlice(kLastCheckinTimeKey),
                   MakeSlice(base::Int64ToString(last_checkin_time_internal)));
 
@@ -693,7 +701,7 @@ void GCMStoreImpl::Backend::SetGServicesSettings(
   // Remove all existing settings.
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kGServiceSettingKeyStart));
        iter->Valid() && iter->key().ToString() < kGServiceSettingKeyEnd;
        iter->Next()) {
@@ -899,8 +907,8 @@ void GCMStoreImpl::Backend::SetValue(const std::string& key,
   foreground_task_runner_->PostTask(FROM_HERE, base::Bind(callback, s.ok()));
 }
 
-bool GCMStoreImpl::Backend::LoadDeviceCredentials(uint64* android_id,
-                                                  uint64* security_token) {
+bool GCMStoreImpl::Backend::LoadDeviceCredentials(uint64_t* android_id,
+                                                  uint64_t* security_token) {
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
 
@@ -938,7 +946,7 @@ bool GCMStoreImpl::Backend::LoadRegistrations(
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kRegistrationKeyStart));
        iter->Valid() && iter->key().ToString() < kRegistrationKeyEnd;
        iter->Next()) {
@@ -960,7 +968,7 @@ bool GCMStoreImpl::Backend::LoadIncomingMessages(
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kIncomingMsgKeyStart));
        iter->Valid() && iter->key().ToString() < kIncomingMsgKeyEnd;
        iter->Next()) {
@@ -982,7 +990,7 @@ bool GCMStoreImpl::Backend::LoadOutgoingMessages(
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kOutgoingMsgKeyStart));
        iter->Valid() && iter->key().ToString() < kOutgoingMsgKeyEnd;
        iter->Next()) {
@@ -991,9 +999,9 @@ bool GCMStoreImpl::Backend::LoadOutgoingMessages(
       LOG(ERROR) << "Error reading incoming message with key " << s.ToString();
       return false;
     }
-    uint8 tag = iter->value().data()[0];
+    uint8_t tag = iter->value().data()[0];
     std::string id = ParseOutgoingKey(iter->key().ToString());
-    scoped_ptr<google::protobuf::MessageLite> message(
+    std::unique_ptr<google::protobuf::MessageLite> message(
         BuildProtobufFromTag(tag));
     if (!message.get() ||
         !message->ParseFromString(iter->value().ToString().substr(1))) {
@@ -1019,7 +1027,7 @@ bool GCMStoreImpl::Backend::LoadLastCheckinInfo(
   leveldb::Status s = db_->Get(read_options,
                                MakeSlice(kLastCheckinTimeKey),
                                &result);
-  int64 time_internal = 0LL;
+  int64_t time_internal = 0LL;
   if (s.ok() && !base::StringToInt64(result, &time_internal)) {
     LOG(ERROR) << "Failed to restore last checkin time. Using default = 0.";
     time_internal = 0LL;
@@ -1048,7 +1056,7 @@ bool GCMStoreImpl::Backend::LoadGServicesSettings(
   read_options.verify_checksums = true;
 
   // Load all of the GServices settings.
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kGServiceSettingKeyStart));
        iter->Valid() && iter->key().ToString() < kGServiceSettingKeyEnd;
        iter->Next()) {
@@ -1074,7 +1082,7 @@ bool GCMStoreImpl::Backend::LoadAccountMappingInfo(
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kAccountKeyStart));
        iter->Valid() && iter->key().ToString() < kAccountKeyEnd;
        iter->Next()) {
@@ -1100,7 +1108,7 @@ bool GCMStoreImpl::Backend::LoadLastTokenFetchTime(
   std::string result;
   leveldb::Status s =
       db_->Get(read_options, MakeSlice(kLastTokenFetchTimeKey), &result);
-  int64 time_internal = 0LL;
+  int64_t time_internal = 0LL;
   if (s.ok() && !base::StringToInt64(result, &time_internal)) {
     LOG(ERROR) <<
         "Failed to restore last token fetching time. Using default = 0.";
@@ -1118,7 +1126,7 @@ bool GCMStoreImpl::Backend::LoadHeartbeatIntervals(
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kHeartbeatKeyStart));
        iter->Valid() && iter->key().ToString() < kHeartbeatKeyEnd;
        iter->Next()) {
@@ -1142,7 +1150,7 @@ bool GCMStoreImpl::Backend::LoadInstanceIDData(
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
+  std::unique_ptr<leveldb::Iterator> iter(db_->NewIterator(read_options));
   for (iter->Seek(MakeSlice(kInstanceIDKeyStart));
        iter->Valid() && iter->key().ToString() < kInstanceIDKeyEnd;
        iter->Next()) {
@@ -1162,13 +1170,12 @@ bool GCMStoreImpl::Backend::LoadInstanceIDData(
 GCMStoreImpl::GCMStoreImpl(
     const base::FilePath& path,
     scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
-    scoped_ptr<Encryptor> encryptor)
+    std::unique_ptr<Encryptor> encryptor)
     : backend_(new Backend(path,
                            base::ThreadTaskRunnerHandle::Get(),
-                           encryptor.Pass())),
+                           std::move(encryptor))),
       blocking_task_runner_(blocking_task_runner),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 GCMStoreImpl::~GCMStoreImpl() {}
 
@@ -1197,8 +1204,8 @@ void GCMStoreImpl::Destroy(const UpdateCallback& callback) {
       base::Bind(&GCMStoreImpl::Backend::Destroy, backend_, callback));
 }
 
-void GCMStoreImpl::SetDeviceCredentials(uint64 device_android_id,
-                                        uint64 device_security_token,
+void GCMStoreImpl::SetDeviceCredentials(uint64_t device_android_id,
+                                        uint64_t device_security_token,
                                         const UpdateCallback& callback) {
   blocking_task_runner_->PostTask(
       FROM_HERE,
@@ -1424,13 +1431,13 @@ void GCMStoreImpl::SetValueForTesting(const std::string& key,
 }
 
 void GCMStoreImpl::LoadContinuation(const LoadCallback& callback,
-                                    scoped_ptr<LoadResult> result) {
+                                    std::unique_ptr<LoadResult> result) {
   // TODO(pkasting): Remove ScopedTracker below once crbug.com/477117 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "477117 GCMStoreImpl::LoadContinuation"));
   if (!result->success) {
-    callback.Run(result.Pass());
+    callback.Run(std::move(result));
     return;
   }
   int num_throttled_apps = 0;
@@ -1448,7 +1455,7 @@ void GCMStoreImpl::LoadContinuation(const LoadCallback& callback,
       num_throttled_apps++;
   }
   UMA_HISTOGRAM_COUNTS("GCM.NumThrottledApps", num_throttled_apps);
-  callback.Run(result.Pass());
+  callback.Run(std::move(result));
 }
 
 void GCMStoreImpl::AddOutgoingMessageContinuation(

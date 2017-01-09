@@ -10,10 +10,13 @@
 #ifndef UI_BASE_CLIPBOARD_CUSTOM_DATA_HELPER_H_
 #define UI_BASE_CLIPBOARD_CUSTOM_DATA_HELPER_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <vector>
 
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "ui/base/ui_base_export.h"
 
 namespace base {
@@ -32,8 +35,6 @@ namespace ui {
 
 #if defined(OS_MACOSX) && !defined(USE_AURA)
 UI_BASE_EXPORT extern NSString* const kWebCustomDataPboardType;
-#elif !defined(OS_WIN) && defined(USE_AURA)
-UI_BASE_EXPORT extern const char kMimeTypeWebCustomData[];
 #endif
 
 UI_BASE_EXPORT void ReadCustomDataTypes(const void* data,

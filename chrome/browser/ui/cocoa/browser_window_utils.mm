@@ -4,8 +4,6 @@
 
 #import "chrome/browser/ui/cocoa/browser_window_utils.h"
 
-#include <Carbon/Carbon.h>
-
 #include "base/logging.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/global_keyboard_shortcuts_mac.h"
@@ -13,8 +11,20 @@
 #import "chrome/browser/ui/cocoa/chrome_event_processing_window.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_controller.h"
 #include "content/public/browser/native_web_keyboard_event.h"
+#include "ui/base/material_design/material_design_controller.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 
 using content::NativeWebKeyboardEvent;
+
+namespace {
+
+CGFloat GetPatternVerticalOffsetWithTabStrip(bool tabStripVisible) {
+  // Without tab strip, offset an extra pixel (determined by experimentation).
+  return tabStripVisible ? -1 : 0;
+}
+
+}  // namespace
+
 
 @implementation BrowserWindowUtils
 + (BOOL)shouldHandleKeyboardEvent:(const NativeWebKeyboardEvent&)event {
@@ -22,6 +32,15 @@ using content::NativeWebKeyboardEvent;
     return NO;
   DCHECK(event.os_event != NULL);
   return YES;
+}
+
++ (BOOL)isTextEditingEvent:(const content::NativeWebKeyboardEvent&)event {
+  return (event.modifiers & blink::WebInputEvent::MetaKey) &&
+         (event.windowsKeyCode == ui::VKEY_A ||
+          event.windowsKeyCode == ui::VKEY_V ||
+          event.windowsKeyCode == ui::VKEY_C ||
+          event.windowsKeyCode == ui::VKEY_X ||
+          event.windowsKeyCode == ui::VKEY_Z);
 }
 
 + (int)getCommandId:(const NativeWebKeyboardEvent&)event {
@@ -85,9 +104,6 @@ using content::NativeWebKeyboardEvent;
 // because of the differing heights between window top and tab top, but this has
 // been approved by UI.
 const CGFloat kPatternHorizontalOffset = -5;
-// Without tab strip, offset an extra pixel (determined by experimentation).
-const CGFloat kPatternVerticalOffset = 2;
-const CGFloat kPatternVerticalOffsetNoTabStrip = 3;
 
 + (NSPoint)themeImagePositionFor:(NSView*)windowView
                     withTabStrip:(NSView*)tabStripView
@@ -95,7 +111,7 @@ const CGFloat kPatternVerticalOffsetNoTabStrip = 3;
   if (!tabStripView) {
     return NSMakePoint(kPatternHorizontalOffset,
                        NSHeight([windowView bounds]) +
-                           kPatternVerticalOffsetNoTabStrip);
+                           GetPatternVerticalOffsetWithTabStrip(false));
   }
 
   NSPoint position =
@@ -112,24 +128,22 @@ const CGFloat kPatternVerticalOffsetNoTabStrip = 3;
     // The theme image is lined up with the top of the tab which is below the
     // top of the tab strip.
     return NSMakePoint(kPatternHorizontalOffset,
-                       [TabStripController defaultTabHeight] +
-                           kPatternVerticalOffset);
+        [TabStripController defaultTabHeight] +
+            GetPatternVerticalOffsetWithTabStrip(true));
   }
   // The theme image is lined up with the top of the tab strip (as opposed to
   // the top of the tab above). This is the same as lining up with the top of
   // the window's root view when not in presentation mode.
   return NSMakePoint(kPatternHorizontalOffset,
                      NSHeight([tabStripView bounds]) +
-                         kPatternVerticalOffsetNoTabStrip);
+                         GetPatternVerticalOffsetWithTabStrip(false));
 }
 
 + (void)activateWindowForController:(NSWindowController*)controller {
   // Per http://crbug.com/73779 and http://crbug.com/75223, we need this to
   // properly activate windows if Chrome is not the active application.
   [[controller window] makeKeyAndOrderFront:controller];
-  ProcessSerialNumber psn;
-  GetCurrentProcess(&psn);
-  SetFrontProcessWithOptions(&psn, kSetFrontProcessFrontWindowOnly);
+  [NSApp activateIgnoringOtherApps:YES];
 }
 
 @end

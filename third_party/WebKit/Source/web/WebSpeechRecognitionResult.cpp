@@ -23,43 +23,40 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebSpeechRecognitionResult.h"
 
 #include "modules/speech/SpeechRecognitionAlternative.h"
 #include "modules/speech/SpeechRecognitionResult.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RawPtr.h"
-#include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
 
 namespace blink {
 
-void WebSpeechRecognitionResult::assign(const WebSpeechRecognitionResult& other)
-{
-    m_private = other.m_private;
+void WebSpeechRecognitionResult::assign(
+    const WebSpeechRecognitionResult& other) {
+  m_private = other.m_private;
 }
 
-void WebSpeechRecognitionResult::assign(const WebVector<WebString>& transcripts, const WebVector<float>& confidences, bool final)
-{
-    ASSERT(transcripts.size() == confidences.size());
+void WebSpeechRecognitionResult::assign(const WebVector<WebString>& transcripts,
+                                        const WebVector<float>& confidences,
+                                        bool final) {
+  DCHECK_EQ(transcripts.size(), confidences.size());
 
-    HeapVector<Member<SpeechRecognitionAlternative>> alternatives(transcripts.size());
-    for (size_t i = 0; i < transcripts.size(); ++i)
-        alternatives[i] = SpeechRecognitionAlternative::create(transcripts[i], confidences[i]);
+  HeapVector<Member<SpeechRecognitionAlternative>> alternatives(
+      transcripts.size());
+  for (size_t i = 0; i < transcripts.size(); ++i)
+    alternatives[i] =
+        SpeechRecognitionAlternative::create(transcripts[i], confidences[i]);
 
-    m_private = SpeechRecognitionResult::create(alternatives, final);
+  m_private = SpeechRecognitionResult::create(alternatives, final);
 }
 
-void WebSpeechRecognitionResult::reset()
-{
-    m_private.reset();
+void WebSpeechRecognitionResult::reset() {
+  m_private.reset();
 }
 
-WebSpeechRecognitionResult::operator SpeechRecognitionResult*() const
-{
-    return m_private.get();
+WebSpeechRecognitionResult::operator SpeechRecognitionResult*() const {
+  return m_private.get();
 }
 
-} // namespace blink
+}  // namespace blink

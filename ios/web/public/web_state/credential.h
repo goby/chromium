@@ -7,6 +7,7 @@
 
 #include "base/strings/string16.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace web {
 
@@ -21,6 +22,7 @@ enum CredentialType {
 // Represents an instance of the JavaScript Credential type.
 struct Credential {
   Credential();
+  Credential(const Credential& other);
   ~Credential();
 
   // The specific type of this credential.
@@ -39,7 +41,7 @@ struct Credential {
   base::string16 password;
 
   // The federation URL for a federated credential.
-  GURL federation_url;
+  url::Origin federation_origin;
 };
 
 // Determines whether two credentials are equal.

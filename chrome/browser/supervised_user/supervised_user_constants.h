@@ -9,6 +9,7 @@ namespace supervised_users {
 
 // Keys for supervised user settings. These are configured remotely and mapped
 // to preferences by the SupervisedUserPrefStore.
+extern const char kApprovedExtensions[];
 extern const char kCameraMicDisabled[];
 extern const char kContentPackDefaultFilteringBehavior[];
 extern const char kContentPackManualBehaviorHosts[];
@@ -16,6 +17,7 @@ extern const char kContentPackManualBehaviorURLs[];
 extern const char kForceSafeSearch[];
 extern const char kGeolocationDisabled[];
 extern const char kRecordHistory[];
+extern const char kRecordHistoryIncludesSessionSync[];
 extern const char kSafeSitesEnabled[];
 extern const char kSigninAllowed[];
 extern const char kUserName[];

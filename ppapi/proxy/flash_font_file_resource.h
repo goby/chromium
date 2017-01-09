@@ -5,9 +5,12 @@
 #ifndef PPAPI_PROXY_FLASH_FONT_FILE_RESOURCE_H_
 #define PPAPI_PROXY_FLASH_FONT_FILE_RESOURCE_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/containers/scoped_ptr_hash_map.h"
+#include "base/macros.h"
 #include "ppapi/c/private/pp_private_font_charset.h"
 #include "ppapi/proxy/plugin_resource.h"
 #include "ppapi/proxy/serialized_structs.h"
@@ -44,7 +47,7 @@ class FlashFontFileResource : public PluginResource,
   const std::string* AddFontTable(uint32_t table, const std::string& contents);
 
   using FontTableMap =
-      base::ScopedPtrHashMap<uint32_t, scoped_ptr<std::string>>;
+      base::ScopedPtrHashMap<uint32_t, std::unique_ptr<std::string>>;
   FontTableMap font_tables_;
 
   SerializedFontDescription description_;

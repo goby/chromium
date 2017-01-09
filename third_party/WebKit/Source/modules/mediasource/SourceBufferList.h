@@ -39,43 +39,51 @@ namespace blink {
 class SourceBuffer;
 class GenericEventQueue;
 
-class SourceBufferList final : public RefCountedGarbageCollectedEventTargetWithInlineData<SourceBufferList> {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(SourceBufferList);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static SourceBufferList* create(ExecutionContext* context, GenericEventQueue* asyncEventQueue)
-    {
-        return new SourceBufferList(context, asyncEventQueue);
-    }
-    ~SourceBufferList() override;
+class SourceBufferList final : public EventTargetWithInlineData {
+  DEFINE_WRAPPERTYPEINFO();
 
-    unsigned length() const { return m_list.size(); }
-    SourceBuffer* item(unsigned index) const { return (index < m_list.size()) ? m_list[index].get() : 0; }
+ public:
+  static SourceBufferList* create(ExecutionContext* context,
+                                  GenericEventQueue* asyncEventQueue) {
+    return new SourceBufferList(context, asyncEventQueue);
+  }
+  ~SourceBufferList() override;
 
-    void add(SourceBuffer*);
-    void insert(size_t position, SourceBuffer*);
-    void remove(SourceBuffer*);
-    size_t find(SourceBuffer* buffer) { return m_list.find(buffer); }
-    bool contains(SourceBuffer* buffer) { return m_list.find(buffer) != kNotFound; }
-    void clear();
+  unsigned length() const { return m_list.size(); }
 
-    // EventTarget interface
-    const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(addsourcebuffer);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(removesourcebuffer);
 
-    DECLARE_VIRTUAL_TRACE();
+  SourceBuffer* item(unsigned index) const {
+    return (index < m_list.size()) ? m_list[index].get() : 0;
+  }
 
-private:
-    SourceBufferList(ExecutionContext*, GenericEventQueue*);
+  void add(SourceBuffer*);
+  void insert(size_t position, SourceBuffer*);
+  void remove(SourceBuffer*);
+  size_t find(SourceBuffer* buffer) { return m_list.find(buffer); }
+  bool contains(SourceBuffer* buffer) {
+    return m_list.find(buffer) != kNotFound;
+  }
+  void clear();
 
-    void scheduleEvent(const AtomicString&);
+  // EventTarget interface
+  const AtomicString& interfaceName() const override;
+  ExecutionContext* getExecutionContext() const override;
 
-    RawPtrWillBeMember<ExecutionContext> m_executionContext;
-    RawPtrWillBeMember<GenericEventQueue> m_asyncEventQueue;
+  DECLARE_VIRTUAL_TRACE();
 
-    HeapVector<Member<SourceBuffer>> m_list;
+ private:
+  SourceBufferList(ExecutionContext*, GenericEventQueue*);
+
+  void scheduleEvent(const AtomicString&);
+
+  Member<ExecutionContext> m_executionContext;
+  Member<GenericEventQueue> m_asyncEventQueue;
+
+  HeapVector<Member<SourceBuffer>> m_list;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SourceBufferList_h
+#endif  // SourceBufferList_h

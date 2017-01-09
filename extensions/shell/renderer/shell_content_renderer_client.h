@@ -5,10 +5,15 @@
 #ifndef EXTENSIONS_SHELL_RENDERER_SHELL_CONTENT_RENDERER_CLIENT_H_
 #define EXTENSIONS_SHELL_RENDERER_SHELL_CONTENT_RENDERER_CLIENT_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/renderer/content_renderer_client.h"
+
+namespace blink {
+class WebURL;
+}  // namespace blink
 
 namespace extensions {
 
@@ -17,7 +22,6 @@ class DispatcherDelegate;
 class ExtensionsClient;
 class ExtensionsGuestViewContainerDispatcher;
 class ShellExtensionsRendererClient;
-class ShellRendererMainDelegate;
 
 // Renderer initialization and runtime support for app_shell.
 class ShellContentRendererClient : public content::ContentRendererClient {
@@ -38,16 +42,16 @@ class ShellContentRendererClient : public content::ContentRendererClient {
       const base::FilePath& plugin_path) override;
   bool WillSendRequest(blink::WebFrame* frame,
                        ui::PageTransition transition_type,
-                       const GURL& url,
-                       const GURL& first_party_for_cookies,
+                       const blink::WebURL& url,
                        GURL* new_url) override;
-  const void* CreatePPAPIInterface(const std::string& interface_name) override;
   bool IsExternalPepperPlugin(const std::string& module_name) override;
   bool ShouldGatherSiteIsolationStats() const override;
   content::BrowserPluginDelegate* CreateBrowserPluginDelegate(
       content::RenderFrame* render_frame,
       const std::string& mime_type,
       const GURL& original_url) override;
+  void RunScriptsAtDocumentStart(content::RenderFrame* render_frame) override;
+  void RunScriptsAtDocumentEnd(content::RenderFrame* render_frame) override;
 
  protected:
   // app_shell embedders may need custom extensions client interfaces.
@@ -55,11 +59,11 @@ class ShellContentRendererClient : public content::ContentRendererClient {
   virtual ExtensionsClient* CreateExtensionsClient();
 
  private:
-  scoped_ptr<ExtensionsClient> extensions_client_;
-  scoped_ptr<ShellExtensionsRendererClient> extensions_renderer_client_;
-  scoped_ptr<DispatcherDelegate> extension_dispatcher_delegate_;
-  scoped_ptr<Dispatcher> extension_dispatcher_;
-  scoped_ptr<ExtensionsGuestViewContainerDispatcher>
+  std::unique_ptr<ExtensionsClient> extensions_client_;
+  std::unique_ptr<ShellExtensionsRendererClient> extensions_renderer_client_;
+  std::unique_ptr<DispatcherDelegate> extension_dispatcher_delegate_;
+  std::unique_ptr<Dispatcher> extension_dispatcher_;
+  std::unique_ptr<ExtensionsGuestViewContainerDispatcher>
       guest_view_container_dispatcher_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellContentRendererClient);

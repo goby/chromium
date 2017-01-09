@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chromeos/chromeos_export.h"
@@ -26,6 +26,9 @@ namespace chromeos {
 // Callback used for getting the current screen brightness.  The param is in the
 // range [0.0, 100.0].
 typedef base::Callback<void(double)> GetScreenBrightnessPercentCallback;
+
+// Callback used for getting the current backlights forced off state.
+typedef base::Callback<void(bool)> GetBacklightsForcedOffCallback;
 
 // PowerManagerClient is used to communicate with the power manager.
 class CHROMEOS_EXPORT PowerManagerClient : public DBusClient {
@@ -87,6 +90,10 @@ class CHROMEOS_EXPORT PowerManagerClient : public DBusClient {
     // Called when the device's lid is opened or closed.
     virtual void LidEventReceived(bool open,
                                   const base::TimeTicks& timestamp) {}
+
+    // Called when the device's tablet mode switch is on or off.
+    virtual void TabletModeEventReceived(bool on,
+                                         const base::TimeTicks& timestamp) {}
 
     // Called when the idle action will be performed after
     // |time_until_idle_action|.
@@ -180,6 +187,13 @@ class CHROMEOS_EXPORT PowerManagerClient : public DBusClient {
   // causes powerd to switch to using the battery on devices with type-C ports.
   virtual void SetPowerSource(const std::string& id) = 0;
 
+  // Forces the display and keyboard backlights (if present) to |forced_off|.
+  virtual void SetBacklightsForcedOff(bool forced_off) = 0;
+
+  // Gets the display and keyboard backlights (if present) forced off state.
+  virtual void GetBacklightsForcedOff(
+      const GetBacklightsForcedOffCallback& callback) = 0;
+
   // Returns a callback that can be called by an observer to report
   // readiness for suspend.  See Observer::SuspendImminent().
   virtual base::Closure GetSuspendReadinessCallback() = 0;
@@ -194,6 +208,9 @@ class CHROMEOS_EXPORT PowerManagerClient : public DBusClient {
   ~PowerManagerClient() override;
 
  protected:
+  // Needs to call DBusClient::Init().
+  friend class PowerManagerClientTest;
+
   // Create() should be used instead.
   PowerManagerClient();
 

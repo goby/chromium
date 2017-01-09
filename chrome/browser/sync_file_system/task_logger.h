@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_TASK_LOGGER_H_
 
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
@@ -30,7 +31,7 @@ class TaskLogger : public base::SupportsWeakPtr<TaskLogger> {
     ~TaskLog();
   };
 
-  typedef std::deque<TaskLog*> LogList;
+  using LogList = std::deque<std::unique_ptr<TaskLog>>;
 
   class Observer {
    public:
@@ -47,7 +48,7 @@ class TaskLogger : public base::SupportsWeakPtr<TaskLogger> {
   TaskLogger();
   ~TaskLogger();
 
-  void RecordLog(scoped_ptr<TaskLog> log);
+  void RecordLog(std::unique_ptr<TaskLog> log);
   void ClearLog();
 
   void AddObserver(Observer* observer);
@@ -56,7 +57,7 @@ class TaskLogger : public base::SupportsWeakPtr<TaskLogger> {
   const LogList& GetLog() const;
 
  private:
-  std::deque<TaskLog*> log_history_;
+  LogList log_history_;
 
   base::ObserverList<Observer> observers_;
 

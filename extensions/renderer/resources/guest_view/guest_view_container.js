@@ -101,14 +101,6 @@ GuestViewContainer.prototype.setupFocusPropagation = function() {
     // See http://crbug.com/231664.
     this.element.setAttribute('tabIndex', -1);
   }
-  this.element.addEventListener('focus', this.weakWrapper(function(e) {
-    // Focus the BrowserPlugin when the GuestViewContainer takes focus.
-    privates(this).internalElement.focus();
-  }));
-  this.element.addEventListener('blur', this.weakWrapper(function(e) {
-    // Blur the BrowserPlugin when the GuestViewContainer loses focus.
-    privates(this).internalElement.blur();
-  }));
 };
 
 GuestViewContainer.prototype.focus = function() {
@@ -198,6 +190,7 @@ GuestViewContainer.prototype.weakWrapper = function(func) {
 
 // Implemented by the specific view type, if needed.
 GuestViewContainer.prototype.buildContainerParams = function() { return {}; };
+GuestViewContainer.prototype.willAttachElement = function() {};
 GuestViewContainer.prototype.onElementAttached = function() {};
 GuestViewContainer.prototype.onElementDetached = function() {};
 GuestViewContainer.prototype.setupAttributes = function() {};
@@ -253,6 +246,7 @@ function registerGuestViewElement(guestViewContainerType) {
       return;
     }
     internal.elementAttached = true;
+    internal.willAttachElement();
     internal.onElementAttached();
   };
 

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "chrome/browser/extensions/api/easy_unlock_private/easy_unlock_private_crypto_delegate.h"
 
 namespace extensions {
@@ -47,9 +48,9 @@ class EasyUnlockPrivateCryptoDelegateStub
 }  // namespace
 
 // static
-scoped_ptr<EasyUnlockPrivateCryptoDelegate>
-    EasyUnlockPrivateCryptoDelegate::Create() {
-  return scoped_ptr<EasyUnlockPrivateCryptoDelegate>(
+std::unique_ptr<EasyUnlockPrivateCryptoDelegate>
+EasyUnlockPrivateCryptoDelegate::Create() {
+  return std::unique_ptr<EasyUnlockPrivateCryptoDelegate>(
       new EasyUnlockPrivateCryptoDelegateStub());
 }
 

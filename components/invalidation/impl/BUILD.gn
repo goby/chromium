@@ -6,7 +6,7 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
-source_set("impl") {
+static_library("impl") {
   sources = [
     "invalidation_logger.cc",
     "invalidation_logger.h",
@@ -39,11 +39,11 @@ source_set("impl") {
   deps = [
     "//base",
     "//base:i18n",
-    "//base:prefs",
     "//components/data_use_measurement/core",
     "//components/gcm_driver",
     "//components/keyed_service/core",
     "//components/pref_registry",
+    "//components/prefs",
     "//components/signin/core/browser",
     "//google_apis",
     "//jingle:notifier",
@@ -107,7 +107,7 @@ source_set("unit_tests") {
     ":impl",
     ":test_support",
     "//base",
-    "//base:prefs",
+    "//components/prefs",
     "//testing/gmock",
     "//testing/gtest",
   ]
@@ -119,6 +119,7 @@ source_set("unit_tests") {
     # Non-Android tests.
     sources += [
       "fake_invalidator_unittest.cc",
+      "gcm_invalidation_bridge_unittest.cc",
       "gcm_network_channel_unittest.cc",
       "invalidation_notifier_unittest.cc",
       "invalidator_registrar_unittest.cc",
@@ -137,8 +138,10 @@ source_set("unit_tests") {
     ]
     deps += [
       "//components/gcm_driver:test_support",
-      "//components/pref_registry:test_support",
+      "//components/signin/core/browser:test_support",
+      "//components/sync_preferences:test_support",
       "//google_apis:test_support",
+      "//net",
     ]
   }
 }
@@ -148,6 +151,8 @@ static_library("test_support") {
   sources = [
     "fake_invalidation_handler.cc",
     "fake_invalidation_handler.h",
+    "fake_invalidation_service.cc",
+    "fake_invalidation_service.h",
     "fake_invalidation_state_tracker.cc",
     "fake_invalidation_state_tracker.h",
     "fake_invalidator.cc",
@@ -173,7 +178,9 @@ static_library("test_support") {
     "//base",
     "//components/gcm_driver:test_support",
     "//components/keyed_service/core",
+    "//components/signin/core/browser:test_support",
     "//google_apis",
+    "//google_apis:test_support",
     "//jingle:notifier",
     "//net",
     "//testing/gmock",
@@ -200,13 +207,18 @@ if (is_android) {
     deps = [
       ":proto_java",
       "//base:base_java",
-      "//sync/android:sync_java",
+      "//components/signin/core/browser/android:java",
+      "//components/sync/android:sync_java",
       "//third_party/android_protobuf:protobuf_nano_javalib",
       "//third_party/cacheinvalidation:cacheinvalidation_javalib",
       "//third_party/cacheinvalidation:cacheinvalidation_proto_java",
       "//third_party/jsr-305:jsr_305_javalib",
     ]
-    DEPRECATED_java_in_dir = "android/java/src"
+    java_files = [
+      "android/java/src/org/chromium/components/invalidation/InvalidationClientService.java",
+      "android/java/src/org/chromium/components/invalidation/InvalidationService.java",
+      "android/java/src/org/chromium/components/invalidation/PendingInvalidation.java",
+    ]
   }
   proto_java_library("proto_java") {
     proto_path = "android/proto"
@@ -215,15 +227,20 @@ if (is_android) {
     ]
   }
   android_library("javatests") {
+    testonly = true
     deps = [
       ":java",
       "//base:base_java",
       "//base:base_java_test_support",
-      "//sync/android:sync_java",
+      "//components/signin/core/browser/android:java",
+      "//components/sync/android:sync_java",
       "//third_party/cacheinvalidation:cacheinvalidation_javalib",
       "//third_party/cacheinvalidation:cacheinvalidation_proto_java",
     ]
-    DEPRECATED_java_in_dir = "android/javatests/src"
+    java_files = [
+      "android/javatests/src/org/chromium/components/invalidation/InvalidationClientServiceTest.java",
+      "android/javatests/src/org/chromium/components/invalidation/TestableInvalidationClientService.java",
+    ]
   }
   junit_binary("components_invalidation_impl_junit_tests") {
     java_files = [ "android/junit/src/org/chromium/components/invalidation/PendingInvalidationTest.java" ]

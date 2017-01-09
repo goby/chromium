@@ -4,12 +4,16 @@
 
 #include "remoting/test/test_video_renderer.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "remoting/codec/video_decoder.h"
 #include "remoting/codec/video_decoder_verbatim.h"
 #include "remoting/codec/video_decoder_vpx.h"
@@ -41,14 +45,14 @@ class TestVideoRenderer::Core {
   void Initialize();
 
   // Used to decode video packets.
-  void ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
+  void ProcessVideoPacket(std::unique_ptr<VideoPacket> packet,
                           const base::Closure& done);
 
   // Initialize a decoder to decode video packets.
   void SetCodecForDecoding(const protocol::ChannelConfig::Codec codec);
 
   // Returns a copy of the current frame.
-  scoped_ptr<webrtc::DesktopFrame> GetCurrentFrameForTest() const;
+  std::unique_ptr<webrtc::DesktopFrame> GetCurrentFrameForTest() const;
 
   // Set expected image pattern for comparison and the callback will be called
   // when the pattern is matched.
@@ -75,7 +79,7 @@ class TestVideoRenderer::Core {
   base::ThreadChecker thread_checker_;
 
   // Used to decode video packets.
-  scoped_ptr<VideoDecoder> decoder_;
+  std::unique_ptr<VideoDecoder> decoder_;
 
   // Used to post tasks back to main thread.
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
@@ -84,7 +88,7 @@ class TestVideoRenderer::Core {
   mutable base::Lock lock_;
 
   // Used to store decoded video frame.
-  scoped_ptr<webrtc::SharedDesktopFrame> frame_;
+  std::unique_ptr<webrtc::SharedDesktopFrame> frame_;
 
   // Used to store the expected image pattern.
   webrtc::DesktopRect expected_rect_;
@@ -146,15 +150,16 @@ void TestVideoRenderer::Core::SetCodecForDecoding(
   }
 }
 
-scoped_ptr<webrtc::DesktopFrame>
+std::unique_ptr<webrtc::DesktopFrame>
 TestVideoRenderer::Core::GetCurrentFrameForTest() const {
   base::AutoLock auto_lock(lock_);
   DCHECK(frame_);
-  return make_scoped_ptr(webrtc::BasicDesktopFrame::CopyOf(*frame_));
+  return base::WrapUnique(webrtc::BasicDesktopFrame::CopyOf(*frame_));
 }
 
-void TestVideoRenderer::Core::ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
-                                                 const base::Closure& done) {
+void TestVideoRenderer::Core::ProcessVideoPacket(
+    std::unique_ptr<VideoPacket> packet,
+    const base::Closure& done) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(decoder_);
   DCHECK(packet);
@@ -174,13 +179,10 @@ void TestVideoRenderer::Core::ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
     }
   }
 
-  // To make life easier, assume that the desktop shape is a single rectangle.
-  packet->clear_use_desktop_shape();
-
   // Render the result into a new DesktopFrame instance that shares buffer with
   // |frame_|. updated_region() will be updated for |new_frame|, but not for
   // |frame_|.
-  scoped_ptr<webrtc::DesktopFrame> new_frame(frame_->Share());
+  std::unique_ptr<webrtc::DesktopFrame> new_frame(frame_->Share());
 
   {
     base::AutoLock auto_lock(lock_);
@@ -193,7 +195,7 @@ void TestVideoRenderer::Core::ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
   main_task_runner_->PostTask(FROM_HERE, done);
 
   if (save_frame_data_to_disk_) {
-    scoped_ptr<webrtc::DesktopFrame> frame(
+    std::unique_ptr<webrtc::DesktopFrame> frame(
         webrtc::BasicDesktopFrame::CopyOf(*frame_));
     video_frame_writer.HighlightRectInFrame(frame.get(), expected_rect_);
     video_frame_writer.WriteFrameToDefaultPath(*frame);
@@ -292,6 +294,12 @@ TestVideoRenderer::~TestVideoRenderer() {
   video_decode_thread_->Stop();
 }
 
+bool TestVideoRenderer::Initialize(
+    const ClientContext& client_context,
+    protocol::FrameStatsConsumer* stats_consumer) {
+  return true;
+}
+
 void TestVideoRenderer::OnSessionConfig(const protocol::SessionConfig& config) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -307,8 +315,18 @@ protocol::VideoStub* TestVideoRenderer::GetVideoStub() {
   return this;
 }
 
-void TestVideoRenderer::ProcessVideoPacket(scoped_ptr<VideoPacket> video_packet,
-                                           const base::Closure& done) {
+protocol::FrameConsumer* TestVideoRenderer::GetFrameConsumer() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  NOTREACHED();
+  return nullptr;
+}
+protocol::FrameStatsConsumer* TestVideoRenderer::GetFrameStatsConsumer() {
+  return nullptr;
+}
+
+void TestVideoRenderer::ProcessVideoPacket(
+    std::unique_ptr<VideoPacket> video_packet,
+    const base::Closure& done) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(video_decode_task_runner_) << "Failed to start video decode thread";
 
@@ -339,8 +357,8 @@ void TestVideoRenderer::SetCodecForDecoding(
                             codec));
 }
 
-scoped_ptr<webrtc::DesktopFrame> TestVideoRenderer::GetCurrentFrameForTest()
-    const {
+std::unique_ptr<webrtc::DesktopFrame>
+TestVideoRenderer::GetCurrentFrameForTest() const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   return core_->GetCurrentFrameForTest();

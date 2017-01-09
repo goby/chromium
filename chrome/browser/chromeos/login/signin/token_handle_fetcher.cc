@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/signin/token_handle_fetcher.h"
 
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/chromeos/login/signin/token_handle_util.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -132,7 +133,7 @@ void TokenHandleFetcher::OnNetworkError(int response_code) {
 }
 
 void TokenHandleFetcher::OnGetTokenInfoResponse(
-    scoped_ptr<base::DictionaryValue> token_info) {
+    std::unique_ptr<base::DictionaryValue> token_info) {
   bool success = false;
   if (!token_info->HasKey("error")) {
     std::string handle;

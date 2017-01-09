@@ -5,10 +5,11 @@
 #include "components/proximity_auth/proximity_monitor_impl.h"
 
 #include <math.h>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "components/proximity_auth/logging/logging.h"
@@ -31,13 +32,14 @@ const int kRssiThreshold = -5;
 // The weight of the most recent RSSI sample.
 const double kRssiSampleWeight = 0.3;
 
-ProximityMonitorImpl::ProximityMonitorImpl(const RemoteDevice& remote_device,
-                                           scoped_ptr<base::TickClock> clock)
+ProximityMonitorImpl::ProximityMonitorImpl(
+    const cryptauth::RemoteDevice& remote_device,
+    std::unique_ptr<base::TickClock> clock)
     : remote_device_(remote_device),
       strategy_(Strategy::NONE),
       remote_device_is_in_proximity_(false),
       is_active_(false),
-      clock_(clock.Pass()),
+      clock_(std::move(clock)),
       polling_weak_ptr_factory_(this),
       weak_ptr_factory_(this) {
   if (device::BluetoothAdapterFactory::IsBluetoothAdapterAvailable()) {
@@ -219,8 +221,8 @@ void ProximityMonitorImpl::OnConnectionInfo(
 
 void ProximityMonitorImpl::ClearProximityState() {
   if (is_active_ && remote_device_is_in_proximity_) {
-    FOR_EACH_OBSERVER(ProximityMonitorObserver, observers_,
-                      OnProximityStateChanged());
+    for (auto& observer : observers_)
+      observer.OnProximityStateChanged();
   }
 
   remote_device_is_in_proximity_ = false;
@@ -271,8 +273,8 @@ void ProximityMonitorImpl::CheckForProximityStateChange() {
     PA_LOG(INFO) << "[Proximity] Updated proximity state: "
                  << (is_now_in_proximity ? "proximate" : "distant");
     remote_device_is_in_proximity_ = is_now_in_proximity;
-    FOR_EACH_OBSERVER(ProximityMonitorObserver, observers_,
-                      OnProximityStateChanged());
+    for (auto& observer : observers_)
+      observer.OnProximityStateChanged();
   }
 }
 

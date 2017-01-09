@@ -26,22 +26,21 @@
 namespace blink {
 
 class PLATFORM_EXPORT SourceAlpha final : public FilterEffect {
-public:
-    static PassRefPtrWillBeRawPtr<SourceAlpha> create(FilterEffect*);
+ public:
+  static SourceAlpha* create(FilterEffect*);
 
-    static const AtomicString& effectName();
+  TextStream& externalRepresentation(TextStream&, int indention) const override;
 
-    FloatRect determineAbsolutePaintRect(const FloatRect& requestedRect) override;
+ private:
+  explicit SourceAlpha(FilterEffect*);
 
-    FilterEffectType filterEffectType() const override { return FilterEffectTypeSourceInput; }
+  FilterEffectType getFilterEffectType() const override {
+    return FilterEffectTypeSourceInput;
+  }
 
-    TextStream& externalRepresentation(TextStream&, int indention) const override;
-    PassRefPtr<SkImageFilter> createImageFilter(SkiaImageFilterBuilder&) override;
-
-private:
-    explicit SourceAlpha(FilterEffect*);
+  sk_sp<SkImageFilter> createImageFilter() override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SourceAlpha_h
+#endif  // SourceAlpha_h

@@ -4,10 +4,12 @@
 
 #include "chrome/browser/chrome_browser_main_win.h"
 
-#include <windows.h>
 #include <shellapi.h>
+#include <stddef.h>
+#include <windows.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -18,32 +20,30 @@
 #include "base/i18n/rtl.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/win/metro.h"
 #include "base/win/registry.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "base/win/wrapped_window_proc.h"
-#include "chrome/browser/browser_util_win.h"
-#include "chrome/browser/chrome_elf_init_win.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/install_verification/win/install_verification.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/browser/ui/uninstall_browser_prompt.h"
+#include "chrome/browser/win/browser_util.h"
+#include "chrome/browser/win/chrome_elf_init.h"
 #include "chrome/chrome_watcher/chrome_watcher_main_api.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_result_codes.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_utility_messages.h"
+#include "chrome/common/crash_keys.h"
 #include "chrome/common/env_vars.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -57,7 +57,6 @@
 #include "content/public/browser/utility_process_host.h"
 #include "content/public/browser/utility_process_host_client.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/dwrite_font_platform_win.h"
 #include "content/public/common/main_function_params.h"
 #include "ui/base/cursor/cursor_loader_win.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -66,14 +65,13 @@
 #include "ui/base/win/message_box_win.h"
 #include "ui/gfx/platform_font_win.h"
 #include "ui/gfx/switches.h"
-#include "ui/gfx/win/direct_write.h"
 #include "ui/strings/grit/app_locale_settings.h"
 
 #if defined(GOOGLE_CHROME_BUILD)
 #include "chrome/browser/google/did_run_updater_win.h"
 #endif
 
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
 #include "syzygy/kasko/api/reporter.h"
 #endif
 
@@ -86,10 +84,9 @@ typedef HRESULT (STDAPICALLTYPE* RegisterApplicationRestartProc)(
 void InitializeWindowProcExceptions() {
   // Get the breakpad pointer from chrome.exe
   base::win::WinProcExceptionFilter exception_filter =
-      reinterpret_cast<base::win::WinProcExceptionFilter>(
-          ::GetProcAddress(::GetModuleHandle(
-                               chrome::kBrowserProcessExecutableName),
-                           "CrashForException"));
+      reinterpret_cast<base::win::WinProcExceptionFilter>(::GetProcAddress(
+          ::GetModuleHandle(chrome::kChromeElfDllName), "CrashForException"));
+  CHECK(exception_filter);
   exception_filter = base::win::SetWinProcExceptionFilter(exception_filter);
   DCHECK(!exception_filter);
 }
@@ -111,17 +108,7 @@ class TranslationDelegate : public installer::TranslationDelegate {
   base::string16 GetLocalizedString(int installer_string_id) override;
 };
 
-void ExecuteFontCacheBuildTask(const base::FilePath& path) {
-  base::WeakPtr<content::UtilityProcessHost> utility_process_host(
-      content::UtilityProcessHost::Create(NULL, NULL)->AsWeakPtr());
-  utility_process_host->SetName(l10n_util::GetStringUTF16(
-      IDS_UTILITY_PROCESS_FONT_CACHE_BUILDER_NAME));
-  utility_process_host->DisableSandbox();
-  utility_process_host->Send(
-      new ChromeUtilityHostMsg_BuildDirectWriteFontCache(path));
-}
-
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
 void ObserveFailedCrashReportDirectory(const base::FilePath& path, bool error) {
   DCHECK(!error);
   if (error)
@@ -154,7 +141,7 @@ void StartFailedKaskoCrashReportWatcher(base::FilePathWatcher* watcher) {
     ObserveFailedCrashReportDirectory(permanent_failure_directory, false);
   }
 }
-#endif
+#endif  // BUILDFLAG(ENABLE_KASKO)
 
 void DetectFaultTolerantHeap() {
   enum FTHFlags {
@@ -220,13 +207,13 @@ void DetectFaultTolerantHeap() {
 void ShowCloseBrowserFirstMessageBox() {
   int message_id = IDS_UNINSTALL_CLOSE_APP;
   if (base::win::GetVersion() >= base::win::VERSION_WIN8 &&
-      (ShellIntegration::GetDefaultBrowser() == ShellIntegration::IS_DEFAULT)) {
+      (shell_integration::GetDefaultBrowser() ==
+       shell_integration::IS_DEFAULT)) {
     message_id = IDS_UNINSTALL_CLOSE_APP_IMMERSIVE;
   }
-  chrome::ShowMessageBox(NULL,
-                         l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-                         l10n_util::GetStringUTF16(message_id),
-                         chrome::MESSAGE_BOX_TYPE_WARNING);
+  chrome::ShowWarningMessageBox(NULL,
+                                l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
+                                l10n_util::GetStringUTF16(message_id));
 }
 
 int DoUninstallTasks(bool chrome_still_running) {
@@ -278,21 +265,6 @@ int DoUninstallTasks(bool chrome_still_running) {
 ChromeBrowserMainPartsWin::ChromeBrowserMainPartsWin(
     const content::MainFunctionParams& parameters)
     : ChromeBrowserMainParts(parameters) {
-  if (base::win::IsMetroProcess()) {
-    typedef const wchar_t* (*GetMetroSwitches)(void);
-    GetMetroSwitches metro_switches_proc = reinterpret_cast<GetMetroSwitches>(
-        GetProcAddress(base::win::GetMetroModule(),
-                       "GetMetroCommandLineSwitches"));
-    if (metro_switches_proc) {
-      base::string16 metro_switches = (*metro_switches_proc)();
-      if (!metro_switches.empty()) {
-        base::CommandLine extra_switches(base::CommandLine::NO_PROGRAM);
-        extra_switches.ParseFromString(metro_switches);
-        base::CommandLine::ForCurrentProcess()->AppendArguments(extra_switches,
-                                                                false);
-      }
-    }
-  }
 }
 
 ChromeBrowserMainPartsWin::~ChromeBrowserMainPartsWin() {
@@ -318,15 +290,19 @@ void ChromeBrowserMainPartsWin::PreMainMessageLoopStart() {
 }
 
 int ChromeBrowserMainPartsWin::PreCreateThreads() {
+// Record whether the machine is domain joined in a crash key. This will be used
+// to better identify whether crashes are from enterprise users.
+  base::debug::SetCrashKeyValue(crash_keys::kEnrolledToDomain,
+                                base::win::IsEnrolledToDomain() ? "yes" : "no");
+
   int rv = ChromeBrowserMainParts::PreCreateThreads();
 
   // TODO(viettrungluu): why don't we run this earlier?
   if (!parsed_command_line().HasSwitch(switches::kNoErrorDialogs) &&
       base::win::GetVersion() < base::win::VERSION_XP) {
-    chrome::ShowMessageBox(NULL,
-        l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
-        l10n_util::GetStringUTF16(IDS_UNSUPPORTED_OS_PRE_WIN_XP),
-        chrome::MESSAGE_BOX_TYPE_WARNING);
+    chrome::ShowWarningMessageBox(
+        NULL, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
+        l10n_util::GetStringUTF16(IDS_UNSUPPORTED_OS_PRE_WIN_XP));
   }
 
   return rv;
@@ -342,40 +318,20 @@ void ChromeBrowserMainPartsWin::ShowMissingLocaleMessageBox() {
 void ChromeBrowserMainPartsWin::PostProfileInit() {
   ChromeBrowserMainParts::PostProfileInit();
 
-  // DirectWrite support is mainly available Windows 7 and up.
-  if (gfx::win::ShouldUseDirectWrite()) {
-    base::FilePath path(
-      profile()->GetPath().AppendASCII(content::kFontCacheSharedSectionName));
-    // This function will create a read only section if cache file exists
-    // otherwise it will spawn utility process to build cache file, which will
-    // be used during next browser start/postprofileinit.
-    if (!content::LoadFontCache(path)) {
-      // We delay building of font cache until first startup page loads.
-      // During first renderer start there are lot of things happening
-      // simultaneously some of them are:
-      // - Renderer is going through all font files on the system to create
-      //   a font collection.
-      // - Renderer loading up startup URL, accessing HTML/JS File cache,
-      //   net activity etc.
-      // - Extension initialization.
-      // We delay building of cache mainly to avoid parallel font file
-      // loading along with Renderer. Some systems have significant number of
-      // font files which takes long time to process.
-      // Related information is at http://crbug.com/436195.
-      const int kBuildFontCacheDelaySec = 30;
-      content::BrowserThread::PostDelayedTask(
-          content::BrowserThread::IO,
-          FROM_HERE,
-          base::Bind(ExecuteFontCacheBuildTask, path),
-          base::TimeDelta::FromSeconds(kBuildFontCacheDelaySec));
-    }
-  }
+  // TODO(kulshin): remove this cleanup code in 2017. http://crbug.com/603718
+  // Attempt to delete the font cache and ignore any errors.
+  base::FilePath path(
+      profile()->GetPath().AppendASCII("ChromeDWriteFontCache"));
+  content::BrowserThread::PostAfterStartupTask(
+      FROM_HERE, content::BrowserThread::GetTaskRunnerForThread(
+                     content::BrowserThread::FILE),
+      base::Bind(base::IgnoreResult(&base::DeleteFile), path, false));
 }
 
 void ChromeBrowserMainPartsWin::PostBrowserStart() {
   ChromeBrowserMainParts::PostBrowserStart();
 
-  UMA_HISTOGRAM_BOOLEAN("Windows.Tablet", base::win::IsTabletDevice());
+  UMA_HISTOGRAM_BOOLEAN("Windows.Tablet", base::win::IsTabletDevice(nullptr));
 
   // Set up a task to verify installed modules in the current process.
   content::BrowserThread::PostAfterStartupTask(
@@ -384,13 +340,13 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
 
   InitializeChromeElf();
 
-#if defined(KASKO)
+#if BUILDFLAG(ENABLE_KASKO)
   content::BrowserThread::PostDelayedTask(
       content::BrowserThread::FILE, FROM_HERE,
       base::Bind(&StartFailedKaskoCrashReportWatcher,
                  base::Unretained(&failed_kasko_crash_report_watcher_)),
       base::TimeDelta::FromMinutes(5));
-#endif
+#endif  // BUILDFLAG(ENABLE_KASKO)
 
 #if defined(GOOGLE_CHROME_BUILD)
   did_run_updater_.reset(new DidRunUpdater);
@@ -409,7 +365,7 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
 void ChromeBrowserMainPartsWin::PrepareRestartOnCrashEnviroment(
     const base::CommandLine& parsed_command_line) {
   // Clear this var so child processes don't show the dialog by default.
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   env->UnSetVar(env_vars::kShowRestart);
 
   // For non-interactive tests we don't restart on crash.
@@ -507,7 +463,7 @@ bool ChromeBrowserMainPartsWin::CheckMachineLevelInstall() {
   // TODO(tommi): Check if using the default distribution is always the right
   // thing to do.
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  Version version;
+  base::Version version;
   InstallUtil::GetChromeVersion(dist, true, &version);
   if (version.IsValid()) {
     base::FilePath exe_path;
@@ -515,19 +471,6 @@ bool ChromeBrowserMainPartsWin::CheckMachineLevelInstall() {
     std::wstring exe = exe_path.value();
     base::FilePath user_exe_path(installer::GetChromeInstallPath(false, dist));
     if (base::FilePath::CompareEqualIgnoreCase(exe, user_exe_path.value())) {
-      bool is_metro = base::win::IsMetroProcess();
-      if (!is_metro) {
-        // The dialog cannot be shown in Win8 Metro as doing so hangs Chrome on
-        // an invisible dialog.
-        // TODO (gab): Get rid of this dialog altogether and auto-launch
-        // system-level Chrome instead.
-        const base::string16 text =
-            l10n_util::GetStringUTF16(IDS_MACHINE_LEVEL_INSTALL_CONFLICT);
-        const base::string16 caption =
-            l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
-        const UINT flags = MB_OK | MB_ICONERROR | MB_TOPMOST;
-        ui::MessageBox(NULL, text, caption, flags);
-      }
       base::CommandLine uninstall_cmd(
           InstallUtil::GetChromeUninstallCmd(false, dist->GetType()));
       if (!uninstall_cmd.GetProgram().empty()) {
@@ -554,10 +497,6 @@ bool ChromeBrowserMainPartsWin::CheckMachineLevelInstall() {
         sei.nShow = SW_SHOWNORMAL;
         sei.lpFile = setup_exe.value().c_str();
         sei.lpParameters = params.c_str();
-        // On Windows 8 SEE_MASK_FLAG_LOG_USAGE is necessary to guarantee we
-        // flip to the Desktop when launching.
-        if (is_metro)
-          sei.fMask |= SEE_MASK_FLAG_LOG_USAGE;
 
         if (!::ShellExecuteEx(&sei))
           DPCHECK(false);

@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_SCREENS_NETWORK_SCREEN_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_SCREENS_NETWORK_SCREEN_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
@@ -60,7 +62,6 @@ class NetworkScreen : public NetworkModel,
   static NetworkScreen* Get(ScreenManager* manager);
 
   // NetworkModel implementation:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void Initialize(::login::ScreenContext* context) override;
@@ -94,7 +95,9 @@ class NetworkScreen : public NetworkModel,
   // Currently We can only get unsecured Wifi network configuration from shark
   // that can be applied to remora. Returns the network ONC configuration.
   void GetConnectedWifiNetwork(std::string* out_onc_spec);
-  void CreateAndConnectNetworkFromOnc(const std::string& onc_spec);
+  void CreateAndConnectNetworkFromOnc(const std::string& onc_spec,
+                                      const base::Closure& success_callback,
+                                      const base::Closure& failed_callback);
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -103,6 +106,7 @@ class NetworkScreen : public NetworkModel,
   friend class NetworkScreenTest;
   FRIEND_TEST_ALL_PREFIXES(NetworkScreenTest, Timeout);
   FRIEND_TEST_ALL_PREFIXES(NetworkScreenTest, CanConnect);
+  FRIEND_TEST_ALL_PREFIXES(HandsOffNetworkScreenTest, RequiresNoInput);
 
   void SetApplicationLocale(const std::string& locale);
   void SetInputMethod(const std::string& input_method);
@@ -150,18 +154,17 @@ class NetworkScreen : public NetworkModel,
 
   // Starts resolving language list on BlockingPool.
   void ScheduleResolveLanguageList(
-      scoped_ptr<locale_util::LanguageSwitchResult> language_switch_result);
+      std::unique_ptr<locale_util::LanguageSwitchResult>
+          language_switch_result);
 
   // Callback for chromeos::ResolveUILanguageList() (from l10n_util).
-  void OnLanguageListResolved(scoped_ptr<base::ListValue> new_language_list,
-                              const std::string& new_language_list_locale,
-                              const std::string& new_selected_language);
+  void OnLanguageListResolved(
+      std::unique_ptr<base::ListValue> new_language_list,
+      const std::string& new_language_list_locale,
+      const std::string& new_selected_language);
 
   // Callback when the system timezone settings is changed.
   void OnSystemTimezoneChanged();
-
-  // Called when connection the network from ONC failed.
-  void OnConnectNetworkFromOncFailed();
 
   // True if subscribed to network change notification.
   bool is_network_subscribed_;
@@ -176,11 +179,11 @@ class NetworkScreen : public NetworkModel,
   // Timer for connection timeout.
   base::OneShotTimer connection_timer_;
 
-  scoped_ptr<CrosSettings::ObserverSubscription> timezone_subscription_;
+  std::unique_ptr<CrosSettings::ObserverSubscription> timezone_subscription_;
 
   NetworkView* view_;
   Delegate* delegate_;
-  scoped_ptr<login::NetworkStateHelper> network_state_helper_;
+  std::unique_ptr<login::NetworkStateHelper> network_state_helper_;
 
   std::string input_method_;
   std::string timezone_;
@@ -188,7 +191,7 @@ class NetworkScreen : public NetworkModel,
   // Creation of language list happens on Blocking Pool, so we cache
   // resolved data.
   std::string language_list_locale_;
-  scoped_ptr<base::ListValue> language_list_;
+  std::unique_ptr<base::ListValue> language_list_;
 
   // The exact language code selected by user in the menu.
   std::string selected_language_code_;

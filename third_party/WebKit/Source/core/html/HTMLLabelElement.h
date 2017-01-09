@@ -25,86 +25,41 @@
 #define HTMLLabelElement_h
 
 #include "core/CoreExport.h"
-#include "core/html/FormAssociatedElement.h"
 #include "core/html/HTMLElement.h"
-#include "core/html/LabelableElement.h"
 
 namespace blink {
 
-class CORE_EXPORT HTMLLabelElement final : public HTMLElement, public FormAssociatedElement {
-    DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(HTMLLabelElement);
-public:
-    static PassRefPtrWillBeRawPtr<HTMLLabelElement> create(Document&, HTMLFormElement*);
-    LabelableElement* control() const;
+class LabelableElement;
 
-    bool willRespondToMouseClickEvents() override;
+class CORE_EXPORT HTMLLabelElement final : public HTMLElement {
+  DEFINE_WRAPPERTYPEINFO();
 
-    DECLARE_VIRTUAL_TRACE();
+ public:
+  static HTMLLabelElement* create(Document&);
+  LabelableElement* control() const;
+  HTMLFormElement* form() const;
 
-    HTMLFormElement* formOwner() const override;
+  bool willRespondToMouseClickEvents() override;
 
+ private:
+  explicit HTMLLabelElement(Document&);
+  bool isInInteractiveContent(Node*) const;
 
-#if !ENABLE(OILPAN)
-    using Node::ref;
-    using Node::deref;
-#endif
+  bool isInteractiveContent() const override;
+  void accessKeyAction(bool sendMouseEvents) override;
 
-private:
-    explicit HTMLLabelElement(Document&, HTMLFormElement*);
-    bool isInInteractiveContent(Node*) const;
+  // Overridden to update the hover/active state of the corresponding control.
+  void setActive(bool = true) override;
+  void setHovered(bool = true) override;
 
-    bool isInteractiveContent() const override;
-    void accessKeyAction(bool sendMouseEvents) override;
+  // Overridden to either click() or focus() the corresponding control.
+  void defaultEventHandler(Event*) override;
 
-    InsertionNotificationRequest insertedInto(ContainerNode*) override;
-    void removedFrom(ContainerNode*) override;
+  void focus(const FocusParams&) override;
 
-    // Overridden to update the hover/active state of the corresponding control.
-    void setActive(bool = true) override;
-    void setHovered(bool = true) override;
-
-    // Overridden to either click() or focus() the corresponding control.
-    void defaultEventHandler(Event*) override;
-
-    void focus(const FocusParams&) override;
-
-    // FormAssociatedElement methods
-    bool isFormControlElement() const override { return false; }
-    bool isEnumeratable() const override { return false; }
-    bool isLabelElement() const override { return true; }
-#if !ENABLE(OILPAN)
-    void refFormAssociatedElement() override { ref(); }
-    void derefFormAssociatedElement() override { deref(); }
-#endif
-
-    void parseAttribute(const QualifiedName&, const AtomicString&, const AtomicString&) override;
-
-    void updateLabel(TreeScope&, const AtomicString& oldForAttributeValue, const AtomicString& newForAttributeValue);
-
-    bool m_processingClick;
+  bool m_processingClick;
 };
 
+}  // namespace blink
 
-template<typename T> inline const T& toElement(const FormAssociatedElement&);
-template<typename T> inline const T* toElement(const FormAssociatedElement*);
-// Make toHTMLLabelElement() accept a FormAssociatedElement as input instead of a Node.
-template<> inline const HTMLLabelElement* toElement<HTMLLabelElement>(const FormAssociatedElement* element)
-{
-    const HTMLLabelElement* labelElement = static_cast<const HTMLLabelElement*>(element);
-    // FormAssociatedElement doesn't have hasTagName, hence check for assert.
-    ASSERT_WITH_SECURITY_IMPLICATION(!labelElement || labelElement->hasTagName(HTMLNames::labelTag));
-    return labelElement;
-}
-
-template<> inline const HTMLLabelElement& toElement<HTMLLabelElement>(const FormAssociatedElement& element)
-{
-    const HTMLLabelElement& labelElement = static_cast<const HTMLLabelElement&>(element);
-    // FormAssociatedElement doesn't have hasTagName, hence check for assert.
-    ASSERT_WITH_SECURITY_IMPLICATION(labelElement.hasTagName(HTMLNames::labelTag));
-    return labelElement;
-}
-
-} // namespace blink
-
-#endif // HTMLLabelElement_h
+#endif  // HTMLLabelElement_h

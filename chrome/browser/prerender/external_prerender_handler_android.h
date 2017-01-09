@@ -7,8 +7,10 @@
 
 #include <jni.h>
 
+#include <memory>
+
 #include "base/android/scoped_java_ref.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 class GURL;
 class Profile;
@@ -27,17 +29,22 @@ class ExternalPrerenderHandlerAndroid {
 
   // Add a prerender with the given url and referrer on the PrerenderManager of
   // the given profile. This is restricted to a single prerender at a time.
-  bool AddPrerender(JNIEnv* env,
-                    jobject obj,
-                    jobject profile,
-                    jobject jweb_contents,
-                    jstring url,
-                    jstring referrer,
-                    jint width,
-                    jint height);
+  base::android::ScopedJavaLocalRef<jobject> AddPrerender(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& obj,
+                    const base::android::JavaParamRef<jobject>& profile,
+                    const base::android::JavaParamRef<jobject>& jweb_contents,
+                    const base::android::JavaParamRef<jstring>& url,
+                    const base::android::JavaParamRef<jstring>& referrer,
+                    jint top,
+                    jint left,
+                    jint bottom,
+                    jint right,
+                    jboolean prerender_on_cellular);
 
   // Cancel the prerender associated with the prerender_handle_
-  void CancelCurrentPrerender(JNIEnv* env, jobject object);
+  void CancelCurrentPrerender(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& object);
 
   // Whether the PrerenderManager associated with the given profile has any
   // prerenders for the url.
@@ -45,11 +52,18 @@ class ExternalPrerenderHandlerAndroid {
                                 GURL url,
                                 content::WebContents* web_contents);
 
+  // Whether the PrerenderManager associated with the given profile has any
+  // prerenders for the url, and the prerender has finished loading.
+  static bool HasPrerenderedAndFinishedLoadingUrl(
+      Profile* profile,
+      GURL url,
+      content::WebContents* web_contents);
+
   static bool RegisterExternalPrerenderHandlerAndroid(JNIEnv* env);
 
  private:
   virtual ~ExternalPrerenderHandlerAndroid();
-  scoped_ptr<prerender::PrerenderHandle> prerender_handle_;
+  std::unique_ptr<prerender::PrerenderHandle> prerender_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(ExternalPrerenderHandlerAndroid);
 };

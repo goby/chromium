@@ -4,11 +4,16 @@
 
 #include "components/autofill/core/browser/webdata/autofill_wallet_metadata_syncable_service.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
@@ -19,11 +24,11 @@
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_change_processor.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/protocol/sync.pb.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_change_processor.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/protocol/sync.pb.h"
 
 namespace autofill {
 
@@ -68,11 +73,11 @@ template <class DataType>
 void UndeleteMetadataIfExisting(
     const std::string& server_id,
     const sync_pb::WalletMetadataSpecifics::Type& metadata_type,
-    base::ScopedPtrHashMap<std::string, scoped_ptr<DataType>>* locals,
+    base::ScopedPtrHashMap<std::string, std::unique_ptr<DataType>>* locals,
     syncer::SyncChangeList* changes_to_sync) {
   const auto& it = locals->find(server_id);
   if (it != locals->end()) {
-    scoped_ptr<DataType> local_metadata = locals->take_and_erase(it);
+    std::unique_ptr<DataType> local_metadata = locals->take_and_erase(it);
     changes_to_sync->push_back(syncer::SyncChange(
         FROM_HERE, syncer::SyncChange::ACTION_ADD,
         BuildSyncData(metadata_type, server_id, *local_metadata)));
@@ -146,7 +151,7 @@ template <class DataType>
 bool MergeRemote(
     const syncer::SyncData& remote,
     const base::Callback<bool(const DataType&)>& updater,
-    base::ScopedPtrHashMap<std::string, scoped_ptr<DataType>>* locals,
+    base::ScopedPtrHashMap<std::string, std::unique_ptr<DataType>>* locals,
     syncer::SyncChangeList* changes_to_sync) {
   DCHECK(locals);
   DCHECK(changes_to_sync);
@@ -157,7 +162,7 @@ bool MergeRemote(
   if (it == locals->end())
     return false;
 
-  scoped_ptr<DataType> local_metadata = locals->take_and_erase(it);
+  std::unique_ptr<DataType> local_metadata = locals->take_and_erase(it);
 
   size_t remote_use_count =
       base::checked_cast<size_t>(remote_metadata.use_count());
@@ -208,19 +213,22 @@ syncer::SyncMergeResult
 AutofillWalletMetadataSyncableService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> sync_error_factory) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!sync_processor_);
   DCHECK(!sync_error_factory_);
   DCHECK_EQ(syncer::AUTOFILL_WALLET_METADATA, type);
 
-  sync_processor_ = sync_processor.Pass();
-  sync_error_factory_ = sync_error_factory.Pass();
+  sync_processor_ = std::move(sync_processor);
+  sync_error_factory_ = std::move(sync_error_factory);
 
   cache_ = initial_sync_data;
 
-  return MergeData(initial_sync_data);
+  syncer::SyncMergeResult result = MergeData(initial_sync_data);
+  if (web_data_backend_)
+    web_data_backend_->NotifyThatSyncHasStarted(type);
+  return result;
 }
 
 void AutofillWalletMetadataSyncableService::StopSyncing(
@@ -239,8 +247,9 @@ syncer::SyncDataList AutofillWalletMetadataSyncableService::GetAllSyncData(
   DCHECK_EQ(syncer::AUTOFILL_WALLET_METADATA, type);
 
   syncer::SyncDataList data_list;
-  base::ScopedPtrHashMap<std::string, scoped_ptr<AutofillProfile>> profiles;
-  base::ScopedPtrHashMap<std::string, scoped_ptr<CreditCard>> cards;
+  base::ScopedPtrHashMap<std::string, std::unique_ptr<AutofillProfile>>
+      profiles;
+  base::ScopedPtrHashMap<std::string, std::unique_ptr<CreditCard>> cards;
   if (GetLocalData(&profiles, &cards)) {
     for (const auto& it : profiles) {
       data_list.push_back(BuildSyncData(
@@ -263,8 +272,9 @@ syncer::SyncError AutofillWalletMetadataSyncableService::ProcessSyncChanges(
 
   ApplyChangesToCache(changes_from_sync, &cache_);
 
-  base::ScopedPtrHashMap<std::string, scoped_ptr<AutofillProfile>> profiles;
-  base::ScopedPtrHashMap<std::string, scoped_ptr<CreditCard>> cards;
+  base::ScopedPtrHashMap<std::string, std::unique_ptr<AutofillProfile>>
+      profiles;
+  base::ScopedPtrHashMap<std::string, std::unique_ptr<CreditCard>> cards;
   GetLocalData(&profiles, &cards);
 
   // base::Unretained is used because the callbacks are invoked synchronously.
@@ -389,25 +399,27 @@ AutofillWalletMetadataSyncableService::AutofillWalletMetadataSyncableService(
 }
 
 bool AutofillWalletMetadataSyncableService::GetLocalData(
-    base::ScopedPtrHashMap<std::string, scoped_ptr<AutofillProfile>>* profiles,
-    base::ScopedPtrHashMap<std::string, scoped_ptr<CreditCard>>* cards) const {
-  ScopedVector<AutofillProfile> profile_list;
+    base::ScopedPtrHashMap<std::string, std::unique_ptr<AutofillProfile>>*
+        profiles,
+    base::ScopedPtrHashMap<std::string, std::unique_ptr<CreditCard>>* cards)
+    const {
+  std::vector<std::unique_ptr<AutofillProfile>> profile_list;
   bool success =
       AutofillTable::FromWebDatabase(web_data_backend_->GetDatabase())
-          ->GetServerProfiles(&profile_list.get());
+          ->GetServerProfiles(&profile_list);
   while (!profile_list.empty()) {
-    profiles->add(GetServerId(*profile_list.front()),
-                  make_scoped_ptr(profile_list.front()));
-    profile_list.weak_erase(profile_list.begin());
+    auto server_id = GetServerId(*profile_list.front());
+    profiles->add(server_id, std::move(profile_list.front()));
+    profile_list.erase(profile_list.begin());
   }
 
-  ScopedVector<CreditCard> card_list;
+  std::vector<std::unique_ptr<CreditCard>> card_list;
   success &= AutofillTable::FromWebDatabase(web_data_backend_->GetDatabase())
-                 ->GetServerCreditCards(&card_list.get());
+                 ->GetServerCreditCards(&card_list);
   while (!card_list.empty()) {
-    cards->add(GetServerId(*card_list.front()),
-               make_scoped_ptr(card_list.front()));
-    card_list.weak_erase(card_list.begin());
+    auto server_id = GetServerId(*card_list.front());
+    cards->add(server_id, std::move(card_list.front()));
+    card_list.erase(card_list.begin());
   }
 
   return success;
@@ -435,8 +447,9 @@ AutofillWalletMetadataSyncableService::SendChangesToSyncServer(
 
 syncer::SyncMergeResult AutofillWalletMetadataSyncableService::MergeData(
     const syncer::SyncDataList& sync_data) {
-  base::ScopedPtrHashMap<std::string, scoped_ptr<AutofillProfile>> profiles;
-  base::ScopedPtrHashMap<std::string, scoped_ptr<CreditCard>> cards;
+  base::ScopedPtrHashMap<std::string, std::unique_ptr<AutofillProfile>>
+      profiles;
+  base::ScopedPtrHashMap<std::string, std::unique_ptr<CreditCard>> cards;
   GetLocalData(&profiles, &cards);
 
   syncer::SyncMergeResult result(syncer::AUTOFILL_WALLET_METADATA);

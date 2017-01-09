@@ -24,7 +24,7 @@ ImageWriterPrivateWriteFromUrlFunction::
 }
 
 bool ImageWriterPrivateWriteFromUrlFunction::RunAsync() {
-  scoped_ptr<image_writer_api::WriteFromUrl::Params> params(
+  std::unique_ptr<image_writer_api::WriteFromUrl::Params> params(
       image_writer_api::WriteFromUrl::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -134,7 +134,7 @@ ImageWriterPrivateDestroyPartitionsFunction::
 }
 
 bool ImageWriterPrivateDestroyPartitionsFunction::RunAsync() {
-  scoped_ptr<image_writer_api::DestroyPartitions::Params> params(
+  std::unique_ptr<image_writer_api::DestroyPartitions::Params> params(
       image_writer_api::DestroyPartitions::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -177,9 +177,8 @@ void ImageWriterPrivateListRemovableStorageDevicesFunction::OnDeviceListReady(
     scoped_refptr<StorageDeviceList> device_list,
     bool success) {
   if (success) {
-    results_ =
-      image_writer_api::ListRemovableStorageDevices::Results::Create(
-        device_list.get()->data);
+    results_ = image_writer_api::ListRemovableStorageDevices::Results::Create(
+        device_list->data);
     SendResponse(true);
   } else {
     error_ = image_writer::error::kDeviceListError;

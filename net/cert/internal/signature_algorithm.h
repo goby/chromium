@@ -7,12 +7,15 @@
 
 #include <stdint.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
 
 namespace net {
+
+class CertErrors;
 
 namespace der {
 class Input;
@@ -34,6 +37,21 @@ enum class SignatureAlgorithmId {
   Ecdsa,     // ECDSA
 };
 
+// Parses a HashAlgorithm as defined by RFC 5912:
+//
+//     HashAlgorithm  ::=  AlgorithmIdentifier{DIGEST-ALGORITHM,
+//                             {HashAlgorithms}}
+//
+//     HashAlgorithms DIGEST-ALGORITHM ::=  {
+//         { IDENTIFIER id-sha1 PARAMS TYPE NULL ARE preferredPresent } |
+//         { IDENTIFIER id-sha224 PARAMS TYPE NULL ARE preferredPresent } |
+//         { IDENTIFIER id-sha256 PARAMS TYPE NULL ARE preferredPresent } |
+//         { IDENTIFIER id-sha384 PARAMS TYPE NULL ARE preferredPresent } |
+//         { IDENTIFIER id-sha512 PARAMS TYPE NULL ARE preferredPresent }
+//     }
+WARN_UNUSED_RESULT bool ParseHashAlgorithm(const der::Input input,
+                                           DigestAlgorithm* out);
+
 // Base class for describing algorithm parameters.
 class NET_EXPORT SignatureAlgorithmParameters {
  public:
@@ -53,8 +71,6 @@ class NET_EXPORT RsaPssParameters : public SignatureAlgorithmParameters {
  public:
   RsaPssParameters(DigestAlgorithm mgf1_hash, uint32_t salt_length);
 
-  bool Equals(const RsaPssParameters* other) const;
-
   DigestAlgorithm mgf1_hash() const { return mgf1_hash_; }
   uint32_t salt_length() const { return salt_length_; }
 
@@ -73,20 +89,22 @@ class NET_EXPORT SignatureAlgorithm {
   DigestAlgorithm digest() const { return digest_; }
 
   // Creates a SignatureAlgorithm by parsing a DER-encoded "AlgorithmIdentifier"
-  // (RFC 5280). Returns nullptr on failure.
-  static scoped_ptr<SignatureAlgorithm> CreateFromDer(
-      const der::Input& algorithm_identifier);
+  // (RFC 5280). Returns nullptr on failure. If |errors| was non-null then
+  // error/warning information is output to it.
+  static std::unique_ptr<SignatureAlgorithm> Create(
+      const der::Input& algorithm_identifier,
+      CertErrors* errors);
 
   // Creates a new SignatureAlgorithm with the given type and parameters.
-  static scoped_ptr<SignatureAlgorithm> CreateRsaPkcs1(DigestAlgorithm digest);
-  static scoped_ptr<SignatureAlgorithm> CreateEcdsa(DigestAlgorithm digest);
-  static scoped_ptr<SignatureAlgorithm> CreateRsaPss(DigestAlgorithm digest,
-                                                     DigestAlgorithm mgf1_hash,
-                                                     uint32_t salt_length);
-
-  // Returns true if |*this| is equivalent to |other|. This compares both the
-  // algorithm ID and each parameter for equality.
-  bool Equals(const SignatureAlgorithm& other) const WARN_UNUSED_RESULT;
+  // Guaranteed to return non-null result.
+  static std::unique_ptr<SignatureAlgorithm> CreateRsaPkcs1(
+      DigestAlgorithm digest);
+  static std::unique_ptr<SignatureAlgorithm> CreateEcdsa(
+      DigestAlgorithm digest);
+  static std::unique_ptr<SignatureAlgorithm> CreateRsaPss(
+      DigestAlgorithm digest,
+      DigestAlgorithm mgf1_hash,
+      uint32_t salt_length);
 
   // The following methods retrieve the parameters for the signature algorithm.
   //
@@ -100,11 +118,11 @@ class NET_EXPORT SignatureAlgorithm {
  private:
   SignatureAlgorithm(SignatureAlgorithmId algorithm,
                      DigestAlgorithm digest,
-                     scoped_ptr<SignatureAlgorithmParameters> params);
+                     std::unique_ptr<SignatureAlgorithmParameters> params);
 
   const SignatureAlgorithmId algorithm_;
   const DigestAlgorithm digest_;
-  const scoped_ptr<SignatureAlgorithmParameters> params_;
+  const std::unique_ptr<SignatureAlgorithmParameters> params_;
 
   DISALLOW_COPY_AND_ASSIGN(SignatureAlgorithm);
 };

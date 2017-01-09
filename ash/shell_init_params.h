@@ -5,12 +5,6 @@
 #ifndef ASH_SHELL_INIT_PARAMS_H_
 #define ASH_SHELL_INIT_PARAMS_H_
 
-#include "build/build_config.h"
-
-#if defined(OS_WIN)
-#include <windows.h>
-#endif
-
 #include "ash/ash_export.h"
 
 namespace base {
@@ -26,17 +20,9 @@ namespace ash {
 class ShellDelegate;
 
 struct ASH_EXPORT ShellInitParams {
-  ShellInitParams();
-  ~ShellInitParams();
-
-  ShellDelegate* delegate;
-
-  ui::ContextFactory* context_factory;
-  base::SequencedWorkerPool* blocking_pool;
-
-#if defined(OS_WIN)
-  HWND remote_hwnd;
-#endif
+  ShellDelegate* delegate = nullptr;
+  ui::ContextFactory* context_factory = nullptr;
+  base::SequencedWorkerPool* blocking_pool = nullptr;
 };
 
 }  // namespace ash

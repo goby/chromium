@@ -5,10 +5,14 @@
 #ifndef CONTENT_BROWSER_SHARED_WORKER_SHARED_WORKER_SERVICE_IMPL_H_
 #define CONTENT_BROWSER_SHARED_WORKER_SHARED_WORKER_SERVICE_IMPL_H_
 
+#include <map>
+#include <memory>
 #include <set>
+#include <utility>
+#include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/containers/scoped_ptr_hash_map.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
 #include "content/public/browser/notification_observer.h"
@@ -46,12 +50,12 @@ class CONTENT_EXPORT SharedWorkerServiceImpl
   void RemoveObserver(WorkerServiceObserver* observer) override;
 
   // These methods correspond to worker related IPCs.
-  void CreateWorker(const ViewHostMsg_CreateWorker_Params& params,
-                    int route_id,
-                    SharedWorkerMessageFilter* filter,
-                    ResourceContext* resource_context,
-                    const WorkerStoragePartitionId& partition_id,
-                    blink::WebWorkerCreationError* creation_error);
+  blink::WebWorkerCreationError CreateWorker(
+      const ViewHostMsg_CreateWorker_Params& params,
+      int route_id,
+      SharedWorkerMessageFilter* filter,
+      ResourceContext* resource_context,
+      const WorkerStoragePartitionId& partition_id);
   void ForwardToWorker(const IPC::Message& message,
                        SharedWorkerMessageFilter* filter);
   void DocumentDetached(unsigned long long document_id,
@@ -69,13 +73,6 @@ class CONTENT_EXPORT SharedWorkerServiceImpl
   void WorkerConnected(int message_port_id,
                        int worker_route_id,
                        SharedWorkerMessageFilter* filter);
-  void AllowDatabase(int worker_route_id,
-                     const GURL& url,
-                     const base::string16& name,
-                     const base::string16& display_name,
-                     unsigned long estimated_size,
-                     bool* result,
-                     SharedWorkerMessageFilter* filter);
   void AllowFileSystem(int worker_route_id,
                        const GURL& url,
                        IPC::Message* reply_msg,
@@ -88,6 +85,11 @@ class CONTENT_EXPORT SharedWorkerServiceImpl
 
   void OnSharedWorkerMessageFilterClosing(
       SharedWorkerMessageFilter* filter);
+
+  // Removes the references to shared workers from all the documents in the
+  // renderer frame. And shuts down any shared workers that are no longer
+  // referenced by active documents.
+  void RenderFrameDetached(int render_process_id, int render_frame_id);
 
   // Checks the worker dependency of renderer processes and calls
   // IncrementWorkerRefCount and DecrementWorkerRefCount of
@@ -103,15 +105,16 @@ class CONTENT_EXPORT SharedWorkerServiceImpl
   friend struct base::DefaultSingletonTraits<SharedWorkerServiceImpl>;
   friend class SharedWorkerServiceImplTest;
 
-  typedef void (*UpdateWorkerDependencyFunc)(const std::vector<int>&,
-                                             const std::vector<int>&);
-  typedef bool (*TryIncrementWorkerRefCountFunc)(bool);
+  using UpdateWorkerDependencyFunc = void (*)(const std::vector<int>&,
+                                              const std::vector<int>&);
+  using TryIncrementWorkerRefCountFunc = bool (*)(bool);
+
   // Pair of render_process_id and worker_route_id.
-  typedef std::pair<int, int> ProcessRouteIdPair;
-  typedef base::ScopedPtrHashMap<ProcessRouteIdPair,
-                                 scoped_ptr<SharedWorkerHost>> WorkerHostMap;
-  typedef base::ScopedPtrHashMap<int, scoped_ptr<SharedWorkerPendingInstance>>
-      PendingInstanceMap;
+  using ProcessRouteIdPair = std::pair<int, int>;
+  using WorkerHostMap =
+      std::map<ProcessRouteIdPair, std::unique_ptr<SharedWorkerHost>>;
+  using PendingInstanceMap =
+      std::map<int, std::unique_ptr<SharedWorkerPendingInstance>>;
 
   SharedWorkerServiceImpl();
   ~SharedWorkerServiceImpl() override;
@@ -121,10 +124,13 @@ class CONTENT_EXPORT SharedWorkerServiceImpl
   // Reserves the render process to create Shared Worker. This reservation
   // procedure will be executed on UI thread and
   // RenderProcessReservedCallback() or RenderProcessReserveFailedCallback()
-  // will be called on IO thread.
-  void ReserveRenderProcessToCreateWorker(
-      scoped_ptr<SharedWorkerPendingInstance> pending_instance,
-      blink::WebWorkerCreationError* creation_error);
+  // will be called on IO thread. Returns blink::WebWorkerCreationErrorNone or
+  // blink::WebWorkerCreationErrorSecureContextMismatch on success.
+  // (SecureContextMismatch is used for UMA and should be handled as success.
+  // See CreateWorkerErrorIsFatal() in shared_worker_message_filter.cc for
+  // details.)
+  blink::WebWorkerCreationError ReserveRenderProcessToCreateWorker(
+      std::unique_ptr<SharedWorkerPendingInstance> pending_instance);
 
   // Called after the render process is reserved to create Shared Worker in it.
   void RenderProcessReservedCallback(int pending_instance_id,
@@ -140,9 +146,9 @@ class CONTENT_EXPORT SharedWorkerServiceImpl
                                           int worker_route_id,
                                           bool is_new_worker);
 
-  SharedWorkerHost* FindSharedWorkerHost(
-      SharedWorkerMessageFilter* filter,
-      int worker_route_id);
+  // Returns nullptr if there is no host for given ids.
+  SharedWorkerHost* FindSharedWorkerHost(int render_process_id,
+                                         int worker_route_id);
 
   SharedWorkerHost* FindSharedWorkerHost(const SharedWorkerInstance& instance);
   SharedWorkerPendingInstance* FindPendingInstance(

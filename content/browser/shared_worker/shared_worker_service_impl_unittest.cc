@@ -2,24 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/shared_worker/shared_worker_service_impl.h"
+
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
-#include <vector>
+#include <string>
+#include <tuple>
 
 #include "base/atomic_sequence_num.h"
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "content/browser/message_port_message_filter.h"
 #include "content/browser/shared_worker/shared_worker_message_filter.h"
-#include "content/browser/shared_worker/shared_worker_service_impl.h"
 #include "content/browser/shared_worker/worker_storage_partition.h"
 #include "content/common/message_port_messages.h"
 #include "content/common/view_messages.h"
 #include "content/common/worker_messages.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
@@ -43,15 +48,16 @@ class SharedWorkerServiceImplTest : public testing::Test {
   SharedWorkerServiceImplTest()
       : browser_thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP),
         browser_context_(new TestBrowserContext()),
-        partition_(
-            new WorkerStoragePartition(browser_context_->GetRequestContext(),
-                                       NULL,
-                                       NULL,
-                                       NULL,
-                                       NULL,
-                                       NULL,
-                                       NULL,
-                                       NULL)) {
+        partition_(new WorkerStoragePartition(
+            BrowserContext::GetDefaultStoragePartition(browser_context_.get())
+                ->GetURLRequestContext(),
+            nullptr /* media_url_request_context */,
+            nullptr /* appcache_service */,
+            nullptr /* quota_manager */,
+            nullptr /* filesystem_context */,
+            nullptr /* database_tracker */,
+            nullptr /* indexed_db_context */,
+            nullptr /* service_worker_context */)) {
     SharedWorkerServiceImpl::GetInstance()
         ->ChangeUpdateWorkerDependencyFuncForTesting(
             &SharedWorkerServiceImplTest::MockUpdateWorkerDependency);
@@ -81,13 +87,15 @@ class SharedWorkerServiceImplTest : public testing::Test {
   }
 
   TestBrowserThreadBundle browser_thread_bundle_;
-  scoped_ptr<TestBrowserContext> browser_context_;
-  scoped_ptr<WorkerStoragePartition> partition_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<WorkerStoragePartition> partition_;
   static int s_update_worker_dependency_call_count_;
   static std::vector<int> s_worker_dependency_added_ids_;
   static std::vector<int> s_worker_dependency_removed_ids_;
   static base::Lock s_lock_;
   static std::set<int> s_running_process_id_set_;
+
+ private:
   DISALLOW_COPY_AND_ASSIGN(SharedWorkerServiceImplTest);
 };
 
@@ -106,36 +114,37 @@ static const int kRenderFrameRouteIDs[] = {300, 301, 302};
 
 class MockMessagePortMessageFilter : public MessagePortMessageFilter {
  public:
-  MockMessagePortMessageFilter(const NextRoutingIDCallback& callback,
-                               ScopedVector<IPC::Message>* message_queue)
+  MockMessagePortMessageFilter(
+      const NextRoutingIDCallback& callback,
+      std::vector<std::unique_ptr<IPC::Message>>* message_queue)
       : MessagePortMessageFilter(callback), message_queue_(message_queue) {}
 
   bool Send(IPC::Message* message) override {
-    if (!message_queue_) {
-      delete message;
+    std::unique_ptr<IPC::Message> owned(message);
+    if (!message_queue_)
       return false;
-    }
-    message_queue_->push_back(message);
+    message_queue_->push_back(std::move(owned));
     return true;
   }
 
   void Close() {
-    message_queue_ = NULL;
+    message_queue_ = nullptr;
     OnChannelClosing();
   }
 
  private:
   ~MockMessagePortMessageFilter() override {}
-  ScopedVector<IPC::Message>* message_queue_;
+  std::vector<std::unique_ptr<IPC::Message>>* message_queue_;
 };
 
 class MockSharedWorkerMessageFilter : public SharedWorkerMessageFilter {
  public:
-  MockSharedWorkerMessageFilter(int render_process_id,
-                                ResourceContext* resource_context,
-                                const WorkerStoragePartition& partition,
-                                MessagePortMessageFilter* message_port_filter,
-                                ScopedVector<IPC::Message>* message_queue)
+  MockSharedWorkerMessageFilter(
+      int render_process_id,
+      ResourceContext* resource_context,
+      const WorkerStoragePartition& partition,
+      MessagePortMessageFilter* message_port_filter,
+      std::vector<std::unique_ptr<IPC::Message>>* message_queue)
       : SharedWorkerMessageFilter(render_process_id,
                                   resource_context,
                                   partition,
@@ -143,22 +152,21 @@ class MockSharedWorkerMessageFilter : public SharedWorkerMessageFilter {
         message_queue_(message_queue) {}
 
   bool Send(IPC::Message* message) override {
-    if (!message_queue_) {
-      delete message;
+    std::unique_ptr<IPC::Message> owned(message);
+    if (!message_queue_)
       return false;
-    }
-    message_queue_->push_back(message);
+    message_queue_->push_back(std::move(owned));
     return true;
   }
 
   void Close() {
-    message_queue_ = NULL;
+    message_queue_ = nullptr;
     OnChannelClosing();
   }
 
  private:
   ~MockSharedWorkerMessageFilter() override {}
-  ScopedVector<IPC::Message>* message_queue_;
+  std::vector<std::unique_ptr<IPC::Message>>* message_queue_;
 };
 
 class MockRendererProcessHost {
@@ -186,29 +194,30 @@ class MockRendererProcessHost {
   }
 
   bool OnMessageReceived(IPC::Message* message) {
-    scoped_ptr<IPC::Message> msg(message);
+    std::unique_ptr<IPC::Message> msg(message);
     const bool ret = message_filter_->OnMessageReceived(*message) ||
                      worker_filter_->OnMessageReceived(*message);
     if (message->is_sync()) {
       CHECK(!queued_messages_.empty());
-      const IPC::Message* response_msg = queued_messages_.back();
+      std::unique_ptr<IPC::Message> response_msg(
+          queued_messages_.back().release());
+      queued_messages_.pop_back();
       IPC::SyncMessage* sync_msg = static_cast<IPC::SyncMessage*>(message);
-      scoped_ptr<IPC::MessageReplyDeserializer> reply_serializer(
+      std::unique_ptr<IPC::MessageReplyDeserializer> reply_serializer(
           sync_msg->GetReplyDeserializer());
       bool result = reply_serializer->SerializeOutputParameters(*response_msg);
       CHECK(result);
-      queued_messages_.pop_back();
     }
     return ret;
   }
 
   size_t QueuedMessageCount() const { return queued_messages_.size(); }
 
-  scoped_ptr<IPC::Message> PopMessage() {
+  std::unique_ptr<IPC::Message> PopMessage() {
     CHECK(queued_messages_.size());
-    scoped_ptr<IPC::Message> msg(*queued_messages_.begin());
-    queued_messages_.weak_erase(queued_messages_.begin());
-    return msg.Pass();
+    std::unique_ptr<IPC::Message> msg(queued_messages_.begin()->release());
+    queued_messages_.erase(queued_messages_.begin());
+    return msg;
   }
 
   void FastShutdownIfPossible() {
@@ -217,7 +226,7 @@ class MockRendererProcessHost {
 
  private:
   const int process_id_;
-  ScopedVector<IPC::Message> queued_messages_;
+  std::vector<std::unique_ptr<IPC::Message>> queued_messages_;
   base::AtomicSequenceNumber next_routing_id_;
   scoped_refptr<MockMessagePortMessageFilter> message_filter_;
   scoped_refptr<MockSharedWorkerMessageFilter> worker_filter_;
@@ -251,6 +260,8 @@ void PostCreateWorker(MockRendererProcessHost* renderer,
   params.security_policy_type = blink::WebContentSecurityPolicyTypeReport;
   params.document_id = document_id;
   params.render_frame_route_id = render_frame_route_id;
+  params.creation_context_type =
+      blink::WebSharedWorkerCreationContextTypeSecure;
   EXPECT_TRUE(
       renderer->OnMessageReceived(new ViewHostMsg_CreateWorker(params, reply)));
 }
@@ -280,11 +291,10 @@ class MockSharedWorkerConnector {
         new MessagePortHostMsg_QueueMessages(remote_port_id_)));
   }
   void SendPostMessage(const std::string& data) {
-    const std::vector<TransferredMessagePort> empty_ports;
+    const std::vector<int> empty_ports;
     EXPECT_TRUE(
         renderer_host_->OnMessageReceived(new MessagePortHostMsg_PostMessage(
-            local_port_id_,
-            MessagePortMessage(base::ASCIIToUTF16(data)), empty_ports)));
+            local_port_id_, base::ASCIIToUTF16(data), empty_ports)));
   }
   void SendConnect() {
     EXPECT_TRUE(
@@ -324,27 +334,27 @@ void CheckWorkerProcessMsgCreateWorker(
     const std::string& expected_name,
     blink::WebContentSecurityPolicyType expected_security_policy_type,
     int* route_id) {
-  scoped_ptr<IPC::Message> msg(renderer_host->PopMessage());
+  std::unique_ptr<IPC::Message> msg(renderer_host->PopMessage());
   EXPECT_EQ(WorkerProcessMsg_CreateWorker::ID, msg->type());
-  base::Tuple<WorkerProcessMsg_CreateWorker_Params> param;
+  std::tuple<WorkerProcessMsg_CreateWorker_Params> param;
   EXPECT_TRUE(WorkerProcessMsg_CreateWorker::Read(msg.get(), &param));
-  EXPECT_EQ(GURL(expected_url), base::get<0>(param).url);
-  EXPECT_EQ(base::ASCIIToUTF16(expected_name), base::get<0>(param).name);
+  EXPECT_EQ(GURL(expected_url), std::get<0>(param).url);
+  EXPECT_EQ(base::ASCIIToUTF16(expected_name), std::get<0>(param).name);
   EXPECT_EQ(expected_security_policy_type,
-            base::get<0>(param).security_policy_type);
-  *route_id = base::get<0>(param).route_id;
+            std::get<0>(param).security_policy_type);
+  *route_id = std::get<0>(param).route_id;
 }
 
 void CheckViewMsgWorkerCreated(MockRendererProcessHost* renderer_host,
                                MockSharedWorkerConnector* connector) {
-  scoped_ptr<IPC::Message> msg(renderer_host->PopMessage());
+  std::unique_ptr<IPC::Message> msg(renderer_host->PopMessage());
   EXPECT_EQ(ViewMsg_WorkerCreated::ID, msg->type());
   EXPECT_EQ(connector->route_id(), msg->routing_id());
 }
 
 void CheckMessagePortMsgMessagesQueued(MockRendererProcessHost* renderer_host,
                                        MockSharedWorkerConnector* connector) {
-  scoped_ptr<IPC::Message> msg(renderer_host->PopMessage());
+  std::unique_ptr<IPC::Message> msg(renderer_host->PopMessage());
   EXPECT_EQ(MessagePortMsg_MessagesQueued::ID, msg->type());
   EXPECT_EQ(connector->temporary_remote_port_route_id(), msg->routing_id());
 }
@@ -353,31 +363,31 @@ void CheckWorkerMsgConnect(MockRendererProcessHost* renderer_host,
                            int expected_msg_route_id,
                            int expected_sent_message_port_id,
                            int* routing_id) {
-  scoped_ptr<IPC::Message> msg(renderer_host->PopMessage());
+  std::unique_ptr<IPC::Message> msg(renderer_host->PopMessage());
   EXPECT_EQ(WorkerMsg_Connect::ID, msg->type());
   EXPECT_EQ(expected_msg_route_id, msg->routing_id());
   WorkerMsg_Connect::Param params;
   EXPECT_TRUE(WorkerMsg_Connect::Read(msg.get(), &params));
-  int port_id = base::get<0>(params);
-  *routing_id = base::get<1>(params);
+  int port_id = std::get<0>(params);
+  *routing_id = std::get<1>(params);
   EXPECT_EQ(expected_sent_message_port_id, port_id);
 }
 
 void CheckMessagePortMsgMessage(MockRendererProcessHost* renderer_host,
                                 int expected_msg_route_id,
                                 std::string expected_data) {
-  scoped_ptr<IPC::Message> msg(renderer_host->PopMessage());
+  std::unique_ptr<IPC::Message> msg(renderer_host->PopMessage());
   EXPECT_EQ(MessagePortMsg_Message::ID, msg->type());
   EXPECT_EQ(expected_msg_route_id, msg->routing_id());
   MessagePortMsg_Message::Param params;
   EXPECT_TRUE(MessagePortMsg_Message::Read(msg.get(), &params));
-  base::string16 data = base::get<0>(params).message_as_string;
+  base::string16 data = std::get<0>(params);
   EXPECT_EQ(base::ASCIIToUTF16(expected_data), data);
 }
 
 void CheckViewMsgWorkerConnected(MockRendererProcessHost* renderer_host,
                                  MockSharedWorkerConnector* connector) {
-  scoped_ptr<IPC::Message> msg(renderer_host->PopMessage());
+  std::unique_ptr<IPC::Message> msg(renderer_host->PopMessage());
   EXPECT_EQ(ViewMsg_WorkerConnected::ID, msg->type());
   EXPECT_EQ(connector->route_id(), msg->routing_id());
 }
@@ -385,11 +395,11 @@ void CheckViewMsgWorkerConnected(MockRendererProcessHost* renderer_host,
 }  // namespace
 
 TEST_F(SharedWorkerServiceImplTest, BasicTest) {
-  scoped_ptr<MockRendererProcessHost> renderer_host(
+  std::unique_ptr<MockRendererProcessHost> renderer_host(
       new MockRendererProcessHost(kProcessIDs[0],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
-  scoped_ptr<MockSharedWorkerConnector> connector(
+  std::unique_ptr<MockSharedWorkerConnector> connector(
       new MockSharedWorkerConnector(renderer_host.get()));
   int worker_route_id;
   int worker_msg_port_route_id;
@@ -467,11 +477,11 @@ TEST_F(SharedWorkerServiceImplTest, BasicTest) {
 
   // When SharedWorker side sends MessagePortHostMsg_PostMessage,
   // SharedWorkerConnector side shuold receive MessagePortMsg_Message.
-  const std::vector<TransferredMessagePort> empty_ports;
+  const std::vector<int> empty_ports;
   EXPECT_TRUE(
       renderer_host->OnMessageReceived(new MessagePortHostMsg_PostMessage(
           connector->remote_port_id(),
-          MessagePortMessage(base::ASCIIToUTF16("test2")), empty_ports)));
+          base::ASCIIToUTF16("test2"), empty_ports)));
   EXPECT_EQ(1U, renderer_host->QueuedMessageCount());
   CheckMessagePortMsgMessage(
       renderer_host.get(), connector->local_port_route_id(), "test2");
@@ -482,11 +492,11 @@ TEST_F(SharedWorkerServiceImplTest, BasicTest) {
 
 TEST_F(SharedWorkerServiceImplTest, TwoRendererTest) {
   // The first renderer host.
-  scoped_ptr<MockRendererProcessHost> renderer_host0(
+  std::unique_ptr<MockRendererProcessHost> renderer_host0(
       new MockRendererProcessHost(kProcessIDs[0],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
-  scoped_ptr<MockSharedWorkerConnector> connector0(
+  std::unique_ptr<MockSharedWorkerConnector> connector0(
       new MockSharedWorkerConnector(renderer_host0.get()));
   int worker_route_id;
   int worker_msg_port_route_id1;
@@ -564,21 +574,21 @@ TEST_F(SharedWorkerServiceImplTest, TwoRendererTest) {
 
   // When SharedWorker side sends MessagePortHostMsg_PostMessage,
   // SharedWorkerConnector side shuold receive MessagePortMsg_Message.
-  const std::vector<TransferredMessagePort> empty_ports;
+  const std::vector<int> empty_ports;
   EXPECT_TRUE(
       renderer_host0->OnMessageReceived(new MessagePortHostMsg_PostMessage(
           connector0->remote_port_id(),
-          MessagePortMessage(base::ASCIIToUTF16("test2")), empty_ports)));
+          base::ASCIIToUTF16("test2"), empty_ports)));
   EXPECT_EQ(1U, renderer_host0->QueuedMessageCount());
   CheckMessagePortMsgMessage(
       renderer_host0.get(), connector0->local_port_route_id(), "test2");
 
   // The second renderer host.
-  scoped_ptr<MockRendererProcessHost> renderer_host1(
+  std::unique_ptr<MockRendererProcessHost> renderer_host1(
       new MockRendererProcessHost(kProcessIDs[1],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
-  scoped_ptr<MockSharedWorkerConnector> connector1(
+  std::unique_ptr<MockSharedWorkerConnector> connector1(
       new MockSharedWorkerConnector(renderer_host1.get()));
   int worker_msg_port_route_id2;
 
@@ -647,7 +657,7 @@ TEST_F(SharedWorkerServiceImplTest, TwoRendererTest) {
   EXPECT_TRUE(
       renderer_host0->OnMessageReceived(new MessagePortHostMsg_PostMessage(
           connector1->remote_port_id(),
-          MessagePortMessage(base::ASCIIToUTF16("test4")), empty_ports)));
+          base::ASCIIToUTF16("test4"), empty_ports)));
   EXPECT_EQ(1U, renderer_host1->QueuedMessageCount());
   CheckMessagePortMsgMessage(
       renderer_host1.get(), connector1->local_port_route_id(), "test4");
@@ -663,12 +673,12 @@ TEST_F(SharedWorkerServiceImplTest, TwoRendererTest) {
 
 TEST_F(SharedWorkerServiceImplTest, CreateWorkerTest) {
   // The first renderer host.
-  scoped_ptr<MockRendererProcessHost> renderer_host0(
+  std::unique_ptr<MockRendererProcessHost> renderer_host0(
       new MockRendererProcessHost(kProcessIDs[0],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
   // The second renderer host.
-  scoped_ptr<MockRendererProcessHost> renderer_host1(
+  std::unique_ptr<MockRendererProcessHost> renderer_host1(
       new MockRendererProcessHost(kProcessIDs[1],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
@@ -676,9 +686,9 @@ TEST_F(SharedWorkerServiceImplTest, CreateWorkerTest) {
 
   // Normal case.
   {
-    scoped_ptr<MockSharedWorkerConnector> connector0(
+    std::unique_ptr<MockSharedWorkerConnector> connector0(
         new MockSharedWorkerConnector(renderer_host0.get()));
-    scoped_ptr<MockSharedWorkerConnector> connector1(
+    std::unique_ptr<MockSharedWorkerConnector> connector1(
         new MockSharedWorkerConnector(renderer_host1.get()));
     connector0->Create("http://example.com/w1.js",
                        "name1",
@@ -707,9 +717,9 @@ TEST_F(SharedWorkerServiceImplTest, CreateWorkerTest) {
 
   // Normal case (URL mismatch).
   {
-    scoped_ptr<MockSharedWorkerConnector> connector0(
+    std::unique_ptr<MockSharedWorkerConnector> connector0(
         new MockSharedWorkerConnector(renderer_host0.get()));
-    scoped_ptr<MockSharedWorkerConnector> connector1(
+    std::unique_ptr<MockSharedWorkerConnector> connector1(
         new MockSharedWorkerConnector(renderer_host1.get()));
     connector0->Create("http://example.com/w2.js",
                        "name2",
@@ -739,9 +749,9 @@ TEST_F(SharedWorkerServiceImplTest, CreateWorkerTest) {
 
   // Pending case.
   {
-    scoped_ptr<MockSharedWorkerConnector> connector0(
+    std::unique_ptr<MockSharedWorkerConnector> connector0(
         new MockSharedWorkerConnector(renderer_host0.get()));
-    scoped_ptr<MockSharedWorkerConnector> connector1(
+    std::unique_ptr<MockSharedWorkerConnector> connector1(
         new MockSharedWorkerConnector(renderer_host1.get()));
     connector0->Create("http://example.com/w3.js",
                        "name3",
@@ -769,9 +779,9 @@ TEST_F(SharedWorkerServiceImplTest, CreateWorkerTest) {
 
   // Pending case (URL mismatch).
   {
-    scoped_ptr<MockSharedWorkerConnector> connector0(
+    std::unique_ptr<MockSharedWorkerConnector> connector0(
         new MockSharedWorkerConnector(renderer_host0.get()));
-    scoped_ptr<MockSharedWorkerConnector> connector1(
+    std::unique_ptr<MockSharedWorkerConnector> connector1(
         new MockSharedWorkerConnector(renderer_host1.get()));
     connector0->Create("http://example.com/w4.js",
                        "name4",
@@ -799,25 +809,25 @@ TEST_F(SharedWorkerServiceImplTest, CreateWorkerTest) {
 
 TEST_F(SharedWorkerServiceImplTest, CreateWorkerRaceTest) {
   // Create three renderer hosts.
-  scoped_ptr<MockRendererProcessHost> renderer_host0(
+  std::unique_ptr<MockRendererProcessHost> renderer_host0(
       new MockRendererProcessHost(kProcessIDs[0],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
-  scoped_ptr<MockRendererProcessHost> renderer_host1(
+  std::unique_ptr<MockRendererProcessHost> renderer_host1(
       new MockRendererProcessHost(kProcessIDs[1],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
-  scoped_ptr<MockRendererProcessHost> renderer_host2(
+  std::unique_ptr<MockRendererProcessHost> renderer_host2(
       new MockRendererProcessHost(kProcessIDs[2],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
   int worker_route_id;
 
-  scoped_ptr<MockSharedWorkerConnector> connector0(
+  std::unique_ptr<MockSharedWorkerConnector> connector0(
       new MockSharedWorkerConnector(renderer_host0.get()));
-  scoped_ptr<MockSharedWorkerConnector> connector1(
+  std::unique_ptr<MockSharedWorkerConnector> connector1(
       new MockSharedWorkerConnector(renderer_host1.get()));
-  scoped_ptr<MockSharedWorkerConnector> connector2(
+  std::unique_ptr<MockSharedWorkerConnector> connector2(
       new MockSharedWorkerConnector(renderer_host2.get()));
   connector0->Create("http://example.com/w1.js",
                      "name1",
@@ -863,25 +873,25 @@ TEST_F(SharedWorkerServiceImplTest, CreateWorkerRaceTest) {
 
 TEST_F(SharedWorkerServiceImplTest, CreateWorkerRaceTest2) {
   // Create three renderer hosts.
-  scoped_ptr<MockRendererProcessHost> renderer_host0(
+  std::unique_ptr<MockRendererProcessHost> renderer_host0(
       new MockRendererProcessHost(kProcessIDs[0],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
-  scoped_ptr<MockRendererProcessHost> renderer_host1(
+  std::unique_ptr<MockRendererProcessHost> renderer_host1(
       new MockRendererProcessHost(kProcessIDs[1],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
-  scoped_ptr<MockRendererProcessHost> renderer_host2(
+  std::unique_ptr<MockRendererProcessHost> renderer_host2(
       new MockRendererProcessHost(kProcessIDs[2],
                                   browser_context_->GetResourceContext(),
                                   *partition_.get()));
   int worker_route_id;
 
-  scoped_ptr<MockSharedWorkerConnector> connector0(
+  std::unique_ptr<MockSharedWorkerConnector> connector0(
       new MockSharedWorkerConnector(renderer_host0.get()));
-  scoped_ptr<MockSharedWorkerConnector> connector1(
+  std::unique_ptr<MockSharedWorkerConnector> connector1(
       new MockSharedWorkerConnector(renderer_host1.get()));
-  scoped_ptr<MockSharedWorkerConnector> connector2(
+  std::unique_ptr<MockSharedWorkerConnector> connector2(
       new MockSharedWorkerConnector(renderer_host2.get()));
   connector0->Create("http://example.com/w1.js",
                      "name1",

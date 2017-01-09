@@ -5,13 +5,20 @@
 #ifndef REMOTING_PROTOCOL_CHANNEL_SOCKET_ADAPTER_H_
 #define REMOTING_PROTOCOL_CHANNEL_SOCKET_ADAPTER_H_
 
+#include <stddef.h>
+
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "remoting/protocol/p2p_datagram_socket.h"
 #include "third_party/webrtc/base/asyncpacketsocket.h"
 #include "third_party/webrtc/base/sigslot.h"
 #include "third_party/webrtc/base/socketaddress.h"
+// TODO(johan): Replace #include by forward declaration once proper
+// inheritance is defined for rtc::PacketTransportInterface and
+// cricket::TransportChannel.
+#include "third_party/webrtc/p2p/base/packettransportinterface.h"
 
 namespace cricket {
 class TransportChannel;
@@ -48,12 +55,12 @@ class TransportChannelSocketAdapter : public P2PDatagramSocket,
            const net::CompletionCallback& callback) override;
 
  private:
-  void OnNewPacket(cricket::TransportChannel* channel,
+  void OnNewPacket(rtc::PacketTransportInterface* transport,
                    const char* data,
                    size_t data_size,
                    const rtc::PacketTime& packet_time,
                    int flags);
-  void OnWritableState(cricket::TransportChannel* channel);
+  void OnWritableState(rtc::PacketTransportInterface* transport);
   void OnChannelDestroyed(cricket::TransportChannel* channel);
 
   base::ThreadChecker thread_checker_;

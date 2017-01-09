@@ -5,26 +5,27 @@
 #ifndef COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_SERVICE_H_
 #define COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_SERVICE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/sequenced_task_runner.h"
 #include "base/threading/non_thread_safe.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
 #include "components/data_reduction_proxy/core/browser/db_data_owner.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_storage_delegate.h"
 
-class GURL;
 class PrefService;
 
 namespace base {
 class SequencedTaskRunner;
+class SingleThreadTaskRunner;
 class TimeDelta;
 class Value;
 }
@@ -38,8 +39,10 @@ namespace data_reduction_proxy {
 class DataReductionProxyCompressionStats;
 class DataReductionProxyEventStore;
 class DataReductionProxyIOData;
+class DataReductionProxyPingbackClient;
 class DataReductionProxyServiceObserver;
 class DataReductionProxySettings;
+class DataUseGroup;
 
 // Contains and initializes all Data Reduction Proxy objects that have a
 // lifetime based on the UI thread.
@@ -57,7 +60,7 @@ class DataReductionProxyService
       DataReductionProxySettings* settings,
       PrefService* prefs,
       net::URLRequestContextGetter* request_context_getter,
-      scoped_ptr<DataStore> store,
+      std::unique_ptr<DataStore> store,
       const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const scoped_refptr<base::SequencedTaskRunner>& db_task_runner,
@@ -74,29 +77,22 @@ class DataReductionProxyService
   // final step in initialization.
   bool Initialized() const;
 
-  // Constructs compression stats with a noop |DataReductionProxyStore|; load
-  // and store calls do nothing. This should not be called
-  // if a valid compression stats is passed into the constructor.
-  void EnableCompressionStatisticsLogging(
-      PrefService* prefs,
-      const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
-      const base::TimeDelta& commit_delay);
-
   // Records daily data savings statistics in |compression_stats_|.
-  void UpdateContentLengths(int64 data_used,
-                            int64 original_size,
+  void UpdateContentLengths(int64_t data_used,
+                            int64_t original_size,
                             bool data_reduction_proxy_enabled,
                             DataReductionProxyRequestType request_type,
-                            const std::string& data_usage_host,
+                            scoped_refptr<DataUseGroup> data_use_group,
                             const std::string& mime_type);
 
   // Overrides of DataReductionProxyEventStorageDelegate.
-  void AddEvent(scoped_ptr<base::Value> event) override;
-  void AddEnabledEvent(scoped_ptr<base::Value> event, bool enabled) override;
-  void AddEventAndSecureProxyCheckState(scoped_ptr<base::Value> event,
+  void AddEvent(std::unique_ptr<base::Value> event) override;
+  void AddEnabledEvent(std::unique_ptr<base::Value> event,
+                       bool enabled) override;
+  void AddEventAndSecureProxyCheckState(std::unique_ptr<base::Value> event,
                                         SecureProxyCheckState state) override;
-  void AddAndSetLastBypassEvent(scoped_ptr<base::Value> event,
-                                int64 expiration_ticks) override;
+  void AddAndSetLastBypassEvent(std::unique_ptr<base::Value> event,
+                                int64_t expiration_ticks) override;
 
   // Records whether the Data Reduction Proxy is unreachable or not.
   void SetUnreachable(bool unreachable);
@@ -111,8 +107,8 @@ class DataReductionProxyService
   // Initializes the Lo-Fi implicit opt out prefs.
   void InitializeLoFiPrefs();
 
-  // Stores an int64 value in |prefs_|.
-  void SetInt64Pref(const std::string& pref_path, int64 value);
+  // Stores an int64_t value in |prefs_|.
+  void SetInt64Pref(const std::string& pref_path, int64_t value);
 
   // Stores a string value in |prefs_|.
   void SetStringPref(const std::string& pref_path, const std::string& value);
@@ -125,13 +121,16 @@ class DataReductionProxyService
       const HistoricalDataUsageCallback& load_data_usage_callback);
   void LoadCurrentDataUsageBucket(
       const LoadCurrentDataUsageCallback& load_current_data_usage_callback);
-  void StoreCurrentDataUsageBucket(scoped_ptr<DataUsageBucket> current);
+  void StoreCurrentDataUsageBucket(std::unique_ptr<DataUsageBucket> current);
   void DeleteHistoricalDataUsage();
   void DeleteBrowsingHistory(const base::Time& start, const base::Time& end);
 
   // Methods for adding/removing observers on |this|.
   void AddObserver(DataReductionProxyServiceObserver* observer);
   void RemoveObserver(DataReductionProxyServiceObserver* observer);
+
+  // Sets the reporting fraction in the pingback client.
+  void SetPingbackReportingFraction(float pingback_reporting_fraction);
 
   // Accessor methods.
   DataReductionProxyCompressionStats* compression_stats() const {
@@ -144,6 +143,10 @@ class DataReductionProxyService
 
   net::URLRequestContextGetter* url_request_context_getter() const {
     return url_request_context_getter_;
+  }
+
+  DataReductionProxyPingbackClient* pingback_client() const {
+    return pingback_client_.get();
   }
 
   base::WeakPtr<DataReductionProxyService> GetWeakPtr();
@@ -169,16 +172,18 @@ class DataReductionProxyService
   net::URLRequestContextGetter* url_request_context_getter_;
 
   // Tracks compression statistics to be displayed to the user.
-  scoped_ptr<DataReductionProxyCompressionStats> compression_stats_;
+  std::unique_ptr<DataReductionProxyCompressionStats> compression_stats_;
 
-  scoped_ptr<DataReductionProxyEventStore> event_store_;
+  std::unique_ptr<DataReductionProxyEventStore> event_store_;
+
+  std::unique_ptr<DataReductionProxyPingbackClient> pingback_client_;
 
   DataReductionProxySettings* settings_;
 
   // A prefs service for storing data.
   PrefService* prefs_;
 
-  scoped_ptr<DBDataOwner> db_data_owner_;
+  std::unique_ptr<DBDataOwner> db_data_owner_;
 
   // Used to post tasks to |io_data_|.
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;

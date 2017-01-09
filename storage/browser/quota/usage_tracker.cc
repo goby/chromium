@@ -4,10 +4,12 @@
 
 #include "storage/browser/quota/usage_tracker.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/bind.h"
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "storage/browser/quota/client_usage_tracker.h"
 #include "storage/browser/quota/storage_monitor.h"
 
@@ -16,8 +18,8 @@ namespace storage {
 namespace {
 
 void DidGetGlobalUsageForLimitedGlobalUsage(const UsageCallback& callback,
-                                            int64 total_global_usage,
-                                            int64 global_unlimited_usage) {
+                                            int64_t total_global_usage,
+                                            int64_t global_unlimited_usage) {
   callback.Run(total_global_usage - global_unlimited_usage);
 }
 
@@ -30,23 +32,20 @@ UsageTracker::UsageTracker(const QuotaClientList& clients,
     : type_(type),
       storage_monitor_(storage_monitor),
       weak_factory_(this) {
-  for (const auto& client : clients) {
+  for (auto* client : clients) {
     if (client->DoesSupport(type)) {
-      client_tracker_map_[client->id()] =
-          new ClientUsageTracker(this, client, type, special_storage_policy,
-                                 storage_monitor_);
+      client_tracker_map_[client->id()] = base::MakeUnique<ClientUsageTracker>(
+          this, client, type, special_storage_policy, storage_monitor_);
     }
   }
 }
 
-UsageTracker::~UsageTracker() {
-  STLDeleteValues(&client_tracker_map_);
-}
+UsageTracker::~UsageTracker() {}
 
 ClientUsageTracker* UsageTracker::GetClientTracker(QuotaClient::ID client_id) {
-  ClientTrackerMap::iterator found = client_tracker_map_.find(client_id);
+  auto found = client_tracker_map_.find(client_id);
   if (found != client_tracker_map_.end())
-    return found->second;
+    return found->second.get();
   return nullptr;
 }
 
@@ -129,15 +128,16 @@ void UsageTracker::GetHostUsage(const std::string& host,
   accumulator.Run(0);
 }
 
-void UsageTracker::UpdateUsageCache(
-    QuotaClient::ID client_id, const GURL& origin, int64 delta) {
+void UsageTracker::UpdateUsageCache(QuotaClient::ID client_id,
+                                    const GURL& origin,
+                                    int64_t delta) {
   ClientUsageTracker* client_tracker = GetClientTracker(client_id);
   DCHECK(client_tracker);
   client_tracker->UpdateUsageCache(origin, delta);
 }
 
 void UsageTracker::GetCachedHostsUsage(
-    std::map<std::string, int64>* host_usage) const {
+    std::map<std::string, int64_t>* host_usage) const {
   DCHECK(host_usage);
   host_usage->clear();
   for (const auto& client_id_and_tracker : client_tracker_map_)
@@ -145,7 +145,7 @@ void UsageTracker::GetCachedHostsUsage(
 }
 
 void UsageTracker::GetCachedOriginsUsage(
-    std::map<GURL, int64>* origin_usage) const {
+    std::map<GURL, int64_t>* origin_usage) const {
   DCHECK(origin_usage);
   origin_usage->clear();
   for (const auto& client_id_and_tracker : client_tracker_map_)
@@ -169,7 +169,7 @@ void UsageTracker::SetUsageCacheEnabled(QuotaClient::ID client_id,
 }
 
 void UsageTracker::AccumulateClientGlobalLimitedUsage(AccumulateInfo* info,
-                                                      int64 limited_usage) {
+                                                      int64_t limited_usage) {
   info->usage += limited_usage;
   if (--info->pending_clients)
     return;
@@ -180,8 +180,8 @@ void UsageTracker::AccumulateClientGlobalLimitedUsage(AccumulateInfo* info,
 }
 
 void UsageTracker::AccumulateClientGlobalUsage(AccumulateInfo* info,
-                                               int64 usage,
-                                               int64 unlimited_usage) {
+                                               int64_t usage,
+                                               int64_t unlimited_usage) {
   info->usage += usage;
   info->unlimited_usage += unlimited_usage;
   if (--info->pending_clients)
@@ -205,7 +205,7 @@ void UsageTracker::AccumulateClientGlobalUsage(AccumulateInfo* info,
 
 void UsageTracker::AccumulateClientHostUsage(AccumulateInfo* info,
                                              const std::string& host,
-                                             int64 usage) {
+                                             int64_t usage) {
   info->usage += usage;
   if (--info->pending_clients)
     return;

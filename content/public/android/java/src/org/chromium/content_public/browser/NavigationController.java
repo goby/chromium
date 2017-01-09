@@ -71,14 +71,9 @@ public interface NavigationController {
     public void reload(boolean checkForRepost);
 
     /**
-     * Reload the current page, ignoring the contents of the cache.
+     * Reload the current page, bypassing the contents of the cache.
      */
-    public void reloadIgnoringCache(boolean checkForRepost);
-
-    /**
-     * Reload the current page with Lo-Fi off, ignoring the contents of the cache.
-     */
-    public void reloadDisableLoFi(boolean checkForRepost);
+    public void reloadBypassingCache(boolean checkForRepost);
 
     /**
      * Cancel the pending reload.
@@ -151,6 +146,7 @@ public interface NavigationController {
      * @param index Index to retrieve the NavigationEntry for.
      * @return Entry containing info about the navigation, null if the index is out of bounds.
      */
+    @VisibleForTesting
     public NavigationEntry getEntryAtIndex(int index);
 
     /**
@@ -195,4 +191,20 @@ public interface NavigationController {
      * @param replaceEntry Whether to replace the current entry in source
      */
     public void copyStateFromAndPrune(NavigationController source, boolean replaceEntry);
+
+    /**
+     * Gets extra data on the {@link NavigationEntry} at {@code index}.
+     * @param index The index of the navigation entry.
+     * @param key The data key.
+     * @return The data value, or null if not found.
+     */
+    String getEntryExtraData(int index, String key);
+
+    /**
+     * Sets extra data on the {@link NavigationEntry} at {@code index}.
+     * @param index The index of the navigation entry.
+     * @param key The data key.
+     * @param value The data value.
+     */
+    void setEntryExtraData(int index, String key, String value);
 }

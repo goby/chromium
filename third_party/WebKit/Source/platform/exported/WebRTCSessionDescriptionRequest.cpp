@@ -28,42 +28,37 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "public/platform/WebRTCSessionDescriptionRequest.h"
 
-#include "platform/mediastream/RTCSessionDescriptionRequest.h"
+#include "platform/peerconnection/RTCSessionDescriptionRequest.h"
 #include "public/platform/WebRTCSessionDescription.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-WebRTCSessionDescriptionRequest::WebRTCSessionDescriptionRequest(RTCSessionDescriptionRequest* constraints)
-    : m_private(constraints)
-{
+WebRTCSessionDescriptionRequest::WebRTCSessionDescriptionRequest(
+    RTCSessionDescriptionRequest* constraints)
+    : m_private(constraints) {}
+
+void WebRTCSessionDescriptionRequest::assign(
+    const WebRTCSessionDescriptionRequest& other) {
+  m_private = other.m_private;
 }
 
-void WebRTCSessionDescriptionRequest::assign(const WebRTCSessionDescriptionRequest& other)
-{
-    m_private = other.m_private;
+void WebRTCSessionDescriptionRequest::reset() {
+  m_private.reset();
 }
 
-void WebRTCSessionDescriptionRequest::reset()
-{
-    m_private.reset();
+void WebRTCSessionDescriptionRequest::requestSucceeded(
+    const WebRTCSessionDescription& sessionDescription) const {
+  ASSERT(m_private.get());
+  m_private->requestSucceeded(sessionDescription);
 }
 
-void WebRTCSessionDescriptionRequest::requestSucceeded(const WebRTCSessionDescription& sessionDescription) const
-{
-    ASSERT(m_private.get());
-    m_private->requestSucceeded(sessionDescription);
+void WebRTCSessionDescriptionRequest::requestFailed(
+    const WebString& error) const {
+  ASSERT(m_private.get());
+  m_private->requestFailed(error);
 }
 
-void WebRTCSessionDescriptionRequest::requestFailed(const WebString& error) const
-{
-    ASSERT(m_private.get());
-    m_private->requestFailed(error);
-}
-
-} // namespace blink
+}  // namespace blink

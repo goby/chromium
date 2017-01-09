@@ -4,6 +4,8 @@
 
 #include "pdf/preview_mode_client.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
 
 namespace chrome_pdf {
@@ -36,7 +38,7 @@ void PreviewModeClient::ScrollToPage(int page) {
 }
 
 void PreviewModeClient::NavigateTo(const std::string& url,
-                                   bool open_in_new_tab) {
+                                   WindowOpenDisposition disposition) {
   NOTREACHED();
 }
 
@@ -136,8 +138,7 @@ void PreviewModeClient::DocumentLoadFailed() {
 }
 
 pp::Instance* PreviewModeClient::GetPluginInstance() {
-  NOTREACHED();
-  return NULL;
+  return nullptr;
 }
 
 void PreviewModeClient::DocumentHasUnsupportedFeature(
@@ -145,9 +146,12 @@ void PreviewModeClient::DocumentHasUnsupportedFeature(
   NOTREACHED();
 }
 
-void PreviewModeClient::DocumentLoadProgress(uint32 available,
-                                             uint32 doc_size) {
+void PreviewModeClient::FontSubstituted() {
+  NOTREACHED();
 }
+
+void PreviewModeClient::DocumentLoadProgress(uint32_t available,
+                                             uint32_t doc_size) {}
 
 void PreviewModeClient::FormTextFieldFocusChange(bool in_focus) {
   NOTREACHED();
@@ -158,7 +162,7 @@ bool PreviewModeClient::IsPrintPreview() {
   return false;
 }
 
-uint32 PreviewModeClient::GetBackgroundColor() {
+uint32_t PreviewModeClient::GetBackgroundColor() {
   NOTREACHED();
   return 0;
 }

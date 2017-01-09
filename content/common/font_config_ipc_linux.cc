@@ -6,11 +6,16 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <unistd.h>
+
+#include <functional>
+#include <memory>
+#include <utility>
 
 #include "base/files/file_util.h"
 #include "base/files/memory_mapped_file.h"
@@ -19,53 +24,31 @@
 #include "base/posix/unix_domain_socket_linux.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
-#include "skia/ext/refptr.h"
 #include "skia/ext/skia_utils_base.h"
 #include "third_party/skia/include/core/SkData.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkStream.h"
 #include "third_party/skia/include/core/SkTypeface.h"
 
 namespace content {
 
-class FontConfigIPC::MappedFontFile
-    : public base::RefCountedThreadSafe<MappedFontFile> {
- public:
-  explicit MappedFontFile(uint32_t font_id) : font_id_(font_id) {}
+std::size_t SkFontConfigInterfaceFontIdentityHash::operator()(
+    const SkFontConfigInterface::FontIdentity& sp) const {
+  std::hash<std::string> stringhash;
+  std::hash<int> inthash;
+  size_t r = inthash(sp.fID);
+  r = r * 41 + inthash(sp.fTTCIndex);
+  r = r * 41 + stringhash(sp.fString.c_str());
+  r = r * 41 + inthash(sp.fStyle.weight());
+  r = r * 41 + inthash(sp.fStyle.slant());
+  r = r * 41 + inthash(sp.fStyle.width());
+  return r;
+}
 
-  uint32_t font_id() const { return font_id_; }
-
-  bool Initialize(int fd) {
-    base::ThreadRestrictions::ScopedAllowIO allow_mmap;
-    return mapped_font_file_.Initialize(base::File(fd));
-  }
-
-  SkMemoryStream* CreateMemoryStream() {
-    DCHECK(mapped_font_file_.IsValid());
-    auto data = skia::AdoptRef(SkData::NewWithProc(
-        mapped_font_file_.data(), mapped_font_file_.length(),
-        &MappedFontFile::ReleaseProc, this));
-    if (!data)
-      return nullptr;
-    AddRef();
-    return new SkMemoryStream(data.get());
-  }
-
- private:
-  friend class base::RefCountedThreadSafe<MappedFontFile>;
-
-  ~MappedFontFile() {
-    auto font_config = static_cast<FontConfigIPC*>(FontConfigIPC::RefGlobal());
-    font_config->RemoveMappedFontFile(this);
-  }
-
-  static void ReleaseProc(const void* ptr, void* context) {
-    base::ThreadRestrictions::ScopedAllowIO allow_munmap;
-    static_cast<MappedFontFile*>(context)->Release();
-  }
-
-  uint32_t font_id_;
-  base::MemoryMappedFile mapped_font_file_;
-};
+// Wikpedia's main country selection page activates 21 fallback fonts,
+// doubling this we should be on the generous side as an upper bound,
+// but nevertheless not have the mapped typefaces cache grow excessively.
+const size_t kMaxMappedTypefaces = 42;
 
 void CloseFD(int fd) {
   int err = IGNORE_EINTR(close(fd));
@@ -73,7 +56,8 @@ void CloseFD(int fd) {
 }
 
 FontConfigIPC::FontConfigIPC(int fd)
-    : fd_(fd) {
+    : fd_(fd)
+    , mapped_typefaces_(kMaxMappedTypefaces) {
 }
 
 FontConfigIPC::~FontConfigIPC() {
@@ -81,10 +65,10 @@ FontConfigIPC::~FontConfigIPC() {
 }
 
 bool FontConfigIPC::matchFamilyName(const char familyName[],
-                                    SkTypeface::Style requestedStyle,
+                                    SkFontStyle requestedStyle,
                                     FontIdentity* outFontIdentity,
                                     SkString* outFamilyName,
-                                    SkTypeface::Style* outStyle) {
+                                    SkFontStyle* outStyle) {
   TRACE_EVENT0("sandbox_ipc", "FontConfigIPC::matchFamilyName");
   size_t familyNameLen = familyName ? strlen(familyName) : 0;
   if (familyNameLen > kMaxFontFamilyLength)
@@ -93,7 +77,7 @@ bool FontConfigIPC::matchFamilyName(const char familyName[],
   base::Pickle request;
   request.WriteInt(METHOD_MATCH);
   request.WriteData(familyName, familyNameLen);
-  request.WriteUInt32(requestedStyle);
+  skia::WriteSkFontStyle(&request, requestedStyle);
 
   uint8_t reply_buf[2048];
   const ssize_t r = base::UnixDomainSocket::SendRecvMsg(
@@ -111,10 +95,10 @@ bool FontConfigIPC::matchFamilyName(const char familyName[],
 
   SkString     reply_family;
   FontIdentity reply_identity;
-  uint32_t     reply_style;
+  SkFontStyle  reply_style;
   if (!skia::ReadSkString(&iter, &reply_family) ||
       !skia::ReadSkFontIdentity(&iter, &reply_identity) ||
-      !iter.ReadUInt32(&reply_style)) {
+      !skia::ReadSkFontStyle(&iter, &reply_style)) {
     return false;
   }
 
@@ -123,20 +107,34 @@ bool FontConfigIPC::matchFamilyName(const char familyName[],
   if (outFamilyName)
     *outFamilyName = reply_family;
   if (outStyle)
-    *outStyle = static_cast<SkTypeface::Style>(reply_style);
+    *outStyle = reply_style;
 
   return true;
 }
 
+static void DestroyMemoryMappedFile(const void*, void* context) {
+  base::ThreadRestrictions::ScopedAllowIO allow_munmap;
+  delete static_cast<base::MemoryMappedFile*>(context);
+}
+
+SkMemoryStream* FontConfigIPC::mapFileDescriptorToStream(int fd) {
+  std::unique_ptr<base::MemoryMappedFile> mapped_font_file(
+      new base::MemoryMappedFile);
+  base::ThreadRestrictions::ScopedAllowIO allow_mmap;
+  mapped_font_file->Initialize(base::File(fd));
+  DCHECK(mapped_font_file->IsValid());
+
+  sk_sp<SkData> data =
+      SkData::MakeWithProc(mapped_font_file->data(), mapped_font_file->length(),
+                           &DestroyMemoryMappedFile, mapped_font_file.get());
+  if (!data)
+    return nullptr;
+  ignore_result(mapped_font_file.release()); // Ownership transferred to SkDataB
+  return new SkMemoryStream(std::move(data));
+}
+
 SkStreamAsset* FontConfigIPC::openStream(const FontIdentity& identity) {
   TRACE_EVENT0("sandbox_ipc", "FontConfigIPC::openStream");
-
-  {
-    base::AutoLock lock(lock_);
-    auto mapped_font_files_it = mapped_font_files_.find(identity.fID);
-    if (mapped_font_files_it != mapped_font_files_.end())
-      return mapped_font_files_it->second->CreateMemoryStream();
-  }
 
   base::Pickle request;
   request.WriteInt(METHOD_OPEN);
@@ -158,24 +156,24 @@ SkStreamAsset* FontConfigIPC::openStream(const FontIdentity& identity) {
     return NULL;
   }
 
-  scoped_refptr<MappedFontFile> mapped_font_file =
-      new MappedFontFile(identity.fID);
-  if (!mapped_font_file->Initialize(result_fd))
-    return nullptr;
-
-  {
-    base::AutoLock lock(lock_);
-    auto mapped_font_files_it =
-        mapped_font_files_.insert(std::make_pair(mapped_font_file->font_id(),
-                                                 mapped_font_file.get())).first;
-    return mapped_font_files_it->second->CreateMemoryStream();
-  }
+  return mapFileDescriptorToStream(result_fd);
 }
 
-void FontConfigIPC::RemoveMappedFontFile(MappedFontFile* mapped_font_file) {
+sk_sp<SkTypeface> FontConfigIPC::makeTypeface(
+    const SkFontConfigInterface::FontIdentity& identity) {
   base::AutoLock lock(lock_);
-  mapped_font_files_.erase(mapped_font_file->font_id());
+  auto mapped_typefaces_it = mapped_typefaces_.Get(identity);
+  if (mapped_typefaces_it != mapped_typefaces_.end())
+    return mapped_typefaces_it->second;
+
+  SkStreamAsset* typeface_stream = openStream(identity);
+  if (!typeface_stream)
+    return nullptr;
+  sk_sp<SkTypeface> typeface_from_stream(
+      SkTypeface::MakeFromStream(typeface_stream, identity.fTTCIndex));
+  auto mapped_typefaces_insert_it =
+      mapped_typefaces_.Put(identity, std::move(typeface_from_stream));
+  return mapped_typefaces_insert_it->second;
 }
 
 }  // namespace content
-

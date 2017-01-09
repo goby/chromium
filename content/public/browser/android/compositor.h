@@ -13,15 +13,8 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
 
-class SkBitmap;
-
 namespace cc {
 class Layer;
-class LayerSettings;
-}
-
-namespace gfx {
-class JavaBitmap;
 }
 
 namespace ui {
@@ -45,9 +38,6 @@ class CONTENT_EXPORT Compositor {
   // the compositor as it manages callbacks on the compositor.
   static Compositor* Create(CompositorClient* client,
                             gfx::NativeWindow root_window);
-
-  static const cc::LayerSettings& LayerSettings();
-  static void SetLayerSettings(const cc::LayerSettings& settings);
 
   // Attaches the layer tree.
   virtual void SetRootLayer(scoped_refptr<cc::Layer> root) = 0;

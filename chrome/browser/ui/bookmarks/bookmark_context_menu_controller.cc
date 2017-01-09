@@ -4,9 +4,10 @@
 
 #include "chrome/browser/ui/bookmarks/bookmark_context_menu_controller.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
@@ -26,10 +27,11 @@
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
+#include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/undo/bookmark_undo_service.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/user_metrics.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using base::UserMetricsAction;
@@ -51,7 +53,7 @@ BookmarkContextMenuController::BookmarkContextMenuController(
       navigator_(navigator),
       parent_(parent),
       selection_(selection),
-      model_(BookmarkModelFactory::GetForProfile(profile)),
+      model_(BookmarkModelFactory::GetForBrowserContext(profile)),
       weak_factory_(this) {
   DCHECK(profile_);
   DCHECK(model_->loaded());
@@ -109,10 +111,7 @@ void BookmarkContextMenuController::BuildMenu() {
   AddSeparator();
   AddItem(IDC_BOOKMARK_MANAGER, IDS_BOOKMARK_MANAGER);
   // Use the native host desktop type in tests.
-  if (chrome::IsAppsShortcutEnabled(
-          profile_,
-          browser_ ? browser_->host_desktop_type()
-                   : chrome::HOST_DESKTOP_TYPE_NATIVE)) {
+  if (chrome::IsAppsShortcutEnabled(profile_)) {
     AddCheckboxItem(IDC_BOOKMARK_BAR_SHOW_APPS_SHORTCUT,
                     IDS_BOOKMARK_BAR_SHOW_APPS_SHORTCUT);
   }
@@ -146,15 +145,15 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
     case IDC_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW: {
       WindowOpenDisposition initial_disposition;
       if (id == IDC_BOOKMARK_BAR_OPEN_ALL) {
-        initial_disposition = NEW_BACKGROUND_TAB;
+        initial_disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
         content::RecordAction(
             UserMetricsAction("BookmarkBar_ContextMenu_OpenAll"));
       } else if (id == IDC_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW) {
-        initial_disposition = NEW_WINDOW;
+        initial_disposition = WindowOpenDisposition::NEW_WINDOW;
         content::RecordAction(
             UserMetricsAction("BookmarkBar_ContextMenu_OpenAllInNewWindow"));
       } else {
-        initial_disposition = OFF_THE_RECORD;
+        initial_disposition = WindowOpenDisposition::OFF_THE_RECORD;
         content::RecordAction(
             UserMetricsAction("BookmarkBar_ContextMenu_OpenAllIncognito"));
       }
@@ -431,12 +430,6 @@ bool BookmarkContextMenuController::IsCommandIdVisible(int command_id) const {
   }
 
   return true;
-}
-
-bool BookmarkContextMenuController::GetAcceleratorForCommandId(
-    int command_id,
-    ui::Accelerator* accelerator) {
-  return false;
 }
 
 void BookmarkContextMenuController::BookmarkModelChanged() {

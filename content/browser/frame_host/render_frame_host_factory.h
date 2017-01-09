@@ -5,8 +5,11 @@
 #ifndef CONTENT_BROWSER_FRAME_HOST_RENDER_FRAME_HOST_FACTORY_H_
 #define CONTENT_BROWSER_FRAME_HOST_RENDER_FRAME_HOST_FACTORY_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "content/common/content_export.h"
 
 namespace content {
@@ -26,16 +29,17 @@ class CONTENT_EXPORT RenderFrameHostFactory {
  public:
   // Creates a new RenderFrameHostImpl using the currently registered factory,
   // or a regular RenderFrameHostImpl if no factory is registered.
-  static scoped_ptr<RenderFrameHostImpl> Create(
+  static std::unique_ptr<RenderFrameHostImpl> Create(
       SiteInstance* site_instance,
       RenderViewHostImpl* render_view_host,
       RenderFrameHostDelegate* delegate,
       RenderWidgetHostDelegate* rwh_delegate,
       FrameTree* frame_tree,
       FrameTreeNode* frame_tree_node,
-      int32 routing_id,
-      int32 widget_routing_id,
-      int flags);
+      int32_t routing_id,
+      int32_t widget_routing_id,
+      bool hidden,
+      bool renderer_initiated_creation);
 
   // Returns true if there is currently a globally-registered factory.
   static bool has_factory() { return !!factory_; }
@@ -46,16 +50,17 @@ class CONTENT_EXPORT RenderFrameHostFactory {
 
   // You can derive from this class and specify an implementation for this
   // function to create an alternate kind of RenderFrameHostImpl for testing.
-  virtual scoped_ptr<RenderFrameHostImpl> CreateRenderFrameHost(
+  virtual std::unique_ptr<RenderFrameHostImpl> CreateRenderFrameHost(
       SiteInstance* site_instance,
       RenderViewHostImpl* render_view_host,
       RenderFrameHostDelegate* delegate,
       RenderWidgetHostDelegate* rwh_delegate,
       FrameTree* frame_tree,
       FrameTreeNode* frame_tree_node,
-      int32 routing_id,
-      int32 widget_routing_id,
-      int flags) = 0;
+      int32_t routing_id,
+      int32_t widget_routing_id,
+      bool hidden,
+      bool renderer_initiated_creation) = 0;
 
   // Registers a factory to be called when new RenderFrameHostImpls are created.
   // We have only one global factory, so there must be no factory registered

@@ -5,9 +5,10 @@
 #ifndef UI_GFX_BUFFER_FORMAT_UTIL_H_
 #define UI_GFX_BUFFER_FORMAT_UTIL_H_
 
+#include <stddef.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gfx_export.h"
@@ -23,13 +24,13 @@ GFX_EXPORT size_t NumberOfPlanesForBufferFormat(BufferFormat format);
 // Returns the subsampling factor applied to the given zero-indexed |plane| of
 // |format| both horizontally and vertically.
 GFX_EXPORT size_t SubsamplingFactorForBufferFormat(BufferFormat format,
-                                                   int plane);
+                                                   size_t plane);
 
 // Returns the number of bytes used to store a row of the given zero-indexed
 // |plane| of |format|.
 GFX_EXPORT size_t RowSizeForBufferFormat(size_t width,
                                          BufferFormat format,
-                                         int plane);
+                                         size_t plane);
 
 // Returns the number of bytes used to store all the planes of a given |format|.
 GFX_EXPORT size_t BufferSizeForBufferFormat(const Size& size,
@@ -39,7 +40,7 @@ GFX_EXPORT bool BufferSizeForBufferFormatChecked(const Size& size,
                                                  size_t* size_in_bytes)
     WARN_UNUSED_RESULT;
 
-GFX_EXPORT int BufferOffsetForBufferFormat(const Size& size,
+GFX_EXPORT size_t BufferOffsetForBufferFormat(const Size& size,
                                            BufferFormat format,
                                            size_t plane);
 

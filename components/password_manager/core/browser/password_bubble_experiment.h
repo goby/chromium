@@ -8,13 +8,15 @@
 class PrefRegistrySimple;
 class PrefService;
 
-namespace sync_driver {
+namespace syncer {
 class SyncService;
 }
 
 namespace password_bubble_experiment {
 
 extern const char kBrandingExperimentName[];
+extern const char kChromeSignInPasswordPromoExperimentName[];
+extern const char kChromeSignInPasswordPromoThresholdParam[];
 extern const char kSmartBubbleExperimentName[];
 extern const char kSmartBubbleThresholdParam[];
 extern const char kSmartLockBrandingGroupName[];
@@ -30,26 +32,31 @@ void RegisterPrefs(PrefRegistrySimple* registry);
 int GetSmartBubbleDismissalThreshold();
 
 // A Smart Lock user is a sync user without a custom passphrase.
-bool IsSmartLockUser(const sync_driver::SyncService* sync_service);
+bool IsSmartLockUser(const syncer::SyncService* sync_service);
 
-enum class SmartLockBranding { NONE, FULL, SAVE_BUBBLE_ONLY };
+enum class SmartLockBranding { NONE, FULL, SAVE_PROMPT_ONLY };
 
 // If the user is not a Smart Lock user, returns NONE. For Smart Lock users:
 // * returns NONE if the password manager should not be referred to as Smart
 //   Lock anywhere;
 // * returns FULL, if it should be referred to as Smart Lock everywhere;
-// * returns SAVE_BUBBLE_ONLY if it only should be referred to as Smart Lock in
+// * returns SAVE_PROMPT_ONLY if it only should be referred to as Smart Lock in
 //   the save password bubble.
 SmartLockBranding GetSmartLockBrandingState(
-    const sync_driver::SyncService* sync_service);
+    const syncer::SyncService* sync_service);
 
 // Convenience function for checking whether the result of
 // GetSmartLockBrandingState is SmartLockBranding::FULL.
-bool IsSmartLockBrandingEnabled(const sync_driver::SyncService* sync_service);
+bool IsSmartLockBrandingEnabled(const syncer::SyncService* sync_service);
+
+// Convenience function for checking whether the result of
+// GetSmartLockBrandingState is not equal to SmartLockBranding::NONE.
+bool IsSmartLockBrandingSavePromptEnabled(
+    const syncer::SyncService* sync_service);
 
 // Returns true if save prompt should contain first run experience.
 bool ShouldShowSavePromptFirstRunExperience(
-    const sync_driver::SyncService* sync_service,
+    const syncer::SyncService* sync_service,
     PrefService* prefs);
 
 // Sets appropriate value to the preference which controls appearance of the
@@ -62,6 +69,14 @@ bool ShouldShowAutoSignInPromptFirstRunExperience(PrefService* prefs);
 // Sets appropriate value to the preference which controls appearance of the
 // first run experience for the auto sign-in prompt.
 void RecordAutoSignInPromptFirstRunExperienceWasShown(PrefService* prefs);
+
+// Turns off the auto signin experience setting.
+void TurnOffAutoSignin(PrefService* prefs);
+
+// Returns true if the Chrome Sign In promo should be shown.
+bool ShouldShowChromeSignInPasswordPromo(
+    PrefService* prefs,
+    const syncer::SyncService* sync_service);
 
 }  // namespace password_bubble_experiment
 

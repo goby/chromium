@@ -6,7 +6,9 @@
 
 #include <objbase.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
@@ -22,8 +24,9 @@
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/winsock_init.h"
+#include "net/base/winsock_util.h"
+#include "net/log/net_log_source.h"
 
 namespace {
 
@@ -44,13 +47,11 @@ std::string IPEndPointToBluetoothAddress(const net::IPEndPoint& end_point) {
   // The address is copied from BTH_ADDR field of SOCKADDR_BTH, which is a
   // 64-bit ULONGLONG that stores Bluetooth address in little-endian. Print in
   // reverse order to preserve the correct ordering.
-  return base::StringPrintf("%02X:%02X:%02X:%02X:%02X:%02X",
-      end_point.address()[5],
-      end_point.address()[4],
-      end_point.address()[3],
-      end_point.address()[2],
-      end_point.address()[1],
-      end_point.address()[0]);
+  return base::StringPrintf(
+      "%02X:%02X:%02X:%02X:%02X:%02X", end_point.address().bytes()[5],
+      end_point.address().bytes()[4], end_point.address().bytes()[3],
+      end_point.address().bytes()[2], end_point.address().bytes()[1],
+      end_point.address().bytes()[0]);
 }
 
 }  // namespace
@@ -193,8 +194,8 @@ void BluetoothSocketWin::DoConnect(
     return;
   }
 
-  scoped_ptr<net::TCPSocket> scoped_socket(
-      new net::TCPSocket(NULL, net::NetLog::Source()));
+  std::unique_ptr<net::TCPSocket> scoped_socket(
+      new net::TCPSocket(NULL, NULL, net::NetLogSource()));
   net::EnsureWinsockInit();
   SOCKET socket_fd = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
   SOCKADDR_BTH sa;
@@ -227,7 +228,7 @@ void BluetoothSocketWin::DoConnect(
     return;
   }
 
-  SetTCPSocket(scoped_socket.Pass());
+  SetTCPSocket(std::move(scoped_socket));
   success_callback.Run();
 }
 
@@ -260,8 +261,8 @@ void BluetoothSocketWin::DoListen(
   // Note that |socket_fd| belongs to a non-TCP address family (i.e. AF_BTH),
   // TCPSocket methods that involve address could not be called. So bind()
   // is called on |socket_fd| directly.
-  scoped_ptr<net::TCPSocket> scoped_socket(
-      new net::TCPSocket(NULL, net::NetLog::Source()));
+  std::unique_ptr<net::TCPSocket> scoped_socket(
+      new net::TCPSocket(NULL, NULL, net::NetLogSource()));
   scoped_socket->AdoptListenSocket(socket_fd);
 
   SOCKADDR_BTH sa;
@@ -285,7 +286,7 @@ void BluetoothSocketWin::DoListen(
     return;
   }
 
-  scoped_ptr<ServiceRegData> reg_data(new ServiceRegData);
+  std::unique_ptr<ServiceRegData> reg_data(new ServiceRegData);
   reg_data->name = base::UTF8ToUTF16(uuid.canonical_value());
 
   if (getsockname(socket_fd, sock_addr, &sock_addr_len)) {
@@ -327,8 +328,8 @@ void BluetoothSocketWin::DoListen(
     return;
   }
 
-  SetTCPSocket(scoped_socket.Pass());
-  service_reg_data_ = reg_data.Pass();
+  SetTCPSocket(std::move(scoped_socket));
+  service_reg_data_ = std::move(reg_data);
 
   PostSuccess(success_callback);
 }
@@ -372,7 +373,7 @@ void BluetoothSocketWin::OnAcceptOnSocketThread(
 }
 
 void BluetoothSocketWin::OnAcceptOnUI(
-    scoped_ptr<net::TCPSocket> accept_socket,
+    std::unique_ptr<net::TCPSocket> accept_socket,
     const net::IPEndPoint& peer_address,
     const AcceptCompletionCallback& success_callback,
     const ErrorCompletionCallback& error_callback) {
@@ -390,7 +391,7 @@ void BluetoothSocketWin::OnAcceptOnUI(
 
   scoped_refptr<BluetoothSocketWin> peer_socket =
       CreateBluetoothSocket(ui_task_runner(), socket_thread());
-  peer_socket->SetTCPSocket(accept_socket.Pass());
+  peer_socket->SetTCPSocket(std::move(accept_socket));
   success_callback.Run(peer_device, peer_socket);
 }
 

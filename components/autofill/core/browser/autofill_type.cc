@@ -9,8 +9,7 @@
 namespace autofill {
 
 AutofillType::AutofillType(ServerFieldType field_type)
-    : html_type_(HTML_TYPE_UNKNOWN),
-      html_mode_(HTML_MODE_NONE) {
+    : html_type_(HTML_TYPE_UNSPECIFIED), html_mode_(HTML_MODE_NONE) {
   if ((field_type < NO_SERVER_DATA || field_type >= MAX_VALID_FIELD_TYPE) ||
       (field_type >= 15 && field_type <= 19) ||
       (field_type >= 25 && field_type <= 29) ||
@@ -68,6 +67,7 @@ FieldTypeGroup AutofillType::group() const {
     case PHONE_HOME_COUNTRY_CODE:
     case PHONE_HOME_CITY_AND_NUMBER:
     case PHONE_HOME_WHOLE_NUMBER:
+    case PHONE_HOME_EXTENSION:
       return PHONE_HOME;
 
     case PHONE_BILLING_NUMBER:
@@ -103,7 +103,9 @@ FieldTypeGroup AutofillType::group() const {
     case ADDRESS_BILLING_DEPENDENT_LOCALITY:
       return ADDRESS_BILLING;
 
-    case CREDIT_CARD_NAME:
+    case CREDIT_CARD_NAME_FULL:
+    case CREDIT_CARD_NAME_FIRST:
+    case CREDIT_CARD_NAME_LAST:
     case CREDIT_CARD_NUMBER:
     case CREDIT_CARD_EXP_MONTH:
     case CREDIT_CARD_EXP_2_DIGIT_YEAR:
@@ -123,6 +125,7 @@ FieldTypeGroup AutofillType::group() const {
     case NEW_PASSWORD:
     case PROBABLY_NEW_PASSWORD:
     case NOT_NEW_PASSWORD:
+    case PROBABLY_ACCOUNT_CREATION_PASSWORD:
       return PASSWORD_FIELD;
 
     case NO_SERVER_DATA:
@@ -172,7 +175,9 @@ FieldTypeGroup AutofillType::group() const {
     case HTML_TYPE_FULL_ADDRESS:
       return html_mode_ == HTML_MODE_BILLING ? ADDRESS_BILLING : ADDRESS_HOME;
 
-    case HTML_TYPE_CREDIT_CARD_NAME:
+    case HTML_TYPE_CREDIT_CARD_NAME_FULL:
+    case HTML_TYPE_CREDIT_CARD_NAME_FIRST:
+    case HTML_TYPE_CREDIT_CARD_NAME_LAST:
     case HTML_TYPE_CREDIT_CARD_NUMBER:
     case HTML_TYPE_CREDIT_CARD_EXP:
     case HTML_TYPE_CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR:
@@ -196,12 +201,14 @@ FieldTypeGroup AutofillType::group() const {
     case HTML_TYPE_TEL_LOCAL:
     case HTML_TYPE_TEL_LOCAL_PREFIX:
     case HTML_TYPE_TEL_LOCAL_SUFFIX:
+    case HTML_TYPE_TEL_EXTENSION:
       return html_mode_ == HTML_MODE_BILLING ? PHONE_BILLING : PHONE_HOME;
 
     case HTML_TYPE_EMAIL:
       return EMAIL;
 
-    case HTML_TYPE_UNKNOWN:
+    case HTML_TYPE_UNSPECIFIED:
+    case HTML_TYPE_UNRECOGNIZED:
       break;
   }
 
@@ -209,7 +216,8 @@ FieldTypeGroup AutofillType::group() const {
 }
 
 bool AutofillType::IsUnknown() const {
-  return server_type_ == UNKNOWN_TYPE && html_type_ == HTML_TYPE_UNKNOWN;
+  return server_type_ == UNKNOWN_TYPE && (html_type_ == HTML_TYPE_UNSPECIFIED ||
+                                          html_type_ == HTML_TYPE_UNRECOGNIZED);
 }
 
 ServerFieldType AutofillType::GetStorableType() const {
@@ -289,7 +297,7 @@ ServerFieldType AutofillType::GetStorableType() const {
   }
 
   switch (html_type_) {
-    case HTML_TYPE_UNKNOWN:
+    case HTML_TYPE_UNSPECIFIED:
       return UNKNOWN_TYPE;
 
     case HTML_TYPE_NAME:
@@ -339,8 +347,14 @@ ServerFieldType AutofillType::GetStorableType() const {
     case HTML_TYPE_FULL_ADDRESS:
       return UNKNOWN_TYPE;
 
-    case HTML_TYPE_CREDIT_CARD_NAME:
-      return CREDIT_CARD_NAME;
+    case HTML_TYPE_CREDIT_CARD_NAME_FULL:
+      return CREDIT_CARD_NAME_FULL;
+
+    case HTML_TYPE_CREDIT_CARD_NAME_FIRST:
+      return CREDIT_CARD_NAME_FIRST;
+
+    case HTML_TYPE_CREDIT_CARD_NAME_LAST:
+      return CREDIT_CARD_NAME_LAST;
 
     case HTML_TYPE_CREDIT_CARD_NUMBER:
       return CREDIT_CARD_NUMBER;
@@ -377,6 +391,9 @@ ServerFieldType AutofillType::GetStorableType() const {
     case HTML_TYPE_TEL_LOCAL_SUFFIX:
       return PHONE_HOME_NUMBER;
 
+    case HTML_TYPE_TEL_EXTENSION:
+      return PHONE_HOME_EXTENSION;
+
     case HTML_TYPE_EMAIL:
       return EMAIL_ADDRESS;
 
@@ -398,6 +415,9 @@ ServerFieldType AutofillType::GetStorableType() const {
     // These types aren't stored; they're transient.
     case HTML_TYPE_TRANSACTION_AMOUNT:
     case HTML_TYPE_TRANSACTION_CURRENCY:
+      return UNKNOWN_TYPE;
+
+    case HTML_TYPE_UNRECOGNIZED:
       return UNKNOWN_TYPE;
   }
 
@@ -481,11 +501,110 @@ std::string AutofillType::ToString() const {
   if (IsUnknown())
     return "UNKNOWN_TYPE";
 
-  switch (server_type_) {
+  if (server_type_ != UNKNOWN_TYPE)
+    return ServerFieldTypeToString(server_type_);
+
+  switch (html_type_) {
+    case HTML_TYPE_UNSPECIFIED:
+      NOTREACHED();
+      break;
+    case HTML_TYPE_NAME:
+      return "HTML_TYPE_NAME";
+    case HTML_TYPE_GIVEN_NAME:
+      return "HTML_TYPE_GIVEN_NAME";
+    case HTML_TYPE_ADDITIONAL_NAME:
+      return "HTML_TYPE_ADDITIONAL_NAME";
+    case HTML_TYPE_FAMILY_NAME:
+      return "HTML_TYPE_FAMILY_NAME";
+    case HTML_TYPE_ORGANIZATION:
+      return "HTML_TYPE_ORGANIZATION";
+    case HTML_TYPE_STREET_ADDRESS:
+      return "HTML_TYPE_STREET_ADDRESS";
+    case HTML_TYPE_ADDRESS_LINE1:
+      return "HTML_TYPE_ADDRESS_LINE1";
+    case HTML_TYPE_ADDRESS_LINE2:
+      return "HTML_TYPE_ADDRESS_LINE2";
+    case HTML_TYPE_ADDRESS_LINE3:
+      return "HTML_TYPE_ADDRESS_LINE3";
+    case HTML_TYPE_ADDRESS_LEVEL1:
+      return "HTML_TYPE_ADDRESS_LEVEL1";
+    case HTML_TYPE_ADDRESS_LEVEL2:
+      return "HTML_TYPE_ADDRESS_LEVEL2";
+    case HTML_TYPE_ADDRESS_LEVEL3:
+      return "HTML_TYPE_ADDRESS_LEVEL3";
+    case HTML_TYPE_COUNTRY_CODE:
+      return "HTML_TYPE_COUNTRY_CODE";
+    case HTML_TYPE_COUNTRY_NAME:
+      return "HTML_TYPE_COUNTRY_NAME";
+    case HTML_TYPE_POSTAL_CODE:
+      return "HTML_TYPE_POSTAL_CODE";
+    case HTML_TYPE_FULL_ADDRESS:
+      return "HTML_TYPE_FULL_ADDRESS";
+    case HTML_TYPE_CREDIT_CARD_NAME_FULL:
+      return "HTML_TYPE_CREDIT_CARD_NAME_FULL";
+    case HTML_TYPE_CREDIT_CARD_NAME_FIRST:
+      return "HTML_TYPE_CREDIT_CARD_NAME_FIRST";
+    case HTML_TYPE_CREDIT_CARD_NAME_LAST:
+      return "HTML_TYPE_CREDIT_CARD_NAME_LAST";
+    case HTML_TYPE_CREDIT_CARD_NUMBER:
+      return "HTML_TYPE_CREDIT_CARD_NUMBER";
+    case HTML_TYPE_CREDIT_CARD_EXP:
+      return "HTML_TYPE_CREDIT_CARD_EXP";
+    case HTML_TYPE_CREDIT_CARD_EXP_MONTH:
+      return "HTML_TYPE_CREDIT_CARD_EXP_MONTH";
+    case HTML_TYPE_CREDIT_CARD_EXP_YEAR:
+      return "HTML_TYPE_CREDIT_CARD_EXP_YEAR";
+    case HTML_TYPE_CREDIT_CARD_VERIFICATION_CODE:
+      return "HTML_TYPE_CREDIT_CARD_VERIFICATION_CODE";
+    case HTML_TYPE_CREDIT_CARD_TYPE:
+      return "HTML_TYPE_CREDIT_CARD_TYPE";
+    case HTML_TYPE_TEL:
+      return "HTML_TYPE_TEL";
+    case HTML_TYPE_TEL_COUNTRY_CODE:
+      return "HTML_TYPE_TEL_COUNTRY_CODE";
+    case HTML_TYPE_TEL_NATIONAL:
+      return "HTML_TYPE_TEL_NATIONAL";
+    case HTML_TYPE_TEL_AREA_CODE:
+      return "HTML_TYPE_TEL_AREA_CODE";
+    case HTML_TYPE_TEL_LOCAL:
+      return "HTML_TYPE_TEL_LOCAL";
+    case HTML_TYPE_TEL_LOCAL_PREFIX:
+      return "HTML_TYPE_TEL_LOCAL_PREFIX";
+    case HTML_TYPE_TEL_LOCAL_SUFFIX:
+      return "HTML_TYPE_TEL_LOCAL_SUFFIX";
+    case HTML_TYPE_TEL_EXTENSION:
+      return "HTML_TYPE_TEL_EXTENSION";
+    case HTML_TYPE_EMAIL:
+      return "HTML_TYPE_EMAIL";
+    case HTML_TYPE_ADDITIONAL_NAME_INITIAL:
+      return "HTML_TYPE_ADDITIONAL_NAME_INITIAL";
+    case HTML_TYPE_CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR:
+      return "HTML_TYPE_CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR";
+    case HTML_TYPE_CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR:
+      return "HTML_TYPE_CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR";
+    case HTML_TYPE_CREDIT_CARD_EXP_2_DIGIT_YEAR:
+      return "HTML_TYPE_CREDIT_CARD_EXP_2_DIGIT_YEAR";
+    case HTML_TYPE_CREDIT_CARD_EXP_4_DIGIT_YEAR:
+      return "HTML_TYPE_CREDIT_CARD_EXP_4_DIGIT_YEAR";
+    case HTML_TYPE_TRANSACTION_AMOUNT:
+      return "HTML_TRANSACTION_AMOUNT";
+    case HTML_TYPE_TRANSACTION_CURRENCY:
+      return "HTML_TRANSACTION_CURRENCY";
+    case HTML_TYPE_UNRECOGNIZED:
+      return "HTML_TYPE_UNRECOGNIZED";
+  }
+
+  NOTREACHED();
+  return std::string();
+}
+
+// static
+std::string AutofillType::ServerFieldTypeToString(ServerFieldType type) {
+  switch (type) {
     case NO_SERVER_DATA:
       return "NO_SERVER_DATA";
     case UNKNOWN_TYPE:
-      break;  // Should be handled in the HTML type handling code below.
+      return "UNKNOWN_TYPE";
     case EMPTY_TYPE:
       return "EMPTY_TYPE";
     case NAME_FIRST:
@@ -524,6 +643,8 @@ std::string AutofillType::ToString() const {
       return "PHONE_HOME_CITY_AND_NUMBER";
     case PHONE_HOME_WHOLE_NUMBER:
       return "PHONE_HOME_WHOLE_NUMBER";
+    case PHONE_HOME_EXTENSION:
+      return "PHONE_HOME_EXTENSION";
     case PHONE_FAX_NUMBER:
       return "PHONE_FAX_NUMBER";
     case PHONE_FAX_CITY_CODE:
@@ -566,8 +687,12 @@ std::string AutofillType::ToString() const {
       return "ADDRESS_BILLING_ZIP";
     case ADDRESS_BILLING_COUNTRY:
       return "ADDRESS_BILLING_COUNTRY";
-    case CREDIT_CARD_NAME:
-      return "CREDIT_CARD_NAME";
+    case CREDIT_CARD_NAME_FULL:
+      return "CREDIT_CARD_NAME_FULL";
+    case CREDIT_CARD_NAME_FIRST:
+      return "CREDIT_CARD_NAME_FIRST";
+    case CREDIT_CARD_NAME_LAST:
+      return "CREDIT_CARD_NAME_LAST";
     case CREDIT_CARD_NUMBER:
       return "CREDIT_CARD_NUMBER";
     case CREDIT_CARD_EXP_MONTH:
@@ -630,91 +755,11 @@ std::string AutofillType::ToString() const {
       return "PROBABLY_NEW_PASSWORD";
     case NOT_NEW_PASSWORD:
       return "NOT_NEW_PASSWORD";
+    case PROBABLY_ACCOUNT_CREATION_PASSWORD:
+      return "PROBABLY_ACCOUNT_CREATION_PASSWORD";
 
     case MAX_VALID_FIELD_TYPE:
       return std::string();
-  }
-
-  switch (html_type_) {
-    case HTML_TYPE_UNKNOWN:
-      NOTREACHED();
-      break;
-    case HTML_TYPE_NAME:
-      return "HTML_TYPE_NAME";
-    case HTML_TYPE_GIVEN_NAME:
-      return "HTML_TYPE_GIVEN_NAME";
-    case HTML_TYPE_ADDITIONAL_NAME:
-      return "HTML_TYPE_ADDITIONAL_NAME";
-    case HTML_TYPE_FAMILY_NAME:
-      return "HTML_TYPE_FAMILY_NAME";
-    case HTML_TYPE_ORGANIZATION:
-      return "HTML_TYPE_ORGANIZATION";
-    case HTML_TYPE_STREET_ADDRESS:
-      return "HTML_TYPE_STREET_ADDRESS";
-    case HTML_TYPE_ADDRESS_LINE1:
-      return "HTML_TYPE_ADDRESS_LINE1";
-    case HTML_TYPE_ADDRESS_LINE2:
-      return "HTML_TYPE_ADDRESS_LINE2";
-    case HTML_TYPE_ADDRESS_LINE3:
-      return "HTML_TYPE_ADDRESS_LINE3";
-    case HTML_TYPE_ADDRESS_LEVEL1:
-      return "HTML_TYPE_ADDRESS_LEVEL1";
-    case HTML_TYPE_ADDRESS_LEVEL2:
-      return "HTML_TYPE_ADDRESS_LEVEL2";
-    case HTML_TYPE_ADDRESS_LEVEL3:
-      return "HTML_TYPE_ADDRESS_LEVEL3";
-    case HTML_TYPE_COUNTRY_CODE:
-      return "HTML_TYPE_COUNTRY_CODE";
-    case HTML_TYPE_COUNTRY_NAME:
-      return "HTML_TYPE_COUNTRY_NAME";
-    case HTML_TYPE_POSTAL_CODE:
-      return "HTML_TYPE_POSTAL_CODE";
-    case HTML_TYPE_FULL_ADDRESS:
-      return "HTML_TYPE_FULL_ADDRESS";
-    case HTML_TYPE_CREDIT_CARD_NAME:
-      return "HTML_TYPE_CREDIT_CARD_NAME";
-    case HTML_TYPE_CREDIT_CARD_NUMBER:
-      return "HTML_TYPE_CREDIT_CARD_NUMBER";
-    case HTML_TYPE_CREDIT_CARD_EXP:
-      return "HTML_TYPE_CREDIT_CARD_EXP";
-    case HTML_TYPE_CREDIT_CARD_EXP_MONTH:
-      return "HTML_TYPE_CREDIT_CARD_EXP_MONTH";
-    case HTML_TYPE_CREDIT_CARD_EXP_YEAR:
-      return "HTML_TYPE_CREDIT_CARD_EXP_YEAR";
-    case HTML_TYPE_CREDIT_CARD_VERIFICATION_CODE:
-      return "HTML_TYPE_CREDIT_CARD_VERIFICATION_CODE";
-    case HTML_TYPE_CREDIT_CARD_TYPE:
-      return "HTML_TYPE_CREDIT_CARD_TYPE";
-    case HTML_TYPE_TEL:
-      return "HTML_TYPE_TEL";
-    case HTML_TYPE_TEL_COUNTRY_CODE:
-      return "HTML_TYPE_TEL_COUNTRY_CODE";
-    case HTML_TYPE_TEL_NATIONAL:
-      return "HTML_TYPE_TEL_NATIONAL";
-    case HTML_TYPE_TEL_AREA_CODE:
-      return "HTML_TYPE_TEL_AREA_CODE";
-    case HTML_TYPE_TEL_LOCAL:
-      return "HTML_TYPE_TEL_LOCAL";
-    case HTML_TYPE_TEL_LOCAL_PREFIX:
-      return "HTML_TYPE_TEL_LOCAL_PREFIX";
-    case HTML_TYPE_TEL_LOCAL_SUFFIX:
-      return "HTML_TYPE_TEL_LOCAL_SUFFIX";
-    case HTML_TYPE_EMAIL:
-      return "HTML_TYPE_EMAIL";
-    case HTML_TYPE_ADDITIONAL_NAME_INITIAL:
-      return "HTML_TYPE_ADDITIONAL_NAME_INITIAL";
-    case HTML_TYPE_CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR:
-      return "HTML_TYPE_CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR";
-    case HTML_TYPE_CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR:
-      return "HTML_TYPE_CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR";
-    case HTML_TYPE_CREDIT_CARD_EXP_2_DIGIT_YEAR:
-      return "HTML_TYPE_CREDIT_CARD_EXP_2_DIGIT_YEAR";
-    case HTML_TYPE_CREDIT_CARD_EXP_4_DIGIT_YEAR:
-      return "HTML_TYPE_CREDIT_CARD_EXP_4_DIGIT_YEAR";
-    case HTML_TYPE_TRANSACTION_AMOUNT:
-      return "HTML_TRANSACTION_AMOUNT";
-    case HTML_TYPE_TRANSACTION_CURRENCY:
-      return "HTML_TRANSACTION_CURRENCY";
   }
 
   NOTREACHED();

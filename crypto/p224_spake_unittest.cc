@@ -4,6 +4,9 @@
 
 #include "crypto/p224_spake.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "base/logging.h"
@@ -124,8 +127,8 @@ TEST(MutualAuth, Fuzz) {
 
     // We'll only be testing small values of i, but we don't want that to bias
     // the test coverage. So we disperse the value of i by multiplying by the
-    // FNV, 32-bit prime, producing a poor-man's PRNG.
-    const uint32 rand = i * 16777619;
+    // FNV, 32-bit prime, producing a simplistic PRNG.
+    const uint32_t rand = i * 16777619;
 
     for (unsigned round = 0;; round++) {
       std::string client_message, server_message;

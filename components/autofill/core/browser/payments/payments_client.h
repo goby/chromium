@@ -44,7 +44,7 @@ class PaymentsClientDelegate {
   virtual void OnDidGetUploadDetails(
       AutofillClient::PaymentsRpcResult result,
       const base::string16& context_token,
-      scoped_ptr<base::DictionaryValue> legal_message) = 0;
+      std::unique_ptr<base::DictionaryValue> legal_message) = 0;
 
   // Returns the result of an upload request.
   virtual void OnDidUploadCard(AutofillClient::PaymentsRpcResult result) = 0;
@@ -54,10 +54,16 @@ class PaymentsClientDelegate {
 // conditions. Only one request may be active at a time. Initiating a new
 // request will cancel a pending request.
 // Tests are located in
-// src/components/autofill/content/browser/wallet/payments_client_unittest.cc.
+// src/components/autofill/content/browser/payments/payments_client_unittest.cc.
 class PaymentsClient : public net::URLFetcherDelegate,
                        public OAuth2TokenService::Consumer {
  public:
+  // The names of the fields used to send non-location elements as part of an
+  // address. Used in the implementation and in tests which verify that these
+  // values are set or not at appropriate times.
+  static const char kRecipientName[];
+  static const char kPhoneNumber[];
+
   // A collection of the information required to make a credit card unmask
   // request.
   struct UnmaskRequestDetails {
@@ -73,6 +79,7 @@ class PaymentsClient : public net::URLFetcherDelegate,
   // request.
   struct UploadRequestDetails {
     UploadRequestDetails();
+    UploadRequestDetails(const UploadRequestDetails& other);
     ~UploadRequestDetails();
 
     CreditCard card;
@@ -102,9 +109,12 @@ class PaymentsClient : public net::URLFetcherDelegate,
   void UnmaskCard(const UnmaskRequestDetails& request_details);
 
   // Determine if the user meets the Payments service's conditions for upload.
-  // If so, the required legal message for display will be returned via
+  // The service uses |addresses| (from which names and phone numbers are
+  // removed) and |app_locale| to determine which legal message to display. If
+  // the conditions are met, the legal message will be returned via
   // OnDidGetUploadDetails.
-  virtual void GetUploadDetails(const std::string& app_locale);
+  virtual void GetUploadDetails(const std::vector<AutofillProfile>& addresses,
+                                const std::string& app_locale);
 
   // The user has indicated that they would like to upload a card with the given
   // cvc. This request will fail server-side if a successful call to
@@ -118,7 +128,8 @@ class PaymentsClient : public net::URLFetcherDelegate,
   // Initiates a Payments request using the state in |request|. If
   // |authenticate| is true, ensures that an OAuth token is avialble first.
   // Takes ownership of |request|.
-  void IssueRequest(scoped_ptr<PaymentsRequest> request, bool authenticate);
+  void IssueRequest(std::unique_ptr<PaymentsRequest> request,
+                    bool authenticate);
 
   // net::URLFetcherDelegate:
   void OnURLFetchComplete(const net::URLFetcher* source) override;
@@ -147,13 +158,13 @@ class PaymentsClient : public net::URLFetcherDelegate,
   PaymentsClientDelegate* const delegate_;  // must outlive |this|.
 
   // The current request.
-  scoped_ptr<PaymentsRequest> request_;
+  std::unique_ptr<PaymentsRequest> request_;
 
   // The fetcher being used to issue the current request.
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
 
   // The current OAuth2 token request object.
-  scoped_ptr<OAuth2TokenService::Request> access_token_request_;
+  std::unique_ptr<OAuth2TokenService::Request> access_token_request_;
 
   // The OAuth2 token, or empty if not fetched.
   std::string access_token_;

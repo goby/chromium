@@ -5,21 +5,30 @@
 #ifndef CONTENT_RENDERER_PRESENTATION_PRESENTATION_DISPATCHER_H_
 #define CONTENT_RENDERER_PRESENTATION_PRESENTATION_DISPATCHER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <queue>
 
 #include "base/compiler_specific.h"
 #include "base/id_map.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
-#include "content/common/presentation/presentation_service.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "third_party/WebKit/public/platform/modules/presentation/WebPresentationClient.h"
+#include "third_party/WebKit/public/platform/modules/presentation/presentation.mojom.h"
+#include "url/gurl.h"
 
 namespace blink {
 class WebPresentationAvailabilityObserver;
+class WebPresentationReceiver;
 class WebString;
+class WebURL;
+template <typename T>
+class WebVector;
 }  // namespace blink
 
 namespace content {
@@ -29,85 +38,97 @@ namespace content {
 class CONTENT_EXPORT PresentationDispatcher
     : public RenderFrameObserver,
       public NON_EXPORTED_BASE(blink::WebPresentationClient),
-      public NON_EXPORTED_BASE(presentation::PresentationServiceClient) {
+      public NON_EXPORTED_BASE(blink::mojom::PresentationServiceClient) {
  public:
   explicit PresentationDispatcher(RenderFrame* render_frame);
   ~PresentationDispatcher() override;
 
  private:
   struct SendMessageRequest {
-    SendMessageRequest(presentation::PresentationSessionInfoPtr session_info,
-                       presentation::SessionMessagePtr message);
+    SendMessageRequest(blink::mojom::PresentationSessionInfoPtr session_info,
+                       blink::mojom::SessionMessagePtr message);
     ~SendMessageRequest();
 
-    presentation::PresentationSessionInfoPtr session_info;
-    presentation::SessionMessagePtr message;
+    blink::mojom::PresentationSessionInfoPtr session_info;
+    blink::mojom::SessionMessagePtr message;
   };
 
   static SendMessageRequest* CreateSendTextMessageRequest(
-      const blink::WebString& presentationUrl,
+      const blink::WebURL& presentationUrl,
       const blink::WebString& presentationId,
       const blink::WebString& message);
   static SendMessageRequest* CreateSendBinaryMessageRequest(
-      const blink::WebString& presentationUrl,
+      const blink::WebURL& presentationUrl,
       const blink::WebString& presentationId,
-      presentation::PresentationMessageType type,
-      const uint8* data,
+      blink::mojom::PresentationMessageType type,
+      const uint8_t* data,
       size_t length);
 
   // WebPresentationClient implementation.
   void setController(blink::WebPresentationController* controller) override;
+  void setReceiver(blink::WebPresentationReceiver*) override;
+
   void startSession(
-      const blink::WebString& presentationUrl,
-      blink::WebPresentationConnectionClientCallbacks* callback) override;
+      const blink::WebVector<blink::WebURL>& presentationUrls,
+      std::unique_ptr<blink::WebPresentationConnectionClientCallbacks> callback)
+      override;
   void joinSession(
-      const blink::WebString& presentationUrl,
+      const blink::WebVector<blink::WebURL>& presentationUrls,
       const blink::WebString& presentationId,
-      blink::WebPresentationConnectionClientCallbacks* callback) override;
-  void sendString(const blink::WebString& presentationUrl,
+      std::unique_ptr<blink::WebPresentationConnectionClientCallbacks> callback)
+      override;
+  void sendString(const blink::WebURL& presentationUrl,
                   const blink::WebString& presentationId,
                   const blink::WebString& message) override;
-  void sendArrayBuffer(const blink::WebString& presentationUrl,
+  void sendArrayBuffer(const blink::WebURL& presentationUrl,
                        const blink::WebString& presentationId,
-                       const uint8* data,
+                       const uint8_t* data,
                        size_t length) override;
-  void sendBlobData(const blink::WebString& presentationUrl,
+  void sendBlobData(const blink::WebURL& presentationUrl,
                     const blink::WebString& presentationId,
-                    const uint8* data,
+                    const uint8_t* data,
                     size_t length) override;
-  void closeSession(const blink::WebString& presentationUrl,
+  void closeSession(const blink::WebURL& presentationUrl,
                     const blink::WebString& presentationId) override;
-  void terminateSession(const blink::WebString& presentationUrl,
+  void terminateSession(const blink::WebURL& presentationUrl,
                         const blink::WebString& presentationId) override;
   void getAvailability(
-      const blink::WebString& availabilityUrl,
-      blink::WebPresentationAvailabilityCallbacks* callbacks) override;
+      const blink::WebURL& availabilityUrl,
+      std::unique_ptr<blink::WebPresentationAvailabilityCallbacks> callbacks)
+      override;
   void startListening(blink::WebPresentationAvailabilityObserver*) override;
   void stopListening(blink::WebPresentationAvailabilityObserver*) override;
-  void setDefaultPresentationUrl(const blink::WebString& url) override;
+  void setDefaultPresentationUrls(
+      const blink::WebVector<blink::WebURL>& presentationUrls) override;
 
   // RenderFrameObserver implementation.
   void DidCommitProvisionalLoad(
       bool is_new_navigation,
       bool is_same_page_navigation) override;
+  void OnDestruct() override;
 
-  // presentation::PresentationServiceClient
-  void OnScreenAvailabilityNotSupported(const mojo::String& url) override;
-  void OnScreenAvailabilityUpdated(const mojo::String& url,
-                                   bool available) override;
+  // blink::mojom::PresentationServiceClient
+  void OnScreenAvailabilityNotSupported(const GURL& url) override;
+  void OnScreenAvailabilityUpdated(const GURL& url, bool available) override;
   void OnConnectionStateChanged(
-      presentation::PresentationSessionInfoPtr connection,
-      presentation::PresentationConnectionState state) override;
+      blink::mojom::PresentationSessionInfoPtr connection,
+      blink::mojom::PresentationConnectionState state) override;
+  void OnConnectionClosed(
+      blink::mojom::PresentationSessionInfoPtr connection,
+      blink::mojom::PresentationConnectionCloseReason reason,
+      const std::string& message) override;
   void OnSessionMessagesReceived(
-      presentation::PresentationSessionInfoPtr session_info,
-      mojo::Array<presentation::SessionMessagePtr> messages) override;
+      blink::mojom::PresentationSessionInfoPtr session_info,
+      std::vector<blink::mojom::SessionMessagePtr> messages) override;
   void OnDefaultSessionStarted(
-      presentation::PresentationSessionInfoPtr session_info) override;
+      blink::mojom::PresentationSessionInfoPtr session_info) override;
 
   void OnSessionCreated(
-      blink::WebPresentationConnectionClientCallbacks* callback,
-      presentation::PresentationSessionInfoPtr session_info,
-      presentation::PresentationErrorPtr error);
+      std::unique_ptr<blink::WebPresentationConnectionClientCallbacks> callback,
+      blink::mojom::PresentationSessionInfoPtr session_info,
+      blink::mojom::PresentationErrorPtr error);
+  void OnReceiverConnectionAvailable(
+      blink::mojom::PresentationSessionInfoPtr) override;
 
   // Call to PresentationService to send the message in |request|.
   // |session_info| and |message| of |reuqest| will be consumed.
@@ -121,12 +142,13 @@ class CONTENT_EXPORT PresentationDispatcher
 
   // Used as a weak reference. Can be null since lifetime is bound to the frame.
   blink::WebPresentationController* controller_;
-  presentation::PresentationServicePtr presentation_service_;
-  mojo::Binding<presentation::PresentationServiceClient> binding_;
+  blink::WebPresentationReceiver* receiver_;
+  blink::mojom::PresentationServicePtr presentation_service_;
+  mojo::Binding<blink::mojom::PresentationServiceClient> binding_;
 
   // Message requests are queued here and only one message at a time is sent
   // over mojo channel.
-  using MessageRequestQueue = std::queue<scoped_ptr<SendMessageRequest>>;
+  using MessageRequestQueue = std::queue<std::unique_ptr<SendMessageRequest>>;
   MessageRequestQueue message_request_queue_;
 
   enum class ListeningState {
@@ -136,23 +158,25 @@ class CONTENT_EXPORT PresentationDispatcher
   };
 
   using AvailabilityCallbacksMap =
-      IDMap<blink::WebPresentationAvailabilityCallbacks, IDMapOwnPointer>;
+      IDMap<std::unique_ptr<blink::WebPresentationAvailabilityCallbacks>>;
   using AvailabilityObserversSet =
       std::set<blink::WebPresentationAvailabilityObserver*>;
 
   // Tracks status of presentation displays availability for |availability_url|.
   struct AvailabilityStatus {
-    explicit AvailabilityStatus(const std::string& availability_url);
+    explicit AvailabilityStatus(const GURL& availability_url);
     ~AvailabilityStatus();
 
-    const std::string url;
+    const GURL url;
     bool last_known_availability;
     ListeningState listening_state;
     AvailabilityCallbacksMap availability_callbacks;
     AvailabilityObserversSet availability_observers;
   };
 
-  std::map<std::string, scoped_ptr<AvailabilityStatus>> availability_status_;
+  // Map of AvailabilityStatus for known URLs.
+  std::map<GURL, std::unique_ptr<AvailabilityStatus>>
+      availability_status_;
 
   // Updates the listening state of availability for |status| and notifies the
   // client.

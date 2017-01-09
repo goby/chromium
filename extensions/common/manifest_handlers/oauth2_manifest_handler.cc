@@ -4,8 +4,11 @@
 
 #include "extensions/common/manifest_handlers/oauth2_manifest_handler.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "extensions/common/error_utils.h"
@@ -46,7 +49,7 @@ OAuth2ManifestHandler::~OAuth2ManifestHandler() {
 
 bool OAuth2ManifestHandler::Parse(Extension* extension,
                                   base::string16* error) {
-  scoped_ptr<OAuth2Info> info(new OAuth2Info);
+  std::unique_ptr<OAuth2Info> info(new OAuth2Info);
   const base::DictionaryValue* dict = NULL;
   if (!extension->manifest()->GetDictionary(keys::kOAuth2, &dict)) {
     *error = base::ASCIIToUTF16(errors::kInvalidOAuth2ClientId);

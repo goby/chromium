@@ -5,12 +5,13 @@
 #ifndef CONTENT_RENDERER_MEDIA_WEBRTC_MEDIA_STREAM_REMOTE_VIDEO_SOURCE_H_
 #define CONTENT_RENDERER_MEDIA_WEBRTC_MEDIA_STREAM_REMOTE_VIDEO_SOURCE_H_
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "content/common/content_export.h"
 #include "content/renderer/media/media_stream_video_source.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
-#include "third_party/libjingle/source/talk/app/webrtc/mediastreaminterface.h"
+#include "third_party/webrtc/api/mediastreaminterface.h"
 
 namespace content {
 
@@ -23,8 +24,13 @@ class TrackObserver;
 class CONTENT_EXPORT MediaStreamRemoteVideoSource
      : public MediaStreamVideoSource {
  public:
-  MediaStreamRemoteVideoSource(scoped_ptr<TrackObserver> observer);
+  MediaStreamRemoteVideoSource(std::unique_ptr<TrackObserver> observer);
   ~MediaStreamRemoteVideoSource() override;
+
+  // Should be called when the remote video track this source originates from is
+  // no longer received on a PeerConnection. This cleans up the references to
+  // the webrtc::MediaStreamTrackInterface instance held by |observer_|.
+  void OnSourceTerminated();
 
  protected:
   // Implements MediaStreamVideoSource.
@@ -43,7 +49,7 @@ class CONTENT_EXPORT MediaStreamRemoteVideoSource
 
   // Used by tests to test that a frame can be received and that the
   // MediaStreamRemoteVideoSource behaves as expected.
-  webrtc::VideoRendererInterface* RenderInterfaceForTest();
+  rtc::VideoSinkInterface<webrtc::VideoFrame>* SinkInterfaceForTest();
 
  private:
   void OnChanged(webrtc::MediaStreamTrackInterface::TrackState state);
@@ -52,7 +58,7 @@ class CONTENT_EXPORT MediaStreamRemoteVideoSource
   // libjingle thread and forward it to the IO-thread.
   class RemoteVideoSourceDelegate;
   scoped_refptr<RemoteVideoSourceDelegate> delegate_;
-  scoped_ptr<TrackObserver> observer_;
+  std::unique_ptr<TrackObserver> observer_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamRemoteVideoSource);
 };

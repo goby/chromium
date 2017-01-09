@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_FEEDBACK_PRIVATE_FEEDBACK_SERVICE_H_
 #define CHROME_BROWSER_EXTENSIONS_API_FEEDBACK_PRIVATE_FEEDBACK_SERVICE_H_
 
+#include <stdint.h>
+
 #include <vector>
-#include "base/basictypes.h"
+
 #include "base/callback.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/extensions/blob_reader.h"
 #include "chrome/browser/feedback/system_logs/scrubbed_system_logs_fetcher.h"
@@ -17,20 +19,24 @@
 
 class Profile;
 
-using extensions::api::feedback_private::SystemInformation;
-
 namespace extensions {
 
-typedef std::vector<linked_ptr<SystemInformation> > SystemInformationList;
+using SystemInformationList =
+    std::vector<api::feedback_private::SystemInformation>;
 
 // The feedback service provides the ability to gather the various pieces of
 // data needed to send a feedback report and then send the report once all
 // the pieces are available.
 class FeedbackService : public base::SupportsWeakPtr<FeedbackService> {
  public:
-  typedef base::Callback<void(bool)> SendFeedbackCallback;
-  typedef base::Callback<void(const SystemInformationList& sys_info)>
-      GetSystemInformationCallback;
+  // Callback invoked when the feedback report is ready to be sent.
+  // True will be passed to indicate that it is being successfully sent now,
+  // and false to indicate that it will be delayed (usually due to being
+  // offline).
+  using SendFeedbackCallback = base::Callback<void(bool)>;
+
+  using GetSystemInformationCallback =
+      base::Callback<void(const SystemInformationList&)>;
 
   FeedbackService();
   virtual ~FeedbackService();
@@ -46,22 +52,23 @@ class FeedbackService : public base::SupportsWeakPtr<FeedbackService> {
 
  private:
   // Callbacks to receive blob data.
-  void AttachedFileCallback(scoped_ptr<std::string> data,
-                            int64 total_blob_length);
-  void ScreenshotCallback(scoped_ptr<std::string> data,
-                          int64 total_blob_length);
+  void AttachedFileCallback(scoped_refptr<feedback::FeedbackData> feedback_data,
+                            const SendFeedbackCallback& callback,
+                            std::unique_ptr<std::string> data,
+                            int64_t total_blob_length);
+  void ScreenshotCallback(scoped_refptr<feedback::FeedbackData> feedback_data,
+                          const SendFeedbackCallback& callback,
+                          std::unique_ptr<std::string> data,
+                          int64_t total_blob_length);
+
+  void OnSystemLogsFetchComplete(
+      const GetSystemInformationCallback& callback,
+      std::unique_ptr<system_logs::SystemLogsResponse> sys_info);
 
   // Checks if we have read all the blobs we need to; signals the feedback
   // data object once all the requisite data has been populated.
-  void CompleteSendFeedback();
-
-  void OnSystemLogsFetchComplete(
-      scoped_ptr<system_logs::SystemLogsResponse> sys_info);
-
-  GetSystemInformationCallback system_information_callback_;
-  SendFeedbackCallback send_feedback_callback_;
-
-  scoped_refptr<feedback::FeedbackData> feedback_data_;
+  void CompleteSendFeedback(scoped_refptr<feedback::FeedbackData> feedback_data,
+                            const SendFeedbackCallback& callback);
 
   DISALLOW_COPY_AND_ASSIGN(FeedbackService);
 };

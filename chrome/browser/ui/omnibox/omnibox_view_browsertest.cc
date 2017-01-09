@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
 #include <stdio.h>
 
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -22,7 +26,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/toolbar/test_toolbar_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
@@ -42,6 +45,7 @@
 #include "components/omnibox/browser/omnibox_view.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/toolbar/test_toolbar_model.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "net/dns/mock_host_resolver.h"
@@ -50,11 +54,6 @@
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/point.h"
-
-// For fine-grained suppression on flaky tests.
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 using base::ASCIIToUTF16;
 using base::UTF16ToUTF8;
@@ -277,12 +276,11 @@ class OmniboxViewTest : public InProcessBrowserTest,
     data.SetShortName(ASCIIToUTF16(kSearchShortName));
     data.SetKeyword(ASCIIToUTF16(kSearchKeyword));
     data.SetURL(kSearchURL);
-    TemplateURL* template_url = new TemplateURL(data);
-    model->Add(template_url);
+    TemplateURL* template_url = model->Add(base::MakeUnique<TemplateURL>(data));
     model->SetUserSelectedDefaultSearchProvider(template_url);
 
     data.SetKeyword(ASCIIToUTF16(kSearchKeyword2));
-    model->Add(new TemplateURL(data));
+    model->Add(base::MakeUnique<TemplateURL>(data));
 
     // Remove built-in template urls, like google.com, bing.com etc., as they
     // may appear as autocomplete suggests and interfere with our tests.
@@ -308,7 +306,7 @@ class OmniboxViewTest : public InProcessBrowserTest,
     }
 
     BookmarkModel* bookmark_model =
-        BookmarkModelFactory::GetForProfile(profile);
+        BookmarkModelFactory::GetForBrowserContext(profile);
     ASSERT_TRUE(bookmark_model);
     bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
 
@@ -455,11 +453,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_BrowserAccelerators) {
 #endif
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_PopupAccelerators) {
-#if defined(OS_WIN)
-  // Flaky on XP bot. http://crbug.com/499155
-  if (base::win::GetVersion() <= base::win::VERSION_XP)
-    return;
-#endif
   // Create a popup.
   Browser* popup = CreateBrowserForPopup(browser()->profile());
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(popup));
@@ -645,7 +638,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_DesiredTLDWithTemporaryText) {
   data.SetShortName(ASCIIToUTF16("abc"));
   data.SetKeyword(ASCIIToUTF16(kSearchText));
   data.SetURL("http://abc.com/");
-  template_url_service->Add(new TemplateURL(data));
+  template_url_service->Add(base::MakeUnique<TemplateURL>(data));
 
   // Send "ab", so that an "abc" entry appears in the popup.
   const ui::KeyboardCode kSearchTextPrefixKeys[] = {
@@ -699,7 +692,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, ClearUserTextAfterBackgroundCommit) {
   GURL url2("data:text/html,page2");
   chrome::NavigateParams params(browser(), url2, ui::PAGE_TRANSITION_LINK);
   params.source_contents = contents;
-  params.disposition = CURRENT_TAB;
+  params.disposition = WindowOpenDisposition::CURRENT_TAB;
   ui_test_utils::NavigateToURL(&params);
 
   // Switch back to the first tab.  The user text should be cleared, and the
@@ -876,6 +869,97 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   EXPECT_EQ(old_text.size(), end);
 }
 
+// Make sure the cursor position doesn't get set past the last character of
+// user input text when the URL is longer than the keyword.
+// (http://crbug.com/656209)
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FocusSearchLongUrl) {
+  OmniboxView* omnibox_view = NULL;
+  ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
+
+  ASSERT_GT(strlen(url::kAboutBlankURL), strlen(kSearchKeyword));
+  ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
+
+  // Make sure nothing DCHECKs.
+  chrome::FocusSearch(browser());
+  ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
+}
+
+// Make sure the display text is preserved when calling FocusSearch() when the
+// display text is not the permanent text.
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, PreserveDisplayTextOnFocusSearch) {
+  OmniboxView* omnibox_view = NULL;
+  ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
+
+  OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
+  ASSERT_TRUE(popup_model);
+
+  // Input something that can match history items.
+  omnibox_view->SetUserText(ASCIIToUTF16("site.com/p"));
+  ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
+  EXPECT_TRUE(popup_model->IsOpen());
+  EXPECT_EQ(ASCIIToUTF16("site.com/path/1"), omnibox_view->GetText());
+  base::string16::size_type start, end;
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(10U, std::min(start, end));
+  EXPECT_EQ(15U, std::max(start, end));
+
+  // Calling FocusSearch() with an inline autocompletion should preserve the
+  // autocompleted text, and should select all.
+  chrome::FocusSearch(browser());
+  ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
+  EXPECT_EQ(ASCIIToUTF16("site.com/path/1"), omnibox_view->GetText());
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(0U, std::min(start, end));
+  EXPECT_EQ(15U, std::max(start, end));
+
+  // Press backspace twice and the omnibox should be empty.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));
+  EXPECT_EQ(base::string16(), omnibox_view->GetText());
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(0U, start);
+  EXPECT_EQ(0U, end);
+
+  // Calling FocusSearch() with temporary text showing should preserve the
+  // suggested text, and should select all.
+  omnibox_view->SetUserText(ASCIIToUTF16("site.com/p"));
+  ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
+  EXPECT_TRUE(popup_model->IsOpen());
+  omnibox_view->model()->OnUpOrDownKeyPressed(1);
+  EXPECT_EQ(ASCIIToUTF16("www.site.com/path/2"), omnibox_view->GetText());
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(start, end);
+
+  chrome::FocusSearch(browser());
+  ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
+  EXPECT_EQ(ASCIIToUTF16("www.site.com/path/2"), omnibox_view->GetText());
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(0U, std::min(start, end));
+  EXPECT_EQ(19U, std::max(start, end));
+}
+
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordByTypingQuestionMark) {
+  OmniboxView* omnibox_view = NULL;
+  ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
+
+  base::string16 search_keyword(ASCIIToUTF16(kSearchKeyword));
+
+  // If the user gets into keyword mode by typing '?', they should be put into
+  // keyword mode for their default search provider.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_OEM_2, ui::EF_SHIFT_DOWN));
+  ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
+  ASSERT_TRUE(omnibox_view->model()->is_keyword_selected());
+  ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
+  ASSERT_EQ(base::string16(), omnibox_view->GetText());
+
+  // If the user press backspace, they should be left with '?' in the omnibox.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));
+  EXPECT_EQ(base::ASCIIToUTF16("?"), omnibox_view->GetText());
+  EXPECT_EQ(base::string16(), omnibox_view->model()->keyword());
+  EXPECT_FALSE(omnibox_view->model()->is_keyword_hint());
+  EXPECT_FALSE(omnibox_view->model()->is_keyword_selected());
+}
+
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
@@ -893,12 +977,19 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
   ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
   ASSERT_TRUE(omnibox_view->GetText().empty());
+  size_t start, end;
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(0U, start);
+  EXPECT_EQ(0U, end);
 
   // Revert to keyword hint mode.
   omnibox_view->model()->ClearKeyword();
   ASSERT_TRUE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
   ASSERT_EQ(search_keyword + base::char16(' '), omnibox_view->GetText());
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(search_keyword.length() + 1, start);
+  EXPECT_EQ(search_keyword.length() + 1, end);
 
   // Keyword should also be accepted by typing an ideographic space.
   omnibox_view->OnBeforePossibleChange();
@@ -946,7 +1037,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
   ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(search_keyword, omnibox_view->model()->keyword());
   ASSERT_EQ(ASCIIToUTF16("a "), omnibox_view->GetText());
-  size_t start, end;
   omnibox_view->GetSelectionBounds(&start, &end);
   EXPECT_EQ(0U, start);
   EXPECT_EQ(0U, end);
@@ -1092,8 +1182,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonSubstitutingKeywordTest) {
   data.SetShortName(ASCIIToUTF16("Search abc"));
   data.SetKeyword(ASCIIToUTF16(kSearchText));
   data.SetURL("http://abc.com/{searchTerms}");
-  TemplateURL* template_url = new TemplateURL(data);
-  template_url_service->Add(template_url);
+  TemplateURL* template_url =
+      template_url_service->Add(base::MakeUnique<TemplateURL>(data));
 
   omnibox_view->SetUserText(base::string16());
 
@@ -1116,7 +1206,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonSubstitutingKeywordTest) {
   template_url_service->Remove(template_url);
   data.SetShortName(ASCIIToUTF16("abc"));
   data.SetURL("http://abc.com/");
-  template_url_service->Add(new TemplateURL(data));
+  template_url_service->Add(base::MakeUnique<TemplateURL>(data));
 
   // We always allow exact matches for non-substituting keywords.
   ASSERT_NO_FATAL_FAILURE(SendKeySequence(kSearchTextKeys));
@@ -1397,9 +1487,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
   ASSERT_FALSE(omnibox_view->model()->is_keyword_hint());
   ASSERT_EQ(kSearchKeyword, UTF16ToUTF8(omnibox_view->model()->keyword()));
 
-  // Input something as search text.
-  ASSERT_NO_FATAL_FAILURE(SendKeySequence(kSearchTextKeys));
-
   // Create a new tab.
   chrome::NewTab(browser());
 
@@ -1407,7 +1494,21 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
   browser()->tab_strip_model()->ActivateTabAt(0, true);
 
   // Make sure we're still in keyword mode.
+  ASSERT_TRUE(omnibox_view->model()->is_keyword_selected());
   ASSERT_EQ(kSearchKeyword, UTF16ToUTF8(omnibox_view->model()->keyword()));
+  ASSERT_EQ(omnibox_view->GetText(), base::string16());
+
+  // Input something as search text.
+  ASSERT_NO_FATAL_FAILURE(SendKeySequence(kSearchTextKeys));
+
+  // Switch to the second tab and back to the first.
+  browser()->tab_strip_model()->ActivateTabAt(1, true);
+  browser()->tab_strip_model()->ActivateTabAt(0, true);
+
+  // Make sure we're still in keyword mode.
+  ASSERT_TRUE(omnibox_view->model()->is_keyword_selected());
+  ASSERT_EQ(kSearchKeyword, UTF16ToUTF8(omnibox_view->model()->keyword()));
+  ASSERT_EQ(omnibox_view->GetText(), base::ASCIIToUTF16(kSearchText));
 }
 
 // http://crbug.com/133355
@@ -1613,7 +1714,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyURLToClipboard) {
   // Set permanent text thus making sure that omnibox treats 'google.com'
   // as URL (not as ordinary user input).
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
+  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
   test_toolbar_model->set_text(ASCIIToUTF16("http://www.google.com/"));
   browser()->swap_toolbar_models(&toolbar_model);
   OmniboxView* omnibox_view = NULL;
@@ -1645,21 +1746,22 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyURLToClipboard) {
   EXPECT_FALSE(clipboard->IsFormatAvailable(
       ui::Clipboard::GetHtmlFormatType(), ui::CLIPBOARD_TYPE_COPY_PASTE));
 
-  // These platforms should read bookmark format.
-#if defined(OS_WIN) || defined(OS_CHROMEOS) || defined(OS_MACOSX)
-  base::string16 title;
-  std::string url;
-  clipboard->ReadBookmark(&title, &url);
-  EXPECT_EQ(target_url, url);
-  EXPECT_EQ(ASCIIToUTF16(target_url), title);
+// Windows clipboard only supports text URLs.
+#if defined(OS_LINUX) || defined(OS_MACOSX)
+  EXPECT_TRUE(clipboard->IsFormatAvailable(ui::Clipboard::GetUrlFormatType(),
+                                           ui::CLIPBOARD_TYPE_COPY_PASTE));
 #endif
+
+  std::string url;
+  clipboard->ReadAsciiText(ui::CLIPBOARD_TYPE_COPY_PASTE, &url);
+  EXPECT_EQ(target_url, url);
 }
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CutURLToClipboard) {
   // Set permanent text thus making sure that omnibox treats 'google.com'
   // as URL (not as ordinary user input).
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
+  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
   test_toolbar_model->set_text(ASCIIToUTF16("http://www.google.com/"));
   browser()->swap_toolbar_models(&toolbar_model);
   OmniboxView* omnibox_view = NULL;
@@ -1691,14 +1793,15 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CutURLToClipboard) {
   EXPECT_FALSE(clipboard->IsFormatAvailable(
       ui::Clipboard::GetHtmlFormatType(), ui::CLIPBOARD_TYPE_COPY_PASTE));
 
-  // These platforms should read bookmark format.
-#if defined(OS_WIN) || defined(OS_CHROMEOS) || defined(OS_MACOSX)
-  base::string16 title;
-  std::string url;
-  clipboard->ReadBookmark(&title, &url);
-  EXPECT_EQ(target_url, url);
-  EXPECT_EQ(ASCIIToUTF16(target_url), title);
+// Windows clipboard only supports text URLs.
+#if defined(OS_LINUX) || defined(OS_MACOSX)
+  EXPECT_TRUE(clipboard->IsFormatAvailable(ui::Clipboard::GetUrlFormatType(),
+                                           ui::CLIPBOARD_TYPE_COPY_PASTE));
 #endif
+
+  std::string url;
+  clipboard->ReadAsciiText(ui::CLIPBOARD_TYPE_COPY_PASTE, &url);
+  EXPECT_EQ(target_url, url);
 }
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyTextToClipboard) {
@@ -1818,67 +1921,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CtrlArrowAfterArrowSuggestions) {
   ASSERT_EQ(ASCIIToUTF16("www.bar.com/2"), omnibox_view->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
-                       PersistSearchReplacementAcrossTabSwitch) {
-  EXPECT_TRUE(browser()->toolbar_model()->url_replacement_enabled());
-  browser()->toolbar_model()->set_url_replacement_enabled(false);
-
-  // Create a new tab.
-  chrome::NewTab(browser());
-  EXPECT_TRUE(browser()->toolbar_model()->url_replacement_enabled());
-
-  // Switch back to the first tab.
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
-  EXPECT_FALSE(browser()->toolbar_model()->url_replacement_enabled());
-}
-
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
-                       DontUpdateURLWhileSearchTermReplacementIsDisabled) {
-  OmniboxView* omnibox_view = NULL;
-  ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
-  TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
-  browser()->swap_toolbar_models(&toolbar_model);
-
-  base::string16 url_a(ASCIIToUTF16("http://www.a.com/"));
-  base::string16 url_b(ASCIIToUTF16("http://www.b.com/"));
-  base::string16 url_c(ASCIIToUTF16("http://www.c.com/"));
-  chrome::FocusLocationBar(browser());
-  test_toolbar_model->set_text(url_a);
-  omnibox_view->Update();
-  EXPECT_EQ(url_a, omnibox_view->GetText());
-
-  // Disable URL replacement and update.  Because the omnibox has focus, the
-  // visible text shouldn't change; see comments in
-  // OmniboxEditModel::UpdatePermanentText().
-  browser()->toolbar_model()->set_url_replacement_enabled(false);
-  test_toolbar_model->set_text(url_b);
-  omnibox_view->Update();
-  EXPECT_EQ(url_a, omnibox_view->GetText());
-
-  // Re-enable URL replacement and ensure updating changes the text.
-  browser()->toolbar_model()->set_url_replacement_enabled(true);
-  // We have to change the toolbar model text here, or Update() will do nothing.
-  // This is because the previous update already updated the permanent text.
-  test_toolbar_model->set_text(url_c);
-  omnibox_view->Update();
-  EXPECT_EQ(url_c, omnibox_view->GetText());
-
-  // The same test, but using RevertAll() to reset search term replacement.
-  test_toolbar_model->set_text(url_a);
-  omnibox_view->Update();
-  EXPECT_EQ(url_a, omnibox_view->GetText());
-  browser()->toolbar_model()->set_url_replacement_enabled(false);
-  test_toolbar_model->set_text(url_b);
-  omnibox_view->Update();
-  EXPECT_EQ(url_a, omnibox_view->GetText());
-  omnibox_view->RevertAll();
-  EXPECT_EQ(url_b, omnibox_view->GetText());
-  test_toolbar_model->set_text(url_c);
-  omnibox_view->Update();
-  EXPECT_EQ(url_c, omnibox_view->GetText());
-}
-
 namespace {
 
 // Returns the number of characters currently selected in |omnibox_view|.
@@ -1898,7 +1940,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, SelectAllStaysAfterUpdate) {
   OmniboxView* omnibox_view = nullptr;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  scoped_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
+  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
   browser()->swap_toolbar_models(&toolbar_model);
 
   base::string16 url_a(ASCIIToUTF16("http://www.a.com/"));

@@ -5,11 +5,13 @@
 #ifndef COMPONENTS_DOMAIN_RELIABILITY_BEACON_H_
 #define COMPONENTS_DOMAIN_RELIABILITY_BEACON_H_
 
+#include <memory>
 #include <string>
 
 #include "base/memory/scoped_vector.h"
 #include "base/time/time.h"
 #include "components/domain_reliability/domain_reliability_export.h"
+#include "net/base/net_error_details.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -22,6 +24,7 @@ namespace domain_reliability {
 struct DOMAIN_RELIABILITY_EXPORT DomainReliabilityBeacon {
  public:
   DomainReliabilityBeacon();
+  DomainReliabilityBeacon(const DomainReliabilityBeacon& other);
   ~DomainReliabilityBeacon();
 
   // Converts the Beacon to JSON format for uploading. Calculates the age
@@ -33,7 +36,7 @@ struct DOMAIN_RELIABILITY_EXPORT DomainReliabilityBeacon {
   // are being uploaded to a same-origin collector.
   // |path_prefixes| are used to include only a known-safe (not PII) prefix of
   // URLs when uploading to a non-same-origin collector.
-  scoped_ptr<base::Value> ToValue(
+  std::unique_ptr<base::Value> ToValue(
       base::TimeTicks upload_time,
       base::TimeTicks last_network_change_time,
       const GURL& collector_url,
@@ -45,6 +48,8 @@ struct DOMAIN_RELIABILITY_EXPORT DomainReliabilityBeacon {
   std::string resource;
   // Status string (e.g. "ok", "dns.nxdomain", "http.403").
   std::string status;
+  // Granular QUIC error string (e.g. "quic.peer_going_away").
+  std::string quic_error;
   // Net error code.  Encoded as a string in the final JSON.
   int chrome_error;
   // IP address of the server the request went to.
@@ -54,6 +59,8 @@ struct DOMAIN_RELIABILITY_EXPORT DomainReliabilityBeacon {
   bool was_proxied;
   // Protocol used to make the request.
   std::string protocol;
+  // Network error details for the request.
+  net::NetErrorDetails details;
   // HTTP response code returned by the server, or -1 if none was received.
   int http_response_code;
   // Elapsed time between starting and completing the request.
@@ -65,6 +72,8 @@ struct DOMAIN_RELIABILITY_EXPORT DomainReliabilityBeacon {
   // caused by an upload that itself contained no beacons caused by uploads,
   // et cetera.
   int upload_depth;
+  // The probability that this request had of being reported ("sample rate").
+  double sample_rate;
 
   // Okay to copy and assign.
 };

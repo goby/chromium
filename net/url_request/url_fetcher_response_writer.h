@@ -5,12 +5,12 @@
 #ifndef NET_URL_REQUEST_URL_FETCHER_RESPONSE_WRITER_H_
 #define NET_URL_REQUEST_URL_FETCHER_RESPONSE_WRITER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
@@ -21,7 +21,6 @@ class SequencedTaskRunner;
 
 namespace net {
 
-class DrainableIOBuffer;
 class FileStream;
 class IOBuffer;
 class URLFetcherFileWriter;
@@ -45,9 +44,14 @@ class NET_EXPORT URLFetcherResponseWriter {
                     int num_bytes,
                     const CompletionCallback& callback) = 0;
 
-  // Finishes writing. If ERR_IO_PENDING is returned, |callback| will be run
-  // later with the result.
-  virtual int Finish(const CompletionCallback& callback) = 0;
+  // Finishes writing. If |net_error| is not OK, this method can be called
+  // in the middle of another operation (eg. Initialize() and Write()). On
+  // errors (|net_error| not OK), this method may be called before the previous
+  // operation completed. In this case, URLFetcherResponseWriter may skip
+  // graceful shutdown and completion of the pending operation. After such a
+  // failure, the URLFetcherResponseWriter may be reused. If ERR_IO_PENDING is
+  // returned, |callback| will be run later with the result.
+  virtual int Finish(int net_error, const CompletionCallback& callback) = 0;
 
   // Returns this instance's pointer as URLFetcherStringWriter when possible.
   virtual URLFetcherStringWriter* AsStringWriter();
@@ -69,7 +73,7 @@ class NET_EXPORT URLFetcherStringWriter : public URLFetcherResponseWriter {
   int Write(IOBuffer* buffer,
             int num_bytes,
             const CompletionCallback& callback) override;
-  int Finish(const CompletionCallback& callback) override;
+  int Finish(int net_error, const CompletionCallback& callback) override;
   URLFetcherStringWriter* AsStringWriter() override;
 
  private:
@@ -95,7 +99,7 @@ class NET_EXPORT URLFetcherFileWriter : public URLFetcherResponseWriter {
   int Write(IOBuffer* buffer,
             int num_bytes,
             const CompletionCallback& callback) override;
-  int Finish(const CompletionCallback& callback) override;
+  int Finish(int net_error, const CompletionCallback& callback) override;
   URLFetcherFileWriter* AsFileWriter() override;
 
   // Drops ownership of the file at |file_path_|.
@@ -103,23 +107,18 @@ class NET_EXPORT URLFetcherFileWriter : public URLFetcherResponseWriter {
   void DisownFile();
 
  private:
-  // Called when a write has been done.
-  void DidWrite(const CompletionCallback& callback, int result);
-
   // Closes the file if it is open and then delete it.
   void CloseAndDeleteFile();
 
   // Callback which gets the result of a temporary file creation.
-  void DidCreateTempFile(const CompletionCallback& callback,
-                         base::FilePath* temp_file_path,
-                         bool success);
+  void DidCreateTempFile(base::FilePath* temp_file_path, bool success);
 
-  // Callback which gets the result of FileStream::Open.
-  void DidOpenFile(const CompletionCallback& callback,
-                   int result);
+  // Run |callback_| if it is non-null when FileStream::Open or
+  // FileStream::Write is completed.
+  void OnIOCompleted(int result);
 
   // Callback which gets the result of closing a file.
-  void CloseComplete(const CompletionCallback& callback, int result);
+  void CloseComplete(int result);
 
   // Task runner on which file operations should happen.
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
@@ -131,7 +130,9 @@ class NET_EXPORT URLFetcherFileWriter : public URLFetcherResponseWriter {
   // True when this instance is responsible to delete the file at |file_path_|.
   bool owns_file_;
 
-  scoped_ptr<FileStream> file_stream_;
+  std::unique_ptr<FileStream> file_stream_;
+
+  CompletionCallback callback_;
 
   // Callbacks are created for use with base::FileUtilProxy.
   base::WeakPtrFactory<URLFetcherFileWriter> weak_factory_;

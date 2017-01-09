@@ -10,13 +10,15 @@
 #define CHROME_INSTALLER_SETUP_SETUP_UTIL_H_
 
 #include <windows.h>
+#include <stdint.h>
 
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/win/scoped_handle.h"
 #include "chrome/installer/util/browser_distribution.h"
+#include "chrome/installer/util/lzma_util.h"
 #include "chrome/installer/util/util_constants.h"
 
 class AppRegistrationData;
@@ -31,7 +33,18 @@ namespace installer {
 
 class InstallationState;
 class InstallerState;
-class ProductState;
+class MasterPreferences;
+
+extern const char kUnPackStatusMetricsName[];
+extern const char kUnPackNTSTATUSMetricsName[];
+
+// The name of consumers of UnPackArchive which is used to publish metrics.
+enum UnPackConsumer {
+  CHROME_ARCHIVE_PATCH,
+  COMPRESSED_CHROME_ARCHIVE,
+  SETUP_EXE_PATCH,
+  UNCOMPRESSED_CHROME_ARCHIVE,
+};
 
 // Applies a patch file to source file using Courgette. Returns 0 in case of
 // success. In case of errors, it returns kCourgetteErrorOffset + a Courgette
@@ -43,7 +56,7 @@ int CourgettePatchFiles(const base::FilePath& src,
 // Applies a patch file to source file using bsdiff. This function uses
 // Courgette's flavor of bsdiff. Returns 0 in case of success, or
 // kBsdiffErrorOffset + a bsdiff status code in case of errors.
-// See courgette/third_party/bsdiff.h for details.
+// See courgette/third_party/bsdiff/bsdiff.h for details.
 int BsdiffPatchFiles(const base::FilePath& src,
                      const base::FilePath& patch,
                      const base::FilePath& dest);
@@ -51,7 +64,7 @@ int BsdiffPatchFiles(const base::FilePath& src,
 // Find the version of Chrome from an install source directory.
 // Chrome_path should contain at least one version folder.
 // Returns the maximum version found or NULL if no version is found.
-Version* GetMaxVersionFromArchiveDir(const base::FilePath& chrome_path);
+base::Version* GetMaxVersionFromArchiveDir(const base::FilePath& chrome_path);
 
 // Returns the uncompressed archive of the installed version that serves as the
 // source for patching.  If |desired_version| is valid, only the path to that
@@ -68,7 +81,7 @@ base::FilePath FindArchiveToPatch(const InstallationState& original_state,
 // given the nature of this function, it is not possible to know if the
 // delete operation itself succeeded.
 bool DeleteFileFromTempProcess(const base::FilePath& path,
-                               uint32 delay_before_delete_ms);
+                               uint32_t delay_before_delete_ms);
 
 // Returns true if the product |type| will be installed after the current
 // setup.exe instance have carried out installation / uninstallation, at
@@ -118,6 +131,17 @@ void DeleteRegistryKeyPartial(
 // Converts a product GUID into a SQuished gUID that is used for MSI installer
 // registry entries.
 base::string16 GuidToSquid(const base::string16& guid);
+
+// Returns true if downgrade is allowed by installer data.
+bool IsDowngradeAllowed(const MasterPreferences& prefs);
+
+// Returns true if Chrome has been run within the last 28 days.
+bool IsChromeActivelyUsed(const InstallerState& installer_state);
+
+// Records UMA metrics for unpack result.
+void RecordUnPackMetrics(UnPackStatus unpack_status,
+                         int32_t status,
+                         UnPackConsumer consumer);
 
 // This class will enable the privilege defined by |privilege_name| on the
 // current process' token. The privilege will be disabled upon the

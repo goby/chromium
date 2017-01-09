@@ -4,6 +4,8 @@
 
 #include "ios/chrome/browser/infobars/infobar.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/translate/core/browser/translate_infobar_delegate.h"
@@ -14,9 +16,8 @@
 using infobars::InfoBar;
 using infobars::InfoBarDelegate;
 
-InfoBarIOS::InfoBarIOS(scoped_ptr<InfoBarDelegate> delegate)
-    : InfoBar(delegate.Pass()) {
-}
+InfoBarIOS::InfoBarIOS(std::unique_ptr<InfoBarDelegate> delegate)
+    : InfoBar(std::move(delegate)) {}
 
 InfoBarIOS::~InfoBarIOS() {
   DCHECK(controller_);

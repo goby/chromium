@@ -11,15 +11,15 @@
 #define CHROME_BROWSER_SAFE_BROWSING_BROWSER_FEATURE_EXTRACTOR_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
@@ -53,6 +53,7 @@ struct IPUrlInfo {
             const std::string& method,
             const std::string& referrer,
             const content::ResourceType& resource_type);
+  IPUrlInfo(const IPUrlInfo& other);
   ~IPUrlInfo();
 };
 
@@ -68,7 +69,7 @@ struct BrowseInfo {
 
   // If a SafeBrowsing interstitial was shown for the current URL
   // this will contain the UnsafeResource struct for that URL.
-  scoped_ptr<SafeBrowsingUIManager::UnsafeResource> unsafe_resource;
+  std::unique_ptr<security_interstitials::UnsafeResource> unsafe_resource;
 
   // List of redirects that lead to the first page on the current host and
   // the current url respectively. These may be the same if the current url
@@ -94,9 +95,9 @@ class BrowserFeatureExtractor {
   // true iff feature extraction succeeded.  The second argument is the
   // phishing request which was modified by the feature extractor.  The
   // DoneCallback takes ownership of the request object.
-  typedef base::Callback<void(bool, scoped_ptr<ClientPhishingRequest>)>
+  typedef base::Callback<void(bool, std::unique_ptr<ClientPhishingRequest>)>
       DoneCallback;
-  typedef base::Callback<void(bool, scoped_ptr<ClientMalwareRequest>)>
+  typedef base::Callback<void(bool, std::unique_ptr<ClientMalwareRequest>)>
       MalwareDoneCallback;
 
   // The caller keeps ownership of the tab and host objects and is
@@ -133,12 +134,12 @@ class BrowserFeatureExtractor {
                                  ClientPhishingRequest* request);
 
   // Actually starts feature extraction (does the real work).
-  void StartExtractFeatures(scoped_ptr<ClientPhishingRequest> request,
+  void StartExtractFeatures(std::unique_ptr<ClientPhishingRequest> request,
                             const DoneCallback& callback);
 
   // HistoryService callback which is called when we're done querying URL visits
   // in the history.
-  void QueryUrlHistoryDone(scoped_ptr<ClientPhishingRequest> request,
+  void QueryUrlHistoryDone(std::unique_ptr<ClientPhishingRequest> request,
                            const DoneCallback& callback,
                            bool success,
                            const history::URLRow& row,
@@ -146,7 +147,7 @@ class BrowserFeatureExtractor {
 
   // HistoryService callback which is called when we're done querying HTTP host
   // visits in the history.
-  void QueryHttpHostVisitsDone(scoped_ptr<ClientPhishingRequest> request,
+  void QueryHttpHostVisitsDone(std::unique_ptr<ClientPhishingRequest> request,
                                const DoneCallback& callback,
                                bool success,
                                int num_visits,
@@ -154,7 +155,7 @@ class BrowserFeatureExtractor {
 
   // HistoryService callback which is called when we're done querying HTTPS host
   // visits in the history.
-  void QueryHttpsHostVisitsDone(scoped_ptr<ClientPhishingRequest> request,
+  void QueryHttpsHostVisitsDone(std::unique_ptr<ClientPhishingRequest> request,
                                 const DoneCallback& callback,
                                 bool success,
                                 int num_visits,
@@ -175,9 +176,10 @@ class BrowserFeatureExtractor {
 
   // Helper function which is called when we're done filtering out benign IPs
   // on the IO thread.  This function is called on the UI thread.
-  void FinishExtractMalwareFeatures(scoped_ptr<IPUrlMap> bad_ips,
-                                    MalwareDoneCallback callback,
-                                    scoped_ptr<ClientMalwareRequest> request);
+  void FinishExtractMalwareFeatures(
+      std::unique_ptr<IPUrlMap> bad_ips,
+      MalwareDoneCallback callback,
+      std::unique_ptr<ClientMalwareRequest> request);
 
   content::WebContents* tab_;
   ClientSideDetectionHost* host_;

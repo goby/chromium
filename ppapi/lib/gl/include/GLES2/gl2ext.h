@@ -1894,25 +1894,6 @@ typedef void (GL_APIENTRYP PFNGLGETTRANSLATEDSHADERSOURCEANGLEPROC) (GLuint shad
 #endif
 #endif
 
-/* GL_CHROMIUM_iosurface */
-/* Exposes the Mac OS-specfic CGLTexImageIOSurface2D entry point as a
- * Chromium extension in the cross-platform API. Binds the IOSurface with
- * the given ID (an IOSurfaceID) to the texture bound to the given target.
- * To avoid needing to expose extraneous enums, assumes internal format
- * RGBA, format BGRA, and type UNSIGNED_INT_8_8_8_8_REV.
- */
-#ifndef GL_CHROMIUM_iosurface
-#define GL_CHROMIUM_iosurface 1
-#ifdef GL_GLEXT_PROTOTYPES
-#define glTexImageIOSurface2DCHROMIUM GLES2_GET_FUN(TexImageIOSurface2DCHROMIUM)
-#if !defined(GLES2_USE_CPP_BINDINGS)
-GL_APICALL void GL_APIENTRY glTexImageIOSurface2DCHROMIUM (GLenum target, GLsizei width, GLsizei height, GLuint ioSurfaceId, GLuint plane);
-#endif
-#else
-typedef void (GL_APIENTRYP PFNGLTEXIMAGEIOSURFACE2DCHROMIUM) (GLenum target, GLsizei width, GLsizei height, GLuint ioSurfaceId, GLuint plane);
-#endif
-#endif
-
 /* GL_CHROMIUM_copy_texture */
 #ifndef GL_CHROMIUM_copy_texture
 #ifndef GL_UNPACK_PREMULTIPLY_ALPHA_CHROMIUM
@@ -1926,7 +1907,6 @@ typedef void (GL_APIENTRYP PFNGLTEXIMAGEIOSURFACE2DCHROMIUM) (GLenum target, GLs
 #define glCopySubTextureCHROMIUM GLES2_GET_FUN(CopySubTextureCHROMIUM)
 #if !defined(GLES2_USE_CPP_BINDINGS)
 GL_APICALL void GL_APIENTRY glCopyTextureCHROMIUM(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint internalformat,
@@ -1935,7 +1915,6 @@ GL_APICALL void GL_APIENTRY glCopyTextureCHROMIUM(
     GLboolean unpack_premultiply_alpha,
     GLboolean unpack_unmultiply_alpha);
 GL_APICALL void GL_APIENTRY glCopySubTextureCHROMIUM(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint xoffset,
@@ -1950,7 +1929,6 @@ GL_APICALL void GL_APIENTRY glCopySubTextureCHROMIUM(
 #endif
 #else
 typedef void(GL_APIENTRYP PFNGLCOPYTEXTURECHROMIUM)(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint internalformat,
@@ -1959,7 +1937,6 @@ typedef void(GL_APIENTRYP PFNGLCOPYTEXTURECHROMIUM)(
     GLboolean unpack_premultiply_alpha,
     GLboolean unpack_unmultiply_alpha);
 typedef void(GL_APIENTRYP PFNGLCOPYSUBTEXTURECHROMIUM)(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint xoffset,

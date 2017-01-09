@@ -4,8 +4,11 @@
 
 #include "ui/base/ime/chromeos/input_method_whitelist.h"
 
+#include <stddef.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "chromeos/ime/input_methods.h"
@@ -31,9 +34,10 @@ bool InputMethodWhitelist::InputMethodIdIsWhitelisted(
   return supported_input_methods_.count(input_method_id) > 0;
 }
 
-scoped_ptr<InputMethodDescriptors>
+std::unique_ptr<InputMethodDescriptors>
 InputMethodWhitelist::GetSupportedInputMethods() const {
-  scoped_ptr<InputMethodDescriptors> input_methods(new InputMethodDescriptors);
+  std::unique_ptr<InputMethodDescriptors> input_methods(
+      new InputMethodDescriptors);
   input_methods->reserve(arraysize(kInputMethods));
   for (size_t i = 0; i < arraysize(kInputMethods); ++i) {
     std::vector<std::string> layouts;
@@ -56,7 +60,7 @@ InputMethodWhitelist::GetSupportedInputMethods() const {
         GURL() // input view page url.
         ));
   }
-  return input_methods.Pass();
+  return input_methods;
 }
 
 }  // namespace input_method

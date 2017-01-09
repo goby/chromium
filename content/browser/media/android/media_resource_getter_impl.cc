@@ -7,16 +7,19 @@
 #include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/android/scoped_java_ref.h"
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/fileapi/browser_file_system_helper.h"
-#include "content/browser/fileapi/chrome_blob_storage_context.h"
 #include "content/browser/resource_context_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/url_constants.h"
 #include "jni/MediaResourceGetter_jni.h"
@@ -34,6 +37,7 @@
 #include "url/gurl.h"
 
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace content {
@@ -53,7 +57,7 @@ static void RequestPlatformPathFromBlobURL(
   ChromeBlobStorageContext* blob_storage_context =
       GetChromeBlobStorageContextForResourceContext(resource_context);
 
-  scoped_ptr<storage::BlobDataHandle> handle =
+  std::unique_ptr<storage::BlobDataHandle> handle =
       blob_storage_context->context()->GetBlobDataFromPublicURL(url);
   if (!handle) {
     // There are plenty of cases where handle can be empty. The most trivial is
@@ -61,7 +65,7 @@ static void RequestPlatformPathFromBlobURL(
     ReturnResultOnUIThread(callback, std::string());
     return;
   }
-  scoped_ptr<storage::BlobDataSnapshot> data = handle->CreateSnapshot();
+  std::unique_ptr<storage::BlobDataSnapshot> data = handle->CreateSnapshot();
   if (!data) {
     ReturnResultOnUIThread(callback, std::string());
     NOTREACHED();
@@ -100,13 +104,13 @@ static void PostMediaMetadataCallbackTask(
     const media::MediaResourceGetter::ExtractMediaMetadataCB& callback,
     JNIEnv* env, ScopedJavaLocalRef<jobject>& j_metadata) {
   BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(callback, base::TimeDelta::FromMilliseconds(
-                       Java_MediaMetadata_getDurationInMilliseconds(
-                           env, j_metadata.obj())),
-                   Java_MediaMetadata_getWidth(env, j_metadata.obj()),
-                   Java_MediaMetadata_getHeight(env, j_metadata.obj()),
-                   Java_MediaMetadata_isSuccess(env, j_metadata.obj())));
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(callback, base::TimeDelta::FromMilliseconds(
+                               Java_MediaMetadata_getDurationInMilliseconds(
+                                   env, j_metadata)),
+                 Java_MediaMetadata_getWidth(env, j_metadata),
+                 Java_MediaMetadata_getHeight(env, j_metadata),
+                 Java_MediaMetadata_isSuccess(env, j_metadata)));
 }
 
 // Gets the metadata from a media URL. When finished, a task is posted to the UI
@@ -119,15 +123,12 @@ static void GetMediaMetadata(
 
   ScopedJavaLocalRef<jstring> j_url_string = ConvertUTF8ToJavaString(env, url);
   ScopedJavaLocalRef<jstring> j_cookies = ConvertUTF8ToJavaString(env, cookies);
-  jobject j_context = base::android::GetApplicationContext();
+  const JavaRef<jobject>& j_context = base::android::GetApplicationContext();
   ScopedJavaLocalRef<jstring> j_user_agent = ConvertUTF8ToJavaString(
       env, user_agent);
   ScopedJavaLocalRef<jobject> j_metadata =
-      Java_MediaResourceGetter_extractMediaMetadata(env,
-                                                    j_context,
-                                                    j_url_string.obj(),
-                                                    j_cookies.obj(),
-                                                    j_user_agent.obj());
+      Java_MediaResourceGetter_extractMediaMetadata(
+          env, j_context, j_url_string, j_cookies, j_user_agent);
 
   PostMediaMetadataCallbackTask(callback, env, j_metadata);
 }
@@ -135,7 +136,9 @@ static void GetMediaMetadata(
 // Gets the metadata from a file descriptor. When finished, a task is posted to
 // the UI thread to run the callback function.
 static void GetMediaMetadataFromFd(
-    const int fd, const int64 offset, const int64 size,
+    const int fd,
+    const int64_t offset,
+    const int64_t size,
     const media::MediaResourceGetter::ExtractMediaMetadataCB& callback) {
   JNIEnv* env = base::android::AttachCurrentThread();
 
@@ -190,7 +193,8 @@ class MediaResourceGetterTask
 
 MediaResourceGetterTask::MediaResourceGetterTask(
     BrowserContext* browser_context, int render_process_id, int render_frame_id)
-    : context_getter_(browser_context->GetRequestContext()),
+    : context_getter_(BrowserContext::GetDefaultStoragePartition(
+          browser_context)->GetURLRequestContext()),
       resource_context_(browser_context->GetResourceContext()),
       render_process_id_(render_process_id),
       render_frame_id_(render_frame_id) {
@@ -365,18 +369,15 @@ void MediaResourceGetterImpl::ExtractMediaMetadata(
 }
 
 void MediaResourceGetterImpl::ExtractMediaMetadata(
-    const int fd, const int64 offset, const int64 size,
+    const int fd,
+    const int64_t offset,
+    const int64_t size,
     const ExtractMediaMetadataCB& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::SequencedWorkerPool* pool = content::BrowserThread::GetBlockingPool();
   pool->PostWorkerTask(
       FROM_HERE,
       base::Bind(&GetMediaMetadataFromFd, fd, offset, size, callback));
-}
-
-// static
-bool MediaResourceGetterImpl::RegisterMediaResourceGetter(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace content

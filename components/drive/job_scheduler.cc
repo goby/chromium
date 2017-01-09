@@ -4,17 +4,19 @@
 
 #include "components/drive/job_scheduler.h"
 
+#include <stddef.h>
 #include <algorithm>
+#include <utility>
 
 #include "base/files/file_util.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/event_logger.h"
+#include "components/prefs/pref_service.h"
 #include "google_apis/drive/drive_api_parser.h"
 
 namespace drive {
@@ -138,7 +140,8 @@ google_apis::CancelCallback RunResumeUploadFile(
 
 // Collects information about sizes of files copied or moved from or to Drive
 // Otherwise does nothing. Temporary for crbug.com/229650.
-void CollectCopyHistogramSample(const std::string& histogram_name, int64 size) {
+void CollectCopyHistogramSample(const std::string& histogram_name,
+                                int64_t size) {
   base::HistogramBase* const counter =
       base::Histogram::FactoryGet(histogram_name,
                                   1,
@@ -335,7 +338,7 @@ void JobScheduler::Search(const std::string& search_query,
 }
 
 void JobScheduler::GetChangeList(
-    int64 start_changestamp,
+    int64_t start_changestamp,
     const google_apis::ChangeListCallback& callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
@@ -575,7 +578,7 @@ void JobScheduler::AddNewDirectory(
 
 JobID JobScheduler::DownloadFile(
     const base::FilePath& virtual_path,
-    int64 expected_file_size,
+    int64_t expected_file_size,
     const base::FilePath& local_cache_path,
     const std::string& resource_id,
     const ClientContext& context,
@@ -611,7 +614,7 @@ JobID JobScheduler::DownloadFile(
 
 void JobScheduler::UploadNewFile(
     const std::string& parent_resource_id,
-    int64 expected_file_size,
+    int64_t expected_file_size,
     const base::FilePath& drive_file_path,
     const base::FilePath& local_file_path,
     const std::string& title,
@@ -655,7 +658,7 @@ void JobScheduler::UploadNewFile(
 
 void JobScheduler::UploadExistingFile(
     const std::string& resource_id,
-    int64 expected_file_size,
+    int64_t expected_file_size,
     const base::FilePath& drive_file_path,
     const base::FilePath& local_file_path,
     const std::string& content_type,
@@ -718,9 +721,11 @@ void JobScheduler::AddPermission(
 }
 
 JobScheduler::JobEntry* JobScheduler::CreateNewJob(JobType type) {
-  JobEntry* job = new JobEntry(type);
-  job->job_info.job_id = job_map_.Add(job);  // Takes the ownership of |job|.
-  return job;
+  auto job = base::MakeUnique<JobEntry>(type);
+  JobEntry* job_raw = job.get();
+  int32_t job_key = job_map_.Add(std::move(job));
+  job_raw->job_info.job_id = job_key;
+  return job_raw;
 }
 
 void JobScheduler::StartJob(JobEntry* job) {
@@ -858,7 +863,8 @@ void JobScheduler::UpdateWait() {
 
   // Exponential backoff: https://developers.google.com/drive/handle-errors.
   base::TimeDelta delay =
-      base::TimeDelta::FromSeconds(1 << (throttle_count_ - 1)) +
+      base::TimeDelta::FromSeconds(static_cast<int64_t>(1)
+                                   << (throttle_count_ - 1)) +
       base::TimeDelta::FromMilliseconds(base::RandInt(0, 1000));
   VLOG(1) << "Throttling for " << delay.InMillisecondsF();
 
@@ -928,48 +934,48 @@ void JobScheduler::OnGetFileListJobDone(
     JobID job_id,
     const google_apis::FileListCallback& callback,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::FileList> file_list) {
+    std::unique_ptr<google_apis::FileList> file_list) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
   if (OnJobDone(job_id, error))
-    callback.Run(error, file_list.Pass());
+    callback.Run(error, std::move(file_list));
 }
 
 void JobScheduler::OnGetChangeListJobDone(
     JobID job_id,
     const google_apis::ChangeListCallback& callback,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::ChangeList> change_list) {
+    std::unique_ptr<google_apis::ChangeList> change_list) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
   if (OnJobDone(job_id, error))
-    callback.Run(error, change_list.Pass());
+    callback.Run(error, std::move(change_list));
 }
 
 void JobScheduler::OnGetFileResourceJobDone(
     JobID job_id,
     const google_apis::FileResourceCallback& callback,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::FileResource> entry) {
+    std::unique_ptr<google_apis::FileResource> entry) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
   if (OnJobDone(job_id, error))
-    callback.Run(error, entry.Pass());
+    callback.Run(error, std::move(entry));
 }
 
 void JobScheduler::OnGetAboutResourceJobDone(
     JobID job_id,
     const google_apis::AboutResourceCallback& callback,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::AboutResource> about_resource) {
+    std::unique_ptr<google_apis::AboutResource> about_resource) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
   if (OnJobDone(job_id, error))
-    callback.Run(error, about_resource.Pass());
+    callback.Run(error, std::move(about_resource));
 }
 
 void JobScheduler::OnGetShareUrlJobDone(
@@ -988,12 +994,12 @@ void JobScheduler::OnGetAppListJobDone(
     JobID job_id,
     const google_apis::AppListCallback& callback,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::AppList> app_list) {
+    std::unique_ptr<google_apis::AppList> app_list) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
   if (OnJobDone(job_id, error))
-    callback.Run(error, app_list.Pass());
+    callback.Run(error, std::move(app_list));
 }
 
 void JobScheduler::OnEntryActionJobDone(
@@ -1025,7 +1031,7 @@ void JobScheduler::OnUploadCompletionJobDone(
     const google_apis::FileResourceCallback& callback,
     google_apis::DriveApiErrorCode error,
     const GURL& upload_location,
-    scoped_ptr<google_apis::FileResource> entry) {
+    std::unique_ptr<google_apis::FileResource> entry) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
@@ -1053,7 +1059,7 @@ void JobScheduler::OnUploadCompletionJobDone(
   }
 
   if (OnJobDone(job_id, error))
-    callback.Run(error, entry.Pass());
+    callback.Run(error, std::move(entry));
 }
 
 void JobScheduler::OnResumeUploadFileDone(
@@ -1062,7 +1068,7 @@ void JobScheduler::OnResumeUploadFileDone(
     const google_apis::FileResourceCallback& callback,
     google_apis::DriveApiErrorCode error,
     const GURL& upload_location,
-    scoped_ptr<google_apis::FileResource> entry) {
+    std::unique_ptr<google_apis::FileResource> entry) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!original_task.is_null());
   DCHECK(!callback.is_null());
@@ -1076,10 +1082,12 @@ void JobScheduler::OnResumeUploadFileDone(
   }
 
   if (OnJobDone(job_id, error))
-    callback.Run(error, entry.Pass());
+    callback.Run(error, std::move(entry));
 }
 
-void JobScheduler::UpdateProgress(JobID job_id, int64 progress, int64 total) {
+void JobScheduler::UpdateProgress(JobID job_id,
+                                  int64_t progress,
+                                  int64_t total) {
   JobEntry* job_entry = job_map_.Lookup(job_id);
   DCHECK(job_entry);
 
@@ -1154,19 +1162,21 @@ void JobScheduler::AbortNotRunningJob(JobEntry* job,
 
 void JobScheduler::NotifyJobAdded(const JobInfo& job_info) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(JobListObserver, observer_list_, OnJobAdded(job_info));
+  for (auto& observer : observer_list_)
+    observer.OnJobAdded(job_info);
 }
 
 void JobScheduler::NotifyJobDone(const JobInfo& job_info,
                                  google_apis::DriveApiErrorCode error) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(JobListObserver, observer_list_,
-                    OnJobDone(job_info, GDataToFileError(error)));
+  for (auto& observer : observer_list_)
+    observer.OnJobDone(job_info, GDataToFileError(error));
 }
 
 void JobScheduler::NotifyJobUpdated(const JobInfo& job_info) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(JobListObserver, observer_list_, OnJobUpdated(job_info));
+  for (auto& observer : observer_list_)
+    observer.OnJobUpdated(job_info);
 }
 
 std::string JobScheduler::GetQueueInfo(QueueType type) const {

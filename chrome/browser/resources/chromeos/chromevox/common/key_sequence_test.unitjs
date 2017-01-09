@@ -443,3 +443,75 @@ TEST_F('CvoxKeySequenceUnitTest', 'Deserialize', function() {
   assertEqualsJSON(ctrlSequence.keys.ctrlKey, [true]);
   assertEqualsJSON(ctrlSequence.keys.keyCode, [17]);
 });
+
+TEST_F('CvoxKeySequenceUnitTest', 'DeserializeAltShiftCvoxMod', function() {
+  cvox.ChromeVox.modKeyStr = 'Alt+Shift';
+
+  // Build a key sequence that does not strip modifiers when deserializing.
+  // This feature is important for sequences that contain part or all of the
+  // modifiers in the cvox modifier as specified in the key map. This happens by
+  // default when deserializing.
+  //
+  // For example, at runtime, a user presses Shift+H with sticky mode on. This
+  // should match against a key sequence that has cvoxModifier set along with
+  // shift key set.
+  var prevHeadingUnstripped = {'shiftKey': [true], keyCode: [72]};
+  var prevHeadingSeq = cvox.KeySequence.deserialize(
+      {'cvoxModifier': true, keys: prevHeadingUnstripped});
+
+  assertTrue(prevHeadingSeq.cvoxModifier);
+  assertTrue(prevHeadingSeq.keys.shiftKey[0]);
+});
+
+TEST_F('CvoxKeySequenceUnitTest', 'DeserializeSearchCvoxMod', function() {
+  // Test the case when we do want to strip modifiers when deserializing. This
+  // is important when the key sequence in the key map and the key sequence at
+  // runtime both contain the bare cvox modifier as a key code such as in the
+  // case of the Search sticky key and Search cvox modifier. Stripping happens
+  // by default for key events at runtime.
+  cvox.ChromeVox.modKeyStr = 'Search';
+
+  // First, assert that unstripped seqs imply various modifier fields get set.
+  var stickySeq = cvox.KeySequence.deserialize({keys: {keyCode: [91]}});
+  assertTrue(stickySeq.cvoxModifier);
+  assertTrue(stickySeq.keys.metaKey[0]);
+  assertTrue(stickySeq.keys.searchKeyHeld[0]);
+
+  // Next, assert that stripping causes those modifiers to get unset. This is
+  // desirable at runtime so that we can match against the stripped runtime key
+  // seqs.
+  stickySeq = cvox.KeySequence.deserialize(
+      {'skipStripping': false, keys: {keyCode: [91]}});
+  assertTrue(stickySeq.cvoxModifier);
+  assertFalse(stickySeq.keys.metaKey[0]);
+  assertFalse(stickySeq.keys.searchKeyHeld[0]);
+});
+
+TEST_F('CvoxKeySequenceUnitTest', 'RequireStickyMode', function() {
+  var oneFromMap = cvox.KeySequence.deserialize({requireStickyMode: true,
+                                          keys: {keyCode: [49]}});
+
+  assertFalse(oneFromMap.cvoxModifier);
+  assertTrue(oneFromMap.requireStickyMode);
+  assertFalse(oneFromMap.stickyMode);
+
+  // Pressing one doesn't trigger the key because it requires sticky mode.
+  var oneFromEvt = cvox.KeySequence.deserialize({keys: {keyCode: [49]}});
+  assertFalse(oneFromMap.equals(oneFromEvt));
+
+  // Even modified, it should not match.
+  var modOneFromEvt = cvox.KeySequence.deserialize({cvoxModifier: true,
+                                                    keys: {keyCode: [49]}});
+  assertFalse(oneFromMap.equals(modOneFromEvt));
+
+  // But, with sticky mode on in the event, it should match.
+  var stickyOneFromEvt = cvox.KeySequence.deserialize({stickyMode: true,
+                                                       keys: {keyCode: [49]}});
+  assertTrue(stickyOneFromEvt.equals(oneFromMap));
+
+  // Finally, with both modifier and sticky on, it doesn't match.
+  var stickyModOneFromEvt = cvox.KeySequence.deserialize({stickyMode: true,
+                                                          cvoxModifier: true,
+                                                          keys: {keyCode: [49]}});
+  assertFalse(stickyModOneFromEvt.equals(oneFromMap));
+});

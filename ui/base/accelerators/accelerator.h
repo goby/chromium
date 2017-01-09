@@ -11,7 +11,9 @@
 #ifndef UI_BASE_ACCELERATORS_ACCELERATOR_H_
 #define UI_BASE_ACCELERATORS_ACCELERATOR_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <utility>
+
 #include "base/strings/string16.h"
 #include "ui/base/accelerators/platform_accelerator.h"
 #include "ui/base/ui_base_export.h"
@@ -25,16 +27,23 @@ class PlatformAccelerator;
 
 // This is a cross-platform class for accelerator keys used in menus.
 // |platform_accelerator| should be used to store platform specific data.
+//
+// While |modifiers| may include EF_IS_REPEAT, EF_IS_REPEAT is not considered
+// an intrinsic part of an Accelerator. This is done so that an accelerator
+// for a particular KeyEvent matches an accelerator with or without the repeat
+// flag. A side effect of this is that == (and <) does not consider the
+// repeat flag in its comparison.
 class UI_BASE_EXPORT Accelerator {
  public:
   Accelerator();
+  // NOTE: this constructor strips out non key related flags.
   Accelerator(ui::KeyboardCode keycode, int modifiers);
   explicit Accelerator(const KeyEvent& key_event);
   Accelerator(const Accelerator& accelerator);
   ~Accelerator();
 
   // Masks out all the non-modifiers KeyEvent |flags| and returns only the
-  // available modifier ones.
+  // available modifier ones. This does not include EF_IS_REPEAT.
   static int MaskOutKeyEventFlags(int flags);
 
   Accelerator& operator=(const Accelerator& accelerator);
@@ -65,8 +74,8 @@ class UI_BASE_EXPORT Accelerator {
   // Returns a string with the localized shortcut if any.
   base::string16 GetShortcutText() const;
 
-  void set_platform_accelerator(scoped_ptr<PlatformAccelerator> p) {
-    platform_accelerator_ = p.Pass();
+  void set_platform_accelerator(std::unique_ptr<PlatformAccelerator> p) {
+    platform_accelerator_ = std::move(p);
   }
 
   // This class keeps ownership of the returned object.
@@ -74,23 +83,18 @@ class UI_BASE_EXPORT Accelerator {
     return platform_accelerator_.get();
   }
 
-  void set_is_repeat(bool is_repeat) { is_repeat_ = is_repeat; }
-
- protected:
+ private:
   // The keycode (VK_...).
   KeyboardCode key_code_;
 
   // The event type (usually ui::ET_KEY_PRESSED).
   EventType type_;
 
-  // The state of the Shift/Ctrl/Alt keys.
+  // The state of the Shift/Ctrl/Alt keys. This corresponds to Event::flags().
   int modifiers_;
 
-  // True if the accelerator is created for an auto repeated key event.
-  bool is_repeat_;
-
   // Stores platform specific data. May be NULL.
-  scoped_ptr<PlatformAccelerator> platform_accelerator_;
+  std::unique_ptr<PlatformAccelerator> platform_accelerator_;
 };
 
 // An interface that classes that want to register for keyboard accelerators
@@ -116,8 +120,9 @@ class AcceleratorProvider {
  public:
   // Gets the accelerator for the specified command id. Returns true if the
   // command id has a valid accelerator, false otherwise.
-  virtual bool GetAcceleratorForCommandId(int command_id,
-                                          ui::Accelerator* accelerator) = 0;
+  virtual bool GetAcceleratorForCommandId(
+      int command_id,
+      ui::Accelerator* accelerator) const = 0;
 
  protected:
   virtual ~AcceleratorProvider() {}

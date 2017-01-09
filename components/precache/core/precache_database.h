@@ -5,22 +5,32 @@
 #ifndef COMPONENTS_PRECACHE_CORE_PRECACHE_DATABASE_H_
 #define COMPONENTS_PRECACHE_CORE_PRECACHE_DATABASE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
+#include "base/time/time.h"
+#include "components/precache/core/precache_fetcher.h"
+#include "components/precache/core/precache_referrer_host_table.h"
+#include "components/precache/core/precache_session_table.h"
 #include "components/precache/core/precache_url_table.h"
 
 class GURL;
 
 namespace base {
 class FilePath;
-class Time;
+}
+
+namespace net {
+class HttpResponseInfo;
 }
 
 namespace sql {
@@ -29,13 +39,17 @@ class Connection;
 
 namespace precache {
 
-// Class that tracks information related to precaching. This class can be
-// constructed or destroyed on any threads, but all other methods must be called
-// on the same thread (e.g. the DB thread).
-class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
+class PrecacheUnfinishedWork;
+
+// Class that tracks information related to precaching. This class may be
+// constructed on any thread, but all calls to, and destruction of this class
+// must be done on the the DB thread.
+class PrecacheDatabase {
  public:
   // A PrecacheDatabase can be constructed on any thread.
   PrecacheDatabase();
+
+  ~PrecacheDatabase();
 
   // Initializes the precache database, using the specified database file path.
   // Init must be called before any other methods.
@@ -48,13 +62,21 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   // Delete all history entries from the database.
   void ClearHistory();
 
+  // Setter and getter for the last precache timestamp.
+  void SetLastPrecacheTimestamp(const base::Time& time);
+  base::Time GetLastPrecacheTimestamp();
+
   // Report precache-related metrics in response to a URL being fetched, where
   // the fetch was motivated by precaching.
+  void RecordURLPrefetchMetrics(const net::HttpResponseInfo& info,
+                                const base::TimeDelta& latency);
+
+  // Records the precache of an url |url| for top host |referrer_host|.
   void RecordURLPrefetch(const GURL& url,
-                         const base::TimeDelta& latency,
+                         const std::string& referrer_host,
                          const base::Time& fetch_time,
-                         int64 size,
-                         bool was_cached);
+                         bool was_cached,
+                         int64_t size);
 
   // Report precache-related metrics in response to a URL being fetched, where
   // the fetch was not motivated by precaching. |is_connection_cellular|
@@ -62,16 +84,45 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   void RecordURLNonPrefetch(const GURL& url,
                             const base::TimeDelta& latency,
                             const base::Time& fetch_time,
-                            int64 size,
-                            bool was_cached,
+                            const net::HttpResponseInfo& info,
+                            int64_t size,
                             int host_rank,
                             bool is_connection_cellular);
 
- private:
-  friend class base::RefCountedThreadSafe<PrecacheDatabase>;
-  friend class PrecacheDatabaseTest;
+  // Returns the referrer host entry for the |referrer_host|.
+  PrecacheReferrerHostEntry GetReferrerHost(const std::string& referrer_host);
 
-  ~PrecacheDatabase();
+  // Populates the list of used and unused resources for referrer host with id
+  // |referrer_host_id|.
+  void GetURLListForReferrerHost(int64_t referrer_host_id,
+                                 std::vector<GURL>* used_urls,
+                                 std::vector<GURL>* unused_urls);
+
+  // Updates the |manifest_id| and |fetch_time| for the referrer host
+  // |hostname|, and deletes the precached subresource URLs for this top host.
+  void UpdatePrecacheReferrerHost(const std::string& hostname,
+                                  int64_t manifest_id,
+                                  const base::Time& fetch_time);
+
+  // Gets the state required to continue a precache session.
+  std::unique_ptr<PrecacheUnfinishedWork> GetUnfinishedWork();
+
+  // Stores the state required to continue a precache session so that the
+  // session can be resumed later.
+  void SaveUnfinishedWork(
+      std::unique_ptr<PrecacheUnfinishedWork> unfinished_work);
+
+  // Deletes unfinished work from the database.
+  void DeleteUnfinishedWork();
+
+  // Precache quota.
+  void SaveQuota(const PrecacheQuota& quota);
+  PrecacheQuota GetQuota();
+
+  base::WeakPtr<PrecacheDatabase> GetWeakPtr();
+
+ private:
+  friend class PrecacheDatabaseTest;
 
   bool IsDatabaseAccessible() const;
 
@@ -89,12 +140,32 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   // posted.
   void MaybePostFlush();
 
-  scoped_ptr<sql::Connection> db_;
+  // Records the time since the last precache.
+  void RecordTimeSinceLastPrecache(const base::Time& fetch_time);
+
+  void RecordURLPrefetchInternal(const GURL& url,
+                                 const std::string& referrer_host,
+                                 bool is_precached,
+                                 const base::Time& fetch_time);
+
+  void UpdatePrecacheReferrerHostInternal(const std::string& hostname,
+                                          int64_t manifest_id,
+                                          const base::Time& fetch_time);
+
+  std::unique_ptr<sql::Connection> db_;
 
   // Table that keeps track of URLs that are in the cache because of precaching,
   // and wouldn't be in the cache otherwise. If |buffered_writes_| is non-empty,
   // then this table will not be up to date until the next call to Flush().
   PrecacheURLTable precache_url_table_;
+
+  // If |buffered_writes_| is non-empty,
+  // then this table will not be up to date until the next call to Flush().
+  PrecacheReferrerHostTable precache_referrer_host_table_;
+
+  // Table that persists state related to a precache session, including
+  // unfinished work to be done.
+  PrecacheSessionTable precache_session_table_;
 
   // A vector of write operations to be run on the database.
   std::vector<base::Closure> buffered_writes_;
@@ -110,6 +181,13 @@ class PrecacheDatabase : public base::RefCountedThreadSafe<PrecacheDatabase> {
   // ThreadChecker used to ensure that all methods other than the constructor
   // or destructor are called on the same thread.
   base::ThreadChecker thread_checker_;
+
+  // Time of the last precache. This is a cached copy of
+  // precache_session_table_.GetLastPrecacheTimestamp.
+  base::Time last_precache_timestamp_;
+
+  // This must be the last member of this class.
+  base::WeakPtrFactory<PrecacheDatabase> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PrecacheDatabase);
 };

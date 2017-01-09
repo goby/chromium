@@ -28,48 +28,46 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/fonts/Font.h"
 
-#include "platform/fonts/TestFontSelector.h"
 #include "platform/fonts/TypesettingFeatures.h"
-#include "public/platform/WebUnitTestSupport.h"
+#include "platform/testing/FontTestHelpers.h"
+#include "platform/testing/UnitTestHelpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using blink::testing::createTestFont;
 
 namespace blink {
 
-static inline String fontPath(String relativePath)
-{
-    return Platform::current()->unitTestSupport()->webKitRootDir()
-        + String("/Source/platform/testing/data/")
-        + relativePath;
+static inline String fontPath(String relativePath) {
+  return testing::blinkRootDir() + "/Source/platform/testing/data/" +
+         relativePath;
 }
 
-TEST(FontPlatformDataTest, AhemHasNoSpaceInLigaturesOrKerning)
-{
-    Font font = createTestFont("Ahem", fontPath("Ahem.woff"));
-    const FontPlatformData& platformData = font.primaryFont()->platformData();
-    TypesettingFeatures features = Kerning | Ligatures;
+TEST(FontPlatformDataTest, AhemHasNoSpaceInLigaturesOrKerning) {
+  Font font = createTestFont("Ahem", fontPath("Ahem.woff"), 16);
+  const FontPlatformData& platformData = font.primaryFont()->platformData();
+  TypesettingFeatures features = Kerning | Ligatures;
 
-    EXPECT_FALSE(platformData.hasSpaceInLigaturesOrKerning(features));
+  EXPECT_FALSE(platformData.hasSpaceInLigaturesOrKerning(features));
 }
 
-TEST(FontPlatformDataTest, AhemSpaceLigatureHasSpaceInLigaturesOrKerning)
-{
-    Font font = createTestFont("AhemSpaceLigature", fontPath("AhemSpaceLigature.woff"));
-    const FontPlatformData& platformData = font.primaryFont()->platformData();
-    TypesettingFeatures features = Kerning | Ligatures;
+TEST(FontPlatformDataTest, AhemSpaceLigatureHasSpaceInLigaturesOrKerning) {
+  Font font = createTestFont("AhemSpaceLigature",
+                             fontPath("AhemSpaceLigature.woff"), 16);
+  const FontPlatformData& platformData = font.primaryFont()->platformData();
+  TypesettingFeatures features = Kerning | Ligatures;
 
-    EXPECT_TRUE(platformData.hasSpaceInLigaturesOrKerning(features));
+  EXPECT_TRUE(platformData.hasSpaceInLigaturesOrKerning(features));
 }
 
-TEST(FontPlatformDataTest, AhemSpaceLigatureHasNoSpaceWithoutFontFeatures)
-{
-    Font font = createTestFont("AhemSpaceLigature", fontPath("AhemSpaceLigature.woff"));
-    const FontPlatformData& platformData = font.primaryFont()->platformData();
-    TypesettingFeatures features = 0;
+TEST(FontPlatformDataTest, AhemSpaceLigatureHasNoSpaceWithoutFontFeatures) {
+  Font font = createTestFont("AhemSpaceLigature",
+                             fontPath("AhemSpaceLigature.woff"), 16);
+  const FontPlatformData& platformData = font.primaryFont()->platformData();
+  TypesettingFeatures features = 0;
 
-    EXPECT_FALSE(platformData.hasSpaceInLigaturesOrKerning(features));
+  EXPECT_FALSE(platformData.hasSpaceInLigaturesOrKerning(features));
 }
 
-} // namespace blink
+}  // namespace blink

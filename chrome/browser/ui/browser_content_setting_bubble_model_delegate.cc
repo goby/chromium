@@ -15,7 +15,7 @@
 // The URL for when the user clicks "learn more" on the mixed scripting page
 // icon bubble.
 const char kInsecureScriptHelpUrl[] =
-    "https://support.google.com/chrome/answer/1342714";
+    "https://support.google.com/chrome/?p=unauthenticated";
 
 BrowserContentSettingBubbleModelDelegate::
 BrowserContentSettingBubbleModelDelegate(Browser* browser) : browser_(browser) {
@@ -30,6 +30,13 @@ void BrowserContentSettingBubbleModelDelegate::ShowCollectedCookiesDialog(
   TabDialogs::FromWebContents(web_contents)->ShowCollectedCookies();
 }
 
+void BrowserContentSettingBubbleModelDelegate::ShowMediaSettingsPage() {
+  // Microphone and camera settings appear in the content settings menu right
+  // next to each other, the microphone section is first.
+  chrome::ShowContentSettings(
+          browser_, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
+}
+
 void BrowserContentSettingBubbleModelDelegate::ShowContentSettingsPage(
     ContentSettingsType type) {
   if (type == CONTENT_SETTINGS_TYPE_MIXEDSCRIPT) {
@@ -42,14 +49,6 @@ void BrowserContentSettingBubbleModelDelegate::ShowContentSettingsPage(
                                   ui::PAGE_TRANSITION_LINK);
   } else if (type == CONTENT_SETTINGS_TYPE_PROTOCOL_HANDLERS) {
     chrome::ShowSettingsSubPage(browser_, chrome::kHandlerSettingsSubPage);
-  } else if (type == CONTENT_SETTINGS_TYPE_MEDIASTREAM) {
-    // If the user requested to see the settings page for both camera
-    // and microphone, point them to the default settings instead of
-    // exceptions, as camera and microphone exceptions are now in two
-    // different overlays. Specifically, point them to the microphone
-    // default settings, as those appear first in the list.
-    chrome::ShowContentSettings(
-        browser_, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
   } else {
     chrome::ShowContentSettingsExceptions(browser_, type);
   }

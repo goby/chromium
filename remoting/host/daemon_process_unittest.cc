@@ -2,20 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "remoting/host/daemon_process.h"
+
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
-#include "ipc/ipc_platform_file.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/host/chromoting_messages.h"
-#include "remoting/host/daemon_process.h"
 #include "remoting/host/desktop_session.h"
-#include "testing/gmock_mutant.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gmock_mutant.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using testing::_;
@@ -56,7 +63,7 @@ class MockDaemonProcess : public DaemonProcess {
       const base::Closure& stopped_callback);
   ~MockDaemonProcess() override;
 
-  scoped_ptr<DesktopSession> DoCreateDesktopSession(
+  std::unique_ptr<DesktopSession> DoCreateDesktopSession(
       int terminal_id,
       const ScreenResolution& resolution,
       bool virtual_terminal) override;
@@ -68,7 +75,7 @@ class MockDaemonProcess : public DaemonProcess {
   MOCK_METHOD1(Sent, void(const IPC::Message&));
 
   MOCK_METHOD3(OnDesktopSessionAgentAttached,
-               bool(int, base::ProcessHandle, IPC::PlatformFileForTransit));
+               bool(int, int, const IPC::ChannelHandle&));
 
   MOCK_METHOD1(DoCreateDesktopSessionPtr, DesktopSession*(int));
   MOCK_METHOD1(DoCrashNetworkProcess, void(const tracked_objects::Location&));
@@ -95,11 +102,11 @@ MockDaemonProcess::MockDaemonProcess(
 MockDaemonProcess::~MockDaemonProcess() {
 }
 
-scoped_ptr<DesktopSession> MockDaemonProcess::DoCreateDesktopSession(
+std::unique_ptr<DesktopSession> MockDaemonProcess::DoCreateDesktopSession(
     int terminal_id,
     const ScreenResolution& resolution,
     bool virtual_terminal) {
-  return make_scoped_ptr(DoCreateDesktopSessionPtr(terminal_id));
+  return base::WrapUnique(DoCreateDesktopSessionPtr(terminal_id));
 }
 
 bool MockDaemonProcess::OnMessageReceived(const IPC::Message& message) {
@@ -146,7 +153,7 @@ class DaemonProcessTest : public testing::Test {
  protected:
   base::MessageLoopForIO message_loop_;
 
-  scoped_ptr<MockDaemonProcess> daemon_process_;
+  std::unique_ptr<MockDaemonProcess> daemon_process_;
   int terminal_id_;
 };
 
@@ -180,7 +187,7 @@ void DaemonProcessTest::SetUp() {
 
 void DaemonProcessTest::TearDown() {
   daemon_process_->Stop();
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 DesktopSession* DaemonProcessTest::DoCreateDesktopSession(int terminal_id) {
@@ -205,7 +212,8 @@ void DaemonProcessTest::DeleteDaemonProcess() {
 }
 
 void DaemonProcessTest::QuitMessageLoop() {
-  message_loop_.PostTask(FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+  message_loop_.task_runner()->PostTask(
+      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
 }
 
 void DaemonProcessTest::StartDaemonProcess() {
@@ -215,7 +223,7 @@ void DaemonProcessTest::StartDaemonProcess() {
 }
 
 MATCHER_P(Message, type, "") {
-  return arg.type() == static_cast<uint32>(type);
+  return arg.type() == static_cast<uint32_t>(type);
 }
 
 TEST_F(DaemonProcessTest, OpenClose) {

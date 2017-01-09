@@ -5,12 +5,15 @@
 #ifndef EXTENSIONS_BROWSER_UPDATER_REQUEST_QUEUE_IMPL_H_
 #define EXTENSIONS_BROWSER_UPDATER_REQUEST_QUEUE_IMPL_H_
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/message_loop/message_loop.h"
-#include "base/stl_util.h"
 #include "extensions/browser/updater/request_queue.h"
 
 namespace extensions {
@@ -39,22 +42,22 @@ int RequestQueue<T>::active_request_failure_count() {
 }
 
 template <typename T>
-scoped_ptr<T> RequestQueue<T>::reset_active_request() {
+std::unique_ptr<T> RequestQueue<T>::reset_active_request() {
   active_backoff_entry_.reset();
-  return active_request_.Pass();
+  return std::move(active_request_);
 }
 
 template <typename T>
-void RequestQueue<T>::ScheduleRequest(scoped_ptr<T> request) {
-  PushImpl(
-      request.Pass(),
-      scoped_ptr<net::BackoffEntry>(new net::BackoffEntry(backoff_policy_)));
+void RequestQueue<T>::ScheduleRequest(std::unique_ptr<T> request) {
+  PushImpl(std::move(request), std::unique_ptr<net::BackoffEntry>(
+                                   new net::BackoffEntry(backoff_policy_)));
   StartNextRequest();
 }
 
 template <typename T>
-void RequestQueue<T>::PushImpl(scoped_ptr<T> request,
-                               scoped_ptr<net::BackoffEntry> backoff_entry) {
+void RequestQueue<T>::PushImpl(
+    std::unique_ptr<T> request,
+    std::unique_ptr<net::BackoffEntry> backoff_entry) {
   pending_requests_.push_back(
       Request(backoff_entry.release(), request.release()));
   std::push_heap(
@@ -109,8 +112,8 @@ void RequestQueue<T>::StartNextRequest() {
   std::pop_heap(
       pending_requests_.begin(), pending_requests_.end(), CompareRequests);
 
-  active_backoff_entry_.reset(pending_requests_.back().backoff_entry.release());
-  active_request_.reset(pending_requests_.back().request.release());
+  active_backoff_entry_ = std::move(pending_requests_.back().backoff_entry);
+  active_request_ = std::move(pending_requests_.back().request);
 
   pending_requests_.pop_back();
 
@@ -124,7 +127,7 @@ void RequestQueue<T>::RetryRequest(const base::TimeDelta& min_backoff_delay) {
     active_backoff_entry_->SetCustomReleaseTime(base::TimeTicks::Now() +
                                                 min_backoff_delay);
   }
-  PushImpl(active_request_.Pass(), active_backoff_entry_.Pass());
+  PushImpl(std::move(active_request_), std::move(active_backoff_entry_));
 }
 
 template <typename T>

@@ -10,9 +10,9 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #import "chrome/browser/mac/keystone_glue.h"
@@ -24,10 +24,11 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
 class SkBitmap;
@@ -51,6 +52,7 @@ class KeystonePromotionInfoBarDelegate : public ConfirmInfoBarDelegate {
   void SetCanExpire() { can_expire_ = true; }
 
   // ConfirmInfoBarDelegate
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   int GetIconId() const override;
   bool ShouldExpire(const NavigationDetails& details) const override;
   base::string16 GetMessageText() const override;
@@ -82,9 +84,10 @@ void KeystonePromotionInfoBarDelegate::Create() {
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(webContents);
   infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(new KeystonePromotionInfoBarDelegate(
-          Profile::FromBrowserContext(
-              webContents->GetBrowserContext())->GetPrefs()))));
+      std::unique_ptr<ConfirmInfoBarDelegate>(
+          new KeystonePromotionInfoBarDelegate(
+              Profile::FromBrowserContext(webContents->GetBrowserContext())
+                  ->GetPrefs()))));
 }
 
 KeystonePromotionInfoBarDelegate::KeystonePromotionInfoBarDelegate(
@@ -95,13 +98,18 @@ KeystonePromotionInfoBarDelegate::KeystonePromotionInfoBarDelegate(
       weak_ptr_factory_(this) {
   const base::TimeDelta kCanExpireOnNavigationAfterDelay =
       base::TimeDelta::FromSeconds(8);
-  base::MessageLoop::current()->PostDelayedTask(FROM_HERE,
-      base::Bind(&KeystonePromotionInfoBarDelegate::SetCanExpire,
-                 weak_ptr_factory_.GetWeakPtr()),
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&KeystonePromotionInfoBarDelegate::SetCanExpire,
+                            weak_ptr_factory_.GetWeakPtr()),
       kCanExpireOnNavigationAfterDelay);
 }
 
 KeystonePromotionInfoBarDelegate::~KeystonePromotionInfoBarDelegate() {
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+KeystonePromotionInfoBarDelegate::GetIdentifier() const {
+  return KEYSTONE_PROMOTION_INFOBAR_DELEGATE;
 }
 
 int KeystonePromotionInfoBarDelegate::GetIconId() const {

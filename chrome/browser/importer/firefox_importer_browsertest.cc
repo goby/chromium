@@ -2,15 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/importer/external_process_importer_host.h"
 #include "chrome/browser/importer/importer_progress_observer.h"
 #include "chrome/browser/importer/importer_unittest_utils.h"
@@ -32,6 +37,10 @@
 #else
 #define MAYBE_IMPORTER(x) x
 #endif
+
+// TODO(kszatan): Disabled all tests on old profiles. http://crbug.com/592239
+#undef MAYBE_IMPORTER
+#define MAYBE_IMPORTER(x) DISABLED_##x
 
 namespace {
 
@@ -213,20 +222,19 @@ class FirefoxObserver : public ProfileWriter,
     }
   }
 
-  void AddKeywords(ScopedVector<TemplateURL> template_urls,
+  void AddKeywords(TemplateURLService::OwnedTemplateURLVector template_urls,
                    bool unique_on_host_and_path) override {
-    for (size_t i = 0; i < template_urls.size(); ++i) {
+    for (const auto& turl : template_urls) {
       // The order might not be deterministic, look in the expected list for
       // that template URL.
       bool found = false;
-      const base::string16& imported_keyword = template_urls[i]->keyword();
-      for (size_t j = 0; j < arraysize(kFirefoxKeywords); ++j) {
-        const base::string16 expected_keyword = base::WideToUTF16(
-            use_keyword_in_json_ ?
-            kFirefoxKeywords[j].keyword_in_json :
-            kFirefoxKeywords[j].keyword_in_sqlite);
+      const base::string16& imported_keyword = turl->keyword();
+      for (const auto& keyword : kFirefoxKeywords) {
+        const base::string16 expected_keyword =
+            base::WideToUTF16(use_keyword_in_json_ ? keyword.keyword_in_json
+                                                   : keyword.keyword_in_sqlite);
         if (imported_keyword == expected_keyword) {
-          EXPECT_EQ(kFirefoxKeywords[j].url, template_urls[i]->url());
+          EXPECT_EQ(keyword.url, turl->url());
           found = true;
           break;
         }
@@ -264,7 +272,7 @@ class FirefoxProfileImporterBrowserTest : public InProcessBrowserTest {
   void SetUp() override {
     // Creates a new profile in a new subdirectory in the temp directory.
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    base::FilePath test_path = temp_dir_.path().AppendASCII("ImporterTest");
+    base::FilePath test_path = temp_dir_.GetPath().AppendASCII("ImporterTest");
     base::DeleteFile(test_path, true);
     base::CreateDirectory(test_path);
     profile_path_ = test_path.AppendASCII("profile");
@@ -323,7 +331,7 @@ class FirefoxProfileImporterBrowserTest : public InProcessBrowserTest {
     host->set_observer(observer);
     host->StartImportSettings(
         source_profile, browser()->profile(), items, writer);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   base::ScopedTempDir temp_dir_;

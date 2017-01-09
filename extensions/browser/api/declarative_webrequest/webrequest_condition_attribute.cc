@@ -4,11 +4,16 @@
 
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition_attribute.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -153,14 +158,12 @@ WebRequestConditionAttributeResourceType::Create(
   passed_types.reserve(number_types);
   for (size_t i = 0; i < number_types; ++i) {
     std::string resource_type_string;
-    ResourceType type = content::RESOURCE_TYPE_LAST_TYPE;
     if (!value_as_list->GetString(i, &resource_type_string) ||
-        !helpers::ParseResourceType(resource_type_string, &type)) {
+        !helpers::ParseResourceType(resource_type_string, &passed_types)) {
       *error = ErrorUtils::FormatErrorMessage(kInvalidValue,
                                               keys::kResourceTypeKey);
       return scoped_refptr<const WebRequestConditionAttribute>(NULL);
     }
-    passed_types.push_back(type);
   }
 
   return scoped_refptr<const WebRequestConditionAttribute>(
@@ -303,7 +306,8 @@ class HeaderMatcher {
   // Creates an instance based on a list |tests| of test groups, encoded as
   // dictionaries of the type declarativeWebRequest.HeaderFilter (see
   // declarative_web_request.json).
-  static scoped_ptr<const HeaderMatcher> Create(const base::ListValue* tests);
+  static std::unique_ptr<const HeaderMatcher> Create(
+      const base::ListValue* tests);
 
   // Does |this| match the header "|name|: |value|"?
   bool TestNameValue(const std::string& name, const std::string& value) const;
@@ -316,9 +320,9 @@ class HeaderMatcher {
 
     // |data| is the pattern to be matched in the position given by |type|.
     // Note that |data| must point to a StringValue object.
-    static scoped_ptr<StringMatchTest> Create(const base::Value* data,
-                                              MatchType type,
-                                              bool case_sensitive);
+    static std::unique_ptr<StringMatchTest> Create(const base::Value& data,
+                                                   MatchType type,
+                                                   bool case_sensitive);
     ~StringMatchTest();
 
     // Does |str| pass |this| StringMatchTest?
@@ -343,7 +347,7 @@ class HeaderMatcher {
 
     // Gets the test group description in |tests| and creates the corresponding
     // HeaderMatchTest. On failure returns NULL.
-    static scoped_ptr<const HeaderMatchTest> Create(
+    static std::unique_ptr<const HeaderMatchTest> Create(
         const base::DictionaryValue* tests);
 
     // Does the header "|name|: |value|" match all tests in |this|?
@@ -351,19 +355,22 @@ class HeaderMatcher {
 
    private:
     // Takes ownership of the content of both |name_match| and |value_match|.
-    HeaderMatchTest(ScopedVector<const StringMatchTest>* name_match,
-                    ScopedVector<const StringMatchTest>* value_match);
+    HeaderMatchTest(
+        std::vector<std::unique_ptr<const StringMatchTest>> name_match,
+        std::vector<std::unique_ptr<const StringMatchTest>> value_match);
 
     // Tests to be passed by a header's name.
-    const ScopedVector<const StringMatchTest> name_match_;
+    const std::vector<std::unique_ptr<const StringMatchTest>> name_match_;
     // Tests to be passed by a header's value.
-    const ScopedVector<const StringMatchTest> value_match_;
+    const std::vector<std::unique_ptr<const StringMatchTest>> value_match_;
+
     DISALLOW_COPY_AND_ASSIGN(HeaderMatchTest);
   };
 
-  explicit HeaderMatcher(ScopedVector<const HeaderMatchTest>* tests);
+  explicit HeaderMatcher(
+      std::vector<std::unique_ptr<const HeaderMatchTest>> tests);
 
-  const ScopedVector<const HeaderMatchTest> tests_;
+  const std::vector<std::unique_ptr<const HeaderMatchTest>> tests_;
 
   DISALLOW_COPY_AND_ASSIGN(HeaderMatcher);
 };
@@ -373,23 +380,24 @@ class HeaderMatcher {
 HeaderMatcher::~HeaderMatcher() {}
 
 // static
-scoped_ptr<const HeaderMatcher> HeaderMatcher::Create(
+std::unique_ptr<const HeaderMatcher> HeaderMatcher::Create(
     const base::ListValue* tests) {
-  ScopedVector<const HeaderMatchTest> header_tests;
+  std::vector<std::unique_ptr<const HeaderMatchTest>> header_tests;
   for (base::ListValue::const_iterator it = tests->begin();
        it != tests->end(); ++it) {
     const base::DictionaryValue* tests = NULL;
     if (!(*it)->GetAsDictionary(&tests))
-      return scoped_ptr<const HeaderMatcher>();
+      return std::unique_ptr<const HeaderMatcher>();
 
-    scoped_ptr<const HeaderMatchTest> header_test(
+    std::unique_ptr<const HeaderMatchTest> header_test(
         HeaderMatchTest::Create(tests));
     if (header_test.get() == NULL)
-      return scoped_ptr<const HeaderMatcher>();
-    header_tests.push_back(header_test.Pass());
+      return std::unique_ptr<const HeaderMatcher>();
+    header_tests.push_back(std::move(header_test));
   }
 
-  return scoped_ptr<const HeaderMatcher>(new HeaderMatcher(&header_tests));
+  return std::unique_ptr<const HeaderMatcher>(
+      new HeaderMatcher(std::move(header_tests)));
 }
 
 bool HeaderMatcher::TestNameValue(const std::string& name,
@@ -401,20 +409,20 @@ bool HeaderMatcher::TestNameValue(const std::string& name,
   return false;
 }
 
-HeaderMatcher::HeaderMatcher(ScopedVector<const HeaderMatchTest>* tests)
-  : tests_(tests->Pass()) {}
+HeaderMatcher::HeaderMatcher(
+    std::vector<std::unique_ptr<const HeaderMatchTest>> tests)
+    : tests_(std::move(tests)) {}
 
 // HeaderMatcher::StringMatchTest implementation.
 
 // static
-scoped_ptr<HeaderMatcher::StringMatchTest>
-HeaderMatcher::StringMatchTest::Create(const base::Value* data,
+std::unique_ptr<HeaderMatcher::StringMatchTest>
+HeaderMatcher::StringMatchTest::Create(const base::Value& data,
                                        MatchType type,
                                        bool case_sensitive) {
   std::string str;
-  CHECK(data->GetAsString(&str));
-  return scoped_ptr<StringMatchTest>(
-      new StringMatchTest(str, type, case_sensitive));
+  CHECK(data.GetAsString(&str));
+  return base::WrapUnique(new StringMatchTest(str, type, case_sensitive));
 }
 
 HeaderMatcher::StringMatchTest::~StringMatchTest() {}
@@ -453,18 +461,18 @@ HeaderMatcher::StringMatchTest::StringMatchTest(const std::string& data,
 // HeaderMatcher::HeaderMatchTest implementation.
 
 HeaderMatcher::HeaderMatchTest::HeaderMatchTest(
-    ScopedVector<const StringMatchTest>* name_match,
-    ScopedVector<const StringMatchTest>* value_match)
-    : name_match_(name_match->Pass()),
-      value_match_(value_match->Pass()) {}
+    std::vector<std::unique_ptr<const StringMatchTest>> name_match,
+    std::vector<std::unique_ptr<const StringMatchTest>> value_match)
+    : name_match_(std::move(name_match)),
+      value_match_(std::move(value_match)) {}
 
 HeaderMatcher::HeaderMatchTest::~HeaderMatchTest() {}
 
 // static
-scoped_ptr<const HeaderMatcher::HeaderMatchTest>
+std::unique_ptr<const HeaderMatcher::HeaderMatchTest>
 HeaderMatcher::HeaderMatchTest::Create(const base::DictionaryValue* tests) {
-  ScopedVector<const StringMatchTest> name_match;
-  ScopedVector<const StringMatchTest> value_match;
+  std::vector<std::unique_ptr<const StringMatchTest>> name_match;
+  std::vector<std::unique_ptr<const StringMatchTest>> value_match;
 
   for (base::DictionaryValue::Iterator it(*tests);
        !it.IsAtEnd(); it.Advance()) {
@@ -492,37 +500,35 @@ HeaderMatcher::HeaderMatchTest::Create(const base::DictionaryValue* tests) {
       match_type = StringMatchTest::kEquals;
     } else {
       NOTREACHED();  // JSON schema type checking should prevent this.
-      return scoped_ptr<const HeaderMatchTest>();
+      return std::unique_ptr<const HeaderMatchTest>();
     }
     const base::Value* content = &it.value();
 
-    ScopedVector<const StringMatchTest>* tests =
+    std::vector<std::unique_ptr<const StringMatchTest>>* tests =
         is_name ? &name_match : &value_match;
     switch (content->GetType()) {
-      case base::Value::TYPE_LIST: {
+      case base::Value::Type::LIST: {
         const base::ListValue* list = NULL;
         CHECK(content->GetAsList(&list));
-        for (base::ListValue::const_iterator it = list->begin();
-             it != list->end(); ++it) {
-          tests->push_back(
-              StringMatchTest::Create(*it, match_type, !is_name).release());
+        for (const auto& it : *list) {
+          tests->push_back(StringMatchTest::Create(*it, match_type, !is_name));
         }
         break;
       }
-      case base::Value::TYPE_STRING: {
+      case base::Value::Type::STRING: {
         tests->push_back(
-            StringMatchTest::Create(content, match_type, !is_name).release());
+            StringMatchTest::Create(*content, match_type, !is_name));
         break;
       }
       default: {
         NOTREACHED();  // JSON schema type checking should prevent this.
-        return scoped_ptr<const HeaderMatchTest>();
+        return std::unique_ptr<const HeaderMatchTest>();
       }
     }
   }
 
-  return scoped_ptr<const HeaderMatchTest>(
-      new HeaderMatchTest(&name_match, &value_match));
+  return std::unique_ptr<const HeaderMatchTest>(
+      new HeaderMatchTest(std::move(name_match), std::move(value_match)));
 }
 
 bool HeaderMatcher::HeaderMatchTest::Matches(const std::string& name,
@@ -545,32 +551,31 @@ bool HeaderMatcher::HeaderMatchTest::Matches(const std::string& name,
 //
 
 WebRequestConditionAttributeRequestHeaders::
-WebRequestConditionAttributeRequestHeaders(
-    scoped_ptr<const HeaderMatcher> header_matcher,
-    bool positive)
-    : header_matcher_(header_matcher.Pass()),
-      positive_(positive) {}
+    WebRequestConditionAttributeRequestHeaders(
+        std::unique_ptr<const HeaderMatcher> header_matcher,
+        bool positive)
+    : header_matcher_(std::move(header_matcher)), positive_(positive) {}
 
 WebRequestConditionAttributeRequestHeaders::
 ~WebRequestConditionAttributeRequestHeaders() {}
 
 namespace {
 
-scoped_ptr<const HeaderMatcher> PrepareHeaderMatcher(
+std::unique_ptr<const HeaderMatcher> PrepareHeaderMatcher(
     const std::string& name,
     const base::Value* value,
     std::string* error) {
   const base::ListValue* value_as_list = NULL;
   if (!value->GetAsList(&value_as_list)) {
     *error = ErrorUtils::FormatErrorMessage(kInvalidValue, name);
-    return scoped_ptr<const HeaderMatcher>();
+    return std::unique_ptr<const HeaderMatcher>();
   }
 
-  scoped_ptr<const HeaderMatcher> header_matcher(
+  std::unique_ptr<const HeaderMatcher> header_matcher(
       HeaderMatcher::Create(value_as_list));
   if (header_matcher.get() == NULL)
     *error = ErrorUtils::FormatErrorMessage(kInvalidValue, name);
-  return header_matcher.Pass();
+  return header_matcher;
 }
 
 }  // namespace
@@ -585,14 +590,14 @@ WebRequestConditionAttributeRequestHeaders::Create(
   DCHECK(name == keys::kRequestHeadersKey ||
          name == keys::kExcludeRequestHeadersKey);
 
-  scoped_ptr<const HeaderMatcher> header_matcher(
+  std::unique_ptr<const HeaderMatcher> header_matcher(
       PrepareHeaderMatcher(name, value, error));
   if (header_matcher.get() == NULL)
     return scoped_refptr<const WebRequestConditionAttribute>(NULL);
 
   return scoped_refptr<const WebRequestConditionAttribute>(
       new WebRequestConditionAttributeRequestHeaders(
-          header_matcher.Pass(), name == keys::kRequestHeadersKey));
+          std::move(header_matcher), name == keys::kRequestHeadersKey));
 }
 
 int WebRequestConditionAttributeRequestHeaders::GetStages() const {
@@ -640,11 +645,10 @@ bool WebRequestConditionAttributeRequestHeaders::Equals(
 //
 
 WebRequestConditionAttributeResponseHeaders::
-WebRequestConditionAttributeResponseHeaders(
-    scoped_ptr<const HeaderMatcher> header_matcher,
-    bool positive)
-    : header_matcher_(header_matcher.Pass()),
-      positive_(positive) {}
+    WebRequestConditionAttributeResponseHeaders(
+        std::unique_ptr<const HeaderMatcher> header_matcher,
+        bool positive)
+    : header_matcher_(std::move(header_matcher)), positive_(positive) {}
 
 WebRequestConditionAttributeResponseHeaders::
 ~WebRequestConditionAttributeResponseHeaders() {}
@@ -659,14 +663,14 @@ WebRequestConditionAttributeResponseHeaders::Create(
   DCHECK(name == keys::kResponseHeadersKey ||
          name == keys::kExcludeResponseHeadersKey);
 
-  scoped_ptr<const HeaderMatcher> header_matcher(
+  std::unique_ptr<const HeaderMatcher> header_matcher(
       PrepareHeaderMatcher(name, value, error));
   if (header_matcher.get() == NULL)
     return scoped_refptr<const WebRequestConditionAttribute>(NULL);
 
   return scoped_refptr<const WebRequestConditionAttribute>(
       new WebRequestConditionAttributeResponseHeaders(
-          header_matcher.Pass(), name == keys::kResponseHeadersKey));
+          std::move(header_matcher), name == keys::kResponseHeadersKey));
 }
 
 int WebRequestConditionAttributeResponseHeaders::GetStages() const {
@@ -689,7 +693,7 @@ bool WebRequestConditionAttributeResponseHeaders::IsFulfilled(
   bool passed = false;  // Did some header pass TestNameValue?
   std::string name;
   std::string value;
-  void* iter = NULL;
+  size_t iter = 0;
   while (!passed && headers->EnumerateHeaderLines(&iter, &name, &value)) {
     passed |= header_matcher_->TestNameValue(name, value);
   }

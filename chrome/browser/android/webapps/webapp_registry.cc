@@ -4,38 +4,26 @@
 
 #include "chrome/browser/android/webapps/webapp_registry.h"
 
-#include <jni.h>
-
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
-#include "base/callback.h"
-#include "chrome/browser/io_thread.h"
-#include "content/public/browser/browser_thread.h"
+#include "chrome/browser/android/browsing_data/url_filter_bridge.h"
 #include "jni/WebappRegistry_jni.h"
 
-// static
-void WebappRegistry::UnregisterWebapps(
-    const base::Closure& callback) {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  uintptr_t callback_pointer = reinterpret_cast<uintptr_t>(
-      new base::Closure(callback));
+using base::android::JavaParamRef;
 
-  Java_WebappRegistry_unregisterAllWebapps(
-      env,
-      base::android::GetApplicationContext(),
-      callback_pointer);
+void WebappRegistry::UnregisterWebappsForUrls(
+    const base::Callback<bool(const GURL&)>& url_filter) {
+  // |filter_bridge| is destroyed from its Java counterpart.
+  UrlFilterBridge* filter_bridge = new UrlFilterBridge(url_filter);
+
+  Java_WebappRegistry_unregisterWebappsForUrls(
+      base::android::AttachCurrentThread(), filter_bridge->j_bridge());
 }
 
-// Callback used by Java when all web apps have been unregistered.
-void OnWebappsUnregistered(JNIEnv* env,
-                           const JavaParamRef<jclass>& klass,
-                           jlong jcallback) {
-  base::Closure* callback = reinterpret_cast<base::Closure*>(jcallback);
-  callback->Run();
-  delete callback;
-}
+void WebappRegistry::ClearWebappHistoryForUrls(
+    const base::Callback<bool(const GURL&)>& url_filter) {
+  // |filter_bridge| is destroyed from its Java counterpart.
+  UrlFilterBridge* filter_bridge = new UrlFilterBridge(url_filter);
 
-// static
-bool WebappRegistry::RegisterWebappRegistry(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+  Java_WebappRegistry_clearWebappHistoryForUrls(
+      base::android::AttachCurrentThread(), filter_bridge->j_bridge());
 }

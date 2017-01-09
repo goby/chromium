@@ -2,48 +2,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/at_exit.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
 #include "base/test/launcher/unit_test_launcher.h"
+#include "base/test/test_io_thread.h"
 #include "base/test/test_suite.h"
-#include "testing/gmock/include/gmock/gmock.h"
-#include "testing/gtest/include/gtest/gtest.h"
-
-#if defined(OS_MACOSX)
-#include "base/mac/scoped_nsautorelease_pool.h"
-#endif
+#include "build/build_config.h"
+#include "mojo/edk/embedder/embedder.h"
 
 namespace {
 
-class NoAtExitBaseTestSuite : public base::TestSuite {
+class GpuTestSuite : public base::TestSuite {
  public:
-  NoAtExitBaseTestSuite(int argc, char** argv)
-      : base::TestSuite(argc, argv, false) {
-  }
+  GpuTestSuite(int argc, char** argv);
+  ~GpuTestSuite() override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(GpuTestSuite);
 };
 
-int RunTestSuite(int argc, char** argv) {
-  base::MessageLoop message_loop;
-  return NoAtExitBaseTestSuite(argc, argv).Run();
-}
+GpuTestSuite::GpuTestSuite(int argc, char** argv)
+    : base::TestSuite(argc, argv) {}
+
+GpuTestSuite::~GpuTestSuite() {}
 
 }  // namespace
 
 int main(int argc, char** argv) {
-  // On Android, AtExitManager is created in
-  // testing/android/native_test_wrapper.cc before main() is called.
-  // The same thing is also done in base/test/test_suite.cc
-#if !defined(OS_ANDROID)
-  base::AtExitManager exit_manager;
-#endif
   base::CommandLine::Init(argc, argv);
-#if defined(OS_MACOSX)
-  base::mac::ScopedNSAutoreleasePool autorelease_pool;
-#endif
-  testing::InitGoogleMock(&argc, argv);
-  return base::LaunchUnitTests(argc,
-                               argv,
-                               base::Bind(&RunTestSuite, argc, argv));
+  GpuTestSuite test_suite(argc, argv);
+
+  mojo::edk::Init();
+
+  return base::LaunchUnitTests(
+      argc, argv,
+      base::Bind(&base::TestSuite::Run, base::Unretained(&test_suite)));
 }

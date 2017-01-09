@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010 Apple Inc. All rights
+ * reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,49 +31,57 @@
 #include "core/editing/VisiblePosition.h"
 #include "platform/geometry/IntRect.h"
 #include "platform/geometry/LayoutRect.h"
+#include "platform/graphics/paint/DisplayItem.h"
 #include "wtf/Noncopyable.h"
 
 namespace blink {
 
-class CullRect;
-class LocalFrame;
+class DisplayItemClient;
 class GraphicsContext;
 class LayoutBlock;
-class LayoutView;
 
-class CORE_EXPORT CaretBase {
-    WTF_MAKE_NONCOPYABLE(CaretBase);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(CaretBase);
-protected:
-    enum CaretVisibility { Visible, Hidden };
-    explicit CaretBase(CaretVisibility = Hidden);
+class CORE_EXPORT CaretBase : public GarbageCollectedFinalized<CaretBase>,
+                              public DisplayItemClient {
+  WTF_MAKE_NONCOPYABLE(CaretBase);
 
-    void invalidateCaretRect(Node*, bool caretRectChanged = false);
-    void clearCaretRect();
-    // Creating VisiblePosition causes synchronous layout so we should use the
-    // PositionWithAffinity version if possible.
-    // A position in HTMLTextFromControlElement is a typical example.
-    bool updateCaretRect(const PositionWithAffinity& caretPosition);
-    bool updateCaretRect(const VisiblePosition& caretPosition);
-    IntRect absoluteBoundsForLocalRect(Node*, const LayoutRect&) const;
-    bool shouldRepaintCaret(Node&) const;
-    bool shouldRepaintCaret(const LayoutView*) const;
-    void paintCaret(Node*, GraphicsContext*, const LayoutPoint&) const;
+ public:
+  CaretBase();
+  virtual ~CaretBase();
 
-    const LayoutRect& localCaretRectWithoutUpdate() const { return m_caretLocalRect; }
+  void invalidateCaretRect(Node*);
+  void clearCaretRect();
+  // Creating VisiblePosition causes synchronous layout so we should use the
+  // PositionWithAffinity version if possible.
+  // A position in HTMLTextFromControlElement is a typical example.
+  void updateCaretRect(const PositionWithAffinity& caretPosition);
+  void updateCaretRect(const VisiblePosition& caretPosition);
+  IntRect absoluteBoundsForLocalRect(Node*, const LayoutRect&) const;
+  bool shouldRepaintCaret(Node&) const;
+  void paintCaret(Node*,
+                  GraphicsContext&,
+                  const LayoutPoint&,
+                  DisplayItem::Type) const;
 
-    void setCaretVisibility(CaretVisibility visibility) { m_caretVisibility = visibility; }
-    bool caretIsVisible() const { return m_caretVisibility == Visible; }
-    CaretVisibility caretVisibility() const { return m_caretVisibility; }
+  const LayoutRect& localCaretRectWithoutUpdate() const {
+    return m_caretLocalRect;
+  }
 
-    static LayoutBlock* caretLayoutObject(Node*);
-    static void invalidateLocalCaretRect(Node*, const LayoutRect&);
+  static LayoutBlock* caretLayoutObject(Node*);
+  void invalidateLocalCaretRect(Node*, const LayoutRect&);
 
-private:
-    LayoutRect m_caretLocalRect; // caret rect in coords local to the layoutObject responsible for painting the caret
-    CaretVisibility m_caretVisibility;
+  // DisplayItemClient methods.
+  LayoutRect visualRect() const override;
+  String debugName() const final;
+
+  DECLARE_VIRTUAL_TRACE();
+
+ private:
+  // caret rect in coords local to the layoutObject responsible for painting the
+  // caret
+  LayoutRect m_caretLocalRect;
+  LayoutRect m_visualRect;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CaretBase_h
+#endif  // CaretBase_h

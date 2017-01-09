@@ -5,8 +5,8 @@
 #ifndef CONTENT_BROWSER_PEPPER_FLASH_SETTINGS_HELPER_IMPL_H_
 #define CONTENT_BROWSER_PEPPER_FLASH_SETTINGS_HELPER_IMPL_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/browser/ppapi_plugin_process_host.h"
 #include "content/public/browser/pepper_flash_settings_helper.h"
 
@@ -28,7 +28,7 @@ class CONTENT_EXPORT PepperFlashSettingsHelperImpl
   void OnPpapiChannelOpened(const IPC::ChannelHandle& channel_handle,
                             base::ProcessId plugin_pid,
                             int plugin_child_id) override;
-  bool OffTheRecord() override;
+  bool Incognito() override;
 
  protected:
   ~PepperFlashSettingsHelperImpl() override;

@@ -38,6 +38,10 @@ namespace net {
 class URLRequestContextGetter;
 }
 
+namespace physical_web {
+class PhysicalWebDataSource;
+}
+
 class SearchTermsData;
 class TemplateURLService;
 
@@ -59,8 +63,9 @@ class AutocompleteProviderClient {
   virtual const SearchTermsData& GetSearchTermsData() const = 0;
   virtual scoped_refptr<ShortcutsBackend> GetShortcutsBackend() = 0;
   virtual scoped_refptr<ShortcutsBackend> GetShortcutsBackendIfExists() = 0;
-  virtual scoped_ptr<KeywordExtensionsDelegate> GetKeywordExtensionsDelegate(
-      KeywordProvider* keyword_provider) = 0;
+  virtual std::unique_ptr<KeywordExtensionsDelegate>
+  GetKeywordExtensionsDelegate(KeywordProvider* keyword_provider) = 0;
+  virtual physical_web::PhysicalWebDataSource* GetPhysicalWebDataSource() = 0;
 
   // The value to use for Accept-Languages HTTP header when making an HTTP
   // request.
@@ -84,9 +89,6 @@ class AutocompleteProviderClient {
 
   virtual bool IsOffTheRecord() const = 0;
   virtual bool SearchSuggestEnabled() const = 0;
-
-  // Returns whether the bookmark bar is visible on all tabs.
-  virtual bool BookmarkBarIsVisible() const = 0;
 
   virtual bool TabSyncEnabledAndUnencrypted() const = 0;
 

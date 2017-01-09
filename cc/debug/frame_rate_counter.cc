@@ -4,10 +4,13 @@
 
 #include "cc/debug/frame_rate_counter.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <limits>
 
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "cc/trees/proxy.h"
 
 namespace cc {
@@ -31,8 +34,9 @@ static const double kFrameTooSlow = 1.5;
 static const double kDroppedFrameTime = 1.0 / 50.0;
 
 // static
-scoped_ptr<FrameRateCounter> FrameRateCounter::Create(bool has_impl_thread) {
-  return make_scoped_ptr(new FrameRateCounter(has_impl_thread));
+std::unique_ptr<FrameRateCounter> FrameRateCounter::Create(
+    bool has_impl_thread) {
+  return base::WrapUnique(new FrameRateCounter(has_impl_thread));
 }
 
 base::TimeDelta FrameRateCounter::RecentFrameInterval(size_t n) const {

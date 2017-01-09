@@ -4,12 +4,16 @@
 
 #include "chrome/browser/extensions/activity_log/fullstream_ui_policy.h"
 
+#include <stddef.h>
+
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/activity_log/activity_action_constants.h"
@@ -53,9 +57,6 @@ FullStreamUIPolicy::FullStreamUIPolicy(Profile* profile)
 FullStreamUIPolicy::~FullStreamUIPolicy() {}
 
 bool FullStreamUIPolicy::InitDatabase(sql::Connection* db) {
-  if (!Util::DropObsoleteTables(db))
-    return false;
-
   // Create the unified activity log entry table.
   return ActivityDatabase::InitializeTable(db,
                                            kTableName,
@@ -79,9 +80,8 @@ bool FullStreamUIPolicy::FlushDatabase(sql::Connection* db) {
   sql::Statement statement(db->GetCachedStatement(
       sql::StatementID(SQL_FROM_HERE), sql_str.c_str()));
 
-  Action::ActionVector::size_type i;
-  for (i = 0; i != queued_actions_.size(); ++i) {
-    const Action& action = *queued_actions_[i].get();
+  for (size_t i = 0; i != queued_actions_.size(); ++i) {
+    const Action& action = *queued_actions_[i];
     statement.Reset(true);
     statement.BindString(0, action.extension_id());
     statement.BindInt64(1, action.time().ToInternalValue());
@@ -118,7 +118,7 @@ bool FullStreamUIPolicy::FlushDatabase(sql::Connection* db) {
   return true;
 }
 
-scoped_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
+std::unique_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
     const std::string& extension_id,
     const Action::ActionType type,
     const std::string& api_name,
@@ -128,11 +128,11 @@ scoped_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
   // Ensure data is flushed to the database first so that we query over all
   // data.
   activity_database()->AdviseFlush(ActivityDatabase::kFlushImmediately);
-  scoped_ptr<Action::ActionVector> actions(new Action::ActionVector());
+  std::unique_ptr<Action::ActionVector> actions(new Action::ActionVector());
 
   sql::Connection* db = GetDatabaseConnection();
   if (!db) {
-    return actions.Pass();
+    return actions;
   }
 
   // Build up the query based on which parameters were specified.
@@ -178,8 +178,8 @@ scoped_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
   if (!arg_url.empty())
     query.BindString(++i, arg_url + "%");
   if (days_ago >= 0) {
-    int64 early_bound;
-    int64 late_bound;
+    int64_t early_bound;
+    int64_t late_bound;
     Util::ComputeDatabaseTimeBounds(Now(), days_ago, &early_bound, &late_bound);
     query.BindInt64(++i, early_bound);
     query.BindInt64(++i, late_bound);
@@ -194,10 +194,10 @@ scoped_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
                    query.ColumnString(3), query.ColumnInt64(9));
 
     if (query.ColumnType(4) != sql::COLUMN_TYPE_NULL) {
-      scoped_ptr<base::Value> parsed_value =
+      std::unique_ptr<base::Value> parsed_value =
           base::JSONReader::Read(query.ColumnString(4));
-      if (parsed_value && parsed_value->IsType(base::Value::TYPE_LIST)) {
-        action->set_args(make_scoped_ptr(
+      if (parsed_value && parsed_value->IsType(base::Value::Type::LIST)) {
+        action->set_args(base::WrapUnique(
             static_cast<base::ListValue*>(parsed_value.release())));
       }
     }
@@ -207,20 +207,21 @@ scoped_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
     action->ParseArgUrl(query.ColumnString(7));
 
     if (query.ColumnType(8) != sql::COLUMN_TYPE_NULL) {
-      scoped_ptr<base::Value> parsed_value =
+      std::unique_ptr<base::Value> parsed_value =
           base::JSONReader::Read(query.ColumnString(8));
-      if (parsed_value && parsed_value->IsType(base::Value::TYPE_DICTIONARY)) {
-        action->set_other(make_scoped_ptr(
+      if (parsed_value && parsed_value->IsType(base::Value::Type::DICTIONARY)) {
+        action->set_other(base::WrapUnique(
             static_cast<base::DictionaryValue*>(parsed_value.release())));
       }
     }
     actions->push_back(action);
   }
 
-  return actions.Pass();
+  return actions;
 }
 
-void FullStreamUIPolicy::DoRemoveActions(const std::vector<int64>& action_ids) {
+void FullStreamUIPolicy::DoRemoveActions(
+    const std::vector<int64_t>& action_ids) {
   if (action_ids.empty())
     return;
 
@@ -394,8 +395,8 @@ void FullStreamUIPolicy::ReadFilteredData(
     const std::string& page_url,
     const std::string& arg_url,
     const int days_ago,
-    const base::Callback
-        <void(scoped_ptr<Action::ActionVector>)>& callback) {
+    const base::Callback<void(std::unique_ptr<Action::ActionVector>)>&
+        callback) {
   BrowserThread::PostTaskAndReplyWithResult(
       BrowserThread::DB,
       FROM_HERE,
@@ -410,7 +411,7 @@ void FullStreamUIPolicy::ReadFilteredData(
       callback);
 }
 
-void FullStreamUIPolicy::RemoveActions(const std::vector<int64>& action_ids) {
+void FullStreamUIPolicy::RemoveActions(const std::vector<int64_t>& action_ids) {
   ScheduleAndForget(this, &FullStreamUIPolicy::DoRemoveActions, action_ids);
 }
 

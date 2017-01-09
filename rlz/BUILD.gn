@@ -68,6 +68,13 @@ source_set("rlz_lib") {
     "//url",
   ]
 
+  if (is_mac) {
+    libs = [
+      "Foundation.framework",
+      "IOKit.framework",
+    ]
+  }
+
   if (is_ios) {
     # These _mac files are also used on iOS.
     set_sources_assignment_filter([])
@@ -113,7 +120,6 @@ test("rlz_unittests") {
     ":rlz_lib",
     ":test_support",
     "//base",
-    "//base:prefs",
     "//net:test_support",
     "//testing/gmock",
     "//testing/gtest",
@@ -121,14 +127,17 @@ test("rlz_unittests") {
   ]
 }
 
-executable("rlz_id") {
-  sources = [
-    "examples/rlz_id.cc",
-  ]
-  deps = [
-    ":rlz_lib",
-    "//build/config/sanitizers:deps",
-  ]
+if (!is_ios) {
+  executable("rlz_id") {
+    sources = [
+      "examples/rlz_id.cc",
+    ]
+    deps = [
+      ":rlz_lib",
+      "//build/config/sanitizers:deps",
+      "//build/win:default_exe_manifest",
+    ]
+  }
 }
 
 if (is_win) {

@@ -4,16 +4,18 @@
 
 #include "content/browser/devtools/protocol/input_handler.h"
 
-#include "base/message_loop/message_loop.h"
+#include <stddef.h>
+
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/output/compositor_frame_metadata.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/common/input/synthetic_pinch_gesture_params.h"
 #include "content/common/input/synthetic_smooth_scroll_gesture_params.h"
 #include "content/common/input/synthetic_tap_gesture_params.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/gfx/geometry/point.h"
 
@@ -67,8 +69,13 @@ void SetEventModifiers(blink::WebInputEvent* event, const int* modifiers) {
 }
 
 void SetEventTimestamp(blink::WebInputEvent* event, const double* timestamp) {
-  event->timeStampSeconds =
-      timestamp ? *timestamp : base::Time::Now().ToDoubleT();
+  // Convert timestamp, in seconds since unix epoch, to an event timestamp
+  // which is time ticks since platform start time.
+  base::TimeTicks ticks = timestamp
+                              ? base::TimeDelta::FromSecondsD(*timestamp) +
+                                    base::TimeTicks::UnixEpoch()
+                              : base::TimeTicks::Now();
+  event->timeStampSeconds = (ticks - base::TimeTicks()).InSecondsF();
 }
 
 bool SetKeyboardEventText(blink::WebUChar* to, const std::string* from) {
@@ -90,15 +97,15 @@ bool SetMouseEventButton(blink::WebMouseEvent* event,
     return true;
 
   if (*button == dispatch_mouse_event::kButtonNone) {
-    event->button = blink::WebMouseEvent::ButtonNone;
+    event->button = blink::WebMouseEvent::Button::NoButton;
   } else if (*button == dispatch_mouse_event::kButtonLeft) {
-    event->button = blink::WebMouseEvent::ButtonLeft;
+    event->button = blink::WebMouseEvent::Button::Left;
     event->modifiers |= blink::WebInputEvent::LeftButtonDown;
   } else if (*button == dispatch_mouse_event::kButtonMiddle) {
-    event->button = blink::WebMouseEvent::ButtonMiddle;
+    event->button = blink::WebMouseEvent::Button::Middle;
     event->modifiers |= blink::WebInputEvent::MiddleButtonDown;
   } else if (*button == dispatch_mouse_event::kButtonRight) {
-    event->button = blink::WebMouseEvent::ButtonRight;
+    event->button = blink::WebMouseEvent::Button::Right;
     event->modifiers |= blink::WebInputEvent::RightButtonDown;
   } else {
     return false;
@@ -134,7 +141,7 @@ void InputHandler::SetRenderWidgetHost(RenderWidgetHostImpl* host) {
   host_ = host;
 }
 
-void InputHandler::SetClient(scoped_ptr<Client> client) {
+void InputHandler::SetClient(std::unique_ptr<Client> client) {
   client_.swap(client);
 }
 
@@ -159,6 +166,7 @@ Response InputHandler::DispatchKeyEvent(
     const bool* is_keypad,
     const bool* is_system_key) {
   NativeWebKeyboardEvent event;
+  event.skip_in_browser = true;
 
   if (type == dispatch_key_event::kTypeKeyDown) {
     event.type = blink::WebInputEvent::KeyDown;
@@ -190,17 +198,6 @@ Response InputHandler::DispatchKeyEvent(
     event.modifiers |= blink::WebInputEvent::IsKeyPad;
   if (is_system_key)
     event.isSystemKey = *is_system_key;
-
-  if (key_identifier) {
-    if (key_identifier->size() >
-        blink::WebKeyboardEvent::keyIdentifierLengthCap) {
-      return Response::InvalidParams("Invalid 'keyIdentifier' parameter");
-    }
-    for (size_t i = 0; i < key_identifier->size(); ++i)
-      event.keyIdentifier[i] = (*key_identifier)[i];
-  } else if (event.type != blink::WebInputEvent::Char) {
-    event.setKeyIdentifierFromWindowsKeyCode();
-  }
 
   if (code) {
     event.domCode = static_cast<int>(
@@ -246,6 +243,7 @@ Response InputHandler::DispatchMouseEvent(
   event.globalX = x * page_scale_factor_;
   event.globalY = y * page_scale_factor_;
   event.clickCount = click_count ? *click_count : 0;
+  event.pointerType = blink::WebPointerProperties::PointerType::Mouse;
 
   if (!host_)
     return Response::ServerError("Could not connect to view");
@@ -294,6 +292,7 @@ Response InputHandler::EmulateTouchFromMouseEvent(const std::string& type,
   event->globalX = x;
   event->globalY = y;
   event->clickCount = click_count ? *click_count : 0;
+  event->pointerType = blink::WebPointerProperties::PointerType::Touch;
 
   if (!host_)
     return Response::ServerError("Could not connect to view");
@@ -422,7 +421,7 @@ void InputHandler::OnScrollFinished(
   }
 
   if (repeat_count > 0) {
-    base::MessageLoop::current()->task_runner()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
         base::Bind(&InputHandler::SynthesizeRepeatingScroll,
                    weak_factory_.GetWeakPtr(), gesture_params, repeat_count - 1,
@@ -470,6 +469,14 @@ Response InputHandler::SynthesizeTapGesture(
   }
 
   return Response::OK();
+}
+
+Response InputHandler::DispatchTouchEvent(
+    const std::string& type,
+    const std::vector<std::unique_ptr<base::DictionaryValue>>& touch_points,
+    const int* modifiers,
+    const double* timestamp) {
+  return Response::FallThrough();
 }
 
 void InputHandler::SendSynthesizePinchGestureResponse(

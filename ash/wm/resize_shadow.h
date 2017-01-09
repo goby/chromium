@@ -5,17 +5,15 @@
 #ifndef ASH_WM_RESIZE_SHADOW_H_
 #define ASH_WM_RESIZE_SHADOW_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 
 namespace aura {
 class Window;
 }
 namespace gfx {
 class Rect;
-}
-namespace ui {
-class Layer;
 }
 namespace wm {
 class ImageGrid;
@@ -44,13 +42,11 @@ class ResizeShadow {
   // Updates the effect positions based on the |bounds| of the window.
   void Layout(const gfx::Rect& bounds);
 
-  int GetLastHitTestForTest() const {
-    return last_hit_test_;
-  }
+  int GetLastHitTestForTest() const { return last_hit_test_; }
 
  private:
   // Images for the shadow effect.
-  scoped_ptr< ::wm::ImageGrid> image_grid_;
+  std::unique_ptr<::wm::ImageGrid> image_grid_;
 
   // Hit test value from last call to ShowForHitTest().  Used to prevent
   // repeatedly triggering the same animations for the same hit.

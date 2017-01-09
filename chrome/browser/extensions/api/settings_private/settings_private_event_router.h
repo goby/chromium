@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_SETTINGS_PRIVATE_SETTINGS_PRIVATE_EVENT_ROUTER_H_
 #define CHROME_BROWSER_EXTENSIONS_API_SETTINGS_PRIVATE_SETTINGS_PRIVATE_EVENT_ROUTER_H_
 
-#include "base/prefs/pref_change_registrar.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/extensions/api/settings_private/prefs_util.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "extensions/browser/event_router.h"
 
 namespace content {
@@ -16,8 +19,6 @@ class BrowserContext;
 }
 
 namespace extensions {
-
-class SettingsPrivateDelegate;
 
 // This is an event router that will observe listeners to pref changes on the
 // appropriate pref service(s) and notify listeners on the JavaScript
@@ -56,15 +57,15 @@ class SettingsPrivateEventRouter : public KeyedService,
 
   PrefChangeRegistrar* FindRegistrarForPref(const std::string& pref_name);
 
-  typedef std::map<std::string,
-                   linked_ptr<chromeos::CrosSettings::ObserverSubscription>>
-      SubscriptionMap;
+  using SubscriptionMap =
+      std::map<std::string,
+               std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>>;
   SubscriptionMap cros_settings_subscription_map_;
 
   content::BrowserContext* context_;
   bool listening_;
 
-  scoped_ptr<PrefsUtil> prefs_util_;
+  std::unique_ptr<PrefsUtil> prefs_util_;
 
   DISALLOW_COPY_AND_ASSIGN(SettingsPrivateEventRouter);
 };

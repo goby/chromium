@@ -6,9 +6,10 @@
 #import <PreferencePanes/PreferencePanes.h>
 #import <SecurityInterface/SFAuthorizationView.h>
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "third_party/jsoncpp/source/include/json/value.h"
 
 namespace remoting {
@@ -50,7 +51,7 @@ class JsonHostConfig {
 
   // Holds the new proposed configuration if a temporary config file is
   // present.
-  scoped_ptr<remoting::JsonHostConfig> config_;
+  std::unique_ptr<remoting::JsonHostConfig> config_;
 
   NSTimer* service_status_timer_;
 

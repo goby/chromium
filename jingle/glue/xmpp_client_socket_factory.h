@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "jingle/glue/resolving_client_socket_factory.h"
 #include "net/ssl/ssl_config_service.h"
@@ -35,11 +36,11 @@ class XmppClientSocketFactory : public ResolvingClientSocketFactory {
   ~XmppClientSocketFactory() override;
 
   // ResolvingClientSocketFactory implementation.
-  scoped_ptr<net::StreamSocket> CreateTransportClientSocket(
+  std::unique_ptr<net::StreamSocket> CreateTransportClientSocket(
       const net::HostPortPair& host_and_port) override;
 
-  scoped_ptr<net::SSLClientSocket> CreateSSLClientSocket(
-      scoped_ptr<net::ClientSocketHandle> transport_socket,
+  std::unique_ptr<net::SSLClientSocket> CreateSSLClientSocket(
+      std::unique_ptr<net::ClientSocketHandle> transport_socket,
       const net::HostPortPair& host_and_port) override;
 
  private:

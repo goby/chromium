@@ -26,7 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/webdatabase/DatabaseAuthorizer.h"
 
 #include "third_party/sqlite/sqlite3.h"
@@ -36,4 +35,4 @@ namespace blink {
 const int SQLAuthAllow = SQLITE_OK;
 const int SQLAuthDeny = SQLITE_DENY;
 
-} // namespace blink
+}  // namespace blink

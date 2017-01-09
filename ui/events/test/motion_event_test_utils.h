@@ -5,10 +5,11 @@
 #ifndef UI_EVENTS_TEST_MOTION_EVENT_TEST_UTILS_H_
 #define UI_EVENTS_TEST_MOTION_EVENT_TEST_UTILS_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/time/time.h"
 #include "ui/events/gesture_detection/motion_event_generic.h"
 #include "ui/gfx/geometry/point_f.h"
@@ -47,6 +48,7 @@ struct MockMotionEvent : public MotionEventGeneric {
   MockMotionEvent& PressPoint(float x, float y);
   MockMotionEvent& MovePoint(size_t index, float x, float y);
   MockMotionEvent& ReleasePoint();
+  MockMotionEvent& ReleasePointAtIndex(size_t index);
   MockMotionEvent& CancelPoint();
   MockMotionEvent& SetTouchMajor(float new_touch_major);
   MockMotionEvent& SetRawOffset(float raw_offset_x, float raw_offset_y);

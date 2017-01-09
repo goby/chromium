@@ -4,12 +4,15 @@
 
 #include "components/signin/core/browser/account_fetcher_service.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
-#include "base/prefs/pref_service.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_info_fetcher.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/child_account_info_fetcher.h"
@@ -200,10 +203,10 @@ void AccountFetcherService::StartFetchingUserInfo(
 
   if (!ContainsKey(user_info_requests_, account_id)) {
     DVLOG(1) << "StartFetching " << account_id;
-    scoped_ptr<AccountInfoFetcher> fetcher(new AccountInfoFetcher(
+    std::unique_ptr<AccountInfoFetcher> fetcher(new AccountInfoFetcher(
         token_service_, signin_client_->GetURLRequestContext(), this,
         account_id));
-    user_info_requests_.set(account_id, fetcher.Pass());
+    user_info_requests_.set(account_id, std::move(fetcher));
     user_info_requests_.get(account_id)->Start();
   }
 }
@@ -211,9 +214,9 @@ void AccountFetcherService::StartFetchingUserInfo(
 // Starts fetching whether this is a child account. Handles refresh internally.
 void AccountFetcherService::StartFetchingChildInfo(
     const std::string& account_id) {
-  child_info_request_.reset(ChildAccountInfoFetcher::CreateFrom(
+  child_info_request_ = ChildAccountInfoFetcher::CreateFrom(
       child_request_account_id_, this, token_service_,
-      signin_client_->GetURLRequestContext(), invalidation_service_));
+      signin_client_->GetURLRequestContext(), invalidation_service_);
 }
 
 void AccountFetcherService::ResetChildInfo() {
@@ -258,7 +261,7 @@ void AccountFetcherService::SendRefreshTokenAnnotationRequest(
   if (IsRefreshTokenDeviceIdExperimentEnabled() ||
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableRefreshTokenAnnotationRequest)) {
-    scoped_ptr<RefreshTokenAnnotationRequest> request =
+    std::unique_ptr<RefreshTokenAnnotationRequest> request =
         RefreshTokenAnnotationRequest::SendIfNeeded(
             signin_client_->GetPrefs(), token_service_, signin_client_,
             signin_client_->GetURLRequestContext(), account_id,
@@ -268,7 +271,7 @@ void AccountFetcherService::SendRefreshTokenAnnotationRequest(
     // If request was sent AccountFetcherService needs to own request till it
     // finishes.
     if (request)
-      refresh_token_annotation_requests_.set(account_id, request.Pass());
+      refresh_token_annotation_requests_.set(account_id, std::move(request));
   }
 #endif
 }
@@ -280,7 +283,7 @@ void AccountFetcherService::RefreshTokenAnnotationRequestDone(
 
 void AccountFetcherService::OnUserInfoFetchSuccess(
     const std::string& account_id,
-    scoped_ptr<base::DictionaryValue> user_info) {
+    std::unique_ptr<base::DictionaryValue> user_info) {
   account_tracker_service_->SetAccountStateFromUserInfo(account_id,
                                                         user_info.get());
   user_info_requests_.erase(account_id);

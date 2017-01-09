@@ -27,604 +27,677 @@
  */
 
 /**
- * @constructor
- * @extends {WebInspector.SourceFrame}
- * @param {!WebInspector.UISourceCode} uiSourceCode
+ * @unrestricted
  */
-WebInspector.UISourceCodeFrame = function(uiSourceCode)
-{
+Sources.UISourceCodeFrame = class extends SourceFrame.SourceFrame {
+  /**
+   * @param {!Workspace.UISourceCode} uiSourceCode
+   */
+  constructor(uiSourceCode) {
+    super(uiSourceCode.contentURL(), workingCopy);
     this._uiSourceCode = uiSourceCode;
-    WebInspector.SourceFrame.call(this, this._uiSourceCode);
-    this.textEditor.setAutocompleteDelegate(new WebInspector.SimpleAutocompleteDelegate());
-    this._rowMessageBuckets = {};
-    this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.WorkingCopyChanged, this._onWorkingCopyChanged, this);
-    this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.WorkingCopyCommitted, this._onWorkingCopyCommitted, this);
-    this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.MessageAdded, this._onMessageAdded, this);
-    this._uiSourceCode.addEventListener(WebInspector.UISourceCode.Events.MessageRemoved, this._onMessageRemoved, this);
+    this.setEditable(this._canEditSource());
+
+    if (Runtime.experiments.isEnabled('sourceDiff'))
+      this._diff = new Sources.SourceCodeDiff(uiSourceCode.requestOriginalContent(), this.textEditor);
+
+    /** @type {?UI.AutocompleteConfig} */
+    this._autocompleteConfig = {isWordChar: Common.TextUtils.isWordChar};
+    Common.moduleSetting('textEditorAutocompletion').addChangeListener(this._updateAutocomplete, this);
+    this._updateAutocomplete();
+
+    /** @type {?Persistence.PersistenceBinding} */
+    this._persistenceBinding = Persistence.persistence.binding(uiSourceCode);
+
+    /** @type {!Map<number, !Sources.UISourceCodeFrame.RowMessageBucket>} */
+    this._rowMessageBuckets = new Map();
+    /** @type {!Set<string>} */
+    this._typeDecorationsPending = new Set();
+    this._uiSourceCode.addEventListener(
+        Workspace.UISourceCode.Events.WorkingCopyChanged, this._onWorkingCopyChanged, this);
+    this._uiSourceCode.addEventListener(
+        Workspace.UISourceCode.Events.WorkingCopyCommitted, this._onWorkingCopyCommitted, this);
+
+    this._messageAndDecorationListeners = [];
+    this._installMessageAndDecorationListeners();
+
+    Persistence.persistence.addEventListener(
+        Persistence.Persistence.Events.BindingCreated, this._onBindingChanged, this);
+    Persistence.persistence.addEventListener(
+        Persistence.Persistence.Events.BindingRemoved, this._onBindingChanged, this);
+
+    this.textEditor.addEventListener(
+        SourceFrame.SourcesTextEditor.Events.EditorBlurred,
+        () => UI.context.setFlavor(Sources.UISourceCodeFrame, null));
+    this.textEditor.addEventListener(
+        SourceFrame.SourcesTextEditor.Events.EditorFocused,
+        () => UI.context.setFlavor(Sources.UISourceCodeFrame, this));
+
     this._updateStyle();
 
-    this._errorPopoverHelper = new WebInspector.PopoverHelper(this.element, this._getErrorAnchor.bind(this), this._showErrorPopover.bind(this));
+    this._errorPopoverHelper = new UI.PopoverHelper(this.element);
+    this._errorPopoverHelper.initializeCallbacks(this._getErrorAnchor.bind(this), this._showErrorPopover.bind(this));
+
     this._errorPopoverHelper.setTimeout(100, 100);
-}
-
-WebInspector.UISourceCodeFrame.prototype = {
-    /**
-     * @return {!WebInspector.UISourceCode}
-     */
-    uiSourceCode: function()
-    {
-        return this._uiSourceCode;
-    },
-
-    wasShown: function()
-    {
-        WebInspector.SourceFrame.prototype.wasShown.call(this);
-        this._boundWindowFocused = this._windowFocused.bind(this);
-        this.element.ownerDocument.defaultView.addEventListener("focus", this._boundWindowFocused, false);
-        this._checkContentUpdated();
-        // We need CodeMirrorTextEditor to be initialized prior to this call as it calls |cursorPositionToCoordinates| internally. @see crbug.com/506566
-        setImmediate(this._updateBucketDecorations.bind(this));
-    },
-
-    willHide: function()
-    {
-        WebInspector.SourceFrame.prototype.willHide.call(this);
-        this.element.ownerDocument.defaultView.removeEventListener("focus", this._boundWindowFocused, false);
-        delete this._boundWindowFocused;
-        this._uiSourceCode.removeWorkingCopyGetter();
-    },
 
     /**
-     * @override
-     * @return {boolean}
+     * @return {!Promise<?string>}
      */
-    canEditSource: function()
-    {
-        var projectType = this._uiSourceCode.project().type();
-        if (projectType === WebInspector.projectTypes.Service || projectType === WebInspector.projectTypes.Debugger || projectType === WebInspector.projectTypes.Formatter)
-            return false;
-        if (projectType === WebInspector.projectTypes.Network && this._uiSourceCode.contentType() === WebInspector.resourceTypes.Document)
-            return false;
-        return true;
-    },
+    function workingCopy() {
+      if (uiSourceCode.isDirty())
+        return /** @type {!Promise<?string>} */ (Promise.resolve(uiSourceCode.workingCopy()));
+      return uiSourceCode.requestContent();
+    }
+  }
 
-    _windowFocused: function(event)
-    {
-        this._checkContentUpdated();
-    },
+  _installMessageAndDecorationListeners() {
+    if (this._persistenceBinding) {
+      var networkSourceCode = this._persistenceBinding.network;
+      var fileSystemSourceCode = this._persistenceBinding.fileSystem;
+      this._messageAndDecorationListeners = [
+        networkSourceCode.addEventListener(Workspace.UISourceCode.Events.MessageAdded, this._onMessageAdded, this),
+        networkSourceCode.addEventListener(Workspace.UISourceCode.Events.MessageRemoved, this._onMessageRemoved, this),
+        networkSourceCode.addEventListener(
+            Workspace.UISourceCode.Events.LineDecorationAdded, this._onLineDecorationAdded, this),
+        networkSourceCode.addEventListener(
+            Workspace.UISourceCode.Events.LineDecorationRemoved, this._onLineDecorationRemoved, this),
 
-    _checkContentUpdated: function()
-    {
-        if (!this.loaded || !this.isShowing())
-            return;
-        this._uiSourceCode.checkContentUpdated(true);
-    },
+        fileSystemSourceCode.addEventListener(Workspace.UISourceCode.Events.MessageAdded, this._onMessageAdded, this),
+        fileSystemSourceCode.addEventListener(
+            Workspace.UISourceCode.Events.MessageRemoved, this._onMessageRemoved, this),
+      ];
+    } else {
+      this._messageAndDecorationListeners = [
+        this._uiSourceCode.addEventListener(Workspace.UISourceCode.Events.MessageAdded, this._onMessageAdded, this),
+        this._uiSourceCode.addEventListener(Workspace.UISourceCode.Events.MessageRemoved, this._onMessageRemoved, this),
+        this._uiSourceCode.addEventListener(
+            Workspace.UISourceCode.Events.LineDecorationAdded, this._onLineDecorationAdded, this),
+        this._uiSourceCode.addEventListener(
+            Workspace.UISourceCode.Events.LineDecorationRemoved, this._onLineDecorationRemoved, this)
+      ];
+    }
+  }
 
-    commitEditing: function()
-    {
-        if (!this._uiSourceCode.isDirty())
-            return;
+  /**
+   * @return {!Workspace.UISourceCode}
+   */
+  uiSourceCode() {
+    return this._uiSourceCode;
+  }
 
-        this._muteSourceCodeEvents = true;
-        this._uiSourceCode.commitWorkingCopy();
-        delete this._muteSourceCodeEvents;
-    },
+  /**
+   * @override
+   */
+  wasShown() {
+    super.wasShown();
+    this._boundWindowFocused = this._windowFocused.bind(this);
+    this.element.ownerDocument.defaultView.addEventListener('focus', this._boundWindowFocused, false);
+    this._checkContentUpdated();
+    // We need CodeMirrorTextEditor to be initialized prior to this call as it calls |cursorPositionToCoordinates| internally. @see crbug.com/506566
+    setImmediate(this._updateBucketDecorations.bind(this));
+  }
 
+  /**
+   * @override
+   */
+  willHide() {
+    super.willHide();
+    UI.context.setFlavor(Sources.UISourceCodeFrame, null);
+    this.element.ownerDocument.defaultView.removeEventListener('focus', this._boundWindowFocused, false);
+    delete this._boundWindowFocused;
+    this._uiSourceCode.removeWorkingCopyGetter();
+  }
+
+  /**
+   * @return {boolean}
+   */
+  _canEditSource() {
+    if (Persistence.persistence.binding(this._uiSourceCode))
+      return true;
+    if (this._uiSourceCode.project().canSetFileContent())
+      return true;
+    if (this._uiSourceCode.project().isServiceProject())
+      return false;
+    return this._uiSourceCode.contentType() !== Common.resourceTypes.Document;
+  }
+
+  _windowFocused(event) {
+    this._checkContentUpdated();
+  }
+
+  _checkContentUpdated() {
+    if (!this.loaded || !this.isShowing())
+      return;
+    this._uiSourceCode.checkContentUpdated(true);
+  }
+
+  commitEditing() {
+    if (!this._uiSourceCode.isDirty())
+      return;
+
+    this._muteSourceCodeEvents = true;
+    this._uiSourceCode.commitWorkingCopy();
+    delete this._muteSourceCodeEvents;
+  }
+
+  /**
+   * @override
+   */
+  onTextEditorContentSet() {
+    if (this._diff)
+      this._diff.updateDiffMarkersImmediately();
+    super.onTextEditorContentSet();
+    for (var message of this._allMessages())
+      this._addMessageToSource(message);
+    this._decorateAllTypes();
+  }
+
+  /**
+   * @return {!Array<!Workspace.UISourceCode.Message>}
+   */
+  _allMessages() {
+    return this._persistenceBinding ?
+        this._persistenceBinding.network.messages().concat(this._persistenceBinding.fileSystem.messages()) :
+        this._uiSourceCode.messages();
+  }
+
+  /**
+   * @override
+   * @param {!Common.TextRange} oldRange
+   * @param {!Common.TextRange} newRange
+   */
+  onTextChanged(oldRange, newRange) {
+    if (this._diff)
+      this._diff.updateDiffMarkersWhenPossible();
+    super.onTextChanged(oldRange, newRange);
+    this._errorPopoverHelper.hidePopover();
+    if (this._isSettingContent)
+      return;
+    this._muteSourceCodeEvents = true;
+    if (this.textEditor.isClean())
+      this._uiSourceCode.resetWorkingCopy();
+    else
+      this._uiSourceCode.setWorkingCopyGetter(this.textEditor.text.bind(this.textEditor));
+    delete this._muteSourceCodeEvents;
+  }
+
+  /**
+   * @param {!Common.Event} event
+   */
+  _onWorkingCopyChanged(event) {
+    if (this._muteSourceCodeEvents)
+      return;
+    this._innerSetContent(this._uiSourceCode.workingCopy());
+    this.onUISourceCodeContentChanged();
+  }
+
+  /**
+   * @param {!Common.Event} event
+   */
+  _onWorkingCopyCommitted(event) {
+    if (!this._muteSourceCodeEvents) {
+      this._innerSetContent(this._uiSourceCode.workingCopy());
+      this.onUISourceCodeContentChanged();
+    }
+    this.textEditor.markClean();
+    this._updateStyle();
+  }
+
+  _onBindingChanged() {
+    var binding = Persistence.persistence.binding(this._uiSourceCode);
+    if (binding === this._persistenceBinding)
+      return;
+    for (var message of this._allMessages())
+      this._removeMessageFromSource(message);
+    Common.EventTarget.removeEventListeners(this._messageAndDecorationListeners);
+
+    this._persistenceBinding = binding;
+
+    for (var message of this._allMessages())
+      this._addMessageToSource(message);
+    this._installMessageAndDecorationListeners();
+    this._updateStyle();
+    this._decorateAllTypes();
+    this.onBindingChanged();
+  }
+
+  /**
+   * @protected
+   */
+  onBindingChanged() {
+    // Overriden in subclasses.
+  }
+
+  _updateStyle() {
+    this.element.classList.toggle(
+        'source-frame-unsaved-committed-changes',
+        Persistence.persistence.hasUnsavedCommittedChanges(this._uiSourceCode));
+    this.setEditable(this._canEditSource());
+  }
+
+  onUISourceCodeContentChanged() {
+  }
+
+  _updateAutocomplete() {
+    this.textEditor.configureAutocomplete(
+        Common.moduleSetting('textEditorAutocompletion').get() ? this._autocompleteConfig : null);
+  }
+
+  /**
+   * @param {?UI.AutocompleteConfig} config
+   */
+  configureAutocomplete(config) {
+    this._autocompleteConfig = config;
+    this._updateAutocomplete();
+  }
+
+  /**
+   * @param {string} content
+   */
+  _innerSetContent(content) {
+    this._isSettingContent = true;
+    if (this._diff) {
+      var oldContent = this.textEditor.text();
+      this.setContent(content);
+      this._diff.highlightModifiedLines(oldContent, content);
+    } else {
+      this.setContent(content);
+    }
+    delete this._isSettingContent;
+  }
+
+  /**
+   * @override
+   * @return {!Promise}
+   */
+  populateTextAreaContextMenu(contextMenu, lineNumber, columnNumber) {
     /**
-     * @override
+     * @this {Sources.UISourceCodeFrame}
      */
-    onTextEditorContentLoaded: function()
-    {
-        WebInspector.SourceFrame.prototype.onTextEditorContentLoaded.call(this);
-        for (var message of this._uiSourceCode.messages())
-            this._addMessageToSource(message);
-    },
+    function appendItems() {
+      contextMenu.appendApplicableItems(this._uiSourceCode);
+      contextMenu.appendApplicableItems(new Workspace.UILocation(this._uiSourceCode, lineNumber, columnNumber));
+      contextMenu.appendApplicableItems(this);
+    }
 
-    /**
-     * @override
-     * @param {!WebInspector.TextRange} oldRange
-     * @param {!WebInspector.TextRange} newRange
-     */
-    onTextChanged: function(oldRange, newRange)
-    {
-        WebInspector.SourceFrame.prototype.onTextChanged.call(this, oldRange, newRange);
-        this._clearMessages();
-        if (this._isSettingContent)
-            return;
-        this._muteSourceCodeEvents = true;
-        if (this._textEditor.isClean())
-            this._uiSourceCode.resetWorkingCopy();
-        else
-            this._uiSourceCode.setWorkingCopyGetter(this._textEditor.text.bind(this._textEditor));
-        delete this._muteSourceCodeEvents;
-    },
+    return super.populateTextAreaContextMenu(contextMenu, lineNumber, columnNumber).then(appendItems.bind(this));
+  }
 
-    /**
-     * @param {!WebInspector.Event} event
-     */
-    _onWorkingCopyChanged: function(event)
-    {
-        if (this._muteSourceCodeEvents)
-            return;
-        this._innerSetContent(this._uiSourceCode.workingCopy());
-        this.onUISourceCodeContentChanged();
-    },
+  /**
+   * @param {!Array.<!UI.Infobar|undefined>} infobars
+   */
+  attachInfobars(infobars) {
+    for (var i = infobars.length - 1; i >= 0; --i) {
+      var infobar = infobars[i];
+      if (!infobar)
+        continue;
+      this.element.insertBefore(infobar.element, this.element.children[0]);
+      infobar.setParentView(this);
+    }
+    this.doResize();
+  }
 
-    /**
-     * @param {!WebInspector.Event} event
-     */
-    _onWorkingCopyCommitted: function(event)
-    {
-        if (!this._muteSourceCodeEvents) {
-            this._innerSetContent(this._uiSourceCode.workingCopy());
-            this.onUISourceCodeContentChanged();
-        }
-        this._textEditor.markClean();
-        this._updateStyle();
-    },
+  dispose() {
+    this.textEditor.dispose();
+    Common.moduleSetting('textEditorAutocompletion').removeChangeListener(this._updateAutocomplete, this);
+    this.detach();
+  }
 
-    _updateStyle: function()
-    {
-        this.element.classList.toggle("source-frame-unsaved-committed-changes", this._uiSourceCode.hasUnsavedCommittedChanges());
-    },
+  /**
+   * @param {!Common.Event} event
+   */
+  _onMessageAdded(event) {
+    var message = /** @type {!Workspace.UISourceCode.Message} */ (event.data);
+    this._addMessageToSource(message);
+  }
 
-    onUISourceCodeContentChanged: function()
-    {
-    },
+  /**
+   * @param {!Workspace.UISourceCode.Message} message
+   */
+  _addMessageToSource(message) {
+    if (!this.loaded)
+      return;
+    var lineNumber = message.lineNumber();
+    if (lineNumber >= this.textEditor.linesCount)
+      lineNumber = this.textEditor.linesCount - 1;
+    if (lineNumber < 0)
+      lineNumber = 0;
 
-    /**
-     * @param {string} content
-     */
-    _innerSetContent: function(content)
-    {
-        this._isSettingContent = true;
-        this.setContent(content);
-        delete this._isSettingContent;
-    },
+    var messageBucket = this._rowMessageBuckets.get(lineNumber);
+    if (!messageBucket) {
+      messageBucket = new Sources.UISourceCodeFrame.RowMessageBucket(this, this.textEditor, lineNumber);
+      this._rowMessageBuckets.set(lineNumber, messageBucket);
+    }
+    messageBucket.addMessage(message);
+  }
 
-    /**
-     * @override
-     * @return {!Promise}
-     */
-    populateTextAreaContextMenu: function(contextMenu, lineNumber, columnNumber)
-    {
-        /**
-         * @this {WebInspector.UISourceCodeFrame}
-         */
-        function appendItems()
-        {
-            contextMenu.appendApplicableItems(this._uiSourceCode);
-            contextMenu.appendApplicableItems(new WebInspector.UILocation(this._uiSourceCode, lineNumber, columnNumber));
-            contextMenu.appendSeparator();
-        }
+  /**
+   * @param {!Common.Event} event
+   */
+  _onMessageRemoved(event) {
+    var message = /** @type {!Workspace.UISourceCode.Message} */ (event.data);
+    this._removeMessageFromSource(message);
+  }
 
-        return WebInspector.SourceFrame.prototype.populateTextAreaContextMenu.call(this, contextMenu, lineNumber, columnNumber)
-            .then(appendItems.bind(this));
-    },
+  /**
+   * @param {!Workspace.UISourceCode.Message} message
+   */
+  _removeMessageFromSource(message) {
+    if (!this.loaded)
+      return;
 
-    /**
-     * @param {!Array.<!WebInspector.UISourceCodeFrame.Infobar|undefined>} infobars
-     */
-    attachInfobars: function(infobars)
-    {
-        for (var i = infobars.length - 1; i >= 0; --i) {
-            var infobar = infobars[i];
-            if (!infobar)
-                continue;
-            this.element.insertBefore(infobar.element, this.element.children[0]);
-            infobar._attached(this);
-        }
-        this.doResize();
-    },
+    var lineNumber = message.lineNumber();
+    if (lineNumber >= this.textEditor.linesCount)
+      lineNumber = this.textEditor.linesCount - 1;
+    if (lineNumber < 0)
+      lineNumber = 0;
 
-    dispose: function()
-    {
-        this._textEditor.dispose();
-        this.detach();
-    },
+    var messageBucket = this._rowMessageBuckets.get(lineNumber);
+    if (!messageBucket)
+      return;
+    messageBucket.removeMessage(message);
+    if (!messageBucket.uniqueMessagesCount()) {
+      messageBucket.detachFromEditor();
+      this._rowMessageBuckets.delete(lineNumber);
+    }
+  }
 
-    /**
-     * @param {!WebInspector.Event} event
-     */
-    _onMessageAdded: function(event)
-    {
-        if (!this.loaded)
-            return;
-        var message = /** @type {!WebInspector.UISourceCode.Message} */ (event.data);
-        this._addMessageToSource(message);
-    },
+  /**
+   * @param {!Element} target
+   * @param {!Event} event
+   * @return {(!Element|undefined)}
+   */
+  _getErrorAnchor(target, event) {
+    var element = target.enclosingNodeOrSelfWithClass('text-editor-line-decoration-icon') ||
+        target.enclosingNodeOrSelfWithClass('text-editor-line-decoration-wave');
+    if (!element)
+      return;
+    this._errorWavePopoverAnchor = new AnchorBox(event.clientX, event.clientY, 1, 1);
+    return element;
+  }
 
-    /**
-     * @param {!WebInspector.UISourceCode.Message} message
-     */
-    _addMessageToSource: function(message)
-    {
-        var lineNumber = message.lineNumber();
-        if (lineNumber >= this._textEditor.linesCount)
-            lineNumber = this._textEditor.linesCount - 1;
-        if (lineNumber < 0)
-            lineNumber = 0;
+  /**
+   * @param {!Element} anchor
+   * @param {!UI.Popover} popover
+   */
+  _showErrorPopover(anchor, popover) {
+    var messageBucket = anchor.enclosingNodeOrSelfWithClass('text-editor-line-decoration')._messageBucket;
+    var messagesOutline = messageBucket.messagesDescription();
+    var popoverAnchor =
+        anchor.enclosingNodeOrSelfWithClass('text-editor-line-decoration-icon') ? anchor : this._errorWavePopoverAnchor;
+    popover.showForAnchor(messagesOutline, popoverAnchor);
+  }
 
-        if (!this._rowMessageBuckets[lineNumber])
-            this._rowMessageBuckets[lineNumber] = new WebInspector.UISourceCodeFrame.RowMessageBucket(this, this._textEditor, lineNumber);
-        var messageBucket = this._rowMessageBuckets[lineNumber];
-        messageBucket.addMessage(message);
-    },
+  _updateBucketDecorations() {
+    for (var bucket of this._rowMessageBuckets.values())
+      bucket._updateDecoration();
+  }
 
-    /**
-     * @param {!WebInspector.Event} event
-     */
-    _onMessageRemoved: function(event)
-    {
-        if (!this.loaded)
-            return;
-        var message = /** @type {!WebInspector.UISourceCode.Message} */ (event.data);
-        this._removeMessageFromSource(message);
-    },
+  /**
+   * @param {!Common.Event} event
+   */
+  _onLineDecorationAdded(event) {
+    var marker = /** @type {!Workspace.UISourceCode.LineMarker} */ (event.data);
+    this._decorateTypeThrottled(marker.type());
+  }
 
-    /**
-     * @param {!WebInspector.UISourceCode.Message} message
-     */
-    _removeMessageFromSource: function(message)
-    {
-        var lineNumber = message.lineNumber();
-        if (lineNumber >= this._textEditor.linesCount)
-            lineNumber = this._textEditor.linesCount - 1;
-        if (lineNumber < 0)
-            lineNumber = 0;
+  /**
+   * @param {!Common.Event} event
+   */
+  _onLineDecorationRemoved(event) {
+    var marker = /** @type {!Workspace.UISourceCode.LineMarker} */ (event.data);
+    this._decorateTypeThrottled(marker.type());
+  }
 
-        var messageBucket = this._rowMessageBuckets[lineNumber];
-        if (!messageBucket)
-            return;
-        messageBucket.removeMessage(message);
-        if (!messageBucket.uniqueMessagesCount()) {
-            messageBucket.detachFromEditor();
-            delete this._rowMessageBuckets[lineNumber];
-        }
-    },
+  /**
+   * @param {string} type
+   */
+  _decorateTypeThrottled(type) {
+    if (this._typeDecorationsPending.has(type))
+      return;
+    this._typeDecorationsPending.add(type);
+    self.runtime.extensions(Sources.UISourceCodeFrame.LineDecorator)
+        .find(extension => extension.descriptor()['decoratorType'] === type)
+        .instance()
+        .then(decorator => {
+          this._typeDecorationsPending.delete(type);
+          decorator.decorate(
+              this._persistenceBinding ? this._persistenceBinding.network : this.uiSourceCode(), this.textEditor);
+        });
+  }
 
-    _clearMessages: function()
-    {
-        for (var line in this._rowMessageBuckets) {
-            var bubble = this._rowMessageBuckets[line];
-            bubble.detachFromEditor();
-        }
+  _decorateAllTypes() {
+    var extensions = self.runtime.extensions(Sources.UISourceCodeFrame.LineDecorator);
+    extensions.forEach(extension => this._decorateTypeThrottled(extension.descriptor()['decoratorType']));
+  }
+};
 
-        this._rowMessageBuckets = {};
-        this._errorPopoverHelper.hidePopover();
-        this._uiSourceCode.removeAllMessages();
-    },
+Sources.UISourceCodeFrame._iconClassPerLevel = {};
+Sources.UISourceCodeFrame._iconClassPerLevel[Workspace.UISourceCode.Message.Level.Error] = 'smallicon-error';
+Sources.UISourceCodeFrame._iconClassPerLevel[Workspace.UISourceCode.Message.Level.Warning] = 'smallicon-warning';
 
-    /**
-     * @param {!Element} target
-     * @param {!Event} event
-     * @return {(!Element|undefined)}
-     */
-    _getErrorAnchor: function(target, event)
-    {
-        var element = target.enclosingNodeOrSelfWithClass("text-editor-line-decoration-icon")
-            || target.enclosingNodeOrSelfWithClass("text-editor-line-decoration-wave");
-        if (!element)
-            return;
-        this._errorWavePopoverAnchor = new AnchorBox(event.clientX, event.clientY, 1, 1);
-        return element;
-    },
+Sources.UISourceCodeFrame._bubbleTypePerLevel = {};
+Sources.UISourceCodeFrame._bubbleTypePerLevel[Workspace.UISourceCode.Message.Level.Error] = 'error';
+Sources.UISourceCodeFrame._bubbleTypePerLevel[Workspace.UISourceCode.Message.Level.Warning] = 'warning';
 
-    /**
-     * @param {!Element} anchor
-     * @param {!WebInspector.Popover} popover
-     */
-    _showErrorPopover: function(anchor, popover)
-    {
-        var messageBucket = anchor.enclosingNodeOrSelfWithClass("text-editor-line-decoration")._messageBucket;
-        var messagesOutline = messageBucket.messagesDescription();
-        var popoverAnchor = anchor.enclosingNodeOrSelfWithClass("text-editor-line-decoration-icon") ? anchor : this._errorWavePopoverAnchor;
-        popover.showForAnchor(messagesOutline, popoverAnchor);
-    },
-
-    _updateBucketDecorations: function()
-    {
-        for (var line in this._rowMessageBuckets) {
-            var bucket = this._rowMessageBuckets[line];
-            bucket._updateDecoration();
-        }
-    },
-
-    __proto__: WebInspector.SourceFrame.prototype
-}
+Sources.UISourceCodeFrame._lineClassPerLevel = {};
+Sources.UISourceCodeFrame._lineClassPerLevel[Workspace.UISourceCode.Message.Level.Error] =
+    'text-editor-line-with-error';
+Sources.UISourceCodeFrame._lineClassPerLevel[Workspace.UISourceCode.Message.Level.Warning] =
+    'text-editor-line-with-warning';
 
 /**
- * @constructor
- * @extends {WebInspector.Infobar}
- * @param {!WebInspector.Infobar.Type} type
- * @param {string} message
- * @param {!WebInspector.Setting=} disableSetting
+ * @interface
  */
-WebInspector.UISourceCodeFrame.Infobar = function(type, message, disableSetting)
-{
-    WebInspector.Infobar.call(this, type, disableSetting);
-    this.setCloseCallback(this.dispose.bind(this));
-    this.element.classList.add("source-frame-infobar");
-    this._rows = this.element.createChild("div", "source-frame-infobar-rows");
+Sources.UISourceCodeFrame.LineDecorator = function() {};
 
-    this._mainRow = this._rows.createChild("div", "source-frame-infobar-main-row");
-    this._mainRow.createChild("span", "source-frame-infobar-row-message").textContent = message;
-
-    this._toggleElement = this._mainRow.createChild("div", "source-frame-infobar-toggle link");
-    this._toggleElement.addEventListener("click", this._onToggleDetails.bind(this), false);
-    this._detailsContainer = this._rows.createChild("div", "source-frame-infobar-details-container");
-    this._updateToggleElement();
-}
-
-WebInspector.UISourceCodeFrame.Infobar.prototype = {
-    _onResize: function()
-    {
-        if (this._uiSourceCodeFrame)
-            this._uiSourceCodeFrame.doResize();
-    },
-
-    _onToggleDetails: function()
-    {
-        this._toggled = !this._toggled;
-        this._updateToggleElement();
-        this._onResize();
-    },
-
-    _updateToggleElement: function()
-    {
-        this._toggleElement.textContent = this._toggled ? WebInspector.UIString("less") : WebInspector.UIString("more");
-        this._detailsContainer.classList.toggle("hidden", !this._toggled);
-    },
-
-    /**
-     * @param {!WebInspector.UISourceCodeFrame} uiSourceCodeFrame
-     */
-    _attached: function(uiSourceCodeFrame)
-    {
-        this._uiSourceCodeFrame = uiSourceCodeFrame;
-        this.setVisible(true);
-    },
-
-    /**
-     * @param {string=} message
-     * @return {!Element}
-     */
-    createDetailsRowMessage: function(message)
-    {
-        var infobarDetailsRow = this._detailsContainer.createChild("div", "source-frame-infobar-details-row");
-        var detailsRowMessage = infobarDetailsRow.createChild("span", "source-frame-infobar-row-message");
-        detailsRowMessage.textContent = message || "";
-        return detailsRowMessage;
-    },
-
-    dispose: function()
-    {
-        this.element.remove();
-        this._onResize();
-        delete this._uiSourceCodeFrame;
-    },
-
-    __proto__: WebInspector.Infobar.prototype
-}
-
-WebInspector.UISourceCodeFrame._iconClassPerLevel = {};
-WebInspector.UISourceCodeFrame._iconClassPerLevel[WebInspector.UISourceCode.Message.Level.Error] = "error-icon";
-WebInspector.UISourceCodeFrame._iconClassPerLevel[WebInspector.UISourceCode.Message.Level.Warning] = "warning-icon";
-
-WebInspector.UISourceCodeFrame._lineClassPerLevel = {};
-WebInspector.UISourceCodeFrame._lineClassPerLevel[WebInspector.UISourceCode.Message.Level.Error] = "text-editor-line-with-error";
-WebInspector.UISourceCodeFrame._lineClassPerLevel[WebInspector.UISourceCode.Message.Level.Warning] = "text-editor-line-with-warning";
-
-/**
- * @constructor
- * @param {!WebInspector.UISourceCode.Message} message
- */
-WebInspector.UISourceCodeFrame.RowMessage = function(message)
-{
-    this._message = message;
-    this._repeatCount = 1;
-    this.element = createElementWithClass("div", "text-editor-row-message");
-    this._icon = this.element.createChild("label", "", "dt-icon-label");
-    this._icon.type = WebInspector.UISourceCodeFrame._iconClassPerLevel[message.level()];
-    this._repeatCountElement = this.element.createChild("span", "bubble-repeat-count hidden error");
-    var linesContainer = this.element.createChild("div", "text-editor-row-message-lines");
-    var lines = this._message.text().split("\n");
-    for (var i = 0; i < lines.length; ++i) {
-        var messageLine = linesContainer.createChild("div");
-        messageLine.textContent = lines[i];
-    }
-}
-
-WebInspector.UISourceCodeFrame.RowMessage.prototype = {
-    /**
-     * @return {!WebInspector.UISourceCode.Message}
-     */
-    message: function()
-    {
-        return this._message;
-    },
-
-    /**
-     * @return {number}
-     */
-    repeatCount: function()
-    {
-        return this._repeatCount;
-    },
-
-    setRepeatCount: function(repeatCount)
-    {
-        if (this._repeatCount === repeatCount)
-            return;
-        this._repeatCount = repeatCount;
-        this._updateMessageRepeatCount();
-    },
-
-    _updateMessageRepeatCount: function()
-    {
-        this._repeatCountElement.textContent = this._repeatCount;
-        var showRepeatCount = this._repeatCount > 1;
-        this._repeatCountElement.classList.toggle("hidden", !showRepeatCount);
-        this._icon.classList.toggle("hidden", showRepeatCount);
-    }
-}
-
-/**
- * @constructor
- * @param {!WebInspector.UISourceCodeFrame} sourceFrame
- * @param {!WebInspector.CodeMirrorTextEditor} textEditor
- * @param {number} lineNumber
- */
-WebInspector.UISourceCodeFrame.RowMessageBucket = function(sourceFrame, textEditor, lineNumber)
-{
-    this._sourceFrame = sourceFrame;
-    this._textEditor = textEditor;
-    this._lineHandle = textEditor.textEditorPositionHandle(lineNumber, 0);
-    this._decoration = createElementWithClass("div", "text-editor-line-decoration");
-    this._decoration._messageBucket = this;
-    this._wave = this._decoration.createChild("div", "text-editor-line-decoration-wave");
-    this._icon = this._wave.createChild("label", "text-editor-line-decoration-icon", "dt-icon-label");
-
-    this._textEditor.addDecoration(lineNumber, this._decoration);
-
-    this._messagesDescriptionElement = createElementWithClass("div", "text-editor-messages-description-container");
-    /** @type {!Array.<!WebInspector.UISourceCodeFrame.RowMessage>} */
-    this._messages = [];
-
-    this._level = null;
-}
-
-WebInspector.UISourceCodeFrame.RowMessageBucket.prototype = {
-    /**
-     * @param {number} lineNumber
-     * @param {number} columnNumber
-     */
-    _updateWavePosition: function(lineNumber, columnNumber)
-    {
-        lineNumber = Math.min(lineNumber, this._textEditor.linesCount - 1);
-        var lineText = this._textEditor.line(lineNumber);
-        columnNumber = Math.min(columnNumber, lineText.length);
-        var lineIndent = WebInspector.TextUtils.lineIndent(lineText).length;
-        var base = this._textEditor.cursorPositionToCoordinates(lineNumber, 0);
-
-        var start = this._textEditor.cursorPositionToCoordinates(lineNumber, Math.max(columnNumber - 1, lineIndent));
-        var end = this._textEditor.cursorPositionToCoordinates(lineNumber, lineText.length);
-        /** @const */
-        var codeMirrorLinesLeftPadding = 4;
-        this._wave.style.left = (start.x - base.x + codeMirrorLinesLeftPadding) + "px";
-        this._wave.style.width = (end.x - start.x) + "px";
-    },
-
-    /**
-     * @return {!Element}
-     */
-    messagesDescription: function()
-    {
-        this._messagesDescriptionElement.removeChildren();
-        for (var i = 0; i < this._messages.length; ++i) {
-            this._messagesDescriptionElement.appendChild(this._messages[i].element);
-        }
-        return this._messagesDescriptionElement;
-    },
-
-    detachFromEditor: function()
-    {
-        var position = this._lineHandle.resolve();
-        if (!position)
-            return;
-        var lineNumber = position.lineNumber;
-        if (this._level)
-            this._textEditor.toggleLineClass(lineNumber, WebInspector.UISourceCodeFrame._lineClassPerLevel[this._level], false);
-        this._textEditor.removeDecoration(lineNumber, this._decoration);
-    },
-
-    /**
-     * @return {number}
-     */
-    uniqueMessagesCount: function()
-    {
-        return this._messages.length;
-    },
-
-    /**
-     * @param {!WebInspector.UISourceCode.Message} message
-     */
-    addMessage: function(message)
-    {
-        for (var i = 0; i < this._messages.length; ++i) {
-            var rowMessage = this._messages[i];
-            if (rowMessage.message().isEqual(message)) {
-                rowMessage.setRepeatCount(rowMessage.repeatCount() + 1);
-                return;
-            }
-        }
-
-        var rowMessage = new WebInspector.UISourceCodeFrame.RowMessage(message);
-        this._messages.push(rowMessage);
-        this._updateDecoration();
-    },
-
-    /**
-     * @param {!WebInspector.UISourceCode.Message} message
-     */
-    removeMessage: function(message)
-    {
-        for (var i = 0; i < this._messages.length; ++i) {
-            var rowMessage = this._messages[i];
-            if (!rowMessage.message().isEqual(message))
-                continue;
-            rowMessage.setRepeatCount(rowMessage.repeatCount() - 1);
-            if (!rowMessage.repeatCount())
-                this._messages.splice(i, 1);
-            this._updateDecoration();
-            return;
-        }
-    },
-
-    _updateDecoration: function()
-    {
-        if (!this._sourceFrame.isEditorShowing())
-            return;
-        if (!this._messages.length)
-            return;
-        var position = this._lineHandle.resolve();
-        if (!position)
-            return;
-
-        var lineNumber = position.lineNumber;
-        var columnNumber = Number.MAX_VALUE;
-        var maxMessage = null;
-        for (var i = 0; i < this._messages.length; ++i) {
-            var message = this._messages[i].message();
-            columnNumber = Math.min(columnNumber, message.columnNumber());
-            if (!maxMessage || WebInspector.UISourceCode.Message.messageLevelComparator(maxMessage, message) < 0)
-                maxMessage = message;
-        }
-        this._updateWavePosition(lineNumber, columnNumber);
-
-        if (this._level) {
-            this._textEditor.toggleLineClass(lineNumber, WebInspector.UISourceCodeFrame._lineClassPerLevel[this._level], false);
-            this._icon.type = "";
-        }
-        this._level = maxMessage.level();
-        if (!this._level)
-            return;
-        this._textEditor.toggleLineClass(lineNumber, WebInspector.UISourceCodeFrame._lineClassPerLevel[this._level], true);
-        this._icon.type = WebInspector.UISourceCodeFrame._iconClassPerLevel[this._level];
-    }
-}
-
-WebInspector.UISourceCode.Message._messageLevelPriority = {
-    "Warning": 3,
-    "Error": 4
+Sources.UISourceCodeFrame.LineDecorator.prototype = {
+  /**
+   * @param {!Workspace.UISourceCode} uiSourceCode
+   * @param {!TextEditor.CodeMirrorTextEditor} textEditor
+   */
+  decorate(uiSourceCode, textEditor) {}
 };
 
 /**
- * @param {!WebInspector.UISourceCode.Message} a
- * @param {!WebInspector.UISourceCode.Message} b
+ * @unrestricted
+ */
+Sources.UISourceCodeFrame.RowMessage = class {
+  /**
+   * @param {!Workspace.UISourceCode.Message} message
+   */
+  constructor(message) {
+    this._message = message;
+    this._repeatCount = 1;
+    this.element = createElementWithClass('div', 'text-editor-row-message');
+    this._icon = this.element.createChild('label', '', 'dt-icon-label');
+    this._icon.type = Sources.UISourceCodeFrame._iconClassPerLevel[message.level()];
+    this._repeatCountElement = this.element.createChild('label', 'message-repeat-count hidden', 'dt-small-bubble');
+    this._repeatCountElement.type = Sources.UISourceCodeFrame._bubbleTypePerLevel[message.level()];
+    var linesContainer = this.element.createChild('div', 'text-editor-row-message-lines');
+    var lines = this._message.text().split('\n');
+    for (var i = 0; i < lines.length; ++i) {
+      var messageLine = linesContainer.createChild('div');
+      messageLine.textContent = lines[i];
+    }
+  }
+
+  /**
+   * @return {!Workspace.UISourceCode.Message}
+   */
+  message() {
+    return this._message;
+  }
+
+  /**
+   * @return {number}
+   */
+  repeatCount() {
+    return this._repeatCount;
+  }
+
+  setRepeatCount(repeatCount) {
+    if (this._repeatCount === repeatCount)
+      return;
+    this._repeatCount = repeatCount;
+    this._updateMessageRepeatCount();
+  }
+
+  _updateMessageRepeatCount() {
+    this._repeatCountElement.textContent = this._repeatCount;
+    var showRepeatCount = this._repeatCount > 1;
+    this._repeatCountElement.classList.toggle('hidden', !showRepeatCount);
+    this._icon.classList.toggle('hidden', showRepeatCount);
+  }
+};
+
+/**
+ * @unrestricted
+ */
+Sources.UISourceCodeFrame.RowMessageBucket = class {
+  /**
+   * @param {!Sources.UISourceCodeFrame} sourceFrame
+   * @param {!TextEditor.CodeMirrorTextEditor} textEditor
+   * @param {number} lineNumber
+   */
+  constructor(sourceFrame, textEditor, lineNumber) {
+    this._sourceFrame = sourceFrame;
+    this.textEditor = textEditor;
+    this._lineHandle = textEditor.textEditorPositionHandle(lineNumber, 0);
+    this._decoration = createElementWithClass('div', 'text-editor-line-decoration');
+    this._decoration._messageBucket = this;
+    this._wave = this._decoration.createChild('div', 'text-editor-line-decoration-wave');
+    this._icon = this._wave.createChild('label', 'text-editor-line-decoration-icon', 'dt-icon-label');
+    this._hasDecoration = false;
+
+    this._messagesDescriptionElement = createElementWithClass('div', 'text-editor-messages-description-container');
+    /** @type {!Array.<!Sources.UISourceCodeFrame.RowMessage>} */
+    this._messages = [];
+
+    this._level = null;
+  }
+
+  /**
+   * @param {number} lineNumber
+   * @param {number} columnNumber
+   */
+  _updateWavePosition(lineNumber, columnNumber) {
+    lineNumber = Math.min(lineNumber, this.textEditor.linesCount - 1);
+    var lineText = this.textEditor.line(lineNumber);
+    columnNumber = Math.min(columnNumber, lineText.length);
+    var lineIndent = Common.TextUtils.lineIndent(lineText).length;
+    if (this._hasDecoration)
+      this.textEditor.removeDecoration(this._decoration, lineNumber);
+    this._hasDecoration = true;
+    this.textEditor.addDecoration(this._decoration, lineNumber, Math.max(columnNumber - 1, lineIndent));
+  }
+
+  /**
+   * @return {!Element}
+   */
+  messagesDescription() {
+    this._messagesDescriptionElement.removeChildren();
+    for (var i = 0; i < this._messages.length; ++i)
+      this._messagesDescriptionElement.appendChild(this._messages[i].element);
+
+    return this._messagesDescriptionElement;
+  }
+
+  detachFromEditor() {
+    var position = this._lineHandle.resolve();
+    if (!position)
+      return;
+    var lineNumber = position.lineNumber;
+    if (this._level)
+      this.textEditor.toggleLineClass(lineNumber, Sources.UISourceCodeFrame._lineClassPerLevel[this._level], false);
+    if (this._hasDecoration)
+      this.textEditor.removeDecoration(this._decoration, lineNumber);
+    this._hasDecoration = false;
+  }
+
+  /**
+   * @return {number}
+   */
+  uniqueMessagesCount() {
+    return this._messages.length;
+  }
+
+  /**
+   * @param {!Workspace.UISourceCode.Message} message
+   */
+  addMessage(message) {
+    for (var i = 0; i < this._messages.length; ++i) {
+      var rowMessage = this._messages[i];
+      if (rowMessage.message().isEqual(message)) {
+        rowMessage.setRepeatCount(rowMessage.repeatCount() + 1);
+        return;
+      }
+    }
+
+    var rowMessage = new Sources.UISourceCodeFrame.RowMessage(message);
+    this._messages.push(rowMessage);
+    this._updateDecoration();
+  }
+
+  /**
+   * @param {!Workspace.UISourceCode.Message} message
+   */
+  removeMessage(message) {
+    for (var i = 0; i < this._messages.length; ++i) {
+      var rowMessage = this._messages[i];
+      if (!rowMessage.message().isEqual(message))
+        continue;
+      rowMessage.setRepeatCount(rowMessage.repeatCount() - 1);
+      if (!rowMessage.repeatCount())
+        this._messages.splice(i, 1);
+      this._updateDecoration();
+      return;
+    }
+  }
+
+  _updateDecoration() {
+    if (!this._sourceFrame.isEditorShowing())
+      return;
+    if (!this._messages.length)
+      return;
+    var position = this._lineHandle.resolve();
+    if (!position)
+      return;
+
+    var lineNumber = position.lineNumber;
+    var columnNumber = Number.MAX_VALUE;
+    var maxMessage = null;
+    for (var i = 0; i < this._messages.length; ++i) {
+      var message = this._messages[i].message();
+      columnNumber = Math.min(columnNumber, message.columnNumber());
+      if (!maxMessage || Workspace.UISourceCode.Message.messageLevelComparator(maxMessage, message) < 0)
+        maxMessage = message;
+    }
+    this._updateWavePosition(lineNumber, columnNumber);
+
+    if (this._level) {
+      this.textEditor.toggleLineClass(lineNumber, Sources.UISourceCodeFrame._lineClassPerLevel[this._level], false);
+      this._icon.type = '';
+    }
+    this._level = maxMessage.level();
+    if (!this._level)
+      return;
+    this.textEditor.toggleLineClass(lineNumber, Sources.UISourceCodeFrame._lineClassPerLevel[this._level], true);
+    this._icon.type = Sources.UISourceCodeFrame._iconClassPerLevel[this._level];
+  }
+};
+
+Workspace.UISourceCode.Message._messageLevelPriority = {
+  'Warning': 3,
+  'Error': 4
+};
+
+/**
+ * @param {!Workspace.UISourceCode.Message} a
+ * @param {!Workspace.UISourceCode.Message} b
  * @return {number}
  */
-WebInspector.UISourceCode.Message.messageLevelComparator = function(a, b)
-{
-    return WebInspector.UISourceCode.Message._messageLevelPriority[a.level()] - WebInspector.UISourceCode.Message._messageLevelPriority[b.level()];
-}
+Workspace.UISourceCode.Message.messageLevelComparator = function(a, b) {
+  return Workspace.UISourceCode.Message._messageLevelPriority[a.level()] -
+      Workspace.UISourceCode.Message._messageLevelPriority[b.level()];
+};

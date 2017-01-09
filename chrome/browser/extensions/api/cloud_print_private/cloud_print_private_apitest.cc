@@ -4,7 +4,8 @@
 
 #include "chrome/browser/extensions/api/cloud_print_private/cloud_print_private_api.h"
 
-#include "base/strings/stringprintf.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -40,8 +41,7 @@ class ExtensionCloudPrintPrivateApiTest : public ExtensionApiTest {
 
  protected:
   // Returns a test server URL, but with host 'www.cloudprintapp.com' so it
-   // matches the cloud print app's extent that we set up via command line
-   // flags.
+  // matches the cloud print app's extent that we set up via command line flags.
   GURL GetTestServerURL(const std::string& path) {
     GURL url = embedded_test_server()->GetURL(
         "/extensions/api_test/cloud_print_private/" + path);
@@ -77,22 +77,21 @@ class CloudPrintTestsDelegateMock : public extensions::CloudPrintTestsDelegate {
 
 MATCHER(IsExpectedUserSettings, "") {
   const UserSettings& settings = arg;
-  return settings.connect_new_printers &&
-         settings.printers.size() == 2 &&
-         settings.printers[0]->name == "printer1" &&
-         !settings.printers[0]->connect &&
-         settings.printers[1]->name == "printer2" &&
-         settings.printers[1]->connect;
+  return settings.connect_new_printers && settings.printers.size() == 2 &&
+         settings.printers[0].name == "printer1" &&
+         !settings.printers[0].connect &&
+         settings.printers[1].name == "printer2" &&
+         settings.printers[1].connect;
 }
 
 // http://crbug.com/177163
 #if defined(OS_WIN) && !defined(NDEBUG)
-#define MAYBE_CloudPrintHosted DISABLED_CloudPrintHosted
+#define MAYBE_CloudPrintHostedWithMock DISABLED_CloudPrintHostedWithMock
 #else
-#define MAYBE_CloudPrintHosted CloudPrintHosted
+#define MAYBE_CloudPrintHostedWithMock CloudPrintHostedWithMock
 #endif
 IN_PROC_BROWSER_TEST_F(ExtensionCloudPrintPrivateApiTest,
-                       MAYBE_CloudPrintHosted) {
+                       MAYBE_CloudPrintHostedWithMock) {
   CloudPrintTestsDelegateMock cloud_print_mock;
 
   EXPECT_CALL(cloud_print_mock,
@@ -118,6 +117,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionCloudPrintPrivateApiTest,
   GURL page_url = GetTestServerURL(
       "enable_chrome_connector/cloud_print_success_tests.html");
   ASSERT_TRUE(RunPageTest(page_url.spec()));
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionCloudPrintPrivateApiTest,
+                       CloudPrintHostedIncognito) {
+  GURL page_url = GetTestServerURL(
+      "enable_chrome_connector/cloud_print_incognito_failure_tests.html");
+  ASSERT_TRUE(RunPageTest(page_url.spec(), kFlagUseIncognito));
 }
 
 #endif  // !defined(OS_CHROMEOS)

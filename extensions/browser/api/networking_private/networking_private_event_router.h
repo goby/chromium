@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_BROWSER_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_EVENT_ROUTER_H_
 #define EXTENSIONS_BROWSER_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_EVENT_ROUTER_H_
 
+#include "base/macros.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/event_router.h"
 
@@ -13,8 +14,6 @@ class BrowserContext;
 }
 
 namespace extensions {
-
-class NetworkingPrivateDelegate;
 
 // This is an event router that will observe listeners to |NetworksChanged| and
 // |NetworkListChanged| events. On ChromeOS it will forward these events

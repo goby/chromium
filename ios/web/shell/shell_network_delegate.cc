@@ -21,17 +21,16 @@ int ShellNetworkDelegate::OnBeforeURLRequest(
   return net::OK;
 }
 
-int ShellNetworkDelegate::OnBeforeSendHeaders(
+int ShellNetworkDelegate::OnBeforeStartTransaction(
     net::URLRequest* request,
     const net::CompletionCallback& callback,
     net::HttpRequestHeaders* headers) {
   return net::OK;
 }
 
-void ShellNetworkDelegate::OnSendHeaders(
+void ShellNetworkDelegate::OnStartTransaction(
     net::URLRequest* request,
-    const net::HttpRequestHeaders& headers) {
-}
+    const net::HttpRequestHeaders& headers) {}
 
 int ShellNetworkDelegate::OnHeadersReceived(
     net::URLRequest* request,
@@ -46,11 +45,12 @@ void ShellNetworkDelegate::OnBeforeRedirect(net::URLRequest* request,
                                             const GURL& new_location) {
 }
 
-void ShellNetworkDelegate::OnResponseStarted(net::URLRequest* request) {
-}
+void ShellNetworkDelegate::OnResponseStarted(net::URLRequest* request,
+                                             int net_error) {}
 
-void ShellNetworkDelegate::OnCompleted(net::URLRequest* request, bool started) {
-}
+void ShellNetworkDelegate::OnCompleted(net::URLRequest* request,
+                                       bool started,
+                                       int net_error) {}
 
 void ShellNetworkDelegate::OnURLRequestDestroyed(net::URLRequest* request) {
 }

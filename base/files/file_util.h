@@ -8,6 +8,18 @@
 #ifndef BASE_FILES_FILE_UTIL_H_
 #define BASE_FILES_FILE_UTIL_H_
 
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include <set>
+#include <string>
+#include <vector>
+
+#include "base/base_export.h"
+#include "base/files/file.h"
+#include "base/files/file_path.h"
+#include "base/strings/string16.h"
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
@@ -17,19 +29,6 @@
 #include <unistd.h>
 #endif
 
-#include <stdio.h>
-
-#include <set>
-#include <string>
-#include <vector>
-
-#include "base/base_export.h"
-#include "base/basictypes.h"
-#include "base/files/file.h"
-#include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/strings/string16.h"
-
 #if defined(OS_POSIX)
 #include "base/file_descriptor_posix.h"
 #include "base/logging.h"
@@ -38,6 +37,7 @@
 
 namespace base {
 
+class Environment;
 class Time;
 
 //-----------------------------------------------------------------------------
@@ -53,7 +53,7 @@ BASE_EXPORT FilePath MakeAbsoluteFilePath(const FilePath& input);
 //
 // This function is implemented using the FileEnumerator class so it is not
 // particularly speedy in any platform.
-BASE_EXPORT int64 ComputeDirectorySize(const FilePath& root_path);
+BASE_EXPORT int64_t ComputeDirectorySize(const FilePath& root_path);
 
 // Deletes the given path, whether it's a file or a directory.
 // If it's a directory, it's perfectly happy to delete all of the
@@ -154,9 +154,9 @@ BASE_EXPORT bool ReadFileToString(const FilePath& path, std::string* contents);
 // |max_size|.
 // |contents| may be NULL, in which case this function is useful for its side
 // effect of priming the disk cache (could be used for unit tests).
-BASE_EXPORT bool ReadFileToString(const FilePath& path,
-                                  std::string* contents,
-                                  size_t max_size);
+BASE_EXPORT bool ReadFileToStringWithMaxSize(const FilePath& path,
+                                             std::string* contents,
+                                             size_t max_size);
 
 #if defined(OS_POSIX)
 
@@ -199,6 +199,11 @@ BASE_EXPORT bool GetPosixFilePermissions(const FilePath& path, int* mode);
 // Sets the permission of the given |path|. If |path| is symbolic link, sets
 // the permission of a file which the symlink points to.
 BASE_EXPORT bool SetPosixFilePermissions(const FilePath& path, int mode);
+
+// Returns true iff |executable| can be found in any directory specified by the
+// environment variable in |env|.
+BASE_EXPORT bool ExecutableExistsInPath(Environment* env,
+                                        const FilePath::StringType& executable);
 
 #endif  // OS_POSIX
 
@@ -265,7 +270,7 @@ BASE_EXPORT bool CreateDirectoryAndGetError(const FilePath& full_path,
 BASE_EXPORT bool CreateDirectory(const FilePath& full_path);
 
 // Returns the file size. Returns true on success.
-BASE_EXPORT bool GetFileSize(const FilePath& file_path, int64* file_size);
+BASE_EXPORT bool GetFileSize(const FilePath& file_path, int64_t* file_size);
 
 // Sets |real_path| to |path| with symbolic links and junctions expanded.
 // On windows, make sure the path starts with a lettered drive.
@@ -350,7 +355,23 @@ BASE_EXPORT bool SetCurrentDirectory(const FilePath& path);
 BASE_EXPORT int GetUniquePathNumber(const FilePath& path,
                                     const FilePath::StringType& suffix);
 
+// Sets the given |fd| to non-blocking mode.
+// Returns true if it was able to set it in the non-blocking mode, otherwise
+// false.
+BASE_EXPORT bool SetNonBlocking(int fd);
+
 #if defined(OS_POSIX)
+// Creates a non-blocking, close-on-exec pipe.
+// This creates a non-blocking pipe that is not intended to be shared with any
+// child process. This will be done atomically if the operating system supports
+// it. Returns true if it was able to create the pipe, otherwise false.
+BASE_EXPORT bool CreateLocalNonBlockingPipe(int fds[2]);
+
+// Sets the given |fd| to close-on-exec mode.
+// Returns true if it was able to set it in the close-on-exec mode, otherwise
+// false.
+BASE_EXPORT bool SetCloseOnExec(int fd);
+
 // Test that |path| can only be changed by a given user and members of
 // a given set of groups.
 // Specifically, test that all parts of |path| under (and including) |base|:

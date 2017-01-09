@@ -5,13 +5,13 @@
 #include "chrome/browser/ui/autofill/autofill_dialog_models.h"
 
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/browser/autofill_country.h"
+#include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace autofill {
@@ -108,12 +108,6 @@ bool SuggestionsMenuModel::IsCommandIdEnabled(
   DCHECK_GE(command_id, 0);
   DCHECK_LT(static_cast<size_t>(command_id), items_.size());
   return items_[command_id].enabled;
-}
-
-bool SuggestionsMenuModel::GetAcceleratorForCommandId(
-    int command_id,
-    ui::Accelerator* accelerator) {
-  return false;
 }
 
 void SuggestionsMenuModel::ExecuteCommand(int command_id, int event_flags) {

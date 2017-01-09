@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "mojo/application/public/cpp/application_impl.h"
-#include "mojo/application/public/cpp/application_test_base.h"
-#include "mojo/public/cpp/system/macros.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "mojo/public/interfaces/bindings/tests/versioning_test_client.mojom.h"
+#include "services/service_manager/public/cpp/application_test_base.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace mojo {
 namespace test {
@@ -21,14 +24,14 @@ class VersioningApplicationTest : public ApplicationTestBase {
   void SetUp() override {
     ApplicationTestBase::SetUp();
 
-    application_impl()->ConnectToService("mojo:versioning_test_service",
-                                         &database_);
+    connector()->ConnectToInterface("versioning_test_service",
+                                    &database_);
   }
 
   HumanResourceDatabasePtr database_;
 
  private:
-  MOJO_DISALLOW_COPY_AND_ASSIGN(VersioningApplicationTest);
+  DISALLOW_COPY_AND_ASSIGN(VersioningApplicationTest);
 };
 
 TEST_F(VersioningApplicationTest, Struct) {

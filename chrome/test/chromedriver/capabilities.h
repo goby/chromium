@@ -5,14 +5,16 @@
 #ifndef CHROME_TEST_CHROMEDRIVER_CAPABILITIES_H_
 #define CHROME_TEST_CHROMEDRIVER_CAPABILITIES_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/test/chromedriver/chrome/device_metrics.h"
 #include "chrome/test/chromedriver/chrome/devtools_http_client.h"
@@ -30,6 +32,7 @@ class Switches {
  public:
   typedef base::FilePath::StringType NativeString;
   Switches();
+  Switches(const Switches& other);
   ~Switches();
 
   void SetSwitch(const std::string& name);
@@ -118,7 +121,7 @@ struct Capabilities {
   bool detach;
 
   // Device metrics for use in Device Emulation.
-  scoped_ptr<DeviceMetrics> device_metrics;
+  std::unique_ptr<DeviceMetrics> device_metrics;
 
   // Set of switches which should be removed from default list when launching
   // Chrome.
@@ -130,7 +133,7 @@ struct Capabilities {
   // This is experimental and may be removed at a later point.
   bool force_devtools_screenshot;
 
-  scoped_ptr<base::DictionaryValue> local_state;
+  std::unique_ptr<base::DictionaryValue> local_state;
 
   std::string log_path;
 
@@ -139,9 +142,15 @@ struct Capabilities {
   // If set, enable minidump for chrome crashes and save to this directory.
   std::string minidump_path;
 
+  std::string page_load_strategy;
+
+  std::string unexpected_alert_behaviour;
+
+  bool network_emulation_enabled;
+
   PerfLoggingPrefs perf_logging_prefs;
 
-  scoped_ptr<base::DictionaryValue> prefs;
+  std::unique_ptr<base::DictionaryValue> prefs;
 
   Switches switches;
 

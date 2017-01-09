@@ -20,15 +20,20 @@ void SimulateUserTypingInField(content::RenderViewHost* render_view_host,
   std::string focus("document.getElementById('" + field_id + "').focus();");
   ASSERT_TRUE(content::ExecuteScript(render_view_host, focus));
 
-  content::SimulateKeyPress(web_contents, ui::VKEY_O, false, false, false,
+  content::SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('O'),
+                            ui::DomCode::US_O, ui::VKEY_O, false, false, false,
                             false);
-  content::SimulateKeyPress(web_contents, ui::VKEY_R, false, false, false,
+  content::SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('R'),
+                            ui::DomCode::US_R, ui::VKEY_R, false, false, false,
                             false);
-  content::SimulateKeyPress(web_contents, ui::VKEY_A, false, false, false,
+  content::SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('A'),
+                            ui::DomCode::US_A, ui::VKEY_A, false, false, false,
                             false);
-  content::SimulateKeyPress(web_contents, ui::VKEY_R, false, false, false,
+  content::SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('R'),
+                            ui::DomCode::US_R, ui::VKEY_R, false, false, false,
                             false);
-  content::SimulateKeyPress(web_contents, ui::VKEY_Y, false, false, false,
+  content::SimulateKeyPress(web_contents, ui::DomKey::FromCharacter('Y'),
+                            ui::DomCode::US_Y, ui::VKEY_Y, false, false, false,
                             false);
 }
 
@@ -36,7 +41,13 @@ void SimulateUserTypingInField(content::RenderViewHost* render_view_host,
 
 namespace password_manager {
 
-IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestBase, UsernameChanged) {
+// TODO(crbug.com/616627): Flaky on Mac, CrOS and Linux.
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS) || defined(OS_LINUX)
+#define MAYBE_UsernameChanged DISABLED_UsernameChanged
+#else
+#define MAYBE_UsernameChanged UsernameChanged
+#endif
+IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestBase, MAYBE_UsernameChanged) {
   scoped_refptr<password_manager::TestPasswordStore> password_store =
       static_cast<password_manager::TestPasswordStore*>(
           PasswordStoreFactory::GetForProfile(
@@ -45,16 +56,16 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestBase, UsernameChanged) {
   NavigateToFile("/password/signup_form.html");
 
   NavigationObserver observer(WebContents());
-  scoped_ptr<PromptObserver> prompt_observer(
-      PromptObserver::Create(WebContents()));
+  std::unique_ptr<BubbleObserver> prompt_observer(
+      new BubbleObserver(WebContents()));
   std::string fill_and_submit =
       "document.getElementById('username_field').value = 'temp';"
       "document.getElementById('password_field').value = 'random';"
       "document.getElementById('input_submit_button').click()";
   ASSERT_TRUE(content::ExecuteScript(RenderViewHost(), fill_and_submit));
   observer.Wait();
-  EXPECT_TRUE(prompt_observer->IsShowingPrompt());
-  prompt_observer->Accept();
+  EXPECT_TRUE(prompt_observer->IsShowingSavePrompt());
+  prompt_observer->AcceptSavePrompt();
 
   // Spin the message loop to make sure the password store had a chance to save
   // the password.
@@ -70,7 +81,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestBase, UsernameChanged) {
   // Let the user interact with the page, so that DOM gets modification events,
   // needed for autofilling fields.
   content::SimulateMouseClickAt(
-      WebContents(), 0, blink::WebMouseEvent::ButtonLeft, gfx::Point(1, 1));
+      WebContents(), 0, blink::WebMouseEvent::Button::Left, gfx::Point(1, 1));
 
   WaitForElementValue("username_field", "temp");
   WaitForElementValue("password_field", "random");
@@ -80,18 +91,18 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerBrowserTestBase, UsernameChanged) {
   SimulateUserTypingInField(RenderViewHost(), WebContents(), "username_field");
   // TODO(gcasto): Not sure why this click is required.
   content::SimulateMouseClickAt(
-      WebContents(), 0, blink::WebMouseEvent::ButtonLeft, gfx::Point(1, 1));
+      WebContents(), 0, blink::WebMouseEvent::Button::Left, gfx::Point(1, 1));
   WaitForElementValue("username_field", "tempORARY");
 
   NavigationObserver second_observer(WebContents());
-  scoped_ptr<PromptObserver> second_prompt_observer(
-      PromptObserver::Create(WebContents()));
+  std::unique_ptr<BubbleObserver> second_prompt_observer(
+      new BubbleObserver(WebContents()));
   std::string submit =
       "document.getElementById('input_submit_button').click();";
   ASSERT_TRUE(content::ExecuteScript(RenderViewHost(), submit));
   second_observer.Wait();
-  EXPECT_TRUE(second_prompt_observer->IsShowingPrompt());
-  second_prompt_observer->Accept();
+  EXPECT_TRUE(second_prompt_observer->IsShowingSavePrompt());
+  second_prompt_observer->AcceptSavePrompt();
 
   // Spin the message loop to make sure the password store had a chance to save
   // the password.

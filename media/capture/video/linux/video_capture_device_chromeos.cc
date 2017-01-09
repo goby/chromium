@@ -4,20 +4,31 @@
 
 #include "media/capture/video/linux/video_capture_device_chromeos.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
+#include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/display_observer.h"
-#include "ui/gfx/screen.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "ui/display/display.h"
+#include "ui/display/display_observer.h"
+#include "ui/display/screen.h"
 
 namespace media {
+
+namespace {
+
+base::LazyInstance<CameraFacingChromeOS>::Leaky g_camera_facing_ =
+    LAZY_INSTANCE_INITIALIZER;
+
+}  // namespace
 
 // This is a delegate class used to transfer Display change events from the UI
 // thread to the media thread.
 class VideoCaptureDeviceChromeOS::ScreenObserverDelegate
-    : public gfx::DisplayObserver,
+    : public display::DisplayObserver,
       public base::RefCountedThreadSafe<ScreenObserverDelegate> {
  public:
   ScreenObserverDelegate(
@@ -44,9 +55,9 @@ class VideoCaptureDeviceChromeOS::ScreenObserverDelegate
 
   ~ScreenObserverDelegate() override { DCHECK(!capture_device_); }
 
-  void OnDisplayAdded(const gfx::Display& /*new_display*/) override {}
-  void OnDisplayRemoved(const gfx::Display& /*old_display*/) override {}
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  void OnDisplayAdded(const display::Display& /*new_display*/) override {}
+  void OnDisplayRemoved(const display::Display& /*old_display*/) override {}
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override {
     DCHECK(ui_task_runner_->BelongsToCurrentThread());
     if (!(metrics & DISPLAY_METRIC_ROTATION))
@@ -56,8 +67,7 @@ class VideoCaptureDeviceChromeOS::ScreenObserverDelegate
 
   void AddObserverOnUIThread() {
     DCHECK(ui_task_runner_->BelongsToCurrentThread());
-    gfx::Screen* screen =
-        gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_ALTERNATE);
+    display::Screen* screen = display::Screen::GetScreen();
     if (screen) {
       screen->AddObserver(this);
       SendDisplayRotation(screen->GetPrimaryDisplay());
@@ -66,14 +76,13 @@ class VideoCaptureDeviceChromeOS::ScreenObserverDelegate
 
   void RemoveObserverOnUIThread() {
     DCHECK(ui_task_runner_->BelongsToCurrentThread());
-    gfx::Screen* screen =
-        gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_ALTERNATE);
+    display::Screen* screen = display::Screen::GetScreen();
     if (screen)
       screen->RemoveObserver(this);
   }
 
   // Post the screen rotation change from the UI thread to capture thread
-  void SendDisplayRotation(const gfx::Display& display) {
+  void SendDisplayRotation(const display::Display& display) {
     DCHECK(ui_task_runner_->BelongsToCurrentThread());
     capture_task_runner_->PostTask(
         FROM_HERE,
@@ -81,7 +90,7 @@ class VideoCaptureDeviceChromeOS::ScreenObserverDelegate
                    this, display));
   }
 
-  void SendDisplayRotationOnCaptureThread(const gfx::Display& display) {
+  void SendDisplayRotationOnCaptureThread(const display::Display& display) {
     DCHECK(capture_task_runner_->BelongsToCurrentThread());
     if (capture_device_)
       capture_device_->SetDisplayRotation(display);
@@ -95,18 +104,60 @@ class VideoCaptureDeviceChromeOS::ScreenObserverDelegate
 
 VideoCaptureDeviceChromeOS::VideoCaptureDeviceChromeOS(
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    const Name& device_name)
-    : VideoCaptureDeviceLinux(device_name),
+    const VideoCaptureDeviceDescriptor& device_descriptor)
+    : VideoCaptureDeviceLinux(device_descriptor),
       screen_observer_delegate_(
-          new ScreenObserverDelegate(this, ui_task_runner)) {
-}
+          new ScreenObserverDelegate(this, ui_task_runner)),
+      lens_facing_(
+          g_camera_facing_.Get().GetCameraFacing(device_descriptor.device_id,
+                                                 device_descriptor.model_id)) {}
 
 VideoCaptureDeviceChromeOS::~VideoCaptureDeviceChromeOS() {
   screen_observer_delegate_->RemoveObserver();
 }
 
+void VideoCaptureDeviceChromeOS::SetRotation(int rotation) {
+  // We assume external camera is facing the users. If not, the users can
+  // rotate the camera manually by themselves.
+  if (lens_facing_ == CameraFacingChromeOS::LensFacing::BACK) {
+    // Original frame when |rotation| = 0
+    // -----------------------
+    // |          *          |
+    // |         * *         |
+    // |        *   *        |
+    // |       *******       |
+    // |      *       *      |
+    // |     *         *     |
+    // -----------------------
+    //
+    // |rotation| = 90, this is what back camera sees
+    // -----------------------
+    // |    ********         |
+    // |       *   ****      |
+    // |       *      ***    |
+    // |       *      ***    |
+    // |       *   ****      |
+    // |    ********         |
+    // -----------------------
+    //
+    // |rotation| = 90, this is what front camera sees
+    // -----------------------
+    // |         ********    |
+    // |      ****   *       |
+    // |    ***      *       |
+    // |    ***      *       |
+    // |      ****   *       |
+    // |         ********    |
+    // -----------------------
+    //
+    // Therefore, for back camera, we need to rotate (360 - |rotation|).
+    rotation = (360 - rotation) % 360;
+  }
+  VideoCaptureDeviceLinux::SetRotation(rotation);
+}
+
 void VideoCaptureDeviceChromeOS::SetDisplayRotation(
-    const gfx::Display& display) {
+    const display::Display& display) {
   if (display.IsInternal())
     SetRotation(display.rotation() * 90);
 }

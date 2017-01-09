@@ -5,122 +5,118 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_STRONG_BINDING_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_STRONG_BINDING_H_
 
-#include <assert.h>
+#include <memory>
+#include <string>
+#include <utility>
 
-#include "mojo/public/c/environment/async_waiter.h"
+#include "base/bind.h"
+#include "base/callback.h"
+#include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "mojo/public/cpp/bindings/callback.h"
+#include "mojo/public/cpp/bindings/connection_error_callback.h"
+#include "mojo/public/cpp/bindings/filter_chain.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "mojo/public/cpp/bindings/lib/filter_chain.h"
-#include "mojo/public/cpp/bindings/lib/message_header_validator.h"
-#include "mojo/public/cpp/bindings/lib/router.h"
+#include "mojo/public/cpp/bindings/message_header_validator.h"
 #include "mojo/public/cpp/system/core.h"
 
 namespace mojo {
 
+template <typename Interface>
+class StrongBinding;
+
+template <typename Interface>
+using StrongBindingPtr = base::WeakPtr<StrongBinding<Interface>>;
+
 // This connects an interface implementation strongly to a pipe. When a
-// connection error is detected the implementation is deleted. Deleting the
-// connector also closes the pipe.
+// connection error is detected the implementation is deleted.
 //
-// Example of an implementation that is always bound strongly to a pipe
+// To use, call StrongBinding<T>::Create() (see below) or the helper
+// MakeStrongBinding function:
 //
-//   class StronglyBound : public Foo {
-//    public:
-//     explicit StronglyBound(InterfaceRequest<Foo> request)
-//         : binding_(this, request.Pass()) {}
+//   mojo::MakeStrongBinding(base::MakeUnique<FooImpl>(),
+//                           std::move(foo_request));
 //
-//     // Foo implementation here
-//
-//    private:
-//     StrongBinding<Foo> binding_;
-//   };
-//
-//   class MyFooFactory : public InterfaceFactory<Foo> {
-//    public:
-//     void Create(..., InterfaceRequest<Foo> request) override {
-//       new StronglyBound(request.Pass());  // The binding now owns the
-//                                           // instance of StronglyBound.
-//     }
-//   };
 template <typename Interface>
 class StrongBinding {
-  MOJO_MOVE_ONLY_TYPE(StrongBinding)
-
  public:
-  explicit StrongBinding(Interface* impl) : binding_(impl) {
-    binding_.set_connection_error_handler([this]() { OnConnectionError(); });
+  // Create a new StrongBinding instance. The instance owns itself, cleaning up
+  // only in the event of a pipe connection error. Returns a WeakPtr to the new
+  // StrongBinding instance.
+  static StrongBindingPtr<Interface> Create(
+      std::unique_ptr<Interface> impl,
+      InterfaceRequest<Interface> request) {
+    StrongBinding* binding =
+        new StrongBinding(std::move(impl), std::move(request));
+    return binding->weak_factory_.GetWeakPtr();
   }
 
-  StrongBinding(
-      Interface* impl,
-      ScopedMessagePipeHandle handle,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter())
-      : StrongBinding(impl) {
-    binding_.Bind(handle.Pass(), waiter);
+  // Note: The error handler must not delete the interface implementation.
+  //
+  // This method may only be called after this StrongBinding has been bound to a
+  // message pipe.
+  void set_connection_error_handler(const base::Closure& error_handler) {
+    DCHECK(binding_.is_bound());
+    connection_error_handler_ = error_handler;
+    connection_error_with_reason_handler_.Reset();
   }
 
-  StrongBinding(
-      Interface* impl,
-      InterfacePtr<Interface>* ptr,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter())
-      : StrongBinding(impl) {
-    binding_.Bind(ptr, waiter);
+  void set_connection_error_with_reason_handler(
+      const ConnectionErrorWithReasonCallback& error_handler) {
+    DCHECK(binding_.is_bound());
+    connection_error_with_reason_handler_ = error_handler;
+    connection_error_handler_.Reset();
   }
 
-  StrongBinding(
-      Interface* impl,
-      InterfaceRequest<Interface> request,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter())
-      : StrongBinding(impl) {
-    binding_.Bind(request.Pass(), waiter);
+  // Forces the binding to close. This destroys the StrongBinding instance.
+  void Close() { delete this; }
+
+  Interface* impl() { return impl_.get(); }
+
+  // Sends a message on the underlying message pipe and runs the current
+  // message loop until its response is received. This can be used in tests to
+  // verify that no message was sent on a message pipe in response to some
+  // stimulus.
+  void FlushForTesting() { binding_.FlushForTesting(); }
+
+ private:
+  StrongBinding(std::unique_ptr<Interface> impl,
+                InterfaceRequest<Interface> request)
+      : impl_(std::move(impl)),
+        binding_(impl_.get(), std::move(request)),
+        weak_factory_(this) {
+    binding_.set_connection_error_with_reason_handler(
+        base::Bind(&StrongBinding::OnConnectionError, base::Unretained(this)));
   }
 
   ~StrongBinding() {}
 
-  void Bind(
-      ScopedMessagePipeHandle handle,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
-    assert(!binding_.is_bound());
-    binding_.Bind(handle.Pass(), waiter);
+  void OnConnectionError(uint32_t custom_reason,
+                         const std::string& description) {
+    if (!connection_error_handler_.is_null())
+      connection_error_handler_.Run();
+    else if (!connection_error_with_reason_handler_.is_null())
+      connection_error_with_reason_handler_.Run(custom_reason, description);
+    Close();
   }
 
-  void Bind(
-      InterfacePtr<Interface>* ptr,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
-    assert(!binding_.is_bound());
-    binding_.Bind(ptr, waiter);
-  }
-
-  void Bind(
-      InterfaceRequest<Interface> request,
-      const MojoAsyncWaiter* waiter = Environment::GetDefaultAsyncWaiter()) {
-    assert(!binding_.is_bound());
-    binding_.Bind(request.Pass(), waiter);
-  }
-
-  bool WaitForIncomingMethodCall() {
-    return binding_.WaitForIncomingMethodCall();
-  }
-
-  // Note: The error handler must not delete the interface implementation.
-  void set_connection_error_handler(const Closure& error_handler) {
-    connection_error_handler_ = error_handler;
-  }
-
-  Interface* impl() { return binding_.impl(); }
-  // Exposed for testing, should not generally be used.
-  internal::Router* internal_router() { return binding_.internal_router(); }
-
-  void OnConnectionError() {
-    connection_error_handler_.Run();
-    delete binding_.impl();
-  }
-
- private:
-  Closure connection_error_handler_;
+  std::unique_ptr<Interface> impl_;
+  base::Closure connection_error_handler_;
+  ConnectionErrorWithReasonCallback connection_error_with_reason_handler_;
   Binding<Interface> binding_;
+  base::WeakPtrFactory<StrongBinding> weak_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(StrongBinding);
 };
+
+template <typename Interface, typename Impl>
+StrongBindingPtr<Interface> MakeStrongBinding(
+    std::unique_ptr<Impl> impl,
+    InterfaceRequest<Interface> request) {
+  return StrongBinding<Interface>::Create(std::move(impl), std::move(request));
+}
 
 }  // namespace mojo
 

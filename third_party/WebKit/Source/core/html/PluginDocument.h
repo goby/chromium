@@ -34,33 +34,31 @@ class Node;
 class Widget;
 
 class CORE_EXPORT PluginDocument final : public HTMLDocument {
-public:
-    static PassRefPtrWillBeRawPtr<PluginDocument> create(const DocumentInit& initializer = DocumentInit())
-    {
-        return adoptRefWillBeNoop(new PluginDocument(initializer));
-    }
+ public:
+  static PluginDocument* create(
+      const DocumentInit& initializer = DocumentInit()) {
+    return new PluginDocument(initializer);
+  }
 
-    void setPluginNode(Node* pluginNode) { m_pluginNode = pluginNode; }
+  void setPluginNode(Node* pluginNode) { m_pluginNode = pluginNode; }
 
-    Widget* pluginWidget();
-    Node* pluginNode();
+  Widget* pluginWidget();
+  Node* pluginNode();
 
-    void detach(const AttachContext& = AttachContext()) override;
+  void shutdown() override;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    explicit PluginDocument(const DocumentInit&);
+ private:
+  explicit PluginDocument(const DocumentInit&);
 
-    PassRefPtrWillBeRawPtr<DocumentParser> createParser() override;
+  DocumentParser* createParser() override;
 
-    String debugName() const override { return "PluginDocument"; }
-
-    RefPtrWillBeMember<Node> m_pluginNode;
+  Member<Node> m_pluginNode;
 };
 
 DEFINE_DOCUMENT_TYPE_CASTS(PluginDocument);
 
-}
+}  // namespace blink
 
-#endif // PluginDocument_h
+#endif  // PluginDocument_h

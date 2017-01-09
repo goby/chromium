@@ -9,6 +9,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
@@ -43,6 +44,7 @@ const char kStateKey[] = "state";
 
 // Request values.
 const char kEventTypeURLRequest[] = "PERMISSION_CHROME_URL";
+const char kEventTypeInstallRequest[] = "PERMISSION_CHROME_CWS_ITEM_INSTALL";
 const char kEventTypeUpdateRequest[] = "PERMISSION_CHROME_CWS_ITEM_UPDATE";
 const char kState[] = "PENDING";
 
@@ -60,11 +62,11 @@ struct PermissionRequestCreatorApiary::Request {
   std::string request_type;
   std::string object_ref;
   SuccessCallback callback;
-  scoped_ptr<OAuth2TokenService::Request> access_token_request;
+  std::unique_ptr<OAuth2TokenService::Request> access_token_request;
   std::string access_token;
   bool access_token_expired;
   int url_fetcher_id;
-  scoped_ptr<URLFetcher> url_fetcher;
+  std::unique_ptr<URLFetcher> url_fetcher;
 };
 
 PermissionRequestCreatorApiary::Request::Request(
@@ -95,14 +97,13 @@ PermissionRequestCreatorApiary::PermissionRequestCreatorApiary(
 PermissionRequestCreatorApiary::~PermissionRequestCreatorApiary() {}
 
 // static
-scoped_ptr<PermissionRequestCreator>
+std::unique_ptr<PermissionRequestCreator>
 PermissionRequestCreatorApiary::CreateWithProfile(Profile* profile) {
   ProfileOAuth2TokenService* token_service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
   SigninManagerBase* signin = SigninManagerFactory::GetForProfile(profile);
-  return make_scoped_ptr(new PermissionRequestCreatorApiary(
-      token_service,
-      signin->GetAuthenticatedAccountId(),
+  return base::WrapUnique(new PermissionRequestCreatorApiary(
+      token_service, signin->GetAuthenticatedAccountId(),
       profile->GetRequestContext()));
 }
 
@@ -114,6 +115,12 @@ void PermissionRequestCreatorApiary::CreateURLAccessRequest(
     const GURL& url_requested,
     const SuccessCallback& callback) {
   CreateRequest(kEventTypeURLRequest, url_requested.spec(), callback);
+}
+
+void PermissionRequestCreatorApiary::CreateExtensionInstallRequest(
+    const std::string& id,
+    const SuccessCallback& callback) {
+  CreateRequest(kEventTypeInstallRequest, id, callback);
 }
 
 void PermissionRequestCreatorApiary::CreateExtensionUpdateRequest(
@@ -246,7 +253,7 @@ void PermissionRequestCreatorApiary::OnURLFetchComplete(
 
   std::string response_body;
   source->GetResponseAsString(&response_body);
-  scoped_ptr<base::Value> value = base::JSONReader::Read(response_body);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(response_body);
   base::DictionaryValue* dict = NULL;
   if (!value || !value->GetAsDictionary(&dict)) {
     LOG(WARNING) << "Invalid top-level dictionary";

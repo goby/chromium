@@ -4,17 +4,22 @@
 
 #include "chrome/browser/diagnostics/sqlite_diagnostics.h"
 
+#include <stdint.h>
+
 #include "base/base_paths.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chromeos/chromeos_constants.h"
@@ -40,7 +45,7 @@ class SqliteIntegrityTest : public DiagnosticsTest {
     REMOVE_IF_CORRUPT = 0x02,
   };
 
-  SqliteIntegrityTest(uint32 flags,
+  SqliteIntegrityTest(uint32_t flags,
                       DiagnosticsTestId id,
                       const base::FilePath& db_path)
       : DiagnosticsTest(id), flags_(flags), db_path_(db_path) {}
@@ -194,63 +199,72 @@ class SqliteIntegrityTest : public DiagnosticsTest {
     DISALLOW_COPY_AND_ASSIGN(ErrorRecorder);
   };
 
-  uint32 flags_;
+  uint32_t flags_;
   base::FilePath db_path_;
   DISALLOW_COPY_AND_ASSIGN(SqliteIntegrityTest);
 };
 
 }  // namespace
 
-DiagnosticsTest* MakeSqliteCookiesDbTest() {
-  return new SqliteIntegrityTest(SqliteIntegrityTest::CRITICAL,
-                                 DIAGNOSTICS_SQLITE_INTEGRITY_COOKIE_TEST,
-                                 base::FilePath(chrome::kCookieFilename));
+std::unique_ptr<DiagnosticsTest> MakeSqliteCookiesDbTest() {
+  return base::MakeUnique<SqliteIntegrityTest>(
+      SqliteIntegrityTest::CRITICAL, DIAGNOSTICS_SQLITE_INTEGRITY_COOKIE_TEST,
+      base::FilePath(chrome::kCookieFilename));
 }
 
-DiagnosticsTest* MakeSqliteWebDatabaseTrackerDbTest() {
+std::unique_ptr<DiagnosticsTest> MakeSqliteWebDatabaseTrackerDbTest() {
   base::FilePath databases_dir(storage::kDatabaseDirectoryName);
   base::FilePath tracker_db =
       databases_dir.Append(storage::kTrackerDatabaseFileName);
-  return new SqliteIntegrityTest(
+  return base::MakeUnique<SqliteIntegrityTest>(
       SqliteIntegrityTest::NO_FLAGS_SET,
-      DIAGNOSTICS_SQLITE_INTEGRITY_DATABASE_TRACKER_TEST,
-      tracker_db);
+      DIAGNOSTICS_SQLITE_INTEGRITY_DATABASE_TRACKER_TEST, tracker_db);
 }
 
-DiagnosticsTest* MakeSqliteHistoryDbTest() {
-  return new SqliteIntegrityTest(SqliteIntegrityTest::CRITICAL,
-                                 DIAGNOSTICS_SQLITE_INTEGRITY_HISTORY_TEST,
-                                 base::FilePath(history::kHistoryFilename));
+std::unique_ptr<DiagnosticsTest> MakeSqliteHistoryDbTest() {
+  return base::MakeUnique<SqliteIntegrityTest>(
+      SqliteIntegrityTest::CRITICAL, DIAGNOSTICS_SQLITE_INTEGRITY_HISTORY_TEST,
+      base::FilePath(history::kHistoryFilename));
 }
 
 #if defined(OS_CHROMEOS)
-DiagnosticsTest* MakeSqliteNssCertDbTest() {
+std::unique_ptr<DiagnosticsTest> MakeSqliteNssCertDbTest() {
   base::FilePath home_dir;
   PathService::Get(base::DIR_HOME, &home_dir);
-  return new SqliteIntegrityTest(SqliteIntegrityTest::REMOVE_IF_CORRUPT,
-                                 DIAGNOSTICS_SQLITE_INTEGRITY_NSS_CERT_TEST,
-                                 home_dir.Append(chromeos::kNssCertDbPath));
+  return base::MakeUnique<SqliteIntegrityTest>(
+      SqliteIntegrityTest::REMOVE_IF_CORRUPT,
+      DIAGNOSTICS_SQLITE_INTEGRITY_NSS_CERT_TEST,
+      home_dir.Append(chromeos::kNssCertDbPath));
 }
 
-DiagnosticsTest* MakeSqliteNssKeyDbTest() {
+std::unique_ptr<DiagnosticsTest> MakeSqliteNssKeyDbTest() {
   base::FilePath home_dir;
   PathService::Get(base::DIR_HOME, &home_dir);
-  return new SqliteIntegrityTest(SqliteIntegrityTest::REMOVE_IF_CORRUPT,
-                                 DIAGNOSTICS_SQLITE_INTEGRITY_NSS_KEY_TEST,
-                                 home_dir.Append(chromeos::kNssKeyDbPath));
+  return base::MakeUnique<SqliteIntegrityTest>(
+      SqliteIntegrityTest::REMOVE_IF_CORRUPT,
+      DIAGNOSTICS_SQLITE_INTEGRITY_NSS_KEY_TEST,
+      home_dir.Append(chromeos::kNssKeyDbPath));
 }
 #endif  // defined(OS_CHROMEOS)
 
-DiagnosticsTest* MakeSqliteThumbnailsDbTest() {
-  return new SqliteIntegrityTest(SqliteIntegrityTest::NO_FLAGS_SET,
-                                 DIAGNOSTICS_SQLITE_INTEGRITY_THUMBNAILS_TEST,
-                                 base::FilePath(history::kThumbnailsFilename));
+std::unique_ptr<DiagnosticsTest> MakeSqliteFaviconsDbTest() {
+  return base::MakeUnique<SqliteIntegrityTest>(
+      SqliteIntegrityTest::NO_FLAGS_SET,
+      DIAGNOSTICS_SQLITE_INTEGRITY_FAVICONS_TEST,
+      base::FilePath(history::kFaviconsFilename));
 }
 
-DiagnosticsTest* MakeSqliteWebDataDbTest() {
-  return new SqliteIntegrityTest(SqliteIntegrityTest::CRITICAL,
-                                 DIAGNOSTICS_SQLITE_INTEGRITY_WEB_DATA_TEST,
-                                 base::FilePath(kWebDataFilename));
+std::unique_ptr<DiagnosticsTest> MakeSqliteTopSitesDbTest() {
+  return base::MakeUnique<SqliteIntegrityTest>(
+      SqliteIntegrityTest::NO_FLAGS_SET,
+      DIAGNOSTICS_SQLITE_INTEGRITY_TOPSITES_TEST,
+      base::FilePath(history::kTopSitesFilename));
+}
+
+std::unique_ptr<DiagnosticsTest> MakeSqliteWebDataDbTest() {
+  return base::MakeUnique<SqliteIntegrityTest>(
+      SqliteIntegrityTest::CRITICAL, DIAGNOSTICS_SQLITE_INTEGRITY_WEB_DATA_TEST,
+      base::FilePath(kWebDataFilename));
 }
 
 }  // namespace diagnostics

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/component_updater/configurator_impl.h"
 #include "extensions/browser/updater/update_client_config.h"
@@ -29,16 +30,23 @@ class ChromeUpdateClientConfig : public UpdateClientConfig {
   int UpdateDelay() const override;
   std::vector<GURL> UpdateUrl() const override;
   std::vector<GURL> PingUrl() const override;
+  std::string GetProdId() const override;
   base::Version GetBrowserVersion() const override;
   std::string GetChannel() const override;
+  std::string GetBrand() const override;
   std::string GetLang() const override;
   std::string GetOSLongName() const override;
   std::string ExtraRequestParams() const override;
+  std::string GetDownloadPreference() const override;
   net::URLRequestContextGetter* RequestContext() const override;
   scoped_refptr<update_client::OutOfProcessPatcher> CreateOutOfProcessPatcher()
       const override;
-  bool DeltasEnabled() const override;
-  bool UseBackgroundDownloader() const override;
+  bool EnabledDeltas() const override;
+  bool EnabledComponentUpdates() const override;
+  bool EnabledBackgroundDownloader() const override;
+  bool EnabledCupSigning() const override;
+  PrefService* GetPrefService() const override;
+  bool IsPerUserInstall() const override;
 
  protected:
   friend class base::RefCountedThreadSafe<ChromeUpdateClientConfig>;

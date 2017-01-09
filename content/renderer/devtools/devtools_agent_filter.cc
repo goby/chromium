@@ -5,7 +5,6 @@
 #include "content/renderer/devtools/devtools_agent_filter.h"
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "content/child/child_process.h"
 #include "content/common/devtools_messages.h"
 #include "content/renderer/devtools/devtools_agent.h"
@@ -21,8 +20,12 @@ namespace {
 
 class MessageImpl : public WebDevToolsAgent::MessageDescriptor {
  public:
-  MessageImpl(const std::string& message, int routing_id)
-      : msg_(message),
+  MessageImpl(
+      const std::string& method,
+      const std::string& message,
+      int routing_id)
+      : method_(method),
+        msg_(message),
         routing_id_(routing_id) {
   }
   ~MessageImpl() override {}
@@ -33,8 +36,10 @@ class MessageImpl : public WebDevToolsAgent::MessageDescriptor {
     return agent->GetWebAgent();
   }
   WebString message() override { return WebString::fromUTF8(msg_); }
+  WebString method() override { return WebString::fromUTF8(method_); }
 
  private:
+  std::string method_;
   std::string msg_;
   int routing_id_;
 };
@@ -42,10 +47,8 @@ class MessageImpl : public WebDevToolsAgent::MessageDescriptor {
 }  // namespace
 
 DevToolsAgentFilter::DevToolsAgentFilter()
-    : render_thread_loop_(base::MessageLoop::current()),
-      io_task_runner_(ChildProcess::current()->io_task_runner()),
-      current_routing_id_(0) {
-}
+    : io_task_runner_(ChildProcess::current()->io_task_runner()),
+      current_routing_id_(0) {}
 
 bool DevToolsAgentFilter::OnMessageReceived(const IPC::Message& message) {
   // Dispatch debugger commands directly from IO.
@@ -61,38 +64,40 @@ DevToolsAgentFilter::~DevToolsAgentFilter() {}
 
 void DevToolsAgentFilter::OnDispatchOnInspectorBackend(
     int session_id,
+    int call_id,
+    const std::string& method,
     const std::string& message) {
   if (embedded_worker_routes_.find(current_routing_id_) !=
       embedded_worker_routes_.end()) {
     return;
   }
 
-  if (WebDevToolsAgent::shouldInterruptForMessage(
-          WebString::fromUTF8(message))) {
+  if (WebDevToolsAgent::shouldInterruptForMethod(
+          WebString::fromUTF8(method))) {
     WebDevToolsAgent::interruptAndDispatch(
-        session_id, new MessageImpl(message, current_routing_id_));
+        session_id, new MessageImpl(method, message, current_routing_id_));
   }
-
 }
 
-void DevToolsAgentFilter::AddEmbeddedWorkerRouteOnMainThread(int32 routing_id) {
+void DevToolsAgentFilter::AddEmbeddedWorkerRouteOnMainThread(
+    int32_t routing_id) {
   io_task_runner_->PostTask(
       FROM_HERE, base::Bind(&DevToolsAgentFilter::AddEmbeddedWorkerRoute, this,
                             routing_id));
 }
 
 void DevToolsAgentFilter::RemoveEmbeddedWorkerRouteOnMainThread(
-    int32 routing_id) {
+    int32_t routing_id) {
   io_task_runner_->PostTask(
       FROM_HERE, base::Bind(&DevToolsAgentFilter::RemoveEmbeddedWorkerRoute,
                             this, routing_id));
 }
 
-void DevToolsAgentFilter::AddEmbeddedWorkerRoute(int32 routing_id) {
+void DevToolsAgentFilter::AddEmbeddedWorkerRoute(int32_t routing_id) {
   embedded_worker_routes_.insert(routing_id);
 }
 
-void DevToolsAgentFilter::RemoveEmbeddedWorkerRoute(int32 routing_id) {
+void DevToolsAgentFilter::RemoveEmbeddedWorkerRoute(int32_t routing_id) {
   embedded_worker_routes_.erase(routing_id);
 }
 

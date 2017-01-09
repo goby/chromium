@@ -4,8 +4,11 @@
 
 #include "chrome/browser/extensions/api/messaging/native_messaging_host_manifest.h"
 
+#include <stddef.h>
+
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 
 namespace extensions {
@@ -22,8 +25,8 @@ bool NativeMessagingHostManifest::IsValidName(const std::string& name) {
     char c = name[i];
 
     // Verify that only the following characters are used: [a-z0-9._].
-    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-          c == '.' || c == '_')) {
+    if (!(base::IsAsciiLower(c) || base::IsAsciiDigit(c) || c == '.' ||
+          c == '_')) {
       return false;
     }
 
@@ -38,31 +41,31 @@ bool NativeMessagingHostManifest::IsValidName(const std::string& name) {
 }
 
 // static
-scoped_ptr<NativeMessagingHostManifest> NativeMessagingHostManifest::Load(
+std::unique_ptr<NativeMessagingHostManifest> NativeMessagingHostManifest::Load(
     const base::FilePath& file_path,
     std::string* error_message) {
   DCHECK(error_message);
 
   JSONFileValueDeserializer deserializer(file_path);
-  scoped_ptr<base::Value> parsed =
+  std::unique_ptr<base::Value> parsed =
       deserializer.Deserialize(NULL, error_message);
   if (!parsed) {
-    return scoped_ptr<NativeMessagingHostManifest>();
+    return std::unique_ptr<NativeMessagingHostManifest>();
   }
 
   base::DictionaryValue* dictionary;
   if (!parsed->GetAsDictionary(&dictionary)) {
     *error_message = "Invalid manifest file.";
-    return scoped_ptr<NativeMessagingHostManifest>();
+    return std::unique_ptr<NativeMessagingHostManifest>();
   }
 
-  scoped_ptr<NativeMessagingHostManifest> result(
+  std::unique_ptr<NativeMessagingHostManifest> result(
       new NativeMessagingHostManifest());
   if (!result->Parse(dictionary, error_message)) {
-    return scoped_ptr<NativeMessagingHostManifest>();
+    return std::unique_ptr<NativeMessagingHostManifest>();
   }
 
-  return result.Pass();
+  return result;
 }
 
 NativeMessagingHostManifest::NativeMessagingHostManifest() {

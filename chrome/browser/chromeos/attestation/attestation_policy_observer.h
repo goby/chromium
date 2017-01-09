@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_CHROMEOS_ATTESTATION_ATTESTATION_POLICY_OBSERVER_H_
 #define CHROME_BROWSER_CHROMEOS_ATTESTATION_ATTESTATION_POLICY_OBSERVER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 
@@ -63,14 +63,15 @@ class AttestationPolicyObserver {
   // Gets the existing EMK certificate and sends it to CheckCertificateExpiry.
   void GetExistingCertificate();
 
-  // Checks if the given certificate is expired and, if so, get a new one.
-  void CheckCertificateExpiry(const std::string& certificate);
+  // Checks if any certificate in the given pem_certificate_chain is expired
+  // and, if so, gets a new one. If not renewing, calls CheckIfUploaded.
+  void CheckCertificateExpiry(const std::string& pem_certificate_chain);
 
   // Uploads a certificate to the policy server.
-  void UploadCertificate(const std::string& certificate);
+  void UploadCertificate(const std::string& pem_certificate_chain);
 
   // Checks if a certificate has already been uploaded and, if not, upload.
-  void CheckIfUploaded(const std::string& certificate,
+  void CheckIfUploaded(const std::string& pem_certificate_chain,
                        const std::string& key_payload);
 
   // Gets the payload associated with the EMK and sends it to |callback|.
@@ -92,11 +93,11 @@ class AttestationPolicyObserver {
   policy::CloudPolicyClient* policy_client_;
   CryptohomeClient* cryptohome_client_;
   AttestationFlow* attestation_flow_;
-  scoped_ptr<AttestationFlow> default_attestation_flow_;
+  std::unique_ptr<AttestationFlow> default_attestation_flow_;
   int num_retries_;
   int retry_delay_;
 
-  scoped_ptr<CrosSettings::ObserverSubscription> attestation_subscription_;
+  std::unique_ptr<CrosSettings::ObserverSubscription> attestation_subscription_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate the weak pointers before any other members are destroyed.

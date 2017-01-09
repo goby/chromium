@@ -60,50 +60,6 @@ a:focus {
   opacity: 0.8;
 }
 
-.dialog-container ::-webkit-scrollbar {
-  height: 0;
-  width: 0;
-}
-
-/* TODO(mtomasz): Flip scrollbars to the opposite side for RTL languages. */
-.scrollbar-vertical {
-  bottom: 0;
-  flex: none;
-  pointer-events: none;
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 10px;
-  z-index: 500;  /* Must be below the contextmenu (600). */
-}
-
-.scrollbar-button {
-  background-color: black;
-  border-radius: 3px;
-  border: 1px solid #ccc;
-  box-sizing: border-box;
-  height: 50%;
-  margin-right: 2px;
-  opacity: 0;
-  pointer-events: auto;
-  position: absolute;
-  transition: opacity 100ms;
-  width: 8px;
-}
-
-:hover > .scrollbar-vertical > .scrollbar-button,
-.scrollbar-vertical > .scrollbar-button.scrolling {
-  opacity: 0.3;
-}
-
-.scrollbar-vertical > .scrollbar-button:hover {
-  opacity: 0.4;
-}
-
-.scrollbar-vertical > .scrollbar-button.pressed {
-  opacity: 0.5;
-}
-
 /* Main part of the dialog between header and footer. */
 .dialog-container {
   align-items: stretch;
@@ -172,6 +128,10 @@ div.splitter {
   position: absolute;
   right: 0;
   top: 0;
+
+  /* TODO(yamaguchi): Remove these when crbug.com/671644 is resolved. */
+  background-color: rgb(250, 250, 250);
+  contain: paint;
 }
 
 #directory-tree .tree-row {
@@ -227,7 +187,7 @@ div.splitter {
 }
 
 #directory-tree .tree-row > paper-ripple {
-  color: rgb(19, 120, 185);
+  color: rgb(51, 103, 214);
 }
 
 #directory-tree [renaming] > .tree-row > paper-ripple {
@@ -239,7 +199,7 @@ div.splitter {
 #directory-tree .tree-row[lead],
 #directory-tree .tree-row[selected],
 #directory-tree .tree-row[anchor] {
-  color: rgb(19, 120, 185);
+  color: rgb(51, 103, 214);
 }
 
 #directory-tree .tree-row > .root-eject {
@@ -268,7 +228,7 @@ div.splitter {
 /* Breadcrumbs and things under the title but above the list view. */
 .dialog-header {
   align-items: center;
-  background: rgb(33, 150, 243);
+  background: rgb(51, 103, 214);
   box-sizing: border-box;
   color: white;
   display: flex;
@@ -325,7 +285,7 @@ body.check-select .dialog-header button paper-ripple {
 
 .dialog-header
     button:focus:not(.using-mouse):not([tabindex='-1']):not(:active) {
-  background-color: rgba(90, 90, 90, 0.15);
+  background-color: rgba(255, 255, 255, 0.20);
 }
 
 body.check-select .dialog-header
@@ -365,6 +325,11 @@ body.check-select .dialog-header
   left: 2px;
   top: 2px;
   width: 28px;
+}
+
+html[dir='rtl'] .dialog-header button.icon-button > files-toggle-ripple {
+  left: auto;
+  right: 2px;
 }
 
 .dialog-header button.icon-button > .icon {
@@ -497,7 +462,7 @@ body.check-select #gear-button {
   top: 42px;  /* Positioned just overlapping the top of the toolbar */
   transition: all 0.2s ease;
   width: 270px;
-  z-index: 5;
+  z-index: 550;
 }
 
 /* These horizontal positions for #cloud-import-details are fallback value.
@@ -513,7 +478,7 @@ html[dir='rtl'] #cloud-import-details {
 }
 
 #cloud-import-details.hidden {
-  -webkit-transform: translateY(-10px);
+  transform: translateY(-10px);
   opacity: 0;
 }
 
@@ -561,7 +526,7 @@ html[dir='rtl'] #cloud-import-details {
 }
 
 #cloud-import-details .status .destination-link {
-  color: #1BA8F3;
+  color: #3367D6;
   cursor: pointer;
 }
 
@@ -589,7 +554,7 @@ html[dir='rtl'] #cloud-import-details {
 }
 
 #cloud-import-details paper-button.import {
-  background-color: #1BA8F3;
+  background-color: #3367D6;
 }
 
 #cloud-import-details paper-button.cancel {
@@ -657,7 +622,6 @@ body.check-select #search-box {
 }
 
 #search-box input {
-  cursor: default;
   display: inline-block;
   transition: width 0.2s ease;
   width: 0;
@@ -671,24 +635,8 @@ body.check-select #search-box {
   margin-top: -4px;
 }
 
-#search-box paper-input-container /deep/ ::-webkit-input-placeholder {
+#search-box paper-input-container input::-webkit-input-placeholder {
   color: rgba(255, 255, 255, 0.5);
-}
-
-#search-box paper-input-container /deep/ .unfocused-line {
-  background-color: rgba(255, 255, 255, 0.3);
-}
-
-#search-box paper-input-container /deep/ .focused-line {
-  background-color: white;
-  height: 1px;
-}
-
-#search-box paper-input-container /deep/ .input-content ::content input {
-  color: inherit;
-  font: inherit;
-  margin: 0.5em 0 0.25em;
-  padding: 0;
 }
 
 #search-box.has-cursor,
@@ -698,7 +646,7 @@ body.check-select #search-box {
 
 #search-box.has-cursor input,
 #search-box.has-text input {
-  width: 218px;
+  width: 202px;
 }
 
 #search-box .clear {
@@ -710,9 +658,9 @@ body.check-select #search-box {
   display: none;
   height: 16px;
   margin: 0;
-  position: absolute;
+  position: relative;
   right: 0;
-  top: 7px;
+  top: 2px;
   visibility: hidden;
   width: 16px;
 }
@@ -792,6 +740,11 @@ html[dir='rtl'] #search-box .clear {
   z-index: 0;
 }
 
+.dialog-footer button[disabled] {
+  cursor: auto;
+  pointer-events: none;
+}
+
 .dialog-footer button {
   font-weight: 500;
 }
@@ -823,7 +776,7 @@ html[dir='rtl'] #search-box .clear {
 
 .dialog-footer .primary,
 .dialog-footer .primary:hover {
-  background-color: rgb(33, 150, 243);
+  background-color: rgb(51, 103, 214);
   color: white;
 }
 
@@ -832,7 +785,7 @@ html[dir='rtl'] #search-box .clear {
 }
 
 .dialog-footer .secondary:hover {
-  color: rgb(33, 150, 243);
+  color: rgb(51, 103, 214);
 }
 
 .dialog-footer input {
@@ -847,18 +800,6 @@ html[dir='rtl'] #search-box .clear {
   color: rgb(51, 51, 51);
   padding: 4px 0;
   width: 100%;
-}
-
-.dialog-footer paper-input-container /deep/ .unfocused-line {
-  background-color: rgb(207, 207, 207);
-}
-
-.dialog-footer paper-input-container /deep/ .focused-line {
-  background-color: rgb(33, 150, 243);
-}
-
-.dialog-footer paper-input-container /deep/ .input-content ::content input {
-  font: inherit;
 }
 
 .dialog-footer select {
@@ -885,7 +826,7 @@ html[dir='rtl'] #search-box .clear {
 .dialog-footer .primary:focus:not(:active),
 .dialog-footer .secondary:focus:not(:active),
 .dialog-footer select:focus:not(:active) {
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.5);
+  box-shadow: 0 0 0 2px rgba(51, 103, 214, 0.5);
 }
 
 .progressable:not([progress]) .progress-bar,
@@ -941,20 +882,27 @@ body.check-select .breadcrumbs {
 
 /* A single directory name in the list of path breadcrumbs. */
 .breadcrumbs .breadcrumb-path {
-  -webkit-margin-end: 0;  /* An arrow is used as a spacer instead. */
   box-sizing: border-box;
   cursor: pointer;
   flex: none;
   font-size: 14px;
   font-weight: 500;
+  margin: 0;
   min-width: 0;
   padding: 0 9px;
   text-transform: none;
   white-space: nowrap;
 }
 
-.breadcrumbs .breadcrumb-path:not(:first-child) {
-  -webkit-margin-start: 0;  /* An arrow is used as a spacer instead. */
+.breadcrumbs .breadcrumb-path:first-child {
+  /* -webkit-margin-start isn't proper
+     because folder names should be ltr even in RTL languages. */
+  margin-left: 8px;
+}
+
+html[dir='rtl'] .breadcrumbs .breadcrumb-path:first-child {
+  margin-left: 0;
+  margin-right: 8px;
 }
 
 .breadcrumbs .breadcrumb-path:active {
@@ -985,7 +933,7 @@ body.check-select .breadcrumbs {
 }
 
 html[dir='rtl'] .breadcrumbs .separator {
-  -webkit-transform: scaleX(-1);
+  transform: scaleX(-1);
 }
 
 .filelist-panel {
@@ -1016,9 +964,9 @@ html[dir='rtl'] .breadcrumbs .separator {
 }
 
 #file-list {
-  /* Override overflow specifying by table_list.js to use the original scroll
-     bar. crbug.com/391698 */
-  overflow: scroll !important;
+  /* TODO(yamaguchi): Remove these when crbug.com/671644 is resolved. */
+  background-color: rgb(250, 250, 250);
+  contain: paint;
 }
 
 #file-list .drag-selection-border {
@@ -1059,13 +1007,9 @@ html[dir='rtl'] .breadcrumbs .separator {
   top: 0;
 }
 
-.loading-indicator::shadow #activeProgress {
-  background-color: rgb(26, 194, 34);
-}
-
 .downloads-warning {
   align-items: center;
-  background-color: rgb(49, 102, 212);
+  background-color: rgb(79, 129, 232);
   color: white;
   display: flex;
   flex: none;
@@ -1093,6 +1037,10 @@ html[dir='rtl'] .breadcrumbs .separator {
   width: 16px;
 }
 
+.downloads-warning .warning-message {
+  -webkit-margin-end: 40px;
+}
+
 .downloads-warning[hidden] {
   display: flex !important;  /* Overrides [hidden] for animation. */
   height: 0;
@@ -1109,7 +1057,7 @@ html[dir='rtl'] .breadcrumbs .separator {
 .volume-warning {
   -webkit-animation: heightAnimation 70ms linear;
   align-items: center;
-  background-color: rgb(49, 102, 212);
+  background-color: rgb(79, 129, 232);
   color: white;
   display: flex;
   flex: none;
@@ -1146,7 +1094,7 @@ html[dir='rtl'] .breadcrumbs .separator {
 .volume-warning .imitate-paper-button {
   background-color: white;
   border-radius: 2px;
-  color: rgb(49, 102, 212);
+  color: rgb(79, 129, 232);
   font-size: 13px;
   font-weight: 500;
   height: 32px;
@@ -1328,7 +1276,7 @@ body.check-select .thumbnail-grid .thumbnail-item[selected] .checkmark.active {
 }
 
 .thumbnail-grid:focus .shield {
-  background-color: rgba(27, 168, 243, 0.5);
+  background-color: rgba(51, 103, 214, 0.5);
 }
 
 .thumbnail-grid .thumbnail-item[selected] .shield {
@@ -1414,24 +1362,17 @@ html[dir='rtl'] .badge {
   padding-left: 26px;
 }
 
-#default-tasks-list > li[selected] {
-  background-color: rgb(225, 225, 225);
-}
-
-#default-tasks-list:focus > li[selected] {
-  background-color: rgb(66, 129, 244);
-  color: white;
-}
-
 #list-container list > li[selected],
 #list-container list > li:active,
-#list-container list > li.accepts {
+#list-container list > li.accepts,
+#default-tasks-list > li[selected] {
   background-color: rgb(232, 232, 232);
 }
 
 #list-container list:focus > li[selected],
-#list-container list:focus > li.accepts[selected] {
-  background-color: rgb(213, 234, 245);
+#list-container list:focus > li.accepts[selected],
+#default-tasks-list:focus > li[selected] {
+  background-color: rgb(216, 223, 240);
 }
 
 #list-container.nohover grid > .accepts {
@@ -1670,7 +1611,6 @@ body.check-select #list-container li[selected] .detail-checkmark {
 #list-container list li .detail-thumbnail {
   height: 28px;
   overflow: hidden;
-  position: absolute;
   width: 28px;
 }
 
@@ -1682,7 +1622,6 @@ body.check-select #list-container li[selected] .detail-checkmark {
   border-radius: 14px;
   height: 100%;
   opacity: 1;
-  position: absolute;
   width: 100%;
 }
 
@@ -1866,21 +1805,6 @@ body[drive='error'] #unmounted-panel > .error,
 
 .buttonbar > * {
   position: relative;
-}
-
-#no-search-results {
-  bottom: 0;
-  display: none;
-  flex: none;
-  left: 0;
-  padding: 10px;
-  position: absolute;
-  right: 0;
-  top: 36px;  /* Leave room for the file list header. */
-}
-
-.dialog-container:not([drive-welcome='page']) #no-search-results[show] {
-  display: block;
 }
 
 #empty-folder {
@@ -2300,4 +2224,26 @@ files-toggle-ripple {
   position: absolute;
   right: 0;
   top: 0;
+}
+
+#quick-view {
+  z-index: 505; /* Must be above the scroll bar (500). */
+}
+
+/* Preventing FOUC */
+paper-input-container:unresolved {
+  display: none;
+}
+
+#drop-label {
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 2px;
+  color: white;
+  display: none;  /* hidden until activaed */
+  font-size: 12px;
+  height: 24px;
+  line-height: 24px;
+  padding: 0 8px;
+  position: absolute;
+  z-index: 1000;  /* same height as files-tooltip */
 }

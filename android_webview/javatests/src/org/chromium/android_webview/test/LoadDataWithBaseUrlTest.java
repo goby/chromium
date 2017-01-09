@@ -11,7 +11,7 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.parameter.ParameterizedTest;
+import org.chromium.base.test.util.Restriction;
 import org.chromium.content.browser.test.util.HistoryUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.content_public.browser.WebContents;
@@ -172,6 +172,17 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView"})
+    public void testInvalidBaseUrl() throws Throwable {
+        final String invalidBaseUrl = "http://";
+        getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
+        loadDataWithBaseUrlSync(
+                CommonResources.ABOUT_HTML, "text/html", false, invalidBaseUrl, null);
+        // Verify that the load succeeds. The actual base url is undefined.
+        assertEquals(CommonResources.ABOUT_TITLE, getTitleOnUiThread(mAwContents));
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
     public void testloadDataWithBaseUrlCallsOnPageStarted() throws Throwable {
         final String baseUrl = "http://base.com/";
         TestCallbackHelperContainer.OnPageStartedHelper onPageStartedHelper =
@@ -185,8 +196,6 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView"})
-    // Run in single-process mode only. Blocked by multiple RVHs crbug.com/533516.
-    @ParameterizedTest.Set
     public void testHistoryUrl() throws Throwable {
 
         final String pageHtml = "<html><body>Hello, world!</body></html>";
@@ -205,8 +214,6 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView"})
-    // Run in single-process mode only. Blocked by multiple RVHs crbug.com/533516.
-    @ParameterizedTest.Set
     public void testOnPageFinishedUrlIsBaseUrl() throws Throwable {
         final String pageHtml = "<html><body>Hello, world!</body></html>";
         final String baseUrl = "http://example.com/";
@@ -229,8 +236,6 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView"})
-    // Run in single-process mode only. Blocked by multiple RVHs crbug.com/533516.
-    @ParameterizedTest.Set
     public void testHistoryUrlNavigation() throws Throwable {
         TestWebServer webServer = TestWebServer.start();
         try {
@@ -254,8 +259,8 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
             assertEquals(page2Title, getTitleOnUiThread(mAwContents));
 
             HistoryUtils.goBackSync(getInstrumentation(), mWebContents, onPageFinishedHelper);
-            // The title of the 'about.html' specified via historyUrl.
-            assertEquals(CommonResources.ABOUT_TITLE, getTitleOnUiThread(mAwContents));
+            // The title of first page loaded with loadDataWithBaseUrl.
+            assertEquals(page1Title, getTitleOnUiThread(mAwContents));
         } finally {
             webServer.shutdown();
         }
@@ -276,7 +281,7 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
 
         loadDataWithBaseUrlSync(data, "text/html", false, baseUrl, null);
 
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 String title = getTitleOnUiThread(mAwContents);
@@ -296,8 +301,11 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
         File tempImage = File.createTempFile("test_image", ".png", cacheDir);
         Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.RGB_565);
         FileOutputStream fos = new FileOutputStream(tempImage);
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
-        fos.close();
+        try {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+        } finally {
+            fos.close();
+        }
         String imagePath = tempImage.getAbsolutePath();
 
         AwSettings contentSettings = getAwSettingsOnUiThread(mAwContents);
@@ -348,5 +356,62 @@ public class LoadDataWithBaseUrlTest extends AwTestBase {
         } finally {
             if (!tempImage.delete()) throw new AssertionError();
         }
+    }
+
+    /**
+     * Disallowed from running on Svelte devices due to OOM errors: crbug.com/598013
+     */
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @Restriction(Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE)
+    public void testLoadLargeData() throws Throwable {
+        // Chrome only allows URLs up to 2MB in IPC. Test something larger than this.
+        // Note that the real URI may be significantly large if it gets encoded into
+        // base64.
+        final int kDataLength = 5 * 1024 * 1024;
+        StringBuilder doc = new StringBuilder();
+        doc.append("<html><head></head><body><!-- ");
+        int i = doc.length();
+        doc.setLength(i + kDataLength);
+        while (i < doc.length()) doc.setCharAt(i++, 'A');
+        doc.append("--><script>window.gotToEndOfBody=true;</script></body></html>");
+
+        enableJavaScriptOnUiThread(mAwContents);
+        loadDataWithBaseUrlSync(doc.toString(), "text/html", false, null, null);
+        assertEquals("true", executeJavaScriptAndWaitForResult(mAwContents, mContentsClient,
+                        "window.gotToEndOfBody"));
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testOnPageFinishedWhenInterrupted() throws Throwable {
+        // See crbug.com/594001 -- when a javascript: URL is loaded, the pending entry
+        // gets discarded and the previous load goes through a different path
+        // inside NavigationController.
+        final String pageHtml = "<html><body>Hello, world!</body></html>";
+        final String baseUrl = "http://example.com/";
+        final TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
+                mContentsClient.getOnPageFinishedHelper();
+        final int callCount = onPageFinishedHelper.getCallCount();
+        loadDataWithBaseUrlAsync(mAwContents, pageHtml, "text/html", false, baseUrl, null);
+        loadUrlAsync(mAwContents, "javascript:42");
+        onPageFinishedHelper.waitForCallback(callCount);
+        assertEquals(baseUrl, onPageFinishedHelper.getUrl());
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testOnPageFinishedWithInvalidBaseUrlWhenInterrupted() throws Throwable {
+        final String pageHtml = CommonResources.ABOUT_HTML;
+        final String invalidBaseUrl = "http://";
+        final TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
+                mContentsClient.getOnPageFinishedHelper();
+        final int callCount = onPageFinishedHelper.getCallCount();
+        getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
+        loadDataWithBaseUrlAsync(mAwContents, pageHtml, "text/html", false, invalidBaseUrl, null);
+        loadUrlAsync(mAwContents, "javascript:42");
+        onPageFinishedHelper.waitForCallback(callCount);
+        // Verify that the load succeeds. The actual base url is undefined.
+        assertEquals(CommonResources.ABOUT_TITLE, getTitleOnUiThread(mAwContents));
     }
 }

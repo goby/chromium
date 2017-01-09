@@ -29,12 +29,13 @@ component("wifi") {
   if (is_mac) {
     libs = [
       "CoreWLAN.framework",
+      "Foundation.framework",
       "SystemConfiguration.framework",
     ]
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   sources = [
     "fake_wifi_service.cc",
     "fake_wifi_service.h",
@@ -56,6 +57,7 @@ executable("wifi_test") {
     ":wifi",
     "//base",
     "//build/config/sanitizers:deps",
+    "//build/win:default_exe_manifest",
     "//components/onc",
   ]
 }

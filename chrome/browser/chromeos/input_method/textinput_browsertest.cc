@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "chrome/browser/chromeos/input_method/textinput_test_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -254,7 +257,8 @@ IN_PROC_BROWSER_TEST_F(TextInput_TextInputStateChangedTest,
   };  // The order should be same as tab order in all_input_node.html.
 
   for (size_t i = 0; i < arraysize(expectations); ++i) {
-    content::SimulateKeyPress(tab, ui::VKEY_TAB, false, false, false, false);
+    content::SimulateKeyPress(tab, ui::DomKey::TAB, ui::DomCode::TAB,
+                              ui::VKEY_TAB, false, false, false, false);
 
     helper.WaitForTextInputStateChanged(expectations[i].type);
     EXPECT_EQ(expectations[i].type, helper.GetTextInputType());
@@ -290,10 +294,8 @@ IN_PROC_BROWSER_TEST_F(TextInput_TextInputStateChangedTest,
   GURL new_url = ui_test_utils::GetTestUrl(
       base::FilePath(FILE_PATH_LITERAL("textinput")),
       base::FilePath(FILE_PATH_LITERAL("focus_input_on_load.html")));
-  ui_test_utils::NavigateToURLWithDisposition(browser(),
-                                              new_url,
-                                              NEW_FOREGROUND_TAB,
-                                              0);
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), new_url, WindowOpenDisposition::NEW_FOREGROUND_TAB, 0);
   content::WebContents* new_tab =
       browser()->tab_strip_model()->GetActiveWebContents();
   EXPECT_NE(base_tab, new_tab);

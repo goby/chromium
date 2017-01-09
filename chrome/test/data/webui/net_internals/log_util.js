@@ -168,12 +168,12 @@ function checkViewsAfterLogLoaded() {
     import: true,
     proxy: true,
     events: true,
-    waterfall: true,
     timeline: true,
     dns: true,
     sockets: true,
     http2: true,
     quic: true,
+    'alt-svc': true,
     sdch: true,
     httpCache: true,
     modules: true,
@@ -182,7 +182,7 @@ function checkViewsAfterLogLoaded() {
     bandwidth: true,
     chromeos: false
   };
-  NetInternalsTest.checkTabHandleVisibility(tabVisibilityState, false);
+  NetInternalsTest.checkTabLinkVisibility(tabVisibilityState, false);
 }
 
 /**
@@ -197,12 +197,12 @@ function checkViewsAfterNetLogFileLoaded() {
     import: true,
     proxy: false,
     events: true,
-    waterfall: true,
     timeline: true,
     dns: false,
     sockets: false,
     http2: false,
     quic: false,
+    'alt-svc': false,
     sdch: false,
     httpCache: false,
     modules: false,
@@ -211,7 +211,7 @@ function checkViewsAfterNetLogFileLoaded() {
     bandwidth: false,
     chromeos: false
   };
-  NetInternalsTest.checkTabHandleVisibility(tabVisibilityState, false);
+  NetInternalsTest.checkTabLinkVisibility(tabVisibilityState, false);
 }
 
 function checkPrivacyStripping(expectedValue) {

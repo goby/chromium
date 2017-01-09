@@ -4,8 +4,12 @@
 
 #include "ui/base/models/simple_menu_model.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image.h"
 
@@ -65,6 +69,12 @@ void SimpleMenuModel::Delegate::MenuWillShow(SimpleMenuModel* /*source*/) {
 }
 
 void SimpleMenuModel::Delegate::MenuClosed(SimpleMenuModel* /*source*/) {
+}
+
+bool SimpleMenuModel::Delegate::GetAcceleratorForCommandId(
+    int command_id,
+    ui::Accelerator* accelerator) const {
+  return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -252,8 +262,8 @@ void SimpleMenuModel::Clear() {
   MenuItemsChanged();
 }
 
-int SimpleMenuModel::GetIndexOfCommandId(int command_id) {
-  for (ItemVector::iterator i = items_.begin(); i != items_.end(); ++i) {
+int SimpleMenuModel::GetIndexOfCommandId(int command_id) const {
+  for (ItemVector::const_iterator i = items_.begin(); i != items_.end(); ++i) {
     if (i->command_id == command_id)
       return static_cast<int>(std::distance(items_.begin(), i));
   }
@@ -387,11 +397,11 @@ void SimpleMenuModel::MenuWillShow() {
     delegate_->MenuWillShow(this);
 }
 
-void SimpleMenuModel::MenuClosed() {
+void SimpleMenuModel::MenuWillClose() {
   // Due to how menus work on the different platforms, ActivatedAt will be
   // called after this.  It's more convenient for the delegate to be called
   // afterwards though, so post a task.
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&SimpleMenuModel::OnMenuClosed, method_factory_.GetWeakPtr()));
 }

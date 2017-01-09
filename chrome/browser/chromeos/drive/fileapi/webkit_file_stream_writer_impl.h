@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_CHROMEOS_DRIVE_FILEAPI_WEBKIT_FILE_STREAM_WRITER_IMPL_H_
 #define CHROME_BROWSER_CHROMEOS_DRIVE_FILEAPI_WEBKIT_FILE_STREAM_WRITER_IMPL_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "storage/browser/fileapi/file_stream_writer.h"
 
@@ -43,7 +46,7 @@ class WebkitFileStreamWriterImpl : public storage::FileStreamWriter {
   WebkitFileStreamWriterImpl(const FileSystemGetter& file_system_getter,
                              base::TaskRunner* file_task_runner,
                              const base::FilePath& file_path,
-                             int64 offset);
+                             int64_t offset);
   ~WebkitFileStreamWriterImpl() override;
 
   // FileWriter override.
@@ -65,9 +68,9 @@ class WebkitFileStreamWriterImpl : public storage::FileStreamWriter {
   FileSystemGetter file_system_getter_;
   scoped_refptr<base::TaskRunner> file_task_runner_;
   const base::FilePath file_path_;
-  const int64 offset_;
+  const int64_t offset_;
 
-  scoped_ptr<storage::FileStreamWriter> local_file_writer_;
+  std::unique_ptr<storage::FileStreamWriter> local_file_writer_;
   base::Closure close_callback_on_ui_thread_;
   net::CompletionCallback pending_write_callback_;
   net::CompletionCallback pending_cancel_callback_;

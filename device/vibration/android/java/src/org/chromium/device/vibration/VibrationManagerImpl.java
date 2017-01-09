@@ -11,8 +11,9 @@ import android.os.Vibrator;
 import android.util.Log;
 
 import org.chromium.base.VisibleForTesting;
+import org.chromium.device.VibrationManager;
 import org.chromium.mojo.system.MojoException;
-import org.chromium.mojom.device.VibrationManager;
+import org.chromium.services.service_manager.InterfaceFactory;
 
 /**
  * Android implementation of the vibration manager service defined in
@@ -57,6 +58,7 @@ public class VibrationManagerImpl implements VibrationManager {
         if (sVibratorWrapper == null) {
             sVibratorWrapper = new AndroidVibratorWrapper();
         }
+        // TODO(mvanouwerkerk): What happens if permission is revoked? Handle this better.
         mHasVibratePermission =
                 context.checkCallingOrSelfPermission(android.Manifest.permission.VIBRATE)
                 == PackageManager.PERMISSION_GRANTED;
@@ -72,7 +74,7 @@ public class VibrationManagerImpl implements VibrationManager {
     public void onConnectionError(MojoException e) {}
 
     @Override
-    public void vibrate(long milliseconds) {
+    public void vibrate(long milliseconds, VibrateResponse callback) {
         // Though the Blink implementation already sanitizes vibration times, don't
         // trust any values passed from the client.
         long sanitizedMilliseconds = Math.max(MINIMUM_VIBRATION_DURATION_MS,
@@ -82,10 +84,27 @@ public class VibrationManagerImpl implements VibrationManager {
                 && mHasVibratePermission) {
             sVibratorWrapper.vibrate(mVibrator, sanitizedMilliseconds);
         }
+        callback.call();
     }
 
     @Override
-    public void cancel() {
+    public void cancel(CancelResponse callback) {
         if (mHasVibratePermission) sVibratorWrapper.cancel(mVibrator);
+        callback.call();
+    }
+
+    /**
+     * A factory for implementations of the VibrationManager interface.
+     */
+    public static class Factory implements InterfaceFactory<VibrationManager> {
+        private Context mContext;
+        public Factory(Context context) {
+            mContext = context;
+        }
+
+        @Override
+        public VibrationManager createImpl() {
+            return new VibrationManagerImpl(mContext);
+        }
     }
 }

@@ -11,7 +11,6 @@
 #include "remoting/base/constants.h"
 #include "remoting/base/rsa_key_pair.h"
 #include "remoting/protocol/channel_authenticator.h"
-#include "remoting/protocol/v2_authenticator.h"
 #include "third_party/webrtc/libjingle/xmllite/xmlelement.h"
 
 namespace remoting {
@@ -69,12 +68,13 @@ void ThirdPartyAuthenticatorBase::ProcessMessage(
   }
 }
 
-scoped_ptr<buzz::XmlElement> ThirdPartyAuthenticatorBase::GetNextMessage() {
+std::unique_ptr<buzz::XmlElement>
+ThirdPartyAuthenticatorBase::GetNextMessage() {
   DCHECK_EQ(state(), MESSAGE_READY);
 
-  scoped_ptr<buzz::XmlElement> message;
+  std::unique_ptr<buzz::XmlElement> message;
   if (underlying_ && underlying_->state() == MESSAGE_READY) {
-    message = underlying_->GetNextMessage().Pass();
+    message = underlying_->GetNextMessage();
   } else {
     message = CreateEmptyAuthenticatorMessage();
   }
@@ -83,7 +83,7 @@ scoped_ptr<buzz::XmlElement> ThirdPartyAuthenticatorBase::GetNextMessage() {
     AddTokenElements(message.get());
     started_ = true;
   }
-  return message.Pass();
+  return message;
 }
 
 const std::string& ThirdPartyAuthenticatorBase::GetAuthKey() const {
@@ -92,7 +92,7 @@ const std::string& ThirdPartyAuthenticatorBase::GetAuthKey() const {
   return underlying_->GetAuthKey();
 }
 
-scoped_ptr<ChannelAuthenticator>
+std::unique_ptr<ChannelAuthenticator>
 ThirdPartyAuthenticatorBase::CreateChannelAuthenticator() const {
   DCHECK_EQ(state(), ACCEPTED);
 

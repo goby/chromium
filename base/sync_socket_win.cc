@@ -4,7 +4,11 @@
 
 #include "base/sync_socket.h"
 
+#include <limits.h>
+#include <stddef.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/rand_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/win/scoped_handle.h"
@@ -290,13 +294,17 @@ size_t SyncSocket::Peek() {
 }
 
 CancelableSyncSocket::CancelableSyncSocket()
-    : shutdown_event_(true, false), file_operation_(true, false) {
-}
+    : shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
+      file_operation_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
 CancelableSyncSocket::CancelableSyncSocket(Handle handle)
-    : SyncSocket(handle), shutdown_event_(true, false),
-      file_operation_(true, false) {
-}
+    : SyncSocket(handle),
+      shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
+      file_operation_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
 bool CancelableSyncSocket::Shutdown() {
   // This doesn't shut down the pipe immediately, but subsequent Receive or Send

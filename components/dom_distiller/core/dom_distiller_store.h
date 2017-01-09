@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "components/dom_distiller/core/article_attachments_data.h"
@@ -16,12 +17,12 @@
 #include "components/dom_distiller/core/dom_distiller_model.h"
 #include "components/dom_distiller/core/dom_distiller_observer.h"
 #include "components/leveldb_proto/proto_database.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/api/sync_merge_result.h"
-#include "sync/api/syncable_service.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/model/sync_merge_result.h"
+#include "components/sync/model/syncable_service.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -48,8 +49,8 @@ class DomDistillerStoreInterface {
   virtual bool RemoveEntry(const ArticleEntry& entry) = 0;
 
   typedef base::Callback<void(bool success)> UpdateAttachmentsCallback;
-  typedef base::Callback<void(bool success,
-                              scoped_ptr<ArticleAttachmentsData> attachments)>
+  typedef base::Callback<
+      void(bool success, std::unique_ptr<ArticleAttachmentsData> attachments)>
       GetAttachmentsCallback;
 
   // Updates the attachments for an entry. The callback will be called with
@@ -59,7 +60,7 @@ class DomDistillerStoreInterface {
   // etc.).
   virtual void UpdateAttachments(
       const std::string& entry_id,
-      scoped_ptr<ArticleAttachmentsData> attachments,
+      std::unique_ptr<ArticleAttachmentsData> attachments,
       const UpdateAttachmentsCallback& callback) = 0;
 
   // Gets the attachments for an entry. If the attachments are available (either
@@ -106,14 +107,14 @@ class DomDistillerStore : public syncer::SyncableService,
   // Creates storage using the given database for local storage. Initializes the
   // database with |database_dir|.
   DomDistillerStore(
-      scoped_ptr<leveldb_proto::ProtoDatabase<ArticleEntry> > database,
+      std::unique_ptr<leveldb_proto::ProtoDatabase<ArticleEntry>> database,
       const base::FilePath& database_dir);
 
   // Creates storage using the given database for local storage. Initializes the
   // database with |database_dir|.  Also initializes the internal model to
   // |initial_model|.
   DomDistillerStore(
-      scoped_ptr<leveldb_proto::ProtoDatabase<ArticleEntry> > database,
+      std::unique_ptr<leveldb_proto::ProtoDatabase<ArticleEntry>> database,
       const std::vector<ArticleEntry>& initial_data,
       const base::FilePath& database_dir);
 
@@ -126,9 +127,10 @@ class DomDistillerStore : public syncer::SyncableService,
   bool UpdateEntry(const ArticleEntry& entry) override;
   bool RemoveEntry(const ArticleEntry& entry) override;
 
-  void UpdateAttachments(const std::string& entry_id,
-                         scoped_ptr<ArticleAttachmentsData> attachments_data,
-                         const UpdateAttachmentsCallback& callback) override;
+  void UpdateAttachments(
+      const std::string& entry_id,
+      std::unique_ptr<ArticleAttachmentsData> attachments_data,
+      const UpdateAttachmentsCallback& callback) override;
   void GetAttachments(const std::string& entry_id,
                       const GetAttachmentsCallback& callback) override;
 
@@ -143,8 +145,8 @@ class DomDistillerStore : public syncer::SyncableService,
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -153,7 +155,7 @@ class DomDistillerStore : public syncer::SyncableService,
 
  private:
   void OnDatabaseInit(bool success);
-  void OnDatabaseLoad(bool success, scoped_ptr<EntryVector> entries);
+  void OnDatabaseLoad(bool success, std::unique_ptr<EntryVector> entries);
   void OnDatabaseSave(bool success);
 
   // Returns true if the change is successfully applied.
@@ -162,15 +164,15 @@ class DomDistillerStore : public syncer::SyncableService,
 
   void OnAttachmentsWrite(
       const std::string& entry_id,
-      scoped_ptr<sync_pb::ArticleAttachments> article_attachments,
+      std::unique_ptr<sync_pb::ArticleAttachments> article_attachments,
       const UpdateAttachmentsCallback& callback,
       const syncer::AttachmentStore::Result& result);
 
   void OnAttachmentsRead(const sync_pb::ArticleAttachments& attachments_proto,
                          const GetAttachmentsCallback& callback,
                          const syncer::AttachmentStore::Result& result,
-                         scoped_ptr<syncer::AttachmentMap> attachments,
-                         scoped_ptr<syncer::AttachmentIdList> missing);
+                         std::unique_ptr<syncer::AttachmentMap> attachments,
+                         std::unique_ptr<syncer::AttachmentIdList> missing);
 
   syncer::SyncMergeResult MergeDataWithModel(
       const syncer::SyncDataList& data, syncer::SyncChangeList* changes_applied,
@@ -195,11 +197,11 @@ class DomDistillerStore : public syncer::SyncableService,
 
   void NotifyObservers(const syncer::SyncChangeList& changes);
 
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
-  scoped_ptr<syncer::SyncErrorFactory> error_factory_;
-  scoped_ptr<leveldb_proto::ProtoDatabase<ArticleEntry> > database_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncErrorFactory> error_factory_;
+  std::unique_ptr<leveldb_proto::ProtoDatabase<ArticleEntry>> database_;
   bool database_loaded_;
-  scoped_ptr<syncer::AttachmentStore> attachment_store_;
+  std::unique_ptr<syncer::AttachmentStore> attachment_store_;
   base::ObserverList<DomDistillerObserver> observers_;
 
   DomDistillerModel model_;

@@ -4,17 +4,18 @@
 
 #include "components/proximity_auth/connection.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "components/proximity_auth/connection_observer.h"
 #include "components/proximity_auth/wire_message.h"
 
 namespace proximity_auth {
 
-Connection::Connection(const RemoteDevice& remote_device)
+Connection::Connection(const cryptauth::RemoteDevice& remote_device)
     : remote_device_(remote_device),
       status_(DISCONNECTED),
-      is_sending_message_(false) {
-}
+      is_sending_message_(false) {}
 
 Connection::~Connection() {
 }
@@ -23,7 +24,7 @@ bool Connection::IsConnected() const {
   return status_ == CONNECTED;
 }
 
-void Connection::SendMessage(scoped_ptr<WireMessage> message) {
+void Connection::SendMessage(std::unique_ptr<WireMessage> message) {
   if (!IsConnected()) {
     VLOG(1) << "Cannot send message when disconnected.";
     return;
@@ -35,7 +36,7 @@ void Connection::SendMessage(scoped_ptr<WireMessage> message) {
   }
 
   is_sending_message_ = true;
-  SendMessageImpl(message.Pass());
+  SendMessageImpl(std::move(message));
 }
 
 void Connection::AddObserver(ConnectionObserver* observer) {
@@ -58,8 +59,8 @@ void Connection::SetStatus(Status status) {
 
   Status old_status = status_;
   status_ = status;
-  FOR_EACH_OBSERVER(ConnectionObserver, observers_,
-                    OnConnectionStatusChanged(this, old_status, status_));
+  for (auto& observer : observers_)
+    observer.OnConnectionStatusChanged(this, old_status, status_);
 }
 
 void Connection::OnDidSendMessage(const WireMessage& message, bool success) {
@@ -69,8 +70,8 @@ void Connection::OnDidSendMessage(const WireMessage& message, bool success) {
   }
 
   is_sending_message_ = false;
-  FOR_EACH_OBSERVER(
-      ConnectionObserver, observers_, OnSendCompleted(*this, message, success));
+  for (auto& observer : observers_)
+    observer.OnSendCompleted(*this, message, success);
 }
 
 void Connection::OnBytesReceived(const std::string& bytes) {
@@ -82,14 +83,14 @@ void Connection::OnBytesReceived(const std::string& bytes) {
   received_bytes_ += bytes;
 
   bool is_incomplete_message;
-  scoped_ptr<WireMessage> message =
+  std::unique_ptr<WireMessage> message =
       DeserializeWireMessage(&is_incomplete_message);
   if (is_incomplete_message)
     return;
 
   if (message) {
-    FOR_EACH_OBSERVER(
-        ConnectionObserver, observers_, OnMessageReceived(*this, *message));
+    for (auto& observer : observers_)
+      observer.OnMessageReceived(*this, *message);
   }
 
   // Whether the message was parsed successfully or not, clear the
@@ -97,7 +98,7 @@ void Connection::OnBytesReceived(const std::string& bytes) {
   received_bytes_.clear();
 }
 
-scoped_ptr<WireMessage> Connection::DeserializeWireMessage(
+std::unique_ptr<WireMessage> Connection::DeserializeWireMessage(
     bool* is_incomplete_message) {
   return WireMessage::Deserialize(received_bytes_, is_incomplete_message);
 }

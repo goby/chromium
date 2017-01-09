@@ -34,11 +34,12 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/fonts/FontOrientation.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "wtf/Allocator.h"
 #include "wtf/Forward.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 class SkTypeface;
 
@@ -48,21 +49,30 @@ class FontPlatformData;
 class SharedBuffer;
 
 class PLATFORM_EXPORT FontCustomPlatformData {
-    USING_FAST_MALLOC(FontCustomPlatformData);
-    WTF_MAKE_NONCOPYABLE(FontCustomPlatformData);
-public:
-    static PassOwnPtr<FontCustomPlatformData> create(SharedBuffer*, String& otsParseMessage);
-    ~FontCustomPlatformData();
+  USING_FAST_MALLOC(FontCustomPlatformData);
+  WTF_MAKE_NONCOPYABLE(FontCustomPlatformData);
 
-    FontPlatformData fontPlatformData(float size, bool bold, bool italic, FontOrientation = FontOrientation::Horizontal);
+ public:
+  static std::unique_ptr<FontCustomPlatformData> create(
+      SharedBuffer*,
+      String& otsParseMessage);
+  ~FontCustomPlatformData();
 
-    static bool supportsFormat(const String&);
+  FontPlatformData fontPlatformData(
+      float size,
+      bool bold,
+      bool italic,
+      FontOrientation = FontOrientation::Horizontal);
 
-private:
-    explicit FontCustomPlatformData(PassRefPtr<SkTypeface>);
-    RefPtr<SkTypeface> m_typeface;
+  size_t dataSize() const { return m_dataSize; }
+  static bool supportsFormat(const String&);
+
+ private:
+  FontCustomPlatformData(sk_sp<SkTypeface>, size_t dataSize);
+  sk_sp<SkTypeface> m_typeface;
+  size_t m_dataSize;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // FontCustomPlatformData_h
+#endif  // FontCustomPlatformData_h

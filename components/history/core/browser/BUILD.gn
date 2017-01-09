@@ -62,12 +62,8 @@ static_library("browser") {
     "top_sites_impl.cc",
     "top_sites_impl.h",
     "top_sites_observer.h",
-    "typed_url_change_processor.cc",
-    "typed_url_change_processor.h",
     "typed_url_data_type_controller.cc",
     "typed_url_data_type_controller.h",
-    "typed_url_model_associator.cc",
-    "typed_url_model_associator.h",
     "typed_url_syncable_service.cc",
     "typed_url_syncable_service.h",
     "url_database.cc",
@@ -80,14 +76,13 @@ static_library("browser") {
     "visit_database.h",
     "visit_delegate.cc",
     "visit_delegate.h",
-    "visit_filter.cc",
-    "visit_filter.h",
     "visit_tracker.cc",
     "visit_tracker.h",
     "visitsegment_database.cc",
     "visitsegment_database.h",
     "web_history_service.cc",
     "web_history_service.h",
+    "web_history_service_observer.h",
   ]
 
   public_deps = [
@@ -97,18 +92,19 @@ static_library("browser") {
   deps = [
     "//base",
     "//base:i18n",
-    "//base:prefs",
     "//components/favicon_base",
     "//components/history/core/common",
     "//components/keyed_service/core",
+    "//components/prefs",
     "//components/query_parser",
     "//components/signin/core/browser",
-    "//components/sync_driver",
+    "//components/sync",
     "//components/url_formatter",
+    "//components/variations",
+    "//components/version_info",
     "//google_apis",
     "//net",
     "//sql",
-    "//sync",
     "//third_party/sqlite",
     "//ui/base",
     "//ui/gfx",
@@ -140,6 +136,45 @@ static_library("browser") {
   configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
 }
 
+bundle_data("unit_tests_bundle_data") {
+  visibility = [ ":unit_tests" ]
+  testonly = true
+  sources = [
+    "//components/test/data/history/Favicons.v3.sql",
+    "//components/test/data/history/Favicons.v4.sql",
+    "//components/test/data/history/Favicons.v5.sql",
+    "//components/test/data/history/Favicons.v6.sql",
+    "//components/test/data/history/Favicons.v7.sql",
+    "//components/test/data/history/Favicons.v8.sql",
+    "//components/test/data/history/HistoryNoDuration",
+    "//components/test/data/history/HistoryNoSource",
+    "//components/test/data/history/History_with_starred",
+    "//components/test/data/history/TopSites.v1.sql",
+    "//components/test/data/history/TopSites.v2.sql",
+    "//components/test/data/history/TopSites.v3.sql",
+    "//components/test/data/history/history.22.sql",
+    "//components/test/data/history/history.26.sql",
+    "//components/test/data/history/history.27.sql",
+    "//components/test/data/history/history.28.sql",
+    "//components/test/data/history/history.29.sql",
+    "//components/test/data/history/history.30.sql",
+    "//components/test/data/history/history.31.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.corrupt_meta.disable",
+    "//components/test/data/history/thumbnail_wild/Favicons.v2.init.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.v3.init.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.v4.init.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.v5.icon_type.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.v5.icon_type2.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.v5.init.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.v5.sizes.sql",
+    "//components/test/data/history/thumbnail_wild/Favicons.v6.init.sql",
+  ]
+  outputs = [
+    "{{bundle_resources_dir}}/" +
+        "{{source_root_relative_dir}}/{{source_file_part}}",
+  ]
+}
+
 source_set("unit_tests") {
   testonly = true
   sources = [
@@ -154,28 +189,31 @@ source_set("unit_tests") {
     "top_sites_cache_unittest.cc",
     "top_sites_database_unittest.cc",
     "top_sites_impl_unittest.cc",
-    "typed_url_model_associator_unittest.cc",
     "typed_url_syncable_service_unittest.cc",
     "url_database_unittest.cc",
     "url_utils_unittest.cc",
     "visit_database_unittest.cc",
-    "visit_filter_unittest.cc",
     "visit_tracker_unittest.cc",
+    "web_history_service_unittest.cc",
   ]
   deps = [
     ":browser",
+    ":unit_tests_bundle_data",
     "//base",
-    "//base:prefs_test_support",
     "//base/test:test_support",
     "//components/favicon_base",
     "//components/history/core/common",
     "//components/history/core/test",
-    "//components/sync_driver:test_support",
+    "//components/prefs:test_support",
+    "//components/signin/core/browser",
+    "//components/signin/core/browser:test_support",
+    "//components/sync",
+    "//components/sync:test_support_model",
     "//sql",
     "//sql:test_support",
-    "//sync:test_support_sync_api",
     "//testing/gtest",
-    "//ui/gfx:gfx",
+    "//ui/gfx",
+    "//ui/gfx:test_support",
     "//url",
   ]
   if (is_android) {

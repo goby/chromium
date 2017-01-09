@@ -4,16 +4,21 @@
 
 #include "net/url_request/url_request_job.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "net/base/auth.h"
 #include "net/base/host_port_pair.h"
@@ -22,9 +27,13 @@
 #include "net/base/load_states.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate.h"
-#include "net/base/network_quality_estimator.h"
-#include "net/filter/filter.h"
 #include "net/http/http_response_headers.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_capture_mode.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_with_source.h"
+#include "net/nqe/network_quality_estimator.h"
+#include "net/proxy/proxy_server.h"
 #include "net/url_request/url_request_context.h"
 
 namespace net {
@@ -32,12 +41,13 @@ namespace net {
 namespace {
 
 // Callback for TYPE_URL_REQUEST_FILTERS_SET net-internals event.
-scoped_ptr<base::Value> FiltersSetCallback(
-    Filter* filter,
+std::unique_ptr<base::Value> SourceStreamSetCallback(
+    SourceStream* source_stream,
     NetLogCaptureMode /* capture_mode */) {
-  scoped_ptr<base::DictionaryValue> event_params(new base::DictionaryValue());
-  event_params->SetString("filters", filter->OrderedFilterList());
-  return event_params.Pass();
+  std::unique_ptr<base::DictionaryValue> event_params(
+      new base::DictionaryValue());
+  event_params->SetString("filters", source_stream->Description());
+  return std::move(event_params);
 }
 
 std::string ComputeMethodForRedirect(const std::string& method,
@@ -59,7 +69,86 @@ std::string ComputeMethodForRedirect(const std::string& method,
   return method;
 }
 
+// A redirect response can contain a Referrer-Policy header
+// (https://w3c.github.io/webappsec-referrer-policy/). This function
+// checks for a Referrer-Policy header, and parses it if
+// present. Returns the referrer policy that should be used for the
+// request.
+URLRequest::ReferrerPolicy ProcessReferrerPolicyHeaderOnRedirect(
+    URLRequest* request) {
+  URLRequest::ReferrerPolicy new_policy = request->referrer_policy();
+
+  std::string referrer_policy_header;
+  request->GetResponseHeaderByName("Referrer-Policy", &referrer_policy_header);
+  std::vector<std::string> policy_tokens =
+      base::SplitString(referrer_policy_header, ",", base::TRIM_WHITESPACE,
+                        base::SPLIT_WANT_NONEMPTY);
+
+  for (const auto& token : policy_tokens) {
+    if (base::CompareCaseInsensitiveASCII(token, "no-referrer") == 0) {
+      new_policy = URLRequest::NO_REFERRER;
+      continue;
+    }
+
+    if (base::CompareCaseInsensitiveASCII(token,
+                                          "no-referrer-when-downgrade") == 0) {
+      new_policy =
+          URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
+      continue;
+    }
+
+    if (base::CompareCaseInsensitiveASCII(token, "origin") == 0) {
+      new_policy = URLRequest::ORIGIN;
+      continue;
+    }
+
+    if (base::CompareCaseInsensitiveASCII(token, "origin-when-cross-origin") ==
+        0) {
+      new_policy = URLRequest::ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN;
+      continue;
+    }
+
+    if (base::CompareCaseInsensitiveASCII(token, "unsafe-url") == 0) {
+      new_policy = URLRequest::NEVER_CLEAR_REFERRER;
+      continue;
+    }
+  }
+  return new_policy;
+}
+
 }  // namespace
+
+// Each SourceStreams own the previous SourceStream in the chain, but the
+// ultimate source is URLRequestJob, which has other ownership semantics, so
+// this class is a proxy for URLRequestJob that is owned by the first stream
+// (in dataflow order).
+class URLRequestJob::URLRequestJobSourceStream : public SourceStream {
+ public:
+  explicit URLRequestJobSourceStream(URLRequestJob* job)
+      : SourceStream(SourceStream::TYPE_NONE), job_(job) {
+    DCHECK(job_);
+  }
+
+  ~URLRequestJobSourceStream() override {}
+
+  // SourceStream implementation:
+  int Read(IOBuffer* dest_buffer,
+           int buffer_size,
+           const CompletionCallback& callback) override {
+    DCHECK(job_);
+    return job_->ReadRawDataHelper(dest_buffer, buffer_size, callback);
+  }
+
+  std::string Description() const override { return std::string(); }
+
+ private:
+  // It is safe to keep a raw pointer because |job_| owns the last stream which
+  // indirectly owns |this|. Therefore, |job_| will not be destroyed when |this|
+  // is alive.
+  URLRequestJob* const job_;
+
+  DISALLOW_COPY_AND_ASSIGN(URLRequestJobSourceStream);
+};
 
 URLRequestJob::URLRequestJob(URLRequest* request,
                              NetworkDelegate* network_delegate)
@@ -67,8 +156,6 @@ URLRequestJob::URLRequestJob(URLRequest* request,
       done_(false),
       prefilter_bytes_read_(0),
       postfilter_bytes_read_(0),
-      filter_needs_more_output_space_(false),
-      filtered_read_buffer_len_(0),
       has_handled_response_(false),
       expected_content_size_(-1),
       network_delegate_(network_delegate),
@@ -78,6 +165,12 @@ URLRequestJob::URLRequestJob(URLRequest* request,
   base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
   if (power_monitor)
     power_monitor->AddObserver(this);
+}
+
+URLRequestJob::~URLRequestJob() {
+  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
+  if (power_monitor)
+    power_monitor->RemoveObserver(this);
 }
 
 void URLRequestJob::SetUpload(UploadDataStream* upload) {
@@ -91,56 +184,31 @@ void URLRequestJob::SetPriority(RequestPriority priority) {
 
 void URLRequestJob::Kill() {
   weak_factory_.InvalidateWeakPtrs();
-  // Make sure the request is notified that we are done.  We assume that the
-  // request took care of setting its error status before calling Kill.
-  if (request_)
-    NotifyCanceled();
+  // Make sure the URLRequest is notified that the job is done.  This assumes
+  // that the URLRequest took care of setting its error status before calling
+  // Kill().
+  // TODO(mmenke):  The URLRequest is currently deleted before this method
+  // invokes its async callback whenever this is called by the URLRequest.
+  // Try to simplify how cancellation works.
+  NotifyCanceled();
 }
 
-void URLRequestJob::DetachRequest() {
-  request_ = NULL;
-}
-
-// This function calls ReadRawData to get stream data. If a filter exists, it
-// passes the data to the attached filter. It then returns the output from
-// filter back to the caller.
-bool URLRequestJob::Read(IOBuffer* buf, int buf_size, int *bytes_read) {
+// This method passes reads down the filter chain, where they eventually end up
+// at URLRequestJobSourceStream::Read, which calls back into
+// URLRequestJob::ReadRawData.
+int URLRequestJob::Read(IOBuffer* buf, int buf_size) {
   DCHECK_LT(buf_size, 1000000);  // Sanity check.
   DCHECK(buf);
-  DCHECK(bytes_read);
-  DCHECK(filtered_read_buffer_.get() == NULL);
-  DCHECK_EQ(0, filtered_read_buffer_len_);
 
-  Error error = OK;
-  *bytes_read = 0;
+  pending_read_buffer_ = buf;
+  int result = source_stream_->Read(
+      buf, buf_size, base::Bind(&URLRequestJob::SourceStreamReadComplete,
+                                weak_factory_.GetWeakPtr(), false));
+  if (result == ERR_IO_PENDING)
+    return ERR_IO_PENDING;
 
-  // Skip Filter if not present.
-  if (!filter_) {
-    error = ReadRawDataHelper(buf, buf_size, bytes_read);
-  } else {
-    // Save the caller's buffers while we do IO
-    // in the filter's buffers.
-    filtered_read_buffer_ = buf;
-    filtered_read_buffer_len_ = buf_size;
-
-    error = ReadFilteredData(bytes_read);
-
-    // Synchronous EOF from the filter.
-    if (error == OK && *bytes_read == 0)
-      DoneReading();
-  }
-
-  if (error == OK) {
-    // If URLRequestJob read zero bytes, the job is at EOF.
-    if (*bytes_read == 0)
-      NotifyDone(URLRequestStatus());
-  } else if (error == ERR_IO_PENDING) {
-    SetStatus(URLRequestStatus::FromError(ERR_IO_PENDING));
-  } else {
-    NotifyDone(URLRequestStatus::FromError(error));
-    *bytes_read = -1;
-  }
-  return error == OK;
+  SourceStreamReadComplete(true, result);
+  return result;
 }
 
 void URLRequestJob::StopCaching() {
@@ -164,10 +232,6 @@ LoadState URLRequestJob::GetLoadState() const {
   return LOAD_STATE_IDLE;
 }
 
-UploadProgress URLRequestJob::GetUploadProgress() const {
-  return UploadProgress();
-}
-
 bool URLRequestJob::GetCharset(std::string* charset) {
   return false;
 }
@@ -183,12 +247,8 @@ bool URLRequestJob::GetRemoteEndpoint(IPEndPoint* endpoint) const {
   return false;
 }
 
-bool URLRequestJob::GetResponseCookies(std::vector<std::string>* cookies) {
-  return false;
-}
-
-Filter* URLRequestJob::SetupFilter() const {
-  return NULL;
+void URLRequestJob::PopulateNetErrorDetails(NetErrorDetails* details) const {
+  return;
 }
 
 bool URLRequestJob::IsRedirectResponse(GURL* location,
@@ -258,18 +318,12 @@ void URLRequestJob::FollowDeferredRedirect() {
   // will fail inside FollowRedirect.  The DCHECK above asserts that we called
   // OnReceivedRedirect.
 
-  // It is also possible that FollowRedirect will drop the last reference to
-  // this job, so we need to reset our members before calling it.
+  // It is also possible that FollowRedirect will delete |this|, so not safe to
+  // pass along reference to |deferred_redirect_info_|.
 
   RedirectInfo redirect_info = deferred_redirect_info_;
   deferred_redirect_info_ = RedirectInfo();
   FollowRedirect(redirect_info);
-}
-
-void URLRequestJob::ResumeNetworkStart() {
-  // This should only be called for HTTP Jobs, and implemented in the derived
-  // class.
-  NOTREACHED();
 }
 
 bool URLRequestJob::GetMimeType(std::string* mime_type) const {
@@ -309,14 +363,14 @@ void URLRequestJob::GetConnectionAttempts(ConnectionAttempts* out) const {
 // static
 GURL URLRequestJob::ComputeReferrerForRedirect(
     URLRequest::ReferrerPolicy policy,
-    const std::string& referrer,
+    const GURL& original_referrer,
     const GURL& redirect_destination) {
-  GURL original_referrer(referrer);
   bool secure_referrer_but_insecure_destination =
       original_referrer.SchemeIsCryptographic() &&
       !redirect_destination.SchemeIsCryptographic();
+  url::Origin referrer_origin(original_referrer);
   bool same_origin =
-      original_referrer.GetOrigin() == redirect_destination.GetOrigin();
+      referrer_origin.IsSameOriginWith(url::Origin(redirect_destination));
   switch (policy) {
     case URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE:
       return secure_referrer_but_insecure_destination ? GURL()
@@ -328,83 +382,58 @@ GURL URLRequestJob::ComputeReferrerForRedirect(
       } else if (secure_referrer_but_insecure_destination) {
         return GURL();
       } else {
-        return original_referrer.GetOrigin();
+        return referrer_origin.GetURL();
       }
 
     case URLRequest::ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN:
-      return same_origin ? original_referrer : original_referrer.GetOrigin();
+      return same_origin ? original_referrer : referrer_origin.GetURL();
 
     case URLRequest::NEVER_CLEAR_REFERRER:
       return original_referrer;
+    case URLRequest::ORIGIN:
+      return referrer_origin.GetURL();
+    case URLRequest::NO_REFERRER:
+      return GURL();
+    case URLRequest::MAX_REFERRER_POLICY:
+      NOTREACHED();
+      return GURL();
   }
 
   NOTREACHED();
   return GURL();
 }
 
-URLRequestJob::~URLRequestJob() {
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  if (power_monitor)
-    power_monitor->RemoveObserver(this);
-}
-
 void URLRequestJob::NotifyCertificateRequested(
     SSLCertRequestInfo* cert_request_info) {
-  if (!request_)
-    return;  // The request was destroyed, so there is no more work to do.
-
   request_->NotifyCertificateRequested(cert_request_info);
 }
 
 void URLRequestJob::NotifySSLCertificateError(const SSLInfo& ssl_info,
                                               bool fatal) {
-  if (!request_)
-    return;  // The request was destroyed, so there is no more work to do.
-
   request_->NotifySSLCertificateError(ssl_info, fatal);
 }
 
 bool URLRequestJob::CanGetCookies(const CookieList& cookie_list) const {
-  if (!request_)
-    return false;  // The request was destroyed, so there is no more work to do.
-
   return request_->CanGetCookies(cookie_list);
 }
 
 bool URLRequestJob::CanSetCookie(const std::string& cookie_line,
                                  CookieOptions* options) const {
-  if (!request_)
-    return false;  // The request was destroyed, so there is no more work to do.
-
   return request_->CanSetCookie(cookie_line, options);
 }
 
 bool URLRequestJob::CanEnablePrivacyMode() const {
-  if (!request_)
-    return false;  // The request was destroyed, so there is no more work to do.
-
   return request_->CanEnablePrivacyMode();
 }
 
-void URLRequestJob::NotifyBeforeNetworkStart(bool* defer) {
-  if (!request_)
-    return;
-
-  request_->NotifyBeforeNetworkStart(defer);
-}
-
 void URLRequestJob::NotifyHeadersComplete() {
-  if (!request_ || !request_->has_delegate())
-    return;  // The request was destroyed, so there is no more work to do.
-
   if (has_handled_response_)
     return;
 
-  // This should not be called on error, and the job type should have cleared
-  // IO_PENDING state before calling this method.
-  // TODO(mmenke): Change this to a DCHECK once https://crbug.com/508900 is
-  // resolved.
-  CHECK(request_->status().is_success());
+  // The URLRequest status should still be IO_PENDING, which it was set to
+  // before the URLRequestJob was started.  On error or cancellation, this
+  // method should not be called.
+  DCHECK(request_->status().is_io_pending());
 
   // Initialize to the current time, and let the subclass optionally override
   // the time stamps if it has that information.  The default request_time is
@@ -412,24 +441,22 @@ void URLRequestJob::NotifyHeadersComplete() {
   request_->response_info_.response_time = base::Time::Now();
   GetResponseInfo(&request_->response_info_);
 
-  // When notifying the delegate, the delegate can release the request
-  // (and thus release 'this').  After calling to the delgate, we must
-  // check the request pointer to see if it still exists, and return
-  // immediately if it has been destroyed.  self_preservation ensures our
-  // survival until we can get out of this method.
-  scoped_refptr<URLRequestJob> self_preservation(this);
-
   MaybeNotifyNetworkBytes();
-
-  if (request_)
-    request_->OnHeadersComplete();
+  request_->OnHeadersComplete();
 
   GURL new_location;
   int http_status_code;
+
   if (IsRedirectResponse(&new_location, &http_status_code)) {
     // Redirect response bodies are not read. Notify the transaction
     // so it does not treat being stopped as an error.
     DoneReadingRedirectResponse();
+
+    // When notifying the URLRequest::Delegate, it can destroy the request,
+    // which will destroy |this|.  After calling to the URLRequest::Delegate,
+    // pointer must be checked to see if |this| still exists, and if not, the
+    // code must return immediately.
+    base::WeakPtr<URLRequestJob> weak_this(weak_factory_.GetWeakPtr());
 
     RedirectInfo redirect_info =
         ComputeRedirectInfo(new_location, http_status_code);
@@ -438,10 +465,8 @@ void URLRequestJob::NotifyHeadersComplete() {
 
     // Ensure that the request wasn't detached, destroyed, or canceled in
     // NotifyReceivedRedirect.
-    if (!request_ || !request_->has_delegate() ||
-        !request_->status().is_success()) {
+    if (!weak_this || !request_->status().is_success())
       return;
-    }
 
     if (defer_redirect) {
       deferred_redirect_info_ = redirect_info;
@@ -465,21 +490,32 @@ void URLRequestJob::NotifyHeadersComplete() {
   }
 
   has_handled_response_ = true;
-  if (request_->status().is_success())
-    filter_.reset(SetupFilter());
+  if (request_->status().is_success()) {
+    DCHECK(!source_stream_);
+    source_stream_ = SetUpSourceStream();
 
-  if (!filter_.get()) {
-    std::string content_length;
-    request_->GetResponseHeaderByName("content-length", &content_length);
-    if (!content_length.empty())
-      base::StringToInt64(content_length, &expected_content_size_);
-  } else {
-    request_->net_log().AddEvent(
-        NetLog::TYPE_URL_REQUEST_FILTERS_SET,
-        base::Bind(&FiltersSetCallback, base::Unretained(filter_.get())));
+    if (!source_stream_) {
+      OnDone(URLRequestStatus(URLRequestStatus::FAILED,
+                              ERR_CONTENT_DECODING_INIT_FAILED),
+             true);
+      return;
+    }
+    if (source_stream_->type() == SourceStream::TYPE_NONE) {
+      std::string content_length;
+      request_->GetResponseHeaderByName("content-length", &content_length);
+      if (!content_length.empty())
+        base::StringToInt64(content_length, &expected_content_size_);
+    } else {
+      request_->net_log().AddEvent(
+          NetLogEventType::URL_REQUEST_FILTERS_SET,
+          base::Bind(&SourceStreamSetCallback,
+                     base::Unretained(source_stream_.get())));
+    }
   }
 
-  request_->NotifyResponseStarted();
+  request_->NotifyResponseStarted(URLRequestStatus());
+
+  // |this| may be destroyed at this point.
 }
 
 void URLRequestJob::ConvertResultToError(int result, Error* error, int* count) {
@@ -493,97 +529,42 @@ void URLRequestJob::ConvertResultToError(int result, Error* error, int* count) {
 }
 
 void URLRequestJob::ReadRawDataComplete(int result) {
+  DCHECK(request_->status().is_io_pending());
+  DCHECK_NE(ERR_IO_PENDING, result);
+
   // TODO(cbentzel): Remove ScopedTracker below once crbug.com/475755 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "475755 URLRequestJob::RawReadCompleted"));
 
-  if (!request_ || !request_->has_delegate())
-    return;  // The request was destroyed, so there is no more work to do.
-
-  // TODO(darin): Bug 1004233. Re-enable this test once all of the chrome
-  // unit_tests have been fixed to not trip this.
-#if 0
-  DCHECK(!request_->status().is_io_pending());
-#endif
   // The headers should be complete before reads complete
   DCHECK(has_handled_response_);
 
-  Error error;
-  int bytes_read;
-  ConvertResultToError(result, &error, &bytes_read);
+  GatherRawReadStats(result);
 
-  DCHECK_NE(ERR_IO_PENDING, error);
+  // Notify SourceStream.
+  DCHECK(!read_raw_callback_.is_null());
 
-  // Synchronize the URLRequest state machine with the URLRequestJob state
-  // machine. If this read succeeded, either the request is at EOF and the
-  // URLRequest state machine goes to 'finished', or it is not and the
-  // URLRequest state machine goes to 'success'. If the read failed, the
-  // URLRequest state machine goes directly to 'finished'.
-  //
-  // Update the URLRequest's status first, so that NotifyReadCompleted has an
-  // accurate view of the request.
-  if (error == OK && bytes_read > 0) {
-    SetStatus(URLRequestStatus());
-  } else {
-    NotifyDone(URLRequestStatus::FromError(error));
-  }
-
-  GatherRawReadStats(error, bytes_read);
-
-  if (filter_.get() && error == OK) {
-    int filter_bytes_read = 0;
-    // Tell the filter that it has more data.
-    PushInputToFilter(bytes_read);
-
-    // Filter the data.
-    error = ReadFilteredData(&filter_bytes_read);
-
-    if (error == OK && !filter_bytes_read)
-      DoneReading();
-
-    DVLOG(1) << __FUNCTION__ << "() "
-             << "\"" << (request_ ? request_->url().spec() : "???") << "\""
-             << " pre bytes read = " << bytes_read
-             << " pre total = " << prefilter_bytes_read_
-             << " post total = " << postfilter_bytes_read_;
-    bytes_read = filter_bytes_read;
-  } else {
-    DVLOG(1) << __FUNCTION__ << "() "
-             << "\"" << (request_ ? request_->url().spec() : "???") << "\""
-             << " pre bytes read = " << bytes_read
-             << " pre total = " << prefilter_bytes_read_
-             << " post total = " << postfilter_bytes_read_;
-  }
-
-  // When notifying the delegate, the delegate can release the request
-  // (and thus release 'this').  After calling to the delegate, we must
-  // check the request pointer to see if it still exists, and return
-  // immediately if it has been destroyed.  self_preservation ensures our
-  // survival until we can get out of this method.
-  scoped_refptr<URLRequestJob> self_preservation(this);
-
-  // NotifyReadCompleted should be called after SetStatus or NotifyDone updates
-  // the status.
-  if (error == OK)
-    request_->NotifyReadCompleted(bytes_read);
+  base::ResetAndReturn(&read_raw_callback_).Run(result);
+  // |this| may be destroyed at this point.
 }
 
 void URLRequestJob::NotifyStartError(const URLRequestStatus &status) {
   DCHECK(!has_handled_response_);
-  has_handled_response_ = true;
-  if (request_) {
-    // There may be relevant information in the response info even in the
-    // error case.
-    GetResponseInfo(&request_->response_info_);
+  DCHECK(request_->status().is_io_pending());
 
-    request_->set_status(status);
-    request_->NotifyResponseStarted();
-    // We may have been deleted.
-  }
+  has_handled_response_ = true;
+  // There may be relevant information in the response info even in the
+  // error case.
+  GetResponseInfo(&request_->response_info_);
+
+  MaybeNotifyNetworkBytes();
+
+  request_->NotifyResponseStarted(status);
+  // |this| may have been deleted here.
 }
 
-void URLRequestJob::NotifyDone(const URLRequestStatus &status) {
+void URLRequestJob::OnDone(const URLRequestStatus& status, bool notify_done) {
   DCHECK(!done_) << "Job sending done notification twice";
   if (done_)
     return;
@@ -593,57 +574,35 @@ void URLRequestJob::NotifyDone(const URLRequestStatus &status) {
   // the response before getting here.
   DCHECK(has_handled_response_ || !status.is_success());
 
-  // As with RawReadCompleted, we need to take care to notice if we were
-  // destroyed during a delegate callback.
-  if (request_) {
-    request_->set_is_pending(false);
-    // With async IO, it's quite possible to have a few outstanding
-    // requests.  We could receive a request to Cancel, followed shortly
-    // by a successful IO.  For tracking the status(), once there is
-    // an error, we do not change the status back to success.  To
-    // enforce this, only set the status if the job is so far
-    // successful.
-    if (request_->status().is_success()) {
-      if (status.status() == URLRequestStatus::FAILED) {
-        request_->net_log().AddEventWithNetErrorCode(NetLog::TYPE_FAILED,
-                                                     status.error());
-      }
-      request_->set_status(status);
-    }
-
-    // If the request succeeded (And wasn't cancelled) and the response code was
-    // 4xx or 5xx, record whether or not the main frame was blank.  This is
-    // intended to be a short-lived histogram, used to figure out how important
-    // fixing http://crbug.com/331745 is.
-    if (request_->status().is_success()) {
-      int response_code = GetResponseCode();
-      if (400 <= response_code && response_code <= 599) {
-        bool page_has_content = (postfilter_bytes_read_ != 0);
-        if (request_->load_flags() & net::LOAD_MAIN_FRAME) {
-          UMA_HISTOGRAM_BOOLEAN("Net.ErrorResponseHasContentMainFrame",
-                                page_has_content);
-        } else {
-          UMA_HISTOGRAM_BOOLEAN("Net.ErrorResponseHasContentNonMainFrame",
-                                page_has_content);
-        }
-      }
-    }
+  request_->set_is_pending(false);
+  // With async IO, it's quite possible to have a few outstanding
+  // requests.  We could receive a request to Cancel, followed shortly
+  // by a successful IO.  For tracking the status(), once there is
+  // an error, we do not change the status back to success.  To
+  // enforce this, only set the status if the job is so far
+  // successful.
+  if (request_->status().is_success()) {
+    if (status.status() == URLRequestStatus::FAILED)
+      request_->net_log().AddEventWithNetErrorCode(NetLogEventType::FAILED,
+                                                   status.error());
+    request_->set_status(status);
   }
 
   MaybeNotifyNetworkBytes();
 
-  // Complete this notification later.  This prevents us from re-entering the
-  // delegate if we're done because of a synchronous call.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&URLRequestJob::CompleteNotifyDone,
-                            weak_factory_.GetWeakPtr()));
+  if (notify_done) {
+    // Complete this notification later.  This prevents us from re-entering the
+    // delegate if we're done because of a synchronous call.
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::Bind(&URLRequestJob::NotifyDone, weak_factory_.GetWeakPtr()));
+  }
 }
 
-void URLRequestJob::CompleteNotifyDone() {
-  // Check if we should notify the delegate that we're done because of an error.
-  if (request_ &&
-      !request_->status().is_success() &&
-      request_->has_delegate()) {
+void URLRequestJob::NotifyDone() {
+  // Check if we should notify the URLRequest that we're done because of an
+  // error.
+  if (!request_->status().is_success()) {
     // We report the error differently depending on whether we've called
     // OnResponseStarted yet.
     if (has_handled_response_) {
@@ -651,14 +610,14 @@ void URLRequestJob::CompleteNotifyDone() {
       request_->NotifyReadCompleted(-1);
     } else {
       has_handled_response_ = true;
-      request_->NotifyResponseStarted();
+      request_->NotifyResponseStarted(URLRequestStatus());
     }
   }
 }
 
 void URLRequestJob::NotifyCanceled() {
   if (!done_) {
-    NotifyDone(URLRequestStatus(URLRequestStatus::CANCELED, ERR_ABORTED));
+    OnDone(URLRequestStatus(URLRequestStatus::CANCELED, ERR_ABORTED), true);
   }
 }
 
@@ -687,216 +646,93 @@ void URLRequestJob::DoneReading() {
 void URLRequestJob::DoneReadingRedirectResponse() {
 }
 
-void URLRequestJob::PushInputToFilter(int bytes_read) {
-  DCHECK(filter_);
-  filter_->FlushStreamBuffer(bytes_read);
+std::unique_ptr<SourceStream> URLRequestJob::SetUpSourceStream() {
+  return base::MakeUnique<URLRequestJobSourceStream>(this);
 }
 
-Error URLRequestJob::ReadFilteredData(int* bytes_read) {
-  DCHECK(filter_);
-  DCHECK(filtered_read_buffer_.get());
-  DCHECK_GT(filtered_read_buffer_len_, 0);
-  DCHECK_LT(filtered_read_buffer_len_, 1000000);  // Sanity check.
-  DCHECK(!raw_read_buffer_);
-
-  *bytes_read = 0;
-  Error error = ERR_FAILED;
-
-  for (;;) {
-    if (is_done())
-      return OK;
-
-    if (!filter_needs_more_output_space_ && !filter_->stream_data_len()) {
-      // We don't have any raw data to work with, so read from the transaction.
-      int filtered_data_read;
-      error = ReadRawDataForFilter(&filtered_data_read);
-      // If ReadRawDataForFilter returned some data, fall through to the case
-      // below; otherwise, return early.
-      if (error != OK || filtered_data_read == 0)
-        return error;
-      filter_->FlushStreamBuffer(filtered_data_read);
-    }
-
-    if ((filter_->stream_data_len() || filter_needs_more_output_space_) &&
-        !is_done()) {
-      // Get filtered data.
-      int filtered_data_len = filtered_read_buffer_len_;
-      int output_buffer_size = filtered_data_len;
-      Filter::FilterStatus status =
-          filter_->ReadData(filtered_read_buffer_->data(), &filtered_data_len);
-
-      if (filter_needs_more_output_space_ && !filtered_data_len) {
-        // filter_needs_more_output_space_ was mistaken... there are no more
-        // bytes and we should have at least tried to fill up the filter's input
-        // buffer. Correct the state, and try again.
-        filter_needs_more_output_space_ = false;
-        continue;
-      }
-      filter_needs_more_output_space_ =
-          (filtered_data_len == output_buffer_size);
-
-      switch (status) {
-        case Filter::FILTER_DONE: {
-          filter_needs_more_output_space_ = false;
-          *bytes_read = filtered_data_len;
-          postfilter_bytes_read_ += filtered_data_len;
-          error = OK;
-          break;
-        }
-        case Filter::FILTER_NEED_MORE_DATA: {
-          // We have finished filtering all data currently in the buffer.
-          // There might be some space left in the output buffer. One can
-          // consider reading more data from the stream to feed the filter
-          // and filling up the output buffer. This leads to more complicated
-          // buffer management and data notification mechanisms.
-          // We can revisit this issue if there is a real perf need.
-          if (filtered_data_len > 0) {
-            *bytes_read = filtered_data_len;
-            postfilter_bytes_read_ += filtered_data_len;
-            error = OK;
-          } else {
-            // Read again since we haven't received enough data yet (e.g., we
-            // may not have a complete gzip header yet).
-            continue;
-          }
-          break;
-        }
-        case Filter::FILTER_OK: {
-          *bytes_read = filtered_data_len;
-          postfilter_bytes_read_ += filtered_data_len;
-          error = OK;
-          break;
-        }
-        case Filter::FILTER_ERROR: {
-          DVLOG(1) << __FUNCTION__ << "() "
-                   << "\"" << (request_ ? request_->url().spec() : "???")
-                   << "\"" << " Filter Error";
-          filter_needs_more_output_space_ = false;
-          error = ERR_CONTENT_DECODING_FAILED;
-          break;
-        }
-        default: {
-          NOTREACHED();
-          filter_needs_more_output_space_ = false;
-          error = ERR_FAILED;
-          break;
-        }
-      }
-
-      // If logging all bytes is enabled, log the filtered bytes read.
-      if (error == OK && request() && filtered_data_len > 0 &&
-          request()->net_log().IsCapturing()) {
-        request()->net_log().AddByteTransferEvent(
-            NetLog::TYPE_URL_REQUEST_JOB_FILTERED_BYTES_READ, filtered_data_len,
-            filtered_read_buffer_->data());
-      }
-    } else {
-      // we are done, or there is no data left.
-      error = OK;
-    }
-    break;
-  }
-
-  if (error == OK) {
-    // When we successfully finished a read, we no longer need to save the
-    // caller's buffers. Release our reference.
-    filtered_read_buffer_ = NULL;
-    filtered_read_buffer_len_ = 0;
-  }
-  return error;
-}
-
-void URLRequestJob::DestroyFilters() {
-  filter_.reset();
+void URLRequestJob::DestroySourceStream() {
+  source_stream_.reset();
 }
 
 const URLRequestStatus URLRequestJob::GetStatus() {
-  if (request_)
-    return request_->status();
-  // If the request is gone, we must be cancelled.
-  return URLRequestStatus(URLRequestStatus::CANCELED,
-                          ERR_ABORTED);
+  return request_->status();
 }
 
-void URLRequestJob::SetStatus(const URLRequestStatus &status) {
-  if (request_) {
-    // An error status should never be replaced by a non-error status by a
-    // URLRequestJob.  URLRequest has some retry paths, but it resets the status
-    // itself, if needed.
-    // TODO(mmenke): Change this to a DCHECK once https://crbug.com/508900 is
-    // resolved.
-    CHECK(request_->status().is_io_pending() ||
-          request_->status().is_success() ||
-          (!status.is_success() && !status.is_io_pending()));
-    request_->set_status(status);
-  }
-}
-
-void URLRequestJob::SetProxyServer(const HostPortPair& proxy_server) {
+void URLRequestJob::SetProxyServer(const ProxyServer& proxy_server) {
   request_->proxy_server_ = proxy_server;
 }
 
-Error URLRequestJob::ReadRawDataForFilter(int* bytes_read) {
-  Error error = ERR_FAILED;
-  DCHECK(bytes_read);
-  DCHECK(filter_.get());
+void URLRequestJob::SourceStreamReadComplete(bool synchronous, int result) {
+  DCHECK_NE(ERR_IO_PENDING, result);
 
-  *bytes_read = 0;
-
-  // Get more pre-filtered data if needed.
-  // TODO(mbelshe): is it possible that the filter needs *MORE* data
-  //    when there is some data already in the buffer?
-  if (!filter_->stream_data_len() && !is_done()) {
-    IOBuffer* stream_buffer = filter_->stream_buffer();
-    int stream_buffer_size = filter_->stream_buffer_size();
-    error = ReadRawDataHelper(stream_buffer, stream_buffer_size, bytes_read);
+  if (result > 0 && request()->net_log().IsCapturing()) {
+    request()->net_log().AddByteTransferEvent(
+        NetLogEventType::URL_REQUEST_JOB_FILTERED_BYTES_READ, result,
+        pending_read_buffer_->data());
   }
-  return error;
+  pending_read_buffer_ = nullptr;
+
+  if (result < 0) {
+    OnDone(URLRequestStatus::FromError(result), !synchronous);
+    return;
+  }
+
+  if (result > 0) {
+    postfilter_bytes_read_ += result;
+  } else {
+    DCHECK_EQ(0, result);
+    DoneReading();
+    // In the synchronous case, the caller will notify the URLRequest of
+    // completion. In the async case, the NotifyReadCompleted call will.
+    // TODO(mmenke): Can this be combined with the error case?
+    OnDone(URLRequestStatus(), false);
+  }
+
+  if (!synchronous)
+    request_->NotifyReadCompleted(result);
 }
 
-Error URLRequestJob::ReadRawDataHelper(IOBuffer* buf,
-                                       int buf_size,
-                                       int* bytes_read) {
+int URLRequestJob::ReadRawDataHelper(IOBuffer* buf,
+                                     int buf_size,
+                                     const CompletionCallback& callback) {
   DCHECK(!raw_read_buffer_);
 
-  // Keep a pointer to the read buffer, so we have access to it in
-  // GatherRawReadStats() in the event that the read completes asynchronously.
+  // Keep a pointer to the read buffer, so URLRequestJob::GatherRawReadStats()
+  // has access to it to log stats.
   raw_read_buffer_ = buf;
-  Error error;
-  ConvertResultToError(ReadRawData(buf, buf_size), &error, bytes_read);
 
-  if (error != ERR_IO_PENDING) {
+  // TODO(xunjieli): Make ReadRawData take in a callback rather than requiring
+  // subclass to call ReadRawDataComplete upon asynchronous completion.
+  int result = ReadRawData(buf, buf_size);
+
+  if (result != ERR_IO_PENDING) {
     // If the read completes synchronously, either success or failure, invoke
     // GatherRawReadStats so we can account for the completed read.
-    GatherRawReadStats(error, *bytes_read);
+    GatherRawReadStats(result);
+  } else {
+    read_raw_callback_ = callback;
   }
-  return error;
+  return result;
 }
 
 void URLRequestJob::FollowRedirect(const RedirectInfo& redirect_info) {
   int rv = request_->Redirect(redirect_info);
   if (rv != OK)
-    NotifyDone(URLRequestStatus(URLRequestStatus::FAILED, rv));
+    OnDone(URLRequestStatus(URLRequestStatus::FAILED, rv), true);
 }
 
-void URLRequestJob::GatherRawReadStats(Error error, int bytes_read) {
+void URLRequestJob::GatherRawReadStats(int bytes_read) {
   DCHECK(raw_read_buffer_ || bytes_read == 0);
-  DCHECK_NE(ERR_IO_PENDING, error);
-
-  if (error != OK) {
-    raw_read_buffer_ = nullptr;
-    return;
-  }
-  // If |filter_| is non-NULL, bytes will be logged after it is applied
-  // instead.
-  if (!filter_.get() && request() && bytes_read > 0 &&
-      request()->net_log().IsCapturing()) {
-    request()->net_log().AddByteTransferEvent(
-        NetLog::TYPE_URL_REQUEST_JOB_BYTES_READ, bytes_read,
-        raw_read_buffer_->data());
-  }
+  DCHECK_NE(ERR_IO_PENDING, bytes_read);
 
   if (bytes_read > 0) {
+    // If there is a filter, bytes will be logged after the filter is applied.
+    if (source_stream_->type() != SourceStream::TYPE_NONE &&
+        request()->net_log().IsCapturing()) {
+      request()->net_log().AddByteTransferEvent(
+          NetLogEventType::URL_REQUEST_JOB_BYTES_READ, bytes_read,
+          raw_read_buffer_->data());
+    }
     RecordBytesRead(bytes_read);
   }
   raw_read_buffer_ = nullptr;
@@ -904,7 +740,7 @@ void URLRequestJob::GatherRawReadStats(Error error, int bytes_read) {
 
 void URLRequestJob::RecordBytesRead(int bytes_read) {
   DCHECK_GT(bytes_read, 0);
-  prefilter_bytes_read_ += bytes_read;
+  prefilter_bytes_read_ += base::checked_cast<size_t>(bytes_read);
 
   // On first read, notify NetworkQualityEstimator that response headers have
   // been received.
@@ -913,19 +749,17 @@ void URLRequestJob::RecordBytesRead(int bytes_read) {
   // If prefilter_bytes_read_ is equal to bytes_read, it indicates this is the
   // first raw read of the response body. This is used as the signal that
   // response headers have been received.
-  if (request_ && request_->context()->network_quality_estimator() &&
-      prefilter_bytes_read_ == bytes_read) {
+  if (request_->context()->network_quality_estimator() &&
+      prefilter_bytes_read() == bytes_read) {
     request_->context()->network_quality_estimator()->NotifyHeadersReceived(
         *request_);
   }
 
-  if (!filter_.get())
-    postfilter_bytes_read_ += bytes_read;
   DVLOG(2) << __FUNCTION__ << "() "
-           << "\"" << (request_ ? request_->url().spec() : "???") << "\""
+           << "\"" << request_->url().spec() << "\""
            << " pre bytes read = " << bytes_read
-           << " pre total = " << prefilter_bytes_read_
-           << " post total = " << postfilter_bytes_read_;
+           << " pre total = " << prefilter_bytes_read()
+           << " post total = " << postfilter_bytes_read();
   UpdatePacketReadTimes();  // Facilitate stats recording if it is active.
 
   // Notify observers if any additional network usage has occurred. Note that
@@ -934,10 +768,6 @@ void URLRequestJob::RecordBytesRead(int bytes_read) {
   // network bytes is received before multiple smaller raw reads are performed
   // on it.
   MaybeNotifyNetworkBytes();
-}
-
-bool URLRequestJob::FilterHasData() {
-    return filter_.get() && filter_->stream_data_len();
 }
 
 void URLRequestJob::UpdatePacketReadTimes() {
@@ -978,17 +808,30 @@ RedirectInfo URLRequestJob::ComputeRedirectInfo(const GURL& location,
         request_->first_party_for_cookies();
   }
 
+  redirect_info.new_referrer_policy =
+      ProcessReferrerPolicyHeaderOnRedirect(request_);
+
   // Alter the referrer if redirecting cross-origin (especially HTTP->HTTPS).
   redirect_info.new_referrer =
-      ComputeReferrerForRedirect(request_->referrer_policy(),
-                                 request_->referrer(),
-                                 redirect_info.new_url).spec();
+      ComputeReferrerForRedirect(redirect_info.new_referrer_policy,
+                                 GURL(request_->referrer()),
+                                 redirect_info.new_url)
+          .spec();
+
+  std::string include_referer;
+  request_->GetResponseHeaderByName("include-referred-token-binding-id",
+                                    &include_referer);
+  include_referer = base::ToLowerASCII(include_referer);
+  if (include_referer == "true" &&
+      request_->ssl_info().token_binding_negotiated) {
+    redirect_info.referred_token_binding_host = url.host();
+  }
 
   return redirect_info;
 }
 
 void URLRequestJob::MaybeNotifyNetworkBytes() {
-  if (!request_ || !network_delegate_)
+  if (!network_delegate_)
     return;
 
   // Report any new received bytes.

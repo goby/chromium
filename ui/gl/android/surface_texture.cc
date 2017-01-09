@@ -13,7 +13,7 @@
 #include "ui/gl/android/surface_texture_listener.h"
 #include "ui/gl/gl_bindings.h"
 
-namespace gfx {
+namespace gl {
 
 scoped_refptr<SurfaceTexture> SurfaceTexture::Create(int texture_id) {
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -28,22 +28,28 @@ SurfaceTexture::SurfaceTexture(
 
 SurfaceTexture::~SurfaceTexture() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_SurfaceTexturePlatformWrapper_destroy(env, j_surface_texture_.obj());
+  Java_SurfaceTexturePlatformWrapper_destroy(env, j_surface_texture_);
 }
 
 void SurfaceTexture::SetFrameAvailableCallback(
     const base::Closure& callback) {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_SurfaceTexturePlatformWrapper_setFrameAvailableCallback(
-      env,
-      j_surface_texture_.obj(),
-      reinterpret_cast<intptr_t>(new SurfaceTextureListener(callback)));
+      env, j_surface_texture_,
+      reinterpret_cast<intptr_t>(new SurfaceTextureListener(callback, false)));
+}
+
+void SurfaceTexture::SetFrameAvailableCallbackOnAnyThread(
+    const base::Closure& callback) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_SurfaceTexturePlatformWrapper_setFrameAvailableCallback(
+      env, j_surface_texture_,
+      reinterpret_cast<intptr_t>(new SurfaceTextureListener(callback, true)));
 }
 
 void SurfaceTexture::UpdateTexImage() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_SurfaceTexturePlatformWrapper_updateTexImage(env,
-                                                    j_surface_texture_.obj());
+  Java_SurfaceTexturePlatformWrapper_updateTexImage(env, j_surface_texture_);
 }
 
 void SurfaceTexture::GetTransformMatrix(float mtx[16]) {
@@ -51,8 +57,8 @@ void SurfaceTexture::GetTransformMatrix(float mtx[16]) {
 
   base::android::ScopedJavaLocalRef<jfloatArray> jmatrix(
       env, env->NewFloatArray(16));
-  Java_SurfaceTexturePlatformWrapper_getTransformMatrix(
-      env, j_surface_texture_.obj(), jmatrix.obj());
+  Java_SurfaceTexturePlatformWrapper_getTransformMatrix(env, j_surface_texture_,
+                                                        jmatrix);
 
   jboolean is_copy;
   jfloat* elements = env->GetFloatArrayElements(jmatrix.obj(), &is_copy);
@@ -67,14 +73,14 @@ void SurfaceTexture::AttachToGLContext() {
   glGetIntegerv(GL_TEXTURE_BINDING_EXTERNAL_OES, &texture_id);
   DCHECK(texture_id);
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_SurfaceTexturePlatformWrapper_attachToGLContext(
-      env, j_surface_texture_.obj(), texture_id);
+  Java_SurfaceTexturePlatformWrapper_attachToGLContext(env, j_surface_texture_,
+                                                       texture_id);
 }
 
 void SurfaceTexture::DetachFromGLContext() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_SurfaceTexturePlatformWrapper_detachFromGLContext(
-      env, j_surface_texture_.obj());
+  Java_SurfaceTexturePlatformWrapper_detachFromGLContext(env,
+                                                         j_surface_texture_);
 }
 
 ANativeWindow* SurfaceTexture::CreateSurface() {
@@ -89,8 +95,9 @@ ANativeWindow* SurfaceTexture::CreateSurface() {
   return native_window;
 }
 
-bool SurfaceTexture::RegisterSurfaceTexture(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+void SurfaceTexture::ReleaseSurfaceTexture() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_SurfaceTexturePlatformWrapper_release(env, j_surface_texture_);
 }
 
-}  // namespace gfx
+}  // namespace gl

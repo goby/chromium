@@ -4,64 +4,33 @@
 
 #include "ui/views/mus/window_manager_connection.h"
 
+#include <algorithm>
+#include <set>
+#include <utility>
+
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/thread_local.h"
-#include "base/threading/thread_restrictions.h"
-#include "components/mus/public/cpp/window_tree_connection.h"
-#include "components/mus/public/interfaces/window_tree.mojom.h"
-#include "mojo/application/public/cpp/application_connection.h"
-#include "mojo/application/public/cpp/application_impl.h"
-#include "mojo/converters/geometry/geometry_type_converters.h"
-#include "mojo/converters/network/network_type_converters.h"
-#include "ui/gfx/display.h"
-#include "ui/gfx/geometry/point_conversions.h"
-#include "ui/gfx/geometry/rect.h"
-#include "ui/mojo/init/ui_init.h"
+#include "services/service_manager/public/cpp/connection.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/ui/public/cpp/gpu/gpu.h"
+#include "services/ui/public/cpp/property_type_converters.h"
+#include "services/ui/public/cpp/window.h"
+#include "services/ui/public/cpp/window_property.h"
+#include "services/ui/public/cpp/window_tree_client.h"
+#include "services/ui/public/interfaces/event_matcher.mojom.h"
+#include "services/ui/public/interfaces/window_tree.mojom.h"
+#include "ui/aura/env.h"
+#include "ui/aura/mus/os_exchange_data_provider_mus.h"
+#include "ui/views/mus/clipboard_mus.h"
 #include "ui/views/mus/native_widget_mus.h"
-#include "ui/views/mus/window_manager_frame_values.h"
+#include "ui/views/mus/pointer_watcher_event_router.h"
+#include "ui/views/mus/screen_mus.h"
+#include "ui/views/mus/surface_context_factory.h"
+#include "ui/views/pointer_watcher.h"
 #include "ui/views/views_delegate.h"
 
-namespace mojo {
-
-gfx::Display::Rotation GFXRotationFromMojomRotation(
-    mus::mojom::Rotation input) {
-  switch (input) {
-    case mus::mojom::ROTATION_VALUE_0:
-      return gfx::Display::ROTATE_0;
-    case mus::mojom::ROTATION_VALUE_90:
-      return gfx::Display::ROTATE_90;
-    case mus::mojom::ROTATION_VALUE_180:
-      return gfx::Display::ROTATE_180;
-    case mus::mojom::ROTATION_VALUE_270:
-      return gfx::Display::ROTATE_270;
-  }
-  return gfx::Display::ROTATE_0;
-}
-
-template <>
-struct TypeConverter<gfx::Display, mus::mojom::DisplayPtr> {
-  static gfx::Display Convert(const mus::mojom::DisplayPtr& input) {
-    gfx::Display result;
-    result.set_id(input->id);
-    result.SetScaleAndBounds(input->device_pixel_ratio,
-                             input->bounds.To<gfx::Rect>());
-    gfx::Rect work_area(
-        gfx::ScaleToFlooredPoint(
-            gfx::Point(input->work_area->x, input->work_area->y),
-            1.0f / input->device_pixel_ratio),
-        gfx::ScaleToFlooredSize(
-            gfx::Size(input->work_area->width, input->work_area->height),
-            1.0f / input->device_pixel_ratio));
-    result.set_work_area(work_area);
-    result.set_rotation(GFXRotationFromMojomRotation(input->rotation));
-    return result;
-  }
-};
-
-}  // namespace mojo
-
 namespace views {
-
 namespace {
 
 using WindowManagerConnectionPtr =
@@ -71,32 +40,74 @@ using WindowManagerConnectionPtr =
 base::LazyInstance<WindowManagerConnectionPtr>::Leaky lazy_tls_ptr =
     LAZY_INSTANCE_INITIALIZER;
 
-std::vector<gfx::Display> GetDisplaysFromWindowManager(
-    mus::mojom::WindowManagerPtr* window_manager) {
-  WindowManagerFrameValues frame_values;
-  std::vector<gfx::Display> displays;
-  (*window_manager)
-      ->GetConfig([&displays,
-                   &frame_values](mus::mojom::WindowManagerConfigPtr results) {
-        displays = results->displays.To<std::vector<gfx::Display>>();
-        frame_values.normal_insets =
-            results->normal_client_area_insets.To<gfx::Insets>();
-        frame_values.maximized_insets =
-            results->maximized_client_area_insets.To<gfx::Insets>();
-        frame_values.max_title_bar_button_width =
-            results->max_title_bar_button_width;
-      });
-  CHECK(window_manager->WaitForIncomingResponse());
-  WindowManagerFrameValues::SetInstance(frame_values);
-  return displays;
+// Recursively finds the deepest visible window from |windows| that contains
+// |screen_point|, when offsetting by the display origins from
+// |display_origins|.
+ui::Window* GetWindowFrom(const std::map<int64_t, gfx::Point>& display_origins,
+                          const std::vector<ui::Window*>& windows,
+                          const gfx::Point& screen_point) {
+  for (ui::Window* window : windows) {
+    if (!window->visible())
+      continue;
+
+    auto it = display_origins.find(window->display_id());
+    if (it == display_origins.end())
+      continue;
+
+    gfx::Rect bounds_in_screen = window->GetBoundsInRoot();
+    bounds_in_screen.Offset(it->second.x(), it->second.y());
+
+    if (bounds_in_screen.Contains(screen_point)) {
+      if (!window->children().empty()) {
+        ui::Window* child =
+            GetWindowFrom(display_origins, window->children(), screen_point);
+        if (child)
+          return child;
+      }
+
+      return window;
+    }
+  }
+  return nullptr;
+}
+
+aura::Window* GetAuraWindowFromUiWindow(ui::Window* window) {
+  if (!window)
+    return nullptr;
+  NativeWidgetMus* nw_mus = NativeWidgetMus::GetForWindow(window);
+  return nw_mus
+             ? static_cast<internal::NativeWidgetPrivate*>(nw_mus)
+                   ->GetNativeView()
+             : nullptr;
 }
 
 }  // namespace
 
+WindowManagerConnection::~WindowManagerConnection() {
+  // ~WindowTreeClient calls back to us (we're its delegate), destroy it while
+  // we are still valid.
+  client_.reset();
+  ui::OSExchangeDataProviderFactory::SetFactory(nullptr);
+  ui::Clipboard::DestroyClipboardForCurrentThread();
+  gpu_.reset();
+  lazy_tls_ptr.Pointer()->Set(nullptr);
+
+  if (ViewsDelegate::GetInstance()) {
+    ViewsDelegate::GetInstance()->set_native_widget_factory(
+        ViewsDelegate::NativeWidgetFactory());
+  }
+}
+
 // static
-void WindowManagerConnection::Create(mojo::ApplicationImpl* app) {
+std::unique_ptr<WindowManagerConnection> WindowManagerConnection::Create(
+    service_manager::Connector* connector,
+    const service_manager::Identity& identity,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(!lazy_tls_ptr.Pointer()->Get());
-  lazy_tls_ptr.Pointer()->Set(new WindowManagerConnection(app));
+  WindowManagerConnection* connection =
+      new WindowManagerConnection(connector, identity, std::move(task_runner));
+  DCHECK(lazy_tls_ptr.Pointer()->Get());
+  return base::WrapUnique(connection);
 }
 
 // static
@@ -106,48 +117,119 @@ WindowManagerConnection* WindowManagerConnection::Get() {
   return connection;
 }
 
-mus::Window* WindowManagerConnection::NewWindow(
+// static
+bool WindowManagerConnection::Exists() {
+  return !!lazy_tls_ptr.Pointer()->Get();
+}
+
+ui::Window* WindowManagerConnection::NewTopLevelWindow(
     const std::map<std::string, std::vector<uint8_t>>& properties) {
-  mus::mojom::WindowTreeClientPtr window_tree_client;
-  mojo::InterfaceRequest<mus::mojom::WindowTreeClient>
-      window_tree_client_request = GetProxy(&window_tree_client);
-  window_manager_->OpenWindow(
-      window_tree_client.Pass(),
-      mojo::Map<mojo::String, mojo::Array<uint8_t>>::From(properties));
-
-  base::ThreadRestrictions::ScopedAllowWait allow_wait;
-  mus::WindowTreeConnection* window_tree_connection =
-      mus::WindowTreeConnection::Create(
-          this, window_tree_client_request.Pass(),
-          mus::WindowTreeConnection::CreateType::WAIT_FOR_EMBED);
-  DCHECK(window_tree_connection->GetRoot());
-  return window_tree_connection->GetRoot();
+  return client_->NewTopLevelWindow(&properties);
 }
 
-WindowManagerConnection::WindowManagerConnection(mojo::ApplicationImpl* app)
-    : app_(app) {
-  app->ConnectToService("mojo:mus", &window_manager_);
-
-  ui_init_.reset(new ui::mojo::UIInit(
-      GetDisplaysFromWindowManager(&window_manager_)));
-  ViewsDelegate::GetInstance()->set_native_widget_factory(
-      base::Bind(&WindowManagerConnection::CreateNativeWidget,
-                 base::Unretained(this)));
-}
-
-WindowManagerConnection::~WindowManagerConnection() {}
-
-void WindowManagerConnection::OnEmbed(mus::Window* root) {}
-void WindowManagerConnection::OnConnectionLost(
-    mus::WindowTreeConnection* connection) {}
-
-NativeWidget* WindowManagerConnection::CreateNativeWidget(
+NativeWidget* WindowManagerConnection::CreateNativeWidgetMus(
+    const std::map<std::string, std::vector<uint8_t>>& props,
     const Widget::InitParams& init_params,
     internal::NativeWidgetDelegate* delegate) {
-  std::map<std::string, std::vector<uint8_t>> properties;
+  // TYPE_CONTROL widgets require a NativeWidgetAura. So we let this fall
+  // through, so that the default NativeWidgetPrivate::CreateNativeWidget() is
+  // used instead.
+  if (init_params.type == Widget::InitParams::TYPE_CONTROL)
+    return nullptr;
+  std::map<std::string, std::vector<uint8_t>> properties = props;
   NativeWidgetMus::ConfigurePropertiesForNewWindow(init_params, &properties);
-  return new NativeWidgetMus(delegate, app_->shell(), NewWindow(properties),
-                             mus::mojom::SURFACE_TYPE_DEFAULT);
+  properties[ui::mojom::WindowManager::kAppID_Property] =
+      mojo::ConvertTo<std::vector<uint8_t>>(identity_.name());
+  return new NativeWidgetMus(delegate, NewTopLevelWindow(properties),
+                             ui::mojom::CompositorFrameSinkType::DEFAULT);
+}
+
+const std::set<ui::Window*>& WindowManagerConnection::GetRoots() const {
+  return client_->GetRoots();
+}
+
+WindowManagerConnection::WindowManagerConnection(
+    service_manager::Connector* connector,
+    const service_manager::Identity& identity,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    : connector_(connector), identity_(identity) {
+  lazy_tls_ptr.Pointer()->Set(this);
+
+  gpu_ = ui::Gpu::Create(connector, std::move(task_runner));
+  compositor_context_factory_ =
+      base::MakeUnique<views::SurfaceContextFactory>(gpu_.get());
+  aura::Env::GetInstance()->set_context_factory(
+      compositor_context_factory_.get());
+  client_ = base::MakeUnique<ui::WindowTreeClient>(this, nullptr, nullptr);
+  client_->ConnectViaWindowTreeFactory(connector_);
+
+  pointer_watcher_event_router_ =
+      base::MakeUnique<PointerWatcherEventRouter>(client_.get());
+
+  screen_ = base::MakeUnique<ScreenMus>(this);
+  screen_->Init(connector);
+
+  std::unique_ptr<ClipboardMus> clipboard = base::MakeUnique<ClipboardMus>();
+  clipboard->Init(connector);
+  ui::Clipboard::SetClipboardForCurrentThread(std::move(clipboard));
+
+  ui::OSExchangeDataProviderFactory::SetFactory(this);
+
+  ViewsDelegate::GetInstance()->set_native_widget_factory(base::Bind(
+      &WindowManagerConnection::CreateNativeWidgetMus,
+      base::Unretained(this),
+      std::map<std::string, std::vector<uint8_t>>()));
+}
+
+ui::Window* WindowManagerConnection::GetUiWindowAtScreenPoint(
+    const gfx::Point& point) {
+  std::map<int64_t, gfx::Point> display_origins;
+  for (const display::Display& d :
+       display::Screen::GetScreen()->GetAllDisplays())
+    display_origins[d.id()] = d.bounds().origin();
+
+  const std::set<ui::Window*>& roots = GetRoots();
+  std::vector<ui::Window*> windows;
+  std::copy(roots.begin(), roots.end(), std::back_inserter(windows));
+  return GetWindowFrom(display_origins, windows, point);
+}
+
+void WindowManagerConnection::OnEmbed(ui::Window* root) {}
+
+void WindowManagerConnection::OnLostConnection(ui::WindowTreeClient* client) {
+  DCHECK_EQ(client, client_.get());
+  client_.reset();
+}
+
+void WindowManagerConnection::OnEmbedRootDestroyed(ui::Window* root) {
+  // Not called for WindowManagerConnection as WindowTreeClient isn't created by
+  // way of an Embed().
+  NOTREACHED();
+}
+
+void WindowManagerConnection::OnPointerEventObserved(
+    const ui::PointerEvent& event,
+    ui::Window* target) {
+  pointer_watcher_event_router_->OnPointerEventObserved(event, target);
+}
+
+void WindowManagerConnection::OnWindowManagerFrameValuesChanged() {
+  if (client_)
+    NativeWidgetMus::NotifyFrameChanged(client_.get());
+}
+
+gfx::Point WindowManagerConnection::GetCursorScreenPoint() {
+  return client_->GetCursorScreenPoint();
+}
+
+aura::Window* WindowManagerConnection::GetWindowAtScreenPoint(
+    const gfx::Point& point) {
+  return GetAuraWindowFromUiWindow(GetUiWindowAtScreenPoint(point));
+}
+
+std::unique_ptr<OSExchangeData::Provider>
+WindowManagerConnection::BuildProvider() {
+  return base::MakeUnique<aura::OSExchangeDataProviderMus>();
 }
 
 }  // namespace views

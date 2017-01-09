@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "base/thread_task_runner_handle.h"
 #include "content/browser/compositor/software_output_device_ozone.h"
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/message_loop/message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/compositor/compositor.h"
@@ -62,14 +65,14 @@ class SoftwareOutputDeviceOzoneTest : public testing::Test {
   void TearDown() override;
 
  protected:
-  scoped_ptr<content::SoftwareOutputDeviceOzone> output_device_;
+  std::unique_ptr<content::SoftwareOutputDeviceOzone> output_device_;
   bool enable_pixel_output_;
 
  private:
-  scoped_ptr<ui::Compositor> compositor_;
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<ui::Compositor> compositor_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
   TestPlatformWindowDelegate window_delegate_;
-  scoped_ptr<ui::PlatformWindow> window_;
+  std::unique_ptr<ui::PlatformWindow> window_;
 
   DISALLOW_COPY_AND_ASSIGN(SoftwareOutputDeviceOzoneTest);
 };
@@ -94,9 +97,10 @@ void SoftwareOutputDeviceOzoneTest::SetUp() {
   compositor_->SetAcceleratedWidget(window_delegate_.GetAcceleratedWidget());
   compositor_->SetScaleAndSize(1.0f, size);
 
-  output_device_.reset(new content::SoftwareOutputDeviceOzone(
-      compositor_.get()));
-  output_device_->Resize(size, 1.f);
+  output_device_ =
+      content::SoftwareOutputDeviceOzone::Create(compositor_.get());
+  if (output_device_)
+    output_device_->Resize(size, 1.f);
 }
 
 void SoftwareOutputDeviceOzoneTest::TearDown() {
@@ -118,6 +122,10 @@ void SoftwareOutputDeviceOzonePixelTest::SetUp() {
 }
 
 TEST_F(SoftwareOutputDeviceOzoneTest, CheckCorrectResizeBehavior) {
+  // Check if software rendering mode is not supported.
+  if (!output_device_)
+    return;
+
   gfx::Rect damage(0, 0, 100, 100);
   gfx::Size size(200, 100);
   // Reduce size.

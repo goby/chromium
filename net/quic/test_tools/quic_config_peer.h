@@ -5,8 +5,11 @@
 #ifndef NET_QUIC_TEST_TOOLS_QUIC_CONFIG_PEER_H_
 #define NET_QUIC_TEST_TOOLS_QUIC_CONFIG_PEER_H_
 
-#include "net/quic/quic_config.h"
-#include "net/quic/quic_protocol.h"
+#include <stdint.h>
+
+#include "base/macros.h"
+#include "net/quic/core/quic_config.h"
+#include "net/quic/core/quic_packets.h"
 
 namespace net {
 
@@ -17,18 +20,31 @@ namespace test {
 class QuicConfigPeer {
  public:
   static void SetReceivedSocketReceiveBuffer(QuicConfig* config,
-                                             uint32 receive_buffer_bytes);
+                                             uint32_t receive_buffer_bytes);
 
   static void SetReceivedInitialStreamFlowControlWindow(QuicConfig* config,
-                                                        uint32 window_bytes);
+                                                        uint32_t window_bytes);
 
   static void SetReceivedInitialSessionFlowControlWindow(QuicConfig* config,
-                                                         uint32 window_bytes);
+                                                         uint32_t window_bytes);
 
   static void SetReceivedConnectionOptions(QuicConfig* config,
                                            const QuicTagVector& options);
 
-  static void SetReceivedBytesForConnectionId(QuicConfig* config, uint32 bytes);
+  static void SetReceivedBytesForConnectionId(QuicConfig* config,
+                                              uint32_t bytes);
+  static void SetReceivedDisableConnectionMigration(QuicConfig* config);
+
+  static void SetReceivedMaxIncomingDynamicStreams(QuicConfig* config,
+                                                   uint32_t max_streams);
+
+  static void SetConnectionOptionsToSend(QuicConfig* config,
+                                         const QuicTagVector& options);
+
+  static void SetReceivedForceHolBlocking(QuicConfig* config);
+
+  static void SetReceivedAlternateServerAddress(QuicConfig* config,
+                                                QuicSocketAddress addr);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(QuicConfigPeer);

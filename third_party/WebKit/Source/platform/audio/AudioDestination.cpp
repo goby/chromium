@@ -26,155 +26,184 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
-#if ENABLE(WEB_AUDIO)
-
 #include "platform/audio/AudioDestination.h"
 
+#include "platform/Histogram.h"
 #include "platform/audio/AudioFIFO.h"
 #include "platform/audio/AudioPullFIFO.h"
+#include "platform/audio/AudioUtilities.h"
+#include "platform/weborigin/SecurityOrigin.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebSecurityOrigin.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
-
-// Buffer size at which the web audio engine will render.
-const unsigned renderBufferSize = 128;
 
 // Size of the FIFO
 const size_t fifoSize = 8192;
 
 // Factory method: Chromium-implementation
-PassOwnPtr<AudioDestination> AudioDestination::create(AudioIOCallback& callback, const String& inputDeviceId, unsigned numberOfInputChannels, unsigned numberOfOutputChannels, float sampleRate)
-{
-    return adoptPtr(new AudioDestination(callback, inputDeviceId, numberOfInputChannels, numberOfOutputChannels, sampleRate));
+std::unique_ptr<AudioDestination> AudioDestination::create(
+    AudioIOCallback& callback,
+    const String& inputDeviceId,
+    unsigned numberOfInputChannels,
+    unsigned numberOfOutputChannels,
+    float sampleRate,
+    PassRefPtr<SecurityOrigin> securityOrigin) {
+  return WTF::wrapUnique(new AudioDestination(
+      callback, inputDeviceId, numberOfInputChannels, numberOfOutputChannels,
+      sampleRate, std::move(securityOrigin)));
 }
 
-AudioDestination::AudioDestination(AudioIOCallback& callback, const String& inputDeviceId, unsigned numberOfInputChannels, unsigned numberOfOutputChannels, float sampleRate)
-    : m_callback(callback)
-    , m_numberOfOutputChannels(numberOfOutputChannels)
-    , m_inputBus(AudioBus::create(numberOfInputChannels, renderBufferSize))
-    , m_renderBus(AudioBus::create(numberOfOutputChannels, renderBufferSize, false))
-    , m_sampleRate(sampleRate)
-    , m_isPlaying(false)
-{
-    // Use the optimal buffer size recommended by the audio backend.
-    m_callbackBufferSize = Platform::current()->audioHardwareBufferSize();
+AudioDestination::AudioDestination(AudioIOCallback& callback,
+                                   const String& inputDeviceId,
+                                   unsigned numberOfInputChannels,
+                                   unsigned numberOfOutputChannels,
+                                   float sampleRate,
+                                   PassRefPtr<SecurityOrigin> securityOrigin)
+    : m_callback(callback),
+      m_numberOfOutputChannels(numberOfOutputChannels),
+      m_inputBus(AudioBus::create(numberOfInputChannels,
+                                  AudioUtilities::kRenderQuantumFrames)),
+      m_renderBus(AudioBus::create(numberOfOutputChannels,
+                                   AudioUtilities::kRenderQuantumFrames,
+                                   false)),
+      m_sampleRate(sampleRate),
+      m_isPlaying(false) {
+  // Histogram for audioHardwareBufferSize
+  DEFINE_STATIC_LOCAL(SparseHistogram, hardwareBufferSizeHistogram,
+                      ("WebAudio.AudioDestination.HardwareBufferSize"));
+  // Histogram for the actual callback size used.  Typically, this is the same
+  // as audioHardwareBufferSize, but can be adjusted depending on some
+  // heuristics below.
+  DEFINE_STATIC_LOCAL(SparseHistogram, callbackBufferSizeHistogram,
+                      ("WebAudio.AudioDestination.CallbackBufferSize"));
+
+  // Use the optimal buffer size recommended by the audio backend.
+  size_t recommendedHardwareBufferSize =
+      Platform::current()->audioHardwareBufferSize();
+  m_callbackBufferSize = recommendedHardwareBufferSize;
 
 #if OS(ANDROID)
-    // The optimum low-latency hardware buffer size is usually too small on Android for WebAudio to
-    // render without glitching. So, if it is small, use a larger size. If it was already large, use
-    // the requested size.
-    //
-    // Since WebAudio renders in 128-frame blocks, the small buffer sizes (144 for a Galaxy Nexus),
-    // cause significant processing jitter. Sometimes multiple blocks will processed, but other
-    // times will not be since the FIFO can satisfy the request. By using a larger
-    // callbackBufferSize, we smooth out the jitter.
-    const size_t kSmallBufferSize = 1024;
-    const size_t kDefaultCallbackBufferSize = 2048;
+  // The optimum low-latency hardware buffer size is usually too small on
+  // Android for WebAudio to render without glitching. So, if it is small, use
+  // a larger size. If it was already large, use the requested size.
+  //
+  // Since WebAudio renders in 128-frame blocks, the small buffer sizes (144
+  // for a Galaxy Nexus), cause significant processing jitter. Sometimes
+  // multiple blocks will processed, but other times will not be since the FIFO
+  // can satisfy the request. By using a larger callbackBufferSize, we smooth
+  // out the jitter.
+  const size_t kSmallBufferSize = 1024;
+  const size_t kDefaultCallbackBufferSize = 2048;
 
-    if (m_callbackBufferSize <= kSmallBufferSize)
-        m_callbackBufferSize = kDefaultCallbackBufferSize;
+  if (m_callbackBufferSize <= kSmallBufferSize)
+    m_callbackBufferSize = kDefaultCallbackBufferSize;
 #endif
 
-    // Quick exit if the requested size is too large.
-    ASSERT(m_callbackBufferSize + renderBufferSize <= fifoSize);
-    if (m_callbackBufferSize + renderBufferSize > fifoSize)
-        return;
+  // Quick exit if the requested size is too large.
+  DCHECK_LE(m_callbackBufferSize + AudioUtilities::kRenderQuantumFrames,
+            fifoSize);
+  if (m_callbackBufferSize + AudioUtilities::kRenderQuantumFrames > fifoSize)
+    return;
 
-    m_audioDevice = adoptPtr(Platform::current()->createAudioDevice(m_callbackBufferSize, numberOfInputChannels, numberOfOutputChannels, sampleRate, this, inputDeviceId));
-    ASSERT(m_audioDevice);
+  m_audioDevice = WTF::wrapUnique(Platform::current()->createAudioDevice(
+      m_callbackBufferSize, numberOfInputChannels, numberOfOutputChannels,
+      sampleRate, this, inputDeviceId, std::move(securityOrigin)));
+  ASSERT(m_audioDevice);
 
-    // Create a FIFO to handle the possibility of the callback size
-    // not being a multiple of the render size. If the FIFO already
-    // contains enough data, the data will be provided directly.
-    // Otherwise, the FIFO will call the provider enough times to
-    // satisfy the request for data.
-    m_fifo = adoptPtr(new AudioPullFIFO(*this, numberOfOutputChannels, fifoSize, renderBufferSize));
+  // Record the sizes if we successfully created an output device.
+  hardwareBufferSizeHistogram.sample(recommendedHardwareBufferSize);
+  callbackBufferSizeHistogram.sample(m_callbackBufferSize);
 
-    // Input buffering.
-    m_inputFifo = adoptPtr(new AudioFIFO(numberOfInputChannels, fifoSize));
+  // Create a FIFO to handle the possibility of the callback size
+  // not being a multiple of the render size. If the FIFO already
+  // contains enough data, the data will be provided directly.
+  // Otherwise, the FIFO will call the provider enough times to
+  // satisfy the request for data.
+  m_fifo =
+      WTF::wrapUnique(new AudioPullFIFO(*this, numberOfOutputChannels, fifoSize,
+                                        AudioUtilities::kRenderQuantumFrames));
 
-    // If the callback size does not match the render size, then we need to buffer some
-    // extra silence for the input. Otherwise, we can over-consume the input FIFO.
-    if (m_callbackBufferSize != renderBufferSize) {
-        // FIXME: handle multi-channel input and don't hard-code to stereo.
-        RefPtr<AudioBus> silence = AudioBus::create(2, renderBufferSize);
-        m_inputFifo->push(silence.get());
-    }
+  // Input buffering.
+  m_inputFifo = WTF::makeUnique<AudioFIFO>(numberOfInputChannels, fifoSize);
+
+  // If the callback size does not match the render size, then we need to
+  // buffer some extra silence for the input. Otherwise, we can over-consume
+  // the input FIFO.
+  if (m_callbackBufferSize != AudioUtilities::kRenderQuantumFrames) {
+    // FIXME: handle multi-channel input and don't hard-code to stereo.
+    RefPtr<AudioBus> silence =
+        AudioBus::create(2, AudioUtilities::kRenderQuantumFrames);
+    m_inputFifo->push(silence.get());
+  }
 }
 
-AudioDestination::~AudioDestination()
-{
-    stop();
+AudioDestination::~AudioDestination() {
+  stop();
 }
 
-void AudioDestination::start()
-{
-    if (!m_isPlaying && m_audioDevice) {
-        m_audioDevice->start();
-        m_isPlaying = true;
-    }
+void AudioDestination::start() {
+  if (!m_isPlaying && m_audioDevice) {
+    m_audioDevice->start();
+    m_isPlaying = true;
+  }
 }
 
-void AudioDestination::stop()
-{
-    if (m_isPlaying && m_audioDevice) {
-        m_audioDevice->stop();
-        m_isPlaying = false;
-    }
+void AudioDestination::stop() {
+  if (m_isPlaying && m_audioDevice) {
+    m_audioDevice->stop();
+    m_isPlaying = false;
+  }
 }
 
-float AudioDestination::hardwareSampleRate()
-{
-    return static_cast<float>(Platform::current()->audioHardwareSampleRate());
+float AudioDestination::hardwareSampleRate() {
+  return static_cast<float>(Platform::current()->audioHardwareSampleRate());
 }
 
-unsigned long AudioDestination::maxChannelCount()
-{
-    return static_cast<float>(Platform::current()->audioHardwareOutputChannels());
+unsigned long AudioDestination::maxChannelCount() {
+  return static_cast<float>(Platform::current()->audioHardwareOutputChannels());
 }
 
-void AudioDestination::render(const WebVector<float*>& sourceData, const WebVector<float*>& audioData, size_t numberOfFrames)
-{
-    bool isNumberOfChannelsGood = audioData.size() == m_numberOfOutputChannels;
-    if (!isNumberOfChannelsGood) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
+void AudioDestination::render(const WebVector<float*>& sourceData,
+                              const WebVector<float*>& audioData,
+                              size_t numberOfFrames) {
+  bool isNumberOfChannelsGood = audioData.size() == m_numberOfOutputChannels;
+  if (!isNumberOfChannelsGood) {
+    ASSERT_NOT_REACHED();
+    return;
+  }
 
-    bool isBufferSizeGood = numberOfFrames == m_callbackBufferSize;
-    if (!isBufferSizeGood) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
+  bool isBufferSizeGood = numberOfFrames == m_callbackBufferSize;
+  if (!isBufferSizeGood) {
+    ASSERT_NOT_REACHED();
+    return;
+  }
 
-    // Buffer optional live input.
-    if (sourceData.size() >= 2) {
-        // FIXME: handle multi-channel input and don't hard-code to stereo.
-        RefPtr<AudioBus> wrapperBus = AudioBus::create(2, numberOfFrames, false);
-        wrapperBus->setChannelMemory(0, sourceData[0], numberOfFrames);
-        wrapperBus->setChannelMemory(1, sourceData[1], numberOfFrames);
-        m_inputFifo->push(wrapperBus.get());
-    }
+  // Buffer optional live input.
+  if (sourceData.size() >= 2) {
+    // FIXME: handle multi-channel input and don't hard-code to stereo.
+    RefPtr<AudioBus> wrapperBus = AudioBus::create(2, numberOfFrames, false);
+    wrapperBus->setChannelMemory(0, sourceData[0], numberOfFrames);
+    wrapperBus->setChannelMemory(1, sourceData[1], numberOfFrames);
+    m_inputFifo->push(wrapperBus.get());
+  }
 
-    for (unsigned i = 0; i < m_numberOfOutputChannels; ++i)
-        m_renderBus->setChannelMemory(i, audioData[i], numberOfFrames);
+  for (unsigned i = 0; i < m_numberOfOutputChannels; ++i)
+    m_renderBus->setChannelMemory(i, audioData[i], numberOfFrames);
 
-    m_fifo->consume(m_renderBus.get(), numberOfFrames);
+  m_fifo->consume(m_renderBus.get(), numberOfFrames);
 }
 
-void AudioDestination::provideInput(AudioBus* bus, size_t framesToProcess)
-{
-    AudioBus* sourceBus = nullptr;
-    if (m_inputFifo->framesInFifo() >= framesToProcess) {
-        m_inputFifo->consume(m_inputBus.get(), framesToProcess);
-        sourceBus = m_inputBus.get();
-    }
+void AudioDestination::provideInput(AudioBus* bus, size_t framesToProcess) {
+  AudioBus* sourceBus = nullptr;
+  if (m_inputFifo->framesInFifo() >= framesToProcess) {
+    m_inputFifo->consume(m_inputBus.get(), framesToProcess);
+    sourceBus = m_inputBus.get();
+  }
 
-    m_callback.render(sourceBus, bus, framesToProcess);
+  m_callback.render(sourceBus, bus, framesToProcess);
 }
 
-} // namespace blink
-
-#endif // ENABLE(WEB_AUDIO)
+}  // namespace blink

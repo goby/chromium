@@ -7,14 +7,11 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handler.h"
 
 // Chrome-specific extension manifest URL handlers.
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace extensions {
 
@@ -58,6 +55,9 @@ class URLOverridesHandler : public ManifestHandler {
   ~URLOverridesHandler() override;
 
   bool Parse(Extension* extension, base::string16* error) override;
+  bool Validate(const Extension* extension,
+                std::string* error,
+                std::vector<InstallWarning>* warnings) const override;
 
  private:
   const std::vector<std::string> Keys() const override;

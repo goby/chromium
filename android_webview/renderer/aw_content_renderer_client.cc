@@ -14,7 +14,6 @@
 #include "android_webview/grit/aw_strings.h"
 #include "android_webview/renderer/aw_content_settings_client.h"
 #include "android_webview/renderer/aw_key_systems.h"
-#include "android_webview/renderer/aw_message_port_client.h"
 #include "android_webview/renderer/aw_print_web_view_helper_delegate.h"
 #include "android_webview/renderer/aw_render_frame_ext.h"
 #include "android_webview/renderer/aw_render_view_ext.h"
@@ -27,46 +26,54 @@
 #include "components/autofill/content/renderer/autofill_agent.h"
 #include "components/autofill/content/renderer/password_autofill_agent.h"
 #include "components/printing/renderer/print_web_view_helper.h"
+#include "components/spellcheck/spellcheck_build_features.h"
+#include "components/supervised_user_error_page/gin_wrapper.h"
+#include "components/supervised_user_error_page/supervised_user_error_page_android.h"
 #include "components/visitedlink/renderer/visitedlink_slave.h"
+#include "components/web_restrictions/interfaces/web_restrictions.mojom.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/renderer/document_state.h"
+#include "content/public/renderer/navigation_state.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/render_view.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
+#include "services/service_manager/public/cpp/interface_registry.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebURLError.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/WebKit/public/web/WebNavigationType.h"
 #include "third_party/WebKit/public/web/WebSecurityPolicy.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+#include "components/spellcheck/renderer/spellcheck.h"
+#include "components/spellcheck/renderer/spellcheck_provider.h"
+#endif
+
 using content::RenderThread;
 
 namespace android_webview {
 
-AwContentRendererClient::AwContentRendererClient()
-    : disable_page_visibility_(
-          base::CommandLine::ForCurrentProcess()
-              ->HasSwitch(switches::kDisablePageVisibility)) {}
+AwContentRendererClient::AwContentRendererClient() {}
 
-AwContentRendererClient::~AwContentRendererClient() {
-}
+AwContentRendererClient::~AwContentRendererClient() {}
 
 void AwContentRendererClient::RenderThreadStarted() {
   RenderThread* thread = RenderThread::Get();
-  aw_render_process_observer_.reset(new AwRenderProcessObserver);
-  thread->AddObserver(aw_render_process_observer_.get());
+  aw_render_thread_observer_.reset(new AwRenderThreadObserver);
+  thread->AddObserver(aw_render_thread_observer_.get());
 
   visited_link_slave_.reset(new visitedlink::VisitedLinkSlave);
-  thread->AddObserver(visited_link_slave_.get());
-
-  // Using WebString requires blink initialization.
-  thread->EnsureWebKitInitialized();
+  thread->GetInterfaceRegistry()->AddInterface(
+      visited_link_slave_->GetBindCallback());
 
   blink::WebString content_scheme(base::ASCIIToUTF16(url::kContentScheme));
   blink::WebSecurityPolicy::registerURLSchemeAsLocal(content_scheme);
@@ -74,14 +81,84 @@ void AwContentRendererClient::RenderThreadStarted() {
   blink::WebString aw_scheme(
       base::ASCIIToUTF16(android_webview::kAndroidWebViewVideoPosterScheme));
   blink::WebSecurityPolicy::registerURLSchemeAsSecure(aw_scheme);
+
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+  if (!spellcheck_) {
+    spellcheck_ = base::MakeUnique<SpellCheck>();
+    thread->AddObserver(spellcheck_.get());
+  }
+#endif
+}
+
+bool AwContentRendererClient::HandleNavigation(
+    content::RenderFrame* render_frame,
+    bool is_content_initiated,
+    bool render_view_was_created_by_renderer,
+    blink::WebFrame* frame,
+    const blink::WebURLRequest& request,
+    blink::WebNavigationType type,
+    blink::WebNavigationPolicy default_policy,
+    bool is_redirect) {
+  // Only GETs can be overridden.
+  if (!request.httpMethod().equals("GET"))
+    return false;
+
+  // Any navigation from loadUrl, and goBack/Forward are considered application-
+  // initiated and hence will not yield a shouldOverrideUrlLoading() callback.
+  // Webview classic does not consider reload application-initiated so we
+  // continue the same behavior.
+  // TODO(sgurun) is_content_initiated is normally false for cross-origin
+  // navigations but since android_webview does not swap out renderers, this
+  // works fine. This will stop working if android_webview starts swapping out
+  // renderers on navigation.
+  bool application_initiated =
+      !is_content_initiated || type == blink::WebNavigationTypeBackForward;
+
+  // Don't offer application-initiated navigations unless it's a redirect.
+  if (application_initiated && !is_redirect)
+    return false;
+
+  bool is_main_frame = !frame->parent();
+  const GURL& gurl = request.url();
+  // For HTTP schemes, only top-level navigations can be overridden. Similarly,
+  // WebView Classic lets app override only top level about:blank navigations.
+  // So we filter out non-top about:blank navigations here.
+  if (!is_main_frame &&
+      (gurl.SchemeIs(url::kHttpScheme) || gurl.SchemeIs(url::kHttpsScheme) ||
+       gurl.SchemeIs(url::kAboutScheme)))
+    return false;
+
+  // use NavigationInterception throttle to handle the call as that can
+  // be deferred until after the java side has been constructed.
+  //
+  // TODO(nick): |render_view_was_created_by_renderer| was plumbed in to
+  // preserve the existing code behavior, but it doesn't appear to be correct.
+  // In particular, this value will be true for the initial navigation of a
+  // RenderView created via window.open(), but it will also be true for all
+  // subsequent navigations in that RenderView, no matter how they are
+  // initiated.
+  if (render_view_was_created_by_renderer) {
+    return false;
+  }
+
+  bool ignore_navigation = false;
+  base::string16 url = request.url().string();
+  bool has_user_gesture = request.hasUserGesture();
+
+  int render_frame_id = render_frame->GetRoutingID();
+  RenderThread::Get()->Send(new AwViewHostMsg_ShouldOverrideUrlLoading(
+      render_frame_id, url, has_user_gesture, is_redirect, is_main_frame,
+      &ignore_navigation));
+  return ignore_navigation;
 }
 
 void AwContentRendererClient::RenderFrameCreated(
     content::RenderFrame* render_frame) {
   new AwContentSettingsClient(render_frame);
   new PrintRenderFrameObserver(render_frame);
+  new printing::PrintWebViewHelper(
+      render_frame, base::MakeUnique<AwPrintWebViewHelperDelegate>());
   new AwRenderFrameExt(render_frame);
-  new AwMessagePortClient(render_frame);
 
   // TODO(jam): when the frame tree moves into content and parent() works at
   // RenderFrame construction, simplify this by just checking parent().
@@ -105,10 +182,9 @@ void AwContentRendererClient::RenderViewCreated(
     content::RenderView* render_view) {
   AwRenderViewExt::RenderViewCreated(render_view);
 
-  new printing::PrintWebViewHelper(
-      render_view,
-      scoped_ptr<printing::PrintWebViewHelper::Delegate>(
-          new AwPrintWebViewHelperDelegate()));
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+  new SpellCheckProvider(render_view, spellcheck_.get());
+#endif
 }
 
 bool AwContentRendererClient::HasErrorPage(int http_status_code,
@@ -117,14 +193,14 @@ bool AwContentRendererClient::HasErrorPage(int http_status_code,
 }
 
 void AwContentRendererClient::GetNavigationErrorStrings(
-    content::RenderFrame* /* render_frame */,
+    content::RenderFrame* render_frame,
     const blink::WebURLRequest& failed_request,
     const blink::WebURLError& error,
     std::string* error_html,
     base::string16* error_description) {
   if (error_html) {
-    std::string url =
-        net::EscapeForHTML(GURL(failed_request.url()).possibly_invalid_spec());
+    GURL gurl(failed_request.url());
+    std::string url = net::EscapeForHTML(gurl.possibly_invalid_spec());
     std::string err =
         base::UTF16ToUTF8(base::StringPiece16(error.localizedDescription));
 
@@ -149,6 +225,22 @@ void AwContentRendererClient::GetNavigationErrorStrings(
         ResourceBundle::GetSharedInstance().GetRawDataResource(
             IDR_AW_LOAD_ERROR_HTML),
         replacements, nullptr);
+    if (error.reason == net::ERR_BLOCKED_BY_ADMINISTRATOR) {
+      // This needs more information
+      render_frame->GetRemoteInterfaces()->GetInterface(
+          &web_restrictions_service_);
+      web_restrictions::mojom::ClientResultPtr result;
+      if (web_restrictions_service_->GetResult(mojo::String(url), &result)) {
+        std::string detailed_error_html =
+            supervised_user_error_page::BuildHtmlFromWebRestrictionsResult(
+                result, RenderThread::Get()->GetLocale());
+        if (!detailed_error_html.empty()) {
+          *error_html = detailed_error_html;
+          supervised_user_error_page::GinWrapper::InstallWhenFrameReady(
+              render_frame, url, web_restrictions_service_);
+        }
+      }
+    }
   }
   if (error_description) {
     if (error.localizedDescription.isEmpty())
@@ -168,19 +260,31 @@ bool AwContentRendererClient::IsLinkVisited(unsigned long long link_hash) {
   return visited_link_slave_->IsVisited(link_hash);
 }
 
-void AwContentRendererClient::AddKeySystems(
-    std::vector<media::KeySystemInfo>* key_systems) {
+void AwContentRendererClient::AddSupportedKeySystems(
+    std::vector<std::unique_ptr<::media::KeySystemProperties>>* key_systems) {
   AwAddKeySystems(key_systems);
 }
 
-bool AwContentRendererClient::ShouldOverridePageVisibilityState(
-    const content::RenderFrame* render_frame,
-    blink::WebPageVisibilityState* override_state) {
-  if (disable_page_visibility_) {
-    *override_state = blink::WebPageVisibilityStateVisible;
-    return true;
+bool AwContentRendererClient::ShouldUseMediaPlayerForURL(const GURL& url) {
+  // Android WebView needs to support codecs that Chrome does not, for these
+  // cases we must force the usage of Android MediaPlayer instead of Chrome's
+  // internal player.
+  //
+  // Note: Despite these extensions being forwarded for playback to MediaPlayer,
+  // HTMLMediaElement.canPlayType() will return empty for these containers.
+  // TODO(boliu): If this is important, extend media::MimeUtil for WebView.
+  //
+  // Format list mirrors:
+  // http://developer.android.com/guide/appendix/media-formats.html
+  static const char* kMediaPlayerExtensions[] = {
+      ".3gp",  ".ts",    ".flac", ".mid", ".xmf",
+      ".mxmf", ".rtttl", ".rtx",  ".ota", ".imy"};
+  for (auto* extension : kMediaPlayerExtensions) {
+    if (base::EndsWith(url.path(), extension,
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+      return true;
+    }
   }
-
   return false;
 }
 

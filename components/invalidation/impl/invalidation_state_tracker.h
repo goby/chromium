@@ -15,7 +15,6 @@
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "components/invalidation/impl/unacked_invalidation_set.h"
@@ -23,10 +22,6 @@
 #include "components/invalidation/public/invalidation_export.h"
 #include "components/invalidation/public/invalidation_util.h"
 #include "google/cacheinvalidation/include/types.h"
-
-namespace base {
-class TaskRunner;
-}  // namespace base
 
 namespace syncer {
 

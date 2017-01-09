@@ -8,6 +8,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/domain_reliability/clear_mode.h"
 #include "content/public/browser/browser_context.h"
@@ -34,18 +35,10 @@ class FakeProfile : public Profile {
   std::string GetProfileUserName() const override;
   ProfileType GetProfileType() const override;
   base::FilePath GetPath() const override;
-  scoped_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
+  std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
   bool IsOffTheRecord() const override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
-  net::URLRequestContextGetter* GetRequestContextForRenderProcess(
-      int renderer_child_id) override;
-  net::URLRequestContextGetter* GetMediaRequestContext() override;
-  net::URLRequestContextGetter* GetMediaRequestContextForRenderProcess(
-      int renderer_child_id) override;
-  net::URLRequestContextGetter* GetMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
   content::ResourceContext* GetResourceContext() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
   storage::SpecialStoragePolicy* GetSpecialStoragePolicy() override;
@@ -53,6 +46,18 @@ class FakeProfile : public Profile {
   content::SSLHostStateDelegate* GetSSLHostStateDelegate() override;
   content::PermissionManager* GetPermissionManager() override;
   content::BackgroundSyncController* GetBackgroundSyncController() override;
+  net::URLRequestContextGetter* CreateRequestContext(
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::URLRequestInterceptorScopedVector request_interceptors) override;
+  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory,
+      content::ProtocolHandlerMap* protocol_handlers,
+      content::URLRequestInterceptorScopedVector request_interceptors) override;
+  net::URLRequestContextGetter* CreateMediaRequestContext() override;
+  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
+      const base::FilePath& partition_path,
+      bool in_memory) override;
   scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner() override;
   Profile* GetOffTheRecordProfile() override;
   void DestroyOffTheRecordProfile() override;
@@ -70,14 +75,6 @@ class FakeProfile : public Profile {
   net::SSLConfigService* GetSSLConfigService() override;
   bool IsSameProfile(Profile* profile) override;
   base::Time GetStartTime() const override;
-  net::URLRequestContextGetter* CreateRequestContext(
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
-  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
   base::FilePath last_selected_directory() override;
   void set_last_selected_directory(const base::FilePath& path) override;
 

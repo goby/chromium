@@ -4,14 +4,16 @@
 
 #include "remoting/signaling/iq_sender.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "remoting/signaling/jid_util.h"
 #include "remoting/signaling/signal_strategy.h"
@@ -21,16 +23,16 @@
 namespace remoting {
 
 // static
-scoped_ptr<buzz::XmlElement> IqSender::MakeIqStanza(
+std::unique_ptr<buzz::XmlElement> IqSender::MakeIqStanza(
     const std::string& type,
     const std::string& addressee,
-    scoped_ptr<buzz::XmlElement> iq_body) {
-  scoped_ptr<buzz::XmlElement> stanza(new buzz::XmlElement(buzz::QN_IQ));
+    std::unique_ptr<buzz::XmlElement> iq_body) {
+  std::unique_ptr<buzz::XmlElement> stanza(new buzz::XmlElement(buzz::QN_IQ));
   stanza->AddAttr(buzz::QN_TYPE, type);
   if (!addressee.empty())
     stanza->AddAttr(buzz::QN_TO, addressee);
   stanza->AddElement(iq_body.release());
-  return stanza.Pass();
+  return stanza;
 }
 
 IqSender::IqSender(SignalStrategy* signal_strategy)
@@ -42,26 +44,31 @@ IqSender::~IqSender() {
   signal_strategy_->RemoveListener(this);
 }
 
-scoped_ptr<IqRequest> IqSender::SendIq(scoped_ptr<buzz::XmlElement> stanza,
-                                       const ReplyCallback& callback) {
+std::unique_ptr<IqRequest> IqSender::SendIq(
+    std::unique_ptr<buzz::XmlElement> stanza,
+    const ReplyCallback& callback) {
   std::string addressee = stanza->Attr(buzz::QN_TO);
-  std::string id = signal_strategy_->GetNextId();
-  stanza->AddAttr(buzz::QN_ID, id);
-  if (!signal_strategy_->SendStanza(stanza.Pass())) {
+  std::string id = stanza->Attr(buzz::QN_ID);
+  if (id.empty()) {
+    id = signal_strategy_->GetNextId();
+    stanza->AddAttr(buzz::QN_ID, id);
+  }
+  if (!signal_strategy_->SendStanza(std::move(stanza))) {
     return nullptr;
   }
   DCHECK(requests_.find(id) == requests_.end());
-  scoped_ptr<IqRequest> request(new IqRequest(this, callback, addressee));
+  std::unique_ptr<IqRequest> request(new IqRequest(this, callback, addressee));
   if (!callback.is_null())
     requests_[id] = request.get();
-  return request.Pass();
+  return request;
 }
 
-scoped_ptr<IqRequest> IqSender::SendIq(const std::string& type,
-                                       const std::string& addressee,
-                                       scoped_ptr<buzz::XmlElement> iq_body,
-                                       const ReplyCallback& callback) {
-  return SendIq(MakeIqStanza(type, addressee, iq_body.Pass()), callback);
+std::unique_ptr<IqRequest> IqSender::SendIq(
+    const std::string& type,
+    const std::string& addressee,
+    std::unique_ptr<buzz::XmlElement> iq_body,
+    const ReplyCallback& callback) {
+  return SendIq(MakeIqStanza(type, addressee, std::move(iq_body)), callback);
 }
 
 void IqSender::RemoveRequest(IqRequest* request) {
@@ -151,13 +158,13 @@ void IqRequest::OnTimeout() {
 void IqRequest::OnResponse(const buzz::XmlElement* stanza) {
   // It's unsafe to delete signal strategy here, and the callback may
   // want to do that, so we post task to invoke the callback later.
-  scoped_ptr<buzz::XmlElement> stanza_copy(new buzz::XmlElement(*stanza));
+  std::unique_ptr<buzz::XmlElement> stanza_copy(new buzz::XmlElement(*stanza));
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&IqRequest::DeliverResponse, AsWeakPtr(),
                             base::Passed(&stanza_copy)));
 }
 
-void IqRequest::DeliverResponse(scoped_ptr<buzz::XmlElement> stanza) {
+void IqRequest::DeliverResponse(std::unique_ptr<buzz::XmlElement> stanza) {
   CallCallback(stanza.get());
 }
 

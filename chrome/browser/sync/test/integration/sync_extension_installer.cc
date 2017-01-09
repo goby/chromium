@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_extension_helper.h"
@@ -45,11 +45,5 @@ void SyncedExtensionInstaller::Observe(
 }
 
 void SyncedExtensionInstaller::DoInstallSyncedExtensions() {
-  // Do not try to install any extensions when running against real servers.
-  // We can not assume that we have a clean slate of extensions installed per
-  // profile before running the test cases.
-  if (!sync_datatype_helper::test()->UsingExternalServers()) {
-    SyncExtensionHelper::GetInstance()->
-        InstallExtensionsPendingForSync(profile_);
-  }
+  SyncExtensionHelper::GetInstance()->InstallExtensionsPendingForSync(profile_);
 }

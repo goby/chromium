@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -16,6 +16,9 @@ BOOL wglChoosePixelFormatARBFn(HDC dc,
                                UINT* num_formats) override;
 BOOL wglCopyContextFn(HGLRC hglrcSrc, HGLRC hglrcDst, UINT mask) override;
 HGLRC wglCreateContextFn(HDC hdc) override;
+HGLRC wglCreateContextAttribsARBFn(HDC hDC,
+                                   HGLRC hShareContext,
+                                   const int* attribList) override;
 HGLRC wglCreateLayerContextFn(HDC hdc, int iLayerPlane) override;
 HPBUFFERARB wglCreatePbufferARBFn(HDC hDC,
                                   int iPixelFormat,

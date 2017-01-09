@@ -4,10 +4,15 @@
 
 #include "chrome/browser/ssl/chrome_ssl_host_state_delegate.h"
 
+#include <stdint.h>
+
 #include <set>
+#include <string>
+#include <utility>
 
 #include "base/base64.h"
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/guid.h"
 #include "base/logging.h"
@@ -19,12 +24,12 @@
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_switches.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/variations/variations_associated_data.h"
+#include "content/public/common/content_switches.h"
 #include "net/base/hash_value.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 #include "net/cert/x509_certificate.h"
 #include "net/http/http_transaction_factory.h"
 #include "net/url_request/url_request_context.h"
@@ -94,6 +99,61 @@ std::string GetKey(const net::X509Certificate& cert, net::CertStatus error) {
   return base::UintToString(error) + base64_fingerprint;
 }
 
+void MigrateOldSettings(HostContentSettingsMap* map) {
+  // Migrate old settings. Previously SSL would use the same pattern twice,
+  // instead of using ContentSettingsPattern::Wildcard(). This has no impact on
+  // lookups using GetWebsiteSetting (because Wildcard matches everything) but
+  // it has an impact when trying to change the existing content setting. We
+  // need to migrate the old-format keys.
+  // TODO(raymes): Remove this after ~M51 when clients have migrated. We should
+  // leave in some code to remove old-format settings for a long time.
+  // crbug.com/569734.
+  ContentSettingsForOneType settings;
+  map->GetSettingsForOneType(CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+                             std::string(), &settings);
+  for (const ContentSettingPatternSource& setting : settings) {
+    // Migrate user preference settings only.
+    if (setting.source != "preference")
+      continue;
+    // Migrate old-format settings only.
+    if (setting.secondary_pattern != ContentSettingsPattern::Wildcard()) {
+      GURL url(setting.primary_pattern.ToString());
+      // Pull out the value of the old-format setting. Only do this if the
+      // patterns are as we expect them to be, otherwise the setting will just
+      // be removed for safety.
+      std::unique_ptr<base::Value> value;
+      if (setting.primary_pattern == setting.secondary_pattern &&
+          url.is_valid()) {
+        value = map->GetWebsiteSetting(url, url,
+                                       CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+                                       std::string(), nullptr);
+      }
+      // Remove the old pattern.
+      map->SetWebsiteSettingCustomScope(
+          setting.primary_pattern, setting.secondary_pattern,
+          CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, std::string(), nullptr);
+      // Set the new pattern.
+      if (value) {
+        map->SetWebsiteSettingDefaultScope(
+            url, GURL(), CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+            std::string(), std::move(value));
+      }
+    }
+  }
+}
+
+bool HostFilterToPatternFilter(
+    const base::Callback<bool(const std::string&)>& host_filter,
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern) {
+  // We only ever set origin-scoped exceptions which are of the form
+  // "https://<host>:443". That is a valid URL, so we can compare |host_filter|
+  // against its host.
+  GURL url = GURL(primary_pattern.ToString());
+  DCHECK(url.is_valid());
+  return host_filter.Run(url.host());
+}
+
 }  // namespace
 
 // This helper function gets the dictionary of certificate fingerprints to
@@ -147,7 +207,7 @@ base::DictionaryValue* ChromeSSLHostStateDelegate::GetValidCertDecisionsDict(
   base::Time decision_expiration;
   if (dict->HasKey(kSSLCertDecisionExpirationTimeKey)) {
     std::string decision_expiration_string;
-    int64 decision_expiration_int64;
+    int64_t decision_expiration_int64;
     success = dict->GetString(kSSLCertDecisionExpirationTimeKey,
                               &decision_expiration_string);
     if (!base::StringToInt64(base::StringPiece(decision_expiration_string),
@@ -177,7 +237,7 @@ base::DictionaryValue* ChromeSSLHostStateDelegate::GetValidCertDecisionsDict(
     expired = true;
     base::Time expiration_time =
         now + base::TimeDelta::FromSeconds(kDeltaDefaultExpirationInSeconds);
-    // Unfortunately, JSON (and thus content settings) doesn't support int64
+    // Unfortunately, JSON (and thus content settings) doesn't support int64_t
     // values, only doubles. Since this mildly depends on precision, it is
     // better to store the value as a string.
     dict->SetString(kSSLCertDecisionExpirationTimeKey,
@@ -221,6 +281,7 @@ ChromeSSLHostStateDelegate::ChromeSSLHostStateDelegate(Profile* profile)
     : clock_(new base::DefaultClock()),
       profile_(profile),
       current_expiration_guid_(base::GenerateGUID()) {
+  MigrateOldSettings(HostContentSettingsMapFactory::GetForProfile(profile));
   if (ExpireAtSessionEnd())
     should_remember_ssl_decisions_ =
         FORGET_SSL_EXCEPTION_DECISIONS_AT_SESSION_END;
@@ -237,10 +298,10 @@ void ChromeSSLHostStateDelegate::AllowCert(const std::string& host,
   GURL url = GetSecureGURLForHost(host);
   HostContentSettingsMap* map =
       HostContentSettingsMapFactory::GetForProfile(profile_);
-  scoped_ptr<base::Value> value(map->GetWebsiteSetting(
+  std::unique_ptr<base::Value> value(map->GetWebsiteSetting(
       url, url, CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, std::string(), NULL));
 
-  if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY))
+  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY))
     value.reset(new base::DictionaryValue());
 
   base::DictionaryValue* dict;
@@ -264,12 +325,25 @@ void ChromeSSLHostStateDelegate::AllowCert(const std::string& host,
   // SetWebsiteSettingDefaultScope.
   map->SetWebsiteSettingDefaultScope(url, GURL(),
                                      CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
-                                     std::string(), value.release());
+                                     std::string(), std::move(value));
 }
 
-void ChromeSSLHostStateDelegate::Clear() {
+void ChromeSSLHostStateDelegate::Clear(
+    const base::Callback<bool(const std::string&)>& host_filter) {
+  // Convert host matching to content settings pattern matching. Content
+  // settings deletion is done synchronously on the UI thread, so we can use
+  // |host_filter| by reference.
+  base::Callback<bool(const ContentSettingsPattern& primary_pattern,
+                      const ContentSettingsPattern& secondary_pattern)>
+      pattern_filter;
+  if (!host_filter.is_null()) {
+    pattern_filter =
+        base::Bind(&HostFilterToPatternFilter, base::ConstRef(host_filter));
+  }
+
   HostContentSettingsMapFactory::GetForProfile(profile_)
-      ->ClearSettingsForOneType(CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS);
+      ->ClearSettingsForOneTypeWithPredicate(
+          CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, pattern_filter);
 }
 
 content::SSLHostStateDelegate::CertJudgment
@@ -280,7 +354,7 @@ ChromeSSLHostStateDelegate::QueryPolicy(const std::string& host,
   HostContentSettingsMap* map =
       HostContentSettingsMapFactory::GetForProfile(profile_);
   GURL url = GetSecureGURLForHost(host);
-  scoped_ptr<base::Value> value(map->GetWebsiteSetting(
+  std::unique_ptr<base::Value> value(map->GetWebsiteSetting(
       url, url, CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, std::string(), NULL));
 
   // Set a default value in case this method is short circuited and doesn't do a
@@ -295,7 +369,7 @@ ChromeSSLHostStateDelegate::QueryPolicy(const std::string& host,
   if (allow_localhost && net::IsLocalhost(url.host()))
     return ALLOWED;
 
-  if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY))
+  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY))
     return DENIED;
 
   base::DictionaryValue* dict;  // Owned by value
@@ -332,7 +406,7 @@ void ChromeSSLHostStateDelegate::RevokeUserAllowExceptions(
 
   map->SetWebsiteSettingDefaultScope(url, GURL(),
                                      CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
-                                     std::string(), NULL);
+                                     std::string(), nullptr);
 }
 
 // TODO(jww): This will revoke all of the decisions in the browser context.
@@ -368,10 +442,10 @@ bool ChromeSSLHostStateDelegate::HasAllowException(
   HostContentSettingsMap* map =
       HostContentSettingsMapFactory::GetForProfile(profile_);
 
-  scoped_ptr<base::Value> value(map->GetWebsiteSetting(
+  std::unique_ptr<base::Value> value(map->GetWebsiteSetting(
       url, url, CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, std::string(), NULL));
 
-  if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY))
+  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY))
     return false;
 
   base::DictionaryValue* dict;  // Owned by value
@@ -388,16 +462,35 @@ bool ChromeSSLHostStateDelegate::HasAllowException(
   return false;
 }
 
-void ChromeSSLHostStateDelegate::HostRanInsecureContent(const std::string& host,
-                                                        int pid) {
-  ran_insecure_content_hosts_.insert(BrokenHostEntry(host, pid));
+void ChromeSSLHostStateDelegate::HostRanInsecureContent(
+    const std::string& host,
+    int child_id,
+    InsecureContentType content_type) {
+  switch (content_type) {
+    case MIXED_CONTENT:
+      ran_mixed_content_hosts_.insert(BrokenHostEntry(host, child_id));
+      return;
+    case CERT_ERRORS_CONTENT:
+      ran_content_with_cert_errors_hosts_.insert(
+          BrokenHostEntry(host, child_id));
+      return;
+  }
 }
 
 bool ChromeSSLHostStateDelegate::DidHostRunInsecureContent(
     const std::string& host,
-    int pid) const {
-  return !!ran_insecure_content_hosts_.count(BrokenHostEntry(host, pid));
+    int child_id,
+    InsecureContentType content_type) const {
+  switch (content_type) {
+    case MIXED_CONTENT:
+      return !!ran_mixed_content_hosts_.count(BrokenHostEntry(host, child_id));
+    case CERT_ERRORS_CONTENT:
+      return !!ran_content_with_cert_errors_hosts_.count(
+          BrokenHostEntry(host, child_id));
+  }
+  NOTREACHED();
+  return false;
 }
-void ChromeSSLHostStateDelegate::SetClock(scoped_ptr<base::Clock> clock) {
-  clock_.reset(clock.release());
+void ChromeSSLHostStateDelegate::SetClock(std::unique_ptr<base::Clock> clock) {
+  clock_ = std::move(clock);
 }

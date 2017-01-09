@@ -4,18 +4,28 @@
 
 #include "ui/gfx/font_fallback_win.h"
 
+#include <dwrite_2.h>
 #include <usp10.h>
+#include <wrl.h>
 
+#include <algorithm>
 #include <map>
 
+#include "base/i18n/rtl.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "base/message_loop/message_loop.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
+#include "base/win/scoped_comptr.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/font_fallback.h"
+#include "ui/gfx/platform_font_win.h"
+#include "ui/gfx/win/direct_write.h"
+#include "ui/gfx/win/text_analysis_source.h"
 
 namespace gfx {
 
@@ -174,6 +184,55 @@ int CALLBACK MetaFileEnumProc(HDC hdc,
   return 1;
 }
 
+bool GetUniscribeFallbackFont(const Font& font,
+                              const wchar_t* text,
+                              int text_length,
+                              Font* result) {
+  // Adapted from WebKit's |FontCache::GetFontDataForCharacters()|.
+  // Uniscribe doesn't expose a method to query fallback fonts, so this works by
+  // drawing the text to an EMF object with Uniscribe's ScriptStringOut and then
+  // inspecting the EMF object to figure out which font Uniscribe used.
+  //
+  // DirectWrite in Windows 8.1 provides a cleaner alternative:
+  // http://msdn.microsoft.com/en-us/library/windows/desktop/dn280480.aspx
+
+  static HDC hdc = CreateCompatibleDC(NULL);
+
+  // Use a meta file to intercept the fallback font chosen by Uniscribe.
+  HDC meta_file_dc = CreateEnhMetaFile(hdc, NULL, NULL, NULL);
+  if (!meta_file_dc)
+    return false;
+
+  SelectObject(meta_file_dc, font.GetNativeFont());
+
+  SCRIPT_STRING_ANALYSIS script_analysis;
+  HRESULT hresult =
+      ScriptStringAnalyse(meta_file_dc, text, text_length, 0, -1,
+                          SSA_METAFILE | SSA_FALLBACK | SSA_GLYPHS | SSA_LINK,
+                          0, NULL, NULL, NULL, NULL, NULL, &script_analysis);
+
+  if (SUCCEEDED(hresult)) {
+    hresult = ScriptStringOut(script_analysis, 0, 0, 0, NULL, 0, 0, FALSE);
+    ScriptStringFree(&script_analysis);
+  }
+
+  bool found_fallback = false;
+  HENHMETAFILE meta_file = CloseEnhMetaFile(meta_file_dc);
+  if (SUCCEEDED(hresult)) {
+    LOGFONT log_font;
+    log_font.lfFaceName[0] = 0;
+    EnumEnhMetaFile(0, meta_file, MetaFileEnumProc, &log_font, NULL);
+    if (log_font.lfFaceName[0]) {
+      *result =
+          Font(base::UTF16ToUTF8(log_font.lfFaceName), font.GetFontSize());
+      found_fallback = true;
+    }
+  }
+  DeleteEnhMetaFile(meta_file);
+
+  return found_fallback;
+}
+
 }  // namespace
 
 namespace internal {
@@ -206,8 +265,8 @@ void ParseFontFamilyString(const std::string& family,
     const size_t index = font_names->back().find('(');
     if (index != std::string::npos) {
       font_names->back().resize(index);
-      base::TrimWhitespace(font_names->back(), base::TRIM_TRAILING,
-                           &font_names->back());
+      base::TrimWhitespaceASCII(font_names->back(), base::TRIM_TRAILING,
+                                &font_names->back());
     }
   }
 }
@@ -269,64 +328,88 @@ const std::vector<Font>* LinkedFontsIterator::GetLinkedFonts() const {
 
 }  // namespace internal
 
-std::vector<std::string> GetFallbackFontFamilies(
-    const std::string& font_family) {
+std::vector<Font> GetFallbackFonts(const Font& font) {
+  std::string font_family = font.GetFontName();
+
   // LinkedFontsIterator doesn't care about the font size, so we always pass 10.
   internal::LinkedFontsIterator linked_fonts(Font(font_family, 10));
-  std::vector<std::string> fallback_fonts;
+  std::vector<Font> fallback_fonts;
   Font current;
   while (linked_fonts.NextFont(&current))
-    fallback_fonts.push_back(current.GetFontName());
+    fallback_fonts.push_back(current);
   return fallback_fonts;
 }
 
-bool GetUniscribeFallbackFont(const Font& font,
-                              const wchar_t* text,
-                              int text_length,
-                              Font* result) {
-  // Adapted from WebKit's |FontCache::GetFontDataForCharacters()|.
-  // Uniscribe doesn't expose a method to query fallback fonts, so this works by
-  // drawing the text to an EMF object with Uniscribe's ScriptStringOut and then
-  // inspecting the EMF object to figure out which font Uniscribe used.
-  //
-  // DirectWrite in Windows 8.1 provides a cleaner alternative:
-  // http://msdn.microsoft.com/en-us/library/windows/desktop/dn280480.aspx
+bool GetFallbackFont(const Font& font,
+                     const wchar_t* text,
+                     int text_length,
+                     Font* result) {
+  // Creating a DirectWrite font fallback can be expensive. It's ok in the
+  // browser process because we can use the shared system fallback, but in the
+  // renderer this can cause hangs. Code that needs font fallback in the
+  // renderer should instead use the font proxy.
+  DCHECK(base::MessageLoopForUI::IsCurrent());
 
-  static HDC hdc = CreateCompatibleDC(NULL);
+  // Check that we have at least as much text as was claimed. If we have less
+  // text than expected then DirectWrite will become confused and crash. This
+  // shouldn't happen, but crbug.com/624905 shows that it happens sometimes.
+  DCHECK_GE(wcslen(text), static_cast<size_t>(text_length));
+  text_length = std::min(wcslen(text), static_cast<size_t>(text_length));
 
-  // Use a meta file to intercept the fallback font chosen by Uniscribe.
-  HDC meta_file_dc = CreateEnhMetaFile(hdc, NULL, NULL, NULL);
-  if (!meta_file_dc)
+  base::win::ScopedComPtr<IDWriteFactory> factory;
+  gfx::win::CreateDWriteFactory(factory.Receive());
+  base::win::ScopedComPtr<IDWriteFactory2> factory2;
+  factory.QueryInterface(factory2.Receive());
+  if (!factory2) {
+    // IDWriteFactory2 is not available before Win8.1
+    return GetUniscribeFallbackFont(font, text, text_length, result);
+  }
+
+  base::win::ScopedComPtr<IDWriteFontFallback> fallback;
+  if (FAILED(factory2->GetSystemFontFallback(fallback.Receive())))
     return false;
 
-  SelectObject(meta_file_dc, font.GetNativeFont());
+  base::string16 locale = base::UTF8ToUTF16(base::i18n::GetConfiguredLocale());
 
-  SCRIPT_STRING_ANALYSIS script_analysis;
-  HRESULT hresult =
-      ScriptStringAnalyse(meta_file_dc, text, text_length, 0, -1,
-                          SSA_METAFILE | SSA_FALLBACK | SSA_GLYPHS | SSA_LINK,
-                          0, NULL, NULL, NULL, NULL, NULL, &script_analysis);
-
-  if (SUCCEEDED(hresult)) {
-    hresult = ScriptStringOut(script_analysis, 0, 0, 0, NULL, 0, 0, FALSE);
-    ScriptStringFree(&script_analysis);
+  base::win::ScopedComPtr<IDWriteNumberSubstitution> number_substitution;
+  if (FAILED(factory2->CreateNumberSubstitution(
+          DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE, locale.c_str(),
+          true /* ignoreUserOverride */, number_substitution.Receive()))) {
+    return false;
   }
 
-  bool found_fallback = false;
-  HENHMETAFILE meta_file = CloseEnhMetaFile(meta_file_dc);
-  if (SUCCEEDED(hresult)) {
-    LOGFONT log_font;
-    log_font.lfFaceName[0] = 0;
-    EnumEnhMetaFile(0, meta_file, MetaFileEnumProc, &log_font, NULL);
-    if (log_font.lfFaceName[0]) {
-      *result = Font(base::UTF16ToUTF8(log_font.lfFaceName),
-                     font.GetFontSize());
-      found_fallback = true;
-    }
+  uint32_t mapped_length = 0;
+  base::win::ScopedComPtr<IDWriteFont> mapped_font;
+  float scale = 0;
+  base::win::ScopedComPtr<IDWriteTextAnalysisSource> text_analysis;
+  DWRITE_READING_DIRECTION reading_direction =
+      base::i18n::IsRTL() ? DWRITE_READING_DIRECTION_RIGHT_TO_LEFT
+                          : DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
+  if (FAILED(Microsoft::WRL::MakeAndInitialize<gfx::win::TextAnalysisSource>(
+          text_analysis.Receive(), text, locale.c_str(),
+          number_substitution.get(), reading_direction))) {
+    return false;
   }
-  DeleteEnhMetaFile(meta_file);
+  base::string16 original_name = base::UTF8ToUTF16(font.GetFontName());
+  DWRITE_FONT_STYLE font_style = DWRITE_FONT_STYLE_NORMAL;
+  if (font.GetStyle() & Font::ITALIC)
+    font_style = DWRITE_FONT_STYLE_ITALIC;
+  if (FAILED(fallback->MapCharacters(
+          text_analysis.get(), 0, text_length, nullptr, original_name.c_str(),
+          static_cast<DWRITE_FONT_WEIGHT>(font.GetWeight()), font_style,
+          DWRITE_FONT_STRETCH_NORMAL, &mapped_length, mapped_font.Receive(),
+          &scale))) {
+    return false;
+  }
 
-  return found_fallback;
+  if (mapped_font) {
+    base::string16 name;
+    if (FAILED(GetFamilyNameFromDirectWriteFont(mapped_font.get(), &name)))
+      return false;
+    *result = Font(base::UTF16ToUTF8(name), font.GetFontSize() * scale);
+    return true;
+  }
+  return false;
 }
 
 }  // namespace gfx

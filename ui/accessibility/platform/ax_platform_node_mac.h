@@ -8,6 +8,7 @@
 #import <Foundation/Foundation.h>
 
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/platform/ax_platform_node_base.h"
 
@@ -20,11 +21,11 @@ class AXPlatformNodeMac : public AXPlatformNodeBase {
   AXPlatformNodeMac();
 
   // AXPlatformNode.
-  void Destroy() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   void NotifyAccessibilityEvent(ui::AXEvent event_type) override;
 
   // AXPlatformNodeBase.
+  void Destroy() override;
   int GetIndexInParent() override;
 
  private:
@@ -45,6 +46,7 @@ AX_EXPORT
 
 + (NSString*)nativeRoleFromAXRole:(ui::AXRole)role;
 + (NSString*)nativeSubroleFromAXRole:(ui::AXRole)role;
++ (NSString*)nativeNotificationFromAXEvent:(ui::AXEvent)event;
 
 - (instancetype)initWithNode:(ui::AXPlatformNodeBase*)node;
 - (void)detach;

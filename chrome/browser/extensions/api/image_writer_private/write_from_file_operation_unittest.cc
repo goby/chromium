@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/test_utils.h"
 #include "chrome/browser/extensions/api/image_writer_private/write_from_file_operation.h"
@@ -19,7 +20,7 @@ class ImageWriterFromFileTest : public ImageWriterUnitTestBase {
  protected:
   ImageWriterFromFileTest()
       : profile_(new TestingProfile), manager_(profile_.get()) {}
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   MockOperationManager manager_;
 };
 

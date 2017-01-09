@@ -4,6 +4,8 @@
 
 #include "ui/views/examples/label_example.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/views/background.h"
@@ -33,7 +35,7 @@ const char* kAlignments[] = { "Left", "Center", "Right", "Head" };
 class PreferredSizeLabel : public Label {
  public:
   PreferredSizeLabel() : Label() {
-    SetBorder(Border::CreateSolidBorder(1, SK_ColorGRAY));
+    SetBorder(CreateSolidBorder(1, SK_ColorGRAY));
   }
   ~PreferredSizeLabel() override {}
 
@@ -110,7 +112,11 @@ void LabelExample::CreateExampleView(View* container) {
   container->AddChildView(label);
 
   label = new Label(ASCIIToUTF16("Label with thick border"));
-  label->SetBorder(Border::CreateSolidBorder(20, SK_ColorRED));
+  label->SetBorder(CreateSolidBorder(20, SK_ColorRED));
+  container->AddChildView(label);
+
+  label = new Label(ASCIIToUTF16("A label supporting text selection."));
+  label->SetSelectable(true);
   container->AddChildView(label);
 
   AddCustomLabel(container);
@@ -149,7 +155,7 @@ void LabelExample::ContentsChanged(Textfield* sender,
 
 void LabelExample::AddCustomLabel(View* container) {
   View* control_container = new View();
-  control_container->SetBorder(Border::CreateSolidBorder(2, SK_ColorGRAY));
+  control_container->SetBorder(CreateSolidBorder(2, SK_ColorGRAY));
   control_container->set_background(
       Background::CreateSolidBackground(SK_ColorLTGRAY));
   GridLayout* layout = GridLayout::CreatePanel(control_container);
@@ -209,7 +215,7 @@ Combobox* LabelExample::AddCombobox(GridLayout* layout,
   layout->StartRow(0, 0);
   layout->AddView(new Label(base::ASCIIToUTF16(name)));
   ExampleComboboxModel* model = new ExampleComboboxModel(strings, count);
-  example_combobox_models_.push_back(make_scoped_ptr(model));
+  example_combobox_models_.push_back(base::WrapUnique(model));
   Combobox* combobox = new Combobox(model);
   combobox->SetSelectedIndex(0);
   combobox->set_listener(this);

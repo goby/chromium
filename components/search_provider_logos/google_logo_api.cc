@@ -4,6 +4,8 @@
 
 #include "components/search_provider_logos/google_logo_api.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/base64.h"
@@ -20,7 +22,8 @@ const char kResponsePreamble[] = ")]}'";
 
 GURL GoogleAppendQueryparamsToLogoURL(const GURL& logo_url,
                                       const std::string& fingerprint,
-                                      bool wants_cta) {
+                                      bool wants_cta,
+                                      bool transparent) {
   // Note: we can't just use net::AppendQueryParameter() because it escapes
   // ":" to "%3A", but the server requires the colon not to be escaped.
   // See: http://crbug.com/413845
@@ -33,14 +36,19 @@ GURL GoogleAppendQueryparamsToLogoURL(const GURL& logo_url,
       query += "&";
 
     query += "async=";
-    if (!fingerprint.empty()) {
-      query += "es_dfp:" + fingerprint;
-      if (wants_cta)
-        query += ",";
+    std::vector<std::string> params;
+    if (!fingerprint.empty())
+      params.push_back("es_dfp:" + fingerprint);
+
+    if (wants_cta)
+      params.push_back("cta:1");
+
+    if (transparent) {
+      params.push_back("transp:1");
+      params.push_back("graybg:1");
     }
-    if (wants_cta) {
-      query += "cta:1";
-    }
+
+    query += base::JoinString(params, ",");
     GURL::Replacements replacements;
     replacements.SetQueryStr(query);
     return logo_url.ReplaceComponents(replacements);
@@ -49,8 +57,8 @@ GURL GoogleAppendQueryparamsToLogoURL(const GURL& logo_url,
   return logo_url;
 }
 
-scoped_ptr<EncodedLogo> GoogleParseLogoResponse(
-    const scoped_ptr<std::string>& response,
+std::unique_ptr<EncodedLogo> GoogleParseLogoResponse(
+    const std::unique_ptr<std::string>& response,
     base::Time response_time,
     bool* parsing_failed) {
   // Google doodles are sent as JSON with a prefix. Example:
@@ -69,29 +77,39 @@ scoped_ptr<EncodedLogo> GoogleParseLogoResponse(
   if (response_sp.starts_with(kResponsePreamble))
     response_sp.remove_prefix(strlen(kResponsePreamble));
 
-  scoped_ptr<base::Value> value = base::JSONReader::Read(response_sp);
-
-  // Check if no logo today.
-  if (!value.get()) {
-    *parsing_failed = false;
-    return scoped_ptr<EncodedLogo>();
-  }
-
   // Default parsing failure to be true.
   *parsing_failed = true;
+
+  int error_code;
+  std::string error_string;
+  int error_line;
+  int error_col;
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
+      response_sp, 0, &error_code, &error_string, &error_line, &error_col);
+  if (!value) {
+    LOG(WARNING) << error_string << " at " << error_line << ":" << error_col;
+    return nullptr;
+  }
   // The important data lives inside several nested dictionaries:
   // {"update": {"logo": { "mime_type": ..., etc } } }
   const base::DictionaryValue* outer_dict;
   if (!value->GetAsDictionary(&outer_dict))
-    return scoped_ptr<EncodedLogo>();
+    return nullptr;
   const base::DictionaryValue* update_dict;
   if (!outer_dict->GetDictionary("update", &update_dict))
-    return scoped_ptr<EncodedLogo>();
+    return nullptr;
+
+  // If there is no logo today, the "update" dictionary will be empty.
+  if (update_dict->empty()) {
+    *parsing_failed = false;
+    return nullptr;
+  }
+
   const base::DictionaryValue* logo_dict;
   if (!update_dict->GetDictionary("logo", &logo_dict))
-    return scoped_ptr<EncodedLogo>();
+    return nullptr;
 
-  scoped_ptr<EncodedLogo> logo(new EncodedLogo());
+  std::unique_ptr<EncodedLogo> logo(new EncodedLogo());
 
   std::string encoded_image_base64;
   if (logo_dict->GetString("data", &encoded_image_base64)) {
@@ -99,10 +117,10 @@ scoped_ptr<EncodedLogo> GoogleParseLogoResponse(
     base::RefCountedString* encoded_image_string = new base::RefCountedString();
     if (!base::Base64Decode(encoded_image_base64,
                             &encoded_image_string->data()))
-      return scoped_ptr<EncodedLogo>();
+      return nullptr;
     logo->encoded_image = encoded_image_string;
     if (!logo_dict->GetString("mime_type", &logo->metadata.mime_type))
-      return scoped_ptr<EncodedLogo>();
+      return nullptr;
   }
 
   // Don't check return values since these fields are optional.
@@ -118,7 +136,7 @@ scoped_ptr<EncodedLogo> GoogleParseLogoResponse(
   int time_to_live_ms;
   if (logo_dict->GetInteger("time_to_live", &time_to_live_ms)) {
     time_to_live = base::TimeDelta::FromMilliseconds(
-        std::min(static_cast<int64>(time_to_live_ms), kMaxTimeToLiveMS));
+        std::min(static_cast<int64_t>(time_to_live_ms), kMaxTimeToLiveMS));
     logo->metadata.can_show_after_expiration = false;
   } else {
     time_to_live = base::TimeDelta::FromMilliseconds(kMaxTimeToLiveMS);
@@ -128,7 +146,7 @@ scoped_ptr<EncodedLogo> GoogleParseLogoResponse(
 
   // If this point is reached, parsing has succeeded.
   *parsing_failed = false;
-  return logo.Pass();
+  return logo;
 }
 
 }  // namespace search_provider_logos

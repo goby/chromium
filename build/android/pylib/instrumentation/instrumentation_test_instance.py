@@ -8,20 +8,21 @@ import logging
 import os
 import pickle
 import re
-import sys
 
 from devil.android import apk_helper
 from devil.android import md5sum
 from pylib import constants
 from pylib.base import base_test_result
+from pylib.base import test_exception
 from pylib.base import test_instance
+from pylib.constants import host_paths
 from pylib.instrumentation import test_result
 from pylib.instrumentation import instrumentation_parser
+from pylib.utils import dexdump
 from pylib.utils import proguard
 
-sys.path.append(
-    os.path.join(constants.DIR_SOURCE_ROOT, 'build', 'util', 'lib', 'common'))
-import unittest_util # pylint: disable=import-error
+with host_paths.SysPath(host_paths.BUILD_COMMON_PATH):
+  import unittest_util # pylint: disable=import-error
 
 # Ref: http://developer.android.com/reference/android/app/Activity.html
 _ACTIVITY_RESULT_CANCELED = 0
@@ -33,9 +34,8 @@ _DEFAULT_ANNOTATIONS = [
     'EnormousTest', 'IntegrationTest']
 _EXCLUDE_UNLESS_REQUESTED_ANNOTATIONS = [
     'DisabledTest', 'FlakyTest']
-_EXTRA_ENABLE_HTTP_SERVER = (
-    'org.chromium.chrome.test.ChromeInstrumentationTestRunner.'
-        + 'EnableTestHttpServer')
+_VALID_ANNOTATIONS = set(['Manual', 'PerfTest'] + _DEFAULT_ANNOTATIONS +
+                         _EXCLUDE_UNLESS_REQUESTED_ANNOTATIONS)
 _EXTRA_DRIVER_TEST_LIST = (
     'org.chromium.test.driver.OnDeviceInstrumentationDriver.TestList')
 _EXTRA_DRIVER_TEST_LIST_FILE = (
@@ -44,10 +44,26 @@ _EXTRA_DRIVER_TARGET_PACKAGE = (
     'org.chromium.test.driver.OnDeviceInstrumentationDriver.TargetPackage')
 _EXTRA_DRIVER_TARGET_CLASS = (
     'org.chromium.test.driver.OnDeviceInstrumentationDriver.TargetClass')
+_EXTRA_TIMEOUT_SCALE = (
+    'org.chromium.test.driver.OnDeviceInstrumentationDriver.TimeoutScale')
+
 _PARAMETERIZED_TEST_ANNOTATION = 'ParameterizedTest'
 _PARAMETERIZED_TEST_SET_ANNOTATION = 'ParameterizedTest$Set'
-_NATIVE_CRASH_RE = re.compile('native crash', re.IGNORECASE)
+_NATIVE_CRASH_RE = re.compile('(process|native) crash', re.IGNORECASE)
+_CMDLINE_NAME_SEGMENT_RE = re.compile(
+    r' with(?:out)? \{[^\}]*\}')
 _PICKLE_FORMAT_VERSION = 10
+
+
+class MissingSizeAnnotationError(test_exception.TestException):
+  def __init__(self, class_name):
+    super(MissingSizeAnnotationError, self).__init__(class_name +
+        ': Test method is missing required size annotation. Add one of: ' +
+        ', '.join('@' + a for a in _VALID_ANNOTATIONS))
+
+
+class TestListPickleException(test_exception.TestException):
+  pass
 
 
 # TODO(jbudorick): Make these private class methods of
@@ -117,6 +133,8 @@ def GenerateTestResults(
           current_result.SetType(base_test_result.ResultType.SKIP)
         elif current_result.GetType() == base_test_result.ResultType.UNKNOWN:
           current_result.SetType(base_test_result.ResultType.PASS)
+      elif status_code == instrumentation_parser.STATUS_CODE_SKIP:
+        current_result.SetType(base_test_result.ResultType.SKIP)
       else:
         if status_code not in (instrumentation_parser.STATUS_CODE_ERROR,
                                instrumentation_parser.STATUS_CODE_FAILURE):
@@ -189,30 +207,255 @@ def ParseCommandLineFlagParameters(annotations):
   return result if result else None
 
 
+def FilterTests(tests, test_filter=None, annotations=None,
+                excluded_annotations=None):
+  """Filter a list of tests
+
+  Args:
+    tests: a list of tests. e.g. [
+           {'annotations": {}, 'class': 'com.example.TestA', 'methods':[]},
+           {'annotations": {}, 'class': 'com.example.TestB', 'methods':[]}]
+    test_filter: googletest-style filter string.
+    annotations: a dict of wanted annotations for test methods.
+    exclude_annotations: a dict of annotations to exclude.
+
+  Return:
+    A list of filtered tests
+  """
+  def gtest_filter(t):
+    if not test_filter:
+      return True
+    # Allow fully-qualified name as well as an omitted package.
+    unqualified_class_test = {
+      'class': t['class'].split('.')[-1],
+      'method': t['method']
+    }
+    names = [
+      GetTestName(t, sep='.'),
+      GetTestName(unqualified_class_test, sep='.'),
+      GetUniqueTestName(t, sep='.')
+    ]
+    return unittest_util.FilterTestNames(names, test_filter)
+
+  def annotation_filter(all_annotations):
+    if not annotations:
+      return True
+    return any_annotation_matches(annotations, all_annotations)
+
+  def excluded_annotation_filter(all_annotations):
+    if not excluded_annotations:
+      return True
+    return not any_annotation_matches(excluded_annotations,
+                                      all_annotations)
+
+  def any_annotation_matches(filter_annotations, all_annotations):
+    return any(
+        ak in all_annotations
+        and annotation_value_matches(av, all_annotations[ak])
+        for ak, av in filter_annotations)
+
+  def annotation_value_matches(filter_av, av):
+    if filter_av is None:
+      return True
+    elif isinstance(av, dict):
+      return filter_av in av['value']
+    elif isinstance(av, list):
+      return filter_av in av
+    return filter_av == av
+
+  filtered_tests = []
+  for t in tests:
+    # Gtest filtering
+    if not gtest_filter(t):
+      continue
+
+    # Enforce that all tests declare their size.
+    if not any(a in _VALID_ANNOTATIONS for a in t['annotations']):
+      raise MissingSizeAnnotationError(GetTestName(t))
+
+    if (not annotation_filter(t['annotations'])
+        or not excluded_annotation_filter(t['annotations'])):
+      continue
+
+    filtered_tests.append(t)
+
+  return filtered_tests
+
+
+def GetAllTestsFromJar(test_jar):
+  pickle_path = '%s-proguard.pickle' % test_jar
+  try:
+    tests = _GetTestsFromPickle(pickle_path, test_jar)
+  except TestListPickleException as e:
+    logging.info('Could not get tests from pickle: %s', e)
+    logging.info('Getting tests from JAR via proguard.')
+    tests = _GetTestsFromProguard(test_jar)
+    _SaveTestsToPickle(pickle_path, test_jar, tests)
+  return tests
+
+
+def GetAllTestsFromApk(test_apk):
+  pickle_path = '%s-dexdump.pickle' % test_apk
+  try:
+    tests = _GetTestsFromPickle(pickle_path, test_apk)
+  except TestListPickleException as e:
+    logging.info('Could not get tests from pickle: %s', e)
+    logging.info('Getting tests from dex via dexdump.')
+    tests = _GetTestsFromDexdump(test_apk)
+    _SaveTestsToPickle(pickle_path, test_apk, tests)
+  return tests
+
+
+def _GetTestsFromPickle(pickle_path, jar_path):
+  if not os.path.exists(pickle_path):
+    raise TestListPickleException('%s does not exist.' % pickle_path)
+  if os.path.getmtime(pickle_path) <= os.path.getmtime(jar_path):
+    raise TestListPickleException(
+        '%s newer than %s.' % (jar_path, pickle_path))
+
+  with open(pickle_path, 'r') as pickle_file:
+    pickle_data = pickle.loads(pickle_file.read())
+  jar_md5 = md5sum.CalculateHostMd5Sums(jar_path)[jar_path]
+
+  if pickle_data['VERSION'] != _PICKLE_FORMAT_VERSION:
+    raise TestListPickleException('PICKLE_FORMAT_VERSION has changed.')
+  if pickle_data['JAR_MD5SUM'] != jar_md5:
+    raise TestListPickleException('JAR file MD5 sum differs.')
+  return pickle_data['TEST_METHODS']
+
+
+def _GetTestsFromProguard(jar_path):
+  p = proguard.Dump(jar_path)
+  class_lookup = dict((c['class'], c) for c in p['classes'])
+
+  def is_test_class(c):
+    return c['class'].endswith('Test')
+
+  def is_test_method(m):
+    return m['method'].startswith('test')
+
+  def recursive_class_annotations(c):
+    s = c['superclass']
+    if s in class_lookup:
+      a = recursive_class_annotations(class_lookup[s])
+    else:
+      a = {}
+    a.update(c['annotations'])
+    return a
+
+  def stripped_test_class(c):
+    return {
+      'class': c['class'],
+      'annotations': recursive_class_annotations(c),
+      'methods': [m for m in c['methods'] if is_test_method(m)],
+    }
+
+  return [stripped_test_class(c) for c in p['classes']
+          if is_test_class(c)]
+
+
+def _GetTestsFromDexdump(test_apk):
+  d = dexdump.Dump(test_apk)
+  tests = []
+
+  def get_test_methods(methods):
+    return [
+        {
+          'method': m,
+          # No annotation info is available from dexdump.
+          # Set MediumTest annotation for default.
+          'annotations': {'MediumTest': None},
+        } for m in methods if m.startswith('test')]
+
+  for package_name, package_info in d.iteritems():
+    for class_name, class_info in package_info['classes'].iteritems():
+      if class_name.endswith('Test'):
+        tests.append({
+            'class': '%s.%s' % (package_name, class_name),
+            'annotations': {},
+            'methods': get_test_methods(class_info['methods']),
+        })
+  return tests
+
+
+def _SaveTestsToPickle(pickle_path, jar_path, tests):
+  jar_md5 = md5sum.CalculateHostMd5Sums(jar_path)[jar_path]
+  pickle_data = {
+    'VERSION': _PICKLE_FORMAT_VERSION,
+    'JAR_MD5SUM': jar_md5,
+    'TEST_METHODS': tests,
+  }
+  with open(pickle_path, 'w') as pickle_file:
+    pickle.dump(pickle_data, pickle_file)
+
+
+class UnmatchedFilterException(test_exception.TestException):
+  """Raised when a user specifies a filter that doesn't match any tests."""
+
+  def __init__(self, test_filter):
+    super(UnmatchedFilterException, self).__init__(
+        'Test filter "%s" matched no tests.' % test_filter)
+
+
+def GetTestName(test, sep='#'):
+  """Gets the name of the given test.
+
+  Note that this may return the same name for more than one test, e.g. if a
+  test is being run multiple times with different parameters.
+
+  Args:
+    test: the instrumentation test dict.
+    sep: the character(s) that should join the class name and the method name.
+  Returns:
+    The test name as a string.
+  """
+  return '%s%s%s' % (test['class'], sep, test['method'])
+
+
+def GetUniqueTestName(test, sep='#'):
+  """Gets the unique name of the given test.
+
+  This will include text to disambiguate between tests for which GetTestName
+  would return the same name.
+
+  Args:
+    test: the instrumentation test dict.
+    sep: the character(s) that should join the class name and the method name.
+  Returns:
+    The unique test name as a string.
+  """
+  display_name = GetTestName(test, sep=sep)
+  if 'flags' in test:
+    flags = test['flags']
+    if flags.add:
+      display_name = '%s with {%s}' % (display_name, ' '.join(flags.add))
+    if flags.remove:
+      display_name = '%s without {%s}' % (display_name, ' '.join(flags.remove))
+  return display_name
+
+
 class InstrumentationTestInstance(test_instance.TestInstance):
 
-  def __init__(self, args, isolate_delegate, error_func):
+  def __init__(self, args, data_deps_delegate, error_func):
     super(InstrumentationTestInstance, self).__init__()
 
     self._additional_apks = []
     self._apk_under_test = None
-    self._apk_under_test_permissions = None
+    self._apk_under_test_incremental_install_script = None
     self._package_info = None
     self._suite = None
     self._test_apk = None
+    self._test_apk_incremental_install_script = None
     self._test_jar = None
     self._test_package = None
-    self._test_permissions = None
     self._test_runner = None
     self._test_support_apk = None
     self._initializeApkAttributes(args, error_func)
 
     self._data_deps = None
-    self._isolate_abs_path = None
-    self._isolate_delegate = None
-    self._isolated_abs_path = None
-    self._test_data = None
-    self._initializeDataDependencyAttributes(args, isolate_delegate)
+    self._data_deps_delegate = None
+    self._runtime_deps_path = None
+    self._initializeDataDependencyAttributes(args, data_deps_delegate)
 
     self._annotations = None
     self._excluded_annotations = None
@@ -230,112 +473,133 @@ class InstrumentationTestInstance(test_instance.TestInstance):
     self._timeout_scale = None
     self._initializeTestControlAttributes(args)
 
+    self._coverage_directory = None
+    self._initializeTestCoverageAttributes(args)
+
+    self._store_tombstones = False
+    self._initializeTombstonesAttributes(args)
+
+    self._should_save_logcat = None
+    self._initializeLogAttributes(args)
+
   def _initializeApkAttributes(self, args, error_func):
-    if args.apk_under_test.endswith('.apk'):
-      self._apk_under_test = args.apk_under_test
-    else:
-      self._apk_under_test = os.path.join(
-          constants.GetOutDirectory(), constants.SDK_BUILD_APKS_DIR,
-          '%s.apk' % args.apk_under_test)
+    if args.apk_under_test:
+      apk_under_test_path = args.apk_under_test
+      if not args.apk_under_test.endswith('.apk'):
+        apk_under_test_path = os.path.join(
+            constants.GetOutDirectory(), constants.SDK_BUILD_APKS_DIR,
+            '%s.apk' % args.apk_under_test)
 
-    if not os.path.exists(self._apk_under_test):
-      error_func('Unable to find APK under test: %s' % self._apk_under_test)
+      # TODO(jbudorick): Move the realpath up to the argument parser once
+      # APK-by-name is no longer supported.
+      apk_under_test_path = os.path.realpath(apk_under_test_path)
 
-    apk = apk_helper.ApkHelper(self._apk_under_test)
-    self._apk_under_test_permissions = apk.GetPermissions()
+      if not os.path.exists(apk_under_test_path):
+        error_func('Unable to find APK under test: %s' % apk_under_test_path)
+
+      self._apk_under_test = apk_helper.ToHelper(apk_under_test_path)
 
     if args.test_apk.endswith('.apk'):
       self._suite = os.path.splitext(os.path.basename(args.test_apk))[0]
-      self._test_apk = args.test_apk
+      test_apk_path = args.test_apk
+      self._test_apk = apk_helper.ToHelper(args.test_apk)
     else:
       self._suite = args.test_apk
-      self._test_apk = os.path.join(
+      test_apk_path = os.path.join(
           constants.GetOutDirectory(), constants.SDK_BUILD_APKS_DIR,
           '%s.apk' % args.test_apk)
 
-    self._test_jar = os.path.join(
-        constants.GetOutDirectory(), constants.SDK_BUILD_TEST_JAVALIB_DIR,
-        '%s.jar' % self._suite)
-    self._test_support_apk = os.path.join(
-        constants.GetOutDirectory(), constants.SDK_BUILD_TEST_JAVALIB_DIR,
-        '%sSupport.apk' % self._suite)
+    # TODO(jbudorick): Move the realpath up to the argument parser once
+    # APK-by-name is no longer supported.
+    test_apk_path = os.path.realpath(test_apk_path)
 
-    if not os.path.exists(self._test_apk):
-      error_func('Unable to find test APK: %s' % self._test_apk)
-    if not os.path.exists(self._test_jar):
+    if not os.path.exists(test_apk_path):
+      error_func('Unable to find test APK: %s' % test_apk_path)
+
+    self._test_apk = apk_helper.ToHelper(test_apk_path)
+
+    self._apk_under_test_incremental_install_script = (
+        args.apk_under_test_incremental_install_script)
+    self._test_apk_incremental_install_script = (
+        args.test_apk_incremental_install_script)
+
+    if self._test_apk_incremental_install_script:
+      assert self._suite.endswith('_incremental')
+      self._suite = self._suite[:-len('_incremental')]
+
+    self._test_jar = args.test_jar
+    self._test_support_apk = apk_helper.ToHelper(os.path.join(
+        constants.GetOutDirectory(), constants.SDK_BUILD_TEST_JAVALIB_DIR,
+        '%sSupport.apk' % self._suite))
+
+    if not os.path.exists(self._test_apk.path):
+      error_func('Unable to find test APK: %s' % self._test_apk.path)
+    if not self._test_jar:
+      logging.warning('Test jar not specified. Test runner will not have '
+                      'Java annotation info available. May not handle test '
+                      'timeouts correctly.')
+    elif not os.path.exists(self._test_jar):
       error_func('Unable to find test JAR: %s' % self._test_jar)
 
-    apk = apk_helper.ApkHelper(self.test_apk)
-    self._test_package = apk.GetPackageName()
-    self._test_permissions = apk.GetPermissions()
-    self._test_runner = apk.GetInstrumentationName()
+    self._test_package = self._test_apk.GetPackageName()
+    self._test_runner = self._test_apk.GetInstrumentationName()
 
     self._package_info = None
-    for package_info in constants.PACKAGE_INFO.itervalues():
-      if self._test_package == package_info.test_package:
-        self._package_info = package_info
+    if self._apk_under_test:
+      package_under_test = self._apk_under_test.GetPackageName()
+      for package_info in constants.PACKAGE_INFO.itervalues():
+        if package_under_test == package_info.package:
+          self._package_info = package_info
+          break
     if not self._package_info:
       logging.warning('Unable to find package info for %s', self._test_package)
 
     for apk in args.additional_apks:
       if not os.path.exists(apk):
         error_func('Unable to find additional APK: %s' % apk)
-    self._additional_apks = args.additional_apks
+    self._additional_apks = (
+        [apk_helper.ToHelper(x) for x in args.additional_apks])
 
-  def _initializeDataDependencyAttributes(self, args, isolate_delegate):
+  def _initializeDataDependencyAttributes(self, args, data_deps_delegate):
     self._data_deps = []
-    if args.isolate_file_path:
-      self._isolate_abs_path = os.path.abspath(args.isolate_file_path)
-      self._isolate_delegate = isolate_delegate
-      self._isolated_abs_path = os.path.join(
-          constants.GetOutDirectory(), '%s.isolated' % self._test_package)
-    else:
-      self._isolate_delegate = None
+    self._data_deps_delegate = data_deps_delegate
+    self._runtime_deps_path = args.runtime_deps_path
 
-    # TODO(jbudorick): Deprecate and remove --test-data once data dependencies
-    # are fully converted to isolate.
-    if args.test_data:
-      logging.info('Data dependencies specified via --test-data')
-      self._test_data = args.test_data
-    else:
-      self._test_data = None
-
-    if not self._isolate_delegate and not self._test_data:
+    if not self._runtime_deps_path:
       logging.warning('No data dependencies will be pushed.')
 
   def _initializeTestFilterAttributes(self, args):
-    self._test_filter = args.test_filter
+    if args.test_filter:
+      self._test_filter = _CMDLINE_NAME_SEGMENT_RE.sub(
+          '', args.test_filter.replace('#', '.'))
 
-    def annotation_dict_element(a):
-      a = a.split('=')
+    def annotation_element(a):
+      a = a.split('=', 1)
       return (a[0], a[1] if len(a) == 2 else None)
 
     if args.annotation_str:
-      self._annotations = dict(
-          annotation_dict_element(a)
-          for a in args.annotation_str.split(','))
+      self._annotations = [
+          annotation_element(a) for a in args.annotation_str.split(',')]
     elif not self._test_filter:
-      self._annotations = dict(
-          annotation_dict_element(a)
-          for a in _DEFAULT_ANNOTATIONS)
+      self._annotations = [
+          annotation_element(a) for a in _DEFAULT_ANNOTATIONS]
     else:
-      self._annotations = {}
+      self._annotations = []
 
     if args.exclude_annotation_str:
-      self._excluded_annotations = dict(
-          annotation_dict_element(a)
-          for a in args.exclude_annotation_str.split(','))
+      self._excluded_annotations = [
+          annotation_element(a) for a in args.exclude_annotation_str.split(',')]
     else:
-      self._excluded_annotations = {}
+      self._excluded_annotations = []
 
-    self._excluded_annotations.update(
-        {
-          a: None for a in _EXCLUDE_UNLESS_REQUESTED_ANNOTATIONS
-          if a not in self._annotations
-        })
+    requested_annotations = set(a[0] for a in self._annotations)
+    if not args.run_disabled:
+      self._excluded_annotations.extend(
+          annotation_element(a) for a in _EXCLUDE_UNLESS_REQUESTED_ANNOTATIONS
+          if a not in requested_annotations)
 
   def _initializeFlagAttributes(self, args):
-    self._flags = ['--disable-fre', '--enable-test-intents']
+    self._flags = ['--enable-test-intents']
     # TODO(jbudorick): Transition "--device-flags" to "--device-flags-file"
     if hasattr(args, 'device_flags') and args.device_flags:
       with open(args.device_flags) as device_flags_file:
@@ -345,6 +609,12 @@ class InstrumentationTestInstance(test_instance.TestInstance):
       with open(args.device_flags_file) as device_flags_file:
         stripped_lines = (l.strip() for l in device_flags_file)
         self._flags.extend([flag for flag in stripped_lines if flag])
+    if (hasattr(args, 'strict_mode') and
+        args.strict_mode and
+        args.strict_mode != 'off'):
+      self._flags.append('--strict-mode=' + args.strict_mode)
+    if hasattr(args, 'regenerate_goldens') and args.regenerate_goldens:
+      self._flags.append('--regenerate-goldens')
 
   def _initializeDriverAttributes(self):
     self._driver_apk = os.path.join(
@@ -358,7 +628,17 @@ class InstrumentationTestInstance(test_instance.TestInstance):
       self._driver_apk = None
 
   def _initializeTestControlAttributes(self, args):
+    self._screenshot_dir = args.screenshot_dir
     self._timeout_scale = args.timeout_scale or 1
+
+  def _initializeTestCoverageAttributes(self, args):
+    self._coverage_directory = args.coverage_dir
+
+  def _initializeTombstonesAttributes(self, args):
+    self._store_tombstones = args.store_tombstones
+
+  def _initializeLogAttributes(self, args):
+    self._should_save_logcat = bool(args.json_results_file)
 
   @property
   def additional_apks(self):
@@ -369,12 +649,12 @@ class InstrumentationTestInstance(test_instance.TestInstance):
     return self._apk_under_test
 
   @property
-  def apk_under_test_permissions(self):
-   return self._apk_under_test_permissions
+  def apk_under_test_incremental_install_script(self):
+    return self._apk_under_test_incremental_install_script
 
   @property
-  def flags(self):
-    return self._flags
+  def coverage_directory(self):
+    return self._coverage_directory
 
   @property
   def driver_apk(self):
@@ -389,8 +669,24 @@ class InstrumentationTestInstance(test_instance.TestInstance):
     return self._driver_name
 
   @property
+  def flags(self):
+    return self._flags
+
+  @property
+  def should_save_logcat(self):
+    return self._should_save_logcat
+
+  @property
   def package_info(self):
     return self._package_info
+
+  @property
+  def screenshot_dir(self):
+    return self._screenshot_dir
+
+  @property
+  def store_tombstones(self):
+    return self._store_tombstones
 
   @property
   def suite(self):
@@ -399,6 +695,10 @@ class InstrumentationTestInstance(test_instance.TestInstance):
   @property
   def test_apk(self):
     return self._test_apk
+
+  @property
+  def test_apk_incremental_install_script(self):
+    return self._test_apk_incremental_install_script
 
   @property
   def test_jar(self):
@@ -411,10 +711,6 @@ class InstrumentationTestInstance(test_instance.TestInstance):
   @property
   def test_package(self):
     return self._test_package
-
-  @property
-  def test_permissions(self):
-    return self._test_permissions
 
   @property
   def test_runner(self):
@@ -430,146 +726,28 @@ class InstrumentationTestInstance(test_instance.TestInstance):
 
   #override
   def SetUp(self):
-    if self._isolate_delegate:
-      self._isolate_delegate.Remap(
-          self._isolate_abs_path, self._isolated_abs_path)
-      self._isolate_delegate.MoveOutputDeps()
-      self._data_deps.extend([(self._isolate_delegate.isolate_deps_dir, None)])
-
-    # TODO(jbudorick): Convert existing tests that depend on the --test-data
-    # mechanism to isolate, then remove this.
-    if self._test_data:
-      for t in self._test_data:
-        device_rel_path, host_rel_path = t.split(':')
-        host_abs_path = os.path.join(constants.DIR_SOURCE_ROOT, host_rel_path)
-        self._data_deps.extend(
-            [(host_abs_path,
-              [None, 'chrome', 'test', 'data', device_rel_path])])
+    self._data_deps.extend(
+        self._data_deps_delegate(self._runtime_deps_path))
 
   def GetDataDependencies(self):
     return self._data_deps
 
   def GetTests(self):
-    pickle_path = '%s-proguard.pickle' % self.test_jar
-    try:
-      tests = self._GetTestsFromPickle(pickle_path, self.test_jar)
-    except self.ProguardPickleException as e:
-      logging.info('Getting tests from JAR via proguard. (%s)', str(e))
-      tests = self._GetTestsFromProguard(self.test_jar)
-      self._SaveTestsToPickle(pickle_path, self.test_jar, tests)
-    return self._ParametrizeTestsWithFlags(
-        self._InflateTests(self._FilterTests(tests)))
-
-  class ProguardPickleException(Exception):
-    pass
-
-  def _GetTestsFromPickle(self, pickle_path, jar_path):
-    if not os.path.exists(pickle_path):
-      raise self.ProguardPickleException('%s does not exist.' % pickle_path)
-    if os.path.getmtime(pickle_path) <= os.path.getmtime(jar_path):
-      raise self.ProguardPickleException(
-          '%s newer than %s.' % (jar_path, pickle_path))
-
-    with open(pickle_path, 'r') as pickle_file:
-      pickle_data = pickle.loads(pickle_file.read())
-    jar_md5 = md5sum.CalculateHostMd5Sums(jar_path)[jar_path]
-
-    try:
-      if pickle_data['VERSION'] != _PICKLE_FORMAT_VERSION:
-        raise self.ProguardPickleException('PICKLE_FORMAT_VERSION has changed.')
-      if pickle_data['JAR_MD5SUM'] != jar_md5:
-        raise self.ProguardPickleException('JAR file MD5 sum differs.')
-      return pickle_data['TEST_METHODS']
-    except TypeError as e:
-      logging.error(pickle_data)
-      raise self.ProguardPickleException(str(e))
+    if self.test_jar:
+      tests = GetAllTestsFromJar(self.test_jar)
+    else:
+      tests = GetAllTestsFromApk(self.test_apk.path)
+    inflated_tests = self._ParametrizeTestsWithFlags(self._InflateTests(tests))
+    filtered_tests = FilterTests(
+        inflated_tests, self._test_filter, self._annotations,
+        self._excluded_annotations)
+    if self._test_filter and not filtered_tests:
+      for t in inflated_tests:
+        logging.debug('  %s', GetUniqueTestName(t))
+      raise UnmatchedFilterException(self._test_filter)
+    return filtered_tests
 
   # pylint: disable=no-self-use
-  def _GetTestsFromProguard(self, jar_path):
-    p = proguard.Dump(jar_path)
-
-    def is_test_class(c):
-      return c['class'].endswith('Test')
-
-    def is_test_method(m):
-      return m['method'].startswith('test')
-
-    class_lookup = dict((c['class'], c) for c in p['classes'])
-    def recursive_get_class_annotations(c):
-      s = c['superclass']
-      if s in class_lookup:
-        a = recursive_get_class_annotations(class_lookup[s])
-      else:
-        a = {}
-      a.update(c['annotations'])
-      return a
-
-    def stripped_test_class(c):
-      return {
-        'class': c['class'],
-        'annotations': recursive_get_class_annotations(c),
-        'methods': [m for m in c['methods'] if is_test_method(m)],
-      }
-
-    return [stripped_test_class(c) for c in p['classes']
-            if is_test_class(c)]
-
-  def _SaveTestsToPickle(self, pickle_path, jar_path, tests):
-    jar_md5 = md5sum.CalculateHostMd5Sums(jar_path)[jar_path]
-    pickle_data = {
-      'VERSION': _PICKLE_FORMAT_VERSION,
-      'JAR_MD5SUM': jar_md5,
-      'TEST_METHODS': tests,
-    }
-    with open(pickle_path, 'w') as pickle_file:
-      pickle.dump(pickle_data, pickle_file)
-
-  def _FilterTests(self, tests):
-
-    def gtest_filter(c, m):
-      t = ['%s.%s' % (c['class'].split('.')[-1], m['method'])]
-      return (not self._test_filter
-              or unittest_util.FilterTestNames(t, self._test_filter))
-
-    def annotation_filter(all_annotations):
-      if not self._annotations:
-        return True
-      return any_annotation_matches(self._annotations, all_annotations)
-
-    def excluded_annotation_filter(all_annotations):
-      if not self._excluded_annotations:
-        return True
-      return not any_annotation_matches(self._excluded_annotations,
-                                        all_annotations)
-
-    def any_annotation_matches(annotations, all_annotations):
-      return any(
-          ak in all_annotations and (av is None or av == all_annotations[ak])
-          for ak, av in annotations.iteritems())
-
-    filtered_classes = []
-    for c in tests:
-      filtered_methods = []
-      for m in c['methods']:
-        # Gtest filtering
-        if not gtest_filter(c, m):
-          continue
-
-        all_annotations = dict(c['annotations'])
-        all_annotations.update(m['annotations'])
-        if (not annotation_filter(all_annotations)
-            or not excluded_annotation_filter(all_annotations)):
-          continue
-
-        filtered_methods.append(m)
-
-      if filtered_methods:
-        filtered_class = dict(c)
-        filtered_class['methods'] = filtered_methods
-        filtered_classes.append(filtered_class)
-
-    return filtered_classes
-
   def _InflateTests(self, tests):
     inflated_tests = []
     for c in tests:
@@ -595,17 +773,12 @@ class InstrumentationTestInstance(test_instance.TestInstance):
           new_tests.append(parameterized_t)
     return tests + new_tests
 
-  @staticmethod
-  def GetHttpServerEnvironmentVars():
-    return {
-      _EXTRA_ENABLE_HTTP_SERVER: None,
-    }
-
   def GetDriverEnvironmentVars(
       self, test_list=None, test_list_file_path=None):
     env = {
       _EXTRA_DRIVER_TARGET_PACKAGE: self.test_package,
       _EXTRA_DRIVER_TARGET_CLASS: self.test_runner,
+      _EXTRA_TIMEOUT_SCALE: self._timeout_scale,
     }
 
     if test_list:
@@ -629,6 +802,4 @@ class InstrumentationTestInstance(test_instance.TestInstance):
 
   #override
   def TearDown(self):
-    if self._isolate_delegate:
-      self._isolate_delegate.Clear()
-
+    pass

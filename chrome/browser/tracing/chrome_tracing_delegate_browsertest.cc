@@ -2,19 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/base_switches.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/tracing/background_tracing_field_trial.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/metrics/metrics_pref_names.h"
+#include "components/prefs/pref_service.h"
+#include "components/variations/variations_switches.h"
 #include "content/public/browser/background_tracing_config.h"
 #include "content/public/browser/background_tracing_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -47,16 +50,17 @@ class ChromeTracingDelegateBrowserTest : public InProcessBrowserTest {
     dict.SetString("mode", "PREEMPTIVE_TRACING_MODE");
     dict.SetString("category", "BENCHMARK");
 
-    scoped_ptr<base::ListValue> rules_list(new base::ListValue());
+    std::unique_ptr<base::ListValue> rules_list(new base::ListValue());
     {
-      scoped_ptr<base::DictionaryValue> rules_dict(new base::DictionaryValue());
+      std::unique_ptr<base::DictionaryValue> rules_dict(
+          new base::DictionaryValue());
       rules_dict->SetString("rule", "MONITOR_AND_DUMP_WHEN_TRIGGER_NAMED");
       rules_dict->SetString("trigger_name", "test");
-      rules_list->Append(rules_dict.Pass());
+      rules_list->Append(std::move(rules_dict));
     }
-    dict.Set("configs", rules_list.Pass());
+    dict.Set("configs", std::move(rules_list));
 
-    scoped_ptr<content::BackgroundTracingConfig> config(
+    std::unique_ptr<content::BackgroundTracingConfig> config(
         content::BackgroundTracingConfig::FromDict(&dict));
 
     DCHECK(config);
@@ -65,7 +69,7 @@ class ChromeTracingDelegateBrowserTest : public InProcessBrowserTest {
                    base::Unretained(this));
 
     return content::BackgroundTracingManager::GetInstance()->SetActiveScenario(
-        config.Pass(), receive_callback, data_filtering);
+        std::move(config), receive_callback, data_filtering);
   }
 
   void TriggerPreemptiveScenario(
@@ -93,14 +97,14 @@ class ChromeTracingDelegateBrowserTest : public InProcessBrowserTest {
 
  private:
   void OnUpload(const scoped_refptr<base::RefCountedString>& file_contents,
-                scoped_ptr<const base::DictionaryValue> metadata,
+                std::unique_ptr<const base::DictionaryValue> metadata,
                 base::Callback<void()> done_callback) {
     receive_count_ += 1;
 
     content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                     base::Bind(done_callback));
+                                     done_callback);
     content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                     base::Bind(on_upload_callback_));
+                                     on_upload_callback_);
   }
 
   void OnStartedFinalizing(bool success) {
@@ -108,9 +112,8 @@ class ChromeTracingDelegateBrowserTest : public InProcessBrowserTest {
     last_on_started_finalizing_success_ = success;
 
     if (!on_started_finalization_callback_.is_null()) {
-      content::BrowserThread::PostTask(
-          content::BrowserThread::UI, FROM_HERE,
-          base::Bind(on_started_finalization_callback_));
+      content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
+                                       on_started_finalization_callback_);
     }
   }
 
@@ -182,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTest,
 IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTest,
                        ExistingIncognitoSessionBlockingTraceStart) {
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_NEW_INCOGNITO_WINDOW));
-  EXPECT_TRUE(BrowserList::IsOffTheRecordSessionActive());
+  EXPECT_TRUE(BrowserList::IsIncognitoSessionActive());
   EXPECT_FALSE(StartPreemptiveScenario(
       base::Closure(), content::BackgroundTracingManager::ANONYMIZE_DATA));
 }
@@ -195,7 +198,7 @@ IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTest,
       base::Closure(), content::BackgroundTracingManager::ANONYMIZE_DATA));
 
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_NEW_INCOGNITO_WINDOW));
-  EXPECT_TRUE(BrowserList::IsOffTheRecordSessionActive());
+  EXPECT_TRUE(BrowserList::IsIncognitoSessionActive());
 
   base::RunLoop wait_for_finalization_start;
   TriggerPreemptiveScenario(wait_for_finalization_start.QuitClosure());
@@ -227,21 +230,21 @@ class ChromeTracingDelegateBrowserTestOnStartup
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
         switches::kForceFieldTrials, "BackgroundTracing/TestGroup/");
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kForceFieldTrialParams,
+        variations::switches::kForceFieldTrialParams,
         "BackgroundTracing.TestGroup:config/default_config_for_testing");
 
     tracing::SetConfigTextFilterForTesting(&FieldTrialConfigTextFilter);
   }
 };
 
-#if !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS) && defined(OFFICIAL_BUILD)
 IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTestOnStartup,
                        PRE_ScenarioSetFromFieldtrial) {
   // At this point the metrics pref is not set.
   EXPECT_FALSE(
       content::BackgroundTracingManager::GetInstance()->HasActiveScenario());
 }
-#endif // OS_CHROMEOS
+#endif // !OS_CHROMEOS && !OFFICIAL_BUILD
 
 IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTestOnStartup,
                        ScenarioSetFromFieldtrial) {
@@ -250,14 +253,14 @@ IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTestOnStartup,
       content::BackgroundTracingManager::GetInstance()->HasActiveScenario());
 }
 
-#if !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS) && defined(OFFICIAL_BUILD)
 IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTestOnStartup,
                        PRE_PRE_StartupTracingThrottle) {
   // At this point the metrics pref is not set.
   EXPECT_FALSE(
       content::BackgroundTracingManager::GetInstance()->HasActiveScenario());
 }
-#endif // OS_CHROMEOS
+#endif // !OS_CHROMEOS && !OFFICIAL_BUILD
 
 IN_PROC_BROWSER_TEST_F(ChromeTracingDelegateBrowserTestOnStartup,
                        PRE_StartupTracingThrottle) {

@@ -1,34 +1,17 @@
-This directory contains files from several different implementations and
-implementation strategies:
-
-## Traditional ReadableStream Implementation
-
-- ReadableByteStream.{cpp,h,idl}
-- ReadableByteStreamReader.{h,idl}
-- ReadableStream.{cpp,h,idl}
-- ReadableStreamImpl.h
-- ReadableStreamReader.{cpp,h,idl}
-- ReadableStreamReaderTest.cpp
-- ReadableStreamTest.cpp
-- UnderlyingSource.h
-
-These files implement the current streams spec, plus the more speculative
-ReadableByteStream, to the extent necessary to support Fetch response bodies.
-They do not support author-constructed readable streams. They use the normal
-approach for implementing web-exposed classes, i.e. IDL bindings with C++
-implementation. They are currently shipping in Chrome.
+This directory contains the Blink implementation of the WHATWG Streams standard:
+https://streams.spec.whatwg.org/. There is also a legacy streams implementation.
 
 ## V8 Extras ReadableStream Implementation
 
 - ByteLengthQueuingStrategy.js
 - CountQueuingStrategy.js
 - ReadableStream.js
-- ReadableStreamTempStub.js
+- ReadableStreamController.h
+- ReadableStreamOperations.{cpp,h}
+- UnderlyingSourceBase.{cpp,h,idl}
 
-These files are an in-progress implementation of the current streams spec,
-using [V8 extras][1]. They allow author construction. We hope eventually to
-have these supercede the traditional ReadableStream implementation, but the
-work to build Fetch response body streams on top of this is ongoing.
+These files implement ReadableStream using [V8 extras][1]. All new code should
+use this implementation.
 
 [1]: https://docs.google.com/document/d/1AT5-T0aHGp7Lt29vPWFr2-qG8r3l9CByyvKwEuA8Ec0
 

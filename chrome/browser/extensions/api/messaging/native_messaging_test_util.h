@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_MESSAGING_NATIVE_MESSAGING_TEST_UTIL_H_
 #define CHROME_BROWSER_EXTENSIONS_API_MESSAGING_NATIVE_MESSAGING_TEST_UTIL_H_
 
+#include <memory>
+
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include "base/test/test_reg_util_win.h"
@@ -39,7 +42,7 @@ class ScopedTestNativeMessagingHost {
 #if defined(OS_WIN)
   registry_util::RegistryOverrideManager registry_override_;
 #else
-  scoped_ptr<base::ScopedPathOverride> path_override_;
+  std::unique_ptr<base::ScopedPathOverride> path_override_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(ScopedTestNativeMessagingHost);

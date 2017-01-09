@@ -5,8 +5,8 @@
 #ifndef CHROME_TEST_CHROMEDRIVER_CHROME_CONSOLE_LOGGER_H_
 #define CHROME_TEST_CHROMEDRIVER_CHROME_CONSOLE_LOGGER_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/test/chromedriver/chrome/devtools_event_listener.h"
 
 class Log;
@@ -32,6 +32,11 @@ class ConsoleLogger : public DevToolsEventListener {
 
  private:
   Log* log_;  // The log where to create entries.
+
+  Status OnConsoleMessageAdded(const base::DictionaryValue& params);
+  Status OnLogEntryAdded(const base::DictionaryValue& params);
+  Status OnRuntimeConsoleApiCalled(const base::DictionaryValue& params);
+  Status OnRuntimeExceptionThrown(const base::DictionaryValue& params);
 
   DISALLOW_COPY_AND_ASSIGN(ConsoleLogger);
 };

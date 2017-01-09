@@ -27,9 +27,10 @@ import optparse
 import os
 import re
 import sys
-from webkitpy.common.checkout import scm
-from webkitpy.common.system.filesystem import FileSystem
+
+from webkitpy.common.checkout.scm.detection import SCMDetector
 from webkitpy.common.system.executive import Executive
+from webkitpy.common.system.filesystem import FileSystem
 
 
 _log = logging.getLogger(__name__)
@@ -60,9 +61,7 @@ def translate_includes(text):
 
 
 def translate_khronos_test(text):
-    """
-    This method translates the contents of a Khronos test to a WebKit test.
-    """
+    """This method translates the contents of a Khronos test to a WebKit test."""
 
     translateFuncs = [
         remove_first_line_comment,
@@ -92,7 +91,7 @@ def update_directory(in_dir, out_dir):
 
 
 def default_out_dir():
-    detector = scm.SCMDetector(FileSystem(), Executive())
+    detector = SCMDetector(FileSystem(), Executive())
     current_scm = detector.detect_scm_system(os.path.dirname(sys.argv[0]))
     if not current_scm:
         return os.getcwd()
@@ -122,16 +121,16 @@ def option_parser():
     usage = "usage: %prog [options] (input file or directory)"
     parser = optparse.OptionParser(usage=usage)
     parser.add_option('-v', '--verbose',
-                             action='store_true',
-                             default=False,
-                             help='include debug-level logging')
+                      action='store_true',
+                      default=False,
+                      help='include debug-level logging')
     parser.add_option('-o', '--output',
-                             action='store',
-                             type='string',
-                             default=default_out_dir(),
-                             metavar='DIR',
-                             help='specify an output directory to place files '
-                                  'in [default: %default]')
+                      action='store',
+                      type='string',
+                      default=default_out_dir(),
+                      metavar='DIR',
+                      help='specify an output directory to place files '
+                      'in [default: %default]')
     return parser
 
 

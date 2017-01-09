@@ -6,11 +6,11 @@
 #define BASE_THREADING_SEQUENCED_TASK_RUNNER_HANDLE_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/sequenced_task_runner.h"
 
 namespace base {
-
-class SequencedTaskRunner;
 
 class BASE_EXPORT SequencedTaskRunnerHandle {
  public:
@@ -21,14 +21,24 @@ class BASE_EXPORT SequencedTaskRunnerHandle {
   static scoped_refptr<SequencedTaskRunner> Get();
 
   // Returns true if one of the following conditions is fulfilled:
-  // a) The current thread has a ThreadTaskRunnerHandle (which includes any
+  // a) A SequencedTaskRunner has been assigned to the current thread by
+  //    instantiating a SequencedTaskRunnerHandle.
+  // b) The current thread has a ThreadTaskRunnerHandle (which includes any
   //    thread that has a MessageLoop associated with it), or
-  // b) The current thread is a worker thread belonging to a SequencedWorkerPool
-  //    *and* is currently running a sequenced task.
+  // c) The current thread is a worker thread belonging to a SequencedWorkerPool
+  //    *and* is currently running a sequenced task (note: not supporting
+  //    unsequenced tasks is intentional: https://crbug.com/618043#c4).
   static bool IsSet();
 
+  // Binds |task_runner| to the current thread.
+  explicit SequencedTaskRunnerHandle(
+      scoped_refptr<SequencedTaskRunner> task_runner);
+  ~SequencedTaskRunnerHandle();
+
  private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(SequencedTaskRunnerHandle);
+  scoped_refptr<SequencedTaskRunner> task_runner_;
+
+  DISALLOW_COPY_AND_ASSIGN(SequencedTaskRunnerHandle);
 };
 
 }  // namespace base

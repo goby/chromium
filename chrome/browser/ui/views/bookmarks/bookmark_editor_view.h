@@ -5,9 +5,13 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_BOOKMARKS_BOOKMARK_EDITOR_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_BOOKMARKS_BOOKMARK_EDITOR_VIEW_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/bookmarks/bookmark_editor.h"
 #include "components/bookmarks/browser/bookmark_expanded_state_tracker.h"
@@ -30,7 +34,6 @@ class TreeView;
 
 class BookmarkEditorViewTest;
 class GURL;
-class Menu;
 class Profile;
 
 // View that allows the user to edit a bookmark/starred URL. The user can
@@ -53,14 +56,14 @@ class BookmarkEditorView : public BookmarkEditor,
                            public bookmarks::BookmarkModelObserver {
  public:
   // Type of node in the tree. Public purely for testing.
-  typedef ui::TreeNodeWithValue<int64> EditorNode;
+  typedef ui::TreeNodeWithValue<int64_t> EditorNode;
 
   // Model for the TreeView. Trivial subclass that doesn't allow titles with
   // empty strings. Public purely for testing.
   class EditorTreeModel : public ui::TreeNodeModel<EditorNode> {
    public:
-    explicit EditorTreeModel(EditorNode* root)
-        : ui::TreeNodeModel<EditorNode>(root) {}
+    explicit EditorTreeModel(std::unique_ptr<EditorNode> root)
+        : ui::TreeNodeModel<EditorNode>(std::move(root)) {}
 
     void SetTitle(ui::TreeModelNode* node,
                   const base::string16& title) override;
@@ -87,7 +90,7 @@ class BookmarkEditorView : public BookmarkEditor,
 
   // views::View:
   gfx::Size GetPreferredSize() const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // views::TreeViewController:
   void OnTreeViewSelectionChanged(views::TreeView* tree_view) override;
@@ -106,7 +109,7 @@ class BookmarkEditorView : public BookmarkEditor,
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
+                                  ui::Accelerator* accelerator) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
   // Creates a Window and adds the BookmarkEditorView to it. When the window is
@@ -166,14 +169,14 @@ class BookmarkEditorView : public BookmarkEditor,
 
   // Creates a returns the new root node. This invokes CreateNodes to do
   // the real work.
-  EditorNode* CreateRootNode();
+  std::unique_ptr<EditorNode> CreateRootNode();
 
   // Adds and creates a child node in b_node for all children of bb_node that
   // are folders.
   void CreateNodes(const bookmarks::BookmarkNode* bb_node, EditorNode* b_node);
 
   // Returns the node with the specified id, or NULL if one can't be found.
-  EditorNode* FindNodeWithID(BookmarkEditorView::EditorNode* node, int64 id);
+  EditorNode* FindNodeWithID(BookmarkEditorView::EditorNode* node, int64_t id);
 
   // Invokes ApplyEdits with the selected node.
   void ApplyEdits();
@@ -206,7 +209,7 @@ class BookmarkEditorView : public BookmarkEditor,
 
   // Creates a new folder as a child of the selected node. If no node is
   // selected, the new folder is added as a child of the bookmark node. Starts
-  // editing on the new gorup as well.
+  // editing on the new group as well.
   void NewFolder();
 
   // Creates a new EditorNode as the last child of parent. The new node is
@@ -226,13 +229,13 @@ class BookmarkEditorView : public BookmarkEditor,
   Profile* profile_;
 
   // Model driving the TreeView.
-  scoped_ptr<EditorTreeModel> tree_model_;
+  std::unique_ptr<EditorTreeModel> tree_model_;
 
   // Displays star folder.
   views::TreeView* tree_view_;
 
   // Used to create a new folder.
-  scoped_ptr<views::LabelButton> new_folder_button_;
+  std::unique_ptr<views::LabelButton> new_folder_button_;
 
   // The label for the url text field.
   views::Label* url_label_;
@@ -253,8 +256,8 @@ class BookmarkEditorView : public BookmarkEditor,
   const EditDetails details_;
 
   // The context menu.
-  scoped_ptr<ui::SimpleMenuModel> context_menu_model_;
-  scoped_ptr<views::MenuRunner> context_menu_runner_;
+  std::unique_ptr<ui::SimpleMenuModel> context_menu_model_;
+  std::unique_ptr<views::MenuRunner> context_menu_runner_;
 
   // Mode used to create nodes from.
   bookmarks::BookmarkModel* bb_model_;
@@ -267,7 +270,7 @@ class BookmarkEditorView : public BookmarkEditor,
   bool show_tree_;
 
   // List of deleted bookmark folders.
-  std::vector<int64> deletes_;
+  std::vector<int64_t> deletes_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkEditorView);
 };

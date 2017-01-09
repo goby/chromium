@@ -21,7 +21,7 @@ namespace {
 base::FilePath GetTempRoot() {
   base::ScopedTempDir temp_dir;
   EXPECT_TRUE(temp_dir.CreateUniqueTempDir());
-  base::FilePath temp_root = temp_dir.path();
+  base::FilePath temp_root = temp_dir.GetPath();
   while (temp_root.DirName() != temp_root)
     temp_root = temp_root.DirName();
   return temp_root;
@@ -99,7 +99,7 @@ void TestVolumeMountWatcherWin::AddDeviceForTesting(
     const base::FilePath& device_path,
     const std::string& device_id,
     const base::string16& storage_label,
-    uint64 total_size_in_bytes) {
+    uint64_t total_size_in_bytes) {
   StorageInfo info(device_id, device_path.value(), storage_label,
                    base::string16(), base::string16(), total_size_in_bytes);
   HandleDeviceAttachEventOnUIThread(device_path, info);
@@ -122,7 +122,9 @@ void TestVolumeMountWatcherWin::DeviceCheckComplete(
 }
 
 void TestVolumeMountWatcherWin::BlockDeviceCheckForTesting() {
-  device_check_complete_event_.reset(new base::WaitableEvent(false, false));
+  device_check_complete_event_.reset(
+      new base::WaitableEvent(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED));
   devices_checked_.clear();
 }
 

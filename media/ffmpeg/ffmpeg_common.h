@@ -5,14 +5,17 @@
 #ifndef MEDIA_FFMPEG_FFMPEG_COMMON_H_
 #define MEDIA_FFMPEG_FFMPEG_COMMON_H_
 
+#include <stdint.h>
+
 // Used for FFmpeg error codes.
 #include <cerrno>
 
 #include "base/compiler_specific.h"
 #include "base/time/time.h"
-#include "media/base/audio_decoder_config.h"
+#include "media/base/audio_codecs.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_export.h"
+#include "media/base/sample_format.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_frame.h"
 #include "media/ffmpeg/ffmpeg_deleters.h"
@@ -20,8 +23,8 @@
 // Include FFmpeg header files.
 extern "C" {
 // Disable deprecated features which result in spammy compile warnings.  This
-// list of defines must mirror those in the 'defines' section of BUILD.gn file &
-// ffmpeg.gyp file or the headers below will generate different structures!
+// list of defines must mirror those in the 'defines' section of FFmpeg's
+// BUILD.gn file or the headers below will generate different structures!
 #define FF_API_CONVERGENCE_DURATION 0
 // Upstream libavcodec/utils.c still uses the deprecated
 // av_dup_packet(), causing deprecation warnings.
@@ -49,6 +52,7 @@ MSVC_POP_WARNING();
 namespace media {
 
 class AudioDecoderConfig;
+class EncryptionScheme;
 class VideoDecoderConfig;
 
 // The following implement the deleters declared in ffmpeg_deleters.h (which
@@ -75,19 +79,28 @@ inline void ScopedPtrAVFreeFrame::operator()(void* x) const {
   av_frame_free(&frame);
 }
 
-// Converts an int64 timestamp in |time_base| units to a base::TimeDelta.
+// Converts an int64_t timestamp in |time_base| units to a base::TimeDelta.
 // For example if |timestamp| equals 11025 and |time_base| equals {1, 44100}
 // then the return value will be a base::TimeDelta for 0.25 seconds since that
 // is how much time 11025/44100ths of a second represents.
 MEDIA_EXPORT base::TimeDelta ConvertFromTimeBase(const AVRational& time_base,
-                                                 int64 timestamp);
+                                                 int64_t timestamp);
 
-// Converts a base::TimeDelta into an int64 timestamp in |time_base| units.
+// Converts a base::TimeDelta into an int64_t timestamp in |time_base| units.
 // For example if |timestamp| is 0.5 seconds and |time_base| is {1, 44100}, then
 // the return value will be 22050 since that is how many 1/44100ths of a second
 // represent 0.5 seconds.
-MEDIA_EXPORT int64 ConvertToTimeBase(const AVRational& time_base,
-                                     const base::TimeDelta& timestamp);
+MEDIA_EXPORT int64_t ConvertToTimeBase(const AVRational& time_base,
+                                       const base::TimeDelta& timestamp);
+
+// Converts an FFmpeg audio codec ID into its corresponding supported codec id.
+MEDIA_EXPORT AudioCodec CodecIDToAudioCodec(AVCodecID codec_id);
+
+// Allocates, populates and returns a wrapped AVCodecContext from the
+// AVCodecParameters in |stream|. On failure, returns a wrapped nullptr.
+// Wrapping helps ensure eventual destruction of the AVCodecContext.
+MEDIA_EXPORT std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext>
+AVStreamToAVCodecContext(const AVStream* stream);
 
 // Returns true if AVStream is successfully converted to a AudioDecoderConfig.
 // Returns false if conversion fails, in which case |config| is not modified.
@@ -110,7 +123,7 @@ void VideoDecoderConfigToAVCodecContext(
 // is not modified.
 MEDIA_EXPORT bool AVCodecContextToAudioDecoderConfig(
     const AVCodecContext* codec_context,
-    bool is_encrypted,
+    const EncryptionScheme& encryption_scheme,
     AudioDecoderConfig* config);
 
 // Converts FFmpeg's channel layout to chrome's ChannelLayout.  |channels| can
@@ -119,6 +132,8 @@ MEDIA_EXPORT bool AVCodecContextToAudioDecoderConfig(
 MEDIA_EXPORT ChannelLayout ChannelLayoutToChromeChannelLayout(int64_t layout,
                                                               int channels);
 
+MEDIA_EXPORT AVCodecID AudioCodecToCodecID(AudioCodec audio_codec,
+                                           SampleFormat sample_format);
 MEDIA_EXPORT AVCodecID VideoCodecToCodecID(VideoCodec video_codec);
 
 // Converts FFmpeg's audio sample format to Chrome's SampleFormat.
@@ -134,11 +149,6 @@ AVPixelFormat VideoPixelFormatToAVPixelFormat(VideoPixelFormat video_format);
 
 ColorSpace AVColorSpaceToColorSpace(AVColorSpace color_space,
                                     AVColorRange color_range);
-
-// Convert FFmpeg UTC representation (YYYY-MM-DD HH:MM:SS) to base::Time.
-// Returns true and sets |*out| if |date_utc| contains a valid
-// date string. Otherwise returns fals and timeline_offset is unmodified.
-MEDIA_EXPORT bool FFmpegUTCDateToTime(const char* date_utc, base::Time* out);
 
 // Returns a 32-bit hash for the given codec name.  See the VerifyUmaCodecHashes
 // unit test for more information and code for generating the histogram XML.

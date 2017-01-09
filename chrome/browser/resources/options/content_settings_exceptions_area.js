@@ -14,15 +14,14 @@ cr.define('options.contentSettings', function() {
    *
    * @param {string} contentType The type of the list.
    */
-  function IsEditableType(contentType) {
+  function isEditableType(contentType) {
     // Exceptions of the following lists are not editable for now.
     return !(contentType == 'location' ||
-             contentType == 'fullscreen' ||
              contentType == 'media-stream-mic' ||
              contentType == 'media-stream-camera' ||
              contentType == 'midi-sysex' ||
              contentType == 'zoomlevels' ||
-             IsChosenObjectType(contentType));
+             isChosenObjectType(contentType));
   }
 
   /**
@@ -30,11 +29,16 @@ cr.define('options.contentSettings', function() {
    *
    * @param {string} contentType The type of the list.
    */
-  function IsChosenObjectType(contentType) {
+  function isChosenObjectType(contentType) {
     return contentType == 'usb-devices';
   }
 
-  function ValueColumnForContentType(contentType) {
+  /**
+   * Returns the ID of the column containing values for the given content type.
+   *
+   * @param {string} contentType The type of the list.
+   */
+  function valueColumnForContentType(contentType) {
     if (contentType == 'usb-devices')
       return 'exception-usb-device-column';
     if (contentType == 'zoomlevels')
@@ -86,7 +90,7 @@ cr.define('options.contentSettings', function() {
       if (this.pattern) {
         var settingLabel = cr.doc.createElement('span');
         settingLabel.textContent = this.settingForDisplay();
-        settingLabel.className = 'exception-setting';
+        settingLabel.className = 'exception-setting overruleable';
         settingLabel.setAttribute('displaymode', 'static');
         this.contentElement.appendChild(settingLabel);
         this.settingLabel = settingLabel;
@@ -113,12 +117,10 @@ cr.define('options.contentSettings', function() {
         select.appendChild(optionSession);
       }
 
-      if (this.contentType != 'fullscreen') {
-        var optionBlock = cr.doc.createElement('option');
-        optionBlock.textContent = loadTimeData.getString('blockException');
-        optionBlock.value = 'block';
-        select.appendChild(optionBlock);
-      }
+      var optionBlock = cr.doc.createElement('option');
+      optionBlock.textContent = loadTimeData.getString('blockException');
+      optionBlock.value = 'block';
+      select.appendChild(optionBlock);
 
       if (this.isEmbeddingRule()) {
         this.patternLabel.classList.add('sublabel');
@@ -133,13 +135,13 @@ cr.define('options.contentSettings', function() {
       }
 
       if (this.contentType != 'zoomlevels' &&
-          !IsChosenObjectType(this.contentType)) {
+          !isChosenObjectType(this.contentType)) {
         this.addEditField(select, this.settingLabel);
         this.contentElement.appendChild(select);
       }
       select.className = 'exception-setting';
       select.setAttribute('aria-labelledby',
-                          ValueColumnForContentType(this.contentType));
+                          valueColumnForContentType(this.contentType));
 
       if (this.pattern)
         select.setAttribute('displaymode', 'edit');
@@ -155,7 +157,7 @@ cr.define('options.contentSettings', function() {
         this.zoomLabel = zoomLabel;
       }
 
-      if (IsChosenObjectType(this.contentType) &&
+      if (isChosenObjectType(this.contentType) &&
           this.dataItem.object !== undefined) {
         this.deletable = true;
 
@@ -175,7 +177,7 @@ cr.define('options.contentSettings', function() {
       // already-existing exceptions (which we assume are valid).
       this.inputValidityKnown = this.pattern;
       // This one tracks the actual validity of the pattern in the input. This
-      // starts off as true so as not to annoy the user when he adds a new and
+      // starts off as true so as not to annoy the user when they add a new and
       // empty input.
       this.inputIsValid = true;
 
@@ -183,7 +185,7 @@ cr.define('options.contentSettings', function() {
       this.select = select;
 
       this.updateEditables();
-      this.editable = this.editable && IsEditableType(this.contentType);
+      this.editable = this.editable && isEditableType(this.contentType);
 
       // If the source of the content setting exception is not a user
       // preference, that source controls the exception and the user cannot edit
@@ -200,14 +202,7 @@ cr.define('options.contentSettings', function() {
 
       if (controlledBy == 'policy' || controlledBy == 'extension') {
         this.querySelector('.row-delete-button').hidden = true;
-        var indicator = new ControlledSettingIndicator();
-        indicator.setAttribute('content-exception', this.contentType);
-        // Create a synthetic pref change event decorated as
-        // CoreOptionsHandler::CreateValueForPref() does.
-        var event = new Event(this.contentType);
-        event.value = { controlledBy: controlledBy };
-        indicator.handlePrefChange(event);
-        this.appendChild(indicator);
+        this.appendIndicatorElement(controlledBy);
       }
 
       // If the exception comes from a hosted app, display the name and the
@@ -234,6 +229,22 @@ cr.define('options.contentSettings', function() {
       // Listen for edit events.
       this.addEventListener('canceledit', this.onEditCancelled_);
       this.addEventListener('commitedit', this.onEditCommitted_);
+    },
+
+    /**
+     * Appends an indicator element to the item. Should be called at most once.
+     *
+     * @param {string} controlledBy The source that controls the item.
+     */
+    appendIndicatorElement: function(controlledBy) {
+      var indicator = new ControlledSettingIndicator();
+      indicator.setAttribute('content-exception', this.contentType);
+      // Create a synthetic pref change event decorated as
+      // CoreOptionsHandler::CreateValueForPref() does.
+      var event = new Event(this.contentType);
+      event.value = {controlledBy: controlledBy};
+      indicator.handlePrefChange(event);
+      this.appendChild(indicator);
     },
 
     isEmbeddingRule: function() {
@@ -338,6 +349,16 @@ cr.define('options.contentSettings', function() {
           this.select.querySelector('[value=\'' + this.setting + '\']');
       if (settingOption)
         settingOption.selected = true;
+    },
+
+    /**
+     * Updates UI to indicate that the exception was overruled by a source.
+     *
+     * @param {string} overruledBy The source that overrules the exception.
+     */
+    setOverruledBy: function(overruledBy) {
+      this.classList.toggle('overruled', !!overruledBy);
+      this.appendIndicatorElement(overruledBy);
     },
 
     /** @override */
@@ -515,6 +536,19 @@ cr.define('options.contentSettings', function() {
     },
 
     /**
+     * Updates UI to indicate that user exceptions were overruled by a source.
+     *
+     * @param {string} overruledBy The source that overrules user exceptions.
+     */
+    setOverruledBy: function(overruledBy) {
+      for (var index = 0; index < this.dataModel.length; ++index) {
+        var item = this.getListItemByIndex(index);
+        if (item.dataItem.source == 'preference')
+          item.setOverruledBy(overruledBy);
+      }
+    },
+
+    /**
      * Sets the exceptions in the js model.
      *
      * @param {Array<options.Exception>} entries A list of dictionaries of
@@ -558,7 +592,7 @@ cr.define('options.contentSettings', function() {
      */
     isEditable: function() {
       // Exceptions of the following lists are not editable for now.
-      return IsEditableType(this.contentType);
+      return isEditableType(this.contentType);
     },
 
     /**
@@ -580,18 +614,15 @@ cr.define('options.contentSettings', function() {
         return;
 
       var dataItem = listItem.dataItem;
-      if (IsChosenObjectType(this.contentType)) {
-        chrome.send('removeException', [listItem.contentType,
-                                        listItem.mode,
-                                        dataItem.origin,
-                                        dataItem.embeddingOrigin,
-                                        dataItem.object]);
-      } else {
-        chrome.send('removeException', [listItem.contentType,
-                                        listItem.mode,
-                                        dataItem.origin,
-                                        dataItem.embeddingOrigin]);
-      }
+      var params = [listItem.contentType,
+                    listItem.mode,
+                    dataItem.origin,
+                    dataItem.embeddingOrigin];
+
+      if (isChosenObjectType(this.contentType))
+        params.push(dataItem.object);
+
+      chrome.send('removeException', params);
     },
   };
 
@@ -656,7 +687,7 @@ cr.define('options.contentSettings', function() {
           divs[i].hidden = true;
       }
 
-      var valueColumnId = ValueColumnForContentType(type);
+      var valueColumnId = valueColumnForContentType(type);
       var headers =
           this.pageDiv.querySelectorAll('div.exception-value-column-header');
       for (var i = 0; i < headers.length; ++i)

@@ -12,36 +12,37 @@
 namespace blink {
 
 class GamepadEvent final : public Event {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<GamepadEvent> create()
-    {
-        return adoptRefWillBeNoop(new GamepadEvent);
-    }
-    static PassRefPtrWillBeRawPtr<GamepadEvent> create(const AtomicString& type, bool canBubble, bool cancelable, Gamepad* gamepad)
-    {
-        return adoptRefWillBeNoop(new GamepadEvent(type, canBubble, cancelable, gamepad));
-    }
-    static PassRefPtrWillBeRawPtr<GamepadEvent> create(const AtomicString& type, const GamepadEventInit& initializer)
-    {
-        return adoptRefWillBeNoop(new GamepadEvent(type, initializer));
-    }
-    ~GamepadEvent() override;
+  DEFINE_WRAPPERTYPEINFO();
 
-    Gamepad* gamepad() const { return m_gamepad.get(); }
+ public:
+  static GamepadEvent* create(const AtomicString& type,
+                              bool canBubble,
+                              bool cancelable,
+                              Gamepad* gamepad) {
+    return new GamepadEvent(type, canBubble, cancelable, gamepad);
+  }
+  static GamepadEvent* create(const AtomicString& type,
+                              const GamepadEventInit& initializer) {
+    return new GamepadEvent(type, initializer);
+  }
+  ~GamepadEvent() override;
 
-    const AtomicString& interfaceName() const override;
+  Gamepad* getGamepad() const { return m_gamepad.get(); }
 
-    DECLARE_VIRTUAL_TRACE();
+  const AtomicString& interfaceName() const override;
 
-private:
-    GamepadEvent();
-    GamepadEvent(const AtomicString& type, bool canBubble, bool cancelable, Gamepad*);
-    GamepadEvent(const AtomicString&, const GamepadEventInit&);
+  DECLARE_VIRTUAL_TRACE();
 
-    PersistentWillBeMember<Gamepad> m_gamepad;
+ private:
+  GamepadEvent(const AtomicString& type,
+               bool canBubble,
+               bool cancelable,
+               Gamepad*);
+  GamepadEvent(const AtomicString&, const GamepadEventInit&);
+
+  Member<Gamepad> m_gamepad;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // GamepadEvent_h
+#endif  // GamepadEvent_h

@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// ClearKeyPlayer responsible for playing media using Clear Key key system and
-// the unprefixed version of EME.
+// ClearKeyPlayer responsible for playing media using Clear Key key system.
 function ClearKeyPlayer(video, testConfig) {
   this.video = video;
   this.testConfig = testConfig;
@@ -28,7 +27,7 @@ ClearKeyPlayer.prototype.onMessage = function(message) {
   message.target.update(jwkSet).catch(function(error) {
     // Ignore the error if a crash is expected. This ensures that the decoder
     // actually detects and reports the error.
-    if (this.testConfig.keySystem != 'org.chromium.externalclearkey.crash') {
+    if (this.testConfig.keySystem != CRASH_TEST_KEYSYSTEM) {
       Utils.failTest(error, EME_UPDATE_FAILED);
     }
   });

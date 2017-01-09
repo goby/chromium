@@ -5,12 +5,14 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_LOOKUP_REQUEST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_LOOKUP_REQUEST_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/base/address_list.h"
 #include "net/base/net_errors.h"
 #include "net/dns/host_resolver.h"
-#include "net/dns/single_request_host_resolver.h"
+#include "net/log/net_log_with_source.h"
 
 namespace content {
 
@@ -35,12 +37,10 @@ class PepperLookupRequest {
 
   void Start() {
     int result =
-        resolver_.Resolve(request_info_,
-                          priority_,
-                          &addresses_,
-                          base::Bind(&PepperLookupRequest<T>::OnLookupFinished,
-                                     base::Unretained(this)),
-                          net::BoundNetLog());
+        resolver_->Resolve(request_info_, priority_, &addresses_,
+                           base::Bind(&PepperLookupRequest<T>::OnLookupFinished,
+                                      base::Unretained(this)),
+                           &request_, net::NetLogWithSource());
     if (result != net::ERR_IO_PENDING)
       OnLookupFinished(result);
   }
@@ -51,10 +51,11 @@ class PepperLookupRequest {
     delete this;
   }
 
-  net::SingleRequestHostResolver resolver_;
+  net::HostResolver* resolver_;
+  std::unique_ptr<net::HostResolver::Request> request_;
   net::HostResolver::RequestInfo request_info_;
   net::RequestPriority priority_;
-  scoped_ptr<T> bound_info_;
+  std::unique_ptr<T> bound_info_;
   LookupRequestCallback callback_;
 
   net::AddressList addresses_;

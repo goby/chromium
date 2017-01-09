@@ -9,34 +9,33 @@
 #include "base/logging.h"
 #include "net/spdy/hpack/hpack_constants.h"
 #include "net/spdy/hpack/hpack_static_table.h"
+#include "net/spdy/spdy_flags.h"
 
 namespace net {
 
 using base::StringPiece;
 
-bool HpackHeaderTable::EntryComparator::operator()(
-    const HpackEntry* lhs,
-    const HpackEntry* rhs) const {
-  int result = lhs->name().compare(rhs->name());
-  if (result != 0) {
-    return result < 0;
+size_t HpackHeaderTable::EntryHasher::operator()(
+    const HpackEntry* entry) const {
+  return base::StringPieceHash()(entry->name()) ^
+         base::StringPieceHash()(entry->value());
+}
+
+bool HpackHeaderTable::EntriesEq::operator()(const HpackEntry* lhs,
+                                             const HpackEntry* rhs) const {
+  if (lhs == nullptr) {
+    return rhs == nullptr;
   }
-  result = lhs->value().compare(rhs->value());
-  if (result != 0) {
-    return result < 0;
+  if (rhs == nullptr) {
+    return false;
   }
-  const size_t lhs_index = lhs->IsLookup() ? 0 : 1 + lhs->InsertionIndex();
-  const size_t rhs_index = rhs->IsLookup() ? 0 : 1 + rhs->InsertionIndex();
-  DCHECK(lhs == rhs || lhs_index != rhs_index)
-      << "lhs: (" << lhs->name() << ", " << rhs->value() << ") rhs: ("
-      << rhs->name() << ", " << rhs->value() << ")"
-      << " lhs index: " << lhs_index << " rhs index: " << rhs_index;
-  return lhs_index < rhs_index;
+  return lhs->name() == rhs->name() && lhs->value() == rhs->value();
 }
 
 HpackHeaderTable::HpackHeaderTable()
     : static_entries_(ObtainHpackStaticTable().GetStaticEntries()),
       static_index_(ObtainHpackStaticTable().GetStaticIndex()),
+      static_name_index_(ObtainHpackStaticTable().GetStaticNameIndex()),
       settings_size_bound_(kDefaultHeaderTableSizeSetting),
       size_(0),
       max_size_(kDefaultHeaderTableSizeSetting),
@@ -54,23 +53,30 @@ const HpackEntry* HpackHeaderTable::GetByIndex(size_t index) {
   }
   index -= static_entries_.size();
   if (index < dynamic_entries_.size()) {
-    return &dynamic_entries_[index];
+    const HpackEntry* result = &dynamic_entries_[index];
+    if (debug_visitor_ != nullptr) {
+      debug_visitor_->OnUseEntry(*result);
+    }
+    return result;
   }
   return NULL;
 }
 
 const HpackEntry* HpackHeaderTable::GetByName(StringPiece name) {
-  HpackEntry query(name, "");
   {
-    OrderedEntrySet::const_iterator it = static_index_.lower_bound(&query);
-    if (it != static_index_.end() && (*it)->name() == name) {
-      return *it;
+    NameToEntryMap::const_iterator it = static_name_index_.find(name);
+    if (it != static_name_index_.end()) {
+      return it->second;
     }
   }
   {
-    OrderedEntrySet::const_iterator it = dynamic_index_.lower_bound(&query);
-    if (it != dynamic_index_.end() && (*it)->name() == name) {
-      return *it;
+    NameToEntryMap::const_iterator it = dynamic_name_index_.find(name);
+    if (it != dynamic_name_index_.end()) {
+      const HpackEntry* result = it->second;
+      if (debug_visitor_ != nullptr) {
+        debug_visitor_->OnUseEntry(*result);
+      }
+      return result;
     }
   }
   return NULL;
@@ -80,17 +86,19 @@ const HpackEntry* HpackHeaderTable::GetByNameAndValue(StringPiece name,
                                                       StringPiece value) {
   HpackEntry query(name, value);
   {
-    OrderedEntrySet::const_iterator it = static_index_.lower_bound(&query);
-    if (it != static_index_.end() && (*it)->name() == name &&
-        (*it)->value() == value) {
+    UnorderedEntrySet::const_iterator it = static_index_.find(&query);
+    if (it != static_index_.end()) {
       return *it;
     }
   }
   {
-    OrderedEntrySet::const_iterator it = dynamic_index_.lower_bound(&query);
-    if (it != dynamic_index_.end() && (*it)->name() == name &&
-        (*it)->value() == value) {
-      return *it;
+    UnorderedEntrySet::const_iterator it = dynamic_index_.find(&query);
+    if (it != dynamic_index_.end()) {
+      const HpackEntry* result = *it;
+      if (debug_visitor_ != nullptr) {
+        debug_visitor_->OnUseEntry(*result);
+      }
+      return result;
     }
   }
   return NULL;
@@ -118,7 +126,11 @@ void HpackHeaderTable::SetMaxSize(size_t max_size) {
 
 void HpackHeaderTable::SetSettingsHeaderTableSize(size_t settings_size) {
   settings_size_bound_ = settings_size;
-  if (settings_size_bound_ < max_size_) {
+  if (!FLAGS_chromium_reloadable_flag_increase_hpack_table_size) {
+    if (settings_size_bound_ < max_size_) {
+      SetMaxSize(settings_size_bound_);
+    }
+  } else {
     SetMaxSize(settings_size_bound_);
   }
 }
@@ -159,7 +171,22 @@ void HpackHeaderTable::Evict(size_t count) {
     HpackEntry* entry = &dynamic_entries_.back();
 
     size_ -= entry->Size();
-    CHECK_EQ(1u, dynamic_index_.erase(entry));
+    UnorderedEntrySet::iterator it = dynamic_index_.find(entry);
+    DCHECK(it != dynamic_index_.end());
+    // Only remove an entry from the index if its insertion index matches;
+    // otherwise, the index refers to another entry with the same name and
+    // value.
+    if ((*it)->InsertionIndex() == entry->InsertionIndex()) {
+      dynamic_index_.erase(it);
+    }
+    NameToEntryMap::iterator name_it = dynamic_name_index_.find(entry->name());
+    DCHECK(name_it != dynamic_name_index_.end());
+    // Only remove an entry from the literal index if its insertion index
+    /// matches; otherwise, the index refers to another entry with the same
+    // name.
+    if (name_it->second->InsertionIndex() == entry->InsertionIndex()) {
+      dynamic_name_index_.erase(name_it);
+    }
     dynamic_entries_.pop_back();
   }
 }
@@ -178,10 +205,43 @@ const HpackEntry* HpackHeaderTable::TryAddEntry(StringPiece name,
   dynamic_entries_.push_front(HpackEntry(name, value,
                                          false,  // is_static
                                          total_insertions_));
-  CHECK(dynamic_index_.insert(&dynamic_entries_.front()).second);
+  HpackEntry* new_entry = &dynamic_entries_.front();
+  auto index_result = dynamic_index_.insert(new_entry);
+  if (!index_result.second) {
+    // An entry with the same name and value already exists in the dynamic
+    // index. We should replace it with the newly added entry.
+    DVLOG(1) << "Found existing entry: "
+             << (*index_result.first)->GetDebugString()
+             << " replacing with: " << new_entry->GetDebugString();
+    DCHECK_GT(new_entry->InsertionIndex(),
+              (*index_result.first)->InsertionIndex());
+    dynamic_index_.erase(index_result.first);
+    CHECK(dynamic_index_.insert(new_entry).second);
+  }
+
+  auto name_result =
+      dynamic_name_index_.insert(std::make_pair(new_entry->name(), new_entry));
+  if (!name_result.second) {
+    // An entry with the same name already exists in the dynamic index. We
+    // should replace it with the newly added entry.
+    DVLOG(1) << "Found existing entry: "
+             << name_result.first->second->GetDebugString()
+             << " replacing with: " << new_entry->GetDebugString();
+    DCHECK_GT(new_entry->InsertionIndex(),
+              name_result.first->second->InsertionIndex());
+    dynamic_name_index_.erase(name_result.first);
+    auto insert_result = dynamic_name_index_.insert(
+        std::make_pair(new_entry->name(), new_entry));
+    CHECK(insert_result.second);
+  }
 
   size_ += entry_size;
   ++total_insertions_;
+  if (debug_visitor_ != nullptr) {
+    // Call |debug_visitor_->OnNewEntry()| to get the current time.
+    HpackEntry& entry = dynamic_entries_.front();
+    entry.set_time_added(debug_visitor_->OnNewEntry(entry));
+  }
 
   return &dynamic_entries_.front();
 }
@@ -193,14 +253,20 @@ void HpackHeaderTable::DebugLogTableState() const {
     DVLOG(2) << "  " << it->GetDebugString();
   }
   DVLOG(2) << "Full Static Index:";
-  for (OrderedEntrySet::const_iterator it = static_index_.begin();
-       it != static_index_.end(); ++it) {
-    DVLOG(2) << "  " << (*it)->GetDebugString();
+  for (auto* entry : static_index_) {
+    DVLOG(2) << "  " << entry->GetDebugString();
+  }
+  DVLOG(2) << "Full Static Name Index:";
+  for (const auto it : static_name_index_) {
+    DVLOG(2) << "  " << it.first << ": " << it.second->GetDebugString();
   }
   DVLOG(2) << "Full Dynamic Index:";
-  for (OrderedEntrySet::const_iterator it = dynamic_index_.begin();
-       it != dynamic_index_.end(); ++it) {
-    DVLOG(2) << "  " << (*it)->GetDebugString();
+  for (auto* entry : dynamic_index_) {
+    DVLOG(2) << "  " << entry->GetDebugString();
+  }
+  DVLOG(2) << "Full Dynamic Name Index:";
+  for (const auto it : dynamic_name_index_) {
+    DVLOG(2) << "  " << it.first << ": " << it.second->GetDebugString();
   }
 }
 

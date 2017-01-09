@@ -10,8 +10,9 @@
 
 #include "base/logging.h"
 #include "ui/base/x/selection_utils.h"
-#include "ui/base/x/x11_foreign_window_manager.h"
 #include "ui/base/x/x11_util.h"
+#include "ui/base/x/x11_window_event_manager.h"
+#include "ui/events/platform/x11/x11_event_source.h"
 
 namespace ui {
 
@@ -22,15 +23,10 @@ const char kIncr[] = "INCR";
 const char kMultiple[] = "MULTIPLE";
 const char kSaveTargets[] = "SAVE_TARGETS";
 const char kTargets[] = "TARGETS";
+const char kTimestamp[] = "TIMESTAMP";
 
-const char* kAtomsToCache[] = {
-  kAtomPair,
-  kIncr,
-  kMultiple,
-  kSaveTargets,
-  kTargets,
-  NULL
-};
+const char* kAtomsToCache[] = {kAtomPair, kIncr,      kMultiple, kSaveTargets,
+                               kTargets,  kTimestamp, NULL};
 
 // The period of |incremental_transfer_abort_timer_|. Arbitrary but must be <=
 // than kIncrementalTransferTimeoutMs.
@@ -122,7 +118,9 @@ void SelectionOwner::RetrieveTargets(std::vector<XAtom>* targets) {
 
 void SelectionOwner::TakeOwnershipOfSelection(
     const SelectionFormatMap& data) {
-  XSetSelectionOwner(x_display_, selection_name_, x_window_, CurrentTime);
+  acquired_selection_timestamp_ = X11EventSource::GetInstance()->GetTimestamp();
+  XSetSelectionOwner(x_display_, selection_name_, x_window_,
+                     acquired_selection_timestamp_);
 
   if (XGetSelectionOwner(x_display_, selection_name_) == x_window_) {
     // The X server agrees that we are the selection owner. Commit our data.
@@ -219,14 +217,23 @@ bool SelectionOwner::ProcessTarget(XAtom target,
   XAtom multiple_atom = atom_cache_.GetAtom(kMultiple);
   XAtom save_targets_atom = atom_cache_.GetAtom(kSaveTargets);
   XAtom targets_atom = atom_cache_.GetAtom(kTargets);
+  XAtom timestamp_atom = atom_cache_.GetAtom(kTimestamp);
 
   if (target == multiple_atom || target == save_targets_atom)
     return false;
+
+  if (target == timestamp_atom) {
+    XChangeProperty(
+        x_display_, requestor, property, XA_INTEGER, 32, PropModeReplace,
+        reinterpret_cast<unsigned char*>(&acquired_selection_timestamp_), 1);
+    return true;
+  }
 
   if (target == targets_atom) {
     // We have been asked for TARGETS. Send an atom array back with the data
     // types we support.
     std::vector<XAtom> targets;
+    targets.push_back(timestamp_atom);
     targets.push_back(targets_atom);
     targets.push_back(save_targets_atom);
     targets.push_back(multiple_atom);
@@ -237,68 +244,62 @@ bool SelectionOwner::ProcessTarget(XAtom target,
                     reinterpret_cast<unsigned char*>(&targets.front()),
                     targets.size());
     return true;
-  } else {
-    // Try to find the data type in map.
-    SelectionFormatMap::const_iterator it = format_map_.find(target);
-    if (it != format_map_.end()) {
-      if (it->second->size() > max_request_size_) {
-        // We must send the data back in several chunks due to a limitation in
-        // the size of X requests. Notify the selection requestor that the data
-        // will be sent incrementally by returning data of type "INCR".
-        long length = it->second->size();
-        XChangeProperty(x_display_,
-                        requestor,
-                        property,
-                        atom_cache_.GetAtom(kIncr),
-                        32,
-                        PropModeReplace,
-                        reinterpret_cast<unsigned char*>(&length),
-                        1);
-
-        // Wait for the selection requestor to indicate that it has processed
-        // the selection result before sending the first chunk of data. The
-        // selection requestor indicates this by deleting |property|.
-        base::TimeTicks timeout =
-            base::TimeTicks::Now() +
-            base::TimeDelta::FromMilliseconds(kIncrementalTransferTimeoutMs);
-        int foreign_window_manager_id =
-            ui::XForeignWindowManager::GetInstance()->RequestEvents(
-                requestor, PropertyChangeMask);
-        incremental_transfers_.push_back(
-            IncrementalTransfer(requestor,
-                                target,
-                                property,
-                                it->second,
-                                0,
-                                timeout,
-                                foreign_window_manager_id));
-
-        // Start a timer to abort the data transfer in case that the selection
-        // requestor does not support the INCR property or gets destroyed during
-        // the data transfer.
-        if (!incremental_transfer_abort_timer_.IsRunning()) {
-          incremental_transfer_abort_timer_.Start(
-              FROM_HERE,
-              base::TimeDelta::FromMilliseconds(kTimerPeriodMs),
-              this,
-              &SelectionOwner::AbortStaleIncrementalTransfers);
-        }
-      } else {
-        XChangeProperty(
-            x_display_,
-            requestor,
-            property,
-            target,
-            8,
-            PropModeReplace,
-            const_cast<unsigned char*>(it->second->front()),
-            it->second->size());
-      }
-      return true;
-    }
-    // I would put error logging here, but GTK ignores TARGETS and spams us
-    // looking for its own internal types.
   }
+
+  // Try to find the data type in map.
+  SelectionFormatMap::const_iterator it = format_map_.find(target);
+  if (it != format_map_.end()) {
+    if (it->second->size() > max_request_size_) {
+      // We must send the data back in several chunks due to a limitation in
+      // the size of X requests. Notify the selection requestor that the data
+      // will be sent incrementally by returning data of type "INCR".
+      long length = it->second->size();
+      XChangeProperty(x_display_,
+                      requestor,
+                      property,
+                      atom_cache_.GetAtom(kIncr),
+                      32,
+                      PropModeReplace,
+                      reinterpret_cast<unsigned char*>(&length),
+                      1);
+
+      // Wait for the selection requestor to indicate that it has processed
+      // the selection result before sending the first chunk of data. The
+      // selection requestor indicates this by deleting |property|.
+      base::TimeTicks timeout =
+          base::TimeTicks::Now() +
+          base::TimeDelta::FromMilliseconds(kIncrementalTransferTimeoutMs);
+      requestor_events_.reset(
+          new ui::XScopedEventSelector(requestor, PropertyChangeMask));
+      incremental_transfers_.push_back(IncrementalTransfer(
+          requestor, target, property, it->second, 0, timeout));
+
+      // Start a timer to abort the data transfer in case that the selection
+      // requestor does not support the INCR property or gets destroyed during
+      // the data transfer.
+      if (!incremental_transfer_abort_timer_.IsRunning()) {
+        incremental_transfer_abort_timer_.Start(
+            FROM_HERE,
+            base::TimeDelta::FromMilliseconds(kTimerPeriodMs),
+            this,
+            &SelectionOwner::AbortStaleIncrementalTransfers);
+      }
+    } else {
+      XChangeProperty(
+          x_display_,
+          requestor,
+          property,
+          target,
+          8,
+          PropModeReplace,
+          const_cast<unsigned char*>(it->second->front()),
+          it->second->size());
+    }
+    return true;
+  }
+
+  // I would put error logging here, but GTK ignores TARGETS and spams us
+  // looking for its own internal types.
   return false;
 }
 
@@ -337,8 +338,8 @@ void SelectionOwner::AbortStaleIncrementalTransfers() {
 
 void SelectionOwner::CompleteIncrementalTransfer(
     std::vector<IncrementalTransfer>::iterator it) {
-  ui::XForeignWindowManager::GetInstance()->CancelRequest(
-      it->foreign_window_manager_id);
+  requestor_events_.reset();
+
   incremental_transfers_.erase(it);
 
   if (incremental_transfers_.empty())
@@ -365,16 +366,16 @@ SelectionOwner::IncrementalTransfer::IncrementalTransfer(
     XAtom property,
     const scoped_refptr<base::RefCountedMemory>& data,
     int offset,
-    base::TimeTicks timeout,
-    int foreign_window_manager_id)
+    base::TimeTicks timeout)
     : window(window),
       target(target),
       property(property),
       data(data),
       offset(offset),
-      timeout(timeout),
-      foreign_window_manager_id(foreign_window_manager_id) {
-}
+      timeout(timeout) {}
+
+SelectionOwner::IncrementalTransfer::IncrementalTransfer(
+    const IncrementalTransfer& other) = default;
 
 SelectionOwner::IncrementalTransfer::~IncrementalTransfer() {
 }

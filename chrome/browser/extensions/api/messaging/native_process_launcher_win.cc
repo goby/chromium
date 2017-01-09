@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
 
 #include <windows.h>
+#include <stdint.h>
 
 #include "base/command_line.h"
 #include "base/logging.h"
@@ -104,7 +105,7 @@ bool NativeProcessLauncher::LaunchNativeProcess(
     return false;
   }
 
-  uint64 pipe_name_token;
+  uint64_t pipe_name_token;
   crypto::RandBytes(&pipe_name_token, sizeof(pipe_name_token));
   base::string16 out_pipe_name = base::StringPrintf(
       L"\\\\.\\pipe\\chrome.nativeMessaging.out.%llx", pipe_name_token);
@@ -139,18 +140,18 @@ bool NativeProcessLauncher::LaunchNativeProcess(
     LOG(ERROR) << "COMSPEC is not set";
     return false;
   }
-  scoped_ptr<wchar_t[]> comspec(new wchar_t[comspec_length]);
+  std::unique_ptr<wchar_t[]> comspec(new wchar_t[comspec_length]);
   ::GetEnvironmentVariable(L"COMSPEC", comspec.get(), comspec_length);
 
   base::string16 command_line_string = command_line.GetCommandLineString();
 
   base::string16 command = base::StringPrintf(
-      L"%ls /c %ls < %ls > %ls",
-      comspec.get(), command_line_string.c_str(),
+      L"%ls /c %ls < %ls > %ls", comspec.get(), command_line_string.c_str(),
       in_pipe_name.c_str(), out_pipe_name.c_str());
 
   base::LaunchOptions options;
   options.start_hidden = true;
+  options.current_directory = command_line.GetProgram().DirName();
   base::Process cmd_process = base::LaunchProcess(command.c_str(), options);
   if (!cmd_process.IsValid()) {
     LOG(ERROR) << "Error launching process "
@@ -169,7 +170,7 @@ bool NativeProcessLauncher::LaunchNativeProcess(
     return false;
   }
 
-  *process = cmd_process.Pass();
+  *process = std::move(cmd_process);
   *read_file = base::File::CreateForAsyncHandle(stdout_pipe.Take());
   *write_file = base::File::CreateForAsyncHandle(stdin_pipe.Take());
 

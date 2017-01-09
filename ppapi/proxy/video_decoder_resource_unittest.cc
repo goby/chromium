@@ -3,9 +3,12 @@
 // found in the LICENSE file.
 
 #include <GLES2/gl2.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "base/memory/shared_memory.h"
 #include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/ppb_video_decoder.h"
 #include "ppapi/proxy/locking_resource_releaser.h"
@@ -106,7 +109,7 @@ class VideoDecoderResourceTest : public PluginProxyTest {
     HostResource host_resource;
     host_resource.SetHostResource(pp_instance(), kGraphics3D);
     scoped_refptr<ppapi::proxy::Graphics3D> graphics_3d(
-        new ppapi::proxy::Graphics3D(host_resource));
+        new ppapi::proxy::Graphics3D(host_resource, gfx::Size(640, 480)));
     return graphics_3d->GetReference();
   }
 

@@ -11,13 +11,14 @@
 #include "base/debug/dump_without_crashing.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/metrics/thread_watcher_report_hang.h"
@@ -34,12 +35,25 @@
 
 using content::BrowserThread;
 
+namespace {
+
+base::StackSamplingProfiler::SamplingParams GetJankTimeBombSamplingParams() {
+  base::StackSamplingProfiler::SamplingParams params;
+  params.initial_delay = base::TimeDelta::FromMilliseconds(0);
+  params.bursts = 1;
+  // 5 seconds at 10Hz.
+  params.samples_per_burst = 50;
+  params.sampling_interval = base::TimeDelta::FromMilliseconds(100);
+  return params;
+}
+
+}  // namespace
+
 // ThreadWatcher methods and members.
 ThreadWatcher::ThreadWatcher(const WatchingParams& params)
     : thread_id_(params.thread_id),
       thread_name_(params.thread_name),
-      watched_runner_(
-          BrowserThread::GetMessageLoopProxyForThread(params.thread_id)),
+      watched_runner_(BrowserThread::GetTaskRunnerForThread(params.thread_id)),
       sleep_time_(params.sleep_time),
       unresponsive_time_(params.unresponsive_time),
       ping_time_(base::TimeTicks::Now()),
@@ -79,14 +93,14 @@ void ThreadWatcher::StartWatching(const WatchingParams& params) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
 
   // Create a new thread watcher object for the given thread and activate it.
-  ThreadWatcher* watcher = new ThreadWatcher(params);
+  std::unique_ptr<ThreadWatcher> watcher(new ThreadWatcher(params));
 
-  DCHECK(watcher);
   // If we couldn't register the thread watcher object, we are shutting down,
-  // then don't activate thread watching.
-  if (!ThreadWatcherList::IsRegistered(params.thread_id))
-    return;
-  watcher->ActivateThreadWatching();
+  // so don't activate thread watching.
+  ThreadWatcher* registered_watcher =
+      ThreadWatcherList::Register(std::move(watcher));
+  if (registered_watcher != nullptr)
+    registered_watcher->ActivateThreadWatching();
 }
 
 void ThreadWatcher::ActivateThreadWatching() {
@@ -150,7 +164,7 @@ void ThreadWatcher::PostPingMessage() {
           base::Bind(&ThreadWatcher::OnPingMessage, thread_id_,
                      callback))) {
       // Post a task to check the responsiveness of watched thread.
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
           base::Bind(&ThreadWatcher::OnCheckResponsiveness,
                      weak_ptr_factory_.GetWeakPtr(), ping_sequence_number_),
@@ -161,7 +175,7 @@ void ThreadWatcher::PostPingMessage() {
   }
 }
 
-void ThreadWatcher::OnPongMessage(uint64 ping_sequence_number) {
+void ThreadWatcher::OnPongMessage(uint64_t ping_sequence_number) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
 
   // Record watched thread's response time.
@@ -192,7 +206,7 @@ void ThreadWatcher::OnPongMessage(uint64 ping_sequence_number) {
       sleep_time_);
 }
 
-void ThreadWatcher::OnCheckResponsiveness(uint64 ping_sequence_number) {
+void ThreadWatcher::OnCheckResponsiveness(uint64_t ping_sequence_number) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
   // If we have stopped watching then consider thread as responding.
   if (!active_) {
@@ -224,7 +238,6 @@ void ThreadWatcher::OnCheckResponsiveness(uint64 ping_sequence_number) {
 
 void ThreadWatcher::Initialize() {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
-  ThreadWatcherList::Register(this);
 
   const std::string response_time_histogram_name =
       "ThreadWatcher.ResponseTime." + thread_name_;
@@ -285,8 +298,8 @@ void ThreadWatcher::GotNoResponse() {
     return;
 
   // Record how other threads are responding.
-  uint32 responding_thread_count = 0;
-  uint32 unresponding_thread_count = 0;
+  uint32_t responding_thread_count = 0;
+  uint32_t unresponding_thread_count = 0;
   ThreadWatcherList::GetStatusOfThreads(&responding_thread_count,
                                         &unresponding_thread_count);
 
@@ -335,11 +348,10 @@ const int ThreadWatcherList::kLiveThreadsThreshold = 2;
 int ThreadWatcherList::g_initialize_delay_seconds = 120;
 
 ThreadWatcherList::CrashDataThresholds::CrashDataThresholds(
-    uint32 live_threads_threshold,
-    uint32 unresponsive_threshold)
+    uint32_t live_threads_threshold,
+    uint32_t unresponsive_threshold)
     : live_threads_threshold(live_threads_threshold),
-      unresponsive_threshold(unresponsive_threshold) {
-}
+      unresponsive_threshold(unresponsive_threshold) {}
 
 ThreadWatcherList::CrashDataThresholds::CrashDataThresholds()
     : live_threads_threshold(kLiveThreadsThreshold),
@@ -350,7 +362,7 @@ ThreadWatcherList::CrashDataThresholds::CrashDataThresholds()
 void ThreadWatcherList::StartWatchingAll(
     const base::CommandLine& command_line) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  uint32 unresponsive_threshold;
+  uint32_t unresponsive_threshold;
   CrashOnHangThreadMap crash_on_hang_threads;
   ParseCommandLine(command_line,
                    &unresponsive_threshold,
@@ -383,23 +395,20 @@ void ThreadWatcherList::StopWatchingAll() {
 }
 
 // static
-void ThreadWatcherList::Register(ThreadWatcher* watcher) {
+ThreadWatcher* ThreadWatcherList::Register(
+    std::unique_ptr<ThreadWatcher> watcher) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
   if (!g_thread_watcher_list_)
-    return;
-  DCHECK(!g_thread_watcher_list_->Find(watcher->thread_id()));
-  g_thread_watcher_list_->registered_[watcher->thread_id()] = watcher;
+    return nullptr;
+  content::BrowserThread::ID thread_id = watcher->thread_id();
+  DCHECK(g_thread_watcher_list_->registered_.count(thread_id) == 0);
+  return g_thread_watcher_list_->registered_[thread_id] = watcher.release();
 }
 
 // static
-bool ThreadWatcherList::IsRegistered(const BrowserThread::ID thread_id) {
-  DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
-  return nullptr != ThreadWatcherList::Find(thread_id);
-}
-
-// static
-void ThreadWatcherList::GetStatusOfThreads(uint32* responding_thread_count,
-                                           uint32* unresponding_thread_count) {
+void ThreadWatcherList::GetStatusOfThreads(
+    uint32_t* responding_thread_count,
+    uint32_t* unresponding_thread_count) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
   *responding_thread_count = 0;
   *unresponding_thread_count = 0;
@@ -445,7 +454,7 @@ ThreadWatcherList::~ThreadWatcherList() {
 // static
 void ThreadWatcherList::ParseCommandLine(
     const base::CommandLine& command_line,
-    uint32* unresponsive_threshold,
+    uint32_t* unresponsive_threshold,
     CrashOnHangThreadMap* crash_on_hang_threads) {
   // Initialize |unresponsive_threshold| to a default value.
   *unresponsive_threshold = kUnresponsiveCount;
@@ -467,7 +476,7 @@ void ThreadWatcherList::ParseCommandLine(
     *unresponsive_threshold *= 2;
 #endif
 
-  uint32 crash_seconds = *unresponsive_threshold * kUnresponsiveSeconds;
+  uint32_t crash_seconds = *unresponsive_threshold * kUnresponsiveSeconds;
   std::string crash_on_hang_thread_names;
   if (command_line.HasSwitch(switches::kCrashOnHangThreads)) {
     crash_on_hang_thread_names =
@@ -491,8 +500,8 @@ void ThreadWatcherList::ParseCommandLine(
 // static
 void ThreadWatcherList::ParseCommandLineCrashOnHangThreads(
     const std::string& crash_on_hang_thread_names,
-    uint32 default_live_threads_threshold,
-    uint32 default_crash_seconds,
+    uint32_t default_live_threads_threshold,
+    uint32_t default_crash_seconds,
     CrashOnHangThreadMap* crash_on_hang_threads) {
   base::StringTokenizer tokens(crash_on_hang_thread_names, ",");
   while (tokens.GetNext()) {
@@ -500,8 +509,8 @@ void ThreadWatcherList::ParseCommandLineCrashOnHangThreads(
         tokens.token_piece(), ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
     std::string thread_name = values[0].as_string();
 
-    uint32 live_threads_threshold = default_live_threads_threshold;
-    uint32 crash_seconds = default_crash_seconds;
+    uint32_t live_threads_threshold = default_live_threads_threshold;
+    uint32_t crash_seconds = default_crash_seconds;
     if (values.size() >= 2 &&
         (!base::StringToUint(values[1], &live_threads_threshold))) {
       continue;
@@ -510,7 +519,7 @@ void ThreadWatcherList::ParseCommandLineCrashOnHangThreads(
         (!base::StringToUint(values[2], &crash_seconds))) {
       continue;
     }
-    uint32 unresponsive_threshold = static_cast<uint32>(
+    uint32_t unresponsive_threshold = static_cast<uint32_t>(
         ceil(static_cast<float>(crash_seconds) / kUnresponsiveSeconds));
 
     CrashDataThresholds crash_data(live_threads_threshold,
@@ -522,7 +531,7 @@ void ThreadWatcherList::ParseCommandLineCrashOnHangThreads(
 
 // static
 void ThreadWatcherList::InitializeAndStartWatching(
-    uint32 unresponsive_threshold,
+    uint32_t unresponsive_threshold,
     const CrashOnHangThreadMap& crash_on_hang_threads) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
 
@@ -574,14 +583,14 @@ void ThreadWatcherList::StartWatching(
     const std::string& thread_name,
     const base::TimeDelta& sleep_time,
     const base::TimeDelta& unresponsive_time,
-    uint32 unresponsive_threshold,
+    uint32_t unresponsive_threshold,
     const CrashOnHangThreadMap& crash_on_hang_threads) {
   DCHECK(WatchDogThread::CurrentlyOnWatchDogThread());
 
   CrashOnHangThreadMap::const_iterator it =
       crash_on_hang_threads.find(thread_name);
   bool crash_on_hang = false;
-  uint32 live_threads_threshold = 0;
+  uint32_t live_threads_threshold = 0;
   if (it != crash_on_hang_threads.end()) {
     crash_on_hang = true;
     live_threads_threshold = it->second.live_threads_threshold;
@@ -748,7 +757,7 @@ WatchDogThread::~WatchDogThread() {
 bool WatchDogThread::CurrentlyOnWatchDogThread() {
   base::AutoLock lock(g_watchdog_lock.Get());
   return g_watchdog_thread &&
-      g_watchdog_thread->message_loop() == base::MessageLoop::current();
+         g_watchdog_thread->task_runner()->BelongsToCurrentThread();
 }
 
 // static
@@ -886,25 +895,30 @@ void StartupTimeBomb::Arm(const base::TimeDelta& duration) {
 void StartupTimeBomb::Disarm() {
   DCHECK_EQ(thread_id_, base::PlatformThread::CurrentId());
   if (startup_watchdog_) {
-    startup_watchdog_->Disarm();
-    startup_watchdog_->Cleanup();
-    DeleteStartupWatchdog();
+    base::Watchdog* startup_watchdog = startup_watchdog_;
+    startup_watchdog_ = nullptr;
+
+    startup_watchdog->Disarm();
+    startup_watchdog->Cleanup();
+    DeleteStartupWatchdog(thread_id_, startup_watchdog);
   }
 }
 
-void StartupTimeBomb::DeleteStartupWatchdog() {
-  DCHECK_EQ(thread_id_, base::PlatformThread::CurrentId());
-  if (startup_watchdog_->IsJoinable()) {
+// static
+void StartupTimeBomb::DeleteStartupWatchdog(
+    const base::PlatformThreadId thread_id,
+    base::Watchdog* startup_watchdog) {
+  DCHECK_EQ(thread_id, base::PlatformThread::CurrentId());
+  if (startup_watchdog->IsJoinable()) {
     // Allow the watchdog thread to shutdown on UI. Watchdog thread shutdowns
     // very fast.
-    base::ThreadRestrictions::SetIOAllowed(true);
-    delete startup_watchdog_;
-    startup_watchdog_ = nullptr;
+    base::ThreadRestrictions::ScopedAllowIO allow_io;
+    delete startup_watchdog;
     return;
   }
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&StartupTimeBomb::DeleteStartupWatchdog,
-                            base::Unretained(this)),
+      FROM_HERE, base::Bind(&StartupTimeBomb::DeleteStartupWatchdog, thread_id,
+                            base::Unretained(startup_watchdog)),
       base::TimeDelta::FromSeconds(10));
 }
 
@@ -915,20 +929,11 @@ void StartupTimeBomb::DisarmStartupTimeBomb() {
     g_startup_timebomb_->Disarm();
 }
 
-base::StackSamplingProfiler::SamplingParams GetJankTimeBombSamplingParams() {
-  base::StackSamplingProfiler::SamplingParams params;
-  params.initial_delay = base::TimeDelta::FromMilliseconds(0);
-  params.bursts = 1;
-  // 5 seconds at 10Hz.
-  params.samples_per_burst = 50;
-  params.sampling_interval = base::TimeDelta::FromMilliseconds(100);
-  return params;
-}
-
 // JankTimeBomb methods and members.
 //
-JankTimeBomb::JankTimeBomb(base::TimeDelta duration)
-    : weak_ptr_factory_(this) {
+JankTimeBomb::JankTimeBomb(base::TimeDelta duration,
+                           metrics::CallStackProfileParams::Thread thread)
+    : thread_(thread), weak_ptr_factory_(this) {
   if (IsEnabled()) {
     WatchDogThread::PostDelayedTask(
         FROM_HERE,
@@ -955,9 +960,11 @@ void JankTimeBomb::Alarm(base::PlatformThreadId thread_id) {
       thread_id,
       GetJankTimeBombSamplingParams(),
       metrics::CallStackProfileMetricsProvider::GetProfilerCallback(
-          metrics::CallStackProfileMetricsProvider::Params(
-              metrics::CallStackProfileMetricsProvider::JANKY_TASK,
-              true))));
+          metrics::CallStackProfileParams(
+              metrics::CallStackProfileParams::BROWSER_PROCESS,
+              thread_,
+              metrics::CallStackProfileParams::JANKY_TASK,
+              metrics::CallStackProfileParams::PRESERVE_ORDER))));
   // Use synchronous profiler. It will automatically stop collection when
   // destroyed.
   sampling_profiler_->Start();

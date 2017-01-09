@@ -5,16 +5,15 @@
 #ifndef CC_BLINK_WEB_CONTENT_LAYER_IMPL_H_
 #define CC_BLINK_WEB_CONTENT_LAYER_IMPL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "cc/blink/cc_blink_export.h"
 #include "cc/blink/web_layer_impl.h"
 #include "cc/layers/content_layer_client.h"
 #include "third_party/WebKit/public/platform/WebContentLayer.h"
-
-namespace cc {
-class IntRect;
-class FloatRect;
-}
 
 namespace blink {
 class WebContentLayerClient;
@@ -27,12 +26,12 @@ class WebContentLayerImpl : public blink::WebContentLayer,
  public:
   CC_BLINK_EXPORT explicit WebContentLayerImpl(blink::WebContentLayerClient*);
 
+  ~WebContentLayerImpl() override;
+
   // WebContentLayer implementation.
   blink::WebLayer* layer() override;
 
  protected:
-  ~WebContentLayerImpl() override;
-
   // ContentLayerClient implementation.
   gfx::Rect PaintableRegion() override;
   scoped_refptr<cc::DisplayItemList> PaintContentsToDisplayList(
@@ -40,7 +39,7 @@ class WebContentLayerImpl : public blink::WebContentLayer,
   bool FillsBoundsCompletely() const override;
   size_t GetApproximateUnsharedMemoryUsage() const override;
 
-  scoped_ptr<WebLayerImpl> layer_;
+  std::unique_ptr<WebLayerImpl> layer_;
   blink::WebContentLayerClient* client_;
 
  private:

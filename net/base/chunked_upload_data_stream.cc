@@ -5,20 +5,41 @@
 #include "net/base/chunked_upload_data_stream.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 
 namespace net {
+
+ChunkedUploadDataStream::Writer::~Writer() {}
+
+bool ChunkedUploadDataStream::Writer::AppendData(const char* data,
+                                                 int data_len,
+                                                 bool is_done) {
+  if (!upload_data_stream_)
+    return false;
+  upload_data_stream_->AppendData(data, data_len, is_done);
+  return true;
+}
+
+ChunkedUploadDataStream::Writer::Writer(
+    base::WeakPtr<ChunkedUploadDataStream> upload_data_stream)
+    : upload_data_stream_(upload_data_stream) {}
 
 ChunkedUploadDataStream::ChunkedUploadDataStream(int64_t identifier)
     : UploadDataStream(true, identifier),
       read_index_(0),
       read_offset_(0),
       all_data_appended_(false),
-      read_buffer_len_(0) {
-}
+      read_buffer_len_(0),
+      weak_factory_(this) {}
 
 ChunkedUploadDataStream::~ChunkedUploadDataStream() {
+}
+
+std::unique_ptr<ChunkedUploadDataStream::Writer>
+ChunkedUploadDataStream::CreateWriter() {
+  return base::WrapUnique(new Writer(weak_factory_.GetWeakPtr()));
 }
 
 void ChunkedUploadDataStream::AppendData(
@@ -28,7 +49,7 @@ void ChunkedUploadDataStream::AppendData(
   if (data_len > 0) {
     DCHECK(data);
     upload_data_.push_back(
-        make_scoped_ptr(new std::vector<char>(data, data + data_len)));
+        base::MakeUnique<std::vector<char>>(data, data + data_len));
   }
   all_data_appended_ = is_done;
 
@@ -43,7 +64,7 @@ void ChunkedUploadDataStream::AppendData(
   OnReadCompleted(result);
 }
 
-int ChunkedUploadDataStream::InitInternal() {
+int ChunkedUploadDataStream::InitInternal(const NetLogWithSource& net_log) {
   // ResetInternal should already have been called.
   DCHECK(!read_buffer_.get());
   DCHECK_EQ(0u, read_index_);

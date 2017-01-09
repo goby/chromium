@@ -4,11 +4,14 @@
 
 #include "chrome/browser/chromeos/system_logs/debug_daemon_log_source.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -66,8 +69,8 @@ void DebugDaemonLogSource::Fetch(const SysLogsSourceCallback& callback) {
   ++num_pending_requests_;
 
   if (scrub_) {
-    client->GetScrubbedLogs(base::Bind(&DebugDaemonLogSource::OnGetLogs,
-                                       weak_ptr_factory_.GetWeakPtr()));
+    client->GetScrubbedBigLogs(base::Bind(&DebugDaemonLogSource::OnGetLogs,
+                                          weak_ptr_factory_.GetWeakPtr()));
   } else {
     client->GetAllLogs(base::Bind(&DebugDaemonLogSource::OnGetLogs,
                                   weak_ptr_factory_.GetWeakPtr()));

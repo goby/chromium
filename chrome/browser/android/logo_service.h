@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_ANDROID_LOGO_SERVICE_H_
 #define CHROME_BROWSER_ANDROID_LOGO_SERVICE_H_
 
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/search_provider_logos/logo_tracker.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 
 class Profile;
 
@@ -30,7 +30,7 @@ class LogoService : public KeyedService {
 
  private:
   Profile* profile_;
-  scoped_ptr<search_provider_logos::LogoTracker> logo_tracker_;
+  std::unique_ptr<search_provider_logos::LogoTracker> logo_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(LogoService);
 };

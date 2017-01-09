@@ -4,18 +4,27 @@
 
 #include "content/browser/media/capture/desktop_capture_device.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "content/browser/media/capture/desktop_capture_device_uma_types.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/desktop_media_id.h"
-#include "content/public/browser/power_save_blocker.h"
+#include "content/public/common/content_switches.h"
+#include "device/power_save_blocker/power_save_blocker.h"
 #include "media/base/video_util.h"
 #include "media/capture/content/capture_resolution_chooser.h"
 #include "third_party/libyuv/include/libyuv/scale_argb.h"
@@ -25,7 +34,6 @@
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
-#include "third_party/webrtc/modules/desktop_capture/screen_capturer.h"
 
 namespace content {
 
@@ -54,24 +62,29 @@ bool IsFrameUnpackedOrInverted(webrtc::DesktopFrame* frame) {
 
 }  // namespace
 
+#if defined(OS_WIN)
+const base::Feature kDirectXCapturer{"DirectXCapturer",
+                                     base::FEATURE_DISABLED_BY_DEFAULT};
+#endif
+
 class DesktopCaptureDevice::Core : public webrtc::DesktopCapturer::Callback {
  public:
   Core(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-       scoped_ptr<webrtc::DesktopCapturer> capturer,
+       std::unique_ptr<webrtc::DesktopCapturer> capturer,
        DesktopMediaID::Type type);
   ~Core() override;
 
   // Implementation of VideoCaptureDevice methods.
   void AllocateAndStart(const media::VideoCaptureParams& params,
-                        scoped_ptr<Client> client);
+                        std::unique_ptr<Client> client);
 
   void SetNotificationWindowId(gfx::NativeViewId window_id);
 
  private:
-
-  // webrtc::DesktopCapturer::Callback interface
-  webrtc::SharedMemory* CreateSharedMemory(size_t size) override;
-  void OnCaptureCompleted(webrtc::DesktopFrame* frame) override;
+  // webrtc::DesktopCapturer::Callback interface.
+  void OnCaptureResult(
+    webrtc::DesktopCapturer::Result result,
+    std::unique_ptr<webrtc::DesktopFrame> frame) override;
 
   // Method that is scheduled on |task_runner_| to be called on regular interval
   // to capture a frame.
@@ -87,11 +100,11 @@ class DesktopCaptureDevice::Core : public webrtc::DesktopCapturer::Callback {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   // The underlying DesktopCapturer instance used to capture frames.
-  scoped_ptr<webrtc::DesktopCapturer> desktop_capturer_;
+  std::unique_ptr<webrtc::DesktopCapturer> desktop_capturer_;
 
   // The device client which proxies device events to the controller. Accessed
   // on the task_runner_ thread.
-  scoped_ptr<Client> client_;
+  std::unique_ptr<Client> client_;
 
   // Requested video capture frame rate.
   float requested_frame_rate_;
@@ -100,12 +113,12 @@ class DesktopCaptureDevice::Core : public webrtc::DesktopCapturer::Callback {
   webrtc::DesktopSize previous_frame_size_;
 
   // Determines the size of frames to deliver to the |client_|.
-  scoped_ptr<media::CaptureResolutionChooser> resolution_chooser_;
+  std::unique_ptr<media::CaptureResolutionChooser> resolution_chooser_;
 
   // DesktopFrame into which captured frames are down-scaled and/or letterboxed,
   // depending upon the caller's requested capture capabilities. If frames can
   // be returned to the caller directly then this is NULL.
-  scoped_ptr<webrtc::DesktopFrame> output_frame_;
+  std::unique_ptr<webrtc::DesktopFrame> output_frame_;
 
   // Timer used to capture the frame.
   base::OneShotTimer capture_timer_;
@@ -120,25 +133,27 @@ class DesktopCaptureDevice::Core : public webrtc::DesktopCapturer::Callback {
   // The type of the capturer.
   DesktopMediaID::Type capturer_type_;
 
-  scoped_ptr<webrtc::BasicDesktopFrame> black_frame_;
+  // The system time when we receive the first frame.
+  base::TimeTicks first_ref_time_;
+
+  std::unique_ptr<webrtc::BasicDesktopFrame> black_frame_;
 
   // TODO(jiayl): Remove power_save_blocker_ when there is an API to keep the
   // screen from sleeping for the drive-by web.
-  scoped_ptr<PowerSaveBlocker> power_save_blocker_;
+  std::unique_ptr<device::PowerSaveBlocker> power_save_blocker_;
 
   DISALLOW_COPY_AND_ASSIGN(Core);
 };
 
 DesktopCaptureDevice::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_ptr<webrtc::DesktopCapturer> capturer,
+    std::unique_ptr<webrtc::DesktopCapturer> capturer,
     DesktopMediaID::Type type)
     : task_runner_(task_runner),
-      desktop_capturer_(capturer.Pass()),
+      desktop_capturer_(std::move(capturer)),
       capture_in_progress_(false),
       first_capture_returned_(false),
-      capturer_type_(type) {
-}
+      capturer_type_(type) {}
 
 DesktopCaptureDevice::Core::~Core() {
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -150,25 +165,25 @@ DesktopCaptureDevice::Core::~Core() {
 
 void DesktopCaptureDevice::Core::AllocateAndStart(
     const media::VideoCaptureParams& params,
-    scoped_ptr<Client> client) {
+    std::unique_ptr<Client> client) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_GT(params.requested_format.frame_size.GetArea(), 0);
   DCHECK_GT(params.requested_format.frame_rate, 0);
   DCHECK(desktop_capturer_);
-  DCHECK(client.get());
-  DCHECK(!client_.get());
+  DCHECK(client);
+  DCHECK(!client_);
 
-  client_ = client.Pass();
+  client_ = std::move(client);
   requested_frame_rate_ = params.requested_format.frame_rate;
   resolution_chooser_.reset(new media::CaptureResolutionChooser(
       params.requested_format.frame_size,
       params.resolution_change_policy));
 
-  power_save_blocker_.reset(
-      PowerSaveBlocker::Create(
-          PowerSaveBlocker::kPowerSaveBlockPreventDisplaySleep,
-          PowerSaveBlocker::kReasonOther,
-          "DesktopCaptureDevice is running").release());
+  power_save_blocker_.reset(new device::PowerSaveBlocker(
+      device::PowerSaveBlocker::kPowerSaveBlockPreventDisplaySleep,
+      device::PowerSaveBlocker::kReasonOther, "DesktopCaptureDevice is running",
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE)));
 
   desktop_capturer_->Start(this);
 
@@ -182,33 +197,32 @@ void DesktopCaptureDevice::Core::SetNotificationWindowId(
   desktop_capturer_->SetExcludedWindow(window_id);
 }
 
-webrtc::SharedMemory*
-DesktopCaptureDevice::Core::CreateSharedMemory(size_t size) {
-  return NULL;
-}
-
-void DesktopCaptureDevice::Core::OnCaptureCompleted(
-    webrtc::DesktopFrame* frame) {
+void DesktopCaptureDevice::Core::OnCaptureResult(
+    webrtc::DesktopCapturer::Result result,
+    std::unique_ptr<webrtc::DesktopFrame> frame) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(capture_in_progress_);
+  capture_in_progress_ = false;
+
+  bool success = result == webrtc::DesktopCapturer::Result::SUCCESS;
 
   if (!first_capture_returned_) {
     first_capture_returned_ = true;
     if (capturer_type_ == DesktopMediaID::TYPE_SCREEN) {
-      IncrementDesktopCaptureCounter(frame ? FIRST_SCREEN_CAPTURE_SUCCEEDED
-                                           : FIRST_SCREEN_CAPTURE_FAILED);
+      IncrementDesktopCaptureCounter(success ? FIRST_SCREEN_CAPTURE_SUCCEEDED
+                                             : FIRST_SCREEN_CAPTURE_FAILED);
     } else {
-      IncrementDesktopCaptureCounter(frame ? FIRST_WINDOW_CAPTURE_SUCCEEDED
-                                           : FIRST_WINDOW_CAPTURE_FAILED);
+      IncrementDesktopCaptureCounter(success ? FIRST_WINDOW_CAPTURE_SUCCEEDED
+                                             : FIRST_WINDOW_CAPTURE_FAILED);
     }
   }
 
-  capture_in_progress_ = false;
-
-  if (!frame) {
-    client_->OnError(FROM_HERE, "Failed to capture a frame.");
+  if (!success) {
+    if (result == webrtc::DesktopCapturer::Result::ERROR_PERMANENT)
+      client_->OnError(FROM_HERE, "The desktop capturer has failed.");
     return;
   }
+  DCHECK(frame);
 
   if (!client_)
     return;
@@ -223,8 +237,6 @@ void DesktopCaptureDevice::Core::OnCaptureCompleted(
   } else {
     UMA_HISTOGRAM_TIMES(kUmaWindowCaptureTime, capture_time);
   }
-
-  scoped_ptr<webrtc::DesktopFrame> owned_frame(frame);
 
   // If the frame size has changed, drop the output frame (if any), and
   // determine the new output size.
@@ -242,26 +254,22 @@ void DesktopCaptureDevice::Core::OnCaptureCompleted(
   if (output_size.is_empty())
     return;
 
-  // On OSX We receive a 1x1 frame when the shared window is minimized. It
-  // cannot be subsampled to I420 and will be dropped downstream. So we replace
-  // it with a black frame to avoid the video appearing frozen at the last
-  // frame.
-  if (frame->size().width() == 1 || frame->size().height() == 1) {
-    if (!black_frame_.get()) {
-      black_frame_.reset(new webrtc::BasicDesktopFrame(output_size));
-      memset(black_frame_->data(),
-             0,
-             black_frame_->stride() * black_frame_->size().height());
-    }
-    owned_frame.reset();
-    frame = black_frame_.get();
-  }
-
   size_t output_bytes = output_size.width() * output_size.height() *
       webrtc::DesktopFrame::kBytesPerPixel;
-  const uint8_t* output_data = NULL;
+  const uint8_t* output_data = nullptr;
 
-  if (!frame->size().equals(output_size)) {
+  if (frame->size().equals(webrtc::DesktopSize(1, 1))) {
+    // On OSX We receive a 1x1 frame when the shared window is minimized. It
+    // cannot be subsampled to I420 and will be dropped downstream. So we
+    // replace it with a black frame to avoid the video appearing frozen at the
+    // last frame.
+    if (!black_frame_ || !black_frame_->size().equals(output_size)) {
+      black_frame_.reset(new webrtc::BasicDesktopFrame(output_size));
+      memset(black_frame_->data(), 0,
+             black_frame_->stride() * black_frame_->size().height());
+    }
+    output_data = black_frame_->data();
+  } else if (!frame->size().equals(output_size)) {
     // Down-scale and/or letterbox to the target format if the frame does not
     // match the output size.
 
@@ -278,16 +286,14 @@ void DesktopCaptureDevice::Core::OnCaptureCompleted(
     // using ARGBScaleClip().
     const webrtc::DesktopRect output_rect =
         ComputeLetterboxRect(output_size, frame->size());
-    uint8_t* output_rect_data = output_frame_->data() +
-        output_frame_->stride() * output_rect.top() +
-        webrtc::DesktopFrame::kBytesPerPixel * output_rect.left();
-    libyuv::ARGBScale(frame->data(), frame->stride(),
-                      frame->size().width(), frame->size().height(),
-                      output_rect_data, output_frame_->stride(),
-                      output_rect.width(), output_rect.height(),
-                      libyuv::kFilterBilinear);
+    uint8_t* output_rect_data =
+        output_frame_->GetFrameDataAtPos(output_rect.top_left());
+    libyuv::ARGBScale(frame->data(), frame->stride(), frame->size().width(),
+                      frame->size().height(), output_rect_data,
+                      output_frame_->stride(), output_rect.width(),
+                      output_rect.height(), libyuv::kFilterBilinear);
     output_data = output_frame_->data();
-  } else if (IsFrameUnpackedOrInverted(frame)) {
+  } else if (IsFrameUnpackedOrInverted(frame.get())) {
     // If |frame| is not packed top-to-bottom then create a packed top-to-bottom
     // copy.
     // This is required if the frame is inverted (see crbug.com/306876), or if
@@ -297,10 +303,8 @@ void DesktopCaptureDevice::Core::OnCaptureCompleted(
       memset(output_frame_->data(), 0, output_bytes);
     }
 
-    output_frame_->CopyPixelsFrom(
-        *frame,
-        webrtc::DesktopVector(),
-        webrtc::DesktopRect::MakeSize(frame->size()));
+    output_frame_->CopyPixelsFrom(*frame, webrtc::DesktopVector(),
+                                  webrtc::DesktopRect::MakeSize(frame->size()));
     output_data = output_frame_->data();
   } else {
     // If the captured frame matches the output size, we can return the pixel
@@ -308,12 +312,15 @@ void DesktopCaptureDevice::Core::OnCaptureCompleted(
     output_data = frame->data();
   }
 
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (first_ref_time_.is_null())
+    first_ref_time_ = now;
   client_->OnIncomingCapturedData(
       output_data, output_bytes,
       media::VideoCaptureFormat(
           gfx::Size(output_size.width(), output_size.height()),
           requested_frame_rate_, media::PIXEL_FORMAT_ARGB),
-      0, base::TimeTicks::Now());
+      0, now, now - first_ref_time_);
 }
 
 void DesktopCaptureDevice::Core::OnCaptureTimer() {
@@ -334,9 +341,9 @@ void DesktopCaptureDevice::Core::CaptureFrameAndScheduleNext() {
 
   // Limit frame-rate to reduce CPU consumption.
   base::TimeDelta capture_period = std::max(
-    (last_capture_duration * 100) / kMaximumCpuConsumptionPercentage,
-    base::TimeDelta::FromMicroseconds(static_cast<int64>(
-        1000000.0 / requested_frame_rate_ + 0.5 /* round to nearest int */)));
+      (last_capture_duration * 100) / kMaximumCpuConsumptionPercentage,
+      base::TimeDelta::FromMicroseconds(static_cast<int64_t>(
+          1000000.0 / requested_frame_rate_ + 0.5 /* round to nearest int */)));
 
   // Schedule a task for the next frame.
   capture_timer_.Start(FROM_HERE, capture_period - last_capture_duration,
@@ -348,7 +355,7 @@ void DesktopCaptureDevice::Core::DoCapture() {
   DCHECK(!capture_in_progress_);
 
   capture_in_progress_ = true;
-  desktop_capturer_->Capture(webrtc::DesktopRegion());
+  desktop_capturer_->CaptureFrame();
 
   // Currently only synchronous implementations of DesktopCapturer are
   // supported.
@@ -356,7 +363,7 @@ void DesktopCaptureDevice::Core::DoCapture() {
 }
 
 // static
-scoped_ptr<media::VideoCaptureDevice> DesktopCaptureDevice::Create(
+std::unique_ptr<media::VideoCaptureDevice> DesktopCaptureDevice::Create(
     const DesktopMediaID& source) {
   webrtc::DesktopCaptureOptions options =
       webrtc::DesktopCaptureOptions::CreateDefault();
@@ -364,29 +371,37 @@ scoped_ptr<media::VideoCaptureDevice> DesktopCaptureDevice::Create(
   options.set_disable_effects(false);
 
 #if defined(OS_WIN)
-      options.set_allow_use_magnification_api(true);
+  if (!base::FeatureList::IsEnabled(kDirectXCapturer)) {
+    options.set_allow_use_magnification_api(true);
+  } else {
+    options.set_allow_directx_capturer(true);
+    options.set_allow_use_magnification_api(false);
+  }
 #endif
 
-  scoped_ptr<webrtc::DesktopCapturer> capturer;
+  std::unique_ptr<webrtc::DesktopCapturer> capturer;
 
   switch (source.type) {
     case DesktopMediaID::TYPE_SCREEN: {
-      scoped_ptr<webrtc::ScreenCapturer> screen_capturer(
-          webrtc::ScreenCapturer::Create(options));
-      if (screen_capturer && screen_capturer->SelectScreen(source.id)) {
+      std::unique_ptr<webrtc::DesktopCapturer> screen_capturer(
+          webrtc::DesktopCapturer::CreateScreenCapturer(options));
+      if (screen_capturer && screen_capturer->SelectSource(source.id)) {
         capturer.reset(new webrtc::DesktopAndCursorComposer(
             screen_capturer.release(),
             webrtc::MouseCursorMonitor::CreateForScreen(options, source.id)));
         IncrementDesktopCaptureCounter(SCREEN_CAPTURER_CREATED);
+        IncrementDesktopCaptureCounter(
+            source.audio_share ? SCREEN_CAPTURER_CREATED_WITH_AUDIO
+                               : SCREEN_CAPTURER_CREATED_WITHOUT_AUDIO);
       }
       break;
     }
 
     case DesktopMediaID::TYPE_WINDOW: {
-      scoped_ptr<webrtc::WindowCapturer> window_capturer(
-          webrtc::CroppingWindowCapturer::Create(options));
-      if (window_capturer && window_capturer->SelectWindow(source.id)) {
-        window_capturer->BringSelectedWindowToFront();
+      std::unique_ptr<webrtc::DesktopCapturer> window_capturer =
+          webrtc::CroppingWindowCapturer::CreateCapturer(options);
+      if (window_capturer && window_capturer->SelectSource(source.id)) {
+        window_capturer->FocusOnSelectedSource();
         capturer.reset(new webrtc::DesktopAndCursorComposer(
             window_capturer.release(),
             webrtc::MouseCursorMonitor::CreateForWindow(options, source.id)));
@@ -395,16 +410,14 @@ scoped_ptr<media::VideoCaptureDevice> DesktopCaptureDevice::Create(
       break;
     }
 
-    default: {
-      NOTREACHED();
-    }
+    default: { NOTREACHED(); }
   }
 
-  scoped_ptr<media::VideoCaptureDevice> result;
+  std::unique_ptr<media::VideoCaptureDevice> result;
   if (capturer)
-    result.reset(new DesktopCaptureDevice(capturer.Pass(), source.type));
+    result.reset(new DesktopCaptureDevice(std::move(capturer), source.type));
 
-  return result.Pass();
+  return result;
 }
 
 DesktopCaptureDevice::~DesktopCaptureDevice() {
@@ -413,7 +426,7 @@ DesktopCaptureDevice::~DesktopCaptureDevice() {
 
 void DesktopCaptureDevice::AllocateAndStart(
     const media::VideoCaptureParams& params,
-    scoped_ptr<Client> client) {
+    std::unique_ptr<Client> client) {
   thread_.task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&Core::AllocateAndStart, base::Unretained(core_.get()), params,
@@ -440,7 +453,7 @@ void DesktopCaptureDevice::SetNotificationWindowId(
 }
 
 DesktopCaptureDevice::DesktopCaptureDevice(
-    scoped_ptr<webrtc::DesktopCapturer> capturer,
+    std::unique_ptr<webrtc::DesktopCapturer> capturer,
     DesktopMediaID::Type type)
     : thread_("desktopCaptureThread") {
 #if defined(OS_WIN)
@@ -452,7 +465,7 @@ DesktopCaptureDevice::DesktopCaptureDevice(
 
   thread_.StartWithOptions(base::Thread::Options(thread_type, 0));
 
-  core_.reset(new Core(thread_.task_runner(), capturer.Pass(), type));
+  core_.reset(new Core(thread_.task_runner(), std::move(capturer), type));
 }
 
 }  // namespace content

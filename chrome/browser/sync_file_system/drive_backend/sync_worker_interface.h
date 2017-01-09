@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_SYNC_WORKER_INTERFACE_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_SYNC_WORKER_INTERFACE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/sync_file_system/remote_file_sync_service.h"
 #include "chrome/browser/sync_file_system/sync_action.h"
 #include "chrome/browser/sync_file_system/sync_callbacks.h"
@@ -21,11 +22,6 @@ class FilePath;
 class ListValue;
 }
 
-namespace drive {
-class DriveServiceInterface;
-class DriveUploaderInterface;
-}
-
 namespace storage {
 class FileSystemURL;
 }
@@ -37,10 +33,8 @@ class SyncFileMetadata;
 
 namespace drive_backend {
 
-class MetadataDatabase;
 class RemoteChangeProcessorOnWorker;
 class SyncEngineContext;
-class SyncTaskManager;
 
 class SyncWorkerInterface {
  public:
@@ -64,7 +58,7 @@ class SyncWorkerInterface {
 
   // Initializes SyncWorkerInterface after constructions of some member classes.
   virtual void Initialize(
-      scoped_ptr<SyncEngineContext> sync_engine_context) = 0;
+      std::unique_ptr<SyncEngineContext> sync_engine_context) = 0;
 
   // See RemoteFileSyncService for the details.
   virtual void RegisterOrigin(const GURL& origin,
@@ -83,8 +77,8 @@ class SyncWorkerInterface {
   virtual RemoteServiceState GetCurrentState() const = 0;
   virtual void GetOriginStatusMap(
       const RemoteFileSyncService::StatusMapCallback& callback) = 0;
-  virtual scoped_ptr<base::ListValue> DumpFiles(const GURL& origin) = 0;
-  virtual scoped_ptr<base::ListValue> DumpDatabase() = 0;
+  virtual std::unique_ptr<base::ListValue> DumpFiles(const GURL& origin) = 0;
+  virtual std::unique_ptr<base::ListValue> DumpDatabase() = 0;
   virtual void SetSyncEnabled(bool enabled) = 0;
   virtual void PromoteDemotedChanges(const base::Closure& callback) = 0;
 

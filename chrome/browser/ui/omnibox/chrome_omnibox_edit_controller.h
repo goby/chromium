@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_OMNIBOX_CHROME_OMNIBOX_EDIT_CONTROLLER_H_
 #define CHROME_BROWSER_UI_OMNIBOX_CHROME_OMNIBOX_EDIT_CONTROLLER_H_
 
+#include "base/macros.h"
 #include "components/omnibox/browser/omnibox_edit_controller.h"
 
 class CommandUpdater;
@@ -19,6 +20,10 @@ class ChromeOmniboxEditController : public OmniboxEditController {
   // Returns the WebContents of the currently active tab.
   virtual content::WebContents* GetWebContents() = 0;
 
+  // Called when the the controller should update itself without restoring any
+  // tab state.
+  virtual void UpdateWithoutTabRestore() = 0;
+
   CommandUpdater* command_updater() { return command_updater_; }
   const CommandUpdater* command_updater() const { return command_updater_; }
 
@@ -30,7 +35,9 @@ class ChromeOmniboxEditController : public OmniboxEditController {
   // OmniboxEditController:
   void OnAutocompleteAccept(const GURL& destination_url,
                             WindowOpenDisposition disposition,
-                            ui::PageTransition transition) override;
+                            ui::PageTransition transition,
+                            AutocompleteMatchType::Type type) override;
+  void OnInputInProgress(bool in_progress) override;
 
   CommandUpdater* command_updater_;
 

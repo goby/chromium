@@ -6,23 +6,30 @@
 #define UI_BASE_TEST_MATERIAL_DESIGN_CONTROLLER_TEST_API_H_
 
 #include "base/macros.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 namespace ui {
 namespace test {
 
 // Test API to access the internal state of the MaterialDesignController class.
+// Creating an instance of this class and then destroying it preserves global
+// state in MaterialDesignController class.
 class MaterialDesignControllerTestAPI {
  public:
+  explicit MaterialDesignControllerTestAPI(MaterialDesignController::Mode mode);
+  ~MaterialDesignControllerTestAPI();
+
   // Wrapper functions for MaterialDesignController internal functions.
-  static void SetMode(MaterialDesignController::Mode mode);
-  static void UninitializeMode();
+  static void Uninitialize();
 
  private:
+  const MaterialDesignController::Mode previous_mode_;
+  const bool previous_initialized_;
+
   DISALLOW_COPY_AND_ASSIGN(MaterialDesignControllerTestAPI);
 };
 
 }  // namespace test
 }  // namespace ui
 
-#endif  // UI_BASE_TEST_MATERIAL_DESIGN_CONTROLLER_TEST_AP_H_
+#endif  // UI_BASE_TEST_MATERIAL_DESIGN_CONTROLLER_TEST_API_H_

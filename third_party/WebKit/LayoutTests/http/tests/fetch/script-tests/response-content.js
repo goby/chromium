@@ -115,6 +115,23 @@ promise_test(function() {
   }, 'Behavior of Response with FormData content');
 
 promise_test(function() {
+    const urlSearchParams = new URLSearchParams();
+    urlSearchParams.append('sample string', '1234567890');
+    urlSearchParams.append('sample string 2', '1234567890 & 2');
+    var response = new Response(urlSearchParams);
+    assert_equals(
+      response.headers.get('Content-Type'),
+      'application/x-www-form-urlencoded;charset=UTF-8',
+      'A Response constructed with a URLSearchParams should have a Content-Type.');
+    return response.text()
+      .then(function(result) {
+          assert_equals(
+            result, 'sample+string=1234567890&sample+string+2=1234567890+%26+2',
+            'Creating a Response with URLSearchParams body must succeed.');
+        });
+  }, 'Behavior of Response with URLSearchParams content');
+
+promise_test(function() {
     var headers = new Headers;
     headers.set('Content-Language', 'ja');
     var response = new Response(
@@ -150,14 +167,13 @@ promise_test(function() {
     var response = new Response(null);
     assert_equals(
       response.headers.get('Content-Type'),
-      'text/plain;charset=UTF-8',
-      'A Response constructed with a value coerced to string should have a ' +
-      'text Content-Type.');
+      null,
+      'A Response constructed with null body should have no Content-Type.');
     return response.text()
       .then(function(text) {
-          assert_equals(text, 'null',
-                        'A null value passed to Response constructor should ' +
-                        'be coerced to the string "null".');
+          assert_equals(text, '',
+                        'Response with null body accessed as text should ' +
+                        'resolve to the empty string.');
         });
   }, 'Behavior of Response passed null for body.');
 

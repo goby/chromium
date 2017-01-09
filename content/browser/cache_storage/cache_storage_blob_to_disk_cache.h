@@ -5,9 +5,11 @@
 #ifndef CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_BLOB_TO_DISK_CACHE_H_
 #define CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_BLOB_TO_DISK_CACHE_H_
 
+#include <memory>
+
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "net/disk_cache/disk_cache.h"
@@ -45,12 +47,12 @@ class CONTENT_EXPORT CacheStorageBlobToDiskCache
   void StreamBlobToCache(
       disk_cache::ScopedEntryPtr entry,
       int disk_cache_body_index,
-      const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
-      scoped_ptr<storage::BlobDataHandle> blob_data_handle,
+      net::URLRequestContextGetter* request_context_getter,
+      std::unique_ptr<storage::BlobDataHandle> blob_data_handle,
       const EntryAndBoolCallback& callback);
 
   // net::URLRequest::Delegate overrides for reading blobs.
-  void OnResponseStarted(net::URLRequest* request) override;
+  void OnResponseStarted(net::URLRequest* request, int net_error) override;
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override;
   void OnReceivedRedirect(net::URLRequest* request,
                           const net::RedirectInfo& redirect_info,
@@ -63,7 +65,6 @@ class CONTENT_EXPORT CacheStorageBlobToDiskCache
   void OnSSLCertificateError(net::URLRequest* request,
                              const net::SSLInfo& ssl_info,
                              bool fatal) override;
-  void OnBeforeNetworkStart(net::URLRequest* request, bool* defer) override;
 
   // URLRequestContextGetterObserver override for canceling requests just
   // before the URLRequestContext is destroyed.
@@ -79,9 +80,12 @@ class CONTENT_EXPORT CacheStorageBlobToDiskCache
 
   int cache_entry_offset_;
   disk_cache::ScopedEntryPtr entry_;
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
+
+  // Owned by CacheStorageCache which owns this.
+  net::URLRequestContextGetter* request_context_getter_;
+
   int disk_cache_body_index_;
-  scoped_ptr<net::URLRequest> blob_request_;
+  std::unique_ptr<net::URLRequest> blob_request_;
   EntryAndBoolCallback callback_;
   scoped_refptr<net::IOBufferWithSize> buffer_;
 

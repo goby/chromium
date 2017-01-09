@@ -5,6 +5,7 @@
 #include "chrome/browser/sync_file_system/local/sync_file_system_backend.h"
 
 #include <string>
+#include <utility>
 
 #include "base/logging.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -126,12 +127,8 @@ void SyncFileSystemBackend::ResolveURL(const storage::FileSystemURL& url,
   // It is safe to pass Unretained(this) since |context_| owns it.
   SyncStatusCallback initialize_callback =
       base::Bind(&SyncFileSystemBackend::DidInitializeSyncFileSystemService,
-                 base::Unretained(this),
-                 make_scoped_refptr(context_),
-                 url.origin(),
-                 url.type(),
-                 mode,
-                 callback);
+                 base::Unretained(this), base::RetainedRef(context_),
+                 url.origin(), url.type(), mode, callback);
   InitializeSyncFileSystemService(url.origin(), initialize_callback);
 }
 
@@ -162,18 +159,18 @@ storage::FileSystemOperation* SyncFileSystemBackend::CreateFileSystemOperation(
   DCHECK(context);
   DCHECK(error_code);
 
-  scoped_ptr<storage::FileSystemOperationContext> operation_context =
+  std::unique_ptr<storage::FileSystemOperationContext> operation_context =
       GetDelegate()->CreateFileSystemOperationContext(url, context, error_code);
   if (!operation_context)
     return nullptr;
 
   if (url.type() == storage::kFileSystemTypeSyncableForInternalSync) {
-    return storage::FileSystemOperation::Create(
-        url, context, operation_context.Pass());
+    return storage::FileSystemOperation::Create(url, context,
+                                                std::move(operation_context));
   }
 
-  return new SyncableFileSystemOperation(
-      url, context, operation_context.Pass());
+  return new SyncableFileSystemOperation(url, context,
+                                         std::move(operation_context));
 }
 
 bool SyncFileSystemBackend::SupportsStreaming(
@@ -186,11 +183,11 @@ bool SyncFileSystemBackend::HasInplaceCopyImplementation(
   return false;
 }
 
-scoped_ptr<storage::FileStreamReader>
+std::unique_ptr<storage::FileStreamReader>
 SyncFileSystemBackend::CreateFileStreamReader(
     const storage::FileSystemURL& url,
-    int64 offset,
-    int64 max_bytes_to_read,
+    int64_t offset,
+    int64_t max_bytes_to_read,
     const base::Time& expected_modification_time,
     storage::FileSystemContext* context) const {
   DCHECK(CanHandleType(url.type()));
@@ -198,10 +195,10 @@ SyncFileSystemBackend::CreateFileStreamReader(
       url, offset, expected_modification_time, context);
 }
 
-scoped_ptr<storage::FileStreamWriter>
+std::unique_ptr<storage::FileStreamWriter>
 SyncFileSystemBackend::CreateFileStreamWriter(
     const storage::FileSystemURL& url,
-    int64 offset,
+    int64_t offset,
     storage::FileSystemContext* context) const {
   DCHECK(CanHandleType(url.type()));
   return GetDelegate()->CreateFileStreamWriter(
@@ -237,10 +234,10 @@ SyncFileSystemBackend* SyncFileSystemBackend::GetBackend(
 }
 
 void SyncFileSystemBackend::SetLocalFileChangeTracker(
-    scoped_ptr<LocalFileChangeTracker> tracker) {
+    std::unique_ptr<LocalFileChangeTracker> tracker) {
   DCHECK(!change_tracker_);
   DCHECK(tracker);
-  change_tracker_ = tracker.Pass();
+  change_tracker_ = std::move(tracker);
 
   storage::SandboxFileSystemBackendDelegate* delegate = GetDelegate();
   delegate->AddFileUpdateObserver(storage::kFileSystemTypeSyncable,
@@ -304,7 +301,7 @@ void SyncFileSystemBackend::DidInitializeSyncFileSystemService(
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
         base::Bind(&SyncFileSystemBackend::DidInitializeSyncFileSystemService,
-                   base::Unretained(this), make_scoped_refptr(context),
+                   base::Unretained(this), base::RetainedRef(context),
                    origin_url, type, mode, callback, status));
     return;
   }

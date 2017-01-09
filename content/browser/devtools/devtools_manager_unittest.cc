@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
-#include "base/location.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
-#include "base/time/time.h"
 #include "content/browser/devtools/devtools_manager.h"
+
+#include <memory>
+
+#include "base/guid.h"
+#include "base/location.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "content/browser/devtools/shared_worker_devtools_manager.h"
 #include "content/browser/shared_worker/shared_worker_instance.h"
 #include "content/browser/shared_worker/worker_storage_partition.h"
@@ -42,7 +46,7 @@ class TestDevToolsClientHost : public DevToolsAgentHostClient {
   void Close() {
     EXPECT_FALSE(closed_);
     close_counter++;
-    agent_host_->DetachClient();
+    agent_host_->DetachClient(this);
     closed_ = true;
   }
 
@@ -85,7 +89,9 @@ class TestWebContentsDelegate : public WebContentsDelegate {
   TestWebContentsDelegate() : renderer_unresponsive_received_(false) {}
 
   // Notification that the contents is hung.
-  void RendererUnresponsive(WebContents* source) override {
+  void RendererUnresponsive(
+      WebContents* source,
+      const WebContentsUnresponsiveState& unresponsive_state) override {
     renderer_unresponsive_received_ = true;
   }
 
@@ -142,24 +148,26 @@ TEST_F(DevToolsManagerTest, NoUnresponsiveDialogInInspectedContents) {
 
   // Start with a short timeout.
   inspected_rvh->GetWidget()->StartHangMonitorTimeout(
-      TimeDelta::FromMilliseconds(10));
+      TimeDelta::FromMilliseconds(10), blink::WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
   // Wait long enough for first timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMilliseconds(10));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_FALSE(delegate.renderer_unresponsive_received());
 
   // Now close devtools and check that the notification is delivered.
   client_host.Close();
   // Start with a short timeout.
   inspected_rvh->GetWidget()->StartHangMonitorTimeout(
-      TimeDelta::FromMilliseconds(10));
+      TimeDelta::FromMilliseconds(10), blink::WebInputEvent::Undefined,
+      RendererUnresponsiveType::RENDERER_UNRESPONSIVE_UNKNOWN);
   // Wait long enough for first timeout and see if it fired.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       TimeDelta::FromMilliseconds(10));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(delegate.renderer_unresponsive_received());
 
   contents()->SetDelegate(NULL);
@@ -172,7 +180,7 @@ TEST_F(DevToolsManagerTest, ReattachOnCancelPendingNavigation) {
       url, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
   int pending_id = controller().GetPendingEntry()->GetUniqueID();
   contents()->GetMainFrame()->PrepareForCommit();
-  contents()->TestDidNavigate(contents()->GetMainFrame(), 1, pending_id, true,
+  contents()->TestDidNavigate(contents()->GetMainFrame(), pending_id, true,
                               url, ui::PAGE_TRANSITION_TYPED);
   contents()->GetMainFrame()->SimulateNavigationStop();
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
@@ -195,7 +203,7 @@ TEST_F(DevToolsManagerTest, ReattachOnCancelPendingNavigation) {
       url, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
   pending_id = controller().GetPendingEntry()->GetUniqueID();
   contents()->GetMainFrame()->PrepareForCommit();
-  contents()->TestDidNavigate(contents()->GetMainFrame(), 1, pending_id, false,
+  contents()->TestDidNavigate(contents()->GetMainFrame(), pending_id, false,
                               url, ui::PAGE_TRANSITION_TYPED);
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
   EXPECT_EQ(client_host.agent_host(),
@@ -204,6 +212,18 @@ TEST_F(DevToolsManagerTest, ReattachOnCancelPendingNavigation) {
 }
 
 class TestExternalAgentDelegate: public DevToolsExternalAgentProxyDelegate {
+ public:
+  TestExternalAgentDelegate() {
+  }
+  ~TestExternalAgentDelegate() override {
+    expectEvent(1, "Attach");
+    expectEvent(1, "Detach");
+    expectEvent(0, "SendMessageToBackend.message0");
+    expectEvent(1, "SendMessageToBackend.message1");
+    expectEvent(2, "SendMessageToBackend.message2");
+  }
+
+ private:
   std::map<std::string,int> event_counter_;
 
   void recordEvent(const std::string& name) {
@@ -222,32 +242,35 @@ class TestExternalAgentDelegate: public DevToolsExternalAgentProxyDelegate {
 
   void Detach() override { recordEvent("Detach"); };
 
+  std::string GetType() override { return std::string(); }
+  std::string GetTitle() override { return std::string(); }
+  std::string GetDescription() override { return std::string(); }
+  GURL GetURL() override { return GURL(); }
+  GURL GetFaviconURL() override { return GURL(); }
+  std::string GetFrontendURL() override { return std::string(); }
+  bool Activate() override { return false; };
+  void Reload() override { };
+  bool Close() override { return false; };
+
   void SendMessageToBackend(const std::string& message) override {
     recordEvent(std::string("SendMessageToBackend.") + message);
   };
 
- public :
-  ~TestExternalAgentDelegate() override {
-    expectEvent(1, "Attach");
-    expectEvent(1, "Detach");
-    expectEvent(0, "SendMessageToBackend.message0");
-    expectEvent(1, "SendMessageToBackend.message1");
-    expectEvent(2, "SendMessageToBackend.message2");
-  }
 };
 
 TEST_F(DevToolsManagerTest, TestExternalProxy) {
-  TestExternalAgentDelegate* delegate = new TestExternalAgentDelegate();
+  std::unique_ptr<TestExternalAgentDelegate> delegate(
+      new TestExternalAgentDelegate());
 
   scoped_refptr<DevToolsAgentHost> agent_host =
-      DevToolsAgentHost::Create(delegate);
+      DevToolsAgentHost::Forward(base::GenerateGUID(), std::move(delegate));
   EXPECT_EQ(agent_host, DevToolsAgentHost::GetForId(agent_host->GetId()));
 
   TestDevToolsClientHost client_host;
   client_host.InspectAgentHost(agent_host.get());
-  agent_host->DispatchProtocolMessage("message1");
-  agent_host->DispatchProtocolMessage("message2");
-  agent_host->DispatchProtocolMessage("message2");
+  agent_host->DispatchProtocolMessage(&client_host, "message1");
+  agent_host->DispatchProtocolMessage(&client_host, "message2");
+  agent_host->DispatchProtocolMessage(&client_host, "message2");
 
   client_host.Close();
 }

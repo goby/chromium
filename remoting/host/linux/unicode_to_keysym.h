@@ -5,13 +5,14 @@
 #ifndef REMOTING_HOST_LINUX_UNICODE_TO_KEYSYM_H_
 #define REMOTING_HOST_LINUX_UNICODE_TO_KEYSYM_H_
 
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 
 namespace remoting {
 
-void GetKeySymsForUnicode(uint32_t code_point, std::vector<uint32_t>* keysyms);
+std::vector<uint32_t> GetKeySymsForUnicode(uint32_t code_point);
 
 }  // namespace remoting
 

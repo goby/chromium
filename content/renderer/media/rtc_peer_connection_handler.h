@@ -5,11 +5,14 @@
 #ifndef CONTENT_RENDERER_MEDIA_RTC_PEER_CONNECTION_HANDLER_H_
 #define CONTENT_RENDERER_MEDIA_RTC_PEER_CONNECTION_HANDLER_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
@@ -17,6 +20,7 @@
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "content/renderer/media/webrtc/media_stream_track_metrics.h"
+#include "ipc/ipc_platform_file.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
 #include "third_party/WebKit/public/platform/WebRTCPeerConnectionHandler.h"
 #include "third_party/WebKit/public/platform/WebRTCStatsRequest.h"
@@ -24,7 +28,9 @@
 
 namespace blink {
 class WebFrame;
+class WebRTCAnswerOptions;
 class WebRTCDataChannelHandler;
+class WebRTCLegacyStats;
 class WebRTCOfferOptions;
 class WebRTCPeerConnectionHandlerClient;
 }
@@ -35,7 +41,6 @@ class PeerConnectionDependencyFactory;
 class PeerConnectionTracker;
 class RemoteMediaStreamImpl;
 class RtcDataChannelHandler;
-class RTCMediaConstraints;
 class WebRtcMediaStreamAdapter;
 
 // Mockable wrapper for blink::WebRTCStatsResponse
@@ -47,10 +52,7 @@ class CONTENT_EXPORT LocalRTCStatsResponse
   }
 
   virtual blink::WebRTCStatsResponse webKitStatsResponse() const;
-  virtual size_t addReport(blink::WebString type, blink::WebString id,
-                           double timestamp);
-  virtual void addStatistic(size_t report,
-                            blink::WebString name, blink::WebString value);
+  virtual void addStats(const blink::WebRTCLegacyStats& stats);
 
  protected:
   ~LocalRTCStatsResponse() override {}
@@ -98,10 +100,6 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
   // Destroy all existing RTCPeerConnectionHandler objects.
   static void DestructAllHandlers();
 
-  static void ConvertOfferOptionsToConstraints(
-      const blink::WebRTCOfferOptions& options,
-      RTCMediaConstraints* output);
-
   void associateWithFrame(blink::WebFrame* frame);
 
   // Initialize method only used for unit test.
@@ -121,6 +119,8 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
 
   void createAnswer(const blink::WebRTCSessionDescriptionRequest& request,
                     const blink::WebMediaConstraints& options) override;
+  void createAnswer(const blink::WebRTCSessionDescriptionRequest& request,
+                    const blink::WebRTCAnswerOptions& options) override;
 
   void setLocalDescription(
       const blink::WebRTCVoidRequest& request,
@@ -132,8 +132,10 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
   blink::WebRTCSessionDescription localDescription() override;
   blink::WebRTCSessionDescription remoteDescription() override;
 
-  bool updateICE(const blink::WebRTCConfiguration& server_configuration,
-                 const blink::WebMediaConstraints& options) override;
+  bool updateICE(
+      const blink::WebRTCConfiguration& server_configuration) override;
+  void logSelectedRtcpMuxPolicy(
+      blink::RtcpMuxPolicy selectedRtcpMuxPolicy) override;
   bool addICECandidate(const blink::WebRTCICECandidate& candidate) override;
   bool addICECandidate(const blink::WebRTCVoidRequest& request,
                        const blink::WebRTCICECandidate& candidate) override;
@@ -144,6 +146,8 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
                  const blink::WebMediaConstraints& options) override;
   void removeStream(const blink::WebMediaStream& stream) override;
   void getStats(const blink::WebRTCStatsRequest& request) override;
+  void getStats(
+      std::unique_ptr<blink::WebRTCStatsReportCallback> callback) override;
   blink::WebRTCDataChannelHandler* createDataChannel(
       const blink::WebString& label,
       const blink::WebRTCDataChannelInit& init) override;
@@ -163,7 +167,14 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
                 blink::WebMediaStreamSource::Type track_type);
 
   // Tells the |client_| to close RTCPeerConnection.
-  void CloseClientPeerConnection();
+  // Make it virtual for testing purpose.
+  virtual void CloseClientPeerConnection();
+
+  // Start recording an event log.
+  void StartEventLog(IPC::PlatformFileForTransit file,
+                     int64_t max_file_size_bytes);
+  // Stop recording an event log.
+  void StopEventLog();
 
  protected:
   webrtc::PeerConnectionInterface* native_peer_connection() {
@@ -180,10 +191,10 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
   void OnIceGatheringChange(
       webrtc::PeerConnectionInterface::IceGatheringState new_state);
   void OnRenegotiationNeeded();
-  void OnAddStream(scoped_ptr<RemoteMediaStreamImpl> stream);
+  void OnAddStream(std::unique_ptr<RemoteMediaStreamImpl> stream);
   void OnRemoveStream(
       const scoped_refptr<webrtc::MediaStreamInterface>& stream);
-  void OnDataChannel(scoped_ptr<RtcDataChannelHandler> handler);
+  void OnDataChannel(std::unique_ptr<RtcDataChannelHandler> handler);
   void OnIceCandidate(const std::string& sdp, const std::string& sdp_mid,
       int sdp_mline_index, int component, int address_family);
 
@@ -264,12 +275,12 @@ class CONTENT_EXPORT RTCPeerConnectionHandler
   // remote side to record UMA stats once both are set.  We only check
   // for the first offer or answer.  "pranswer"s and "unknown"s (from
   // unit tests) are ignored.
-  scoped_ptr<FirstSessionDescription> first_local_description_;
-  scoped_ptr<FirstSessionDescription> first_remote_description_;
+  std::unique_ptr<FirstSessionDescription> first_local_description_;
+  std::unique_ptr<FirstSessionDescription> first_remote_description_;
 
-  typedef std::map<webrtc::MediaStreamInterface*,
-      content::RemoteMediaStreamImpl*> RemoteStreamMap;
-  RemoteStreamMap remote_streams_;
+  std::map<webrtc::MediaStreamInterface*,
+           std::unique_ptr<content::RemoteMediaStreamImpl>>
+      remote_streams_;
   scoped_refptr<webrtc::UMAObserver> uma_observer_;
   base::TimeTicks ice_connection_checking_start_;
 

@@ -28,48 +28,41 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/forms/TextInputType.h"
 
 #include "core/InputTypeNames.h"
 #include "core/html/HTMLInputElement.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
 using namespace HTMLNames;
 
-PassRefPtrWillBeRawPtr<InputType> TextInputType::create(HTMLInputElement& element)
-{
-    return adoptRefWillBeNoop(new TextInputType(element));
+InputType* TextInputType::create(HTMLInputElement& element) {
+  return new TextInputType(element);
 }
 
-void TextInputType::countUsage()
-{
-    countUsageIfVisible(UseCounter::InputTypeText);
-    if (element().fastHasAttribute(maxlengthAttr))
-        countUsageIfVisible(UseCounter::InputTypeTextMaxLength);
-    const AtomicString& type = element().fastGetAttribute(typeAttr);
-    if (equalIgnoringCase(type, InputTypeNames::datetime))
-        countUsageIfVisible(UseCounter::InputTypeDateTimeFallback);
-    else if (equalIgnoringCase(type, InputTypeNames::week))
-        countUsageIfVisible(UseCounter::InputTypeWeekFallback);
+void TextInputType::countUsage() {
+  countUsageIfVisible(UseCounter::InputTypeText);
+  if (element().fastHasAttribute(maxlengthAttr))
+    countUsageIfVisible(UseCounter::InputTypeTextMaxLength);
+  const AtomicString& type = element().fastGetAttribute(typeAttr);
+  if (equalIgnoringCase(type, InputTypeNames::datetime))
+    countUsageIfVisible(UseCounter::InputTypeDateTimeFallback);
+  else if (equalIgnoringCase(type, InputTypeNames::week))
+    countUsageIfVisible(UseCounter::InputTypeWeekFallback);
 }
 
-const AtomicString& TextInputType::formControlType() const
-{
-    return InputTypeNames::text;
+const AtomicString& TextInputType::formControlType() const {
+  return InputTypeNames::text;
 }
 
-bool TextInputType::supportsInputModeAttribute() const
-{
-    return true;
+bool TextInputType::supportsInputModeAttribute() const {
+  return true;
 }
 
-const AtomicString& TextInputType::defaultAutocapitalize() const
-{
-    DEFINE_STATIC_LOCAL(const AtomicString, sentences, ("sentences", AtomicString::ConstructFromLiteral));
-    return sentences;
+const AtomicString& TextInputType::defaultAutocapitalize() const {
+  DEFINE_STATIC_LOCAL(const AtomicString, sentences, ("sentences"));
+  return sentences;
 }
 
-} // namespace blink
+}  // namespace blink

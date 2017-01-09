@@ -5,17 +5,21 @@
 #ifndef CONTENT_PUBLIC_RENDERER_CONTENT_RENDERER_CLIENT_H_
 #define CONTENT_PUBLIC_RENDERER_CONTENT_RENDERER_CLIENT_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/public/common/content_client.h"
 #include "third_party/WebKit/public/platform/WebPageVisibilityState.h"
+#include "third_party/WebKit/public/web/WebNavigationPolicy.h"
+#include "third_party/WebKit/public/web/WebNavigationType.h"
 #include "ui/base/page_transition_types.h"
 #include "v8/include/v8.h"
 
@@ -28,7 +32,6 @@ class SingleThreadTaskRunner;
 }
 
 namespace blink {
-class WebAppBannerClient;
 class WebAudioDevice;
 class WebClipboard;
 class WebFrame;
@@ -38,13 +41,13 @@ class WebMIDIAccessorClient;
 class WebMediaStreamCenter;
 class WebMediaStreamCenterClient;
 class WebPlugin;
-class WebPluginContainer;
 class WebPrescientNetworking;
 class WebRTCPeerConnectionHandler;
 class WebRTCPeerConnectionHandlerClient;
 class WebSpeechSynthesizer;
 class WebSpeechSynthesizerClient;
 class WebThemeEngine;
+class WebURL;
 class WebURLResponse;
 class WebURLRequest;
 class WebWorkerContentSettingsClientProxy;
@@ -52,21 +55,29 @@ struct WebPluginParams;
 struct WebURLError;
 }
 
+namespace cc {
+class ImageSerializationProcessor;
+class RemoteCompositorBridge;
+}
+
+namespace gfx {
+class ICCProfile;
+}
+
 namespace media {
-class GpuVideoAcceleratorFactories;
-class MediaLog;
-class RendererFactory;
-struct KeySystemInfo;
+class KeySystemProperties;
+}
+
+namespace service_manager {
+class InterfaceRegistry;
 }
 
 namespace content {
 class BrowserPluginDelegate;
-class DocumentState;
 class MediaStreamRendererFactory;
+class RemoteProtoChannel;
 class RenderFrame;
 class RenderView;
-class SynchronousCompositor;
-struct WebPluginInfo;
 
 // Embedder API for participating in renderer logic.
 class CONTENT_EXPORT ContentRendererClient {
@@ -100,6 +111,8 @@ class CONTENT_EXPORT ContentRendererClient {
 
   // Creates a replacement plugin that is shown when the plugin at |file_path|
   // couldn't be loaded. This allows the embedder to show a custom placeholder.
+  // This may return nullptr. However, if it does return a WebPlugin, it must
+  // never fail to initialize.
   virtual blink::WebPlugin* CreatePluginReplacement(
       RenderFrame* render_frame,
       const base::FilePath& plugin_path);
@@ -190,6 +203,27 @@ class CONTENT_EXPORT ContentRendererClient {
   // Returns true if a popup window should be allowed.
   virtual bool AllowPopup();
 
+#if defined(OS_ANDROID)
+  // TODO(sgurun) This callback is deprecated and will be removed as soon
+  // as android webview completes implementation of a resource throttle based
+  // shouldoverrideurl implementation. See crbug.com/325351
+  //
+  // Returns true if the navigation was handled by the embedder and should be
+  // ignored by WebKit. This method is used by CEF and android_webview.
+  virtual bool HandleNavigation(RenderFrame* render_frame,
+                                bool is_content_initiated,
+                                bool render_view_was_created_by_renderer,
+                                blink::WebFrame* frame,
+                                const blink::WebURLRequest& request,
+                                blink::WebNavigationType type,
+                                blink::WebNavigationPolicy default_policy,
+                                bool is_redirect);
+
+  // Indicates if the Android MediaPlayer should be used instead of Chrome's
+  // built in media player for the given |url|. Defaults to false.
+  virtual bool ShouldUseMediaPlayerForURL(const GURL& url);
+#endif
+
   // Returns true if we should fork a new process for the given navigation.
   // If |send_referrer| is set to false (which is the default), no referrer
   // header will be send for the navigation. Otherwise, the referrer header is
@@ -205,9 +239,13 @@ class CONTENT_EXPORT ContentRendererClient {
   // |url|.  If the function returns true, the url is changed to |new_url|.
   virtual bool WillSendRequest(blink::WebFrame* frame,
                                ui::PageTransition transition_type,
-                               const GURL& url,
-                               const GURL& first_party_for_cookies,
+                               const blink::WebURL& url,
                                GURL* new_url);
+
+  // Returns true if the request is associated with a document that is in
+  // ""prefetch only" mode, and will not be rendered.
+  virtual bool IsPrefetchOnly(RenderFrame* render_frame,
+                              const blink::WebURLRequest& request);
 
   // See blink::Platform.
   virtual unsigned long long VisitedLinkHash(const char* canonical_url,
@@ -218,10 +256,6 @@ class CONTENT_EXPORT ContentRendererClient {
       const RenderFrame* render_frame,
       blink::WebPageVisibilityState* override_state);
 
-  // Allows an embedder to return custom PPAPI interfaces.
-  virtual const void* CreatePPAPIInterface(
-      const std::string& interface_name);
-
   // Returns true if the given Pepper plugin is external (requiring special
   // startup steps).
   virtual bool IsExternalPepperPlugin(const std::string& module_name);
@@ -229,19 +263,28 @@ class CONTENT_EXPORT ContentRendererClient {
   // Returns true if the page at |url| can use Pepper MediaStream APIs.
   virtual bool AllowPepperMediaStreamAPI(const GURL& url);
 
-  // Allows an embedder to provide a media::RendererFactory.
-  virtual scoped_ptr<media::RendererFactory> CreateMediaRendererFactory(
-      RenderFrame* render_frame,
-      media::GpuVideoAcceleratorFactories* gpu_factories,
-      const scoped_refptr<media::MediaLog>& media_log);
-
   // Allows an embedder to provide a MediaStreamRendererFactory.
-  virtual scoped_ptr<MediaStreamRendererFactory>
+  virtual std::unique_ptr<MediaStreamRendererFactory>
   CreateMediaStreamRendererFactory();
+
+  // Allows an embedder to provide a cc::ImageSerializationProcessor.
+  virtual cc::ImageSerializationProcessor* GetImageSerializationProcessor();
+
+  // Allows an embedder to create the cc::RemoteCompositorBridge when using
+  // remote compositing.
+  // The |remote_proto_channel| outlives the RemoteCompositorBridge.
+  virtual std::unique_ptr<cc::RemoteCompositorBridge>
+  CreateRemoteCompositorBridge(
+      RemoteProtoChannel* remote_proto_channel,
+      scoped_refptr<base::SingleThreadTaskRunner> compositor_main_task_runner);
+
+  // Allows an embedder to provide a default image decode color space.
+  virtual std::unique_ptr<gfx::ICCProfile> GetImageDecodeColorProfile();
 
   // Gives the embedder a chance to register the key system(s) it supports by
   // populating |key_systems|.
-  virtual void AddKeySystems(std::vector<media::KeySystemInfo>* key_systems);
+  virtual void AddSupportedKeySystems(
+      std::vector<std::unique_ptr<media::KeySystemProperties>>* key_systems);
 
   // Returns true if we should report a detailed message (including a stack
   // trace) for console [logs|errors|exceptions]. |source| is the WebKit-
@@ -278,31 +321,56 @@ class CONTENT_EXPORT ContentRendererClient {
   // metric. See: https://www.chromium.org/developers/design-documents/rappor
   virtual void RecordRapporURL(const std::string& metric, const GURL& url) {}
 
-  // Allows an embedder to provide a blink::WebAppBannerClient.
-  virtual scoped_ptr<blink::WebAppBannerClient> CreateAppBannerClient(
-      RenderFrame* render_frame);
-
   // Gives the embedder a chance to add properties to the context menu.
   // Currently only called when the context menu is for an image.
   virtual void AddImageContextMenuProperties(
       const blink::WebURLResponse& response,
       std::map<std::string, std::string>* properties) {}
 
+  // Notifies that a document element has been inserted in the frame's document.
+  // This may be called multiple times for the same document. This method may
+  // invalidate the frame.
+  virtual void RunScriptsAtDocumentStart(RenderFrame* render_frame) {}
+
+  // Notifies that the DOM is ready in the frame's document.
+  // This method may invalidate the frame.
+  virtual void RunScriptsAtDocumentEnd(RenderFrame* render_frame) {}
+
+  // Allows subclasses to enable some runtime features before Blink has
+  // started.
+  virtual void SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() {}
+
   // Notifies that a service worker context has been created. This function
   // is called from the worker thread.
   virtual void DidInitializeServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> context,
+      int64_t service_worker_version_id,
       const GURL& url) {}
 
   // Notifies that a service worker context will be destroyed. This function
   // is called from the worker thread.
   virtual void WillDestroyServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> context,
+      int64_t service_worker_version_id,
       const GURL& url) {}
 
   // Whether this renderer should enforce preferences related to the WebRTC
   // routing logic, i.e. allowing multiple routes and non-proxied UDP.
   virtual bool ShouldEnforceWebRTCRoutingPreferences();
+
+  // Notifies that a worker context has been created. This function is called
+  // from the worker thread.
+  virtual void DidInitializeWorkerContextOnWorkerThread(
+      v8::Local<v8::Context> context) {}
+
+  // Allows the client to expose interfaces from the renderer process to the
+  // browser process via |registry|.
+  virtual void ExposeInterfacesToBrowser(
+      service_manager::InterfaceRegistry* interface_registry) {}
+
+  // Overwrites the given URL to use an HTML5 embed if possible.
+  // An empty URL is returned if the URL is not overriden.
+  virtual GURL OverrideFlashEmbedWithHTML(const GURL& url);
 };
 
 }  // namespace content

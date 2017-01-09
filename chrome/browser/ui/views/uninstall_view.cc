@@ -7,7 +7,8 @@
 #include "base/message_loop/message_loop.h"
 #include "base/process/launch.h"
 #include "base/run_loop.h"
-#include "chrome/browser/browser_process.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/uninstall_browser_prompt.h"
 #include "chrome/common/chrome_result_codes.h"
@@ -64,7 +65,7 @@ void UninstallView::SetupControls() {
   // The "delete profile" check box.
   ++column_set_id;
   column_set = layout->AddColumnSet(column_set_id);
-  column_set->AddPaddingColumn(0, views::kPanelHorizIndentation);
+  column_set->AddPaddingColumn(0, views::kCheckboxIndent);
   column_set->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
                         GridLayout::USE_PREF, 0, 0);
   layout->StartRow(0, column_set_id);
@@ -79,11 +80,8 @@ void UninstallView::SetupControls() {
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
   if (dist->GetDefaultBrowserControlPolicy() !=
           BrowserDistribution::DEFAULT_BROWSER_UNSUPPORTED &&
-      ShellIntegration::GetDefaultBrowser() == ShellIntegration::IS_DEFAULT &&
-      (ShellIntegration::CanSetAsDefaultBrowser() ==
-          ShellIntegration::SET_DEFAULT_NOT_ALLOWED ||
-       ShellIntegration::CanSetAsDefaultBrowser() ==
-          ShellIntegration::SET_DEFAULT_UNATTENDED)) {
+      ShellUtil::CanMakeChromeDefaultUnattended() &&
+      shell_integration::GetDefaultBrowser() == shell_integration::IS_DEFAULT) {
     browsers_.reset(new BrowsersMap());
     ShellUtil::GetRegisteredBrowsers(dist, browsers_.get());
     if (!browsers_->empty()) {
@@ -91,7 +89,7 @@ void UninstallView::SetupControls() {
 
       ++column_set_id;
       column_set = layout->AddColumnSet(column_set_id);
-      column_set->AddPaddingColumn(0, views::kPanelHorizIndentation);
+      column_set->AddPaddingColumn(0, views::kCheckboxIndent);
       column_set->AddColumn(GridLayout::LEADING, GridLayout::CENTER, 0,
                             GridLayout::USE_PREF, 0, 0);
       column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
@@ -169,14 +167,15 @@ int ShowUninstallBrowserPrompt() {
   DCHECK(base::MessageLoopForUI::IsCurrent());
   int result = content::RESULT_CODE_NORMAL_EXIT;
 
-  // Take a reference on g_browser_process while showing the dialog. This is
-  // done because the dialog uses the views framework which may increment
-  // and decrement the module ref count during the course of displaying UI and
-  // this code can be called while the module refcount is still at 0.
+  // Register a KeepAlive while showing the dialog. This is done because the
+  // dialog uses the views framework which may take and release a KeepAlive
+  // during the course of displaying UI and this code can be called while
+  // there is no registered KeepAlive.
   // Note that this reference is never released, as this code is shown on a path
   // that immediately exits Chrome anyway.
   // See http://crbug.com/241366 for details.
-  g_browser_process->AddRefModule();
+  new ScopedKeepAlive(KeepAliveOrigin::LEAKED_UNINSTALL_VIEW,
+                      KeepAliveRestartOption::DISABLED);
 
   base::RunLoop run_loop;
   UninstallView* view = new UninstallView(&result,

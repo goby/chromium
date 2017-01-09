@@ -5,13 +5,18 @@
 #ifndef RLZ_CHROMEOS_LIB_RLZ_VALUE_STORE_CHROMEOS_H_
 #define RLZ_CHROMEOS_LIB_RLZ_VALUE_STORE_CHROMEOS_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/values.h"
 #include "rlz/lib/rlz_value_store.h"
 
 namespace base {
-class ListValue;
 class SequencedTaskRunner;
 class Value;
 }
@@ -33,8 +38,8 @@ class RlzValueStoreChromeOS : public RlzValueStore,
   // RlzValueStore overrides:
   bool HasAccess(AccessType type) override;
 
-  bool WritePingTime(Product product, int64 time) override;
-  bool ReadPingTime(Product product, int64* time) override;
+  bool WritePingTime(Product product, int64_t time) override;
+  bool ReadPingTime(Product product, int64_t* time) override;
   bool ClearPingTime(Product product) override;
 
   bool WriteAccessPointRlz(AccessPoint access_point,
@@ -64,13 +69,14 @@ class RlzValueStoreChromeOS : public RlzValueStore,
   void WriteStore();
 
   // Adds |value| to list at |list_name| path in JSON store.
-  bool AddValueToList(const std::string& list_name, base::Value* value);
+  bool AddValueToList(const std::string& list_name,
+                      std::unique_ptr<base::Value> value);
   // Removes |value| from list at |list_name| path in JSON store.
   bool RemoveValueFromList(const std::string& list_name,
                            const base::Value& value);
 
   // In-memory store with RLZ data.
-  scoped_ptr<base::DictionaryValue> rlz_store_;
+  std::unique_ptr<base::DictionaryValue> rlz_store_;
 
   base::FilePath store_path_;
 

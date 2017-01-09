@@ -5,8 +5,8 @@
 #ifndef CONTENT_BROWSER_WEBUI_SHARED_RESOURCES_DATA_SOURCE_H_
 #define CONTENT_BROWSER_WEBUI_SHARED_RESOURCES_DATA_SOURCE_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/public/browser/url_data_source.h"
 
 namespace content {
@@ -20,10 +20,11 @@ class SharedResourcesDataSource : public URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const ResourceRequestInfo::WebContentsGetter& wc_getter,
       const URLDataSource::GotDataCallback& callback) override;
-  std::string GetMimeType(const std::string&) const override;
+  std::string GetMimeType(const std::string& path) const override;
+  scoped_refptr<base::SingleThreadTaskRunner> TaskRunnerForRequestPath(
+      const std::string& path) const override;
   std::string GetAccessControlAllowOriginForOrigin(
       const std::string& origin) const override;
 

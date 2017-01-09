@@ -7,7 +7,6 @@
 
 #include "core/html/imports/HTMLImport.h"
 #include "platform/Timer.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
@@ -15,40 +14,44 @@ class HTMLImportChild;
 class KURL;
 
 class HTMLImportTreeRoot : public HTMLImport {
-public:
-    static PassOwnPtrWillBeRawPtr<HTMLImportTreeRoot> create(Document*);
+ public:
+  static HTMLImportTreeRoot* create(Document*);
 
-    ~HTMLImportTreeRoot() override;
-    void dispose();
+  ~HTMLImportTreeRoot() override;
+  void dispose();
 
-    // HTMLImport
-    Document* document() const override;
-    bool hasFinishedLoading() const override;
-    void stateWillChange() override;
-    void stateDidChange() override;
+  // HTMLImport
+  Document* document() const override;
+  bool hasFinishedLoading() const override;
+  void stateWillChange() override;
+  void stateDidChange() override;
 
-    void scheduleRecalcState();
+  void scheduleRecalcState();
 
-    HTMLImportChild* add(PassOwnPtrWillBeRawPtr<HTMLImportChild>);
-    HTMLImportChild* find(const KURL&) const;
+  HTMLImportChild* add(HTMLImportChild*);
+  HTMLImportChild* find(const KURL&) const;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    explicit HTMLImportTreeRoot(Document*);
+ private:
+  explicit HTMLImportTreeRoot(Document*);
 
-    void recalcTimerFired(Timer<HTMLImportTreeRoot>*);
+  void recalcTimerFired(TimerBase*);
 
-    RawPtrWillBeMember<Document> m_document;
-    Timer<HTMLImportTreeRoot> m_recalcTimer;
+  Member<Document> m_document;
+  Timer<HTMLImportTreeRoot> m_recalcTimer;
 
-    // List of import which has been loaded or being loaded.
-    typedef WillBeHeapVector<OwnPtrWillBeMember<HTMLImportChild>> ImportList;
-    ImportList m_imports;
+  // List of import which has been loaded or being loaded.
+  typedef HeapVector<Member<HTMLImportChild>> ImportList;
+  ImportList m_imports;
 };
 
-DEFINE_TYPE_CASTS(HTMLImportTreeRoot, HTMLImport, import, import->isRoot(), import.isRoot());
+DEFINE_TYPE_CASTS(HTMLImportTreeRoot,
+                  HTMLImport,
+                  import,
+                  import->isRoot(),
+                  import.isRoot());
 
-}
+}  // namespace blink
 
 #endif

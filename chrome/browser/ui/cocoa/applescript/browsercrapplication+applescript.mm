@@ -5,13 +5,14 @@
 #import "chrome/browser/ui/cocoa/applescript/browsercrapplication+applescript.h"
 
 #include "base/logging.h"
+#import "base/mac/foundation_util.h"
 #import "base/mac/scoped_nsobject.h"
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_iterator.h"
+#include "chrome/browser/ui/browser_list.h"
 #import "chrome/browser/ui/cocoa/applescript/bookmark_folder_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/constants_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/error_applescript.h"
@@ -27,13 +28,12 @@ using bookmarks::BookmarkModel;
       arrayWithCapacity:chrome::GetTotalBrowserCount()];
   // Iterate through all browsers and check if it closing,
   // if not add it to list.
-  for (chrome::BrowserIterator browserIterator; !browserIterator.done();
-       browserIterator.Next()) {
-    if ((*browserIterator)->IsAttemptingToCloseBrowser())
+  for (auto* browser : *BrowserList::GetInstance()) {
+    if (browser->IsAttemptingToCloseBrowser())
       continue;
 
     base::scoped_nsobject<WindowAppleScript> window(
-        [[WindowAppleScript alloc] initWithBrowser:*browserIterator]);
+        [[WindowAppleScript alloc] initWithBrowser:browser]);
     [window setContainer:NSApp
                 property:AppleScript::kWindowsProperty];
     [appleScriptWindows addObject:window];
@@ -72,7 +72,8 @@ using bookmarks::BookmarkModel;
 }
 
 - (BookmarkFolderAppleScript*)otherBookmarks {
-  AppController* appDelegate = [NSApp delegate];
+  AppController* appDelegate =
+      base::mac::ObjCCastStrict<AppController>([NSApp delegate]);
 
   Profile* lastProfile = [appDelegate lastProfile];
   if (!lastProfile) {
@@ -80,7 +81,8 @@ using bookmarks::BookmarkModel;
     return nil;
   }
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(lastProfile);
+  BookmarkModel* model =
+      BookmarkModelFactory::GetForBrowserContext(lastProfile);
   if (!model->loaded()) {
     AppleScript::SetError(AppleScript::errBookmarkModelLoad);
     return nil;
@@ -95,7 +97,8 @@ using bookmarks::BookmarkModel;
 }
 
 - (BookmarkFolderAppleScript*)bookmarksBar {
-  AppController* appDelegate = [NSApp delegate];
+  AppController* appDelegate =
+      base::mac::ObjCCastStrict<AppController>([NSApp delegate]);
 
   Profile* lastProfile = [appDelegate lastProfile];
   if (!lastProfile) {
@@ -103,7 +106,8 @@ using bookmarks::BookmarkModel;
     return nil;
   }
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(lastProfile);
+  BookmarkModel* model =
+      BookmarkModelFactory::GetForBrowserContext(lastProfile);
   if (!model->loaded()) {
     AppleScript::SetError(AppleScript::errBookmarkModelLoad);
     return NULL;

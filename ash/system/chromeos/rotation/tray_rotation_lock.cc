@@ -4,16 +4,22 @@
 
 #include "ash/system/chromeos/rotation/tray_rotation_lock.h"
 
+#include "ash/common/material_design/material_design_controller.h"
+#include "ash/common/system/tray/system_tray.h"
+#include "ash/common/system/tray/tray_constants.h"
+#include "ash/common/system/tray/tray_item_more.h"
+#include "ash/common/system/tray/tray_popup_item_style.h"
+#include "ash/common/wm/maximize_mode/maximize_mode_controller.h"
+#include "ash/common/wm_shell.h"
 #include "ash/display/screen_orientation_controller_chromeos.h"
+#include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/tray_item_more.h"
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
 #include "grit/ash_resources.h"
 #include "grit/ash_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/gfx/paint_vector_icon.h"
 
 namespace ash {
 
@@ -23,8 +29,7 @@ namespace tray {
 // DetailedView. This was chosen over ActionableView in order to reuse the
 // layout and styling of labels and images. This allows RotationLockDefaultView
 // to maintain the look of other system tray items without code duplication.
-class RotationLockDefaultView : public TrayItemMore,
-                                public ShellObserver {
+class RotationLockDefaultView : public TrayItemMore, public ShellObserver {
  public:
   explicit RotationLockDefaultView(SystemTrayItem* owner);
   ~RotationLockDefaultView() override;
@@ -36,6 +41,10 @@ class RotationLockDefaultView : public TrayItemMore,
   void OnMaximizeModeStarted() override;
   void OnMaximizeModeEnded() override;
 
+ protected:
+  // TrayItemMore:
+  void UpdateStyle() override;
+
  private:
   void UpdateImage();
 
@@ -44,14 +53,14 @@ class RotationLockDefaultView : public TrayItemMore,
 
 RotationLockDefaultView::RotationLockDefaultView(SystemTrayItem* owner)
     : TrayItemMore(owner, false) {
-  UpdateImage();
-  SetVisible(Shell::GetInstance()->maximize_mode_controller()->
-                 IsMaximizeModeWindowManagerEnabled());
-  Shell::GetInstance()->AddShellObserver(this);
+  SetVisible(WmShell::Get()
+                 ->maximize_mode_controller()
+                 ->IsMaximizeModeWindowManagerEnabled());
+  WmShell::Get()->AddShellObserver(this);
 }
 
 RotationLockDefaultView::~RotationLockDefaultView() {
-  Shell::GetInstance()->RemoveShellObserver(this);
+  WmShell::Get()->RemoveShellObserver(this);
 }
 
 bool RotationLockDefaultView::PerformAction(const ui::Event& event) {
@@ -72,33 +81,44 @@ void RotationLockDefaultView::OnMaximizeModeEnded() {
   SetVisible(false);
 }
 
+void RotationLockDefaultView::UpdateStyle() {
+  TrayItemMore::UpdateStyle();
+  UpdateImage();
+}
+
 void RotationLockDefaultView::UpdateImage() {
-  base::string16 label;
-  ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-  if (Shell::GetInstance()
-          ->screen_orientation_controller()
-          ->rotation_locked()) {
-    SetImage(bundle.GetImageNamed(
-        IDR_AURA_UBER_TRAY_AUTO_ROTATION_LOCKED_DARK).ToImageSkia());
-    label = l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_ROTATION_LOCK_LOCKED);
-    SetLabel(label);
-    SetAccessibleName(label);
+  const bool rotation_locked =
+      Shell::GetInstance()->screen_orientation_controller()->rotation_locked();
+  if (MaterialDesignController::UseMaterialDesignSystemIcons()) {
+    std::unique_ptr<TrayPopupItemStyle> style = CreateStyle();
+    SetImage(gfx::CreateVectorIcon(rotation_locked
+                                       ? kSystemMenuRotationLockLockedIcon
+                                       : kSystemMenuRotationLockAutoIcon,
+                                   kMenuIconSize, style->GetIconColor()));
   } else {
-    SetImage(bundle.GetImageNamed(IDR_AURA_UBER_TRAY_AUTO_ROTATION_DARK).
-        ToImageSkia());
-    label = l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_ROTATION_LOCK_AUTO);
-    SetLabel(label);
-    SetAccessibleName(label);
+    ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
+    const int resource_id = rotation_locked
+                                ? IDR_AURA_UBER_TRAY_AUTO_ROTATION_LOCKED_DARK
+                                : IDR_AURA_UBER_TRAY_AUTO_ROTATION_DARK;
+    SetImage(*bundle.GetImageNamed(resource_id).ToImageSkia());
   }
+
+  base::string16 label = l10n_util::GetStringUTF16(
+      rotation_locked ? IDS_ASH_STATUS_TRAY_ROTATION_LOCK_LOCKED
+                      : IDS_ASH_STATUS_TRAY_ROTATION_LOCK_AUTO);
+  SetLabel(label);
+  SetAccessibleName(label);
 }
 
 }  // namespace tray
 
 TrayRotationLock::TrayRotationLock(SystemTray* system_tray)
-    : TrayImageItem(system_tray, IDR_AURA_UBER_TRAY_AUTO_ROTATION_LOCKED),
+    : TrayImageItem(system_tray,
+                    IDR_AURA_UBER_TRAY_AUTO_ROTATION_LOCKED,
+                    UMA_ROTATION_LOCK),
       observing_rotation_(false),
       observing_shell_(true) {
-  Shell::GetInstance()->AddShellObserver(this);
+  WmShell::Get()->AddShellObserver(this);
 }
 
 TrayRotationLock::~TrayRotationLock() {
@@ -109,7 +129,7 @@ void TrayRotationLock::OnRotationLockChanged(bool rotation_locked) {
   tray_view()->SetVisible(ShouldBeVisible());
 }
 
-views::View* TrayRotationLock::CreateDefaultView(user::LoginStatus status) {
+views::View* TrayRotationLock::CreateDefaultView(LoginStatus status) {
   if (OnPrimaryDisplay())
     return new tray::RotationLockDefaultView(this);
   return NULL;
@@ -139,7 +159,7 @@ bool TrayRotationLock::GetInitialVisibility() {
 
 bool TrayRotationLock::ShouldBeVisible() {
   return OnPrimaryDisplay() &&
-         Shell::GetInstance()
+         WmShell::Get()
              ->maximize_mode_controller()
              ->IsMaximizeModeWindowManagerEnabled() &&
          Shell::GetInstance()
@@ -149,8 +169,8 @@ bool TrayRotationLock::ShouldBeVisible() {
 
 bool TrayRotationLock::OnPrimaryDisplay() const {
   gfx::NativeView native_view = system_tray()->GetWidget()->GetNativeView();
-  gfx::Display parent_display =
-      Shell::GetScreen()->GetDisplayNearestWindow(native_view);
+  display::Display parent_display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(native_view);
   return parent_display.IsInternal();
 }
 
@@ -167,7 +187,7 @@ void TrayRotationLock::StopObservingRotation() {
 void TrayRotationLock::StopObservingShell() {
   if (!observing_shell_)
     return;
-  Shell::GetInstance()->RemoveShellObserver(this);
+  WmShell::Get()->RemoveShellObserver(this);
   observing_shell_ = false;
 }
 

@@ -19,14 +19,15 @@ function test()
                 cssResource = resource;
         }
         InspectorTest.addResult(cssResource.url);
-        InspectorTest.assertEquals(cssResource.resourceType(), WebInspector.resourceTypes.Stylesheet, "Resource type should be Stylesheet.");
+        InspectorTest.assertEquals(cssResource.resourceType(), Common.resourceTypes.Stylesheet, "Resource type should be Stylesheet.");
         InspectorTest.assertTrue(!cssResource.failed, "Resource loading failed.");
-        cssResource.requestContent(step2);
+        cssResource.requestContent().then(step2);
     }
 
     function step2()
     {
-        InspectorTest.addResult("Resource.content: " + cssResource.content);
+        var content = cssResource.contentEncoded ? window.atob(cssResource.content) : cssResource.content;
+        InspectorTest.addResult("Resource.content: " + content);
         InspectorTest.completeTest();
     }
 }

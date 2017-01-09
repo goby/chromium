@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/attestation/attestation_key_payload.pb.h"
 #include "chrome/browser/chromeos/attestation/attestation_policy_observer.h"
 #include "chrome/browser/chromeos/attestation/fake_certificate.h"
@@ -28,34 +33,34 @@ namespace attestation {
 
 namespace {
 
-const int64 kCertValid = 90;
-const int64 kCertExpiringSoon = 20;
-const int64 kCertExpired = -20;
+const int64_t kCertValid = 90;
+const int64_t kCertExpiringSoon = 20;
+const int64_t kCertExpired = -20;
 
 void DBusCallbackFalse(const BoolDBusMethodCallback& callback) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS, false));
 }
 
 void DBusCallbackTrue(const BoolDBusMethodCallback& callback) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS, true));
 }
 
 void DBusCallbackError(const BoolDBusMethodCallback& callback) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_FAILURE, false));
 }
 
 void CertCallbackSuccess(const AttestationFlow::CertificateCallback& callback) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(callback, true, "fake_cert"));
 }
 
 void StatusCallbackSuccess(
     const policy::CloudPolicyClient::StatusCallback& callback) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE, base::Bind(callback, true));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::Bind(callback, true));
 }
 
 class FakeDBusData {
@@ -63,9 +68,8 @@ class FakeDBusData {
   explicit FakeDBusData(const std::string& data) : data_(data) {}
 
   void operator() (const CryptohomeClient::DataMethodCallback& callback) {
-    base::MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(callback, DBUS_METHOD_CALL_SUCCESS, true, data_));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS, true, data_));
   }
 
  private:
@@ -177,7 +181,7 @@ TEST_F(AttestationPolicyObserverTest, NewCertificate) {
 
 TEST_F(AttestationPolicyObserverTest, KeyExistsNotUploaded) {
   std::string certificate;
-  ASSERT_TRUE(GetFakeCertificateDER(base::TimeDelta::FromDays(kCertValid),
+  ASSERT_TRUE(GetFakeCertificatePEM(base::TimeDelta::FromDays(kCertValid),
                                     &certificate));
   SetupMocks(MOCK_KEY_EXISTS, certificate);
   Run();
@@ -185,7 +189,7 @@ TEST_F(AttestationPolicyObserverTest, KeyExistsNotUploaded) {
 
 TEST_F(AttestationPolicyObserverTest, KeyExistsAlreadyUploaded) {
   std::string certificate;
-  ASSERT_TRUE(GetFakeCertificateDER(base::TimeDelta::FromDays(kCertValid),
+  ASSERT_TRUE(GetFakeCertificatePEM(base::TimeDelta::FromDays(kCertValid),
                                     &certificate));
   SetupMocks(MOCK_KEY_EXISTS | MOCK_KEY_UPLOADED, certificate);
   Run();
@@ -193,7 +197,7 @@ TEST_F(AttestationPolicyObserverTest, KeyExistsAlreadyUploaded) {
 
 TEST_F(AttestationPolicyObserverTest, KeyExistsCertExpiringSoon) {
   std::string certificate;
-  ASSERT_TRUE(GetFakeCertificateDER(
+  ASSERT_TRUE(GetFakeCertificatePEM(
       base::TimeDelta::FromDays(kCertExpiringSoon), &certificate));
   SetupMocks(MOCK_KEY_EXISTS | MOCK_KEY_UPLOADED | MOCK_NEW_KEY, certificate);
   Run();
@@ -201,7 +205,7 @@ TEST_F(AttestationPolicyObserverTest, KeyExistsCertExpiringSoon) {
 
 TEST_F(AttestationPolicyObserverTest, KeyExistsCertExpired) {
   std::string certificate;
-  ASSERT_TRUE(GetFakeCertificateDER(base::TimeDelta::FromDays(kCertExpired),
+  ASSERT_TRUE(GetFakeCertificatePEM(base::TimeDelta::FromDays(kCertExpired),
                                     &certificate));
   SetupMocks(MOCK_KEY_EXISTS | MOCK_KEY_UPLOADED | MOCK_NEW_KEY, certificate);
   Run();

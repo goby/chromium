@@ -2,18 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/search_engines/default_search_manager.h"
+
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/pref_registry/testing_pref_service_syncable.h"
-#include "components/search_engines/default_search_manager.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/template_url_data.h"
+#include "components/search_engines/template_url_data_util.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -23,8 +29,8 @@ namespace {
 const char kDefaultSearchProviderData[] =
     "default_search_provider_data.template_url_data";
 
-// Checks that the two TemplateURLs are similar. Does not check the id, the
-// date_created or the last_modified time.  Neither pointer should be NULL.
+// Checks that the two TemplateURLs are similar. Does not check the id or
+// any time-related fields.  Neither pointer should be null.
 void ExpectSimilar(const TemplateURLData* expected,
                    const TemplateURLData* actual) {
   ASSERT_TRUE(expected != NULL);
@@ -36,7 +42,6 @@ void ExpectSimilar(const TemplateURLData* expected,
   EXPECT_EQ(expected->suggestions_url, actual->suggestions_url);
   EXPECT_EQ(expected->favicon_url, actual->favicon_url);
   EXPECT_EQ(expected->alternate_urls, actual->alternate_urls);
-  EXPECT_EQ(expected->show_in_default_list, actual->show_in_default_list);
   EXPECT_EQ(expected->safe_for_autoreplace, actual->safe_for_autoreplace);
   EXPECT_EQ(expected->input_encodings, actual->input_encodings);
   EXPECT_EQ(expected->search_terms_replacement_key,
@@ -44,11 +49,12 @@ void ExpectSimilar(const TemplateURLData* expected,
 }
 
 // TODO(caitkp): TemplateURLData-ify this.
-void SetOverrides(user_prefs::TestingPrefServiceSyncable* prefs, bool update) {
+void SetOverrides(sync_preferences::TestingPrefServiceSyncable* prefs,
+                  bool update) {
   prefs->SetUserPref(prefs::kSearchProviderOverridesVersion,
                      new base::FundamentalValue(1));
   base::ListValue* overrides = new base::ListValue;
-  scoped_ptr<base::DictionaryValue> entry(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue);
 
   entry->SetString("name", update ? "new_foo" : "foo");
   entry->SetString("keyword", update ? "new_fook" : "fook");
@@ -62,65 +68,38 @@ void SetOverrides(user_prefs::TestingPrefServiceSyncable* prefs, bool update) {
   alternate_urls->AppendString("http://foo.com/alternate?q={searchTerms}");
   entry->Set("alternate_urls", alternate_urls);
   entry->SetString("search_terms_replacement_key", "espv");
-  overrides->Append(entry->DeepCopy());
+  overrides->Append(entry->CreateDeepCopy());
 
   entry.reset(new base::DictionaryValue);
   entry->SetInteger("id", 1002);
   entry->SetString("name", update ? "new_bar" : "bar");
   entry->SetString("keyword", update ? "new_bark" : "bark");
   entry->SetString("encoding", std::string());
-  overrides->Append(entry->DeepCopy());
+  overrides->Append(entry->CreateDeepCopy());
   entry->SetInteger("id", 1003);
   entry->SetString("name", "baz");
   entry->SetString("keyword", "bazk");
   entry->SetString("encoding", "UTF-8");
-  overrides->Append(entry->DeepCopy());
+  overrides->Append(entry->CreateDeepCopy());
   prefs->SetUserPref(prefs::kSearchProviderOverrides, overrides);
 }
 
-void SetPolicy(user_prefs::TestingPrefServiceSyncable* prefs,
+void SetPolicy(sync_preferences::TestingPrefServiceSyncable* prefs,
                bool enabled,
                TemplateURLData* data) {
   if (enabled) {
     EXPECT_FALSE(data->keyword().empty());
     EXPECT_FALSE(data->url().empty());
   }
-  scoped_ptr<base::DictionaryValue> entry(new base::DictionaryValue);
-  entry->SetString(DefaultSearchManager::kShortName, data->short_name());
-  entry->SetString(DefaultSearchManager::kKeyword, data->keyword());
-  entry->SetString(DefaultSearchManager::kURL, data->url());
-  entry->SetString(DefaultSearchManager::kFaviconURL, data->favicon_url.spec());
-  entry->SetString(DefaultSearchManager::kSuggestionsURL,
-                   data->suggestions_url);
-  entry->SetBoolean(DefaultSearchManager::kSafeForAutoReplace,
-                    data->safe_for_autoreplace);
-  scoped_ptr<base::ListValue> alternate_urls(new base::ListValue);
-  for (std::vector<std::string>::const_iterator it =
-           data->alternate_urls.begin();
-       it != data->alternate_urls.end();
-       ++it) {
-    alternate_urls->AppendString(*it);
-  }
-  entry->Set(DefaultSearchManager::kAlternateURLs, alternate_urls.release());
-
-  scoped_ptr<base::ListValue> encodings(new base::ListValue);
-  for (std::vector<std::string>::const_iterator it =
-           data->input_encodings.begin();
-       it != data->input_encodings.end();
-       ++it) {
-    encodings->AppendString(*it);
-  }
-  entry->Set(DefaultSearchManager::kInputEncodings, encodings.release());
-
-  entry->SetString(DefaultSearchManager::kSearchTermsReplacementKey,
-                   data->search_terms_replacement_key);
+  std::unique_ptr<base::DictionaryValue> entry(
+      TemplateURLDataToDictionary(*data));
   entry->SetBoolean(DefaultSearchManager::kDisabledByPolicy, !enabled);
   prefs->SetManagedPref(kDefaultSearchProviderData, entry.release());
 }
 
-scoped_ptr<TemplateURLData> GenerateDummyTemplateURLData(
+std::unique_ptr<TemplateURLData> GenerateDummyTemplateURLData(
     const std::string& type) {
-  scoped_ptr<TemplateURLData> data(new TemplateURLData());
+  std::unique_ptr<TemplateURLData> data(new TemplateURLData());
   data->SetShortName(base::UTF8ToUTF16(std::string(type).append("name")));
   data->SetKeyword(base::UTF8ToUTF16(std::string(type).append("key")));
   data->SetURL(std::string("http://").append(type).append("foo/{searchTerms}"));
@@ -129,12 +108,12 @@ scoped_ptr<TemplateURLData> GenerateDummyTemplateURLData(
       std::string("http://").append(type).append("foo/alt"));
   data->favicon_url = GURL("http://icon1");
   data->safe_for_autoreplace = true;
-  data->show_in_default_list = true;
   data->input_encodings = base::SplitString(
       "UTF-8;UTF-16", ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   data->date_created = base::Time();
   data->last_modified = base::Time();
-  return data.Pass();
+  data->last_visited = base::Time();
+  return data;
 }
 
 }  // namespace
@@ -144,17 +123,17 @@ class DefaultSearchManagerTest : public testing::Test {
   DefaultSearchManagerTest() {};
 
   void SetUp() override {
-    pref_service_.reset(new user_prefs::TestingPrefServiceSyncable);
+    pref_service_.reset(new sync_preferences::TestingPrefServiceSyncable);
     DefaultSearchManager::RegisterProfilePrefs(pref_service_->registry());
     TemplateURLPrepopulateData::RegisterProfilePrefs(pref_service_->registry());
   }
 
-  user_prefs::TestingPrefServiceSyncable* pref_service() {
+  sync_preferences::TestingPrefServiceSyncable* pref_service() {
     return pref_service_.get();
   }
 
  private:
-  scoped_ptr<user_prefs::TestingPrefServiceSyncable> pref_service_;
+  std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> pref_service_;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultSearchManagerTest);
 };
@@ -171,10 +150,10 @@ TEST_F(DefaultSearchManagerTest, ReadAndWritePref) {
   data.alternate_urls.push_back("http://foo1/alt");
   data.favicon_url = GURL("http://icon1");
   data.safe_for_autoreplace = true;
-  data.show_in_default_list = true;
   data.input_encodings = base::SplitString(
       "UTF-8;UTF-16", ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   data.date_created = base::Time();
+  data.last_modified = base::Time();
   data.last_modified = base::Time();
 
   manager.SetUserSelectedDefaultSearchEngine(data);
@@ -187,17 +166,17 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByUserPref) {
   size_t default_search_index = 0;
   DefaultSearchManager manager(pref_service(),
                                DefaultSearchManager::ObserverCallback());
-  ScopedVector<TemplateURLData> prepopulated_urls =
+  std::vector<std::unique_ptr<TemplateURLData>> prepopulated_urls =
       TemplateURLPrepopulateData::GetPrepopulatedEngines(pref_service(),
                                                          &default_search_index);
   DefaultSearchManager::Source source = DefaultSearchManager::FROM_POLICY;
   // If no user pref is set, we should use the pre-populated values.
-  ExpectSimilar(prepopulated_urls[default_search_index],
+  ExpectSimilar(prepopulated_urls[default_search_index].get(),
                 manager.GetDefaultSearchEngine(&source));
   EXPECT_EQ(DefaultSearchManager::FROM_FALLBACK, source);
 
   // Setting a user pref overrides the pre-populated values.
-  scoped_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
+  std::unique_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
   manager.SetUserSelectedDefaultSearchEngine(*data.get());
 
   ExpectSimilar(data.get(), manager.GetDefaultSearchEngine(&source));
@@ -205,7 +184,8 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByUserPref) {
 
   // Updating the user pref (externally to this instance of
   // DefaultSearchManager) triggers an update.
-  scoped_ptr<TemplateURLData> new_data = GenerateDummyTemplateURLData("user2");
+  std::unique_ptr<TemplateURLData> new_data =
+      GenerateDummyTemplateURLData("user2");
   DefaultSearchManager other_manager(pref_service(),
                                      DefaultSearchManager::ObserverCallback());
   other_manager.SetUserSelectedDefaultSearchEngine(*new_data.get());
@@ -216,7 +196,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByUserPref) {
   // Clearing the user pref should cause the default search to revert to the
   // prepopulated vlaues.
   manager.ClearUserSelectedDefaultSearchEngine();
-  ExpectSimilar(prepopulated_urls[default_search_index],
+  ExpectSimilar(prepopulated_urls[default_search_index].get(),
                 manager.GetDefaultSearchEngine(&source));
   EXPECT_EQ(DefaultSearchManager::FROM_FALLBACK, source);
 }
@@ -227,13 +207,13 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByOverrides) {
   size_t default_search_index = 0;
   DefaultSearchManager manager(pref_service(),
                                DefaultSearchManager::ObserverCallback());
-  ScopedVector<TemplateURLData> prepopulated_urls =
+  std::vector<std::unique_ptr<TemplateURLData>> prepopulated_urls =
       TemplateURLPrepopulateData::GetPrepopulatedEngines(pref_service(),
                                                          &default_search_index);
 
   DefaultSearchManager::Source source = DefaultSearchManager::FROM_POLICY;
   TemplateURLData first_default(*manager.GetDefaultSearchEngine(&source));
-  ExpectSimilar(prepopulated_urls[default_search_index], &first_default);
+  ExpectSimilar(prepopulated_urls[default_search_index].get(), &first_default);
   EXPECT_EQ(DefaultSearchManager::FROM_FALLBACK, source);
 
   // Update the overrides:
@@ -242,7 +222,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByOverrides) {
       pref_service(), &default_search_index);
 
   // Make sure DefaultSearchManager updated:
-  ExpectSimilar(prepopulated_urls[default_search_index],
+  ExpectSimilar(prepopulated_urls[default_search_index].get(),
                 manager.GetDefaultSearchEngine(&source));
   EXPECT_EQ(DefaultSearchManager::FROM_FALLBACK, source);
   EXPECT_NE(manager.GetDefaultSearchEngine(NULL)->short_name(),
@@ -255,14 +235,14 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByOverrides) {
 TEST_F(DefaultSearchManagerTest, DefaultSearchSetByPolicy) {
   DefaultSearchManager manager(pref_service(),
                                DefaultSearchManager::ObserverCallback());
-  scoped_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
+  std::unique_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
   manager.SetUserSelectedDefaultSearchEngine(*data.get());
 
   DefaultSearchManager::Source source = DefaultSearchManager::FROM_FALLBACK;
   ExpectSimilar(data.get(), manager.GetDefaultSearchEngine(&source));
   EXPECT_EQ(DefaultSearchManager::FROM_USER, source);
 
-  scoped_ptr<TemplateURLData> policy_data =
+  std::unique_ptr<TemplateURLData> policy_data =
       GenerateDummyTemplateURLData("policy");
   SetPolicy(pref_service(), true, policy_data.get());
 
@@ -283,7 +263,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByPolicy) {
 TEST_F(DefaultSearchManagerTest, DefaultSearchSetByExtension) {
   DefaultSearchManager manager(pref_service(),
                                DefaultSearchManager::ObserverCallback());
-  scoped_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
+  std::unique_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
   manager.SetUserSelectedDefaultSearchEngine(*data);
 
   DefaultSearchManager::Source source = DefaultSearchManager::FROM_FALLBACK;
@@ -291,7 +271,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByExtension) {
   EXPECT_EQ(DefaultSearchManager::FROM_USER, source);
 
   // Extension trumps prefs:
-  scoped_ptr<TemplateURLData> extension_data_1 =
+  std::unique_ptr<TemplateURLData> extension_data_1 =
       GenerateDummyTemplateURLData("ext1");
   manager.SetExtensionControlledDefaultSearchEngine(*extension_data_1);
 
@@ -300,7 +280,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByExtension) {
   EXPECT_EQ(DefaultSearchManager::FROM_EXTENSION, source);
 
   // Policy trumps extension:
-  scoped_ptr<TemplateURLData> policy_data =
+  std::unique_ptr<TemplateURLData> policy_data =
       GenerateDummyTemplateURLData("policy");
   SetPolicy(pref_service(), true, policy_data.get());
 
@@ -309,9 +289,9 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByExtension) {
   pref_service()->RemoveManagedPref(kDefaultSearchProviderData);
 
   // Extensions trump each other:
-  scoped_ptr<TemplateURLData> extension_data_2 =
+  std::unique_ptr<TemplateURLData> extension_data_2 =
       GenerateDummyTemplateURLData("ext2");
-  scoped_ptr<TemplateURLData> extension_data_3 =
+  std::unique_ptr<TemplateURLData> extension_data_3 =
       GenerateDummyTemplateURLData("ext3");
   manager.SetExtensionControlledDefaultSearchEngine(*extension_data_2);
   manager.SetExtensionControlledDefaultSearchEngine(*extension_data_3);

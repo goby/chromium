@@ -4,6 +4,7 @@
 
 #include "extensions/browser/mock_extension_system.h"
 
+#include "extensions/browser/value_store/value_store_factory.h"
 #include "extensions/common/extension_set.h"
 
 namespace extensions {
@@ -46,6 +47,10 @@ StateStore* MockExtensionSystem::rules_store() {
   return nullptr;
 }
 
+scoped_refptr<ValueStoreFactory> MockExtensionSystem::store_factory() {
+  return nullptr;
+}
+
 InfoMap* MockExtensionSystem::info_map() {
   return nullptr;
 }
@@ -66,9 +71,9 @@ ContentVerifier* MockExtensionSystem::content_verifier() {
   return nullptr;
 }
 
-scoped_ptr<ExtensionSet> MockExtensionSystem::GetDependentExtensions(
+std::unique_ptr<ExtensionSet> MockExtensionSystem::GetDependentExtensions(
     const Extension* extension) {
-  return scoped_ptr<ExtensionSet>();
+  return std::unique_ptr<ExtensionSet>();
 }
 
 void MockExtensionSystem::InstallUpdate(const std::string& extension_id,

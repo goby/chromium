@@ -5,11 +5,12 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <sys/resource.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -287,12 +288,14 @@ void UnitTests::DeathMessage(int status,
   bool subprocess_exited_without_matching_message =
       msg.find(expected_msg) == std::string::npos;
 
-// In official builds CHECK messages are dropped, so look for SIGABRT.
-// See https://code.google.com/p/chromium/issues/detail?id=437312
+// In official builds CHECK messages are dropped, so look for SIGABRT or SIGILL.
+// See https://crbug.com/437312 and https://crbug.com/612507.
 #if defined(OFFICIAL_BUILD) && defined(NDEBUG) && !defined(OS_ANDROID)
   if (subprocess_exited_without_matching_message) {
+    static const char kSigIllegalMessage[] = "Received signal 4";
     static const char kSigAbortMessage[] = "Received signal 6";
     subprocess_exited_without_matching_message =
+        msg.find(kSigIllegalMessage) == std::string::npos &&
         msg.find(kSigAbortMessage) == std::string::npos;
   }
 #endif

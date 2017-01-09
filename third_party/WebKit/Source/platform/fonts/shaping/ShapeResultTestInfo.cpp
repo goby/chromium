@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "platform/fonts/shaping/ShapeResultTestInfo.h"
 
 #include "platform/fonts/Font.h"
@@ -10,33 +9,36 @@
 
 namespace blink {
 
-unsigned ShapeResultTestInfo::numberOfRunsForTesting() const
-{
-    return m_runs.size();
+unsigned ShapeResultTestInfo::numberOfRunsForTesting() const {
+  return m_runs.size();
 }
 
 bool ShapeResultTestInfo::runInfoForTesting(unsigned runIndex,
-    unsigned& startIndex, unsigned& numGlyphs, hb_script_t& script)
-{
-    if (runIndex < m_runs.size() && m_runs[runIndex]) {
-        startIndex = m_runs[runIndex]->m_startIndex;
-        numGlyphs = m_runs[runIndex]->m_numGlyphs;
-        script = m_runs[runIndex]->m_script;
-        return true;
-    }
-    return false;
+                                            unsigned& startIndex,
+                                            unsigned& numGlyphs,
+                                            hb_script_t& script) const {
+  if (runIndex < m_runs.size() && m_runs[runIndex]) {
+    startIndex = m_runs[runIndex]->m_startIndex;
+    numGlyphs = m_runs[runIndex]->m_glyphData.size();
+    script = m_runs[runIndex]->m_script;
+    return true;
+  }
+  return false;
 }
 
 uint16_t ShapeResultTestInfo::glyphForTesting(unsigned runIndex,
-    size_t glyphIndex)
-{
-    return m_runs[runIndex]->m_glyphData[glyphIndex].glyph;
+                                              size_t glyphIndex) const {
+  return m_runs[runIndex]->m_glyphData[glyphIndex].glyph;
 }
 
 float ShapeResultTestInfo::advanceForTesting(unsigned runIndex,
-    size_t glyphIndex)
-{
-    return m_runs[runIndex]->m_glyphData[glyphIndex].advance;
+                                             size_t glyphIndex) const {
+  return m_runs[runIndex]->m_glyphData[glyphIndex].advance;
 }
 
-} // namespace blink
+SimpleFontData* ShapeResultTestInfo::fontDataForTesting(
+    unsigned runIndex) const {
+  return m_runs[runIndex]->m_fontData.get();
+}
+
+}  // namespace blink

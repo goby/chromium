@@ -5,17 +5,19 @@
 #include "chrome/browser/net/disk_cache_dir_policy_handler.h"
 
 #include "base/files/file_path.h"
-#include "base/prefs/pref_value_map.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/policy/policy_path_parser.h"
 #include "chrome/common/pref_names.h"
 #include "components/policy/core/common/policy_map.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
 
 namespace policy {
 
 DiskCacheDirPolicyHandler::DiskCacheDirPolicyHandler()
-    : TypeCheckingPolicyHandler(key::kDiskCacheDir, base::Value::TYPE_STRING) {}
+    : TypeCheckingPolicyHandler(key::kDiskCacheDir, base::Value::Type::STRING) {
+}
 
 DiskCacheDirPolicyHandler::~DiskCacheDirPolicyHandler() {}
 
@@ -27,7 +29,7 @@ void DiskCacheDirPolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
     base::FilePath::StringType expanded_value =
         policy::path_parser::ExpandPathVariables(string_value);
     prefs->SetValue(prefs::kDiskCacheDir,
-                    make_scoped_ptr(new base::StringValue(expanded_value)));
+                    base::MakeUnique<base::StringValue>(expanded_value));
   }
 }
 

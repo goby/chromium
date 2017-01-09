@@ -5,19 +5,25 @@
 #ifndef CHROME_BROWSER_ANDROID_CONTEXTUALSEARCH_CONTEXTUAL_SEARCH_MANAGER_H_
 #define CHROME_BROWSER_ANDROID_CONTEXTUALSEARCH_CONTEXTUAL_SEARCH_MANAGER_H_
 
+#include <stddef.h>
+
 #include "base/android/jni_android.h"
+#include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/android/contextualsearch/contextual_search_context.h"
 #include "chrome/browser/android/contextualsearch/contextual_search_delegate.h"
+#include "components/contextual_search/browser/contextual_search_js_api_handler.h"
 
 // Manages the native extraction and request logic for Contextual Search,
 // and interacts with the Java ContextualSearchManager for UX.
 // Most of the work is done by the associated ContextualSearchDelegate.
-class ContextualSearchManager {
+class ContextualSearchManager
+    : public contextual_search::ContextualSearchJsApiHandler {
  public:
   // Constructs a native manager associated with the Java manager.
-  ContextualSearchManager(JNIEnv* env, jobject obj);
-  virtual ~ContextualSearchManager();
+  ContextualSearchManager(JNIEnv* env,
+                          const base::android::JavaRef<jobject>& obj);
+  ~ContextualSearchManager() override;
 
   // Called by the Java ContextualSearchManager when it is being destroyed.
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
@@ -34,7 +40,7 @@ class ContextualSearchManager {
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& j_selection,
       jboolean j_use_resolved_search_term,
-      const base::android::JavaParamRef<jobject>& j_base_content_view_core,
+      const base::android::JavaParamRef<jobject>& j_base_web_contents,
       jboolean j_may_send_base_page_url);
 
   // Gathers the surrounding text around the selection and saves it locally.
@@ -44,7 +50,7 @@ class ContextualSearchManager {
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& j_selection,
       jboolean j_use_resolved_search_term,
-      const base::android::JavaParamRef<jobject>& j_base_content_view_core,
+      const base::android::JavaParamRef<jobject>& j_base_web_contents,
       jboolean j_may_send_base_page_url);
 
   // Gets the target language for translation purposes.
@@ -56,6 +62,15 @@ class ContextualSearchManager {
   base::android::ScopedJavaLocalRef<jstring> GetAcceptLanguages(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+
+  // Enables the Contextual Search JS API for the given |WebContents|.
+  void EnableContextualSearchJsApiForOverlay(
+      JNIEnv* env,
+      jobject obj,
+      const base::android::JavaParamRef<jobject>& j_web_contents);
+
+  // ContextualSearchJsApiHandler overrides:
+  void SetCaption(std::string caption, bool does_answer) override;
 
  private:
   void OnSearchTermResolutionResponse(
@@ -74,7 +89,7 @@ class ContextualSearchManager {
   base::android::ScopedJavaGlobalRef<jobject> java_manager_;
 
   // The delegate we're using the do the real work.
-  scoped_ptr<ContextualSearchDelegate> delegate_;
+  std::unique_ptr<ContextualSearchDelegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextualSearchManager);
 };

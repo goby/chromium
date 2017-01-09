@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/base/audio_shifter.h"
+
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "base/bind.h"
 #include "media/base/audio_bus.h"
-#include "media/base/audio_shifter.h"
 
 namespace media {
 
@@ -75,43 +77,46 @@ class ClockSmoother {
 
 AudioShifter::AudioQueueEntry::AudioQueueEntry(
     base::TimeTicks target_playout_time_,
-    scoped_ptr<AudioBus> audio_) :
-    target_playout_time(target_playout_time_),
-    audio(audio_.release()) {
-}
+    std::unique_ptr<AudioBus> audio_)
+    : target_playout_time(target_playout_time_), audio(audio_.release()) {}
+
+AudioShifter::AudioQueueEntry::AudioQueueEntry(const AudioQueueEntry& other) =
+    default;
 
 AudioShifter::AudioQueueEntry::~AudioQueueEntry() {}
 
 AudioShifter::AudioShifter(base::TimeDelta max_buffer_size,
                            base::TimeDelta clock_accuracy,
                            base::TimeDelta adjustment_time,
-                           size_t rate,
-                           int channels) :
-    max_buffer_size_(max_buffer_size),
-    clock_accuracy_(clock_accuracy),
-    adjustment_time_(adjustment_time),
-    rate_(rate),
-    input_clock_smoother_(new ClockSmoother(clock_accuracy)),
-    output_clock_smoother_(new ClockSmoother(clock_accuracy)),
-    running_(false),
-    position_(0),
-    previous_requested_samples_(0),
-    resampler_(channels, 1.0, 96,
-               base::Bind(&AudioShifter::ResamplerCallback,
-                          base::Unretained(this))),
-    current_ratio_(1.0) {
-}
+                           int rate,
+                           int channels)
+    : max_buffer_size_(max_buffer_size),
+      clock_accuracy_(clock_accuracy),
+      adjustment_time_(adjustment_time),
+      rate_(rate),
+      channels_(channels),
+      input_clock_smoother_(new ClockSmoother(clock_accuracy)),
+      output_clock_smoother_(new ClockSmoother(clock_accuracy)),
+      running_(false),
+      position_(0),
+      previous_requested_samples_(0),
+      resampler_(
+          channels,
+          1.0,
+          96,
+          base::Bind(&AudioShifter::ResamplerCallback, base::Unretained(this))),
+      current_ratio_(1.0) {}
 
 AudioShifter::~AudioShifter() {}
 
-void AudioShifter::Push(scoped_ptr<AudioBus> input,
+void AudioShifter::Push(std::unique_ptr<AudioBus> input,
                         base::TimeTicks playout_time) {
   if (!queue_.empty()) {
     playout_time = input_clock_smoother_->Smooth(
         playout_time,
         base::TimeDelta::FromSeconds(queue_.back().audio->frames()) / rate_);
   }
-  queue_.push_back(AudioQueueEntry(playout_time, input.Pass()));
+  queue_.push_back(AudioQueueEntry(playout_time, std::move(input)));
   while (!queue_.empty() &&
          queue_.back().target_playout_time -
          queue_.front().target_playout_time > max_buffer_size_) {
@@ -168,7 +173,7 @@ void AudioShifter::Pull(AudioBus* output,
     // the entire queue will be in the past. Since we cannot
     // play audio in the past. We add one buffer size to the
     // bias to avoid buffer underruns in the future.
-    if (bias_ == base::TimeDelta()) {
+    if (bias_.is_zero()) {
       bias_ = playout_time - stream_time +
           clock_accuracy_ +
           base::TimeDelta::FromSeconds(output->frames()) / rate_;
@@ -266,15 +271,6 @@ void AudioShifter::ResamplerCallback(int frame_delay, AudioBus* destination) {
     bias_ = base::TimeDelta();
     destination->ZeroFramesPartial(pos, destination->frames() - pos);
   }
-}
-
-void AudioShifter::Flush() {
-  resampler_.Flush();
-  position_ = 0;
-  queue_.clear();
-  running_ = false;
-  previous_playout_time_ = base::TimeTicks();
-  bias_ = base::TimeDelta();
 }
 
 void AudioShifter::Zero(AudioBus* output) {

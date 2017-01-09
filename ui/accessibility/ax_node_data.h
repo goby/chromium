@@ -5,7 +5,10 @@
 #ifndef UI_ACCESSIBILITY_AX_NODE_DATA_H_
 #define UI_ACCESSIBILITY_AX_NODE_DATA_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -13,7 +16,11 @@
 #include "base/strings/string_split.h"
 #include "ui/accessibility/ax_enums.h"
 #include "ui/accessibility/ax_export.h"
-#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
+
+namespace gfx {
+class Transform;
+};
 
 namespace ui {
 
@@ -23,6 +30,9 @@ namespace ui {
 struct AX_EXPORT AXNodeData {
   AXNodeData();
   virtual ~AXNodeData();
+
+  AXNodeData(const AXNodeData& other);
+  AXNodeData& operator=(AXNodeData other);
 
   // Accessing accessibility attributes:
   //
@@ -63,10 +73,10 @@ struct AX_EXPORT AXNodeData {
       AXStringAttribute attribute) const;
 
   bool HasIntListAttribute(AXIntListAttribute attribute) const;
-  const std::vector<int32>& GetIntListAttribute(
+  const std::vector<int32_t>& GetIntListAttribute(
       AXIntListAttribute attribute) const;
   bool GetIntListAttribute(AXIntListAttribute attribute,
-                           std::vector<int32>* value) const;
+                           std::vector<int32_t>* value) const;
 
   bool GetHtmlAttribute(const char* attr, base::string16* value) const;
   bool GetHtmlAttribute(const char* attr, std::string* value) const;
@@ -78,34 +88,56 @@ struct AX_EXPORT AXNodeData {
   void AddFloatAttribute(AXFloatAttribute attribute, float value);
   void AddBoolAttribute(AXBoolAttribute attribute, bool value);
   void AddIntListAttribute(AXIntListAttribute attribute,
-                           const std::vector<int32>& value);
+                           const std::vector<int32_t>& value);
 
   // Convenience functions, mainly for writing unit tests.
   // Equivalent to AddStringAttribute(ATTR_NAME, name).
   void SetName(const std::string& name);
+  void SetName(const base::string16& name);
   // Equivalent to AddStringAttribute(ATTR_VALUE, value).
   void SetValue(const std::string& value);
+  void SetValue(const base::string16& value);
+
+  // Helper to check whether |state_flag| is set in the given |state|.
+  static bool IsFlagSet(uint32_t state, ui::AXState state_flag);
+
+  // Set or check bits in |state_|.
+  void AddStateFlag(ui::AXState state_flag);
+  bool HasStateFlag(ui::AXState state_flag) const;
 
   // Return a string representation of this data, for debugging.
   virtual std::string ToString() const;
 
-  bool IsRoot() const;
-  void SetRoot();
-
-  // This is a simple serializable struct. All member variables should be
-  // public and copyable.
-  int32 id;
+  // As much as possible this should behave as a simple, serializable,
+  // copyable struct.
+  int32_t id;
   AXRole role;
-  uint32 state;
-  gfx::Rect location;
-  std::vector<std::pair<AXStringAttribute, std::string> > string_attributes;
-  std::vector<std::pair<AXIntAttribute, int32> > int_attributes;
-  std::vector<std::pair<AXFloatAttribute, float> > float_attributes;
-  std::vector<std::pair<AXBoolAttribute, bool> > bool_attributes;
-  std::vector<std::pair<AXIntListAttribute, std::vector<int32> > >
+  uint32_t state;
+  std::vector<std::pair<AXStringAttribute, std::string>> string_attributes;
+  std::vector<std::pair<AXIntAttribute, int32_t>> int_attributes;
+  std::vector<std::pair<AXFloatAttribute, float>> float_attributes;
+  std::vector<std::pair<AXBoolAttribute, bool>> bool_attributes;
+  std::vector<std::pair<AXIntListAttribute, std::vector<int32_t>>>
       intlist_attributes;
   base::StringPairs html_attributes;
-  std::vector<int32> child_ids;
+  std::vector<int32_t> child_ids;
+
+  // TODO(dmazzoni): replace the following three members with a single
+  // instance of AXRelativeBounds.
+
+  // The id of an ancestor node in the same AXTree that this object's
+  // bounding box is relative to, or -1 if there's no offset container.
+  int offset_container_id;
+
+  // The relative bounding box of this node.
+  gfx::RectF location;
+
+  // An additional transform to apply to position this object and its subtree.
+  // NOTE: this member is a std::unique_ptr because it's rare and gfx::Transform
+  // takes up a fair amount of space. The assignment operator and copy
+  // constructor both make a duplicate of the owned pointer, so it acts more
+  // like a member than a pointer.
+  std::unique_ptr<gfx::Transform> transform;
 };
 
 }  // namespace ui

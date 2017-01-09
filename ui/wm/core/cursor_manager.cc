@@ -4,7 +4,10 @@
 
 #include "ui/wm/core/cursor_manager.h"
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/wm/core/native_cursor_manager.h"
 #include "ui/wm/core/native_cursor_manager_delegate.h"
@@ -70,14 +73,23 @@ class CursorState {
 
 }  // namespace internal
 
-CursorManager::CursorManager(scoped_ptr<NativeCursorManager> delegate)
-    : delegate_(delegate.Pass()),
+bool CursorManager::last_cursor_visibility_state_ = true;
+
+CursorManager::CursorManager(std::unique_ptr<NativeCursorManager> delegate)
+    : delegate_(std::move(delegate)),
       cursor_lock_count_(0),
       current_state_(new internal::CursorState),
       state_on_unlock_(new internal::CursorState) {
+  // Restore the last cursor visibility state.
+  current_state_->SetVisible(last_cursor_visibility_state_);
 }
 
 CursorManager::~CursorManager() {
+}
+
+// static
+void CursorManager::ResetCursorVisibilityStateForTest() {
+  last_cursor_visibility_state_ = true;
 }
 
 void CursorManager::SetCursor(gfx::NativeCursor cursor) {
@@ -93,22 +105,24 @@ gfx::NativeCursor CursorManager::GetCursor() const {
 }
 
 void CursorManager::ShowCursor() {
+  last_cursor_visibility_state_ = true;
   state_on_unlock_->SetVisible(true);
   if (cursor_lock_count_ == 0 &&
       IsCursorVisible() != state_on_unlock_->visible()) {
     delegate_->SetVisibility(state_on_unlock_->visible(), this);
-    FOR_EACH_OBSERVER(aura::client::CursorClientObserver, observers_,
-                      OnCursorVisibilityChanged(true));
+    for (auto& observer : observers_)
+      observer.OnCursorVisibilityChanged(true);
   }
 }
 
 void CursorManager::HideCursor() {
+  last_cursor_visibility_state_ = false;
   state_on_unlock_->SetVisible(false);
   if (cursor_lock_count_ == 0 &&
       IsCursorVisible() != state_on_unlock_->visible()) {
     delegate_->SetVisibility(state_on_unlock_->visible(), this);
-    FOR_EACH_OBSERVER(aura::client::CursorClientObserver, observers_,
-                      OnCursorVisibilityChanged(false));
+    for (auto& observer : observers_)
+      observer.OnCursorVisibilityChanged(false);
   }
 }
 
@@ -118,8 +132,11 @@ bool CursorManager::IsCursorVisible() const {
 
 void CursorManager::SetCursorSet(ui::CursorSetType cursor_set) {
   state_on_unlock_->set_cursor_set(cursor_set);
-  if (GetCursorSet() != state_on_unlock_->cursor_set())
+  if (GetCursorSet() != state_on_unlock_->cursor_set()) {
     delegate_->SetCursorSet(state_on_unlock_->cursor_set(), this);
+    for (auto& observer : observers_)
+      observer.OnCursorSetChanged(cursor_set);
+  }
 }
 
 ui::CursorSetType CursorManager::GetCursorSet() const {
@@ -148,7 +165,7 @@ bool CursorManager::IsMouseEventsEnabled() const {
   return current_state_->mouse_events_enabled();
 }
 
-void CursorManager::SetDisplay(const gfx::Display& display) {
+void CursorManager::SetDisplay(const display::Display& display) {
   delegate_->SetDisplay(display, this);
 }
 
@@ -201,8 +218,8 @@ void CursorManager::CommitCursor(gfx::NativeCursor cursor) {
 void CursorManager::CommitVisibility(bool visible) {
   // TODO(tdanderson): Find a better place for this so we don't
   // notify the observers more than is necessary.
-  FOR_EACH_OBSERVER(aura::client::CursorClientObserver, observers_,
-                    OnCursorVisibilityChanged(visible));
+  for (auto& observer : observers_)
+    observer.OnCursorVisibilityChanged(visible);
   current_state_->SetVisible(visible);
 }
 

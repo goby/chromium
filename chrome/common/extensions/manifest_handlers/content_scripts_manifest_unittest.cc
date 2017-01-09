@@ -4,6 +4,7 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/common/chrome_paths.h"
@@ -79,12 +80,12 @@ TEST_F(ContentScriptsManifestTest, ContentScriptIds) {
   const UserScriptList& user_scripts1 =
       ContentScriptsInfo::GetContentScripts(extension1.get());
   ASSERT_EQ(1u, user_scripts1.size());
-  int id = user_scripts1[0].id();
+  int id = user_scripts1[0]->id();
   const UserScriptList& user_scripts2 =
       ContentScriptsInfo::GetContentScripts(extension2.get());
   ASSERT_EQ(1u, user_scripts2.size());
   // The id of the content script should be one higher than the previous.
-  EXPECT_EQ(id + 1, user_scripts2[0].id());
+  EXPECT_EQ(id + 1, user_scripts2[0]->id());
 }
 
 TEST_F(ContentScriptsManifestTest, FailLoadingNonUTF8Scripts) {

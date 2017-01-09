@@ -34,34 +34,36 @@
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "modules/ModulesExport.h"
 #include "platform/StorageQuotaCallbacks.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
 
-class MODULES_EXPORT StorageQuotaCallbacksImpl final : public StorageQuotaCallbacks {
-    WTF_MAKE_NONCOPYABLE(StorageQuotaCallbacksImpl);
-public:
-    static StorageQuotaCallbacksImpl* create(ScriptPromiseResolver* resolver)
-    {
-        return new StorageQuotaCallbacksImpl(resolver);
-    }
+class MODULES_EXPORT StorageQuotaCallbacksImpl final
+    : public StorageQuotaCallbacks {
+  WTF_MAKE_NONCOPYABLE(StorageQuotaCallbacksImpl);
 
-    ~StorageQuotaCallbacksImpl() override;
+ public:
+  static StorageQuotaCallbacksImpl* create(ScriptPromiseResolver* resolver) {
+    return new StorageQuotaCallbacksImpl(resolver);
+  }
 
-    void didQueryStorageUsageAndQuota(unsigned long long usageInBytes, unsigned long long quotaInBytes) override;
-    void didGrantStorageQuota(unsigned long long usageInBytes, unsigned long long grantedQuotaInBytes) override;
-    void didFail(WebStorageQuotaError) override;
+  ~StorageQuotaCallbacksImpl() override;
 
-    DECLARE_VIRTUAL_TRACE();
+  void didQueryStorageUsageAndQuota(unsigned long long usageInBytes,
+                                    unsigned long long quotaInBytes) override;
+  void didGrantStorageQuota(unsigned long long usageInBytes,
+                            unsigned long long grantedQuotaInBytes) override;
+  void didFail(WebStorageQuotaError) override;
 
-private:
-    explicit StorageQuotaCallbacksImpl(ScriptPromiseResolver*);
+  DECLARE_VIRTUAL_TRACE();
 
-    Member<ScriptPromiseResolver> m_resolver;
+ private:
+  explicit StorageQuotaCallbacksImpl(ScriptPromiseResolver*);
+
+  Member<ScriptPromiseResolver> m_resolver;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // StorageQuotaCallbacksImpl_h
+#endif  // StorageQuotaCallbacksImpl_h

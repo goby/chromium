@@ -13,11 +13,13 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/translate/core/browser/translate_url_fetcher.h"
 #include "components/translate/core/browser/translate_url_util.h"
 #include "components/translate/core/common/translate_switches.h"
 #include "components/translate/core/common/translate_util.h"
+#include "components/variations/variations_associated_data.h"
 #include "google_apis/google_api_keys.h"
 #include "grit/components_resources.h"
 #include "net/base/escape.h"
@@ -33,7 +35,7 @@ const int kExpirationDelayDays = 1;
 }  // namespace
 
 const char TranslateScript::kScriptURL[] =
-    "https://translate.google.com/translate_a/element.js";
+    "https://translate.googleapis.com/translate_a/element.js";
 const char TranslateScript::kRequestHeader[] =
     "Google-Translate-Element-Mode: library";
 const char TranslateScript::kAlwaysUseSslQueryName[] = "aus";
@@ -47,6 +49,8 @@ const char TranslateScript::kCssLoaderCallbackQueryValue[] =
 const char TranslateScript::kJavascriptLoaderCallbackQueryName[] = "jlc";
 const char TranslateScript::kJavascriptLoaderCallbackQueryValue[] =
     "cr.googleTranslate.onLoadJavascript";
+const char kTranslateServerStudy[] = "TranslateServerStudy";
+const char kServerParams[] = "server_params";
 
 TranslateScript::TranslateScript()
     : expiration_delay_(base::TimeDelta::FromDays(kExpirationDelayDays)),
@@ -57,6 +61,8 @@ TranslateScript::~TranslateScript() {
 }
 
 void TranslateScript::Request(const RequestCallback& callback) {
+  script_fetch_start_time_ = base::Time::Now().ToJsTime();
+
   DCHECK(data_.empty()) << "Do not fetch the script if it is already fetched";
   callback_list_.push_back(callback);
 
@@ -123,13 +129,26 @@ void TranslateScript::OnScriptFetchComplete(
     int id, bool success, const std::string& data) {
   DCHECK_EQ(kFetcherId, id);
 
-  scoped_ptr<const TranslateURLFetcher> delete_ptr(fetcher_.release());
+  std::unique_ptr<const TranslateURLFetcher> delete_ptr(fetcher_.release());
 
   if (success) {
     DCHECK(data_.empty());
     // Insert variable definitions on API Key and security origin.
     data_ = base::StringPrintf("var translateApiKey = '%s';\n",
                                google_apis::GetAPIKey().c_str());
+
+    // Insert server params to pass experimental params to google translate
+    // server.
+    std::string server_params;
+    std::map<std::string, std::string> params;
+    if (variations::GetVariationParams(kTranslateServerStudy, &params)) {
+      server_params = params[kServerParams];
+    }
+    base::StringAppendF(
+        &data_, "var gtTimeInfo = {'fetchStart': %0.f, 'fetchEnd': %0.f};\n",
+        script_fetch_start_time_, base::Time::Now().ToJsTime());
+    base::StringAppendF(&data_, "var serverParams = '%s';\n",
+                        server_params.c_str());
 
     GURL security_origin = translate::GetTranslateSecurityOrigin();
     base::StringAppendF(

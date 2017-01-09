@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/signin/merge_session_load_page.h"
@@ -26,7 +29,7 @@ namespace {
 const char kURL1[] = "http://www.google.com/";
 const char kURL2[] = "http://mail.google.com/";
 
-const int64 kSessionMergeTimeout = 60;
+const int64_t kSessionMergeTimeout = 60;
 
 }  // namespace
 
@@ -66,11 +69,10 @@ class MergeSessionLoadPageTest : public ChromeRenderViewHostTestHarness {
   }
 
   void Navigate(const char* url,
-                int page_id,
                 int nav_entry_id,
                 bool did_create_new_entry) {
     WebContentsTester::For(web_contents())
-        ->TestDidNavigate(web_contents()->GetMainFrame(), page_id, nav_entry_id,
+        ->TestDidNavigate(web_contents()->GetMainFrame(), nav_entry_id,
                           did_create_new_entry, GURL(url),
                           ui::PAGE_TRANSITION_TYPED);
   }
@@ -116,13 +118,13 @@ class MergeSessionLoadPageTest : public ChromeRenderViewHostTestHarness {
  private:
   ScopedTestDeviceSettingsService test_device_settings_service_;
   ScopedTestCrosSettings test_cros_settings_;
-  scoped_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
+  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
 };
 
 TEST_F(MergeSessionLoadPageTest, MergeSessionPageNotShown) {
   SetMergeSessionState(OAuth2LoginManager::SESSION_RESTORE_DONE);
   // Start a load.
-  Navigate(kURL1, 1, 0, true);
+  Navigate(kURL1, 0, true);
   // Load next page.
   controller().LoadURL(GURL(kURL2), content::Referrer(),
                        ui::PAGE_TRANSITION_TYPED, std::string());
@@ -140,7 +142,7 @@ TEST_F(MergeSessionLoadPageTest, MergeSessionPageNotShownOnTimeout) {
       base::TimeDelta::FromSeconds(kSessionMergeTimeout + 1));
 
   // Start a load.
-  Navigate(kURL1, 1, 0, true);
+  Navigate(kURL1, 0, true);
   // Load next page.
   controller().LoadURL(GURL(kURL2), content::Referrer(),
                        ui::PAGE_TRANSITION_TYPED, std::string());
@@ -155,7 +157,7 @@ TEST_F(MergeSessionLoadPageTest, MergeSessionPageShown) {
   SetMergeSessionState(OAuth2LoginManager::SESSION_RESTORE_IN_PROGRESS);
 
   // Start a load.
-  Navigate(kURL1, 1, 0, true);
+  Navigate(kURL1, 0, true);
   // Load next page.
   controller().LoadURL(GURL(kURL2), content::Referrer(),
                        ui::PAGE_TRANSITION_TYPED, std::string());
@@ -176,7 +178,7 @@ TEST_F(MergeSessionLoadPageTest, MergeSessionPageShown) {
   EXPECT_EQ(kURL2, web_contents()->GetVisibleURL().spec());
 
   // Commit navigation and the interstitial page is gone.
-  Navigate(kURL2, 2, pending_id, true);
+  Navigate(kURL2, pending_id, true);
   EXPECT_FALSE(GetMergeSessionLoadPage());
 }
 

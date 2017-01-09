@@ -7,6 +7,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/macros.h"
 #include "chrome/browser/ui/cocoa/location_bar/image_decoration.h"
 
 class CommandUpdater;
@@ -19,7 +20,7 @@ class StarDecoration : public ImageDecoration {
   ~StarDecoration() override;
 
   // Sets the image and tooltip based on |starred|.
-  void SetStarred(bool starred);
+  void SetStarred(bool starred, bool locationBarIsDark);
 
   // Returns true if the star is lit.
   bool starred() const { return starred_; }
@@ -29,6 +30,11 @@ class StarDecoration : public ImageDecoration {
   bool OnMousePressed(NSRect frame, NSPoint location) override;
   NSString* GetToolTip() override;
   NSPoint GetBubblePointInFrame(NSRect frame) override;
+
+ protected:
+  // Overridden from LocationBarDecoration:
+  SkColor GetMaterialIconColor(bool location_bar_is_dark) const override;
+  gfx::VectorIconId GetMaterialVectorIconId() const override;
 
  private:
   // For bringing up bookmark bar.

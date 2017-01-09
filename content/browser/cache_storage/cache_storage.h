@@ -5,11 +5,16 @@
 #ifndef CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_H_
 #define CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/cache_storage/cache_storage_cache.h"
@@ -27,6 +32,7 @@ class BlobStorageContext;
 }
 
 namespace content {
+class CacheStorageCacheHandle;
 class CacheStorageScheduler;
 
 // TODO(jkarlin): Constrain the total bytes used per origin.
@@ -38,10 +44,11 @@ class CONTENT_EXPORT CacheStorage {
  public:
   typedef std::vector<std::string> StringVector;
   typedef base::Callback<void(bool, CacheStorageError)> BoolAndErrorCallback;
-  typedef base::Callback<void(const scoped_refptr<CacheStorageCache>&,
-                              CacheStorageError)> CacheAndErrorCallback;
-  typedef base::Callback<void(const StringVector&, CacheStorageError)>
-      StringsAndErrorCallback;
+  typedef base::Callback<void(std::unique_ptr<CacheStorageCacheHandle>,
+                              CacheStorageError)>
+      CacheAndErrorCallback;
+  using StringsCallback = base::Callback<void(const StringVector&)>;
+  using SizeCallback = base::Callback<void(int64_t)>;
 
   static const char kIndexFileName[];
 
@@ -49,8 +56,8 @@ class CONTENT_EXPORT CacheStorage {
       const base::FilePath& origin_path,
       bool memory_only,
       base::SequencedTaskRunner* cache_task_runner,
-      const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
-      const scoped_refptr<storage::QuotaManagerProxy>& quota_manager_proxy,
+      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy,
       base::WeakPtr<storage::BlobStorageContext> blob_context,
       const GURL& origin);
 
@@ -59,7 +66,10 @@ class CONTENT_EXPORT CacheStorage {
   virtual ~CacheStorage();
 
   // Get the cache for the given key. If the cache is not found it is
-  // created.
+  // created. The CacheStorgeCacheHandle in the callback prolongs the lifetime
+  // of the cache. Once all handles to a cache are deleted the cache is deleted.
+  // The cache will also be deleted in the CacheStorage's destructor so be sure
+  // to check the handle's value before using it.
   void OpenCache(const std::string& cache_name,
                  const CacheAndErrorCallback& callback);
 
@@ -68,33 +78,38 @@ class CONTENT_EXPORT CacheStorage {
                 const BoolAndErrorCallback& callback);
 
   // Deletes the cache if it exists. If it doesn't exist,
-  // CACHE_STORAGE_ERROR_NOT_FOUND is returned.
+  // CACHE_STORAGE_ERROR_NOT_FOUND is returned. Any existing
+  // CacheStorageCacheHandle(s) to the cache will remain valid but future
+  // CacheStorage operations won't be able to access the cache. The cache
+  // isn't actually erased from disk until the last handle is dropped.
+  // TODO(jkarlin): Rename to DoomCache.
   void DeleteCache(const std::string& cache_name,
                    const BoolAndErrorCallback& callback);
 
   // Calls the callback with a vector of cache names (keys) available.
-  void EnumerateCaches(const StringsAndErrorCallback& callback);
+  void EnumerateCaches(const StringsCallback& callback);
 
   // Calls match on the cache with the given |cache_name|.
   void MatchCache(const std::string& cache_name,
-                  scoped_ptr<ServiceWorkerFetchRequest> request,
+                  std::unique_ptr<ServiceWorkerFetchRequest> request,
+                  const CacheStorageCacheQueryParams& match_params,
                   const CacheStorageCache::ResponseCallback& callback);
 
   // Calls match on all of the caches in parallel, calling |callback| with the
-  // first response found. Note that if multiple caches have the same
-  // request/response then it is not defined which cache's response will be
-  // returned. If no response is found then |callback| is called with
+  // response from the first cache (in order of cache creation) to have the
+  // entry. If no response is found then |callback| is called with
   // CACHE_STORAGE_ERROR_NOT_FOUND.
-  void MatchAllCaches(scoped_ptr<ServiceWorkerFetchRequest> request,
+  void MatchAllCaches(std::unique_ptr<ServiceWorkerFetchRequest> request,
+                      const CacheStorageCacheQueryParams& match_params,
                       const CacheStorageCache::ResponseCallback& callback);
 
-  // Calls close on each cache and runs the callback after all of them have
-  // closed.
-  void CloseAllCaches(const base::Closure& callback);
+  // Sums the sizes of each cache and closes them. Runs |callback| with the
+  // size.
+  void GetSizeThenCloseAllCaches(const SizeCallback& callback);
 
-  // The size of all of the origin's contents in memory. Returns 0 if the cache
-  // backend is not a memory backend. Runs synchronously.
-  int64 MemoryBackedSize() const;
+  // The size of all of the origin's contents. This value should be used as an
+  // estimate only since the cache may be modified at any time.
+  void Size(const SizeCallback& callback);
 
   // The functions below are for tests to verify that the operations run
   // serially.
@@ -102,40 +117,42 @@ class CONTENT_EXPORT CacheStorage {
   void CompleteAsyncOperationForTesting();
 
  private:
-  friend class TestCacheStorage;
-
+  friend class CacheStorageCacheHandle;
+  friend class CacheStorageCache;
+  class CacheLoader;
   class MemoryLoader;
   class SimpleCacheLoader;
-  class CacheLoader;
+  struct CacheMatchResponse;
 
-  typedef std::map<std::string, base::WeakPtr<CacheStorageCache>> CacheMap;
+  typedef std::map<std::string, std::unique_ptr<CacheStorageCache>> CacheMap;
 
-  // Return a CacheStorageCache for the given name if the name is known. If the
-  // CacheStorageCache has been deleted, creates a new one.
-  scoped_refptr<CacheStorageCache> GetLoadedCache(
+  // Functions for exposing handles to CacheStorageCache to clients.
+  std::unique_ptr<CacheStorageCacheHandle> CreateCacheHandle(
+      CacheStorageCache* cache);
+  void AddCacheHandleRef(CacheStorageCache* cache);
+  void DropCacheHandleRef(CacheStorageCache* cache);
+
+  // Returns a CacheStorageCacheHandle for the given name if the name is known.
+  // If the CacheStorageCache has been deleted, creates a new one.
+  std::unique_ptr<CacheStorageCacheHandle> GetLoadedCache(
       const std::string& cache_name);
-
-  // Holds a reference to a cache for thirty seconds.
-  void TemporarilyPreserveCache(const scoped_refptr<CacheStorageCache>& cache);
-  virtual void SchedulePreservedCacheRemoval(
-      const base::Closure& callback);  // Virtual for testing.
-  void RemovePreservedCache(const CacheStorageCache* cache);
 
   // Initializer and its callback are below.
   void LazyInit();
   void LazyInitImpl();
   void LazyInitDidLoadIndex(
-      scoped_ptr<std::vector<std::string>> indexed_cache_names);
+      std::unique_ptr<std::vector<std::string>> indexed_cache_names);
 
   // The Open and CreateCache callbacks are below.
   void OpenCacheImpl(const std::string& cache_name,
                      const CacheAndErrorCallback& callback);
   void CreateCacheDidCreateCache(const std::string& cache_name,
                                  const CacheAndErrorCallback& callback,
-                                 const scoped_refptr<CacheStorageCache>& cache);
-  void CreateCacheDidWriteIndex(const CacheAndErrorCallback& callback,
-                                const scoped_refptr<CacheStorageCache>& cache,
-                                bool success);
+                                 std::unique_ptr<CacheStorageCache> cache);
+  void CreateCacheDidWriteIndex(
+      const CacheAndErrorCallback& callback,
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
+      bool success);
 
   // The HasCache callbacks are below.
   void HasCacheImpl(const std::string& cache_name,
@@ -144,71 +161,69 @@ class CONTENT_EXPORT CacheStorage {
   // The DeleteCache callbacks are below.
   void DeleteCacheImpl(const std::string& cache_name,
                        const BoolAndErrorCallback& callback);
-
-  void DeleteCacheDidClose(const std::string& cache_name,
-                           const BoolAndErrorCallback& callback,
-                           const StringVector& ordered_cache_names,
-                           const scoped_refptr<CacheStorageCache>& cache);
-  void DeleteCacheDidWriteIndex(const std::string& cache_name,
-                                const BoolAndErrorCallback& callback,
-                                bool success);
-  void DeleteCacheDidCleanUp(const BoolAndErrorCallback& callback,
-                             bool success);
+  void DeleteCacheDidWriteIndex(
+      const std::string& cache_name,
+      const StringVector& original_ordered_cache_names,
+      const BoolAndErrorCallback& callback,
+      bool success);
+  void DeleteCacheFinalize(std::unique_ptr<CacheStorageCache> doomed_cache);
+  void DeleteCacheDidGetSize(std::unique_ptr<CacheStorageCache> cache,
+                             int64_t cache_size);
+  void DeleteCacheDidCleanUp(bool success);
 
   // The EnumerateCache callbacks are below.
-  void EnumerateCachesImpl(const StringsAndErrorCallback& callback);
+  void EnumerateCachesImpl(const StringsCallback& callback);
 
   // The MatchCache callbacks are below.
   void MatchCacheImpl(const std::string& cache_name,
-                      scoped_ptr<ServiceWorkerFetchRequest> request,
+                      std::unique_ptr<ServiceWorkerFetchRequest> request,
+                      const CacheStorageCacheQueryParams& match_params,
                       const CacheStorageCache::ResponseCallback& callback);
-  void MatchCacheDidMatch(const scoped_refptr<CacheStorageCache>& cache,
+  void MatchCacheDidMatch(std::unique_ptr<CacheStorageCacheHandle> cache_handle,
                           const CacheStorageCache::ResponseCallback& callback,
                           CacheStorageError error,
-                          scoped_ptr<ServiceWorkerResponse> response,
-                          scoped_ptr<storage::BlobDataHandle> handle);
+                          std::unique_ptr<ServiceWorkerResponse> response,
+                          std::unique_ptr<storage::BlobDataHandle> handle);
 
   // The MatchAllCaches callbacks are below.
-  void MatchAllCachesImpl(scoped_ptr<ServiceWorkerFetchRequest> request,
+  void MatchAllCachesImpl(std::unique_ptr<ServiceWorkerFetchRequest> request,
+                          const CacheStorageCacheQueryParams& match_params,
                           const CacheStorageCache::ResponseCallback& callback);
-  void MatchAllCachesDidMatch(scoped_refptr<CacheStorageCache> cache,
-                              const base::Closure& barrier_closure,
-                              CacheStorageCache::ResponseCallback* callback,
-                              CacheStorageError error,
-                              scoped_ptr<ServiceWorkerResponse> response,
-                              scoped_ptr<storage::BlobDataHandle> handle);
-  void MatchAllCachesDidMatchAll(
-      scoped_ptr<CacheStorageCache::ResponseCallback> callback);
-
-  // The CloseAllCaches callbacks are below.
-  void CloseAllCachesImpl(const base::Closure& callback);
-
-  void PendingClosure(const base::Closure& callback);
-  void PendingBoolAndErrorCallback(const BoolAndErrorCallback& callback,
-                                   bool found,
-                                   CacheStorageError error);
-  void PendingCacheAndErrorCallback(
-      const CacheAndErrorCallback& callback,
-      const scoped_refptr<CacheStorageCache>& cache,
-      CacheStorageError error);
-  void PendingStringsAndErrorCallback(const StringsAndErrorCallback& callback,
-                                      const StringVector& strings,
-                                      CacheStorageError error);
-  void PendingResponseCallback(
-      const CacheStorageCache::ResponseCallback& callback,
+  void MatchAllCachesDidMatch(
+      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
+      CacheMatchResponse* out_match_response,
+      const base::Closure& barrier_closure,
       CacheStorageError error,
-      scoped_ptr<ServiceWorkerResponse> response,
-      scoped_ptr<storage::BlobDataHandle> blob_data_handle);
+      std::unique_ptr<ServiceWorkerResponse> service_worker_response,
+      std::unique_ptr<storage::BlobDataHandle> handle);
+  void MatchAllCachesDidMatchAll(
+      std::unique_ptr<std::vector<CacheMatchResponse>> match_responses,
+      const CacheStorageCache::ResponseCallback& callback);
+
+  void GetSizeThenCloseAllCachesImpl(const SizeCallback& callback);
+
+  void SizeImpl(const SizeCallback& callback);
 
   // Whether or not we've loaded the list of cache names into memory.
   bool initialized_;
   bool initializing_;
 
+  // True if the backend is supposed to reside in memory only.
+  bool memory_only_;
+
   // The pending operation scheduler.
-  scoped_ptr<CacheStorageScheduler> scheduler_;
+  std::unique_ptr<CacheStorageScheduler> scheduler_;
 
   // The map of cache names to CacheStorageCache objects.
   CacheMap cache_map_;
+
+  // Caches that have been deleted but must still be held onto until all handles
+  // have been released.
+  std::map<CacheStorageCache*, std::unique_ptr<CacheStorageCache>>
+      doomed_caches_;
+
+  // CacheStorageCacheHandle reference counts
+  std::map<CacheStorageCache*, size_t> cache_handle_counts_;
 
   // The names of caches in the order that they were created.
   StringVector ordered_cache_names_;
@@ -219,16 +234,14 @@ class CONTENT_EXPORT CacheStorage {
   // The TaskRunner to run file IO on.
   scoped_refptr<base::SequencedTaskRunner> cache_task_runner_;
 
-  // Whether or not to store data in disk or memory.
-  bool memory_only_;
-
   // Performs backend specific operations (memory vs disk).
-  scoped_ptr<CacheLoader> cache_loader_;
+  std::unique_ptr<CacheLoader> cache_loader_;
 
-  // Holds ref pointers to recently opened caches so that they can be reused
-  // without having the open the cache again.
-  std::map<const CacheStorageCache*, scoped_refptr<CacheStorageCache>>
-      preserved_caches_;
+  // The quota manager.
+  scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy_;
+
+  // The origin that this CacheStorage is associated with.
+  GURL origin_;
 
   base::WeakPtrFactory<CacheStorage> weak_factory_;
 

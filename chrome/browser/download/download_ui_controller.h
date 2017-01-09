@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_DOWNLOAD_UI_CONTROLLER_H_
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_UI_CONTROLLER_H_
 
+#include <memory>
 #include <set>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/download/all_download_item_notifier.h"
 
 // This class handles the task of observing a single DownloadManager for
@@ -34,7 +35,7 @@ class DownloadUIController : public AllDownloadItemNotifier::Observer {
   //
   // Currently explicit delegates are only used for testing.
   DownloadUIController(content::DownloadManager* manager,
-                       scoped_ptr<Delegate> delegate);
+                       std::unique_ptr<Delegate> delegate);
 
   ~DownloadUIController() override;
 
@@ -46,7 +47,7 @@ class DownloadUIController : public AllDownloadItemNotifier::Observer {
 
   AllDownloadItemNotifier download_notifier_;
 
-  scoped_ptr<Delegate> delegate_;
+  std::unique_ptr<Delegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadUIController);
 };

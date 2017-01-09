@@ -4,13 +4,19 @@
 
 #include "content/renderer/pepper/plugin_module.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <memory>
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/common/frame_messages.h"
@@ -35,7 +41,6 @@
 #include "ppapi/c/dev/ppb_cursor_control_dev.h"
 #include "ppapi/c/dev/ppb_device_ref_dev.h"
 #include "ppapi/c/dev/ppb_file_chooser_dev.h"
-#include "ppapi/c/dev/ppb_font_dev.h"
 #include "ppapi/c/dev/ppb_gles_chromium_texture_mapping_dev.h"
 #include "ppapi/c/dev/ppb_memory_dev.h"
 #include "ppapi/c/dev/ppb_opengles2ext_dev.h"
@@ -92,6 +97,7 @@
 #include "ppapi/c/ppb_video_encoder.h"
 #include "ppapi/c/ppb_video_frame.h"
 #include "ppapi/c/ppb_view.h"
+#include "ppapi/c/ppb_vpn_provider.h"
 #include "ppapi/c/ppp.h"
 #include "ppapi/c/ppp_instance.h"
 #include "ppapi/c/private/ppb_camera_capabilities_private.h"
@@ -115,6 +121,7 @@
 #include "ppapi/c/private/ppb_isolated_file_system_private.h"
 #include "ppapi/c/private/ppb_output_protection_private.h"
 #include "ppapi/c/private/ppb_pdf.h"
+#include "ppapi/c/private/ppb_platform_verification_private.h"
 #include "ppapi/c/private/ppb_proxy_private.h"
 #include "ppapi/c/private/ppb_tcp_server_socket_private.h"
 #include "ppapi/c/private/ppb_tcp_socket_private.h"
@@ -140,10 +147,6 @@
 #include "ppapi/thunk/enter.h"
 #include "ppapi/thunk/ppb_graphics_2d_api.h"
 #include "ppapi/thunk/thunk.h"
-
-#if defined(OS_CHROMEOS)
-#include "ppapi/c/private/ppb_platform_verification_private.h"
-#endif
 
 using ppapi::InputEventData;
 using ppapi::PpapiGlobals;
@@ -294,7 +297,7 @@ PP_Bool ReadImageData(PP_Resource device_context_2d,
 void RunMessageLoop(PP_Instance instance) {
   base::MessageLoop::ScopedNestableTaskAllower allow(
       base::MessageLoop::current());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 void QuitMessageLoop(PP_Instance instance) {
@@ -371,9 +374,11 @@ void SetMinimumArrayBufferSizeForShmem(PP_Instance /*instance*/,
   // Does nothing. Not needed in-process.
 }
 
-void RunV8GC(PP_Instance instance) {
-  content::PepperPluginInstance::Get(instance)->GetIsolate()->
-      RequestGarbageCollectionForTesting(v8::Isolate::kFullGarbageCollection);
+void RunV8GC(PP_Instance pp_instance) {
+  PepperPluginInstanceImpl* instance =
+      content::PepperPluginInstanceImpl::GetForTesting(pp_instance);
+  instance->GetIsolate()->RequestGarbageCollectionForTesting(
+      v8::Isolate::kFullGarbageCollection);
 }
 
 const PPB_Testing_Private testing_interface = {
@@ -393,12 +398,6 @@ const PPB_Testing_Private testing_interface = {
 // GetInterface ----------------------------------------------------------------
 
 const void* InternalGetInterface(const char* name) {
-  // Allow custom interface factories first stab at the GetInterface call.
-  const void* custom_interface =
-      GetContentClient()->renderer()->CreatePPAPIInterface(name);
-  if (custom_interface)
-    return custom_interface;
-
 // TODO(brettw) put these in a hash map for better performance.
 #define PROXIED_IFACE(iface_str, iface_struct) \
   if (strcmp(name, iface_str) == 0)            \
@@ -553,8 +552,8 @@ PluginModule::~PluginModule() {
 }
 
 void PluginModule::SetRendererPpapiHost(
-    scoped_ptr<RendererPpapiHostImpl> host) {
-  renderer_ppapi_host_ = host.Pass();
+    std::unique_ptr<RendererPpapiHostImpl> host) {
+  renderer_ppapi_host_ = std::move(host);
 }
 
 bool PluginModule::InitAsInternalPlugin(
@@ -722,7 +721,7 @@ RendererPpapiHostImpl* PluginModule::CreateOutOfProcessModule(
     bool is_external) {
   scoped_refptr<PepperHungPluginFilter> hung_filter(new PepperHungPluginFilter(
       path, render_frame->GetRoutingID(), plugin_child_id));
-  scoped_ptr<HostDispatcherWrapper> dispatcher(new HostDispatcherWrapper(
+  std::unique_ptr<HostDispatcherWrapper> dispatcher(new HostDispatcherWrapper(
       this, peer_pid, plugin_child_id, permissions, is_external));
   if (!dispatcher->Init(channel_handle,
                         &GetInterface,
@@ -799,7 +798,7 @@ scoped_refptr<PluginModule> PluginModule::Create(
   int plugin_child_id = 0;
   render_frame->Send(new FrameHostMsg_OpenChannelToPepperPlugin(
       path, &channel_handle, &peer_pid, &plugin_child_id));
-  if (channel_handle.name.empty()) {
+  if (!channel_handle.is_mojo_channel_handle()) {
     // Couldn't be initialized.
     return scoped_refptr<PluginModule>();
   }

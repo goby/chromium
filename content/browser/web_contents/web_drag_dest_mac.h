@@ -4,13 +4,16 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "content/public/common/drop_data.h"
+#include "ui/gfx/geometry/point.h"
 
 namespace content {
 class RenderViewHost;
+class RenderWidgetHostImpl;
 class WebContentsImpl;
 class WebDragDestDelegate;
 }
@@ -34,12 +37,15 @@ CONTENT_EXPORT
   // allow the drop.
   NSDragOperation currentOperation_;
 
+  // Tracks the current RenderWidgetHost we're dragging over.
+  base::WeakPtr<content::RenderWidgetHostImpl> currentRWHForDrag_;
+
   // Keep track of the render view host we're dragging over.  If it changes
   // during a drag, we need to re-send the DragEnter message.
   RenderViewHostIdentifier currentRVH_;
 
   // The data for the current drag, or NULL if none is in progress.
-  scoped_ptr<content::DropData> dropData_;
+  std::unique_ptr<content::DropData> dropData_;
 
   // True if the drag has been canceled.
   bool canceled_;
@@ -66,8 +72,12 @@ CONTENT_EXPORT
 - (void)draggingExited:(id<NSDraggingInfo>)info;
 - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)info
                               view:(NSView*)view;
-- (BOOL)performDragOperation:(id<NSDraggingInfo>)info
-                              view:(NSView*)view;
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info view:(NSView*)view;
+
+// Helper to call WebWidgetHostInputEventRouter::GetRenderWidgetHostAtPoint().
+- (content::RenderWidgetHostImpl*)
+GetRenderWidgetHostAtPoint:(const NSPoint&)viewPoint
+             transformedPt:(gfx::Point*)transformedPt;
 
 @end
 

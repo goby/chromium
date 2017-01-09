@@ -5,13 +5,13 @@
 #include "chrome/browser/plugins/plugin_status_pref_setter.h"
 
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/pepper_flash_settings_manager.h"
 #include "chrome/browser/plugins/plugin_data_remover_helper.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/plugin_service.h"
@@ -44,11 +44,8 @@ void PluginStatusPrefSetter::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type == chrome::NOTIFICATION_PLUGIN_ENABLE_STATUS_CHANGED) {
-    StartUpdate();
-  } else {
-    NOTREACHED();
-  }
+  DCHECK_EQ(chrome::NOTIFICATION_PLUGIN_ENABLE_STATUS_CHANGED, type);
+  StartUpdate();
 }
 
 void PluginStatusPrefSetter::StartUpdate() {

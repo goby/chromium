@@ -7,8 +7,9 @@
 #include <limits>
 
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process_metrics.h"
+#include "build/build_config.h"
 #include "content/public/common/process_type.h"
 
 #if defined(OS_MACOSX)
@@ -46,12 +47,12 @@ void ProcessMetricsHistory::Initialize(
   last_update_sequence_ = initial_update_sequence;
 
 #if defined(OS_MACOSX)
-  process_metrics_.reset(base::ProcessMetrics::CreateProcessMetrics(
+  process_metrics_ = base::ProcessMetrics::CreateProcessMetrics(
       process_data_.handle,
-      content::BrowserChildProcessHost::GetPortProvider()));
+      content::BrowserChildProcessHost::GetPortProvider());
 #else
-  process_metrics_.reset(
-      base::ProcessMetrics::CreateProcessMetrics(process_data_.handle));
+  process_metrics_ =
+      base::ProcessMetrics::CreateProcessMetrics(process_data_.handle);
 #endif
 
   const char* trigger_name = NULL;
@@ -84,7 +85,7 @@ void ProcessMetricsHistory::SampleMetrics() {
 void ProcessMetricsHistory::RunPerformanceTriggers() {
   // We scale up to the equivalent of 64 CPU cores fully loaded. More than this
   // doesn't really matter, as we're already in a terrible place.
-  const int kHistogramMin = 0;
+  const int kHistogramMin = 1;
   const int kHistogramMax = 6400;
   const int kHistogramBucketCount = 50;
 
@@ -110,13 +111,6 @@ void ProcessMetricsHistory::RunPerformanceTriggers() {
         UMA_HISTOGRAM_BOOLEAN("PerformanceMonitor.HighCPU.RendererProcess",
                               true);
       }
-      break;
-    case content::PROCESS_TYPE_PLUGIN:
-      UMA_HISTOGRAM_CUSTOM_COUNTS("PerformanceMonitor.AverageCPU.PluginProcess",
-                                  cpu_usage_, kHistogramMin, kHistogramMax,
-                                  kHistogramBucketCount);
-      if (cpu_usage_ > kHighCPUUtilizationThreshold)
-        UMA_HISTOGRAM_BOOLEAN("PerformanceMonitor.HighCPU.PluginProcess", true);
       break;
     case content::PROCESS_TYPE_GPU:
       UMA_HISTOGRAM_CUSTOM_COUNTS("PerformanceMonitor.AverageCPU.GPUProcess",

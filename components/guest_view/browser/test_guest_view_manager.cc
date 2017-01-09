@@ -4,21 +4,21 @@
 
 #include "components/guest_view/browser/test_guest_view_manager.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <utility>
+
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
 
 namespace guest_view {
 
 TestGuestViewManager::TestGuestViewManager(
     content::BrowserContext* context,
-    scoped_ptr<GuestViewManagerDelegate> delegate)
-    : GuestViewManager(context, delegate.Pass()),
+    std::unique_ptr<GuestViewManagerDelegate> delegate)
+    : GuestViewManager(context, std::move(delegate)),
       num_embedder_processes_destroyed_(0),
       num_guests_created_(0),
       expected_num_guests_created_(0),
       num_views_garbage_collected_(0),
-      waiting_for_guests_created_(false) {
-}
+      waiting_for_guests_created_(false) {}
 
 TestGuestViewManager::~TestGuestViewManager() {
 }
@@ -145,10 +145,10 @@ TestGuestViewManagerFactory::~TestGuestViewManagerFactory() {
 
 GuestViewManager* TestGuestViewManagerFactory::CreateGuestViewManager(
     content::BrowserContext* context,
-    scoped_ptr<GuestViewManagerDelegate> delegate) {
+    std::unique_ptr<GuestViewManagerDelegate> delegate) {
   if (!test_guest_view_manager_) {
     test_guest_view_manager_ =
-        new TestGuestViewManager(context, delegate.Pass());
+        new TestGuestViewManager(context, std::move(delegate));
   }
   return test_guest_view_manager_;
 }

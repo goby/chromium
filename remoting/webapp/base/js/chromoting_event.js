@@ -79,6 +79,16 @@ remoting.ChromotingEvent = function(type) {
   this.render_latency;
   /** @type {number} */
   this.roundtrip_latency;
+  /** @type {number} */
+  this.max_capture_latency;
+  /** @type {number} */
+  this.max_encode_latency;
+  /** @type {number} */
+  this.max_decode_latency;
+  /** @type {number} */
+  this.max_render_latency;
+  /** @type {number} */
+  this.max_roundtrip_latency;
   /** @type {remoting.ChromotingEvent.Mode} */
   this.mode;
   /** @type {remoting.ChromotingEvent.SignalStrategyType} */
@@ -89,7 +99,10 @@ remoting.ChromotingEvent = function(type) {
   this.xmpp_error;
   /** @type {remoting.ChromotingEvent.SessionEntryPoint} */
   this.session_entry_point;
-  /** @type {number} */
+  /**
+   * Elapsed time since last host list refresh in milliseconds.
+   * @type {number}
+   */
   this.host_status_update_elapsed_time;
   /** @type {remoting.ChromotingEvent.AuthMethod} */
   this.auth_method;
@@ -97,6 +110,24 @@ remoting.ChromotingEvent = function(type) {
   this.raw_plugin_error;
   /** @type {remoting.ChromotingEvent.SessionSummary} */
   this.previous_session;
+  /**
+   * Elapsed time since the last host heartbeat in milliseconds.
+   * @type {number}
+   */
+  this.host_last_heartbeat_elapsed_time;
+  /**
+    * To track features like number of ESC key press in a session.
+    * @type {remoting.ChromotingEvent.FeatureTracker}
+    */
+  this.feature_tracker;
+  /** @type {remoting.ChromotingEvent.ScreenResolution} */
+  this.host_all_screens_size;
+  /** @type {remoting.ChromotingEvent.ScreenResolution} */
+  this.client_video_size;
+  /** @type {remoting.ChromotingEvent.ScreenResolution} */
+  this.client_window_size;
+  /** @type {boolean} */
+  this.client_fullscreen;
 
   this.init_();
 };
@@ -198,6 +229,34 @@ remoting.ChromotingEvent.SessionSummary = function() {
   this.entry_point;
 };
 
+/**
+ * For tracking features like keypress count.
+ * All counting fields will be initialized to 0.
+ * @constructor
+ */
+remoting.ChromotingEvent.FeatureTracker = function() {
+  /** @type {number} */
+  this.fullscreen_esc_count = 0;
+};
+
+/**
+ * Client or host screen resolution.
+ *
+ * @param {number} width
+ * @param {number} height
+ * @param {number} dpi
+ * @struct
+ * @constructor
+ */
+  remoting.ChromotingEvent.ScreenResolution = function(width, height, dpi) {
+  /** @type {number} */
+  this.width = width;
+  /** @type {number} */
+  this.height = height;
+  /** @type {number} */
+  this.dpi = dpi;
+};
+
 })();
 
 /**
@@ -212,7 +271,9 @@ remoting.ChromotingEvent.Type = {
   HEARTBEAT_REJECTED: 6,
   RESTART: 7,
   HOST_STATUS: 8,
-  SIGNAL_STRATEGY_PROGRESS: 9
+  SIGNAL_STRATEGY_PROGRESS: 9,
+  FEATURE_TRACKING: 10,
+  SCREEN_RESOLUTIONS: 11,
 };
 
 /** @enum {number} */
@@ -277,6 +338,7 @@ remoting.ChromotingEvent.SessionState = {
   STARTED: 15,
   SIGNALING: 16,
   CREATING_PLUGIN: 17,
+  VIDEO_STREAM_STARTED: 18,
 };
 
 /** @enum {number} */
@@ -313,6 +375,8 @@ remoting.ChromotingEvent.ConnectionError = {
   NACL_DISABLED: 15,
   MAX_SESSION_LENGTH: 16,
   HOST_CONFIGURATION_ERROR: 17,
+  NACL_PLUGIN_CRASHED: 18,
+  INVALID_ACCOUNT: 19,
 };
 
 /** @enum {number} */

@@ -4,7 +4,10 @@
 
 #include "chromeos/dbus/cros_disks_client.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "dbus/message.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -12,6 +15,8 @@
 namespace chromeos {
 
 namespace {
+
+const char kMountLabel[] = "/tmp/cros-disks-test";
 
 // Appends a boolean entry to a dictionary of type "a{sv}"
 void AppendBoolDictEntry(dbus::MessageWriter* array_writer,
@@ -45,10 +50,10 @@ TEST(CrosDisksClientTest, DiskInfo) {
   const bool kDeviceIsOnBootDevice = true;
   const bool kDeviceIsOnRemovableDevice = true;
   const bool kDeviceIsReadOnly = true;
-  const uint32 kDeviceMediaType = cros_disks::DEVICE_MEDIA_SD;
+  const uint32_t kDeviceMediaType = cros_disks::DEVICE_MEDIA_SD;
   const std::string kMountPath = "/media/removable/UNTITLED";
   const bool kDevicePresentationHide = false;
-  const uint64 kDeviceSize = 16005464064;
+  const uint64_t kDeviceSize = 16005464064;
   const std::string kDriveModel = "DriveModel";
   const std::string kIdLabel = "UNTITLED";
   const std::string kIdUuid = "XXXX-YYYY";
@@ -59,7 +64,7 @@ TEST(CrosDisksClientTest, DiskInfo) {
   const std::string kVendorName = "Vendor Name";
 
   // Construct a fake response of GetDeviceProperties().
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   {
     dbus::MessageWriter writer(response.get());
     dbus::MessageWriter array_writer(NULL);
@@ -148,6 +153,44 @@ TEST(CrosDisksClientTest, DiskInfo) {
   EXPECT_EQ(kDeviceSize, result.total_size_in_bytes());
   EXPECT_EQ(DEVICE_TYPE_SD, result.device_type());
   EXPECT_EQ(kMountPath, result.mount_path());
+}
+
+TEST(CrosDisksClientTest, ComposeMountOptions) {
+  std::string kExpectedMountLabelOption =
+      std::string("mountlabel=") + kMountLabel;
+  std::vector<std::string> rw_mount_options =
+      CrosDisksClient::ComposeMountOptions(kMountLabel,
+                                           MOUNT_ACCESS_MODE_READ_WRITE,
+                                           REMOUNT_OPTION_MOUNT_NEW_DEVICE);
+  ASSERT_EQ(5U, rw_mount_options.size());
+  EXPECT_EQ("nodev", rw_mount_options[0]);
+  EXPECT_EQ("noexec", rw_mount_options[1]);
+  EXPECT_EQ("nosuid", rw_mount_options[2]);
+  EXPECT_EQ("rw", rw_mount_options[3]);
+  EXPECT_EQ(kExpectedMountLabelOption, rw_mount_options[4]);
+
+  std::vector<std::string> ro_mount_options =
+      CrosDisksClient::ComposeMountOptions(kMountLabel,
+                                           MOUNT_ACCESS_MODE_READ_ONLY,
+                                           REMOUNT_OPTION_MOUNT_NEW_DEVICE);
+  ASSERT_EQ(5U, ro_mount_options.size());
+  EXPECT_EQ("nodev", ro_mount_options[0]);
+  EXPECT_EQ("noexec", ro_mount_options[1]);
+  EXPECT_EQ("nosuid", ro_mount_options[2]);
+  EXPECT_EQ("ro", ro_mount_options[3]);
+  EXPECT_EQ(kExpectedMountLabelOption, ro_mount_options[4]);
+
+  std::vector<std::string> remount_mount_options =
+      CrosDisksClient::ComposeMountOptions(
+          kMountLabel, MOUNT_ACCESS_MODE_READ_WRITE,
+          REMOUNT_OPTION_REMOUNT_EXISTING_DEVICE);
+  ASSERT_EQ(6U, remount_mount_options.size());
+  EXPECT_EQ("nodev", remount_mount_options[0]);
+  EXPECT_EQ("noexec", remount_mount_options[1]);
+  EXPECT_EQ("nosuid", remount_mount_options[2]);
+  EXPECT_EQ("rw", remount_mount_options[3]);
+  EXPECT_EQ("remount", remount_mount_options[4]);
+  EXPECT_EQ(kExpectedMountLabelOption, remount_mount_options[5]);
 }
 
 }  // namespace chromeos

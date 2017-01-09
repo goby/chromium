@@ -4,8 +4,11 @@
 
 #include "content/shell/browser/layout_test/layout_test_bluetooth_chooser_factory.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "url/gurl.h"
+#include "content/public/browser/render_frame_host.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -58,8 +61,12 @@ class LayoutTestBluetoothChooserFactory::Chooser : public BluetoothChooser {
     }
   }
 
-  void AddDevice(const std::string& device_id,
-                 const base::string16& device_name) override {
+  void AddOrUpdateDevice(const std::string& device_id,
+                         bool should_update_name,
+                         const base::string16& device_name,
+                         bool is_gatt_connected,
+                         bool is_paired,
+                         int signal_strength_level) override {
     CheckFactory();
     std::string event = "add-device(";
     event += base::UTF16ToUTF8(device_name);
@@ -97,16 +104,17 @@ LayoutTestBluetoothChooserFactory::~LayoutTestBluetoothChooserFactory() {
   SendEvent(BluetoothChooser::Event::CANCELLED, "");
 }
 
-scoped_ptr<BluetoothChooser>
+std::unique_ptr<BluetoothChooser>
 LayoutTestBluetoothChooserFactory::RunBluetoothChooser(
-    WebContents* web_contents,
-    const BluetoothChooser::EventHandler& event_handler,
-    const GURL& origin) {
+    RenderFrameHost* frame,
+    const BluetoothChooser::EventHandler& event_handler) {
+  const url::Origin origin = frame->GetLastCommittedOrigin();
+  DCHECK(!origin.unique());
   std::string event = "chooser-opened(";
-  event += origin.spec();
+  event += origin.Serialize();
   event += ")";
   events_.push_back(event);
-  return make_scoped_ptr(new Chooser(weak_this_.GetWeakPtr(), event_handler));
+  return base::MakeUnique<Chooser>(weak_this_.GetWeakPtr(), event_handler);
 }
 
 std::vector<std::string>

@@ -4,10 +4,12 @@
 
 #include "chromeos/dbus/shill_client_helper.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "dbus/message.h"
 #include "dbus/object_proxy.h"
@@ -146,7 +148,7 @@ void OnDictionaryValueMethod(
     return;
   }
   dbus::MessageReader reader(response);
-  scoped_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
+  std::unique_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
   base::DictionaryValue* result = NULL;
   if (!value.get() || !value->GetAsDictionary(&result)) {
     base::DictionaryValue result;
@@ -172,7 +174,7 @@ void OnDictionaryValueMethodWithErrorCallback(
     const ShillClientHelper::ErrorCallback& error_callback,
     dbus::Response* response) {
   dbus::MessageReader reader(response);
-  scoped_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
+  std::unique_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
   base::DictionaryValue* result = NULL;
   if (!value.get() || !value->GetAsDictionary(&result)) {
     error_callback.Run(kInvalidResponseErrorName, kInvalidResponseErrorMessage);
@@ -188,7 +190,7 @@ void OnListValueMethodWithErrorCallback(
     const ShillClientHelper::ErrorCallback& error_callback,
     dbus::Response* response) {
   dbus::MessageReader reader(response);
-  scoped_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
+  std::unique_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
   base::ListValue* result = NULL;
   if (!value.get() || !value->GetAsList(&result)) {
     error_callback.Run(kInvalidResponseErrorName, kInvalidResponseErrorMessage);
@@ -440,7 +442,7 @@ void AppendValueDataAsVariantInternal(dbus::MessageWriter* writer,
                                       DictionaryType dictionary_type) {
   // Support basic types and string-to-string dictionary.
   switch (value.GetType()) {
-    case base::Value::TYPE_DICTIONARY: {
+    case base::Value::Type::DICTIONARY: {
       const base::DictionaryValue* dictionary = NULL;
       value.GetAsDictionary(&dictionary);
       if (dictionary_type == DICTIONARY_TYPE_STRING) {
@@ -454,7 +456,7 @@ void AppendValueDataAsVariantInternal(dbus::MessageWriter* writer,
       }
       break;
     }
-    case base::Value::TYPE_LIST: {
+    case base::Value::Type::LIST: {
       const base::ListValue* list = NULL;
       value.GetAsList(&list);
       dbus::MessageWriter variant_writer(NULL);
@@ -473,10 +475,10 @@ void AppendValueDataAsVariantInternal(dbus::MessageWriter* writer,
       writer->CloseContainer(&variant_writer);
       break;
     }
-    case base::Value::TYPE_BOOLEAN:
-    case base::Value::TYPE_INTEGER:
-    case base::Value::TYPE_DOUBLE:
-    case base::Value::TYPE_STRING:
+    case base::Value::Type::BOOLEAN:
+    case base::Value::Type::INTEGER:
+    case base::Value::Type::DOUBLE:
+    case base::Value::Type::STRING:
       dbus::AppendBasicTypeValueDataAsVariant(writer, value);
       break;
     default:
@@ -541,12 +543,12 @@ void ShillClientHelper::OnPropertyChanged(dbus::Signal* signal) {
   std::string name;
   if (!reader.PopString(&name))
     return;
-  scoped_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
+  std::unique_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
   if (!value.get())
     return;
 
-  FOR_EACH_OBSERVER(ShillPropertyChangedObserver, observer_list_,
-                    OnPropertyChanged(name, *value));
+  for (auto& observer : observer_list_)
+    observer.OnPropertyChanged(name, *value);
 }
 
 }  // namespace chromeos

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/private/ppb_pdf.h"
@@ -129,21 +131,63 @@ void GetV8ExternalSnapshotData(PP_Instance instance,
       natives_size_out, snapshot_data_out, snapshot_size_out);
 }
 
+void SetAccessibilityViewportInfo(
+    PP_Instance instance,
+    PP_PrivateAccessibilityViewportInfo* viewport_info) {
+  EnterInstanceAPI<PPB_PDF_API> enter(instance);
+  if (enter.failed())
+    return;
+  enter.functions()->SetAccessibilityViewportInfo(viewport_info);
+}
+
+void SetAccessibilityDocInfo(
+    PP_Instance instance,
+    PP_PrivateAccessibilityDocInfo* doc_info) {
+  EnterInstanceAPI<PPB_PDF_API> enter(instance);
+  if (enter.failed())
+    return;
+  enter.functions()->SetAccessibilityDocInfo(doc_info);
+}
+
+void SetAccessibilityPageInfo(
+    PP_Instance instance,
+    PP_PrivateAccessibilityPageInfo* page_info,
+    PP_PrivateAccessibilityTextRunInfo text_runs[],
+    PP_PrivateAccessibilityCharInfo chars[]) {
+  EnterInstanceAPI<PPB_PDF_API> enter(instance);
+  if (enter.failed())
+    return;
+  enter.functions()->SetAccessibilityPageInfo(page_info, text_runs, chars);
+}
+
+void SetCrashData(PP_Instance instance,
+                  const char* pdf_url,
+                  const char* top_level_url) {
+  EnterInstanceAPI<PPB_PDF_API> enter(instance);
+  if (enter.failed())
+    return;
+  enter.functions()->SetCrashData(pdf_url, top_level_url);
+}
+
 const PPB_PDF g_ppb_pdf_thunk = {
-  &GetFontFileWithFallback,
-  &GetFontTableForPrivateFontFile,
-  &SearchString,
-  &DidStartLoading,
-  &DidStopLoading,
-  &SetContentRestriction,
-  &UserMetricsRecordAction,
-  &HasUnsupportedFeature,
-  &SaveAs,
-  &Print,
-  &IsFeatureEnabled,
-  &SetSelectedText,
-  &SetLinkUnderCursor,
-  &GetV8ExternalSnapshotData,
+    &GetFontFileWithFallback,
+    &GetFontTableForPrivateFontFile,
+    &SearchString,
+    &DidStartLoading,
+    &DidStopLoading,
+    &SetContentRestriction,
+    &UserMetricsRecordAction,
+    &HasUnsupportedFeature,
+    &SaveAs,
+    &Print,
+    &IsFeatureEnabled,
+    &SetSelectedText,
+    &SetLinkUnderCursor,
+    &GetV8ExternalSnapshotData,
+    &SetAccessibilityViewportInfo,
+    &SetAccessibilityDocInfo,
+    &SetAccessibilityPageInfo,
+    &SetCrashData,
 };
 
 }  // namespace

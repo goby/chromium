@@ -7,8 +7,8 @@
 
 #include <map>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/sessions/core/session_id.h"
 #include "content/public/browser/notification_observer.h"
@@ -79,11 +79,6 @@ class PrintPreviewDialogController
     return is_creating_print_preview_dialog_;
   }
 
-  void AddProxyDialogForWebContents(content::WebContents* source,
-                                    content::WebContents* target);
-
-  void RemoveProxyDialogForWebContents(content::WebContents* source);
-
  private:
   friend class base::RefCounted<PrintPreviewDialogController>;
 
@@ -127,8 +122,6 @@ class PrintPreviewDialogController
   // Mapping between print preview dialog and the corresponding initiator.
   PrintPreviewDialogMap preview_dialog_map_;
 
-  PrintPreviewDialogMap proxied_dialog_map_;
-
   // A registrar for listening to notifications.
   content::NotificationRegistrar registrar_;
 
@@ -139,6 +132,12 @@ class PrintPreviewDialogController
   // Whether the PrintPreviewDialogController is in the middle of creating a
   // print preview dialog.
   bool is_creating_print_preview_dialog_;
+
+  // How many web contents (dialogs and initiators) are watching a given render
+  // process host. Used to determine when a render process host's
+  // NOTIFICATION_RENDERER_PROCESS_CLOSED notification should be removed from
+  // the registrar.
+  std::map<content::RenderProcessHost*, int> host_contents_count_map_;
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewDialogController);
 };

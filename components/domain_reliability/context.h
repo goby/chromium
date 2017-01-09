@@ -5,10 +5,13 @@
 #ifndef COMPONENTS_DOMAIN_RELIABILITY_CONTEXT_H_
 #define COMPONENTS_DOMAIN_RELIABILITY_CONTEXT_H_
 
+#include <stddef.h>
+
 #include <deque>
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/domain_reliability/beacon.h"
@@ -41,8 +44,8 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
   class DOMAIN_RELIABILITY_EXPORT Factory {
    public:
     virtual ~Factory();
-    virtual scoped_ptr<DomainReliabilityContext> CreateContextForConfig(
-        scoped_ptr<const DomainReliabilityConfig> config) = 0;
+    virtual std::unique_ptr<DomainReliabilityContext> CreateContextForConfig(
+        std::unique_ptr<const DomainReliabilityConfig> config) = 0;
   };
 
   DomainReliabilityContext(
@@ -52,20 +55,23 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
       const base::TimeTicks* last_network_change_time,
       DomainReliabilityDispatcher* dispatcher,
       DomainReliabilityUploader* uploader,
-      scoped_ptr<const DomainReliabilityConfig> config);
+      std::unique_ptr<const DomainReliabilityConfig> config);
   ~DomainReliabilityContext();
 
   // Notifies the context of a beacon on its domain(s); may or may not save the
   // actual beacon to be uploaded, depending on the sample rates in the config,
   // but will increment one of the request counters in any case.
-  void OnBeacon(scoped_ptr<DomainReliabilityBeacon> beacon);
+  //
+  // Returns |true| if the beacon was queued or |false| if it was discarded,
+  // for metrics purposes.
+  bool OnBeacon(std::unique_ptr<DomainReliabilityBeacon> beacon);
 
   // Called to clear browsing data, since beacons are like browsing history.
   void ClearBeacons();
 
   // Gets a Value containing data that can be formatted into a web page for
   // debugging purposes.
-  scoped_ptr<base::Value> GetWebUIData() const;
+  std::unique_ptr<base::Value> GetWebUIData() const;
 
   // Gets the beacons queued for upload in this context. |*beacons_out| will be
   // cleared and filled with pointers to the beacons; the pointers remain valid
@@ -80,16 +86,14 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
   static const size_t kMaxQueuedBeacons;
 
  private:
-  // Deque of beacons owned by this context. (Deleted after uploading.)
-  typedef std::deque<DomainReliabilityBeacon*> BeaconDeque;
-
   void ScheduleUpload(base::TimeDelta min_delay, base::TimeDelta max_delay);
   void StartUpload();
   void OnUploadComplete(const DomainReliabilityUploader::UploadResult& result);
 
-  scoped_ptr<const base::Value> CreateReport(base::TimeTicks upload_time,
-                                             const GURL& collector_url,
-                                             int* max_beacon_depth_out) const;
+  std::unique_ptr<const base::Value> CreateReport(
+      base::TimeTicks upload_time,
+      const GURL& collector_url,
+      int* max_beacon_depth_out) const;
 
   // Remembers the current state of the context when an upload starts. Can be
   // called multiple times in a row (without |CommitUpload|) if uploads fail
@@ -106,20 +110,24 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
   // when there are too many beacons queued.)
   void RemoveOldestBeacon();
 
-  scoped_ptr<const DomainReliabilityConfig> config_;
+  void RemoveExpiredBeacons();
+
+  std::unique_ptr<const DomainReliabilityConfig> config_;
   MockableTime* time_;
   const std::string& upload_reporter_string_;
   DomainReliabilityScheduler scheduler_;
   DomainReliabilityDispatcher* dispatcher_;
   DomainReliabilityUploader* uploader_;
 
-  BeaconDeque beacons_;
+  std::deque<std::unique_ptr<DomainReliabilityBeacon>> beacons_;
   size_t uploading_beacons_size_;
   base::TimeTicks upload_time_;
   base::TimeTicks last_upload_time_;
   // The last network change time is not tracked per-context, so this is a
   // pointer to that value in a wider (e.g. per-Monitor or unittest) scope.
   const base::TimeTicks* last_network_change_time_;
+
+  base::TimeTicks last_queued_beacon_time_;
 
   base::WeakPtrFactory<DomainReliabilityContext> weak_factory_;
 

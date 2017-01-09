@@ -5,6 +5,7 @@
 #ifndef UI_NATIVE_THEME_NATIVE_THEME_MAC_H_
 #define UI_NATIVE_THEME_NATIVE_THEME_MAC_H_
 
+#include "base/macros.h"
 #include "ui/native_theme/native_theme_base.h"
 #include "ui/native_theme/native_theme_export.h"
 
@@ -13,24 +14,28 @@ namespace ui {
 // Mac implementation of native theme support.
 class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
  public:
-  static NativeThemeMac* instance();
+  static const int kButtonCornerRadius = 3;
+
+  // Type of gradient to use on a button background. Use HIGHLIGHTED for the
+  // default button of a window and all combobox controls, but only when the
+  // window is active.
+  enum class ButtonBackgroundType {
+    DISABLED,
+    HIGHLIGHTED,
+    NORMAL,
+    PRESSED,
+    COUNT
+  };
+
+  // Adjusts an SkColor based on the current system control tint. For example,
+  // if the current tint is "graphite", this function maps the provided value to
+  // an appropriate gray.
+  static SkColor ApplySystemControlTint(SkColor color);
 
   // Overridden from NativeTheme:
   SkColor GetSystemColor(ColorId color_id) const override;
 
   // Overridden from NativeThemeBase:
-  void PaintScrollbarTrack(SkCanvas* canvas,
-                           Part part,
-                           State state,
-                           const ScrollbarTrackExtraParams& extra_params,
-                           const gfx::Rect& rect) const override;
-  void PaintScrollbarThumb(SkCanvas* sk_canvas,
-                           Part part,
-                           State state,
-                           const gfx::Rect& rect) const override;
-  void PaintScrollbarCorner(SkCanvas* canvas,
-                            State state,
-                            const gfx::Rect& rect) const override;
   void PaintMenuPopupBackground(
       SkCanvas* canvas,
       const gfx::Size& size,
@@ -39,7 +44,31 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
       SkCanvas* canvas,
       State state,
       const gfx::Rect& rect,
-      const MenuListExtraParams& menu_list) const override;
+      const MenuItemExtraParams& menu_item) const override;
+
+  // Creates a shader appropriate for painting the background of a button.
+  static sk_sp<SkShader> GetButtonBackgroundShader(ButtonBackgroundType type,
+                                                   int height);
+
+  // Creates a shader for the button border. This should be painted over with
+  // the background after insetting the rounded rect.
+  static sk_sp<SkShader> GetButtonBorderShader(ButtonBackgroundType type,
+                                               int height);
+
+  // Paints the styled button shape used for default controls on Mac. The basic
+  // style is used for dialog buttons, comboboxes, and tabbed pane tabs.
+  // Depending on the control part being drawn, the left or the right side can
+  // be given rounded corners.
+  static void PaintStyledGradientButton(SkCanvas* canvas,
+                                        const gfx::Rect& bounds,
+                                        ButtonBackgroundType type,
+                                        bool round_left,
+                                        bool round_right,
+                                        bool focus);
+
+ protected:
+  friend class NativeTheme;
+  static NativeThemeMac* instance();
 
  private:
   NativeThemeMac();

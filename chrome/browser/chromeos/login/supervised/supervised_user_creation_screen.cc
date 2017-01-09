@@ -4,8 +4,12 @@
 
 #include "chrome/browser/chromeos/login/supervised/supervised_user_creation_screen.h"
 
-#include "ash/desktop_background/desktop_background_controller.h"
-#include "ash/shell.h"
+#include <utility>
+
+#include "ash/common/shelf/wm_shelf.h"
+#include "ash/common/wallpaper/wallpaper_controller.h"
+#include "ash/common/wm_shell.h"
+#include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/camera_detector.h"
@@ -29,6 +33,7 @@
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
@@ -123,11 +128,6 @@ SupervisedUserCreationScreen::~SupervisedUserCreationScreen() {
   network_portal_detector::GetInstance()->RemoveObserver(this);
 }
 
-void SupervisedUserCreationScreen::PrepareToShow() {
-  if (actor_)
-    actor_->PrepareToShow();
-}
-
 void SupervisedUserCreationScreen::Show() {
   CameraPresenceNotifier::GetInstance()->AddObserver(this);
   if (actor_) {
@@ -216,22 +216,21 @@ void SupervisedUserCreationScreen::HideFlow() {
 }
 
 void SupervisedUserCreationScreen::AuthenticateManager(
-    const std::string& manager_id,
+    const AccountId& manager_id,
     const std::string& manager_password) {
   if (manager_signin_in_progress_)
     return;
   manager_signin_in_progress_ = true;
 
   UserFlow* flow = new SupervisedUserCreationFlow(manager_id);
-  ChromeUserManager::Get()->SetUserFlow(AccountId::FromUserEmail(manager_id),
-                                        flow);
+  ChromeUserManager::Get()->SetUserFlow(manager_id, flow);
 
   // Make sure no two controllers exist at the same time.
   controller_.reset();
 
   controller_.reset(new SupervisedUserCreationControllerNew(this, manager_id));
 
-  UserContext user_context(AccountId::FromUserEmail(manager_id));
+  UserContext user_context(manager_id);
   user_context.SetKey(Key(manager_password));
   ExistingUserController::current_controller()->Login(user_context,
                                                       SigninSpecifics());
@@ -370,10 +369,11 @@ void SupervisedUserCreationScreen::OnManagerFullyAuthenticated(
       ->NotifySupervisedUserCreationStarted();
   manager_signin_in_progress_ = false;
   DCHECK(controller_.get());
-  // For manager user, move desktop to locked container so that windows created
-  // during the user image picker step are below it.
-  ash::Shell::GetInstance()->
-      desktop_background_controller()->MoveDesktopToLockedContainer();
+  // For manager user, move wallpaper to locked container so that windows
+  // created during the user image picker step are below it.
+  ash::WmShell::Get()->wallpaper_controller()->MoveToLockedContainer();
+  ash::WmShelf::ForWindow(ash::WmShell::Get()->GetPrimaryRootWindow())
+      ->SetAlignment(ash::ShelfAlignment::SHELF_ALIGNMENT_BOTTOM_LOCKED);
 
   controller_->SetManagerProfile(manager_profile);
   if (actor_)
@@ -494,15 +494,15 @@ void SupervisedUserCreationScreen::ApplyPicture() {
         apply_photo_after_decoding_ = true;
         return;
       }
-      image_manager->SaveUserImage(
-          user_manager::UserImage::CreateAndEncode(user_photo_));
+      image_manager->SaveUserImage(user_manager::UserImage::CreateAndEncode(
+          user_photo_, user_manager::UserImage::FORMAT_JPEG));
       break;
     case user_manager::User::USER_IMAGE_PROFILE:
       NOTREACHED() << "Supervised users have no profile pictures";
       break;
     default:
       DCHECK(selected_image_ >= 0 &&
-             selected_image_ < user_manager::kDefaultImagesCount);
+             selected_image_ < default_user_image::kDefaultImagesCount);
       image_manager->SaveUserDefaultImageIndex(selected_image_);
       break;
   }
@@ -523,7 +523,7 @@ void SupervisedUserCreationScreen::OnCameraPresenceCheckDone(
 void SupervisedUserCreationScreen::OnGetSupervisedUsers(
     const base::DictionaryValue* users) {
   // Copy for passing to WebUI, contains only id, name and avatar URL.
-  scoped_ptr<base::ListValue> ui_users(new base::ListValue());
+  std::unique_ptr<base::ListValue> ui_users(new base::ListValue());
   SupervisedUserManager* supervised_user_manager =
       ChromeUserManager::Get()->GetSupervisedUserManager();
 
@@ -536,8 +536,7 @@ void SupervisedUserCreationScreen::OnGetSupervisedUsers(
         static_cast<base::DictionaryValue*>(it.value().DeepCopy());
     // Copy that would be passed to WebUI. It has some extra values for
     // displaying, but does not contain sensitive data, such as master password.
-    base::DictionaryValue* ui_copy =
-        static_cast<base::DictionaryValue*>(new base::DictionaryValue());
+    auto ui_copy = base::MakeUnique<base::DictionaryValue>();
 
     int avatar_index = SupervisedUserCreationController::kDummyAvatarIndex;
     std::string chromeos_avatar;
@@ -547,15 +546,16 @@ void SupervisedUserCreationScreen::OnGetSupervisedUsers(
         SupervisedUserSyncService::GetAvatarIndex(
             chromeos_avatar, &avatar_index)) {
       ui_copy->SetString(kAvatarURLKey,
-                         user_manager::GetDefaultImageUrl(avatar_index));
+                         default_user_image::GetDefaultImageUrl(avatar_index));
     } else {
-      int i = base::RandInt(user_manager::kFirstDefaultImageIndex,
-                            user_manager::kDefaultImagesCount - 1);
+      int i = base::RandInt(default_user_image::kFirstDefaultImageIndex,
+                            default_user_image::kDefaultImagesCount - 1);
       local_copy->SetString(
           SupervisedUserSyncService::kChromeOsAvatar,
           SupervisedUserSyncService::BuildAvatarString(i));
       local_copy->SetBoolean(kRandomAvatarKey, true);
-      ui_copy->SetString(kAvatarURLKey, user_manager::GetDefaultImageUrl(i));
+      ui_copy->SetString(kAvatarURLKey,
+                         default_user_image::GetDefaultImageUrl(i));
     }
 
     local_copy->SetBoolean(kUserExists, false);
@@ -587,7 +587,7 @@ void SupervisedUserCreationScreen::OnGetSupervisedUsers(
     ui_copy->SetString("id", it.key());
 
     existing_users_->Set(it.key(), local_copy);
-    ui_users->Append(ui_copy);
+    ui_users->Append(std::move(ui_copy));
   }
   actor_->ShowExistingSupervisedUsers(ui_users.get());
 }
@@ -618,7 +618,7 @@ void SupervisedUserCreationScreen::OnImageSelected(
     return;
   int user_image_index = user_manager::User::USER_IMAGE_INVALID;
   if (image_type == "default" &&
-      user_manager::IsDefaultImageUrl(image_url, &user_image_index)) {
+      default_user_image::IsDefaultImageUrl(image_url, &user_image_index)) {
     selected_image_ = user_image_index;
   } else if (image_type == "camera") {
     selected_image_ = user_manager::User::USER_IMAGE_EXTERNAL;

@@ -5,15 +5,15 @@
 #ifndef CHROME_BROWSER_SPELLCHECKER_SPELLCHECK_HUNSPELL_DICTIONARY_H_
 #define CHROME_BROWSER_SPELLCHECKER_SPELLCHECK_HUNSPELL_DICTIONARY_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/move.h"
 #include "base/observer_list.h"
-#include "chrome/browser/spellchecker/spellcheck_dictionary.h"
+#include "components/spellcheck/browser/spellcheck_dictionary.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
 class GURL;
@@ -92,7 +92,6 @@ class SpellcheckHunspellDictionary
 
   // Dictionary file information to be passed between the FILE and UI threads.
   struct DictionaryFile {
-    MOVE_ONLY_TYPE_FOR_CPP_03(DictionaryFile)
    public:
     DictionaryFile();
     ~DictionaryFile();
@@ -105,6 +104,9 @@ class SpellcheckHunspellDictionary
 
     // The dictionary file.
     base::File file;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(DictionaryFile);
   };
 
   // net::URLFetcherDelegate implementation. Called when dictionary download
@@ -150,7 +152,7 @@ class SpellcheckHunspellDictionary
   net::URLRequestContextGetter* request_context_getter_;
 
   // Used for downloading the dictionary file.
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   SpellcheckService* spellcheck_service_;
 

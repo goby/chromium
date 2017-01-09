@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/location.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -19,6 +23,7 @@
 #include "chrome/browser/ui/views/toolbar/extension_toolbar_menu_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "extensions/browser/notification_types.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "ui/views/controls/menu/menu_controller.h"
@@ -35,10 +40,12 @@ AppMenuButton* GetAppButtonFromBrowser(Browser* browser) {
 
 // Tests clicking on an overflowed toolbar action. This is called when the app
 // menu is open, and handles actually clicking on the action.
-// |button| specifies the mouse button to click with.
+// |button| specifies the mouse button to click with. Optionally
+// |toolbar_action_view| can be provided to receive the targeted
+// ToolbarActionView.
 void TestOverflowedToolbarAction(Browser* browser,
                                  ui_controls::MouseButton button,
-                                 const base::Closure& quit_closure) {
+                                 ToolbarActionView** toolbar_action_view) {
   // A bunch of plumbing to safely get at the overflowed toolbar action.
   AppMenuButton* app_menu_button = GetAppButtonFromBrowser(browser);
   EXPECT_TRUE(app_menu_button->IsMenuShowing());
@@ -56,18 +63,18 @@ void TestOverflowedToolbarAction(Browser* browser,
 
   // Click on the toolbar action to activate it.
   gfx::Point action_view_loc =
-      test::GetCenterInScreenCoordinates(action_view);
+      ui_test_utils::GetCenterInScreenCoordinates(action_view);
   ui_controls::SendMouseMove(action_view_loc.x(), action_view_loc.y());
-  ui_controls::SendMouseEventsNotifyWhenDone(
-      button, ui_controls::DOWN | ui_controls::UP, quit_closure);
+  EXPECT_TRUE(ui_test_utils::SendMouseEventsSync(
+      button, ui_controls::DOWN | ui_controls::UP));
+
+  if (toolbar_action_view)
+    *toolbar_action_view = action_view;
 }
 
 // Tests the context menu of an overflowed action.
-void TestWhileContextMenuOpen(bool* did_test_while_menu_open,
-                              Browser* browser,
+void TestWhileContextMenuOpen(Browser* browser,
                               ToolbarActionView* context_menu_action) {
-  *did_test_while_menu_open = true;
-
   views::MenuItemView* menu_root = context_menu_action->menu_for_testing();
   ASSERT_TRUE(menu_root);
   ASSERT_TRUE(menu_root->GetSubmenu());
@@ -103,7 +110,7 @@ void TestWhileContextMenuOpen(bool* did_test_while_menu_open,
   EXPECT_TRUE(second_row_action->enabled());
 
   gfx::Point action_view_loc =
-      test::GetCenterInScreenCoordinates(second_row_action);
+      ui_test_utils::GetCenterInScreenCoordinates(second_row_action);
   gfx::Point action_view_loc_in_menu_item_bounds = action_view_loc;
   views::View::ConvertPointFromScreen(first_menu_item,
                                       &action_view_loc_in_menu_item_bounds);
@@ -116,19 +123,9 @@ void TestWhileContextMenuOpen(bool* did_test_while_menu_open,
   // Click on the first menu item (which shares bounds, but overlaps, the second
   // row action).
   ui_controls::SendMouseMove(action_view_loc.x(), action_view_loc.y());
-  ui_controls::SendMouseEventsNotifyWhenDone(
-      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP, base::Closure());
-
+  EXPECT_TRUE(ui_test_utils::SendMouseEventsSync(
+      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP));
   // Test resumes in the main test body.
-}
-
-// Posts a task to test the context menu.
-void OnContextMenuWillShow(bool* did_test_while_menu_open,
-                           Browser* browser,
-                           ToolbarActionView* toolbar_action_view) {
-  base::MessageLoop::current()->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&TestWhileContextMenuOpen, did_test_while_menu_open,
-                            browser, toolbar_action_view));
 }
 
 }  // namespace
@@ -143,9 +140,6 @@ class ToolbarActionViewInteractiveUITest : public ExtensionBrowserTest {
   void TearDownOnMainThread() override;
 
  private:
-  // Override the extensions-action-redesign switch.
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> feature_override_;
-
   DISALLOW_COPY_AND_ASSIGN(ToolbarActionViewInteractiveUITest);
 };
 
@@ -155,10 +149,6 @@ ToolbarActionViewInteractiveUITest::~ToolbarActionViewInteractiveUITest() {}
 void ToolbarActionViewInteractiveUITest::SetUpCommandLine(
     base::CommandLine* command_line) {
   ExtensionBrowserTest::SetUpCommandLine(command_line);
-  // We do this before the rest of the setup because it can affect how the views
-  // are constructed.
-  feature_override_.reset(new extensions::FeatureSwitch::ScopedOverride(
-      extensions::FeatureSwitch::extension_action_redesign(), true));
   ToolbarActionsBar::disable_animations_for_testing_ = true;
 }
 
@@ -166,8 +156,9 @@ void ToolbarActionViewInteractiveUITest::TearDownOnMainThread() {
   ToolbarActionsBar::disable_animations_for_testing_ = false;
 }
 
-#if defined(USE_OZONE)
+#if defined(USE_OZONE) || defined(OS_WIN)
 // ozone bringup - http://crbug.com/401304
+// flaky on Windows - http://crbug.com/638692
 #define MAYBE_TestClickingOnOverflowedAction DISABLED_TestClickingOnOverflowedAction
 #else
 #define MAYBE_TestClickingOnOverflowedAction TestClickingOnOverflowedAction
@@ -191,20 +182,25 @@ IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
 
   // Click on the app button.
   gfx::Point app_button_loc =
-      test::GetCenterInScreenCoordinates(app_menu_button);
-  base::RunLoop loop;
+      ui_test_utils::GetCenterInScreenCoordinates(app_menu_button);
   ui_controls::SendMouseMove(app_button_loc.x(), app_button_loc.y());
-  ui_controls::SendMouseEventsNotifyWhenDone(
-      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
-      base::Bind(&TestOverflowedToolbarAction, browser(), ui_controls::LEFT,
-                 loop.QuitClosure()));
-  loop.Run();
+  EXPECT_TRUE(ui_test_utils::SendMouseEventsSync(
+      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP));
+  base::RunLoop().RunUntilIdle();
+
+  TestOverflowedToolbarAction(browser(), ui_controls::LEFT, nullptr);
+
+  base::RunLoop().RunUntilIdle();
   // The app menu should no longer be showing.
   EXPECT_FALSE(app_menu_button->IsMenuShowing());
 
   // And the extension should have been activated.
   listener.WaitUntilSatisfied();
 }
+
+// TODO(jonross): determine cause of new flake, and restore previous MAYBE
+// conditions. Temporarily disabling due to number of flakes (crbug.com/639010)
+// Tests the context menus of overflowed extension actions.
 
 #if defined(USE_OZONE)
 // ozone bringup - http://crbug.com/401304
@@ -214,7 +210,6 @@ IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
 #define MAYBE_TestContextMenuOnOverflowedAction \
   TestContextMenuOnOverflowedAction
 #endif
-// Tests the context menus of overflowed extension actions.
 IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
                        MAYBE_TestContextMenuOnOverflowedAction) {
   views::MenuController::TurnOffMenuSelectionHoldForTest();
@@ -244,32 +239,29 @@ IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
   // Reduce visible count to 0 so that all actions are overflowed.
   ToolbarActionsModel::Get(profile())->SetVisibleIconCount(0);
 
-  // Set a callback for the context menu showing.
-  bool did_test_while_menu_open = false;
-  base::Callback<void(ToolbarActionView*)> context_menu_callback(
-      base::Bind(&OnContextMenuWillShow, &did_test_while_menu_open, browser()));
-  ToolbarActionView::set_context_menu_callback_for_testing(
-      &context_menu_callback);
-
   AppMenuButton* app_menu_button = GetAppButtonFromBrowser(browser());
   // Click on the app button, and then right-click on the first toolbar action.
   gfx::Point app_button_loc =
-      test::GetCenterInScreenCoordinates(app_menu_button);
-  base::RunLoop loop;
+      ui_test_utils::GetCenterInScreenCoordinates(app_menu_button);
   ui_controls::SendMouseMove(app_button_loc.x(), app_button_loc.y());
-  ui_controls::SendMouseEventsNotifyWhenDone(
-      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
-      base::Bind(&TestOverflowedToolbarAction, browser(), ui_controls::RIGHT,
-                 loop.QuitClosure()));
-  loop.Run();
+  EXPECT_TRUE(ui_test_utils::SendMouseEventsSync(
+      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP));
+  base::RunLoop().RunUntilIdle();
 
-  // Test is continued first in TestOverflowedToolbarAction() to right click on
-  // the action, followed by OnContextMenuWillShow() and
-  // TestWhileContextMenuOpen().
+  // Right clicks on the action view, this should trigger the context menu.
+  ToolbarActionView* action_view = nullptr;
+  TestOverflowedToolbarAction(browser(), ui_controls::RIGHT, &action_view);
+  base::RunLoop().RunUntilIdle();
 
-  // Make sure we did all the expected tests.
-  EXPECT_TRUE(did_test_while_menu_open);
+  // Ensure that the menu actually opened.
+  EXPECT_TRUE(action_view->IsMenuRunningForTesting());
 
+  // Triggers the action within the context menu. This should load the extension
+  // webpage, and close the menu.
+  TestWhileContextMenuOpen(browser(), action_view);
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_FALSE(action_view->IsMenuRunningForTesting());
   // We should have navigated to the extension's home page, which is google.com.
   EXPECT_EQ(
       GURL("https://www.google.com/"),
@@ -278,8 +270,15 @@ IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
 
 // Tests that clicking on the toolbar action a second time when the action is
 // already open results in closing the popup, and doesn't re-open it.
+#if defined(OS_WIN)
+// Flaky on Windows; see https://crbug.com/617056.
+#define MAYBE_DoubleClickToolbarActionToClose \
+    DISABLED_DoubleClickToolbarActionToClose
+#else
+#define MAYBE_DoubleClickToolbarActionToClose DoubleClickToolbarActionToClose
+#endif
 IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
-                       DoubleClickToolbarActionToClose) {
+                       MAYBE_DoubleClickToolbarActionToClose) {
   ASSERT_TRUE(LoadExtension(
       test_data_dir_.AppendASCII("ui").AppendASCII("browser_action_popup")));
   base::RunLoop().RunUntilIdle();  // Ensure the extension is fully loaded.
@@ -299,7 +298,7 @@ IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
 
   // Click on the action, and wait for the popup to fully load.
   EXPECT_TRUE(ui_test_utils::SendMouseMoveSync(
-      test::GetCenterInScreenCoordinates(toolbar_action_view)));
+     ui_test_utils::GetCenterInScreenCoordinates(toolbar_action_view)));
 
   EXPECT_TRUE(ui_test_utils::SendMouseEventsSync(
       ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP));
@@ -335,4 +334,56 @@ IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
       ui_test_utils::SendMouseEventsSync(ui_controls::LEFT, ui_controls::UP));
   EXPECT_FALSE(view_controller->is_showing_popup());
   EXPECT_EQ(nullptr, toolbar_actions_bar->popup_owner());
+}
+
+#if defined(USE_OZONE)
+// ozone bringup - http://crbug.com/401304
+#define MAYBE_ActivateOverflowedToolbarActionWithKeyboard \
+  DISABLED_ActivateOverflowedToolbarActionWithKeyboard
+#else
+#define MAYBE_ActivateOverflowedToolbarActionWithKeyboard \
+  ActivateOverflowedToolbarActionWithKeyboard
+#endif
+IN_PROC_BROWSER_TEST_F(ToolbarActionViewInteractiveUITest,
+                       MAYBE_ActivateOverflowedToolbarActionWithKeyboard) {
+  views::MenuController::TurnOffMenuSelectionHoldForTest();
+  // Load an extension with an action.
+  ASSERT_TRUE(LoadExtension(
+      test_data_dir_.AppendASCII("ui").AppendASCII("browser_action_popup")));
+  base::RunLoop().RunUntilIdle();  // Ensure the extension is fully loaded.
+
+  // Reduce visible count to 0 so that all actions are overflowed.
+  ToolbarActionsModel::Get(profile())->SetVisibleIconCount(0);
+
+  // Set up a listener for the extension being triggered.
+  ExtensionTestMessageListener listener("Popup opened", false);
+
+  // Open the app menu, navigate to the toolbar action, and activate it via the
+  // keyboard.
+  AppMenuButton* app_menu_button = GetAppButtonFromBrowser(browser());
+  gfx::Point app_button_loc =
+      ui_test_utils::GetCenterInScreenCoordinates(app_menu_button);
+  ui_controls::SendMouseMove(app_button_loc.x(), app_button_loc.y());
+  EXPECT_TRUE(ui_test_utils::SendMouseEventsSync(
+      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP));
+
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_TRUE(app_menu_button->IsMenuShowing());
+  gfx::NativeWindow native_window =
+      views::MenuController::GetActiveInstance()->owner()->GetNativeWindow();
+  // Send a key down event followed by the return key.
+  // The key down event targets the toolbar action in the app menu.
+  ui_controls::SendKeyPress(native_window, ui::VKEY_DOWN, false, false, false,
+                            false);
+  // The triggering of the action and subsequent widget destruction occurs on
+  // the message loop. Wait for this all to complete.
+  EXPECT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
+      native_window, ui::VKEY_RETURN, false, false, false, false));
+  base::RunLoop().RunUntilIdle();
+
+  // The menu should be closed.
+  EXPECT_FALSE(app_menu_button->IsMenuShowing());
+  // And the extension should have been activated.
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
 }

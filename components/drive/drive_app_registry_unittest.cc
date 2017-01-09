@@ -4,6 +4,8 @@
 
 #include "components/drive/drive_app_registry.h"
 
+#include <stddef.h>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
@@ -63,8 +65,8 @@ class DriveAppRegistryTest : public testing::Test {
   }
 
   base::MessageLoop message_loop_;
-  scoped_ptr<FakeDriveService> fake_drive_service_;
-  scoped_ptr<DriveAppRegistry> apps_registry_;
+  std::unique_ptr<FakeDriveService> fake_drive_service_;
+  std::unique_ptr<DriveAppRegistry> apps_registry_;
 };
 
 TEST_F(DriveAppRegistryTest, BasicParse) {
@@ -116,9 +118,9 @@ TEST_F(DriveAppRegistryTest, LoadAndFindDriveApps) {
 }
 
 TEST_F(DriveAppRegistryTest, UpdateFromAppList) {
-  scoped_ptr<base::Value> app_info_value =
+  std::unique_ptr<base::Value> app_info_value =
       google_apis::test_util::LoadJSONFile("drive/applist.json");
-  scoped_ptr<google_apis::AppList> app_list(
+  std::unique_ptr<google_apis::AppList> app_list(
       google_apis::AppList::CreateFrom(*app_info_value));
 
   TestDriveAppRegistryObserver observer(apps_registry_.get());

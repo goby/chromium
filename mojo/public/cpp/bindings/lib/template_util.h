@@ -5,6 +5,8 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_LIB_TEMPLATE_UTIL_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_LIB_TEMPLATE_UTIL_H_
 
+#include <type_traits>
+
 namespace mojo {
 namespace internal {
 
@@ -46,18 +48,12 @@ struct NoType {
 };
 
 // A helper template to determine if given type is non-const move-only-type,
-// i.e. if a value of the given type should be passed via .Pass() in a
+// i.e. if a value of the given type should be passed via std::move() in a
 // destructive way.
 template <typename T>
 struct IsMoveOnlyType {
-  template <typename U>
-  static YesType Test(const typename U::MoveOnlyTypeForCPP03*);
-
-  template <typename U>
-  static NoType Test(...);
-
-  static const bool value =
-      sizeof(Test<T>(0)) == sizeof(YesType) && !IsConst<T>::value;
+  static const bool value = std::is_constructible<T, T&&>::value &&
+                            !std::is_constructible<T, const T&>::value;
 };
 
 // This goop is a trick used to implement a template that can be used to
@@ -70,17 +66,23 @@ template <typename A>
 struct IsSame<A, A> {
   static bool const value = true;
 };
+
+template <typename T>
+struct EnsureTypeIsComplete {
+  // sizeof() cannot be applied to incomplete types, this line will fail
+  // compilation if T is forward declaration.
+  using CheckSize = char (*)[sizeof(T)];
+};
+
 template <typename Base, typename Derived>
 struct IsBaseOf {
  private:
-  // This class doesn't work correctly with forward declarations.
-  // Because sizeof cannot be applied to incomplete types, this line prevents us
-  // from passing in forward declarations.
-  typedef char (*EnsureTypesAreComplete)[sizeof(Base) + sizeof(Derived)];
-
   static Derived* CreateDerived();
   static char(&Check(Base*))[1];
   static char(&Check(...))[2];
+
+  EnsureTypeIsComplete<Base> check_base_;
+  EnsureTypeIsComplete<Derived> check_derived_;
 
  public:
   static bool const value = sizeof Check(CreateDerived()) == 1 &&

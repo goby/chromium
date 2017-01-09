@@ -9,9 +9,9 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/first_run/first_run.h"
@@ -25,6 +25,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
@@ -118,7 +119,7 @@ class FirstRunMasterPrefsBrowserTestBase : public InProcessBrowserTest {
 
  private:
   base::FilePath prefs_file_;
-  scoped_ptr<std::string> text_;
+  std::unique_ptr<std::string> text_;
 
   DISALLOW_COPY_AND_ASSIGN(FirstRunMasterPrefsBrowserTestBase);
 };
@@ -144,7 +145,7 @@ class FirstRunMasterPrefsBrowserTestT
 // bot configurations do not have another profile (browser) to import from and
 // thus the import must not be expected to have occurred.
 int MaskExpectedImportState(int expected_import_state) {
-  scoped_ptr<ImporterList> importer_list(new ImporterList());
+  std::unique_ptr<ImporterList> importer_list(new ImporterList());
   base::RunLoop run_loop;
   importer_list->DetectSourceProfiles(
       g_browser_process->GetApplicationLocale(),

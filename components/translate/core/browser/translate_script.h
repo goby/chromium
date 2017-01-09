@@ -5,12 +5,13 @@
 #ifndef COMPONENTS_TRANSLATE_CORE_BROWSER_TRANSLATE_SCRIPT_H_
 #define COMPONENTS_TRANSLATE_CORE_BROWSER_TRANSLATE_SCRIPT_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 
@@ -74,10 +75,14 @@ class TranslateScript {
   void OnScriptFetchComplete(int id, bool success, const std::string& data);
 
   // URL fetcher to fetch the translate script.
-  scoped_ptr<TranslateURLFetcher> fetcher_;
+  std::unique_ptr<TranslateURLFetcher> fetcher_;
 
   // The JS injected in the page to do the translation.
   std::string data_;
+
+  // The starting time of fetching the translate script.
+  // Number of milliseconds since the epoch.
+  double script_fetch_start_time_;
 
   // Delay after which the translate script is fetched again from the translate
   // server.

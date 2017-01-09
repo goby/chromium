@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/logging.h"
 #include "remoting/host/chromeos/skia_bitmap_desktop_frame.h"
+
+#include <stddef.h>
+
+#include <utility>
+
+#include "base/logging.h"
 
 namespace remoting {
 
 // static
 SkiaBitmapDesktopFrame* SkiaBitmapDesktopFrame::Create(
-    scoped_ptr<SkBitmap> bitmap) {
-
+    std::unique_ptr<SkBitmap> bitmap) {
   webrtc::DesktopSize size(bitmap->width(), bitmap->height());
   DCHECK_EQ(kBGRA_8888_SkColorType, bitmap->info().colorType())
       << "DesktopFrame objects always hold RGBA data.";
@@ -21,7 +25,7 @@ SkiaBitmapDesktopFrame* SkiaBitmapDesktopFrame::Create(
 
   const size_t row_bytes = bitmap->rowBytes();
   SkiaBitmapDesktopFrame* result = new SkiaBitmapDesktopFrame(
-      size, row_bytes, bitmap_data, bitmap.Pass());
+      size, row_bytes, bitmap_data, std::move(bitmap));
 
   return result;
 }
@@ -29,11 +33,9 @@ SkiaBitmapDesktopFrame* SkiaBitmapDesktopFrame::Create(
 SkiaBitmapDesktopFrame::SkiaBitmapDesktopFrame(webrtc::DesktopSize size,
                                                int stride,
                                                uint8_t* data,
-                                               scoped_ptr<SkBitmap> bitmap)
-    : DesktopFrame(size, stride, data, nullptr), bitmap_(bitmap.Pass()) {
-}
+                                               std::unique_ptr<SkBitmap> bitmap)
+    : DesktopFrame(size, stride, data, nullptr), bitmap_(std::move(bitmap)) {}
 
-SkiaBitmapDesktopFrame::~SkiaBitmapDesktopFrame() {
-}
+SkiaBitmapDesktopFrame::~SkiaBitmapDesktopFrame() {}
 
 }  // namespace remoting

@@ -36,28 +36,30 @@
 
 namespace blink {
 
+class MediaDevices;
 class MediaDevicesRequest;
 class UserMediaRequest;
 class WebUserMediaClient;
-class WebLocalFrameImpl;
 
 class UserMediaClientImpl final : public UserMediaClient {
-public:
-    explicit UserMediaClientImpl(WebLocalFrameImpl*);
+ public:
+  static std::unique_ptr<UserMediaClientImpl> create(
+      WebUserMediaClient* client) {
+    return WTF::wrapUnique(new UserMediaClientImpl(client));
+  }
 
-    // UserMediaClient ----------------------------------------------
-    void requestUserMedia(UserMediaRequest*) override;
-    void cancelUserMediaRequest(UserMediaRequest*) override;
-    void requestMediaDevices(MediaDevicesRequest*) override;
-    void cancelMediaDevicesRequest(MediaDevicesRequest*) override;
-    void requestSources(MediaStreamTrackSourcesRequest*) override;
+  // UserMediaClient ----------------------------------------------
+  void requestUserMedia(UserMediaRequest*) override;
+  void cancelUserMediaRequest(UserMediaRequest*) override;
+  void requestMediaDevices(MediaDevicesRequest*) override;
+  void setMediaDeviceChangeObserver(MediaDevices*) override;
 
-private:
-    UserMediaClientImpl();
+ private:
+  explicit UserMediaClientImpl(WebUserMediaClient*);
 
-    WebUserMediaClient* m_client;
+  WebUserMediaClient* m_client;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // UserMediaClientImpl_h
+#endif  // UserMediaClientImpl_h

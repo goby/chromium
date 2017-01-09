@@ -4,13 +4,17 @@
 
 #include "components/proximity_auth/throttled_bluetooth_connection_finder.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/time/time.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/bluetooth_connection_finder.h"
 #include "components/proximity_auth/bluetooth_throttler.h"
 #include "components/proximity_auth/fake_connection.h"
-#include "components/proximity_auth/remote_device.h"
 #include "components/proximity_auth/wire_message.h"
 #include "device/bluetooth/bluetooth_uuid.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -27,9 +31,9 @@ const int kPollingIntervalSeconds = 7;
 const char kUuid[] = "DEADBEEF-CAFE-FEED-FOOD-D15EA5EBEEF";
 
 // A callback that stores a found |connection| into |out|.
-void SaveConnection(scoped_ptr<Connection>* out,
-                    scoped_ptr<Connection> connection) {
-  *out = connection.Pass();
+void SaveConnection(std::unique_ptr<Connection>* out,
+                    std::unique_ptr<Connection> connection) {
+  *out = std::move(connection);
 }
 
 class MockBluetoothThrottler : public BluetoothThrottler {
@@ -48,14 +52,14 @@ class FakeBluetoothConnectionFinder : public BluetoothConnectionFinder {
  public:
   FakeBluetoothConnectionFinder()
       : BluetoothConnectionFinder(
-            RemoteDevice(),
+            cryptauth::RemoteDevice(),
             device::BluetoothUUID(kUuid),
             base::TimeDelta::FromSeconds(kPollingIntervalSeconds)) {}
   ~FakeBluetoothConnectionFinder() override {}
 
   void Find(const ConnectionCallback& connection_callback) override {
     connection_callback.Run(
-        make_scoped_ptr(new FakeConnection(RemoteDevice())));
+        base::MakeUnique<FakeConnection>(cryptauth::RemoteDevice()));
   }
 
  private:
@@ -80,9 +84,9 @@ TEST_F(ProximityAuthThrottledBluetoothConnectionFinderTest,
   ON_CALL(throttler_, GetDelay()).WillByDefault(Return(base::TimeDelta()));
 
   ThrottledBluetoothConnectionFinder connection_finder(
-      make_scoped_ptr(new FakeBluetoothConnectionFinder), task_runner_,
+      base::WrapUnique(new FakeBluetoothConnectionFinder), task_runner_,
       &throttler_);
-  scoped_ptr<Connection> connection;
+  std::unique_ptr<Connection> connection;
   connection_finder.Find(base::Bind(&SaveConnection, &connection));
   EXPECT_TRUE(connection);
 }
@@ -93,9 +97,9 @@ TEST_F(ProximityAuthThrottledBluetoothConnectionFinderTest,
       .WillByDefault(Return(base::TimeDelta::FromSeconds(1)));
 
   ThrottledBluetoothConnectionFinder connection_finder(
-      make_scoped_ptr(new FakeBluetoothConnectionFinder), task_runner_,
+      base::WrapUnique(new FakeBluetoothConnectionFinder), task_runner_,
       &throttler_);
-  scoped_ptr<Connection> connection;
+  std::unique_ptr<Connection> connection;
   connection_finder.Find(base::Bind(&SaveConnection, &connection));
   EXPECT_FALSE(connection);
 
@@ -110,9 +114,9 @@ TEST_F(ProximityAuthThrottledBluetoothConnectionFinderTest,
   ON_CALL(throttler_, GetDelay()).WillByDefault(Return(base::TimeDelta()));
 
   ThrottledBluetoothConnectionFinder connection_finder(
-      make_scoped_ptr(new FakeBluetoothConnectionFinder), task_runner_,
+      base::WrapUnique(new FakeBluetoothConnectionFinder), task_runner_,
       &throttler_);
-  scoped_ptr<Connection> connection;
+  std::unique_ptr<Connection> connection;
   EXPECT_CALL(throttler_, OnConnection(_));
   connection_finder.Find(base::Bind(&SaveConnection, &connection));
   EXPECT_TRUE(connection);

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/stl_util.h"
 #include "components/webcrypto/algorithm_dispatch.h"
 #include "components/webcrypto/algorithms/ec.h"
@@ -74,7 +77,7 @@ bool ImportKeysFromTest(const base::DictionaryValue* test,
 class WebCryptoEcdhTest : public WebCryptoTestBase {};
 
 TEST_F(WebCryptoEcdhTest, DeriveBitsKnownAnswer) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("ecdh.json", &tests));
 
   for (size_t test_index = 0; test_index < tests->GetSize(); ++test_index) {
@@ -116,7 +119,7 @@ TEST_F(WebCryptoEcdhTest, DeriveBitsKnownAnswer) {
 // 528 bits.
 ::testing::AssertionResult LoadTestKeys(blink::WebCryptoKey* public_key,
                                         blink::WebCryptoKey* private_key) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   if (!ReadJsonTestFileToList("ecdh.json", &tests))
     return ::testing::AssertionFailure() << "Failed loading ecdh.json";
 
@@ -216,7 +219,7 @@ TEST_F(WebCryptoEcdhTest, DeriveKeyHmac19Bits) {
             ExportKey(blink::WebCryptoKeyFormatRaw, derived_key, &raw_key));
   EXPECT_EQ(3u, raw_key.size());
   // The last 7 bits of the key should be zero.
-  EXPECT_EQ(0, raw_key[raw_key.size() - 1] & 0x1f);
+  EXPECT_EQ(0, raw_key.back() & 0x1f);
 }
 
 // Derive an HMAC key with no specified length (just the hash of SHA-256).
@@ -299,7 +302,7 @@ TEST_F(WebCryptoEcdhTest, DeriveKeyAes128) {
 TEST_F(WebCryptoEcdhTest, ImportKeyEmptyUsage) {
   blink::WebCryptoKey key;
 
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("ecdh.json", &tests));
 
   const base::DictionaryValue* test;

@@ -1,24 +1,27 @@
 {
     "extensions": [
         {
-            "type": "@WebInspector.PanelFactory",
-            "name": "profiles",
+            "type": "view",
+            "location": "panel",
+            "id": "profiles",
             "title": "Profiles",
             "order": 60,
-            "className": "WebInspector.ProfilesPanelFactory"
+            "className": "Profiler.ProfilesPanel",
+            "condition": "v8only"
         },
         {
-            "type": "@WebInspector.ContextMenu.Provider",
-            "contextTypes": ["WebInspector.RemoteObject"],
-            "className": "WebInspector.ProfilesPanel.ContextMenuProvider"
+            "type": "view",
+            "location": "panel",
+            "id": "profiles",
+            "title": "Memory",
+            "order": 60,
+            "className": "Profiler.ProfilesPanel",
+            "condition": "!v8only"
         },
         {
-            "type": "setting",
-            "category": "Profiler",
-            "title": "Show advanced heap snapshot properties",
-            "settingName": "showAdvancedHeapSnapshotProperties",
-            "settingType": "boolean",
-            "defaultValue": false
+            "type": "@UI.ContextMenu.Provider",
+            "contextTypes": ["SDK.RemoteObject"],
+            "className": "Profiler.ProfilesPanel.ContextMenuProvider"
         },
         {
             "type": "setting",
@@ -34,7 +37,7 @@
             "title": "High resolution CPU profiling",
             "settingName": "highResolutionCpuProfiling",
             "settingType": "boolean",
-            "defaultValue": false
+            "defaultValue": true
         },
         {
             "type": "setting",
@@ -42,14 +45,16 @@
             "title": "Show native functions in JS Profile",
             "settingName": "showNativeFunctionsInJSProfile",
             "settingType": "boolean",
-            "defaultValue": false
+            "defaultValue": true
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "profiler.toggle-recording",
-            "iconClass": "record-toolbar-item",
-            "contextTypes": ["WebInspector.ProfilesPanel"],
-            "className": "WebInspector.ProfilesPanel.RecordActionDelegate",
+            "iconClass": "largeicon-start-recording",
+            "toggledIconClass": "largeicon-stop-recording",
+            "toggleWithRedColor": true,
+            "contextTypes": ["Profiler.ProfilesPanel"],
+            "className": "Profiler.ProfilesPanel.RecordActionDelegate",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -60,19 +65,29 @@
                     "shortcut": "Meta+E"
                 }
             ]
+        },
+        {
+            "type": "@UI.ActionDelegate",
+            "actionId": "profiler.collect-garbage",
+            "title": "Collect garbage",
+            "iconClass": "largeicon-trash-bin",
+            "className": "Profiler.ProfilesPanel.GCActionDelegate"
         }
     ],
     "dependencies": [
         "components",
+        "components_lazy",
         "ui_lazy"
     ],
     "scripts": [
         "ProfilesPanel.js",
-        "CPUProfileDataGrid.js",
-        "CPUProfileBottomUpDataGrid.js",
-        "CPUProfileTopDownDataGrid.js",
+        "ProfileView.js",
+        "ProfileDataGrid.js",
+        "BottomUpProfileDataGrid.js",
+        "TopDownProfileDataGrid.js",
         "CPUProfileFlameChart.js",
         "CPUProfileView.js",
+        "HeapProfileView.js",
         "HeapSnapshotCommon.js",
         "HeapSnapshotProxy.js",
         "HeapSnapshotDataGrids.js",
@@ -84,6 +99,7 @@
     ],
     "resources": [
         "heapProfiler.css",
-        "profilesPanel.css"
+        "profilesPanel.css",
+        "profilesSidebarTree.css"
     ]
 }

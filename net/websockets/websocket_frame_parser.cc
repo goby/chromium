@@ -6,12 +6,13 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "base/big_endian.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
 #include "net/base/io_buffer.h"
 #include "net/websockets/websocket_frame.h"
 
@@ -46,7 +47,7 @@ WebSocketFrameParser::~WebSocketFrameParser() {}
 bool WebSocketFrameParser::Decode(
     const char* data,
     size_t length,
-    ScopedVector<WebSocketFrameChunk>* frame_chunks) {
+    std::vector<std::unique_ptr<WebSocketFrameChunk>>* frame_chunks) {
   if (websocket_error_ != kWebSocketNormalClosure)
     return false;
   if (!length)
@@ -68,10 +69,10 @@ bool WebSocketFrameParser::Decode(
       first_chunk = true;
     }
 
-    scoped_ptr<WebSocketFrameChunk> frame_chunk =
+    std::unique_ptr<WebSocketFrameChunk> frame_chunk =
         DecodeFramePayload(first_chunk);
     DCHECK(frame_chunk.get());
-    frame_chunks->push_back(frame_chunk.Pass());
+    frame_chunks->push_back(std::move(frame_chunk));
 
     if (current_frame_header_.get()) {
       DCHECK(current_read_pos_ == buffer_.size());
@@ -168,7 +169,7 @@ void WebSocketFrameParser::DecodeFrameHeader() {
   DCHECK_EQ(0u, frame_offset_);
 }
 
-scoped_ptr<WebSocketFrameChunk> WebSocketFrameParser::DecodeFramePayload(
+std::unique_ptr<WebSocketFrameChunk> WebSocketFrameParser::DecodeFramePayload(
     bool first_chunk) {
   // The cast here is safe because |payload_length| is already checked to be
   // less than std::numeric_limits<int>::max() when the header is parsed.
@@ -176,7 +177,7 @@ scoped_ptr<WebSocketFrameChunk> WebSocketFrameParser::DecodeFramePayload(
       std::min(static_cast<uint64_t>(buffer_.size() - current_read_pos_),
                current_frame_header_->payload_length - frame_offset_));
 
-  scoped_ptr<WebSocketFrameChunk> frame_chunk(new WebSocketFrameChunk);
+  std::unique_ptr<WebSocketFrameChunk> frame_chunk(new WebSocketFrameChunk);
   if (first_chunk) {
     frame_chunk->header = current_frame_header_->Clone();
   }
@@ -203,7 +204,7 @@ scoped_ptr<WebSocketFrameChunk> WebSocketFrameParser::DecodeFramePayload(
     frame_offset_ = 0;
   }
 
-  return frame_chunk.Pass();
+  return frame_chunk;
 }
 
 }  // namespace net

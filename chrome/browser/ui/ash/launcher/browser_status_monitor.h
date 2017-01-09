@@ -5,28 +5,21 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_BROWSER_STATUS_MONITOR_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_BROWSER_STATUS_MONITOR_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 
-#include "ash/shelf/scoped_observer_with_duplicated_sources.h"
-#include "base/basictypes.h"
-#include "base/compiler_specific.h"
-#include "base/scoped_observer.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
-#include "ui/aura/window_observer.h"
-#include "ui/gfx/display_observer.h"
 #include "ui/wm/public/activation_change_observer.h"
 
 namespace aura {
 class Window;
-
-namespace client {
-class ActivationClient;
-}
 }  // namespace aura
 
 class Browser;
@@ -35,10 +28,8 @@ class Browser;
 // TabStripModel to keep the launcher representation up to date as the
 // active tab changes.
 class BrowserStatusMonitor : public aura::client::ActivationChangeObserver,
-                             public aura::WindowObserver,
                              public BrowserTabStripTrackerDelegate,
                              public chrome::BrowserListObserver,
-                             public gfx::DisplayObserver,
                              public TabStripModelObserver {
  public:
   explicit BrowserStatusMonitor(ChromeLauncherController* launcher_controller);
@@ -64,21 +55,12 @@ class BrowserStatusMonitor : public aura::client::ActivationChangeObserver,
       aura::Window* gained_active,
       aura::Window* lost_active) override;
 
-  // aura::WindowObserver overrides:
-  void OnWindowDestroyed(aura::Window* window) override;
-
   // BrowserTabStripTrackerDelegate overrides:
   bool ShouldTrackBrowser(Browser* browser) override;
 
   // chrome::BrowserListObserver overrides:
   void OnBrowserAdded(Browser* browser) override;
   void OnBrowserRemoved(Browser* browser) override;
-
-  // gfx::DisplayObserver overrides:
-  void OnDisplayAdded(const gfx::Display& new_display) override;
-  void OnDisplayRemoved(const gfx::Display& old_display) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
-                               uint32_t metrics) override;
 
   // TabStripModelObserver overrides:
   void ActiveTabChanged(content::WebContents* old_contents,
@@ -89,7 +71,8 @@ class BrowserStatusMonitor : public aura::client::ActivationChangeObserver,
                      content::WebContents* old_contents,
                      content::WebContents* new_contents,
                      int index) override;
-  void TabInsertedAt(content::WebContents* contents,
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     content::WebContents* contents,
                      int index,
                      bool foreground) override;
   void TabClosingAt(TabStripModel* tab_strip_mode,
@@ -115,11 +98,6 @@ class BrowserStatusMonitor : public aura::client::ActivationChangeObserver,
 
  private:
   class LocalWebContentsObserver;
-  class SettingsWindowObserver;
-
-  typedef std::map<Browser*, std::string> BrowserToAppIDMap;
-  typedef std::map<content::WebContents*, LocalWebContentsObserver*>
-      WebContentsToObserverMap;
 
   // Create LocalWebContentsObserver for |contents|.
   void AddWebContentsObserver(content::WebContents* contents);
@@ -136,16 +114,9 @@ class BrowserStatusMonitor : public aura::client::ActivationChangeObserver,
 
   ChromeLauncherController* launcher_controller_;
 
-  // Hold all observed activation clients.
-  ScopedObserverWithDuplicatedSources<aura::client::ActivationClient,
-      aura::client::ActivationChangeObserver> observed_activation_clients_;
-
-  // Hold all observed root windows.
-  ScopedObserver<aura::Window, aura::WindowObserver> observed_root_windows_;
-
-  BrowserToAppIDMap browser_to_app_id_map_;
-  WebContentsToObserverMap webcontents_to_observer_map_;
-  scoped_ptr<SettingsWindowObserver> settings_window_observer_;
+  std::map<Browser*, std::string> browser_to_app_id_map_;
+  std::map<content::WebContents*, std::unique_ptr<LocalWebContentsObserver>>
+      webcontents_to_observer_map_;
 
   BrowserTabStripTracker browser_tab_strip_tracker_;
 

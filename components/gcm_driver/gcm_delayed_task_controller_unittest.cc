@@ -4,6 +4,8 @@
 
 #include "components/gcm_driver/gcm_delayed_task_controller.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -21,7 +23,7 @@ class GCMDelayedTaskControllerTest : public testing::Test {
   int number_of_triggered_tasks() const { return number_of_triggered_tasks_; }
 
  private:
-  scoped_ptr<GCMDelayedTaskController> controller_;
+  std::unique_ptr<GCMDelayedTaskController> controller_;
   int number_of_triggered_tasks_;
 };
 

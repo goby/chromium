@@ -4,11 +4,11 @@
 
 #include "components/omnibox/browser/clipboard_url_provider.h"
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/mock_autocomplete_provider_client.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
@@ -26,8 +26,8 @@ class ClipboardURLProviderTest : public testing::Test {
  public:
   ClipboardURLProviderTest()
       : client_(new testing::NiceMock<MockAutocompleteProviderClient>()),
-        provider_(
-            new ClipboardURLProvider(client_.get(), &clipboard_content_)) {
+        provider_(new ClipboardURLProvider(client_.get(), nullptr,
+                                           &clipboard_content_)) {
     SetClipboardUrl(GURL(kClipboardURL));
   }
 
@@ -50,7 +50,7 @@ class ClipboardURLProviderTest : public testing::Test {
  protected:
   TestSchemeClassifier classifier_;
   FakeClipboardRecentContent clipboard_content_;
-  scoped_ptr<testing::NiceMock<MockAutocompleteProviderClient>> client_;
+  std::unique_ptr<testing::NiceMock<MockAutocompleteProviderClient>> client_;
   scoped_refptr<ClipboardURLProvider> provider_;
 };
 

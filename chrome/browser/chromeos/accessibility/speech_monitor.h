@@ -7,6 +7,7 @@
 
 #include <deque>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/speech/tts_platform.h"
 #include "content/public/test/test_utils.h"
@@ -27,6 +28,7 @@ class SpeechMonitor : public TtsPlatformImpl {
   // Wait for next utterance and return true if next utterance is ChromeVox
   // enabled message.
   bool SkipChromeVoxEnabledMessage();
+  bool SkipChromeVoxMessage(const std::string& message);
 
   // TtsPlatformImpl implementation.
   bool PlatformImplAvailable() override;

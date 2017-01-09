@@ -17,40 +17,39 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/layout/svg/SVGTextLayoutEngineSpacing.h"
 
-#include "platform/fonts/Character.h"
 #include "platform/fonts/Font.h"
+#include "platform/text/Character.h"
 
 namespace blink {
 
-SVGTextLayoutEngineSpacing::SVGTextLayoutEngineSpacing(const Font& font, float effectiveZoom)
-    : m_font(font)
-    , m_lastCharacter(0)
-    , m_effectiveZoom(effectiveZoom)
-{
-    ASSERT(m_effectiveZoom);
+SVGTextLayoutEngineSpacing::SVGTextLayoutEngineSpacing(const Font& font,
+                                                       float effectiveZoom)
+    : m_font(font), m_lastCharacter(0), m_effectiveZoom(effectiveZoom) {
+  ASSERT(m_effectiveZoom);
 }
 
-float SVGTextLayoutEngineSpacing::calculateCSSSpacing(UChar currentCharacter)
-{
-    UChar lastCharacter = m_lastCharacter;
-    m_lastCharacter = currentCharacter;
+float SVGTextLayoutEngineSpacing::calculateCSSSpacing(UChar currentCharacter) {
+  UChar lastCharacter = m_lastCharacter;
+  m_lastCharacter = currentCharacter;
 
-    if (!m_font.fontDescription().letterSpacing() && !m_font.fontDescription().wordSpacing())
-        return 0;
+  if (!m_font.getFontDescription().letterSpacing() &&
+      !m_font.getFontDescription().wordSpacing())
+    return 0;
 
-    float spacing = m_font.fontDescription().letterSpacing();
-    if (currentCharacter && lastCharacter && m_font.fontDescription().wordSpacing()) {
-        if (Character::treatAsSpace(currentCharacter) && !Character::treatAsSpace(lastCharacter))
-            spacing += m_font.fontDescription().wordSpacing();
-    }
+  float spacing = m_font.getFontDescription().letterSpacing();
+  if (currentCharacter && lastCharacter &&
+      m_font.getFontDescription().wordSpacing()) {
+    if (Character::treatAsSpace(currentCharacter) &&
+        !Character::treatAsSpace(lastCharacter))
+      spacing += m_font.getFontDescription().wordSpacing();
+  }
 
-    if (m_effectiveZoom != 1)
-        spacing = spacing / m_effectiveZoom;
+  if (m_effectiveZoom != 1)
+    spacing = spacing / m_effectiveZoom;
 
-    return spacing;
+  return spacing;
 }
 
-}
+}  // namespace blink

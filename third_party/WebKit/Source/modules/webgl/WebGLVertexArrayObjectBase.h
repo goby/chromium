@@ -5,6 +5,7 @@
 #ifndef WebGLVertexArrayObjectBase_h
 #define WebGLVertexArrayObjectBase_h
 
+#include "bindings/core/v8/TraceWrapperMember.h"
 #include "modules/webgl/WebGLBuffer.h"
 #include "modules/webgl/WebGLContextObject.h"
 #include "platform/heap/Handle.h"
@@ -12,78 +13,61 @@
 namespace blink {
 
 class WebGLVertexArrayObjectBase : public WebGLContextObject {
-public:
-    enum VaoType {
-        VaoTypeDefault,
-        VaoTypeUser,
-    };
+ public:
+  enum VaoType {
+    VaoTypeDefault,
+    VaoTypeUser,
+  };
 
-    ~WebGLVertexArrayObjectBase() override;
+  ~WebGLVertexArrayObjectBase() override;
 
-    Platform3DObject object() const { return m_object; }
+  GLuint object() const { return m_object; }
 
-    // Cached values for vertex attrib range checks
-    class VertexAttribState final : public GarbageCollected<VertexAttribState> {
-    public:
-        VertexAttribState()
-            : enabled(false)
-            , bytesPerElement(0)
-            , size(4)
-            , type(GL_FLOAT)
-            , normalized(false)
-            , stride(16)
-            , originalStride(0)
-            , offset(0)
-            , divisor(0)
-        {
-        }
+  bool isDefaultObject() const { return m_type == VaoTypeDefault; }
 
-        DECLARE_TRACE();
+  bool hasEverBeenBound() const { return object() && m_hasEverBeenBound; }
+  void setHasEverBeenBound() { m_hasEverBeenBound = true; }
 
-        bool enabled;
-        Member<WebGLBuffer> bufferBinding;
-        GLsizei bytesPerElement;
-        GLint size;
-        GLenum type;
-        bool normalized;
-        GLsizei stride;
-        GLsizei originalStride;
-        GLintptr offset;
-        GLuint divisor;
-    };
+  WebGLBuffer* boundElementArrayBuffer() const {
+    return m_boundElementArrayBuffer;
+  }
+  void setElementArrayBuffer(WebGLBuffer*);
 
-    bool isDefaultObject() const { return m_type == VaoTypeDefault; }
+  WebGLBuffer* getArrayBufferForAttrib(size_t);
+  void setArrayBufferForAttrib(GLuint, WebGLBuffer*);
+  void setAttribEnabled(GLuint, bool);
+  bool getAttribEnabled(GLuint) const;
+  bool isAllEnabledAttribBufferBound() const {
+    return m_isAllEnabledAttribBufferBound;
+  }
+  void unbindBuffer(WebGLBuffer*);
 
-    bool hasEverBeenBound() const { return object() && m_hasEverBeenBound; }
-    void setHasEverBeenBound() { m_hasEverBeenBound = true; }
+  virtual void visitChildDOMWrappers(v8::Isolate*,
+                                     const v8::Persistent<v8::Object>&);
 
-    WebGLBuffer* boundElementArrayBuffer() const { return m_boundElementArrayBuffer; }
-    void setElementArrayBuffer(WebGLBuffer*);
+  DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
-    VertexAttribState* getVertexAttribState(size_t);
-    void setVertexAttribState(GLuint, GLsizei, GLint, GLenum, GLboolean, GLsizei, GLintptr, WebGLBuffer*);
-    void unbindBuffer(WebGLBuffer*);
-    void setVertexAttribDivisor(GLuint index, GLuint divisor);
+ protected:
+  WebGLVertexArrayObjectBase(WebGLRenderingContextBase*, VaoType);
 
-    DECLARE_VIRTUAL_TRACE();
+ private:
+  void dispatchDetached(gpu::gles2::GLES2Interface*);
+  bool hasObject() const override { return m_object != 0; }
+  void deleteObjectImpl(gpu::gles2::GLES2Interface*) override;
 
-protected:
-    WebGLVertexArrayObjectBase(WebGLRenderingContextBase*, VaoType);
+  void updateAttribBufferBoundStatus();
 
-private:
-    void dispatchDetached(WebGraphicsContext3D*);
-    bool hasObject() const override { return m_object != 0; }
-    void deleteObjectImpl(WebGraphicsContext3D*) override;
+  GLuint m_object;
 
-    Platform3DObject m_object;
-
-    VaoType m_type;
-    bool m_hasEverBeenBound;
-    bool m_destructionInProgress;
-    Member<WebGLBuffer> m_boundElementArrayBuffer;
-    HeapVector<Member<VertexAttribState>> m_vertexAttribState;
+  VaoType m_type;
+  bool m_hasEverBeenBound;
+  TraceWrapperMember<WebGLBuffer> m_boundElementArrayBuffer;
+  HeapVector<TraceWrapperMember<WebGLBuffer>> m_arrayBufferList;
+  Vector<bool> m_attribEnabled;
+  bool m_isAllEnabledAttribBufferBound;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebGLVertexArrayObjectBase_h
+#endif  // WebGLVertexArrayObjectBase_h

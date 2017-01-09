@@ -5,14 +5,13 @@
 #ifndef ASH_FIRST_RUN_FIRST_RUN_HELPER_IMPL_H_
 #define ASH_FIRST_RUN_FIRST_RUN_HELPER_IMPL_H_
 
-#include "ash/first_run/first_run_helper.h"
 #include "ash/first_run/desktop_cleaner.h"
+#include "ash/first_run/first_run_helper.h"
 #include "ash/wm/overlay_event_filter.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 
 namespace ash {
-
-class Shell;
 
 class FirstRunHelperImpl : public FirstRunHelper,
                            public OverlayEventFilter::Delegate {
@@ -22,11 +21,7 @@ class FirstRunHelperImpl : public FirstRunHelper,
 
   // Overriden from FirstRunHelper.
   views::Widget* GetOverlayWidget() override;
-  void OpenAppList() override;
-  void CloseAppList() override;
-  gfx::Rect GetLauncherBounds() override;
   gfx::Rect GetAppListButtonBounds() override;
-  gfx::Rect GetAppListBounds() override;
   void OpenTrayBubble() override;
   void CloseTrayBubble() override;
   bool IsTrayBubbleOpened() override;
@@ -48,4 +43,3 @@ class FirstRunHelperImpl : public FirstRunHelper,
 }  // namespace ash
 
 #endif  // ASH_FIRST_RUN_FIRST_RUN_HELPER_IMPL_H_
-

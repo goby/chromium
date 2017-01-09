@@ -5,8 +5,10 @@
 #ifndef REMOTING_CLIENT_PLUGIN_PEPPER_MOUSE_LOCKER_H_
 #define REMOTING_CLIENT_PLUGIN_PEPPER_MOUSE_LOCKER_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ppapi/cpp/mouse_lock.h"
 #include "ppapi/utility/completion_callback_factory.h"
 #include "remoting/protocol/cursor_shape_stub.h"
@@ -16,8 +18,6 @@ class Instance;
 }  // namespace pp
 
 namespace remoting {
-
-class PepperInputHandler;
 
 class PepperMouseLocker : public pp::MouseLock,
                           public protocol::CursorShapeStub {
@@ -66,7 +66,7 @@ private:
   protocol::CursorShapeStub* cursor_stub_;
 
   // Copy of the most-recently-set cursor, to set when mouse-lock is cancelled.
-  scoped_ptr<protocol::CursorShapeInfo> cursor_shape_;
+  std::unique_ptr<protocol::CursorShapeInfo> cursor_shape_;
 
   // Used to create PPAPI callbacks that will be abandoned when |this| is
   // deleted.

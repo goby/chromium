@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_BLOB_READER_H_
 #define CHROME_BROWSER_EXTENSIONS_BLOB_READER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/base/io_buffer.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request.h"
@@ -25,8 +28,8 @@ class BlobReader : public net::URLFetcherDelegate {
   // |blob_data| contains the portion of the Blob requested. |blob_total_size|
   // is the total size of the Blob, and may be larger than |blob_data->size()|.
   // |blob_total_size| is -1 if it cannot be determined.
-  typedef base::Callback<void(scoped_ptr<std::string> blob_data,
-                              int64 blob_total_size)>
+  typedef base::Callback<void(std::unique_ptr<std::string> blob_data,
+                              int64_t blob_total_size)>
       BlobReadCallback;
 
   BlobReader(Profile* profile,
@@ -34,7 +37,7 @@ class BlobReader : public net::URLFetcherDelegate {
              BlobReadCallback callback);
   ~BlobReader() override;
 
-  void SetByteRange(int64 offset, int64 length);
+  void SetByteRange(int64_t offset, int64_t length);
 
   void Start();
 
@@ -43,7 +46,7 @@ class BlobReader : public net::URLFetcherDelegate {
   void OnURLFetchComplete(const net::URLFetcher* source) override;
 
   BlobReadCallback callback_;
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(BlobReader);
 };

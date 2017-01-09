@@ -13,12 +13,13 @@ import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.sync.FakeProfileSyncService;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.test.util.ApplicationData;
 import org.chromium.chrome.test.util.browser.signin.SigninTestUtil;
+import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.content.browser.test.NativeLibraryTestBase;
-import org.chromium.sync.signin.ChromeSigninController;
 
 /**
  * Tests for PassphraseActivity.
@@ -42,7 +43,7 @@ public class PassphraseActivityTest extends NativeLibraryTestBase {
         // Clear ProfileSyncService in case it was mocked.
         ProfileSyncService.overrideForTests(null);
         super.tearDown();
-        SigninTestUtil.get().resetSigninState();
+        SigninTestUtil.resetSigninState();
     }
 
     /**
@@ -50,9 +51,10 @@ public class PassphraseActivityTest extends NativeLibraryTestBase {
      */
     @SmallTest
     @Feature({"Sync"})
+    @RetryOnFailure
     public void testCallbackAfterBackgrounded() throws Exception {
         getInstrumentation().waitForIdleSync();
-        SigninTestUtil.get().addAndSignInTestAccount();
+        SigninTestUtil.addAndSignInTestAccount();
 
         // Override before creating the activity so we know initialized is false.
         overrideProfileSyncService();
@@ -72,7 +74,7 @@ public class PassphraseActivityTest extends NativeLibraryTestBase {
                 getInstrumentation().callActivityOnSaveInstanceState(activity, bundle);
                 // Fake sync's backend finishing its initialization.
                 FakeProfileSyncService pss = (FakeProfileSyncService) ProfileSyncService.get();
-                pss.setSyncInitialized(true);
+                pss.setEngineInitialized(true);
                 pss.syncStateChanged();
             }
         });

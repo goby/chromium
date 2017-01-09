@@ -4,8 +4,11 @@
 
 #include "remoting/protocol/v2_authenticator.h"
 
+#include <utility>
+
 #include "base/base64.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "remoting/base/constants.h"
 #include "remoting/base/rsa_key_pair.h"
 #include "remoting/protocol/ssl_hmac_channel_authenticator.h"
@@ -31,24 +34,24 @@ bool V2Authenticator::IsEkeMessage(const buzz::XmlElement* message) {
 }
 
 // static
-scoped_ptr<Authenticator> V2Authenticator::CreateForClient(
+std::unique_ptr<Authenticator> V2Authenticator::CreateForClient(
     const std::string& shared_secret,
     Authenticator::State initial_state) {
-  return make_scoped_ptr(new V2Authenticator(
+  return base::WrapUnique(new V2Authenticator(
       P224EncryptedKeyExchange::kPeerTypeClient, shared_secret, initial_state));
 }
 
 // static
-scoped_ptr<Authenticator> V2Authenticator::CreateForHost(
+std::unique_ptr<Authenticator> V2Authenticator::CreateForHost(
     const std::string& local_cert,
     scoped_refptr<RsaKeyPair> key_pair,
     const std::string& shared_secret,
     Authenticator::State initial_state) {
-  scoped_ptr<V2Authenticator> result(new V2Authenticator(
+  std::unique_ptr<V2Authenticator> result(new V2Authenticator(
       P224EncryptedKeyExchange::kPeerTypeServer, shared_secret, initial_state));
   result->local_cert_ = local_cert;
   result->local_key_pair_ = key_pair;
-  return result.Pass();
+  return std::move(result);
 }
 
 V2Authenticator::V2Authenticator(
@@ -148,10 +151,10 @@ void V2Authenticator::ProcessMessageInternal(const buzz::XmlElement* message) {
   state_ = MESSAGE_READY;
 }
 
-scoped_ptr<buzz::XmlElement> V2Authenticator::GetNextMessage() {
+std::unique_ptr<buzz::XmlElement> V2Authenticator::GetNextMessage() {
   DCHECK_EQ(state(), MESSAGE_READY);
 
-  scoped_ptr<buzz::XmlElement> message = CreateEmptyAuthenticatorMessage();
+  std::unique_ptr<buzz::XmlElement> message = CreateEmptyAuthenticatorMessage();
 
   DCHECK(!pending_messages_.empty());
   while (!pending_messages_.empty()) {
@@ -178,14 +181,14 @@ scoped_ptr<buzz::XmlElement> V2Authenticator::GetNextMessage() {
   if (state_ != ACCEPTED) {
     state_ = WAITING_MESSAGE;
   }
-  return message.Pass();
+  return message;
 }
 
 const std::string& V2Authenticator::GetAuthKey() const {
   return auth_key_;
 }
 
-scoped_ptr<ChannelAuthenticator>
+std::unique_ptr<ChannelAuthenticator>
 V2Authenticator::CreateChannelAuthenticator() const {
   DCHECK_EQ(state(), ACCEPTED);
   CHECK(!auth_key_.empty());

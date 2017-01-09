@@ -5,8 +5,10 @@
 #ifndef SQL_CONNECTION_H_
 #define SQL_CONNECTION_H_
 
+#include <stddef.h>
 #include <stdint.h>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -16,10 +18,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
-#include "base/trace_event/memory_dump_provider.h"
 #include "sql/sql_export.h"
 
 struct sqlite3;
@@ -28,16 +28,21 @@ struct sqlite3_stmt;
 namespace base {
 class FilePath;
 class HistogramBase;
+namespace trace_event {
+class ProcessMemoryDump;
+}
 }
 
 namespace sql {
 
+class ConnectionMemoryDumpProvider;
 class Recovery;
 class Statement;
 
 // To allow some test classes to be friended.
 namespace test {
 class ScopedCommitHook;
+class ScopedErrorExpecter;
 class ScopedScalarFunction;
 class ScopedMockTimeSource;
 }
@@ -104,7 +109,7 @@ class SQL_EXPORT TimeSource {
   DISALLOW_COPY_AND_ASSIGN(TimeSource);
 };
 
-class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
+class SQL_EXPORT Connection {
  private:
   class StatementRef;  // Forward declaration, see real one below.
 
@@ -112,7 +117,7 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   // The database is opened by calling Open[InMemory](). Any uncommitted
   // transactions will be rolled back when this object is deleted.
   Connection();
-  ~Connection() override;
+  ~Connection();
 
   // Pre-init configuration ----------------------------------------------------
 
@@ -147,6 +152,11 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   // TODO(shess): Currently only supported on OS_POSIX, is a noop on
   // other platforms.
   void set_restrict_to_user() { restrict_to_user_ = true; }
+
+  // Call to use alternative status-tracking for mmap.  Usually this is tracked
+  // in the meta table, but some databases have no meta table.
+  // TODO(shess): Maybe just have all databases use the alt option?
+  void set_mmap_alt_status() { mmap_alt_status_ = true; }
 
   // Call to opt out of memory-mapped file I/O.
   void set_mmap_disabled() { mmap_disabled_ = true; }
@@ -217,6 +227,9 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
     EVENT_MMAP_SUCCESS_PARTIAL,      // Read but did not reach EOF.
     EVENT_MMAP_SUCCESS_NO_PROGRESS,  // Read quota exhausted.
 
+    EVENT_MMAP_STATUS_FAILURE_READ,  // Failure reading MmapStatus view.
+    EVENT_MMAP_STATUS_FAILURE_UPDATE,// Failure updating MmapStatus view.
+
     // Leave this at the end.
     // TODO(shess): |EVENT_MAX| causes compile fail on Windows.
     EVENT_MAX_VALUE
@@ -236,6 +249,14 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   // interprets the results returning true if the the statement executes
   // without error and results in a single "ok" value.
   bool QuickIntegrityCheck() WARN_UNUSED_RESULT;
+
+  // Meant to be called from a client error callback so that it's able to
+  // get diagnostic information about the database.
+  std::string GetDiagnosticInfo(int extended_error, Statement* statement);
+
+  // Reports memory usage into provided memory dump with the given name.
+  bool ReportMemoryUsage(base::trace_event::ProcessMemoryDump* pmd,
+                         const std::string& dump_name);
 
   // Initialization ------------------------------------------------------------
 
@@ -437,11 +458,12 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
 
   // Info querying -------------------------------------------------------------
 
-  // Returns true if the given table (or index) exists.  Instead of
-  // test-then-create, callers should almost always prefer "CREATE TABLE IF NOT
-  // EXISTS" or "CREATE INDEX IF NOT EXISTS".
-  bool DoesTableExist(const char* table_name) const;
+  // Returns true if the given structure exists.  Instead of test-then-create,
+  // callers should almost always prefer the "IF NOT EXISTS" version of the
+  // CREATE statement.
   bool DoesIndexExist(const char* index_name) const;
+  bool DoesTableExist(const char* table_name) const;
+  bool DoesViewExist(const char* table_name) const;
 
   // Returns true if a column with the given name exists in the given table.
   bool DoesColumnExist(const char* table_name, const char* column_name) const;
@@ -473,20 +495,12 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   //   SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY 1, 2, 3, 4;
   std::string GetSchema() const;
 
-  // Clients which provide an error_callback don't see the
-  // error-handling at the end of OnSqliteError().  Expose to allow
-  // those clients to work appropriately with ScopedErrorIgnorer in
-  // tests.
-  static bool ShouldIgnoreSqliteError(int error);
-
-  // Additionally ignores errors which are unlikely to be caused by problems
-  // with the syntax of a SQL statement, or problems with the database schema.
-  static bool ShouldIgnoreSqliteCompileError(int error);
-
-  // base::trace_event::MemoryDumpProvider implementation.
-  bool OnMemoryDump(
-      const base::trace_event::MemoryDumpArgs& args,
-      base::trace_event::ProcessMemoryDump* process_memory_dump) override;
+  // Returns |true| if there is an error expecter (see SetErrorExpecter), and
+  // that expecter returns |true| when passed |error|.  Clients which provide an
+  // |error_callback| should use IsExpectedSqliteError() to check for unexpected
+  // errors; if one is detected, DLOG(FATAL) is generally appropriate (see
+  // OnSqliteError implementation).
+  static bool IsExpectedSqliteError(int error);
 
   // Collect various diagnostic information and post a crash dump to aid
   // debugging.  Dump rate per database is limited to prevent overwhelming the
@@ -497,8 +511,8 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   // For recovery module.
   friend class Recovery;
 
-  // Allow test-support code to set/reset error ignorer.
-  friend class ScopedErrorIgnorer;
+  // Allow test-support code to set/reset error expecter.
+  friend class test::ScopedErrorExpecter;
 
   // Statement accesses StatementRef which we don't want to expose to everybody
   // (they should go through Statement).
@@ -509,6 +523,9 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   friend class test::ScopedMockTimeSource;
 
   FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, CollectDiagnosticInfo);
+  FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, GetAppropriateMmapSize);
+  FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, GetAppropriateMmapSizeAltStatus);
+  FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, OnMemoryDump);
   FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, RegisterIntentToUpload);
 
   // Internal initialize function used by both Init and InitInMemory. The file
@@ -535,15 +552,15 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
       base::ThreadRestrictions::AssertIOAllowed();
   }
 
-  // Internal helper for DoesTableExist and DoesIndexExist.
-  bool DoesTableOrIndexExist(const char* name, const char* type) const;
+  // Internal helper for Does*Exist() functions.
+  bool DoesSchemaItemExist(const char* name, const char* type) const;
 
-  // Accessors for global error-ignorer, for injecting behavior during tests.
-  // See test/scoped_error_ignorer.h.
-  typedef base::Callback<bool(int)> ErrorIgnorerCallback;
-  static ErrorIgnorerCallback* current_ignorer_cb_;
-  static void SetErrorIgnorer(ErrorIgnorerCallback* ignorer);
-  static void ResetErrorIgnorer();
+  // Accessors for global error-expecter, for injecting behavior during tests.
+  // See test/scoped_error_expecter.h.
+  typedef base::Callback<bool(int)> ErrorExpecterCallback;
+  static ErrorExpecterCallback* current_expecter_cb_;
+  static void SetErrorExpecter(ErrorExpecterCallback* expecter);
+  static void ResetErrorExpecter();
 
   // A StatementRef is a refcounted wrapper around a sqlite statement pointer.
   // Refcounting allows us to give these statements out to sql::Statement
@@ -626,18 +643,24 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   // error handlers to transparently convert errors into success.
   // Unfortunately, transactions are not generally restartable, so
   // this did not work out.
-  int OnSqliteError(int err, Statement* stmt, const char* sql);
+  int OnSqliteError(int err, Statement* stmt, const char* sql) const;
 
   // Like |Execute()|, but retries if the database is locked.
   bool ExecuteWithTimeout(const char* sql, base::TimeDelta ms_timeout)
       WARN_UNUSED_RESULT;
 
-  // Internal helper for const functions.  Like GetUniqueStatement(),
-  // except the statement is not entered into open_statements_,
-  // allowing this function to be const.  Open statements can block
-  // closing the database, so only use in cases where the last ref is
-  // released before close could be called (which should always be the
-  // case for const functions).
+  // Implementation helper for GetUniqueStatement() and GetUntrackedStatement().
+  // |tracking_db| is the db the resulting ref should register with for
+  // outstanding statement tracking, which should be |this| to track or NULL to
+  // not track.
+  scoped_refptr<StatementRef> GetStatementImpl(
+      sql::Connection* tracking_db, const char* sql) const;
+
+  // Helper for implementing const member functions.  Like GetUniqueStatement(),
+  // except the StatementRef is not entered into |open_statements_|, so an
+  // outstanding StatementRef from this function can block closing the database.
+  // The StatementRef will not call OnSqliteError(), because that can call
+  // |error_callback_| which can close the database.
   scoped_refptr<StatementRef> GetUntrackedStatement(const char* sql) const;
 
   bool IntegrityCheckHelper(
@@ -716,6 +739,10 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   // the file should only be read through once.
   size_t GetAppropriateMmapSize();
 
+  // Helpers for GetAppropriateMmapSize().
+  bool GetMmapAltStatus(int64_t* status);
+  bool SetMmapAltStatus(int64_t status);
+
   // The actual sqlite database. Will be NULL before Init has been called or if
   // Init resulted in an error.
   sqlite3* db_;
@@ -757,6 +784,9 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
   // databases.
   bool poisoned_;
 
+  // |true| to use alternate storage for tracking mmap status.
+  bool mmap_alt_status_;
+
   // |true| if SQLite memory-mapped I/O is not desired for this connection.
   bool mmap_disabled_;
 
@@ -791,7 +821,10 @@ class SQL_EXPORT Connection : public base::trace_event::MemoryDumpProvider {
 
   // Source for timing information, provided to allow tests to inject time
   // changes.
-  scoped_ptr<TimeSource> clock_;
+  std::unique_ptr<TimeSource> clock_;
+
+  // Stores the dump provider object when db is open.
+  std::unique_ptr<ConnectionMemoryDumpProvider> memory_dump_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(Connection);
 };

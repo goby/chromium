@@ -4,9 +4,11 @@
 
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field_editor.h"
 
+#include "base/mac/sdk_forward_declarations.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"  // IDC_*
+#include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser_list.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
@@ -14,9 +16,16 @@
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/grit/generated_resources.h"
 #import "ui/base/cocoa/find_pasteboard.h"
+#import "ui/base/cocoa/touch_bar_forward_declarations.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 namespace {
+
+// Set to true when an instance of this class is running a nested run loop.
+// Since this must always be run on the UI thread, there should never be two
+// simultaneous drags.
+bool gInDrag = false;
 
 // When too much data is put into a single-line text field, things get
 // janky due to the cost of computing the blink rect.  Sometimes users
@@ -41,7 +50,28 @@ BOOL ThePasteboardIsTooDamnBig() {
   return [[pb stringForType:type] length] > kMaxPasteLength;
 }
 
+// Returns a possibly disabled "Paste and {Go, Search}" menu item.
+NSMenuItem* PasteAndGoMenuItemForObserver(
+    AutocompleteTextFieldObserver* observer) {
+  DCHECK(observer);
+  int string_id = IDS_PASTE_AND_GO;
+  BOOL enabled = !ThePasteboardIsTooDamnBig() && observer->CanPasteAndGo();
+  if (enabled)
+    string_id = observer->GetPasteActionStringId();
+
+  NSString* title = l10n_util::GetNSStringWithFixup(string_id);
+  base::scoped_nsobject<NSMenuItem> item([[NSMenuItem alloc]
+      initWithTitle:title
+             action:@selector(pasteAndGo:)
+      keyEquivalent:@""]);
+  [item setEnabled:enabled];
+  return item.autorelease();
+}
+
 }  // namespace
+
+@interface AutocompleteTextFieldEditor ()<NSDraggingSource>
+@end
 
 @implementation AutocompleteTextFieldEditor
 
@@ -67,6 +97,46 @@ BOOL ThePasteboardIsTooDamnBig() {
   return self;
 }
 
+// Overridden to prevent unwanted items from appearing in the Touch Bar.
+- (NSTouchBar*)makeTouchBar {
+  return nil;
+}
+
+- (void)updateColorsToMatchTheme {
+  if (![[self window] inIncognitoMode]) {
+    return;
+  }
+
+  bool inDarkMode = [[self window] inIncognitoModeWithSystemTheme];
+  // Draw a white insertion point for MD Incognito.
+  NSColor* insertionPointColor =
+      inDarkMode ? [NSColor whiteColor] : [NSColor blackColor];
+  [self setInsertionPointColor:insertionPointColor];
+
+  NSColor* textSelectionColor = [NSColor selectedTextBackgroundColor];
+  if (inDarkMode) {
+    // In MD Incognito the text is light gray against a dark background. When
+    // selected, the light gray text against the selection color is illegible.
+    // Rather than tweak or change the selection color, make the text black when
+    // selected.
+    [self setSelectedTextAttributes:@{
+      NSForegroundColorAttributeName : [NSColor blackColor],
+      NSBackgroundColorAttributeName : textSelectionColor
+    }];
+  } else {
+    [self setSelectedTextAttributes:@{
+      NSBackgroundColorAttributeName : textSelectionColor
+    }];
+  }
+}
+
+- (void)viewDidMoveToWindow {
+  // Only care about landing in a window.
+  if ([self window]) {
+    [self updateColorsToMatchTheme];
+  }
+}
+
 // If the entire field is selected, drag the same data as would be
 // dragged from the field's location icon.  In some cases the textual
 // contents will not contain relevant data (for instance, "http://" is
@@ -77,24 +147,37 @@ BOOL ThePasteboardIsTooDamnBig() {
   AutocompleteTextFieldObserver* observer = [self observer];
   DCHECK(observer);
   if (observer && observer->CanCopy()) {
-    NSPasteboard* pboard = [NSPasteboard pasteboardWithName:NSDragPboard];
-    observer->CopyToPasteboard(pboard);
-
     NSPoint p;
     NSImage* image = [self dragImageForSelectionWithEvent:event origin:&p];
 
-    [self dragImage:image
-                 at:p
-             offset:mouseOffset
-              event:event
-         pasteboard:pboard
-             source:self
-          slideBack:slideBack];
+    base::scoped_nsobject<NSPasteboardItem> item(
+        observer->CreatePasteboardItem());
+    base::scoped_nsobject<NSDraggingItem> dragItem(
+        [[NSDraggingItem alloc] initWithPasteboardWriter:item]);
+    NSRect draggingFrame =
+        NSMakeRect(0, 0, image.size.width, image.size.height);
+    [dragItem setDraggingFrame:draggingFrame contents:image];
+    [self beginDraggingSessionWithItems:@[ dragItem.get() ]
+                                  event:event
+                                 source:self];
+    DCHECK(!gInDrag);
+    gInDrag = true;
+    while (gInDrag) {
+      [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                               beforeDate:[NSDate distantFuture]];
+    }
+
     return YES;
   }
   return [super dragSelectionWithEvent:event
                                 offset:mouseOffset
                              slideBack:slideBack];
+}
+
+- (void)draggingSession:(NSDraggingSession*)session
+           endedAtPoint:(NSPoint)aPoint
+              operation:(NSDragOperation)operation {
+  gInDrag = false;
 }
 
 - (void)copy:(id)sender {
@@ -107,12 +190,6 @@ BOOL ThePasteboardIsTooDamnBig() {
 - (void)cut:(id)sender {
   [self copy:sender];
   [self delete:nil];
-}
-
-- (void)showURL:(id)sender {
-  AutocompleteTextFieldObserver* observer = [self observer];
-  DCHECK(observer);
-  observer->ShowURL();
 }
 
 // This class assumes that the delegate is an AutocompleteTextField.
@@ -232,32 +309,9 @@ BOOL ThePasteboardIsTooDamnBig() {
                   action:@selector(paste:)
            keyEquivalent:@""];
 
-  // TODO(shess): If the control is not editable, should we show a
-  // greyed-out "Paste and Go"?
   if ([self isEditable]) {
-    // Paste and go/search.
-    AutocompleteTextFieldObserver* observer = [self observer];
-    DCHECK(observer);
-    if (!ThePasteboardIsTooDamnBig()) {
-      NSString* pasteAndGoLabel =
-          l10n_util::GetNSStringWithFixup(observer->GetPasteActionStringId());
-      DCHECK([pasteAndGoLabel length]);
-      [menu addItemWithTitle:pasteAndGoLabel
-                      action:@selector(pasteAndGo:)
-               keyEquivalent:@""];
-    }
-
+    [menu addItem:PasteAndGoMenuItemForObserver([self observer])];
     [menu addItem:[NSMenuItem separatorItem]];
-
-    // Display a "Show URL" option if search term replacement is active.
-    if (observer->ShouldEnableShowURL()) {
-      NSString* showURLLabel =
-          l10n_util::GetNSStringWithFixup(IDS_SHOW_URL_MAC);
-      DCHECK([showURLLabel length]);
-      [menu addItemWithTitle:showURLLabel
-                      action:@selector(showURL:)
-               keyEquivalent:@""];
-    }
 
     NSString* searchEngineLabel =
         l10n_util::GetNSStringWithFixup(IDS_EDIT_SEARCH_ENGINES);
@@ -281,7 +335,8 @@ BOOL ThePasteboardIsTooDamnBig() {
     // responder dance between the field and the field editor is a little
     // weird.)
     [[BrowserWindowController browserWindowControllerForView:field]
-        lockBarVisibilityForOwner:field withAnimation:YES delay:NO];
+        lockToolbarVisibilityForOwner:field
+                        withAnimation:YES];
   }
   return doAccept;
 }
@@ -294,7 +349,8 @@ BOOL ThePasteboardIsTooDamnBig() {
   if (doResign && field) {
     // Give the text field ownership of the visibility lock.
     [[BrowserWindowController browserWindowControllerForView:field]
-        releaseBarVisibilityForOwner:field withAnimation:YES delay:YES];
+        releaseToolbarVisibilityForOwner:field
+                           withAnimation:YES];
 
     AutocompleteTextFieldObserver* observer = [self observer];
     if (observer)
@@ -430,6 +486,24 @@ BOOL ThePasteboardIsTooDamnBig() {
 
   DCHECK(interpretingKeyEvents_);
   interpretingKeyEvents_ = NO;
+
+  // -[NSTextView interpretKeyEvents:] invalidates the existing layout.
+  //
+  // observer->OnDidChange() calls OmniboxViewMac::ApplyTextStyle, which
+  // invalidates the existing layout again, but in a slightly different way.
+  // Details unclear.
+  //
+  // On older versions of macOS, this results in a single call to -[NSTextView
+  // drawRect:] on the next frame, which paints the correct contents.
+  //
+  // On macOS 10.12 dp4, for unknown reasons, this causes two calls to
+  // -[NSTextView drawRect:] across two(!) frames. The first call to
+  // -[NSTextView drawRect:] draws no text, which causes a flicker in the
+  // omnibox. Forcing a layout ensures that drawRect: is only called once, and
+  // is drawn with the correct contents.
+  // https://crbug.com/634318.
+  [self.layoutManager
+      ensureLayoutForCharacterRange:NSMakeRange(0, self.textStorage.length)];
 }
 
 - (BOOL)shouldChangeTextInRange:(NSRange)affectedCharRange
@@ -502,18 +576,12 @@ BOOL ThePasteboardIsTooDamnBig() {
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
   if ([item action] == @selector(copyToFindPboard:))
     return [self selectedRange].length > 0;
-  if ([item action] == @selector(pasteAndGo:)) {
-    // TODO(rohitrao): If the clipboard is empty, should we show a
-    // greyed-out "Paste and Go" or nothing at all?
-    AutocompleteTextFieldObserver* observer = [self observer];
-    DCHECK(observer);
-    return observer->CanPasteAndGo();
-  }
-  if ([item action] == @selector(showURL:)) {
-    AutocompleteTextFieldObserver* observer = [self observer];
-    DCHECK(observer);
-    return observer->ShouldEnableShowURL();
-  }
+
+  // Paste & Go doesn't appear in the mainMenu. Use the enabled state when the
+  // menu item was added in -menuForEvent:.
+  if ([item action] == @selector(pasteAndGo:))
+    return [item isEnabled];
+
   return [super validateMenuItem:item];
 }
 
@@ -530,17 +598,36 @@ BOOL ThePasteboardIsTooDamnBig() {
   [[FindPasteboard sharedInstance] setFindText:[selection string]];
 }
 
+- (BOOL)isOpaque {
+  // Even if you call -setDrawsBackground:NO, the background still gets drawn
+  // when editing. This is a problem because the left edge of the background
+  // overlaps the security decoration's hover rect. Return that the textview
+  // is transparent, and follow up below by disabling any background drawing.
+  // This will cause background drawing to fall through to the cell. See
+  // https://crbug.com/669870 .
+  return NO;
+}
+
+- (void)drawViewBackgroundInRect:(NSRect)aRect {
+  // See the comment in -isOpaque.
+}
+
 - (void)drawRect:(NSRect)rect {
-  [super drawRect:rect];
-  autocomplete_text_field::DrawGrayTextAutocompletion(
-      [self textStorage],
-      [[self delegate] suggestText],
-      [[self delegate] suggestColor],
-      self,
-      [self bounds]);
   AutocompleteTextFieldObserver* observer = [self observer];
   if (observer)
+    observer->OnBeforeDrawRect();
+  [super drawRect:rect];
+  if (observer)
     observer->OnDidDrawRect();
+}
+
+// ThemedWindowDrawing implementation.
+
+- (void)windowDidChangeTheme {
+  [self updateColorsToMatchTheme];
+}
+
+- (void)windowDidChangeActive {
 }
 
 @end

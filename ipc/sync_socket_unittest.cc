@@ -4,14 +4,19 @@
 
 #include "base/sync_socket.h"
 
+#include <stddef.h>
 #include <stdio.h>
+#include <memory>
 #include <sstream>
 #include <string>
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "ipc/ipc_test_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -104,15 +109,12 @@ class SyncSocketServerListener : public IPC::Listener {
 
 // Runs the fuzzing server child mode. Returns when the preset number of
 // messages have been received.
-MULTIPROCESS_IPC_TEST_CLIENT_MAIN(SyncSocketServerClient) {
-  base::MessageLoopForIO main_message_loop;
+DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(SyncSocketServerClient) {
   SyncSocketServerListener listener;
-  scoped_ptr<IPC::Channel> channel(IPC::Channel::CreateClient(
-      IPCTestBase::GetChannelName("SyncSocketServerClient"), &listener));
-  EXPECT_TRUE(channel->Connect());
-  listener.Init(channel.get());
-  base::MessageLoop::current()->Run();
-  return 0;
+  Connect(&listener);
+  listener.Init(channel());
+  base::RunLoop().Run();
+  Close();
 }
 
 // The SyncSocket client listener only processes one sort of message,
@@ -160,20 +162,13 @@ class SyncSocketClientListener : public IPC::Listener {
   DISALLOW_COPY_AND_ASSIGN(SyncSocketClientListener);
 };
 
-class SyncSocketTest : public IPCTestBase {
-};
+using SyncSocketTest = IPCChannelMojoTestBase;
 
-#if defined(OS_ANDROID)
-#define MAYBE_SanityTest DISABLED_SanityTest
-#else
-#define MAYBE_SanityTest SanityTest
-#endif
-TEST_F(SyncSocketTest, MAYBE_SanityTest) {
+TEST_F(SyncSocketTest, SanityTest) {
   Init("SyncSocketServerClient");
 
   SyncSocketClientListener listener;
   CreateChannel(&listener);
-  ASSERT_TRUE(StartClient());
   // Create a pair of SyncSockets.
   base::SyncSocket pair[2];
   base::SyncSocket::CreatePair(&pair[0], &pair[1]);
@@ -200,7 +195,7 @@ TEST_F(SyncSocketTest, MAYBE_SanityTest) {
 #endif  // defined(OS_WIN)
   EXPECT_TRUE(sender()->Send(msg));
   // Use the current thread as the I/O thread.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   // Shut down.
   pair[0].Close();
   pair[1].Close();
@@ -250,13 +245,8 @@ TEST_F(SyncSocketTest, DisconnectTest) {
   EXPECT_EQ(0U, received);
 }
 
-#if defined(OS_ANDROID)
-#define MAYBE_BlockingReceiveTest DISABLED_BlockingReceiveTest
-#else
-#define MAYBE_BlockingReceiveTest BlockingReceiveTest
-#endif
 // Tests that read is a blocking operation.
-TEST_F(SyncSocketTest, MAYBE_BlockingReceiveTest) {
+TEST_F(SyncSocketTest, BlockingReceiveTest) {
   base::CancelableSyncSocket pair[2];
   ASSERT_TRUE(base::CancelableSyncSocket::CreatePair(&pair[0], &pair[1]));
 

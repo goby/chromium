@@ -5,7 +5,6 @@
 #ifndef CONTENT_PUBLIC_BROWSER_WEB_UI_CONTROLLER_H_
 #define CONTENT_PUBLIC_BROWSER_WEB_UI_CONTROLLER_H_
 
-#include "base/basictypes.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
 
@@ -17,7 +16,7 @@ class ListValue;
 
 namespace content {
 
-class RenderViewHost;
+class RenderFrameHost;
 class WebUI;
 
 // A WebUI page is controller by the embedder's WebUIController object. It
@@ -33,13 +32,10 @@ class CONTENT_EXPORT WebUIController {
                                           const std::string& message,
                                           const base::ListValue& args);
 
-  // Called when RenderView is first created. This is *not* called for every
-  // page load because in some cases a RenderView will be reused. In those
-  // cases, RenderViewReused will be called instead.
-  virtual void RenderViewCreated(RenderViewHost* render_view_host) {}
-
-  // Called when a RenderView is reused to display a page.
-  virtual void RenderViewReused(RenderViewHost* render_view_host) {}
+  // Called when a RenderFrame is created.  This is *not* called for every
+  // page load because in some cases a RenderFrame will be reused, for example
+  // when reloading or navigating to a same-site URL.
+  virtual void RenderFrameCreated(RenderFrameHost* render_frame_host) {}
 
   WebUI* web_ui() const { return web_ui_; }
 

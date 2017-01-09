@@ -7,8 +7,8 @@
 #include <drm.h>
 #include <string.h>
 #include <xf86drm.h>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -30,11 +30,10 @@ void EmptyFlipCallback(gfx::SwapResult) {}
 }  // namespace
 
 HardwareDisplayController::HardwareDisplayController(
-    scoped_ptr<CrtcController> controller,
+    std::unique_ptr<CrtcController> controller,
     const gfx::Point& origin)
-    : origin_(origin),
-      is_disabled_(controller->is_disabled()) {
-  AddCrtc(controller.Pass());
+    : origin_(origin), is_disabled_(controller->is_disabled()) {
+  AddCrtc(std::move(controller));
 }
 
 HardwareDisplayController::~HardwareDisplayController() {
@@ -133,24 +132,15 @@ bool HardwareDisplayController::ActualSchedulePageFlip(
   return status;
 }
 
-std::vector<uint32_t> HardwareDisplayController::GetCompatibleHardwarePlaneIds(
-    const OverlayPlane& plane) const {
-  std::vector<uint32_t> plane_ids =
-      crtc_controllers_[0]->GetCompatibleHardwarePlaneIds(plane);
-
-  if (plane_ids.empty())
-    return plane_ids;
-
-  for (size_t i = 1; i < crtc_controllers_.size(); ++i) {
-    // Make sure all mirrored displays have overlays to support this
-    // plane.
-    if (crtc_controllers_[i]->GetCompatibleHardwarePlaneIds(plane).empty())
-      return std::vector<uint32_t>();
+bool HardwareDisplayController::IsFormatSupported(uint32_t fourcc_format,
+                                                  uint32_t z_order) const {
+  for (size_t i = 0; i < crtc_controllers_.size(); ++i) {
+    // Make sure all displays have overlay to support this format.
+    if (!crtc_controllers_[i]->IsFormatSupported(fourcc_format, z_order))
+      return false;
   }
 
-  // TODO(kalyank): We Should ensure that this list doesn't contain any planes
-  // which mirrored displays share with primary.
-  return plane_ids;
+  return true;
 }
 
 bool HardwareDisplayController::SetCursor(
@@ -185,13 +175,15 @@ bool HardwareDisplayController::MoveCursor(const gfx::Point& location) {
   return status;
 }
 
-void HardwareDisplayController::AddCrtc(scoped_ptr<CrtcController> controller) {
+void HardwareDisplayController::AddCrtc(
+    std::unique_ptr<CrtcController> controller) {
   scoped_refptr<DrmDevice> drm = controller->drm();
-  owned_hardware_planes_.add(drm.get(), scoped_ptr<HardwareDisplayPlaneList>(
-                                            new HardwareDisplayPlaneList()));
+  owned_hardware_planes_.add(drm.get(),
+                             std::unique_ptr<HardwareDisplayPlaneList>(
+                                 new HardwareDisplayPlaneList()));
 
   // Check if this controller owns any planes and ensure we keep track of them.
-  const std::vector<scoped_ptr<HardwareDisplayPlane>>& all_planes =
+  const std::vector<std::unique_ptr<HardwareDisplayPlane>>& all_planes =
       drm->plane_manager()->planes();
   HardwareDisplayPlaneList* crtc_plane_list =
       owned_hardware_planes_.get(drm.get());
@@ -201,16 +193,16 @@ void HardwareDisplayController::AddCrtc(scoped_ptr<CrtcController> controller) {
       crtc_plane_list->old_plane_list.push_back(plane.get());
   }
 
-  crtc_controllers_.push_back(controller.Pass());
+  crtc_controllers_.push_back(std::move(controller));
 }
 
-scoped_ptr<CrtcController> HardwareDisplayController::RemoveCrtc(
+std::unique_ptr<CrtcController> HardwareDisplayController::RemoveCrtc(
     const scoped_refptr<DrmDevice>& drm,
     uint32_t crtc) {
   for (auto it = crtc_controllers_.begin(); it != crtc_controllers_.end();
        ++it) {
     if ((*it)->drm() == drm && (*it)->crtc() == crtc) {
-      scoped_ptr<CrtcController> controller(std::move(*it));
+      std::unique_ptr<CrtcController> controller(std::move(*it));
       crtc_controllers_.erase(it);
 
       // Remove entry from |owned_hardware_planes_| iff no other crtcs share it.
@@ -235,7 +227,7 @@ scoped_ptr<CrtcController> HardwareDisplayController::RemoveCrtc(
         owned_hardware_planes_.erase(controller->drm().get());
       }
 
-      return controller.Pass();
+      return controller;
     }
   }
 

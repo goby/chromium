@@ -18,13 +18,16 @@ class TraceConfigMemoryTestUtil {
     return StringPrintf(
         "{"
           "\"enable_argument_filter\":false,"
-          "\"enable_sampling\":false,"
           "\"enable_systrace\":false,"
           "\"included_categories\":["
             "\"%s\""
           "],"
           "\"memory_dump_config\":{"
-            "\"triggers\":["
+             "\"allowed_dump_modes\":[\"background\",\"light\",\"detailed\"],"
+             "\"heap_profiler_options\":{"
+               "\"breakdown_threshold_bytes\":2048"
+             "},"
+             "\"triggers\":["
               "{"
                 "\"mode\":\"light\","
                 "\"periodic_interval_ms\":%d"
@@ -43,12 +46,12 @@ class TraceConfigMemoryTestUtil {
     return StringPrintf(
         "{"
           "\"enable_argument_filter\":false,"
-          "\"enable_sampling\":false,"
           "\"enable_systrace\":false,"
           "\"included_categories\":["
             "\"%s\""
           "],"
           "\"memory_dump_config\":{"
+            "\"allowed_dump_modes\":[\"background\",\"light\",\"detailed\"],"
             "\"triggers\":["
             "]"
           "},"
@@ -60,13 +63,33 @@ class TraceConfigMemoryTestUtil {
     return StringPrintf(
         "{"
           "\"enable_argument_filter\":false,"
-          "\"enable_sampling\":false,"
           "\"enable_systrace\":false,"
           "\"included_categories\":["
             "\"%s\""
           "],"
           "\"record_mode\":\"record-until-full\""
         "}", MemoryDumpManager::kTraceCategory);
+  }
+
+  static std::string GetTraceConfig_BackgroundTrigger(int period_ms) {
+    return StringPrintf(
+        "{"
+          "\"enable_argument_filter\":false,"
+          "\"enable_systrace\":false,"
+          "\"included_categories\":["
+            "\"%s\""
+          "],"
+          "\"memory_dump_config\":{"
+             "\"allowed_dump_modes\":[\"background\"],"
+             "\"triggers\":["
+              "{"
+                "\"mode\":\"background\","
+                "\"periodic_interval_ms\":%d"
+              "}"
+            "]"
+          "},"
+          "\"record_mode\":\"record-until-full\""
+        "}", MemoryDumpManager::kTraceCategory, period_ms);
   }
 };
 

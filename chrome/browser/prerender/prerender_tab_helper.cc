@@ -5,7 +5,7 @@
 #include "chrome/browser/prerender/prerender_tab_helper.h"
 
 #include "base/bind.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/prerender/prerender_histograms.h"
 #include "chrome/browser/prerender/prerender_manager.h"
@@ -41,7 +41,6 @@ PrerenderTabHelper::~PrerenderTabHelper() {
 }
 
 void PrerenderTabHelper::DidGetRedirectForResourceRequest(
-    content::RenderFrameHost* render_frame_host,
     const content::ResourceRedirectDetails& details) {
   if (details.resource_type != content::RESOURCE_TYPE_MAIN_FRAME)
     return;
@@ -69,7 +68,7 @@ void PrerenderTabHelper::DidStopLoading() {
   // page is still prerendering, record the not swapped in page load time
   // instead.
   if (!pplt_load_start_.is_null()) {
-    base::TimeTicks now = base::TimeTicks::Now();
+    base::TimeTicks now = GetTimeTicksFromPrerenderManager();
     if (IsPrerendering()) {
       PrerenderManager* prerender_manager = MaybeGetPrerenderManager();
       if (prerender_manager) {
@@ -105,13 +104,12 @@ void PrerenderTabHelper::DidStopLoading() {
 void PrerenderTabHelper::DidStartProvisionalLoadForFrame(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url,
-    bool is_error_page,
-    bool is_iframe_srcdoc) {
+    bool is_error_page) {
   if (render_frame_host->GetParent())
     return;
 
   // Record PPLT state for the beginning of a new navigation.
-  pplt_load_start_ = base::TimeTicks::Now();
+  pplt_load_start_ = GetTimeTicksFromPrerenderManager();
   actual_load_start_ = base::TimeTicks();
 
   if (next_load_is_control_prerender_) {
@@ -130,8 +128,20 @@ void PrerenderTabHelper::MainFrameUrlDidChange(const GURL& url) {
 }
 
 PrerenderManager* PrerenderTabHelper::MaybeGetPrerenderManager() const {
-  return PrerenderManagerFactory::GetForProfile(
-      Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
+  return PrerenderManagerFactory::GetForBrowserContext(
+      web_contents()->GetBrowserContext());
+}
+
+base::TimeTicks PrerenderTabHelper::GetTimeTicksFromPrerenderManager() const {
+  // Prerender browser tests should always have a PrerenderManager when mocking
+  // out tick clock.
+  PrerenderManager* prerender_manager = MaybeGetPrerenderManager();
+  if (prerender_manager)
+    return prerender_manager->GetCurrentTimeTicks();
+
+  // Fall back to returning the same value as PrerenderManager would have
+  // returned in production.
+  return base::TimeTicks::Now();
 }
 
 bool PrerenderTabHelper::IsPrerendering() {
@@ -153,7 +163,7 @@ void PrerenderTabHelper::PrerenderSwappedIn() {
     // If we have not finished loading yet, record the actual load start, and
     // rebase the start time to now.
     actual_load_start_ = pplt_load_start_;
-    pplt_load_start_ = base::TimeTicks::Now();
+    pplt_load_start_ = GetTimeTicksFromPrerenderManager();
   }
 }
 

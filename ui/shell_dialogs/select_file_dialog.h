@@ -5,14 +5,14 @@
 #ifndef UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_H_
 #define UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/shell_dialogs/base_shell_dialog.h"
@@ -22,7 +22,6 @@ namespace ui {
 class SelectFileDialogFactory;
 class SelectFilePolicy;
 struct SelectedFileInfo;
-class ShellDialogsDelegate;
 
 // Shows a dialog box for selecting a file or a folder.
 class SHELL_DIALOGS_EXPORT SelectFileDialog
@@ -109,6 +108,7 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
   // Holds information about allowed extensions on a file save dialog.
   struct SHELL_DIALOGS_EXPORT FileTypeInfo {
     FileTypeInfo();
+    FileTypeInfo(const FileTypeInfo& other);
     ~FileTypeInfo();
 
     // A list of allowed extensions. For example, it might be
@@ -127,12 +127,12 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
     // Specifies whether there will be a filter added for all files (i.e. *.*).
     bool include_all_files;
 
-    // Specifies whether the caller can directly support file paths pointing to
-    // files/folders on Google Drive. If the flag is true, the file dialog does
-    // nothing special; just returns a Drive path. If it is false, the dialog
-    // creates a local replica of the Drive file and returns its path, so that
-    // the caller can use it without any difference than when it were local.
-    bool support_drive;
+    // Specifies which type of paths the caller can handle. If it is
+    // NATIVE_PATH, the dialog creates a native replica of the non-native file
+    // and returns its path, so that the caller can use it without any
+    // difference than when it were local.
+    enum AllowedPaths { ANY_PATH, NATIVE_PATH, NATIVE_OR_DRIVE_PATH };
+    AllowedPaths allowed_paths;
   };
 
   // Selects a File.
@@ -172,9 +172,6 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
                   void* params);
   bool HasMultipleFileTypeChoices();
 
-  // Sets the global ShellDialogsDelegate. Defaults to NULL.
-  static void SetShellDialogsDelegate(ShellDialogsDelegate* delegate);
-
  protected:
   friend class base::RefCountedThreadSafe<SelectFileDialog>;
   explicit SelectFileDialog(Listener* listener, SelectFilePolicy* policy);
@@ -194,9 +191,6 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
       gfx::NativeWindow owning_window,
       void* params) = 0;
 
-  // Returns the global ShellDialogsDelegate instance if any.
-  ShellDialogsDelegate* GetShellDialogsDelegate();
-
   // The listener to be notified of selection completion.
   Listener* listener_;
 
@@ -213,11 +207,13 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
   // Returns true if the dialog has multiple file type choices.
   virtual bool HasMultipleFileTypeChoicesImpl() = 0;
 
-  scoped_ptr<SelectFilePolicy> select_file_policy_;
+  std::unique_ptr<SelectFilePolicy> select_file_policy_;
 
   DISALLOW_COPY_AND_ASSIGN(SelectFileDialog);
 };
 
+SelectFileDialog* CreateSelectFileDialog(SelectFileDialog::Listener* listener,
+                                         SelectFilePolicy* policy);
 }  // namespace ui
 
 #endif  // UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_H_

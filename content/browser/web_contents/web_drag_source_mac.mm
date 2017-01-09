@@ -6,6 +6,8 @@
 
 #include <sys/param.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -20,6 +22,7 @@
 #include "content/browser/download/drag_download_file.h"
 #include "content/browser/download/drag_download_util.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
@@ -28,6 +31,7 @@
 #include "net/base/filename_util.h"
 #include "net/base/mime_util.h"
 #include "ui/base/clipboard/custom_data_helper.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/dragdrop/cocoa_dnd_util.h"
 #include "ui/gfx/image/image.h"
 #include "ui/resources/grit/ui_resources.h"
@@ -106,6 +110,7 @@ void PromiseWriterHelper(const DropData& drop_data,
 - (id)initWithContents:(content::WebContentsImpl*)contents
                   view:(NSView*)contentsView
               dropData:(const DropData*)dropData
+             sourceRWH:(content::RenderWidgetHostImpl*)sourceRWH
                  image:(NSImage*)image
                 offset:(NSPoint)offset
             pasteboard:(NSPasteboard*)pboard
@@ -120,6 +125,7 @@ void PromiseWriterHelper(const DropData& drop_data,
     dropData_.reset(new DropData(*dropData));
     DCHECK(dropData_.get());
 
+    dragStartRWH_ = sourceRWH->GetWeakPtr();
     dragImage_.reset([image retain]);
     imageOffset_ = offset;
 
@@ -171,8 +177,8 @@ void PromiseWriterHelper(const DropData& drop_data,
     // Strip out any existing escapes and then re-escape uniformly.
     if (!url && dropData_->url.SchemeIs(url::kJavaScriptScheme)) {
       net::UnescapeRule::Type unescapeRules =
-          net::UnescapeRule::SPACES |
-          net::UnescapeRule::URL_SPECIAL_CHARS |
+          net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
           net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS;
       std::string unescapedUrlString =
           net::UnescapeURLComponent(dropData_->url.spec(), unescapeRules);
@@ -220,7 +226,8 @@ void PromiseWriterHelper(const DropData& drop_data,
 
 - (NSPoint)convertScreenPoint:(NSPoint)screenPoint {
   DCHECK([contentsView_ window]);
-  NSPoint basePoint = [[contentsView_ window] convertScreenToBase:screenPoint];
+  NSPoint basePoint =
+      ui::ConvertPointFromScreenToWindow([contentsView_ window], screenPoint);
   return [contentsView_ convertPoint:basePoint fromView:nil];
 }
 
@@ -265,30 +272,31 @@ void PromiseWriterHelper(const DropData& drop_data,
         operation:(NSDragOperation)operation {
   if (!contents_ || !contentsView_)
     return;
-  contents_->SystemDragEnded();
 
-  RenderViewHostImpl* rvh = static_cast<RenderViewHostImpl*>(
-      contents_->GetRenderViewHost());
-  if (rvh) {
-    // Convert |screenPoint| to view coordinates and flip it.
-    NSPoint localPoint = NSZeroPoint;
-    if ([contentsView_ window])
-      localPoint = [self convertScreenPoint:screenPoint];
-    NSRect viewFrame = [contentsView_ frame];
-    localPoint.y = viewFrame.size.height - localPoint.y;
-    // Flip |screenPoint|.
-    NSRect screenFrame = [[[contentsView_ window] screen] frame];
-    screenPoint.y = screenFrame.size.height - screenPoint.y;
+  contents_->SystemDragEnded(dragStartRWH_.get());
 
-    // If AppKit returns a copy and move operation, mask off the move bit
-    // because WebCore does not understand what it means to do both, which
-    // results in an assertion failure/renderer crash.
-    if (operation == (NSDragOperationMove | NSDragOperationCopy))
-      operation &= ~NSDragOperationMove;
+  // Convert |screenPoint| to view coordinates and flip it.
+  NSPoint localPoint = NSZeroPoint;
+  if ([contentsView_ window])
+    localPoint = [self convertScreenPoint:screenPoint];
+  NSRect viewFrame = [contentsView_ frame];
+  localPoint.y = viewFrame.size.height - localPoint.y;
+  // Flip |screenPoint|.
+  NSRect screenFrame = [[[contentsView_ window] screen] frame];
+  screenPoint.y = screenFrame.size.height - screenPoint.y;
 
-    contents_->DragSourceEndedAt(localPoint.x, localPoint.y, screenPoint.x,
-        screenPoint.y, static_cast<blink::WebDragOperation>(operation));
-  }
+  // If AppKit returns a copy and move operation, mask off the move bit
+  // because WebCore does not understand what it means to do both, which
+  // results in an assertion failure/renderer crash.
+  if (operation == (NSDragOperationMove | NSDragOperationCopy))
+    operation &= ~NSDragOperationMove;
+
+  // TODO(paulmeyer):  In the OOPIF case, should |localPoint| be converted to
+  // the coordinates local to |dragStartRWH_|?
+  contents_->DragSourceEndedAt(
+      localPoint.x, localPoint.y, screenPoint.x, screenPoint.y,
+      static_cast<blink::WebDragOperation>(operation),
+      dragStartRWH_.get());
 
   // Make sure the pasteboard owner isn't us.
   [pasteboard_ declareTypes:[NSArray array] owner:nil];
@@ -313,14 +321,11 @@ void PromiseWriterHelper(const DropData& drop_data,
     return nil;
 
   if (downloadURL_.is_valid() && contents_) {
-    scoped_refptr<DragDownloadFile> dragFileDownloader(new DragDownloadFile(
-        filePath,
-        file.Pass(),
-        downloadURL_,
-        content::Referrer(contents_->GetLastCommittedURL(),
-                          dropData_->referrer_policy),
-        contents_->GetEncoding(),
-        contents_));
+    scoped_refptr<DragDownloadFile> dragFileDownloader(
+        new DragDownloadFile(filePath, std::move(file), downloadURL_,
+                             content::Referrer(contents_->GetLastCommittedURL(),
+                                               dropData_->referrer_policy),
+                             contents_->GetEncoding(), contents_));
 
     // The finalizer will take care of closing and deletion.
     dragFileDownloader->Start(new PromiseFileFinalizer(

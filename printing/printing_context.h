@@ -5,12 +5,14 @@
 #ifndef PRINTING_PRINTING_CONTEXT_H_
 #define PRINTING_PRINTING_CONTEXT_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "printing/print_settings.h"
+#include "skia/ext/native_drawing_context.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace base {
@@ -28,8 +30,8 @@ class PRINTING_EXPORT PrintingContext {
   // Printing context delegate.
   class Delegate {
    public:
-    Delegate() {};
-    virtual ~Delegate() {};
+    Delegate() {}
+    virtual ~Delegate() {}
 
     // Returns parent view to use for modal dialogs.
     virtual gfx::NativeView GetParentView() = 0;
@@ -84,9 +86,6 @@ class PRINTING_EXPORT PrintingContext {
   // settings information. |ranges| has the new page range settings.
   Result UpdatePrintSettings(const base::DictionaryValue& job_settings);
 
-  // Initializes with predefined settings.
-  virtual Result InitWithSettings(const PrintSettings& settings) = 0;
-
   // Does platform specific setup of the printer before the printing. Signal the
   // printer that a document is about to be spooled.
   // Warning: This function enters a message loop. That may cause side effects
@@ -113,13 +112,14 @@ class PRINTING_EXPORT PrintingContext {
   virtual void ReleaseContext() = 0;
 
   // Returns the native context used to print.
-  virtual gfx::NativeDrawingContext context() const = 0;
+  virtual skia::NativeDrawingContext context() const = 0;
 
   // Creates an instance of this object. Implementers of this interface should
   // implement this method to create an object of their implementation.
-  static scoped_ptr<PrintingContext> Create(Delegate* delegate);
+  static std::unique_ptr<PrintingContext> Create(Delegate* delegate);
 
   void set_margin_type(MarginType type);
+  void set_is_modifiable(bool is_modifiable);
 
   const PrintSettings& settings() const {
     return settings_;

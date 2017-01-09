@@ -6,16 +6,17 @@
 #define CHROME_BROWSER_DEVTOOLS_DEVTOOLS_FILE_HELPER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/strings/string16.h"
+#include "components/prefs/pref_change_registrar.h"
 
 class DevToolsFileWatcher;
 class Profile;
@@ -46,7 +47,10 @@ class DevToolsFileHelper {
     virtual ~Delegate() {}
     virtual void FileSystemAdded(const FileSystem& file_system) = 0;
     virtual void FileSystemRemoved(const std::string& file_system_path) = 0;
-    virtual void FilePathsChanged(const std::vector<std::string>& paths) = 0;
+    virtual void FilePathsChanged(
+        const std::vector<std::string>& changed_paths,
+        const std::vector<std::string>& added_paths,
+        const std::vector<std::string>& removed_paths) = 0;
   };
 
   DevToolsFileHelper(content::WebContents* web_contents, Profile* profile,
@@ -131,7 +135,9 @@ class DevToolsFileHelper {
       const base::FilePath& path,
       bool allowed);
   void FileSystemPathsSettingChanged();
-  void FilePathsChanged(const std::vector<std::string>& paths);
+  void FilePathsChanged(const std::vector<std::string>& changed_paths,
+                        const std::vector<std::string>& added_paths,
+                        const std::vector<std::string>& removed_paths);
 
   content::WebContents* web_contents_;
   Profile* profile_;
@@ -140,7 +146,7 @@ class DevToolsFileHelper {
   PathsMap saved_files_;
   PrefChangeRegistrar pref_change_registrar_;
   std::set<std::string> file_system_paths_;
-  scoped_ptr<DevToolsFileWatcher> file_watcher_;
+  std::unique_ptr<DevToolsFileWatcher> file_watcher_;
   base::WeakPtrFactory<DevToolsFileHelper> weak_factory_;
   DISALLOW_COPY_AND_ASSIGN(DevToolsFileHelper);
 };

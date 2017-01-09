@@ -5,13 +5,11 @@
 #include "content/test/mock_keyboard.h"
 
 #include "base/logging.h"
+#include "build/build_config.h"
 
 namespace content {
 
-MockKeyboard::MockKeyboard()
-    : keyboard_layout_(LAYOUT_NULL),
-      keyboard_modifiers_(INVALID) {
-}
+MockKeyboard::MockKeyboard() {}
 
 MockKeyboard::~MockKeyboard() {
 }

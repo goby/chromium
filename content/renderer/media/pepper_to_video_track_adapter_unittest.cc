@@ -49,7 +49,7 @@ class PepperToVideoTrackAdapterTest : public PpapiUnittest {
   // Sources inside |registry_| into believing they are on the right threads.
   const ChildProcess child_process_;
   const MockRenderThread render_thread_;
-  scoped_ptr<MockMediaStreamRegistry> registry_;
+  std::unique_ptr<MockMediaStreamRegistry> registry_;
 };
 
 TEST_F(PepperToVideoTrackAdapterTest, Open) {
@@ -81,10 +81,9 @@ TEST_F(PepperToVideoTrackAdapterTest, PutFrame) {
   ASSERT_TRUE(native_track != NULL);
 
   MockMediaStreamVideoSink sink;
-  native_track->AddSink(&sink, sink.GetDeliverFrameCB());
-   scoped_refptr<PPB_ImageData_Impl> image(
-      new PPB_ImageData_Impl(instance()->pp_instance(),
-                             PPB_ImageData_Impl::ForTest()));
+  native_track->AddSink(&sink, sink.GetDeliverFrameCB(), false);
+  scoped_refptr<PPB_ImageData_Impl> image(new PPB_ImageData_Impl(
+      instance()->pp_instance(), PPB_ImageData_Impl::ForTest()));
   image->Init(PP_IMAGEDATAFORMAT_BGRA_PREMUL, 640, 360, true);
   {
     base::RunLoop run_loop;
@@ -99,7 +98,7 @@ TEST_F(PepperToVideoTrackAdapterTest, PutFrame) {
     // PostTaskAndReply to the IO thread and expects the reply to process
     // on the main render thread to clean up its resources. However, the
     // QuitClosure above ends before that.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
   EXPECT_EQ(1, sink.number_of_frames());
   native_track->RemoveSink(&sink);

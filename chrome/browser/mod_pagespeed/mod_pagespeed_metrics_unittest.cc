@@ -5,11 +5,11 @@
 #include "chrome/browser/mod_pagespeed/mod_pagespeed_metrics.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
 #include "content/public/common/resource_type.h"
@@ -37,8 +37,8 @@ TEST(ModPagespeedMetricsTest, CountPageSpeedHeadersTest) {
   int num_bucket_30 = 0;  // 1.2.24.1 bucket
   int num_bucket_33 = 0;  // 1.3.25.2 bucket
 
-  scoped_ptr<base::HistogramSamples> server_samples;
-  scoped_ptr<base::HistogramSamples> version_samples;
+  std::unique_ptr<base::HistogramSamples> server_samples;
+  std::unique_ptr<base::HistogramSamples> version_samples;
 
   // No PageSpeed header. The VersionCounts histogram isn't created yet.
   RecordMetrics(content::RESOURCE_TYPE_MAIN_FRAME, url, headers.get());
@@ -63,6 +63,22 @@ TEST(ModPagespeedMetricsTest, CountPageSpeedHeadersTest) {
       base::StatisticsRecorder::FindHistogram(
           "Prerender.PagespeedHeader.VersionCounts");
   ASSERT_TRUE(version_histogram != NULL);
+  server_samples = server_histogram->SnapshotSamples();
+  version_samples = version_histogram->SnapshotSamples();
+  EXPECT_EQ(++num_responses, server_samples->GetCount(0));
+  EXPECT_EQ(++num_mps, server_samples->GetCount(1));
+  EXPECT_EQ(num_ngx, server_samples->GetCount(2));
+  EXPECT_EQ(num_pss, server_samples->GetCount(3));
+  EXPECT_EQ(num_other, server_samples->GetCount(4));
+  EXPECT_EQ(num_bucket_1, version_samples->GetCount(1));
+  EXPECT_EQ(++num_bucket_30, version_samples->GetCount(30));  // +1 for #30
+  EXPECT_EQ(num_bucket_33, version_samples->GetCount(33));
+  headers->RemoveHeader("X-Mod-Pagespeed");
+
+  // X-Mod-Pagespeed header in expected format, without (optional) SVN commit
+  // number.
+  headers->AddHeader("X-Mod-Pagespeed: 1.2.24.1");
+  RecordMetrics(content::RESOURCE_TYPE_MAIN_FRAME, url, headers.get());
   server_samples = server_histogram->SnapshotSamples();
   version_samples = version_histogram->SnapshotSamples();
   EXPECT_EQ(++num_responses, server_samples->GetCount(0));

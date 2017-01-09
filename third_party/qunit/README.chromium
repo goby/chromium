@@ -3,6 +3,7 @@ Short Name: QUnit
 URL: https://github.com/jquery/qunit
 Version: 1.17.1
 License: MIT
+License File: NOT_SHIPPED
 Security Critical: no
 
 Description:
@@ -31,4 +32,5 @@ testing.
 Local Modifications:
 No Modifications is made to src/qunit.js.
 src/browser_test_harness.js is added to enable running the QUnit test suite on
-try bots using the chromium browser test infrastructure.
+try bots using the chromium browser test infrastructure.  It also automatically
+fails a test case if it doesn't return within a timeout of 5 seconds.

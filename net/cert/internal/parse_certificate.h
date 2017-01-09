@@ -5,9 +5,11 @@
 #ifndef NET_CERT_INTERNAL_PARSE_CERTIFICATE_H_
 #define NET_CERT_INTERNAL_PARSE_CERTIFICATE_H_
 
-#include <map>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <map>
+#include <vector>
+
 #include "base/compiler_specific.h"
 #include "net/base/net_export.h"
 #include "net/der/input.h"
@@ -15,31 +17,93 @@
 
 namespace net {
 
-struct ParsedCertificate;
+class CertErrors;
 struct ParsedTbsCertificate;
 
-// Parses a DER-encoded "Certificate" as specified by RFC 5280. Returns true on
-// success and sets the results in |out|.
+// Returns true if the given serial number (CertificateSerialNumber in RFC 5280)
+// is valid:
 //
-// Note that on success |out| aliases data from the input |certificate_tlv|.
-// Hence the fields of the ParsedCertificate are only valid as long as
+//    CertificateSerialNumber  ::=  INTEGER
+//
+// The input to this function is the (unverified) value octets of the INTEGER.
+// This function will verify that:
+//
+//   * The octets are a valid DER-encoding of an INTEGER (for instance, minimal
+//     encoding length).
+//
+//   * No more than 20 octets are used.
+//
+// Note that it DOES NOT reject non-positive values (zero or negative).
+//
+// For reference, here is what RFC 5280 section 4.1.2.2 says:
+//
+//     Given the uniqueness requirements above, serial numbers can be
+//     expected to contain long integers.  Certificate users MUST be able to
+//     handle serialNumber values up to 20 octets.  Conforming CAs MUST NOT
+//     use serialNumber values longer than 20 octets.
+//
+//     Note: Non-conforming CAs may issue certificates with serial numbers
+//     that are negative or zero.  Certificate users SHOULD be prepared to
+//     gracefully handle such certificates.
+NET_EXPORT bool VerifySerialNumber(const der::Input& value) WARN_UNUSED_RESULT;
+
+struct NET_EXPORT ParseCertificateOptions {
+  // If set to true, then parsing will skip checks on the certificate's serial
+  // number. The only requirement will be that the serial number is an INTEGER,
+  // however it is not required to be a valid DER-encoding (i.e. minimal
+  // encoding), nor is it required to be constrained to any particular length.
+  bool allow_invalid_serial_numbers = false;
+};
+
+// Parses a DER-encoded "Certificate" as specified by RFC 5280. Returns true on
+// success and sets the results in the |out_*| parameters. On both the failure
+// and success case, if |out_errors| was non-null it may contain extra error
+// information.
+//
+// Note that on success the out parameters alias data from the input
+// |certificate_tlv|.  Hence the output values are only valid as long as
 // |certificate_tlv| remains valid.
 //
-// On failure |out| has an undefined state. Some of its fields may have been
-// updated during parsing, whereas others may not have been changed.
+// On failure the out parameters have an undefined state, except for
+// out_errors. Some of them may have been updated during parsing, whereas
+// others may not have been changed.
 //
-// Refer to the per-field documention of the ParsedCertificate structure for
-// details on what validity checks parsing performs.
-//
+// The out parameters represent each field of the Certificate SEQUENCE:
 //       Certificate  ::=  SEQUENCE  {
-//            tbsCertificate       TBSCertificate,
-//            signatureAlgorithm   AlgorithmIdentifier,
-//            signatureValue       BIT STRING  }
+//
+// The |out_tbs_certificate_tlv| parameter corresponds with "tbsCertificate"
+// from RFC 5280:
+//         tbsCertificate       TBSCertificate,
+//
+// This contains the full (unverified) Tag-Length-Value for a SEQUENCE. No
+// guarantees are made regarding the value of this SEQUENCE.
+// This can be further parsed using ParseTbsCertificate().
+//
+// The |out_signature_algorithm_tlv| parameter corresponds with
+// "signatureAlgorithm" from RFC 5280:
+//         signatureAlgorithm   AlgorithmIdentifier,
+//
+// This contains the full (unverified) Tag-Length-Value for a SEQUENCE. No
+// guarantees are made regarding the value of this SEQUENCE.
+// This can be further parsed using SignatureValue::Create().
+//
+// The |out_signature_value| parameter corresponds with "signatureValue" from
+// RFC 5280:
+//         signatureValue       BIT STRING  }
+//
+// Parsing guarantees that this is a valid BIT STRING.
 NET_EXPORT bool ParseCertificate(const der::Input& certificate_tlv,
-                                 ParsedCertificate* out) WARN_UNUSED_RESULT;
+                                 der::Input* out_tbs_certificate_tlv,
+                                 der::Input* out_signature_algorithm_tlv,
+                                 der::BitString* out_signature_value,
+                                 CertErrors* out_errors) WARN_UNUSED_RESULT;
 
 // Parses a DER-encoded "TBSCertificate" as specified by RFC 5280. Returns true
-// on success and sets the results in |out|.
+// on success and sets the results in |out|. Certain invalid inputs may
+// be accepted based on the provided |options|.
+//
+// If |errors| was non-null then any warnings/errors that occur during parsing
+// are added to it.
 //
 // Note that on success |out| aliases data from the input |tbs_tlv|.
 // Hence the fields of the ParsedTbsCertificate are only valid as long as
@@ -67,8 +131,9 @@ NET_EXPORT bool ParseCertificate(const der::Input& certificate_tlv,
 //                                 -- If present, version MUST be v3
 //            }
 NET_EXPORT bool ParseTbsCertificate(const der::Input& tbs_tlv,
-                                    ParsedTbsCertificate* out)
-    WARN_UNUSED_RESULT;
+                                    const ParseCertificateOptions& options,
+                                    ParsedTbsCertificate* out,
+                                    CertErrors* errors) WARN_UNUSED_RESULT;
 
 // Represents a "Version" from RFC 5280:
 //         Version  ::=  INTEGER  {  v1(0), v2(1), v3(2)  }
@@ -76,37 +141,6 @@ enum class CertificateVersion {
   V1,
   V2,
   V3,
-};
-
-// ParsedCertificate contains pointers to the main fields of a DER-encoded RFC
-// 5280 "Certificate".
-//
-// ParsedCertificate is expected to be filled by ParseCertificate(), so
-// subsequent field descriptions are in terms of what ParseCertificate() sets.
-struct NET_EXPORT ParsedCertificate {
-  // Corresponds with "tbsCertificate" from RFC 5280:
-  //         tbsCertificate       TBSCertificate,
-  //
-  // This contains the full (unverified) Tag-Length-Value for a SEQUENCE. No
-  // guarantees are made regarding the value of this SEQUENCE.
-  //
-  // This can be further parsed using ParseTbsCertificate().
-  der::Input tbs_certificate_tlv;
-
-  // Corresponds with "signatureAlgorithm" from RFC 5280:
-  //         signatureAlgorithm   AlgorithmIdentifier,
-  //
-  // This contains the full (unverified) Tag-Length-Value for a SEQUENCE. No
-  // guarantees are made regarding the value of this SEQUENCE.
-  //
-  // This can be further parsed using SignatureValue::CreateFromDer().
-  der::Input signature_algorithm_tlv;
-
-  // Corresponds with "signatureValue" from RFC 5280:
-  //         signatureValue       BIT STRING  }
-  //
-  // Parsing guarantees that this is a valid BIT STRING.
-  der::BitString signature_value;
 };
 
 // ParsedTbsCertificate contains pointers to the main fields of a DER-encoded
@@ -132,7 +166,13 @@ struct NET_EXPORT ParsedTbsCertificate {
   // instance if the serial number was 1000 then this would contain bytes
   // {0x03, 0xE8}.
   //
-  // In addition to being a valid DER-encoded INTEGER, parsing guarantees that
+  // The serial number may or may not be a valid DER-encoded INTEGER:
+  //
+  // If the option |allow_invalid_serial_numbers=true| was used during
+  // parsing, then nothing further can be assumed about these bytes.
+  //
+  // Otherwise if |allow_invalid_serial_numbers=false| then in addition
+  // to being a valid DER-encoded INTEGER, parsing guarantees that
   // the serial number is at most 20 bytes long. Parsing does NOT guarantee
   // that the integer is positive (might be zero or negative).
   der::Input serial_number;
@@ -143,7 +183,7 @@ struct NET_EXPORT ParsedTbsCertificate {
   // This contains the full (unverified) Tag-Length-Value for a SEQUENCE. No
   // guarantees are made regarding the value of this SEQUENCE.
   //
-  // This can be further parsed using SignatureValue::CreateFromDer().
+  // This can be further parsed using SignatureValue::Create().
   der::Input signature_algorithm_tlv;
 
   // Corresponds with "issuer" from RFC 5280:
@@ -296,6 +336,27 @@ NET_EXPORT der::Input PolicyConstraintsOid();
 // In dotted notation: 2.5.29.37
 NET_EXPORT der::Input ExtKeyUsageOid();
 
+// From RFC 5280:
+//
+//     id-pe-authorityInfoAccess OBJECT IDENTIFIER ::= { id-pe 1 }
+//
+// In dotted notation: 1.3.6.1.5.5.7.1.1
+NET_EXPORT der::Input AuthorityInfoAccessOid();
+
+// From RFC 5280:
+//
+//     id-ad-caIssuers OBJECT IDENTIFIER ::= { id-ad 2 }
+//
+// In dotted notation: 1.3.6.1.5.5.7.48.2
+NET_EXPORT der::Input AdCaIssuersOid();
+
+// From RFC 5280:
+//
+//     id-ad-ocsp OBJECT IDENTIFIER ::= { id-ad 1 }
+//
+// In dotted notation: 1.3.6.1.5.5.7.48.1
+NET_EXPORT der::Input AdOcspOid();
+
 // Parses the Extensions sequence as defined by RFC 5280. Extensions are added
 // to the map |extensions| keyed by the OID. Parsing guarantees that each OID
 // is unique. Note that certificate verification must consume each extension
@@ -307,6 +368,14 @@ NET_EXPORT der::Input ExtKeyUsageOid();
 NET_EXPORT bool ParseExtensions(
     const der::Input& extensions_tlv,
     std::map<der::Input, ParsedExtension>* extensions) WARN_UNUSED_RESULT;
+
+// Removes the extension with OID |oid| from |unconsumed_extensions| and fills
+// |extension| with the matching extension value. If there was no extension
+// matching |oid| then returns |false|.
+NET_EXPORT bool ConsumeExtension(
+    const der::Input& oid,
+    std::map<der::Input, ParsedExtension>* unconsumed_extensions,
+    ParsedExtension* extension) WARN_UNUSED_RESULT;
 
 struct ParsedBasicConstraints {
   bool is_ca = false;
@@ -366,6 +435,27 @@ enum KeyUsageBit {
 //     key_usage->AssertsBit(KEY_USAGE_BIT_DIGITAL_SIGNATURE);
 NET_EXPORT bool ParseKeyUsage(const der::Input& key_usage_tlv,
                               der::BitString* key_usage) WARN_UNUSED_RESULT;
+
+// Parses the Authority Information Access extension defined by RFC 5280.
+// Returns true on success, and |out_ca_issuers_uris| and |out_ocsp_uris| will
+// alias data in |authority_info_access_tlv|. On failure returns false, and
+// |out_ca_issuers_uris| and |out_ocsp_uris| may have been partially filled.
+//
+// |out_ca_issuers_uris| is filled with the accessLocations of type
+// uniformResourceIdentifier for the accessMethod id-ad-caIssuers.
+// |out_ocsp_uris| is filled with the accessLocations of type
+// uniformResourceIdentifier for the accessMethod id-ad-ocsp.
+//
+// The values in |out_ca_issuers_uris| and |out_ocsp_uris| are checked to be
+// IA5String (ASCII strings), but no other validation is performed on them.
+//
+// accessMethods other than id-ad-caIssuers and id-ad-ocsp are silently ignored.
+// accessLocation types other than uniformResourceIdentifier are silently
+// ignored.
+NET_EXPORT bool ParseAuthorityInfoAccess(
+    const der::Input& authority_info_access_tlv,
+    std::vector<base::StringPiece>* out_ca_issuers_uris,
+    std::vector<base::StringPiece>* out_ocsp_uris) WARN_UNUSED_RESULT;
 
 }  // namespace net
 

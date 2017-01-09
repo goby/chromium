@@ -5,6 +5,7 @@
 #ifndef IPC_IPC_TEST_SINK_H_
 #define IPC_IPC_TEST_SINK_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <utility>
@@ -13,6 +14,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "build/build_config.h"
 #include "ipc/ipc_channel.h"
 
 namespace IPC {
@@ -57,17 +59,22 @@ class Message;
 //
 //   class MyListener : public IPC::Listener {
 //    public:
+//     MyListener(const base::Closure& closure)
+//       : message_received_closure_(closure) {}
 //     virtual bool OnMessageReceived(const IPC::Message& msg) {
 //       <do something with the message>
-//       MessageLoop::current()->QuitWhenIdle();
+//       message_received_closure_.Run();
 //       return false;  // to store the message in the sink, or true to drop it
 //     }
+//    private:
+//     base::Closure message_received_closure_;
 //   };
 //
-//   MyListener listener;
+//   base::RunLoop run_loop;
+//   MyListener listener(run_loop.QuitClosure());
 //   test_sink.AddFilter(&listener);
 //   StartSomeAsynchronousProcess(&test_sink);
-//   MessageLoop::current()->Run();
+//   run_loop.Run();
 //   <inspect the results>
 //   ...
 //
@@ -83,13 +90,6 @@ class TestSink : public Channel {
   bool Send(IPC::Message* message) override;
   bool Connect() override WARN_UNUSED_RESULT;
   void Close() override;
-  base::ProcessId GetPeerPID() const override;
-  base::ProcessId GetSelfPID() const override;
-
-#if defined(OS_POSIX) && !defined(OS_NACL)
-  int GetClientFileDescriptor() const override;
-  base::ScopedFD TakeClientFileDescriptor() override;
-#endif  // defined(OS_POSIX) && !defined(OS_NACL)
 
   // Used by the source of the messages to send the message to the sink. This
   // will make a copy of the message and store it in the list.

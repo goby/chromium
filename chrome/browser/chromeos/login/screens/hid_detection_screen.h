@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_SCREENS_HID_DETECTION_SCREEN_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_SCREENS_HID_DETECTION_SCREEN_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/device/input_service_proxy.h"
 #include "chrome/browser/chromeos/login/screens/base_screen.h"
@@ -46,7 +48,6 @@ class HIDDetectionScreen : public HIDDetectionModel,
   ~HIDDetectionScreen() override;
 
   // HIDDetectionModel implementation:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void Initialize(::login::ScreenContext* context) override;
@@ -60,11 +61,11 @@ class HIDDetectionScreen : public HIDDetectionModel,
   void RequestPasskey(device::BluetoothDevice* device) override;
   void DisplayPinCode(device::BluetoothDevice* device,
                       const std::string& pincode) override;
-  void DisplayPasskey(
-      device::BluetoothDevice* device, uint32 passkey) override;
-  void KeysEntered(device::BluetoothDevice* device, uint32 entered) override;
-  void ConfirmPasskey(
-      device::BluetoothDevice* device, uint32 passkey) override;
+  void DisplayPasskey(device::BluetoothDevice* device,
+                      uint32_t passkey) override;
+  void KeysEntered(device::BluetoothDevice* device, uint32_t entered) override;
+  void ConfirmPasskey(device::BluetoothDevice* device,
+                      uint32_t passkey) override;
   void AuthorizePairing(device::BluetoothDevice* device) override;
 
   // device::BluetoothAdapter::Observer implementation.
@@ -82,6 +83,8 @@ class HIDDetectionScreen : public HIDDetectionModel,
   void OnInputDeviceRemoved(const std::string& id) override;
 
  private:
+  friend class HIDDetectionScreenTest;
+
   // Types of dialog leaving scenarios for UMA metric.
   enum ContinueScenarioType {
     // Only pointing device detected, user pressed 'Continue'.
@@ -131,7 +134,7 @@ class HIDDetectionScreen : public HIDDetectionModel,
   // Called by device::BluetoothAdapter in response to a successful request
   // to initiate a discovery session.
   void OnStartDiscoverySession(
-      scoped_ptr<device::BluetoothDiscoverySession> discovery_session);
+      std::unique_ptr<device::BluetoothDiscoverySession> discovery_session);
 
   // Called by device::BluetoothAdapter in response to a failure to
   // initiate a discovery session.
@@ -156,13 +159,13 @@ class HIDDetectionScreen : public HIDDetectionModel,
 
   // Called by device::BluetoothDevice on a successful pairing and connection
   // to a device.
-  void BTConnected(device::BluetoothDevice::DeviceType device_type);
+  void BTConnected(device::BluetoothDeviceType device_type);
 
   // Called by device::BluetoothDevice in response to a failure to
   // connect to the device with bluetooth address |address| due to an error
   // encoded in |error_code|.
   void BTConnectError(const std::string& address,
-                      device::BluetoothDevice::DeviceType device_type,
+                      device::BluetoothDeviceType device_type,
                       device::BluetoothDevice::ConnectErrorCode error_code);
 
   // Sends a notification to the Web UI of the status of available Bluetooth/USB
@@ -186,7 +189,7 @@ class HIDDetectionScreen : public HIDDetectionModel,
   // The current device discovery session. Only one active discovery session is
   // kept at a time and the instance that |discovery_session_| points to gets
   // replaced by a new one when a new discovery session is initiated.
-  scoped_ptr<device::BluetoothDiscoverySession> discovery_session_;
+  std::unique_ptr<device::BluetoothDiscoverySession> discovery_session_;
 
   // Current pointing device, if any. Device name is kept in screen context.
   std::string pointing_device_id_;
@@ -200,7 +203,7 @@ class HIDDetectionScreen : public HIDDetectionModel,
   std::string keyboard_device_name_;
 
   // State of BT adapter before screen-initiated changes.
-  scoped_ptr<bool> adapter_initially_powered_;
+  std::unique_ptr<bool> adapter_initially_powered_;
 
   bool switch_on_adapter_when_ready_;
 

@@ -4,8 +4,13 @@
 
 #include "google_apis/gcm/base/mcs_util.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -13,12 +18,12 @@
 namespace gcm {
 namespace {
 
-const uint64 kAuthId = 4421448356646222460;
-const uint64 kAuthToken = 12345;
+const uint64_t kAuthId = 4421448356646222460;
+const uint64_t kAuthToken = 12345;
 
 // Build a login request protobuf.
 TEST(MCSUtilTest, BuildLoginRequest) {
-  scoped_ptr<mcs_proto::LoginRequest> login_request =
+  std::unique_ptr<mcs_proto::LoginRequest> login_request =
       BuildLoginRequest(kAuthId, kAuthToken, "1.0");
   ASSERT_EQ("chrome-1.0", login_request->id());
   ASSERT_EQ(base::Uint64ToString(kAuthToken), login_request->auth_token());
@@ -31,8 +36,8 @@ TEST(MCSUtilTest, BuildLoginRequest) {
 
 // Test building a protobuf and extracting the tag from a protobuf.
 TEST(MCSUtilTest, ProtobufToTag) {
-  for (uint8 i = 0; i < kNumProtoTypes; ++i) {
-    scoped_ptr<google::protobuf::MessageLite> protobuf =
+  for (uint8_t i = 0; i < kNumProtoTypes; ++i) {
+    std::unique_ptr<google::protobuf::MessageLite> protobuf =
         BuildProtobufFromTag(i);
     if (!protobuf.get())  // Not all tags have protobuf definitions.
       continue;
@@ -49,7 +54,7 @@ TEST(MCSUtilTest, PersistentIds) {
   };
   for (size_t i = 0; i < arraysize(kTagsWithPersistentIds); ++i) {
     int tag = kTagsWithPersistentIds[i];
-    scoped_ptr<google::protobuf::MessageLite> protobuf =
+    std::unique_ptr<google::protobuf::MessageLite> protobuf =
         BuildProtobufFromTag(tag);
     ASSERT_TRUE(protobuf.get());
     SetPersistentId(base::IntToString(tag), protobuf.get());
@@ -71,7 +76,7 @@ TEST(MCSUtilTest, StreamIds) {
   };
   for (size_t i = 0; i < arraysize(kTagsWithStreamIds); ++i) {
     int tag = kTagsWithStreamIds[i];
-    scoped_ptr<google::protobuf::MessageLite> protobuf =
+    std::unique_ptr<google::protobuf::MessageLite> protobuf =
         BuildProtobufFromTag(tag);
     ASSERT_TRUE(protobuf.get());
     SetLastStreamIdReceived(tag, protobuf.get());

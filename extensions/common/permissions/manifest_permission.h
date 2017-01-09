@@ -5,19 +5,16 @@
 #ifndef EXTENSIONS_COMMON_PERMISSIONS_MANIFEST_PERMISSION_H_
 #define EXTENSIONS_COMMON_PERMISSIONS_MANIFEST_PERMISSION_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/pickle.h"
 #include "extensions/common/permissions/api_permission_set.h"
 
 namespace base {
 class PickleIterator;
 class Value;
-}
-
-namespace IPC {
-class Message;
 }
 
 namespace extensions {
@@ -44,7 +41,7 @@ class ManifestPermission {
   virtual bool FromValue(const base::Value* value) = 0;
 
   // Stores this into a new created Value.
-  virtual scoped_ptr<base::Value> ToValue() const = 0;
+  virtual std::unique_ptr<base::Value> ToValue() const = 0;
 
   // Clones this.
   ManifestPermission* Clone() const;
@@ -67,11 +64,14 @@ class ManifestPermission {
   bool Equal(const ManifestPermission* rhs) const;
 
   // IPC functions
+  // Gets the size of the data to be written.
+  void GetSize(base::PickleSizer* s) const;
+
   // Writes this into the given IPC message |m|.
-  void Write(IPC::Message* m) const;
+  void Write(base::Pickle* m) const;
 
   // Reads from the given IPC message |m|.
-  bool Read(const IPC::Message* m, base::PickleIterator* iter);
+  bool Read(const base::Pickle* m, base::PickleIterator* iter);
 
   // Logs this permission.
   void Log(std::string* log) const;

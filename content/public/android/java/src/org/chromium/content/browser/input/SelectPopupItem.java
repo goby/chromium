@@ -4,13 +4,13 @@
 
 package org.chromium.content.browser.input;
 
-import org.chromium.ui.DropdownItem;
+import org.chromium.ui.DropdownItemBase;
 
 /**
  * Select popup item containing the label, the type and the enabled state
  * of an item belonging to a select popup dialog.
  */
-public class SelectPopupItem implements DropdownItem {
+public class SelectPopupItem extends DropdownItemBase {
     private final String mLabel;
     private final int mType;
 
@@ -22,16 +22,6 @@ public class SelectPopupItem implements DropdownItem {
     @Override
     public String getLabel() {
         return mLabel;
-    }
-
-    @Override
-    public String getSublabel() {
-        return null;
-    }
-
-    @Override
-    public int getIconId() {
-        return NO_ICON;
     }
 
     @Override

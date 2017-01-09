@@ -28,63 +28,51 @@
 #define LifecycleObserver_h
 
 #include "platform/heap/Handle.h"
-#include "wtf/Assertions.h"
 
 namespace blink {
 
-template<typename T, typename Observer, typename Notifier>
-class LifecycleObserver : public WillBeGarbageCollectedMixin {
-public:
-    using Context = T;
+template <typename Context, typename Observer>
+class LifecycleNotifier;
 
-#if !ENABLE(OILPAN)
-    virtual ~LifecycleObserver()
-    {
-        clearContext();
-    }
-#endif
+template <typename Context, typename Observer>
+class LifecycleObserver : public GarbageCollectedMixin {
+ public:
+  DEFINE_INLINE_VIRTUAL_TRACE() { visitor->trace(m_lifecycleContext); }
 
-    EAGERLY_FINALIZE_WILL_BE_REMOVED();
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        visitor->trace(m_lifecycleContext);
-    }
+  virtual void contextDestroyed() {}
 
-    virtual void contextDestroyed() { }
+  Context* lifecycleContext() const { return m_lifecycleContext; }
 
-    Context* lifecycleContext() const { return m_lifecycleContext; }
-    void clearLifecycleContext() { m_lifecycleContext = nullptr; }
+  void clearContext() { setContext(nullptr); }
 
-protected:
-    explicit LifecycleObserver(Context* context)
-        : m_lifecycleContext(nullptr)
-    {
-        setContext(context);
-    }
+ protected:
+  explicit LifecycleObserver(Context* context) : m_lifecycleContext(nullptr) {
+    setContext(context);
+  }
 
-    void setContext(Context*);
+  void setContext(Context*);
 
-    void clearContext()
-    {
-        setContext(nullptr);
-    }
-
-private:
-    RawPtrWillBeWeakMember<Context> m_lifecycleContext;
+ private:
+  WeakMember<Context> m_lifecycleContext;
 };
 
-template<typename T, typename Observer, typename Notifier>
-inline void LifecycleObserver<T, Observer, Notifier>::setContext(typename LifecycleObserver<T, Observer, Notifier>::Context* context)
-{
-    if (m_lifecycleContext)
-        static_cast<Notifier*>(m_lifecycleContext.get())->removeObserver(static_cast<Observer*>(this));
+template <typename Context, typename Observer>
+inline void LifecycleObserver<Context, Observer>::setContext(Context* context) {
+  using Notifier = LifecycleNotifier<Context, Observer>;
 
-    m_lifecycleContext = context;
+  if (m_lifecycleContext) {
+    static_cast<Notifier*>(m_lifecycleContext)
+        ->removeObserver(static_cast<Observer*>(this));
+  }
 
-    if (m_lifecycleContext)
-        static_cast<Notifier*>(m_lifecycleContext.get())->addObserver(static_cast<Observer*>(this));
+  m_lifecycleContext = context;
+
+  if (m_lifecycleContext) {
+    static_cast<Notifier*>(m_lifecycleContext)
+        ->addObserver(static_cast<Observer*>(this));
+  }
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // LifecycleObserver_h
+#endif  // LifecycleObserver_h

@@ -7,13 +7,11 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file.h"
 
 namespace storage {
 
-class FileSystemOperationContext;
 class FileSystemURL;
 
 // An interface for providing entry observing capability for file system

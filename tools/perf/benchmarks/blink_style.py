@@ -9,7 +9,7 @@ import page_sets
 from telemetry import benchmark
 
 
-@benchmark.Disabled('reference', 'win8')
+@benchmark.Disabled('win8')
 class BlinkStyleTop25(perf_benchmark.PerfBenchmark):
   """Measures performance of Blink's style engine (CSS Parsing, Style Recalc,
   etc.) on the top 25 pages.
@@ -22,7 +22,6 @@ class BlinkStyleTop25(perf_benchmark.PerfBenchmark):
     return 'blink_style.top_25'
 
 
-@benchmark.Disabled('reference')
 @benchmark.Enabled('android')
 class BlinkStyleKeyMobileSites(perf_benchmark.PerfBenchmark):
   """Measures performance of Blink's style engine (CSS Parsing, Style Recalc,
@@ -32,11 +31,15 @@ class BlinkStyleKeyMobileSites(perf_benchmark.PerfBenchmark):
   page_set = page_sets.KeyMobileSitesPageSet
 
   @classmethod
+  def ShouldDisable(cls, possible_browser):  # http://crbug.com/597656
+    return (possible_browser.browser_type == 'reference' and
+            possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X')
+
+  @classmethod
   def Name(cls):
     return 'blink_style.key_mobile_sites'
 
 
-@benchmark.Disabled('reference')
 @benchmark.Enabled('android')
 class BlinkStylePolymer(perf_benchmark.PerfBenchmark):
   """Measures performance of Blink's style engine (CSS Parsing, Style Recalc,

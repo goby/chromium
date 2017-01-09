@@ -5,14 +5,16 @@
 #ifndef GPU_CONFIG_GPU_CONTROL_LIST_H_
 #define GPU_CONFIG_GPU_CONTROL_LIST_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "gpu/gpu_export.h"
@@ -57,7 +59,7 @@ class GPU_EXPORT GpuControlList {
   // Collects the active entries from the last MakeDecision() call.
   // If disabled set to true, return entries that are disabled; otherwise,
   // return enabled entries.
-  void GetDecisionEntries(std::vector<uint32>* entry_ids,
+  void GetDecisionEntries(std::vector<uint32_t>* entry_ids,
                           bool disabled) const;
 
   // Collects all disabled extensions.
@@ -76,7 +78,7 @@ class GPU_EXPORT GpuControlList {
       base::ListValue* problem_list, const std::string& tag) const;
 
   // Return the largest entry id.  This is used for histogramming.
-  uint32 max_entry_id() const;
+  uint32_t max_entry_id() const;
 
   // Returns the version of the control list.
   std::string version() const;
@@ -88,6 +90,9 @@ class GPU_EXPORT GpuControlList {
 
   // Returns the number of entries.  This is only for tests.
   size_t num_entries() const;
+
+  // This is only for tests.
+  bool has_duplicated_entry_id() const;
 
   // Register a feature to FeatureMap - used to construct a GpuControlList.
   void AddSupportedFeature(const std::string& feature_name, int feature_id);
@@ -191,7 +196,7 @@ class GPU_EXPORT GpuControlList {
 
    private:
     OsType type_;
-    scoped_ptr<VersionInfo> version_info_;
+    std::unique_ptr<VersionInfo> version_info_;
   };
 
   class GPU_EXPORT FloatInfo {
@@ -274,7 +279,7 @@ class GPU_EXPORT GpuControlList {
     OsType GetOsType() const;
 
     // Returns the entry's unique id.  0 is reserved.
-    uint32 id() const;
+    uint32_t id() const;
 
     // Returns whether the entry is disabled.
     bool disabled() const;
@@ -330,7 +335,7 @@ class GPU_EXPORT GpuControlList {
     GpuControlListEntry();
     ~GpuControlListEntry();
 
-    bool SetId(uint32 id);
+    bool SetId(uint32_t id);
 
     void SetDisabled(bool disabled);
 
@@ -363,6 +368,8 @@ class GPU_EXPORT GpuControlList {
     bool SetGLVersionInfo(const std::string& version_op,
                           const std::string& version_string,
                           const std::string& version_string2);
+
+    bool SetGLVersionStringInfo(const std::string& version_string_value);
 
     bool SetGLVendorInfo(const std::string& vendor_value);
 
@@ -402,6 +409,7 @@ class GPU_EXPORT GpuControlList {
     void SetInProcessGPUInfo(bool value);
 
     bool SetFeatures(const std::vector<std::string>& features,
+                     const std::vector<std::string>& exceptions,
                      const FeatureMap& feature_map,
                      bool supports_feature_type_all);
 
@@ -428,35 +436,36 @@ class GPU_EXPORT GpuControlList {
     // See GLType declaration.
     static GLType GetDefaultGLType();
 
-    uint32 id_;
+    uint32_t id_;
     bool disabled_;
     std::string description_;
     std::vector<int> cr_bugs_;
     std::vector<int> webkit_bugs_;
     std::vector<std::string> disabled_extensions_;
-    scoped_ptr<OsInfo> os_info_;
-    uint32 vendor_id_;
-    std::vector<uint32> device_id_list_;
+    std::unique_ptr<OsInfo> os_info_;
+    uint32_t vendor_id_;
+    std::vector<uint32_t> device_id_list_;
     MultiGpuStyle multi_gpu_style_;
     MultiGpuCategory multi_gpu_category_;
     GLType gl_type_;
     std::string driver_vendor_info_;
-    scoped_ptr<VersionInfo> driver_version_info_;
-    scoped_ptr<VersionInfo> driver_date_info_;
-    scoped_ptr<VersionInfo> gl_version_info_;
+    std::unique_ptr<VersionInfo> driver_version_info_;
+    std::unique_ptr<VersionInfo> driver_date_info_;
+    std::unique_ptr<VersionInfo> gl_version_info_;
+    std::string gl_version_string_info_;
     std::string gl_vendor_info_;
     std::string gl_renderer_info_;
     std::string gl_extensions_info_;
-    scoped_ptr<IntInfo> gl_reset_notification_strategy_info_;
+    std::unique_ptr<IntInfo> gl_reset_notification_strategy_info_;
     std::string cpu_brand_;
-    scoped_ptr<FloatInfo> perf_graphics_info_;
-    scoped_ptr<FloatInfo> perf_gaming_info_;
-    scoped_ptr<FloatInfo> perf_overall_info_;
+    std::unique_ptr<FloatInfo> perf_graphics_info_;
+    std::unique_ptr<FloatInfo> perf_gaming_info_;
+    std::unique_ptr<FloatInfo> perf_overall_info_;
     std::vector<std::string> machine_model_name_list_;
-    scoped_ptr<VersionInfo> machine_model_version_info_;
-    scoped_ptr<IntInfo> gpu_count_info_;
-    scoped_ptr<BoolInfo> direct_rendering_info_;
-    scoped_ptr<BoolInfo> in_process_gpu_info_;
+    std::unique_ptr<VersionInfo> machine_model_version_info_;
+    std::unique_ptr<IntInfo> gpu_count_info_;
+    std::unique_ptr<BoolInfo> direct_rendering_info_;
+    std::unique_ptr<BoolInfo> in_process_gpu_info_;
     std::set<int> features_;
     std::vector<ScopedGpuControlListEntry> exceptions_;
   };
@@ -478,7 +487,7 @@ class GPU_EXPORT GpuControlList {
   // used later by GetDecisionEntries().
   std::vector<ScopedGpuControlListEntry> active_entries_;
 
-  uint32 max_entry_id_;
+  uint32_t max_entry_id_;
 
   bool needs_more_info_;
 

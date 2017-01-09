@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/der/parse_values.h"
+
 #include <stdint.h>
 
 #include "base/macros.h"
-#include "net/der/parse_values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -173,6 +174,12 @@ TEST(ParseValuesTest, TimesCompare) {
   EXPECT_TRUE(time1 < time2);
   EXPECT_TRUE(time2 < time3);
   EXPECT_TRUE(time3 < time4);
+
+  EXPECT_TRUE(time2 > time1);
+  EXPECT_TRUE(time2 >= time1);
+  EXPECT_TRUE(time3 <= time4);
+  EXPECT_TRUE(time1 <= time1);
+  EXPECT_TRUE(time1 >= time1);
 }
 
 struct Uint64TestData {

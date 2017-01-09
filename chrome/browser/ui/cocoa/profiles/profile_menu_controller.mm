@@ -4,6 +4,8 @@
 
 #import "chrome/browser/ui/cocoa/profiles/profile_menu_controller.h"
 
+#include <stddef.h>
+
 #include "base/mac/scoped_nsobject.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
@@ -12,8 +14,6 @@
 #include "chrome/browser/profiles/avatar_menu_observer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
-#include "chrome/browser/profiles/profile_info_interface.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_window.h"
@@ -114,8 +114,7 @@ class Observer : public chrome::BrowserListObserver,
 }
 
 - (IBAction)newProfile:(id)sender {
-  profiles::CreateAndSwitchToNewProfile(chrome::HOST_DESKTOP_TYPE_NATIVE,
-                                        ProfileManager::CreateCallback(),
+  profiles::CreateAndSwitchToNewProfile(ProfileManager::CreateCallback(),
                                         ProfileMetrics::ADD_NEW_USER_MENU);
 }
 
@@ -152,11 +151,8 @@ class Observer : public chrome::BrowserListObserver,
       [item setIndentationLevel:1];
     } else {
       gfx::Image itemIcon;
-      bool isRectangle;
       // Always use the low-res, small default avatars in the menu.
-      AvatarMenu::GetImageForMenuButton(itemData.profile_path,
-                                        &itemIcon,
-                                        &isRectangle);
+      AvatarMenu::GetImageForMenuButton(itemData.profile_path, &itemIcon);
 
       // The image might be too large and need to be resized (i.e. if this is
       // a signed-in user using the GAIA profile photo).
@@ -232,7 +228,7 @@ class Observer : public chrome::BrowserListObserver,
 - (void)initializeMenu {
   observer_.reset(new ProfileMenuControllerInternal::Observer(self));
   avatarMenu_.reset(new AvatarMenu(
-      &g_browser_process->profile_manager()->GetProfileInfoCache(),
+      &g_browser_process->profile_manager()->GetProfileAttributesStorage(),
       observer_.get(),
       NULL));
   avatarMenu_->RebuildMenu();

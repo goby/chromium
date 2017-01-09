@@ -31,25 +31,24 @@
 #ifndef UndoStep_h
 #define UndoStep_h
 
-#include "core/editing/commands/EditAction.h"
+#include "core/events/InputEvent.h"
 #include "platform/heap/Handle.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
 class LocalFrame;
 
-class UndoStep : public RefCountedWillBeGarbageCollectedFinalized<UndoStep> {
-public:
-    virtual ~UndoStep() { }
-    DEFINE_INLINE_VIRTUAL_TRACE() { }
+class UndoStep : public GarbageCollectedFinalized<UndoStep> {
+ public:
+  virtual ~UndoStep() {}
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 
-    virtual bool belongsTo(const LocalFrame&) const = 0;
-    virtual void unapply() = 0;
-    virtual void reapply() = 0;
-    virtual EditAction editingAction() const = 0;
+  virtual bool belongsTo(const LocalFrame&) const = 0;
+  virtual void unapply() = 0;
+  virtual void reapply() = 0;
+  virtual InputEvent::InputType inputType() const = 0;
 };
 
-}
+}  // namespace blink
 
 #endif

@@ -4,11 +4,14 @@
 
 #include "chrome/browser/chromeos/login/users/avatar/user_image_manager_test_util.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <string>
+#include <utility>
 
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
@@ -18,6 +21,7 @@ namespace test {
 
 const char kUserAvatarImage1RelativePath[] = "chromeos/avatar1.jpg";
 const char kUserAvatarImage2RelativePath[] = "chromeos/avatar2.jpg";
+const char kUserAvatarImage3RelativePath[] = "chromeos/avatar3.png";
 
 bool AreImagesEqual(const gfx::ImageSkia& first, const gfx::ImageSkia& second) {
   if (first.width() != second.width() || first.height() != second.height())
@@ -50,13 +54,16 @@ ImageLoader::ImageLoader(const base::FilePath& path) : path_(path) {
 ImageLoader::~ImageLoader() {
 }
 
-scoped_ptr<gfx::ImageSkia> ImageLoader::Load() {
+std::unique_ptr<gfx::ImageSkia> ImageLoader::Load() {
   std::string image_data;
   ReadFileToString(path_, &image_data);
-  ImageDecoder::StartWithOptions(this, image_data,
-                                 ImageDecoder::ROBUST_JPEG_CODEC, false);
+  const ImageDecoder::ImageCodec codec =
+      (path_.Extension() == FILE_PATH_LITERAL(".jpg")
+           ? ImageDecoder::ROBUST_JPEG_CODEC
+           : ImageDecoder::ROBUST_PNG_CODEC);
+  ImageDecoder::StartWithOptions(this, image_data, codec, false);
   run_loop_.Run();
-  return decoded_image_.Pass();
+  return std::move(decoded_image_);
 }
 
 void ImageLoader::OnImageDecoded(const SkBitmap& decoded_image) {

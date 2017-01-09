@@ -4,6 +4,7 @@
 
 #include "components/policy/core/common/cloud/mock_device_management_service.h"
 
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -143,7 +144,7 @@ std::string MockDeviceManagementServiceConfiguration::GetPlatformParameter() {
 }
 
 MockDeviceManagementService::MockDeviceManagementService()
-    : DeviceManagementService(scoped_ptr<Configuration>(
+    : DeviceManagementService(std::unique_ptr<Configuration>(
           new MockDeviceManagementServiceConfiguration)) {}
 
 MockDeviceManagementService::~MockDeviceManagementService() {}

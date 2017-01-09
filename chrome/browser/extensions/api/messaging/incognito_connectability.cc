@@ -50,6 +50,7 @@ class IncognitoConnectabilityInfoBarDelegate : public ConfirmInfoBarDelegate {
 
   // ConfirmInfoBarDelegate:
   Type GetInfoBarType() const override;
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   base::string16 GetMessageText() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
@@ -66,7 +67,7 @@ InfoBar* IncognitoConnectabilityInfoBarDelegate::Create(
     const base::string16& message,
     const IncognitoConnectabilityInfoBarDelegate::InfoBarCallback& callback) {
   return infobar_manager->AddInfoBar(infobar_manager->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(
+      std::unique_ptr<ConfirmInfoBarDelegate>(
           new IncognitoConnectabilityInfoBarDelegate(message, callback))));
 }
 
@@ -89,6 +90,11 @@ IncognitoConnectabilityInfoBarDelegate::
 infobars::InfoBarDelegate::Type
 IncognitoConnectabilityInfoBarDelegate::GetInfoBarType() const {
   return PAGE_ACTION_TYPE;
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+IncognitoConnectabilityInfoBarDelegate::GetIdentifier() const {
+  return INCOGNITO_CONNECTABILITY_INFOBAR_DELEGATE;
 }
 
 base::string16 IncognitoConnectabilityInfoBarDelegate::GetMessageText() const {
@@ -212,6 +218,9 @@ void IncognitoConnectability::Query(
 IncognitoConnectability::TabContext::TabContext() : infobar(nullptr) {
 }
 
+IncognitoConnectability::TabContext::TabContext(const TabContext& other) =
+    default;
+
 IncognitoConnectability::TabContext::~TabContext() {
 }
 
@@ -233,10 +242,10 @@ void IncognitoConnectability::OnInteractiveResponse(
       break;
   }
 
-  DCHECK(ContainsKey(pending_origins_, make_pair(extension_id, origin)));
+  DCHECK(base::ContainsKey(pending_origins_, make_pair(extension_id, origin)));
   PendingOrigin& pending_origin =
       pending_origins_[make_pair(extension_id, origin)];
-  DCHECK(ContainsKey(pending_origin, infobar_manager));
+  DCHECK(base::ContainsKey(pending_origin, infobar_manager));
 
   std::vector<base::Callback<void(bool)>> callbacks;
   if (response == ScopedAlertTracker::INTERACTIVE) {

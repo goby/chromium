@@ -5,15 +5,18 @@
 #ifndef URL_SCHEME_HOST_PORT_H_
 #define URL_SCHEME_HOST_PORT_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/strings/string_piece.h"
 #include "url/url_export.h"
 
 class GURL;
 
 namespace url {
+
+struct Parsed;
 
 // This class represents a (scheme, host, port) tuple extracted from a URL.
 //
@@ -81,7 +84,22 @@ class URL_EXPORT SchemeHostPort {
   // support ports (e.g. 'file'). In that case, |port| must be 0.
   //
   // Copies the data in |scheme| and |host|.
-  SchemeHostPort(base::StringPiece scheme, base::StringPiece host, uint16 port);
+  SchemeHostPort(base::StringPiece scheme,
+                 base::StringPiece host,
+                 uint16_t port);
+
+  // Metadata influencing whether or not the constructor should sanity check
+  // host canonicalization.
+  enum ConstructPolicy { CHECK_CANONICALIZATION, ALREADY_CANONICALIZED };
+
+  // Creates a (scheme, host, port) tuple without performing sanity checking
+  // that the host and port are canonicalized. This should only be used when
+  // converting between already normalized types, and should NOT be used for
+  // IPC.
+  SchemeHostPort(base::StringPiece scheme,
+                 base::StringPiece host,
+                 uint16_t port,
+                 ConstructPolicy policy);
 
   // Creates a (scheme, host, port) tuple from |url|, as described at
   // https://tools.ietf.org/html/rfc6454#section-4
@@ -97,7 +115,7 @@ class URL_EXPORT SchemeHostPort {
   // and all IPv6 addresses will be enclosed in brackets ("[2001:db8::1]").
   const std::string& host() const { return host_; }
   const std::string& scheme() const { return scheme_; }
-  uint16 port() const { return port_; }
+  uint16_t port() const { return port_; }
   bool IsInvalid() const;
 
   // Serializes the SchemeHostPort tuple to a canonical form.
@@ -107,6 +125,10 @@ class URL_EXPORT SchemeHostPort {
   // SchemeHostPort tuples serialize to the empty string, rather than being
   // serialized as a unique Origin.
   std::string Serialize() const;
+
+  // Efficiently returns what GURL(Serialize()) would return, without needing to
+  // re-parse the URL.
+  GURL GetURL() const;
 
   // Two SchemeHostPort objects are "equal" iff their schemes, hosts, and ports
   // are exact matches.
@@ -121,9 +143,11 @@ class URL_EXPORT SchemeHostPort {
   bool operator<(const SchemeHostPort& other) const;
 
  private:
+  std::string SerializeInternal(url::Parsed* parsed) const;
+
   std::string scheme_;
   std::string host_;
-  uint16 port_;
+  uint16_t port_;
 };
 
 }  // namespace url

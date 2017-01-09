@@ -5,12 +5,14 @@
 #ifndef NET_SPDY_SPDY_SESSION_POOL_H_
 #define NET_SPDY_SPDY_SESSION_POOL_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/host_port_pair.h"
@@ -21,17 +23,22 @@
 #include "net/cert/cert_database.h"
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_server.h"
-#include "net/socket/next_proto.h"
 #include "net/spdy/spdy_session_key.h"
 #include "net/ssl/ssl_config_service.h"
 
+namespace base {
+namespace trace_event {
+class ProcessMemoryDump;
+}
+}
+
 namespace net {
 
-class AddressList;
-class BoundNetLog;
 class ClientSocketHandle;
 class HostResolver;
 class HttpServerProperties;
+class NetLogWithSource;
+class ProxyDelegate;
 class SpdySession;
 class TransportSecurityState;
 
@@ -43,22 +50,15 @@ class NET_EXPORT SpdySessionPool
  public:
   typedef base::TimeTicks (*TimeFunc)(void);
 
-  // |default_protocol| may be kProtoUnknown (e.g., if SPDY is
-  // disabled), in which case it's set to a default value. Otherwise,
-  // it must be a SPDY protocol.
-  SpdySessionPool(
-      HostResolver* host_resolver,
-      SSLConfigService* ssl_config_service,
-      const base::WeakPtr<HttpServerProperties>& http_server_properties,
-      TransportSecurityState* transport_security_state,
-      bool enable_compression,
-      bool enable_ping_based_connection_checking,
-      NextProto default_protocol,
-      size_t session_max_recv_window_size,
-      size_t stream_max_recv_window_size,
-      size_t initial_max_concurrent_streams,
-      SpdySessionPool::TimeFunc time_func,
-      const std::string& trusted_spdy_proxy);
+  SpdySessionPool(HostResolver* host_resolver,
+                  SSLConfigService* ssl_config_service,
+                  HttpServerProperties* http_server_properties,
+                  TransportSecurityState* transport_security_state,
+                  bool enable_ping_based_connection_checking,
+                  size_t session_max_recv_window_size,
+                  size_t stream_max_recv_window_size,
+                  SpdySessionPool::TimeFunc time_func,
+                  ProxyDelegate* proxy_delegate);
   ~SpdySessionPool() override;
 
   // In the functions below, a session is "available" if this pool has
@@ -70,28 +70,27 @@ class NET_EXPORT SpdySessionPool
   // processing existing streams.
 
   // Create a new SPDY session from an existing socket.  There must
-  // not already be a session for the given key. This pool must have
-  // been constructed with a valid |default_protocol| value.
+  // not already be a session for the given key.
   //
   // |is_secure| can be false for testing or when SPDY is configured
-  // to work with non-secure sockets. If |is_secure| is true,
-  // |certificate_error_code| indicates that the certificate error
-  // encountered when connecting the SSL socket, with OK meaning there
-  // was no error.
+  // to work with non-secure sockets.
   //
   // Returns the new SpdySession. Note that the SpdySession begins reading from
   // |connection| on a subsequent event loop iteration, so it may be closed
   // immediately afterwards if the first read of |connection| fails.
   base::WeakPtr<SpdySession> CreateAvailableSessionFromSocket(
       const SpdySessionKey& key,
-      scoped_ptr<ClientSocketHandle> connection,
-      const BoundNetLog& net_log,
-      int certificate_error_code,
+      std::unique_ptr<ClientSocketHandle> connection,
+      const NetLogWithSource& net_log,
       bool is_secure);
 
-  // Find an available session for the given key, or NULL if there isn't one.
-  base::WeakPtr<SpdySession> FindAvailableSession(const SpdySessionKey& key,
-                                                  const BoundNetLog& net_log);
+  // Return an available session for |key| that has an unclaimed push stream for
+  // |url| if such exists and |url| is not empty, or else an available session
+  // for |key| if such exists, or else nullptr.
+  base::WeakPtr<SpdySession> FindAvailableSession(
+      const SpdySessionKey& key,
+      const GURL& url,
+      const NetLogWithSource& net_log);
 
   // Remove all mappings and aliases for the given session, which must
   // still be available. Except for in tests, this must be called by
@@ -118,10 +117,17 @@ class NET_EXPORT SpdySessionPool
   // closing the current ones.
   void CloseAllSessions();
 
-  // Creates a Value summary of the state of the spdy session pool.
-  scoped_ptr<base::Value> SpdySessionPoolInfoToValue() const;
+  // (Un)register a SpdySession with an unclaimed pushed stream for |url|, so
+  // that the right SpdySession can be served by FindAvailableSession.
+  void RegisterUnclaimedPushedStream(GURL url,
+                                     base::WeakPtr<SpdySession> spdy_session);
+  void UnregisterUnclaimedPushedStream(const GURL& url,
+                                       SpdySession* spdy_session);
 
-  base::WeakPtr<HttpServerProperties> http_server_properties() {
+  // Creates a Value summary of the state of the spdy session pool.
+  std::unique_ptr<base::Value> SpdySessionPoolInfoToValue() const;
+
+  HttpServerProperties* http_server_properties() {
     return http_server_properties_;
   }
 
@@ -141,8 +147,10 @@ class NET_EXPORT SpdySessionPool
 
   // We perform the same flushing as described above when certificate database
   // is changed.
-  void OnCertAdded(const X509Certificate* cert) override;
-  void OnCACertChanged(const X509Certificate* cert) override;
+  void OnCertDBChanged(const X509Certificate* cert) override;
+
+  void DumpMemoryStats(base::trace_event::ProcessMemoryDump* pmd,
+                       const std::string& parent_dump_absolute_name) const;
 
  private:
   friend class SpdySessionPoolPeer;  // For testing.
@@ -152,6 +160,7 @@ class NET_EXPORT SpdySessionPool
   typedef std::map<SpdySessionKey, base::WeakPtr<SpdySession> >
       AvailableSessionMap;
   typedef std::map<IPEndPoint, SpdySessionKey> AliasMap;
+  typedef std::map<GURL, WeakSessionList> UnclaimedPushedStreamMap;
 
   // Returns true iff |session| is in |available_sessions_|.
   bool IsSessionAvailable(const base::WeakPtr<SpdySession>& session) const;
@@ -184,7 +193,7 @@ class NET_EXPORT SpdySessionPool
       const std::string& description,
       bool idle_only);
 
-  const base::WeakPtr<HttpServerProperties> http_server_properties_;
+  HttpServerProperties* http_server_properties_;
 
   TransportSecurityState* transport_security_state_;
 
@@ -201,23 +210,27 @@ class NET_EXPORT SpdySessionPool
   // A map of IPEndPoint aliases for sessions.
   AliasMap aliases_;
 
+  // A map of all SpdySessions owned by |this| that have an unclaimed pushed
+  // streams for a GURL.  Might contain invalid WeakPtr's.
+  // A single SpdySession can only have at most one pushed stream for each GURL,
+  // but it is possible that multiple SpdySessions have pushed streams for the
+  // same GURL.
+  UnclaimedPushedStreamMap unclaimed_pushed_streams_;
+
   const scoped_refptr<SSLConfigService> ssl_config_service_;
   HostResolver* const resolver_;
 
   // Defaults to true. May be controlled via SpdySessionPoolPeer for tests.
-  bool verify_domain_authentication_;
   bool enable_sending_initial_data_;
-  bool enable_compression_;
   bool enable_ping_based_connection_checking_;
-  const NextProto default_protocol_;
   size_t session_max_recv_window_size_;
   size_t stream_max_recv_window_size_;
-  size_t initial_max_concurrent_streams_;
   TimeFunc time_func_;
 
-  // This SPDY proxy is allowed to push resources from origins that are
-  // different from those of their associated streams.
-  HostPortPair trusted_spdy_proxy_;
+  // Determines if a proxy is a trusted SPDY proxy, which is allowed to push
+  // resources from origins that are different from those of their associated
+  // streams. May be nullptr.
+  ProxyDelegate* proxy_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(SpdySessionPool);
 };

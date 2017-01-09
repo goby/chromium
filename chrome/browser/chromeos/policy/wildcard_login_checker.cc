@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/policy_oauth2_token_fetcher.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
@@ -43,7 +43,7 @@ void WildcardLoginChecker::StartWithSigninContext(
   start_timestamp_ = base::Time::Now();
   callback_ = callback;
 
-  token_fetcher_.reset(new PolicyOAuth2TokenFetcher());
+  token_fetcher_.reset(PolicyOAuth2TokenFetcher::CreateInstance());
   token_fetcher_->StartWithSigninContext(
       signin_context.get(), g_browser_process->system_request_context(),
       base::Bind(&WildcardLoginChecker::OnPolicyTokenFetched,
@@ -59,7 +59,7 @@ void WildcardLoginChecker::StartWithRefreshToken(
   start_timestamp_ = base::Time::Now();
   callback_ = callback;
 
-  token_fetcher_.reset(new PolicyOAuth2TokenFetcher());
+  token_fetcher_.reset(PolicyOAuth2TokenFetcher::CreateInstance());
   token_fetcher_->StartWithRefreshToken(
       refresh_token, g_browser_process->system_request_context(),
       base::Bind(&WildcardLoginChecker::OnPolicyTokenFetched,

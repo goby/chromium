@@ -5,296 +5,88 @@
 #include "chrome/browser/profiles/profile_statistics.h"
 
 #include "base/bind.h"
-#include "base/memory/ref_counted.h"
-#include "base/prefs/pref_service.h"
-#include "base/task_runner.h"
-#include "base/time/time.h"
-#include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "base/macros.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/password_manager/password_store_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "components/bookmarks/browser/bookmark_model.h"
-#include "components/history/core/browser/history_service.h"
-#include "components/password_manager/core/browser/password_store.h"
-#include "components/password_manager/core/browser/password_store_consumer.h"
-#include "content/public/browser/browser_thread.h"
+#include "chrome/browser/profiles/profile_statistics_aggregator.h"
 
-using content::BrowserThread;
+ProfileStatistics::ProfileStatistics(Profile* profile)
+    : profile_(profile), aggregator_(nullptr), weak_ptr_factory_(this) {
+}
 
-namespace {
+ProfileStatistics::~ProfileStatistics() {
+}
 
-struct ProfileStatValue {
-  int count;
-  bool success;  // false means the statistics failed to load
-};
+void ProfileStatistics::GatherStatistics(
+    const profiles::ProfileStatisticsCallback& callback) {
+  // IsValidProfile() can be false in unit tests.
+  if (!g_browser_process->profile_manager()->IsValidProfile(profile_))
+    return;
+  DCHECK(!profile_->IsOffTheRecord() && !profile_->IsSystemProfile());
 
-int CountBookmarksFromNode(const bookmarks::BookmarkNode* node) {
-  int count = 0;
-  if (node->is_url()) {
-    ++count;
+  if (HasAggregator()) {
+    GetAggregator()->AddCallbackAndStartAggregator(callback);
   } else {
-    for (int i = 0; i < node->child_count(); ++i)
-      count += CountBookmarksFromNode(node->GetChild(i));
+    // The statistics task may outlive ProfileStatistics in unit tests, so a
+    // weak pointer is used for the callback.
+    scoped_refptr<ProfileStatisticsAggregator> aggregator =
+        new ProfileStatisticsAggregator(
+                profile_,
+                callback,
+                base::Bind(&ProfileStatistics::DeregisterAggregator,
+                           weak_ptr_factory_.GetWeakPtr()));
+    RegisterAggregator(aggregator.get());
   }
-  return count;
 }
 
-class ProfileStatisticsAggregator
-    : public base::RefCountedThreadSafe<ProfileStatisticsAggregator> {
-  // This class collects statistical information about the profile and returns
-  // the information via a callback function. Currently bookmarks, history,
-  // logins and preferences are counted.
-  //
-  // The class is RefCounted because this is needed for CancelableTaskTracker
-  // to function properly. Once all tasks are run (or cancelled) the instance is
-  // automatically destructed.
-  //
-  // The class is used internally by GetProfileStatistics function.
-
- public:
-  explicit ProfileStatisticsAggregator(Profile* profile,
-      const profiles::ProfileStatisticsCallback& callback,
-      base::CancelableTaskTracker* tracker);
-
- private:
-  friend class base::RefCountedThreadSafe<ProfileStatisticsAggregator>;
-  ~ProfileStatisticsAggregator() {}
-
-  void Init();
-
-  // Callback functions
-  // Normal callback. Appends result to |profile_category_stats_|, and then call
-  // the external callback. All other callbacks call this function.
-  void StatisticsCallback(const char* category, ProfileStatValue result);
-  // Callback for reporting success.
-  void StatisticsCallbackSuccess(const char* category, int count);
-  // Callback for reporting failure.
-  void StatisticsCallbackFailure(const char* category);
-  // Callback for history.
-  void StatisticsCallbackHistory(history::HistoryCountResult result);
-
-  // Bookmark counting.
-  ProfileStatValue CountBookmarks() const;
-
-  // Preference counting.
-  ProfileStatValue CountPrefs() const;
-
-  Profile* profile_;
-  profiles::ProfileCategoryStats profile_category_stats_;
-
-  // Callback function to be called when results arrive. Will be called
-  // multiple times (once for each statistics).
-  const profiles::ProfileStatisticsCallback callback_;
-
-  base::CancelableTaskTracker* tracker_;
-
-  // Password counting.
-  class PasswordStoreConsumerHelper
-      : public password_manager::PasswordStoreConsumer {
-   public:
-    explicit PasswordStoreConsumerHelper(ProfileStatisticsAggregator* parent)
-        : parent_(parent) {}
-
-    void OnGetPasswordStoreResults(
-        ScopedVector<autofill::PasswordForm> results) override {
-      parent_->StatisticsCallbackSuccess(profiles::kProfileStatisticsPasswords,
-                                         results.size());
-    }
-
-   private:
-    ProfileStatisticsAggregator* parent_ = nullptr;
-
-    DISALLOW_COPY_AND_ASSIGN(PasswordStoreConsumerHelper);
-  };
-  PasswordStoreConsumerHelper password_store_consumer_helper_;
-
-  DISALLOW_COPY_AND_ASSIGN(ProfileStatisticsAggregator);
-};
-
-ProfileStatisticsAggregator::ProfileStatisticsAggregator(
-    Profile* profile,
-    const profiles::ProfileStatisticsCallback& callback,
-    base::CancelableTaskTracker* tracker)
-    : profile_(profile),
-      callback_(callback),
-      tracker_(tracker),
-      password_store_consumer_helper_(this) {
-  Init();
+bool ProfileStatistics::HasAggregator() const {
+  return aggregator_ != nullptr;
 }
 
-void ProfileStatisticsAggregator::Init() {
-  // Initiate bookmark counting (async). Post to UI thread.
-  tracker_->PostTaskAndReplyWithResult(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI).get(),
-          FROM_HERE,
-          base::Bind(&ProfileStatisticsAggregator::CountBookmarks, this),
-          base::Bind(&ProfileStatisticsAggregator::StatisticsCallback,
-                     this, profiles::kProfileStatisticsBookmarks));
-
-  // Initiate history counting (async).
-  history::HistoryService* history_service =
-      HistoryServiceFactory::GetForProfileWithoutCreating(profile_);
-
-  if (history_service) {
-    history_service->GetHistoryCount(
-        base::Time(),
-        base::Time::Max(),
-        base::Bind(&ProfileStatisticsAggregator::StatisticsCallbackHistory,
-                   this),
-        tracker_);
-  } else {
-    StatisticsCallbackFailure(profiles::kProfileStatisticsBrowsingHistory);
-  }
-
-  // Initiate stored password counting (async).
-  // TODO(anthonyvd): make password task cancellable.
-  scoped_refptr<password_manager::PasswordStore> password_store =
-      PasswordStoreFactory::GetForProfile(
-          profile_, ServiceAccessType::EXPLICIT_ACCESS);
-  if (password_store) {
-    password_store->GetAutofillableLogins(&password_store_consumer_helper_);
-  } else {
-    StatisticsCallbackFailure(profiles::kProfileStatisticsPasswords);
-  }
-
-  // Initiate preference counting (async). Post to UI thread.
-  tracker_->PostTaskAndReplyWithResult(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI).get(),
-          FROM_HERE,
-          base::Bind(&ProfileStatisticsAggregator::CountPrefs, this),
-          base::Bind(&ProfileStatisticsAggregator::StatisticsCallback,
-                     this, profiles::kProfileStatisticsSettings));
+ProfileStatisticsAggregator* ProfileStatistics::GetAggregator() const {
+  return aggregator_;
 }
 
-void ProfileStatisticsAggregator::StatisticsCallback(
-    const char* category, ProfileStatValue result) {
-  profiles::ProfileCategoryStat datum;
-  datum.category = category;
-  datum.count = result.count;
-  datum.success = result.success;
-  profile_category_stats_.push_back(datum);
-  callback_.Run(profile_category_stats_);
+void ProfileStatistics::RegisterAggregator(
+    ProfileStatisticsAggregator* aggregator) {
+  aggregator_ = aggregator;
 }
 
-void ProfileStatisticsAggregator::StatisticsCallbackSuccess(
-    const char* category, int count) {
-  ProfileStatValue result;
-  result.count = count;
-  result.success = true;
-  StatisticsCallback(category, result);
+void ProfileStatistics::DeregisterAggregator() {
+  aggregator_ = nullptr;
 }
 
-void ProfileStatisticsAggregator::StatisticsCallbackFailure(
-    const char* category) {
-  ProfileStatValue result;
-  result.count = 0;
-  result.success = false;
-  StatisticsCallback(category, result);
-}
-
-void ProfileStatisticsAggregator::StatisticsCallbackHistory(
-    history::HistoryCountResult result) {
-  ProfileStatValue result_converted;
-  result_converted.count = result.count;
-  result_converted.success = result.success;
-  StatisticsCallback(profiles::kProfileStatisticsBrowsingHistory,
-                     result_converted);
-}
-
-ProfileStatValue ProfileStatisticsAggregator::CountBookmarks() const {
-  bookmarks::BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfileIfExists(profile_);
-
-  ProfileStatValue result;
-  if (bookmark_model) {
-    result.count = CountBookmarksFromNode(bookmark_model->bookmark_bar_node()) +
-                   CountBookmarksFromNode(bookmark_model->other_node()) +
-                   CountBookmarksFromNode(bookmark_model->mobile_node());
-    result.success = true;
-  } else {
-    result.count = 0;
-    result.success = false;
-  }
-  return result;
-}
-
-ProfileStatValue ProfileStatisticsAggregator::CountPrefs() const {
-  const PrefService* pref_service = profile_->GetPrefs();
-
-  ProfileStatValue result;
-  if (pref_service) {
-    scoped_ptr<base::DictionaryValue> prefs =
-        pref_service->GetPreferenceValuesWithoutPathExpansion();
-
-    int count = 0;
-    for (base::DictionaryValue::Iterator it(*(prefs.get()));
-         !it.IsAtEnd(); it.Advance()) {
-      const PrefService::Preference* pref = pref_service->
-                                                FindPreference(it.key());
-      // Skip all dictionaries (which must be empty by the function call above).
-      if (it.value().GetType() != base::Value::TYPE_DICTIONARY &&
-        pref && pref->IsUserControlled() && !pref->IsDefaultValue()) {
-        ++count;
-      }
-    }
-
-    result.count = count;
-    result.success = true;
-  } else {
-    result.count = 0;
-    result.success = false;
-  }
-  return result;
-}
-
-}  // namespace
-
-namespace profiles {
-
-// Constants for the categories in ProfileCategoryStats
-const char kProfileStatisticsBrowsingHistory[] = "BrowsingHistory";
-const char kProfileStatisticsPasswords[] = "Passwords";
-const char kProfileStatisticsBookmarks[] = "Bookmarks";
-const char kProfileStatisticsSettings[] = "Settings";
-
-void GetProfileStatistics(Profile* profile,
-    const ProfileStatisticsCallback& callback,
-    base::CancelableTaskTracker* tracker) {
-  scoped_refptr<ProfileStatisticsAggregator> aggregator =
-      new ProfileStatisticsAggregator(profile, callback, tracker);
-}
-
-ProfileCategoryStats GetProfileStatisticsFromCache(
-    const base::FilePath& profile_path) {
-  ProfileInfoCache& profile_info_cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
+// static
+profiles::ProfileCategoryStats
+    ProfileStatistics::GetProfileStatisticsFromAttributesStorage(
+        const base::FilePath& profile_path) {
   ProfileAttributesEntry* entry = nullptr;
-  bool has_entry = profile_info_cache.
+  bool has_entry = g_browser_process->profile_manager()->
+      GetProfileAttributesStorage().
       GetProfileAttributesWithPath(profile_path, &entry);
 
-  ProfileCategoryStats stats;
-  ProfileCategoryStat stat;
+  profiles::ProfileCategoryStats stats;
+  profiles::ProfileCategoryStat stat;
 
-  stat.category = kProfileStatisticsBrowsingHistory;
+  stat.category = profiles::kProfileStatisticsBrowsingHistory;
   stat.success = has_entry ? entry->HasStatsBrowsingHistory() : false;
   stat.count = stat.success ? entry->GetStatsBrowsingHistory() : 0;
   stats.push_back(stat);
 
-  stat.category = kProfileStatisticsPasswords;
+  stat.category = profiles::kProfileStatisticsPasswords;
   stat.success = has_entry ? entry->HasStatsPasswords() : false;
   stat.count = stat.success ? entry->GetStatsPasswords() : 0;
   stats.push_back(stat);
 
-  stat.category = kProfileStatisticsBookmarks;
+  stat.category = profiles::kProfileStatisticsBookmarks;
   stat.success = has_entry ? entry->HasStatsBookmarks() : false;
   stat.count = stat.success ? entry->GetStatsBookmarks() : 0;
   stats.push_back(stat);
 
-  stat.category = kProfileStatisticsSettings;
+  stat.category = profiles::kProfileStatisticsSettings;
   stat.success = has_entry ? entry->HasStatsSettings() : false;
   stat.count = stat.success ? entry->GetStatsSettings() : 0;
   stats.push_back(stat);
@@ -302,29 +94,33 @@ ProfileCategoryStats GetProfileStatisticsFromCache(
   return stats;
 }
 
-void SetProfileStatisticsInCache(const base::FilePath& profile_path,
-                                 const std::string& category, int count) {
-  // If local_state() is null, profile_manager() will seg-fault.
-  if (!g_browser_process || !g_browser_process->local_state())
+// static
+void ProfileStatistics::SetProfileStatisticsToAttributesStorage(
+    const base::FilePath& profile_path,
+    const std::string& category,
+    int count) {
+  // |profile_manager()| may return a null pointer.
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  if (!profile_manager)
     return;
 
-  ProfileInfoCache& profile_info_cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
   ProfileAttributesEntry* entry = nullptr;
-  if (!profile_info_cache.GetProfileAttributesWithPath(profile_path, &entry))
+  if (!profile_manager->GetProfileAttributesStorage().
+          GetProfileAttributesWithPath(profile_path, &entry)) {
+    // It is possible to have the profile attributes entry absent, e.g. the
+    // profile is scheduled for deletion during the async statistics task.
     return;
+  }
 
-  if (category == kProfileStatisticsBrowsingHistory) {
+  if (category == profiles::kProfileStatisticsBrowsingHistory) {
     entry->SetStatsBrowsingHistory(count);
-  } else if (category == kProfileStatisticsPasswords) {
+  } else if (category == profiles::kProfileStatisticsPasswords) {
     entry->SetStatsPasswords(count);
-  } else if (category == kProfileStatisticsBookmarks) {
+  } else if (category == profiles::kProfileStatisticsBookmarks) {
     entry->SetStatsBookmarks(count);
-  } else if (category == kProfileStatisticsSettings) {
+  } else if (category == profiles::kProfileStatisticsSettings) {
     entry->SetStatsSettings(count);
   } else {
     NOTREACHED();
   }
 }
-
-}  // namespace profiles

@@ -4,13 +4,15 @@
 
 #include "chrome/renderer/safe_browsing/phishing_classifier.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
@@ -191,19 +193,19 @@ class PhishingClassifierTest : public InProcessBrowserTest {
         embedded_test_server()->base_url().ReplaceComponents(replace_host));
   }
 
-  scoped_ptr<net::test_server::HttpResponse>
-      HandleRequest(const net::test_server::HttpRequest& request) {
-    scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
+      const net::test_server::HttpRequest& request) {
+    std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
         new net::test_server::BasicHttpResponse());
     http_response->set_code(net::HTTP_OK);
     http_response->set_content_type("text/html");
     http_response->set_content(response_content_);
-    return http_response.Pass();
+    return std::move(http_response);
   }
 
   std::string response_content_;
-  scoped_ptr<Scorer> scorer_;
-  scoped_ptr<PhishingClassifier> classifier_;
+  std::unique_ptr<Scorer> scorer_;
+  std::unique_ptr<PhishingClassifier> classifier_;
   MockFeatureExtractorClock* clock_;  // Owned by classifier_.
 
   // Features that are in the model.
@@ -215,9 +217,9 @@ class PhishingClassifierTest : public InProcessBrowserTest {
 
 // This test flakes on Mac with force compositing mode.
 // http://crbug.com/316709
-// Flaky on Chrome OS, running into a memory allocation error.
+// Flaky on Chrome OS and Linux, running into a memory allocation error.
 // http://crbug.com/544085
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS) || defined(OS_LINUX)
 #define MAYBE_TestClassificationOfPhishingDotCom \
   DISABLED_TestClassificationOfPhishingDotCom
 #else
@@ -243,9 +245,9 @@ IN_PROC_BROWSER_TEST_F(PhishingClassifierTest,
 
 // This test flakes on Mac with force compositing mode.
 // http://crbug.com/316709
-// Flaky on Chrome OS, running into a memory allocation error.
+// Flaky on Chrome OS and Linux, running into a memory allocation error.
 // http://crbug.com/544085
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS) || defined(OS_LINUX)
 #define MAYBE_TestClassificationOfSafeDotCom \
   DISABLED_TestClassificationOfSafeDotCom
 #else
@@ -271,9 +273,9 @@ IN_PROC_BROWSER_TEST_F(PhishingClassifierTest,
 
 // This test flakes on Mac with force compositing mode.
 // http://crbug.com/316709
-// Flaky on Chrome OS, running into a memory allocation error.
+// Flaky on Chrome OS and Linux, running into a memory allocation error.
 // http://crbug.com/544085
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS) || defined(OS_LINUX)
 #define MAYBE_TestClassificationWhenNoTld DISABLED_TestClassificationWhenNoTld
 #else
 #define MAYBE_TestClassificationWhenNoTld TestClassificationWhenNoTld
@@ -292,9 +294,9 @@ IN_PROC_BROWSER_TEST_F(PhishingClassifierTest,
 
 // This test flakes on Mac with force compositing mode.
 // http://crbug.com/316709
-// Flaky on Chrome OS, running into a memory allocation error.
+// Flaky on Chrome OS and Linux, running into a memory allocation error.
 // http://crbug.com/544085
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS) || defined(OS_LINUX)
 #define MAYBE_TestClassificationWhenNotHttp \
   DISABLED_TestClassificationWhenNotHttp
 #else
@@ -321,9 +323,9 @@ IN_PROC_BROWSER_TEST_F(PhishingClassifierTest,
 
 // This test flakes on Mac with force compositing mode.
 // http://crbug.com/316709
-// Flaky on Chrome OS, running into a memory allocation error.
+// Flaky on Chrome OS and Linux, running into a memory allocation error.
 // http://crbug.com/544085
-#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS) || defined(OS_LINUX)
 #define MAYBE_TestClassificationWhenPostRequest \
   DISABLED_TestClassificationWhenPostRequest
 #else
@@ -343,7 +345,8 @@ IN_PROC_BROWSER_TEST_F(PhishingClassifierTest,
 }
 
 // Test flakes with LSAN enabled. See http://crbug.com/373155.
-#if defined(LEAK_SANITIZER)
+// Flaky on Linux. See http://crbug.com/638557.
+#if defined(LEAK_SANITIZER) || defined(OS_LINUX)
 #define MAYBE_DisableDetection DISABLED_DisableDetection
 #else
 #define MAYBE_DisableDetection DisableDetection

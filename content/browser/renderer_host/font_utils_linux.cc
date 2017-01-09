@@ -4,14 +4,16 @@
 
 #include <fcntl.h>
 #include <fontconfig/fontconfig.h>
+#include <stddef.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
 #include <string>
 
 #include "base/posix/eintr_wrapper.h"
+#include "ppapi/c/private/pp_private_font_charset.h"
 #include "ppapi/c/trusted/ppb_browser_font_trusted.h"
-#include "third_party/npapi/bindings/npapi_extensions.h"
 
 namespace {
 
@@ -39,30 +41,30 @@ bool MSCharSetToFontconfig(FcLangSet* langset, unsigned fdwCharSet) {
 
   bool is_lgc = false;
   switch (fdwCharSet) {
-    case NPCharsetAnsi:
+    case PP_PRIVATEFONTCHARSET_ANSI:
     // These values I don't really know what to do with, so I'm going to map
     // them to English also.
-    case NPCharsetDefault:
-    case NPCharsetMac:
-    case NPCharsetOEM:
-    case NPCharsetSymbol:
+    case PP_PRIVATEFONTCHARSET_DEFAULT:
+    case PP_PRIVATEFONTCHARSET_MAC:
+    case PP_PRIVATEFONTCHARSET_OEM:
+    case PP_PRIVATEFONTCHARSET_SYMBOL:
       is_lgc = true;
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("en"));
       break;
-    case NPCharsetBaltic:
+    case PP_PRIVATEFONTCHARSET_BALTIC:
       // The three baltic languages.
       is_lgc = true;
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("et"));
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("lv"));
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("lt"));
       break;
-    case NPCharsetChineseBIG5:
+    case PP_PRIVATEFONTCHARSET_CHINESEBIG5:
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("zh-tw"));
       break;
-    case NPCharsetGB2312:
+    case PP_PRIVATEFONTCHARSET_GB2312:
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("zh-cn"));
       break;
-    case NPCharsetEastEurope:
+    case PP_PRIVATEFONTCHARSET_EASTEUROPE:
       // A scattering of eastern European languages.
       is_lgc = true;
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("pl"));
@@ -71,38 +73,38 @@ bool MSCharSetToFontconfig(FcLangSet* langset, unsigned fdwCharSet) {
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("hu"));
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("hr"));
       break;
-    case NPCharsetGreek:
+    case PP_PRIVATEFONTCHARSET_GREEK:
       is_lgc = true;
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("el"));
       break;
-    case NPCharsetHangul:
-    case NPCharsetJohab:
+    case PP_PRIVATEFONTCHARSET_HANGUL:
+    case PP_PRIVATEFONTCHARSET_JOHAB:
       // Korean
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("ko"));
       break;
-    case NPCharsetRussian:
+    case PP_PRIVATEFONTCHARSET_RUSSIAN:
       is_lgc = true;
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("ru"));
       break;
-    case NPCharsetShiftJIS:
+    case PP_PRIVATEFONTCHARSET_SHIFTJIS:
       // Japanese
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("ja"));
       break;
-    case NPCharsetTurkish:
+    case PP_PRIVATEFONTCHARSET_TURKISH:
       is_lgc = true;
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("tr"));
       break;
-    case NPCharsetVietnamese:
+    case PP_PRIVATEFONTCHARSET_VIETNAMESE:
       is_lgc = true;
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("vi"));
       break;
-    case NPCharsetArabic:
+    case PP_PRIVATEFONTCHARSET_ARABIC:
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("ar"));
       break;
-    case NPCharsetHebrew:
+    case PP_PRIVATEFONTCHARSET_HEBREW:
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("he"));
       break;
-    case NPCharsetThai:
+    case PP_PRIVATEFONTCHARSET_THAI:
       FcLangSetAdd(langset, reinterpret_cast<const FcChar8*>("th"));
       break;
       // default:
@@ -119,8 +121,8 @@ namespace content {
 int MatchFontFaceWithFallback(const std::string& face,
                               bool is_bold,
                               bool is_italic,
-                              uint32 charset,
-                              uint32 fallback_family) {
+                              uint32_t charset,
+                              uint32_t fallback_family) {
   FcLangSet* langset = FcLangSetCreate();
   bool is_lgc = MSCharSetToFontconfig(langset, charset);
   FcPattern* pattern = FcPatternCreate();

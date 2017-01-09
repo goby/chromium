@@ -5,6 +5,8 @@
 #ifndef CONTENT_PUBLIC_BROWSER_BACKGROUND_TRACING_CONFIG_H_
 #define CONTENT_PUBLIC_BROWSER_BACKGROUND_TRACING_CONFIG_H_
 
+#include <memory>
+
 #include "base/trace_event/trace_event_impl.h"
 #include "content/common/content_export.h"
 
@@ -26,7 +28,7 @@ class CONTENT_EXPORT BackgroundTracingConfig {
   };
   TracingMode tracing_mode() const { return tracing_mode_; }
 
-  static scoped_ptr<BackgroundTracingConfig> FromDict(
+  static std::unique_ptr<BackgroundTracingConfig> FromDict(
       const base::DictionaryValue* dict);
 
   virtual void IntoDict(base::DictionaryValue* dict) const = 0;

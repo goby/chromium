@@ -5,15 +5,17 @@
 #include "chrome/test/chromedriver/session_commands.h"
 
 #include <list>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"  // For CHECK macros.
 #include "base/memory/ref_counted.h"
+#include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/basic_types.h"
 #include "chrome/test/chromedriver/capabilities.h"
@@ -25,6 +27,7 @@
 #include "chrome/test/chromedriver/chrome/device_manager.h"
 #include "chrome/test/chromedriver/chrome/devtools_event_listener.h"
 #include "chrome/test/chromedriver/chrome/geoposition.h"
+#include "chrome/test/chromedriver/chrome/javascript_dialog_manager.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome/web_view.h"
 #include "chrome/test/chromedriver/chrome_launcher.h"
@@ -37,6 +40,22 @@
 
 namespace {
 
+const int kWifiMask = 0x2;
+const int k4GMask = 0x8;
+const int k3GMask = 0x10;
+const int k2GMask = 0x20;
+
+const int kAirplaneModeLatency = 0;
+const int kAirplaneModeThroughput = 0;
+const int kWifiLatency = 2;
+const int kWifiThroughput = 30720 * 1024;
+const int k4GLatency = 20;
+const int k4GThroughput = 4096 * 1024;
+const int k3GLatency = 100;
+const int k3GThroughput = 750 * 1024;
+const int k2GLatency = 300;
+const int k2GThroughput = 250 * 1024;
+
 const char kWindowHandlePrefix[] = "CDwindow-";
 
 std::string WebViewIdToWindowHandle(const std::string& web_view_id) {
@@ -45,11 +64,24 @@ std::string WebViewIdToWindowHandle(const std::string& web_view_id) {
 
 bool WindowHandleToWebViewId(const std::string& window_handle,
                              std::string* web_view_id) {
-  if (window_handle.find(kWindowHandlePrefix) != 0u)
+  if (!base::StartsWith(window_handle, kWindowHandlePrefix,
+                        base::CompareCase::SENSITIVE)) {
     return false;
-  *web_view_id = window_handle.substr(
-      std::string(kWindowHandlePrefix).length());
+  }
+  *web_view_id = window_handle.substr(sizeof(kWindowHandlePrefix) - 1);
   return true;
+}
+
+Status EvaluateScriptAndIgnoreResult(Session* session, std::string expression) {
+  WebView* web_view = nullptr;
+  Status status = session->GetTargetWindow(&web_view);
+  if (status.IsError())
+    return status;
+  if (web_view->GetJavaScriptDialogManager()->IsDialogOpen())
+    return Status(kUnexpectedAlertOpen);
+  std::string frame_id = session->GetCurrentFrameId();
+  std::unique_ptr<base::Value> result;
+  return web_view->EvaluateScript(frame_id, expression, &result);
 }
 
 }  // namespace
@@ -66,16 +98,20 @@ InitSessionParams::InitSessionParams(
       port_server(port_server),
       port_manager(port_manager) {}
 
+InitSessionParams::InitSessionParams(const InitSessionParams& other) = default;
+
 InitSessionParams::~InitSessionParams() {}
 
 namespace {
 
-scoped_ptr<base::DictionaryValue> CreateCapabilities(Chrome* chrome) {
-  scoped_ptr<base::DictionaryValue> caps(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue> CreateCapabilities(Session* session) {
+  std::unique_ptr<base::DictionaryValue> caps(new base::DictionaryValue());
   caps->SetString("browserName", "chrome");
-  caps->SetString("version", chrome->GetBrowserInfo()->browser_version);
+  caps->SetString("version",
+                  session->chrome->GetBrowserInfo()->browser_version);
   caps->SetString("chrome.chromedriverVersion", kChromeDriverVersion);
-  caps->SetString("platform", chrome->GetOperatingSystemName());
+  caps->SetString("platform", session->chrome->GetOperatingSystemName());
+  caps->SetString("pageLoadStrategy", session->chrome->page_load_strategy());
   caps->SetBoolean("javascriptEnabled", true);
   caps->SetBoolean("takesScreenshot", true);
   caps->SetBoolean("takesHeapSnapshot", true);
@@ -83,7 +119,7 @@ scoped_ptr<base::DictionaryValue> CreateCapabilities(Chrome* chrome) {
   caps->SetBoolean("databaseEnabled", false);
   caps->SetBoolean("locationContextEnabled", true);
   caps->SetBoolean("mobileEmulationEnabled",
-                   chrome->IsMobileEmulationEnabled());
+                   session->chrome->IsMobileEmulationEnabled());
   caps->SetBoolean("applicationCacheEnabled", false);
   caps->SetBoolean("browserConnectionEnabled", false);
   caps->SetBoolean("cssSelectorsEnabled", true);
@@ -91,16 +127,20 @@ scoped_ptr<base::DictionaryValue> CreateCapabilities(Chrome* chrome) {
   caps->SetBoolean("rotatable", false);
   caps->SetBoolean("acceptSslCerts", true);
   caps->SetBoolean("nativeEvents", true);
-  caps->SetBoolean("hasTouchScreen", chrome->HasTouchScreen());
+  caps->SetBoolean("hasTouchScreen", session->chrome->HasTouchScreen());
+  caps->SetString("unexpectedAlertBehaviour",
+                  session->unexpected_alert_behaviour);
 
   ChromeDesktopImpl* desktop = NULL;
-  Status status = chrome->GetAsDesktop(&desktop);
+  Status status = session->chrome->GetAsDesktop(&desktop);
   if (status.IsOk()) {
     caps->SetString("chrome.userDataDir",
                     desktop->command().GetSwitchValueNative("user-data-dir"));
+    caps->SetBoolean("networkConnectionEnabled",
+                     desktop->IsNetworkConnectionEnabled());
   }
 
-  return caps.Pass();
+  return caps;
 }
 
 Status CheckSessionCreated(Session* session) {
@@ -114,7 +154,7 @@ Status CheckSessionCreated(Session* session) {
     return Status(kSessionNotCreatedException, status);
 
   base::ListValue args;
-  scoped_ptr<base::Value> result(new base::FundamentalValue(0));
+  std::unique_ptr<base::Value> result(new base::FundamentalValue(0));
   status = web_view->CallFunction(session->GetCurrentFrameId(),
                                   "function(s) { return 1; }", args, &result);
   if (status.IsError())
@@ -129,21 +169,29 @@ Status CheckSessionCreated(Session* session) {
   return Status(kOk);
 }
 
-Status InitSessionHelper(
-    const InitSessionParams& bound_params,
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status InitSessionHelper(const InitSessionParams& bound_params,
+                         Session* session,
+                         const base::DictionaryValue& params,
+                         std::unique_ptr<base::Value>* value) {
   session->driver_log.reset(
       new WebDriverLog(WebDriverLog::kDriverType, Log::kAll));
   const base::DictionaryValue* desired_caps;
-  if (!params.GetDictionary("desiredCapabilities", &desired_caps))
+  bool w3c_capability = false;
+  if (params.GetDictionary("capabilities.desiredCapabilities", &desired_caps)
+      && desired_caps->GetBoolean("chromeOptions.w3c", &w3c_capability)
+      && w3c_capability)
+    session->w3c_compliant = true;
+  else if (!params.GetDictionary("desiredCapabilities", &desired_caps) &&
+     !params.GetDictionary("capabilities.desiredCapabilities", &desired_caps))
     return Status(kUnknownError, "cannot find dict 'desiredCapabilities'");
 
   Capabilities capabilities;
   Status status = capabilities.Parse(*desired_caps);
   if (status.IsError())
     return status;
+
+  desired_caps->GetString("unexpectedAlertBehaviour",
+                           &session->unexpected_alert_behaviour);
 
   Log::Level driver_level = Log::kWarning;
   if (capabilities.logging_prefs.count(WebDriverLog::kDriverType))
@@ -173,32 +221,29 @@ Status InitSessionHelper(
                         bound_params.port_manager,
                         capabilities,
                         &devtools_event_listeners,
-                        &session->chrome);
+                        &session->chrome,
+                        session->w3c_compliant);
   if (status.IsError())
     return status;
 
-  std::list<std::string> web_view_ids;
-  status = session->chrome->GetWebViewIds(&web_view_ids);
-  if (status.IsError() || web_view_ids.empty()) {
-    return status.IsError() ? status :
-        Status(kUnknownError, "unable to discover open window in chrome");
-  }
+  status = session->chrome->GetWebViewIdForFirstTab(&session->window,
+                                                    session->w3c_compliant);
+  if (status.IsError())
+    return status;
 
-  session->window = web_view_ids.front();
   session->detach = capabilities.detach;
   session->force_devtools_screenshot = capabilities.force_devtools_screenshot;
-  session->capabilities = CreateCapabilities(session->chrome.get());
+  session->capabilities = CreateCapabilities(session);
   value->reset(session->capabilities->DeepCopy());
   return CheckSessionCreated(session);
 }
 
 }  // namespace
 
-Status ExecuteInitSession(
-    const InitSessionParams& bound_params,
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteInitSession(const InitSessionParams& bound_params,
+                          Session* session,
+                          const base::DictionaryValue& params,
+                          std::unique_ptr<base::Value>* value) {
   Status status = InitSessionHelper(bound_params, session, params, value);
   if (status.IsError()) {
     session->quit = true;
@@ -208,11 +253,10 @@ Status ExecuteInitSession(
   return status;
 }
 
-Status ExecuteQuit(
-    bool allow_detach,
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteQuit(bool allow_detach,
+                   Session* session,
+                   const base::DictionaryValue& params,
+                   std::unique_ptr<base::Value>* value) {
   session->quit = true;
   if (allow_detach && session->detach)
     return Status(kOk);
@@ -220,18 +264,16 @@ Status ExecuteQuit(
     return session->chrome->Quit();
 }
 
-Status ExecuteGetSessionCapabilities(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteGetSessionCapabilities(Session* session,
+                                     const base::DictionaryValue& params,
+                                     std::unique_ptr<base::Value>* value) {
   value->reset(session->capabilities->DeepCopy());
   return Status(kOk);
 }
 
-Status ExecuteGetCurrentWindowHandle(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteGetCurrentWindowHandle(Session* session,
+                                     const base::DictionaryValue& params,
+                                     std::unique_ptr<base::Value>* value) {
   WebView* web_view = NULL;
   Status status = session->GetTargetWindow(&web_view);
   if (status.IsError())
@@ -242,10 +284,9 @@ Status ExecuteGetCurrentWindowHandle(
   return Status(kOk);
 }
 
-Status ExecuteLaunchApp(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteLaunchApp(Session* session,
+                        const base::DictionaryValue& params,
+                        std::unique_ptr<base::Value>* value) {
   std::string id;
   if (!params.GetString("id", &id))
     return Status(kUnknownError, "'id' must be a string");
@@ -256,19 +297,19 @@ Status ExecuteLaunchApp(
     return status;
 
   AutomationExtension* extension = NULL;
-  status = desktop->GetAutomationExtension(&extension);
+  status = desktop->GetAutomationExtension(&extension, session->w3c_compliant);
   if (status.IsError())
     return status;
 
   return extension->LaunchApp(id);
 }
 
-Status ExecuteClose(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteClose(Session* session,
+                    const base::DictionaryValue& params,
+                    std::unique_ptr<base::Value>* value) {
   std::list<std::string> web_view_ids;
-  Status status = session->chrome->GetWebViewIds(&web_view_ids);
+  Status status = session->chrome->GetWebViewIds(&web_view_ids,
+                                                 session->w3c_compliant);
   if (status.IsError())
     return status;
   bool is_last_web_view = web_view_ids.size() == 1u;
@@ -283,7 +324,8 @@ Status ExecuteClose(
   if (status.IsError())
     return status;
 
-  status = session->chrome->GetWebViewIds(&web_view_ids);
+  status = session->chrome->GetWebViewIds(&web_view_ids,
+                                          session->w3c_compliant);
   if ((status.code() == kChromeNotReachable && is_last_web_view) ||
       (status.IsOk() && web_view_ids.empty())) {
     // If no window is open, close is the equivalent of calling "quit".
@@ -294,15 +336,15 @@ Status ExecuteClose(
   return status;
 }
 
-Status ExecuteGetWindowHandles(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteGetWindowHandles(Session* session,
+                               const base::DictionaryValue& params,
+                               std::unique_ptr<base::Value>* value) {
   std::list<std::string> web_view_ids;
-  Status status = session->chrome->GetWebViewIds(&web_view_ids);
+  Status status = session->chrome->GetWebViewIds(&web_view_ids,
+                                                 session->w3c_compliant);
   if (status.IsError())
     return status;
-  scoped_ptr<base::ListValue> window_ids(new base::ListValue());
+  std::unique_ptr<base::ListValue> window_ids(new base::ListValue());
   for (std::list<std::string>::const_iterator it = web_view_ids.begin();
        it != web_view_ids.end(); ++it) {
     window_ids->AppendString(WebViewIdToWindowHandle(*it));
@@ -311,16 +353,16 @@ Status ExecuteGetWindowHandles(
   return Status(kOk);
 }
 
-Status ExecuteSwitchToWindow(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteSwitchToWindow(Session* session,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value) {
   std::string name;
   if (!params.GetString("name", &name))
     return Status(kUnknownError, "'name' must be a string");
 
   std::list<std::string> web_view_ids;
-  Status status = session->chrome->GetWebViewIds(&web_view_ids);
+  Status status = session->chrome->GetWebViewIds(&web_view_ids,
+                                                 session->w3c_compliant);
   if (status.IsError())
     return status;
 
@@ -341,7 +383,7 @@ Status ExecuteSwitchToWindow(
     base::ListValue args;
     for (std::list<std::string>::const_iterator it = web_view_ids.begin();
          it != web_view_ids.end(); ++it) {
-      scoped_ptr<base::Value> result;
+      std::unique_ptr<base::Value> result;
       WebView* web_view;
       status = session->chrome->GetWebViewById(*it, &web_view);
       if (status.IsError())
@@ -400,10 +442,9 @@ Status ExecuteSwitchToWindow(
   return Status(kOk);
 }
 
-Status ExecuteSetTimeout(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteSetTimeout(Session* session,
+                         const base::DictionaryValue& params,
+                         std::unique_ptr<base::Value>* value) {
   double ms_double;
   if (!params.GetDouble("ms", &ms_double))
     return Status(kUnknownError, "'ms' must be a double");
@@ -429,10 +470,9 @@ Status ExecuteSetTimeout(
   return Status(kOk);
 }
 
-Status ExecuteSetScriptTimeout(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteSetScriptTimeout(Session* session,
+                               const base::DictionaryValue& params,
+                               std::unique_ptr<base::Value>* value) {
   double ms;
   if (!params.GetDouble("ms", &ms) || ms < 0)
     return Status(kUnknownError, "'ms' must be a non-negative number");
@@ -441,10 +481,9 @@ Status ExecuteSetScriptTimeout(
   return Status(kOk);
 }
 
-Status ExecuteImplicitlyWait(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteImplicitlyWait(Session* session,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value) {
   double ms;
   if (!params.GetDouble("ms", &ms) || ms < 0)
     return Status(kUnknownError, "'ms' must be a non-negative number");
@@ -453,10 +492,9 @@ Status ExecuteImplicitlyWait(
   return Status(kOk);
 }
 
-Status ExecuteIsLoading(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteIsLoading(Session* session,
+                        const base::DictionaryValue& params,
+                        std::unique_ptr<base::Value>* value) {
   WebView* web_view = NULL;
   Status status = session->GetTargetWindow(&web_view);
   if (status.IsError())
@@ -468,17 +506,16 @@ Status ExecuteIsLoading(
 
   bool is_pending;
   status = web_view->IsPendingNavigation(
-      session->GetCurrentFrameId(), &is_pending);
+      session->GetCurrentFrameId(), nullptr, &is_pending);
   if (status.IsError())
     return status;
   value->reset(new base::FundamentalValue(is_pending));
   return Status(kOk);
 }
 
-Status ExecuteGetLocation(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteGetLocation(Session* session,
+                          const base::DictionaryValue& params,
+                          std::unique_ptr<base::Value>* value) {
   if (!session->overridden_geoposition) {
     return Status(kUnknownError,
                   "Location must be set before it can be retrieved");
@@ -494,10 +531,26 @@ Status ExecuteGetLocation(
   return Status(kOk);
 }
 
-Status ExecuteGetNetworkConditions(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteGetNetworkConnection(Session* session,
+                                   const base::DictionaryValue& params,
+                                   std::unique_ptr<base::Value>* value) {
+  ChromeDesktopImpl* desktop = nullptr;
+  Status status = session->chrome->GetAsDesktop(&desktop);
+  if (status.IsError())
+    return status;
+  if (!desktop->IsNetworkConnectionEnabled())
+    return Status(kUnknownError, "network connection must be enabled");
+
+  int connection_type = 0;
+  connection_type = desktop->GetNetworkConnection();
+
+  value->reset(new base::FundamentalValue(connection_type));
+  return Status(kOk);
+}
+
+Status ExecuteGetNetworkConditions(Session* session,
+                                   const base::DictionaryValue& params,
+                                   std::unique_ptr<base::Value>* value) {
   if (!session->overridden_network_conditions) {
     return Status(kUnknownError,
                   "network conditions must be set before it can be retrieved");
@@ -517,17 +570,87 @@ Status ExecuteGetNetworkConditions(
   return Status(kOk);
 }
 
-Status ExecuteGetWindowPosition(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteSetNetworkConnection(Session* session,
+                                   const base::DictionaryValue& params,
+                                   std::unique_ptr<base::Value>* value) {
+  ChromeDesktopImpl* desktop = nullptr;
+  Status status = session->chrome->GetAsDesktop(&desktop);
+  if (status.IsError())
+    return status;
+  if (!desktop->IsNetworkConnectionEnabled())
+    return Status(kUnknownError, "network connection must be enabled");
+
+  int connection_type;
+  if (!params.GetInteger("parameters.type", &connection_type))
+    return Status(kUnknownError, "invalid connection_type");
+
+  desktop->SetNetworkConnection(connection_type);
+
+  std::unique_ptr<NetworkConditions> network_conditions(
+      new NetworkConditions());
+
+  if (connection_type & kWifiMask) {
+    network_conditions->latency = kWifiLatency;
+    network_conditions->upload_throughput = kWifiThroughput;
+    network_conditions->download_throughput = kWifiThroughput;
+    network_conditions->offline = false;
+  } else if (connection_type & k4GMask) {
+    network_conditions->latency = k4GLatency;
+    network_conditions->upload_throughput = k4GThroughput;
+    network_conditions->download_throughput = k4GThroughput;
+    network_conditions->offline = false;
+  } else if (connection_type & k3GMask) {
+    network_conditions->latency = k3GLatency;
+    network_conditions->upload_throughput = k3GThroughput;
+    network_conditions->download_throughput = k3GThroughput;
+    network_conditions->offline = false;
+  } else if (connection_type & k2GMask) {
+    network_conditions->latency = k2GLatency;
+    network_conditions->upload_throughput = k2GThroughput;
+    network_conditions->download_throughput = k2GThroughput;
+    network_conditions->offline = false;
+  } else {
+    network_conditions->latency = kAirplaneModeLatency;
+    network_conditions->upload_throughput = kAirplaneModeThroughput;
+    network_conditions->download_throughput = kAirplaneModeThroughput;
+    network_conditions->offline = true;
+  }
+
+  session->overridden_network_conditions.reset(
+      network_conditions.release());
+
+  // Applies overridden network connection to all WebViews of the session
+  // to ensure that network emulation is applied on a per-session basis
+  // rather than the just to the current WebView.
+  std::list<std::string> web_view_ids;
+  status = session->chrome->GetWebViewIds(&web_view_ids,
+                                          session->w3c_compliant);
+  if (status.IsError())
+    return status;
+
+  for (std::string web_view_id : web_view_ids) {
+    WebView* web_view;
+    status = session->chrome->GetWebViewById(web_view_id, &web_view);
+    if (status.IsError())
+      return status;
+    web_view->OverrideNetworkConditions(
+      *session->overridden_network_conditions);
+  }
+
+  value->reset(new base::FundamentalValue(connection_type));
+  return Status(kOk);
+}
+
+Status ExecuteGetWindowPosition(Session* session,
+                                const base::DictionaryValue& params,
+                                std::unique_ptr<base::Value>* value) {
   ChromeDesktopImpl* desktop = NULL;
   Status status = session->chrome->GetAsDesktop(&desktop);
   if (status.IsError())
     return status;
 
   AutomationExtension* extension = NULL;
-  status = desktop->GetAutomationExtension(&extension);
+  status = desktop->GetAutomationExtension(&extension, session->w3c_compliant);
   if (status.IsError())
     return status;
 
@@ -543,10 +666,9 @@ Status ExecuteGetWindowPosition(
   return Status(kOk);
 }
 
-Status ExecuteSetWindowPosition(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteSetWindowPosition(Session* session,
+                                const base::DictionaryValue& params,
+                                std::unique_ptr<base::Value>* value) {
   double x = 0;
   double y = 0;
   if (!params.GetDouble("x", &x) || !params.GetDouble("y", &y))
@@ -558,24 +680,23 @@ Status ExecuteSetWindowPosition(
     return status;
 
   AutomationExtension* extension = NULL;
-  status = desktop->GetAutomationExtension(&extension);
+  status = desktop->GetAutomationExtension(&extension, session->w3c_compliant);
   if (status.IsError())
     return status;
 
   return extension->SetWindowPosition(static_cast<int>(x), static_cast<int>(y));
 }
 
-Status ExecuteGetWindowSize(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteGetWindowSize(Session* session,
+                            const base::DictionaryValue& params,
+                            std::unique_ptr<base::Value>* value) {
   ChromeDesktopImpl* desktop = NULL;
   Status status = session->chrome->GetAsDesktop(&desktop);
   if (status.IsError())
     return status;
 
   AutomationExtension* extension = NULL;
-  status = desktop->GetAutomationExtension(&extension);
+  status = desktop->GetAutomationExtension(&extension, session->w3c_compliant);
   if (status.IsError())
     return status;
 
@@ -591,10 +712,9 @@ Status ExecuteGetWindowSize(
   return Status(kOk);
 }
 
-Status ExecuteSetWindowSize(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteSetWindowSize(Session* session,
+                            const base::DictionaryValue& params,
+                            std::unique_ptr<base::Value>* value) {
   double width = 0;
   double height = 0;
   if (!params.GetDouble("width", &width) ||
@@ -607,7 +727,7 @@ Status ExecuteSetWindowSize(
     return status;
 
   AutomationExtension* extension = NULL;
-  status = desktop->GetAutomationExtension(&extension);
+  status = desktop->GetAutomationExtension(&extension, session->w3c_compliant);
   if (status.IsError())
     return status;
 
@@ -615,46 +735,55 @@ Status ExecuteSetWindowSize(
       static_cast<int>(width), static_cast<int>(height));
 }
 
-Status ExecuteMaximizeWindow(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteMaximizeWindow(Session* session,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value) {
   ChromeDesktopImpl* desktop = NULL;
   Status status = session->chrome->GetAsDesktop(&desktop);
   if (status.IsError())
     return status;
 
   AutomationExtension* extension = NULL;
-  status = desktop->GetAutomationExtension(&extension);
+  status = desktop->GetAutomationExtension(&extension, session->w3c_compliant);
   if (status.IsError())
     return status;
 
   return extension->MaximizeWindow();
 }
 
-Status ExecuteGetAvailableLogTypes(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
-  scoped_ptr<base::ListValue> types(new base::ListValue());
+Status ExecuteGetAvailableLogTypes(Session* session,
+                                   const base::DictionaryValue& params,
+                                   std::unique_ptr<base::Value>* value) {
+  std::unique_ptr<base::ListValue> types(new base::ListValue());
   std::vector<WebDriverLog*> logs = session->GetAllLogs();
   for (std::vector<WebDriverLog*>::const_iterator log = logs.begin();
        log != logs.end();
        ++log) {
     types->AppendString((*log)->type());
   }
-  *value = types.Pass();
+  *value = std::move(types);
   return Status(kOk);
 }
 
-Status ExecuteGetLog(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteGetLog(Session* session,
+                     const base::DictionaryValue& params,
+                     std::unique_ptr<base::Value>* value) {
   std::string log_type;
   if (!params.GetString("type", &log_type)) {
     return Status(kUnknownError, "missing or invalid 'type'");
   }
+
+  // Evaluate a JavaScript in the renderer process for the current tab, to flush
+  // out any pending logging-related events.
+  Status status = EvaluateScriptAndIgnoreResult(session, "1");
+  if (status.IsError()) {
+    // Sometimes a WebDriver client fetches logs to diagnose an error that has
+    // occurred. It's possible that in the case of an error, the renderer is no
+    // be longer available, but we should return the logs anyway. So log (but
+    // don't fail on) any error that we get while evaluating the script.
+    LOG(WARNING) << "Unable to evaluate script: " << status.message();
+  }
+
   std::vector<WebDriverLog*> logs = session->GetAllLogs();
   for (std::vector<WebDriverLog*>::const_iterator log = logs.begin();
        log != logs.end();
@@ -667,11 +796,10 @@ Status ExecuteGetLog(
   return Status(kUnknownError, "log type '" + log_type + "' not found");
 }
 
-Status ExecuteUploadFile(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
-    std::string base64_zip_data;
+Status ExecuteUploadFile(Session* session,
+                         const base::DictionaryValue& params,
+                         std::unique_ptr<base::Value>* value) {
+  std::string base64_zip_data;
   if (!params.GetString("file", &base64_zip_data))
     return Status(kUnknownError, "missing or invalid 'file'");
   std::string zip_data;
@@ -683,7 +811,7 @@ Status ExecuteUploadFile(
       return Status(kUnknownError, "unable to create temp dir");
   }
   base::FilePath upload_dir;
-  if (!base::CreateTemporaryDirInDir(session->temp_dir.path(),
+  if (!base::CreateTemporaryDirInDir(session->temp_dir.GetPath(),
                                      FILE_PATH_LITERAL("upload"),
                                      &upload_dir)) {
     return Status(kUnknownError, "unable to create temp dir");
@@ -698,21 +826,73 @@ Status ExecuteUploadFile(
   return Status(kOk);
 }
 
-Status ExecuteIsAutoReporting(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteIsAutoReporting(Session* session,
+                              const base::DictionaryValue& params,
+                              std::unique_ptr<base::Value>* value) {
   value->reset(new base::FundamentalValue(session->auto_reporting_enabled));
   return Status(kOk);
 }
 
-Status ExecuteSetAutoReporting(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
+Status ExecuteSetAutoReporting(Session* session,
+                               const base::DictionaryValue& params,
+                               std::unique_ptr<base::Value>* value) {
   bool enabled;
   if (!params.GetBoolean("enabled", &enabled))
     return Status(kUnknownError, "missing parameter 'enabled'");
   session->auto_reporting_enabled = enabled;
+  return Status(kOk);
+}
+
+Status ExecuteUnimplementedCommand(Session* session,
+                                   const base::DictionaryValue& params,
+                                   std::unique_ptr<base::Value>* value) {
+  return Status(kUnknownCommand);
+}
+
+Status ExecuteGetScreenOrientation(Session* session,
+                                   const base::DictionaryValue& params,
+                                   std::unique_ptr<base::Value>* value) {
+  WebView* web_view = nullptr;
+  Status status = session->GetTargetWindow(&web_view);
+  if (status.IsError())
+    return status;
+
+  std::string screen_orientation;
+  status = web_view->GetScreenOrientation(&screen_orientation);
+  if (status.IsError())
+    return status;
+
+  base::DictionaryValue orientation_value;
+  orientation_value.SetString("orientation", screen_orientation);
+  value->reset(orientation_value.DeepCopy());
+  return Status(kOk);
+}
+
+Status ExecuteSetScreenOrientation(Session* session,
+                                   const base::DictionaryValue& params,
+                                   std::unique_ptr<base::Value>* value) {
+  WebView* web_view = nullptr;
+  Status status = session->GetTargetWindow(&web_view);
+  if (status.IsError())
+    return status;
+
+  std::string screen_orientation;
+  params.GetString("parameters.orientation", &screen_orientation);
+  status = web_view->SetScreenOrientation(screen_orientation);
+  if (status.IsError())
+    return status;
+  return Status(kOk);
+}
+
+Status ExecuteDeleteScreenOrientation(Session* session,
+                                      const base::DictionaryValue& params,
+                                      std::unique_ptr<base::Value>* value) {
+  WebView* web_view = nullptr;
+  Status status = session->GetTargetWindow(&web_view);
+  if (status.IsError())
+    return status;
+  status = web_view->DeleteScreenOrientation();
+  if (status.IsError())
+    return status;
   return Status(kOk);
 }

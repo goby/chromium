@@ -5,12 +5,17 @@
 #ifndef COMPONENTS_BUBBLE_BUBBLE_DELEGATE_H_
 #define COMPONENTS_BUBBLE_BUBBLE_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/bubble/bubble_close_reason.h"
 
 class BubbleUi;
+
+namespace content {
+class RenderFrameHost;
+}
 
 // Inherit from this class to define a bubble. A bubble is a small transient UI
 // surface anchored to a parent window. Most bubbles are dismissed when they
@@ -26,11 +31,11 @@ class BubbleDelegate {
   virtual bool ShouldClose(BubbleCloseReason reason) const;
 
   // Called by BubbleController to notify a bubble that it has closed.
-  virtual void DidClose();
+  virtual void DidClose(BubbleCloseReason reason);
 
   // Called by BubbleController to build the UI that will represent this bubble.
   // BubbleDelegate should not keep a reference to this newly created UI.
-  virtual scoped_ptr<BubbleUi> BuildBubbleUi() = 0;
+  virtual std::unique_ptr<BubbleUi> BuildBubbleUi() = 0;
 
   // Called to update an existing UI. This is the same BubbleUi that was created
   // in |BuildBubbleUi|.
@@ -39,6 +44,10 @@ class BubbleDelegate {
 
   // Used to identify a bubble for collecting metrics.
   virtual std::string GetName() const = 0;
+
+  // If this returns non-null, the bubble will be closed when the returned frame
+  // is destroyed.
+  virtual const content::RenderFrameHost* OwningFrame() const = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BubbleDelegate);

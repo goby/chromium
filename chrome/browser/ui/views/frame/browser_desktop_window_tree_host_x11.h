@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_DESKTOP_WINDOW_TREE_HOST_X11_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_DESKTOP_WINDOW_TREE_HOST_X11_H_
 
+#include "base/macros.h"
 #include "chrome/browser/ui/views/frame/browser_desktop_window_tree_host.h"
 #include "chrome/browser/ui/views/frame/global_menu_bar_x11.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_x11.h"
@@ -43,7 +44,7 @@ class BrowserDesktopWindowTreeHostX11
   // Each browser frame maintains its own menu bar object because the lower
   // level dbus protocol associates a xid to a menu bar; we can't map multiple
   // xids to the same menu bar.
-  scoped_ptr<GlobalMenuBarX11> global_menu_bar_x11_;
+  std::unique_ptr<GlobalMenuBarX11> global_menu_bar_x11_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserDesktopWindowTreeHostX11);
 };

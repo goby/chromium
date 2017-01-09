@@ -18,8 +18,7 @@ namespace security_interstitials {
 namespace common_string_util {
 
 // Returns the |gurl| as a URL appropriate for display in an error page.
-base::string16 GetFormattedHostName(const GURL& gurl,
-                                    const std::string& languages);
+base::string16 GetFormattedHostName(const GURL& gurl);
 
 // For SSL-related errors that share a basic structure.
 void PopulateSSLLayoutStrings(int cert_error,
@@ -29,6 +28,9 @@ void PopulateSSLLayoutStrings(int cert_error,
 void PopulateSSLDebuggingStrings(const net::SSLInfo ssl_info,
                                  const base::Time time_triggered,
                                  base::DictionaryValue* load_time_data);
+
+// For determining whether to use the old or new icon sets.
+void PopulateNewIconStrings(base::DictionaryValue* load_time_data);
 
 }  // common_string_util
 

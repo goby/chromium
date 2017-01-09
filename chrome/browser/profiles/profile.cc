@@ -6,7 +6,6 @@
 
 #include <string>
 
-#include "base/prefs/pref_service.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/first_run/first_run.h"
@@ -14,16 +13,19 @@
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_prefs.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/sync_driver/sync_prefs.h"
+#include "components/prefs/pref_service.h"
+#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/sync/base/sync_prefs.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
+#include "extensions/features/features.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/command_line.h"
@@ -31,7 +33,7 @@
 #include "chromeos/chromeos_switches.h"
 #endif
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/pref_names.h"
 #endif
 
@@ -87,27 +89,29 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
 #endif
   registry->RegisterBooleanPref(prefs::kSessionExitedCleanly, true);
   registry->RegisterStringPref(prefs::kSessionExitType, std::string());
+  registry->RegisterInt64Pref(prefs::kSiteEngagementLastUpdateTime, 0,
+                              PrefRegistry::LOSSY_PREF);
   registry->RegisterBooleanPref(
       prefs::kSafeBrowsingEnabled,
       true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(prefs::kSafeBrowsingExtendedReportingEnabled,
                                 false);
+  registry->RegisterBooleanPref(prefs::kSafeBrowsingScoutReportingEnabled,
+                                false);
+  registry->RegisterBooleanPref(prefs::kSafeBrowsingScoutGroupSelected, false);
   registry->RegisterBooleanPref(prefs::kSafeBrowsingProceedAnywayDisabled,
                                 false);
   registry->RegisterBooleanPref(prefs::kSSLErrorOverrideAllowed, true);
   registry->RegisterDictionaryPref(prefs::kSafeBrowsingIncidentsSent);
   registry->RegisterBooleanPref(
       prefs::kSafeBrowsingExtendedReportingOptInAllowed, true);
-#if BUILDFLAG(ENABLE_GOOGLE_NOW)
-  registry->RegisterBooleanPref(prefs::kGoogleGeolocationAccessEnabled, false);
-#endif
   // This pref is intentionally outside the above #if. That flag corresponds
   // to the Notifier extension and does not gate the launcher page.
   // TODO(skare): Remove or rename ENABLE_GOOGLE_NOW: http://crbug.com/459827.
   registry->RegisterBooleanPref(prefs::kGoogleNowLauncherEnabled, true);
   registry->RegisterBooleanPref(prefs::kDisableExtensions, false);
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   registry->RegisterBooleanPref(extensions::pref_names::kAlertsInitialized,
                                 false);
 #endif
@@ -139,11 +143,38 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(prefs::kDevToolsRemoteEnabled, false);
 #endif
 
+  registry->RegisterBooleanPref(prefs::kDataSaverEnabled, false);
   data_reduction_proxy::RegisterSyncableProfilePrefs(registry);
 
-#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS) && !defined(OS_IOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   // Preferences related to the avatar bubble and user manager tutorials.
   registry->RegisterIntegerPref(prefs::kProfileAvatarTutorialShown, 0);
+#endif
+
+#if defined(OS_ANDROID)
+  registry->RegisterBooleanPref(prefs::kClickedUpdateMenuItem, false);
+  registry->RegisterStringPref(prefs::kLatestVersionWhenClickedUpdateMenuItem,
+                               std::string());
+#endif
+
+#if defined(ENABLE_MEDIA_ROUTER)
+  registry->RegisterBooleanPref(
+      prefs::kMediaRouterCloudServicesPrefSet,
+      false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kMediaRouterEnableCloudServices,
+      false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kMediaRouterFirstRunFlowAcknowledged,
+      false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterListPref(prefs::kMediaRouterTabMirroringSources);
+#endif
+
+#if defined(OS_CHROMEOS)
+  registry->RegisterBooleanPref(prefs::kAllowScreenLock, true);
 #endif
 }
 
@@ -173,8 +204,8 @@ bool Profile::IsSystemProfile() const {
 bool Profile::IsNewProfile() {
   // The profile has been shut down if the prefs were loaded from disk, unless
   // first-run autoimport wrote them and reloaded the pref service.
-  // TODO(dconnelly): revisit this when crbug.com/22142 (unifying the profile
-  // import code) is fixed.
+  // TODO(crbug.com/660346): revisit this when crbug.com/22142 (unifying the
+  // profile import code) is fixed.
   return GetOriginalProfile()->GetPrefs()->GetInitializationStatus() ==
       PrefService::INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE;
 }
@@ -186,8 +217,9 @@ bool Profile::IsSyncAllowed() {
 
   // No ProfileSyncService created yet - we don't want to create one, so just
   // infer the accessible state by looking at prefs/command line flags.
-  sync_driver::SyncPrefs prefs(GetPrefs());
-  return ProfileSyncService::IsSyncAllowedByFlag() && !prefs.IsManaged();
+  syncer::SyncPrefs prefs(GetPrefs());
+  return browser_sync::ProfileSyncService::IsSyncAllowedByFlag() &&
+         !prefs.IsManaged();
 }
 
 void Profile::MaybeSendDestroyedNotification() {

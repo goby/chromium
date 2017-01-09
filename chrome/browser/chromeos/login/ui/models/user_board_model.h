@@ -7,6 +7,8 @@
 
 #include "chrome/browser/chromeos/login/screens/base_screen.h"
 
+class AccountId;
+
 namespace chromeos {
 
 class UserBoardModel : public BaseScreen {
@@ -26,7 +28,6 @@ class UserBoardModel : public BaseScreen {
   std::string GetName() const override;
 
   // Temorary unused methods:
-  void PrepareToShow() override{};
   void Show() override{};
   void Hide() override{};
 };

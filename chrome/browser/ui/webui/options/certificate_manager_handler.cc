@@ -5,20 +5,25 @@
 #include "chrome/browser/ui/webui/options/certificate_manager_handler.h"
 
 #include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <algorithm>
 #include <map>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"  // for FileAccessProvider
 #include "base/i18n/string_compare.h"
 #include "base/id_map.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/certificate_viewer.h"
 #include "chrome/browser/profiles/profile.h"
@@ -27,11 +32,14 @@
 #include "chrome/browser/ui/crypto_module_password_dialog_nss.h"
 #include "chrome/browser/ui/webui/certificate_viewer_webui.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/crypto_module.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_certificate.h"
+#include "net/der/input.h"
+#include "net/der/parser.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_CHROMEOS)
@@ -80,14 +88,14 @@ struct DictionaryIdComparator {
       : collator_(collator) {
   }
 
-  bool operator()(const base::Value* a,
-                  const base::Value* b) const {
-    DCHECK(a->GetType() == base::Value::TYPE_DICTIONARY);
-    DCHECK(b->GetType() == base::Value::TYPE_DICTIONARY);
-    const base::DictionaryValue* a_dict =
-        reinterpret_cast<const base::DictionaryValue*>(a);
-    const base::DictionaryValue* b_dict =
-        reinterpret_cast<const base::DictionaryValue*>(b);
+  bool operator()(const std::unique_ptr<base::Value>& a,
+                  const std::unique_ptr<base::Value>& b) const {
+    const base::DictionaryValue* a_dict;
+    bool a_is_dictionary = a->GetAsDictionary(&a_dict);
+    DCHECK(a_is_dictionary);
+    const base::DictionaryValue* b_dict;
+    bool b_is_dictionary = b->GetAsDictionary(&b_dict);
+    DCHECK(b_is_dictionary);
     base::string16 a_str;
     base::string16 b_str;
     a_dict->GetString(kNameId, &a_str);
@@ -140,6 +148,44 @@ void ShowCertificateViewerModalDialog(content::WebContents* web_contents,
 }
 #endif
 
+// Determine if |data| could be a PFX Protocol Data Unit.
+// This only does the minimum parsing necessary to distinguish a PFX file from a
+// DER encoded Certificate.
+//
+// From RFC 7292 section 4:
+//   PFX ::= SEQUENCE {
+//       version     INTEGER {v3(3)}(v3,...),
+//       authSafe    ContentInfo,
+//       macData     MacData OPTIONAL
+//   }
+// From RFC 5280 section 4.1:
+//   Certificate  ::=  SEQUENCE  {
+//       tbsCertificate       TBSCertificate,
+//       signatureAlgorithm   AlgorithmIdentifier,
+//       signatureValue       BIT STRING  }
+//
+//  Certificate must be DER encoded, while PFX may be BER encoded.
+//  Therefore PFX can be distingushed by checking if the file starts with an
+//  indefinite SEQUENCE, or a definite SEQUENCE { INTEGER,  ... }.
+bool CouldBePFX(const std::string& data) {
+  if (data.size() < 4)
+    return false;
+
+  // Indefinite length SEQUENCE.
+  if (data[0] == 0x30 && static_cast<uint8_t>(data[1]) == 0x80)
+    return true;
+
+  // If the SEQUENCE is definite length, it can be parsed through the version
+  // tag using DER parser, since INTEGER must be definite length, even in BER.
+  net::der::Parser parser((net::der::Input(&data)));
+  net::der::Parser sequence_parser;
+  if (!parser.ReadSequence(&sequence_parser))
+    return false;
+  if (!sequence_parser.SkipTag(net::der::kInteger))
+    return false;
+  return true;
+}
+
 }  // namespace
 
 namespace options {
@@ -157,10 +203,10 @@ class CertIdMap {
   net::X509Certificate* CallbackArgsToCert(const base::ListValue* args);
 
  private:
-  typedef std::map<net::X509Certificate*, int32> CertMap;
+  typedef std::map<net::X509Certificate*, int32_t> CertMap;
 
   // Creates an ID for cert and looks up the cert for an ID.
-  IDMap<net::X509Certificate>id_map_;
+  IDMap<net::X509Certificate*> id_map_;
 
   // Finds the ID for a cert.
   CertMap cert_map_;
@@ -173,13 +219,13 @@ std::string CertIdMap::CertToId(net::X509Certificate* cert) {
   if (iter != cert_map_.end())
     return base::IntToString(iter->second);
 
-  int32 new_id = id_map_.Add(cert);
+  int32_t new_id = id_map_.Add(cert);
   cert_map_[cert] = new_id;
   return base::IntToString(new_id);
 }
 
 net::X509Certificate* CertIdMap::IdToCert(const std::string& id) {
-  int32 cert_id = 0;
+  int32_t cert_id = 0;
   if (!base::StringToInt(id, &cert_id))
     return NULL;
 
@@ -253,7 +299,7 @@ base::CancelableTaskTracker::TaskId FileAccessProvider::StartRead(
 
   // Post task to file thread to read file.
   return tracker->PostTaskAndReply(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get(),
       FROM_HERE,
       base::Bind(&FileAccessProvider::DoRead, this, path, saved_errno, data),
       base::Bind(callback, base::Owned(saved_errno), base::Owned(data)));
@@ -270,16 +316,11 @@ base::CancelableTaskTracker::TaskId FileAccessProvider::StartWrite(
 
   // Post task to file thread to write file.
   return tracker->PostTaskAndReply(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
-      FROM_HERE,
-      base::Bind(&FileAccessProvider::DoWrite,
-                 this,
-                 path,
-                 data,
-                 saved_errno,
-                 bytes_written),
-      base::Bind(
-          callback, base::Owned(saved_errno), base::Owned(bytes_written)));
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get(),
+      FROM_HERE, base::Bind(&FileAccessProvider::DoWrite, this, path, data,
+                            saved_errno, bytes_written),
+      base::Bind(callback, base::Owned(saved_errno),
+                 base::Owned(bytes_written)));
 }
 
 void FileAccessProvider::DoRead(const base::FilePath& path,
@@ -557,7 +598,8 @@ void CertificateManagerHandler::View(const base::ListValue* args) {
 void CertificateManagerHandler::GetCATrust(const base::ListValue* args) {
   net::X509Certificate* cert = cert_id_map_->CallbackArgsToCert(args);
   if (!cert) {
-    web_ui()->CallJavascriptFunction("CertificateEditCaTrustOverlay.dismiss");
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "CertificateEditCaTrustOverlay.dismiss");
     return;
   }
 
@@ -569,9 +611,9 @@ void CertificateManagerHandler::GetCATrust(const base::ListValue* args) {
       static_cast<bool>(trust_bits & net::NSSCertDatabase::TRUSTED_EMAIL));
   base::FundamentalValue obj_sign_value(
       static_cast<bool>(trust_bits & net::NSSCertDatabase::TRUSTED_OBJ_SIGN));
-  web_ui()->CallJavascriptFunction(
-      "CertificateEditCaTrustOverlay.populateTrust",
-      ssl_value, email_value, obj_sign_value);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "CertificateEditCaTrustOverlay.populateTrust", ssl_value, email_value,
+      obj_sign_value);
 }
 
 void CertificateManagerHandler::EditCATrust(const base::ListValue* args) {
@@ -585,7 +627,8 @@ void CertificateManagerHandler::EditCATrust(const base::ListValue* args) {
   fail |= !CallbackArgsToBool(args, 3, &trust_obj_sign);
   if (fail) {
     LOG(ERROR) << "EditCATrust args fail";
-    web_ui()->CallJavascriptFunction("CertificateEditCaTrustOverlay.dismiss");
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "CertificateEditCaTrustOverlay.dismiss");
     return;
   }
 
@@ -595,7 +638,8 @@ void CertificateManagerHandler::EditCATrust(const base::ListValue* args) {
       trust_ssl * net::NSSCertDatabase::TRUSTED_SSL +
           trust_email * net::NSSCertDatabase::TRUSTED_EMAIL +
           trust_obj_sign * net::NSSCertDatabase::TRUSTED_OBJ_SIGN);
-  web_ui()->CallJavascriptFunction("CertificateEditCaTrustOverlay.dismiss");
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "CertificateEditCaTrustOverlay.dismiss");
   if (!result) {
     // TODO(mattm): better error messages?
     ShowError(
@@ -637,14 +681,14 @@ void CertificateManagerHandler::ExportAllPersonal(const base::ListValue* args) {
 void CertificateManagerHandler::ExportPersonalFileSelected(
     const base::FilePath& path) {
   file_path_ = path;
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "CertificateManager.exportPersonalAskPassword");
 }
 
 void CertificateManagerHandler::ExportPersonalPasswordSelected(
     const base::ListValue* args) {
   if (!args->GetString(0, &password_)) {
-    web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
+    web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
     ImportExportCleanup();
     return;
   }
@@ -671,7 +715,7 @@ void CertificateManagerHandler::ExportPersonalSlotsUnlocked() {
       password_,
       &output);
   if (!num_exported) {
-    web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
+    web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
     ShowError(
         l10n_util::GetStringUTF8(IDS_CERT_MANAGER_PKCS12_EXPORT_ERROR_TITLE),
         l10n_util::GetStringUTF8(IDS_CERT_MANAGER_UNKNOWN_ERROR));
@@ -688,7 +732,7 @@ void CertificateManagerHandler::ExportPersonalSlotsUnlocked() {
 
 void CertificateManagerHandler::ExportPersonalFileWritten(
     const int* write_errno, const int* bytes_written) {
-  web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
+  web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
   ImportExportCleanup();
   if (*write_errno) {
     ShowError(
@@ -705,12 +749,13 @@ void CertificateManagerHandler::StartImportPersonal(
   if (!args->GetBoolean(0, &use_hardware_backed_)) {
     // Unable to retrieve the hardware backed attribute from the args,
     // so bail.
-    web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
+    web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
     ImportExportCleanup();
     return;
   }
   file_type_info.extensions.resize(1);
   file_type_info.extensions[0].push_back(FILE_PATH_LITERAL("p12"));
+  file_type_info.extensions[0].push_back(FILE_PATH_LITERAL("pfx"));
   file_type_info.extensions[0].push_back(FILE_PATH_LITERAL("crt"));
   file_type_info.extension_description_overrides.push_back(
       l10n_util::GetStringUTF16(IDS_CERT_USAGE_SSL_CLIENT));
@@ -726,33 +771,9 @@ void CertificateManagerHandler::StartImportPersonal(
 
 void CertificateManagerHandler::ImportPersonalFileSelected(
     const base::FilePath& path) {
-  file_path_ = path;
-  if (file_path_.MatchesExtension(FILE_PATH_LITERAL(".p12"))) {
-    web_ui()->CallJavascriptFunction(
-        "CertificateManager.importPersonalAskPassword");
-    return;
-  }
-
-  // Non .p12 files are treated as unencrypted certificates.
-  password_.clear();
   file_access_provider_->StartRead(
-      file_path_,
-      base::Bind(&CertificateManagerHandler::ImportPersonalFileRead,
-                 base::Unretained(this)),
-      &tracker_);
-}
-
-void CertificateManagerHandler::ImportPersonalPasswordSelected(
-    const base::ListValue* args) {
-  if (!args->GetString(0, &password_)) {
-    web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
-    ImportExportCleanup();
-    return;
-  }
-  file_access_provider_->StartRead(
-      file_path_,
-      base::Bind(&CertificateManagerHandler::ImportPersonalFileRead,
-                 base::Unretained(this)),
+      path, base::Bind(&CertificateManagerHandler::ImportPersonalFileRead,
+                       base::Unretained(this)),
       &tracker_);
 }
 
@@ -760,7 +781,7 @@ void CertificateManagerHandler::ImportPersonalFileRead(
     const int* read_errno, const std::string* data) {
   if (*read_errno) {
     ImportExportCleanup();
-    web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
+    web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
     ShowError(
         l10n_util::GetStringUTF8(IDS_CERT_MANAGER_IMPORT_ERROR_TITLE),
         l10n_util::GetStringFUTF8(IDS_CERT_MANAGER_READ_ERROR_FORMAT,
@@ -771,31 +792,19 @@ void CertificateManagerHandler::ImportPersonalFileRead(
 
   file_data_ = *data;
 
-  if (file_path_.MatchesExtension(FILE_PATH_LITERAL(".p12"))) {
-    if (use_hardware_backed_) {
-      module_ = certificate_manager_model_->cert_db()->GetPrivateModule();
-    } else {
-      module_ = certificate_manager_model_->cert_db()->GetPublicModule();
-    }
-
-    net::CryptoModuleList modules;
-    modules.push_back(module_);
-    chrome::UnlockSlotsIfNecessary(
-        modules,
-        chrome::kCryptoModulePasswordCertImport,
-        net::HostPortPair(),  // unused.
-        GetParentWindow(),
-        base::Bind(&CertificateManagerHandler::ImportPersonalSlotUnlocked,
-                   base::Unretained(this)));
+  if (CouldBePFX(file_data_)) {
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "CertificateManager.importPersonalAskPassword");
     return;
   }
 
-  // Non .p12 files are assumed to be single/chain certificates without private
-  // key data. The default extension according to spec is '.crt', however other
-  // extensions are also used in some places to represent these certificates.
+  // Non .p12/.pfx files are assumed to be single/chain certificates without
+  // private key data. The default extension according to spec is '.crt',
+  // however other extensions are also used in some places to represent these
+  // certificates.
   int result = certificate_manager_model_->ImportUserCert(file_data_);
   ImportExportCleanup();
-  web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
+  web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
   int string_id;
   switch (result) {
     case net::OK:
@@ -804,7 +813,7 @@ void CertificateManagerHandler::ImportPersonalFileRead(
       string_id = IDS_CERT_MANAGER_IMPORT_MISSING_KEY;
       break;
     case net::ERR_CERT_INVALID:
-      string_id = IDS_CERT_MANAGER_READ_ERROR_FORMAT;
+      string_id = IDS_CERT_MANAGER_IMPORT_INVALID_FILE;
       break;
     default:
       string_id = IDS_CERT_MANAGER_UNKNOWN_ERROR;
@@ -813,6 +822,31 @@ void CertificateManagerHandler::ImportPersonalFileRead(
   ShowError(
       l10n_util::GetStringUTF8(IDS_CERT_MANAGER_IMPORT_ERROR_TITLE),
       l10n_util::GetStringUTF8(string_id));
+}
+
+void CertificateManagerHandler::ImportPersonalPasswordSelected(
+    const base::ListValue* args) {
+  if (!args->GetString(0, &password_)) {
+    web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
+    ImportExportCleanup();
+    return;
+  }
+
+  if (use_hardware_backed_) {
+    module_ = certificate_manager_model_->cert_db()->GetPrivateModule();
+  } else {
+    module_ = certificate_manager_model_->cert_db()->GetPublicModule();
+  }
+
+  net::CryptoModuleList modules;
+  modules.push_back(module_);
+  chrome::UnlockSlotsIfNecessary(
+      modules,
+      chrome::kCryptoModulePasswordCertImport,
+      net::HostPortPair(),  // unused.
+      GetParentWindow(),
+      base::Bind(&CertificateManagerHandler::ImportPersonalSlotUnlocked,
+                 base::Unretained(this)));
 }
 
 void CertificateManagerHandler::ImportPersonalSlotUnlocked() {
@@ -824,7 +858,7 @@ void CertificateManagerHandler::ImportPersonalSlotUnlocked() {
   int result = certificate_manager_model_->ImportFromPKCS12(
       module_.get(), file_data_, password_, is_extractable);
   ImportExportCleanup();
-  web_ui()->CallJavascriptFunction("CertificateRestoreOverlay.dismiss");
+  web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
   int string_id;
   switch (result) {
     case net::OK:
@@ -864,6 +898,7 @@ void CertificateManagerHandler::ImportExportCleanup() {
   use_hardware_backed_ = false;
   selected_cert_list_.clear();
   module_ = NULL;
+  tracker_.TryCancelAll();
 
   // There may be pending file dialogs, we need to tell them that we've gone
   // away so they don't try and call back to us.
@@ -885,11 +920,9 @@ void CertificateManagerHandler::ImportServer(const base::ListValue* args) {
 
 void CertificateManagerHandler::ImportServerFileSelected(
     const base::FilePath& path) {
-  file_path_ = path;
   file_access_provider_->StartRead(
-      file_path_,
-      base::Bind(&CertificateManagerHandler::ImportServerFileRead,
-                 base::Unretained(this)),
+      path, base::Bind(&CertificateManagerHandler::ImportServerFileRead,
+                       base::Unretained(this)),
       &tracker_);
 }
 
@@ -945,11 +978,9 @@ void CertificateManagerHandler::ImportCA(const base::ListValue* args) {
 
 void CertificateManagerHandler::ImportCAFileSelected(
     const base::FilePath& path) {
-  file_path_ = path;
   file_access_provider_->StartRead(
-      file_path_,
-      base::Bind(&CertificateManagerHandler::ImportCAFileRead,
-                 base::Unretained(this)),
+      path, base::Bind(&CertificateManagerHandler::ImportCAFileRead,
+                       base::Unretained(this)),
       &tracker_);
 }
 
@@ -982,8 +1013,8 @@ void CertificateManagerHandler::ImportCAFileRead(const int* read_errno,
   // TODO(mattm): check here if root_cert is not a CA cert and show error.
 
   base::StringValue cert_name(root_cert->subject().GetDisplayName());
-  web_ui()->CallJavascriptFunction("CertificateEditCaTrustOverlay.showImport",
-                                   cert_name);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "CertificateEditCaTrustOverlay.showImport", cert_name);
 }
 
 void CertificateManagerHandler::ImportCATrustSelected(
@@ -998,7 +1029,8 @@ void CertificateManagerHandler::ImportCATrustSelected(
   if (fail) {
     LOG(ERROR) << "ImportCATrustSelected args fail";
     ImportExportCleanup();
-    web_ui()->CallJavascriptFunction("CertificateEditCaTrustOverlay.dismiss");
+    web_ui()->CallJavascriptFunctionUnsafe(
+        "CertificateEditCaTrustOverlay.dismiss");
     return;
   }
 
@@ -1011,7 +1043,8 @@ void CertificateManagerHandler::ImportCATrustSelected(
           trust_email * net::NSSCertDatabase::TRUSTED_EMAIL +
           trust_obj_sign * net::NSSCertDatabase::TRUSTED_OBJ_SIGN,
       &not_imported);
-  web_ui()->CallJavascriptFunction("CertificateEditCaTrustOverlay.dismiss");
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "CertificateEditCaTrustOverlay.dismiss");
   if (!result) {
     ShowError(
         l10n_util::GetStringUTF8(IDS_CERT_MANAGER_CA_IMPORT_ERROR_TITLE),
@@ -1045,8 +1078,8 @@ void CertificateManagerHandler::Delete(const base::ListValue* args) {
 }
 
 void CertificateManagerHandler::OnCertificateManagerModelCreated(
-    scoped_ptr<CertificateManagerModel> model) {
-  certificate_manager_model_ = model.Pass();
+    std::unique_ptr<CertificateManagerModel> model) {
+  certificate_manager_model_ = std::move(model);
   CertificateManagerModelReady();
 }
 
@@ -1055,9 +1088,9 @@ void CertificateManagerHandler::CertificateManagerModelReady() {
       certificate_manager_model_->is_user_db_available());
   base::FundamentalValue tpm_available_value(
       certificate_manager_model_->is_tpm_available());
-  web_ui()->CallJavascriptFunction("CertificateManager.onModelReady",
-                                   user_db_available_value,
-                                   tpm_available_value);
+  web_ui()->CallJavascriptFunctionUnsafe("CertificateManager.onModelReady",
+                                         user_db_available_value,
+                                         tpm_available_value);
   certificate_manager_model_->Refresh();
 }
 
@@ -1090,7 +1123,7 @@ void CertificateManagerHandler::PopulateTree(
     const net::CertificateList& web_trust_certs) {
   const std::string tree_name = tab_name + "-tree";
 
-  scoped_ptr<icu::Collator> collator;
+  std::unique_ptr<icu::Collator> collator;
   UErrorCode error = U_ZERO_ERROR;
   collator.reset(
       icu::Collator::createInstance(
@@ -1104,11 +1137,11 @@ void CertificateManagerHandler::PopulateTree(
   certificate_manager_model_->FilterAndBuildOrgGroupingMap(type, &map);
 
   {
-    base::ListValue* nodes = new base::ListValue;
+    std::unique_ptr<base::ListValue> nodes(new base::ListValue);
     for (CertificateManagerModel::OrgGroupingMap::iterator i = map.begin();
          i != map.end(); ++i) {
       // Populate first level (org name).
-      base::DictionaryValue* dict = new base::DictionaryValue;
+      std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
       dict->SetString(kKeyId, OrgNameToId(i->first));
       dict->SetString(kNameId, i->first);
 
@@ -1116,7 +1149,8 @@ void CertificateManagerHandler::PopulateTree(
       base::ListValue* subnodes = new base::ListValue;
       for (net::CertificateList::const_iterator org_cert_it = i->second.begin();
            org_cert_it != i->second.end(); ++org_cert_it) {
-        base::DictionaryValue* cert_dict = new base::DictionaryValue;
+        std::unique_ptr<base::DictionaryValue> cert_dict(
+            new base::DictionaryValue);
         net::X509Certificate* cert = org_cert_it->get();
         cert_dict->SetString(kKeyId, cert_id_map_->CertToId(cert));
         cert_dict->SetString(kNameId, certificate_manager_model_->GetColumnText(
@@ -1139,19 +1173,20 @@ void CertificateManagerHandler::PopulateTree(
             kExtractableId,
             !certificate_manager_model_->IsHardwareBacked(cert));
         // TODO(mattm): Other columns.
-        subnodes->Append(cert_dict);
+        subnodes->Append(std::move(cert_dict));
       }
       std::sort(subnodes->begin(), subnodes->end(), comparator);
 
       dict->Set(kSubNodesId, subnodes);
-      nodes->Append(dict);
+      nodes->Append(std::move(dict));
     }
     std::sort(nodes->begin(), nodes->end(), comparator);
 
     base::ListValue args;
-    args.Append(new base::StringValue(tree_name));
-    args.Append(nodes);
-    web_ui()->CallJavascriptFunction("CertificateManager.onPopulateTree", args);
+    args.AppendString(tree_name);
+    args.Append(std::move(nodes));
+    web_ui()->CallJavascriptFunctionUnsafe("CertificateManager.onPopulateTree",
+                                           args);
   }
 }
 
@@ -1164,7 +1199,7 @@ void CertificateManagerHandler::ShowError(const std::string& title,
   args.push_back(base::Value::CreateNullValue().release());  // cancelTitle
   args.push_back(base::Value::CreateNullValue().release());  // okCallback
   args.push_back(base::Value::CreateNullValue().release());  // cancelCallback
-  web_ui()->CallJavascriptFunction("AlertOverlay.show", args.get());
+  web_ui()->CallJavascriptFunctionUnsafe("AlertOverlay.show", args.get());
 }
 
 void CertificateManagerHandler::ShowImportErrors(
@@ -1182,18 +1217,17 @@ void CertificateManagerHandler::ShowImportErrors(
   base::ListValue cert_error_list;
   for (size_t i = 0; i < not_imported.size(); ++i) {
     const net::NSSCertDatabase::ImportCertFailure& failure = not_imported[i];
-    base::DictionaryValue* dict = new base::DictionaryValue;
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
     dict->SetString(kNameId, failure.certificate->subject().GetDisplayName());
     dict->SetString(kErrorId, NetErrorToString(failure.net_error));
-    cert_error_list.Append(dict);
+    cert_error_list.Append(std::move(dict));
   }
 
   base::StringValue title_value(title);
   base::StringValue error_value(error);
-  web_ui()->CallJavascriptFunction("CertificateImportErrorOverlay.show",
-                                   title_value,
-                                   error_value,
-                                   cert_error_list);
+  web_ui()->CallJavascriptFunctionUnsafe("CertificateImportErrorOverlay.show",
+                                         title_value, error_value,
+                                         cert_error_list);
 }
 
 gfx::NativeWindow CertificateManagerHandler::GetParentWindow() const {

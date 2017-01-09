@@ -4,6 +4,9 @@
 
 #include "components/user_prefs/tracked/pref_hash_calculator.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
@@ -20,7 +23,7 @@ namespace {
 std::string GetDigestString(const std::string& key,
                             const std::string& message) {
   crypto::HMAC hmac(crypto::HMAC::SHA256);
-  std::vector<uint8> digest(hmac.DigestLength());
+  std::vector<uint8_t> digest(hmac.DigestLength());
   if (!hmac.Init(key) || !hmac.Sign(message, &digest[0], digest.size())) {
     NOTREACHED();
     return std::string();
@@ -34,7 +37,7 @@ bool VerifyDigestString(const std::string& key,
                         const std::string& message,
                         const std::string& digest_string) {
   crypto::HMAC hmac(crypto::HMAC::SHA256);
-  std::vector<uint8> digest;
+  std::vector<uint8_t> digest;
   return base::HexStringToBytes(digest_string, &digest) && hmac.Init(key) &&
          hmac.Verify(message,
                      base::StringPiece(reinterpret_cast<char*>(&digest[0]),
@@ -48,7 +51,7 @@ std::string ValueAsString(const base::Value* value) {
   // Dictionary values may contain empty lists and sub-dictionaries. Make a
   // deep copy with those removed to make the hash more stable.
   const base::DictionaryValue* dict_value;
-  scoped_ptr<base::DictionaryValue> canonical_dict_value;
+  std::unique_ptr<base::DictionaryValue> canonical_dict_value;
   if (value && value->GetAsDictionary(&dict_value)) {
     canonical_dict_value = dict_value->DeepCopyWithoutEmptyChildren();
     value = canonical_dict_value.get();

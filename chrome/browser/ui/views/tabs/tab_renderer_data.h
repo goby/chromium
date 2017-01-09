@@ -23,6 +23,7 @@ struct CHROME_VIEWS_EXPORT TabRendererData {
   };
 
   TabRendererData();
+  TabRendererData(const TabRendererData& other);
   ~TabRendererData();
 
   // This interprets the crashed status to decide whether or not this
@@ -44,7 +45,7 @@ struct CHROME_VIEWS_EXPORT TabRendererData {
   bool pinned;
   bool blocked;
   bool app;
-  TabMediaState media_state;
+  TabAlertState alert_state;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TABS_TAB_RENDERER_DATA_H_

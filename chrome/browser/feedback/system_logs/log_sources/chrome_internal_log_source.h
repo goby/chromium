@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_FEEDBACK_SYSTEM_LOGS_LOG_SOURCES_CHROME_INTERNAL_LOG_SOURCE_H_
 #define CHROME_BROWSER_FEEDBACK_SYSTEM_LOGS_LOG_SOURCES_CHROME_INTERNAL_LOG_SOURCE_H_
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/feedback/system_logs/system_logs_fetcher_base.h"
 
 namespace system_logs {
@@ -22,6 +24,11 @@ class ChromeInternalLogSource : public SystemLogsSource {
   void PopulateSyncLogs(SystemLogsResponse* response);
   void PopulateExtensionInfoLogs(SystemLogsResponse* response);
   void PopulateDataReductionProxyLogs(SystemLogsResponse* response);
+
+#if defined(OS_CHROMEOS)
+  void PopulateLocalStateSettings(SystemLogsResponse* response);
+#endif  // defined(OS_CHROMEOS)
+
 #if defined(OS_WIN)
   void PopulateUsbKeyboardDetected(SystemLogsResponse* response);
 #endif

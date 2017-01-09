@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "mojo/public/interfaces/bindings/tests/test_structs.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -46,7 +49,7 @@ struct TypeConverter<test::RectPtr, RedmondRect> {
     rect->y = input.top;
     rect->width = input.right - input.left;
     rect->height = input.bottom - input.top;
-    return rect.Pass();
+    return rect;
   }
 };
 
@@ -66,9 +69,9 @@ template <>
 struct TypeConverter<test::NamedRegionPtr, RedmondNamedRegion> {
   static test::NamedRegionPtr Convert(const RedmondNamedRegion& input) {
     test::NamedRegionPtr region(test::NamedRegion::New());
-    region->name = input.name;
-    region->rects = Array<test::RectPtr>::From(input.rects);
-    return region.Pass();
+    region->name.emplace(input.name);
+    region->rects = Array<test::RectPtr>::From(input.rects).PassStorage();
+    return region;
   }
 };
 
@@ -76,8 +79,13 @@ template <>
 struct TypeConverter<RedmondNamedRegion, test::NamedRegionPtr> {
   static RedmondNamedRegion Convert(const test::NamedRegionPtr& input) {
     RedmondNamedRegion region;
-    region.name = input->name;
-    region.rects = input->rects.To<std::vector<RedmondRect>>();
+    if (input->name)
+      region.name = input->name.value();
+    if (input->rects) {
+      region.rects.reserve(input->rects->size());
+      for (const auto& element : *input->rects)
+        region.rects.push_back(element.To<RedmondRect>());
+    }
     return region;
   }
 };
@@ -98,7 +106,7 @@ TEST(TypeConversionTest, String) {
 }
 
 TEST(TypeConversionTest, String_Null) {
-  String a;
+  String a(nullptr);
   EXPECT_TRUE(a.is_null());
   EXPECT_EQ(std::string(), a.To<std::string>());
 

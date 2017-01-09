@@ -64,7 +64,12 @@ InspectorTest.dumpResourcesTree = function()
             dump(children[i], prefix + "    ");
     }
 
-    dump(WebInspector.panels.resources.resourcesListTreeElement, "");
+    dump(UI.panels.resources.resourcesListTreeElement, "");
+    if (!InspectorTest._testSourceNavigator) {
+        InspectorTest._testSourceNavigator = new Sources.SourcesNavigatorView();
+        InspectorTest._testSourceNavigator.show(UI.inspectorView.element);
+    }
+    InspectorTest.dumpNavigatorViewInAllModes(InspectorTest._testSourceNavigator);
 }
 
 InspectorTest.dumpResourceTreeEverything = function()

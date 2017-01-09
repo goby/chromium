@@ -8,7 +8,11 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 
 namespace local_discovery {
 
@@ -55,31 +59,26 @@ void ServiceDiscoveryDeviceLister::OnServiceUpdated(
     return;
   }
 
-  if (update != ServiceWatcher::UPDATE_REMOVED) {
-    bool added = (update == ServiceWatcher::UPDATE_ADDED);
-    std::pair<ServiceResolverMap::iterator, bool> insert_result =
-        resolvers_.insert(make_pair(service_name,
-                                    linked_ptr<ServiceResolver>(NULL)));
-
-    // If there is already a resolver working on this service, don't add one.
-    if (insert_result.second) {
-      VLOG(1) << "Adding resolver for service_name: " << service_name;
-      scoped_ptr<ServiceResolver> resolver =
-          service_discovery_client_->CreateServiceResolver(
-          service_name, base::Bind(
-              &ServiceDiscoveryDeviceLister::OnResolveComplete,
-              weak_factory_.GetWeakPtr(),
-              added,
-              service_name));
-
-      insert_result.first->second.reset(resolver.release());
-      insert_result.first->second->StartResolving();
-    } else {
-      VLOG(1) << "Resolver already exists, service_name: " << service_name;
-    }
-  } else {
+  if (update == ServiceWatcher::UPDATE_REMOVED) {
     delegate_->OnDeviceRemoved(service_name);
+    return;
   }
+
+  // If there is already a resolver working on this service, don't add one.
+  if (base::ContainsKey(resolvers_, service_name)) {
+    VLOG(1) << "Resolver already exists, service_name: " << service_name;
+    return;
+  }
+
+  VLOG(1) << "Adding resolver for service_name: " << service_name;
+  bool added = (update == ServiceWatcher::UPDATE_ADDED);
+  std::unique_ptr<ServiceResolver> resolver =
+      service_discovery_client_->CreateServiceResolver(
+          service_name,
+          base::Bind(&ServiceDiscoveryDeviceLister::OnResolveComplete,
+                     weak_factory_.GetWeakPtr(), added, service_name));
+  resolver->StartResolving();
+  resolvers_[service_name] = std::move(resolver);
 }
 
 // TODO(noamsml): Update ServiceDiscoveryClient interface to match this.
@@ -98,11 +97,10 @@ void ServiceDiscoveryDeviceLister::OnResolveComplete(
     // On Mac, the Bonjour service does not seem to ever evict a service if a
     // device is unplugged, so we need to continuously try to resolve the
     // service to detect non-graceful shutdowns.
-    base::MessageLoop::current()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
         base::Bind(&ServiceDiscoveryDeviceLister::OnServiceUpdated,
-                   weak_factory_.GetWeakPtr(),
-                   ServiceWatcher::UPDATE_CHANGED,
+                   weak_factory_.GetWeakPtr(), ServiceWatcher::UPDATE_CHANGED,
                    service_description.service_name),
         base::TimeDelta::FromSeconds(kMacServiceResolvingIntervalSecs));
 #endif

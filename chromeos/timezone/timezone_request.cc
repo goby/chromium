@@ -4,10 +4,12 @@
 
 #include "chromeos/timezone/timezone_request.h"
 
+#include <stddef.h>
 #include <string>
+#include <utility>
 
 #include "base/json/json_reader.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -175,8 +177,9 @@ bool ParseServerResponse(const GURL& server_url,
 
   // Parse the response, ignoring comments.
   std::string error_msg;
-  scoped_ptr<base::Value> response_value = base::JSONReader::ReadAndReturnError(
-      response_body, base::JSON_PARSE_RFC, NULL, &error_msg);
+  std::unique_ptr<base::Value> response_value =
+      base::JSONReader::ReadAndReturnError(response_body, base::JSON_PARSE_RFC,
+                                           NULL, &error_msg);
   if (response_value == NULL) {
     PrintTimeZoneError(server_url, "JSONReader failed: " + error_msg, timezone);
     RecordUmaEvent(TIMEZONE_REQUEST_EVENT_RESPONSE_MALFORMED);
@@ -185,10 +188,12 @@ bool ParseServerResponse(const GURL& server_url,
 
   const base::DictionaryValue* response_object = NULL;
   if (!response_value->GetAsDictionary(&response_object)) {
-    PrintTimeZoneError(server_url,
-                       "Unexpected response type : " +
-                           base::StringPrintf("%u", response_value->GetType()),
-                       timezone);
+    PrintTimeZoneError(
+        server_url,
+        "Unexpected response type : " +
+            base::StringPrintf(
+                "%u", static_cast<unsigned int>(response_value->GetType())),
+        timezone);
     RecordUmaEvent(TIMEZONE_REQUEST_EVENT_RESPONSE_MALFORMED);
     return false;
   }
@@ -261,33 +266,33 @@ bool ParseServerResponse(const GURL& server_url,
 
 // Attempts to extract a position from the response. Detects and indicates
 // various failure cases.
-scoped_ptr<TimeZoneResponseData> GetTimeZoneFromResponse(
+std::unique_ptr<TimeZoneResponseData> GetTimeZoneFromResponse(
     bool http_success,
     int status_code,
     const std::string& response_body,
     const GURL& server_url) {
-  scoped_ptr<TimeZoneResponseData> timezone(new TimeZoneResponseData);
+  std::unique_ptr<TimeZoneResponseData> timezone(new TimeZoneResponseData);
 
   // HttpPost can fail for a number of reasons. Most likely this is because
   // we're offline, or there was no response.
   if (!http_success) {
     PrintTimeZoneError(server_url, "No response received", timezone.get());
     RecordUmaEvent(TIMEZONE_REQUEST_EVENT_RESPONSE_EMPTY);
-    return timezone.Pass();
+    return timezone;
   }
   if (status_code != net::HTTP_OK) {
     std::string message = "Returned error code ";
     message += base::IntToString(status_code);
     PrintTimeZoneError(server_url, message, timezone.get());
     RecordUmaEvent(TIMEZONE_REQUEST_EVENT_RESPONSE_NOT_OK);
-    return timezone.Pass();
+    return timezone;
   }
 
   if (!ParseServerResponse(server_url, response_body, timezone.get()))
-    return timezone.Pass();
+    return timezone;
 
   RecordUmaEvent(TIMEZONE_REQUEST_EVENT_RESPONSE_SUCCESS);
-  return timezone.Pass();
+  return timezone;
 }
 
 }  // namespace
@@ -366,7 +371,7 @@ void TimeZoneRequest::OnURLFetchComplete(const net::URLFetcher* source) {
 
   std::string data;
   source->GetResponseAsString(&data);
-  scoped_ptr<TimeZoneResponseData> timezone = GetTimeZoneFromResponse(
+  std::unique_ptr<TimeZoneResponseData> timezone = GetTimeZoneFromResponse(
       status.is_success(), response_code, data, source->GetURL());
   const bool server_error =
       !status.is_success() || (response_code >= 500 && response_code < 600);
@@ -398,7 +403,7 @@ void TimeZoneRequest::OnURLFetchComplete(const net::URLFetcher* source) {
 
   // callback.Run() usually destroys TimeZoneRequest, because this is the way
   // callback is implemented in TimeZoneProvider.
-  callback.Run(timezone.Pass(), server_error);
+  callback.Run(std::move(timezone), server_error);
   // "this" is already destroyed here.
 }
 

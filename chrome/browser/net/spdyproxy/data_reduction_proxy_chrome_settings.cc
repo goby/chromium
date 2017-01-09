@@ -4,20 +4,23 @@
 
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/base64.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/common/pref_names.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_io_data.h"
@@ -25,6 +28,8 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
 #include "components/data_reduction_proxy/core/browser/data_store.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/proxy_config/proxy_prefs.h"
 #include "net/base/host_port_pair.h"
@@ -66,13 +71,14 @@ bool ContainsDataReductionProxyDefaultHostSuffix(
 // Extract the embedded PAC script from the given |pac_url|, and store the
 // extracted script in |pac_script|. Returns true if extraction was successful,
 // otherwise returns false. |pac_script| must not be NULL.
-bool GetEmbeddedPacScript(const std::string& pac_url, std::string* pac_script) {
+bool GetEmbeddedPacScript(base::StringPiece pac_url, std::string* pac_script) {
   DCHECK(pac_script);
-  const std::string kPacURLPrefix =
+  static const char kPacURLPrefix[] =
       "data:application/x-ns-proxy-autoconfig;base64,";
   return base::StartsWith(pac_url, kPacURLPrefix,
                           base::CompareCase::SENSITIVE) &&
-         base::Base64Decode(pac_url.substr(kPacURLPrefix.size()), pac_script);
+         base::Base64Decode(pac_url.substr(arraysize(kPacURLPrefix) - 1),
+                            pac_script);
 }
 
 }  // namespace
@@ -165,7 +171,8 @@ DataReductionProxyChromeSettings::MigrateDataReductionProxyOffProxyPrefsHelper(
 }
 
 DataReductionProxyChromeSettings::DataReductionProxyChromeSettings()
-    : data_reduction_proxy::DataReductionProxySettings() {
+    : data_reduction_proxy::DataReductionProxySettings(),
+      data_reduction_proxy_enabled_pref_name_(prefs::kDataSaverEnabled) {
 }
 
 DataReductionProxyChromeSettings::~DataReductionProxyChromeSettings() {
@@ -182,10 +189,10 @@ void DataReductionProxyChromeSettings::InitDataReductionProxySettings(
     data_reduction_proxy::DataReductionProxyIOData* io_data,
     PrefService* profile_prefs,
     net::URLRequestContextGetter* request_context_getter,
-    scoped_ptr<data_reduction_proxy::DataStore> store,
+    std::unique_ptr<data_reduction_proxy::DataStore> store,
     const scoped_refptr<base::SingleThreadTaskRunner>& ui_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& db_task_runner) {
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
   // On mobile we write Data Reduction Proxy prefs directly to the pref service.
   // On desktop we store Data Reduction Proxy prefs in memory, writing to disk
   // every 60 minutes and on termination. Shutdown hooks must be added for
@@ -196,13 +203,15 @@ void DataReductionProxyChromeSettings::InitDataReductionProxySettings(
   base::TimeDelta commit_delay = base::TimeDelta::FromMinutes(60);
 #endif
 
-  scoped_ptr<data_reduction_proxy::DataReductionProxyService> service =
-      make_scoped_ptr(new data_reduction_proxy::DataReductionProxyService(
-          this, profile_prefs, request_context_getter, store.Pass(),
+  std::unique_ptr<data_reduction_proxy::DataReductionProxyService> service =
+      base::MakeUnique<data_reduction_proxy::DataReductionProxyService>(
+          this, profile_prefs, request_context_getter, std::move(store),
           ui_task_runner, io_data->io_task_runner(), db_task_runner,
-          commit_delay));
+          commit_delay);
   data_reduction_proxy::DataReductionProxySettings::
-      InitDataReductionProxySettings(profile_prefs, io_data, service.Pass());
+      InitDataReductionProxySettings(data_reduction_proxy_enabled_pref_name_,
+                                     profile_prefs, io_data,
+                                     std::move(service));
   io_data->SetDataReductionProxyService(
       data_reduction_proxy_service()->GetWeakPtr());
 
@@ -218,8 +227,6 @@ void DataReductionProxyChromeSettings::InitDataReductionProxySettings(
 data_reduction_proxy::Client DataReductionProxyChromeSettings::GetClient() {
 #if defined(OS_ANDROID)
   return data_reduction_proxy::Client::CHROME_ANDROID;
-#elif defined(OS_IOS)
-  return data_reduction_proxy::Client::CHROME_IOS;
 #elif defined(OS_MACOSX)
   return data_reduction_proxy::Client::CHROME_MAC;
 #elif defined(OS_CHROMEOS)

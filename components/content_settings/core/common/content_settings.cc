@@ -8,6 +8,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/stl_util.h"
+#include "build/build_config.h"
 
 ContentSetting IntToContentSetting(int content_setting) {
   return ((content_setting < 0) ||
@@ -30,19 +31,19 @@ ContentSettingsType kHistogramOrder[] = {
     CONTENT_SETTINGS_TYPE_GEOLOCATION,
     CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
     CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE,
-    CONTENT_SETTINGS_TYPE_FULLSCREEN,
-    CONTENT_SETTINGS_TYPE_MOUSELOCK,
+    CONTENT_SETTINGS_TYPE_DEFAULT,  // FULLSCREEN (removed).
+    CONTENT_SETTINGS_TYPE_DEFAULT,  // MOUSELOCK (removed).
     CONTENT_SETTINGS_TYPE_MIXEDSCRIPT,
-    CONTENT_SETTINGS_TYPE_MEDIASTREAM,
+    CONTENT_SETTINGS_TYPE_DEFAULT,  // MEDIASTREAM (removed).
     CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
     CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
     CONTENT_SETTINGS_TYPE_PROTOCOL_HANDLERS,
     CONTENT_SETTINGS_TYPE_PPAPI_BROKER,
     CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
     CONTENT_SETTINGS_TYPE_MIDI_SYSEX,
-    CONTENT_SETTINGS_TYPE_PUSH_MESSAGING,
+    CONTENT_SETTINGS_TYPE_DEFAULT,  // PUSH_MESSAGING (removed).
     CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
-    CONTENT_SETTINGS_TYPE_DEFAULT,  // METRO_SWITCH_TO_DESKTOP (deprecated).
+    CONTENT_SETTINGS_TYPE_DEFAULT,  // METRO_SWITCH_TO_DESKTOP (removed).
 #if defined(OS_ANDROID) || defined(OS_CHROMEOS)
     CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER,
 #else
@@ -52,6 +53,11 @@ ContentSettingsType kHistogramOrder[] = {
     CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT,
     CONTENT_SETTINGS_TYPE_DURABLE_STORAGE,
     CONTENT_SETTINGS_TYPE_KEYGEN,
+    CONTENT_SETTINGS_TYPE_BLUETOOTH_GUARD,
+    CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC,
+    CONTENT_SETTINGS_TYPE_AUTOPLAY,
+    CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT,
+    CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO,
 };
 
 int ContentSettingTypeToHistogramValue(ContentSettingsType content_setting,
@@ -66,7 +72,7 @@ int ContentSettingTypeToHistogramValue(ContentSettingsType content_setting,
     }
   }
 
-  DCHECK(ContainsKey(kMap, content_setting));
+  DCHECK(base::ContainsKey(kMap, content_setting));
   *num_values = arraysize(kHistogramOrder);
   return kMap[content_setting];
 }
@@ -86,6 +92,9 @@ ContentSettingPatternSource::ContentSettingPatternSource(
 ContentSettingPatternSource::ContentSettingPatternSource()
     : setting(CONTENT_SETTING_DEFAULT), incognito(false) {
 }
+
+ContentSettingPatternSource::ContentSettingPatternSource(
+    const ContentSettingPatternSource& other) = default;
 
 RendererContentSettingRules::RendererContentSettingRules() {}
 

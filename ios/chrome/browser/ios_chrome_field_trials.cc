@@ -5,23 +5,15 @@
 #include "ios/chrome/browser/ios_chrome_field_trials.h"
 
 #include "base/metrics/field_trial.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/ntp_tiles/field_trial.h"
+#include "components/version_info/version_info.h"
+#include "ios/chrome/common/channel_info.h"
 
-namespace {
-
-// Instantiates dynamic field trials by querying their state to ensure they
-// get reported as used.
-void InstantiateDynamicTrials() {
-  // Activate the autocomplete dynamic field trials.
-  OmniboxFieldTrial::ActivateDynamicTrials();
-
+void SetupIOSFieldTrials() {
   // Activate the iOS tab eviction dynamic field trials.
   base::FieldTrialList::FindValue("TabEviction");
-}
 
-}  // namespace
-
-void SetupFieldTrials(const base::CommandLine& command_line,
-                      const base::Time& install_time) {
-  InstantiateDynamicTrials();
+  // Setup a field trial for a first run experiment on Popular sites.
+  ntp_tiles::SetUpFirstLaunchFieldTrial(GetChannel() ==
+                                        version_info::Channel::STABLE);
 }

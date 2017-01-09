@@ -31,26 +31,18 @@
 #ifndef HarfBuzzShaper_h
 #define HarfBuzzShaper_h
 
-#include "hb.h"
 #include "platform/fonts/shaping/ShapeResult.h"
-#include "platform/fonts/shaping/Shaper.h"
-#include "platform/geometry/FloatPoint.h"
-#include "platform/geometry/FloatRect.h"
 #include "platform/text/TextRun.h"
 #include "wtf/Allocator.h"
 #include "wtf/Deque.h"
-#include "wtf/HashSet.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
-#include "wtf/text/CharacterNames.h"
-
+#include <hb.h>
+#include <memory>
 #include <unicode/uscript.h>
 
 namespace blink {
 
 class Font;
-class GlyphBuffer;
 class SimpleFontData;
 class HarfBuzzShaper;
 
@@ -59,10 +51,16 @@ class HarfBuzzShaper;
 // result, and processing sub-runs by trying to shape them with a fallback font
 // until the last resort font is reached.
 //
-// Going through one example to illustrate the process: The following is a run of
-// vertical text to be shaped. After run segmentation in RunSegmenter it is split
-// into 4 segments. The segments indicated by the segementation results showing
-// the script, orientation information and small caps handling of the individual
+// If caps formatting is requested, an additional lowercase/uppercase
+// segmentation stage is required. In this stage, OpenType features in the font
+// are matched against the requested formatting and formatting is synthesized as
+// required by the CSS Level 3 Fonts Module.
+//
+// Going through one example - for simplicity without caps formatting - to
+// illustrate the process: The following is a run of vertical text to be
+// shaped. After run segmentation in RunSegmenter it is split into 4
+// segments. The segments indicated by the segementation results showing the
+// script, orientation information and small caps handling of the individual
 // segment. The Japanese text at the beginning has script "Hiragana", does not
 // need rotation when laid out vertically and does not need uppercasing when
 // small caps is requested.
@@ -93,30 +91,30 @@ class HarfBuzzShaper;
 // one for Latin U+00-U+FF and one unrestricted unicode-range.
 //
 // FontFallbackIterator provides the shaper with Heiti SC, then Tinos of the
-// restricted unicode-range, then the unrestricted full unicode-range Tinos, then
-// a system sans-serif.
+// restricted unicode-range, then the unrestricted full unicode-range Tinos,
+// then a system sans-serif.
 //
 // The initial segment 0-2 to the shaper, together with the segmentation
 // properties and the initial Heiti SC font. Characters 0-2 are shaped
-// successfully with Heiti SC. The next segment, 3-5 is passed to the shaper. The
-// shaper attempts to shape it with Heiti SC, which fails for the Combining
+// successfully with Heiti SC. The next segment, 3-5 is passed to the shaper.
+// The shaper attempts to shape it with Heiti SC, which fails for the Combining
 // Macron. So the shaping result for this segment would look similar to this.
 //
 // Glyphpos: 0 1 2 3
 // Cluster:  0 0 2 3
 // Glyph:    a x a A (where x is .notdef)
 //
-// Now in the extractShapeResults() step we notice that there is more work to do,
-// since Heiti SC does not have a glyph for the Combining Macron combined with an
-// a. So, this cluster together with a Todo item for switching to the next font
-// is put into HolesQueue.
+// Now in the extractShapeResults() step we notice that there is more work to
+// do, since Heiti SC does not have a glyph for the Combining Macron combined
+// with an a. So, this cluster together with a Todo item for switching to the
+// next font is put into HolesQueue.
 //
 // After shaping the initial segment, the remaining items in the HolesQueue are
 // processed, picking them from the head of the queue. So, first, the next font
-// is requested from the FontFallbackIterator. In this case, Tinos (for the range
-// U+00-U+FF) comes back. Shaping using this font, assuming it is subsetted,
-// fails again since there is no combining mark available. This triggers
-// requesting yet another font. This time, the Tinos font for the full
+// is requested from the FontFallbackIterator. In this case, Tinos (for the
+// range U+00-U+FF) comes back. Shaping using this font, assuming it is
+// subsetted, fails again since there is no combining mark available. This
+// triggers requesting yet another font. This time, the Tinos font for the full
 // range. With this, shaping succeeds with the following HarfBuzz result:
 //
 //  Glyphpos 0 1 2 3
@@ -130,68 +128,48 @@ class HarfBuzzShaper;
 //
 // Shaping then continues analogously for the remaining Hiragana Japanese
 // sub-run, and the result is inserted into ShapeResult as well.
-class PLATFORM_EXPORT HarfBuzzShaper final : public Shaper {
-public:
-    HarfBuzzShaper(const Font*, const TextRun&);
-    PassRefPtr<ShapeResult> shapeResult();
-    ~HarfBuzzShaper() { }
+class PLATFORM_EXPORT HarfBuzzShaper final {
+ public:
+  HarfBuzzShaper(const UChar*, unsigned length, TextDirection);
+  PassRefPtr<ShapeResult> shapeResult(const Font*) const;
+  ~HarfBuzzShaper() {}
 
-    enum HolesQueueItemAction {
-        HolesQueueNextFont,
-        HolesQueueRange
-    };
+  enum HolesQueueItemAction { HolesQueueNextFont, HolesQueueRange };
 
-    struct HolesQueueItem {
-        DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
-        HolesQueueItemAction m_action;
-        unsigned m_startIndex;
-        unsigned m_numCharacters;
-        HolesQueueItem(HolesQueueItemAction action, unsigned start, unsigned num)
-            : m_action(action)
-            , m_startIndex(start)
-            , m_numCharacters(num) {};
-    };
+  struct HolesQueueItem {
+    DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
+    HolesQueueItemAction m_action;
+    unsigned m_startIndex;
+    unsigned m_numCharacters;
+    HolesQueueItem(HolesQueueItemAction action, unsigned start, unsigned num)
+        : m_action(action), m_startIndex(start), m_numCharacters(num){};
+  };
 
-private:
-    float nextExpansionPerOpportunity();
-    void setExpansion(float);
-    void setFontFeatures();
+ private:
+  bool extractShapeResults(hb_buffer_t*,
+                           ShapeResult*,
+                           bool& fontCycleQueued,
+                           Deque<HolesQueueItem>*,
+                           const HolesQueueItem&,
+                           const Font*,
+                           const SimpleFontData*,
+                           UScriptCode,
+                           bool isLastResort) const;
+  bool collectFallbackHintChars(const Deque<HolesQueueItem>&,
+                                Vector<UChar32>& hint) const;
 
-    void appendToHolesQueue(HolesQueueItemAction,
-        unsigned startIndex,
-        unsigned numCharacters);
-    inline bool shapeRange(hb_buffer_t* harfBuzzBuffer,
-        unsigned startIndex,
-        unsigned numCharacters,
-        const SimpleFontData* currentFont,
-        unsigned currentFontRangeFrom,
-        unsigned currentFontRangeTo,
-        UScriptCode currentRunScript,
-        hb_language_t);
-    bool extractShapeResults(hb_buffer_t* harfBuzzBuffer,
-        ShapeResult*,
-        bool& fontCycleQueued,
-        const HolesQueueItem& currentQueueItem,
-        const SimpleFontData* currentFont,
-        UScriptCode currentRunScript,
-        bool isLastResort);
-    bool collectFallbackHintChars(Vector<UChar32>& hint, bool needsList);
+  void insertRunIntoShapeResult(
+      ShapeResult*,
+      std::unique_ptr<ShapeResult::RunInfo> runToInsert,
+      unsigned startGlyph,
+      unsigned numGlyphs,
+      hb_buffer_t*);
 
-    void insertRunIntoShapeResult(ShapeResult*, PassOwnPtr<ShapeResult::RunInfo> runToInsert, unsigned startGlyph, unsigned numGlyphs, hb_buffer_t*);
-    float adjustSpacing(ShapeResult::RunInfo*, size_t glyphIndex, unsigned currentCharacterIndex, float& offsetX, float& totalAdvance);
-
-    OwnPtr<UChar[]> m_normalizedBuffer;
-    unsigned m_normalizedBufferLength;
-
-    float m_wordSpacingAdjustment; // Delta adjustment (pixels) for each word break.
-    float m_letterSpacing; // Pixels to be added after each glyph.
-    unsigned m_expansionOpportunityCount;
-
-    Vector<hb_feature_t, 4> m_features;
-    Deque<HolesQueueItem> m_holesQueue;
+  const UChar* m_normalizedBuffer;
+  unsigned m_normalizedBufferLength;
+  TextDirection m_textDirection;
 };
 
+}  // namespace blink
 
-} // namespace blink
-
-#endif // HarfBuzzShaper_h
+#endif  // HarfBuzzShaper_h

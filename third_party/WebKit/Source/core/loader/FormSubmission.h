@@ -31,6 +31,7 @@
 #ifndef FormSubmission_h
 #define FormSubmission_h
 
+#include "core/loader/FrameLoadRequest.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/Referrer.h"
@@ -38,91 +39,100 @@
 
 namespace blink {
 
+class Document;
 class EncodedFormData;
 class Event;
-struct FrameLoadRequest;
+class HTMLFormControlElement;
 class HTMLFormElement;
 
-class FormSubmission : public RefCountedWillBeGarbageCollectedFinalized<FormSubmission> {
-public:
-    enum Method { GetMethod, PostMethod, DialogMethod };
+class FormSubmission : public GarbageCollectedFinalized<FormSubmission> {
+ public:
+  enum SubmitMethod { GetMethod, PostMethod, DialogMethod };
 
-    class Attributes {
-        DISALLOW_NEW();
-        WTF_MAKE_NONCOPYABLE(Attributes);
-    public:
-        Attributes()
-            : m_method(GetMethod)
-            , m_isMultiPartForm(false)
-            , m_encodingType("application/x-www-form-urlencoded", AtomicString::ConstructFromLiteral)
-        {
-        }
+  class Attributes {
+    DISALLOW_NEW();
+    WTF_MAKE_NONCOPYABLE(Attributes);
 
-        Method method() const { return m_method; }
-        static Method parseMethodType(const String&);
-        void updateMethodType(const String&);
-        static String methodString(Method);
+   public:
+    Attributes()
+        : m_method(GetMethod),
+          m_isMultiPartForm(false),
+          m_encodingType("application/x-www-form-urlencoded") {}
 
-        const String& action() const { return m_action; }
-        void parseAction(const String&);
+    SubmitMethod method() const { return m_method; }
+    static SubmitMethod parseMethodType(const String&);
+    void updateMethodType(const String&);
+    static String methodString(SubmitMethod);
 
-        const AtomicString& target() const { return m_target; }
-        void setTarget(const AtomicString& target) { m_target = target; }
+    const String& action() const { return m_action; }
+    void parseAction(const String&);
 
-        const AtomicString& encodingType() const { return m_encodingType; }
-        static AtomicString parseEncodingType(const String&);
-        void updateEncodingType(const String&);
-        bool isMultiPartForm() const { return m_isMultiPartForm; }
-
-        const String& acceptCharset() const { return m_acceptCharset; }
-        void setAcceptCharset(const String& value) { m_acceptCharset = value; }
-
-        void copyFrom(const Attributes&);
-
-    private:
-        Method m_method;
-        bool m_isMultiPartForm;
-
-        String m_action;
-        AtomicString m_target;
-        AtomicString m_encodingType;
-        String m_acceptCharset;
-    };
-
-    static PassRefPtrWillBeRawPtr<FormSubmission> create(HTMLFormElement*, const Attributes&, PassRefPtrWillBeRawPtr<Event>);
-    DECLARE_TRACE();
-
-    void populateFrameLoadRequest(FrameLoadRequest&);
-
-    KURL requestURL() const;
-
-    Method method() const { return m_method; }
-    const KURL& action() const { return m_action; }
     const AtomicString& target() const { return m_target; }
-    void clearTarget() { m_target = nullAtom; }
-    HTMLFormElement* form() const { return m_form.get(); }
-    EncodedFormData* data() const { return m_formData.get(); }
-    Event* event() const { return m_event.get(); }
+    void setTarget(const AtomicString& target) { m_target = target; }
 
-    const String& result() const { return m_result; }
+    const AtomicString& encodingType() const { return m_encodingType; }
+    static AtomicString parseEncodingType(const String&);
+    void updateEncodingType(const String&);
+    bool isMultiPartForm() const { return m_isMultiPartForm; }
 
-private:
-    FormSubmission(Method, const KURL& action, const AtomicString& target, const AtomicString& contentType, HTMLFormElement*, PassRefPtr<EncodedFormData>, const String& boundary, PassRefPtrWillBeRawPtr<Event>);
-    // FormSubmission for DialogMethod
-    FormSubmission(const String& result);
+    const String& acceptCharset() const { return m_acceptCharset; }
+    void setAcceptCharset(const String& value) { m_acceptCharset = value; }
 
-    // FIXME: Hold an instance of Attributes instead of individual members.
-    Method m_method;
-    KURL m_action;
+    void copyFrom(const Attributes&);
+
+   private:
+    SubmitMethod m_method;
+    bool m_isMultiPartForm;
+
+    String m_action;
     AtomicString m_target;
-    AtomicString m_contentType;
-    RefPtrWillBeMember<HTMLFormElement> m_form;
-    RefPtr<EncodedFormData> m_formData;
-    String m_boundary;
-    RefPtrWillBeMember<Event> m_event;
-    String m_result;
+    AtomicString m_encodingType;
+    String m_acceptCharset;
+  };
+
+  static FormSubmission* create(HTMLFormElement*,
+                                const Attributes&,
+                                Event*,
+                                HTMLFormControlElement* submitButton);
+  DECLARE_TRACE();
+
+  FrameLoadRequest createFrameLoadRequest(Document* originDocument);
+
+  KURL requestURL() const;
+
+  SubmitMethod method() const { return m_method; }
+  const KURL& action() const { return m_action; }
+  const AtomicString& target() const { return m_target; }
+  void clearTarget() { m_target = nullAtom; }
+  HTMLFormElement* form() const { return m_form.get(); }
+  EncodedFormData* data() const { return m_formData.get(); }
+
+  const String& result() const { return m_result; }
+
+ private:
+  FormSubmission(SubmitMethod,
+                 const KURL& action,
+                 const AtomicString& target,
+                 const AtomicString& contentType,
+                 HTMLFormElement*,
+                 PassRefPtr<EncodedFormData>,
+                 const String& boundary,
+                 Event*);
+  // FormSubmission for DialogMethod
+  explicit FormSubmission(const String& result);
+
+  // FIXME: Hold an instance of Attributes instead of individual members.
+  SubmitMethod m_method;
+  KURL m_action;
+  AtomicString m_target;
+  AtomicString m_contentType;
+  Member<HTMLFormElement> m_form;
+  RefPtr<EncodedFormData> m_formData;
+  String m_boundary;
+  Member<Event> m_event;
+  String m_result;
 };
 
-}
+}  // namespace blink
 
-#endif // FormSubmission_h
+#endif  // FormSubmission_h

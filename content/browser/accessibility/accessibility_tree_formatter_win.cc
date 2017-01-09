@@ -5,8 +5,11 @@
 #include "content/browser/accessibility/accessibility_tree_formatter.h"
 
 #include <oleacc.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/strings/string_number_conversions.h"
@@ -25,35 +28,63 @@
 
 namespace content {
 
-const char* ALL_ATTRIBUTES[] = {
-    "name",
-    "value",
-    "states",
-    "attributes",
-    "role_name",
-    "ia2_hypertext",
-    "currentValue",
-    "minimumValue",
-    "maximumValue",
-    "description",
-    "default_action",
-    "keyboard_shortcut",
-    "location",
-    "size",
-    "index_in_parent",
-    "n_relations",
-    "group_level",
-    "similar_items_in_group",
-    "position_in_group",
-    "table_rows",
-    "table_columns",
-    "row_index",
-    "column_index",
-    "n_characters",
-    "caret_offset",
-    "n_selections",
-    "selection_start",
-    "selection_end"
+class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatter {
+ public:
+  AccessibilityTreeFormatterWin();
+  ~AccessibilityTreeFormatterWin() override;
+
+ private:
+  const base::FilePath::StringType GetExpectedFileSuffix() override;
+  const std::string GetAllowEmptyString() override;
+  const std::string GetAllowString() override;
+  const std::string GetDenyString() override;
+  void AddProperties(const BrowserAccessibility& node,
+                     base::DictionaryValue* dict) override;
+  base::string16 ToString(const base::DictionaryValue& node) override;
+};
+
+// static
+AccessibilityTreeFormatter* AccessibilityTreeFormatter::Create() {
+  return new AccessibilityTreeFormatterWin();
+}
+
+AccessibilityTreeFormatterWin::AccessibilityTreeFormatterWin() {
+  ui::win::CreateATLModuleIfNeeded();
+}
+
+AccessibilityTreeFormatterWin::~AccessibilityTreeFormatterWin() {
+}
+
+const char* const ALL_ATTRIBUTES[] = {
+  "name",
+  "value",
+  "states",
+  "attributes",
+  "text_attributes",
+  "role_name",
+  "ia2_hypertext",
+  "currentValue",
+  "minimumValue",
+  "maximumValue",
+  "description",
+  "default_action",
+  "keyboard_shortcut",
+  "location",
+  "size",
+  "index_in_parent",
+  "n_relations",
+  "group_level",
+  "similar_items_in_group",
+  "position_in_group",
+  "table_rows",
+  "table_columns",
+  "row_index",
+  "column_index",
+  "n_characters",
+  "caret_offset",
+  "n_selections",
+  "selection_start",
+  "selection_end"
 };
 
 namespace {
@@ -122,17 +153,13 @@ base::string16 GetIA2Hypertext(BrowserAccessibilityWin& ax_object) {
   return ia2_hypertext;
 }
 
-} // Namespace
+}  // namespace
 
-void AccessibilityTreeFormatter::Initialize() {
-  ui::win::CreateATLModuleIfNeeded();
-}
-
-void AccessibilityTreeFormatter::AddProperties(
+void AccessibilityTreeFormatterWin::AddProperties(
     const BrowserAccessibility& node, base::DictionaryValue* dict) {
   dict->SetInteger("id", node.GetId());
   BrowserAccessibilityWin* ax_object =
-      const_cast<BrowserAccessibility*>(&node)->ToBrowserAccessibilityWin();
+      ToBrowserAccessibilityWin(const_cast<BrowserAccessibility*>(&node));
   DCHECK(ax_object);
 
   VARIANT variant_self;
@@ -142,8 +169,13 @@ void AccessibilityTreeFormatter::AddProperties(
   dict->SetString("role", IAccessible2RoleToString(ax_object->ia2_role()));
 
   base::win::ScopedBstr temp_bstr;
-  if (SUCCEEDED(ax_object->get_accName(variant_self, temp_bstr.Receive())))
-    dict->SetString("name", base::string16(temp_bstr, temp_bstr.Length()));
+  if (SUCCEEDED(ax_object->get_accName(variant_self, temp_bstr.Receive()))) {
+    base::string16 name = base::string16(temp_bstr, temp_bstr.Length());
+
+    // Ignore a JAWS workaround where the name of a document is " ".
+    if (name != L" " || ax_object->ia2_role() != ROLE_SYSTEM_DOCUMENT)
+      dict->SetString("name", name);
+  }
   temp_bstr.Reset();
 
   if (SUCCEEDED(ax_object->get_accValue(variant_self, temp_bstr.Receive())))
@@ -151,7 +183,7 @@ void AccessibilityTreeFormatter::AddProperties(
   temp_bstr.Reset();
 
   std::vector<base::string16> state_strings;
-  int32 ia_state = ax_object->ia_state();
+  int32_t ia_state = ax_object->ia_state();
 
   // Avoid flakiness: these states depend on whether the window is focused
   // and the position of the mouse cursor.
@@ -160,17 +192,29 @@ void AccessibilityTreeFormatter::AddProperties(
 
   IAccessibleStateToStringVector(ia_state, &state_strings);
   IAccessible2StateToStringVector(ax_object->ia2_state(), &state_strings);
-  base::ListValue* states = new base::ListValue;
-  for (const auto& state_string : state_strings)
+  std::unique_ptr<base::ListValue> states(new base::ListValue());
+  for (const base::string16& state_string : state_strings)
     states->AppendString(base::UTF16ToUTF8(state_string));
-  dict->Set("states", states);
+  dict->Set("states", std::move(states));
 
   const std::vector<base::string16>& ia2_attributes =
       ax_object->ia2_attributes();
-  base::ListValue* attributes = new base::ListValue;
-  for (const auto& ia2_attribute : ia2_attributes)
+  std::unique_ptr<base::ListValue> attributes(new base::ListValue());
+  for (const base::string16& ia2_attribute : ia2_attributes)
     attributes->AppendString(base::UTF16ToUTF8(ia2_attribute));
-  dict->Set("attributes", attributes);
+  dict->Set("attributes", std::move(attributes));
+
+  ax_object->ComputeStylesIfNeeded();
+  const std::map<int, std::vector<base::string16>>& ia2_text_attributes =
+      ax_object->offset_to_text_attributes();
+  std::unique_ptr<base::ListValue> text_attributes(new base::ListValue());
+  for (const auto& style_span : ia2_text_attributes) {
+    int start_offset = style_span.first;
+    text_attributes->AppendString("offset:" + base::IntToString(start_offset));
+    for (const base::string16& text_attribute : style_span.second)
+      text_attributes->AppendString(base::UTF16ToUTF8(text_attribute));
+  }
+  dict->Set("text_attributes", std::move(text_attributes));
 
   dict->SetString("role_name", ax_object->role_name());
   dict->SetString("ia2_hypertext", GetIA2Hypertext(*ax_object));
@@ -212,12 +256,12 @@ void AccessibilityTreeFormatter::AddProperties(
     dict->SetString("help", base::string16(temp_bstr, temp_bstr.Length()));
   temp_bstr.Reset();
 
-  BrowserAccessibility* root = node.manager()->GetRoot();
+  BrowserAccessibility* root = node.manager()->GetRootManager()->GetRoot();
   LONG left, top, width, height;
   LONG root_left, root_top, root_width, root_height;
   if (SUCCEEDED(ax_object->accLocation(
           &left, &top, &width, &height, variant_self)) &&
-      SUCCEEDED(root->ToBrowserAccessibilityWin()->accLocation(
+      SUCCEEDED(ToBrowserAccessibilityWin(root)->accLocation(
           &root_left, &root_top, &root_width, &root_height, variant_self))) {
     base::DictionaryValue* location = new base::DictionaryValue;
     location->SetInteger("x", left - root_left);
@@ -239,9 +283,10 @@ void AccessibilityTreeFormatter::AddProperties(
     dict->SetInteger("n_relations", n_relations);
 
   LONG group_level, similar_items_in_group, position_in_group;
-  if (SUCCEEDED(ax_object->get_groupPosition(&group_level,
-                                 &similar_items_in_group,
-                                 &position_in_group))) {
+  // |GetGroupPosition| returns S_FALSE when no grouping information is
+  // available so avoid using |SUCCEEDED|.
+  if (ax_object->get_groupPosition(&group_level, &similar_items_in_group,
+                                   &position_in_group) == S_OK) {
     dict->SetInteger("group_level", group_level);
     dict->SetInteger("similar_items_in_group", similar_items_in_group);
     dict->SetInteger("position_in_group", position_in_group);
@@ -284,11 +329,11 @@ void AccessibilityTreeFormatter::AddProperties(
   }
 }
 
-base::string16 AccessibilityTreeFormatter::ToString(
+base::string16 AccessibilityTreeFormatterWin::ToString(
     const base::DictionaryValue& dict) {
   base::string16 line;
 
-  if (show_ids_) {
+  if (show_ids()) {
     int id_value;
     dict.GetInteger("id", &id_value);
     WriteAttribute(true, base::IntToString16(id_value), &line);
@@ -298,14 +343,13 @@ base::string16 AccessibilityTreeFormatter::ToString(
   dict.GetString("role", &role_value);
   WriteAttribute(true, base::UTF16ToUTF8(role_value), &line);
 
-  for (int i = 0; i < arraysize(ALL_ATTRIBUTES); i++) {
-    const char* attribute_name = ALL_ATTRIBUTES[i];
+  for (const char* attribute_name : ALL_ATTRIBUTES) {
     const base::Value* value;
     if (!dict.Get(attribute_name, &value))
       continue;
 
     switch (value->GetType()) {
-      case base::Value::TYPE_STRING: {
+      case base::Value::Type::STRING: {
         base::string16 string_value;
         value->GetAsString(&string_value);
         WriteAttribute(false,
@@ -315,8 +359,8 @@ base::string16 AccessibilityTreeFormatter::ToString(
                        &line);
         break;
       }
-      case base::Value::TYPE_INTEGER: {
-        int int_value;
+      case base::Value::Type::INTEGER: {
+        int int_value = 0;
         value->GetAsInteger(&int_value);
         WriteAttribute(false,
                        base::StringPrintf(L"%ls=%d",
@@ -326,8 +370,8 @@ base::string16 AccessibilityTreeFormatter::ToString(
                        &line);
         break;
       }
-      case base::Value::TYPE_DOUBLE: {
-        double double_value;
+      case base::Value::Type::DOUBLE: {
+        double double_value = 0.0;
         value->GetAsDouble(&double_value);
         WriteAttribute(false,
                        base::StringPrintf(L"%ls=%.2f",
@@ -337,7 +381,7 @@ base::string16 AccessibilityTreeFormatter::ToString(
                        &line);
         break;
       }
-      case base::Value::TYPE_LIST: {
+      case base::Value::Type::LIST: {
         // Currently all list values are string and are written without
         // attribute names.
         const base::ListValue* list_value;
@@ -351,7 +395,7 @@ base::string16 AccessibilityTreeFormatter::ToString(
         }
         break;
       }
-      case base::Value::TYPE_DICTIONARY: {
+      case base::Value::Type::DICTIONARY: {
         // Currently all dictionary values are coordinates.
         // Revisit this if that changes.
         const base::DictionaryValue* dict_value;
@@ -377,30 +421,20 @@ base::string16 AccessibilityTreeFormatter::ToString(
   return line;
 }
 
-// static
 const base::FilePath::StringType
-AccessibilityTreeFormatter::GetActualFileSuffix() {
-  return FILE_PATH_LITERAL("-actual-win.txt");
-}
-
-// static
-const base::FilePath::StringType
-AccessibilityTreeFormatter::GetExpectedFileSuffix() {
+AccessibilityTreeFormatterWin::GetExpectedFileSuffix() {
   return FILE_PATH_LITERAL("-expected-win.txt");
 }
 
-// static
-const std::string AccessibilityTreeFormatter::GetAllowEmptyString() {
+const std::string AccessibilityTreeFormatterWin::GetAllowEmptyString() {
   return "@WIN-ALLOW-EMPTY:";
 }
 
-// static
-const std::string AccessibilityTreeFormatter::GetAllowString() {
+const std::string AccessibilityTreeFormatterWin::GetAllowString() {
   return "@WIN-ALLOW:";
 }
 
-// static
-const std::string AccessibilityTreeFormatter::GetDenyString() {
+const std::string AccessibilityTreeFormatterWin::GetDenyString() {
   return "@WIN-DENY:";
 }
 

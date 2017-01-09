@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_FILE_PICKER_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 namespace base {
@@ -14,8 +15,6 @@ class FilePath;
 
 namespace content {
 class DownloadItem;
-class DownloadManager;
-class WebContents;
 }
 
 // Handles showing a dialog to the user to ask for the filename for a download.

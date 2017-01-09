@@ -4,21 +4,22 @@
 
 #include "device/bluetooth/bluetooth_socket_net.h"
 
+#include <memory>
 #include <queue>
 #include <string>
+#include <utility>
 
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "device/bluetooth/bluetooth_socket.h"
 #include "device/bluetooth/bluetooth_socket_thread.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_source.h"
 
 namespace {
 
@@ -48,7 +49,7 @@ BluetoothSocketNet::BluetoothSocketNet(
 }
 
 BluetoothSocketNet::~BluetoothSocketNet() {
-  DCHECK(tcp_socket_.get() == NULL);
+  DCHECK(!tcp_socket_);
   ui_task_runner_->PostTask(FROM_HERE,
                             base::Bind(&DeactivateSocket, socket_thread_));
 }
@@ -116,11 +117,12 @@ void BluetoothSocketNet::ResetData() {
 }
 
 void BluetoothSocketNet::ResetTCPSocket() {
-  tcp_socket_.reset(new net::TCPSocket(NULL, net::NetLog::Source()));
+  tcp_socket_.reset(new net::TCPSocket(NULL, NULL, net::NetLogSource()));
 }
 
-void BluetoothSocketNet::SetTCPSocket(scoped_ptr<net::TCPSocket> tcp_socket) {
-  tcp_socket_ = tcp_socket.Pass();
+void BluetoothSocketNet::SetTCPSocket(
+    std::unique_ptr<net::TCPSocket> tcp_socket) {
+  tcp_socket_ = std::move(tcp_socket);
 }
 
 void BluetoothSocketNet::PostSuccess(const base::Closure& callback) {

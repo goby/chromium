@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/version_handler.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/metrics/field_trial.h"
@@ -12,6 +14,7 @@
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/variations/active_field_trials.h"
 #include "components/version_ui/version_handler_helper.h"
 #include "components/version_ui/version_ui_constants.h"
@@ -19,7 +22,7 @@
 #include "content/public/browser/plugin_service.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/content_constants.h"
-#include "grit/components_strings.h"
+#include "ppapi/features/features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -62,7 +65,7 @@ void VersionHandler::RegisterMessages() {
 }
 
 void VersionHandler::HandleRequestVersionInfo(const base::ListValue* args) {
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   // The Flash version information is needed in the response, so make sure
   // the plugins are loaded.
   content::PluginService::GetInstance()->GetPlugins(
@@ -85,8 +88,8 @@ void VersionHandler::HandleRequestVersionInfo(const base::ListValue* args) {
                      base::Owned(profile_path_buffer)));
 
   // Respond with the variations info immediately.
-  web_ui()->CallJavascriptFunction(version_ui::kReturnVariationInfo,
-                                   *version_ui::GetVariationsList());
+  web_ui()->CallJavascriptFunctionUnsafe(version_ui::kReturnVariationInfo,
+                                         *version_ui::GetVariationsList());
 }
 
 void VersionHandler::OnGotFilePaths(base::string16* executable_path_data,
@@ -95,11 +98,11 @@ void VersionHandler::OnGotFilePaths(base::string16* executable_path_data,
 
   base::StringValue exec_path(*executable_path_data);
   base::StringValue profile_path(*profile_path_data);
-  web_ui()->CallJavascriptFunction(version_ui::kReturnFilePaths, exec_path,
-                                   profile_path);
+  web_ui()->CallJavascriptFunctionUnsafe(version_ui::kReturnFilePaths,
+                                         exec_path, profile_path);
 }
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 void VersionHandler::OnGotPlugins(
     const std::vector<content::WebPluginInfo>& plugins) {
   // Obtain the version of the first enabled Flash plugin.
@@ -120,6 +123,6 @@ void VersionHandler::OnGotPlugins(
   }
 
   base::StringValue arg(flash_version);
-  web_ui()->CallJavascriptFunction(version_ui::kReturnFlashVersion, arg);
+  web_ui()->CallJavascriptFunctionUnsafe(version_ui::kReturnFlashVersion, arg);
 }
-#endif  // defined(ENABLE_PLUGINS)
+#endif  // BUILDFLAG(ENABLE_PLUGINS)

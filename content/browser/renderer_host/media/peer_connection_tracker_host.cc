@@ -4,15 +4,20 @@
 #include "content/browser/renderer_host/media/peer_connection_tracker_host.h"
 
 #include "base/power_monitor/power_monitor.h"
-#include "content/browser/media/webrtc_internals.h"
+#include "content/browser/renderer_host/render_process_host_impl.h"
+#include "content/browser/webrtc/webrtc_eventlog_host.h"
+#include "content/browser/webrtc/webrtc_internals.h"
 #include "content/common/media/peer_connection_tracker_messages.h"
-#include "content/public/browser/render_process_host.h"
 
 namespace content {
 
-PeerConnectionTrackerHost::PeerConnectionTrackerHost(int render_process_id)
+PeerConnectionTrackerHost::PeerConnectionTrackerHost(
+    int render_process_id,
+    const base::WeakPtr<WebRTCEventLogHost>& event_log_host)
     : BrowserMessageFilter(PeerConnectionTrackerMsgStart),
-      render_process_id_(render_process_id) {
+      render_process_id_(render_process_id),
+      event_log_host_(event_log_host) {
+  DCHECK(event_log_host);
 }
 
 bool PeerConnectionTrackerHost::OnMessageReceived(const IPC::Message& message) {
@@ -41,7 +46,7 @@ void PeerConnectionTrackerHost::OverrideThreadForMessage(
 PeerConnectionTrackerHost::~PeerConnectionTrackerHost() {
 }
 
-void PeerConnectionTrackerHost::OnChannelConnected(int32 peer_pid) {
+void PeerConnectionTrackerHost::OnChannelConnected(int32_t peer_pid) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   // Add PowerMonitor when connected to channel rather than in constructor due
   // to thread safety concerns. Observers of PowerMonitor must be added and
@@ -71,10 +76,14 @@ void PeerConnectionTrackerHost::OnAddPeerConnection(
       info.url,
       info.rtc_configuration,
       info.constraints);
+  if (event_log_host_)
+    event_log_host_->PeerConnectionAdded(info.lid);
 }
 
 void PeerConnectionTrackerHost::OnRemovePeerConnection(int lid) {
   WebRTCInternals::GetInstance()->OnRemovePeerConnection(peer_pid(), lid);
+  if (event_log_host_)
+    event_log_host_->PeerConnectionRemoved(lid);
 }
 
 void PeerConnectionTrackerHost::OnUpdatePeerConnection(

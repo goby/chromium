@@ -4,36 +4,31 @@
 
 #include "net/cert/x509_util_openssl.h"
 
-#include <openssl/asn1.h>
-#include <openssl/mem.h>
+#include <limits.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "crypto/ec_private_key.h"
 #include "crypto/openssl_util.h"
 #include "crypto/rsa_private_key.h"
-#include "crypto/scoped_openssl_types.h"
+#include "net/cert/internal/parse_certificate.h"
+#include "net/cert/internal/signature_algorithm.h"
 #include "net/cert/x509_cert_types.h"
+#include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
-#include "net/ssl/scoped_openssl_types.h"
+#include "third_party/boringssl/src/include/openssl/asn1.h"
+#include "third_party/boringssl/src/include/openssl/digest.h"
+#include "third_party/boringssl/src/include/openssl/mem.h"
 
 namespace net {
 
 namespace {
-
-using ScopedASN1_INTEGER =
-    crypto::ScopedOpenSSL<ASN1_INTEGER, ASN1_INTEGER_free>;
-using ScopedASN1_OCTET_STRING =
-    crypto::ScopedOpenSSL<ASN1_OCTET_STRING, ASN1_OCTET_STRING_free>;
-using ScopedASN1_STRING = crypto::ScopedOpenSSL<ASN1_STRING, ASN1_STRING_free>;
-using ScopedASN1_TIME = crypto::ScopedOpenSSL<ASN1_TIME, ASN1_TIME_free>;
-using ScopedX509_EXTENSION =
-    crypto::ScopedOpenSSL<X509_EXTENSION, X509_EXTENSION_free>;
-using ScopedX509_NAME = crypto::ScopedOpenSSL<X509_NAME, X509_NAME_free>;
 
 const EVP_MD* ToEVP(x509_util::DigestAlgorithm alg) {
   switch (alg) {
@@ -51,34 +46,34 @@ namespace x509_util {
 
 namespace {
 
-X509* CreateCertificate(EVP_PKEY* key,
-                        DigestAlgorithm alg,
-                        const std::string& common_name,
-                        uint32_t serial_number,
-                        base::Time not_valid_before,
-                        base::Time not_valid_after) {
+bssl::UniquePtr<X509> CreateCertificate(EVP_PKEY* key,
+                                        DigestAlgorithm alg,
+                                        const std::string& common_name,
+                                        uint32_t serial_number,
+                                        base::Time not_valid_before,
+                                        base::Time not_valid_after) {
   // Put the serial number into an OpenSSL-friendly object.
-  ScopedASN1_INTEGER asn1_serial(ASN1_INTEGER_new());
+  bssl::UniquePtr<ASN1_INTEGER> asn1_serial(ASN1_INTEGER_new());
   if (!asn1_serial.get() ||
       !ASN1_INTEGER_set(asn1_serial.get(), static_cast<long>(serial_number))) {
     LOG(ERROR) << "Invalid serial number " << serial_number;
-    return NULL;
+    return nullptr;
   }
 
   // Do the same for the time stamps.
-  ScopedASN1_TIME asn1_not_before_time(
-      ASN1_TIME_set(NULL, not_valid_before.ToTimeT()));
+  bssl::UniquePtr<ASN1_TIME> asn1_not_before_time(
+      ASN1_TIME_set(nullptr, not_valid_before.ToTimeT()));
   if (!asn1_not_before_time.get()) {
     LOG(ERROR) << "Invalid not_valid_before time: "
                << not_valid_before.ToTimeT();
-    return NULL;
+    return nullptr;
   }
 
-  ScopedASN1_TIME asn1_not_after_time(
-      ASN1_TIME_set(NULL, not_valid_after.ToTimeT()));
+  bssl::UniquePtr<ASN1_TIME> asn1_not_after_time(
+      ASN1_TIME_set(nullptr, not_valid_after.ToTimeT()));
   if (!asn1_not_after_time.get()) {
     LOG(ERROR) << "Invalid not_valid_after time: " << not_valid_after.ToTimeT();
-    return NULL;
+    return nullptr;
   }
 
   // Because |common_name| only contains a common name and starts with 'CN=',
@@ -89,11 +84,11 @@ X509* CreateCertificate(EVP_PKEY* key,
   if (common_name.size() < kCommonNamePrefixLen ||
       strncmp(common_name.c_str(), kCommonNamePrefix, kCommonNamePrefixLen)) {
     LOG(ERROR) << "Common name must begin with " << kCommonNamePrefix;
-    return NULL;
+    return nullptr;
   }
   if (common_name.size() > INT_MAX) {
     LOG(ERROR) << "Common name too long";
-    return NULL;
+    return nullptr;
   }
   unsigned char* common_name_str =
       reinterpret_cast<unsigned char*>(const_cast<char*>(common_name.data())) +
@@ -101,7 +96,7 @@ X509* CreateCertificate(EVP_PKEY* key,
   int common_name_len =
       static_cast<int>(common_name.size() - kCommonNamePrefixLen);
 
-  ScopedX509_NAME name(X509_NAME_new());
+  bssl::UniquePtr<X509_NAME> name(X509_NAME_new());
   if (!name.get() || !X509_NAME_add_entry_by_NID(name.get(),
                                                  NID_commonName,
                                                  MBSTRING_ASC,
@@ -110,11 +105,11 @@ X509* CreateCertificate(EVP_PKEY* key,
                                                  -1,
                                                  0)) {
     LOG(ERROR) << "Can't parse common name: " << common_name.c_str();
-    return NULL;
+    return nullptr;
   }
 
   // Now create certificate and populate it.
-  ScopedX509 cert(X509_new());
+  bssl::UniquePtr<X509> cert(X509_new());
   if (!cert.get() || !X509_set_version(cert.get(), 2L) /* i.e. version 3 */ ||
       !X509_set_pubkey(cert.get(), key) ||
       !X509_set_serialNumber(cert.get(), asn1_serial.get()) ||
@@ -123,10 +118,10 @@ X509* CreateCertificate(EVP_PKEY* key,
       !X509_set_subject_name(cert.get(), name.get()) ||
       !X509_set_issuer_name(cert.get(), name.get())) {
     LOG(ERROR) << "Could not create certificate";
-    return NULL;
+    return nullptr;
   }
 
-  return cert.release();
+  return cert;
 }
 
 // DER-encodes |x509|. On success, returns true and writes the
@@ -197,39 +192,6 @@ base::LazyInstance<DERCacheInitSingleton>::Leaky g_der_cache_singleton =
 
 }  // namespace
 
-bool IsSupportedValidityRange(base::Time not_valid_before,
-                              base::Time not_valid_after) {
-  if (not_valid_before > not_valid_after)
-    return false;
-
-  // The validity field of a certificate can only encode years 1-9999.
-
-  // Compute the base::Time values corresponding to Jan 1st,0001 and
-  // Jan 1st, 10000 respectively. Done by using the pre-computed numbers
-  // of days between these dates and the Unix epoch, i.e. Jan 1st, 1970,
-  // using the following Python script:
-  //
-  //     from datetime import date as D
-  //     print (D(1970,1,1)-D(1,1,1))        # -> 719162 days
-  //     print (D(9999,12,31)-D(1970,1,1))   # -> 2932896 days
-  //
-  // Note: This ignores leap seconds, but should be enough in practice.
-  //
-  const int64_t kDaysFromYear0001ToUnixEpoch = 719162;
-  const int64_t kDaysFromUnixEpochToYear10000 = 2932896 + 1;
-  const base::Time kEpoch = base::Time::UnixEpoch();
-  const base::Time kYear0001 = kEpoch -
-      base::TimeDelta::FromDays(kDaysFromYear0001ToUnixEpoch);
-  const base::Time kYear10000 = kEpoch +
-      base::TimeDelta::FromDays(kDaysFromUnixEpochToYear10000);
-
-  if (not_valid_before < kYear0001 || not_valid_before >= kYear10000 ||
-      not_valid_after < kYear0001 || not_valid_after >= kYear10000)
-    return false;
-
-  return true;
-}
-
 bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
                           DigestAlgorithm alg,
                           const std::string& common_name,
@@ -238,13 +200,10 @@ bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
                           base::Time not_valid_after,
                           std::string* der_encoded) {
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
-  ScopedX509 cert(CreateCertificate(key->key(),
-                                    alg,
-                                    common_name,
-                                    serial_number,
-                                    not_valid_before,
-                                    not_valid_after));
-  if (!cert.get())
+  bssl::UniquePtr<X509> cert =
+      CreateCertificate(key->key(), alg, common_name, serial_number,
+                        not_valid_before, not_valid_after);
+  if (!cert)
     return false;
 
   return SignAndDerEncodeCert(cert.get(), key->key(), alg, der_encoded);
@@ -325,13 +284,66 @@ bool GetDER(X509* x509, base::StringPiece* der_cache) {
   DERCache* internal_cache = static_cast<DERCache*>(
       X509_get_ex_data(x509, x509_der_cache_index));
   if (!internal_cache) {
-    scoped_ptr<DERCache> new_cache(new DERCache);
+    std::unique_ptr<DERCache> new_cache(new DERCache);
     if (!DerEncodeCert(x509, &new_cache->data))
       return false;
     internal_cache = new_cache.get();
     X509_set_ex_data(x509, x509_der_cache_index, new_cache.release());
   }
   *der_cache = base::StringPiece(internal_cache->data);
+  return true;
+}
+
+bool GetTLSServerEndPointChannelBinding(const X509Certificate& certificate,
+                                        std::string* token) {
+  static const char kChannelBindingPrefix[] = "tls-server-end-point:";
+
+  std::string der_encoded_certificate;
+  if (!X509Certificate::GetDEREncoded(certificate.os_cert_handle(),
+                                      &der_encoded_certificate))
+    return false;
+
+  der::Input tbs_certificate_tlv;
+  der::Input signature_algorithm_tlv;
+  der::BitString signature_value;
+  if (!ParseCertificate(der::Input(&der_encoded_certificate),
+                        &tbs_certificate_tlv, &signature_algorithm_tlv,
+                        &signature_value, nullptr))
+    return false;
+
+  std::unique_ptr<SignatureAlgorithm> signature_algorithm =
+      SignatureAlgorithm::Create(signature_algorithm_tlv, nullptr);
+  if (!signature_algorithm)
+    return false;
+
+  const EVP_MD* digest_evp_md = nullptr;
+  switch (signature_algorithm->digest()) {
+    case net::DigestAlgorithm::Sha1:
+    case net::DigestAlgorithm::Sha256:
+      digest_evp_md = EVP_sha256();
+      break;
+
+    case net::DigestAlgorithm::Sha384:
+      digest_evp_md = EVP_sha384();
+      break;
+
+    case net::DigestAlgorithm::Sha512:
+      digest_evp_md = EVP_sha512();
+      break;
+  }
+  if (!digest_evp_md)
+    return false;
+
+  std::vector<uint8_t> digest(EVP_MAX_MD_SIZE);
+  unsigned int out_size = digest.size();
+  if (!EVP_Digest(der_encoded_certificate.data(),
+                  der_encoded_certificate.size(), digest.data(), &out_size,
+                  digest_evp_md, nullptr))
+    return false;
+
+  digest.resize(out_size);
+  token->assign(kChannelBindingPrefix);
+  token->append(digest.begin(), digest.end());
   return true;
 }
 

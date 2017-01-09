@@ -4,6 +4,9 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/command_line.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -12,7 +15,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_mock.h"
 
-using ::gfx::MockGLInterface;
+using ::gl::MockGLInterface;
 using ::testing::_;
 using ::testing::Return;
 
@@ -163,7 +166,7 @@ TEST_P(GLES2DecoderTestDisabledExtensions, CHROMIUMPathRenderingDisabled) {
   }
   {
     cmds::BindFragmentInputLocationCHROMIUMBucket cmd;
-    const uint32 kBucketId = 123;
+    const uint32_t kBucketId = 123;
     const GLint kLocation = 2;
     const char* kName = "testing";
     SetBucketAsCString(kBucketId, kName);
@@ -190,10 +193,8 @@ class GLES2DecoderTestWithCHROMIUMPathRendering : public GLES2DecoderTest {
     init.request_alpha = true;
     init.request_depth = true;
     init.bind_generates_resource = true;
-    init.extensions = "GL_NV_path_rendering";
-    base::CommandLine command_line(0, NULL);
-    command_line.AppendSwitch(switches::kEnableGLPathRendering);
-    InitDecoderWithCommandLine(init, &command_line);
+    init.extensions = "GL_NV_path_rendering GL_NV_framebuffer_mixed_samples";
+    InitDecoder(init);
 
     EXPECT_CALL(*gl_, GenPathsNV(1))
         .WillOnce(Return(kServicePathId))
@@ -248,11 +249,11 @@ class GLES2DecoderTestWithCHROMIUMPathRendering : public GLES2DecoderTest {
                               // since the implementation modifies the memory
                               // area.
     void* paths = NULL;
-    uint32 paths_shm_id = 0;
-    uint32 paths_shm_offset = 0;
+    uint32_t paths_shm_id = 0;
+    uint32_t paths_shm_offset = 0;
     GLfloat* transforms = NULL;
-    uint32 transforms_shm_id = 0;
-    uint32 transforms_shm_offset = 0;
+    uint32_t transforms_shm_id = 0;
+    uint32_t transforms_shm_offset = 0;
 
     if (testcase.transform_values) {
       transforms = GetSharedMemoryAs<GLfloat*>();
@@ -404,10 +405,10 @@ class GLES2DecoderTestWithCHROMIUMPathRendering : public GLES2DecoderTest {
   void CallAllInstancedCommandsWithInvalidSHM(GLsizei num_paths,
                                               const GLuint* paths,
                                               GLuint* paths_shm,
-                                              uint32 paths_shm_id,
-                                              uint32 paths_shm_offset,
-                                              uint32 transforms_shm_id,
-                                              uint32 transforms_shm_offset) {
+                                              uint32_t paths_shm_id,
+                                              uint32_t paths_shm_offset,
+                                              uint32_t transforms_shm_id,
+                                              uint32_t transforms_shm_offset) {
     const GLuint kPathBase = 0;
     const GLenum kFillMode = GL_INVERT;
     const GLuint kMask = 0x80;
@@ -539,6 +540,26 @@ INSTANTIATE_TEST_CASE_P(Service,
                         GLES2DecoderTestWithBlendFuncExtended,
                         ::testing::Bool());
 
+class GLES2DecoderTestWithCHROMIUMFramebufferMixedSamples
+    : public GLES2DecoderTest {
+ public:
+  GLES2DecoderTestWithCHROMIUMFramebufferMixedSamples() {}
+  void SetUp() override {
+    InitState init;
+    init.gl_version = "opengl es 3.1";
+    init.has_alpha = true;
+    init.has_depth = true;
+    init.request_alpha = true;
+    init.request_depth = true;
+    init.bind_generates_resource = true;
+    init.extensions = "GL_NV_path_rendering GL_NV_framebuffer_mixed_samples ";
+    InitDecoder(init);
+  }
+};
+
+INSTANTIATE_TEST_CASE_P(Service,
+                        GLES2DecoderTestWithCHROMIUMFramebufferMixedSamples,
+                        ::testing::Bool());
 
 TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering, GenDeletePaths) {
   static GLuint kFirstClientID = client_path_id_ + 88;
@@ -823,9 +844,9 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
   commands[4] = GL_CUBIC_CURVE_TO_CHROMIUM;
   commands[5] = GL_CONIC_CURVE_TO_CHROMIUM;
 
-  EXPECT_CALL(*gl_, PathCommandsNV(kServicePathId, kCorrectCommandCount,
-                                   commands, kCorrectCoordCount, GL_FLOAT,
-                                   coords)).RetiresOnSaturation();
+  EXPECT_CALL(*gl_, PathCommandsNV(kServicePathId, kCorrectCommandCount, _,
+                                   kCorrectCoordCount, GL_FLOAT, coords))
+      .RetiresOnSaturation();
 
   cmds::PathCommandsCHROMIUM cmd;
 
@@ -1322,8 +1343,8 @@ void GLES2DecoderTestWithCHROMIUMPathRendering::
   commands[4] = GL_CUBIC_CURVE_TO_CHROMIUM;
   commands[5] = GL_CONIC_CURVE_TO_CHROMIUM;
 
-  EXPECT_CALL(*gl_, PathCommandsNV(kServicePathId, kCorrectCommandCount,
-                                   commands, kCorrectCoordCount,
+  EXPECT_CALL(*gl_, PathCommandsNV(kServicePathId, kCorrectCommandCount, _,
+                                   kCorrectCoordCount,
                                    gl_type_enum<TypeParam>::kGLType, coords))
       .RetiresOnSaturation();
 
@@ -1409,9 +1430,9 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
 
   for (size_t i = 0; i < arraysize(kFillModes); ++i) {
     memcpy(paths, kPaths, sizeof(kPaths));
-    EXPECT_CALL(
-        *gl_, StencilFillPathInstancedNV(kPathCount, GL_UNSIGNED_INT, paths, 0,
-                                         kFillModes[i], kMask, GL_NONE, NULL))
+    EXPECT_CALL(*gl_,
+                StencilFillPathInstancedNV(kPathCount, GL_UNSIGNED_INT, _, 0,
+                                           kFillModes[i], kMask, GL_NONE, NULL))
         .RetiresOnSaturation();
     sfi_cmd.Init(kPathCount, GL_UNSIGNED_INT, shared_memory_id_,
                  shared_memory_offset_, 0, kFillModes[i], kMask, GL_NONE, 0, 0);
@@ -1421,7 +1442,7 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
     memcpy(paths, kPaths, sizeof(kPaths));
     EXPECT_CALL(*gl_,
                 StencilThenCoverFillPathInstancedNV(
-                    kPathCount, GL_UNSIGNED_INT, paths, 0, kFillModes[i], kMask,
+                    kPathCount, GL_UNSIGNED_INT, _, 0, kFillModes[i], kMask,
                     GL_BOUNDING_BOX_OF_BOUNDING_BOXES_NV, GL_NONE, NULL))
         .RetiresOnSaturation();
     stcfi_cmd.Init(kPathCount, GL_UNSIGNED_INT, shared_memory_id_,
@@ -1638,14 +1659,15 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering, InstancedInvalidSHMValues) {
 
   for (int testcase = kFirstTestcase; testcase <= kLastTestcase; ++testcase) {
     GLfloat* transforms = GetSharedMemoryAs<GLfloat*>();
-    uint32 transforms_shm_id = shared_memory_id_;
-    uint32 transforms_shm_offset = shared_memory_offset_;
+    uint32_t transforms_shm_id = shared_memory_id_;
+    uint32_t transforms_shm_offset = shared_memory_offset_;
     memcpy(transforms, transform_values, sizeof(transform_values));
 
     GLuint* paths =
         GetSharedMemoryAsWithOffset<GLuint*>(sizeof(transform_values));
-    uint32 paths_shm_id = shared_memory_id_;
-    uint32 paths_shm_offset = shared_memory_offset_ + sizeof(transform_values);
+    uint32_t paths_shm_id = shared_memory_id_;
+    uint32_t paths_shm_offset =
+        shared_memory_offset_ + sizeof(transform_values);
 
     if (testcase & kPathsSHMIdInvalid) {
       paths_shm_id = kInvalidSharedMemoryId;
@@ -1669,7 +1691,7 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering, InstancedInvalidSHMValues) {
 
 TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
        BindFragmentInputLocationCHROMIUM) {
-  const uint32 kBucketId = 123;
+  const uint32_t kBucketId = 123;
   const GLint kLocation = 2;
   const char* kName = "testing";
   const char* kBadName1 = "gl_testing";

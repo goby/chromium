@@ -4,6 +4,8 @@
 
 #include "base/test/gtest_xml_util.h"
 
+#include <stdint.h>
+
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -118,15 +120,14 @@ bool ProcessGTestOutput(const base::FilePath& output_file,
           if (!xml_reader.NodeAttribute("time", &test_time_str))
             return false;
           result.elapsed_time = TimeDelta::FromMicroseconds(
-              static_cast<int64>(strtod(test_time_str.c_str(), NULL) *
-                  Time::kMicrosecondsPerSecond));
+              static_cast<int64_t>(strtod(test_time_str.c_str(), NULL) *
+                                   Time::kMicrosecondsPerSecond));
 
           result.status = TestResult::TEST_SUCCESS;
 
           if (!results->empty() &&
-              results->at(results->size() - 1).full_name == result.full_name &&
-              results->at(results->size() - 1).status ==
-                  TestResult::TEST_CRASH) {
+              results->back().full_name == result.full_name &&
+              results->back().status == TestResult::TEST_CRASH) {
             // Erase the fail-safe "crashed" result - now we know the test did
             // not crash.
             results->pop_back();
@@ -139,7 +140,7 @@ bool ProcessGTestOutput(const base::FilePath& output_file,
             return false;
 
           DCHECK(!results->empty());
-          results->at(results->size() - 1).status = TestResult::TEST_FAILURE;
+          results->back().status = TestResult::TEST_FAILURE;
 
           state = STATE_FAILURE;
         } else if (node_name == "testcase" && xml_reader.IsClosingElement()) {

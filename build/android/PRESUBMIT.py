@@ -21,15 +21,18 @@ def CommonChecks(input_api, output_api):
   build_pys = [
       r'gyp/.*\.py$',
       r'gn/.*\.py',
-      r'incremental_install/.*\.py',
   ]
   output.extend(input_api.canned_checks.RunPylint(
       input_api,
       output_api,
       pylintrc='pylintrc',
-      # symbols has its own PRESUBMIT.py
-      black_list=build_pys + [r'pylib/symbols/.*\.py$'],
-      extra_paths_list=[J(), J('buildbot')]))
+      black_list=build_pys,
+      extra_paths_list=[
+          J(),
+          J('gyp'),
+          J('buildbot'),
+          J('..', '..', 'third_party', 'catapult', 'devil')
+      ]))
   output.extend(input_api.canned_checks.RunPylint(
       input_api,
       output_api,
@@ -56,29 +59,15 @@ def CommonChecks(input_api, output_api):
           J('pylib', 'gtest', 'gtest_test_instance_test.py'),
           J('pylib', 'instrumentation',
             'instrumentation_test_instance_test.py'),
+          J('pylib', 'local', 'device', 'local_device_test_run_test.py'),
           J('pylib', 'results', 'json_results_test.py'),
+          J('pylib', 'symbols', 'elf_symbolizer_unittest.py'),
+          J('pylib', 'utils', 'device_dependencies_test.py'),
+          J('pylib', 'utils', 'dexdump_test.py'),
+          J('pylib', 'utils', 'proguard_test.py'),
       ],
       env=pylib_test_env))
 
-
-  devil_test_env = dict(pylib_test_env)
-  devil_test_env.update({
-      'DEVIL_ENV_CONFIG':
-          input_api.os_path.join(build_android_dir, 'devil_chromium.json')
-  })
-  output.extend(input_api.canned_checks.RunUnitTests(
-      input_api,
-      output_api,
-      unit_tests=[
-          J('devil', 'android', 'battery_utils_test.py'),
-          J('devil', 'android', 'device_utils_test.py'),
-          J('devil', 'android', 'fastboot_utils_test.py'),
-          J('devil', 'android', 'md5sum_test.py'),
-          J('devil', 'android', 'logcat_monitor_test.py'),
-          J('devil', 'utils', 'cmd_helper_test.py'),
-          J('devil', 'utils', 'timeout_retry_unittest.py'),
-      ],
-      env=devil_test_env))
   return output
 
 

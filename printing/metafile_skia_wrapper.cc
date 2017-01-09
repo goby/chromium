@@ -4,23 +4,24 @@
 
 #include "printing/metafile_skia_wrapper.h"
 #include "skia/ext/platform_canvas.h"
-#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkMetaData.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace printing {
 
 namespace {
 
-const char* kMetafileKey = "CrMetafile";
+const char kMetafileKey[] = "CrMetafile";
 
 }  // namespace
 
 // static
 void MetafileSkiaWrapper::SetMetafileOnCanvas(const SkCanvas& canvas,
                                               PdfMetafileSkia* metafile) {
-  skia::RefPtr<MetafileSkiaWrapper> wrapper;
+  sk_sp<MetafileSkiaWrapper> wrapper;
+  // Can't use sk_make_sp<>() because the constructor is private.
   if (metafile)
-    wrapper = skia::AdoptRef(new MetafileSkiaWrapper(metafile));
+    wrapper = sk_sp<MetafileSkiaWrapper>(new MetafileSkiaWrapper(metafile));
 
   SkMetaData& meta = skia::GetMetaData(canvas);
   meta.setRefCnt(kMetafileKey, wrapper.get());
@@ -32,7 +33,7 @@ PdfMetafileSkia* MetafileSkiaWrapper::GetMetafileFromCanvas(
   SkMetaData& meta = skia::GetMetaData(canvas);
   SkRefCnt* value;
   if (!meta.findRefCnt(kMetafileKey, &value) || !value)
-    return NULL;
+    return nullptr;
 
   return static_cast<MetafileSkiaWrapper*>(value)->metafile_;
 }

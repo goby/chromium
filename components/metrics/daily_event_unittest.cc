@@ -4,7 +4,9 @@
 
 #include "components/metrics/daily_event.h"
 
-#include "base/prefs/testing_pref_service.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace metrics {
@@ -38,7 +40,7 @@ class DailyEventTest : public testing::Test {
   DailyEventTest() : event_(&prefs_, kTestPrefName, kTestMetricName) {
     DailyEvent::RegisterPref(prefs_.registry(), kTestPrefName);
     observer_ = new TestDailyObserver();
-    event_.AddObserver(make_scoped_ptr(observer_));
+    event_.AddObserver(base::WrapUnique(observer_));
   }
 
  protected:

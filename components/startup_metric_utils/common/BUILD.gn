@@ -2,15 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("common") {
-  sources = [
-    "startup_metric_message_generator.cc",
-    "startup_metric_message_generator.h",
-    "startup_metric_messages.h",
-  ]
+import("//mojo/public/tools/bindings/mojom.gni")
 
+mojom("interfaces") {
+  sources = [
+    "startup_metric.mojom",
+  ]
   deps = [
-    "//base",
-    "//ipc",
+    "//mojo/common:common_custom_types",
   ]
 }

@@ -4,22 +4,24 @@
 
 #include "chrome/browser/chromeos/login/profile_auth_data.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_constants.h"
-#include "net/cookies/cookie_monster.h"
 #include "net/cookies/cookie_store.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_cache.h"
@@ -50,6 +52,7 @@ const char kCookieValue1[] = "value 1";
 const char kCookieValue2[] = "value 2";
 const char kGAIACookieDomain[] = "google.com";
 const char kSAMLIdPCookieDomain[] = "example.com";
+const char kSAMLIdPCookieDomainWithWildcard[] = ".example.com";
 
 const char kChannelIDServerIdentifier[] = "server";
 
@@ -75,19 +78,20 @@ class ProfileAuthDataTest : public testing::Test {
   void VerifyUserChannelID(crypto::ECPrivateKey* expected_key);
 
  protected:
-  scoped_ptr<crypto::ECPrivateKey> channel_id_key1_;
-  scoped_ptr<crypto::ECPrivateKey> channel_id_key2_;
+  std::unique_ptr<crypto::ECPrivateKey> channel_id_key1_;
+  std::unique_ptr<crypto::ECPrivateKey> channel_id_key2_;
 
  private:
-  void PopulateBrowserContext(content::BrowserContext* browser_context,
-                              const std::string& proxy_auth_password,
-                              const std::string& cookie_value,
-                              scoped_ptr<crypto::ECPrivateKey> channel_id_key);
+  void PopulateBrowserContext(
+      content::BrowserContext* browser_context,
+      const std::string& proxy_auth_password,
+      const std::string& cookie_value,
+      std::unique_ptr<crypto::ECPrivateKey> channel_id_key);
 
   net::URLRequestContext* GetRequestContext(
       content::BrowserContext* browser_context);
   net::HttpAuthCache* GetProxyAuth(content::BrowserContext* browser_context);
-  net::CookieMonster* GetCookies(content::BrowserContext* browser_context);
+  net::CookieStore* GetCookies(content::BrowserContext* browser_context);
   net::ChannelIDStore* GetChannelIDs(content::BrowserContext* browser_context);
 
   void QuitLoop(const net::CookieList& ignored);
@@ -103,21 +107,19 @@ class ProfileAuthDataTest : public testing::Test {
   net::CookieList user_cookie_list_;
   net::ChannelIDStore::ChannelIDList user_channel_id_list_;
 
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 };
 
 void ProfileAuthDataTest::SetUp() {
-  channel_id_key1_.reset(crypto::ECPrivateKey::Create());
-  channel_id_key2_.reset(crypto::ECPrivateKey::Create());
+  channel_id_key1_ = crypto::ECPrivateKey::Create();
+  channel_id_key2_ = crypto::ECPrivateKey::Create();
   PopulateBrowserContext(&login_browser_context_, kProxyAuthPassword1,
-                         kCookieValue1,
-                         make_scoped_ptr(channel_id_key1_->Copy()));
+                         kCookieValue1, channel_id_key1_->Copy());
 }
 
 void ProfileAuthDataTest::PopulateUserBrowserContext() {
   PopulateBrowserContext(&user_browser_context_, kProxyAuthPassword2,
-                         kCookieValue2,
-                         make_scoped_ptr(channel_id_key2_->Copy()));
+                         kCookieValue2, channel_id_key2_->Copy());
 }
 
 void ProfileAuthDataTest::Transfer(
@@ -173,14 +175,20 @@ void ProfileAuthDataTest::VerifyUserCookies(
     const std::string& expected_gaia_cookie_value,
     const std::string& expected_saml_idp_cookie_value) {
   net::CookieList user_cookies = GetUserCookies();
-  ASSERT_EQ(2u, user_cookies.size());
+  ASSERT_EQ(3u, user_cookies.size());
+
+  // Cookies are returned chronoligically, in the order they were set.
   net::CanonicalCookie* cookie = &user_cookies[0];
-  EXPECT_EQ(GURL(kSAMLIdPCookieURL), cookie->Source());
+  EXPECT_EQ(kCookieName, cookie->Name());
+  EXPECT_EQ(expected_saml_idp_cookie_value, cookie->Value());
+  EXPECT_EQ(kSAMLIdPCookieDomainWithWildcard, cookie->Domain());
+
+  cookie = &user_cookies[1];
   EXPECT_EQ(kCookieName, cookie->Name());
   EXPECT_EQ(expected_saml_idp_cookie_value, cookie->Value());
   EXPECT_EQ(kSAMLIdPCookieDomain, cookie->Domain());
-  cookie = &user_cookies[1];
-  EXPECT_EQ(GURL(kGAIACookieURL), cookie->Source());
+
+  cookie = &user_cookies[2];
   EXPECT_EQ(kCookieName, cookie->Name());
   EXPECT_EQ(expected_gaia_cookie_value, cookie->Value());
   EXPECT_EQ(kGAIACookieDomain, cookie->Domain());
@@ -199,7 +207,7 @@ void ProfileAuthDataTest::PopulateBrowserContext(
     content::BrowserContext* browser_context,
     const std::string& proxy_auth_password,
     const std::string& cookie_value,
-    scoped_ptr<crypto::ECPrivateKey> channel_id_key) {
+    std::unique_ptr<crypto::ECPrivateKey> channel_id_key) {
   GetProxyAuth(browser_context)->Add(
       GURL(kProxyAuthURL),
       kProxyAuthRealm,
@@ -209,32 +217,39 @@ void ProfileAuthDataTest::PopulateBrowserContext(
                            base::ASCIIToUTF16(proxy_auth_password)),
       std::string());
 
-  net::CookieMonster* cookies = GetCookies(browser_context);
+  net::CookieStore* cookies = GetCookies(browser_context);
   // Ensure |cookies| is fully initialized.
   run_loop_.reset(new base::RunLoop);
   cookies->GetAllCookiesAsync(base::Bind(&ProfileAuthDataTest::QuitLoop,
                                          base::Unretained(this)));
   run_loop_->Run();
 
-  net::CookieList cookie_list;
-  cookie_list.push_back(net::CanonicalCookie(
-      GURL(kGAIACookieURL), kCookieName, cookie_value, kGAIACookieDomain,
+  cookies->SetCookieWithDetailsAsync(
+      GURL(kSAMLIdPCookieURL), kCookieName, cookie_value,
+      kSAMLIdPCookieDomainWithWildcard, std::string(), base::Time(),
+      base::Time(), base::Time(), true, false,
+      net::CookieSameSite::DEFAULT_MODE, false, net::COOKIE_PRIORITY_DEFAULT,
+      net::CookieStore::SetCookiesCallback());
+  cookies->SetCookieWithDetailsAsync(
+      GURL(kSAMLIdPCookieURL), kCookieName, cookie_value, std::string(),
       std::string(), base::Time(), base::Time(), base::Time(), true, false,
-      false, net::COOKIE_PRIORITY_DEFAULT));
-  cookie_list.push_back(net::CanonicalCookie(
-      GURL(kSAMLIdPCookieURL), kCookieName, cookie_value, kSAMLIdPCookieDomain,
+      net::CookieSameSite::DEFAULT_MODE, false, net::COOKIE_PRIORITY_DEFAULT,
+      net::CookieStore::SetCookiesCallback());
+  cookies->SetCookieWithDetailsAsync(
+      GURL(kGAIACookieURL), kCookieName, cookie_value, std::string(),
       std::string(), base::Time(), base::Time(), base::Time(), true, false,
-      false, net::COOKIE_PRIORITY_DEFAULT));
-  cookies->ImportCookies(cookie_list);
+      net::CookieSameSite::DEFAULT_MODE, false, net::COOKIE_PRIORITY_DEFAULT,
+      net::CookieStore::SetCookiesCallback());
 
   GetChannelIDs(browser_context)
-      ->SetChannelID(make_scoped_ptr(new net::ChannelIDStore::ChannelID(
-          kChannelIDServerIdentifier, base::Time(), channel_id_key.Pass())));
+      ->SetChannelID(base::MakeUnique<net::ChannelIDStore::ChannelID>(
+          kChannelIDServerIdentifier, base::Time(), std::move(channel_id_key)));
 }
 
 net::URLRequestContext* ProfileAuthDataTest::GetRequestContext(
     content::BrowserContext* browser_context) {
-  return browser_context->GetRequestContext()->GetURLRequestContext();
+  return content::BrowserContext::GetDefaultStoragePartition(browser_context)->
+      GetURLRequestContext()->GetURLRequestContext();
 }
 
 net::HttpAuthCache* ProfileAuthDataTest::GetProxyAuth(
@@ -243,9 +258,9 @@ net::HttpAuthCache* ProfileAuthDataTest::GetProxyAuth(
       GetSession()->http_auth_cache();
 }
 
-net::CookieMonster* ProfileAuthDataTest::GetCookies(
+net::CookieStore* ProfileAuthDataTest::GetCookies(
     content::BrowserContext* browser_context) {
-  return GetRequestContext(browser_context)->cookie_store()->GetCookieMonster();
+  return GetRequestContext(browser_context)->cookie_store();
 }
 
 net::ChannelIDStore* ProfileAuthDataTest::GetChannelIDs(

@@ -5,19 +5,20 @@
 #ifndef REMOTING_HOST_DAEMON_PROCESS_H_
 #define REMOTING_HOST_DAEMON_PROCESS_H_
 
+#include <stdint.h>
+
 #include <list>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/process/process.h"
 #include "ipc/ipc_channel.h"
-#include "ipc/ipc_channel_proxy.h"
-#include "ipc/ipc_platform_file.h"
+#include "ipc/ipc_channel_handle.h"
 #include "remoting/host/config_watcher.h"
 #include "remoting/host/host_status_monitor.h"
 #include "remoting/host/worker_process_ipc_delegate.h"
@@ -52,7 +53,7 @@ class DaemonProcess
   // passing relevant task runners. Public methods of this class must be called
   // on the |caller_task_runner| thread. |io_task_runner| is used to handle IPC
   // and background I/O tasks.
-  static scoped_ptr<DaemonProcess> Create(
+  static std::unique_ptr<DaemonProcess> Create(
       scoped_refptr<AutoThreadTaskRunner> caller_task_runner,
       scoped_refptr<AutoThreadTaskRunner> io_task_runner,
       const base::Closure& stopped_callback);
@@ -66,7 +67,7 @@ class DaemonProcess
   void RemoveStatusObserver(HostStatusObserver* observer) override;
 
   // WorkerProcessIpcDelegate implementation.
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   bool OnMessageReceived(const IPC::Message& message) override;
   void OnPermanentError(int exit_code) override;
 
@@ -75,13 +76,13 @@ class DaemonProcess
   virtual void SendToNetwork(IPC::Message* message) = 0;
 
   // Called when a desktop integration process attaches to |terminal_id|.
-  // |desktop_process| is a handle of the desktop integration process.
+  // |session_id| is the id of the desktop session being attached.
   // |desktop_pipe| specifies the client end of the desktop pipe. Returns true
   // on success, false otherwise.
   virtual bool OnDesktopSessionAgentAttached(
       int terminal_id,
-      base::ProcessHandle desktop_process,
-      IPC::PlatformFileForTransit desktop_pipe) = 0;
+      int session_id,
+      const IPC::ChannelHandle& desktop_pipe) = 0;
 
   // Closes the desktop session identified by |terminal_id|.
   void CloseDesktopSession(int terminal_id);
@@ -127,7 +128,7 @@ class DaemonProcess
 
   // Creates a platform-specific desktop session and assigns a unique ID to it.
   // An implementation should validate |params| as they are received via IPC.
-  virtual scoped_ptr<DesktopSession> DoCreateDesktopSession(
+  virtual std::unique_ptr<DesktopSession> DoCreateDesktopSession(
       int terminal_id,
       const ScreenResolution& resolution,
       bool virtual_terminal) = 0;
@@ -163,7 +164,7 @@ class DaemonProcess
   // Handles IPC and background I/O tasks.
   scoped_refptr<AutoThreadTaskRunner> io_task_runner_;
 
-  scoped_ptr<ConfigWatcher> config_watcher_;
+  std::unique_ptr<ConfigWatcher> config_watcher_;
 
   // The configuration file contents.
   std::string serialized_config_;
@@ -181,7 +182,7 @@ class DaemonProcess
   base::Closure stopped_callback_;
 
   // Writes host status updates to the system event log.
-  scoped_ptr<HostEventLogger> host_event_logger_;
+  std::unique_ptr<HostEventLogger> host_event_logger_;
 
   base::WeakPtrFactory<DaemonProcess> weak_factory_;
 

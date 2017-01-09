@@ -5,12 +5,13 @@
 #include "net/base/layered_network_delegate.h"
 
 #include <map>
+#include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/auth.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate_impl.h"
@@ -19,7 +20,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/proxy/proxy_config_service.h"
 #include "net/proxy/proxy_info.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy/proxy_retry_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -45,33 +46,23 @@ class TestNetworkDelegateImpl : public NetworkDelegateImpl {
     return OK;
   }
 
-  void OnResolveProxy(const GURL& url,
-                      int load_flags,
-                      const ProxyService& proxy_service,
-                      ProxyInfo* result) override {
-    IncrementAndCompareCounter("on_resolve_proxy_count");
-  }
-
-  void OnProxyFallback(const ProxyServer& bad_proxy, int net_error) override {
-    IncrementAndCompareCounter("on_proxy_fallback_count");
-  }
-
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) override {
-    IncrementAndCompareCounter("on_before_send_headers_count");
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) override {
+    IncrementAndCompareCounter("on_before_start_transaction_count");
     return OK;
   }
 
-  void OnBeforeSendProxyHeaders(URLRequest* request,
-                                const ProxyInfo& proxy_info,
-                                HttpRequestHeaders* headers) override {
-    IncrementAndCompareCounter("on_before_send_proxy_headers_count");
+  void OnBeforeSendHeaders(URLRequest* request,
+                           const ProxyInfo& proxy_info,
+                           const ProxyRetryInfoMap& proxy_retry_info,
+                           HttpRequestHeaders* headers) override {
+    IncrementAndCompareCounter("on_before_send_headers_count");
   }
 
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) override {
-    IncrementAndCompareCounter("on_send_headers_count");
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) override {
+    IncrementAndCompareCounter("on_start_transaction_count");
   }
 
   int OnHeadersReceived(
@@ -89,7 +80,7 @@ class TestNetworkDelegateImpl : public NetworkDelegateImpl {
     IncrementAndCompareCounter("on_before_redirect_count");
   }
 
-  void OnResponseStarted(URLRequest* request) override {
+  void OnResponseStarted(URLRequest* request, int net_error) override {
     IncrementAndCompareCounter("on_response_started_count");
   }
 
@@ -102,7 +93,7 @@ class TestNetworkDelegateImpl : public NetworkDelegateImpl {
     IncrementAndCompareCounter("on_network_bytes_sent_count");
   }
 
-  void OnCompleted(URLRequest* request, bool started) override {
+  void OnCompleted(URLRequest* request, bool started, int net_error) override {
     IncrementAndCompareCounter("on_completed_count");
   }
 
@@ -172,9 +163,9 @@ class TestNetworkDelegateImpl : public NetworkDelegateImpl {
 
 class TestLayeredNetworkDelegate : public LayeredNetworkDelegate {
  public:
-  TestLayeredNetworkDelegate(scoped_ptr<NetworkDelegate> network_delegate,
+  TestLayeredNetworkDelegate(std::unique_ptr<NetworkDelegate> network_delegate,
                              CountersMap* counters)
-      : LayeredNetworkDelegate(network_delegate.Pass()),
+      : LayeredNetworkDelegate(std::move(network_delegate)),
         context_(true),
         counters_(counters) {
     context_.Init();
@@ -184,29 +175,28 @@ class TestLayeredNetworkDelegate : public LayeredNetworkDelegate {
 
   void CallAndVerify() {
     scoped_refptr<AuthChallengeInfo> auth_challenge(new AuthChallengeInfo());
-    scoped_ptr<URLRequest> request =
+    std::unique_ptr<URLRequest> request =
         context_.CreateRequest(GURL(), IDLE, &delegate_);
-    scoped_ptr<HttpRequestHeaders> request_headers(new HttpRequestHeaders());
+    std::unique_ptr<HttpRequestHeaders> request_headers(
+        new HttpRequestHeaders());
     scoped_refptr<HttpResponseHeaders> response_headers(
         new HttpResponseHeaders(""));
     TestCompletionCallback completion_callback;
-    scoped_ptr<ProxyService> proxy_service(ProxyService::CreateDirect());
-    scoped_ptr<ProxyInfo> proxy_info(new ProxyInfo());
+    ProxyRetryInfoMap proxy_retry_info;
 
     EXPECT_EQ(OK, OnBeforeURLRequest(request.get(),
                                      completion_callback.callback(), NULL));
-    OnResolveProxy(GURL(), 0, *proxy_service, proxy_info.get());
-    OnProxyFallback(ProxyServer(), 0);
-    EXPECT_EQ(OK, OnBeforeSendHeaders(NULL, completion_callback.callback(),
-                                      request_headers.get()));
-    OnBeforeSendProxyHeaders(NULL, ProxyInfo(), request_headers.get());
-    OnSendHeaders(NULL, *request_headers);
+    EXPECT_EQ(OK, OnBeforeStartTransaction(NULL, completion_callback.callback(),
+                                           request_headers.get()));
+    OnBeforeSendHeaders(NULL, ProxyInfo(), proxy_retry_info,
+                        request_headers.get());
+    OnStartTransaction(NULL, *request_headers);
     OnNetworkBytesSent(request.get(), 42);
     EXPECT_EQ(OK, OnHeadersReceived(NULL, completion_callback.callback(),
                                     response_headers.get(), NULL, NULL));
-    OnResponseStarted(request.get());
+    OnResponseStarted(request.get(), net::OK);
     OnNetworkBytesReceived(request.get(), 42);
-    OnCompleted(request.get(), false);
+    OnCompleted(request.get(), false, net::OK);
     OnURLRequestDestroyed(request.get());
     OnPACScriptError(0, base::string16());
     EXPECT_EQ(
@@ -228,38 +218,25 @@ class TestLayeredNetworkDelegate : public LayeredNetworkDelegate {
     EXPECT_EQ(1, (*counters_)["on_before_url_request_count"]);
   }
 
-  void OnResolveProxyInternal(const GURL& url,
-                              int load_flags,
-                              const ProxyService& proxy_service,
-                              ProxyInfo* result) override {
-    ++(*counters_)["on_resolve_proxy_count"];
-    EXPECT_EQ(1, (*counters_)["on_resolve_proxy_count"]);
-  }
-
-  void OnProxyFallbackInternal(const ProxyServer& bad_proxy,
-                               int net_error) override {
-    ++(*counters_)["on_proxy_fallback_count"];
-    EXPECT_EQ(1, (*counters_)["on_proxy_fallback_count"]);
+  void OnBeforeStartTransactionInternal(URLRequest* request,
+                                        const CompletionCallback& callback,
+                                        HttpRequestHeaders* headers) override {
+    ++(*counters_)["on_before_start_transaction_count"];
+    EXPECT_EQ(1, (*counters_)["on_before_start_transaction_count"]);
   }
 
   void OnBeforeSendHeadersInternal(URLRequest* request,
-                                   const CompletionCallback& callback,
+                                   const ProxyInfo& proxy_info,
+                                   const ProxyRetryInfoMap& proxy_retry_info,
                                    HttpRequestHeaders* headers) override {
     ++(*counters_)["on_before_send_headers_count"];
     EXPECT_EQ(1, (*counters_)["on_before_send_headers_count"]);
   }
 
-  void OnBeforeSendProxyHeadersInternal(URLRequest* request,
-                                        const ProxyInfo& proxy_info,
-                                        HttpRequestHeaders* headers) override {
-    ++(*counters_)["on_before_send_proxy_headers_count"];
-    EXPECT_EQ(1, (*counters_)["on_before_send_proxy_headers_count"]);
-  }
-
-  void OnSendHeadersInternal(URLRequest* request,
-                             const HttpRequestHeaders& headers) override {
-    ++(*counters_)["on_send_headers_count"];
-    EXPECT_EQ(1, (*counters_)["on_send_headers_count"]);
+  void OnStartTransactionInternal(URLRequest* request,
+                                  const HttpRequestHeaders& headers) override {
+    ++(*counters_)["on_start_transaction_count"];
+    EXPECT_EQ(1, (*counters_)["on_start_transaction_count"]);
   }
 
   void OnHeadersReceivedInternal(
@@ -370,17 +347,17 @@ class TestLayeredNetworkDelegate : public LayeredNetworkDelegate {
 class LayeredNetworkDelegateTest : public testing::Test {
  public:
   LayeredNetworkDelegateTest() {
-    scoped_ptr<TestNetworkDelegateImpl> test_network_delegate(
+    std::unique_ptr<TestNetworkDelegateImpl> test_network_delegate(
         new TestNetworkDelegateImpl(&layered_network_delegate_counters));
     test_network_delegate_ = test_network_delegate.get();
-    layered_network_delegate_ =
-        scoped_ptr<TestLayeredNetworkDelegate>(new TestLayeredNetworkDelegate(
-            test_network_delegate.Pass(), &layered_network_delegate_counters));
+    layered_network_delegate_ = std::unique_ptr<TestLayeredNetworkDelegate>(
+        new TestLayeredNetworkDelegate(std::move(test_network_delegate),
+                                       &layered_network_delegate_counters));
   }
 
   CountersMap layered_network_delegate_counters;
   TestNetworkDelegateImpl* test_network_delegate_;
-  scoped_ptr<TestLayeredNetworkDelegate> layered_network_delegate_;
+  std::unique_ptr<TestLayeredNetworkDelegate> layered_network_delegate_;
 };
 
 TEST_F(LayeredNetworkDelegateTest, VerifyLayeredNetworkDelegateInternal) {

@@ -5,10 +5,9 @@
 package org.chromium.cronet_sample_apk;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.os.Bundle;
-import android.os.Environment;
+import android.support.v7.app.AlertDialog;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.EditText;
@@ -16,10 +15,9 @@ import android.widget.TextView;
 
 import org.chromium.base.Log;
 import org.chromium.net.CronetEngine;
-import org.chromium.net.UploadDataProvider;
-import org.chromium.net.UploadDataSink;
+import org.chromium.net.CronetException;
+import org.chromium.net.UploadDataProviders;
 import org.chromium.net.UrlRequest;
-import org.chromium.net.UrlRequestException;
 import org.chromium.net.UrlResponseInfo;
 
 import java.io.ByteArrayOutputStream;
@@ -34,7 +32,7 @@ import java.util.concurrent.Executors;
  * Activity for managing the Cronet Sample.
  */
 public class CronetSampleActivity extends Activity {
-    private static final String TAG = "cr.CronetSample";
+    private static final String TAG = "CronetSample";
 
     private CronetEngine mCronetEngine;
 
@@ -56,7 +54,7 @@ public class CronetSampleActivity extends Activity {
         @Override
         public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
             Log.i(TAG, "****** Response Started ******");
-            Log.i(TAG, "*** Headers Are *** " + info.getAllHeaders());
+            Log.i(TAG, "*** Headers Are *** %s", info.getAllHeaders());
 
             request.read(ByteBuffer.allocateDirect(32 * 1024));
         }
@@ -64,21 +62,22 @@ public class CronetSampleActivity extends Activity {
         @Override
         public void onReadCompleted(
                 UrlRequest request, UrlResponseInfo info, ByteBuffer byteBuffer) {
-            Log.i(TAG, "****** onReadCompleted ******" + byteBuffer);
+            byteBuffer.flip();
+            Log.i(TAG, "****** onReadCompleted ******%s", byteBuffer);
 
             try {
                 mReceiveChannel.write(byteBuffer);
             } catch (IOException e) {
                 Log.i(TAG, "IOException during ByteBuffer read. Details: ", e);
             }
-            byteBuffer.position(0);
+            byteBuffer.clear();
             request.read(byteBuffer);
         }
 
         @Override
         public void onSucceeded(UrlRequest request, UrlResponseInfo info) {
-            Log.i(TAG, "****** Request Completed, status code is " + info.getHttpStatusCode()
-                            + ", total received bytes is " + info.getReceivedBytesCount());
+            Log.i(TAG, "****** Request Completed, status code is %d, total received bytes is %d",
+                    info.getHttpStatusCode(), info.getReceivedByteCount());
 
             final String receivedData = mBytesReceived.toString();
             final String url = info.getUrl();
@@ -93,8 +92,8 @@ public class CronetSampleActivity extends Activity {
         }
 
         @Override
-        public void onFailed(UrlRequest request, UrlResponseInfo info, UrlRequestException error) {
-            Log.i(TAG, "****** onFailed, error is: " + error.getMessage());
+        public void onFailed(UrlRequest request, UrlResponseInfo info, CronetException error) {
+            Log.i(TAG, "****** onFailed, error is: %s", error.getMessage());
 
             final String url = mUrl;
             final String text = "Failed " + mUrl + " (" + error.getMessage() + ")";
@@ -107,41 +106,6 @@ public class CronetSampleActivity extends Activity {
         }
     }
 
-    static class SimpleUploadDataProvider extends UploadDataProvider {
-        private byte[] mUploadData;
-        private int mOffset;
-
-        SimpleUploadDataProvider(byte[] uploadData) {
-            mUploadData = uploadData;
-            mOffset = 0;
-        }
-
-        @Override
-        public long getLength() {
-            return mUploadData.length;
-        }
-
-        @Override
-        public void read(final UploadDataSink uploadDataSink, final ByteBuffer byteBuffer)
-                throws IOException {
-            if (byteBuffer.remaining() >= mUploadData.length - mOffset) {
-                byteBuffer.put(mUploadData, mOffset, mUploadData.length - mOffset);
-                mOffset = mUploadData.length;
-            } else {
-                int length = byteBuffer.remaining();
-                byteBuffer.put(mUploadData, mOffset, length);
-                mOffset += length;
-            }
-            uploadDataSink.onReadSucceeded(false);
-        }
-
-        @Override
-        public void rewind(final UploadDataSink uploadDataSink) throws IOException {
-            mOffset = 0;
-            uploadDataSink.onRewindSucceeded();
-        }
-    }
-
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -151,8 +115,8 @@ public class CronetSampleActivity extends Activity {
 
         CronetEngine.Builder myBuilder = new CronetEngine.Builder(this);
         myBuilder.enableHttpCache(CronetEngine.Builder.HTTP_CACHE_IN_MEMORY, 100 * 1024)
-                .enableHTTP2(true)
-                .enableQUIC(true);
+                .enableHttp2(true)
+                .enableQuic(true);
 
         mCronetEngine = myBuilder.build();
 
@@ -188,11 +152,10 @@ public class CronetSampleActivity extends Activity {
     private void applyPostDataToUrlRequestBuilder(
             UrlRequest.Builder builder, Executor executor, String postData) {
         if (postData != null && postData.length() > 0) {
-            UploadDataProvider uploadDataProvider =
-                    new SimpleUploadDataProvider(postData.getBytes());
             builder.setHttpMethod("POST");
             builder.addHeader("Content-Type", "application/x-www-form-urlencoded");
-            builder.setUploadDataProvider(uploadDataProvider, executor);
+            builder.setUploadDataProvider(
+                    UploadDataProviders.create(postData.getBytes()), executor);
         }
     }
 
@@ -201,22 +164,26 @@ public class CronetSampleActivity extends Activity {
     }
 
     private void startWithURL(String url, String postData) {
-        Log.i(TAG, "Cronet started: " + url);
+        Log.i(TAG, "Cronet started: %s", url);
         mUrl = url;
 
         Executor executor = Executors.newSingleThreadExecutor();
         UrlRequest.Callback callback = new SimpleUrlRequestCallback();
-        UrlRequest.Builder builder = new UrlRequest.Builder(url, callback, executor, mCronetEngine);
+        UrlRequest.Builder builder = mCronetEngine.newUrlRequestBuilder(url, callback, executor);
         applyPostDataToUrlRequestBuilder(builder, executor, postData);
         builder.build().start();
     }
 
+    // Starts writing NetLog to disk. startNetLog() should be called afterwards.
     private void startNetLog() {
-        mCronetEngine.startNetLogToFile(
-                Environment.getExternalStorageDirectory().getPath() + "/cronet_sample_netlog.json",
-                false);
+        mCronetEngine.startNetLogToFile(getCacheDir().getPath() + "/netlog.json", false);
     }
 
+    // Stops writing NetLog to disk. Should be called after calling startNetLog().
+    // NetLog can be downloaded afterwards via:
+    //   adb root
+    //   adb pull /data/data/org.chromium.cronet_sample_apk/cache/netlog.json
+    // netlog.json can then be viewed in a Chrome tab navigated to chrome://net-internals/#import
     private void stopNetLog() {
         mCronetEngine.stopNetLog();
     }

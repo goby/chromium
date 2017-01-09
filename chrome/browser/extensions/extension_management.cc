@@ -5,12 +5,13 @@
 #include "chrome/browser/extensions/extension_management.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
@@ -26,7 +27,9 @@
 #include "components/crx_file/id_util.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission_set.h"
 #include "extensions/common/permissions/permission_set.h"
@@ -57,8 +60,10 @@ ExtensionManagement::ExtensionManagement(PrefService* pref_service)
   // before first call to Refresh(), so in order to resolve this, Refresh() must
   // be called in the initialization of ExtensionManagement.
   Refresh();
-  providers_.push_back(new StandardManagementPolicyProvider(this));
-  providers_.push_back(new PermissionsBasedManagementPolicyProvider(this));
+  providers_.push_back(
+      base::MakeUnique<StandardManagementPolicyProvider>(this));
+  providers_.push_back(
+      base::MakeUnique<PermissionsBasedManagementPolicyProvider>(this));
 }
 
 ExtensionManagement::~ExtensionManagement() {
@@ -77,9 +82,9 @@ void ExtensionManagement::RemoveObserver(Observer* observer) {
   observer_list_.RemoveObserver(observer);
 }
 
-std::vector<ManagementPolicy::Provider*> ExtensionManagement::GetProviders()
-    const {
-  return providers_.get();
+const std::vector<std::unique_ptr<ManagementPolicy::Provider>>&
+ExtensionManagement::GetProviders() const {
+  return providers_;
 }
 
 bool ExtensionManagement::BlacklistedByDefault() const {
@@ -104,9 +109,10 @@ ExtensionManagement::InstallationMode ExtensionManagement::GetInstallationMode(
   return default_settings_->installation_mode;
 }
 
-scoped_ptr<base::DictionaryValue> ExtensionManagement::GetForceInstallList()
-    const {
-  scoped_ptr<base::DictionaryValue> install_list(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue>
+ExtensionManagement::GetForceInstallList() const {
+  std::unique_ptr<base::DictionaryValue> install_list(
+      new base::DictionaryValue());
   for (SettingsIdMap::const_iterator it = settings_by_id_.begin();
        it != settings_by_id_.end();
        ++it) {
@@ -115,12 +121,13 @@ scoped_ptr<base::DictionaryValue> ExtensionManagement::GetForceInstallList()
           install_list.get(), it->first, it->second->update_url);
     }
   }
-  return install_list.Pass();
+  return install_list;
 }
 
-scoped_ptr<base::DictionaryValue>
+std::unique_ptr<base::DictionaryValue>
 ExtensionManagement::GetRecommendedInstallList() const {
-  scoped_ptr<base::DictionaryValue> install_list(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> install_list(
+      new base::DictionaryValue());
   for (SettingsIdMap::const_iterator it = settings_by_id_.begin();
        it != settings_by_id_.end();
        ++it) {
@@ -129,7 +136,7 @@ ExtensionManagement::GetRecommendedInstallList() const {
           install_list.get(), it->first, it->second->update_url);
     }
   }
-  return install_list.Pass();
+  return install_list;
 }
 
 bool ExtensionManagement::IsInstallationExplicitlyAllowed(
@@ -204,10 +211,10 @@ APIPermissionSet ExtensionManagement::GetBlockedAPIPermissions(
   return default_settings_->blocked_permissions;
 }
 
-scoped_ptr<const PermissionSet> ExtensionManagement::GetBlockedPermissions(
+std::unique_ptr<const PermissionSet> ExtensionManagement::GetBlockedPermissions(
     const Extension* extension) const {
   // Only api permissions are supported currently.
-  return scoped_ptr<const PermissionSet>(new PermissionSet(
+  return std::unique_ptr<const PermissionSet>(new PermissionSet(
       GetBlockedAPIPermissions(extension), ManifestPermissionSet(),
       URLPatternSet(), URLPatternSet()));
 }
@@ -215,7 +222,7 @@ scoped_ptr<const PermissionSet> ExtensionManagement::GetBlockedPermissions(
 bool ExtensionManagement::IsPermissionSetAllowed(
     const Extension* extension,
     const PermissionSet& perms) const {
-  for (const auto& blocked_api : GetBlockedAPIPermissions(extension)) {
+  for (auto* blocked_api : GetBlockedAPIPermissions(extension)) {
     if (perms.HasAPIPermission(blocked_api->id()))
       return false;
   }
@@ -243,26 +250,26 @@ void ExtensionManagement::Refresh() {
   // Load all extension management settings preferences.
   const base::ListValue* allowed_list_pref =
       static_cast<const base::ListValue*>(LoadPreference(
-          pref_names::kInstallAllowList, true, base::Value::TYPE_LIST));
+          pref_names::kInstallAllowList, true, base::Value::Type::LIST));
   // Allow user to use preference to block certain extensions. Note that policy
   // managed forcelist or whitelist will always override this.
   const base::ListValue* denied_list_pref =
       static_cast<const base::ListValue*>(LoadPreference(
-          pref_names::kInstallDenyList, false, base::Value::TYPE_LIST));
+          pref_names::kInstallDenyList, false, base::Value::Type::LIST));
   const base::DictionaryValue* forced_list_pref =
       static_cast<const base::DictionaryValue*>(LoadPreference(
-          pref_names::kInstallForceList, true, base::Value::TYPE_DICTIONARY));
+          pref_names::kInstallForceList, true, base::Value::Type::DICTIONARY));
   const base::ListValue* install_sources_pref =
       static_cast<const base::ListValue*>(LoadPreference(
-          pref_names::kAllowedInstallSites, true, base::Value::TYPE_LIST));
+          pref_names::kAllowedInstallSites, true, base::Value::Type::LIST));
   const base::ListValue* allowed_types_pref =
       static_cast<const base::ListValue*>(LoadPreference(
-          pref_names::kAllowedTypes, true, base::Value::TYPE_LIST));
+          pref_names::kAllowedTypes, true, base::Value::Type::LIST));
   const base::DictionaryValue* dict_pref =
       static_cast<const base::DictionaryValue*>(
           LoadPreference(pref_names::kExtensionManagement,
                          true,
-                         base::Value::TYPE_DICTIONARY));
+                         base::Value::Type::DICTIONARY));
 
   // Reset all settings.
   global_settings_.reset(new internal::GlobalSettings());
@@ -431,8 +438,8 @@ void ExtensionManagement::OnExtensionPrefChanged() {
 }
 
 void ExtensionManagement::NotifyExtensionManagementPrefChanged() {
-  FOR_EACH_OBSERVER(
-      Observer, observer_list_, OnExtensionManagementSettingsChanged());
+  for (auto& observer : observer_list_)
+    observer.OnExtensionManagementSettingsChanged();
 }
 
 internal::IndividualSettings* ExtensionManagement::AccessById(
@@ -440,9 +447,9 @@ internal::IndividualSettings* ExtensionManagement::AccessById(
   DCHECK(crx_file::id_util::IdIsValid(id)) << "Invalid ID: " << id;
   SettingsIdMap::iterator it = settings_by_id_.find(id);
   if (it == settings_by_id_.end()) {
-    scoped_ptr<internal::IndividualSettings> settings(
+    std::unique_ptr<internal::IndividualSettings> settings(
         new internal::IndividualSettings(default_settings_.get()));
-    it = settings_by_id_.add(id, settings.Pass()).first;
+    it = settings_by_id_.add(id, std::move(settings)).first;
   }
   return it->second;
 }
@@ -452,9 +459,9 @@ internal::IndividualSettings* ExtensionManagement::AccessByUpdateUrl(
   DCHECK(GURL(update_url).is_valid()) << "Invalid update URL: " << update_url;
   SettingsUpdateUrlMap::iterator it = settings_by_update_url_.find(update_url);
   if (it == settings_by_update_url_.end()) {
-    scoped_ptr<internal::IndividualSettings> settings(
+    std::unique_ptr<internal::IndividualSettings> settings(
         new internal::IndividualSettings(default_settings_.get()));
-    it = settings_by_update_url_.add(update_url, settings.Pass()).first;
+    it = settings_by_update_url_.add(update_url, std::move(settings)).first;
   }
   return it->second;
 }

@@ -15,6 +15,9 @@ PlayerTrackerImpl::PlayerCallbacks::PlayerCallbacks(
     const base::Closure& cdm_unset_cb)
     : new_key_cb(new_key_cb), cdm_unset_cb(cdm_unset_cb) {}
 
+PlayerTrackerImpl::PlayerCallbacks::PlayerCallbacks(
+    const PlayerCallbacks& other) = default;
+
 PlayerTrackerImpl::PlayerCallbacks::~PlayerCallbacks() {
 }
 
@@ -27,7 +30,7 @@ int PlayerTrackerImpl::RegisterPlayer(const base::Closure& new_key_cb,
                                       const base::Closure& cdm_unset_cb) {
   base::AutoLock lock(lock_);
   int registration_id = next_registration_id_++;
-  DCHECK(!ContainsKey(player_callbacks_map_, registration_id));
+  DCHECK(!base::ContainsKey(player_callbacks_map_, registration_id));
   player_callbacks_map_.insert(std::make_pair(
       registration_id, PlayerCallbacks(new_key_cb, cdm_unset_cb)));
   return registration_id;
@@ -35,7 +38,7 @@ int PlayerTrackerImpl::RegisterPlayer(const base::Closure& new_key_cb,
 
 void PlayerTrackerImpl::UnregisterPlayer(int registration_id) {
   base::AutoLock lock(lock_);
-  DCHECK(ContainsKey(player_callbacks_map_, registration_id))
+  DCHECK(base::ContainsKey(player_callbacks_map_, registration_id))
       << registration_id;
   player_callbacks_map_.erase(registration_id);
 }

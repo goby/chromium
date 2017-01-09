@@ -4,7 +4,6 @@
 
 #include "chrome/test/media_router/media_router_e2e_browsertest.h"
 
-#include "base/strings/stringprintf.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -21,6 +20,8 @@ IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest, MANUAL_MirrorHTML5Video) {
   ExecuteScript(web_contents, script);
   content::WebContents* dialog_contents = OpenMRDialog(web_contents);
   ASSERT_TRUE(dialog_contents);
+  // Wait for 1s to make sure the dialog finishes rendering.
+  Wait(base::TimeDelta::FromSeconds(1));
   WaitUntilSinkDiscoveredOnUI();
   ChooseSink(web_contents, receiver());
   WaitUntilRouteCreated();

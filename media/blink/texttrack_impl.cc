@@ -4,6 +4,8 @@
 
 #include "media/blink/texttrack_impl.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
@@ -17,10 +19,10 @@ namespace media {
 TextTrackImpl::TextTrackImpl(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     blink::WebMediaPlayerClient* client,
-    scoped_ptr<WebInbandTextTrackImpl> text_track)
+    std::unique_ptr<WebInbandTextTrackImpl> text_track)
     : task_runner_(task_runner),
       client_(client),
-      text_track_(text_track.Pass()) {
+      text_track_(std::move(text_track)) {
   client_->addTextTrack(text_track_.get());
 }
 
@@ -62,7 +64,7 @@ void TextTrackImpl::OnAddCue(WebInbandTextTrackImpl* text_track,
 
 void TextTrackImpl::OnRemoveTrack(
     blink::WebMediaPlayerClient* client,
-    scoped_ptr<WebInbandTextTrackImpl> text_track) {
+    std::unique_ptr<WebInbandTextTrackImpl> text_track) {
   if (text_track->client())
     client->removeTextTrack(text_track.get());
 }

@@ -13,6 +13,7 @@ import android.widget.ImageView;
 
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.metrics.WebappUma;
@@ -20,6 +21,7 @@ import org.chromium.chrome.browser.metrics.WebappUma;
 /**
  * Tests for splash screens with an icon registered in WebappRegistry.
  */
+@RetryOnFailure
 public class WebappSplashScreenIconTest extends WebappActivityTestBase {
 
     @Override
@@ -31,17 +33,16 @@ public class WebappSplashScreenIconTest extends WebappActivityTestBase {
 
     @Override
     protected void setUp() throws Exception {
-        WebappDataStorage.open(getInstrumentation().getTargetContext(), WEBAPP_ID)
-                .updateSplashScreenImage(ShortcutHelper.decodeBitmapFromString(TEST_SPLASH_ICON));
-
         super.setUp();
+        WebappRegistry.getInstance().getWebappDataStorage(WEBAPP_ID).updateSplashScreenImage(
+                TEST_SPLASH_ICON);
         startWebappActivity();
     }
 
     @SmallTest
     @Feature({"Webapps"})
     public void testShowSplashIcon() {
-        ViewGroup splashScreen = getActivity().getSplashScreenForTests();
+        ViewGroup splashScreen = waitUntilSplashScreenAppears();
         ImageView splashImage = (ImageView) splashScreen.findViewById(
                 R.id.webapp_splash_screen_icon);
         BitmapDrawable drawable = (BitmapDrawable) splashImage.getDrawable();

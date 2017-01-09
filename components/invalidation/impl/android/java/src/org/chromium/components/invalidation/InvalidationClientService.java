@@ -7,9 +7,12 @@ package org.chromium.components.invalidation;
 import android.accounts.Account;
 import android.app.PendingIntent;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Bundle;
-import android.util.Log;
 
 import com.google.ipc.invalidation.external.client.InvalidationListener.RegistrationState;
 import com.google.ipc.invalidation.external.client.contrib.AndroidListener;
@@ -20,21 +23,24 @@ import com.google.protos.ipc.invalidation.Types.ClientType;
 
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.CollectionUtil;
+import org.chromium.base.ContextUtils;
+import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.sync.AndroidSyncSettings;
-import org.chromium.sync.ModelTypeHelper;
-import org.chromium.sync.SyncConstants;
-import org.chromium.sync.notifier.InvalidationClientNameProvider;
-import org.chromium.sync.notifier.InvalidationIntentProtocol;
-import org.chromium.sync.notifier.InvalidationPreferences;
-import org.chromium.sync.notifier.InvalidationPreferences.EditContext;
-import org.chromium.sync.signin.AccountManagerHelper;
-import org.chromium.sync.signin.ChromeSigninController;
+import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.ChromeSigninController;
+import org.chromium.components.sync.AndroidSyncSettings;
+import org.chromium.components.sync.ModelTypeHelper;
+import org.chromium.components.sync.SyncConstants;
+import org.chromium.components.sync.notifier.InvalidationClientNameProvider;
+import org.chromium.components.sync.notifier.InvalidationIntentProtocol;
+import org.chromium.components.sync.notifier.InvalidationPreferences;
+import org.chromium.components.sync.notifier.InvalidationPreferences.EditContext;
 
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.annotation.Nullable;
 
@@ -61,7 +67,8 @@ public class InvalidationClientService extends AndroidListener {
     @VisibleForTesting
     static final int CLIENT_TYPE = ClientType.CHROME_SYNC_ANDROID;
 
-    private static final String TAG = "cr.invalidation";
+    private static final String TAG = "cr_invalidation";
+    private static final String CLIENT_SERVICE_KEY = "ipc.invalidation.ticl.listener_service_class";
 
     /**
      * Whether the underlying notification client has been started. This boolean is updated when a
@@ -75,6 +82,43 @@ public class InvalidationClientService extends AndroidListener {
      * true if the client has not yet gone ready.
      */
     @Nullable private static byte[] sClientId;
+
+    private static AtomicReference<Class<? extends InvalidationClientService>> sServiceClass =
+            new AtomicReference<>();
+
+    private static Class<? extends InvalidationClientService>
+            findRegisteredInvalidationClientService() {
+        Context context = ContextUtils.getApplicationContext();
+        PackageManager packageManager = context.getPackageManager();
+        ApplicationInfo appInfo;
+        try {
+            appInfo = packageManager.getApplicationInfo(context.getPackageName(),
+                    PackageManager.GET_META_DATA);
+            if (appInfo.metaData != null) {
+                String serviceMetadata = appInfo.metaData.getString(CLIENT_SERVICE_KEY, null);
+                if (serviceMetadata == null) return InvalidationClientService.class;
+
+                Class<?> foundClass = Class.forName(serviceMetadata);
+                Class<? extends InvalidationClientService> serviceClass =
+                        foundClass.asSubclass(InvalidationClientService.class);
+                return serviceClass;
+            }
+        } catch (NameNotFoundException | ClassNotFoundException | ClassCastException e) {
+            Log.e(TAG, "Unable to find registered client service", e);
+        }
+        return InvalidationClientService.class;
+    }
+
+    /**
+     * @return The registered {@link InvalidationClientService} class reference to use for
+     *         interacting with the service.
+     */
+    public static Class<? extends InvalidationClientService> getRegisteredClass() {
+        if (sServiceClass.get() == null) {
+            sServiceClass.compareAndSet(null, findRegisteredInvalidationClientService());
+        }
+        return sServiceClass.get();
+    }
 
     @Override
     public void onHandleIntent(Intent intent) {
@@ -222,7 +266,7 @@ public class InvalidationClientService extends AndroidListener {
 
     @Override
     public void writeState(byte[] data) {
-        InvalidationPreferences invPreferences = new InvalidationPreferences(this);
+        InvalidationPreferences invPreferences = new InvalidationPreferences();
         EditContext editContext = invPreferences.edit();
         invPreferences.setInternalNotificationClientState(editContext, data);
         invPreferences.commit(editContext);
@@ -230,7 +274,7 @@ public class InvalidationClientService extends AndroidListener {
 
     @Override
     @Nullable public byte[] readState() {
-        return new InvalidationPreferences(this).getInternalNotificationClientState();
+        return new InvalidationPreferences().getInternalNotificationClientState();
     }
 
     /**
@@ -256,7 +300,7 @@ public class InvalidationClientService extends AndroidListener {
         if (intendedAccount == null) {
             return;
         }
-        InvalidationPreferences invPrefs = new InvalidationPreferences(this);
+        InvalidationPreferences invPrefs = new InvalidationPreferences();
         if (!intendedAccount.equals(invPrefs.getSavedSyncedAccount())) {
             if (sIsClientStarted) {
                 stopClient();
@@ -286,7 +330,7 @@ public class InvalidationClientService extends AndroidListener {
 
     /** Sets the saved sync account in {@link InvalidationPreferences} to {@code owningAccount}. */
     private void setAccount(Account owningAccount) {
-        InvalidationPreferences invPrefs = new InvalidationPreferences(this);
+        InvalidationPreferences invPrefs = new InvalidationPreferences();
         EditContext editContext = invPrefs.edit();
         invPrefs.setAccount(editContext, owningAccount);
         invPrefs.commit(editContext);
@@ -297,7 +341,7 @@ public class InvalidationClientService extends AndroidListener {
      * corresponding object ids.
      */
     private Set<ObjectId> readSyncRegistrationsFromPrefs() {
-        Set<String> savedTypes = new InvalidationPreferences(this).getSavedSyncedTypes();
+        Set<String> savedTypes = new InvalidationPreferences().getSavedSyncedTypes();
         if (savedTypes == null) return Collections.emptySet();
         return ModelTypeHelper.notificationTypesToObjectIds(savedTypes);
     }
@@ -307,7 +351,7 @@ public class InvalidationClientService extends AndroidListener {
      * corresponding object ids.
      */
     private Set<ObjectId> readNonSyncRegistrationsFromPrefs() {
-        Set<ObjectId> objectIds = new InvalidationPreferences(this).getSavedObjectIds();
+        Set<ObjectId> objectIds = new InvalidationPreferences().getSavedObjectIds();
         if (objectIds == null) return Collections.emptySet();
         return objectIds;
     }
@@ -359,7 +403,7 @@ public class InvalidationClientService extends AndroidListener {
                 ? null : readNonSyncRegistrationsFromPrefs();
 
         // Write the new sync types/object ids to preferences.
-        InvalidationPreferences prefs = new InvalidationPreferences(this);
+        InvalidationPreferences prefs = new InvalidationPreferences();
         EditContext editContext = prefs.edit();
         if (syncTypes != null) {
             prefs.setSyncTypes(editContext, syncTypes);

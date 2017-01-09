@@ -10,9 +10,10 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/sync/model/syncable_service.h"
 #include "sql/init_status.h"
-#include "sync/api/syncable_service.h"
 
 class KeywordWebDataService;
 class TokenWebData;
@@ -23,7 +24,6 @@ class PasswordWebDataService;
 #endif
 
 namespace autofill {
-class AutofillWebDataBackend;
 class AutofillWebDataService;
 }  // namespace autofill
 
@@ -45,7 +45,14 @@ class WebDataServiceWrapper : public KeyedService {
   };
 
   // Shows an error message if a loading error occurs.
-  using ShowErrorCallback = void (*)(ErrorType, sql::InitStatus);
+  // |error_type| shows which service encountered an error while loading.
+  // |init_status| is the returned status of initializing the underlying
+  // database.
+  // |diagnostics| contains information about the underlying database
+  // which can help in identifying the cause of the error.
+  using ShowErrorCallback = void (*)(ErrorType error_type,
+                                     sql::InitStatus init_status,
+                                     const std::string& diagnostics);
 
   // Constructor for WebDataServiceWrapper that initializes the different
   // WebDataServices and starts the synchronization services using |flare|.

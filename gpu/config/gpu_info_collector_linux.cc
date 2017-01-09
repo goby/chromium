@@ -4,12 +4,14 @@
 
 #include "gpu/config/gpu_info_collector_linux.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -17,6 +19,8 @@
 #include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/config/gpu_info_collector.h"
+#include "gpu/config/gpu_switches.h"
+#include "third_party/re2/src/re2/re2.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_implementation.h"
@@ -24,7 +28,7 @@
 #include "ui/gl/gl_switches.h"
 
 #if defined(USE_LIBPCI)
-#include "library_loaders/libpci.h"
+#include "library_loaders/libpci.h"  // nogncheck
 #endif
 
 namespace gpu {
@@ -42,12 +46,30 @@ bool IsPciSupported() {
 }
 #endif  // defined(USE_LIBPCI)
 
+// Scan /sys/module/amdgpu/version.
+// Return empty string on failing.
+std::string CollectDriverVersionAMDBrahma() {
+  const base::FilePath ati_file_path("/sys/module/amdgpu/version");
+  if (!base::PathExists(ati_file_path))
+    return std::string();
+  std::string contents;
+  if (!base::ReadFileToString(ati_file_path, &contents))
+    return std::string();
+  size_t begin = contents.find_first_of("0123456789");
+  if (begin != std::string::npos) {
+    size_t end = contents.find_first_not_of("0123456789.", begin);
+    if (end == std::string::npos)
+      return contents.substr(begin);
+    else
+      return contents.substr(begin, end - begin);
+  }
+  return std::string();
+}
+
 // Scan /etc/ati/amdpcsdb.default for "ReleaseVersion".
 // Return empty string on failing.
-std::string CollectDriverVersionATI() {
-  const base::FilePath::CharType kATIFileName[] =
-      FILE_PATH_LITERAL("/etc/ati/amdpcsdb.default");
-  base::FilePath ati_file_path(kATIFileName);
+std::string CollectDriverVersionAMDCatalyst() {
+  const base::FilePath ati_file_path("/etc/ati/amdpcsdb.default");
   if (!base::PathExists(ati_file_path))
     return std::string();
   std::string contents;
@@ -71,9 +93,9 @@ std::string CollectDriverVersionATI() {
   return std::string();
 }
 
-const uint32 kVendorIDIntel = 0x8086;
-const uint32 kVendorIDNVidia = 0x10de;
-const uint32 kVendorIDAMD = 0x1002;
+const uint32_t kVendorIDIntel = 0x8086;
+const uint32_t kVendorIDNVidia = 0x10de;
+const uint32_t kVendorIDAMD = 0x1002;
 
 CollectInfoResult CollectPCIVideoCardInfo(GPUInfo* gpu_info) {
   DCHECK(gpu_info);
@@ -164,26 +186,12 @@ CollectInfoResult CollectContextGraphicsInfo(GPUInfo* gpu_info) {
 
   TRACE_EVENT0("gpu", "gpu_info_collector::CollectGraphicsInfo");
 
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kGpuNoContextLost)) {
-    gpu_info->can_lose_context = false;
-  } else {
-#if defined(OS_CHROMEOS)
-    gpu_info->can_lose_context = false;
-#else
-    // TODO(zmo): need to consider the case where we are running on top
-    // of desktop GL and GL_ARB_robustness extension is available.
-    gpu_info->can_lose_context =
-        (gfx::GetGLImplementation() == gfx::kGLImplementationEGLGLES2);
-#endif
-  }
-
   CollectInfoResult result = CollectGraphicsInfoGL(gpu_info);
   gpu_info->context_info_state = result;
   return result;
 }
 
-CollectInfoResult CollectGpuID(uint32* vendor_id, uint32* device_id) {
+CollectInfoResult CollectGpuID(uint32_t* vendor_id, uint32_t* device_id) {
   DCHECK(vendor_id && device_id);
   *vendor_id = 0;
   *device_id = 0;
@@ -205,10 +213,16 @@ CollectInfoResult CollectBasicGraphicsInfo(GPUInfo* gpu_info) {
   std::string driver_version;
   switch (gpu_info->gpu.vendor_id) {
     case kVendorIDAMD:
-      driver_version = CollectDriverVersionATI();
+      driver_version = CollectDriverVersionAMDBrahma();
       if (!driver_version.empty()) {
-        gpu_info->driver_vendor = "ATI / AMD";
+        gpu_info->driver_vendor = "ATI / AMD (Brahma)";
         gpu_info->driver_version = driver_version;
+      } else {
+        driver_version = CollectDriverVersionAMDCatalyst();
+        if (!driver_version.empty()) {
+          gpu_info->driver_vendor = "ATI / AMD (Catalyst)";
+          gpu_info->driver_version = driver_version;
+        }
       }
       break;
     case kVendorIDNVidia:
@@ -244,9 +258,15 @@ CollectInfoResult CollectBasicGraphicsInfo(GPUInfo* gpu_info) {
 CollectInfoResult CollectDriverInfoGL(GPUInfo* gpu_info) {
   DCHECK(gpu_info);
 
+  // Driver vendor and version are always expected to be extracted from the
+  // testing gl version.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kGpuTestingGLVersion) &&
+      !gpu_info->driver_vendor.empty() && !gpu_info->driver_version.empty()) {
+    return kCollectInfoSuccess;
+  }
+
   std::string gl_version = gpu_info->gl_version;
-  if (base::StartsWith(gl_version, "OpenGL ES", base::CompareCase::SENSITIVE))
-    gl_version = gl_version.substr(10);
   std::vector<std::string> pieces = base::SplitString(
       gl_version, base::kWhitespaceASCII, base::KEEP_WHITESPACE,
       base::SPLIT_WANT_NONEMPTY);
@@ -255,14 +275,23 @@ CollectInfoResult CollectDriverInfoGL(GPUInfo* gpu_info) {
   if (pieces.size() < 3)
     return kCollectInfoNonFatalFailure;
 
-  std::string driver_version = pieces[2];
-  size_t pos = driver_version.find_first_not_of("0123456789.");
-  if (pos == 0)
-    return kCollectInfoNonFatalFailure;
-  if (pos != std::string::npos)
-    driver_version = driver_version.substr(0, pos);
+  // Search from the end for the first piece that starts with major.minor or
+  // major.minor.micro but assume the driver version cannot be in the first two
+  // pieces.
+  re2::RE2 pattern("([\\d]+\\.[\\d]+(\\.[\\d]+)?).*");
+  std::string driver_version;
+  auto it = pieces.rbegin();
+  while (pieces.rend() - it > 2) {
+    bool parsed = re2::RE2::FullMatch(*it, pattern, &driver_version);
+    if (parsed)
+      break;
+    ++it;
+  }
 
-  gpu_info->driver_vendor = pieces[1];
+  if (driver_version.empty())
+    return kCollectInfoNonFatalFailure;
+
+  gpu_info->driver_vendor = *(++it);
   gpu_info->driver_version = driver_version;
   return kCollectInfoSuccess;
 }

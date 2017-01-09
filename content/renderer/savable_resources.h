@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/common/savable_subframe.h"
 #include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
@@ -17,7 +18,6 @@ namespace blink {
 class WebElement;
 class WebFrame;
 class WebString;
-class WebView;
 }
 
 // A collection of operations that access the underlying WebKit DOM directly.

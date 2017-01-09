@@ -20,6 +20,11 @@ cr.define('inline.login', function() {
    */
   var authReadyFired;
 
+  /**
+  * Whether the login UI is loaded for signing in primary account.
+  */
+  var isLoginPrimaryAccount;
+
   function onResize(e) {
     chrome.send('switchToFullTab', [e.detail]);
   }
@@ -27,6 +32,8 @@ cr.define('inline.login', function() {
   function onAuthReady(e) {
     $('contents').classList.toggle('loading', false);
     authReadyFired = true;
+    if (isLoginPrimaryAccount)
+      chrome.send('metricsHandler:recordAction', ['Signin_SigninPage_Shown']);
   }
 
   function onDropLink(e) {
@@ -52,6 +59,7 @@ cr.define('inline.login', function() {
    * Initialize the UI.
    */
   function initialize() {
+    $('navigation-button').addEventListener('click', navigationButtonClicked);
     authExtHost = new cr.login.GaiaAuthHost('signin-frame');
     authExtHost.addEventListener('dropLink', onDropLink);
     authExtHost.addEventListener('ready', onAuthReady);
@@ -72,6 +80,7 @@ cr.define('inline.login', function() {
     $('contents').classList.toggle('loading',
         data.authMode != cr.login.GaiaAuthHost.AuthMode.DESKTOP ||
         data.constrained == '1');
+    isLoginPrimaryAccount = data.isLoginPrimaryAccount;
   }
 
   /**
@@ -104,13 +113,36 @@ cr.define('inline.login', function() {
     return authReadyFired;
   }
 
+  function showBackButton() {
+
+    $('navigation-button').icon =
+        isRTL() ? 'icons:arrow-forward' : 'icons:arrow-back';
+
+    $('navigation-button').setAttribute(
+        'aria-label', loadTimeData.getString('accessibleBackButtonLabel'));
+  }
+
+  function showCloseButton() {
+    $('navigation-button').icon = 'icons:close';
+    $('navigation-button').classList.add('enabled');
+    $('navigation-button').setAttribute(
+        'aria-label', loadTimeData.getString('accessibleCloseButtonLabel'));
+  }
+
+  function navigationButtonClicked() {
+    chrome.send('navigationButtonClicked');
+  }
+
   return {
-    getAuthExtHost: getAuthExtHost,
-    isAuthReady: isAuthReady,
-    initialize: initialize,
-    loadAuthExtension: loadAuthExtension,
     closeDialog: closeDialog,
-    handleOAuth2TokenFailure: handleOAuth2TokenFailure
+    getAuthExtHost: getAuthExtHost,
+    handleOAuth2TokenFailure: handleOAuth2TokenFailure,
+    initialize: initialize,
+    isAuthReady: isAuthReady,
+    loadAuthExtension: loadAuthExtension,
+    navigationButtonClicked: navigationButtonClicked,
+    showBackButton: showBackButton,
+    showCloseButton: showCloseButton
   };
 });
 

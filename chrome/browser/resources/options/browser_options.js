@@ -6,6 +6,7 @@ cr.exportPath('options');
 
 /**
  * @typedef {{actionLinkText: (string|undefined),
+ *            accountInfo: (string|undefined),
  *            childUser: (boolean|undefined),
  *            hasError: (boolean|undefined),
  *            hasUnrecoverableError: (boolean|undefined),
@@ -15,6 +16,7 @@ cr.exportPath('options');
  *            signedIn: (boolean|undefined),
  *            signinAllowed: (boolean|undefined),
  *            signoutAllowed: (boolean|undefined),
+ *            statusAction: (string|undefined),
  *            statusText: (string|undefined),
  *            supervisedUser: (boolean|undefined),
  *            syncSystemEnabled: (boolean|undefined)}}
@@ -37,6 +39,18 @@ options.ExtensionData;
  * @see chrome/browser/ui/webui/options/browser_options_handler.cc
  */
 options.Profile;
+
+/**
+ * Device policy SystemTimezoneAutomaticDetection values.
+ * @enum {number}
+ * @const
+ */
+options.AutomaticTimezoneDetectionType = {
+  USERS_DECIDE: 0,
+  DISABLED: 1,
+  IP_ONLY: 2,
+  SEND_WIFI_ACCESS_POINTS: 3,
+};
 
 cr.define('options', function() {
   var OptionsPage = options.OptionsPage;
@@ -79,24 +93,21 @@ cr.define('options', function() {
 
     /**
      * Keeps track of whether the user is signed in or not.
-     * @type {boolean}
-     * @private
+     * @private {boolean}
      */
     signedIn_: false,
 
     /**
      * Indicates whether signing out is allowed or whether a complete profile
      * wipe is required to remove the current enterprise account.
-     * @type {boolean}
-     * @private
+     * @private {boolean}
      */
     signoutAllowed_: true,
 
     /**
      * Keeps track of whether |onShowHomeButtonChanged_| has been called. See
      * |onShowHomeButtonChanged_|.
-     * @type {boolean}
-     * @private
+     * @private {boolean}
      */
     onShowHomeButtonChangedCalled_: false,
 
@@ -104,8 +115,7 @@ cr.define('options', function() {
      * Track if page initialization is complete.  All C++ UI handlers have the
      * chance to manipulate page content within their InitializePage methods.
      * This flag is set to true after all initializers have been called.
-     * @type {boolean}
-     * @private
+     * @private {boolean}
      */
     initializationComplete_: false,
 
@@ -120,6 +130,18 @@ cr.define('options', function() {
      * @private {boolean}
      */
     systemTimezoneIsManaged_: false,
+
+    /**
+     * True if system timezone detection is managed by policy.
+     * @private {boolean}
+     */
+    systemTimezoneAutomaticDetectionIsManaged_: false,
+
+    /**
+     * This is the value of SystemTimezoneAutomaticDetection policy.
+     * @private {number}
+     */
+    systemTimezoneAutomaticDetectionValue_: 0,
 
     /**
      * Cached bluetooth adapter state.
@@ -192,7 +214,12 @@ cr.define('options', function() {
       }
 
       // Sync (Sign in) section.
-      this.updateSyncState_(loadTimeData.getValue('syncData'));
+      this.updateSyncState_(/** @type {options.SyncStatus} */(
+          loadTimeData.getValue('syncData')));
+      if (!$('sync-overview').hidden) {
+        chrome.send('metricsHandler:recordAction',
+                    ['Signin_Impression_FromSettings']);
+      }
 
       $('start-stop-sync').onclick = function(event) {
         if (self.signedIn_) {
@@ -203,7 +230,7 @@ cr.define('options', function() {
         } else if (cr.isChromeOS) {
           SyncSetupOverlay.showSetupUI();
         } else {
-          SyncSetupOverlay.startSignIn();
+          SyncSetupOverlay.startSignIn(false /* creatingSupervisedUser */);
         }
       };
       $('customize-sync').onclick = function(event) {
@@ -312,6 +339,12 @@ cr.define('options', function() {
 
       // Device section (ChromeOS only).
       if (cr.isChromeOS) {
+        if (loadTimeData.getBoolean('showStylusSettings')) {
+          $('stylus-settings-link').onclick = function(event) {
+            PageManager.showPageByName('stylus-overlay');
+          };
+          $('stylus-row').hidden = false;
+        }
         if (loadTimeData.getBoolean('showPowerStatus')) {
           $('power-settings-link').onclick = function(evt) {
             PageManager.showPageByName('power-overlay');
@@ -329,6 +362,11 @@ cr.define('options', function() {
           PageManager.showPageByName('pointer-overlay');
           chrome.send('coreOptionsUserMetricsAction',
                       ['Options_ShowTouchpadSettings']);
+        };
+        $('storage-manager-button').onclick = function(evt) {
+          PageManager.showPageByName('storage');
+          chrome.send('coreOptionsUserMetricsAction',
+                      ['Options_ShowStorageManager']);
         };
       }
 
@@ -351,7 +389,8 @@ cr.define('options', function() {
         profilesList.autoExpands = true;
 
         // The profiles info data in |loadTimeData| might be stale.
-        this.setProfilesInfo_(loadTimeData.getValue('profilesInfo'));
+        this.setProfilesInfo_(/** @type {!Array<!options.Profile>} */(
+            loadTimeData.getValue('profilesInfo')));
         chrome.send('requestProfilesInfo');
 
         profilesList.addEventListener('change',
@@ -361,12 +400,6 @@ cr.define('options', function() {
                       ['Options_ShowCreateProfileDlg']);
           ManageProfileOverlay.showCreateDialog();
         };
-        if (OptionsPage.isSettingsApp()) {
-          $('profiles-app-list-switch').onclick = function(event) {
-            var selectedProfile = self.getSelectedProfileItem_();
-            chrome.send('switchAppListProfile', [selectedProfile.filePath]);
-          };
-        }
         $('profiles-manage').onclick = function(event) {
           chrome.send('metricsHandler:recordAction',
                       ['Options_ShowEditProfileDlg']);
@@ -404,6 +437,13 @@ cr.define('options', function() {
           chrome.send('coreOptionsUserMetricsAction',
               ['Options_ManageAccounts']);
         };
+
+        if (loadTimeData.getBoolean('showQuickUnlockSettings')) {
+          $('manage-screenlock').onclick = function(event) {
+            PageManager.showPageByName('quickUnlockConfigureOverlay');
+          };
+          $('manage-screenlock').hidden = false;
+        }
       } else {
         $('import-data').onclick = function(event) {
           ImportDataOverlay.show();
@@ -455,7 +495,6 @@ cr.define('options', function() {
         PageManager.showPageByName('clearBrowserData');
         chrome.send('coreOptionsUserMetricsAction', ['Options_ClearData']);
       };
-      $('privacyClearDataButton').hidden = OptionsPage.isSettingsApp();
 
       if ($('metrics-reporting-enabled')) {
         $('metrics-reporting-enabled').checked =
@@ -611,16 +650,6 @@ cr.define('options', function() {
         };
       }
 
-      // Device control section.
-      if (cr.isChromeOS &&
-          UIAccountTweaks.currentUserIsOwner() &&
-          loadTimeData.getBoolean('consumerManagementEnabled')) {
-        $('device-control-section').hidden = false;
-        $('consumer-management-button').onclick = function(event) {
-          PageManager.showPageByName('consumer-management-overlay');
-        };
-      }
-
       // Easy Unlock section.
       if (loadTimeData.getBoolean('easyUnlockAllowed')) {
         $('easy-unlock-section').hidden = false;
@@ -650,6 +679,10 @@ cr.define('options', function() {
       $('defaultZoomFactor').onchange = function(event) {
         chrome.send('defaultZoomFactorAction',
             [String(event.target.options[event.target.selectedIndex].value)]);
+      };
+      $('safeBrowsingExtendedReportingCheckbox').onchange = function(event) {
+        chrome.send('safeBrowsingExtendedReportingAction',
+            [event.target.checked]);
       };
 
       // Languages section.
@@ -688,6 +721,16 @@ cr.define('options', function() {
         };
       }
 
+      // CUPS Print section (CrOS only).
+      if (cr.isChromeOS) {
+        if (loadTimeData.getBoolean('cupsPrintEnabled')) {
+          $('cups-printers-section').hidden = false;
+          $('cupsPrintersManageButton').onclick = function() {
+            chrome.send('showCupsPrintDevicesPage');
+          };
+        }
+      }
+
       if (loadTimeData.getBoolean('cloudPrintShowMDnsOptions')) {
         $('cloudprint-options-mdns').hidden = false;
         $('cloudPrintDevicesPageButton').onclick = function() {
@@ -697,13 +740,13 @@ cr.define('options', function() {
 
       // Accessibility section (CrOS only).
       if (cr.isChromeOS) {
-        var updateAccessibilitySettingsButton = function() {
+        var updateAccessibilitySettingsSection = function() {
           $('accessibility-settings').hidden =
               !($('accessibility-spoken-feedback-check').checked);
         };
         Preferences.getInstance().addEventListener(
             'settings.accessibility',
-            updateAccessibilitySettingsButton);
+            updateAccessibilitySettingsSection);
         $('accessibility-learn-more').onclick = function(unused_event) {
           chrome.send('coreOptionsUserMetricsAction',
                       ['Options_AccessibilityLearnMore']);
@@ -711,9 +754,12 @@ cr.define('options', function() {
         $('accessibility-settings-button').onclick = function(unused_event) {
           window.open(loadTimeData.getString('accessibilitySettingsURL'));
         };
+        $('talkback-settings-button').onclick = function(unused_event) {
+          chrome.send('showAccessibilityTalkBackSettings');
+        };
         $('accessibility-spoken-feedback-check').onchange =
-            updateAccessibilitySettingsButton;
-        updateAccessibilitySettingsButton();
+            updateAccessibilitySettingsSection;
+        updateAccessibilitySettingsSection();
 
         var updateScreenMagnifierCenterFocus = function() {
           $('accessibility-screen-magnifier-center-focus-check').disabled =
@@ -730,6 +776,8 @@ cr.define('options', function() {
         Preferences.getInstance().addEventListener(
             $('accessibility-autoclick-check').getAttribute('pref'),
             updateDelayDropdown);
+        $('experimental-accessibility-features').hidden =
+            !loadTimeData.getBoolean('enableExperimentalAccessibilityFeatures');
       }
 
       // Display management section (CrOS only).
@@ -767,7 +815,11 @@ cr.define('options', function() {
 
       // Reset profile settings section.
       $('reset-profile-settings').onclick = function(event) {
-        PageManager.showPageByName('resetProfileSettings');
+        // We use the hash to indicate the source of the reset request. The hash
+        // is removed by the reset profile settings overlay once it has been
+        // consumed.
+        PageManager.showPageByName('resetProfileSettings', true,
+                                   {hash: '#userclick'});
       };
 
       // Extension controlled UI.
@@ -797,6 +849,33 @@ cr.define('options', function() {
         if (button)
           chrome.send('disableExtension', [button.dataset.extensionId]);
       });
+
+      // Setup ARC section.
+      if (cr.isChromeOS) {
+        $('android-apps-settings-label').innerHTML =
+            loadTimeData.getString('androidAppsSettingsLabel');
+        Preferences.getInstance().addEventListener('arc.enabled', function(e) {
+          // Only change settings visibility on committed settings changes.
+          if (e.value.uncommitted)
+            return;
+
+          var isArcEnabled = !e.value.value;
+          var androidAppSettings = $('android-apps-settings');
+          if (androidAppSettings != null)
+            androidAppSettings.hidden = isArcEnabled;
+
+          var talkbackSettingsButton = $('talkback-settings-button');
+          if (talkbackSettingsButton != null)
+            talkbackSettingsButton.hidden = isArcEnabled;
+        });
+
+        $('android-apps-settings-link').addEventListener('click', function(e) {
+            // MouseEvent.detail indicates the current click count (or tap
+            // count, in the case of touch events) in the 'click' event.
+            var activatedFromKeyboard = e.detail == 0;
+            chrome.send('showAndroidAppsSettings', [activatedFromKeyboard]);
+        });
+      }
     },
 
     /** @override */
@@ -1125,6 +1204,9 @@ cr.define('options', function() {
                   loadTimeData.getString('syncButtonTextSignIn');
       $('start-stop-sync-indicator').hidden = signInButton.hidden;
 
+      $('account-info').textContent = syncData.accountInfo;
+      $('account-info').hidden = !this.signedIn_;
+
       // TODO(estade): can this just be textContent?
       $('sync-status-text').innerHTML = syncData.statusText;
       var statusSet = syncData.statusText.length != 0;
@@ -1139,13 +1221,31 @@ cr.define('options', function() {
       $('sync-action-link').disabled = syncData.managed ||
                                        !syncData.syncSystemEnabled;
 
-      // On Chrome OS, sign out the user and sign in again to get fresh
-      // credentials on auth errors.
       $('sync-action-link').onclick = function(event) {
-        if (cr.isChromeOS && syncData.hasError)
-          SyncSetupOverlay.doSignOutOnAuthError();
-        else
-          SyncSetupOverlay.showSetupUI();
+        switch (syncData.statusAction) {
+          case 'reauthenticate':
+<if expr="chromeos">
+            // On Chrome OS, sign out the user and sign in again to get fresh
+            // credentials on auth errors.
+            SyncSetupOverlay.doSignOutOnAuthError();
+</if>
+<if expr="not chromeos">
+            if (syncData.signoutAllowed) {
+              // Silently sign the user out without deleting their profile and
+              // prompt them to sign back in.
+              chrome.send('SyncSetupStopSyncing', [false /* deleteProfile */]);
+              SyncSetupOverlay.startSignIn(false /* creatingSupervisedUser */);
+            } else {
+              chrome.send('showDisconnectManagedProfileDialog');
+            }
+</if>
+            break;
+          case 'upgradeClient':
+            PageManager.showPageByName('help');
+            break;
+          default:
+            SyncSetupOverlay.showSetupUI();
+        }
       };
 
       if (syncData.hasError)
@@ -1479,11 +1579,7 @@ cr.define('options', function() {
       else
         $('profiles-manage').title = '';
       $('profiles-delete').disabled = !profilesList.canDeleteItems ||
-                                      (!hasSelection && !hasSingleProfile);
-      if (OptionsPage.isSettingsApp()) {
-        $('profiles-app-list-switch').disabled = !hasSelection ||
-            selectedProfile.isCurrentProfile;
-      }
+                                      !hasSelection;
       var importData = $('import-data');
       if (importData) {
         importData.disabled = $('import-data').disabled = hasSelection &&
@@ -1503,18 +1599,15 @@ cr.define('options', function() {
       var showSingleProfileView = !usingNewProfilesUI && numProfiles == 1;
       $('profiles-list').hidden = showSingleProfileView;
       $('profiles-single-message').hidden = !showSingleProfileView;
-      $('profiles-manage').hidden =
-          showSingleProfileView || OptionsPage.isSettingsApp();
+      $('profiles-manage').hidden = showSingleProfileView;
       $('profiles-delete').textContent = showSingleProfileView ?
           loadTimeData.getString('profilesDeleteSingle') :
           loadTimeData.getString('profilesDelete');
-      if (OptionsPage.isSettingsApp())
-        $('profiles-app-list-switch').hidden = showSingleProfileView;
     },
 
     /**
      * Adds all |profiles| to the list.
-     * @param {Array<!options.Profile>} profiles An array of profile info
+     * @param {!Array<!options.Profile>} profiles An array of profile info
      *     objects.
      * @private
      */
@@ -1681,17 +1774,37 @@ cr.define('options', function() {
      * @private
      */
     updateTimezoneSectionState_: function() {
+      var self = this;
+      $('resolve-timezone-by-geolocation')
+          .onclick = function(event) {
+        self.resolveTimezoneByGeolocation_ = event.currentTarget.checked;
+      };
       if (this.systemTimezoneIsManaged_) {
-        $('resolve-timezone-by-geolocation-selection').disabled = true;
-        $('resolve-timezone-by-geolocation').onclick = function(event) {};
+        $('resolve-timezone-by-geolocation').disabled = true;
+        $('resolve-timezone-by-geolocation').checked = false;
+      } else if (this.systemTimezoneAutomaticDetectionIsManaged_) {
+        if (this.systemTimezoneAutomaticDetectionValue_ ==
+            options.AutomaticTimezoneDetectionType.USERS_DECIDE) {
+          $('resolve-timezone-by-geolocation').disabled = false;
+          $('resolve-timezone-by-geolocation')
+              .checked = this.resolveTimezoneByGeolocation_;
+          $('timezone-value-select')
+              .disabled = this.resolveTimezoneByGeolocation_;
+        } else {
+          $('resolve-timezone-by-geolocation').disabled = true;
+          $('resolve-timezone-by-geolocation')
+              .checked =
+              (this.systemTimezoneAutomaticDetectionValue_ !=
+               options.AutomaticTimezoneDetectionType.DISABLED);
+          $('timezone-value-select').disabled = true;
+        }
       } else {
         this.enableElementIfPossible_(
-            getRequiredElement('resolve-timezone-by-geolocation-selection'));
-        $('resolve-timezone-by-geolocation').onclick = function(event) {
-          $('timezone-value-select').disabled = event.currentTarget.checked;
-        };
+            getRequiredElement('resolve-timezone-by-geolocation'));
         $('timezone-value-select').disabled =
             this.resolveTimezoneByGeolocation_;
+        $('resolve-timezone-by-geolocation')
+            .checked = this.resolveTimezoneByGeolocation_;
       }
     },
 
@@ -1703,6 +1816,20 @@ cr.define('options', function() {
      */
     setSystemTimezoneManaged_: function(managed) {
       this.systemTimezoneIsManaged_ = managed;
+      this.updateTimezoneSectionState_();
+    },
+
+    /**
+     * This is called from chromium code when system timezone detection
+     * "managed" state is changed. Enables or disables dependent settings.
+     * @param {boolean} managed Is true when system timezone autodetection is
+     *     managed by enterprise policy. False otherwize.
+     * @param {options.AutomaticTimezoneDetectionType} value Current value of
+     *     SystemTimezoneAutomaticDetection device policy.
+     */
+    setSystemTimezoneAutomaticDetectionManaged_: function(managed, value) {
+      this.systemTimezoneAutomaticDetectionIsManaged_ = managed;
+      this.systemTimezoneAutomaticDetectionValue_ = value;
       this.updateTimezoneSectionState_();
     },
 
@@ -1737,12 +1864,17 @@ cr.define('options', function() {
 
     /**
      * Enables or disables the Chrome OS display settings button and overlay.
+     * @param {boolean} uiEnabled
+     * @param {boolean} unifiedEnabled
+     * @param {boolean} mirroredEnabled
      * @private
      */
-    enableDisplaySettings_: function(enabled, showUnifiedDesktop) {
+    enableDisplaySettings_: function(
+        uiEnabled, unifiedEnabled, mirroredEnabled) {
       if (cr.isChromeOS) {
-        $('display-options').disabled = !enabled;
-        DisplayOptions.getInstance().setEnabled(enabled, showUnifiedDesktop);
+        $('display-options').disabled = !uiEnabled;
+        DisplayOptions.getInstance().setEnabled(
+            uiEnabled, unifiedEnabled, mirroredEnabled);
       }
     },
 
@@ -1789,6 +1921,15 @@ cr.define('options', function() {
     },
 
     /**
+      * Set the checked state of the Safe Browsing Extended Reporting Enabled
+      * checkbox.
+      * @private
+      */
+    setExtendedReportingEnabledCheckboxState_: function(checked) {
+      $('safeBrowsingExtendedReportingCheckbox').checked = checked;
+    },
+
+    /**
      * Set network prediction checkbox value.
      *
      * @param {{value: number, disabled: boolean}} pref Information about
@@ -1799,7 +1940,8 @@ cr.define('options', function() {
      */
     setNetworkPredictionValue_: function(pref) {
       var checkbox = $('networkPredictionOptions');
-      checkbox.disabled = pref.disabled;
+      checkbox.disabled = pref.disabled ||
+                          loadTimeData.getBoolean('profileIsGuest');
       checkbox.checked = (pref.value != NetworkPredictionOptions.NEVER);
     },
 
@@ -1816,7 +1958,7 @@ cr.define('options', function() {
      * @private
      */
     setFontSize_: function(pref) {
-      var selectCtl = $('defaultFontSize');
+      var selectCtl = /** @type {HTMLSelectElement} */($('defaultFontSize'));
       selectCtl.disabled = pref.disabled;
       // Create a synthetic pref change event decorated as
       // CoreOptionsHandler::CreateValueForPref() does.
@@ -2063,7 +2205,10 @@ cr.define('options', function() {
      * @private
      */
     onBluetoothAdapterStateChanged_: function(state) {
-      if (!state || !state.available) {
+      var disallowBluetooth = !loadTimeData.getBoolean('allowBluetooth');
+      // If allowBluetooth is false, state.available will always be false, so
+      // assume Bluetooth is available but disabled by policy.
+      if (!state || (!state.available && !disallowBluetooth)) {
         this.bluetoothAdapterState_ = null;
         $('bluetooth-devices').hidden = true;
         return;
@@ -2071,6 +2216,19 @@ cr.define('options', function() {
       $('bluetooth-devices').hidden = false;
       this.bluetoothAdapterState_ = state;
       this.setBluetoothState_(state.powered);
+
+      var enableBluetoothEl = $('enable-bluetooth');
+      if (disallowBluetooth) {
+        enableBluetoothEl.setAttribute('pref', 'cros.device.allow_bluetooth');
+        enableBluetoothEl.setAttribute('controlled-by', 'policy');
+        enableBluetoothEl.disabled = true;
+        $('bluetooth-controlled-setting-indicator').hidden = false;
+        return;
+      }
+      enableBluetoothEl.removeAttribute('pref');
+      enableBluetoothEl.removeAttribute('controlled-by');
+      enableBluetoothEl.disabled = false;
+      $('bluetooth-controlled-setting-indicator').hidden = true;
 
       // Flush the device lists.
       $('bluetooth-paired-devices-list').clear();
@@ -2234,26 +2392,28 @@ cr.define('options', function() {
     'removeBluetoothDevice',
     'scrollToSection',
     'setAccountPictureManaged',
-    'setWallpaperManaged',
+    'setAllHotwordSectionsVisible',
+    'setAudioHistorySectionVisible',
     'setAutoOpenFileTypesDisplayed',
     'setCanSetTime',
+    'setExtendedReportingEnabledCheckboxState',
     'setFontSize',
+    'setHighContrastCheckboxState',
     'setHotwordRetrainLinkVisible',
+    'setMetricsReportingCheckboxState',
+    'setMetricsReportingSettingVisibility',
     'setNativeThemeButtonEnabled',
     'setNetworkPredictionValue',
     'setNowSectionVisible',
-    'setHighContrastCheckboxState',
-    'setAllHotwordSectionsVisible',
-    'setMetricsReportingCheckboxState',
-    'setMetricsReportingSettingVisibility',
     'setProfilesInfo',
     'setSpokenFeedbackCheckboxState',
+    'setSystemTimezoneAutomaticDetectionManaged',
     'setSystemTimezoneManaged',
     'setThemesResetButtonEnabled',
     'setVirtualKeyboardCheckboxState',
+    'setWallpaperManaged',
     'setupPageZoomSelector',
     'setupProxySettingsButton',
-    'setAudioHistorySectionVisible',
     'showCreateProfileError',
     'showCreateProfileSuccess',
     'showCreateProfileWarning',
@@ -2284,40 +2444,27 @@ cr.define('options', function() {
     };
 
     /**
-     * Shows different button text for each consumer management enrollment
-     * status.
-     * @enum {string} status Consumer management service status string.
+     * Shows Android Apps settings when they are available.
+     * (Chrome OS only).
      */
-    BrowserOptions.setConsumerManagementStatus = function(status) {
-      var button = $('consumer-management-button');
-      if (status == 'StatusUnknown') {
-        button.hidden = true;
+    BrowserOptions.showAndroidAppsSection = function(isArcEnabled) {
+      var section = $('android-apps-section');
+      if (!section)
         return;
-      }
 
-      button.hidden = false;
-      var strId;
-      switch (status) {
-        case ConsumerManagementOverlay.Status.STATUS_UNENROLLED:
-          strId = 'consumerManagementEnrollButton';
-          button.disabled = false;
-          ConsumerManagementOverlay.setStatus(status);
-          break;
-        case ConsumerManagementOverlay.Status.STATUS_ENROLLING:
-          strId = 'consumerManagementEnrollingButton';
-          button.disabled = true;
-          break;
-        case ConsumerManagementOverlay.Status.STATUS_ENROLLED:
-          strId = 'consumerManagementUnenrollButton';
-          button.disabled = false;
-          ConsumerManagementOverlay.setStatus(status);
-          break;
-        case ConsumerManagementOverlay.Status.STATUS_UNENROLLING:
-          strId = 'consumerManagementUnenrollingButton';
-          button.disabled = true;
-          break;
-      }
-      button.textContent = loadTimeData.getString(strId);
+      section.hidden = false;
+    };
+
+    /**
+     * Shows/hides Android Settings app section.
+     * (Chrome OS only).
+     */
+    BrowserOptions.setAndroidAppsSettingsVisibility = function(isVisible) {
+      var settings = $('android-apps-settings');
+      if (!settings)
+        return;
+
+      settings.hidden = !isVisible;
     };
   }
 

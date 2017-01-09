@@ -28,25 +28,29 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-#include "InternalsVibration.h"
+#include "modules/vibration/testing/InternalsVibration.h"
 
-#include "core/dom/Document.h"
+#include "core/frame/Navigator.h"
 #include "core/testing/Internals.h"
 #include "modules/vibration/NavigatorVibration.h"
+#include "modules/vibration/VibrationController.h"
 
 namespace blink {
 
-bool InternalsVibration::isVibrating(Internals&, Document* document)
-{
-    ASSERT(document && document->page());
-    return NavigatorVibration::from(*document->page()).isVibrating();
+bool InternalsVibration::isVibrating(Internals&, Navigator* navigator) {
+  DCHECK(navigator && navigator->frame());
+  return NavigatorVibration::from(*navigator)
+      .controller(*navigator->frame())
+      ->isRunning();
 }
 
-Vector<unsigned> InternalsVibration::pendingVibrationPattern(Internals&, Document* document)
-{
-    ASSERT(document && document->page());
-    return NavigatorVibration::from(*document->page()).pattern();
+Vector<unsigned> InternalsVibration::pendingVibrationPattern(
+    Internals&,
+    Navigator* navigator) {
+  DCHECK(navigator && navigator->frame());
+  return NavigatorVibration::from(*navigator)
+      .controller(*navigator->frame())
+      ->pattern();
 }
 
-} // namespace blink
+}  // namespace blink

@@ -5,8 +5,11 @@
 #ifndef UI_VIEWS_CONTROLS_WEBVIEW_WEBVIEW_H_
 #define UI_VIEWS_CONTROLS_WEBVIEW_WEBVIEW_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -96,8 +99,8 @@ class WEBVIEW_EXPORT WebView : public View,
  protected:
   // Swaps the owned WebContents |wc_owner_| with |new_web_contents|. Returns
   // the previously owned WebContents.
-  scoped_ptr<content::WebContents> SwapWebContents(
-      scoped_ptr<content::WebContents> new_web_contents);
+  std::unique_ptr<content::WebContents> SwapWebContents(
+      std::unique_ptr<content::WebContents> new_web_contents);
 
   // Called when the web contents is successfully attached.
   virtual void OnWebContentsAttached() {}
@@ -110,7 +113,7 @@ class WEBVIEW_EXPORT WebView : public View,
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnFocus() override;
   void AboutToRequestFocusFromTabTraversal(bool reverse) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   gfx::Size GetPreferredSize() const override;
 
@@ -129,14 +132,15 @@ class WEBVIEW_EXPORT WebView : public View,
   void RenderViewHostChanged(content::RenderViewHost* old_host,
                              content::RenderViewHost* new_host) override;
   void WebContentsDestroyed() override;
-  void DidShowFullscreenWidget(int routing_id) override;
-  void DidDestroyFullscreenWidget(int routing_id) override;
-  void DidToggleFullscreenModeForTab(bool entered_fullscreen) override;
+  void DidShowFullscreenWidget() override;
+  void DidDestroyFullscreenWidget() override;
+  void DidToggleFullscreenModeForTab(bool entered_fullscreen,
+                                     bool will_cause_resize) override;
   void DidAttachInterstitialPage() override;
   void DidDetachInterstitialPage() override;
   // Workaround for MSVC++ linker bug/feature that requires
   // instantiation of the inline IPC::Listener methods in all translation units.
-  void OnChannelConnected(int32 peer_id) override {}
+  void OnChannelConnected(int32_t peer_id) override {}
   void OnChannelError() override {}
   void OnBadMessageReceived(const IPC::Message& message) override {}
   void OnWebContentsFocused() override;
@@ -156,7 +160,7 @@ class WEBVIEW_EXPORT WebView : public View,
 
   NativeViewHost* const holder_;
   // Non-NULL if |web_contents()| was created and is owned by this WebView.
-  scoped_ptr<content::WebContents> wc_owner_;
+  std::unique_ptr<content::WebContents> wc_owner_;
   // The RenderProcessHost to which this RenderProcessHostObserver is added.
   // Since WebView::GetTextInputClient is relying on RWHV::GetTextInputClient,
   // we have to observe the lifecycle of the underlying RWHV through

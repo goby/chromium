@@ -4,15 +4,20 @@
 
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_creator.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 
@@ -22,12 +27,23 @@ using base::TimeDelta;
 namespace {
 
 const char kChromeProxyHeader[] = "chrome-proxy";
+const char kChromeProxyAcceptTransformHeader[] =
+    "chrome-proxy-accept-transform";
+const char kChromeProxyContentTransformHeader[] =
+    "chrome-proxy-content-transform";
 
 const char kActionValueDelimiter = '=';
 
-const char kChromeProxyLoFiDirective[] = "q=low";
-const char kChromeProxyLoFiPreviewDirective[] = "q=preview";
-const char kChromeProxyLoFiExperimentDirective[] = "exp=lofi_active_control";
+// Previews directives.
+const char kEmptyImageDirective[] = "empty-image";
+const char kLitePageDirective[] = "lite-page";
+const char kCompressedVideoDirective[] = "compressed-video";
+const char kIdentityDirective[] = "identity";
+
+const char kChromeProxyLitePageIngoreBlacklistDirective[] =
+    "exp=ignore_preview_blacklist";
+
+const char kIfHeavyQualifier[] = "if-heavy";
 
 const char kChromeProxyActionBlockOnce[] = "block-once";
 const char kChromeProxyActionBlock[] = "block";
@@ -44,10 +60,49 @@ const int kMediumBypassMaxSeconds = 300;
 
 // Returns a random bypass duration between 1 and 5 minutes.
 base::TimeDelta GetDefaultBypassDuration() {
-  const int64 delta_ms =
+  const int64_t delta_ms =
       base::RandInt(base::TimeDelta::FromMinutes(1).InMilliseconds(),
                     base::TimeDelta::FromMinutes(5).InMilliseconds());
   return TimeDelta::FromMilliseconds(delta_ms);
+}
+
+bool StartsWithActionPrefix(base::StringPiece header_value,
+                            base::StringPiece action_prefix) {
+  DCHECK(!action_prefix.empty());
+  // A valid action does not include a trailing '='.
+  DCHECK(action_prefix.back() != kActionValueDelimiter);
+
+  return header_value.size() > action_prefix.size() + 1 &&
+         header_value[action_prefix.size()] == kActionValueDelimiter &&
+         base::StartsWith(header_value, action_prefix,
+                          base::CompareCase::INSENSITIVE_ASCII);
+}
+
+// Returns true if the provided transform type is specified in the provided
+// Chrome-Proxy-Content-Transform header value.
+bool IsPreviewTypeInHeaderValue(const std::string& header_value,
+                                const std::string& transform_type) {
+  std::vector<std::string> tokens =
+      base::SplitString(base::ToLowerASCII(header_value), ";",
+                        base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (tokens.empty())
+    return false;
+  std::string header_transform_type;
+  base::TrimWhitespaceASCII(tokens[0], base::TRIM_ALL, &header_transform_type);
+  return header_transform_type == transform_type;
+}
+
+// Returns true if the provided transform type is specified in the
+// Chrome-Proxy-Content-Transform-Header.
+bool IsPreviewType(const net::HttpResponseHeaders& headers,
+                   const std::string& transform_type) {
+  std::string header_value;
+  if (!headers.GetNormalizedHeader(
+          data_reduction_proxy::chrome_proxy_content_transform_header(),
+          &header_value)) {
+    return false;
+  }
+  return IsPreviewTypeInHeaderValue(header_value, transform_type);
 }
 
 }  // namespace
@@ -58,73 +113,91 @@ const char* chrome_proxy_header() {
   return kChromeProxyHeader;
 }
 
-const char* chrome_proxy_lo_fi_directive() {
-  return kChromeProxyLoFiDirective;
+const char* chrome_proxy_accept_transform_header() {
+  return kChromeProxyAcceptTransformHeader;
 }
 
-const char* chrome_proxy_lo_fi_preview_directive() {
-  return kChromeProxyLoFiPreviewDirective;
+const char* chrome_proxy_content_transform_header() {
+  return kChromeProxyContentTransformHeader;
 }
 
-const char* chrome_proxy_lo_fi_experiment_directive() {
-  return kChromeProxyLoFiExperimentDirective;
+const char* empty_image_directive() {
+  return kEmptyImageDirective;
 }
 
-bool GetDataReductionProxyActionValue(
-    const net::HttpResponseHeaders* headers,
-    const std::string& action_prefix,
-    std::string* action_value) {
+const char* lite_page_directive() {
+  return kLitePageDirective;
+}
+
+const char* compressed_video_directive() {
+  return kCompressedVideoDirective;
+}
+
+const char* identity_directive() {
+  return kIdentityDirective;
+}
+
+const char* chrome_proxy_lite_page_ignore_blacklist_directive() {
+  return kChromeProxyLitePageIngoreBlacklistDirective;
+}
+
+const char* if_heavy_qualifier() {
+  return kIfHeavyQualifier;
+}
+
+bool IsEmptyImagePreview(const net::HttpResponseHeaders& headers) {
+  return IsPreviewType(headers, kEmptyImageDirective);
+}
+
+bool IsEmptyImagePreview(const std::string& content_transform_value) {
+  return IsPreviewTypeInHeaderValue(content_transform_value,
+                                    kEmptyImageDirective);
+}
+
+bool IsLitePagePreview(const net::HttpResponseHeaders& headers) {
+  return IsPreviewType(headers, kLitePageDirective);
+}
+
+bool GetDataReductionProxyActionValue(const net::HttpResponseHeaders* headers,
+                                      base::StringPiece action_prefix,
+                                      std::string* action_value) {
   DCHECK(headers);
-  DCHECK(!action_prefix.empty());
-  // A valid action does not include a trailing '='.
-  DCHECK(action_prefix[action_prefix.size() - 1] != kActionValueDelimiter);
-  void* iter = NULL;
+  size_t iter = 0;
   std::string value;
-  std::string prefix = action_prefix + kActionValueDelimiter;
 
   while (headers->EnumerateHeader(&iter, kChromeProxyHeader, &value)) {
-    if (value.size() > prefix.size()) {
-      if (base::StartsWith(value, prefix,
-                           base::CompareCase::INSENSITIVE_ASCII)) {
-        if (action_value)
-          *action_value = value.substr(prefix.size());
-        return true;
-      }
+    if (StartsWithActionPrefix(value, action_prefix)) {
+      if (action_value)
+        *action_value = value.substr(action_prefix.size() + 1);
+      return true;
     }
   }
   return false;
 }
 
 bool ParseHeadersAndSetBypassDuration(const net::HttpResponseHeaders* headers,
-                                      const std::string& action_prefix,
+                                      base::StringPiece action_prefix,
                                       base::TimeDelta* bypass_duration) {
   DCHECK(headers);
-  DCHECK(!action_prefix.empty());
-  // A valid action does not include a trailing '='.
-  DCHECK(action_prefix[action_prefix.size() - 1] != kActionValueDelimiter);
-  void* iter = NULL;
+  size_t iter = 0;
   std::string value;
-  std::string prefix = action_prefix + kActionValueDelimiter;
 
   while (headers->EnumerateHeader(&iter, kChromeProxyHeader, &value)) {
-    if (value.size() > prefix.size()) {
-      if (base::StartsWith(value, prefix,
-                           base::CompareCase::INSENSITIVE_ASCII)) {
-        int64 seconds;
-        if (!base::StringToInt64(
-                StringPiece(value.begin() + prefix.size(), value.end()),
-                &seconds) || seconds < 0) {
-          continue;  // In case there is a well formed instruction.
-        }
-        if (seconds != 0) {
-          *bypass_duration = TimeDelta::FromSeconds(seconds);
-        } else {
-          // Server deferred to us to choose a duration. Default to a random
-          // duration between one and five minutes.
-          *bypass_duration = GetDefaultBypassDuration();
-        }
-        return true;
+    if (StartsWithActionPrefix(value, action_prefix)) {
+      int64_t seconds;
+      if (!base::StringToInt64(
+              StringPiece(value).substr(action_prefix.size() + 1), &seconds) ||
+          seconds < 0) {
+        continue;  // In case there is a well formed instruction.
       }
+      if (seconds != 0) {
+        *bypass_duration = TimeDelta::FromSeconds(seconds);
+      } else {
+        // Server deferred to us to choose a duration. Default to a random
+        // duration between one and five minutes.
+        *bypass_duration = GetDefaultBypassDuration();
+      }
+      return true;
     }
   }
   return false;
@@ -181,18 +254,18 @@ bool ParseHeadersForBypassInfo(const net::HttpResponseHeaders* headers,
 
 bool HasDataReductionProxyViaHeader(const net::HttpResponseHeaders* headers,
                                     bool* has_intermediary) {
-  const size_t kVersionSize = 4;
-  const char kDataReductionProxyViaValue[] = "Chrome-Compression-Proxy";
-  size_t value_len = strlen(kDataReductionProxyViaValue);
-  void* iter = NULL;
+  static const size_t kVersionSize = 4;
+  static const char kDataReductionProxyViaValue[] = "Chrome-Compression-Proxy";
+  size_t iter = 0;
   std::string value;
 
   // Case-sensitive comparison of |value|. Assumes the received protocol and the
   // space following it are always |kVersionSize| characters. E.g.,
   // 'Via: 1.1 Chrome-Compression-Proxy'
   while (headers->EnumerateHeader(&iter, "via", &value)) {
-    if (value.size() >= kVersionSize + value_len &&
-        !value.compare(kVersionSize, value_len, kDataReductionProxyViaValue)) {
+    if (base::StringPiece(value).substr(
+            kVersionSize, arraysize(kDataReductionProxyViaValue) - 1) ==
+        kDataReductionProxyViaValue) {
       if (has_intermediary)
         // We assume intermediary exists if there is another Via header after
         // the data reduction proxy's Via header.
@@ -254,13 +327,17 @@ DataReductionProxyBypassType GetDataReductionProxyBypassType(
         headers->response_code() < net::HTTP_INTERNAL_SERVER_ERROR) {
       // At this point, any 4xx response that is missing the via header
       // indicates an issue that is scoped to only the current request, so only
-      // bypass the data reduction proxy for a second.
-      // TODO(sclittle): Change this to only bypass the current request once
-      // that is fully supported, see http://crbug.com/418342.
-      data_reduction_proxy_info->bypass_duration = TimeDelta::FromSeconds(1);
+      // bypass the data reduction proxy for the current request.
+      data_reduction_proxy_info->bypass_all = true;
+      data_reduction_proxy_info->mark_proxies_as_bad = false;
+      data_reduction_proxy_info->bypass_duration = TimeDelta();
       return BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_4XX;
     }
-    return BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_OTHER;
+
+    // Missing the via header should not trigger bypass if the client is
+    // included in the tamper detection experiment.
+    if (!params::IsIncludedInTamperDetectionExperiment())
+      return BYPASS_EVENT_TYPE_MISSING_VIA_HEADER_OTHER;
   }
   // There is no bypass event.
   return BYPASS_EVENT_TYPE_MAX;
@@ -306,19 +383,13 @@ void GetDataReductionProxyHeaderWithFingerprintRemoved(
     const net::HttpResponseHeaders* headers,
     std::vector<std::string>* values) {
   DCHECK(values);
-  std::string chrome_proxy_fingerprint_prefix = std::string(
-      kChromeProxyActionFingerprintChromeProxy) + kActionValueDelimiter;
 
   std::string value;
-  void* iter = NULL;
+  size_t iter = 0;
   while (headers->EnumerateHeader(&iter, kChromeProxyHeader, &value)) {
-    if (value.size() > chrome_proxy_fingerprint_prefix.size()) {
-      if (base::StartsWith(value, chrome_proxy_fingerprint_prefix,
-                           base::CompareCase::INSENSITIVE_ASCII)) {
-        continue;
-      }
-    }
-    values->push_back(value);
+    if (StartsWithActionPrefix(value, kChromeProxyActionFingerprintChromeProxy))
+      continue;
+    values->push_back(std::move(value));
   }
 }
 

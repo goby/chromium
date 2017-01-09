@@ -5,14 +5,18 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_GPU_SERVICE_TEST_H_
 #define GPU_COMMAND_BUFFER_SERVICE_GPU_SERVICE_TEST_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/message_loop/message_loop.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_mock.h"
 
-namespace gfx {
+namespace gl {
 class GLContextStubWithExtensions;
+class GLSurface;
+class GLSurfaceStub;
 }
 
 namespace gpu {
@@ -28,14 +32,17 @@ class GpuServiceTest : public testing::Test {
   void SetUpWithGLVersion(const char* gl_version, const char* gl_extensions);
   void SetUp() override;
   void TearDown() override;
-  gfx::GLContext* GetGLContext();
+  gl::GLContext* GetGLContext();
+  gl::GLSurface* GetGLSurface();
 
-  scoped_ptr< ::testing::StrictMock< ::gfx::MockGLInterface> > gl_;
+  std::unique_ptr<::testing::StrictMock<::gl::MockGLInterface>> gl_;
 
  private:
   bool ran_setup_;
   bool ran_teardown_;
-  scoped_refptr<gfx::GLContextStubWithExtensions> context_;
+  scoped_refptr<gl::GLContextStubWithExtensions> context_;
+  scoped_refptr<gl::GLSurfaceStub> surface_;
+  base::MessageLoop message_loop_;
 };
 
 }  // namespace gles2

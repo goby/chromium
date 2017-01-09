@@ -5,6 +5,8 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_GESTURE_EVENT_DATA_H_
 #define UI_EVENTS_GESTURE_DETECTION_GESTURE_EVENT_DATA_H_
 
+#include <stddef.h>
+
 #include "base/time/time.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/gesture_detection/gesture_detection_export.h"
@@ -26,8 +28,10 @@ struct GESTURE_DETECTION_EXPORT GestureEventData {
                    float raw_y,
                    size_t touch_point_count,
                    const gfx::RectF& bounding_box,
-                   int flags);
+                   int flags,
+                   uint32_t unique_touch_event_id);
   GestureEventData(EventType type, const GestureEventData&);
+  GestureEventData(const GestureEventData& other);
 
   EventType type() const { return details.type(); }
 
@@ -40,6 +44,11 @@ struct GESTURE_DETECTION_EXPORT GestureEventData {
   float raw_x;
   float raw_y;
   int flags;
+
+  // The unique id of the touch event that released the gesture event. This
+  // field gets a non-zero from the corresponding field in
+  // GestureEventDataPacket at the moment the gesture is pushed into the packet.
+  uint32_t unique_touch_event_id;
 
  private:
   friend class GestureEventDataPacket;

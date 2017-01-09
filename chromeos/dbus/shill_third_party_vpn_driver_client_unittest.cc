@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "base/bind.h"
+#include "base/run_loop.h"
 #include "chromeos/dbus/shill_client_unittest_base.h"
 #include "chromeos/dbus/shill_third_party_vpn_driver_client.h"
 #include "chromeos/dbus/shill_third_party_vpn_observer.h"
@@ -41,7 +45,7 @@ class ShillThirdPartyVpnDriverClientTest : public ShillClientUnittestBase {
     client_.reset(ShillThirdPartyVpnDriverClient::Create());
     client_->Init(mock_bus_.get());
     // Run the message loop to run the signal connection result callback.
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void TearDown() override { ShillClientUnittestBase::TearDown(); }
@@ -54,7 +58,7 @@ class ShillThirdPartyVpnDriverClientTest : public ShillClientUnittestBase {
   }
 
  protected:
-  scoped_ptr<ShillThirdPartyVpnDriverClient> client_;
+  std::unique_ptr<ShillThirdPartyVpnDriverClient> client_;
 };
 
 TEST_F(ShillThirdPartyVpnDriverClientTest, PlatformSignal) {
@@ -90,7 +94,7 @@ TEST_F(ShillThirdPartyVpnDriverClientTest, PlatformSignal) {
 
   testing::Mock::VerifyAndClearExpectations(&observer);
 
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   uint32_t connection_state = 2;
 
   PrepareForMethodCall(shill::kUpdateConnectionStateFunction,
@@ -119,11 +123,11 @@ TEST_F(ShillThirdPartyVpnDriverClientTest, PlatformSignal) {
 
   testing::Mock::VerifyAndClearExpectations(&observer);
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillThirdPartyVpnDriverClientTest, SetParameters) {
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
   writer.AppendString(std::string("deadbeef"));
 
@@ -145,11 +149,11 @@ TEST_F(ShillThirdPartyVpnDriverClientTest, SetParameters) {
                  base::Unretained(this)),
       base::Bind(&Failure));
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillThirdPartyVpnDriverClientTest, UpdateConnectionState) {
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   uint32_t connection_state = 2;
 
   EXPECT_CALL(*this, MockSuccess()).Times(1);
@@ -164,11 +168,11 @@ TEST_F(ShillThirdPartyVpnDriverClientTest, UpdateConnectionState) {
                  base::Unretained(this)),
       base::Bind(&Failure));
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillThirdPartyVpnDriverClientTest, SendPacket) {
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
 
   const size_t kPacketSize = 5;
   const std::vector<char> data(kPacketSize, 0);
@@ -186,7 +190,7 @@ TEST_F(ShillThirdPartyVpnDriverClientTest, SendPacket) {
                  base::Unretained(this)),
       base::Bind(&Failure));
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace chromeos

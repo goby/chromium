@@ -10,6 +10,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/sys_info.h"
 #include "base/test/test_timeouts.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/common/content_paths.h"
@@ -21,10 +22,10 @@
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_resource_dispatcher_host_delegate.h"
 #include "net/base/escape.h"
-#include "net/base/test_data_directory.h"
 #include "net/ssl/ssl_server_config.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/test_data_directory.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -171,7 +172,8 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, WorkerTlsClientAuth) {
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   https_server.ServeFilesFromSourceDirectory("content/test/data");
   net::SSLServerConfig ssl_config;
-  ssl_config.require_client_cert = true;
+  ssl_config.client_cert_type =
+      net::SSLServerConfig::ClientCertType::REQUIRE_CLIENT_CERT;
   https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK, ssl_config);
   ASSERT_TRUE(https_server.Start());
 
@@ -191,7 +193,8 @@ IN_PROC_BROWSER_TEST_F(WorkerTest, SharedWorkerTlsClientAuth) {
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   https_server.ServeFilesFromSourceDirectory("content/test/data");
   net::SSLServerConfig ssl_config;
-  ssl_config.require_client_cert = true;
+  ssl_config.client_cert_type =
+      net::SSLServerConfig::ClientCertType::REQUIRE_CLIENT_CERT;
   https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK, ssl_config);
   ASSERT_TRUE(https_server.Start());
 

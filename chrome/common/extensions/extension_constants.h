@@ -5,17 +5,19 @@
 #ifndef CHROME_COMMON_EXTENSIONS_EXTENSION_CONSTANTS_H_
 #define CHROME_COMMON_EXTENSIONS_EXTENSION_CONSTANTS_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
+#include "build/build_config.h"
 #include "url/gurl.h"
 
 namespace extension_urls {
 
 // This returns the compile-time constant webstore update url specific to
 // Chrome. Usually you should prefer using GetWebstoreUpdateUrl.
-GURL GetDefaultWebstoreUpdateUrl();
+const char* GetDefaultWebstoreUpdateUrl();
 
 // Field to use with webstore URL for tracking launch source.
 extern const char kWebstoreSourceField[];
@@ -53,6 +55,9 @@ extern const char kEasyUnlockAppId[];
 // The extension id of the Enterprise Web Store component application.
 extern const char kEnterpriseWebStoreAppId[];
 
+// The extension id of the feedback component extension.
+extern const char kFeedbackExtensionId[];
+
 // The extension id of GMail application.
 extern const char kGmailAppId[];
 
@@ -88,9 +93,6 @@ extern const char kHotwordNewExtensionId[];
 
 // The extension id of the hotword shared module.
 extern const char kHotwordSharedModuleId[];
-
-// The extension id of the settings application.
-extern const char kSettingsAppId[];
 
 // The extension id of the Youtube application.
 extern const char kYoutubeAppId[];
@@ -196,6 +198,11 @@ extern const char kChromeVoxExtensionId[];
 // Path to preinstalled ChromeVox screen reader extension (relative to
 // |chrome::DIR_RESOURCES|).
 extern const char kChromeVoxExtensionPath[];
+// The extension id of the Select-to-speak extension.
+extern const char kSelectToSpeakExtensionId[];
+// Path to preinstalled Select-to-speak extension (relative to
+// |chrome::DIR_RESOURCES|).
+extern const char kSelectToSpeakExtensionPath[];
 // Name of the manifest file in an extension when a special manifest is used
 // for guest mode.
 extern const char kGuestManifestFilename[];
@@ -244,10 +251,11 @@ extern const char kAppStateReadyToRun[];
 // The path part of the file system url used for media file systems.
 extern const char kMediaFileSystemPathPart[];
 
-// The key used for signing some pieces of data from the webstore.
-extern const uint8 kWebstoreSignaturesPublicKey[];
-extern const int kWebstoreSignaturesPublicKeySize;
-
+#if defined(OS_CHROMEOS)
+// Returns true if |extension_id| is one of the IME extensions that will create
+// IME menu.
+bool IsImeMenuExtensionId(const std::string& extension_id);
+#endif
 }  // namespace extension_misc
 
 #endif  // CHROME_COMMON_EXTENSIONS_EXTENSION_CONSTANTS_H_

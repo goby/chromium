@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_SYSTEM_LOG_UPLOADER_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_SYSTEM_LOG_UPLOADER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -17,6 +20,10 @@
 
 namespace base {
 class SequencedTaskRunner;
+}
+
+namespace feedback {
+class AnonymizerTool;
 }
 
 namespace policy {
@@ -30,8 +37,8 @@ class SystemLogUploader : public UploadJob::Delegate {
   typedef std::vector<std::pair<std::string, std::string>> SystemLogs;
 
   // Refresh constants.
-  static const int64 kDefaultUploadDelayMs;
-  static const int64 kErrorUploadDelayMs;
+  static const int64_t kDefaultUploadDelayMs;
+  static const int64_t kErrorUploadDelayMs;
 
   // Http header constants to upload.
   static const char* const kNameFieldTemplate;
@@ -43,7 +50,7 @@ class SystemLogUploader : public UploadJob::Delegate {
   // from the disk and create an upload job.
   class Delegate {
    public:
-    typedef base::Callback<void(scoped_ptr<SystemLogs> system_logs)>
+    typedef base::Callback<void(std::unique_ptr<SystemLogs> system_logs)>
         LogUploadCallback;
 
     virtual ~Delegate() {}
@@ -53,7 +60,7 @@ class SystemLogUploader : public UploadJob::Delegate {
 
     // Creates a new fully configured instance of an UploadJob. This method
     // will be called exactly once per every system log upload.
-    virtual scoped_ptr<UploadJob> CreateUploadJob(
+    virtual std::unique_ptr<UploadJob> CreateUploadJob(
         const GURL& upload_url,
         UploadJob::Delegate* delegate) = 0;
   };
@@ -61,7 +68,7 @@ class SystemLogUploader : public UploadJob::Delegate {
   // Constructor. Callers can inject their own Delegate. A nullptr can be passed
   // for |syslog_delegate| to use the default implementation.
   explicit SystemLogUploader(
-      scoped_ptr<Delegate> syslog_delegate,
+      std::unique_ptr<Delegate> syslog_delegate,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner);
 
   ~SystemLogUploader() override;
@@ -76,9 +83,11 @@ class SystemLogUploader : public UploadJob::Delegate {
   void OnSuccess() override;
   void OnFailure(UploadJob::ErrorCode error_code) override;
 
-  // Remove lines from |data| that contain common PII (IP addresses, SSIDs, URLs
-  // e-mail addresses).
-  static std::string RemoveSensitiveData(const std::string& data);
+  // Remove lines from |data| that contain common PII (IP addresses, BSSIDs,
+  // SSIDs, URLs, e-mail addresses).
+  static std::string RemoveSensitiveData(
+      feedback::AnonymizerTool* const anonymizer,
+      const std::string& data);
 
  private:
   // Updates the system log upload enabled field from settings.
@@ -89,7 +98,7 @@ class SystemLogUploader : public UploadJob::Delegate {
 
   // The callback is invoked by the Delegate if system logs have been loaded
   // from disk, uploads system logs.
-  void UploadSystemLogs(scoped_ptr<SystemLogs> system_logs);
+  void UploadSystemLogs(std::unique_ptr<SystemLogs> system_logs);
 
   // Helper method that figures out when the next system log upload should
   // be scheduled.
@@ -108,10 +117,10 @@ class SystemLogUploader : public UploadJob::Delegate {
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // The upload job that is re-created on every system log upload.
-  scoped_ptr<UploadJob> upload_job_;
+  std::unique_ptr<UploadJob> upload_job_;
 
   // The Delegate is used to load system logs and create UploadJobs.
-  scoped_ptr<Delegate> syslog_delegate_;
+  std::unique_ptr<Delegate> syslog_delegate_;
 
   // True if system log upload is enabled. Kept cached in this object because
   // CrosSettings can switch to an unstrusted state temporarily, and we want to
@@ -119,7 +128,7 @@ class SystemLogUploader : public UploadJob::Delegate {
   bool upload_enabled_;
 
   // Observer to changes in system log upload settings.
-  scoped_ptr<chromeos::CrosSettings::ObserverSubscription>
+  std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
       upload_enabled_observer_;
 
   base::ThreadChecker thread_checker_;

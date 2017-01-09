@@ -10,6 +10,8 @@ import android.content.Intent;
 import android.test.suitebuilder.annotation.MediumTest;
 
 import org.chromium.base.test.util.AdvancedMockContext;
+import org.chromium.components.minidump_uploader.CrashFileManager;
+import org.chromium.components.minidump_uploader.CrashTestCase;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -25,6 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LogcatExtractionCallableTest extends CrashTestCase {
     private File mCrashDir;
 
+    @Override
     protected void setUp() throws Exception {
         super.setUp();
         mCrashDir = new CrashFileManager(mCacheDir).getCrashDirectory();
@@ -81,7 +84,7 @@ public class LogcatExtractionCallableTest extends CrashTestCase {
             File logfile = new File(mCrashDir, fileName);
             assertTrue("Logfile does not exist!", logfile.exists());
             BufferedReader input = new BufferedReader(new FileReader(logfile));
-            StringBuffer sb = new StringBuffer();
+            StringBuilder sb = new StringBuilder();
             String line = null;
             while ((line = input.readLine()) != null) {
                 sb.append(line);

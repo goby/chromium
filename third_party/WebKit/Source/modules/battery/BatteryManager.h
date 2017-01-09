@@ -5,65 +5,76 @@
 #ifndef BatteryManager_h
 #define BatteryManager_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseProperty.h"
-#include "core/dom/ActiveDOMObject.h"
 #include "core/dom/ContextLifecycleObserver.h"
+#include "core/dom/SuspendableObject.h"
 #include "core/frame/PlatformEventController.h"
 #include "modules/EventTargetModules.h"
+#include "modules/battery/battery_status.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class BatteryStatus;
+class BatteryManager final : public EventTargetWithInlineData,
+                             public ActiveScriptWrappable,
+                             public SuspendableObject,
+                             public PlatformEventController {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(BatteryManager);
 
-class BatteryManager final : public RefCountedGarbageCollectedEventTargetWithInlineData<BatteryManager>, public ActiveDOMObject, public PlatformEventController {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(BatteryManager);
-    DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(BatteryManager);
-public:
-    static BatteryManager* create(ExecutionContext*);
-    ~BatteryManager() override;
+ public:
+  static BatteryManager* create(ExecutionContext*);
+  ~BatteryManager() override;
 
-    // Returns a promise object that will be resolved with this BatteryManager.
-    ScriptPromise startRequest(ScriptState*);
+  // Returns a promise object that will be resolved with this BatteryManager.
+  ScriptPromise startRequest(ScriptState*);
 
-    // EventTarget implementation.
-    const WTF::AtomicString& interfaceName() const override { return EventTargetNames::BatteryManager; }
-    ExecutionContext* executionContext() const override { return ContextLifecycleObserver::executionContext(); }
+  // EventTarget implementation.
+  const WTF::AtomicString& interfaceName() const override {
+    return EventTargetNames::BatteryManager;
+  }
+  ExecutionContext* getExecutionContext() const override {
+    return ContextLifecycleObserver::getExecutionContext();
+  }
 
-    bool charging();
-    double chargingTime();
-    double dischargingTime();
-    double level();
+  bool charging();
+  double chargingTime();
+  double dischargingTime();
+  double level();
 
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(chargingchange);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(chargingtimechange);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(dischargingtimechange);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(levelchange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(chargingchange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(chargingtimechange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(dischargingtimechange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(levelchange);
 
-    // Inherited from PlatformEventController.
-    void didUpdateData() override;
-    void registerWithDispatcher() override;
-    void unregisterWithDispatcher() override;
-    bool hasLastData() override;
+  // Inherited from PlatformEventController.
+  void didUpdateData() override;
+  void registerWithDispatcher() override;
+  void unregisterWithDispatcher() override;
+  bool hasLastData() override;
 
-    // ActiveDOMObject implementation.
-    void suspend() override;
-    void resume() override;
-    void stop() override;
-    bool hasPendingActivity() const override;
+  // SuspendableObject implementation.
+  void suspend() override;
+  void resume() override;
+  void contextDestroyed() override;
 
-    DECLARE_VIRTUAL_TRACE();
+  // ScriptWrappable implementation.
+  bool hasPendingActivity() const final;
 
-private:
-    explicit BatteryManager(ExecutionContext*);
+  DECLARE_VIRTUAL_TRACE();
 
-    using BatteryProperty = ScriptPromiseProperty<Member<BatteryManager>, Member<BatteryManager>, Member<DOMException>>;
-    Member<BatteryProperty> m_batteryProperty;
-    Member<BatteryStatus> m_batteryStatus;
+ private:
+  explicit BatteryManager(ExecutionContext*);
+
+  using BatteryProperty = ScriptPromiseProperty<Member<BatteryManager>,
+                                                Member<BatteryManager>,
+                                                Member<DOMException>>;
+  Member<BatteryProperty> m_batteryProperty;
+  BatteryStatus m_batteryStatus;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // BatteryManager_h
+#endif  // BatteryManager_h

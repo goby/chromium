@@ -4,10 +4,14 @@
 
 #include "chrome/browser/sync_file_system/local/local_file_change_tracker.h"
 
+#include <stddef.h>
 #include <queue>
+#include <utility>
 
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_status.h"
@@ -47,7 +51,7 @@ class LocalFileChangeTracker::TrackerDB {
   SyncStatusCode ClearDirty(const std::string& url);
   SyncStatusCode GetDirtyEntries(
       std::queue<FileSystemURL>* dirty_files);
-  SyncStatusCode WriteBatch(scoped_ptr<leveldb::WriteBatch> batch);
+  SyncStatusCode WriteBatch(std::unique_ptr<leveldb::WriteBatch> batch);
 
  private:
   enum RecoveryOption {
@@ -62,7 +66,7 @@ class LocalFileChangeTracker::TrackerDB {
 
   const base::FilePath base_path_;
   leveldb::Env* env_override_;
-  scoped_ptr<leveldb::DB> db_;
+  std::unique_ptr<leveldb::DB> db_;
   SyncStatusCode db_status_;
 
   DISALLOW_COPY_AND_ASSIGN(TrackerDB);
@@ -91,8 +95,10 @@ LocalFileChangeTracker::~LocalFileChangeTracker() {
 
 void LocalFileChangeTracker::OnStartUpdate(const FileSystemURL& url) {
   DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
-  if (ContainsKey(changes_, url) || ContainsKey(demoted_changes_, url))
+  if (base::ContainsKey(changes_, url) ||
+      base::ContainsKey(demoted_changes_, url)) {
     return;
+  }
   // TODO(nhiroki): propagate the error code (see http://crbug.com/152127).
   MarkDirtyOnDatabase(url);
 }
@@ -175,7 +181,7 @@ void LocalFileChangeTracker::ClearChangesForURL(const FileSystemURL& url) {
 void LocalFileChangeTracker::CreateFreshMirrorForURL(
     const storage::FileSystemURL& url) {
   DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
-  DCHECK(!ContainsKey(mirror_changes_, url));
+  DCHECK(!base::ContainsKey(mirror_changes_, url));
   mirror_changes_[url] = ChangeInfo();
 }
 
@@ -187,10 +193,12 @@ void LocalFileChangeTracker::RemoveMirrorAndCommitChangesForURL(
     return;
   mirror_changes_.erase(found);
 
-  if (ContainsKey(changes_, url) || ContainsKey(demoted_changes_, url))
+  if (base::ContainsKey(changes_, url) ||
+      base::ContainsKey(demoted_changes_, url)) {
     MarkDirtyOnDatabase(url);
-  else
+  } else {
     ClearDirtyOnDatabase(url);
+  }
   UpdateNumChanges();
 }
 
@@ -203,11 +211,11 @@ void LocalFileChangeTracker::ResetToMirrorAndCommitChangesForURL(
     return;
   }
   const ChangeInfo& info = found->second;
-  if (ContainsKey(demoted_changes_, url)) {
-    DCHECK(!ContainsKey(changes_, url));
+  if (base::ContainsKey(demoted_changes_, url)) {
+    DCHECK(!base::ContainsKey(changes_, url));
     demoted_changes_[url] = info;
   } else {
-    DCHECK(!ContainsKey(demoted_changes_, url));
+    DCHECK(!base::ContainsKey(demoted_changes_, url));
     change_seqs_[info.change_seq] = url;
     changes_[url] = info;
   }
@@ -221,7 +229,7 @@ void LocalFileChangeTracker::DemoteChangesForURL(
   FileChangeMap::iterator found = changes_.find(url);
   if (found == changes_.end())
     return;
-  DCHECK(!ContainsKey(demoted_changes_, url));
+  DCHECK(!base::ContainsKey(demoted_changes_, url));
   change_seqs_.erase(found->second.change_seq);
   demoted_changes_.insert(*found);
   changes_.erase(found);
@@ -238,8 +246,8 @@ void LocalFileChangeTracker::PromoteDemotedChangesForURL(
 
   FileChangeList::List change_list = iter->second.change_list.list();
   // Make sure that this URL is in no queues.
-  DCHECK(!ContainsKey(change_seqs_, iter->second.change_seq));
-  DCHECK(!ContainsKey(changes_, url));
+  DCHECK(!base::ContainsKey(change_seqs_, iter->second.change_seq));
+  DCHECK(!base::ContainsKey(changes_, url));
 
   change_seqs_[iter->second.change_seq] = url;
   changes_.insert(*iter);
@@ -274,7 +282,7 @@ SyncStatusCode LocalFileChangeTracker::Initialize(
 void LocalFileChangeTracker::ResetForFileSystem(const GURL& origin,
                                                 storage::FileSystemType type) {
   DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
-  scoped_ptr<leveldb::WriteBatch> batch(new leveldb::WriteBatch);
+  std::unique_ptr<leveldb::WriteBatch> batch(new leveldb::WriteBatch);
   for (FileChangeMap::iterator iter = changes_.begin();
        iter != changes_.end();) {
     storage::FileSystemURL url = iter->first;
@@ -299,13 +307,13 @@ void LocalFileChangeTracker::ResetForFileSystem(const GURL& origin,
 
   // Fail to apply batch to database wouldn't have critical effect, they'll be
   // just marked deleted on next relaunch.
-  tracker_db_->WriteBatch(batch.Pass());
+  tracker_db_->WriteBatch(std::move(batch));
   UpdateNumChanges();
 }
 
 void LocalFileChangeTracker::UpdateNumChanges() {
   base::AutoLock lock(num_changes_lock_);
-  num_changes_ = static_cast<int64>(change_seqs_.size());
+  num_changes_ = static_cast<int64_t>(change_seqs_.size());
 }
 
 void LocalFileChangeTracker::GetAllChangedURLs(FileSystemURLSet* urls) {
@@ -355,7 +363,7 @@ SyncStatusCode LocalFileChangeTracker::CollectLastDirtyChanges(
   FileSystemFileUtil* file_util =
       file_system_context->sandbox_delegate()->sync_file_util();
   DCHECK(file_util);
-  scoped_ptr<FileSystemOperationContext> context(
+  std::unique_ptr<FileSystemOperationContext> context(
       new FileSystemOperationContext(file_system_context));
 
   base::File::Info file_info;
@@ -380,7 +388,7 @@ SyncStatusCode LocalFileChangeTracker::CollectLastDirtyChanges(
             SYNC_FILE_TYPE_DIRECTORY));
 
         // Push files and directories in this directory into |dirty_files|.
-        scoped_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator(
+        std::unique_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator(
             file_util->CreateFileEnumerator(context.get(), url));
         base::FilePath path_each;
         while (!(path_each = enumerator->Next()).empty()) {
@@ -414,13 +422,13 @@ void LocalFileChangeTracker::RecordChange(
     const FileSystemURL& url, const FileChange& change) {
   DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
   int change_seq = current_change_seq_number_++;
-  if (ContainsKey(demoted_changes_, url)) {
+  if (base::ContainsKey(demoted_changes_, url)) {
     RecordChangeToChangeMaps(url, change, change_seq,
                              &demoted_changes_, nullptr);
   } else {
     RecordChangeToChangeMaps(url, change, change_seq, &changes_, &change_seqs_);
   }
-  if (ContainsKey(mirror_changes_, url)) {
+  if (base::ContainsKey(mirror_changes_, url)) {
     RecordChangeToChangeMaps(url, change, change_seq, &mirror_changes_,
                              nullptr);
   }
@@ -588,7 +596,8 @@ SyncStatusCode LocalFileChangeTracker::TrackerDB::GetDirtyEntries(
     return db_status_;
   }
 
-  scoped_ptr<leveldb::Iterator> iter(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> iter(
+      db_->NewIterator(leveldb::ReadOptions()));
   iter->SeekToFirst();
   FileSystemURL url;
   while (iter->Valid()) {
@@ -596,6 +605,7 @@ SyncStatusCode LocalFileChangeTracker::TrackerDB::GetDirtyEntries(
       LOG(WARNING) << "Failed to deserialize an URL. "
                    << "TrackerDB might be corrupted.";
       db_status_ = SYNC_DATABASE_ERROR_CORRUPTION;
+      iter.reset();  // Must delete before closing the database.
       db_.reset();
       return db_status_;
     }
@@ -606,7 +616,7 @@ SyncStatusCode LocalFileChangeTracker::TrackerDB::GetDirtyEntries(
 }
 
 SyncStatusCode LocalFileChangeTracker::TrackerDB::WriteBatch(
-    scoped_ptr<leveldb::WriteBatch> batch) {
+    std::unique_ptr<leveldb::WriteBatch> batch) {
   if (db_status_ != SYNC_STATUS_OK)
     return db_status_;
 

@@ -28,8 +28,6 @@ class CONTENT_EXPORT BluetoothChooser {
     RESCAN,
     // Show overview page for Bluetooth.
     SHOW_OVERVIEW_HELP,
-    // Show help page explaining what Bluetooth pairing means.
-    SHOW_PAIRING_HELP,
     // Show help page explaining why scanning failed because Bluetooth is off.
     SHOW_ADAPTER_OFF_HELP,
     // Show help page explaining why Chromium needs the Location permission to
@@ -46,9 +44,9 @@ class CONTENT_EXPORT BluetoothChooser {
   //
   // The EventHandler won't be called after the chooser object is destroyed.
   //
-  // After the EventHandler is called with Event::CANCELLED or Event::SELECTED,
-  // it won't be called again, and users must not call any more BluetoothChooser
-  // methods.
+  // After the EventHandler is called with Event::CANCELLED, Event::SELECTED,
+  // Event::DENIED_PERMISSION or Event::SHOW_*, it won't be called again, and
+  // users must not call any more BluetoothChooser methods.
   typedef base::Callback<void(Event, const std::string& opt_device_id)>
       EventHandler;
 
@@ -70,9 +68,21 @@ class CONTENT_EXPORT BluetoothChooser {
   enum class DiscoveryState { FAILED_TO_START, DISCOVERING, IDLE };
   virtual void ShowDiscoveryState(DiscoveryState state) {}
 
-  // Shows a new device in the chooser.
-  virtual void AddDevice(const std::string& device_id,
-                         const base::string16& device_name) {}
+  // Adds a new device to the chooser or updates the information of an existing
+  // device.
+  //
+  // Sometimes when a Bluetooth device stops advertising, the |device_name| can
+  // be invalid, and in that case |should_update_name| will be set false.
+  //
+  // The range of |signal_strength_level| is -1 to 4 inclusively.
+  // -1 means that the device doesn't have RSSI which happens when the device
+  // is already connected.
+  virtual void AddOrUpdateDevice(const std::string& device_id,
+                                 bool should_update_name,
+                                 const base::string16& device_name,
+                                 bool is_gatt_connected,
+                                 bool is_paired,
+                                 int signal_strength_level) {}
 
   // Tells the chooser that a device is no longer available. The chooser should
   // not call DeviceSelected() for a device that's been removed.

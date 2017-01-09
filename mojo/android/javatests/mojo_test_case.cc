@@ -8,18 +8,21 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/at_exit.h"
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/test/test_support_android.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "jni/MojoTestCase_jni.h"
-#include "mojo/message_pump/message_pump_mojo.h"
-#include "mojo/public/cpp/environment/environment.h"
+
+using base::android::JavaParamRef;
 
 namespace {
 
 struct TestEnvironment {
-  TestEnvironment() : message_loop(mojo::common::MessagePumpMojo::Create()) {}
+  TestEnvironment() {}
 
   base::ShadowingAtExitManager at_exit;
   base::MessageLoop message_loop;
@@ -50,7 +53,7 @@ static void RunLoop(JNIEnv* env,
                     jlong timeout_ms) {
   base::RunLoop run_loop;
   if (timeout_ms) {
-    base::MessageLoop::current()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
         base::TimeDelta::FromMilliseconds(timeout_ms));
     run_loop.Run();

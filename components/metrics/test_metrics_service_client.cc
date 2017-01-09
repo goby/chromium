@@ -15,8 +15,9 @@ const char TestMetricsServiceClient::kBrandForTesting[] = "brand_for_testing";
 
 TestMetricsServiceClient::TestMetricsServiceClient()
     : version_string_("5.0.322.0-64-devel"),
-      product_(ChromeUserMetricsExtension::CHROME) {
-}
+      product_(ChromeUserMetricsExtension::CHROME),
+      reporting_is_managed_(false),
+      enable_default_(EnableMetricsDefault::DEFAULT_UNKNOWN) {}
 
 TestMetricsServiceClient::~TestMetricsServiceClient() {
 }
@@ -28,13 +29,6 @@ metrics::MetricsService* TestMetricsServiceClient::GetMetricsService() {
 void TestMetricsServiceClient::SetMetricsClientId(
     const std::string& client_id) {
   client_id_ = client_id;
-}
-
-void TestMetricsServiceClient::OnRecordingDisabled() {
-}
-
-bool TestMetricsServiceClient::IsOffTheRecordSessionActive() {
-  return false;
 }
 
 int32_t TestMetricsServiceClient::GetProduct() {
@@ -71,13 +65,22 @@ void TestMetricsServiceClient::CollectFinalMetricsForLog(
   done_callback.Run();
 }
 
-scoped_ptr<MetricsLogUploader> TestMetricsServiceClient::CreateUploader(
+std::unique_ptr<MetricsLogUploader> TestMetricsServiceClient::CreateUploader(
     const base::Callback<void(int)>& on_upload_complete) {
-  return scoped_ptr<MetricsLogUploader>();
+  return std::unique_ptr<MetricsLogUploader>();
 }
 
 base::TimeDelta TestMetricsServiceClient::GetStandardUploadInterval() {
   return base::TimeDelta::FromMinutes(5);
+}
+
+bool TestMetricsServiceClient::IsReportingPolicyManaged() {
+  return reporting_is_managed_;
+}
+
+EnableMetricsDefault
+TestMetricsServiceClient::GetMetricsReportingDefaultState() {
+  return enable_default_;
 }
 
 }  // namespace metrics

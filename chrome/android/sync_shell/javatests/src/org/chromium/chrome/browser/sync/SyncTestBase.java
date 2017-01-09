@@ -13,18 +13,18 @@ import org.chromium.chrome.browser.identity.UniqueIdentificationGenerator;
 import org.chromium.chrome.browser.identity.UniqueIdentificationGeneratorFactory;
 import org.chromium.chrome.browser.identity.UuidBasedUniqueIdentificationGenerator;
 import org.chromium.chrome.browser.signin.SigninManager;
-import org.chromium.chrome.browser.signin.SigninManager.SignInFlowObserver;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
 import org.chromium.chrome.test.util.browser.signin.SigninTestUtil;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
+import org.chromium.components.sync.AndroidSyncSettings;
+import org.chromium.components.sync.ModelType;
+import org.chromium.components.sync.test.util.MockSyncContentResolverDelegate;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.sync.AndroidSyncSettings;
-import org.chromium.sync.ModelType;
-import org.chromium.sync.test.util.MockSyncContentResolverDelegate;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -46,6 +46,25 @@ public class SyncTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
                 ModelType.PROXY_TABS,
                 ModelType.TYPED_URLS,
             }));
+
+    protected abstract class DataCriteria<T> extends Criteria {
+        public DataCriteria() {
+            super("Sync data criteria not met.");
+        }
+
+        public abstract boolean isSatisfied(List<T> data);
+
+        public abstract List<T> getData() throws Exception;
+
+        @Override
+        public boolean isSatisfied() {
+            try {
+                return isSatisfied(getData());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
 
     protected Context mContext;
     protected FakeServerHelper mFakeServerHelper;
@@ -108,7 +127,7 @@ public class SyncTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
                 FakeServerHelper.deleteFakeServer();
             }
         });
-        SigninTestUtil.get().resetSigninState();
+        SigninTestUtil.resetSigninState();
 
         super.tearDown();
     }
@@ -119,25 +138,29 @@ public class SyncTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
         AndroidSyncSettings.overrideForTests(mContext, mSyncContentResolver);
     }
 
-    protected Account setUpTestAccount() throws InterruptedException {
-        Account account = SigninTestUtil.get().addAndSignInTestAccount();
-        SyncTestUtil.verifySyncIsSignedOut(getActivity());
+    protected Account setUpTestAccount() {
+        Account account = SigninTestUtil.addTestAccount();
+        assertFalse(SyncTestUtil.isSyncRequested());
         return account;
     }
 
-    protected Account setUpTestAccountAndSignInToSync() throws InterruptedException {
+    protected Account setUpTestAccountAndSignIn() throws InterruptedException {
         Account account = setUpTestAccount();
         signIn(account);
         return account;
     }
 
-    protected void startSync() throws InterruptedException {
+    protected void startSync() {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
                 mProfileSyncService.requestStart();
             }
         });
+    }
+
+    protected void startSyncAndWait() throws InterruptedException {
+        startSync();
         SyncTestUtil.waitForSyncActive();
     }
 
@@ -155,20 +178,12 @@ public class SyncTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                SigninManager signinManager = SigninManager.get(mContext);
-                signinManager.startSignIn(null, account, false, new SignInFlowObserver() {
-                    @Override
-                    public void onSigninComplete() {
-                        mProfileSyncService.requestStart();
-                    }
-
-                    @Override
-                    public void onSigninCancelled() {
-                    }
-                });
+                SigninManager.get(mContext).signIn(account, null, null);
             }
         });
-        SyncTestUtil.verifySyncIsActiveForAccount(mContext, account);
+        SyncTestUtil.waitForSyncActive();
+        SyncTestUtil.triggerSyncAndWaitForCompletion();
+        assertEquals(account, SigninTestUtil.getCurrentAccount());
     }
 
     protected void signOut() throws InterruptedException {
@@ -176,7 +191,7 @@ public class SyncTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                SigninManager.get(mContext).signOut(getActivity(), new Runnable() {
+                SigninManager.get(mContext).signOut(new Runnable() {
                     @Override
                     public void run() {
                         s.release();
@@ -185,13 +200,14 @@ public class SyncTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
             }
         });
         assertTrue(s.tryAcquire(SyncTestUtil.TIMEOUT_MS, TimeUnit.MILLISECONDS));
-        SyncTestUtil.verifySyncIsSignedOut(mContext);
+        assertNull(SigninTestUtil.getCurrentAccount());
+        assertFalse(SyncTestUtil.isSyncRequested());
     }
 
     protected void clearServerData() throws InterruptedException {
         mFakeServerHelper.clearServerData();
         SyncTestUtil.triggerSync();
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria("Timed out waiting for sync to stop.") {
+        CriteriaHelper.pollUiThread(new Criteria("Timed out waiting for sync to stop.") {
             @Override
             public boolean isSatisfied() {
                 return !ProfileSyncService.get().isSyncRequested();
@@ -209,5 +225,10 @@ public class SyncTestBase extends ChromeActivityTestCaseBase<ChromeActivity> {
                 mProfileSyncService.setPreferredDataTypes(false, preferredTypes);
             }
         });
+    }
+
+    protected void pollInstrumentationThread(Criteria criteria) throws InterruptedException {
+        CriteriaHelper.pollInstrumentationThread(
+                criteria, SyncTestUtil.TIMEOUT_MS, SyncTestUtil.INTERVAL_MS);
     }
 }

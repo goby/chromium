@@ -43,8 +43,6 @@ const char kRTFFormat[] = "rtf";
 const char kBitmapFormat[] = "bitmap";
 const char kWebKitSmartPasteFormat[] = "webkit_smart";
 const char kBookmarkFormat[] = "bookmark";
-const char kMimeTypePepperCustomData[] = "chromium/x-pepper-custom-data";
-const char kMimeTypeWebCustomData[] = "chromium/x-web-custom-data";
 
 class ClipboardMap {
  public:
@@ -66,14 +64,8 @@ class ClipboardMap {
 base::LazyInstance<ClipboardMap>::Leaky g_map = LAZY_INSTANCE_INITIALIZER;
 
 ClipboardMap::ClipboardMap() {
-  JNIEnv* env = AttachCurrentThread();
-  DCHECK(env);
-
-  // Get the context.
-  jobject context = base::android::GetApplicationContext();
-  DCHECK(context);
-
-  clipboard_manager_.Reset(Java_Clipboard_create(env, context));
+  clipboard_manager_.Reset(Java_Clipboard_create(
+      AttachCurrentThread(), base::android::GetApplicationContext()));
   DCHECK(clipboard_manager_.obj());
 }
 
@@ -87,7 +79,7 @@ std::string ClipboardMap::Get(const std::string& format) {
 bool ClipboardMap::HasFormat(const std::string& format) {
   base::AutoLock lock(lock_);
   UpdateFromAndroidClipboard();
-  return ContainsKey(map_, format);
+  return base::ContainsKey(map_, format);
 }
 
 void ClipboardMap::Set(const std::string& format, const std::string& data) {
@@ -98,10 +90,10 @@ void ClipboardMap::Set(const std::string& format, const std::string& data) {
 void ClipboardMap::CommitToAndroidClipboard() {
   JNIEnv* env = AttachCurrentThread();
   base::AutoLock lock(lock_);
-  if (ContainsKey(map_, kHTMLFormat)) {
+  if (base::ContainsKey(map_, kHTMLFormat)) {
     // Android's API for storing HTML content on the clipboard requires a plain-
     // text representation to be available as well.
-    if (!ContainsKey(map_, kPlainTextFormat))
+    if (!base::ContainsKey(map_, kPlainTextFormat))
       return;
 
     ScopedJavaLocalRef<jstring> html =
@@ -110,16 +102,14 @@ void ClipboardMap::CommitToAndroidClipboard() {
         ConvertUTF8ToJavaString(env, map_[kPlainTextFormat].c_str());
 
     DCHECK(html.obj() && text.obj());
-    Java_Clipboard_setHTMLText(env, clipboard_manager_.obj(), html.obj(),
-                               text.obj());
-  } else if (ContainsKey(map_, kPlainTextFormat)) {
+    Java_Clipboard_setHTMLText(env, clipboard_manager_, html, text);
+  } else if (base::ContainsKey(map_, kPlainTextFormat)) {
     ScopedJavaLocalRef<jstring> str =
         ConvertUTF8ToJavaString(env, map_[kPlainTextFormat].c_str());
     DCHECK(str.obj());
-
-    Java_Clipboard_setText(env, clipboard_manager_.obj(), str.obj());
+    Java_Clipboard_setText(env, clipboard_manager_, str);
   } else {
-    Java_Clipboard_setText(env, clipboard_manager_.obj(), nullptr);
+    Java_Clipboard_clear(env, clipboard_manager_);
     NOTIMPLEMENTED();
   }
 }
@@ -128,7 +118,7 @@ void ClipboardMap::Clear() {
   JNIEnv* env = AttachCurrentThread();
   base::AutoLock lock(lock_);
   map_.clear();
-  Java_Clipboard_setText(env, clipboard_manager_.obj(), NULL);
+  Java_Clipboard_clear(env, clipboard_manager_);
 }
 
 // Add a key:jstr pair to map, but only if jstr is not null, and also
@@ -164,9 +154,9 @@ void ClipboardMap::UpdateFromAndroidClipboard() {
   std::map<std::string, std::string> android_clipboard_state;
 
   ScopedJavaLocalRef<jstring> jtext =
-      Java_Clipboard_getCoercedText(env, clipboard_manager_.obj());
+      Java_Clipboard_getCoercedText(env, clipboard_manager_);
   ScopedJavaLocalRef<jstring> jhtml =
-      Java_Clipboard_getHTMLText(env, clipboard_manager_.obj());
+      Java_Clipboard_getHTMLText(env, clipboard_manager_);
 
   AddMapEntry(env, &android_clipboard_state, kPlainTextFormat, jtext);
   AddMapEntry(env, &android_clipboard_state, kHTMLFormat, jhtml);
@@ -282,7 +272,7 @@ ClipboardAndroid::~ClipboardAndroid() {
   DCHECK(CalledOnValidThread());
 }
 
-uint64 ClipboardAndroid::GetSequenceNumber(ClipboardType /* type */) const {
+uint64_t ClipboardAndroid::GetSequenceNumber(ClipboardType /* type */) const {
   DCHECK(CalledOnValidThread());
   // TODO: implement this. For now this interface will advertise
   // that the clipboard never changes. That's fine as long as we
@@ -352,8 +342,8 @@ void ClipboardAndroid::ReadAsciiText(ClipboardType type,
 void ClipboardAndroid::ReadHTML(ClipboardType type,
                                 base::string16* markup,
                                 std::string* src_url,
-                                uint32* fragment_start,
-                                uint32* fragment_end) const {
+                                uint32_t* fragment_start,
+                                uint32_t* fragment_end) const {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(type, CLIPBOARD_TYPE_COPY_PASTE);
   if (src_url)
@@ -363,7 +353,7 @@ void ClipboardAndroid::ReadHTML(ClipboardType type,
   *markup = base::UTF8ToUTF16(input);
 
   *fragment_start = 0;
-  *fragment_end = static_cast<uint32>(markup->length());
+  *fragment_end = static_cast<uint32_t>(markup->length());
 }
 
 void ClipboardAndroid::ReadRTF(ClipboardType type, std::string* result) const {
@@ -472,10 +462,6 @@ void ClipboardAndroid::WriteData(const Clipboard::FormatType& format,
                                  const char* data_data,
                                  size_t data_len) {
   g_map.Get().Set(format.ToString(), std::string(data_data, data_len));
-}
-
-bool RegisterClipboardAndroid(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 } // namespace ui

@@ -7,13 +7,14 @@
 #ifndef CHROME_INSTALLER_UTIL_BROWSER_DISTRIBUTION_H_
 #define CHROME_INSTALLER_UTIL_BROWSER_DISTRIBUTION_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "chrome/installer/util/util_constants.h"
 
 #if defined(OS_WIN)
@@ -29,12 +30,6 @@ class BrowserDistribution {
     CHROME_FRAME,
     CHROME_BINARIES,
     NUM_TYPES
-  };
-
-  enum ShortcutType {
-    SHORTCUT_CHROME,
-    SHORTCUT_CHROME_ALTERNATE,
-    SHORTCUT_APP_LAUNCHER
   };
 
   enum Subfolder {
@@ -64,7 +59,7 @@ class BrowserDistribution {
   base::string16 GetVersionKey() const;
 
   virtual void DoPostUninstallOperations(
-      const Version& version,
+      const base::Version& version,
       const base::FilePath& local_data_path,
       const base::string16& distribution_data);
 
@@ -81,21 +76,19 @@ class BrowserDistribution {
   // Returns the localized display name of this distribution.
   virtual base::string16 GetDisplayName();
 
-  // Returns the localized name of the shortcut identified by |shortcut_type|
-  // for this distribution or empty string if |shortcut_type| is unsupported
-  // by this BrowserDistribution.
-  virtual base::string16 GetShortcutName(ShortcutType shortcut_type);
+  // Returns the localized name of the Chrome shortcut for this distribution.
+  virtual base::string16 GetShortcutName();
 
-  // Returns the index of the icon for the product identified by
-  // |shortcut_type|, inside the file specified by GetIconFilename().
-  virtual int GetIconIndex(ShortcutType shortcut_type);
+  // Returns the index of the Chrome icon for this distribution, inside the file
+  // specified by GetIconFilename().
+  virtual int GetIconIndex();
 
   // Returns the executable filename (not path) that contains the product icon.
   virtual base::string16 GetIconFilename();
 
   // Returns the localized name of the subfolder in the Start Menu identified by
   // |subfolder_type| that this distribution should create shortcuts in. For
-  // SUBFOLDER_CHROME this returns GetShortcutName(SHORTCUT_CHROME).
+  // SUBFOLDER_CHROME this returns GetShortcutName().
   virtual base::string16 GetStartMenuShortcutSubfolder(
       Subfolder subfolder_type);
 
@@ -136,7 +129,7 @@ class BrowserDistribution {
   // by third parties (e.g., a subkey that specifies the location of a native
   // messaging host's manifest), state stored in this key is removed during
   // uninstall when the user chooses to also delete their browsing data.
-  base::string16 GetRegistryPath();
+  virtual base::string16 GetRegistryPath();
 
   virtual base::string16 GetUninstallRegPath();
 
@@ -163,7 +156,8 @@ class BrowserDistribution {
   virtual bool HasUserExperiments();
 
  protected:
-  BrowserDistribution(Type type, scoped_ptr<AppRegistrationData> app_reg_data);
+  BrowserDistribution(Type type,
+                      std::unique_ptr<AppRegistrationData> app_reg_data);
 
   template<class DistributionClass>
   static BrowserDistribution* GetOrCreateBrowserDistribution(
@@ -171,7 +165,7 @@ class BrowserDistribution {
 
   const Type type_;
 
-  scoped_ptr<AppRegistrationData> app_reg_data_;
+  std::unique_ptr<AppRegistrationData> app_reg_data_;
 
  private:
   BrowserDistribution();

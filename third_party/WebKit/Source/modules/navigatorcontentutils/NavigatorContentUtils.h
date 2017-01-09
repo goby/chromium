@@ -27,11 +27,11 @@
 #ifndef NavigatorContentUtils_h
 #define NavigatorContentUtils_h
 
+#include "core/frame/LocalFrame.h"
 #include "modules/ModulesExport.h"
 #include "modules/navigatorcontentutils/NavigatorContentUtilsClient.h"
 #include "platform/Supplementable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
@@ -40,40 +40,48 @@ class ExceptionState;
 class LocalFrame;
 class Navigator;
 
-class MODULES_EXPORT NavigatorContentUtils final : public NoBaseWillBeGarbageCollectedFinalized<NavigatorContentUtils>, public WillBeHeapSupplement<LocalFrame> {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(NavigatorContentUtils);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(NavigatorContentUtils);
-public:
-    virtual ~NavigatorContentUtils();
+class MODULES_EXPORT NavigatorContentUtils final
+    : public GarbageCollectedFinalized<NavigatorContentUtils>,
+      public Supplement<LocalFrame> {
+  USING_GARBAGE_COLLECTED_MIXIN(NavigatorContentUtils);
 
-    static NavigatorContentUtils* from(LocalFrame&);
-    static const char* supplementName();
+ public:
+  virtual ~NavigatorContentUtils();
 
-    static void registerProtocolHandler(Navigator&, const String& scheme, const String& url, const String& title, ExceptionState&);
-    static String isProtocolHandlerRegistered(Navigator&, const String& scheme, const String& url, ExceptionState&);
-    static void unregisterProtocolHandler(Navigator&, const String& scheme, const String& url, ExceptionState&);
+  static NavigatorContentUtils* from(LocalFrame&);
+  static const char* supplementName();
 
-    static PassOwnPtrWillBeRawPtr<NavigatorContentUtils> create(PassOwnPtrWillBeRawPtr<NavigatorContentUtilsClient>);
+  static void registerProtocolHandler(Navigator&,
+                                      const String& scheme,
+                                      const String& url,
+                                      const String& title,
+                                      ExceptionState&);
+  static String isProtocolHandlerRegistered(Navigator&,
+                                            const String& scheme,
+                                            const String& url,
+                                            ExceptionState&);
+  static void unregisterProtocolHandler(Navigator&,
+                                        const String& scheme,
+                                        const String& url,
+                                        ExceptionState&);
 
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        visitor->trace(m_client);
-        WillBeHeapSupplement<LocalFrame>::trace(visitor);
-    }
+  static NavigatorContentUtils* create(NavigatorContentUtilsClient*);
 
-    void setClientForTest(PassOwnPtrWillBeRawPtr<NavigatorContentUtilsClient> client) { m_client = client; }
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    explicit NavigatorContentUtils(PassOwnPtrWillBeRawPtr<NavigatorContentUtilsClient> client)
-        : m_client(client)
-    {
-    }
+  void setClientForTest(NavigatorContentUtilsClient* client) {
+    m_client = client;
+  }
 
-    NavigatorContentUtilsClient* client() { return m_client.get(); }
+ private:
+  explicit NavigatorContentUtils(NavigatorContentUtilsClient* client)
+      : m_client(client) {}
 
-    OwnPtrWillBeMember<NavigatorContentUtilsClient> m_client;
+  NavigatorContentUtilsClient* client() { return m_client.get(); }
+
+  Member<NavigatorContentUtilsClient> m_client;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NavigatorContentUtils_h
+#endif  // NavigatorContentUtils_h

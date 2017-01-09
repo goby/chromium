@@ -8,15 +8,16 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/login/screens/core_oobe_actor.h"
 #include "chrome/browser/chromeos/login/screens/hid_detection_model.h"
-#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/login/localized_values_builder.h"
+#include "components/prefs/pref_service.h"
 
 namespace {
 
@@ -52,7 +53,7 @@ void HIDDetectionScreenHandler::Show() {
   local_state->SetInteger(prefs::kTimesHIDDialogShown,
                           num_of_times_dialog_was_shown + 1);
 
-  ShowScreen(OobeUI::kScreenHIDDetection, NULL);
+  ShowScreen(OobeScreen::SCREEN_OOBE_HID_DETECTION);
 }
 
 void HIDDetectionScreenHandler::Hide() {
@@ -68,9 +69,6 @@ void HIDDetectionScreenHandler::Bind(HIDDetectionModel& model) {
 void HIDDetectionScreenHandler::Unbind() {
   model_ = nullptr;
   BaseScreenHandler::SetBaseScreen(nullptr);
-}
-
-void HIDDetectionScreenHandler::PrepareToShow() {
 }
 
 void HIDDetectionScreenHandler::CheckIsScreenRequired(

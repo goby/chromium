@@ -5,6 +5,7 @@
 #ifndef CHROME_RENDERER_MEDIA_WEBRTC_LOGGING_MESSAGE_FILTER_H_
 #define CHROME_RENDERER_MEDIA_WEBRTC_LOGGING_MESSAGE_FILTER_H_
 
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "chrome/common/media/webrtc_logging_message_data.h"
 #include "ipc/message_filter.h"
@@ -45,7 +46,7 @@ class WebRtcLoggingMessageFilter : public IPC::MessageFilter {
  private:
   // IPC::MessageFilter implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelClosing() override;
 

@@ -5,7 +5,11 @@
 #ifndef UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_NATIVE_WIDGET_AURA_H_
 #define UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_NATIVE_WIDGET_AURA_H_
 
+#include <string>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_tree_host_observer.h"
@@ -14,16 +18,14 @@
 #include "ui/wm/core/compound_event_filter.h"
 #include "ui/wm/public/activation_change_observer.h"
 #include "ui/wm/public/activation_delegate.h"
-#include "ui/wm/public/drag_drop_delegate.h"
 
 namespace aura {
 class WindowEventDispatcher;
 class WindowTreeHost;
 namespace client {
 class DragDropClient;
-class FocusClient;
 class ScreenPositionClient;
-class WindowTreeClient;
+class WindowParentingClient;
 }
 }
 
@@ -41,7 +43,6 @@ namespace corewm {
 class TooltipController;
 }
 class DesktopCaptureClient;
-class DesktopDispatcherClient;
 class DesktopEventClient;
 class DesktopNativeCursorManager;
 class DesktopWindowTreeHost;
@@ -66,6 +67,11 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   // window.
   static DesktopNativeWidgetAura* ForWindow(aura::Window* window);
 
+  // Used to explicitly set a DesktopWindowTreeHost. Must be called before
+  // InitNativeWidget().
+  void SetDesktopWindowTreeHost(
+      std::unique_ptr<DesktopWindowTreeHost> desktop_window_tree_host);
+
   // Called by our DesktopWindowTreeHost after it has deleted native resources;
   // this is the signal that we should start our shutdown.
   virtual void OnHostClosed();
@@ -83,6 +89,8 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
     return host_.get();
   }
 
+  aura::Window* content_window() { return content_window_; }
+
   // Ensures that the correct window is activated/deactivated based on whether
   // we are being activated/deactivated.
   void HandleActivationChanged(bool active);
@@ -90,6 +98,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
  protected:
   // Overridden from internal::NativeWidgetPrivate:
   void InitNativeWidget(const Widget::InitParams& params) override;
+  void OnWidgetInitDone() override;
   NonClientFrameView* CreateNonClientFrameView() override;
   bool ShouldUseNativeFrame() const override;
   bool ShouldWindowContentsBeTransparent() const override;
@@ -120,12 +129,12 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   gfx::Rect GetWindowBoundsInScreen() const override;
   gfx::Rect GetClientAreaBoundsInScreen() const override;
   gfx::Rect GetRestoredBounds() const override;
+  std::string GetWorkspace() const override;
   void SetBounds(const gfx::Rect& bounds) override;
   void SetSize(const gfx::Size& size) override;
   void StackAbove(gfx::NativeView native_view) override;
   void StackAtTop() override;
-  void StackBelow(gfx::NativeView native_view) override;
-  void SetShape(SkRegion* shape) override;
+  void SetShape(std::unique_ptr<SkRegion> shape) override;
   void Close() override;
   void CloseNow() override;
   void Show() override;
@@ -139,6 +148,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void SetAlwaysOnTop(bool always_on_top) override;
   bool IsAlwaysOnTop() const override;
   void SetVisibleOnAllWorkspaces(bool always_visible) override;
+  bool IsVisibleOnAllWorkspaces() const override;
   void Maximize() override;
   void Minimize() override;
   bool IsMaximized() const override;
@@ -146,8 +156,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void Restore() override;
   void SetFullscreen(bool fullscreen) override;
   bool IsFullscreen() const override;
-  void SetOpacity(unsigned char opacity) override;
-  void SetUseDragFrame(bool use_drag_frame) override;
+  void SetOpacity(float opacity) override;
   void FlashFrame(bool flash_frame) override;
   void RunShellDrag(View* view,
                     const ui::OSExchangeData& data,
@@ -168,11 +177,10 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void SetVisibilityAnimationDuration(const base::TimeDelta& duration) override;
   void SetVisibilityAnimationTransition(
       Widget::VisibilityTransition transition) override;
-  ui::NativeTheme* GetNativeTheme() const override;
-  void OnRootViewLayout() override;
   bool IsTranslucentWindowOpacitySupported() const override;
   void OnSizeConstraintsChanged() override;
   void RepostNativeEvent(gfx::NativeEvent native_event) override;
+  std::string GetName() const override;
 
   // Overridden from aura::WindowDelegate:
   gfx::Size GetMinimumSize() const override;
@@ -222,11 +230,11 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   // Overridden from aura::WindowTreeHostObserver:
   void OnHostCloseRequested(const aura::WindowTreeHost* host) override;
   void OnHostResized(const aura::WindowTreeHost* host) override;
-  void OnHostMoved(const aura::WindowTreeHost* host,
-                   const gfx::Point& new_origin) override;
+  void OnHostWorkspaceChanged(const aura::WindowTreeHost* host) override;
+  void OnHostMovedInPixels(const aura::WindowTreeHost* host,
+                           const gfx::Point& new_origin_in_pixels) override;
 
  private:
-  friend class FocusManagerEventHandler;
   friend class RootWindowDestructionObserver;
 
   // To save a clear on platforms where the window is never transparent, the
@@ -235,13 +243,16 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
 
   void RootWindowDestroyed();
 
-  scoped_ptr<aura::WindowTreeHost> host_;
+  std::unique_ptr<aura::WindowTreeHost> host_;
   DesktopWindowTreeHost* desktop_window_tree_host_;
 
   // See class documentation for Widget in widget.h for a note about ownership.
   Widget::InitParams::Ownership ownership_;
 
-  scoped_ptr<DesktopCaptureClient> capture_client_;
+  // Internal name.
+  std::string name_;
+
+  std::unique_ptr<DesktopCaptureClient> capture_client_;
 
   // Child of the root, contains |content_window_|.
   aura::Window* content_window_container_;
@@ -253,27 +264,25 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
 
   internal::NativeWidgetDelegate* native_widget_delegate_;
 
-  scoped_ptr<wm::FocusController> focus_client_;
-  scoped_ptr<DesktopDispatcherClient> dispatcher_client_;
-  scoped_ptr<aura::client::ScreenPositionClient> position_client_;
-  scoped_ptr<aura::client::DragDropClient> drag_drop_client_;
-  scoped_ptr<aura::client::WindowTreeClient> window_tree_client_;
-  scoped_ptr<DesktopEventClient> event_client_;
-  scoped_ptr<FocusManagerEventHandler> focus_manager_event_handler_;
+  std::unique_ptr<wm::FocusController> focus_client_;
+  std::unique_ptr<aura::client::ScreenPositionClient> position_client_;
+  std::unique_ptr<aura::client::DragDropClient> drag_drop_client_;
+  std::unique_ptr<aura::client::WindowParentingClient> window_parenting_client_;
+  std::unique_ptr<DesktopEventClient> event_client_;
+  std::unique_ptr<FocusManagerEventHandler> focus_manager_event_handler_;
 
   // Toplevel event filter which dispatches to other event filters.
-  scoped_ptr<wm::CompoundEventFilter> root_window_event_filter_;
+  std::unique_ptr<wm::CompoundEventFilter> root_window_event_filter_;
 
-  scoped_ptr<DropHelper> drop_helper_;
+  std::unique_ptr<DropHelper> drop_helper_;
   int last_drop_operation_;
 
-  scoped_ptr<corewm::TooltipController> tooltip_controller_;
-  scoped_ptr<TooltipManagerAura> tooltip_manager_;
+  std::unique_ptr<corewm::TooltipController> tooltip_controller_;
+  std::unique_ptr<TooltipManagerAura> tooltip_manager_;
 
-  scoped_ptr<wm::VisibilityController> visibility_controller_;
+  std::unique_ptr<wm::VisibilityController> visibility_controller_;
 
-  scoped_ptr<wm::WindowModalityController>
-      window_modality_controller_;
+  std::unique_ptr<wm::WindowModalityController> window_modality_controller_;
 
   bool restore_focus_on_activate_;
 
@@ -286,16 +295,19 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   // crash.
   static int cursor_reference_count_;
   static wm::CursorManager* cursor_manager_;
-  static views::DesktopNativeCursorManager* native_cursor_manager_;
+  static DesktopNativeCursorManager* native_cursor_manager_;
 
-  scoped_ptr<wm::ShadowController> shadow_controller_;
+  std::unique_ptr<wm::ShadowController> shadow_controller_;
 
   // Reorders child windows of |window_| associated with a view based on the
   // order of the associated views in the widget's view hierarchy.
-  scoped_ptr<WindowReorderer> window_reorderer_;
+  std::unique_ptr<WindowReorderer> window_reorderer_;
 
   // See class documentation for Widget in widget.h for a note about type.
   Widget::InitParams::Type widget_type_;
+
+  // See DesktopWindowTreeHost::ShouldUseDesktopNativeCursorManager().
+  bool use_desktop_native_cursor_manager_ = false;
 
   // The following factory is used for calls to close the NativeWidgetAura
   // instance.

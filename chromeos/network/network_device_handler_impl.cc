@@ -4,11 +4,15 @@
 
 #include "chromeos/network/network_device_handler_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -171,8 +175,8 @@ void TDLSSuccessCallback(
   }
 
   TDLSOperationParams new_params;
-  const int64 kRequestStatusDelayMs = 500;
-  int64 request_delay_ms = 0;
+  const int64_t kRequestStatusDelayMs = 500;
+  int64_t request_delay_ms = 0;
   if (params.operation == shill::kTDLSStatusOperation) {
     // If this is the last operation, or the result is 'Nonexistent',
     // return the result.
@@ -228,7 +232,7 @@ void TDLSErrorCallback(
     ++retry_params.retry_count;
     NET_LOG(EVENT) << "TDLS Retry: " << params.retry_count << ": "
                    << device_path;
-    const int64 kReRequestDelayMs = 1000;
+    const int64_t kReRequestDelayMs = 1000;
     base::TimeDelta request_delay;
     if (!DBusThreadManager::Get()->GetShillDeviceClient()->GetTestInterface())
       request_delay = base::TimeDelta::FromMilliseconds(kReRequestDelayMs);
@@ -250,11 +254,11 @@ void TDLSErrorCallback(
       dbus_error_name == shill::kErrorResultInProgress ?
       NetworkDeviceHandler::kErrorTimeout : NetworkDeviceHandler::kErrorUnknown;
   const std::string& error_detail = params.ip_or_mac_address;
-  scoped_ptr<base::DictionaryValue> error_data(
-      network_handler::CreateDBusErrorData(
-          device_path, error_name, error_detail,
-          dbus_error_name, dbus_error_message));
-  error_callback.Run(error_name, error_data.Pass());
+  std::unique_ptr<base::DictionaryValue> error_data(
+      network_handler::CreateDBusErrorData(device_path, error_name,
+                                           error_detail, dbus_error_name,
+                                           dbus_error_message));
+  error_callback.Run(error_name, std::move(error_data));
 }
 
 void CallPerformTDLSOperation(
@@ -428,6 +432,12 @@ void NetworkDeviceHandlerImpl::SetCellularAllowRoaming(
   ApplyCellularAllowRoamingToShill();
 }
 
+void NetworkDeviceHandlerImpl::SetMACAddressRandomizationEnabled(
+    const bool enabled) {
+  mac_addr_randomization_enabled_ = enabled;
+  ApplyMACAddressRandomizationToShill();
+}
+
 void NetworkDeviceHandlerImpl::SetWifiTDLSEnabled(
     const std::string& ip_or_mac_address,
     bool enabled,
@@ -516,11 +526,15 @@ void NetworkDeviceHandlerImpl::RemoveAllWifiWakeOnPacketConnections(
 
 void NetworkDeviceHandlerImpl::DeviceListChanged() {
   ApplyCellularAllowRoamingToShill();
+  ApplyMACAddressRandomizationToShill();
 }
 
 NetworkDeviceHandlerImpl::NetworkDeviceHandlerImpl()
     : network_state_handler_(NULL),
-      cellular_allow_roaming_(false) {}
+      cellular_allow_roaming_(false),
+      mac_addr_randomization_supported_(true),
+      mac_addr_randomization_enabled_(false),
+      weak_ptr_factory_(this) {}
 
 void NetworkDeviceHandlerImpl::Init(
     NetworkStateHandler* network_state_handler) {
@@ -560,6 +574,31 @@ void NetworkDeviceHandlerImpl::ApplyCellularAllowRoamingToShill() {
   }
 }
 
+void NetworkDeviceHandlerImpl::ApplyMACAddressRandomizationToShill() {
+  if (!mac_addr_randomization_supported_)
+    return;
+
+  const DeviceState* device_state =
+      GetWifiDeviceState(network_handler::ErrorCallback());
+  if (!device_state)
+    return;
+
+  SetDevicePropertyInternal(
+      device_state->path(), shill::kMACAddressRandomizationProperty,
+      base::FundamentalValue(mac_addr_randomization_enabled_),
+      base::Bind(&base::DoNothing),
+      base::Bind(
+          &NetworkDeviceHandlerImpl::SetMACAddressRandomizationErrorCallback,
+          weak_ptr_factory_.GetWeakPtr()));
+}
+
+void NetworkDeviceHandlerImpl::SetMACAddressRandomizationErrorCallback(
+    const std::string& error_name,
+    std::unique_ptr<base::DictionaryValue> error_data) {
+  if (error_name == NetworkDeviceHandler::kErrorNotSupported)
+    mac_addr_randomization_supported_ = false;
+}
+
 const DeviceState* NetworkDeviceHandlerImpl::GetWifiDeviceState(
     const network_handler::ErrorCallback& error_callback) {
   const DeviceState* device_state =
@@ -567,9 +606,10 @@ const DeviceState* NetworkDeviceHandlerImpl::GetWifiDeviceState(
   if (!device_state) {
     if (error_callback.is_null())
       return NULL;
-    scoped_ptr<base::DictionaryValue> error_data(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> error_data(
+        new base::DictionaryValue);
     error_data->SetString(network_handler::kErrorName, kErrorDeviceMissing);
-    error_callback.Run(kErrorDeviceMissing, error_data.Pass());
+    error_callback.Run(kErrorDeviceMissing, std::move(error_data));
     return NULL;
   }
 

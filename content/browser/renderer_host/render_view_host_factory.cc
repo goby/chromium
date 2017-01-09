@@ -4,21 +4,28 @@
 
 #include "content/browser/renderer_host/render_view_host_factory.h"
 
+#include <memory>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_impl.h"
 
 namespace content {
 
 // static
-RenderViewHostFactory* RenderViewHostFactory::factory_ = NULL;
+RenderViewHostFactory* RenderViewHostFactory::factory_ = nullptr;
+
+// static
+bool RenderViewHostFactory::is_real_render_view_host_ = false;
 
 // static
 RenderViewHost* RenderViewHostFactory::Create(
     SiteInstance* instance,
     RenderViewHostDelegate* delegate,
     RenderWidgetHostDelegate* widget_delegate,
-    int32 routing_id,
-    int32 main_frame_routing_id,
+    int32_t routing_id,
+    int32_t main_frame_routing_id,
     bool swapped_out,
     bool hidden) {
   // RenderViewHost creation can be either browser-driven (by the user opening a
@@ -41,9 +48,12 @@ RenderViewHost* RenderViewHostFactory::Create(
                                           routing_id, main_frame_routing_id,
                                           swapped_out);
   }
-  return new RenderViewHostImpl(instance, delegate, widget_delegate, routing_id,
-                                main_frame_routing_id, swapped_out, hidden,
-                                true /* has_initialized_audio_host */);
+  return new RenderViewHostImpl(
+      instance,
+      base::MakeUnique<RenderWidgetHostImpl>(
+          widget_delegate, instance->GetProcess(), routing_id, hidden),
+      delegate, main_frame_routing_id, swapped_out,
+      true /* has_initialized_audio_host */);
 }
 
 // static
@@ -55,7 +65,7 @@ void RenderViewHostFactory::RegisterFactory(RenderViewHostFactory* factory) {
 // static
 void RenderViewHostFactory::UnregisterFactory() {
   DCHECK(factory_) << "No factory to unregister.";
-  factory_ = NULL;
+  factory_ = nullptr;
 }
 
 }  // namespace content

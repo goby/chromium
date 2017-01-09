@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_UPDATE_CLIENT_CRX_UPDATE_ITEM_H_
 #define COMPONENTS_UPDATE_CLIENT_CRX_UPDATE_ITEM_H_
 
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -68,6 +70,7 @@ struct CrxUpdateItem {
     kUpdated,
     kUpToDate,
     kNoUpdate,
+    kUninstalled,
     kLastStatus
   };
 
@@ -78,15 +81,23 @@ struct CrxUpdateItem {
   std::string id;
   CrxComponent component;
 
-  base::Time last_check;
+  // Time when an update check for this CRX has happened.
+  base::TimeTicks last_check;
+
+  // Time when the update of this CRX has begun.
+  base::TimeTicks update_begin;
 
   // A component can be made available for download from several urls.
   std::vector<GURL> crx_urls;
   std::vector<GURL> crx_diffurls;
 
+  // The cryptographic hash values for the component payload.
+  std::string hash_sha256;
+  std::string hashdiff_sha256;
+
   // The from/to version and fingerprint values.
-  Version previous_version;
-  Version next_version;
+  base::Version previous_version;
+  base::Version next_version;
   std::string previous_fp;
   std::string next_fp;
 
@@ -112,6 +123,7 @@ struct CrxUpdateItem {
   std::vector<CrxDownloader::DownloadMetrics> download_metrics;
 
   CrxUpdateItem();
+  CrxUpdateItem(const CrxUpdateItem& other);
   ~CrxUpdateItem();
 
   // Function object used to find a specific component.
@@ -125,6 +137,9 @@ struct CrxUpdateItem {
     const std::string& id_;
   };
 };
+
+using IdToCrxUpdateItemMap =
+    std::map<std::string, std::unique_ptr<CrxUpdateItem>>;
 
 }  // namespace update_client
 

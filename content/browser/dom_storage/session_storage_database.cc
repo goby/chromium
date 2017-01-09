@@ -4,14 +4,19 @@
 
 #include "content/browser/dom_storage/session_storage_database.h"
 
+#include <inttypes.h>
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/process_memory_dump.h"
 #include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
 #include "third_party/leveldatabase/src/include/leveldb/iterator.h"
@@ -28,7 +33,12 @@ const char session_storage_uma_name[] = "SessionStorageDatabase.Open";
 enum SessionStorageUMA {
   SESSION_STORAGE_UMA_SUCCESS,
   SESSION_STORAGE_UMA_RECREATED,
-  SESSION_STORAGE_UMA_FAIL,
+  SESSION_STORAGE_UMA_RECREATE_FAIL,  // Deprecated in M56 (issue 183679)
+  SESSION_STORAGE_UMA_RECREATE_NOT_FOUND,
+  SESSION_STORAGE_UMA_RECREATE_NOT_SUPPORTED,
+  SESSION_STORAGE_UMA_RECREATE_CORRUPTION,
+  SESSION_STORAGE_UMA_RECREATE_INVALID_ARGUMENT,
+  SESSION_STORAGE_UMA_RECREATE_IO_ERROR,
   SESSION_STORAGE_UMA_MAX
 };
 
@@ -148,7 +158,7 @@ bool SessionStorageDatabase::CommitAreaChanges(
                      &exists, &map_id))
     return false;
   if (exists) {
-    int64 ref_count;
+    int64_t ref_count;
     if (!GetMapRefCount(map_id, &ref_count))
       return false;
     if (ref_count > 1) {
@@ -274,7 +284,7 @@ bool SessionStorageDatabase::ReadNamespacesAndOrigins(
   options.snapshot = db_->GetSnapshot();
 
   std::string namespace_prefix = NamespacePrefix();
-  scoped_ptr<leveldb::Iterator> it(db_->NewIterator(options));
+  std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(options));
   it->Seek(namespace_prefix);
   // If the key is not found, the status of the iterator won't be IsNotFound(),
   // but the iterator will be invalid.
@@ -293,7 +303,8 @@ bool SessionStorageDatabase::ReadNamespacesAndOrigins(
   std::string current_namespace_id;
   for (it->Next(); it->Valid(); it->Next()) {
     std::string key = it->key().ToString();
-    if (key.find(namespace_prefix) != 0) {
+    if (!base::StartsWith(key, namespace_prefix,
+                          base::CompareCase::SENSITIVE)) {
       // Iterated past the "namespace-" keys.
       break;
     }
@@ -321,6 +332,37 @@ bool SessionStorageDatabase::ReadNamespacesAndOrigins(
   }
   db_->ReleaseSnapshot(options.snapshot);
   return true;
+}
+
+void SessionStorageDatabase::OnMemoryDump(
+    base::trace_event::ProcessMemoryDump* pmd) {
+  std::string db_memory_usage;
+  {
+    base::AutoLock lock(db_lock_);
+    if (!db_)
+      return;
+
+    bool res =
+        db_->GetProperty("leveldb.approximate-memory-usage", &db_memory_usage);
+    DCHECK(res);
+  }
+
+  uint64_t size;
+  bool res = base::StringToUint64(db_memory_usage, &size);
+  DCHECK(res);
+
+  auto* mad = pmd->CreateAllocatorDump(
+      base::StringPrintf("dom_storage/session_storage_0x%" PRIXPTR,
+                         reinterpret_cast<uintptr_t>(this)));
+  mad->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                 base::trace_event::MemoryAllocatorDump::kUnitsBytes, size);
+
+  // Memory is allocated from system allocator (malloc).
+  const char* system_allocator_name =
+      base::trace_event::MemoryDumpManager::GetInstance()
+          ->system_allocator_pool_name();
+  if (system_allocator_name)
+    pmd->AddSuballocation(mad->guid(), system_allocator_name);
 }
 
 bool SessionStorageDatabase::LazyOpen(bool create_if_needed) {
@@ -354,9 +396,30 @@ bool SessionStorageDatabase::LazyOpen(bool create_if_needed) {
     if (!s.ok()) {
       LOG(WARNING) << "Failed to open leveldb in " << file_path_.value()
                    << ", error: " << s.ToString();
-      UMA_HISTOGRAM_ENUMERATION(session_storage_uma_name,
-                                SESSION_STORAGE_UMA_FAIL,
-                                SESSION_STORAGE_UMA_MAX);
+      if (s.IsNotFound()) {
+        UMA_HISTOGRAM_ENUMERATION(session_storage_uma_name,
+                                  SESSION_STORAGE_UMA_RECREATE_NOT_FOUND,
+                                  SESSION_STORAGE_UMA_MAX);
+      } else if (s.IsNotSupportedError()) {
+        UMA_HISTOGRAM_ENUMERATION(session_storage_uma_name,
+                                  SESSION_STORAGE_UMA_RECREATE_NOT_SUPPORTED,
+                                  SESSION_STORAGE_UMA_MAX);
+      } else if (s.IsCorruption()) {
+        UMA_HISTOGRAM_ENUMERATION(session_storage_uma_name,
+                                  SESSION_STORAGE_UMA_RECREATE_CORRUPTION,
+                                  SESSION_STORAGE_UMA_MAX);
+      } else if (s.IsInvalidArgument()) {
+        UMA_HISTOGRAM_ENUMERATION(session_storage_uma_name,
+                                  SESSION_STORAGE_UMA_RECREATE_INVALID_ARGUMENT,
+                                  SESSION_STORAGE_UMA_MAX);
+      } else if (s.IsIOError()) {
+        UMA_HISTOGRAM_ENUMERATION(session_storage_uma_name,
+                                  SESSION_STORAGE_UMA_RECREATE_IO_ERROR,
+                                  SESSION_STORAGE_UMA_MAX);
+      } else {
+        NOTREACHED();
+      }
+
       DCHECK(db == NULL);
       db_error_ = true;
       return false;
@@ -381,6 +444,9 @@ leveldb::Status SessionStorageDatabase::TryToOpen(leveldb::DB** db) {
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = true;
   options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
+  // Default write_buffer_size is 4 MB but that might leave a 3.999
+  // memory allocation in RAM from a log file recovery.
+  options.write_buffer_size = 64 * 1024;
   return leveldb::DB::Open(options, file_path_.AsUTF8Unsafe(), db);
 }
 
@@ -442,7 +508,8 @@ bool SessionStorageDatabase::GetAreasInNamespace(
     const std::string& namespace_id,
     std::map<std::string, std::string>* areas) {
   std::string namespace_start_key = NamespaceStartKey(namespace_id);
-  scoped_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> it(
+      db_->NewIterator(leveldb::ReadOptions()));
   it->Seek(namespace_start_key);
   // If the key is not found, the status of the iterator won't be IsNotFound(),
   // but the iterator will be invalid.
@@ -457,7 +524,8 @@ bool SessionStorageDatabase::GetAreasInNamespace(
   // Skip the dummy entry "namespace-<namespaceid>-" and iterate the origins.
   for (it->Next(); it->Valid(); it->Next()) {
     std::string key = it->key().ToString();
-    if (key.find(namespace_start_key) != 0) {
+    if (!base::StartsWith(key, namespace_start_key,
+                          base::CompareCase::SENSITIVE)) {
       // Iterated past the origins for this namespace.
       break;
     }
@@ -495,7 +563,8 @@ bool SessionStorageDatabase::DeleteAreaHelper(
   // If this was the only area in the namespace, delete the namespace start key,
   // too.
   std::string namespace_start_key = NamespaceStartKey(namespace_id);
-  scoped_ptr<leveldb::Iterator> it(db_->NewIterator(leveldb::ReadOptions()));
+  std::unique_ptr<leveldb::Iterator> it(
+      db_->NewIterator(leveldb::ReadOptions()));
   it->Seek(namespace_start_key);
   if (!ConsistencyCheck(it->Valid()))
     return false;
@@ -508,7 +577,7 @@ bool SessionStorageDatabase::DeleteAreaHelper(
   if (!it->Valid())
     return true;
   std::string key = it->key().ToString();
-  if (key.find(namespace_start_key) != 0)
+  if (!base::StartsWith(key, namespace_start_key, base::CompareCase::SENSITIVE))
     batch->Delete(namespace_start_key);
   return true;
 }
@@ -535,7 +604,7 @@ bool SessionStorageDatabase::CreateMapForArea(const std::string& namespace_id,
   leveldb::Status s = db_->Get(leveldb::ReadOptions(), next_map_id_key, map_id);
   if (!DatabaseErrorCheck(s.ok() || s.IsNotFound()))
     return false;
-  int64 next_map_id = 0;
+  int64_t next_map_id = 0;
   if (s.IsNotFound()) {
     *map_id = "0";
   } else {
@@ -554,7 +623,7 @@ bool SessionStorageDatabase::ReadMap(const std::string& map_id,
                                      const leveldb::ReadOptions& options,
                                      DOMStorageValuesMap* result,
                                      bool only_keys) {
-  scoped_ptr<leveldb::Iterator> it(db_->NewIterator(options));
+  std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(options));
   std::string map_start_key = MapRefCountKey(map_id);
   it->Seek(map_start_key);
   // If the key is not found, the status of the iterator won't be IsNotFound(),
@@ -567,7 +636,7 @@ bool SessionStorageDatabase::ReadMap(const std::string& map_id,
   // Skip the dummy entry "map-<mapid>-".
   for (it->Next(); it->Valid(); it->Next()) {
     std::string key = it->key().ToString();
-    if (key.find(map_start_key) != 0) {
+    if (!base::StartsWith(key, map_start_key, base::CompareCase::SENSITIVE)) {
       // Iterated past the keys in this map.
       break;
     }
@@ -610,7 +679,7 @@ void SessionStorageDatabase::WriteValuesToMap(const std::string& map_id,
 }
 
 bool SessionStorageDatabase::GetMapRefCount(const std::string& map_id,
-                                            int64* ref_count) {
+                                            int64_t* ref_count) {
   std::string ref_count_string;
   leveldb::Status s = db_->Get(leveldb::ReadOptions(),
                                MapRefCountKey(map_id), &ref_count_string);
@@ -623,7 +692,7 @@ bool SessionStorageDatabase::GetMapRefCount(const std::string& map_id,
 bool SessionStorageDatabase::IncreaseMapRefCount(const std::string& map_id,
                                                  leveldb::WriteBatch* batch) {
   // Increase the ref count for the map.
-  int64 old_ref_count;
+  int64_t old_ref_count;
   if (!GetMapRefCount(map_id, &old_ref_count))
     return false;
   batch->Put(MapRefCountKey(map_id), base::Int64ToString(++old_ref_count));
@@ -634,7 +703,7 @@ bool SessionStorageDatabase::DecreaseMapRefCount(const std::string& map_id,
                                                  int decrease,
                                                  leveldb::WriteBatch* batch) {
   // Decrease the ref count for the map.
-  int64 ref_count;
+  int64_t ref_count;
   if (!GetMapRefCount(map_id, &ref_count))
     return false;
   if (!ConsistencyCheck(decrease <= ref_count))

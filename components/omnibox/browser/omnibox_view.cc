@@ -7,12 +7,16 @@
 
 #include "components/omnibox/browser/omnibox_view.h"
 
+#include <utility>
+
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_client.h"
 #include "components/omnibox/browser/omnibox_edit_controller.h"
+#include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/toolbar/toolbar_model.h"
 #include "grit/components_scaled_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -63,9 +67,11 @@ void OmniboxView::OpenMatch(const AutocompleteMatch& match,
   // Invalid URLs such as chrome://history can end up here.
   if (!match.destination_url.is_valid() || !model_)
     return;
+  const AutocompleteMatch::Type match_type = match.type;
   model_->OpenMatch(
       match, disposition, alternate_nav_url, pasted_text, selected_line);
-  OnMatchOpened(match);
+  // WARNING: |match| may refer to a deleted object at this point!
+  OnMatchOpened(match_type);
 }
 
 bool OmniboxView::IsEditingOrEmpty() const {
@@ -73,73 +79,27 @@ bool OmniboxView::IsEditingOrEmpty() const {
       (GetOmniboxTextLength() == 0);
 }
 
-int OmniboxView::GetIcon() const {
+gfx::VectorIconId OmniboxView::GetVectorIcon() const {
   if (!IsEditingOrEmpty())
-    return controller_->GetToolbarModel()->GetIcon();
-  int id = AutocompleteMatch::TypeToIcon(model_.get() ?
-      model_->CurrentTextType() : AutocompleteMatchType::URL_WHAT_YOU_TYPED);
-  return (id == IDR_OMNIBOX_HTTP) ? IDR_LOCATION_BAR_HTTP : id;
-}
+    return controller_->GetToolbarModel()->GetVectorIcon();
 
-gfx::VectorIconId OmniboxView::GetVectorIcon(bool invert) const {
-#if !defined(OS_ANDROID) && !defined(OS_MACOSX) && !defined(OS_IOS)
-  if (!IsEditingOrEmpty()) {
-    gfx::VectorIconId id = controller_->GetToolbarModel()->GetVectorIcon();
-    if (invert) {
-      if (id == gfx::VectorIconId::LOCATION_BAR_HTTPS_VALID)
-        return gfx::VectorIconId::LOCATION_BAR_HTTPS_VALID_INVERT;
-      if (id == gfx::VectorIconId::LOCATION_BAR_HTTPS_INVALID)
-        return gfx::VectorIconId::LOCATION_BAR_HTTPS_INVALID_INVERT;
-    }
-    return id;
-  }
-  // Reuse the dropdown icons...
-  gfx::VectorIconId id = AutocompleteMatch::TypeToVectorIcon(
+  return AutocompleteMatch::TypeToVectorIcon(
       model_ ? model_->CurrentTextType()
              : AutocompleteMatchType::URL_WHAT_YOU_TYPED);
-  // but use a tweaked version for the HTTP icon.
-  return (id == gfx::VectorIconId::OMNIBOX_HTTP)
-             ? gfx::VectorIconId::LOCATION_BAR_HTTP
-             : id;
-#else
-  NOTIMPLEMENTED();
-  return gfx::VectorIconId::VECTOR_ICON_NONE;
-#endif
 }
 
 void OmniboxView::SetUserText(const base::string16& text) {
-  SetUserText(text, text, true);
+  SetUserText(text, true);
 }
 
 void OmniboxView::SetUserText(const base::string16& text,
-                              const base::string16& display_text,
                               bool update_popup) {
   if (model_.get())
     model_->SetUserText(text);
-  SetWindowTextAndCaretPos(display_text, display_text.length(), update_popup,
-                           true);
-}
-
-void OmniboxView::ShowURL() {
-  SetFocus();
-  controller_->GetToolbarModel()->set_url_replacement_enabled(false);
-  model_->UpdatePermanentText();
-  RevertWithoutResettingSearchTermReplacement();
-  SelectAll(true);
-}
-
-void OmniboxView::HideURL() {
-  controller_->GetToolbarModel()->set_url_replacement_enabled(true);
-  model_->UpdatePermanentText();
-  RevertWithoutResettingSearchTermReplacement();
+  SetWindowTextAndCaretPos(text, text.length(), update_popup, true);
 }
 
 void OmniboxView::RevertAll() {
-  controller_->GetToolbarModel()->set_url_replacement_enabled(true);
-  RevertWithoutResettingSearchTermReplacement();
-}
-
-void OmniboxView::RevertWithoutResettingSearchTermReplacement() {
   CloseOmniboxPopup();
   if (model_.get())
     model_->Revert();
@@ -167,16 +127,56 @@ bool OmniboxView::IsIndicatingQueryRefinement() const {
   return false;
 }
 
-void OmniboxView::OnMatchOpened(const AutocompleteMatch& match) {
+void OmniboxView::OnMatchOpened(AutocompleteMatch::Type match_type) {
+}
+
+void OmniboxView::GetState(State* state) {
+  state->text = GetText();
+  state->keyword = model()->keyword();
+  state->is_keyword_selected = model()->is_keyword_selected();
+  GetSelectionBounds(&state->sel_start, &state->sel_end);
+}
+
+OmniboxView::StateChanges OmniboxView::GetStateChanges(const State& before,
+                                                     const State& after) {
+  OmniboxView::StateChanges state_changes;
+  state_changes.old_text = &before.text;
+  state_changes.new_text = &after.text;
+  state_changes.new_sel_start = after.sel_start;
+  state_changes.new_sel_end = after.sel_end;
+  const bool old_sel_empty = before.sel_start == before.sel_end;
+  const bool new_sel_empty = after.sel_start == after.sel_end;
+  const bool sel_same_ignoring_direction =
+      std::min(before.sel_start, before.sel_end) ==
+          std::min(after.sel_start, after.sel_end) &&
+      std::max(before.sel_start, before.sel_end) ==
+          std::max(after.sel_start, after.sel_end);
+  state_changes.selection_differs =
+      (!old_sel_empty || !new_sel_empty) && !sel_same_ignoring_direction;
+  state_changes.text_differs = before.text != after.text;
+  state_changes.keyword_differs =
+      (after.is_keyword_selected != before.is_keyword_selected) ||
+      (after.is_keyword_selected && before.is_keyword_selected &&
+       after.keyword != before.keyword);
+
+  // When the user has deleted text, we don't allow inline autocomplete.  Make
+  // sure to not flag cases like selecting part of the text and then pasting
+  // (or typing) the prefix of that selection.  (We detect these by making
+  // sure the caret, which should be after any insertion, hasn't moved
+  // forward of the old selection start.)
+  state_changes.just_deleted_text =
+      (before.text.length() > after.text.length()) &&
+      (after.sel_start <= std::min(before.sel_start, before.sel_end));
+
+  return state_changes;
 }
 
 OmniboxView::OmniboxView(OmniboxEditController* controller,
-                         scoped_ptr<OmniboxClient> client)
+                         std::unique_ptr<OmniboxClient> client)
     : controller_(controller) {
   // |client| can be null in tests.
   if (client) {
-    model_.reset(
-        new OmniboxEditModel(this, controller, client.Pass()));
+    model_.reset(new OmniboxEditModel(this, controller, std::move(client)));
   }
 }
 

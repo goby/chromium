@@ -23,16 +23,13 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/dom/DOMStringMap.h"
 
 namespace blink {
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(DOMStringMap);
-
-bool DOMStringMap::namedPropertyQuery(const AtomicString& name, ExceptionState&)
-{
-    return contains(name);
+bool DOMStringMap::namedPropertyQuery(const AtomicString& name,
+                                      ExceptionState&) {
+  return contains(name);
 }
 
-} // namespace blink
+}  // namespace blink

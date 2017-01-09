@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/extensions/default_apps.h"
+
+#include <memory>
+
+#include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/external_pref_loader.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/test_browser_thread.h"
 #include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -42,7 +45,7 @@ class DefaultAppsTest : public testing::Test {
 // Chrome OS has different way of installing default apps.
 // Android does not currently support installing apps via Chrome.
 TEST_F(DefaultAppsTest, Install) {
-  scoped_ptr<TestingProfile> profile(new TestingProfile());
+  std::unique_ptr<TestingProfile> profile(new TestingProfile());
   ExternalLoader* loader = new MockExternalLoader();
 
   Provider provider(profile.get(), NULL, loader, Manifest::INTERNAL,

@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/importer/firefox_profile_lock.h"
+
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "chrome/browser/importer/firefox_profile_lock.h"
 #include "chrome/common/chrome_paths.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -18,7 +21,7 @@ class FirefoxProfileLockTest : public testing::Test {
 };
 
 TEST_F(FirefoxProfileLockTest, LockTest) {
-  FirefoxProfileLock lock1(temp_dir_.path());
+  FirefoxProfileLock lock1(temp_dir_.GetPath());
   ASSERT_TRUE(lock1.HasAcquired());
   lock1.Unlock();
   ASSERT_FALSE(lock1.HasAcquired());
@@ -29,11 +32,11 @@ TEST_F(FirefoxProfileLockTest, LockTest) {
 // Tests basic functionality and verifies that the lock file is deleted after
 // use.
 TEST_F(FirefoxProfileLockTest, ProfileLock) {
-  base::FilePath test_path = temp_dir_.path();
+  base::FilePath test_path = temp_dir_.GetPath();
   base::FilePath lock_file_path =
       test_path.Append(FirefoxProfileLock::kLockFileName);
 
-  scoped_ptr<FirefoxProfileLock> lock;
+  std::unique_ptr<FirefoxProfileLock> lock;
   EXPECT_EQ(static_cast<FirefoxProfileLock*>(NULL), lock.get());
   EXPECT_FALSE(base::PathExists(lock_file_path));
   lock.reset(new FirefoxProfileLock(test_path));
@@ -62,7 +65,7 @@ TEST_F(FirefoxProfileLockTest, ProfileLock) {
 // If for some reason the lock file is left behind by the previous owner, we
 // should still be able to lock it, at least in the Windows implementation.
 TEST_F(FirefoxProfileLockTest, ProfileLockOrphaned) {
-  base::FilePath test_path = temp_dir_.path();
+  base::FilePath test_path = temp_dir_.GetPath();
   base::FilePath lock_file_path =
       test_path.Append(FirefoxProfileLock::kLockFileName);
 
@@ -72,7 +75,7 @@ TEST_F(FirefoxProfileLockTest, ProfileLockOrphaned) {
   base::CloseFile(lock_file);
   EXPECT_TRUE(base::PathExists(lock_file_path));
 
-  scoped_ptr<FirefoxProfileLock> lock;
+  std::unique_ptr<FirefoxProfileLock> lock;
   EXPECT_EQ(static_cast<FirefoxProfileLock*>(NULL), lock.get());
   lock.reset(new FirefoxProfileLock(test_path));
   EXPECT_TRUE(lock->HasAcquired());
@@ -85,14 +88,14 @@ TEST_F(FirefoxProfileLockTest, ProfileLockOrphaned) {
 #if !defined(OS_POSIX)
 // Tests two locks contending for the same lock file.
 TEST_F(FirefoxProfileLockTest, ProfileLockContention) {
-  base::FilePath test_path = temp_dir_.path();
+  base::FilePath test_path = temp_dir_.GetPath();
 
-  scoped_ptr<FirefoxProfileLock> lock1;
+  std::unique_ptr<FirefoxProfileLock> lock1;
   EXPECT_EQ(static_cast<FirefoxProfileLock*>(NULL), lock1.get());
   lock1.reset(new FirefoxProfileLock(test_path));
   EXPECT_TRUE(lock1->HasAcquired());
 
-  scoped_ptr<FirefoxProfileLock> lock2;
+  std::unique_ptr<FirefoxProfileLock> lock2;
   EXPECT_EQ(static_cast<FirefoxProfileLock*>(NULL), lock2.get());
   lock2.reset(new FirefoxProfileLock(test_path));
   EXPECT_FALSE(lock2->HasAcquired());

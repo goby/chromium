@@ -4,7 +4,7 @@
 
 #include "extensions/renderer/scripts_run_info.h"
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "extensions/common/extension_messages.h"
@@ -27,9 +27,9 @@ ScriptsRunInfo::ScriptsRunInfo(content::RenderFrame* render_frame,
 ScriptsRunInfo::~ScriptsRunInfo() {
 }
 
-void ScriptsRunInfo::LogRun() {
+void ScriptsRunInfo::LogRun(bool send_script_activity) {
   // Notify the browser if any extensions are now executing scripts.
-  if (!executing_scripts.empty()) {
+  if (!executing_scripts.empty() && send_script_activity) {
     content::RenderThread::Get()->Send(
         new ExtensionHostMsg_ContentScriptsExecuting(
             routing_id_, executing_scripts, frame_url_));

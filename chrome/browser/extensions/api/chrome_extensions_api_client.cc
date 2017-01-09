@@ -6,10 +6,15 @@
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
+#include "chrome/browser/data_use_measurement/data_use_web_contents_observer.h"
 #include "chrome/browser/extensions/api/chrome_device_permissions_prompt.h"
 #include "chrome/browser/extensions/api/declarative_content/chrome_content_rules_registry.h"
 #include "chrome/browser/extensions/api/declarative_content/default_content_predicate_evaluators.h"
 #include "chrome/browser/extensions/api/management/chrome_management_api_delegate.h"
+#include "chrome/browser/extensions/api/metrics_private/chrome_metrics_private_delegate.h"
+#include "chrome/browser/extensions/api/storage/managed_value_store_cache.h"
 #include "chrome/browser/extensions/api/storage/sync_value_store_cache.h"
 #include "chrome/browser/extensions/api/web_request/chrome_extension_web_request_event_router_delegate.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
@@ -27,23 +32,20 @@
 #include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_delegate.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_helper.h"
-
-#if defined(ENABLE_CONFIGURATION_POLICY)
-#include "chrome/browser/extensions/api/storage/managed_value_store_cache.h"
-#endif
+#include "printing/features/features.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/extensions/api/virtual_keyboard_private/chrome_virtual_keyboard_delegate.h"
 #endif
 
-#if defined(ENABLE_PRINTING)
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/printing/print_preview_message_handler.h"
 #include "chrome/browser/printing/print_view_manager.h"
 #else
 #include "chrome/browser/printing/print_view_manager_basic.h"
-#endif  // defined(ENABLE_PRINT_PREVIEW)
-#endif  // defined(ENABLE_PRINTING)
+#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#endif  // BUILDFLAG(ENABLE_PRINTING)
 
 namespace extensions {
 
@@ -53,7 +55,7 @@ ChromeExtensionsAPIClient::~ChromeExtensionsAPIClient() {}
 
 void ChromeExtensionsAPIClient::AddAdditionalValueStoreCaches(
     content::BrowserContext* context,
-    const scoped_refptr<SettingsStorageFactory>& factory,
+    const scoped_refptr<ValueStoreFactory>& factory,
     const scoped_refptr<base::ObserverListThreadSafe<SettingsObserver>>&
         observers,
     std::map<settings_namespace::Namespace, ValueStoreCache*>* caches) {
@@ -61,29 +63,28 @@ void ChromeExtensionsAPIClient::AddAdditionalValueStoreCaches(
   (*caches)[settings_namespace::SYNC] =
       new SyncValueStoreCache(factory, observers, context->GetPath());
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   // Add support for chrome.storage.managed.
   (*caches)[settings_namespace::MANAGED] =
       new ManagedValueStoreCache(context, factory, observers);
-#endif
 }
 
 void ChromeExtensionsAPIClient::AttachWebContentsHelpers(
     content::WebContents* web_contents) const {
   favicon::CreateContentFaviconDriverForWebContents(web_contents);
-#if defined(ENABLE_PRINTING)
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   printing::PrintViewManager::CreateForWebContents(web_contents);
   printing::PrintPreviewMessageHandler::CreateForWebContents(web_contents);
 #else
   printing::PrintViewManagerBasic::CreateForWebContents(web_contents);
-#endif  // defined(ENABLE_PRINT_PREVIEW)
-#endif  // defined(ENABLE_PRINTING)
+#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
+#endif  // BUILDFLAG(ENABLE_PRINTING)
   pdf::PDFWebContentsHelper::CreateForWebContentsWithClient(
-      web_contents,
-      scoped_ptr<pdf::PDFWebContentsHelperClient>(
-          new ChromePDFWebContentsHelperClient()));
+      web_contents, std::unique_ptr<pdf::PDFWebContentsHelperClient>(
+                        new ChromePDFWebContentsHelperClient()));
 
+  data_use_measurement::DataUseWebContentsObserver::CreateForWebContents(
+      web_contents);
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
       web_contents);
 }
@@ -99,16 +100,16 @@ ChromeExtensionsAPIClient::CreateExtensionOptionsGuestDelegate(
   return new ChromeExtensionOptionsGuestDelegate(guest);
 }
 
-scoped_ptr<guest_view::GuestViewManagerDelegate>
+std::unique_ptr<guest_view::GuestViewManagerDelegate>
 ChromeExtensionsAPIClient::CreateGuestViewManagerDelegate(
     content::BrowserContext* context) const {
-  return make_scoped_ptr(new ChromeGuestViewManagerDelegate(context));
+  return base::MakeUnique<ChromeGuestViewManagerDelegate>(context);
 }
 
-scoped_ptr<MimeHandlerViewGuestDelegate>
+std::unique_ptr<MimeHandlerViewGuestDelegate>
 ChromeExtensionsAPIClient::CreateMimeHandlerViewGuestDelegate(
     MimeHandlerViewGuest* guest) const {
-  return make_scoped_ptr(new ChromeMimeHandlerViewGuestDelegate());
+  return base::MakeUnique<ChromeMimeHandlerViewGuestDelegate>();
 }
 
 WebViewGuestDelegate* ChromeExtensionsAPIClient::CreateWebViewGuestDelegate(
@@ -122,9 +123,9 @@ WebViewPermissionHelperDelegate* ChromeExtensionsAPIClient::
   return new ChromeWebViewPermissionHelperDelegate(web_view_permission_helper);
 }
 
-WebRequestEventRouterDelegate*
+std::unique_ptr<WebRequestEventRouterDelegate>
 ChromeExtensionsAPIClient::CreateWebRequestEventRouterDelegate() const {
-  return new ChromeExtensionWebRequestEventRouterDelegate();
+  return base::MakeUnique<ChromeExtensionWebRequestEventRouterDelegate>();
 }
 
 scoped_refptr<ContentRulesRegistry>
@@ -139,16 +140,16 @@ ChromeExtensionsAPIClient::CreateContentRulesRegistry(
                      base::Unretained(browser_context))));
 }
 
-scoped_ptr<DevicePermissionsPrompt>
+std::unique_ptr<DevicePermissionsPrompt>
 ChromeExtensionsAPIClient::CreateDevicePermissionsPrompt(
     content::WebContents* web_contents) const {
-  return make_scoped_ptr(new ChromeDevicePermissionsPrompt(web_contents));
+  return base::MakeUnique<ChromeDevicePermissionsPrompt>(web_contents);
 }
 
-scoped_ptr<VirtualKeyboardDelegate>
+std::unique_ptr<VirtualKeyboardDelegate>
 ChromeExtensionsAPIClient::CreateVirtualKeyboardDelegate() const {
 #if defined(OS_CHROMEOS)
-  return make_scoped_ptr(new ChromeVirtualKeyboardDelegate());
+  return base::MakeUnique<ChromeVirtualKeyboardDelegate>();
 #else
   return nullptr;
 #endif
@@ -157,6 +158,12 @@ ChromeExtensionsAPIClient::CreateVirtualKeyboardDelegate() const {
 ManagementAPIDelegate* ChromeExtensionsAPIClient::CreateManagementAPIDelegate()
     const {
   return new ChromeManagementAPIDelegate;
+}
+
+MetricsPrivateDelegate* ChromeExtensionsAPIClient::GetMetricsPrivateDelegate() {
+  if (!metrics_private_delegate_)
+    metrics_private_delegate_.reset(new ChromeMetricsPrivateDelegate());
+  return metrics_private_delegate_.get();
 }
 
 }  // namespace extensions

@@ -2,19 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <string>
 
 #include "base/bind.h"
+#include "base/location.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "chrome/browser/chromeos/attestation/attestation_signed_data.pb.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/attestation/fake_certificate.h"
 #include "chrome/browser/chromeos/attestation/platform_verification_flow.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/profiles/profile_impl.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/attestation/attestation.pb.h"
 #include "chromeos/attestation/mock_attestation_flow.h"
 #include "chromeos/cryptohome/mock_async_method_caller.h"
 #include "chromeos/dbus/fake_cryptohome_client.h"
@@ -98,18 +104,14 @@ class CustomFakeCryptohomeClient : public FakeCryptohomeClient {
                                  attestation_prepared_(true) {}
   void TpmAttestationIsEnrolled(
       const BoolDBusMethodCallback& callback) override {
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback,
-                                                      call_status_,
-                                                      attestation_enrolled_));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, call_status_, attestation_enrolled_));
   }
 
   void TpmAttestationIsPrepared(
       const BoolDBusMethodCallback& callback) override {
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback,
-                                                      call_status_,
-                                                      attestation_prepared_));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, call_status_, attestation_prepared_));
   }
 
   void set_call_status(DBusMethodCallStatus call_status) {
@@ -161,22 +163,23 @@ class PlatformVerificationFlowTest : public ::testing::Test {
     // that there are no calls to the attestation service.  Thus, a test must
     // explicitly expect these calls or the mocks will fail the test.
 
+    const AccountId account_id = AccountId::FromUserEmail(kTestEmail);
     // Configure the mock AttestationFlow to call FakeGetCertificate.
     EXPECT_CALL(mock_attestation_flow_,
                 GetCertificate(PROFILE_CONTENT_PROTECTION_CERTIFICATE,
-                               kTestEmail, kTestID, _, _))
-        .WillRepeatedly(WithArgs<4>(Invoke(
-            this, &PlatformVerificationFlowTest::FakeGetCertificate)));
+                               account_id, kTestID, _, _))
+        .WillRepeatedly(WithArgs<4>(
+            Invoke(this, &PlatformVerificationFlowTest::FakeGetCertificate)));
 
     // Configure the mock AsyncMethodCaller to call FakeSignChallenge.
     std::string expected_key_name = std::string(kContentProtectionKeyPrefix) +
                                     std::string(kTestID);
     EXPECT_CALL(mock_async_caller_,
-                TpmAttestationSignSimpleChallenge(KEY_USER, kTestEmail,
-                                                  expected_key_name,
-                                                  kTestChallenge, _))
-        .WillRepeatedly(WithArgs<4>(Invoke(
-            this, &PlatformVerificationFlowTest::FakeSignChallenge)));
+                TpmAttestationSignSimpleChallenge(
+                    KEY_USER, cryptohome::Identification(account_id),
+                    expected_key_name, kTestChallenge, _))
+        .WillRepeatedly(WithArgs<4>(
+            Invoke(this, &PlatformVerificationFlowTest::FakeSignChallenge)));
   }
 
   void FakeGetCertificate(
@@ -184,20 +187,16 @@ class PlatformVerificationFlowTest : public ::testing::Test {
     std::string certificate =
         (fake_certificate_index_ < fake_certificate_list_.size()) ?
             fake_certificate_list_[fake_certificate_index_] : kTestCertificate;
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback,
-                                                      certificate_success_,
-                                                      certificate));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, certificate_success_, certificate));
     ++fake_certificate_index_;
   }
 
   void FakeSignChallenge(
       const cryptohome::AsyncMethodCaller::DataCallback& callback) {
-    base::MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(callback,
-                   sign_challenge_success_,
-                   CreateFakeResponseProto()));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, sign_challenge_success_,
+                              CreateFakeResponseProto()));
   }
 
   void FakeChallengeCallback(PlatformVerificationFlow::Result result,

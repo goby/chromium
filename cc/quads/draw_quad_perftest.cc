@@ -28,7 +28,7 @@ SharedQuadState* CreateSharedQuadState(RenderPass* render_pass) {
   bool is_clipped = false;
   float opacity = 1.f;
   int sorting_context_id = 65536;
-  SkXfermode::Mode blend_mode = SkXfermode::kSrcOver_Mode;
+  SkBlendMode blend_mode = SkBlendMode::kSrcOver;
 
   SharedQuadState* state = render_pass->CreateAndAppendSharedQuadState();
   state->SetAll(quad_transform, content_bounds, visible_layer_rect, clip_rect,
@@ -48,7 +48,7 @@ class DrawQuadPerfTest : public testing::Test {
     SharedQuadState* new_shared_state(
         CreateSharedQuadState(render_pass_.get()));
     shared_state_ = render_pass_->CreateAndAppendSharedQuadState();
-    shared_state_->CopyFrom(new_shared_state);
+    *shared_state_ = *new_shared_state;
   }
 
   void CleanUpRenderPass() {
@@ -73,7 +73,7 @@ class DrawQuadPerfTest : public testing::Test {
       quad->SetNew(shared_state_, rect, rect, rect, resource_id,
                    premultiplied_alpha, uv_top_left, uv_bottom_right,
                    background_color, vertex_opacity, y_flipped,
-                   nearest_neighbor);
+                   nearest_neighbor, false);
       quads->push_back(quad);
     }
   }
@@ -98,7 +98,7 @@ class DrawQuadPerfTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<RenderPass> render_pass_;
+  std::unique_ptr<RenderPass> render_pass_;
   SharedQuadState* shared_state_;
   LapTimer timer_;
 };

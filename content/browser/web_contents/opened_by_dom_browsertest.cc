@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -72,8 +73,7 @@ class OpenedByDOMTest : public ContentBrowserTest {
     TestNavigationObserver nav_observer(NULL);
     nav_observer.StartWatchingNewWebContents();
     CHECK(ExecuteScript(
-        shell->web_contents(),
-        base::StringPrintf("window.open('%s')", url.spec().c_str())));
+        shell, base::StringPrintf("window.open('%s')", url.spec().c_str())));
     nav_observer.Wait();
     return new_shell_observer.GetShell();
   }

@@ -2,15 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/supervised_user/child_accounts/family_info_fetcher.h"
+
+#include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
-#include "chrome/browser/supervised_user/child_accounts/family_info_fetcher.h"
 #include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/test_url_fetcher_factory.h"
@@ -45,9 +50,10 @@ std::string BuildGetFamilyProfileResponse(
   base::DictionaryValue dict;
   base::DictionaryValue* family_dict = new base::DictionaryValue;
   family_dict->SetStringWithoutPathExpansion("familyId", family.id);
-  base::DictionaryValue* profile_dict = new base::DictionaryValue;
+  std::unique_ptr<base::DictionaryValue> profile_dict =
+      base::MakeUnique<base::DictionaryValue>();
   profile_dict->SetStringWithoutPathExpansion("name", family.name);
-  family_dict->SetWithoutPathExpansion("profile", profile_dict);
+  family_dict->SetWithoutPathExpansion("profile", std::move(profile_dict));
   dict.SetWithoutPathExpansion("family", family_dict);
   std::string result;
   base::JSONWriter::Write(dict, &result);
@@ -69,7 +75,8 @@ std::string BuildGetFamilyMembersResponse(
   base::ListValue* list = new base::ListValue;
   for (size_t i = 0; i < members.size(); i++) {
     const FamilyInfoFetcher::FamilyMember& member = members[i];
-    base::DictionaryValue* member_dict = new base::DictionaryValue;
+    std::unique_ptr<base::DictionaryValue> member_dict(
+        new base::DictionaryValue);
     member_dict->SetStringWithoutPathExpansion("userId",
                                                member.obfuscated_gaia_id);
     member_dict->SetStringWithoutPathExpansion(
@@ -94,7 +101,7 @@ std::string BuildGetFamilyMembersResponse(
 
       member_dict->SetWithoutPathExpansion("profile", profile_dict);
     }
-    list->Append(member_dict);
+    list->Append(std::move(member_dict));
   }
   dict.SetWithoutPathExpansion("members", list);
   std::string result;

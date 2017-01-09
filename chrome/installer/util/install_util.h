@@ -12,10 +12,10 @@
 #include <windows.h>
 #include <tchar.h>
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/win/scoped_handle.h"
 #include "chrome/installer/util/browser_distribution.h"
@@ -32,10 +32,6 @@ class Version;
 // independently.
 class InstallUtil {
  public:
-  // Returns true if properties that enable Metro mode on Win8+ should be
-  // installed.
-  static bool ShouldInstallMetroProperties();
-
   // Get the path to this distribution's Active Setup registry entries.
   // e.g. Software\Microsoft\Active Setup\Installed Components\<dist_guid>
   static base::string16 GetActiveSetupPath(BrowserDistribution* dist);
@@ -76,9 +72,9 @@ class InstallUtil {
   // This function checks if the current OS is supported for Chromium.
   static bool IsOSSupported();
 
-  // Adds work items to |install_list|, which should be a
-  // NoRollbackWorkItemList, to set installer error information in the registry
-  // for consumption by Google Update.  |state_key| must be the full path to an
+  // Adds work items to |install_list| to set installer error information in the
+  // registry for consumption by Google Update. |install_list| must be best-
+  // effort with rollback disabled. |state_key| must be the full path to an
   // app's ClientState key.  See InstallerState::WriteInstallerResult for more
   // details.
   static void AddInstallerResultItems(bool system_install,
@@ -88,17 +84,14 @@ class InstallUtil {
                                       const base::string16* const launch_cmd,
                                       WorkItemList* install_list);
 
-  // Update the installer stage reported by Google Update.  |state_key_path|
-  // should be obtained via the state_key method of an InstallerState instance
-  // created before the machine state is modified by the installer.
-  static void UpdateInstallerStage(bool system_install,
-                                   const base::string16& state_key_path,
-                                   installer::InstallerStage stage);
-
   // Returns true if this installation path is per user, otherwise returns false
   // (per machine install, meaning: the exe_path contains the path to Program
   // Files).
   static bool IsPerUserInstall(const base::FilePath& exe_path);
+
+  // Resets internal state for IsPerUserInstall so that the next call recomputes
+  // with fresh data.
+  static void ResetIsPerUserInstallForTest();
 
   // Returns true if the installation represented by the pair of |dist| and
   // |system_level| is a multi install.
@@ -186,6 +179,21 @@ class InstallUtil {
 
   // Returns a string in the form YYYYMMDD of the current date.
   static base::string16 GetCurrentDate();
+
+  // Returns the highest Chrome version that was installed prior to a downgrade,
+  // or an invalid Version if Chrome was not previously downgraded from a newer
+  // version.
+  static base::Version GetDowngradeVersion(bool system_install,
+                                           const BrowserDistribution* dist);
+
+  // Adds or removes downgrade version registry value. This function should only
+  // be used for Chrome install.
+  static void AddUpdateDowngradeVersionItem(
+      bool system_install,
+      const base::Version* current_version,
+      const base::Version& new_version,
+      const BrowserDistribution* dist,
+      WorkItemList* list);
 
   // A predicate that compares the program portion of a command line with a
   // given file path.  First, the file paths are compared directly.  If they do

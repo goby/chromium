@@ -5,6 +5,7 @@
 #include "content/public/browser/navigation_controller.h"
 
 #include "base/memory/ref_counted_memory.h"
+#include "build/build_config.h"
 
 namespace content {
 
@@ -15,14 +16,15 @@ NavigationController::LoadURLParams::LoadURLParams(const GURL& url)
       frame_tree_node_id(-1),
       is_renderer_initiated(false),
       override_user_agent(UA_OVERRIDE_INHERIT),
-      browser_initiated_post_data(nullptr),
+      post_data(nullptr),
       can_load_local_resources(false),
       should_replace_current_entry(false),
 #if defined(OS_ANDROID)
       intent_received_timestamp(0),
       has_user_gesture(false),
 #endif
-      should_clear_history_list(false) {
+      should_clear_history_list(false),
+      started_from_context_menu(false) {
 }
 
 NavigationController::LoadURLParams::~LoadURLParams() {
@@ -41,13 +43,14 @@ NavigationController::LoadURLParams::LoadURLParams(
       transferred_global_request_id(other.transferred_global_request_id),
       base_url_for_data_url(other.base_url_for_data_url),
       virtual_url_for_data_url(other.virtual_url_for_data_url),
-      browser_initiated_post_data(other.browser_initiated_post_data),
+      post_data(other.post_data),
       should_replace_current_entry(false),
 #if defined(OS_ANDROID)
       intent_received_timestamp(other.intent_received_timestamp),
       has_user_gesture(other.has_user_gesture),
 #endif
-      should_clear_history_list(false) {
+      should_clear_history_list(false),
+      started_from_context_menu(other.started_from_context_menu) {
 }
 
 NavigationController::LoadURLParams&
@@ -65,13 +68,14 @@ NavigationController::LoadURLParams::operator=(
   transferred_global_request_id = other.transferred_global_request_id;
   base_url_for_data_url = other.base_url_for_data_url;
   virtual_url_for_data_url = other.virtual_url_for_data_url;
-  browser_initiated_post_data = other.browser_initiated_post_data;
+  post_data = other.post_data;
   should_replace_current_entry = other.should_replace_current_entry;
   should_clear_history_list = other.should_clear_history_list;
 #if defined(OS_ANDROID)
   intent_received_timestamp = other.intent_received_timestamp;
   has_user_gesture = other.has_user_gesture;
 #endif
+  started_from_context_menu = other.started_from_context_menu;
 
   return *this;
 }

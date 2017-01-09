@@ -4,15 +4,17 @@
 
 #include "base/message_loop/message_loop_task_runner.h"
 
+#include <memory>
+
 #include "base/atomic_sequence_num.h"
 #include "base/bind.h"
 #include "base/debug/leak_annotations.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_loop_task_runner.h"
+#include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -23,7 +25,8 @@ class MessageLoopTaskRunnerTest : public testing::Test {
   MessageLoopTaskRunnerTest()
       : current_loop_(new MessageLoop()),
         task_thread_("task_thread"),
-        thread_sync_(true, false) {}
+        thread_sync_(WaitableEvent::ResetPolicy::MANUAL,
+                     WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   void DeleteCurrentMessageLoop() { current_loop_.reset(); }
 
@@ -34,7 +37,7 @@ class MessageLoopTaskRunnerTest : public testing::Test {
     task_thread_.Start();
 
     // Allow us to pause the |task_thread_|'s MessageLoop.
-    task_thread_.message_loop()->PostTask(
+    task_thread_.task_runner()->PostTask(
         FROM_HERE, Bind(&MessageLoopTaskRunnerTest::BlockTaskThreadHelper,
                         Unretained(this)));
   }
@@ -88,7 +91,7 @@ class MessageLoopTaskRunnerTest : public testing::Test {
 
   static StaticAtomicSequenceNumber g_order;
 
-  scoped_ptr<MessageLoop> current_loop_;
+  std::unique_ptr<MessageLoop> current_loop_;
   Thread task_thread_;
 
  private:
@@ -121,7 +124,7 @@ TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReply_Basic) {
   ASSERT_FALSE(reply_deleted_on);
 
   UnblockTaskThread();
-  current_loop_->Run();
+  RunLoop().Run();
 
   EXPECT_EQ(task_thread_.message_loop(), task_run_on);
   EXPECT_EQ(current_loop_.get(), task_deleted_on);
@@ -188,7 +191,7 @@ TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReply_SameLoop) {
   ASSERT_FALSE(task_deleted_on);
   ASSERT_FALSE(reply_deleted_on);
 
-  current_loop_->Run();
+  RunLoop().Run();
 
   EXPECT_EQ(current_loop_.get(), task_run_on);
   EXPECT_EQ(current_loop_.get(), task_deleted_on);
@@ -256,7 +259,8 @@ class MessageLoopTaskRunnerThreadingTest : public testing::Test {
   }
 
   void Quit() const {
-    loop_.PostTask(FROM_HERE, MessageLoop::QuitWhenIdleClosure());
+    loop_.task_runner()->PostTask(FROM_HERE,
+                                  MessageLoop::QuitWhenIdleClosure());
   }
 
   void AssertOnIOThread() const {
@@ -303,8 +307,8 @@ class MessageLoopTaskRunnerThreadingTest : public testing::Test {
     MessageLoopTaskRunnerThreadingTest* test_;
   };
 
-  scoped_ptr<Thread> io_thread_;
-  scoped_ptr<Thread> file_thread_;
+  std::unique_ptr<Thread> io_thread_;
+  std::unique_ptr<Thread> file_thread_;
 
  private:
   mutable MessageLoop loop_;
@@ -312,25 +316,25 @@ class MessageLoopTaskRunnerThreadingTest : public testing::Test {
 
 TEST_F(MessageLoopTaskRunnerThreadingTest, Release) {
   EXPECT_TRUE(io_thread_->task_runner()->ReleaseSoon(FROM_HERE, this));
-  MessageLoop::current()->Run();
+  RunLoop().Run();
 }
 
 TEST_F(MessageLoopTaskRunnerThreadingTest, Delete) {
   DeletedOnFile* deleted_on_file = new DeletedOnFile(this);
   EXPECT_TRUE(
       file_thread_->task_runner()->DeleteSoon(FROM_HERE, deleted_on_file));
-  MessageLoop::current()->Run();
+  RunLoop().Run();
 }
 
 TEST_F(MessageLoopTaskRunnerThreadingTest, PostTask) {
   EXPECT_TRUE(file_thread_->task_runner()->PostTask(
       FROM_HERE, Bind(&MessageLoopTaskRunnerThreadingTest::BasicFunction,
                       Unretained(this))));
-  MessageLoop::current()->Run();
+  RunLoop().Run();
 }
 
 TEST_F(MessageLoopTaskRunnerThreadingTest, PostTaskAfterThreadExits) {
-  scoped_ptr<Thread> test_thread(
+  std::unique_ptr<Thread> test_thread(
       new Thread("MessageLoopTaskRunnerThreadingTest_Dummy"));
   test_thread->Start();
   scoped_refptr<SingleThreadTaskRunner> task_runner =
@@ -345,7 +349,7 @@ TEST_F(MessageLoopTaskRunnerThreadingTest, PostTaskAfterThreadExits) {
 TEST_F(MessageLoopTaskRunnerThreadingTest, PostTaskAfterThreadIsDeleted) {
   scoped_refptr<SingleThreadTaskRunner> task_runner;
   {
-    scoped_ptr<Thread> test_thread(
+    std::unique_ptr<Thread> test_thread(
         new Thread("MessageLoopTaskRunnerThreadingTest_Dummy"));
     test_thread->Start();
     task_runner = test_thread->task_runner();

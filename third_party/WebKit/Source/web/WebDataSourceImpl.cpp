@@ -28,131 +28,140 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "web/WebDataSourceImpl.h"
 
 #include "core/dom/Document.h"
+#include "public/platform/WebDocumentSubresourceFilter.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/WebURLError.h"
 #include "public/platform/WebVector.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<WebDataSourceImpl> WebDataSourceImpl::create(LocalFrame* frame, const ResourceRequest& request, const SubstituteData& data)
-{
-    return adoptRefWillBeNoop(new WebDataSourceImpl(frame, request, data));
+WebDataSourceImpl* WebDataSourceImpl::create(
+    LocalFrame* frame,
+    const ResourceRequest& request,
+    const SubstituteData& data,
+    ClientRedirectPolicy clientRedirectPolicy) {
+  return new WebDataSourceImpl(frame, request, data, clientRedirectPolicy);
 }
 
-const WebURLRequest& WebDataSourceImpl::originalRequest() const
-{
-    m_originalRequestWrapper.bind(DocumentLoader::originalRequest());
-    return m_originalRequestWrapper;
+const WebURLRequest& WebDataSourceImpl::originalRequest() const {
+  return m_originalRequestWrapper;
 }
 
-const WebURLRequest& WebDataSourceImpl::request() const
-{
-    m_requestWrapper.bind(DocumentLoader::request());
-    return m_requestWrapper;
+const WebURLRequest& WebDataSourceImpl::request() const {
+  return m_requestWrapper;
 }
 
-const WebURLResponse& WebDataSourceImpl::response() const
-{
-    m_responseWrapper.bind(DocumentLoader::response());
-    return m_responseWrapper;
+const WebURLResponse& WebDataSourceImpl::response() const {
+  return m_responseWrapper;
 }
 
-bool WebDataSourceImpl::hasUnreachableURL() const
-{
-    return !DocumentLoader::unreachableURL().isEmpty();
+bool WebDataSourceImpl::hasUnreachableURL() const {
+  return !DocumentLoader::unreachableURL().isEmpty();
 }
 
-WebURL WebDataSourceImpl::unreachableURL() const
-{
-    return DocumentLoader::unreachableURL();
+WebURL WebDataSourceImpl::unreachableURL() const {
+  return DocumentLoader::unreachableURL();
 }
 
-void WebDataSourceImpl::appendRedirect(const WebURL& url)
-{
-    DocumentLoader::appendRedirect(url);
+void WebDataSourceImpl::appendRedirect(const WebURL& url) {
+  DocumentLoader::appendRedirect(url);
 }
 
-void WebDataSourceImpl::redirectChain(WebVector<WebURL>& result) const
-{
-    result.assign(m_redirectChain);
+void WebDataSourceImpl::updateNavigation(
+    double redirectStartTime,
+    double redirectEndTime,
+    double fetchStartTime,
+    const WebVector<WebURL>& redirectChain) {
+  // Updates the redirection timing if there is at least one redirection
+  // (between two URLs).
+  if (redirectChain.size() >= 2) {
+    for (size_t i = 0; i + 1 < redirectChain.size(); ++i)
+      didRedirect(redirectChain[i], redirectChain[i + 1]);
+    timing().setRedirectStart(redirectStartTime);
+    timing().setRedirectEnd(redirectEndTime);
+  }
+  timing().setFetchStart(fetchStartTime);
 }
 
-bool WebDataSourceImpl::isClientRedirect() const
-{
-    return DocumentLoader::isClientRedirect();
+void WebDataSourceImpl::redirectChain(WebVector<WebURL>& result) const {
+  result.assign(m_redirectChain);
 }
 
-bool WebDataSourceImpl::replacesCurrentHistoryItem() const
-{
-    return DocumentLoader::replacesCurrentHistoryItem();
+bool WebDataSourceImpl::isClientRedirect() const {
+  return DocumentLoader::isClientRedirect();
 }
 
-WebNavigationType WebDataSourceImpl::navigationType() const
-{
-    return toWebNavigationType(DocumentLoader::navigationType());
+bool WebDataSourceImpl::replacesCurrentHistoryItem() const {
+  return DocumentLoader::replacesCurrentHistoryItem();
 }
 
-WebDataSource::ExtraData* WebDataSourceImpl::extraData() const
-{
-    return m_extraData.get();
+WebNavigationType WebDataSourceImpl::navigationType() const {
+  return toWebNavigationType(DocumentLoader::getNavigationType());
 }
 
-void WebDataSourceImpl::setExtraData(ExtraData* extraData)
-{
-    // extraData can't be a PassOwnPtr because setExtraData is a WebKit API function.
-    m_extraData = adoptPtr(extraData);
+WebDataSource::ExtraData* WebDataSourceImpl::getExtraData() const {
+  return m_extraData.get();
 }
 
-void WebDataSourceImpl::setNavigationStartTime(double navigationStart)
-{
-    timing().setNavigationStart(navigationStart);
+void WebDataSourceImpl::setExtraData(ExtraData* extraData) {
+  // extraData can't be a std::unique_ptr because setExtraData is a WebKit API
+  // function.
+  m_extraData = WTF::wrapUnique(extraData);
 }
 
-WebNavigationType WebDataSourceImpl::toWebNavigationType(NavigationType type)
-{
-    switch (type) {
+void WebDataSourceImpl::setNavigationStartTime(double navigationStart) {
+  timing().setNavigationStart(navigationStart);
+}
+
+WebNavigationType WebDataSourceImpl::toWebNavigationType(NavigationType type) {
+  switch (type) {
     case NavigationTypeLinkClicked:
-        return WebNavigationTypeLinkClicked;
+      return WebNavigationTypeLinkClicked;
     case NavigationTypeFormSubmitted:
-        return WebNavigationTypeFormSubmitted;
+      return WebNavigationTypeFormSubmitted;
     case NavigationTypeBackForward:
-        return WebNavigationTypeBackForward;
+      return WebNavigationTypeBackForward;
     case NavigationTypeReload:
-        return WebNavigationTypeReload;
+      return WebNavigationTypeReload;
     case NavigationTypeFormResubmitted:
-        return WebNavigationTypeFormResubmitted;
+      return WebNavigationTypeFormResubmitted;
     case NavigationTypeOther:
     default:
-        return WebNavigationTypeOther;
-    }
+      return WebNavigationTypeOther;
+  }
 }
 
-WebDataSourceImpl::WebDataSourceImpl(LocalFrame* frame, const ResourceRequest& request, const SubstituteData& data)
-    : DocumentLoader(frame, request, data)
-{
+WebDataSourceImpl::WebDataSourceImpl(LocalFrame* frame,
+                                     const ResourceRequest& request,
+                                     const SubstituteData& data,
+                                     ClientRedirectPolicy clientRedirectPolicy)
+    : DocumentLoader(frame, request, data, clientRedirectPolicy),
+      m_originalRequestWrapper(DocumentLoader::originalRequest()),
+      m_requestWrapper(DocumentLoader::request()),
+      m_responseWrapper(DocumentLoader::response()) {}
+
+WebDataSourceImpl::~WebDataSourceImpl() {
+  // Verify that detachFromFrame() has been called.
+  DCHECK(!m_extraData);
 }
 
-WebDataSourceImpl::~WebDataSourceImpl()
-{
-    // Verify that detachFromFrame() has been called.
-    ASSERT(!m_extraData);
+void WebDataSourceImpl::detachFromFrame() {
+  DocumentLoader::detachFromFrame();
+  m_extraData.reset();
 }
 
-void WebDataSourceImpl::detachFromFrame()
-{
-    RefPtrWillBeRawPtr<DocumentLoader> protect(this);
-
-    DocumentLoader::detachFromFrame();
-    m_extraData.clear();
+void WebDataSourceImpl::setSubresourceFilter(
+    WebDocumentSubresourceFilter* subresourceFilter) {
+  DocumentLoader::setSubresourceFilter(WTF::wrapUnique(subresourceFilter));
 }
 
-DEFINE_TRACE(WebDataSourceImpl)
-{
-    DocumentLoader::trace(visitor);
+DEFINE_TRACE(WebDataSourceImpl) {
+  DocumentLoader::trace(visitor);
 }
 
-} // namespace blink
+}  // namespace blink

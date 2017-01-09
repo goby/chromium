@@ -5,8 +5,10 @@
 #import "chrome/browser/ui/cocoa/screen_capture_notification_ui_cocoa.h"
 
 #include "base/bind.h"
+#include "base/mac/mac_util.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 
 @interface ScreenCaptureNotificationController (ExposedForTesting)
 - (NSButton*)stopButton;
@@ -46,7 +48,7 @@ class ScreenCaptureNotificationUICocoaTest : public CocoaTest {
     return target_->windowController_.get();
   }
 
-  scoped_ptr<ScreenCaptureNotificationUICocoa> target_;
+  std::unique_ptr<ScreenCaptureNotificationUICocoa> target_;
   int callback_called_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenCaptureNotificationUICocoaTest);
@@ -111,6 +113,8 @@ TEST_F(ScreenCaptureNotificationUICocoaTest, CloseWindow) {
 }
 
 TEST_F(ScreenCaptureNotificationUICocoaTest, MinimizeWindow) {
+  if (base::mac::IsOS10_10())
+    return;  // Fails when swarmed. http://crbug.com/660582
   target_.reset(
       new ScreenCaptureNotificationUICocoa(base::UTF8ToUTF16("Title")));
   target_->OnStarted(

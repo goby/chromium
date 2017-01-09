@@ -160,6 +160,8 @@
   if (![_webViewContentView isEqual:webViewContentView]) {
     [_webViewContentView removeFromSuperview];
     _webViewContentView.reset([webViewContentView retain]);
+    [_webViewContentView setFrame:self.bounds];
+    [self addSubview:_webViewContentView];
   }
 }
 
@@ -210,17 +212,23 @@
                                UIEdgeInsetsMake(headerHeight, 0, 0, 0));
 }
 
+- (id<CRWWebControllerContainerViewDelegate>)delegate {
+  return _delegate.get();
+}
+
+- (void)setDelegate:(id<CRWWebControllerContainerViewDelegate>)delegate {
+  _delegate.reset(delegate);
+}
+
 #pragma mark Layout
 
 - (void)layoutSubviews {
   [super layoutSubviews];
 
-  // webViewcontentView layout.
-  if (self.webViewContentView) {
-    if (!self.webViewContentView.superview)
-      [self addSubview:self.webViewContentView];
-    self.webViewContentView.frame = self.bounds;
-  }
+  self.webViewContentView.frame = self.bounds;
+
+  // TODO(crbug.com/570114): Move adding of the following subviews to another
+  // place.
 
   // nativeController layout.
   if (self.nativeController) {

@@ -5,11 +5,11 @@
 #ifndef REMOTING_HOST_WIN_RDP_CLIENT_H_
 #define REMOTING_HOST_WIN_RDP_CLIENT_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
 
 namespace base {
@@ -37,12 +37,12 @@ class RdpClient : public base::NonThreadSafe {
     virtual void OnRdpClosed() = 0;
   };
 
-  RdpClient(
-      scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      const webrtc::DesktopSize& screen_size,
-      const std::string& terminal_id,
-      EventHandler* event_handler);
+  RdpClient(scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
+            scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+            const webrtc::DesktopSize& screen_size,
+            const std::string& terminal_id,
+            DWORD port_number,
+            EventHandler* event_handler);
   virtual ~RdpClient();
 
   // Sends Secure Attention Sequence to the session.

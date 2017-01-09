@@ -5,14 +5,17 @@
 #ifndef CONTENT_BROWSER_DEVICE_SENSORS_SENSOR_MANAGER_ANDROID_H_
 #define CONTENT_BROWSER_DEVICE_SENSORS_SENSOR_MANAGER_ANDROID_H_
 
+#include <memory>
+
 #include "base/android/scoped_java_ref.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
+#include "base/threading/thread_checker.h"
 #include "content/browser/device_sensors/device_sensors_consts.h"
 #include "content/common/content_export.h"
-#include "content/common/device_sensors/device_light_hardware_buffer.h"
-#include "content/common/device_sensors/device_motion_hardware_buffer.h"
-#include "content/common/device_sensors/device_orientation_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_light_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_motion_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_orientation_hardware_buffer.h"
 
 namespace base {
 template <typename T>
@@ -31,7 +34,7 @@ class CONTENT_EXPORT SensorManagerAndroid {
   // Must be called at startup, before GetInstance().
   static bool Register(JNIEnv* env);
 
-  // Needs to be thread-safe, because accessed from different threads.
+  // Should be called only on the UI thread.
   static SensorManagerAndroid* GetInstance();
 
   // Called from Java via JNI.
@@ -108,20 +111,6 @@ class CONTENT_EXPORT SensorManagerAndroid {
   // ConsumerType.DEVICE_MOTION.
   virtual int GetNumberActiveDeviceMotionSensors();
 
-  void StartFetchingLightDataOnUI(DeviceLightHardwareBuffer* buffer);
-  void StopFetchingLightDataOnUI();
-
-  void StartFetchingMotionDataOnUI(DeviceMotionHardwareBuffer* buffer);
-  void StopFetchingMotionDataOnUI();
-
-  void StartFetchingOrientationDataOnUI(
-      DeviceOrientationHardwareBuffer* buffer);
-  void StopFetchingOrientationDataOnUI();
-
-  void StartFetchingOrientationAbsoluteDataOnUI(
-      DeviceOrientationHardwareBuffer* buffer);
-  void StopFetchingOrientationAbsoluteDataOnUI();
-
  private:
   friend struct base::DefaultSingletonTraits<SensorManagerAndroid>;
 
@@ -159,6 +148,7 @@ class CONTENT_EXPORT SensorManagerAndroid {
   base::Lock orientation_absolute_buffer_lock_;
 
   bool is_shutdown_;
+  base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(SensorManagerAndroid);
 };

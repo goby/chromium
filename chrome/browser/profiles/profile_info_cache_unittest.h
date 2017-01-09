@@ -7,6 +7,7 @@
 
 #include <set>
 
+#include "base/macros.h"
 #include "base/test/scoped_path_override.h"
 #include "chrome/browser/profiles/profile_info_cache_observer.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -55,11 +56,15 @@ class ProfileInfoCacheTest : public testing::Test {
   base::FilePath GetProfilePath(const std::string& base_name);
   void ResetCache();
 
+ private:
+  // TestBrowserThreadBundle needs to be up through the destruction of the
+  // TestingProfileManager below.
+  content::TestBrowserThreadBundle thread_bundle_;
+
  protected:
   TestingProfileManager testing_profile_manager_;
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
   ProfileNameVerifierObserver name_observer_;
   base::ScopedPathOverride user_data_dir_override_;
 };

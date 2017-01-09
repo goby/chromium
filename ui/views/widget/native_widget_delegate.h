@@ -11,7 +11,6 @@
 #include "ui/views/views_export.h"
 
 namespace gfx {
-class Canvas;
 class Path;
 class Point;
 class Size;
@@ -24,7 +23,6 @@ class Layer;
 class MouseEvent;
 class PaintContext;
 class ScrollEvent;
-class TouchEvent;
 }
 
 namespace views {
@@ -51,8 +49,12 @@ class VIEWS_EXPORT NativeWidgetDelegate {
   // Returns true if the window can be activated.
   virtual bool CanActivate() const = 0;
 
-  virtual bool IsInactiveRenderingDisabled() const = 0;
-  virtual void EnableInactiveRendering() = 0;
+  // Prevents the window from being rendered as deactivated. This state is
+  // reset automatically as soon as the window becomes activated again. There is
+  // no ability to control the state through this API as this leads to sync
+  // problems.
+  virtual void SetAlwaysRenderAsActive(bool always_render_as_active) = 0;
+  virtual bool IsAlwaysRenderAsActive() const = 0;
 
   // Called when the activation state of a window has changed.
   virtual void OnNativeWidgetActivationChanged(bool active) = 0;
@@ -93,6 +95,9 @@ class VIEWS_EXPORT NativeWidgetDelegate {
   // e.g. maximize.
   virtual void OnNativeWidgetSizeChanged(const gfx::Size& new_size) = 0;
 
+  // Called when NativeWidget changed workspaces.
+  virtual void OnNativeWidgetWorkspaceChanged() = 0;
+
   // Called when the NativeWidget changes its window state.
   // This may happen at the same time as OnNativeWidgetSizeChanged, e.g.
   // maximize.
@@ -113,11 +118,10 @@ class VIEWS_EXPORT NativeWidgetDelegate {
   // |point|, in client coordinates.
   virtual int GetNonClientComponent(const gfx::Point& point) = 0;
 
-  // Mouse and key event handlers.
+  // Event handlers.
   virtual void OnKeyEvent(ui::KeyEvent* event) = 0;
   virtual void OnMouseEvent(ui::MouseEvent* event) = 0;
   virtual void OnMouseCaptureLost() = 0;
-
   virtual void OnScrollEvent(ui::ScrollEvent* event) = 0;
   virtual void OnGestureEvent(ui::GestureEvent* event) = 0;
 
@@ -133,7 +137,6 @@ class VIEWS_EXPORT NativeWidgetDelegate {
   // Provides the hit-test mask if HasHitTestMask above returns true.
   virtual void GetHitTestMask(gfx::Path* mask) const = 0;
 
-  //
   virtual Widget* AsWidget() = 0;
   virtual const Widget* AsWidget() const = 0;
 

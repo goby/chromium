@@ -2,7 +2,8 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2003, 2004, 2005, 2006, 2007, 2008 Apple Inc. All rights reserved.
+ * Copyright (C) 2003, 2004, 2005, 2006, 2007, 2008 Apple Inc. All rights
+ * reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -20,7 +21,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/html/HTMLScriptElement.h"
 
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
@@ -38,152 +38,143 @@ namespace blink {
 
 using namespace HTMLNames;
 
-inline HTMLScriptElement::HTMLScriptElement(Document& document, bool wasInsertedByParser, bool alreadyStarted)
-    : HTMLElement(scriptTag, document)
-    , m_loader(ScriptLoader::create(this, wasInsertedByParser, alreadyStarted))
-{
+inline HTMLScriptElement::HTMLScriptElement(Document& document,
+                                            bool wasInsertedByParser,
+                                            bool alreadyStarted,
+                                            bool createdDuringDocumentWrite)
+    : HTMLElement(scriptTag, document),
+      m_loader(ScriptLoader::create(this,
+                                    wasInsertedByParser,
+                                    alreadyStarted,
+                                    createdDuringDocumentWrite)) {}
+
+HTMLScriptElement* HTMLScriptElement::create(Document& document,
+                                             bool wasInsertedByParser,
+                                             bool alreadyStarted,
+                                             bool createdDuringDocumentWrite) {
+  return new HTMLScriptElement(document, wasInsertedByParser, alreadyStarted,
+                               createdDuringDocumentWrite);
 }
 
-PassRefPtrWillBeRawPtr<HTMLScriptElement> HTMLScriptElement::create(Document& document, bool wasInsertedByParser, bool alreadyStarted)
-{
-    return adoptRefWillBeNoop(new HTMLScriptElement(document, wasInsertedByParser, alreadyStarted));
+bool HTMLScriptElement::isURLAttribute(const Attribute& attribute) const {
+  return attribute.name() == srcAttr || HTMLElement::isURLAttribute(attribute);
 }
 
-bool HTMLScriptElement::isURLAttribute(const Attribute& attribute) const
-{
-    return attribute.name() == srcAttr || HTMLElement::isURLAttribute(attribute);
+bool HTMLScriptElement::hasLegalLinkAttribute(const QualifiedName& name) const {
+  return name == srcAttr || HTMLElement::hasLegalLinkAttribute(name);
 }
 
-bool HTMLScriptElement::hasLegalLinkAttribute(const QualifiedName& name) const
-{
-    return name == srcAttr || HTMLElement::hasLegalLinkAttribute(name);
+const QualifiedName& HTMLScriptElement::subResourceAttributeName() const {
+  return srcAttr;
 }
 
-const QualifiedName& HTMLScriptElement::subResourceAttributeName() const
-{
-    return srcAttr;
+void HTMLScriptElement::childrenChanged(const ChildrenChange& change) {
+  HTMLElement::childrenChanged(change);
+  if (change.isChildInsertion())
+    m_loader->childrenChanged();
 }
 
-void HTMLScriptElement::childrenChanged(const ChildrenChange& change)
-{
-    HTMLElement::childrenChanged(change);
-    if (change.isChildInsertion())
-        m_loader->childrenChanged();
+void HTMLScriptElement::didMoveToNewDocument(Document& oldDocument) {
+  ScriptRunner::movePendingScript(oldDocument, document(), m_loader.get());
+  HTMLElement::didMoveToNewDocument(oldDocument);
 }
 
-void HTMLScriptElement::didMoveToNewDocument(Document& oldDocument)
-{
-    ScriptRunner::movePendingAsyncScript(oldDocument, document(), m_loader.get());
-    HTMLElement::didMoveToNewDocument(oldDocument);
-}
-
-void HTMLScriptElement::parseAttribute(const QualifiedName& name, const AtomicString& oldValue, const AtomicString& value)
-{
-    if (name == srcAttr) {
-        m_loader->handleSourceAttribute(value);
-        logEventIfIsolatedWorldAndInDocument("blinkSetAttribute", "script", srcAttr.toString(), oldValue, value);
-    } else if (name == asyncAttr) {
-        m_loader->handleAsyncAttribute();
-    } else {
-        HTMLElement::parseAttribute(name, oldValue, value);
-    }
-}
-
-Node::InsertionNotificationRequest HTMLScriptElement::insertedInto(ContainerNode* insertionPoint)
-{
-    if (insertionPoint->inDocument() && hasSourceAttribute() && !loader()->isScriptTypeSupported(ScriptLoader::DisallowLegacyTypeInTypeAttribute))
-        UseCounter::count(document(), UseCounter::ScriptElementWithInvalidTypeHasSrc);
-    HTMLElement::insertedInto(insertionPoint);
-    logEventIfIsolatedWorldAndInDocument("blinkAddElement", "script", fastGetAttribute(srcAttr));
-    return InsertionShouldCallDidNotifySubtreeInsertions;
-}
-
-void HTMLScriptElement::didNotifySubtreeInsertionsToDocument()
-{
-    m_loader->didNotifySubtreeInsertionsToDocument();
-}
-
-void HTMLScriptElement::setText(const String &value)
-{
-    setTextContent(value);
-}
-
-void HTMLScriptElement::setAsync(bool async)
-{
-    setBooleanAttribute(asyncAttr, async);
+void HTMLScriptElement::parseAttribute(const QualifiedName& name,
+                                       const AtomicString& oldValue,
+                                       const AtomicString& value) {
+  if (name == srcAttr) {
+    m_loader->handleSourceAttribute(value);
+    logUpdateAttributeIfIsolatedWorldAndInDocument("script", srcAttr, oldValue,
+                                                   value);
+  } else if (name == asyncAttr) {
     m_loader->handleAsyncAttribute();
+  } else {
+    HTMLElement::parseAttribute(name, oldValue, value);
+  }
 }
 
-bool HTMLScriptElement::async() const
-{
-    return fastHasAttribute(asyncAttr) || (m_loader->forceAsync());
+Node::InsertionNotificationRequest HTMLScriptElement::insertedInto(
+    ContainerNode* insertionPoint) {
+  if (insertionPoint->isConnected() && hasSourceAttribute() &&
+      !loader()->isScriptTypeSupported(
+          ScriptLoader::DisallowLegacyTypeInTypeAttribute))
+    UseCounter::count(document(),
+                      UseCounter::ScriptElementWithInvalidTypeHasSrc);
+  HTMLElement::insertedInto(insertionPoint);
+  logAddElementIfIsolatedWorldAndInDocument("script", srcAttr);
+  return InsertionShouldCallDidNotifySubtreeInsertions;
 }
 
-KURL HTMLScriptElement::src() const
-{
-    return document().completeURL(sourceAttributeValue());
+void HTMLScriptElement::didNotifySubtreeInsertionsToDocument() {
+  m_loader->didNotifySubtreeInsertionsToDocument();
 }
 
-String HTMLScriptElement::sourceAttributeValue() const
-{
-    return getAttribute(srcAttr).string();
+void HTMLScriptElement::setText(const String& value) {
+  setTextContent(value);
 }
 
-String HTMLScriptElement::charsetAttributeValue() const
-{
-    return getAttribute(charsetAttr).string();
+void HTMLScriptElement::setAsync(bool async) {
+  setBooleanAttribute(asyncAttr, async);
+  m_loader->handleAsyncAttribute();
 }
 
-String HTMLScriptElement::typeAttributeValue() const
-{
-    return getAttribute(typeAttr).string();
+bool HTMLScriptElement::async() const {
+  return fastHasAttribute(asyncAttr) || (m_loader->forceAsync());
 }
 
-String HTMLScriptElement::languageAttributeValue() const
-{
-    return getAttribute(languageAttr).string();
+KURL HTMLScriptElement::src() const {
+  return document().completeURL(sourceAttributeValue());
 }
 
-String HTMLScriptElement::forAttributeValue() const
-{
-    return getAttribute(forAttr).string();
+String HTMLScriptElement::sourceAttributeValue() const {
+  return getAttribute(srcAttr).getString();
 }
 
-String HTMLScriptElement::eventAttributeValue() const
-{
-    return getAttribute(eventAttr).string();
+String HTMLScriptElement::charsetAttributeValue() const {
+  return getAttribute(charsetAttr).getString();
 }
 
-bool HTMLScriptElement::asyncAttributeValue() const
-{
-    return fastHasAttribute(asyncAttr);
+String HTMLScriptElement::typeAttributeValue() const {
+  return getAttribute(typeAttr).getString();
 }
 
-bool HTMLScriptElement::deferAttributeValue() const
-{
-    return fastHasAttribute(deferAttr);
+String HTMLScriptElement::languageAttributeValue() const {
+  return getAttribute(languageAttr).getString();
 }
 
-bool HTMLScriptElement::hasSourceAttribute() const
-{
-    return fastHasAttribute(srcAttr);
+String HTMLScriptElement::forAttributeValue() const {
+  return getAttribute(forAttr).getString();
 }
 
-void HTMLScriptElement::dispatchLoadEvent()
-{
-    ASSERT(!m_loader->haveFiredLoadEvent());
-    dispatchEvent(Event::create(EventTypeNames::load));
+String HTMLScriptElement::eventAttributeValue() const {
+  return getAttribute(eventAttr).getString();
 }
 
-PassRefPtrWillBeRawPtr<Element> HTMLScriptElement::cloneElementWithoutAttributesAndChildren()
-{
-    return adoptRefWillBeNoop(new HTMLScriptElement(document(), false, m_loader->alreadyStarted()));
+bool HTMLScriptElement::asyncAttributeValue() const {
+  return fastHasAttribute(asyncAttr);
 }
 
-DEFINE_TRACE(HTMLScriptElement)
-{
-    visitor->trace(m_loader);
-    HTMLElement::trace(visitor);
+bool HTMLScriptElement::deferAttributeValue() const {
+  return fastHasAttribute(deferAttr);
 }
 
+bool HTMLScriptElement::hasSourceAttribute() const {
+  return fastHasAttribute(srcAttr);
 }
+
+void HTMLScriptElement::dispatchLoadEvent() {
+  DCHECK(!m_loader->haveFiredLoadEvent());
+  dispatchEvent(Event::create(EventTypeNames::load));
+}
+
+Element* HTMLScriptElement::cloneElementWithoutAttributesAndChildren() {
+  return new HTMLScriptElement(document(), false, m_loader->alreadyStarted(),
+                               false);
+}
+
+DEFINE_TRACE(HTMLScriptElement) {
+  visitor->trace(m_loader);
+  HTMLElement::trace(visitor);
+}
+
+}  // namespace blink

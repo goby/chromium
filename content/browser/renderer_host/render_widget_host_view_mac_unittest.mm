@@ -5,30 +5,44 @@
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
 
 #include <Cocoa/Cocoa.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <tuple>
 
-#include "base/mac/mac_util.h"
+#include "base/command_line.h"
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/mac/sdk_forward_declarations.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/histogram_tester.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/compositor/test/no_transport_image_transport_factory.h"
 #include "content/browser/frame_host/render_widget_host_view_guest.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
-#include "content/common/gpu/gpu_messages.h"
+#include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/input_messages.h"
+#include "content/common/text_input_state.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_widget_host_view_mac_delegate.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/test_render_view_host.h"
+#include "gpu/ipc/common/gpu_messages.h"
+#include "gpu/ipc/service/image_transport_surface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/ocmock_extensions.h"
+#include "ui/events/base_event_utils.h"
+#include "ui/events/blink/web_input_event_traits.h"
+#include "ui/events/latency_info.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
 #import "ui/gfx/test/ui_cocoa_test_helper.h"
 
@@ -74,24 +88,39 @@
   if (!consumed)
     unhandledWheelEventReceived_ = true;
 }
+- (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
+                                 consumed:(BOOL)consumed {
+  if (!consumed && event.type == blink::WebInputEvent::GestureScrollUpdate)
+    unhandledWheelEventReceived_ = true;
+}
 - (void)touchesBeganWithEvent:(NSEvent*)event {}
 - (void)touchesMovedWithEvent:(NSEvent*)event {}
 - (void)touchesCancelledWithEvent:(NSEvent*)event {}
 - (void)touchesEndedWithEvent:(NSEvent*)event {}
 - (void)beginGestureWithEvent:(NSEvent*)event {}
 - (void)endGestureWithEvent:(NSEvent*)event {}
-- (BOOL)canRubberbandLeft:(NSView*)view {
-  return true;
-}
-- (BOOL)canRubberbandRight:(NSView*)view {
-  return true;
-}
 
 @end
 
 namespace content {
 
 namespace {
+
+std::string GetInputMessageTypes(MockRenderProcessHost* process) {
+  std::string result;
+  for (size_t i = 0; i < process->sink().message_count(); ++i) {
+    const IPC::Message* message = process->sink().GetMessageAt(i);
+    EXPECT_EQ(InputMsg_HandleInputEvent::ID, message->type());
+    InputMsg_HandleInputEvent::Param params;
+    EXPECT_TRUE(InputMsg_HandleInputEvent::Read(message, &params));
+    const blink::WebInputEvent* event = std::get<0>(params);
+    if (i != 0)
+      result += " ";
+    result += blink::WebInputEvent::GetName(event->type);
+  }
+  process->sink().ClearMessages();
+  return result;
+}
 
 id MockGestureEvent(NSEventType type, double magnification) {
   id event = [OCMockObject mockForClass:[NSEvent class]];
@@ -116,25 +145,45 @@ id MockGestureEvent(NSEventType type, double magnification) {
 
 class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
  public:
-  MockRenderWidgetHostDelegate() {}
+  MockRenderWidgetHostDelegate()
+      : text_input_manager_(new TextInputManager()) {}
   ~MockRenderWidgetHostDelegate() override {}
+
+  TextInputManager* GetTextInputManager() override {
+    return text_input_manager_.get();
+  }
 
  private:
   void Cut() override {}
   void Copy() override {}
   void Paste() override {}
   void SelectAll() override {}
+
+  std::unique_ptr<TextInputManager> text_input_manager_;
 };
 
 class MockRenderWidgetHostImpl : public RenderWidgetHostImpl {
  public:
   MockRenderWidgetHostImpl(RenderWidgetHostDelegate* delegate,
                            RenderProcessHost* process,
-                           int32 routing_id)
-      : RenderWidgetHostImpl(delegate, process, routing_id, false) {}
+                           int32_t routing_id)
+      : RenderWidgetHostImpl(delegate, process, routing_id, false) {
+    set_renderer_initialized(true);
+    lastWheelEventLatencyInfo = ui::LatencyInfo();
+  }
+
+  // Extracts |latency_info| and stores it in |lastWheelEventLatencyInfo|.
+  void ForwardWheelEventWithLatencyInfo (
+        const blink::WebMouseWheelEvent& wheel_event,
+        const ui::LatencyInfo& ui_latency) override {
+    RenderWidgetHostImpl::ForwardWheelEventWithLatencyInfo (
+        wheel_event, ui_latency);
+    lastWheelEventLatencyInfo = ui::LatencyInfo(ui_latency);
+  }
 
   MOCK_METHOD0(Focus, void());
   MOCK_METHOD0(Blur, void());
+  ui::LatencyInfo lastWheelEventLatencyInfo;
 };
 
 // Generates the |length| of composition rectangle vector and save them to
@@ -183,6 +232,8 @@ gfx::Rect GetExpectedRect(const gfx::Point& origin,
 NSEvent* MockScrollWheelEventWithPhase(SEL mockPhaseSelector, int32_t delta) {
   CGEventRef cg_event =
       CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, delta, 0);
+  CGEventTimestamp timestamp = 0;
+  CGEventSetTimestamp(cg_event, timestamp);
   NSEvent* event = [NSEvent eventWithCGEvent:cg_event];
   CFRelease(cg_event);
   method_setImplementation(
@@ -195,13 +246,16 @@ NSEvent* MockScrollWheelEventWithPhase(SEL mockPhaseSelector, int32_t delta) {
 
 class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
  public:
-  RenderWidgetHostViewMacTest() : old_rwhv_(NULL), rwhv_mac_(NULL) {}
+  RenderWidgetHostViewMacTest() : old_rwhv_(NULL), rwhv_mac_(NULL) {
+    std::unique_ptr<base::SimpleTestTickClock> mock_clock(
+        new base::SimpleTestTickClock());
+    mock_clock->Advance(base::TimeDelta::FromMilliseconds(100));
+    ui::SetEventTickClockForTesting(std::move(mock_clock));
+  }
 
   void SetUp() override {
     RenderViewHostImplTestHarness::SetUp();
-    ImageTransportFactory::InitializeForUnitTests(
-        scoped_ptr<ImageTransportFactory>(
-            new NoTransportImageTransportFactory));
+    gpu::ImageTransportSurface::SetAllowOSMesaForTesting(true);
 
     // TestRenderViewHost's destruction assumes that its view is a
     // TestRenderWidgetHostView, so store its view and reset it back to the
@@ -210,6 +264,8 @@ class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
 
     // Owned by its |cocoa_view()|, i.e. |rwhv_cocoa_|.
     rwhv_mac_ = new RenderWidgetHostViewMac(rvh()->GetWidget(), false);
+    RenderWidgetHostImpl::From(rvh()->GetWidget())->SetView(rwhv_mac_);
+
     rwhv_cocoa_.reset([rwhv_mac_->cocoa_view() retain]);
   }
   void TearDown() override {
@@ -221,19 +277,25 @@ class RenderWidgetHostViewMacTest : public RenderViewHostImplTestHarness {
     test_rvh()->GetWidget()->SetView(
         static_cast<RenderWidgetHostViewBase*>(old_rwhv_));
 
-    ImageTransportFactory::Terminate();
     RenderViewHostImplTestHarness::TearDown();
   }
 
   void RecycleAndWait() {
     pool_.Recycle();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     pool_.Recycle();
   }
 
   void DestroyHostViewRetainCocoaView() {
     test_rvh()->GetWidget()->SetView(nullptr);
     rwhv_mac_->Destroy();
+  }
+
+  void ActivateViewWithTextInputManager(RenderWidgetHostViewBase* view,
+                                        ui::TextInputType type) {
+    TextInputState state;
+    state.type = type;
+    view->TextInputStateChanged(state);
   }
 
  private:
@@ -258,6 +320,29 @@ TEST_F(RenderWidgetHostViewMacTest, AcceptsFirstResponder) {
   EXPECT_TRUE([rwhv_cocoa_.get() acceptsFirstResponder]);
 }
 
+// This test verifies that RenderWidgetHostViewCocoa's implementation of
+// NSTextInputClientConformance conforms to requirements.
+TEST_F(RenderWidgetHostViewMacTest, NSTextInputClientConformance) {
+  NSRange selectedRange = [rwhv_cocoa_ selectedRange];
+  EXPECT_EQ(0u, selectedRange.location);
+  EXPECT_EQ(0u, selectedRange.length);
+
+  NSRange actualRange = NSMakeRange(1u, 2u);
+  NSAttributedString* actualString = [rwhv_cocoa_
+      attributedSubstringForProposedRange:NSMakeRange(NSNotFound, 0u)
+                              actualRange:&actualRange];
+  EXPECT_EQ(nil, actualString);
+  EXPECT_EQ(static_cast<NSUInteger>(NSNotFound), actualRange.location);
+  EXPECT_EQ(0u, actualRange.length);
+
+  actualString = [rwhv_cocoa_
+      attributedSubstringForProposedRange:NSMakeRange(NSNotFound, 15u)
+                              actualRange:&actualRange];
+  EXPECT_EQ(nil, actualString);
+  EXPECT_EQ(static_cast<NSUInteger>(NSNotFound), actualRange.location);
+  EXPECT_EQ(0u, actualRange.length);
+}
+
 TEST_F(RenderWidgetHostViewMacTest, Fullscreen) {
   rwhv_mac_->InitAsFullscreen(NULL);
   EXPECT_TRUE(rwhv_mac_->pepper_fullscreen_window());
@@ -276,7 +361,7 @@ TEST_F(RenderWidgetHostViewMacTest, FullscreenCloseOnEscape) {
   TestBrowserContext browser_context;
   MockRenderProcessHost* process_host =
       new MockRenderProcessHost(&browser_context);
-  int32 routing_id = process_host->GetNextRoutingID();
+  int32_t routing_id = process_host->GetNextRoutingID();
   // Owned by its |cocoa_view()|.
   RenderWidgetHostImpl* rwh =
       new RenderWidgetHostImpl(&delegate, process_host, routing_id, false);
@@ -310,7 +395,7 @@ TEST_F(RenderWidgetHostViewMacTest, AcceleratorDestroy) {
   TestBrowserContext browser_context;
   MockRenderProcessHost* process_host =
       new MockRenderProcessHost(&browser_context);
-  int32 routing_id = process_host->GetNextRoutingID();
+  int32_t routing_id = process_host->GetNextRoutingID();
   // Owned by its |cocoa_view()|.
   RenderWidgetHostImpl* rwh =
       new RenderWidgetHostImpl(&delegate, process_host, routing_id, false);
@@ -329,6 +414,77 @@ TEST_F(RenderWidgetHostViewMacTest, AcceleratorDestroy) {
       cocoa_test_event_utils::KeyEventWithKeyCode(
           53, 27, NSKeyDown, NSCommandKeyMask)];
   observer.Wait();
+}
+
+// Test that NSEvent of private use character won't generate keypress event
+// http://crbug.com/459089
+TEST_F(RenderWidgetHostViewMacTest, FilterNonPrintableCharacter) {
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+
+  // Simulate ctrl+F12, will produce a private use character but shouldn't
+  // fire keypress event
+  process_host->sink().ClearMessages();
+  EXPECT_EQ(0U, process_host->sink().message_count());
+  [view->cocoa_view() keyEvent:
+      cocoa_test_event_utils::KeyEventWithKeyCode(
+          0x7B, 0xF70F, NSKeyDown, NSControlKeyMask)];
+  EXPECT_EQ(1U, process_host->sink().message_count());
+  EXPECT_EQ("RawKeyDown", GetInputMessageTypes(process_host));
+
+  // Simulate ctrl+delete, will produce a private use character but shouldn't
+  // fire keypress event
+  process_host->sink().ClearMessages();
+  EXPECT_EQ(0U, process_host->sink().message_count());
+  [view->cocoa_view() keyEvent:
+      cocoa_test_event_utils::KeyEventWithKeyCode(
+          0x2E, 0xF728, NSKeyDown, NSControlKeyMask)];
+  EXPECT_EQ(1U, process_host->sink().message_count());
+  EXPECT_EQ("RawKeyDown", GetInputMessageTypes(process_host));
+
+  // Simulate a printable char, should generate keypress event
+  process_host->sink().ClearMessages();
+  EXPECT_EQ(0U, process_host->sink().message_count());
+  [view->cocoa_view() keyEvent:
+      cocoa_test_event_utils::KeyEventWithKeyCode(
+          0x58, 'x', NSKeyDown, NSControlKeyMask)];
+  EXPECT_EQ(2U, process_host->sink().message_count());
+  EXPECT_EQ("RawKeyDown Char", GetInputMessageTypes(process_host));
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
+}
+
+// Test that invalid |keyCode| shouldn't generate key events.
+// https://crbug.com/601964
+TEST_F(RenderWidgetHostViewMacTest, InvalidKeyCode) {
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+
+  // Simulate "Convert" key on JIS PC keyboard, will generate a |NSFlagsChanged|
+  // NSEvent with |keyCode| == 0xFF.
+  process_host->sink().ClearMessages();
+  EXPECT_EQ(0U, process_host->sink().message_count());
+  [view->cocoa_view() keyEvent:cocoa_test_event_utils::KeyEventWithKeyCode(
+                                   0xFF, 0, NSFlagsChanged, 0)];
+  EXPECT_EQ(0U, process_host->sink().message_count());
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
 }
 
 TEST_F(RenderWidgetHostViewMacTest, GetFirstRectForCharacterRangeCaretCase) {
@@ -420,6 +576,7 @@ TEST_F(RenderWidgetHostViewMacTest, GetFirstRectForCharacterRangeCaretCase) {
 }
 
 TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionSinglelineCase) {
+  ActivateViewWithTextInputManager(rwhv_mac_, ui::TEXT_INPUT_TYPE_TEXT);
   const gfx::Point kOrigin(10, 11);
   const gfx::Size kBoundsUnit(10, 20);
 
@@ -528,6 +685,7 @@ TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionSinglelineCase) {
 }
 
 TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionMultilineCase) {
+  ActivateViewWithTextInputManager(rwhv_mac_, ui::TEXT_INPUT_TYPE_TEXT);
   const gfx::Point kOrigin(10, 11);
   const gfx::Size kBoundsUnit(10, 20);
   NSRect rect;
@@ -661,17 +819,23 @@ TEST_F(RenderWidgetHostViewMacTest, UpdateCompositionMultilineCase) {
 // firstRectForCharacterRange:actualRange] are handled in a sane manner if they
 // arrive after the C++ RenderWidgetHostView is destroyed.
 TEST_F(RenderWidgetHostViewMacTest, CompositionEventAfterDestroy) {
-  // The test view isn't in an NSWindow to perform the final coordinate
-  // conversion, so use an origin of 0,0, but verify the size.
+  ActivateViewWithTextInputManager(rwhv_mac_, ui::TEXT_INPUT_TYPE_TEXT);
   const gfx::Rect composition_bounds(0, 0, 30, 40);
   const gfx::Range range(0, 1);
   rwhv_mac_->ImeCompositionRangeChanged(
       range, std::vector<gfx::Rect>(1, composition_bounds));
 
   NSRange actual_range = NSMakeRange(0, 0);
+
+  base::scoped_nsobject<CocoaTestHelperWindow> window(
+      [[CocoaTestHelperWindow alloc] init]);
+  [[window contentView] addSubview:rwhv_cocoa_];
+  [rwhv_cocoa_ setFrame:NSMakeRect(0, 0, 400, 400)];
+
   NSRect rect = [rwhv_cocoa_ firstRectForCharacterRange:range.ToNSRange()
                                             actualRange:&actual_range];
-  EXPECT_NSEQ(NSMakeRect(0, 0, 30, 40), rect);
+  EXPECT_EQ(30, rect.size.width);
+  EXPECT_EQ(40, rect.size.height);
   EXPECT_EQ(range, gfx::Range(actual_range));
 
   DestroyHostViewRetainCocoaView();
@@ -689,9 +853,10 @@ TEST_F(RenderWidgetHostViewMacTest, BlurAndFocusOnSetActive) {
   TestBrowserContext browser_context;
   MockRenderProcessHost* process_host =
       new MockRenderProcessHost(&browser_context);
+  process_host->Init();
 
   // Owned by its |cocoa_view()|.
-  int32 routing_id = process_host->GetNextRoutingID();
+  int32_t routing_id = process_host->GetNextRoutingID();
   MockRenderWidgetHostImpl* rwh =
       new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(rwh, false);
@@ -723,14 +888,10 @@ TEST_F(RenderWidgetHostViewMacTest, BlurAndFocusOnSetActive) {
   testing::Mock::VerifyAndClearExpectations(rwh);
 
   // Clean up.
-  rwh->Shutdown();
+  rwh->ShutdownAndDestroyWidget(true);
 }
 
-TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
-  // This tests Lion+ functionality, so don't run the test pre-Lion.
-  if (!base::mac::IsOSLionOrLater())
-    return;
-
+TEST_F(RenderWidgetHostViewMacTest, LastWheelEventLatencyInfoExists) {
   // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
   // the MockRenderProcessHost that is set up by the test harness which mocks
   // out |OnMessageReceived()|.
@@ -739,20 +900,90 @@ TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
       new MockRenderProcessHost(&browser_context);
   process_host->Init();
   MockRenderWidgetHostDelegate delegate;
-  int32 routing_id = process_host->GetNextRoutingID();
+  int32_t routing_id = process_host->GetNextRoutingID();
   MockRenderWidgetHostImpl* host =
       new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host->sink().ClearMessages();
+
+  // Send an initial wheel event for scrolling by 3 lines.
+  // Verifies that ui::INPUT_EVENT_LATENCY_UI_COMPONENT is added
+  // properly in scrollWheel function.
+  NSEvent* wheelEvent1 = MockScrollWheelEventWithPhase(@selector(phaseBegan),3);
+  [view->cocoa_view() scrollWheel:wheelEvent1];
+  ui::LatencyInfo::LatencyComponent ui_component1;
+  ASSERT_TRUE(host->lastWheelEventLatencyInfo.FindLatency(
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, &ui_component1) );
+
+  // Send a wheel event with phaseEnded.
+  // Verifies that ui::INPUT_EVENT_LATENCY_UI_COMPONENT is added
+  // properly in shortCircuitScrollWheelEvent function which is called
+  // in scrollWheel.
+  NSEvent* wheelEvent2 = MockScrollWheelEventWithPhase(@selector(phaseEnded),0);
+  [view->cocoa_view() scrollWheel:wheelEvent2];
+  ui::LatencyInfo::LatencyComponent ui_component2;
+  ASSERT_TRUE(host->lastWheelEventLatencyInfo.FindLatency(
+      ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0, &ui_component2) );
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
+}
+
+TEST_F(RenderWidgetHostViewMacTest, SourceEventTypeExistsInLatencyInfo) {
+  // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
+  // the MockRenderProcessHost that is set up by the test harness which mocks
+  // out |OnMessageReceived()|.
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host->sink().ClearMessages();
+
+  // Send a wheel event for scrolling by 3 lines.
+  // Verifies that SourceEventType exists in forwarded LatencyInfo object.
+  NSEvent* wheelEvent = MockScrollWheelEventWithPhase(@selector(phaseBegan), 3);
+  [view->cocoa_view() scrollWheel:wheelEvent];
+  ASSERT_TRUE(host->lastWheelEventLatencyInfo.source_event_type() ==
+              ui::SourceEventType::WHEEL);
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
+}
+
+TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
+  // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
+  // the MockRenderProcessHost that is set up by the test harness which mocks
+  // out |OnMessageReceived()|.
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host->sink().ClearMessages();
 
   // Send an initial wheel event with NSEventPhaseBegan to the view.
   NSEvent* event1 = MockScrollWheelEventWithPhase(@selector(phaseBegan), 0);
   [view->cocoa_view() scrollWheel:event1];
   ASSERT_EQ(1U, process_host->sink().message_count());
 
+  // Flush and clear other messages (e.g. begin frames) the RWHVMac also sends.
+  base::RunLoop().RunUntilIdle();
+  process_host->sink().ClearMessages();
+
   // Send an ACK for the first wheel event, so that the queue will be flushed.
-  InputEventAck ack(blink::WebInputEvent::MouseWheel,
+  InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD,
+                    blink::WebInputEvent::MouseWheel,
                     INPUT_EVENT_ACK_STATE_CONSUMED);
-  scoped_ptr<IPC::Message> response(
+  std::unique_ptr<IPC::Message> response(
       new InputHostMsg_HandleInputEvent_ACK(0, ack));
   host->OnMessageReceived(*response);
 
@@ -760,18 +991,15 @@ TEST_F(RenderWidgetHostViewMacTest, ScrollWheelEndEventDelivery) {
   // render view receives it.
   NSEvent* event2 = MockScrollWheelEventWithPhase(@selector(phaseEnded), 0);
   [NSApp postEvent:event2 atStart:NO];
-  base::MessageLoop::current()->RunUntilIdle();
-  ASSERT_EQ(2U, process_host->sink().message_count());
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(1U, process_host->sink().message_count());
 
   // Clean up.
-  host->Shutdown();
+  host->ShutdownAndDestroyWidget(true);
 }
 
-TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
-  // This tests Lion+ functionality, so don't run the test pre-Lion.
-  if (!base::mac::IsOSLionOrLater())
-    return;
-
+TEST_F(RenderWidgetHostViewMacTest,
+       IgnoreEmptyUnhandledWheelEventWithWheelGestures) {
   // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
   // the MockRenderProcessHost that is set up by the test harness which mocks
   // out |OnMessageReceived()|.
@@ -780,10 +1008,11 @@ TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
       new MockRenderProcessHost(&browser_context);
   process_host->Init();
   MockRenderWidgetHostDelegate delegate;
-  int32 routing_id = process_host->GetNextRoutingID();
+  int32_t routing_id = process_host->GetNextRoutingID();
   MockRenderWidgetHostImpl* host =
       new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host->sink().ClearMessages();
 
   // Add a delegate to the view.
   base::scoped_nsobject<MockRenderWidgetHostViewMacDelegate> view_delegate(
@@ -797,11 +1026,21 @@ TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
   process_host->sink().ClearMessages();
 
   // Indicate that the wheel event was unhandled.
-  InputEventAck unhandled_ack(blink::WebInputEvent::MouseWheel,
+  InputEventAck unhandled_ack(InputEventAckSource::COMPOSITOR_THREAD,
+                              blink::WebInputEvent::MouseWheel,
                               INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
-  scoped_ptr<IPC::Message> response1(
+  std::unique_ptr<IPC::Message> response1(
       new InputHostMsg_HandleInputEvent_ACK(0, unhandled_ack));
   host->OnMessageReceived(*response1);
+  ASSERT_EQ(2U, process_host->sink().message_count());
+  process_host->sink().ClearMessages();
+
+  InputEventAck unhandled_scroll_ack(InputEventAckSource::COMPOSITOR_THREAD,
+                                     blink::WebInputEvent::GestureScrollUpdate,
+                                     INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  std::unique_ptr<IPC::Message> scroll_response1(
+      new InputHostMsg_HandleInputEvent_ACK(0, unhandled_scroll_ack));
+  host->OnMessageReceived(*scroll_response1);
 
   // Check that the view delegate got an unhandled wheel event.
   ASSERT_EQ(YES, view_delegate.get().unhandledWheelEventReceived);
@@ -810,10 +1049,10 @@ TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
   // Send another wheel event, this time for scrolling by 0 lines (empty event).
   NSEvent* event2 = MockScrollWheelEventWithPhase(@selector(phaseChanged), 0);
   [view->cocoa_view() scrollWheel:event2];
-  ASSERT_EQ(1U, process_host->sink().message_count());
+  ASSERT_EQ(2U, process_host->sink().message_count());
 
   // Indicate that the wheel event was also unhandled.
-  scoped_ptr<IPC::Message> response2(
+  std::unique_ptr<IPC::Message> response2(
       new InputHostMsg_HandleInputEvent_ACK(0, unhandled_ack));
   host->OnMessageReceived(*response2);
 
@@ -821,7 +1060,7 @@ TEST_F(RenderWidgetHostViewMacTest, IgnoreEmptyUnhandledWheelEvent) {
   ASSERT_EQ(NO, view_delegate.get().unhandledWheelEventReceived);
 
   // Clean up.
-  host->Shutdown();
+  host->ShutdownAndDestroyWidget(true);
 }
 
 // Tests that when view initiated shutdown happens (i.e. RWHView is deleted
@@ -831,7 +1070,8 @@ TEST_F(RenderWidgetHostViewMacTest, GuestViewDoesNotLeak) {
   TestBrowserContext browser_context;
   MockRenderProcessHost* process_host =
       new MockRenderProcessHost(&browser_context);
-  int32 routing_id = process_host->GetNextRoutingID();
+  process_host->Init();
+  int32_t routing_id = process_host->GetNextRoutingID();
 
   // Owned by its |cocoa_view()|.
   MockRenderWidgetHostImpl* rwh =
@@ -844,8 +1084,8 @@ TEST_F(RenderWidgetHostViewMacTest, GuestViewDoesNotLeak) {
   view->SetDelegate(view_delegate.get());
 
   base::WeakPtr<RenderWidgetHostViewBase> guest_rwhv_weak =
-      (new RenderWidgetHostViewGuest(
-           rwh, NULL, view->GetWeakPtr()))->GetWeakPtr();
+      (RenderWidgetHostViewGuest::Create(rwh, NULL, view->GetWeakPtr()))
+          ->GetWeakPtr();
 
   // Remove the cocoa_view() so |view| also goes away before |rwh|.
   {
@@ -855,7 +1095,7 @@ TEST_F(RenderWidgetHostViewMacTest, GuestViewDoesNotLeak) {
   RecycleAndWait();
 
   // Clean up.
-  rwh->Shutdown();
+  rwh->ShutdownAndDestroyWidget(true);
 
   // Let |guest_rwhv_weak| have a chance to delete itself.
   base::RunLoop run_loop;
@@ -873,8 +1113,9 @@ TEST_F(RenderWidgetHostViewMacTest, Background) {
   TestBrowserContext browser_context;
   MockRenderProcessHost* process_host =
       new MockRenderProcessHost(&browser_context);
+  process_host->Init();
   MockRenderWidgetHostDelegate delegate;
-  int32 routing_id = process_host->GetNextRoutingID();
+  int32_t routing_id = process_host->GetNextRoutingID();
   MockRenderWidgetHostImpl* host =
       new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
@@ -890,9 +1131,9 @@ TEST_F(RenderWidgetHostViewMacTest, Background) {
   set_background = process_host->sink().GetUniqueMessageMatching(
       ViewMsg_SetBackgroundOpaque::ID);
   ASSERT_TRUE(set_background);
-  base::Tuple<bool> sent_background;
+  std::tuple<bool> sent_background;
   ViewMsg_SetBackgroundOpaque::Read(set_background, &sent_background);
-  EXPECT_FALSE(base::get<0>(sent_background));
+  EXPECT_FALSE(std::get<0>(sent_background));
 
   // Try setting it back.
   process_host->sink().ClearMessages();
@@ -903,9 +1144,9 @@ TEST_F(RenderWidgetHostViewMacTest, Background) {
       ViewMsg_SetBackgroundOpaque::ID);
   ASSERT_TRUE(set_background);
   ViewMsg_SetBackgroundOpaque::Read(set_background, &sent_background);
-  EXPECT_TRUE(base::get<0>(sent_background));
+  EXPECT_TRUE(std::get<0>(sent_background));
 
-  host->Shutdown();
+  host->ShutdownAndDestroyWidget(true);
 }
 
 class RenderWidgetHostViewMacPinchTest : public RenderWidgetHostViewMacTest {
@@ -928,9 +1169,11 @@ class RenderWidgetHostViewMacPinchTest : public RenderWidgetHostViewMacTest {
         break;
     }
     DCHECK(message);
-    base::Tuple<IPC::WebInputEventPointer, ui::LatencyInfo> data;
+    std::tuple<IPC::WebInputEventPointer, ui::LatencyInfo,
+               InputEventDispatchType>
+        data;
     InputMsg_HandleInputEvent::Read(message, &data);
-    IPC::WebInputEventPointer ipc_event = base::get<0>(data);
+    IPC::WebInputEventPointer ipc_event = std::get<0>(data);
     const blink::WebGestureEvent* gesture_event =
         static_cast<const blink::WebGestureEvent*>(ipc_event);
     return gesture_event->data.pinchUpdate.zoomDisabled;
@@ -940,10 +1183,6 @@ class RenderWidgetHostViewMacPinchTest : public RenderWidgetHostViewMacTest {
 };
 
 TEST_F(RenderWidgetHostViewMacPinchTest, PinchThresholding) {
-  // This tests Lion+ functionality, so don't run the test pre-Lion.
-  if (!base::mac::IsOSLionOrLater())
-    return;
-
   // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
   // the MockRenderProcessHost that is set up by the test harness which mocks
   // out |OnMessageReceived()|.
@@ -951,15 +1190,17 @@ TEST_F(RenderWidgetHostViewMacPinchTest, PinchThresholding) {
   process_host_ = new MockRenderProcessHost(&browser_context);
   process_host_->Init();
   MockRenderWidgetHostDelegate delegate;
-  int32 routing_id = process_host_->GetNextRoutingID();
+  int32_t routing_id = process_host_->GetNextRoutingID();
   MockRenderWidgetHostImpl* host =
       new MockRenderWidgetHostImpl(&delegate, process_host_, routing_id);
   RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host_->sink().ClearMessages();
 
   // We'll use this IPC message to ack events.
-  InputEventAck ack(blink::WebInputEvent::GesturePinchUpdate,
+  InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD,
+                    blink::WebInputEvent::GesturePinchUpdate,
                     INPUT_EVENT_ACK_STATE_CONSUMED);
-  scoped_ptr<IPC::Message> response(
+  std::unique_ptr<IPC::Message> response(
       new InputHostMsg_HandleInputEvent_ACK(0, ack));
 
   // Do a gesture that crosses the threshold.
@@ -1057,8 +1298,320 @@ TEST_F(RenderWidgetHostViewMacPinchTest, PinchThresholding) {
   }
 
   // Clean up.
-  host->Shutdown();
+  host->ShutdownAndDestroyWidget(true);
 }
 
+TEST_F(RenderWidgetHostViewMacTest, EventLatencyOSMouseWheelHistogram) {
+  base::HistogramTester histogram_tester;
+
+  // Initialize the view associated with a MockRenderWidgetHostImpl, rather than
+  // the MockRenderProcessHost that is set up by the test harness which mocks
+  // out |OnMessageReceived()|.
+  TestBrowserContext browser_context;
+  MockRenderProcessHost* process_host =
+      new MockRenderProcessHost(&browser_context);
+  process_host->Init();
+  MockRenderWidgetHostDelegate delegate;
+  int32_t routing_id = process_host->GetNextRoutingID();
+  MockRenderWidgetHostImpl* host =
+      new MockRenderWidgetHostImpl(&delegate, process_host, routing_id);
+  RenderWidgetHostViewMac* view = new RenderWidgetHostViewMac(host, false);
+  process_host->sink().ClearMessages();
+
+  // Send an initial wheel event for scrolling by 3 lines.
+  // Verify that Event.Latency.OS.MOUSE_WHEEL histogram is computed properly.
+  NSEvent* wheelEvent = MockScrollWheelEventWithPhase(@selector(phaseBegan),3);
+  [view->cocoa_view() scrollWheel:wheelEvent];
+  histogram_tester.ExpectTotalCount("Event.Latency.OS.MOUSE_WHEEL", 1);
+
+  // Clean up.
+  host->ShutdownAndDestroyWidget(true);
+}
+
+// This class is used for IME-related unit tests which verify correctness of IME
+// for pages with multiple RWHVs.
+class InputMethodMacTest : public RenderWidgetHostViewMacTest {
+ public:
+  InputMethodMacTest() {}
+  ~InputMethodMacTest() override {}
+  void SetUp() override {
+    RenderWidgetHostViewMacTest::SetUp();
+
+    // Initializing a child frame's view.
+    child_process_host_ = new MockRenderProcessHost(&browser_context_);
+    RenderWidgetHostDelegate* rwh_delegate =
+        RenderWidgetHostImpl::From(rvh()->GetWidget())->delegate();
+    child_widget_ = new RenderWidgetHostImpl(
+        rwh_delegate, child_process_host_,
+        child_process_host_->GetNextRoutingID(), false);
+    child_view_ = new TestRenderWidgetHostView(child_widget_);
+    text_input_manager_ = rwh_delegate->GetTextInputManager();
+    tab_widget_ = RenderWidgetHostImpl::From(rvh()->GetWidget());
+  }
+
+  void TearDown() override {
+    child_widget_->ShutdownAndDestroyWidget(true);
+
+    RenderWidgetHostViewMacTest::TearDown();
+  }
+
+  void SetTextInputType(RenderWidgetHostViewBase* view,
+                        ui::TextInputType type) {
+    TextInputState state;
+    state.type = type;
+    view->TextInputStateChanged(state);
+  }
+
+  IPC::TestSink& tab_sink() { return process()->sink(); }
+  IPC::TestSink& child_sink() { return child_process_host_->sink(); }
+  TextInputManager* text_input_manager() { return text_input_manager_; }
+  RenderWidgetHostViewBase* tab_view() { return rwhv_mac_; }
+  RenderWidgetHostImpl* tab_widget() { return tab_widget_; }
+
+ protected:
+  MockRenderProcessHost* child_process_host_;
+  RenderWidgetHostImpl* child_widget_;
+  TestRenderWidgetHostView* child_view_;
+
+ private:
+  TestBrowserContext browser_context_;
+  TextInputManager* text_input_manager_;
+  RenderWidgetHostImpl* tab_widget_;
+
+  DISALLOW_COPY_AND_ASSIGN(InputMethodMacTest);
+};
+
+// This test will verify that calling unmarkText on the cocoa view will lead to
+// a finish composing text IPC for the corresponding active widget.
+TEST_F(InputMethodMacTest, UnmarkText) {
+  // Make the child view active and then call unmarkText on the view (Note that
+  // |RenderWidgetHostViewCocoa::handlingKeyDown_| is false so calling
+  // unmarkText would lead to an IPC. This assumption is made in other similar
+  // tests as well). We should observe an IPC being sent to the |child_widget_|.
+  SetTextInputType(child_view_, ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(child_widget_, text_input_manager()->GetActiveWidget());
+  child_sink().ClearMessages();
+  [rwhv_cocoa_ unmarkText];
+  EXPECT_TRUE(!!child_sink().GetFirstMessageMatching(
+      InputMsg_ImeFinishComposingText::ID));
+
+  // Repeat the same steps for the tab's view .
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(tab_widget(), text_input_manager()->GetActiveWidget());
+  tab_sink().ClearMessages();
+  [rwhv_cocoa_ unmarkText];
+  EXPECT_TRUE(!!tab_sink().GetFirstMessageMatching(
+      InputMsg_ImeFinishComposingText::ID));
+}
+
+// This test makes sure that calling setMarkedText on the cocoa view will lead
+// to a set composition IPC for the corresponding active widget.
+TEST_F(InputMethodMacTest, SetMarkedText) {
+  // Some values for the call to setMarkedText.
+  base::scoped_nsobject<NSString> text(
+      [[NSString alloc] initWithString:@"sample text"]);
+  NSRange selectedRange = NSMakeRange(0, 4);
+  NSRange replacementRange = NSMakeRange(0, 1);
+
+  // Make the child view active and then call setMarkedText with some values. We
+  // should observe an IPC being sent to the |child_widget_|.
+  SetTextInputType(child_view_, ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(child_widget_, text_input_manager()->GetActiveWidget());
+  child_sink().ClearMessages();
+  [rwhv_cocoa_ setMarkedText:text
+               selectedRange:selectedRange
+            replacementRange:replacementRange];
+  EXPECT_TRUE(
+      !!child_sink().GetFirstMessageMatching(InputMsg_ImeSetComposition::ID));
+
+  // Repeat the same steps for the tab's view.
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(tab_widget(), text_input_manager()->GetActiveWidget());
+  tab_sink().ClearMessages();
+  [rwhv_cocoa_ setMarkedText:text
+               selectedRange:selectedRange
+            replacementRange:replacementRange];
+  EXPECT_TRUE(
+      !!tab_sink().GetFirstMessageMatching(InputMsg_ImeSetComposition::ID));
+}
+
+// This test verifies that calling insertText on the cocoa view will lead to a
+// commit text IPC sent to the active widget.
+TEST_F(InputMethodMacTest, InsertText) {
+  // Some values for the call to insertText.
+  base::scoped_nsobject<NSString> text(
+      [[NSString alloc] initWithString:@"sample text"]);
+  NSRange replacementRange = NSMakeRange(0, 1);
+
+  // Make the child view active and then call insertText with some values. We
+  // should observe an IPC being sent to the |child_widget_|.
+  SetTextInputType(child_view_, ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(child_widget_, text_input_manager()->GetActiveWidget());
+  child_sink().ClearMessages();
+  [rwhv_cocoa_ insertText:text replacementRange:replacementRange];
+  EXPECT_TRUE(
+      !!child_sink().GetFirstMessageMatching(InputMsg_ImeCommitText::ID));
+
+  // Repeat the same steps for the tab's view.
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(tab_widget(), text_input_manager()->GetActiveWidget());
+  [rwhv_cocoa_ insertText:text replacementRange:replacementRange];
+  EXPECT_TRUE(!!tab_sink().GetFirstMessageMatching(InputMsg_ImeCommitText::ID));
+}
+
+// This test makes sure that calling finishComposingText on the cocoa view will
+// lead to a finish composing text IPC for a the corresponding active widget.
+TEST_F(InputMethodMacTest, FinishComposingText) {
+  // Some values for the call to setMarkedText.
+  base::scoped_nsobject<NSString> text(
+      [[NSString alloc] initWithString:@"sample text"]);
+  NSRange selectedRange = NSMakeRange(0, 4);
+  NSRange replacementRange = NSMakeRange(0, 1);
+
+  // Make child view active and then call finishComposingText. We should observe
+  // an IPC being sent to the |child_widget_|.
+  SetTextInputType(child_view_, ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(child_widget_, text_input_manager()->GetActiveWidget());
+  child_sink().ClearMessages();
+  // In order to finish composing text, we must first have some marked text. So,
+  // we will first call setMarkedText on cocoa view. This would lead to a set
+  // composition IPC in the sink, but it doesn't matter since we will be looking
+  // for a finish composing text IPC for this test.
+  [rwhv_cocoa_ setMarkedText:text
+               selectedRange:selectedRange
+            replacementRange:replacementRange];
+  [rwhv_cocoa_ finishComposingText];
+  EXPECT_TRUE(!!child_sink().GetFirstMessageMatching(
+      InputMsg_ImeFinishComposingText::ID));
+
+  // Repeat the same steps for the tab's view.
+  SetTextInputType(tab_view(), ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_EQ(tab_widget(), text_input_manager()->GetActiveWidget());
+  tab_sink().ClearMessages();
+  [rwhv_cocoa_ setMarkedText:text
+               selectedRange:selectedRange
+            replacementRange:replacementRange];
+  [rwhv_cocoa_ finishComposingText];
+  EXPECT_TRUE(!!tab_sink().GetFirstMessageMatching(
+      InputMsg_ImeFinishComposingText::ID));
+}
+
+// This test creates a test view to mimic a child frame's view and verifies that
+// calling ImeCancelComposition on either the child view or the tab's view will
+// always lead to a call to cancelComposition on the cocoa view.
+TEST_F(InputMethodMacTest, ImeCancelCompositionForAllViews) {
+  // Some values for the call to setMarkedText.
+  base::scoped_nsobject<NSString> text(
+      [[NSString alloc] initWithString:@"sample text"]);
+  NSRange selectedRange = NSMakeRange(0, 1);
+  NSRange replacementRange = NSMakeRange(0, 1);
+
+  // Make Cocoa view assume there is marked text.
+  [rwhv_cocoa_ setMarkedText:text
+               selectedRange:selectedRange
+            replacementRange:replacementRange];
+  EXPECT_TRUE([rwhv_cocoa_ hasMarkedText]);
+  child_view_->ImeCancelComposition();
+  EXPECT_FALSE([rwhv_cocoa_ hasMarkedText]);
+
+  // Repeat for the tab's view.
+  [rwhv_cocoa_ setMarkedText:text
+               selectedRange:selectedRange
+            replacementRange:replacementRange];
+  EXPECT_TRUE([rwhv_cocoa_ hasMarkedText]);
+  rwhv_mac_->ImeCancelComposition();
+  EXPECT_FALSE([rwhv_cocoa_ hasMarkedText]);
+}
+
+// This test verifies that when a RenderWidgetHostView changes its
+// TextInputState to NONE we send the IPC to stop monitor composition info and,
+// conversely, when its state is set to non-NONE, we start monitoring the
+// composition info.
+TEST_F(InputMethodMacTest, MonitorCompositionRangeForActiveWidget) {
+  // First, we need to make the cocoa view the first responder so that the
+  // method RWHVMac::HasFocus() returns true. Then we can make sure that as long
+  // as there is some TextInputState of non-NONE, the corresponding widget will
+  // be asked to start monitoring composition info.
+  base::scoped_nsobject<CocoaTestHelperWindow> window(
+      [[CocoaTestHelperWindow alloc] init]);
+  [[window contentView] addSubview:rwhv_cocoa_];
+  [window makeFirstResponder:rwhv_cocoa_];
+  EXPECT_TRUE(rwhv_mac_->HasFocus());
+
+  TextInputState state;
+  state.type = ui::TEXT_INPUT_TYPE_TEXT;
+  tab_sink().ClearMessages();
+
+  // Make the tab's widget active.
+  rwhv_mac_->TextInputStateChanged(state);
+
+  // The tab's widget must have received an IPC regarding composition updates.
+  const IPC::Message* composition_request_msg_for_tab =
+      tab_sink().GetUniqueMessageMatching(
+          InputMsg_RequestCompositionUpdate::ID);
+  EXPECT_TRUE(composition_request_msg_for_tab);
+
+  // The message should ask for monitoring updates, but no immediate update.
+  InputMsg_RequestCompositionUpdate::Param tab_msg_params;
+  InputMsg_RequestCompositionUpdate::Read(composition_request_msg_for_tab,
+                                          &tab_msg_params);
+  bool is_tab_msg_for_immediate_request = std::get<0>(tab_msg_params);
+  bool is_tab_msg_for_monitor_request = std::get<1>(tab_msg_params);
+  EXPECT_FALSE(is_tab_msg_for_immediate_request);
+  EXPECT_TRUE(is_tab_msg_for_monitor_request);
+  tab_sink().ClearMessages();
+  child_sink().ClearMessages();
+
+  // Now make the child view active.
+  child_view_->TextInputStateChanged(state);
+
+  // The tab should receive another IPC for composition updates.
+  composition_request_msg_for_tab = tab_sink().GetUniqueMessageMatching(
+      InputMsg_RequestCompositionUpdate::ID);
+  EXPECT_TRUE(composition_request_msg_for_tab);
+
+  // This time, the tab should have been asked to stop monitoring (and no
+  // immediate updates).
+  InputMsg_RequestCompositionUpdate::Read(composition_request_msg_for_tab,
+                                          &tab_msg_params);
+  is_tab_msg_for_immediate_request = std::get<0>(tab_msg_params);
+  is_tab_msg_for_monitor_request = std::get<1>(tab_msg_params);
+  EXPECT_FALSE(is_tab_msg_for_immediate_request);
+  EXPECT_FALSE(is_tab_msg_for_monitor_request);
+  tab_sink().ClearMessages();
+
+  // The child too must have received an IPC for composition updates.
+  const IPC::Message* composition_request_msg_for_child =
+      child_sink().GetUniqueMessageMatching(
+          InputMsg_RequestCompositionUpdate::ID);
+  EXPECT_TRUE(composition_request_msg_for_child);
+
+  // Verify that the message is asking for monitoring to start; but no immediate
+  // updates.
+  InputMsg_RequestCompositionUpdate::Param child_msg_params;
+  InputMsg_RequestCompositionUpdate::Read(composition_request_msg_for_child,
+                                          &child_msg_params);
+  bool is_child_msg_for_immediate_request = std::get<0>(child_msg_params);
+  bool is_child_msg_for_monitor_request = std::get<1>(child_msg_params);
+  EXPECT_FALSE(is_child_msg_for_immediate_request);
+  EXPECT_TRUE(is_child_msg_for_monitor_request);
+  child_sink().ClearMessages();
+
+  // Make the tab view active again.
+  rwhv_mac_->TextInputStateChanged(state);
+
+  // Verify that the child received another IPC for composition updates.
+  composition_request_msg_for_child = child_sink().GetUniqueMessageMatching(
+      InputMsg_RequestCompositionUpdate::ID);
+  EXPECT_TRUE(composition_request_msg_for_child);
+
+  // Verify that this IPC is asking for no monitoring or immediate updates.
+  InputMsg_RequestCompositionUpdate::Read(composition_request_msg_for_child,
+                                          &child_msg_params);
+  is_child_msg_for_immediate_request = std::get<0>(child_msg_params);
+  is_child_msg_for_monitor_request = std::get<1>(child_msg_params);
+  EXPECT_FALSE(is_child_msg_for_immediate_request);
+  EXPECT_FALSE(is_child_msg_for_monitor_request);
+}
 
 }  // namespace content

@@ -23,11 +23,9 @@
 #ifndef SVGFilterElement_h
 #define SVGFilterElement_h
 
+#include "core/CoreExport.h"
 #include "core/SVGNames.h"
-#include "core/svg/SVGAnimatedBoolean.h"
 #include "core/svg/SVGAnimatedEnumeration.h"
-#include "core/svg/SVGAnimatedInteger.h"
-#include "core/svg/SVGAnimatedIntegerOptionalInteger.h"
 #include "core/svg/SVGAnimatedLength.h"
 #include "core/svg/SVGElement.h"
 #include "core/svg/SVGURIReference.h"
@@ -36,46 +34,48 @@
 
 namespace blink {
 
-class SVGFilterElement final : public SVGElement,
-                               public SVGURIReference {
-    DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(SVGFilterElement);
-public:
-    DECLARE_NODE_FACTORY(SVGFilterElement);
-    DECLARE_VIRTUAL_TRACE();
+class CORE_EXPORT SVGFilterElement final : public SVGElement,
+                                           public SVGURIReference {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(SVGFilterElement);
 
-    void addClient(Node*);
-    void removeClient(Node*);
+ public:
+  DECLARE_NODE_FACTORY(SVGFilterElement);
+  DECLARE_VIRTUAL_TRACE();
 
-    SVGAnimatedLength* x() const { return m_x.get(); }
-    SVGAnimatedLength* y() const { return m_y.get(); }
-    SVGAnimatedLength* width() const { return m_width.get(); }
-    SVGAnimatedLength* height() const { return m_height.get(); }
-    SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>* filterUnits() { return m_filterUnits.get(); }
-    SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>* primitiveUnits() { return m_primitiveUnits.get(); }
+  ~SVGFilterElement() override;
 
-private:
-    explicit SVGFilterElement(Document&);
+  SVGAnimatedLength* x() const { return m_x.get(); }
+  SVGAnimatedLength* y() const { return m_y.get(); }
+  SVGAnimatedLength* width() const { return m_width.get(); }
+  SVGAnimatedLength* height() const { return m_height.get(); }
+  SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>* filterUnits() {
+    return m_filterUnits.get();
+  }
+  SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>* primitiveUnits() {
+    return m_primitiveUnits.get();
+  }
 
-    bool needsPendingResourceHandling() const override { return false; }
+ private:
+  explicit SVGFilterElement(Document&);
 
-    void svgAttributeChanged(const QualifiedName&) override;
-    void childrenChanged(const ChildrenChange&) override;
+  bool needsPendingResourceHandling() const override { return false; }
 
-    LayoutObject* createLayoutObject(const ComputedStyle&) override;
+  void svgAttributeChanged(const QualifiedName&) override;
+  void childrenChanged(const ChildrenChange&) override;
 
-    bool selfHasRelativeLengths() const override;
+  LayoutObject* createLayoutObject(const ComputedStyle&) override;
 
-    RefPtrWillBeMember<SVGAnimatedLength> m_x;
-    RefPtrWillBeMember<SVGAnimatedLength> m_y;
-    RefPtrWillBeMember<SVGAnimatedLength> m_width;
-    RefPtrWillBeMember<SVGAnimatedLength> m_height;
-    RefPtrWillBeMember<SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>> m_filterUnits;
-    RefPtrWillBeMember<SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>> m_primitiveUnits;
+  bool selfHasRelativeLengths() const override;
 
-    WillBeHeapHashSet<RefPtrWillBeMember<Node>> m_clientsToAdd;
+  Member<SVGAnimatedLength> m_x;
+  Member<SVGAnimatedLength> m_y;
+  Member<SVGAnimatedLength> m_width;
+  Member<SVGAnimatedLength> m_height;
+  Member<SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>> m_filterUnits;
+  Member<SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>> m_primitiveUnits;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGFilterElement_h
+#endif  // SVGFilterElement_h

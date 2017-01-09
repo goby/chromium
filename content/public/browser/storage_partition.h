@@ -5,13 +5,15 @@
 #ifndef CONTENT_PUBLIC_BROWSER_STORAGE_PARTITION_H_
 #define CONTENT_PUBLIC_BROWSER_STORAGE_PARTITION_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "net/cookies/cookie_store.h"
 
 class GURL;
 
@@ -39,15 +41,12 @@ class DatabaseTracker;
 namespace content {
 
 class AppCacheService;
-class BackgroundSyncContext;
 class BrowserContext;
 class CacheStorageContext;
 class DOMStorageContext;
-class GeofencingManager;
 class HostZoomLevelContext;
 class HostZoomMap;
 class IndexedDBContext;
-class NavigatorConnectContext;
 class PlatformNotificationContext;
 class ServiceWorkerContext;
 class ZoomLevelDelegate;
@@ -71,15 +70,12 @@ class CONTENT_EXPORT StoragePartition {
   virtual IndexedDBContext* GetIndexedDBContext() = 0;
   virtual ServiceWorkerContext* GetServiceWorkerContext() = 0;
   virtual CacheStorageContext* GetCacheStorageContext() = 0;
-  virtual GeofencingManager* GetGeofencingManager() = 0;
   virtual HostZoomMap* GetHostZoomMap() = 0;
   virtual HostZoomLevelContext* GetHostZoomLevelContext() = 0;
   virtual ZoomLevelDelegate* GetZoomLevelDelegate() = 0;
-  virtual NavigatorConnectContext* GetNavigatorConnectContext() = 0;
   virtual PlatformNotificationContext* GetPlatformNotificationContext() = 0;
-  virtual BackgroundSyncContext* GetBackgroundSyncContext() = 0;
 
-  enum : uint32 {
+  enum : uint32_t {
     REMOVE_DATA_MASK_APPCACHE = 1 << 0,
     REMOVE_DATA_MASK_COOKIES = 1 << 1,
     REMOVE_DATA_MASK_FILE_SYSTEMS = 1 << 2,
@@ -87,9 +83,9 @@ class CONTENT_EXPORT StoragePartition {
     REMOVE_DATA_MASK_LOCAL_STORAGE = 1 << 4,
     REMOVE_DATA_MASK_SHADER_CACHE = 1 << 5,
     REMOVE_DATA_MASK_WEBSQL = 1 << 6,
-    REMOVE_DATA_MASK_WEBRTC_IDENTITY = 1 << 7,
-    REMOVE_DATA_MASK_SERVICE_WORKERS = 1 << 8,
-    REMOVE_DATA_MASK_CACHE_STORAGE = 1 << 9,
+    REMOVE_DATA_MASK_SERVICE_WORKERS = 1 << 7,
+    REMOVE_DATA_MASK_CACHE_STORAGE = 1 << 8,
+    REMOVE_DATA_MASK_PLUGIN_PRIVATE_DATA = 1 << 9,
     REMOVE_DATA_MASK_ALL = 0xFFFFFFFF,
 
     // Corresponds to storage::kStorageTypeTemporary.
@@ -114,8 +110,8 @@ class CONTENT_EXPORT StoragePartition {
   // about.  This will no longer be the case when we resolve
   // http://crbug.com/159193. Remove |request_context_getter| when that bug
   // is fixed.
-  virtual void ClearDataForOrigin(uint32 remove_mask,
-                                  uint32 quota_storage_remove_mask,
+  virtual void ClearDataForOrigin(uint32_t remove_mask,
+                                  uint32_t quota_storage_remove_mask,
                                   const GURL& storage_origin,
                                   net::URLRequestContextGetter* rq_context,
                                   const base::Closure& callback) = 0;
@@ -126,17 +122,41 @@ class CONTENT_EXPORT StoragePartition {
   typedef base::Callback<bool(const GURL&, storage::SpecialStoragePolicy*)>
       OriginMatcherFunction;
 
+  // A callback type to check if a given cookie should be cleared.
+  using CookieMatcherFunction = net::CookieStore::CookiePredicate;
+
   // Similar to ClearDataForOrigin().
-  // Deletes all data out fo the StoragePartition if |storage_origin| is
-  // nullptr.
+  // Deletes all data out for the StoragePartition if |storage_origin| is empty.
   // |origin_matcher| is present if special storage policy is to be handled,
   // otherwise the callback can be null (base::Callback::is_null() == true).
   // |callback| is called when data deletion is done or at least the deletion is
   // scheduled.
-  virtual void ClearData(uint32 remove_mask,
-                         uint32 quota_storage_remove_mask,
+  // storage_origin and origin_matcher_function are used for different
+  // subsystems. One does not imply the other.
+  virtual void ClearData(uint32_t remove_mask,
+                         uint32_t quota_storage_remove_mask,
                          const GURL& storage_origin,
                          const OriginMatcherFunction& origin_matcher,
+                         const base::Time begin,
+                         const base::Time end,
+                         const base::Closure& callback) = 0;
+
+  // Similar to ClearData().
+  // Deletes all data out for the StoragePartition.
+  // * |origin_matcher| is present if special storage policy is to be handled,
+  //   otherwise the callback should be null (base::Callback::is_null()==true).
+  //   The origin matcher does not apply to cookies, instead use:
+  // * |cookies_matcher| is present if special cookie clearing is to be handled.
+  //   If the callback is null all cookies withing the time range will be
+  //   cleared.
+  // * |callback| is called when data deletion is done or at least the deletion
+  //   is scheduled.
+  // Note: Make sure you know what you are doing before clearing cookies
+  // selectively. You don't want to break the web.
+  virtual void ClearData(uint32_t remove_mask,
+                         uint32_t quota_storage_remove_mask,
+                         const OriginMatcherFunction& origin_matcher,
+                         const CookieMatcherFunction& cookie_matcher,
                          const base::Time begin,
                          const base::Time end,
                          const base::Closure& callback) = 0;

@@ -31,22 +31,20 @@
 namespace blink {
 
 class MediaDocument final : public HTMLDocument {
-public:
-    static PassRefPtrWillBeRawPtr<MediaDocument> create(const DocumentInit& initializer = DocumentInit())
-    {
-        return adoptRefWillBeNoop(new MediaDocument(initializer));
-    }
+ public:
+  static MediaDocument* create(
+      const DocumentInit& initializer = DocumentInit()) {
+    return new MediaDocument(initializer);
+  }
 
-private:
-    MediaDocument(const DocumentInit&);
+ private:
+  MediaDocument(const DocumentInit&);
 
-    PassRefPtrWillBeRawPtr<DocumentParser> createParser() override;
+  DocumentParser* createParser() override;
 
-    void defaultEventHandler(Event*) override;
-
-    String debugName() const override { return "MediaDocument"; }
+  void defaultEventHandler(Event*) override;
 };
 
-}
+}  // namespace blink
 
 #endif

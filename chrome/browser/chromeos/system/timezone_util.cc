@@ -4,11 +4,15 @@
 
 #include "chrome/browser/chromeos/system/timezone_util.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/i18n/rtl.h"
 #include "base/lazy_instance.h"
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -18,10 +22,11 @@
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/common/pref_names.h"
+#include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/settings/timezone_settings.h"
 #include "chromeos/timezone/timezone_request.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
 #include "third_party/icu/source/common/unicode/ures.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
@@ -66,7 +71,7 @@ base::string16 GetExemplarCity(const icu::TimeZone& zone) {
 
   // Resource keys for timezones use ':' in place of '/'.
   base::ReplaceSubstringsAfterOffset(&zone_id_str, 0, "/", ":");
-  scoped_ptr<UResourceBundle, UResClose> zone_item(
+  std::unique_ptr<UResourceBundle, UResClose> zone_item(
       ures_getByKey(zone_strings, zone_id_str.c_str(), NULL, &status));
   icu::UnicodeString city;
   if (!U_FAILURE(status)) {
@@ -142,21 +147,24 @@ base::string16 GetTimezoneName(const icu::TimeZone& timezone) {
 namespace chromeos {
 namespace system {
 
+base::string16 GetCurrentTimezoneName() {
+  return GetTimezoneName(
+      chromeos::system::TimezoneSettings::GetInstance()->GetTimezone());
+}
+
 // Creates a list of pairs of each timezone's ID and name.
-scoped_ptr<base::ListValue> GetTimezoneList() {
-  const std::vector<icu::TimeZone*> &timezones =
+std::unique_ptr<base::ListValue> GetTimezoneList() {
+  const auto& timezones =
       chromeos::system::TimezoneSettings::GetInstance()->GetTimezoneList();
-  scoped_ptr<base::ListValue> timezoneList(new base::ListValue());
-  for (std::vector<icu::TimeZone*>::const_iterator iter = timezones.begin();
-       iter != timezones.end(); ++iter) {
-    const icu::TimeZone* timezone = *iter;
-    base::ListValue* option = new base::ListValue();
-    option->Append(new base::StringValue(
-        chromeos::system::TimezoneSettings::GetTimezoneID(*timezone)));
-    option->Append(new base::StringValue(GetTimezoneName(*timezone)));
-    timezoneList->Append(option);
+  std::unique_ptr<base::ListValue> timezoneList(new base::ListValue());
+  for (const auto& timezone : timezones) {
+    auto option = base::MakeUnique<base::ListValue>();
+    option->AppendString(
+        chromeos::system::TimezoneSettings::GetTimezoneID(*timezone));
+    option->AppendString(GetTimezoneName(*timezone));
+    timezoneList->Append(std::move(option));
   }
-  return timezoneList.Pass();
+  return timezoneList;
 }
 
 bool HasSystemTimezonePolicy() {
@@ -177,21 +185,10 @@ bool HasSystemTimezonePolicy() {
 }
 
 void ApplyTimeZone(const TimeZoneResponseData* timezone) {
-  if (HasSystemTimezonePolicy())
+  if (!g_browser_process->platform_part()
+           ->GetTimezoneResolverManager()
+           ->ShouldApplyResolvedTimezone()) {
     return;
-
-  const user_manager::User* primary_user =
-      user_manager::UserManager::Get()->GetPrimaryUser();
-  if (primary_user) {
-    if (!primary_user->is_profile_created())
-      return;
-
-    Profile* profile =
-        chromeos::ProfileHelper::Get()->GetProfileByUser(primary_user);
-    if (!profile->GetPrefs()->GetBoolean(
-            prefs::kResolveTimezoneByGeolocation)) {
-      return;
-    }
   }
 
   if (!timezone->timeZoneId.empty()) {

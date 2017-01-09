@@ -5,35 +5,39 @@
 #ifndef NET_DNS_DNS_SESSION_H_
 #define NET_DNS_DNS_SESSION_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/bucket_ranges.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
+#include "net/base/network_change_notifier.h"
 #include "net/base/rand_callback.h"
 #include "net/dns/dns_config_service.h"
 #include "net/dns/dns_socket_pool.h"
 
 namespace base {
 class BucketRanges;
-class SampleVector;
 }
 
 namespace net {
 
-class ClientSocketFactory;
 class DatagramClientSocket;
 class NetLog;
+struct NetLogSource;
 class StreamSocket;
 
 // Session parameters and state shared between DNS transactions.
 // Ref-counted so that DnsClient::Request can keep working in absence of
 // DnsClient. A DnsSession must be recreated when DnsConfig changes.
 class NET_EXPORT_PRIVATE DnsSession
-    : NON_EXPORTED_BASE(public base::RefCounted<DnsSession>) {
+    : NON_EXPORTED_BASE(public base::RefCounted<DnsSession>),
+      public NetworkChangeNotifier::ConnectionTypeObserver {
  public:
   typedef base::Callback<int()> RandCallback;
 
@@ -41,7 +45,7 @@ class NET_EXPORT_PRIVATE DnsSession
    public:
     SocketLease(scoped_refptr<DnsSession> session,
                 unsigned server_index,
-                scoped_ptr<DatagramClientSocket> socket);
+                std::unique_ptr<DatagramClientSocket> socket);
     ~SocketLease();
 
     unsigned server_index() const { return server_index_; }
@@ -51,13 +55,13 @@ class NET_EXPORT_PRIVATE DnsSession
    private:
     scoped_refptr<DnsSession> session_;
     unsigned server_index_;
-    scoped_ptr<DatagramClientSocket> socket_;
+    std::unique_ptr<DatagramClientSocket> socket_;
 
     DISALLOW_COPY_AND_ASSIGN(SocketLease);
   };
 
   DnsSession(const DnsConfig& config,
-             scoped_ptr<DnsSocketPool> socket_pool,
+             std::unique_ptr<DnsSocketPool> socket_pool,
              const RandIntCallback& rand_int_callback,
              NetLog* net_log);
 
@@ -97,21 +101,27 @@ class NET_EXPORT_PRIVATE DnsSession
 
   // Allocate a socket, already connected to the server address.
   // When the SocketLease is destroyed, the socket will be freed.
-  scoped_ptr<SocketLease> AllocateSocket(unsigned server_index,
-                                         const NetLog::Source& source);
+  std::unique_ptr<SocketLease> AllocateSocket(unsigned server_index,
+                                              const NetLogSource& source);
 
   // Creates a StreamSocket from the factory for a transaction over TCP. These
   // sockets are not pooled.
-  scoped_ptr<StreamSocket> CreateTCPSocket(unsigned server_index,
-                                           const NetLog::Source& source);
+  std::unique_ptr<StreamSocket> CreateTCPSocket(unsigned server_index,
+                                                const NetLogSource& source);
+
+  void ApplyPersistentData(const base::Value& data);
+  std::unique_ptr<const base::Value> GetPersistentData() const;
 
  private:
   friend class base::RefCounted<DnsSession>;
-  ~DnsSession();
+  ~DnsSession() override;
+
+  void UpdateTimeouts(NetworkChangeNotifier::ConnectionType type);
+  void InitializeServerStats();
 
   // Release a socket.
   void FreeSocket(unsigned server_index,
-                  scoped_ptr<DatagramClientSocket> socket);
+                  std::unique_ptr<DatagramClientSocket> socket);
 
   // Return the timeout using the TCP timeout method.
   base::TimeDelta NextTimeoutFromJacobson(unsigned server_index, int attempt);
@@ -119,18 +129,25 @@ class NET_EXPORT_PRIVATE DnsSession
   // Compute the timeout using the histogram method.
   base::TimeDelta NextTimeoutFromHistogram(unsigned server_index, int attempt);
 
+  // NetworkChangeNotifier::ConnectionTypeObserver:
+  void OnConnectionTypeChanged(
+      NetworkChangeNotifier::ConnectionType type) override;
+
   const DnsConfig config_;
-  scoped_ptr<DnsSocketPool> socket_pool_;
+  std::unique_ptr<DnsSocketPool> socket_pool_;
   RandCallback rand_callback_;
   NetLog* net_log_;
 
   // Current index into |config_.nameservers| to begin resolution with.
   int server_index_;
 
+  base::TimeDelta initial_timeout_;
+  base::TimeDelta max_timeout_;
+
   struct ServerStats;
 
   // Track runtime statistics of each DNS server.
-  std::vector<scoped_ptr<ServerStats>> server_stats_;
+  std::vector<std::unique_ptr<ServerStats>> server_stats_;
 
   // Buckets shared for all |ServerStats::rtt_histogram|.
   struct RttBuckets : public base::BucketRanges {

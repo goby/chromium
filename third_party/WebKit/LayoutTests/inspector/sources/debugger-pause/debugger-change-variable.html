@@ -44,9 +44,9 @@ var test = function()
 
     function step2(callFrames)
     {
-        var pane = WebInspector.panels.sources.sidebarPanes.callstack;
+        var pane = self.runtime.sharedInstance(Sources.CallStackSidebarPane);
         pane._callFrameSelected(pane.callFrames[1]);
-        InspectorTest.runAfterPendingDispatches(step3);
+        InspectorTest.deprecatedRunAfterPendingDispatches(step3);
     }
 
     function step3()

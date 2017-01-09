@@ -1,7 +1,5 @@
 include_rules = [
   "+chromeos",
-  "+components/devtools_discovery",
-  "+components/devtools_http_handler",
   "+components/keyed_service",
   "+components/nacl/browser",
   "+components/nacl/common",
@@ -19,7 +17,8 @@ include_rules = [
   "+content/shell/browser/shell_url_request_context_getter.h",
 
   # For device backend support.
-  "+device/core",
+  "+device/base",
+  "+device/bluetooth",
   "+device/hid",
   "+device/usb",
 
@@ -31,7 +30,6 @@ include_rules = [
 
   "+ppapi",
   "+storage/browser/quota",
-  "+sync/api",
   "+third_party/skia/include",
 
   # Additional UI dependencies for app_shell. Note that no particular UI toolkit
@@ -39,6 +37,7 @@ include_rules = [
   "+ui/aura",
   "+ui/chromeos",
   "+ui/display",
+  "+ui/ozone/public",
   "+ui/wm",
 
   "+third_party/cros_system_api",

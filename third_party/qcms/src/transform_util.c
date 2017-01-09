@@ -191,13 +191,14 @@ void compute_curve_gamma_table_type_parametric(float gamma_table[256], float par
                 interval = -INFINITY;
         }       
         for (X = 0; X < 256; X++) {
-                if (X >= interval) {
+                float x = X / 255.0;
+                if (x >= interval) {
                         // XXX The equations are not exactly as definied in the spec but are
                         //     algebraic equivilent.
                         // TODO Should division by 255 be for the whole expression.
-                        gamma_table[X] = clamp_float(pow(a * X / 255. + b, y) + c + e);
+                        gamma_table[X] = clamp_float(pow(a * x + b, y) + c + e);
                 } else {
-                        gamma_table[X] = clamp_float(c * X / 255. + f);
+                        gamma_table[X] = clamp_float(c * x + f);
                 }
         }
 }
@@ -310,35 +311,25 @@ struct matrix build_colorant_matrix(qcms_profile *p)
  * I think it could be much better. For example, Argyll seems to have better code in
  * icmTable_lookup_bwd and icmTable_setup_bwd. However, for now this is a quick way
  * to a working solution and allows for easy comparing with lcms. */
-uint16_fract_t lut_inverse_interp16(uint16_t Value, uint16_t LutTable[], int length)
+uint16_fract_t lut_inverse_interp16(uint16_t Value, uint16_t LutTable[], int length, int NumZeroes, int NumPoles)
 {
         int l = 1;
         int r = 0x10000;
         int x = 0, res;       // 'int' Give spacing for negative values
-        int NumZeroes, NumPoles;
         int cell0, cell1;
         double val2;
         double y0, y1, x0, x1;
         double a, b, f;
 
         // July/27 2001 - Expanded to handle degenerated curves with an arbitrary
-        // number of elements containing 0 at the begining of the table (Zeroes)
+        // number of elements containing 0 at the beginning of the table (Zeroes)
         // and another arbitrary number of poles (FFFFh) at the end.
-        // First the zero and pole extents are computed, then value is compared.
-
-        NumZeroes = 0;
-        while (LutTable[NumZeroes] == 0 && NumZeroes < length-1)
-            NumZeroes++;
 
         // There are no zeros at the beginning and we are trying to find a zero, so
         // return anything. It seems zero would be the less destructive choice
 	/* I'm not sure that this makes sense, but oh well... */
         if (NumZeroes == 0 && Value == 0)
             return 0;
-
-        NumPoles = 0;
-        while (LutTable[length-1- NumPoles] == 0xFFFF && NumPoles < length-1)
-            NumPoles++;
 
         // Does the curve belong to this case?
         if (NumZeroes > 1 || NumPoles > 1)
@@ -439,6 +430,21 @@ uint16_fract_t lut_inverse_interp16(uint16_t Value, uint16_t LutTable[], int len
         return (uint16_fract_t) floor(f + 0.5);
 }
 
+// December/16 2015 - Moved this code out of lut_inverse_interp16
+// in order to save computation in invert_lut loop.
+static void count_zeroes_and_poles(uint16_t *LutTable, int length, int *NumZeroes, int *NumPoles)
+{
+    int z = 0, p = 0;
+
+    while (LutTable[z] == 0 && z < length - 1)
+    	z++;
+    *NumZeroes = z;
+
+    while (LutTable[length - 1 - p] == 0xFFFF && p < length - 1)
+    	p++;
+    *NumPoles = p;
+}
+
 /*
  The number of entries needed to invert a lookup table should not
  necessarily be the same as the original number of entries.  This is
@@ -454,6 +460,8 @@ uint16_fract_t lut_inverse_interp16(uint16_t Value, uint16_t LutTable[], int len
  For now, we punt the decision of output size to the caller. */
 static uint16_t *invert_lut(uint16_t *table, int length, size_t out_length)
 {
+        int NumZeroes;
+        int NumPoles;
         int i;
         /* for now we invert the lut by creating a lut of size out_length
          * and attempting to lookup a value for each entry using lut_inverse_interp16 */
@@ -461,11 +469,16 @@ static uint16_t *invert_lut(uint16_t *table, int length, size_t out_length)
         if (!output)
                 return NULL;
 
+        // December/16 2015 - Compute the input curve zero and pole extents outside
+        // the loop and pass them to lut_inverse_interp16.
+        count_zeroes_and_poles(table, length, &NumZeroes, &NumPoles);
+
         for (i = 0; i < out_length; i++) {
                 double x = ((double) i * 65535.) / (double) (out_length - 1);
                 uint16_fract_t input = floor(x + .5);
-                output[i] = lut_inverse_interp16(input, table, length);
+                output[i] = lut_inverse_interp16(input, table, length, NumZeroes, NumPoles);
         }
+
         return output;
 }
 
@@ -585,20 +598,25 @@ void build_output_lut(struct curveType *trc,
 {
         if (trc->type == PARAMETRIC_CURVE_TYPE) {
                 float gamma_table[256];
+                uint16_t gamma_table_uint[256];
                 uint16_t i;
-                uint16_t *output = malloc(sizeof(uint16_t)*256);
-
-                if (!output) {
-                        *output_gamma_lut = NULL;
-                        return;
-                }
+                uint16_t *inverted;
+                int inverted_size = 4096;
 
                 compute_curve_gamma_table_type_parametric(gamma_table, trc->parameter, trc->count);
-                *output_gamma_lut_length = 256;
                 for(i = 0; i < 256; i++) {
-                        output[i] = (uint16_t)(gamma_table[i] * 65535);
+                        gamma_table_uint[i] = (uint16_t)(gamma_table[i] * 65535);
                 }
-                *output_gamma_lut = output;
+
+                //XXX: the choice of a minimum of 256 here is not backed by any theory,
+                //     measurement or data, however it is what lcms uses.
+                //     the maximum number we would need is 65535 because that's the
+                //     accuracy used for computing the pre cache table
+                inverted = invert_lut(gamma_table_uint, 256, inverted_size);
+                if (!inverted)
+                        return;
+                *output_gamma_lut = inverted;
+                *output_gamma_lut_length = inverted_size;
         } else {
                 if (trc->count == 0) {
                         *output_gamma_lut = build_linear_table(4096);
@@ -618,4 +636,38 @@ void build_output_lut(struct curveType *trc,
                 }
         }
 
+}
+
+size_t qcms_profile_get_parametric_curve(qcms_profile *profile, qcms_trc_channel channel, float data[7])
+{
+    static const uint32_t COUNT_TO_LENGTH[5] = {1, 3, 4, 5, 7};
+    struct curveType *curve = NULL;
+    size_t size;
+
+    if (profile->color_space != RGB_SIGNATURE)
+        return 0;
+
+    switch(channel) {
+    case QCMS_TRC_RED:
+        curve = profile->redTRC;
+        break;
+    case QCMS_TRC_GREEN:
+        curve = profile->greenTRC;
+        break;
+    case QCMS_TRC_BLUE:
+        curve = profile->blueTRC;
+        break;
+    default:
+        return 0;
+    }
+
+    if (!curve || curve->type != PARAMETRIC_CURVE_TYPE)
+        return 0;
+
+    size = COUNT_TO_LENGTH[curve->count];
+
+    if (data)
+        memcpy(data, curve->parameter, size * sizeof(float));
+
+    return size;
 }

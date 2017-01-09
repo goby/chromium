@@ -4,17 +4,18 @@
 
 #include "remoting/host/setup/daemon_controller_delegate_win.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "base/win/scoped_bstr.h"
-#include "base/win/windows_version.h"
 #include "remoting/base/scoped_sc_handle_win.h"
 #include "remoting/host/branding.h"
 #include "remoting/host/host_config.h"
@@ -65,15 +66,16 @@ const char* const kUnprivilegedConfigKeys[] = {
 // Reads and parses the configuration file up to |kMaxConfigFileSize| in
 // size.
 bool ReadConfig(const base::FilePath& filename,
-                scoped_ptr<base::DictionaryValue>* config_out) {
+                std::unique_ptr<base::DictionaryValue>* config_out) {
   std::string file_content;
-  if (!base::ReadFileToString(filename, &file_content, kMaxConfigFileSize)) {
+  if (!base::ReadFileToStringWithMaxSize(filename, &file_content,
+                                         kMaxConfigFileSize)) {
     PLOG(ERROR) << "Failed to read '" << filename.value() << "'.";
     return false;
   }
 
   // Parse the JSON configuration, expecting it to contain a dictionary.
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       base::JSONReader::Read(file_content, base::JSON_ALLOW_TRAILING_COMMAS);
 
   base::DictionaryValue* dictionary;
@@ -157,7 +159,7 @@ bool WriteConfig(const std::string& content) {
   }
 
   // Extract the configuration data that the user will verify.
-  scoped_ptr<base::Value> config_value = base::JSONReader::Read(content);
+  std::unique_ptr<base::Value> config_value = base::JSONReader::Read(content);
   if (!config_value.get()) {
     return false;
   }
@@ -179,8 +181,7 @@ bool WriteConfig(const std::string& content) {
 
   // Extract the unprivileged fields from the configuration.
   base::DictionaryValue unprivileged_config_dict;
-  for (int i = 0; i < arraysize(kUnprivilegedConfigKeys); ++i) {
-    const char* key = kUnprivilegedConfigKeys[i];
+  for (const char* key : kUnprivilegedConfigKeys) {
     base::string16 value;
     if (config_dict->GetString(key, &value)) {
       unprivileged_config_dict.SetString(key, value);
@@ -256,7 +257,7 @@ ScopedScHandle OpenService(DWORD access) {
                 << "' service";
   }
 
-  return service.Pass();
+  return service;
 }
 
 void InvokeCompletionCallback(
@@ -367,11 +368,12 @@ DaemonController::State DaemonControllerDelegateWin::GetState() {
   return ConvertToDaemonState(status.dwCurrentState);
 }
 
-scoped_ptr<base::DictionaryValue> DaemonControllerDelegateWin::GetConfig() {
+std::unique_ptr<base::DictionaryValue>
+DaemonControllerDelegateWin::GetConfig() {
   base::FilePath config_dir = remoting::GetConfigDir();
 
   // Read the unprivileged part of host configuration.
-  scoped_ptr<base::DictionaryValue> config;
+  std::unique_ptr<base::DictionaryValue> config;
   if (!ReadConfig(config_dir.Append(kUnprivilegedConfigFileName), &config))
     return nullptr;
 
@@ -379,10 +381,10 @@ scoped_ptr<base::DictionaryValue> DaemonControllerDelegateWin::GetConfig() {
 }
 
 void DaemonControllerDelegateWin::UpdateConfig(
-    scoped_ptr<base::DictionaryValue> config,
+    std::unique_ptr<base::DictionaryValue> config,
     const DaemonController::CompletionCallback& done) {
   // Check for bad keys.
-  for (int i = 0; i < arraysize(kReadonlyKeys); ++i) {
+  for (size_t i = 0; i < arraysize(kReadonlyKeys); ++i) {
     if (config->HasKey(kReadonlyKeys[i])) {
       LOG(ERROR) << "Cannot update config: '" << kReadonlyKeys[i]
                  << "' is read only.";
@@ -392,7 +394,7 @@ void DaemonControllerDelegateWin::UpdateConfig(
   }
   // Get the old config.
   base::FilePath config_dir = remoting::GetConfigDir();
-  scoped_ptr<base::DictionaryValue> config_old;
+  std::unique_ptr<base::DictionaryValue> config_old;
   if (!ReadConfig(config_dir.Append(kConfigFileName), &config_old)) {
     InvokeCompletionCallback(done, false);
     return;
@@ -437,7 +439,7 @@ DaemonControllerDelegateWin::GetUsageStatsConsent() {
 }
 
 void DaemonControllerDelegateWin::SetConfigAndStart(
-    scoped_ptr<base::DictionaryValue> config,
+    std::unique_ptr<base::DictionaryValue> config,
     bool consent,
     const DaemonController::CompletionCallback& done) {
   // Record the user's consent.
@@ -468,9 +470,8 @@ void DaemonControllerDelegateWin::SetConfigAndStart(
 }
 
 scoped_refptr<DaemonController> DaemonController::Create() {
-  scoped_ptr<DaemonController::Delegate> delegate(
-      new DaemonControllerDelegateWin());
-  return new DaemonController(delegate.Pass());
+  return new DaemonController(
+      base::WrapUnique(new DaemonControllerDelegateWin()));
 }
 
 }  // namespace remoting

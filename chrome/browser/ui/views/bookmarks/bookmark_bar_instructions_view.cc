@@ -11,9 +11,8 @@
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar_instructions_delegate.h"
 #include "chrome/grit/generated_resources.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/label.h"
@@ -23,14 +22,9 @@ namespace {
 
 // Horizontal padding, in pixels, between the link and label.
 int GetViewPadding() {
-  if (ui::MaterialDesignController::IsModeMaterial()) {
-    static int space_width =
-        views::Label(base::ASCIIToUTF16(" ")).GetPreferredSize().width();
-    return space_width;
-  }
-
-  // Pre-MD is hard-coded to 6px.
-  return 6;
+  static int space_width =
+      views::Label(base::ASCIIToUTF16(" ")).GetPreferredSize().width();
+  return space_width;
 }
 
 }  // namespace
@@ -40,7 +34,6 @@ BookmarkBarInstructionsView::BookmarkBarInstructionsView(
     : delegate_(delegate),
       instructions_(NULL),
       import_link_(NULL),
-      baseline_(-1),
       updated_colors_(false) {
   instructions_ = new views::Label(
       l10n_util::GetStringUTF16(IDS_BOOKMARKS_NO_ITEMS));
@@ -52,7 +45,7 @@ BookmarkBarInstructionsView::BookmarkBarInstructionsView(
     import_link_ = new views::Link(
         l10n_util::GetStringUTF16(IDS_BOOKMARK_BAR_IMPORT_LINK));
     // We don't want the link to alter tab navigation.
-    import_link_->SetFocusable(false);
+    import_link_->SetFocusBehavior(FocusBehavior::NEVER);
     import_link_->set_listener(this);
     import_link_->set_context_menu_controller(this);
     import_link_->SetAutoColorReadabilityEnabled(false);
@@ -62,23 +55,16 @@ BookmarkBarInstructionsView::BookmarkBarInstructionsView(
 }
 
 gfx::Size BookmarkBarInstructionsView::GetPreferredSize() const {
-  int ascent = 0, descent = 0, height = 0, width = 0;
+  int height = 0, width = 0;
   for (int i = 0; i < child_count(); ++i) {
     const views::View* view = child_at(i);
     gfx::Size pref = view->GetPreferredSize();
-    int baseline = view->GetBaseline();
-    if (baseline != -1) {
-      ascent = std::max(ascent, baseline);
-      descent = std::max(descent, pref.height() - baseline);
-    } else {
-      height = std::max(pref.height(), height);
-    }
+    height = std::max(pref.height(), height);
     width += pref.width();
   }
   width += (child_count() - 1) * GetViewPadding();
-  if (ascent != 0)
-    height = std::max(ascent + descent, height);
-  return gfx::Size(width, height);
+  gfx::Insets insets = GetInsets();
+  return gfx::Size(width + insets.width(), height + insets.height());
 }
 
 void BookmarkBarInstructionsView::Layout() {
@@ -87,14 +73,8 @@ void BookmarkBarInstructionsView::Layout() {
   for (int i = 0; i < child_count(); ++i) {
     views::View* view = child_at(i);
     gfx::Size pref = view->GetPreferredSize();
-    int baseline = view->GetBaseline();
-    int y;
-    if (baseline != -1 && baseline_ != -1)
-      y = baseline_ - baseline;
-    else
-      y = (height() - pref.height()) / 2;
     int view_width = std::min(remaining_width, pref.width());
-    view->SetBounds(x, y, view_width, pref.height());
+    view->SetBounds(x, 0, view_width, height());
     x += view_width + GetViewPadding();
     remaining_width = std::max(0, width() - x);
   }
@@ -114,9 +94,9 @@ void BookmarkBarInstructionsView::ViewHierarchyChanged(
     UpdateColors();
 }
 
-void BookmarkBarInstructionsView::GetAccessibleState(
-    ui::AXViewState* state) {
-  instructions_->GetAccessibleState(state);
+void BookmarkBarInstructionsView::GetAccessibleNodeData(
+    ui::AXNodeData* node_data) {
+  instructions_->GetAccessibleNodeData(node_data);
 }
 
 void BookmarkBarInstructionsView::LinkClicked(views::Link* source,
@@ -138,25 +118,21 @@ void BookmarkBarInstructionsView::UpdateColors() {
   if (!theme_provider)
     return;
   updated_colors_ = true;
-  SkColor text_color =
-      theme_provider->GetColor(ThemeProperties::COLOR_BOOKMARK_TEXT);
+  SkColor text_color = theme_provider->GetColor(
+      ThemeProperties::COLOR_BOOKMARK_BAR_INSTRUCTIONS_TEXT);
   instructions_->SetEnabledColor(text_color);
   if (!import_link_)
     return;
 
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    import_link_->SetEnabledColor(text_color);
-  } else {
-    // For MD, use the default link color if it provides enough contrast. If
-    // contrast is too low, fall back to the bookmark text color and use an
-    // underline to make it obvious it's a link. The default color readability
-    // code (which only adjusts luminance) doesn't work well in this case.
-    SkColor bg = theme_provider->GetColor(ThemeProperties::COLOR_TOOLBAR);
-    SkColor link_color =
-        GetNativeTheme()->GetSystemColor(ui::NativeTheme::kColorId_LinkEnabled);
-    bool link_has_contrast = color_utils::GetContrastRatio(link_color, bg) >=
-                             color_utils::kMinimumReadableContrastRatio;
-    import_link_->SetUnderline(!link_has_contrast);
-    import_link_->SetEnabledColor(link_has_contrast ? link_color : text_color);
-  }
+  // Use the default link color if it provides enough contrast. If
+  // contrast is too low, fall back to the bookmark text color and use an
+  // underline to make it obvious it's a link. The default color readability
+  // code (which only adjusts luminance) doesn't work well in this case.
+  SkColor bg = theme_provider->GetColor(ThemeProperties::COLOR_TOOLBAR);
+  SkColor link_color =
+      GetNativeTheme()->GetSystemColor(ui::NativeTheme::kColorId_LinkEnabled);
+  bool link_has_contrast = color_utils::GetContrastRatio(link_color, bg) >=
+                           color_utils::kMinimumReadableContrastRatio;
+  import_link_->SetUnderline(!link_has_contrast);
+  import_link_->SetEnabledColor(link_has_contrast ? link_color : text_color);
 }

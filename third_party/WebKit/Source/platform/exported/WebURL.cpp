@@ -28,31 +28,34 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/platform/WebURL.h"
 
 #include "platform/weborigin/KURL.h"
+#include "wtf/text/StringView.h"
 
 namespace blink {
 
+bool WebURL::protocolIs(const char* protocol) const {
+  const url::Component& scheme = m_parsed.scheme;
+  StringView urlView = m_string;
+  // For subtlety why this works in all cases, see KURL::componentString.
+  return m_isValid && StringView(urlView, scheme.begin, scheme.len) == protocol;
+}
+
 WebURL::WebURL(const KURL& url)
-    : m_string(url.string())
-    , m_parsed(url.parsed())
-    , m_isValid(url.isValid())
-{
+    : m_string(url.getString()),
+      m_parsed(url.parsed()),
+      m_isValid(url.isValid()) {}
+
+WebURL& WebURL::operator=(const KURL& url) {
+  m_string = url.getString();
+  m_parsed = url.parsed();
+  m_isValid = url.isValid();
+  return *this;
 }
 
-WebURL& WebURL::operator=(const KURL& url)
-{
-    m_string = url.string();
-    m_parsed = url.parsed();
-    m_isValid = url.isValid();
-    return *this;
+WebURL::operator KURL() const {
+  return KURL(m_string, m_parsed, m_isValid);
 }
 
-WebURL::operator KURL() const
-{
-    return KURL(m_string, m_parsed, m_isValid);
-}
-
-} // namespace blink
+}  // namespace blink

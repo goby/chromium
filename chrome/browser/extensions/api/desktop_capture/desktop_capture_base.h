@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_DESKTOP_CAPTURE_DESKTOP_CAPTURE_BASE_H_
 #define CHROME_BROWSER_EXTENSIONS_API_DESKTOP_CAPTURE_DESKTOP_CAPTURE_BASE_H_
 
+#include <array>
 #include <map>
+#include <string>
 
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
-#include "chrome/browser/media/desktop_media_list.h"
-#include "chrome/browser/media/desktop_media_picker.h"
-#include "chrome/browser/media/native_desktop_media_list.h"
+#include "chrome/browser/media/webrtc/desktop_media_list.h"
+#include "chrome/browser/media/webrtc/desktop_media_picker.h"
 #include "chrome/common/extensions/api/desktop_capture.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "url/gurl.h"
@@ -26,11 +28,20 @@ class DesktopCaptureChooseDesktopMediaFunctionBase
   // Used for tests to supply fake picker.
   class PickerFactory {
    public:
-    virtual scoped_ptr<DesktopMediaList> CreateModel(bool show_screens,
-                                                     bool show_windows) = 0;
-    virtual scoped_ptr<DesktopMediaPicker> CreatePicker() = 0;
+    typedef std::array<std::unique_ptr<DesktopMediaList>, 3> MediaListArray;
+    virtual MediaListArray CreateModel(
+        bool show_screens,
+        bool show_windows,
+        bool show_tabs,
+        bool show_audio) = 0;
+    virtual std::unique_ptr<DesktopMediaPicker> CreatePicker() = 0;
+
    protected:
+    PickerFactory() = default;
     virtual ~PickerFactory() {}
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(PickerFactory);
   };
 
   // Used to set PickerFactory used to create mock DesktopMediaPicker instances
@@ -56,6 +67,9 @@ class DesktopCaptureChooseDesktopMediaFunctionBase
       const GURL& origin,
       const base::string16 target_name);
 
+  // Returns the calling application name to show in the picker.
+  std::string GetCallerDisplayName() const;
+
   int request_id_;
 
  private:
@@ -67,11 +81,11 @@ class DesktopCaptureChooseDesktopMediaFunctionBase
   // URL of page that desktop capture was requested for.
   GURL origin_;
 
-  scoped_ptr<DesktopMediaPicker> picker_;
+  std::unique_ptr<DesktopMediaPicker> picker_;
 };
 
 class DesktopCaptureCancelChooseDesktopMediaFunctionBase
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DesktopCaptureCancelChooseDesktopMediaFunctionBase();
 
@@ -80,7 +94,7 @@ class DesktopCaptureCancelChooseDesktopMediaFunctionBase
 
  private:
   // ExtensionFunction overrides.
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class DesktopCaptureRequestsRegistry {

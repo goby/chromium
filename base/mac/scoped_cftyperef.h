@@ -11,10 +11,10 @@
 
 namespace base {
 
-// ScopedCFTypeRef<> is patterned after scoped_ptr<>, but maintains ownership
-// of a CoreFoundation object: any object that can be represented as a
-// CFTypeRef.  Style deviations here are solely for compatibility with
-// scoped_ptr<>'s interface, with which everyone is already familiar.
+// ScopedCFTypeRef<> is patterned after std::unique_ptr<>, but maintains
+// ownership of a CoreFoundation object: any object that can be represented
+// as a CFTypeRef.  Style deviations here are solely for compatibility with
+// std::unique_ptr<>'s interface, with which everyone is already familiar.
 //
 // By default, ScopedCFTypeRef<> takes ownership of an object (in the
 // constructor or in reset()) by taking over the caller's existing ownership
@@ -27,11 +27,14 @@ namespace base {
 
 namespace internal {
 
+template<typename CFT>
 struct ScopedCFTypeRefTraits {
-  static void Retain(CFTypeRef object) {
+  static CFT InvalidValue() { return nullptr; }
+  static CFT Retain(CFT object) {
     CFRetain(object);
+    return object;
   }
-  static void Release(CFTypeRef object) {
+  static void Release(CFT object) {
     CFRelease(object);
   }
 };
@@ -39,20 +42,8 @@ struct ScopedCFTypeRefTraits {
 }  // namespace internal
 
 template<typename CFT>
-class ScopedCFTypeRef
-    : public ScopedTypeRef<CFT, internal::ScopedCFTypeRefTraits> {
- public:
-  typedef CFT element_type;
-
-  explicit ScopedCFTypeRef(
-      CFT object = NULL,
-      base::scoped_policy::OwnershipPolicy policy = base::scoped_policy::ASSUME)
-      : ScopedTypeRef<CFT,
-                      internal::ScopedCFTypeRefTraits>(object, policy) {}
-
-  ScopedCFTypeRef(const ScopedCFTypeRef<CFT>& that)
-      : ScopedTypeRef<CFT, internal::ScopedCFTypeRefTraits>(that) {}
-};
+using ScopedCFTypeRef =
+    ScopedTypeRef<CFT, internal::ScopedCFTypeRefTraits<CFT>>;
 
 }  // namespace base
 

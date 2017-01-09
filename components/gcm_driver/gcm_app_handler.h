@@ -7,7 +7,6 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "components/gcm_driver/gcm_client.h"
 
 namespace gcm {
@@ -23,6 +22,15 @@ class GCMAppHandler {
   // In the case that multiple apps share the same app handler, it should be
   // make safe for ShutdownHandler to be called multiple times.
   virtual void ShutdownHandler() = 0;
+
+  // Called when the GCM store is reset (e.g. due to corruption), which changes
+  // the device ID, invalidating all prior registrations. Any stored state
+  // related to GCM registrations or InstanceIDs should be deleted. This should
+  // only be considered a defense in depth, as this method will not be called if
+  // the store is reset before this app handler is registered; hence it is
+  // recommended to regularly revalidate any stored registrations/InstanceIDs.
+  // TODO(johnme): GCMDriver doesn't yet provide an API for revalidating them.
+  virtual void OnStoreReset() = 0;
 
   // Called when a GCM message has been received.
   virtual void OnMessage(const std::string& app_id,

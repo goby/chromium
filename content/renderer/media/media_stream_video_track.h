@@ -9,18 +9,20 @@
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "content/public/renderer/media_stream_video_sink.h"
 #include "content/renderer/media/media_stream_track.h"
 #include "content/renderer/media/media_stream_video_source.h"
+#include "content/renderer/media/secure_display_link_tracker.h"
 
 namespace content {
 
 // MediaStreamVideoTrack is a video specific representation of a
 // blink::WebMediaStreamTrack in content. It is owned by the blink object
 // and can be retrieved from a blink object using
-// WebMediaStreamTrack::extraData() or MediaStreamVideoTrack::GetVideoTrack.
+// WebMediaStreamTrack::getExtraData() or MediaStreamVideoTrack::GetVideoTrack.
 class CONTENT_EXPORT MediaStreamVideoTrack : public MediaStreamTrack {
  public:
   // Help method to create a blink::WebMediaStreamTrack and a
@@ -48,9 +50,10 @@ class CONTENT_EXPORT MediaStreamVideoTrack : public MediaStreamTrack {
       bool enabled);
   ~MediaStreamVideoTrack() override;
 
+  // MediaStreamTrack overrides.
   void SetEnabled(bool enabled) override;
-
   void Stop() override;
+  void getSettings(blink::WebMediaStreamTrack::Settings& settings) override;
 
   void OnReadyStateChanged(blink::WebMediaStreamSource::ReadyState state);
 
@@ -71,7 +74,8 @@ class CONTENT_EXPORT MediaStreamVideoTrack : public MediaStreamTrack {
   // store the callback. This is important to ensure that we can release
   // the callback on render thread without reference to it on the IO-thread.
   void AddSink(MediaStreamVideoSink* sink,
-               const VideoCaptureDeliverFrameCB& callback);
+               const VideoCaptureDeliverFrameCB& callback,
+               bool is_sink_secure);
   void RemoveSink(MediaStreamVideoSink* sink);
 
   std::vector<MediaStreamVideoSink*> sinks_;
@@ -83,10 +87,11 @@ class CONTENT_EXPORT MediaStreamVideoTrack : public MediaStreamTrack {
 
   const blink::WebMediaConstraints constraints_;
 
-  // Weak ref to the source this tracks is connected to.  |source_| is owned
-  // by the blink::WebMediaStreamSource and is guaranteed to outlive the
-  // track.
-  MediaStreamVideoSource* source_;
+  // Weak ref to the source this tracks is connected to.
+  base::WeakPtr<MediaStreamVideoSource> source_;
+
+  // This is used for tracking if all connected video sinks are secure.
+  SecureDisplayLinkTracker<MediaStreamVideoSink> secure_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamVideoTrack);
 };

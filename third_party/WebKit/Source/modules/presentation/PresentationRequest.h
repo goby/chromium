@@ -5,8 +5,9 @@
 #ifndef PresentationRequest_h
 #define PresentationRequest_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
-#include "core/dom/ActiveDOMObject.h"
+#include "core/dom/SuspendableObject.h"
 #include "core/events/EventTarget.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/Heap.h"
@@ -16,44 +17,47 @@ namespace blink {
 
 // Implements the PresentationRequest interface from the Presentation API from
 // which websites can start or join presentation connections.
-class PresentationRequest final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<PresentationRequest>
-    , public ActiveDOMObject {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(PresentationRequest);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(PresentationRequest);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    ~PresentationRequest() = default;
+class PresentationRequest final : public EventTargetWithInlineData,
+                                  public ActiveScriptWrappable,
+                                  public SuspendableObject {
+  USING_GARBAGE_COLLECTED_MIXIN(PresentationRequest);
+  DEFINE_WRAPPERTYPEINFO();
 
-    static PresentationRequest* create(ExecutionContext*, const String& url, ExceptionState&);
+ public:
+  ~PresentationRequest() = default;
 
-    // EventTarget implementation.
-    const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+  static PresentationRequest* create(ExecutionContext*,
+                                     const String& url,
+                                     ExceptionState&);
 
-    // ActiveDOMObject implementation.
-    bool hasPendingActivity() const;
+  // EventTarget implementation.
+  const AtomicString& interfaceName() const override;
+  ExecutionContext* getExecutionContext() const override;
 
-    ScriptPromise start(ScriptState*);
-    ScriptPromise reconnect(ScriptState*, const String& id);
-    ScriptPromise getAvailability(ScriptState*);
+  // ScriptWrappable implementation.
+  bool hasPendingActivity() const final;
 
-    const KURL& url() const;
+  ScriptPromise start(ScriptState*);
+  ScriptPromise reconnect(ScriptState*, const String& id);
+  ScriptPromise getAvailability(ScriptState*);
 
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(connectionavailable);
+  const KURL& url() const;
 
-    DECLARE_VIRTUAL_TRACE();
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(connectionavailable);
 
-protected:
-    // EventTarget implementation.
-    bool addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    PresentationRequest(ExecutionContext*, const KURL&);
+ protected:
+  // EventTarget implementation.
+  void addedEventListener(const AtomicString& eventType,
+                          RegisteredEventListener&) override;
 
-    KURL m_url;
+ private:
+  PresentationRequest(ExecutionContext*, const KURL&);
+
+  KURL m_url;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PresentationRequest_h
+#endif  // PresentationRequest_h

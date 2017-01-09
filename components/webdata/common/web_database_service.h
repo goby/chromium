@@ -9,13 +9,14 @@
 #ifndef COMPONENTS_WEBDATA_COMMON_WEB_DATABASE_SERVICE_H_
 #define COMPONENTS_WEBDATA_COMMON_WEB_DATABASE_SERVICE_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_delete_on_message_loop.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/single_thread_task_runner.h"
@@ -24,11 +25,6 @@
 #include "components/webdata/common/webdata_export.h"
 
 class WebDatabaseBackend;
-class WebDataRequestManager;
-
-namespace content {
-class BrowserContext;
-}
 
 namespace tracked_objects {
 class Location;
@@ -49,12 +45,13 @@ class WebDataServiceConsumer;
 class WEBDATA_EXPORT WebDatabaseService
     : public base::RefCountedDeleteOnMessageLoop<WebDatabaseService> {
  public:
-  typedef base::Callback<scoped_ptr<WDTypedResult>(WebDatabase*)> ReadTask;
-  typedef base::Callback<WebDatabase::State(WebDatabase*)> WriteTask;
+  using ReadTask = base::Callback<std::unique_ptr<WDTypedResult>(WebDatabase*)>;
+  using WriteTask = base::Callback<WebDatabase::State(WebDatabase*)>;
 
   // Types for managing DB loading callbacks.
-  typedef base::Closure DBLoadedCallback;
-  typedef base::Callback<void(sql::InitStatus)> DBLoadErrorCallback;
+  using DBLoadedCallback = base::Closure;
+  using DBLoadErrorCallback =
+      base::Callback<void(sql::InitStatus, const std::string&)>;
 
   // Takes the path to the WebDatabase file.
   // WebDatabaseService lives on |ui_thread| and posts tasks to |db_thread|.
@@ -65,7 +62,7 @@ class WEBDATA_EXPORT WebDatabaseService
   // Adds |table| as a WebDatabaseTable that will participate in
   // managing the database, transferring ownership. All calls to this
   // method must be made before |LoadDatabase| is called.
-  virtual void AddTable(scoped_ptr<WebDatabaseTable> table);
+  virtual void AddTable(std::unique_ptr<WebDatabaseTable> table);
 
   // Initializes the web database service.
   virtual void LoadDatabase();
@@ -118,12 +115,13 @@ class WEBDATA_EXPORT WebDatabaseService
   friend class base::RefCountedDeleteOnMessageLoop<WebDatabaseService>;
   friend class base::DeleteHelper<WebDatabaseService>;
 
-  typedef std::vector<DBLoadedCallback> LoadedCallbacks;
-  typedef std::vector<DBLoadErrorCallback> ErrorCallbacks;
+  using LoadedCallbacks = std::vector<DBLoadedCallback>;
+  using ErrorCallbacks = std::vector<DBLoadErrorCallback>;
 
   virtual ~WebDatabaseService();
 
-  void OnDatabaseLoadDone(sql::InitStatus status);
+  void OnDatabaseLoadDone(sql::InitStatus status,
+                          const std::string& diagnostics);
 
   base::FilePath path_;
 

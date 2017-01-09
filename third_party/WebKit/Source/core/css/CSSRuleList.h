@@ -33,89 +33,68 @@ namespace blink {
 class CSSRule;
 class CSSStyleSheet;
 
-class CSSRuleList : public NoBaseWillBeGarbageCollectedFinalized<CSSRuleList>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-    USING_FAST_MALLOC_WILL_BE_REMOVED(CSSRuleList);
-    WTF_MAKE_NONCOPYABLE(CSSRuleList);
-public:
-    virtual ~CSSRuleList();
+class CSSRuleList : public GarbageCollected<CSSRuleList>,
+                    public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
+  WTF_MAKE_NONCOPYABLE(CSSRuleList);
 
-#if !ENABLE(OILPAN)
-    virtual void ref() = 0;
-    virtual void deref() = 0;
-#endif
+ public:
+  virtual unsigned length() const = 0;
+  virtual CSSRule* item(unsigned index) const = 0;
 
-    virtual unsigned length() const = 0;
-    virtual CSSRule* item(unsigned index) const = 0;
+  virtual CSSStyleSheet* styleSheet() const = 0;
 
-    virtual CSSStyleSheet* styleSheet() const = 0;
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 
-    DEFINE_INLINE_VIRTUAL_TRACE() { }
-
-protected:
-    CSSRuleList() { }
+ protected:
+  CSSRuleList() {}
 };
 
 class StaticCSSRuleList final : public CSSRuleList {
-public:
-    static PassRefPtrWillBeRawPtr<StaticCSSRuleList> create()
-    {
-        return adoptRefWillBeNoop(new StaticCSSRuleList());
-    }
+ public:
+  static StaticCSSRuleList* create() { return new StaticCSSRuleList(); }
 
-#if !ENABLE(OILPAN)
-    void ref() override { ++m_refCount; }
-    void deref() override;
-#endif
+  HeapVector<Member<CSSRule>>& rules() { return m_rules; }
 
-    WillBeHeapVector<RefPtrWillBeMember<CSSRule>>& rules() { return m_rules; }
+  CSSStyleSheet* styleSheet() const override { return 0; }
 
-    CSSStyleSheet* styleSheet() const override { return 0; }
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+ private:
+  StaticCSSRuleList();
 
-private:
-    StaticCSSRuleList();
-    ~StaticCSSRuleList() override;
+  unsigned length() const override { return m_rules.size(); }
+  CSSRule* item(unsigned index) const override {
+    return index < m_rules.size() ? m_rules[index].get() : nullptr;
+  }
 
-    unsigned length() const override { return m_rules.size(); }
-    CSSRule* item(unsigned index) const override { return index < m_rules.size() ? m_rules[index].get() : nullptr; }
-
-    WillBeHeapVector<RefPtrWillBeMember<CSSRule>> m_rules;
-#if !ENABLE(OILPAN)
-    unsigned m_refCount;
-#endif
+  HeapVector<Member<CSSRule>> m_rules;
 };
 
 template <class Rule>
 class LiveCSSRuleList final : public CSSRuleList {
-public:
-    static PassOwnPtrWillBeRawPtr<LiveCSSRuleList> create(Rule* rule)
-    {
-        return adoptPtrWillBeNoop(new LiveCSSRuleList(rule));
-    }
+ public:
+  static LiveCSSRuleList* create(Rule* rule) {
+    return new LiveCSSRuleList(rule);
+  }
 
-#if !ENABLE(OILPAN)
-    void ref() override { m_rule->ref(); }
-    void deref() override { m_rule->deref(); }
-#endif
+  DEFINE_INLINE_VIRTUAL_TRACE() {
+    visitor->trace(m_rule);
+    CSSRuleList::trace(visitor);
+  }
 
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        visitor->trace(m_rule);
-        CSSRuleList::trace(visitor);
-    }
+ private:
+  LiveCSSRuleList(Rule* rule) : m_rule(rule) {}
 
-private:
-    LiveCSSRuleList(Rule* rule) : m_rule(rule) { }
+  unsigned length() const override { return m_rule->length(); }
+  CSSRule* item(unsigned index) const override { return m_rule->item(index); }
+  CSSStyleSheet* styleSheet() const override {
+    return m_rule->parentStyleSheet();
+  }
 
-    unsigned length() const override { return m_rule->length(); }
-    CSSRule* item(unsigned index) const override { return m_rule->item(index); }
-    CSSStyleSheet* styleSheet() const override { return m_rule->parentStyleSheet(); }
-
-    RawPtrWillBeMember<Rule> m_rule;
+  Member<Rule> m_rule;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSRuleList_h
+#endif  // CSSRuleList_h

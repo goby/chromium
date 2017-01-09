@@ -2,19 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/callback_list.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_iterator.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -30,13 +36,12 @@ namespace {
 // Check that there are two browsers. Find the one that is not |browser|.
 Browser* FindOneOtherBrowser(Browser* browser) {
   // There should only be one other browser.
-  EXPECT_EQ(2u, chrome::GetBrowserCount(browser->profile(),
-                                        browser->host_desktop_type()));
+  EXPECT_EQ(2u, chrome::GetBrowserCount(browser->profile()));
 
   // Find the new browser.
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    if (*it != browser)
-      return *it;
+  for (auto* b : *BrowserList::GetInstance()) {
+    if (b != browser)
+      return b;
   }
 
   return nullptr;
@@ -59,9 +64,9 @@ class MockTriggeredProfileResetter : public TriggeredProfileResetter {
 
 bool MockTriggeredProfileResetter::has_reset_trigger_ = false;
 
-scoped_ptr<KeyedService> BuildMockTriggeredProfileResetter(
+std::unique_ptr<KeyedService> BuildMockTriggeredProfileResetter(
     content::BrowserContext* context) {
-  return make_scoped_ptr(new MockTriggeredProfileResetter);
+  return base::WrapUnique(new MockTriggeredProfileResetter);
 }
 
 }  // namespace
@@ -77,8 +82,7 @@ class StartupBrowserCreatorTriggeredResetTest : public InProcessBrowserTest {
             ->RegisterWillCreateBrowserContextServicesCallbackForTesting(
                 base::Bind(&StartupBrowserCreatorTriggeredResetTest::
                                OnWillCreateBrowserContextServices,
-                           base::Unretained(this)))
-            .Pass();
+                           base::Unretained(this)));
   }
 
  private:
@@ -87,7 +91,8 @@ class StartupBrowserCreatorTriggeredResetTest : public InProcessBrowserTest {
         context, &BuildMockTriggeredProfileResetter);
   }
 
-  scoped_ptr<base::CallbackList<void(content::BrowserContext*)>::Subscription>
+  std::unique_ptr<
+      base::CallbackList<void(content::BrowserContext*)>::Subscription>
       will_create_browser_context_services_subscription_;
 
   DISALLOW_COPY_AND_ASSIGN(StartupBrowserCreatorTriggeredResetTest);
@@ -102,7 +107,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   urls.push_back(embedded_test_server()->GetURL("/title2.html"));
 
   Profile* profile = browser()->profile();
-  chrome::HostDesktopType host_desktop_type = browser()->host_desktop_type();
 
   // Set the startup preference to open these URLs.
   SessionStartupPref pref(SessionStartupPref::URLS);
@@ -110,7 +114,8 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   SessionStartupPref::SetStartupPref(profile, pref);
 
   // Keep the browser process running while browsers are closed.
-  g_browser_process->AddRefModule();
+  ScopedKeepAlive keep_alive(KeepAliveOrigin::BROWSER,
+                             KeepAliveRestartOption::DISABLED);
 
   // Close the browser.
   CloseBrowserAsynchronously(browser());
@@ -122,8 +127,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   base::CommandLine dummy(base::CommandLine::NO_PROGRAM);
   StartupBrowserCreatorImpl launch(base::FilePath(), dummy,
                                    chrome::startup::IS_NOT_FIRST_RUN);
-  ASSERT_TRUE(
-      launch.Launch(profile, std::vector<GURL>(), false, host_desktop_type));
+  ASSERT_TRUE(launch.Launch(profile, std::vector<GURL>(), false));
 
   // This should have created a new browser window.  |browser()| is still
   // around at this point, even though we've closed its window.
@@ -140,8 +144,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   ASSERT_EQ(static_cast<int>(expected_urls.size()), tab_strip->count());
   for (size_t i = 0; i < expected_urls.size(); i++)
     EXPECT_EQ(expected_urls[i], tab_strip->GetWebContentsAt(i)->GetURL());
-
-  g_browser_process->ReleaseModule();
 }
 
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
@@ -162,8 +164,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   base::CommandLine dummy(base::CommandLine::NO_PROGRAM);
   StartupBrowserCreatorImpl launch(base::FilePath(), dummy, &browser_creator,
                                    chrome::startup::IS_FIRST_RUN);
-  ASSERT_TRUE(launch.Launch(browser()->profile(), std::vector<GURL>(), true,
-                            browser()->host_desktop_type()));
+  ASSERT_TRUE(launch.Launch(browser()->profile(), std::vector<GURL>(), true));
 
   // This should have created a new browser window.
   Browser* new_browser = FindOneOtherBrowser(browser());
@@ -175,7 +176,9 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
 
   GURL expected_first_tab_url =
       signin::ShouldShowPromoAtStartup(browser()->profile(), true)
-          ? signin::GetPromoURL(signin_metrics::SOURCE_START_PAGE, false)
+          ? signin::GetPromoURL(
+                signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
+                signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, false)
           : GURL(chrome::kChromeUINewTabURL);
   EXPECT_EQ(expected_first_tab_url, tab_strip->GetWebContentsAt(0)->GetURL());
 
@@ -189,7 +192,8 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   SessionStartupPref::SetStartupPref(browser()->profile(), pref);
 
   // Keep the browser process running while browsers are closed.
-  g_browser_process->AddRefModule();
+  ScopedKeepAlive keep_alive(KeepAliveOrigin::BROWSER,
+                             KeepAliveRestartOption::DISABLED);
 
   // Close the browser.
   CloseBrowserAsynchronously(browser());
@@ -202,8 +206,8 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   {
     StartupBrowserCreatorImpl launch(base::FilePath(), dummy,
                                      chrome::startup::IS_NOT_FIRST_RUN);
-    ASSERT_TRUE(launch.Launch(browser()->profile(), std::vector<GURL>(), false,
-                              browser()->host_desktop_type()));
+    ASSERT_TRUE(
+        launch.Launch(browser()->profile(), std::vector<GURL>(), false));
   }
 
   // This should have created a new browser window.  |browser()| is still
@@ -237,13 +241,11 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   {
     StartupBrowserCreatorImpl launch(base::FilePath(), dummy,
                                      chrome::startup::IS_NOT_FIRST_RUN);
-    ASSERT_TRUE(launch.Launch(other_profile, std::vector<GURL>(), false,
-                              new_browser->host_desktop_type()));
+    ASSERT_TRUE(launch.Launch(other_profile, std::vector<GURL>(), false));
   }
 
   Browser* other_profile_browser =
-      chrome::FindBrowserWithProfile(other_profile,
-                                     new_browser->host_desktop_type());
+      chrome::FindBrowserWithProfile(other_profile);
   ASSERT_NE(nullptr, other_profile_browser);
 
   // Check for the expected reset dialog in the second browser too.
@@ -251,5 +253,4 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   ASSERT_LT(0, other_tab_strip->count());
   EXPECT_EQ(internals::GetTriggeredResetSettingsURL(),
             other_tab_strip->GetActiveWebContents()->GetURL());
-  g_browser_process->ReleaseModule();
 }

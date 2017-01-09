@@ -4,8 +4,10 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/browsing_data/cookies_tree_model.h"
 #include "chrome/browser/ui/cocoa/constrained_window/constrained_window_mac.h"
 #import "chrome/browser/ui/cocoa/content_settings/cookie_tree_node.h"
@@ -46,7 +48,7 @@ class CollectedCookiesMac : public ConstrainedWindowMacDelegate,
 
   content::NotificationRegistrar registrar_;
 
-  scoped_ptr<ConstrainedWindowMac> window_;
+  std::unique_ptr<ConstrainedWindowMac> window_;
 
   base::scoped_nsobject<CollectedCookiesWindowController> sheet_controller_;
 
@@ -64,15 +66,15 @@ class CollectedCookiesMac : public ConstrainedWindowMacDelegate,
                                                NSWindowDelegate> {
  @private
   // Platform-independent model.
-  scoped_ptr<CookiesTreeModel> allowedTreeModel_;
-  scoped_ptr<CookiesTreeModel> blockedTreeModel_;
+  std::unique_ptr<CookiesTreeModel> allowedTreeModel_;
+  std::unique_ptr<CookiesTreeModel> blockedTreeModel_;
 
   // Cached array of icons.
   base::scoped_nsobject<NSMutableArray> icons_;
 
   // Our Cocoa copy of the model.
-  scoped_ptr<CookiesTreeControllerBridge> allowedControllerBridge_;
-  scoped_ptr<CookiesTreeControllerBridge> blockedControllerBridge_;
+  std::unique_ptr<CookiesTreeControllerBridge> allowedControllerBridge_;
+  std::unique_ptr<CookiesTreeControllerBridge> blockedControllerBridge_;
 
   BOOL allowedCookiesButtonsEnabled_;
   BOOL blockedCookiesButtonsEnabled_;

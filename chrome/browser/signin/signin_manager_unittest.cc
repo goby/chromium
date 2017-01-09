@@ -4,18 +4,15 @@
 
 #include "components/signin/core/browser/signin_manager.h"
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/strings/stringprintf.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -32,6 +29,10 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/fake_account_fetcher_service.h"
 #include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
@@ -48,21 +49,21 @@
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
-
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-scoped_ptr<KeyedService> SigninManagerBuild(content::BrowserContext* context) {
+std::unique_ptr<KeyedService> SigninManagerBuild(
+    content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
-  scoped_ptr<SigninManager> service(new SigninManager(
+  std::unique_ptr<SigninManager> service(new SigninManager(
       ChromeSigninClientFactory::GetInstance()->GetForProfile(profile),
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
       AccountTrackerServiceFactory::GetForProfile(profile),
       GaiaCookieManagerServiceFactory::GetForProfile(profile)));
   service->Initialize(NULL);
-  return service.Pass();
+  return std::move(service);
 }
 
 class TestSigninManagerObserver : public SigninManagerBase::Observer {
@@ -218,12 +219,12 @@ class SigninManagerTest : public testing::Test {
 
   content::TestBrowserThreadBundle thread_bundle_;
   net::TestURLFetcherFactory factory_;
-  scoped_ptr<SigninManager> naked_manager_;
+  std::unique_ptr<SigninManager> naked_manager_;
   SigninManager* manager_;
   TestSigninManagerObserver test_observer_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   std::vector<std::string> oauth_tokens_fetched_;
-  scoped_ptr<TestingPrefServiceSimple> prefs_;
+  std::unique_ptr<TestingPrefServiceSimple> prefs_;
   std::vector<std::string> cookies_;
 };
 
@@ -314,7 +315,8 @@ TEST_F(SigninManagerTest, SignOut) {
       "user@gmail.com",
       "password",
       SigninManager::OAuthTokenFetchedCallback());
-  manager_->SignOut(signin_metrics::SIGNOUT_TEST);
+  manager_->SignOut(signin_metrics::SIGNOUT_TEST,
+                    signin_metrics::SignoutDelete::IGNORE_METRIC);
   EXPECT_FALSE(manager_->IsAuthenticated());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountInfo().email.empty());
   EXPECT_TRUE(manager_->GetAuthenticatedAccountId().empty());
@@ -335,10 +337,12 @@ TEST_F(SigninManagerTest, SignOutWhileProhibited) {
 
   manager_->SetAuthenticatedAccountInfo("gaia_id", "user@gmail.com");
   manager_->ProhibitSignout(true);
-  manager_->SignOut(signin_metrics::SIGNOUT_TEST);
+  manager_->SignOut(signin_metrics::SIGNOUT_TEST,
+                    signin_metrics::SignoutDelete::IGNORE_METRIC);
   EXPECT_TRUE(manager_->IsAuthenticated());
   manager_->ProhibitSignout(false);
-  manager_->SignOut(signin_metrics::SIGNOUT_TEST);
+  manager_->SignOut(signin_metrics::SIGNOUT_TEST,
+                    signin_metrics::SignoutDelete::IGNORE_METRIC);
   EXPECT_FALSE(manager_->IsAuthenticated());
 }
 
@@ -501,11 +505,11 @@ TEST_F(SigninManagerTest, GaiaIdMigration) {
     ListPrefUpdate update(client_prefs,
                           AccountTrackerService::kAccountInfoPref);
     update->Clear();
-    base::DictionaryValue* dict = new base::DictionaryValue();
-    update->Append(dict);
+    auto dict = base::MakeUnique<base::DictionaryValue>();
     dict->SetString("account_id", base::UTF8ToUTF16(email));
     dict->SetString("email", base::UTF8ToUTF16(email));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_id));
+    update->Append(std::move(dict));
 
     tracker->Shutdown();
     tracker->Initialize(signin_client());
@@ -535,11 +539,11 @@ TEST_F(SigninManagerTest, VeryOldProfileGaiaIdMigration) {
     ListPrefUpdate update(client_prefs,
                           AccountTrackerService::kAccountInfoPref);
     update->Clear();
-    base::DictionaryValue* dict = new base::DictionaryValue();
-    update->Append(dict);
+    auto dict = base::MakeUnique<base::DictionaryValue>();
     dict->SetString("account_id", base::UTF8ToUTF16(email));
     dict->SetString("email", base::UTF8ToUTF16(email));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_id));
+    update->Append(std::move(dict));
 
     tracker->Shutdown();
     tracker->Initialize(signin_client());
@@ -570,11 +574,11 @@ TEST_F(SigninManagerTest, GaiaIdMigrationCrashInTheMiddle) {
     ListPrefUpdate update(client_prefs,
                           AccountTrackerService::kAccountInfoPref);
     update->Clear();
-    base::DictionaryValue* dict = new base::DictionaryValue();
-    update->Append(dict);
+    auto dict = base::MakeUnique<base::DictionaryValue>();
     dict->SetString("account_id", base::UTF8ToUTF16(email));
     dict->SetString("email", base::UTF8ToUTF16(email));
     dict->SetString("gaia", base::UTF8ToUTF16(gaia_id));
+    update->Append(std::move(dict));
 
     tracker->Shutdown();
     tracker->Initialize(signin_client());

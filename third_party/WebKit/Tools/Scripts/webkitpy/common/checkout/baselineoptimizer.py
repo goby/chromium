@@ -30,6 +30,7 @@ import copy
 import logging
 
 from webkitpy.common.memoized import memoized
+from functools import reduce
 
 _log = logging.getLogger(__name__)
 
@@ -48,12 +49,8 @@ def _invert_dictionary(dictionary):
 class BaselineOptimizer(object):
     ROOT_LAYOUT_TESTS_DIRECTORY = 'LayoutTests'
 
-    def __init__(self, host, port, port_names, skip_scm_commands):
+    def __init__(self, host, port, port_names):
         self._filesystem = host.filesystem
-        self._skip_scm_commands = skip_scm_commands
-        self._files_to_delete = []
-        self._files_to_add = []
-        self._scm = host.scm()
         self._default_port = port
         self._ports = {}
         for port_name in port_names:
@@ -94,7 +91,7 @@ class BaselineOptimizer(object):
         # test suite in the name and the virtual baseline name is not a strict superset of the non-virtual name.
         # For example, virtual/gpu/fast/canvas/foo-expected.png corresponds to fast/canvas/foo-expected.png and
         # the baseline directories are like platform/mac/virtual/gpu/fast/canvas. So, to get the path
-        # to the baseline in the platform directory, we need to append jsut foo-expected.png to the directory.
+        # to the baseline in the platform directory, we need to append just foo-expected.png to the directory.
         virtual_suite = self._virtual_suite(baseline_name)
         if virtual_suite:
             baseline_name_without_virtual = baseline_name[len(virtual_suite.name) + 1:]
@@ -104,7 +101,8 @@ class BaselineOptimizer(object):
 
     def read_results_by_directory(self, baseline_name):
         results_by_directory = {}
-        directories = reduce(set.union, map(set, [self._relative_baseline_search_paths(port, baseline_name) for port in self._ports.values()]))
+        directories = reduce(set.union, map(set, [self._relative_baseline_search_paths(
+            port, baseline_name) for port in self._ports.values()]))
 
         for directory in directories:
             path = self._join_directory(directory, baseline_name)
@@ -170,7 +168,8 @@ class BaselineOptimizer(object):
         results_by_port_name = self._results_by_port_name(results_by_directory, baseline_name)
         port_names_by_result = _invert_dictionary(results_by_port_name)
 
-        new_results_by_directory = self._remove_redundant_results(results_by_directory, results_by_port_name, port_names_by_result, baseline_name)
+        new_results_by_directory = self._remove_redundant_results(
+            results_by_directory, results_by_port_name, port_names_by_result, baseline_name)
         self._optimize_result_for_root(new_results_by_directory, baseline_name)
 
         return results_by_directory, new_results_by_directory
@@ -182,7 +181,7 @@ class BaselineOptimizer(object):
 
             # This happens if we're missing baselines for a port.
             if not current_result:
-                continue;
+                continue
 
             fallback_path = self._relative_baseline_search_paths(port, baseline_name)
             current_index, current_directory = self._find_in_fallbackpath(fallback_path, current_result, new_results_by_directory)
@@ -223,31 +222,19 @@ class BaselineOptimizer(object):
                 source = self._join_directory(directory, baseline_name)
                 data_for_result[result] = self._filesystem.read_binary_file(source)
 
-        scm_files = []
         fs_files = []
         for directory, result in results_by_directory.items():
             if new_results_by_directory.get(directory) != result:
                 file_name = self._join_directory(directory, baseline_name)
-                if self._scm.exists(file_name):
-                    scm_files.append(file_name)
-                else:
+                if self._filesystem.exists(file_name):
                     fs_files.append(file_name)
 
-        if scm_files or fs_files:
-            if scm_files:
-                _log.debug("    Deleting (SCM):")
-                for platform_dir in sorted(self._platform(filename) for filename in scm_files):
-                    _log.debug("      " + platform_dir)
-                if self._skip_scm_commands:
-                    self._files_to_delete.extend(scm_files)
-                else:
-                    self._scm.delete_list(scm_files)
-            if fs_files:
-                _log.debug("    Deleting (file system):")
-                for platform_dir in sorted(self._platform(filename) for filename in fs_files):
-                    _log.debug("      " + platform_dir)
-                for filename in fs_files:
-                    self._filesystem.remove(filename)
+        if fs_files:
+            _log.debug("    Deleting (file system):")
+            for platform_dir in sorted(self._platform(filename) for filename in fs_files):
+                _log.debug("      " + platform_dir)
+            for filename in fs_files:
+                self._filesystem.remove(filename)
         else:
             _log.debug("    (Nothing to delete)")
 
@@ -263,12 +250,6 @@ class BaselineOptimizer(object):
             _log.debug("    Adding:")
             for platform_dir in sorted(self._platform(filename) for filename in file_names):
                 _log.debug("      " + platform_dir)
-            if self._skip_scm_commands:
-                # Have adds win over deletes.
-                self._files_to_delete = list(set(self._files_to_delete) - set(file_names))
-                self._files_to_add.extend(file_names)
-            else:
-                self._scm.add_list(file_names)
         else:
             _log.debug("    (Nothing to add)")
 
@@ -282,22 +263,23 @@ class BaselineOptimizer(object):
 
         if new_results_by_directory == results_by_directory:
             if new_results_by_directory:
-                _log.debug("  %s: (already optimal)" % basename)
+                _log.debug("  %s: (already optimal)", basename)
                 self.write_by_directory(results_by_directory, _log.debug, "    ")
             else:
-                _log.debug("  %s: (no baselines found)" % basename)
+                _log.debug("  %s: (no baselines found)", basename)
             # This is just used for unittests. Intentionally set it to the old data if we don't modify anything.
             self.new_results_by_directory.append(results_by_directory)
             return True
 
-        if self._results_by_port_name(results_by_directory, baseline_name) != self._results_by_port_name(new_results_by_directory, baseline_name):
+        if self._results_by_port_name(results_by_directory, baseline_name) != self._results_by_port_name(
+                new_results_by_directory, baseline_name):
             # This really should never happen. Just a sanity check to make sure the script fails in the case of bugs
             # instead of committing incorrect baselines.
-            _log.error("  %s: optimization failed" % basename)
+            _log.error("  %s: optimization failed", basename)
             self.write_by_directory(results_by_directory, _log.warning, "      ")
             return False
 
-        _log.debug("  %s:" % basename)
+        _log.debug("  %s:", basename)
         _log.debug("    Before: ")
         self.write_by_directory(results_by_directory, _log.debug, "      ")
         _log.debug("    After: ")
@@ -324,17 +306,8 @@ class BaselineOptimizer(object):
                 break
 
         _log.debug("Deleting redundant virtual root expected result.")
-        if self._skip_scm_commands and virtual_root_expected_baseline_path in self._files_to_add:
-            self._files_to_add.remove(virtual_root_expected_baseline_path)
-        if self._scm.exists(virtual_root_expected_baseline_path):
-            _log.debug("    Deleting (SCM): " + virtual_root_expected_baseline_path)
-            if self._skip_scm_commands:
-                self._files_to_delete.append(virtual_root_expected_baseline_path)
-            else:
-                self._scm.delete(virtual_root_expected_baseline_path)
-        else:
-            _log.debug("    Deleting (file system): " + virtual_root_expected_baseline_path)
-            self._filesystem.remove(virtual_root_expected_baseline_path)
+        _log.debug("    Deleting (file system): " + virtual_root_expected_baseline_path)
+        self._filesystem.remove(virtual_root_expected_baseline_path)
 
     def optimize(self, baseline_name):
         # The virtual fallback path is the same as the non-virtual one tacked on to the bottom of the non-virtual path.
@@ -343,16 +316,14 @@ class BaselineOptimizer(object):
         #
         # So, we can optimize the virtual path, then the virtual root and then the regular path.
 
-        self._files_to_delete = []
-        self._files_to_add = []
         _log.debug("Optimizing regular fallback path.")
         result = self._optimize_subtree(baseline_name)
         non_virtual_baseline_name = self._virtual_base(baseline_name)
         if not non_virtual_baseline_name:
-            return result, self._files_to_delete, self._files_to_add
+            return result
 
         self._optimize_virtual_root(baseline_name, non_virtual_baseline_name)
 
         _log.debug("Optimizing non-virtual fallback path.")
         result |= self._optimize_subtree(non_virtual_baseline_name)
-        return result, self._files_to_delete, self._files_to_add
+        return result

@@ -4,22 +4,26 @@
 
 #include "remoting/host/me2me_desktop_environment.h"
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "remoting/base/logging.h"
 #include "remoting/host/client_session_control.h"
 #include "remoting/host/curtain_mode.h"
 #include "remoting/host/desktop_resizer.h"
-#include "remoting/host/gnubby_auth_handler.h"
 #include "remoting/host/host_window.h"
 #include "remoting/host/host_window.h"
 #include "remoting/host/host_window_proxy.h"
+#include "remoting/host/input_injector.h"
 #include "remoting/host/local_input_monitor.h"
 #include "remoting/host/resizing_host_observer.h"
 #include "remoting/host/screen_controls.h"
 #include "remoting/protocol/capability_names.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_options.h"
-#include "third_party/webrtc/modules/desktop_capture/screen_capturer.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 
 #if defined(OS_POSIX)
 #include <sys/types.h>
@@ -32,65 +36,69 @@ Me2MeDesktopEnvironment::~Me2MeDesktopEnvironment() {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 }
 
-scoped_ptr<ScreenControls> Me2MeDesktopEnvironment::CreateScreenControls() {
+std::unique_ptr<ScreenControls>
+Me2MeDesktopEnvironment::CreateScreenControls() {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  return make_scoped_ptr(new ResizingHostObserver(DesktopResizer::Create()));
+  // We only want to restore the host resolution on disconnect if we are not
+  // curtained so we don't mess up the user's window layout unnecessarily if
+  // they disconnect and reconnect. Both OS X and Windows will restore the
+  // resolution automatically when the user logs back in on the console, and on
+  // Linux the curtain-mode uses a separate session.
+  return base::WrapUnique(new ResizingHostObserver(DesktopResizer::Create(),
+                                                   curtain_ == nullptr));
 }
 
 std::string Me2MeDesktopEnvironment::GetCapabilities() const {
-  std::string capabilities = BasicDesktopEnvironment::GetCapabilities();
-  if (!capabilities.empty())
-    capabilities.append(" ");
-  capabilities.append(protocol::kRateLimitResizeRequests);
-
+  std::string capabilities;
+  capabilities += protocol::kRateLimitResizeRequests;
+  if (InputInjector::SupportsTouchEvents()) {
+    capabilities += " ";
+    capabilities += protocol::kTouchEventsCapability;
+  }
   return capabilities;
 }
 
 Me2MeDesktopEnvironment::Me2MeDesktopEnvironment(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    bool supports_touch_events)
+    const DesktopEnvironmentOptions& options)
     : BasicDesktopEnvironment(caller_task_runner,
+                              video_capture_task_runner,
                               input_task_runner,
                               ui_task_runner,
-                              supports_touch_events),
-      gnubby_auth_enabled_(false) {
+                              options) {
   DCHECK(caller_task_runner->BelongsToCurrentThread());
-  desktop_capture_options()->set_use_update_notifications(true);
-}
 
-scoped_ptr<GnubbyAuthHandler> Me2MeDesktopEnvironment::CreateGnubbyAuthHandler(
-    protocol::ClientStub* client_stub) {
-  DCHECK(caller_task_runner()->BelongsToCurrentThread());
-
-  if (gnubby_auth_enabled_)
-    return GnubbyAuthHandler::Create(client_stub);
-
-  HOST_LOG << "gnubby auth is not enabled";
-  return nullptr;
+  // TODO(zijiehe): This logic should belong to RemotingMe2MeHost, instead of
+  // Me2MeDesktopEnvironment, which does not take response to create a new
+  // session.
+  // X DAMAGE is not enabled by default, since it is broken on many systems -
+  // see http://crbug.com/73423. It's safe to enable it here because it works
+  // properly under Xvfb.
+  mutable_desktop_capture_options()->set_use_update_notifications(true);
 }
 
 bool Me2MeDesktopEnvironment::InitializeSecurity(
-    base::WeakPtr<ClientSessionControl> client_session_control,
-    bool curtain_enabled) {
+    base::WeakPtr<ClientSessionControl> client_session_control) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
   // Detach the session from the local console if the caller requested.
-  if (curtain_enabled) {
-    curtain_ = CurtainMode::Create(caller_task_runner(),
-                                   ui_task_runner(),
-                                   client_session_control);
-    bool active = curtain_->Activate();
-    if (!active)
+  if (desktop_environment_options().enable_curtaining()) {
+    curtain_ = CurtainMode::Create(
+        caller_task_runner(), ui_task_runner(), client_session_control);
+    if (!curtain_->Activate()) {
       LOG(ERROR) << "Failed to activate the curtain mode.";
-    return active;
+      curtain_ = nullptr;
+      return false;
+    }
+    return true;
   }
 
   // Otherwise, if the session is shared with the local user start monitoring
   // the local input and create the in-session UI.
-
 #if defined(OS_LINUX)
   bool want_user_interface = false;
 #elif defined(OS_MACOSX)
@@ -102,73 +110,55 @@ bool Me2MeDesktopEnvironment::InitializeSecurity(
   // running in the LoginWindow context, and refactor this into a separate
   // function to be used here and in CurtainMode::ActivateCurtain().
   bool want_user_interface = getuid() != 0;
-#elif defined(OS_WIN)
-  bool want_user_interface = true;
-#endif  // defined(OS_WIN)
+#else
+  bool want_user_interface =
+      desktop_environment_options().enable_user_interface();
+#endif
 
   // Create the disconnect window.
   if (want_user_interface) {
     // Create the local input monitor.
-    local_input_monitor_ = LocalInputMonitor::Create(caller_task_runner(),
-                                                     input_task_runner(),
-                                                     ui_task_runner(),
-                                                     client_session_control);
+    local_input_monitor_ = LocalInputMonitor::Create(
+        caller_task_runner(), input_task_runner(), ui_task_runner(),
+        client_session_control);
 
     disconnect_window_ = HostWindow::CreateDisconnectWindow();
     disconnect_window_.reset(new HostWindowProxy(
-        caller_task_runner(),
-        ui_task_runner(),
-        disconnect_window_.Pass()));
+        caller_task_runner(), ui_task_runner(), std::move(disconnect_window_)));
     disconnect_window_->Start(client_session_control);
   }
 
   return true;
 }
 
-void Me2MeDesktopEnvironment::SetEnableGnubbyAuth(bool gnubby_auth_enabled) {
-  gnubby_auth_enabled_ = gnubby_auth_enabled;
-}
-
 Me2MeDesktopEnvironmentFactory::Me2MeDesktopEnvironmentFactory(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
     : BasicDesktopEnvironmentFactory(caller_task_runner,
+                                     video_capture_task_runner,
                                      input_task_runner,
-                                     ui_task_runner),
-      curtain_enabled_(false) {
-}
+                                     ui_task_runner) {}
 
 Me2MeDesktopEnvironmentFactory::~Me2MeDesktopEnvironmentFactory() {
 }
 
-scoped_ptr<DesktopEnvironment> Me2MeDesktopEnvironmentFactory::Create(
-    base::WeakPtr<ClientSessionControl> client_session_control) {
+std::unique_ptr<DesktopEnvironment> Me2MeDesktopEnvironmentFactory::Create(
+    base::WeakPtr<ClientSessionControl> client_session_control,
+    const DesktopEnvironmentOptions& options) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  scoped_ptr<Me2MeDesktopEnvironment> desktop_environment(
+  std::unique_ptr<Me2MeDesktopEnvironment> desktop_environment(
       new Me2MeDesktopEnvironment(caller_task_runner(),
-                                  input_task_runner(),
-                                  ui_task_runner(),
-                                  supports_touch_events()));
-  if (!desktop_environment->InitializeSecurity(client_session_control,
-                                               curtain_enabled_)) {
+                                  video_capture_task_runner(),
+                                  input_task_runner(), ui_task_runner(),
+                                  options));
+  if (!desktop_environment->InitializeSecurity(client_session_control)) {
     return nullptr;
   }
-  desktop_environment->SetEnableGnubbyAuth(gnubby_auth_enabled_);
 
-  return desktop_environment.Pass();
-}
-
-void Me2MeDesktopEnvironmentFactory::SetEnableCurtaining(bool enable) {
-  DCHECK(caller_task_runner()->BelongsToCurrentThread());
-
-  curtain_enabled_ = enable;
-}
-
-void Me2MeDesktopEnvironmentFactory::SetEnableGnubbyAuth(
-    bool gnubby_auth_enabled) {
-  gnubby_auth_enabled_ = gnubby_auth_enabled;
+  return std::move(desktop_environment);
 }
 
 }  // namespace remoting

@@ -28,124 +28,180 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "web/ServiceWorkerGlobalScopeClientImpl.h"
 
 #include "modules/fetch/Response.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerResponse.h"
 #include "public/web/modules/serviceworker/WebServiceWorkerContextClient.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
+#include <utility>
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<ServiceWorkerGlobalScopeClient> ServiceWorkerGlobalScopeClientImpl::create(WebServiceWorkerContextClient& client)
-{
-    return adoptPtrWillBeNoop(new ServiceWorkerGlobalScopeClientImpl(client));
+ServiceWorkerGlobalScopeClient* ServiceWorkerGlobalScopeClientImpl::create(
+    WebServiceWorkerContextClient& client) {
+  return new ServiceWorkerGlobalScopeClientImpl(client);
 }
 
-ServiceWorkerGlobalScopeClientImpl::~ServiceWorkerGlobalScopeClientImpl()
-{
+ServiceWorkerGlobalScopeClientImpl::~ServiceWorkerGlobalScopeClientImpl() {}
+
+void ServiceWorkerGlobalScopeClientImpl::getClient(
+    const WebString& id,
+    std::unique_ptr<WebServiceWorkerClientCallbacks> callbacks) {
+  m_client.getClient(id, std::move(callbacks));
 }
 
-void ServiceWorkerGlobalScopeClientImpl::getClients(const WebServiceWorkerClientQueryOptions& options, WebServiceWorkerClientsCallbacks* callbacks)
-{
-    m_client.getClients(options, callbacks);
+void ServiceWorkerGlobalScopeClientImpl::getClients(
+    const WebServiceWorkerClientQueryOptions& options,
+    std::unique_ptr<WebServiceWorkerClientsCallbacks> callbacks) {
+  m_client.getClients(options, std::move(callbacks));
 }
 
-void ServiceWorkerGlobalScopeClientImpl::openWindow(const WebURL& url, WebServiceWorkerClientCallbacks* callbacks)
-{
-    m_client.openWindow(url, callbacks);
+void ServiceWorkerGlobalScopeClientImpl::openWindow(
+    const WebURL& url,
+    std::unique_ptr<WebServiceWorkerClientCallbacks> callbacks) {
+  m_client.openWindow(url, std::move(callbacks));
 }
 
-void ServiceWorkerGlobalScopeClientImpl::setCachedMetadata(const WebURL& url, const char* data, size_t size)
-{
-    m_client.setCachedMetadata(url, data, size);
+void ServiceWorkerGlobalScopeClientImpl::setCachedMetadata(const WebURL& url,
+                                                           const char* data,
+                                                           size_t size) {
+  m_client.setCachedMetadata(url, data, size);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::clearCachedMetadata(const WebURL& url)
-{
-    m_client.clearCachedMetadata(url);
+void ServiceWorkerGlobalScopeClientImpl::clearCachedMetadata(
+    const WebURL& url) {
+  m_client.clearCachedMetadata(url);
 }
 
-WebURL ServiceWorkerGlobalScopeClientImpl::scope() const
-{
-    return m_client.scope();
+WebURL ServiceWorkerGlobalScopeClientImpl::scope() const {
+  return m_client.scope();
 }
 
-void ServiceWorkerGlobalScopeClientImpl::didHandleActivateEvent(int eventID, WebServiceWorkerEventResult result)
-{
-    m_client.didHandleActivateEvent(eventID, result);
+void ServiceWorkerGlobalScopeClientImpl::didHandleActivateEvent(
+    int eventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandleActivateEvent(eventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::didHandleFetchEvent(int fetchEventID)
-{
-    m_client.didHandleFetchEvent(fetchEventID);
+void ServiceWorkerGlobalScopeClientImpl::didHandleExtendableMessageEvent(
+    int eventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandleExtendableMessageEvent(eventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::didHandleFetchEvent(int fetchEventID, const WebServiceWorkerResponse& webResponse)
-{
-    m_client.didHandleFetchEvent(fetchEventID, webResponse);
+void ServiceWorkerGlobalScopeClientImpl::respondToFetchEvent(
+    int fetchEventID,
+    double eventDispatchTime) {
+  m_client.respondToFetchEvent(fetchEventID, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::didHandleInstallEvent(int installEventID, WebServiceWorkerEventResult result)
-{
-    m_client.didHandleInstallEvent(installEventID, result);
+void ServiceWorkerGlobalScopeClientImpl::respondToFetchEvent(
+    int fetchEventID,
+    const WebServiceWorkerResponse& response,
+    double eventDispatchTime) {
+  m_client.respondToFetchEvent(fetchEventID, response, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::didHandleNotificationClickEvent(int eventID, WebServiceWorkerEventResult result)
-{
-    m_client.didHandleNotificationClickEvent(eventID, result);
+void ServiceWorkerGlobalScopeClientImpl::didHandleFetchEvent(
+    int fetchEventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandleFetchEvent(fetchEventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::didHandlePushEvent(int pushEventID, WebServiceWorkerEventResult result)
-{
-    m_client.didHandlePushEvent(pushEventID, result);
+void ServiceWorkerGlobalScopeClientImpl::didHandleInstallEvent(
+    int installEventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandleInstallEvent(installEventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::didHandleSyncEvent(int syncEventID, WebServiceWorkerEventResult result)
-{
-    m_client.didHandleSyncEvent(syncEventID, result);
+void ServiceWorkerGlobalScopeClientImpl::didHandleNotificationClickEvent(
+    int eventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandleNotificationClickEvent(eventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::postMessageToClient(const WebString& clientUUID, const WebString& message, PassOwnPtr<WebMessagePortChannelArray> webChannels)
-{
-    m_client.postMessageToClient(clientUUID, message, webChannels.leakPtr());
+void ServiceWorkerGlobalScopeClientImpl::didHandleNotificationCloseEvent(
+    int eventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandleNotificationCloseEvent(eventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::postMessageToCrossOriginClient(const WebCrossOriginServiceWorkerClient& client, const WebString& message, PassOwnPtr<WebMessagePortChannelArray> webChannels)
-{
-    m_client.postMessageToCrossOriginClient(client, message, webChannels.leakPtr());
+void ServiceWorkerGlobalScopeClientImpl::didHandlePushEvent(
+    int pushEventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandlePushEvent(pushEventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::skipWaiting(WebServiceWorkerSkipWaitingCallbacks* callbacks)
-{
-    m_client.skipWaiting(callbacks);
+void ServiceWorkerGlobalScopeClientImpl::didHandleSyncEvent(
+    int syncEventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandleSyncEvent(syncEventID, result, eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::claim(WebServiceWorkerClientsClaimCallbacks* callbacks)
-{
-    m_client.claim(callbacks);
+void ServiceWorkerGlobalScopeClientImpl::didHandlePaymentRequestEvent(
+    int paymentRequestEventID,
+    WebServiceWorkerEventResult result,
+    double eventDispatchTime) {
+  m_client.didHandlePaymentRequestEvent(paymentRequestEventID, result,
+                                        eventDispatchTime);
 }
 
-void ServiceWorkerGlobalScopeClientImpl::focus(const WebString& clientUUID, WebServiceWorkerClientCallbacks* callback)
-{
-    m_client.focus(clientUUID, callback);
+void ServiceWorkerGlobalScopeClientImpl::postMessageToClient(
+    const WebString& clientUUID,
+    const WebString& message,
+    std::unique_ptr<WebMessagePortChannelArray> webChannels) {
+  m_client.postMessageToClient(clientUUID, message, webChannels.release());
 }
 
-void ServiceWorkerGlobalScopeClientImpl::navigate(const WebString& clientUUID, const WebURL& url, WebServiceWorkerClientCallbacks* callback)
-{
-    m_client.navigate(clientUUID, url, callback);
+void ServiceWorkerGlobalScopeClientImpl::postMessageToCrossOriginClient(
+    const WebCrossOriginServiceWorkerClient& client,
+    const WebString& message,
+    std::unique_ptr<WebMessagePortChannelArray> webChannels) {
+  m_client.postMessageToCrossOriginClient(client, message,
+                                          webChannels.release());
 }
 
-void ServiceWorkerGlobalScopeClientImpl::registerForeignFetchScopes(const WebVector<WebURL>& subScopes)
-{
-    m_client.registerForeignFetchScopes(subScopes);
+void ServiceWorkerGlobalScopeClientImpl::skipWaiting(
+    std::unique_ptr<WebServiceWorkerSkipWaitingCallbacks> callbacks) {
+  m_client.skipWaiting(std::move(callbacks));
 }
 
-ServiceWorkerGlobalScopeClientImpl::ServiceWorkerGlobalScopeClientImpl(WebServiceWorkerContextClient& client)
-    : m_client(client)
-{
+void ServiceWorkerGlobalScopeClientImpl::claim(
+    std::unique_ptr<WebServiceWorkerClientsClaimCallbacks> callbacks) {
+  m_client.claim(std::move(callbacks));
 }
 
-} // namespace blink
+void ServiceWorkerGlobalScopeClientImpl::focus(
+    const WebString& clientUUID,
+    std::unique_ptr<WebServiceWorkerClientCallbacks> callback) {
+  m_client.focus(clientUUID, std::move(callback));
+}
+
+void ServiceWorkerGlobalScopeClientImpl::navigate(
+    const WebString& clientUUID,
+    const WebURL& url,
+    std::unique_ptr<WebServiceWorkerClientCallbacks> callback) {
+  m_client.navigate(clientUUID, url, std::move(callback));
+}
+
+void ServiceWorkerGlobalScopeClientImpl::registerForeignFetchScopes(
+    const WebVector<WebURL>& subScopes,
+    const WebVector<WebSecurityOrigin>& origins) {
+  m_client.registerForeignFetchScopes(subScopes, origins);
+}
+
+ServiceWorkerGlobalScopeClientImpl::ServiceWorkerGlobalScopeClientImpl(
+    WebServiceWorkerContextClient& client)
+    : m_client(client) {}
+
+}  // namespace blink

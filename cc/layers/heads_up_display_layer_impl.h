@@ -5,16 +5,19 @@
 #ifndef CC_LAYERS_HEADS_UP_DISPLAY_LAYER_IMPL_H_
 #define CC_LAYERS_HEADS_UP_DISPLAY_LAYER_IMPL_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "cc/base/cc_export.h"
 #include "cc/debug/debug_rect_history.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/resources/memory_history.h"
 #include "cc/resources/scoped_resource.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 
 class SkCanvas;
 class SkPaint;
@@ -24,17 +27,17 @@ struct SkRect;
 namespace cc {
 
 class FrameRateCounter;
-class PaintTimeCounter;
 
 class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
  public:
-  static scoped_ptr<HeadsUpDisplayLayerImpl> Create(LayerTreeImpl* tree_impl,
-                                                    int id) {
-    return make_scoped_ptr(new HeadsUpDisplayLayerImpl(tree_impl, id));
+  static std::unique_ptr<HeadsUpDisplayLayerImpl> Create(
+      LayerTreeImpl* tree_impl,
+      int id) {
+    return base::WrapUnique(new HeadsUpDisplayLayerImpl(tree_impl, id));
   }
   ~HeadsUpDisplayLayerImpl() override;
 
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
 
   bool WillDraw(DrawMode draw_mode,
                 ResourceProvider* resource_provider) override;
@@ -48,6 +51,11 @@ class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
   gfx::Rect GetEnclosingRectInTargetSpace() const override;
 
   bool IsAnimatingHUDContents() const { return fade_step_ > 0; }
+
+  void SetHUDTypeface(sk_sp<SkTypeface> typeface);
+
+  // LayerImpl overrides.
+  void PushPropertiesTo(LayerImpl* layer) override;
 
  private:
   class Graph {
@@ -123,10 +131,10 @@ class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
   void AcquireResource(ResourceProvider* resource_provider);
   void ReleaseUnmatchedSizeResources(ResourceProvider* resource_provider);
 
-  std::vector<scoped_ptr<ScopedResource>> resources_;
-  skia::RefPtr<SkSurface> hud_surface_;
+  std::vector<std::unique_ptr<ScopedResource>> resources_;
+  sk_sp<SkSurface> hud_surface_;
 
-  skia::RefPtr<SkTypeface> typeface_;
+  sk_sp<SkTypeface> typeface_;
 
   float internal_contents_scale_;
   gfx::Size internal_content_bounds_;

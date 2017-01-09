@@ -4,6 +4,9 @@
 
 #include "content/renderer/pepper/ppb_var_deprecated_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
 
 #include "content/renderer/pepper/host_globals.h"
@@ -17,7 +20,6 @@
 #include "ppapi/c/ppb_var.h"
 #include "ppapi/shared_impl/ppb_var_shared.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 #include "third_party/WebKit/public/web/WebPluginScriptForbiddenScope.h"
@@ -72,7 +74,7 @@ class ObjectAccessor {
  private:
   V8ObjectVar* object_var_;
   PepperPluginInstanceImpl* instance_;
-  scoped_ptr<V8VarConverter> converter_;
+  std::unique_ptr<V8VarConverter> converter_;
 };
 
 bool IsValidIdentifer(PP_Var identifier, PP_Var* exception) {
@@ -250,7 +252,7 @@ PP_Var CallDeprecatedInternal(PP_Var var,
     return PP_MakeUndefined();
   }
 
-  scoped_ptr<v8::Local<v8::Value>[] > converted_args(
+  std::unique_ptr<v8::Local<v8::Value>[]> converted_args(
       new v8::Local<v8::Value>[argc]);
   for (uint32_t i = 0; i < argc; ++i) {
     converted_args[i] = try_catch.ToV8(argv[i]);
@@ -261,7 +263,7 @@ PP_Var CallDeprecatedInternal(PP_Var var,
   blink::WebPluginContainer* container = accessor.instance()->container();
   blink::WebLocalFrame* frame = NULL;
   if (container)
-    frame = container->element().document().frame();
+    frame = container->document().frame();
 
   if (!frame) {
     try_catch.SetException("No frame to execute script in.");

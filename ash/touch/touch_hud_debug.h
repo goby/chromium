@@ -5,11 +5,14 @@
 #ifndef ASH_TOUCH_TOUCH_HUD_DEBUG_H_
 #define ASH_TOUCH_TOUCH_HUD_DEBUG_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 
 #include "ash/ash_export.h"
 #include "ash/touch/touch_observer_hud.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/values.h"
 
 namespace views {
@@ -36,7 +39,7 @@ class ASH_EXPORT TouchHudDebug : public TouchObserverHUD {
 
   // Returns the log of touch events for all displays as a dictionary mapping id
   // of each display to its touch log.
-  static scoped_ptr<base::DictionaryValue> GetAllAsDictionary();
+  static std::unique_ptr<base::DictionaryValue> GetAllAsDictionary();
 
   // Changes the display mode (e.g. scale, visibility). Calling this repeatedly
   // cycles between a fixed number of display modes.
@@ -44,7 +47,7 @@ class ASH_EXPORT TouchHudDebug : public TouchObserverHUD {
 
   // Returns log of touch events as a list value. Each item in the list is a
   // trace of one touch point.
-  scoped_ptr<base::ListValue> GetLogAsList() const;
+  std::unique_ptr<base::ListValue> GetLogAsList() const;
 
   Mode mode() const { return mode_; }
 
@@ -60,7 +63,7 @@ class ASH_EXPORT TouchHudDebug : public TouchObserverHUD {
 
   // Overriden from TouchObserverHUD.
   void OnTouchEvent(ui::TouchEvent* event) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
   void SetHudForRootWindowController(RootWindowController* controller) override;
   void UnsetHudForRootWindowController(
@@ -70,7 +73,7 @@ class ASH_EXPORT TouchHudDebug : public TouchObserverHUD {
 
   Mode mode_;
 
-  scoped_ptr<TouchLog> touch_log_;
+  std::unique_ptr<TouchLog> touch_log_;
 
   TouchHudCanvas* canvas_;
   views::View* label_container_;

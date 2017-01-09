@@ -9,15 +9,9 @@
 
 namespace switches {
 
-extern const char kEnableRendererMojoChannel[];
-extern const char kDisableMojoChannel[];
+CONTENT_EXPORT extern const char kMojoChannelToken[];
+CONTENT_EXPORT extern const char kServiceRequestChannelToken[];
 
 }  // namespace switches
-
-namespace content {
-
-bool CONTENT_EXPORT ShouldUseMojoChannel();
-
-}  // namespace content
 
 #endif  // CONTENT_PUBLIC_COMMON_MOJO_CHANNEL_SWITCHES_H_

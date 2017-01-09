@@ -27,25 +27,32 @@
 #define ContentSecurityPolicyResponseHeaders_h
 
 #include "platform/PlatformExport.h"
+#include "wtf/Allocator.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
 class ResourceResponse;
 
-class PLATFORM_EXPORT ContentSecurityPolicyResponseHeaders {
-public:
-    ContentSecurityPolicyResponseHeaders() { }
-    explicit ContentSecurityPolicyResponseHeaders(const ResourceResponse&);
+class PLATFORM_EXPORT ContentSecurityPolicyResponseHeaders final {
+  STACK_ALLOCATED();
 
-    const String& contentSecurityPolicy() const { return m_contentSecurityPolicy; }
-    const String& contentSecurityPolicyReportOnly() const { return m_contentSecurityPolicyReportOnly; }
+ public:
+  ContentSecurityPolicyResponseHeaders() {}
+  explicit ContentSecurityPolicyResponseHeaders(const ResourceResponse&);
 
-private:
-    String m_contentSecurityPolicy;
-    String m_contentSecurityPolicyReportOnly;
+  const String& contentSecurityPolicy() const {
+    return m_contentSecurityPolicy;
+  }
+  const String& contentSecurityPolicyReportOnly() const {
+    return m_contentSecurityPolicyReportOnly;
+  }
+
+ private:
+  String m_contentSecurityPolicy;
+  String m_contentSecurityPolicyReportOnly;
 };
 
-}
+}  // namespace blink
 
 #endif

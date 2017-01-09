@@ -5,10 +5,15 @@
 #ifndef CC_BASE_CONTIGUOUS_CONTAINER_H_
 #define CC_BASE_CONTIGUOUS_CONTAINER_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/stl_util.h"
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 
 namespace cc {
@@ -56,7 +61,7 @@ class CC_EXPORT ContiguousContainerBase {
 
   Buffer* AllocateNewBufferForNextAllocation(size_t buffer_size);
 
-  std::vector<scoped_ptr<Buffer>> buffers_;
+  std::vector<std::unique_ptr<Buffer>> buffers_;
   size_t end_index_;
   size_t max_object_size_;
 
@@ -125,6 +130,7 @@ class ContiguousContainer : public ContiguousContainerBase {
   ContiguousContainer(size_t max_object_size, size_t initial_size_bytes)
       : ContiguousContainerBase(Align(max_object_size), initial_size_bytes) {}
 
+  DISABLE_CFI_PERF
   ~ContiguousContainer() {
     for (auto& element : *this) {
       // MSVC incorrectly reports this variable as unused.
@@ -162,12 +168,11 @@ class ContiguousContainer : public ContiguousContainerBase {
   }
 
   template <class DerivedElementType, typename... Args>
-  DerivedElementType& AllocateAndConstruct(const Args&... args) {
+  DerivedElementType& AllocateAndConstruct(Args&&... args) {
     static_assert(alignment % ALIGNOF(DerivedElementType) == 0,
                   "Derived type requires stronger alignment.");
-    size_t alloc_size = Align(sizeof(DerivedElementType));
-    // TODO(enne): This should forward the args.
-    return *new (Allocate(alloc_size)) DerivedElementType(args...);
+    return *new (AlignedAllocate(sizeof(DerivedElementType)))
+        DerivedElementType(std::forward<Args>(args)...);
   }
 
   void RemoveLast() {
@@ -193,14 +198,20 @@ class ContiguousContainer : public ContiguousContainerBase {
   // element in its place. Use with care.
   BaseElementType& AppendByMoving(BaseElementType* item, size_t size) {
     DCHECK_GE(size, sizeof(BaseElementType));
-    void* new_item = Allocate(size);
+    void* new_item = AlignedAllocate(size);
     memcpy(new_item, static_cast<void*>(item), size);
     new (item) BaseElementType;
     return *static_cast<BaseElementType*>(new_item);
   }
 
  private:
-  static size_t Align(size_t size) {
+  void* AlignedAllocate(size_t size) {
+    void* result = ContiguousContainerBase::Allocate(Align(size));
+    DCHECK_EQ(reinterpret_cast<intptr_t>(result) & (alignment - 1), 0u);
+    return result;
+  }
+
+  size_t Align(size_t size) {
     size_t aligned_size = alignment * ((size + alignment - 1) / alignment);
     DCHECK_EQ(aligned_size % alignment, 0u);
     DCHECK_GE(aligned_size, size);

@@ -5,16 +5,17 @@
 #ifndef CHROME_BROWSER_PRERENDER_PRERENDER_LINK_MANAGER_H_
 #define CHROME_BROWSER_PRERENDER_PRERENDER_LINK_MANAGER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <list>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/prerender/prerender_handle.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "url/gurl.h"
-
-class Profile;
 
 namespace content {
 struct Referrer;
@@ -47,7 +48,7 @@ class PrerenderLinkManager : public KeyedService,
   void OnAddPrerender(int child_id,
                       int prerender_id,
                       const GURL& url,
-                      uint32 rel_types,
+                      uint32_t rel_types,
                       const content::Referrer& referrer,
                       const gfx::Size& size,
                       int render_view_route_id);
@@ -76,19 +77,20 @@ class PrerenderLinkManager : public KeyedService,
     LinkPrerender(int launcher_child_id,
                   int prerender_id,
                   const GURL& url,
-                  uint32 rel_types,
+                  uint32_t rel_types,
                   const content::Referrer& referrer,
                   const gfx::Size& size,
                   int render_view_route_id,
                   base::TimeTicks creation_time,
                   PrerenderContents* deferred_launcher);
+    LinkPrerender(const LinkPrerender& other);
     ~LinkPrerender();
 
     // Parameters from PrerenderLinkManager::OnAddPrerender():
     int launcher_child_id;
     int prerender_id;
     GURL url;
-    uint32 rel_types;
+    uint32_t rel_types;
     content::Referrer referrer;
     gfx::Size size;
     int render_view_route_id;
@@ -104,10 +106,6 @@ class PrerenderLinkManager : public KeyedService,
     // Initially NULL, |handle| is set once we start this prerender. It is owned
     // by this struct, and must be deleted before destructing this struct.
     PrerenderHandle* handle;
-
-    // True if this prerender has become a MatchComplete replacement. This state
-    // is maintained so the renderer is not notified of a stop twice.
-    bool is_match_complete_replacement;
 
     // True if this prerender has been abandoned by its launcher.
     bool has_been_abandoned;
@@ -151,8 +149,6 @@ class PrerenderLinkManager : public KeyedService,
   void OnPrerenderStopLoading(PrerenderHandle* prerender_handle) override;
   void OnPrerenderDomContentLoaded(PrerenderHandle* prerender_handle) override;
   void OnPrerenderStop(PrerenderHandle* prerender_handle) override;
-  void OnPrerenderCreatedMatchCompleteReplacement(
-      PrerenderHandle* handle) override;
 
   bool has_shutdown_;
 
@@ -165,7 +161,7 @@ class PrerenderLinkManager : public KeyedService,
 
   // Helper object to manage prerenders which are launched by other prerenders
   // and must be deferred until the launcher is swapped in.
-  scoped_ptr<PendingPrerenderManager> pending_prerender_manager_;
+  std::unique_ptr<PendingPrerenderManager> pending_prerender_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(PrerenderLinkManager);
 };

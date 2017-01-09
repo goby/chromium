@@ -8,14 +8,13 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/child/child_process.h"
 #include "content/common/media/audio_messages.h"
 #include "content/renderer/media/audio_message_filter.h"
 #include "content/renderer/pepper/audio_helper.h"
 #include "content/renderer/render_thread_impl.h"
-#include "media/base/audio_hardware_config.h"
 #include "ppapi/shared_impl/ppb_audio_config_shared.h"
 
 namespace content {
@@ -60,6 +59,17 @@ bool PepperPlatformAudioOutput::StopPlayback() {
   return false;
 }
 
+bool PepperPlatformAudioOutput::SetVolume(double volume) {
+  if (ipc_) {
+    io_task_runner_->PostTask(
+        FROM_HERE,
+        base::Bind(&PepperPlatformAudioOutput::SetVolumeOnIOThread,
+                   this, volume));
+    return true;
+  }
+  return false;
+}
+
 void PepperPlatformAudioOutput::ShutDown() {
   // Called on the main thread to stop all audio callbacks. We must only change
   // the client on the main thread, and the delegates from the I/O thread.
@@ -69,12 +79,12 @@ void PepperPlatformAudioOutput::ShutDown() {
       base::Bind(&PepperPlatformAudioOutput::ShutDownOnIOThread, this));
 }
 
-void PepperPlatformAudioOutput::OnStateChanged(
-    media::AudioOutputIPCDelegateState state) {}
+void PepperPlatformAudioOutput::OnError() {}
 
 void PepperPlatformAudioOutput::OnDeviceAuthorized(
     media::OutputDeviceStatus device_status,
-    const media::AudioParameters& output_params) {
+    const media::AudioParameters& output_params,
+    const std::string& matched_device_id) {
   NOTREACHED();
 }
 
@@ -153,6 +163,12 @@ void PepperPlatformAudioOutput::StartPlaybackOnIOThread() {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   if (ipc_)
     ipc_->PlayStream();
+}
+
+void PepperPlatformAudioOutput::SetVolumeOnIOThread(double volume) {
+  DCHECK(io_task_runner_->BelongsToCurrentThread());
+  if (ipc_)
+    ipc_->SetVolume(volume);
 }
 
 void PepperPlatformAudioOutput::StopPlaybackOnIOThread() {

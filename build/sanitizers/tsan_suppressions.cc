@@ -43,14 +43,11 @@ char kTSanDefaultSuppressions[] =
 // Test-only race, won't fix.
 "race:tracked_objects::ThreadData::ShutdownSingleThreadedCleanup\n"
 
-// http://crbug.com/115540
-"race:*GetCurrentThreadIdentifier\n"
-
 // http://crbug.com/120808
 "race:base/threading/watchdog.cc\n"
 
 // http://crbug.com/157586
-"race:third_party/libvpx_new/source/libvpx/vp8/decoder/threading.c\n"
+"race:third_party/libvpx/source/libvpx/vp8/decoder/threading.c\n"
 
 // http://crbug.com/158718
 "race:third_party/ffmpeg/libavcodec/pthread.c\n"
@@ -62,8 +59,8 @@ char kTSanDefaultSuppressions[] =
 "race:media::ReleaseData\n"
 
 // http://crbug.com/158922
-"race:third_party/libvpx_new/source/libvpx/vp8/encoder/*\n"
-"race:third_party/libvpx_new/source/libvpx/vp9/encoder/*\n"
+"race:third_party/libvpx/source/libvpx/vp8/encoder/*\n"
+"race:third_party/libvpx/source/libvpx/vp9/encoder/*\n"
 
 // http://crbug.com/189177
 "race:thread_manager\n"
@@ -154,9 +151,6 @@ char kTSanDefaultSuppressions[] =
 // http://crbug.com/328868
 "race:PR_Lock\n"
 
-// http://crbug.com/329225
-"race:blink::currentTimeFunction\n"
-
 // http://crbug.com/333244
 "race:content::"
     "VideoCaptureImplTest::MockVideoCaptureImpl::~MockVideoCaptureImpl\n"
@@ -182,16 +176,6 @@ char kTSanDefaultSuppressions[] =
 "race:blink::s_platform\n"
 "race:content::"
     "RendererWebKitPlatformSupportImpl::~RendererWebKitPlatformSupportImpl\n"
-
-// http://crbug.com/345240
-"race:WTF::s_shutdown\n"
-
-// http://crbug.com/345245
-"race:jingle_glue::JingleThreadWrapper::~JingleThreadWrapper\n"
-"race:webrtc::voe::Channel::UpdatePacketDelay\n"
-"race:webrtc::voe::Channel::GetDelayEstimate\n"
-"race:webrtc::VCMCodecDataBase::DeregisterReceiveCodec\n"
-"race:webrtc::GainControlImpl::set_stream_analog_level\n"
 
 // http://crbug.com/345618
 "race:WebCore::AudioDestinationNode::render\n"
@@ -223,18 +207,8 @@ char kTSanDefaultSuppressions[] =
 "race:sctp_express_handle_sack\n"
 "race:system_base_info\n"
 
-// http://crbug.com/363999
-"race:v8::internal::EnterDebugger::*EnterDebugger\n"
-
 // https://code.google.com/p/v8/issues/detail?id=3143
 "race:v8::internal::FLAG_track_double_fields\n"
-
-// https://crbug.com/369257
-// TODO(mtklein): annotate properly and remove suppressions.
-"race:SandboxIPCHandler::HandleFontMatchRequest\n"
-"race:SkFontConfigInterfaceDirect::matchFamilyName\n"
-"race:SkFontConfigInterface::GetSingletonDirectInterface\n"
-"race:FcStrStaticName\n"
 
 // http://crbug.com/374135
 "race:media::AlsaWrapper::PcmWritei\n"
@@ -271,16 +245,9 @@ char kTSanDefaultSuppressions[] =
 // https://crbug.com/430533
 "race:TileTaskGraphRunner::Run\n"
 
-// https://crbug.com/448203
-"race:blink::RemoteFrame::detach\n"
-
 // Lock inversion in third party code, won't fix.
 // https://crbug.com/455638
 "deadlock:dbus::Bus::ShutdownAndBlock\n"
-
-// https://crbug.com/455665
-"race:mojo::common::*::tick_clock\n"
-"race:mojo::common::internal::NowTicks\n"
 
 // https://crbug.com/459429
 "race:randomnessPid\n"
@@ -288,8 +255,20 @@ char kTSanDefaultSuppressions[] =
 // https://crbug.com/454655
 "race:content::BrowserTestBase::PostTaskToInProcessRendererAndWait\n"
 
-// https://crbug.com/539315
-"race:MojoCreateMessagePipe\n"
+// https://crbug.com/569682
+"race:blink::ThreadState::visitStackRoots\n"
+
+// http://crbug.com/582274
+"race:usrsctp_close\n"
+
+// http://crbug.com/633145
+"race:third_party/libjpeg_turbo/simd/jsimd_x86_64.c\n"
+
+// http://crbug.com/638378
+"race:~TaskSchedulerWorkerPoolCheckTlsReuse\n"
+
+// http://crbug.com/638583
+"race:webrtc/modules/audio_processing/aec/aec_rdft.cc\n"
 
 // End of suppressions.
 ;  // Please keep this semicolon.

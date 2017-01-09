@@ -5,14 +5,14 @@
 #ifndef UI_EVENTS_TEST_EVENTS_TEST_UTILS_X11_H_
 #define UI_EVENTS_TEST_EVENTS_TEST_UTILS_X11_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/events/devices/x11/device_data_manager_x11.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/x/x11_types.h"
-
-typedef union _XEvent XEvent;
 
 namespace ui {
 
@@ -87,7 +87,7 @@ class ScopedXI2Event {
 
   void SetUpValuators(const std::vector<Valuator>& valuators);
 
-  scoped_ptr<XEvent, XEventDeleter> event_;
+  std::unique_ptr<XEvent, XEventDeleter> event_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedXI2Event);
 };

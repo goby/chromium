@@ -10,20 +10,24 @@
 #define CHROME_INSTALLER_UTIL_SHELL_UTIL_H_
 
 #include <windows.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <map>
 #include <set>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_vector.h"
 #include "base/strings/string16.h"
 #include "chrome/installer/util/work_item_list.h"
 
 class BrowserDistribution;
+class RegistryEntry;
 
 namespace base {
 class CancellationFlag;
@@ -93,6 +97,7 @@ class ShellUtil {
     };
 
     explicit ShortcutProperties(ShellChange level_in);
+    ShortcutProperties(const ShortcutProperties& other);
     ~ShortcutProperties();
 
     // Sets the target executable to launch from this shortcut.
@@ -138,22 +143,11 @@ class ShellUtil {
     }
 
     // Forces the shortcut's name to |shortcut_name_in|.
-    // Default: the current distribution's GetShortcutName(SHORTCUT_CHROME).
+    // Default: the current distribution's GetShortcutName().
     // The ".lnk" extension will automatically be added to this name.
     void set_shortcut_name(const base::string16& shortcut_name_in) {
       shortcut_name = shortcut_name_in;
       options |= PROPERTIES_SHORTCUT_NAME;
-    }
-
-    // Sets whether this is a dual mode shortcut (Win8+).
-    // Documentation on usage of the dual mode property on Win8:
-    // http://go.microsoft.com/fwlink/p/?linkid=243079
-    // NOTE: Only the default (no arguments and default browser appid) browser
-    // shortcut in the Start menu (Start screen on Win8+) should be made dual
-    // mode.
-    void set_dual_mode(bool dual_mode_in) {
-      dual_mode = dual_mode_in;
-      options |= PROPERTIES_DUAL_MODE;
     }
 
     // Sets whether to pin this shortcut to the taskbar after creating it
@@ -187,10 +181,6 @@ class ShellUtil {
       return (options & PROPERTIES_SHORTCUT_NAME) != 0;
     }
 
-    bool has_dual_mode() const {
-      return (options & PROPERTIES_DUAL_MODE) != 0;
-    }
-
     // The level to install this shortcut at (CURRENT_USER for a per-user
     // shortcut and SYSTEM_LEVEL for an all-users shortcut).
     ShellChange level;
@@ -202,13 +192,12 @@ class ShellUtil {
     int icon_index;
     base::string16 app_id;
     base::string16 shortcut_name;
-    bool dual_mode;
     bool pin_to_taskbar;
     // Bitfield made of IndividualProperties. Properties set in |options| will
     // be used to create/update the shortcut, others will be ignored on update
     // and possibly replaced by default values on create (see individual
     // property setters above for details on default values).
-    uint32 options;
+    uint32_t options;
   };
 
   // Relative path of the URL Protocol registry entry (prefixed with '\').
@@ -420,6 +409,19 @@ class ShellUtil {
   // Windows prior to Windows 8.
   static bool CanMakeChromeDefaultUnattended();
 
+  enum InteractiveSetDefaultMode {
+    // The intent picker is opened with the different choices available to the
+    // user.
+    INTENT_PICKER,
+    // The Windows default apps settings page is opened with the current default
+    // app focused.
+    SYSTEM_SETTINGS,
+  };
+
+  // Returns the interactive mode that should be used to set the default browser
+  // or default protocol client on Windows 8+.
+  static InteractiveSetDefaultMode GetInteractiveSetDefaultMode();
+
   // Returns the DefaultState of Chrome for HTTP and HTTPS and updates the
   // default browser beacons as appropriate.
   static DefaultState GetChromeDefaultState();
@@ -438,7 +440,7 @@ class ShellUtil {
   // browsing, e.g. http, https, .html etc., and requesting to become the
   // default handler for each. If any of these fails the operation will return
   // false to indicate failure, which is consistent with the return value of
-  // ShellIntegration::GetDefaultBrowser.
+  // shell_integration::GetDefaultBrowser.
   //
   // In the case of failure any successful changes will be left, however no
   // more changes will be attempted.
@@ -609,13 +611,6 @@ class ShellUtil {
   // should call GetCurrentInstallationSuffix().
   static bool GetOldUserSpecificRegistrySuffix(base::string16* suffix);
 
-  // Returns the base32 encoding (using the [A-Z2-7] alphabet) of |bytes|.
-  // |size| is the length of |bytes|.
-  // Note: This method does not suffix the output with '=' signs as technically
-  // required by the base32 standard for inputs that aren't a multiple of 5
-  // bytes.
-  static base::string16 ByteArrayToBase32(const uint8* bytes, size_t size);
-
   // Associates a set of file extensions with a particular application in the
   // Windows registry, for the current user only. If an extension has no
   // existing default association, the given application becomes the default.
@@ -647,6 +642,11 @@ class ShellUtil {
   // application, as given to AddFileAssociations. All information associated
   // with this name will be deleted.
   static bool DeleteFileAssociations(const base::string16& prog_id);
+
+  // This method converts all the RegistryEntries from the given list to
+  // Set/CreateRegWorkItems and runs them using WorkItemList.
+  static bool AddRegistryEntries(HKEY root,
+                                 const ScopedVector<RegistryEntry>& entries);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ShellUtil);

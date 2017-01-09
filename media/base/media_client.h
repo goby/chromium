@@ -8,8 +8,9 @@
 #include <string>
 #include <vector>
 
-#include "media/base/key_system_info.h"
+#include "media/base/key_system_properties.h"
 #include "media/base/media_export.h"
+#include "media/base/video_codecs.h"
 #include "url/gurl.h"
 
 namespace media {
@@ -28,8 +29,7 @@ MEDIA_EXPORT MediaClient* GetMediaClient();
 
 struct MEDIA_EXPORT KeySystemInfoForUMA {
   KeySystemInfoForUMA(const std::string& key_system,
-                      const std::string& key_system_name_for_uma,
-                      bool reports_key_system_support_to_uma);
+                      const std::string& key_system_name_for_uma);
   ~KeySystemInfoForUMA();
 
   // Concrete key system name;
@@ -39,12 +39,6 @@ struct MEDIA_EXPORT KeySystemInfoForUMA {
   // "org.w3.clearkey" is "ClearKey". When providing this value, make sure to
   // update tools/metrics/histograms/histograms.xml.
   std::string key_system_name_for_uma;
-
-  // Whether query/support statistics for |key_system| should be reported.
-  // If set to true, make sure to add a new Media.EME.KeySystemSupport.* to
-  // tools/metrics/histograms/histograms.xml. See KeySystemsSupportUMA for
-  // details on how key system query/support UMA is reported.
-  bool reports_key_system_support_to_uma;
 };
 
 // A client interface for embedders (e.g. content/renderer) to provide
@@ -60,16 +54,23 @@ class MEDIA_EXPORT MediaClient {
   virtual void AddKeySystemsInfoForUMA(
       std::vector<KeySystemInfoForUMA>* key_systems_info_for_uma) = 0;
 
-  // Returns whether client key systems info should be updated.
+  // Returns whether client key systems properties should be updated.
   virtual bool IsKeySystemsUpdateNeeded() = 0;
 
-  // Adds info for supported key systems.
+  // Adds properties for supported key systems.
   virtual void AddSupportedKeySystems(
-      std::vector<KeySystemInfo>* key_systems_info) = 0;
+      std::vector<std::unique_ptr<KeySystemProperties>>*
+          key_systems_properties) = 0;
 
   // Records a domain and registry of a url to a Rappor privacy-preserving
   // metric. See: https://www.chromium.org/developers/design-documents/rappor
   virtual void RecordRapporURL(const std::string& metric, const GURL& url) = 0;
+
+  // Returns true if the given combination of video codec, profile and level is
+  // supported. The |level| value is codec-specific.
+  virtual bool IsSupportedVideoConfig(VideoCodec codec,
+                                      VideoCodecProfile profile,
+                                      int level) = 0;
 };
 
 }  // namespace media

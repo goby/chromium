@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -8,10 +8,10 @@
 //    clang-format -i -style=chromium filename
 // DO NOT EDIT!
 
-#ifndef UI_GFX_GL_GL_BINDINGS_AUTOGEN_OSMESA_H_
-#define UI_GFX_GL_GL_BINDINGS_AUTOGEN_OSMESA_H_
+#ifndef UI_GL_GL_BINDINGS_AUTOGEN_OSMESA_H_
+#define UI_GL_GL_BINDINGS_AUTOGEN_OSMESA_H_
 
-namespace gfx {
+namespace gl {
 
 class GLContext;
 
@@ -99,25 +99,25 @@ class GL_EXPORT OSMESAApi {
   virtual void OSMesaPixelStoreFn(GLint pname, GLint value) = 0;
 };
 
-}  // namespace gfx
+}  // namespace gl
 
-#define OSMesaColorClamp ::gfx::g_current_osmesa_context->OSMesaColorClampFn
+#define OSMesaColorClamp ::gl::g_current_osmesa_context->OSMesaColorClampFn
 #define OSMesaCreateContext \
-  ::gfx::g_current_osmesa_context->OSMesaCreateContextFn
+  ::gl::g_current_osmesa_context->OSMesaCreateContextFn
 #define OSMesaCreateContextExt \
-  ::gfx::g_current_osmesa_context->OSMesaCreateContextExtFn
+  ::gl::g_current_osmesa_context->OSMesaCreateContextExtFn
 #define OSMesaDestroyContext \
-  ::gfx::g_current_osmesa_context->OSMesaDestroyContextFn
+  ::gl::g_current_osmesa_context->OSMesaDestroyContextFn
 #define OSMesaGetColorBuffer \
-  ::gfx::g_current_osmesa_context->OSMesaGetColorBufferFn
+  ::gl::g_current_osmesa_context->OSMesaGetColorBufferFn
 #define OSMesaGetCurrentContext \
-  ::gfx::g_current_osmesa_context->OSMesaGetCurrentContextFn
+  ::gl::g_current_osmesa_context->OSMesaGetCurrentContextFn
 #define OSMesaGetDepthBuffer \
-  ::gfx::g_current_osmesa_context->OSMesaGetDepthBufferFn
-#define OSMesaGetIntegerv ::gfx::g_current_osmesa_context->OSMesaGetIntegervFn
+  ::gl::g_current_osmesa_context->OSMesaGetDepthBufferFn
+#define OSMesaGetIntegerv ::gl::g_current_osmesa_context->OSMesaGetIntegervFn
 #define OSMesaGetProcAddress \
-  ::gfx::g_current_osmesa_context->OSMesaGetProcAddressFn
-#define OSMesaMakeCurrent ::gfx::g_current_osmesa_context->OSMesaMakeCurrentFn
-#define OSMesaPixelStore ::gfx::g_current_osmesa_context->OSMesaPixelStoreFn
+  ::gl::g_current_osmesa_context->OSMesaGetProcAddressFn
+#define OSMesaMakeCurrent ::gl::g_current_osmesa_context->OSMesaMakeCurrentFn
+#define OSMesaPixelStore ::gl::g_current_osmesa_context->OSMesaPixelStoreFn
 
-#endif  //  UI_GFX_GL_GL_BINDINGS_AUTOGEN_OSMESA_H_
+#endif  //  UI_GL_GL_BINDINGS_AUTOGEN_OSMESA_H_

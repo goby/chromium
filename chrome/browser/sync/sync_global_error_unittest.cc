@@ -4,9 +4,11 @@
 
 #include "chrome/browser/sync/sync_global_error.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/sync/profile_sync_service_mock.h"
+#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/sync/sync_global_error_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
@@ -14,7 +16,7 @@
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/sync_driver/sync_error_controller.h"
+#include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
@@ -30,7 +32,7 @@ namespace {
 
 class FakeLoginUIService: public LoginUIService {
  public:
-  FakeLoginUIService() : LoginUIService(NULL) {}
+  FakeLoginUIService() : LoginUIService(nullptr) {}
 };
 
 class FakeLoginUI : public LoginUIService::LoginUI {
@@ -44,14 +46,13 @@ class FakeLoginUI : public LoginUIService::LoginUI {
  private:
   // Overridden from LoginUIService::LoginUI:
   void FocusUI() override { ++focus_ui_call_count_; }
-  void CloseUI() override {}
 
   int focus_ui_call_count_;
 };
 
-scoped_ptr<KeyedService> BuildMockLoginUIService(
+std::unique_ptr<KeyedService> BuildMockLoginUIService(
     content::BrowserContext* profile) {
-  return make_scoped_ptr(new FakeLoginUIService());
+  return base::MakeUnique<FakeLoginUIService>();
 }
 
 // Same as BrowserWithTestWindowTest, but uses MockBrowser to test calls to
@@ -62,7 +63,7 @@ class SyncGlobalErrorTest : public BrowserWithTestWindowTest {
   ~SyncGlobalErrorTest() override {}
 
   void SetUp() override {
-    profile_.reset(ProfileSyncServiceMock::MakeSignedInTestingProfile());
+    profile_ = MakeSignedInTestingProfile();
 
     BrowserWithTestWindowTest::SetUp();
   }
@@ -70,23 +71,23 @@ class SyncGlobalErrorTest : public BrowserWithTestWindowTest {
   Profile* profile() { return profile_.get(); }
 
  private:
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncGlobalErrorTest);
 };
 
 // Utility function to test that SyncGlobalError behaves correctly for the given
 // error condition.
-void VerifySyncGlobalErrorResult(NiceMock<ProfileSyncServiceMock>* service,
+void VerifySyncGlobalErrorResult(browser_sync::ProfileSyncServiceMock* service,
                                  FakeLoginUIService* login_ui_service,
                                  Browser* browser,
-                                 SyncErrorController* error,
+                                 syncer::SyncErrorController* error,
                                  SyncGlobalError* global_error,
                                  GoogleServiceAuthError::State error_state,
                                  bool is_signed_in,
                                  bool is_error) {
-  EXPECT_CALL(*service, HasSyncSetupCompleted())
-              .WillRepeatedly(Return(is_signed_in));
+  EXPECT_CALL(*service, IsFirstSetupComplete())
+      .WillRepeatedly(Return(is_signed_in));
 
   GoogleServiceAuthError auth_error(error_state);
   EXPECT_CALL(*service, GetAuthError()).WillRepeatedly(ReturnRef(auth_error));
@@ -119,11 +120,17 @@ void VerifySyncGlobalErrorResult(NiceMock<ProfileSyncServiceMock>* service,
   }
 }
 
-} // namespace
+}  // namespace
 
 // Test that SyncGlobalError shows an error if a passphrase is required.
 TEST_F(SyncGlobalErrorTest, PassphraseGlobalError) {
-  NiceMock<ProfileSyncServiceMock> service(profile());
+  // The MD User Menu displays Sync errors in a different way and should be the
+  // only one to do so. Under that paradigm, this test is obsolete.
+  if (switches::IsMaterialDesignUserMenu())
+    return;
+
+  browser_sync::ProfileSyncServiceMock service(
+      CreateProfileSyncServiceParamsForTest(profile()));
 
   FakeLoginUIService* login_ui_service = static_cast<FakeLoginUIService*>(
       LoginUIServiceFactory::GetInstance()->SetTestingFactoryAndUse(
@@ -131,12 +138,12 @@ TEST_F(SyncGlobalErrorTest, PassphraseGlobalError) {
   FakeLoginUI login_ui;
   login_ui_service->SetLoginUI(&login_ui);
 
-  SyncErrorController error(&service);
+  syncer::SyncErrorController error(&service);
   SyncGlobalError global_error(
       GlobalErrorServiceFactory::GetForProfile(profile()), login_ui_service,
       &error, &service);
 
-  browser_sync::SyncBackendHost::Status status;
+  syncer::SyncEngine::Status status;
   EXPECT_CALL(service, QueryDetailedSyncStatus(_))
               .WillRepeatedly(Return(false));
 

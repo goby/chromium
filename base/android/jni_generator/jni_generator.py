@@ -138,7 +138,7 @@ def JavaDataTypeToC(java_type):
 def WrapCTypeForDeclaration(c_type):
   """Wrap the C datatype in a JavaRef if required."""
   if re.match(RE_SCOPED_JNI_TYPES, c_type):
-    return 'const JavaParamRef<' + c_type + '>&'
+    return 'const base::android::JavaParamRef<' + c_type + '>&'
   else:
     return c_type
 
@@ -153,7 +153,11 @@ def JavaDataTypeToCForCalledByNativeParam(java_type):
   if java_type == 'int':
     return 'JniIntWrapper'
   else:
-    return JavaDataTypeToC(java_type)
+    c_type = JavaDataTypeToC(java_type)
+    if re.match(RE_SCOPED_JNI_TYPES, c_type):
+      return 'const base::android::JavaRefOrBare<' + c_type + '>&'
+    else:
+      return c_type
 
 
 def JavaReturnValueToC(java_type):
@@ -177,7 +181,6 @@ class JniParams(object):
   _fully_qualified_class = ''
   _package = ''
   _inner_classes = []
-  _remappings = []
   _implicit_imports = []
 
   @staticmethod
@@ -268,7 +271,7 @@ class JniParams(object):
       return prefix + pod_param_map[param]
     if '/' in param:
       # Coming from javap, use the fully qualified param directly.
-      return prefix + 'L' + JniParams.RemapClassName(param) + ';'
+      return prefix + 'L' + param + ';'
 
     for qualified_name in (object_param_list +
                            [JniParams._fully_qualified_class] +
@@ -276,7 +279,7 @@ class JniParams(object):
       if (qualified_name.endswith('/' + param) or
           qualified_name.endswith('$' + param.replace('.', '$')) or
           qualified_name == 'L' + param):
-        return prefix + JniParams.RemapClassName(qualified_name) + ';'
+        return prefix + qualified_name + ';'
 
     # Is it from an import? (e.g. referecing Class from import pkg.Class;
     # note that referencing an inner class Inner from import pkg.Class.Inner
@@ -290,7 +293,7 @@ class JniParams(object):
                             'and used by JNI (%s). Please import the outer '
                             'class and use Outer.Inner instead.' %
                             (qualified_name, param))
-        return prefix + JniParams.RemapClassName(qualified_name) + ';'
+        return prefix + qualified_name + ';'
 
     # Is it an inner class from an outer class import? (e.g. referencing
     # Class.Inner from import pkg.Class).
@@ -300,8 +303,7 @@ class JniParams(object):
       inner = components[-1]
       for qualified_name in JniParams._imports:
         if qualified_name.endswith('/' + outer):
-          return (prefix + JniParams.RemapClassName(qualified_name) +
-                  '$' + inner + ';')
+          return (prefix + qualified_name + '$' + inner + ';')
       raise SyntaxError('Inner class (%s) can not be '
                         'used directly by JNI. Please import the outer '
                         'class, probably:\n'
@@ -312,8 +314,7 @@ class JniParams(object):
     JniParams._CheckImplicitImports(param)
 
     # Type not found, falling back to same package as this class.
-    return (prefix + 'L' +
-            JniParams.RemapClassName(JniParams._package + '/' + param) + ';')
+    return (prefix + 'L' + JniParams._package + '/' + param + ';')
 
   @staticmethod
   def _CheckImplicitImports(param):
@@ -355,51 +356,20 @@ class JniParams(object):
     ret = []
     for p in [p.strip() for p in params.split(',')]:
       items = p.split(' ')
+
+      # Remove @Annotations from parameters.
+      while items[0].startswith('@'):
+        del items[0]
+
       if 'final' in items:
         items.remove('final')
+
       param = Param(
           datatype=items[0],
           name=(items[1] if len(items) > 1 else 'p%s' % len(ret)),
       )
       ret += [param]
     return ret
-
-  @staticmethod
-  def RemapClassName(class_name):
-    """Remaps class names using the jarjar mapping table."""
-    for old, new in JniParams._remappings:
-      if old.endswith('**') and old[:-2] in class_name:
-        return class_name.replace(old[:-2], new, 1)
-      if '*' not in old and class_name.endswith(old):
-        return class_name.replace(old, new, 1)
-
-    return class_name
-
-  @staticmethod
-  def SetJarJarMappings(mappings):
-    """Parse jarjar mappings from a string."""
-    JniParams._remappings = []
-    for line in mappings.splitlines():
-      rule = line.split()
-      if rule[0] != 'rule':
-        continue
-      _, src, dest = rule
-      src = src.replace('.', '/')
-      dest = dest.replace('.', '/')
-      if src.endswith('**'):
-        src_real_name = src[:-2]
-      else:
-        assert not '*' in src
-        src_real_name = src
-
-      if dest.endswith('@0'):
-        JniParams._remappings.append((src, dest[:-2] + src_real_name))
-      elif dest.endswith('@1'):
-        assert '**' in src
-        JniParams._remappings.append((src, dest[:-2]))
-      else:
-        assert not '@' in dest
-        JniParams._remappings.append((src, dest))
 
 
 def ExtractJNINamespace(contents):
@@ -548,9 +518,15 @@ RE_SCOPED_JNI_TYPES = re.compile('jobject|jclass|jstring|jthrowable|.*Array')
 RE_CALLED_BY_NATIVE = re.compile(
     '@CalledByNative(?P<Unchecked>(Unchecked)*?)(?:\("(?P<annotation>.*)"\))?'
     '\s+(?P<prefix>[\w ]*?)'
+    '(:?\s*@\w+)?'  # Ignore annotations in return types.
     '\s*(?P<return_type>\S+?)'
     '\s+(?P<name>\w+)'
     '\s*\((?P<params>[^\)]*)\)')
+
+
+# Removes empty lines that are indented (i.e. start with 2x spaces).
+def RemoveIndentedEmptyLines(string):
+  return re.sub('^(?: {2})+$\n', '', string, flags=re.MULTILINE)
 
 
 def ExtractCalledByNatives(contents):
@@ -743,14 +719,7 @@ class InlHeaderFileGenerator(object):
     self.header_guard = fully_qualified_class.replace('/', '_') + '_JNI'
     self.constant_fields = constant_fields
     self.options = options
-    self.init_native = self.ExtractInitNative(options)
 
-  def ExtractInitNative(self, options):
-    for native in self.natives:
-      if options.jni_init_native_name == 'native' + native.name:
-        self.natives.remove(native)
-        return native
-    return None
 
   def GetContent(self):
     """Returns the content of the JNI binding file."""
@@ -777,7 +746,7 @@ ${INCLUDES}
 // Step 1: forward declarations.
 namespace {
 $CLASS_PATH_DEFINITIONS
-$METHOD_ID_DEFINITIONS
+
 }  // namespace
 
 $OPEN_NAMESPACE
@@ -791,14 +760,13 @@ $METHOD_STUBS
 $JNI_NATIVE_METHODS
 $REGISTER_NATIVES
 $CLOSE_NAMESPACE
-$JNI_REGISTER_NATIVES
+
 #endif  // ${HEADER_GUARD}
 """)
     values = {
         'SCRIPT_NAME': self.options.script_name,
         'FULLY_QUALIFIED_CLASS': self.fully_qualified_class,
         'CLASS_PATH_DEFINITIONS': self.GetClassPathDefinitionsString(),
-        'METHOD_ID_DEFINITIONS': self.GetMethodIDDefinitionsString(),
         'CONSTANT_FIELDS': self.GetConstantFieldsString(),
         'METHOD_STUBS': self.GetMethodStubsString(),
         'OPEN_NAMESPACE': self.GetOpenNamespaceString(),
@@ -807,28 +775,14 @@ $JNI_REGISTER_NATIVES
         'CLOSE_NAMESPACE': self.GetCloseNamespaceString(),
         'HEADER_GUARD': self.header_guard,
         'INCLUDES': self.GetIncludesString(),
-        'JNI_REGISTER_NATIVES': self.GetJNIRegisterNativesString()
     }
+    assert ((values['JNI_NATIVE_METHODS'] == '') ==
+            (values['REGISTER_NATIVES'] == ''))
     return WrapOutput(template.substitute(values))
 
   def GetClassPathDefinitionsString(self):
     ret = []
     ret += [self.GetClassPathDefinitions()]
-    return '\n'.join(ret)
-
-  def GetMethodIDDefinitionsString(self):
-    """Returns the definition of method ids for the called by native methods."""
-    if not self.options.eager_called_by_natives:
-      return ''
-    template = Template("""\
-jmethodID g_${JAVA_CLASS}_${METHOD_ID_VAR_NAME} = NULL;""")
-    ret = []
-    for called_by_native in self.called_by_natives:
-      values = {
-          'JAVA_CLASS': called_by_native.java_class_name or self.class_name,
-          'METHOD_ID_VAR_NAME': called_by_native.method_id_var_name,
-      }
-      ret += [template.substitute(values)]
     return '\n'.join(ret)
 
   def GetConstantFieldsString(self):
@@ -845,24 +799,12 @@ jmethodID g_${JAVA_CLASS}_${METHOD_ID_VAR_NAME} = NULL;""")
     ret = []
     for native in self.natives:
       ret += [self.GetNativeStub(native)]
-    if self.options.eager_called_by_natives:
-      ret += self.GetEagerCalledByNativeMethodStubs()
-    else:
-      ret += self.GetLazyCalledByNativeMethodStubs()
+    ret += self.GetLazyCalledByNativeMethodStubs()
     return '\n'.join(ret)
 
   def GetLazyCalledByNativeMethodStubs(self):
     return [self.GetLazyCalledByNativeMethodStub(called_by_native)
             for called_by_native in self.called_by_natives]
-
-  def GetEagerCalledByNativeMethodStubs(self):
-    ret = []
-    if self.called_by_natives:
-      ret += ['namespace {']
-      for called_by_native in self.called_by_natives:
-        ret += [self.GetEagerCalledByNativeMethodStub(called_by_native)]
-      ret += ['}  // namespace']
-    return ret
 
   def GetIncludesString(self):
     if not self.options.includes:
@@ -894,7 +836,7 @@ jmethodID g_${JAVA_CLASS}_${METHOD_ID_VAR_NAME} = NULL;""")
 
   def GetJNINativeMethodsString(self):
     """Returns the implementation of the array of native methods."""
-    if self.options.native_exports and not self.options.native_exports_optional:
+    if not self.options.native_exports_optional:
       return ''
     template = Template("""\
 static const JNINativeMethod kMethods${JAVA_CLASS}[] = {
@@ -903,62 +845,36 @@ ${KMETHODS}
 """)
     return self.SubstituteNativeMethods(template)
 
-  def GetRegisterCalledByNativesImplString(self):
-    """Returns the code for registering the called by native methods."""
-    if not self.options.eager_called_by_natives:
-      return ''
-    template = Template("""\
-  g_${JAVA_CLASS}_${METHOD_ID_VAR_NAME} = ${GET_METHOD_ID_IMPL}
-  if (g_${JAVA_CLASS}_${METHOD_ID_VAR_NAME} == NULL) {
-    return false;
-  }
-    """)
-    ret = []
-    for called_by_native in self.called_by_natives:
-      values = {
-          'JAVA_CLASS': called_by_native.java_class_name or self.class_name,
-          'METHOD_ID_VAR_NAME': called_by_native.method_id_var_name,
-          'GET_METHOD_ID_IMPL': self.GetMethodIDImpl(called_by_native),
-      }
-      ret += [template.substitute(values)]
-    return '\n'.join(ret)
-
   def GetRegisterNativesString(self):
     """Returns the code for RegisterNatives."""
+    natives = self.GetRegisterNativesImplString()
+    if not natives:
+      return ''
+
     template = Template("""\
 ${REGISTER_NATIVES_SIGNATURE} {
 ${EARLY_EXIT}
-${CLASSES}
 ${NATIVES}
-${CALLED_BY_NATIVES}
   return true;
 }
 """)
-    signature = 'static bool RegisterNativesImpl(JNIEnv* env'
-    if self.init_native:
-      signature += ', jclass clazz)'
-    else:
-      signature += ')'
-
+    signature = 'static bool RegisterNativesImpl(JNIEnv* env)'
     early_exit = ''
     if self.options.native_exports_optional:
       early_exit = """\
   if (base::android::IsManualJniRegistrationDisabled()) return true;
 """
 
-    natives = self.GetRegisterNativesImplString()
-    called_by_natives = self.GetRegisterCalledByNativesImplString()
     values = {'REGISTER_NATIVES_SIGNATURE': signature,
               'EARLY_EXIT': early_exit,
-              'CLASSES': self.GetFindClasses(),
               'NATIVES': natives,
-              'CALLED_BY_NATIVES': called_by_natives,
              }
+
     return template.substitute(values)
 
   def GetRegisterNativesImplString(self):
     """Returns the shared implementation for RegisterNatives."""
-    if self.options.native_exports and not self.options.native_exports_optional:
+    if not self.options.native_exports_optional:
       return ''
 
     template = Template("""\
@@ -973,34 +889,6 @@ ${CALLED_BY_NATIVES}
   }
 """)
     return self.SubstituteNativeMethods(template)
-
-  def GetJNIRegisterNativesString(self):
-    """Returns the implementation for the JNI registration of native methods."""
-    if not self.init_native:
-      return ''
-
-    template = Template("""\
-extern "C" JNIEXPORT bool JNICALL
-Java_${FULLY_QUALIFIED_CLASS}_${INIT_NATIVE_NAME}(JNIEnv* env, jclass clazz) {
-  return ${NAMESPACE}RegisterNativesImpl(env, clazz);
-}
-""")
-
-    if self.options.native_exports:
-      java_name = JniParams.RemapClassName(self.fully_qualified_class)
-      java_name = java_name.replace('_', '_1').replace('/', '_')
-    else:
-      java_name = self.fully_qualified_class.replace('/', '_')
-
-    namespace = ''
-    if self.namespace:
-      namespace = self.namespace + '::'
-    values = {'FULLY_QUALIFIED_CLASS': java_name,
-              'INIT_NATIVE_NAME': 'native' + self.init_native.name,
-              'NAMESPACE': namespace,
-              'REGISTER_NATIVES_IMPL': self.GetRegisterNativesImplString()
-             }
-    return template.substitute(values)
 
   def GetOpenNamespaceString(self):
     if self.namespace:
@@ -1077,8 +965,7 @@ Java_${FULLY_QUALIFIED_CLASS}_${INIT_NATIVE_NAME}(JNIEnv* env, jclass clazz) {
     """
     template = Template("Java_${JAVA_NAME}_native${NAME}")
 
-    java_name = JniParams.RemapClassName(self.fully_qualified_class)
-    java_name = java_name.replace('_', '_1').replace('/', '_')
+    java_name = self.fully_qualified_class.replace('_', '_1').replace('/', '_')
     if native.java_class_name:
       java_name += '_00024' + native.java_class_name
 
@@ -1087,7 +974,8 @@ Java_${FULLY_QUALIFIED_CLASS}_${INIT_NATIVE_NAME}(JNIEnv* env, jclass clazz) {
     return template.substitute(values)
 
   def GetJavaParamRefForCall(self, c_type, name):
-    return Template('JavaParamRef<${TYPE}>(env, ${NAME})').substitute({
+    return Template(
+        'base::android::JavaParamRef<${TYPE}>(env, ${NAME})').substitute({
         'TYPE': c_type,
         'NAME': name,
     })
@@ -1103,9 +991,7 @@ Java_${FULLY_QUALIFIED_CLASS}_${INIT_NATIVE_NAME}(JNIEnv* env, jclass clazz) {
       params = native.params[1:]
     else:
       params = native.params
-    params_in_call = []
-    if not self.options.pure_native_methods:
-      params_in_call = ['env'] + self.GetJNIFirstParamForCall(native)
+    params_in_call = ['env'] + self.GetJNIFirstParamForCall(native)
     for p in params:
       c_type = JavaDataTypeToC(p.datatype)
       if re.match(RE_SCOPED_JNI_TYPES, c_type):
@@ -1114,15 +1000,15 @@ Java_${FULLY_QUALIFIED_CLASS}_${INIT_NATIVE_NAME}(JNIEnv* env, jclass clazz) {
         params_in_call.append(p.name)
     params_in_call = ', '.join(params_in_call)
 
-    if self.options.native_exports:
-      stub_visibility = 'extern "C" __attribute__((visibility("default")))\n'
-    else:
-      stub_visibility = 'static '
     return_type = return_declaration = JavaDataTypeToC(native.return_type)
     post_call = ''
     if re.match(RE_SCOPED_JNI_TYPES, return_type):
       post_call = '.Release()'
-      return_declaration = 'ScopedJavaLocalRef<' + return_type + '>'
+      return_declaration = ('base::android::ScopedJavaLocalRef<' + return_type +
+                            '>')
+    profiling_entered_native = ''
+    if self.options.enable_profiling:
+      profiling_entered_native = 'JNI_LINK_SAVED_FRAME_POINTER;'
     values = {
         'RETURN': return_type,
         'RETURN_DECLARATION': return_declaration,
@@ -1132,7 +1018,7 @@ Java_${FULLY_QUALIFIED_CLASS}_${INIT_NATIVE_NAME}(JNIEnv* env, jclass clazz) {
         'PARAMS_IN_CALL': params_in_call,
         'POST_CALL': post_call,
         'STUB_NAME': self.GetStubName(native),
-        'STUB_VISIBILITY': stub_visibility,
+        'PROFILING_ENTERED_NATIVE': profiling_entered_native,
     }
 
     if is_method:
@@ -1145,8 +1031,8 @@ Java_${FULLY_QUALIFIED_CLASS}_${INIT_NATIVE_NAME}(JNIEnv* env, jclass clazz) {
           'P0_TYPE': native.p0_type,
       })
       template = Template("""\
-${STUB_VISIBILITY}${RETURN} ${STUB_NAME}(JNIEnv* env,
-    ${PARAMS_IN_STUB}) {
+JNI_GENERATOR_EXPORT ${RETURN} ${STUB_NAME}(JNIEnv* env, ${PARAMS_IN_STUB}) {
+  ${PROFILING_ENTERED_NATIVE}
   ${P0_TYPE}* native = reinterpret_cast<${P0_TYPE}*>(${PARAM0_NAME});
   CHECK_NATIVE_PTR(env, jcaller, native, "${NAME}"${OPTIONAL_ERROR_RETURN});
   return native->${NAME}(${PARAMS_IN_CALL})${POST_CALL};
@@ -1156,16 +1042,21 @@ ${STUB_VISIBILITY}${RETURN} ${STUB_NAME}(JNIEnv* env,
       template = Template("""
 static ${RETURN_DECLARATION} ${NAME}(JNIEnv* env, ${PARAMS});
 
-${STUB_VISIBILITY}${RETURN} ${STUB_NAME}(JNIEnv* env, ${PARAMS_IN_STUB}) {
+JNI_GENERATOR_EXPORT ${RETURN} ${STUB_NAME}(JNIEnv* env, ${PARAMS_IN_STUB}) {
+  ${PROFILING_ENTERED_NATIVE}
   return ${NAME}(${PARAMS_IN_CALL})${POST_CALL};
 }
 """)
 
-    return template.substitute(values)
+    return RemoveIndentedEmptyLines(template.substitute(values))
 
   def GetArgument(self, param):
-    return ('as_jint(' + param.name + ')'
-            if param.datatype == 'int' else param.name)
+    if param.datatype == 'int':
+      return 'as_jint(' + param.name + ')'
+    elif re.match(RE_SCOPED_JNI_TYPES, JavaDataTypeToC(param.datatype)):
+      return param.name + '.obj()'
+    else:
+      return param.name
 
   def GetArgumentsInCall(self, params):
     """Return a string of arguments to call from native into Java"""
@@ -1178,8 +1069,9 @@ ${STUB_VISIBILITY}${RETURN} ${STUB_NAME}(JNIEnv* env, ${PARAMS_IN_STUB}) {
       first_param_in_declaration = ''
       first_param_in_call = ('%s_clazz(env)' % java_class)
     else:
-      first_param_in_declaration = ', jobject obj'
-      first_param_in_call = 'obj'
+      first_param_in_declaration = (
+          ', const base::android::JavaRefOrBare<jobject>& obj')
+      first_param_in_call = 'obj.obj()'
     params_in_declaration = self.GetCalledByNativeParamsInDeclaration(
         called_by_native)
     if params_in_declaration:
@@ -1205,10 +1097,13 @@ ${STUB_VISIBILITY}${RETURN} ${STUB_NAME}(JNIEnv* env, ${PARAMS_IN_STUB}) {
       pre_call = ' ' + pre_call
       return_declaration = return_type + ' ret ='
       if re.match(RE_SCOPED_JNI_TYPES, return_type):
-        return_type = 'ScopedJavaLocalRef<' + return_type + '>'
+        return_type = 'base::android::ScopedJavaLocalRef<' + return_type + '>'
         return_clause = 'return ' + return_type + '(env, ret);'
       else:
         return_clause = 'return ret;'
+    profiling_leaving_native = ''
+    if self.options.enable_profiling:
+      profiling_leaving_native = 'JNI_SAVE_FRAME_POINTER;'
     return {
         'JAVA_CLASS': java_class,
         'RETURN_TYPE': return_type,
@@ -1224,20 +1119,10 @@ ${STUB_VISIBILITY}${RETURN} ${STUB_NAME}(JNIEnv* env, ${PARAMS_IN_STUB}) {
         'PARAMS_IN_CALL': params_in_call,
         'METHOD_ID_VAR_NAME': called_by_native.method_id_var_name,
         'CHECK_EXCEPTION': check_exception,
-        'GET_METHOD_ID_IMPL': self.GetMethodIDImpl(called_by_native)
+        'GET_METHOD_ID_IMPL': self.GetMethodIDImpl(called_by_native),
+        'PROFILING_LEAVING_NATIVE': profiling_leaving_native,
     }
 
-  def GetEagerCalledByNativeMethodStub(self, called_by_native):
-    """Returns the implementation of the called by native method."""
-    template = Template("""
-static ${RETURN_TYPE} ${METHOD_ID_VAR_NAME}(\
-JNIEnv* env${FIRST_PARAM_IN_DECLARATION}${PARAMS_IN_DECLARATION}) {
-  ${RETURN_DECLARATION}${PRE_CALL}env->${ENV_CALL}(${FIRST_PARAM_IN_CALL},
-      g_${JAVA_CLASS}_${METHOD_ID_VAR_NAME}${PARAMS_IN_CALL})${POST_CALL};
-  ${RETURN_CLAUSE}
-}""")
-    values = self.GetCalledByNativeValues(called_by_native)
-    return template.substitute(values)
 
   def GetLazyCalledByNativeMethodStub(self, called_by_native):
     """Returns a string."""
@@ -1252,11 +1137,11 @@ ${FUNCTION_SIGNATURE} {""")
     template = Template("""
 static base::subtle::AtomicWord g_${JAVA_CLASS}_${METHOD_ID_VAR_NAME} = 0;
 ${FUNCTION_HEADER}
-  /* Must call RegisterNativesImpl()  */
   CHECK_CLAZZ(env, ${FIRST_PARAM_IN_CALL},
       ${JAVA_CLASS}_clazz(env)${OPTIONAL_ERROR_RETURN});
   jmethodID method_id =
     ${GET_METHOD_ID_IMPL}
+  ${PROFILING_LEAVING_NATIVE}
   ${RETURN_DECLARATION}
      ${PRE_CALL}env->${ENV_CALL}(${FIRST_PARAM_IN_CALL},
           method_id${PARAMS_IN_CALL})${POST_CALL};
@@ -1271,7 +1156,7 @@ ${FUNCTION_HEADER}
           function_header_with_unused_template.substitute(values))
     else:
       values['FUNCTION_HEADER'] = function_header_template.substitute(values)
-    return template.substitute(values)
+    return RemoveIndentedEmptyLines(template.substitute(values))
 
   def GetKMethodArrayEntry(self, native):
     template = Template('    { "native${NAME}", ${JNI_SIGNATURE}, ' +
@@ -1299,37 +1184,26 @@ ${FUNCTION_HEADER}
     ret = []
     template = Template("""\
 const char k${JAVA_CLASS}ClassPath[] = "${JNI_CLASS_PATH}";""")
-    native_classes = self.GetUniqueClasses(self.natives)
-    called_by_native_classes = self.GetUniqueClasses(self.called_by_natives)
-    if self.options.native_exports:
-      all_classes = called_by_native_classes
-    else:
-      all_classes = native_classes
-      all_classes.update(called_by_native_classes)
+    all_classes = self.GetUniqueClasses(self.called_by_natives)
+    if self.options.native_exports_optional:
+      all_classes.update(self.GetUniqueClasses(self.natives))
 
     for clazz in all_classes:
       values = {
           'JAVA_CLASS': clazz,
-          'JNI_CLASS_PATH': JniParams.RemapClassName(all_classes[clazz]),
+          'JNI_CLASS_PATH': all_classes[clazz],
       }
       ret += [template.substitute(values)]
     ret += ''
 
-    class_getter_methods = []
-    if self.options.native_exports:
-      template = Template("""\
+    template = Template("""\
 // Leaking this jclass as we cannot use LazyInstance from some threads.
 base::subtle::AtomicWord g_${JAVA_CLASS}_clazz __attribute__((unused)) = 0;
 #define ${JAVA_CLASS}_clazz(env) \
 base::android::LazyGetClass(env, k${JAVA_CLASS}ClassPath, \
 &g_${JAVA_CLASS}_clazz)""")
-    else:
-      template = Template("""\
-// Leaking this jclass as we cannot use LazyInstance from some threads.
-jclass g_${JAVA_CLASS}_clazz = NULL;
-#define ${JAVA_CLASS}_clazz(env) g_${JAVA_CLASS}_clazz""")
 
-    for clazz in called_by_native_classes:
+    for clazz in all_classes:
       values = {
           'JAVA_CLASS': clazz,
       }
@@ -1337,37 +1211,9 @@ jclass g_${JAVA_CLASS}_clazz = NULL;
 
     return '\n'.join(ret)
 
-  def GetFindClasses(self):
-    """Returns the imlementation of FindClass for all known classes."""
-    if self.init_native:
-      if self.options.native_exports:
-        template = Template("""\
-  base::subtle::Release_Store(&g_${JAVA_CLASS}_clazz,
-      static_cast<base::subtle::AtomicWord>(env->NewWeakGlobalRef(clazz));""")
-      else:
-        template = Template("""\
-  g_${JAVA_CLASS}_clazz = static_cast<jclass>(env->NewWeakGlobalRef(clazz));""")
-    else:
-      if self.options.native_exports:
-        return '\n'
-      template = Template("""\
-  g_${JAVA_CLASS}_clazz = reinterpret_cast<jclass>(env->NewGlobalRef(
-      base::android::GetClass(env, k${JAVA_CLASS}ClassPath).obj()));""")
-    ret = []
-    for clazz in self.GetUniqueClasses(self.called_by_natives):
-      values = {'JAVA_CLASS': clazz}
-      ret += [template.substitute(values)]
-    return '\n'.join(ret)
-
   def GetMethodIDImpl(self, called_by_native):
     """Returns the implementation of GetMethodID."""
-    if self.options.eager_called_by_natives:
-      template = Template("""\
-env->Get${STATIC_METHOD_PART}MethodID(
-      ${JAVA_CLASS}_clazz(env),
-      "${JNI_NAME}", ${JNI_SIGNATURE});""")
-    else:
-      template = Template("""\
+    template = Template("""\
   base::android::MethodID::LazyGet<
       base::android::MethodID::TYPE_${STATIC}>(
       env, ${JAVA_CLASS}_clazz(env),
@@ -1391,7 +1237,6 @@ env->Get${STATIC_METHOD_PART}MethodID(
         'JNI_NAME': jni_name,
         'METHOD_ID_VAR_NAME': called_by_native.method_id_var_name,
         'STATIC': 'STATIC' if called_by_native.static else 'INSTANCE',
-        'STATIC_METHOD_PART': 'Static' if called_by_native.static else '',
         'JNI_SIGNATURE': signature,
     }
     return template.substitute(values)
@@ -1513,49 +1358,27 @@ See SampleForTests.java for more details.
                            default=0, help='Whether we should optimize JNI '
                            'generation by not regenerating files if they have '
                            'not changed.')
-  option_parser.add_option('--jarjar',
-                           help='Path to optional jarjar rules file.')
   option_parser.add_option('--script_name', default=GetScriptName(),
                            help='The name of this script in the generated '
                            'header.')
   option_parser.add_option('--includes',
                            help='The comma-separated list of header files to '
                            'include in the generated header.')
-  option_parser.add_option('--pure_native_methods',
-                           action='store_true', dest='pure_native_methods',
-                           help='When true, the native methods will be called '
-                           'without any JNI-specific arguments.')
   option_parser.add_option('--ptr_type', default='int',
                            type='choice', choices=['int', 'long'],
                            help='The type used to represent native pointers in '
                            'Java code. For 32-bit, use int; '
                            'for 64-bit, use long.')
-  option_parser.add_option('--jni_init_native_name', default='',
-                           help='The name of the JNI registration method that '
-                           'is used to initialize all native methods. If a '
-                           'method with this name is not present in the Java '
-                           'source file, setting this option is a no-op. When '
-                           'a method with this name is found however, the '
-                           'naming convention Java_<packageName>_<className> '
-                           'will limit the initialization to only the '
-                           'top-level class.')
-  option_parser.add_option('--eager_called_by_natives',
-                           action='store_true', dest='eager_called_by_natives',
-                           help='When true, the called-by-native methods will '
-                           'be initialized in a non-atomic way.')
   option_parser.add_option('--cpp', default='cpp',
                            help='The path to cpp command.')
   option_parser.add_option('--javap', default='javap',
                            help='The path to javap command.')
-  option_parser.add_option('--native_exports', action='store_true',
-                           help='Native method registration through .so '
-                           'exports.')
   option_parser.add_option('--native_exports_optional', action='store_true',
                            help='Support both explicit and native method'
                            'registration.')
+  option_parser.add_option('--enable_profiling', action='store_true',
+                           help='Add additional profiling instrumentation.')
   options, args = option_parser.parse_args(argv)
-  if options.native_exports_optional:
-    options.native_exports = True
   if options.jar_file:
     input_file = ExtractJarInputFile(options.jar_file, options.input_file,
                                      options.output_dir)
@@ -1569,15 +1392,10 @@ See SampleForTests.java for more details.
   if options.output_dir:
     root_name = os.path.splitext(os.path.basename(input_file))[0]
     output_file = os.path.join(options.output_dir, root_name) + '_jni.h'
-  if options.jarjar:
-    with open(options.jarjar) as f:
-      JniParams.SetJarJarMappings(f.read())
   GenerateJNIHeader(input_file, output_file, options)
 
   if options.depfile:
-    build_utils.WriteDepfile(
-        options.depfile,
-        build_utils.GetPythonDependencies())
+    build_utils.WriteDepfile(options.depfile, output_file)
 
 
 if __name__ == '__main__':

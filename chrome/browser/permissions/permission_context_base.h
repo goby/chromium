@@ -5,19 +5,22 @@
 #ifndef CHROME_BROWSER_PERMISSIONS_PERMISSION_CONTEXT_BASE_H_
 #define CHROME_BROWSER_PERMISSIONS_PERMISSION_CONTEXT_BASE_H_
 
-#include "base/callback.h"
+#include <memory>
+
+#include "base/callback_forward.h"
 #include "base/containers/scoped_ptr_hash_map.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/ui/website_settings/permission_bubble_request.h"
+#include "build/build_config.h"
+#include "chrome/browser/permissions/permission_request.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "url/gurl.h"
+#include "content/public/browser/permission_type.h"
 
 #if defined(OS_ANDROID)
 class PermissionQueueController;
 #endif
+class GURL;
 class PermissionRequestID;
 class Profile;
 
@@ -29,7 +32,7 @@ using BrowserPermissionCallback = base::Callback<void(ContentSetting)>;
 
 // This base class contains common operations for granting permissions.
 // It offers the following functionality:
-//   - Creates a bubble or infobar when a permission is needed
+//   - Creates a permission request when needed.
 //   - If accepted/denied the permission is saved in content settings for
 //     future uses (for the domain that requested it).
 //   - If dismissed the permission is not saved but it's considered denied for
@@ -42,8 +45,7 @@ using BrowserPermissionCallback = base::Callback<void(ContentSetting)>;
 //     new permission.
 //   - Inherit from PermissionInfobarDelegate and implement
 //     |GetMessageText|
-//   - Edit the PermissionBubbleRequestImpl methods to add the new text for
-//     the bubble.
+//   - Edit the PermissionRequestImpl methods to add the new text.
 //   - Hit several asserts for the missing plumbing and fix them :)
 // After this you can override several other methods to customize behavior,
 // in particular it is advised to override UpdateTabContext in order to manage
@@ -55,15 +57,18 @@ using BrowserPermissionCallback = base::Callback<void(ContentSetting)>;
 class PermissionContextBase : public KeyedService {
  public:
   PermissionContextBase(Profile* profile,
-                        const ContentSettingsType permission_type);
+                        const content::PermissionType permission_type,
+                        const ContentSettingsType content_settings_type);
   ~PermissionContextBase() override;
 
   // A field trial used to enable the global permissions kill switch.
-  // This is public for testing purposes.
+  // This is public so permissions that don't yet inherit from
+  // PermissionContextBase can use it.
   static const char kPermissionsKillSwitchFieldStudy[];
 
   // The field trial param to enable the global permissions kill switch.
-  // This is public for testing purposes.
+  // This is public so permissions that don't yet inherit from
+  // PermissionContextBase can use it.
   static const char kPermissionsKillSwitchBlockedValue[];
 
   // The renderer is requesting permission to push messages.
@@ -109,6 +114,7 @@ class PermissionContextBase : public KeyedService {
   void PermissionDecided(const PermissionRequestID& id,
                          const GURL& requesting_origin,
                          const GURL& embedding_origin,
+                         bool user_gesture,
                          const BrowserPermissionCallback& callback,
                          bool persist,
                          ContentSetting content_setting);
@@ -144,17 +150,25 @@ class PermissionContextBase : public KeyedService {
   // Whether the permission should be restricted to secure origins.
   virtual bool IsRestrictedToSecureOrigins() const = 0;
 
+  content::PermissionType permission_type() const { return permission_type_; }
+  ContentSettingsType content_settings_type() const {
+    return content_settings_type_;
+  }
+
  private:
-  // Called when a bubble is no longer used so it can be cleaned up.
-  void CleanUpBubble(const PermissionRequestID& id);
+  friend class PermissionContextBaseTests;
+
+  // Called when a request is no longer used so it can be cleaned up.
+  void CleanUpRequest(const PermissionRequestID& id);
 
   Profile* profile_;
-  const ContentSettingsType permission_type_;
+  const content::PermissionType permission_type_;
+  const ContentSettingsType content_settings_type_;
 #if defined(OS_ANDROID)
-  scoped_ptr<PermissionQueueController> permission_queue_controller_;
+  std::unique_ptr<PermissionQueueController> permission_queue_controller_;
 #endif
-  base::ScopedPtrHashMap<std::string, scoped_ptr<PermissionBubbleRequest>>
-      pending_bubbles_;
+  base::ScopedPtrHashMap<std::string, std::unique_ptr<PermissionRequest>>
+      pending_requests_;
 
   // Must be the last member, to ensure that it will be
   // destroyed first, which will invalidate weak pointers

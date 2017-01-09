@@ -4,10 +4,12 @@
 
 #include "chrome/browser/search/instant_service_factory.h"
 
+#include "build/build_config.h"
 #include "chrome/browser/history/top_sites_factory.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/instant_service.h"
+#include "chrome/browser/search/suggestions/suggestions_service_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -31,8 +33,9 @@ InstantServiceFactory::InstantServiceFactory()
     : BrowserContextKeyedServiceFactory(
         "InstantService",
         BrowserContextDependencyManager::GetInstance()) {
+  DependsOn(suggestions::SuggestionsServiceFactory::GetInstance());
   DependsOn(TemplateURLServiceFactory::GetInstance());
-#if defined(ENABLE_THEMES)
+#if !defined(OS_ANDROID)
   DependsOn(ThemeServiceFactory::GetInstance());
 #endif
   DependsOn(TopSitesFactory::GetInstance());

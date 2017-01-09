@@ -8,15 +8,12 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/public/common/color_suggestion.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "third_party/WebKit/public/web/WebColorChooser.h"
 #include "third_party/WebKit/public/web/WebColorChooserClient.h"
 #include "third_party/skia/include/core/SkColor.h"
-
-namespace blink {
-class WebFrame;
-}
 
 namespace content {
 

@@ -6,12 +6,14 @@
 
 #include <set>
 
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/apps/drive/drive_app_provider.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/prefs/pref_service.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
@@ -22,6 +24,10 @@
 #endif
 
 namespace app_list {
+
+namespace {
+bool use_in_testing = false;
+}
 
 // static
 AppListSyncableService* AppListSyncableServiceFactory::GetForProfile(
@@ -36,7 +42,7 @@ AppListSyncableServiceFactory* AppListSyncableServiceFactory::GetInstance() {
 }
 
 // static
-scoped_ptr<KeyedService> AppListSyncableServiceFactory::BuildInstanceFor(
+std::unique_ptr<KeyedService> AppListSyncableServiceFactory::BuildInstanceFor(
     content::BrowserContext* browser_context) {
   Profile* profile = static_cast<Profile*>(browser_context);
 #if defined(OS_CHROMEOS)
@@ -45,8 +51,13 @@ scoped_ptr<KeyedService> AppListSyncableServiceFactory::BuildInstanceFor(
 #endif
   VLOG(1) << "BuildInstanceFor: " << profile->GetDebugName()
           << " (" << profile << ")";
-  return make_scoped_ptr(new AppListSyncableService(
-      profile, extensions::ExtensionSystem::Get(profile)));
+  return base::MakeUnique<AppListSyncableService>(
+      profile, extensions::ExtensionSystem::Get(profile));
+}
+
+// static
+void AppListSyncableServiceFactory::SetUseInTesting() {
+  use_in_testing = true;
 }
 
 AppListSyncableServiceFactory::AppListSyncableServiceFactory()
@@ -95,7 +106,7 @@ bool AppListSyncableServiceFactory::ServiceIsCreatedWithBrowserContext() const {
 }
 
 bool AppListSyncableServiceFactory::ServiceIsNULLWhileTesting() const {
-  return true;
+  return !use_in_testing;
 }
 
 }  // namespace app_list

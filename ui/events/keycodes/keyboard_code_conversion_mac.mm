@@ -9,11 +9,19 @@
 #import <Carbon/Carbon.h>
 
 #include "base/logging.h"
+#include "base/mac/mac_logging.h"
+#include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 
 namespace ui {
 
 namespace {
+
+// This value is not defined but shows up as 0x36.
+const int kVK_RightCommand = 0x36;
+// Context menu is not defined but shows up as 0x6E.
+const int kVK_ContextMenu = 0x6E;
 
 // A struct to hold a Windows keycode to Mac virtual keycode mapping.
 struct KeyCodeMap {
@@ -105,8 +113,8 @@ const KeyCodeMap kKeyCodesMap[] = {
   { VKEY_Y /* 0x59 */, kVK_ANSI_Y, 'y' },
   { VKEY_Z /* 0x5A */, kVK_ANSI_Z, 'z' },
   { VKEY_LWIN /* 0x5B */, kVK_Command, 0 },
-  { VKEY_RWIN /* 0x5C */, 0x36, 0 },
-  { VKEY_APPS /* 0x5D */, 0x36, 0 },
+  { VKEY_RWIN /* 0x5C */, kVK_RightCommand, 0 },
+  { VKEY_APPS /* 0x5D */, kVK_RightCommand, 0 },
   { VKEY_SLEEP /* 0x5F */, -1, 0 },
   { VKEY_NUMPAD0 /* 0x60 */, kVK_ANSI_Keypad0, '0' },
   { VKEY_NUMPAD1 /* 0x61 */, kVK_ANSI_Keypad1, '1' },
@@ -200,7 +208,7 @@ const KeyCodeMap kKeyCodesMap[] = {
   { VKEY_OEM_CLEAR /* 0xFE */, kVK_ANSI_KeypadClear, kClearCharCode }
 };
 
-bool IsKeypadEvent(NSEvent* event) {
+bool IsKeypadOrNumericKeyEvent(NSEvent* event) {
   // Check that this is the type of event that has a keyCode.
   switch ([event type]) {
     case NSKeyDown:
@@ -230,6 +238,16 @@ bool IsKeypadEvent(NSEvent* event) {
     case kVK_ANSI_Keypad7:
     case kVK_ANSI_Keypad8:
     case kVK_ANSI_Keypad9:
+    case kVK_ANSI_0:
+    case kVK_ANSI_1:
+    case kVK_ANSI_2:
+    case kVK_ANSI_3:
+    case kVK_ANSI_4:
+    case kVK_ANSI_5:
+    case kVK_ANSI_6:
+    case kVK_ANSI_7:
+    case kVK_ANSI_8:
+    case kVK_ANSI_9:
       return true;
   }
 
@@ -410,7 +428,7 @@ KeyboardCode KeyboardCodeFromKeyCode(unsigned short keyCode) {
     /* 0x6B */ VKEY_F14,
     /* 0x6C */ VKEY_UNKNOWN, // n/a
     /* 0x6D */ VKEY_F10,
-    /* 0x6E */ VKEY_UNKNOWN, // n/a (Windows95 key?)
+    /* 0x6E */ VKEY_APPS, // Context Menu key
     /* 0x6F */ VKEY_F12,
     /* 0x70 */ VKEY_UNKNOWN, // n/a
     /* 0x71 */ VKEY_F15,
@@ -438,6 +456,7 @@ KeyboardCode KeyboardCodeFromKeyCode(unsigned short keyCode) {
 
 DomKey DomKeyFromKeyCode(unsigned short keyCode) {
   switch (keyCode) {
+    case kVK_ANSI_KeypadEnter:
     case kVK_Return:
       return DomKey::ENTER;
     case kVK_Tab:
@@ -447,6 +466,7 @@ DomKey DomKeyFromKeyCode(unsigned short keyCode) {
     case kVK_Escape:
       return DomKey::ESCAPE;
     case kVK_Command:
+    case kVK_RightCommand:
       return DomKey::META;
     case kVK_Shift:
     case kVK_RightShift:
@@ -462,11 +482,11 @@ DomKey DomKeyFromKeyCode(unsigned short keyCode) {
     case kVK_Function:
       return DomKey::FN;
     case kVK_VolumeUp:
-      return DomKey::VOLUME_UP;
+      return DomKey::AUDIO_VOLUME_UP;
     case kVK_VolumeDown:
-      return DomKey::VOLUME_DOWN;
+      return DomKey::AUDIO_VOLUME_DOWN;
     case kVK_Mute:
-      return DomKey::VOLUME_MUTE;
+      return DomKey::AUDIO_VOLUME_MUTE;
     case kVK_F1:
       return DomKey::F1;
     case kVK_F2:
@@ -527,6 +547,8 @@ DomKey DomKeyFromKeyCode(unsigned short keyCode) {
       return DomKey::ARROW_DOWN;
     case kVK_UpArrow:
       return DomKey::ARROW_UP;
+    case kVK_ContextMenu:
+      return DomKey::CONTEXT_MENU;
     default:
       return DomKey::NONE;
   }
@@ -534,11 +556,6 @@ DomKey DomKeyFromKeyCode(unsigned short keyCode) {
 
 DomKey DomKeyFromCharCode(unichar char_code) {
   switch (char_code) {
-    case 0x03:
-      return DomKey::ENTER;  // Numpad Enter
-    // Mac maps backspace to forward delete unicode.
-    case 0x7f:
-      return DomKey::BACKSPACE;
     case NSUpArrowFunctionKey:
       return DomKey::ARROW_UP;
     case NSDownArrowFunctionKey:
@@ -634,6 +651,56 @@ DomKey DomKeyFromCharCode(unichar char_code) {
   }
 }
 
+UniChar MacKeycodeAndModifiersToCharacter(unsigned short mac_keycode,
+                                          int modifiers,
+                                          bool* is_dead_key) {
+  // Convert NSEvent modifiers to format UCKeyTranslate accepts. See docs
+  // on UCKeyTranslate for more info.
+  int unicode_modifiers = 0;
+  if (modifiers & NSShiftKeyMask)
+    unicode_modifiers |= shiftKey;
+  if (modifiers & NSAlphaShiftKeyMask)
+    unicode_modifiers |= alphaLock;
+  // if (modifiers & NSControlKeyMask)
+  //   unicode_modifiers |= controlKey;
+  if (modifiers & NSAlternateKeyMask)
+    unicode_modifiers |= optionKey;
+  // if (modifiers & NSCommandKeyMask)
+  //   unicode_modifiers |= cmdKey;
+  UInt32 modifier_key_state = (unicode_modifiers >> 8) & 0xFF;
+
+  base::ScopedCFTypeRef<TISInputSourceRef> input_source_copy(
+      TISCopyCurrentKeyboardLayoutInputSource());
+  CFDataRef layout_data = static_cast<CFDataRef>(TISGetInputSourceProperty(
+      input_source_copy, kTISPropertyUnicodeKeyLayoutData));
+  const UCKeyboardLayout* layout =
+      reinterpret_cast<const UCKeyboardLayout*>(CFDataGetBytePtr(layout_data));
+
+  UInt32 dead_key_state = 0;
+  UniCharCount char_count = 0;
+  // According Apple's doc UCKeyTranslate::maxStringLength maybe up to 255 but
+  // would actually be rare to get more than 4.
+  UniChar unicode_string[4];
+  OSStatus status =
+      UCKeyTranslate(layout, static_cast<UInt16>(mac_keycode), kUCKeyActionDown,
+                     modifier_key_state, LMGetKbdLast(), 0, &dead_key_state,
+                     arraysize(unicode_string), &char_count, unicode_string);
+
+  OSSTATUS_DCHECK(status == noErr, status);
+  *is_dead_key = dead_key_state != 0;
+  if (*is_dead_key) {
+    // A dead key, injecting space to get the diacritic in an isolated form.
+    status = UCKeyTranslate(layout, static_cast<UInt16>(kVK_Space),
+                            kUCKeyActionDown, 0, LMGetKbdLast(), 0,
+                            &dead_key_state, arraysize(unicode_string),
+                            &char_count, unicode_string);
+    OSSTATUS_DCHECK(status == noErr, status);
+  }
+
+  // TODO(chongz): Handle multiple character case. Should be rare.
+  return unicode_string[0];
+}
+
 }  // namespace
 
 int MacKeyCodeForWindowsKeyCode(KeyboardCode keycode,
@@ -718,8 +785,12 @@ int MacKeyCodeForWindowsKeyCode(KeyboardCode keycode,
 KeyboardCode KeyboardCodeFromNSEvent(NSEvent* event) {
   KeyboardCode code = VKEY_UNKNOWN;
 
-  if (!IsKeypadEvent(event) &&
+  // Numeric keys 0-9 should always return |keyCode| 0-9.
+  // https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/keyCode#Printable_keys_in_standard_position
+  if (!IsKeypadOrNumericKeyEvent(event) &&
       ([event type] == NSKeyDown || [event type] == NSKeyUp)) {
+    // Handles Dvorak-QWERTY Cmd case.
+    // https://github.com/WebKit/webkit/blob/4d41c98b1de467f5d2a8fcba84d7c5268f11b0cc/Source/WebCore/platform/mac/PlatformEventFactoryMac.mm#L329
     NSString* characters = [event characters];
     if ([characters length] > 0)
       code = KeyboardCodeFromCharCode([characters characterAtIndex:0]);
@@ -735,18 +806,73 @@ KeyboardCode KeyboardCodeFromNSEvent(NSEvent* event) {
   return KeyboardCodeFromKeyCode([event keyCode]);
 }
 
+int ISOKeyboardKeyCodeMap(int nativeKeyCode) {
+  // OS X will swap 'Backquote' and 'IntlBackslash' if it's an ISO keyboard.
+  // https://crbug.com/600607
+  switch (nativeKeyCode) {
+    case kVK_ISO_Section:
+      return kVK_ANSI_Grave;
+    case kVK_ANSI_Grave:
+      return kVK_ISO_Section;
+    default:
+      return nativeKeyCode;
+  }
+}
+
 DomCode DomCodeFromNSEvent(NSEvent* event) {
+  if (KBGetLayoutType(LMGetKbdType()) == kKeyboardISO) {
+    return ui::KeycodeConverter::NativeKeycodeToDomCode(
+        ISOKeyboardKeyCodeMap([event keyCode]));
+  }
+
   return ui::KeycodeConverter::NativeKeycodeToDomCode([event keyCode]);
 }
 
 DomKey DomKeyFromNSEvent(NSEvent* event) {
   // Apply the lookup based on the character first since that has the
-  // Keyboard layout and modifers already applied; whereas the keyCode
+  // Keyboard layout and modifiers already applied; whereas the keyCode
   // doesn't.
   if ([event type] == NSKeyDown || [event type] == NSKeyUp) {
+    // Cannot use [event characters] to check whether it's a dead key, because
+    // KeyUp event has the character form of the dead key in [event characters].
+    bool is_dead_key = false;
+    // MacKeycodeAndModifiersToCharacter() is efficient (around 6E-4 ms).
+    unichar dead_dom_key_char = MacKeycodeAndModifiersToCharacter(
+        [event keyCode], [event modifierFlags], &is_dead_key);
+    if (is_dead_key)
+      return DomKey::DeadKeyFromCombiningCharacter(dead_dom_key_char);
+
+    // [event characters] will have dead key state applied.
     NSString* characters = [event characters];
-    if ([characters length] > 0)
-      return DomKeyFromCharCode([characters characterAtIndex:0]);
+    if ([characters length] > 0) {
+      // An invalid dead key combination will produce two characters, according
+      // to spec DomKey should be the last character.
+      // e.g. On French keyboard [+a will produce "^q", DomKey should be 'q'.
+      unichar dom_key_char =
+          [characters characterAtIndex:[characters length] - 1];
+      const bool is_ctrl_down = ([event modifierFlags] & NSControlKeyMask) &&
+                                !([event modifierFlags] & NSAlternateKeyMask);
+      const bool is_command_down = [event modifierFlags] & NSCommandKeyMask;
+      // On Mac Blink won't insert ASCII character if either Ctrl or Command, or
+      // both, are down.
+      // See EditingBehavior::shouldInsertCharacter()
+      if (std::iscntrl(dom_key_char) ||
+          (dom_key_char < 0x80 && (is_ctrl_down || is_command_down))) {
+        // According to spec if the key combination produces a non-printable
+        // character, the key value should be the character without modifiers
+        // except Shift and AltGr.
+        // See https://w3c.github.io/uievents/#keys-guidelines
+        bool unused_is_dead_key;
+        const int kAllowedModifiersMask =
+            NSShiftKeyMask | NSAlphaShiftKeyMask | NSAlternateKeyMask;
+        // MacKeycodeAndModifiersToCharacter() is efficient (around 6E-4 ms).
+        dom_key_char = MacKeycodeAndModifiersToCharacter(
+            [event keyCode], [event modifierFlags] & kAllowedModifiersMask,
+            &unused_is_dead_key);
+      }
+      if (!std::iscntrl(dom_key_char))
+        return DomKeyFromCharCode(dom_key_char);
+    }
   }
   return DomKeyFromKeyCode([event keyCode]);
 }

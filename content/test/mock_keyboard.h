@@ -7,7 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include "content/test/mock_keyboard_driver_win.h"
@@ -95,10 +96,9 @@ class MockKeyboard {
                     std::wstring* output);
 
  private:
-  Layout keyboard_layout_;
-  Modifiers keyboard_modifiers_;
-
 #if defined(OS_WIN)
+  Layout keyboard_layout_ = LAYOUT_NULL;
+  Modifiers keyboard_modifiers_ = INVALID;
   MockKeyboardDriverWin driver_;
 #endif
 

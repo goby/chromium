@@ -48,6 +48,7 @@ class PRINTING_EXPORT PrintSettings {
   };
 
   PrintSettings();
+  PrintSettings(const PrintSettings& other);
   ~PrintSettings();
 
   // Reinitialize the settings to the default values.
@@ -92,6 +93,9 @@ class PRINTING_EXPORT PrintSettings {
   void set_dpi(int dpi) { dpi_ = dpi; }
   int dpi() const { return dpi_; }
 
+  void set_scale_factor(double scale_factor) { scale_factor_ = scale_factor; }
+  double scale_factor() const { return scale_factor_; }
+
   void set_supports_alpha_blend(bool supports_alpha_blend) {
     supports_alpha_blend_ = supports_alpha_blend;
   }
@@ -105,8 +109,8 @@ class PRINTING_EXPORT PrintSettings {
 #endif  // defined(OS_MACOSX)
   }
 
-  void set_ranges(const PageRanges& ranges) { ranges_ = ranges; };
-  const PageRanges& ranges() const { return ranges_; };
+  void set_ranges(const PageRanges& ranges) { ranges_ = ranges; }
+  const PageRanges& ranges() const { return ranges_; }
 
   void set_selection_only(bool selection_only) {
     selection_only_ = selection_only;
@@ -143,9 +147,13 @@ class PRINTING_EXPORT PrintSettings {
 
   int desired_dpi() const { return desired_dpi_; }
 
-  double max_shrink() const { return max_shrink_; }
+#if defined(OS_WIN)
+  void set_print_text_with_gdi(bool use_gdi) { print_text_with_gdi_ = use_gdi; }
+  bool print_text_with_gdi() const { return print_text_with_gdi_; }
 
-  double min_shrink() const { return min_shrink_; }
+  void set_printer_is_xps(bool is_xps) { printer_is_xps_ = is_xps; }
+  bool printer_is_xps() const { return printer_is_xps_; }
+#endif
 
   // Cookie generator. It is used to initialize PrintedDocument with its
   // associated PrintSettings, to be sure that each generated PrintedPage is
@@ -156,19 +164,6 @@ class PRINTING_EXPORT PrintSettings {
   // Multi-page printing. Each PageRange describes a from-to page combination.
   // This permits printing selected pages only.
   PageRanges ranges_;
-
-  // By imaging to a width a little wider than the available pixels, thin pages
-  // will be scaled down a little, matching the way they print in IE and Camino.
-  // This lets them use fewer sheets than they would otherwise, which is
-  // presumably why other browsers do this. Wide pages will be scaled down more
-  // than this.
-  double min_shrink_;
-
-  // This number determines how small we are willing to reduce the page content
-  // in order to accommodate the widest line. If the page would have to be
-  // reduced smaller to make the widest line fit, we just clip instead (this
-  // behavior matches MacIE and Mozilla, at least)
-  double max_shrink_;
 
   // Desired visible dots per inch rendering for output. Printing should be
   // scaled to ScreenDpi/dpix*desired_dpi.
@@ -214,11 +209,22 @@ class PRINTING_EXPORT PrintSettings {
   // Printer's device effective dots per inch in both axis.
   int dpi_;
 
+  // Scale factor
+  double scale_factor_;
+
   // Is the orientation landscape or portrait.
   bool landscape_;
 
   // True if this printer supports AlphaBlend.
   bool supports_alpha_blend_;
+
+#if defined(OS_WIN)
+  // True to print text with GDI.
+  bool print_text_with_gdi_;
+
+  // True if the printer is an XPS printer.
+  bool printer_is_xps_;
+#endif
 
   // If margin type is custom, this is what was requested.
   PageMargins requested_custom_margins_in_points_;

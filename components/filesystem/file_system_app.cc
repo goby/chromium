@@ -4,96 +4,91 @@
 
 #include "components/filesystem/file_system_app.h"
 
-#include "base/bind.h"
-#include "base/logging.h"
-#include "mojo/application/public/cpp/application_connection.h"
-#include "mojo/application/public/cpp/application_impl.h"
+#include <memory>
+
+#include "base/command_line.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "services/service_manager/public/cpp/connection.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/cpp/interface_registry.h"
+#include "services/service_manager/public/cpp/service_context.h"
+
+#if defined(OS_WIN)
+#include "base/base_paths_win.h"
+#include "base/path_service.h"
+#include "base/strings/utf_string_conversions.h"
+#elif defined(OS_ANDROID)
+#include "base/base_paths_android.h"
+#include "base/path_service.h"
+#elif defined(OS_LINUX)
+#include "base/environment.h"
+#include "base/nix/xdg_util.h"
+#elif defined(OS_MACOSX)
+#include "base/base_paths_mac.h"
+#include "base/path_service.h"
+#endif
 
 namespace filesystem {
 
-FileSystemApp::FileSystemApp() : app_(nullptr), in_shutdown_(false) {}
+namespace {
+
+const char kUserDataDir[] = "user-data-dir";
+
+}  // namespace filesystem
+
+FileSystemApp::FileSystemApp() : lock_table_(new LockTable) {}
 
 FileSystemApp::~FileSystemApp() {}
 
-void FileSystemApp::Initialize(mojo::ApplicationImpl* app) {
-  app_ = app;
-  tracing_.Initialize(app);
+void FileSystemApp::OnStart() {
+  tracing_.Initialize(context()->connector(), context()->identity().name());
 }
 
-bool FileSystemApp::ConfigureIncomingConnection(
-    mojo::ApplicationConnection* connection) {
-  connection->AddService<FileSystem>(this);
+bool FileSystemApp::OnConnect(const service_manager::ServiceInfo& remote_info,
+                              service_manager::InterfaceRegistry* registry) {
+  registry->AddInterface<mojom::FileSystem>(this);
   return true;
 }
 
-void FileSystemApp::RegisterDirectoryToClient(DirectoryImpl* directory,
-                                              FileSystemClientPtr client) {
-  directory->set_connection_error_handler(
-      base::Bind(&FileSystemApp::OnDirectoryConnectionError,
-                 base::Unretained(this),
-                 directory));
-  client_mapping_.emplace_back(directory, client.Pass());
-}
-
-bool FileSystemApp::OnShellConnectionError() {
-  if (client_mapping_.empty()) {
-    // If we have no current connections, we can shutdown immediately.
-    return true;
-  }
-
-  in_shutdown_ = true;
-
-  // We have live connections. Send a notification to each one indicating that
-  // they should shutdown.
-  for (std::vector<Client>::iterator it = client_mapping_.begin();
-       it != client_mapping_.end(); ++it) {
-    it->fs_client_->OnFileSystemShutdown();
-  }
-
-  return false;
-}
-
 // |InterfaceFactory<Files>| implementation:
-void FileSystemApp::Create(mojo::ApplicationConnection* connection,
-                           mojo::InterfaceRequest<FileSystem> request) {
-  new FileSystemImpl(this, connection, request.Pass());
+void FileSystemApp::Create(const service_manager::Identity& remote_identity,
+                           mojom::FileSystemRequest request) {
+  mojo::MakeStrongBinding(base::MakeUnique<FileSystemImpl>(
+                              remote_identity, GetUserDataDir(), lock_table_),
+                          std::move(request));
 }
 
-void FileSystemApp::OnDirectoryConnectionError(DirectoryImpl* directory) {
-  for (std::vector<Client>::iterator it = client_mapping_.begin();
-       it != client_mapping_.end(); ++it) {
-    if (it->directory_ == directory) {
-      client_mapping_.erase(it);
+//static
+base::FilePath FileSystemApp::GetUserDataDir() {
+  base::FilePath path;
 
-      if (in_shutdown_ && client_mapping_.empty()) {
-        // We just cleared the last directory after our shell connection went
-        // away. Time to shut ourselves down.
-        app_->Quit();
-      }
-
-      return;
-    }
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(kUserDataDir)) {
+    path = command_line->GetSwitchValuePath(kUserDataDir);
+  } else {
+#if defined(OS_WIN)
+    CHECK(PathService::Get(base::DIR_LOCAL_APP_DATA, &path));
+#elif defined(OS_MACOSX)
+    CHECK(PathService::Get(base::DIR_APP_DATA, &path));
+#elif defined(OS_ANDROID)
+    CHECK(PathService::Get(base::DIR_ANDROID_APP_DATA, &path));
+#elif defined(OS_LINUX)
+    std::unique_ptr<base::Environment> env(base::Environment::Create());
+    path = base::nix::GetXDGDirectory(env.get(),
+                                      base::nix::kXdgConfigHomeEnvVar,
+                                      base::nix::kDotConfigDir);
+#else
+    NOTIMPLEMENTED();
+#endif
+    path = path.Append(FILE_PATH_LITERAL("filesystem"));
   }
-}
 
-FileSystemApp::Client::Client(DirectoryImpl* directory,
-                              FileSystemClientPtr fs_client)
-    : directory_(directory),
-      fs_client_(fs_client.Pass()) {
-}
+  if (!base::PathExists(path))
+    base::CreateDirectory(path);
 
-FileSystemApp::Client::Client(Client&& rhs)
-    : directory_(rhs.directory_),
-      fs_client_(rhs.fs_client_.Pass()) {
-}
-
-FileSystemApp::Client::~Client() {}
-
-FileSystemApp::Client& FileSystemApp::Client::operator=(
-    FileSystemApp::Client&& rhs) {
-  directory_ = rhs.directory_;
-  fs_client_ = rhs.fs_client_.Pass();
-  return *this;
+  return path;
 }
 
 }  // namespace filesystem

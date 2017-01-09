@@ -8,7 +8,6 @@
 #include "chrome/browser/chromeos/login/signin/merge_session_xhr_request_waiter.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/web_contents.h"
 #include "net/url_request/url_request.h"
@@ -20,22 +19,14 @@ using content::WebContents;
 namespace {
 
 void DelayXHRLoadOnUIThread(
-    int render_process_id,
-    int render_view_id,
+    const content::ResourceRequestInfo::WebContentsGetter& web_contents_getter,
     const GURL& url,
     const merge_session_throttling_utils::CompletionCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  bool should_delay_request = false;
-  RenderViewHost* render_view_host =
-      RenderViewHost::FromID(render_process_id, render_view_id);
-  WebContents* web_contents = nullptr;
-  if (render_view_host) {
-    web_contents = WebContents::FromRenderViewHost(render_view_host);
-    if (web_contents)
-      should_delay_request =
-          merge_session_throttling_utils::ShouldDelayRequest(web_contents);
-  }
-  if (should_delay_request) {
+  WebContents* web_contents = web_contents_getter.Run();
+  if (web_contents &&
+      merge_session_throttling_utils::ShouldDelayRequestForWebContents(
+          web_contents)) {
     DVLOG(1) << "Creating XHR waiter for " << url.spec();
     Profile* profile =
         Profile::FromBrowserContext(web_contents->GetBrowserContext());
@@ -72,7 +63,7 @@ void MergeSessionResourceThrottle::WillStartRequest(bool* defer) {
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(
-          &DelayXHRLoadOnUIThread, info->GetChildID(), info->GetRouteID(),
+          &DelayXHRLoadOnUIThread, info->GetWebContentsGetterForRequest(),
           request_->url(),
           base::Bind(&MergeSessionResourceThrottle::OnBlockingPageComplete,
                      weak_factory_.GetWeakPtr())));
@@ -85,5 +76,5 @@ const char* MergeSessionResourceThrottle::GetNameForLogging() const {
 
 void MergeSessionResourceThrottle::OnBlockingPageComplete() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  controller()->Resume();
+  Resume();
 }

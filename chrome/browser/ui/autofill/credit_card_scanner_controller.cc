@@ -4,10 +4,11 @@
 
 #include "chrome/browser/ui/autofill/credit_card_scanner_controller.h"
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
@@ -48,17 +49,15 @@ class Controller : public CreditCardScannerViewDelegate,
   }
 
   // CreditCardScannerViewDelegate implementation.
-  void ScanCompleted(const base::string16& card_number,
-                     int expiration_month,
-                     int expiration_year) override {
+  void ScanCompleted(const CreditCard& card) override {
     AutofillMetrics::LogScanCreditCardCompleted(
         base::TimeTicks::Now() - show_time_, true);
-    callback_.Run(card_number, expiration_month, expiration_year);
+    callback_.Run(card);
     delete this;
   }
 
   // The view for the credit card scanner.
-  scoped_ptr<CreditCardScannerView> view_;
+  std::unique_ptr<CreditCardScannerView> view_;
 
   // The callback to be invoked when scanning completes successfully.
   AutofillClient::CreditCardScanCallback callback_;

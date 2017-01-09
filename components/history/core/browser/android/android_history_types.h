@@ -5,9 +5,12 @@
 #ifndef COMPONENTS_HISTORY_CORE_BROWSER_ANDROID_ANDROID_HISTORY_TYPES_H_
 #define COMPONENTS_HISTORY_CORE_BROWSER_ANDROID_ANDROID_HISTORY_TYPES_H_
 
-#include <map>
+#include <stdint.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <map>
+#include <memory>
+
+#include "base/macros.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/keyword_id.h"
 
@@ -17,8 +20,8 @@ class Statement;
 
 namespace history {
 
-typedef int64 AndroidURLID;
-typedef int64 SearchTermID;
+typedef int64_t AndroidURLID;
+typedef int64_t SearchTermID;
 
 // Wraps all columns needed to support android.provider.Browser.BookmarkColumns.
 // It is used in insert() and update() to specify the columns need to insert or
@@ -45,6 +48,7 @@ class HistoryAndBookmarkRow {
   };
 
   HistoryAndBookmarkRow();
+  HistoryAndBookmarkRow(const HistoryAndBookmarkRow& other);
   virtual ~HistoryAndBookmarkRow();
 
   // Returns the column name defined in Android.
@@ -120,11 +124,11 @@ class HistoryAndBookmarkRow {
   AndroidURLID id() const { return id_; }
 
   // The id of the parent folder containing the bookmark, if any.
-  void set_parent_id(int64 parent_id) {
+  void set_parent_id(int64_t parent_id) {
     set_value_explicitly(PARENT_ID);
     parent_id_ = parent_id;
   }
-  const int64 parent_id() const { return parent_id_; }
+  int64_t parent_id() const { return parent_id_; }
 
   // The internal URLID
   void set_url_id(URLID url_id) {
@@ -150,7 +154,7 @@ class HistoryAndBookmarkRow {
   scoped_refptr<base::RefCountedMemory> favicon_;
   int visit_count_;
   bool is_bookmark_;
-  int64 parent_id_;
+  int64_t parent_id_;
   URLID url_id_;
 
   // Used to find whether a column has been set a value explicitly.
@@ -172,6 +176,7 @@ class SearchRow {
   enum ColumnID { ID, SEARCH_TERM, SEARCH_TIME, URL, KEYWORD_ID, COLUMN_END };
 
   SearchRow();
+  SearchRow(const SearchRow& other);
   virtual ~SearchRow();
 
   // Returns the column name defined in Android.
@@ -273,7 +278,7 @@ class AndroidStatement {
   int favicon_index() const { return favicon_index_; }
 
  private:
-  scoped_ptr<sql::Statement> statement_;
+  std::unique_ptr<sql::Statement> statement_;
   int favicon_index_;
 
   DISALLOW_COPY_AND_ASSIGN(AndroidStatement);

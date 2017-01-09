@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/login/screens/controller_pairing_screen.h"
 
 #include "base/command_line.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "google_apis/gaia/gaia_auth_util.h"
@@ -50,9 +51,6 @@ bool ControllerPairingScreen::ExpectStageIs(Stage stage) const {
     LOG(ERROR) << "Incorrect stage. Expected: " << stage
                << ", current stage: " << current_stage_;
   return stage == current_stage_;
-}
-
-void ControllerPairingScreen::PrepareToShow() {
 }
 
 void ControllerPairingScreen::Show() {
@@ -102,9 +100,13 @@ void ControllerPairingScreen::PairingStageChanged(Stage new_stage) {
     }
     case ControllerPairingController::STAGE_PAIRING_DONE: {
       if (delegate_) {
-        delegate_->SetHostNetwork();
         delegate_->SetHostConfiguration();
+        delegate_->SetHostNetwork();
       }
+      break;
+    }
+    case ControllerPairingController::STAGE_HOST_NETWORK_ERROR: {
+      desired_page = kPageHostNetworkError;
       break;
     }
     case ControllerPairingController::STAGE_HOST_UPDATE_IN_PROGRESS: {
@@ -148,10 +150,8 @@ void ControllerPairingScreen::DiscoveredDevicesListChanged() {
       kContextKeyPage,
       devices.empty() ? kPageDevicesDiscovery : kPageDeviceSelect);
   std::string selected_device = context_.GetString(kContextKeySelectedDevice);
-  if (std::find(devices.begin(), devices.end(), selected_device) ==
-      devices.end()) {
+  if (!base::ContainsValue(devices, selected_device))
     selected_device.clear();
-  }
   if (devices.empty()) {
     device_preselected_ = false;
   } else if (!device_preselected_) {

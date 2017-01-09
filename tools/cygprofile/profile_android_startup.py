@@ -17,16 +17,21 @@ import sys
 import tempfile
 import time
 
+sys.path.append(os.path.join(sys.path[0], '..', '..',
+    'third_party', 'catapult', 'devil'))
+from devil.android import device_errors
+from devil.android import device_utils
+from devil.android import flag_changer
+from devil.android import forwarder
+from devil.android.sdk import intent
+
 sys.path.append(os.path.join(sys.path[0], '..', '..', 'build', 'android'))
 from pylib import constants
-from pylib import flag_changer
-from pylib import forwarder
-from pylib.device import device_errors
-from pylib.device import device_utils
-from pylib.device import intent
 
-sys.path.append(os.path.join(sys.path[0], '..', '..', 'tools', 'telemetry'))
-from telemetry.internal.util import webpagereplay
+sys.path.append(os.path.join(sys.path[0], '..', '..', 'tools', 'perf'))
+from chrome_telemetry_build import chromium_config
+sys.path.append(chromium_config.GetTelemetryDir())
+from telemetry.internal.util import wpr_server
 
 sys.path.append(os.path.join(sys.path[0], '..', '..',
     'third_party', 'webpagereplay'))
@@ -138,10 +143,9 @@ class WprManager(object):
     if self._is_test_ca_installed:
       args.extend(['--should_generate_certs',
                    '--https_root_ca_cert_path=' + self._wpr_ca_cert_path])
-    wpr_server = webpagereplay.ReplayServer(self._wpr_archive,
+    self._wpr_server = wpr_server.ReplayServer(self._wpr_archive,
         '127.0.0.1', 0, 0, None, args)
-    ports = wpr_server.StartServer()[:-1]
-    self._wpr_server = wpr_server
+    ports = self._wpr_server.StartServer()[:-1]
     self._host_http_port = ports[0]
     self._host_https_port = ports[1]
 
@@ -351,11 +355,19 @@ class AndroidProfileTool(object):
     """
     print 'Pulling cyglog data...'
     self._SetUpHostFolders()
-    self._device.PullFile(
-        self._DEVICE_CYGLOG_DIR, self._host_cyglog_dir)
+    self._device.PullFile(self._DEVICE_CYGLOG_DIR, self._host_cyglog_dir)
     files = os.listdir(self._host_cyglog_dir)
 
     if len(files) == 0:
       raise NoCyglogDataError('No cyglog data was collected')
 
-    return [os.path.join(self._host_cyglog_dir, x) for x in files]
+    # Temporary workaround/investigation: if (for unknown reason) 'adb pull' of
+    # the directory 'cyglog' into '.../Release/cyglog_data' produces
+    # '...cyglog_data/cyglog/files' instead of the usual '...cyglog_data/files',
+    # list the files deeper in the tree.
+    cyglog_dir = self._host_cyglog_dir
+    if (len(files) == 1) and (files[0] == 'cyglog'):
+      cyglog_dir = os.path.join(self._host_cyglog_dir, 'cyglog')
+      files = os.listdir(cyglog_dir)
+
+    return [os.path.join(cyglog_dir, x) for x in files]

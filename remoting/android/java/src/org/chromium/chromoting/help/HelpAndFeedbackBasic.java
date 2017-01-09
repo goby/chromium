@@ -6,8 +6,6 @@ package org.chromium.chromoting.help;
 
 import android.app.Activity;
 
-import org.chromium.chromoting.HelpActivity;
-
 /**
  * This class implements a basic UI for help-and-feedback.
  */
@@ -15,6 +13,11 @@ public class HelpAndFeedbackBasic implements HelpAndFeedback {
     @Override
     public void launchHelp(Activity activity, HelpContext helpContext) {
         HelpActivity.launch(activity, urlFromHelpContext(helpContext));
+    }
+
+    @Override
+    public void launchFeedback(Activity activity) {
+        FeedbackSender.sendFeedback(activity);
     }
 
     private static String urlFromHelpContext(HelpContext helpContext) {

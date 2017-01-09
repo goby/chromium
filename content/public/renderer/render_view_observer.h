@@ -5,8 +5,8 @@
 #ifndef CONTENT_PUBLIC_RENDERER_RENDER_VIEW_OBSERVER_H_
 #define CONTENT_PUBLIC_RENDERER_RENDER_VIEW_OBSERVER_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
@@ -31,9 +31,10 @@ class RenderViewImpl;
 class CONTENT_EXPORT RenderViewObserver : public IPC::Listener,
                                           public IPC::Sender {
  public:
-  // By default, observers will be deleted when the RenderView goes away.  If
-  // they want to outlive it, they can override this function.
-  virtual void OnDestruct();
+  // A subclass can use this to delete itself. If it does not, the subclass must
+  // always null-check each call to render_view() becase the RenderView can
+  // go away at any time.
+  virtual void OnDestruct() = 0;
 
   // These match the WebKit API notifications
   virtual void DidStartLoading() {}
@@ -53,8 +54,6 @@ class CONTENT_EXPORT RenderViewObserver : public IPC::Listener,
   virtual void FrameCreated(blink::WebLocalFrame* parent,
                             blink::WebFrame* frame) {}
   virtual void FrameDetached(blink::WebFrame* frame) {}
-  virtual void FrameWillClose(blink::WebFrame* frame) {}
-  virtual void PrintPage(blink::WebLocalFrame* frame, bool user_initiated) {}
   virtual void FocusedNodeChanged(const blink::WebNode& node) {}
   virtual void DraggableRegionsChanged(blink::WebFrame* frame) {}
   virtual void DidCommitCompositorFrame() {}
@@ -103,7 +102,7 @@ class CONTENT_EXPORT RenderViewObserver : public IPC::Listener,
   // can null out its pointer.
   void RenderViewGone();
 
-  RenderView* render_view_;
+  RenderViewImpl* render_view_;
   // The routing ID of the associated RenderView.
   int routing_id_;
 

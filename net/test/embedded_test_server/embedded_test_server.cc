@@ -4,26 +4,29 @@
 
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/process/process_metrics.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "crypto/rsa_private_key.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
+#include "net/base/port_util.h"
 #include "net/cert/pem_tokenizer.h"
 #include "net/cert/test_root_certs.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/ssl_server_socket.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
@@ -35,6 +38,7 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
+#include "net/test/test_data_directory.h"
 
 namespace net {
 namespace test_server {
@@ -50,6 +54,7 @@ EmbeddedTestServer::EmbeddedTestServer(Type type)
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (is_using_ssl_) {
+    base::ThreadRestrictions::ScopedAllowIO allow_io_for_importing_test_cert;
     TestRootCerts* root_certs = TestRootCerts::GetInstance();
     base::FilePath certs_dir(GetTestCertsDirectory());
     root_certs->AddFromFile(certs_dir.AppendASCII("root_ca_cert.pem"));
@@ -61,6 +66,13 @@ EmbeddedTestServer::~EmbeddedTestServer() {
 
   if (Started() && !ShutdownAndWaitUntilComplete()) {
     LOG(ERROR) << "EmbeddedTestServer failed to shut down.";
+  }
+
+  {
+    // Thread::Join induced by test code should cause an assert.
+    base::ThreadRestrictions::ScopedAllowIO allow_io_for_thread_join;
+
+    io_thread_.reset();
   }
 }
 
@@ -81,21 +93,38 @@ bool EmbeddedTestServer::Start() {
 bool EmbeddedTestServer::InitializeAndListen() {
   DCHECK(!Started());
 
-  listen_socket_.reset(new TCPServerSocket(nullptr, NetLog::Source()));
+  const int max_tries = 5;
+  int num_tries = 0;
+  bool is_valid_port = false;
 
-  int result = listen_socket_->ListenWithAddressAndPort("127.0.0.1", 0, 10);
-  if (result) {
-    LOG(ERROR) << "Listen failed: " << ErrorToString(result);
-    listen_socket_.reset();
-    return false;
-  }
+  do {
+    if (++num_tries > max_tries) {
+      LOG(ERROR) << "Failed to listen on a valid port after " << max_tries
+                 << " attempts.";
+      listen_socket_.reset();
+      return false;
+    }
 
-  result = listen_socket_->GetLocalAddress(&local_endpoint_);
-  if (result != OK) {
-    LOG(ERROR) << "GetLocalAddress failed: " << ErrorToString(result);
-    listen_socket_.reset();
-    return false;
-  }
+    listen_socket_.reset(new TCPServerSocket(nullptr, NetLogSource()));
+
+    int result = listen_socket_->ListenWithAddressAndPort("127.0.0.1", 0, 10);
+    if (result) {
+      LOG(ERROR) << "Listen failed: " << ErrorToString(result);
+      listen_socket_.reset();
+      return false;
+    }
+
+    result = listen_socket_->GetLocalAddress(&local_endpoint_);
+    if (result != OK) {
+      LOG(ERROR) << "GetLocalAddress failed: " << ErrorToString(result);
+      listen_socket_.reset();
+      return false;
+    }
+
+    port_ = local_endpoint_.port();
+    is_valid_port |= net::IsPortAllowedForScheme(
+        port_, is_using_ssl_ ? url::kHttpsScheme : url::kHttpScheme);
+  } while (!is_valid_port);
 
   if (is_using_ssl_) {
     base_url_ = GURL("https://" + local_endpoint_.ToString());
@@ -106,10 +135,33 @@ bool EmbeddedTestServer::InitializeAndListen() {
   } else {
     base_url_ = GURL("http://" + local_endpoint_.ToString());
   }
-  port_ = local_endpoint_.port();
 
   listen_socket_->DetachFromThread();
+
+  if (is_using_ssl_)
+    InitializeSSLServerContext();
   return true;
+}
+
+void EmbeddedTestServer::InitializeSSLServerContext() {
+  base::ThreadRestrictions::ScopedAllowIO allow_io_for_ssl_initialization;
+  base::FilePath certs_dir(GetTestCertsDirectory());
+  std::string cert_name = GetCertificateName();
+
+  base::FilePath key_path = certs_dir.AppendASCII(cert_name);
+  std::string key_string;
+  CHECK(base::ReadFileToString(key_path, &key_string));
+  std::vector<std::string> headers;
+  headers.push_back("PRIVATE KEY");
+  PEMTokenizer pem_tokenizer(key_string, headers);
+  pem_tokenizer.GetNext();
+  std::vector<uint8_t> key_vector;
+  key_vector.assign(pem_tokenizer.data().begin(), pem_tokenizer.data().end());
+
+  std::unique_ptr<crypto::RSAPrivateKey> server_key(
+      crypto::RSAPrivateKey::CreateFromPrivateKeyInfo(key_vector));
+  context_ =
+      CreateSSLServerContext(GetCertificate().get(), *server_key, ssl_config_);
 }
 
 void EmbeddedTestServer::StartAcceptingConnections() {
@@ -136,16 +188,18 @@ void EmbeddedTestServer::ShutdownOnIOThread() {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
   weak_factory_.InvalidateWeakPtrs();
   listen_socket_.reset();
-  STLDeleteContainerPairSecondPointers(connections_.begin(),
-                                       connections_.end());
   connections_.clear();
 }
 
 void EmbeddedTestServer::HandleRequest(HttpConnection* connection,
-                                       scoped_ptr<HttpRequest> request) {
+                                       std::unique_ptr<HttpRequest> request) {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
+  request->base_url = base_url_;
 
-  scoped_ptr<HttpResponse> response;
+  for (const auto& monitor : request_monitors_)
+    monitor.Run(*request);
+
+  std::unique_ptr<HttpResponse> response;
 
   for (const auto& handler : request_handlers_) {
     response = handler.Run(*request);
@@ -164,9 +218,10 @@ void EmbeddedTestServer::HandleRequest(HttpConnection* connection,
   if (!response) {
     LOG(WARNING) << "Request not handled. Returning 404: "
                  << request->relative_url;
-    scoped_ptr<BasicHttpResponse> not_found_response(new BasicHttpResponse);
+    std::unique_ptr<BasicHttpResponse> not_found_response(
+        new BasicHttpResponse);
     not_found_response->set_code(HTTP_NOT_FOUND);
-    response = not_found_response.Pass();
+    response = std::move(not_found_response);
   }
 
   response->SendResponse(
@@ -229,6 +284,8 @@ std::string EmbeddedTestServer::GetCertificateName() const {
 scoped_refptr<X509Certificate> EmbeddedTestServer::GetCertificate() const {
   DCHECK(is_using_ssl_);
   base::FilePath certs_dir(GetTestCertsDirectory());
+
+  base::ThreadRestrictions::ScopedAllowIO allow_io_for_importing_test_cert;
   return ImportCertFromFile(certs_dir, GetCertificateName());
 }
 
@@ -258,40 +315,30 @@ void EmbeddedTestServer::AddDefaultHandlers(const base::FilePath& directory) {
 
 void EmbeddedTestServer::RegisterRequestHandler(
     const HandleRequestCallback& callback) {
-  // TODO(svaldez): Add check to prevent RegisterHandler from being called
-  // after the server has started. https://crbug.com/546060
+  DCHECK(!io_thread_.get())
+      << "Handlers must be registered before starting the server.";
   request_handlers_.push_back(callback);
+}
+
+void EmbeddedTestServer::RegisterRequestMonitor(
+    const MonitorRequestCallback& callback) {
+  DCHECK(!io_thread_.get())
+      << "Monitors must be registered before starting the server.";
+  request_monitors_.push_back(callback);
 }
 
 void EmbeddedTestServer::RegisterDefaultHandler(
     const HandleRequestCallback& callback) {
-  // TODO(svaldez): Add check to prevent RegisterHandler from being called
-  // after the server has started. https://crbug.com/546060
+  DCHECK(!io_thread_.get())
+      << "Handlers must be registered before starting the server.";
   default_request_handlers_.push_back(callback);
 }
 
-scoped_ptr<StreamSocket> EmbeddedTestServer::DoSSLUpgrade(
-    scoped_ptr<StreamSocket> connection) {
+std::unique_ptr<StreamSocket> EmbeddedTestServer::DoSSLUpgrade(
+    std::unique_ptr<StreamSocket> connection) {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
 
-  base::FilePath certs_dir(GetTestCertsDirectory());
-  std::string cert_name = GetCertificateName();
-
-  base::FilePath key_path = certs_dir.AppendASCII(cert_name);
-  std::string key_string;
-  CHECK(base::ReadFileToString(key_path, &key_string));
-  std::vector<std::string> headers;
-  headers.push_back("PRIVATE KEY");
-  PEMTokenizer pem_tokenizer(key_string, headers);
-  pem_tokenizer.GetNext();
-  std::vector<uint8_t> key_vector;
-  key_vector.assign(pem_tokenizer.data().begin(), pem_tokenizer.data().end());
-
-  scoped_ptr<crypto::RSAPrivateKey> server_key(
-      crypto::RSAPrivateKey::CreateFromPrivateKeyInfo(key_vector));
-
-  return CreateSSLServerSocket(connection.Pass(), GetCertificate().get(),
-                               server_key.get(), ssl_config_);
+  return context_->CreateSSLServerSocket(std::move(connection));
 }
 
 void EmbeddedTestServer::DoAcceptLoop() {
@@ -302,13 +349,23 @@ void EmbeddedTestServer::DoAcceptLoop() {
                                       base::Unretained(this)));
     if (rv == ERR_IO_PENDING)
       return;
-    HandleAcceptResult(accepted_socket_.Pass());
+    HandleAcceptResult(std::move(accepted_socket_));
   }
+}
+
+bool EmbeddedTestServer::FlushAllSocketsAndConnectionsOnUIThread() {
+  return PostTaskToIOThreadAndWait(
+      base::Bind(&EmbeddedTestServer::FlushAllSocketsAndConnections,
+                 base::Unretained(this)));
+}
+
+void EmbeddedTestServer::FlushAllSocketsAndConnections() {
+  connections_.clear();
 }
 
 void EmbeddedTestServer::OnAcceptCompleted(int rv) {
   DCHECK_NE(ERR_IO_PENDING, rv);
-  HandleAcceptResult(accepted_socket_.Pass());
+  HandleAcceptResult(std::move(accepted_socket_));
   DoAcceptLoop();
 }
 
@@ -319,18 +376,21 @@ void EmbeddedTestServer::OnHandshakeDone(HttpConnection* connection, int rv) {
     DidClose(connection);
 }
 
-void EmbeddedTestServer::HandleAcceptResult(scoped_ptr<StreamSocket> socket) {
+void EmbeddedTestServer::HandleAcceptResult(
+    std::unique_ptr<StreamSocket> socket) {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
   if (connection_listener_)
     connection_listener_->AcceptedSocket(*socket);
 
   if (is_using_ssl_)
-    socket = DoSSLUpgrade(socket.Pass());
+    socket = DoSSLUpgrade(std::move(socket));
 
-  HttpConnection* http_connection = new HttpConnection(
-      socket.Pass(),
-      base::Bind(&EmbeddedTestServer::HandleRequest, base::Unretained(this)));
-  connections_[http_connection->socket_.get()] = http_connection;
+  std::unique_ptr<HttpConnection> http_connection_ptr =
+      base::MakeUnique<HttpConnection>(
+          std::move(socket), base::Bind(&EmbeddedTestServer::HandleRequest,
+                                        base::Unretained(this)));
+  HttpConnection* http_connection = http_connection_ptr.get();
+  connections_[http_connection->socket_.get()] = std::move(http_connection_ptr);
 
   if (is_using_ssl_) {
     SSLServerSocket* ssl_socket =
@@ -366,7 +426,7 @@ void EmbeddedTestServer::OnReadCompleted(HttpConnection* connection, int rv) {
 bool EmbeddedTestServer::HandleReadResult(HttpConnection* connection, int rv) {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
   if (connection_listener_)
-    connection_listener_->ReadFromSocket(*connection->socket_);
+    connection_listener_->ReadFromSocket(*connection->socket_, rv);
   if (rv <= 0) {
     DidClose(connection);
     return false;
@@ -386,18 +446,16 @@ void EmbeddedTestServer::DidClose(HttpConnection* connection) {
   DCHECK_EQ(1u, connections_.count(connection->socket_.get()));
 
   connections_.erase(connection->socket_.get());
-  delete connection;
 }
 
 HttpConnection* EmbeddedTestServer::FindConnection(StreamSocket* socket) {
   DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
 
-  std::map<StreamSocket*, HttpConnection*>::iterator it =
-      connections_.find(socket);
+  auto it = connections_.find(socket);
   if (it == connections_.end()) {
-    return NULL;
+    return nullptr;
   }
-  return it->second;
+  return it->second.get();
 }
 
 bool EmbeddedTestServer::PostTaskToIOThreadAndWait(
@@ -411,7 +469,7 @@ bool EmbeddedTestServer::PostTaskToIOThreadAndWait(
   //
   // To handle this situation, create temporary message loop to support the
   // PostTaskAndReply operation if the current thread as no message loop.
-  scoped_ptr<base::MessageLoop> temporary_loop;
+  std::unique_ptr<base::MessageLoop> temporary_loop;
   if (!base::MessageLoop::current())
     temporary_loop.reset(new base::MessageLoop());
 

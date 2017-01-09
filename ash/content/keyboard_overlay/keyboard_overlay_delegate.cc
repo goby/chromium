@@ -14,7 +14,8 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "ui/aura/window_event_dispatcher.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/views/controls/webview/web_dialog_view.h"
 #include "ui/views/widget/widget.h"
 
@@ -53,6 +54,7 @@ void PaintMessageHandler::RegisterMessages() {
 void PaintMessageHandler::DidPaint(const base::ListValue* args) {
   // Show the widget after the web content has been painted.
   widget_->Show();
+  web_ui()->CallJavascriptFunctionUnsafe("onWidgetShown");
 }
 
 }  // namespace
@@ -77,11 +79,12 @@ views::Widget* KeyboardOverlayDelegate::Show(views::WebDialogView* view) {
   gfx::Size size;
   GetDialogSize(&size);
   const gfx::Rect& rect =
-      Shell::GetScreen()
+      display::Screen::GetScreen()
           ->GetDisplayNearestWindow(widget_->GetNativeView())
           .work_area();
   gfx::Rect bounds(rect.x() + (rect.width() - size.width()) / 2,
-                   rect.bottom() - size.height(), size.width(), size.height());
+                   rect.y() + (rect.height() - size.height()) / 2, size.width(),
+                   size.height());
   widget_->SetBounds(bounds);
 
   // The widget will be shown when the web contents gets ready to display.
@@ -108,7 +111,7 @@ void KeyboardOverlayDelegate::GetWebUIMessageHandlers(
 void KeyboardOverlayDelegate::GetDialogSize(gfx::Size* size) const {
   using std::min;
   DCHECK(widget_);
-  gfx::Rect rect = ash::Shell::GetScreen()
+  gfx::Rect rect = display::Screen::GetScreen()
                        ->GetDisplayNearestWindow(widget_->GetNativeView())
                        .work_area();
   const int width = min(kBaseWidth, rect.width() - kHorizontalMargin);

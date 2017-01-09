@@ -12,24 +12,22 @@
 #include "base/compiler_specific.h"
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
-#include "device/hid/device_monitor_linux.h"
 
 namespace device {
 
 // This class provides information and notifications about
 // connected/disconnected input/HID devices. This class is *NOT*
 // thread-safe and all methods must be called from the FILE thread.
-class InputServiceLinux : public base::MessageLoop::DestructionObserver {
+class InputServiceLinux {
  public:
   struct InputDeviceInfo {
     enum Subsystem { SUBSYSTEM_HID, SUBSYSTEM_INPUT, SUBSYSTEM_UNKNOWN };
     enum Type { TYPE_BLUETOOTH, TYPE_USB, TYPE_SERIO, TYPE_UNKNOWN };
 
     InputDeviceInfo();
+    InputDeviceInfo(const InputDeviceInfo& other);
 
     std::string id;
     std::string name;
@@ -46,7 +44,6 @@ class InputServiceLinux : public base::MessageLoop::DestructionObserver {
     bool is_touchscreen : 1;
   };
 
-
   using DeviceMap = base::hash_map<std::string, InputDeviceInfo>;
 
   class Observer {
@@ -57,28 +54,34 @@ class InputServiceLinux : public base::MessageLoop::DestructionObserver {
   };
 
   InputServiceLinux();
-  ~InputServiceLinux() override;
+  virtual ~InputServiceLinux();
 
+  // Returns the InputServiceLinux instance for the current process. Creates one
+  // if none has been set.
   static InputServiceLinux* GetInstance();
+
+  // Returns true if an InputServiceLinux instance has been set for the current
+  // process. An instance is set on the first call to GetInstance() or
+  // SetForTesting().
   static bool HasInstance();
-  static void SetForTesting(InputServiceLinux* service);
+
+  // Sets the InputServiceLinux instance for the current process. Cannot be
+  // called if GetInstance() or SetForTesting() has already been called in the
+  // current process. |service| will never be deleted.
+  static void SetForTesting(std::unique_ptr<InputServiceLinux> service);
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
   // Returns list of all currently connected input/hid devices.
-  void GetDevices(std::vector<InputDeviceInfo>* devices);
+  virtual void GetDevices(std::vector<InputDeviceInfo>* devices);
 
   // Returns an info about input device identified by |id|. When there're
   // no input or hid device with such id, returns false and doesn't
   // modify |info|.
   bool GetDeviceInfo(const std::string& id, InputDeviceInfo* info) const;
 
-  // Implements base::MessageLoop::DestructionObserver
-  void WillDestroyCurrentMessageLoop() override;
-
  protected:
-
   void AddDevice(const InputDeviceInfo& info);
   void RemoveDevice(const std::string& id);
 
@@ -88,8 +91,6 @@ class InputServiceLinux : public base::MessageLoop::DestructionObserver {
   base::ObserverList<Observer> observers_;
 
  private:
-  friend std::default_delete<InputServiceLinux>;
-
   base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(InputServiceLinux);

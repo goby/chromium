@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/threading/thread.h"
 #include "net/base/address_tracker_linux.h"
 #include "net/dns/dns_config_service.h"
@@ -14,17 +15,17 @@ namespace net {
 
 class NetworkChangeNotifierLinux::Thread : public base::Thread {
  public:
-  explicit Thread(const base::hash_set<std::string>& ignored_interfaces);
+  explicit Thread(const std::unordered_set<std::string>& ignored_interfaces);
   ~Thread() override;
 
   // Plumbing for NetworkChangeNotifier::GetCurrentConnectionType.
   // Safe to call from any thread.
   NetworkChangeNotifier::ConnectionType GetCurrentConnectionType() {
-    return address_tracker_.GetCurrentConnectionType();
+    return address_tracker_->GetCurrentConnectionType();
   }
 
   const internal::AddressTrackerLinux* address_tracker() const {
-    return &address_tracker_;
+    return address_tracker_.get();
   }
 
  protected:
@@ -35,39 +36,42 @@ class NetworkChangeNotifierLinux::Thread : public base::Thread {
  private:
   void OnIPAddressChanged();
   void OnLinkChanged();
-  scoped_ptr<DnsConfigService> dns_config_service_;
+  std::unique_ptr<DnsConfigService> dns_config_service_;
   // Used to detect online/offline state and IP address changes.
-  internal::AddressTrackerLinux address_tracker_;
+  std::unique_ptr<internal::AddressTrackerLinux> address_tracker_;
   NetworkChangeNotifier::ConnectionType last_type_;
 
   DISALLOW_COPY_AND_ASSIGN(Thread);
 };
 
 NetworkChangeNotifierLinux::Thread::Thread(
-    const base::hash_set<std::string>& ignored_interfaces)
+    const std::unordered_set<std::string>& ignored_interfaces)
     : base::Thread("NetworkChangeNotifier"),
-      address_tracker_(
+      address_tracker_(new internal::AddressTrackerLinux(
           base::Bind(&NetworkChangeNotifierLinux::Thread::OnIPAddressChanged,
                      base::Unretained(this)),
           base::Bind(&NetworkChangeNotifierLinux::Thread::OnLinkChanged,
                      base::Unretained(this)),
           base::Bind(base::DoNothing),
-          ignored_interfaces),
-      last_type_(NetworkChangeNotifier::CONNECTION_NONE) {
-}
+          ignored_interfaces)),
+      last_type_(NetworkChangeNotifier::CONNECTION_NONE) {}
 
 NetworkChangeNotifierLinux::Thread::~Thread() {
   DCHECK(!Thread::IsRunning());
 }
 
 void NetworkChangeNotifierLinux::Thread::Init() {
-  address_tracker_.Init();
+  address_tracker_->Init();
   dns_config_service_ = DnsConfigService::CreateSystemService();
   dns_config_service_->WatchConfig(
       base::Bind(&NetworkChangeNotifier::SetDnsConfig));
 }
 
 void NetworkChangeNotifierLinux::Thread::CleanUp() {
+  // Delete AddressTrackerLinux before MessageLoop gets deleted as
+  // AddressTrackerLinux's FileDescriptorWatcher holds a pointer to the
+  // MessageLoop.
+  address_tracker_.reset();
   dns_config_service_.reset();
 }
 
@@ -91,7 +95,7 @@ void NetworkChangeNotifierLinux::Thread::OnLinkChanged() {
 }
 
 NetworkChangeNotifierLinux::NetworkChangeNotifierLinux(
-    const base::hash_set<std::string>& ignored_interfaces)
+    const std::unordered_set<std::string>& ignored_interfaces)
     : NetworkChangeNotifier(NetworkChangeCalculatorParamsLinux()),
       notifier_thread_(new Thread(ignored_interfaces)) {
   // We create this notifier thread because the notification implementation

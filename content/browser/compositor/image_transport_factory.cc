@@ -15,7 +15,7 @@ namespace content {
 namespace {
 ImageTransportFactory* g_factory = NULL;
 bool g_initialized_for_unit_tests = false;
-static gfx::DisableNullDrawGLBindings* g_disable_null_draw = NULL;
+static gl::DisableNullDrawGLBindings* g_disable_null_draw = NULL;
 
 void SetFactory(ImageTransportFactory* factory) {
   g_factory = factory;
@@ -32,7 +32,7 @@ void ImageTransportFactory::Initialize() {
 }
 
 void ImageTransportFactory::InitializeForUnitTests(
-    scoped_ptr<ImageTransportFactory> factory) {
+    std::unique_ptr<ImageTransportFactory> factory) {
   DCHECK(!g_factory);
   DCHECK(!g_initialized_for_unit_tests);
   g_initialized_for_unit_tests = true;
@@ -40,7 +40,7 @@ void ImageTransportFactory::InitializeForUnitTests(
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kEnablePixelOutputInTests))
-    g_disable_null_draw = new gfx::DisableNullDrawGLBindings;
+    g_disable_null_draw = new gl::DisableNullDrawGLBindings;
 
   SetFactory(factory.release());
 }

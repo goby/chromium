@@ -28,65 +28,67 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "wtf/SpinLock.h"
 
-#include "platform/Task.h"
-#include "platform/ThreadSafeFunctional.h"
+#include "platform/CrossThreadFunctional.h"
+#include "platform/WebTaskRunner.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebThread.h"
 #include "public/platform/WebTraceLocation.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 static const size_t bufferSize = 16;
 
-static int lock = 0;
+static SpinLock lock;
 
-static void fillBuffer(volatile char* buffer, char fillPattern)
-{
-    for (size_t i = 0; i < bufferSize; ++i)
-        buffer[i] = fillPattern;
+static void fillBuffer(volatile char* buffer, char fillPattern) {
+  for (size_t i = 0; i < bufferSize; ++i)
+    buffer[i] = fillPattern;
 }
 
-static void changeAndCheckBuffer(volatile char* buffer)
-{
-    fillBuffer(buffer, '\0');
-    int total = 0;
-    for (size_t i = 0; i < bufferSize; ++i)
-        total += buffer[i];
+static void changeAndCheckBuffer(volatile char* buffer) {
+  fillBuffer(buffer, '\0');
+  int total = 0;
+  for (size_t i = 0; i < bufferSize; ++i)
+    total += buffer[i];
 
-    EXPECT_EQ(0, total);
+  EXPECT_EQ(0, total);
 
-    // This will mess with the other thread's calculation if we accidentally get
-    // concurrency.
-    fillBuffer(buffer, '!');
+  // This will mess with the other thread's calculation if we accidentally get
+  // concurrency.
+  fillBuffer(buffer, '!');
 }
 
-static void threadMain(volatile char* buffer)
-{
-    for (int i = 0; i < 500000; ++i) {
-        spinLockLock(&lock);
-        changeAndCheckBuffer(buffer);
-        spinLockUnlock(&lock);
-    }
+static void threadMain(volatile char* buffer) {
+  for (int i = 0; i < 500000; ++i) {
+    SpinLock::Guard guard(lock);
+    changeAndCheckBuffer(buffer);
+  }
 }
 
-TEST(SpinLockTest, Torture)
-{
-    char sharedBuffer[bufferSize];
+TEST(SpinLockTest, Torture) {
+  char sharedBuffer[bufferSize];
 
-    OwnPtr<WebThread> thread1 = adoptPtr(Platform::current()->createThread("thread1"));
-    OwnPtr<WebThread> thread2 = adoptPtr(Platform::current()->createThread("thread2"));
+  std::unique_ptr<WebThread> thread1 =
+      WTF::wrapUnique(Platform::current()->createThread("thread1"));
+  std::unique_ptr<WebThread> thread2 =
+      WTF::wrapUnique(Platform::current()->createThread("thread2"));
 
-    thread1->taskRunner()->postTask(BLINK_FROM_HERE, new Task(threadSafeBind(&threadMain, AllowCrossThreadAccess(static_cast<char*>(sharedBuffer)))));
-    thread2->taskRunner()->postTask(BLINK_FROM_HERE, new Task(threadSafeBind(&threadMain, AllowCrossThreadAccess(static_cast<char*>(sharedBuffer)))));
+  thread1->getWebTaskRunner()->postTask(
+      BLINK_FROM_HERE,
+      crossThreadBind(&threadMain,
+                      crossThreadUnretained(static_cast<char*>(sharedBuffer))));
+  thread2->getWebTaskRunner()->postTask(
+      BLINK_FROM_HERE,
+      crossThreadBind(&threadMain,
+                      crossThreadUnretained(static_cast<char*>(sharedBuffer))));
 
-    thread1.clear();
-    thread2.clear();
+  thread1.reset();
+  thread2.reset();
 }
 
-} // namespace blink
+}  // namespace blink

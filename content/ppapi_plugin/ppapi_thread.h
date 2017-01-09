@@ -5,15 +5,19 @@
 #ifndef CONTENT_PPAPI_PLUGIN_PPAPI_THREAD_H_
 #define CONTENT_PPAPI_PLUGIN_PPAPI_THREAD_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/metrics/field_trial.h"
 #include "base/process/process.h"
 #include "base/scoped_native_library.h"
 #include "build/build_config.h"
+#include "components/variations/child_process_field_trial_syncer.h"
 #include "content/child/child_thread_impl.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "ppapi/c/pp_module.h"
@@ -32,6 +36,10 @@ class CommandLine;
 class FilePath;
 }
 
+namespace discardable_memory {
+class ClientDiscardableSharedMemoryManager;
+}
+
 namespace IPC {
 struct ChannelHandle;
 }
@@ -48,7 +56,8 @@ class PpapiBlinkPlatformImpl;
 
 class PpapiThread : public ChildThreadImpl,
                     public ppapi::proxy::PluginDispatcher::PluginDelegate,
-                    public ppapi::proxy::PluginProxyDelegate {
+                    public ppapi::proxy::PluginProxyDelegate,
+                    public base::FieldTrialList::Observer {
  public:
   PpapiThread(const base::CommandLine& command_line, bool is_broker);
   ~PpapiThread() override;
@@ -70,7 +79,7 @@ class PpapiThread : public ChildThreadImpl,
   // ChildThread overrides.
   bool Send(IPC::Message* msg) override;
   bool OnControlMessageReceived(const IPC::Message& msg) override;
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
 
   // PluginDispatcher::PluginDelegate implementation.
   std::set<PP_Instance>* GetGloballySeenInstanceIDSet() override;
@@ -83,8 +92,8 @@ class PpapiThread : public ChildThreadImpl,
   base::SharedMemoryHandle ShareSharedMemoryHandleWithRemote(
       const base::SharedMemoryHandle& handle,
       base::ProcessId remote_pid) override;
-  uint32 Register(ppapi::proxy::PluginDispatcher* plugin_dispatcher) override;
-  void Unregister(uint32 plugin_dispatcher_id) override;
+  uint32_t Register(ppapi::proxy::PluginDispatcher* plugin_dispatcher) override;
+  void Unregister(uint32_t plugin_dispatcher_id) override;
 
   // PluginProxyDelegate.
   // SendToBrowser() is intended to be safe to use on another thread so
@@ -108,12 +117,18 @@ class PpapiThread : public ChildThreadImpl,
   void OnCrash();
   void OnHang();
 
-  // Sets up the channel to the given renderer. On success, returns true and
-  // fills the given ChannelHandle with the information from the new channel.
-  bool SetupRendererChannel(base::ProcessId renderer_pid,
-                            int renderer_child_id,
-                            bool incognito,
-                            IPC::ChannelHandle* handle);
+  // base::FieldTrialList::Observer:
+  void OnFieldTrialGroupFinalized(const std::string& trial_name,
+                                  const std::string& group_name) override;
+
+  // Sets up the channel to the given renderer. If |renderer_pid| is
+  // base::kNullProcessId, the channel is set up to the browser. On success,
+  // returns true and fills the given ChannelHandle with the information from
+  // the new channel.
+  bool SetupChannel(base::ProcessId renderer_pid,
+                    int renderer_child_id,
+                    bool incognito,
+                    IPC::ChannelHandle* handle);
 
   // Sets up the name of the plugin for logging using the given path.
   void SavePluginName(const base::FilePath& path);
@@ -157,16 +172,21 @@ class PpapiThread : public ChildThreadImpl,
   std::set<PP_Instance> globally_seen_instance_ids_;
 
   // The PluginDispatcher instances contained in the map are not owned by it.
-  std::map<uint32, ppapi::proxy::PluginDispatcher*> plugin_dispatchers_;
-  uint32 next_plugin_dispatcher_id_;
+  std::map<uint32_t, ppapi::proxy::PluginDispatcher*> plugin_dispatchers_;
+  uint32_t next_plugin_dispatcher_id_;
 
   // The BlinkPlatformImpl implementation.
-  scoped_ptr<PpapiBlinkPlatformImpl> blink_platform_impl_;
+  std::unique_ptr<PpapiBlinkPlatformImpl> blink_platform_impl_;
 
 #if defined(OS_WIN)
   // Caches the handle to the peer process if this is a broker.
   base::win::ScopedHandle peer_handle_;
 #endif
+
+  variations::ChildProcessFieldTrialSyncer field_trial_syncer_;
+
+  std::unique_ptr<discardable_memory::ClientDiscardableSharedMemoryManager>
+      discardable_shared_memory_manager_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(PpapiThread);
 };

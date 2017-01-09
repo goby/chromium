@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_DOWNLOAD_METADATA_MANAGER_H_
 
 #include <map>
+#include <memory>
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
@@ -26,7 +27,6 @@ namespace safe_browsing {
 
 class ClientDownloadRequest;
 class ClientIncidentReport_DownloadDetails;
-class DownloadMetadata;
 
 // A browser-wide object that manages the persistent state of metadata
 // pertaining to a download.
@@ -35,7 +35,8 @@ class DownloadMetadataManager : public content::DownloadManager::Observer {
   // A callback run when the results of a call to GetDownloadDetails are ready.
   // The supplied parameter may be null, indicating that there are no persisted
   // details for the |browser_context| passed to GetDownloadDetails.
-  typedef base::Callback<void(scoped_ptr<ClientIncidentReport_DownloadDetails>)>
+  typedef base::Callback<void(
+      std::unique_ptr<ClientIncidentReport_DownloadDetails>)>
       GetDownloadDetailsCallback;
 
   // Constructs a new instance for which disk IO operations will take place in

@@ -29,7 +29,8 @@ enum {
 #endif
   DIR_RESOURCES,                // Directory containing separate file resources
                                 // used by Chrome at runtime.
-  DIR_INSPECTOR,                // Directory where web inspector is located.
+  DIR_INSPECTOR_DEBUG,          // Directory where non-bundled and non-minified
+                                // web inspector is located.
   DIR_APP_DICTIONARIES,         // Directory where the global dictionaries are.
   DIR_USER_DOCUMENTS,           // Directory for a user's "My Documents".
   DIR_USER_MUSIC,               // Directory for a user's music.
@@ -40,18 +41,16 @@ enum {
                                 // "Downloads". (Linux)
   DIR_DEFAULT_DOWNLOADS,        // Directory for a user's downloads.
   DIR_INTERNAL_PLUGINS,         // Directory where internal plugins reside.
+  DIR_COMPONENTS,               // Directory where built-in implementations of
+                                // component-updated libraries or data reside.
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
   DIR_POLICY_FILES,             // Directory for system-wide read-only
                                 // policy files that allow sys-admins
                                 // to set policies for chrome. This directory
                                 // contains subdirectories.
 #endif
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  DIR_USER_APPLICATIONS,        // ~/Applications
-  DIR_USER_LIBRARY,             // ~/Library
-#endif
 #if defined(OS_CHROMEOS) || (defined(OS_LINUX) && defined(CHROMIUM_BUILD)) || \
-    (defined(OS_MACOSX) && !defined(OS_IOS))
+    defined(OS_MACOSX)
   DIR_USER_EXTERNAL_EXTENSIONS,  // Directory for per-user external extensions
                                  // on Chrome Mac and Chromium Linux.
                                  // On Chrome OS, this path is used for OEM
@@ -88,10 +87,6 @@ enum {
                                     // Pepper Flash plugin, downloadable from
                                     // Adobe website. Querying this path might
                                     // succeed no matter the file exists or not.
-  FILE_FLASH_SYSTEM_PLUGIN,     // Full path to the system version of NPAPI
-                                // Flash plugin, downloadable from Adobe
-                                // website. Querying this path might succeed no
-                                // matter the file exists or not.
   FILE_NACL_PLUGIN,             // Full path to the internal NaCl plugin file.
   DIR_PNACL_BASE,               // Full path to the base dir for PNaCl.
   DIR_PNACL_COMPONENT,          // Full path to the latest PNaCl version
@@ -117,7 +112,7 @@ enum {
   DIR_SUPERVISED_USER_INSTALLED_WHITELISTS,  // Directory where sanitized
                                              // supervised user whitelists are
                                              // installed.
-#if defined(OS_LINUX) || (defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_LINUX) || defined(OS_MACOSX)
   DIR_NATIVE_MESSAGING,         // System directory where native messaging host
                                 // manifest files are stored.
   DIR_USER_NATIVE_MESSAGING,    // Directory with Native Messaging Hosts
@@ -135,8 +130,11 @@ enum {
 #if defined(OS_LINUX)
   FILE_COMPONENT_FLASH_HINT,    // A file in a known location that points to
                                 // the component updated flash plugin.
-#endif // defined(OS_LINUX)
-
+#endif  // defined(OS_LINUX)
+#if defined(OS_CHROMEOS)
+  FILE_CHROME_OS_COMPONENT_FLASH,  // The location of component updated Flash on
+                                   // Chrome OS.
+#endif  // defined(OS_CHROMEOS)
   PATH_END
 };
 

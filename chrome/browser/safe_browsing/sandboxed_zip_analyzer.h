@@ -11,10 +11,10 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_SANDBOXED_ZIP_ANALYZER_H_
 #define CHROME_BROWSER_SAFE_BROWSING_SANDBOXED_ZIP_ANALYZER_H_
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/utility_process_host.h"
 #include "content/public/browser/utility_process_host_client.h"
@@ -52,14 +52,12 @@ class SandboxedZipAnalyzer : public content::UtilityProcessHostClient {
 
   // content::UtilityProcessHostClient implementation.
   // These notifications run on the IO thread.
+  void OnProcessCrashed(int exit_code) override;
+  void OnProcessLaunchFailed(int error_code) override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
   // Launches the utility process.  Must run on the IO thread.
   void StartProcessOnIOThread();
-
-  // Notification that the utility process is running, and we can now get its
-  // process handle.
-  void OnUtilityProcessStarted();
 
   // Notification from the utility process that the zip file has been analyzed,
   // with the given results.  Runs on the IO thread.

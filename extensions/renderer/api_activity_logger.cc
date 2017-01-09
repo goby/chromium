@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/bind.h"
@@ -10,17 +12,23 @@
 #include "extensions/common/extension_messages.h"
 #include "extensions/renderer/activity_log_converter_strategy.h"
 #include "extensions/renderer/api_activity_logger.h"
+#include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/script_context.h"
 
 using content::V8ValueConverter;
 
 namespace extensions {
 
-APIActivityLogger::APIActivityLogger(ScriptContext* context)
-    : ObjectBackedNativeHandler(context) {
-  RouteFunction("LogEvent", base::Bind(&APIActivityLogger::LogEvent));
-  RouteFunction("LogAPICall", base::Bind(&APIActivityLogger::LogAPICall));
+APIActivityLogger::APIActivityLogger(ScriptContext* context,
+                                     Dispatcher* dispatcher)
+    : ObjectBackedNativeHandler(context), dispatcher_(dispatcher) {
+  RouteFunction("LogEvent", base::Bind(&APIActivityLogger::LogEvent,
+                                       base::Unretained(this)));
+  RouteFunction("LogAPICall", base::Bind(&APIActivityLogger::LogAPICall,
+                                         base::Unretained(this)));
 }
+
+APIActivityLogger::~APIActivityLogger() {}
 
 // static
 void APIActivityLogger::LogAPICall(
@@ -43,6 +51,9 @@ void APIActivityLogger::LogInternal(
   CHECK(args[1]->IsString());
   CHECK(args[2]->IsArray());
 
+  if (!dispatcher_->activity_logging_enabled())
+    return;
+
   std::string ext_id = *v8::String::Utf8Value(args[0]);
   ExtensionHostMsg_APIActionOrEvent_Params params;
   params.api_call = *v8::String::Utf8Value(args[1]);
@@ -54,11 +65,11 @@ void APIActivityLogger::LogInternal(
   // Get the array of api call arguments.
   v8::Local<v8::Array> arg_array = v8::Local<v8::Array>::Cast(args[2]);
   if (arg_array->Length() > 0) {
-    scoped_ptr<V8ValueConverter> converter(V8ValueConverter::create());
+    std::unique_ptr<V8ValueConverter> converter(V8ValueConverter::create());
     ActivityLogConverterStrategy strategy;
     converter->SetFunctionAllowed(true);
     converter->SetStrategy(&strategy);
-    scoped_ptr<base::ListValue> arg_list(new base::ListValue());
+    std::unique_ptr<base::ListValue> arg_list(new base::ListValue());
     for (size_t i = 0; i < arg_array->Length(); ++i) {
       arg_list->Set(
           i,

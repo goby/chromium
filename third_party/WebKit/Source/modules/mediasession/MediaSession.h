@@ -5,37 +5,75 @@
 #ifndef MediaSession_h
 #define MediaSession_h
 
-#include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptWrappable.h"
+#include "core/dom/ContextLifecycleObserver.h"
+#include "core/events/EventTarget.h"
 #include "modules/ModulesExport.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/modules/mediasession/WebMediaSession.h"
-#include "wtf/OwnPtr.h"
+#include "public/platform/modules/mediasession/media_session.mojom-blink.h"
+#include <memory>
 
 namespace blink {
 
-class ScriptState;
+class ExecutionContext;
+class MediaMetadata;
 
-class MODULES_EXPORT MediaSession
-    : public GarbageCollectedFinalized<MediaSession>
-    , public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static MediaSession* create(ExecutionContext*, ExceptionState&);
+class MODULES_EXPORT MediaSession final
+    : public EventTargetWithInlineData,
+      public ContextLifecycleObserver,
+      blink::mojom::blink::MediaSessionClient {
+  USING_GARBAGE_COLLECTED_MIXIN(MediaSession);
+  DEFINE_WRAPPERTYPEINFO();
+  USING_PRE_FINALIZER(MediaSession, dispose);
 
-    ScriptPromise activate(ScriptState*);
-    ScriptPromise deactivate(ScriptState*);
+ public:
+  static MediaSession* create(ExecutionContext*);
 
-    DEFINE_INLINE_TRACE() { }
+  void dispose();
 
-private:
-    friend class MediaSessionTest;
+  void setMetadata(MediaMetadata*);
+  MediaMetadata* metadata() const;
 
-    explicit MediaSession(PassOwnPtr<WebMediaSession>);
+  // EventTarget implementation.
+  const WTF::AtomicString& interfaceName() const override;
+  ExecutionContext* getExecutionContext() const override;
 
-    OwnPtr<WebMediaSession> m_webMediaSession;
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(play);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(pause);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(playpause);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(previoustrack);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(nexttrack);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(seekforward);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(seekbackward);
+
+  DECLARE_VIRTUAL_TRACE();
+
+ private:
+  friend class MediaSessionTest;
+
+  explicit MediaSession(ExecutionContext*);
+
+  // EventTarget overrides
+  bool addEventListenerInternal(
+      const AtomicString& eventType,
+      EventListener*,
+      const AddEventListenerOptionsResolved&) override;
+  bool removeEventListenerInternal(const AtomicString& eventType,
+                                   const EventListener*,
+                                   const EventListenerOptions&) override;
+
+  // blink::mojom::blink::MediaSessionClient implementation.
+  void DidReceiveAction(blink::mojom::blink::MediaSessionAction) override;
+
+  // Returns null when the ExecutionContext is not document.
+  mojom::blink::MediaSessionService* getService();
+
+  Member<MediaMetadata> m_metadata;
+  mojom::blink::MediaSessionServicePtr m_service;
+  mojo::Binding<blink::mojom::blink::MediaSessionClient> m_clientBinding;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // MediaSession_h
+#endif  // MediaSession_h

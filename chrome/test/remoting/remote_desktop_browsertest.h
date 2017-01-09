@@ -14,6 +14,8 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/dns/mock_host_resolver.h"
+#include "ui/events/keycodes/dom/dom_code.h"
+#include "ui/events/keycodes/dom/dom_key.h"
 
 namespace {
 // Command line arguments specific to the chromoting browser tests.
@@ -110,8 +112,9 @@ class RemoteDesktopBrowserTest : public extensions::PlatformAppBrowserTest {
   void SimulateKeyPressWithCode(ui::KeyboardCode keyCode,
                                 const std::string& code);
 
-  void SimulateKeyPressWithCode(ui::KeyboardCode keyCode,
-                                const std::string& code,
+  void SimulateKeyPressWithCode(ui::DomKey key,
+                                ui::DomCode code,
+                                ui::KeyboardCode keyCode,
                                 bool control,
                                 bool shift,
                                 bool alt,
@@ -311,6 +314,9 @@ class RemoteDesktopBrowserTest : public extensions::PlatformAppBrowserTest {
   // Wait for the me2me connection to be established.
   void WaitForConnection();
 
+  // Checking whether the host is online.
+  bool IsHostOnline(const std::string& element_id);
+
   // Checking whether the localHost has been initialized.
   bool IsLocalHostReady();
 
@@ -360,7 +366,8 @@ class RemoteDesktopBrowserTest : public extensions::PlatformAppBrowserTest {
   // This test needs to make live DNS requests for access to
   // GAIA and sync server URLs under google.com. We use a scoped version
   // to override the default resolver while the test is active.
-  scoped_ptr<net::ScopedDefaultHostResolverProc> mock_host_resolver_override_;
+  std::unique_ptr<net::ScopedDefaultHostResolverProc>
+      mock_host_resolver_override_;
 
   // Stores all the WebContents instance in a stack so that we can easily
   // return to the previous instance.
@@ -379,7 +386,7 @@ class RemoteDesktopBrowserTest : public extensions::PlatformAppBrowserTest {
   content::WebContents* client_web_content_;
 
   // Helper class to assist in performing and verifying remote operations.
-  scoped_ptr<RemoteTestHelper> remote_test_helper_;
+  std::unique_ptr<RemoteTestHelper> remote_test_helper_;
 
   bool no_cleanup_;
   bool no_install_;

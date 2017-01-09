@@ -5,8 +5,10 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_PROTOCOL_PAGE_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_PROTOCOL_PAGE_HANDLER_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "cc/output/compositor_frame_metadata.h"
@@ -19,10 +21,13 @@ class SkBitmap;
 
 namespace content {
 
+class NavigationHandle;
 class RenderFrameHostImpl;
 class WebContentsImpl;
 
 namespace devtools {
+class PageNavigationThrottle;
+
 namespace page {
 
 class ColorPicker;
@@ -35,11 +40,11 @@ class PageHandler : public NotificationObserver {
   ~PageHandler() override;
 
   void SetRenderFrameHost(RenderFrameHostImpl* host);
-  void SetClient(scoped_ptr<Client> client);
+  void SetClient(std::unique_ptr<Client> client);
   void Detached();
-  void OnSwapCompositorFrame(const cc::CompositorFrameMetadata& frame_metadata);
-  void OnSynchronousSwapCompositorFrame(const cc::CompositorFrameMetadata&
-      frame_metadata);
+  void OnSwapCompositorFrame(cc::CompositorFrameMetadata frame_metadata);
+  void OnSynchronousSwapCompositorFrame(
+      cc::CompositorFrameMetadata frame_metadata);
   void DidAttachInterstitialPage();
   void DidDetachInterstitialPage();
   bool screencast_enabled() const { return enabled_ && screencast_enabled_; }
@@ -47,11 +52,13 @@ class PageHandler : public NotificationObserver {
   Response Enable();
   Response Disable();
 
-  Response Reload(const bool* ignoreCache,
+  Response Reload(const bool* bypassCache,
                   const std::string* script_to_evaluate_on_load,
                   const std::string* script_preprocessor = NULL);
 
   Response Navigate(const std::string& url, FrameId* frame_id);
+
+  Response StopLoading();
 
   using NavigationEntries = std::vector<scoped_refptr<NavigationEntry>>;
   Response GetNavigationHistory(int* current_index,
@@ -75,15 +82,51 @@ class PageHandler : public NotificationObserver {
                               const std::string& security_origin);
 
   Response SetColorPickerEnabled(bool enabled);
+  Response RequestAppBanner();
+
+  Response SetControlNavigations(bool enabled);
+  Response ProcessNavigation(const std::string& response, int navigation_id);
+
+  Response AddScriptToEvaluateOnLoad(const std::string& source,
+                                     std::string* identifier);
+  Response RemoveScriptToEvaluateOnLoad(const std::string& identifier);
+  Response SetAutoAttachToCreatedPages(bool auto_attach);
+  Response GetResourceTree(scoped_refptr<FrameResourceTree>* tree);
+  Response GetResourceContent(DevToolsCommandId command_id,
+                              const std::string& frame_id,
+                              const std::string& url);
+  Response SearchInResource(DevToolsCommandId command_id,
+                            const std::string& frame_id,
+                            const std::string& url,
+                            const std::string& query,
+                            bool* case_sensitive,
+                            bool* is_regex);
+  Response SetDocumentContent(const std::string& frame_id,
+                              const std::string& html);
+  Response ConfigureOverlay(const bool* is_suspended,
+                            const std::string* message);
+  Response GetAppManifest(
+      std::string* url,
+      std::vector<scoped_refptr<AppManifestError>>* errors,
+      std::string* data);
+  Response GetLayoutMetrics(
+      scoped_refptr<LayoutViewport>* layout_viewport,
+      scoped_refptr<VisualViewport>* visual_viewport);
+
+  std::unique_ptr<PageNavigationThrottle> CreateThrottleForNavigation(
+      NavigationHandle* navigation_handle);
+
+  void OnPageNavigationThrottleDisposed(int navigation_id);
+  void NavigationRequested(const PageNavigationThrottle* throttle);
 
  private:
   WebContentsImpl* GetWebContents();
   void NotifyScreencastVisibility(bool visible);
   void InnerSwapCompositorFrame();
-  void ScreencastFrameCaptured(const cc::CompositorFrameMetadata& metadata,
+  void ScreencastFrameCaptured(cc::CompositorFrameMetadata metadata,
                                const SkBitmap& bitmap,
                                ReadbackResponse response);
-  void ScreencastFrameEncoded(const cc::CompositorFrameMetadata& metadata,
+  void ScreencastFrameEncoded(cc::CompositorFrameMetadata metadata,
                               const base::Time& timestamp,
                               const std::string& data);
 
@@ -115,10 +158,14 @@ class PageHandler : public NotificationObserver {
   int frame_counter_;
   int frames_in_flight_;
 
-  scoped_ptr<ColorPicker> color_picker_;
+  std::unique_ptr<ColorPicker> color_picker_;
+
+  bool navigation_throttle_enabled_;
+  int next_navigation_id_;
+  std::map<int, PageNavigationThrottle*> navigation_throttles_;
 
   RenderFrameHostImpl* host_;
-  scoped_ptr<Client> client_;
+  std::unique_ptr<Client> client_;
   NotificationRegistrar registrar_;
   base::WeakPtrFactory<PageHandler> weak_factory_;
 

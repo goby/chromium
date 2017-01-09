@@ -22,8 +22,11 @@ base::StringPiece ByteVectorAsStringPiece(const ByteVector& lhs) {
 }
 
 // Concatenates parameters together as a string.
-std::string Concat(const ByteVector& value, char c, const std::string& data) {
-  return std::string(value.begin(), value.end()) + c + data;
+std::string Concat(const ByteVector& value, char c, base::StringPiece data) {
+  std::string result(value.begin(), value.end());
+  result += c;
+  data.AppendToString(&result);
+  return result;
 }
 
 // Performs the operation: K = HMAC(K, data)
@@ -54,7 +57,7 @@ bool HMAC_Rehash(const crypto::HMAC& hmac, ByteVector* value) {
 // The input "Key" is passed by initializing |hmac1| with it.
 // The output "Key" is returned by initializing |out_hmac| with it.
 // Returns false on an error.
-bool HMAC_DRBG_Update(const std::string& provided_data,
+bool HMAC_DRBG_Update(base::StringPiece provided_data,
                       const crypto::HMAC& hmac1,
                       ByteVector* value,
                       crypto::HMAC* out_hmac) {
@@ -141,23 +144,30 @@ ByteVector ByteVectorGenerator::GetRandomByteVector() {
 
 ByteVector ByteVectorGenerator::GetWeightedRandomByteVector(
     Probability probability) {
-  ByteVector bytes = GetRandomByteVector();
   switch (probability) {
-    case PROBABILITY_75:
+    case PROBABILITY_100:
+      return ByteVector(byte_count_, 0xff);
+    case PROBABILITY_75: {
+      ByteVector bytes = GetRandomByteVector();
       return *ByteVectorOr(GetRandomByteVector(), &bytes);
+    }
     case PROBABILITY_50:
-      return bytes;
-    case PROBABILITY_25:
+      return GetRandomByteVector();
+    case PROBABILITY_25: {
+      ByteVector bytes = GetRandomByteVector();
       return *ByteVectorAnd(GetRandomByteVector(), &bytes);
+    }
+    case PROBABILITY_0:
+      return ByteVector(byte_count_);
   }
   NOTREACHED();
-  return bytes;
+  return ByteVector(byte_count_);
 }
 
 HmacByteVectorGenerator::HmacByteVectorGenerator(
     size_t byte_count,
     const std::string& entropy_input,
-    const std::string& personalization_string)
+    base::StringPiece personalization_string)
     : ByteVectorGenerator(byte_count),
       hmac_(crypto::HMAC::SHA256),
       value_(hmac_.DigestLength(), 0x01),
@@ -168,7 +178,8 @@ HmacByteVectorGenerator::HmacByteVectorGenerator(
   // Note: We are using the 8.6.7 interpretation, where the entropy_input and
   // nonce are acquired at the same time from the same source.
   DCHECK_EQ(kEntropyInputSize, entropy_input.size());
-  std::string seed_material(entropy_input + personalization_string);
+  std::string seed_material(entropy_input);
+  personalization_string.AppendToString(&seed_material);
   // 2. Key = 0x00 00...00
   crypto::HMAC hmac1(crypto::HMAC::SHA256);
   if (!hmac1.Init(std::string(hmac_.DigestLength(), 0x00)))

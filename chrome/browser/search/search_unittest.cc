@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/browser/search/search.h"
@@ -15,11 +19,13 @@
 #include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/search_test_utils.h"
 #include "components/google/core/browser/google_switches.h"
+#include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/search_engines/search_engines_switches.h"
 #include "components/search_engines/template_url_service.h"
@@ -32,7 +38,7 @@
 #include "content/public/common/renderer_preferences.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
@@ -45,7 +51,7 @@ class SearchTest : public BrowserWithTestWindowTest {
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
     field_trial_list_.reset(new base::FieldTrialList(
-        new metrics::SHA1EntropyProvider("42")));
+        base::MakeUnique<metrics::SHA1EntropyProvider>("42")));
     TemplateURLServiceFactory::GetInstance()->SetTestingFactoryAndUse(
         profile(), &TemplateURLServiceFactory::BuildInstanceFor);
     TemplateURLService* template_url_service =
@@ -69,9 +75,8 @@ class SearchTest : public BrowserWithTestWindowTest {
     data.alternate_urls.push_back("http://foo.com/alt#quux={searchTerms}");
     data.search_terms_replacement_key = "strk";
 
-    TemplateURL* template_url = new TemplateURL(data);
-    // Takes ownership of |template_url|.
-    template_url_service->Add(template_url);
+    TemplateURL* template_url =
+        template_url_service->Add(base::MakeUnique<TemplateURL>(data));
     template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
   }
 
@@ -94,9 +99,8 @@ class SearchTest : public BrowserWithTestWindowTest {
         kInstantURLWithStrk : kInstantURLNoStrk);
     data.search_terms_replacement_key = "strk";
 
-    TemplateURL* template_url = new TemplateURL(data);
-    // Takes ownership of |template_url|.
-    template_url_service->Add(template_url);
+    TemplateURL* template_url =
+        template_url_service->Add(base::MakeUnique<TemplateURL>(data));
     template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
   }
 
@@ -107,7 +111,7 @@ class SearchTest : public BrowserWithTestWindowTest {
         contents->GetRenderProcessHost()->GetID());
   }
 
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 };
 
 struct SearchTestCase {
@@ -117,15 +121,13 @@ struct SearchTestCase {
 };
 
 TEST_F(SearchTest, ShouldAssignURLToInstantRendererExtendedEnabled) {
-  EnableQueryExtractionForTesting();
-
   const SearchTestCase kTestCases[] = {
     {chrome::kChromeSearchLocalNtpUrl, true,  ""},
     {"https://foo.com/instant?strk",   true,  ""},
     {"https://foo.com/instant#strk",   true,  ""},
     {"https://foo.com/instant?strk=0", true,  ""},
-    {"https://foo.com/url?strk",       true,  ""},
-    {"https://foo.com/alt?strk",       true,  ""},
+    {"https://foo.com/url?strk",       false, ""},
+    {"https://foo.com/alt?strk",       false, ""},
     {"http://foo.com/instant",         false, "Non-HTTPS"},
     {"http://foo.com/instant?strk",    false, "Non-HTTPS"},
     {"http://foo.com/instant?strk=1",  false, "Non-HTTPS"},
@@ -168,8 +170,6 @@ TEST_F(SearchTest, ShouldAssignURLToInstantRendererExtendedEnabledNotOnSRP) {
 }
 
 TEST_F(SearchTest, ShouldUseProcessPerSiteForInstantURL) {
-  EnableQueryExtractionForTesting();
-
   const SearchTestCase kTestCases[] = {
     {"chrome-search://local-ntp",      true,  "Local NTP"},
     {"chrome-search://remote-ntp",     true,  "Remote NTP"},
@@ -181,9 +181,11 @@ TEST_F(SearchTest, ShouldUseProcessPerSiteForInstantURL) {
     {"https://foo.com/instant?strk=0", false,  ""},
     {"https://foo.com/url?strk",       false,  ""},
     {"https://foo.com/alt?strk",       false,  ""},
+    {"https://foo.com:80/instant",     false,  "HTTPS with port"},
     {"http://foo.com/instant",         false,  "Non-HTTPS"},
     {"http://foo.com/instant?strk",    false,  "Non-HTTPS"},
     {"http://foo.com/instant?strk=1",  false,  "Non-HTTPS"},
+    {"http://foo.com:443/instant",     false,  "Non-HTTPS"},
     {"https://foo.com/instant",        false,  "No search terms replacement"},
     {"https://foo.com/?strk",          false,  "Non-exact path"},
   };
@@ -210,30 +212,28 @@ const struct ProcessIsolationTestCase {
 } kProcessIsolationTestCases[] = {
   {"Local NTP -> SRP",
    "chrome-search://local-ntp",       true,
-   "https://foo.com/url?strk",        true,   false },
+   "https://foo.com/url?strk",        false,  false },
   {"Local NTP -> Regular",
    "chrome-search://local-ntp",       true,
    "https://foo.com/other",           false,  false },
   {"Remote NTP -> SRP",
    "https://foo.com/newtab?strk",     true,
-   "https://foo.com/url?strk",        true,   false },
+   "https://foo.com/url?strk",        false,  false },
   {"Remote NTP -> Regular",
    "https://foo.com/newtab?strk",     true,
    "https://foo.com/other",           false,  false },
   {"SRP -> SRP",
-   "https://foo.com/url?strk",        true,
-   "https://foo.com/url?strk",        true,   true  },
+   "https://foo.com/url?strk",        false,
+   "https://foo.com/url?strk",        false,  true  },
   {"SRP -> Regular",
-   "https://foo.com/url?strk",        true,
-   "https://foo.com/other",           false,  false },
+   "https://foo.com/url?strk",        false,
+   "https://foo.com/other",           false,  true },
   {"Regular -> SRP",
    "https://foo.com/other",           false,
-   "https://foo.com/url?strk",        true,   false },
+   "https://foo.com/url?strk",        false,  true },
 };
 
 TEST_F(SearchTest, ProcessIsolation) {
-  EnableQueryExtractionForTesting();
-
   for (size_t i = 0; i < arraysize(kProcessIsolationTestCases); ++i) {
     const ProcessIsolationTestCase& test = kProcessIsolationTestCases[i];
     AddTab(browser(), GURL("chrome://blank"));
@@ -271,8 +271,6 @@ TEST_F(SearchTest, ProcessIsolation) {
 }
 
 TEST_F(SearchTest, ProcessIsolation_RendererInitiated) {
-  EnableQueryExtractionForTesting();
-
   for (size_t i = 0; i < arraysize(kProcessIsolationTestCases); ++i) {
     const ProcessIsolationTestCase& test = kProcessIsolationTestCases[i];
     AddTab(browser(), GURL("chrome://blank"));
@@ -338,7 +336,6 @@ const SearchTestCase kInstantNTPTestCases[] = {
 };
 
 TEST_F(SearchTest, InstantNTPExtendedEnabled) {
-  EnableQueryExtractionForTesting();
   AddTab(browser(), GURL("chrome://blank"));
   for (size_t i = 0; i < arraysize(kInstantNTPTestCases); ++i) {
     const SearchTestCase& test = kInstantNTPTestCases[i];
@@ -351,7 +348,6 @@ TEST_F(SearchTest, InstantNTPExtendedEnabled) {
 }
 
 TEST_F(SearchTest, InstantNTPCustomNavigationEntry) {
-  EnableQueryExtractionForTesting();
   AddTab(browser(), GURL("chrome://blank"));
   for (size_t i = 0; i < arraysize(kInstantNTPTestCases); ++i) {
     const SearchTestCase& test = kInstantNTPTestCases[i];
@@ -437,7 +433,7 @@ TEST_F(SearchTest, UseLocalNTPIfNTPURLIsNotSet) {
   EXPECT_EQ(GURL(chrome::kChromeSearchLocalNtpUrl), new_tab_url);
 }
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 TEST_F(SearchTest, UseLocalNTPIfNTPURLIsBlockedForSupervisedUser) {
   // Block access to foo.com in the URL filter.
   SupervisedUserService* supervised_user_service =
@@ -447,6 +443,7 @@ TEST_F(SearchTest, UseLocalNTPIfNTPURLIsBlockedForSupervisedUser) {
   std::map<std::string, bool> hosts;
   hosts["foo.com"] = false;
   url_filter->SetManualHosts(&hosts);
+  url_filter->SetEnabled(true);
 
   EXPECT_EQ(GURL(chrome::kChromeSearchLocalNtpUrl),
             GetNewTabPageURL(profile()));
@@ -477,22 +474,6 @@ TEST_F(SearchTest, GetInstantURL) {
   // Disable suggest. No Instant URL.
   profile()->GetPrefs()->SetBoolean(prefs::kSearchSuggestEnabled, false);
   EXPECT_EQ(GURL(), GetInstantURL(profile(), false));
-
-  // Use alternate Instant search base URL.
-  profile()->GetPrefs()->SetBoolean(prefs::kSearchSuggestEnabled, true);
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch", "Group1 espv:8 use_alternate_instant_url:1"));
-  EXPECT_EQ(GURL("https://foo.com/instant?foo=foo&qbp=1#foo=foo&strk"),
-            GetInstantURL(profile(), false));
-}
-
-TEST_F(SearchTest, UseSearchPathForInstant) {
-  // Use alternate Instant search base URL path.
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch",
-      "Group1 use_alternate_instant_url:1 use_search_path_for_instant:1"));
-  EXPECT_EQ(GURL("https://foo.com/search?foo=foo&qbp=1#foo=foo&strk"),
-            GetInstantURL(profile(), false));
 }
 
 TEST_F(SearchTest, InstantSearchEnabledCGI) {
@@ -508,9 +489,6 @@ TEST_F(SearchTest, InstantSearchEnabledCGI) {
 }
 
 TEST_F(SearchTest, CommandLineOverrides) {
-  GURL local_instant_url(GetLocalInstantURL(profile()));
-  EXPECT_EQ(GURL(chrome::kChromeSearchLocalNtpUrl), local_instant_url);
-
   TemplateURLService* template_url_service =
       TemplateURLServiceFactory::GetForProfile(profile());
   TemplateURLData data;
@@ -518,9 +496,8 @@ TEST_F(SearchTest, CommandLineOverrides) {
   data.SetURL("{google:baseURL}search?q={searchTerms}");
   data.instant_url = "{google:baseURL}webhp?strk";
   data.search_terms_replacement_key = "strk";
-  TemplateURL* template_url = new TemplateURL(data);
-  // Takes ownership of |template_url|.
-  template_url_service->Add(template_url);
+  TemplateURL* template_url =
+      template_url_service->Add(base::MakeUnique<TemplateURL>(data));
   template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
 
   // By default, Instant Extended forces the instant URL to be HTTPS, so even if
@@ -539,12 +516,6 @@ TEST_F(SearchTest, CommandLineOverrides) {
   ASSERT_TRUE(instant_url.is_valid());
   EXPECT_EQ("http://www.bar.com/webhp?strk", instant_url.spec());
 
-  // Similarly, setting a Google base URL on the command line should allow you
-  // to get the Google version of the local NTP, even though search provider's
-  // URL doesn't contain "google".
-  local_instant_url = GetLocalInstantURL(profile());
-  EXPECT_EQ(GURL(chrome::kChromeSearchLocalNtpUrl), local_instant_url);
-
   // If we specify extra search query params, they should be inserted into the
   // query portion of the instant URL.
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
@@ -554,77 +525,13 @@ TEST_F(SearchTest, CommandLineOverrides) {
   EXPECT_EQ("http://www.bar.com/webhp?a=b&strk", instant_url.spec());
 }
 
-TEST_F(SearchTest, ShouldUseAltInstantURL_DisabledViaFieldTrial) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch", "Group1 espv:8 use_alternate_instant_url:0"));
-  EXPECT_FALSE(ShouldUseAltInstantURL());
-}
-
-TEST_F(SearchTest, ShouldUseAltInstantURL_EnabledViaFieldTrial) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch", "Group1 espv:8 use_alternate_instant_url:1"));
-  EXPECT_TRUE(ShouldUseAltInstantURL());
-}
-
-TEST_F(SearchTest, ShouldUseSearchPathForInstant_DisabledViaFieldTrial) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch",
-      "Group1 use_alternate_instant_url:1 use_search_path_for_instant:0"));
-  EXPECT_FALSE(ShouldUseSearchPathForInstant());
-}
-
-TEST_F(SearchTest, ShouldUseSearchPathForInstant_EnabledViaFieldTrial) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch",
-      "Group1 use_alternate_instant_url:1 use_search_path_for_instant:1"));
-  EXPECT_TRUE(ShouldUseSearchPathForInstant());
-}
-
-TEST_F(SearchTest,
-       ShouldPrerenderInstantUrlOnOmniboxFocus_DisabledViaFieldTrial) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch",
-      "Group1 espv:89 prerender_instant_url_on_omnibox_focus:0"));
-  EXPECT_FALSE(ShouldPrerenderInstantUrlOnOmniboxFocus());
-  EXPECT_EQ(89ul, EmbeddedSearchPageVersion());
-}
-
-TEST_F(SearchTest,
-       ShouldPrerenderInstantUrlOnOmniboxFocus_EnabledViaFieldTrial) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch",
-      "Group1 espv:80 prerender_instant_url_on_omnibox_focus:1"));
-  EXPECT_TRUE(ShouldPrerenderInstantUrlOnOmniboxFocus());
-  EXPECT_EQ(80ul, EmbeddedSearchPageVersion());
-}
-
-
-
-TEST_F(SearchTest, ShouldShowGoogleLocalNTP_Default) {
-  EXPECT_TRUE(ShouldShowGoogleLocalNTP());
-}
-
-TEST_F(SearchTest, ShouldShowGoogleLocalNTP_EnabledViaFinch) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch", "Group1 espv:2 google_local_ntp:1"));
-  EXPECT_TRUE(ShouldShowGoogleLocalNTP());
-}
-
-TEST_F(SearchTest, ShouldShowGoogleLocalNTP_DisabledViaFinch) {
-  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      "EmbeddedSearch", "Group1 espv:2 google_local_ntp:0"));
-  EXPECT_FALSE(ShouldShowGoogleLocalNTP());
-}
-
-
 TEST_F(SearchTest, IsNTPURL) {
   GURL invalid_url;
   GURL ntp_url(chrome::kChromeUINewTabURL);
-  GURL local_ntp_url(GetLocalInstantURL(profile()));
+  GURL local_ntp_url(chrome::kChromeSearchLocalNtpUrl);
 
   EXPECT_FALSE(IsNTPURL(invalid_url, profile()));
   // No margin.
-  EnableQueryExtractionForTesting();
   profile()->GetPrefs()->SetBoolean(prefs::kSearchSuggestEnabled, true);
   GURL remote_ntp_url(GetInstantURL(profile(), false));
   GURL search_url_with_search_terms("https://foo.com/url?strk&bar=abc");
@@ -634,7 +541,7 @@ TEST_F(SearchTest, IsNTPURL) {
   EXPECT_TRUE(IsNTPURL(local_ntp_url, profile()));
   EXPECT_TRUE(IsNTPURL(remote_ntp_url, profile()));
   EXPECT_FALSE(IsNTPURL(search_url_with_search_terms, profile()));
-  EXPECT_TRUE(IsNTPURL(search_url_without_search_terms, profile()));
+  EXPECT_FALSE(IsNTPURL(search_url_without_search_terms, profile()));
 
   EXPECT_FALSE(IsNTPURL(ntp_url, NULL));
   EXPECT_FALSE(IsNTPURL(local_ntp_url, NULL));
@@ -651,14 +558,9 @@ TEST_F(SearchTest, GetSearchURLs) {
 }
 
 TEST_F(SearchTest, GetSearchResultPrefetchBaseURL) {
-#if defined(OS_IOS)
-  EXPECT_FALSE(ShouldPrefetchSearchResults());
-  EXPECT_EQ(GURL(), GetSearchResultPrefetchBaseURL(profile()));
-#else
   EXPECT_TRUE(ShouldPrefetchSearchResults());
   EXPECT_EQ(GURL("https://foo.com/instant?ion=1&foo=foo#foo=foo&strk"),
             GetSearchResultPrefetchBaseURL(profile()));
-#endif
 }
 
 struct ExtractSearchTermsTestCase {
@@ -710,6 +612,40 @@ TEST_F(SearchTest, IsQueryExtractionAllowedForURL) {
   }
 }
 
+// Regression test for https://crbug.com/605720: Set up a search provider backed
+// by localhost on a specific port, like browsertests do.  The chrome-search://
+// URLs generated in this mode should not have ports.
+TEST_F(SearchTest, SearchProviderWithPort) {
+  TemplateURLService* template_url_service =
+      TemplateURLServiceFactory::GetForProfile(profile());
+  TemplateURLData data;
+  data.SetShortName(base::ASCIIToUTF16("localhost"));
+  data.SetURL("https://[::1]:1993/url?bar={searchTerms}");
+  data.instant_url =
+      "https://[::1]:1993/instant?"
+      "{google:forceInstantResults}foo=foo#foo=foo&strk";
+  data.new_tab_url = "https://[::1]:1993/newtab?strk";
+  data.alternate_urls.push_back("https://[::1]:1993/alt#quux={searchTerms}");
+  data.search_terms_replacement_key = "strk";
+
+  TemplateURL* template_url =
+      template_url_service->Add(base::MakeUnique<TemplateURL>(data));
+  template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
+
+  EXPECT_TRUE(ShouldAssignURLToInstantRenderer(
+      GURL("https://[::1]:1993/newtab?lala"), profile()));
+  EXPECT_FALSE(ShouldAssignURLToInstantRenderer(
+      GURL("https://[::1]:1992/newtab?lala"), profile()));
+  EXPECT_EQ(GURL("chrome-search://remote-ntp/newtab?lala"),
+            GetEffectiveURLForInstant(GURL("https://[::1]:1993/newtab?lala"),
+                                      profile()));
+  EXPECT_EQ(GURL("chrome-search://[::1]/instant?strk"),
+            GetEffectiveURLForInstant(GURL("https://[::1]:1993/instant?strk"),
+                                      profile()));
+  EXPECT_FALSE(ShouldAssignURLToInstantRenderer(
+      GURL("https://[::1]:1993/unregistered-path?strk"), profile()));
+}
+
 class SearchURLTest : public SearchTest {
  protected:
   void SetSearchProvider(bool set_ntp_url, bool insecure_ntp_url) override {
@@ -720,31 +656,16 @@ class SearchURLTest : public SearchTest {
     data.SetURL("{google:baseURL}search?"
                 "{google:instantExtendedEnabledParameter}q={searchTerms}");
     data.search_terms_replacement_key = "espv";
-    template_url_ = new TemplateURL(data);
-    // |template_url_service| takes ownership of |template_url_|.
-    template_url_service->Add(template_url_);
+    template_url_ =
+        template_url_service->Add(base::MakeUnique<TemplateURL>(data));
     template_url_service->SetUserSelectedDefaultSearchProvider(template_url_);
   }
 
   TemplateURL* template_url_;
 };
 
-TEST_F(SearchURLTest, QueryExtractionEnabled) {
-  UIThreadSearchTermsData::SetGoogleBaseURL("http://www.google.com/");
-  EnableQueryExtractionForTesting();
-  EXPECT_TRUE(IsQueryExtractionEnabled());
-  TemplateURLRef::SearchTermsArgs search_terms_args(base::ASCIIToUTF16("foo"));
-  GURL result(template_url_->url_ref().ReplaceSearchTerms(
-      search_terms_args, UIThreadSearchTermsData(profile())));
-  ASSERT_TRUE(result.is_valid());
-  // Query extraction is enabled. Make sure
-  // {google:instantExtendedEnabledParameter} is set in the search URL.
-  EXPECT_EQ("http://www.google.com/search?espv=2&q=foo", result.spec());
-}
-
 TEST_F(SearchURLTest, QueryExtractionDisabled) {
   UIThreadSearchTermsData::SetGoogleBaseURL("http://www.google.com/");
-  EXPECT_FALSE(IsQueryExtractionEnabled());
   TemplateURLRef::SearchTermsArgs search_terms_args(base::ASCIIToUTF16("foo"));
   GURL result(template_url_->url_ref().ReplaceSearchTerms(
       search_terms_args, UIThreadSearchTermsData(profile())));

@@ -34,7 +34,7 @@
     if (window.testRunner) {
       testRunner.dumpAsText();
       testRunner.overridePreference("WebKitTabToLinksPreferenceKey", 1);
-      window.internals.settings.setSpatialNavigationEnabled(true);
+      testRunner.overridePreference("WebKitSpatialNavigationEnabled", 1);
       testRunner.waitUntilDone();
     }
 
@@ -51,9 +51,9 @@
       document.getElementById("start").focus();
       shouldBe("gFocusedDocument.getElementById(\"start\").selectedIndex", "0");
       eventSender.keyDown(" ");
-      eventSender.keyDown("downArrow");
+      eventSender.keyDown("ArrowDown");
       shouldBe("gFocusedDocument.getElementById(\"start\").selectedIndex", "1");
-      eventSender.keyDown("upArrow");
+      eventSender.keyDown("ArrowUp");
       shouldBe("gFocusedDocument.getElementById(\"start\").selectedIndex", "0");
 
       testCompleted();

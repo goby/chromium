@@ -5,101 +5,98 @@
 #ifndef CC_ANIMATION_TIMING_FUNCTION_H_
 #define CC_ANIMATION_TIMING_FUNCTION_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "cc/base/cc_export.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "cc/animation/animation_export.h"
 #include "ui/gfx/geometry/cubic_bezier.h"
 
 namespace cc {
 
 // See http://www.w3.org/TR/css3-transitions/.
-class CC_EXPORT TimingFunction {
+class CC_ANIMATION_EXPORT TimingFunction {
  public:
   virtual ~TimingFunction();
 
+  // Note that LINEAR is a nullptr TimingFunction (for now).
+  enum class Type { LINEAR, CUBIC_BEZIER, STEPS };
+
+  virtual Type GetType() const = 0;
   virtual float GetValue(double t) const = 0;
   virtual float Velocity(double time) const = 0;
   // The smallest and largest values returned by GetValue for inputs in [0, 1].
   virtual void Range(float* min, float* max) const = 0;
-  virtual scoped_ptr<TimingFunction> Clone() const = 0;
+  virtual std::unique_ptr<TimingFunction> Clone() const = 0;
 
  protected:
   TimingFunction();
 
- private:
   DISALLOW_ASSIGN(TimingFunction);
 };
 
-class CC_EXPORT CubicBezierTimingFunction : public TimingFunction {
+class CC_ANIMATION_EXPORT CubicBezierTimingFunction : public TimingFunction {
  public:
-  static scoped_ptr<CubicBezierTimingFunction> Create(double x1, double y1,
-                                                      double x2, double y2);
+  enum class EaseType { EASE, EASE_IN, EASE_OUT, EASE_IN_OUT, CUSTOM };
+
+  static std::unique_ptr<CubicBezierTimingFunction> CreatePreset(
+      EaseType ease_type);
+  static std::unique_ptr<CubicBezierTimingFunction> Create(double x1,
+                                                           double y1,
+                                                           double x2,
+                                                           double y2);
   ~CubicBezierTimingFunction() override;
 
   // TimingFunction implementation.
+  Type GetType() const override;
   float GetValue(double time) const override;
   float Velocity(double time) const override;
   void Range(float* min, float* max) const override;
-  scoped_ptr<TimingFunction> Clone() const override;
+  std::unique_ptr<TimingFunction> Clone() const override;
 
- protected:
-  CubicBezierTimingFunction(double x1, double y1, double x2, double y2);
-
-  gfx::CubicBezier bezier_;
+  EaseType ease_type() const { return ease_type_; }
+  const gfx::CubicBezier& bezier() const { return bezier_; }
 
  private:
+  CubicBezierTimingFunction(EaseType ease_type,
+                            double x1,
+                            double y1,
+                            double x2,
+                            double y2);
+
+  gfx::CubicBezier bezier_;
+  EaseType ease_type_;
+
   DISALLOW_ASSIGN(CubicBezierTimingFunction);
 };
 
-class CC_EXPORT EaseTimingFunction {
+class CC_ANIMATION_EXPORT StepsTimingFunction : public TimingFunction {
  public:
-  static scoped_ptr<TimingFunction> Create();
+  // Web Animations specification, 3.12.4. Timing in discrete steps.
+  enum class StepPosition { START, MIDDLE, END };
 
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(EaseTimingFunction);
-};
-
-class CC_EXPORT EaseInTimingFunction {
- public:
-  static scoped_ptr<TimingFunction> Create();
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(EaseInTimingFunction);
-};
-
-class CC_EXPORT EaseOutTimingFunction {
- public:
-  static scoped_ptr<TimingFunction> Create();
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(EaseOutTimingFunction);
-};
-
-class CC_EXPORT EaseInOutTimingFunction {
- public:
-  static scoped_ptr<TimingFunction> Create();
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(EaseInOutTimingFunction);
-};
-
-class CC_EXPORT StepsTimingFunction : public TimingFunction {
- public:
-  static scoped_ptr<StepsTimingFunction> Create(int steps,
-                                                float steps_start_offset);
+  static std::unique_ptr<StepsTimingFunction> Create(
+      int steps,
+      StepPosition step_position);
   ~StepsTimingFunction() override;
 
+  // TimingFunction implementation.
+  Type GetType() const override;
   float GetValue(double t) const override;
-  scoped_ptr<TimingFunction> Clone() const override;
-
+  std::unique_ptr<TimingFunction> Clone() const override;
   void Range(float* min, float* max) const override;
   float Velocity(double time) const override;
 
- protected:
-  StepsTimingFunction(int steps, float steps_start_offset);
+  int steps() const { return steps_; }
+  StepPosition step_position() const { return step_position_; }
+  double GetPreciseValue(double t) const;
 
  private:
+  StepsTimingFunction(int steps, StepPosition step_position);
+
+  float GetStepsStartOffset() const;
+
   int steps_;
-  float steps_start_offset_;
+  StepPosition step_position_;
 
   DISALLOW_ASSIGN(StepsTimingFunction);
 };

@@ -4,21 +4,24 @@
 
 #include "crypto/sha2.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/stl_util.h"
 #include "crypto/secure_hash.h"
 
 namespace crypto {
 
 void SHA256HashString(const base::StringPiece& str, void* output, size_t len) {
-  scoped_ptr<SecureHash> ctx(SecureHash::Create(SecureHash::SHA256));
+  std::unique_ptr<SecureHash> ctx(SecureHash::Create(SecureHash::SHA256));
   ctx->Update(str.data(), str.length());
   ctx->Finish(output, len);
 }
 
 std::string SHA256HashString(const base::StringPiece& str) {
   std::string output(kSHA256Length, 0);
-  SHA256HashString(str, string_as_array(&output), output.size());
+  SHA256HashString(str, base::string_as_array(&output), output.size());
   return output;
 }
 

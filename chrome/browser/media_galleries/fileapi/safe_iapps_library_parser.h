@@ -11,8 +11,9 @@
 #include "base/compiler_specific.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/common/media_galleries/iphoto_library.h"
+#include "build/build_config.h"
 #include "chrome/common/media_galleries/itunes_library.h"
 #include "content/public/browser/utility_process_host.h"
 #include "content/public/browser/utility_process_host_client.h"
@@ -34,16 +35,10 @@ namespace iapps {
 // noted.
 class SafeIAppsLibraryParser : public content::UtilityProcessHostClient {
  public:
-  typedef base::Callback<void(bool, const iphoto::parser::Library&)>
-      IPhotoParserCallback;
   typedef base::Callback<void(bool, const itunes::parser::Library&)>
       ITunesParserCallback;
 
   SafeIAppsLibraryParser();
-
-  // Start the parse of the iPhoto library file.
-  void ParseIPhotoLibrary(const base::FilePath& library_file,
-                          const IPhotoParserCallback& callback);
 
   // Start the parse of the iTunes library file.
   void ParseITunesLibrary(const base::FilePath& library_file,
@@ -53,7 +48,6 @@ class SafeIAppsLibraryParser : public content::UtilityProcessHostClient {
  private:
   enum ParserState {
     INITIAL_STATE,
-    PINGED_UTILITY_PROCESS_STATE,
     STARTED_PARSING_STATE,
     FINISHED_PARSING_STATE,
   };
@@ -66,17 +60,6 @@ class SafeIAppsLibraryParser : public content::UtilityProcessHostClient {
 
   // Launches the utility process.  Must run on the IO thread.
   void StartProcessOnIOThread();
-
-  // Notification that the utility process is running, and we can now get its
-  // process handle.
-  // Runs on the IO thread.
-  void OnUtilityProcessStarted();
-
-  // Notification from the utility process when it finishes parsing the
-  // iPhoto XML. Runs on the IO thread.
-#if defined(OS_MACOSX)
-  void OnGotIPhotoLibrary(bool result, const iphoto::parser::Library& library);
-#endif
 
   // Notification from the utility process when it finishes parsing the
   // iTunes XML. Runs on the IO thread.
@@ -105,9 +88,6 @@ class SafeIAppsLibraryParser : public content::UtilityProcessHostClient {
 
   // Only accessed on the Media Task Runner.
   ITunesParserCallback itunes_callback_;
-
-  // Only accessed on the Media Task Runner.
-  IPhotoParserCallback iphoto_callback_;
 
   // Verifies the messages from the utility process came at the right time.
   // Initialized on the Media Task Runner, but only accessed on the IO thread.

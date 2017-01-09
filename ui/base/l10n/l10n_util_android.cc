@@ -4,6 +4,8 @@
 
 #include "ui/base/l10n/l10n_util_android.h"
 
+#include <stdint.h>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
@@ -14,6 +16,9 @@
 #include "jni/LocalizationUtils_jni.h"
 #include "third_party/icu/source/common/unicode/uloc.h"
 #include "ui/base/l10n/time_format.h"
+
+using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace l10n_util {
 
@@ -69,10 +74,10 @@ ScopedJavaLocalRef<jobject> NewJavaLocale(
       locale, uloc_getCountry, ULOC_COUNTRY_CAPACITY);
   std::string variant = GetLocaleComponent(
       locale, uloc_getVariant, ULOC_FULLNAME_CAPACITY);
-  return Java_LocalizationUtils_getJavaLocale(env,
-          base::android::ConvertUTF8ToJavaString(env, language).obj(),
-          base::android::ConvertUTF8ToJavaString(env, country).obj(),
-          base::android::ConvertUTF8ToJavaString(env, variant).obj());
+  return Java_LocalizationUtils_getJavaLocale(
+      env, base::android::ConvertUTF8ToJavaString(env, language),
+      base::android::ConvertUTF8ToJavaString(env, country),
+      base::android::ConvertUTF8ToJavaString(env, variant));
 }
 
 }  // namespace
@@ -86,10 +91,8 @@ base::string16 GetDisplayNameForLocale(const std::string& locale,
       NewJavaLocale(env, display_locale);
 
   ScopedJavaLocalRef<jstring> java_result(
-      Java_LocalizationUtils_getDisplayNameForLocale(
-          env,
-          java_locale.obj(),
-          java_display_locale.obj()));
+      Java_LocalizationUtils_getDisplayNameForLocale(env, java_locale,
+                                                     java_display_locale));
   return ConvertJavaStringToUTF16(java_result);
 }
 

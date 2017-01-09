@@ -11,7 +11,7 @@
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_surface.h"
 
-namespace gfx {
+namespace gl {
 
 GLContextOSMesa::GLContextOSMesa(GLShareGroup* share_group)
     : GLContextReal(share_group),
@@ -20,14 +20,29 @@ GLContextOSMesa::GLContextOSMesa(GLShareGroup* share_group)
 }
 
 bool GLContextOSMesa::Initialize(GLSurface* compatible_surface,
-                                 GpuPreference gpu_preference) {
+                                 const GLContextAttribs& attribs) {
+  // webgl_compatibility_context and disabling bind_generates_resource are not
+  // supported.
+  DCHECK(!attribs.webgl_compatibility_context &&
+         attribs.bind_generates_resource);
+
   DCHECK(!context_);
 
   OSMesaContext share_handle = static_cast<OSMesaContext>(
       share_group() ? share_group()->GetHandle() : nullptr);
 
-  GLuint format = compatible_surface->GetFormat();
-  DCHECK_NE(format, (unsigned)0);
+  GLuint format = 0;
+  switch (compatible_surface->GetFormat()) {
+    case GLSurface::SURFACE_OSMESA_BGRA:
+      format = OSMESA_BGRA;
+      break;
+    case GLSurface::SURFACE_OSMESA_RGBA:
+      format = OSMESA_RGBA;
+      break;
+    default:
+      NOTREACHED();
+      return false;
+  }
   context_ = OSMesaCreateContextExt(format,
                                     0,  // depth bits
                                     0,  // stencil bits
@@ -73,9 +88,7 @@ bool GLContextOSMesa::MakeCurrent(GLSurface* surface) {
   OSMesaPixelStore(OSMESA_Y_UP, 0);
 
   SetCurrent(surface);
-  if (!InitializeDynamicBindings()) {
-    return false;
-  }
+  InitializeDynamicBindings();
 
   if (!surface->OnMakeCurrent(this)) {
     LOG(ERROR) << "Could not make current.";
@@ -140,4 +153,4 @@ GLContextOSMesa::~GLContextOSMesa() {
   Destroy();
 }
 
-}  // namespace gfx
+}  // namespace gl

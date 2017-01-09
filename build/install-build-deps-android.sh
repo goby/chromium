@@ -6,7 +6,7 @@
 
 # Script to install everything needed to build chromium on android, including
 # items requiring sudo privileges.
-# See http://code.google.com/p/chromium/wiki/AndroidBuildInstructions
+# See https://www.chromium.org/developers/how-tos/android-build-instructions
 
 # This script installs the sun-java6 packages (bin, jre and jdk). Sun requires
 # a license agreement, so upon installation it will prompt the user. To get
@@ -14,21 +14,27 @@
 
 args="$@"
 
-# TODO(dgn) remove this this argument from calls (http://crbug.com/541727)
-if test "$1" = "--skip-sdk-packages"; then
-  args="${@:2}"
-fi
-
 if ! uname -m | egrep -q "i686|x86_64"; then
   echo "Only x86 architectures are currently supported" >&2
   exit
 fi
 
+lsb_release=$(lsb_release --codename --short)
+
+case $lsb_release in
+  xenial)
+    java_alternative="java-1.8.0-openjdk-amd64"
+    java_pkgs="openjdk-8-jre openjdk-8-jdk"
+  ;;
+  *)
+    java_alternative="java-1.7.0-openjdk-amd64"
+    java_pkgs="openjdk-7-jre openjdk-7-jdk"
+  ;;
+esac
+
 # Install first the default Linux build deps.
 "$(dirname "${BASH_SOURCE[0]}")/install-build-deps.sh" \
   --no-syms --lib32 --no-arm --no-chromeos-fonts --no-nacl --no-prompt "${args}"
-
-lsb_release=$(lsb_release --codename --short)
 
 # The temporary directory used to store output of update-java-alternatives
 TEMPDIR=$(mktemp -d)
@@ -49,7 +55,7 @@ sudo apt-get -f install
 # be installed manually on late-model versions.
 
 # common
-sudo apt-get -y install lighttpd python-pexpect xvfb x11-utils
+sudo apt-get -y install lib32z1 lighttpd python-pexpect xvfb x11-utils
 
 # Some binaries in the Android SDK require 32-bit libraries on the host.
 # See https://developer.android.com/sdk/installing/index.html?pkg=tools
@@ -61,15 +67,15 @@ fi
 
 sudo apt-get -y install ant
 
-# Install openjdk and openjre 7 stuff
-sudo apt-get -y install openjdk-7-jre openjdk-7-jdk
+# Install openjdk and openjre stuff
+sudo apt-get -y install $java_pkgs
 
 # Switch version of Java to openjdk 7.
 # Some Java plugins (e.g. for firefox, mozilla) are not required to build, and
 # thus are treated only as warnings. Any errors in updating java alternatives
 # which are not '*-javaplugin.so' will cause errors and stop the script from
 # completing successfully.
-if ! sudo update-java-alternatives -s java-1.7.0-openjdk-amd64 \
+if ! sudo update-java-alternatives -s $java_alternative \
            >& "${TEMPDIR}"/update-java-alternatives.out
 then
   # Check that there are the expected javaplugin.so errors for the update

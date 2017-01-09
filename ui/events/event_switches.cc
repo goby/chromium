@@ -2,23 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "ui/events/event_switches.h"
 
 namespace switches {
 
 // Enable scroll prediction for scroll update events.
 const char kEnableScrollPrediction[] = "enable-scroll-prediction";
-
-// Enable support for touch events.
-const char kTouchEvents[] = "touch-events";
-
-// The values the kTouchEvents switch may have, as in --touch-events=disabled.
-//   auto: enabled at startup when an attached touchscreen is present.
-const char kTouchEventsAuto[] = "auto";
-//   enabled: touch events always enabled.
-const char kTouchEventsEnabled[] = "enabled";
-//   disabled: touch events are disabled.
-const char kTouchEventsDisabled[] = "disabled";
 
 // Enable compensation for unstable pinch zoom. Some touch screens display
 // significant amount of wobble when moving a finger in a straight line. This

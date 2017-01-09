@@ -4,20 +4,18 @@
 
 package org.chromium.base.library_loader;
 
-import android.annotation.TargetApi;
+import android.annotation.SuppressLint;
 import android.content.Context;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageInfo;
 import android.os.AsyncTask;
-import android.os.Build;
 import android.os.SystemClock;
 
 import org.chromium.base.CommandLine;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.PackageUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.MainDex;
 import org.chromium.base.metrics.RecordHistogram;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -39,6 +37,7 @@ import javax.annotation.Nullable;
  * the native counterpart to this class.
  */
 @JNINamespace("base::android")
+@MainDex
 public class LibraryLoader {
     private static final String TAG = "LibraryLoader";
 
@@ -47,6 +46,9 @@ public class LibraryLoader {
 
     // Guards all access to the libraries
     private static final Object sLock = new Object();
+
+    // The singleton instance of NativeLibraryPreloader.
+    private static NativeLibraryPreloader sLibraryPreloader;
 
     // The singleton instance of LibraryLoader.
     private static volatile LibraryLoader sInstance;
@@ -87,6 +89,25 @@ public class LibraryLoader {
     // will be reported via UMA. Set once when the libraries are done loading.
     private long mLibraryLoadTimeMs;
 
+    // The return value of NativeLibraryPreloader.loadLibrary(), which will be reported
+    // via UMA, it is initialized to the invalid value which shouldn't showup in UMA
+    // report.
+    private int mLibraryPreloaderStatus = -1;
+
+    /**
+     * Set native library preloader, if set, the NativeLibraryPreloader.loadLibrary will be invoked
+     * before calling System.loadLibrary, this only applies when not using the chromium linker.
+     *
+     * @param loader the NativeLibraryPreloader, it shall only be set once and before the
+     *               native library loaded.
+     */
+    public static void setNativeLibraryPreloader(NativeLibraryPreloader loader) {
+        synchronized (sLock) {
+            assert sLibraryPreloader == null && (sInstance == null || !sInstance.mLoaded);
+            sLibraryPreloader = loader;
+        }
+    }
+
     /**
      * @param libraryProcessType the process the shared library is loaded in. refer to
      *                           LibraryProcessType for possible values.
@@ -111,16 +132,14 @@ public class LibraryLoader {
 
     /**
      *  This method blocks until the library is fully loaded and initialized.
-     *
-     *  @param context The context in which the method is called.
      */
-    public void ensureInitialized(Context context) throws ProcessInitException {
+    public void ensureInitialized() throws ProcessInitException {
         synchronized (sLock) {
             if (mInitialized) {
                 // Already initialized, nothing to do.
                 return;
             }
-            loadAlreadyLocked(context);
+            loadAlreadyLocked(ContextUtils.getApplicationContext());
             initializeAlreadyLocked();
         }
     }
@@ -139,13 +158,26 @@ public class LibraryLoader {
      * this is called on will be the thread that runs the native code's static initializers.
      * See the comment in doInBackground() for more considerations on this.
      *
-     * @param context The context the code is running.
-     *
      * @throws ProcessInitException if the native library failed to load.
      */
-    public void loadNow(Context context) throws ProcessInitException {
+    public void loadNow() throws ProcessInitException {
+        loadNowOverrideApplicationContext(ContextUtils.getApplicationContext());
+    }
+
+    /**
+     * Override kept for callers that need to load from a different app context. Do not use unless
+     * specifically required to load from another context that is not the current process's app
+     * context.
+     *
+     * @param appContext The overriding app context to be used to load libraries.
+     * @throws ProcessInitException if the native library failed to load with this context.
+     */
+    public void loadNowOverrideApplicationContext(Context appContext) throws ProcessInitException {
         synchronized (sLock) {
-            loadAlreadyLocked(context);
+            if (mLoaded && appContext != ContextUtils.getApplicationContext()) {
+                throw new IllegalStateException("Attempt to load again from alternate context.");
+            }
+            loadAlreadyLocked(appContext);
         }
     }
 
@@ -170,16 +202,33 @@ public class LibraryLoader {
      * detrimental to the startup time.
      */
     public void asyncPrefetchLibrariesToMemory() {
-        if (!mPrefetchLibraryHasBeenCalled.compareAndSet(false, true)) return;
+        final boolean coldStart = mPrefetchLibraryHasBeenCalled.compareAndSet(false, true);
         new AsyncTask<Void, Void, Void>() {
             @Override
             protected Void doInBackground(Void... params) {
                 TraceEvent.begin("LibraryLoader.asyncPrefetchLibrariesToMemory");
-                boolean success = nativeForkAndPrefetchNativeLibrary();
-                if (!success) {
-                    Log.w(TAG, "Forking a process to prefetch the native library failed.");
+                int percentage = nativePercentageOfResidentNativeLibraryCode();
+                boolean success = false;
+                // Arbitrary percentage threshold. If most of the native library is already
+                // resident (likely with monochrome), don't bother creating a prefetch process.
+                boolean prefetch = coldStart && percentage < 90;
+                if (prefetch) {
+                    success = nativeForkAndPrefetchNativeLibrary();
+                    if (!success) {
+                        Log.w(TAG, "Forking a process to prefetch the native library failed.");
+                    }
                 }
-                RecordHistogram.recordBooleanHistogram("LibraryLoader.PrefetchStatus", success);
+                // As this runs in a background thread, it can be called before histograms are
+                // initialized. In this instance, histograms are dropped.
+                RecordHistogram.initialize();
+                if (prefetch) {
+                    RecordHistogram.recordBooleanHistogram("LibraryLoader.PrefetchStatus", success);
+                }
+                if (percentage != -1) {
+                    String histogram = "LibraryLoader.PercentageOfResidentCodeBeforePrefetch"
+                            + (coldStart ? ".ColdStartup" : ".WarmStartup");
+                    RecordHistogram.recordPercentageHistogram(histogram, percentage);
+                }
                 TraceEvent.end("LibraryLoader.asyncPrefetchLibrariesToMemory");
                 return null;
             }
@@ -213,7 +262,9 @@ public class LibraryLoader {
 
     // Invoke either Linker.loadLibrary(...) or System.loadLibrary(...), triggering
     // JNI_OnLoad in native code
-    private void loadAlreadyLocked(Context context) throws ProcessInitException {
+    // TODO(crbug.com/635567): Fix this properly.
+    @SuppressLint("DefaultLocale")
+    private void loadAlreadyLocked(Context appContext) throws ProcessInitException {
         try {
             if (!mLoaded) {
                 assert !mInitialized;
@@ -239,7 +290,7 @@ public class LibraryLoader {
                         String libFilePath = System.mapLibraryName(library);
                         if (Linker.isInZipFile()) {
                             // Load directly from the APK.
-                            zipFilePath = getLibraryApkPath(context);
+                            zipFilePath = appContext.getApplicationInfo().sourceDir;
                             Log.i(TAG, "Loading " + library + " from within " + zipFilePath);
                         } else {
                             // The library is in its own file.
@@ -252,6 +303,9 @@ public class LibraryLoader {
 
                     linker.finishLibraryLoad();
                 } else {
+                    if (sLibraryPreloader != null) {
+                        mLibraryPreloaderStatus = sLibraryPreloader.loadLibrary(appContext);
+                    }
                     // Load libraries using the system linker.
                     for (String library : NativeLibraries.LIBRARIES) {
                         System.loadLibrary(library);
@@ -281,31 +335,6 @@ public class LibraryLoader {
         }
     }
 
-    // Returns whether the given split name is that of the ABI split.
-    private static boolean isAbiSplit(String splitName) {
-        // The split name for the ABI split is manually set in the build rules.
-        return splitName.startsWith("abi_");
-    }
-
-    // Returns the path to the .apk that holds the native libraries.
-    // This is either the main .apk, or the abi split apk.
-    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-    private static String getLibraryApkPath(Context context) {
-        ApplicationInfo appInfo = context.getApplicationInfo();
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            return appInfo.sourceDir;
-        }
-        PackageInfo packageInfo = PackageUtils.getOwnPackageInfo(context);
-        if (packageInfo.splitNames != null) {
-            for (int i = 0; i < packageInfo.splitNames.length; ++i) {
-                if (isAbiSplit(packageInfo.splitNames[i])) {
-                    return appInfo.splitSourceDirs[i];
-                }
-            }
-        }
-        return appInfo.sourceDir;
-    }
-
     // The WebView requires the Command Line to be switched over before
     // initialization is done. This is okay in the WebView's case since the
     // JNI is already loaded by this point.
@@ -326,6 +355,10 @@ public class LibraryLoader {
         nativeInitCommandLine(CommandLine.getJavaSwitchesOrNull());
         CommandLine.enableNativeProxy();
         mCommandLineSwitched = true;
+
+        // Ensure that native side application context is loaded and in sync with java side. Must do
+        // this here so webview also gets its application context set before fully initializing.
+        ContextUtils.initApplicationContextForNative();
     }
 
     // Invoke base::android::LibraryLoaded in library_loader_hooks.cc
@@ -334,21 +367,11 @@ public class LibraryLoader {
             return;
         }
 
-        // Setup the native command line if necessary.
-        if (!mCommandLineSwitched) {
-            nativeInitCommandLine(CommandLine.getJavaSwitchesOrNull());
-        }
+        ensureCommandLineSwitchedAlreadyLocked();
 
         if (!nativeLibraryLoaded()) {
             Log.e(TAG, "error calling nativeLibraryLoaded");
             throw new ProcessInitException(LoaderErrors.LOADER_ERROR_FAILED_TO_REGISTER_JNI);
-        }
-
-        // The Chrome JNI is registered by now so we can switch the Java
-        // command line over to delegating to native if it's necessary.
-        if (!mCommandLineSwitched) {
-            CommandLine.enableNativeProxy();
-            mCommandLineSwitched = true;
         }
 
         // From now on, keep tracing in sync with native.
@@ -363,24 +386,28 @@ public class LibraryLoader {
     }
 
     // Called after all native initializations are complete.
-    public void onNativeInitializationComplete(Context context) {
-        recordBrowserProcessHistogram(context);
+    public void onNativeInitializationComplete() {
+        recordBrowserProcessHistogram();
     }
 
     // Record Chromium linker histogram state for the main browser process. Called from
     // onNativeInitializationComplete().
-    private void recordBrowserProcessHistogram(Context context) {
+    private void recordBrowserProcessHistogram() {
         if (Linker.getInstance().isUsed()) {
-            nativeRecordChromiumAndroidLinkerBrowserHistogram(mIsUsingBrowserSharedRelros,
-                                                              mLoadAtFixedAddressFailed,
-                                                              getLibraryLoadFromApkStatus(context),
-                                                              mLibraryLoadTimeMs);
+            nativeRecordChromiumAndroidLinkerBrowserHistogram(
+                    mIsUsingBrowserSharedRelros,
+                    mLoadAtFixedAddressFailed,
+                    getLibraryLoadFromApkStatus(),
+                    mLibraryLoadTimeMs);
+        }
+        if (sLibraryPreloader != null) {
+            nativeRecordLibraryPreloaderBrowserHistogram(mLibraryPreloaderStatus);
         }
     }
 
     // Returns the device's status for loading a library directly from the APK file.
     // This method can only be called when the Chromium linker is used.
-    private int getLibraryLoadFromApkStatus(Context context) {
+    private int getLibraryLoadFromApkStatus() {
         assert Linker.getInstance().isUsed();
 
         if (mLibraryWasLoadedFromApk) {
@@ -401,6 +428,9 @@ public class LibraryLoader {
             nativeRegisterChromiumAndroidLinkerRendererHistogram(requestedSharedRelro,
                                                                  loadAtFixedAddressFailed,
                                                                  mLibraryLoadTimeMs);
+        }
+        if (sLibraryPreloader != null) {
+            nativeRegisterLibraryPreloaderRendererHistogram(mLibraryPreloaderStatus);
         }
     }
 
@@ -435,6 +465,10 @@ public class LibraryLoader {
             int libraryLoadFromApkStatus,
             long libraryLoadTime);
 
+    // Method called to record the return value of NativeLibraryPreloader.loadLibrary for the main
+    // browser process.
+    private native void nativeRecordLibraryPreloaderBrowserHistogram(int status);
+
     // Method called to register (for later recording) statistics about the Chromium linker
     // operation for a renderer process. Indicates whether the linker attempted relro sharing,
     // and if it did, whether the library failed to load at a fixed address. Also records the
@@ -444,6 +478,10 @@ public class LibraryLoader {
             boolean loadAtFixedAddressFailed,
             long libraryLoadTime);
 
+    // Method called to register (for later recording) the return value of
+    // NativeLibraryPreloader.loadLibrary for a renderer process.
+    private native void nativeRegisterLibraryPreloaderRendererHistogram(int status);
+
     // Get the version of the native library. This is needed so that we can check we
     // have the right version before initializing the (rest of the) JNI.
     private native String nativeGetVersionNumber();
@@ -452,4 +490,8 @@ public class LibraryLoader {
     // process to prefetch these pages and waits for it. The new process then
     // terminates. This is blocking.
     private static native boolean nativeForkAndPrefetchNativeLibrary();
+
+    // Returns the percentage of the native library code page that are currently reseident in
+    // memory.
+    private static native int nativePercentageOfResidentNativeLibraryCode();
 }

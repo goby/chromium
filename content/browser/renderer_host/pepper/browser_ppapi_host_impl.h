@@ -7,11 +7,12 @@
 
 #include <map>
 #include <string>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -23,9 +24,10 @@
 #include "content/public/browser/browser_ppapi_host.h"
 #include "content/public/common/process_type.h"
 #include "ipc/message_filter.h"
+#include "ppapi/features/features.h"
 #include "ppapi/host/ppapi_host.h"
 
-#if !defined(ENABLE_PLUGINS)
+#if !BUILDFLAG(ENABLE_PLUGINS)
 #error "Plugins should be enabled"
 #endif
 
@@ -78,7 +80,7 @@ class CONTENT_EXPORT BrowserPpapiHostImpl : public BrowserPpapiHost {
   bool IsPotentiallySecurePluginContext(PP_Instance instance);
 
   void set_plugin_process(base::Process process) {
-    plugin_process_ = process.Pass();
+    plugin_process_ = std::move(process);
   }
 
   bool external_plugin() const { return external_plugin_; }
@@ -144,7 +146,7 @@ class CONTENT_EXPORT BrowserPpapiHostImpl : public BrowserPpapiHost {
   // Reports plugin activity to the callback set with SetOnKeepaliveCallback.
   void OnKeepalive();
 
-  scoped_ptr<ppapi::host::PpapiHost> ppapi_host_;
+  std::unique_ptr<ppapi::host::PpapiHost> ppapi_host_;
   base::Process plugin_process_;
   std::string plugin_name_;
   base::FilePath plugin_path_;
@@ -160,7 +162,8 @@ class CONTENT_EXPORT BrowserPpapiHostImpl : public BrowserPpapiHost {
   scoped_refptr<SSLContextHelper> ssl_context_helper_;
 
   // Tracks all PP_Instances in this plugin and associated data.
-  base::ScopedPtrHashMap<PP_Instance, scoped_ptr<InstanceData>> instance_map_;
+  base::ScopedPtrHashMap<PP_Instance, std::unique_ptr<InstanceData>>
+      instance_map_;
 
   scoped_refptr<HostMessageFilter> message_filter_;
 

@@ -29,7 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/forms/ResetInputType.h"
 
 #include "core/InputTypeNames.h"
@@ -37,41 +36,34 @@
 #include "core/html/HTMLFormElement.h"
 #include "core/html/HTMLInputElement.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> ResetInputType::create(HTMLInputElement& element)
-{
-    return adoptRefWillBeNoop(new ResetInputType(element));
+InputType* ResetInputType::create(HTMLInputElement& element) {
+  return new ResetInputType(element);
 }
 
-const AtomicString& ResetInputType::formControlType() const
-{
-    return InputTypeNames::reset;
+const AtomicString& ResetInputType::formControlType() const {
+  return InputTypeNames::reset;
 }
 
-bool ResetInputType::supportsValidation() const
-{
-    return false;
+bool ResetInputType::supportsValidation() const {
+  return false;
 }
 
-void ResetInputType::handleDOMActivateEvent(Event* event)
-{
-    if (element().isDisabledFormControl() || !element().form())
-        return;
-    element().form()->reset();
-    event->setDefaultHandled();
+void ResetInputType::handleDOMActivateEvent(Event* event) {
+  if (element().isDisabledFormControl() || !element().form())
+    return;
+  element().form()->reset();
+  event->setDefaultHandled();
 }
 
-String ResetInputType::defaultValue() const
-{
-    return locale().queryString(WebLocalizedString::ResetButtonDefaultLabel);
+String ResetInputType::defaultLabel() const {
+  return locale().queryString(WebLocalizedString::ResetButtonDefaultLabel);
 }
 
-bool ResetInputType::isTextButton() const
-{
-    return true;
+bool ResetInputType::isTextButton() const {
+  return true;
 }
 
-} // namespace blink
+}  // namespace blink

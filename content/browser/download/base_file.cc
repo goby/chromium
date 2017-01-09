@@ -4,6 +4,8 @@
 
 #include "content/browser/download/base_file.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
@@ -12,48 +14,21 @@
 #include "base/pickle.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "content/browser/download/download_interrupt_reasons_impl.h"
 #include "content/browser/download/download_net_log_parameters.h"
 #include "content/browser/download/download_stats.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/common/quarantine.h"
 #include "crypto/secure_hash.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
 
 namespace content {
 
-// This will initialize the entire array to zero.
-const unsigned char BaseFile::kEmptySha256Hash[] = { 0 };
-
-BaseFile::BaseFile(const base::FilePath& full_path,
-                   const GURL& source_url,
-                   const GURL& referrer_url,
-                   int64 received_bytes,
-                   bool calculate_hash,
-                   const std::string& hash_state_bytes,
-                   base::File file,
-                   const net::BoundNetLog& bound_net_log)
-    : full_path_(full_path),
-      source_url_(source_url),
-      referrer_url_(referrer_url),
-      file_(file.Pass()),
-      bytes_so_far_(received_bytes),
-      start_tick_(base::TimeTicks::Now()),
-      calculate_hash_(calculate_hash),
-      detached_(false),
-      bound_net_log_(bound_net_log) {
-  memcpy(sha256_hash_, kEmptySha256Hash, crypto::kSHA256Length);
-  if (calculate_hash_) {
-    secure_hash_.reset(crypto::SecureHash::Create(crypto::SecureHash::SHA256));
-    if ((bytes_so_far_ > 0) &&  // Not starting at the beginning.
-        (!IsEmptyHash(hash_state_bytes))) {
-      base::Pickle hash_state(hash_state_bytes.c_str(),
-                              hash_state_bytes.size());
-      base::PickleIterator data_iterator(hash_state);
-      secure_hash_->Deserialize(&data_iterator);
-    }
-  }
-}
+BaseFile::BaseFile(const net::NetLogWithSource& net_log) : net_log_(net_log) {}
 
 BaseFile::~BaseFile() {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
@@ -64,11 +39,16 @@ BaseFile::~BaseFile() {
 }
 
 DownloadInterruptReason BaseFile::Initialize(
-    const base::FilePath& default_directory) {
+    const base::FilePath& full_path,
+    const base::FilePath& default_directory,
+    base::File file,
+    int64_t bytes_so_far,
+    const std::string& hash_so_far,
+    std::unique_ptr<crypto::SecureHash> hash_state) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   DCHECK(!detached_);
 
-  if (full_path_.empty()) {
+  if (full_path.empty()) {
     base::FilePath initial_directory(default_directory);
     base::FilePath temp_file;
     if (initial_directory.empty()) {
@@ -84,9 +64,15 @@ DownloadInterruptReason BaseFile::Initialize(
                                 DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
     }
     full_path_ = temp_file;
+  } else {
+    full_path_ = full_path;
   }
 
-  return Open();
+  bytes_so_far_ = bytes_so_far;
+  secure_hash_ = std::move(hash_state);
+  file_ = std::move(file);
+
+  return Open(hash_so_far);
 }
 
 DownloadInterruptReason BaseFile::AppendDataToFile(const char* data,
@@ -111,6 +97,7 @@ DownloadInterruptReason BaseFile::AppendDataToFile(const char* data,
   size_t write_count = 0;
   size_t len = data_len;
   const char* current_data = data;
+  net_log_.BeginEvent(net::NetLogEventType::DOWNLOAD_FILE_WRITTEN);
   while (len > 0) {
     write_count++;
     int write_result = file_.WriteAtCurrentPos(current_data, len);
@@ -127,11 +114,13 @@ DownloadInterruptReason BaseFile::AppendDataToFile(const char* data,
     current_data += write_size;
     bytes_so_far_ += write_size;
   }
+  net_log_.EndEvent(net::NetLogEventType::DOWNLOAD_FILE_WRITTEN,
+                    net::NetLog::Int64Callback("bytes", data_len));
 
   RecordDownloadWriteSize(data_len);
   RecordDownloadWriteLoopCount(write_count);
 
-  if (calculate_hash_)
+  if (secure_hash_)
     secure_hash_->Update(data, data_len);
 
   return DOWNLOAD_INTERRUPT_REASON_NONE;
@@ -150,15 +139,19 @@ DownloadInterruptReason BaseFile::Rename(const base::FilePath& new_path) {
   // it will be overwritten by closing the file.
   bool was_in_progress = in_progress();
 
-  bound_net_log_.BeginEvent(
-      net::NetLog::TYPE_DOWNLOAD_FILE_RENAMED,
-      base::Bind(&FileRenamedNetLogCallback, &full_path_, &new_path));
   Close();
+
+  net_log_.BeginEvent(
+      net::NetLogEventType::DOWNLOAD_FILE_RENAMED,
+      base::Bind(&FileRenamedNetLogCallback, &full_path_, &new_path));
+
   base::CreateDirectory(new_path.DirName());
 
   // A simple rename wouldn't work here since we want the file to have
   // permissions / security descriptors that makes sense in the new directory.
   rename_result = MoveFileAndAdjustPermissions(new_path);
+
+  net_log_.EndEvent(net::NetLogEventType::DOWNLOAD_FILE_RENAMED);
 
   if (rename_result == DOWNLOAD_INTERRUPT_REASON_NONE)
     full_path_ = new_path;
@@ -167,116 +160,150 @@ DownloadInterruptReason BaseFile::Rename(const base::FilePath& new_path) {
   // reason.
   DownloadInterruptReason open_result = DOWNLOAD_INTERRUPT_REASON_NONE;
   if (was_in_progress)
-    open_result = Open();
+    open_result = Open(std::string());
 
-  bound_net_log_.EndEvent(net::NetLog::TYPE_DOWNLOAD_FILE_RENAMED);
   return rename_result == DOWNLOAD_INTERRUPT_REASON_NONE ? open_result
                                                          : rename_result;
 }
 
 void BaseFile::Detach() {
   detached_ = true;
-  bound_net_log_.AddEvent(net::NetLog::TYPE_DOWNLOAD_FILE_DETACHED);
+  net_log_.AddEvent(net::NetLogEventType::DOWNLOAD_FILE_DETACHED);
 }
 
 void BaseFile::Cancel() {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   DCHECK(!detached_);
 
-  bound_net_log_.AddEvent(net::NetLog::TYPE_CANCELLED);
+  net_log_.AddEvent(net::NetLogEventType::CANCELLED);
 
   Close();
 
   if (!full_path_.empty()) {
-    bound_net_log_.AddEvent(net::NetLog::TYPE_DOWNLOAD_FILE_DELETED);
+    net_log_.AddEvent(net::NetLogEventType::DOWNLOAD_FILE_DELETED);
     base::DeleteFile(full_path_, false);
   }
 
   Detach();
 }
 
-void BaseFile::Finish() {
+std::unique_ptr<crypto::SecureHash> BaseFile::Finish() {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-
-  if (calculate_hash_)
-    secure_hash_->Finish(sha256_hash_, crypto::kSHA256Length);
-
   Close();
-}
-
-void BaseFile::SetClientGuid(const std::string& guid) {
-  client_guid_ = guid;
-}
-
-// OS_WIN, OS_MACOSX and OS_LINUX have specialized implementations.
-#if !defined(OS_WIN) && !defined(OS_MACOSX) && !defined(OS_LINUX)
-DownloadInterruptReason BaseFile::AnnotateWithSourceInformation() {
-  return DOWNLOAD_INTERRUPT_REASON_NONE;
-}
-#endif
-
-bool BaseFile::GetHash(std::string* hash) {
-  DCHECK(!detached_);
-  hash->assign(reinterpret_cast<const char*>(sha256_hash_),
-               sizeof(sha256_hash_));
-  return (calculate_hash_ && !in_progress());
-}
-
-std::string BaseFile::GetHashState() {
-  if (!calculate_hash_)
-    return std::string();
-
-  base::Pickle hash_state;
-  if (!secure_hash_->Serialize(&hash_state))
-    return std::string();
-
-  return std::string(reinterpret_cast<const char*>(hash_state.data()),
-                     hash_state.size());
-}
-
-// static
-bool BaseFile::IsEmptyHash(const std::string& hash) {
-  return (hash.size() == crypto::kSHA256Length &&
-          0 == memcmp(hash.data(), kEmptySha256Hash, crypto::kSHA256Length));
+  return std::move(secure_hash_);
 }
 
 std::string BaseFile::DebugString() const {
-  return base::StringPrintf("{ source_url_ = \"%s\""
-                            " full_path_ = \"%" PRFilePath "\""
-                            " bytes_so_far_ = %" PRId64
-                            " detached_ = %c }",
-                            source_url_.spec().c_str(),
-                            full_path_.value().c_str(),
-                            bytes_so_far_,
-                            detached_ ? 'T' : 'F');
+  return base::StringPrintf(
+      "{ "
+      " full_path_ = \"%" PRFilePath
+      "\""
+      " bytes_so_far_ = %" PRId64 " detached_ = %c }",
+      full_path_.value().c_str(),
+      bytes_so_far_,
+      detached_ ? 'T' : 'F');
 }
 
-DownloadInterruptReason BaseFile::Open() {
+DownloadInterruptReason BaseFile::CalculatePartialHash(
+    const std::string& hash_to_expect) {
+  secure_hash_ = crypto::SecureHash::Create(crypto::SecureHash::SHA256);
+
+  if (bytes_so_far_ == 0)
+    return DOWNLOAD_INTERRUPT_REASON_NONE;
+
+  if (file_.Seek(base::File::FROM_BEGIN, 0) != 0)
+    return LogSystemError("Seek partial file",
+                          logging::GetLastSystemErrorCode());
+
+  const size_t kMinBufferSize = secure_hash_->GetHashLength();
+  const size_t kMaxBufferSize = 1024 * 512;
+  static_assert(kMaxBufferSize <= std::numeric_limits<int>::max(),
+                "kMaxBufferSize must fit on an int");
+
+  // The size of the buffer is:
+  // - at least kMinBufferSize so that we can use it to hold the hash as well.
+  // - at most kMaxBufferSize so that there's a reasonable bound.
+  // - not larger than |bytes_so_far_| unless bytes_so_far_ is less than the
+  //   hash size.
+  std::vector<char> buffer(std::max<int64_t>(
+      kMinBufferSize, std::min<int64_t>(kMaxBufferSize, bytes_so_far_)));
+
+  int64_t current_position = 0;
+  while (current_position < bytes_so_far_) {
+    // While std::min needs to work with int64_t, the result is always at most
+    // kMaxBufferSize, which fits on an int.
+    int bytes_to_read =
+        std::min<int64_t>(buffer.size(), bytes_so_far_ - current_position);
+    int length = file_.ReadAtCurrentPos(&buffer.front(), bytes_to_read);
+    if (length == -1) {
+      return LogInterruptReason("Reading partial file",
+                                logging::GetLastSystemErrorCode(),
+                                DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT);
+    }
+
+    if (length == 0)
+      break;
+
+    secure_hash_->Update(&buffer.front(), length);
+    current_position += length;
+  }
+
+  if (current_position != bytes_so_far_) {
+    return LogInterruptReason(
+        "Verifying prefix hash", 0, DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT);
+  }
+
+  if (!hash_to_expect.empty()) {
+    DCHECK_EQ(secure_hash_->GetHashLength(), hash_to_expect.size());
+    DCHECK(buffer.size() >= secure_hash_->GetHashLength());
+    std::unique_ptr<crypto::SecureHash> partial_hash(secure_hash_->Clone());
+    partial_hash->Finish(&buffer.front(), buffer.size());
+
+    if (memcmp(&buffer.front(),
+               hash_to_expect.c_str(),
+               partial_hash->GetHashLength())) {
+      return LogInterruptReason("Verifying prefix hash",
+                                0,
+                                DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH);
+    }
+  }
+
+  return DOWNLOAD_INTERRUPT_REASON_NONE;
+}
+
+DownloadInterruptReason BaseFile::Open(const std::string& hash_so_far) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   DCHECK(!detached_);
   DCHECK(!full_path_.empty());
 
-  bound_net_log_.BeginEvent(
-      net::NetLog::TYPE_DOWNLOAD_FILE_OPENED,
-      base::Bind(&FileOpenedNetLogCallback, &full_path_, bytes_so_far_));
-
   // Create a new file if it is not provided.
   if (!file_.IsValid()) {
-    file_.Initialize(
-        full_path_, base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_WRITE);
+    file_.Initialize(full_path_,
+                     base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_WRITE |
+                         base::File::FLAG_READ);
     if (!file_.IsValid()) {
-      return LogNetError("Open",
+      return LogNetError("Open/Initialize File",
                          net::FileErrorToNetError(file_.error_details()));
     }
   }
 
-  // We may be re-opening the file after rename. Always make sure we're
-  // writing at the end of the file.
-  int64 file_size = file_.Seek(base::File::FROM_END, 0);
+  net_log_.BeginEvent(
+      net::NetLogEventType::DOWNLOAD_FILE_OPENED,
+      base::Bind(&FileOpenedNetLogCallback, &full_path_, bytes_so_far_));
+
+  if (!secure_hash_) {
+    DownloadInterruptReason reason = CalculatePartialHash(hash_so_far);
+    if (reason != DOWNLOAD_INTERRUPT_REASON_NONE) {
+      ClearFile();
+      return reason;
+    }
+  }
+
+  int64_t file_size = file_.Seek(base::File::FROM_END, 0);
   if (file_size < 0) {
     logging::SystemErrorCode error = logging::GetLastSystemErrorCode();
     ClearFile();
-    return LogSystemError("Seek", error);
+    return LogSystemError("Seeking to end", error);
   } else if (file_size > bytes_so_far_) {
     // The file is larger than we expected.
     // This is OK, as long as we don't use the extra.
@@ -285,7 +312,7 @@ DownloadInterruptReason BaseFile::Open() {
         file_.Seek(base::File::FROM_BEGIN, bytes_so_far_) != bytes_so_far_) {
       logging::SystemErrorCode error = logging::GetLastSystemErrorCode();
       ClearFile();
-      return LogSystemError("Truncate",  error);
+      return LogSystemError("Truncating to last known offset", error);
     }
   } else if (file_size < bytes_so_far_) {
     // The file is shorter than we expected.  Our hashes won't be valid.
@@ -300,8 +327,6 @@ DownloadInterruptReason BaseFile::Open() {
 void BaseFile::Close() {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
-  bound_net_log_.AddEvent(net::NetLog::TYPE_DOWNLOAD_FILE_CLOSED);
-
   if (file_.IsValid()) {
     // Currently we don't really care about the return value, since if it fails
     // theres not much we can do.  But we might in the future.
@@ -314,15 +339,14 @@ void BaseFile::ClearFile() {
   // This should only be called when we have a stream.
   DCHECK(file_.IsValid());
   file_.Close();
-  bound_net_log_.EndEvent(net::NetLog::TYPE_DOWNLOAD_FILE_OPENED);
+  net_log_.EndEvent(net::NetLogEventType::DOWNLOAD_FILE_OPENED);
 }
 
 DownloadInterruptReason BaseFile::LogNetError(
     const char* operation,
     net::Error error) {
-  bound_net_log_.AddEvent(
-      net::NetLog::TYPE_DOWNLOAD_FILE_ERROR,
-      base::Bind(&FileErrorNetLogCallback, operation, error));
+  net_log_.AddEvent(net::NetLogEventType::DOWNLOAD_FILE_ERROR,
+                    base::Bind(&FileErrorNetLogCallback, operation, error));
   return ConvertNetErrorToInterruptReason(error, DOWNLOAD_INTERRUPT_FROM_DISK);
 }
 
@@ -340,10 +364,105 @@ DownloadInterruptReason BaseFile::LogInterruptReason(
     const char* operation,
     int os_error,
     DownloadInterruptReason reason) {
-  bound_net_log_.AddEvent(
-      net::NetLog::TYPE_DOWNLOAD_FILE_ERROR,
+  DVLOG(1) << __func__ << "() operation:" << operation
+           << " os_error:" << os_error
+           << " reason:" << DownloadInterruptReasonToString(reason);
+  net_log_.AddEvent(
+      net::NetLogEventType::DOWNLOAD_FILE_ERROR,
       base::Bind(&FileInterruptedNetLogCallback, operation, os_error, reason));
   return reason;
 }
+
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+
+namespace {
+
+// Given a source and a referrer, determines the "safest" URL that can be used
+// to determine the authority of the download source. Returns an empty URL if no
+// HTTP/S URL can be determined for the <|source_url|, |referrer_url|> pair.
+GURL GetEffectiveAuthorityURL(const GURL& source_url,
+                              const GURL& referrer_url) {
+  if (source_url.is_valid()) {
+    // http{,s} has an authority and are supported.
+    if (source_url.SchemeIsHTTPOrHTTPS())
+      return source_url;
+
+    // If the download source is file:// ideally we should copy the MOTW from
+    // the original file, but given that Chrome/Chromium places strict
+    // restrictions on which schemes can reference file:// URLs, this code is
+    // going to assume that at this point it's okay to treat this download as
+    // being from the local system.
+    if (source_url.SchemeIsFile())
+      return source_url;
+
+    // ftp:// has an authority.
+    if (source_url.SchemeIs(url::kFtpScheme))
+      return source_url;
+  }
+
+  if (referrer_url.is_valid() && referrer_url.SchemeIsHTTPOrHTTPS())
+    return referrer_url;
+
+  return GURL();
+}
+
+}  // namespace
+
+DownloadInterruptReason BaseFile::AnnotateWithSourceInformation(
+    const std::string& client_guid,
+    const GURL& source_url,
+    const GURL& referrer_url) {
+  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(!detached_);
+  DCHECK(!full_path_.empty());
+
+  net_log_.BeginEvent(net::NetLogEventType::DOWNLOAD_FILE_ANNOTATED);
+  QuarantineFileResult result = QuarantineFile(
+      full_path_, GetEffectiveAuthorityURL(source_url, referrer_url),
+      referrer_url, client_guid);
+  net_log_.EndEvent(net::NetLogEventType::DOWNLOAD_FILE_ANNOTATED);
+  switch (result) {
+    case QuarantineFileResult::OK:
+      return DOWNLOAD_INTERRUPT_REASON_NONE;
+    case QuarantineFileResult::VIRUS_INFECTED:
+      return DOWNLOAD_INTERRUPT_REASON_FILE_VIRUS_INFECTED;
+    case QuarantineFileResult::SECURITY_CHECK_FAILED:
+      return DOWNLOAD_INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED;
+    case QuarantineFileResult::BLOCKED_BY_POLICY:
+      return DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED;
+    case QuarantineFileResult::ACCESS_DENIED:
+      return DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED;
+
+    case QuarantineFileResult::FILE_MISSING:
+      // Don't have a good interrupt reason here. This return code means that
+      // the file at |full_path_| went missing before QuarantineFile got to look
+      // at it. Not expected to happen, but we've seen instances where a file
+      // goes missing immediately after BaseFile closes the handle.
+      //
+      // Intentionally using a different error message than
+      // SECURITY_CHECK_FAILED in order to distinguish the two.
+      return DOWNLOAD_INTERRUPT_REASON_FILE_FAILED;
+
+    case QuarantineFileResult::ANNOTATION_FAILED:
+      // This means that the mark-of-the-web couldn't be applied. The file is
+      // already on the file system under its final target name.
+      //
+      // Causes of failed annotations typically aren't transient. E.g. the
+      // target file system may not support extended attributes or alternate
+      // streams. We are going to allow these downloads to progress on the
+      // assumption that failures to apply MOTW can't reliably be introduced
+      // remotely.
+      return DOWNLOAD_INTERRUPT_REASON_NONE;
+  }
+  return DOWNLOAD_INTERRUPT_REASON_FILE_FAILED;
+}
+#else  // !OS_WIN && !OS_MACOSX && !OS_LINUX
+DownloadInterruptReason BaseFile::AnnotateWithSourceInformation(
+    const std::string& client_guid,
+    const GURL& source_url,
+    const GURL& referrer_url) {
+  return DOWNLOAD_INTERRUPT_REASON_NONE;
+}
+#endif
 
 }  // namespace content

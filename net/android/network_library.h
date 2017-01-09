@@ -6,6 +6,7 @@
 #define NET_ANDROID_NETWORK_LIBRARY_H_
 
 #include <jni.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <string>
@@ -35,25 +36,14 @@ void AddTestRootCertificate(const uint8_t* cert, size_t len);
 // Removes all root certificates added by |AddTestRootCertificate| calls.
 void ClearTestRootCertificates();
 
-// Helper for the <keygen> handler. Passes the DER-encoded key  pair via
-// JNI to the Credentials store. Note that the public key must be a DER
-// encoded SubjectPublicKeyInfo (X.509), as returned by i2d_PUBKEY()
-// (and *not* i2d_PublicKey(), which returns a PKCS#1 key).
-//
-// Also, the private key must be in PKCS#8 format, as returned by
-// i2d_PKCS8_PRIV_KEY_INFO(EVP_PKEY2PKCS8(pkey)), which is a different
-// format than what i2d_PrivateKey() returns, so don't use it either.
-//
+// Helper for the <keygen> handler. Passes the DER-encoded key pair via JNI to
+// the Credentials store. The public key should be a DER-encoded
+// SubjectPublicKeyInfo (X.509) and the private key a DER-encode PrivateKeyInfo
+// (PKCS#8).
 bool StoreKeyPair(const uint8_t* public_key,
                   size_t public_len,
                   const uint8_t* private_key,
                   size_t private_len);
-
-// Helper used to pass the DER-encoded bytes of an X.509 certificate or
-// a PKCS#12 archive holding a private key to the CertInstaller activity.
-NET_EXPORT void StoreCertificate(CertificateMimeType cert_type,
-                                 const void* data,
-                                 size_t data_len);
 
 // Returns true if it can determine that only loopback addresses are configured.
 // i.e. if only 127.0.0.1 and ::1 are routable.
@@ -81,8 +71,17 @@ NET_EXPORT std::string GetTelephonySimOperator();
 // true, it suggests that use of data may incur extra costs.
 NET_EXPORT bool GetIsRoaming();
 
-// Register JNI methods
-NET_EXPORT bool RegisterNetworkLibrary(JNIEnv* env);
+// Returns true if the system's captive portal probe was blocked for the current
+// default data network. The method will return false if the captive portal
+// probe was not blocked, the login process to the captive portal has been
+// successfully completed, or if the captive portal status can't be determined.
+// Requires ACCESS_NETWORK_STATE permission. Only available on Android
+// Marshmallow and later versions. Returns false on earlier versions.
+NET_EXPORT bool GetIsCaptivePortal();
+
+// Gets the SSID of the currently associated WiFi access point if there is one.
+// Otherwise, returns empty string.
+NET_EXPORT_PRIVATE std::string GetWifiSSID();
 
 }  // namespace android
 }  // namespace net

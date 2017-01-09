@@ -19,7 +19,7 @@ consistent state.
 
 ## Build a release-mode clang-format on each platform
 
-Follow the the official instructions here:
+Follow the official instructions here:
 http://clang.llvm.org/get_started.html.
 
 Windows step-by-step:
@@ -75,8 +75,6 @@ strip bin/clang-format
 # On Mac, the system compiler is already clang so it's not needed there.)
 -DCMAKE_C_COMPILER=$PWD/../chrome/src/third_party/llvm-build/Release+Asserts/bin/clang -DCMAKE_CXX_COMPILER=$PWD/../chrome/src/third_party/llvm-build/Release+Asserts/bin/clang++
 ```
-
-TODO: these ^^ instructions looks odd. Are they correct???
 
 Platform specific notes:
 

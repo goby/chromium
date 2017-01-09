@@ -26,51 +26,57 @@
 #ifndef CSSFontFaceSource_h
 #define CSSFontFaceSource_h
 
+#include "core/CoreExport.h"
+#include "platform/fonts/FontCacheKey.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Allocator.h"
 #include "wtf/HashMap.h"
 
 namespace blink {
 
-class FontResource;
 class CSSFontFace;
 class FontDescription;
 class SimpleFontData;
 
-class CSSFontFaceSource : public NoBaseWillBeGarbageCollectedFinalized<CSSFontFaceSource> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(CSSFontFaceSource);
-    WTF_MAKE_NONCOPYABLE(CSSFontFaceSource);
-public:
-    virtual ~CSSFontFaceSource();
+class CORE_EXPORT CSSFontFaceSource
+    : public GarbageCollectedFinalized<CSSFontFaceSource> {
+  WTF_MAKE_NONCOPYABLE(CSSFontFaceSource);
 
-    virtual bool isLocal() const { return false; }
-    virtual bool isLoading() const { return false; }
-    virtual bool isLoaded() const { return true; }
-    virtual bool isValid() const { return true; }
+ public:
+  virtual ~CSSFontFaceSource();
 
-    virtual FontResource* resource() { return nullptr; }
-    void setFontFace(CSSFontFace* face) { m_face = face; }
+  virtual bool isLocal() const { return false; }
+  virtual bool isLoading() const { return false; }
+  virtual bool isLoaded() const { return true; }
+  virtual bool isValid() const { return true; }
 
-    PassRefPtr<SimpleFontData> getFontData(const FontDescription&);
+  void setFontFace(CSSFontFace* face) { m_face = face; }
 
-    virtual bool isLocalFontAvailable(const FontDescription&) { return false; }
-    virtual void beginLoadIfNeeded() { }
+  PassRefPtr<SimpleFontData> getFontData(const FontDescription&);
 
-    // For UMA reporting
-    virtual bool hadBlankText() { return false; }
+  virtual bool isLocalFontAvailable(const FontDescription&) { return false; }
+  virtual void beginLoadIfNeeded() {}
 
-    DECLARE_VIRTUAL_TRACE();
+  virtual bool isBlank() { return false; }
 
-protected:
-    CSSFontFaceSource();
-    virtual PassRefPtr<SimpleFontData> createFontData(const FontDescription&) = 0;
+  // For UMA reporting
+  virtual bool hadBlankText() { return false; }
 
-    using FontDataTable = HashMap<unsigned, RefPtr<SimpleFontData>>; // The hash key is composed of size synthetic styles.
+  DECLARE_VIRTUAL_TRACE();
 
-    RawPtrWillBeMember<CSSFontFace> m_face; // Our owning font face.
-    FontDataTable m_fontDataTable;
+ protected:
+  CSSFontFaceSource();
+  virtual PassRefPtr<SimpleFontData> createFontData(const FontDescription&) = 0;
+
+  using FontDataTable = HashMap<FontCacheKey,
+                                RefPtr<SimpleFontData>,
+                                FontCacheKeyHash,
+                                FontCacheKeyTraits>;
+
+  Member<CSSFontFace> m_face;  // Our owning font face.
+  FontDataTable m_fontDataTable;
 };
 
-}
+}  // namespace blink
 
 #endif

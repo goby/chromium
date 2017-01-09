@@ -4,19 +4,24 @@
 
 #include "chrome/browser/ui/translate/translate_bubble_model_impl.h"
 
+#include <utility>
+
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "components/translate/core/browser/language_state.h"
 #include "components/translate/core/browser/translate_ui_delegate.h"
 
 TranslateBubbleModelImpl::TranslateBubbleModelImpl(
     translate::TranslateStep step,
-    scoped_ptr<translate::TranslateUIDelegate> ui_delegate)
-    : ui_delegate_(ui_delegate.Pass()),
-      view_state_transition_(TranslateStepToViewState(step)) {
+    std::unique_ptr<translate::TranslateUIDelegate> ui_delegate)
+    : ui_delegate_(std::move(ui_delegate)),
+      view_state_transition_(TranslateStepToViewState(step)),
+      translation_declined_(false),
+      translate_executed_(false) {
+  if (GetViewState() != TranslateBubbleModel::VIEW_STATE_BEFORE_TRANSLATE)
+    translate_executed_ = true;
 }
 
-TranslateBubbleModelImpl::~TranslateBubbleModelImpl() {
-}
+TranslateBubbleModelImpl::~TranslateBubbleModelImpl() {}
 
 // static
 TranslateBubbleModel::ViewState
@@ -39,6 +44,10 @@ TranslateBubbleModelImpl::TranslateStepToViewState(
 
 TranslateBubbleModel::ViewState TranslateBubbleModelImpl::GetViewState() const {
   return view_state_transition_.view_state();
+}
+
+bool TranslateBubbleModelImpl::ShouldAlwaysTranslateBeCheckedByDefault() const {
+  return ui_delegate_->ShouldAlwaysTranslateBeCheckedByDefault();
 }
 
 void TranslateBubbleModelImpl::SetViewState(
@@ -79,6 +88,10 @@ void TranslateBubbleModelImpl::UpdateTargetLanguageIndex(int index) {
   ui_delegate_->UpdateTargetLanguageIndex(index);
 }
 
+void TranslateBubbleModelImpl::DeclineTranslation() {
+  translation_declined_ = true;
+}
+
 void TranslateBubbleModelImpl::SetNeverTranslateLanguage(bool value) {
   ui_delegate_->SetLanguageBlocked(value);
 }
@@ -96,6 +109,7 @@ void TranslateBubbleModelImpl::SetAlwaysTranslate(bool value) {
 }
 
 void TranslateBubbleModelImpl::Translate() {
+  translate_executed_ = true;
   ui_delegate_->Translate();
 }
 
@@ -103,15 +117,16 @@ void TranslateBubbleModelImpl::RevertTranslation() {
   ui_delegate_->RevertTranslation();
 }
 
-void TranslateBubbleModelImpl::TranslationDeclined(bool explicitly_closed) {
-  ui_delegate_->TranslationDeclined(explicitly_closed);
+void TranslateBubbleModelImpl::OnBubbleClosing() {
+  if (!translate_executed_)
+    ui_delegate_->TranslationDeclined(translation_declined_);
 }
 
 bool TranslateBubbleModelImpl::IsPageTranslatedInCurrentLanguages() const {
   const translate::LanguageState& language_state =
       ui_delegate_->GetLanguageState();
   return ui_delegate_->GetOriginalLanguageCode() ==
-      language_state.original_language() &&
-      ui_delegate_->GetTargetLanguageCode() ==
-      language_state.current_language();
+             language_state.original_language() &&
+         ui_delegate_->GetTargetLanguageCode() ==
+             language_state.current_language();
 }

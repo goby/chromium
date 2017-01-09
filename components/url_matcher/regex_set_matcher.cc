@@ -4,12 +4,14 @@
 
 #include "components/url_matcher/regex_set_matcher.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "components/url_matcher/substring_set_matcher.h"
-#include "third_party/re2/re2/filtered_re2.h"
-#include "third_party/re2/re2/re2.h"
+#include "third_party/re2/src/re2/filtered_re2.h"
+#include "third_party/re2/src/re2/re2.h"
 
 namespace url_matcher {
 
@@ -100,13 +102,16 @@ void RegexSetMatcher::RebuildMatcher() {
   // SubstringSetMatcher doesn't own its strings.
   for (size_t i = 0; i < strings_to_match.size(); ++i) {
     substring_patterns_.push_back(
-        new StringPattern(strings_to_match[i], i));
+        base::MakeUnique<StringPattern>(strings_to_match[i], i));
   }
-  substring_matcher_->RegisterPatterns(substring_patterns_);
+  std::vector<const StringPattern*> patterns;
+  for (const auto& pattern : substring_patterns_)
+    patterns.push_back(pattern.get());
+  substring_matcher_->RegisterPatterns(patterns);
 }
 
 void RegexSetMatcher::DeleteSubstringPatterns() {
-  STLDeleteElements(&substring_patterns_);
+  substring_patterns_.clear();
 }
 
 }  // namespace url_matcher

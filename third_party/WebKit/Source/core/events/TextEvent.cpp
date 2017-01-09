@@ -24,89 +24,102 @@
  *
  */
 
-#include "config.h"
 #include "core/events/TextEvent.h"
 
 #include "core/dom/DocumentFragment.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<TextEvent> TextEvent::create()
-{
-    return adoptRefWillBeNoop(new TextEvent);
+TextEvent* TextEvent::create() {
+  return new TextEvent;
 }
 
-PassRefPtrWillBeRawPtr<TextEvent> TextEvent::create(PassRefPtrWillBeRawPtr<AbstractView> view, const String& data, TextEventInputType inputType)
-{
-    return adoptRefWillBeNoop(new TextEvent(view, data, inputType));
+TextEvent* TextEvent::create(AbstractView* view,
+                             const String& data,
+                             TextEventInputType inputType) {
+  return new TextEvent(view, data, inputType);
 }
 
-PassRefPtrWillBeRawPtr<TextEvent> TextEvent::createForPlainTextPaste(PassRefPtrWillBeRawPtr<AbstractView> view, const String& data, bool shouldSmartReplace)
-{
-    return adoptRefWillBeNoop(new TextEvent(view, data, nullptr, shouldSmartReplace, false));
+TextEvent* TextEvent::createForPlainTextPaste(AbstractView* view,
+                                              const String& data,
+                                              bool shouldSmartReplace) {
+  return new TextEvent(view, data, nullptr, shouldSmartReplace, false);
 }
 
-PassRefPtrWillBeRawPtr<TextEvent> TextEvent::createForFragmentPaste(PassRefPtrWillBeRawPtr<AbstractView> view, PassRefPtrWillBeRawPtr<DocumentFragment> data, bool shouldSmartReplace, bool shouldMatchStyle)
-{
-    return adoptRefWillBeNoop(new TextEvent(view, "", data, shouldSmartReplace, shouldMatchStyle));
+TextEvent* TextEvent::createForFragmentPaste(AbstractView* view,
+                                             DocumentFragment* data,
+                                             bool shouldSmartReplace,
+                                             bool shouldMatchStyle) {
+  return new TextEvent(view, "", data, shouldSmartReplace, shouldMatchStyle);
 }
 
-PassRefPtrWillBeRawPtr<TextEvent> TextEvent::createForDrop(PassRefPtrWillBeRawPtr<AbstractView> view, const String& data)
-{
-    return adoptRefWillBeNoop(new TextEvent(view, data, TextEventInputDrop));
+TextEvent* TextEvent::createForDrop(AbstractView* view, const String& data) {
+  return new TextEvent(view, data, TextEventInputDrop);
 }
 
 TextEvent::TextEvent()
-    : m_inputType(TextEventInputKeyboard)
-    , m_shouldSmartReplace(false)
-    , m_shouldMatchStyle(false)
-{
+    : m_inputType(TextEventInputKeyboard),
+      m_shouldSmartReplace(false),
+      m_shouldMatchStyle(false) {}
+
+TextEvent::TextEvent(AbstractView* view,
+                     const String& data,
+                     TextEventInputType inputType)
+    : UIEvent(EventTypeNames::textInput,
+              true,
+              true,
+              ComposedMode::Composed,
+              WTF::monotonicallyIncreasingTime(),
+              view,
+              0,
+              nullptr),
+      m_inputType(inputType),
+      m_data(data),
+      m_pastingFragment(nullptr),
+      m_shouldSmartReplace(false),
+      m_shouldMatchStyle(false) {}
+
+TextEvent::TextEvent(AbstractView* view,
+                     const String& data,
+                     DocumentFragment* pastingFragment,
+                     bool shouldSmartReplace,
+                     bool shouldMatchStyle)
+    : UIEvent(EventTypeNames::textInput,
+              true,
+              true,
+              ComposedMode::Composed,
+              WTF::monotonicallyIncreasingTime(),
+              view,
+              0,
+              nullptr),
+      m_inputType(TextEventInputPaste),
+      m_data(data),
+      m_pastingFragment(pastingFragment),
+      m_shouldSmartReplace(shouldSmartReplace),
+      m_shouldMatchStyle(shouldMatchStyle) {}
+
+TextEvent::~TextEvent() {}
+
+void TextEvent::initTextEvent(const AtomicString& type,
+                              bool canBubble,
+                              bool cancelable,
+                              AbstractView* view,
+                              const String& data) {
+  if (isBeingDispatched())
+    return;
+
+  initUIEvent(type, canBubble, cancelable, view, 0);
+
+  m_data = data;
 }
 
-TextEvent::TextEvent(PassRefPtrWillBeRawPtr<AbstractView> view, const String& data, TextEventInputType inputType)
-    : UIEvent(EventTypeNames::textInput, true, true, view, 0)
-    , m_inputType(inputType)
-    , m_data(data)
-    , m_pastingFragment(nullptr)
-    , m_shouldSmartReplace(false)
-    , m_shouldMatchStyle(false)
-{
+const AtomicString& TextEvent::interfaceName() const {
+  return EventNames::TextEvent;
 }
 
-TextEvent::TextEvent(PassRefPtrWillBeRawPtr<AbstractView> view, const String& data, PassRefPtrWillBeRawPtr<DocumentFragment> pastingFragment,
-                     bool shouldSmartReplace, bool shouldMatchStyle)
-    : UIEvent(EventTypeNames::textInput, true, true, view, 0)
-    , m_inputType(TextEventInputPaste)
-    , m_data(data)
-    , m_pastingFragment(pastingFragment)
-    , m_shouldSmartReplace(shouldSmartReplace)
-    , m_shouldMatchStyle(shouldMatchStyle)
-{
+DEFINE_TRACE(TextEvent) {
+  visitor->trace(m_pastingFragment);
+  UIEvent::trace(visitor);
 }
 
-TextEvent::~TextEvent()
-{
-}
-
-void TextEvent::initTextEvent(const AtomicString& type, bool canBubble, bool cancelable, PassRefPtrWillBeRawPtr<AbstractView> view, const String& data)
-{
-    if (dispatched())
-        return;
-
-    initUIEvent(type, canBubble, cancelable, view, 0);
-
-    m_data = data;
-}
-
-const AtomicString& TextEvent::interfaceName() const
-{
-    return EventNames::TextEvent;
-}
-
-DEFINE_TRACE(TextEvent)
-{
-    visitor->trace(m_pastingFragment);
-    UIEvent::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

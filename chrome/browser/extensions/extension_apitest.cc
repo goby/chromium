@@ -4,16 +4,21 @@
 
 #include "chrome/browser/extensions/extension_apitest.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/base_switches.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
+#include "chrome/common/extensions/extension_process_policy.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/browser/api/test/test_api.h"
@@ -40,7 +45,7 @@ const char kIsolateExtensions[] = "isolateExtensions";
 const char kFtpServerPort[] = "ftpServer.port";
 const char kEmbeddedTestServerPort[] = "testServer.port";
 
-scoped_ptr<net::test_server::HttpResponse> HandleServerRedirectRequest(
+std::unique_ptr<net::test_server::HttpResponse> HandleServerRedirectRequest(
     const net::test_server::HttpRequest& request) {
   if (!base::StartsWith(request.relative_url, "/server-redirect?",
                         base::CompareCase::SENSITIVE))
@@ -50,14 +55,14 @@ scoped_ptr<net::test_server::HttpResponse> HandleServerRedirectRequest(
   std::string redirect_target =
       request.relative_url.substr(query_string_pos + 1);
 
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse);
   http_response->set_code(net::HTTP_MOVED_PERMANENTLY);
   http_response->AddCustomHeader("Location", redirect_target);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
-scoped_ptr<net::test_server::HttpResponse> HandleEchoHeaderRequest(
+std::unique_ptr<net::test_server::HttpResponse> HandleEchoHeaderRequest(
     const net::test_server::HttpRequest& request) {
   if (!base::StartsWith(request.relative_url, "/echoheader?",
                         base::CompareCase::SENSITIVE))
@@ -68,25 +73,24 @@ scoped_ptr<net::test_server::HttpResponse> HandleEchoHeaderRequest(
       request.relative_url.substr(query_string_pos + 1);
 
   std::string header_value;
-  std::map<std::string, std::string>::const_iterator it = request.headers.find(
-      header_name);
+  auto it = request.headers.find(header_name);
   if (it != request.headers.end())
     header_value = it->second;
 
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse);
   http_response->set_code(net::HTTP_OK);
   http_response->set_content(header_value);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
-scoped_ptr<net::test_server::HttpResponse> HandleSetCookieRequest(
+std::unique_ptr<net::test_server::HttpResponse> HandleSetCookieRequest(
     const net::test_server::HttpRequest& request) {
   if (!base::StartsWith(request.relative_url, "/set-cookie?",
                         base::CompareCase::SENSITIVE))
     return nullptr;
 
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse);
   http_response->set_code(net::HTTP_OK);
 
@@ -98,10 +102,10 @@ scoped_ptr<net::test_server::HttpResponse> HandleSetCookieRequest(
            cookie_value, "&", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL))
     http_response->AddCustomHeader("Set-Cookie", cookie);
 
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
-scoped_ptr<net::test_server::HttpResponse> HandleSetHeaderRequest(
+std::unique_ptr<net::test_server::HttpResponse> HandleSetHeaderRequest(
     const net::test_server::HttpRequest& request) {
   if (!base::StartsWith(request.relative_url, "/set-header?",
                         base::CompareCase::SENSITIVE))
@@ -111,25 +115,25 @@ scoped_ptr<net::test_server::HttpResponse> HandleSetHeaderRequest(
   std::string escaped_header =
       request.relative_url.substr(query_string_pos + 1);
 
-  std::string header =
-      net::UnescapeURLComponent(escaped_header,
-                                net::UnescapeRule::NORMAL |
-                                net::UnescapeRule::SPACES |
-                                net::UnescapeRule::URL_SPECIAL_CHARS);
+  std::string header = net::UnescapeURLComponent(
+      escaped_header,
+      net::UnescapeRule::NORMAL | net::UnescapeRule::SPACES |
+          net::UnescapeRule::PATH_SEPARATORS |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
 
   size_t colon_pos = header.find(':');
   if (colon_pos == std::string::npos)
-    return scoped_ptr<net::test_server::HttpResponse>();
+    return std::unique_ptr<net::test_server::HttpResponse>();
 
   std::string header_name = header.substr(0, colon_pos);
   // Skip space after colon.
   std::string header_value = header.substr(colon_pos + 2);
 
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse);
   http_response->set_code(net::HTTP_OK);
   http_response->AddCustomHeader(header_name, header_value);
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 };  // namespace
@@ -153,10 +157,7 @@ void ExtensionApiTest::SetUpInProcessBrowserTestFixture() {
   test_config_->SetString(kTestDataDirectory,
                           net::FilePathToFileURL(test_data_dir_).spec());
   test_config_->SetInteger(kTestWebSocketPort, 0);
-  bool isolate_extensions = base::CommandLine::ForCurrentProcess()->HasSwitch(
-                                switches::kSitePerProcess) ||
-                            base::CommandLine::ForCurrentProcess()->HasSwitch(
-                                extensions::switches::kIsolateExtensions);
+  bool isolate_extensions = extensions::IsIsolateExtensionsEnabled();
   test_config_->SetBoolean(kIsolateExtensions, isolate_extensions);
   extensions::TestGetConfigFunction::set_test_config_state(
       test_config_.get());
@@ -170,6 +171,13 @@ void ExtensionApiTest::TearDownInProcessBrowserTestFixture() {
 bool ExtensionApiTest::RunExtensionTest(const std::string& extension_name) {
   return RunExtensionTestImpl(
       extension_name, std::string(), NULL, kFlagEnableFileAccess);
+}
+
+bool ExtensionApiTest::RunExtensionTestWithArg(
+    const std::string& extension_name,
+    const char* custom_arg) {
+  return RunExtensionTestImpl(extension_name, std::string(), custom_arg,
+                              kFlagEnableFileAccess);
 }
 
 bool ExtensionApiTest::RunExtensionTestIncognito(
@@ -254,8 +262,7 @@ bool ExtensionApiTest::RunPlatformAppTest(const std::string& extension_name) {
 
 bool ExtensionApiTest::RunPlatformAppTestWithArg(
     const std::string& extension_name, const char* custom_arg) {
-  return RunExtensionTestImpl(
-      extension_name, std::string(), custom_arg, kFlagLaunchPlatformApp);
+  return RunPlatformAppTestWithFlags(extension_name, custom_arg, kFlagNone);
 }
 
 bool ExtensionApiTest::RunPlatformAppTestWithFlags(
@@ -263,6 +270,15 @@ bool ExtensionApiTest::RunPlatformAppTestWithFlags(
   return RunExtensionTestImpl(
       extension_name, std::string(), NULL, flags | kFlagLaunchPlatformApp);
 }
+
+bool ExtensionApiTest::RunPlatformAppTestWithFlags(
+    const std::string& extension_name,
+    const char* custom_arg,
+    int flags) {
+  return RunExtensionTestImpl(extension_name, std::string(), custom_arg,
+                              flags | kFlagLaunchPlatformApp);
+}
+
 
 // Load |extension_name| extension and/or |page_url| and wait for
 // PASSED or FAILED notification.
@@ -325,9 +341,9 @@ bool ExtensionApiTest::RunExtensionTestImpl(const std::string& extension_name,
     else
       ui_test_utils::NavigateToURL(browser(), url);
   } else if (launch_platform_app) {
-    AppLaunchParams params(browser()->profile(), extension,
-                           extensions::LAUNCH_CONTAINER_NONE, NEW_WINDOW,
-                           extensions::SOURCE_TEST);
+    AppLaunchParams params(
+        browser()->profile(), extension, extensions::LAUNCH_CONTAINER_NONE,
+        WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_TEST);
     params.command_line = *base::CommandLine::ForCurrentProcess();
     OpenApplication(params);
   }
@@ -372,7 +388,15 @@ const extensions::Extension* ExtensionApiTest::GetSingleLoadedExtension() {
 }
 
 bool ExtensionApiTest::StartEmbeddedTestServer() {
-  if (!embedded_test_server()->Start())
+  if (!InitializeEmbeddedTestServer())
+    return false;
+
+  EmbeddedTestServerAcceptConnections();
+  return true;
+}
+
+bool ExtensionApiTest::InitializeEmbeddedTestServer() {
+  if (!embedded_test_server()->InitializeAndListen())
     return false;
 
   // Build a dictionary of values that tests can use to build URLs that
@@ -382,6 +406,10 @@ bool ExtensionApiTest::StartEmbeddedTestServer() {
                            embedded_test_server()->port());
 
   return true;
+}
+
+void ExtensionApiTest::EmbeddedTestServerAcceptConnections() {
+  embedded_test_server()->StartAcceptingConnections();
 }
 
 bool ExtensionApiTest::StartWebSocketServer(

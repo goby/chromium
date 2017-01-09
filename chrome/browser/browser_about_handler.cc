@@ -11,12 +11,20 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "components/url_formatter/url_fixer.h"
+#include "extensions/features/features.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/webui/md_history_ui.h"
+#endif
 
 bool FixupBrowserAboutURL(GURL* url,
                           content::BrowserContext* browser_context) {
@@ -35,7 +43,7 @@ bool WillHandleBrowserAboutURL(GURL* url,
   FixupBrowserAboutURL(url, browser_context);
 
   // Check that about: URLs are fixed up to chrome: by url_formatter::FixupURL.
-  DCHECK((*url == GURL(url::kAboutBlankURL)) ||
+  DCHECK((*url == url::kAboutBlankURL) ||
          !url->SchemeIs(url::kAboutScheme));
 
   // Only handle chrome://foo/, url_formatter::FixupURL translates about:foo.
@@ -54,10 +62,11 @@ bool WillHandleBrowserAboutURL(GURL* url,
   } else if (host == chrome::kChromeUISyncHost) {
     host = chrome::kChromeUISyncInternalsHost;
   // Redirect chrome://extensions.
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   } else if (host == chrome::kChromeUIExtensionsHost) {
     // If the material design extensions page is enabled, it gets its own host.
     // Otherwise, it's handled by the uber settings page.
-    if (::switches::MdExtensionsEnabled()) {
+    if (base::FeatureList::IsEnabled(features::kMaterialDesignExtensions)) {
       host = chrome::kChromeUIExtensionsHost;
       path = url->path();
     } else {
@@ -69,34 +78,40 @@ bool WillHandleBrowserAboutURL(GURL* url,
       url->path() == std::string("/") + chrome::kExtensionsSubPage) {
     host = chrome::kChromeUIUberHost;
     path = chrome::kChromeUIExtensionsHost;
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
   // Redirect chrome://history.
   } else if (host == chrome::kChromeUIHistoryHost) {
+#if defined(OS_ANDROID)
+    // On Android, redirect directly to chrome://history-frame since
+    // uber page is unsupported.
+    host = chrome::kChromeUIHistoryFrameHost;
+#else
     // Material design history is handled on the top-level chrome://history
     // host.
-    if (::switches::MdHistoryEnabled()) {
+    if (MdHistoryUI::IsEnabled(Profile::FromBrowserContext(browser_context))) {
       host = chrome::kChromeUIHistoryHost;
       path = url->path();
     } else {
-#if defined(OS_ANDROID)
-      // On Android, redirect directly to chrome://history-frame since
-      // uber page is unsupported.
-      host = chrome::kChromeUIHistoryFrameHost;
-#else
       host = chrome::kChromeUIUberHost;
       path = chrome::kChromeUIHistoryHost + url->path();
-#endif
     }
-  // Redirect chrome://settings
+#endif
+  // Redirect chrome://settings, unless MD settings is enabled.
   } else if (host == chrome::kChromeUISettingsHost) {
-    if (::switches::AboutInSettingsEnabled()) {
+    if (base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
+      return true;  // Prevent further rewriting - this is a valid URL.
+    } else if (::switches::AboutInSettingsEnabled()) {
       host = chrome::kChromeUISettingsFrameHost;
     } else {
       host = chrome::kChromeUIUberHost;
       path = chrome::kChromeUISettingsHost + url->path();
     }
-  // Redirect chrome://help
+  // Redirect chrome://help, unless MD settings is enabled.
   } else if (host == chrome::kChromeUIHelpHost) {
-    if (::switches::AboutInSettingsEnabled()) {
+    if (base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
+      host = chrome::kChromeUISettingsHost;
+      path = chrome::kChromeUIHelpHost;
+    } else if (::switches::AboutInSettingsEnabled()) {
       host = chrome::kChromeUISettingsFrameHost;
       if (url->path().empty() || url->path() == "/")
         path = chrome::kChromeUIHelpHost;

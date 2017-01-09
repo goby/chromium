@@ -5,6 +5,7 @@
 #ifndef NavigatorServiceWorker_h
 #define NavigatorServiceWorker_h
 
+#include "core/dom/ContextLifecycleObserver.h"
 #include "core/frame/Navigator.h"
 #include "modules/ModulesExport.h"
 #include "platform/Supplementable.h"
@@ -17,31 +18,38 @@ class ExceptionState;
 class Navigator;
 class ServiceWorkerContainer;
 
-class MODULES_EXPORT NavigatorServiceWorker final : public GarbageCollectedFinalized<NavigatorServiceWorker>, public HeapSupplement<Navigator>, public DOMWindowProperty {
-    USING_GARBAGE_COLLECTED_MIXIN(NavigatorServiceWorker);
-public:
-    static NavigatorServiceWorker* from(Document&);
-    static NavigatorServiceWorker& from(Navigator&);
-    static NavigatorServiceWorker* toNavigatorServiceWorker(Navigator&);
+class MODULES_EXPORT NavigatorServiceWorker final
+    : public GarbageCollected<NavigatorServiceWorker>,
+      public Supplement<Navigator>,
+      public ContextLifecycleObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(NavigatorServiceWorker);
 
-    virtual ~NavigatorServiceWorker();
+ public:
+  static NavigatorServiceWorker* from(Document&);
+  static NavigatorServiceWorker& from(Navigator&);
+  static NavigatorServiceWorker* toNavigatorServiceWorker(Navigator&);
+  static ServiceWorkerContainer* serviceWorker(ExecutionContext*,
+                                               Navigator&,
+                                               ExceptionState&);
+  static ServiceWorkerContainer* serviceWorker(ExecutionContext*,
+                                               Navigator&,
+                                               String& errorMessage);
 
-    static ServiceWorkerContainer* serviceWorker(ExecutionContext*, Navigator&, ExceptionState&);
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+ private:
+  explicit NavigatorServiceWorker(Navigator&);
+  ServiceWorkerContainer* serviceWorker(LocalFrame*, ExceptionState&);
+  ServiceWorkerContainer* serviceWorker(LocalFrame*, String& errorMessage);
 
-private:
-    explicit NavigatorServiceWorker(Navigator&);
-    ServiceWorkerContainer* serviceWorker(ExceptionState&);
+  static const char* supplementName();
 
-    static const char* supplementName();
+  // ContextLifecycleObserver override.
+  void contextDestroyed() override;
 
-    // DOMWindowProperty override.
-    void willDetachGlobalObjectFromFrame() override;
-
-    Member<ServiceWorkerContainer> m_serviceWorker;
+  Member<ServiceWorkerContainer> m_serviceWorker;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NavigatorServiceWorker_h
+#endif  // NavigatorServiceWorker_h

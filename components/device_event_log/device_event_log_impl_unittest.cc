@@ -4,14 +4,16 @@
 
 #include "components/device_event_log/device_event_log_impl.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/test_simple_task_runner.h"
@@ -117,7 +119,7 @@ class DeviceEventLogTest : public testing::Test {
   size_t GetMaxEntries() const { return impl_->max_entries(); }
 
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  scoped_ptr<DeviceEventLogImpl> impl_;
+  std::unique_ptr<DeviceEventLogImpl> impl_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DeviceEventLogTest);
@@ -181,16 +183,11 @@ TEST_F(DeviceEventLogTest, TestStringFormat) {
   EXPECT_EQ("[time] event0\n",
             SkipTime(GetLogString(OLDEST_FIRST, "time", kDefaultLevel, 1)));
   EXPECT_EQ("event0\n", GetLogString(OLDEST_FIRST, "", kDefaultLevel, 1));
-  EXPECT_EQ("<b><i>event0</i></b>\n",
-            GetLogString(OLDEST_FIRST, "html", kDefaultLevel, 1));
   EXPECT_EQ(
       "[time] file:0 event0\n",
       SkipTime(GetLogString(OLDEST_FIRST, "file,time", kDefaultLevel, 1)));
 
   AddTestEvent(LOG_LEVEL_DEBUG, "event1");
-  EXPECT_EQ("[time] file:0 <i>event1</i>\n",
-            SkipTime(GetLogString(OLDEST_FIRST, "file,time,html",
-                                  LOG_LEVEL_DEBUG, 1)));
 
   AddTestEvent(kDefaultLevel, "event2");
   EXPECT_EQ("Network: file:0 event2\n",

@@ -7,7 +7,7 @@
 #include "base/base64.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/macros.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -45,8 +45,9 @@ std::string CreateSalt() {
 }
 
 std::string BuildRawHMACKey() {
-  scoped_ptr<crypto::SymmetricKey> key(crypto::SymmetricKey::GenerateRandomKey(
-      crypto::SymmetricKey::AES, kHMACKeySizeInBits));
+  std::unique_ptr<crypto::SymmetricKey> key(
+      crypto::SymmetricKey::GenerateRandomKey(crypto::SymmetricKey::AES,
+                                              kHMACKeySizeInBits));
   std::string raw_result, result;
   key->GetRawKey(&raw_result);
   base::Base64Encode(raw_result, &result);
@@ -58,7 +59,7 @@ base::DictionaryValue* LoadPasswordData(base::FilePath profile_dir) {
       profile_dir.Append(kPasswordUpdateFile));
   std::string error_message;
   int error_code = JSONFileValueDeserializer::JSON_NO_ERROR;
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       deserializer.Deserialize(&error_code, &error_message);
   if (JSONFileValueDeserializer::JSON_NO_ERROR != error_code) {
     LOG(ERROR) << "Could not deserialize password data, error = " << error_code

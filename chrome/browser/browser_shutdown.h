@@ -5,9 +5,25 @@
 #ifndef CHROME_BROWSER_BROWSER_SHUTDOWN_H_
 #define CHROME_BROWSER_BROWSER_SHUTDOWN_H_
 
+#include "build/build_config.h"
+
 class PrefRegistrySimple;
 
 namespace browser_shutdown {
+
+// Shutdown flags
+enum Flags {
+  NO_FLAGS = 0,
+
+  // If |RESTART_LAST_SESSION| is set, the browser will attempt to restart in
+  // in the last session after the shutdown.
+  RESTART_LAST_SESSION = 1 << 0,
+
+  // Makes a panned restart happen in the background. The browser will just come
+  // up in the system tray but not open a new window after restarting. This flag
+  // has no effect if |RESTART_LAST_SESSION| is not set.
+  RESTART_IN_BACKGROUND = 1 << 1
+};
 
 enum ShutdownType {
   // an uninitialized value
@@ -19,6 +35,8 @@ enum ShutdownType {
   // windows is logging off or shutting down
   END_SESSION
 };
+
+constexpr int kNumShutdownTypes = END_SESSION + 1;
 
 void RegisterPrefs(PrefRegistrySimple* registry);
 
@@ -36,12 +54,15 @@ ShutdownType GetShutdownType();
 // Returns true if the session should be restarted.
 bool ShutdownPreThreadsStop();
 
+// Records the shutdown related prefs, and returns true if the browser should be
+// restarted on exit.
+bool RecordShutdownInfoPrefs();
+
 // Performs the remaining shutdown tasks after all threads but the
 // main thread have been stopped.  This includes deleting g_browser_process.
 //
-// The provided parameter indicates whether a preference to restart
-// the session was present.
-void ShutdownPostThreadsStop(bool restart_last_session);
+// See |browser_shutdown::Flags| for the possible flag values and their effects.
+void ShutdownPostThreadsStop(int shutdown_flags);
 #endif
 
 // Called at startup to create a histogram from our previous shutdown time.

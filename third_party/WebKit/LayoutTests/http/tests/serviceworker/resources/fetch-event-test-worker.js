@@ -11,6 +11,16 @@ function handleReferrer(event) {
     ['Referrer: ' + event.request.referrer])));
 }
 
+function handleClientId(event) {
+  var body;
+  if (event.clientId !== null) {
+    body = 'Client ID Found: ' + event.clientId;
+  } else {
+    body = 'Client ID Not Found';
+  }
+  event.respondWith(new Response(body));
+}
+
 function handleNullBody(event) {
   event.respondWith(new Response());
 }
@@ -23,18 +33,23 @@ function handleFormPost(event) {
   event.respondWith(new Promise(function(resolve) {
       event.request.text()
         .then(function(result) {
-            resolve(new Response(event.request.method + ':' + result));
+            resolve(new Response(event.request.method + ':' +
+                                 event.request.headers.get('Content-Type') + ':' +
+                                 result));
           });
     }));
 }
 
-var logForMultipleRespondWith = '';
-
 function handleMultipleRespondWith(event) {
+  var logForMultipleRespondWith = '';
   for (var i = 0; i < 3; ++i) {
     logForMultipleRespondWith += '(' + i + ')';
     try {
-      event.respondWith(new Response(logForMultipleRespondWith));
+      event.respondWith(new Promise(function(resolve) {
+        setTimeout(function() {
+          resolve(new Response(logForMultipleRespondWith));
+        }, 0);
+      }));
     } catch (e) {
       logForMultipleRespondWith += '[' + e.name + ']';
     }
@@ -55,18 +70,25 @@ function handleUsedCheck(event) {
   }
 }
 
+function handleHeaders(event) {
+  const headers = Array.from(event.request.headers);
+  event.respondWith(new Response(JSON.stringify(headers)));
+}
+
 self.addEventListener('fetch', function(event) {
     var url = event.request.url;
     var handlers = [
       { pattern: '?string', fn: handleString },
       { pattern: '?blob', fn: handleBlob },
       { pattern: '?referrer', fn: handleReferrer },
+      { pattern: '?clientId', fn: handleClientId },
       { pattern: '?ignore', fn: function() {} },
       { pattern: '?null', fn: handleNullBody },
       { pattern: '?fetch', fn: handleFetch },
       { pattern: '?form-post', fn: handleFormPost },
       { pattern: '?multiple-respond-with', fn: handleMultipleRespondWith },
-      { pattern: '?used-check', fn: handleUsedCheck }
+      { pattern: '?used-check', fn: handleUsedCheck },
+      { pattern: '?headers', fn: handleHeaders }
     ];
 
     var handler = null;

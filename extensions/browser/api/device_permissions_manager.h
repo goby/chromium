@@ -5,14 +5,16 @@
 #ifndef EXTENSIONS_DEVICE_PERMISSION_MANAGER_H_
 #define EXTENSIONS_DEVICE_PERMISSION_MANAGER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "base/threading/thread_checker.h"
@@ -58,7 +60,7 @@ class DevicePermissionEntry : public base::RefCounted<DevicePermissionEntry> {
 
   // Convert the device to a serializable value, returns a null pointer if the
   // entry is not persistent.
-  scoped_ptr<base::Value> ToValue() const;
+  std::unique_ptr<base::Value> ToValue() const;
 
   base::string16 GetPermissionMessageString() const;
 
@@ -141,8 +143,8 @@ class DevicePermissionsManager : public KeyedService,
   static DevicePermissionsManager* Get(content::BrowserContext* context);
 
   static base::string16 GetPermissionMessage(
-      uint16 vendor_id,
-      uint16 product_id,
+      uint16_t vendor_id,
+      uint16_t product_id,
       const base::string16& manufacturer_string,
       const base::string16& product_string,
       const base::string16& serial_number,

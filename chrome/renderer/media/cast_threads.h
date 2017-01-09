@@ -14,14 +14,13 @@
 #define CHROME_RENDERER_MEDIA_CAST_THREADS_H_
 
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/threading/thread.h"
 
 class CastThreads {
  public:
-  scoped_refptr<base::SingleThreadTaskRunner>
-  GetAudioEncodeMessageLoopProxy();
-  scoped_refptr<base::SingleThreadTaskRunner>
-  GetVideoEncodeMessageLoopProxy();
+  scoped_refptr<base::SingleThreadTaskRunner> GetAudioEncodeTaskRunner();
+  scoped_refptr<base::SingleThreadTaskRunner> GetVideoEncodeTaskRunner();
 
  private:
   friend struct base::DefaultLazyInstanceTraits<CastThreads>;

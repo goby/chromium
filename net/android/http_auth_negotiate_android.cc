@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "jni/HttpNegotiateAuthenticator_jni.h"
 #include "net/base/auth.h"
 #include "net/base/net_errors.h"
@@ -20,6 +20,7 @@
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertJavaStringToUTF8;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace net {
@@ -64,8 +65,7 @@ HttpAuthNegotiateAndroid::HttpAuthNegotiateAndroid(
   JNIEnv* env = AttachCurrentThread();
   java_authenticator_.Reset(Java_HttpNegotiateAuthenticator_create(
       env,
-      ConvertUTF8ToJavaString(env, prefs->AuthAndroidNegotiateAccountType())
-          .obj()));
+      ConvertUTF8ToJavaString(env, prefs->AuthAndroidNegotiateAccountType())));
 }
 
 HttpAuthNegotiateAndroid::~HttpAuthNegotiateAndroid() {
@@ -101,6 +101,7 @@ HttpAuth::AuthorizationResult HttpAuthNegotiateAndroid::ParseChallenge(
 int HttpAuthNegotiateAndroid::GenerateAuthToken(
     const AuthCredentials* credentials,
     const std::string& spn,
+    const std::string& channel_bindings,
     std::string* auth_token,
     const net::CompletionCallback& callback) {
   if (prefs_->AuthAndroidNegotiateAccountType().empty()) {
@@ -138,9 +139,8 @@ int HttpAuthNegotiateAndroid::GenerateAuthToken(
   JavaNegotiateResultWrapper* callback_wrapper = new JavaNegotiateResultWrapper(
       callback_task_runner, thread_safe_callback);
   Java_HttpNegotiateAuthenticator_getNextAuthToken(
-      env, java_authenticator_.obj(),
-      reinterpret_cast<intptr_t>(callback_wrapper), java_spn.obj(),
-      java_server_auth_token.obj(), can_delegate_);
+      env, java_authenticator_, reinterpret_cast<intptr_t>(callback_wrapper),
+      java_spn, java_server_auth_token, can_delegate_);
   return ERR_IO_PENDING;
 }
 

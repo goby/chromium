@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_DOWNLOAD_QUERY_H_
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_QUERY_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "content/public/browser/download_item.h"
 
@@ -36,7 +39,6 @@ class Value;
 // query.AddSorter(SORT_BYTES_RECEIVED, ASCENDING);
 // query.AddSorter(SORT_URL, DESCENDING);
 // query.Limit(20);
-// query.Skip(5);
 // DownloadVector all_items, results;
 // query.Search(all_items.begin(), all_items.end(), &results);
 class DownloadQuery {
@@ -50,7 +52,7 @@ class DownloadQuery {
 
   // All times are ISO 8601 strings.
   enum FilterType {
-    FILTER_BYTES_RECEIVED,       // int
+    FILTER_BYTES_RECEIVED,       // double
     FILTER_DANGER_ACCEPTED,      // bool
     FILTER_ENDED_AFTER,          // string
     FILTER_ENDED_BEFORE,         // string
@@ -64,9 +66,11 @@ class DownloadQuery {
     FILTER_STARTED_AFTER,        // string
     FILTER_STARTED_BEFORE,       // string
     FILTER_START_TIME,           // string
-    FILTER_TOTAL_BYTES,          // int
-    FILTER_TOTAL_BYTES_GREATER,  // int
-    FILTER_TOTAL_BYTES_LESS,     // int
+    FILTER_TOTAL_BYTES,          // double
+    FILTER_TOTAL_BYTES_GREATER,  // double
+    FILTER_TOTAL_BYTES_LESS,     // double
+    FILTER_ORIGINAL_URL,         // string
+    FILTER_ORIGINAL_URL_REGEX,   // string
     FILTER_URL,                  // string
     FILTER_URL_REGEX,            // string
   };
@@ -83,6 +87,7 @@ class DownloadQuery {
     SORT_START_TIME,
     SORT_STATE,
     SORT_TOTAL_BYTES,
+    SORT_ORIGINAL_URL,
     SORT_URL,
   };
 
@@ -125,11 +130,6 @@ class DownloadQuery {
   // Limit the size of search results to |limit|.
   void Limit(size_t limit) { limit_ = limit; }
 
-  // Ignore |skip| items. Note: which items are skipped are not guaranteed to
-  // always be the same. If you rely on this, you should probably be using
-  // AddSorter() in conjunction with this method.
-  void Skip(size_t skip) { skip_ = skip; }
-
   // Filters DownloadItem*s from |iter| to |last| into |results|, sorts
   // |results|, and limits the size of |results|. |results| must be non-NULL.
   template <typename InputIterator>
@@ -157,7 +157,6 @@ class DownloadQuery {
   FilterCallbackVector filters_;
   SorterVector sorters_;
   size_t limit_;
-  size_t skip_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadQuery);
 };

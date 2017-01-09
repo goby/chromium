@@ -5,10 +5,10 @@
 import("//build/config/android/rules.gni")
 
 android_apk("customtabs_benchmark_apk") {
-  DEPRECATED_java_in_dir = "java/src"
+  java_files = [ "java/src/org/chromium/customtabs/test/MainActivity.java" ]
   android_manifest = "java/AndroidManifest.xml"
   apk_name = "CustomTabsBenchmark"
   deps = [
-    "//third_party/custom_tabs_client:custom_tabs_support_lib",
+    "//third_party/custom_tabs_client:custom_tabs_support_java",
   ]
 }

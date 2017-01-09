@@ -37,20 +37,18 @@ class TaskSwitchTimeTrackerTest : public testing::Test {
 
  protected:
   // Used to verify recorded histogram data.
-  scoped_ptr<base::HistogramTester> histogram_tester_;
+  std::unique_ptr<base::HistogramTester> histogram_tester_;
 
   // A Test API that wraps the test target.
-  scoped_ptr<test::TaskSwitchTimeTrackerTestAPI> time_tracker_test_api_;
+  std::unique_ptr<test::TaskSwitchTimeTrackerTestAPI> time_tracker_test_api_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TaskSwitchTimeTrackerTest);
 };
 
-TaskSwitchTimeTrackerTest::TaskSwitchTimeTrackerTest() {
-}
+TaskSwitchTimeTrackerTest::TaskSwitchTimeTrackerTest() {}
 
-TaskSwitchTimeTrackerTest::~TaskSwitchTimeTrackerTest() {
-}
+TaskSwitchTimeTrackerTest::~TaskSwitchTimeTrackerTest() {}
 
 void TaskSwitchTimeTrackerTest::SetUp() {
   testing::Test::SetUp();

@@ -6,32 +6,42 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sha1.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/url_util.h"
+#include "net/cert/asn1_util.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_proc_whitelist.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/crl_set.h"
+#include "net/cert/internal/parse_ocsp.h"
+#include "net/cert/ocsp_revocation_status.h"
 #include "net/cert/x509_certificate.h"
+#include "net/der/encode_values.h"
 #include "url/url_canon.h"
 
-#if defined(USE_NSS_CERTS) || defined(OS_IOS)
+#if defined(USE_NSS_CERTS)
 #include "net/cert/cert_verify_proc_nss.h"
 #elif defined(USE_OPENSSL_CERTS) && !defined(OS_ANDROID)
 #include "net/cert/cert_verify_proc_openssl.h"
 #elif defined(OS_ANDROID)
 #include "net/cert/cert_verify_proc_android.h"
+#elif defined(OS_IOS)
+#include "net/cert/cert_verify_proc_ios.h"
 #elif defined(OS_MACOSX)
 #include "net/cert/cert_verify_proc_mac.h"
 #elif defined(OS_WIN)
+#include "base/win/windows_version.h"
 #include "net/cert/cert_verify_proc_win.h"
 #else
 #error Implement certificate verification.
@@ -177,16 +187,200 @@ bool IsPastSHA1DeprecationDate(const X509Certificate& cert) {
   return start >= kSHA1DeprecationDate;
 }
 
+// Checks if the given RFC 6960 OCSPCertID structure |cert_id| has the same
+// serial number as |certificate|.
+//
+// TODO(dadrian): Verify name and key hashes. https://crbug.com/620005
+bool CheckCertIDMatchesCertificate(const OCSPCertID& cert_id,
+                                   const X509Certificate& certificate) {
+  der::Input serial(&certificate.serial_number());
+  return cert_id.serial_number == serial;
+}
+
+// Populates |ocsp_result| with revocation information for |certificate|, based
+// on the unparsed OCSP response in |raw_response|.
+void CheckOCSP(const std::string& raw_response,
+               const X509Certificate& certificate,
+               OCSPVerifyResult* ocsp_result) {
+  // The maximum age for an OCSP response, implemented as time since the
+  // |this_update| field in OCSPSingleREsponse. Responses older than |max_age|
+  // will be considered invalid.
+  static base::TimeDelta max_age = base::TimeDelta::FromDays(7);
+  *ocsp_result = OCSPVerifyResult();
+
+  if (raw_response.empty()) {
+    ocsp_result->response_status = OCSPVerifyResult::MISSING;
+    return;
+  }
+
+  der::Input response_der(&raw_response);
+  OCSPResponse response;
+  if (!ParseOCSPResponse(response_der, &response)) {
+    ocsp_result->response_status = OCSPVerifyResult::PARSE_RESPONSE_ERROR;
+    return;
+  }
+
+  // RFC 6960 defines all responses |response_status| != SUCCESSFUL as error
+  // responses. No revocation information is provided on error responses, and
+  // the OCSPResponseData structure is not set.
+  if (response.status != OCSPResponse::ResponseStatus::SUCCESSFUL) {
+    ocsp_result->response_status = OCSPVerifyResult::ERROR_RESPONSE;
+    return;
+  }
+
+  // Actual revocation information is contained within the BasicOCSPResponse as
+  // a ResponseData structure. The BasicOCSPResponse was parsed above, and
+  // contains an unparsed ResponseData. From RFC 6960:
+  //
+  // BasicOCSPResponse       ::= SEQUENCE {
+  //    tbsResponseData      ResponseData,
+  //    signatureAlgorithm   AlgorithmIdentifier,
+  //    signature            BIT STRING,
+  //    certs            [0] EXPLICIT SEQUENCE OF Certificate OPTIONAL }
+  //
+  // ResponseData ::= SEQUENCE {
+  //     version              [0] EXPLICIT Version DEFAULT v1,
+  //     responderID              ResponderID,
+  //     producedAt               GeneralizedTime,
+  //     responses                SEQUENCE OF SingleResponse,
+  //     responseExtensions   [1] EXPLICIT Extensions OPTIONAL }
+  OCSPResponseData response_data;
+  if (!ParseOCSPResponseData(response.data, &response_data)) {
+    ocsp_result->response_status = OCSPVerifyResult::PARSE_RESPONSE_DATA_ERROR;
+    return;
+  }
+
+  // If producedAt is outside of the certificate validity period, reject the
+  // response.
+  der::GeneralizedTime not_before, not_after;
+  if (!der::EncodeTimeAsGeneralizedTime(certificate.valid_start(),
+                                        &not_before) ||
+      !der::EncodeTimeAsGeneralizedTime(certificate.valid_expiry(),
+                                        &not_after)) {
+    ocsp_result->response_status = OCSPVerifyResult::BAD_PRODUCED_AT;
+    return;
+  }
+  if (response_data.produced_at < not_before ||
+      response_data.produced_at > not_after) {
+    ocsp_result->response_status = OCSPVerifyResult::BAD_PRODUCED_AT;
+    return;
+  }
+
+  // TODO(svaldez): Unify with GetOCSPCertStatus. https://crbug.com/629249
+  base::Time verify_time = base::Time::Now();
+  ocsp_result->response_status = OCSPVerifyResult::NO_MATCHING_RESPONSE;
+  for (const auto& single_response_der : response_data.responses) {
+    // In the common case, there should only be one SingleResponse in the
+    // ResponseData (matching the certificate requested and used on this
+    // connection). However, it is possible for the OCSP responder to provide
+    // multiple responses for multiple certificates. Look through all the
+    // provided SingleResponses, and check to see if any match the certificate.
+    // A SingleResponse matches a certificate if it has the same serial number.
+    OCSPSingleResponse single_response;
+    if (!ParseOCSPSingleResponse(single_response_der, &single_response))
+      continue;
+    OCSPCertID cert_id;
+    if (!ParseOCSPCertID(single_response.cert_id_tlv, &cert_id))
+      continue;
+    if (!CheckCertIDMatchesCertificate(cert_id, certificate))
+      continue;
+    // The SingleResponse matches the certificate, but may be out of date. Out
+    // of date responses are noted seperate from responses with mismatched
+    // serial numbers. If an OCSP responder provides both an up to date response
+    // and an expired response, the up to date response takes precedence
+    // (PROVIDED > INVALID_DATE).
+    if (!CheckOCSPDateValid(single_response, verify_time, max_age)) {
+      if (ocsp_result->response_status != OCSPVerifyResult::PROVIDED)
+        ocsp_result->response_status = OCSPVerifyResult::INVALID_DATE;
+      continue;
+    }
+
+    // In the case with multiple matching and up to date responses, keep only
+    // the strictest status (REVOKED > UNKNOWN > GOOD). The current
+    // |revocation_status| is only valid if |response_status| is already set to
+    // PROVIDED.
+    OCSPRevocationStatus current_status = OCSPRevocationStatus::GOOD;
+    if (ocsp_result->response_status == OCSPVerifyResult::PROVIDED) {
+      current_status = ocsp_result->revocation_status;
+    }
+    if (current_status == OCSPRevocationStatus::GOOD ||
+        single_response.cert_status.status == OCSPRevocationStatus::REVOKED) {
+      ocsp_result->revocation_status = single_response.cert_status.status;
+    }
+    ocsp_result->response_status = OCSPVerifyResult::PROVIDED;
+  }
+}
+
+// Records histograms indicating whether the certificate |cert|, which
+// is assumed to have been validated chaining to a private root,
+// contains the TLS Feature Extension (https://tools.ietf.org/html/rfc7633) and
+// has valid OCSP information stapled.
+void RecordTLSFeatureExtensionWithPrivateRoot(
+    X509Certificate* cert,
+    const OCSPVerifyResult& ocsp_result) {
+  std::string cert_der;
+  if (!X509Certificate::GetDEREncoded(cert->os_cert_handle(), &cert_der))
+    return;
+
+  // This checks only for the presence of the TLS Feature Extension, but
+  // does not check the feature list, and in particular does not verify that
+  // its value is 'status_request' or 'status_request2'. In practice the
+  // only use of the TLS feature extension is for OCSP stapling, so
+  // don't bother to check the value.
+  bool has_extension = asn1::HasTLSFeatureExtension(cert_der);
+
+  UMA_HISTOGRAM_BOOLEAN("Net.Certificate.TLSFeatureExtensionWithPrivateRoot",
+                        has_extension);
+  if (!has_extension)
+    return;
+
+  UMA_HISTOGRAM_BOOLEAN(
+      "Net.Certificate.TLSFeatureExtensionWithPrivateRootHasOCSP",
+      (ocsp_result.response_status != OCSPVerifyResult::MISSING));
+}
+
+// Comparison functor used for binary searching whether a given HashValue,
+// which MUST be a SHA-256 hash, is contained with an array of SHA-256
+// hashes.
+struct HashToArrayComparator {
+  template <size_t N>
+  bool operator()(const uint8_t(&lhs)[N], const HashValue& rhs) const {
+    static_assert(N == crypto::kSHA256Length,
+                  "Only SHA-256 hashes are supported");
+    return memcmp(lhs, rhs.data(), crypto::kSHA256Length) < 0;
+  }
+
+  template <size_t N>
+  bool operator()(const HashValue& lhs, const uint8_t(&rhs)[N]) const {
+    static_assert(N == crypto::kSHA256Length,
+                  "Only SHA-256 hashes are supported");
+    return memcmp(lhs.data(), rhs, crypto::kSHA256Length) < 0;
+  }
+};
+
+bool AreSHA1IntermediatesAllowed() {
+#if defined(OS_WIN)
+  // TODO(rsleevi): Remove this once https://crbug.com/588789 is resolved
+  // for Windows 7/2008 users.
+  // Note: This must be kept in sync with cert_verify_proc_unittest.cc
+  return base::win::GetVersion() < base::win::VERSION_WIN8;
+#else
+  return false;
+#endif
+};
+
 }  // namespace
 
 // static
 CertVerifyProc* CertVerifyProc::CreateDefault() {
-#if defined(USE_NSS_CERTS) || defined(OS_IOS)
+#if defined(USE_NSS_CERTS)
   return new CertVerifyProcNSS();
 #elif defined(USE_OPENSSL_CERTS) && !defined(OS_ANDROID)
   return new CertVerifyProcOpenSSL();
 #elif defined(OS_ANDROID)
   return new CertVerifyProcAndroid();
+#elif defined(OS_IOS)
+  return new CertVerifyProcIOS();
 #elif defined(OS_MACOSX)
   return new CertVerifyProcMac();
 #elif defined(OS_WIN)
@@ -196,7 +390,8 @@ CertVerifyProc* CertVerifyProc::CreateDefault() {
 #endif
 }
 
-CertVerifyProc::CertVerifyProc() {}
+CertVerifyProc::CertVerifyProc()
+    : sha1_legacy_mode_enabled(base::FeatureList::IsEnabled(kSHA1LegacyMode)) {}
 
 CertVerifyProc::~CertVerifyProc() {}
 
@@ -231,6 +426,9 @@ int CertVerifyProc::Verify(X509Certificate* cert,
     UMA_HISTOGRAM_BOOLEAN("Net.CertCommonNameFallbackPrivateCA",
                           verify_result->common_name_fallback_used);
   }
+
+  CheckOCSP(ocsp_response, *verify_result->verified_cert,
+            &verify_result->ocsp_result);
 
   // This check is done after VerifyInternal so that VerifyInternal can fill
   // in the list of public key hashes.
@@ -284,9 +482,24 @@ int CertVerifyProc::Verify(X509Certificate* cert,
   // disabled on this date, but enterprises need more time to transition.
   // As the risk is greatest for publicly trusted certificates, prevent
   // those certificates from being trusted from that date forward.
+  //
+  // TODO(mattm): apply the SHA-1 deprecation check to all certs unless
+  // CertVerifier::VERIFY_ENABLE_SHA1_LOCAL_ANCHORS flag is present.
   if (verify_result->has_md5 ||
-      (verify_result->has_sha1_leaf && verify_result->is_issued_by_known_root &&
-       IsPastSHA1DeprecationDate(*cert))) {
+      // Current SHA-1 behaviour:
+      // - Reject all publicly trusted SHA-1
+      // - ... unless it's in the intermediate and SHA-1 intermediates are
+      //   allowed for that platform. See https://crbug.com/588789
+      (!sha1_legacy_mode_enabled &&
+       (verify_result->is_issued_by_known_root &&
+        (verify_result->has_sha1_leaf ||
+         (verify_result->has_sha1 && !AreSHA1IntermediatesAllowed())))) ||
+      // Legacy SHA-1 behaviour:
+      // - Reject all publicly trusted SHA-1 leaf certs issued after
+      //   2016-01-01.
+      (sha1_legacy_mode_enabled && (verify_result->has_sha1_leaf &&
+                                    verify_result->is_issued_by_known_root &&
+                                    IsPastSHA1DeprecationDate(*cert)))) {
     verify_result->cert_status |= CERT_STATUS_WEAK_SIGNATURE_ALGORITHM;
     // Avoid replacing a more serious error, such as an OS/library failure,
     // by ensuring that if verification failed, it failed with a certificate
@@ -313,75 +526,16 @@ int CertVerifyProc::Verify(X509Certificate* cert,
       rv = MapCertStatusToNetError(verify_result->cert_status);
   }
 
+  // Record a histogram for the presence of the TLS feature extension in
+  // a certificate chaining to a private root.
+  if (rv == OK && !verify_result->is_issued_by_known_root)
+    RecordTLSFeatureExtensionWithPrivateRoot(cert, verify_result->ocsp_result);
+
   return rv;
 }
 
 // static
 bool CertVerifyProc::IsBlacklisted(X509Certificate* cert) {
-  static const unsigned kComodoSerialBytes = 16;
-  static const uint8_t kComodoSerials[][kComodoSerialBytes] = {
-    // Not a real certificate. For testing only.
-    {0x07,0x7a,0x59,0xbc,0xd5,0x34,0x59,0x60,0x1c,0xa6,0x90,0x72,0x67,0xa6,0xdd,0x1c},
-
-    // The next nine certificates all expire on Fri Mar 14 23:59:59 2014.
-    // Some serial numbers actually have a leading 0x00 byte required to
-    // encode a positive integer in DER if the most significant bit is 0.
-    // We omit the leading 0x00 bytes to make all serial numbers 16 bytes.
-
-    // Subject: CN=mail.google.com
-    // subjectAltName dNSName: mail.google.com, www.mail.google.com
-    {0x04,0x7e,0xcb,0xe9,0xfc,0xa5,0x5f,0x7b,0xd0,0x9e,0xae,0x36,0xe1,0x0c,0xae,0x1e},
-    // Subject: CN=global trustee
-    // subjectAltName dNSName: global trustee
-    // Note: not a CA certificate.
-    {0xd8,0xf3,0x5f,0x4e,0xb7,0x87,0x2b,0x2d,0xab,0x06,0x92,0xe3,0x15,0x38,0x2f,0xb0},
-    // Subject: CN=login.live.com
-    // subjectAltName dNSName: login.live.com, www.login.live.com
-    {0xb0,0xb7,0x13,0x3e,0xd0,0x96,0xf9,0xb5,0x6f,0xae,0x91,0xc8,0x74,0xbd,0x3a,0xc0},
-    // Subject: CN=addons.mozilla.org
-    // subjectAltName dNSName: addons.mozilla.org, www.addons.mozilla.org
-    {0x92,0x39,0xd5,0x34,0x8f,0x40,0xd1,0x69,0x5a,0x74,0x54,0x70,0xe1,0xf2,0x3f,0x43},
-    // Subject: CN=login.skype.com
-    // subjectAltName dNSName: login.skype.com, www.login.skype.com
-    {0xe9,0x02,0x8b,0x95,0x78,0xe4,0x15,0xdc,0x1a,0x71,0x0a,0x2b,0x88,0x15,0x44,0x47},
-    // Subject: CN=login.yahoo.com
-    // subjectAltName dNSName: login.yahoo.com, www.login.yahoo.com
-    {0xd7,0x55,0x8f,0xda,0xf5,0xf1,0x10,0x5b,0xb2,0x13,0x28,0x2b,0x70,0x77,0x29,0xa3},
-    // Subject: CN=www.google.com
-    // subjectAltName dNSName: www.google.com, google.com
-    {0xf5,0xc8,0x6a,0xf3,0x61,0x62,0xf1,0x3a,0x64,0xf5,0x4f,0x6d,0xc9,0x58,0x7c,0x06},
-    // Subject: CN=login.yahoo.com
-    // subjectAltName dNSName: login.yahoo.com
-    {0x39,0x2a,0x43,0x4f,0x0e,0x07,0xdf,0x1f,0x8a,0xa3,0x05,0xde,0x34,0xe0,0xc2,0x29},
-    // Subject: CN=login.yahoo.com
-    // subjectAltName dNSName: login.yahoo.com
-    {0x3e,0x75,0xce,0xd4,0x6b,0x69,0x30,0x21,0x21,0x88,0x30,0xae,0x86,0xa8,0x2a,0x71},
-  };
-
-  const std::string& serial_number = cert->serial_number();
-  if (!serial_number.empty() && (serial_number[0] & 0x80) != 0) {
-    // This is a negative serial number, which isn't technically allowed but
-    // which probably happens. In order to avoid confusing a negative serial
-    // number with a positive one once the leading zeros have been removed, we
-    // disregard it.
-    return false;
-  }
-
-  base::StringPiece serial(serial_number);
-  // Remove leading zeros.
-  while (serial.size() > 1 && serial[0] == 0)
-    serial.remove_prefix(1);
-
-  if (serial.size() == kComodoSerialBytes) {
-    for (unsigned i = 0; i < arraysize(kComodoSerials); i++) {
-      if (memcmp(kComodoSerials[i], serial.data(), kComodoSerialBytes) == 0) {
-        UMA_HISTOGRAM_ENUMERATION("Net.SSLCertBlacklisted", i,
-                                  arraysize(kComodoSerials) + 1);
-        return true;
-      }
-    }
-  }
-
   // CloudFlare revoked all certificates issued prior to April 2nd, 2014. Thus
   // all certificates where the CN ends with ".cloudflare.com" with a prior
   // issuance date are rejected.
@@ -405,125 +559,19 @@ bool CertVerifyProc::IsBlacklisted(X509Certificate* cert) {
 }
 
 // static
-// NOTE: This implementation assumes and enforces that the hashes are SHA1.
 bool CertVerifyProc::IsPublicKeyBlacklisted(
     const HashValueVector& public_key_hashes) {
-  static const unsigned kNumSHA1Hashes = 14;
-  static const uint8_t kSHA1Hashes[kNumSHA1Hashes][base::kSHA1Length] = {
-    // Subject: CN=DigiNotar Root CA
-    // Issuer: CN=Entrust.net x2 and self-signed
-    {0x41, 0x0f, 0x36, 0x36, 0x32, 0x58, 0xf3, 0x0b, 0x34, 0x7d,
-     0x12, 0xce, 0x48, 0x63, 0xe4, 0x33, 0x43, 0x78, 0x06, 0xa8},
-    // Subject: CN=DigiNotar Cyber CA
-    // Issuer: CN=GTE CyberTrust Global Root
-    {0xc4, 0xf9, 0x66, 0x37, 0x16, 0xcd, 0x5e, 0x71, 0xd6, 0x95,
-     0x0b, 0x5f, 0x33, 0xce, 0x04, 0x1c, 0x95, 0xb4, 0x35, 0xd1},
-    // Subject: CN=DigiNotar Services 1024 CA
-    // Issuer: CN=Entrust.net
-    {0xe2, 0x3b, 0x8d, 0x10, 0x5f, 0x87, 0x71, 0x0a, 0x68, 0xd9,
-     0x24, 0x80, 0x50, 0xeb, 0xef, 0xc6, 0x27, 0xbe, 0x4c, 0xa6},
-    // Subject: CN=DigiNotar PKIoverheid CA Organisatie - G2
-    // Issuer: CN=Staat der Nederlanden Organisatie CA - G2
-    {0x7b, 0x2e, 0x16, 0xbc, 0x39, 0xbc, 0xd7, 0x2b, 0x45, 0x6e,
-     0x9f, 0x05, 0x5d, 0x1d, 0xe6, 0x15, 0xb7, 0x49, 0x45, 0xdb},
-    // Subject: CN=DigiNotar PKIoverheid CA Overheid en Bedrijven
-    // Issuer: CN=Staat der Nederlanden Overheid CA
-    {0xe8, 0xf9, 0x12, 0x00, 0xc6, 0x5c, 0xee, 0x16, 0xe0, 0x39,
-     0xb9, 0xf8, 0x83, 0x84, 0x16, 0x61, 0x63, 0x5f, 0x81, 0xc5},
-    // Issuer: CN=Trustwave Organization Issuing CA, Level 2
-    // Covers two certificates, the latter of which expires Apr 15 21:09:30
-    // 2021 GMT.
-    {0xe1, 0x2d, 0x89, 0xf5, 0x6d, 0x22, 0x76, 0xf8, 0x30, 0xe6,
-     0xce, 0xaf, 0xa6, 0x6c, 0x72, 0x5c, 0x0b, 0x41, 0xa9, 0x32},
-    // Cyberoam CA certificate. Private key leaked, but this certificate would
-    // only have been installed by Cyberoam customers. The certificate expires
-    // in 2036, but we can probably remove in a couple of years (2014).
-    {0xd9, 0xf5, 0xc6, 0xce, 0x57, 0xff, 0xaa, 0x39, 0xcc, 0x7e,
-     0xd1, 0x72, 0xbd, 0x53, 0xe0, 0xd3, 0x07, 0x83, 0x4b, 0xd1},
-    // Win32/Sirefef.gen!C generates fake certificates with this public key.
-    {0xa4, 0xf5, 0x6e, 0x9e, 0x1d, 0x9a, 0x3b, 0x7b, 0x1a, 0xc3,
-     0x31, 0xcf, 0x64, 0xfc, 0x76, 0x2c, 0xd0, 0x51, 0xfb, 0xa4},
-    // Three retired intermediate certificates from Symantec. No compromise;
-    // just for robustness. All expire May 17 23:59:59 2018.
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=966060
-    {0x68, 0x5e, 0xec, 0x0a, 0x39, 0xf6, 0x68, 0xae, 0x8f, 0xd8,
-     0x96, 0x4f, 0x98, 0x74, 0x76, 0xb4, 0x50, 0x4f, 0xd2, 0xbe},
-    {0x0e, 0x50, 0x2d, 0x4d, 0xd1, 0xe1, 0x60, 0x36, 0x8a, 0x31,
-     0xf0, 0x6a, 0x81, 0x04, 0x31, 0xba, 0x6f, 0x72, 0xc0, 0x41},
-    {0x93, 0xd1, 0x53, 0x22, 0x29, 0xcc, 0x2a, 0xbd, 0x21, 0xdf,
-     0xf5, 0x97, 0xee, 0x32, 0x0f, 0xe4, 0x24, 0x6f, 0x3d, 0x0c},
-    // C=IN, O=National Informatics Centre, CN=NIC CA 2011. Issued by
-    // C=IN, O=India PKI, CN=CCA India 2011.
-    // Expires March 11th 2016.
-    {0x07, 0x7a, 0xc7, 0xde, 0x8d, 0xa5, 0x58, 0x64, 0x3a, 0x06,
-     0xc5, 0x36, 0x9e, 0x55, 0x4f, 0xae, 0xb3, 0xdf, 0xa1, 0x66},
-    // C=IN, O=National Informatics Centre, CN=NIC CA 2014. Issued by
-    // C=IN, O=India PKI, CN=CCA India 2014.
-    // Expires: March 5th, 2024.
-    {0xe5, 0x8e, 0x31, 0x5b, 0xaa, 0xee, 0xaa, 0xc6, 0xe7, 0x2e,
-     0xc9, 0x57, 0x36, 0x70, 0xca, 0x2f, 0x25, 0x4e, 0xc3, 0x47},
-    // C=DE, O=Fraunhofer, OU=Fraunhofer Corporate PKI,
-    // CN=Fraunhofer Service CA 2007.
-    // Expires: Jun 30 2019.
-    // No compromise, just for robustness. See
-    // https://bugzilla.mozilla.org/show_bug.cgi?id=1076940
-    {0x38, 0x4d, 0x0c, 0x1d, 0xc4, 0x77, 0xa7, 0xb3, 0xf8, 0x67,
-     0x86, 0xd0, 0x18, 0x51, 0x9f, 0x58, 0x9f, 0x1e, 0x9e, 0x25},
-  };
-
-  static const unsigned kNumSHA256Hashes = 4;
-  static const uint8_t kSHA256Hashes[kNumSHA256Hashes][crypto::kSHA256Length] =
-  {
-    // Two intermediates issued by TurkTrust to *.ego.gov.tr and
-    // e-islem.kktcmerkezbankasi.org. Expires July 6 2021 and August 5 2021,
-    // respectively.
-    // See http://googleonlinesecurity.blogspot.com/2013/01/enhancing-digital-certificate-security.html
-    {0x3e, 0xdb, 0xd9, 0xac, 0xe6, 0x39, 0xba, 0x1a,
-     0x2d, 0x4a, 0xd0, 0x47, 0x18, 0x71, 0x1f, 0xda,
-     0x23, 0xe8, 0x59, 0xb2, 0xfb, 0xf5, 0xd1, 0x37,
-     0xd4, 0x24, 0x04, 0x5e, 0x79, 0x19, 0xdf, 0xb9},
-    {0xc1, 0x73, 0xf0, 0x62, 0x64, 0x56, 0xca, 0x85,
-     0x4f, 0xf2, 0xa7, 0xf0, 0xb1, 0x33, 0xa7, 0xcf,
-     0x4d, 0x02, 0x11, 0xe5, 0x52, 0xf2, 0x4b, 0x3e,
-     0x33, 0xad, 0xe8, 0xc5, 0x9f, 0x0a, 0x42, 0x4c},
-
-    // xs4all certificate. Expires March 19 2016.
-    // https://raymii.org/s/blog/How_I_got_a_valid_SSL_certificate_for_my_ISPs_main_website.html
-    {0xf2, 0xbb, 0xe0, 0x4c, 0x5d, 0xc7, 0x0d, 0x76,
-     0x3e, 0x89, 0xc5, 0xa0, 0x52, 0x70, 0x48, 0xcd,
-     0x9e, 0xcd, 0x39, 0xeb, 0x62, 0x1e, 0x20, 0x72,
-     0xff, 0x9a, 0x5f, 0x84, 0x32, 0x57, 0x1a, 0xa0},
-
-    // Japanese National Institute of Informatics intermediate. No suggestion
-    // of compromise, it's just being discontinued.
-    // Expires March 27th 2019
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1188582
-    {0x5c, 0x72, 0x2c, 0xb7, 0x0f, 0xb3, 0x11, 0xf2,
-     0x1e, 0x0d, 0xa0, 0xe7, 0xd1, 0x2e, 0xbc, 0x8e,
-     0x05, 0xf6, 0x07, 0x96, 0xbc, 0x49, 0xcf, 0x51,
-     0x18, 0x49, 0xd5, 0xbc, 0x62, 0x03, 0x03, 0x82},
-  };
-
-  for (unsigned i = 0; i < kNumSHA1Hashes; i++) {
-    for (HashValueVector::const_iterator j = public_key_hashes.begin();
-         j != public_key_hashes.end(); ++j) {
-      if (j->tag == HASH_VALUE_SHA1 &&
-          memcmp(j->data(), kSHA1Hashes[i], base::kSHA1Length) == 0) {
-        return true;
-      }
+// Defines kBlacklistedSPKIs.
+#include "net/cert/cert_verify_proc_blacklist.inc"
+  for (const auto& hash : public_key_hashes) {
+    if (hash.tag != HASH_VALUE_SHA256)
+      continue;
+    if (std::binary_search(std::begin(kBlacklistedSPKIs),
+                           std::end(kBlacklistedSPKIs), hash,
+                           HashToArrayComparator())) {
+      return true;
     }
   }
-
-  for (unsigned i = 0; i < kNumSHA256Hashes; i++) {
-    for (HashValueVector::const_iterator j = public_key_hashes.begin();
-         j != public_key_hashes.end(); ++j) {
-      if (j->tag == HASH_VALUE_SHA256 &&
-          memcmp(j->data(), kSHA256Hashes[i], crypto::kSHA256Length) == 0) {
-        return true;
-      }
-    }
-  }
-
   return false;
 }
 
@@ -542,13 +590,11 @@ static bool CheckNameConstraints(const std::vector<std::string>& dns_names,
     if (host_info.IsIPAddress())
       continue;
 
-    const size_t registry_len = registry_controlled_domains::GetRegistryLength(
-        dns_name,
-        registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
-        registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
     // If the name is not in a known TLD, ignore it. This permits internal
     // names.
-    if (registry_len == 0)
+    if (!registry_controlled_domains::HostHasRegistryControlledDomain(
+            dns_name, registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
+            registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES))
       continue;
 
     for (size_t j = 0; domains[j][0]; ++j) {
@@ -557,7 +603,8 @@ static bool CheckNameConstraints(const std::vector<std::string>& dns_names,
       if (i->size() <= (1 /* period before domain */ + domain_length))
         continue;
 
-      const char* suffix = &dns_name[i->size() - domain_length - 1];
+      std::string suffix =
+          base::ToLowerASCII(&(*i)[i->size() - domain_length - 1]);
       if (suffix[0] != '.')
         continue;
       if (memcmp(&suffix[1], domains[j], domain_length) != 0)
@@ -621,41 +668,41 @@ bool CertVerifyProc::HasNameConstraintsViolation(
   };
 
   static const PublicKeyDomainLimitation kLimits[] = {
-    // C=FR, ST=France, L=Paris, O=PM/SGDN, OU=DCSSI,
-    // CN=IGC/A/emailAddress=igca@sgdn.pm.gouv.fr
-    {
-      {0x79, 0x23, 0xd5, 0x8d, 0x0f, 0xe0, 0x3c, 0xe6, 0xab, 0xad,
-       0xae, 0x27, 0x1a, 0x6d, 0x94, 0xf4, 0x14, 0xd1, 0xa8, 0x73},
-      kDomainsANSSI,
-    },
-    // C=IN, O=India PKI, CN=CCA India 2007
-    // Expires: July 4th 2015.
-    {
-      {0xfe, 0xe3, 0x95, 0x21, 0x2d, 0x5f, 0xea, 0xfc, 0x7e, 0xdc,
-       0xcf, 0x88, 0x3f, 0x1e, 0xc0, 0x58, 0x27, 0xd8, 0xb8, 0xe4},
-      kDomainsIndiaCCA,
-    },
-    // C=IN, O=India PKI, CN=CCA India 2011
-    // Expires: March 11 2016.
-    {
-      {0xf1, 0x42, 0xf6, 0xa2, 0x7d, 0x29, 0x3e, 0xa8, 0xf9, 0x64,
-       0x52, 0x56, 0xed, 0x07, 0xa8, 0x63, 0xf2, 0xdb, 0x1c, 0xdf},
-      kDomainsIndiaCCA,
-    },
-    // C=IN, O=India PKI, CN=CCA India 2014
-    // Expires: March 5 2024.
-    {
-      {0x36, 0x8c, 0x4a, 0x1e, 0x2d, 0xb7, 0x81, 0xe8, 0x6b, 0xed,
-       0x5a, 0x0a, 0x42, 0xb8, 0xc5, 0xcf, 0x6d, 0xb3, 0x57, 0xe1},
-      kDomainsIndiaCCA,
-    },
-    // Not a real certificate - just for testing. This is the SPKI hash of
-    // the keys used in net/data/ssl/certificates/name_constraint_*.crt.
-    {
-      {0x61, 0xec, 0x82, 0x8b, 0xdb, 0x5c, 0x78, 0x2a, 0x8f, 0xcc,
-       0x4f, 0x0f, 0x14, 0xbb, 0x85, 0x31, 0x93, 0x9f, 0xf7, 0x3d},
-      kDomainsTest,
-    },
+      // C=FR, ST=France, L=Paris, O=PM/SGDN, OU=DCSSI,
+      // CN=IGC/A/emailAddress=igca@sgdn.pm.gouv.fr
+      {
+          {0x79, 0x23, 0xd5, 0x8d, 0x0f, 0xe0, 0x3c, 0xe6, 0xab, 0xad, 0xae,
+           0x27, 0x1a, 0x6d, 0x94, 0xf4, 0x14, 0xd1, 0xa8, 0x73},
+          kDomainsANSSI,
+      },
+      // C=IN, O=India PKI, CN=CCA India 2007
+      // Expires: July 4th 2015.
+      {
+          {0xfe, 0xe3, 0x95, 0x21, 0x2d, 0x5f, 0xea, 0xfc, 0x7e, 0xdc, 0xcf,
+           0x88, 0x3f, 0x1e, 0xc0, 0x58, 0x27, 0xd8, 0xb8, 0xe4},
+          kDomainsIndiaCCA,
+      },
+      // C=IN, O=India PKI, CN=CCA India 2011
+      // Expires: March 11 2016.
+      {
+          {0xf1, 0x42, 0xf6, 0xa2, 0x7d, 0x29, 0x3e, 0xa8, 0xf9, 0x64, 0x52,
+           0x56, 0xed, 0x07, 0xa8, 0x63, 0xf2, 0xdb, 0x1c, 0xdf},
+          kDomainsIndiaCCA,
+      },
+      // C=IN, O=India PKI, CN=CCA India 2014
+      // Expires: March 5 2024.
+      {
+          {0x36, 0x8c, 0x4a, 0x1e, 0x2d, 0xb7, 0x81, 0xe8, 0x6b, 0xed, 0x5a,
+           0x0a, 0x42, 0xb8, 0xc5, 0xcf, 0x6d, 0xb3, 0x57, 0xe1},
+          kDomainsIndiaCCA,
+      },
+      // Not a real certificate - just for testing. This is the SPKI hash of
+      // the keys used in net/data/ssl/certificates/name_constraint_*.crt.
+      {
+          {0x48, 0x49, 0x4a, 0xc5, 0x5a, 0x3e, 0xcd, 0xc5, 0x62, 0x9f, 0xef,
+           0x23, 0x14, 0xad, 0x05, 0xa9, 0x2a, 0x5c, 0x39, 0xc0},
+          kDomainsTest,
+      },
   };
 
   for (unsigned i = 0; i < arraysize(kLimits); ++i) {
@@ -703,12 +750,12 @@ bool CertVerifyProc::HasTooLongValidity(const X509Certificate& cert) {
   if (exploded_expiry.day_of_month > exploded_start.day_of_month)
     ++month_diff;
 
-  static const base::Time time_2012_07_01 =
-      base::Time::FromUTCExploded({2012, 7, 0, 1, 0, 0, 0, 0});
-  static const base::Time time_2015_04_01 =
-      base::Time::FromUTCExploded({2015, 4, 0, 1, 0, 0, 0, 0});
-  static const base::Time time_2019_07_01 =
-      base::Time::FromUTCExploded({2019, 7, 0, 1, 0, 0, 0, 0});
+  const base::Time time_2012_07_01 =
+      base::Time::FromInternalValue(12985574400000000);
+  const base::Time time_2015_04_01 =
+      base::Time::FromInternalValue(13072320000000000);
+  const base::Time time_2019_07_01 =
+      base::Time::FromInternalValue(13206412800000000);
 
   // For certificates issued before the BRs took effect.
   if (start < time_2012_07_01 && (month_diff > 120 || expiry > time_2019_07_01))
@@ -724,5 +771,9 @@ bool CertVerifyProc::HasTooLongValidity(const X509Certificate& cert) {
 
   return false;
 }
+
+// static
+const base::Feature CertVerifyProc::kSHA1LegacyMode{
+    "SHA1LegacyMode", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace net

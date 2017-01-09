@@ -5,7 +5,9 @@
 #ifndef UI_BASE_IME_INPUT_METHOD_AURALINUX_H_
 #define UI_BASE_IME_INPUT_METHOD_AURALINUX_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/input_method_base.h"
 #include "ui/base/ime/linux/linux_input_method_context.h"
@@ -31,11 +33,7 @@ class UI_BASE_IME_EXPORT InputMethodAuraLinux
   void OnTextInputTypeChanged(const TextInputClient* client) override;
   void OnCaretBoundsChanged(const TextInputClient* client) override;
   void CancelComposition(const TextInputClient* client) override;
-  void OnInputLocaleChanged() override;
-  std::string GetInputLocale() override;
   bool IsCandidatePopupOpen() const override;
-  void OnFocus() override;
-  void OnBlur() override;
 
   // Overriden from ui::LinuxInputMethodContextDelegate
   void OnCommit(const base::string16& text) override;
@@ -58,8 +56,24 @@ class UI_BASE_IME_EXPORT InputMethodAuraLinux
   void UpdateContextFocusState();
   void ResetContext();
 
-  scoped_ptr<LinuxInputMethodContext> context_;
-  scoped_ptr<LinuxInputMethodContext> context_simple_;
+  // Processes the key event after the event is processed by the system IME or
+  // the extension.
+  void ProcessKeyEventDone(ui::KeyEvent* event, bool filtered, bool is_handled);
+
+  // Callback function for IMEEngineHandlerInterface::ProcessKeyEvent().
+  // It recovers the context when the event is being passed to the extension and
+  // call ProcessKeyEventDone() for the following processing. This is necessary
+  // as this method is async. The environment may be changed by other generated
+  // key events by the time the callback is run.
+  void ProcessKeyEventByEngineDone(ui::KeyEvent* event,
+                                   bool filtered,
+                                   bool composition_changed,
+                                   ui::CompositionText* composition,
+                                   base::string16* result_text,
+                                   bool is_handled);
+
+  std::unique_ptr<LinuxInputMethodContext> context_;
+  std::unique_ptr<LinuxInputMethodContext> context_simple_;
 
   base::string16 result_text_;
 
@@ -79,6 +93,9 @@ class UI_BASE_IME_EXPORT InputMethodAuraLinux
   // If it's true then all input method result received before the next key
   // event will be discarded.
   bool suppress_next_result_;
+
+  // Used for making callbacks.
+  base::WeakPtrFactory<InputMethodAuraLinux> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodAuraLinux);
 };

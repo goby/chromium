@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_CONTROLS_IMAGE_VIEW_H_
 #define UI_VIEWS_CONTROLS_IMAGE_VIEW_H_
 
+#include "base/macros.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/view.h"
@@ -49,9 +50,9 @@ class VIEWS_EXPORT ImageView : public View {
   // image.
   void SetImage(const gfx::ImageSkia* image_skia);
 
-  // Returns the image currently displayed or NULL of none is currently set.
+  // Returns the image currently displayed, which can be empty if not set.
   // The returned image is still owned by the ImageView.
-  const gfx::ImageSkia& GetImage();
+  const gfx::ImageSkia& GetImage() const;
 
   // Set the desired image size for the receiving ImageView.
   void SetImageSize(const gfx::Size& image_size);
@@ -76,14 +77,14 @@ class VIEWS_EXPORT ImageView : public View {
 
   void set_interactive(bool interactive) { interactive_ = interactive; }
 
-  void SetFocusPainter(scoped_ptr<Painter> focus_painter);
+  void SetFocusPainter(std::unique_ptr<Painter> focus_painter);
 
   // Overriden from View:
   gfx::Size GetPreferredSize() const override;
   void OnFocus() override;
   void OnBlur() override;
   void OnPaint(gfx::Canvas* canvas) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   const char* GetClassName() const override;
   bool GetTooltipText(const gfx::Point& p,
                       base::string16* tooltip) const override;
@@ -132,7 +133,7 @@ class VIEWS_EXPORT ImageView : public View {
   // safe to cache.
   void* last_painted_bitmap_pixels_;
 
-  scoped_ptr<views::Painter> focus_painter_;
+  std::unique_ptr<views::Painter> focus_painter_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageView);
 };

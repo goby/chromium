@@ -9,7 +9,7 @@
 #include <sstream>
 
 #include "chrome/browser/android/proto/delta_file.pb.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 #include "url/gurl.h"
 
 namespace history_report {
@@ -25,9 +25,8 @@ std::string ReportToKey(const history_report::UsageReport& report) {
 }
 
 bool IsTypedVisit(ui::PageTransition visit_transition) {
-  ui::PageTransition transition_type =
-      ui::PageTransitionStripQualifier(visit_transition);
-  return transition_type == ui::PAGE_TRANSITION_TYPED &&
+  return ui::PageTransitionCoreTypeIs(visit_transition,
+                                      ui::PAGE_TRANSITION_TYPED) &&
          !ui::PageTransitionIsRedirect(visit_transition);
 }
 
@@ -41,7 +40,7 @@ bool ShouldIgnoreUrl(const GURL& url) {
     return true;
 
   // Ignore localhost URLs.
-  if (net::IsLocalhost(url.host()))
+  if (net::IsLocalhost(url.host_piece()))
     return true;
 
   return false;

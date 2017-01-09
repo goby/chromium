@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/select_file_dialog_extension.h"
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 
@@ -88,7 +89,7 @@ class SelfDeletingClient : public ui::SelectFileDialog::Listener {
 
 TEST_F(SelectFileDialogExtensionTest, FileSelected) {
   const int kFileIndex = 5;
-  scoped_ptr<TestListener> listener(new TestListener);
+  std::unique_ptr<TestListener> listener(new TestListener);
   scoped_refptr<SelectFileDialogExtension> dialog =
       CreateDialog(listener.get());
   // Simulate selecting a file.
@@ -102,7 +103,7 @@ TEST_F(SelectFileDialogExtensionTest, FileSelected) {
 }
 
 TEST_F(SelectFileDialogExtensionTest, FileSelectionCanceled) {
-  scoped_ptr<TestListener> listener(new TestListener);
+  std::unique_ptr<TestListener> listener(new TestListener);
   scoped_refptr<SelectFileDialogExtension> dialog =
       CreateDialog(listener.get());
   // Simulate cancelling the dialog.

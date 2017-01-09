@@ -19,6 +19,7 @@ class AppLaunchSplashScreenActor {
     APP_LAUNCH_STATE_INSTALLING_APPLICATION,
     APP_LAUNCH_STATE_WAITING_APP_WINDOW,
     APP_LAUNCH_STATE_NETWORK_WAIT_TIMEOUT,
+    APP_LAUNCH_STATE_SHOWING_NETWORK_CONFIGURE_UI,
   };
 
   class Delegate {
@@ -44,9 +45,6 @@ class AppLaunchSplashScreenActor {
 
   // Sets screen this actor belongs to.
   virtual void SetDelegate(Delegate* screen) = 0;
-
-  // Prepare the contents to showing.
-  virtual void PrepareToShow() = 0;
 
   // Shows the contents of the screen.
   virtual void Show(const std::string& app_id) = 0;

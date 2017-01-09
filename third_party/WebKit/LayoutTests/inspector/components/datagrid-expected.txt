@@ -80,7 +80,7 @@ Tree:
    aaa
    aab
   ab
-   aac
+   aac <- selected
  b
 
 Removing aac from ab
@@ -91,6 +91,55 @@ Tree:
    aaa
    aab
   ab
+ b <- selected
+
+Attached aac to ab
+
+Tree:
+ a
+  aa
+  ab
+   aac <- selected
+ b
+
+Attached aac to ab
+Removing aa from a
+
+Tree:
+ a
+  ab
+   aac <- selected
+ b
+
+Removing ab from a
+
+Tree:
+ a
+ b <- selected
+
+
+Tree:
+
+Attached a to root
+
+Tree:
+ a
+
+Added secondCol
+
+Tree:
+ a | a foo
+
+Attached b to root
+
+Tree:
+ a | a foo
+ b | b foo
+
+Removed secondCol
+
+Tree:
+ a
  b
 
 

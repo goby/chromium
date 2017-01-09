@@ -5,10 +5,10 @@
 #ifndef MEDIA_BLINK_TEXTTRACK_IMPL_H_
 #define MEDIA_BLINK_TEXTTRACK_IMPL_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/text_track.h"
 
 namespace base {
@@ -16,7 +16,6 @@ class SingleThreadTaskRunner;
 }
 
 namespace blink {
-class WebInbandTextTrackClient;
 class WebMediaPlayerClient;
 }
 
@@ -29,7 +28,7 @@ class TextTrackImpl : public TextTrack {
   // Constructor assumes ownership of the |text_track| object.
   TextTrackImpl(const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
                 blink::WebMediaPlayerClient* client,
-                scoped_ptr<WebInbandTextTrackImpl> text_track);
+                std::unique_ptr<WebInbandTextTrackImpl> text_track);
 
   ~TextTrackImpl() override;
 
@@ -48,11 +47,11 @@ class TextTrackImpl : public TextTrack {
                        const std::string& settings);
 
   static void OnRemoveTrack(blink::WebMediaPlayerClient* client,
-                            scoped_ptr<WebInbandTextTrackImpl> text_track);
+                            std::unique_ptr<WebInbandTextTrackImpl> text_track);
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   blink::WebMediaPlayerClient* client_;
-  scoped_ptr<WebInbandTextTrackImpl> text_track_;
+  std::unique_ptr<WebInbandTextTrackImpl> text_track_;
   DISALLOW_COPY_AND_ASSIGN(TextTrackImpl);
 };
 

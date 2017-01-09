@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_GOOGLE_CORE_BROWSER_GOOGLE_URL_TRACKER_H_
 #define COMPONENTS_GOOGLE_CORE_BROWSER_GOOGLE_URL_TRACKER_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/callback_list.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/google/core/browser/google_url_tracker_client.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -15,12 +17,6 @@
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
-
-class PrefService;
-
-namespace infobars {
-class InfoBar;
-}
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -57,7 +53,7 @@ class GoogleURLTracker
   static const char kDefaultGoogleHomepage[];
 
   // Only the GoogleURLTrackerFactory and tests should call this.
-  GoogleURLTracker(scoped_ptr<GoogleURLTrackerClient> client, Mode mode);
+  GoogleURLTracker(std::unique_ptr<GoogleURLTrackerClient> client, Mode mode);
 
   ~GoogleURLTracker() override;
 
@@ -77,7 +73,7 @@ class GoogleURLTracker
   // check, it will check again.
   void RequestServerCheck(bool force);
 
-  scoped_ptr<Subscription> RegisterCallback(
+  std::unique_ptr<Subscription> RegisterCallback(
       const OnGoogleURLUpdatedCallback& cb);
 
  private:
@@ -109,10 +105,10 @@ class GoogleURLTracker
 
   CallbackList callback_list_;
 
-  scoped_ptr<GoogleURLTrackerClient> client_;
+  std::unique_ptr<GoogleURLTrackerClient> client_;
 
   GURL google_url_;
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
   int fetcher_id_;
   bool in_startup_sleep_;  // True if we're in the five-second "no fetching"
                            // period that begins at browser start.

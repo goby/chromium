@@ -5,6 +5,8 @@
 #ifndef GOOGLE_APIS_GCM_ENGINE_CONNECTION_HANDLER_H_
 #define GOOGLE_APIS_GCM_ENGINE_CONNECTION_HANDLER_H_
 
+#include <memory>
+
 #include "base/callback.h"
 #include "google_apis/gcm/base/gcm_export.h"
 
@@ -24,9 +26,6 @@ class LoginRequest;
 
 namespace gcm {
 
-class SocketInputStream;
-class SocketOutputStream;
-
 // Handles performing the protocol handshake and sending/receiving protobuf
 // messages. Note that no retrying or queueing is enforced at this layer.
 // Once a connection error is encountered, the ConnectionHandler will disconnect
@@ -34,7 +33,7 @@ class SocketOutputStream;
 // messages can be sent/received again.
 class GCM_EXPORT ConnectionHandler {
  public:
-  typedef base::Callback<void(scoped_ptr<google::protobuf::MessageLite>)>
+  typedef base::Callback<void(std::unique_ptr<google::protobuf::MessageLite>)>
       ProtoReceivedCallback;
   typedef base::Closure ProtoSentCallback;
   typedef base::Callback<void(int)> ConnectionChangedCallback;

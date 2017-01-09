@@ -20,13 +20,13 @@ IndexedDBActiveBlobRegistry::IndexedDBActiveBlobRegistry(
 IndexedDBActiveBlobRegistry::~IndexedDBActiveBlobRegistry() {
 }
 
-void IndexedDBActiveBlobRegistry::AddBlobRef(int64 database_id,
-                                             int64 blob_key) {
+void IndexedDBActiveBlobRegistry::AddBlobRef(int64_t database_id,
+                                             int64_t blob_key) {
   DCHECK(backing_store_);
   DCHECK(backing_store_->task_runner()->RunsTasksOnCurrentThread());
   DCHECK(KeyPrefix::IsValidDatabaseId(database_id));
   DCHECK(DatabaseMetaDataKey::IsValidBlobKey(blob_key));
-  DCHECK(!ContainsKey(deleted_dbs_, database_id));
+  DCHECK(!base::ContainsKey(deleted_dbs_, database_id));
   bool need_ref = use_tracker_.empty();
   SingleDBMap& single_db_map = use_tracker_[database_id];
   SingleDBMap::iterator iter = single_db_map.find(blob_key);
@@ -34,7 +34,7 @@ void IndexedDBActiveBlobRegistry::AddBlobRef(int64 database_id,
     single_db_map[blob_key] = false;
     if (need_ref) {
       backing_store_->factory()->ReportOutstandingBlobs(
-          backing_store_->origin_url(), true);
+          backing_store_->origin(), true);
     }
   } else {
     DCHECK(!need_ref);
@@ -42,13 +42,13 @@ void IndexedDBActiveBlobRegistry::AddBlobRef(int64 database_id,
   }
 }
 
-void IndexedDBActiveBlobRegistry::ReleaseBlobRef(int64 database_id,
-                                                 int64 blob_key) {
+void IndexedDBActiveBlobRegistry::ReleaseBlobRef(int64_t database_id,
+                                                 int64_t blob_key) {
   DCHECK(backing_store_);
   DCHECK(backing_store_->task_runner()->RunsTasksOnCurrentThread());
   DCHECK(KeyPrefix::IsValidDatabaseId(database_id));
   DCHECK(DatabaseMetaDataKey::IsValidBlobKey(blob_key));
-  AllDBsMap::iterator db_pair = use_tracker_.find(database_id);
+  const auto& db_pair = use_tracker_.find(database_id);
   if (db_pair == use_tracker_.end()) {
     NOTREACHED();
     return;
@@ -60,7 +60,7 @@ void IndexedDBActiveBlobRegistry::ReleaseBlobRef(int64 database_id,
     return;
   }
   bool delete_in_backend = false;
-  DeletedDBSet::iterator db_to_delete = deleted_dbs_.find(database_id);
+  const auto& db_to_delete = deleted_dbs_.find(database_id);
   bool db_marked_for_deletion = db_to_delete != deleted_dbs_.end();
   // Don't bother deleting the file if we're going to delete its whole
   // database directory soon.
@@ -77,17 +77,17 @@ void IndexedDBActiveBlobRegistry::ReleaseBlobRef(int64 database_id,
   if (delete_in_backend)
     backing_store_->ReportBlobUnused(database_id, blob_key);
   if (use_tracker_.empty()) {
-    backing_store_->factory()->ReportOutstandingBlobs(
-        backing_store_->origin_url(), false);
+    backing_store_->factory()->ReportOutstandingBlobs(backing_store_->origin(),
+                                                      false);
   }
 }
 
-bool IndexedDBActiveBlobRegistry::MarkDeletedCheckIfUsed(int64 database_id,
-                                                         int64 blob_key) {
+bool IndexedDBActiveBlobRegistry::MarkDeletedCheckIfUsed(int64_t database_id,
+                                                         int64_t blob_key) {
   DCHECK(backing_store_);
   DCHECK(backing_store_->task_runner()->RunsTasksOnCurrentThread());
   DCHECK(KeyPrefix::IsValidDatabaseId(database_id));
-  AllDBsMap::iterator db_pair = use_tracker_.find(database_id);
+  const auto& db_pair = use_tracker_.find(database_id);
   if (db_pair == use_tracker_.end())
     return false;
 
@@ -108,8 +108,8 @@ bool IndexedDBActiveBlobRegistry::MarkDeletedCheckIfUsed(int64 database_id,
 void IndexedDBActiveBlobRegistry::ReleaseBlobRefThreadSafe(
     scoped_refptr<base::TaskRunner> task_runner,
     base::WeakPtr<IndexedDBActiveBlobRegistry> weak_ptr,
-    int64 database_id,
-    int64 blob_key,
+    int64_t database_id,
+    int64_t blob_key,
     const base::FilePath& unused) {
   task_runner->PostTask(FROM_HERE,
                         base::Bind(&IndexedDBActiveBlobRegistry::ReleaseBlobRef,
@@ -119,8 +119,8 @@ void IndexedDBActiveBlobRegistry::ReleaseBlobRefThreadSafe(
 }
 
 storage::ShareableFileReference::FinalReleaseCallback
-IndexedDBActiveBlobRegistry::GetFinalReleaseCallback(int64 database_id,
-                                                     int64 blob_key) {
+IndexedDBActiveBlobRegistry::GetFinalReleaseCallback(int64_t database_id,
+                                                     int64_t blob_key) {
   return base::Bind(
       &IndexedDBActiveBlobRegistry::ReleaseBlobRefThreadSafe,
       scoped_refptr<base::TaskRunner>(backing_store_->task_runner()),
@@ -130,8 +130,8 @@ IndexedDBActiveBlobRegistry::GetFinalReleaseCallback(int64 database_id,
 }
 
 base::Closure IndexedDBActiveBlobRegistry::GetAddBlobRefCallback(
-    int64 database_id,
-    int64 blob_key) {
+    int64_t database_id,
+    int64_t blob_key) {
   return base::Bind(&IndexedDBActiveBlobRegistry::AddBlobRef,
                     weak_factory_.GetWeakPtr(),
                     database_id,

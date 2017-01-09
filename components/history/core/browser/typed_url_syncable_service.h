@@ -5,24 +5,24 @@
 #ifndef COMPONENTS_HISTORY_CORE_BROWSER_TYPED_URL_SYNCABLE_SERVICE_H_
 #define COMPONENTS_HISTORY_CORE_BROWSER_TYPED_URL_SYNCABLE_SERVICE_H_
 
+#include <stdint.h>
+
 #include <set>
 #include <vector>
 
+#include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "base/threading/thread_checker.h"
 #include "components/history/core/browser/history_backend_observer.h"
 #include "components/history/core/browser/history_types.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/api/syncable_service.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/model/syncable_service.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
-
-namespace base {
-class MessageLoop;
-};
 
 namespace sync_pb {
 class TypedUrlSpecifics;
@@ -46,8 +46,8 @@ class TypedUrlSyncableService : public syncer::SyncableService,
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> error_handler) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> error_handler) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -68,6 +68,15 @@ class TypedUrlSyncableService : public syncer::SyncableService,
                      const history::URLRows& deleted_rows,
                      const std::set<GURL>& favicon_urls) override;
 
+  // Returns the percentage of DB accesses that have resulted in an error.
+  int GetErrorPercentage() const;
+
+  // Converts the passed URL information to a TypedUrlSpecifics structure for
+  // writing to the sync DB.
+  static void WriteToTypedUrlSpecifics(const URLRow& url,
+                                       const VisitVector& visits,
+                                       sync_pb::TypedUrlSpecifics* specifics);
+
  private:
   friend class TypedUrlSyncableServiceTest;
 
@@ -77,33 +86,32 @@ class TypedUrlSyncableService : public syncer::SyncableService,
 
   // This is a helper map used only in Merge/Process* functions. The lifetime
   // of the iterator is longer than the map object.
-  typedef std::map<GURL,
-                   std::pair<syncer::SyncChange::SyncChangeType,
-                             URLRows::iterator>> TypedUrlMap;
+  typedef std::map<GURL, std::pair<syncer::SyncChange::SyncChangeType, URLRow>>
+      TypedUrlMap;
 
   // This is a helper map used to associate visit vectors from the history db
   // to the typed urls in the above map.
   typedef std::map<GURL, VisitVector> UrlVisitVectorMap;
 
   // Bitfield returned from MergeUrls to specify the result of a merge.
-  typedef uint32 MergeResult;
+  typedef uint32_t MergeResult;
   static const MergeResult DIFF_NONE = 0;
   static const MergeResult DIFF_UPDATE_NODE = 1 << 0;
   static const MergeResult DIFF_LOCAL_ROW_CHANGED = 1 << 1;
   static const MergeResult DIFF_LOCAL_VISITS_ADDED = 1 << 2;
 
   // Helper method for getting the set of synced urls.
+  // Set it as virtual for testing.
   void GetSyncedUrls(std::set<GURL>* urls) const;
 
   // Helper function that clears our error counters (used to reset stats after
   // model association so we can track model association errors separately).
-  void ClearErrorStats();
+  virtual void ClearErrorStats();
 
   // Compares |typed_url| from the server against local history to decide how
   // to merge any existing data, and updates appropriate data containers to
   // write to server and backend.
   void CreateOrUpdateUrl(const sync_pb::TypedUrlSpecifics& typed_url,
-                         history::URLRows* typed_urls,
                          TypedUrlMap* loaded_data,
                          UrlVisitVectorMap* visit_vectors,
                          history::URLRows* new_synced_urls,
@@ -135,11 +143,9 @@ class TypedUrlSyncableService : public syncer::SyncableService,
   // Writes new typed url data from sync server to history backend.
   void WriteToHistoryBackend(const history::URLRows* new_urls,
                              const history::URLRows* updated_urls,
+                             const std::vector<GURL>* deleted_urls,
                              const TypedUrlVisitVector* new_visits,
                              const history::VisitVector* deleted_visits);
-
-  // Returns the percentage of DB accesses that have resulted in an error.
-  int GetErrorPercentage() const;
 
   // Helper function that determines if we should ignore a URL for the purposes
   // of sync, because it contains invalid data.
@@ -167,12 +173,6 @@ class TypedUrlSyncableService : public syncer::SyncableService,
                                const history::VisitVector& visits,
                                std::string title,
                                syncer::SyncChangeList* change_list);
-
-  // Converts the passed URL information to a TypedUrlSpecifics structure for
-  // writing to the sync DB.
-  static void WriteToTypedUrlSpecifics(const URLRow& url,
-                                       const VisitVector& visits,
-                                       sync_pb::TypedUrlSpecifics* specifics);
 
   // Fills |new_url| with formatted data from |typed_url|.
   static void UpdateURLRowFromTypedUrlSpecifics(
@@ -224,8 +224,8 @@ class TypedUrlSyncableService : public syncer::SyncableService,
 
   // We receive ownership of |sync_processor_| and |error_handler_| in
   // MergeDataAndStartSyncing() and destroy them in StopSyncing().
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
-  scoped_ptr<syncer::SyncErrorFactory> sync_error_handler_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncErrorFactory> sync_error_handler_;
 
   // Statistics for the purposes of tracking the percentage of DB accesses that
   // fail for each client via UMA.
@@ -233,6 +233,9 @@ class TypedUrlSyncableService : public syncer::SyncableService,
   int num_db_errors_;
 
   base::ThreadChecker thread_checker_;
+
+  ScopedObserver<history::HistoryBackend, history::HistoryBackendObserver>
+      history_backend_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TypedUrlSyncableService);
 };

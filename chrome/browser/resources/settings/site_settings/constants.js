@@ -2,39 +2,59 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.define('settings', function() {
-  /**
-   * The possible contentSettingsTypes (the ones we currently support
-   * configuring in the UI). This is a subset of the constants found under
-   * content_setttings_types.h and the values should be kept in sync.
-   * TODO(finnur): When all categories have been implemented we can just
-   * generate these constants from content_setttings_types.h.
-   * @enum {number}
-   */
-  var ContentSettingsTypes = {
-    COOKIES: 0,
-    IMAGES: 1,
-    JAVASCRIPT: 2,
-    POPUPS: 4,
-    GEOLOCATION: 5,
-    NOTIFICATION: 6,
-    FULLSCREEN: 8,
-    MIC: 12,
-    CAMERA: 13,
-  };
+cr.exportPath('settings');
 
-  /**
-   * Contains the possible values for a given contentSettingsType.
-   * @enum {number}
-   */
-  var PermissionValues = {
-    ALLOW: 1,
-    BLOCK: 2,
-    ASK: 3,
-  };
+/**
+ * All possible contentSettingsTypes that we currently support configuring in
+ * the UI. Both top-level categories and content settings that represent
+ * individual permissions under Site Details should appear here. This is a
+ * subset of the constants found in site_settings_helper.cc and the values
+ * should be kept in sync.
+ * @enum {string}
+ */
+settings.ContentSettingsTypes = {
+  COOKIES: 'cookies',
+  IMAGES: 'images',
+  JAVASCRIPT: 'javascript',
+  PLUGINS: 'plugins',
+  POPUPS: 'popups',
+  GEOLOCATION: 'location',
+  NOTIFICATIONS: 'notifications',
+  MIC: 'media-stream-mic',
+  CAMERA: 'media-stream-camera',
+  PROTOCOL_HANDLERS: 'register-protocol-handler',
+  UNSANDBOXED_PLUGINS: 'ppapi-broker',
+  AUTOMATIC_DOWNLOADS: 'multiple-automatic-downloads',
+  KEYGEN: 'keygen',
+  BACKGROUND_SYNC: 'background-sync',
+  USB_DEVICES: 'usb-chooser-data',
+  ZOOM_LEVELS: 'zoom-levels',
+};
 
-  return {
-    ContentSettingsTypes: ContentSettingsTypes,
-    PermissionValues: PermissionValues,
-  };
-});
+/**
+ * Contains the possible string values for a given contentSettingsType.
+ * @enum {string}
+ *
+ * TODO(dschuyler): This should be rename as ContentSetting to maintain
+ * nomenclature with C++.
+ */
+settings.PermissionValues = {
+  DEFAULT: 'default',
+  ALLOW: 'allow',
+  BLOCK: 'block',
+  ASK: 'ask',
+  SESSION_ONLY: 'session_only',
+  IMPORTANT_CONTENT: 'detect_important_content',
+};
+
+/**
+ * A category value to use for the All Sites list.
+ * @const {string}
+ */
+settings.ALL_SITES = 'all-sites';
+
+/**
+ * An invalid subtype value.
+ * @const {string}
+ */
+settings.INVALID_CATEGORY_SUBTYPE = '';

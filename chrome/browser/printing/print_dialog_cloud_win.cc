@@ -4,16 +4,20 @@
 
 #include "chrome/browser/printing/print_dialog_cloud.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -26,7 +30,6 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/message_port_provider.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/common/message_port_types.h"
 
 namespace print_dialog_cloud {
 
@@ -72,7 +75,7 @@ class PrintDataSetter : public content::WebContentsObserver {
       base::string16 origin = base::UTF8ToUTF16(url.GetOrigin().spec());
       content::MessagePortProvider::PostMessageToFrame(
           web_contents(), origin, origin, message_data_,
-          std::vector<content::TransferredMessagePort>());
+          std::vector<int>());
     }
   }
 
@@ -89,14 +92,13 @@ void CreatePrintDialog(content::BrowserContext* browser_context,
                        const scoped_refptr<base::RefCountedMemory>& data) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   Profile* profile = Profile::FromBrowserContext(browser_context);
-  chrome::ScopedTabbedBrowserDisplayer displayer(profile,
-                                                 chrome::GetActiveDesktop());
+  chrome::ScopedTabbedBrowserDisplayer displayer(profile);
   GURL url = cloud_devices::GetCloudPrintRelativeURL("client/dialog.html");
   content::WebContents* web_contents =
       displayer.browser()->OpenURL(content::OpenURLParams(
           google_util::AppendGoogleLocaleParam(
               url, g_browser_process->GetApplicationLocale()),
-          content::Referrer(), NEW_FOREGROUND_TAB,
+          content::Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
           ui::PAGE_TRANSITION_AUTO_BOOKMARK, false));
   if (data && data->size()) {
     new PrintDataSetter(web_contents, data, print_job_title, print_ticket,

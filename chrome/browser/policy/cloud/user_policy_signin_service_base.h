@@ -5,13 +5,13 @@
 #ifndef CHROME_BROWSER_POLICY_CLOUD_USER_POLICY_SIGNIN_SERVICE_BASE_H_
 #define CHROME_BROWSER_POLICY_CLOUD_USER_POLICY_SIGNIN_SERVICE_BASE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
@@ -36,11 +36,11 @@ class UserCloudPolicyManager;
 // infrastructure (mainly UserCloudPolicyManager) to load policy for the signed
 // in user. This is the base class that contains shared behavior.
 //
-// At signin time, this class initializes the UCPM and loads policy before any
-// other signed in services are initialized. After each restart, this class
-// ensures that the CloudPolicyClient is registered (in case the policy server
-// was offline during the initial policy fetch) and if not it initiates a fresh
-// registration process.
+// At signin time, this class initializes the UserCloudPolicyManager and loads
+// policy before any other signed in services are initialized. After each
+// restart, this class ensures that the CloudPolicyClient is registered (in case
+// the policy server was offline during the initial policy fetch) and if not it
+// initiates a fresh registration process.
 //
 // Finally, if the user signs out, this class is responsible for shutting down
 // the policy infrastructure to ensure that any cached policy is cleared.
@@ -112,7 +112,7 @@ class UserPolicySigninServiceBase : public KeyedService,
 
   // Returns a CloudPolicyClient to perform a registration with the DM server,
   // or NULL if |username| shouldn't register for policy management.
-  scoped_ptr<CloudPolicyClient> CreateClientForRegistrationOnly(
+  std::unique_ptr<CloudPolicyClient> CreateClientForRegistrationOnly(
       const std::string& username);
 
   // Returns false if cloud policy is disabled or if the passed |email_address|
@@ -141,7 +141,7 @@ class UserPolicySigninServiceBase : public KeyedService,
   // the initial policy fetch after signing in.
   virtual void InitializeUserCloudPolicyManager(
       const std::string& username,
-      scoped_ptr<CloudPolicyClient> client);
+      std::unique_ptr<CloudPolicyClient> client);
 
   // Prepares for the UserCloudPolicyManager to be shutdown due to
   // user signout or profile destruction.
@@ -159,8 +159,6 @@ class UserPolicySigninServiceBase : public KeyedService,
   content::NotificationRegistrar* registrar() { return &registrar_; }
 
  private:
-  scoped_refptr<net::URLRequestContextGetter> CreateSystemRequestContext();
-
   // Weak pointer to the UserCloudPolicyManager and SigninManager this service
   // is associated with.
   UserCloudPolicyManager* policy_manager_;

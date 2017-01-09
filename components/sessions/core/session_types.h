@@ -6,25 +6,21 @@
 #define COMPONENTS_SESSIONS_CORE_SESSION_TYPES_H_
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/sessions/core/serialized_navigation_entry.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/sessions_export.h"
+#include "components/sync/protocol/session_specifics.pb.h"
 #include "components/variations/variations_associated_data.h"
-#include "sync/protocol/session_specifics.pb.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
-
-namespace content {
-class BrowserContext;
-class NavigationEntry;
-}
 
 namespace sessions {
 
@@ -61,7 +57,7 @@ struct SESSIONS_EXPORT SessionTab {
   // Unique id of the window.
   SessionID window_id;
 
-  // Unique if of the tab.
+  // Unique id of the tab.
   SessionID tab_id;
 
   // Visual index of the tab within its window. There may be gaps in these
@@ -139,6 +135,9 @@ struct SESSIONS_EXPORT SessionWindow {
   // Bounds of the window.
   gfx::Rect bounds;
 
+  // The workspace in which the window resides.
+  std::string workspace;
+
   // Index of the selected tab in tabs; -1 if no tab is selected. After restore
   // this value is guaranteed to be a valid index into tabs.
   //
@@ -162,7 +161,7 @@ struct SESSIONS_EXPORT SessionWindow {
   base::Time timestamp;
 
   // The tabs, ordered by visual order.
-  std::vector<SessionTab*> tabs;
+  std::vector<std::unique_ptr<SessionTab>> tabs;
 
   // Is the window maximized, minimized, or normal?
   ui::WindowShowState show_state;

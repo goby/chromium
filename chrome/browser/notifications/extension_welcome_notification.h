@@ -5,13 +5,14 @@
 #ifndef CHROME_BROWSER_NOTIFICATIONS_EXTENSION_WELCOME_NOTIFICATION_H_
 #define CHROME_BROWSER_NOTIFICATIONS_EXTENSION_WELCOME_NOTIFICATION_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_member.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/syncable_prefs/pref_service_syncable_observer.h"
+#include "components/prefs/pref_member.h"
+#include "components/sync_preferences/pref_service_syncable_observer.h"
 #include "ui/message_center/notifier_settings.h"
 
 namespace base {
@@ -43,7 +44,7 @@ class Profile;
 // This class expects to be created and called from the UI thread.
 class ExtensionWelcomeNotification
     : public KeyedService,
-      public syncable_prefs::PrefServiceSyncableObserver {
+      public sync_preferences::PrefServiceSyncableObserver {
  public:
   // Allows for overriding global calls.
   class Delegate {
@@ -76,7 +77,7 @@ class ExtensionWelcomeNotification
   static ExtensionWelcomeNotification* Create(Profile* const profile,
                                               Delegate* const delegate);
 
-  // syncable_prefs::PrefServiceSyncableObserver
+  // sync_preferences::PrefServiceSyncableObserver
   void OnIsSyncingChanged() override;
 
   // Adds in the welcome notification if required for components built
@@ -148,15 +149,15 @@ class ExtensionWelcomeNotification
   // Simplifying Assumption: The delayed notification has passed the
   // extension ID check. This means we do not need to store all of the
   // notifications that may also show a welcome notification.
-  scoped_ptr<Notification> delayed_notification_;
+  std::unique_ptr<Notification> delayed_notification_;
 
   // If the welcome notification is shown, this timer tracks when to hide the
   // welcome notification.
-  scoped_ptr<base::OneShotTimer> expiration_timer_;
+  std::unique_ptr<base::OneShotTimer> expiration_timer_;
 
   // Delegate for Chrome global calls like base::Time::GetTime() for
   // testability.
-  scoped_ptr<Delegate> delegate_;
+  std::unique_ptr<Delegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionWelcomeNotification);
 };

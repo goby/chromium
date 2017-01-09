@@ -4,8 +4,11 @@
 
 #include "remoting/host/pairing_registry_delegate_win.h"
 
+#include <utility>
+
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "base/win/registry.h"
@@ -36,8 +39,8 @@ bool DuplicateKeyHandle(HKEY source, base::win::RegKey* dest) {
 
 // Reads value |value_name| from |key| as a JSON string and returns it as
 // |base::Value|.
-scoped_ptr<base::DictionaryValue> ReadValue(const base::win::RegKey& key,
-                                            const wchar_t* value_name) {
+std::unique_ptr<base::DictionaryValue> ReadValue(const base::win::RegKey& key,
+                                                 const wchar_t* value_name) {
   // presubmit: allow wstring
   std::wstring value_json;
   LONG result = key.ReadValue(value_name, &value_json);
@@ -52,7 +55,7 @@ scoped_ptr<base::DictionaryValue> ReadValue(const base::win::RegKey& key,
   JSONStringValueDeserializer deserializer(value_json_utf8);
   int error_code;
   std::string error_message;
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       deserializer.Deserialize(&error_code, &error_message);
   if (!value) {
     LOG(ERROR) << "Failed to parse '" << value_name << "': " << error_message
@@ -60,19 +63,19 @@ scoped_ptr<base::DictionaryValue> ReadValue(const base::win::RegKey& key,
     return nullptr;
   }
 
-  if (!value->IsType(base::Value::TYPE_DICTIONARY)) {
+  if (!value->IsType(base::Value::Type::DICTIONARY)) {
     LOG(ERROR) << "Failed to parse '" << value_name << "': not a dictionary.";
     return nullptr;
   }
 
-  return make_scoped_ptr(static_cast<base::DictionaryValue*>(value.release()));
+  return base::WrapUnique(static_cast<base::DictionaryValue*>(value.release()));
 }
 
 // Serializes |value| into a JSON string and writes it as value |value_name|
 // under |key|.
 bool WriteValue(base::win::RegKey& key,
                 const wchar_t* value_name,
-                scoped_ptr<base::DictionaryValue> value) {
+                std::unique_ptr<base::DictionaryValue> value) {
   std::string value_json_utf8;
   JSONStringValueSerializer serializer(&value_json_utf8);
   if (!serializer.Serialize(*value)) {
@@ -119,8 +122,8 @@ bool PairingRegistryDelegateWin::SetRootKeys(HKEY privileged,
   return true;
 }
 
-scoped_ptr<base::ListValue> PairingRegistryDelegateWin::LoadAll() {
-  scoped_ptr<base::ListValue> pairings(new base::ListValue());
+std::unique_ptr<base::ListValue> PairingRegistryDelegateWin::LoadAll() {
+  std::unique_ptr<base::ListValue> pairings(new base::ListValue());
 
   // Enumerate and parse all values under the unprivileged key.
   DWORD count = unprivileged_.GetValueCount();
@@ -139,7 +142,7 @@ scoped_ptr<base::ListValue> PairingRegistryDelegateWin::LoadAll() {
       pairings->Append(pairing.ToValue().release());
   }
 
-  return pairings.Pass();
+  return pairings;
 }
 
 bool PairingRegistryDelegateWin::DeleteAll() {
@@ -184,15 +187,15 @@ PairingRegistry::Pairing PairingRegistryDelegateWin::Load(
   std::wstring value_name = base::UTF8ToWide(client_id);
 
   // Read unprivileged fields first.
-  scoped_ptr<base::DictionaryValue> pairing = ReadValue(unprivileged_,
-                                                        value_name.c_str());
+  std::unique_ptr<base::DictionaryValue> pairing =
+      ReadValue(unprivileged_, value_name.c_str());
   if (!pairing)
     return PairingRegistry::Pairing();
 
   // Read the shared secret.
   if (privileged_.Valid()) {
-    scoped_ptr<base::DictionaryValue> secret = ReadValue(privileged_,
-                                                         value_name.c_str());
+    std::unique_ptr<base::DictionaryValue> secret =
+        ReadValue(privileged_, value_name.c_str());
     if (!secret)
       return PairingRegistry::Pairing();
 
@@ -211,20 +214,21 @@ bool PairingRegistryDelegateWin::Save(const PairingRegistry::Pairing& pairing) {
   }
 
   // Convert pairing to JSON.
-  scoped_ptr<base::DictionaryValue> pairing_json = pairing.ToValue();
+  std::unique_ptr<base::DictionaryValue> pairing_json = pairing.ToValue();
 
   // Extract the shared secret to a separate dictionary.
-  scoped_ptr<base::Value> secret_key;
+  std::unique_ptr<base::Value> secret_key;
   CHECK(pairing_json->Remove(PairingRegistry::kSharedSecretKey, &secret_key));
-  scoped_ptr<base::DictionaryValue> secret_json(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> secret_json(
+      new base::DictionaryValue());
   secret_json->Set(PairingRegistry::kSharedSecretKey, secret_key.release());
 
   // presubmit: allow wstring
   std::wstring value_name = base::UTF8ToWide(pairing.client_id());
 
   // Write pairing to the registry.
-  if (!WriteValue(privileged_, value_name.c_str(), secret_json.Pass()) ||
-      !WriteValue(unprivileged_, value_name.c_str(), pairing_json.Pass())) {
+  if (!WriteValue(privileged_, value_name.c_str(), std::move(secret_json)) ||
+      !WriteValue(unprivileged_, value_name.c_str(), std::move(pairing_json))) {
     return false;
   }
 
@@ -261,8 +265,8 @@ bool PairingRegistryDelegateWin::Delete(const std::string& client_id) {
   return true;
 }
 
-scoped_ptr<PairingRegistry::Delegate> CreatePairingRegistryDelegate() {
-  return make_scoped_ptr(new PairingRegistryDelegateWin());
+std::unique_ptr<PairingRegistry::Delegate> CreatePairingRegistryDelegate() {
+  return base::MakeUnique<PairingRegistryDelegateWin>();
 }
 
 }  // namespace remoting

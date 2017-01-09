@@ -4,7 +4,9 @@
 
 #include "chrome/browser/chromeos/extensions/launcher_search_provider.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <utility>
+
 #include "chrome/browser/chromeos/launcher_search_provider/error_reporter.h"
 #include "chrome/browser/chromeos/launcher_search_provider/launcher_search_provider_service.h"
 #include "chrome/common/extensions/api/launcher_search_provider.h"
@@ -16,21 +18,22 @@ LauncherSearchProviderSetSearchResultsFunction::
     ~LauncherSearchProviderSetSearchResultsFunction() {
 }
 
-bool LauncherSearchProviderSetSearchResultsFunction::RunSync() {
+ExtensionFunction::ResponseAction
+LauncherSearchProviderSetSearchResultsFunction::Run() {
   using chromeos::launcher_search_provider::ErrorReporter;
   using chromeos::launcher_search_provider::Service;
   using extensions::api::launcher_search_provider::SetSearchResults::Params;
-  const scoped_ptr<Params> params(Params::Create(*args_));
+  const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
   DCHECK(render_frame_host());
 
-  scoped_ptr<ErrorReporter> error_reporter(
+  std::unique_ptr<ErrorReporter> error_reporter(
       new ErrorReporter(render_frame_host()));
-  Service* const service = Service::Get(GetProfile());
-  service->SetSearchResults(extension(), error_reporter.Pass(),
+  Service* const service = Service::Get(browser_context());
+  service->SetSearchResults(extension(), std::move(error_reporter),
                             params->query_id, params->results);
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
 }  // namespace extensions

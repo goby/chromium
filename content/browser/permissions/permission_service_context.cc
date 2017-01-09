@@ -4,6 +4,8 @@
 
 #include "content/browser/permissions/permission_service_context.h"
 
+#include <utility>
+
 #include "content/browser/permissions/permission_service_impl.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/render_frame_host.h"
@@ -30,8 +32,8 @@ PermissionServiceContext::~PermissionServiceContext() {
 }
 
 void PermissionServiceContext::CreateService(
-    mojo::InterfaceRequest<PermissionService> request) {
-  services_.push_back(new PermissionServiceImpl(this, request.Pass()));
+    mojo::InterfaceRequest<blink::mojom::PermissionService> request) {
+  services_.push_back(new PermissionServiceImpl(this, std::move(request)));
 }
 
 void PermissionServiceContext::ServiceHadConnectionError(

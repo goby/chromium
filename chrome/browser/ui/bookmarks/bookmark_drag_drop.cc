@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/bookmarks/bookmark_drag_drop.h"
 
+#include <stddef.h>
+
+#include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
@@ -26,7 +29,7 @@ int DropBookmarks(Profile* profile,
                   const BookmarkNode* parent_node,
                   int index,
                   bool copy) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile);
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
 #if !defined(OS_ANDROID)
   bookmarks::ScopedGroupBookmarkActions group_drops(model);
 #endif

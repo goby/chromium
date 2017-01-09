@@ -8,6 +8,70 @@
  */
 
 /**
+ * Model of a volume slider and a mute switch and its user interaction.
+ * @constructor
+ * @struct
+ */
+function VolumeModel() {
+  /**
+   * @type {boolean}
+   */
+  this.isMuted_ = false;
+
+  /**
+   * The volume level in [0..1].
+   * @type {number}
+   */
+  this.volume_ = 0.5;
+};
+
+/**
+ * After unmuting, the volume should be non-zero value to avoid that the mute
+ * button gives no response to user.
+ */
+VolumeModel.MIN_VOLUME_AFTER_UNMUTE = 0.01;
+
+/**
+ * @return {number} the value to be set as the volume level of a media element.
+ */
+VolumeModel.prototype.getMediaVolume = function() {
+  return this.isMuted_ ? 0 : this.volume_;
+};
+
+/**
+ * Handles operation to the volume level slider.
+ * @param {number} value new position of the slider in [0..1].
+ */
+VolumeModel.prototype.onVolumeChanged = function(value) {
+  if (value == 0) {
+    this.isMuted_ = true;
+  } else {
+    this.isMuted_ = false;
+    this.volume_ = value;
+  }
+};
+
+/**
+ * Toggles the mute state.
+ */
+VolumeModel.prototype.toggleMute = function() {
+  this.isMuted_ = !this.isMuted_;
+  if (!this.isMuted_) {
+    this.volume_ = Math.max(VolumeModel.MIN_VOLUME_AFTER_UNMUTE, this.volume_);
+  }
+};
+
+/**
+ * Sets the status of the model.
+ * @param {number} volume the volume level in [0..1].
+ * @param {boolean} mute whether to mute the sound.
+ */
+VolumeModel.prototype.set = function(volume, mute) {
+  this.volume_ = volume;
+  this.isMuted_ = mute;
+};
+
+/**
  * @param {!HTMLElement} containerElement The container for the controls.
  * @param {function(Event)} onMediaError Function to display an error message.
  * @constructor
@@ -24,7 +88,11 @@ function MediaControls(containerElement, onMediaError) {
   this.onMediaProgressBound_ = this.onMediaProgress_.bind(this);
   this.onMediaError_ = onMediaError || function() {};
 
-  this.savedVolume_ = 1;  // 100% volume.
+  /**
+   * @type {VolumeModel}
+   * @private
+   */
+  this.volumeModel_ = new VolumeModel();
 
   /**
    * @type {HTMLElement}
@@ -57,6 +125,17 @@ function MediaControls(containerElement, onMediaError) {
   this.soundButton_ = null;
 
   /**
+   * @type {HTMLElement}
+   * @private
+   */
+  this.subtitlesButton_ = null;
+
+  /**
+   * @private {TextTrack}
+   */
+  this.subtitlesTrack_ = null;
+
+  /**
    * @type {boolean}
    * @private
    */
@@ -78,6 +157,11 @@ function MediaControls(containerElement, onMediaError) {
    * @private {boolean}
    */
   this.seeking_ = false;
+
+  /**
+   * @private {boolean}
+   */
+  this.showRemainingTime_ = false;
 }
 
 /**
@@ -96,17 +180,21 @@ MediaControls.ButtonStateType = {
 MediaControls.prototype.getMedia = function() { return this.media_ };
 
 /**
- * Format the time in hh:mm:ss format (omitting redundant leading zeros).
- *
+ * Format the time in hh:mm:ss format (omitting redundant leading zeros)
+ * adding '-' sign if given value is negative.
  * @param {number} timeInSec Time in seconds.
  * @return {string} Formatted time string.
  * @private
  */
 MediaControls.formatTime_ = function(timeInSec) {
+  var result = '';
+  if (timeInSec < 0) {
+    timeInSec *= -1;
+    result += '-';
+  }
   var seconds = Math.floor(timeInSec % 60);
   var minutes = Math.floor((timeInSec / 60) % 60);
   var hours = Math.floor(timeInSec / 60 / 60);
-  var result = '';
   if (hours) result += hours + ':';
   if (hours && (minutes < 10)) result += '0';
   result += minutes + ':';
@@ -246,6 +334,28 @@ MediaControls.prototype.initPlayButton = function(opt_parent) {
 MediaControls.PROGRESS_RANGE = 5000;
 
 /**
+ * 5 seconds should be skipped when left/right key is pressed.
+ */
+MediaControls.PROGRESS_MAX_SECONDS_TO_SMALL_SKIP = 5;
+
+/**
+ * 10 seconds should be skipped when J/L key is pressed.
+ */
+MediaControls.PROGRESS_MAX_SECONDS_TO_BIG_SKIP = 10;
+
+/**
+ * 10% of duration should be skipped when the video is too short to skip 5
+ * seconds.
+ */
+MediaControls.PROGRESS_MAX_RATIO_TO_SMALL_SKIP = 0.1;
+
+/**
+ * 20% of duration should be skipped when the video is too short to skip 10
+ * seconds.
+ */
+MediaControls.PROGRESS_MAX_RATIO_TO_BIG_SKIP = 0.2;
+
+/**
  * @param {HTMLElement=} opt_parent Parent container.
  */
 MediaControls.prototype.initTimeControls = function(opt_parent) {
@@ -255,6 +365,8 @@ MediaControls.prototype.initTimeControls = function(opt_parent) {
 
   this.currentTimeSpacer_ = this.createControl('spacer', timeBox);
   this.currentTime_ = this.createControl('current', timeBox);
+  this.currentTime_.addEventListener('click',
+      this.onTimeLabelClick_.bind(this));
   // Set the initial width to the minimum to reduce the flicker.
   this.updateTimeLabel_(0, 0);
 
@@ -301,6 +413,10 @@ MediaControls.prototype.onProgressChange_ = function(value) {
 
   this.setSeeking_(false);
 
+  // Re-start playing the video when the seek bar is moved from ending point.
+  if (this.media_.ended)
+    this.play();
+
   var current = this.media_.duration * value;
   this.media_.currentTime = current;
   this.updateTimeLabel_(current);
@@ -322,6 +438,48 @@ MediaControls.prototype.onProgressDrag_ = function() {
     var current = this.media_.duration * immediateRatio;
     this.updateTimeLabel_(current);
   }
+};
+
+/**
+ * Skips forward/backword.
+ * @param {number} sec Seconds to skip. Set negative value to skip backword.
+ * @private
+ */
+MediaControls.prototype.skip_ = function(sec) {
+  if (this.media_ && this.media_.duration > 0) {
+    var stepsToSkip = MediaControls.PROGRESS_RANGE *
+        (sec / this.media_.duration);
+    this.progressSlider_.value = Math.max(Math.min(
+        this.progressSlider_.value + stepsToSkip,
+        this.progressSlider_.max), 0);
+    this.onProgressChange_(this.progressSlider_.ratio);
+  }
+};
+
+/**
+ * Invokes small skip.
+ * @param {boolean} forward Whether to skip forward or backword.
+ */
+MediaControls.prototype.smallSkip = function(forward) {
+  var secondsToSkip = Math.min(
+      MediaControls.PROGRESS_MAX_SECONDS_TO_SMALL_SKIP,
+      this.media_.duration * MediaControls.PROGRESS_MAX_RATIO_TO_SMALL_SKIP);
+  if (!forward)
+    secondsToSkip *= -1;
+  this.skip_(secondsToSkip);
+};
+
+/**
+ * Invokes big skip.
+ * @param {boolean} forward Whether to skip forward or backword.
+ */
+MediaControls.prototype.bigSkip = function(forward) {
+  var secondsToSkip = Math.min(
+      MediaControls.PROGRESS_MAX_SECONDS_TO_BIG_SKIP,
+      this.media_.duration * MediaControls.PROGRESS_MAX_RATIO_TO_BIG_SKIP);
+  if (!forward)
+    secondsToSkip *= -1;
+  this.skip_(secondsToSkip);
 };
 
 /**
@@ -351,10 +509,18 @@ MediaControls.prototype.setSeeking_ = function(seeking) {
   this.updatePlayButtonState_(this.isPlaying());
 };
 
+/**
+ * Click handler for the time label.
+ * @private
+ */
+MediaControls.prototype.onTimeLabelClick_ = function(event) {
+  this.showRemainingTime_ = !this.showRemainingTime_;
+  this.updateTimeLabel_(this.media_.currentTime, this.media_.duration);
+}
 
 /**
  * Update the label for current playing position and video duration.
- * The label should be like "0:00 / 6:20".
+ * The label should be like "0:06 / 0:32" or "-0:26 / 0:32".
  * @param {number} current Current playing position.
  * @param {number=} opt_duration Video's duration.
  * @private
@@ -369,18 +535,34 @@ MediaControls.prototype.updateTimeLabel_ = function(current, opt_duration) {
   if (isNaN(current))
     current = 0;
 
-  this.currentTime_.textContent =
-      MediaControls.formatTime_(current) + ' / ' +
-      MediaControls.formatTime_(duration);
-  // Keep the maximum space to prevent time label from moving while playing.
-  this.currentTimeSpacer_.textContent =
-      MediaControls.formatTime_(duration) + ' / ' +
-      MediaControls.formatTime_(duration);
+  if (isFinite(duration)) {
+    this.currentTime_.textContent =
+        (this.showRemainingTime_ ? MediaControls.formatTime_(current - duration)
+          : MediaControls.formatTime_(current)) + ' / ' +
+          MediaControls.formatTime_(duration);
+    // Keep the maximum space to prevent time label from moving while playing.
+    this.currentTimeSpacer_.textContent =
+        (this.showRemainingTime_ ? '-' : '') +
+        MediaControls.formatTime_(duration) + ' / ' +
+        MediaControls.formatTime_(duration);
+  } else {
+    // Media's duration can be positive infinity value when the media source is
+    // not known to be bounded yet. In such cases, we should hide duration.
+    this.currentTime_.textContent = MediaControls.formatTime_(current);
+    this.currentTimeSpacer_.textContent = MediaControls.formatTime_(current);
+  }
 };
 
 /*
  * Volume controls
  */
+
+MediaControls.STORAGE_PREFIX = 'videoplayer-';
+
+MediaControls.KEY_NORMALIZED_VOLUME =
+    MediaControls.STORAGE_PREFIX + 'normalized-volume';
+MediaControls.KEY_MUTED =
+    MediaControls.STORAGE_PREFIX + 'muted';
 
 /**
  * @param {HTMLElement=} opt_parent Parent element for the controls.
@@ -405,8 +587,30 @@ MediaControls.prototype.initVolumeControls = function(opt_parent) {
   this.volume_.addEventListener('immediate-value-change', function(event) {
     this.onVolumeDrag_();
   }.bind(this));
-  this.volume_.value = this.volume_.max;
+  this.loadVolumeControlState();
   volumeControls.appendChild(this.volume_);
+};
+
+MediaControls.prototype.loadVolumeControlState = function() {
+  chrome.storage.local.get([MediaControls.KEY_NORMALIZED_VOLUME,
+                            MediaControls.KEY_MUTED],
+      function(retrieved) {
+        var normalizedVolume = (MediaControls.KEY_NORMALIZED_VOLUME
+                                 in retrieved)
+            ? retrieved[MediaControls.KEY_NORMALIZED_VOLUME] : 1;
+        var isMuted = (MediaControls.KEY_MUTED in retrieved)
+            ? retrieved[MediaControls.KEY_MUTED] : false;
+        this.volumeModel_.set(normalizedVolume, isMuted);
+        this.reflectVolumeToUi_();
+      }.bind(this));
+};
+
+MediaControls.prototype.saveVolumeControlState = function() {
+  var valuesToStore = {};
+  valuesToStore[MediaControls.KEY_NORMALIZED_VOLUME] =
+      this.volumeModel_.volume_;
+  valuesToStore[MediaControls.KEY_MUTED] = this.volumeModel_.isMuted_;
+  chrome.storage.local.set(valuesToStore);
 };
 
 /**
@@ -414,17 +618,9 @@ MediaControls.prototype.initVolumeControls = function(opt_parent) {
  * @private
  */
 MediaControls.prototype.onSoundButtonClick_ = function() {
-  if (this.media_.volume == 0) {
-    this.volume_.value = (this.savedVolume_ || 1) * this.volume_.max;
-    this.soundButton_.setAttribute('aria-label',
-        str('MEDIA_PLAYER_MUTE_BUTTON_LABEL'));
-  } else {
-    this.savedVolume_ = this.media_.volume;
-    this.volume_.value = 0;
-    this.soundButton_.setAttribute('aria-label',
-        str('MEDIA_PLAYER_UNMUTE_BUTTON_LABEL'));
-  }
-  this.onVolumeChange_(this.volume_.ratio);
+  this.volumeModel_.toggleMute();
+  this.saveVolumeControlState();
+  this.reflectVolumeToUi_();
 };
 
 /**
@@ -440,6 +636,23 @@ MediaControls.getVolumeLevel_ = function(value) {
 };
 
 /**
+ * Reflects volume model to the UI elements.
+ * @private
+ */
+MediaControls.prototype.reflectVolumeToUi_ = function() {
+  this.soundButton_.setAttribute('level',
+      MediaControls.getVolumeLevel_(this.volumeModel_.getMediaVolume()));
+  this.soundButton_.setAttribute('aria-label', this.volumeModel_.isMuted_
+                                 ? str('MEDIA_PLAYER_UNMUTE_BUTTON_LABEL')
+                                 : str('MEDIA_PLAYER_MUTE_BUTTON_LABEL'));
+  this.volume_.value = this.volumeModel_.getMediaVolume() * this.volume_.max
+  if (this.media_) {
+    this.media_.volume = this.volumeModel_.getMediaVolume();
+  }
+}
+
+/**
+ * Handles change event of the volume slider.
  * @param {number} value Volume [0..1].
  * @private
  */
@@ -447,11 +660,9 @@ MediaControls.prototype.onVolumeChange_ = function(value) {
   if (!this.media_)
     return;  // Media is detached.
 
-  this.media_.volume = value;
-  this.soundButton_.setAttribute('level', MediaControls.getVolumeLevel_(value));
-  this.soundButton_.setAttribute('aria-label',
-      value === 0 ? str('MEDIA_PLAYER_UNMUTE_BUTTON_LABEL')
-                  : str('MEDIA_PLAYER_MUTE_BUTTON_LABEL'));
+  this.volumeModel_.onVolumeChanged(value);
+  this.saveVolumeControlState();
+  this.reflectVolumeToUi_();
 };
 
 /**
@@ -459,8 +670,70 @@ MediaControls.prototype.onVolumeChange_ = function(value) {
  */
 MediaControls.prototype.onVolumeDrag_ = function() {
   if (this.media_.volume !== 0) {
-    this.savedVolume_ = this.media_.volume;
+    this.volumeModel_.onVolumeChanged(this.media_.volume);;
   }
+};
+
+/**
+ * Initializes subtitles button.
+ */
+MediaControls.prototype.initSubtitlesButton = function() {
+  this.subtitlesTrack_ = null;
+  this.subtitlesButton_ =
+      this.createButton('subtitles', this.onSubtitlesButtonClicked_.bind(this));
+};
+
+/**
+ * @param {Event} event Mouse click event.
+ * @private
+ */
+MediaControls.prototype.onSubtitlesButtonClicked_ = function(event) {
+  if (!this.subtitlesTrack_) {
+    return;
+  }
+  this.toggleSubtitlesMode_(this.subtitlesTrack_.mode === 'hidden');
+};
+
+/**
+ * @param {boolean} on Whether enabled or not.
+ * @private
+ */
+MediaControls.prototype.toggleSubtitlesMode_ = function(on) {
+  if (!this.subtitlesTrack_) {
+    return;
+  }
+  if (on) {
+    this.subtitlesTrack_.mode = 'showing';
+    this.subtitlesButton_.setAttribute('showing', '');
+    this.subtitlesButton_.setAttribute('aria-label',
+        str('VIDEO_PLAYER_DISABLE_SUBTITLES_BUTTON_LABEL'));
+  } else {
+    this.subtitlesTrack_.mode = 'hidden';
+    this.subtitlesButton_.removeAttribute('showing');
+    this.subtitlesButton_.setAttribute('aria-label',
+        str('VIDEO_PLAYER_ENABLE_SUBTITLES_BUTTON_LABEL'));
+  }
+};
+
+/**
+ * @param {TextTrack} track Subtitles track
+ * @private
+ */
+MediaControls.prototype.attachTextTrack_ = function(track) {
+  this.subtitlesTrack_ = track;
+  if (this.subtitlesTrack_) {
+    this.toggleSubtitlesMode_(true);
+    this.subtitlesButton_.removeAttribute('unavailable');
+  } else {
+    this.subtitlesButton_.setAttribute('unavailable', '');
+  }
+};
+
+/**
+ * @private
+ */
+MediaControls.prototype.detachTextTrack_ = function() {
+  this.subtitlesTrack_ = null;
 };
 
 /*
@@ -489,9 +762,14 @@ MediaControls.prototype.attachMedia = function(mediaElement) {
   this.onMediaDuration_();
   this.onMediaPlay_(this.isPlaying());
   this.onMediaProgress_();
-  if (this.volume_) {
-    /* Copy the user selected volume to the new media element. */
-    this.savedVolume_ = this.media_.volume = this.volume_.ratio;
+
+  // Reflect the user specified volume to the media.
+  this.media_.volume = this.volumeModel_.getMediaVolume();
+
+  if (this.media_.textTracks && this.media_.textTracks.length > 0) {
+    this.attachTextTrack_(this.media_.textTracks[0]);
+  } else {
+    this.attachTextTrack_(null);
   }
 };
 
@@ -509,6 +787,7 @@ MediaControls.prototype.detachMedia = function() {
   this.media_.removeEventListener('error', this.onMediaError_);
 
   this.media_ = null;
+  this.detachTextTrack_();
 };
 
 /**
@@ -688,8 +967,9 @@ function VideoControls(
   this.initPlayButton();
   this.initTimeControls();
   this.initVolumeControls();
+  this.initSubtitlesButton();
 
-  // Create the cast button.
+  // Create the cast menu button.
   // We need to use <button> since cr.ui.MenuButton.decorate modifies prototype
   // chain, by which <files-icon-button> will not work correctly.
   // TODO(fukino): Find a way to use files-icon-button consistently.
@@ -700,6 +980,10 @@ function VideoControls(
   this.castButton_.setAttribute('state', MediaControls.ButtonStateType.DEFAULT);
   this.castButton_.appendChild(document.createElement('files-ripple'));
   cr.ui.decorate(this.castButton_, cr.ui.MenuButton);
+
+  // Create the cast button, which is a normal button and is used when we cast
+  // videos usign Media Router.
+  this.createButton('cast-button');
 
   if (opt_fullScreenToggle) {
     this.fullscreenButton_ =
@@ -913,5 +1197,10 @@ VideoControls.prototype.onFullScreenChanged = function(fullscreen) {
     this.fullscreenButton_.setAttribute('aria-label',
         fullscreen ? str('VIDEO_PLAYER_EXIT_FULL_SCREEN_BUTTON_LABEL')
                    : str('VIDEO_PLAYER_FULL_SCREEN_BUTTON_LABEL'));;
+    // If the fullscreen button has focus on entering fullscreen mode, reset the
+    // focus to make the spacebar toggle play/pause state. This is the
+    // consistent behavior with Youtube Web UI.
+    if (fullscreen)
+      this.fullscreenButton_.blur();
   }
 };

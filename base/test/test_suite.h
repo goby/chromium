@@ -9,11 +9,13 @@
 // instantiate this class in your main function and call its Run method to run
 // any gtest based tests that are linked into your executable.
 
+#include <memory>
 #include <string>
 
 #include "base/at_exit.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/test/trace_to_file.h"
+#include "build/build_config.h"
 
 namespace testing {
 class TestInfo;
@@ -49,11 +51,6 @@ class TestSuite {
   int Run();
 
  protected:
-  // This constructor is only accessible to specialized test suite
-  // implementations which need to control the creation of an AtExitManager
-  // instance for the duration of the test.
-  TestSuite(int argc, char** argv, bool create_at_exit_manager);
-
   // By default fatal log messages (e.g. from DCHECKs) result in error dialogs
   // which gum up buildbots. Use a minimalistic assert handler which just
   // terminates the process.
@@ -70,7 +67,7 @@ class TestSuite {
 
   // Make sure that we setup an AtExitManager so Singleton objects will be
   // destroyed.
-  scoped_ptr<base::AtExitManager> at_exit_manager_;
+  std::unique_ptr<base::AtExitManager> at_exit_manager_;
 
  private:
   void InitializeFromCommandLine(int argc, char** argv);
@@ -79,11 +76,13 @@ class TestSuite {
 #endif  // defined(OS_WIN)
 
   // Basic initialization for the test suite happens here.
-  void PreInitialize(bool create_at_exit_manager);
+  void PreInitialize();
 
   test::TraceToFile trace_to_file_;
 
   bool initialized_command_line_;
+
+  bool created_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSuite);
 };

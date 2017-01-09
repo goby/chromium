@@ -12,15 +12,45 @@
 #include <mlang.h>
 #endif
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/feature_list.h"
 #include "base/sys_info.h"
 #include "content/child/site_isolation_stats_gatherer.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "v8/include/v8.h"
+
+namespace {
+
+const base::Feature kV8_ES2015_TailCalls_Feature {
+  "V8_ES2015_TailCalls", base::FEATURE_DISABLED_BY_DEFAULT
+};
+
+const base::Feature kV8_ES2016_ExplicitTailCalls_Feature{
+    "V8_ES2016_ExplicitTailCalls", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kV8SerializeEagerFeature{"V8_Serialize_Eager",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kV8SerializeAgeCodeFeature{
+    "V8_Serialize_Age_Code", base::FEATURE_DISABLED_BY_DEFAULT};
+
+void SetV8FlagIfFeature(const base::Feature& feature, const char* v8_flag) {
+  if (base::FeatureList::IsEnabled(feature)) {
+    v8::V8::SetFlagsFromString(v8_flag, strlen(v8_flag));
+  }
+}
+
+void SetV8FlagIfHasSwitch(const char* switch_name, const char* v8_flag) {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(switch_name)) {
+    v8::V8::SetFlagsFromString(v8_flag, strlen(v8_flag));
+  }
+}
+
+}  // namespace
 
 namespace content {
 
@@ -43,31 +73,32 @@ RenderProcessImpl::RenderProcessImpl()
   }
 #endif
 
-  std::string scavenge_reclaim_unmodified_flag(
-      "--scavenge_reclaim_unmodified_objects");
-  v8::V8::SetFlagsFromString(
-      scavenge_reclaim_unmodified_flag.c_str(),
-      static_cast<int>(scavenge_reclaim_unmodified_flag.size()));
-
   if (base::SysInfo::IsLowEndDevice()) {
     std::string optimize_flag("--optimize-for-size");
     v8::V8::SetFlagsFromString(optimize_flag.c_str(),
                                static_cast<int>(optimize_flag.size()));
   }
 
+  SetV8FlagIfFeature(kV8_ES2015_TailCalls_Feature, "--harmony-tailcalls");
+  SetV8FlagIfFeature(kV8_ES2016_ExplicitTailCalls_Feature,
+                     "--harmony-explicit-tailcalls");
+  SetV8FlagIfFeature(kV8SerializeEagerFeature, "--serialize_eager");
+  SetV8FlagIfFeature(kV8SerializeAgeCodeFeature, "--serialize_age_code");
+  SetV8FlagIfHasSwitch(switches::kDisableJavaScriptHarmonyShipping,
+                       "--noharmony-shipping");
+  SetV8FlagIfHasSwitch(switches::kJavaScriptHarmony, "--harmony");
+  SetV8FlagIfFeature(features::kAsmJsToWebAssembly, "--validate-asm");
+  SetV8FlagIfFeature(features::kWebAssembly, "--expose-wasm");
+  SetV8FlagIfFeature(features::kSharedArrayBuffer,
+                     "--harmony-sharedarraybuffer");
+
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
+
   if (command_line.HasSwitch(switches::kJavaScriptFlags)) {
     std::string flags(
         command_line.GetSwitchValueASCII(switches::kJavaScriptFlags));
     v8::V8::SetFlagsFromString(flags.c_str(), static_cast<int>(flags.size()));
-  }
-
-  if (command_line.HasSwitch(
-          switches::kEnableExperimentalWebPlatformFeatures)) {
-    std::string extras_flag("--experimental_extras");
-    v8::V8::SetFlagsFromString(extras_flag.c_str(),
-                               static_cast<int>(extras_flag.size()));
   }
 
   SiteIsolationStatsGatherer::SetEnabled(

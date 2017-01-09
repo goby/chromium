@@ -10,13 +10,15 @@
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/tcp_server_socket.h"
 #include "net/test/python_utils.h"
 
-
-const uint16 kMinPort = 17000;
-const uint16 kPortRangeSize = 1000;
+const uint16_t kMinPort = 17000;
+const uint16_t kPortRangeSize = 1000;
 
 // Widevine license server configuration files.
 const base::FilePath::CharType kKeysFileName[] =
@@ -76,7 +78,7 @@ bool WVTestLicenseServerConfig::GetServerCommandLine(
   // Needed to dynamically load .so libraries used by license server.
   // TODO(shadi): Remove need to set env variable once b/12932983 is fixed.
 #if defined(OS_LINUX)
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   const char kLibraryPathEnvVarName[] = "LD_LIBRARY_PATH";
   std::string library_paths(license_server_path.DirName().value());
   std::string old_path;
@@ -102,15 +104,14 @@ bool WVTestLicenseServerConfig::GetServerCommandLine(
 bool WVTestLicenseServerConfig::SelectServerPort() {
   // Try all ports within the range of kMinPort to (kMinPort + kPortRangeSize)
   // Instead of starting from kMinPort, use a random port within that range.
-  net::IPAddressNumber address;
-  net::ParseIPLiteralToNumber("127.0.0.1", &address);
-  uint16 start_seed = base::RandInt(0, kPortRangeSize);
-  uint16 try_port = 0;
-  for (uint16 i = 0; i < kPortRangeSize; ++i) {
+  uint16_t start_seed = base::RandInt(0, kPortRangeSize);
+  uint16_t try_port = 0;
+  for (uint16_t i = 0; i < kPortRangeSize; ++i) {
     try_port = kMinPort + (start_seed + i) % kPortRangeSize;
-    net::NetLog::Source source;
+    net::NetLogSource source;
     net::TCPServerSocket sock(NULL, source);
-    if (sock.Listen(net::IPEndPoint(address, try_port), 1) == net::OK) {
+    if (sock.Listen(net::IPEndPoint(net::IPAddress::IPv4Localhost(), try_port),
+                    1) == net::OK) {
       port_ = try_port;
       return true;
     }

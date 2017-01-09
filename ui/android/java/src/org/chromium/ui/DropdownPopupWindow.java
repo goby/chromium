@@ -18,7 +18,6 @@ import android.widget.ListPopupWindow;
 import android.widget.PopupWindow;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.ui.base.ViewAndroidDelegate;
 
 import java.lang.reflect.Method;
 
@@ -28,13 +27,9 @@ import java.lang.reflect.Method;
 public class DropdownPopupWindow extends ListPopupWindow {
 
     private final Context mContext;
-    private final ViewAndroidDelegate mViewAndroidDelegate;
     private final View mAnchorView;
-    private float mAnchorWidth;
-    private float mAnchorHeight;
-    private float mAnchorX;
-    private float mAnchorY;
     private boolean mRtl;
+    private int mInitialSelection = -1;
     private OnLayoutChangeListener mLayoutChangeListener;
     private PopupWindow.OnDismissListener mOnDismissListener;
     private CharSequence mDescription;
@@ -43,14 +38,13 @@ public class DropdownPopupWindow extends ListPopupWindow {
     /**
      * Creates an DropdownPopupWindow with specified parameters.
      * @param context Application context.
-     * @param viewAndroidDelegate View delegate used to add and remove views.
+     * @param anchorView Popup view to be anchored.
      */
-    public DropdownPopupWindow(Context context, ViewAndroidDelegate viewAndroidDelegate) {
+    public DropdownPopupWindow(Context context, View anchorView) {
         super(context, null, 0, R.style.DropdownPopupWindow);
         mContext = context;
-        mViewAndroidDelegate = viewAndroidDelegate;
+        mAnchorView = anchorView;
 
-        mAnchorView = mViewAndroidDelegate.acquireAnchorView();
         mAnchorView.setId(R.id.dropdown_popup_window);
         mAnchorView.setTag(this);
 
@@ -71,7 +65,6 @@ public class DropdownPopupWindow extends ListPopupWindow {
                 }
                 mAnchorView.removeOnLayoutChangeListener(mLayoutChangeListener);
                 mAnchorView.setTag(null);
-                mViewAndroidDelegate.releaseAnchorView(mAnchorView);
             }
         });
 
@@ -81,30 +74,15 @@ public class DropdownPopupWindow extends ListPopupWindow {
         setVerticalOffset(-originalPadding.top);
     }
 
-    /**
-     * Sets the location and the size of the anchor view that the DropdownPopupWindow will use to
-     * attach itself. Calling this method can cause a layout change, so the adapter should not be
-     * null.
-     * @param x X coordinate of the top left corner of the anchor view.
-     * @param y Y coordinate of the top left corner of the anchor view.
-     * @param width The width of the anchor view.
-     * @param height The height of the anchor view.
-     */
-    public void setAnchorRect(float x, float y, float width, float height) {
-        mAnchorWidth = width;
-        mAnchorHeight = height;
-        mAnchorX = x;
-        mAnchorY = y;
-        if (mAnchorView != null) {
-            mViewAndroidDelegate.setAnchorViewPosition(mAnchorView, mAnchorX, mAnchorY,
-                    mAnchorWidth, mAnchorHeight);
-        }
-    }
-
     @Override
     public void setAdapter(ListAdapter adapter) {
         mAdapter = adapter;
         super.setAdapter(adapter);
+    }
+
+
+    public void setInitialSelection(int initialSelection) {
+        mInitialSelection = initialSelection;
     }
 
     /**
@@ -116,11 +94,11 @@ public class DropdownPopupWindow extends ListPopupWindow {
         setInputMethodMode(INPUT_METHOD_NEEDED);
 
         int contentWidth = measureContentWidth();
-        float contentWidthInDip = contentWidth
-                / mContext.getResources().getDisplayMetrics().density;
+        float anchorWidth = mAnchorView.getLayoutParams().width;
+        assert anchorWidth > 0;
         Rect padding = new Rect();
         getBackground().getPadding(padding);
-        if (contentWidthInDip + padding.left + padding.right > mAnchorWidth) {
+        if (contentWidth + padding.left + padding.right > anchorWidth) {
             setContentWidth(contentWidth);
             final Rect displayFrame = new Rect();
             mAnchorView.getWindowVisibleDisplayFrame(displayFrame);
@@ -130,8 +108,6 @@ public class DropdownPopupWindow extends ListPopupWindow {
         } else {
             setWidth(ViewGroup.LayoutParams.WRAP_CONTENT);
         }
-        mViewAndroidDelegate.setAnchorViewPosition(mAnchorView, mAnchorX, mAnchorY, mAnchorWidth,
-                mAnchorHeight);
         boolean wasShowing = isShowing();
         super.show();
         getListView().setDividerHeight(0);
@@ -140,6 +116,10 @@ public class DropdownPopupWindow extends ListPopupWindow {
         if (!wasShowing) {
             getListView().setContentDescription(mDescription);
             getListView().sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+        }
+        if (mInitialSelection >= 0) {
+            getListView().setSelection(mInitialSelection);
+            mInitialSelection = -1;
         }
     }
 

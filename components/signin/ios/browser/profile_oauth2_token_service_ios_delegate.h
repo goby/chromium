@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "components/signin/core/browser/signin_error_controller.h"
@@ -14,12 +15,13 @@
 
 class AccountTrackerService;
 class ProfileOAuth2TokenServiceIOSProvider;
+class SigninClient;
 
 class ProfileOAuth2TokenServiceIOSDelegate : public OAuth2TokenServiceDelegate {
  public:
   ProfileOAuth2TokenServiceIOSDelegate(
       SigninClient* client,
-      ProfileOAuth2TokenServiceIOSProvider* provider,
+      std::unique_ptr<ProfileOAuth2TokenServiceIOSProvider> provider,
       AccountTrackerService* account_tracker_service,
       SigninErrorController* signin_error_controller);
   ~ProfileOAuth2TokenServiceIOSDelegate() override;
@@ -60,12 +62,12 @@ class ProfileOAuth2TokenServiceIOSDelegate : public OAuth2TokenServiceDelegate {
   // |primary_account_id| must not be an empty string.
   void ReloadCredentials(const std::string& primary_account_id);
 
- protected:
   // Adds |account_id| to |accounts_| if it does not exist or udpates
   // the auth error state of |account_id| if it exists. Fires
   // |OnRefreshTokenAvailable| if the account info is updated.
   virtual void AddOrUpdateAccount(const std::string& account_id);
 
+ protected:
   // Removes |account_id| from |accounts_|. Fires |OnRefreshTokenRevoked|
   // if the account info is removed.
   virtual void RemoveAccount(const std::string& account_id);
@@ -115,7 +117,7 @@ class ProfileOAuth2TokenServiceIOSDelegate : public OAuth2TokenServiceDelegate {
 
   // The client with which this instance was initialied, or NULL.
   SigninClient* client_;
-  ProfileOAuth2TokenServiceIOSProvider* provider_;
+  std::unique_ptr<ProfileOAuth2TokenServiceIOSProvider> provider_;
   AccountTrackerService* account_tracker_service_;
 
   // The error controller with which this instance was initialized, or NULL.

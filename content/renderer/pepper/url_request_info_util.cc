@@ -4,6 +4,9 @@
 
 #include "content/renderer/pepper/url_request_info_util.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "content/child/request_extra_data.h"
@@ -110,8 +113,8 @@ std::string FilterStringForXRequestedWithValue(const std::string& s) {
     char c = s[i];
     // Allow ASCII digits, letters, periods, commas, and underscores. (Ignore
     // all other characters.)
-    if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
-        (c >= 'a' && c <= 'z') || (c == '.') || (c == ',') || (c == '_'))
+    if (base::IsAsciiDigit(c) || base::IsAsciiAlpha(c) || (c == '.') ||
+        (c == ',') || (c == '_'))
       rv.push_back(c);
   }
   return rv;
@@ -166,7 +169,6 @@ bool CreateWebURLRequest(PP_Instance instance,
      name_version = "internal_testing_only";
    }
 
-  dest->initialize();
   dest->setURL(frame->document().completeURL(WebString::fromUTF8(data->url)));
   dest->setDownloadToFile(data->stream_to_file);
   dest->setReportUploadProgress(data->record_upload_progress);

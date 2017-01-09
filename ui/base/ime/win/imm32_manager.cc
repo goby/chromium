@@ -4,19 +4,17 @@
 
 #include "ui/base/ime/win/imm32_manager.h"
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/scoped_comptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ime/composition_text.h"
-
-// "imm32.lib" is required by IMM32 APIs used in this file.
-// NOTE(hbono): To comply with a comment from Darin, I have added
-// this #pragma directive instead of adding "imm32.lib" to a project file.
-#pragma comment(lib, "imm32.lib")
 
 // Following code requires wchar_t to be same as char16. It should always be
 // true on Windows.
@@ -44,7 +42,7 @@ void GetCompositionTargetRange(HIMC imm_context, int* target_start,
   if (attribute_size > 0) {
     int start = 0;
     int end = 0;
-    scoped_ptr<char[]> attribute_data(new char[attribute_size]);
+    std::unique_ptr<char[]> attribute_data(new char[attribute_size]);
     if (attribute_data.get()) {
       ::ImmGetCompositionString(imm_context, GCS_COMPATTR,
                                 attribute_data.get(), attribute_size);
@@ -70,9 +68,9 @@ void GetCompositionUnderlines(HIMC imm_context,
                               ui::CompositionUnderlines* underlines) {
   int clause_size = ::ImmGetCompositionString(imm_context, GCS_COMPCLAUSE,
                                               NULL, 0);
-  int clause_length = clause_size / sizeof(uint32);
+  int clause_length = clause_size / sizeof(uint32_t);
   if (clause_length) {
-    scoped_ptr<uint32[]> clause_data(new uint32[clause_length]);
+    std::unique_ptr<uint32_t[]> clause_data(new uint32_t[clause_length]);
     if (clause_data.get()) {
       ::ImmGetCompositionString(imm_context, GCS_COMPCLAUSE,
                                 clause_data.get(), clause_size);
@@ -85,8 +83,8 @@ void GetCompositionUnderlines(HIMC imm_context,
         underline.background_color = SK_ColorTRANSPARENT;
 
         // Use thick underline for the target clause.
-        if (underline.start_offset >= static_cast<uint32>(target_start) &&
-            underline.end_offset <= static_cast<uint32>(target_end)) {
+        if (underline.start_offset >= static_cast<uint32_t>(target_start) &&
+            underline.end_offset <= static_cast<uint32_t>(target_end)) {
           underline.thick = true;
         }
         underlines->push_back(underline);
@@ -126,13 +124,20 @@ IMM32Manager::~IMM32Manager() {
 }
 
 void IMM32Manager::SetInputLanguage() {
-  // Retrieve the current keyboard layout from Windows and determine whether
-  // or not the current input context has IMEs.
-  // Also save its input language for language-specific operations required
-  // while composing a text.
-  HKL keyboard_layout = ::GetKeyboardLayout(0);
-  input_language_id_ =
-      static_cast<LANGID>(reinterpret_cast<uintptr_t>(keyboard_layout));
+  // Retrieve the current input language from the system's keyboard layout.
+  // Using GetKeyboardLayoutName instead of GetKeyboardLayout, because
+  // the language from GetKeyboardLayout is the language under where the
+  // keyboard layout is installed. And the language from GetKeyboardLayoutName
+  // indicates the language of the keyboard layout itself.
+  // See crbug.com/344834.
+  WCHAR keyboard_layout[KL_NAMELENGTH];
+  if (::GetKeyboardLayoutNameW(keyboard_layout)) {
+    input_language_id_ =
+        static_cast<LANGID>(
+            wcstol(&keyboard_layout[KL_NAMELENGTH >> 1], nullptr, 16));
+  } else {
+    input_language_id_ = 0x0409;  // Fallback to en-US.
+  }
 }
 
 void IMM32Manager::CreateImeWindow(HWND window_handle) {
@@ -285,8 +290,9 @@ void IMM32Manager::CompleteComposition(HWND window_handle, HIMC imm_context) {
   }
 }
 
-void IMM32Manager::GetCompositionInfo(HIMC imm_context, LPARAM lparam,
-                                  CompositionText* composition) {
+void IMM32Manager::GetCompositionInfo(HIMC imm_context,
+                                      LPARAM lparam,
+                                      CompositionText* composition) {
   // We only care about GCS_COMPATTR, GCS_COMPCLAUSE and GCS_CURSORPOS, and
   // convert them into underlines and selection range respectively.
   composition->underlines.clear();
@@ -321,28 +327,29 @@ void IMM32Manager::GetCompositionInfo(HIMC imm_context, LPARAM lparam,
   }
 
   // Set default underlines in case there is no clause information.
-  if (!composition->underlines.size()) {
-    CompositionUnderline underline;
-    underline.color = SK_ColorBLACK;
-    underline.background_color = SK_ColorTRANSPARENT;
-    if (target_start > 0) {
-      underline.start_offset = 0U;
-      underline.end_offset = static_cast<uint32>(target_start);
-      underline.thick = false;
-      composition->underlines.push_back(underline);
-    }
-    if (target_end > target_start) {
-      underline.start_offset = static_cast<uint32>(target_start);
-      underline.end_offset = static_cast<uint32>(target_end);
-      underline.thick = true;
-      composition->underlines.push_back(underline);
-    }
-    if (target_end < length) {
-      underline.start_offset = static_cast<uint32>(target_end);
-      underline.end_offset = static_cast<uint32>(length);
-      underline.thick = false;
-      composition->underlines.push_back(underline);
-    }
+  if (!composition->underlines.empty())
+    return;
+
+  CompositionUnderline underline;
+  underline.color = SK_ColorBLACK;
+  underline.background_color = SK_ColorTRANSPARENT;
+  if (target_start > 0) {
+    underline.start_offset = 0U;
+    underline.end_offset = static_cast<uint32_t>(target_start);
+    underline.thick = false;
+    composition->underlines.push_back(underline);
+  }
+  if (target_end > target_start) {
+    underline.start_offset = static_cast<uint32_t>(target_start);
+    underline.end_offset = static_cast<uint32_t>(target_end);
+    underline.thick = true;
+    composition->underlines.push_back(underline);
+  }
+  if (target_end < length) {
+    underline.start_offset = static_cast<uint32_t>(target_end);
+    underline.end_offset = static_cast<uint32_t>(length);
+    underline.thick = false;
+    composition->underlines.push_back(underline);
   }
 }
 
@@ -457,31 +464,10 @@ void IMM32Manager::SetUseCompositionWindow(bool use_composition_window) {
   use_composition_window_ = use_composition_window;
 }
 
-std::string IMM32Manager::GetInputLanguageName() const {
-  const LCID locale_id = MAKELCID(input_language_id_, SORT_DEFAULT);
-  // max size for LOCALE_SISO639LANGNAME and LOCALE_SISO3166CTRYNAME is 9.
-  wchar_t buffer[9];
-
-  // Get language id.
-  int length = ::GetLocaleInfo(locale_id, LOCALE_SISO639LANGNAME, &buffer[0],
-                               arraysize(buffer));
-  if (length <= 1)
-    return std::string();
-
-  std::string language;
-  base::WideToUTF8(buffer, length - 1, &language);
-  if (SUBLANGID(input_language_id_) == SUBLANG_NEUTRAL)
-    return language;
-
-  // Get region id.
-  length = ::GetLocaleInfo(locale_id, LOCALE_SISO3166CTRYNAME, &buffer[0],
-                           arraysize(buffer));
-  if (length <= 1)
-    return language;
-
-  std::string region;
-  base::WideToUTF8(buffer, length - 1, &region);
-  return language.append(1, '-').append(region);
+bool IMM32Manager::IsInputLanguageCJK() const {
+  LANGID lang = PRIMARYLANGID(input_language_id_);
+  return lang == LANG_CHINESE || lang == LANG_JAPANESE ||
+      lang == LANG_KOREAN;
 }
 
 void IMM32Manager::SetTextInputMode(HWND window_handle,
@@ -532,7 +518,7 @@ bool IMM32Manager::IsRTLKeyboardLayoutInstalled() {
 
   // Retrieve the keyboard layouts in an array and check if there is an RTL
   // layout in it.
-  scoped_ptr<HKL[]> layouts(new HKL[size]);
+  std::unique_ptr<HKL[]> layouts(new HKL[size]);
   ::GetKeyboardLayoutList(size, layouts.get());
   for (int i = 0; i < size; ++i) {
     if (IsRTLPrimaryLangID(

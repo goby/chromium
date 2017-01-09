@@ -49,12 +49,16 @@
         value: true
       },
 
+      strings: Object,
+
       animationConfig: {
         value: function() {
           return {
             'entry': {
-              name: 'slide-down-animation',
+              name: 'transform-animation',
               node: this,
+              transformFrom: 'translateY(-100%)',
+              transformTo: 'translateY(0%)',
               timing: {
                 easing: 'cubic-bezier(0, 0, 0.2, 1)',
                 duration: 250

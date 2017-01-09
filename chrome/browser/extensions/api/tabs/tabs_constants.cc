@@ -31,6 +31,8 @@ const char kOldWindowIdKey[] = "oldWindowId";
 const char kOpenerTabIdKey[] = "openerTabId";
 const char kPinnedKey[] = "pinned";
 const char kAudibleKey[] = "audible";
+const char kDiscardedKey[] = "discarded";
+const char kAutoDiscardableKey[] = "autoDiscardable";
 const char kMutedKey[] = "muted";
 const char kMutedInfoKey[] = "mutedInfo";
 const char kQualityKey[] = "quality";
@@ -65,7 +67,6 @@ const char kStatusValueLoading[] = "loading";
 const char kWindowTypeValueNormal[] = "normal";
 const char kWindowTypeValuePopup[] = "popup";
 const char kWindowTypeValuePanel[] = "panel";
-const char kWindowTypeValueDetachedPanel[] = "detached_panel";
 const char kWindowTypeValueApp[] = "app";
 const char kWindowTypeValueDevTools[] = "devtools";
 
@@ -75,6 +76,7 @@ const char kCanOnlyMoveTabsWithinNormalWindowsError[] = "Tabs can only be "
     "moved to and from normal windows.";
 const char kCanOnlyMoveTabsWithinSameProfileError[] = "Tabs can only be moved "
     "between windows in the same profile.";
+const char kFrameNotFoundError[] = "No frame with id * in tab *.";
 const char kNoCrashBrowserError[] =
     "I'm sorry. I'm afraid I can't do that.";
 const char kNoCurrentWindowError[] = "No current window";
@@ -84,6 +86,8 @@ const char kPerOriginOnlyInAutomaticError[] = "Can only set scope to "
 const char kWindowNotFoundError[] = "No window with id: *.";
 const char kTabIndexNotFoundError[] = "No tab at index: *.";
 const char kTabNotFoundError[] = "No tab with id: *.";
+const char kCannotDiscardTab[] = "Cannot discard tab with id: *.";
+const char kCannotFindTabToDiscard[] = "Cannot find a tab to discard.";
 const char kTabStripNotEditableError[] =
     "Tabs cannot be edited right now (user may be dragging a tab).";
 const char kNoSelectedTabError[] = "No selected tab";

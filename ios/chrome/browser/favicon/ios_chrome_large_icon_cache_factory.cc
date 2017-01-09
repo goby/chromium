@@ -4,11 +4,12 @@
 
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_cache_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "ios/chrome/browser/browser_state/browser_state_otr_helper.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/favicon/large_icon_cache.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 // static
 LargeIconCache* IOSChromeLargeIconCacheFactory::GetForBrowserState(
@@ -29,10 +30,10 @@ IOSChromeLargeIconCacheFactory::IOSChromeLargeIconCacheFactory()
 
 IOSChromeLargeIconCacheFactory::~IOSChromeLargeIconCacheFactory() {}
 
-scoped_ptr<KeyedService>
+std::unique_ptr<KeyedService>
 IOSChromeLargeIconCacheFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-  return make_scoped_ptr(new LargeIconCache);
+  return base::WrapUnique(new LargeIconCache);
 }
 
 web::BrowserState* IOSChromeLargeIconCacheFactory::GetBrowserStateToUse(

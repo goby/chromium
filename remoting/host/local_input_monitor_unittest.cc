@@ -2,17 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "remoting/host/local_input_monitor.h"
+
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/host/client_session_control.h"
 #include "remoting/host/host_mock_objects.h"
-#include "remoting/host/local_input_monitor.h"
 #include "remoting/protocol/protocol_mock_objects.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_POSIX)
+#include "base/files/file_descriptor_watcher_posix.h"
+#endif
 
 namespace remoting {
 
@@ -39,6 +46,10 @@ class LocalInputMonitorTest : public testing::Test {
   void SetUp() override;
 
   base::MessageLoop message_loop_;
+#if defined(OS_POSIX)
+  // Required to watch a file descriptor from NativeMessageProcessHost.
+  base::FileDescriptorWatcher file_descriptor_watcher_;
+#endif
   base::RunLoop run_loop_;
   scoped_refptr<AutoThreadTaskRunner> task_runner_;
 
@@ -49,6 +60,9 @@ class LocalInputMonitorTest : public testing::Test {
 
 LocalInputMonitorTest::LocalInputMonitorTest()
     : message_loop_(kDesiredMessageLoopType),
+#if defined(OS_POSIX)
+      file_descriptor_watcher_(base::MessageLoopForIO::current()),
+#endif
       client_jid_("user@domain/rest-of-jid"),
       client_session_control_factory_(&client_session_control_) {
 }
@@ -75,10 +89,8 @@ TEST_F(LocalInputMonitorTest, Basic) {
       .Times(0);
 
   {
-    scoped_ptr<LocalInputMonitor> local_input_monitor =
-        LocalInputMonitor::Create(task_runner_,
-                                  task_runner_,
-                                  task_runner_,
+    std::unique_ptr<LocalInputMonitor> local_input_monitor =
+        LocalInputMonitor::Create(task_runner_, task_runner_, task_runner_,
                                   client_session_control_factory_.GetWeakPtr());
     task_runner_ = nullptr;
   }

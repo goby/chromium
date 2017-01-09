@@ -6,21 +6,51 @@
 
 .computed-properties {
     -webkit-user-select: text;
+    flex-shrink: 0;
 }
 
 .computed-style-property {
     display: flex;
-    flex-wrap: wrap;
+    overflow: hidden;
+    flex: auto;
 }
 
 .computed-style-property .property-name {
-    width: 16em;
+    min-width: 5em;
     text-overflow: ellipsis;
     overflow: hidden;
+    flex-shrink: 1;
+    flex-basis: 16em;
+    flex-grow: 1;
 }
 
 .computed-style-property .property-value {
-    min-width: 5em;
+    margin-left: 2em;
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    flex-basis: 5em;
+    flex-grow: 10;
+}
+
+.computed-style-property .property-value-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tree-outline li:hover .goto-source-icon {
+    display: block;
+}
+
+.goto-source-icon {
+    background-color: #5a5a5a;
+    display: none;
+    position: absolute;
+    left: -16px;
+}
+
+.goto-source-icon:hover {
+    background-color: #333;
 }
 
 .computed-style-property-inherited {
@@ -28,15 +58,11 @@
 }
 
 .trace-link {
+    user-select: none;
     float: right;
     padding-left: 1em;
     position: relative;
     z-index: 1;
-}
-
-.trace-link a::before {
-    content: attr(data-uncopyable);
-    text-decoration: underline;
 }
 
 .property-trace {
@@ -53,6 +79,7 @@
 .property-trace-value {
     position: relative;
     display: inline-block;
+    margin-left: 2em;
 }
 
 .property-trace-inactive .property-trace-value::before {
@@ -79,16 +106,14 @@
     cursor: pointer;
 }
 
-/* FIXME: Patch TreeElement styles to use flex for title layout. */
-
-.tree-outline li {
-    display: flex;
-    align-items: baseline;
+.tree-outline li::before {
+    margin-left: 4px;
 }
 
-.tree-outline li::before {
-    float: none;
-    flex: none;
-    background-color: rgb(110, 110, 110);
-    margin-left: 4px;
+.delimeter {
+    color: transparent;
+}
+
+.delimeter::selection {
+    color: transparent;
 }

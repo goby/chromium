@@ -5,7 +5,9 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_UI_GESTURE_PROVIDER_H_
 #define UI_EVENTS_GESTURE_DETECTION_UI_GESTURE_PROVIDER_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "ui/events/event.h"
 #include "ui/events/events_export.h"
@@ -16,23 +18,32 @@
 
 namespace ui {
 
+class GestureProviderAura;
+
 class EVENTS_EXPORT GestureProviderAuraClient {
  public:
   virtual ~GestureProviderAuraClient() {}
-  virtual void OnGestureEvent(GestureEvent* event) = 0;
+  virtual void OnGestureEvent(GestureConsumer* consumer,
+                              GestureEvent* event) = 0;
 };
 
 // Provides gesture detection and dispatch given a sequence of touch events
 // and touch event acks.
 class EVENTS_EXPORT GestureProviderAura : public GestureProviderClient {
  public:
-  GestureProviderAura(GestureProviderAuraClient* client);
+  GestureProviderAura(GestureConsumer* consumer,
+                      GestureProviderAuraClient* client);
   ~GestureProviderAura() override;
 
+  void set_gesture_consumer(GestureConsumer* consumer) {
+    gesture_consumer_ = consumer;
+  }
+
   bool OnTouchEvent(TouchEvent* event);
-  void OnTouchEventAck(uint32 unique_event_id, bool event_consumed);
+  void OnTouchEventAck(uint32_t unique_touch_event_id, bool event_consumed);
   const MotionEventAura& pointer_state() { return pointer_state_; }
   ScopedVector<GestureEvent>* GetAndResetPendingGestures();
+  void OnTouchEnter(int pointer_id, float x, float y);
 
   // GestureProviderClient implementation
   void OnGestureEvent(const GestureEventData& gesture) override;
@@ -44,6 +55,9 @@ class EVENTS_EXPORT GestureProviderAura : public GestureProviderClient {
 
   bool handling_event_;
   ScopedVector<GestureEvent> pending_gestures_;
+
+  // |gesture_consumer_| must outlive this object.
+  GestureConsumer* gesture_consumer_;
 
   DISALLOW_COPY_AND_ASSIGN(GestureProviderAura);
 };

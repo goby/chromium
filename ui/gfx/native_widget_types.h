@@ -5,15 +5,14 @@
 #ifndef UI_GFX_NATIVE_WIDGET_TYPES_H_
 #define UI_GFX_NATIVE_WIDGET_TYPES_H_
 
+#include <stdint.h>
+
+#include "base/logging.h"
 #include "build/build_config.h"
 
 #if defined(OS_ANDROID)
 #include <jni.h>
 #endif
-
-#include "base/basictypes.h"
-#include "base/logging.h"
-#include "ui/gfx/gfx_export.h"
 
 // This file provides cross platform typedefs for native widget types.
 //   NativeWindow: this is a handle to a native, top-level window
@@ -40,7 +39,6 @@
 // 'views'.
 
 #if defined(USE_AURA)
-class SkRegion;
 namespace aura {
 class Window;
 }
@@ -138,11 +136,9 @@ typedef jobject NativeEvent;
 
 #if defined(OS_WIN)
 typedef HFONT NativeFont;
-typedef HDC NativeDrawingContext;
 typedef IAccessible* NativeViewAccessible;
 #elif defined(OS_IOS)
 typedef UIFont* NativeFont;
-typedef CGContext* NativeDrawingContext;
 #ifdef __OBJC__
 typedef id NativeViewAccessible;
 #else
@@ -150,7 +146,6 @@ typedef void* NativeViewAccessible;
 #endif  // __OBJC__
 #elif defined(OS_MACOSX)
 typedef NSFont* NativeFont;
-typedef CGContext* NativeDrawingContext;
 #ifdef __OBJC__
 typedef id NativeViewAccessible;
 #else
@@ -158,11 +153,6 @@ typedef void* NativeViewAccessible;
 #endif  // __OBJC__
 #else  // Android, Linux, Chrome OS, etc.
 // Linux doesn't have a native font type.
-#if defined(USE_CAIRO)
-typedef cairo_t* NativeDrawingContext;
-#else
-typedef void* NativeDrawingContext;
-#endif  // defined(USE_CAIRO)
 #if defined(USE_X11) && !defined(OS_CHROMEOS)
 typedef AtkObject* NativeViewAccessible;
 #else
@@ -193,68 +183,25 @@ typedef NativeImageType* NativeImage;
 // See comment at the top of the file for usage.
 typedef intptr_t NativeViewId;
 
-// PluginWindowHandle is an abstraction wrapping "the types of windows
-// used by NPAPI plugins". On Windows it's an HWND, on X it's an X
-// window id.
-#if defined(OS_WIN)
-  typedef HWND PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = NULL;
-#elif defined(USE_X11)
-  typedef unsigned long PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#elif defined(OS_ANDROID)
-  typedef uint32 PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#elif defined(USE_OZONE)
-  typedef intptr_t PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#else
-  typedef uint32 PluginWindowHandle;
-  const PluginWindowHandle kNullPluginWindow = 0;
-#endif
-
-enum SurfaceType {
-  EMPTY,
-  NATIVE_DIRECT,
-  NULL_TRANSPORT,
-  SURFACE_TYPE_LAST = NULL_TRANSPORT
-};
-
-struct GLSurfaceHandle {
-  GLSurfaceHandle() : handle(kNullPluginWindow), transport_type(EMPTY) {}
-  GLSurfaceHandle(PluginWindowHandle handle_, SurfaceType transport_)
-      : handle(handle_), transport_type(transport_) {
-    DCHECK(!is_null() || handle == kNullPluginWindow);
-    DCHECK(transport_type != NULL_TRANSPORT ||
-           handle == kNullPluginWindow);
-  }
-  bool is_null() const { return transport_type == EMPTY; }
-  bool is_transport() const {
-    return transport_type == NULL_TRANSPORT;
-  }
-  PluginWindowHandle handle;
-  SurfaceType transport_type;
-};
-
 // AcceleratedWidget provides a surface to compositors to paint pixels.
 #if defined(OS_WIN)
 typedef HWND AcceleratedWidget;
-const AcceleratedWidget kNullAcceleratedWidget = NULL;
+constexpr AcceleratedWidget kNullAcceleratedWidget = NULL;
 #elif defined(USE_X11)
 typedef unsigned long AcceleratedWidget;
-const AcceleratedWidget kNullAcceleratedWidget = 0;
+constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(OS_IOS)
 typedef UIView* AcceleratedWidget;
-const AcceleratedWidget kNullAcceleratedWidget = 0;
+constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(OS_MACOSX)
 typedef NSView* AcceleratedWidget;
-const AcceleratedWidget kNullAcceleratedWidget = 0;
+constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(OS_ANDROID)
 typedef ANativeWindow* AcceleratedWidget;
-const AcceleratedWidget kNullAcceleratedWidget = 0;
+constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #elif defined(USE_OZONE)
-typedef intptr_t AcceleratedWidget;
-const AcceleratedWidget kNullAcceleratedWidget = 0;
+typedef int32_t AcceleratedWidget;
+constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
 #else
 #error unknown platform
 #endif

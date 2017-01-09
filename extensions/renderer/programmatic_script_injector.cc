@@ -4,6 +4,7 @@
 
 #include "extensions/renderer/programmatic_script_injector.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/values.h"
@@ -12,8 +13,10 @@
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/renderer/injection_host.h"
+#include "extensions/renderer/renderer_extension_registry.h"
 #include "extensions/renderer/script_context.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -23,14 +26,9 @@
 namespace extensions {
 
 ProgrammaticScriptInjector::ProgrammaticScriptInjector(
-    const ExtensionMsg_ExecuteCode_Params& params,
-    content::RenderFrame* render_frame)
+    const ExtensionMsg_ExecuteCode_Params& params)
     : params_(new ExtensionMsg_ExecuteCode_Params(params)),
-      url_(
-          ScriptContext::GetDataSourceURLForFrame(render_frame->GetWebFrame())),
       finished_(false) {
-  effective_url_ = ScriptContext::GetEffectiveDocumentURL(
-      render_frame->GetWebFrame(), url_, params.match_about_blank);
 }
 
 ProgrammaticScriptInjector::~ProgrammaticScriptInjector() {
@@ -54,19 +52,29 @@ bool ProgrammaticScriptInjector::ExpectsResults() const {
 }
 
 bool ProgrammaticScriptInjector::ShouldInjectJs(
-    UserScript::RunLocation run_location) const {
+    UserScript::RunLocation run_location,
+    const std::set<std::string>& executing_scripts) const {
   return GetRunLocation() == run_location && params_->is_javascript;
 }
 
 bool ProgrammaticScriptInjector::ShouldInjectCss(
-    UserScript::RunLocation run_location) const {
+    UserScript::RunLocation run_location,
+    const std::set<std::string>& injected_stylesheets) const {
   return GetRunLocation() == run_location && !params_->is_javascript;
 }
 
 PermissionsData::AccessType ProgrammaticScriptInjector::CanExecuteOnFrame(
     const InjectionHost* injection_host,
     blink::WebLocalFrame* frame,
-    int tab_id) const {
+    int tab_id) {
+  // Note: we calculate url_ now and not in the constructor because with
+  // PlzNavigate we won't have the URL at that point when loads start. The
+  // browser issues the request and only when it has a response does the
+  // renderer see the provisional data source which the method below uses.
+  url_ = ScriptContext::GetDataSourceURLForFrame(frame);
+  if (url_.SchemeIs(url::kAboutScheme)) {
+    origin_for_about_error_ = frame->getSecurityOrigin().toString().utf8();
+  }
   GURL effective_document_url = ScriptContext::GetEffectiveDocumentURL(
       frame, frame->document().url(), params_->match_about_blank);
   if (params_->is_web_view) {
@@ -89,7 +97,9 @@ PermissionsData::AccessType ProgrammaticScriptInjector::CanExecuteOnFrame(
 }
 
 std::vector<blink::WebScriptSource> ProgrammaticScriptInjector::GetJsSources(
-    UserScript::RunLocation run_location) const {
+    UserScript::RunLocation run_location,
+    std::set<std::string>* executing_scripts,
+    size_t* num_injected_js_scripts) const {
   DCHECK_EQ(GetRunLocation(), run_location);
   DCHECK(params_->is_javascript);
 
@@ -99,26 +109,24 @@ std::vector<blink::WebScriptSource> ProgrammaticScriptInjector::GetJsSources(
           blink::WebString::fromUTF8(params_->code), params_->file_url));
 }
 
-std::vector<std::string> ProgrammaticScriptInjector::GetCssSources(
-    UserScript::RunLocation run_location) const {
+std::vector<blink::WebString> ProgrammaticScriptInjector::GetCssSources(
+    UserScript::RunLocation run_location,
+    std::set<std::string>* injected_stylesheets,
+    size_t* num_injected_stylesheets) const {
   DCHECK_EQ(GetRunLocation(), run_location);
   DCHECK(!params_->is_javascript);
 
-  return std::vector<std::string>(1, params_->code);
-}
-
-void ProgrammaticScriptInjector::GetRunInfo(
-    ScriptsRunInfo* scripts_run_info,
-    UserScript::RunLocation run_location) const {
+  return std::vector<blink::WebString>(
+      1, blink::WebString::fromUTF8(params_->code));
 }
 
 void ProgrammaticScriptInjector::OnInjectionComplete(
-    scoped_ptr<base::Value> execution_result,
+    std::unique_ptr<base::Value> execution_result,
     UserScript::RunLocation run_location,
     content::RenderFrame* render_frame) {
   DCHECK(results_.empty());
   if (execution_result)
-    results_.Append(execution_result.Pass());
+    results_.Append(std::move(execution_result));
   Finish(std::string(), render_frame);
 }
 
@@ -128,16 +136,15 @@ void ProgrammaticScriptInjector::OnWillNotInject(
   std::string error;
   switch (reason) {
     case NOT_ALLOWED:
-      if (url_.SchemeIs(url::kAboutScheme)) {
+      if (!CanShowUrlInError()) {
+        error = manifest_errors::kCannotAccessPage;
+      } else if (!origin_for_about_error_.empty()) {
         error = ErrorUtils::FormatErrorMessage(
             manifest_errors::kCannotAccessAboutUrl, url_.spec(),
-            effective_url_.GetOrigin().spec());
+            origin_for_about_error_);
       } else {
-        // TODO(?) It would be nice to show kCannotAccessPageWithUrl here if
-        // this is triggered by an extension with tabs permission. See
-        // https://codereview.chromium.org/1414223005/diff/1/extensions/
-        // common/manifest_constants.cc#newcode269
-        error = manifest_errors::kCannotAccessPage;
+        error = ErrorUtils::FormatErrorMessage(
+            manifest_errors::kCannotAccessPageWithUrl, url_.spec());
       }
       break;
     case EXTENSION_REMOVED:  // no special error here.
@@ -145,6 +152,17 @@ void ProgrammaticScriptInjector::OnWillNotInject(
       break;
   }
   Finish(error, render_frame);
+}
+
+bool ProgrammaticScriptInjector::CanShowUrlInError() const {
+  if (params_->host_id.type() != HostID::EXTENSIONS)
+    return false;
+  const Extension* extension =
+      RendererExtensionRegistry::Get()->GetByID(params_->host_id.id());
+  if (!extension)
+    return false;
+  return extension->permissions_data()->active_permissions().HasAPIPermission(
+      APIPermission::kTab);
 }
 
 UserScript::RunLocation ProgrammaticScriptInjector::GetRunLocation() const {

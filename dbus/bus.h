@@ -6,6 +6,7 @@
 #define DBUS_BUS_H_
 
 #include <dbus/dbus.h>
+#include <stdint.h>
 
 #include <map>
 #include <set>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
@@ -24,10 +26,6 @@ namespace base {
 class SequencedTaskRunner;
 class SingleThreadTaskRunner;
 class TaskRunner;
-}
-
-namespace tracked_objects {
-class Location;
 }
 
 namespace dbus {
@@ -86,7 +84,7 @@ class ObjectProxy;
 //       bus.GetObjectProxy(service_name, object_path);
 //
 //   dbus::MethodCall method_call(interface_name, method_name);
-//   scoped_ptr<dbus::Response> response(
+//   std::unique_ptr<dbus::Response> response(
 //       object_proxy.CallMethodAndBlock(&method_call, timeout_ms));
 //   if (response.get() != NULL) {  // Success.
 //     ...
@@ -358,12 +356,6 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
                                    const ObjectPath& object_path,
                                    const base::Closure& callback);
 
-  // Instructs all registered object managers to retrieve their set of managed
-  // objects from their respective remote objects. There is no need to call this
-  // manually, this is called automatically by the D-Bus thread manager once
-  // implementation classes are registered.
-  virtual void GetManagedObjects();
-
   // Shuts down the bus and blocks until it's done. More specifically, this
   // function does the following:
   //
@@ -462,7 +454,7 @@ class CHROME_DBUS_EXPORT Bus : public base::RefCountedThreadSafe<Bus> {
   // be stored in |serial|.
   //
   // BLOCKING CALL.
-  virtual void Send(DBusMessage* request, uint32* serial);
+  virtual void Send(DBusMessage* request, uint32_t* serial);
 
   // Adds the message filter function. |filter_function| will be called
   // when incoming messages are received.

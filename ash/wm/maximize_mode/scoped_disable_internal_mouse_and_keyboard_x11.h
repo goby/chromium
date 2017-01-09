@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "ash/ash_export.h"
-#include "ash/wm/maximize_mode/scoped_disable_internal_mouse_and_keyboard.h"
+#include "ash/common/wm/maximize_mode/scoped_disable_internal_mouse_and_keyboard.h"
 #include "base/macros.h"
 #include "ui/events/platform/platform_event_observer.h"
 #include "ui/gfx/geometry/point.h"
@@ -42,4 +42,4 @@ class ScopedDisableInternalMouseAndKeyboardX11
 
 }  // namespace ash
 
-#endif // ASH_WM_MAXIMIZE_MODE_SCOPED_DISABLE_INTERNAL_MOUSE_AND_KEYBOARD_X11_H_
+#endif  // ASH_WM_MAXIMIZE_MODE_SCOPED_DISABLE_INTERNAL_MOUSE_AND_KEYBOARD_X11_H_

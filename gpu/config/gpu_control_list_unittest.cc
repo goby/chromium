@@ -2,17 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "gpu/config/gpu_control_list.h"
 #include "gpu/config/gpu_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 const char kOsVersion[] = "10.6.4";
-const uint32 kIntelVendorId = 0x8086;
-const uint32 kNvidiaVendorId = 0x10de;
-const uint32 kAmdVendorId = 0x10de;
+const uint32_t kIntelVendorId = 0x8086;
+const uint32_t kNvidiaVendorId = 0x10de;
+const uint32_t kAmdVendorId = 0x10de;
 
 #define LONG_STRING_CONST(...) #__VA_ARGS__
 
@@ -66,7 +68,7 @@ class GpuControlListTest : public testing::Test {
 };
 
 TEST_F(GpuControlListTest, DefaultControlListSettings) {
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
   // Default control list settings: all feature are allowed.
   std::set<int> features = control_list->MakeDecision(
       GpuControlList::kOsMacosx, kOsVersion, gpu_info());
@@ -83,7 +85,7 @@ TEST_F(GpuControlListTest, EmptyControlList) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
 
   EXPECT_TRUE(control_list->LoadList(empty_list_json,
                                      GpuControlList::kAllOs));
@@ -122,7 +124,7 @@ TEST_F(GpuControlListTest, DetailedEntryAndInvalidJson) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
 
   EXPECT_TRUE(control_list->LoadList(exact_list_json, GpuControlList::kAllOs));
   std::set<int> features = control_list->MakeDecision(
@@ -136,7 +138,7 @@ TEST_F(GpuControlListTest, DetailedEntryAndInvalidJson) {
   features = control_list->MakeDecision(
       GpuControlList::kOsMacosx, kOsVersion, gpu_info());
   EXPECT_SINGLE_FEATURE(features, TEST_FEATURE_0);
-  std::vector<uint32> entries;
+  std::vector<uint32_t> entries;
   control_list->GetDecisionEntries(&entries, false);
   ASSERT_EQ(1u, entries.size());
   EXPECT_EQ(5u, entries[0]);
@@ -160,7 +162,7 @@ TEST_F(GpuControlListTest, VendorOnAllOsEntry) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
 
   // ControlList entries won't be filtered to the current OS only upon loading.
   EXPECT_TRUE(control_list->LoadList(vendor_json, GpuControlList::kAllOs));
@@ -212,7 +214,7 @@ TEST_F(GpuControlListTest, UnknownField) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
 
   EXPECT_FALSE(control_list->LoadList(
       unknown_field_json, GpuControlList::kAllOs));
@@ -251,7 +253,7 @@ TEST_F(GpuControlListTest, UnknownExceptionField) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
 
   EXPECT_FALSE(control_list->LoadList(
       unknown_exception_field_json, GpuControlList::kAllOs));
@@ -273,12 +275,12 @@ TEST_F(GpuControlListTest, DisabledEntry) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
   EXPECT_TRUE(control_list->LoadList(disabled_json, GpuControlList::kAllOs));
   std::set<int> features = control_list->MakeDecision(
       GpuControlList::kOsWin, kOsVersion, gpu_info());
   EXPECT_EMPTY_SET(features);
-  std::vector<uint32> flag_entries;
+  std::vector<uint32_t> flag_entries;
   control_list->GetDecisionEntries(&flag_entries, false);
   EXPECT_EQ(0u, flag_entries.size());
   control_list->GetDecisionEntries(&flag_entries, true);
@@ -311,14 +313,14 @@ TEST_F(GpuControlListTest, NeedsMoreInfo) {
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = kNvidiaVendorId;
 
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
   EXPECT_TRUE(control_list->LoadList(json, GpuControlList::kAllOs));
 
   std::set<int> features = control_list->MakeDecision(
       GpuControlList::kOsWin, kOsVersion, gpu_info);
   EXPECT_EMPTY_SET(features);
   EXPECT_TRUE(control_list->needs_more_info());
-  std::vector<uint32> decision_entries;
+  std::vector<uint32_t> decision_entries;
   control_list->GetDecisionEntries(&decision_entries, false);
   EXPECT_EQ(0u, decision_entries.size());
 
@@ -358,7 +360,7 @@ TEST_F(GpuControlListTest, NeedsMoreInfoForExceptions) {
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = kIntelVendorId;
 
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
   EXPECT_TRUE(control_list->LoadList(json, GpuControlList::kAllOs));
 
   // The case this entry does not apply.
@@ -428,7 +430,7 @@ TEST_F(GpuControlListTest, IgnorableEntries) {
   GPUInfo gpu_info;
   gpu_info.gpu.vendor_id = kIntelVendorId;
 
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
   EXPECT_TRUE(control_list->LoadList(json, GpuControlList::kAllOs));
   std::set<int> features = control_list->MakeDecision(
       GpuControlList::kOsLinux, kOsVersion, gpu_info);
@@ -476,7 +478,7 @@ TEST_F(GpuControlListTest, ExceptionWithoutVendorId) {
   gpu_info.gpu.device_id = 0x2a02;
   gpu_info.driver_version = "9.1";
 
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
   EXPECT_TRUE(control_list->LoadList(json, GpuControlList::kAllOs));
 
   std::set<int> features = control_list->MakeDecision(
@@ -519,7 +521,7 @@ TEST_F(GpuControlListTest, AMDSwitchable) {
         }
     );
 
-    scoped_ptr<GpuControlList> control_list(Create());
+    std::unique_ptr<GpuControlList> control_list(Create());
     EXPECT_TRUE(control_list->LoadList(json, GpuControlList::kAllOs));
 
     // Integrated GPU is active
@@ -557,7 +559,7 @@ TEST_F(GpuControlListTest, AMDSwitchable) {
         }
     );
 
-    scoped_ptr<GpuControlList> control_list(Create());
+    std::unique_ptr<GpuControlList> control_list(Create());
     EXPECT_TRUE(control_list->LoadList(json, GpuControlList::kAllOs));
 
     // Discrete GPU is active
@@ -612,7 +614,7 @@ TEST_F(GpuControlListTest, DisabledExtensionTest) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
 
   EXPECT_TRUE(control_list->LoadList(exact_list_json, GpuControlList::kAllOs));
   GPUInfo gpu_info;
@@ -646,7 +648,7 @@ TEST_F(GpuControlListTest, DisabledInProcessGPUTest) {
         ]
       }
   );
-  scoped_ptr<GpuControlList> control_list(Create());
+  std::unique_ptr<GpuControlList> control_list(Create());
 
   EXPECT_TRUE(control_list->LoadList(exact_list_json, GpuControlList::kAllOs));
   GPUInfo gpu_info;
@@ -660,6 +662,38 @@ TEST_F(GpuControlListTest, DisabledInProcessGPUTest) {
   features = control_list->MakeDecision(
         GpuControlList::kOsWin, kOsVersion, gpu_info);
   EXPECT_EMPTY_SET(features);
+}
+
+TEST_F(GpuControlListTest, SameGPUTwiceTest) {
+  const std::string json = LONG_STRING_CONST(
+      {
+        "name": "gpu control list",
+        "version": "0.1",
+        "entries": [
+          {
+            "id": 1,
+            "os": {
+              "type": "win"
+            },
+            "vendor_id": "0x8086",
+            "features": [
+              "test_feature_0"
+            ]
+          }
+        ]
+      }
+  );
+  GPUInfo gpu_info;
+  gpu_info.gpu.vendor_id = kIntelVendorId;
+  // Real case on Intel GMA* on Windows
+  gpu_info.secondary_gpus.push_back(gpu_info.gpu);
+
+  std::unique_ptr<GpuControlList> control_list(Create());
+  EXPECT_TRUE(control_list->LoadList(json, GpuControlList::kAllOs));
+  std::set<int> features = control_list->MakeDecision(
+      GpuControlList::kOsWin, kOsVersion, gpu_info);
+  EXPECT_SINGLE_FEATURE(features, TEST_FEATURE_0);
+  EXPECT_FALSE(control_list->needs_more_info());
 }
 
 }  // namespace gpu

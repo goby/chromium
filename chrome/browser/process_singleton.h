@@ -14,11 +14,11 @@
 #include <set>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process.h"
 #include "base/threading/non_thread_safe.h"
@@ -49,12 +49,16 @@ class CommandLine;
 
 class ProcessSingleton : public base::NonThreadSafe {
  public:
+  // Logged as histograms, do not modify these values.
   enum NotifyResult {
-    PROCESS_NONE,
-    PROCESS_NOTIFIED,
-    PROFILE_IN_USE,
-    LOCK_ERROR,
+    PROCESS_NONE = 0,
+    PROCESS_NOTIFIED = 1,
+    PROFILE_IN_USE = 2,
+    LOCK_ERROR = 3,
+    LAST_VALUE = LOCK_ERROR
   };
+
+  static constexpr int kNumNotifyResults = LAST_VALUE + 1;
 
   // Implement this callback to handle notifications from other processes. The
   // callback will receive the command line and directory with which the other

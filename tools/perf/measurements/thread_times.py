@@ -2,15 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from telemetry.page import page_test
-from telemetry.timeline import tracing_category_filter
+from telemetry.page import legacy_page_test
+from telemetry.timeline import chrome_trace_category_filter
 from telemetry.web_perf.metrics import layout
 
 from measurements import timeline_controller
 from metrics import timeline
 
 
-class ThreadTimes(page_test.PageTest):
+class ThreadTimes(legacy_page_test.LegacyPageTest):
+
   def __init__(self, report_silk_details=False):
     super(ThreadTimes, self).__init__()
     self._timeline_controller = None
@@ -24,13 +25,15 @@ class ThreadTimes(page_test.PageTest):
       self._timeline_controller.trace_categories = None
     else:
       self._timeline_controller.trace_categories = \
-          tracing_category_filter.CreateNoOverheadFilter().filter_string
+          chrome_trace_category_filter.CreateLowOverheadFilter().filter_string
     self._timeline_controller.SetUp(page, tab)
 
   def DidNavigateToPage(self, page, tab):
+    del page  # unused
     self._timeline_controller.Start(tab)
 
   def ValidateAndMeasurePage(self, page, tab, results):
+    del page  # unused
     self._timeline_controller.Stop(tab, results)
     metric = timeline.ThreadTimesTimelineMetric()
     renderer_thread = \

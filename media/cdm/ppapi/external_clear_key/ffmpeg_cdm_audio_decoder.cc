@@ -4,6 +4,8 @@
 
 #include "media/cdm/ppapi/external_clear_key/ffmpeg_cdm_audio_decoder.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/logging.h"
@@ -137,9 +139,8 @@ FFmpegCdmAudioDecoder::FFmpegCdmAudioDecoder(ClearKeyCdmHost* host)
       channels_(0),
       av_sample_format_(0),
       bytes_per_frame_(0),
-      last_input_timestamp_(kNoTimestamp()),
-      output_bytes_to_drop_(0) {
-}
+      last_input_timestamp_(kNoTimestamp),
+      output_bytes_to_drop_(0) {}
 
 FFmpegCdmAudioDecoder::~FFmpegCdmAudioDecoder() {
   ReleaseFFmpegResources();
@@ -231,7 +232,7 @@ cdm::Status FFmpegCdmAudioDecoder::DecodeBuffer(
 
   bool is_vorbis = codec_context_->codec_id == AV_CODEC_ID_VORBIS;
   if (!is_end_of_stream) {
-    if (last_input_timestamp_ == kNoTimestamp()) {
+    if (last_input_timestamp_ == kNoTimestamp) {
       if (is_vorbis && timestamp < base::TimeDelta()) {
         // Dropping frames for negative timestamps as outlined in section A.2
         // in the Vorbis spec. http://xiph.org/vorbis/doc/Vorbis_I_spec.html
@@ -241,7 +242,7 @@ cdm::Status FFmpegCdmAudioDecoder::DecodeBuffer(
       } else {
         last_input_timestamp_ = timestamp;
       }
-    } else if (timestamp != kNoTimestamp()) {
+    } else if (timestamp != kNoTimestamp) {
       if (timestamp < last_input_timestamp_) {
         base::TimeDelta diff = timestamp - last_input_timestamp_;
         DVLOG(1) << "Input timestamps are not monotonically increasing! "
@@ -297,9 +298,9 @@ cdm::Status FFmpegCdmAudioDecoder::DecodeBuffer(
     packet.size -= result;
     packet.data += result;
 
-    if (output_timestamp_helper_->base_timestamp() == kNoTimestamp() &&
+    if (output_timestamp_helper_->base_timestamp() == kNoTimestamp &&
         !is_end_of_stream) {
-      DCHECK(timestamp != kNoTimestamp());
+      DCHECK(timestamp != kNoTimestamp);
       if (output_bytes_to_drop_ > 0) {
         // Currently Vorbis is the only codec that causes us to drop samples.
         // If we have to drop samples it always means the timeline starts at 0.
@@ -351,7 +352,7 @@ cdm::Status FFmpegCdmAudioDecoder::DecodeBuffer(
       // If we've exhausted the packet in the first decode we can write directly
       // into the frame buffer instead of a multistep serialization approach.
       if (serialized_audio_frames_.empty() && !packet.size) {
-        const uint32_t buffer_size = decoded_audio_size + sizeof(int64) * 2;
+        const uint32_t buffer_size = decoded_audio_size + sizeof(int64_t) * 2;
         decoded_frames->SetFrameBuffer(host_->Allocate(buffer_size));
         if (!decoded_frames->FrameBuffer()) {
           LOG(ERROR) << "DecodeBuffer() ClearKeyCdmHost::Allocate failed.";
@@ -360,11 +361,11 @@ cdm::Status FFmpegCdmAudioDecoder::DecodeBuffer(
         decoded_frames->FrameBuffer()->SetSize(buffer_size);
         uint8_t* output_buffer = decoded_frames->FrameBuffer()->Data();
 
-        const int64 timestamp = output_timestamp.InMicroseconds();
+        const int64_t timestamp = output_timestamp.InMicroseconds();
         memcpy(output_buffer, &timestamp, sizeof(timestamp));
         output_buffer += sizeof(timestamp);
 
-        const int64 output_size = decoded_audio_size;
+        const int64_t output_size = decoded_audio_size;
         memcpy(output_buffer, &output_size, sizeof(output_size));
         output_buffer += sizeof(output_size);
 
@@ -408,8 +409,8 @@ cdm::Status FFmpegCdmAudioDecoder::DecodeBuffer(
 }
 
 void FFmpegCdmAudioDecoder::ResetTimestampState() {
-  output_timestamp_helper_->SetBaseTimestamp(kNoTimestamp());
-  last_input_timestamp_ = kNoTimestamp();
+  output_timestamp_helper_->SetBaseTimestamp(kNoTimestamp);
+  last_input_timestamp_ = kNoTimestamp;
   output_bytes_to_drop_ = 0;
 }
 
@@ -420,7 +421,7 @@ void FFmpegCdmAudioDecoder::ReleaseFFmpegResources() {
   av_frame_.reset();
 }
 
-void FFmpegCdmAudioDecoder::SerializeInt64(int64 value) {
+void FFmpegCdmAudioDecoder::SerializeInt64(int64_t value) {
   const size_t previous_size = serialized_audio_frames_.size();
   serialized_audio_frames_.resize(previous_size + sizeof(value));
   memcpy(&serialized_audio_frames_[0] + previous_size, &value, sizeof(value));

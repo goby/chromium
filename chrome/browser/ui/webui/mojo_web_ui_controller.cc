@@ -12,13 +12,13 @@
 #include "mojo/public/cpp/system/core.h"
 
 MojoWebUIControllerBase::MojoWebUIControllerBase(content::WebUI* contents)
-    : WebUIController(contents), mojo_data_source_(NULL) {
-}
+    : WebUIController(contents) {}
 
 MojoWebUIControllerBase::~MojoWebUIControllerBase() {
 }
 
-void MojoWebUIControllerBase::RenderViewCreated(
-    content::RenderViewHost* render_view_host) {
-  render_view_host->AllowBindings(content::BINDINGS_POLICY_WEB_UI);
+void MojoWebUIControllerBase::RenderFrameCreated(
+    content::RenderFrameHost* render_frame_host) {
+  render_frame_host->GetRenderViewHost()->AllowBindings(
+      content::BINDINGS_POLICY_WEB_UI);
 }

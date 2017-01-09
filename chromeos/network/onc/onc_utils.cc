@@ -4,21 +4,40 @@
 
 #include "chromeos/network/onc/onc_utils.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/base64.h"
 #include "base/json/json_reader.h"
+#include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "chromeos/network/managed_network_configuration_handler.h"
+#include "chromeos/network/network_configuration_handler.h"
 #include "chromeos/network/network_event_log.h"
+#include "chromeos/network/network_profile.h"
+#include "chromeos/network/network_profile_handler.h"
+#include "chromeos/network/network_state.h"
+#include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/network_ui_data.h"
 #include "chromeos/network/onc/onc_mapper.h"
+#include "chromeos/network/onc/onc_normalizer.h"
 #include "chromeos/network/onc/onc_signature.h"
+#include "chromeos/network/onc/onc_translator.h"
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/onc/onc_validator.h"
 #include "components/device_event_log/device_event_log.h"
+#include "components/onc/onc_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/proxy_config/proxy_config_dictionary.h"
+#include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/user.h"
+#include "components/user_manager/user_manager.h"
 #include "crypto/encryptor.h"
 #include "crypto/hmac.h"
 #include "crypto/symmetric_key.h"
@@ -28,6 +47,8 @@
 #include "net/proxy/proxy_bypass_rules.h"
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_server.h"
+#include "third_party/cros_system_api/dbus/service_constants.h"
+#include "url/gurl.h"
 #include "url/url_constants.h"
 
 using namespace ::onc;
@@ -40,16 +61,41 @@ namespace {
 const char kUnableToDecrypt[] = "Unable to decrypt encrypted ONC";
 const char kUnableToDecode[] = "Unable to decode encrypted ONC";
 
+// This class defines which string placeholders of ONC are replaced by which
+// user attribute.
+class UserStringSubstitution : public chromeos::onc::StringSubstitution {
+ public:
+  explicit UserStringSubstitution(const user_manager::User* user)
+      : user_(user) {}
+  ~UserStringSubstitution() override {}
+
+  bool GetSubstitute(const std::string& placeholder,
+                     std::string* substitute) const override {
+    if (placeholder == ::onc::substitutes::kLoginIDField)
+      *substitute = user_->GetAccountName(false);
+    else if (placeholder == ::onc::substitutes::kEmailField)
+      *substitute = user_->GetAccountId().GetUserEmail();
+    else
+      return false;
+    return true;
+  }
+
+ private:
+  const user_manager::User* user_;
+
+  DISALLOW_COPY_AND_ASSIGN(UserStringSubstitution);
+};
+
 }  // namespace
 
 const char kEmptyUnencryptedConfiguration[] =
     "{\"Type\":\"UnencryptedConfiguration\",\"NetworkConfigurations\":[],"
     "\"Certificates\":[]}";
 
-scoped_ptr<base::DictionaryValue> ReadDictionaryFromJson(
+std::unique_ptr<base::DictionaryValue> ReadDictionaryFromJson(
     const std::string& json) {
   std::string error;
-  scoped_ptr<base::Value> root = base::JSONReader::ReadAndReturnError(
+  std::unique_ptr<base::Value> root = base::JSONReader::ReadAndReturnError(
       json, base::JSON_ALLOW_TRAILING_COMMAS, nullptr, &error);
 
   base::DictionaryValue* dict_ptr = nullptr;
@@ -58,11 +104,12 @@ scoped_ptr<base::DictionaryValue> ReadDictionaryFromJson(
     return nullptr;
   }
   ignore_result(root.release());
-  return make_scoped_ptr(dict_ptr);
+  return base::WrapUnique(dict_ptr);
 }
 
-scoped_ptr<base::DictionaryValue> Decrypt(const std::string& passphrase,
-                                          const base::DictionaryValue& root) {
+std::unique_ptr<base::DictionaryValue> Decrypt(
+    const std::string& passphrase,
+    const base::DictionaryValue& root) {
   const int kKeySizeInBits = 256;
   const int kMaxIterationCount = 500000;
   std::string onc_type;
@@ -114,11 +161,9 @@ scoped_ptr<base::DictionaryValue> Decrypt(const std::string& passphrase,
     return nullptr;
   }
 
-  scoped_ptr<crypto::SymmetricKey> key(
+  std::unique_ptr<crypto::SymmetricKey> key(
       crypto::SymmetricKey::DeriveKeyFromPassword(crypto::SymmetricKey::AES,
-                                                  passphrase,
-                                                  salt,
-                                                  iterations,
+                                                  passphrase, salt, iterations,
                                                   kKeySizeInBits));
 
   if (!base::Base64Decode(initial_vector, &initial_vector)) {
@@ -153,14 +198,14 @@ scoped_ptr<base::DictionaryValue> Decrypt(const std::string& passphrase,
     return nullptr;
   }
 
-  scoped_ptr<base::DictionaryValue> new_root =
+  std::unique_ptr<base::DictionaryValue> new_root =
       ReadDictionaryFromJson(plaintext);
   if (!new_root) {
     NET_LOG(ERROR) << "Property dictionary malformed.";
     return nullptr;
   }
 
-  return new_root.Pass();
+  return new_root;
 }
 
 std::string GetSourceAsString(ONCSource source) {
@@ -235,7 +280,7 @@ void ExpandStringsInOncObject(
 
 void ExpandStringsInNetworks(const StringSubstitution& substitution,
                              base::ListValue* network_configs) {
-  for (base::Value* entry : *network_configs) {
+  for (const auto& entry : *network_configs) {
     base::DictionaryValue* network = nullptr;
     entry->GetAsDictionary(&network);
     DCHECK(network);
@@ -286,7 +331,7 @@ namespace {
 
 class OncMaskValues : public Mapper {
  public:
-  static scoped_ptr<base::DictionaryValue> Mask(
+  static std::unique_ptr<base::DictionaryValue> Mask(
       const OncValueSignature& signature,
       const base::DictionaryValue& onc_object,
       const std::string& mask) {
@@ -300,13 +345,14 @@ class OncMaskValues : public Mapper {
       : mask_(mask) {
   }
 
-  scoped_ptr<base::Value> MapField(const std::string& field_name,
-                                   const OncValueSignature& object_signature,
-                                   const base::Value& onc_value,
-                                   bool* found_unknown_field,
-                                   bool* error) override {
+  std::unique_ptr<base::Value> MapField(
+      const std::string& field_name,
+      const OncValueSignature& object_signature,
+      const base::Value& onc_value,
+      bool* found_unknown_field,
+      bool* error) override {
     if (FieldIsCredential(object_signature, field_name)) {
-      return scoped_ptr<base::Value>(new base::StringValue(mask_));
+      return std::unique_ptr<base::Value>(new base::StringValue(mask_));
     } else {
       return Mapper::MapField(field_name, object_signature, onc_value,
                               found_unknown_field, error);
@@ -319,7 +365,7 @@ class OncMaskValues : public Mapper {
 
 }  // namespace
 
-scoped_ptr<base::DictionaryValue> MaskCredentialsInOncObject(
+std::unique_ptr<base::DictionaryValue> MaskCredentialsInOncObject(
     const OncValueSignature& signature,
     const base::DictionaryValue& onc_object,
     const std::string& mask) {
@@ -358,9 +404,10 @@ std::string DecodePEM(const std::string& pem_encoded) {
 CertPEMsByGUIDMap GetServerAndCACertsByGUID(
     const base::ListValue& certificates) {
   CertPEMsByGUIDMap certs_by_guid;
-  for (const base::Value* entry : certificates) {
+  for (const auto& entry : certificates) {
     const base::DictionaryValue* cert = nullptr;
-    entry->GetAsDictionary(&cert);
+    bool entry_is_dictionary = entry->GetAsDictionary(&cert);
+    DCHECK(entry_is_dictionary);
 
     std::string guid;
     cert->GetStringWithoutPathExpansion(certificate::kGUID, &guid);
@@ -387,7 +434,7 @@ CertPEMsByGUIDMap GetServerAndCACertsByGUID(
 }
 
 void FillInHexSSIDFieldsInNetworks(base::ListValue* network_configs) {
-  for (base::Value* entry : *network_configs) {
+  for (const auto& entry : *network_configs) {
     base::DictionaryValue* network = nullptr;
     entry->GetAsDictionary(&network);
     DCHECK(network);
@@ -409,7 +456,7 @@ bool ParseAndValidateOncForImport(const std::string& onc_blob,
   if (onc_blob.empty())
     return true;
 
-  scoped_ptr<base::DictionaryValue> toplevel_onc =
+  std::unique_ptr<base::DictionaryValue> toplevel_onc =
       ReadDictionaryFromJson(onc_blob);
   if (!toplevel_onc) {
     LOG(ERROR) << "ONC loaded from " << GetSourceAsString(onc_source)
@@ -552,10 +599,11 @@ bool ResolveCertRefList(const CertPEMsByGUIDMap& certs_by_guid,
     return true;
   }
 
-  scoped_ptr<base::ListValue> pem_list(new base::ListValue);
-  for (const base::Value* entry : *guid_ref_list) {
+  std::unique_ptr<base::ListValue> pem_list(new base::ListValue);
+  for (const auto& entry : *guid_ref_list) {
     std::string guid_ref;
-    entry->GetAsString(&guid_ref);
+    bool entry_is_string = entry->GetAsString(&guid_ref);
+    DCHECK(entry_is_string);
 
     std::string pem_encoded;
     if (!GUIDRefToPEMEncoding(certs_by_guid, guid_ref, &pem_encoded))
@@ -581,7 +629,7 @@ bool ResolveSingleCertRefToList(const CertPEMsByGUIDMap& certs_by_guid,
   if (!GUIDRefToPEMEncoding(certs_by_guid, guid_ref, &pem_encoded))
     return false;
 
-  scoped_ptr<base::ListValue> pem_list(new base::ListValue);
+  std::unique_ptr<base::ListValue> pem_list(new base::ListValue);
   pem_list->AppendString(pem_encoded);
   onc_object->RemoveWithoutPathExpansion(key_guid_ref, nullptr);
   onc_object->SetWithoutPathExpansion(key_pem_list, pem_list.release());
@@ -768,7 +816,7 @@ net::ProxyServer ConvertOncProxyLocationToHostPort(
   return net::ProxyServer(
       proxy_server.scheme(),
       net::HostPortPair(proxy_server.host_port_pair().host(),
-                        static_cast<uint16>(port)));
+                        static_cast<uint16_t>(port)));
 }
 
 void AppendProxyServerForScheme(const base::DictionaryValue& onc_manual,
@@ -849,7 +897,7 @@ void SetProxyForScheme(const net::ProxyConfig::ProxyRules& proxy_rules,
   if (!proxy_list || proxy_list->IsEmpty())
     return;
   const net::ProxyServer& server = proxy_list->Get();
-  scoped_ptr<base::DictionaryValue> url_dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> url_dict(new base::DictionaryValue);
   std::string host = server.host_port_pair().host();
 
   // For all proxy types except SOCKS, the default scheme of the proxy host is
@@ -868,11 +916,11 @@ void SetProxyForScheme(const net::ProxyConfig::ProxyRules& proxy_rules,
 
 }  // namespace
 
-scoped_ptr<base::DictionaryValue> ConvertOncProxySettingsToProxyConfig(
+std::unique_ptr<base::DictionaryValue> ConvertOncProxySettingsToProxyConfig(
     const base::DictionaryValue& onc_proxy_settings) {
   std::string type;
   onc_proxy_settings.GetStringWithoutPathExpansion(::onc::proxy::kType, &type);
-  scoped_ptr<base::DictionaryValue> proxy_dict;
+  std::unique_ptr<base::DictionaryValue> proxy_dict;
 
   if (type == ::onc::proxy::kDirect) {
     proxy_dict.reset(ProxyConfigDictionary::CreateDirect());
@@ -909,17 +957,18 @@ scoped_ptr<base::DictionaryValue> ConvertOncProxySettingsToProxyConfig(
   } else {
     NOTREACHED();
   }
-  return proxy_dict.Pass();
+  return proxy_dict;
 }
 
-scoped_ptr<base::DictionaryValue> ConvertProxyConfigToOncProxySettings(
+std::unique_ptr<base::DictionaryValue> ConvertProxyConfigToOncProxySettings(
     const base::DictionaryValue& proxy_config_value) {
   // Create a ProxyConfigDictionary from the DictionaryValue.
-  scoped_ptr<ProxyConfigDictionary> proxy_config(
+  std::unique_ptr<ProxyConfigDictionary> proxy_config(
       new ProxyConfigDictionary(&proxy_config_value));
 
   // Create the result DictionaryValue and populate it.
-  scoped_ptr<base::DictionaryValue> proxy_settings(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> proxy_settings(
+      new base::DictionaryValue);
   ProxyPrefs::ProxyMode mode;
   if (!proxy_config->GetMode(&mode))
     return nullptr;
@@ -945,7 +994,7 @@ scoped_ptr<base::DictionaryValue> ConvertProxyConfigToOncProxySettings(
     }
     case ProxyPrefs::MODE_FIXED_SERVERS: {
       proxy_settings->SetString(::onc::proxy::kType, ::onc::proxy::kManual);
-      scoped_ptr<base::DictionaryValue> manual(new base::DictionaryValue);
+      std::unique_ptr<base::DictionaryValue> manual(new base::DictionaryValue);
       std::string proxy_rules_string;
       if (proxy_config->GetProxyServer(&proxy_rules_string)) {
         net::ProxyConfig::ProxyRules proxy_rules;
@@ -967,8 +1016,8 @@ scoped_ptr<base::DictionaryValue> ConvertProxyConfigToOncProxySettings(
       if (proxy_config->GetBypassList(&bypass_rules_string)) {
         net::ProxyBypassRules bypass_rules;
         bypass_rules.ParseFromString(bypass_rules_string);
-        scoped_ptr<base::ListValue> exclude_domains(new base::ListValue);
-        for (const net::ProxyBypassRules::Rule* rule : bypass_rules.rules())
+        std::unique_ptr<base::ListValue> exclude_domains(new base::ListValue);
+        for (const auto& rule : bypass_rules.rules())
           exclude_domains->AppendString(rule->ToString());
         if (!exclude_domains->empty()) {
           proxy_settings->SetWithoutPathExpansion(::onc::proxy::kExcludeDomains,
@@ -982,7 +1031,296 @@ scoped_ptr<base::DictionaryValue> ConvertProxyConfigToOncProxySettings(
       return nullptr;
     }
   }
-  return proxy_settings.Pass();
+  return proxy_settings;
+}
+
+namespace {
+
+const base::DictionaryValue* GetNetworkConfigByGUID(
+    const base::ListValue& network_configs,
+    const std::string& guid) {
+  for (base::ListValue::const_iterator it = network_configs.begin();
+       it != network_configs.end(); ++it) {
+    const base::DictionaryValue* network = NULL;
+    (*it)->GetAsDictionary(&network);
+    DCHECK(network);
+
+    std::string current_guid;
+    network->GetStringWithoutPathExpansion(::onc::network_config::kGUID,
+                                           &current_guid);
+    if (current_guid == guid)
+      return network;
+  }
+  return NULL;
+}
+
+const base::DictionaryValue* GetNetworkConfigForEthernetWithoutEAP(
+    const base::ListValue& network_configs) {
+  VLOG(2) << "Search for ethernet policy without EAP.";
+  for (base::ListValue::const_iterator it = network_configs.begin();
+       it != network_configs.end(); ++it) {
+    const base::DictionaryValue* network = NULL;
+    (*it)->GetAsDictionary(&network);
+    DCHECK(network);
+
+    std::string type;
+    network->GetStringWithoutPathExpansion(::onc::network_config::kType, &type);
+    if (type != ::onc::network_type::kEthernet)
+      continue;
+
+    const base::DictionaryValue* ethernet = NULL;
+    network->GetDictionaryWithoutPathExpansion(::onc::network_config::kEthernet,
+                                               &ethernet);
+
+    std::string auth;
+    ethernet->GetStringWithoutPathExpansion(::onc::ethernet::kAuthentication,
+                                            &auth);
+    if (auth == ::onc::ethernet::kAuthenticationNone)
+      return network;
+  }
+  return NULL;
+}
+
+const base::DictionaryValue* GetNetworkConfigForNetworkFromOnc(
+    const base::ListValue& network_configs,
+    const NetworkState& network) {
+  // In all cases except Ethernet, we use the GUID of |network|.
+  if (!network.Matches(NetworkTypePattern::Ethernet()))
+    return GetNetworkConfigByGUID(network_configs, network.guid());
+
+  // Ethernet is always shared and thus cannot store a GUID per user. Thus we
+  // search for any Ethernet policy intead of a matching GUID.
+  // EthernetEAP service contains only the EAP parameters and stores the GUID of
+  // the respective ONC policy. The EthernetEAP service itself is however never
+  // in state "connected". An EthernetEAP policy must be applied, if an Ethernet
+  // service is connected using the EAP parameters.
+  const NetworkState* ethernet_eap = NULL;
+  if (NetworkHandler::IsInitialized()) {
+    ethernet_eap =
+        NetworkHandler::Get()->network_state_handler()->GetEAPForEthernet(
+            network.path());
+  }
+
+  // The GUID associated with the EthernetEAP service refers to the ONC policy
+  // with "Authentication: 8021X".
+  if (ethernet_eap)
+    return GetNetworkConfigByGUID(network_configs, ethernet_eap->guid());
+
+  // Otherwise, EAP is not used and instead the Ethernet policy with
+  // "Authentication: None" applies.
+  return GetNetworkConfigForEthernetWithoutEAP(network_configs);
+}
+
+const base::DictionaryValue* GetPolicyForNetworkFromPref(
+    const PrefService* pref_service,
+    const char* pref_name,
+    const NetworkState& network) {
+  if (!pref_service) {
+    VLOG(2) << "No pref service";
+    return NULL;
+  }
+
+  const PrefService::Preference* preference =
+      pref_service->FindPreference(pref_name);
+  if (!preference) {
+    VLOG(2) << "No preference " << pref_name;
+    // The preference may not exist in tests.
+    return NULL;
+  }
+
+  // User prefs are not stored in this Preference yet but only the policy.
+  //
+  // The policy server incorrectly configures the OpenNetworkConfiguration user
+  // policy as Recommended. To work around that, we handle the Recommended and
+  // the Mandatory value in the same way.
+  // TODO(pneubeck): Remove this workaround, once the server is fixed. See
+  // http://crbug.com/280553 .
+  if (preference->IsDefaultValue()) {
+    VLOG(2) << "Preference has no recommended or mandatory value.";
+    // No policy set.
+    return NULL;
+  }
+  VLOG(2) << "Preference with policy found.";
+  const base::Value* onc_policy_value = preference->GetValue();
+  DCHECK(onc_policy_value);
+
+  const base::ListValue* onc_policy = NULL;
+  onc_policy_value->GetAsList(&onc_policy);
+  DCHECK(onc_policy);
+
+  return GetNetworkConfigForNetworkFromOnc(*onc_policy, network);
+}
+
+}  // namespace
+
+void ExpandStringPlaceholdersInNetworksForUser(
+    const user_manager::User* user,
+    base::ListValue* network_configs) {
+  if (!user) {
+    // In tests no user may be logged in. It's not harmful if we just don't
+    // expand the strings.
+    return;
+  }
+  UserStringSubstitution substitution(user);
+  chromeos::onc::ExpandStringsInNetworks(substitution, network_configs);
+}
+
+void ImportNetworksForUser(const user_manager::User* user,
+                           const base::ListValue& network_configs,
+                           std::string* error) {
+  error->clear();
+
+  std::unique_ptr<base::ListValue> expanded_networks(
+      network_configs.DeepCopy());
+  ExpandStringPlaceholdersInNetworksForUser(user, expanded_networks.get());
+
+  const NetworkProfile* profile =
+      NetworkHandler::Get()->network_profile_handler()->GetProfileForUserhash(
+          user->username_hash());
+  if (!profile) {
+    *error = "User profile doesn't exist.";
+    return;
+  }
+
+  bool ethernet_not_found = false;
+  for (base::ListValue::const_iterator it = expanded_networks->begin();
+       it != expanded_networks->end(); ++it) {
+    const base::DictionaryValue* network = NULL;
+    (*it)->GetAsDictionary(&network);
+    DCHECK(network);
+
+    // Remove irrelevant fields.
+    onc::Normalizer normalizer(true /* remove recommended fields */);
+    std::unique_ptr<base::DictionaryValue> normalized_network =
+        normalizer.NormalizeObject(&onc::kNetworkConfigurationSignature,
+                                   *network);
+
+    // TODO(pneubeck): Use ONC and ManagedNetworkConfigurationHandler instead.
+    // crbug.com/457936
+    std::unique_ptr<base::DictionaryValue> shill_dict =
+        onc::TranslateONCObjectToShill(&onc::kNetworkConfigurationSignature,
+                                       *normalized_network);
+
+    std::unique_ptr<NetworkUIData> ui_data(
+        NetworkUIData::CreateFromONC(::onc::ONC_SOURCE_USER_IMPORT));
+    base::DictionaryValue ui_data_dict;
+    ui_data->FillDictionary(&ui_data_dict);
+    std::string ui_data_json;
+    base::JSONWriter::Write(ui_data_dict, &ui_data_json);
+    shill_dict->SetStringWithoutPathExpansion(shill::kUIDataProperty,
+                                              ui_data_json);
+
+    shill_dict->SetStringWithoutPathExpansion(shill::kProfileProperty,
+                                              profile->path);
+
+    std::string type;
+    shill_dict->GetStringWithoutPathExpansion(shill::kTypeProperty, &type);
+    NetworkConfigurationHandler* config_handler =
+        NetworkHandler::Get()->network_configuration_handler();
+    if (NetworkTypePattern::Ethernet().MatchesType(type)) {
+      // Ethernet has to be configured using an existing Ethernet service.
+      const NetworkState* ethernet =
+          NetworkHandler::Get()->network_state_handler()->FirstNetworkByType(
+              NetworkTypePattern::Ethernet());
+      if (ethernet) {
+        config_handler->SetShillProperties(
+            ethernet->path(), *shill_dict,
+            NetworkConfigurationObserver::SOURCE_USER_ACTION, base::Closure(),
+            network_handler::ErrorCallback());
+      } else {
+        ethernet_not_found = true;
+      }
+
+    } else {
+      config_handler->CreateShillConfiguration(
+          *shill_dict, NetworkConfigurationObserver::SOURCE_USER_ACTION,
+          network_handler::ServiceResultCallback(),
+          network_handler::ErrorCallback());
+    }
+  }
+
+  if (ethernet_not_found)
+    *error = "No Ethernet available to configure.";
+}
+
+const base::DictionaryValue* FindPolicyForActiveUser(
+    const std::string& guid,
+    ::onc::ONCSource* onc_source) {
+  const user_manager::User* user =
+      user_manager::UserManager::Get()->GetActiveUser();
+  std::string username_hash = user ? user->username_hash() : std::string();
+  return NetworkHandler::Get()
+      ->managed_network_configuration_handler()
+      ->FindPolicyByGUID(username_hash, guid, onc_source);
+}
+
+namespace {
+
+const base::DictionaryValue* GetGlobalConfigFromPolicy(bool for_active_user) {
+  std::string username_hash;
+  if (for_active_user) {
+    const user_manager::User* user =
+        user_manager::UserManager::Get()->GetActiveUser();
+    if (!user) {
+      LOG(ERROR) << "No user logged in yet.";
+      return NULL;
+    }
+    username_hash = user->username_hash();
+  }
+  return NetworkHandler::Get()
+      ->managed_network_configuration_handler()
+      ->GetGlobalConfigFromPolicy(username_hash);
+}
+
+}  // namespace
+
+bool PolicyAllowsOnlyPolicyNetworksToAutoconnect(bool for_active_user) {
+  const base::DictionaryValue* global_config =
+      GetGlobalConfigFromPolicy(for_active_user);
+  if (!global_config)
+    return false;  // By default, all networks are allowed to autoconnect.
+
+  bool only_policy_autoconnect = false;
+  global_config->GetBooleanWithoutPathExpansion(
+      ::onc::global_network_config::kAllowOnlyPolicyNetworksToAutoconnect,
+      &only_policy_autoconnect);
+  return only_policy_autoconnect;
+}
+
+const base::DictionaryValue* GetPolicyForNetwork(
+    const PrefService* profile_prefs,
+    const PrefService* local_state_prefs,
+    const NetworkState& network,
+    ::onc::ONCSource* onc_source) {
+  VLOG(2) << "GetPolicyForNetwork: " << network.path();
+  *onc_source = ::onc::ONC_SOURCE_NONE;
+
+  const base::DictionaryValue* network_policy = GetPolicyForNetworkFromPref(
+      profile_prefs, ::onc::prefs::kOpenNetworkConfiguration, network);
+  if (network_policy) {
+    VLOG(1) << "Network " << network.path() << " is managed by user policy.";
+    *onc_source = ::onc::ONC_SOURCE_USER_POLICY;
+    return network_policy;
+  }
+  network_policy = GetPolicyForNetworkFromPref(
+      local_state_prefs, ::onc::prefs::kDeviceOpenNetworkConfiguration,
+      network);
+  if (network_policy) {
+    VLOG(1) << "Network " << network.path() << " is managed by device policy.";
+    *onc_source = ::onc::ONC_SOURCE_DEVICE_POLICY;
+    return network_policy;
+  }
+  VLOG(2) << "Network " << network.path() << " is unmanaged.";
+  return NULL;
+}
+
+bool HasPolicyForNetwork(const PrefService* profile_prefs,
+                         const PrefService* local_state_prefs,
+                         const NetworkState& network) {
+  ::onc::ONCSource ignored_onc_source;
+  const base::DictionaryValue* policy = onc::GetPolicyForNetwork(
+      profile_prefs, local_state_prefs, network, &ignored_onc_source);
+  return policy != NULL;
 }
 
 }  // namespace onc

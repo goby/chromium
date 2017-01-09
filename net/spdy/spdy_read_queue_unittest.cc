@@ -6,15 +6,17 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "net/spdy/spdy_buffer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
-
+namespace test {
 namespace {
 
 const char kData[] = "SPDY read queue test data.\0Some more data.";
@@ -30,8 +32,8 @@ void EnqueueString(const std::string& data,
   size_t old_total_size = queue->GetTotalSize();
   for (size_t i = 0; i < data.size();) {
     size_t buffer_size = std::min(data.size() - i, max_buffer_size);
-    queue->Enqueue(
-        scoped_ptr<SpdyBuffer>(new SpdyBuffer(data.data() + i, buffer_size)));
+    queue->Enqueue(std::unique_ptr<SpdyBuffer>(
+        new SpdyBuffer(data.data() + i, buffer_size)));
     i += buffer_size;
     EXPECT_FALSE(queue->IsEmpty());
     EXPECT_EQ(old_total_size + i, queue->GetTotalSize());
@@ -46,7 +48,7 @@ std::string DrainToString(size_t max_buffer_size, SpdyReadQueue* queue) {
   // Pad the buffer so we can detect out-of-bound writes.
   size_t padding = std::max(static_cast<size_t>(4096), queue->GetTotalSize());
   size_t buffer_size_with_padding = padding + max_buffer_size + padding;
-  scoped_ptr<char[]> buffer(new char[buffer_size_with_padding]);
+  std::unique_ptr<char[]> buffer(new char[buffer_size_with_padding]);
   std::memset(buffer.get(), 0, buffer_size_with_padding);
   char* buffer_data = buffer.get() + padding;
 
@@ -84,6 +86,17 @@ void RunEnqueueDequeueTest(size_t enqueue_max_buffer_size,
   EXPECT_EQ(data, drained_data);
 }
 
+void OnBufferDiscarded(bool* discarded,
+                       size_t* discarded_bytes,
+                       size_t delta,
+                       SpdyBuffer::ConsumeSource consume_source) {
+  EXPECT_EQ(SpdyBuffer::DISCARD, consume_source);
+  *discarded = true;
+  *discarded_bytes = delta;
+}
+
+}  // namespace
+
 class SpdyReadQueueTest : public ::testing::Test {};
 
 // Call RunEnqueueDequeueTest() with various buffer size combinatinos.
@@ -101,6 +114,26 @@ TEST_F(SpdyReadQueueTest, CoprimeBufferSizes) {
   RunEnqueueDequeueTest(3, 2);
 }
 
-}  // namespace
+TEST_F(SpdyReadQueueTest, Clear) {
+  auto buffer = base::MakeUnique<SpdyBuffer>(kData, kDataSize);
+  bool discarded = false;
+  size_t discarded_bytes = 0;
+  buffer->AddConsumeCallback(
+      base::Bind(&OnBufferDiscarded, &discarded, &discarded_bytes));
 
+  SpdyReadQueue read_queue;
+  read_queue.Enqueue(std::move(buffer));
+
+  EXPECT_FALSE(discarded);
+  EXPECT_EQ(0u, discarded_bytes);
+  EXPECT_FALSE(read_queue.IsEmpty());
+
+  read_queue.Clear();
+
+  EXPECT_TRUE(discarded);
+  EXPECT_EQ(kDataSize, discarded_bytes);
+  EXPECT_TRUE(read_queue.IsEmpty());
+}
+
+}  // namespace test
 }  // namespace net

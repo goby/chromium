@@ -4,10 +4,12 @@
 
 #include "ui/views/accessibility/ax_widget_obj_wrapper.h"
 
+#include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/views/accessibility/ax_aura_obj_cache.h"
 #include "ui/views/accessibility/ax_aura_obj_wrapper.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
 
 namespace views {
 
@@ -30,19 +32,25 @@ AXAuraObjWrapper* AXWidgetObjWrapper::GetParent() {
 
 void AXWidgetObjWrapper::GetChildren(
     std::vector<AXAuraObjWrapper*>* out_children) {
+  if (!widget_->IsVisible() || !widget_->GetRootView()->visible())
+    return;
+
   out_children->push_back(
       AXAuraObjCache::GetInstance()->GetOrCreate(widget_->GetRootView()));
 }
 
 void AXWidgetObjWrapper::Serialize(ui::AXNodeData* out_node_data) {
   out_node_data->id = GetID();
-  out_node_data->role = ui::AX_ROLE_CLIENT;
-  out_node_data->location = widget_->GetWindowBoundsInScreen();
-  // TODO(dtseng): Set better states.
+  out_node_data->role = widget_->widget_delegate()->GetAccessibleWindowRole();
+  out_node_data->AddStringAttribute(
+      ui::AX_ATTR_NAME,
+      base::UTF16ToUTF8(
+          widget_->widget_delegate()->GetAccessibleWindowTitle()));
+  out_node_data->location = gfx::RectF(widget_->GetWindowBoundsInScreen());
   out_node_data->state = 0;
 }
 
-int32 AXWidgetObjWrapper::GetID() {
+int32_t AXWidgetObjWrapper::GetID() {
   return AXAuraObjCache::GetInstance()->GetID(widget_);
 }
 
@@ -50,8 +58,18 @@ void AXWidgetObjWrapper::OnWidgetDestroying(Widget* widget) {
   AXAuraObjCache::GetInstance()->Remove(widget);
 }
 
+void AXWidgetObjWrapper::OnWidgetClosing(Widget* widget) {
+  AXAuraObjCache::GetInstance()->Remove(widget);
+}
+
+void AXWidgetObjWrapper::OnWidgetVisibilityChanged(Widget*, bool) {
+  // If a widget changes visibility it may affect what's focused, in particular
+  // when a widget that contains the focused view gets hidden.
+  AXAuraObjCache::GetInstance()->OnFocusedViewChanged();
+}
+
 void AXWidgetObjWrapper::OnWillRemoveView(Widget* widget, View* view) {
-  AXAuraObjCache::GetInstance()->Remove(view);
+  AXAuraObjCache::GetInstance()->RemoveViewSubtree(view);
 }
 
 }  // namespace views

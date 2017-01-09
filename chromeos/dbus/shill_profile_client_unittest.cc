@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
+#include "base/run_loop.h"
 #include "base/values.h"
 #include "chromeos/dbus/shill_client_unittest_base.h"
 #include "chromeos/dbus/shill_profile_client.h"
@@ -44,13 +45,13 @@ class ShillProfileClientTest : public ShillClientUnittestBase {
     client_.reset(ShillProfileClient::Create());
     client_->Init(mock_bus_.get());
     // Run the message loop to run the signal connection result callback.
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void TearDown() override { ShillClientUnittestBase::TearDown(); }
 
  protected:
-  scoped_ptr<ShillProfileClient> client_;
+  std::unique_ptr<ShillProfileClient> client_;
 };
 
 TEST_F(ShillProfileClientTest, PropertyChanged) {
@@ -64,7 +65,7 @@ TEST_F(ShillProfileClientTest, PropertyChanged) {
 
   // Set expectations.
   base::ListValue value;
-  value.Append(new base::StringValue(kExampleEntryPath));
+  value.AppendString(kExampleEntryPath);
   MockPropertyChangeObserver observer;
   EXPECT_CALL(observer,
               OnPropertyChanged(
@@ -92,7 +93,7 @@ TEST_F(ShillProfileClientTest, PropertyChanged) {
 
 TEST_F(ShillProfileClientTest, GetProperties) {
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
   dbus::MessageWriter array_writer(NULL);
   writer.OpenArray("{sv}", &array_writer);
@@ -106,7 +107,7 @@ TEST_F(ShillProfileClientTest, GetProperties) {
 
   // Create the expected value.
   base::ListValue* entries = new base::ListValue;
-  entries->Append(new base::StringValue(kExampleEntryPath));
+  entries->AppendString(kExampleEntryPath);
   base::DictionaryValue value;
   value.SetWithoutPathExpansion(shill::kEntriesProperty, entries);
   // Set expectations.
@@ -122,12 +123,12 @@ TEST_F(ShillProfileClientTest, GetProperties) {
   EXPECT_CALL(error_callback, Run(_, _)).Times(0);
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillProfileClientTest, GetEntry) {
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
   dbus::MessageWriter array_writer(NULL);
   writer.OpenArray("{sv}", &array_writer);
@@ -155,12 +156,12 @@ TEST_F(ShillProfileClientTest, GetEntry) {
                     error_callback.GetCallback());
   EXPECT_CALL(error_callback, Run(_, _)).Times(0);
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ShillProfileClientTest, DeleteEntry) {
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
 
   // Create the expected value.
   base::DictionaryValue value;
@@ -181,7 +182,7 @@ TEST_F(ShillProfileClientTest, DeleteEntry) {
   EXPECT_CALL(mock_error_callback, Run(_, _)).Times(0);
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace chromeos

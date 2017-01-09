@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_NACL_LOADER_NACL_TRUSTED_LISTENER_H_
 #define COMPONENTS_NACL_LOADER_NACL_TRUSTED_LISTENER_H_
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_listener.h"
@@ -21,8 +22,6 @@ class NaClTrustedListener : public base::RefCounted<NaClTrustedListener>,
                       base::SingleThreadTaskRunner* ipc_task_runner,
                       base::WaitableEvent* shutdown_event);
 
-  IPC::ChannelHandle TakeClientChannelHandle();
-
   // Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
 
@@ -32,7 +31,7 @@ class NaClTrustedListener : public base::RefCounted<NaClTrustedListener>,
   friend class base::RefCounted<NaClTrustedListener>;
   ~NaClTrustedListener() override;
   IPC::ChannelHandle channel_handle_;
-  scoped_ptr<IPC::SyncChannel> channel_;
+  std::unique_ptr<IPC::SyncChannel> channel_;
 
   DISALLOW_COPY_AND_ASSIGN(NaClTrustedListener);
 };

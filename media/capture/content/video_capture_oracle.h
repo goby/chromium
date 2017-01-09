@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_CAPTURE_VIDEO_CAPTURE_ORACLE_H_
-#define MEDIA_CAPTURE_VIDEO_CAPTURE_ORACLE_H_
+#ifndef MEDIA_CAPTURE_CONTENT_VIDEO_CAPTURE_ORACLE_H_
+#define MEDIA_CAPTURE_CONTENT_VIDEO_CAPTURE_ORACLE_H_
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
-#include "media/base/media_export.h"
+#include "media/base/feedback_signal_accumulator.h"
+#include "media/capture/capture_export.h"
 #include "media/capture/content/animated_content_sampler.h"
 #include "media/capture/content/capture_resolution_chooser.h"
-#include "media/capture/content/feedback_signal_accumulator.h"
 #include "media/capture/content/smooth_event_sampler.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -21,19 +20,14 @@ namespace media {
 // from a video capture device.  It is informed of every update by the device;
 // this empowers it to look into the future and decide if a particular frame
 // ought to be captured in order to achieve its target frame rate.
-class MEDIA_EXPORT VideoCaptureOracle {
+class CAPTURE_EXPORT VideoCaptureOracle {
  public:
   enum Event {
-    kTimerPoll,
     kCompositorUpdate,
+    kActiveRefreshRequest,
+    kPassiveRefreshRequest,
+    kMouseCursorUpdate,
     kNumEvents,
-  };
-
-  enum {
-    // The recommended minimum amount of time between calls to
-    // ObserveEventAndDecideCapture() for the kTimerPoll Event type.  Anything
-    // lower than this isn't harmful, just wasteful.
-    kMinTimerPollPeriodMillis = 125,  // 8 FPS
   };
 
   VideoCaptureOracle(base::TimeDelta min_capture_period,
@@ -56,13 +50,15 @@ class MEDIA_EXPORT VideoCaptureOracle {
                                     const gfx::Rect& damage_rect,
                                     base::TimeTicks event_time);
 
+  // Returns the |frame_number| to be used with CompleteCapture().
+  int next_frame_number() const;
+
   // Record and update internal state based on whether the frame capture will be
   // started.  |pool_utilization| is a value in the range 0.0 to 1.0 to indicate
   // the current buffer pool utilization relative to a sustainable maximum (not
   // the absolute maximum).  This method should only be called if the last call
-  // to ObserveEventAndDecideCapture() returned true.  The first method returns
-  // the |frame_number| to be used with CompleteCapture().
-  int RecordCapture(double pool_utilization);
+  // to ObserveEventAndDecideCapture() returned true.
+  void RecordCapture(double pool_utilization);
   void RecordWillNotCapture(double pool_utilization);
 
   // Notify of the completion of a capture, and whether it was successful.
@@ -97,6 +93,15 @@ class MEDIA_EXPORT VideoCaptureOracle {
   // calls to ObserveEventAndDecideCapture().  The oracle prevents too-frequent
   // changes to the capture size, to avoid stressing the end-to-end pipeline.
   gfx::Size capture_size() const { return capture_size_; }
+
+  // Returns the oracle's estimate of the last time animation was detected.
+  base::TimeTicks last_time_animation_was_detected() const {
+    return last_time_animation_was_detected_;
+  }
+
+  // Returns a NUL-terminated string containing a short, human-readable form of
+  // |event|.
+  static const char* EventAsString(Event event);
 
  private:
   // Retrieve/Assign a frame timestamp by capture |frame_number|.  Only valid
@@ -177,13 +182,13 @@ class MEDIA_EXPORT VideoCaptureOracle {
   base::TimeTicks frame_timestamps_[kMaxFrameTimestamps];
 
   // Recent average buffer pool utilization for capture.
-  FeedbackSignalAccumulator buffer_pool_utilization_;
+  FeedbackSignalAccumulator<base::TimeTicks> buffer_pool_utilization_;
 
   // Estimated maximum frame area that currently can be handled by the consumer,
   // in number of pixels per frame.  This is used to adjust the capture size up
   // or down to a data volume the consumer can handle.  Note that some consumers
   // do not provide feedback, and the analysis logic should account for that.
-  FeedbackSignalAccumulator estimated_capable_area_;
+  FeedbackSignalAccumulator<base::TimeTicks> estimated_capable_area_;
 
   // The time of the first analysis which concluded the end-to-end system was
   // under-utilized.  If null, the system is not currently under-utilized.  This
@@ -199,4 +204,4 @@ class MEDIA_EXPORT VideoCaptureOracle {
 
 }  // namespace media
 
-#endif  // MEDIA_CAPTURE_VIDEO_CAPTURE_ORACLE_H_
+#endif  // MEDIA_CAPTURE_CONTENT_VIDEO_CAPTURE_ORACLE_H_

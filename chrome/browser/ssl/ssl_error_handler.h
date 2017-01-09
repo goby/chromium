@@ -9,13 +9,16 @@
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/common_name_mismatch_handler.h"
 #include "chrome/browser/ssl/ssl_cert_reporter.h"
+#include "components/ssl_errors/error_classification.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/restore_type.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "net/ssl/ssl_info.h"
@@ -29,8 +32,11 @@ class Clock;
 }
 
 namespace content {
-class RenderViewHost;
 class WebContents;
+}
+
+namespace network_time {
+class NetworkTimeTracker;
 }
 
 // This class is responsible for deciding what type of interstitial to show for
@@ -55,13 +61,15 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
 
   // Entry point for the class. The parameters are the same as SSLBlockingPage
   // constructor.
-  static void HandleSSLError(content::WebContents* web_contents,
-                             int cert_error,
-                             const net::SSLInfo& ssl_info,
-                             const GURL& request_url,
-                             int options_mask,
-                             scoped_ptr<SSLCertReporter> ssl_cert_reporter,
-                             const base::Callback<void(bool)>& callback);
+  static void HandleSSLError(
+      content::WebContents* web_contents,
+      int cert_error,
+      const net::SSLInfo& ssl_info,
+      const GURL& request_url,
+      int options_mask,
+      std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+      const base::Callback<void(content::CertificateRequestResultType)>&
+          callback);
 
   // Testing methods.
   static void SetInterstitialDelayForTest(base::TimeDelta delay);
@@ -69,6 +77,8 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   static void SetInterstitialTimerStartedCallbackForTest(
       TimerStartedCallback* callback);
   static void SetClockForTest(base::Clock* testing_clock);
+  static void SetNetworkTimeTrackerForTest(
+      network_time::NetworkTimeTracker* tracker);
 
  protected:
   // The parameters are the same as SSLBlockingPage's constructor.
@@ -77,8 +87,9 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
                   const net::SSLInfo& ssl_info,
                   const GURL& request_url,
                   int options_mask,
-                  scoped_ptr<SSLCertReporter> ssl_cert_reporter,
-                  const base::Callback<void(bool)>& callback);
+                  std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+                  const base::Callback<
+                      void(content::CertificateRequestResultType)>& callback);
 
   ~SSLErrorHandler() override;
 
@@ -97,8 +108,8 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   virtual bool IsErrorOverridable() const;
   virtual void ShowCaptivePortalInterstitial(const GURL& landing_url);
   virtual void ShowSSLInterstitial();
-
-  void ShowBadClockInterstitial(const base::Time& now);
+  virtual void ShowBadClockInterstitial(const base::Time& now,
+                                        ssl_errors::ClockState clock_state);
 
   // Gets the result of whether the suggested URL is valid. Displays
   // common name mismatch interstitial or ssl interstitial accordingly.
@@ -116,7 +127,7 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   // content::WebContentsObserver:
   void DidStartNavigationToPendingEntry(
       const GURL& url,
-      content::NavigationController::ReloadType reload_type) override;
+      content::ReloadType reload_type) override;
 
   // content::WebContentsObserver:
   void NavigationStopped() override;
@@ -125,20 +136,25 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   // load stops or when there is a new navigation.
   void DeleteSSLErrorHandler();
 
+  void HandleCertDateInvalidError();
+  void HandleCertDateInvalidErrorImpl();
+
   content::WebContents* web_contents_;
   const int cert_error_;
   const net::SSLInfo ssl_info_;
   const GURL request_url_;
   const int options_mask_;
-  base::Callback<void(bool)> callback_;
+  base::Callback<void(content::CertificateRequestResultType)> callback_;
   Profile* const profile_;
 
   content::NotificationRegistrar registrar_;
   base::OneShotTimer timer_;
 
-  scoped_ptr<CommonNameMismatchHandler> common_name_mismatch_handler_;
+  std::unique_ptr<CommonNameMismatchHandler> common_name_mismatch_handler_;
 
-  scoped_ptr<SSLCertReporter> ssl_cert_reporter_;
+  std::unique_ptr<SSLCertReporter> ssl_cert_reporter_;
+
+  base::WeakPtrFactory<SSLErrorHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(SSLErrorHandler);
 };

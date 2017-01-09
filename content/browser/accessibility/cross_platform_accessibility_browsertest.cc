@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -42,7 +47,9 @@ class CrossPlatformAccessibilityBrowserTest : public ContentBrowserTest {
   const ui::AXTree& GetAXTree(
       AccessibilityMode accessibility_mode = AccessibilityModeComplete) {
     AccessibilityNotificationWaiter waiter(
-        shell(), accessibility_mode, ui::AX_EVENT_LAYOUT_COMPLETE);
+        shell()->web_contents(),
+        accessibility_mode,
+        ui::AX_EVENT_LAYOUT_COMPLETE);
     waiter.WaitForNotification();
     return waiter.GetAXTree();
   }
@@ -70,7 +77,7 @@ class CrossPlatformAccessibilityBrowserTest : public ContentBrowserTest {
 
  private:
 #if defined(OS_WIN)
-  scoped_ptr<base::win::ScopedCOMInitializer> com_initializer_;
+  std::unique_ptr<base::win::ScopedCOMInitializer> com_initializer_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(CrossPlatformAccessibilityBrowserTest);
@@ -287,7 +294,7 @@ IN_PROC_BROWSER_TEST_F(CrossPlatformAccessibilityBrowserTest,
   EXPECT_EQ(1U, column1->data().intlist_attributes.size());
   EXPECT_EQ(ui::AX_ATTR_INDIRECT_CHILD_IDS,
             column1->data().intlist_attributes[0].first);
-  const std::vector<int32> column1_indirect_child_ids =
+  const std::vector<int32_t> column1_indirect_child_ids =
       column1->data().intlist_attributes[0].second;
   EXPECT_EQ(1U, column1_indirect_child_ids.size());
   EXPECT_EQ(cell1->id(), column1_indirect_child_ids[0]);
@@ -296,7 +303,7 @@ IN_PROC_BROWSER_TEST_F(CrossPlatformAccessibilityBrowserTest,
   EXPECT_EQ(0, column2->child_count());
   EXPECT_EQ(ui::AX_ATTR_INDIRECT_CHILD_IDS,
             column2->data().intlist_attributes[0].first);
-  const std::vector<int32> column2_indirect_child_ids =
+  const std::vector<int32_t> column2_indirect_child_ids =
       column2->data().intlist_attributes[0].second;
   EXPECT_EQ(1U, column2_indirect_child_ids.size());
   EXPECT_EQ(cell2->id(), column2_indirect_child_ids[0]);
@@ -441,7 +448,7 @@ IN_PROC_BROWSER_TEST_F(CrossPlatformAccessibilityBrowserTest,
 
   ASSERT_EQ(ui::AX_ATTR_CELL_IDS,
             table->data().intlist_attributes[0].first);
-  const std::vector<int32>& table_cell_ids =
+  const std::vector<int32_t>& table_cell_ids =
       table->data().intlist_attributes[0].second;
   ASSERT_EQ(6U, table_cell_ids.size());
   EXPECT_EQ(cell1->id(), table_cell_ids[0]);

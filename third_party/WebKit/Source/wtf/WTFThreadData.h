@@ -34,53 +34,44 @@
 #include "wtf/Threading.h"
 #include "wtf/WTFExport.h"
 #include "wtf/text/StringHash.h"
+#include <memory>
 
 namespace WTF {
 
 class AtomicStringTable;
 struct ICUConverterWrapper;
 
-typedef void (*AtomicStringTableDestructor)(AtomicStringTable*);
-
 class WTF_EXPORT WTFThreadData {
-    WTF_MAKE_NONCOPYABLE(WTFThreadData);
-public:
-    WTFThreadData();
-    ~WTFThreadData();
+  DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
+  WTF_MAKE_NONCOPYABLE(WTFThreadData);
 
-    AtomicStringTable* atomicStringTable()
-    {
-        return m_atomicStringTable;
-    }
+ public:
+  WTFThreadData();
+  ~WTFThreadData();
 
-    ICUConverterWrapper& cachedConverterICU() { return *m_cachedConverterICU; }
+  AtomicStringTable& getAtomicStringTable() { return *m_atomicStringTable; }
 
-private:
-    AtomicStringTable* m_atomicStringTable;
-    AtomicStringTableDestructor m_atomicStringTableDestructor;
-    OwnPtr<ICUConverterWrapper> m_cachedConverterICU;
+  ICUConverterWrapper& cachedConverterICU() { return *m_cachedConverterICU; }
 
-    static ThreadSpecific<WTFThreadData>* staticData;
-    friend WTFThreadData& wtfThreadData();
-    friend class AtomicStringTable;
+ private:
+  std::unique_ptr<AtomicStringTable> m_atomicStringTable;
+  std::unique_ptr<ICUConverterWrapper> m_cachedConverterICU;
+
+  static ThreadSpecific<WTFThreadData>* staticData;
+  friend WTFThreadData& wtfThreadData();
 };
 
-inline WTFThreadData& wtfThreadData()
-{
-    // WRT WebCore:
-    //    WTFThreadData is used on main thread before it could possibly be used
-    //    on secondary ones, so there is no need for synchronization here.
-    // WRT JavaScriptCore:
-    //    wtfThreadData() is initially called from initializeThreading(), ensuring
-    //    this is initially called in a pthread_once locked context.
-    if (!WTFThreadData::staticData)
-        WTFThreadData::staticData = new ThreadSpecific<WTFThreadData>;
-    return **WTFThreadData::staticData;
+inline WTFThreadData& wtfThreadData() {
+  // WTFThreadData is used on main thread before it could possibly be used
+  // on secondary ones, so there is no need for synchronization here.
+  if (!WTFThreadData::staticData)
+    WTFThreadData::staticData = new ThreadSpecific<WTFThreadData>;
+  return **WTFThreadData::staticData;
 }
 
-} // namespace WTF
+}  // namespace WTF
 
 using WTF::WTFThreadData;
 using WTF::wtfThreadData;
 
-#endif // WTFThreadData_h
+#endif  // WTFThreadData_h

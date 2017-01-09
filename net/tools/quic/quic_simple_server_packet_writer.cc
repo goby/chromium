@@ -7,13 +7,12 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
-#include "net/udp/udp_server_socket.h"
+#include "net/socket/udp_server_socket.h"
 
 namespace net {
-namespace tools {
 
 QuicSimpleServerPacketWriter::QuicSimpleServerPacketWriter(
     UDPServerSocket* socket,
@@ -21,21 +20,21 @@ QuicSimpleServerPacketWriter::QuicSimpleServerPacketWriter(
     : socket_(socket),
       blocked_writer_(blocked_writer),
       write_blocked_(false),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
-QuicSimpleServerPacketWriter::~QuicSimpleServerPacketWriter() {
-}
+QuicSimpleServerPacketWriter::~QuicSimpleServerPacketWriter() {}
 
 WriteResult QuicSimpleServerPacketWriter::WritePacketWithCallback(
     const char* buffer,
     size_t buf_len,
-    const IPAddressNumber& self_address,
-    const IPEndPoint& peer_address,
+    const QuicIpAddress& self_address,
+    const QuicSocketAddress& peer_address,
+    PerPacketOptions* options,
     WriteCallback callback) {
   DCHECK(callback_.is_null());
   callback_ = callback;
-  WriteResult result = WritePacket(buffer, buf_len, self_address, peer_address);
+  WriteResult result =
+      WritePacket(buffer, buf_len, self_address, peer_address, options);
   if (result.status != WRITE_STATUS_BLOCKED) {
     callback_.Reset();
   }
@@ -46,7 +45,9 @@ void QuicSimpleServerPacketWriter::OnWriteComplete(int rv) {
   DCHECK_NE(rv, ERR_IO_PENDING);
   write_blocked_ = false;
   WriteResult result(rv < 0 ? WRITE_STATUS_ERROR : WRITE_STATUS_OK, rv);
-  base::ResetAndReturn(&callback_).Run(result);
+  if (!callback_.is_null()) {
+    base::ResetAndReturn(&callback_).Run(result);
+  }
   blocked_writer_->OnCanWrite();
 }
 
@@ -66,21 +67,19 @@ void QuicSimpleServerPacketWriter::SetWritable() {
 WriteResult QuicSimpleServerPacketWriter::WritePacket(
     const char* buffer,
     size_t buf_len,
-    const IPAddressNumber& self_address,
-    const IPEndPoint& peer_address) {
+    const QuicIpAddress& self_address,
+    const QuicSocketAddress& peer_address,
+    PerPacketOptions* options) {
   scoped_refptr<StringIOBuffer> buf(
       new StringIOBuffer(std::string(buffer, buf_len)));
   DCHECK(!IsWriteBlocked());
-  DCHECK(!callback_.is_null());
   int rv;
   if (buf_len <= static_cast<size_t>(std::numeric_limits<int>::max())) {
     rv = socket_->SendTo(
-        buf.get(),
-        static_cast<int>(buf_len),
-        peer_address,
-        base::Bind(
-            &QuicSimpleServerPacketWriter::OnWriteComplete,
-            weak_factory_.GetWeakPtr()));
+        buf.get(), static_cast<int>(buf_len),
+        peer_address.impl().socket_address(),
+        base::Bind(&QuicSimpleServerPacketWriter::OnWriteComplete,
+                   weak_factory_.GetWeakPtr()));
   } else {
     rv = ERR_MSG_TOO_BIG;
   }
@@ -98,9 +97,8 @@ WriteResult QuicSimpleServerPacketWriter::WritePacket(
 }
 
 QuicByteCount QuicSimpleServerPacketWriter::GetMaxPacketSize(
-    const IPEndPoint& peer_address) const {
+    const QuicSocketAddress& peer_address) const {
   return kMaxPacketSize;
 }
 
-}  // namespace tools
 }  // namespace net

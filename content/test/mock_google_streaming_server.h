@@ -6,6 +6,7 @@
 #define CONTENT_TEST_MOCK_GOOGLE_STREAMING_SERVER_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/public/common/speech_recognition_result.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 
@@ -17,7 +18,7 @@ struct SpeechRecognitionResult;
 // recognition webservice, exploiting the TestURLFetcher to extract request
 // parameters and provide forged JSON responses back to the client.
 // It is intended for closing the server-side loop in speech tests that involve
-// the GoogleStreamingRemoteEngine client.
+// the SpeechRecognitionEngine client.
 class MockGoogleStreamingServer : public net::TestURLFetcherDelegateForTests {
  public:
   class Delegate {

@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_SYNC_SESSIONS_FAKE_SYNC_SESSIONS_CLIENT_H_
 #define COMPONENTS_SYNC_SESSIONS_FAKE_SYNC_SESSIONS_CLIENT_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "components/sync_sessions/sync_sessions_client.h"
 
@@ -21,9 +23,8 @@ class FakeSyncSessionsClient : public SyncSessionsClient {
   favicon::FaviconService* GetFaviconService() override;
   history::HistoryService* GetHistoryService() override;
   bool ShouldSyncURL(const GURL& url) const override;
-  browser_sync::SyncedWindowDelegatesGetter* GetSyncedWindowDelegatesGetter()
-      override;
-  scoped_ptr<browser_sync::LocalSessionEventRouter> GetLocalSessionEventRouter()
+  SyncedWindowDelegatesGetter* GetSyncedWindowDelegatesGetter() override;
+  std::unique_ptr<LocalSessionEventRouter> GetLocalSessionEventRouter()
       override;
 
  private:

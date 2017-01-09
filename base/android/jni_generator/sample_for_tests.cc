@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <iostream>
+
 #include "base/android/jni_generator/sample_for_tests.h"
 
 #include "base/android/jni_android.h"
@@ -49,8 +51,8 @@ void CPPClass::AddStructB(JNIEnv* env,
                           const JavaParamRef<jobject>& caller,
                           const JavaParamRef<jobject>& structb) {
   long key = Java_InnerStructB_getKey(env, structb);
-  std::string value = ConvertJavaStringToUTF8(
-      env, Java_InnerStructB_getValue(env, structb).obj());
+  std::string value =
+      ConvertJavaStringToUTF8(env, Java_InnerStructB_getValue(env, structb));
   map_[key] = value;
 }
 
@@ -62,6 +64,7 @@ void CPPClass::IterateAndDoSomethingWithStructB(
        it != map_.end(); ++it) {
     long key = it->first;
     std::string value = it->second;
+    std::cout << key << value;
   }
   map_.clear();
 }
@@ -97,7 +100,7 @@ static ScopedJavaLocalRef<jobject> GetNonPODDatatype(
   return ScopedJavaLocalRef<jobject>();
 }
 
-static jint InnerFunction(JNIEnv*, jclass) {
+static jint GetInnerIntFunction(JNIEnv*, const JavaParamRef<jclass>&) {
   return 0;
 }
 
@@ -114,18 +117,26 @@ int main() {
 
   // This is how you call a java method from C++. Note that you must have
   // obtained the jobject somehow.
-  jobject my_java_object = NULL;
+  ScopedJavaLocalRef<jobject> my_java_object;
   int bar = base::android::Java_SampleForTests_javaMethod(
       env, my_java_object, 1, 2);
+
+  std::cout << foo << bar;
 
   for (int i = 0; i < 10; ++i) {
     // Creates a "struct" that will then be used by the java side.
     ScopedJavaLocalRef<jobject> struct_a =
         base::android::Java_InnerStructA_create(
-            env, 0, 1, ConvertUTF8ToJavaString(env, "test").obj());
-    base::android::Java_SampleForTests_addStructA(
-        env, my_java_object, struct_a.obj());
+            env, 0, 1, ConvertUTF8ToJavaString(env, "test"));
+    base::android::Java_SampleForTests_addStructA(env, my_java_object,
+                                                  struct_a);
   }
   base::android::Java_SampleForTests_iterateAndDoSomething(env, my_java_object);
+  base::android::Java_SampleForTests_packagePrivateJavaMethod(env,
+                                                              my_java_object);
+  base::android::Java_SampleForTests_methodThatThrowsException(env,
+                                                               my_java_object);
+  base::android::Java_SampleForTests_javaMethodWithAnnotatedParam(
+      env, my_java_object, 42);
   return 0;
 }

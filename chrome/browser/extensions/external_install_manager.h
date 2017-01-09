@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTERNAL_INSTALL_MANAGER_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTERNAL_INSTALL_MANAGER_H_
 
+#include <map>
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/scoped_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -31,11 +33,8 @@ class ExternalInstallManager : public ExtensionRegistryObserver,
                          bool is_first_run);
   ~ExternalInstallManager() override;
 
-  // Removes the global error, if one existed.
-  void RemoveExternalInstallError();
-
-  // Returns true if there is a global error for an external install.
-  bool HasExternalInstallError() const;
+  // Removes the error associated with a given extension.
+  void RemoveExternalInstallError(const std::string& extension_id);
 
   // Checks if there are any new external extensions to notify the user about.
   void UpdateExternalExtensionAlert();
@@ -44,15 +43,22 @@ class ExternalInstallManager : public ExtensionRegistryObserver,
   // acknowledged.
   void AcknowledgeExternalExtension(const std::string& extension_id);
 
-  // Returns true if there is a global error with a bubble view for an external
-  // install. Used for testing.
-  bool HasExternalInstallBubbleForTesting() const;
+  // Notifies the manager that |external_install_error| has changed its alert
+  // visibility.
+  void DidChangeInstallAlertVisibility(
+      ExternalInstallError* external_install_error,
+      bool visible);
 
-  // Returns the current install error, if one exists.
-  const ExternalInstallError* error() { return error_.get(); }
+  bool has_currently_visible_install_alert() {
+    return currently_visible_install_alert_ != nullptr;
+  }
 
-  // Returns a mutable copy of the error for testing purposes.
-  ExternalInstallError* error_for_testing() { return error_.get(); }
+  ExternalInstallError* currently_visible_install_alert_for_testing() const {
+    return currently_visible_install_alert_;
+  }
+
+  // Returns a mutable copy of the list of global errors for testing purposes.
+  std::vector<ExternalInstallError*> GetErrorsForTesting();
 
  private:
   // ExtensionRegistryObserver implementation.
@@ -88,8 +94,13 @@ class ExternalInstallManager : public ExtensionRegistryObserver,
   // The associated ExtensionPrefs.
   ExtensionPrefs* extension_prefs_;
 
-  // The current ExternalInstallError, if one exists.
-  scoped_ptr<ExternalInstallError> error_;
+  // The collection of ExternalInstallErrors.
+  std::map<std::string, std::unique_ptr<ExternalInstallError>> errors_;
+
+  std::set<std::string> shown_ids_;
+
+  // The error that is currently showing an alert dialog/bubble.
+  ExternalInstallError* currently_visible_install_alert_;
 
   content::NotificationRegistrar registrar_;
 

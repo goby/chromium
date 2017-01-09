@@ -4,14 +4,19 @@
 
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
+#include <stddef.h>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_client.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_edit_controller.h"
-#include "chrome/browser/ui/toolbar/toolbar_model_delegate.h"
-#include "chrome/browser/ui/toolbar/toolbar_model_impl.h"
+#include "chrome/browser/ui/toolbar/chrome_toolbar_model_delegate.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/omnibox_popup_view.h"
+#include "components/toolbar/toolbar_model_impl.h"
+#include "content/public/common/content_constants.h"
 #include "testing/platform_test.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/geometry/rect.h"
@@ -27,7 +32,7 @@ class MockOmniboxEditModel : public OmniboxEditModel {
       : OmniboxEditModel(
             view,
             controller,
-            make_scoped_ptr(new ChromeOmniboxClient(controller, profile))),
+            base::WrapUnique(new ChromeOmniboxClient(controller, profile))),
         up_or_down_count_(0) {}
 
   void OnUpOrDownKeyPressed(int count) override { up_or_down_count_ = count; }
@@ -66,12 +71,12 @@ class MockOmniboxPopupView : public OmniboxPopupView {
   DISALLOW_COPY_AND_ASSIGN(MockOmniboxPopupView);
 };
 
-class TestingToolbarModelDelegate : public ToolbarModelDelegate {
+class TestingToolbarModelDelegate : public ChromeToolbarModelDelegate {
  public:
   TestingToolbarModelDelegate() {}
   ~TestingToolbarModelDelegate() override {}
 
-  // Overridden from ToolbarModelDelegate:
+  // Overridden from ChromeToolbarModelDelegate:
   content::WebContents* GetActiveWebContents() const override { return NULL; }
 
  private:
@@ -88,8 +93,6 @@ class TestingOmniboxEditController : public ChromeOmniboxEditController {
   // Overridden from ChromeOmniboxEditController:
   void UpdateWithoutTabRestore() override {}
   void OnChanged() override {}
-  void OnSetFocus() override {}
-  void ShowURL() override {}
   ToolbarModel* GetToolbarModel() override { return toolbar_model_; }
   const ToolbarModel* GetToolbarModel() const override {
     return toolbar_model_;
@@ -111,8 +114,11 @@ class OmniboxViewMacTest : public CocoaProfileTest {
   }
 };
 
-TEST_F(OmniboxViewMacTest, GetFieldFont) {
-  EXPECT_TRUE(OmniboxViewMac::GetFieldFont(gfx::Font::NORMAL));
+TEST_F(OmniboxViewMacTest, GetFonts) {
+  EXPECT_TRUE(OmniboxViewMac::GetNormalFieldFont());
+  EXPECT_TRUE(OmniboxViewMac::GetBoldFieldFont());
+  EXPECT_TRUE(OmniboxViewMac::GetLargeFont());
+  EXPECT_TRUE(OmniboxViewMac::GetSmallFont());
 }
 
 TEST_F(OmniboxViewMacTest, TabToAutocomplete) {
@@ -139,35 +145,6 @@ TEST_F(OmniboxViewMacTest, TabToAutocomplete) {
   EXPECT_EQ(1, model->up_or_down_count());
   view.OnDoCommandBySelector(@selector(insertBacktab:));
   EXPECT_EQ(-1, model->up_or_down_count());
-}
-
-TEST_F(OmniboxViewMacTest, SetGrayTextAutocompletion) {
-  const NSRect frame = NSMakeRect(0, 0, 50, 30);
-  base::scoped_nsobject<AutocompleteTextField> field(
-      [[AutocompleteTextField alloc] initWithFrame:frame]);
-
-  TestingToolbarModelDelegate delegate;
-  ToolbarModelImpl toolbar_model(&delegate);
-  TestingOmniboxEditController controller(&toolbar_model);
-  OmniboxViewMac view(&controller, profile(), NULL, field.get());
-
-  // This is deleted by the omnibox view.
-  MockOmniboxEditModel* model =
-      new MockOmniboxEditModel(&view, &controller, profile());
-  SetModel(&view, model);
-
-  MockOmniboxPopupView popup_view;
-  OmniboxPopupModel popup_model(&popup_view, model);
-
-  view.SetUserText(base::ASCIIToUTF16("Alfred"));
-  EXPECT_EQ("Alfred", base::UTF16ToUTF8(view.GetText()));
-  view.SetGrayTextAutocompletion(base::ASCIIToUTF16(" Hitchcock"));
-  EXPECT_EQ("Alfred", base::UTF16ToUTF8(view.GetText()));
-  EXPECT_EQ(" Hitchcock", base::UTF16ToUTF8(view.GetGrayTextAutocompletion()));
-
-  view.SetUserText(base::string16());
-  EXPECT_EQ(base::string16(), view.GetText());
-  EXPECT_EQ(base::string16(), view.GetGrayTextAutocompletion());
 }
 
 TEST_F(OmniboxViewMacTest, UpDownArrow) {

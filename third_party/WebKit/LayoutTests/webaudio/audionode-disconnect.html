@@ -4,6 +4,7 @@
 <head>
   <script src="../resources/js-test.js"></script>
   <script src="resources/compatibility.js"></script>
+  <script src="resources/audit-util.js"></script>
   <script src="resources/audio-testing.js"></script>
 </head>
 
@@ -22,7 +23,7 @@
       // all zeros since the source was disconnected.
       var context = new OfflineAudioContext(1, 128, 44100);
       var source = context.createBufferSource();
-      var buffer1ch = createTestingAudioBuffer(context, 1, 128);
+      var buffer1ch = createConstantBuffer(context, 128, [1]);
       var gain1 = context.createGain();
       var gain2 = context.createGain();
       var gain3 = context.createGain();
@@ -56,7 +57,7 @@
       // is actually disconnected.
       var context = new OfflineAudioContext(1, 128, 44100);
       var source = context.createBufferSource();
-      var buffer3ch = createTestingAudioBuffer(context, 3, 128);
+      var buffer3ch = createConstantBuffer(context, 128, [1, 2, 3]);
       var splitter = context.createChannelSplitter(3);
       var sum = context.createGain();
       
@@ -87,7 +88,7 @@
       // single destination selectively works correctly.
       var context = new OfflineAudioContext(1, 128, 44100);
       var source = context.createBufferSource();
-      var buffer1ch = createTestingAudioBuffer(context, 1, 128);
+      var buffer1ch = createConstantBuffer(context, 128, [1]);
       var gain1 = context.createGain();
       var gain2 = context.createGain();
       var gain3 = context.createGain();
@@ -126,7 +127,7 @@
       // specified output of the destination node works correctly.
       var context = new OfflineAudioContext(1, 128, 44100);
       var source = context.createBufferSource();
-      var buffer2ch = createTestingAudioBuffer(context, 2, 128);
+      var buffer2ch = createConstantBuffer(context, 128, [1, 2]);
       var splitter = context.createChannelSplitter(2);
       var gain1 = context.createGain();
       var gain2 = context.createGain();
@@ -164,7 +165,7 @@
       // respectively.
       var context = new OfflineAudioContext(3, 128, 44100);
       var source = context.createBufferSource();
-      var buffer3ch = createTestingAudioBuffer(context, 3, 128);
+      var buffer3ch = createConstantBuffer(context, 128, [1, 2, 3]);
       var splitter = context.createChannelSplitter(3);
       var merger = context.createChannelMerger(3);
       
@@ -255,20 +256,29 @@
       done();
     });
 
+    audit.defineTask('disabled-outputs', function (taskDone) {
+      // See crbug.com/656652
+      var context = new OfflineAudioContext(2, 1024, 44100);
+      var g1 = context.createGain();
+      var g2 = context.createGain();
+      g1.connect(g2);
+      g1.disconnect(g2);
+      var g3 = context.createGain();
+      g2.connect(g3);
+      g1.connect(g2);
+      context.startRendering().then(function () {
+        // If we make it here, we passed.
+        Should("Disabled outputs handled", true)
+          .summarize("correctly", "inccorrectly");
+      }).then(taskDone);
+    });
+
     audit.defineTask('finish', function (done) {
       finishJSTest();
       done();
     });
 
-    audit.runTasks(
-      'disconnect()',
-      'disconnect(output)',
-      'disconnect(AudioNode)',
-      'disconnect(AudioNode, output)',
-      'disconnect(AudioNode, output, input)',
-      'exceptions',
-      'finish'
-    );
+    audit.runTasks();
 
     successfullyParsed = true;
   </script>

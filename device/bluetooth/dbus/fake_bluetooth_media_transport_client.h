@@ -5,13 +5,15 @@
 #ifndef DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_MEDIA_TRANSPORT_CLIENT_H_
 #define DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_MEDIA_TRANSPORT_CLIENT_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "dbus/object_path.h"
 #include "device/bluetooth/bluetooth_export.h"
@@ -96,18 +98,18 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothMediaTransportClient
   // assigned with a transport path, an object of Transport is created.
   struct Transport {
     Transport(const dbus::ObjectPath& transport_path,
-              Properties* transport_properties);
+              std::unique_ptr<Properties> transport_properties);
     ~Transport();
 
     // An unique transport path.
     dbus::ObjectPath path;
 
     // The property set bound with |path|.
-    scoped_ptr<Properties> properties;
+    std::unique_ptr<Properties> properties;
 
     // This is the internal end of socketpair created for simulation purposes.
     // |input_fd| will be initialized when Acquire/TryAcquire is called.
-    scoped_ptr<base::File> input_fd;
+    std::unique_ptr<base::File> input_fd;
   };
 
   // Property callback passed while a Properties structure is created.
@@ -132,7 +134,8 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothMediaTransportClient
   // Map of endpoints with valid transport. Each pair is composed of an endpoint
   // path and a Transport structure containing a transport path and its
   // properties.
-  std::map<dbus::ObjectPath, Transport*> endpoint_to_transport_map_;
+  std::map<dbus::ObjectPath, std::unique_ptr<Transport>>
+      endpoint_to_transport_map_;
 
   // Map of valid transports. Each pair is composed of a transport path as the
   // key and an endpoint path as the value. This map is used to get the

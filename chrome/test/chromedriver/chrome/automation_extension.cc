@@ -4,19 +4,21 @@
 
 #include "chrome/test/chromedriver/chrome/automation_extension.h"
 
+#include <utility>
+
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome/web_view.h"
 
-AutomationExtension::AutomationExtension(scoped_ptr<WebView> web_view)
-    : web_view_(web_view.Pass()) {}
+AutomationExtension::AutomationExtension(std::unique_ptr<WebView> web_view)
+    : web_view_(std::move(web_view)) {}
 
 AutomationExtension::~AutomationExtension() {}
 
 Status AutomationExtension::CaptureScreenshot(std::string* screenshot) {
   base::ListValue args;
-  scoped_ptr<base::Value> result;
+  std::unique_ptr<base::Value> result;
   Status status = web_view_->CallAsyncFunction(
       std::string(),
       "captureScreenshot",
@@ -67,7 +69,7 @@ Status AutomationExtension::GetWindowInfo(int* x,
                                           int* width,
                                           int* height) {
   base::ListValue args;
-  scoped_ptr<base::Value> result;
+  std::unique_ptr<base::Value> result;
   Status status = web_view_->CallAsyncFunction(std::string(),
                                                "getWindowInfo",
                                                args,
@@ -98,8 +100,8 @@ Status AutomationExtension::GetWindowInfo(int* x,
 Status AutomationExtension::UpdateWindow(
     const base::DictionaryValue& update_info) {
   base::ListValue args;
-  args.Append(update_info.DeepCopy());
-  scoped_ptr<base::Value> result;
+  args.Append(update_info.CreateDeepCopy());
+  std::unique_ptr<base::Value> result;
   return web_view_->CallAsyncFunction(std::string(),
                                       "updateWindow",
                                       args,
@@ -110,7 +112,7 @@ Status AutomationExtension::UpdateWindow(
 Status AutomationExtension::LaunchApp(const std::string& id) {
   base::ListValue args;
   args.AppendString(id);
-  scoped_ptr<base::Value> result;
+  std::unique_ptr<base::Value> result;
   return web_view_->CallAsyncFunction(std::string(),
                                       "launchApp",
                                       args,

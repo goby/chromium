@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/events/NavigatorEvents.h"
 
 #include "core/frame/LocalFrame.h"
@@ -37,14 +36,13 @@
 
 namespace blink {
 
-long NavigatorEvents::maxTouchPoints(Navigator& navigator)
-{
-    LocalFrame* frame = navigator.frame();
-    if (!frame)
-        return 0;
-    if (Settings* settings = frame->settings())
-        return settings->maxTouchPoints();
+long NavigatorEvents::maxTouchPoints(Navigator& navigator) {
+  LocalFrame* frame = navigator.frame();
+  if (!frame)
     return 0;
+  if (Settings* settings = frame->settings())
+    return settings->maxTouchPoints();
+  return 0;
 }
 
-} // namespace blink
+}  // namespace blink

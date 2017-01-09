@@ -53,13 +53,13 @@ cr.define('cr.ui', function() {
 
       var newRow = -1;
 
-      if (e.keyIdentifier == 'Up')
+      if (e.key == 'ArrowUp')
         newRow = rowIndex - 1;
-      else if (e.keyIdentifier == 'Down')
+      else if (e.key == 'ArrowDown')
         newRow = rowIndex + 1;
-      else if (e.keyIdentifier == 'PageUp')
+      else if (e.key == 'PageUp')
         newRow = 0;
-      else if (e.keyIdentifier == 'PageDown')
+      else if (e.key == 'PageDown')
         newRow = this.rows.length - 1;
 
       var rowToFocus = this.rows[newRow];
@@ -82,7 +82,7 @@ cr.define('cr.ui', function() {
     },
 
     /**
-     * @param {Node} target A target item to find in this grid.
+     * @param {!Element} target A target item to find in this grid.
      * @return {number} The row index. -1 if not found.
      */
     getRowIndexForTarget: function(target) {
@@ -122,7 +122,7 @@ cr.define('cr.ui', function() {
     addRowBefore: function(row, nextRow) {
       row.delegate = row.delegate || this;
 
-      var nextRowIndex = this.rows.indexOf(nextRow);
+      var nextRowIndex = nextRow ? this.rows.indexOf(nextRow) : -1;
       if (nextRowIndex == -1)
         this.rows.push(row);
       else
@@ -134,7 +134,7 @@ cr.define('cr.ui', function() {
      * @param {cr.ui.FocusRow} row The row that needs to be removed.
      */
     removeRow: function(row) {
-      var nextRowIndex = this.rows.indexOf(row);
+      var nextRowIndex = row ? this.rows.indexOf(row) : -1;
       if (nextRowIndex > -1)
         this.rows.splice(nextRowIndex, 1);
     },

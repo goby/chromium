@@ -5,9 +5,10 @@
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 
 #include "base/bind.h"
+#include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "base/prefs/pref_service.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/browser_process.h"
@@ -27,18 +28,20 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/drive/chromeos/file_cache.h"
+#include "components/drive/chromeos/file_system.h"
+#include "components/drive/chromeos/resource_metadata.h"
 #include "components/drive/drive_api_util.h"
 #include "components/drive/drive_app_registry.h"
 #include "components/drive/drive_notification_manager.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/event_logger.h"
-#include "components/drive/file_cache.h"
-#include "components/drive/file_system.h"
 #include "components/drive/job_scheduler.h"
-#include "components/drive/resource_metadata.h"
 #include "components/drive/resource_metadata_storage.h"
 #include "components/drive/service/drive_api_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/version_info/version_info.h"
@@ -93,6 +96,17 @@ std::string GetDriveUserAgent() {
                             os_cpu_info.c_str());
 }
 
+void DeleteDirectoryContents(const base::FilePath& dir) {
+  base::FileEnumerator content_enumerator(
+      dir, false, base::FileEnumerator::FILES |
+                      base::FileEnumerator::DIRECTORIES |
+                      base::FileEnumerator::SHOW_SYM_LINKS);
+  for (base::FilePath path = content_enumerator.Next(); !path.empty();
+       path = content_enumerator.Next()) {
+    base::DeleteFile(path, true);
+  }
+}
+
 // Initializes FileCache and ResourceMetadata.
 // Must be run on the same task runner used by |cache| and |resource_metadata|.
 FileError InitializeMetadata(
@@ -101,16 +115,26 @@ FileError InitializeMetadata(
     internal::FileCache* cache,
     internal::ResourceMetadata* resource_metadata,
     const base::FilePath& downloads_directory) {
+  if (!base::DirectoryExists(
+          cache_root_directory.Append(kTemporaryFileDirectory))) {
+    LOG(ERROR) << "/tmp should have been created as clear.";
+    // Create /tmp directory as encrypted. Cryptohome will re-create /tmp
+    // direcotry at the next login.
+    if (!base::CreateDirectory(
+            cache_root_directory.Append(kTemporaryFileDirectory))) {
+      LOG(WARNING) << "Failed to create directories.";
+      return FILE_ERROR_FAILED;
+    }
+  }
   // Files in temporary directory need not persist across sessions. Clean up
-  // the directory content while initialization.
-  base::DeleteFile(cache_root_directory.Append(kTemporaryFileDirectory),
-                   true);  // recursive
+  // the directory content while initialization. The directory itself should not
+  // be deleted because it's created by cryptohome in clear and shouldn't be
+  // re-created as encrypted.
+  DeleteDirectoryContents(cache_root_directory.Append(kTemporaryFileDirectory));
   if (!base::CreateDirectory(cache_root_directory.Append(
           kMetadataDirectory)) ||
       !base::CreateDirectory(cache_root_directory.Append(
-          kCacheFileDirectory)) ||
-      !base::CreateDirectory(cache_root_directory.Append(
-          kTemporaryFileDirectory))) {
+          kCacheFileDirectory))) {
     LOG(WARNING) << "Failed to create directories.";
     return FILE_ERROR_FAILED;
   }
@@ -237,7 +261,6 @@ DriveIntegrationService::DriveIntegrationService(
         oauth_service, g_browser_process->system_request_context(),
         blocking_task_runner_.get(),
         GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction),
-        GURL(google_apis::DriveApiUrlGenerator::kBaseDownloadUrlForProduction),
         GURL(google_apis::DriveApiUrlGenerator::kBaseThumbnailUrlForProduction),
         GetDriveUserAgent()));
   }
@@ -260,7 +283,7 @@ DriveIntegrationService::DriveIntegrationService(
       metadata_storage_.get(), cache_.get(), blocking_task_runner_));
 
   file_task_runner_ =
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE);
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE);
   file_system_.reset(
       test_file_system
           ? test_file_system
@@ -442,8 +465,8 @@ void DriveIntegrationService::AddDriveMountPoint() {
 
   if (success) {
     logger_->Log(logging::LOG_INFO, "Drive mount point is added");
-    FOR_EACH_OBSERVER(DriveIntegrationServiceObserver, observers_,
-                      OnFileSystemMounted());
+    for (auto& observer : observers_)
+      observer.OnFileSystemMounted();
   }
 }
 
@@ -453,8 +476,8 @@ void DriveIntegrationService::RemoveDriveMountPoint() {
   if (!mount_point_name_.empty()) {
     job_list()->CancelAllJobs();
 
-    FOR_EACH_OBSERVER(DriveIntegrationServiceObserver, observers_,
-                      OnFileSystemBeingUnmounted());
+    for (auto& observer : observers_)
+      observer.OnFileSystemBeingUnmounted();
 
     storage::ExternalMountPoints* const mount_points =
         storage::ExternalMountPoints::GetSystemInstance();
@@ -565,13 +588,12 @@ void DriveIntegrationService::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type == chrome::NOTIFICATION_PROFILE_CREATED) {
-    Profile* created_profile = content::Source<Profile>(source).ptr();
-    if (created_profile->IsOffTheRecord() &&
-        created_profile->IsSameProfile(profile_)) {
-      download_handler_->ObserveIncognitoDownloadManager(
-          BrowserContext::GetDownloadManager(created_profile));
-    }
+  DCHECK_EQ(chrome::NOTIFICATION_PROFILE_CREATED, type);
+  Profile* created_profile = content::Source<Profile>(source).ptr();
+  if (created_profile->IsOffTheRecord() &&
+      created_profile->IsSameProfile(profile_)) {
+    download_handler_->ObserveIncognitoDownloadManager(
+        BrowserContext::GetDownloadManager(created_profile));
   }
 }
 

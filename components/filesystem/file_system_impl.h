@@ -5,53 +5,46 @@
 #ifndef COMPONENTS_FILESYSTEM_FILE_SYSTEM_IMPL_H_
 #define COMPONENTS_FILESYSTEM_FILE_SYSTEM_IMPL_H_
 
+#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "components/filesystem/public/interfaces/file_system.mojom.h"
+#include "components/filesystem/shared_temp_dir.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace base {
 class FilePath;
 }
 
-namespace mojo {
-class ApplicationConnection;
+namespace service_manager {
+class Identity;
 }
 
 namespace filesystem {
-class FileSystemApp;
 
-class FileSystemImpl : public FileSystem {
+class LockTable;
+
+// The base implementation of FileSystemImpl.
+class FileSystemImpl : public mojom::FileSystem {
  public:
-  FileSystemImpl(FileSystemApp* app,
-                 mojo::ApplicationConnection* connection,
-                 mojo::InterfaceRequest<FileSystem> request);
+  // |persistent_dir| is the directory served to callers of
+  // |OpenPersistentFileSystem().
+  FileSystemImpl(const service_manager::Identity& remote_identity,
+                 base::FilePath persistent_dir,
+                 scoped_refptr<LockTable> lock_table);
   ~FileSystemImpl() override;
 
   // |Files| implementation:
-
-  // Current valid values for |file_system| are "temp" for a temporary
-  // filesystem and "origin" for a persistent filesystem bound to the origin of
-  // the URL of the caller.
-  void OpenFileSystem(const mojo::String& file_system,
-                      mojo::InterfaceRequest<Directory> directory,
-                      FileSystemClientPtr client,
-                      const OpenFileSystemCallback& callback) override;
+  void OpenTempDirectory(mojom::DirectoryRequest directory,
+                         const OpenTempDirectoryCallback& callback) override;
+  void OpenPersistentFileSystem(
+      mojom::DirectoryRequest directory,
+      const OpenPersistentFileSystemCallback& callback) override;
 
  private:
-  // Gets the system specific toplevel profile directory.
-  base::FilePath GetSystemProfileDir() const;
+  const std::string remote_application_name_;
+  scoped_refptr<LockTable> lock_table_;
 
-  // Takes the origin string from |remote_application_url_|.
-  std::string GetOriginFromRemoteApplicationURL() const;
-
-  // Sanitizes |origin| so it is an acceptable filesystem name.
-  void BuildSanitizedOrigin(const std::string& origin,
-                            std::string* sanitized_origin);
-
-  FileSystemApp* app_;
-  const std::string remote_application_url_;
-  mojo::StrongBinding<FileSystem> binding_;
+  base::FilePath persistent_dir_;
 
   DISALLOW_COPY_AND_ASSIGN(FileSystemImpl);
 };

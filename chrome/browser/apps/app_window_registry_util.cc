@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/stl_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -80,7 +81,13 @@ void AppWindowRegistryUtil::CloseAllAppWindows() {
     if (!registry)
       continue;
 
-    while (!registry->app_windows().empty())
-      registry->app_windows().front()->GetBaseWindow()->Close();
+    // Ask each app window to close, but cater for windows removing or
+    // rearranging themselves in the ordered window list in response.
+    AppWindowList window_list_copy(registry->app_windows());
+    for (auto* window : window_list_copy) {
+      // Ensure window is still valid.
+      if (base::ContainsValue(registry->app_windows(), window))
+        window->GetBaseWindow()->Close();
+    }
   }
 }

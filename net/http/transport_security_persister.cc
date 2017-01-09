@@ -4,6 +4,9 @@
 
 #include "net/http/transport_security_persister.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
@@ -13,7 +16,7 @@
 #include "base/location.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task_runner_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "crypto/sha2.h"
 #include "net/cert/x509_certificate.h"
@@ -26,7 +29,7 @@ namespace {
 base::ListValue* SPKIHashesToListValue(const HashValueVector& hashes) {
   base::ListValue* pins = new base::ListValue;
   for (size_t i = 0; i != hashes.size(); i++)
-    pins->Append(new base::StringValue(hashes[i].ToString()));
+    pins->AppendString(hashes[i].ToString());
   return pins;
 }
 
@@ -143,7 +146,8 @@ bool TransportSecurityPersister::SerializeData(std::string* output) {
         sts_iterator.domain_state();
 
     const std::string key = HashedDomainToExternalString(hostname);
-    scoped_ptr<base::DictionaryValue> serialized(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> serialized(
+        new base::DictionaryValue);
     PopulateEntryWithDefaults(serialized.get());
 
     serialized->SetBoolean(kStsIncludeSubdomains, sts_state.include_subdomains);
@@ -162,7 +166,7 @@ bool TransportSecurityPersister::SerializeData(std::string* output) {
         continue;
     }
 
-    toplevel.Set(key, serialized.Pass());
+    toplevel.Set(key, std::move(serialized));
   }
 
   TransportSecurityState::PKPStateIterator pkp_iterator(
@@ -177,11 +181,11 @@ bool TransportSecurityPersister::SerializeData(std::string* output) {
     const std::string key = HashedDomainToExternalString(hostname);
     base::DictionaryValue* serialized = nullptr;
     if (!toplevel.GetDictionary(key, &serialized)) {
-      scoped_ptr<base::DictionaryValue> serialized_scoped(
+      std::unique_ptr<base::DictionaryValue> serialized_scoped(
           new base::DictionaryValue);
       serialized = serialized_scoped.get();
       PopulateEntryWithDefaults(serialized);
-      toplevel.Set(key, serialized_scoped.Pass());
+      toplevel.Set(key, std::move(serialized_scoped));
     }
 
     serialized->SetBoolean(kPkpIncludeSubdomains, pkp_state.include_subdomains);
@@ -219,7 +223,7 @@ bool TransportSecurityPersister::LoadEntries(const std::string& serialized,
 bool TransportSecurityPersister::Deserialize(const std::string& serialized,
                                              bool* dirty,
                                              TransportSecurityState* state) {
-  scoped_ptr<base::Value> value = base::JSONReader::Read(serialized);
+  std::unique_ptr<base::Value> value = base::JSONReader::Read(serialized);
   base::DictionaryValue* dict_value = NULL;
   if (!value.get() || !value->GetAsDictionary(&dict_value))
     return false;

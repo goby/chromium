@@ -8,19 +8,19 @@
 #include "chrome/browser/command_updater.h"
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 #include "chrome/grit/generated_resources.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 TranslateDecoration::TranslateDecoration(CommandUpdater* command_updater)
     : command_updater_(command_updater) {
-  SetLit(false);
+  SetLit(false, false);
 }
 
 TranslateDecoration::~TranslateDecoration() {}
 
-void TranslateDecoration::SetLit(bool on) {
-  const int image_id = on ? IDR_TRANSLATE_ACTIVE : IDR_TRANSLATE;
-  SetImage(OmniboxViewMac::ImageForResource(image_id));
+void TranslateDecoration::SetLit(bool on, bool location_bar_is_dark) {
+  SetImage(GetMaterialIcon(location_bar_is_dark));
 }
 
 NSPoint TranslateDecoration::GetBubblePointInFrame(NSRect frame) {
@@ -39,4 +39,8 @@ bool TranslateDecoration::OnMousePressed(NSRect frame, NSPoint location) {
 
 NSString* TranslateDecoration::GetToolTip() {
   return l10n_util::GetNSStringWithFixup(IDS_TOOLTIP_TRANSLATE);
+}
+
+gfx::VectorIconId TranslateDecoration::GetMaterialVectorIconId() const {
+  return gfx::VectorIconId::TRANSLATE;
 }

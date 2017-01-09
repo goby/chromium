@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/param.h>
@@ -15,6 +17,7 @@
 #include <unistd.h>
 
 #include <map>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -30,11 +33,11 @@
 #include <AvailabilityMacros.h>
 #endif
 
-#include "base/basictypes.h"
 #include "base/debug/debugger.h"
 #include "base/debug/proc_maps_linux.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/free_deleter.h"
 #include "base/memory/singleton.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
@@ -95,7 +98,7 @@ void DemangleSymbols(std::string* text) {
 
     // Try to demangle the mangled symbol candidate.
     int status = 0;
-    scoped_ptr<char, base::FreeDeleter> demangled_symbol(
+    std::unique_ptr<char, base::FreeDeleter> demangled_symbol(
         abi::__cxa_demangle(mangled_symbol.c_str(), NULL, 0, &status));
     if (status == 0) {  // Demangling is successful.
       // Remove the mangled symbol.
@@ -122,6 +125,7 @@ class BacktraceOutputHandler {
   virtual ~BacktraceOutputHandler() {}
 };
 
+#if !defined(__UCLIBC__)
 void OutputPointer(void* pointer, BacktraceOutputHandler* handler) {
   // This should be more than enough to store a 64-bit number in hex:
   // 16 hex digits + 1 for null-terminator.
@@ -169,14 +173,14 @@ void ProcessBacktrace(void *const *trace,
 
     handler->HandleOutput("\n");
   }
-#elif !defined(__UCLIBC__)
+#else
   bool printed = false;
 
   // Below part is async-signal unsafe (uses malloc), so execute it only
   // when we are not executing the signal handler.
   if (in_signal_handler == 0) {
-    scoped_ptr<char*, FreeDeleter>
-        trace_symbols(backtrace_symbols(trace, size));
+    std::unique_ptr<char*, FreeDeleter> trace_symbols(
+        backtrace_symbols(trace, size));
     if (trace_symbols.get()) {
       for (size_t i = 0; i < size; ++i) {
         std::string trace_symbol = trace_symbols.get()[i];
@@ -198,6 +202,7 @@ void ProcessBacktrace(void *const *trace,
   }
 #endif  // defined(USE_SYMBOLIZE)
 }
+#endif  // !defined(__UCLIBC__)
 
 void PrintToStderr(const char* output) {
   // NOTE: This code MUST be async-signal safe (it's used by in-process
@@ -439,8 +444,6 @@ void WarmUpBacktrace() {
   StackTrace stack_trace;
 }
 
-}  // namespace
-
 #if defined(USE_SYMBOLIZE)
 
 // class SandboxSymbolizeHelper.
@@ -456,7 +459,8 @@ class SandboxSymbolizeHelper {
  public:
   // Returns the singleton instance.
   static SandboxSymbolizeHelper* GetInstance() {
-    return Singleton<SandboxSymbolizeHelper>::get();
+    return Singleton<SandboxSymbolizeHelper,
+                     LeakySingletonTraits<SandboxSymbolizeHelper>>::get();
   }
 
  private:
@@ -671,6 +675,8 @@ class SandboxSymbolizeHelper {
   DISALLOW_COPY_AND_ASSIGN(SandboxSymbolizeHelper);
 };
 #endif  // USE_SYMBOLIZE
+
+}  // namespace
 
 bool EnableInProcessStackDumping() {
 #if defined(USE_SYMBOLIZE)

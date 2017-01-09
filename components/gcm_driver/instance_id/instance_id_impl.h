@@ -6,11 +6,11 @@
 #define COMPONENTS_GCM_DRIVER_INSTANCE_ID_INSTANCE_ID_IMPL_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/gcm_driver/gcm_client.h"
@@ -37,14 +37,12 @@ class InstanceIDImpl : public InstanceID {
                 const std::string& scope,
                 const std::map<std::string, std::string>& options,
                 const GetTokenCallback& callback) override;
-  void DeleteToken(const std::string& authorized_entity,
-                   const std::string& scope,
-                   const DeleteTokenCallback& callback) override;
-  void DeleteID(const DeleteIDCallback& callback) override;
+  void DeleteTokenImpl(const std::string& authorized_entity,
+                       const std::string& scope,
+                       const DeleteTokenCallback& callback) override;
+  void DeleteIDImpl(const DeleteIDCallback& callback) override;
 
  private:
-  gcm::InstanceIDHandler* GetInstanceIDHandler() const;
-
   void EnsureIDGenerated();
 
   void OnGetTokenCompleted(const GetTokenCallback& callback,
@@ -69,12 +67,9 @@ class InstanceIDImpl : public InstanceID {
                      const DeleteTokenCallback& callback);
   void DoDeleteID(const DeleteIDCallback& callback);
 
-  gcm::GCMDriver* gcm_driver_;  // Not owned.
+  gcm::InstanceIDHandler* Handler();
 
   gcm::GCMDelayedTaskController delayed_task_controller_;
-
-  // Flag to indicate that we have tries to load the data from the store.
-  bool load_from_store_;
 
   // The generated Instance ID.
   std::string id_;

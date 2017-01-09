@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef USE_BRLAPI
-#error This test requires brlapi.
-#endif
+#include <stddef.h>
 
 #include <deque>
 
@@ -22,7 +20,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/chromeos_switches.h"
-#include "components/user_manager/user_manager.h"
+#include "components/session_manager/core/session_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
@@ -52,7 +50,8 @@ brlapi_keyCode_t kErrorKeyCode = BRLAPI_KEY_MAX;
 // itself.
 struct MockBrlapiConnectionData {
   bool connected;
-  size_t display_size;
+  size_t display_columns;
+  size_t display_rows;
   brlapi_error_t error;
   std::vector<std::string> written_content;
   // List of brlapi key codes.  A negative number makes the connection mock
@@ -82,7 +81,7 @@ class MockBrlapiConnection : public BrlapiConnection {
   void Disconnect() override {
     data_->connected = false;
     if (data_->reappear_on_disconnect) {
-      data_->display_size *= 2;
+      data_->display_columns *= 2;
       BrowserThread::PostTask(
           BrowserThread::IO, FROM_HERE,
           base::Bind(&BrailleControllerImpl::PokeSocketDirForTesting,
@@ -98,14 +97,16 @@ class MockBrlapiConnection : public BrlapiConnection {
     return data_->error.brlerrno != BRLAPI_ERROR_SUCCESS ? "Error" : "Success";
   }
 
-  bool GetDisplaySize(size_t* size) override {
-    *size = data_->display_size;
+  bool GetDisplaySize(unsigned int* columns, unsigned int* rows) override {
+    *columns = data_->display_columns;
+    *rows = data_->display_rows;
     return true;
   }
 
-  bool WriteDots(const unsigned char* cells) override {
-    std::string written(reinterpret_cast<const char*>(cells),
-                        data_->display_size);
+  bool WriteDots(const std::vector<unsigned char>& cells) override {
+    std::string written(
+        cells.begin(),
+        cells.begin() + data_->display_rows * data_->display_columns);
     data_->written_content.push_back(written);
     return true;
   }
@@ -145,7 +146,8 @@ class BrailleDisplayPrivateApiTest : public ExtensionApiTest {
   void SetUpInProcessBrowserTestFixture() override {
     ExtensionApiTest::SetUpInProcessBrowserTestFixture();
     connection_data_.connected = false;
-    connection_data_.display_size = 0;
+    connection_data_.display_rows = 0;
+    connection_data_.display_columns = 0;
     connection_data_.error.brlerrno = BRLAPI_ERROR_SUCCESS;
     connection_data_.reappear_on_disconnect = false;
     BrailleControllerImpl::GetInstance()->SetCreateBrlapiConnectionForTesting(
@@ -167,8 +169,8 @@ class BrailleDisplayPrivateApiTest : public ExtensionApiTest {
   }
 
  private:
-  scoped_ptr<BrlapiConnection> CreateBrlapiConnection() {
-    return scoped_ptr<BrlapiConnection>(
+  std::unique_ptr<BrlapiConnection> CreateBrlapiConnection() {
+    return std::unique_ptr<BrlapiConnection>(
         new MockBrlapiConnection(&connection_data_));
   }
 
@@ -176,22 +178,25 @@ class BrailleDisplayPrivateApiTest : public ExtensionApiTest {
 };
 
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, WriteDots) {
-  connection_data_.display_size = 11;
+  connection_data_.display_columns = 11;
+  connection_data_.display_rows = 1;
   ASSERT_TRUE(RunComponentExtensionTest("braille_display_private/write_dots"))
       << message_;
   ASSERT_EQ(3U, connection_data_.written_content.size());
-  const std::string expected_content(connection_data_.display_size, '\0');
+  const std::string expected_content(
+      connection_data_.display_columns * connection_data_.display_rows, '\0');
   for (size_t i = 0; i < connection_data_.written_content.size(); ++i) {
-    ASSERT_EQ(std::string(
-        connection_data_.display_size,
-        static_cast<char>(i)),
-                 connection_data_.written_content[i])
+    ASSERT_EQ(std::string(connection_data_.display_columns *
+                              connection_data_.display_rows,
+                          static_cast<char>(i)),
+              connection_data_.written_content[i])
         << "String " << i << " doesn't match";
   }
 }
 
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, KeyEvents) {
-  connection_data_.display_size = 11;
+  connection_data_.display_columns = 11;
+  connection_data_.display_rows = 1;
 
   // Braille navigation commands.
   connection_data_.pending_keys.push_back(BRLAPI_KEY_TYPE_CMD |
@@ -254,7 +259,8 @@ IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, KeyEvents) {
 }
 
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateApiTest, DisplayStateChanges) {
-  connection_data_.display_size = 11;
+  connection_data_.display_columns = 11;
+  connection_data_.display_rows = 1;
   connection_data_.pending_keys.push_back(kErrorKeyCode);
   connection_data_.reappear_on_disconnect = true;
   ASSERT_TRUE(RunComponentExtensionTest(
@@ -275,7 +281,9 @@ class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
 
     int GetEventCount() { return event_count_; }
 
-    void BroadcastEvent(scoped_ptr<Event> event) override { ++event_count_; }
+    void BroadcastEvent(std::unique_ptr<Event> event) override {
+      ++event_count_;
+    }
     bool HasListener() override { return true; }
 
    private:
@@ -285,7 +293,7 @@ class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
   MockEventDelegate* SetMockEventDelegate(BrailleDisplayPrivateAPI* api) {
     MockEventDelegate* delegate = new MockEventDelegate();
     api->SetEventDelegateForTest(
-        scoped_ptr<BrailleDisplayPrivateAPI::EventDelegate>(delegate).Pass());
+        std::unique_ptr<BrailleDisplayPrivateAPI::EventDelegate>(delegate));
     return delegate;
   }
 
@@ -316,13 +324,19 @@ class BrailleDisplayPrivateAPIUserTest : public BrailleDisplayPrivateApiTest {
   }
 };
 
+// Flakily times out on ChromeOS MSAN bots. See https://crbug.com/592893.
+#if defined(MEMORY_SANITIZER)
+#define MAYBE_KeyEventOnLockScreen DISABLED_KeyEventOnLockScreen
+#else
+#define MAYBE_KeyEventOnLockScreen KeyEventOnLockScreen
+#endif
 IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateAPIUserTest,
-                       KeyEventOnLockScreen) {
-  scoped_ptr<ScreenLockerTester> tester(ScreenLocker::GetTester());
+                       MAYBE_KeyEventOnLockScreen) {
+  std::unique_ptr<ScreenLockerTester> tester(ScreenLocker::GetTester());
   // Log in.
-  user_manager::UserManager::Get()->UserLoggedIn(
-      AccountId::FromUserEmail(kTestUserName), kTestUserName, true);
-  user_manager::UserManager::Get()->SessionStarted();
+  session_manager::SessionManager::Get()->CreateSession(
+      AccountId::FromUserEmail(kTestUserName), kTestUserName);
+  session_manager::SessionManager::Get()->SessionStarted();
   Profile* profile = ProfileManager::GetActiveUserProfile();
   ASSERT_FALSE(
       ProfileHelper::GetSigninProfile()->IsSameProfile(profile))

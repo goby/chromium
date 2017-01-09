@@ -4,12 +4,14 @@
 
 #include "components/dom_distiller/core/fake_distiller.h"
 
+#include <utility>
+
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace dom_distiller {
@@ -40,7 +42,7 @@ FakeDistiller::~FakeDistiller() {
 
 void FakeDistiller::DistillPage(
     const GURL& url,
-    scoped_ptr<DistillerPage> distiller_page,
+    std::unique_ptr<DistillerPage> distiller_page,
     const DistillationFinishedCallback& article_callback,
     const DistillationUpdateCallback& page_callback) {
   url_ = url;
@@ -50,18 +52,18 @@ void FakeDistiller::DistillPage(
     base::ResetAndReturn(&distillation_initiated_callback_).Run();
   }
   if (execute_callback_) {
-    scoped_ptr<DistilledArticleProto> proto(new DistilledArticleProto);
+    std::unique_ptr<DistilledArticleProto> proto(new DistilledArticleProto);
     proto->add_pages()->set_url(url_.spec());
-    PostDistillerCallback(proto.Pass());
+    PostDistillerCallback(std::move(proto));
   }
 }
 
 void FakeDistiller::RunDistillerCallback(
-    scoped_ptr<DistilledArticleProto> proto) {
+    std::unique_ptr<DistilledArticleProto> proto) {
   ASSERT_FALSE(execute_callback_) << "Cannot explicitly run the distiller "
                                      "callback for a fake distiller created "
                                      "with automatic callback execution.";
-  PostDistillerCallback(proto.Pass());
+  PostDistillerCallback(std::move(proto));
 }
 
 void FakeDistiller::RunDistillerUpdateCallback(
@@ -69,21 +71,20 @@ void FakeDistiller::RunDistillerUpdateCallback(
   page_callback_.Run(update);
 }
 
-
 void FakeDistiller::PostDistillerCallback(
-    scoped_ptr<DistilledArticleProto> proto) {
+    std::unique_ptr<DistilledArticleProto> proto) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&FakeDistiller::RunDistillerCallbackInternal,
                             base::Unretained(this), base::Passed(&proto)));
 }
 
 void FakeDistiller::RunDistillerCallbackInternal(
-    scoped_ptr<DistilledArticleProto> proto) {
+    std::unique_ptr<DistilledArticleProto> proto) {
   EXPECT_FALSE(article_callback_.is_null());
 
   base::AutoReset<bool> dont_delete_this_in_callback(&destruction_allowed_,
                                                      false);
-  article_callback_.Run(proto.Pass());
+  article_callback_.Run(std::move(proto));
   article_callback_.Reset();
 }
 

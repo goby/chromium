@@ -12,26 +12,30 @@
 
 class BackgroundTheme : public ui::ThemeProvider {
  public:
-  BackgroundTheme(ui::ThemeProvider* provider);
+  BackgroundTheme(const ui::ThemeProvider* provider);
   ~BackgroundTheme() override;
 
   // Overridden from ui::ThemeProvider:
   bool UsingSystemTheme() const override;
   gfx::ImageSkia* GetImageSkiaNamed(int id) const override;
   SkColor GetColor(int id) const override;
+  color_utils::HSL GetTint(int id) const override;
   int GetDisplayProperty(int id) const override;
   bool ShouldUseNativeFrame() const override;
   bool HasCustomImage(int id) const override;
   base::RefCountedMemory* GetRawData(int id, ui::ScaleFactor scale_factor)
       const override;
+  bool InIncognitoMode() const override;
+  bool HasCustomColor(int id) const override;
   NSImage* GetNSImageNamed(int id) const override;
   NSColor* GetNSImageColorNamed(int id) const override;
   NSColor* GetNSColor(int id) const override;
   NSColor* GetNSColorTint(int id) const override;
   NSGradient* GetNSGradient(int id) const override;
+  bool ShouldIncreaseContrast() const override;
 
  private:
-  ui::ThemeProvider* provider_;
+  const ui::ThemeProvider* provider_;
   base::scoped_nsobject<NSGradient> buttonGradient_;
   base::scoped_nsobject<NSGradient> buttonPressedGradient_;
   base::scoped_nsobject<NSColor> borderColor_;

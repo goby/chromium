@@ -6,9 +6,6 @@
  * @fileoverview
  * 'settings-internet-known-networks' is the settings subpage listing the
  * known networks for a type (currently always WiFi).
- *
- * @group Chrome Settings Elements
- * @element settings-internet-known-networks
  */
 Polymer({
   is: 'settings-internet-known-networks-page',
@@ -20,7 +17,6 @@ Polymer({
      */
     networkType: {
       type: String,
-      value: CrOnc.Type.WI_FI,
       observer: 'networkTypeChanged_',
     },
 
@@ -29,17 +25,25 @@ Polymer({
      */
     maxHeight: {
       type: Number,
-      value: 500
+      value: 500,
     },
 
     /**
-     * List of all network state data for the network type.
-     * @type {!Array<!CrOnc.NetworkStateProperties>}
+     * Interface for networkingPrivate calls, passed from internet_page.
+     * @type {NetworkingPrivate}
      */
-    networkStateList: {
+    networkingPrivate: Object,
+
+    /**
+     * List of all network state data for the network type.
+     * @private {!Array<!CrOnc.NetworkStateProperties>}
+     */
+    networkStateList_: {
       type: Array,
-      value: function() { return []; }
-    }
+      value: function() {
+        return [];
+      }
+    },
   },
 
   /**
@@ -52,19 +56,17 @@ Polymer({
   /** @override */
   attached: function() {
     this.networksChangedListener_ = this.onNetworksChangedEvent_.bind(this);
-    chrome.networkingPrivate.onNetworksChanged.addListener(
+    this.networkingPrivate.onNetworksChanged.addListener(
         this.networksChangedListener_);
   },
 
   /** @override */
   detached: function() {
-    chrome.networkingPrivate.onNetworksChanged.removeListener(
+    this.networkingPrivate.onNetworksChanged.removeListener(
         this.networksChangedListener_);
   },
 
-  /**
-   * Polymer type changed method.
-   */
+  /** @private */
   networkTypeChanged_: function() {
     this.refreshNetworks_();
   },
@@ -91,43 +93,65 @@ Polymer({
       visible: false,
       configured: true
     };
-    chrome.networkingPrivate.getNetworks(
-        filter,
-        function(states) { this.networkStateList = states; }.bind(this));
+    this.networkingPrivate.getNetworks(filter, function(states) {
+      this.networkStateList_ = states;
+    }.bind(this));
   },
 
   /**
-   * Event triggered when a cr-network-list item is selected.
-   * @param {!{detail: !CrOnc.NetworkStateProperties}} event
+   * @param {!CrOnc.NetworkStateProperties} state
+   * @return {boolean}
    * @private
    */
-  onListItemSelected_: function(event) {
-    this.fire('show-detail', event.detail);
+  networkIsPreferred_: function(state) {
+    // Currently we treat NetworkStateProperties.Priority as a boolean.
+    return state.Priority > 0;
   },
 
   /**
-   * Event triggered when a cr-network-list item 'remove' button is pressed.
-   * @param {!{detail: !CrOnc.NetworkStateProperties}} event
+   * @param {!CrOnc.NetworkStateProperties} networkState
+   * @return {boolean}
    * @private
    */
-  onRemove_: function(event) {
-    var state = event.detail;
-    if (!state.GUID)
-      return;
-    chrome.networkingPrivate.forgetNetwork(state.GUID);
+  networkIsNotPreferred_: function(networkState) {
+    return networkState.Priority == 0;
   },
 
   /**
-   * Event triggered when a cr-network-list item 'preferred' button is toggled.
-   * @param {!{detail: !CrOnc.NetworkStateProperties}} event
+   * @return {boolean}
    * @private
    */
-  onTogglePreferred_: function(event) {
-    var state = event.detail;
-    if (!state.GUID)
-      return;
-    var preferred = state.Priority > 0;
-    var onc = {Priority: preferred ? 0 : 1};
-    chrome.networkingPrivate.setProperties(state.GUID, onc);
+  havePreferred_: function() {
+    return this.networkStateList_.find(function(state) {
+      return this.networkIsPreferred_(state);
+    }.bind(this)) !== undefined;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  haveNotPreferred_: function() {
+    return this.networkStateList_.find(function(state) {
+      return this.networkIsNotPreferred_(state);
+    }.bind(this)) !== undefined;
+  },
+
+  /**
+   * @param {!{model: !{item: !CrOnc.NetworkStateProperties}}} e
+   * @private
+   */
+  onRemoveTap_: function(e) {
+    var state = e.model.item;
+    this.networkingPrivate.setProperties(state.GUID, {Priority: 0});
+  },
+
+  /**
+   * @param {!{model: !{item: !CrOnc.NetworkStateProperties}}} e
+   * @private
+   */
+  onAddTap_: function(e) {
+    var state = e.model.item;
+    this.networkingPrivate.setProperties(state.GUID, {Priority: 1});
   },
 });

@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/browser/predictors/autocomplete_action_predictor_table.h"
@@ -12,6 +15,7 @@
 #include "chrome/browser/predictors/predictor_database_factory.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "sql/statement.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -52,10 +56,9 @@ class AutocompleteActionPredictorTableTest : public testing::Test {
   AutocompleteActionPredictorTable::Rows test_db_;
 
  private:
-  base::MessageLoop loop_;
+  content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile profile_;
-  scoped_ptr<PredictorDatabase> db_;
-  content::TestBrowserThread db_thread_;
+  std::unique_ptr<PredictorDatabase> db_;
 };
 
 class AutocompleteActionPredictorTableReopenTest
@@ -70,16 +73,14 @@ class AutocompleteActionPredictorTableReopenTest
   }
 };
 
-AutocompleteActionPredictorTableTest::AutocompleteActionPredictorTableTest()
-    : db_thread_(BrowserThread::DB, &loop_) {
-}
+AutocompleteActionPredictorTableTest::AutocompleteActionPredictorTableTest() {}
 
 AutocompleteActionPredictorTableTest::~AutocompleteActionPredictorTableTest() {
 }
 
 void AutocompleteActionPredictorTableTest::SetUp() {
   db_.reset(new PredictorDatabase(&profile_));
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   test_db_.push_back(AutocompleteActionPredictorTable::Row(
       "BD85DBA2-8C29-49F9-84AE-48E1E90880DF",
@@ -97,7 +98,7 @@ void AutocompleteActionPredictorTableTest::SetUp() {
 
 void AutocompleteActionPredictorTableTest::TearDown() {
   db_.reset(NULL);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   test_db_.clear();
 }
 

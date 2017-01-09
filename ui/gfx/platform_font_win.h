@@ -9,11 +9,13 @@
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "ui/gfx/gfx_export.h"
 #include "ui/gfx/platform_font.h"
 
 struct IDWriteFactory;
+struct IDWriteFont;
 
 namespace gfx {
 
@@ -49,20 +51,17 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
   // name could not be retrieved, returns GetFontName().
   std::string GetLocalizedFontName() const;
 
-  // Returns a derived Font with the specified |style| and maximum |height|.
-  // The returned Font will be the largest font size with a height <= |height|,
-  // since a size with the exact specified |height| may not necessarily exist.
-  // GetMinimumFontSize() may impose a font size that is taller than |height|.
-  Font DeriveFontWithHeight(int height, int style);
-
   // Overridden from PlatformFont:
-  Font DeriveFont(int size_delta, int style) const override;
-  int GetHeight() const override;
-  int GetBaseline() const override;
-  int GetCapHeight() const override;
-  int GetExpectedTextWidth(int length) const override;
+  Font DeriveFont(int size_delta,
+                  int style,
+                  Font::Weight weight) const override;
+  int GetHeight() override;
+  Font::Weight GetWeight() const override;
+  int GetBaseline() override;
+  int GetCapHeight() override;
+  int GetExpectedTextWidth(int length) override;
   int GetStyle() const override;
-  std::string GetFontName() const override;
+  const std::string& GetFontName() const override;
   std::string GetActualFontNameForTesting() const override;
   int GetFontSize() const override;
   const FontRenderParams& GetFontRenderParams() override;
@@ -81,7 +80,7 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
   static int GetFontSize(const LOGFONT& font_info);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(RenderTextTest, HarfBuzz_UniscribeFallback);
+  FRIEND_TEST_ALL_PREFIXES(RenderTextHarfBuzzTest, HarfBuzz_UniscribeFallback);
   FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, Metrics_SkiaVersusGDI);
   FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, DirectWriteFontSubstitution);
 
@@ -105,6 +104,7 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
              int baseline,
              int cap_height,
              int ave_char_width,
+             Font::Weight weight,
              int style);
 
     // Accessors
@@ -113,6 +113,7 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
     int baseline() const { return baseline_; }
     int cap_height() const { return cap_height_; }
     int ave_char_width() const { return ave_char_width_; }
+    Font::Weight weight() const { return weight_; }
     int style() const { return style_; }
     const std::string& font_name() const { return font_name_; }
     int font_size() const { return font_size_; }
@@ -127,7 +128,8 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
 
    private:
     friend class base::RefCounted<HFontRef>;
-    FRIEND_TEST_ALL_PREFIXES(RenderTextTest, HarfBuzz_UniscribeFallback);
+    FRIEND_TEST_ALL_PREFIXES(RenderTextHarfBuzzTest,
+                             HarfBuzz_UniscribeFallback);
     FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, Metrics_SkiaVersusGDI);
     FRIEND_TEST_ALL_PREFIXES(PlatformFontWinTest, DirectWriteFontSubstitution);
 
@@ -139,6 +141,7 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
     const int baseline_;
     const int cap_height_;
     const int ave_char_width_;
+    const Font::Weight weight_;
     const int style_;
     // Average character width in dialog units. This is queried lazily from the
     // system, with an initial value of -1 meaning it hasn't yet been queried.
@@ -202,6 +205,12 @@ class GFX_EXPORT PlatformFontWin : public PlatformFont {
 
   DISALLOW_COPY_AND_ASSIGN(PlatformFontWin);
 };
+
+// Returns the family name for the |IDWriteFont| interface passed in.
+// The family name is returned in the |family_name| parameter.
+// Returns S_OK on success.
+HRESULT GetFamilyNameFromDirectWriteFont(IDWriteFont* dwrite_font,
+                                         base::string16* family_name);
 
 }  // namespace gfx
 

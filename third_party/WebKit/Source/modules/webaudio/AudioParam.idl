@@ -26,12 +26,14 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-[
-    GarbageCollected,
-    Conditional=WEB_AUDIO,
-] interface AudioParam {
+// See https://webaudio.github.io/web-audio-api/#AudioParam
+interface AudioParam {
     attribute float value;
     readonly attribute float defaultValue;
+
+    // Nominal range for the value.
+    readonly attribute float minValue;
+    readonly attribute float maxValue;
 
     // Parameter automation.
     [RaisesException, MeasureAs=AudioParamSetValueAtTime] AudioParam setValueAtTime(float value, double time);

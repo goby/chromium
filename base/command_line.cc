@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <ostream>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -75,7 +75,11 @@ void AppendSwitchesAndArguments(CommandLine* command_line,
   bool parse_switches = true;
   for (size_t i = 1; i < argv.size(); ++i) {
     CommandLine::StringType arg = argv[i];
+#if defined(OS_WIN)
     TrimWhitespace(arg, TRIM_ALL, &arg);
+#else
+    TrimWhitespaceASCII(arg, TRIM_ALL, &arg);
+#endif
 
     CommandLine::StringType switch_string;
     CommandLine::StringType switch_value;
@@ -193,6 +197,17 @@ void CommandLine::set_slash_is_not_a_switch() {
   DCHECK_EQ(wcscmp(kSwitchPrefixes[arraysize(kSwitchPrefixes) - 1], L"/"), 0);
   switch_prefix_count = arraysize(kSwitchPrefixes) - 1;
 }
+
+// static
+void CommandLine::InitUsingArgvForTesting(int argc, const char* const* argv) {
+  DCHECK(!current_process_commandline_);
+  current_process_commandline_ = new CommandLine(NO_PROGRAM);
+  // On Windows we need to convert the command line arguments to string16.
+  base::CommandLine::StringVector argv_vector;
+  for (int i = 0; i < argc; ++i)
+    argv_vector.push_back(UTF8ToUTF16(argv[i]));
+  current_process_commandline_->InitFromArgv(argv_vector);
+}
 #endif
 
 // static
@@ -263,7 +278,11 @@ FilePath CommandLine::GetProgram() const {
 }
 
 void CommandLine::SetProgram(const FilePath& program) {
+#if defined(OS_WIN)
   TrimWhitespace(program.value(), TRIM_ALL, &argv_[0]);
+#else
+  TrimWhitespaceASCII(program.value(), TRIM_ALL, &argv_[0]);
+#endif
 }
 
 bool CommandLine::HasSwitch(const base::StringPiece& switch_string) const {

@@ -4,6 +4,8 @@
 
 #include "ui/events/test/test_event_processor.h"
 
+#include <utility>
+
 #include "ui/events/event_target.h"
 
 namespace ui {
@@ -17,8 +19,8 @@ TestEventProcessor::TestEventProcessor()
 
 TestEventProcessor::~TestEventProcessor() {}
 
-void TestEventProcessor::SetRoot(scoped_ptr<EventTarget> root) {
-  root_ = root.Pass();
+void TestEventProcessor::SetRoot(std::unique_ptr<EventTarget> root) {
+  root_ = std::move(root);
 }
 
 void TestEventProcessor::Reset() {

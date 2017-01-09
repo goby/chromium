@@ -8,28 +8,27 @@
 #include "components/dom_distiller/content/common/distiller_page_notifier_service.mojom.h"
 #include "components/dom_distiller/content/renderer/distiller_js_render_frame_observer.h"
 #include "components/dom_distiller/content/renderer/distiller_native_javascript.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace dom_distiller {
 
 class DistillerJsRenderFrameObserver;
 
-// DistillerPageNotifierService is responsible for listening to the browser for
+// mojom::DistillerPageNotifierService is responsible for listening to the
+// browser for
 // messages about if a page is a distiller page. No message is received if the
 // page is not a distiller page. This service should be removed from the
 // registry once the page is done loading.
-class DistillerPageNotifierServiceImpl : public DistillerPageNotifierService {
+class DistillerPageNotifierServiceImpl
+    : public mojom::DistillerPageNotifierService {
  public:
   explicit DistillerPageNotifierServiceImpl(
-      DistillerJsRenderFrameObserver* observer,
-      mojo::InterfaceRequest<DistillerPageNotifierService> request);
+      DistillerJsRenderFrameObserver* observer);
   ~DistillerPageNotifierServiceImpl() override;
 
   // Implementation of mojo interface DistillerPageNotifierService.
   void NotifyIsDistillerPage() override;
 
  private:
-  mojo::StrongBinding<DistillerPageNotifierService> binding_;
   DistillerJsRenderFrameObserver* distiller_js_observer_;
 };
 

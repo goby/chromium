@@ -4,6 +4,8 @@
 
 #include "content/shell/browser/layout_test/layout_test_android.h"
 
+#include <memory>
+
 #include "base/android/context_utils.h"
 #include "base/android/fifo_utils.h"
 #include "base/android/jni_android.h"
@@ -15,6 +17,8 @@
 #include "content/shell/common/shell_switches.h"
 #include "jni/ShellLayoutTestUtils_jni.h"
 #include "url/gurl.h"
+
+using base::android::ScopedJavaLocalRef;
 
 namespace {
 
@@ -31,8 +35,9 @@ void EnsureCreateFIFO(const base::FilePath& path) {
     << "Unable to create the Android's FIFO: " << path.value().c_str();
 }
 
-scoped_ptr<base::MessagePump> CreateMessagePumpForUI() {
-  return scoped_ptr<base::MessagePump>(new content::NestedMessagePumpAndroid());
+std::unique_ptr<base::MessagePump> CreateMessagePumpForUI() {
+  return std::unique_ptr<base::MessagePump>(
+      new content::NestedMessagePumpAndroid());
 }
 
 }  // namespace
@@ -41,8 +46,6 @@ namespace content {
 
 void EnsureInitializeForAndroidLayoutTests() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  content::NestedMessagePumpAndroid::RegisterJni(env);
-  content::RegisterNativesImpl(env);
 
   bool success = base::MessageLoop::InitMessagePumpForUIFactory(
       &CreateMessagePumpForUI);

@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_THUMBNAIL_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_THUMBNAIL_LAYER_H_
 
+#include <stddef.h>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "cc/layers/ui_resource_layer.h"
@@ -19,7 +21,6 @@ namespace cc {
 class Layer;
 }
 
-namespace chrome {
 namespace android {
 
 // A layer to render a thumbnail.
@@ -56,6 +57,5 @@ class ThumbnailLayer : public Layer {
 };
 
 }  // namespace android
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_COMPOSITOR_LAYER_THUMBNAIL_LAYER_H_

@@ -5,10 +5,11 @@
 #ifndef CHROMEOS_TPM_TPM_TOKEN_LOADER_H_
 #define CHROMEOS_TPM_TPM_TOKEN_LOADER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -116,7 +117,7 @@ class CHROMEOS_EXPORT TPMTokenLoader : public LoginState::Observer {
   };
   TPMTokenState tpm_token_state_;
 
-  scoped_ptr<TPMTokenInfoGetter> tpm_token_info_getter_;
+  std::unique_ptr<TPMTokenInfoGetter> tpm_token_info_getter_;
 
   // Cached TPM token info.
   int tpm_token_slot_id_;

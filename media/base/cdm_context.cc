@@ -6,19 +6,16 @@
 
 namespace media {
 
-CdmContext::CdmContext() {
-}
+const int CdmContext::kInvalidCdmId = 0;
 
-CdmContext::~CdmContext() {
-}
+CdmContext::CdmContext() {}
 
-CdmContextProvider::CdmContextProvider() {
-}
+CdmContext::~CdmContext() {}
 
-CdmContextProvider::~CdmContextProvider() {
-}
+void IgnoreCdmAttached(bool /* success */) {}
 
-void IgnoreCdmAttached(bool success) {
+void* CdmContext::GetClassIdentifier() const {
+  return nullptr;
 }
 
 }  // namespace media

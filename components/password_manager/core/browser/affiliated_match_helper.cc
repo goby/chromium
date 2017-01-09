@@ -4,46 +4,19 @@
 
 #include "components/password_manager/core/browser/affiliated_match_helper.h"
 
+#include <utility>
+
+#include "base/barrier_closure.h"
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/command_line.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/affiliation_service.h"
 
 namespace password_manager {
 
 namespace {
-
-// Dummy Android facet URIs for which affiliations will be fetched as part of an
-// experiment to exercise the AffiliationService code in the wild, before users
-// would get a chance to have real Android credentials saved.
-// Note: although somewhat redundant, the URLs are listed explicitly so that
-// they are easy to find in code search if someone wonders why they are fetched.
-const char* kDummyAndroidFacetURIs[] = {
-    "android://oEOFeXmqYvBlkpl3gJlItdIzb59KFnmFGuc1eHFQcIKpEWQuV2X4L7GYkRtdqTi_"
-    "g9YvgKFAXew3rMDjeAkWVA==@com.example.one",
-    "android://oEOFeXmqYvBlkpl3gJlItdIzb59KFnmFGuc1eHFQcIKpEWQuV2X4L7GYkRtdqTi_"
-    "g9YvgKFAXew3rMDjeAkWVA==@com.example.two",
-    "android://oEOFeXmqYvBlkpl3gJlItdIzb59KFnmFGuc1eHFQcIKpEWQuV2X4L7GYkRtdqTi_"
-    "g9YvgKFAXew3rMDjeAkWVA==@com.example.twoprime",
-    "android://oEOFeXmqYvBlkpl3gJlItdIzb59KFnmFGuc1eHFQcIKpEWQuV2X4L7GYkRtdqTi_"
-    "g9YvgKFAXew3rMDjeAkWVA==@com.example.three",
-    "android://oEOFeXmqYvBlkpl3gJlItdIzb59KFnmFGuc1eHFQcIKpEWQuV2X4L7GYkRtdqTi_"
-    "g9YvgKFAXew3rMDjeAkWVA==@com.example.four",
-    "android://oEOFeXmqYvBlkpl3gJlItdIzb59KFnmFGuc1eHFQcIKpEWQuV2X4L7GYkRtdqTi_"
-    "g9YvgKFAXew3rMDjeAkWVA==@com.example.fourprime"};
-
-// Dummy Web facet URIs for the same purpose. The URIs with the same numbers are
-// in the same equivalence class.
-const char* kDummyWebFacetURIs[] = {"https://one.example.com",
-                                    "https://two.example.com",
-                                    "https://three.example.com",
-                                    "https://threeprime.example.com",
-                                    "https://four.example.com",
-                                    "https://fourprime.example.com"};
 
 // Returns whether or not |form| represents a credential for an Android
 // application, and if so, returns the |facet_uri| of that application.
@@ -60,16 +33,15 @@ bool IsAndroidApplicationCredential(const autofill::PasswordForm& form,
 }  // namespace
 
 // static
-const int64 AffiliatedMatchHelper::kInitializationDelayOnStartupInSeconds;
+const int64_t AffiliatedMatchHelper::kInitializationDelayOnStartupInSeconds;
 
 AffiliatedMatchHelper::AffiliatedMatchHelper(
     PasswordStore* password_store,
-    scoped_ptr<AffiliationService> affiliation_service)
+    std::unique_ptr<AffiliationService> affiliation_service)
     : password_store_(password_store),
       task_runner_for_waiting_(base::ThreadTaskRunnerHandle::Get()),
-      affiliation_service_(affiliation_service.Pass()),
-      weak_ptr_factory_(this) {
-}
+      affiliation_service_(std::move(affiliation_service)),
+      weak_ptr_factory_(this) {}
 
 AffiliatedMatchHelper::~AffiliatedMatchHelper() {
   if (password_store_)
@@ -86,7 +58,7 @@ void AffiliatedMatchHelper::Initialize() {
 }
 
 void AffiliatedMatchHelper::GetAffiliatedAndroidRealms(
-    const autofill::PasswordForm& observed_form,
+    const PasswordStore::FormDigest& observed_form,
     const AffiliatedRealmsCallback& result_callback) {
   if (IsValidWebCredential(observed_form)) {
     FacetURI facet_uri(
@@ -101,7 +73,7 @@ void AffiliatedMatchHelper::GetAffiliatedAndroidRealms(
 }
 
 void AffiliatedMatchHelper::GetAffiliatedWebRealms(
-    const autofill::PasswordForm& android_form,
+    const PasswordStore::FormDigest& android_form,
     const AffiliatedRealmsCallback& result_callback) {
   if (IsValidAndroidCredential(android_form)) {
     affiliation_service_->GetAffiliations(
@@ -114,22 +86,61 @@ void AffiliatedMatchHelper::GetAffiliatedWebRealms(
   }
 }
 
+void AffiliatedMatchHelper::InjectAffiliatedWebRealms(
+    std::vector<std::unique_ptr<autofill::PasswordForm>> forms,
+    const PasswordFormsCallback& result_callback) {
+  std::vector<autofill::PasswordForm*> android_credentials;
+  for (const auto& form : forms) {
+    if (IsValidAndroidCredential(PasswordStore::FormDigest(*form)))
+      android_credentials.push_back(form.get());
+  }
+  base::Closure on_get_all_realms(
+      base::Bind(result_callback, base::Passed(&forms)));
+  base::Closure barrier_closure =
+      base::BarrierClosure(android_credentials.size(), on_get_all_realms);
+  for (auto* form : android_credentials) {
+    affiliation_service_->GetAffiliations(
+        FacetURI::FromPotentiallyInvalidSpec(form->signon_realm),
+        AffiliationService::StrategyOnCacheMiss::FAIL,
+        base::Bind(&AffiliatedMatchHelper::CompleteInjectAffiliatedWebRealm,
+                   weak_ptr_factory_.GetWeakPtr(), base::Unretained(form),
+                   barrier_closure));
+  }
+}
+
+void AffiliatedMatchHelper::CompleteInjectAffiliatedWebRealm(
+    autofill::PasswordForm* form,
+    base::Closure barrier_closure,
+    const AffiliatedFacets& results,
+    bool success) {
+  // If there is a number of realms, choose the first in the list.
+  if (success) {
+    for (const FacetURI& affiliated_facet : results) {
+      if (affiliated_facet.IsValidWebFacetURI()) {
+        form->affiliated_web_realm = affiliated_facet.canonical_spec() + "/";
+        break;
+      }
+    }
+  }
+  barrier_closure.Run();
+}
+
 void AffiliatedMatchHelper::TrimAffiliationCache() {
   affiliation_service_->TrimCache();
 }
 
 // static
 bool AffiliatedMatchHelper::IsValidAndroidCredential(
-    const autofill::PasswordForm& form) {
+    const PasswordStore::FormDigest& form) {
   return form.scheme == autofill::PasswordForm::SCHEME_HTML &&
          IsValidAndroidFacetURI(form.signon_realm);
 }
 
 // static
 bool AffiliatedMatchHelper::IsValidWebCredential(
-    const autofill::PasswordForm& form) {
+    const PasswordStore::FormDigest& form) {
   FacetURI facet_uri(FacetURI::FromPotentiallyInvalidSpec(form.signon_realm));
-  return form.scheme == autofill::PasswordForm::SCHEME_HTML && form.ssl_valid &&
+  return form.scheme == autofill::PasswordForm::SCHEME_HTML &&
          facet_uri.IsValidWebFacetURI();
 }
 
@@ -143,6 +154,7 @@ void AffiliatedMatchHelper::DoDeferredInitialization() {
   // taken to avoid inconsistencies due to any changes taking place in-between.
   password_store_->AddObserver(this);
   password_store_->GetAutofillableLogins(this);
+  password_store_->GetBlacklistLogins(this);
 }
 
 void AffiliatedMatchHelper::CompleteGetAffiliatedAndroidRealms(
@@ -177,29 +189,6 @@ void AffiliatedMatchHelper::CompleteGetAffiliatedWebRealms(
   result_callback.Run(affiliated_realms);
 }
 
-void AffiliatedMatchHelper::VerifyAffiliationsForDummyFacets(
-    VerificationTiming timing) {
-  DCHECK(affiliation_service_);
-  for (const char* web_facet_uri : kDummyWebFacetURIs) {
-    // If affiliation for the Android facets has successfully been prefetched,
-    // then cache-restricted queries into affiliated Web facets should succeed.
-    affiliation_service_->GetAffiliations(
-        FacetURI::FromCanonicalSpec(web_facet_uri),
-        AffiliationService::StrategyOnCacheMiss::FAIL,
-        base::Bind(&OnRetrievedAffiliationResultsForDummyWebFacets, timing));
-  }
-}
-
-void AffiliatedMatchHelper::ScheduleVerifyAffiliationsForDummyFacets(
-    base::Timer* timer,
-    base::TimeDelta delay,
-    VerificationTiming timing) {
-  timer->Start(
-      FROM_HERE, delay,
-      base::Bind(&AffiliatedMatchHelper::VerifyAffiliationsForDummyFacets,
-                 base::Unretained(this), timing));
-}
-
 void AffiliatedMatchHelper::OnLoginsChanged(
     const PasswordStoreChangeList& changes) {
   std::vector<FacetURI> facet_uris_to_trim;
@@ -228,56 +217,11 @@ void AffiliatedMatchHelper::OnLoginsChanged(
 }
 
 void AffiliatedMatchHelper::OnGetPasswordStoreResults(
-    ScopedVector<autofill::PasswordForm> results) {
-  for (autofill::PasswordForm* form : results) {
+    std::vector<std::unique_ptr<autofill::PasswordForm>> results) {
+  for (const auto& form : results) {
     FacetURI facet_uri;
     if (IsAndroidApplicationCredential(*form, &facet_uri))
       affiliation_service_->Prefetch(facet_uri, base::Time::Max());
-  }
-
-  // If the respective experiment is enabled, test prefetching affiliation data
-  // for dummy Android facet URIs to discover potenial issues in the wild, even
-  // before users would get a chance to have real Android credentials saved.
-  if (password_manager::IsAffiliationRequestsForDummyFacetsEnabled(
-          *base::CommandLine::ForCurrentProcess())) {
-    for (const char* android_facet_uri : kDummyAndroidFacetURIs) {
-      affiliation_service_->Prefetch(
-          FacetURI::FromCanonicalSpec(android_facet_uri), base::Time::Max());
-    }
-    ScheduleVerifyAffiliationsForDummyFacets(&on_startup_verification_timer_,
-                                             base::TimeDelta::FromMinutes(1),
-                                             VerificationTiming::ON_STARTUP);
-    ScheduleVerifyAffiliationsForDummyFacets(&repeated_verification_timer_,
-                                             base::TimeDelta::FromHours(1),
-                                             VerificationTiming::PERIODIC);
-  }
-}
-
-// static
-void AffiliatedMatchHelper::OnRetrievedAffiliationResultsForDummyWebFacets(
-    VerificationTiming timing,
-    const AffiliatedFacets& results,
-    bool success) {
-  if (timing == AffiliatedMatchHelper::VerificationTiming::ON_STARTUP) {
-    UMA_HISTOGRAM_BOOLEAN(
-        "PasswordManager.AffiliationDummyData.RequestSuccess.OnStartup",
-        success);
-    if (success) {
-      UMA_HISTOGRAM_COUNTS_100(
-          "PasswordManager.AffiliationDummyData.RequestResultCount.OnStartup",
-          results.size());
-    }
-  } else if (timing == AffiliatedMatchHelper::VerificationTiming::PERIODIC) {
-    UMA_HISTOGRAM_BOOLEAN(
-        "PasswordManager.AffiliationDummyData.RequestSuccess.Periodic",
-        success);
-    if (success) {
-      UMA_HISTOGRAM_COUNTS_100(
-          "PasswordManager.AffiliationDummyData.RequestResultCount.Periodic",
-          results.size());
-    }
-  } else {
-    NOTREACHED();
   }
 }
 

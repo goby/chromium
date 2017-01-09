@@ -44,10 +44,9 @@ class SandboxedDMGAnalyzer : public content::UtilityProcessHostClient {
   void StartAnalysis();
 
   // content::UtilityProcessHostClient:
+  void OnProcessCrashed(int exit_code) override;
+  void OnProcessLaunchFailed(int error_code) override;
   bool OnMessageReceived(const IPC::Message& message) override;
-
-  // Message handler for reply ping when the utility process has started.
-  void OnUtilityProcessStarted();
 
   // Message handler to receive the results of the analysis. Invokes the
   // |callback_|.
@@ -55,9 +54,6 @@ class SandboxedDMGAnalyzer : public content::UtilityProcessHostClient {
 
   const base::FilePath file_path_;  // The path of the DMG file.
   base::File file_;  // The opened file handle for |file_path_|.
-
-  // Weak reference to the utility process, which owns this.
-  base::WeakPtr<content::UtilityProcessHost> utility_process_host_;
 
   const ResultsCallback callback_;  // Result callback.
   bool callback_called_;  // Whether |callback_| has already been invoked.

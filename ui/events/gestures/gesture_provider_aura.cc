@@ -4,21 +4,26 @@
 
 #include "ui/events/gestures/gesture_provider_aura.h"
 
+#include <utility>
+
 #include "base/auto_reset.h"
 #include "base/logging.h"
 #include "ui/events/event.h"
+#include "ui/events/event_utils.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
 #include "ui/events/gesture_detection/gesture_event_data.h"
 #include "ui/events/gesture_detection/gesture_provider_config_helper.h"
 
 namespace ui {
 
-GestureProviderAura::GestureProviderAura(GestureProviderAuraClient* client)
+GestureProviderAura::GestureProviderAura(GestureConsumer* consumer,
+                                         GestureProviderAuraClient* client)
     : client_(client),
       filtered_gesture_provider_(
           GetGestureProviderConfig(GestureProviderConfigType::CURRENT_PLATFORM),
           this),
-      handling_event_(false) {
+      handling_event_(false),
+      gesture_consumer_(consumer) {
   filtered_gesture_provider_.SetDoubleTapSupportForPlatformEnabled(false);
 }
 
@@ -32,36 +37,32 @@ bool GestureProviderAura::OnTouchEvent(TouchEvent* event) {
   if (!result.succeeded)
     return false;
 
-  event->set_may_cause_scrolling(result.did_generate_scroll);
+  event->set_may_cause_scrolling(result.moved_beyond_slop_region);
   pointer_state_.CleanupRemovedTouchPoints(*event);
   return true;
 }
 
-void GestureProviderAura::OnTouchEventAck(uint32 unique_event_id,
-                                          bool event_consumed) {
+void GestureProviderAura::OnTouchEventAck(uint32_t unique_touch_event_id,
+    bool event_consumed) {
   DCHECK(pending_gestures_.empty());
   DCHECK(!handling_event_);
   base::AutoReset<bool> handling_event(&handling_event_, true);
-  filtered_gesture_provider_.OnTouchEventAck(unique_event_id, event_consumed);
+  filtered_gesture_provider_.OnTouchEventAck(unique_touch_event_id,
+      event_consumed);
 }
 
-void GestureProviderAura::OnGestureEvent(
-    const GestureEventData& gesture) {
-  GestureEventDetails details = gesture.details;
-  details.set_oldest_touch_id(gesture.motion_event_id);
-  scoped_ptr<ui::GestureEvent> event(
-      new ui::GestureEvent(gesture.x,
-                           gesture.y,
-                           gesture.flags,
-                           gesture.time - base::TimeTicks(),
-                           details));
+void GestureProviderAura::OnGestureEvent(const GestureEventData& gesture) {
+  std::unique_ptr<ui::GestureEvent> event(
+      new ui::GestureEvent(gesture.x, gesture.y, gesture.flags,
+                           gesture.time, gesture.details,
+                           gesture.unique_touch_event_id));
 
   if (!handling_event_) {
     // Dispatching event caused by timer.
-    client_->OnGestureEvent(event.get());
+    client_->OnGestureEvent(gesture_consumer_, event.get());
   } else {
     // Memory managed by ScopedVector pending_gestures_.
-    pending_gestures_.push_back(event.Pass());
+    pending_gestures_.push_back(std::move(event));
   }
 }
 
@@ -73,6 +74,18 @@ ScopedVector<GestureEvent>* GestureProviderAura::GetAndResetPendingGestures() {
       new ScopedVector<GestureEvent>();
   old_pending_gestures->swap(pending_gestures_);
   return old_pending_gestures;
+}
+
+void GestureProviderAura::OnTouchEnter(int pointer_id, float x, float y) {
+  std::unique_ptr<TouchEvent> touch_event(new TouchEvent(
+      ET_TOUCH_PRESSED, gfx::Point(), EF_IS_SYNTHESIZED, pointer_id,
+      ui::EventTimeForNow(), 0.0f, 0.0f, 0.0f, 0.0f));
+  gfx::PointF point(x, y);
+  touch_event->set_location_f(point);
+  touch_event->set_root_location_f(point);
+
+  OnTouchEvent(touch_event.get());
+  OnTouchEventAck(touch_event->unique_event_id(), true);
 }
 
 }  // namespace content

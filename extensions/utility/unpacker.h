@@ -5,14 +5,13 @@
 #ifndef EXTENSIONS_UTILITY_UNPACKER_H_
 #define EXTENSIONS_UTILITY_UNPACKER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "extensions/common/manifest.h"
-
-class SkBitmap;
 
 namespace base {
 class DictionaryValue;
@@ -32,6 +31,17 @@ class Unpacker {
            Manifest::Location location,
            int creation_flags);
   ~Unpacker();
+
+  // Returns true if the given base::FilePath should be unzipped.
+  static bool ShouldExtractFile(bool is_theme, const base::FilePath& file_path);
+
+  // Returns true for manifest.json only.
+  static bool IsManifestFile(const base::FilePath& file_path);
+
+  // Parse the manifest.json file inside the extension (not in the header).
+  static std::unique_ptr<base::DictionaryValue> ReadManifest(
+      const base::FilePath& extension_dir,
+      std::string* error);
 
   // Runs the processing steps for the extension. On success, this returns true
   // and the decoded images will be in a file at
@@ -53,9 +63,6 @@ class Unpacker {
   // instead of sending them over IPC, since they are so large.  Returns true on
   // success.
   bool DumpMessageCatalogsToFile();
-
-  // Parse the manifest.json file inside the extension (not in the header).
-  scoped_ptr<base::DictionaryValue> ReadManifest();
 
   // Parse all _locales/*/messages.json files inside the extension.
   bool ReadAllMessageCatalogs(const std::string& default_locale);
@@ -88,16 +95,16 @@ class Unpacker {
   int creation_flags_;
 
   // The parsed version of the manifest JSON contained in the extension.
-  scoped_ptr<base::DictionaryValue> parsed_manifest_;
+  std::unique_ptr<base::DictionaryValue> parsed_manifest_;
 
   // A list of decoded images and the paths where those images came from.  Paths
   // are relative to the manifest file.
   struct InternalData;
-  scoped_ptr<InternalData> internal_data_;
+  std::unique_ptr<InternalData> internal_data_;
 
   // Dictionary of relative paths and catalogs per path. Paths are in the form
   // of _locales/locale, without messages.json base part.
-  scoped_ptr<base::DictionaryValue> parsed_catalogs_;
+  std::unique_ptr<base::DictionaryValue> parsed_catalogs_;
 
   // The last error message that was set.  Empty if there were no errors.
   base::string16 error_message_;

@@ -6,6 +6,8 @@
 
 #include <fcntl.h>
 #include <pthread.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -22,6 +24,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -48,7 +51,27 @@ const char kLogFilenameFormat[] = "%scyglog.%d.%d-%d";
 ThreadLog* const kMagicBeingConstructed = reinterpret_cast<ThreadLog*>(1);
 
 // Per-thread pointer to the current log object.
-static __thread ThreadLog* g_tls_log = NULL;
+pthread_key_t g_tls_slot;
+
+// Used to initialize the tls slot, once per the entire process.
+pthread_once_t g_tls_slot_initializer_once = PTHREAD_ONCE_INIT;
+
+// This variable is to prevent re-entrancy in the __cyg_profile_func_enter()
+// while the TLS slot itself is being initialized. Volatile here is required
+// to avoid compiler optimizations as this need to be read in a re-entrant way.
+// This variable is written by one thread only, which is the first thread that
+// happens to run the TLSSlotInitializer(). In practice this will happen very
+// early in the startup process, as soon as the first instrumented function is
+// called.
+volatile bool g_tls_slot_being_initialized = false;
+
+// Initializes the global TLS slot. This is invoked only once per process.
+static void TLSSlotInitializer()
+{
+    g_tls_slot_being_initialized = true;
+    PCHECK(0 == pthread_key_create(&g_tls_slot, NULL));
+    g_tls_slot_being_initialized = false;
+}
 
 // Returns light-weight process ID. On Linux, this is a system-wide unique
 // thread id.
@@ -85,11 +108,11 @@ struct ImmutableFileHeaderLine {
   static bool ParseAddress(const std::string& line,
                            size_t start_offset,
                            size_t length,
-                           uint64* result) {
+                           uint64_t* result) {
     if (start_offset >= line.length())
       return false;
 
-    uint64 address;
+    uint64_t address;
     const bool ret = HexStringToUInt64(
         base::StringPiece(line.c_str() + start_offset, length), &address);
     if (!ret)
@@ -112,10 +135,10 @@ struct ImmutableFileHeaderLine {
         continue;
 
       const size_t address_length = line.find('-');
-      uint64 start_address = 0;
+      uint64_t start_address = 0;
       CHECK(ParseAddress(line, 0, address_length, &start_address));
 
-      uint64 end_address = 0;
+      uint64_t end_address = 0;
       CHECK(ParseAddress(line, address_length + 1, address_length,
                          &end_address));
 
@@ -148,11 +171,11 @@ class Thread {
  public:
   Thread(const base::Closure& thread_callback)
       : thread_callback_(thread_callback) {
-    CHECK_EQ(0, pthread_create(&handle_, NULL, &Thread::EntryPoint, this));
+    PCHECK(0 == pthread_create(&handle_, NULL, &Thread::EntryPoint, this));
   }
 
   ~Thread() {
-    CHECK_EQ(0, pthread_join(handle_, NULL));
+    PCHECK(0 == pthread_join(handle_, NULL));
   }
 
  private:
@@ -160,8 +183,11 @@ class Thread {
     // Disable logging on this thread. Although this routine is not instrumented
     // (cygprofile.gyp provides that), the called routines are and thus will
     // call instrumentation.
-    CHECK(g_tls_log == NULL);  // Must be 0 as this is a new thread.
-    g_tls_log = kMagicBeingConstructed;
+    pthread_once(&g_tls_slot_initializer_once, TLSSlotInitializer);
+    ThreadLog* thread_log = reinterpret_cast<ThreadLog*>(
+        pthread_getspecific(g_tls_slot));
+    CHECK(thread_log == NULL);  // Must be 0 as this is a new thread.
+    PCHECK(0 == pthread_setspecific(g_tls_slot, kMagicBeingConstructed));
 
     Thread* const instance = reinterpret_cast<Thread*>(data);
     instance->thread_callback_.Run();
@@ -196,7 +222,7 @@ ThreadLog::ThreadLog(const FlushCallback& flush_callback)
 }
 
 ThreadLog::~ThreadLog() {
-  g_tls_log = NULL;
+  PCHECK(0 == pthread_setspecific(g_tls_slot, NULL));
 }
 
 void ThreadLog::AddEntry(void* address) {
@@ -223,7 +249,7 @@ void ThreadLog::AddEntry(void* address) {
 void ThreadLog::TakeEntries(std::vector<LogEntry>* destination) {
   base::AutoLock auto_lock(lock_);
   destination->swap(entries_);
-  STLClearObject(&entries_);
+  base::STLClearObject(&entries_);
 }
 
 void ThreadLog::Flush(std::vector<LogEntry>* entries) const {
@@ -247,7 +273,7 @@ void ThreadLog::FlushInternal(std::vector<LogEntry>* entries) const {
             it->time.tv_nsec / 1000, it->pid, it->tid, it->address);
   }
 
-  STLClearObject(entries);
+  base::STLClearObject(entries);
 }
 
 ThreadLogsManager::ThreadLogsManager()
@@ -264,23 +290,21 @@ ThreadLogsManager::ThreadLogsManager(const base::Closure& wait_callback,
 ThreadLogsManager::~ThreadLogsManager() {
   // Note that the internal thread does some work until it sees |flush_thread_|
   // = NULL.
-  scoped_ptr<Thread> flush_thread;
+  std::unique_ptr<Thread> flush_thread;
   {
     base::AutoLock auto_lock(lock_);
     flush_thread_.swap(flush_thread);
   }
   flush_thread.reset();  // Joins the flush thread.
-
-  STLDeleteContainerPointers(logs_.begin(), logs_.end());
 }
 
-void ThreadLogsManager::AddLog(scoped_ptr<ThreadLog> new_log) {
+void ThreadLogsManager::AddLog(std::unique_ptr<ThreadLog> new_log) {
   base::AutoLock auto_lock(lock_);
 
   if (logs_.empty())
     StartInternalFlushThread_Locked();
 
-  logs_.push_back(new_log.release());
+  logs_.push_back(std::move(new_log));
 }
 
 void ThreadLogsManager::StartInternalFlushThread_Locked() {
@@ -319,7 +343,8 @@ void ThreadLogsManager::FlushAllLogsOnFlushThread() {
     std::vector<ThreadLog*> thread_logs_copy;
     {
       base::AutoLock auto_lock(lock_);
-      thread_logs_copy = logs_;
+      for (const auto& log : logs_)
+        thread_logs_copy.push_back(log.get());
     }
 
     // Move the logs' data before flushing them so that the mutexes are not
@@ -355,16 +380,24 @@ void __cyg_profile_func_exit(void* this_fn, void* call_site)
     __attribute__((no_instrument_function));
 
 void __cyg_profile_func_enter(void* this_fn, void* callee_unused) {
-  if (g_tls_log == NULL) {
-    g_tls_log = kMagicBeingConstructed;
-    ThreadLog* new_log = new ThreadLog();
-    CHECK(new_log);
-    g_logs_manager.Pointer()->AddLog(make_scoped_ptr(new_log));
-    g_tls_log = new_log;
+  // Avoid re-entrancy while initializing the TLS slot (once per process).
+  if (g_tls_slot_being_initialized)
+    return;
+
+  pthread_once(&g_tls_slot_initializer_once, TLSSlotInitializer);
+  ThreadLog* thread_log = reinterpret_cast<ThreadLog*>(
+      pthread_getspecific(g_tls_slot));
+
+  if (thread_log == NULL) {
+    PCHECK(0 == pthread_setspecific(g_tls_slot, kMagicBeingConstructed));
+    thread_log = new ThreadLog();
+    CHECK(thread_log);
+    g_logs_manager.Pointer()->AddLog(base::WrapUnique(thread_log));
+    PCHECK(0 == pthread_setspecific(g_tls_slot, thread_log));
   }
 
-  if (g_tls_log != kMagicBeingConstructed)
-    g_tls_log->AddEntry(this_fn);
+  if (thread_log != kMagicBeingConstructed)
+    thread_log->AddEntry(this_fn);
 }
 
 void __cyg_profile_func_exit(void* this_fn, void* call_site) {}

@@ -4,10 +4,13 @@
 
 #include "chrome/browser/chromeos/power/extension_event_observer.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
@@ -31,7 +34,7 @@
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/test/test_screen.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/screen.h"
 
 namespace chromeos {
 
@@ -43,7 +46,7 @@ class ExtensionEventObserverTest : public ::testing::Test {
         fake_user_manager_(new FakeChromeUserManager()),
         scoped_user_manager_enabler_(fake_user_manager_) {
     DBusThreadManager::GetSetterForTesting()->SetPowerManagerClient(
-        make_scoped_ptr(power_manager_client_));
+        base::WrapUnique(power_manager_client_));
 
     profile_manager_.reset(
         new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
@@ -62,7 +65,7 @@ class ExtensionEventObserverTest : public ::testing::Test {
   void SetUp() override {
     ::testing::Test::SetUp();
 
-    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, test_screen_.get());
+    display::Screen::SetScreenInstance(test_screen_.get());
 
     // Must be called from ::testing::Test::SetUp.
     ASSERT_TRUE(profile_manager_->SetUp());
@@ -79,7 +82,7 @@ class ExtensionEventObserverTest : public ::testing::Test {
   void TearDown() override {
     profile_ = NULL;
     profile_manager_->DeleteAllTestingProfiles();
-    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, nullptr);
+    display::Screen::SetScreenInstance(nullptr);
     ::testing::Test::TearDown();
   }
 
@@ -89,18 +92,23 @@ class ExtensionEventObserverTest : public ::testing::Test {
     scoped_refptr<extensions::Extension> app =
         extensions::ExtensionBuilder()
             .SetManifest(
-                 extensions::DictionaryBuilder()
-                     .Set("name", name)
-                     .Set("version", "1.0.0")
-                     .Set("manifest_version", 2)
-                     .Set("app",
-                          extensions::DictionaryBuilder().Set(
-                              "background",
-                              extensions::DictionaryBuilder().Set(
-                                  "scripts", extensions::ListBuilder().Append(
-                                                 "background.js"))))
-                     .Set("permissions", extensions::ListBuilder().Append(
-                                             uses_gcm ? "gcm" : "")))
+                extensions::DictionaryBuilder()
+                    .Set("name", name)
+                    .Set("version", "1.0.0")
+                    .Set("manifest_version", 2)
+                    .Set("app", extensions::DictionaryBuilder()
+                                    .Set("background",
+                                         extensions::DictionaryBuilder()
+                                             .Set("scripts",
+                                                  extensions::ListBuilder()
+                                                      .Append("background.js")
+                                                      .Build())
+                                             .Build())
+                                    .Build())
+                    .Set("permissions", extensions::ListBuilder()
+                                            .Append(uses_gcm ? "gcm" : "")
+                                            .Build())
+                    .Build())
             .Build();
 
     created_apps_.push_back(app);
@@ -121,15 +129,15 @@ class ExtensionEventObserverTest : public ::testing::Test {
   // Owned by DBusThreadManager.
   FakePowerManagerClient* power_manager_client_;
 
-  scoped_ptr<ExtensionEventObserver> extension_event_observer_;
-  scoped_ptr<ExtensionEventObserver::TestApi> test_api_;
+  std::unique_ptr<ExtensionEventObserver> extension_event_observer_;
+  std::unique_ptr<ExtensionEventObserver::TestApi> test_api_;
 
   // Owned by |profile_manager_|.
   TestingProfile* profile_;
-  scoped_ptr<TestingProfileManager> profile_manager_;
+  std::unique_ptr<TestingProfileManager> profile_manager_;
 
  private:
-  scoped_ptr<aura::TestScreen> test_screen_;
+  std::unique_ptr<aura::TestScreen> test_screen_;
   content::TestBrowserThreadBundle browser_thread_bundle_;
 
   // Needed to ensure we don't end up creating actual RenderViewHosts
@@ -242,7 +250,7 @@ TEST_F(ExtensionEventObserverTest, NetworkRequestsMayDelaySuspend) {
 
   // Test that network requests started while there is no pending push message
   // are ignored.
-  const uint64 kNonPushRequestId = 5170725;
+  const uint64_t kNonPushRequestId = 5170725;
   extension_event_observer_->OnNetworkRequestStarted(host, kNonPushRequestId);
   power_manager_client_->SendSuspendImminent();
 
@@ -252,7 +260,7 @@ TEST_F(ExtensionEventObserverTest, NetworkRequestsMayDelaySuspend) {
   // Test that network requests started while a push message is pending delay
   // the suspend even after the push message has been acked.
   const int kPushMessageId = 178674;
-  const uint64 kNetworkRequestId = 78917089;
+  const uint64_t kNetworkRequestId = 78917089;
   power_manager_client_->SendDarkSuspendImminent();
   extension_event_observer_->OnBackgroundEventDispatched(
       host, extensions::api::gcm::OnMessage::kEventName, kPushMessageId);
@@ -284,7 +292,7 @@ TEST_F(ExtensionEventObserverTest, DeletedExtensionHostDoesNotBlockSuspend) {
   EXPECT_TRUE(test_api_->WillDelaySuspendForExtensionHost(host));
 
   const int kPushId = 156178;
-  const uint64 kNetworkId = 791605;
+  const uint64_t kNetworkId = 791605;
   extension_event_observer_->OnBackgroundEventDispatched(
       host, extensions::api::gcm::OnMessage::kEventName, kPushId);
   extension_event_observer_->OnNetworkRequestStarted(host, kNetworkId);

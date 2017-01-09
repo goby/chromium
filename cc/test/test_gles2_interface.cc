@@ -10,12 +10,8 @@
 
 namespace cc {
 
-TestGLES2Interface::TestGLES2Interface(TestWebGraphicsContext3D* test_context)
-    : test_context_(test_context) {
-  DCHECK(test_context_);
-}
-
-TestGLES2Interface::~TestGLES2Interface() {}
+TestGLES2Interface::TestGLES2Interface() = default;
+TestGLES2Interface::~TestGLES2Interface() = default;
 
 void TestGLES2Interface::GenTextures(GLsizei n, GLuint* textures) {
   for (GLsizei i = 0; i < n; ++i) {
@@ -228,15 +224,6 @@ void TestGLES2Interface::TexStorage2DEXT(GLenum target,
   test_context_->texStorage2DEXT(target, levels, internalformat, width, height);
 }
 
-void TestGLES2Interface::TexImageIOSurface2DCHROMIUM(GLenum target,
-                                                     GLsizei width,
-                                                     GLsizei height,
-                                                     GLuint io_surface_id,
-                                                     GLuint plane) {
-  test_context_->texImageIOSurface2DCHROMIUM(
-      target, width, height, io_surface_id, plane);
-}
-
 void TestGLES2Interface::TexParameteri(GLenum target,
                                        GLenum pname,
                                        GLint param) {
@@ -323,8 +310,23 @@ void TestGLES2Interface::BufferData(GLenum target,
   test_context_->bufferData(target, size, data, usage);
 }
 
-GLuint TestGLES2Interface::InsertSyncPointCHROMIUM() {
-  return test_context_->insertSyncPoint();
+GLuint64 TestGLES2Interface::InsertFenceSyncCHROMIUM() {
+  return test_context_->insertFenceSync();
+}
+
+void TestGLES2Interface::GenSyncTokenCHROMIUM(GLuint64 fence_sync,
+                                              GLbyte* sync_token) {
+  test_context_->genSyncToken(fence_sync, sync_token);
+}
+
+void TestGLES2Interface::GenUnverifiedSyncTokenCHROMIUM(GLuint64 fence_sync,
+                                                        GLbyte* sync_token) {
+  test_context_->genSyncToken(fence_sync, sync_token);
+}
+
+void TestGLES2Interface::VerifySyncTokensCHROMIUM(GLbyte** sync_tokens,
+                                                  GLsizei count) {
+  test_context_->verifySyncTokens(sync_tokens, count);
 }
 
 void TestGLES2Interface::WaitSyncTokenCHROMIUM(const GLbyte* sync_token) {
@@ -392,6 +394,12 @@ GLenum TestGLES2Interface::GetGraphicsResetStatusKHR() {
   if (test_context_->isContextLost())
     return GL_UNKNOWN_CONTEXT_RESET_KHR;
   return GL_NO_ERROR;
+}
+
+void TestGLES2Interface::set_test_context(TestWebGraphicsContext3D* context) {
+  DCHECK(!test_context_);
+  test_context_ = context;
+  InitializeTestContext(test_context_);
 }
 
 }  // namespace cc

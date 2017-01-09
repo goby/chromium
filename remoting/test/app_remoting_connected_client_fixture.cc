@@ -4,11 +4,13 @@
 
 #include "remoting/test/app_remoting_connected_client_fixture.h"
 
+#include <utility>
+
 #include "base/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "remoting/protocol/host_stub.h"
@@ -39,21 +41,19 @@ namespace test {
 AppRemotingConnectedClientFixture::AppRemotingConnectedClientFixture()
     : application_details_(
           AppRemotingSharedData->GetDetailsFromAppName(GetParam())),
-      timer_(new base::Timer(true, false)) {
-}
+      timer_(new base::Timer(true, false)) {}
 
-AppRemotingConnectedClientFixture::~AppRemotingConnectedClientFixture() {
-}
+AppRemotingConnectedClientFixture::~AppRemotingConnectedClientFixture() {}
 
 void AppRemotingConnectedClientFixture::SetUp() {
   connection_helper_.reset(
       new AppRemotingConnectionHelper(application_details_));
-  scoped_ptr<TestChromotingClient> test_chromoting_client(
+  std::unique_ptr<TestChromotingClient> test_chromoting_client(
       new TestChromotingClient());
 
   test_chromoting_client->AddRemoteConnectionObserver(this);
 
-  connection_helper_->Initialize(test_chromoting_client.Pass());
+  connection_helper_->Initialize(std::move(test_chromoting_client));
   if (!connection_helper_->StartConnection()) {
     LOG(ERROR) << "Remote host connection could not be established.";
     FAIL();

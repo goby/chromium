@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_view_observer.h"
@@ -52,6 +52,7 @@ class PageClickTracker : public content::RenderFrameObserver {
 
   // RenderFrameObserver implementation.
   void FocusedNodeChanged(const blink::WebNode& node) override;
+  void OnDestruct() override;
 
   // RenderViewObserver methods forwarded from Legacy. Should be
   // merged into RenderFrameObserver.

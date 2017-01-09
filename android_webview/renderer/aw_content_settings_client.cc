@@ -33,18 +33,15 @@ AwContentSettingsClient::AwContentSettingsClient(
 AwContentSettingsClient::~AwContentSettingsClient() {
 }
 
-bool AwContentSettingsClient::allowDisplayingInsecureContent(
+bool AwContentSettingsClient::allowRunningInsecureContent(
       bool enabled_per_settings,
       const blink::WebSecurityOrigin& origin,
       const blink::WebURL& url) {
   return enabled_per_settings ? true : AllowMixedContent(url);
 }
 
-bool AwContentSettingsClient::allowRunningInsecureContent(
-      bool enabled_per_settings,
-      const blink::WebSecurityOrigin& origin,
-      const blink::WebURL& url) {
-  return enabled_per_settings ? true : AllowMixedContent(url);
+void AwContentSettingsClient::OnDestruct() {
+  delete this;
 }
 
 }  // namespace android_webview

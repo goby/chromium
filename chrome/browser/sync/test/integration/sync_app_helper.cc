@@ -4,6 +4,10 @@
 
 #include "chrome/browser/sync/test/integration/sync_app_helper.h"
 
+#include <list>
+#include <map>
+#include <memory>
+
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -89,7 +93,7 @@ void LoadApp(content::BrowserContext* context,
 AppStateMap GetAppStates(Profile* profile) {
   AppStateMap app_state_map;
 
-  scoped_ptr<const extensions::ExtensionSet> extensions(
+  std::unique_ptr<const extensions::ExtensionSet> extensions(
       extensions::ExtensionRegistry::Get(profile)
           ->GenerateInstalledExtensionsSet());
   for (const auto& extension : *extensions) {
@@ -168,8 +172,7 @@ bool SyncAppHelper::AppStatesMatch(Profile* profile1, Profile* profile2) {
       DVLOG(2) << "Apps for profile " << profile2->GetDebugName()
                << " are not valid.";
       return false;
-    } else if (!sync_datatype_helper::test()->UsingExternalServers() &&
-               !it1->second.Equals(it2->second)) {
+    } else if (!it1->second.Equals(it2->second)) {
       // If this test is run against real backend servers then we do not expect
       // to install pending apps. So, we don't check equality of AppStates of
       // each app per profile.

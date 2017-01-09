@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/base/dragdrop/os_exchange_data.h"
+
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/scoped_hglobal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/clipboard/clipboard.h"
-#include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_win.h"
 #include "url/gurl.h"
 
@@ -193,7 +195,7 @@ TEST(OSExchangeDataWinTest, EnumerationViaCOM) {
     FORMATETC elements_array[1];
     EXPECT_EQ(S_OK, enumerator->Next(1,
         reinterpret_cast<FORMATETC*>(&elements_array), &retrieved));
-    EXPECT_EQ(1, retrieved);
+    EXPECT_EQ(1u, retrieved);
     EXPECT_EQ(text_x_moz_url, elements_array[0].cfFormat);
   }
 
@@ -213,7 +215,7 @@ TEST(OSExchangeDataWinTest, EnumerationViaCOM) {
     FORMATETC elements_array[2];
     EXPECT_EQ(S_OK, enumerator->Next(2,
         reinterpret_cast<FORMATETC*>(&elements_array), &retrieved));
-    EXPECT_EQ(2, retrieved);
+    EXPECT_EQ(2u, retrieved);
     EXPECT_EQ(text_x_moz_url, elements_array[0].cfFormat);
     EXPECT_EQ(cfstr_file_group_descriptor, elements_array[1].cfFormat);
   }
@@ -226,7 +228,7 @@ TEST(OSExchangeDataWinTest, EnumerationViaCOM) {
     FORMATETC elements_array[1];
     EXPECT_EQ(S_OK, enumerator->Next(1,
         reinterpret_cast<FORMATETC*>(&elements_array), &retrieved));
-    EXPECT_EQ(1, retrieved);
+    EXPECT_EQ(1u, retrieved);
     EXPECT_EQ(cfstr_file_group_descriptor, elements_array[0].cfFormat);
   }
 
@@ -244,7 +246,7 @@ TEST(OSExchangeDataWinTest, EnumerationViaCOM) {
       FORMATETC elements_array[1];
       EXPECT_EQ(S_OK, cloned_enumerator->Next(1,
           reinterpret_cast<FORMATETC*>(&elements_array), &retrieved));
-      EXPECT_EQ(1, retrieved);
+      EXPECT_EQ(1u, retrieved);
       EXPECT_EQ(cfstr_file_group_descriptor, elements_array[0].cfFormat);
     }
 
@@ -253,7 +255,7 @@ TEST(OSExchangeDataWinTest, EnumerationViaCOM) {
       FORMATETC elements_array[1];
       EXPECT_EQ(S_OK, enumerator->Next(1,
           reinterpret_cast<FORMATETC*>(&elements_array), &retrieved));
-      EXPECT_EQ(1, retrieved);
+      EXPECT_EQ(1u, retrieved);
       EXPECT_EQ(text_x_moz_url, elements_array[0].cfFormat);
     }
   }

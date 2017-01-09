@@ -5,12 +5,14 @@
 #include "chrome/browser/chromeos/fileapi/external_file_url_request_job.h"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/chromeos/fileapi/external_file_url_util.h"
@@ -47,7 +49,7 @@ class URLHelper {
   // The scoped pointer to control lifetime of the instance itself. The pointer
   // is passed to callback functions and binds the lifetime of the instance to
   // the callback's lifetime.
-  typedef scoped_ptr<URLHelper> Lifetime;
+  typedef std::unique_ptr<URLHelper> Lifetime;
 
   URLHelper(void* profile_id,
             const GURL& url,
@@ -138,7 +140,7 @@ class URLHelper {
   const GURL url_;
   const ExternalFileURLRequestJob::HelperCallback callback_;
   scoped_refptr<storage::FileSystemContext> file_system_context_;
-  scoped_ptr<ExternalFileURLRequestJob::IsolatedFileSystemScope>
+  std::unique_ptr<ExternalFileURLRequestJob::IsolatedFileSystemScope>
       isolated_file_system_scope_;
   storage::FileSystemURL file_system_url_;
   std::string mime_type_;
@@ -231,7 +233,7 @@ void ExternalFileURLRequestJob::StartAsync() {
 void ExternalFileURLRequestJob::OnHelperResultObtained(
     net::Error error,
     const scoped_refptr<storage::FileSystemContext>& file_system_context,
-    scoped_ptr<IsolatedFileSystemScope> isolated_file_system_scope,
+    std::unique_ptr<IsolatedFileSystemScope> isolated_file_system_scope,
     const storage::FileSystemURL& file_system_url,
     const std::string& mime_type) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -244,7 +246,7 @@ void ExternalFileURLRequestJob::OnHelperResultObtained(
 
   DCHECK(file_system_context.get());
   file_system_context_ = file_system_context;
-  isolated_file_system_scope_ = isolated_file_system_scope.Pass();
+  isolated_file_system_scope_ = std::move(isolated_file_system_scope);
   file_system_url_ = file_system_url;
   mime_type_ = mime_type;
 
@@ -297,8 +299,8 @@ void ExternalFileURLRequestJob::OnFileInfoObtained(
         net::URLRequestStatus::FAILED, net::ERR_REQUEST_RANGE_NOT_SATISFIABLE));
     return;
   }
-  const int64 offset = byte_range_.first_byte_position();
-  const int64 size =
+  const int64_t offset = byte_range_.first_byte_position();
+  const int64_t size =
       byte_range_.last_byte_position() + 1 - byte_range_.first_byte_position();
   set_expected_content_size(size);
   remaining_bytes_ = size;
@@ -352,7 +354,7 @@ int ExternalFileURLRequestJob::ReadRawData(net::IOBuffer* buf, int buf_size) {
     return 0;
 
   const int result = stream_reader_->Read(
-      buf, std::min<int64>(buf_size, remaining_bytes_),
+      buf, std::min<int64_t>(buf_size, remaining_bytes_),
       base::Bind(&ExternalFileURLRequestJob::OnReadCompleted,
                  weak_ptr_factory_.GetWeakPtr()));
 

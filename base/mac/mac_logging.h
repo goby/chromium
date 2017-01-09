@@ -6,8 +6,8 @@
 #define BASE_MAC_MAC_LOGGING_H_
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "build/build_config.h"
 
 #if defined(OS_IOS)
@@ -28,6 +28,9 @@
 // the name, OSSTATUS_LOG can be used equally well for OSStatus and OSErr.
 
 namespace logging {
+
+// Returns a UTF8 description from an OS X Status error.
+BASE_EXPORT std::string DescriptionFromOSStatus(OSStatus err);
 
 class BASE_EXPORT OSStatusLogMessage : public logging::LogMessage {
  public:

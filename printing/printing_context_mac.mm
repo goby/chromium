@@ -12,6 +12,7 @@
 #include "base/logging.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_nsautorelease_pool.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -66,8 +67,8 @@ PMPaper MatchPaper(CFArrayRef paper_list,
 }  // namespace
 
 // static
-scoped_ptr<PrintingContext> PrintingContext::Create(Delegate* delegate) {
-  return make_scoped_ptr<PrintingContext>(new PrintingContextMac(delegate));
+std::unique_ptr<PrintingContext> PrintingContext::Create(Delegate* delegate) {
+  return base::WrapUnique(new PrintingContextMac(delegate));
 }
 
 PrintingContextMac::PrintingContextMac(Delegate* delegate)
@@ -411,17 +412,6 @@ PageRanges PrintingContextMac::GetPageRangesFromPrintInfo() {
   return page_ranges;
 }
 
-PrintingContext::Result PrintingContextMac::InitWithSettings(
-    const PrintSettings& settings) {
-  DCHECK(!in_print_job_);
-
-  settings_ = settings;
-
-  NOTIMPLEMENTED();
-
-  return FAILED;
-}
-
 PrintingContext::Result PrintingContextMac::NewDocument(
     const base::string16& document_name) {
   DCHECK(!in_print_job_);
@@ -515,7 +505,7 @@ void PrintingContextMac::ReleaseContext() {
   context_ = NULL;
 }
 
-gfx::NativeDrawingContext PrintingContextMac::context() const {
+skia::NativeDrawingContext PrintingContextMac::context() const {
   return context_;
 }
 

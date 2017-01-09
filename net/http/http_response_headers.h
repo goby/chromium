@@ -5,27 +5,32 @@
 #ifndef NET_HTTP_HTTP_RESPONSE_HEADERS_H_
 #define NET_HTTP_HTTP_RESPONSE_HEADERS_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
+#include <unordered_set>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
+#include "base/time/time.h"
 #include "net/base/net_export.h"
 #include "net/http/http_version.h"
-#include "net/log/net_log.h"
 
 namespace base {
 class Pickle;
 class PickleIterator;
 class Time;
 class TimeDelta;
+class Value;
 }
 
 namespace net {
 
 class HttpByteRange;
+class NetLogCaptureMode;
 
 enum ValidationType {
   VALIDATION_NONE,          // The resource is fresh.
@@ -94,6 +99,10 @@ class NET_EXPORT HttpResponseHeaders
   // end of the list.
   void AddHeader(const std::string& header);
 
+  // Adds a cookie header. |cookie_string| should be the header value without
+  // the header name (Set-Cookie).
+  void AddCookie(const std::string& cookie_string);
+
   // Replaces the current status line with the provided one (|new_status| should
   // not have any EOL).
   void ReplaceStatusLine(const std::string& new_status);
@@ -104,7 +113,7 @@ class NET_EXPORT HttpResponseHeaders
   // |byte_range| must have a valid, bounded range (i.e. coming from a valid
   // response or should be usable for a response).
   void UpdateWithNewRange(const HttpByteRange& byte_range,
-                          int64 resource_size,
+                          int64_t resource_size,
                           bool replace_status_line);
 
   // Creates a normalized header string.  The output will be formatted exactly
@@ -138,9 +147,6 @@ class NET_EXPORT HttpResponseHeaders
   // NOTE: Do not make any assumptions about the encoding of this output
   // string.  It may be non-ASCII, and the encoding used by the server is not
   // necessarily known to us.  Do not assume that this output is UTF-8!
-  //
-  // TODO(darin): remove this method
-  //
   bool GetNormalizedHeader(const std::string& name, std::string* value) const;
 
   // Returns the normalized status line.
@@ -160,20 +166,38 @@ class NET_EXPORT HttpResponseHeaders
   // header appears on multiple lines, then it will appear multiple times in
   // this enumeration (in the order the header lines were received from the
   // server).  Also, a given header might have an empty value.  Initialize a
-  // 'void*' variable to NULL and pass it by address to EnumerateHeaderLines.
+  // 'size_t' variable to 0 and pass it by address to EnumerateHeaderLines.
   // Call EnumerateHeaderLines repeatedly until it returns false.  The
   // out-params 'name' and 'value' are set upon success.
-  bool EnumerateHeaderLines(void** iter,
+  bool EnumerateHeaderLines(size_t* iter,
                             std::string* name,
                             std::string* value) const;
 
   // Enumerate the values of the specified header.   If you are only interested
-  // in the first header, then you can pass NULL for the 'iter' parameter.
+  // in the first header, then you can pass nullptr for the 'iter' parameter.
   // Otherwise, to iterate across all values for the specified header,
-  // initialize a 'void*' variable to NULL and pass it by address to
+  // initialize a 'size_t' variable to 0 and pass it by address to
   // EnumerateHeader. Note that a header might have an empty value. Call
   // EnumerateHeader repeatedly until it returns false.
-  bool EnumerateHeader(void** iter,
+  //
+  // Unless a header is explicitly marked as non-coalescing (see
+  // HttpUtil::IsNonCoalescingHeader), headers that contain
+  // comma-separated lists are treated "as if" they had been sent as
+  // distinct headers. That is, a header of "Foo: a, b, c" would
+  // enumerate into distinct values of "a", "b", and "c". This is also
+  // true for headers that occur multiple times in a response; unless
+  // they are marked non-coalescing, "Foo: a, b" followed by "Foo: c"
+  // will enumerate to "a", "b", "c". Commas inside quoted strings are ignored,
+  // for example a header of 'Foo: "a, b", "c"' would enumerate as '"a, b"',
+  // '"c"'.
+  //
+  // This can cause issues for headers that might have commas in fields that
+  // aren't quoted strings, for example a header of "Foo: <a, b>, <c>" would
+  // enumerate as '<a', 'b>', '<c>', rather than as '<a, b>', '<c>'.
+  //
+  // To handle cases such as this, use GetNormalizedHeader to return the full
+  // concatenated header, and then parse manually.
+  bool EnumerateHeader(size_t* iter,
                        const base::StringPiece& name,
                        std::string* value) const;
 
@@ -235,8 +259,8 @@ class NET_EXPORT HttpResponseHeaders
                                 const base::Time& current_time) const;
 
   // The following methods extract values from the response headers.  If a
-  // value is not present, then false is returned.  Otherwise, true is returned
-  // and the out param is assigned to the corresponding value.
+  // value is not present, or is invalid, then false is returned.  Otherwise,
+  // true is returned and the out param is assigned to the corresponding value.
   bool GetMaxAgeValue(base::TimeDelta* value) const;
   bool GetAgeValue(base::TimeDelta* value) const;
   bool GetDateValue(base::Time* value) const;
@@ -255,13 +279,18 @@ class NET_EXPORT HttpResponseHeaders
   // See section 13.3.3 of RFC 2616.
   bool HasStrongValidators() const;
 
+  // Returns true if this response has any validator (either a Last-Modified or
+  // an ETag) regardless of whether it is strong or weak.  See section 13.3.3 of
+  // RFC 2616.
+  bool HasValidators() const;
+
   // Extracts the value of the Content-Length header or returns -1 if there is
   // no such header in the response.
-  int64 GetContentLength() const;
+  int64_t GetContentLength() const;
 
   // Extracts the value of the specified header or returns -1 if there is no
   // such header in the response.
-  int64 GetInt64HeaderValue(const std::string& header) const;
+  int64_t GetInt64HeaderValue(const std::string& header) const;
 
   // Extracts the values in a Content-Range header and returns true if they are
   // valid for a 206 response; otherwise returns false.
@@ -270,15 +299,16 @@ class NET_EXPORT HttpResponseHeaders
   // |*last_byte_position| = inclusive position of the last byte of the range
   // |*instance_length| = size in bytes of the object requested
   // If any of the above values is unknown, its value will be -1.
-  bool GetContentRange(int64* first_byte_position,
-                       int64* last_byte_position,
-                       int64* instance_length) const;
+  bool GetContentRange(int64_t* first_byte_position,
+                       int64_t* last_byte_position,
+                       int64_t* instance_length) const;
 
   // Returns true if the response is chunk-encoded.
   bool IsChunkEncoded() const;
 
   // Creates a Value for use with the NetLog containing the response headers.
-  scoped_ptr<base::Value> NetLogCallback(NetLogCaptureMode capture_mode) const;
+  std::unique_ptr<base::Value> NetLogCallback(
+      NetLogCaptureMode capture_mode) const;
 
   // Takes in a Value created by the above function, and attempts to create a
   // copy of the original headers.  Returns true on success.  On failure,
@@ -300,7 +330,7 @@ class NET_EXPORT HttpResponseHeaders
  private:
   friend class base::RefCountedThreadSafe<HttpResponseHeaders>;
 
-  typedef base::hash_set<std::string> HeaderSet;
+  using HeaderSet = std::unordered_set<std::string>;
 
   // The members of this structure point into raw_headers_.
   struct ParsedHeader;

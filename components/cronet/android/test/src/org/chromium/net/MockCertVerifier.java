@@ -5,6 +5,7 @@
 package org.chromium.net;
 
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.test.util.UrlUtils;
 
 /**
  * A Java wrapper to supply a net::MockCertVerifier which can be then passed
@@ -21,9 +22,10 @@ public class MockCertVerifier {
      *         net::GetTestCertsDirectory() to accept in testing.
      * @return a pointer to the newly created net::MockCertVerifier.
      */
-    public static long createMockCertVerifier(String[] certs) {
-        return nativeCreateMockCertVerifier(certs);
+    public static long createMockCertVerifier(String[] certs, boolean knownRoot) {
+        return nativeCreateMockCertVerifier(certs, knownRoot, UrlUtils.getIsolatedTestRoot());
     }
 
-    private static native long nativeCreateMockCertVerifier(String[] certs);
+    private static native long nativeCreateMockCertVerifier(
+            String[] certs, boolean knownRoot, String testDataDir);
 }

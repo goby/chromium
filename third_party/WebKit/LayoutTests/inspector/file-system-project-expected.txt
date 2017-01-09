@@ -4,7 +4,6 @@ Tests file system project.
 Running: testFileSystems
 Adding first file system.
 Adding second file system.
-Adding file mappings.
 Adding files to file systems.
 
 UISourceCode: file:///var/www/localhost/foo.js
@@ -26,12 +25,6 @@ Dumping uiSourceCode location link texts:
  - foo.js:6
  - bar.js:6
  - baz.js:6
-UISourceCode uri to url mappings:
-    filesystem:/var/www/localhost/foo.js -> http://localhost/foo.js
-    filesystem:/foo/bar/baz.js -> http://www.example.com/baz.js
-UISourceCode url to uri mappings:
-    http://localhost/foo.js -> filesystem:/var/www/localhost/foo.js
-    http://www.example.com/baz.js -> filesystem:/foo/bar/baz.js
 After revision added:
 UISourceCode: file:///var/www/localhost/foo.js
 UISourceCode is content script: false
@@ -64,6 +57,27 @@ Running: testExcludesViaProject
 
 -- Excluded /html2/ via .devtools --
 Dumping uiSourceCodes origin URLs:
-  - file:///html/foo.js
-  - file:///bar.js
+  - file:///var/www3/html/foo.js
+  - file:///var/www3/bar.js
+
+Running: testFileAddedExternally
+-- Original tree --
+Dumping uiSourceCodes origin URLs:
+  - file:///var/www4/html/foo.js
+-- File added externally --
+Dumping uiSourceCodes origin URLs:
+  - file:///var/www4/html/foo.js
+  - file:///var/www4/html/bar.js
+
+Running: testGitFolders
+project_1
+project_2
+
+Running: testUISourceCodeMetadata
+Initial metadata
+    content size: 6
+    modification time: 1970-01-01T00:16:40.000Z
+Changed metadata
+    content size: 15
+    modification time: 1970-01-01T00:16:41.000Z
 

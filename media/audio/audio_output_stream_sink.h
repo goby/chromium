@@ -5,11 +5,15 @@
 #ifndef MEDIA_AUDIO_AUDIO_OUTPUT_STREAM_SINK_H_
 #define MEDIA_AUDIO_AUDIO_OUTPUT_STREAM_SINK_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 #include "media/audio/audio_io.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/base/media_export.h"
@@ -36,10 +40,14 @@ class MEDIA_EXPORT AudioOutputStreamSink
   void Pause() override;
   void Play() override;
   bool SetVolume(double volume) override;
-  OutputDevice* GetOutputDevice() override;
+  OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool CurrentThreadIsRenderingThread() override;
 
   // AudioSourceCallback implementation.
-  int OnMoreData(AudioBus* dest, uint32 total_bytes_delay) override;
+  int OnMoreData(base::TimeDelta delay,
+                 base::TimeTicks delay_timestamp,
+                 int prior_frames_skipped,
+                 AudioBus* dest) override;
   void OnError(AudioOutputStream* stream) override;
 
  private:
@@ -80,6 +88,6 @@ class MEDIA_EXPORT AudioOutputStreamSink
   DISALLOW_COPY_AND_ASSIGN(AudioOutputStreamSink);
 };
 
-}  // namepace media
+}  // namespace media
 
 #endif  // MEDIA_AUDIO_AUDIO_OUTPUT_STREAM_SINK_H_

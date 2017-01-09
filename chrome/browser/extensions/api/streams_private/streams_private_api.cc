@@ -4,12 +4,17 @@
 
 #include "chrome/browser/extensions/api/streams_private/streams_private_api.h"
 
+#include <limits.h>
+#include <utility>
+
 #include "base/lazy_instance.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/common/extensions/api/streams_private.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/stream_handle.h"
 #include "content/public/browser/stream_info.h"
+#include "content/public/browser/web_contents.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/extension_registry.h"
@@ -26,7 +31,7 @@ void CreateResponseHeadersDictionary(const net::HttpResponseHeaders* headers,
   if (!headers)
     return;
 
-  void* iter = NULL;
+  size_t iter = 0;
   std::string header_name;
   std::string header_value;
   while (headers->EnumerateHeaderLines(&iter, &header_name, &header_value)) {
@@ -62,17 +67,28 @@ StreamsPrivateAPI::~StreamsPrivateAPI() {
 
 void StreamsPrivateAPI::ExecuteMimeTypeHandler(
     const std::string& extension_id,
-    content::WebContents* web_contents,
-    scoped_ptr<content::StreamInfo> stream,
+    std::unique_ptr<content::StreamInfo> stream,
     const std::string& view_id,
-    int64 expected_content_size,
+    int64_t expected_content_size,
     bool embedded,
+    int frame_tree_node_id,
     int render_process_id,
     int render_frame_id) {
   const Extension* extension = ExtensionRegistry::Get(browser_context_)
                                    ->enabled_extensions()
                                    .GetByID(extension_id);
   if (!extension)
+    return;
+
+  content::WebContents* web_contents = nullptr;
+  if (frame_tree_node_id != -1) {
+    web_contents =
+        content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
+  } else {
+    web_contents = content::WebContents::FromRenderFrameHost(
+        content::RenderFrameHost::FromID(render_process_id, render_frame_id));
+  }
+  if (!web_contents)
     return;
 
   MimeTypesHandler* handler = MimeTypesHandler::GetHandler(extension);
@@ -82,12 +98,12 @@ void StreamsPrivateAPI::ExecuteMimeTypeHandler(
   if (handler->HasPlugin()) {
     GURL handler_url(Extension::GetBaseURLFromExtensionId(extension_id).spec() +
                      handler->handler_url());
-    auto tab_id = ExtensionTabUtil::GetTabId(web_contents);
-    scoped_ptr<StreamContainer> stream_container(new StreamContainer(
-        stream.Pass(), tab_id, embedded, handler_url, extension_id));
+    int tab_id = ExtensionTabUtil::GetTabId(web_contents);
+    std::unique_ptr<StreamContainer> stream_container(new StreamContainer(
+        std::move(stream), tab_id, embedded, handler_url, extension_id));
     MimeHandlerStreamManager::Get(browser_context_)
-        ->AddStream(view_id, stream_container.Pass(), render_process_id,
-                    render_frame_id);
+        ->AddStream(view_id, std::move(stream_container), frame_tree_node_id,
+                    render_process_id, render_frame_id);
     return;
   }
   // Create the event's arguments value.
@@ -110,16 +126,16 @@ void StreamsPrivateAPI::ExecuteMimeTypeHandler(
   CreateResponseHeadersDictionary(stream->response_headers.get(),
                                   &info.response_headers.additional_properties);
 
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(events::STREAMS_PRIVATE_ON_EXECUTE_MIME_TYPE_HANDLER,
                 streams_private::OnExecuteMimeTypeHandler::kEventName,
                 streams_private::OnExecuteMimeTypeHandler::Create(info)));
 
   EventRouter::Get(browser_context_)
-      ->DispatchEventToExtension(extension_id, event.Pass());
+      ->DispatchEventToExtension(extension_id, std::move(event));
 
   GURL url = stream->handle->GetURL();
-  streams_[extension_id][url] = make_linked_ptr(stream->handle.release());
+  streams_[extension_id][url] = std::move(stream->handle);
 }
 
 void StreamsPrivateAPI::AbortStream(const std::string& extension_id,

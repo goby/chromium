@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/fileapi/mock_file_change_observer.h"
 #include "content/browser/quota/mock_quota_manager.h"
 #include "content/public/test/mock_blob_url_request_context.h"
@@ -66,14 +70,14 @@ class FileSystemOperationImplWriteTest
     ASSERT_TRUE(dir_.CreateUniqueTempDir());
 
     quota_manager_ =
-        new MockQuotaManager(false /* is_incognito */, dir_.path(),
+        new MockQuotaManager(false /* is_incognito */, dir_.GetPath(),
                              base::ThreadTaskRunnerHandle::Get().get(),
                              base::ThreadTaskRunnerHandle::Get().get(),
                              NULL /* special storage policy */);
     virtual_path_ = base::FilePath(FILE_PATH_LITERAL("temporary file"));
 
     file_system_context_ = CreateFileSystemContextForTesting(
-        quota_manager_->proxy(), dir_.path());
+        quota_manager_->proxy(), dir_.GetPath());
     url_request_context_.reset(
         new MockBlobURLRequestContext(file_system_context_.get()));
 
@@ -94,12 +98,12 @@ class FileSystemOperationImplWriteTest
 
   base::File::Error status() const { return status_; }
   base::File::Error cancel_status() const { return cancel_status_; }
-  void add_bytes_written(int64 bytes, bool complete) {
+  void add_bytes_written(int64_t bytes, bool complete) {
     bytes_written_ += bytes;
     EXPECT_FALSE(complete_);
     complete_ = complete;
   }
-  int64 bytes_written() const { return bytes_written_; }
+  int64_t bytes_written() const { return bytes_written_; }
   bool complete() const { return complete_; }
 
  protected:
@@ -127,7 +131,7 @@ class FileSystemOperationImplWriteTest
                       weak_factory_.GetWeakPtr());
   }
 
-  void DidWrite(base::File::Error status, int64 bytes, bool complete) {
+  void DidWrite(base::File::Error status, int64_t bytes, bool complete) {
     if (status == base::File::FILE_OK) {
       add_bytes_written(bytes, complete);
       if (complete)
@@ -161,10 +165,10 @@ class FileSystemOperationImplWriteTest
   // For post-operation status.
   base::File::Error status_;
   base::File::Error cancel_status_;
-  int64 bytes_written_;
+  int64_t bytes_written_;
   bool complete_;
 
-  scoped_ptr<MockBlobURLRequestContext> url_request_context_;
+  std::unique_ptr<MockBlobURLRequestContext> url_request_context_;
 
   storage::MockFileChangeObserver change_observer_;
   storage::ChangeObserverList change_observers_;
@@ -182,7 +186,7 @@ TEST_F(FileSystemOperationImplWriteTest, TestWriteSuccess) {
       &url_request_context(), URLForPath(virtual_path_),
       blob.GetBlobDataHandle(),
       0, RecordWriteCallback());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(14, bytes_written());
   EXPECT_EQ(base::File::FILE_OK, status());
@@ -196,7 +200,7 @@ TEST_F(FileSystemOperationImplWriteTest, TestWriteZero) {
   file_system_context_->operation_runner()->Write(
       &url_request_context(), URLForPath(virtual_path_),
       blob.GetBlobDataHandle(), 0, RecordWriteCallback());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(0, bytes_written());
   EXPECT_EQ(base::File::FILE_OK, status());
@@ -207,11 +211,11 @@ TEST_F(FileSystemOperationImplWriteTest, TestWriteZero) {
 
 
 TEST_F(FileSystemOperationImplWriteTest, TestWriteInvalidBlobUrl) {
-  scoped_ptr<storage::BlobDataHandle> null_handle;
+  std::unique_ptr<storage::BlobDataHandle> null_handle;
   file_system_context_->operation_runner()->Write(
-      &url_request_context(), URLForPath(virtual_path_),
-      null_handle.Pass(), 0, RecordWriteCallback());
-  base::MessageLoop::current()->Run();
+      &url_request_context(), URLForPath(virtual_path_), std::move(null_handle),
+      0, RecordWriteCallback());
+  base::RunLoop().Run();
 
   EXPECT_EQ(0, bytes_written());
   EXPECT_EQ(base::File::FILE_ERROR_FAILED, status());
@@ -227,7 +231,7 @@ TEST_F(FileSystemOperationImplWriteTest, TestWriteInvalidFile) {
       &url_request_context(),
       URLForPath(base::FilePath(FILE_PATH_LITERAL("nonexist"))),
       blob.GetBlobDataHandle(), 0, RecordWriteCallback());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(0, bytes_written());
   EXPECT_EQ(base::File::FILE_ERROR_NOT_FOUND, status());
@@ -248,7 +252,7 @@ TEST_F(FileSystemOperationImplWriteTest, TestWriteDir) {
   file_system_context_->operation_runner()->Write(
       &url_request_context(), URLForPath(virtual_dir_path),
       blob.GetBlobDataHandle(),  0, RecordWriteCallback());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(0, bytes_written());
   // TODO(kinuko): This error code is platform- or fileutil- dependent
@@ -269,7 +273,7 @@ TEST_F(FileSystemOperationImplWriteTest, TestWriteFailureByQuota) {
   file_system_context_->operation_runner()->Write(
       &url_request_context(), URLForPath(virtual_path_),
       blob.GetBlobDataHandle(), 0, RecordWriteCallback());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(10, bytes_written());
   EXPECT_EQ(base::File::FILE_ERROR_NO_SPACE, status());

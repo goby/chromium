@@ -9,7 +9,7 @@
 #include "base/strings/string_util.h"
 #include "ui/gl/gl_implementation.h"
 
-namespace gfx {
+namespace gl {
 
 RealGLXApi* g_real_glx;
 
@@ -27,7 +27,7 @@ void InitializeDebugGLBindingsGLX() {
   g_driver_glx.InitializeDebugBindings();
 }
 
-void ClearGLBindingsGLX() {
+void ClearBindingsGLX() {
   if (g_real_glx) {
     delete g_real_glx;
     g_real_glx = NULL;
@@ -119,6 +119,4 @@ bool GetGLWindowSystemBindingInfoGLX(GLWindowSystemBindingInfo* info) {
   return true;
 }
 
-}  // namespace gfx
-
-
+}  // namespace gl

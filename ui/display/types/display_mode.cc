@@ -4,6 +4,7 @@
 
 #include "ui/display/types/display_mode.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 
 namespace ui {
@@ -17,12 +18,22 @@ DisplayMode::DisplayMode(const gfx::Size& size,
 
 DisplayMode::~DisplayMode() {}
 
+std::unique_ptr<DisplayMode> DisplayMode::Clone() const {
+  return base::WrapUnique(new DisplayMode(size_,
+                                          is_interlaced_,
+                                          refresh_rate_));
+}
+
 std::string DisplayMode::ToString() const {
   return base::StringPrintf("[%dx%d %srate=%f]",
                             size_.width(),
                             size_.height(),
                             is_interlaced_ ? "interlaced " : "",
                             refresh_rate_);
+}
+
+void PrintTo(const DisplayMode& mode, std::ostream* os) {
+  *os << mode.ToString();
 }
 
 }  // namespace ui

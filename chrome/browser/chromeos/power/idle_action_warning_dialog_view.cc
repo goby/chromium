@@ -8,6 +8,7 @@
 
 #include "ash/shell.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -62,11 +63,9 @@ IdleActionWarningDialogView::IdleActionWarningDialogView(
     : idle_action_time_(idle_action_time),
       label_(NULL) {
   label_ = new FixedWidthLabel(kIdleActionWarningContentWidth);
-  label_->SetBorder(
-      views::Border::CreateEmptyBorder(views::kPanelVertMargin,
-                                       views::kButtonHEdgeMarginNew,
-                                       views::kPanelVertMargin,
-                                       views::kButtonHEdgeMarginNew));
+  label_->SetBorder(views::CreateEmptyBorder(
+      views::kPanelVertMargin, views::kButtonHEdgeMarginNew,
+      views::kPanelVertMargin, views::kButtonHEdgeMarginNew));
   AddChildView(label_);
   SetLayoutManager(new views::FillLayout());
 

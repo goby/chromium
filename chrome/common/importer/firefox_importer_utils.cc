@@ -4,6 +4,8 @@
 
 #include "chrome/common/importer/firefox_importer_utils.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <map>
 #include <string>
@@ -16,6 +18,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/common/ini_parser.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -308,10 +311,11 @@ base::string16 GetFirefoxImporterName(const base::FilePath& app_path) {
       if (line == "[App]") {
         in_app_section = true;
       } else if (in_app_section) {
-        if (line.find(name_attr) == 0) {
+        if (base::StartsWith(line, name_attr, base::CompareCase::SENSITIVE)) {
           line.substr(name_attr.size()).CopyToString(&branding_name);
           break;
-        } else if (line.length() > 0 && line[0] == '[') {
+        }
+        if (line.length() > 0 && line[0] == '[') {
           // No longer in the [App] section.
           break;
         }

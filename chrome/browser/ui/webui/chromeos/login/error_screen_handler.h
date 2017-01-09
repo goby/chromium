@@ -23,16 +23,13 @@ class ErrorScreenHandler : public BaseScreenHandler,
   ~ErrorScreenHandler() override;
 
   // ErrorView:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void Bind(NetworkErrorModel& model) override;
   void Unbind() override;
-  void ShowScreen(OobeUI::Screen screen) override;
+  void ShowOobeScreen(OobeScreen screen) override;
 
  private:
-  bool GetScreenName(OobeUI::Screen screen, std::string* name) const;
-
   // WebUI message handlers.
   void HandleHideCaptivePortal();
 

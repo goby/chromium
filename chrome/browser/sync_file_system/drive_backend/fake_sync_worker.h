@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_FAKE_SYNC_WORKER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_worker_interface.h"
@@ -24,11 +25,6 @@ class FilePath;
 class ListValue;
 }
 
-namespace drive {
-class DriveServiceInterface;
-class DriveUploaderInterface;
-}
-
 namespace storage {
 class FileSystemURL;
 }
@@ -40,10 +36,8 @@ class SyncFileMetadata;
 
 namespace drive_backend {
 
-class MetadataDatabase;
 class RemoteChangeProcessorOnWorker;
 class SyncEngineContext;
-class SyncTaskManager;
 
 class FakeSyncWorker : public SyncWorkerInterface {
  public:
@@ -51,7 +45,8 @@ class FakeSyncWorker : public SyncWorkerInterface {
   ~FakeSyncWorker() override;
 
   // SyncWorkerInterface overrides.
-  void Initialize(scoped_ptr<SyncEngineContext> sync_engine_context) override;
+  void Initialize(
+      std::unique_ptr<SyncEngineContext> sync_engine_context) override;
   void RegisterOrigin(const GURL& origin,
                       const SyncStatusCallback& callback) override;
   void EnableOrigin(const GURL& origin,
@@ -67,8 +62,8 @@ class FakeSyncWorker : public SyncWorkerInterface {
   RemoteServiceState GetCurrentState() const override;
   void GetOriginStatusMap(
       const RemoteFileSyncService::StatusMapCallback& callback) override;
-  scoped_ptr<base::ListValue> DumpFiles(const GURL& origin) override;
-  scoped_ptr<base::ListValue> DumpDatabase() override;
+  std::unique_ptr<base::ListValue> DumpFiles(const GURL& origin) override;
+  std::unique_ptr<base::ListValue> DumpDatabase() override;
   void SetSyncEnabled(bool enabled) override;
   void PromoteDemotedChanges(const base::Closure& callback) override;
   void ApplyLocalChange(const FileChange& local_change,
@@ -99,7 +94,7 @@ class FakeSyncWorker : public SyncWorkerInterface {
   bool sync_enabled_;
   StatusMap status_map_;
 
-  scoped_ptr<SyncEngineContext> sync_engine_context_;
+  std::unique_ptr<SyncEngineContext> sync_engine_context_;
 
   base::ObserverList<Observer> observers_;
   base::SequenceChecker sequence_checker_;

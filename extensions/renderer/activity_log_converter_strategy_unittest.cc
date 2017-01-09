@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "base/values.h"
 #include "extensions/renderer/activity_log_converter_strategy.h"
+
+#include <memory>
+
+#include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "v8/include/v8.h"
 
@@ -29,9 +31,9 @@ class ActivityLogConverterStrategyTest : public testing::Test {
   }
 
   testing::AssertionResult VerifyNull(v8::Local<v8::Value> v8_value) {
-    scoped_ptr<base::Value> value(
+    std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->IsType(base::Value::TYPE_NULL))
+    if (value->IsType(base::Value::Type::NONE))
       return testing::AssertionSuccess();
     return testing::AssertionFailure();
   }
@@ -39,9 +41,9 @@ class ActivityLogConverterStrategyTest : public testing::Test {
   testing::AssertionResult VerifyBoolean(v8::Local<v8::Value> v8_value,
                                          bool expected) {
     bool out;
-    scoped_ptr<base::Value> value(
+    std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->IsType(base::Value::TYPE_BOOLEAN)
+    if (value->IsType(base::Value::Type::BOOLEAN)
         && value->GetAsBoolean(&out)
         && out == expected)
       return testing::AssertionSuccess();
@@ -51,9 +53,9 @@ class ActivityLogConverterStrategyTest : public testing::Test {
   testing::AssertionResult VerifyInteger(v8::Local<v8::Value> v8_value,
                                          int expected) {
     int out;
-    scoped_ptr<base::Value> value(
+    std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->IsType(base::Value::TYPE_INTEGER)
+    if (value->IsType(base::Value::Type::INTEGER)
         && value->GetAsInteger(&out)
         && out == expected)
       return testing::AssertionSuccess();
@@ -63,9 +65,9 @@ class ActivityLogConverterStrategyTest : public testing::Test {
   testing::AssertionResult VerifyDouble(v8::Local<v8::Value> v8_value,
                                         double expected) {
     double out;
-    scoped_ptr<base::Value> value(
+    std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->IsType(base::Value::TYPE_DOUBLE)
+    if (value->IsType(base::Value::Type::DOUBLE)
         && value->GetAsDouble(&out)
         && out == expected)
       return testing::AssertionSuccess();
@@ -75,9 +77,9 @@ class ActivityLogConverterStrategyTest : public testing::Test {
   testing::AssertionResult VerifyString(v8::Local<v8::Value> v8_value,
                                         const std::string& expected) {
     std::string out;
-    scoped_ptr<base::Value> value(
+    std::unique_ptr<base::Value> value(
         converter_->FromV8Value(v8_value, context()));
-    if (value->IsType(base::Value::TYPE_STRING)
+    if (value->IsType(base::Value::Type::STRING)
         && value->GetAsString(&out)
         && out == expected)
       return testing::AssertionSuccess();
@@ -92,8 +94,8 @@ class ActivityLogConverterStrategyTest : public testing::Test {
   v8::HandleScope handle_scope_;
   v8::Global<v8::Context> context_;
   v8::Context::Scope context_scope_;
-  scoped_ptr<V8ValueConverter> converter_;
-  scoped_ptr<ActivityLogConverterStrategy> strategy_;
+  std::unique_ptr<V8ValueConverter> converter_;
+  std::unique_ptr<ActivityLogConverterStrategy> strategy_;
 };
 
 TEST_F(ActivityLogConverterStrategyTest, ConversionTest) {
@@ -115,13 +117,15 @@ TEST_F(ActivityLogConverterStrategyTest, ConversionTest) {
           "hot: \"dog\","
         "},"
         "empty_dictionary: {},"
-        "list: [ \"monkey\", \"balls\" ],"
+        "list: [ \"bar\", \"foo\" ],"
         "empty_list: [],"
-        "function: function() {},"
+        "function: (0, function() {}),"  // ensure function is anonymous
         "named_function: foo"
       "};"
       "})();";
 
+  v8::MicrotasksScope microtasks(
+      isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::Script> script(
       v8::Script::Compile(v8::String::NewFromUtf8(isolate_, source)));
   v8::Local<v8::Object> v8_object = script->Run().As<v8::Object>();

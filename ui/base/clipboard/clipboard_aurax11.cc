@@ -4,28 +4,31 @@
 
 #include "ui/base/clipboard/clipboard_aurax11.h"
 
-#include <stdint.h>
-#include <X11/extensions/Xfixes.h>
 #include <X11/Xatom.h>
+#include <X11/extensions/Xfixes.h>
+#include <stdint.h>
 
 #include <limits>
 #include <list>
+#include <memory>
 #include <set>
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/clipboard/clipboard_monitor.h"
 #include "ui/base/clipboard/custom_data_helper.h"
 #include "ui/base/x/selection_owner.h"
 #include "ui/base/x/selection_requestor.h"
 #include "ui/base/x/selection_utils.h"
 #include "ui/base/x/x11_util.h"
+#include "ui/base/x/x11_window_event_manager.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
 #include "ui/events/platform/platform_event_observer.h"
 #include "ui/events/platform/platform_event_source.h"
@@ -40,25 +43,21 @@ namespace {
 const char kClipboard[] = "CLIPBOARD";
 const char kClipboardManager[] = "CLIPBOARD_MANAGER";
 const char kMimeTypeFilename[] = "chromium/filename";
-const char kMimeTypePepperCustomData[] = "chromium/x-pepper-custom-data";
-const char kMimeTypeWebkitSmartPaste[] = "chromium/x-webkit-paste";
 const char kSaveTargets[] = "SAVE_TARGETS";
 const char kTargets[] = "TARGETS";
 
-const char* kAtomsToCache[] = {
-  kClipboard,
-  kClipboardManager,
-  Clipboard::kMimeTypePNG,
-  kMimeTypeFilename,
-  kMimeTypeMozillaURL,
-  kMimeTypeWebkitSmartPaste,
-  kSaveTargets,
-  kString,
-  kTargets,
-  kText,
-  kUtf8String,
-  NULL
-};
+const char* kAtomsToCache[] = {kClipboard,
+                               kClipboardManager,
+                               Clipboard::kMimeTypePNG,
+                               kMimeTypeFilename,
+                               Clipboard::kMimeTypeMozillaURL,
+                               Clipboard::kMimeTypeWebkitSmartPaste,
+                               kSaveTargets,
+                               kString,
+                               kTargets,
+                               kText,
+                               kUtf8String,
+                               nullptr};
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -130,6 +129,7 @@ void SelectionChangeObserver::WillProcessEvent(const ui::PlatformEvent& event) {
         reinterpret_cast<XFixesSelectionNotifyEvent*>(event);
     if (ev->selection == clipboard_atom_) {
       clipboard_sequence_number_++;
+      ClipboardMonitor::GetInstance()->NotifyClipboardDataChanged();
     } else if (ev->selection == XA_PRIMARY) {
       primary_sequence_number_++;
     } else {
@@ -302,6 +302,9 @@ class ClipboardAuraX11::AuraX11Details : public PlatformEventDispatcher {
   // Input-only window used as a selection owner.
   ::Window x_window_;
 
+  // Events selected on |x_window_|.
+  std::unique_ptr<XScopedEventSelector> x_window_events_;
+
   X11AtomCache atom_cache_;
 
   // Object which requests and receives selection data.
@@ -340,7 +343,8 @@ ClipboardAuraX11::AuraX11Details::AuraX11Details()
   atom_cache_.allow_uncached_atoms();
 
   XStoreName(x_display_, x_window_, "Chromium clipboard");
-  XSelectInput(x_display_, x_window_, PropertyChangeMask);
+  x_window_events_.reset(
+      new XScopedEventSelector(x_window_, PropertyChangeMask));
 
   if (PlatformEventSource::GetInstance())
     PlatformEventSource::GetInstance()->AddPlatformEventDispatcher(this);
@@ -593,6 +597,12 @@ const Clipboard::FormatType& Clipboard::GetUrlFormatType() {
 // static
 const Clipboard::FormatType& Clipboard::GetUrlWFormatType() {
   return GetUrlFormatType();
+}
+
+// static
+const Clipboard::FormatType& Clipboard::GetMozUrlFormatType() {
+  CR_DEFINE_STATIC_LOCAL(FormatType, type, (kMimeTypeMozillaURL));
+  return type;
 }
 
 // static

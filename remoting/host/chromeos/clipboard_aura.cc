@@ -4,6 +4,9 @@
 
 #include "remoting/host/chromeos/clipboard_aura.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "remoting/base/constants.h"
 #include "remoting/proto/event.pb.h"
@@ -14,7 +17,7 @@
 namespace {
 
 // Clipboard polling interval in milliseconds.
-const int64 kClipboardPollingIntervalMs = 500;
+const int64_t kClipboardPollingIntervalMs = 500;
 
 }  // namespace
 
@@ -30,10 +33,10 @@ ClipboardAura::~ClipboardAura() {
 }
 
 void ClipboardAura::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  client_clipboard_ = client_clipboard.Pass();
+  client_clipboard_ = std::move(client_clipboard);
 
   // Aura doesn't provide a clipboard-changed notification. The only way to
   // detect clipboard changes is by polling.
@@ -69,7 +72,7 @@ void ClipboardAura::CheckClipboardForChanges() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
-  uint64 change_count =
+  uint64_t change_count =
       clipboard->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE);
 
   if (change_count == current_change_count_) {
@@ -88,8 +91,8 @@ void ClipboardAura::CheckClipboardForChanges() {
   client_clipboard_->InjectClipboardEvent(event);
 }
 
-scoped_ptr<Clipboard> Clipboard::Create() {
-  return make_scoped_ptr(new ClipboardAura());
+std::unique_ptr<Clipboard> Clipboard::Create() {
+  return base::WrapUnique(new ClipboardAura());
 }
 
 }  // namespace remoting

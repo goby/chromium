@@ -3,19 +3,22 @@
 // found in the LICENSE file.
 
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
-#include "chrome/browser/notifications/desktop_notification_profile_util.h"
 #include "chrome/browser/notifications/message_center_settings_controller.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
+#include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "content/public/browser/permission_type.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
@@ -23,7 +26,7 @@
 #include "ui/message_center/notifier_settings.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/system/system_notifier.h"
+#include "ash/common/system/system_notifier.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #endif
@@ -48,7 +51,7 @@ class MessageCenterSettingsControllerBaseTest : public testing::Test {
 
   void CreateController() {
     controller_.reset(new MessageCenterSettingsController(
-        testing_profile_manager_.profile_info_cache()));
+        *testing_profile_manager_.profile_attributes_storage()));
   }
 
   void ResetController() {
@@ -60,7 +63,7 @@ class MessageCenterSettingsControllerBaseTest : public testing::Test {
  private:
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfileManager testing_profile_manager_;
-  scoped_ptr<MessageCenterSettingsController> controller_;
+  std::unique_ptr<MessageCenterSettingsController> controller_;
 
   DISALLOW_COPY_AND_ASSIGN(MessageCenterSettingsControllerBaseTest);
 };
@@ -106,7 +109,7 @@ class MessageCenterSettingsControllerChromeOSTest
         user_manager::UserManager::Get());
   }
 
-  scoped_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
+  std::unique_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
 
   DISALLOW_COPY_AND_ASSIGN(MessageCenterSettingsControllerChromeOSTest);
 };
@@ -128,20 +131,15 @@ TEST_F(MessageCenterSettingsControllerTest, NotifierGroups) {
 
   EXPECT_EQ(controller()->GetNotifierGroupAt(0).name,
             base::UTF8ToUTF16("Profile-1"));
-  EXPECT_EQ(controller()->GetNotifierGroupAt(0).index, 0u);
-
   EXPECT_EQ(controller()->GetNotifierGroupAt(1).name,
             base::UTF8ToUTF16("Profile-2"));
-  EXPECT_EQ(controller()->GetNotifierGroupAt(1).index, 1u);
 
   EXPECT_EQ(controller()->GetActiveNotifierGroup().name,
             base::UTF8ToUTF16("Profile-1"));
-  EXPECT_EQ(controller()->GetActiveNotifierGroup().index, 0u);
 
   controller()->SwitchToNotifierGroup(1);
   EXPECT_EQ(controller()->GetActiveNotifierGroup().name,
             base::UTF8ToUTF16("Profile-2"));
-  EXPECT_EQ(controller()->GetActiveNotifierGroup().index, 1u);
 
   controller()->SwitchToNotifierGroup(0);
   EXPECT_EQ(controller()->GetActiveNotifierGroup().name,
@@ -157,22 +155,19 @@ TEST_F(MessageCenterSettingsControllerChromeOSTest, NotifierGroups) {
 
   EXPECT_EQ(controller()->GetNotifierGroupAt(0).name,
             base::UTF8ToUTF16("Profile-1"));
-  EXPECT_EQ(controller()->GetNotifierGroupAt(0).index, 0u);
 
   SwitchActiveUser("Profile-2");
   EXPECT_EQ(controller()->GetNotifierGroupCount(), 1u);
   EXPECT_EQ(controller()->GetNotifierGroupAt(0).name,
             base::UTF8ToUTF16("Profile-2"));
-  EXPECT_EQ(controller()->GetNotifierGroupAt(0).index, 1u);
 
   SwitchActiveUser("Profile-1");
   EXPECT_EQ(controller()->GetNotifierGroupCount(), 1u);
   EXPECT_EQ(controller()->GetNotifierGroupAt(0).name,
             base::UTF8ToUTF16("Profile-1"));
-  EXPECT_EQ(controller()->GetNotifierGroupAt(0).index, 0u);
 }
 // TODO(mukai): write a test case to reproduce the actual guest session scenario
-// in ChromeOS -- no profiles in the profile_info_cache.
+// in ChromeOS -- no profiles in |profile_attributes_storage_|.
 #endif  // !defined(OS_CHROMEOS)
 
 TEST_F(MessageCenterSettingsControllerTest, NotifierSortOrder) {
@@ -205,13 +200,17 @@ TEST_F(MessageCenterSettingsControllerTest, NotifierSortOrder) {
           .Set("name", "Foo")
           .Set("version", "1.0.0")
           .Set("manifest_version", 2)
-          .Set("app", extensions::DictionaryBuilder().Set(
-                          "background",
-                          extensions::DictionaryBuilder().Set(
-                              "scripts", extensions::ListBuilder().Append(
-                                             "background.js"))))
+          .Set("app", extensions::DictionaryBuilder()
+                          .Set("background",
+                               extensions::DictionaryBuilder()
+                                   .Set("scripts", extensions::ListBuilder()
+                                                       .Append("background.js")
+                                                       .Build())
+                                   .Build())
+                          .Build())
           .Set("permissions",
-               extensions::ListBuilder().Append("notifications")));
+               extensions::ListBuilder().Append("notifications").Build())
+          .Build());
   foo_app.SetID(kFooId);
   extension_service->AddExtension(foo_app.Build().get());
 
@@ -221,13 +220,17 @@ TEST_F(MessageCenterSettingsControllerTest, NotifierSortOrder) {
           .Set("name", "Bar")
           .Set("version", "1.0.0")
           .Set("manifest_version", 2)
-          .Set("app", extensions::DictionaryBuilder().Set(
-                          "background",
-                          extensions::DictionaryBuilder().Set(
-                              "scripts", extensions::ListBuilder().Append(
-                                             "background.js"))))
+          .Set("app", extensions::DictionaryBuilder()
+                          .Set("background",
+                               extensions::DictionaryBuilder()
+                                   .Set("scripts", extensions::ListBuilder()
+                                                       .Append("background.js")
+                                                       .Build())
+                                   .Build())
+                          .Build())
           .Set("permissions",
-               extensions::ListBuilder().Append("notifications")));
+               extensions::ListBuilder().Append("notifications").Build())
+          .Build());
   bar_app.SetID(kBarId);
   extension_service->AddExtension(bar_app.Build().get());
 
@@ -237,11 +240,15 @@ TEST_F(MessageCenterSettingsControllerTest, NotifierSortOrder) {
           .Set("name", "baz")
           .Set("version", "1.0.0")
           .Set("manifest_version", 2)
-          .Set("app", extensions::DictionaryBuilder().Set(
-                          "background",
-                          extensions::DictionaryBuilder().Set(
-                              "scripts", extensions::ListBuilder().Append(
-                                             "background.js")))));
+          .Set("app", extensions::DictionaryBuilder()
+                          .Set("background",
+                               extensions::DictionaryBuilder()
+                                   .Set("scripts", extensions::ListBuilder()
+                                                       .Append("background.js")
+                                                       .Build())
+                                   .Build())
+                          .Build())
+          .Build());
   baz_app.SetID(kBazId);
   extension_service->AddExtension(baz_app.Build().get());
 
@@ -252,15 +259,20 @@ TEST_F(MessageCenterSettingsControllerTest, NotifierSortOrder) {
           .Set("version", "1.0.0")
           .Set("manifest_version", 2)
           .Set("app",
-               extensions::DictionaryBuilder().Set(
-                   "urls",
-                   extensions::ListBuilder().Append(
-                       "http://localhost/extensions/hosted_app/main.html")))
+               extensions::DictionaryBuilder()
+                   .Set("urls", extensions::ListBuilder()
+                                    .Append("http://localhost/extensions/"
+                                            "hosted_app/main.html")
+                                    .Build())
+                   .Build())
           .Set("launch",
-               extensions::DictionaryBuilder().Set(
-                   "urls",
-                   extensions::ListBuilder().Append(
-                       "http://localhost/extensions/hosted_app/main.html"))));
+               extensions::DictionaryBuilder()
+                   .Set("urls", extensions::ListBuilder()
+                                    .Append("http://localhost/extensions/"
+                                            "hosted_app/main.html")
+                                    .Build())
+                   .Build())
+          .Build());
 
   baf_app.SetID(kBafId);
   extension_service->AddExtension(baf_app.Build().get());
@@ -281,7 +293,7 @@ TEST_F(MessageCenterSettingsControllerTest, NotifierSortOrder) {
   EXPECT_EQ(kBarId, notifiers[0]->notifier_id.id);
   EXPECT_EQ(kFooId, notifiers[1]->notifier_id.id);
 
-  STLDeleteElements(&notifiers);
+  base::STLDeleteElements(&notifiers);
 }
 
 TEST_F(MessageCenterSettingsControllerTest, SetWebPageNotifierEnabled) {
@@ -301,15 +313,19 @@ TEST_F(MessageCenterSettingsControllerTest, SetWebPageNotifierEnabled) {
           ->GetDefaultContentSetting(CONTENT_SETTINGS_TYPE_NOTIFICATIONS, NULL);
   ASSERT_EQ(CONTENT_SETTING_ASK, default_setting);
 
+  PermissionManager* permission_manager = PermissionManager::Get(profile);
+
   // (1) Enable the permission when the default is to ask (expected to set).
   controller()->SetNotifierEnabled(disabled_notifier, true);
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
-            DesktopNotificationProfileUtil::GetContentSetting(profile, origin));
+  EXPECT_EQ(blink::mojom::PermissionStatus::GRANTED,
+            permission_manager->GetPermissionStatus(
+                content::PermissionType::NOTIFICATIONS, origin, origin));
 
   // (2) Disable the permission when the default is to ask (expected to clear).
   controller()->SetNotifierEnabled(enabled_notifier, false);
-  EXPECT_EQ(CONTENT_SETTING_ASK,
-            DesktopNotificationProfileUtil::GetContentSetting(profile, origin));
+  EXPECT_EQ(blink::mojom::PermissionStatus::ASK,
+            permission_manager->GetPermissionStatus(
+                content::PermissionType::NOTIFICATIONS, origin, origin));
 
   // Change the default content setting vaule for notifications to ALLOW.
   HostContentSettingsMapFactory::GetForProfile(profile)
@@ -318,13 +334,15 @@ TEST_F(MessageCenterSettingsControllerTest, SetWebPageNotifierEnabled) {
 
   // (3) Disable the permission when the default is allowed (expected to set).
   controller()->SetNotifierEnabled(enabled_notifier, false);
-  EXPECT_EQ(CONTENT_SETTING_BLOCK,
-            DesktopNotificationProfileUtil::GetContentSetting(profile, origin));
+  EXPECT_EQ(blink::mojom::PermissionStatus::DENIED,
+            permission_manager->GetPermissionStatus(
+                content::PermissionType::NOTIFICATIONS, origin, origin));
 
   // (4) Enable the permission when the default is allowed (expected to clear).
   controller()->SetNotifierEnabled(disabled_notifier, true);
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
-            DesktopNotificationProfileUtil::GetContentSetting(profile, origin));
+  EXPECT_EQ(blink::mojom::PermissionStatus::GRANTED,
+            permission_manager->GetPermissionStatus(
+                content::PermissionType::NOTIFICATIONS, origin, origin));
 
   // Now change the default content setting value to BLOCK.
   HostContentSettingsMapFactory::GetForProfile(profile)
@@ -333,11 +351,13 @@ TEST_F(MessageCenterSettingsControllerTest, SetWebPageNotifierEnabled) {
 
   // (5) Enable the permission when the default is blocked (expected to set).
   controller()->SetNotifierEnabled(disabled_notifier, true);
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
-            DesktopNotificationProfileUtil::GetContentSetting(profile, origin));
+  EXPECT_EQ(blink::mojom::PermissionStatus::GRANTED,
+            permission_manager->GetPermissionStatus(
+                content::PermissionType::NOTIFICATIONS, origin, origin));
 
   // (6) Disable the permission when the default is blocked (expected to clear).
   controller()->SetNotifierEnabled(enabled_notifier, false);
-  EXPECT_EQ(CONTENT_SETTING_BLOCK,
-            DesktopNotificationProfileUtil::GetContentSetting(profile, origin));
+  EXPECT_EQ(blink::mojom::PermissionStatus::DENIED,
+            permission_manager->GetPermissionStatus(
+                content::PermissionType::NOTIFICATIONS, origin, origin));
 }

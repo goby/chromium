@@ -18,13 +18,19 @@ VersionHandlerChromeOS::~VersionHandlerChromeOS() {
 
 void VersionHandlerChromeOS::HandleRequestVersionInfo(
     const base::ListValue* args) {
-  // Start the asynchronous load of the version.
+  // Start the asynchronous load of the versions.
   base::PostTaskAndReplyWithResult(
       content::BrowserThread::GetBlockingPool(),
       FROM_HERE,
       base::Bind(&chromeos::version_loader::GetVersion,
                  chromeos::version_loader::VERSION_FULL),
       base::Bind(&VersionHandlerChromeOS::OnVersion,
+                 weak_factory_.GetWeakPtr()));
+  base::PostTaskAndReplyWithResult(
+      content::BrowserThread::GetBlockingPool(),
+      FROM_HERE,
+      base::Bind(&chromeos::version_loader::GetARCVersion),
+      base::Bind(&VersionHandlerChromeOS::OnARCVersion,
                  weak_factory_.GetWeakPtr()));
 
   // Parent class takes care of the rest.
@@ -33,5 +39,10 @@ void VersionHandlerChromeOS::HandleRequestVersionInfo(
 
 void VersionHandlerChromeOS::OnVersion(const std::string& version) {
   base::StringValue arg(version);
-  web_ui()->CallJavascriptFunction("returnOsVersion", arg);
+  web_ui()->CallJavascriptFunctionUnsafe("returnOsVersion", arg);
+}
+
+void VersionHandlerChromeOS::OnARCVersion(const std::string& version) {
+  base::StringValue arg(version);
+  web_ui()->CallJavascriptFunctionUnsafe("returnARCVersion", arg);
 }

@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/threading/thread.h"
-#include "chrome/common/chrome_constants.h"
 #include "chrome/common/render_messages.h"
 #include "components/variations/variations_util.h"
 #include "content/public/browser/browser_thread.h"
@@ -43,19 +42,14 @@ void FieldTrialSynchronizer::NotifyAllRenderers(
   for (content::RenderProcessHost::iterator it(
           content::RenderProcessHost::AllHostsIterator());
        !it.IsAtEnd(); it.Advance()) {
-    it.GetCurrentValue()->Send(
-        new ChromeViewMsg_SetFieldTrialGroup(field_trial_name, group_name));
+    it.GetCurrentValue()->Send(new ChromeViewMsg_SetFieldTrialGroup(
+        field_trial_name, group_name));
   }
 }
 
 void FieldTrialSynchronizer::OnFieldTrialGroupFinalized(
     const std::string& field_trial_name,
     const std::string& group_name) {
-  // TODO(asvitkine): Remove these CHECKs once http://crbug.com/359406 is fixed.
-  CHECK(!field_trial_name.empty() && !group_name.empty());
-  CHECK_EQ(group_name, base::FieldTrialList::FindFullName(field_trial_name))
-      << field_trial_name << ":" << group_name << "=>"
-      << base::FieldTrialList::FindFullName(field_trial_name);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&FieldTrialSynchronizer::NotifyAllRenderers,

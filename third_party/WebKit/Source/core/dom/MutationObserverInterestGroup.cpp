@@ -28,66 +28,67 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "core/dom/MutationObserverInterestGroup.h"
 
 #include "core/dom/MutationRecord.h"
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<MutationObserverInterestGroup> MutationObserverInterestGroup::createIfNeeded(Node& target, MutationObserver::MutationType type, MutationRecordDeliveryOptions oldValueFlag, const QualifiedName* attributeName)
-{
-    ASSERT((type == MutationObserver::Attributes && attributeName) || !attributeName);
-    WillBeHeapHashMap<RefPtrWillBeMember<MutationObserver>, MutationRecordDeliveryOptions> observers;
-    target.getRegisteredMutationObserversOfType(observers, type, attributeName);
-    if (observers.isEmpty())
-        return nullptr;
+MutationObserverInterestGroup* MutationObserverInterestGroup::createIfNeeded(
+    Node& target,
+    MutationObserver::MutationType type,
+    MutationRecordDeliveryOptions oldValueFlag,
+    const QualifiedName* attributeName) {
+  DCHECK((type == MutationObserver::Attributes && attributeName) ||
+         !attributeName);
+  HeapHashMap<Member<MutationObserver>, MutationRecordDeliveryOptions>
+      observers;
+  target.getRegisteredMutationObserversOfType(observers, type, attributeName);
+  if (observers.isEmpty())
+    return nullptr;
 
-    return adoptPtrWillBeNoop(new MutationObserverInterestGroup(observers, oldValueFlag));
+  return new MutationObserverInterestGroup(observers, oldValueFlag);
 }
 
-MutationObserverInterestGroup::MutationObserverInterestGroup(WillBeHeapHashMap<RefPtrWillBeMember<MutationObserver>, MutationRecordDeliveryOptions>& observers, MutationRecordDeliveryOptions oldValueFlag)
-    : m_oldValueFlag(oldValueFlag)
-{
-    ASSERT(!observers.isEmpty());
-    m_observers.swap(observers);
+MutationObserverInterestGroup::MutationObserverInterestGroup(
+    HeapHashMap<Member<MutationObserver>, MutationRecordDeliveryOptions>&
+        observers,
+    MutationRecordDeliveryOptions oldValueFlag)
+    : m_oldValueFlag(oldValueFlag) {
+  DCHECK(!observers.isEmpty());
+  m_observers.swap(observers);
 }
 
-bool MutationObserverInterestGroup::isOldValueRequested()
-{
-    for (auto& observer : m_observers) {
-        if (hasOldValue(observer.value))
-            return true;
+bool MutationObserverInterestGroup::isOldValueRequested() {
+  for (auto& observer : m_observers) {
+    if (hasOldValue(observer.value))
+      return true;
+  }
+  return false;
+}
+
+void MutationObserverInterestGroup::enqueueMutationRecord(
+    MutationRecord* mutation) {
+  MutationRecord* mutationWithNullOldValue = nullptr;
+  for (auto& iter : m_observers) {
+    MutationObserver* observer = iter.key.get();
+    if (hasOldValue(iter.value)) {
+      observer->enqueueMutationRecord(mutation);
+      continue;
     }
-    return false;
-}
-
-void MutationObserverInterestGroup::enqueueMutationRecord(PassRefPtrWillBeRawPtr<MutationRecord> prpMutation)
-{
-    RefPtrWillBeRawPtr<MutationRecord> mutation = prpMutation;
-    RefPtrWillBeRawPtr<MutationRecord> mutationWithNullOldValue = nullptr;
-    for (auto& iter : m_observers) {
-        MutationObserver* observer = iter.key.get();
-        if (hasOldValue(iter.value)) {
-            observer->enqueueMutationRecord(mutation);
-            continue;
-        }
-        if (!mutationWithNullOldValue) {
-            if (mutation->oldValue().isNull())
-                mutationWithNullOldValue = mutation;
-            else
-                mutationWithNullOldValue = MutationRecord::createWithNullOldValue(mutation).get();
-        }
-        observer->enqueueMutationRecord(mutationWithNullOldValue);
+    if (!mutationWithNullOldValue) {
+      if (mutation->oldValue().isNull())
+        mutationWithNullOldValue = mutation;
+      else
+        mutationWithNullOldValue =
+            MutationRecord::createWithNullOldValue(mutation);
     }
+    observer->enqueueMutationRecord(mutationWithNullOldValue);
+  }
 }
 
-DEFINE_TRACE(MutationObserverInterestGroup)
-{
-#if ENABLE(OILPAN)
-    visitor->trace(m_observers);
-#endif
+DEFINE_TRACE(MutationObserverInterestGroup) {
+  visitor->trace(m_observers);
 }
 
-} // namespace blink
+}  // namespace blink

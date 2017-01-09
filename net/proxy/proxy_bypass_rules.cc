@@ -4,16 +4,16 @@
 
 #include "net/proxy/proxy_bypass_rules.h"
 
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/pattern.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/host_port_pair.h"
-#include "net/base/ip_address_number.h"
-#include "net/base/net_util.h"
+#include "net/base/ip_address.h"
+#include "net/base/parse_number.h"
+#include "net/base/url_util.h"
 
 namespace net {
 
@@ -50,10 +50,9 @@ class HostnamePatternRule : public ProxyBypassRules::Rule {
     return str;
   }
 
-  Rule* Clone() const override {
-    return new HostnamePatternRule(optional_scheme_,
-                                   hostname_pattern_,
-                                   optional_port_);
+  std::unique_ptr<Rule> Clone() const override {
+    return base::MakeUnique<HostnamePatternRule>(
+        optional_scheme_, hostname_pattern_, optional_port_);
   }
 
  private:
@@ -73,7 +72,9 @@ class BypassLocalRule : public ProxyBypassRules::Rule {
 
   std::string ToString() const override { return "<local>"; }
 
-  Rule* Clone() const override { return new BypassLocalRule(); }
+  std::unique_ptr<Rule> Clone() const override {
+    return base::MakeUnique<BypassLocalRule>();
+  }
 };
 
 // Rule for matching a URL that is an IP address, if that IP address falls
@@ -84,13 +85,12 @@ class BypassIPBlockRule : public ProxyBypassRules::Rule {
   // |ip_prefix| + |prefix_length| define the IP block to match.
   BypassIPBlockRule(const std::string& description,
                     const std::string& optional_scheme,
-                    const IPAddressNumber& ip_prefix,
+                    const IPAddress& ip_prefix,
                     size_t prefix_length_in_bits)
       : description_(description),
         optional_scheme_(optional_scheme),
         ip_prefix_(ip_prefix),
-        prefix_length_in_bits_(prefix_length_in_bits) {
-  }
+        prefix_length_in_bits_(prefix_length_in_bits) {}
 
   bool Matches(const GURL& url) const override {
     if (!url.HostIsIPAddress())
@@ -100,28 +100,26 @@ class BypassIPBlockRule : public ProxyBypassRules::Rule {
       return false;  // Didn't match scheme expectation.
 
     // Parse the input IP literal to a number.
-    IPAddressNumber ip_number;
-    if (!ParseIPLiteralToNumber(url.HostNoBrackets(), &ip_number))
+    IPAddress ip_address;
+    if (!ip_address.AssignFromIPLiteral(url.HostNoBrackets()))
       return false;
 
     // Test if it has the expected prefix.
-    return IPNumberMatchesPrefix(ip_number, ip_prefix_,
-                                 prefix_length_in_bits_);
+    return IPAddressMatchesPrefix(ip_address, ip_prefix_,
+                                  prefix_length_in_bits_);
   }
 
   std::string ToString() const override { return description_; }
 
-  Rule* Clone() const override {
-    return new BypassIPBlockRule(description_,
-                                 optional_scheme_,
-                                 ip_prefix_,
-                                 prefix_length_in_bits_);
+  std::unique_ptr<Rule> Clone() const override {
+    return base::MakeUnique<BypassIPBlockRule>(
+        description_, optional_scheme_, ip_prefix_, prefix_length_in_bits_);
   }
 
  private:
   const std::string description_;
   const std::string optional_scheme_;
-  const IPAddressNumber ip_prefix_;
+  const IPAddress ip_prefix_;
   const size_t prefix_length_in_bits_;
 };
 
@@ -199,14 +197,13 @@ bool ProxyBypassRules::AddRuleForHostname(const std::string& optional_scheme,
   if (hostname_pattern.empty())
     return false;
 
-  rules_.push_back(new HostnamePatternRule(optional_scheme,
-                                           hostname_pattern,
-                                           optional_port));
+  rules_.push_back(base::MakeUnique<HostnamePatternRule>(
+      optional_scheme, hostname_pattern, optional_port));
   return true;
 }
 
 void ProxyBypassRules::AddRuleToBypassLocal() {
-  rules_.push_back(new BypassLocalRule);
+  rules_.push_back(base::MakeUnique<BypassLocalRule>());
 }
 
 bool ProxyBypassRules::AddRuleFromString(const std::string& raw) {
@@ -230,7 +227,7 @@ std::string ProxyBypassRules::ToString() const {
 }
 
 void ProxyBypassRules::Clear() {
-  STLDeleteElements(&rules_);
+  rules_.clear();
 }
 
 void ProxyBypassRules::AssignFrom(const ProxyBypassRules& other) {
@@ -284,14 +281,14 @@ bool ProxyBypassRules::AddRuleFromStringInternal(
   // If there is a forward slash in the input, it is probably a CIDR style
   // mask.
   if (raw.find('/') != std::string::npos) {
-    IPAddressNumber ip_prefix;
+    IPAddress ip_prefix;
     size_t prefix_length_in_bits;
 
     if (!ParseCIDRBlock(raw, &ip_prefix, &prefix_length_in_bits))
       return false;
 
-    rules_.push_back(
-        new BypassIPBlockRule(raw, scheme, ip_prefix, prefix_length_in_bits));
+    rules_.push_back(base::MakeUnique<BypassIPBlockRule>(
+        raw, scheme, ip_prefix, prefix_length_in_bits));
 
     return true;
   }
@@ -301,6 +298,11 @@ bool ProxyBypassRules::AddRuleFromStringInternal(
   std::string host;
   int port;
   if (ParseHostAndPort(raw, &host, &port)) {
+    // TODO(eroman): HostForURL() below DCHECKs() when |host| contains an
+    // embedded NULL.
+    if (host.find('\0') != std::string::npos)
+      return false;
+
     // Note that HostPortPair is used to merely to convert any IPv6 literals to
     // a URL-safe format that can be used by canonicalization below.
     std::string bracketed_host = HostPortPair(host, 80).HostForURL();
@@ -313,13 +315,11 @@ bool ProxyBypassRules::AddRuleFromStringInternal(
 
   // Otherwise assume we have <hostname-pattern>[:port].
   std::string::size_type pos_colon = raw.rfind(':');
-  host = raw;
   port = -1;
   if (pos_colon != std::string::npos) {
-    if (!base::StringToInt(base::StringPiece(raw.begin() + pos_colon + 1,
-                                             raw.end()),
-                           &port) ||
-        (port < 0 || port > 0xFFFF)) {
+    if (!ParseInt32(base::StringPiece(raw.begin() + pos_colon + 1, raw.end()),
+                    ParseIntFormat::NON_NEGATIVE, &port) ||
+        port > 0xFFFF) {
       return false;  // Port was invalid.
     }
     raw = raw.substr(0, pos_colon);

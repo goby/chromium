@@ -4,6 +4,9 @@
 
 #include "chrome/browser/status_icons/status_icon.h"
 
+#include <utility>
+
+#include "build/build_config.h"
 #include "chrome/browser/status_icons/status_icon_observer.h"
 
 StatusIcon::StatusIcon() {
@@ -25,21 +28,24 @@ bool StatusIcon::HasObservers() const {
 }
 
 void StatusIcon::DispatchClickEvent() {
-  FOR_EACH_OBSERVER(StatusIconObserver, observers_, OnStatusIconClicked());
+  for (StatusIconObserver& observer : observers_)
+    observer.OnStatusIconClicked();
 }
 
 #if defined(OS_WIN)
 void StatusIcon::DispatchBalloonClickEvent() {
-  FOR_EACH_OBSERVER(StatusIconObserver, observers_, OnBalloonClicked());
+  for (StatusIconObserver& observer : observers_)
+    observer.OnBalloonClicked();
 }
 #endif
 
 void StatusIcon::ForceVisible() {}
 
-void StatusIcon::SetContextMenu(scoped_ptr<StatusIconMenuModel> menu) {
+void StatusIcon::SetContextMenu(std::unique_ptr<StatusIconMenuModel> menu) {
   // The UI may been showing a menu for the current model, don't destroy it
   // until we've notified the UI of the change.
-  scoped_ptr<StatusIconMenuModel> old_menu = context_menu_contents_.Pass();
-  context_menu_contents_ = menu.Pass();
+  std::unique_ptr<StatusIconMenuModel> old_menu =
+      std::move(context_menu_contents_);
+  context_menu_contents_ = std::move(menu);
   UpdatePlatformContextMenu(context_menu_contents_.get());
 }

@@ -4,8 +4,11 @@
 
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
+#include "build/build_config.h"
 #include "content/browser/accessibility/accessibility_mode_helper.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -119,7 +122,7 @@ void BrowserAccessibilityStateImpl::UpdateHistograms() {
                             switches::kForceRendererAccessibility));
 }
 
-#if !defined(OS_WIN)
+#if !defined(OS_WIN) && !defined(OS_MACOSX)
 void BrowserAccessibilityStateImpl::UpdatePlatformSpecificHistograms() {
 }
 #endif

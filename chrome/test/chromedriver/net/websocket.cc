@@ -4,24 +4,32 @@
 
 #include "chrome/test/chromedriver/net/websocket.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
+
+#include <memory>
+#include <vector>
 
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_vector.h"
+#include "base/json/json_writer.h"
 #include "base/rand_util.h"
 #include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/values.h"
+#include "build/build_config.h"
 #include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/sys_addrinfo.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
+#include "net/log/net_log_source.h"
 #include "net/websockets/websocket_frame.h"
 
 #if defined(OS_WIN)
@@ -30,7 +38,9 @@
 
 namespace {
 
-bool ResolveHost(const std::string& host, net::IPAddressNumber* address) {
+bool ResolveHost(const std::string& host,
+                 uint16_t port,
+                 net::AddressList* address_list) {
   struct addrinfo hints;
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;
@@ -40,18 +50,10 @@ bool ResolveHost(const std::string& host, net::IPAddressNumber* address) {
   if (getaddrinfo(host.c_str(), NULL, &hints, &result))
     return false;
 
-  for (struct addrinfo* addr = result; addr; addr = addr->ai_next) {
-    if (addr->ai_family == AF_INET || addr->ai_family == AF_INET6) {
-      net::IPEndPoint end_point;
-      if (!end_point.FromSockAddr(addr->ai_addr, addr->ai_addrlen)) {
-        freeaddrinfo(result);
-        return false;
-      }
-      *address = end_point.address();
-    }
-  }
+  auto list = net::AddressList::CreateFromAddrinfo(result);
+  *address_list = net::AddressList::CopyWithPort(list, port);
   freeaddrinfo(result);
-  return true;
+  return !address_list->empty();
 }
 
 }  // namespace
@@ -71,17 +73,26 @@ void WebSocket::Connect(const net::CompletionCallback& callback) {
   CHECK(thread_checker_.CalledOnValidThread());
   CHECK_EQ(INITIALIZED, state_);
 
-  net::IPAddressNumber address;
-  if (!net::ParseIPLiteralToNumber(url_.HostNoBrackets(), &address)) {
-    if (!ResolveHost(url_.HostNoBrackets(), &address)) {
+  net::IPAddress address;
+  net::AddressList addresses;
+  uint16_t port = static_cast<uint16_t>(url_.EffectiveIntPort());
+  if (ParseURLHostnameToAddress(url_.host(), &address)) {
+    addresses = net::AddressList::CreateFromIPAddress(address, port);
+  } else {
+    if (!ResolveHost(url_.HostNoBrackets(), port, &addresses)) {
       callback.Run(net::ERR_ADDRESS_UNREACHABLE);
       return;
     }
+    base::ListValue endpoints;
+    for (auto endpoint : addresses)
+      endpoints.AppendString(endpoint.ToStringWithoutPort());
+    std::string json;
+    CHECK(base::JSONWriter::Write(endpoints, &json));
+    VLOG(0) << "resolved " << url_.HostNoBrackets() << " to " << json;
   }
-  net::AddressList addresses(
-      net::IPEndPoint(address, static_cast<uint16>(url_.EffectiveIntPort())));
-  net::NetLog::Source source;
-  socket_.reset(new net::TCPClientSocket(addresses, NULL, source));
+
+  net::NetLogSource source;
+  socket_.reset(new net::TCPClientSocket(addresses, NULL, NULL, source));
 
   state_ = CONNECTING;
   connect_callback_ = callback;
@@ -116,6 +127,8 @@ bool WebSocket::Send(const std::string& message) {
 
 void WebSocket::OnSocketConnect(int code) {
   if (code != net::OK) {
+    VLOG(1) << "failed to connect to " << url_.HostNoBrackets() << " (error "
+            << code << ")";
     Close(code);
     return;
   }
@@ -232,7 +245,7 @@ void WebSocket::OnReadDuringHandshake(const char* data, int len) {
 }
 
 void WebSocket::OnReadDuringOpen(const char* data, int len) {
-  ScopedVector<net::WebSocketFrameChunk> frame_chunks;
+  std::vector<std::unique_ptr<net::WebSocketFrameChunk>> frame_chunks;
   CHECK(parser_.Decode(data, len, &frame_chunks));
   for (size_t i = 0; i < frame_chunks.size(); ++i) {
     scoped_refptr<net::IOBufferWithSize> buffer = frame_chunks[i]->data;

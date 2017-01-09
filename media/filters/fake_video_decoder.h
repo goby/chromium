@@ -5,11 +5,14 @@
 #ifndef MEDIA_FILTERS_FAKE_VIDEO_DECODER_H_
 #define MEDIA_FILTERS_FAKE_VIDEO_DECODER_H_
 
+#include <stddef.h>
+
 #include <list>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "media/base/callback_holder.h"
@@ -21,10 +24,6 @@
 #include "ui/gfx/geometry/size.h"
 
 using base::ResetAndReturn;
-
-namespace base {
-class SingleThreadTaskRunner;
-}
 
 namespace media {
 
@@ -44,7 +43,7 @@ class FakeVideoDecoder : public VideoDecoder {
   std::string GetDisplayName() const override;
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
-                  const SetCdmReadyCB& set_cdm_ready_cb,
+                  CdmContext* cdm_context,
                   const InitCB& init_cb,
                   const OutputCB& output_cb) override;
   void Decode(const scoped_refptr<DecoderBuffer>& buffer,
@@ -83,7 +82,7 @@ class FakeVideoDecoder : public VideoDecoder {
   // Callback for updating |total_bytes_decoded_|.
   void OnFrameDecoded(int buffer_size,
                       const DecodeCB& decode_cb,
-                      Status status);
+                      DecodeStatus status);
 
   // Runs |decode_cb| or puts it to |held_decode_callbacks_| depending on
   // current value of |hold_decode_|.

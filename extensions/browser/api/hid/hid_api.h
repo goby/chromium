@@ -5,10 +5,13 @@
 #ifndef EXTENSIONS_BROWSER_API_HID_HID_API_H_
 #define EXTENSIONS_BROWSER_API_HID_HID_API_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/api/hid/hid_connection_resource.h"
 #include "extensions/browser/api/hid/hid_device_manager.h"
@@ -18,7 +21,6 @@
 namespace device {
 class HidConnection;
 class HidDeviceInfo;
-class HidService;
 }  // namespace device
 
 namespace net {
@@ -41,7 +43,7 @@ class HidGetDevicesFunction : public UIThreadExtensionFunction {
   // ExtensionFunction:
   ResponseAction Run() override;
 
-  void OnEnumerationComplete(scoped_ptr<base::ListValue> devices);
+  void OnEnumerationComplete(std::unique_ptr<base::ListValue> devices);
 
   DISALLOW_COPY_AND_ASSIGN(HidGetDevicesFunction);
 };
@@ -62,8 +64,7 @@ class HidGetUserSelectedDevicesFunction : public UIThreadExtensionFunction {
   void OnDevicesChosen(
       const std::vector<scoped_refptr<device::HidDeviceInfo>>& devices);
 
-  HidDeviceManager* device_manager_;
-  scoped_ptr<DevicePermissionsPrompt> prompt_;
+  std::unique_ptr<DevicePermissionsPrompt> prompt_;
 
   DISALLOW_COPY_AND_ASSIGN(HidGetUserSelectedDevicesFunction);
 };
@@ -140,7 +141,7 @@ class HidReceiveFunction : public HidConnectionIoFunction {
                   scoped_refptr<net::IOBuffer> buffer,
                   size_t size);
 
-  scoped_ptr<api::hid::Receive::Params> parameters_;
+  std::unique_ptr<api::hid::Receive::Params> parameters_;
 
   DISALLOW_COPY_AND_ASSIGN(HidReceiveFunction);
 };
@@ -160,7 +161,7 @@ class HidSendFunction : public HidConnectionIoFunction {
 
   void OnFinished(bool success);
 
-  scoped_ptr<api::hid::Send::Params> parameters_;
+  std::unique_ptr<api::hid::Send::Params> parameters_;
 
   DISALLOW_COPY_AND_ASSIGN(HidSendFunction);
 };
@@ -183,7 +184,7 @@ class HidReceiveFeatureReportFunction : public HidConnectionIoFunction {
                   scoped_refptr<net::IOBuffer> buffer,
                   size_t size);
 
-  scoped_ptr<api::hid::ReceiveFeatureReport::Params> parameters_;
+  std::unique_ptr<api::hid::ReceiveFeatureReport::Params> parameters_;
 
   DISALLOW_COPY_AND_ASSIGN(HidReceiveFeatureReportFunction);
 };
@@ -203,7 +204,7 @@ class HidSendFeatureReportFunction : public HidConnectionIoFunction {
 
   void OnFinished(bool success);
 
-  scoped_ptr<api::hid::SendFeatureReport::Params> parameters_;
+  std::unique_ptr<api::hid::SendFeatureReport::Params> parameters_;
 
   DISALLOW_COPY_AND_ASSIGN(HidSendFeatureReportFunction);
 };

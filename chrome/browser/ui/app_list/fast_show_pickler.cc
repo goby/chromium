@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/app_list/fast_show_pickler.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/app_list/app_list_item.h"
 #include "ui/gfx/image/image_skia_rep.h"
@@ -146,24 +149,24 @@ bool UnpickleImage(base::PickleIterator* it, gfx::ImageSkia* out) {
 
 }  // namespace
 
-scoped_ptr<AppListItem> FastShowPickler::UnpickleAppListItem(
+std::unique_ptr<AppListItem> FastShowPickler::UnpickleAppListItem(
     base::PickleIterator* it) {
   std::string id;
   if (!it->ReadString(&id))
-    return scoped_ptr<AppListItem>();
-  scoped_ptr<AppListItem> result(new AppListItem(id));
+    return std::unique_ptr<AppListItem>();
+  std::unique_ptr<AppListItem> result(new AppListItem(id));
   std::string name;
   if (!it->ReadString(&name))
-    return scoped_ptr<AppListItem>();
+    return std::unique_ptr<AppListItem>();
   std::string short_name;
   if (!it->ReadString(&short_name))
-    return scoped_ptr<AppListItem>();
+    return std::unique_ptr<AppListItem>();
   result->SetNameAndShortName(name, short_name);
   gfx::ImageSkia icon;
   if (!UnpickleImage(it, &icon))
-    return scoped_ptr<AppListItem>();
+    return std::unique_ptr<AppListItem>();
   result->SetIcon(icon);
-  return result.Pass();
+  return result;
 }
 
 bool FastShowPickler::PickleAppListItem(base::Pickle* pickle,
@@ -190,52 +193,52 @@ void FastShowPickler::CopyOverItem(AppListItem* src_item,
 // whenever this format is changed so new clients can invalidate old versions.
 const int FastShowPickler::kVersion = 4;
 
-scoped_ptr<base::Pickle> FastShowPickler::PickleAppListModelForFastShow(
+std::unique_ptr<base::Pickle> FastShowPickler::PickleAppListModelForFastShow(
     AppListModel* model) {
-  scoped_ptr<base::Pickle> result(new base::Pickle);
+  std::unique_ptr<base::Pickle> result(new base::Pickle);
   if (!result->WriteInt(kVersion))
-    return scoped_ptr<base::Pickle>();
+    return std::unique_ptr<base::Pickle>();
   if (!result->WriteInt((int)model->top_level_item_list()->item_count()))
-    return scoped_ptr<base::Pickle>();
+    return std::unique_ptr<base::Pickle>();
   for (size_t i = 0; i < model->top_level_item_list()->item_count(); ++i) {
     if (!PickleAppListItem(result.get(),
                            model->top_level_item_list()->item_at(i))) {
-      return scoped_ptr<base::Pickle>();
+      return std::unique_ptr<base::Pickle>();
     }
   }
-  return result.Pass();
+  return result;
 }
 
 void FastShowPickler::CopyOver(AppListModel* src, AppListModel* dest) {
   DCHECK_EQ(0u, dest->top_level_item_list()->item_count());
   for (size_t i = 0; i < src->top_level_item_list()->item_count(); i++) {
     AppListItem* src_item = src->top_level_item_list()->item_at(i);
-    scoped_ptr<AppListItem> dest_item(new AppListItem(src_item->id()));
+    std::unique_ptr<AppListItem> dest_item(new AppListItem(src_item->id()));
     CopyOverItem(src_item, dest_item.get());
-    dest->AddItemToFolder(dest_item.Pass(), src_item->folder_id());
+    dest->AddItemToFolder(std::move(dest_item), src_item->folder_id());
   }
 }
 
-scoped_ptr<AppListModel> FastShowPickler::UnpickleAppListModelForFastShow(
+std::unique_ptr<AppListModel> FastShowPickler::UnpickleAppListModelForFastShow(
     base::Pickle* pickle) {
   base::PickleIterator it(*pickle);
   int read_version = 0;
   if (!it.ReadInt(&read_version))
-    return scoped_ptr<AppListModel>();
+    return std::unique_ptr<AppListModel>();
   if (read_version != kVersion)
-    return scoped_ptr<AppListModel>();
+    return std::unique_ptr<AppListModel>();
   int app_count = 0;
   if (!it.ReadInt(&app_count))
-    return scoped_ptr<AppListModel>();
+    return std::unique_ptr<AppListModel>();
 
-  scoped_ptr<AppListModel> model(new AppListModel);
+  std::unique_ptr<AppListModel> model(new AppListModel);
   for (int i = 0; i < app_count; ++i) {
-    scoped_ptr<AppListItem> item(UnpickleAppListItem(&it).Pass());
+    std::unique_ptr<AppListItem> item(UnpickleAppListItem(&it));
     if (!item)
-      return scoped_ptr<AppListModel>();
+      return std::unique_ptr<AppListModel>();
     std::string folder_id = item->folder_id();
-    model->AddItemToFolder(item.Pass(), folder_id);
+    model->AddItemToFolder(std::move(item), folder_id);
   }
 
-  return model.Pass();
+  return model;
 }

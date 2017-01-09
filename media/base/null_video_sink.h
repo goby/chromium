@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_AUDIO_NULL_VIDEO_SINK_H_
-#define MEDIA_AUDIO_NULL_VIDEO_SINK_H_
+#ifndef MEDIA_BASE_NULL_VIDEO_SINK_H_
+#define MEDIA_BASE_NULL_VIDEO_SINK_H_
 
 #include "base/cancelable_callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "media/base/media_export.h"
@@ -35,8 +35,8 @@ class MEDIA_EXPORT NullVideoSink : public VideoRendererSink {
   // VideoRendererSink implementation.
   void Start(RenderCallback* callback) override;
   void Stop() override;
-  void PaintFrameUsingOldRenderingPath(
-      const scoped_refptr<VideoFrame>& frame) override;
+  void PaintSingleFrame(const scoped_refptr<VideoFrame>& frame,
+                        bool repaint_duplicate_frame) override;
 
   void set_tick_clock_for_testing(base::TickClock* tick_clock) {
     tick_clock_ = tick_clock;
@@ -93,4 +93,4 @@ class MEDIA_EXPORT NullVideoSink : public VideoRendererSink {
 
 }  // namespace media
 
-#endif  // MEDIA_AUDIO_NULL_VIDEO_SINK_H_
+#endif  // MEDIA_BASE_NULL_VIDEO_SINK_H_

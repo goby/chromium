@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/crypto/DOMWindowCrypto.h"
 
 #include "core/frame/LocalDOMWindow.h"
@@ -37,44 +36,36 @@
 namespace blink {
 
 DOMWindowCrypto::DOMWindowCrypto(LocalDOMWindow& window)
-    : DOMWindowProperty(window.frame())
-{
+    : DOMWindowProperty(window.frame()) {}
+
+const char* DOMWindowCrypto::supplementName() {
+  return "DOMWindowCrypto";
 }
 
-DEFINE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(DOMWindowCrypto);
-
-const char* DOMWindowCrypto::supplementName()
-{
-    return "DOMWindowCrypto";
+DOMWindowCrypto& DOMWindowCrypto::from(LocalDOMWindow& window) {
+  DOMWindowCrypto* supplement = static_cast<DOMWindowCrypto*>(
+      Supplement<LocalDOMWindow>::from(window, supplementName()));
+  if (!supplement) {
+    supplement = new DOMWindowCrypto(window);
+    provideTo(window, supplementName(), supplement);
+  }
+  return *supplement;
 }
 
-DOMWindowCrypto& DOMWindowCrypto::from(LocalDOMWindow& window)
-{
-    DOMWindowCrypto* supplement = static_cast<DOMWindowCrypto*>(WillBeHeapSupplement<LocalDOMWindow>::from(window, supplementName()));
-    if (!supplement) {
-        supplement = new DOMWindowCrypto(window);
-        provideTo(window, supplementName(), adoptPtrWillBeNoop(supplement));
-    }
-    return *supplement;
+Crypto* DOMWindowCrypto::crypto(DOMWindow& window) {
+  return DOMWindowCrypto::from(toLocalDOMWindow(window)).crypto();
 }
 
-Crypto* DOMWindowCrypto::crypto(DOMWindow& window)
-{
-    return DOMWindowCrypto::from(toLocalDOMWindow(window)).crypto();
+Crypto* DOMWindowCrypto::crypto() const {
+  if (!m_crypto && frame())
+    m_crypto = Crypto::create();
+  return m_crypto.get();
 }
 
-Crypto* DOMWindowCrypto::crypto() const
-{
-    if (!m_crypto && frame())
-        m_crypto = Crypto::create();
-    return m_crypto.get();
+DEFINE_TRACE(DOMWindowCrypto) {
+  visitor->trace(m_crypto);
+  Supplement<LocalDOMWindow>::trace(visitor);
+  DOMWindowProperty::trace(visitor);
 }
 
-DEFINE_TRACE(DOMWindowCrypto)
-{
-    visitor->trace(m_crypto);
-    WillBeHeapSupplement<LocalDOMWindow>::trace(visitor);
-    DOMWindowProperty::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

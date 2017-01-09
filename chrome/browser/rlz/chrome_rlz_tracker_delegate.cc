@@ -6,7 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/google/google_brand.h"
@@ -18,6 +18,7 @@
 #include "chrome/common/pref_names.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/omnibox/browser/omnibox_log.h"
+#include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "content/public/browser/browser_thread.h"
@@ -114,8 +115,10 @@ bool ChromeRLZTrackerDelegate::GetLanguage(base::string16* language) {
 #if defined(OS_WIN)
   return GoogleUpdateSettings::GetLanguage(language);
 #else
-  // TODO(thakis): Implement.
-  NOTIMPLEMENTED();
+  // On other systems, we don't know the install language of promotions. That's
+  // OK, for now all promotions on non-Windows systems will be reported as "en".
+  // If non-Windows promotions end up requiring language code reporting, that
+  // code will need to go here.
   return false;
 #endif
 }

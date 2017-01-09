@@ -4,6 +4,8 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 
+#include <stdint.h>
+
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
@@ -29,7 +31,7 @@
 #define GL_DEPTH24_STENCIL8 0x88F0
 #endif
 
-using ::gfx::MockGLInterface;
+using ::gl::MockGLInterface;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
@@ -50,26 +52,13 @@ namespace gles2 {
 
 namespace {
 
-void SetupUpdateES3UnpackParametersExpectations(
-    ::gfx::MockGLInterface* gl,
-    GLint row_length,
-    GLint image_height,
-    GLint skip_pixels,
-    GLint skip_rows,
-    GLint skip_images) {
+void SetupUpdateES3UnpackParametersExpectations(::gl::MockGLInterface* gl,
+                                                GLint row_length,
+                                                GLint image_height) {
   EXPECT_CALL(*gl, PixelStorei(GL_UNPACK_ROW_LENGTH, row_length))
       .Times(1)
       .RetiresOnSaturation();
   EXPECT_CALL(*gl, PixelStorei(GL_UNPACK_IMAGE_HEIGHT, image_height))
-      .Times(1)
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl, PixelStorei(GL_UNPACK_SKIP_ROWS, skip_rows))
-      .Times(1)
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl, PixelStorei(GL_UNPACK_SKIP_PIXELS, skip_pixels))
-      .Times(1)
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl, PixelStorei(GL_UNPACK_SKIP_IMAGES, skip_images))
       .Times(1)
       .RetiresOnSaturation();
 }
@@ -86,8 +75,8 @@ class GLES2DecoderRestoreStateTest : public GLES2DecoderManualInitTest {
   void AddExpectationsForActiveTexture(GLenum unit);
   void AddExpectationsForBindTexture(GLenum target, GLuint id);
   void InitializeContextState(ContextState* state,
-                              uint32 non_default_unit,
-                              uint32 active_unit);
+                              uint32_t non_default_unit,
+                              uint32_t active_unit);
 };
 
 INSTANTIATE_TEST_CASE_P(Service,
@@ -106,10 +95,10 @@ void GLES2DecoderRestoreStateTest::AddExpectationsForBindTexture(GLenum target,
 
 void GLES2DecoderRestoreStateTest::InitializeContextState(
     ContextState* state,
-    uint32 non_default_unit,
-    uint32 active_unit) {
+    uint32_t non_default_unit,
+    uint32_t active_unit) {
   state->texture_units.resize(group().max_texture_units());
-  for (uint32 tt = 0; tt < state->texture_units.size(); ++tt) {
+  for (uint32_t tt = 0; tt < state->texture_units.size(); ++tt) {
     TextureRef* ref_cube_map =
         group().texture_manager()->GetDefaultTextureInfo(GL_TEXTURE_CUBE_MAP);
     state->texture_units[tt].bound_texture_cube_map = ref_cube_map;
@@ -136,7 +125,7 @@ TEST_P(GLES2DecoderRestoreStateTest, NullPreviousStateBGR) {
                                 TestHelper::kServiceDefaultTextureCubemapId);
 
   // Expect to restore texture bindings for remaining units.
-  for (uint32 i = 1; i < group().max_texture_units(); ++i) {
+  for (uint32_t i = 1; i < group().max_texture_units(); ++i) {
     AddExpectationsForActiveTexture(GL_TEXTURE0 + i);
     AddExpectationsForBindTexture(GL_TEXTURE_2D,
                                   TestHelper::kServiceDefaultTexture2dId);
@@ -162,7 +151,7 @@ TEST_P(GLES2DecoderRestoreStateTest, NullPreviousState) {
   AddExpectationsForBindTexture(GL_TEXTURE_CUBE_MAP, 0);
 
   // Expect to restore texture bindings for remaining units.
-  for (uint32 i = 1; i < group().max_texture_units(); ++i) {
+  for (uint32_t i = 1; i < group().max_texture_units(); ++i) {
     AddExpectationsForActiveTexture(GL_TEXTURE0 + i);
     AddExpectationsForBindTexture(GL_TEXTURE_2D, 0);
     AddExpectationsForBindTexture(GL_TEXTURE_CUBE_MAP, 0);
@@ -183,7 +172,7 @@ TEST_P(GLES2DecoderRestoreStateTest, WithPreviousStateBGR) {
   // Construct a previous ContextState with all texture bindings
   // set to default textures.
   ContextState prev_state(NULL, NULL, NULL);
-  InitializeContextState(&prev_state, std::numeric_limits<uint32>::max(), 0);
+  InitializeContextState(&prev_state, std::numeric_limits<uint32_t>::max(), 0);
 
   InSequence sequence;
   // Expect to restore only GL_TEXTURE_2D binding for GL_TEXTURE0 unit,
@@ -206,7 +195,7 @@ TEST_P(GLES2DecoderRestoreStateTest, WithPreviousState) {
   // Construct a previous ContextState with all texture bindings
   // set to default textures.
   ContextState prev_state(NULL, NULL, NULL);
-  InitializeContextState(&prev_state, std::numeric_limits<uint32>::max(), 0);
+  InitializeContextState(&prev_state, std::numeric_limits<uint32_t>::max(), 0);
 
   InSequence sequence;
   // Expect to restore only GL_TEXTURE_2D binding for GL_TEXTURE0 unit,
@@ -236,7 +225,7 @@ TEST_P(GLES2DecoderRestoreStateTest, ActiveUnit1) {
   // Construct a previous ContextState with all texture bindings
   // set to default textures.
   ContextState prev_state(NULL, NULL, NULL);
-  InitializeContextState(&prev_state, std::numeric_limits<uint32>::max(), 0);
+  InitializeContextState(&prev_state, std::numeric_limits<uint32_t>::max(), 0);
 
   InSequence sequence;
   // Expect to restore only GL_TEXTURE_2D binding for GL_TEXTURE1 unit,
@@ -428,13 +417,13 @@ TEST_P(GLES3DecoderTest, ES3PixelStoreiWithPixelUnpackBuffer) {
   // Without PIXEL_UNPACK_BUFFER bound, PixelStorei with unpack parameters
   // is cached and not passed down to GL.
   EXPECT_CALL(*gl_, PixelStorei(_, _)).Times(0);
-  cmds::PixelStorei cmd;
-  cmd.Init(GL_UNPACK_SKIP_ROWS, 2);
+  PixelStorei cmd;
+  cmd.Init(GL_UNPACK_ROW_LENGTH, 8);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
 
   // When a PIXEL_UNPACK_BUFFER is bound, all cached unpack parameters are
   // applied to GL.
-  SetupUpdateES3UnpackParametersExpectations(gl_.get(), 0, 0, 0, 2, 0);
+  SetupUpdateES3UnpackParametersExpectations(gl_.get(), 8, 0);
   DoBindBuffer(GL_PIXEL_UNPACK_BUFFER, client_buffer_id_, kServiceBufferId);
 
   // Now with a bound PIXEL_UNPACK_BUFFER, all PixelStorei calls with unpack
@@ -447,17 +436,49 @@ TEST_P(GLES3DecoderTest, ES3PixelStoreiWithPixelUnpackBuffer) {
 
   // Now unbind PIXEL_UNPACK_BUFFER, all ES3 unpack parameters are set back to
   // 0.
-  SetupUpdateES3UnpackParametersExpectations(gl_.get(), 0, 0, 0, 0, 0);
+  SetupUpdateES3UnpackParametersExpectations(gl_.get(), 0, 0);
   DoBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0, 0);
 
   // Again, PixelStorei calls with unpack parameters are cached.
   EXPECT_CALL(*gl_, PixelStorei(_, _)).Times(0);
-  cmd.Init(GL_UNPACK_SKIP_ROWS, 3);
+  cmd.Init(GL_UNPACK_ROW_LENGTH, 32);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
 
   // Bind a PIXEL_UNPACK_BUFFER again.
-  SetupUpdateES3UnpackParametersExpectations(gl_.get(), 16, 0, 0, 3, 0);
+  SetupUpdateES3UnpackParametersExpectations(gl_.get(), 32, 0);
   DoBindBuffer(GL_PIXEL_UNPACK_BUFFER, client_buffer_id_, kServiceBufferId);
+}
+
+TEST_P(GLES2DecoderManualInitTest, MipmapHintOnCoreProfile) {
+  // On a core profile, glHint(GL_GENERATE_MIPMAP_HINT) should be a noop
+  InitState init;
+  init.gl_version = "3.2";
+  InitDecoder(init);
+
+  Hint cmd;
+  cmd.Init(GL_GENERATE_MIPMAP_HINT, GL_NICEST);
+
+  EXPECT_CALL(*gl_, Hint(GL_GENERATE_MIPMAP_HINT, GL_NICEST)).Times(0);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_P(GLES2DecoderManualInitTest, MipmapHintOnCompatibilityProfile) {
+  // On a compatibility profile, glHint(GL_GENERATE_MIPMAP_HINT) should be go
+  // through
+  InitState init;
+  init.gl_version = "3.2";
+  init.extensions += " GL_ARB_compatibility";
+  InitDecoder(init);
+
+  Hint cmd;
+  cmd.Init(GL_GENERATE_MIPMAP_HINT, GL_NICEST);
+
+  EXPECT_CALL(*gl_, Hint(GL_GENERATE_MIPMAP_HINT, GL_NICEST))
+      .Times(1)
+      .RetiresOnSaturation();
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
 
 // TODO(vmiura): Tests for VAO restore.

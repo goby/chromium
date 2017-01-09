@@ -42,6 +42,10 @@ bool FakeMessageCenter::IsQuietMode() const {
   return false;
 }
 
+bool FakeMessageCenter::IsLockedState() const {
+  return false;
+}
+
 bool FakeMessageCenter::HasClickedListener(const std::string& id) {
   return false;
 }
@@ -61,22 +65,18 @@ NotificationList::PopupNotifications
   return NotificationList::PopupNotifications();
 }
 
-void FakeMessageCenter::AddNotification(scoped_ptr<Notification> notification) {
-}
+void FakeMessageCenter::AddNotification(
+    std::unique_ptr<Notification> notification) {}
 
 void FakeMessageCenter::UpdateNotification(
     const std::string& old_id,
-    scoped_ptr<Notification> new_notification) {}
+    std::unique_ptr<Notification> new_notification) {}
 
 void FakeMessageCenter::RemoveNotification(const std::string& id,
                                            bool by_user) {
 }
 
-void FakeMessageCenter::RemoveAllNotifications(bool by_user) {
-}
-
-void FakeMessageCenter::RemoveAllVisibleNotifications(bool by_user) {
-}
+void FakeMessageCenter::RemoveAllNotifications(bool by_user, RemoveType type) {}
 
 void FakeMessageCenter::SetNotificationIcon(const std::string& notification_id,
                                             const gfx::Image& image) {
@@ -124,6 +124,8 @@ NotifierSettingsProvider* FakeMessageCenter::GetNotifierSettingsProvider() {
 
 void FakeMessageCenter::SetQuietMode(bool in_quiet_mode) {
 }
+
+void FakeMessageCenter::SetLockedState(bool locked) {}
 
 void FakeMessageCenter::EnterQuietModeWithExpire(
     const base::TimeDelta& expires_in) {

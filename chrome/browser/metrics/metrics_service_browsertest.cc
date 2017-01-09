@@ -12,7 +12,7 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -22,6 +22,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/metrics_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/base/filename_util.h"
 #include "ui/base/window_open_disposition.h"
@@ -45,17 +46,13 @@ class MetricsServiceBrowserTest : public InProcessBrowserTest {
 
     base::FilePath page1_path = test_directory.AppendASCII("title2.html");
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(),
-        net::FilePathToFileURL(page1_path),
-        NEW_FOREGROUND_TAB,
-        kBrowserTestFlags);
+        browser(), net::FilePathToFileURL(page1_path),
+        WindowOpenDisposition::NEW_FOREGROUND_TAB, kBrowserTestFlags);
 
     base::FilePath page2_path = test_directory.AppendASCII("iframe.html");
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(),
-        net::FilePathToFileURL(page2_path),
-        NEW_FOREGROUND_TAB,
-        kBrowserTestFlags);
+        browser(), net::FilePathToFileURL(page2_path),
+        WindowOpenDisposition::NEW_FOREGROUND_TAB, kBrowserTestFlags);
   }
 };
 

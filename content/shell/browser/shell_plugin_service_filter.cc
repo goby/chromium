@@ -18,9 +18,10 @@ bool ShellPluginServiceFilter::IsPluginAvailable(
     int render_frame_id,
     const void* context,
     const GURL& url,
-    const GURL& policy_url,
+    const url::Origin& main_frame_origin,
     WebPluginInfo* plugin) {
   return plugin->name == base::ASCIIToUTF16("Blink Test Plugin") ||
+         plugin->name == base::ASCIIToUTF16("Blink Deprecated Test Plugin") ||
          plugin->name == base::ASCIIToUTF16("WebKit Test PlugIn");
 }
 

@@ -9,14 +9,15 @@ from core import perf_benchmark
 
 from telemetry import benchmark
 from telemetry import page as page_module
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry import story
 from telemetry.value import scalar
 
 from metrics import power
 
 
-class _DromaeoMeasurement(page_test.PageTest):
+class _DromaeoMeasurement(legacy_page_test.LegacyPageTest):
+
   def __init__(self):
     super(_DromaeoMeasurement, self).__init__()
     self._power_metric = None
@@ -74,7 +75,8 @@ class _DromaeoMeasurement(page_test.PageTest):
       container[key]['count'] += 1
       container[key]['sum'] += math.log(value)
 
-    suffix = page.url[page.url.index('?') + 1 :]
+    suffix = page.url[page.url.index('?') + 1:]
+
     def AddResult(name, value):
       important = False
       if name == suffix:
@@ -95,6 +97,7 @@ class _DromaeoMeasurement(page_test.PageTest):
 
     for key, value in aggregated.iteritems():
       AddResult(key, math.exp(value['sum'] / value['count']))
+
 
 class _DromaeoBenchmark(perf_benchmark.PerfBenchmark):
   """A base class for Dromaeo benchmarks."""
@@ -134,7 +137,6 @@ class DromaeoDomCoreAttr(_DromaeoBenchmark):
     return 'dromaeo.domcoreattr'
 
 
-@benchmark.Disabled('xp')  # crbug.com/501625
 class DromaeoDomCoreModify(_DromaeoBenchmark):
   """Dromaeo DOMCore modify JavaScript benchmark.
 
@@ -174,7 +176,6 @@ class DromaeoDomCoreTraverse(_DromaeoBenchmark):
     return 'dromaeo.domcoretraverse'
 
 
-@benchmark.Disabled('win')  # crbug.com/523276
 class DromaeoJslibAttrJquery(_DromaeoBenchmark):
   """Dromaeo JSLib attr jquery JavaScript benchmark.
 
@@ -188,6 +189,10 @@ class DromaeoJslibAttrJquery(_DromaeoBenchmark):
   def Name(cls):
     return 'dromaeo.jslibattrjquery'
 
+  @classmethod
+  def ShouldDisable(cls, possible_browser):
+    # http://crbug.com/634055 (Android One).
+    return cls.IsSvelte(possible_browser)
 
 class DromaeoJslibAttrPrototype(_DromaeoBenchmark):
   """Dromaeo JSLib attr prototype JavaScript benchmark.
@@ -203,7 +208,6 @@ class DromaeoJslibAttrPrototype(_DromaeoBenchmark):
     return 'dromaeo.jslibattrprototype'
 
 
-@benchmark.Disabled('win')  # crbug.com/523276
 class DromaeoJslibEventJquery(_DromaeoBenchmark):
   """Dromaeo JSLib event jquery JavaScript benchmark.
 
@@ -232,11 +236,10 @@ class DromaeoJslibEventPrototype(_DromaeoBenchmark):
     return 'dromaeo.jslibeventprototype'
 
 
-# xp: crbug.com/389731
-# win7: http://crbug.com/479796
+# win: http://crbug.com/479796, http://crbug.com/598705
 # android: http://crbug.com/503138
-# win8: crbug.com/529330
-@benchmark.Disabled('xp', 'win7', 'android', 'win8')
+# linux: http://crbug.com/583075
+@benchmark.Disabled('win-reference', 'android', 'linux')
 class DromaeoJslibModifyJquery(_DromaeoBenchmark):
   """Dromaeo JSLib modify jquery JavaScript benchmark.
 
@@ -265,7 +268,6 @@ class DromaeoJslibModifyPrototype(_DromaeoBenchmark):
     return 'dromaeo.jslibmodifyprototype'
 
 
-@benchmark.Disabled('win')  # crbug.com/523276
 class DromaeoJslibStyleJquery(_DromaeoBenchmark):
   """Dromaeo JSLib style jquery JavaScript benchmark.
 

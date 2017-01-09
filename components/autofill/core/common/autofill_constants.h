@@ -14,6 +14,9 @@ namespace autofill {
 // Help URL for the Autofill dialog.
 extern const char kHelpURL[];
 
+// The origin of an AutofillDataModel created or modified in the settings page.
+extern const char kSettingsOrigin[];
+
 // The number of fields required by Autofill to execute its heuristic and
 // crowdsourcing prediction routines. Ideally we would execute those routines no
 // matter how many fields are in the forms; however, finding the label for each
@@ -24,6 +27,14 @@ const size_t kRequiredFieldsForPredictionRoutines = 3;
 // The minimum number of fields required to upload a form to the Autofill
 // servers.
 const size_t kRequiredFieldsForUpload = 3;
+
+// The minimum number of fields in a form that contains only password fields to
+// upload the form to and request predictions from the Autofill servers.
+const size_t kRequiredFieldsForFormsWithOnlyPasswordFields = 2;
+
+// Special query id used between the browser and the renderer when the action
+// is initiated from the browser.
+const int kNoQueryId = -1;
 
 // Options bitmask values for AutofillHostMsg_ShowPasswordSuggestions IPC
 enum ShowPasswordSuggestionsOptions {

@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/keyed_service/content/refcounted_browser_context_keyed_service_factory.h"
 
@@ -24,8 +25,7 @@ class TopSites;
 
 class Profile;
 
-// Used for creating and fetching a per-profile instance of the
-// TopSites.
+// Used for creating and fetching a per-profile instance of the TopSites.
 class TopSitesFactory : public RefcountedBrowserContextKeyedServiceFactory {
  public:
   // Get the TopSites service for |profile|, creating one if needed.

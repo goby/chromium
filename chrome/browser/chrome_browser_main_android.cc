@@ -4,32 +4,26 @@
 
 #include "chrome/browser/chrome_browser_main_android.h"
 
-#include "base/android/build_info.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/trace_event/trace_event.h"
-#include "chrome/browser/android/chrome_media_client_android.h"
+#include "chrome/browser/android/mojo/chrome_interface_registrar_android.h"
 #include "chrome/browser/android/seccomp_support_detector.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "components/crash/content/app/breakpad_linux.h"
 #include "components/crash/content/browser/crash_dump_manager_android.h"
-#include "components/enhanced_bookmarks/persistent_image_store.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "content/public/browser/android/compositor.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/main_function_params.h"
-#include "media/base/android/media_client_android.h"
 #include "net/android/network_change_notifier_factory_android.h"
 #include "net/base/network_change_notifier.h"
 #include "ui/base/resource/resource_bundle_android.h"
 #include "ui/base/ui_base_paths.h"
-
-#if !defined(USE_AURA)
-#include "content/public/browser/android/compositor.h"
-#endif
 
 namespace {
 
@@ -76,9 +70,10 @@ int ChromeBrowserMainPartsAndroid::PreCreateThreads() {
     crash_dump_manager_.reset(new breakpad::CrashDumpManager(crash_dump_dir));
   }
 
-  bool has_language_splits =
-      base::android::BuildInfo::GetInstance()->has_language_apk_splits();
-  ui::SetLocalePaksStoredInApk(has_language_splits);
+  // Auto-detect based on en-US whether locale .pak files are store uncompressed
+  // (monochrome) vs extracted (non-monochrome).
+  ui::SetLocalePaksStoredInApk(
+      !ui::GetPathForAndroidLocalePakWithinApk("en-US").empty());
 
   return ChromeBrowserMainParts::PreCreateThreads();
 }
@@ -89,12 +84,15 @@ void ChromeBrowserMainPartsAndroid::PostProfileInit() {
   // Previously we stored information related to salient images for bookmarks
   // in a local file. We replaced the salient images with favicons. As part
   // of the clean up, the local file needs to be deleted. See crbug.com/499415.
-  base::FilePath bookmark_image_file_path = profile()->GetPath().Append(
-      PersistentImageStore::kBookmarkImageStoreDb);
+  base::FilePath bookmark_image_file_path =
+      profile()->GetPath().Append("BookmarkImageAndUrlStore.db");
   content::BrowserThread::PostDelayedTask(
       content::BrowserThread::FILE, FROM_HERE,
       base::Bind(&DeleteFileTask, bookmark_image_file_path),
       base::TimeDelta::FromMinutes(1));
+  // Start watching the preferences that need to be backed up backup using
+  // Android backup, so that we create a new backup if they change.
+  backup_watcher_.reset(new chrome::android::ChromeBackupWatcher(profile()));
 }
 
 void ChromeBrowserMainPartsAndroid::PreEarlyInitialization() {
@@ -103,9 +101,7 @@ void ChromeBrowserMainPartsAndroid::PreEarlyInitialization() {
   net::NetworkChangeNotifier::SetFactory(
       new net::NetworkChangeNotifierFactoryAndroid());
 
-#if !defined(USE_AURA)
   content::Compositor::Initialize();
-#endif
 
   // Chrome on Android does not use default MessageLoop. It has its own
   // Android specific MessageLoop.
@@ -128,18 +124,14 @@ void ChromeBrowserMainPartsAndroid::PreEarlyInitialization() {
   ChromeBrowserMainParts::PreEarlyInitialization();
 }
 
-void ChromeBrowserMainPartsAndroid::PreMainMessageLoopRun() {
-  media::SetMediaClientAndroid(new ChromeMediaClientAndroid);
-
-  ChromeBrowserMainParts::PreMainMessageLoopRun();
-}
-
 void ChromeBrowserMainPartsAndroid::PostBrowserStart() {
   ChromeBrowserMainParts::PostBrowserStart();
 
   content::BrowserThread::GetBlockingPool()->PostDelayedTask(FROM_HERE,
       base::Bind(&SeccompSupportDetector::StartDetection),
       base::TimeDelta::FromMinutes(1));
+
+  RegisterChromeJavaMojoInterfaces();
 }
 
 void ChromeBrowserMainPartsAndroid::ShowMissingLocaleMessageBox() {

@@ -2,13 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/disk_cache/simple/simple_index.h"
+
 #include <algorithm>
 #include <functional>
+#include <memory>
+#include <utility>
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/hash.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/pickle.h"
 #include "base/sha1.h"
 #include "base/strings/stringprintf.h"
@@ -16,7 +19,6 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "net/base/cache_type.h"
-#include "net/disk_cache/simple/simple_index.h"
 #include "net/disk_cache/simple/simple_index_delegate.h"
 #include "net/disk_cache/simple/simple_index_file.h"
 #include "net/disk_cache/simple/simple_test_util.h"
@@ -28,12 +30,11 @@ namespace {
 
 const base::Time kTestLastUsedTime =
     base::Time::UnixEpoch() + base::TimeDelta::FromDays(20);
-const uint64 kTestEntrySize = 789;
+const uint32_t kTestEntrySize = 789;
 
 }  // namespace
 
-
-class EntryMetadataTest  : public testing::Test {
+class EntryMetadataTest : public testing::Test {
  public:
   EntryMetadata NewEntryMetadataWithValues() {
     return EntryMetadata(kTestLastUsedTime, kTestEntrySize);
@@ -65,8 +66,9 @@ class MockSimpleIndexFile : public SimpleIndexFile,
     ++load_index_entries_calls_;
   }
 
-  void WriteToDisk(const SimpleIndex::EntrySet& entry_set,
-                   uint64 cache_size,
+  void WriteToDisk(SimpleIndex::IndexWriteToDiskReason reason,
+                   const SimpleIndex::EntrySet& entry_set,
+                   uint64_t cache_size,
                    const base::TimeTicks& start,
                    bool app_on_background,
                    const base::Closure& callback) override {
@@ -97,16 +99,16 @@ class SimpleIndexTest  : public testing::Test, public SimpleIndexDelegate {
       : hashes_(base::Bind(&HashesInitializer)),
         doom_entries_calls_(0) {}
 
-  static uint64 HashesInitializer(size_t hash_index) {
+  static uint64_t HashesInitializer(size_t hash_index) {
     return disk_cache::simple_util::GetEntryHashKey(
         base::StringPrintf("key%d", static_cast<int>(hash_index)));
   }
 
   void SetUp() override {
-    scoped_ptr<MockSimpleIndexFile> index_file(new MockSimpleIndexFile());
+    std::unique_ptr<MockSimpleIndexFile> index_file(new MockSimpleIndexFile());
     index_file_ = index_file->AsWeakPtr();
     index_.reset(
-        new SimpleIndex(NULL, this, net::DISK_CACHE, index_file.Pass()));
+        new SimpleIndex(NULL, this, net::DISK_CACHE, std::move(index_file)));
 
     index_->Initialize(base::Time());
   }
@@ -120,16 +122,16 @@ class SimpleIndexTest  : public testing::Test, public SimpleIndexDelegate {
   }
 
   // From SimpleIndexDelegate:
-  void DoomEntries(std::vector<uint64>* entry_hashes,
+  void DoomEntries(std::vector<uint64_t>* entry_hashes,
                    const net::CompletionCallback& callback) override {
-    for (const uint64& entry_hash : *entry_hashes)
+    for (const uint64_t& entry_hash : *entry_hashes)
       index_->Remove(entry_hash);
     last_doom_entry_hashes_ = *entry_hashes;
     ++doom_entries_calls_;
   }
 
   // Redirect to allow single "friend" declaration in base class.
-  bool GetEntryForTesting(uint64 key, EntryMetadata* metadata) {
+  bool GetEntryForTesting(uint64_t key, EntryMetadata* metadata) {
     SimpleIndex::EntrySet::iterator it = index_->entries_set_.find(key);
     if (index_->entries_set_.end() == it)
       return false;
@@ -137,11 +139,12 @@ class SimpleIndexTest  : public testing::Test, public SimpleIndexDelegate {
     return true;
   }
 
-  void InsertIntoIndexFileReturn(uint64 hash_key,
+  void InsertIntoIndexFileReturn(uint64_t hash_key,
                                  base::Time last_used_time,
                                  int entry_size) {
     index_file_->load_result()->entries.insert(std::make_pair(
-        hash_key, EntryMetadata(last_used_time, entry_size)));
+        hash_key, EntryMetadata(last_used_time,
+                                base::checked_cast<uint32_t>(entry_size))));
   }
 
   void ReturnIndexFile() {
@@ -153,17 +156,16 @@ class SimpleIndexTest  : public testing::Test, public SimpleIndexDelegate {
   SimpleIndex* index() { return index_.get(); }
   const MockSimpleIndexFile* index_file() const { return index_file_.get(); }
 
-  const std::vector<uint64>& last_doom_entry_hashes() const {
+  const std::vector<uint64_t>& last_doom_entry_hashes() const {
     return last_doom_entry_hashes_;
   }
   int doom_entries_calls() const { return doom_entries_calls_; }
 
-
-  const simple_util::ImmutableArray<uint64, 16> hashes_;
-  scoped_ptr<SimpleIndex> index_;
+  const simple_util::ImmutableArray<uint64_t, 16> hashes_;
+  std::unique_ptr<SimpleIndex> index_;
   base::WeakPtr<MockSimpleIndexFile> index_file_;
 
-  std::vector<uint64> last_doom_entry_hashes_;
+  std::vector<uint64_t> last_doom_entry_hashes_;
   int doom_entries_calls_;
 };
 
@@ -184,6 +186,25 @@ TEST_F(EntryMetadataTest, Basics) {
             entry_metadata.GetLastUsedTime());
 }
 
+// Tests that setting an unusually small/large last used time results in
+// truncation (rather than crashing).
+TEST_F(EntryMetadataTest, SaturatedLastUsedTime) {
+  EntryMetadata entry_metadata;
+
+  // Set a time that is too large to be represented internally as 32-bit unix
+  // timestamp. Will saturate to a large timestamp (in year 2106).
+  entry_metadata.SetLastUsedTime(base::Time::Max());
+  EXPECT_EQ(INT64_C(15939440895000000),
+            entry_metadata.GetLastUsedTime().ToInternalValue());
+
+  // Set a time that is too small to be represented by a unix timestamp (before
+  // 1970).
+  entry_metadata.SetLastUsedTime(
+      base::Time::FromInternalValue(7u));  // This is a date in 1601.
+  EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(1),
+            entry_metadata.GetLastUsedTime());
+}
+
 TEST_F(EntryMetadataTest, Serialize) {
   EntryMetadata entry_metadata = NewEntryMetadataWithValues();
 
@@ -199,28 +220,28 @@ TEST_F(EntryMetadataTest, Serialize) {
 TEST_F(SimpleIndexTest, IndexSizeCorrectOnMerge) {
   index()->SetMaxSize(100);
   index()->Insert(hashes_.at<2>());
-  index()->UpdateEntrySize(hashes_.at<2>(), 2);
+  index()->UpdateEntrySize(hashes_.at<2>(), 2u);
   index()->Insert(hashes_.at<3>());
-  index()->UpdateEntrySize(hashes_.at<3>(), 3);
+  index()->UpdateEntrySize(hashes_.at<3>(), 3u);
   index()->Insert(hashes_.at<4>());
-  index()->UpdateEntrySize(hashes_.at<4>(), 4);
+  index()->UpdateEntrySize(hashes_.at<4>(), 4u);
   EXPECT_EQ(9U, index()->cache_size_);
   {
-    scoped_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
+    std::unique_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
     result->did_load = true;
-    index()->MergeInitializingSet(result.Pass());
+    index()->MergeInitializingSet(std::move(result));
   }
   EXPECT_EQ(9U, index()->cache_size_);
   {
-    scoped_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
+    std::unique_ptr<SimpleIndexLoadResult> result(new SimpleIndexLoadResult());
     result->did_load = true;
-    const uint64 new_hash_key = hashes_.at<11>();
+    const uint64_t new_hash_key = hashes_.at<11>();
     result->entries.insert(
-        std::make_pair(new_hash_key, EntryMetadata(base::Time::Now(), 11)));
-    const uint64 redundant_hash_key = hashes_.at<4>();
-    result->entries.insert(std::make_pair(redundant_hash_key,
-                                          EntryMetadata(base::Time::Now(), 4)));
-    index()->MergeInitializingSet(result.Pass());
+        std::make_pair(new_hash_key, EntryMetadata(base::Time::Now(), 11u)));
+    const uint64_t redundant_hash_key = hashes_.at<4>();
+    result->entries.insert(std::make_pair(
+        redundant_hash_key, EntryMetadata(base::Time::Now(), 4u)));
+    index()->MergeInitializingSet(std::move(result));
   }
   EXPECT_EQ(2U + 3U + 4U + 11U, index()->cache_size_);
 }
@@ -254,7 +275,7 @@ TEST_F(SimpleIndexTest, Has) {
   EXPECT_EQ(1, index_file_->load_index_entries_calls());
 
   // Confirm "Has()" always returns true before the callback is called.
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   EXPECT_TRUE(index()->Has(kHash1));
   index()->Insert(kHash1);
   EXPECT_TRUE(index()->Has(kHash1));
@@ -278,7 +299,7 @@ TEST_F(SimpleIndexTest, UseIfExists) {
 
   // Confirm "UseIfExists()" always returns true before the callback is called
   // and updates mod time if the entry was really there.
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   EntryMetadata metadata1, metadata2;
   EXPECT_TRUE(index()->UseIfExists(kHash1));
   EXPECT_FALSE(GetEntryForTesting(kHash1, &metadata1));
@@ -317,7 +338,7 @@ TEST_F(SimpleIndexTest, UpdateEntrySize) {
 
   index()->SetMaxSize(1000);
 
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   InsertIntoIndexFileReturn(kHash1, now - base::TimeDelta::FromDays(2), 475);
   ReturnIndexFile();
 
@@ -395,7 +416,7 @@ TEST_F(SimpleIndexTest, BasicInit) {
 
 // Remove something that's going to come in from the loaded index.
 TEST_F(SimpleIndexTest, RemoveBeforeInit) {
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   index()->Remove(kHash1);
 
   InsertIntoIndexFileReturn(kHash1,
@@ -409,7 +430,7 @@ TEST_F(SimpleIndexTest, RemoveBeforeInit) {
 // Insert something that's going to come in from the loaded index; correct
 // result?
 TEST_F(SimpleIndexTest, InsertBeforeInit) {
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   index()->Insert(kHash1);
 
   InsertIntoIndexFileReturn(kHash1,
@@ -427,7 +448,7 @@ TEST_F(SimpleIndexTest, InsertBeforeInit) {
 
 // Insert and Remove something that's going to come in from the loaded index.
 TEST_F(SimpleIndexTest, InsertRemoveBeforeInit) {
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   index()->Insert(kHash1);
   index()->Remove(kHash1);
 
@@ -441,7 +462,7 @@ TEST_F(SimpleIndexTest, InsertRemoveBeforeInit) {
 
 // Insert and Remove something that's going to come in from the loaded index.
 TEST_F(SimpleIndexTest, RemoveInsertBeforeInit) {
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   index()->Remove(kHash1);
   index()->Insert(kHash1);
 
@@ -521,7 +542,7 @@ TEST_F(SimpleIndexTest, BasicEviction) {
                             now - base::TimeDelta::FromDays(2),
                             475u);
   index()->Insert(hashes_.at<2>());
-  index()->UpdateEntrySize(hashes_.at<2>(), 475);
+  index()->UpdateEntrySize(hashes_.at<2>(), 475u);
   ReturnIndexFile();
 
   WaitForTimeChange();
@@ -538,7 +559,7 @@ TEST_F(SimpleIndexTest, BasicEviction) {
   // TODO(rdsmith): This is dependent on the innards of the implementation
   // as to at exactly what point we trigger eviction. Not sure how to fix
   // that.
-  index()->UpdateEntrySize(hashes_.at<3>(), 475);
+  index()->UpdateEntrySize(hashes_.at<3>(), 475u);
   EXPECT_EQ(1, doom_entries_calls());
   EXPECT_EQ(1, index()->GetEntryCount());
   EXPECT_FALSE(index()->Has(hashes_.at<1>()));
@@ -555,7 +576,7 @@ TEST_F(SimpleIndexTest, DiskWriteQueued) {
 
   EXPECT_FALSE(index()->write_to_disk_timer_.IsRunning());
 
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   index()->Insert(kHash1);
   EXPECT_TRUE(index()->write_to_disk_timer_.IsRunning());
   index()->write_to_disk_timer_.Stop();
@@ -565,7 +586,7 @@ TEST_F(SimpleIndexTest, DiskWriteQueued) {
   EXPECT_TRUE(index()->write_to_disk_timer_.IsRunning());
   index()->write_to_disk_timer_.Stop();
 
-  index()->UpdateEntrySize(kHash1, 20);
+  index()->UpdateEntrySize(kHash1, 20u);
   EXPECT_TRUE(index()->write_to_disk_timer_.IsRunning());
   index()->write_to_disk_timer_.Stop();
 
@@ -580,9 +601,9 @@ TEST_F(SimpleIndexTest, DiskWriteExecuted) {
 
   EXPECT_FALSE(index()->write_to_disk_timer_.IsRunning());
 
-  const uint64 kHash1 = hashes_.at<1>();
+  const uint64_t kHash1 = hashes_.at<1>();
   index()->Insert(kHash1);
-  index()->UpdateEntrySize(kHash1, 20);
+  index()->UpdateEntrySize(kHash1, 20u);
   EXPECT_TRUE(index()->write_to_disk_timer_.IsRunning());
   base::Closure user_task(index()->write_to_disk_timer_.user_task());
   index()->write_to_disk_timer_.Stop();
@@ -593,7 +614,7 @@ TEST_F(SimpleIndexTest, DiskWriteExecuted) {
   SimpleIndex::EntrySet entry_set;
   index_file_->GetAndResetDiskWriteEntrySet(&entry_set);
 
-  uint64 hash_key = kHash1;
+  uint64_t hash_key = kHash1;
   base::Time now(base::Time::Now());
   ASSERT_EQ(1u, entry_set.size());
   EXPECT_EQ(hash_key, entry_set.begin()->first);
@@ -610,7 +631,7 @@ TEST_F(SimpleIndexTest, DiskWritePostponed) {
   EXPECT_FALSE(index()->write_to_disk_timer_.IsRunning());
 
   index()->Insert(hashes_.at<1>());
-  index()->UpdateEntrySize(hashes_.at<1>(), 20);
+  index()->UpdateEntrySize(hashes_.at<1>(), 20u);
   EXPECT_TRUE(index()->write_to_disk_timer_.IsRunning());
   base::TimeTicks expected_trigger(
       index()->write_to_disk_timer_.desired_run_time());
@@ -618,7 +639,7 @@ TEST_F(SimpleIndexTest, DiskWritePostponed) {
   WaitForTimeChange();
   EXPECT_EQ(expected_trigger, index()->write_to_disk_timer_.desired_run_time());
   index()->Insert(hashes_.at<2>());
-  index()->UpdateEntrySize(hashes_.at<2>(), 40);
+  index()->UpdateEntrySize(hashes_.at<2>(), 40u);
   EXPECT_TRUE(index()->write_to_disk_timer_.IsRunning());
   EXPECT_LT(expected_trigger, index()->write_to_disk_timer_.desired_run_time());
   index()->write_to_disk_timer_.Stop();

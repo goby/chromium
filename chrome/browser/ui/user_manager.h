@@ -5,7 +5,11 @@
 #ifndef CHROME_BROWSER_UI_USER_MANAGER_H_
 #define CHROME_BROWSER_UI_USER_MANAGER_H_
 
+#include "base/callback_forward.h"
+#include "base/macros.h"
 #include "chrome/browser/profiles/profile_window.h"
+#include "components/signin/core/browser/signin_metrics.h"
+#include "content/public/browser/web_contents_delegate.h"
 
 namespace base {
 class FilePath;
@@ -14,62 +18,105 @@ class FilePath;
 // Cross-platform methods for displaying the user manager.
 class UserManager {
  public:
+  // TODO(noms): Figure out if this size can be computed dynamically or adjusted
+  // for smaller screens.
+  static constexpr int kWindowWidth = 800;
+  static constexpr int kWindowHeight = 600;
+
   // Shows the User Manager or re-activates an existing one, focusing the
   // profile given by |profile_path_to_focus|; passing an empty base::FilePath
   // focuses no user pod. Based on the value of |tutorial_mode|, a tutorial
-  // could be shown, in which case |profile_path_to_focus| is ignored. After a
-  // profile is opened, executes the |profile_open_action|.
+  // could be shown, in which case |profile_path_to_focus| is ignored. Depending
+  // on the value of |user_manager_action|, executes an action once the user
+  // manager displays or after a profile is opened.
   static void Show(const base::FilePath& profile_path_to_focus,
                    profiles::UserManagerTutorialMode tutorial_mode,
-                   profiles::UserManagerProfileSelected profile_open_action);
+                   profiles::UserManagerAction user_manager_action);
 
   // Hides the User Manager.
   static void Hide();
 
-  // Returns whether the User Manager is showing.
+  // Returns whether the User Manager is showing and active.
+  // TODO(zmin): Rename the function to something less confusing.
+  // https://crbug.com/649380.
   static bool IsShowing();
 
   // To be called once the User Manager's contents are showing.
   static void OnUserManagerShown();
 
-  // Shows a dialog where the user can re-authenticate when their profile is
-  // not yet open.  This is called from the user manager when a profile is
-  // locked and it has detected that the user's password has changed since the
-  // profile was locked.
-  static void ShowReauthDialog(content::BrowserContext* browser_context,
-                               const std::string& email);
+  // Add a callback that will be called when OnUserManagerShown is called.
+  static void AddOnUserManagerShownCallbackForTesting(
+      const base::Closure& callback);
 
-  // TODO(noms): Figure out if this size can be computed dynamically or adjusted
-  // for smaller screens.
-  static const int kWindowWidth = 800;
-  static const int kWindowHeight = 600;
-
-  static const int kReauthDialogWidth = 360;
-  static const int kReauthDialogHeight = 440;
-
-  // This class observes the WebUI used in the UserManager to perform online
-  // reauthentication of locked profiles. Its concretely implemented in
-  // UserManagerMac and UserManagerView to specialize the closing of the UI's
-  // dialog widget.
-  class ReauthDialogObserver : public content::WebContentsObserver {
-   public:
-    ReauthDialogObserver(content::WebContents* web_contents,
-                         const std::string& email_address);
-    ~ReauthDialogObserver() override {}
-
-   private:
-    // content::WebContentsObserver:
-    void DidStopLoading() override;
-
-    virtual void CloseReauthDialog() = 0;
-
-    const std::string email_address_;
-
-    DISALLOW_COPY_AND_ASSIGN(ReauthDialogObserver);
-  };
+  // Get the path of profile that is being signed in.
+  static base::FilePath GetSigninProfilePath();
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(UserManager);
+  DISALLOW_IMPLICIT_CONSTRUCTORS(UserManager);
+};
+
+// Dialog that will be displayed when a profile is selected in UserManager.
+class UserManagerProfileDialog {
+ public:
+  // Dimensions of the reauth dialog displaying the old-style signin flow with
+  // the username and password challenge on the same form.
+  static constexpr int kPasswordCombinedDialogHeight = 440;
+  static constexpr int kPasswordCombinedDialogWidth = 360;
+
+  // Dimensions of the reauth dialog displaying the password-separated signin
+  // flow.
+  static constexpr int kDialogHeight = 512;
+  static constexpr int kDialogWidth = 448;
+
+  // Shows a dialog where the user can re-authenticate the profile with the
+  // given |email|. This is called in the following scenarios:
+  //  -From the user manager when a profile is locked and the user's password is
+  //   detected to have been changed.
+  //  -From the user manager when a custodian account needs to be
+  //   reauthenticated.
+  // |reason| can be REASON_UNLOCK or REASON_REAUTHENTICATION to indicate
+  // whether this is a reauth or unlock scenario.
+  static void ShowReauthDialog(content::BrowserContext* browser_context,
+                               const std::string& email,
+                               signin_metrics::Reason reason);
+
+  // Shows a dialog where the user logs into their profile for the first time
+  // via the user manager.
+  static void ShowSigninDialog(content::BrowserContext* browser_context,
+                               const base::FilePath& profile_path);
+
+  // Show the dialog and display local sign in error message without browser.
+  static void ShowDialogAndDisplayErrorMessage(
+      content::BrowserContext* browser_context);
+
+  // Display local sign in error message without browser.
+  static void DisplayErrorMessage();
+
+  // Hides the dialog if it is showing.
+  static void HideDialog();
+
+  // Abstract base class for performing online reauthentication of profiles in
+  // the User Manager. It is concretely implemented in UserManagerMac and
+  // UserManagerView to specialize the closing of the UI's dialog widgets.
+  class BaseDialogDelegate : public content::WebContentsDelegate {
+   public:
+    BaseDialogDelegate();
+
+    // content::WebContentsDelegate:
+    bool HandleContextMenu(const content::ContextMenuParams& params) override;
+
+    // content::WebContentsDelegate:
+    void LoadingStateChanged(content::WebContents* source,
+                             bool to_different_document) override;
+
+   protected:
+    virtual void CloseDialog() = 0;
+
+    // WebContents of the embedded WebView.
+    content::WebContents* guest_web_contents_;
+
+    DISALLOW_COPY_AND_ASSIGN(BaseDialogDelegate);
+  };
 };
 
 #endif  // CHROME_BROWSER_UI_USER_MANAGER_H_

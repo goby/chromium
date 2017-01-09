@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
@@ -16,40 +17,28 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/ssl_cert_reporter.h"
 #include "components/certificate_reporting/error_report.h"
+#include "content/public/browser/certificate_request_result_type.h"
+#include "extensions/features/features.h"
 #include "net/ssl/ssl_info.h"
 #include "url/gurl.h"
-
-#if defined(ENABLE_EXTENSIONS)
-namespace extensions {
-class ExperienceSamplingEvent;
-}
-#endif
 
 namespace policy {
 class PolicyTest_SSLErrorOverridingDisallowed_Test;
 }
 
+namespace security_interstitials {
+class SSLErrorUI;
+}
+
 class CertReportHelper;
+class SSLUITest;
+class ChromeMetricsHelper;
 
 // This class is responsible for showing/hiding the interstitial page that is
 // shown when a certificate error happens.
 // It deletes itself when the interstitial page is closed.
 class SSLBlockingPage : public SecurityInterstitialPage {
  public:
-  enum SSLBlockingPageOptionsMask {
-    // Indicates whether or not the user could (assuming perfect knowledge)
-    // successfully override the error and still get the security guarantees
-    // of TLS.
-    OVERRIDABLE = 1 << 0,
-    // Indicates whether or not the site the user is trying to connect to has
-    // requested strict enforcement of certificate validation (e.g. with HTTP
-    // Strict-Transport-Security).
-    STRICT_ENFORCEMENT = 1 << 1,
-    // Indicates whether a user decision had been previously made but the
-    // decision has expired.
-    EXPIRED_BUT_PREVIOUSLY_ALLOWED = 1 << 2
-  };
-
   // Interstitial type, used in tests.
   static InterstitialPageDelegate::TypeID kTypeForTesting;
 
@@ -58,30 +47,33 @@ class SSLBlockingPage : public SecurityInterstitialPage {
   // Creates an SSL blocking page. If the blocking page isn't shown, the caller
   // is responsible for cleaning up the blocking page, otherwise the
   // interstitial takes ownership when shown. |options_mask| must be a bitwise
-  // mask of SSLBlockingPageOptionsMask values.
-  SSLBlockingPage(content::WebContents* web_contents,
-                  int cert_error,
-                  const net::SSLInfo& ssl_info,
-                  const GURL& request_url,
-                  int options_mask,
-                  const base::Time& time_triggered,
-                  scoped_ptr<SSLCertReporter> ssl_cert_reporter,
-                  const base::Callback<void(bool)>& callback);
+  // mask of SSLErrorUI::SSLErrorOptionsMask values.
+  // This is static because the constructor uses expensive to compute parameters
+  // more than once (e.g. overrideable).
+  static SSLBlockingPage* Create(
+      content::WebContents* web_contents,
+      int cert_error,
+      const net::SSLInfo& ssl_info,
+      const GURL& request_url,
+      int options_mask,
+      const base::Time& time_triggered,
+      std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+      const base::Callback<void(content::CertificateRequestResultType)>&
+          callback);
 
   // InterstitialPageDelegate method:
   InterstitialPageDelegate::TypeID GetTypeForTesting() const override;
 
-  // Returns true if |options_mask| refers to an overridable SSL error and
+  // Returns true if |options_mask| refers to a soft-overridable SSL error and
   // if SSL error overriding is allowed by policy.
   static bool IsOverridable(int options_mask, const Profile* const profile);
 
-  static bool DoesPolicyAllowDangerOverride(const Profile* const profile);
-
   void SetSSLCertReporterForTesting(
-      scoped_ptr<SSLCertReporter> ssl_cert_reporter);
+      std::unique_ptr<SSLCertReporter> ssl_cert_reporter);
 
  protected:
   friend class policy::PolicyTest_SSLErrorOverridingDisallowed_Test;
+  friend class SSLUITest;
 
   // InterstitialPageDelegate implementation.
   void CommandReceived(const std::string& command) override;
@@ -94,39 +86,33 @@ class SSLBlockingPage : public SecurityInterstitialPage {
   bool ShouldCreateNewNavigation() const override;
   void PopulateInterstitialStrings(
       base::DictionaryValue* load_time_data) override;
-  void AfterShow() override {}
 
  private:
+  SSLBlockingPage(
+      content::WebContents* web_contents,
+      int cert_error,
+      const net::SSLInfo& ssl_info,
+      const GURL& request_url,
+      int options_mask,
+      const base::Time& time_triggered,
+      std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+      bool overrideable,
+      std::unique_ptr<ChromeMetricsHelper> metrics_helper,
+      const base::Callback<void(content::CertificateRequestResultType)>&
+          callback);
+
   void NotifyDenyCertificate();
-  void NotifyAllowCertificate();
 
-  std::string GetUmaHistogramPrefix() const;
-  std::string GetSamplingEventName() const;
-
-  base::Callback<void(bool)> callback_;
-
-  const int cert_error_;
+  base::Callback<void(content::CertificateRequestResultType)> callback_;
   const net::SSLInfo ssl_info_;
-  // There are two ways for the user to override an interstitial:
-  //
-  // overridable_) By clicking on "Advanced" and then "Proceed".
-  //   - This corresponds to "the user can override using the UI".
-  // danger_overridable_) By typing the word "danger".
-  //   - This is an undocumented workaround.
-  //   - This can be set to "false" dynamically to prevent the behaviour.
-  const bool overridable_;
-  bool danger_overridable_;
-  // Has the site requested strict enforcement of certificate errors?
-  const bool strict_enforcement_;
-  // Did the user previously allow a bad certificate but the decision has now
-  // expired?
+  const bool overridable_;  // The UI allows the user to override the error.
+
+  // The user previously allowed a bad certificate, but the decision has now
+  // expired.
   const bool expired_but_previously_allowed_;
 
-  // The time at which the interstitial was triggered. The interstitial
-  // calculates all times relative to this.
-  const base::Time time_triggered_;
-
-  scoped_ptr<CertReportHelper> cert_report_helper_;
+  const std::unique_ptr<CertReportHelper> cert_report_helper_;
+  const std::unique_ptr<security_interstitials::SSLErrorUI> ssl_error_ui_;
 
   DISALLOW_COPY_AND_ASSIGN(SSLBlockingPage);
 };

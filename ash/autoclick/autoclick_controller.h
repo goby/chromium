@@ -6,6 +6,8 @@
 #define ASH_AUTOCLICK_AUTOCLICK_CONTROLLER_H
 
 #include "ash/ash_export.h"
+#include "base/macros.h"
+#include "base/time/time.h"
 
 namespace ash {
 
@@ -24,10 +26,7 @@ class ASH_EXPORT AutoclickController {
 
   // Set the time to wait in milliseconds from when the mouse stops moving
   // to when the autoclick event is sent.
-  virtual void SetAutoclickDelay(int delay_ms) = 0;
-
-  // Returns the autoclick delay in milliseconds.
-  virtual int GetAutoclickDelay() const = 0;
+  virtual void SetAutoclickDelay(base::TimeDelta delay) = 0;
 
   static AutoclickController* CreateInstance();
 
@@ -35,8 +34,14 @@ class ASH_EXPORT AutoclickController {
   // the autoclick.
   static const int kDefaultAutoclickDelayMs;
 
+  // Gets the default wait time as a base::TimeDelta object.
+  static base::TimeDelta GetDefaultAutoclickDelay();
+
  protected:
   AutoclickController() {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(AutoclickController);
 };
 
 }  // namespace ash

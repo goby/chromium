@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_DEV_MODE_BUBBLE_DELEGATE_H_
 #define CHROME_BROWSER_EXTENSIONS_DEV_MODE_BUBBLE_DELEGATE_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/macros.h"
@@ -42,6 +44,7 @@ class DevModeBubbleDelegate
   void LogAction(ExtensionMessageBubbleController::BubbleAction) override;
   const char* GetKey() override;
   bool ClearProfileSetAfterAction() override;
+  bool SupportsPolicyIndicator() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DevModeBubbleDelegate);

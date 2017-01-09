@@ -5,6 +5,7 @@
 #include "skia/ext/bitmap_platform_device_mac.h"
 
 #import <ApplicationServices/ApplicationServices.h>
+#include <stddef.h>
 #include <time.h>
 
 #include "base/mac/mac_util.h"
@@ -14,13 +15,25 @@
 #include "skia/ext/skia_utils_mac.h"
 #include "third_party/skia/include/core/SkMatrix.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "third_party/skia/include/core/SkRegion.h"
+#include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkTypes.h"
-#include "third_party/skia/include/core/SkUtils.h"
 
 namespace skia {
 
 namespace {
+
+// Returns true if it is unsafe to attempt to allocate an offscreen buffer
+// given these dimensions.
+bool RasterDeviceTooBigToAllocate(int width, int height) {
+
+#ifndef SKIA_EXT_RASTER_DEVICE_ALLOCATION_MAX
+#define SKIA_EXT_RASTER_DEVICE_ALLOCATION_MAX    (2 * 256 * 1024 * 1024)
+#endif
+
+    int bytesPerPixel = 4;
+    int64_t bytes = (int64_t)width * height * bytesPerPixel;
+    return bytes > SKIA_EXT_RASTER_DEVICE_ALLOCATION_MAX;
+}
 
 static CGContextRef CGContextForData(void* data, int width, int height) {
 #define HAS_ARGB_SHIFTS(a, r, g, b) \
@@ -64,14 +77,6 @@ void BitmapPlatformDevice::ReleaseBitmapContext() {
   bitmap_context_ = NULL;
 }
 
-void BitmapPlatformDevice::SetMatrixClip(
-    const SkMatrix& transform,
-    const SkRegion& region) {
-  transform_ = transform;
-  clip_region_ = region;
-  config_dirty_ = true;
-}
-
 // Loads the specified Skia transform into the device context
 static void LoadTransformToCGContext(CGContextRef context,
                                      const SkMatrix& matrix) {
@@ -99,55 +104,35 @@ static void LoadTransformToCGContext(CGContextRef context,
   transformed_matrix.setTranslateY(ty + (SkScalar)height);
 
   CGAffineTransform cg_matrix =
-      gfx::SkMatrixToCGAffineTransform(transformed_matrix);
+      skia::SkMatrixToCGAffineTransform(transformed_matrix);
 
   // Load final transform into context.
   CGContextConcatCTM(context, cg_matrix);
 }
 
-// Loads a SkRegion into the CG context.
 static void LoadClippingRegionToCGContext(CGContextRef context,
-                                          const SkRegion& region,
+                                          const SkIRect& clip_bounds,
                                           const SkMatrix& transformation) {
-  if (region.isEmpty()) {
-    // region can be empty, in which case everything will be clipped.
-    SkRect rect;
-    rect.setEmpty();
-    CGContextClipToRect(context, gfx::SkRectToCGRect(rect));
-  } else if (region.isRect()) {
-    // CoreGraphics applies the current transform to clip rects, which is
-    // unwanted. Inverse-transform the rect before sending it to CG. This only
-    // works for translations and scaling, but not for rotations (but the
-    // viewport is never rotated anyway).
-    SkMatrix t;
-    bool did_invert = transformation.invert(&t);
-    if (!did_invert)
-      t.reset();
-    // Do the transformation.
-    SkRect rect;
-    rect.set(region.getBounds());
-    t.mapRect(&rect);
-    SkIRect irect;
-    rect.round(&irect);
-    CGContextClipToRect(context, gfx::SkIRectToCGRect(irect));
-  } else {
-    // It is complex.
-    SkPath path;
-    region.getBoundaryPath(&path);
-    // Clip. Note that windows clipping regions are not affected by the
-    // transform so apply it manually.
-    path.transform(transformation);
-    // TODO(playmobil): Implement.
-    SkASSERT(false);
-    // LoadPathToDC(context, path);
-    // hrgn = PathToRegion(context);
-  }
+  // CoreGraphics applies the current transform to clip rects, which is
+  // unwanted. Inverse-transform the rect before sending it to CG. This only
+  // works for translations and scaling, but not for rotations (but the
+  // viewport is never rotated anyway).
+  SkMatrix t;
+  bool did_invert = transformation.invert(&t);
+  if (!did_invert)
+    t.reset();
+
+  SkRect rect = SkRect::Make(clip_bounds);
+  t.mapRect(&rect);
+  SkIRect irect;
+  rect.round(&irect);
+  CGContextClipToRect(context, skia::SkIRectToCGRect(irect));
 }
 
-void BitmapPlatformDevice::LoadConfig() {
-  if (!config_dirty_ || !bitmap_context_)
+void BitmapPlatformDevice::LoadConfig(const SkMatrix& transform,
+                                      const SkIRect& clip_bounds) {
+  if (!bitmap_context_)
     return;  // Nothing to do.
-  config_dirty_ = false;
 
   // We must restore and then save the state of the graphics context since the
   // calls to Load the clipping region to the context are strictly cummulative,
@@ -157,8 +142,8 @@ void BitmapPlatformDevice::LoadConfig() {
   // calls in LoadClippingRegionToCGContext() with an image mask instead.
   CGContextRestoreGState(bitmap_context_);
   CGContextSaveGState(bitmap_context_);
-  LoadTransformToCGContext(bitmap_context_, transform_);
-  LoadClippingRegionToCGContext(bitmap_context_, clip_region_, transform_);
+  LoadTransformToCGContext(bitmap_context_, transform);
+  LoadClippingRegionToCGContext(bitmap_context_, clip_bounds, transform);
 }
 
 
@@ -239,9 +224,7 @@ BitmapPlatformDevice* BitmapPlatformDevice::CreateWithData(uint8_t* data,
 BitmapPlatformDevice::BitmapPlatformDevice(
     CGContextRef context, const SkBitmap& bitmap)
     : SkBitmapDevice(bitmap),
-      bitmap_context_(context),
-      config_dirty_(true),  // Want to load the config next time.
-      transform_(SkMatrix::I()) {
+      bitmap_context_(context) {
   SetPlatformDevice(this, this);
   SkASSERT(bitmap_context_);
   // Initialize the clip region to the entire bitmap.
@@ -250,7 +233,6 @@ BitmapPlatformDevice::BitmapPlatformDevice(
   rect.set(0, 0,
            CGBitmapContextGetWidth(bitmap_context_),
            CGBitmapContextGetHeight(bitmap_context_));
-  clip_region_ = SkRegion(rect);
   CGContextRetain(bitmap_context_);
   // We must save the state once so that we can use the restore/save trick
   // in LoadConfig().
@@ -262,15 +244,10 @@ BitmapPlatformDevice::~BitmapPlatformDevice() {
     CGContextRelease(bitmap_context_);
 }
 
-CGContextRef BitmapPlatformDevice::GetBitmapContext() {
-  LoadConfig();
+CGContextRef BitmapPlatformDevice::GetBitmapContext(const SkMatrix& transform,
+                                                    const SkIRect& clip_bounds) {
+  LoadConfig(transform, clip_bounds);
   return bitmap_context_;
-}
-
-void BitmapPlatformDevice::setMatrixClip(const SkMatrix& transform,
-                                         const SkRegion& region,
-                                         const SkClipStack&) {
-  SetMatrixClip(transform, region);
 }
 
 SkBaseDevice* BitmapPlatformDevice::onCreateDevice(const CreateInfo& cinfo,
@@ -283,17 +260,23 @@ SkBaseDevice* BitmapPlatformDevice::onCreateDevice(const CreateInfo& cinfo,
 
 // PlatformCanvas impl
 
-SkCanvas* CreatePlatformCanvas(CGContextRef ctx, int width, int height,
-                               bool is_opaque, OnFailureType failureType) {
+std::unique_ptr<SkCanvas> CreatePlatformCanvas(CGContextRef ctx,
+                                               int width,
+                                               int height,
+                                               bool is_opaque,
+                                               OnFailureType failureType) {
   const bool do_clear = false;
-  skia::RefPtr<SkBaseDevice> dev = skia::AdoptRef(
+  sk_sp<SkBaseDevice> dev(
       BitmapPlatformDevice::Create(ctx, width, height, is_opaque, do_clear));
   return CreateCanvas(dev, failureType);
 }
 
-SkCanvas* CreatePlatformCanvas(int width, int height, bool is_opaque,
-                               uint8_t* data, OnFailureType failureType) {
-  skia::RefPtr<SkBaseDevice> dev = skia::AdoptRef(
+std::unique_ptr<SkCanvas> CreatePlatformCanvas(int width,
+                                               int height,
+                                               bool is_opaque,
+                                               uint8_t* data,
+                                               OnFailureType failureType) {
+  sk_sp<SkBaseDevice> dev(
       BitmapPlatformDevice::CreateWithData(data, width, height, is_opaque));
   return CreateCanvas(dev, failureType);
 }

@@ -5,42 +5,42 @@
 #ifndef EXTENSIONS_BROWSER_VALUE_STORE_VALUE_STORE_FRONTEND_H_
 #define EXTENSIONS_BROWSER_VALUE_STORE_VALUE_STORE_FRONTEND_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/values.h"
 #include "extensions/browser/value_store/value_store.h"
 
-namespace base {
-class FilePath;
-}
+namespace extensions {
+class ValueStoreFactory;
+}  // namespace extensions
 
 // A frontend for a LeveldbValueStore, for use on the UI thread.
 class ValueStoreFrontend
     : public base::SupportsWeakPtr<ValueStoreFrontend>,
       public base::NonThreadSafe {
  public:
-  typedef base::Callback<void(scoped_ptr<base::Value>)> ReadCallback;
+  // The kind of extensions data stored in a backend.
+  enum class BackendType { RULES, STATE };
 
-  ValueStoreFrontend();
-  ValueStoreFrontend(const std::string& uma_client_name,
-                     const base::FilePath& db_path);
-  // This variant is useful for testing (using a mock ValueStore).
-  explicit ValueStoreFrontend(scoped_ptr<ValueStore> value_store);
+  typedef base::Callback<void(std::unique_ptr<base::Value>)> ReadCallback;
+
+  ValueStoreFrontend(
+      const scoped_refptr<extensions::ValueStoreFactory>& store_factory,
+      BackendType backend_type);
   ~ValueStoreFrontend();
-
-  void Init(const std::string& uma_client_name, const base::FilePath& db_path);
 
   // Retrieves a value from the database asynchronously, passing a copy to
   // |callback| when ready. NULL is passed if no matching entry is found.
   void Get(const std::string& key, const ReadCallback& callback);
 
   // Sets a value with the given key.
-  void Set(const std::string& key, scoped_ptr<base::Value> value);
+  void Set(const std::string& key, std::unique_ptr<base::Value> value);
 
   // Removes the value with the given key.
   void Remove(const std::string& key);

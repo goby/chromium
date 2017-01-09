@@ -43,9 +43,9 @@ function makeXHRForJSONArguments(jsonArgs)
     makeXHR(args.method, args.url, args.async, args.user, args.password, args.headers || [], args.withCredentials, args.payload, args.type, xhrLoadedCallback);
 }
 
-function makeFetch(url, requestInitializer, callback)
+function makeFetch(url, requestInitializer)
 {
-    fetch(url, requestInitializer).then(callback).catch(callback);
+    return fetch(url, requestInitializer).catch(e => e);
 }
 
 var initialize_NetworkTest = function() {
@@ -54,12 +54,12 @@ InspectorTest.preloadPanel("network");
 
 InspectorTest.recordNetwork = function()
 {
-    WebInspector.panels.network._networkLogView.setRecording(true);
+    UI.panels.network._networkLogView.setRecording(true);
 }
 
 InspectorTest.networkRequests = function()
 {
-    return WebInspector.NetworkLog.requests();
+    return SDK.NetworkLog.requests();
 }
 
 InspectorTest.dumpNetworkRequests = function()
@@ -69,6 +69,14 @@ InspectorTest.dumpNetworkRequests = function()
     InspectorTest.addResult("resources count = " + requests.length);
     for (i = 0; i < requests.length; i++)
         InspectorTest.addResult(requests[i].url);
+}
+
+// |url| must be a regular expression to match request URLs.
+InspectorTest.findRequestsByURLPattern = function(urlPattern)
+{
+    return InspectorTest.networkRequests().filter(function(value) {
+        return urlPattern.test(value.url)
+    });
 }
 
 InspectorTest.makeSimpleXHR = function(method, url, async, callback)
@@ -109,7 +117,7 @@ InspectorTest.makeXHR = function(method, url, async, user, password, headers, wi
 
 InspectorTest.makeFetch = function(url, requestInitializer, callback)
 {
-    InspectorTest.invokePageFunctionAsync("makeFetch", url, requestInitializer, callback);
+    InspectorTest.callFunctionInPageAsync("makeFetch", [url, requestInitializer]).then(callback);
 }
 
 InspectorTest.HARPropertyFormatters = {
@@ -128,9 +136,8 @@ InspectorTest.HARPropertyFormatters = {
     version: "formatAsTypeName",
     wait: "formatAsTypeName",
     _transferSize: "formatAsTypeName",
-    _error: "skip",
+    _error: "skip"
 };
-
 // addObject checks own properties only, so make a deep copy rather than use prototype.
 InspectorTest.HARPropertyFormattersWithSize = JSON.parse(JSON.stringify(InspectorTest.HARPropertyFormatters));
 InspectorTest.HARPropertyFormattersWithSize.size = "formatAsTypeName";

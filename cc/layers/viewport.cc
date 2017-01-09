@@ -5,18 +5,19 @@
 #include "cc/layers/viewport.h"
 
 #include "base/logging.h"
-#include "cc/input/top_controls_manager.h"
+#include "base/memory/ptr_util.h"
+#include "cc/input/browser_controls_offset_manager.h"
 #include "cc/trees/layer_tree_host_impl.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "cc/trees/scroll_node.h"
 #include "ui/gfx/geometry/vector2d_conversions.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
 namespace cc {
 
 // static
-scoped_ptr<Viewport> Viewport::Create(
-    LayerTreeHostImpl* host_impl) {
-  return make_scoped_ptr(new Viewport(host_impl));
+std::unique_ptr<Viewport> Viewport::Create(LayerTreeHostImpl* host_impl) {
+  return base::WrapUnique(new Viewport(host_impl));
 }
 
 Viewport::Viewport(LayerTreeHostImpl* host_impl)
@@ -35,29 +36,110 @@ void Viewport::Pan(const gfx::Vector2dF& delta) {
 Viewport::ScrollResult Viewport::ScrollBy(const gfx::Vector2dF& delta,
                                           const gfx::Point& viewport_point,
                                           bool is_direct_manipulation,
-                                          bool affect_top_controls) {
+                                          bool affect_browser_controls,
+                                          bool scroll_outer_viewport) {
+  if (!OuterScrollLayer())
+    return ScrollResult();
+
   gfx::Vector2dF content_delta = delta;
 
-  if (affect_top_controls && ShouldTopControlsConsumeScroll(delta))
-    content_delta -= ScrollTopControls(delta);
+  if (affect_browser_controls && ShouldBrowserControlsConsumeScroll(delta))
+    content_delta -= ScrollBrowserControls(delta);
 
   gfx::Vector2dF pending_content_delta = content_delta;
 
-  pending_content_delta -= host_impl_->ScrollLayer(InnerScrollLayer(),
-                                                   pending_content_delta,
-                                                   viewport_point,
-                                                   is_direct_manipulation);
+  ScrollTree& scroll_tree =
+      host_impl_->active_tree()->property_trees()->scroll_tree;
+  ScrollNode* inner_node =
+      scroll_tree.Node(InnerScrollLayer()->scroll_tree_index());
+  pending_content_delta -= host_impl_->ScrollSingleNode(
+      inner_node, pending_content_delta, viewport_point, is_direct_manipulation,
+      &scroll_tree);
 
   ScrollResult result;
 
-  pending_content_delta -= host_impl_->ScrollLayer(OuterScrollLayer(),
-                                                   pending_content_delta,
-                                                   viewport_point,
-                                                   is_direct_manipulation);
+  if (scroll_outer_viewport) {
+    ScrollNode* outer_node =
+        scroll_tree.Node(OuterScrollLayer()->scroll_tree_index());
+    pending_content_delta -= host_impl_->ScrollSingleNode(
+        outer_node, pending_content_delta, viewport_point,
+        is_direct_manipulation, &scroll_tree);
+  }
+
   result.consumed_delta = delta - AdjustOverscroll(pending_content_delta);
 
   result.content_scrolled_delta = content_delta - pending_content_delta;
   return result;
+}
+
+void Viewport::ScrollByInnerFirst(const gfx::Vector2dF& delta) {
+  LayerImpl* scroll_layer = InnerScrollLayer();
+
+  gfx::Vector2dF unused_delta = scroll_layer->ScrollBy(delta);
+  if (!unused_delta.IsZero() && OuterScrollLayer())
+    OuterScrollLayer()->ScrollBy(unused_delta);
+}
+
+bool Viewport::ShouldAnimateViewport(const gfx::Vector2dF& viewport_delta,
+                                     const gfx::Vector2dF& pending_delta) {
+  float max_dim_viewport_delta =
+      std::max(std::abs(viewport_delta.x()), std::abs(viewport_delta.y()));
+  float max_dim_pending_delta =
+      std::max(std::abs(pending_delta.x()), std::abs(pending_delta.y()));
+  return max_dim_viewport_delta > max_dim_pending_delta;
+}
+
+gfx::Vector2dF Viewport::ScrollAnimated(const gfx::Vector2dF& delta,
+                                        base::TimeDelta delayed_by) {
+  if (!OuterScrollLayer())
+    return gfx::Vector2dF(0, 0);
+
+  ScrollTree& scroll_tree =
+      host_impl_->active_tree()->property_trees()->scroll_tree;
+
+  float scale_factor = host_impl_->active_tree()->current_page_scale_factor();
+  gfx::Vector2dF scaled_delta = delta;
+  scaled_delta.Scale(1.f / scale_factor);
+
+  ScrollNode* inner_node =
+      scroll_tree.Node(InnerScrollLayer()->scroll_tree_index());
+  gfx::Vector2dF inner_delta =
+      host_impl_->ComputeScrollDelta(inner_node, delta);
+
+  gfx::Vector2dF pending_delta = scaled_delta - inner_delta;
+  pending_delta.Scale(scale_factor);
+
+  ScrollNode* outer_node =
+      scroll_tree.Node(OuterScrollLayer()->scroll_tree_index());
+  gfx::Vector2dF outer_delta =
+      host_impl_->ComputeScrollDelta(outer_node, pending_delta);
+
+  if (inner_delta.IsZero() && outer_delta.IsZero())
+    return gfx::Vector2dF(0, 0);
+
+  // Animate the viewport to which the majority of scroll delta will be applied.
+  // The animation system only supports running one scroll offset animation.
+  // TODO(ymalik): Fix the visible jump seen by instant scrolling one of the
+  // viewports.
+  bool will_animate = false;
+  if (ShouldAnimateViewport(inner_delta, outer_delta)) {
+    scroll_tree.ScrollBy(outer_node, outer_delta, host_impl_->active_tree());
+    will_animate =
+        host_impl_->ScrollAnimationCreate(inner_node, inner_delta, delayed_by);
+  } else {
+    scroll_tree.ScrollBy(inner_node, inner_delta, host_impl_->active_tree());
+    will_animate =
+        host_impl_->ScrollAnimationCreate(outer_node, outer_delta, delayed_by);
+  }
+
+  if (will_animate) {
+    // Consume entire scroll delta as long as we are starting an animation.
+    return delta;
+  }
+
+  pending_delta = scaled_delta - inner_delta - outer_delta;
+  pending_delta.Scale(scale_factor);
+  return pending_delta;
 }
 
 void Viewport::SnapPinchAnchorIfWithinMargin(const gfx::Point& anchor) {
@@ -116,16 +198,20 @@ void Viewport::PinchEnd() {
   pinch_zoom_active_ = false;
 }
 
-gfx::Vector2dF Viewport::ScrollTopControls(const gfx::Vector2dF& delta) {
+LayerImpl* Viewport::MainScrollLayer() const {
+  return OuterScrollLayer();
+}
+
+gfx::Vector2dF Viewport::ScrollBrowserControls(const gfx::Vector2dF& delta) {
   gfx::Vector2dF excess_delta =
-      host_impl_->top_controls_manager()->ScrollBy(delta);
+      host_impl_->browser_controls_manager()->ScrollBy(delta);
 
   return delta - excess_delta;
 }
 
-bool Viewport::ShouldTopControlsConsumeScroll(
+bool Viewport::ShouldBrowserControlsConsumeScroll(
     const gfx::Vector2dF& scroll_delta) const {
-  // Always consume if it's in the direction to show the top controls.
+  // Always consume if it's in the direction to show the browser controls.
   if (scroll_delta.y() < 0)
     return true;
 

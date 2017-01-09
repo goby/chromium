@@ -1,0 +1,8 @@
+include_rules = [
+  "+components/gcm_driver",
+  "+components/prefs",
+  "+components/proximity_auth",
+  "+crypto",
+  "+google_apis",
+  "+net",
+]

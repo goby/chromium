@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/dom_distiller/core/distilled_content_store.h"
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "components/dom_distiller/core/article_entry.h"
-#include "components/dom_distiller/core/distilled_content_store.h"
 #include "components/dom_distiller/core/proto/distilled_article.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -50,9 +53,10 @@ DistilledArticleProto CreateDistilledArticleForEntry(
 
 class InMemoryContentStoreTest : public testing::Test {
  public:
-  void OnLoadCallback(bool success, scoped_ptr<DistilledArticleProto> proto) {
+  void OnLoadCallback(bool success,
+                      std::unique_ptr<DistilledArticleProto> proto) {
     load_success_ = success;
-    loaded_proto_ = proto.Pass();
+    loaded_proto_ = std::move(proto);
   }
 
   void OnSaveCallback(bool success) { save_success_ = success; }
@@ -66,10 +70,10 @@ class InMemoryContentStoreTest : public testing::Test {
     loaded_proto_.reset();
   }
 
-  scoped_ptr<InMemoryContentStore> store_;
+  std::unique_ptr<InMemoryContentStore> store_;
   bool save_success_;
   bool load_success_;
-  scoped_ptr<DistilledArticleProto> loaded_proto_;
+  std::unique_ptr<DistilledArticleProto> loaded_proto_;
 };
 
 // Tests whether saving and then loading a single article works as expected.
@@ -82,14 +86,14 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadSingleArticle) {
                       stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
   store_->LoadContent(entry,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(load_success_);
   EXPECT_EQ(stored_proto.SerializeAsString(),
             loaded_proto_->SerializeAsString());
@@ -103,7 +107,7 @@ TEST_F(InMemoryContentStoreTest, LoadNonExistentArticle) {
   store_->LoadContent(entry,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(load_success_);
 }
 
@@ -120,7 +124,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMultipleArticles) {
                       first_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -133,7 +137,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMultipleArticles) {
                       second_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -141,7 +145,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMultipleArticles) {
   store_->LoadContent(second_entry,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(load_success_);
   load_success_ = false;
   EXPECT_EQ(second_stored_proto.SerializeAsString(),
@@ -152,7 +156,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMultipleArticles) {
   store_->LoadContent(first_entry,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(load_success_);
   EXPECT_EQ(first_stored_proto.SerializeAsString(),
             loaded_proto_->SerializeAsString());
@@ -175,7 +179,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
                       first_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -188,7 +192,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
                       second_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -200,7 +204,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
                       third_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -209,7 +213,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
   store_->LoadContent(first_entry,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(load_success_);
   load_success_ = false;
   EXPECT_EQ(first_stored_proto.SerializeAsString(),
@@ -225,7 +229,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
                       fourth_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -234,7 +238,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
   store_->LoadContent(second_entry,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // Since the store can only contain |kMaxNumArticles| entries, this load
   // should fail.
   EXPECT_FALSE(load_success_);
@@ -250,7 +254,7 @@ TEST_F(InMemoryContentStoreTest, LookupArticleByURL) {
                       stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -259,7 +263,7 @@ TEST_F(InMemoryContentStoreTest, LookupArticleByURL) {
   store_->LoadContent(lookup_entry1,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(load_success_);
   EXPECT_EQ(stored_proto.SerializeAsString(),
             loaded_proto_->SerializeAsString());
@@ -270,7 +274,7 @@ TEST_F(InMemoryContentStoreTest, LookupArticleByURL) {
   store_->LoadContent(lookup_entry2,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(load_success_);
   EXPECT_EQ(stored_proto.SerializeAsString(),
             loaded_proto_->SerializeAsString());
@@ -293,7 +297,7 @@ TEST_F(InMemoryContentStoreTest, LoadArticleByURLAfterExpungedFromCache) {
                       first_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -304,7 +308,7 @@ TEST_F(InMemoryContentStoreTest, LoadArticleByURLAfterExpungedFromCache) {
   store_->LoadContent(first_entry_lookup,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(load_success_);
   EXPECT_EQ(first_stored_proto.SerializeAsString(),
             loaded_proto_->SerializeAsString());
@@ -318,7 +322,7 @@ TEST_F(InMemoryContentStoreTest, LoadArticleByURLAfterExpungedFromCache) {
                       second_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(save_success_);
   save_success_ = false;
 
@@ -326,7 +330,7 @@ TEST_F(InMemoryContentStoreTest, LoadArticleByURLAfterExpungedFromCache) {
   store_->LoadContent(first_entry_lookup,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
                                  base::Unretained(this)));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(load_success_);
 }
 

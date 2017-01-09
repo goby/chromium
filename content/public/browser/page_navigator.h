@@ -12,11 +12,11 @@
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/ref_counted_memory.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/referrer.h"
+#include "content/public/common/resource_request_body.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
@@ -33,10 +33,17 @@ struct CONTENT_EXPORT OpenURLParams {
                 bool is_renderer_initiated);
   OpenURLParams(const GURL& url,
                 const Referrer& referrer,
+                WindowOpenDisposition disposition,
+                ui::PageTransition transition,
+                bool is_renderer_initiated,
+                bool started_from_context_menu);
+  OpenURLParams(const GURL& url,
+                const Referrer& referrer,
                 int frame_tree_node_id,
                 WindowOpenDisposition disposition,
                 ui::PageTransition transition,
                 bool is_renderer_initiated);
+  OpenURLParams(const OpenURLParams& other);
   ~OpenURLParams();
 
   // The URL/referrer to be opened.
@@ -51,13 +58,10 @@ struct CONTENT_EXPORT OpenURLParams {
   std::vector<GURL> redirect_chain;
 
   // Indicates whether this navigation will be sent using POST.
-  // The POST method is limited support for basic POST data by leveraging
-  // NavigationController::LOAD_TYPE_BROWSER_INITIATED_HTTP_POST.
-  // It is not for things like file uploads.
   bool uses_post;
 
   // The post data when the navigation uses POST.
-  scoped_refptr<base::RefCountedMemory> browser_initiated_post_data;
+  scoped_refptr<ResourceRequestBody> post_data;
 
   // Extra headers to add to the request for this page.  Headers are
   // represented as "<name>: <value>" and separated by \r\n.  The entire string
@@ -76,10 +80,6 @@ struct CONTENT_EXPORT OpenURLParams {
   // Whether this navigation is initiated by the renderer process.
   bool is_renderer_initiated;
 
-  // Reference to the old request id in case this is a navigation that is being
-  // transferred to a new renderer.
-  GlobalRequestID transferred_global_request_id;
-
   // Indicates whether this navigation should replace the current
   // navigation entry.
   bool should_replace_current_entry;
@@ -87,6 +87,9 @@ struct CONTENT_EXPORT OpenURLParams {
   // Indicates whether this navigation was triggered while processing a user
   // gesture if the navigation was initiated by the renderer.
   bool user_gesture;
+
+  // Indicates whether this navigation was started via context menu.
+  bool started_from_context_menu;
 
  private:
   OpenURLParams();

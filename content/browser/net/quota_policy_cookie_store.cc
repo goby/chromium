@@ -5,14 +5,13 @@
 #include "content/browser/net/quota_policy_cookie_store.h"
 
 #include <list>
+#include <memory>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/profiler/scoped_tracker.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
@@ -98,14 +97,14 @@ void QuotaPolicyCookieStore::Flush(const base::Closure& callback) {
 
 void QuotaPolicyCookieStore::OnLoad(
     const LoadedCallback& loaded_callback,
-    const std::vector<net::CanonicalCookie*>& cookies) {
+    std::vector<std::unique_ptr<net::CanonicalCookie>> cookies) {
   for (const auto& cookie : cookies) {
     net::SQLitePersistentCookieStore::CookieOrigin origin(
         cookie->Domain(), cookie->IsSecure());
     ++cookies_per_origin_[origin];
   }
 
-  loaded_callback.Run(cookies);
+  loaded_callback.Run(std::move(cookies));
 }
 
 CookieStoreConfig::CookieStoreConfig()
@@ -130,17 +129,18 @@ CookieStoreConfig::CookieStoreConfig(
 CookieStoreConfig::~CookieStoreConfig() {
 }
 
-net::CookieStore* CreateCookieStore(const CookieStoreConfig& config) {
+std::unique_ptr<net::CookieStore> CreateCookieStore(
+    const CookieStoreConfig& config) {
   // TODO(bcwhite): Remove ScopedTracker below once crbug.com/483686 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
       FROM_HERE_WITH_EXPLICIT_FUNCTION("483686 content::CreateCookieStore"));
 
-  net::CookieMonster* cookie_monster = nullptr;
+  std::unique_ptr<net::CookieMonster> cookie_monster;
 
   if (config.path.empty()) {
     // Empty path means in-memory store.
-    cookie_monster = new net::CookieMonster(nullptr,
-                                            config.cookie_delegate.get());
+    cookie_monster.reset(
+        new net::CookieMonster(nullptr, config.cookie_delegate.get()));
   } else {
     scoped_refptr<base::SequencedTaskRunner> client_task_runner =
         config.client_task_runner;
@@ -149,13 +149,13 @@ net::CookieStore* CreateCookieStore(const CookieStoreConfig& config) {
 
     if (!client_task_runner.get()) {
       client_task_runner =
-          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
+          BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
     }
 
     if (!background_task_runner.get()) {
       background_task_runner =
           BrowserThread::GetBlockingPool()->GetSequencedTaskRunner(
-              BrowserThread::GetBlockingPool()->GetSequenceToken());
+              base::SequencedWorkerPool::GetSequenceToken());
     }
 
     scoped_refptr<net::SQLitePersistentCookieStore> sqlite_store(
@@ -172,8 +172,8 @@ net::CookieStore* CreateCookieStore(const CookieStoreConfig& config) {
             sqlite_store.get(),
             config.storage_policy.get());
 
-    cookie_monster =
-        new net::CookieMonster(persistent_store, config.cookie_delegate.get());
+    cookie_monster.reset(
+        new net::CookieMonster(persistent_store, config.cookie_delegate.get()));
     if ((config.session_cookie_mode ==
          CookieStoreConfig::PERSISTANT_SESSION_COOKIES) ||
         (config.session_cookie_mode ==
@@ -182,7 +182,10 @@ net::CookieStore* CreateCookieStore(const CookieStoreConfig& config) {
     }
   }
 
-  return cookie_monster;
+  if (!config.cookieable_schemes.empty())
+    cookie_monster->SetCookieableSchemes(config.cookieable_schemes);
+
+  return std::move(cookie_monster);
 }
 
 }  // namespace content

@@ -1,3 +1,5 @@
 include_rules = [
-  "+ui/gl/gl_surface.h",  # To initialize GL bindings.
+  "+cc/surfaces/surface_manager.h",
+  "+ui/display",          # Windows DPI Initialization.
+  "+ui/gl/init/gl_factory.h",  # To initialize GL bindings.
 ]

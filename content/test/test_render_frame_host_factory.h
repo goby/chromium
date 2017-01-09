@@ -5,9 +5,12 @@
 #ifndef CONTENT_TEST_TEST_RENDER_FRAME_HOST_FACTORY_H_
 #define CONTENT_TEST_TEST_RENDER_FRAME_HOST_FACTORY_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/browser/frame_host/render_frame_host_factory.h"
 
 namespace content {
@@ -24,16 +27,17 @@ class TestRenderFrameHostFactory : public RenderFrameHostFactory {
 
  protected:
   // RenderFrameHostFactory implementation.
-  scoped_ptr<RenderFrameHostImpl> CreateRenderFrameHost(
+  std::unique_ptr<RenderFrameHostImpl> CreateRenderFrameHost(
       SiteInstance* site_instance,
       RenderViewHostImpl* render_view_host,
       RenderFrameHostDelegate* delegate,
       RenderWidgetHostDelegate* rwh_delegate,
       FrameTree* frame_tree,
       FrameTreeNode* frame_tree_node,
-      int32 routing_id,
-      int32 widget_routing_id,
-      int flags) override;
+      int32_t routing_id,
+      int32_t widget_routing_id,
+      bool hidden,
+      bool renderer_initiated_creation) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestRenderFrameHostFactory);

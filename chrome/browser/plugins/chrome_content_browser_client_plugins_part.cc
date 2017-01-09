@@ -13,10 +13,11 @@
 #include "chrome/common/pepper_permission_util.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/features/features.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/shared_impl/ppapi_switches.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/extension_service.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/constants.h"
@@ -44,7 +45,7 @@ bool ChromeContentBrowserClientPluginsPart::
         content::BrowserContext* browser_context,
         const GURL& url,
         const std::set<std::string>& allowed_file_handle_origins) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   Profile* profile = Profile::FromBrowserContext(browser_context);
   const extensions::ExtensionSet* extension_set = NULL;
   if (profile) {
@@ -67,7 +68,7 @@ bool ChromeContentBrowserClientPluginsPart::AllowPepperSocketAPI(
     bool private_api,
     const content::SocketPermissionRequest* params,
     const std::set<std::string>& allowed_socket_origin) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   Profile* profile = Profile::FromBrowserContext(browser_context);
   const extensions::ExtensionSet* extension_set = NULL;
   if (profile) {
@@ -113,6 +114,34 @@ bool ChromeContentBrowserClientPluginsPart::AllowPepperSocketAPI(
 #endif
 }
 
+bool ChromeContentBrowserClientPluginsPart::IsPepperVpnProviderAPIAllowed(
+    content::BrowserContext* browser_context,
+    const GURL& url) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  Profile* profile = Profile::FromBrowserContext(browser_context);
+  if (!profile)
+    return false;
+
+  const extensions::ExtensionSet* extension_set =
+      &extensions::ExtensionRegistry::Get(profile)->enabled_extensions();
+  if (!extension_set)
+    return false;
+
+  // Access to the vpnProvider API is controlled by extension permissions.
+  if (url.is_valid() && url.SchemeIs(extensions::kExtensionScheme)) {
+    const extensions::Extension* extension = extension_set->GetByID(url.host());
+    if (extension) {
+      if (extension->permissions_data()->HasAPIPermission(
+              extensions::APIPermission::kVpnProvider)) {
+        return true;
+      }
+    }
+  }
+#endif
+
+  return false;
+}
+
 bool ChromeContentBrowserClientPluginsPart::IsPluginAllowedToUseDevChannelAPIs(
     content::BrowserContext* browser_context,
     const GURL& url,
@@ -123,7 +152,7 @@ bool ChromeContentBrowserClientPluginsPart::IsPluginAllowedToUseDevChannelAPIs(
     return true;
   }
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   Profile* profile = Profile::FromBrowserContext(browser_context);
   const extensions::ExtensionSet* extension_set = NULL;
   if (profile) {
@@ -147,7 +176,7 @@ bool ChromeContentBrowserClientPluginsPart::IsPluginAllowedToUseDevChannelAPIs(
 void ChromeContentBrowserClientPluginsPart::DidCreatePpapiPlugin(
     content::BrowserPpapiHost* browser_host) {
   browser_host->GetPpapiHost()->AddHostFactoryFilter(
-      scoped_ptr<ppapi::host::HostFactory>(
+      std::unique_ptr<ppapi::host::HostFactory>(
           new ChromeBrowserPepperHostFactory(browser_host)));
 }
 

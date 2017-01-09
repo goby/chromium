@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CLOUD_MOCK_CLOUD_POLICY_STORE_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CLOUD_MOCK_CLOUD_POLICY_STORE_H_
 
+#include "base/macros.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -26,6 +27,7 @@ class MockCloudPolicyStore : public CloudPolicyStore {
   using CloudPolicyStore::policy_;
   using CloudPolicyStore::status_;
   using CloudPolicyStore::invalidation_version_;
+  using CloudPolicyStore::policy_signature_public_key_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockCloudPolicyStore);

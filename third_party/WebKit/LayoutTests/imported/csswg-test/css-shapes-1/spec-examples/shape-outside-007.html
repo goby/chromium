@@ -11,8 +11,8 @@
     <meta name="assert" content="This test verifies that inline content only wraps around the
                                  shape, and otherwise overlays the rest of the float margin
                                  box"/>
-     <!--  This test is derived from Example 5 in this version of the spec:
-          http://www.w3.org/TR/2013/WD-css-shapes-1-20131203/  -->
+     <!-- This test is derived from Example 5 in this version of the spec:
+          http://www.w3.org/TR/2013/WD-css-shapes-1-20131203/ -->
     <style type="text/css">
         .container {
           width: 260px;
@@ -76,7 +76,7 @@
             background-color: lightblue;
             margin-left: 2px;
             clip-path: polygon(0% 50%, 50% 100%, 0 100%);;
-            
+
         }
     </style>
 </head>
@@ -84,7 +84,7 @@
     <p>
         The test passes if one green bar is inside the top rectangle, three green bars
         are in the bottom rectangle, and none intersect the triangle. There should be no red.
-    </p>   
+    </p>
     <div id="test" class="container">
         <div id="test-float-left"></div>
         XXXXXXXXXXXX XXXXXXXXXXXX XXXXXXXXXXX XXXXXXXXXX

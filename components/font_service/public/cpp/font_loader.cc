@@ -4,36 +4,19 @@
 
 #include "components/font_service/public/cpp/font_loader.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/trace_event/trace_event.h"
 #include "components/font_service/public/cpp/font_service_thread.h"
-#include "mojo/application/public/cpp/application_impl.h"
-#include "mojo/application/public/cpp/connect.h"
-#include "mojo/application/public/interfaces/shell.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace font_service {
-namespace {
-void OnGotContentHandlerID(uint32_t content_handler_id) {}
-}  // namespace
 
-FontLoader::FontLoader(mojo::Shell* shell) {
-  mojo::ServiceProviderPtr font_service_provider;
-  mojo::URLRequestPtr request(mojo::URLRequest::New());
-  request->url = mojo::String::From("mojo:font_service");
-  FontServicePtr font_service;
-  shell->ConnectToApplication(request.Pass(), GetProxy(&font_service_provider),
-                              nullptr, mojo::CreatePermissiveCapabilityFilter(),
-                              base::Bind(&OnGotContentHandlerID));
-  mojo::ConnectToService(font_service_provider.get(), &font_service);
-
-  thread_ = new internal::FontServiceThread(font_service.Pass());
-}
-
-FontLoader::FontLoader(mojo::ApplicationImpl* application_impl) {
-  FontServicePtr font_service;
-  application_impl->ConnectToService("mojo:font_service", &font_service);
-
-  thread_ = new internal::FontServiceThread(font_service.Pass());
+FontLoader::FontLoader(service_manager::Connector* connector) {
+  mojom::FontServicePtr font_service;
+  connector->ConnectToInterface("font_service", &font_service);
+  thread_ = new internal::FontServiceThread(std::move(font_service));
 }
 
 FontLoader::~FontLoader() {}
@@ -44,10 +27,10 @@ void FontLoader::Shutdown() {
 }
 
 bool FontLoader::matchFamilyName(const char family_name[],
-                                 SkTypeface::Style requested,
+                                 SkFontStyle requested,
                                  FontIdentity* out_font_identifier,
                                  SkString* out_family_name,
-                                 SkTypeface::Style* out_style) {
+                                 SkFontStyle* out_style) {
   TRACE_EVENT1("font_service", "FontServiceThread::MatchFamilyName",
                "family_name", family_name);
   return thread_->MatchFamilyName(family_name, requested, out_font_identifier,

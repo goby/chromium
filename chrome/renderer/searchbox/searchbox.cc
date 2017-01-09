@@ -4,6 +4,9 @@
 
 #include "chrome/renderer/searchbox/searchbox.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "base/logging.h"
@@ -232,14 +235,11 @@ SearchBox::SearchBox(content::RenderView* render_view)
     : content::RenderViewObserver(render_view),
       content::RenderViewObserverTracker<SearchBox>(render_view),
     page_seq_no_(0),
-    app_launcher_enabled_(false),
     is_focused_(false),
     is_input_in_progress_(false),
     is_key_capture_enabled_(false),
-    display_instant_results_(false),
     most_visited_items_cache_(kMaxInstantMostVisitedItemCacheSize),
-    query_(),
-    start_margin_(0) {
+    query_() {
 }
 
 SearchBox::~SearchBox() {
@@ -252,10 +252,13 @@ void SearchBox::LogEvent(NTPLoggingEventType event) {
   base::TimeDelta delta;
   if (render_view()->GetWebView()->mainFrame()->isWebLocalFrame()) {
     // navigation_start in ms.
-    uint64 start = 1000 * (render_view()->GetMainRenderFrame()->GetWebFrame()->
-        performance().navigationStart());
-    uint64 now = (base::TimeTicks::Now() - base::TimeTicks::UnixEpoch())
-                     .InMilliseconds();
+    uint64_t start = 1000 * (render_view()
+                                 ->GetMainRenderFrame()
+                                 ->GetWebFrame()
+                                 ->performance()
+                                 .navigationStart());
+    uint64_t now = (base::TimeTicks::Now() - base::TimeTicks::UnixEpoch())
+                       .InMilliseconds();
     DCHECK(now >= start);
     delta = base::TimeDelta::FromMilliseconds(now - start);
   }
@@ -264,15 +267,15 @@ void SearchBox::LogEvent(NTPLoggingEventType event) {
 }
 
 void SearchBox::LogMostVisitedImpression(int position,
-                                         const base::string16& provider) {
+                                         ntp_tiles::NTPTileSource tile_source) {
   render_view()->Send(new ChromeViewHostMsg_LogMostVisitedImpression(
-      render_view()->GetRoutingID(), page_seq_no_, position, provider));
+      render_view()->GetRoutingID(), page_seq_no_, position, tile_source));
 }
 
 void SearchBox::LogMostVisitedNavigation(int position,
-                                         const base::string16& provider) {
+                                         ntp_tiles::NTPTileSource tile_source) {
   render_view()->Send(new ChromeViewHostMsg_LogMostVisitedNavigation(
-      render_view()->GetRoutingID(), page_seq_no_, position, provider));
+      render_view()->GetRoutingID(), page_seq_no_, position, tile_source));
 }
 
 void SearchBox::CheckIsUserSignedInToChromeAs(const base::string16& identity) {
@@ -320,19 +323,6 @@ const EmbeddedSearchRequestParams& SearchBox::GetEmbeddedSearchRequestParams() {
   return embedded_search_request_params_;
 }
 
-void SearchBox::Focus() {
-  render_view()->Send(new ChromeViewHostMsg_FocusOmnibox(
-      render_view()->GetRoutingID(), page_seq_no_, OMNIBOX_FOCUS_VISIBLE));
-}
-
-void SearchBox::NavigateToURL(const GURL& url,
-                              WindowOpenDisposition disposition,
-                              bool is_most_visited_item_url) {
-  render_view()->Send(new ChromeViewHostMsg_SearchBoxNavigate(
-      render_view()->GetRoutingID(), page_seq_no_, url,
-      disposition, is_most_visited_item_url));
-}
-
 void SearchBox::Paste(const base::string16& text) {
   render_view()->Send(new ChromeViewHostMsg_PasteAndOpenDropdown(
       render_view()->GetRoutingID(), page_seq_no_, text));
@@ -373,13 +363,8 @@ bool SearchBox::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ChromeViewMsg_HistorySyncCheckResult,
                         OnHistorySyncCheckResult)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_SearchBoxFocusChanged, OnFocusChanged)
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_SearchBoxMarginChange, OnMarginChange)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_SearchBoxMostVisitedItemsChanged,
                         OnMostVisitedChanged)
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_SearchBoxPromoInformation,
-                        OnPromoInformationReceived)
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_SearchBoxSetDisplayInstantResults,
-                        OnSetDisplayInstantResults)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_SearchBoxSetInputInProgress,
                         OnSetInputInProgress)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_SearchBoxSetSuggestionToPrefetch,
@@ -454,14 +439,6 @@ void SearchBox::OnHistorySyncCheckResult(bool sync_history) {
   }
 }
 
-void SearchBox::OnMarginChange(int margin) {
-  start_margin_ = margin;
-  if (render_view()->GetWebView() && render_view()->GetWebView()->mainFrame()) {
-    extensions_v8::SearchBoxExtension::DispatchMarginChange(
-        render_view()->GetWebView()->mainFrame());
-  }
-}
-
 void SearchBox::OnMostVisitedChanged(
     const std::vector<InstantMostVisitedItem>& items) {
   std::vector<InstantMostVisitedItemIDPair> last_known_items;
@@ -475,14 +452,6 @@ void SearchBox::OnMostVisitedChanged(
     extensions_v8::SearchBoxExtension::DispatchMostVisitedChanged(
         render_view()->GetWebView()->mainFrame());
   }
-}
-
-void SearchBox::OnPromoInformationReceived(bool is_app_launcher_enabled) {
-  app_launcher_enabled_ = is_app_launcher_enabled;
-}
-
-void SearchBox::OnSetDisplayInstantResults(bool display_instant_results) {
-  display_instant_results_ = display_instant_results;
 }
 
 void SearchBox::OnSetInputInProgress(bool is_input_in_progress) {
@@ -545,8 +514,11 @@ void SearchBox::Reset() {
   query_.clear();
   embedded_search_request_params_ = EmbeddedSearchRequestParams();
   suggestion_ = InstantSuggestion();
-  start_margin_ = 0;
   is_focused_ = false;
   is_key_capture_enabled_ = false;
   theme_info_ = ThemeBackgroundInfo();
+}
+
+void SearchBox::OnDestruct() {
+  delete this;
 }

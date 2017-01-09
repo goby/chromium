@@ -25,15 +25,13 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "config.h"
-
-#include <stdarg.h>
-#include <limits.h>
-
 #include "strtod.h"
+
 #include "bignum.h"
 #include "cached-powers.h"
 #include "double.h"
+#include <stdarg.h>
+#include <limits.h>
 
 namespace WTF {
 
@@ -266,7 +264,7 @@ namespace double_conversion {
         const int kDenominator = 1 << kDenominatorLog;
         // Move the remaining decimals into the exponent.
         exponent += remaining_decimals;
-        int error = (remaining_decimals == 0 ? 0 : kDenominator / 2);
+        int64_t error = (remaining_decimals == 0 ? 0 : kDenominator / 2);
 
         int old_e = input.e();
         input.Normalize();

@@ -6,9 +6,9 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/mac/authorization_util.h"
 #include "base/mac/scoped_authorizationref.h"
-#include "remoting/host/constants_mac.h"
-
+#include "remoting/host/mac/constants_mac.h"
 
 void logOutput(FILE* pipe) {
   char readBuffer[128];
@@ -86,11 +86,8 @@ const char kKeystonePID[] = "com.google.chrome_remote_desktop";
   NSLog(@"Executing (as Admin): %s %@", cmd,
         [arg_array componentsJoinedByString:@" "]);
   FILE* pipe = nullptr;
-  OSStatus status;
-  status = AuthorizationExecuteWithPrivileges(authRef, cmd,
-                                              kAuthorizationFlagDefaults,
-                                              (char* const*)args,
-                                              &pipe);
+  OSStatus status = base::mac::ExecuteWithPrivilegesAndGetPID(
+      authRef, cmd, kAuthorizationFlagDefaults, args, &pipe, nullptr);
 
   if (status == errAuthorizationToolExecuteFailure) {
     NSLog(@"Error errAuthorizationToolExecuteFailure");

@@ -7,10 +7,11 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_DECODER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_DECODER_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -18,13 +19,17 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/capabilities.h"
+#include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/service/common_decoder.h"
 #include "gpu/gpu_export.h"
 
-namespace gfx {
+namespace gl {
 class GLContext;
 class GLSurface;
+}
+
+namespace gfx {
 class Size;
 }
 
@@ -36,23 +41,44 @@ namespace gles2 {
 
 class ContextGroup;
 class ErrorState;
+class FeatureInfo;
 class GLES2Util;
 class ImageManager;
 class Logger;
 class QueryManager;
+class ShaderTranslatorInterface;
 class Texture;
+class TransformFeedbackManager;
 class VertexArrayManager;
-class ValuebufferManager;
+struct ContextCreationAttribHelper;
 struct ContextState;
 
 struct DisallowedFeatures {
   DisallowedFeatures()
       : gpu_memory_manager(false),
-        npot_support(false) {
+        npot_support(false),
+        chromium_color_buffer_float_rgba(false),
+        chromium_color_buffer_float_rgb(false),
+        ext_color_buffer_float(false),
+        oes_texture_float_linear(false),
+        oes_texture_half_float_linear(false) {
+  }
+
+  void AllowExtensions() {
+    chromium_color_buffer_float_rgba = false;
+    chromium_color_buffer_float_rgb = false;
+    ext_color_buffer_float = false;
+    oes_texture_float_linear = false;
+    oes_texture_half_float_linear = false;
   }
 
   bool gpu_memory_manager;
   bool npot_support;
+  bool chromium_color_buffer_float_rgba;
+  bool chromium_color_buffer_float_rgb;
+  bool ext_color_buffer_float;
+  bool oes_texture_float_linear;
+  bool oes_texture_half_float_linear;
 };
 
 typedef base::Callback<void(const std::string& key,
@@ -64,11 +90,12 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
                                 public CommonDecoder {
  public:
   typedef error::Error Error;
-  typedef base::Callback<bool(uint32 id)> WaitSyncPointCallback;
   typedef base::Callback<void(uint64_t release)> FenceSyncReleaseCallback;
   typedef base::Callback<bool(gpu::CommandBufferNamespace namespace_id,
-                              uint64_t command_buffer_id,
-                              uint64_t release)> WaitFenceSyncCallback;
+                              gpu::CommandBufferId command_buffer_id,
+                              uint64_t release)>
+      WaitFenceSyncCallback;
+  typedef base::Callback<void(void)> NoParamCallback;
 
   // The default stencil mask, which has all bits set.  This really should be a
   // GLuint, but we can't #include gl_bindings.h in this file without causing
@@ -86,14 +113,6 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
 
   void set_initialized() {
     initialized_ = true;
-  }
-
-  bool unsafe_es3_apis_enabled() const {
-    return unsafe_es3_apis_enabled_;
-  }
-
-  void set_unsafe_es3_apis_enabled(bool enabled) {
-    unsafe_es3_apis_enabled_ = enabled;
   }
 
   bool debug() const {
@@ -126,23 +145,26 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   //  offscreen_size: the size if the GL context is offscreen.
   // Returns:
   //   true if successful.
-  virtual bool Initialize(const scoped_refptr<gfx::GLSurface>& surface,
-                          const scoped_refptr<gfx::GLContext>& context,
+  virtual bool Initialize(const scoped_refptr<gl::GLSurface>& surface,
+                          const scoped_refptr<gl::GLContext>& context,
                           bool offscreen,
-                          const gfx::Size& offscreen_size,
                           const DisallowedFeatures& disallowed_features,
-                          const std::vector<int32>& attribs) = 0;
+                          const ContextCreationAttribHelper& attrib_helper) = 0;
 
   // Destroys the graphics context.
   virtual void Destroy(bool have_context) = 0;
 
   // Set the surface associated with the default FBO.
-  virtual void SetSurface(const scoped_refptr<gfx::GLSurface>& surface) = 0;
+  virtual void SetSurface(const scoped_refptr<gl::GLSurface>& surface) = 0;
+  // Releases the surface associated with the GL context.
+  // The decoder should not be used until a new surface is set.
+  virtual void ReleaseSurface() = 0;
 
-  virtual void ProduceFrontBuffer(const Mailbox& mailbox) = 0;
+  virtual void TakeFrontBuffer(const Mailbox& mailbox) = 0;
+  virtual void ReturnFrontBuffer(const Mailbox& mailbox, bool is_lost) = 0;
 
   // Resize an offscreen frame buffer.
-  virtual bool ResizeOffscreenFrameBuffer(const gfx::Size& size) = 0;
+  virtual bool ResizeOffscreenFramebuffer(const gfx::Size& size) = 0;
 
   // Make this decoder's GL context current.
   virtual bool MakeCurrent() = 0;
@@ -151,10 +173,11 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   virtual GLES2Util* GetGLES2Util() = 0;
 
   // Gets the associated GLContext.
-  virtual gfx::GLContext* GetGLContext() = 0;
+  virtual gl::GLContext* GetGLContext() = 0;
 
   // Gets the associated ContextGroup
   virtual ContextGroup* GetContextGroup() = 0;
+  virtual const FeatureInfo* GetFeatureInfo() const = 0;
 
   virtual Capabilities GetCapabilities() = 0;
 
@@ -173,25 +196,28 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   virtual void RestoreProgramBindings() const = 0;
   virtual void RestoreTextureState(unsigned service_id) const = 0;
   virtual void RestoreTextureUnitBindings(unsigned unit) const = 0;
+  virtual void RestoreAllExternalTextureBindingsIfNeeded() = 0;
 
   virtual void ClearAllAttributes() const = 0;
   virtual void RestoreAllAttributes() const = 0;
 
   virtual void SetIgnoreCachedStateForTest(bool ignore) = 0;
   virtual void SetForceShaderNameHashingForTest(bool force) = 0;
-  virtual uint32 GetAndClearBackbufferClearBitsForTest();
+  virtual uint32_t GetAndClearBackbufferClearBitsForTest();
+  virtual size_t GetSavedBackTextureCountForTest() = 0;
+  virtual size_t GetCreatedBackTextureCountForTest() = 0;
 
   // Gets the QueryManager for this context.
   virtual QueryManager* GetQueryManager() = 0;
+
+  // Gets the TransformFeedbackManager for this context.
+  virtual TransformFeedbackManager* GetTransformFeedbackManager() = 0;
 
   // Gets the VertexArrayManager for this context.
   virtual VertexArrayManager* GetVertexArrayManager() = 0;
 
   // Gets the ImageManager for this context.
   virtual ImageManager* GetImageManager() = 0;
-
-  // Gets the ValuebufferManager for this context.
-  virtual ValuebufferManager* GetValuebufferManager() = 0;
 
   // Returns false if there are no pending queries.
   virtual bool HasPendingQueries() const = 0;
@@ -205,15 +231,21 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // Perform any idle work that needs to be made.
   virtual void PerformIdleWork() = 0;
 
+  // Whether there is state that needs to be regularly polled.
+  virtual bool HasPollingWork() const = 0;
+
+  // Perform necessary polling.
+  virtual void PerformPollingWork() = 0;
+
   // Get the service texture ID corresponding to a client texture ID.
   // If no such record is found then return false.
-  virtual bool GetServiceTextureId(uint32 client_texture_id,
-                                   uint32* service_texture_id);
+  virtual bool GetServiceTextureId(uint32_t client_texture_id,
+                                   uint32_t* service_texture_id);
 
   // Provides detail about a lost context if one occurred.
   virtual error::ContextLostReason GetContextLostReason() = 0;
 
-  // Clears a level sub area of a texture
+  // Clears a level sub area of a 2D texture.
   // Returns false if a GL error should be generated.
   virtual bool ClearLevel(Texture* texture,
                           unsigned target,
@@ -225,15 +257,34 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
                           int width,
                           int height) = 0;
 
+  // Clears a level sub area of a compressed 2D texture.
+  // Returns false if a GL error should be generated.
+  virtual bool ClearCompressedTextureLevel(Texture* texture,
+                                           unsigned target,
+                                           int level,
+                                           unsigned format,
+                                           int width,
+                                           int height) = 0;
+
+  // Indicates whether a given internal format is one for a compressed
+  // texture.
+  virtual bool IsCompressedTextureFormat(unsigned format) = 0;
+
+  // Clears a level of a 3D texture.
+  // Returns false if a GL error should be generated.
+  virtual bool ClearLevel3D(Texture* texture,
+                            unsigned target,
+                            int level,
+                            unsigned format,
+                            unsigned type,
+                            int width,
+                            int height,
+                            int depth) = 0;
+
   virtual ErrorState* GetErrorState() = 0;
 
   // A callback for messages from the decoder.
   virtual void SetShaderCacheCallback(const ShaderCacheCallback& callback) = 0;
-
-  // Sets the callback for waiting on a sync point. The callback returns the
-  // scheduling status (i.e. true if the channel is still scheduled).
-  virtual void SetWaitSyncPointCallback(
-      const WaitSyncPointCallback& callback) = 0;
 
   // Sets the callback for fence sync release and wait calls. The wait call
   // returns true if the channel is still scheduled.
@@ -242,8 +293,15 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   virtual void SetWaitFenceSyncCallback(
       const WaitFenceSyncCallback& callback) = 0;
 
+  // Sets the callback for the DescheduleUntilFinished and
+  // RescheduleAfterFinished calls.
+  virtual void SetDescheduleUntilFinishedCallback(
+      const NoParamCallback& callback) = 0;
+  virtual void SetRescheduleAfterFinishedCallback(
+      const NoParamCallback& callback) = 0;
+
   virtual void WaitForReadPixels(base::Closure callback) = 0;
-  virtual uint32 GetTextureUploadCount() = 0;
+  virtual uint32_t GetTextureUploadCount() = 0;
   virtual base::TimeDelta GetTotalTextureUploadTime() = 0;
   virtual base::TimeDelta GetTotalProcessingCommandsTime() = 0;
   virtual void AddProcessingCommandsTime(base::TimeDelta) = 0;
@@ -264,16 +322,24 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   virtual void EndDecoding();
 
   virtual const ContextState* GetContextState() = 0;
+  virtual scoped_refptr<ShaderTranslatorInterface> GetTranslator(
+      unsigned int type) = 0;
 
  protected:
   GLES2Decoder();
+
+  // Decode a command, and call the corresponding GL functions.
+  // NOTE: DoCommand() is slower than calling DoCommands() on larger batches
+  // of commands at once, and is now only used for tests that need to track
+  // individual commands.
+  error::Error DoCommand(unsigned int command,
+                         unsigned int arg_count,
+                         const volatile void* cmd_data) override;
 
  private:
   bool initialized_;
   bool debug_;
   bool log_commands_;
-  bool unsafe_es3_apis_enabled_;
-  bool force_shader_name_hashing_for_test_;
   DISALLOW_COPY_AND_ASSIGN(GLES2Decoder);
 };
 

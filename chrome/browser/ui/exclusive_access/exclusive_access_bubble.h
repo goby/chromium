@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_EXCLUSIVE_ACCESS_BUBBLE_H_
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_EXCLUSIVE_ACCESS_BUBBLE_H_
 
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -29,9 +30,9 @@ class Rect;
 //   has elapsed, the next user input re-displays the bubble.
 class ExclusiveAccessBubble : public gfx::AnimationDelegate {
  public:
-  explicit ExclusiveAccessBubble(ExclusiveAccessManager* manager,
-                                 const GURL& url,
-                                 ExclusiveAccessBubbleType bubble_type);
+  ExclusiveAccessBubble(ExclusiveAccessManager* manager,
+                        const GURL& url,
+                        ExclusiveAccessBubbleType bubble_type);
   ~ExclusiveAccessBubble() override;
 
   // Informs the ExclusiveAccessBubble of some user input, which may update
@@ -53,9 +54,9 @@ class ExclusiveAccessBubble : public gfx::AnimationDelegate {
   // Space between top of screen and popup, in simplified UI.
   static const int kSimplifiedPopupTopPx;
 
-  // Returns the current desirable rect for the popup window.  If
-  // |ignore_animation_state| is true this returns the rect assuming the popup
-  // is fully onscreen.
+  // Returns the current desirable rect for the popup window in screen
+  // coordinates. If |ignore_animation_state| is true this returns the rect
+  // assuming the popup is fully onscreen.
   virtual gfx::Rect GetPopupRect(bool ignore_animation_state) const = 0;
   virtual gfx::Point GetCursorScreenPoint() = 0;
   virtual bool WindowContainsPoint(gfx::Point pos) = 0;
@@ -85,20 +86,16 @@ class ExclusiveAccessBubble : public gfx::AnimationDelegate {
   void CheckMousePosition();
 
   void ExitExclusiveAccess();
-  // Accepts the request. Can cause FullscreenExitBubble to be deleted.
-  void Accept();
-  // Denys the request. Can cause FullscreenExitBubble to be deleted.
-  void Cancel();
 
   // The following strings may change according to the content type and URL.
   base::string16 GetCurrentMessageText() const;
   base::string16 GetCurrentDenyButtonText() const;
   base::string16 GetCurrentAllowButtonText() const;
 
-  // The following strings never change.
   // This string *may* contain the name of the key surrounded in pipe characters
   // ('|'), which should be drawn graphically as a key, not displayed literally.
-  base::string16 GetInstructionText() const;
+  // |accelerator| is the name of the key to exit fullscreen mode.
+  base::string16 GetInstructionText(const base::string16& accelerator) const;
 
   // The Manager associated with this bubble.
   ExclusiveAccessManager* const manager_;
@@ -135,7 +132,8 @@ class ExclusiveAccessBubble : public gfx::AnimationDelegate {
   base::RepeatingTimer mouse_position_checker_;
 
   // The most recently seen mouse position, in screen coordinates.  Used to see
-  // if the mouse has moved since our last check.
+  // if the mouse has moved since our last check. Only used in non-simplified
+  // fullscreen mode.
   gfx::Point last_mouse_pos_;
 
   DISALLOW_COPY_AND_ASSIGN(ExclusiveAccessBubble);

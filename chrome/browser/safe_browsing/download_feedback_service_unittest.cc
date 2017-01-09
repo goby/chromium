@@ -4,10 +4,14 @@
 
 #include "chrome/browser/safe_browsing/download_feedback_service.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/safe_browsing/download_feedback.h"
@@ -20,6 +24,7 @@
 
 using ::testing::_;
 using ::testing::Return;
+using ::testing::ReturnRef;
 using ::testing::SaveArg;
 
 namespace safe_browsing {
@@ -37,8 +42,7 @@ class FakeDownloadFeedback : public DownloadFeedback {
       : ping_request_(ping_request),
         ping_response_(ping_response),
         deletion_callback_(deletion_callback),
-        start_called_(false) {
-  }
+        start_called_(false) {}
 
   ~FakeDownloadFeedback() override { deletion_callback_.Run(); }
 
@@ -79,28 +83,22 @@ class FakeDownloadFeedbackFactory : public DownloadFeedbackFactory {
  public:
   ~FakeDownloadFeedbackFactory() override {}
 
-  DownloadFeedback* CreateDownloadFeedback(
+  std::unique_ptr<DownloadFeedback> CreateDownloadFeedback(
       net::URLRequestContextGetter* request_context_getter,
       base::TaskRunner* file_task_runner,
       const base::FilePath& file_path,
       const std::string& ping_request,
       const std::string& ping_response) override {
     FakeDownloadFeedback* feedback = new FakeDownloadFeedback(
-        request_context_getter,
-        file_task_runner,
-        file_path,
-        ping_request,
+        request_context_getter, file_task_runner, file_path, ping_request,
         ping_response,
-        base::Bind(&FakeDownloadFeedbackFactory::DownloadFeedbackDeleted,
-                   base::Unretained(this),
-                   feedbacks_.size()));
+        base::Bind(&FakeDownloadFeedbackFactory::DownloadFeedbackSent,
+                   base::Unretained(this), feedbacks_.size()));
     feedbacks_.push_back(feedback);
-    return feedback;
+    return base::WrapUnique(feedback);
   }
 
-  void DownloadFeedbackDeleted(size_t n) {
-    feedbacks_[n] = NULL;
-  }
+  void DownloadFeedbackSent(size_t n) { feedbacks_[n] = nullptr; }
 
   FakeDownloadFeedback* feedback(size_t n) const {
     return feedbacks_[n];
@@ -115,7 +113,7 @@ class FakeDownloadFeedbackFactory : public DownloadFeedbackFactory {
 };
 
 bool WillStorePings(DownloadProtectionService::DownloadCheckResult result,
-                     int64 size) {
+                    int64_t size) {
   content::MockDownloadItem item;
   EXPECT_CALL(item, GetReceivedBytes()).WillRepeatedly(Return(size));
 
@@ -129,24 +127,23 @@ bool WillStorePings(DownloadProtectionService::DownloadCheckResult result,
 class DownloadFeedbackServiceTest : public testing::Test {
  public:
   DownloadFeedbackServiceTest()
-      : file_task_runner_(content::BrowserThread::GetMessageLoopProxyForThread(
+      : file_task_runner_(content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::FILE)),
-        io_task_runner_(content::BrowserThread::GetMessageLoopProxyForThread(
+        io_task_runner_(content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO)),
         request_context_getter_(
-            new net::TestURLRequestContextGetter(io_task_runner_)) {
-  }
+            new net::TestURLRequestContextGetter(io_task_runner_)) {}
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     DownloadFeedback::RegisterFactory(&download_feedback_factory_);
   }
 
-  void TearDown() override { DownloadFeedback::RegisterFactory(NULL); }
+  void TearDown() override { DownloadFeedback::RegisterFactory(nullptr); }
 
   base::FilePath CreateTestFile(int n) const {
     base::FilePath upload_file_path(
-        temp_dir_.path().AppendASCII("test file " + base::IntToString(n)));
+        temp_dir_.GetPath().AppendASCII("test file " + base::IntToString(n)));
     const std::string upload_file_data = "data";
     int wrote = base::WriteFile(
         upload_file_path, upload_file_data.data(), upload_file_data.size());
@@ -172,23 +169,27 @@ class DownloadFeedbackServiceTest : public testing::Test {
 };
 
 TEST_F(DownloadFeedbackServiceTest, MaybeStorePingsForDownload) {
-  const int64 ok_size = DownloadFeedback::kMaxUploadSize;
-  const int64 bad_size = DownloadFeedback::kMaxUploadSize + 1;
+  const int64_t ok_size = DownloadFeedback::kMaxUploadSize;
+  const int64_t bad_size = DownloadFeedback::kMaxUploadSize + 1;
 
   EXPECT_FALSE(WillStorePings(DownloadProtectionService::SAFE, ok_size));
   EXPECT_FALSE(WillStorePings(DownloadProtectionService::DANGEROUS, ok_size));
   EXPECT_TRUE(WillStorePings(DownloadProtectionService::UNCOMMON, ok_size));
   EXPECT_TRUE(
       WillStorePings(DownloadProtectionService::DANGEROUS_HOST, ok_size));
+  EXPECT_TRUE(
+      WillStorePings(DownloadProtectionService::POTENTIALLY_UNWANTED, ok_size));
 
   EXPECT_FALSE(WillStorePings(DownloadProtectionService::SAFE, bad_size));
   EXPECT_FALSE(WillStorePings(DownloadProtectionService::DANGEROUS, bad_size));
   EXPECT_FALSE(WillStorePings(DownloadProtectionService::UNCOMMON, bad_size));
   EXPECT_FALSE(
       WillStorePings(DownloadProtectionService::DANGEROUS_HOST, bad_size));
+  EXPECT_FALSE(WillStorePings(DownloadProtectionService::POTENTIALLY_UNWANTED,
+                              bad_size));
 }
 
-TEST_F(DownloadFeedbackServiceTest, SingleFeedbackComplete) {
+TEST_F(DownloadFeedbackServiceTest, SingleFeedbackCompleteAndDiscardDownload) {
   const base::FilePath file_path(CreateTestFile(0));
   const std::string ping_request = "ping";
   const std::string ping_response = "resp";
@@ -199,15 +200,16 @@ TEST_F(DownloadFeedbackServiceTest, SingleFeedbackComplete) {
   EXPECT_CALL(item, GetDangerType())
       .WillRepeatedly(Return(content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT));
   EXPECT_CALL(item, GetReceivedBytes()).WillRepeatedly(Return(1000));
-  EXPECT_CALL(item, StealDangerousDownload(_))
-      .WillOnce(SaveArg<0>(&download_discarded_callback));
+  EXPECT_CALL(item,
+              StealDangerousDownload(true /*delete_file_after_feedback*/, _))
+      .WillOnce(SaveArg<1>(&download_discarded_callback));
 
   DownloadFeedbackService service(request_context_getter_.get(),
                                   file_task_runner_.get());
   service.MaybeStorePingsForDownload(
       DownloadProtectionService::UNCOMMON, &item, ping_request, ping_response);
   ASSERT_TRUE(DownloadFeedbackService::IsEnabledForDownload(item));
-  service.BeginFeedbackForDownload(&item);
+  service.BeginFeedbackForDownload(&item, DownloadCommands::DISCARD);
   ASSERT_FALSE(download_discarded_callback.is_null());
   EXPECT_EQ(0U, num_feedbacks());
 
@@ -221,7 +223,47 @@ TEST_F(DownloadFeedbackServiceTest, SingleFeedbackComplete) {
   feedback(0)->finish_callback().Run();
   EXPECT_FALSE(feedback(0));
 
-  // File should still exist since our FakeDownloadFeedback does not delete it.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(base::PathExists(file_path));
+}
+
+TEST_F(DownloadFeedbackServiceTest, SingleFeedbackCompleteAndKeepDownload) {
+  const base::FilePath file_path(CreateTestFile(0));
+  const std::string ping_request = "ping";
+  const std::string ping_response = "resp";
+
+  content::DownloadItem::AcquireFileCallback download_discarded_callback;
+
+  content::MockDownloadItem item;
+  EXPECT_CALL(item, GetDangerType())
+      .WillRepeatedly(Return(content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT));
+  EXPECT_CALL(item, GetReceivedBytes()).WillRepeatedly(Return(1000));
+  EXPECT_CALL(item,
+              StealDangerousDownload(false /*delete_file_after_feedback*/, _))
+      .WillOnce(SaveArg<1>(&download_discarded_callback));
+  EXPECT_CALL(item, ValidateDangerousDownload()).Times(1);
+  GURL empty_url;
+  EXPECT_CALL(item, GetURL()).WillOnce(ReturnRef(empty_url));
+
+  DownloadFeedbackService service(request_context_getter_.get(),
+                                  file_task_runner_.get());
+  service.MaybeStorePingsForDownload(DownloadProtectionService::UNCOMMON, &item,
+                                     ping_request, ping_response);
+  ASSERT_TRUE(DownloadFeedbackService::IsEnabledForDownload(item));
+  service.BeginFeedbackForDownload(&item, DownloadCommands::KEEP);
+  ASSERT_FALSE(download_discarded_callback.is_null());
+  EXPECT_EQ(0U, num_feedbacks());
+
+  download_discarded_callback.Run(file_path);
+  ASSERT_EQ(1U, num_feedbacks());
+  ASSERT_TRUE(feedback(0));
+  EXPECT_TRUE(feedback(0)->start_called());
+  EXPECT_EQ(ping_request, feedback(0)->GetPingRequestForTesting());
+  EXPECT_EQ(ping_response, feedback(0)->GetPingResponseForTesting());
+
+  feedback(0)->finish_callback().Run();
+  EXPECT_FALSE(feedback(0));
+
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(base::PathExists(file_path));
 }
@@ -229,20 +271,20 @@ TEST_F(DownloadFeedbackServiceTest, SingleFeedbackComplete) {
 TEST_F(DownloadFeedbackServiceTest, MultiplePendingFeedbackComplete) {
   const std::string ping_request = "ping";
   const std::string ping_response = "resp";
-  const size_t num_downloads = 3;
+  const size_t kNumDownloads = 3;
 
   content::DownloadItem::AcquireFileCallback
-      download_discarded_callback[num_downloads];
+      download_discarded_callback[kNumDownloads];
 
-  base::FilePath file_path[num_downloads];
-  content::MockDownloadItem item[num_downloads];
-  for (size_t i = 0; i < num_downloads; ++i) {
+  base::FilePath file_path[kNumDownloads];
+  content::MockDownloadItem item[kNumDownloads];
+  for (size_t i = 0; i < kNumDownloads; ++i) {
     file_path[i] = CreateTestFile(i);
     EXPECT_CALL(item[i], GetDangerType())
         .WillRepeatedly(Return(content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT));
     EXPECT_CALL(item[i], GetReceivedBytes()).WillRepeatedly(Return(1000));
-    EXPECT_CALL(item[i], StealDangerousDownload(_))
-        .WillOnce(SaveArg<0>(&download_discarded_callback[i]));
+    EXPECT_CALL(item[i], StealDangerousDownload(true, _))
+        .WillOnce(SaveArg<1>(&download_discarded_callback[i]));
     DownloadFeedbackService::MaybeStorePingsForDownload(
         DownloadProtectionService::UNCOMMON, &item[i], ping_request,
         ping_response);
@@ -252,14 +294,14 @@ TEST_F(DownloadFeedbackServiceTest, MultiplePendingFeedbackComplete) {
   {
     DownloadFeedbackService service(request_context_getter_.get(),
                                     file_task_runner_.get());
-    for (size_t i = 0; i < num_downloads; ++i) {
+    for (size_t i = 0; i < kNumDownloads; ++i) {
       SCOPED_TRACE(i);
-      service.BeginFeedbackForDownload(&item[i]);
+      service.BeginFeedbackForDownload(&item[i], DownloadCommands::DISCARD);
       ASSERT_FALSE(download_discarded_callback[i].is_null());
     }
     EXPECT_EQ(0U, num_feedbacks());
 
-    for (size_t i = 0; i < num_downloads; ++i) {
+    for (size_t i = 0; i < kNumDownloads; ++i) {
       download_discarded_callback[i].Run(file_path[i]);
     }
 
@@ -298,20 +340,20 @@ TEST_F(DownloadFeedbackServiceTest, MultiplePendingFeedbackComplete) {
 TEST_F(DownloadFeedbackServiceTest, MultiFeedbackWithIncomplete) {
   const std::string ping_request = "ping";
   const std::string ping_response = "resp";
-  const size_t num_downloads = 3;
+  const size_t kNumDownloads = 3;
 
   content::DownloadItem::AcquireFileCallback
-      download_discarded_callback[num_downloads];
+      download_discarded_callback[kNumDownloads];
 
-  base::FilePath file_path[num_downloads];
-  content::MockDownloadItem item[num_downloads];
-  for (size_t i = 0; i < num_downloads; ++i) {
+  base::FilePath file_path[kNumDownloads];
+  content::MockDownloadItem item[kNumDownloads];
+  for (size_t i = 0; i < kNumDownloads; ++i) {
     file_path[i] = CreateTestFile(i);
     EXPECT_CALL(item[i], GetDangerType())
         .WillRepeatedly(Return(content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT));
     EXPECT_CALL(item[i], GetReceivedBytes()).WillRepeatedly(Return(1000));
-    EXPECT_CALL(item[i], StealDangerousDownload(_))
-        .WillOnce(SaveArg<0>(&download_discarded_callback[i]));
+    EXPECT_CALL(item[i], StealDangerousDownload(true, _))
+        .WillOnce(SaveArg<1>(&download_discarded_callback[i]));
     DownloadFeedbackService::MaybeStorePingsForDownload(
         DownloadProtectionService::UNCOMMON, &item[i], ping_request,
         ping_response);
@@ -321,9 +363,9 @@ TEST_F(DownloadFeedbackServiceTest, MultiFeedbackWithIncomplete) {
   {
     DownloadFeedbackService service(request_context_getter_.get(),
                                     file_task_runner_.get());
-    for (size_t i = 0; i < num_downloads; ++i) {
+    for (size_t i = 0; i < kNumDownloads; ++i) {
       SCOPED_TRACE(i);
-      service.BeginFeedbackForDownload(&item[i]);
+      service.BeginFeedbackForDownload(&item[i], DownloadCommands::DISCARD);
       ASSERT_FALSE(download_discarded_callback[i].is_null());
     }
     EXPECT_EQ(0U, num_feedbacks());

@@ -13,6 +13,10 @@
 #include "content/browser/service_worker/service_worker_navigation_handle_core.h"
 #include "content/common/navigation_params.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/global_request_id.h"
+#include "content/public/browser/navigation_data.h"
+#include "content/public/browser/navigation_ui_data.h"
+#include "content/public/browser/ssl_status.h"
 #include "content/public/browser/stream_handle.h"
 #include "content/public/common/resource_response.h"
 #include "net/base/net_errors.h"
@@ -22,8 +26,7 @@ namespace content {
 
 NavigationURLLoaderImplCore::NavigationURLLoaderImplCore(
     const base::WeakPtr<NavigationURLLoaderImpl>& loader)
-    : loader_(loader),
-      resource_handler_(nullptr) {
+    : loader_(loader), resource_handler_(nullptr) {
   // This object is created on the UI thread but otherwise is accessed and
   // deleted on the IO thread.
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -39,7 +42,9 @@ NavigationURLLoaderImplCore::~NavigationURLLoaderImplCore() {
 void NavigationURLLoaderImplCore::Start(
     ResourceContext* resource_context,
     ServiceWorkerNavigationHandleCore* service_worker_handle_core,
-    scoped_ptr<NavigationRequestInfo> request_info) {
+    AppCacheNavigationHandleCore* appcache_handle_core,
+    std::unique_ptr<NavigationRequestInfo> request_info,
+    std::unique_ptr<NavigationUIData> navigation_ui_data) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   BrowserThread::PostTask(
@@ -50,7 +55,8 @@ void NavigationURLLoaderImplCore::Start(
   // The ResourceDispatcherHostImpl can be null in unit tests.
   if (ResourceDispatcherHostImpl::Get()) {
     ResourceDispatcherHostImpl::Get()->BeginNavigationRequest(
-        resource_context, *request_info, this, service_worker_handle_core);
+        resource_context, *request_info, std::move(navigation_ui_data), this,
+        service_worker_handle_core, appcache_handle_core);
   }
 }
 
@@ -61,10 +67,18 @@ void NavigationURLLoaderImplCore::FollowRedirect() {
     resource_handler_->FollowRedirect();
 }
 
+void NavigationURLLoaderImplCore::ProceedWithResponse() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  if (resource_handler_)
+    resource_handler_->ProceedWithResponse();
+}
+
 void NavigationURLLoaderImplCore::NotifyRequestRedirected(
     const net::RedirectInfo& redirect_info,
     ResourceResponse* response) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  TRACE_EVENT_ASYNC_END0("navigation", "Navigation redirectDelay", this);
 
   // Make a copy of the ResourceResponse before it is passed to another thread.
   //
@@ -75,12 +89,27 @@ void NavigationURLLoaderImplCore::NotifyRequestRedirected(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&NavigationURLLoaderImpl::NotifyRequestRedirected, loader_,
                  redirect_info, response->DeepCopy()));
+
+  // TODO(carlosk): extend this trace to support non-PlzNavigate navigations.
+  // For the trace below we're using the NavigationURLLoaderImplCore as the
+  // async trace id and reporting the new redirect URL as a parameter.
+  TRACE_EVENT_ASYNC_BEGIN2("navigation", "Navigation redirectDelay", this,
+                           "&NavigationURLLoaderImplCore", this, "New URL",
+                           redirect_info.new_url.spec());
 }
 
 void NavigationURLLoaderImplCore::NotifyResponseStarted(
     ResourceResponse* response,
-    scoped_ptr<StreamHandle> body) {
+    std::unique_ptr<StreamHandle> body,
+    const SSLStatus& ssl_status,
+    std::unique_ptr<NavigationData> navigation_data,
+    const GlobalRequestID& request_id,
+    bool is_download,
+    bool is_stream) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  TRACE_EVENT_ASYNC_END0("navigation", "Navigation redirectDelay", this);
+  TRACE_EVENT_ASYNC_END2("navigation", "Navigation timeToResponseStarted", this,
+                         "&NavigationURLLoaderImplCore", this, "success", true);
 
   // If, by the time the task reaches the UI thread, |loader_| has already been
   // destroyed, NotifyResponseStarted will not run. |body| will be destructed
@@ -94,12 +123,18 @@ void NavigationURLLoaderImplCore::NotifyResponseStarted(
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&NavigationURLLoaderImpl::NotifyResponseStarted, loader_,
-                 response->DeepCopy(), base::Passed(&body)));
+                 response->DeepCopy(), base::Passed(&body), ssl_status,
+                 base::Passed(&navigation_data), request_id, is_download,
+                 is_stream));
 }
 
 void NavigationURLLoaderImplCore::NotifyRequestFailed(bool in_cache,
                                                       int net_error) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  TRACE_EVENT_ASYNC_END0("navigation", "Navigation redirectDelay", this);
+  TRACE_EVENT_ASYNC_END2("navigation", "Navigation timeToResponseStarted", this,
+                         "&NavigationURLLoaderImplCore", this, "success",
+                         false);
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,

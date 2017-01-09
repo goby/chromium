@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "extensions/browser/extension_prefs.h"
@@ -11,61 +12,70 @@
 #include "extensions/common/extension.h"
 #include "ui/base/window_open_disposition.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/arc/arc_session_manager.h"
+#include "components/arc/arc_bridge_service.h"
+#endif
+
 using extensions::ExtensionPrefs;
+using extensions::api::app_runtime::PlayStoreStatus;
 
 AppLaunchParams::AppLaunchParams(Profile* profile,
                                  const extensions::Extension* extension,
                                  extensions::LaunchContainer container,
                                  WindowOpenDisposition disposition,
-                                 extensions::AppLaunchSource source)
+                                 extensions::AppLaunchSource source,
+                                 bool set_playstore_status)
     : profile(profile),
       extension_id(extension ? extension->id() : std::string()),
       container(container),
       disposition(disposition),
-      desktop_type(chrome::GetActiveDesktop()),
-      override_url(),
-      override_bounds(),
       command_line(base::CommandLine::NO_PROGRAM),
-      source(source) {
+      source(source),
+      play_store_status(PlayStoreStatus::PLAY_STORE_STATUS_UNKNOWN) {
+#if defined(OS_CHROMEOS)
+  if (set_playstore_status) {
+    if (arc::ArcSessionManager::IsAllowedForProfile(profile)) {
+      play_store_status = PlayStoreStatus::PLAY_STORE_STATUS_ENABLED;
+    } else if (arc::ArcBridgeService::GetAvailable(
+                   base::CommandLine::ForCurrentProcess())) {
+      play_store_status = PlayStoreStatus::PLAY_STORE_STATUS_AVAILABLE;
+    }  // else, default to PLAY_STORE_STATUS_UNKNOWN.
+  }
+#endif
 }
 
-AppLaunchParams::AppLaunchParams(Profile* profile,
-                                 const extensions::Extension* extension,
-                                 WindowOpenDisposition disposition,
-                                 extensions::AppLaunchSource source)
-    : profile(profile),
-      extension_id(extension ? extension->id() : std::string()),
-      container(extensions::LAUNCH_CONTAINER_NONE),
-      disposition(disposition),
-      desktop_type(chrome::GetActiveDesktop()),
-      override_url(),
-      override_bounds(),
-      command_line(base::CommandLine::NO_PROGRAM),
-      source(source) {
+AppLaunchParams::AppLaunchParams(const AppLaunchParams& other) = default;
+
+AppLaunchParams::~AppLaunchParams() {}
+
+AppLaunchParams CreateAppLaunchParamsUserContainer(
+    Profile* profile,
+    const extensions::Extension* extension,
+    WindowOpenDisposition disposition,
+    extensions::AppLaunchSource source) {
   // Look up the app preference to find out the right launch container. Default
   // is to launch as a regular tab.
-  container =
+  extensions::LaunchContainer container =
       extensions::GetLaunchContainer(ExtensionPrefs::Get(profile), extension);
+  return AppLaunchParams(profile, extension, container, disposition, source);
 }
 
-AppLaunchParams::AppLaunchParams(Profile* profile,
-                                 const extensions::Extension* extension,
-                                 WindowOpenDisposition raw_disposition,
-                                 chrome::HostDesktopType desktop_type,
-                                 extensions::AppLaunchSource source)
-    : profile(profile),
-      extension_id(extension ? extension->id() : std::string()),
-      container(extensions::LAUNCH_CONTAINER_NONE),
-      desktop_type(desktop_type),
-      override_url(),
-      override_bounds(),
-      command_line(base::CommandLine::NO_PROGRAM),
-      source(source) {
-  if (raw_disposition == NEW_FOREGROUND_TAB ||
-      raw_disposition == NEW_BACKGROUND_TAB) {
+AppLaunchParams CreateAppLaunchParamsWithEventFlags(
+    Profile* profile,
+    const extensions::Extension* extension,
+    int event_flags,
+    extensions::AppLaunchSource source) {
+  WindowOpenDisposition raw_disposition =
+      ui::DispositionFromEventFlags(event_flags);
+
+  extensions::LaunchContainer container;
+  WindowOpenDisposition disposition;
+  if (raw_disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB ||
+      raw_disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
     container = extensions::LAUNCH_CONTAINER_TAB;
     disposition = raw_disposition;
-  } else if (raw_disposition == NEW_WINDOW) {
+  } else if (raw_disposition == WindowOpenDisposition::NEW_WINDOW) {
     container = extensions::LAUNCH_CONTAINER_WINDOW;
     disposition = raw_disposition;
   } else {
@@ -73,9 +83,7 @@ AppLaunchParams::AppLaunchParams(Profile* profile,
     // is set, launch as a regular tab.
     container =
         extensions::GetLaunchContainer(ExtensionPrefs::Get(profile), extension);
-    disposition = NEW_FOREGROUND_TAB;
+    disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   }
-}
-
-AppLaunchParams::~AppLaunchParams() {
+  return AppLaunchParams(profile, extension, container, disposition, source);
 }

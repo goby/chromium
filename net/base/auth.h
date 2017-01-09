@@ -9,8 +9,8 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
-#include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
+#include "url/origin.h"
 
 namespace net {
 
@@ -28,7 +28,7 @@ class NET_EXPORT AuthChallengeInfo :
   bool is_proxy;
 
   // The service issuing the challenge.
-  HostPortPair challenger;
+  url::Origin challenger;
 
   // The authentication scheme used, such as "basic" or "digest". If the
   // |source| is FTP_SERVER, this is an empty string. The encoding is ASCII.
@@ -87,19 +87,6 @@ enum AuthState {
   AUTH_STATE_NEED_AUTH,
   AUTH_STATE_HAVE_AUTH,
   AUTH_STATE_CANCELED
-};
-
-class AuthData : public base::RefCountedThreadSafe<AuthData> {
- public:
-  AuthState state;  // whether we need, have, or gave up on authentication.
-  AuthCredentials credentials; // The credentials to use for auth.
-
-  // We wouldn't instantiate this class if we didn't need authentication.
-  AuthData();
-
- private:
-  friend class base::RefCountedThreadSafe<AuthData>;
-  ~AuthData();
 };
 
 }  // namespace net

@@ -4,6 +4,12 @@
 
 #include "components/url_matcher/url_matcher.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -476,27 +482,27 @@ TEST(URLMatcherConditionSetTest, Matching) {
 
   // Test scheme filters.
   scoped_refptr<URLMatcherConditionSet> condition_set2(
-      new URLMatcherConditionSet(1,
-                                 conditions,
-                                 scoped_ptr<URLMatcherSchemeFilter>(
+      new URLMatcherConditionSet(1, conditions,
+                                 std::unique_ptr<URLMatcherSchemeFilter>(
                                      new URLMatcherSchemeFilter("https")),
-                                 scoped_ptr<URLMatcherPortFilter>()));
+                                 std::unique_ptr<URLMatcherPortFilter>()));
   EXPECT_FALSE(condition_set2->IsMatch(matching_patterns, url1));
   scoped_refptr<URLMatcherConditionSet> condition_set3(
-      new URLMatcherConditionSet(1,
-                                 conditions,
-                                 scoped_ptr<URLMatcherSchemeFilter>(
+      new URLMatcherConditionSet(1, conditions,
+                                 std::unique_ptr<URLMatcherSchemeFilter>(
                                      new URLMatcherSchemeFilter("http")),
-                                 scoped_ptr<URLMatcherPortFilter>()));
+                                 std::unique_ptr<URLMatcherPortFilter>()));
   EXPECT_TRUE(condition_set3->IsMatch(matching_patterns, url1));
 
   // Test port filters.
   std::vector<URLMatcherPortFilter::Range> ranges;
   ranges.push_back(URLMatcherPortFilter::CreateRange(80));
-  scoped_ptr<URLMatcherPortFilter> filter(new URLMatcherPortFilter(ranges));
+  std::unique_ptr<URLMatcherPortFilter> filter(
+      new URLMatcherPortFilter(ranges));
   scoped_refptr<URLMatcherConditionSet> condition_set4(
-      new URLMatcherConditionSet(
-          1, conditions, scoped_ptr<URLMatcherSchemeFilter>(), filter.Pass()));
+      new URLMatcherConditionSet(1, conditions,
+                                 std::unique_ptr<URLMatcherSchemeFilter>(),
+                                 std::move(filter)));
   EXPECT_TRUE(condition_set4->IsMatch(matching_patterns, url1));
   EXPECT_TRUE(condition_set4->IsMatch(matching_patterns, url3));
   EXPECT_FALSE(condition_set4->IsMatch(matching_patterns, url4));
@@ -556,15 +562,13 @@ bool IsQueryMatch(
   URLMatcherConditionSet::QueryConditions query_conditions;
   query_conditions.insert(q1);
 
-  scoped_ptr<URLMatcherSchemeFilter> scheme_filter;
-  scoped_ptr<URLMatcherPortFilter> port_filter;
+  std::unique_ptr<URLMatcherSchemeFilter> scheme_filter;
+  std::unique_ptr<URLMatcherPortFilter> port_filter;
 
   scoped_refptr<URLMatcherConditionSet> condition_set(
-      new URLMatcherConditionSet(1,
-                                 conditions,
-                                 query_conditions,
-                                 scheme_filter.Pass(),
-                                 port_filter.Pass()));
+      new URLMatcherConditionSet(1, conditions, query_conditions,
+                                 std::move(scheme_filter),
+                                 std::move(port_filter)));
 
   GURL url("http://www.example.com/foo?" + url_query);
 

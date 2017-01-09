@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_HISTORY_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_HISTORY_UI_H_
 
+#include "base/macros.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "ui/base/layout.h"
 
@@ -21,6 +22,8 @@ class HistoryUI : public content::WebUIController {
       ui::ScaleFactor scale_factor);
 
  private:
+  void UpdateDataSource();
+
   DISALLOW_COPY_AND_ASSIGN(HistoryUI);
 };
 

@@ -5,8 +5,12 @@
 #ifndef CONTENT_CHILD_SERVICE_WORKER_SERVICE_WORKER_HANDLE_REFERENCE_H_
 #define CONTENT_CHILD_SERVICE_WORKER_SERVICE_WORKER_HANDLE_REFERENCE_H_
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_types.h"
 
@@ -21,13 +25,13 @@ class CONTENT_EXPORT ServiceWorkerHandleReference {
  public:
   // Creates a new ServiceWorkerHandleReference and increments ref-count. If
   // the handle id is kInvalidServiceWorkerHandleId, returns null instead.
-  static scoped_ptr<ServiceWorkerHandleReference> Create(
+  static std::unique_ptr<ServiceWorkerHandleReference> Create(
       const ServiceWorkerObjectInfo& info,
       ThreadSafeSender* sender);
 
   // Creates a new ServiceWorkerHandleReference by adopting a ref-count. If
   // the handle id is kInvalidServiceWorkerHandleId, returns null instead.
-  static scoped_ptr<ServiceWorkerHandleReference> Adopt(
+  static std::unique_ptr<ServiceWorkerHandleReference> Adopt(
       const ServiceWorkerObjectInfo& info,
       ThreadSafeSender* sender);
 
@@ -37,8 +41,7 @@ class CONTENT_EXPORT ServiceWorkerHandleReference {
   int handle_id() const { return info_.handle_id; }
   const GURL& url() const { return info_.url; }
   blink::WebServiceWorkerState state() const { return info_.state; }
-  void set_state(blink::WebServiceWorkerState state) { info_.state = state; }
-  int64 version_id() const { return info_.version_id; }
+  int64_t version_id() const { return info_.version_id; }
 
  private:
   ServiceWorkerHandleReference(const ServiceWorkerObjectInfo& info,

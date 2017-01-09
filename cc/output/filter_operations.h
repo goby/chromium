@@ -5,17 +5,22 @@
 #ifndef CC_OUTPUT_FILTER_OPERATIONS_H_
 #define CC_OUTPUT_FILTER_OPERATIONS_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/output/filter_operation.h"
 
 namespace base {
 namespace trace_event {
 class TracedValue;
 }
-class Value;
+}
+
+namespace gfx {
+class Rect;
 }
 
 namespace cc {
@@ -27,9 +32,13 @@ class CC_EXPORT FilterOperations {
 
   FilterOperations(const FilterOperations& other);
 
+  explicit FilterOperations(std::vector<FilterOperation>&& operations);
+
   ~FilterOperations();
 
   FilterOperations& operator=(const FilterOperations& other);
+
+  FilterOperations& operator=(FilterOperations&& other);
 
   bool operator==(const FilterOperations& other) const;
 
@@ -44,6 +53,14 @@ class CC_EXPORT FilterOperations {
 
   bool IsEmpty() const;
 
+  // Maps "forward" to determine which pixels in a destination rect are affected
+  // by pixels in the source rect.
+  gfx::Rect MapRect(const gfx::Rect& rect, const SkMatrix& matrix) const;
+
+  // Maps "backward" to determine which pixels in the source affect the pixels
+  // in the destination rect.
+  gfx::Rect MapRectReverse(const gfx::Rect& rect, const SkMatrix& matrix) const;
+
   void GetOutsets(int* top, int* right, int* bottom, int* left) const;
   bool HasFilterThatMovesPixels() const;
   bool HasFilterThatAffectsOpacity() const;
@@ -52,6 +69,8 @@ class CC_EXPORT FilterOperations {
   size_t size() const {
     return operations_.size();
   }
+
+  const std::vector<FilterOperation>& operations() const { return operations_; }
 
   const FilterOperation& at(size_t index) const {
     DCHECK_LT(index, size());

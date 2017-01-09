@@ -40,7 +40,7 @@ var test = function()
             InspectorTest.addResult("SUCCESS: Did step into event listener(" + expectedName + ").");
         else
             InspectorTest.addResult("FAIL: Unexpected top function: expected " + expectedName + ", found " + topFunctionName);
-        InspectorTest.assertEquals(WebInspector.DebuggerModel.BreakReason.Other, reason, "FAIL: wrong pause reason: " + reason);
+        InspectorTest.assertEquals(SDK.DebuggerModel.BreakReason.Other, reason, "FAIL: wrong pause reason: " + reason);
     }
 
     var stepCount = 0;
@@ -53,7 +53,7 @@ var test = function()
 
         if (stepCount < 5) {
             InspectorTest.addResult("Stepping into...");
-            WebInspector.panels.sources._stepIntoButton.element.click();
+            InspectorTest.stepInto();
             InspectorTest.waitUntilResumed(InspectorTest.waitUntilPaused.bind(InspectorTest, step2));
         } else {
             InspectorTest.completeDebuggerTest();

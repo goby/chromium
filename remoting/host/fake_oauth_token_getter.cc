@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace remoting {
 
@@ -24,6 +24,10 @@ void FakeOAuthTokenGetter::CallWithToken(const TokenCallback& on_access_token) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(on_access_token, status_, user_email_, access_token_));
+}
+
+void FakeOAuthTokenGetter::InvalidateCache() {
+  NOTIMPLEMENTED();
 }
 
 }  // namespace remoting

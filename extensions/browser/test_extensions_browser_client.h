@@ -6,16 +6,20 @@
 #define EXTENSIONS_BROWSER_TEST_EXTENSIONS_BROWSER_CLIENT_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 #include "components/update_client/update_client.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/updater/extension_cache.h"
 
 namespace extensions {
+class KioskDelegate;
 
 // A simplified ExtensionsBrowserClient for a single normal browser context and
 // an optional incognito browser context associated with it. A test that uses
@@ -32,8 +36,8 @@ class TestExtensionsBrowserClient : public ExtensionsBrowserClient {
   void set_extension_system_factory(ExtensionSystemProvider* factory) {
     extension_system_factory_ = factory;
   }
-  void set_extension_cache(scoped_ptr<ExtensionCache> extension_cache) {
-    extension_cache_ = extension_cache.Pass();
+  void set_extension_cache(std::unique_ptr<ExtensionCache> extension_cache) {
+    extension_cache_ = std::move(extension_cache);
   }
 
   // Sets a factory to respond to calls of the CreateUpdateClient method.
@@ -82,33 +86,37 @@ class TestExtensionsBrowserClient : public ExtensionsBrowserClient {
       content::BrowserContext* context,
       std::vector<ExtensionPrefsObserver*>* observers) const override;
   ProcessManagerDelegate* GetProcessManagerDelegate() const override;
-  scoped_ptr<ExtensionHostDelegate> CreateExtensionHostDelegate() override;
+  std::unique_ptr<ExtensionHostDelegate> CreateExtensionHostDelegate() override;
   bool DidVersionUpdate(content::BrowserContext* context) override;
   void PermitExternalProtocolHandler() override;
   bool IsRunningInForcedAppMode() override;
   bool IsLoggedInAsPublicAccount() override;
-  ApiActivityMonitor* GetApiActivityMonitor(
-      content::BrowserContext* context) override;
   ExtensionSystemProvider* GetExtensionSystemFactory() override;
   void RegisterExtensionFunctions(
       ExtensionFunctionRegistry* registry) const override;
   void RegisterMojoServices(content::RenderFrameHost* render_frame_host,
                             const Extension* extension) const override;
-  scoped_ptr<RuntimeAPIDelegate> CreateRuntimeAPIDelegate(
+  std::unique_ptr<RuntimeAPIDelegate> CreateRuntimeAPIDelegate(
       content::BrowserContext* context) const override;
   const ComponentExtensionResourceManager*
   GetComponentExtensionResourceManager() override;
-  void BroadcastEventToRenderers(events::HistogramValue histogram_value,
-                                 const std::string& event_name,
-                                 scoped_ptr<base::ListValue> args) override;
+  void BroadcastEventToRenderers(
+      events::HistogramValue histogram_value,
+      const std::string& event_name,
+      std::unique_ptr<base::ListValue> args) override;
   net::NetLog* GetNetLog() override;
   ExtensionCache* GetExtensionCache() override;
   bool IsBackgroundUpdateAllowed() override;
   bool IsMinBrowserVersionSupported(const std::string& min_version) override;
   ExtensionWebContentsObserver* GetExtensionWebContentsObserver(
       content::WebContents* web_contents) override;
+  KioskDelegate* GetKioskDelegate() override;
   scoped_refptr<update_client::UpdateClient> CreateUpdateClient(
       content::BrowserContext* context) override;
+
+  ExtensionSystemProvider* extension_system_factory() {
+    return extension_system_factory_;
+  }
 
  private:
   content::BrowserContext* main_context_;       // Not owned.
@@ -120,7 +128,7 @@ class TestExtensionsBrowserClient : public ExtensionsBrowserClient {
   // Not owned, defaults to NULL.
   ExtensionSystemProvider* extension_system_factory_;
 
-  scoped_ptr<ExtensionCache> extension_cache_;
+  std::unique_ptr<ExtensionCache> extension_cache_;
 
   base::Callback<update_client::UpdateClient*(void)> update_client_factory_;
 

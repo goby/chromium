@@ -5,14 +5,16 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_DECODER_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_DECODER_HOST_H_
 
+#include <stdint.h>
+
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "content/common/content_export.h"
 #include "media/video/video_decode_accelerator.h"
@@ -27,9 +29,7 @@ class SharedMemory;
 
 namespace content {
 
-class PPB_Graphics3D_Impl;
 class RendererPpapiHost;
-class RenderViewImpl;
 class VideoDecoderShim;
 
 class CONTENT_EXPORT PepperVideoDecoderHost
@@ -70,12 +70,14 @@ class CONTENT_EXPORT PepperVideoDecoderHost
       ppapi::host::HostMessageContext* context) override;
 
   // media::VideoDecodeAccelerator::Client implementation.
-  void ProvidePictureBuffers(uint32 requested_num_of_buffers,
+  void ProvidePictureBuffers(uint32_t requested_num_of_buffers,
+                             media::VideoPixelFormat format,
+                             uint32_t textures_per_buffer,
                              const gfx::Size& dimensions,
-                             uint32 texture_target) override;
-  void DismissPictureBuffer(int32 picture_buffer_id) override;
+                             uint32_t texture_target) override;
+  void DismissPictureBuffer(int32_t picture_buffer_id) override;
   void PictureReady(const media::Picture& picture) override;
-  void NotifyEndOfBitstreamBuffer(int32 bitstream_buffer_id) override;
+  void NotifyEndOfBitstreamBuffer(int32_t bitstream_buffer_id) override;
   void NotifyFlushDone() override;
   void NotifyResetDone() override;
   void NotifyError(media::VideoDecodeAccelerator::Error error) override;
@@ -103,9 +105,9 @@ class CONTENT_EXPORT PepperVideoDecoderHost
   // These methods are needed by VideoDecodeShim, to look like a
   // VideoDecodeAccelerator.
   const uint8_t* DecodeIdToAddress(uint32_t decode_id);
-  void RequestTextures(uint32 requested_num_of_buffers,
+  void RequestTextures(uint32_t requested_num_of_buffers,
                        const gfx::Size& dimensions,
-                       uint32 texture_target,
+                       uint32_t texture_target,
                        const std::vector<gpu::Mailbox>& mailboxes);
 
   // Tries to initialize software decoder. Returns true on success.
@@ -118,7 +120,7 @@ class CONTENT_EXPORT PepperVideoDecoderHost
 
   media::VideoCodecProfile profile_;
 
-  scoped_ptr<media::VideoDecodeAccelerator> decoder_;
+  std::unique_ptr<media::VideoDecodeAccelerator> decoder_;
 
   bool software_fallback_allowed_ = false;
   bool software_fallback_used_ = false;

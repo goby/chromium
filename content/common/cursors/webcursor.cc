@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/pickle.h"
+#include "build/build_config.h"
 #include "third_party/WebKit/public/platform/WebImage.h"
 
 using blink::WebCursorInfo;
@@ -17,19 +18,7 @@ namespace content {
 WebCursor::WebCursor()
     : type_(WebCursorInfo::TypePointer),
       custom_scale_(1) {
-#if defined(OS_WIN)
-  external_cursor_ = NULL;
-#endif
   InitPlatformData();
-}
-
-WebCursor::WebCursor(const CursorInfo& cursor_info)
-    : type_(WebCursorInfo::TypePointer) {
-#if defined(OS_WIN)
-  external_cursor_ = NULL;
-#endif
-  InitPlatformData();
-  InitFromCursorInfo(cursor_info);
 }
 
 WebCursor::~WebCursor() {
@@ -53,13 +42,6 @@ const WebCursor& WebCursor::operator=(const WebCursor& other) {
 void WebCursor::InitFromCursorInfo(const CursorInfo& cursor_info) {
   Clear();
 
-#if defined(OS_WIN)
-  if (cursor_info.external_handle) {
-    InitFromExternalCursor(cursor_info.external_handle);
-    return;
-  }
-#endif
-
   type_ = cursor_info.type;
   hotspot_ = cursor_info.hotspot;
   if (IsCustom())
@@ -74,10 +56,6 @@ void WebCursor::GetCursorInfo(CursorInfo* cursor_info) const {
   cursor_info->hotspot = hotspot_;
   ImageFromCustomData(&cursor_info->custom_image);
   cursor_info->image_scale_factor = custom_scale_;
-
-#if defined(OS_WIN)
-  cursor_info->external_handle = external_cursor_;
-#endif
 }
 
 bool WebCursor::Deserialize(base::PickleIterator* iter) {
@@ -171,45 +149,6 @@ bool WebCursor::IsEqual(const WebCursor& other) const {
          custom_data_ == other.custom_data_;
 }
 
-#if defined(OS_WIN)
-
-static WebCursorInfo::Type ToCursorType(HCURSOR cursor) {
-  static struct {
-    HCURSOR cursor;
-    WebCursorInfo::Type type;
-  } kStandardCursors[] = {
-    { LoadCursor(NULL, IDC_ARROW),       WebCursorInfo::TypePointer },
-    { LoadCursor(NULL, IDC_CROSS),       WebCursorInfo::TypeCross },
-    { LoadCursor(NULL, IDC_HAND),        WebCursorInfo::TypeHand },
-    { LoadCursor(NULL, IDC_IBEAM),       WebCursorInfo::TypeIBeam },
-    { LoadCursor(NULL, IDC_WAIT),        WebCursorInfo::TypeWait },
-    { LoadCursor(NULL, IDC_HELP),        WebCursorInfo::TypeHelp },
-    { LoadCursor(NULL, IDC_SIZENESW),    WebCursorInfo::TypeNorthEastResize },
-    { LoadCursor(NULL, IDC_SIZENWSE),    WebCursorInfo::TypeNorthWestResize },
-    { LoadCursor(NULL, IDC_SIZENS),      WebCursorInfo::TypeNorthSouthResize },
-    { LoadCursor(NULL, IDC_SIZEWE),      WebCursorInfo::TypeEastWestResize },
-    { LoadCursor(NULL, IDC_SIZEALL),     WebCursorInfo::TypeMove },
-    { LoadCursor(NULL, IDC_APPSTARTING), WebCursorInfo::TypeProgress },
-    { LoadCursor(NULL, IDC_NO),          WebCursorInfo::TypeNotAllowed },
-  };
-  for (int i = 0; i < arraysize(kStandardCursors); ++i) {
-    if (cursor == kStandardCursors[i].cursor)
-      return kStandardCursors[i].type;
-  }
-  return WebCursorInfo::TypeCustom;
-}
-
-void WebCursor::InitFromExternalCursor(HCURSOR cursor) {
-  WebCursorInfo::Type cursor_type = ToCursorType(cursor);
-
-  InitFromCursorInfo(CursorInfo(cursor_type));
-
-  if (cursor_type == WebCursorInfo::TypeCustom)
-    external_cursor_ = cursor;
-}
-
-#endif  // defined(OS_WIN)
-
 void WebCursor::Clear() {
   type_ = WebCursorInfo::TypePointer;
   hotspot_.set_x(0);
@@ -231,18 +170,24 @@ void WebCursor::Copy(const WebCursor& other) {
 }
 
 void WebCursor::SetCustomData(const SkBitmap& bitmap) {
+  CreateCustomData(bitmap, &custom_data_, &custom_size_);
+}
+
+void WebCursor::CreateCustomData(const SkBitmap& bitmap,
+                                 std::vector<char>* custom_data,
+                                 gfx::Size* custom_size) {
   if (bitmap.empty())
     return;
 
-  // Fill custom_data_ directly with the NativeImage pixels.
-  custom_data_.resize(bitmap.getSize());
-  if (!custom_data_.empty()) {
+  // Fill custom_data directly with the NativeImage pixels.
+  custom_data->resize(bitmap.getSize());
+  if (!custom_data->empty()) {
     //This will divide color values by alpha (un-premultiply) if necessary
     SkImageInfo dstInfo = bitmap.info().makeAlphaType(kUnpremul_SkAlphaType);
-    bitmap.readPixels(dstInfo, &custom_data_[0], dstInfo.minRowBytes(), 0, 0);
+    bitmap.readPixels(dstInfo, &(*custom_data)[0], dstInfo.minRowBytes(), 0, 0);
   }
-  custom_size_.set_width(bitmap.width());
-  custom_size_.set_height(bitmap.height());
+  custom_size->set_width(bitmap.width());
+  custom_size->set_height(bitmap.height());
 }
 
 void WebCursor::ImageFromCustomData(SkBitmap* image) const {

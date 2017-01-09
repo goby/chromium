@@ -7,11 +7,14 @@
 #include "base/android/context_utils.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/layers/ui_resource_layer.h"
 #include "content/public/browser/android/compositor.h"
 #include "jni/HandleViewResources_jni.h"
 #include "ui/gfx/android/java_bitmap.h"
+
+using base::android::JavaRef;
 
 namespace content {
 
@@ -21,7 +24,7 @@ static SkBitmap CreateSkBitmapFromJavaBitmap(
     base::android::ScopedJavaLocalRef<jobject> jbitmap) {
   return jbitmap.is_null()
              ? SkBitmap()
-             : CreateSkBitmapFromJavaBitmap(gfx::JavaBitmap(jbitmap.obj()));
+             : CreateSkBitmapFromJavaBitmap(gfx::JavaBitmap(jbitmap));
 }
 
 class HandleResources {
@@ -29,7 +32,7 @@ class HandleResources {
   HandleResources() : loaded_(false) {
   }
 
-  void LoadIfNecessary(jobject context) {
+  void LoadIfNecessary(const JavaRef<jobject>& context) {
     if (loaded_)
       return;
 
@@ -37,8 +40,6 @@ class HandleResources {
 
     TRACE_EVENT0("browser", "HandleResources::Create");
     JNIEnv* env = base::android::AttachCurrentThread();
-    if (!context)
-      context = base::android::GetApplicationContext();
 
     left_bitmap_ = CreateSkBitmapFromJavaBitmap(
         Java_HandleViewResources_getLeftHandleBitmap(env, context));
@@ -92,10 +93,10 @@ base::LazyInstance<HandleResources>::Leaky g_selection_resources;
 CompositedTouchHandleDrawable::CompositedTouchHandleDrawable(
     cc::Layer* root_layer,
     float dpi_scale,
-    jobject context)
+    const JavaRef<jobject>& context)
     : dpi_scale_(dpi_scale),
       orientation_(ui::TouchHandleOrientation::UNDEFINED),
-      layer_(cc::UIResourceLayer::Create(Compositor::LayerSettings())) {
+      layer_(cc::UIResourceLayer::Create()) {
   g_selection_resources.Get().LoadIfNecessary(context);
   drawable_horizontal_padding_ratio_ =
       g_selection_resources.Get().GetDrawableHorizontalPaddingRatio();
@@ -176,11 +177,6 @@ void CompositedTouchHandleDrawable::DetachLayer() {
 
 void CompositedTouchHandleDrawable::UpdateLayerPosition() {
   layer_->SetPosition(origin_position_);
-}
-
-// static
-bool CompositedTouchHandleDrawable::RegisterHandleViewResources(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace content

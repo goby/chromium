@@ -4,16 +4,19 @@
 
 #include "chromeos/dbus/fake_shill_manager_client.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -127,11 +130,11 @@ bool IsCellularTechnology(const std::string& type) {
           type == shill::kNetworkTechnologyLteAdvanced);
 }
 
-const char* kTechnologyUnavailable = "unavailable";
-const char* kNetworkActivated = "activated";
-const char* kNetworkDisabled = "disabled";
-const char* kCellularServicePath = "/service/cellular1";
-const char* kRoamingRequired = "required";
+const char kTechnologyUnavailable[] = "unavailable";
+const char kNetworkActivated[] = "activated";
+const char kNetworkDisabled[] = "disabled";
+const char kCellularServicePath[] = "/service/cellular1";
+const char kRoamingRequired[] = "required";
 
 }  // namespace
 
@@ -290,7 +293,7 @@ void FakeShillManagerClient::ConfigureService(
     existing_properties = service_client->GetServiceProperties(service_path);
   }
 
-  scoped_ptr<base::DictionaryValue> merged_properties(
+  std::unique_ptr<base::DictionaryValue> merged_properties(
       existing_properties->DeepCopy());
   merged_properties->MergeDictionary(&properties);
 
@@ -380,7 +383,8 @@ ShillManagerClient::TestInterface* FakeShillManagerClient::GetTestInterface() {
 
 void FakeShillManagerClient::AddDevice(const std::string& device_path) {
   if (GetListProperty(shill::kDevicesProperty)
-          ->AppendIfNotPresent(new base::StringValue(device_path))) {
+          ->AppendIfNotPresent(
+              base::MakeUnique<base::StringValue>(device_path))) {
     CallNotifyObserversPropertyChanged(shill::kDevicesProperty);
   }
 }
@@ -401,13 +405,13 @@ void FakeShillManagerClient::ClearDevices() {
 void FakeShillManagerClient::AddTechnology(const std::string& type,
                                            bool enabled) {
   if (GetListProperty(shill::kAvailableTechnologiesProperty)
-          ->AppendIfNotPresent(new base::StringValue(type))) {
+          ->AppendIfNotPresent(base::MakeUnique<base::StringValue>(type))) {
     CallNotifyObserversPropertyChanged(
         shill::kAvailableTechnologiesProperty);
   }
   if (enabled &&
       GetListProperty(shill::kEnabledTechnologiesProperty)
-          ->AppendIfNotPresent(new base::StringValue(type))) {
+          ->AppendIfNotPresent(base::MakeUnique<base::StringValue>(type))) {
     CallNotifyObserversPropertyChanged(
         shill::kEnabledTechnologiesProperty);
   }
@@ -431,7 +435,7 @@ void FakeShillManagerClient::SetTechnologyInitializing(const std::string& type,
                                                        bool initializing) {
   if (initializing) {
     if (GetListProperty(shill::kUninitializedTechnologiesProperty)
-            ->AppendIfNotPresent(new base::StringValue(type))) {
+            ->AppendIfNotPresent(base::MakeUnique<base::StringValue>(type))) {
       CallNotifyObserversPropertyChanged(
           shill::kUninitializedTechnologiesProperty);
     }
@@ -453,13 +457,13 @@ void FakeShillManagerClient::AddGeoNetwork(
     list_value = new base::ListValue;
     stub_geo_networks_.SetWithoutPathExpansion(technology, list_value);
   }
-  list_value->Append(network.DeepCopy());
+  list_value->Append(network.CreateDeepCopy());
 }
 
 void FakeShillManagerClient::AddProfile(const std::string& profile_path) {
   const char* key = shill::kProfilesProperty;
-  if (GetListProperty(key)
-          ->AppendIfNotPresent(new base::StringValue(profile_path))) {
+  if (GetListProperty(key)->AppendIfNotPresent(
+          base::MakeUnique<base::StringValue>(profile_path))) {
     CallNotifyObserversPropertyChanged(key);
   }
 }
@@ -479,7 +483,7 @@ void FakeShillManagerClient::AddManagerService(
     bool notify_observers) {
   VLOG(2) << "AddManagerService: " << service_path;
   GetListProperty(shill::kServiceCompleteListProperty)
-      ->AppendIfNotPresent(new base::StringValue(service_path));
+      ->AppendIfNotPresent(base::MakeUnique<base::StringValue>(service_path));
   SortManagerServices(false);
   if (notify_observers)
     CallNotifyObserversPropertyChanged(shill::kServiceCompleteListProperty);
@@ -524,7 +528,8 @@ void FakeShillManagerClient::SortManagerServices(bool notify) {
       GetListProperty(shill::kServiceCompleteListProperty);
   if (complete_list->empty())
     return;
-  scoped_ptr<base::ListValue> prev_complete_list(complete_list->DeepCopy());
+  std::unique_ptr<base::ListValue> prev_complete_list(
+      complete_list->DeepCopy());
 
   std::vector<std::string> active_services;
   std::vector<std::string> inactive_services;
@@ -580,6 +585,13 @@ void FakeShillManagerClient::SetBestServiceToConnect(
     const std::string& service_path) {
   best_service_ = service_path;
 }
+
+void FakeShillManagerClient::SetNetworkThrottlingStatus(
+    bool enabled,
+    uint32_t upload_rate_kbits,
+    uint32_t download_rate_kbits,
+    const base::Closure& callback,
+    const ErrorCallback& error_callback) {}
 
 void FakeShillManagerClient::SetupDefaultEnvironment() {
   // Bail out from setup if there is no message loop. This will be the common
@@ -862,8 +874,8 @@ void FakeShillManagerClient::SetupDefaultEnvironment() {
     services->SetServiceProperty(kCellularServicePath,
                                  shill::kCellularLastGoodApnProperty, apn);
     base::ListValue apn_list;
-    apn_list.Append(apn.DeepCopy());
-    apn_list.Append(apn2.DeepCopy());
+    apn_list.Append(apn.CreateDeepCopy());
+    apn_list.Append(apn2.CreateDeepCopy());
     devices->SetDeviceProperty("/device/cellular1",
                                shill::kCellularApnListProperty, apn_list);
 
@@ -926,7 +938,7 @@ void FakeShillManagerClient::SetupDefaultEnvironment() {
 
 void FakeShillManagerClient::PassStubProperties(
     const DictionaryValueCallback& callback) const {
-  scoped_ptr<base::DictionaryValue> stub_properties(
+  std::unique_ptr<base::DictionaryValue> stub_properties(
       stub_properties_.DeepCopy());
   stub_properties->SetWithoutPathExpansion(
       shill::kServiceCompleteListProperty,
@@ -960,15 +972,13 @@ void FakeShillManagerClient::NotifyObserversPropertyChanged(
     return;
   }
   if (property == shill::kServiceCompleteListProperty) {
-    scoped_ptr<base::ListValue> services(GetEnabledServiceList(property));
-    FOR_EACH_OBSERVER(ShillPropertyChangedObserver,
-                      observer_list_,
-                      OnPropertyChanged(property, *(services.get())));
+    std::unique_ptr<base::ListValue> services(GetEnabledServiceList(property));
+    for (auto& observer : observer_list_)
+      observer.OnPropertyChanged(property, *(services.get()));
     return;
   }
-  FOR_EACH_OBSERVER(ShillPropertyChangedObserver,
-                    observer_list_,
-                    OnPropertyChanged(property, *value));
+  for (auto& observer : observer_list_)
+    observer.OnPropertyChanged(property, *value);
 }
 
 base::ListValue* FakeShillManagerClient::GetListProperty(
@@ -1005,7 +1015,7 @@ void FakeShillManagerClient::SetTechnologyEnabled(
   base::ListValue* enabled_list =
       GetListProperty(shill::kEnabledTechnologiesProperty);
   if (enabled)
-    enabled_list->AppendIfNotPresent(new base::StringValue(type));
+    enabled_list->AppendIfNotPresent(base::MakeUnique<base::StringValue>(type));
   else
     enabled_list->Remove(base::StringValue(type), NULL);
   CallNotifyObserversPropertyChanged(
@@ -1036,7 +1046,7 @@ base::ListValue* FakeShillManagerClient::GetEnabledServiceList(
       std::string type;
       properties->GetString(shill::kTypeProperty, &type);
       if (TechnologyEnabled(type))
-        new_service_list->Append((*iter)->DeepCopy());
+        new_service_list->Append((*iter)->CreateDeepCopy());
     }
   }
   return new_service_list;

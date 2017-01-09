@@ -4,17 +4,21 @@
 
 #include "chrome/browser/metrics/metrics_memory_details.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/nacl/common/nacl_process_type.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/process_type.h"
+#include "ppapi/features/features.h"
 
 MemoryGrowthTracker::MemoryGrowthTracker() {
 }
@@ -55,27 +59,27 @@ bool MemoryGrowthTracker::UpdateSample(base::ProcessId pid,
 MetricsMemoryDetails::MetricsMemoryDetails(
     const base::Closure& callback,
     MemoryGrowthTracker* memory_growth_tracker)
-    : callback_(callback), memory_growth_tracker_(memory_growth_tracker) {
-  memory_growth_tracker_ = memory_growth_tracker;
-}
+    : callback_(callback),
+      memory_growth_tracker_(memory_growth_tracker),
+      generate_histograms_(true) {}
 
 MetricsMemoryDetails::~MetricsMemoryDetails() {
 }
 
 void MetricsMemoryDetails::OnDetailsAvailable() {
-  UpdateHistograms();
+  if (generate_histograms_)
+    UpdateHistograms();
+  AnalyzeMemoryGrowth();
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback_);
 }
 
 void MetricsMemoryDetails::UpdateHistograms() {
   // Reports a set of memory metrics to UMA.
-  // Memory is measured in KB.
 
   const ProcessData& browser = *ChromeBrowser();
   size_t aggregate_memory = 0;
   int chrome_count = 0;
   int extension_count = 0;
-  int plugin_count = 0;
   int pepper_plugin_count = 0;
   int pepper_plugin_broker_count = 0;
   int renderer_count = 0;
@@ -84,12 +88,20 @@ void MetricsMemoryDetails::UpdateHistograms() {
   int process_limit = content::RenderProcessHost::GetMaxRendererProcessCount();
   for (size_t index = 0; index < browser.processes.size(); index++) {
     int sample = static_cast<int>(browser.processes[index].working_set.priv);
+    size_t committed = browser.processes[index].committed.priv +
+                       browser.processes[index].committed.mapped +
+                       browser.processes[index].committed.image;
     aggregate_memory += sample;
     switch (browser.processes[index].process_type) {
       case content::PROCESS_TYPE_BROWSER:
-        UMA_HISTOGRAM_MEMORY_KB("Memory.Browser", sample);
+        UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.Browser.Large2", sample / 1024);
+        UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.Browser.Committed",
+                                      committed / 1024);
         continue;
       case content::PROCESS_TYPE_RENDERER: {
+        UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.RendererAll", sample / 1024);
+        UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.RendererAll.Committed",
+                                      committed / 1024);
         ProcessMemoryInformation::RendererProcessType renderer_type =
             browser.processes[index].renderer_type;
         switch (renderer_type) {
@@ -107,24 +119,14 @@ void MetricsMemoryDetails::UpdateHistograms() {
           case ProcessMemoryInformation::RENDERER_NORMAL:
           default:
             // TODO(erikkay): Should we bother splitting out the other subtypes?
-            UMA_HISTOGRAM_MEMORY_KB("Memory.Renderer", sample);
-            int diff;
-            if (memory_growth_tracker_ &&
-                memory_growth_tracker_->UpdateSample(
-                    browser.processes[index].pid, sample, &diff)) {
-              if (diff < 0)
-                UMA_HISTOGRAM_MEMORY_KB("Memory.RendererShrinkIn30Min", -diff);
-              else
-                UMA_HISTOGRAM_MEMORY_KB("Memory.RendererGrowthIn30Min", diff);
-            }
+            UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.Renderer.Large2",
+                                          sample / 1024);
+            UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.Renderer.Committed",
+                                          committed / 1024);
             renderer_count++;
             continue;
         }
       }
-      case content::PROCESS_TYPE_PLUGIN:
-        UMA_HISTOGRAM_MEMORY_KB("Memory.Plugin", sample);
-        plugin_count++;
-        continue;
       case content::PROCESS_TYPE_UTILITY:
         UMA_HISTOGRAM_MEMORY_KB("Memory.Utility", sample);
         other_count++;
@@ -141,7 +143,7 @@ void MetricsMemoryDetails::UpdateHistograms() {
         UMA_HISTOGRAM_MEMORY_KB("Memory.Gpu", sample);
         other_count++;
         continue;
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
       case content::PROCESS_TYPE_PPAPI_PLUGIN: {
         const std::vector<base::string16>& titles =
             browser.processes[index].titles;
@@ -185,7 +187,6 @@ void MetricsMemoryDetails::UpdateHistograms() {
   UMA_HISTOGRAM_COUNTS_100("Memory.ChromeProcessCount", chrome_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.ExtensionProcessCount", extension_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.OtherProcessCount", other_count);
-  UMA_HISTOGRAM_COUNTS_100("Memory.PluginProcessCount", plugin_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.PepperPluginProcessCount",
                            pepper_plugin_count);
   UMA_HISTOGRAM_COUNTS_100("Memory.PepperPluginBrokerProcessCount",
@@ -195,9 +196,6 @@ void MetricsMemoryDetails::UpdateHistograms() {
   // TODO(viettrungluu): Do we want separate counts for the other
   // (platform-specific) process types?
 
-  // TODO(rkaplow): Remove once we've verified Memory.Total2 is ok.
-  int total_sample_old = static_cast<int>(aggregate_memory / 1000);
-  UMA_HISTOGRAM_MEMORY_MB("Memory.Total", total_sample_old);
   int total_sample = static_cast<int>(aggregate_memory / 1024);
   UMA_HISTOGRAM_MEMORY_LARGE_MB("Memory.Total2", total_sample);
 
@@ -250,9 +248,6 @@ void MetricsMemoryDetails::UpdateSwapHistograms() {
             continue;
         }
       }
-      case content::PROCESS_TYPE_PLUGIN:
-        UMA_HISTOGRAM_MEMORY_KB("Memory.Swap.Plugin", sample);
-        continue;
       case content::PROCESS_TYPE_UTILITY:
         UMA_HISTOGRAM_MEMORY_KB("Memory.Swap.Utility", sample);
         continue;
@@ -310,3 +305,22 @@ void MetricsMemoryDetails::UpdateSwapHistograms() {
   }
 }
 #endif  // defined(OS_CHROMEOS)
+
+void MetricsMemoryDetails::AnalyzeMemoryGrowth() {
+  for (const auto& process_entry : ChromeBrowser()->processes) {
+    int sample = static_cast<int>(process_entry.working_set.priv);
+    int diff;
+
+    // UpdateSample changes state of |memory_growth_tracker_| and it should be
+    // called even if |generate_histograms_| is false.
+    if (memory_growth_tracker_ &&
+        memory_growth_tracker_->UpdateSample(process_entry.pid, sample,
+                                             &diff) &&
+        generate_histograms_) {
+      if (diff < 0)
+        UMA_HISTOGRAM_MEMORY_KB("Memory.RendererShrinkIn30Min", -diff);
+      else
+        UMA_HISTOGRAM_MEMORY_KB("Memory.RendererGrowthIn30Min", diff);
+    }
+  }
+}

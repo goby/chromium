@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "chrome/browser/ui/browser.h"
@@ -51,28 +53,6 @@ class NewTabUIBrowserTest : public InProcessBrowserTest {
   }
 };
 
-// TODO(samarth): delete along with rest of NTP4 code.
-// Loads chrome://hang/ into two NTP tabs, ensuring we don't crash.
-// See http://crbug.com/59859.
-// If this flakes, use http://crbug.com/87200.
-IN_PROC_BROWSER_TEST_F(NewTabUIBrowserTest, DISABLED_ChromeHangInNTP) {
-  // Bring up a new tab page.
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(chrome::kChromeUINewTabURL), NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
-
-  // Navigate to chrome://hang/ to stall the process.
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(content::kChromeUIHangURL), CURRENT_TAB, 0);
-
-  // Visit chrome://hang/ again in another NTP. Don't bother waiting for the
-  // NTP to load, because it's hung.
-  chrome::NewTab(browser());
-  browser()->OpenURL(OpenURLParams(
-      GURL(content::kChromeUIHangURL), Referrer(), CURRENT_TAB,
-      ui::PAGE_TRANSITION_TYPED, false));
-}
-
 // Navigate to incognito NTP. Fails if there are console errors.
 IN_PROC_BROWSER_TEST_F(NewTabUIBrowserTest, ShowIncognito) {
   ui_test_utils::NavigateToURL(CreateIncognitoBrowser(),
@@ -98,18 +78,20 @@ IN_PROC_BROWSER_TEST_F(NewTabUIProcessPerTabTest, NavBeforeNTPCommits) {
 
   // Navigate to chrome://hang/ to stall the process.
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(content::kChromeUIHangURL), CURRENT_TAB, 0);
+      browser(), GURL(content::kChromeUIHangURL),
+      WindowOpenDisposition::CURRENT_TAB, 0);
 
   // Visit a normal URL in another NTP that hasn't committed.
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(chrome::kChromeUINewTabURL), NEW_FOREGROUND_TAB, 0);
+      browser(), GURL(chrome::kChromeUINewTabURL),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB, 0);
 
   // We don't use ui_test_utils::NavigateToURLWithDisposition because that waits
   // for current loading to stop.
   content::TestNavigationObserver observer(
       browser()->tab_strip_model()->GetActiveWebContents());
   browser()->OpenURL(OpenURLParams(
-      GURL("data:text/html,hello world"), Referrer(), CURRENT_TAB,
-      ui::PAGE_TRANSITION_TYPED, false));
+      GURL("data:text/html,hello world"), Referrer(),
+      WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false));
   observer.Wait();
 }

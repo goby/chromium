@@ -6,6 +6,7 @@
 #define EXTENSIONS_SHELL_BROWSER_SHELL_CONTENT_BROWSER_CLIENT_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/public/browser/content_browser_client.h"
 
 class GURL;
@@ -42,10 +43,6 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
   void RenderProcessWillLaunch(content::RenderProcessHost* host) override;
   bool ShouldUseProcessPerSite(content::BrowserContext* browser_context,
                                const GURL& effective_url) override;
-  net::URLRequestContextGetter* CreateRequestContext(
-      content::BrowserContext* browser_context,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
   // TODO(jamescook): Quota management?
   bool IsHandledURL(const GURL& url) override;
   void SiteInstanceGotProcess(content::SiteInstance* site_instance) override;
@@ -59,6 +56,10 @@ class ShellContentBrowserClient : public content::ContentBrowserClient {
   void GetAdditionalAllowedSchemesForFileSystem(
       std::vector<std::string>* additional_schemes) override;
   content::DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
+  ScopedVector<content::NavigationThrottle> CreateThrottlesForNavigation(
+      content::NavigationHandle* navigation_handle) override;
+  std::unique_ptr<content::NavigationUIData> GetNavigationUIData(
+      content::NavigationHandle* navigation_handle) override;
 
  protected:
   // Subclasses may wish to provide their own ShellBrowserMainParts.

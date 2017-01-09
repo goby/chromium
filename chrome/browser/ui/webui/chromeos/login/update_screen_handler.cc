@@ -4,14 +4,14 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/update_screen_handler.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/screens/update_model.h"
-#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
@@ -53,6 +53,9 @@ void UpdateScreenHandler::DeclareLocalizedValues(
   builder->Add("cancelUpdateHint", IDS_EMPTY_STRING);
   builder->Add("cancelledUpdateMessage", IDS_EMPTY_STRING);
 #endif
+
+  // For Material Design OOBE
+  builder->Add("updatingScreenTitle", IDS_UPDATING_SCREEN_TITLE);
 }
 
 void UpdateScreenHandler::Initialize() {
@@ -62,15 +65,12 @@ void UpdateScreenHandler::Initialize() {
   }
 }
 
-void UpdateScreenHandler::PrepareToShow() {
-}
-
 void UpdateScreenHandler::Show() {
   if (!page_is_ready()) {
     show_on_init_ = true;
     return;
   }
-  ShowScreen(OobeUI::kScreenOobeUpdate, NULL);
+  ShowScreen(OobeScreen::SCREEN_OOBE_UPDATE);
 }
 
 void UpdateScreenHandler::Hide() {

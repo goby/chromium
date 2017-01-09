@@ -7,7 +7,7 @@
 #include "base/base64.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
@@ -64,7 +64,7 @@ bool ContentHashReader::Init() {
   verified_contents_.reset(new VerifiedContents(key_.data, key_.size));
   if (!verified_contents_->InitFrom(verified_contents_path, false) ||
       !verified_contents_->valid_signature() ||
-      !verified_contents_->version().Equals(extension_version_) ||
+      verified_contents_->version() != extension_version_ ||
       verified_contents_->extension_id() != extension_id_)
     return false;
 

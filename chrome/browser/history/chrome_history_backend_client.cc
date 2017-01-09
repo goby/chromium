@@ -4,10 +4,12 @@
 
 #include "chrome/browser/history/chrome_history_backend_client.h"
 
+#include "build/build_config.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/features.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/version_info/version_info.h"
+#include "content/public/browser/child_process_security_policy.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ANDROID_JAVA_UI)
@@ -22,7 +24,7 @@ namespace {
 const base::FilePath::CharType kAndroidCacheFilename[] =
     FILE_PATH_LITERAL("AndroidCache");
 }
-#endif  // defined(OS_IOS)
+#endif
 
 ChromeHistoryBackendClient::ChromeHistoryBackendClient(
     bookmarks::BookmarkModel* bookmark_model)
@@ -69,6 +71,11 @@ bool ChromeHistoryBackendClient::ShouldReportDatabaseError() {
   version_info::Channel channel = chrome::GetChannel();
   return channel != version_info::Channel::STABLE &&
          channel != version_info::Channel::BETA;
+}
+
+bool ChromeHistoryBackendClient::IsWebSafe(const GURL& url) {
+  return content::ChildProcessSecurityPolicy::GetInstance()->IsWebSafeScheme(
+      url.scheme());
 }
 
 #if BUILDFLAG(ANDROID_JAVA_UI)

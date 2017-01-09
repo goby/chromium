@@ -5,12 +5,16 @@
 #ifndef CHROME_BROWSER_BROWSING_DATA_BROWSING_DATA_LOCAL_STORAGE_HELPER_H_
 #define CHROME_BROWSER_BROWSING_DATA_BROWSING_DATA_LOCAL_STORAGE_HELPER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <list>
+#include <map>
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "content/public/browser/dom_storage_context.h"
@@ -25,14 +29,13 @@ class BrowsingDataLocalStorageHelper
  public:
   // Contains detailed information about local storage.
   struct LocalStorageInfo {
-    LocalStorageInfo(
-        const GURL& origin_url,
-        int64 size,
-        base::Time last_modified);
+    LocalStorageInfo(const GURL& origin_url,
+                     int64_t size,
+                     base::Time last_modified);
     ~LocalStorageInfo();
 
     GURL origin_url;
-    int64 size;
+    int64_t size;
     base::Time last_modified;
   };
 
@@ -45,8 +48,8 @@ class BrowsingDataLocalStorageHelper
   // callback. This must be called only in the UI thread.
   virtual void StartFetching(const FetchCallback& callback);
 
-  // Deletes the local storage for the |origin|.
-  virtual void DeleteOrigin(const GURL& origin);
+  // Deletes the local storage for the |origin_url|.
+  virtual void DeleteOrigin(const GURL& origin_url);
 
  protected:
   friend class base::RefCounted<BrowsingDataLocalStorageHelper>;
@@ -68,7 +71,7 @@ class CannedBrowsingDataLocalStorageHelper
 
   // Add a local storage to the set of canned local storages that is returned
   // by this helper.
-  void AddLocalStorage(const GURL& origin);
+  void AddLocalStorage(const GURL& origin_url);
 
   // Clear the list of canned local storages.
   void Reset();
@@ -84,12 +87,13 @@ class CannedBrowsingDataLocalStorageHelper
 
   // BrowsingDataLocalStorageHelper implementation.
   void StartFetching(const FetchCallback& callback) override;
-  void DeleteOrigin(const GURL& origin) override;
+  void DeleteOrigin(const GURL& origin_url) override;
 
  private:
   ~CannedBrowsingDataLocalStorageHelper() override;
 
   std::set<GURL> pending_local_storage_info_;
+  std::multimap<GURL, GURL> pending_origins_to_pending_suborigins_;
 
   DISALLOW_COPY_AND_ASSIGN(CannedBrowsingDataLocalStorageHelper);
 };

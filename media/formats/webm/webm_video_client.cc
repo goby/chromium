@@ -28,11 +28,14 @@ void WebMVideoClient::Reset() {
   display_height_ = -1;
   display_unit_ = -1;
   alpha_mode_ = -1;
+  colour_parsed_ = false;
 }
 
 bool WebMVideoClient::InitializeConfig(
-    const std::string& codec_id, const std::vector<uint8>& codec_private,
-    bool is_encrypted, VideoDecoderConfig* config) {
+    const std::string& codec_id,
+    const std::vector<uint8_t>& codec_private,
+    const EncryptionScheme& encryption_scheme,
+    VideoDecoderConfig* config) {
   DCHECK(config);
 
   VideoCodec video_codec = kUnknownVideoCodec;
@@ -42,7 +45,9 @@ bool WebMVideoClient::InitializeConfig(
     profile = VP8PROFILE_ANY;
   } else if (codec_id == "V_VP9") {
     video_codec = kCodecVP9;
-    profile = VP9PROFILE_ANY;
+    // TODO(servolk): Find a way to read actual VP9 profile from WebM.
+    // crbug.com/592074
+    profile = VP9PROFILE_PROFILE0;
   } else {
     MEDIA_LOG(ERROR, media_log_) << "Unsupported video codec_id " << codec_id;
     return false;
@@ -91,12 +96,32 @@ bool WebMVideoClient::InitializeConfig(
 
   config->Initialize(video_codec, profile, format, COLOR_SPACE_HD_REC709,
                      coded_size, visible_rect, natural_size, codec_private,
-                     is_encrypted);
+                     encryption_scheme);
+  if (colour_parsed_) {
+    WebMColorMetadata color_metadata = colour_parser_.GetWebMColorMetadata();
+    config->set_color_space_info(color_metadata.color_space);
+    config->set_hdr_metadata(color_metadata.hdr_metadata);
+  }
   return config->IsValidConfig();
 }
 
-bool WebMVideoClient::OnUInt(int id, int64 val) {
-  int64* dst = NULL;
+WebMParserClient* WebMVideoClient::OnListStart(int id) {
+  if (id == kWebMIdColour) {
+    colour_parsed_ = false;
+    return &colour_parser_;
+  }
+
+  return this;
+}
+
+bool WebMVideoClient::OnListEnd(int id) {
+  if (id == kWebMIdColour)
+    colour_parsed_ = true;
+  return true;
+}
+
+bool WebMVideoClient::OnUInt(int id, int64_t val) {
+  int64_t* dst = NULL;
 
   switch (id) {
     case kWebMIdPixelWidth:
@@ -144,7 +169,7 @@ bool WebMVideoClient::OnUInt(int id, int64 val) {
   return true;
 }
 
-bool WebMVideoClient::OnBinary(int id, const uint8* data, int size) {
+bool WebMVideoClient::OnBinary(int id, const uint8_t* data, int size) {
   // Accept binary fields we don't care about for now.
   return true;
 }

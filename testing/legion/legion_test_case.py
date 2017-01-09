@@ -9,10 +9,14 @@ import logging
 import sys
 import unittest
 
-#pylint: disable=relative-import
-import common_lib
-import task_controller
-import task_registration_server
+# pylint: disable=relative-import
+# Import common_lib first so we can setup the environment
+from lib import common_lib
+common_lib.SetupEnvironment()
+
+from legion.lib import task_controller
+from legion.lib import task_registration_server
+from legion.lib.comm_server import comm_server
 
 BANNER_WIDTH = 80
 
@@ -95,16 +99,21 @@ class TestCase(unittest.TestCase):
   @classmethod
   def _SetUpFramework(cls):
     """Perform the framework-specific setup operations."""
+    # Setup the registration server
     cls._registration_server = (
         task_registration_server.TaskRegistrationServer())
+    common_lib.OnShutdown += cls._registration_server.Shutdown
     cls._registration_server.Start()
+
+    # Setup the event server
+    cls.comm_server = comm_server.CommServer()
+    common_lib.OnShutdown += cls.comm_server.shutdown
+    cls.comm_server.start()
 
   @classmethod
   def _TearDownFramework(cls):
     """Perform the framework-specific teardown operations."""
-    if cls._registration_server:
-      cls._registration_server.Shutdown()
-    task_controller.TaskController.ReleaseAllTasks()
+    common_lib.Shutdown()
 
   @classmethod
   def _HandleSetUpClass(cls):
@@ -113,7 +122,6 @@ class TestCase(unittest.TestCase):
     This method performs test-wide setup such as starting the registration
     server and then calls the original setUpClass method."""
     try:
-      common_lib.InitLogging()
       cls._LogInfoBanner('setUpClass', 'Performs class level setup.')
       cls._SetUpFramework()
       cls._OriginalSetUpClassMethod()
@@ -140,4 +148,4 @@ class TestCase(unittest.TestCase):
 
 
 def main():
-  unittest.main(verbosity=0, argv=sys.argv[:1])
+  unittest.main(argv=sys.argv[:1])

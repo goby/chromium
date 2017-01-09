@@ -4,6 +4,9 @@
 
 #include "chromeos/dbus/fake_debug_daemon_client.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
 #include <string>
 
@@ -12,8 +15,16 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/stl_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/chromeos_switches.h"
+
+namespace {
+
+const char kCrOSTracingAgentName[] = "cros";
+const char kCrOSTraceLabel[] = "systemTraceEvents";
+
+}  // namespace
 
 namespace chromeos {
 
@@ -28,8 +39,7 @@ void FakeDebugDaemonClient::Init(dbus::Bus* bus) {}
 
 void FakeDebugDaemonClient::DumpDebugLogs(
     bool is_compressed,
-    base::File file,
-    scoped_refptr<base::TaskRunner> task_runner,
+    int file_descriptor,
     const GetDebugLogsCallback& callback) {
   callback.Run(true);
 }
@@ -38,15 +48,32 @@ void FakeDebugDaemonClient::SetDebugMode(const std::string& subsystem,
                                          const SetDebugModeCallback& callback) {
   callback.Run(false);
 }
-void FakeDebugDaemonClient::StartSystemTracing() {}
 
-bool FakeDebugDaemonClient::RequestStopSystemTracing(
-    scoped_refptr<base::TaskRunner> task_runner,
-    const StopSystemTracingCallback& callback) {
-  std::string no_data;
-  callback.Run(base::RefCountedString::TakeString(&no_data));
-  return true;
+std::string FakeDebugDaemonClient::GetTracingAgentName() {
+  return kCrOSTracingAgentName;
 }
+
+std::string FakeDebugDaemonClient::GetTraceEventLabel() {
+  return kCrOSTraceLabel;
+}
+
+void FakeDebugDaemonClient::StartAgentTracing(
+    const base::trace_event::TraceConfig& trace_config,
+    const StartAgentTracingCallback& callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::Bind(callback, GetTracingAgentName(), true /* success */));
+}
+
+void FakeDebugDaemonClient::StopAgentTracing(
+    const StopAgentTracingCallback& callback) {
+  std::string no_data;
+  callback.Run(GetTracingAgentName(), GetTraceEventLabel(),
+               base::RefCountedString::TakeString(&no_data));
+}
+
+void FakeDebugDaemonClient::SetStopAgentTracingTaskRunner(
+    scoped_refptr<base::TaskRunner> task_runner) {}
 
 void FakeDebugDaemonClient::GetRoutes(bool numeric,
                                       bool ipv6,
@@ -81,19 +108,22 @@ void FakeDebugDaemonClient::GetNetworkInterfaces(
 }
 
 void FakeDebugDaemonClient::GetPerfOutput(
-    uint32_t duration,
+    base::TimeDelta duration,
     const std::vector<std::string>& perf_args,
-    const GetPerfOutputCallback& callback) {
-  int status = 0;
-  std::vector<uint8> perf_data;
-  std::vector<uint8> perf_stat;
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, status, perf_data, perf_stat));
-}
+    int file_descriptor,
+    const DBusMethodErrorCallback& error_callback) {}
 
 void FakeDebugDaemonClient::GetScrubbedLogs(const GetLogsCallback& callback) {
   std::map<std::string, std::string> sample;
   sample["Sample Scrubbed Log"] = "Your email address is xxxxxxxx";
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, false, sample));
+}
+
+void FakeDebugDaemonClient::GetScrubbedBigLogs(
+    const GetLogsCallback& callback) {
+  std::map<std::string, std::string> sample;
+  sample["Sample Scrubbed Big Log"] = "Your email address is xxxxxxxx";
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(callback, false, sample));
 }
@@ -166,6 +196,13 @@ void FakeDebugDaemonClient::WaitForServiceToBeAvailable(
   }
 }
 
+void FakeDebugDaemonClient::SetOomScoreAdj(
+    const std::map<pid_t, int32_t>& pid_to_oom_score_adj,
+    const SetOomScoreAdjCallback& callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, false, ""));
+}
+
 void FakeDebugDaemonClient::SetDebuggingFeaturesStatus(int featues_mask) {
   featues_mask_ = featues_mask;
 }
@@ -179,6 +216,30 @@ void FakeDebugDaemonClient::SetServiceIsAvailable(bool is_available) {
   callbacks.swap(pending_wait_for_service_to_be_available_callbacks_);
   for (size_t i = 0; i < callbacks.size(); ++i)
     callbacks[i].Run(is_available);
+}
+
+void FakeDebugDaemonClient::CupsAddPrinter(
+    const std::string& name,
+    const std::string& uri,
+    const std::string& ppd_path,
+    bool ipp_everywhere,
+    const DebugDaemonClient::CupsAddPrinterCallback& callback,
+    const base::Closure& error_callback) {
+  printers_.insert(name);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::Bind(callback, true));
+}
+
+void FakeDebugDaemonClient::CupsRemovePrinter(
+    const std::string& name,
+    const DebugDaemonClient::CupsRemovePrinterCallback& callback,
+    const base::Closure& error_callback) {
+  const bool has_printer = base::ContainsKey(printers_, name);
+  if (has_printer)
+    printers_.erase(name);
+
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, has_printer));
 }
 
 }  // namespace chromeos

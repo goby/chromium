@@ -7,15 +7,14 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/shill_client_helper.h"
 
 namespace base {
 
-class Value;
 class DictionaryValue;
 
 }  // namespace base

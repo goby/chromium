@@ -2,25 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/policy/core/common/remote_commands/remote_commands_service.h"
+
+#include <stddef.h>
+
 #include <queue>
 #include <string>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/remote_commands/remote_command_job.h"
 #include "components/policy/core/common/remote_commands/remote_commands_factory.h"
 #include "components/policy/core/common/remote_commands/remote_commands_queue.h"
-#include "components/policy/core/common/remote_commands/remote_commands_service.h"
 #include "components/policy/core/common/remote_commands/test_remote_command_job.h"
 #include "components/policy/core/common/remote_commands/testing_remote_commands_server.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -60,13 +65,13 @@ class MockTestRemoteCommandFactory : public RemoteCommandsFactory {
 
  private:
   // RemoteCommandJobsFactory:
-  scoped_ptr<RemoteCommandJob> BuildJobForType(
+  std::unique_ptr<RemoteCommandJob> BuildJobForType(
       em::RemoteCommand_Type type) override {
     if (type != em::RemoteCommand_Type_COMMAND_ECHO_TEST) {
       ADD_FAILURE();
       return nullptr;
     }
-    return make_scoped_ptr<RemoteCommandJob>(BuildTestCommand());
+    return base::WrapUnique<RemoteCommandJob>(BuildTestCommand());
   }
 
   DISALLOW_COPY_AND_ASSIGN(MockTestRemoteCommandFactory);
@@ -79,9 +84,9 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
       TestingRemoteCommandsServer* server)
       : CloudPolicyClient(std::string(), /* machine_id */
                           std::string(), /* machine_model */
-                          std::string(), /* verification_key_hash */
-                          nullptr,
-                          nullptr),
+                          nullptr,       /* service */
+                          nullptr,       /* request_context */
+                          nullptr /* signing_service */),
         server_(server) {
     dm_token_ = kDMToken;
   }
@@ -118,7 +123,7 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
   };
 
   void FetchRemoteCommands(
-      scoped_ptr<RemoteCommandJob::UniqueIDType> last_command_id,
+      std::unique_ptr<RemoteCommandJob::UniqueIDType> last_command_id,
       const std::vector<em::RemoteCommandResult>& command_results,
       const RemoteCommandCallback& callback) override {
     ASSERT_FALSE(expected_fetch_commands_calls_.empty());
@@ -139,12 +144,12 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
   }
 
   void DoFetchRemoteCommands(
-      scoped_ptr<RemoteCommandJob::UniqueIDType> last_command_id,
+      std::unique_ptr<RemoteCommandJob::UniqueIDType> last_command_id,
       const std::vector<em::RemoteCommandResult>& command_results,
       const RemoteCommandCallback& callback,
       const FetchCallExpectation& fetch_call_expectation) {
     const std::vector<em::RemoteCommand> fetched_commands =
-        server_->FetchCommands(last_command_id.Pass(), command_results);
+        server_->FetchCommands(std::move(last_command_id), command_results);
 
     EXPECT_EQ(fetch_call_expectation.expected_command_results,
               command_results.size());
@@ -244,7 +249,7 @@ class RemoteCommandsServiceTest : public testing::Test {
 
   void SetUp() override {
     server_.reset(new TestingRemoteCommandsServer());
-    server_->SetClock(task_runner_->GetMockTickClock().Pass());
+    server_->SetClock(task_runner_->GetMockTickClock());
     cloud_policy_client_.reset(
         new TestingCloudPolicyClientForRemoteCommands(server_.get()));
   }
@@ -255,9 +260,9 @@ class RemoteCommandsServiceTest : public testing::Test {
     server_.reset();
   }
 
-  void StartService(scoped_ptr<RemoteCommandsFactory> factory) {
-    remote_commands_service_.reset(
-        new RemoteCommandsService(factory.Pass(), cloud_policy_client_.get()));
+  void StartService(std::unique_ptr<RemoteCommandsFactory> factory) {
+    remote_commands_service_.reset(new RemoteCommandsService(
+        std::move(factory), cloud_policy_client_.get()));
     remote_commands_service_->SetClockForTesting(
         task_runner_->GetMockTickClock());
   }
@@ -266,15 +271,14 @@ class RemoteCommandsServiceTest : public testing::Test {
     task_runner_->FastForwardUntilNoTasksRemain();
   }
 
-  scoped_ptr<TestingRemoteCommandsServer> server_;
-  scoped_ptr<TestingCloudPolicyClientForRemoteCommands> cloud_policy_client_;
-  scoped_ptr<RemoteCommandsService> remote_commands_service_;
+  std::unique_ptr<TestingRemoteCommandsServer> server_;
+  std::unique_ptr<TestingCloudPolicyClientForRemoteCommands>
+      cloud_policy_client_;
+  std::unique_ptr<RemoteCommandsService> remote_commands_service_;
 
   scoped_refptr<ScopedMockTimeTaskRunner> task_runner_;
 
  private:
-  bool service_started_ = false;
-
   base::ThreadTaskRunnerHandle runner_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteCommandsServiceTest);
@@ -282,11 +286,11 @@ class RemoteCommandsServiceTest : public testing::Test {
 
 // Tests that no command will be fetched if no commands is issued.
 TEST_F(RemoteCommandsServiceTest, NoCommands) {
-  scoped_ptr<MockTestRemoteCommandFactory> factory(
+  std::unique_ptr<MockTestRemoteCommandFactory> factory(
       new MockTestRemoteCommandFactory());
   EXPECT_CALL(*factory, BuildTestCommand()).Times(0);
 
-  StartService(factory.Pass());
+  StartService(std::move(factory));
 
   // A fetch requst should get nothing from server.
   cloud_policy_client_->ExpectFetchCommands(0u, 0u, base::Closure());
@@ -297,7 +301,7 @@ TEST_F(RemoteCommandsServiceTest, NoCommands) {
 
 // Tests that existing commands issued before service started will be fetched.
 TEST_F(RemoteCommandsServiceTest, ExistingCommand) {
-  scoped_ptr<MockTestRemoteCommandFactory> factory(
+  std::unique_ptr<MockTestRemoteCommandFactory> factory(
       new MockTestRemoteCommandFactory());
   EXPECT_CALL(*factory, BuildTestCommand()).Times(1);
 
@@ -312,7 +316,7 @@ TEST_F(RemoteCommandsServiceTest, ExistingCommand) {
     // Start the service, run until the command is fetched.
     cloud_policy_client_->ExpectFetchCommands(0u, 1u,
                                               scoped_runner.QuitClosure());
-    StartService(factory.Pass());
+    StartService(std::move(factory));
     EXPECT_TRUE(remote_commands_service_->FetchRemoteCommands());
 
     scoped_runner.Run();
@@ -328,11 +332,11 @@ TEST_F(RemoteCommandsServiceTest, ExistingCommand) {
 
 // Tests that commands issued after service started will be fetched.
 TEST_F(RemoteCommandsServiceTest, NewCommand) {
-  scoped_ptr<MockTestRemoteCommandFactory> factory(
+  std::unique_ptr<MockTestRemoteCommandFactory> factory(
       new MockTestRemoteCommandFactory());
   EXPECT_CALL(*factory, BuildTestCommand()).Times(1);
 
-  StartService(factory.Pass());
+  StartService(std::move(factory));
 
   // Set up expectations on fetch commands calls. The first request will fetch
   // one command, and the second will fetch none but provide result for the
@@ -353,11 +357,11 @@ TEST_F(RemoteCommandsServiceTest, NewCommand) {
 // Tests that commands issued after service started will be fetched, even if
 // the command is issued when a fetch request is ongoing.
 TEST_F(RemoteCommandsServiceTest, NewCommandFollwingFetch) {
-  scoped_ptr<MockTestRemoteCommandFactory> factory(
+  std::unique_ptr<MockTestRemoteCommandFactory> factory(
       new MockTestRemoteCommandFactory());
   EXPECT_CALL(*factory, BuildTestCommand()).Times(1);
 
-  StartService(factory.Pass());
+  StartService(std::move(factory));
 
   {
     ScopedMockTimeTaskRunner::ScopedRunner scoped_runner(task_runner_);

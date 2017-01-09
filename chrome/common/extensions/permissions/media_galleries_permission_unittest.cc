@@ -4,6 +4,8 @@
 
 // These tests make sure MediaGalleriesPermission values are parsed correctly.
 
+#include <memory>
+
 #include "base/values.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/media_galleries_permission.h"
@@ -31,11 +33,11 @@ TEST(MediaGalleriesPermissionTest, GoodValues) {
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kMediaGalleries);
 
-  scoped_ptr<APIPermission> permission(
+  std::unique_ptr<APIPermission> permission(
       permission_info->CreateAPIPermission());
 
   // access_type + all_detected
-  scoped_ptr<base::ListValue> value(new base::ListValue());
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   value->AppendString(MediaGalleriesPermission::kAllAutoDetectedPermission);
   value->AppendString(MediaGalleriesPermission::kReadPermission);
   CheckFromValue(permission.get(), value.get(), true);
@@ -88,14 +90,11 @@ TEST(MediaGalleriesPermissionTest, BadValues) {
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kMediaGalleries);
 
-  scoped_ptr<APIPermission> permission(permission_info->CreateAPIPermission());
-
-  // Empty
-  scoped_ptr<base::ListValue> value(new base::ListValue());
-  CheckFromValue(permission.get(), value.get(), false);
+  std::unique_ptr<APIPermission> permission(
+      permission_info->CreateAPIPermission());
 
   // copyTo and delete without read
-  value.reset(new base::ListValue());
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   value->AppendString(MediaGalleriesPermission::kCopyToPermission);
   CheckFromValue(permission.get(), value.get(), false);
 
@@ -137,10 +136,11 @@ TEST(MediaGalleriesPermissionTest, UnknownValues) {
   const APIPermissionInfo* permission_info =
       PermissionsInfo::GetInstance()->GetByID(APIPermission::kMediaGalleries);
 
-  scoped_ptr<APIPermission> permission(permission_info->CreateAPIPermission());
+  std::unique_ptr<APIPermission> permission(
+      permission_info->CreateAPIPermission());
 
   // A good one and an unknown one.
-  scoped_ptr<base::ListValue> value(new base::ListValue());
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   value->AppendString(MediaGalleriesPermission::kReadPermission);
   value->AppendString("Unknown");
   EXPECT_TRUE(permission->FromValue(value.get(), &error, &unhandled));
@@ -171,12 +171,12 @@ TEST(MediaGalleriesPermissionTest, Equal) {
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kMediaGalleries);
 
-  scoped_ptr<APIPermission> permission1(
+  std::unique_ptr<APIPermission> permission1(
       permission_info->CreateAPIPermission());
-  scoped_ptr<APIPermission> permission2(
+  std::unique_ptr<APIPermission> permission2(
       permission_info->CreateAPIPermission());
 
-  scoped_ptr<base::ListValue> value(new base::ListValue());
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   value->AppendString(MediaGalleriesPermission::kAllAutoDetectedPermission);
   value->AppendString(MediaGalleriesPermission::kReadPermission);
   ASSERT_TRUE(permission1->FromValue(value.get(), NULL, NULL));
@@ -223,12 +223,12 @@ TEST(MediaGalleriesPermissionTest, NotEqual) {
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kMediaGalleries);
 
-  scoped_ptr<APIPermission> permission1(
+  std::unique_ptr<APIPermission> permission1(
       permission_info->CreateAPIPermission());
-  scoped_ptr<APIPermission> permission2(
+  std::unique_ptr<APIPermission> permission2(
       permission_info->CreateAPIPermission());
 
-  scoped_ptr<base::ListValue> value(new base::ListValue());
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   value->AppendString(MediaGalleriesPermission::kAllAutoDetectedPermission);
   value->AppendString(MediaGalleriesPermission::kReadPermission);
   ASSERT_TRUE(permission1->FromValue(value.get(), NULL, NULL));
@@ -246,17 +246,17 @@ TEST(MediaGalleriesPermissionTest, ToFromValue) {
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kMediaGalleries);
 
-  scoped_ptr<APIPermission> permission1(
+  std::unique_ptr<APIPermission> permission1(
       permission_info->CreateAPIPermission());
-  scoped_ptr<APIPermission> permission2(
+  std::unique_ptr<APIPermission> permission2(
       permission_info->CreateAPIPermission());
 
-  scoped_ptr<base::ListValue> value(new base::ListValue());
+  std::unique_ptr<base::ListValue> value(new base::ListValue());
   value->AppendString(MediaGalleriesPermission::kAllAutoDetectedPermission);
   value->AppendString(MediaGalleriesPermission::kReadPermission);
   ASSERT_TRUE(permission1->FromValue(value.get(), NULL, NULL));
 
-  scoped_ptr<base::Value> vtmp(permission1->ToValue());
+  std::unique_ptr<base::Value> vtmp(permission1->ToValue());
   ASSERT_TRUE(vtmp);
   ASSERT_TRUE(permission2->FromValue(vtmp.get(), NULL, NULL));
   EXPECT_TRUE(permission1->Equal(permission2.get()));
@@ -276,6 +276,15 @@ TEST(MediaGalleriesPermissionTest, ToFromValue) {
   value->AppendString(MediaGalleriesPermission::kReadPermission);
   value->AppendString(MediaGalleriesPermission::kDeletePermission);
   ASSERT_TRUE(permission1->FromValue(value.get(), NULL, NULL));
+
+  vtmp = permission1->ToValue();
+  ASSERT_TRUE(vtmp);
+  ASSERT_TRUE(permission2->FromValue(vtmp.get(), NULL, NULL));
+  EXPECT_TRUE(permission1->Equal(permission2.get()));
+
+  value.reset(new base::ListValue());
+  // without sub-permission
+  ASSERT_TRUE(permission1->FromValue(NULL, NULL, NULL));
 
   vtmp = permission1->ToValue();
   ASSERT_TRUE(vtmp);

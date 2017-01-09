@@ -15,7 +15,6 @@
 #include "chrome/browser/ui/search_engines/template_url_table_model.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/locale_settings.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "content/public/browser/user_metrics.h"
@@ -151,8 +150,9 @@ void SearchEngineManagerHandler::OnModelChanged() {
     keyword_list.Append(CreateDictionaryForEngine(i, i == default_index));
   }
 
-  web_ui()->CallJavascriptFunction("SearchEngineManager.updateSearchEngineList",
-                                   defaults_list, others_list, keyword_list);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "SearchEngineManager.updateSearchEngineList", defaults_list, others_list,
+      keyword_list);
 }
 
 void SearchEngineManagerHandler::OnItemsChanged(int start, int length) {
@@ -167,8 +167,9 @@ void SearchEngineManagerHandler::OnItemsRemoved(int start, int length) {
   OnModelChanged();
 }
 
-base::DictionaryValue* SearchEngineManagerHandler::CreateDictionaryForEngine(
-    int index, bool is_default) {
+std::unique_ptr<base::DictionaryValue>
+SearchEngineManagerHandler::CreateDictionaryForEngine(int index,
+                                                      bool is_default) {
   TemplateURLTableModel* table_model = list_controller_->table_model();
   const TemplateURL* template_url = list_controller_->GetTemplateURL(index);
 
@@ -176,7 +177,7 @@ base::DictionaryValue* SearchEngineManagerHandler::CreateDictionaryForEngine(
   // chrome/browser/resources/options/search_engine_manager_engine_list.js
   // in @typedef for SearchEngine. Please update it whenever you add or remove
   // any keys here.
-  base::DictionaryValue* dict = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("name",  template_url->short_name());
   dict->SetString("displayName", table_model->GetText(
     index, IDS_SEARCH_ENGINES_EDITOR_DESCRIPTION_COLUMN));
@@ -196,7 +197,7 @@ base::DictionaryValue* SearchEngineManagerHandler::CreateDictionaryForEngine(
                    list_controller_->CanMakeDefault(template_url));
   dict->SetBoolean("default", is_default);
   dict->SetBoolean("canBeEdited", list_controller_->CanEdit(template_url));
-  TemplateURL::Type type = template_url->GetType();
+  TemplateURL::Type type = template_url->type();
   dict->SetBoolean("isOmniboxExtension",
                    type == TemplateURL::OMNIBOX_API_EXTENSION);
   if (type == TemplateURL::NORMAL_CONTROLLED_BY_EXTENSION ||
@@ -296,8 +297,8 @@ void SearchEngineManagerHandler::CheckSearchEngineInfoValidity(
   validity.SetBoolean("keyword", edit_controller_->IsKeywordValid(keyword));
   validity.SetBoolean("url", edit_controller_->IsURLValid(url));
   base::StringValue indexValue(modelIndex);
-  web_ui()->CallJavascriptFunction("SearchEngineManager.validityCheckCallback",
-                                   validity, indexValue);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "SearchEngineManager.validityCheckCallback", validity, indexValue);
 }
 
 void SearchEngineManagerHandler::EditCancelled(const base::ListValue* args) {

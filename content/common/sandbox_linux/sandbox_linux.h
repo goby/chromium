@@ -5,12 +5,12 @@
 #ifndef CONTENT_COMMON_SANDBOX_LINUX_SANDBOX_LINUX_H_
 #define CONTENT_COMMON_SANDBOX_LINUX_SANDBOX_LINUX_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/public/common/sandbox_linux.h"
 
 #if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) || \
@@ -42,7 +42,7 @@ namespace content {
 class LinuxSandbox {
  public:
   // This is a list of sandbox IPC methods which the renderer may send to the
-  // sandbox host. See http://code.google.com/p/chromium/wiki/LinuxSandboxIPC
+  // sandbox host. See https://chromium.googlesource.com/chromium/src/+/master/docs/linux_sandbox_ipc.md
   // This isn't the full list, values < 32 are reserved for methods called from
   // Skia.
   enum LinuxSandboxIPCMethods {
@@ -173,9 +173,9 @@ class LinuxSandbox {
   bool seccomp_bpf_with_tsync_supported_;  // Accurate if pre_initialized_.
   bool yama_is_enforcing_;  // Accurate if pre_initialized_.
   bool initialize_sandbox_ran_;  // InitializeSandbox() was called.
-  scoped_ptr<sandbox::SetuidSandboxClient> setuid_sandbox_client_;
+  std::unique_ptr<sandbox::SetuidSandboxClient> setuid_sandbox_client_;
 #if defined(ANY_OF_AMTLU_SANITIZER)
-  scoped_ptr<__sanitizer_sandbox_arguments> sanitizer_args_;
+  std::unique_ptr<__sanitizer_sandbox_arguments> sanitizer_args_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(LinuxSandbox);

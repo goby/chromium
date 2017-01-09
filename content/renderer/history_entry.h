@@ -35,23 +35,18 @@
 #ifndef CONTENT_RENDERER_HISTORY_ENTRY_H_
 #define CONTENT_RENDERER_HISTORY_ENTRY_H_
 
+#include <memory>
+
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebHistoryItem.h"
 
-namespace blink {
-class WebFrame;
-}
-
 namespace content {
 class RenderFrameImpl;
 class RenderViewImpl;
-
-const int kInvalidFrameRoutingID = -1;
 
 class CONTENT_EXPORT HistoryEntry {
  public:
@@ -79,7 +74,7 @@ class CONTENT_EXPORT HistoryEntry {
     // a dying HistoryEntry, or do unnecessary work when the whole entry is
     // being destroyed.
     base::WeakPtr<HistoryEntry> entry_;
-    scoped_ptr<ScopedVector<HistoryNode> > children_;
+    std::unique_ptr<ScopedVector<HistoryNode>> children_;
     blink::WebHistoryItem item_;
     // We need to track multiple names because the name of a frame can change
     // over its lifetime. This allows us to clean up all of the names this node
@@ -102,7 +97,7 @@ class CONTENT_EXPORT HistoryEntry {
   HistoryNode* root_history_node() const { return root_.get(); }
 
  private:
-  scoped_ptr<HistoryNode> root_;
+  std::unique_ptr<HistoryNode> root_;
 
   typedef base::hash_map<std::string, HistoryNode*> UniqueNamesToItems;
   UniqueNamesToItems unique_names_to_items_;

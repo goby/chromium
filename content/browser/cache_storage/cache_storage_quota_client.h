@@ -5,14 +5,11 @@
 #ifndef CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_QUOTA_CLIENT_H_
 #define CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_QUOTA_CLIENT_H_
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "storage/browser/quota/quota_client.h"
 #include "storage/common/quota/quota_types.h"
-
-namespace storage {
-class QuotaManagerProxy;
-}
 
 namespace content {
 class CacheStorageManager;

@@ -5,6 +5,9 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_OPERATION_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_OPERATION_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
@@ -26,8 +29,6 @@ class URLRequest;
 namespace storage {
 class ShareableFileReference;
 }
-
-class GURL;
 
 namespace storage {
 
@@ -61,7 +62,7 @@ class FileSystemOperation {
   STORAGE_EXPORT static FileSystemOperation* Create(
       const FileSystemURL& url,
       FileSystemContext* file_system_context,
-      scoped_ptr<FileSystemOperationContext> operation_context);
+      std::unique_ptr<FileSystemOperationContext> operation_context);
 
   virtual ~FileSystemOperation() {}
 
@@ -205,15 +206,14 @@ class FileSystemOperation {
   typedef base::Callback<void(CopyProgressType type,
                               const FileSystemURL& source_url,
                               const FileSystemURL& destination_url,
-                              int64 size)>
-      CopyProgressCallback;
+                              int64_t size)> CopyProgressCallback;
 
   // Used for CopyFileLocal() to report progress update.
   // |size| is the cumulative copied bytes for the copy.
   // At the beginning the progress callback should be called with |size| = 0,
   // and also at the ending the progress callback should be called with |size|
   // set to the copied file size.
-  typedef base::Callback<void(int64 size)> CopyFileProgressCallback;
+  typedef base::Callback<void(int64_t size)> CopyFileProgressCallback;
 
   // The option for copy or move operation.
   enum CopyOrMoveOption {
@@ -237,7 +237,7 @@ class FileSystemOperation {
 
   // Used for Write().
   typedef base::Callback<void(base::File::Error result,
-                              int64 bytes,
+                              int64_t bytes,
                               bool complete)> WriteCallback;
 
   // Creates a file at |path|. If |exclusive| is true, an error is raised
@@ -295,6 +295,8 @@ class FileSystemOperation {
   //   CopyInForeignFile and CreateDirectory on dest filesystem
   //   for cross-filesystem case.
   //
+  // TODO(crbug.com/171284): Restore directory timestamps after the Move
+  //                         operation.
   virtual void Move(const FileSystemURL& src_path,
                     const FileSystemURL& dest_path,
                     CopyOrMoveOption option,
@@ -323,16 +325,16 @@ class FileSystemOperation {
                       const StatusCallback& callback) = 0;
 
   // Writes the data read from |blob_request| using |writer_delegate|.
-  virtual void Write(
-    const FileSystemURL& url,
-    scoped_ptr<FileWriterDelegate> writer_delegate,
-    scoped_ptr<net::URLRequest> blob_request,
-    const WriteCallback& callback) = 0;
+  virtual void Write(const FileSystemURL& url,
+                     std::unique_ptr<FileWriterDelegate> writer_delegate,
+                     std::unique_ptr<net::URLRequest> blob_request,
+                     const WriteCallback& callback) = 0;
 
   // Truncates a file at |path| to |length|. If |length| is larger than
   // the original file size, the file will be extended, and the extended
   // part is filled with null bytes.
-  virtual void Truncate(const FileSystemURL& path, int64 length,
+  virtual void Truncate(const FileSystemURL& path,
+                        int64_t length,
                         const StatusCallback& callback) = 0;
 
   // Tries to cancel the current operation [we support cancelling write or

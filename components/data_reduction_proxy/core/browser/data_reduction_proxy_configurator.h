@@ -9,17 +9,14 @@
 #include <vector>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "net/proxy/proxy_config.h"
 
 namespace net {
 class NetLog;
-class ProxyInfo;
 class ProxyServer;
-class ProxyService;
 }
-
-class PrefService;
 
 namespace data_reduction_proxy {
 
@@ -35,12 +32,11 @@ class DataReductionProxyConfigurator {
 
   virtual ~DataReductionProxyConfigurator();
 
-  // Constructs a proxy configuration suitable for enabling the Data Reduction
-  // proxy. If true, |secure_transport_restricted| indicates that proxies going
-  // over secure transports (HTTPS) should/can not be used.
+  // Enables data reduction using the proxy servers in |proxies_for_http|.
+  // |secure_transport_restricted| indicates that proxies going over secure
+  // transports can not be used.
   virtual void Enable(bool secure_transport_restricted,
-                      const std::vector<net::ProxyServer>& proxies_for_http,
-                      const std::vector<net::ProxyServer>& proxies_for_https);
+                      const std::vector<net::ProxyServer>& proxies_for_http);
 
   // Constructs a proxy configuration suitable for disabling the Data Reduction
   // proxy.
@@ -53,14 +49,16 @@ class DataReductionProxyConfigurator {
   // each time the proxy is enabled, but are not updated while it is enabled.
   virtual void AddHostPatternToBypass(const std::string& pattern);
 
-  // Adds a URL pattern to bypass the proxy. The base implementation strips
-  // everything in |pattern| after the first single slash and then treats it
-  // as a hostname pattern.
-  virtual void AddURLPatternToBypass(const std::string& pattern);
-
   // Returns the current data reduction proxy config, even if it is not the
   // effective configuration used by the proxy service.
   const net::ProxyConfig& GetProxyConfig() const;
+
+  // Constructs a proxy configuration suitable for enabling the Data Reduction
+  // proxy. If true, |secure_transport_restricted| indicates that proxies going
+  // over secure transports (HTTPS) should/can not be used.
+  net::ProxyConfig CreateProxyConfig(
+      bool secure_transport_restricted,
+      const std::vector<net::ProxyServer>& proxies_for_http) const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(DataReductionProxyConfiguratorTest, TestBypassList);

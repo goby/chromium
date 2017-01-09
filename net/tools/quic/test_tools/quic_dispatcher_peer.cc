@@ -8,7 +8,6 @@
 #include "net/tools/quic/quic_packet_writer_wrapper.h"
 
 namespace net {
-namespace tools {
 namespace test {
 
 // static
@@ -31,16 +30,21 @@ QuicPacketWriter* QuicDispatcherPeer::GetWriter(QuicDispatcher* dispatcher) {
 }
 
 // static
-void QuicDispatcherPeer::SetPacketWriterFactory(
-    QuicDispatcher* dispatcher,
-    QuicDispatcher::PacketWriterFactory* packet_writer_factory) {
-  dispatcher->packet_writer_factory_.reset(packet_writer_factory);
+QuicCompressedCertsCache* QuicDispatcherPeer::GetCache(
+    QuicDispatcher* dispatcher) {
+  return dispatcher->compressed_certs_cache();
 }
 
 // static
 QuicConnectionHelperInterface* QuicDispatcherPeer::GetHelper(
     QuicDispatcher* dispatcher) {
   return dispatcher->helper_.get();
+}
+
+// static
+QuicAlarmFactory* QuicDispatcherPeer::GetAlarmFactory(
+    QuicDispatcher* dispatcher) {
+  return dispatcher->alarm_factory_.get();
 }
 
 // static
@@ -58,11 +62,35 @@ QuicErrorCode QuicDispatcherPeer::GetAndClearLastError(
 }
 
 // static
+QuicBufferedPacketStore* QuicDispatcherPeer::GetBufferedPackets(
+    QuicDispatcher* dispatcher) {
+  return &(dispatcher->buffered_packets_);
+}
+
+// static
 const QuicDispatcher::SessionMap& QuicDispatcherPeer::session_map(
     QuicDispatcher* dispatcher) {
   return dispatcher->session_map();
 }
 
+// static
+void QuicDispatcherPeer::set_new_sessions_allowed_per_event_loop(
+    QuicDispatcher* dispatcher,
+    size_t num_session_allowed) {
+  return dispatcher->set_new_sessions_allowed_per_event_loop(
+      num_session_allowed);
+}
+
+// static
+void QuicDispatcherPeer::SendPublicReset(
+    QuicDispatcher* dispatcher,
+    const QuicSocketAddress& server_address,
+    const QuicSocketAddress& client_address,
+    QuicConnectionId connection_id,
+    QuicPacketNumber rejected_packet_number) {
+  dispatcher->time_wait_list_manager()->SendPublicReset(
+      server_address, client_address, connection_id, rejected_packet_number);
+}
+
 }  // namespace test
-}  // namespace tools
 }  // namespace net

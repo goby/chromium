@@ -5,16 +5,17 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_DIAL_DIAL_REGISTRY_H_
 #define CHROME_BROWSER_EXTENSIONS_API_DIAL_DIAL_REGISTRY_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/extensions/api/dial/dial_service.h"
@@ -26,10 +27,11 @@ namespace extensions {
 // Keeps track of devices that have responded to discovery requests and notifies
 // the observer with an updated, complete set of active devices.  The registry's
 // observer (i.e., the Dial API) owns the registry instance.
+// DialRegistry lives on the IO thread.
 class DialRegistry : public DialService::Observer,
                      public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
-  typedef std::vector<DialDeviceData> DeviceList;
+  using DeviceList = std::vector<DialDeviceData>;
 
   enum DialErrorCode {
     DIAL_NO_LISTENERS = 0,
@@ -72,20 +74,19 @@ class DialRegistry : public DialService::Observer,
 
  protected:
   // Returns a new instance of the DIAL service.  Overridden by tests.
-  virtual DialService* CreateDialService();
+  virtual std::unique_ptr<DialService> CreateDialService();
   virtual void ClearDialService();
 
   // Returns the current time.  Overridden by tests.
   virtual base::Time Now() const;
 
- protected:
   // The DIAL service. Periodic discovery is active when this is not NULL.
-  scoped_ptr<DialService> dial_;
+  std::unique_ptr<DialService> dial_;
 
  private:
-  typedef base::hash_map<std::string, linked_ptr<DialDeviceData> >
-      DeviceByIdMap;
-  typedef std::map<std::string, linked_ptr<DialDeviceData> > DeviceByLabelMap;
+  using DeviceByIdMap =
+      base::hash_map<std::string, std::unique_ptr<DialDeviceData>>;
+  using DeviceByLabelMap = std::map<std::string, DialDeviceData*>;
 
   // DialService::Observer:
   void OnDiscoveryRequest(DialService* service) override;
@@ -117,7 +118,7 @@ class DialRegistry : public DialService::Observer,
 
   // Attempts to add a newly discovered device to the registry.  Returns true if
   // successful.
-  bool MaybeAddDevice(const linked_ptr<DialDeviceData>& device_data);
+  bool MaybeAddDevice(std::unique_ptr<DialDeviceData> device_data);
 
   // Remove devices from the registry that have expired, i.e. not responded
   // after some time.  Returns true if the registry was modified.
@@ -127,8 +128,11 @@ class DialRegistry : public DialService::Observer,
   // active set.
   bool IsDeviceExpired(const DialDeviceData& device) const;
 
-  // Notify clients with the current device list if necessary.
+  // Notify listeners with the current device list if the list has changed.
   void MaybeSendEvent();
+
+  // Notify listeners with the current device list.
+  void SendEvent();
 
   // Returns the next label to use for a newly-seen device.
   std::string NextLabel();
@@ -136,15 +140,8 @@ class DialRegistry : public DialService::Observer,
   // The current number of event listeners attached to this registry.
   int num_listeners_;
 
-  // Incremented each time we DoDiscovery().
-  int discovery_generation_;
-
   // Incremented each time we modify the registry of active devices.
   int registry_generation_;
-
-  // The discovery generation associated with the last time we sent an event.
-  // Used to ensure that we generate at least one event per round of discovery.
-  int last_event_discovery_generation_;
 
   // The registry generation associated with the last time we sent an event.
   // Used to suppress events with duplicate device lists.
@@ -154,9 +151,9 @@ class DialRegistry : public DialService::Observer,
   int label_count_;
 
   // Registry parameters
-  base::TimeDelta refresh_interval_delta_;
-  base::TimeDelta expiration_delta_;
-  size_t max_devices_;
+  const base::TimeDelta refresh_interval_delta_;
+  const base::TimeDelta expiration_delta_;
+  const size_t max_devices_;
 
   // A map used to track known devices by their device_id.
   DeviceByIdMap device_by_id_map_;
@@ -172,12 +169,11 @@ class DialRegistry : public DialService::Observer,
   // DIAL API owns this DIAL registry.
   Observer* const dial_api_;
 
-  // Thread checker.
-  base::ThreadChecker thread_checker_;
-
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest, TestAddRemoveListeners);
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest, TestNoDevicesDiscovered);
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest, TestDevicesDiscovered);
+  FRIEND_TEST_ALL_PREFIXES(DialRegistryTest,
+                           TestDevicesDiscoveredWithTwoListeners);
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest, TestDeviceExpires);
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest, TestExpiredDeviceIsRediscovered);
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest,

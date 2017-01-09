@@ -4,17 +4,25 @@
 
 #include "content/common/content_param_traits.h"
 
+#include <stddef.h>
+
 #include "base/strings/string_number_conversions.h"
-#include "content/common/input/web_input_event_traits.h"
 #include "net/base/ip_endpoint.h"
+#include "ui/events/blink/web_input_event_traits.h"
 
 namespace IPC {
 
-void ParamTraits<WebInputEventPointer>::Write(Message* m, const param_type& p) {
+void ParamTraits<WebInputEventPointer>::GetSize(base::PickleSizer* s,
+                                                const param_type& p) {
+  s->AddData(p->size);
+}
+
+void ParamTraits<WebInputEventPointer>::Write(base::Pickle* m,
+                                              const param_type& p) {
   m->WriteData(reinterpret_cast<const char*>(p), p->size);
 }
 
-bool ParamTraits<WebInputEventPointer>::Read(const Message* m,
+bool ParamTraits<WebInputEventPointer>::Read(const base::Pickle* m,
                                              base::PickleIterator* iter,
                                              param_type* r) {
   const char* data;
@@ -34,7 +42,7 @@ bool ParamTraits<WebInputEventPointer>::Read(const Message* m,
     return false;
   }
   const size_t expected_size_for_type =
-      content::WebInputEventTraits::GetSize(event->type);
+      ui::WebInputEventTraits::GetSize(event->type);
   if (data_length != static_cast<int>(expected_size_for_type)) {
     NOTREACHED();
     return false;
@@ -55,6 +63,13 @@ void ParamTraits<WebInputEventPointer>::Log(const param_type& p,
 }
 
 }  // namespace IPC
+
+// Generate param traits size methods.
+#include "ipc/param_traits_size_macros.h"
+namespace IPC {
+#undef CONTENT_COMMON_CONTENT_PARAM_TRAITS_MACROS_H_
+#include "content/common/content_param_traits_macros.h"
+}
 
 // Generate param traits write methods.
 #include "ipc/param_traits_write_macros.h"

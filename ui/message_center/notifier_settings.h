@@ -5,9 +5,13 @@
 #ifndef UI_MESSAGE_CENTER_NOTIFIER_SETTINGS_H_
 #define UI_MESSAGE_CENTER_NOTIFIER_SETTINGS_H_
 
+#include <stddef.h>
+
 #include <string>
+#include <vector>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/gfx/image/image.h"
 #include "ui/message_center/message_center_export.h"
@@ -26,6 +30,7 @@ class MessagePopupCollectionTest;
 }
 
 class MessageCenterNotificationManagerTest;
+class Notification;
 class NotifierSettingsDelegate;
 class NotifierSettingsProvider;
 
@@ -38,10 +43,14 @@ MESSAGE_CENTER_EXPORT NotifierSettingsDelegate* ShowSettings(
 
 // The struct to distinguish the notifiers.
 struct MESSAGE_CENTER_EXPORT NotifierId {
-  enum NotifierType {
-    APPLICATION,
-    WEB_PAGE,
-    SYSTEM_COMPONENT,
+  // This enum is being used for histogram reporting and the elements should not
+  // be re-ordered.
+  enum NotifierType : int {
+    APPLICATION = 0,
+    ARC_APPLICATION = 1,
+    WEB_PAGE = 2,
+    SYSTEM_COMPONENT = 3,
+    SIZE,
   };
 
   // Constructor for non WEB_PAGE type.
@@ -49,6 +58,8 @@ struct MESSAGE_CENTER_EXPORT NotifierId {
 
   // Constructor for WEB_PAGE type.
   explicit NotifierId(const GURL& url);
+
+  NotifierId(const NotifierId& other);
 
   bool operator==(const NotifierId& other) const;
   // Allows NotifierId to be used as a key in std::map.
@@ -69,6 +80,7 @@ struct MESSAGE_CENTER_EXPORT NotifierId {
  private:
   friend class MessageCenterNotificationManagerTest;
   friend class MessageCenterTrayTest;
+  friend class Notification;
   friend class NotificationControllerTest;
   friend class PopupCollectionTest;
   friend class TrayViewControllerTest;
@@ -109,24 +121,14 @@ struct MESSAGE_CENTER_EXPORT Notifier {
 };
 
 struct MESSAGE_CENTER_EXPORT NotifierGroup {
-  NotifierGroup(const gfx::Image& icon,
-                const base::string16& name,
-                const base::string16& login_info,
-                size_t index);
+  NotifierGroup(const base::string16& name, const base::string16& login_info);
   ~NotifierGroup();
-
-  // Icon of a notifier group.
-  const gfx::Image icon;
 
   // Display name of a notifier group.
   const base::string16 name;
 
   // More display information about the notifier group.
   base::string16 login_info;
-
-  // Unique identifier for the notifier group so that they can be selected in
-  // the UI.
-  const size_t index;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NotifierGroup);
@@ -152,7 +154,7 @@ class MESSAGE_CENTER_EXPORT NotifierSettingsObserver {
 // for the clients of this module.
 class MESSAGE_CENTER_EXPORT NotifierSettingsProvider {
  public:
-  virtual ~NotifierSettingsProvider() {};
+  virtual ~NotifierSettingsProvider() {}
 
   // Sets the delegate.
   virtual void AddObserver(NotifierSettingsObserver* observer) = 0;

@@ -4,6 +4,7 @@
 
 #include "components/drive/resource_entry_conversion.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "components/drive/drive.pb.h"
 #include "components/drive/drive_api_util.h"
@@ -25,7 +26,9 @@ base::Time GetTestTime() {
   exploded.minute = 40;
   exploded.second = 47;
   exploded.millisecond = 330;
-  return base::Time::FromUTCExploded(exploded);
+  base::Time out_time;
+  EXPECT_TRUE(base::Time::FromUTCExploded(exploded, &out_time));
+  return out_time;
 }
 
 }  // namespace
@@ -53,6 +56,7 @@ TEST(ResourceEntryConversionTest, ConvertToResourceEntry_File) {
   EXPECT_EQ("", parent_resource_id);
 
   EXPECT_FALSE(entry.deleted());
+  EXPECT_FALSE(entry.starred());
   EXPECT_FALSE(entry.shared_with_me());
   EXPECT_FALSE(entry.shared());
 
@@ -102,6 +106,7 @@ TEST(ResourceEntryConversionTest,
   EXPECT_EQ("", parent_resource_id);
 
   EXPECT_FALSE(entry.deleted());
+  EXPECT_FALSE(entry.starred());
   EXPECT_FALSE(entry.shared_with_me());
   EXPECT_FALSE(entry.shared());
 
@@ -152,6 +157,7 @@ TEST(ResourceEntryConversionTest,
   EXPECT_EQ(parent.file_id(), parent_resource_id);
 
   EXPECT_FALSE(entry.deleted());
+  EXPECT_FALSE(entry.starred());
   EXPECT_FALSE(entry.shared_with_me());
   EXPECT_FALSE(entry.shared());
 
@@ -190,6 +196,7 @@ TEST(ResourceEntryConversionTest,
   EXPECT_EQ("", parent_resource_id);
 
   EXPECT_TRUE(entry.deleted());  // The document was deleted.
+  EXPECT_FALSE(entry.starred());
   EXPECT_FALSE(entry.shared_with_me());
   EXPECT_FALSE(entry.shared());
 
@@ -212,7 +219,7 @@ TEST(ResourceEntryConversionTest,
 
 TEST(ResourceEntryConversionTest, ConvertChangeResourceToResourceEntry) {
   google_apis::ChangeResource change_resource;
-  change_resource.set_file(make_scoped_ptr(new google_apis::FileResource));
+  change_resource.set_file(base::WrapUnique(new google_apis::FileResource));
   change_resource.set_file_id("resource_id");
   change_resource.set_modification_date(GetTestTime());
 
@@ -241,7 +248,7 @@ TEST(ResourceEntryConversionTest, ConvertChangeResourceToResourceEntry) {
 TEST(ResourceEntryConversionTest,
      ConvertChangeResourceToResourceEntry_Trashed) {
   google_apis::ChangeResource change_resource;
-  change_resource.set_file(make_scoped_ptr(new google_apis::FileResource));
+  change_resource.set_file(base::WrapUnique(new google_apis::FileResource));
   change_resource.set_file_id("resource_id");
   change_resource.set_modification_date(GetTestTime());
 
@@ -287,6 +294,18 @@ TEST(ResourceEntryConversionTest,
 
   EXPECT_EQ(change_resource.modification_date().ToInternalValue(),
             entry.modification_date());
+}
+
+TEST(ResourceEntryConversionTest,
+     ConvertFileResourceToResourceEntry_StarredEntry) {
+  google_apis::FileResource file_resource;
+  file_resource.mutable_labels()->set_starred(true);
+
+  ResourceEntry entry;
+  std::string parent_resource_id;
+  EXPECT_TRUE(ConvertFileResourceToResourceEntry(
+      file_resource, &entry, &parent_resource_id));
+  EXPECT_TRUE(entry.starred());
 }
 
 TEST(ResourceEntryConversionTest,

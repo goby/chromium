@@ -5,10 +5,12 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_GESTURE_EVENT_QUEUE_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_GESTURE_EVENT_QUEUE_H_
 
-#include <deque>
+#include <stddef.h>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <deque>
+#include <memory>
+
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/browser/renderer_host/input/tap_suppression_controller.h"
@@ -16,12 +18,11 @@
 #include "content/browser/renderer_host/input/touchscreen_tap_suppression_controller.h"
 #include "content/common/content_export.h"
 #include "content/common/input/input_event_ack_state.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/gfx/transform.h"
 
 namespace content {
 class GestureEventQueueTest;
-class InputRouter;
 class MockRenderWidgetHost;
 
 // Interface with which the GestureEventQueue can forward gesture events, and
@@ -114,6 +115,8 @@ class CONTENT_EXPORT GestureEventQueue {
  private:
   friend class GestureEventQueueTest;
   friend class MockRenderWidgetHost;
+
+  bool OnScrollBegin(const GestureEventWithLatencyInfo& gesture_event);
 
   // TODO(mohsen): There are a bunch of ShouldForward.../ShouldDiscard...
   // methods that are getting confusing. This should be somehow fixed. Maybe

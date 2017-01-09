@@ -13,7 +13,9 @@
 
 #include "base/callback.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "ui/accessibility/ax_enums.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/native_widget_types.h"
@@ -162,8 +164,8 @@ class VIEWS_EXPORT ViewsDelegate {
   virtual void OnBeforeWidgetInit(Widget::InitParams* params,
                                   internal::NativeWidgetDelegate* delegate) = 0;
 
-  // Returns the default obscured text reveal duration.
-  virtual base::TimeDelta GetDefaultTextfieldObscuredRevealDuration();
+  // Returns the password reveal duration for Textfield.
+  virtual base::TimeDelta GetTextfieldPasswordRevealDuration();
 
   // Returns true if the operating system's window manager will always provide a
   // title bar with caption buttons (ignoring the setting to
@@ -191,14 +193,26 @@ class VIEWS_EXPORT ViewsDelegate {
   // Returns a blocking pool task runner given a TaskRunnerType.
   virtual scoped_refptr<base::TaskRunner> GetBlockingPoolTaskRunner();
 
+  // Returns the insets that should be applied around a DialogClientView. Note
+  // that the top inset is used for the distance between the buttons and the
+  // DialogClientView's content view.
+  virtual gfx::Insets GetDialogButtonInsets();
+
+  // Returns the spacing between a pair of related horizontal buttons, used for
+  // dialog layout.
+  virtual int GetDialogRelatedButtonHorizontalSpacing();
+
+  // Returns the insets that should be applied around a dialog's frame view.
+  virtual gfx::Insets GetDialogFrameViewInsets();
+
  protected:
   ViewsDelegate();
 
  private:
-  scoped_ptr<ViewsTouchEditingControllerFactory> views_tsc_factory_;
+  std::unique_ptr<ViewsTouchEditingControllerFactory> views_tsc_factory_;
 
 #if defined(USE_AURA)
-  scoped_ptr<TouchSelectionMenuRunnerViews> touch_selection_menu_runner_;
+  std::unique_ptr<TouchSelectionMenuRunnerViews> touch_selection_menu_runner_;
 #endif
 
   NativeWidgetFactory native_widget_factory_;

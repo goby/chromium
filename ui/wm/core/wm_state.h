@@ -5,11 +5,14 @@
 #ifndef UI_WM_CORE_WM_STATE_H_
 #define UI_WM_CORE_WM_STATE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/wm/wm_export.h"
 
 namespace wm {
 
+class CaptureController;
 class TransientWindowController;
 class TransientWindowStackingClient;
 
@@ -19,10 +22,12 @@ class WM_EXPORT WMState {
   WMState();
   ~WMState();
 
-  // WindowStackingClient:
+  CaptureController* capture_controller() { return capture_controller_.get(); }
+
  private:
-  scoped_ptr<TransientWindowStackingClient> window_stacking_client_;
-  scoped_ptr<TransientWindowController> transient_window_client_;
+  std::unique_ptr<TransientWindowStackingClient> window_stacking_client_;
+  std::unique_ptr<TransientWindowController> transient_window_client_;
+  std::unique_ptr<CaptureController> capture_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(WMState);
 };

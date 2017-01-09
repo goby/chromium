@@ -4,13 +4,15 @@
 
 #include "chrome/browser/extensions/api/preference/chrome_direct_setting.h"
 
+#include <utility>
+
 #include "base/containers/hash_tables.h"
 #include "base/lazy_instance.h"
-#include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/preference/chrome_direct_setting_api.h"
 #include "chrome/browser/extensions/api/preference/preference_api_constants.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/prefs/pref_service.h"
 
 namespace extensions {
 namespace chromedirectsetting {
@@ -20,15 +22,15 @@ DirectSettingFunctionBase::DirectSettingFunctionBase() {}
 DirectSettingFunctionBase::~DirectSettingFunctionBase() {}
 
 PrefService* DirectSettingFunctionBase::GetPrefService() {
-  return GetProfile()->GetPrefs();
+  return Profile::FromBrowserContext(browser_context())->GetPrefs();
 }
 
 GetDirectSettingFunction::GetDirectSettingFunction() {}
 
-bool GetDirectSettingFunction::RunSync() {
+ExtensionFunction::ResponseAction GetDirectSettingFunction::Run() {
   std::string pref_key;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &pref_key));
-  EXTENSION_FUNCTION_VALIDATE(ChromeDirectSettingAPI::Get(GetProfile())
+  EXTENSION_FUNCTION_VALIDATE(ChromeDirectSettingAPI::Get(browser_context())
                                   ->IsPreferenceOnWhitelist(pref_key));
 
   const PrefService::Preference* preference =
@@ -36,21 +38,19 @@ bool GetDirectSettingFunction::RunSync() {
   EXTENSION_FUNCTION_VALIDATE(preference);
   const base::Value* value = preference->GetValue();
 
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
   result->Set(preference_api_constants::kValue, value->DeepCopy());
-  SetResult(result.release());
-
-  return true;
+  return RespondNow(OneArgument(std::move(result)));
 }
 
 GetDirectSettingFunction::~GetDirectSettingFunction() {}
 
 SetDirectSettingFunction::SetDirectSettingFunction() {}
 
-bool SetDirectSettingFunction::RunSync() {
+ExtensionFunction::ResponseAction SetDirectSettingFunction::Run() {
   std::string pref_key;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &pref_key));
-  EXTENSION_FUNCTION_VALIDATE(ChromeDirectSettingAPI::Get(GetProfile())
+  EXTENSION_FUNCTION_VALIDATE(ChromeDirectSettingAPI::Get(browser_context())
                                   ->IsPreferenceOnWhitelist(pref_key));
 
   base::DictionaryValue* details = NULL;
@@ -69,21 +69,21 @@ bool SetDirectSettingFunction::RunSync() {
 
   pref_service->Set(pref_key.c_str(), *value);
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
 SetDirectSettingFunction::~SetDirectSettingFunction() {}
 
 ClearDirectSettingFunction::ClearDirectSettingFunction() {}
 
-bool ClearDirectSettingFunction::RunSync() {
+ExtensionFunction::ResponseAction ClearDirectSettingFunction::Run() {
   std::string pref_key;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &pref_key));
-  EXTENSION_FUNCTION_VALIDATE(ChromeDirectSettingAPI::Get(GetProfile())
+  EXTENSION_FUNCTION_VALIDATE(ChromeDirectSettingAPI::Get(browser_context())
                                   ->IsPreferenceOnWhitelist(pref_key));
   GetPrefService()->ClearPref(pref_key.c_str());
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
 ClearDirectSettingFunction::~ClearDirectSettingFunction() {}

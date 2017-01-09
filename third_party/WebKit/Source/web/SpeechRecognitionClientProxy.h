@@ -29,8 +29,8 @@
 #include "modules/speech/SpeechRecognitionClient.h"
 #include "public/web/WebSpeechRecognizerClient.h"
 #include "wtf/Compiler.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
@@ -38,36 +38,51 @@ class MediaStreamTrack;
 class WebSpeechRecognizer;
 class WebString;
 
-class SpeechRecognitionClientProxy final : public SpeechRecognitionClient, public WebSpeechRecognizerClient {
-public:
-    ~SpeechRecognitionClientProxy() override;
+class SpeechRecognitionClientProxy final : public SpeechRecognitionClient,
+                                           public WebSpeechRecognizerClient {
+ public:
+  ~SpeechRecognitionClientProxy() override;
 
-    // Constructing a proxy object with a 0 WebSpeechRecognizer is safe in
-    // itself, but attempting to call start/stop/abort on it will crash.
-    static PassOwnPtr<SpeechRecognitionClientProxy> create(WebSpeechRecognizer*);
+  // Constructing a proxy object with a 0 WebSpeechRecognizer is safe in
+  // itself, but attempting to call start/stop/abort on it will crash.
+  static std::unique_ptr<SpeechRecognitionClientProxy> create(
+      WebSpeechRecognizer*);
 
-    // SpeechRecognitionClient:
-    void start(SpeechRecognition*, const SpeechGrammarList*, const String& lang, const String& serviceURI, bool continuous, bool interimResults, unsigned long maxAlternatives, MediaStreamTrack*) override;
-    void stop(SpeechRecognition*) override;
-    void abort(SpeechRecognition*) override;
+  // SpeechRecognitionClient:
+  void start(SpeechRecognition*,
+             const SpeechGrammarList*,
+             const String& lang,
+             bool continuous,
+             bool interimResults,
+             unsigned long maxAlternatives,
+             MediaStreamTrack*) override;
+  void stop(SpeechRecognition*) override;
+  void abort(SpeechRecognition*) override;
 
-    // WebSpeechRecognizerClient:
-    void didStartAudio(const WebSpeechRecognitionHandle&) override;
-    void didStartSound(const WebSpeechRecognitionHandle&) override;
-    void didEndSound(const WebSpeechRecognitionHandle&) override;
-    void didEndAudio(const WebSpeechRecognitionHandle&) override;
-    void didReceiveResults(const WebSpeechRecognitionHandle&, const WebVector<WebSpeechRecognitionResult>& newFinalResults, const WebVector<WebSpeechRecognitionResult>& currentInterimResults) override;
-    void didReceiveNoMatch(const WebSpeechRecognitionHandle&, const WebSpeechRecognitionResult&) override;
-    void didReceiveError(const WebSpeechRecognitionHandle&, const WebString& message, WebSpeechRecognizerClient::ErrorCode) override;
-    void didStart(const WebSpeechRecognitionHandle&) override;
-    void didEnd(const WebSpeechRecognitionHandle&) override;
+  // WebSpeechRecognizerClient:
+  void didStartAudio(const WebSpeechRecognitionHandle&) override;
+  void didStartSound(const WebSpeechRecognitionHandle&) override;
+  void didEndSound(const WebSpeechRecognitionHandle&) override;
+  void didEndAudio(const WebSpeechRecognitionHandle&) override;
+  void didReceiveResults(
+      const WebSpeechRecognitionHandle&,
+      const WebVector<WebSpeechRecognitionResult>& newFinalResults,
+      const WebVector<WebSpeechRecognitionResult>& currentInterimResults)
+      override;
+  void didReceiveNoMatch(const WebSpeechRecognitionHandle&,
+                         const WebSpeechRecognitionResult&) override;
+  void didReceiveError(const WebSpeechRecognitionHandle&,
+                       const WebString& message,
+                       WebSpeechRecognizerClient::ErrorCode) override;
+  void didStart(const WebSpeechRecognitionHandle&) override;
+  void didEnd(const WebSpeechRecognitionHandle&) override;
 
-private:
-    SpeechRecognitionClientProxy(WebSpeechRecognizer*);
+ private:
+  SpeechRecognitionClientProxy(WebSpeechRecognizer*);
 
-    WebSpeechRecognizer* m_recognizer;
+  WebSpeechRecognizer* m_recognizer;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SpeechRecognitionClientProxy_h
+#endif  // SpeechRecognitionClientProxy_h

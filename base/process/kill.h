@@ -12,10 +12,21 @@
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 
 namespace base {
 
 class ProcessFilter;
+
+#if defined(OS_WIN)
+namespace win {
+
+// See definition in sandbox/win/src/sandbox_types.h
+const DWORD kSandboxFatalMemoryExceeded = 7012;
+
+}  // namespace win
+
+#endif  // OS_WIN
 
 // Return status values from GetTerminationStatus.  Don't use these as
 // exit code arguments to KillProcess*(), use platform/application
@@ -38,6 +49,7 @@ enum TerminationStatus {
   TERMINATION_STATUS_OOM_PROTECTED,        // child was protected from oom kill
 #endif
   TERMINATION_STATUS_LAUNCH_FAILED,        // child process never launched
+  TERMINATION_STATUS_OOM,                  // Process died due to oom
   TERMINATION_STATUS_MAX_ENUM
 };
 

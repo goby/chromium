@@ -68,12 +68,12 @@
                     // In Chromium, HOME/END key only reset y scroll position, and x scroll position is preserved.
                     function testEnd() {
                         window.scrollTo(expectedScrollX, expectedScrollY);
-                        eventSender.keyDown("end");
+                        eventSender.keyDown("End");
                         shouldBecomeEqual('window.scrollY == 0', 'true', testSelectAll);
                     }
                     function testHome() {
                         window.scrollTo(expectedScrollX, expectedScrollY);
-                        eventSender.keyDown("home");
+                        eventSender.keyDown("Home");
                         shouldBecomeEqual('window.scrollY == -3425', 'true', testEnd);
                     }
                     testHome();
@@ -87,8 +87,6 @@
                     document.execCommand("SelectAll");
                     var selection = window.getSelection();
                     assertEqual("selectAll selects all document", selection.toString().substring(0, div.innerHTML.length), div.innerHTML);
-
-                    div.style.display = "none";
 
                     finishJSTest();
                 }

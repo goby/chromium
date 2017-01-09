@@ -8,15 +8,19 @@
 #ifndef GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_UTILS_H_
 #define GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_UTILS_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <limits>
 #include <string>
 #include <vector>
 
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/numerics/safe_math.h"
 #include "gpu/command_buffer/common/gles2_utils_export.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gl/gpu_preference.h"
 
 namespace gpu {
 namespace gles2 {
@@ -51,6 +55,42 @@ inline bool SafeAddInt32(int32_t a, int32_t b, int32_t* dst) {
   *dst = checked.ValueOrDefault(0);
   return checked.IsValid();
 }
+
+// Returns the address of the first byte after a struct.
+template <typename T>
+const volatile void* AddressAfterStruct(const volatile T& pod) {
+  return reinterpret_cast<const volatile uint8_t*>(&pod) + sizeof(pod);
+}
+
+// Returns the address of the frst byte after the struct or NULL if size >
+// immediate_data_size.
+template <typename RETURN_TYPE, typename COMMAND_TYPE>
+RETURN_TYPE GetImmediateDataAs(const volatile COMMAND_TYPE& pod,
+                               uint32_t size,
+                               uint32_t immediate_data_size) {
+  return (size <= immediate_data_size)
+             ? static_cast<RETURN_TYPE>(
+                   const_cast<volatile void*>(AddressAfterStruct(pod)))
+             : NULL;
+}
+
+struct GLES2_UTILS_EXPORT PixelStoreParams {
+  PixelStoreParams()
+      : alignment(4),
+        row_length(0),
+        image_height(0),
+        skip_pixels(0),
+        skip_rows(0),
+        skip_images(0) {
+  }
+
+  int32_t alignment;
+  int32_t row_length;
+  int32_t image_height;
+  int32_t skip_pixels;
+  int32_t skip_rows;
+  int32_t skip_images;
+};
 
 // Utilties for GLES2 support.
 class GLES2_UTILS_EXPORT GLES2Util {
@@ -105,17 +145,27 @@ class GLES2_UTILS_EXPORT GLES2Util {
 
   // Computes the size of an image row including alignment padding
   static bool ComputeImagePaddedRowSize(
-      int width, int format, int type, int unpack_alignment,
+      int width, int format, int type, int alignment,
       uint32_t* padded_row_size);
 
   // Computes the size of image data for TexImage2D and TexSubImage2D.
-  // Optionally the unpadded and padded row sizes can be returned. If height < 2
-  // then the padded_row_size will be the same as the unpadded_row_size since
-  // padding is not necessary.
+  // Optionally the unpadded and padded row sizes can be returned.
   static bool ComputeImageDataSizes(
       int width, int height, int depth, int format, int type,
-      int unpack_alignment, uint32_t* size, uint32_t* unpadded_row_size,
-      uint32_t* padded_row_size);
+      int alignment, uint32_t* size, uint32_t* opt_unpadded_row_size,
+      uint32_t* opt_padded_row_size);
+
+  // Similar to the above function, but taking into consideration all ES3
+  // pixel pack/unpack parameters.
+  // Optionally the skipped bytes in the beginning can be returned.
+  // Note the returned |size| does NOT include |skip_size|.
+  // TODO(zmo): merging ComputeImageDataSize and ComputeImageDataSizeES3.
+  static bool ComputeImageDataSizesES3(
+      int width, int height, int depth, int format, int type,
+      const PixelStoreParams& params,
+      uint32_t* size, uint32_t* opt_unpadded_row_size,
+      uint32_t* opt_padded_row_size, uint32_t* opt_skip_size,
+      uint32_t* opt_padding);
 
   static size_t RenderbufferBytesPerPixel(int format);
 
@@ -126,7 +176,11 @@ class GLES2_UTILS_EXPORT GLES2Util {
   // For example, GL_FLOAT_MAT3 returns 9.
   static uint32_t GetElementCountForUniformType(int type);
 
-  static size_t GetGLTypeSizeForTexturesAndBuffers(uint32_t type);
+  static size_t GetGLTypeSizeForTextures(uint32_t type);
+
+  static size_t GetGLTypeSizeForBuffers(uint32_t type);
+
+  static size_t GetGroupSizeForBufferType(uint32_t count, uint32_t type);
 
   static size_t GetGLTypeSizeForPathCoordType(uint32_t type);
 
@@ -143,9 +197,11 @@ class GLES2_UTILS_EXPORT GLES2Util {
   static uint32_t IndexToGLFaceTarget(int index);
 
   static size_t GLTargetToFaceIndex(uint32_t target);
+  static uint32_t GLFaceTargetToTextureTarget(uint32_t target);
 
-  static uint32_t GetGLReadPixelsImplementationFormat(
-      uint32_t internal_format);
+  static uint32_t GetGLReadPixelsImplementationFormat(uint32_t internal_format,
+                                                      uint32_t texture_type,
+                                                      bool supports_bgra);
 
   static uint32_t GetGLReadPixelsImplementationType(
       uint32_t internal_format, uint32_t texture_type);
@@ -185,12 +241,30 @@ class GLES2_UTILS_EXPORT GLES2Util {
   static bool IsSignedIntegerFormat(uint32_t internal_format);
   static bool IsIntegerFormat(uint32_t internal_format);
   static bool IsFloatFormat(uint32_t internal_format);
+  static uint32_t ConvertToSizedFormat(uint32_t format, uint32_t type);
+
+  static bool IsSizedColorFormat(uint32_t internal_format);
+  static void GetColorFormatComponentSizes(
+      uint32_t internal_format, uint32_t type, int* r, int* g, int* b, int* a);
+
+  // Computes the data size for certain gl commands like glUniform.
+  static bool ComputeDataSize(uint32_t count,
+                              size_t size,
+                              unsigned int elements_per_unit,
+                              uint32_t* dst);
 
   #include "../common/gles2_cmd_utils_autogen.h"
 
  private:
   static std::string GetQualifiedEnumString(
       const EnumToString* table, size_t count, uint32_t value);
+
+  static bool ComputeImageRowSizeHelper(int width,
+                                        uint32_t bytes_per_group,
+                                        int alignment,
+                                        uint32_t* rt_unpadded_row_size,
+                                        uint32_t* rt_padded_row_size,
+                                        uint32_t* rt_padding);
 
   static const EnumToString* const enum_to_string_table_;
   static const size_t enum_to_string_table_len_;
@@ -226,15 +300,19 @@ enum ContextType {
   CONTEXT_TYPE_WEBGL1,
   CONTEXT_TYPE_WEBGL2,
   CONTEXT_TYPE_OPENGLES2,
-  CONTEXT_TYPE_OPENGLES3
+  CONTEXT_TYPE_OPENGLES3,
+  CONTEXT_TYPE_LAST = CONTEXT_TYPE_OPENGLES3
 };
+GLES2_UTILS_EXPORT bool IsWebGLContextType(ContextType context_type);
 
 struct GLES2_UTILS_EXPORT ContextCreationAttribHelper {
   ContextCreationAttribHelper();
+  ContextCreationAttribHelper(const ContextCreationAttribHelper& other);
 
-  void Serialize(std::vector<int32_t>* attribs) const;
   bool Parse(const std::vector<int32_t>& attribs);
 
+  gfx::Size offscreen_framebuffer_size;
+  gl::GpuPreference gpu_preference;
   // -1 if invalid or unspecified.
   int32_t alpha_size;
   int32_t blue_size;
@@ -248,6 +326,8 @@ struct GLES2_UTILS_EXPORT ContextCreationAttribHelper {
   bool bind_generates_resource;
   bool fail_if_major_perf_caveat;
   bool lose_context_when_out_of_memory;
+  bool should_use_native_gmb_for_backbuffer;
+
   ContextType context_type;
 };
 

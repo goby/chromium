@@ -7,15 +7,10 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/tracked_objects.h"
 
 namespace content {
-
-// DOMStorageTaskRunner
-
-bool DOMStorageTaskRunner::RunsTasksOnCurrentThread() const {
-  return IsRunningOnSequence(PRIMARY_SEQUENCE);
-}
 
 // DOMStorageWorkerPoolTaskRunner
 
@@ -28,9 +23,16 @@ DOMStorageWorkerPoolTaskRunner::DOMStorageWorkerPoolTaskRunner(
       sequenced_worker_pool_(sequenced_worker_pool),
       primary_sequence_token_(primary_sequence_token),
       commit_sequence_token_(commit_sequence_token) {
+  primary_sequence_checker_.DetachFromSequence();
+  commit_sequence_checker_.DetachFromSequence();
 }
 
 DOMStorageWorkerPoolTaskRunner::~DOMStorageWorkerPoolTaskRunner() {
+}
+
+bool DOMStorageWorkerPoolTaskRunner::RunsTasksOnCurrentThread() const {
+  // It is valid for an implementation to always return true.
+  return true;
 }
 
 bool DOMStorageWorkerPoolTaskRunner::PostDelayedTask(
@@ -40,7 +42,7 @@ bool DOMStorageWorkerPoolTaskRunner::PostDelayedTask(
   // Note base::TaskRunner implements PostTask in terms of PostDelayedTask
   // with a delay of zero, we detect that usage and avoid the unecessary
   // trip thru the message loop.
-  if (delay == base::TimeDelta()) {
+  if (delay.is_zero()) {
     return sequenced_worker_pool_->PostSequencedWorkerTaskWithShutdownBehavior(
         primary_sequence_token_, from_here, task,
         base::SequencedWorkerPool::BLOCK_SHUTDOWN);
@@ -62,10 +64,17 @@ bool DOMStorageWorkerPoolTaskRunner::PostShutdownBlockingTask(
       base::SequencedWorkerPool::BLOCK_SHUTDOWN);
 }
 
-bool DOMStorageWorkerPoolTaskRunner::IsRunningOnSequence(
-    SequenceID sequence_id) const {
-  return sequenced_worker_pool_->IsRunningSequenceOnCurrentThread(
-      IDtoToken(sequence_id));
+void DOMStorageWorkerPoolTaskRunner::AssertIsRunningOnPrimarySequence() const {
+  DCHECK(primary_sequence_checker_.CalledOnValidSequence());
+}
+
+void DOMStorageWorkerPoolTaskRunner::AssertIsRunningOnCommitSequence() const {
+  DCHECK(commit_sequence_checker_.CalledOnValidSequence());
+}
+
+scoped_refptr<base::SequencedTaskRunner>
+DOMStorageWorkerPoolTaskRunner::GetSequencedTaskRunner(SequenceID sequence_id) {
+  return sequenced_worker_pool_->GetSequencedTaskRunner(IDtoToken(sequence_id));
 }
 
 base::SequencedWorkerPool::SequenceToken
@@ -86,6 +95,10 @@ MockDOMStorageTaskRunner::MockDOMStorageTaskRunner(
 MockDOMStorageTaskRunner::~MockDOMStorageTaskRunner() {
 }
 
+bool MockDOMStorageTaskRunner::RunsTasksOnCurrentThread() const {
+  return task_runner_->RunsTasksOnCurrentThread();
+}
+
 bool MockDOMStorageTaskRunner::PostDelayedTask(
     const tracked_objects::Location& from_here,
     const base::Closure& task,
@@ -100,8 +113,17 @@ bool MockDOMStorageTaskRunner::PostShutdownBlockingTask(
   return task_runner_->PostTask(from_here, task);
 }
 
-bool MockDOMStorageTaskRunner::IsRunningOnSequence(SequenceID) const {
-  return task_runner_->RunsTasksOnCurrentThread();
+void MockDOMStorageTaskRunner::AssertIsRunningOnPrimarySequence() const {
+  DCHECK(RunsTasksOnCurrentThread());
+}
+
+void MockDOMStorageTaskRunner::AssertIsRunningOnCommitSequence() const {
+  DCHECK(RunsTasksOnCurrentThread());
+}
+
+scoped_refptr<base::SequencedTaskRunner>
+MockDOMStorageTaskRunner::GetSequencedTaskRunner(SequenceID sequence_id) {
+  return task_runner_;
 }
 
 }  // namespace content

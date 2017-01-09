@@ -4,6 +4,7 @@
 
 #include "android_webview/native/aw_settings.h"
 
+#include "android_webview/browser/aw_content_browser_client.h"
 #include "android_webview/browser/renderer_host/aw_render_view_host_ext.h"
 #include "android_webview/common/aw_content_client.h"
 #include "android_webview/native/aw_contents.h"
@@ -22,6 +23,7 @@
 
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 using content::RendererPreferences;
 using content::WebPreferences;
@@ -48,6 +50,7 @@ void PopulateFixedRendererPreferences(RendererPreferences* prefs) {
 void PopulateFixedWebPreferences(WebPreferences* web_prefs) {
   web_prefs->shrinks_standalone_images_to_fit = false;
   web_prefs->should_clear_document_background = false;
+  web_prefs->viewport_meta_enabled = true;
 }
 
 const void* const kAwSettingsUserDataKey = &kAwSettingsUserDataKey;
@@ -87,9 +90,9 @@ AwSettings::~AwSettings() {
 
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> scoped_obj = aw_settings_.get(env);
-  jobject obj = scoped_obj.obj();
-  if (!obj) return;
-  Java_AwSettings_nativeAwSettingsGone(env, obj,
+  if (scoped_obj.is_null())
+    return;
+  Java_AwSettings_nativeAwSettingsGone(env, scoped_obj,
                                        reinterpret_cast<intptr_t>(this));
 }
 
@@ -119,10 +122,10 @@ void AwSettings::UpdateEverything() {
   JNIEnv* env = base::android::AttachCurrentThread();
   CHECK(env);
   ScopedJavaLocalRef<jobject> scoped_obj = aw_settings_.get(env);
-  jobject obj = scoped_obj.obj();
-  if (!obj) return;
+  if (scoped_obj.is_null())
+    return;
   // Grab the lock and call UpdateEverythingLocked.
-  Java_AwSettings_updateEverything(env, obj);
+  Java_AwSettings_updateEverything(env, scoped_obj);
 }
 
 void AwSettings::UpdateEverythingLocked(JNIEnv* env,
@@ -209,15 +212,9 @@ void AwSettings::UpdateRendererPreferencesLocked(
     update_prefs = true;
   }
 
-  bool video_overlay =
-      Java_AwSettings_getVideoOverlayForEmbeddedVideoEnabledLocked(env, obj);
-  bool force_video_overlay =
-      Java_AwSettings_getForceVideoOverlayForTests(env, obj);
-  if (video_overlay !=
-          prefs->use_video_overlay_for_embedded_encrypted_video ||
-      force_video_overlay != prefs->use_view_overlay_for_all_video) {
-    prefs->use_video_overlay_for_embedded_encrypted_video = video_overlay;
-    prefs->use_view_overlay_for_all_video = force_video_overlay;
+  if (prefs->accept_languages.compare(
+          AwContentBrowserClient::GetAcceptLangsImpl())) {
+    prefs->accept_languages = AwContentBrowserClient::GetAcceptLangsImpl();
     update_prefs = true;
   }
 
@@ -236,17 +233,9 @@ void AwSettings::UpdateOffscreenPreRasterLocked(
   }
 }
 
-void AwSettings::RenderViewCreated(content::RenderViewHost* render_view_host) {
-  // A single WebContents can normally have 0 to many RenderViewHost instances
-  // associated with it.
-  // This is important since there is only one RenderViewHostExt instance per
-  // WebContents (and not one RVHExt per RVH, as you might expect) and updating
-  // settings via RVHExt only ever updates the 'current' RVH.
-  // In android_webview we don't swap out the RVH on cross-site navigations, so
-  // we shouldn't have to deal with the multiple RVH per WebContents case. That
-  // in turn means that the newly created RVH is always the 'current' RVH
-  // (since we only ever go from 0 to 1 RVH instances) and hence the DCHECK.
-  DCHECK_EQ(render_view_host, web_contents()->GetRenderViewHost());
+void AwSettings::RenderViewHostChanged(content::RenderViewHost* old_host,
+                                       content::RenderViewHost* new_host) {
+  DCHECK_EQ(new_host, web_contents()->GetRenderViewHost());
 
   UpdateEverything();
 }
@@ -259,11 +248,11 @@ void AwSettings::PopulateWebPreferences(WebPreferences* web_prefs) {
   JNIEnv* env = base::android::AttachCurrentThread();
   CHECK(env);
   ScopedJavaLocalRef<jobject> scoped_obj = aw_settings_.get(env);
-  jobject obj = scoped_obj.obj();
-  if (!obj) return;
+  if (scoped_obj.is_null())
+    return;
   // Grab the lock and call PopulateWebPreferencesLocked.
-  Java_AwSettings_populateWebPreferences(
-      env, obj, reinterpret_cast<jlong>(web_prefs));
+  Java_AwSettings_populateWebPreferences(env, scoped_obj,
+                                         reinterpret_cast<jlong>(web_prefs));
 }
 
 void AwSettings::PopulateWebPreferencesLocked(JNIEnv* env,
@@ -401,6 +390,9 @@ void AwSettings::PopulateWebPreferencesLocked(JNIEnv* env,
   web_prefs->ignore_main_frame_overflow_hidden_quirk = support_quirks;
   web_prefs->report_screen_size_in_physical_pixels_quirk = support_quirks;
 
+  web_prefs->resue_global_for_unowned_main_frame =
+      Java_AwSettings_getAllowEmptyDocumentPersistenceLocked(env, obj);
+
   web_prefs->password_echo_enabled =
       Java_AwSettings_getPasswordEchoEnabledLocked(env, obj);
   web_prefs->spatial_navigation_enabled =
@@ -425,15 +417,32 @@ void AwSettings::PopulateWebPreferencesLocked(JNIEnv* env,
       web_prefs->experimental_webgl_enabled &&
       enable_supported_hardware_accelerated_features;
 
-  web_prefs->allow_displaying_insecure_content =
-      Java_AwSettings_getAllowDisplayingInsecureContentLocked(env, obj);
+  // If strict mixed content checking is enabled then running should not be
+  // allowed.
+  DCHECK(!Java_AwSettings_getUseStricMixedContentCheckingLocked(env, obj) ||
+         !Java_AwSettings_getAllowRunningInsecureContentLocked(env, obj));
   web_prefs->allow_running_insecure_content =
       Java_AwSettings_getAllowRunningInsecureContentLocked(env, obj);
+  web_prefs->strict_mixed_content_checking =
+      Java_AwSettings_getUseStricMixedContentCheckingLocked(env, obj);
 
   web_prefs->fullscreen_supported =
       Java_AwSettings_getFullscreenSupportedLocked(env, obj);
   web_prefs->record_whole_document =
       Java_AwSettings_getRecordFullDocument(env, obj);
+
+  // TODO(jww): This should be removed once sufficient warning has been given of
+  // possible API breakage because of disabling insecure use of geolocation.
+  web_prefs->allow_geolocation_on_insecure_origins =
+      Java_AwSettings_getAllowGeolocationOnInsecureOrigins(env, obj);
+
+  // We use system scrollbars, so make Blink's scrollbars invisible.
+  web_prefs->hide_scrollbars = true;
+
+  // Keep spellcheck disabled on html elements unless the spellcheck="true"
+  // attribute is explicitly specified. This "opt-in" behavior is for backward
+  // consistency in apps that use WebView (see crbug.com/652314).
+  web_prefs->spellcheck_enabled_by_default = false;
 }
 
 static jlong Init(JNIEnv* env,

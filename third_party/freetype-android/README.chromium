@@ -1,7 +1,7 @@
 Name: FreeType
 URL: http://www.freetype.org/
-Version: VER-2-6-1-updates
-Revision: 30fe5e762e062612fdf4b56b50d813525a5aa311
+Version: VER-2-7-0-updates
+Revision: c38be52bf8de3b1699d74932b849bf150265819e
 License: Custom license "inspired by the BSD, Artistic, and IJG (Independent
          JPEG Group) licenses"
 License File: src/docs/FTL.TXT
@@ -10,8 +10,8 @@ License Android Compatible: yes
 
 Description:
 This package tracks upstream FreeType, but the build files and configuration
-are based on the Android source tree. This package is only used for Android.
-For other platforms the system FreeType library is used.
+are based on the Android source tree. This package is only used for Android
+and Chromecast. For other platforms the system FreeType library is used.
 
 How to update:
 1. Find the desired commit in
@@ -19,8 +19,10 @@ How to update:
    If such a commit does not yet exist, branch from the appropriate point with
    a branch name like "chromium/android/VER-X-X-X-updates" depending on the
    FreeType tag being branched and commit changes there.
-2. Update freetype.gyp and BUILD.gn to reflect any changes. These should be kept
+2. Update BUILD.gn to reflect any changes. This build should be kept
    in sync with the Android.mk for FreeType in Android as possible.
-3. Update this file.
-4. Commit build changes while rolling Chromium's freetype-android DEPS to the
+3. Merge the new src/include/freetype/config/ftoption.h into
+   include/freetype-android-config/ftoption.h .
+4. Update this file.
+5. Commit build changes while rolling Chromium's freetype-android DEPS to the
    new commit.

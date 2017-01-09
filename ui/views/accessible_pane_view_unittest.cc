@@ -4,15 +4,13 @@
 
 #include "ui/views/accessible_pane_view.h"
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget.h"
-
-#if defined(OS_MACOSX)
-#include "ui/base/test/scoped_fake_nswindow_focus.h"
-#endif
 
 namespace views {
 
@@ -40,10 +38,10 @@ class TestBarView : public AccessiblePaneView,
  private:
   void Init();
 
-  scoped_ptr<LabelButton> child_button_;
-  scoped_ptr<LabelButton> second_child_button_;
-  scoped_ptr<LabelButton> third_child_button_;
-  scoped_ptr<LabelButton> not_child_button_;
+  std::unique_ptr<LabelButton> child_button_;
+  std::unique_ptr<LabelButton> second_child_button_;
+  std::unique_ptr<LabelButton> third_child_button_;
+  std::unique_ptr<LabelButton> not_child_button_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBarView);
 };
@@ -76,7 +74,7 @@ View* TestBarView::GetDefaultFocusableChild() {
 
 TEST_F(AccessiblePaneViewTest, SimpleSetPaneFocus) {
   TestBarView* test_view = new TestBarView();
-  scoped_ptr<Widget> widget(new Widget());
+  std::unique_ptr<Widget> widget(new Widget());
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.bounds = gfx::Rect(50, 50, 650, 650);
@@ -103,15 +101,8 @@ TEST_F(AccessiblePaneViewTest, SimpleSetPaneFocus) {
 }
 
 TEST_F(AccessiblePaneViewTest, SetPaneFocusAndRestore) {
-#if defined(OS_MACOSX)
-  // On Aura platforms, this test creates Ash windows and only interacts with
-  // the Ash window manager. On Mac, it creates native windows, but since unit
-  // tests cannot gain key status, fake it out here.
-  ui::test::ScopedFakeNSWindowFocus fake_focus;
-#endif
-
   View* test_view_main = new View();
-  scoped_ptr<Widget> widget_main(new Widget());
+  std::unique_ptr<Widget> widget_main(new Widget());
   Widget::InitParams params_main = CreateParams(Widget::InitParams::TYPE_POPUP);
   params_main.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   // By default, TYPE_POPUP is not activatable.
@@ -120,13 +111,14 @@ TEST_F(AccessiblePaneViewTest, SetPaneFocusAndRestore) {
   widget_main->Init(params_main);
   View* root_main = widget_main->GetRootView();
   root_main->AddChildView(test_view_main);
+  widget_main->Show();
   widget_main->Activate();
   test_view_main->GetFocusManager()->SetFocusedView(test_view_main);
   EXPECT_TRUE(widget_main->IsActive());
   EXPECT_TRUE(test_view_main->HasFocus());
 
   TestBarView* test_view_bar = new TestBarView();
-  scoped_ptr<Widget> widget_bar(new Widget());
+  std::unique_ptr<Widget> widget_bar(new Widget());
   Widget::InitParams params_bar = CreateParams(Widget::InitParams::TYPE_POPUP);
   params_bar.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params_bar.activatable = Widget::InitParams::ACTIVATABLE_YES;
@@ -145,16 +137,19 @@ TEST_F(AccessiblePaneViewTest, SetPaneFocusAndRestore) {
   EXPECT_EQ(test_view_bar->child_button(),
             test_view_bar->GetWidget()->GetFocusManager()->GetFocusedView());
 
-  // Deactivate() is only reliable on Ash. On Windows it uses ::GetNextWindow()
-  // to simply activate another window, and which one is not predictable. On
-  // Mac, Deactivate() is not implemented. Note that TestBarView calls
-  // set_allow_deactivate_on_esc(true), which is only otherwise used in Ash.
+  if (!IsMus() && !IsAuraMusClient()) {
+    // Deactivate() is only reliable on Ash. On Windows it uses
+    // ::GetNextWindow() to simply activate another window, and which one is not
+    // predictable. On Mac, Deactivate() is not implemented. Note that
+    // TestBarView calls set_allow_deactivate_on_esc(true), which is only
+    // otherwise used in Ash.
 #if !defined(OS_MACOSX) || defined(USE_ASH)
-  // Esc should deactivate the widget.
-  test_view_bar->AcceleratorPressed(test_view_bar->escape_key());
-  EXPECT_TRUE(widget_main->IsActive());
-  EXPECT_FALSE(widget_bar->IsActive());
+    // Esc should deactivate the widget.
+    test_view_bar->AcceleratorPressed(test_view_bar->escape_key());
+    EXPECT_TRUE(widget_main->IsActive());
+    EXPECT_FALSE(widget_bar->IsActive());
 #endif
+  }
 
   widget_bar->CloseNow();
   widget_bar.reset();
@@ -166,7 +161,7 @@ TEST_F(AccessiblePaneViewTest, SetPaneFocusAndRestore) {
 TEST_F(AccessiblePaneViewTest, TwoSetPaneFocus) {
   TestBarView* test_view = new TestBarView();
   TestBarView* test_view_2 = new TestBarView();
-  scoped_ptr<Widget> widget(new Widget());
+  std::unique_ptr<Widget> widget(new Widget());
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.bounds = gfx::Rect(50, 50, 650, 650);
@@ -196,7 +191,7 @@ TEST_F(AccessiblePaneViewTest, TwoSetPaneFocus) {
 TEST_F(AccessiblePaneViewTest, PaneFocusTraversal) {
   TestBarView* test_view = new TestBarView();
   TestBarView* original_test_view = new TestBarView();
-  scoped_ptr<Widget> widget(new Widget());
+  std::unique_ptr<Widget> widget(new Widget());
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.bounds = gfx::Rect(50, 50, 650, 650);

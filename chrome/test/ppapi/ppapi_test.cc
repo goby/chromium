@@ -4,6 +4,8 @@
 
 #include "chrome/test/ppapi/ppapi_test.h"
 
+#include <stdint.h>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
@@ -11,7 +13,8 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/infobars/infobar_service.h"
@@ -20,7 +23,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
@@ -32,8 +34,8 @@
 #include "content/public/test/ppapi_test_utils.h"
 #include "media/base/media_switches.h"
 #include "net/base/filename_util.h"
-#include "net/base/test_data_directory.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/test_data_directory.h"
 #include "ppapi/shared_impl/ppapi_switches.h"
 #include "ui/gl/gl_switches.h"
 
@@ -231,15 +233,6 @@ void PPAPITestBase::RunTestViaHTTPIfAudioOutputAvailable(
 }
 
 void PPAPITestBase::RunTestURL(const GURL& test_url) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // PPAPITests are broken in Ash browser tests (http://crbug.com/263548).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests)) {
-    LOG(WARNING) << "PPAPITests are disabled for Ash browser tests.";
-    return;
-  }
-#endif
-
   // See comment above TestingInstance in ppapi/test/testing_instance.h.
   // Basically it sends messages using the DOM automation controller. The
   // value of "..." means it's still working and we should continue to wait,

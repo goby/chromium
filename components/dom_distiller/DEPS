@@ -1,13 +1,15 @@
 include_rules = [
+  "+components/data_use_measurement/core",
   "+components/leveldb_proto",
   "+components/pref_registry",
+  "+components/prefs",
+  "+components/sync/model",
+  "+components/sync/protocol",
+  "+components/sync_preferences",
   "+components/variations",
   "+google", # For third_party/protobuf.
   "+grit",  # For generated headers.
   "+jni",
-  "+sync/api",
-  "+sync/internal_api/public/attachments", # Needed for tests.
-  "+sync/protocol",
   "+third_party/dom_distiller_js",
   "+third_party/re2",
   "+net/base",

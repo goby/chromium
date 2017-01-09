@@ -4,8 +4,12 @@
 
 #include "device/bluetooth/dbus/bluetooth_profile_service_provider.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/platform_thread.h"
 #include "dbus/exported_object.h"
@@ -99,10 +103,9 @@ class BluetoothProfileServiceProviderImpl
 
     dbus::MessageReader reader(method_call);
     dbus::ObjectPath device_path;
-    scoped_ptr<dbus::FileDescriptor> fd(new dbus::FileDescriptor());
+    base::ScopedFD fd;
     dbus::MessageReader array_reader(NULL);
-    if (!reader.PopObjectPath(&device_path) ||
-        !reader.PopFileDescriptor(fd.get()) ||
+    if (!reader.PopObjectPath(&device_path) || !reader.PopFileDescriptor(&fd) ||
         !reader.PopArray(&array_reader)) {
       LOG(WARNING) << "NewConnection called with incorrect paramters: "
                    << method_call->ToString();
@@ -129,7 +132,7 @@ class BluetoothProfileServiceProviderImpl
         &BluetoothProfileServiceProviderImpl::OnConfirmation,
         weak_ptr_factory_.GetWeakPtr(), method_call, response_sender);
 
-    delegate_->NewConnection(device_path, fd.Pass(), options, callback);
+    delegate_->NewConnection(device_path, std::move(fd), options, callback);
   }
 
   // Called by dbus:: when the Bluetooth daemon is about to disconnect the
@@ -238,11 +241,10 @@ BluetoothProfileServiceProvider* BluetoothProfileServiceProvider::Create(
     dbus::Bus* bus,
     const dbus::ObjectPath& object_path,
     Delegate* delegate) {
-  if (!bluez::BluezDBusManager::Get()->IsUsingStub()) {
+  if (!bluez::BluezDBusManager::Get()->IsUsingFakes()) {
     return new BluetoothProfileServiceProviderImpl(bus, object_path, delegate);
-  } else {
-    return new FakeBluetoothProfileServiceProvider(object_path, delegate);
   }
+  return new FakeBluetoothProfileServiceProvider(object_path, delegate);
 }
 
 }  // namespace bluez

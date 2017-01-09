@@ -3,9 +3,12 @@
 // found in the LICENSE file.
 
 #include <algorithm>
+#include <memory>
 
 #include "base/bind.h"
+#include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/perf_time_logger.h"
@@ -33,7 +36,7 @@ class CookieMonsterTest : public testing::Test {
   CookieMonsterTest() : message_loop_(new base::MessageLoopForIO()) {}
 
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
 };
 
 class BaseCallback {
@@ -47,7 +50,7 @@ class BaseCallback {
     // Therefore, callbacks will actually always complete synchronously. If the
     // tests get more advanced we need to add other means of signaling
     // completion.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(has_run_);
     has_run_ = false;
   }
@@ -119,7 +122,7 @@ TEST(ParsedCookieTest, TestParseBigCookies) {
 }
 
 TEST_F(CookieMonsterTest, TestAddCookiesOnSingleHost) {
-  scoped_refptr<CookieMonster> cm(new CookieMonster(NULL, NULL));
+  std::unique_ptr<CookieMonster> cm(new CookieMonster(nullptr, nullptr));
   std::vector<std::string> cookies;
   for (int i = 0; i < kNumCookies; i++) {
     cookies.push_back(base::StringPrintf("a%03d=b", i));
@@ -147,12 +150,12 @@ TEST_F(CookieMonsterTest, TestAddCookiesOnSingleHost) {
 
   base::PerfTimeLogger timer3("Cookie_monster_deleteall_single_host");
   cm->DeleteAllAsync(CookieMonster::DeleteCallback());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   timer3.Done();
 }
 
 TEST_F(CookieMonsterTest, TestAddCookieOnManyHosts) {
-  scoped_refptr<CookieMonster> cm(new CookieMonster(NULL, NULL));
+  std::unique_ptr<CookieMonster> cm(new CookieMonster(nullptr, nullptr));
   std::string cookie(kCookieLine);
   std::vector<GURL> gurls;  // just wanna have ffffuunnn
   for (int i = 0; i < kNumCookies; ++i) {
@@ -180,12 +183,12 @@ TEST_F(CookieMonsterTest, TestAddCookieOnManyHosts) {
 
   base::PerfTimeLogger timer3("Cookie_monster_deleteall_many_hosts");
   cm->DeleteAllAsync(CookieMonster::DeleteCallback());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   timer3.Done();
 }
 
 TEST_F(CookieMonsterTest, TestDomainTree) {
-  scoped_refptr<CookieMonster> cm(new CookieMonster(NULL, NULL));
+  std::unique_ptr<CookieMonster> cm(new CookieMonster(nullptr, nullptr));
   GetCookiesCallback getCookiesCallback;
   SetCookieCallback setCookieCallback;
   const char domain_cookie_format_tree[] = "a=b; domain=%s";
@@ -238,7 +241,7 @@ TEST_F(CookieMonsterTest, TestDomainTree) {
 }
 
 TEST_F(CookieMonsterTest, TestDomainLine) {
-  scoped_refptr<CookieMonster> cm(new CookieMonster(NULL, NULL));
+  std::unique_ptr<CookieMonster> cm(new CookieMonster(nullptr, nullptr));
   SetCookieCallback setCookieCallback;
   GetCookiesCallback getCookiesCallback;
   std::vector<std::string> domain_list;
@@ -279,16 +282,15 @@ TEST_F(CookieMonsterTest, TestDomainLine) {
 
 TEST_F(CookieMonsterTest, TestImport) {
   scoped_refptr<MockPersistentCookieStore> store(new MockPersistentCookieStore);
-  std::vector<CanonicalCookie*> initial_cookies;
+  std::vector<std::unique_ptr<CanonicalCookie>> initial_cookies;
   GetCookiesCallback getCookiesCallback;
 
   // We want to setup a fairly large backing store, with 300 domains of 50
   // cookies each.  Creation times must be unique.
-  int64 time_tick(base::Time::Now().ToInternalValue());
+  int64_t time_tick(base::Time::Now().ToInternalValue());
 
   for (int domain_num = 0; domain_num < 300; domain_num++) {
-    std::string domain_name(base::StringPrintf(".Domain_%d.com", domain_num));
-    std::string gurl("www" + domain_name);
+    GURL gurl(base::StringPrintf("http://www.Domain_%d.com", domain_num));
     for (int cookie_num = 0; cookie_num < 50; cookie_num++) {
       std::string cookie_line(
           base::StringPrintf("Cookie_%d=1; Path=/", cookie_num));
@@ -298,9 +300,9 @@ TEST_F(CookieMonsterTest, TestImport) {
     }
   }
 
-  store->SetLoadExpectation(true, initial_cookies);
+  store->SetLoadExpectation(true, std::move(initial_cookies));
 
-  scoped_refptr<CookieMonster> cm(new CookieMonster(store.get(), NULL));
+  std::unique_ptr<CookieMonster> cm(new CookieMonster(store.get(), nullptr));
 
   // Import will happen on first access.
   GURL gurl("www.google.com");
@@ -314,7 +316,7 @@ TEST_F(CookieMonsterTest, TestImport) {
 }
 
 TEST_F(CookieMonsterTest, TestGetKey) {
-  scoped_refptr<CookieMonster> cm(new CookieMonster(NULL, NULL));
+  std::unique_ptr<CookieMonster> cm(new CookieMonster(nullptr, nullptr));
   base::PerfTimeLogger timer("Cookie_monster_get_key");
   for (int i = 0; i < kNumCookies; i++)
     cm->GetKey("www.google.com");
@@ -370,9 +372,9 @@ TEST_F(CookieMonsterTest, TestGCTimes) {
   };
   for (int ci = 0; ci < static_cast<int>(arraysize(test_cases)); ++ci) {
     const TestCase& test_case(test_cases[ci]);
-    scoped_refptr<CookieMonster> cm(CreateMonsterFromStoreForGC(
+    std::unique_ptr<CookieMonster> cm = CreateMonsterFromStoreForGC(
         test_case.num_cookies, test_case.num_old_cookies, 0, 0,
-        CookieMonster::kSafeFromGlobalPurgeDays * 2));
+        CookieMonster::kSafeFromGlobalPurgeDays * 2);
 
     GURL gurl("http://google.com");
     std::string cookie_line("z=3");

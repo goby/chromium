@@ -32,97 +32,81 @@
 #ifndef CollectionItemsCache_h
 #define CollectionItemsCache_h
 
-#include "core/html/CollectionIndexCache.h"
+#include "core/dom/CollectionIndexCache.h"
 #include "wtf/Vector.h"
-#include <v8.h>
 
 namespace blink {
 
 template <typename Collection, typename NodeType>
 class CollectionItemsCache : public CollectionIndexCache<Collection, NodeType> {
-    DISALLOW_NEW();
+  DISALLOW_NEW();
 
-    typedef CollectionIndexCache<Collection, NodeType> Base;
+  typedef CollectionIndexCache<Collection, NodeType> Base;
 
-public:
-    CollectionItemsCache();
-    ~CollectionItemsCache();
+ public:
+  CollectionItemsCache();
+  ~CollectionItemsCache();
 
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        visitor->trace(m_cachedList);
-        Base::trace(visitor);
-    }
+  DEFINE_INLINE_VIRTUAL_TRACE() {
+    visitor->trace(m_cachedList);
+    Base::trace(visitor);
+  }
 
-    unsigned nodeCount(const Collection&);
-    NodeType* nodeAt(const Collection&, unsigned index);
-    void invalidate();
+  unsigned nodeCount(const Collection&);
+  NodeType* nodeAt(const Collection&, unsigned index);
+  void invalidate();
 
-private:
-    ptrdiff_t allocationSize() const { return m_cachedList.capacity() * sizeof(NodeType*); }
-    static void reportExtraMemoryCostForCollectionItemsCache(ptrdiff_t diff)
-    {
-        v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(diff);
-    }
-
-    bool m_listValid;
-    WillBeHeapVector<RawPtrWillBeMember<NodeType>> m_cachedList;
+ private:
+  bool m_listValid;
+  HeapVector<Member<NodeType>> m_cachedList;
 };
 
 template <typename Collection, typename NodeType>
 CollectionItemsCache<Collection, NodeType>::CollectionItemsCache()
-    : m_listValid(false)
-{
-}
+    : m_listValid(false) {}
 
 template <typename Collection, typename NodeType>
-CollectionItemsCache<Collection, NodeType>::~CollectionItemsCache()
-{
-    if (ptrdiff_t diff = allocationSize())
-        reportExtraMemoryCostForCollectionItemsCache(-diff);
-}
+CollectionItemsCache<Collection, NodeType>::~CollectionItemsCache() {}
 
 template <typename Collection, typename NodeType>
-void CollectionItemsCache<Collection, NodeType>::invalidate()
-{
-    Base::invalidate();
-    if (m_listValid) {
-        m_cachedList.shrink(0);
-        m_listValid = false;
-    }
+void CollectionItemsCache<Collection, NodeType>::invalidate() {
+  Base::invalidate();
+  if (m_listValid) {
+    m_cachedList.shrink(0);
+    m_listValid = false;
+  }
 }
 
 template <class Collection, class NodeType>
-unsigned CollectionItemsCache<Collection, NodeType>::nodeCount(const Collection& collection)
-{
-    if (this->isCachedNodeCountValid())
-        return this->cachedNodeCount();
-
-    NodeType* currentNode = collection.traverseToFirst();
-    unsigned currentIndex = 0;
-    ptrdiff_t oldCapacity = allocationSize();
-    while (currentNode) {
-        m_cachedList.append(currentNode);
-        currentNode = collection.traverseForwardToOffset(currentIndex + 1, *currentNode, currentIndex);
-    }
-    if (ptrdiff_t diff = allocationSize() - oldCapacity)
-        reportExtraMemoryCostForCollectionItemsCache(diff);
-
-    this->setCachedNodeCount(m_cachedList.size());
-    m_listValid = true;
+unsigned CollectionItemsCache<Collection, NodeType>::nodeCount(
+    const Collection& collection) {
+  if (this->isCachedNodeCountValid())
     return this->cachedNodeCount();
+
+  NodeType* currentNode = collection.traverseToFirst();
+  unsigned currentIndex = 0;
+  while (currentNode) {
+    m_cachedList.append(currentNode);
+    currentNode = collection.traverseForwardToOffset(
+        currentIndex + 1, *currentNode, currentIndex);
+  }
+
+  this->setCachedNodeCount(m_cachedList.size());
+  m_listValid = true;
+  return this->cachedNodeCount();
 }
 
 template <typename Collection, typename NodeType>
-inline NodeType* CollectionItemsCache<Collection, NodeType>::nodeAt(const Collection& collection, unsigned index)
-{
-    if (m_listValid) {
-        ASSERT(this->isCachedNodeCountValid());
-        return index < this->cachedNodeCount() ? m_cachedList[index] : nullptr;
-    }
-    return Base::nodeAt(collection, index);
+inline NodeType* CollectionItemsCache<Collection, NodeType>::nodeAt(
+    const Collection& collection,
+    unsigned index) {
+  if (m_listValid) {
+    DCHECK(this->isCachedNodeCountValid());
+    return index < this->cachedNodeCount() ? m_cachedList[index] : nullptr;
+  }
+  return Base::nodeAt(collection, index);
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CollectionItemsCache_h
+#endif  // CollectionItemsCache_h

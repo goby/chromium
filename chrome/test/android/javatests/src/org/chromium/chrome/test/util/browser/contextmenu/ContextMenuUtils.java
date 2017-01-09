@@ -11,9 +11,9 @@ import android.view.MenuItem;
 
 import junit.framework.Assert;
 
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
@@ -162,7 +162,7 @@ public class ContextMenuUtils {
             }
         });
 
-        CriteriaHelper.pollForCriteria(new Criteria("Activity did not regain focus.") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("Activity did not regain focus.") {
             @Override
             public boolean isSatisfied() {
                 return testCase.getActivity().hasWindowFocus();

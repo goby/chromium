@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_FOCUS_FOCUS_SEARCH_H_
 #define UI_VIEWS_FOCUS_FOCUS_SEARCH_H_
 
+#include "base/macros.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -86,7 +87,8 @@ class VIEWS_EXPORT FocusSearch {
   bool IsViewFocusableCandidate(View* v, int skip_group_id);
 
   // Convenience method; returns true if a view is not NULL and is focusable
-  // (checking IsAccessibilityFocusable() if |accessibility_mode_| is true).
+  // (checking IsAccessibilityFocusable() if |accessibility_mode_| is true or
+  // the associated FocusManager has keyboard accessibility enabled).
   bool IsFocusable(View* v);
 
   // Returns the view selected for the group of the selected view. If the view

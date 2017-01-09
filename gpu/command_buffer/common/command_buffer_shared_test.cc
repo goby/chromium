@@ -6,9 +6,12 @@
 
 #include "gpu/command_buffer/common/command_buffer_shared.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,7 +25,7 @@ class CommandBufferSharedTest : public testing::Test {
     shared_state_->Initialize();
   }
 
-  scoped_ptr<CommandBufferSharedState> shared_state_;
+  std::unique_ptr<CommandBufferSharedState> shared_state_;
 };
 
 TEST_F(CommandBufferSharedTest, TestBasic) {
@@ -39,8 +42,7 @@ TEST_F(CommandBufferSharedTest, TestBasic) {
 
 static const int kSize = 100000;
 
-void WriteToState(int32 *buffer,
-                  CommandBufferSharedState* shared_state) {
+void WriteToState(int32_t* buffer, CommandBufferSharedState* shared_state) {
   CommandBuffer::State state;
   for (int i = 0; i < kSize; i++) {
     state.token = i - 1;
@@ -56,11 +58,11 @@ void WriteToState(int32 *buffer,
 }
 
 TEST_F(CommandBufferSharedTest, TestConsistency) {
-  scoped_ptr<int32[]> buffer;
-  buffer.reset(new int32[kSize]);
+  std::unique_ptr<int32_t[]> buffer;
+  buffer.reset(new int32_t[kSize]);
   base::Thread consumer("Reader Thread");
 
-  memset(buffer.get(), 0, kSize * sizeof(int32));
+  memset(buffer.get(), 0, kSize * sizeof(int32_t));
 
   consumer.Start();
   consumer.task_runner()->PostTask(

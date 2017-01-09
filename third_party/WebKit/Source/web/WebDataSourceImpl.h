@@ -31,61 +31,71 @@
 #ifndef WebDataSourceImpl_h
 #define WebDataSourceImpl_h
 
+#include "core/frame/FrameTypes.h"
 #include "core/loader/DocumentLoader.h"
 #include "platform/exported/WrappedResourceRequest.h"
 #include "platform/exported/WrappedResourceResponse.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "public/web/WebDataSource.h"
-#include "wtf/OwnPtr.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
 class WebDataSourceImpl final : public DocumentLoader, public WebDataSource {
-public:
-    static PassRefPtrWillBeRawPtr<WebDataSourceImpl> create(LocalFrame*, const ResourceRequest&, const SubstituteData&);
+ public:
+  static WebDataSourceImpl* create(LocalFrame*,
+                                   const ResourceRequest&,
+                                   const SubstituteData&,
+                                   ClientRedirectPolicy);
 
-    static WebDataSourceImpl* fromDocumentLoader(DocumentLoader* loader)
-    {
-        return static_cast<WebDataSourceImpl*>(loader);
-    }
+  static WebDataSourceImpl* fromDocumentLoader(DocumentLoader* loader) {
+    return static_cast<WebDataSourceImpl*>(loader);
+  }
 
-    // WebDataSource methods:
-    const WebURLRequest& originalRequest() const override;
-    const WebURLRequest& request() const override;
-    const WebURLResponse& response() const override;
-    bool hasUnreachableURL() const override;
-    WebURL unreachableURL() const override;
-    void appendRedirect(const WebURL&) override;
-    void redirectChain(WebVector<WebURL>&) const override;
-    bool isClientRedirect() const override;
-    bool replacesCurrentHistoryItem() const override;
-    WebNavigationType navigationType() const override;
-    ExtraData* extraData() const override;
-    void setExtraData(ExtraData*) override;
-    void setNavigationStartTime(double) override;
+  // WebDataSource methods:
+  const WebURLRequest& originalRequest() const override;
+  const WebURLRequest& request() const override;
+  const WebURLResponse& response() const override;
+  bool hasUnreachableURL() const override;
+  WebURL unreachableURL() const override;
+  void appendRedirect(const WebURL&) override;
+  void redirectChain(WebVector<WebURL>&) const override;
+  bool isClientRedirect() const override;
+  bool replacesCurrentHistoryItem() const override;
+  WebNavigationType navigationType() const override;
+  ExtraData* getExtraData() const override;
+  void setExtraData(ExtraData*) override;
+  void setNavigationStartTime(double) override;
+  void updateNavigation(double redirectStartTime,
+                        double redirectEndTime,
+                        double fetchStartTime,
+                        const WebVector<WebURL>& redirectChain) override;
+  void setSubresourceFilter(WebDocumentSubresourceFilter*) override;
 
-    static WebNavigationType toWebNavigationType(NavigationType);
+  static WebNavigationType toWebNavigationType(NavigationType);
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    WebDataSourceImpl(LocalFrame*, const ResourceRequest&, const SubstituteData&);
-    ~WebDataSourceImpl() override;
-    void detachFromFrame() override;
-    String debugName() const override { return "WebDataSourceImpl"; }
+ private:
+  WebDataSourceImpl(LocalFrame*,
+                    const ResourceRequest&,
+                    const SubstituteData&,
+                    ClientRedirectPolicy);
+  ~WebDataSourceImpl() override;
+  void detachFromFrame() override;
+  String debugName() const override { return "WebDataSourceImpl"; }
 
-    // Mutable because the const getters will magically sync these to the
-    // latest version from WebKit.
-    mutable WrappedResourceRequest m_originalRequestWrapper;
-    mutable WrappedResourceRequest m_requestWrapper;
-    mutable WrappedResourceResponse m_responseWrapper;
+  // Mutable because the const getters will magically sync these to the
+  // latest version from WebKit.
+  mutable WrappedResourceRequest m_originalRequestWrapper;
+  mutable WrappedResourceRequest m_requestWrapper;
+  mutable WrappedResourceResponse m_responseWrapper;
 
-    OwnPtr<ExtraData> m_extraData;
+  std::unique_ptr<ExtraData> m_extraData;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif  // WebDataSourceImpl_h

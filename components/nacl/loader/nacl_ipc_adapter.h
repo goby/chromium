@@ -5,20 +5,23 @@
 #ifndef COMPONENTS_NACL_LOADER_NACL_IPC_ADAPTER_H_
 #define COMPONENTS_NACL_LOADER_NACL_IPC_ADAPTER_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <queue>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/files/scoped_file.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/pickle.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/task_runner.h"
+#include "build/build_config.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_platform_file.h"
 #include "ppapi/c/pp_stdint.h"
@@ -26,15 +29,14 @@
 
 struct NaClDesc;
 struct NaClImcTypedMsgHdr;
-struct PP_Size;
+
+namespace base {
+class SingleThreadTaskRunner;
+}
 
 namespace IPC {
 class Channel;
 struct ChannelHandle;
-}
-
-namespace ppapi {
-class HostResource;
 }
 
 // Adapts a Chrome IPC channel to an IPC channel that we expose to Native
@@ -62,11 +64,11 @@ class NaClIPCAdapter : public base::RefCountedThreadSafe<NaClIPCAdapter>,
   // header we're exposing to NaCl.
 #pragma pack(push, 4)
   struct NaClMessageHeader : public base::Pickle::Header {
-    int32 routing;
-    uint32 type;
-    uint32 flags;
-    uint16 num_fds;
-    uint16 pad;
+    int32_t routing;
+    uint32_t type;
+    uint32_t flags;
+    uint16_t num_fds;
+    uint16_t pad;
   };
 #pragma pack(pop)
 
@@ -102,15 +104,15 @@ class NaClIPCAdapter : public base::RefCountedThreadSafe<NaClIPCAdapter>,
   // |open_resource_cb| may immediately call a OpenResourceReplyCallback
   // function to send a pre-opened resource descriptor to the untrusted side.
   // OpenResourceCallback returns true when OpenResourceReplyCallback is called.
-  NaClIPCAdapter(
-      const IPC::ChannelHandle& handle,
-      base::TaskRunner* runner,
-      ResolveFileTokenCallback resolve_file_token_cb,
-      OpenResourceCallback open_resource_cb);
+  NaClIPCAdapter(const IPC::ChannelHandle& handle,
+                 const scoped_refptr<base::SingleThreadTaskRunner>& runner,
+                 ResolveFileTokenCallback resolve_file_token_cb,
+                 OpenResourceCallback open_resource_cb);
 
   // Initializes with a given channel that's already created for testing
   // purposes. This function will take ownership of the given channel.
-  NaClIPCAdapter(scoped_ptr<IPC::Channel> channel, base::TaskRunner* runner);
+  NaClIPCAdapter(std::unique_ptr<IPC::Channel> channel,
+                 base::TaskRunner* runner);
 
   // Connect the channel. This must be called after the constructor that accepts
   // an IPC::ChannelHandle, and causes the Channel to be connected on the IO
@@ -133,13 +135,9 @@ class NaClIPCAdapter : public base::RefCountedThreadSafe<NaClIPCAdapter>,
   // NaClDesc is reference-counted, and a reference is returned.
   NaClDesc* MakeNaClDesc();
 
-#if defined(OS_POSIX)
-  base::ScopedFD TakeClientFileDescriptor();
-#endif
-
   // Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
  private:
@@ -177,12 +175,12 @@ class NaClIPCAdapter : public base::RefCountedThreadSafe<NaClIPCAdapter>,
     IOThreadData();
     ~IOThreadData();
 
-    scoped_ptr<IPC::Channel> channel_;
+    std::unique_ptr<IPC::Channel> channel_;
 
     // When we send a synchronous message (from untrusted to trusted), we store
     // its type here, so that later we can associate the reply with its type
     // for scanning.
-    typedef std::map<int, uint32> PendingSyncMsgMap;
+    typedef std::map<int, uint32_t> PendingSyncMsgMap;
     PendingSyncMsgMap pending_sync_msgs_;
   };
 
@@ -207,7 +205,7 @@ class NaClIPCAdapter : public base::RefCountedThreadSafe<NaClIPCAdapter>,
 
   void ConnectChannelOnIOThread();
   void CloseChannelOnIOThread();
-  void SendMessageOnIOThread(scoped_ptr<IPC::Message> message);
+  void SendMessageOnIOThread(std::unique_ptr<IPC::Message> message);
 
   // Saves the message to forward to NaCl. This method assumes that the caller
   // holds the lock for locked_data_.

@@ -5,12 +5,14 @@
 #ifndef ASH_TEST_TEST_SESSION_STATE_ANIMATOR_H_
 #define ASH_TEST_TEST_SESSION_STATE_ANIMATOR_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <vector>
 
 #include "ash/ash_export.h"
 #include "ash/wm/session_state_animator.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 
 namespace ash {
@@ -27,9 +29,7 @@ class TestSessionStateAnimator : public SessionStateAnimator {
   TestSessionStateAnimator();
   ~TestSessionStateAnimator() override;
 
-  int last_animation_epoch() {
-    return last_animation_epoch_;
-  }
+  int last_animation_epoch() { return last_animation_epoch_; }
 
   // Resets the current animation epoch back to 0 and aborts all currently
   // active animations.
@@ -72,9 +72,9 @@ class TestSessionStateAnimator : public SessionStateAnimator {
                                   AnimationSpeed speed,
                                   base::Closure callback) override;
   AnimationSequence* BeginAnimationSequence(base::Closure callback) override;
-  bool IsBackgroundHidden() const override;
-  void ShowBackground() override;
-  void HideBackground() override;
+  bool IsWallpaperHidden() const override;
+  void ShowWallpaper() override;
+  void HideWallpaper() override;
 
  private:
   class AnimationSequence;
@@ -83,14 +83,14 @@ class TestSessionStateAnimator : public SessionStateAnimator {
   // Data structure to track the currently active animations and their
   // callbacks.
   struct ActiveAnimation {
-    ActiveAnimation(
-        int animation_epoch,
-        base::TimeDelta duration,
-        SessionStateAnimator::Container container,
-        AnimationType type,
-        AnimationSpeed speed,
-        base::Closure success_callback,
-        base::Closure failed_callback);
+    ActiveAnimation(int animation_epoch,
+                    base::TimeDelta duration,
+                    SessionStateAnimator::Container container,
+                    AnimationType type,
+                    AnimationSpeed speed,
+                    base::Closure success_callback,
+                    base::Closure failed_callback);
+    ActiveAnimation(const ActiveAnimation& other);
     virtual ~ActiveAnimation();
 
     // The time epoch that this animation was scheduled.
@@ -121,11 +121,10 @@ class TestSessionStateAnimator : public SessionStateAnimator {
 
   // Starts an animation in the |animation_sequence| for each container
   // specified by |container_mask| with the given |type| and |speed|.
-  virtual void StartAnimationInSequence(
-      int container_mask,
-      AnimationType type,
-      AnimationSpeed speed,
-      AnimationSequence* animation_sequence);
+  virtual void StartAnimationInSequence(int container_mask,
+                                        AnimationType type,
+                                        AnimationSpeed speed,
+                                        AnimationSequence* animation_sequence);
 
   // Adds a single animation to the currently active animations.  If an
   // animation is already active for the given |container| then it will be
@@ -152,8 +151,8 @@ class TestSessionStateAnimator : public SessionStateAnimator {
   // sequence.
   int last_animation_epoch_;
 
-  // Tracks whether the background is hidden or not.
-  bool is_background_hidden_;
+  // Tracks whether the wallpaper is hidden or not.
+  bool is_wallpaper_hidden_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSessionStateAnimator);
 };

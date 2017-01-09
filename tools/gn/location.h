@@ -13,12 +13,13 @@ class InputFile;
 class Location {
  public:
   Location();
-  Location(const InputFile* file, int line_number, int char_offset, int byte);
+  Location(const InputFile* file, int line_number, int column_number, int byte);
 
   const InputFile* file() const { return file_; }
   int line_number() const { return line_number_; }
-  int char_offset() const { return char_offset_; }
+  int column_number() const { return column_number_; }
   int byte() const { return byte_; }
+  bool is_null() const { return *this == Location(); }
 
   bool operator==(const Location& other) const;
   bool operator!=(const Location& other) const;
@@ -27,12 +28,12 @@ class Location {
   // Returns a string with the file, line, and (optionally) the character
   // offset for this location. If this location is null, returns an empty
   // string.
-  std::string Describe(bool include_char_offset) const;
+  std::string Describe(bool include_column_number) const;
 
  private:
   const InputFile* file_;  // Null when unset.
   int line_number_;        // -1 when unset. 1-based.
-  int char_offset_;        // -1 when unset. 1-based.
+  int column_number_;      // -1 when unset. 1-based.
   int byte_;               // Index into the buffer, 0-based.
 };
 
@@ -45,6 +46,10 @@ class LocationRange {
 
   const Location& begin() const { return begin_; }
   const Location& end() const { return end_; }
+  bool is_null() const {
+    return begin_.is_null();  // No need to check both for the null case.
+  }
+
 
   LocationRange Union(const LocationRange& other) const;
 

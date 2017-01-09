@@ -6,6 +6,7 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -43,15 +44,16 @@ class HostConfigTest : public testing::Test {
 TEST_F(HostConfigTest, InvalidFile) {
   ASSERT_TRUE(test_dir_.CreateUniqueTempDir());
   base::FilePath non_existent_file =
-      test_dir_.path().AppendASCII("non_existent.json");
+      test_dir_.GetPath().AppendASCII("non_existent.json");
   EXPECT_FALSE(HostConfigFromJsonFile(non_existent_file));
 }
 
 TEST_F(HostConfigTest, Read) {
   ASSERT_TRUE(test_dir_.CreateUniqueTempDir());
-  base::FilePath test_file = test_dir_.path().AppendASCII("read.json");
+  base::FilePath test_file = test_dir_.GetPath().AppendASCII("read.json");
   WriteTestFile(test_file);
-  scoped_ptr<base::DictionaryValue> target(HostConfigFromJsonFile(test_file));
+  std::unique_ptr<base::DictionaryValue> target(
+      HostConfigFromJsonFile(test_file));
   ASSERT_TRUE(target);
 
   std::string value;
@@ -72,9 +74,10 @@ TEST_F(HostConfigTest, Read) {
 TEST_F(HostConfigTest, Write) {
   ASSERT_TRUE(test_dir_.CreateUniqueTempDir());
 
-  base::FilePath test_file = test_dir_.path().AppendASCII("write.json");
+  base::FilePath test_file = test_dir_.GetPath().AppendASCII("write.json");
   WriteTestFile(test_file);
-  scoped_ptr<base::DictionaryValue> target(HostConfigFromJsonFile(test_file));
+  std::unique_ptr<base::DictionaryValue> target(
+      HostConfigFromJsonFile(test_file));
   ASSERT_TRUE(target);
 
   std::string new_refresh_token_value = "NEW_REFRESH_TOKEN";
@@ -82,7 +85,8 @@ TEST_F(HostConfigTest, Write) {
   ASSERT_TRUE(HostConfigToJsonFile(*target, test_file));
 
   // Now read the file again and check that the value has been written.
-  scoped_ptr<base::DictionaryValue> reader(HostConfigFromJsonFile(test_file));
+  std::unique_ptr<base::DictionaryValue> reader(
+      HostConfigFromJsonFile(test_file));
   ASSERT_TRUE(reader);
 
   std::string value;

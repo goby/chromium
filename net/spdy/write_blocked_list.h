@@ -5,11 +5,14 @@
 #ifndef NET_SPDY_WRITE_BLOCKED_LIST_H_
 #define NET_SPDY_WRITE_BLOCKED_LIST_H_
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <deque>
+#include <unordered_map>
 
-#include "base/containers/hash_tables.h"
 #include "base/logging.h"
+#include "net/spdy/spdy_bug_tracker.h"
 #include "net/spdy/spdy_protocol.h"
 
 namespace net {
@@ -29,11 +32,11 @@ class WriteBlockedList {
 
   static SpdyPriority ClampPriority(SpdyPriority priority) {
     if (priority < kV3HighestPriority) {
-      LOG(DFATAL) << "Invalid priority: " << static_cast<int>(priority);
+      SPDY_BUG << "Invalid priority: " << static_cast<int>(priority);
       return kV3HighestPriority;
     }
     if (priority > kV3LowestPriority) {
-      LOG(DFATAL) << "Invalid priority: " << static_cast<int>(priority);
+      SPDY_BUG << "Invalid priority: " << static_cast<int>(priority);
       return kV3LowestPriority;
     }
     return priority;
@@ -46,7 +49,7 @@ class WriteBlockedList {
         return i;
       }
     }
-    LOG(DFATAL) << "No blocked streams";
+    SPDY_BUG << "No blocked streams";
     return kV3HighestPriority;
   }
 
@@ -149,7 +152,7 @@ class WriteBlockedList {
  private:
   friend class net::test::WriteBlockedListPeer;
 
-  typedef base::hash_map<IdType, SpdyPriority> StreamToPriorityMap;
+  using StreamToPriorityMap = std::unordered_map<IdType, SpdyPriority>;
 
   void AddStream(IdType stream_id, SpdyPriority priority, bool push_back) {
     priority = ClampPriority(priority);

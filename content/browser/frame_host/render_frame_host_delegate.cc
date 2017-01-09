@@ -6,6 +6,7 @@
 
 #include "base/callback.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/browser/frame_host/render_frame_host_delegate.h"
 #include "ipc/ipc_message.h"
 #include "ui/gfx/native_widget_types.h"
@@ -23,8 +24,10 @@ const GURL& RenderFrameHostDelegate::GetMainFrameLastCommittedURL() const {
   return GURL::EmptyGURL();
 }
 
-bool RenderFrameHostDelegate::AddMessageToConsole(
-    int32 level, const base::string16& message, int32 line_no,
+bool RenderFrameHostDelegate::DidAddMessageToConsole(
+    int32_t level,
+    const base::string16& message,
+    int32_t line_no,
     const base::string16& source_id) {
   return false;
 }
@@ -33,14 +36,17 @@ WebContents* RenderFrameHostDelegate::GetAsWebContents() {
   return NULL;
 }
 
+InterstitialPage* RenderFrameHostDelegate::GetAsInterstitialPage() {
+  return nullptr;
+}
+
 void RenderFrameHostDelegate::RequestMediaAccessPermission(
     const MediaStreamRequest& request,
     const MediaResponseCallback& callback) {
   LOG(ERROR) << "RenderFrameHostDelegate::RequestMediaAccessPermission: "
              << "Not supported.";
-  callback.Run(MediaStreamDevices(),
-               MEDIA_DEVICE_NOT_SUPPORTED,
-               scoped_ptr<MediaStreamUI>());
+  callback.Run(MediaStreamDevices(), MEDIA_DEVICE_NOT_SUPPORTED,
+               std::unique_ptr<MediaStreamUI>());
 }
 
 bool RenderFrameHostDelegate::CheckMediaAccessPermission(
@@ -61,12 +67,18 @@ RenderFrameHost* RenderFrameHostDelegate::GetGuestByInstanceID(
   return NULL;
 }
 
-GeolocationServiceContext*
+device::GeolocationServiceContext*
 RenderFrameHostDelegate::GetGeolocationServiceContext() {
-  return NULL;
+  return nullptr;
 }
 
-WakeLockServiceContext* RenderFrameHostDelegate::GetWakeLockServiceContext() {
+device::WakeLockServiceContext*
+RenderFrameHostDelegate::GetWakeLockServiceContext() {
+  return nullptr;
+}
+
+ScreenOrientationProvider*
+RenderFrameHostDelegate::GetScreenOrientationProvider() {
   return nullptr;
 }
 
@@ -76,16 +88,9 @@ bool RenderFrameHostDelegate::ShouldRouteMessageEvent(
   return false;
 }
 
-scoped_ptr<WebUIImpl> RenderFrameHostDelegate::CreateWebUIForRenderFrameHost(
-    const GURL& url) {
+std::unique_ptr<WebUIImpl>
+RenderFrameHostDelegate::CreateWebUIForRenderFrameHost(const GURL& url) {
   return nullptr;
 }
-
-#if defined(OS_WIN)
-gfx::NativeViewAccessible
-    RenderFrameHostDelegate::GetParentNativeViewAccessible() {
-  return NULL;
-}
-#endif  // defined(OS_WIN)
 
 }  // namespace content

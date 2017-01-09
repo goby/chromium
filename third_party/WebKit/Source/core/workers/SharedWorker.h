@@ -32,6 +32,7 @@
 #ifndef SharedWorker_h
 #define SharedWorker_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/workers/AbstractWorker.h"
 #include "platform/Supplementable.h"
@@ -41,30 +42,36 @@ namespace blink {
 
 class ExceptionState;
 
-class CORE_EXPORT SharedWorker final : public AbstractWorker, public HeapSupplementable<SharedWorker> {
-    DEFINE_WRAPPERTYPEINFO();
-    USING_GARBAGE_COLLECTED_MIXIN(SharedWorker);
-public:
-    static SharedWorker* create(ExecutionContext*, const String& url, const String& name, ExceptionState&);
-    ~SharedWorker() override;
+class CORE_EXPORT SharedWorker final : public AbstractWorker,
+                                       public Supplementable<SharedWorker>,
+                                       public ActiveScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(SharedWorker);
 
-    MessagePort* port() const { return m_port.get(); }
+ public:
+  static SharedWorker* create(ExecutionContext*,
+                              const String& url,
+                              const String& name,
+                              ExceptionState&);
+  ~SharedWorker() override;
 
-    const AtomicString& interfaceName() const override;
+  MessagePort* port() const { return m_port.get(); }
 
-    void setIsBeingConnected(bool b) { m_isBeingConnected = b; }
+  const AtomicString& interfaceName() const override;
 
-    bool hasPendingActivity() const override;
+  void setIsBeingConnected(bool b) { m_isBeingConnected = b; }
 
-    DECLARE_VIRTUAL_TRACE();
+  bool hasPendingActivity() const final;
 
-private:
-    explicit SharedWorker(ExecutionContext*);
+  DECLARE_VIRTUAL_TRACE();
 
-    Member<MessagePort> m_port;
-    bool m_isBeingConnected;
+ private:
+  explicit SharedWorker(ExecutionContext*);
+
+  Member<MessagePort> m_port;
+  bool m_isBeingConnected;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SharedWorker_h
+#endif  // SharedWorker_h

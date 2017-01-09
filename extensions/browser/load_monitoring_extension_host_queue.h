@@ -5,11 +5,13 @@
 #ifndef EXTENSIONS_BROWSER_LOAD_MONITORING_EXTENSION_HOST_QUEUE_H_
 #define EXTENSIONS_BROWSER_LOAD_MONITORING_EXTENSION_HOST_QUEUE_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
@@ -32,7 +34,7 @@ class LoadMonitoringExtensionHostQueue
                                                size_t,  // max_awaiting_loading
                                                size_t   // max_active_loading
                                                )>;
-  LoadMonitoringExtensionHostQueue(scoped_ptr<ExtensionHostQueue> delegate,
+  LoadMonitoringExtensionHostQueue(std::unique_ptr<ExtensionHostQueue> delegate,
                                    base::TimeDelta monitor_time,
                                    const FinishedCallback& finished_callback);
 
@@ -41,7 +43,7 @@ class LoadMonitoringExtensionHostQueue
   // Monitoring will not start until the first Add()ed
   // DeferredStartRenderHost starts loading, or StartMonitoring() is called.
   explicit LoadMonitoringExtensionHostQueue(
-      scoped_ptr<ExtensionHostQueue> delegate);
+      std::unique_ptr<ExtensionHostQueue> delegate);
 
   ~LoadMonitoringExtensionHostQueue() override;
 
@@ -77,7 +79,7 @@ class LoadMonitoringExtensionHostQueue
   void FinishMonitoring();
 
   // Delegate actually loading DeferredStartRenderHosts to another queue.
-  scoped_ptr<ExtensionHostQueue> delegate_;
+  std::unique_ptr<ExtensionHostQueue> delegate_;
 
   // The amount of time to monitor for. By default this is 1 minute, but it can
   // be overriden by tests.

@@ -4,6 +4,8 @@
 
 #include "components/cronet/android/cronet_in_memory_pref_store.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/values.h"
 
@@ -37,21 +39,23 @@ bool CronetInMemoryPrefStore::IsInitializationComplete() const {
   return true;
 }
 
-void CronetInMemoryPrefStore::SetValue(
-    const std::string& key, scoped_ptr<base::Value> value, uint32 flags) {
+void CronetInMemoryPrefStore::SetValue(const std::string& key,
+                                       std::unique_ptr<base::Value> value,
+                                       uint32_t flags) {
   DCHECK(value);
-  if (prefs_.SetValue(key, value.Pass()))
+  if (prefs_.SetValue(key, std::move(value)))
     ReportValueChanged(key, flags);
 }
 
-void CronetInMemoryPrefStore::SetValueSilently(const std::string& key,
-                                               scoped_ptr<base::Value> value,
-                                               uint32 flags) {
-  prefs_.SetValue(key, value.Pass());
+void CronetInMemoryPrefStore::SetValueSilently(
+    const std::string& key,
+    std::unique_ptr<base::Value> value,
+    uint32_t flags) {
+  prefs_.SetValue(key, std::move(value));
 }
 
 void CronetInMemoryPrefStore::RemoveValue(const std::string& key,
-                                          uint32 flags) {
+                                          uint32_t flags) {
   if (prefs_.RemoveValue(key))
     ReportValueChanged(key, flags);
 }
@@ -74,7 +78,8 @@ void CronetInMemoryPrefStore::ReadPrefsAsync(
 }
 
 void CronetInMemoryPrefStore::ReportValueChanged(const std::string& key,
-                                                 uint32 flags) {
-  FOR_EACH_OBSERVER(Observer, observers_, OnPrefValueChanged(key));
+                                                 uint32_t flags) {
+  for (Observer& observer : observers_)
+    observer.OnPrefValueChanged(key);
 }
 

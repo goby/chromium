@@ -6,12 +6,12 @@
 #define CONTENT_RENDERER_MEDIA_WEBRTC_WEBRTC_VIDEO_TRACK_ADAPTER_H_
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/public/renderer/media_stream_video_sink.h"
 #include "content/renderer/media/webrtc/webrtc_video_capturer_adapter.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/libjingle/source/talk/app/webrtc/mediastreaminterface.h"
-#include "third_party/libjingle/source/talk/app/webrtc/videosourceinterface.h"
+#include "third_party/webrtc/api/mediastreaminterface.h"
 
 namespace content {
 
@@ -27,7 +27,7 @@ class PeerConnectionDependencyFactory;
 // to an RTCPeerConnection object.
 // Instances of this class is owned by the WebRtcMediaStreamAdapter object that
 // created it.
-class MediaStreamVideoWebRtcSink : public MediaStreamVideoSink {
+class CONTENT_EXPORT MediaStreamVideoWebRtcSink : public MediaStreamVideoSink {
  public:
   MediaStreamVideoWebRtcSink(const blink::WebMediaStreamTrack& track,
                              PeerConnectionDependencyFactory* factory);
@@ -37,19 +37,35 @@ class MediaStreamVideoWebRtcSink : public MediaStreamVideoSink {
     return video_track_.get();
   }
 
+  rtc::Optional<bool> SourceNeedsDenoisingForTesting() const;
+
  protected:
   // Implementation of MediaStreamSink.
   void OnEnabledChanged(bool enabled) override;
 
  private:
+  // Helper to request a refresh frame from the source. Called via the callback
+  // passed to WebRtcVideoSourceAdapter.
+  void RequestRefreshFrame();
+
   // Used to DCHECK that we are called on the correct thread.
   base::ThreadChecker thread_checker_;
 
+  // |video_source_| and |video_track_source_proxy_| are held as references to
+  // outlive |video_track_| since the interfaces between them don't use
+  // reference counting.
+  class WebRtcVideoSource;
+  scoped_refptr<WebRtcVideoSource> video_source_;
+  scoped_refptr<webrtc::VideoTrackSourceInterface> video_source_proxy_;
   scoped_refptr<webrtc::VideoTrackInterface> video_track_;
-  blink::WebMediaStreamTrack web_track_;
 
   class WebRtcVideoSourceAdapter;
   scoped_refptr<WebRtcVideoSourceAdapter> source_adapter_;
+
+  // Provides WebRtcVideoSourceAdapter a weak reference to
+  // MediaStreamVideoWebRtcSink in order to allow it to request refresh frames.
+  // See comments in media_stream_video_webrtc_sink.cc.
+  base::WeakPtrFactory<MediaStreamVideoWebRtcSink> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamVideoWebRtcSink);
 };

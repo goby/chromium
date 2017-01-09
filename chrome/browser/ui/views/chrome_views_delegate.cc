@@ -4,23 +4,36 @@
 
 #include "chrome/browser/ui/views/chrome_views_delegate.h"
 
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include <memory>
+
+#include "base/location.h"
+#include "base/logging.h"
+#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/browser_window_state.h"
+#include "chrome/browser/ui/views/harmony/harmony_layout_delegate.h"
+#include "chrome/grit/chrome_unscaled_resources.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_factory.h"
-#include "grit/chrome_unscaled_resources.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget.h"
@@ -31,8 +44,7 @@
 #include "base/profiler/scoped_tracker.h"
 #include "base/task_runner_util.h"
 #include "base/win/windows_version.h"
-#include "chrome/browser/app_icon_win.h"
-#include "content/public/browser/browser_thread.h"
+#include "chrome/browser/win/app_icon.h"
 #include "ui/base/win/shell.h"
 #endif
 
@@ -43,7 +55,6 @@
 #endif
 
 #if defined(USE_AURA) && !defined(OS_CHROMEOS)
-#include "chrome/browser/ui/host_desktop.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/native_widget_aura.h"
 #endif
@@ -52,16 +63,13 @@
 #include "ui/views/linux_ui/linux_ui.h"
 #endif
 
-#if defined(OS_ANDROID)
-#include "ui/views/widget/android/native_widget_android.h"
-#endif
-
 #if defined(USE_ASH)
-#include "ash/accelerators/accelerator_controller.h"
-#include "ash/shell.h"
-#include "ash/wm/window_state.h"
-#include "chrome/browser/ui/ash/ash_init.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "ash/common/accelerators/accelerator_controller.h"  // nogncheck
+#include "ash/common/wm/window_state.h"  // nogncheck
+#include "ash/common/wm_shell.h"  // nogncheck
+#include "ash/shell.h"  // nogncheck
+#include "ash/wm/window_state_aura.h"  // nogncheck
+#include "chrome/browser/ui/ash/ash_init.h"  // nogncheck
 #endif
 
 // Helpers --------------------------------------------------------------------
@@ -91,14 +99,14 @@ PrefService* GetPrefsForWindow(const views::Widget* window) {
 }
 
 #if defined(OS_WIN)
-bool MonitorHasTopmostAutohideTaskbarForEdge(UINT edge, HMONITOR monitor) {
+bool MonitorHasAutohideTaskbarForEdge(UINT edge, HMONITOR monitor) {
   APPBARDATA taskbar_data = { sizeof(APPBARDATA), NULL, 0, edge };
   taskbar_data.hWnd = ::GetForegroundWindow();
 
   // TODO(robliao): Remove ScopedTracker below once crbug.com/462368 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "462368 MonitorHasTopmostAutohideTaskbarForEdge"));
+          "462368 MonitorHasAutohideTaskbarForEdge"));
 
   // MSDN documents an ABM_GETAUTOHIDEBAREX, which supposedly takes a monitor
   // rect and returns autohide bars on that monitor.  This sounds like a good
@@ -130,22 +138,51 @@ bool MonitorHasTopmostAutohideTaskbarForEdge(UINT edge, HMONITOR monitor) {
     if (taskbar_data.uEdge == edge)
       taskbar = taskbar_data.hWnd;
   }
-  return ::IsWindow(taskbar) &&
-      (MonitorFromWindow(taskbar, MONITOR_DEFAULTTONULL) == monitor) &&
-      (GetWindowLong(taskbar, GWL_EXSTYLE) & WS_EX_TOPMOST);
+
+  // There is a potential race condition here:
+  // 1. A maximized chrome window is fullscreened.
+  // 2. It is switched back to maximized.
+  // 3. In the process the window gets a WM_NCCACLSIZE message which calls us to
+  //    get the autohide state.
+  // 4. The worker thread is invoked. It calls the API to get the autohide
+  //    state. On Windows versions  earlier than Windows 7, taskbars could
+  //    easily be always on top or not.
+  //    This meant that we only want to look for taskbars which have the topmost
+  //    bit set.  However this causes problems in cases where the window on the
+  //    main thread is still in the process of switching away from fullscreen.
+  //    In this case the taskbar might not yet have the topmost bit set.
+  // 5. The main thread resumes and does not leave space for the taskbar and
+  //    hence it does not pop when hovered.
+  //
+  // To address point 4 above, it is best to not check for the WS_EX_TOPMOST
+  // window style on the taskbar, as starting from Windows 7, the topmost
+  // style is always set. We don't support XP and Vista anymore.
+  if (::IsWindow(taskbar)) {
+    if (MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST) == monitor)
+      return true;
+    // In some cases like when the autohide taskbar is on the left of the
+    // secondary monitor, the MonitorFromWindow call above fails to return the
+    // correct monitor the taskbar is on. We fallback to MonitorFromPoint for
+    // the cursor position in that case, which seems to work well.
+    POINT cursor_pos = {0};
+    GetCursorPos(&cursor_pos);
+    if (MonitorFromPoint(cursor_pos, MONITOR_DEFAULTTONEAREST) == monitor)
+      return true;
+  }
+  return false;
 }
 
 int GetAppbarAutohideEdgesOnWorkerThread(HMONITOR monitor) {
   DCHECK(monitor);
 
   int edges = 0;
-  if (MonitorHasTopmostAutohideTaskbarForEdge(ABE_LEFT, monitor))
+  if (MonitorHasAutohideTaskbarForEdge(ABE_LEFT, monitor))
     edges |= views::ViewsDelegate::EDGE_LEFT;
-  if (MonitorHasTopmostAutohideTaskbarForEdge(ABE_TOP, monitor))
+  if (MonitorHasAutohideTaskbarForEdge(ABE_TOP, monitor))
     edges |= views::ViewsDelegate::EDGE_TOP;
-  if (MonitorHasTopmostAutohideTaskbarForEdge(ABE_RIGHT, monitor))
+  if (MonitorHasAutohideTaskbarForEdge(ABE_RIGHT, monitor))
     edges |= views::ViewsDelegate::EDGE_RIGHT;
-  if (MonitorHasTopmostAutohideTaskbarForEdge(ABE_BOTTOM, monitor))
+  if (MonitorHasAutohideTaskbarForEdge(ABE_BOTTOM, monitor))
     edges |= views::ViewsDelegate::EDGE_BOTTOM;
   return edges;
 }
@@ -155,7 +192,7 @@ int GetAppbarAutohideEdgesOnWorkerThread(HMONITOR monitor) {
 void ProcessAcceleratorNow(const ui::Accelerator& accelerator) {
   // TODO(afakhry): See if we need here to send the accelerator to the
   // FocusManager of the active window in a follow-up CL.
-  ash::Shell::GetInstance()->accelerator_controller()->Process(accelerator);
+  ash::WmShell::Get()->accelerator_controller()->Process(accelerator);
 }
 #endif  // defined(USE_ASH)
 
@@ -174,6 +211,7 @@ ChromeViewsDelegate::ChromeViewsDelegate() {
 }
 
 ChromeViewsDelegate::~ChromeViewsDelegate() {
+  DCHECK_EQ(0u, ref_count_);
 }
 
 void ChromeViewsDelegate::SaveWindowPlacement(const views::Widget* window,
@@ -184,7 +222,7 @@ void ChromeViewsDelegate::SaveWindowPlacement(const views::Widget* window,
   if (!prefs)
     return;
 
-  scoped_ptr<DictionaryPrefUpdate> pref_update =
+  std::unique_ptr<DictionaryPrefUpdate> pref_update =
       chrome::GetWindowPlacementDictionaryReadWrite(window_name, prefs);
   base::DictionaryValue* window_preferences = pref_update->Get();
   window_preferences->SetInteger("left", bounds.x());
@@ -194,8 +232,9 @@ void ChromeViewsDelegate::SaveWindowPlacement(const views::Widget* window,
   window_preferences->SetBoolean("maximized",
                                  show_state == ui::SHOW_STATE_MAXIMIZED);
   window_preferences->SetBoolean("docked", show_state == ui::SHOW_STATE_DOCKED);
-  gfx::Rect work_area(gfx::Screen::GetScreenFor(window->GetNativeView())->
-      GetDisplayNearestWindow(window->GetNativeView()).work_area());
+  gfx::Rect work_area(display::Screen::GetScreen()
+                          ->GetDisplayNearestWindow(window->GetNativeView())
+                          .work_area());
   window_preferences->SetInteger("work_area_left", work_area.x());
   window_preferences->SetInteger("work_area_top", work_area.y());
   window_preferences->SetInteger("work_area_right", work_area.right());
@@ -234,13 +273,10 @@ bool ChromeViewsDelegate::GetSavedWindowPlacement(
   // On Ash environment, a window won't span across displays.  Adjust
   // the bounds to fit the work area.
   gfx::NativeView window = widget->GetNativeView();
-  if (chrome::GetHostDesktopTypeForNativeView(window) ==
-      chrome::HOST_DESKTOP_TYPE_ASH) {
-    gfx::Display display = gfx::Screen::GetScreenFor(window)->
-        GetDisplayMatching(*bounds);
-    bounds->AdjustToFit(display.work_area());
-    ash::wm::GetWindowState(window)->set_minimum_visibility(true);
-  }
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayMatching(*bounds);
+  bounds->AdjustToFit(display.work_area());
+  ash::wm::GetWindowState(window)->set_minimum_visibility(true);
 #endif
   return true;
 }
@@ -257,20 +293,21 @@ views::ViewsDelegate::ProcessMenuAcceleratorResult
 ChromeViewsDelegate::ProcessAcceleratorWhileMenuShowing(
     const ui::Accelerator& accelerator) {
 #if defined(USE_ASH)
-  // Handle ash accelerators only when a menu is opened on an ash desktop.
-  if (chrome::GetActiveDesktop() != chrome::HOST_DESKTOP_TYPE_ASH)
+  DCHECK(base::MessageLoopForUI::IsCurrent());
+
+  // Early return because mash chrome does not have access to ash::Shell
+  if (chrome::IsRunningInMash())
     return views::ViewsDelegate::ProcessMenuAcceleratorResult::LEAVE_MENU_OPEN;
 
   ash::AcceleratorController* accelerator_controller =
-      ash::Shell::GetInstance()->accelerator_controller();
+      ash::WmShell::Get()->accelerator_controller();
 
   accelerator_controller->accelerator_history()->StoreCurrentAccelerator(
       accelerator);
   if (accelerator_controller->ShouldCloseMenuAndRepostAccelerator(
           accelerator)) {
-    base::MessageLoopForUI::current()->PostTask(
-        FROM_HERE,
-        base::Bind(ProcessAcceleratorNow, accelerator));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(ProcessAcceleratorNow, accelerator));
     return views::ViewsDelegate::ProcessMenuAcceleratorResult::CLOSE_MENU;
   }
 
@@ -290,10 +327,6 @@ HICON ChromeViewsDelegate::GetSmallWindowIcon() const {
   return GetSmallAppIcon();
 }
 
-bool ChromeViewsDelegate::IsWindowInMetro(gfx::NativeWindow window) const {
-  return chrome::IsNativeViewInAsh(window);
-}
-
 #elif defined(OS_LINUX) && !defined(OS_CHROMEOS)
 gfx::ImageSkia* ChromeViewsDelegate::GetDefaultWindowIcon() const {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
@@ -304,17 +337,25 @@ gfx::ImageSkia* ChromeViewsDelegate::GetDefaultWindowIcon() const {
 #if defined(USE_ASH)
 views::NonClientFrameView* ChromeViewsDelegate::CreateDefaultNonClientFrameView(
     views::Widget* widget) {
-  return chrome::IsNativeViewInAsh(widget->GetNativeView()) ?
-      ash::Shell::GetInstance()->CreateDefaultNonClientFrameView(widget) : NULL;
+  return ash::Shell::GetInstance()->CreateDefaultNonClientFrameView(widget);
 }
 #endif
 
 void ChromeViewsDelegate::AddRef() {
-  g_browser_process->AddRefModule();
+  if (ref_count_ == 0u) {
+    keep_alive_.reset(
+        new ScopedKeepAlive(KeepAliveOrigin::CHROME_VIEWS_DELEGATE,
+                            KeepAliveRestartOption::DISABLED));
+  }
+
+  ++ref_count_;
 }
 
 void ChromeViewsDelegate::ReleaseRef() {
-  g_browser_process->ReleaseModule();
+  DCHECK_NE(0u, ref_count_);
+
+  if (--ref_count_ == 0u)
+    keep_alive_.reset();
 }
 
 void ChromeViewsDelegate::OnBeforeWidgetInit(
@@ -329,10 +370,24 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
   if (params->native_widget)
     return;
 
+  if (!native_widget_factory().is_null()) {
+    params->native_widget = native_widget_factory().Run(*params, delegate);
+    if (params->native_widget)
+      return;
+  }
+
 #if defined(USE_AURA) && !defined(OS_CHROMEOS)
   bool use_non_toplevel_window =
       params->parent &&
+#if defined(OS_WIN)
+      // Check the force_software_compositing flag only on Windows. If this
+      // flag is on, it means that the widget being created wants to use the
+      // software compositor which requires a top level window. We cannot have
+      // a mixture of compositors active in one view hierarchy.
+      !params->force_software_compositing &&
+#else
       params->type != views::Widget::InitParams::TYPE_MENU &&
+#endif
       params->type != views::Widget::InitParams::TYPE_TOOLTIP;
 
 #if defined(OS_WIN)
@@ -345,10 +400,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
   // the side effects are not as bad as the poor window manager interactions. On
   // Windows however these WM interactions are not an issue, so we open windows
   // requested as top_level as actual top level windows on the desktop.
-  use_non_toplevel_window = use_non_toplevel_window &&
-      (params->child ||
-       chrome::GetHostDesktopTypeForNativeView(params->parent) !=
-          chrome::HOST_DESKTOP_TYPE_NATIVE);
+  use_non_toplevel_window = use_non_toplevel_window && params->child;
 
   if (!ui::win::IsAeroGlassEnabled()) {
     // If we don't have composition (either because Glass is not enabled or
@@ -356,15 +408,14 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
     // transparency will be broken with a toplevel window, so force the use of
     // a non toplevel window.
     if (params->opacity == views::Widget::InitParams::TRANSLUCENT_WINDOW &&
-        params->type != views::Widget::InitParams::TYPE_MENU)
+        !params->force_software_compositing)
       use_non_toplevel_window = true;
   } else {
     // If we're on Vista+ with composition enabled, then we can use toplevel
     // windows for most things (they get blended via WS_EX_COMPOSITED, which
     // allows for animation effects, but also exceeding the bounds of the parent
     // window).
-    if (chrome::GetActiveDesktop() != chrome::HOST_DESKTOP_TYPE_ASH &&
-        params->parent &&
+    if (params->parent &&
         params->type != views::Widget::InitParams::TYPE_CONTROL &&
         params->type != views::Widget::InitParams::TYPE_WINDOW) {
       // When we set this to false, we get a DesktopNativeWidgetAura from the
@@ -380,7 +431,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
   }
 #endif  // USE_AURA
 
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || defined(USE_ASH)
   // When we are doing straight chromeos builds, we still need to handle the
   // toplevel window case.
   // There may be a few remaining widgets in Chrome OS that are not top level,
@@ -395,26 +446,10 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
     params->context = ash::Shell::GetPrimaryRootWindow();
 #elif defined(USE_AURA)
   // While the majority of the time, context wasn't plumbed through due to the
-  // existence of a global WindowTreeClient, if this window is toplevel, it's
-  // possible that there is no contextual state that we can use.
+  // existence of a global WindowParentingClient, if this window is toplevel,
+  // it's possible that there is no contextual state that we can use.
   if (params->parent == NULL && params->context == NULL && !params->child) {
-    // We need to make a decision about where to place this window based on the
-    // desktop type.
-    switch (chrome::GetActiveDesktop()) {
-      case chrome::HOST_DESKTOP_TYPE_NATIVE:
-        // If we're native, we should give this window its own toplevel desktop
-        // widget.
-        params->native_widget = new views::DesktopNativeWidgetAura(delegate);
-        break;
-#if defined(USE_ASH)
-      case chrome::HOST_DESKTOP_TYPE_ASH:
-        // If we're in ash, give this window the context of the main monitor.
-        params->context = ash::Shell::GetPrimaryRootWindow();
-        break;
-#endif
-      default:
-        NOTREACHED();
-    }
+    params->native_widget = new views::DesktopNativeWidgetAura(delegate);
   } else if (use_non_toplevel_window) {
     views::NativeWidgetAura* native_widget =
         new views::NativeWidgetAura(delegate);
@@ -426,18 +461,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
     }
     params->native_widget = native_widget;
   } else {
-    // TODO(erg): Once we've threaded context to everywhere that needs it, we
-    // should remove this check here.
-    gfx::NativeView to_check =
-        params->context ? params->context : params->parent;
-    if (chrome::GetHostDesktopTypeForNativeView(to_check) ==
-        chrome::HOST_DESKTOP_TYPE_NATIVE) {
-#if defined(OS_ANDROID)
-      params->native_widget = new views::NativeWidgetAndroid(delegate);
-#else
-      params->native_widget = new views::DesktopNativeWidgetAura(delegate);
-#endif
-    }
+    params->native_widget = new views::DesktopNativeWidgetAura(delegate);
   }
 #endif
 }
@@ -470,6 +494,10 @@ int ChromeViewsDelegate::GetAppbarAutohideEdges(HMONITOR monitor,
   // edges.
   if (!appbar_autohide_edge_map_.count(monitor))
     appbar_autohide_edge_map_[monitor] = EDGE_BOTTOM;
+
+  // We use the SHAppBarMessage API to get the taskbar autohide state. This API
+  // spins a modal loop which could cause callers to be reentered. To avoid
+  // that we retrieve the taskbar state in a worker thread.
   if (monitor && !in_autohide_edges_callback_) {
     base::PostTaskAndReplyWithResult(
         content::BrowserThread::GetBlockingPool(),
@@ -502,6 +530,28 @@ void ChromeViewsDelegate::OnGotAppbarAutohideEdges(
 scoped_refptr<base::TaskRunner>
 ChromeViewsDelegate::GetBlockingPoolTaskRunner() {
   return content::BrowserThread::GetBlockingPool();
+}
+
+gfx::Insets ChromeViewsDelegate::GetDialogButtonInsets() {
+  if (ui::MaterialDesignController::IsSecondaryUiMaterial())
+    return gfx::Insets(HarmonyLayoutDelegate::kHarmonyLayoutUnit);
+  return ViewsDelegate::GetDialogButtonInsets();
+}
+
+int ChromeViewsDelegate::GetDialogRelatedButtonHorizontalSpacing() {
+  if (ui::MaterialDesignController::IsSecondaryUiMaterial())
+    return HarmonyLayoutDelegate::kHarmonyLayoutUnit / 2;
+  return ViewsDelegate::GetDialogRelatedButtonHorizontalSpacing();
+}
+
+gfx::Insets ChromeViewsDelegate::GetDialogFrameViewInsets() {
+  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+    // Titles are inset at the top and sides, but not at the bottom.
+    return gfx::Insets(HarmonyLayoutDelegate::kHarmonyLayoutUnit,
+                       HarmonyLayoutDelegate::kHarmonyLayoutUnit, 0,
+                       HarmonyLayoutDelegate::kHarmonyLayoutUnit);
+  }
+  return ViewsDelegate::GetDialogFrameViewInsets();
 }
 
 #if !defined(USE_ASH)

@@ -1,10 +1,11 @@
 <!doctype html>
 <html>
   <head>
+    <script src="../resources/js-test.js"></script>
     <script src="resources/compatibility.js"></script>
+    <script src="resources/audit-util.js"></script>
     <script src="resources/audio-testing.js"></script>
     <script src="resources/audioparam-testing.js"></script>
-    <script src="../resources/js-test.js"></script>
     <title>Test Sampling of LinearRampToValueAtTime</title>
   </head>
 
@@ -57,9 +58,13 @@
           var expectedEnd = config.expectedFunction(endFrame / sampleRate);
 
           var success = Should(config.desc + ": Sample " + startFrame,
-            resultData[startFrame]).beCloseTo(expectedStart, config.startValueThreshold, 7);
+            resultData[startFrame], {
+              precision: 7
+            }).beCloseTo(expectedStart, config.startValueThreshold);
           success = Should(config.desc + ": Sample " + endFrame,
-            resultData[endFrame]).beCloseTo(expectedEnd, config.endValueThreshold, 7) && success;
+            resultData[endFrame], {
+              precision: 7
+            }).beCloseTo(expectedEnd, config.endValueThreshold) && success;
 
           if (success)
             testPassed(config.desc + " passed.\n");

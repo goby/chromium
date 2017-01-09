@@ -11,10 +11,9 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "net/cookies/cookie_monster.h"
-
-class Task;
 
 namespace base {
 class FilePath;

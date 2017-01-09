@@ -4,6 +4,8 @@
 
 #include "extensions/browser/api/display_source/display_source_event_router.h"
 
+#include <utility>
+
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/api/display_source/display_source_api.h"
 #include "extensions/browser/api/display_source/display_source_connection_delegate_factory.h"
@@ -63,7 +65,7 @@ void DisplaySourceEventRouter::StartOrStopListeningForSinksChanges() {
             browser_context_);
     if (delegate) {
       delegate->AddObserver(this);
-      delegate->StartWatchingSinks();
+      delegate->StartWatchingAvailableSinks();
     }
   }
   if (!should_listen && listening_) {
@@ -72,7 +74,7 @@ void DisplaySourceEventRouter::StartOrStopListeningForSinksChanges() {
             browser_context_);
     if (delegate) {
       delegate->RemoveObserver(this);
-      delegate->StopWatchingSinks();
+      delegate->StopWatchingAvailableSinks();
     }
   }
 
@@ -84,12 +86,12 @@ void DisplaySourceEventRouter::OnSinksUpdated(
   EventRouter* event_router = EventRouter::Get(browser_context_);
   if (!event_router)
     return;
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       api::display_source::OnSinksUpdated::Create(sinks));
-  scoped_ptr<Event> sinks_updated_event(
-      new Event(events::DISPLAY_SOURCE_ON_SINKS_UPDATED,
-                api::display_source::OnSinksUpdated::kEventName, args.Pass()));
-  event_router->BroadcastEvent(sinks_updated_event.Pass());
+  std::unique_ptr<Event> sinks_updated_event(new Event(
+      events::DISPLAY_SOURCE_ON_SINKS_UPDATED,
+      api::display_source::OnSinksUpdated::kEventName, std::move(args)));
+  event_router->BroadcastEvent(std::move(sinks_updated_event));
 }
 
 DisplaySourceEventRouter* DisplaySourceEventRouter::Create(

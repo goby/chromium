@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_tracker_service_factory.h"
@@ -16,8 +17,8 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/signin_tracker_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/profile_sync_service_mock.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/browser_sync/profile_sync_service_mock.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/fake_auth_status_provider.h"
 #include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
@@ -88,8 +89,8 @@ class SigninTrackerTest : public testing::Test {
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<SigninTracker> tracker_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<SigninTracker> tracker_;
+  std::unique_ptr<TestingProfile> profile_;
   FakeSigninManagerForTesting* mock_signin_manager_;
   FakeProfileOAuth2TokenService* fake_oauth2_token_service_;
   MockObserver observer_;

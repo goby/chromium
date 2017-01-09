@@ -6,12 +6,12 @@
 #define CONTENT_RENDERER_MEDIA_RTC_VIDEO_RENDERER_H_
 
 #include "base/callback.h"
-#include "base/memory/weak_ptr.h"
+#include "base/macros.h"
+#include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "content/common/media/video_capture.h"
+#include "content/public/renderer/media_stream_video_renderer.h"
 #include "content/public/renderer/media_stream_video_sink.h"
-#include "content/public/renderer/video_frame_provider.h"
-#include "media/video/gpu_memory_buffer_video_frame_pool.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -21,17 +21,18 @@ class TaskRunner;
 }  // namespace base
 
 namespace media {
+class GpuMemoryBufferVideoFramePool;
 class GpuVideoAcceleratorFactories;
 }  // namespace media
 
 namespace content {
 
-// MediaStreamVideoRendererSink is a VideoFrameProvider designed for rendering
-// Video MediaStreamTracks [1], MediaStreamVideoRendererSink implements
-// MediaStreamVideoSink in order to render video frames provided from a
-// MediaStreamVideoTrack, to which it AddToVideoTrack()s itself when the
-// VideoFrameProvider is Start()ed and RemoveFromVideoTrack()s itself when the
-// latter is Stop()ed.
+// MediaStreamVideoRendererSink is a MediaStreamVideoRenderer designed for
+// rendering Video MediaStreamTracks [1], MediaStreamVideoRendererSink
+// implements MediaStreamVideoSink in order to render video frames provided from
+// a MediaStreamVideoTrack, to which it connects itself when the
+// MediaStreamVideoRenderer is Start()ed, and disconnects itself when the latter
+// is Stop()ed.
 //
 // [1] http://dev.w3.org/2011/webrtc/editor/getusermedia.html#mediastreamtrack
 //
@@ -39,24 +40,23 @@ namespace content {
 // http://src.chromium.org/viewvc/chrome/trunk/src/content/renderer/media/rtc_vi
 // deo_decoder_unittest.cc?revision=180591&view=markup
 class CONTENT_EXPORT MediaStreamVideoRendererSink
-    : NON_EXPORTED_BASE(public VideoFrameProvider),
+    : NON_EXPORTED_BASE(public MediaStreamVideoRenderer),
       NON_EXPORTED_BASE(public MediaStreamVideoSink) {
  public:
   MediaStreamVideoRendererSink(
       const blink::WebMediaStreamTrack& video_track,
       const base::Closure& error_cb,
-      const RepaintCB& repaint_cb,
+      const MediaStreamVideoRenderer::RepaintCB& repaint_cb,
+      const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
       const scoped_refptr<base::TaskRunner>& worker_task_runner,
       media::GpuVideoAcceleratorFactories* gpu_factories);
 
-  // VideoFrameProvider implementation. Called on the main thread.
+  // MediaStreamVideoRenderer implementation. Called on the main thread.
   void Start() override;
   void Stop() override;
-  void Play() override;
+  void Resume() override;
   void Pause() override;
-  void SetGpuMemoryBufferVideoForTesting(
-      media::GpuMemoryBufferVideoFramePool* gpu_memory_buffer_pool);
 
  protected:
   ~MediaStreamVideoRendererSink() override;
@@ -69,29 +69,30 @@ class CONTENT_EXPORT MediaStreamVideoRendererSink
     STOPPED,
   };
 
-  void OnVideoFrame(const scoped_refptr<media::VideoFrame>& frame,
-                    base::TimeTicks estimated_capture_time);
-  void FrameReady(const scoped_refptr<media::VideoFrame>& frame);
-
   // MediaStreamVideoSink implementation. Called on the main thread.
   void OnReadyStateChanged(
       blink::WebMediaStreamSource::ReadyState state) override;
 
-  void RenderSignalingFrame();
+  // Helper methods used for testing.
+  State GetStateForTesting();
+  void SetGpuMemoryBufferVideoForTesting(
+      media::GpuMemoryBufferVideoFramePool* gpu_memory_buffer_pool);
 
   const base::Closure error_cb_;
   const RepaintCB repaint_cb_;
-
-  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  State state_;
-  gfx::Size frame_size_;
   const blink::WebMediaStreamTrack video_track_;
 
-  // Pool of GpuMemoryBuffers and resources used to create hardware frames.
-  scoped_ptr<media::GpuMemoryBufferVideoFramePool> gpu_memory_buffer_pool_;
-  const scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
+  // Inner class used for transfering frames on compositor thread and running
+  // |repaint_cb_|.
+  class FrameDeliverer;
+  std::unique_ptr<FrameDeliverer> frame_deliverer_;
 
-  base::WeakPtrFactory<MediaStreamVideoRendererSink> weak_factory_;
+  const scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
+  const scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
+  const scoped_refptr<base::TaskRunner> worker_task_runner_;
+  media::GpuVideoAcceleratorFactories* const gpu_factories_;
+
+  base::ThreadChecker main_thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamVideoRendererSink);
 };

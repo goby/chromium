@@ -4,17 +4,18 @@
 
 #include "chrome/browser/search_engines/template_url_service_test_util.h"
 
+#include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/search_engines/chrome_template_url_service_client.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/search_engines/default_search_pref_test_util.h"
 #include "components/search_engines/keyword_table.h"
 #include "components/search_engines/keyword_web_data_service.h"
+#include "components/search_engines/template_url_data_util.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/search_engines/testing_search_terms_data.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/webdata/common/web_database_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -41,19 +42,34 @@ class TestingTemplateURLServiceClient : public ChromeTemplateURLServiceClient {
 
 }  // namespace
 
+void SetManagedDefaultSearchPreferences(const TemplateURLData& managed_data,
+                                        bool enabled,
+                                        TestingProfile* profile) {
+  auto dict = TemplateURLDataToDictionary(managed_data);
+  dict->SetBoolean(DefaultSearchManager::kDisabledByPolicy, !enabled);
+
+  profile->GetTestingPrefService()->SetManagedPref(
+      DefaultSearchManager::kDefaultSearchProviderDataPrefName, dict.release());
+}
+
+void RemoveManagedDefaultSearchPreferences(TestingProfile* profile) {
+  profile->GetTestingPrefService()->RemoveManagedPref(
+      DefaultSearchManager::kDefaultSearchProviderDataPrefName);
+}
+
 TemplateURLServiceTestUtil::TemplateURLServiceTestUtil()
     : changed_count_(0),
       search_terms_data_(NULL) {
   // Make unique temp directory.
   EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
-  profile_.reset(new TestingProfile(temp_dir_.path()));
+  profile_.reset(new TestingProfile(temp_dir_.GetPath()));
 
   scoped_refptr<WebDatabaseService> web_database_service =
-      new WebDatabaseService(temp_dir_.path().AppendASCII("webdata"),
+      new WebDatabaseService(temp_dir_.GetPath().AppendASCII("webdata"),
                              base::ThreadTaskRunnerHandle::Get(),
                              base::ThreadTaskRunnerHandle::Get());
   web_database_service->AddTable(
-      scoped_ptr<WebDatabaseTable>(new KeywordTable()));
+      std::unique_ptr<WebDatabaseTable>(new KeywordTable()));
   web_database_service->LoadDatabase();
 
   web_data_service_ = new KeywordWebDataService(
@@ -112,12 +128,14 @@ void TemplateURLServiceTestUtil::ResetModel(bool verify_load) {
     ClearModel();
   search_terms_data_ = new TestingSearchTermsData("http://www.google.com/");
   model_.reset(new TemplateURLService(
-      profile()->GetPrefs(), scoped_ptr<SearchTermsData>(search_terms_data_),
+      profile()->GetPrefs(),
+      std::unique_ptr<SearchTermsData>(search_terms_data_),
       web_data_service_.get(),
-      scoped_ptr<TemplateURLServiceClient>(new TestingTemplateURLServiceClient(
-          HistoryServiceFactory::GetForProfileIfExists(
-              profile(), ServiceAccessType::EXPLICIT_ACCESS),
-          &search_term_)),
+      std::unique_ptr<TemplateURLServiceClient>(
+          new TestingTemplateURLServiceClient(
+              HistoryServiceFactory::GetForProfileIfExists(
+                  profile(), ServiceAccessType::EXPLICIT_ACCESS),
+              &search_term_)),
       NULL, NULL, base::Closure()));
   model()->AddObserver(this);
   changed_count_ = 0;
@@ -135,25 +153,4 @@ void TemplateURLServiceTestUtil::SetGoogleBaseURL(const GURL& base_url) {
   DCHECK(base_url.is_valid());
   search_terms_data_->set_google_base_url(base_url.spec());
   model_->GoogleBaseURLChanged();
-}
-
-void TemplateURLServiceTestUtil::SetManagedDefaultSearchPreferences(
-    bool enabled,
-    const std::string& name,
-    const std::string& keyword,
-    const std::string& search_url,
-    const std::string& suggest_url,
-    const std::string& icon_url,
-    const std::string& encodings,
-    const std::string& alternate_url,
-    const std::string& search_terms_replacement_key) {
-  DefaultSearchPrefTestUtil::SetManagedPref(
-      profile()->GetTestingPrefService(),
-      enabled, name, keyword, search_url, suggest_url, icon_url, encodings,
-      alternate_url, search_terms_replacement_key);
-}
-
-void TemplateURLServiceTestUtil::RemoveManagedDefaultSearchPreferences() {
-  DefaultSearchPrefTestUtil::RemoveManagedPref(
-      profile()->GetTestingPrefService());
 }

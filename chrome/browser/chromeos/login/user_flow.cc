@@ -3,21 +3,14 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/login/user_flow.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "components/signin/core/account_id/account_id.h"
 
 namespace chromeos {
-
-namespace {
-
-void UnregisterFlow(const std::string& user_id) {
-  ChromeUserManager::Get()->ResetUserFlow(AccountId::FromUserEmail(user_id));
-}
-
-} // namespace
-
 
 UserFlow::UserFlow() : host_(NULL) {}
 
@@ -37,7 +30,15 @@ bool DefaultUserFlow::CanLockScreen() {
   return true;
 }
 
+bool DefaultUserFlow::CanStartArc() {
+  return true;
+}
+
 bool DefaultUserFlow::ShouldShowSettings() {
+  return true;
+}
+
+bool DefaultUserFlow::ShouldShowNotificationTray() {
   return true;
 }
 
@@ -70,9 +71,8 @@ void DefaultUserFlow::HandleOAuthTokenStatusChange(
 void DefaultUserFlow::LaunchExtraSteps(Profile* profile) {
 }
 
-ExtendedUserFlow::ExtendedUserFlow(const std::string& user_id)
-    : user_id_(user_id) {
-}
+ExtendedUserFlow::ExtendedUserFlow(const AccountId& account_id)
+    : account_id_(account_id) {}
 
 ExtendedUserFlow::~ExtendedUserFlow() {
 }
@@ -84,15 +84,19 @@ bool ExtendedUserFlow::ShouldShowSettings() {
   return true;
 }
 
+bool ExtendedUserFlow::ShouldShowNotificationTray() {
+  return true;
+}
+
 void ExtendedUserFlow::HandleOAuthTokenStatusChange(
     user_manager::User::OAuthTokenStatus status) {
 }
 
 void ExtendedUserFlow::UnregisterFlowSoon() {
-  std::string id_copy(user_id());
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-      base::Bind(&UnregisterFlow,
-                 id_copy));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::Bind(&ChromeUserManager::ResetUserFlow,
+                 base::Unretained(ChromeUserManager::Get()), account_id()));
 }
 
 }  // namespace chromeos

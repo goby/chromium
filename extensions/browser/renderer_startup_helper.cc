@@ -16,6 +16,8 @@
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/extensions_client.h"
+#include "extensions/common/features/feature_channel.h"
+#include "extensions/common/features/feature_session_type.h"
 #include "ui/base/webui/web_ui_util.h"
 
 using content::BrowserContext;
@@ -27,6 +29,8 @@ RendererStartupHelper::RendererStartupHelper(BrowserContext* browser_context)
   DCHECK(browser_context);
   registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,
                  content::NotificationService::AllBrowserContextsAndSources());
+  registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_TERMINATED,
+                 content::NotificationService::AllBrowserContextsAndSources());
 }
 
 RendererStartupHelper::~RendererStartupHelper() {}
@@ -35,12 +39,39 @@ void RendererStartupHelper::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  DCHECK_EQ(content::NOTIFICATION_RENDERER_PROCESS_CREATED, type);
-  content::RenderProcessHost* process =
-      content::Source<content::RenderProcessHost>(source).ptr();
-  if (!ExtensionsBrowserClient::Get()->IsSameContext(
-          browser_context_, process->GetBrowserContext()))
+  switch (type) {
+    case content::NOTIFICATION_RENDERER_PROCESS_CREATED:
+      InitializeProcess(
+          content::Source<content::RenderProcessHost>(source).ptr());
+      break;
+    case content::NOTIFICATION_RENDERER_PROCESS_TERMINATED:
+      UntrackProcess(content::Source<content::RenderProcessHost>(source).ptr());
+      break;
+    default:
+      NOTREACHED() << "Unexpected notification: " << type;
+  }
+}
+
+void RendererStartupHelper::InitializeProcess(
+    content::RenderProcessHost* process) {
+  ExtensionsBrowserClient* client = ExtensionsBrowserClient::Get();
+  if (!client->IsSameContext(browser_context_, process->GetBrowserContext()))
     return;
+
+  bool activity_logging_enabled =
+      client->IsActivityLoggingEnabled(process->GetBrowserContext());
+  // We only send the ActivityLoggingEnabled message if it is enabled; otherwise
+  // the default (not enabled) is correct.
+  if (activity_logging_enabled) {
+    process->Send(
+        new ExtensionMsg_SetActivityLoggingEnabled(activity_logging_enabled));
+  }
+
+  // Extensions need to know the channel and the session type for API
+  // restrictions. The values are sent to all renderers, as the non-extension
+  // renderers may have content scripts.
+  process->Send(new ExtensionMsg_SetSessionInfo(
+      GetCurrentChannel(), GetCurrentFeatureSessionType()));
 
   // Platform apps need to know the system font.
   // TODO(dbeam): this is not the system font in all cases.
@@ -77,6 +108,68 @@ void RendererStartupHelper::Observe(
     }
   }
   process->Send(new ExtensionMsg_Loaded(loaded_extensions));
+  auto iter = pending_active_extensions_.find(process);
+  if (iter != pending_active_extensions_.end()) {
+    for (const ExtensionId& id : iter->second) {
+      DCHECK(extensions.Contains(id));
+      process->Send(new ExtensionMsg_ActivateExtension(id));
+    }
+  }
+
+  initialized_processes_.insert(process);
+}
+
+void RendererStartupHelper::UntrackProcess(
+    content::RenderProcessHost* process) {
+  if (!ExtensionsBrowserClient::Get()->IsSameContext(
+          browser_context_, process->GetBrowserContext())) {
+    return;
+  }
+
+  initialized_processes_.erase(process);
+  pending_active_extensions_.erase(process);
+}
+
+void RendererStartupHelper::ActivateExtensionInProcess(
+    const Extension& extension,
+    content::RenderProcessHost* process) {
+  // Renderers don't need to know about themes. We also don't normally
+  // "activate" themes, but this could happen if someone tries to open a tab
+  // to the e.g. theme's manifest.
+  if (extension.is_theme())
+    return;
+
+  if (initialized_processes_.count(process))
+    process->Send(new ExtensionMsg_ActivateExtension(extension.id()));
+  else
+    pending_active_extensions_[process].insert(extension.id());
+}
+
+void RendererStartupHelper::OnExtensionLoaded(const Extension& extension) {
+  // Renderers don't need to know about themes.
+  if (extension.is_theme())
+    return;
+
+  // We don't need to include tab permisisons here, since the extension
+  // was just loaded.
+  // Uninitialized renderers will be informed of the extension load during the
+  // first batch of messages.
+  std::vector<ExtensionMsg_Loaded_Params> params(
+      1,
+      ExtensionMsg_Loaded_Params(&extension, false /* no tab permissions */));
+  for (content::RenderProcessHost* process : initialized_processes_)
+    process->Send(new ExtensionMsg_Loaded(params));
+}
+
+void RendererStartupHelper::OnExtensionUnloaded(const Extension& extension) {
+  // Renderers don't need to know about themes.
+  if (extension.is_theme())
+    return;
+
+  for (content::RenderProcessHost* process : initialized_processes_)
+    process->Send(new ExtensionMsg_Unloaded(extension.id()));
+  for (auto& process_extensions_pair : pending_active_extensions_)
+    process_extensions_pair.second.erase(extension.id());
 }
 
 //////////////////////////////////////////////////////////////////////////////

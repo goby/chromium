@@ -9,6 +9,7 @@
 #include <map>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "chrome/browser/browsing_data/browsing_data_local_storage_helper.h"
 
 // Mock for BrowsingDataLocalStorageHelper.
@@ -25,6 +26,7 @@ class MockBrowsingDataLocalStorageHelper
 
   // Adds some LocalStorageInfo samples.
   void AddLocalStorageSamples();
+  void AddLocalStorageSamplesWithSuborigins();
 
   // Notifies the callback.
   void Notify();

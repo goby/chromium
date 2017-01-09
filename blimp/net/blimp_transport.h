@@ -5,9 +5,9 @@
 #ifndef BLIMP_NET_BLIMP_TRANSPORT_H_
 #define BLIMP_NET_BLIMP_TRANSPORT_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "net/base/completion_callback.h"
 
 namespace blimp {
@@ -24,18 +24,18 @@ class BlimpTransport {
 
   // Initiate or listen for a connection.
   //
-  // |callback| will be invoked with the connection outcome:
-  //   * net::OK if a connection is established successful, the BlimpConnection
-  //     can be taken by calling TakeConnection().
-  //   * net::ERR_IO_PENDING will never be the outcome
-  //   * Other error code indicates no connection was established.
+  // |callback| is passed net::OK if a connection was successfully
+  // established.
+  // All other values indicate a connection error.
   virtual void Connect(const net::CompletionCallback& callback) = 0;
 
-  // Returns the connection object after a successful Connect().
-  virtual scoped_ptr<BlimpConnection> TakeConnection() = 0;
+  // Creates a new |BlimpConnection| for the specific |BlimpTransport|
+  // implementation. Must not be called until |Connect|'s callback returns
+  // net::OK.
+  virtual std::unique_ptr<BlimpConnection> MakeConnection() = 0;
 
-  // Gets transport name, e.g. "TCP", "SSL", "mock", etc.
-  virtual const std::string GetName() const = 0;
+  // Gets the transport name, e.g. "TCP", "SSL", "mock", etc.
+  virtual const char* GetName() const = 0;
 };
 
 }  // namespace blimp

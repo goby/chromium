@@ -9,18 +9,56 @@
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/task_runner_util.h"
 #include "chrome/browser/image_decoder.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ui/ash/launcher/arc_app_shelf_id.h"
+#include "chrome/grit/component_extension_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/grit/extensions_browser_resources.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_source.h"
 
 namespace {
 
-bool g_disable_decoding = false;
+bool disable_safe_decoding = false;
+
+std::string GetAppFromAppOrGroupId(content::BrowserContext* context,
+                                   const std::string& app_or_group_id) {
+  const arc::ArcAppShelfId app_shelf_id = arc::ArcAppShelfId::FromString(
+      app_or_group_id);
+  if (!app_shelf_id.has_shelf_group_id())
+    return app_shelf_id.app_id();
+
+  const ArcAppListPrefs* const prefs = ArcAppListPrefs::Get(context);
+  DCHECK(prefs);
+
+  // Try to find a shortcut with requested shelf group id.
+  const std::vector<std::string> app_ids = prefs->GetAppIds();
+  for (const auto& app_id : app_ids) {
+    std::unique_ptr<ArcAppListPrefs::AppInfo> app_info = prefs->GetApp(app_id);
+    DCHECK(app_info);
+    if (!app_info || !app_info->shortcut)
+      continue;
+    const arc::ArcAppShelfId shortcut_shelf_id =
+        arc::ArcAppShelfId::FromIntentAndAppId(app_info->intent_uri,
+                                               app_id);
+    if (shortcut_shelf_id.has_shelf_group_id() &&
+        shortcut_shelf_id.shelf_group_id() == app_shelf_id.shelf_group_id()) {
+      return app_id;
+    }
+  }
+
+  // Shortcut with requested shelf group id was not found, use app id as
+  // fallback.
+  return app_shelf_id.app_id();
+}
 
 }  // namespace
 
@@ -28,27 +66,18 @@ bool g_disable_decoding = false;
 // ArcAppIcon::ReadResult
 
 struct ArcAppIcon::ReadResult {
-  enum class Status {
-    OK,
-    FAIL,
-    REQUEST_TO_INSTALL,
-  };
-
-  // Used for fail results or for the requests to install an icon.
-  ReadResult(Status status, ui::ScaleFactor scale_factor)
-      : status(status), scale_factor(scale_factor) {
-    DCHECK(status == Status::FAIL || status == Status::REQUEST_TO_INSTALL);
-  }
-
-  // Used for successful results.
-  ReadResult(ui::ScaleFactor scale_factor,
-             const std::string& unsafe_icon_data)
-      : status(Status::OK),
+  ReadResult(bool error,
+             bool request_to_install,
+             ui::ScaleFactor scale_factor,
+             std::string unsafe_icon_data)
+      : error(error),
+        request_to_install(request_to_install),
         scale_factor(scale_factor),
         unsafe_icon_data(unsafe_icon_data) {
   }
 
-  Status status;
+  bool error;
+  bool request_to_install;
   ui::ScaleFactor scale_factor;
   std::string unsafe_icon_data;
 };
@@ -58,7 +87,7 @@ struct ArcAppIcon::ReadResult {
 
 class ArcAppIcon::Source : public gfx::ImageSkiaSource {
  public:
-  explicit Source(const base::WeakPtr<ArcAppIcon>& host);
+  Source(const base::WeakPtr<ArcAppIcon>& host, int resource_size_in_dip);
   ~Source() override;
 
  private:
@@ -69,11 +98,15 @@ class ArcAppIcon::Source : public gfx::ImageSkiaSource {
   // destroyed.
   base::WeakPtr<ArcAppIcon> host_;
 
+  const int resource_size_in_dip_;
+
   DISALLOW_COPY_AND_ASSIGN(Source);
 };
 
-ArcAppIcon::Source::Source(const base::WeakPtr<ArcAppIcon>& host)
-    : host_(host) {
+ArcAppIcon::Source::Source(const base::WeakPtr<ArcAppIcon>& host,
+                           int resource_size_in_dip)
+    : host_(host),
+      resource_size_in_dip_(resource_size_in_dip) {
 }
 
 ArcAppIcon::Source::~Source() {
@@ -84,11 +117,21 @@ gfx::ImageSkiaRep ArcAppIcon::Source::GetImageForScale(float scale) {
     host_->LoadForScaleFactor(ui::GetSupportedScaleFactor(scale));
 
   // Host loads icon asynchronously, so use default icon so far.
+  int resource_id;
+  if (host_ && host_->app_id() == arc::kPlayStoreAppId) {
+    resource_id = scale >= 1.5f ?
+        IDR_ARC_SUPPORT_ICON_96 : IDR_ARC_SUPPORT_ICON_48;
+  } else {
+    resource_id = IDR_APP_DEFAULT_ICON;
+  }
   const gfx::ImageSkia* default_image = ResourceBundle::GetSharedInstance().
-      GetImageSkiaNamed(IDR_APP_DEFAULT_ICON);
+      GetImageSkiaNamed(resource_id);
   CHECK(default_image);
-
-  return default_image->GetRepresentation(scale);
+  return gfx::ImageSkiaOperations::CreateResizedImage(
+      *default_image,
+      skia::ImageOperations::RESIZE_BEST,
+      gfx::Size(resource_size_in_dip_, resource_size_in_dip_)).
+          GetRepresentation(scale);
 }
 
 class ArcAppIcon::DecodeRequest : public ImageDecoder::ImageRequest {
@@ -161,8 +204,8 @@ void ArcAppIcon::DecodeRequest::OnDecodeImageFailed() {
 // ArcAppIcon
 
 // static
-void ArcAppIcon::DisableDecodingForTesting() {
-  g_disable_decoding = true;
+void ArcAppIcon::DisableSafeDecodingForTesting() {
+  disable_safe_decoding = true;
 }
 
 ArcAppIcon::ArcAppIcon(content::BrowserContext* context,
@@ -170,12 +213,12 @@ ArcAppIcon::ArcAppIcon(content::BrowserContext* context,
                        int resource_size_in_dip,
                        Observer* observer)
     : context_(context),
-      app_id_(app_id),
+      app_id_(GetAppFromAppOrGroupId(context, app_id)),
       resource_size_in_dip_(resource_size_in_dip),
       observer_(observer),
       weak_ptr_factory_(this) {
   CHECK(observer_ != nullptr);
-  source_ = new Source(weak_ptr_factory_.GetWeakPtr());
+  source_ = new Source(weak_ptr_factory_.GetWeakPtr(), resource_size_in_dip);
   gfx::Size resource_size(resource_size_in_dip, resource_size_in_dip);
   image_skia_ = gfx::ImageSkia(source_, resource_size);
 }
@@ -185,23 +228,26 @@ ArcAppIcon::~ArcAppIcon() {
 
 void ArcAppIcon::LoadForScaleFactor(ui::ScaleFactor scale_factor) {
   ArcAppListPrefs* prefs = ArcAppListPrefs::Get(context_);
+  DCHECK(prefs);
 
   base::FilePath path = prefs->GetIconPath(app_id_, scale_factor);
   if (path.empty())
     return;
 
-  base::PostTaskAndReplyWithResult(content::BrowserThread::GetBlockingPool(),
-                                   FROM_HERE,
-                                   base::Bind(&ArcAppIcon::ReadOnFileThread,
-                                              scale_factor,
-                                              path),
-                                   base::Bind(&ArcAppIcon::OnIconRead,
-                                              weak_ptr_factory_.GetWeakPtr()));
+  base::PostTaskAndReplyWithResult(
+      content::BrowserThread::GetBlockingPool(),
+      FROM_HERE,
+      base::Bind(&ArcAppIcon::ReadOnFileThread,
+          scale_factor,
+          path,
+          prefs->MaybeGetIconPathForDefaultApp(app_id_, scale_factor)),
+      base::Bind(&ArcAppIcon::OnIconRead, weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ArcAppIcon::RequestIcon(ui::ScaleFactor scale_factor) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   ArcAppListPrefs* prefs = ArcAppListPrefs::Get(context_);
+  DCHECK(prefs);
 
   // ArcAppListPrefs notifies ArcAppModelBuilder via Observer when icon is ready
   // and ArcAppModelBuilder refreshes the icon of the corresponding item by
@@ -210,49 +256,66 @@ void ArcAppIcon::RequestIcon(ui::ScaleFactor scale_factor) {
 }
 
 // static
-scoped_ptr<ArcAppIcon::ReadResult> ArcAppIcon::ReadOnFileThread(
+std::unique_ptr<ArcAppIcon::ReadResult> ArcAppIcon::ReadOnFileThread(
     ui::ScaleFactor scale_factor,
-    const base::FilePath& path) {
+    const base::FilePath& path,
+    const base::FilePath& default_app_path) {
   DCHECK(content::BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
   DCHECK(!path.empty());
 
-  if (!base::PathExists(path))
-    return make_scoped_ptr(new ArcAppIcon::ReadResult(
-        ArcAppIcon::ReadResult::Status::REQUEST_TO_INSTALL, scale_factor));
+  base::FilePath path_to_read;
+  if (base::PathExists(path)) {
+    path_to_read = path;
+  } else {
+    if (default_app_path.empty() || !base::PathExists(default_app_path)) {
+      return base::WrapUnique(new ArcAppIcon::ReadResult(
+          false, true, scale_factor, std::string()));
+    }
+    path_to_read = default_app_path;
+  }
 
   // Read the file from disk.
   std::string unsafe_icon_data;
-  if (!base::ReadFileToString(path, &unsafe_icon_data)) {
+  if (!base::ReadFileToString(path_to_read, &unsafe_icon_data)) {
     VLOG(2) << "Failed to read an ARC icon from file " << path.MaybeAsASCII();
-    return make_scoped_ptr(new ArcAppIcon::ReadResult(
-        ArcAppIcon::ReadResult::Status::FAIL, scale_factor));
+    return base::WrapUnique(new ArcAppIcon::ReadResult(
+        true, path_to_read != path, scale_factor, std::string()));
   }
 
-  return make_scoped_ptr(new ArcAppIcon::ReadResult(scale_factor,
-                                                    unsafe_icon_data));
+  return base::WrapUnique(new ArcAppIcon::ReadResult(false,
+                                                     path_to_read != path,
+                                                     scale_factor,
+                                                     unsafe_icon_data));
 }
 
-void ArcAppIcon::OnIconRead(scoped_ptr<ArcAppIcon::ReadResult> read_result) {
+void ArcAppIcon::OnIconRead(
+    std::unique_ptr<ArcAppIcon::ReadResult> read_result) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  switch (read_result->status) {
-  case ReadResult::Status::OK:
-    if (!g_disable_decoding) {
-      decode_requests_.push_back(
-          new DecodeRequest(weak_ptr_factory_.GetWeakPtr(),
-                            resource_size_in_dip_,
-                            read_result->scale_factor));
+  if (read_result->request_to_install)
+    RequestIcon(read_result->scale_factor);
+
+  if (!read_result->unsafe_icon_data.empty()) {
+    decode_requests_.push_back(
+        new DecodeRequest(weak_ptr_factory_.GetWeakPtr(),
+                          resource_size_in_dip_,
+                          read_result->scale_factor));
+    if (disable_safe_decoding) {
+      SkBitmap bitmap;
+      if (!read_result->unsafe_icon_data.empty() &&
+          gfx::PNGCodec::Decode(
+              reinterpret_cast<const unsigned char*>(
+                  &read_result->unsafe_icon_data.front()),
+              read_result->unsafe_icon_data.length(),
+              &bitmap)) {
+        decode_requests_.back()->OnImageDecoded(bitmap);
+      } else {
+        decode_requests_.back()->OnDecodeImageFailed();
+      }
+    } else {
       ImageDecoder::Start(decode_requests_.back(),
                           read_result->unsafe_icon_data);
     }
-    break;
-  case ReadResult::Status::FAIL:
-    break;
-  case ReadResult::Status::REQUEST_TO_INSTALL:
-    RequestIcon(read_result->scale_factor);
-    break;
-  default:
-    NOTREACHED();
   }
 }
 
@@ -270,7 +333,7 @@ void ArcAppIcon::Update(const gfx::ImageSkia* image) {
 
   image_ = gfx::Image(image_skia_);
 
-  observer_->OnIconUpdated();
+  observer_->OnIconUpdated(this);
 }
 
 void ArcAppIcon::DiscardDecodeRequest(DecodeRequest* request) {

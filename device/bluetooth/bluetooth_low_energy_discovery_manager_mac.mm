@@ -4,9 +4,10 @@
 
 #include "device/bluetooth/bluetooth_low_energy_discovery_manager_mac.h"
 
+#include <memory>
+
 #include "base/mac/mac_util.h"
 #include "base/mac/sdk_forward_declarations.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/sys_string_conversions.h"
 #include "device/bluetooth/bluetooth_adapter_mac.h"
 #include "device/bluetooth/bluetooth_low_energy_device_mac.h"
@@ -57,14 +58,21 @@ void BluetoothLowEnergyDiscoveryManagerMac::TryStartDiscovery() {
     for (auto& service_uuid : services_uuids_) {
       NSString* uuidString =
           base::SysUTF8ToNSString(service_uuid.canonical_value().c_str());
-      Class aClass = NSClassFromString(@"CBUUID");
-      CBUUID* uuid = [aClass UUIDWithString:uuidString];
+      CBUUID* uuid = [CBUUID UUIDWithString:uuidString];
       [services addObject:uuid];
     }
   };
 
   VLOG(1) << "TryStartDiscovery scanForPeripheralsWithServices";
-  [central_manager_ scanForPeripheralsWithServices:services options:nil];
+  // Start a scan with the Allow Duplicates option so that we get notified
+  // of each new Advertisement Packet. This allows us to provide up to date
+  // values for RSSI, Advertised Services, Advertised Data, etc.
+  [central_manager_
+      scanForPeripheralsWithServices:services
+                             options:@{
+                               CBCentralManagerScanOptionAllowDuplicatesKey :
+                                   @YES
+                             }];
   pending_ = false;
 }
 
@@ -85,7 +93,7 @@ void BluetoothLowEnergyDiscoveryManagerMac::DiscoveredPeripheral(
     CBPeripheral* peripheral,
     NSDictionary* advertisementData,
     int rssi) {
-  VLOG(1) << "DiscoveredPeripheral";
+  VLOG(3) << "DiscoveredPeripheral";
   observer_->LowEnergyDeviceUpdated(peripheral, advertisementData, rssi);
 }
 

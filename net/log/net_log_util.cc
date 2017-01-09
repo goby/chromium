@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -28,11 +29,16 @@
 #include "net/http/http_server_properties.h"
 #include "net/http/http_transaction_factory.h"
 #include "net/log/net_log.h"
+#include "net/log/net_log_capture_mode.h"
+#include "net/log/net_log_entry.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_parameters_callback.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_retry_info.h"
 #include "net/proxy/proxy_service.h"
-#include "net/quic/quic_protocol.h"
-#include "net/quic/quic_utils.h"
+#include "net/quic/core/quic_error_codes.h"
+#include "net/quic/core/quic_packets.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -128,15 +134,17 @@ bool RequestCreatedBefore(const URLRequest* request1,
 
 // Returns a Value representing the state of a pre-existing URLRequest when
 // net-internals was opened.
-scoped_ptr<base::Value> GetRequestStateAsValue(const net::URLRequest* request,
-                                               NetLogCaptureMode capture_mode) {
+std::unique_ptr<base::Value> GetRequestStateAsValue(
+    const net::URLRequest* request,
+    NetLogCaptureMode capture_mode) {
   return request->GetStateAsValue();
 }
 
 }  // namespace
 
-scoped_ptr<base::DictionaryValue> GetNetConstants() {
-  scoped_ptr<base::DictionaryValue> constants_dict(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue> GetNetConstants() {
+  std::unique_ptr<base::DictionaryValue> constants_dict(
+      new base::DictionaryValue());
 
   // Version of the file format.
   constants_dict->SetInteger("logFormatVersion", kLogFormatVersion);
@@ -148,106 +156,105 @@ scoped_ptr<base::DictionaryValue> GetNetConstants() {
   // Add a dictionary with information about the relationship between CertStatus
   // flags and their symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    for (size_t i = 0; i < arraysize(kCertStatusFlags); i++)
-      dict->SetInteger(kCertStatusFlags[i].name, kCertStatusFlags[i].constant);
+    for (const auto& flag : kCertStatusFlags)
+      dict->SetInteger(flag.name, flag.constant);
 
-    constants_dict->Set("certStatusFlag", dict.Pass());
+    constants_dict->Set("certStatusFlag", std::move(dict));
   }
 
   // Add a dictionary with information about the relationship between load flag
   // enums and their symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    for (size_t i = 0; i < arraysize(kLoadFlags); i++)
-      dict->SetInteger(kLoadFlags[i].name, kLoadFlags[i].constant);
+    for (const auto& flag : kLoadFlags)
+      dict->SetInteger(flag.name, flag.constant);
 
-    constants_dict->Set("loadFlag", dict.Pass());
+    constants_dict->Set("loadFlag", std::move(dict));
   }
 
   // Add a dictionary with information about the relationship between load state
   // enums and their symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    for (size_t i = 0; i < arraysize(kLoadStateTable); i++)
-      dict->SetInteger(kLoadStateTable[i].name, kLoadStateTable[i].constant);
+    for (const auto& state : kLoadStateTable)
+      dict->SetInteger(state.name, state.constant);
 
-    constants_dict->Set("loadState", dict.Pass());
+    constants_dict->Set("loadState", std::move(dict));
   }
 
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 #define NET_INFO_SOURCE(label, string, value) \
   dict->SetInteger(string, NET_INFO_##label);
 #include "net/base/net_info_source_list.h"
 #undef NET_INFO_SOURCE
-    constants_dict->Set("netInfoSources", dict.Pass());
+    constants_dict->Set("netInfoSources", std::move(dict));
   }
 
   // Add information on the relationship between net error codes and their
   // symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    for (size_t i = 0; i < arraysize(kNetErrors); i++)
-      dict->SetInteger(ErrorToShortString(kNetErrors[i]), kNetErrors[i]);
+    for (const auto& error : kNetErrors)
+      dict->SetInteger(ErrorToShortString(error), error);
 
-    constants_dict->Set("netError", dict.Pass());
+    constants_dict->Set("netError", std::move(dict));
   }
 
   // Add information on the relationship between QUIC error codes and their
   // symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
     for (QuicErrorCode error = QUIC_NO_ERROR; error < QUIC_LAST_ERROR;
          error = static_cast<QuicErrorCode>(error + 1)) {
-      dict->SetInteger(QuicUtils::ErrorToString(error),
-                       static_cast<int>(error));
+      dict->SetInteger(QuicErrorCodeToString(error), static_cast<int>(error));
     }
 
-    constants_dict->Set("quicError", dict.Pass());
+    constants_dict->Set("quicError", std::move(dict));
   }
 
   // Add information on the relationship between QUIC RST_STREAM error codes
   // and their symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
     for (QuicRstStreamErrorCode error = QUIC_STREAM_NO_ERROR;
          error < QUIC_STREAM_LAST_ERROR;
          error = static_cast<QuicRstStreamErrorCode>(error + 1)) {
-      dict->SetInteger(QuicUtils::StreamErrorToString(error),
+      dict->SetInteger(QuicRstStreamErrorCodeToString(error),
                        static_cast<int>(error));
     }
 
-    constants_dict->Set("quicRstStreamError", dict.Pass());
+    constants_dict->Set("quicRstStreamError", std::move(dict));
   }
 
   // Add information on the relationship between SDCH problem codes and their
   // symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    for (size_t i = 0; i < arraysize(kSdchProblems); i++)
-      dict->SetInteger(kSdchProblems[i].name, kSdchProblems[i].constant);
+    for (const auto& problem : kSdchProblems)
+      dict->SetInteger(problem.name, problem.constant);
 
-    constants_dict->Set("sdchProblemCode", dict.Pass());
+    constants_dict->Set("sdchProblemCode", std::move(dict));
   }
 
   // Information about the relationship between event phase enums and their
   // symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    dict->SetInteger("PHASE_BEGIN", NetLog::PHASE_BEGIN);
-    dict->SetInteger("PHASE_END", NetLog::PHASE_END);
-    dict->SetInteger("PHASE_NONE", NetLog::PHASE_NONE);
+    dict->SetInteger("PHASE_BEGIN", static_cast<int>(NetLogEventPhase::BEGIN));
+    dict->SetInteger("PHASE_END", static_cast<int>(NetLogEventPhase::END));
+    dict->SetInteger("PHASE_NONE", static_cast<int>(NetLogEventPhase::NONE));
 
-    constants_dict->Set("logEventPhase", dict.Pass());
+    constants_dict->Set("logEventPhase", std::move(dict));
   }
 
   // Information about the relationship between source type enums and
@@ -262,21 +269,32 @@ scoped_ptr<base::DictionaryValue> GetNetConstants() {
   // Information about the relationship between address family enums and
   // their symbolic names.
   {
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
     dict->SetInteger("ADDRESS_FAMILY_UNSPECIFIED", ADDRESS_FAMILY_UNSPECIFIED);
     dict->SetInteger("ADDRESS_FAMILY_IPV4", ADDRESS_FAMILY_IPV4);
     dict->SetInteger("ADDRESS_FAMILY_IPV6", ADDRESS_FAMILY_IPV6);
 
-    constants_dict->Set("addressFamily", dict.Pass());
+    constants_dict->Set("addressFamily", std::move(dict));
   }
 
   // Information about how the "time ticks" values we have given it relate to
   // actual system times.  Time ticks are used throughout since they are stable
-  // across system clock changes.
+  // across system clock changes. Note: |timeTickOffset| is only comparable to
+  // TimeTicks values in milliseconds.
+  // TODO(csharrison): This is an imprecise way to convert TimeTicks to unix
+  // time. In fact, there isn't really a good way to do this unless we log Time
+  // and TimeTicks values side by side for every event. crbug.com/593157 tracks
+  // a change where the user will be notified if a timing anomaly occured that
+  // would skew the conversion (i.e. the machine entered suspend mode while
+  // logging).
   {
-    int64 tick_to_unix_time_ms =
-        (base::TimeTicks() - base::TimeTicks::UnixEpoch()).InMilliseconds();
+    base::TimeDelta time_since_epoch =
+        base::Time::Now() - base::Time::UnixEpoch();
+    base::TimeDelta reference_time_ticks =
+        base::TimeTicks::Now() - base::TimeTicks();
+    int64_t tick_to_unix_time_ms =
+        (time_since_epoch - reference_time_ticks).InMilliseconds();
 
     // Pass it as a string, since it may be too large to fit in an integer.
     constants_dict->SetString("timeTickOffset",
@@ -300,30 +318,31 @@ scoped_ptr<base::DictionaryValue> GetNetConstants() {
     constants_dict->Set("activeFieldTrialGroups", field_trial_groups);
   }
 
-  return constants_dict.Pass();
+  return constants_dict;
 }
 
-NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
+NET_EXPORT std::unique_ptr<base::DictionaryValue> GetNetInfo(
     URLRequestContext* context,
     int info_sources) {
   // May only be called on the context's thread.
   DCHECK(context->CalledOnValidThread());
 
-  scoped_ptr<base::DictionaryValue> net_info_dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> net_info_dict(
+      new base::DictionaryValue());
 
   // TODO(mmenke):  The code for most of these sources should probably be moved
   // into the sources themselves.
   if (info_sources & NET_INFO_PROXY_SETTINGS) {
     ProxyService* proxy_service = context->proxy_service();
 
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     if (proxy_service->fetched_config().is_valid())
       dict->Set("original", proxy_service->fetched_config().ToValue());
     if (proxy_service->config().is_valid())
       dict->Set("effective", proxy_service->config().ToValue());
 
     net_info_dict->Set(NetInfoSourceToString(NET_INFO_PROXY_SETTINGS),
-                       dict.Pass());
+                       std::move(dict));
   }
 
   if (info_sources & NET_INFO_BAD_PROXIES) {
@@ -337,12 +356,12 @@ NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
       const std::string& proxy_uri = it->first;
       const ProxyRetryInfo& retry_info = it->second;
 
-      scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+      std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
       dict->SetString("proxy_uri", proxy_uri);
       dict->SetString("bad_until",
                       NetLog::TickCountToString(retry_info.bad_until));
 
-      list->Append(dict.Pass());
+      list->Append(std::move(dict));
     }
 
     net_info_dict->Set(NetInfoSourceToString(NET_INFO_BAD_PROXIES), list);
@@ -353,10 +372,11 @@ NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
     DCHECK(host_resolver);
     HostCache* cache = host_resolver->GetHostCache();
     if (cache) {
-      scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-      base::Value* dns_config = host_resolver->GetDnsConfigAsValue();
+      std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+      std::unique_ptr<base::Value> dns_config =
+          host_resolver->GetDnsConfigAsValue();
       if (dns_config)
-        dict->Set("dns_config", dns_config);
+        dict->Set("dns_config", std::move(dns_config));
 
       base::DictionaryValue* cache_info_dict = new base::DictionaryValue();
 
@@ -365,37 +385,37 @@ NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
 
       base::ListValue* entry_list = new base::ListValue();
 
-      HostCache::EntryMap::Iterator it(cache->entries());
-      for (; it.HasNext(); it.Advance()) {
-        const HostCache::Key& key = it.key();
-        const HostCache::Entry& entry = it.value();
+      for (const auto& pair : cache->entries()) {
+        const HostCache::Key& key = pair.first;
+        const HostCache::Entry& entry = pair.second;
 
-        base::DictionaryValue* entry_dict = new base::DictionaryValue();
+        std::unique_ptr<base::DictionaryValue> entry_dict(
+            new base::DictionaryValue());
 
         entry_dict->SetString("hostname", key.hostname);
         entry_dict->SetInteger("address_family",
                                static_cast<int>(key.address_family));
         entry_dict->SetString("expiration",
-                              NetLog::TickCountToString(it.expiration()));
+                              NetLog::TickCountToString(entry.expires()));
 
-        if (entry.error != OK) {
-          entry_dict->SetInteger("error", entry.error);
+        if (entry.error() != OK) {
+          entry_dict->SetInteger("error", entry.error());
         } else {
+          const AddressList& addresses = entry.addresses();
           // Append all of the resolved addresses.
           base::ListValue* address_list = new base::ListValue();
-          for (size_t i = 0; i < entry.addrlist.size(); ++i) {
-            address_list->AppendString(entry.addrlist[i].ToStringWithoutPort());
-          }
+          for (size_t i = 0; i < addresses.size(); ++i)
+            address_list->AppendString(addresses[i].ToStringWithoutPort());
           entry_dict->Set("addresses", address_list);
         }
 
-        entry_list->Append(entry_dict);
+        entry_list->Append(std::move(entry_dict));
       }
 
       cache_info_dict->Set("entries", entry_list);
       dict->Set("cache", cache_info_dict);
       net_info_dict->Set(NetInfoSourceToString(NET_INFO_HOST_RESOLVER),
-                         dict.Pass());
+                         std::move(dict));
     }
   }
 
@@ -415,10 +435,8 @@ NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
   if (info_sources & NET_INFO_SPDY_STATUS) {
     base::DictionaryValue* status_dict = new base::DictionaryValue();
 
-    status_dict->SetBoolean("spdy_enabled", HttpStreamFactory::spdy_enabled());
-    status_dict->SetBoolean(
-        "use_alternative_services",
-        http_network_session->params().use_alternative_services);
+    status_dict->SetBoolean("enable_http2",
+                            http_network_session->params().enable_http2);
 
     NextProtoVector alpn_protos;
     http_network_session->GetAlpnProtos(&alpn_protos);
@@ -427,32 +445,20 @@ NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
       for (NextProto proto : alpn_protos) {
         if (!next_protos_string.empty())
           next_protos_string.append(",");
-        next_protos_string.append(SSLClientSocket::NextProtoToString(proto));
+        next_protos_string.append(NextProtoToString(proto));
       }
       status_dict->SetString("alpn_protos", next_protos_string);
-    }
-
-    NextProtoVector npn_protos;
-    http_network_session->GetNpnProtos(&npn_protos);
-    if (!npn_protos.empty()) {
-      std::string next_protos_string;
-      for (NextProto proto : npn_protos) {
-        if (!next_protos_string.empty())
-          next_protos_string.append(",");
-        next_protos_string.append(SSLClientSocket::NextProtoToString(proto));
-      }
-      status_dict->SetString("npn_protos", next_protos_string);
     }
 
     net_info_dict->Set(NetInfoSourceToString(NET_INFO_SPDY_STATUS),
                        status_dict);
   }
 
-  if (info_sources & NET_INFO_SPDY_ALT_SVC_MAPPINGS) {
+  if (info_sources & NET_INFO_ALT_SVC_MAPPINGS) {
     const HttpServerProperties& http_server_properties =
         *context->http_server_properties();
     net_info_dict->Set(
-        NetInfoSourceToString(NET_INFO_SPDY_ALT_SVC_MAPPINGS),
+        NetInfoSourceToString(NET_INFO_ALT_SVC_MAPPINGS),
         http_server_properties.GetAlternativeServiceInfoAsValue());
   }
 
@@ -482,17 +488,18 @@ NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
   }
 
   if (info_sources & NET_INFO_SDCH) {
-    scoped_ptr<base::Value> info_dict;
+    std::unique_ptr<base::Value> info_dict;
     SdchManager* sdch_manager = context->sdch_manager();
     if (sdch_manager) {
       info_dict = sdch_manager->SdchInfoToValue();
     } else {
       info_dict.reset(new base::DictionaryValue());
     }
-    net_info_dict->Set(NetInfoSourceToString(NET_INFO_SDCH), info_dict.Pass());
+    net_info_dict->Set(NetInfoSourceToString(NET_INFO_SDCH),
+                       std::move(info_dict));
   }
 
-  return net_info_dict.Pass();
+  return net_info_dict;
 }
 
 NET_EXPORT void CreateNetLogEntriesForActiveObjects(
@@ -500,12 +507,12 @@ NET_EXPORT void CreateNetLogEntriesForActiveObjects(
     NetLog::ThreadSafeObserver* observer) {
   // Put together the list of all requests.
   std::vector<const URLRequest*> requests;
-  for (const auto& context : contexts) {
+  for (auto* context : contexts) {
     // May only be called on the context's thread.
     DCHECK(context->CalledOnValidThread());
     // Contexts should all be using the same NetLog.
     DCHECK_EQ((*contexts.begin())->net_log(), context->net_log());
-    for (const auto& request : *context->url_requests()) {
+    for (auto* request : *context->url_requests()) {
       requests.push_back(request);
     }
   }
@@ -514,16 +521,16 @@ NET_EXPORT void CreateNetLogEntriesForActiveObjects(
   std::sort(requests.begin(), requests.end(), RequestCreatedBefore);
 
   // Create fake events.
-  for (const auto& request : requests) {
-    NetLog::ParametersCallback callback =
+  for (auto* request : requests) {
+    NetLogParametersCallback callback =
         base::Bind(&GetRequestStateAsValue, base::Unretained(request));
 
     // Note that passing the hardcoded NetLogCaptureMode::Default() below is
     // fine, since GetRequestStateAsValue() ignores the capture mode.
-    NetLog::EntryData entry_data(
-        NetLog::TYPE_REQUEST_ALIVE, request->net_log().source(),
-        NetLog::PHASE_BEGIN, request->creation_time(), &callback);
-    NetLog::Entry entry(&entry_data, NetLogCaptureMode::Default());
+    NetLogEntryData entry_data(
+        NetLogEventType::REQUEST_ALIVE, request->net_log().source(),
+        NetLogEventPhase::BEGIN, request->creation_time(), &callback);
+    NetLogEntry entry(&entry_data, NetLogCaptureMode::Default());
     observer->OnAddEntry(entry);
   }
 }

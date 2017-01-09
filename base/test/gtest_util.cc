@@ -4,8 +4,13 @@
 
 #include "base/test/gtest_util.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -14,9 +19,17 @@ namespace base {
 TestIdentifier::TestIdentifier() {
 }
 
+TestIdentifier::TestIdentifier(const TestIdentifier& other) = default;
+
 std::string FormatFullTestName(const std::string& test_case_name,
                                const std::string& test_name) {
   return test_case_name + "." + test_name;
+}
+
+std::string TestNameWithoutDisabledPrefix(const std::string& full_test_name) {
+  std::string test_name_no_disabled(full_test_name);
+  ReplaceSubstringsAfterOffset(&test_name_no_disabled, 0, "DISABLED_", "");
+  return test_name_no_disabled;
 }
 
 std::vector<TestIdentifier> GetCompiledInTests() {
@@ -43,12 +56,12 @@ bool WriteCompiledInTestsToFile(const FilePath& path) {
 
   ListValue root;
   for (size_t i = 0; i < tests.size(); ++i) {
-    DictionaryValue* test_info = new DictionaryValue;
+    std::unique_ptr<DictionaryValue> test_info(new DictionaryValue);
     test_info->SetString("test_case_name", tests[i].test_case_name);
     test_info->SetString("test_name", tests[i].test_name);
     test_info->SetString("file", tests[i].file);
     test_info->SetInteger("line", tests[i].line);
-    root.Append(test_info);
+    root.Append(std::move(test_info));
   }
 
   JSONFileValueSerializer serializer(path);
@@ -60,7 +73,7 @@ bool ReadTestNamesFromFile(const FilePath& path,
   JSONFileValueDeserializer deserializer(path);
   int error_code = 0;
   std::string error_message;
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       deserializer.Deserialize(&error_code, &error_message);
   if (!value.get())
     return false;

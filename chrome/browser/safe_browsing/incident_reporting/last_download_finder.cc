@@ -4,15 +4,19 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/last_download_finder.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <functional>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -21,12 +25,15 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
 #include "chrome/common/safe_browsing/download_protection_util.h"
+#include "chrome/common/safe_browsing/file_type_policies.h"
 #include "components/history/core/browser/download_constants.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "crypto/sha2.h"
+#include "extensions/features/features.h"
 
 namespace safe_browsing {
 
@@ -38,19 +45,22 @@ namespace {
 // functions that follow.
 
 // Returns the end time of a download represented by a DownloadRow.
-int64 GetEndTime(const history::DownloadRow& row) {
+int64_t GetEndTime(const history::DownloadRow& row) {
   return row.end_time.ToJavaTime();
 }
 
 // Returns the end time of a download represented by a DownloadDetails.
-int64 GetEndTime(const ClientIncidentReport_DownloadDetails& details) {
+int64_t GetEndTime(const ClientIncidentReport_DownloadDetails& details) {
   return details.download_time_msec();
 }
 
 bool IsBinaryDownloadForCurrentOS(
     ClientDownloadRequest::DownloadType download_type) {
+  // Whenever a new DownloadType is introduced, the following set of conditions
+  // should also be updated so that the IsBinaryDownloadForCurrentOS() will
+  // return true for that DownloadType as appropriate.
   static_assert(ClientDownloadRequest::DownloadType_MAX ==
-                    ClientDownloadRequest::INVALID_MAC_ARCHIVE,
+                    ClientDownloadRequest::SAMPLED_UNSUPPORTED_FILE,
                 "Update logic below");
 
 // Platform-specific types are relevant only for their own platforms.
@@ -64,7 +74,7 @@ bool IsBinaryDownloadForCurrentOS(
 #endif
 
 // Extensions are supported where enabled.
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   if (download_type == ClientDownloadRequest::CHROME_EXTENSION)
     return true;
 #endif
@@ -72,7 +82,8 @@ bool IsBinaryDownloadForCurrentOS(
   if (download_type == ClientDownloadRequest::ZIPPED_EXECUTABLE ||
       download_type == ClientDownloadRequest::ZIPPED_ARCHIVE ||
       download_type == ClientDownloadRequest::INVALID_ZIP ||
-      download_type == ClientDownloadRequest::ARCHIVE) {
+      download_type == ClientDownloadRequest::ARCHIVE ||
+      download_type == ClientDownloadRequest::PPAPI_SAVE_REQUEST) {
     return true;
   }
 
@@ -86,15 +97,17 @@ bool IsBinaryDownloadForCurrentOS(
 bool IsBinaryDownload(const history::DownloadRow& row) {
   // TODO(grt): Peek into archives to see if they contain binaries;
   // http://crbug.com/386915.
-  return (download_protection_util::IsSupportedBinaryFile(row.target_path) &&
-          !download_protection_util::IsArchiveFile(row.target_path) &&
+  FileTypePolicies* policies = FileTypePolicies::GetInstance();
+  return (policies->IsCheckedBinaryFile(row.target_path) &&
+          !policies->IsArchiveFile(row.target_path) &&
           IsBinaryDownloadForCurrentOS(
               download_protection_util::GetDownloadType(row.target_path)));
 }
 
 // Returns true if a download represented by a DownloadRow is not a binary file.
 bool IsNonBinaryDownload(const history::DownloadRow& row) {
-  return !download_protection_util::IsSupportedBinaryFile(row.target_path);
+  return !FileTypePolicies::GetInstance()->IsCheckedBinaryFile(
+      row.target_path);
 }
 
 // Returns true if a download represented by a DownloadDetails is binary file
@@ -208,8 +221,7 @@ void PopulateNonBinaryDetailsFromRow(
     const history::DownloadRow& download,
     ClientIncidentReport_NonBinaryDownloadDetails* details) {
   details->set_file_type(
-      base::FilePath(
-          download_protection_util::GetFileExtension(download.target_path))
+      base::FilePath(FileTypePolicies::GetFileExtension(download.target_path))
           .AsUTF8Unsafe());
   details->set_length(download.received_bytes);
   if (download.url_chain.back().has_host())
@@ -224,17 +236,18 @@ LastDownloadFinder::~LastDownloadFinder() {
 }
 
 // static
-scoped_ptr<LastDownloadFinder> LastDownloadFinder::Create(
+std::unique_ptr<LastDownloadFinder> LastDownloadFinder::Create(
     const DownloadDetailsGetter& download_details_getter,
     const LastDownloadCallback& callback) {
-  scoped_ptr<LastDownloadFinder> finder(make_scoped_ptr(new LastDownloadFinder(
-      download_details_getter,
-      g_browser_process->profile_manager()->GetLoadedProfiles(),
-      callback)));
+  std::unique_ptr<LastDownloadFinder> finder(
+      base::WrapUnique(new LastDownloadFinder(
+          download_details_getter,
+          g_browser_process->profile_manager()->GetLoadedProfiles(),
+          callback)));
   // Return NULL if there is no work to do.
   if (finder->profile_states_.empty())
-    return scoped_ptr<LastDownloadFinder>();
-  return finder.Pass();
+    return std::unique_ptr<LastDownloadFinder>();
+  return finder;
 }
 
 LastDownloadFinder::LastDownloadFinder()
@@ -285,7 +298,7 @@ void LastDownloadFinder::SearchInProfile(Profile* profile) {
 
 void LastDownloadFinder::OnMetadataQuery(
     Profile* profile,
-    scoped_ptr<ClientIncidentReport_DownloadDetails> details) {
+    std::unique_ptr<ClientIncidentReport_DownloadDetails> details) {
   auto iter = profile_states_.find(profile);
   // Early-exit if the search for this profile was abandoned.
   if (iter == profile_states_.end())
@@ -294,7 +307,7 @@ void LastDownloadFinder::OnMetadataQuery(
   if (details) {
     if (IsMostInterestingBinary(*details, details_.get(),
                                 most_recent_binary_row_)) {
-      details_ = details.Pass();
+      details_ = std::move(details);
       most_recent_binary_row_.end_time = base::Time();
     }
     iter->second = WAITING_FOR_NON_BINARY_HISTORY;
@@ -330,7 +343,7 @@ void LastDownloadFinder::AbandonSearchInProfile(Profile* profile) {
 
 void LastDownloadFinder::OnDownloadQuery(
     Profile* profile,
-    scoped_ptr<std::vector<history::DownloadRow> > downloads) {
+    std::unique_ptr<std::vector<history::DownloadRow>> downloads) {
   // Early-exit if the history search for this profile was abandoned.
   auto iter = profile_states_.find(profile);
   if (iter == profile_states_.end())
@@ -375,9 +388,10 @@ void LastDownloadFinder::RemoveProfileAndReportIfDone(
 void LastDownloadFinder::ReportResults() {
   DCHECK(profile_states_.empty());
 
-  scoped_ptr<ClientIncidentReport_DownloadDetails> binary_details = nullptr;
-  scoped_ptr<ClientIncidentReport_NonBinaryDownloadDetails> non_binary_details =
+  std::unique_ptr<ClientIncidentReport_DownloadDetails> binary_details =
       nullptr;
+  std::unique_ptr<ClientIncidentReport_NonBinaryDownloadDetails>
+      non_binary_details = nullptr;
 
   if (details_) {
     binary_details.reset(new ClientIncidentReport_DownloadDetails(*details_));
@@ -393,7 +407,7 @@ void LastDownloadFinder::ReportResults() {
                                     non_binary_details.get());
   }
 
-  callback_.Run(binary_details.Pass(), non_binary_details.Pass());
+  callback_.Run(std::move(binary_details), std::move(non_binary_details));
   // Do not touch this LastDownloadFinder after running the callback, since it
   // may have been deleted.
 }

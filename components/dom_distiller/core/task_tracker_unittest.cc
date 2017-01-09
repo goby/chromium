@@ -4,6 +4,8 @@
 
 #include "components/dom_distiller/core/task_tracker.h"
 
+#include <utility>
+
 #include "base/run_loop.h"
 #include "components/dom_distiller/core/article_distillation_update.h"
 #include "components/dom_distiller/core/article_entry.h"
@@ -75,7 +77,7 @@ class DomDistillerTaskTrackerTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
   std::string entry_id_;
   GURL page_0_url_;
   GURL page_1_url_;
@@ -108,8 +110,10 @@ TEST_F(DomDistillerTaskTrackerTest, TestViewerCancelled) {
 
   FakeViewRequestDelegate viewer_delegate;
   FakeViewRequestDelegate viewer_delegate2;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
-  scoped_ptr<ViewerHandle> handle2(task_tracker.AddViewer(&viewer_delegate2));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle2(
+      task_tracker.AddViewer(&viewer_delegate2));
 
   EXPECT_FALSE(cancel_callback.Cancelled());
   handle.reset();
@@ -125,7 +129,8 @@ TEST_F(DomDistillerTaskTrackerTest, TestViewerCancelledWithSaveRequest) {
       GetDefaultEntry(), cancel_callback.GetCallback(), NULL);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
   EXPECT_FALSE(cancel_callback.Cancelled());
 
   MockSaveCallback save_callback;
@@ -147,13 +152,14 @@ TEST_F(DomDistillerTaskTrackerTest, TestViewerNotifiedOnDistillationComplete) {
       GetDefaultEntry(), cancel_callback.GetCallback(), NULL);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_CALL(viewer_delegate, OnArticleReady(_));
 
   task_tracker.StartDistiller(&distiller_factory,
-                              scoped_ptr<DistillerPage>().Pass());
+                              std::unique_ptr<DistillerPage>());
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(cancel_callback.Cancelled());
@@ -170,15 +176,16 @@ TEST_F(DomDistillerTaskTrackerTest, TestDistillerFails) {
       GetDefaultEntry(), cancel_callback.GetCallback(), NULL);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_CALL(viewer_delegate, OnArticleReady(_));
 
   task_tracker.StartDistiller(&distiller_factory,
-                              scoped_ptr<DistillerPage>().Pass());
+                              std::unique_ptr<DistillerPage>());
   distiller->RunDistillerCallback(
-      scoped_ptr<DistilledArticleProto>(new DistilledArticleProto));
+      std::unique_ptr<DistilledArticleProto>(new DistilledArticleProto));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(cancel_callback.Cancelled());
@@ -202,7 +209,7 @@ TEST_F(DomDistillerTaskTrackerTest,
   EXPECT_CALL(save_callback, Save(_, _, _));
 
   task_tracker.StartDistiller(&distiller_factory,
-                              scoped_ptr<DistillerPage>().Pass());
+                              std::unique_ptr<DistillerPage>());
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(cancel_callback.Cancelled());
@@ -231,7 +238,8 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcher) {
       entry_with_blob, cancel_callback.GetCallback(), &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
   base::RunLoop().RunUntilIdle();
 
   const DistilledArticleProto* distilled_article;
@@ -264,7 +272,8 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcherFinishesFirst) {
       entry_with_blob, cancel_callback.GetCallback(), &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
   base::RunLoop().RunUntilIdle();
 
   DistilledArticleProto distilled_article;
@@ -276,7 +285,7 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcherFinishesFirst) {
       .WillOnce(testing::Assign(&distiller_destroyed, true));
 
   task_tracker.StartDistiller(&distiller_factory,
-                              scoped_ptr<DistillerPage>().Pass());
+                              std::unique_ptr<DistillerPage>());
   task_tracker.StartBlobFetcher();
   base::RunLoop().RunUntilIdle();
 
@@ -297,7 +306,7 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcherWithoutBlob) {
 
   ArticleEntry entry(GetDefaultEntry());
   InMemoryContentStore content_store(kDefaultMaxNumCachedEntries);
-  scoped_ptr<DistilledArticleProto> distilled_article(
+  std::unique_ptr<DistilledArticleProto> distilled_article(
       new DistilledArticleProto(CreateDistilledArticleForEntry(entry)));
 
   TestCancelCallback cancel_callback;
@@ -305,12 +314,13 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcherWithoutBlob) {
       GetDefaultEntry(), cancel_callback.GetCallback(), &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
   base::RunLoop().RunUntilIdle();
 
   task_tracker.StartBlobFetcher();
   task_tracker.StartDistiller(&distiller_factory,
-                              scoped_ptr<DistillerPage>().Pass());
+                              std::unique_ptr<DistillerPage>());
 
   // OnArticleReady shouldn't be called until distillation finishes (i.e. the
   // blob fetcher shouldn't return distilled content).
@@ -318,7 +328,7 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcherWithoutBlob) {
   base::RunLoop().RunUntilIdle();
 
   EXPECT_CALL(viewer_delegate, OnArticleReady(_));
-  distiller->RunDistillerCallback(distilled_article.Pass());
+  distiller->RunDistillerCallback(std::move(distilled_article));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(cancel_callback.Cancelled());
@@ -338,26 +348,26 @@ TEST_F(DomDistillerTaskTrackerTest, TestDistillerFailsFirst) {
       GetDefaultEntry(), cancel_callback.GetCallback(), &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
 
   DistilledContentStore::LoadCallback content_store_load_callback;
   EXPECT_CALL(content_store, LoadContent(_, _))
       .WillOnce(testing::SaveArg<1>(&content_store_load_callback));
 
   task_tracker.StartDistiller(&distiller_factory,
-                              scoped_ptr<DistillerPage>().Pass());
+                              std::unique_ptr<DistillerPage>());
   task_tracker.StartBlobFetcher();
 
   EXPECT_CALL(viewer_delegate, OnArticleReady(_)).Times(0);
   distiller->RunDistillerCallback(
-      scoped_ptr<DistilledArticleProto>(new DistilledArticleProto));
+      std::unique_ptr<DistilledArticleProto>(new DistilledArticleProto));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_CALL(viewer_delegate, OnArticleReady(_));
   content_store_load_callback.Run(
-      true,
-      scoped_ptr<DistilledArticleProto>(
-          new DistilledArticleProto(CreateDistilledArticleForEntry(entry))));
+      true, std::unique_ptr<DistilledArticleProto>(new DistilledArticleProto(
+                CreateDistilledArticleForEntry(entry))));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(cancel_callback.Cancelled());
@@ -379,7 +389,8 @@ TEST_F(DomDistillerTaskTrackerTest, ContentIsSaved) {
       GetDefaultEntry(), cancel_callback.GetCallback(), &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
-  scoped_ptr<ViewerHandle> handle(task_tracker.AddViewer(&viewer_delegate));
+  std::unique_ptr<ViewerHandle> handle(
+      task_tracker.AddViewer(&viewer_delegate));
 
   DistilledArticleProto stored_distilled_article;
   DistilledContentStore::LoadCallback content_store_load_callback;
@@ -387,10 +398,10 @@ TEST_F(DomDistillerTaskTrackerTest, ContentIsSaved) {
       .WillOnce(testing::SaveArg<1>(&stored_distilled_article));
 
   task_tracker.StartDistiller(&distiller_factory,
-                              scoped_ptr<DistillerPage>().Pass());
+                              std::unique_ptr<DistillerPage>());
 
   EXPECT_CALL(viewer_delegate, OnArticleReady(_));
-  distiller->RunDistillerCallback(scoped_ptr<DistilledArticleProto>(
+  distiller->RunDistillerCallback(std::unique_ptr<DistilledArticleProto>(
       new DistilledArticleProto(distilled_article)));
   base::RunLoop().RunUntilIdle();
 

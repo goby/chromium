@@ -19,7 +19,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/dom/Comment.h"
 
 #include "core/dom/Document.h"
@@ -27,28 +26,22 @@
 namespace blink {
 
 inline Comment::Comment(Document& document, const String& text)
-    : CharacterData(document, text, CreateOther)
-{
+    : CharacterData(document, text, CreateOther) {}
+
+Comment* Comment::create(Document& document, const String& text) {
+  return new Comment(document, text);
 }
 
-PassRefPtrWillBeRawPtr<Comment> Comment::create(Document& document, const String& text)
-{
-    return adoptRefWillBeNoop(new Comment(document, text));
+String Comment::nodeName() const {
+  return "#comment";
 }
 
-String Comment::nodeName() const
-{
-    return "#comment";
+Node::NodeType Comment::getNodeType() const {
+  return kCommentNode;
 }
 
-Node::NodeType Comment::nodeType() const
-{
-    return COMMENT_NODE;
+Node* Comment::cloneNode(bool /*deep*/) {
+  return create(document(), data());
 }
 
-PassRefPtrWillBeRawPtr<Node> Comment::cloneNode(bool /*deep*/)
-{
-    return create(document(), data());
-}
-
-} // namespace blink
+}  // namespace blink

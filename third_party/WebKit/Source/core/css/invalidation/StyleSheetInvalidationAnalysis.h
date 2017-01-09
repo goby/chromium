@@ -33,30 +33,31 @@
 
 namespace blink {
 
-class Document;
-class Node;
 class StyleSheetContents;
 class TreeScope;
 
 class StyleSheetInvalidationAnalysis {
-    STACK_ALLOCATED();
-public:
-    StyleSheetInvalidationAnalysis(const TreeScope&, const WillBeHeapVector<RawPtrWillBeMember<StyleSheetContents>>&);
+  STACK_ALLOCATED();
+  WTF_MAKE_NONCOPYABLE(StyleSheetInvalidationAnalysis);
 
-    bool dirtiesAllStyle() const { return m_dirtiesAllStyle; }
-    void invalidateStyle();
+ public:
+  StyleSheetInvalidationAnalysis(const TreeScope&,
+                                 const HeapVector<Member<StyleSheetContents>>&);
 
-private:
+  bool dirtiesAllStyle() const { return m_dirtiesAllStyle; }
+  void invalidateStyle();
 
-    void analyzeStyleSheet(StyleSheetContents*);
+ private:
+  void analyzeStyleSheet(StyleSheetContents*);
 
-    RawPtrWillBeMember<const TreeScope> m_treeScope;
-    HashSet<StringImpl*> m_idScopes;
-    HashSet<StringImpl*> m_classScopes;
+  Member<const TreeScope> m_treeScope;
+  HashSet<StringImpl*> m_idScopes;
+  HashSet<StringImpl*> m_classScopes;
 
-    bool m_dirtiesAllStyle = false;
+  bool m_dirtiesAllStyle = false;
+  bool m_addsKeyframes = false;
 };
 
-}
+}  // namespace blink
 
 #endif

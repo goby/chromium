@@ -7,7 +7,6 @@
         <script src="../../resources/testharnessreport.js"></script>
     </head>
     <body>
-        <div id="log"></div>
         <script>
             function expect_error(keySystem, configurations, expectedError, testName) {
                 promise_test(function(test) {
@@ -39,7 +38,7 @@
             }
 
             // Tests for keySystem.
-            expect_error('', [{}], 'InvalidAccessError', 'Empty keySystem');
+            expect_error('', [{}], 'TypeError', 'Empty keySystem');
             expect_error('com.example.unsupported', [{}], 'NotSupportedError', 'Unsupported keySystem');
             expect_error('org.w3.clearkey.', [{}], 'NotSupportedError', 'keySystem ends with "."');
             expect_error('org.w3.ClearKey', [{}], 'NotSupportedError', 'Capitalized keySystem');
@@ -78,10 +77,12 @@
             expect_error('Org.w3.clearkey', [{}], 'NotSupportedError', 'Key system name is case sensitive');
 
             // Tests for trivial configurations.
-            expect_error('org.w3.clearkey', [], 'InvalidAccessError', 'Empty supportedConfigurations');
+            expect_error('org.w3.clearkey', [], 'TypeError', 'Empty supportedConfigurations');
             expect_config('org.w3.clearkey', [{}], {}, 'Empty configuration');
 
             // Various combinations of supportedConfigurations.
+            // TODO(jrummell): Specifying contentType without codecs is
+            // deprecated, so this test should fail. http://crbug.com/605661.
             expect_config('org.w3.clearkey', [{
                 initDataTypes: ['webm'],
                 audioCapabilities: [{contentType: 'audio/webm'}],
@@ -92,6 +93,8 @@
                 videoCapabilities: [{contentType: 'video/webm'}],
             }, 'Basic supported configuration');
 
+            // TODO(jrummell): Specifying contentType without codecs is
+            // deprecated, so this test should fail. http://crbug.com/605661.
             expect_config('org.w3.clearkey', [{
                 initDataTypes: ['fakeidt', 'webm'],
                 audioCapabilities: [{contentType: 'audio/fake'}, {contentType: 'audio/webm'}],
@@ -254,10 +257,16 @@
             }, 'Codecs=');
 
             expect_config('org.w3.clearkey', [{
-                videoCapabilities: [{contentType: 'VIDEO/WEBM; CODECS="vp8"'}],
+                videoCapabilities: [{contentType: 'VIDEO/WEBM; codecs="vp8"'}],
             }], {
-                videoCapabilities: [{contentType: 'VIDEO/WEBM; CODECS="vp8"'}],
+                videoCapabilities: [{contentType: 'VIDEO/WEBM; codecs="vp8"'}],
             }, 'VIDEO/WEBM');
+
+            expect_config('org.w3.clearkey', [{
+                videoCapabilities: [{contentType: 'video/webm; CODECS="vp8"'}],
+            }], {
+                videoCapabilities: [{contentType: 'video/webm; CODECS="vp8"'}],
+            }, 'CODECS=');
 
             // Unrecognized attributes are not allowed.
             // TODO(jrummell): Unrecognized attributes are ignored currently.
@@ -303,6 +312,23 @@
             expect_error('org.w3.clearkey', [{
                 videoCapabilities: [{contentType: 'video/webm; codecs=",vp8,"'}],
             }], 'NotSupportedError', 'Leading and trailing , in codecs');
+
+            // Verify 'temporary' sessionType.
+            expect_config('org.w3.clearkey', [{
+                sessionTypes: [ 'temporary' ]
+            }], {
+                sessionTypes: [ 'temporary' ]
+            }, 'temporary sessionType');
+
+            // Clear Key doesn't support persistent sessions.
+            expect_error('org.w3.clearkey', [{
+                sessionTypes: [ 'persistent-license' ]
+            }], 'NotSupportedError', 'persistent-license sessionType');
+
+            // Verify invalid sessionTypes.
+            expect_error('org.w3.clearkey', [{
+                sessionTypes: [ 'foo' ]
+            }], 'NotSupportedError', 'invalid sessionType');
         </script>
     </body>
 </html>

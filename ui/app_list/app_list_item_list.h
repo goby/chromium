@@ -5,12 +5,15 @@
 #ifndef UI_APP_LIST_APP_LIST_ITEM_LIST_H_
 #define UI_APP_LIST_APP_LIST_ITEM_LIST_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/observer_list.h"
-#include "sync/api/string_ordinal.h"
+#include "components/sync/model/string_ordinal.h"
 #include "ui/app_list/app_list_export.h"
 #include "ui/app_list/app_list_item_list_observer.h"
 
@@ -74,7 +77,7 @@ class APP_LIST_EXPORT AppListItemList {
   // Adds |item| to the end of |app_list_items_|. Takes ownership of |item|.
   // Triggers observers_.OnListItemAdded(). Returns a pointer to the added item
   // that is safe to use (e.g. after releasing a scoped ptr).
-  AppListItem* AddItem(scoped_ptr<AppListItem> item_ptr);
+  AppListItem* AddItem(std::unique_ptr<AppListItem> item_ptr);
 
   // Finds item matching |id| in |app_list_items_| (linear search) and deletes
   // it. Triggers observers_.OnListItemRemoved() after removing the item from
@@ -83,11 +86,11 @@ class APP_LIST_EXPORT AppListItemList {
 
   // Removes the item with matching |id| in |app_list_items_| without deleting
   // it. Returns a scoped pointer containing the removed item.
-  scoped_ptr<AppListItem> RemoveItem(const std::string& id);
+  std::unique_ptr<AppListItem> RemoveItem(const std::string& id);
 
   // Removes the item at |index| from |app_list_items_| without deleting it.
   // Returns a scoped pointer containing the removed item.
-  scoped_ptr<AppListItem> RemoveItemAt(size_t index);
+  std::unique_ptr<AppListItem> RemoveItemAt(size_t index);
 
   // Deletes item at |index| and signals observers.
   void DeleteItemAt(size_t index);

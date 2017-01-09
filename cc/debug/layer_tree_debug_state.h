@@ -5,7 +5,6 @@
 #ifndef CC_DEBUG_LAYER_TREE_DEBUG_STATE_H_
 #define CC_DEBUG_LAYER_TREE_DEBUG_STATE_H_
 
-#include "base/basictypes.h"
 #include "cc/base/cc_export.h"
 
 namespace cc {
@@ -17,6 +16,7 @@ class LayerTreeDebugState;
 class CC_EXPORT LayerTreeDebugState {
  public:
   LayerTreeDebugState();
+  LayerTreeDebugState(const LayerTreeDebugState& other);
   ~LayerTreeDebugState();
 
   bool show_fps_counter;
@@ -26,7 +26,6 @@ class CC_EXPORT LayerTreeDebugState {
   bool show_property_changed_rects;
   bool show_surface_damage_rects;
   bool show_screen_space_rects;
-  bool show_replica_screen_space_rects;
   bool show_touch_event_handler_rects;
   bool show_wheel_event_handler_rects;
   bool show_scroll_event_handler_rects;
@@ -43,9 +42,6 @@ class CC_EXPORT LayerTreeDebugState {
   bool ShowHudInfo() const;
   bool ShowHudRects() const;
   bool ShowMemoryStats() const;
-
-  void ToProtobuf(proto::LayerTreeDebugState* proto) const;
-  void FromProtobuf(const proto::LayerTreeDebugState& proto);
 
   static bool Equal(const LayerTreeDebugState& a, const LayerTreeDebugState& b);
   static LayerTreeDebugState Unite(const LayerTreeDebugState& a,

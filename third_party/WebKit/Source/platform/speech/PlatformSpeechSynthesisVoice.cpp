@@ -23,34 +23,38 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/speech/PlatformSpeechSynthesisVoice.h"
 
 namespace blink {
 
-PlatformSpeechSynthesisVoice* PlatformSpeechSynthesisVoice::create(const String& voiceURI, const String& name, const String& lang, bool localService, bool isDefault)
-{
-    return new PlatformSpeechSynthesisVoice(voiceURI, name, lang, localService, isDefault);
+PassRefPtr<PlatformSpeechSynthesisVoice> PlatformSpeechSynthesisVoice::create(
+    const String& voiceURI,
+    const String& name,
+    const String& lang,
+    bool localService,
+    bool isDefault) {
+  return adoptRef(new PlatformSpeechSynthesisVoice(voiceURI, name, lang,
+                                                   localService, isDefault));
 }
 
-PlatformSpeechSynthesisVoice* PlatformSpeechSynthesisVoice::create()
-{
-    return new PlatformSpeechSynthesisVoice();
+PassRefPtr<PlatformSpeechSynthesisVoice>
+PlatformSpeechSynthesisVoice::create() {
+  return adoptRef(new PlatformSpeechSynthesisVoice);
 }
 
-PlatformSpeechSynthesisVoice::PlatformSpeechSynthesisVoice(const String& voiceURI, const String& name, const String& lang, bool localService, bool isDefault)
-    : m_voiceURI(voiceURI)
-    , m_name(name)
-    , m_lang(lang)
-    , m_localService(localService)
-    , m_default(isDefault)
-{
-}
+PlatformSpeechSynthesisVoice::PlatformSpeechSynthesisVoice(
+    const String& voiceURI,
+    const String& name,
+    const String& lang,
+    bool localService,
+    bool isDefault)
+    : m_voiceURI(voiceURI),
+      m_name(name),
+      m_lang(lang),
+      m_localService(localService),
+      m_default(isDefault) {}
 
 PlatformSpeechSynthesisVoice::PlatformSpeechSynthesisVoice()
-    : m_localService(false)
-    , m_default(false)
-{
-}
+    : m_localService(false), m_default(false) {}
 
-} // namespace blink
+}  // namespace blink

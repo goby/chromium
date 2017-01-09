@@ -5,13 +5,17 @@
 #include "base/strings/string_number_conversions.h"
 
 #include <errno.h>
+#include <limits.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
 #include <cmath>
 #include <limits>
 
+#include "base/bit_cast.h"
 #include "base/format_macros.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -65,7 +69,7 @@ TEST(StringNumberConversionsTest, IntToString) {
 
 TEST(StringNumberConversionsTest, Uint64ToString) {
   static const struct {
-    uint64 input;
+    uint64_t input;
     std::string output;
   } cases[] = {
       {0, "0"},
@@ -134,12 +138,12 @@ TEST(StringNumberConversionsTest, StringToInt) {
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    int output = 0;
+    int output = cases[i].output ^ 1;  // Ensure StringToInt wrote something.
     EXPECT_EQ(cases[i].success, StringToInt(cases[i].input, &output));
     EXPECT_EQ(cases[i].output, output);
 
     string16 utf16_input = UTF8ToUTF16(cases[i].input);
-    output = 0;
+    output = cases[i].output ^ 1;  // Ensure StringToInt wrote something.
     EXPECT_EQ(cases[i].success, StringToInt(utf16_input, &output));
     EXPECT_EQ(cases[i].output, output);
   }
@@ -198,12 +202,13 @@ TEST(StringNumberConversionsTest, StringToUint) {
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    unsigned output = 0;
+    unsigned output =
+        cases[i].output ^ 1;  // Ensure StringToUint wrote something.
     EXPECT_EQ(cases[i].success, StringToUint(cases[i].input, &output));
     EXPECT_EQ(cases[i].output, output);
 
     string16 utf16_input = UTF8ToUTF16(cases[i].input);
-    output = 0;
+    output = cases[i].output ^ 1;  // Ensure StringToUint wrote something.
     EXPECT_EQ(cases[i].success, StringToUint(utf16_input, &output));
     EXPECT_EQ(cases[i].output, output);
   }
@@ -296,7 +301,7 @@ TEST(StringNumberConversionsTest, StringToInt64) {
 TEST(StringNumberConversionsTest, StringToUint64) {
   static const struct {
     std::string input;
-    uint64 output;
+    uint64_t output;
     bool success;
   } cases[] = {
       {"0", 0, true},
@@ -335,7 +340,7 @@ TEST(StringNumberConversionsTest, StringToUint64) {
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    uint64 output = 0;
+    uint64_t output = 0;
     EXPECT_EQ(cases[i].success, StringToUint64(cases[i].input, &output));
     EXPECT_EQ(cases[i].output, output);
 
@@ -350,7 +355,7 @@ TEST(StringNumberConversionsTest, StringToUint64) {
   // interpreted as junk after the number.
   const char input[] = "6\06";
   std::string input_string(input, arraysize(input) - 1);
-  uint64 output;
+  uint64_t output;
   EXPECT_FALSE(StringToUint64(input_string, &output));
   EXPECT_EQ(6U, output);
 
@@ -608,7 +613,7 @@ TEST(StringNumberConversionsTest, HexStringToInt64) {
 TEST(StringNumberConversionsTest, HexStringToUInt64) {
   static const struct {
     std::string input;
-    uint64 output;
+    uint64_t output;
     bool success;
   } cases[] = {
       {"0", 0, true},
@@ -654,7 +659,7 @@ TEST(StringNumberConversionsTest, HexStringToUInt64) {
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    uint64 output = 0;
+    uint64_t output = 0;
     EXPECT_EQ(cases[i].success, HexStringToUInt64(cases[i].input, &output));
     EXPECT_EQ(cases[i].output, output);
   }
@@ -663,7 +668,7 @@ TEST(StringNumberConversionsTest, HexStringToUInt64) {
   // interpreted as junk after the number.
   const char input[] = "0xc0ffee\0" "9";
   std::string input_string(input, arraysize(input) - 1);
-  uint64 output;
+  uint64_t output;
   EXPECT_FALSE(HexStringToUInt64(input_string, &output));
   EXPECT_EQ(0xc0ffeeU, output);
 }
@@ -714,17 +719,53 @@ TEST(StringNumberConversionsTest, StringToDouble) {
     double output;
     bool success;
   } cases[] = {
+    // Test different forms of zero.
     {"0", 0.0, true},
+    {"+0", 0.0, true},
+    {"-0", 0.0, true},
+    {"0.0", 0.0, true},
+    {"000000000000000000000000000000.0", 0.0, true},
+    {"0.000000000000000000000000000", 0.0, true},
+
+    // Test the answer.
     {"42", 42.0, true},
     {"-42", -42.0, true},
+
+    // Test variances of an ordinary number.
     {"123.45", 123.45, true},
     {"-123.45", -123.45, true},
     {"+123.45", 123.45, true},
+
+    // Test different forms of representation.
     {"2.99792458e8", 299792458.0, true},
     {"149597870.691E+3", 149597870691.0, true},
     {"6.", 6.0, true},
+
+    // Test around the largest/smallest value that a double can represent.
+    {"9e307", 9e307, true},
+    {"1.7976e308", 1.7976e308, true},
+    {"1.7977e308", HUGE_VAL, false},
+    {"1.797693134862315807e+308", HUGE_VAL, true},
+    {"1.797693134862315808e+308", HUGE_VAL, false},
+    {"9e308", HUGE_VAL, false},
+    {"9e309", HUGE_VAL, false},
+    {"9e999", HUGE_VAL, false},
+    {"9e1999", HUGE_VAL, false},
+    {"9e19999", HUGE_VAL, false},
     {"9e99999999999999999999", HUGE_VAL, false},
+    {"-9e307", -9e307, true},
+    {"-1.7976e308", -1.7976e308, true},
+    {"-1.7977e308", -HUGE_VAL, false},
+    {"-1.797693134862315807e+308", -HUGE_VAL, true},
+    {"-1.797693134862315808e+308", -HUGE_VAL, false},
+    {"-9e308", -HUGE_VAL, false},
+    {"-9e309", -HUGE_VAL, false},
+    {"-9e999", -HUGE_VAL, false},
+    {"-9e1999", -HUGE_VAL, false},
+    {"-9e19999", -HUGE_VAL, false},
     {"-9e99999999999999999999", -HUGE_VAL, false},
+
+    // Test more exponents.
     {"1e-2", 0.01, true},
     {"42 ", 42.0, false},
     {" 1e-2", 0.01, false},
@@ -732,6 +773,9 @@ TEST(StringNumberConversionsTest, StringToDouble) {
     {"-1E-7", -0.0000001, true},
     {"01e02", 100, true},
     {"2.3e15", 2.3e15, true},
+    {"100e-309", 100e-309, true},
+
+    // Test some invalid cases.
     {"\t\n\v\f\r -123.45e2", -12345.0, false},
     {"+123 e4", 123.0, false},
     {"123e ", 123.0, false},
@@ -742,6 +786,10 @@ TEST(StringNumberConversionsTest, StringToDouble) {
     {"-", 0.0, false},
     {"+", 0.0, false},
     {"", 0.0, false},
+
+    // crbug.org/588726
+    {"-0.0010000000000000000000000000000000000000001e-256",
+     -1.0000000000000001e-259, true},
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
@@ -799,6 +847,56 @@ TEST(StringNumberConversionsTest, HexEncode) {
   unsigned char bytes[] = {0x01, 0xff, 0x02, 0xfe, 0x03, 0x80, 0x81};
   hex = HexEncode(bytes, sizeof(bytes));
   EXPECT_EQ(hex.compare("01FF02FE038081"), 0);
+}
+
+// Test cases of known-bad strtod conversions that motivated the use of dmg_fp.
+// See https://bugs.chromium.org/p/chromium/issues/detail?id=593512.
+TEST(StringNumberConversionsTest, StrtodFailures) {
+  static const struct {
+    const char* input;
+    uint64_t expected;
+  } cases[] = {
+      // http://www.exploringbinary.com/incorrectly-rounded-conversions-in-visual-c-plus-plus/
+      {"9214843084008499", 0x43405e6cec57761aULL},
+      {"0.500000000000000166533453693773481063544750213623046875",
+       0x3fe0000000000002ULL},
+      {"30078505129381147446200", 0x44997a3c7271b021ULL},
+      {"1777820000000000000001", 0x4458180d5bad2e3eULL},
+      {"0.500000000000000166547006220929549868969843373633921146392822265625",
+       0x3fe0000000000002ULL},
+      {"0.50000000000000016656055874808561867439493653364479541778564453125",
+       0x3fe0000000000002ULL},
+      {"0.3932922657273", 0x3fd92bb352c4623aULL},
+
+      // http://www.exploringbinary.com/incorrectly-rounded-conversions-in-gcc-and-glibc/
+      {"0.500000000000000166533453693773481063544750213623046875",
+       0x3fe0000000000002ULL},
+      {"3.518437208883201171875e13", 0x42c0000000000002ULL},
+      {"62.5364939768271845828", 0x404f44abd5aa7ca4ULL},
+      {"8.10109172351e-10", 0x3e0bd5cbaef0fd0cULL},
+      {"1.50000000000000011102230246251565404236316680908203125",
+       0x3ff8000000000000ULL},
+      {"9007199254740991.4999999999999999999999999999999995",
+       0x433fffffffffffffULL},
+
+      // http://www.exploringbinary.com/incorrect-decimal-to-floating-point-conversion-in-sqlite/
+      {"1e-23", 0x3b282db34012b251ULL},
+      {"8.533e+68", 0x4e3fa69165a8eea2ULL},
+      {"4.1006e-184", 0x19dbe0d1c7ea60c9ULL},
+      {"9.998e+307", 0x7fe1cc0a350ca87bULL},
+      {"9.9538452227e-280", 0x0602117ae45cde43ULL},
+      {"6.47660115e-260", 0x0a1fdd9e333badadULL},
+      {"7.4e+47", 0x49e033d7eca0adefULL},
+      {"5.92e+48", 0x4a1033d7eca0adefULL},
+      {"7.35e+66", 0x4dd172b70eababa9ULL},
+      {"8.32116e+55", 0x4b8b2628393e02cdULL},
+  };
+
+  for (const auto& test : cases) {
+    double output;
+    EXPECT_TRUE(StringToDouble(test.input, &output));
+    EXPECT_EQ(bit_cast<uint64_t>(output), test.expected);
+  }
 }
 
 }  // namespace base

@@ -5,19 +5,19 @@
 #ifndef EXTENSIONS_BROWSER_EXTERNAL_PROVIDER_INTERFACE_H_
 #define EXTENSIONS_BROWSER_EXTERNAL_PROVIDER_INTERFACE_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/memory/linked_ptr.h"
 #include "extensions/common/manifest.h"
 
-class GURL;
-
 namespace base {
-class FilePath;
 class Version;
 }
 
 namespace extensions {
+
+struct ExternalInstallInfoFile;
+struct ExternalInstallInfoUpdateUrl;
 
 // This class is an abstract class for implementing external extensions
 // providers.
@@ -35,24 +35,14 @@ class ExternalProviderInterface {
     // proceed if the extension is already installed from a higher priority
     // location.
     virtual bool OnExternalExtensionFileFound(
-        const std::string& id,
-        const base::Version* version,
-        const base::FilePath& path,
-        Manifest::Location location,
-        int creation_flags,
-        bool mark_acknowledged,
-        bool install_immediately) = 0;
+        const ExternalInstallInfoFile& info) = 0;
 
     // Return true if the extension install will proceed.  Install might not
     // proceed if the extension is already installed from a higher priority
     // location.
     virtual bool OnExternalExtensionUpdateUrlFound(
-        const std::string& id,
-        const std::string& install_parameter,
-        const GURL& update_url,
-        Manifest::Location location,
-        int creation_flags,
-        bool mark_acknowledged) = 0;
+        const ExternalInstallInfoUpdateUrl& info,
+        bool is_initial_load) = 0;
 
     // Called after all the external extensions have been reported
     // through the above two methods. |provider| is a pointer to the
@@ -61,6 +51,19 @@ class ExternalProviderInterface {
     // safely assert that provider->IsReady().
     virtual void OnExternalProviderReady(
         const ExternalProviderInterface* provider) = 0;
+
+    // Once this provider becomes "ready", it can send additional external
+    // extensions it learns about later on through
+    // OnExternalExtensionUpdateUrlFound() or OnExternalExtensionFileFound().
+    // This method will be called each time the provider finds a set of
+    // updated external extensions.
+    virtual void OnExternalProviderUpdateComplete(
+        const ExternalProviderInterface* provider,
+        const std::vector<std::unique_ptr<ExternalInstallInfoUpdateUrl>>&
+            update_url_extensions,
+        const std::vector<std::unique_ptr<ExternalInstallInfoFile>>&
+            file_extensions,
+        const std::set<std::string>& removed_extensions) = 0;
 
    protected:
     virtual ~VisitorInterface() {}
@@ -86,15 +89,15 @@ class ExternalProviderInterface {
   virtual bool GetExtensionDetails(
       const std::string& id,
       Manifest::Location* location,
-      scoped_ptr<base::Version>* version) const = 0;
+      std::unique_ptr<base::Version>* version) const = 0;
 
   // Determines if this provider had loaded the list of external extensions
   // from its source.
   virtual bool IsReady() const = 0;
 };
 
-typedef std::vector<linked_ptr<ExternalProviderInterface> >
-    ProviderCollection;
+using ProviderCollection =
+    std::vector<std::unique_ptr<ExternalProviderInterface>>;
 
 }  // namespace extensions
 

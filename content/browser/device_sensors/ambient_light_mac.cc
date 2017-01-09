@@ -6,6 +6,8 @@
 
 #include "content/browser/device_sensors/ambient_light_mac.h"
 
+#include <utility>
+
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_ioobject.h"
 
@@ -21,9 +23,9 @@ enum LmuFunctionIndex {
 }  // namespace
 
 // static
-scoped_ptr<AmbientLightSensor> AmbientLightSensor::Create() {
-  scoped_ptr<AmbientLightSensor> light_sensor(new AmbientLightSensor);
-  return light_sensor->Init() ? light_sensor.Pass() : nullptr;
+std::unique_ptr<AmbientLightSensor> AmbientLightSensor::Create() {
+  std::unique_ptr<AmbientLightSensor> light_sensor(new AmbientLightSensor);
+  return light_sensor->Init() ? std::move(light_sensor) : nullptr;
 }
 
 AmbientLightSensor::~AmbientLightSensor() {

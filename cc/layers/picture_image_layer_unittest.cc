@@ -4,9 +4,11 @@
 
 #include "cc/layers/picture_image_layer.h"
 
-#include "cc/layers/layer_settings.h"
+#include "cc/animation/animation_host.h"
 #include "cc/playback/display_item.h"
+#include "cc/test/fake_layer_tree_host.h"
 #include "cc/test/skia_common.h"
+#include "cc/test/test_task_graph_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -17,15 +19,20 @@ namespace cc {
 namespace {
 
 TEST(PictureImageLayerTest, PaintContentsToDisplayList) {
-  scoped_refptr<PictureImageLayer> layer =
-      PictureImageLayer::Create(LayerSettings());
+  scoped_refptr<PictureImageLayer> layer = PictureImageLayer::Create();
+  FakeLayerTreeHostClient client;
+  TestTaskGraphRunner task_graph_runner;
+  auto animation_host = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+  std::unique_ptr<FakeLayerTreeHost> host = FakeLayerTreeHost::Create(
+      &client, &task_graph_runner, animation_host.get());
+  layer->SetLayerTreeHost(host.get());
   gfx::Rect layer_rect(200, 200);
 
   unsigned char image_pixels[4 * 200 * 200] = {0};
   SkImageInfo info =
       SkImageInfo::MakeN32Premul(layer_rect.width(), layer_rect.height());
-  skia::RefPtr<SkSurface> image_surface = skia::AdoptRef(
-      SkSurface::NewRasterDirect(info, image_pixels, info.minRowBytes()));
+  sk_sp<SkSurface> image_surface =
+      SkSurface::MakeRasterDirect(info, image_pixels, info.minRowBytes());
   SkCanvas* image_canvas = image_surface->getCanvas();
   image_canvas->clear(SK_ColorRED);
   SkPaint blue_paint;
@@ -33,9 +40,7 @@ TEST(PictureImageLayerTest, PaintContentsToDisplayList) {
   image_canvas->drawRectCoords(0.f, 0.f, 100.f, 100.f, blue_paint);
   image_canvas->drawRectCoords(100.f, 100.f, 200.f, 200.f, blue_paint);
 
-  skia::RefPtr<const SkImage> image =
-      skia::AdoptRef(image_surface->newImageSnapshot());
-  layer->SetImage(std::move(image));
+  layer->SetImage(image_surface->makeImageSnapshot());
   layer->SetBounds(gfx::Size(layer_rect.width(), layer_rect.height()));
 
   scoped_refptr<DisplayItemList> display_list =
@@ -45,6 +50,8 @@ TEST(PictureImageLayerTest, PaintContentsToDisplayList) {
   DrawDisplayList(actual_pixels, layer_rect, display_list);
 
   EXPECT_EQ(0, memcmp(actual_pixels, image_pixels, 4 * 200 * 200));
+
+  layer->SetLayerTreeHost(nullptr);
 }
 
 }  // namespace

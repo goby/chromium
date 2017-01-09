@@ -4,8 +4,11 @@
 
 #include "ppapi/shared_impl/ppb_audio_shared.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
+#include "media/base/audio_parameters.h"
 #include "ppapi/nacl_irt/public/irt_ppapi.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/ppb_audio_config_shared.h"
@@ -112,8 +115,14 @@ void PPB_Audio_Shared::SetStreamInfo(
         std::string(),
         "Failed to map shared memory for PPB_Audio_Shared.");
   } else {
-    audio_bus_ = media::AudioBus::WrapMemory(
-        kAudioOutputChannels, sample_frame_count, shared_memory_->memory());
+    DCHECK_EQ(shared_memory_size_,
+              sizeof(media::AudioOutputBufferParameters) +
+                  media::AudioBus::CalculateMemorySize(kAudioOutputChannels,
+                                                       sample_frame_count));
+    media::AudioOutputBuffer* buffer =
+        reinterpret_cast<media::AudioOutputBuffer*>(shared_memory_->memory());
+    audio_bus_ = media::AudioBus::WrapMemory(kAudioOutputChannels,
+                                             sample_frame_count, buffer->audio);
     // Setup integer audio buffer for user audio data.
     client_buffer_size_bytes_ = audio_bus_->frames() * audio_bus_->channels() *
                                 kBitsPerAudioOutputSample / 8;
@@ -173,7 +182,7 @@ void PPB_Audio_Shared::StopThread() {
     }
   } else {
     if (audio_thread_.get()) {
-      auto local_audio_thread(audio_thread_.Pass());
+      auto local_audio_thread(std::move(audio_thread_));
       CallWhileUnlocked(base::Bind(&base::DelegateSimpleThread::Join,
                                    base::Unretained(local_audio_thread.get())));
     }
@@ -208,21 +217,24 @@ void PPB_Audio_Shared::CallRun(void* self) {
 }
 
 void PPB_Audio_Shared::Run() {
-  int pending_data = 0;
-  while (sizeof(pending_data) ==
-         socket_->Receive(&pending_data, sizeof(pending_data))) {
+  int control_signal = 0;
+  while (sizeof(control_signal) ==
+         socket_->Receive(&control_signal, sizeof(control_signal))) {
     // |buffer_index_| must track the number of Receive() calls.  See the Send()
     // call below for why this is important.
     ++buffer_index_;
-    if (pending_data < 0)
+    if (control_signal < 0)
       break;
 
     {
       TRACE_EVENT0("audio", "PPB_Audio_Shared::FireRenderCallback");
-      PP_TimeDelta latency =
-          static_cast<double>(pending_data) / bytes_per_second_;
-      callback_.Run(
-          client_buffer_.get(), client_buffer_size_bytes_, latency, user_data_);
+      media::AudioOutputBuffer* buffer =
+          reinterpret_cast<media::AudioOutputBuffer*>(shared_memory_->memory());
+      base::TimeDelta delay =
+          base::TimeDelta::FromMicroseconds(buffer->params.delay);
+
+      callback_.Run(client_buffer_.get(), client_buffer_size_bytes_,
+                    delay.InSecondsF(), user_data_);
     }
 
     // Deinterleave the audio data into the shared memory as floats.

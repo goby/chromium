@@ -5,7 +5,7 @@
 #ifndef CC_DEBUG_DEBUG_COLORS_H_
 #define CC_DEBUG_DEBUG_COLORS_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 namespace cc {
@@ -35,9 +35,6 @@ class DebugColors {
   static SkColor SurfaceBorderColor();
   static int SurfaceBorderWidth(const LayerTreeImpl* tree_impl);
 
-  static SkColor SurfaceReplicaBorderColor();
-  static int SurfaceReplicaBorderWidth(const LayerTreeImpl* tree_impl);
-
   static SkColor HighResTileBorderColor();
   static int HighResTileBorderWidth(const LayerTreeImpl* tree_impl);
 
@@ -62,6 +59,9 @@ class DebugColors {
   static SkColor DirectPictureBorderColor();
   static int DirectPictureBorderWidth(const LayerTreeImpl* tree_impl);
 
+  static SkColor CompressedTileBorderColor();
+  static int CompressedTileBorderWidth(const LayerTreeImpl* tree_impl);
+
   static SkColor DefaultCheckerboardColor();
   static SkColor EvictedTileCheckerboardColor();
   static SkColor InvalidatedTileCheckerboardColor();
@@ -82,10 +82,6 @@ class DebugColors {
   static SkColor ScreenSpaceLayerRectBorderColor();
   static int ScreenSpaceLayerRectBorderWidth();
   static SkColor ScreenSpaceLayerRectFillColor();
-
-  static SkColor ScreenSpaceSurfaceReplicaRectBorderColor();
-  static int ScreenSpaceSurfaceReplicaRectBorderWidth();
-  static SkColor ScreenSpaceSurfaceReplicaRectFillColor();
 
   static SkColor TouchEventHandlerRectBorderColor();
   static int TouchEventHandlerRectBorderWidth();

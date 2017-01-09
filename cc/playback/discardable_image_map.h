@@ -8,17 +8,18 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/rtree.h"
 #include "cc/playback/draw_image.h"
-#include "third_party/skia/include/core/SkPicture.h"
+#include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
-class SkImage;
-
 namespace cc {
+
+// Helper function to apply the matrix to the rect and return the result.
+SkRect MapRect(const SkMatrix& matrix, const SkRect& src);
 
 // This class is used for generating discardable images data (see DrawImage
 // for the type of data it stores). It allows the client to query a particular
@@ -35,7 +36,7 @@ class CC_EXPORT DiscardableImageMap {
 
    private:
     DiscardableImageMap* image_map_;
-    scoped_ptr<SkCanvas> metadata_canvas_;
+    std::unique_ptr<SkCanvas> metadata_canvas_;
   };
 
   DiscardableImageMap();
@@ -43,14 +44,14 @@ class CC_EXPORT DiscardableImageMap {
 
   bool empty() const { return all_images_.empty(); }
   void GetDiscardableImagesInRect(const gfx::Rect& rect,
-                                  float raster_scale,
+                                  const gfx::SizeF& raster_scales,
                                   std::vector<DrawImage>* images) const;
 
  private:
   friend class ScopedMetadataGenerator;
   friend class DiscardableImageMapTest;
 
-  scoped_ptr<SkCanvas> BeginGeneratingMetadata(const gfx::Size& bounds);
+  std::unique_ptr<SkCanvas> BeginGeneratingMetadata(const gfx::Size& bounds);
   void EndGeneratingMetadata();
 
   std::vector<std::pair<DrawImage, gfx::Rect>> all_images_;

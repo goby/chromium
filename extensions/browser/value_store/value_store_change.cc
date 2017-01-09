@@ -4,8 +4,11 @@
 
 #include "extensions/browser/value_store/value_store_change.h"
 
+#include <utility>
+
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 
 // static
 std::string ValueStoreChange::ToJson(
@@ -13,23 +16,28 @@ std::string ValueStoreChange::ToJson(
   base::DictionaryValue changes_value;
   for (ValueStoreChangeList::const_iterator it = changes.begin();
       it != changes.end(); ++it) {
-    base::DictionaryValue* change_value = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> change_value =
+        base::MakeUnique<base::DictionaryValue>();
     if (it->old_value()) {
       change_value->Set("oldValue", it->old_value()->DeepCopy());
     }
     if (it->new_value()) {
       change_value->Set("newValue", it->new_value()->DeepCopy());
     }
-    changes_value.SetWithoutPathExpansion(it->key(), change_value);
+    changes_value.SetWithoutPathExpansion(it->key(), std::move(change_value));
   }
   std::string json;
-  base::JSONWriter::Write(changes_value, &json);
+  bool success = base::JSONWriter::Write(changes_value, &json);
+  DCHECK(success);
   return json;
 }
 
-ValueStoreChange::ValueStoreChange(
-    const std::string& key, base::Value* old_value, base::Value* new_value)
-    : inner_(new Inner(key, old_value, new_value)) {}
+ValueStoreChange::ValueStoreChange(const std::string& key,
+                                   std::unique_ptr<base::Value> old_value,
+                                   std::unique_ptr<base::Value> new_value)
+    : inner_(new Inner(key, std::move(old_value), std::move(new_value))) {}
+
+ValueStoreChange::ValueStoreChange(const ValueStoreChange& other) = default;
 
 ValueStoreChange::~ValueStoreChange() {}
 
@@ -48,8 +56,11 @@ const base::Value* ValueStoreChange::new_value() const {
   return inner_->new_value_.get();
 }
 
-ValueStoreChange::Inner::Inner(
-    const std::string& key, base::Value* old_value, base::Value* new_value)
-    : key_(key), old_value_(old_value), new_value_(new_value) {}
+ValueStoreChange::Inner::Inner(const std::string& key,
+                               std::unique_ptr<base::Value> old_value,
+                               std::unique_ptr<base::Value> new_value)
+    : key_(key),
+      old_value_(std::move(old_value)),
+      new_value_(std::move(new_value)) {}
 
 ValueStoreChange::Inner::~Inner() {}

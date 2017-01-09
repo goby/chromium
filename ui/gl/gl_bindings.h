@@ -5,17 +5,26 @@
 #ifndef UI_GL_GL_BINDINGS_H_
 #define UI_GL_GL_BINDINGS_H_
 
-#include <string>
-
 // Includes the platform independent and platform dependent GL headers.
 // Only include this in cc files. It pulls in system headers, including
 // the X11 headers on linux, which define all kinds of macros that are
 // liable to cause conflicts.
 
+// GL headers may include inttypes.h and so we need to ensure that
+// __STDC_FORMAT_MACROS is defined in order for //base/format_macros.h to
+// function correctly. See comment and #error message in //base/format_macros.h
+// for details.
+#if defined(OS_POSIX) && !defined(__STDC_FORMAT_MACROS)
+#define __STDC_FORMAT_MACROS
+#endif
+
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#include <stdint.h>
+
+#include <string>
 
 #include "base/logging.h"
 #include "base/threading/thread_local.h"
@@ -27,16 +36,16 @@
 #include <GL/wglext.h>
 #elif defined(OS_MACOSX)
 #include <OpenGL/OpenGL.h>
-#elif defined(USE_X11)
+#elif defined(USE_GLX)
 #include <GL/glx.h>
 #include <GL/glxext.h>
+#endif
 
 // Undefine some macros defined by X headers. This is why this file should only
 // be included in .cc files.
 #undef Bool
 #undef None
 #undef Status
-#endif
 
 
 // GLES2 defines not part of Desktop GL
@@ -72,9 +81,6 @@
 
 #define GL_UNPACK_COLORSPACE_CONVERSION_CHROMIUM         0x9243
 #define GL_BIND_GENERATES_RESOURCE_CHROMIUM              0x9244
-
-// GL_ANGLE_pack_reverse_row_order
-#define GL_PACK_REVERSE_ROW_ORDER_ANGLE                  0x93A4
 
 // GL_ANGLE_texture_usage
 #define GL_TEXTURE_USAGE_ANGLE                           0x93A2
@@ -129,8 +135,8 @@
 // GL_CHROMIUM_gpu_memory_buffer_image
 #define GL_READ_WRITE_CHROMIUM                           0x78F2
 
-// GL_CHROMIUM_yuv_420_image
-#define GL_RGB_YUV_420_CHROMIUM                          0x78FA
+// GL_CHROMIUM_ycrcb_420_image
+#define GL_RGB_YCRCB_420_CHROMIUM                        0x78FA
 
 // GL_CHROMIUM_ycbcr_422_image
 #define GL_RGB_YCBCR_422_CHROMIUM                        0x78FB
@@ -273,6 +279,11 @@
 #define GL_SAMPLE_ALPHA_TO_ONE_EXT 0x809F
 #endif /* GL_EXT_multisample_compatibility */
 
+#ifndef GL_CHROMIUM_framebuffer_mixed_samples
+#define GL_CHROMIUM_framebuffer_mixed_samples 1
+#define GL_COVERAGE_MODULATION_CHROMIUM 0x9332
+#endif /* GL_CHROMIUM_framebuffer_mixed_samples */
+
 #ifndef GL_KHR_blend_equation_advanced
 #define GL_KHR_blend_equation_advanced 1
 #define GL_COLORBURN_KHR                  0x929A
@@ -325,7 +336,7 @@
 #define GL_RG8_EXT 0x822B
 #endif /* GL_EXT_texture_rg */
 
-// This is from NV_path_rendering, but the Mesa GL header is not up-to-date with
+// This is from NV_path_rendering, but the Mesa GL header is not up to date with
 // the most recent
 // version of the extension. This definition could be removed once glext.h
 // r27498 or later is
@@ -364,24 +375,24 @@ typedef struct osmesa_context *OSMesaContext;
 typedef void (*OSMESAproc)();
 
 // Forward declare EGL types.
-typedef uint64 EGLuint64CHROMIUM;
+typedef uint64_t EGLuint64CHROMIUM;
 
 #include "gl_bindings_autogen_gl.h"
 #include "gl_bindings_autogen_osmesa.h"
 
-#if defined(OS_WIN)
-#include "gl_bindings_autogen_egl.h"
-#include "gl_bindings_autogen_wgl.h"
-#elif defined(USE_X11)
-#include "gl_bindings_autogen_egl.h"
-#include "gl_bindings_autogen_glx.h"
-#elif defined(USE_OZONE)
-#include "gl_bindings_autogen_egl.h"
-#elif defined(OS_ANDROID)
+#if defined(USE_EGL)
 #include "gl_bindings_autogen_egl.h"
 #endif
 
-namespace gfx {
+#if defined(OS_WIN)
+#include "gl_bindings_autogen_wgl.h"
+#endif
+
+#if defined(USE_GLX)
+#include "gl_bindings_autogen_glx.h"
+#endif
+
+namespace gl {
 
 struct GL_EXPORT DriverGL {
   void InitializeStaticBindings();
@@ -433,9 +444,10 @@ struct GL_EXPORT DriverWGL {
 };
 #endif
 
-#if defined(OS_WIN) || defined(USE_X11) || defined(OS_ANDROID) || defined(USE_OZONE)
+#if defined(USE_EGL)
 struct GL_EXPORT DriverEGL {
   void InitializeStaticBindings();
+  void InitializeClientExtensionBindings();
   void InitializeExtensionBindings();
   void InitializeDebugBindings();
   void ClearBindings();
@@ -449,7 +461,7 @@ struct GL_EXPORT DriverEGL {
 };
 #endif
 
-#if defined(USE_X11)
+#if defined(USE_GLX)
 struct GL_EXPORT DriverGLX {
   void InitializeStaticBindings();
   void InitializeExtensionBindings();
@@ -473,32 +485,21 @@ GL_EXPORT extern OSMESAApi* g_current_osmesa_context;
 GL_EXPORT extern DriverGL g_driver_gl;
 GL_EXPORT extern DriverOSMESA g_driver_osmesa;
 
-#if defined(OS_WIN)
-
-GL_EXPORT extern EGLApi* g_current_egl_context;
-GL_EXPORT extern WGLApi* g_current_wgl_context;
-GL_EXPORT extern DriverEGL g_driver_egl;
-GL_EXPORT extern DriverWGL g_driver_wgl;
-
-#elif defined(USE_X11)
-
-GL_EXPORT extern EGLApi* g_current_egl_context;
-GL_EXPORT extern GLXApi* g_current_glx_context;
-GL_EXPORT extern DriverEGL g_driver_egl;
-GL_EXPORT extern DriverGLX g_driver_glx;
-
-#elif defined(USE_OZONE)
-
+#if defined(USE_EGL)
 GL_EXPORT extern EGLApi* g_current_egl_context;
 GL_EXPORT extern DriverEGL g_driver_egl;
-
-#elif defined(OS_ANDROID)
-
-GL_EXPORT extern EGLApi* g_current_egl_context;
-GL_EXPORT extern DriverEGL g_driver_egl;
-
 #endif
 
-}  // namespace gfx
+#if defined(OS_WIN)
+GL_EXPORT extern WGLApi* g_current_wgl_context;
+GL_EXPORT extern DriverWGL g_driver_wgl;
+#endif
+
+#if defined(USE_GLX)
+GL_EXPORT extern GLXApi* g_current_glx_context;
+GL_EXPORT extern DriverGLX g_driver_glx;
+#endif
+
+}  // namespace gl
 
 #endif  // UI_GL_GL_BINDINGS_H_

@@ -5,7 +5,11 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_BINARY_INTEGRITY_INCIDENT_H_
 #define CHROME_BROWSER_SAFE_BROWSING_INCIDENT_REPORTING_BINARY_INTEGRITY_INCIDENT_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident.h"
 
 namespace safe_browsing {
@@ -16,7 +20,7 @@ class ClientIncidentReport_IncidentData_BinaryIntegrityIncident;
 class BinaryIntegrityIncident : public Incident {
  public:
   explicit BinaryIntegrityIncident(
-      scoped_ptr<ClientIncidentReport_IncidentData_BinaryIntegrityIncident>
+      std::unique_ptr<ClientIncidentReport_IncidentData_BinaryIntegrityIncident>
           binary_integrity);
   ~BinaryIntegrityIncident() override;
 

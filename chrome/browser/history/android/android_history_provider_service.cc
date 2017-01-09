@@ -4,6 +4,8 @@
 
 #include "chrome/browser/history/android/android_history_provider_service.h"
 
+#include <utility>
+
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/history/android/android_provider_backend.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -57,11 +59,11 @@ class AndroidProviderTask : public history::HistoryDBTask {
 // Creates an instance of AndroidProviderTask using the two callback and using
 // type deduction.
 template <typename ResultType>
-scoped_ptr<history::HistoryDBTask> CreateAndroidProviderTask(
+std::unique_ptr<history::HistoryDBTask> CreateAndroidProviderTask(
     const base::Callback<ResultType(history::AndroidProviderBackend*)>&
         request_cb,
     const base::Callback<void(ResultType)>& result_cb) {
-  return scoped_ptr<history::HistoryDBTask>(
+  return std::unique_ptr<history::HistoryDBTask>(
       new AndroidProviderTask<ResultType>(request_cb, result_cb));
 }
 
@@ -371,9 +373,9 @@ void AndroidHistoryProviderService::CloseStatement(
     delete statement;
     return;
   }
-  scoped_ptr<CloseStatementTask> task(new CloseStatementTask(statement));
+  std::unique_ptr<CloseStatementTask> task(new CloseStatementTask(statement));
   base::CancelableTaskTracker* tracker = task->tracker();
-  hs->ScheduleDBTask(task.Pass(), tracker);
+  hs->ScheduleDBTask(std::move(task), tracker);
 }
 
 base::CancelableTaskTracker::TaskId

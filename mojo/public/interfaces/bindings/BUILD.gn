@@ -10,5 +10,7 @@ mojom("bindings") {
     "pipe_control_messages.mojom",
   ]
 
-  with_environment = false
+  export_class_attribute = "MOJO_CPP_BINDINGS_EXPORT"
+  export_define = "MOJO_CPP_BINDINGS_IMPLEMENTATION"
+  export_header = "mojo/public/cpp/bindings/bindings_export.h"
 }

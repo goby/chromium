@@ -4,11 +4,17 @@
 
 #include "printing/backend/print_backend.h"
 
+namespace {
+bool g_native_cups_enabled = false;
+}  // namespace
+
 namespace printing {
 
 PrinterBasicInfo::PrinterBasicInfo()
     : printer_status(0),
       is_default(false) {}
+
+PrinterBasicInfo::PrinterBasicInfo(const PrinterBasicInfo& other) = default;
 
 PrinterBasicInfo::~PrinterBasicInfo() {}
 
@@ -24,12 +30,28 @@ PrinterSemanticCapsAndDefaults::PrinterSemanticCapsAndDefaults()
       bw_model(UNKNOWN_COLOR_MODEL)
 {}
 
+PrinterSemanticCapsAndDefaults::PrinterSemanticCapsAndDefaults(
+    const PrinterSemanticCapsAndDefaults& other) = default;
+
 PrinterSemanticCapsAndDefaults::~PrinterSemanticCapsAndDefaults() {}
 
 PrinterCapsAndDefaults::PrinterCapsAndDefaults() {}
 
+PrinterCapsAndDefaults::PrinterCapsAndDefaults(
+    const PrinterCapsAndDefaults& other) = default;
+
 PrinterCapsAndDefaults::~PrinterCapsAndDefaults() {}
 
 PrintBackend::~PrintBackend() {}
+
+// static
+bool PrintBackend::GetNativeCupsEnabled() {
+  return g_native_cups_enabled;
+}
+
+// static
+void PrintBackend::SetNativeCupsEnabled(bool enabled) {
+  g_native_cups_enabled = enabled;
+}
 
 }  // namespace printing

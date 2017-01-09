@@ -5,6 +5,8 @@
 #ifndef CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_PERMISSION_MANAGER_H_
 #define CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_PERMISSION_MANAGER_H_
 
+#include <stddef.h>
+
 #include "base/callback_forward.h"
 #include "base/containers/hash_tables.h"
 #include "base/id_map.h"
@@ -26,21 +28,24 @@ class LayoutTestPermissionManager : public PermissionManager {
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       bool user_gesture,
-      const base::Callback<void(PermissionStatus)>& callback) override;
+      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
+      override;
   int RequestPermissions(
       const std::vector<PermissionType>& permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       bool user_gesture,
-      const base::Callback<void(
-          const std::vector<PermissionStatus>&)>& callback) override;
+      const base::Callback<
+          void(const std::vector<blink::mojom::PermissionStatus>&)>& callback)
+      override;
   void CancelPermissionRequest(int request_id) override;
   void ResetPermission(PermissionType permission,
                        const GURL& requesting_origin,
                        const GURL& embedding_origin) override;
-  PermissionStatus GetPermissionStatus(PermissionType permission,
-                                       const GURL& requesting_origin,
-                                       const GURL& embedding_origin) override;
+  blink::mojom::PermissionStatus GetPermissionStatus(
+      PermissionType permission,
+      const GURL& requesting_origin,
+      const GURL& embedding_origin) override;
   void RegisterPermissionUsage(PermissionType permission,
                                const GURL& requesting_origin,
                                const GURL& embedding_origin) override;
@@ -48,11 +53,12 @@ class LayoutTestPermissionManager : public PermissionManager {
       PermissionType permission,
       const GURL& requesting_origin,
       const GURL& embedding_origin,
-      const base::Callback<void(PermissionStatus)>& callback) override;
+      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
+      override;
   void UnsubscribePermissionStatusChange(int subscription_id) override;
 
   void SetPermission(PermissionType permission,
-                     PermissionStatus status,
+                     blink::mojom::PermissionStatus status,
                      const GURL& origin,
                      const GURL& embedding_origin);
   void ResetPermissions();
@@ -78,13 +84,13 @@ class LayoutTestPermissionManager : public PermissionManager {
   };
 
   struct Subscription;
-  using SubscriptionsMap = IDMap<Subscription, IDMapOwnPointer>;
+  using SubscriptionsMap = IDMap<std::unique_ptr<Subscription>>;
   using PermissionsMap = base::hash_map<PermissionDescription,
-                                        PermissionStatus,
+                                        blink::mojom::PermissionStatus,
                                         PermissionDescription::Hash>;
 
   void OnPermissionChanged(const PermissionDescription& permission,
-                           PermissionStatus status);
+                           blink::mojom::PermissionStatus status);
 
   // Mutex for permissions access. Unfortunately, the permissions can be
   // accessed from the IO thread because of Notifications' synchronous IPC.

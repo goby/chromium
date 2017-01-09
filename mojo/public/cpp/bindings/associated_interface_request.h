@@ -5,21 +5,23 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_REQUEST_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_REQUEST_H_
 
+#include <string>
+#include <utility>
+
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/lib/scoped_interface_endpoint_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "mojo/public/cpp/bindings/interface_endpoint_client.h"
+#include "mojo/public/cpp/bindings/lib/control_message_proxy.h"
+#include "mojo/public/cpp/bindings/message.h"
+#include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 
 namespace mojo {
-
-namespace internal {
-class AssociatedInterfaceRequestHelper;
-}
 
 // AssociatedInterfaceRequest represents an associated interface request. It is
 // similar to InterfaceRequest except that it doesn't own a message pipe handle.
 template <typename Interface>
 class AssociatedInterfaceRequest {
-  MOVE_ONLY_TYPE_WITH_MOVE_CONSTRUCTOR_FOR_CPP_03(AssociatedInterfaceRequest);
-
  public:
   // Constructs an empty AssociatedInterfaceRequest, representing that the
   // client is not requesting an implementation of Interface.
@@ -29,11 +31,11 @@ class AssociatedInterfaceRequest {
   // Takes the interface endpoint handle from another
   // AssociatedInterfaceRequest.
   AssociatedInterfaceRequest(AssociatedInterfaceRequest&& other) {
-    handle_ = other.handle_.Pass();
+    handle_ = std::move(other.handle_);
   }
   AssociatedInterfaceRequest& operator=(AssociatedInterfaceRequest&& other) {
     if (this != &other)
-      handle_ = other.handle_.Pass();
+      handle_ = std::move(other.handle_);
     return *this;
   }
 
@@ -49,39 +51,63 @@ class AssociatedInterfaceRequest {
   // handle.
   bool is_pending() const { return handle_.is_valid(); }
 
+  void Bind(ScopedInterfaceEndpointHandle handle) {
+    handle_ = std::move(handle);
+  }
+
+  ScopedInterfaceEndpointHandle PassHandle() {
+    return std::move(handle_);
+  }
+
+  const ScopedInterfaceEndpointHandle& handle() const { return handle_; }
+
+  bool Equals(const AssociatedInterfaceRequest& other) const {
+    if (this == &other)
+      return true;
+
+    // Now that the two refer to different objects, they are equivalent if
+    // and only if they are both invalid.
+    return !is_pending() && !other.is_pending();
+  }
+
+  void ResetWithReason(uint32_t custom_reason, const std::string& description) {
+    if (!handle_.is_valid())
+      return;
+
+    if (!handle_.is_local()) {
+      // This handle is supposed to be sent to the other end of the message
+      // pipe and used there.
+      NOTREACHED();
+      handle_.reset();
+      return;
+    }
+
+    InterfaceEndpointClient client(std::move(handle_), nullptr,
+                                   base::MakeUnique<PassThroughFilter>(), false,
+                                   base::ThreadTaskRunnerHandle::Get(), 0u);
+    Message message =
+        internal::ControlMessageProxy::ConstructDisconnectReasonMessage(
+            custom_reason, description);
+    bool result = client.Accept(&message);
+    DCHECK(result);
+  }
+
  private:
-  friend class internal::AssociatedInterfaceRequestHelper;
+  ScopedInterfaceEndpointHandle handle_;
 
-  internal::ScopedInterfaceEndpointHandle handle_;
+  DISALLOW_COPY_AND_ASSIGN(AssociatedInterfaceRequest);
 };
 
-namespace internal {
+// Makes an AssociatedInterfaceRequest bound to the specified associated
+// endpoint.
+template <typename Interface>
+AssociatedInterfaceRequest<Interface> MakeAssociatedRequest(
+    ScopedInterfaceEndpointHandle handle) {
+  AssociatedInterfaceRequest<Interface> request;
+  request.Bind(std::move(handle));
+  return request;
+}
 
-// With this helper, AssociatedInterfaceRequest doesn't have to expose any
-// operations related to ScopedInterfaceEndpointHandle, which is an internal
-// class.
-class AssociatedInterfaceRequestHelper {
- public:
-  template <typename Interface>
-  static ScopedInterfaceEndpointHandle PassHandle(
-      AssociatedInterfaceRequest<Interface>* request) {
-    return request->handle_.Pass();
-  }
-
-  template <typename Interface>
-  static const ScopedInterfaceEndpointHandle& GetHandle(
-      AssociatedInterfaceRequest<Interface>* request) {
-    return request->handle_;
-  }
-
-  template <typename Interface>
-  static void SetHandle(AssociatedInterfaceRequest<Interface>* request,
-                        ScopedInterfaceEndpointHandle handle) {
-    request->handle_ = handle.Pass();
-  }
-};
-
-}  // namespace internal
 }  // namespace mojo
 
 #endif  // MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_REQUEST_H_

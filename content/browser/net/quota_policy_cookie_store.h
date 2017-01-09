@@ -5,26 +5,21 @@
 #ifndef CONTENT_BROWSER_NET_QUOTA_POLICY_COOKIE_STORE_H_
 #define CONTENT_BROWSER_NET_QUOTA_POLICY_COOKIE_STORE_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/extras/sqlite/sqlite_persistent_cookie_store.h"
 
-class Task;
-
-namespace base {
-class FilePath;
-class SequencedTaskRunner;
-}  // namespace base
-
 namespace net {
 class CanonicalCookie;
-class CookieCryptoDelegate;
 }  // namespace net
 
 namespace storage {
@@ -65,7 +60,7 @@ class CONTENT_EXPORT QuotaPolicyCookieStore
   // Called after cookies are loaded from the database.  Calls |loaded_callback|
   // when done.
   void OnLoad(const LoadedCallback& loaded_callback,
-              const std::vector<net::CanonicalCookie*>& cookies);
+              std::vector<std::unique_ptr<net::CanonicalCookie>> cookies);
 
   // Map of (domain keys(eTLD+1), is secure cookie) to number of cookies in the
   // database.

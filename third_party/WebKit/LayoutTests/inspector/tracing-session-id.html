@@ -1,12 +1,12 @@
 <html>
 <head>
 <script src="../http/tests/inspector/inspector-test.js"></script>
-<script src="tracing-test.js"></script>
+<script src="../http/tests/inspector/timeline-test.js"></script>
 
 <script>
 function test()
 {
-    InspectorTest.invokeWithTracing("(function(callback) { callback(); })", processTracingEvents);
+    InspectorTest.evaluateWithTimeline("(function() {})", processTracingEvents);
 
     function processTracingEvents()
     {
@@ -21,14 +21,14 @@ function test()
     function processEvent(event)
     {
         var metadataEvents = [
-            WebInspector.TimelineModel.RecordType.SetLayerTreeId,
-            WebInspector.TimelineModel.RecordType.TracingStartedInPage
+            TimelineModel.TimelineModel.RecordType.SetLayerTreeId,
+            TimelineModel.TimelineModel.RecordType.TracingStartedInPage
         ];
 
-        if (!event.hasCategory(WebInspector.TracingModel.DevToolsMetadataEventCategory) || metadataEvents.indexOf(event.name) < 0)
+        if (!event.hasCategory(SDK.TracingModel.DevToolsMetadataEventCategory) || metadataEvents.indexOf(event.name) < 0)
             return;
 
-        InspectorTest.assertEquals(InspectorTest.tracingTimelineModel().sessionId(), event.args["data"]["sessionId"]);
+        InspectorTest.assertEquals(InspectorTest.timelineModel().sessionId(), event.args["data"]["sessionId"]);
         InspectorTest.addResult("Got DevTools metadata event: " + event.name);
     }
 }

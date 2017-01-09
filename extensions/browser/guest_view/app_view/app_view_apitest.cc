@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/command_line.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/browser/guest_view_manager_factory.h"
 #include "components/guest_view/browser/test_guest_view_manager.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -23,6 +26,7 @@
 #include "extensions/shell/test/shell_test.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/base/filename_util.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 using guest_view::GuestViewManager;
 using guest_view::TestGuestViewManager;
@@ -89,7 +93,8 @@ class MockExtensionsAPIClient : public extensions::ShellExtensionsAPIClient {
 
 namespace extensions {
 
-class AppViewTest : public AppShellTest {
+class AppViewTest : public AppShellTest,
+                    public testing::WithParamInterface<bool> {
  protected:
   AppViewTest() { GuestViewManager::set_factory_for_testing(&factory_); }
 
@@ -116,8 +121,6 @@ class AppViewTest : public AppShellTest {
   void RunTest(const std::string& test_name,
                const std::string& app_location,
                const std::string& app_to_embed) {
-    extension_system_->Init();
-
     const Extension* app_embedder = LoadApp(app_location);
     ASSERT_TRUE(app_embedder);
     const Extension* app_embedded = LoadApp(app_to_embed);
@@ -141,20 +144,42 @@ class AppViewTest : public AppShellTest {
     ASSERT_TRUE(done_listener.WaitUntilSatisfied());
   }
 
- protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    AppShellTest::SetUpCommandLine(command_line);
+
+    bool use_cross_process_frames_for_guests = GetParam();
+    if (use_cross_process_frames_for_guests) {
+      command_line->AppendSwitchASCII(
+          switches::kEnableFeatures,
+          ::features::kGuestViewCrossProcessFrames.name);
+    } else {
+      command_line->AppendSwitchASCII(
+          switches::kDisableFeatures,
+          ::features::kGuestViewCrossProcessFrames.name);
+    }
+  }
+
   content::WebContents* embedder_web_contents_;
   TestGuestViewManagerFactory factory_;
 };
 
+INSTANTIATE_TEST_CASE_P(AppViewTests, AppViewTest, testing::Bool());
+
+#if defined(OS_WIN)
+#define MAYBE_TestAppViewGoodDataShouldSucceed \
+  DISABLED_TestAppViewGoodDataShouldSucceed
+#else
+#define MAYBE_TestAppViewGoodDataShouldSucceed TestAppViewGoodDataShouldSucceed
+#endif
 // Tests that <appview> correctly processes parameters passed on connect.
-IN_PROC_BROWSER_TEST_F(AppViewTest, TestAppViewGoodDataShouldSucceed) {
+IN_PROC_BROWSER_TEST_P(AppViewTest, MAYBE_TestAppViewGoodDataShouldSucceed) {
   RunTest("testAppViewGoodDataShouldSucceed",
           "app_view/apitest",
           "app_view/apitest/skeleton");
 }
 
 // Tests that <appview> can handle media permission requests.
-IN_PROC_BROWSER_TEST_F(AppViewTest, TestAppViewMediaRequest) {
+IN_PROC_BROWSER_TEST_P(AppViewTest, TestAppViewMediaRequest) {
   static_cast<ShellExtensionsBrowserClient*>(ExtensionsBrowserClient::Get())
       ->SetAPIClientForTest(nullptr);
   static_cast<ShellExtensionsBrowserClient*>(ExtensionsBrowserClient::Get())
@@ -169,14 +194,22 @@ IN_PROC_BROWSER_TEST_F(AppViewTest, TestAppViewMediaRequest) {
 // Tests that <appview> correctly processes parameters passed on connect.
 // This test should fail to connect because the embedded app (skeleton) will
 // refuse the data passed by the embedder app and deny the request.
-IN_PROC_BROWSER_TEST_F(AppViewTest, TestAppViewRefusedDataShouldFail) {
+IN_PROC_BROWSER_TEST_P(AppViewTest, TestAppViewRefusedDataShouldFail) {
   RunTest("testAppViewRefusedDataShouldFail",
           "app_view/apitest",
           "app_view/apitest/skeleton");
 }
 
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
+#define MAYBE_TestAppViewWithUndefinedDataShouldSucceed \
+  DISABLED_TestAppViewWithUndefinedDataShouldSucceed
+#else
+#define MAYBE_TestAppViewWithUndefinedDataShouldSucceed \
+  TestAppViewWithUndefinedDataShouldSucceed
+#endif
 // Tests that <appview> is able to navigate to another installed app.
-IN_PROC_BROWSER_TEST_F(AppViewTest, TestAppViewWithUndefinedDataShouldSucceed) {
+IN_PROC_BROWSER_TEST_P(AppViewTest,
+                       MAYBE_TestAppViewWithUndefinedDataShouldSucceed) {
   RunTest("testAppViewWithUndefinedDataShouldSucceed",
           "app_view/apitest",
           "app_view/apitest/skeleton");

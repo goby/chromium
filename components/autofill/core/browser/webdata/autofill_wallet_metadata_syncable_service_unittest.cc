@@ -4,22 +4,27 @@
 
 #include "components/autofill/core/browser/webdata/autofill_wallet_metadata_syncable_service.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
-#include "base/basictypes.h"
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_change_processor_wrapper_for_test.h"
-#include "sync/api/sync_error_factory_mock.h"
-#include "sync/protocol/autofill_specifics.pb.h"
-#include "sync/protocol/sync.pb.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_change_processor_wrapper_for_test.h"
+#include "components/sync/model/sync_error_factory_mock.h"
+#include "components/sync/protocol/autofill_specifics.pb.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -60,13 +65,13 @@ ACTION_P2(GetCopiesOf, profiles, cards) {
   for (const auto& profile : *profiles) {
     std::string utf8_server_id;
     base::Base64Encode(profile.server_id(), &utf8_server_id);
-    arg0->add(utf8_server_id, make_scoped_ptr(new AutofillProfile(profile)));
+    arg0->add(utf8_server_id, base::WrapUnique(new AutofillProfile(profile)));
   }
 
   for (const auto& card : *cards) {
     std::string utf8_server_id;
     base::Base64Encode(card.server_id(), &utf8_server_id);
-    arg1->add(utf8_server_id, make_scoped_ptr(new CreditCard(card)));
+    arg1->add(utf8_server_id, base::WrapUnique(new CreditCard(card)));
   }
 }
 
@@ -116,8 +121,9 @@ class MockService : public AutofillWalletMetadataSyncableService {
  private:
   MOCK_CONST_METHOD2(
       GetLocalData,
-      bool(base::ScopedPtrHashMap<std::string, scoped_ptr<AutofillProfile>>*,
-           base::ScopedPtrHashMap<std::string, scoped_ptr<CreditCard>>*));
+      bool(base::ScopedPtrHashMap<std::string,
+                                  std::unique_ptr<AutofillProfile>>*,
+           base::ScopedPtrHashMap<std::string, std::unique_ptr<CreditCard>>*));
 
   syncer::SyncError SendChangesToSyncServerConcrete(
       const syncer::SyncChangeList& changes) {
@@ -149,6 +155,7 @@ class NoOpWebData : public AutofillWebDataBackend {
       AutofillWebDataServiceObserverOnDBThread* observer) override {}
   void RemoveExpiredFormElements() override {}
   void NotifyOfMultipleAutofillChanges() override {}
+  void NotifyThatSyncHasStarted(syncer::ModelType /* model_type */) override {}
 
   DISALLOW_COPY_AND_ASSIGN(NoOpWebData);
 };
@@ -177,8 +184,8 @@ TEST_F(AutofillWalletMetadataSyncableServiceTest, NoMetadataToReturn) {
 }
 
 AutofillProfile BuildAddress(const std::string& server_id,
-                             int64 use_count,
-                             int64 use_date) {
+                             int64_t use_count,
+                             int64_t use_date) {
   AutofillProfile profile(AutofillProfile::SERVER_PROFILE, server_id);
   profile.set_use_count(use_count);
   profile.set_use_date(base::Time::FromInternalValue(use_date));
@@ -186,8 +193,8 @@ AutofillProfile BuildAddress(const std::string& server_id,
 }
 
 CreditCard BuildCard(const std::string& server_id,
-                     int64 use_count,
-                     int64 use_date) {
+                     int64_t use_count,
+                     int64_t use_date) {
   CreditCard card(CreditCard::MASKED_SERVER_CARD, server_id);
   card.set_use_count(use_count);
   card.set_use_date(base::Time::FromInternalValue(use_date));
@@ -231,16 +238,17 @@ void MergeMetadata(MockService* local, MockService* remote) {
   ON_CALL(*remote, SendChangesToSyncServer(_))
       .WillByDefault(Return(syncer::SyncError()));
 
-  scoped_ptr<syncer::SyncErrorFactoryMock> errors(
+  std::unique_ptr<syncer::SyncErrorFactoryMock> errors(
       new syncer::SyncErrorFactoryMock);
   EXPECT_CALL(*errors, CreateAndUploadError(_, _)).Times(0);
   EXPECT_FALSE(
-      local->MergeDataAndStartSyncing(
-               syncer::AUTOFILL_WALLET_METADATA,
-               remote->GetAllSyncData(syncer::AUTOFILL_WALLET_METADATA),
-               scoped_ptr<syncer::SyncChangeProcessor>(
-                   new syncer::SyncChangeProcessorWrapperForTest(remote)),
-               errors.Pass())
+      local
+          ->MergeDataAndStartSyncing(
+              syncer::AUTOFILL_WALLET_METADATA,
+              remote->GetAllSyncData(syncer::AUTOFILL_WALLET_METADATA),
+              std::unique_ptr<syncer::SyncChangeProcessor>(
+                  new syncer::SyncChangeProcessorWrapperForTest(remote)),
+              std::move(errors))
           .error()
           .IsSet());
 }
@@ -559,8 +567,8 @@ syncer::SyncChange BuildChange(
     const std::string& sync_tag,
     sync_pb::WalletMetadataSpecifics::Type metadata_type,
     const std::string& server_id,
-    int64 use_count,
-    int64 use_date) {
+    int64_t use_count,
+    int64_t use_date) {
   sync_pb::EntitySpecifics entity;
   entity.mutable_wallet_metadata()->set_type(metadata_type);
   entity.mutable_wallet_metadata()->set_id(server_id);

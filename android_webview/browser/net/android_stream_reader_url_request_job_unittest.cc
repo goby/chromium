@@ -2,23 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "android_webview/browser/input_stream.h"
 #include "android_webview/browser/net/android_stream_reader_url_request_job.h"
+
+#include <memory>
+#include <utility>
+
+#include "android_webview/browser/input_stream.h"
 #include "android_webview/browser/net/aw_url_request_job_factory.h"
 #include "android_webview/browser/net/input_stream_reader.h"
 #include "base/format_macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "net/url_request/url_request_test_util.h"
-
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -75,9 +78,9 @@ class StreamReaderDelegate :
  public:
   StreamReaderDelegate() {}
 
-  scoped_ptr<InputStream> OpenInputStream(JNIEnv* env,
-                                          const GURL& url) override {
-    return make_scoped_ptr<InputStream>(new NotImplInputStream());
+  std::unique_ptr<InputStream> OpenInputStream(JNIEnv* env,
+                                               const GURL& url) override {
+    return base::MakeUnique<NotImplInputStream>();
   }
 
   void OnInputStreamOpenFailed(net::URLRequest* request,
@@ -109,9 +112,9 @@ class NullStreamReaderDelegate : public StreamReaderDelegate {
  public:
   NullStreamReaderDelegate() {}
 
-  scoped_ptr<InputStream> OpenInputStream(JNIEnv* env,
-                                          const GURL& url) override {
-    return make_scoped_ptr<InputStream>(NULL);
+  std::unique_ptr<InputStream> OpenInputStream(JNIEnv* env,
+                                               const GURL& url) override {
+    return nullptr;
   }
 };
 
@@ -154,30 +157,30 @@ class MockInputStreamReader : public InputStreamReader {
 
 class TestStreamReaderJob : public AndroidStreamReaderURLRequestJob {
  public:
-  TestStreamReaderJob(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate,
-      scoped_ptr<Delegate> delegate,
-      scoped_ptr<InputStreamReader> stream_reader)
+  TestStreamReaderJob(net::URLRequest* request,
+                      net::NetworkDelegate* network_delegate,
+                      std::unique_ptr<Delegate> delegate,
+                      std::unique_ptr<InputStreamReader> stream_reader)
       : AndroidStreamReaderURLRequestJob(request,
                                          network_delegate,
-                                         delegate.Pass()),
-        stream_reader_(stream_reader.Pass()) {
+                                         std::move(delegate)),
+        stream_reader_(std::move(stream_reader)) {
     task_runner_ = base::ThreadTaskRunnerHandle::Get();
   }
 
-  scoped_ptr<InputStreamReader> CreateStreamReader(
-      InputStream* stream) override {
-    return stream_reader_.Pass();
-  }
- protected:
   ~TestStreamReaderJob() override {}
 
+  std::unique_ptr<InputStreamReader> CreateStreamReader(
+      InputStream* stream) override {
+    return std::move(stream_reader_);
+  }
+
+ protected:
   base::TaskRunner* GetWorkerThreadRunner() override {
     return task_runner_.get();
   }
 
-  scoped_ptr<InputStreamReader> stream_reader_;
+  std::unique_ptr<InputStreamReader> stream_reader_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 };
 
@@ -206,31 +209,24 @@ class AndroidStreamReaderURLRequestJobTest : public Test {
     req->SetExtraRequestHeaders(headers);
   }
 
-  void SetUpTestJob(scoped_ptr<InputStreamReader> stream_reader) {
-    SetUpTestJob(stream_reader.Pass(),
-                 make_scoped_ptr(new StreamReaderDelegate()));
+  void SetUpTestJob(std::unique_ptr<InputStreamReader> stream_reader) {
+    SetUpTestJob(std::move(stream_reader),
+                 base::MakeUnique<StreamReaderDelegate>());
   }
 
-  void SetUpTestJob(scoped_ptr<InputStreamReader> stream_reader,
-                    scoped_ptr<AndroidStreamReaderURLRequestJob::Delegate>
+  void SetUpTestJob(std::unique_ptr<InputStreamReader> stream_reader,
+                    std::unique_ptr<AndroidStreamReaderURLRequestJob::Delegate>
                         stream_reader_delegate) {
-    TestStreamReaderJob* test_stream_reader_job =
-        new TestStreamReaderJob(
-            req_.get(),
-            &network_delegate_,
-            stream_reader_delegate.Pass(),
-            stream_reader.Pass());
+    std::unique_ptr<TestStreamReaderJob> test_stream_reader_job(
+        new TestStreamReaderJob(req_.get(), &network_delegate_,
+                                std::move(stream_reader_delegate),
+                                std::move(stream_reader)));
     // The Interceptor is owned by the |factory_|.
-    TestJobInterceptor* protocol_handler = new TestJobInterceptor;
-    protocol_handler->set_main_intercept_job(test_stream_reader_job);
+    std::unique_ptr<TestJobInterceptor> protocol_handler(
+        new TestJobInterceptor);
+    protocol_handler->set_main_intercept_job(std::move(test_stream_reader_job));
     bool set_protocol =
-        factory_.SetProtocolHandler("http", make_scoped_ptr(protocol_handler));
-    DCHECK(set_protocol);
-
-    protocol_handler = new TestJobInterceptor;
-    protocol_handler->set_main_intercept_job(test_stream_reader_job);
-    set_protocol = factory_.SetProtocolHandler(
-        "content", make_scoped_ptr(protocol_handler));
+        factory_.SetProtocolHandler("content", std::move(protocol_handler));
     DCHECK(set_protocol);
   }
 
@@ -239,11 +235,11 @@ class AndroidStreamReaderURLRequestJobTest : public Test {
   android_webview::AwURLRequestJobFactory factory_;
   TestDelegate url_request_delegate_;
   TestNetworkDelegate network_delegate_;
-  scoped_ptr<URLRequest> req_;
+  std::unique_ptr<URLRequest> req_;
 };
 
 TEST_F(AndroidStreamReaderURLRequestJobTest, ReadEmptyStream) {
-  scoped_ptr<StrictMock<MockInputStreamReader> > stream_reader(
+  std::unique_ptr<StrictMock<MockInputStreamReader>> stream_reader(
       new StrictMock<MockInputStreamReader>());
   {
     InSequence s;
@@ -253,12 +249,12 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, ReadEmptyStream) {
         .WillOnce(Return(0));
   }
 
-  SetUpTestJob(stream_reader.Pass());
+  SetUpTestJob(std::move(stream_reader));
 
   req_->Start();
 
   // The TestDelegate will quit the message loop on request completion.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_FALSE(url_request_delegate_.request_failed());
   EXPECT_EQ(1, network_delegate_.completed_requests());
@@ -267,11 +263,11 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, ReadEmptyStream) {
 }
 
 TEST_F(AndroidStreamReaderURLRequestJobTest, ReadWithNullStream) {
-  SetUpTestJob(nullptr, make_scoped_ptr(new NullStreamReaderDelegate()));
+  SetUpTestJob(nullptr, base::MakeUnique<NullStreamReaderDelegate>());
   req_->Start();
 
   // The TestDelegate will quit the message loop on request completion.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // The request_failed() method is named confusingly but all it checks is
   // whether the request got as far as calling NotifyHeadersComplete.
@@ -283,12 +279,11 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, ReadWithNullStream) {
 }
 
 TEST_F(AndroidStreamReaderURLRequestJobTest, ModifyHeadersAndStatus) {
-  SetUpTestJob(nullptr,
-               make_scoped_ptr(new HeaderAlteringStreamReaderDelegate()));
+  SetUpTestJob(nullptr, base::MakeUnique<HeaderAlteringStreamReaderDelegate>());
   req_->Start();
 
   // The TestDelegate will quit the message loop on request completion.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // The request_failed() method is named confusingly but all it checks is
   // whether the request got as far as calling NotifyHeadersComplete.
@@ -314,7 +309,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, ReadPartOfStream) {
   const int bytes_available = 128;
   const int offset = 32;
   const int bytes_to_read = bytes_available - offset;
-  scoped_ptr<StrictMock<MockInputStreamReader> > stream_reader(
+  std::unique_ptr<StrictMock<MockInputStreamReader>> stream_reader(
       new StrictMock<MockInputStreamReader>());
   {
     InSequence s;
@@ -328,12 +323,12 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, ReadPartOfStream) {
         .WillOnce(Return(0));
   }
 
-  SetUpTestJob(stream_reader.Pass());
+  SetUpTestJob(std::move(stream_reader));
 
   SetRange(req_.get(), offset, bytes_available);
   req_->Start();
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_FALSE(url_request_delegate_.request_failed());
   EXPECT_EQ(bytes_to_read, url_request_delegate_.bytes_received());
@@ -347,7 +342,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest,
   const int bytes_available = 128;
   const int offset = 0;
   const int bytes_to_read = bytes_available - offset;
-  scoped_ptr<StrictMock<MockInputStreamReader> > stream_reader(
+  std::unique_ptr<StrictMock<MockInputStreamReader>> stream_reader(
       new StrictMock<MockInputStreamReader>());
   {
     InSequence s;
@@ -359,12 +354,12 @@ TEST_F(AndroidStreamReaderURLRequestJobTest,
         .WillOnce(Return(0));
   }
 
-  SetUpTestJob(stream_reader.Pass());
+  SetUpTestJob(std::move(stream_reader));
 
   SetRange(req_.get(), offset, bytes_available_reported);
   req_->Start();
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_FALSE(url_request_delegate_.request_failed());
   EXPECT_EQ(bytes_to_read, url_request_delegate_.bytes_received());
@@ -376,7 +371,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, DeleteJobMidWaySeek) {
   const int offset = 20;
   const int bytes_available = 128;
   base::RunLoop loop;
-  scoped_ptr<StrictMock<MockInputStreamReader> > stream_reader(
+  std::unique_ptr<StrictMock<MockInputStreamReader>> stream_reader(
       new StrictMock<MockInputStreamReader>());
   EXPECT_CALL(*stream_reader, Seek(_))
       .WillOnce(DoAll(InvokeWithoutArgs(&loop, &base::RunLoop::Quit),
@@ -384,7 +379,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, DeleteJobMidWaySeek) {
   ON_CALL(*stream_reader, ReadRawData(_, _))
       .WillByDefault(Return(0));
 
-  SetUpTestJob(stream_reader.Pass());
+  SetUpTestJob(std::move(stream_reader));
 
   SetRange(req_.get(), offset, bytes_available);
   req_->Start();
@@ -400,7 +395,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, DeleteJobMidWayRead) {
   const int offset = 20;
   const int bytes_available = 128;
   base::RunLoop loop;
-  scoped_ptr<StrictMock<MockInputStreamReader> > stream_reader(
+  std::unique_ptr<StrictMock<MockInputStreamReader>> stream_reader(
       new StrictMock<MockInputStreamReader>());
   net::CompletionCallback read_completion_callback;
   EXPECT_CALL(*stream_reader, Seek(_))
@@ -409,7 +404,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, DeleteJobMidWayRead) {
       .WillOnce(DoAll(InvokeWithoutArgs(&loop, &base::RunLoop::Quit),
                       Return(bytes_available)));
 
-  SetUpTestJob(stream_reader.Pass());
+  SetUpTestJob(std::move(stream_reader));
 
   SetRange(req_.get(), offset, bytes_available);
   req_->Start();

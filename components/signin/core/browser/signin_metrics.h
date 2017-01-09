@@ -5,8 +5,9 @@
 #ifndef COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_METRICS_H_
 #define COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_METRICS_H_
 
-#include "base/time/time.h"
+#include <limits.h>
 
+#include "base/time/time.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 
 namespace signin_metrics {
@@ -98,22 +99,63 @@ enum {
   HISTOGRAM_CONFIRM_MAX
 };
 
-// Enum valus used with the "Signin.SigninSource" histogram, which tracks the
-// source that launched a Gaia signin page.
+// TODO(gogerald): right now, gaia server needs to distinguish the source from
+// signin_metrics::SOURCE_START_PAGE, signin_metrics::SOURCE_SETTINGS and the
+// others to show advanced sync setting, remove them after switching to Minute
+// Maid sign in flow.
+// This was previously used in Signin.SigninSource UMA histogram, but no longer
+// used after having below AccessPoint and Reason related histograms.
 enum Source {
-  SOURCE_START_PAGE = 0, // This must be first.
-  SOURCE_NTP_LINK,
-  SOURCE_MENU,
-  SOURCE_SETTINGS,
-  SOURCE_EXTENSION_INSTALL_BUBBLE,
-  SOURCE_APP_LAUNCHER,
-  SOURCE_APPS_PAGE_LINK,
-  SOURCE_BOOKMARK_BUBBLE,
-  SOURCE_AVATAR_BUBBLE_SIGN_IN,
-  SOURCE_AVATAR_BUBBLE_ADD_ACCOUNT,
-  SOURCE_DEVICES_PAGE,
-  SOURCE_REAUTH,
-  SOURCE_UNKNOWN, // This must be last.
+  SOURCE_START_PAGE = 0,  // This must be first.
+  SOURCE_SETTINGS = 3,
+  SOURCE_OTHERS = 13,
+};
+
+// Enum values which enumerates all access points where sign in could be
+// initiated. Not all of them exist on all platforms. They are used with
+// "Signin.SigninStartedAccessPoint" and "Signin.SigninCompletedAccessPoint"
+// histograms.
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.signin
+// GENERATED_JAVA_CLASS_NAME_OVERRIDE: SigninAccessPoint
+enum class AccessPoint : int {
+  ACCESS_POINT_START_PAGE = 0,
+  ACCESS_POINT_NTP_LINK,
+  ACCESS_POINT_MENU,
+  ACCESS_POINT_SETTINGS,
+  ACCESS_POINT_SUPERVISED_USER,
+  ACCESS_POINT_EXTENSION_INSTALL_BUBBLE,
+  ACCESS_POINT_EXTENSIONS,
+  ACCESS_POINT_APPS_PAGE_LINK,
+  ACCESS_POINT_BOOKMARK_BUBBLE,
+  ACCESS_POINT_BOOKMARK_MANAGER,
+  ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN,
+  ACCESS_POINT_USER_MANAGER,
+  ACCESS_POINT_DEVICES_PAGE,
+  ACCESS_POINT_CLOUD_PRINT,
+  ACCESS_POINT_CONTENT_AREA,
+  ACCESS_POINT_SIGNIN_PROMO,
+  ACCESS_POINT_RECENT_TABS,
+  ACCESS_POINT_UNKNOWN,  // This should never have been used to get signin URL.
+  ACCESS_POINT_PASSWORD_BUBBLE,
+  ACCESS_POINT_AUTOFILL_DROPDOWN,
+  ACCESS_POINT_NTP_CONTENT_SUGGESTIONS,
+  ACCESS_POINT_RESIGNIN_INFOBAR,
+  ACCESS_POINT_TAB_SWITCHER,
+  ACCESS_POINT_MAX,  // This must be last.
+};
+
+// Enum values which enumerates all reasons to start sign in process.
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.signin
+// GENERATED_JAVA_CLASS_NAME_OVERRIDE: SigninReason
+enum class Reason : int {
+  REASON_SIGNIN_PRIMARY_ACCOUNT = 0,
+  REASON_ADD_SECONDARY_ACCOUNT,
+  REASON_REAUTHENTICATION,
+  REASON_UNLOCK,
+  REASON_UNKNOWN_REASON,  // This should never have been used to get signin URL.
+  REASON_MAX,             // This must be last.
 };
 
 // Enum values used for use with the "Signin.Reauth" histogram.
@@ -167,7 +209,7 @@ enum CrossDevicePromoInitialized {
 // histogram, which records the state of the AccountReconcilor when GAIA returns
 // a specific response.
 enum AccountReconcilorState {
-  // The AccountReconcilor has finished running ans is up-to-date.
+  // The AccountReconcilor has finished running ans is up to date.
   ACCOUNT_RECONCILOR_OK,
   // The AccountReconcilor is running and gathering information.
   ACCOUNT_RECONCILOR_RUNNING,
@@ -176,6 +218,78 @@ enum AccountReconcilorState {
   // Always the last enumerated type.
   ACCOUNT_RECONCILOR_HISTOGRAM_COUNT,
 };
+
+// Values of histogram comparing account id and email.
+enum class AccountEquality : int {
+  // Expected case when the user is not switching accounts.
+  BOTH_EQUAL = 0,
+  // Expected case when the user is switching accounts.
+  BOTH_DIFFERENT,
+  // The user has changed at least two email account names. This is actually
+  // a different account, even though the email matches.
+  ONLY_SAME_EMAIL,
+  // The user has changed the email of their account, but the account is
+  // actually the same.
+  ONLY_SAME_ID,
+  // The last account id was not present, email equality was used. This should
+  // happen once to all old clients. Does not differentiate between same and
+  // different accounts.
+  EMAIL_FALLBACK,
+  // Always the last enumerated type.
+  HISTOGRAM_COUNT,
+};
+
+// When the user is give a choice of deleting their profile or not when signing
+// out, the |DELETED| or |KEEPING| metric should be used. If the user is not
+// given any option, then use the |IGNORE_METRIC| value should be used.
+enum class SignoutDelete : int {
+  DELETED = 0,
+  KEEPING,
+  IGNORE_METRIC,
+};
+
+// This is the relationship between the account used to sign into chrome, and
+// the account(s) used to sign into the content area/cookie jar. This enum
+// gets messy because we're trying to capture quite a few things, if there was
+// a match or not, how many accounts were in the cookie jar, and what state
+// those cookie jar accounts were in (signed out vs signed in). Note that it's
+// not possible to have the same account multiple times in the cookie jar.
+enum class AccountRelation : int {
+  // No signed in or out accounts in the content area. Cannot have a match.
+  EMPTY_COOKIE_JAR = 0,
+  // The cookie jar contains only a single signed out account that matches.
+  NO_SIGNED_IN_SINGLE_SIGNED_OUT_MATCH,
+  // The cookie jar contains only signed out accounts, one of which matches.
+  NO_SIGNED_IN_ONE_OF_SIGNED_OUT_MATCH,
+  // The cookie jar contains one or more signed out accounts, none match.
+  NO_SIGNED_IN_WITH_SIGNED_OUT_NO_MATCH,
+  // The cookie jar contains only a single signed in account that matches.
+  SINGLE_SIGNED_IN_MATCH_NO_SIGNED_OUT,
+  // There's only one signed in account which matches, and there are one or
+  // more signed out accounts.
+  SINGLE_SINGED_IN_MATCH_WITH_SIGNED_OUT,
+  // There's more than one signed in account, one of which matches. There
+  // could be any configuration of signed out accounts.
+  ONE_OF_SIGNED_IN_MATCH_ANY_SIGNED_OUT,
+  // There's one or more signed in accounts, none of which match. However
+  // there is a match in the signed out accounts.
+  WITH_SIGNED_IN_ONE_OF_SIGNED_OUT_MATCH,
+  // There's one or more signed in accounts and any configuration of signed
+  // out accounts. However, none of the accounts match.
+  WITH_SIGNED_IN_NO_MATCH,
+  // Always the last enumerated type.
+  HISTOGRAM_COUNT,
+};
+
+// Different types of reporting. This is used as a histogram suffix.
+enum class ReportingType { PERIODIC, ON_CHANGE };
+
+// Tracks the access point of sign in.
+void LogSigninAccessPointStarted(AccessPoint access_point);
+void LogSigninAccessPointCompleted(AccessPoint access_point);
+
+// Tracks the reason of sign in.
+void LogSigninReason(Reason reason);
 
 // Log to UMA histograms and UserCounts stats about a single execution of the
 // AccountReconciler.
@@ -207,14 +321,11 @@ void LogSigninAccountReconciliationDuration(base::TimeDelta duration,
 // Track a successful signin.
 void LogSigninAddAccount();
 
-// Tracks the original source that showed the signin page.
-void LogSigninSource(Source source);
-
 // Track a successful signin of a profile.
 void LogSigninProfile(bool is_first_run, base::Time install_date);
 
 // Track a profile signout.
-void LogSignout(ProfileSignout metric);
+void LogSignout(ProfileSignout source_metric, SignoutDelete delete_metric);
 
 // Tracks whether the external connection results were all fetched before
 // the gaia cookie manager service tried to use them with merge session.
@@ -238,6 +349,66 @@ void LogBrowsingSessionDuration(const base::Time& previous_activity_time);
 // If |state| is different than ACCOUNT_RECONCILOR_OK it means the user will
 // be shown a different set of accounts in the content-area and the settings UI.
 void LogAccountReconcilorStateOnGaiaResponse(AccountReconcilorState state);
+
+// Records the AccountEquality metric when an investigator compares the current
+// and previous id/emails during a signin.
+void LogAccountEquality(AccountEquality equality);
+
+// Records the amount of time since the cookie jar was last changed.
+void LogCookieJarStableAge(const base::TimeDelta stable_age,
+                           const ReportingType type);
+
+// Records three counts for the number of accounts in the cookei jar.
+void LogCookieJarCounts(const int signed_in,
+                        const int signed_out,
+                        const int total,
+                        const ReportingType type);
+
+// Records the relation between the account signed into Chrome, and the
+// account(s) present in the cookie jar.
+void LogAccountRelation(const AccountRelation relation,
+                        const ReportingType type);
+
+// Records if the best guess is that this profile is currently shared or not
+// between multiple users.
+void LogIsShared(const bool is_shared, const ReportingType type);
+
+// These intermediate macros are necessary when we may emit to different
+// histograms from the same logical place in the code. The base histogram macros
+// expand in a way that can only work for a single histogram name, so these
+// allow a single place in the code to fan out for multiple names.
+#define INVESTIGATOR_HISTOGRAM_CUSTOM_COUNTS(name, type, sample, min, max, \
+                                             bucket_count)                 \
+  switch (type) {                                                          \
+    case ReportingType::PERIODIC:                                          \
+      UMA_HISTOGRAM_CUSTOM_COUNTS(name "_Periodic", sample, min, max,      \
+                                  bucket_count);                           \
+      break;                                                               \
+    case ReportingType::ON_CHANGE:                                         \
+      UMA_HISTOGRAM_CUSTOM_COUNTS(name "_OnChange", sample, min, max,      \
+                                  bucket_count);                           \
+      break;                                                               \
+  }
+
+#define INVESTIGATOR_HISTOGRAM_BOOLEAN(name, type, sample) \
+  switch (type) {                                          \
+    case ReportingType::PERIODIC:                          \
+      UMA_HISTOGRAM_BOOLEAN(name "_Periodic", sample);     \
+      break;                                               \
+    case ReportingType::ON_CHANGE:                         \
+      UMA_HISTOGRAM_BOOLEAN(name "_OnChange", sample);     \
+      break;                                               \
+  }
+
+#define INVESTIGATOR_HISTOGRAM_ENUMERATION(name, type, sample, boundary_value) \
+  switch (type) {                                                              \
+    case ReportingType::PERIODIC:                                              \
+      UMA_HISTOGRAM_ENUMERATION(name "_Periodic", sample, boundary_value);     \
+      break;                                                                   \
+    case ReportingType::ON_CHANGE:                                             \
+      UMA_HISTOGRAM_ENUMERATION(name "_OnChange", sample, boundary_value);     \
+      break;                                                                   \
+  }
 
 }  // namespace signin_metrics
 

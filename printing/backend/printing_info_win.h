@@ -6,17 +6,19 @@
 #define PRINTING_BACKEND_PRINTING_INFO_WIN_H_
 
 #include <objidl.h>
+#include <stdint.h>
 #include <winspool.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "printing/printing_export.h"
 
 namespace printing {
 
 namespace internal {
 
-PRINTING_EXPORT uint8* GetDriverInfo(HANDLE printer, int level);
-PRINTING_EXPORT uint8* GetPrinterInfo(HANDLE printer, int level);
+PRINTING_EXPORT uint8_t* GetDriverInfo(HANDLE printer, int level);
+PRINTING_EXPORT uint8_t* GetPrinterInfo(HANDLE printer, int level);
 
 // This class is designed to work with PRINTER_INFO_X structures
 // and calls GetPrinter internally with correctly allocated buffer.
@@ -25,7 +27,7 @@ class PrinterInfo {
  public:
   bool Init(HANDLE printer) {
     buffer_.reset(GetPrinterInfo(printer, level));
-    return buffer_;
+    return buffer_ != nullptr;
   }
 
   const PrinterInfoType* get() const {
@@ -33,7 +35,7 @@ class PrinterInfo {
   }
 
  private:
-  scoped_ptr<uint8[]> buffer_;
+  std::unique_ptr<uint8_t[]> buffer_;
 };
 
 // This class is designed to work with DRIVER_INFO_X structures
@@ -43,7 +45,7 @@ class DriverInfo {
  public:
   bool Init(HANDLE printer) {
     buffer_.reset(GetDriverInfo(printer, level));
-    return buffer_;
+    return buffer_ != nullptr;
   }
 
   const DriverInfoType* get() const {
@@ -51,7 +53,7 @@ class DriverInfo {
   }
 
  private:
-  scoped_ptr<uint8[]> buffer_;
+  std::unique_ptr<uint8_t[]> buffer_;
 };
 
 }  // namespace internal

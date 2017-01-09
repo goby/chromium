@@ -4,15 +4,17 @@
 
 #include "chrome/browser/extensions/error_console/error_console.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
+#include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/extension_error.h"
@@ -21,6 +23,7 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/feature_switch.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -48,14 +51,14 @@ class ErrorConsoleUnitTest : public testing::Test {
 
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   ErrorConsole* error_console_;
 };
 
 // Test that the error console is enabled/disabled appropriately.
 TEST_F(ErrorConsoleUnitTest, EnableAndDisableErrorConsole) {
   // Start in Dev Channel, without the feature switch.
-  scoped_ptr<ScopedCurrentChannel> channel_override(
+  std::unique_ptr<ScopedCurrentChannel> channel_override(
       new ScopedCurrentChannel(version_info::Channel::DEV));
   ASSERT_EQ(version_info::Channel::DEV, GetCurrentChannel());
   FeatureSwitch::error_console()->SetOverrideValue(

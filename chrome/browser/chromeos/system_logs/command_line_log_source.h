@@ -5,11 +5,12 @@
 #ifndef CHROME_BROWSER_CHROMEOS_SYSTEM_LOGS_COMMAND_LINE_LOG_SOURCE_H_
 #define CHROME_BROWSER_CHROMEOS_SYSTEM_LOGS_COMMAND_LINE_LOG_SOURCE_H_
 
+#include "base/macros.h"
 #include "chrome/browser/feedback/system_logs/system_logs_fetcher_base.h"
 
 namespace system_logs {
 
-// This classs gathers logs data from various command line tools which we can
+// This class gathers logs data from various command line tools which we can
 // not access using Debug Daemon.
 class CommandLineLogSource : public SystemLogsSource {
  public:

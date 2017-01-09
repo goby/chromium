@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/test/power_monitor_test_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -13,7 +15,7 @@ class PowerMonitorTest : public testing::Test {
   PowerMonitorTest() {
     power_monitor_source_ = new PowerMonitorTestSource();
     power_monitor_.reset(new PowerMonitor(
-        scoped_ptr<PowerMonitorSource>(power_monitor_source_)));
+        std::unique_ptr<PowerMonitorSource>(power_monitor_source_)));
   }
   ~PowerMonitorTest() override{};
 
@@ -21,8 +23,9 @@ class PowerMonitorTest : public testing::Test {
   PowerMonitor* monitor() { return power_monitor_.get(); }
 
  private:
+  base::MessageLoop message_loop_;
   PowerMonitorTestSource* power_monitor_source_;
-  scoped_ptr<PowerMonitor> power_monitor_;
+  std::unique_ptr<PowerMonitor> power_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(PowerMonitorTest);
 };

@@ -3,15 +3,18 @@
 // found in the LICENSE file.
 // MSVC++ requires this to be set before any other includes to get M_PI.
 #define _USE_MATH_DEFINES
-#include <cmath>
 
 #include "media/audio/simple_sources.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <cmath>
 
 #include "base/files/file.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/time/time.h"
 #include "media/audio/sounds/wav_audio_handler.h"
 #include "media/base/audio_bus.h"
 
@@ -21,8 +24,8 @@ namespace {
 // return a null pointer if we can't read the file or if it's malformed. The
 // caller takes ownership of the returned data. The size of the data is stored
 // in |read_length|.
-scoped_ptr<char[]> ReadWavFile(const base::FilePath& wav_filename,
-                               size_t* read_length) {
+std::unique_ptr<char[]> ReadWavFile(const base::FilePath& wav_filename,
+                                    size_t* read_length) {
   base::File wav_file(
       wav_filename, base::File::FLAG_OPEN | base::File::FLAG_READ);
   if (!wav_file.IsValid()) {
@@ -31,15 +34,19 @@ scoped_ptr<char[]> ReadWavFile(const base::FilePath& wav_filename,
     return nullptr;
   }
 
-  size_t wav_file_length = wav_file.GetLength();
-  if (wav_file_length == 0u) {
+  int64_t wav_file_length = wav_file.GetLength();
+  if (wav_file_length < 0) {
+    LOG(ERROR) << "Failed to get size of " << wav_filename.value();
+    return nullptr;
+  }
+  if (wav_file_length == 0) {
     LOG(ERROR) << "Input file to fake device is empty: "
                << wav_filename.value();
     return nullptr;
   }
 
-  scoped_ptr<char[]> data(new char[wav_file_length]);
-  size_t read_bytes = wav_file.Read(0, data.get(), wav_file_length);
+  std::unique_ptr<char[]> data(new char[wav_file_length]);
+  int read_bytes = wav_file.Read(0, data.get(), wav_file_length);
   if (read_bytes != wav_file_length) {
     LOG(ERROR) << "Failed to read all bytes of " << wav_filename.value();
     return nullptr;
@@ -109,8 +116,10 @@ SineWaveAudioSource::~SineWaveAudioSource() {
 
 // The implementation could be more efficient if a lookup table is constructed
 // but it is efficient enough for our simple needs.
-int SineWaveAudioSource::OnMoreData(AudioBus* audio_bus,
-                                    uint32 total_bytes_delay) {
+int SineWaveAudioSource::OnMoreData(base::TimeDelta /* delay */,
+                                    base::TimeTicks /* delay_timestamp */,
+                                    int /* prior_frames_skipped */,
+                                    AudioBus* dest) {
   base::AutoLock auto_lock(time_lock_);
   callbacks_++;
 
@@ -118,13 +127,13 @@ int SineWaveAudioSource::OnMoreData(AudioBus* audio_bus,
   // where Theta = 2*PI*fs.
   // We store the discrete time value |t| in a member to ensure that the
   // next pass starts at a correct state.
-  int max_frames = cap_ > 0 ?
-      std::min(audio_bus->frames(), cap_ - time_state_) : audio_bus->frames();
+  int max_frames =
+      cap_ > 0 ? std::min(dest->frames(), cap_ - time_state_) : dest->frames();
   for (int i = 0; i < max_frames; ++i)
-    audio_bus->channel(0)[i] = sin(2.0 * M_PI * f_ * time_state_++);
-  for (int i = 1; i < audio_bus->channels(); ++i) {
-    memcpy(audio_bus->channel(i), audio_bus->channel(0),
-           max_frames * sizeof(*audio_bus->channel(i)));
+    dest->channel(0)[i] = sin(2.0 * M_PI * f_ * time_state_++);
+  for (int i = 1; i < dest->channels(); ++i) {
+    memcpy(dest->channel(i), dest->channel(0),
+           max_frames * sizeof(*dest->channel(i)));
   }
   return max_frames;
 }
@@ -145,12 +154,13 @@ void SineWaveAudioSource::Reset() {
 }
 
 FileSource::FileSource(const AudioParameters& params,
-                       const base::FilePath& path_to_wav_file)
+                       const base::FilePath& path_to_wav_file,
+                       bool loop)
     : params_(params),
       path_to_wav_file_(path_to_wav_file),
       wav_file_read_pos_(0),
-      load_failed_(false) {
-}
+      load_failed_(false),
+      looping_(loop) {}
 
 FileSource::~FileSource() {
 }
@@ -193,7 +203,10 @@ void FileSource::LoadWavFile(const base::FilePath& path_to_wav_file) {
   file_audio_converter_->AddInput(this);
 }
 
-int FileSource::OnMoreData(AudioBus* audio_bus, uint32 total_bytes_delay) {
+int FileSource::OnMoreData(base::TimeDelta /* delay */,
+                           base::TimeTicks /* delay_timestamp */,
+                           int /* prior_frames_skipped */,
+                           AudioBus* dest) {
   // Load the file if we haven't already. This load needs to happen on the
   // audio thread, otherwise we'll run on the UI thread on Mac for instance.
   // This will massively delay the first OnMoreData, but we'll catch up.
@@ -204,17 +217,24 @@ int FileSource::OnMoreData(AudioBus* audio_bus, uint32 total_bytes_delay) {
 
   DCHECK(wav_audio_handler_.get());
 
-  // Stop playing if we've played out the whole file.
-  if (wav_audio_handler_->AtEnd(wav_file_read_pos_))
-    return 0;
+  if (wav_audio_handler_->AtEnd(wav_file_read_pos_)) {
+    if (looping_)
+      Rewind();
+    else
+      return 0;
+  }
 
   // This pulls data from ProvideInput.
-  file_audio_converter_->Convert(audio_bus);
-  return audio_bus->frames();
+  file_audio_converter_->Convert(dest);
+  return dest->frames();
+}
+
+void FileSource::Rewind() {
+  wav_file_read_pos_ = 0;
 }
 
 double FileSource::ProvideInput(AudioBus* audio_bus_into_converter,
-                                base::TimeDelta buffer_delay) {
+                                uint32_t frames_delayed) {
   // Unfilled frames will be zeroed by CopyTo.
   size_t bytes_written;
   wav_audio_handler_->CopyTo(audio_bus_into_converter, wav_file_read_pos_,
@@ -228,7 +248,7 @@ void FileSource::OnError(AudioOutputStream* stream) {
 
 BeepingSource::BeepingSource(const AudioParameters& params)
     : buffer_size_(params.GetBytesPerBuffer()),
-      buffer_(new uint8[buffer_size_]),
+      buffer_(new uint8_t[buffer_size_]),
       params_(params),
       last_callback_time_(base::TimeTicks::Now()),
       beep_duration_in_buffers_(kBeepDurationMilliseconds *
@@ -236,13 +256,15 @@ BeepingSource::BeepingSource(const AudioParameters& params)
                                 params.frames_per_buffer() /
                                 1000),
       beep_generated_in_buffers_(0),
-      beep_period_in_frames_(params.sample_rate() / kBeepFrequency) {
-}
+      beep_period_in_frames_(params.sample_rate() / kBeepFrequency) {}
 
 BeepingSource::~BeepingSource() {
 }
 
-int BeepingSource::OnMoreData(AudioBus* audio_bus, uint32 total_bytes_delay) {
+int BeepingSource::OnMoreData(base::TimeDelta /* delay */,
+                              base::TimeTicks /* delay_timestamp */,
+                              int /* prior_frames_skipped */,
+                              AudioBus* dest) {
   // Accumulate the time from the last beep.
   interval_from_last_beep_ += base::TimeTicks::Now() - last_callback_time_;
 
@@ -286,9 +308,9 @@ int BeepingSource::OnMoreData(AudioBus* audio_bus, uint32 total_bytes_delay) {
   }
 
   last_callback_time_ = base::TimeTicks::Now();
-  audio_bus->FromInterleaved(
-      buffer_.get(), audio_bus->frames(), params_.bits_per_sample() / 8);
-  return audio_bus->frames();
+  dest->FromInterleaved(buffer_.get(), dest->frames(),
+                        params_.bits_per_sample() / 8);
+  return dest->frames();
 }
 
 void BeepingSource::OnError(AudioOutputStream* stream) {

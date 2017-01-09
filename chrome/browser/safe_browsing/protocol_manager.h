@@ -13,21 +13,27 @@
 // and handling responses from, Google's SafeBrowsing servers. This class uses
 // The SafeBrowsingProtocolParser class to do the actual parsing.
 
+#include <stddef.h>
+
+#include <algorithm>
 #include <deque>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/safe_browsing/chunk_range.h"
 #include "chrome/browser/safe_browsing/protocol_manager_helper.h"
 #include "chrome/browser/safe_browsing/protocol_parser.h"
 #include "chrome/browser/safe_browsing/safe_browsing_util.h"
+#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing_db/safebrowsing.pb.h"
+#include "components/safe_browsing_db/util.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_status.h"
 #include "url/gurl.h"
@@ -42,8 +48,8 @@ namespace safe_browsing {
 class SBProtocolManagerFactory;
 class SafeBrowsingProtocolManagerDelegate;
 
-class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
-                                    public base::NonThreadSafe {
+// Lives on the IO thread.
+class SafeBrowsingProtocolManager : public net::URLFetcherDelegate {
  public:
   // FullHashCallback is invoked when GetFullHash completes.
   // Parameters:
@@ -51,8 +57,9 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   //     were no matches, and that the resource is safe.
   //   - The cache lifetime of the result. A lifetime of 0 indicates the results
   //     should not be cached.
-  typedef base::Callback<void(const std::vector<SBFullHashResult>&,
-                              const base::TimeDelta&)> FullHashCallback;
+  using FullHashCallback =
+      base::Callback<void(const std::vector<SBFullHashResult>&,
+                          const base::TimeDelta&)>;
 
   ~SafeBrowsingProtocolManager() override;
 
@@ -63,7 +70,7 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   }
 
   // Create an instance of the safe browsing protocol manager.
-  static SafeBrowsingProtocolManager* Create(
+  static std::unique_ptr<SafeBrowsingProtocolManager> Create(
       SafeBrowsingProtocolManagerDelegate* delegate,
       net::URLRequestContextGetter* request_context_getter,
       const SafeBrowsingProtocolConfig& config);
@@ -81,7 +88,7 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   virtual void GetFullHash(const std::vector<SBPrefix>& prefixes,
                            FullHashCallback callback,
                            bool is_download,
-                           bool is_extended_reporting);
+                           ExtendedReportingLevel reporting_level);
 
   // Forces the start of next update after |interval| time.
   void ForceScheduleNextUpdate(base::TimeDelta interval);
@@ -95,7 +102,7 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   // should try again later to open the database.
   void OnGetChunksComplete(const std::vector<SBListChunkRanges>& list,
                            bool database_error,
-                           bool is_extended_reporting);
+                           ExtendedReportingLevel reporting_level);
 
   // The last time we received an update.
   base::Time last_update() const { return last_update_; }
@@ -167,10 +174,7 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   // Returns whether another update is currently scheduled.
   bool IsUpdateScheduled() const;
 
-  // Called when app changes status of foreground or background.
-  void SetAppInForeground(bool foreground) {
-    app_in_foreground_ = foreground;
-  }
+  static base::TimeDelta GetUpdateTimeoutForTesting();
 
  protected:
   // Constructs a SafeBrowsingProtocolManager for |delegate| that issues
@@ -183,9 +187,9 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
  private:
   FRIEND_TEST_ALL_PREFIXES(SafeBrowsingProtocolManagerTest, TestBackOffTimes);
   FRIEND_TEST_ALL_PREFIXES(SafeBrowsingProtocolManagerTest, TestChunkStrings);
-  FRIEND_TEST_ALL_PREFIXES(SafeBrowsingProtocolManagerTest, TestGetHashUrl);
   FRIEND_TEST_ALL_PREFIXES(SafeBrowsingProtocolManagerTest,
                            TestGetHashBackOffTimes);
+  FRIEND_TEST_ALL_PREFIXES(SafeBrowsingProtocolManagerTest, TestGetHashUrl);
   FRIEND_TEST_ALL_PREFIXES(SafeBrowsingProtocolManagerTest, TestNextChunkUrl);
   FRIEND_TEST_ALL_PREFIXES(SafeBrowsingProtocolManagerTest, TestUpdateUrl);
   friend class SafeBrowsingServerTest;
@@ -210,15 +214,14 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   };
 
   // Generates Update URL for querying about the latest set of chunk updates.
-  GURL UpdateUrl(bool is_extended_reporting) const;
+  GURL UpdateUrl(ExtendedReportingLevel reporting_level) const;
 
   // Generates backup Update URL for querying about the latest set of chunk
   // updates. |url_prefix| is the base prefix to use.
   GURL BackupUpdateUrl(BackupUpdateReason reason) const;
 
   // Generates GetHash request URL for retrieving full hashes.
-  GURL GetHashUrl(bool is_extended_reporting) const;
-  // Generates URL for reporting safe browsing hits for UMA users.
+  GURL GetHashUrl(ExtendedReportingLevel reporting_level) const;
 
   // Composes a ChunkUrl based on input string.
   GURL NextChunkUrl(const std::string& input) const;
@@ -279,17 +282,16 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   // Called after the chunks are added to the database.
   void OnAddChunksComplete();
 
- private:
   // Map of GetHash requests to parameters which created it.
   struct FullHashDetails {
     FullHashDetails();
     FullHashDetails(FullHashCallback callback, bool is_download);
+    FullHashDetails(const FullHashDetails& other);
     ~FullHashDetails();
 
     FullHashCallback callback;
     bool is_download;
   };
-  typedef base::hash_map<const net::URLFetcher*, FullHashDetails> HashRequests;
 
   // The factory that controls the creation of SafeBrowsingProtocolManager.
   // This is used by tests.
@@ -301,12 +303,13 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   // Current active request (in case we need to cancel) for updates or chunks
   // from the SafeBrowsing service. We can only have one of these outstanding
   // at any given time unlike GetHash requests, which are tracked separately.
-  scoped_ptr<net::URLFetcher> request_;
+  std::unique_ptr<net::URLFetcher> request_;
 
   // The kind of request that is currently in progress.
   SafeBrowsingRequestType request_type_;
 
-  // The number of HTTP response errors, used for request backoff timing.
+  // The number of HTTP response errors since the the last successful HTTP
+  // response, used for request backoff timing.
   size_t update_error_count_;
   size_t gethash_error_count_;
 
@@ -332,7 +335,9 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   // All chunk requests that need to be made.
   std::deque<ChunkUrl> chunk_request_urls_;
 
-  HashRequests hash_requests_;
+  base::hash_map<const net::URLFetcher*,
+                 std::pair<std::unique_ptr<net::URLFetcher>, FullHashDetails>>
+      hash_requests_;
 
   // True if the service has been given an add/sub chunk but it hasn't been
   // added to the database yet.
@@ -382,9 +387,6 @@ class SafeBrowsingProtocolManager : public net::URLFetcherDelegate,
   // ID for URLFetchers for testing.
   int url_fetcher_id_;
 
-  // Whether the app is in foreground or background.
-  bool app_in_foreground_;
-
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingProtocolManager);
 };
 
@@ -393,10 +395,12 @@ class SBProtocolManagerFactory {
  public:
   SBProtocolManagerFactory() {}
   virtual ~SBProtocolManagerFactory() {}
-  virtual SafeBrowsingProtocolManager* CreateProtocolManager(
+
+  virtual std::unique_ptr<SafeBrowsingProtocolManager> CreateProtocolManager(
       SafeBrowsingProtocolManagerDelegate* delegate,
       net::URLRequestContextGetter* request_context_getter,
       const SafeBrowsingProtocolConfig& config) = 0;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(SBProtocolManagerFactory);
 };
@@ -404,12 +408,11 @@ class SBProtocolManagerFactory {
 // Delegate interface for the SafeBrowsingProtocolManager.
 class SafeBrowsingProtocolManagerDelegate {
  public:
-  typedef base::Callback<void(
+  using GetChunksCallback = base::Callback<void(
       const std::vector<SBListChunkRanges>&, /* List of chunks */
       bool,                                  /* database_error */
-      bool                                   /* is_extended_reporting */
-      )> GetChunksCallback;
-  typedef base::Callback<void(void)> AddChunksCallback;
+      ExtendedReportingLevel                 /* reporting_level */)>;
+  using AddChunksCallback = base::Closure;
 
   virtual ~SafeBrowsingProtocolManagerDelegate();
 
@@ -434,12 +437,12 @@ class SafeBrowsingProtocolManagerDelegate {
   // call at a later time.
   virtual void AddChunks(
       const std::string& list,
-      scoped_ptr<std::vector<scoped_ptr<SBChunkData>>> chunks,
+      std::unique_ptr<std::vector<std::unique_ptr<SBChunkData>>> chunks,
       AddChunksCallback callback) = 0;
 
   // Delete chunks from the database.
   virtual void DeleteChunks(
-      scoped_ptr<std::vector<SBChunkDelete> > chunk_deletes) = 0;
+      std::unique_ptr<std::vector<SBChunkDelete>> chunk_deletes) = 0;
 };
 
 }  // namespace safe_browsing

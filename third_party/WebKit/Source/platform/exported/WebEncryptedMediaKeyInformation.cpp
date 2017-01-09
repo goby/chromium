@@ -2,47 +2,37 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "public/platform/WebEncryptedMediaKeyInformation.h"
 
 namespace blink {
 
-WebEncryptedMediaKeyInformation::WebEncryptedMediaKeyInformation()
-{
+WebEncryptedMediaKeyInformation::WebEncryptedMediaKeyInformation() {}
+
+WebEncryptedMediaKeyInformation::~WebEncryptedMediaKeyInformation() {}
+
+WebData WebEncryptedMediaKeyInformation::id() const {
+  return m_id;
 }
 
-WebEncryptedMediaKeyInformation::~WebEncryptedMediaKeyInformation()
-{
+void WebEncryptedMediaKeyInformation::setId(const WebData& id) {
+  m_id.assign(id);
 }
 
-WebData WebEncryptedMediaKeyInformation::id() const
-{
-    return m_id;
+WebEncryptedMediaKeyInformation::KeyStatus
+WebEncryptedMediaKeyInformation::status() const {
+  return m_status;
 }
 
-void WebEncryptedMediaKeyInformation::setId(const WebData& id)
-{
-    m_id.assign(id);
+void WebEncryptedMediaKeyInformation::setStatus(KeyStatus status) {
+  m_status = status;
 }
 
-WebEncryptedMediaKeyInformation::KeyStatus WebEncryptedMediaKeyInformation::status() const
-{
-    return m_status;
+uint32_t WebEncryptedMediaKeyInformation::systemCode() const {
+  return m_systemCode;
 }
 
-void WebEncryptedMediaKeyInformation::setStatus(KeyStatus status)
-{
-    m_status = status;
+void WebEncryptedMediaKeyInformation::setSystemCode(uint32_t systemCode) {
+  m_systemCode = systemCode;
 }
 
-uint32_t WebEncryptedMediaKeyInformation::systemCode() const
-{
-    return m_systemCode;
-}
-
-void WebEncryptedMediaKeyInformation::setSystemCode(uint32_t systemCode)
-{
-    m_systemCode = systemCode;
-}
-
-} // namespace blink
+}  // namespace blink

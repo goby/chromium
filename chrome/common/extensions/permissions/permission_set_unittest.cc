@@ -2,22 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_test_util.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/extensions/permissions/chrome_permission_message_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/version_info/version_info.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/permissions/permission_message_provider.h"
 #include "extensions/common/permissions/permission_message_test_util.h"
 #include "extensions/common/permissions/permission_message_util.h"
@@ -26,7 +33,6 @@
 #include "extensions/common/permissions/permissions_info.h"
 #include "extensions/common/permissions/socket_permission.h"
 #include "extensions/common/value_builder.h"
-#include "extensions/strings/grit/extensions_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -337,18 +343,18 @@ TEST(PermissionsTest, CreateUnion) {
 
   URLPatternSet effective_hosts;
 
-  scoped_ptr<const PermissionSet> set1;
-  scoped_ptr<const PermissionSet> set2;
-  scoped_ptr<const PermissionSet> union_set;
+  std::unique_ptr<const PermissionSet> set1;
+  std::unique_ptr<const PermissionSet> set2;
+  std::unique_ptr<const PermissionSet> union_set;
 
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kSocket);
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("tcp-connect:*.example.com:80"));
-    value->Append(new base::StringValue("udp-bind::8080"));
-    value->Append(new base::StringValue("udp-send-to::8888"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("tcp-connect:*.example.com:80");
+    value->AppendString("udp-bind::8080");
+    value->AppendString("udp-send-to::8888");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
 
@@ -370,9 +376,9 @@ TEST(PermissionsTest, CreateUnion) {
                                scriptable_hosts2));
   union_set = PermissionSet::CreateUnion(*set1, *set2);
   EXPECT_TRUE(set1->Contains(*set2));
-  EXPECT_TRUE(set1->Contains(*union_set.get()));
+  EXPECT_TRUE(set1->Contains(*union_set));
   EXPECT_FALSE(set2->Contains(*set1));
-  EXPECT_FALSE(set2->Contains(*union_set.get()));
+  EXPECT_FALSE(set2->Contains(*union_set));
   EXPECT_TRUE(union_set->Contains(*set1));
   EXPECT_TRUE(union_set->Contains(*set2));
 
@@ -390,9 +396,9 @@ TEST(PermissionsTest, CreateUnion) {
 
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("tcp-connect:*.example.com:80"));
-    value->Append(new base::StringValue("udp-send-to::8899"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("tcp-connect:*.example.com:80");
+    value->AppendString("udp-send-to::8899");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   apis2.insert(permission);
@@ -404,11 +410,11 @@ TEST(PermissionsTest, CreateUnion) {
 
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("tcp-connect:*.example.com:80"));
-    value->Append(new base::StringValue("udp-bind::8080"));
-    value->Append(new base::StringValue("udp-send-to::8888"));
-    value->Append(new base::StringValue("udp-send-to::8899"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("tcp-connect:*.example.com:80");
+    value->AppendString("udp-bind::8080");
+    value->AppendString("udp-send-to::8888");
+    value->AppendString("udp-send-to::8899");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   // Insert a new permission socket permisssion which will replace the old one.
@@ -427,9 +433,9 @@ TEST(PermissionsTest, CreateUnion) {
   union_set = PermissionSet::CreateUnion(*set1, *set2);
 
   EXPECT_FALSE(set1->Contains(*set2));
-  EXPECT_FALSE(set1->Contains(*union_set.get()));
+  EXPECT_FALSE(set1->Contains(*union_set));
   EXPECT_FALSE(set2->Contains(*set1));
-  EXPECT_FALSE(set2->Contains(*union_set.get()));
+  EXPECT_FALSE(set2->Contains(*union_set));
   EXPECT_TRUE(union_set->Contains(*set1));
   EXPECT_TRUE(union_set->Contains(*set2));
 
@@ -459,9 +465,9 @@ TEST(PermissionsTest, CreateIntersection) {
 
   URLPatternSet effective_hosts;
 
-  scoped_ptr<const PermissionSet> set1;
-  scoped_ptr<const PermissionSet> set2;
-  scoped_ptr<const PermissionSet> new_set;
+  std::unique_ptr<const PermissionSet> set1;
+  std::unique_ptr<const PermissionSet> set2;
+  std::unique_ptr<const PermissionSet> new_set;
 
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kSocket);
@@ -471,10 +477,10 @@ TEST(PermissionsTest, CreateIntersection) {
   apis1.insert(APIPermission::kBackground);
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("tcp-connect:*.example.com:80"));
-    value->Append(new base::StringValue("udp-bind::8080"));
-    value->Append(new base::StringValue("udp-send-to::8888"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("tcp-connect:*.example.com:80");
+    value->AppendString("udp-bind::8080");
+    value->AppendString("udp-send-to::8888");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   apis1.insert(permission);
@@ -508,10 +514,10 @@ TEST(PermissionsTest, CreateIntersection) {
   apis2.insert(APIPermission::kPlugin);
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("udp-bind::8080"));
-    value->Append(new base::StringValue("udp-send-to::8888"));
-    value->Append(new base::StringValue("udp-send-to::8899"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("udp-bind::8080");
+    value->AppendString("udp-send-to::8888");
+    value->AppendString("udp-send-to::8899");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   apis2.insert(permission);
@@ -519,9 +525,9 @@ TEST(PermissionsTest, CreateIntersection) {
   expected_apis.insert(APIPermission::kTab);
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("udp-bind::8080"));
-    value->Append(new base::StringValue("udp-send-to::8888"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("udp-bind::8080");
+    value->AppendString("udp-send-to::8888");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   expected_apis.insert(permission);
@@ -571,9 +577,9 @@ TEST(PermissionsTest, CreateDifference) {
 
   URLPatternSet effective_hosts;
 
-  scoped_ptr<const PermissionSet> set1;
-  scoped_ptr<const PermissionSet> set2;
-  scoped_ptr<const PermissionSet> new_set;
+  std::unique_ptr<const PermissionSet> set1;
+  std::unique_ptr<const PermissionSet> set2;
+  std::unique_ptr<const PermissionSet> new_set;
 
   const APIPermissionInfo* permission_info =
     PermissionsInfo::GetInstance()->GetByID(APIPermission::kSocket);
@@ -583,10 +589,10 @@ TEST(PermissionsTest, CreateDifference) {
   apis1.insert(APIPermission::kBackground);
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("tcp-connect:*.example.com:80"));
-    value->Append(new base::StringValue("udp-bind::8080"));
-    value->Append(new base::StringValue("udp-send-to::8888"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("tcp-connect:*.example.com:80");
+    value->AppendString("udp-bind::8080");
+    value->AppendString("udp-send-to::8888");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   apis1.insert(permission);
@@ -608,9 +614,9 @@ TEST(PermissionsTest, CreateDifference) {
   apis2.insert(APIPermission::kPlugin);
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("tcp-connect:*.example.com:80"));
-    value->Append(new base::StringValue("udp-send-to::8899"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("tcp-connect:*.example.com:80");
+    value->AppendString("udp-send-to::8899");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   apis2.insert(permission);
@@ -618,9 +624,9 @@ TEST(PermissionsTest, CreateDifference) {
   expected_apis.insert(APIPermission::kBackground);
   permission = permission_info->CreateAPIPermission();
   {
-    scoped_ptr<base::ListValue> value(new base::ListValue());
-    value->Append(new base::StringValue("udp-bind::8080"));
-    value->Append(new base::StringValue("udp-send-to::8888"));
+    std::unique_ptr<base::ListValue> value(new base::ListValue());
+    value->AppendString("udp-bind::8080");
+    value->AppendString("udp-send-to::8888");
     ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
   }
   expected_apis.insert(permission);
@@ -679,7 +685,7 @@ TEST(PermissionsTest, IsPrivilegeIncrease) {
     { "plugin3", true },  // none -> plugin
 #endif
     { "storage", false },  // none -> storage
-    { "notifications", false },  // none -> notifications
+    { "notifications", true },  // none -> notifications
     { "platformapp1", false },  // host permissions for platform apps
     { "platformapp2", true },  // API permissions for platform apps
     { "media_galleries1", true },  // all -> read|all
@@ -731,13 +737,11 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermission::kAlwaysOnTopWindows);
   skip.insert(APIPermission::kAppView);
   skip.insert(APIPermission::kAudio);
-  skip.insert(APIPermission::kAudioModem);
   skip.insert(APIPermission::kBrowsingData);
   skip.insert(APIPermission::kCastStreaming);
   skip.insert(APIPermission::kCommandsAccessibility);
   skip.insert(APIPermission::kContextMenus);
   skip.insert(APIPermission::kCryptotokenPrivate);
-  skip.insert(APIPermission::kCopresencePrivate);
   skip.insert(APIPermission::kDesktopCapturePrivate);
   skip.insert(APIPermission::kDiagnostics);
   skip.insert(APIPermission::kDns);
@@ -752,7 +756,6 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermission::kInlineInstallPrivate);
   skip.insert(APIPermission::kIdltest);
   skip.insert(APIPermission::kLogPrivate);
-  skip.insert(APIPermission::kNotifications);
   skip.insert(APIPermission::kNotificationProvider);
   skip.insert(APIPermission::kOverrideEscFullscreen);
   skip.insert(APIPermission::kPointerLock);
@@ -780,6 +783,7 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermission::kBackground);
 
   skip.insert(APIPermission::kClipboardWrite);
+  skip.insert(APIPermission::kClipboard);
 
   // The cookie permission does nothing unless you have associated host
   // permissions.
@@ -838,7 +842,6 @@ TEST(PermissionsTest, PermissionMessages) {
   skip.insert(APIPermission::kMediaRouterPrivate);
   skip.insert(APIPermission::kMetricsPrivate);
   skip.insert(APIPermission::kPreferencesPrivate);
-  skip.insert(APIPermission::kPrincipalsPrivate);
   skip.insert(APIPermission::kImageWriterPrivate);
   skip.insert(APIPermission::kResourcesPrivate);
   skip.insert(APIPermission::kRtcPrivate);
@@ -1299,11 +1302,12 @@ TEST(PermissionsTest, GetWarningMessages_PlatformAppHosts) {
 testing::AssertionResult ShowsAllHostsWarning(const std::string& pattern) {
   scoped_refptr<Extension> extension =
       ExtensionBuilder()
-          .SetManifest(DictionaryBuilder()
-                           .Set("name", "TLDWildCardTest")
-                           .Set("version", "0.1.0")
-                           .Set("permissions", ListBuilder().Append(pattern))
-                           .Build())
+          .SetManifest(
+              DictionaryBuilder()
+                  .Set("name", "TLDWildCardTest")
+                  .Set("version", "0.1.0")
+                  .Set("permissions", ListBuilder().Append(pattern).Build())
+                  .Build())
           .Build();
 
   return VerifyHasPermissionMessage(
@@ -1582,8 +1586,8 @@ TEST(PermissionsTest, IsHostPrivilegeIncrease) {
   URLPatternSet elist2;
   URLPatternSet slist1;
   URLPatternSet slist2;
-  scoped_ptr<const PermissionSet> set1;
-  scoped_ptr<const PermissionSet> set2;
+  std::unique_ptr<const PermissionSet> set1;
+  std::unique_ptr<const PermissionSet> set2;
   APIPermissionSet empty_perms;
   elist1.AddPattern(
       URLPattern(URLPattern::SCHEME_HTTP, "http://www.google.com.hk/path"));
@@ -1681,9 +1685,9 @@ TEST(PermissionsTest, IsEmpty) {
   APIPermissionSet empty_apis;
   URLPatternSet empty_extent;
 
-  scoped_ptr<const PermissionSet> empty(new PermissionSet());
+  std::unique_ptr<const PermissionSet> empty(new PermissionSet());
   EXPECT_TRUE(empty->IsEmpty());
-  scoped_ptr<const PermissionSet> perm_set;
+  std::unique_ptr<const PermissionSet> perm_set;
 
   perm_set.reset(new PermissionSet(empty_apis, ManifestPermissionSet(),
                                    empty_extent, empty_extent));

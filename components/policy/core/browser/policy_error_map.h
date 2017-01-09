@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_POLICY_CORE_BROWSER_POLICY_ERROR_MAP_H_
 #define COMPONENTS_POLICY_CORE_BROWSER_POLICY_ERROR_MAP_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "components/policy/policy_export.h"
 
@@ -91,7 +93,7 @@ class POLICY_EXPORT PolicyErrorMap {
 
  private:
   // Maps the error when ready, otherwise adds it to the pending errors list.
-  void AddError(PendingError* error);
+  void AddError(std::unique_ptr<PendingError> error);
 
   // Converts a PendingError into a |map_| entry.
   void Convert(PendingError* error);
@@ -99,7 +101,7 @@ class POLICY_EXPORT PolicyErrorMap {
   // Converts all pending errors to |map_| entries.
   void CheckReadyAndConvert();
 
-  ScopedVector<PendingError> pending_;
+  std::vector<std::unique_ptr<PendingError>> pending_;
   PolicyMapType map_;
 
   DISALLOW_COPY_AND_ASSIGN(PolicyErrorMap);

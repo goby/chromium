@@ -4,6 +4,8 @@
 
 #include "remoting/host/register_support_host_request.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
@@ -79,13 +81,12 @@ class RegisterSupportHostRequestTest : public testing::Test {
 
 TEST_F(RegisterSupportHostRequestTest, Send) {
   // |iq_request| is freed by RegisterSupportHostRequest.
-  int64 start_time = static_cast<int64>(base::Time::Now().ToDoubleT());
+  int64_t start_time = static_cast<int64_t>(base::Time::Now().ToDoubleT());
 
-  scoped_ptr<RegisterSupportHostRequest> request(
-      new RegisterSupportHostRequest(&signal_strategy_, key_pair_,
-                                     kTestBotJid,
-                                     base::Bind(&MockCallback::OnResponse,
-                                                base::Unretained(&callback_))));
+  std::unique_ptr<RegisterSupportHostRequest> request(
+      new RegisterSupportHostRequest(
+          &signal_strategy_, key_pair_, kTestBotJid,
+          base::Bind(&MockCallback::OnResponse, base::Unretained(&callback_))));
 
   XmlElement* sent_iq = nullptr;
   EXPECT_CALL(signal_strategy_, GetNextId())
@@ -97,7 +98,7 @@ TEST_F(RegisterSupportHostRequestTest, Send) {
   base::RunLoop().RunUntilIdle();
 
   // Verify format of the query.
-  scoped_ptr<XmlElement> stanza(sent_iq);
+  std::unique_ptr<XmlElement> stanza(sent_iq);
   ASSERT_TRUE(stanza != nullptr);
 
   EXPECT_EQ(stanza->Attr(buzz::QName(std::string(), "to")),
@@ -114,9 +115,9 @@ TEST_F(RegisterSupportHostRequestTest, Send) {
 
   std::string time_str =
       signature->Attr(QName(kChromotingXmlNamespace, "time"));
-  int64 time;
+  int64_t time;
   EXPECT_TRUE(base::StringToInt64(time_str, &time));
-  int64 now = static_cast<int64>(base::Time::Now().ToDoubleT());
+  int64_t now = static_cast<int64_t>(base::Time::Now().ToDoubleT());
   EXPECT_LE(start_time, time);
   EXPECT_GE(now, time);
 
@@ -132,7 +133,7 @@ TEST_F(RegisterSupportHostRequestTest, Send) {
                                     base::TimeDelta::FromSeconds(300),
                                     ""));
 
-  scoped_ptr<XmlElement> response(new XmlElement(buzz::QN_IQ));
+  std::unique_ptr<XmlElement> response(new XmlElement(buzz::QN_IQ));
   response->AddAttr(QName(std::string(), "from"), kTestBotJid);
   response->AddAttr(QName(std::string(), "type"), "result");
   response->AddAttr(QName(std::string(), "id"), kStanzaId);
@@ -152,11 +153,8 @@ TEST_F(RegisterSupportHostRequestTest, Send) {
   result->AddElement(support_id_lifetime);
 
   int consumed = 0;
-  base::ObserverListBase<SignalStrategy::Listener>::Iterator it(
-      &signal_strategy_listeners_);
-  SignalStrategy::Listener* listener;
-  while ((listener = it.GetNext()) != nullptr) {
-    if (listener->OnSignalStrategyIncomingStanza(response.get()))
+  for (auto& listener : signal_strategy_listeners_) {
+    if (listener.OnSignalStrategyIncomingStanza(response.get()))
       consumed++;
   }
   EXPECT_EQ(1, consumed);

@@ -4,20 +4,22 @@
 
 #include "chrome/browser/ui/webui/options/language_options_handler_common.h"
 
+#include <stddef.h>
+
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
@@ -27,9 +29,10 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/spellcheck_common.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
+#include "components/spellcheck/common/spellcheck_common.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/browser/translate_prefs.h"
 #include "content/public/browser/user_metrics.h"
@@ -77,8 +80,6 @@ void LanguageOptionsHandlerCommon::GetLocalizedValues(
       IDS_OPTIONS_SETTINGS_USE_THIS_FOR_SPELL_CHECKING },
     { "cannotBeUsedForSpellChecking",
       IDS_OPTIONS_SETTINGS_CANNOT_BE_USED_FOR_SPELL_CHECKING },
-    { "isUsedForSpellChecking",
-      IDS_OPTIONS_SETTINGS_IS_USED_FOR_SPELL_CHECKING },
     { "enableSpellCheck", IDS_OPTIONS_ENABLE_SPELLCHECK },
     { "downloadingDictionary", IDS_OPTIONS_DICTIONARY_DOWNLOADING },
     { "downloadFailed", IDS_OPTIONS_DICTIONARY_DOWNLOAD_FAILED },
@@ -94,23 +95,6 @@ void LanguageOptionsHandlerCommon::GetLocalizedValues(
       IDS_OPTIONS_LANGUAGES_CANNOT_TRANSLATE_IN_THIS_LANGUAGE },
   };
 
-#if defined(ENABLE_SETTINGS_APP)
-  static OptionsStringResource app_resources[] = {
-    { "cannotBeDisplayedInThisLanguage",
-      IDS_OPTIONS_SETTINGS_LANGUAGES_CANNOT_BE_DISPLAYED_IN_THIS_LANGUAGE,
-      IDS_SETTINGS_APP_LAUNCHER_PRODUCT_NAME },
-    { "isDisplayedInThisLanguage",
-      IDS_OPTIONS_SETTINGS_LANGUAGES_IS_DISPLAYED_IN_THIS_LANGUAGE,
-      IDS_SETTINGS_APP_LAUNCHER_PRODUCT_NAME },
-    { "displayInThisLanguage",
-      IDS_OPTIONS_SETTINGS_LANGUAGES_DISPLAY_IN_THIS_LANGUAGE,
-      IDS_SETTINGS_APP_LAUNCHER_PRODUCT_NAME },
-  };
-  base::DictionaryValue* app_values = NULL;
-  CHECK(localized_strings->GetDictionary(kSettingsAppKey, &app_values));
-  RegisterStrings(app_values, app_resources, arraysize(app_resources));
-#endif
-
   RegisterStrings(localized_strings, resources, arraysize(resources));
 
   // The following are resources, rather than local strings.
@@ -123,10 +107,6 @@ void LanguageOptionsHandlerCommon::GetLocalizedValues(
   localized_strings->Set("spellCheckLanguageCodeSet",
                          GetSpellCheckLanguageCodeSet());
   localized_strings->Set("uiLanguageCodeSet", GetUILanguageCodeSet());
-
-  localized_strings->SetBoolean(
-      "enableMultilingualSpellChecker",
-      chrome::spellcheck_common::IsMultilingualSpellcheckEnabled());
 
   Profile* profile = Profile::FromWebUI(web_ui());
   PrefService* prefs = profile->GetPrefs();
@@ -141,7 +121,7 @@ void LanguageOptionsHandlerCommon::GetLocalizedValues(
   base::ListValue* languages_list = new base::ListValue();
   for (std::vector<std::string>::iterator it = languages.begin();
        it != languages.end(); ++it) {
-    languages_list->Append(new base::StringValue(*it));
+    languages_list->AppendString(*it);
   }
 
   localized_strings->Set("translateSupportedLanguages", languages_list);
@@ -152,7 +132,7 @@ void LanguageOptionsHandlerCommon::Uninitialize() {
   if (!service)
     return;
 
-  for (auto dict : service->GetHunspellDictionaries())
+  for (auto* dict : service->GetHunspellDictionaries())
     dict->RemoveObserver(this);
 }
 
@@ -185,21 +165,21 @@ void LanguageOptionsHandlerCommon::OnHunspellDictionaryInitialized(
 
 void LanguageOptionsHandlerCommon::OnHunspellDictionaryDownloadBegin(
     const std::string& language) {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.LanguageOptions.onDictionaryDownloadBegin",
       base::StringValue(language));
 }
 
 void LanguageOptionsHandlerCommon::OnHunspellDictionaryDownloadSuccess(
     const std::string& language) {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.LanguageOptions.onDictionaryDownloadSuccess",
       base::StringValue(language));
 }
 
 void LanguageOptionsHandlerCommon::OnHunspellDictionaryDownloadFailure(
     const std::string& language) {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.LanguageOptions.onDictionaryDownloadFailure",
       base::StringValue(language));
 }
@@ -217,7 +197,7 @@ base::DictionaryValue*
 LanguageOptionsHandlerCommon::GetSpellCheckLanguageCodeSet() {
   base::DictionaryValue* dictionary = new base::DictionaryValue();
   std::vector<std::string> spell_check_languages;
-  chrome::spellcheck_common::SpellCheckLanguages(&spell_check_languages);
+  spellcheck::SpellCheckLanguages(&spell_check_languages);
   for (size_t i = 0; i < spell_check_languages.size(); ++i) {
     dictionary->SetBoolean(spell_check_languages[i], true);
   }
@@ -231,7 +211,7 @@ void LanguageOptionsHandlerCommon::LanguageOptionsOpenCallback(
   if (!service)
     return;
 
-  for (auto dictionary : service->GetHunspellDictionaries()) {
+  for (auto* dictionary : service->GetHunspellDictionaries()) {
     dictionary->RemoveObserver(this);
     dictionary->AddObserver(this);
 
@@ -254,8 +234,8 @@ void LanguageOptionsHandlerCommon::UiLanguageChangeCallback(
   content::RecordComputedAction(action);
   SetApplicationLocale(language_code);
   base::StringValue language_value(language_code);
-  web_ui()->CallJavascriptFunction("options.LanguageOptions.uiLanguageSaved",
-                                   language_value);
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "options.LanguageOptions.uiLanguageSaved", language_value);
 }
 
 void LanguageOptionsHandlerCommon::SpellCheckLanguageChangeCallback(
@@ -270,7 +250,7 @@ void LanguageOptionsHandlerCommon::SpellCheckLanguageChangeCallback(
   if (!service)
     return;
 
-  for (auto dictionary : service->GetHunspellDictionaries()) {
+  for (auto* dictionary : service->GetHunspellDictionaries()) {
     dictionary->RemoveObserver(this);
     dictionary->AddObserver(this);
   }
@@ -292,7 +272,7 @@ void LanguageOptionsHandlerCommon::UpdateLanguageListCallback(
   }
 
   Profile* profile = Profile::FromWebUI(web_ui());
-  scoped_ptr<translate::TranslatePrefs> translate_prefs =
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
       ChromeTranslateClient::CreateTranslatePrefs(profile->GetPrefs());
   translate_prefs->UpdateLanguageList(languages);
 }
@@ -304,7 +284,7 @@ void LanguageOptionsHandlerCommon::RetrySpellcheckDictionaryDownload(
   if (!service)
     return;
 
-  for (auto dictionary : service->GetHunspellDictionaries()) {
+  for (auto* dictionary : service->GetHunspellDictionaries()) {
     if (dictionary->GetLanguage() == language) {
       dictionary->RetryDownloadDictionary(
           Profile::FromWebUI(web_ui())->GetRequestContext());

@@ -5,6 +5,8 @@
 #ifndef CHROME_RENDERER_INSTANT_RESTRICTED_ID_CACHE_H_
 #define CHROME_RENDERER_INSTANT_RESTRICTED_ID_CACHE_H_
 
+#include <stddef.h>
+
 #include <set>
 #include <utility>
 #include <vector>
@@ -12,7 +14,8 @@
 #include "base/containers/mru_cache.h"
 #include "base/gtest_prod_util.h"
 #include "base/logging.h"
-#include "chrome/common/instant_types.h"
+#include "base/macros.h"
+#include "chrome/common/search/instant_types.h"
 
 // In InstantExtended, iframes are used to display objects which can only be
 // referenced by the Instant page using an ID (restricted ID). These IDs need to

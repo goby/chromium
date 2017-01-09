@@ -4,19 +4,26 @@
 
 #include "ui/gl/test/gl_surface_test_support.h"
 
+#include <vector>
+
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_implementation.h"
-#include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_switches.h"
+#include "ui/gl/init/gl_factory.h"
+
+#if defined(USE_OZONE)
+#include "ui/ozone/public/ozone_platform.h"
+#endif
 
 #if defined(USE_X11)
 #include <X11/Xlib.h>
 #include "ui/platform_window/x11/x11_window.h"
 #endif
 
-namespace gfx {
+namespace gl {
 
 // static
 void GLSurfaceTestSupport::InitializeOneOff() {
@@ -41,8 +48,8 @@ void GLSurfaceTestSupport::InitializeOneOff() {
   use_osmesa = false;
 #endif
 
-  std::vector<GLImplementation> allowed_impls;
-  GetAllowedGLImplementations(&allowed_impls);
+  std::vector<GLImplementation> allowed_impls =
+      init::GetAllowedGLImplementations();
   DCHECK(!allowed_impls.empty());
 
   GLImplementation impl = allowed_impls[0];
@@ -56,7 +63,7 @@ void GLSurfaceTestSupport::InitializeOneOff() {
   bool gpu_service_logging = false;
   bool disable_gl_drawing = true;
 
-  CHECK(GLSurface::InitializeOneOffImplementation(
+  CHECK(init::InitializeGLOneOffImplementation(
       impl, fallback_to_osmesa, gpu_service_logging, disable_gl_drawing));
 }
 
@@ -69,23 +76,22 @@ void GLSurfaceTestSupport::InitializeOneOffImplementation(
 
   // This method may be called multiple times in the same process to set up
   // bindings in different ways.
-  ClearGLBindings();
+  init::ShutdownGL();
 
   bool gpu_service_logging = false;
   bool disable_gl_drawing = false;
 
-  CHECK(GLSurface::InitializeOneOffImplementation(
+  CHECK(init::InitializeGLOneOffImplementation(
       impl, fallback_to_osmesa, gpu_service_logging, disable_gl_drawing));
 }
 
 // static
 void GLSurfaceTestSupport::InitializeOneOffWithMockBindings() {
+#if defined(USE_OZONE)
+  // This function skips where Ozone is otherwise initialized.
+  ui::OzonePlatform::InitializeForGPU();
+#endif
   InitializeOneOffImplementation(kGLImplementationMockGL, false);
 }
 
-// static
-void GLSurfaceTestSupport::InitializeDynamicMockBindings(GLContext* context) {
-  CHECK(InitializeDynamicGLBindings(kGLImplementationMockGL, context));
-}
-
-}  // namespace gfx
+}  // namespace gl

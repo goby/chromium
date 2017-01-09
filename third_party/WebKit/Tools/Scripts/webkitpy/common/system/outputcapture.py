@@ -30,7 +30,6 @@
 
 import logging
 import sys
-import unittest
 
 from StringIO import StringIO
 
@@ -79,7 +78,8 @@ class OutputCapture(object):
         delattr(self, '_logs')
         return (self._restore_output_with_name("stdout"), self._restore_output_with_name("stderr"), logs_string)
 
-    def assert_outputs(self, testcase, function, args=[], kwargs={}, expected_stdout="", expected_stderr="", expected_exception=None, expected_logs=None):
+    def assert_outputs(self, testcase, function, args=[], kwargs={}, expected_stdout="",
+                       expected_stderr="", expected_exception=None, expected_logs=None):
         self.capture_output()
         try:
             if expected_exception:
@@ -100,24 +100,3 @@ class OutputCapture(object):
             testassert(logs_string, expected_logs)
         # This is a little strange, but I don't know where else to return this information.
         return return_value
-
-
-class OutputCaptureTestCaseBase(unittest.TestCase):
-    maxDiff = None
-
-    def setUp(self):
-        unittest.TestCase.setUp(self)
-        self.output_capture = OutputCapture()
-        (self.__captured_stdout, self.__captured_stderr) = self.output_capture.capture_output()
-
-    def tearDown(self):
-        del self.__captured_stdout
-        del self.__captured_stderr
-        self.output_capture.restore_output()
-        unittest.TestCase.tearDown(self)
-
-    def assertStdout(self, expected_stdout):
-        self.assertEqual(expected_stdout, self.__captured_stdout.getvalue())
-
-    def assertStderr(self, expected_stderr):
-        self.assertEqual(expected_stderr, self.__captured_stderr.getvalue())

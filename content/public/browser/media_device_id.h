@@ -15,31 +15,32 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/common/media_stream_request.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
 // Generates a one-way hash of a device's unique ID usable by one
 // particular security origin.
 CONTENT_EXPORT std::string GetHMACForMediaDeviceID(
-    const ResourceContext::SaltCallback& sc,
-    const GURL& security_origin,
+    const std::string& salt,
+    const url::Origin& security_origin,
     const std::string& raw_unique_id);
 
 // Convenience method to check if |device_guid| is an HMAC of
 // |raw_device_id| for |security_origin|.
 CONTENT_EXPORT bool DoesMediaDeviceIDMatchHMAC(
-    const ResourceContext::SaltCallback& sc,
-    const GURL& security_origin,
+    const std::string& salt,
+    const url::Origin& security_origin,
     const std::string& device_guid,
     const std::string& raw_unique_id);
 
-CONTENT_EXPORT bool GetMediaDeviceIDForHMAC(
-    MediaStreamType stream_type,
-    const ResourceContext::SaltCallback& rc,
-    const GURL& security_origin,
-    const std::string& source_id,
-    std::string* device_id);
+CONTENT_EXPORT bool GetMediaDeviceIDForHMAC(MediaStreamType stream_type,
+                                            const std::string& salt,
+                                            const url::Origin& security_origin,
+                                            const std::string& source_id,
+                                            std::string* device_id);
+
+CONTENT_EXPORT bool IsValidDeviceId(const std::string& device_id);
 
 }  // namespace content
 

@@ -10,18 +10,20 @@
 #define net net_kernel
 #include <linux/rtnetlink.h>
 #undef net
+#include <stddef.h>
 
 #include <map>
+#include <unordered_set>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
-#include "net/base/ip_address_number.h"
+#include "net/base/ip_address.h"
+#include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
 
 namespace net {
@@ -32,7 +34,7 @@ namespace internal {
 class NET_EXPORT_PRIVATE AddressTrackerLinux :
     public base::MessageLoopForIO::Watcher {
  public:
-  typedef std::map<IPAddressNumber, struct ifaddrmsg> AddressMap;
+  typedef std::map<IPAddress, struct ifaddrmsg> AddressMap;
 
   // Non-tracking version constructor: it takes a snapshot of the
   // current system configuration. Once Init() returns, the
@@ -50,10 +52,11 @@ class NET_EXPORT_PRIVATE AddressTrackerLinux :
   // NOTE: Only ignore interfaces not used to connect to the internet. Adding
   // interfaces used to connect to the internet can cause critical network
   // changed signals to be lost allowing incorrect stale state to persist.
-  AddressTrackerLinux(const base::Closure& address_callback,
-                      const base::Closure& link_callback,
-                      const base::Closure& tunnel_callback,
-                      const base::hash_set<std::string>& ignored_interfaces);
+  AddressTrackerLinux(
+      const base::Closure& address_callback,
+      const base::Closure& link_callback,
+      const base::Closure& tunnel_callback,
+      const std::unordered_set<std::string>& ignored_interfaces);
   ~AddressTrackerLinux() override;
 
   // In tracking mode, it starts watching the system configuration for
@@ -66,7 +69,7 @@ class NET_EXPORT_PRIVATE AddressTrackerLinux :
   AddressMap GetAddressMap() const;
 
   // Returns set of interface indicies for online interfaces.
-  base::hash_set<int> GetOnlineLinks() const;
+  std::unordered_set<int> GetOnlineLinks() const;
 
   // Implementation of NetworkChangeNotifierLinux::GetCurrentConnectionType().
   // Safe to call from any thread, but will block until Init() has completed.
@@ -159,10 +162,10 @@ class NET_EXPORT_PRIVATE AddressTrackerLinux :
 
   // Set of interface indices for links that are currently online.
   mutable base::Lock online_links_lock_;
-  base::hash_set<int> online_links_;
+  std::unordered_set<int> online_links_;
 
   // Set of interface names that should be ignored.
-  const base::hash_set<std::string> ignored_interfaces_;
+  const std::unordered_set<std::string> ignored_interfaces_;
 
   base::Lock connection_type_lock_;
   bool connection_type_initialized_;

@@ -5,20 +5,16 @@
 #ifndef ModulesExport_h
 #define ModulesExport_h
 
-#if !defined(LINK_CORE_MODULES_SEPARATELY)
-#define LINK_CORE_MODULES_SEPARATELY 0
-#endif
-
-#if LINK_CORE_MODULES_SEPARATELY && defined(COMPONENT_BUILD)
+#if defined(COMPONENT_BUILD)
 #if defined(WIN32)
 
 #if defined(BLINK_MODULES_IMPLEMENTATION) && BLINK_MODULES_IMPLEMENTATION
 #define MODULES_EXPORT __declspec(dllexport)
 #else
 #define MODULES_EXPORT __declspec(dllimport)
-#endif // defined(BLINK_MODULES_IMPLEMENTATION) && BLINK_MODULES_IMPLEMENTATION
+#endif  // defined(BLINK_MODULES_IMPLEMENTATION) && BLINK_MODULES_IMPLEMENTATION
 
-#else // defined(WIN32)
+#else  // defined(WIN32)
 #if defined(BLINK_MODULES_IMPLEMENTATION) && BLINK_MODULES_IMPLEMENTATION
 #define MODULES_EXPORT __attribute__((visibility("default")))
 #else
@@ -26,8 +22,8 @@
 #endif
 #endif
 
-#else // defined(COMPONENT_BUILD)
+#else  // defined(COMPONENT_BUILD)
 #define MODULES_EXPORT
 #endif
 
-#endif // ModulesExport_h
+#endif  // ModulesExport_h

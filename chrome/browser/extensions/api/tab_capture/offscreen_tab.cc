@@ -7,23 +7,17 @@
 #include <algorithm>
 
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/web_preferences.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
-
-#if defined(USE_AURA)
-#include "base/memory/weak_ptr.h"
-#include "base/thread_task_runner_handle.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/browser_window.h"
-#include "ui/aura/window.h"
-#include "ui/gfx/native_widget_types.h"
-#endif
 
 using content::WebContents;
 
@@ -39,85 +33,6 @@ const int kMaxOffscreenTabsPerExtension = 3;
 // offscreen tab has stopped, to automatically tear it down and free resources.
 const int kMaxSecondsToWaitForCapture = 60;
 const int kPollIntervalInSeconds = 1;
-
-#if defined(USE_AURA)
-
-// A WindowObserver that automatically finds a root Window to adopt the
-// WebContents native view containing the OffscreenTab content.  This is a
-// workaround for Aura, which requires the WebContents native view be attached
-// somewhere in the window tree in order to gain access to the compositing and
-// capture functionality.  The WebContents native view, although attached to the
-// window tree, will never become visible on-screen.
-class WindowAdoptionAgent : protected aura::WindowObserver {
- public:
-  static void Start(aura::Window* offscreen_window) {
-    new WindowAdoptionAgent(offscreen_window);
-    // WindowAdoptionAgent destroys itself when the Window calls
-    // OnWindowDestroyed().
-  }
-
- protected:
-  void OnWindowParentChanged(aura::Window* target,
-                             aura::Window* parent) final {
-    if (target != offscreen_window_ || parent != nullptr)
-      return;
-
-    // Post a task to return to the event loop before finding a new parent, to
-    // avoid clashing with the currently-in-progress window tree hierarchy
-    // changes.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&WindowAdoptionAgent::FindNewParent,
-                   weak_ptr_factory_.GetWeakPtr()));
-  }
-
-  void OnWindowDestroyed(aura::Window* window) final {
-    delete this;
-  }
-
- private:
-  explicit WindowAdoptionAgent(aura::Window* offscreen_window)
-      : offscreen_window_(offscreen_window),
-        weak_ptr_factory_(this) {
-    DVLOG(2) << "WindowAdoptionAgent for offscreen window " << offscreen_window_
-             << " is being created.";
-    offscreen_window->AddObserver(this);
-    OnWindowParentChanged(offscreen_window_, offscreen_window_->parent());
-  }
-
-  ~WindowAdoptionAgent() final {
-    DVLOG(2) << "WindowAdoptionAgent for offscreen window " << offscreen_window_
-             << " is self-destructing.";
-  }
-
-  void FindNewParent() {
-    BrowserList* const browsers =
-        BrowserList::GetInstance(chrome::GetActiveDesktop());
-    Browser* const active_browser =
-        browsers ? browsers->GetLastActive() : nullptr;
-    BrowserWindow* const active_window =
-        active_browser ? active_browser->window() : nullptr;
-    aura::Window* const native_window =
-        active_window ? active_window->GetNativeWindow() : nullptr;
-    aura::Window* const root_window =
-        native_window ? native_window->GetRootWindow() : nullptr;
-    if (root_window) {
-      DVLOG(2) << "Root window " << root_window
-               << " adopts the offscreen window " << offscreen_window_ << '.';
-      root_window->AddChild(offscreen_window_);
-    } else {
-      LOG(DFATAL) << "Unable to find an aura root window.  "
-                     "OffscreenTab compositing may be halted!";
-    }
-  }
-
-  aura::Window* const offscreen_window_;
-  base::WeakPtrFactory<WindowAdoptionAgent> weak_ptr_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(WindowAdoptionAgent);
-};
-
-#endif  // USE_AURA
 
 }  // namespace
 
@@ -145,15 +60,24 @@ OffscreenTab* OffscreenTabsOwner::OpenNewTab(
   if (tabs_.size() >= kMaxOffscreenTabsPerExtension)
     return nullptr;  // Maximum number of offscreen tabs reached.
 
-  tabs_.push_back(new OffscreenTab(this));
+  // OffscreenTab cannot be created with MakeUnique<OffscreenTab> since the
+  // constructor is protected. So create it separately, and then move it to
+  // |tabs_| below.
+  std::unique_ptr<OffscreenTab> offscreen_tab(new OffscreenTab(this));
+  tabs_.push_back(std::move(offscreen_tab));
   tabs_.back()->Start(start_url, initial_size, optional_presentation_id);
-  return tabs_.back();
+  return tabs_.back().get();
 }
 
 void OffscreenTabsOwner::DestroyTab(OffscreenTab* tab) {
-  const auto it = std::find(tabs_.begin(), tabs_.end(), tab);
-  if (it != tabs_.end())
-    tabs_.erase(it);
+  for (std::vector<std::unique_ptr<OffscreenTab>>::iterator iter =
+           tabs_.begin();
+       iter != tabs_.end(); ++iter) {
+    if (iter->get() == tab) {
+      tabs_.erase(iter);
+      break;
+    }
+  }
 }
 
 OffscreenTab::OffscreenTab(OffscreenTabsOwner* owner)
@@ -184,13 +108,10 @@ void OffscreenTab::Start(const GURL& start_url,
   offscreen_tab_web_contents_->SetDelegate(this);
   WebContentsObserver::Observe(offscreen_tab_web_contents_.get());
 
-#if defined(USE_AURA)
-  WindowAdoptionAgent::Start(offscreen_tab_web_contents_->GetNativeView());
-#endif
-
   // Set initial size, if specified.
   if (!initial_size.IsEmpty())
-    ResizeWebContents(offscreen_tab_web_contents_.get(), initial_size);
+    ResizeWebContents(offscreen_tab_web_contents_.get(),
+                      gfx::Rect(initial_size));
 
   // Mute audio output.  When tab capture starts, the audio will be
   // automatically unmuted, but will be captured into the MediaStream.
@@ -201,6 +122,13 @@ void OffscreenTab::Start(const GURL& start_url,
   if (!optional_presentation_id.empty()) {
     NOTIMPLEMENTED()
         << "Register with PresentationRouter, id=" << optional_presentation_id;
+
+    if (auto* render_view_host =
+            offscreen_tab_web_contents_->GetRenderViewHost()) {
+      auto web_prefs = render_view_host->GetWebkitPreferences();
+      web_prefs.presentation_receiver = true;
+      render_view_host->UpdateWebkitPreferences(web_prefs);
+    }
   }
 
   // Navigate to the initial URL.
@@ -287,16 +215,18 @@ bool OffscreenTab::CanDragEnter(
 }
 
 bool OffscreenTab::ShouldCreateWebContents(
-    WebContents* contents,
+    content::WebContents* web_contents,
+    content::SiteInstance* source_site_instance,
     int32_t route_id,
     int32_t main_frame_route_id,
     int32_t main_frame_widget_route_id,
     WindowContainerType window_container_type,
+    const GURL& opener_url,
     const std::string& frame_name,
     const GURL& target_url,
     const std::string& partition_id,
     content::SessionStorageNamespace* session_storage_namespace) {
-  DCHECK_EQ(offscreen_tab_web_contents_.get(), contents);
+  DCHECK_EQ(offscreen_tab_web_contents_.get(), web_contents);
   // Disallow creating separate WebContentses.  The WebContents implementation
   // uses this to spawn new windows/tabs, which is also not allowed for
   // offscreen tabs.
@@ -319,7 +249,7 @@ void OffscreenTab::EnterFullscreenModeForTab(WebContents* contents,
       contents->GetRenderWidgetHostView()->GetViewBounds().size();
   if (contents->GetCapturerCount() >= 0 &&
       !contents->GetPreferredSize().IsEmpty()) {
-    ResizeWebContents(contents, contents->GetPreferredSize());
+    ResizeWebContents(contents, gfx::Rect(contents->GetPreferredSize()));
   }
 }
 
@@ -329,7 +259,7 @@ void OffscreenTab::ExitFullscreenModeForTab(WebContents* contents) {
   if (!in_fullscreen_mode())
     return;
 
-  ResizeWebContents(contents, non_fullscreen_size_);
+  ResizeWebContents(contents, gfx::Rect(non_fullscreen_size_));
   non_fullscreen_size_ = gfx::Size();
 }
 
@@ -388,11 +318,9 @@ void OffscreenTab::RequestMediaAccessPermission(
   DVLOG(2) << "Allowing " << devices.size()
            << " capture devices for OffscreenTab content.";
 
-  callback.Run(
-    devices,
-    devices.empty() ? content::MEDIA_DEVICE_INVALID_STATE :
-                      content::MEDIA_DEVICE_OK,
-    scoped_ptr<content::MediaStreamUI>(nullptr));
+  callback.Run(devices, devices.empty() ? content::MEDIA_DEVICE_INVALID_STATE
+                                        : content::MEDIA_DEVICE_OK,
+               std::unique_ptr<content::MediaStreamUI>(nullptr));
 }
 
 bool OffscreenTab::CheckMediaAccessPermission(
@@ -404,7 +332,7 @@ bool OffscreenTab::CheckMediaAccessPermission(
       type == content::MEDIA_TAB_VIDEO_CAPTURE;
 }
 
-void OffscreenTab::DidShowFullscreenWidget(int routing_id) {
+void OffscreenTab::DidShowFullscreenWidget() {
   if (offscreen_tab_web_contents_->GetCapturerCount() == 0 ||
       offscreen_tab_web_contents_->GetPreferredSize().IsEmpty())
     return;  // Do nothing, since no preferred size is specified.

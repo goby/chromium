@@ -23,7 +23,6 @@
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using chromeos::CrosSettings;
@@ -79,7 +78,7 @@ bool IsAutoUpdateDisabled() {
 // the appropriate status.
 bool EnsureCanUpdate(const VersionUpdater::StatusCallback& callback) {
   if (IsAutoUpdateDisabled()) {
-    callback.Run(VersionUpdater::FAILED, 0,
+    callback.Run(VersionUpdater::DISABLED_BY_ADMIN, 0,
                  l10n_util::GetStringUTF16(IDS_UPGRADE_DISABLED_BY_POLICY));
     return false;
   }
@@ -129,7 +128,8 @@ void VersionUpdaterCros::GetUpdateStatus(const StatusCallback& callback) {
       DBusThreadManager::Get()->GetUpdateEngineClient()->GetLastStatus());
 }
 
-void VersionUpdaterCros::CheckForUpdate(const StatusCallback& callback) {
+void VersionUpdaterCros::CheckForUpdate(const StatusCallback& callback,
+                                        const PromoteCallback&) {
   callback_ = callback;
 
   if (!EnsureCanUpdate(callback))
@@ -155,10 +155,6 @@ void VersionUpdaterCros::CheckForUpdate(const StatusCallback& callback) {
   }
 }
 
-void VersionUpdaterCros::RelaunchBrowser() const {
-  DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart();
-}
-
 void VersionUpdaterCros::SetChannel(const std::string& channel,
                                     bool is_powerwash_allowed) {
   OwnerSettingsServiceChromeOS* service =
@@ -182,6 +178,14 @@ void VersionUpdaterCros::GetChannel(bool get_current_channel,
   update_engine_client->GetChannel(get_current_channel, cb);
 }
 
+void VersionUpdaterCros::GetEolStatus(const EolStatusCallback& cb) {
+  UpdateEngineClient* update_engine_client =
+      DBusThreadManager::Get()->GetUpdateEngineClient();
+
+  // Request the Eol Status.
+  update_engine_client->GetEolStatus(cb);
+}
+
 VersionUpdaterCros::VersionUpdaterCros(content::WebContents* web_contents)
     : context_(web_contents ? web_contents->GetBrowserContext() : nullptr),
       last_operation_(UpdateEngineClient::UPDATE_STATUS_IDLE),
@@ -203,7 +207,7 @@ void VersionUpdaterCros::UpdateStatusChanged(
 
   // If the updater is currently idle, just show the last operation (unless it
   // was previously checking for an update -- in that case, the system is
-  // up-to-date now).  See http://crbug.com/120063 for details.
+  // up to date now).  See http://crbug.com/120063 for details.
   UpdateEngineClient::UpdateStatusOperation operation_to_show = status.status;
   if (status.status == UpdateEngineClient::UPDATE_STATUS_IDLE &&
       last_operation_ !=
@@ -248,7 +252,7 @@ void VersionUpdaterCros::UpdateStatusChanged(
 
   if (check_for_update_when_idle_ &&
       status.status == UpdateEngineClient::UPDATE_STATUS_IDLE) {
-    CheckForUpdate(callback_);
+    CheckForUpdate(callback_, VersionUpdater::PromoteCallback());
   }
 }
 

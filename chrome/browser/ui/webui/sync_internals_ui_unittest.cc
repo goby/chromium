@@ -10,13 +10,13 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/sync/profile_sync_service_mock.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "components/browser_sync/profile_sync_service_mock.h"
+#include "components/sync/js/js_arg_list.h"
+#include "components/sync/js/js_event_details.h"
+#include "components/sync/js/js_test_util.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/test/test_browser_thread.h"
-#include "sync/js/js_arg_list.h"
-#include "sync/js/js_event_details.h"
-#include "sync/js/js_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -63,7 +63,7 @@ class SyncInternalsUITestWithService : public ChromeRenderViewHostTestHarness {
 
   virtual void SetUp() {
     NiceMock<ProfileMock>* profile_mock = new NiceMock<ProfileMock>();
-    StrictMock<ProfileSyncServiceMock> profile_sync_service_mock;
+    StrictMock<browser_sync::ProfileSyncServiceMock> profile_sync_service_mock;
     EXPECT_CALL(*profile_mock, GetProfileSyncService())
         .WillOnce(Return(&profile_sync_service_mock));
     browser_context_.reset(profile_mock);
@@ -104,7 +104,7 @@ class SyncInternalsUITestWithService : public ChromeRenderViewHostTestHarness {
   }
 
   StrictMock<browser_sync::MockJsController> mock_js_controller_;
-  scoped_ptr<TestSyncWebUI> web_ui_;
+  std::unique_ptr<TestSyncWebUI> web_ui_;
   SyncInternalsUI* sync_internals_ui_;
 };
 
@@ -150,7 +150,7 @@ class SyncInternalsUITestWithoutService
   virtual void SetUp() {
     NiceMock<ProfileMock>* profile_mock = new NiceMock<ProfileMock>();
     EXPECT_CALL(*profile_mock, GetProfileSyncService())
-        .WillOnce(Return(static_cast<ProfileSyncService*>(NULL)));
+        .WillOnce(Return(static_cast<browser_sync::ProfileSyncService*>(NULL)));
     browser_context_.reset(profile_mock);
 
     ChromeRenderViewHostTestHarness::SetUp();
@@ -170,7 +170,7 @@ class SyncInternalsUITestWithoutService
     Mock::VerifyAndClearExpectations(profile_mock);
   }
 
-  scoped_ptr<TestSyncWebUI> web_ui_;
+  std::unique_ptr<TestSyncWebUI> web_ui_;
   SyncInternalsUI* sync_internals_ui_;
 };
 

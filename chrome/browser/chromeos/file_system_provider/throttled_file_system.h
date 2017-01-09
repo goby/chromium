@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_THROTTLED_FILE_SYSTEM_H_
 #define CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_THROTTLED_FILE_SYSTEM_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/file_system_provider/abort_callback.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system.h"
@@ -19,8 +22,6 @@
 #include "storage/browser/fileapi/async_file_util.h"
 #include "storage/browser/fileapi/watcher_manager.h"
 #include "url/gurl.h"
-
-class Profile;
 
 namespace net {
 class IOBuffer;
@@ -40,7 +41,7 @@ class RequestManager;
 class ThrottledFileSystem : public ProvidedFileSystemInterface {
  public:
   explicit ThrottledFileSystem(
-      scoped_ptr<ProvidedFileSystemInterface> file_system);
+      std::unique_ptr<ProvidedFileSystemInterface> file_system);
   ~ThrottledFileSystem() override;
 
   // ProvidedFileSystemInterface overrides.
@@ -66,7 +67,7 @@ class ThrottledFileSystem : public ProvidedFileSystemInterface {
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback ReadFile(int file_handle,
                          net::IOBuffer* buffer,
-                         int64 offset,
+                         int64_t offset,
                          int length,
                          const ReadChunkReceivedCallback& callback) override;
   AbortCallback CreateDirectory(
@@ -90,12 +91,12 @@ class ThrottledFileSystem : public ProvidedFileSystemInterface {
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback Truncate(
       const base::FilePath& file_path,
-      int64 length,
+      int64_t length,
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback WriteFile(
       int file_handle,
       net::IOBuffer* buffer,
-      int64 offset,
+      int64_t offset,
       int length,
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback AddWatcher(
@@ -120,7 +121,7 @@ class ThrottledFileSystem : public ProvidedFileSystemInterface {
   void Notify(const base::FilePath& entry_path,
               bool recursive,
               storage::WatcherManager::ChangeType change_type,
-              scoped_ptr<ProvidedFileSystemObserver::Changes> changes,
+              std::unique_ptr<ProvidedFileSystemObserver::Changes> changes,
               const std::string& tag,
               const storage::AsyncFileUtil::StatusCallback& callback) override;
   void Configure(
@@ -143,8 +144,8 @@ class ThrottledFileSystem : public ProvidedFileSystemInterface {
       const storage::AsyncFileUtil::StatusCallback& callback,
       base::File::Error result);
 
-  scoped_ptr<ProvidedFileSystemInterface> file_system_;
-  scoped_ptr<Queue> open_queue_;
+  std::unique_ptr<ProvidedFileSystemInterface> file_system_;
+  std::unique_ptr<Queue> open_queue_;
 
   // Map from file handles to open queue tokens.
   std::map<int, int> opened_files_;

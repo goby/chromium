@@ -4,11 +4,18 @@
 
 package org.chromium.net;
 
+import android.annotation.TargetApi;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.security.KeyChain;
 import android.telephony.TelephonyManager;
 import android.util.Log;
@@ -57,47 +64,6 @@ class AndroidNetworkLibrary {
             return true;
         } catch (ActivityNotFoundException e) {
             Log.w(TAG, "could not store key pair: " + e);
-        }
-        return false;
-    }
-
-    /**
-      * Adds a cryptographic file (User certificate, a CA certificate or
-      * PKCS#12 keychain) through the system's CertInstaller activity.
-      *
-      * @param context current application context.
-      * @param certType cryptographic file type. E.g. CertificateMimeType.X509_USER_CERT
-      * @param data certificate/keychain data bytes.
-      * @return true on success, false on failure.
-      *
-      * Note that failure only indicates that the function couldn't launch the
-      * CertInstaller activity, not that the certificate/keychain was properly
-      * installed to the keystore.
-      */
-    @CalledByNative
-    public static boolean storeCertificate(Context context, int certType, byte[] data) {
-        try {
-            Intent intent = KeyChain.createInstallIntent();
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-            switch (certType) {
-                case CertificateMimeType.X509_USER_CERT:
-                case CertificateMimeType.X509_CA_CERT:
-                    intent.putExtra(KeyChain.EXTRA_CERTIFICATE, data);
-                    break;
-
-                case CertificateMimeType.PKCS12_ARCHIVE:
-                    intent.putExtra(KeyChain.EXTRA_PKCS12, data);
-                    break;
-
-                default:
-                    Log.w(TAG, "invalid certificate type: " + certType);
-                    return false;
-            }
-            context.startActivity(intent);
-            return true;
-        } catch (ActivityNotFoundException e) {
-            Log.w(TAG, "could not store crypto file: " + e);
         }
         return false;
     }
@@ -226,6 +192,55 @@ class AndroidNetworkLibrary {
         ConnectivityManager connectivityManager =
                 (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         NetworkInfo networkInfo = connectivityManager.getActiveNetworkInfo();
+        if (networkInfo == null) return false; // No active network.
         return networkInfo.isRoaming();
+    }
+
+    /**
+     * Returns true if the system's captive portal probe was blocked for the current default data
+     * network. The method will return false if the captive portal probe was not blocked, the login
+     * process to the captive portal has been successfully completed, or if the captive portal
+     * status can't be determined. Requires ACCESS_NETWORK_STATE permission. Only available on
+     * Android Marshmallow and later versions. Returns false on earlier versions.
+     */
+    @TargetApi(Build.VERSION_CODES.M)
+    @CalledByNative
+    private static boolean getIsCaptivePortal(Context context) {
+        // NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL is only available on Marshmallow and
+        // later versions.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false;
+        ConnectivityManager connectivityManager =
+                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null) return false;
+
+        Network network = connectivityManager.getActiveNetwork();
+        if (network == null) return false;
+
+        NetworkCapabilities capabilities = connectivityManager.getNetworkCapabilities(network);
+        return capabilities != null
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL);
+    }
+
+    /**
+     * Gets the SSID of the currently associated WiFi access point if there is one. Otherwise,
+     * returns empty string.
+     */
+    @CalledByNative
+    public static String getWifiSSID(Context context) {
+        if (context == null) {
+            return "";
+        }
+        final Intent intent = context.registerReceiver(
+                null, new IntentFilter(WifiManager.NETWORK_STATE_CHANGED_ACTION));
+        if (intent != null) {
+            final WifiInfo wifiInfo = intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
+            if (wifiInfo != null) {
+                final String ssid = wifiInfo.getSSID();
+                if (ssid != null) {
+                    return ssid;
+                }
+            }
+        }
+        return "";
     }
 }

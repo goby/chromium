@@ -17,6 +17,8 @@
 // All constants in mime_util.cc must be written in lower case, except parameter
 // values, which can be any case.
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -87,16 +89,9 @@ NET_EXPORT void GetExtensionsForMimeType(
     const std::string& mime_type,
     std::vector<base::FilePath::StringType>* extensions);
 
-// A list of supported certificate-related mime types.
-//
-// A Java counterpart will be generated for this enum.
-// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.net
-enum CertificateMimeType {
-  CERTIFICATE_MIME_TYPE_UNKNOWN,
-  CERTIFICATE_MIME_TYPE_X509_USER_CERT,
-  CERTIFICATE_MIME_TYPE_X509_CA_CERT,
-  CERTIFICATE_MIME_TYPE_PKCS12_ARCHIVE,
-};
+// Generates a random MIME multipart boundary.
+// The returned string is guaranteed to be at most 70 characters long.
+NET_EXPORT std::string GenerateMimeMultipartBoundary();
 
 // Prepares one value as part of a multi-part upload request.
 NET_EXPORT void AddMultipartValueForUpload(const std::string& value_name,

@@ -5,9 +5,12 @@
 #include "net/dns/host_resolver.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/values.h"
+#include "net/base/net_errors.h"
 #include "net/dns/dns_client.h"
 #include "net/dns/dns_config_service.h"
 #include "net/dns/host_cache.h"
@@ -89,8 +92,23 @@ HostResolver::Options::Options()
 }
 
 HostResolver::RequestInfo::RequestInfo(const HostPortPair& host_port_pair)
-    : host_port_pair_(host_port_pair),
-      address_family_(ADDRESS_FAMILY_UNSPECIFIED),
+    : RequestInfo() {
+  host_port_pair_ = host_port_pair;
+}
+
+HostResolver::RequestInfo::RequestInfo(const RequestInfo& request_info)
+    : host_port_pair_(request_info.host_port_pair_),
+      address_family_(request_info.address_family_),
+      host_resolver_flags_(request_info.host_resolver_flags_),
+      allow_cached_response_(request_info.allow_cached_response_),
+      is_speculative_(request_info.is_speculative_),
+      is_my_ip_address_(request_info.is_my_ip_address_),
+      cache_hit_callback_(request_info.cache_hit_callback_) {}
+
+HostResolver::RequestInfo::~RequestInfo() {}
+
+HostResolver::RequestInfo::RequestInfo()
+    : address_family_(ADDRESS_FAMILY_UNSPECIFIED),
       host_resolver_flags_(0),
       allow_cached_response_(true),
       is_speculative_(false),
@@ -103,26 +121,44 @@ void HostResolver::SetDnsClientEnabled(bool enabled) {
 }
 
 HostCache* HostResolver::GetHostCache() {
-  return NULL;
+  return nullptr;
 }
 
-base::Value* HostResolver::GetDnsConfigAsValue() const {
-  return NULL;
+std::unique_ptr<base::Value> HostResolver::GetDnsConfigAsValue() const {
+  return nullptr;
 }
+
+void HostResolver::InitializePersistence(
+    const PersistCallback& persist_callback,
+    std::unique_ptr<const base::Value> old_data) {}
 
 // static
-scoped_ptr<HostResolver> HostResolver::CreateSystemResolver(
+std::unique_ptr<HostResolver> HostResolver::CreateSystemResolver(
     const Options& options,
     NetLog* net_log) {
-  return scoped_ptr<HostResolver>(new HostResolverImpl(options, net_log));
+  return std::unique_ptr<HostResolver>(
+      CreateSystemResolverImpl(options, net_log).release());
 }
 
 // static
-scoped_ptr<HostResolver> HostResolver::CreateDefaultResolver(NetLog* net_log) {
-  return scoped_ptr<HostResolver>(new HostResolverImpl(Options(), net_log));
+std::unique_ptr<HostResolverImpl> HostResolver::CreateSystemResolverImpl(
+    const Options& options,
+    NetLog* net_log) {
+  return base::WrapUnique(new HostResolverImpl(options, net_log));
 }
 
-HostResolver::HostResolver() {
+// static
+std::unique_ptr<HostResolver> HostResolver::CreateDefaultResolver(
+    NetLog* net_log) {
+  return CreateSystemResolver(Options(), net_log);
 }
+
+// static
+std::unique_ptr<HostResolverImpl> HostResolver::CreateDefaultResolverImpl(
+    NetLog* net_log) {
+  return CreateSystemResolverImpl(Options(), net_log);
+}
+
+HostResolver::HostResolver() {}
 
 }  // namespace net

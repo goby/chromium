@@ -5,9 +5,12 @@
 #include "remoting/host/linux/audio_pipe_reader.h"
 
 #include <fcntl.h>
+#include <stddef.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include <utility>
 
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
@@ -60,15 +63,6 @@ void AudioPipeReader::RemoveObserver(StreamObserver* observer) {
   observers_->RemoveObserver(observer);
 }
 
-void AudioPipeReader::OnFileCanReadWithoutBlocking(int fd) {
-  DCHECK_EQ(fd, pipe_.GetPlatformFile());
-  StartTimer();
-}
-
-void AudioPipeReader::OnFileCanWriteWithoutBlocking(int fd) {
-  NOTREACHED();
-}
-
 void AudioPipeReader::StartOnAudioThread() {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
@@ -112,10 +106,10 @@ void AudioPipeReader::TryOpenPipe() {
     }
   }
 
-  file_descriptor_watcher_.StopWatchingFileDescriptor();
+  pipe_watch_controller_.reset();
   timer_.Stop();
 
-  pipe_ = new_pipe.Pass();
+  pipe_ = std::move(new_pipe);
 
   if (pipe_.IsValid()) {
     // Get buffer size for the pipe.
@@ -135,6 +129,8 @@ void AudioPipeReader::TryOpenPipe() {
 
 void AudioPipeReader::StartTimer() {
   DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(pipe_watch_controller_);
+  pipe_watch_controller_.reset();
   started_time_ = base::TimeTicks::Now();
   last_capture_position_ = 0;
   timer_.Start(FROM_HERE, capture_period_, this, &AudioPipeReader::DoCapture);
@@ -147,9 +143,10 @@ void AudioPipeReader::DoCapture() {
   // Calculate how much we need read from the pipe. Pulseaudio doesn't control
   // how much data it writes to the pipe, so we need to pace the stream.
   base::TimeDelta stream_position = base::TimeTicks::Now() - started_time_;
-  int64 stream_position_bytes = stream_position.InMilliseconds() *
-      kSampleBytesPerSecond / base::Time::kMillisecondsPerSecond;
-  int64 bytes_to_read = stream_position_bytes - last_capture_position_;
+  int64_t stream_position_bytes = stream_position.InMilliseconds() *
+                                  kSampleBytesPerSecond /
+                                  base::Time::kMillisecondsPerSecond;
+  int64_t bytes_to_read = stream_position_bytes - last_capture_position_;
 
   std::string data = left_over_bytes_;
   size_t pos = data.size();
@@ -157,8 +154,8 @@ void AudioPipeReader::DoCapture() {
   data.resize(pos + bytes_to_read);
 
   while (pos < data.size()) {
-    int read_result =
-        pipe_.ReadAtCurrentPos(string_as_array(&data) + pos, data.size() - pos);
+    int read_result = pipe_.ReadAtCurrentPos(base::string_as_array(&data) + pos,
+                                             data.size() - pos);
     if (read_result > 0) {
       pos += read_result;
     } else {
@@ -198,9 +195,10 @@ void AudioPipeReader::DoCapture() {
 
 void AudioPipeReader::WaitForPipeReadable() {
   timer_.Stop();
-  base::MessageLoopForIO::current()->WatchFileDescriptor(
-      pipe_.GetPlatformFile(), false, base::MessageLoopForIO::WATCH_READ,
-      &file_descriptor_watcher_, this);
+  DCHECK(!pipe_watch_controller_);
+  pipe_watch_controller_ = base::FileDescriptorWatcher::WatchReadable(
+      pipe_.GetPlatformFile(),
+      base::Bind(&AudioPipeReader::StartTimer, base::Unretained(this)));
 }
 
 // static

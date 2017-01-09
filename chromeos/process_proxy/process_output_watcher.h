@@ -5,12 +5,16 @@
 #ifndef CHROMEOS_PROCESS_PROXY_PROCESS_OUTPUT_WATCHER_H_
 #define CHROMEOS_PROCESS_PROXY_PROCESS_OUTPUT_WATCHER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/files/file.h"
+#include "base/files/file_descriptor_watcher_posix.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "chromeos/chromeos_export.h"
 
 namespace chromeos {
@@ -20,23 +24,22 @@ enum ProcessOutputType {
   PROCESS_OUTPUT_TYPE_EXIT
 };
 
-typedef base::Callback<void(ProcessOutputType, const std::string&)>
-      ProcessOutputCallback;
+typedef base::Callback<void(ProcessOutputType,
+                            const std::string&,
+                            const base::Closure&)> ProcessOutputCallback;
 
 // Observes output on |out_fd| and invokes |callback| when some output is
 // detected. It assumes UTF8 output.
-class CHROMEOS_EXPORT ProcessOutputWatcher
-    : public base::MessageLoopForIO::Watcher {
+class CHROMEOS_EXPORT ProcessOutputWatcher {
  public:
   ProcessOutputWatcher(int out_fd, const ProcessOutputCallback& callback);
-  ~ProcessOutputWatcher() override;
+  ~ProcessOutputWatcher();
 
   void Start();
 
  private:
-  // MessageLoopForIO::Watcher overrides:
-  void OnFileCanReadWithoutBlocking(int fd) override;
-  void OnFileCanWriteWithoutBlocking(int fd) override;
+  // Called when |process_output_file_| is readable without blocking.
+  void OnProcessOutputCanReadWithoutBlocking();
 
   // Listens to output from fd passed to the constructor.
   void WatchProcessOutput();
@@ -50,9 +53,11 @@ class CHROMEOS_EXPORT ProcessOutputWatcher
 
   // Processes new |read_buffer_| state and notifies observer about new process
   // output.
-  void ReportOutput(ProcessOutputType type, size_t new_bytes_count);
+  void ReportOutput(ProcessOutputType type,
+                    size_t new_bytes_count,
+                    const base::Closure& callback);
 
-  char read_buffer_[256];
+  char read_buffer_[4096];
   // Maximum read buffer content size.
   size_t read_buffer_capacity_;
   // Current read bufferi content size.
@@ -60,7 +65,7 @@ class CHROMEOS_EXPORT ProcessOutputWatcher
 
   // Contains file descsriptor to which watched process output is written.
   base::File process_output_file_;
-  base::MessageLoopForIO::FileDescriptorWatcher output_file_watcher_;
+  std::unique_ptr<base::FileDescriptorWatcher::Controller> output_file_watcher_;
 
   // Callback that will be invoked when some output is detected.
   ProcessOutputCallback on_read_callback_;

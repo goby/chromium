@@ -5,12 +5,14 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_FILE_SYSTEM_BROWSER_HOST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_FILE_SYSTEM_BROWSER_HOST_H_
 
+#include <stdint.h>
+
 #include <queue>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/renderer_host/pepper/quota_reservation.h"
 #include "content/common/content_export.h"
@@ -149,7 +151,8 @@ class CONTENT_EXPORT PepperFileSystemBrowserHost
   GURL root_url_;
   scoped_refptr<storage::FileSystemContext> file_system_context_;
 
-  scoped_ptr<storage::FileSystemOperationRunner> file_system_operation_runner_;
+  std::unique_ptr<storage::FileSystemOperationRunner>
+      file_system_operation_runner_;
 
   // Used only for file systems with quota.
   // When a PepperFileIOHost calls OpenQuotaFile, we add the id and a non-owning

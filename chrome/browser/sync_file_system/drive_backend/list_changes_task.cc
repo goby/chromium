@@ -4,6 +4,8 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/list_changes_task.h"
 
+#include <stddef.h>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -32,23 +34,22 @@ ListChangesTask::ListChangesTask(SyncEngineContext* sync_context)
 ListChangesTask::~ListChangesTask() {
 }
 
-void ListChangesTask::RunPreflight(scoped_ptr<SyncTaskToken> token) {
+void ListChangesTask::RunPreflight(std::unique_ptr<SyncTaskToken> token) {
   token->InitializeTaskLog("List Changes");
 
   if (!IsContextReady()) {
     token->RecordLog("Failed to get required service.");
-    SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_FAILED);
+    SyncTaskManager::NotifyTaskDone(std::move(token), SYNC_STATUS_FAILED);
     return;
   }
 
   SyncTaskManager::UpdateTaskBlocker(
-      token.Pass(),
-      scoped_ptr<TaskBlocker>(new TaskBlocker),
+      std::move(token), std::unique_ptr<TaskBlocker>(new TaskBlocker),
       base::Bind(&ListChangesTask::StartListing,
                  weak_ptr_factory_.GetWeakPtr()));
 }
 
-void ListChangesTask::StartListing(scoped_ptr<SyncTaskToken> token) {
+void ListChangesTask::StartListing(std::unique_ptr<SyncTaskToken> token) {
   drive_service()->GetChangeList(
       metadata_database()->GetLargestFetchedChangeID() + 1,
       base::Bind(&ListChangesTask::DidListChanges,
@@ -56,21 +57,21 @@ void ListChangesTask::StartListing(scoped_ptr<SyncTaskToken> token) {
 }
 
 void ListChangesTask::DidListChanges(
-    scoped_ptr<SyncTaskToken> token,
+    std::unique_ptr<SyncTaskToken> token,
     google_apis::DriveApiErrorCode error,
-    scoped_ptr<google_apis::ChangeList> change_list) {
+    std::unique_ptr<google_apis::ChangeList> change_list) {
   SyncStatusCode status = DriveApiErrorCodeToSyncStatusCode(error);
   if (status != SYNC_STATUS_OK) {
     token->RecordLog("Failed to fetch change list.");
-    SyncTaskManager::NotifyTaskDone(
-        token.Pass(), SYNC_STATUS_NETWORK_ERROR);
+    SyncTaskManager::NotifyTaskDone(std::move(token),
+                                    SYNC_STATUS_NETWORK_ERROR);
     return;
   }
 
   if (!change_list) {
     NOTREACHED();
     token->RecordLog("Got invalid change list.");
-    SyncTaskManager::NotifyTaskDone(token.Pass(), SYNC_STATUS_FAILED);
+    SyncTaskManager::NotifyTaskDone(std::move(token), SYNC_STATUS_FAILED);
     return;
   }
 
@@ -93,23 +94,22 @@ void ListChangesTask::DidListChanges(
 
   if (change_list_.empty()) {
     token->RecordLog("Got no change.");
-    SyncTaskManager::NotifyTaskDone(
-        token.Pass(), SYNC_STATUS_NO_CHANGE_TO_SYNC);
+    SyncTaskManager::NotifyTaskDone(std::move(token),
+                                    SYNC_STATUS_NO_CHANGE_TO_SYNC);
     return;
   }
 
-  scoped_ptr<TaskBlocker> task_blocker(new TaskBlocker);
+  std::unique_ptr<TaskBlocker> task_blocker(new TaskBlocker);
   task_blocker->exclusive = true;
   SyncTaskManager::UpdateTaskBlocker(
-      token.Pass(),
-      task_blocker.Pass(),
+      std::move(token), std::move(task_blocker),
       base::Bind(&ListChangesTask::CheckInChangeList,
                  weak_ptr_factory_.GetWeakPtr(),
                  change_list->largest_change_id()));
 }
 
-void ListChangesTask::CheckInChangeList(int64 largest_change_id,
-                                        scoped_ptr<SyncTaskToken> token) {
+void ListChangesTask::CheckInChangeList(int64_t largest_change_id,
+                                        std::unique_ptr<SyncTaskToken> token) {
   token->RecordLog(base::StringPrintf(
       "Got %" PRIuS " changes, updating MetadataDatabase.",
       change_list_.size()));
@@ -119,16 +119,15 @@ void ListChangesTask::CheckInChangeList(int64 largest_change_id,
   for (size_t i = 0; i < change_list_.size(); ++i)
     file_ids_.push_back(change_list_[i]->file_id());
 
-  SyncStatusCode status =
-      metadata_database()->UpdateByChangeList(
-          largest_change_id, change_list_.Pass());
+  SyncStatusCode status = metadata_database()->UpdateByChangeList(
+      largest_change_id, std::move(change_list_));
   if (status != SYNC_STATUS_OK) {
-    SyncTaskManager::NotifyTaskDone(token.Pass(), status);
+    SyncTaskManager::NotifyTaskDone(std::move(token), status);
     return;
   }
 
   status = metadata_database()->SweepDirtyTrackers(file_ids_);
-  SyncTaskManager::NotifyTaskDone(token.Pass(), status);
+  SyncTaskManager::NotifyTaskDone(std::move(token), status);
 }
 
 bool ListChangesTask::IsContextReady() {

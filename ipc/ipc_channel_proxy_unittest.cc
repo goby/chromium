@@ -4,7 +4,12 @@
 
 #include "build/build_config.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <memory>
+
 #include "base/pickle.h"
+#include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_test_base.h"
@@ -140,8 +145,8 @@ class MessageCountFilter : public IPC::MessageFilter {
         last_filter_event_(NONE),
         message_filtering_enabled_(false) {}
 
-  void OnFilterAdded(IPC::Sender* sender) override {
-    EXPECT_TRUE(sender);
+  void OnFilterAdded(IPC::Channel* channel) override {
+    EXPECT_TRUE(channel);
     EXPECT_EQ(NONE, last_filter_event_);
     last_filter_event_ = FILTER_ADDED;
   }
@@ -160,17 +165,18 @@ class MessageCountFilter : public IPC::MessageFilter {
   void OnChannelClosing() override {
     // We may or may not have gotten OnChannelError; if not, the last event has
     // to be OnChannelConnected.
+    EXPECT_NE(FILTER_REMOVED, last_filter_event_);
     if (last_filter_event_ != CHANNEL_ERROR)
       EXPECT_EQ(CHANNEL_CONNECTED, last_filter_event_);
     last_filter_event_ = CHANNEL_CLOSING;
   }
 
   void OnFilterRemoved() override {
-    // If the channel didn't get a chance to connect, we might see the
-    // OnFilterRemoved event with no other events preceding it. We still want
-    // OnFilterRemoved to be called to allow for deleting the Filter.
-    if (last_filter_event_ != NONE)
-      EXPECT_EQ(CHANNEL_CLOSING, last_filter_event_);
+    // A filter may be removed at any time, even before the channel is connected
+    // (and thus before OnFilterAdded is ever able to dispatch.) The only time
+    // we won't see OnFilterRemoved is immediately after OnFilterAdded, because
+    // OnChannelConnected is always the next event to fire after that.
+    EXPECT_NE(FILTER_ADDED, last_filter_event_);
     last_filter_event_ = FILTER_REMOVED;
   }
 
@@ -226,13 +232,13 @@ class MessageCountFilter : public IPC::MessageFilter {
   bool message_filtering_enabled_;
 };
 
-class IPCChannelProxyTest : public IPCTestBase {
+class IPCChannelProxyTest : public IPCChannelMojoTestBase {
  public:
   IPCChannelProxyTest() {}
   ~IPCChannelProxyTest() override {}
 
   void SetUp() override {
-    IPCTestBase::SetUp();
+    IPCChannelMojoTestBase::SetUp();
 
     Init("ChannelProxyClient");
 
@@ -242,21 +248,21 @@ class IPCChannelProxyTest : public IPCTestBase {
     thread_->StartWithOptions(options);
 
     listener_.reset(new QuitListener());
-    CreateChannelProxy(listener_.get(), thread_->task_runner().get());
-
-    ASSERT_TRUE(StartClient());
+    channel_proxy_ = IPC::ChannelProxy::Create(
+        TakeHandle().release(), IPC::Channel::MODE_SERVER, listener_.get(),
+        thread_->task_runner());
   }
 
   void TearDown() override {
-    DestroyChannelProxy();
+    channel_proxy_.reset();
     thread_.reset();
     listener_.reset();
-    IPCTestBase::TearDown();
+    IPCChannelMojoTestBase::TearDown();
   }
 
   void SendQuitMessageAndWaitForIdle() {
     sender()->Send(new WorkerMsg_Quit);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     EXPECT_TRUE(WaitForClientShutdown());
   }
 
@@ -264,17 +270,16 @@ class IPCChannelProxyTest : public IPCTestBase {
     return listener_->bad_message_received_;
   }
 
+  IPC::ChannelProxy* channel_proxy() { return channel_proxy_.get(); }
+  IPC::Sender* sender() { return channel_proxy_.get(); }
+
  private:
-  scoped_ptr<base::Thread> thread_;
-  scoped_ptr<QuitListener> listener_;
+  std::unique_ptr<base::Thread> thread_;
+  std::unique_ptr<QuitListener> listener_;
+  std::unique_ptr<IPC::ChannelProxy> channel_proxy_;
 };
 
-#if defined(OS_ANDROID)
-#define MAYBE_MessageClassFilters DISABLED_MessageClassFilters
-#else
-#define MAYBE_MessageClassFilters MessageClassFilters
-#endif
-TEST_F(IPCChannelProxyTest, MAYBE_MessageClassFilters) {
+TEST_F(IPCChannelProxyTest, MessageClassFilters) {
   // Construct a filter per message class.
   std::vector<scoped_refptr<MessageCountFilter> > class_filters;
   class_filters.push_back(make_scoped_refptr(
@@ -298,12 +303,7 @@ TEST_F(IPCChannelProxyTest, MAYBE_MessageClassFilters) {
     EXPECT_EQ(1U, class_filters[i]->messages_received());
 }
 
-#if defined(OS_ANDROID)
-#define MAYBE_GlobalAndMessageClassFilters DISABLED_GlobalAndMessageClassFilters
-#else
-#define MAYBE_GlobalAndMessageClassFilters GlobalAndMessageClassFilters
-#endif
-TEST_F(IPCChannelProxyTest, MAYBE_GlobalAndMessageClassFilters) {
+TEST_F(IPCChannelProxyTest, GlobalAndMessageClassFilters) {
   // Add a class and global filter.
   scoped_refptr<MessageCountFilter> class_filter(
       new MessageCountFilter(TestMsgStart));
@@ -332,12 +332,7 @@ TEST_F(IPCChannelProxyTest, MAYBE_GlobalAndMessageClassFilters) {
   EXPECT_EQ(3U, global_filter->messages_received());
 }
 
-#if defined(OS_ANDROID)
-#define MAYBE_FilterRemoval DISABLED_FilterRemoval
-#else
-#define MAYBE_FilterRemoval FilterRemoval
-#endif
-TEST_F(IPCChannelProxyTest, MAYBE_FilterRemoval) {
+TEST_F(IPCChannelProxyTest, FilterRemoval) {
   // Add a class and global filter.
   scoped_refptr<MessageCountFilter> class_filter(
       new MessageCountFilter(TestMsgStart));
@@ -363,9 +358,6 @@ TEST_F(IPCChannelProxyTest, MAYBE_FilterRemoval) {
   EXPECT_EQ(0U, global_filter->messages_received());
 }
 
-// The test that follow trigger DCHECKS in debug build.
-#if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
-
 TEST_F(IPCChannelProxyTest, BadMessageOnListenerThread) {
   scoped_refptr<MessageCountFilter> class_filter(
       new MessageCountFilter(TestMsgStart));
@@ -390,28 +382,26 @@ TEST_F(IPCChannelProxyTest, BadMessageOnIPCThread) {
   EXPECT_TRUE(DidListenerGetBadMessage());
 }
 
-class IPCChannelBadMessageTest : public IPCTestBase {
+class IPCChannelBadMessageTest : public IPCChannelMojoTestBase {
  public:
   void SetUp() override {
-    IPCTestBase::SetUp();
+    IPCChannelMojoTestBase::SetUp();
 
     Init("ChannelProxyClient");
 
     listener_.reset(new QuitListener());
     CreateChannel(listener_.get());
     ASSERT_TRUE(ConnectChannel());
-
-    ASSERT_TRUE(StartClient());
   }
 
   void TearDown() override {
+    IPCChannelMojoTestBase::TearDown();
     listener_.reset();
-    IPCTestBase::TearDown();
   }
 
   void SendQuitMessageAndWaitForIdle() {
     sender()->Send(new WorkerMsg_Quit);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     EXPECT_TRUE(WaitForClientShutdown());
   }
 
@@ -420,7 +410,7 @@ class IPCChannelBadMessageTest : public IPCTestBase {
   }
 
  private:
-  scoped_ptr<QuitListener> listener_;
+  std::unique_ptr<QuitListener> listener_;
 };
 
 #if !defined(OS_WIN)
@@ -432,18 +422,13 @@ TEST_F(IPCChannelBadMessageTest, BadMessage) {
 }
 #endif
 
-#endif
-
-MULTIPROCESS_IPC_TEST_CLIENT_MAIN(ChannelProxyClient) {
-  base::MessageLoopForIO main_message_loop;
+DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(ChannelProxyClient) {
   ChannelReflectorListener listener;
-  scoped_ptr<IPC::Channel> channel(IPC::Channel::CreateClient(
-      IPCTestBase::GetChannelName("ChannelProxyClient"), &listener));
-  CHECK(channel->Connect());
-  listener.Init(channel.get());
+  Connect(&listener);
+  listener.Init(channel());
 
-  base::MessageLoop::current()->Run();
-  return 0;
+  base::RunLoop().Run();
+  Close();
 }
 
 }  // namespace

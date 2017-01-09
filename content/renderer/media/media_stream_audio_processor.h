@@ -8,6 +8,9 @@
 #include "base/atomicops.h"
 #include "base/files/file.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -17,8 +20,18 @@
 #include "content/renderer/media/audio_repetition_detector.h"
 #include "content/renderer/media/webrtc_audio_device_impl.h"
 #include "media/base/audio_converter.h"
-#include "third_party/libjingle/source/talk/app/webrtc/mediastreaminterface.h"
+#include "third_party/webrtc/api/mediastreaminterface.h"
 #include "third_party/webrtc/modules/audio_processing/include/audio_processing.h"
+
+// The audio repetition detector is by default only used on non-official
+// ChromeOS builds for debugging purposes. http://crbug.com/658719.
+#if !defined(ENABLE_AUDIO_REPETITION_DETECTOR)
+#if defined(OS_CHROMEOS) && !defined(OFFICIAL_BUILD)
+#define ENABLE_AUDIO_REPETITION_DETECTOR 1
+#else
+#define ENABLE_AUDIO_REPETITION_DETECTOR 0
+#endif
+#endif
 
 namespace blink {
 class WebMediaConstraints;
@@ -26,7 +39,6 @@ class WebMediaConstraints;
 
 namespace media {
 class AudioBus;
-class AudioFifo;
 class AudioParameters;
 }  // namespace media
 
@@ -39,7 +51,6 @@ namespace content {
 class EchoInformation;
 class MediaStreamAudioBus;
 class MediaStreamAudioFifo;
-class RTCMediaConstraints;
 
 using webrtc::AudioProcessorInterface;
 
@@ -55,6 +66,9 @@ class CONTENT_EXPORT MediaStreamAudioProcessor :
   // |playout_data_source| is used to register this class as a sink to the
   // WebRtc playout data for processing AEC. If clients do not enable AEC,
   // |playout_data_source| won't be used.
+  //
+  // Threading note: The constructor assumes it is being run on the main render
+  // thread.
   MediaStreamAudioProcessor(
       const blink::WebMediaConstraints& constraints,
       const MediaStreamDevice::AudioDeviceParameters& input_params,
@@ -109,6 +123,17 @@ class CONTENT_EXPORT MediaStreamAudioProcessor :
   void OnDisableAecDump() override;
   void OnIpcClosing() override;
 
+  // Returns true if MediaStreamAudioProcessor would modify the audio signal,
+  // based on the |constraints| and |effects_flags| parsed from a user media
+  // request. If the audio signal would not be modified, there is no need to
+  // instantiate a MediaStreamAudioProcessor and feed audio through it. Doing so
+  // would waste a non-trivial amount of memory and CPU resources.
+  //
+  // See media::AudioParameters::PlatformEffectsMask for interpretation of
+  // |effects_flags|.
+  static bool WouldModifyAudio(const blink::WebMediaConstraints& constraints,
+                               int effects_flags);
+
  protected:
   ~MediaStreamAudioProcessor() override;
 
@@ -123,6 +148,7 @@ class CONTENT_EXPORT MediaStreamAudioProcessor :
                      int sample_rate,
                      int audio_delay_milliseconds) override;
   void OnPlayoutDataSourceChanged() override;
+  void OnRenderThreadChanged() override;
 
   // webrtc::AudioProcessorInterface implementation.
   // This method is called on the libjingle thread.
@@ -151,23 +177,28 @@ class CONTENT_EXPORT MediaStreamAudioProcessor :
                   bool key_pressed,
                   float* const* output_ptrs);
 
+  // Update AEC stats. Called on the main render thread.
+  void UpdateAecStats();
+
   // Cached value for the render delay latency. This member is accessed by
   // both the capture audio thread and the render audio thread.
   base::subtle::Atomic32 render_delay_ms_;
 
+#if ENABLE_AUDIO_REPETITION_DETECTOR
   // Module to detect and report (to UMA) bit exact audio repetition.
-  scoped_ptr<AudioRepetitionDetector> audio_repetition_detector_;
+  std::unique_ptr<AudioRepetitionDetector> audio_repetition_detector_;
+#endif  // ENABLE_AUDIO_REPETITION_DETECTOR
 
   // Module to handle processing and format conversion.
-  scoped_ptr<webrtc::AudioProcessing> audio_processing_;
+  std::unique_ptr<webrtc::AudioProcessing> audio_processing_;
 
   // FIFO to provide 10 ms capture chunks.
-  scoped_ptr<MediaStreamAudioFifo> capture_fifo_;
+  std::unique_ptr<MediaStreamAudioFifo> capture_fifo_;
   // Receives processing output.
-  scoped_ptr<MediaStreamAudioBus> output_bus_;
+  std::unique_ptr<MediaStreamAudioBus> output_bus_;
 
   // FIFO to provide 10 ms render chunks when the AEC is enabled.
-  scoped_ptr<MediaStreamAudioFifo> render_fifo_;
+  std::unique_ptr<MediaStreamAudioFifo> render_fifo_;
 
   // These are mutated on the main render thread in OnCaptureFormatChanged().
   // The caller guarantees this does not run concurrently with accesses on the
@@ -181,8 +212,9 @@ class CONTENT_EXPORT MediaStreamAudioProcessor :
   // lifetime of RenderThread.
   WebRtcPlayoutDataSource* playout_data_source_;
 
-  // Used to DCHECK that some methods are called on the main render thread.
-  base::ThreadChecker main_thread_checker_;
+  // Task runner for the main render thread.
+  const scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner_;
+
   // Used to DCHECK that some methods are called on the capture audio thread.
   base::ThreadChecker capture_thread_checker_;
   // Used to DCHECK that some methods are called on the render audio thread.
@@ -191,10 +223,10 @@ class CONTENT_EXPORT MediaStreamAudioProcessor :
   // Flag to enable stereo channel mirroring.
   bool audio_mirroring_;
 
-  scoped_ptr<webrtc::TypingDetection> typing_detector_;
-  // This flag is used to show the result of typing detection.
-  // It can be accessed by the capture audio thread and by the libjingle thread
-  // which calls GetStats().
+  // Typing detector. |typing_detected_| is used to show the result of typing
+  // detection. It can be accessed by the capture audio thread and by the
+  // libjingle thread which calls GetStats().
+  std::unique_ptr<webrtc::TypingDetection> typing_detector_;
   base::subtle::Atomic32 typing_detected_;
 
   // Communication with browser for AEC dump.
@@ -203,9 +235,9 @@ class CONTENT_EXPORT MediaStreamAudioProcessor :
   // Flag to avoid executing Stop() more than once.
   bool stopped_;
 
-  // Object for logging echo information when the AEC is enabled. Accessible by
-  // the libjingle thread through GetStats().
-  scoped_ptr<EchoInformation> echo_information_;
+  // Object for logging UMA stats for echo information when the AEC is enabled.
+  // Accessed on the main render thread.
+  std::unique_ptr<EchoInformation> echo_information_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamAudioProcessor);
 };

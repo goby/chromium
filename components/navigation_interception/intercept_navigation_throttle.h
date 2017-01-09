@@ -8,10 +8,9 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/navigation_throttle.h"
-
-class GURL;
 
 namespace content {
 class NavigationHandle;
@@ -44,7 +43,10 @@ class InterceptNavigationThrottle : public content::NavigationThrottle {
 
   // Called to perform the checks asynchronously
   void RunCallbackAsynchronously(const NavigationParams& navigation_params);
-  void OnAsynchronousChecksPerformed(bool should_ignore_navigation);
+  // TODO(clamy): remove |throttle_was_destroyed| once crbug.com/570200 is
+  // fixed.
+  void OnAsynchronousChecksPerformed(bool should_ignore_navigation,
+                                     bool throttle_was_destroyed);
 
   CheckCallback should_ignore_callback_;
 

@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebDOMEvent.h"
 
 #include "core/events/Event.h"
@@ -36,29 +35,22 @@
 
 namespace blink {
 
-void WebDOMEvent::reset()
-{
-    assign(nullptr);
+void WebDOMEvent::reset() {
+  assign(nullptr);
 }
 
-void WebDOMEvent::assign(const WebDOMEvent& other)
-{
-    m_private = other.m_private;
+void WebDOMEvent::assign(const WebDOMEvent& other) {
+  m_private = other.m_private;
 }
 
-void WebDOMEvent::assign(const PassRefPtrWillBeRawPtr<Event>& event)
-{
-    m_private = event;
+void WebDOMEvent::assign(Event* event) {
+  m_private = event;
 }
 
-WebDOMEvent::WebDOMEvent(const PassRefPtrWillBeRawPtr<Event>& event)
-    : m_private(event)
-{
+WebDOMEvent::WebDOMEvent(Event* event) : m_private(event) {}
+
+WebDOMEvent::operator Event*() const {
+  return m_private.get();
 }
 
-WebDOMEvent::operator PassRefPtrWillBeRawPtr<Event>() const
-{
-    return m_private.get();
-}
-
-} // namespace blink
+}  // namespace blink

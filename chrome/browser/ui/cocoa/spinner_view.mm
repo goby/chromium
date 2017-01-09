@@ -6,13 +6,11 @@
 
 #import <QuartzCore/QuartzCore.h>
 
-#include "base/mac/mac_util.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "ui/base/theme_provider.h"
 #include "ui/native_theme/native_theme.h"
-#include "ui/native_theme/native_theme_mac.h"
 
 namespace {
 const CGFloat kDegrees90               = (M_PI / 2);
@@ -32,7 +30,7 @@ NSString* const kSpinnerAnimationName  = @"SpinnerAnimationName";
 NSString* const kRotationAnimationName = @"RotationAnimationName";
 }
 
-@interface SpinnerView () {
+@interface SpinnerView () <CALayerDelegate> {
   base::scoped_nsobject<CAAnimationGroup> spinnerAnimation_;
   base::scoped_nsobject<CABasicAnimation> rotationAnimation_;
   CAShapeLayer* shapeLayer_;  // Weak.
@@ -118,10 +116,10 @@ NSString* const kRotationAnimationName = @"RotationAnimationName";
   [shapeLayer_ setLineCap:kCALineCapRound];
   [shapeLayer_ setLineDashPattern:@[ @(kArcLength * scaleFactor) ]];
   [shapeLayer_ setFillColor:NULL];
-  ui::NativeTheme* nativeTheme = ui::NativeThemeMac::instance();
-  SkColor throbberBlueColor = nativeTheme->GetSystemColor(
-      ui::NativeTheme::kColorId_ThrobberSpinningColor);
-  CGColorRef blueColor = gfx::CGColorCreateFromSkColor(throbberBlueColor);
+  SkColor throbberBlueColor =
+      ui::NativeTheme::GetInstanceForNativeUi()->GetSystemColor(
+          ui::NativeTheme::kColorId_ThrobberSpinningColor);
+  CGColorRef blueColor = skia::CGColorCreateFromSkColor(throbberBlueColor);
   [shapeLayer_ setStrokeColor:blueColor];
   CGColorRelease(blueColor);
 
@@ -178,10 +176,8 @@ NSString* const kRotationAnimationName = @"RotationAnimationName";
   // Make sure |shapeLayer_|'s content scale factor matches the window's
   // backing depth (e.g. it's 2.0 on Retina Macs). Don't worry about adjusting
   // any other layers because |shapeLayer_| is the only one displaying content.
-  if (base::mac::IsOSLionOrLater()) {
-    CGFloat backingScaleFactor = [[self window] backingScaleFactor];
-    [shapeLayer_ setContentsScale:backingScaleFactor];
-  }
+  CGFloat backingScaleFactor = [[self window] backingScaleFactor];
+  [shapeLayer_ setContentsScale:backingScaleFactor];
 
   // Create the first half of the arc animation, where it grows from a short
   // block to its full length.

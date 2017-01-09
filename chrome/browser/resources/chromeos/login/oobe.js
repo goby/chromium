@@ -7,7 +7,8 @@
  * This is the main code for the OOBE WebUI implementation.
  */
 
-<include src="login_common.js">
+<include src="login_shared.js">
+<include src="login_non_lock_shared.js">
 <include src="oobe_screen_auto_enrollment_check.js">
 <include src="oobe_screen_controller_pairing.js">
 <include src="oobe_screen_enable_debugging.js">
@@ -27,6 +28,9 @@ cr.define('cr.ui.Oobe', function() {
      * Elements with optionGroupName are considered option group.
      * @param {string} callback Callback name which should be send to Chrome or
      * an empty string if the event listener shouldn't be added.
+     *
+     * Note: do not forget to update getSelectedTitle() below if this is
+     * updated!
      */
     setupSelect: function(select, list, callback) {
       select.innerHTML = '';
@@ -62,10 +66,31 @@ cr.define('cr.ui.Oobe', function() {
     },
 
     /**
+     * Returns title of the selected option (see setupSelect() above).
+     * @param {!Object} list The same as in setupSelect() above.
+     */
+    getSelectedTitle: function(list) {
+      var firstTitle = '';
+      for (var i = 0; i < list.length; ++i) {
+        var item = list[i];
+        if (item.optionGroupName)
+          continue;
+
+        if (!firstTitle)
+          firstTitle = item.title;
+
+        if (item.selected)
+          return item.title;
+      }
+      return firstTitle;
+    },
+
+    /**
      * Initializes the OOBE flow.  This will cause all C++ handlers to
      * be invoked to do final setup.
      */
     initialize: function() {
+      this.setMDMode_();
       cr.ui.login.DisplayManager.initialize();
       login.HIDDetectionScreen.register();
       login.WrongHWIDScreen.register();
@@ -85,6 +110,7 @@ cr.define('cr.ui.Oobe', function() {
       login.PasswordChangedScreen.register();
       login.SupervisedUserCreationScreen.register();
       login.TermsOfServiceScreen.register();
+      login.ArcTermsOfServiceScreen.register();
       login.AppLaunchSplashScreen.register();
       login.ConfirmPasswordScreen.register();
       login.FatalErrorScreen.register();
@@ -160,6 +186,8 @@ cr.define('cr.ui.Oobe', function() {
 
       $('accessibility-menu').firstBubbleElement = $('spoken-feedback');
       $('accessibility-menu').lastBubbleElement = $('close-accessibility-menu');
+      $('spoken-feedback').focus();
+
       if (Oobe.getInstance().currentScreen &&
           Oobe.getInstance().currentScreen.defaultControl) {
         $('accessibility-menu').elementToFocusOnHide =
@@ -220,6 +248,7 @@ cr.define('cr.ui.Oobe', function() {
      */
     setUsageStats: function(checked) {
       $('usage-stats').checked = checked;
+      $('oobe-eula-md').usageStatsChecked = checked;
     },
 
     /**
@@ -261,6 +290,8 @@ cr.define('cr.ui.Oobe', function() {
       $('screen-magnifier').checked = data.screenMagnifierEnabled;
       $('large-cursor').checked = data.largeCursorEnabled;
       $('virtual-keyboard').checked = data.virtualKeyboardEnabled;
+
+      $('oobe-welcome-md').a11yStatus = data;
     },
 
     /**
@@ -278,6 +309,8 @@ cr.define('cr.ui.Oobe', function() {
       Oobe.setupSelect($('keyboard-select'), data.inputMethodsList);
       Oobe.setupSelect($('timezone-select'), data.timezoneList);
 
+      this.setMDMode_();
+
       // Update localized content of the screens.
       Oobe.updateLocalizedContent();
     },
@@ -289,6 +322,18 @@ cr.define('cr.ui.Oobe', function() {
     updateLocalizedContent: function() {
       // Buttons, headers and links.
       Oobe.getInstance().updateLocalizedContent_();
-    }
+    },
+
+    /**
+     * This method takes care of switching to material-design OOBE.
+     * @private
+     */
+    setMDMode_: function() {
+      if (loadTimeData.getString('newOobeUI') == 'on') {
+        $('oobe').setAttribute('md-mode', 'true');
+      } else {
+        $('oobe').removeAttribute('md-mode');
+      }
+    },
   };
 });

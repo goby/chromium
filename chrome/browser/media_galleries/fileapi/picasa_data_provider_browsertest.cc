@@ -2,18 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media_galleries/fileapi/picasa_data_provider.h"
+
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
 #include "chrome/browser/media_galleries/fileapi/media_file_system_backend.h"
-#include "chrome/browser/media_galleries/fileapi/picasa_data_provider.h"
 #include "chrome/common/media_galleries/picasa_test_util.h"
 #include "chrome/common/media_galleries/picasa_types.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -26,7 +29,7 @@ namespace {
 void VerifyTestAlbumTable(PicasaDataProvider* data_provider,
                           base::FilePath test_folder_1_path,
                           base::FilePath test_folder_2_path) {
-  scoped_ptr<AlbumMap> folders = data_provider->GetFolders();
+  std::unique_ptr<AlbumMap> folders = data_provider->GetFolders();
   ASSERT_TRUE(folders.get());
   EXPECT_EQ(2u, folders->size());
 
@@ -46,7 +49,7 @@ void VerifyTestAlbumTable(PicasaDataProvider* data_provider,
   EXPECT_EQ(test_folder_2_path, folder_2->second.path);
   EXPECT_EQ("uid4", folder_2->second.uid);
 
-  scoped_ptr<AlbumMap> albums = data_provider->GetAlbums();
+  std::unique_ptr<AlbumMap> albums = data_provider->GetAlbums();
   ASSERT_TRUE(albums.get());
   EXPECT_EQ(2u, albums->size());
 
@@ -67,7 +70,7 @@ void VerifyTestAlbumsImagesIndex(PicasaDataProvider* data_provider,
                                  base::FilePath test_folder_1_path,
                                  base::FilePath test_folder_2_path) {
   base::File::Error error;
-  scoped_ptr<AlbumImages> album_1_images =
+  std::unique_ptr<AlbumImages> album_1_images =
       data_provider->FindAlbumImages("uid3", &error);
   ASSERT_TRUE(album_1_images);
   EXPECT_EQ(base::File::FILE_OK, error);
@@ -80,7 +83,7 @@ void VerifyTestAlbumsImagesIndex(PicasaDataProvider* data_provider,
   EXPECT_EQ(test_folder_2_path.AppendASCII("InFirstAlbumOnly.jpg"),
             (*album_1_images)["InFirstAlbumOnly.jpg"]);
 
-  scoped_ptr<AlbumImages> album_2_images =
+  std::unique_ptr<AlbumImages> album_2_images =
       data_provider->FindAlbumImages("uid5", &error);
   ASSERT_TRUE(album_2_images);
   EXPECT_EQ(base::File::FILE_OK, error);
@@ -118,7 +121,7 @@ class TestPicasaDataProvider : public PicasaDataProvider {
   // Simulates the actual writing process of moving all the database files
   // from the temporary directory to the database directory in a loop.
   void MoveTempFilesToDatabase() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
 
     base::FileEnumerator file_enumerator(
         database_path_.DirName().AppendASCII(kPicasaTempDirName),
@@ -154,8 +157,8 @@ class TestPicasaDataProvider : public PicasaDataProvider {
 
  private:
   void OnTempDirWatchStarted(
-      scoped_ptr<base::FilePathWatcher> temp_dir_watcher) override {
-    PicasaDataProvider::OnTempDirWatchStarted(temp_dir_watcher.Pass());
+      MediaFilePathWatcherUniquePtr temp_dir_watcher) override {
+    PicasaDataProvider::OnTempDirWatchStarted(std::move(temp_dir_watcher));
 
     file_watch_request_returned_ = true;
     for (std::vector<ReadyCallback>::const_iterator it =
@@ -206,10 +209,10 @@ class PicasaDataProviderTest : public InProcessBrowserTest {
 
   // Start the test. The data provider is refreshed before calling StartTest
   // and the result of the refresh is passed in.
-  virtual void VerifyRefreshResults(bool parse_success) {};
+  virtual void VerifyRefreshResults(bool parse_success) {}
 
   void TestDone() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
 
     // The data provider must be destructed on the MediaTaskRunner. This is done
     // in a posted task rather than directly because TestDone is called by
@@ -220,38 +223,42 @@ class PicasaDataProviderTest : public InProcessBrowserTest {
                    base::Unretained(this)));
   }
 
-  const base::FilePath& test_folder_1_path() { return test_folder_1_.path(); }
-  const base::FilePath& test_folder_2_path() { return test_folder_2_.path(); }
+  const base::FilePath& test_folder_1_path() {
+    return test_folder_1_.GetPath();
+  }
+  const base::FilePath& test_folder_2_path() {
+    return test_folder_2_.GetPath();
+  }
 
   TestPicasaDataProvider* data_provider() const {
     return picasa_data_provider_.get();
   }
 
   const base::FilePath GetTempDirPath() const {
-    return picasa_root_dir_.path().AppendASCII(kPicasaTempDirName);
+    return picasa_root_dir_.GetPath().AppendASCII(kPicasaTempDirName);
   }
 
   virtual base::FilePath GetColumnFileDestination() const {
-    return picasa_root_dir_.path().AppendASCII(kPicasaDatabaseDirName);
+    return picasa_root_dir_.GetPath().AppendASCII(kPicasaDatabaseDirName);
   }
 
  private:
   void SetupFoldersAndDataProvider() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
     ASSERT_TRUE(test_folder_1_.CreateUniqueTempDir());
     ASSERT_TRUE(test_folder_2_.CreateUniqueTempDir());
     ASSERT_TRUE(picasa_root_dir_.CreateUniqueTempDir());
     ASSERT_TRUE(base::CreateDirectory(
-        picasa_root_dir_.path().AppendASCII(kPicasaDatabaseDirName)));
+        picasa_root_dir_.GetPath().AppendASCII(kPicasaDatabaseDirName)));
     ASSERT_TRUE(base::CreateDirectory(
-        picasa_root_dir_.path().AppendASCII(kPicasaTempDirName)));
+        picasa_root_dir_.GetPath().AppendASCII(kPicasaTempDirName)));
 
     picasa_data_provider_.reset(new TestPicasaDataProvider(
-        picasa_root_dir_.path().AppendASCII(kPicasaDatabaseDirName)));
+        picasa_root_dir_.GetPath().AppendASCII(kPicasaDatabaseDirName)));
   }
 
   virtual void StartTestOnMediaTaskRunner() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
 
     data_provider()->RefreshData(
         RequestedDataType(),
@@ -260,7 +267,7 @@ class PicasaDataProviderTest : public InProcessBrowserTest {
   }
 
   void DestructDataProviderThenQuit() {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
     picasa_data_provider_.reset();
     content::BrowserThread::PostTask(
         content::BrowserThread::UI, FROM_HERE, quit_closure_);
@@ -270,7 +277,7 @@ class PicasaDataProviderTest : public InProcessBrowserTest {
   base::ScopedTempDir test_folder_2_;
   base::ScopedTempDir picasa_root_dir_;
 
-  scoped_ptr<TestPicasaDataProvider> picasa_data_provider_;
+  std::unique_ptr<TestPicasaDataProvider> picasa_data_provider_;
 
   base::Closure quit_closure_;
 
@@ -405,7 +412,7 @@ class PicasaDataProviderMultipleMixedCallbacksTest
   }
 
   void StartTestOnMediaTaskRunner() override {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
 
     data_provider()->RefreshData(
         PicasaDataProvider::LIST_OF_ALBUMS_AND_FOLDERS_DATA,
@@ -472,7 +479,7 @@ class PicasaDataProviderFileWatcherInvalidateTest
 
  private:
   void StartTestOnMediaTaskRunner() override {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
 
     // Refresh before moving album table to database dir, guaranteeing failure.
     data_provider()->RefreshData(
@@ -496,7 +503,7 @@ class PicasaDataProviderInvalidateInflightTableReaderTest
 
  private:
   void StartTestOnMediaTaskRunner() override {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
 
     // Refresh before the database files have been written.
     // This is guaranteed to fail to read the album table.
@@ -542,7 +549,7 @@ class PicasaDataProviderInvalidateInflightAlbumsIndexerTest
 
  private:
   void StartTestOnMediaTaskRunner() override {
-    DCHECK(MediaFileSystemBackend::CurrentlyOnMediaTaskRunnerThread());
+    MediaFileSystemBackend::AssertCurrentlyOnMediaSequence();
 
     data_provider()->RefreshData(
         PicasaDataProvider::LIST_OF_ALBUMS_AND_FOLDERS_DATA,

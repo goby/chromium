@@ -4,128 +4,139 @@
 
 #include "chrome/browser/usb/web_usb_permission_provider.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/stl_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/usb/usb_chooser_context.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
+#include "chrome/browser/usb/usb_tab_helper.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "device/core/device_client.h"
+#include "device/usb/usb_device.h"
+#include "device/usb/webusb_descriptors.h"
 
 using content::WebContents;
-using device::usb::WebUsbDescriptorSet;
-using device::usb::WebUsbConfigurationSubsetPtr;
-using device::usb::WebUsbFunctionSubsetPtr;
 
 namespace {
 
-bool FindOriginInDescriptorSet(const WebUsbDescriptorSet* set,
+bool FindOriginInDescriptorSet(const device::WebUsbAllowedOrigins* set,
                                const GURL& origin,
                                const uint8_t* configuration_value,
-                               const uint8_t* interface_number) {
+                               const uint8_t* first_interface) {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableWebUsbSecurity))
+    return true;
+
   if (!set)
     return false;
-  for (size_t i = 0; i < set->origins.size(); ++i) {
-    if (origin.spec() == set->origins[i])
-      return true;
-  }
-  for (size_t i = 0; i < set->configurations.size(); ++i) {
-    const device::usb::WebUsbConfigurationSubsetPtr& config =
-        set->configurations[i];
+  if (base::ContainsValue(set->origins, origin))
+    return true;
+  for (const auto& configuration : set->configurations) {
     if (configuration_value &&
-        *configuration_value != config->configuration_value)
+        *configuration_value != configuration.configuration_value)
       continue;
-    for (size_t j = 0; i < config->origins.size(); ++j) {
-      if (origin.spec() == config->origins[j])
-        return true;
-    }
-    for (size_t j = 0; j < config->functions.size(); ++j) {
-      const device::usb::WebUsbFunctionSubsetPtr& function =
-          config->functions[j];
-      // TODO(reillyg): Implement support for Interface Association Descriptors
-      // so that this check will match associated interfaces.
-      if (interface_number && *interface_number != function->first_interface)
+    if (base::ContainsValue(configuration.origins, origin))
+      return true;
+    for (const auto& function : configuration.functions) {
+      if (first_interface && *first_interface != function.first_interface)
         continue;
-      for (size_t k = 0; k < function->origins.size(); ++k) {
-        if (origin.spec() == function->origins[k])
-          return true;
-      }
+      if (base::ContainsValue(function.origins, origin))
+        return true;
     }
   }
   return false;
 }
 
-bool EnableWebUsbOnAnyOrigin() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableWebUsbOnAnyOrigin);
-}
-
 }  // namespace
+
+// static
+bool WebUSBPermissionProvider::HasDevicePermission(
+    content::RenderFrameHost* render_frame_host,
+    scoped_refptr<const device::UsbDevice> device) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  WebContents* web_contents =
+      WebContents::FromRenderFrameHost(render_frame_host);
+  GURL embedding_origin =
+      web_contents->GetMainFrame()->GetLastCommittedURL().GetOrigin();
+  GURL requesting_origin = render_frame_host->GetLastCommittedURL().GetOrigin();
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  UsbChooserContext* chooser_context =
+      UsbChooserContextFactory::GetForProfile(profile);
+
+  if (!chooser_context->HasDevicePermission(requesting_origin, embedding_origin,
+                                            device)) {
+    return false;
+  }
+
+  // On Android it is not possible to read the WebUSB descriptors until Chrome
+  // has been granted permission to open it. Instead we grant provisional access
+  // to the device and perform the allowed origins check when the client tries
+  // to open it.
+  if (!device->permission_granted())
+    return true;
+
+  return FindOriginInDescriptorSet(device->webusb_allowed_origins(),
+                                   requesting_origin, nullptr, nullptr);
+}
 
 WebUSBPermissionProvider::WebUSBPermissionProvider(
     content::RenderFrameHost* render_frame_host)
-    : render_frame_host_(render_frame_host) {
+    : render_frame_host_(render_frame_host), weak_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(render_frame_host_);
 }
 
 WebUSBPermissionProvider::~WebUSBPermissionProvider() {}
 
-void WebUSBPermissionProvider::HasDevicePermission(
-    mojo::Array<device::usb::DeviceInfoPtr> requested_devices,
-    const HasDevicePermissionCallback& callback) {
+base::WeakPtr<device::usb::PermissionProvider>
+WebUSBPermissionProvider::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
+}
+
+bool WebUSBPermissionProvider::HasDevicePermission(
+    scoped_refptr<const device::UsbDevice> device) const {
+  return HasDevicePermission(render_frame_host_, device);
+}
+
+bool WebUSBPermissionProvider::HasConfigurationPermission(
+    uint8_t requested_configuration_value,
+    scoped_refptr<const device::UsbDevice> device) const {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  return FindOriginInDescriptorSet(
+      device->webusb_allowed_origins(),
+      render_frame_host_->GetLastCommittedURL().GetOrigin(),
+      &requested_configuration_value, nullptr);
+}
+
+bool WebUSBPermissionProvider::HasFunctionPermission(
+    uint8_t requested_function,
+    uint8_t configuration_value,
+    scoped_refptr<const device::UsbDevice> device) const {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  return FindOriginInDescriptorSet(
+      device->webusb_allowed_origins(),
+      render_frame_host_->GetLastCommittedURL().GetOrigin(),
+      &configuration_value, &requested_function);
+}
+
+void WebUSBPermissionProvider::IncrementConnectionCount() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   WebContents* web_contents =
       WebContents::FromRenderFrameHost(render_frame_host_);
-  GURL embedding_origin =
-      web_contents->GetMainFrame()->GetLastCommittedURL().GetOrigin();
-  GURL requesting_origin =
-      render_frame_host_->GetLastCommittedURL().GetOrigin();
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  UsbChooserContext* chooser_context =
-      UsbChooserContextFactory::GetForProfile(profile);
-
-  mojo::Array<mojo::String> allowed_guids(0);
-  for (size_t i = 0; i < requested_devices.size(); ++i) {
-    const device::usb::DeviceInfoPtr& device = requested_devices[i];
-    if (FindOriginInDescriptorSet(device->webusb_allowed_origins.get(),
-                                  requesting_origin, nullptr, nullptr) &&
-        (EnableWebUsbOnAnyOrigin() ||
-         chooser_context->HasDevicePermission(requesting_origin,
-                                              embedding_origin, device->guid)))
-      allowed_guids.push_back(device->guid);
-  }
-  callback.Run(allowed_guids.Pass());
+  UsbTabHelper* tab_helper = UsbTabHelper::FromWebContents(web_contents);
+  tab_helper->IncrementConnectionCount(render_frame_host_);
 }
 
-void WebUSBPermissionProvider::HasConfigurationPermission(
-    uint8_t requested_configuration_value,
-    device::usb::DeviceInfoPtr device,
-    const HasInterfacePermissionCallback& callback) {
+void WebUSBPermissionProvider::DecrementConnectionCount() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  callback.Run(FindOriginInDescriptorSet(
-      device->webusb_allowed_origins.get(),
-      render_frame_host_->GetLastCommittedURL().GetOrigin(),
-      &requested_configuration_value, nullptr));
-}
-
-void WebUSBPermissionProvider::HasInterfacePermission(
-    uint8_t requested_interface,
-    uint8_t configuration_value,
-    device::usb::DeviceInfoPtr device,
-    const HasInterfacePermissionCallback& callback) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  callback.Run(FindOriginInDescriptorSet(
-      device->webusb_allowed_origins.get(),
-      render_frame_host_->GetLastCommittedURL().GetOrigin(),
-      &configuration_value, &requested_interface));
-}
-
-void WebUSBPermissionProvider::Bind(
-    mojo::InterfaceRequest<device::usb::PermissionProvider> request) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  bindings_.AddBinding(this, request.Pass());
+  WebContents* web_contents =
+      WebContents::FromRenderFrameHost(render_frame_host_);
+  UsbTabHelper* tab_helper = UsbTabHelper::FromWebContents(web_contents);
+  tab_helper->DecrementConnectionCount(render_frame_host_);
 }

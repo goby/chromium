@@ -7,20 +7,24 @@
 
 #include <OpenGL/CGLTypes.h>
 
-#include "ui/gl/gl_context.h"
+#include <memory>
 
-namespace gfx {
+#include "base/macros.h"
+#include "ui/gl/gl_context.h"
+#include "ui/gl/gl_export.h"
+
+namespace gl {
 
 class GLSurface;
 
 // Encapsulates a CGL OpenGL context.
-class GLContextCGL : public GLContextReal {
+class GL_EXPORT GLContextCGL : public GLContextReal {
  public:
   explicit GLContextCGL(GLShareGroup* share_group);
 
   // Implement GLContext.
   bool Initialize(GLSurface* compatible_surface,
-                  GpuPreference gpu_preference) override;
+                  const GLContextAttribs& attribs) override;
   bool MakeCurrent(GLSurface* surface) override;
   void ReleaseCurrent(GLSurface* surface) override;
   bool IsCurrent(GLSurface* surface) override;
@@ -28,6 +32,7 @@ class GLContextCGL : public GLContextReal {
   void OnSetSwapInterval(int interval) override;
   void SetSafeToForceGpuSwitch() override;
   bool ForceGpuSwitchIfNeeded() override;
+  YUVToRGBConverter* GetYUVToRGBConverter() override;
 
  protected:
   ~GLContextCGL() override;
@@ -38,6 +43,7 @@ class GLContextCGL : public GLContextReal {
 
   void* context_;
   GpuPreference gpu_preference_;
+  std::unique_ptr<YUVToRGBConverter> yuv_to_rgb_converter_;
 
   CGLPixelFormatObj discrete_pixelformat_;
 
@@ -48,6 +54,6 @@ class GLContextCGL : public GLContextReal {
   DISALLOW_COPY_AND_ASSIGN(GLContextCGL);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_CONTEXT_CGL_H_

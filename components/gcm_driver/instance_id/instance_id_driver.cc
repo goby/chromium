@@ -5,27 +5,24 @@
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
 
 #include "base/metrics/field_trial.h"
+#include "base/strings/string_util.h"
+#include "build/build_config.h"
+#include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/instance_id/instance_id.h"
 
 namespace instance_id {
 
 namespace {
-#if !defined(OS_ANDROID)
 const char kInstanceIDFieldTrialName[] = "InstanceID";
-const char kInstanceIDFieldTrialEnabledGroupName[] = "Enabled";
-#endif    // !defined(OS_ANDROID)
+const char kInstanceIDFieldTrialDisabledGroupPrefix[] = "Disabled";
 }  // namespace
 
 // static
 bool InstanceIDDriver::IsInstanceIDEnabled() {
-#if defined(OS_ANDROID)
-  // Not implemented yet.
-  return false;
-#else
   std::string group_name =
       base::FieldTrialList::FindFullName(kInstanceIDFieldTrialName);
-  return group_name == kInstanceIDFieldTrialEnabledGroupName;
-#endif    // defined(OS_ANDROID)
+  return !base::StartsWith(group_name, kInstanceIDFieldTrialDisabledGroupPrefix,
+                           base::CompareCase::INSENSITIVE_ASCII);
 }
 
 InstanceIDDriver::InstanceIDDriver(gcm::GCMDriver* gcm_driver)
@@ -40,7 +37,8 @@ InstanceID* InstanceIDDriver::GetInstanceID(const std::string& app_id) {
   if (iter != instance_id_map_.end())
     return iter->second.get();
 
-  scoped_ptr<InstanceID> instance_id = InstanceID::Create(app_id, gcm_driver_);
+  std::unique_ptr<InstanceID> instance_id =
+      InstanceID::CreateInternal(app_id, gcm_driver_);
   InstanceID* instance_id_ptr = instance_id.get();
   instance_id_map_.insert(std::make_pair(app_id, std::move(instance_id)));
   return instance_id_ptr;

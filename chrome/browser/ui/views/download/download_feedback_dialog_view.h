@@ -5,8 +5,8 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_DOWNLOAD_DOWNLOAD_FEEDBACK_DIALOG_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_DOWNLOAD_DOWNLOAD_FEEDBACK_DIALOG_VIEW_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/views/controls/link_listener.h"
 #include "ui/views/window/dialog_delegate.h"
 
@@ -20,7 +20,7 @@ class PageNavigator;
 
 class Profile;
 
-// Asks the user whether s/he wants to participate in the Safe Browsing
+// Asks the user whether they want to participate in the Safe Browsing
 // download feedback program. Shown only for downloads marked DANGEROUS_HOST
 // or UNCOMMON_DOWNLOAD. The user should only see this dialog once.
 class DownloadFeedbackDialogView : public views::DialogDelegate,

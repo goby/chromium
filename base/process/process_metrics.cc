@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "base/values.h"
+#include "build/build_config.h"
 
 namespace base {
 
@@ -30,8 +31,8 @@ SystemMetrics SystemMetrics::Sample() {
   return system_metrics;
 }
 
-scoped_ptr<Value> SystemMetrics::ToValue() const {
-  scoped_ptr<DictionaryValue> res(new DictionaryValue());
+std::unique_ptr<Value> SystemMetrics::ToValue() const {
+  std::unique_ptr<DictionaryValue> res(new DictionaryValue());
 
   res->SetInteger("committed_memory", static_cast<int>(committed_memory_));
 #if defined(OS_LINUX) || defined(OS_ANDROID)
@@ -45,7 +46,7 @@ scoped_ptr<Value> SystemMetrics::ToValue() const {
   return std::move(res);
 }
 
-ProcessMetrics* ProcessMetrics::CreateCurrentProcessMetrics() {
+std::unique_ptr<ProcessMetrics> ProcessMetrics::CreateCurrentProcessMetrics() {
 #if !defined(OS_MACOSX) || defined(OS_IOS)
   return CreateProcessMetrics(base::GetCurrentProcessHandle());
 #else
@@ -63,7 +64,7 @@ double ProcessMetrics::GetPlatformIndependentCPUUsage() {
 
 #if defined(OS_MACOSX) || defined(OS_LINUX)
 int ProcessMetrics::CalculateIdleWakeupsPerSecond(
-    uint64 absolute_idle_wakeups) {
+    uint64_t absolute_idle_wakeups) {
   TimeTicks time = TimeTicks::Now();
 
   if (last_absolute_idle_wakeups_ == 0) {
@@ -73,8 +74,8 @@ int ProcessMetrics::CalculateIdleWakeupsPerSecond(
     return 0;
   }
 
-  int64 wakeups_delta = absolute_idle_wakeups - last_absolute_idle_wakeups_;
-  int64 time_delta = (time - last_idle_wakeups_time_).InMicroseconds();
+  int64_t wakeups_delta = absolute_idle_wakeups - last_absolute_idle_wakeups_;
+  int64_t time_delta = (time - last_idle_wakeups_time_).InMicroseconds();
   if (time_delta == 0) {
     NOTREACHED();
     return 0;
@@ -84,7 +85,7 @@ int ProcessMetrics::CalculateIdleWakeupsPerSecond(
   last_absolute_idle_wakeups_ = absolute_idle_wakeups;
 
   // Round to average wakeups per second.
-  int64 wakeups_delta_for_ms = wakeups_delta * Time::kMicrosecondsPerSecond;
+  int64_t wakeups_delta_for_ms = wakeups_delta * Time::kMicrosecondsPerSecond;
   return (wakeups_delta_for_ms + time_delta / 2) / time_delta;
 }
 #else

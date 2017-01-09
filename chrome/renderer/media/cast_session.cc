@@ -4,6 +4,11 @@
 
 #include "chrome/renderer/media/cast_session.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/single_thread_task_runner.h"
 #include "chrome/renderer/media/cast_session_delegate.h"
 #include "content/public/renderer/render_thread.h"
@@ -28,28 +33,27 @@ void CreateVideoEncodeMemory(
     const media::cast::ReceiveVideoEncodeMemoryCallback& callback) {
   DCHECK(content::RenderThread::Get());
 
-  scoped_ptr<base::SharedMemory> shm =
+  std::unique_ptr<base::SharedMemory> shm =
       content::RenderThread::Get()->HostAllocateSharedMemoryBuffer(size);
   DCHECK(shm) << "Failed to allocate shared memory";
   if (!shm->Map(size)) {
     NOTREACHED() << "Map failed";
   }
-  callback.Run(shm.Pass());
+  callback.Run(std::move(shm));
 }
 
 }  // namespace
 
 CastSession::CastSession()
     : delegate_(new CastSessionDelegate()),
-      io_task_runner_(
-          content::RenderThread::Get()->GetIOMessageLoopProxy()) {}
+      io_task_runner_(content::RenderThread::Get()->GetIOTaskRunner()) {}
 
 CastSession::~CastSession() {
   // We should always be able to delete the object on the IO thread.
   CHECK(io_task_runner_->DeleteSoon(FROM_HERE, delegate_.release()));
 }
 
-void CastSession::StartAudio(const media::cast::AudioSenderConfig& config,
+void CastSession::StartAudio(const media::cast::FrameSenderConfig& config,
                              const AudioFrameInputAvailableCallback& callback,
                              const ErrorCallback& error_callback) {
   DCHECK(content::RenderThread::Get());
@@ -63,7 +67,7 @@ void CastSession::StartAudio(const media::cast::AudioSenderConfig& config,
                  media::BindToCurrentLoop(error_callback)));
 }
 
-void CastSession::StartVideo(const media::cast::VideoSenderConfig& config,
+void CastSession::StartVideo(const media::cast::FrameSenderConfig& config,
                              const VideoFrameInputAvailableCallback& callback,
                              const ErrorCallback& error_callback) {
   DCHECK(content::RenderThread::Get());
@@ -81,8 +85,20 @@ void CastSession::StartVideo(const media::cast::VideoSenderConfig& config,
                      base::Bind(&CreateVideoEncodeMemory))));
 }
 
+void CastSession::StartRemotingStream(
+    int32_t stream_id,
+    const media::cast::FrameSenderConfig& config,
+    const ErrorCallback& error_callback) {
+  DCHECK(content::RenderThread::Get());
+
+  io_task_runner_->PostTask(
+      FROM_HERE, base::Bind(&CastSessionDelegate::StartRemotingStream,
+                            base::Unretained(delegate_.get()), stream_id,
+                            config, media::BindToCurrentLoop(error_callback)));
+}
+
 void CastSession::StartUDP(const net::IPEndPoint& remote_endpoint,
-                           scoped_ptr<base::DictionaryValue> options,
+                           std::unique_ptr<base::DictionaryValue> options,
                            const ErrorCallback& error_callback) {
   io_task_runner_->PostTask(
       FROM_HERE,

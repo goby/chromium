@@ -5,7 +5,13 @@
 #ifndef COMPONENTS_FONT_SERVICE_PUBLIC_CPP_FONT_SERVICE_THREAD_H_
 #define COMPONENTS_FONT_SERVICE_PUBLIC_CPP_FONT_SERVICE_THREAD_H_
 
+#include <stdint.h>
+
+#include <set>
+
 #include "base/files/file.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
 #include "components/font_service/public/interfaces/font_service.mojom.h"
 #include "third_party/skia/include/core/SkStream.h"
@@ -27,15 +33,15 @@ class MappedFontFile;
 class FontServiceThread : public base::Thread,
                           public base::RefCountedThreadSafe<FontServiceThread> {
  public:
-  explicit FontServiceThread(FontServicePtr font_service);
+  explicit FontServiceThread(mojom::FontServicePtr font_service);
 
   // These methods are proxies which run on your thread, post a blocking task
   // to the FontServiceThread, and wait on an event signaled from the callback.
   bool MatchFamilyName(const char family_name[],
-                       SkTypeface::Style requested_style,
+                       SkFontStyle requested_style,
                        SkFontConfigInterface::FontIdentity* out_font_identity,
                        SkString* out_family_name,
-                       SkTypeface::Style* out_style);
+                       SkFontStyle* out_style);
   scoped_refptr<MappedFontFile> OpenStream(
       const SkFontConfigInterface::FontIdentity& identity);
 
@@ -49,11 +55,11 @@ class FontServiceThread : public base::Thread,
   void MatchFamilyNameImpl(
       base::WaitableEvent* done_event,
       const char family_name[],
-      SkTypeface::Style requested_style,
+      SkFontStyle requested_style,
       bool* out_valid,
       SkFontConfigInterface::FontIdentity* out_font_identity,
       SkString* out_family_name,
-      SkTypeface::Style* out_style);
+      SkFontStyle* out_style);
 
   // Called on the FontServiceThread in response to receiving a message from
   // our MatchFamily mojo IPC. This writes the data returned by mojo, and then
@@ -63,10 +69,10 @@ class FontServiceThread : public base::Thread,
       bool* out_valid,
       SkFontConfigInterface::FontIdentity* out_font_identity,
       SkString* out_family_name,
-      SkTypeface::Style* out_style,
-      FontIdentityPtr font_identity,
-      mojo::String family_name,
-      TypefaceStyle style);
+      SkFontStyle* out_style,
+      mojom::FontIdentityPtr font_identity,
+      const std::string& family_name,
+      mojom::TypefaceStylePtr style);
 
   // Implementation of OpenStream; same threading restrictions as MatchFamily.
   void OpenStreamImpl(base::WaitableEvent* done_event,
@@ -74,7 +80,11 @@ class FontServiceThread : public base::Thread,
                       const uint32_t id_number);
   void OnOpenStreamComplete(base::WaitableEvent* done_event,
                             base::File* output_file,
-                            mojo::ScopedHandle handle);
+                            base::File file);
+
+  // Connection to |font_service_| has gone away. Called on the background
+  // thread.
+  void OnFontServiceConnectionError();
 
   // base::Thread
   void Init() override;
@@ -82,11 +92,21 @@ class FontServiceThread : public base::Thread,
 
   // This member is used to safely pass data from one thread to another. It is
   // set in the constructor and is consumed in Init().
-  mojo::InterfacePtrInfo<FontService> font_service_info_;
+  mojo::InterfacePtrInfo<mojom::FontService> font_service_info_;
 
   // This member is set in Init(). It takes |font_service_info_|, which is
   // non-thread bound, and binds it to the newly created thread.
-  mojo::InterfacePtr<FontService> font_service_;
+  mojo::InterfacePtr<mojom::FontService> font_service_;
+
+  // All WaitableEvents supplied to OpenStreamImpl() are added here while
+  // waiting on the response from the |font_service_| (FontService::OpenStream()
+  // was called, but the callback has not been processed yet). If
+  // |font_service_| gets an error during this time all events in
+  // |pending_waitable_events_| are signaled. This is necessary as when the
+  // pipe is closed the callbacks are never received.
+  std::set<base::WaitableEvent*> pending_waitable_events_;
+
+  base::WeakPtrFactory<FontServiceThread> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FontServiceThread);
 };

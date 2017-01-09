@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_CHROME_VIEWS_DELEGATE_H_
 #define CHROME_BROWSER_UI_VIEWS_CHROME_VIEWS_DELEGATE_H_
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_enums.h"
 #include "ui/views/views_delegate.h"
+
+class ScopedKeepAlive;
 
 class ChromeViewsDelegate : public views::ViewsDelegate {
  public:
@@ -35,7 +37,6 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
 #if defined(OS_WIN)
   HICON GetDefaultWindowIcon() const override;
   HICON GetSmallWindowIcon() const override;
-  bool IsWindowInMetro(gfx::NativeWindow window) const override;
 #elif defined(OS_LINUX) && !defined(OS_CHROMEOS)
   gfx::ImageSkia* GetDefaultWindowIcon() const override;
 #endif
@@ -60,6 +61,10 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
 #endif
   scoped_refptr<base::TaskRunner> GetBlockingPoolTaskRunner() override;
 
+  gfx::Insets GetDialogButtonInsets() override;
+  int GetDialogRelatedButtonHorizontalSpacing() override;
+  gfx::Insets GetDialogFrameViewInsets() override;
+
  private:
 #if defined(OS_WIN)
   typedef std::map<HMONITOR, int> AppbarAutohideEdgeMap;
@@ -76,6 +81,13 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
   // and desktop context.
   views::Widget::InitParams::WindowOpacity GetOpacityForInitParams(
       const views::Widget::InitParams& params);
+
+  // |ChromeViewsDelegate| exposes a |RefCounted|-like interface, but //chrome
+  // uses |ScopedKeepAlive|s to manage lifetime. We manage an internal counter
+  // to do that translation.
+  unsigned int ref_count_ = 0u;
+
+  std::unique_ptr<ScopedKeepAlive> keep_alive_;
 
 #if defined(OS_WIN)
   AppbarAutohideEdgeMap appbar_autohide_edge_map_;

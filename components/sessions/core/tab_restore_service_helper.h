@@ -8,7 +8,7 @@
 #include <set>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "components/sessions/core/session_id.h"
@@ -77,13 +77,12 @@ class SESSIONS_EXPORT TabRestoreServiceHelper {
   void BrowserClosed(LiveTabContext* context);
   void ClearEntries();
   const Entries& entries() const;
-  std::vector<LiveTab*> RestoreMostRecentEntry(LiveTabContext* context,
-                                               int host_desktop_type);
-  Tab* RemoveTabEntryById(SessionID::id_type id);
+  std::vector<LiveTab*> RestoreMostRecentEntry(LiveTabContext* context);
+  std::unique_ptr<Tab> RemoveTabEntryById(SessionID::id_type id);
   std::vector<LiveTab*> RestoreEntryById(LiveTabContext* context,
                                          SessionID::id_type id,
-                                         int host_desktop_type,
                                          WindowOpenDisposition disposition);
+  bool IsRestoring() const;
 
   // Notifies observers the tabs have changed.
   void NotifyTabsChanged();
@@ -91,11 +90,11 @@ class SESSIONS_EXPORT TabRestoreServiceHelper {
   // Notifies observers the service has loaded.
   void NotifyLoaded();
 
-  // Adds |entry| to the list of entries and takes ownership. If |prune| is true
-  // |PruneAndNotify| is invoked. If |to_front| is true the entry is added to
-  // the front, otherwise the back. Normal closes go to the front, but
-  // tab/window closes from the previous session are added to the back.
-  void AddEntry(Entry* entry, bool prune, bool to_front);
+  // Adds |entry| to the list of entries. If |prune| is true |PruneAndNotify| is
+  // invoked. If |to_front| is true the entry is added to the front, otherwise
+  // the back. Normal closes go to the front, but tab/window closes from the
+  // previous session are added to the back.
+  void AddEntry(std::unique_ptr<Entry> entry, bool prune, bool to_front);
 
   // Prunes |entries_| to contain only kMaxEntries, and removes uninteresting
   // entries.
@@ -108,7 +107,7 @@ class SESSIONS_EXPORT TabRestoreServiceHelper {
   Entries::iterator GetEntryIteratorById(SessionID::id_type id);
 
   // Calls either ValidateTab or ValidateWindow as appropriate.
-  static bool ValidateEntry(Entry* entry);
+  static bool ValidateEntry(const Entry& entry);
 
  private:
   friend class PersistentTabRestoreService;
@@ -122,36 +121,32 @@ class SESSIONS_EXPORT TabRestoreServiceHelper {
 
   // This is a helper function for RestoreEntryById() for restoring a single
   // tab. If |context| is NULL, this creates a new window for the entry. This
-  // returns the LiveTabContext into which the tab was restored.
-  // |disposition| will be respected, but if it is UNKNOWN then the tab's
-  // original attributes will be respected instead. If a new
-  // LiveTabContext needs to be created for this tab,
-  // |host_desktop_type| will be passed to
-  // TabRestoreServiceClient::CreateLiveTabContext(). If present,
-  // |live_tab| will be populated with the LiveTab of the restored tab.
+  // returns the LiveTabContext into which the tab was restored. |disposition|
+  // will be respected, but if it is UNKNOWN then the tab's original attributes
+  // will be respected instead. If a new LiveTabContext needs to be created for
+  // this tab, If present, |live_tab| will be populated with the LiveTab of the
+  // restored tab.
   LiveTabContext* RestoreTab(const Tab& tab,
                              LiveTabContext* context,
-                             int host_desktop_type,
                              WindowOpenDisposition disposition,
                              LiveTab** live_tab);
 
-  // Returns true if |tab| has more than one navigation. If |tab| has more
-  // than one navigation |tab->current_navigation_index| is constrained based
-  // on the number of navigations.
-  static bool ValidateTab(Tab* tab);
+  // Returns true if |tab| has at least one navigation and
+  // |tab->current_navigation_index| is in bounds.
+  static bool ValidateTab(const Tab& tab);
 
   // Validates all the tabs in a window, plus the window's active tab index.
-  static bool ValidateWindow(Window* window);
+  static bool ValidateWindow(const Window& window);
 
   // Returns true if |tab| is one we care about restoring.
-  bool IsTabInteresting(const Tab* tab);
+  bool IsTabInteresting(const Tab& tab);
 
   // Checks whether |window| is interesting --- if it only contains a single,
   // uninteresting tab, it's not interesting.
-  bool IsWindowInteresting(const Window* window);
+  bool IsWindowInteresting(const Window& window);
 
   // Validates and checks |entry| for interesting.
-  bool FilterEntry(Entry* entry);
+  bool FilterEntry(const Entry& entry);
 
   // Finds tab entries with the old browser_id and sets it to the new one.
   void UpdateTabBrowserIDs(SessionID::id_type old_id,

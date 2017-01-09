@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_SCREENS_USER_IMAGE_SCREEN_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_SCREENS_USER_IMAGE_SCREEN_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/camera_presence_notifier.h"
 #include "chrome/browser/chromeos/login/screens/base_screen.h"
@@ -45,7 +47,6 @@ class UserImageScreen : public UserImageModel,
   static UserImageScreen* Get(ScreenManager* manager);
 
   // BaseScreen implementation:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
 
@@ -116,7 +117,7 @@ class UserImageScreen : public UserImageModel,
 
   content::NotificationRegistrar notification_registrar_;
 
-  scoped_ptr<policy::PolicyChangeRegistrar> policy_registrar_;
+  std::unique_ptr<policy::PolicyChangeRegistrar> policy_registrar_;
 
   UserImageView* view_;
 
@@ -132,7 +133,7 @@ class UserImageScreen : public UserImageModel,
   int selected_image_;
 
   // Timer used for waiting for user image sync.
-  scoped_ptr<base::Timer> sync_timer_;
+  std::unique_ptr<base::Timer> sync_timer_;
 
   // If screen ready to be shown.
   bool is_screen_ready_;

@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/trace_event_analyzer.h"
 #include "base/time/default_tick_clock.h"
@@ -40,11 +43,12 @@
 #include "media/cast/test/utility/in_process_receiver.h"
 #include "media/cast/test/utility/standalone_cast_environment.h"
 #include "media/cast/test/utility/udp_proxy.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/rand_callback.h"
-#include "net/udp/udp_server_socket.h"
+#include "net/log/net_log_source.h"
+#include "net/socket/udp_server_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_test.h"
 #include "ui/compositor/compositor_switches.h"
@@ -97,13 +101,11 @@ class SkewedCastEnvironment : public media::cast::StandaloneCastEnvironment {
 
 // We log one of these for each call to OnAudioFrame/OnVideoFrame.
 struct TimeData {
-  TimeData(uint16 frame_no_, base::TimeTicks render_time_) :
-      frame_no(frame_no_),
-      render_time(render_time_) {
-  }
+  TimeData(uint16_t frame_no_, base::TimeTicks render_time_)
+      : frame_no(frame_no_), render_time(render_time_) {}
   // The unit here is video frames, for audio data there can be duplicates.
   // This was decoded from the actual audio/video data.
-  uint16 frame_no;
+  uint16_t frame_no;
   // This is when we should play this data, according to the sender.
   base::TimeTicks render_time;
 };
@@ -189,7 +191,7 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
                           media::cast::GetDefaultVideoReceiverConfig()) {
   }
 
-  typedef std::map<uint16, base::TimeTicks> TimeMap;
+  typedef std::map<uint16_t, base::TimeTicks> TimeMap;
 
   // Build a map from frame ID (as encoded in the audio and video data)
   // to the rtp timestamp for that frame. Note that there will be multiple
@@ -235,7 +237,7 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
 
  private:
   // Invoked by InProcessReceiver for each received audio frame.
-  void OnAudioFrame(scoped_ptr<media::AudioBus> audio_frame,
+  void OnAudioFrame(std::unique_ptr<media::AudioBus> audio_frame,
                     const base::TimeTicks& playout_time,
                     bool is_continuous) override {
     CHECK(cast_env()->CurrentlyOn(media::cast::CastEnvironment::MAIN));
@@ -246,7 +248,7 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
     }
 
     // Note: This is the number of the video frame that this audio belongs to.
-    uint16 frame_no;
+    uint16_t frame_no;
     if (media::cast::DecodeTimestamp(audio_frame->channel(0),
                                      audio_frame->frames(),
                                      &frame_no)) {
@@ -266,7 +268,7 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
         TRACE_EVENT_SCOPE_THREAD,
         "render_time", render_time.ToInternalValue());
 
-    uint16 frame_no;
+    uint16_t frame_no;
     if (media::cast::test::DecodeBarcode(video_frame, &frame_no)) {
       video_events_.push_back(TimeData(frame_no, render_time));
     } else {
@@ -334,15 +336,11 @@ class CastV2PerformanceTest
     // Determine a unused UDP port for the in-process receiver to listen on.
     // Method: Bind a UDP socket on port 0, and then check which port the
     // operating system assigned to it.
-    net::IPAddressNumber localhost;
-    localhost.push_back(127);
-    localhost.push_back(0);
-    localhost.push_back(0);
-    localhost.push_back(1);
-    scoped_ptr<net::UDPServerSocket> receive_socket(
-        new net::UDPServerSocket(NULL, net::NetLog::Source()));
+    std::unique_ptr<net::UDPServerSocket> receive_socket(
+        new net::UDPServerSocket(NULL, net::NetLogSource()));
     receive_socket->AllowAddressReuse();
-    CHECK_EQ(net::OK, receive_socket->Listen(net::IPEndPoint(localhost, 0)));
+    CHECK_EQ(net::OK, receive_socket->Listen(
+                          net::IPEndPoint(net::IPAddress::IPv4Localhost(), 0)));
     net::IPEndPoint endpoint;
     CHECK_EQ(net::OK, receive_socket->GetLocalAddress(&endpoint));
     return endpoint;
@@ -588,22 +586,18 @@ class CastV2PerformanceTest
         new TestPatternReceiver(cast_environment, receiver_end_point);
     receiver->Start();
 
-    scoped_ptr<media::cast::test::UDPProxy> udp_proxy;
+    std::unique_ptr<media::cast::test::UDPProxy> udp_proxy;
     if (HasFlag(kProxyWifi) || HasFlag(kProxyBad)) {
       net::IPEndPoint proxy_end_point = GetFreeLocalPort();
       if (HasFlag(kProxyWifi)) {
         udp_proxy = media::cast::test::UDPProxy::Create(
-            proxy_end_point,
-            receiver_end_point,
-            media::cast::test::WifiNetwork().Pass(),
-            media::cast::test::WifiNetwork().Pass(),
+            proxy_end_point, receiver_end_point,
+            media::cast::test::WifiNetwork(), media::cast::test::WifiNetwork(),
             NULL);
       } else if (HasFlag(kProxyBad)) {
         udp_proxy = media::cast::test::UDPProxy::Create(
-            proxy_end_point,
-            receiver_end_point,
-            media::cast::test::BadNetwork().Pass(),
-            media::cast::test::BadNetwork().Pass(),
+            proxy_end_point, receiver_end_point,
+            media::cast::test::BadNetwork(), media::cast::test::BadNetwork(),
             NULL);
       }
       receiver_end_point = proxy_end_point;
@@ -623,7 +617,7 @@ class CastV2PerformanceTest
     // Stop all threads, removes the need for synchronization when analyzing
     // the data.
     cast_environment->Shutdown();
-    scoped_ptr<trace_analyzer::TraceAnalyzer> analyzer;
+    std::unique_ptr<trace_analyzer::TraceAnalyzer> analyzer;
     analyzer.reset(trace_analyzer::TraceAnalyzer::Create(json_events));
     analyzer->AssociateAsyncBeginEndEvents();
 

@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/rect.h"
@@ -62,7 +63,7 @@ TEST_F(CanvasTest, MAYBE_StringSizeEmptyString) {
 // Verifies GetClipBounds() returns the correct value.
 TEST_F(CanvasTest, ClipRectWithScaling) {
   Canvas canvas(gfx::Size(200, 100), 2.25, true);
-  canvas.sk_canvas()->clipRect(RectFToSkRect(gfx::RectF(100, 0, 20, 1.7f)));
+  canvas.ClipRect(gfx::RectF(100, 0, 20, 1.7f));
   gfx::Rect clip_rect;
   ASSERT_TRUE(canvas.GetClipBounds(&clip_rect));
   // Use Contains() rather than Equals() as skia may extend the rect in certain

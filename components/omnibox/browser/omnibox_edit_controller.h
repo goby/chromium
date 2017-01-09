@@ -5,37 +5,28 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_EDIT_CONTROLLER_H_
 #define COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_EDIT_CONTROLLER_H_
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
+#include "components/omnibox/browser/autocomplete_match_type.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 
 class ToolbarModel;
 
-namespace gfx {
-class Image;
-}
-
 class OmniboxEditController {
  public:
   virtual void OnAutocompleteAccept(const GURL& destination_url,
                                     WindowOpenDisposition disposition,
-                                    ui::PageTransition transition);
+                                    ui::PageTransition transition,
+                                    AutocompleteMatchType::Type match_type);
 
-  // Called when the the controller should update itself without restoring any
-  // tab state.
-  virtual void UpdateWithoutTabRestore() = 0;
+  virtual void OnInputInProgress(bool in_progress) = 0;
 
   // Called when anything has changed that might affect the layout or contents
   // of the views around the edit, including the text of the edit and the
   // status of any keyword- or hint-related state.
   virtual void OnChanged() = 0;
-
-  // Called whenever the autocomplete edit gets focused.
-  virtual void OnSetFocus() = 0;
-
-  // Shows the URL.
-  virtual void ShowURL() = 0;
 
   virtual ToolbarModel* GetToolbarModel() = 0;
   virtual const ToolbarModel* GetToolbarModel() const = 0;

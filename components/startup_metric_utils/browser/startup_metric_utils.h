@@ -5,9 +5,10 @@
 #ifndef COMPONENTS_STARTUP_METRIC_UTILS_BROWSER_STARTUP_METRIC_UTILS_H_
 #define COMPONENTS_STARTUP_METRIC_UTILS_BROWSER_STARTUP_METRIC_UTILS_H_
 
-#include <string>
-
 #include "base/time/time.h"
+
+class PrefRegistrySimple;
+class PrefService;
 
 // Utility functions to support metric collection for browser startup. Timings
 // should use TimeTicks whenever possible. OS-provided timings are still
@@ -17,30 +18,15 @@
 
 namespace startup_metric_utils {
 
-// An enumeration of startup temperatures. This must be kept in sync with the
-// UMA StartupType enumeration defined in histograms.xml.
-enum StartupTemperature {
-  // The startup was a cold start: nearly all of the Chrome binaries and
-  // resources were brought into memory using hard faults.
-  COLD_STARTUP_TEMPERATURE = 0,
-  // The startup was a warm start: the Chrome binaries and resources were
-  // mostly already resident in memory and effectively no hard faults were
-  // observed.
-  WARM_STARTUP_TEMPERATURE = 1,
-  // The startup type couldn't quite be classified as warm of cold, but rather
-  // was somewhere in between.
-  UNCERTAIN_STARTUP_TEMPERATURE = 2,
-  // This must be last.
-  STARTUP_TEMPERATURE_MAX
-};
+// Registers startup related prefs in |registry|.
+void RegisterPrefs(PrefRegistrySimple* registry);
 
 // Returns true if any UI other than the browser window has been displayed
 // so far.  Useful to test if UI has been displayed before the first browser
 // window was shown, which would invalidate any surrounding timing metrics.
 bool WasNonBrowserUIDisplayed();
 
-// Call this when displaying UI that might potentially delay the appearance
-// of the initial browser window on Chrome startup.
+// Call this when displaying UI that might potentially delay startup events.
 //
 // Note on usage: This function is idempotent and its overhead is low enough
 // in comparison with UI display that it's OK to call it on every
@@ -59,12 +45,14 @@ void RecordMainEntryPointTime(const base::Time& time);
 // Call this with the time when the executable is loaded and main() is entered.
 // Can be different from |RecordMainEntryPointTime| when the startup process is
 // contained in a separate dll, such as with chrome.exe / chrome.dll on Windows.
-void RecordExeMainEntryPointTime(const base::Time& time);
+void RecordExeMainEntryPointTicks(const base::TimeTicks& time);
 
 // Call this with the time recorded just before the message loop is started.
-// |is_first_run| - is the current launch part of a first run.
+// |is_first_run| - is the current launch part of a first run. |pref_service| is
+// used to store state for stats that span multiple startups.
 void RecordBrowserMainMessageLoopStart(const base::TimeTicks& ticks,
-                                       bool is_first_run);
+                                       bool is_first_run,
+                                       PrefService* pref_service);
 
 // Call this with the time when the first browser window became visible.
 void RecordBrowserWindowDisplay(const base::TimeTicks& ticks);
@@ -98,11 +86,6 @@ void RecordFirstWebContentsMainNavigationFinished(const base::TimeTicks& ticks);
 // RecordMainEntryPointTime. Returns a null TimeTicks if a value has not been
 // recorded yet. This method is expected to be called from the UI thread.
 base::TimeTicks MainEntryPointTicks();
-
-// Returns the startup type. This is only currently supported on the Windows
-// platform and will simply return UNCERTAIN_STARTUP_TYPE on other platforms.
-// This is only valid after a call to RecordBrowserMainMessageLoopStart().
-StartupTemperature GetStartupTemperature();
 
 }  // namespace startup_metric_utils
 

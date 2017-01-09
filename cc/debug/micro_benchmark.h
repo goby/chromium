@@ -5,8 +5,9 @@
 #ifndef CC_DEBUG_MICRO_BENCHMARK_H_
 #define CC_DEBUG_MICRO_BENCHMARK_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/base/cc_export.h"
 
 namespace base {
@@ -16,35 +17,35 @@ class Value;
 
 namespace cc {
 
-class LayerTreeHost;
+class LayerTree;
 class Layer;
 class PictureLayer;
 class MicroBenchmarkImpl;
 class CC_EXPORT MicroBenchmark {
  public:
-  typedef base::Callback<void(scoped_ptr<base::Value>)> DoneCallback;
+  typedef base::Callback<void(std::unique_ptr<base::Value>)> DoneCallback;
 
   explicit MicroBenchmark(const DoneCallback& callback);
   virtual ~MicroBenchmark();
 
   bool IsDone() const;
-  virtual void DidUpdateLayers(LayerTreeHost* host);
+  virtual void DidUpdateLayers(LayerTree* layer_tree);
   int id() const { return id_; }
   void set_id(int id) { id_ = id; }
 
   virtual void RunOnLayer(Layer* layer);
   virtual void RunOnLayer(PictureLayer* layer);
 
-  virtual bool ProcessMessage(scoped_ptr<base::Value> value);
+  virtual bool ProcessMessage(std::unique_ptr<base::Value> value);
 
   bool ProcessedForBenchmarkImpl() const;
-  scoped_ptr<MicroBenchmarkImpl> GetBenchmarkImpl(
+  std::unique_ptr<MicroBenchmarkImpl> GetBenchmarkImpl(
       scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner);
 
  protected:
-  void NotifyDone(scoped_ptr<base::Value> result);
+  void NotifyDone(std::unique_ptr<base::Value> result);
 
-  virtual scoped_ptr<MicroBenchmarkImpl> CreateBenchmarkImpl(
+  virtual std::unique_ptr<MicroBenchmarkImpl> CreateBenchmarkImpl(
       scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner);
 
  private:

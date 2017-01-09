@@ -28,61 +28,39 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
-#include "platform/EventTracer.h"
+#include "base/bind.h"
+#include "base/test/launcher/unit_test_launcher.h"
+#include "base/test/test_io_thread.h"
+#include "base/test/test_suite.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/test/scoped_ipc_support.h"
 #include "platform/heap/Heap.h"
 #include "platform/testing/TestingPlatformSupport.h"
-#include "wtf/CryptographicallyRandomNumber.h"
-#include "wtf/MainThread.h"
-#include "wtf/Partitions.h"
-#include "wtf/WTF.h"
-#include <base/bind.h>
-#include <base/bind_helpers.h>
-#include <base/test/launcher/unit_test_launcher.h>
-#include <base/test/test_suite.h>
-#include <cc/blink/web_compositor_support_impl.h>
-#include <string.h>
+#include <memory>
 
-static double CurrentTime()
-{
-    return 0.0;
+namespace {
+
+int runTestSuite(base::TestSuite* testSuite) {
+  int result = testSuite->Run();
+  blink::ThreadState::current()->collectAllGarbage();
+  return result;
 }
 
-static void AlwaysZeroNumberSource(unsigned char* buf, size_t len)
-{
-    memset(buf, '\0', len);
-}
+}  // namespace
 
-static int runTestSuite(base::TestSuite* testSuite)
-{
-    int result = testSuite->Run();
-    blink::Heap::collectAllGarbage();
-    return result;
-}
-
-int main(int argc, char** argv)
-{
-    WTF::setRandomSource(AlwaysZeroNumberSource);
-    WTF::initialize(CurrentTime, CurrentTime, CurrentTime, nullptr, nullptr);
-    WTF::initializeMainThread(0);
-
-    blink::TestingPlatformSupport::Config platformConfig;
-    cc_blink::WebCompositorSupportImpl compositorSupport;
-    platformConfig.compositorSupport = &compositorSupport;
-    blink::TestingPlatformSupport platform(platformConfig);
-
-    blink::Heap::init();
-    blink::ThreadState::attachMainThread();
-    blink::ThreadState::current()->registerTraceDOMWrappers(nullptr, nullptr);
-    blink::EventTracer::initialize();
-
+int main(int argc, char** argv) {
+  blink::ScopedUnittestsEnvironmentSetup testEnvironmentSetup(argc, argv);
+  int result = 0;
+  {
     base::TestSuite testSuite(argc, argv);
-    int result = base::LaunchUnitTests(argc, argv, base::Bind(runTestSuite, base::Unretained(&testSuite)));
 
-    blink::ThreadState::detachMainThread();
-    blink::Heap::shutdown();
-
-    WTF::shutdown();
-    return result;
+    mojo::edk::Init();
+    base::TestIOThread testIoThread(base::TestIOThread::kAutoStart);
+    std::unique_ptr<mojo::edk::test::ScopedIPCSupport> ipcSupport(
+        WTF::wrapUnique(
+            new mojo::edk::test::ScopedIPCSupport(testIoThread.task_runner())));
+    result = base::LaunchUnitTests(
+        argc, argv, base::Bind(runTestSuite, base::Unretained(&testSuite)));
+  }
+  return result;
 }

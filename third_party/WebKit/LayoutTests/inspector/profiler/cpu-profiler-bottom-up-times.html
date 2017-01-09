@@ -9,103 +9,121 @@ function test()
     var profileAndExpectations = {
         "title": "profile1",
         "target": function() {
-          return WebInspector.targetManager.targets()[0];
+          return SDK.targetManager.targets()[0];
         },
         "_profile": {
-            "head": {
-                "functionName": "(root)",
-                "scriptId": "0",
-                "url": "",
-                "lineNumber": 0,
-                "hitCount": 50,
-                "callUID": 1000,
-                "children": [
+            "nodes": [
                 {
-                    "functionName": "(idle)",
-                    "scriptId": "40",
-                    "url": "",
-                    "lineNumber": 1,
-                    "hitCount": 300,
-                    "callUID": 2,
-                    "children": []
+                    "id": 0,
+                    "callFrame":
+                    {
+                        "functionName": "(root)",
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 0
+                    },
+                    "hitCount": 350
                 },
                 {
-                    "functionName": "A",
-                    "scriptId": "40",
-                    "url": "",
-                    "lineNumber": 4642,
+                    "id": 1,
+                    "callFrame":
+                    {
+                        "functionName": "(idle)",
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 1
+                    },
+                    "hitCount": 1000,
+                    "parent": 0
+                },
+                {
+                    "id": 2,
+                    "callFrame":
+                    {
+                        "functionName": "A",
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 4642
+                    },
                     "hitCount": 250,
-                    "callUID": 1001,
-                    "children": [
-                    {
-                        "functionName": "C",
-                        "scriptId": "40",
-                        "url": "",
-                        "lineNumber": 525,
-                        "hitCount": 100,
-                        "callUID": 2000,
-                        "children": [
-                        {
-                            "functionName": "D",
-                            "scriptId": "40",
-                            "url": "",
-                            "lineNumber": 425,
-                            "hitCount": 20,
-                            "callUID": 3000,
-                            "children": []
-                        }
-                        ]
-                    }
-                    ]
+                    "parent": 0
                 },
                 {
-                    "functionName": "B",
-                    "scriptId": "40",
-                    "url": "",
-                    "lineNumber": 4662,
-                    "hitCount": 150,
-                    "callUID": 1002,
-                    "children": [
+                    "id": 3,
+                    "callFrame":
                     {
                         "functionName": "C",
-                        "scriptId": "40",
-                        "url": "",
-                        "lineNumber": 525,
-                        "hitCount": 100,
-                        "callUID": 2000,
-                        "children": [
-                        {
-                            "functionName": "D",
-                            "scriptId": "40",
-                            "url": "",
-                            "lineNumber": 425,
-                            "hitCount": 30,
-                            "callUID": 3000,
-                            "children": []
-                        }
-                        ]
-                    }
-                    ]
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 525
+                    },
+                    "hitCount": 100,
+                    "parent": 2
+                },
+                {
+                    "id": 4,
+                    "callFrame":
+                    {
+                        "functionName": "D",
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 425
+                    },
+                    "hitCount": 20,
+                    "parent": 3
+                },
+                {
+                    "id": 5,
+                    "callFrame":
+                    {
+                        "functionName": "B",
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 4662
+                    },
+                    "hitCount": 150,
+                    "parent": 0
+                },
+                {
+                    "id": 6,
+                    "callFrame":
+                    {
+                        "functionName": "C",
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 525
+                    },
+                    "hitCount": 100,
+                    "parent": 5
+                },
+                {
+                    "id": 7,
+                    "callFrame":
+                    {
+                        "functionName": "D",
+                        "scriptId": "0",
+                        "url": "a.js",
+                        "lineNumber": 425
+                    },
+                    "hitCount": 30,
+                    "parent": 6
                 }
-                ]
-            },
-            "idleTime": 0.300,
+            ],
             "startTime": 0,
-            "endTime": 1.000
+            "endTime": 1e6
         }
     };
-    var view = new WebInspector.CPUProfileView(profileAndExpectations);
+    var view = new Profiler.CPUProfileView(profileAndExpectations);
     view.viewSelectComboBox.setSelectedIndex(1);
     view._changeView();
     var tree = view.profileDataGridTree;
     if (!tree)
-         InspectorTest.addResult("no tree");
+        InspectorTest.addResult("no tree");
     var node = tree.children[0];
     if (!node)
-         InspectorTest.addResult("no node");
+        InspectorTest.addResult("no node");
     while (node) {
-        var url = node.element().children[2].firstChild.textContent;
-        InspectorTest.addResult(node.callUID + ": " + node.functionName + " " + node.selfTime + " " + node.totalTime + " " + url + " " + JSON.stringify(node.data));
+        InspectorTest.addResult(node.callUID + ": " + node.functionName + " " + node.self + " " + node.total + " " + node.element().textContent);
         node = node.traverseNextNode(true, null, true);
     }
     InspectorTest.completeProfilerTest();

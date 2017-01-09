@@ -5,20 +5,22 @@
 #include "chrome/browser/download/download_prefs.h"
 
 #include "base/files/file_path.h"
-#include "base/prefs/pref_service.h"
-#include "chrome/browser/download/download_extensions.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/safe_browsing/file_type_policies.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using safe_browsing::FileTypePolicies;
 
 TEST(DownloadPrefsTest, Prerequisites) {
   // Most of the tests below are based on the assumption that .swf files are not
   // allowed to open automatically, and that .txt files are allowed. If this
   // assumption changes, then we need to update the tests to match.
-  ASSERT_FALSE(download_util::IsAllowedToOpenAutomatically(
+  ASSERT_FALSE(FileTypePolicies::GetInstance()->IsAllowedToOpenAutomatically(
       base::FilePath(FILE_PATH_LITERAL("a.swf"))));
-  ASSERT_TRUE(download_util::IsAllowedToOpenAutomatically(
+  ASSERT_TRUE(FileTypePolicies::GetInstance()->IsAllowedToOpenAutomatically(
       base::FilePath(FILE_PATH_LITERAL("a.txt"))));
 }
 
@@ -115,3 +117,18 @@ TEST(DownloadPrefsTest, AutoOpenCheckIsCaseInsensitive) {
   EXPECT_TRUE(prefs.IsAutoOpenEnabledBasedOnExtension(
       base::FilePath(FILE_PATH_LITERAL("x.Bar"))));
 }
+
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
+TEST(DownloadPrefsTest, AlwaysOpenPdfExternally) {
+  content::TestBrowserThreadBundle threads_are_required_for_testing_profile;
+  TestingProfile profile;
+  profile.GetPrefs()->SetBoolean(prefs::kOpenPdfDownloadInSystemReader, false);
+  profile.GetPrefs()->SetBoolean(prefs::kPluginsAlwaysOpenPdfExternally, true);
+  DownloadPrefs prefs(&profile);
+  prefs.DisableAdobeVersionCheckForTests();
+
+  EXPECT_TRUE(prefs.ShouldOpenPdfInSystemReader());
+  EXPECT_TRUE(prefs.IsAutoOpenEnabledBasedOnExtension(
+      base::FilePath(FILE_PATH_LITERAL("doc.pdf"))));
+}
+#endif

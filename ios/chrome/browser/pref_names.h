@@ -5,50 +5,42 @@
 #ifndef IOS_CHROME_BROWSER_PREF_NAMES_H_
 #define IOS_CHROME_BROWSER_PREF_NAMES_H_
 
-namespace ios {
+// TODO(crbug.com/663469): Remove these includes once embedders are migrated to
+// use the new pref header.
+#include "components/handoff/pref_names_ios.h"
+#include "ios/public/provider/chrome/browser/voice/voice_search_prefs.h"
+
 namespace prefs {
 
-// Preferences in ios::prefs:: are temporary shared with desktop Chrome.
-// Non-shared preferences should be in the prefs:: namespace (no ios::).
 extern const char kAcceptLanguages[];
-extern const char kAllowDeletingBrowserHistory[];
 extern const char kApplicationLocale[];
 extern const char kBrowserStateInfoCache[];
 extern const char kBrowserStateLastUsed[];
 extern const char kBrowserStatesLastActive[];
 extern const char kBrowserStatesNumCreated[];
+extern const char kBrowsingDataMigrationHasBeenPossible[];
+extern const char kClearBrowsingDataHistoryNoticeShownTimes[];
+extern const char kContextualSearchEnabled[];
+extern const char kDataSaverEnabled[];
 extern const char kDefaultCharset[];
 extern const char kEnableDoNotTrack[];
 extern const char kHttpServerProperties[];
+extern const char kIosBookmarkFolderDefault[];
+extern const char kIosBookmarkPromoAlreadySeen[];
+extern const char kIosPhysicalWebEnabled[];
+extern const char kLastSessionExitedCleanly[];
+extern const char kMetricsReportingWifiOnly[];
 extern const char kNtpShownPage[];
 extern const char kSavingBrowserHistoryDisabled[];
 extern const char kSearchSuggestEnabled[];
 
-}  // namespace prefs
-}  // namespace ios
-
-namespace prefs {
-
-extern const char kContextualSearchEnabled[];
-extern const char kIosBookmarkFolderDefault[];
-extern const char kIosBookmarkPromoAlreadySeen[];
-extern const char kBrowsingDataMigrationHasBeenPossible[];
-extern const char kOTRStashStatePathSystemBackupExcluded[];
-extern const char kIosHandoffToOtherDevices[];
-extern const char kLastSessionExitedCleanly[];
-extern const char kLastSessionUsedWKWebViewControlGroup[];
-extern const char kMetricsReportingWifiOnly[];
-
-// TODO(stkhapugin): Consider migrating from these two bools to an integer.
-// http://crbug.com/538573
+// TODO(crbug.com/538573): Consider migrating from these two bools to an integer
+// since only three cases are supported.
 extern const char kNetworkPredictionEnabled[];
 extern const char kNetworkPredictionWifiOnly[];
 
 extern const char kNtpShownBookmarksFolder[];
 extern const char kShowMemoryDebuggingTools[];
-
-extern const char kVoiceSearchLocale[];
-extern const char kVoiceSearchTTS[];
 
 extern const char kSigninLastAccounts[];
 extern const char kSigninLastAccountsMigrated[];

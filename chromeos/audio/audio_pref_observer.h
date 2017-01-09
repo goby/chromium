@@ -5,11 +5,8 @@
 #ifndef CHROMEOS_AUDIO_AUDIO_PREF_OBSERVER_H_
 #define CHROMEOS_AUDIO_AUDIO_PREF_OBSERVER_H_
 
-#include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
 #include "chromeos/chromeos_export.h"
-
-class PrefRegistrySimple;
 
 namespace chromeos {
 

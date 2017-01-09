@@ -12,44 +12,73 @@ import android.test.suitebuilder.annotation.MediumTest;
 import android.view.ContextMenu;
 import android.view.KeyEvent;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
 import org.chromium.chrome.browser.download.DownloadTestBase;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModel;
-import org.chromium.chrome.test.util.TestHttpServerClient;
 import org.chromium.chrome.test.util.browser.contextmenu.ContextMenuUtils;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
+import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.TestTouchUtils;
+import org.chromium.net.test.EmbeddedTestServer;
 
 import java.io.IOException;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Context menu related tests
  */
 @CommandLineFlags.Add(ChromeSwitches.GOOGLE_BASE_URL + "=http://example.com/")
 public class ContextMenuTest extends DownloadTestBase {
-    private static final String TEST_URL = TestHttpServerClient.getUrl(
-            "chrome/test/data/android/contextmenu/context_menu_test.html");
+    private static final String TEST_PATH =
+            "/chrome/test/data/android/contextmenu/context_menu_test.html";
+
+    private EmbeddedTestServer mTestServer;
+    private String mTestUrl;
+
+    private static final String FILENAME_GIF = "download.gif";
+    private static final String FILENAME_PNG = "test_image.png";
+    private static final String FILENAME_WEBM = "test.webm";
+
+    private static final String[] TEST_FILES = new String[] {
+        FILENAME_GIF, FILENAME_PNG, FILENAME_WEBM
+    };
+
+    @Override
+    protected void setUp() throws Exception {
+        mTestServer = EmbeddedTestServer.createAndStartServer(getInstrumentation().getContext());
+        mTestUrl = mTestServer.getURL(TEST_PATH);
+        deleteTestFiles();
+        super.setUp();
+    }
+
+    @Override
+    protected void tearDown() throws Exception {
+        mTestServer.stopAndDestroyServer();
+        deleteTestFiles();
+        super.tearDown();
+    }
 
     @Override
     public void startMainActivity() throws InterruptedException {
-        startMainActivityWithURL(TEST_URL);
+        startMainActivityWithURL(mTestUrl);
         assertWaitForPageScaleFactorMatch(0.5f);
     }
 
     @MediumTest
     @Feature({"Browser", "Main"})
+    @RetryOnFailure
     public void testCopyLinkURL() throws InterruptedException, TimeoutException {
         Tab tab = getActivity().getActivityTab();
         ContextMenuUtils.selectContextMenuItem(this, tab, "testLink",
@@ -60,6 +89,7 @@ public class ContextMenuTest extends DownloadTestBase {
 
     @MediumTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testCopyImageLinkCopiesLinkURL() throws InterruptedException, TimeoutException {
         Tab tab = getActivity().getActivityTab();
         ContextMenuUtils.selectContextMenuItem(this, tab, "testImageLink",
@@ -70,6 +100,7 @@ public class ContextMenuTest extends DownloadTestBase {
 
     @MediumTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testCopyLinkTextSimple() throws InterruptedException, TimeoutException {
         Tab tab = getActivity().getActivityTab();
         ContextMenuUtils.selectContextMenuItem(this, tab, "testLink",
@@ -81,6 +112,7 @@ public class ContextMenuTest extends DownloadTestBase {
 
     @MediumTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testCopyLinkTextComplex() throws InterruptedException, TimeoutException {
         Tab tab = getActivity().getActivityTab();
         ContextMenuUtils.selectContextMenuItem(this, tab, "copyLinkTextComplex",
@@ -92,69 +124,79 @@ public class ContextMenuTest extends DownloadTestBase {
 
     @MediumTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testLongPressOnImage() throws InterruptedException, TimeoutException {
-        final Tab tab = getActivity().getActivityTab();
-
-        TestCallbackHelperContainer helper =
-                new TestCallbackHelperContainer(tab.getContentViewCore());
-
-        OnPageFinishedHelper callback = helper.getOnPageFinishedHelper();
-        int callbackCount = callback.getCallCount();
-
-        ContextMenuUtils.selectContextMenuItem(this, tab, "testImage",
-                R.id.contextmenu_open_image);
-
-        callback.waitForCallback(callbackCount);
-
-        String expectedUrl = TestHttpServerClient.getUrl(
-                "chrome/test/data/android/contextmenu/test_image.png");
-
-        String actualUrl = ThreadUtils.runOnUiThreadBlockingNoException(new Callable<String>() {
-            @Override
-            public String call() throws Exception {
-                return tab.getUrl();
-            }
-        });
-
-        assertEquals("Failed to navigate to the image", expectedUrl, actualUrl);
+        checkOpenImageInNewTab(
+                "testImage", "/chrome/test/data/android/contextmenu/test_image.png");
     }
 
-    @MediumTest
-    @Feature({"Browser"})
+    /**
+     * @MediumTest
+     * @Feature({"Browser"})
+     * @CommandLineFlags.Add(ChromeSwitches.DISABLE_DOCUMENT_MODE)
+    */
+    @FlakyTest(message = "http://crbug.com/606939")
     public void testLongPressOnImageLink() throws InterruptedException, TimeoutException {
-        final Tab tab = getActivity().getActivityTab();
+        checkOpenImageInNewTab(
+                "testImageLink", "/chrome/test/data/android/contextmenu/test_image.png");
+    }
 
-        TestCallbackHelperContainer helper =
-                new TestCallbackHelperContainer(tab.getContentViewCore());
+    private void checkOpenImageInNewTab(String domId, final String expectedPath)
+            throws InterruptedException, TimeoutException {
+        final Tab activityTab = getActivity().getActivityTab();
 
-        OnPageFinishedHelper callback = helper.getOnPageFinishedHelper();
-        int callbackCount = callback.getCallCount();
-
-        ContextMenuUtils.selectContextMenuItem(this, tab, "testImage",
-                R.id.contextmenu_open_image);
-
-        callback.waitForCallback(callbackCount);
-
-        String actualTitle = ThreadUtils.runOnUiThreadBlockingNoException(new Callable<String>() {
+        final CallbackHelper newTabCallback = new CallbackHelper();
+        final AtomicReference<Tab> newTab = new AtomicReference<>();
+        getActivity().getTabModelSelector().addObserver(new EmptyTabModelSelectorObserver() {
             @Override
-            public String call() throws Exception {
-                return tab.getTitle();
+            public void onNewTabCreated(Tab tab) {
+                super.onNewTabCreated(tab);
+
+                if (tab.getParentId() != activityTab.getId()) return;
+                newTab.set(tab);
+                newTabCallback.notifyCalled();
+
+                getActivity().getTabModelSelector().removeObserver(this);
             }
         });
 
-        assertTrue("Navigated to the wrong page.", actualTitle.startsWith("test_image.png"));
+        int callbackCount = newTabCallback.getCallCount();
+
+        ContextMenuUtils.selectContextMenuItem(this, activityTab, domId,
+                R.id.contextmenu_open_image_in_new_tab);
+
+        try {
+            newTabCallback.waitForCallback(callbackCount);
+        } catch (TimeoutException ex) {
+            fail("New tab never created from context menu press");
+        }
+
+        // Only check for the URL matching as the tab will not be fully created in svelte mode.
+        final String expectedUrl = mTestServer.getURL(expectedPath);
+        CriteriaHelper.pollUiThread(Criteria.equals(expectedUrl, new Callable<String>() {
+            @Override
+            public String call() {
+                return newTab.get().getUrl();
+            }
+        }));
     }
 
     @MediumTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testDismissContextMenuOnBack() throws InterruptedException, TimeoutException {
         Tab tab = getActivity().getActivityTab();
         ContextMenu menu = ContextMenuUtils.openContextMenu(this, tab, "testImage");
         assertNotNull("Context menu was not properly created", menu);
-        assertFalse("Context menu did not have window focus", getActivity().hasWindowFocus());
+        CriteriaHelper.pollUiThread(new Criteria("Context menu did not have window focus") {
+            @Override
+            public boolean isSatisfied() {
+                return !getActivity().hasWindowFocus();
+            }
+        });
 
         getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
-        CriteriaHelper.pollForCriteria(new Criteria("Activity did not regain focus.") {
+        CriteriaHelper.pollUiThread(new Criteria("Activity did not regain focus.") {
             @Override
             public boolean isSatisfied() {
                 return getActivity().hasWindowFocus();
@@ -164,15 +206,21 @@ public class ContextMenuTest extends DownloadTestBase {
 
     @MediumTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testDismissContextMenuOnClick() throws InterruptedException, TimeoutException {
         Tab tab = getActivity().getActivityTab();
         ContextMenu menu = ContextMenuUtils.openContextMenu(this, tab, "testImage");
         assertNotNull("Context menu was not properly created", menu);
-        assertFalse("Context menu did not have window focus", getActivity().hasWindowFocus());
+        CriteriaHelper.pollUiThread(new Criteria("Context menu did not have window focus") {
+            @Override
+            public boolean isSatisfied() {
+                return !getActivity().hasWindowFocus();
+            }
+        });
 
         TestTouchUtils.singleClickView(getInstrumentation(), tab.getView(), 0, 0);
 
-        CriteriaHelper.pollForCriteria(new Criteria("Activity did not regain focus.") {
+        CriteriaHelper.pollUiThread(new Criteria("Activity did not regain focus.") {
             @Override
             public boolean isSatisfied() {
                 return getActivity().hasWindowFocus();
@@ -182,6 +230,7 @@ public class ContextMenuTest extends DownloadTestBase {
 
     @MediumTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testCopyEmailAddress() throws InterruptedException, TimeoutException {
         Tab tab = getActivity().getActivityTab();
         ContextMenuUtils.selectContextMenuItem(this, tab, "testEmail",
@@ -193,29 +242,28 @@ public class ContextMenuTest extends DownloadTestBase {
 
     @LargeTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testSaveDataUrl()
             throws InterruptedException, TimeoutException, SecurityException, IOException {
-        saveMediaFromContextMenu("dataUrlIcon", R.id.contextmenu_save_image, "download.gif");
+        saveMediaFromContextMenu("dataUrlIcon", R.id.contextmenu_save_image, FILENAME_GIF);
     }
 
     @LargeTest
     @Feature({"Browser"})
+    @RetryOnFailure
     public void testSaveImage()
             throws InterruptedException, TimeoutException, SecurityException, IOException {
-        saveMediaFromContextMenu("testImage", R.id.contextmenu_save_image, "test_image.png");
+        saveMediaFromContextMenu("testImage", R.id.contextmenu_save_image, FILENAME_PNG);
     }
 
-    /*
-     * Long-pressing on a video tag doesn't show a context menu, so this test fails.
-     * Bug: http://crbug.com/514745
-     *
-     * @LargeTest
-     * @Feature({"Browser"})
-     */
-    @DisabledTest
+    @LargeTest
+    @Feature({"Browser"})
+    @RetryOnFailure
     public void testSaveVideo()
             throws InterruptedException, TimeoutException, SecurityException, IOException {
-        saveMediaFromContextMenu("videoDOMElement", R.id.contextmenu_save_video, "test.mp4");
+        // Click the video to enable playback
+        DOMUtils.clickNode(this, getActivity().getCurrentContentViewCore(), "videoDOMElement");
+        saveMediaFromContextMenu("videoDOMElement", R.id.contextmenu_save_video, FILENAME_WEBM);
     }
 
     /**
@@ -227,7 +275,7 @@ public class ContextMenuTest extends DownloadTestBase {
      */
     @LargeTest
     @Feature({"Browser"})
-    @CommandLineFlags.Add(ChromeSwitches.DISABLE_DOCUMENT_MODE)
+    @RetryOnFailure
     public void testOpenLinksInNewTabsAndVerifyTabIndexOrdering()
             throws InterruptedException, TimeoutException {
         TabModel tabModel = getActivity().getCurrentTabModel();
@@ -243,7 +291,7 @@ public class ContextMenuTest extends DownloadTestBase {
         // Wait for any new tab animation to finish if we're being driven by the compositor.
         final LayoutManager layoutDriver = getActivity()
                 .getCompositorViewHolder().getLayoutManager();
-        CriteriaHelper.pollForUIThreadCriteria(
+        CriteriaHelper.pollUiThread(
                 new Criteria("Background tab animation not finished.") {
                     @Override
                     public boolean isSatisfied() {
@@ -259,15 +307,15 @@ public class ContextMenuTest extends DownloadTestBase {
         assertEquals("Number of open tabs does not match", numOpenedTabs, tabModel.getCount());
 
         // Verify the Url is still the same of Parent page.
-        assertEquals(TEST_URL, getActivity().getActivityTab().getUrl());
+        assertEquals(mTestUrl, getActivity().getActivityTab().getUrl());
 
         // Verify that the background tabs were opened in the expected order.
-        String newTabUrl = TestHttpServerClient.getUrl(
-                "chrome/test/data/android/contextmenu/test_link.html");
+        String newTabUrl = mTestServer.getURL(
+                "/chrome/test/data/android/contextmenu/test_link.html");
         assertEquals(newTabUrl, tabModel.getTabAt(indexOfLinkPage).getUrl());
 
-        String imageUrl = TestHttpServerClient.getUrl(
-                "chrome/test/data/android/contextmenu/test_link2.html");
+        String imageUrl = mTestServer.getURL(
+                "/chrome/test/data/android/contextmenu/test_link2.html");
         assertEquals(imageUrl, tabModel.getTabAt(indexOfLinkPage2).getUrl());
     }
 
@@ -276,10 +324,11 @@ public class ContextMenuTest extends DownloadTestBase {
             SecurityException, IOException {
         // Select "save [image/video]" in that menu.
         Tab tab = getActivity().getActivityTab();
+        int callCount = getChromeDownloadCallCount();
         ContextMenuUtils.selectContextMenuItem(this, tab, mediaDOMElement, saveMenuID);
 
         // Wait for the download to complete and see if we got the right file
-        assertTrue(waitForChromeDownloadToFinish());
+        assertTrue(waitForChromeDownloadToFinish(callCount));
         checkLastDownload(expectedFilename);
     }
 
@@ -295,5 +344,13 @@ public class ContextMenuTest extends DownloadTestBase {
     private void assertStringContains(String subString, String superString) {
         assertTrue("String '" + superString + "' does not contain '" + subString + "'",
                 superString.contains(subString));
+    }
+
+    /**
+     * Makes sure there are no files with names identical to the ones this test uses in the
+     * downloads directory
+     */
+    private void deleteTestFiles() {
+        deleteFilesInDownloadDirectory(TEST_FILES);
     }
 }

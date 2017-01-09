@@ -4,15 +4,21 @@
 
 #include "storage/browser/fileapi/file_system_operation_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/fileapi/mock_file_change_observer.h"
 #include "content/browser/fileapi/mock_file_update_observer.h"
 #include "content/browser/quota/mock_quota_manager.h"
@@ -56,7 +62,7 @@ class FileSystemOperationImplTest
     update_observers_ =
         storage::MockFileUpdateObserver::CreateList(&update_observer_);
 
-    base::FilePath base_dir = base_.path().AppendASCII("filesystem");
+    base::FilePath base_dir = base_.GetPath().AppendASCII("filesystem");
     quota_manager_ =
         new MockQuotaManager(false /* is_incognito */, base_dir,
                              base::ThreadTaskRunnerHandle::Get().get(),
@@ -109,12 +115,12 @@ class FileSystemOperationImplTest
     return &change_observer_;
   }
 
-  scoped_ptr<FileSystemOperationContext> NewContext() {
+  std::unique_ptr<FileSystemOperationContext> NewContext() {
     FileSystemOperationContext* context =
         sandbox_file_system_.NewOperationContext();
     // Grant enough quota for all test cases.
     context->set_allowed_bytes_growth(1000000);
-    return make_scoped_ptr(context);
+    return base::WrapUnique(context);
   }
 
   FileSystemURL URLForPath(const std::string& path) const {
@@ -155,7 +161,7 @@ class FileSystemOperationImplTest
     return url;
   }
 
-  int64 GetFileSize(const std::string& path) {
+  int64_t GetFileSize(const std::string& path) {
     base::File::Info info;
     EXPECT_TRUE(base::GetFileInfo(PlatformPath(path), &info));
     return info.size;
@@ -238,12 +244,12 @@ class FileSystemOperationImplTest
     closure.Run();
   }
 
-  int64 GetDataSizeOnDisk() {
+  int64_t GetDataSizeOnDisk() {
     return sandbox_file_system_.ComputeCurrentOriginUsage() -
         sandbox_file_system_.ComputeCurrentDirectoryDatabaseUsage();
   }
 
-  void GetUsageAndQuota(int64* usage, int64* quota) {
+  void GetUsageAndQuota(int64_t* usage, int64_t* quota) {
     storage::QuotaStatusCode status =
         AsyncFileTestHelper::GetUsageAndQuota(quota_manager_.get(),
                                               sandbox_file_system_.origin(),
@@ -254,8 +260,8 @@ class FileSystemOperationImplTest
     ASSERT_EQ(storage::kQuotaStatusOk, status);
   }
 
-  int64 ComputePathCost(const FileSystemURL& url) {
-    int64 base_usage;
+  int64_t ComputePathCost(const FileSystemURL& url) {
+    int64_t base_usage;
     GetUsageAndQuota(&base_usage, NULL);
 
     AsyncFileTestHelper::CreateFile(
@@ -264,27 +270,27 @@ class FileSystemOperationImplTest
 
     change_observer()->ResetCount();
 
-    int64 total_usage;
+    int64_t total_usage;
     GetUsageAndQuota(&total_usage, NULL);
     return total_usage - base_usage;
   }
 
   void GrantQuotaForCurrentUsage() {
-    int64 usage;
+    int64_t usage;
     GetUsageAndQuota(&usage, NULL);
     quota_manager()->SetQuota(sandbox_file_system_.origin(),
                               sandbox_file_system_.storage_type(),
                               usage);
   }
 
-  int64 GetUsage() {
-    int64 usage = 0;
+  int64_t GetUsage() {
+    int64_t usage = 0;
     GetUsageAndQuota(&usage, NULL);
     return usage;
   }
 
-  void AddQuota(int64 quota_delta) {
-    int64 quota;
+  void AddQuota(int64_t quota_delta) {
+    int64_t quota;
     GetUsageAndQuota(NULL, &quota);
     quota_manager()->SetQuota(sandbox_file_system_.origin(),
                               sandbox_file_system_.storage_type(),
@@ -707,7 +713,7 @@ TEST_F(FileSystemOperationImplTest, TestCopyFailureByQuota) {
   EXPECT_EQ(6, GetFileSize("src/file"));
 
   FileSystemURL dest_file(URLForPath("dest/file"));
-  int64 dest_path_cost = ComputePathCost(dest_file);
+  int64_t dest_path_cost = ComputePathCost(dest_file);
   GrantQuotaForCurrentUsage();
   AddQuota(6 + dest_path_cost - 1);
 
@@ -823,7 +829,7 @@ TEST_F(FileSystemOperationImplTest, TestCopyInForeignFileSuccess) {
 
   FileSystemURL dest_dir(CreateDirectory("dest"));
 
-  int64 before_usage;
+  int64_t before_usage;
   GetUsageAndQuota(&before_usage, NULL);
 
   // Check that the file copied and corresponding usage increased.
@@ -833,7 +839,7 @@ TEST_F(FileSystemOperationImplTest, TestCopyInForeignFileSuccess) {
 
   EXPECT_EQ(1, change_observer()->create_file_count());
   EXPECT_TRUE(FileExists("dest/file"));
-  int64 after_usage;
+  int64_t after_usage;
   GetUsageAndQuota(&after_usage, NULL);
   EXPECT_GT(after_usage, before_usage);
 
@@ -1219,7 +1225,7 @@ TEST_F(FileSystemOperationImplTest,
   EXPECT_EQ(base::File::FILE_OK, Truncate(grandchild_file1, 30));
   EXPECT_EQ(base::File::FILE_OK, Truncate(grandchild_file2, 2));
 
-  const int64 all_file_size = 5000 + 400 + 30 + 2;
+  const int64_t all_file_size = 5000 + 400 + 30 + 2;
   EXPECT_EQ(all_file_size, GetDataSizeOnDisk());
   EXPECT_EQ(all_file_size + total_path_cost, GetUsage());
 
@@ -1242,17 +1248,17 @@ TEST_F(FileSystemOperationImplTest,
   FileSystemURL dest1(CreateDirectory("dest1"));
   FileSystemURL dest2(CreateDirectory("dest2"));
 
-  int64 usage = GetUsage();
+  int64_t usage = GetUsage();
   FileSystemURL child_file1(CreateFile("src/file1"));
   FileSystemURL child_file2(CreateFile("src/file2"));
   FileSystemURL child_dir(CreateDirectory("src/dir"));
-  int64 child_path_cost = GetUsage() - usage;
+  int64_t child_path_cost = GetUsage() - usage;
   usage += child_path_cost;
 
   FileSystemURL grandchild_file1(CreateFile("src/dir/file1"));
   FileSystemURL grandchild_file2(CreateFile("src/dir/file2"));
-  int64 total_path_cost = GetUsage();
-  int64 grandchild_path_cost = total_path_cost - usage;
+  int64_t total_path_cost = GetUsage();
+  int64_t grandchild_path_cost = total_path_cost - usage;
 
   EXPECT_EQ(0, GetDataSizeOnDisk());
 
@@ -1261,10 +1267,10 @@ TEST_F(FileSystemOperationImplTest,
   EXPECT_EQ(base::File::FILE_OK, Truncate(grandchild_file1, 60));
   EXPECT_EQ(base::File::FILE_OK, Truncate(grandchild_file2, 5));
 
-  const int64 child_file_size = 8000 + 700;
-  const int64 grandchild_file_size = 60 + 5;
-  const int64 all_file_size = child_file_size + grandchild_file_size;
-  int64 expected_usage = all_file_size + total_path_cost;
+  const int64_t child_file_size = 8000 + 700;
+  const int64_t grandchild_file_size = 60 + 5;
+  const int64_t all_file_size = child_file_size + grandchild_file_size;
+  int64_t expected_usage = all_file_size + total_path_cost;
 
   usage = GetUsage();
   EXPECT_EQ(all_file_size, GetDataSizeOnDisk());

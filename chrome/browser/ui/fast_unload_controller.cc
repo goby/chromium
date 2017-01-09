@@ -6,8 +6,9 @@
 
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/ui/browser.h"
@@ -21,9 +22,14 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "extensions/features/features.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "extensions/browser/extension_registry.h"
+#include "extensions/common/constants.h"
+#endif  // (ENABLE_EXTENSIONS)
 
 namespace chrome {
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // DetachedWebContentsDelegate will delete web contents when they close.
@@ -72,7 +78,6 @@ bool FastUnloadController::CanCloseContents(content::WebContents* contents) {
       is_calling_before_unload_handlers();
 }
 
-// static
 bool FastUnloadController::ShouldRunUnloadEventsHelper(
     content::WebContents* contents) {
   // If |contents| is being inspected, devtools needs to intercept beforeunload
@@ -80,9 +85,28 @@ bool FastUnloadController::ShouldRunUnloadEventsHelper(
   return DevToolsWindow::GetInstanceForInspectedWebContents(contents) != NULL;
 }
 
-// static
 bool FastUnloadController::RunUnloadEventsHelper(
     content::WebContents* contents) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // Don't run for extensions that are disabled or uninstalled; the tabs will
+  // be killed if they make any network requests, and the extension shouldn't
+  // be doing any work if it's removed.
+  GURL url = contents->GetLastCommittedURL();
+  if (url.SchemeIs(extensions::kExtensionScheme) &&
+      !extensions::ExtensionRegistry::Get(browser_->profile())
+           ->enabled_extensions()
+           .GetExtensionOrAppByURL(url)) {
+    return false;
+  }
+#endif  // (ENABLE_EXTENSIONS)
+
+  // Special case for when we quit an application. The Devtools window can
+  // close if it's beforeunload event has already fired which will happen due
+  // to the interception of it's content's beforeunload.
+  if (browser_->is_devtools() &&
+      DevToolsWindow::HasFiredBeforeUnloadEventForDevToolsBrowser(browser_))
+    return false;
+
   // If there's a devtools window attached to |contents|,
   // we would like devtools to call its own beforeunload handlers first,
   // and then call beforeunload handlers for |contents|.
@@ -99,7 +123,7 @@ bool FastUnloadController::RunUnloadEventsHelper(
     // them. Once they have fired, we'll get a message back saying whether
     // to proceed closing the page or not, which sends us back to this method
     // with the NeedToFireBeforeUnload bit cleared.
-    contents->DispatchBeforeUnload(false);
+    contents->DispatchBeforeUnload();
     return true;
   }
   return false;
@@ -272,25 +296,18 @@ void FastUnloadController::Observe(
       int type,
       const content::NotificationSource& source,
       const content::NotificationDetails& details) {
-  switch (type) {
-    case content::NOTIFICATION_WEB_CONTENTS_DISCONNECTED: {
-      registrar_.Remove(this,
-                        content::NOTIFICATION_WEB_CONTENTS_DISCONNECTED,
-                        source);
-      content::WebContents* contents =
-          content::Source<content::WebContents>(source).ptr();
-      ClearUnloadState(contents);
-      break;
-    }
-    default:
-      NOTREACHED() << "Got a notification we didn't register for.";
-  }
+  DCHECK_EQ(content::NOTIFICATION_WEB_CONTENTS_DISCONNECTED, type);
+
+  registrar_.Remove(this, content::NOTIFICATION_WEB_CONTENTS_DISCONNECTED,
+                    source);
+  ClearUnloadState(content::Source<content::WebContents>(source).ptr());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // FastUnloadController, TabStripModelObserver implementation:
 
-void FastUnloadController::TabInsertedAt(content::WebContents* contents,
+void FastUnloadController::TabInsertedAt(TabStripModel* tab_strip_model,
+                                         content::WebContents* contents,
                                          int index,
                                          bool foreground) {
   TabAttachedImpl(contents);
@@ -396,7 +413,7 @@ void FastUnloadController::ProcessPendingTabs() {
       // and then call beforeunload handlers for |contents|.
       // See DevToolsWindow::InterceptPageBeforeUnload for details.
       if (!DevToolsWindow::InterceptPageBeforeUnload(contents))
-        contents->DispatchBeforeUnload(false);
+        contents->DispatchBeforeUnload();
     } else {
       ProcessPendingTabs();
     }

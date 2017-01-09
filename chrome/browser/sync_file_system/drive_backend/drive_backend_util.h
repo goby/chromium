@@ -5,27 +5,24 @@
 #ifndef CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_DRIVE_BACKEND_UTIL_H_
 #define CHROME_BROWSER_SYNC_FILE_SYSTEM_DRIVE_BACKEND_DRIVE_BACKEND_UTIL_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.pb.h"
 #include "chrome/browser/sync_file_system/sync_status_code.h"
 #include "google_apis/drive/drive_api_error_codes.h"
 #include "storage/browser/blob/scoped_file.h"
-
-namespace google_apis {
-class ChangeResource;
-class FileResource;
-}
 
 namespace sync_file_system {
 namespace drive_backend {
 
 class LevelDBWrapper;
 
-void PutVersionToDB(int64 version, LevelDBWrapper* db);
+void PutVersionToDB(int64_t version, LevelDBWrapper* db);
 
 void PutServiceMetadataToDB(const ServiceMetadata& service_metadata,
                             LevelDBWrapper* db);
@@ -34,7 +31,7 @@ void PutFileTrackerToDB(const FileTracker& tracker, LevelDBWrapper* db);
 
 void PutFileMetadataDeletionToDB(const std::string& file_id,
                                  LevelDBWrapper* db);
-void PutFileTrackerDeletionToDB(int64 tracker_id, LevelDBWrapper* db);
+void PutFileTrackerDeletionToDB(int64_t tracker_id, LevelDBWrapper* db);
 
 bool HasFileAsParent(const FileDetails& details, const std::string& file_id);
 
@@ -50,7 +47,7 @@ SyncStatusCode DriveApiErrorCodeToSyncStatusCode(
 bool RemovePrefix(const std::string& str, const std::string& prefix,
                   std::string* out);
 
-scoped_ptr<ServiceMetadata> InitializeServiceMetadata(LevelDBWrapper* db);
+std::unique_ptr<ServiceMetadata> InitializeServiceMetadata(LevelDBWrapper* db);
 
 template <typename Src, typename Dest>
 void AppendContents(const Src& src, Dest* dest) {

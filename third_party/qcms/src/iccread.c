@@ -258,88 +258,107 @@ static struct tag_index read_tag_table(qcms_profile *profile, struct mem_source 
  */
 qcms_bool qcms_profile_is_bogus(qcms_profile *profile)
 {
-        float rX, rY, rZ, gX, gY, gZ, bX, bY, bZ;
-        float target[3], tolerance[3], sum[3];
-        unsigned i;
+    float rX, rY, rZ, gX, gY, gZ, bX, bY, bZ;
+    float target[3], tolerance[3], sum[3];
+    unsigned i;
 
-        // We currently only check the bogosity of RGB profiles.
-        if (profile->color_space != RGB_SIGNATURE)
-               return false;
+    // We currently only check the bogosity of RGB profiles.
+    if (profile->color_space != RGB_SIGNATURE)
+        return false;
 
-        if (qcms_supports_iccv4 && (profile->A2B0 || profile->B2A0))
-               return false;
+    if (qcms_supports_iccv4 && (profile->A2B0 || profile->B2A0))
+        return false;
 
-        rX = s15Fixed16Number_to_float(profile->redColorant.X);
-        rY = s15Fixed16Number_to_float(profile->redColorant.Y);
-        rZ = s15Fixed16Number_to_float(profile->redColorant.Z);
+    rX = s15Fixed16Number_to_float(profile->redColorant.X);
+    rY = s15Fixed16Number_to_float(profile->redColorant.Y);
+    rZ = s15Fixed16Number_to_float(profile->redColorant.Z);
 
-        gX = s15Fixed16Number_to_float(profile->greenColorant.X);
-        gY = s15Fixed16Number_to_float(profile->greenColorant.Y);
-        gZ = s15Fixed16Number_to_float(profile->greenColorant.Z);
+    gX = s15Fixed16Number_to_float(profile->greenColorant.X);
+    gY = s15Fixed16Number_to_float(profile->greenColorant.Y);
+    gZ = s15Fixed16Number_to_float(profile->greenColorant.Z);
 
-        bX = s15Fixed16Number_to_float(profile->blueColorant.X);
-        bY = s15Fixed16Number_to_float(profile->blueColorant.Y);
-        bZ = s15Fixed16Number_to_float(profile->blueColorant.Z);
+    bX = s15Fixed16Number_to_float(profile->blueColorant.X);
+    bY = s15Fixed16Number_to_float(profile->blueColorant.Y);
+    bZ = s15Fixed16Number_to_float(profile->blueColorant.Z);
 
-        // Build our target vector: CIE D50 white. See also mozilla bug 460629,
-        // and http://www.color.org/whyd50.xalter "Why is the media white point
-        // of a display profile always D50?"
+    // Build our target vector: CIE D50 white. See also mozilla bug 460629,
+    // and http://www.color.org/whyd50.xalter "Why is the media white point
+    // of a display profile always D50?"
 
-        target[0] = (float) 0.96420;
-        target[1] = (float) 1.00000;
-        target[2] = (float) 0.82491;
+    target[0] = (float) 0.96420;
+    target[1] = (float) 1.00000;
+    target[2] = (float) 0.82491;
 
-        // Our tolerance vector - Recommended by Chris Murphy [1] based on
-        // conversion from the L*a*b space criterion of no more than 3 in any
-        // one channel. This is similar to, but slightly more tolerant than
-        // Adobe's criterion. [1] https://bugzil.la/460629#c10
+    // Our tolerance vector - Recommended by Chris Murphy [1] based on
+    // conversion from the L*a*b space criterion of no more than 3 in any
+    // one channel. This is similar to, but slightly more tolerant than
+    // Adobe's criterion. [1] https://bugzil.la/460629#c10
 
-        tolerance[0] = (float) 0.02;
-        tolerance[1] = (float) 0.02;
-        tolerance[2] = (float) 0.04;
+    tolerance[0] = (float) 0.02;
+    tolerance[1] = (float) 0.02;
+    tolerance[2] = (float) 0.04;
 
-        // Sum the XYZ values: they should add to D50 white, within tolerance.
+    // Sum the XYZ values: they should add to D50 white, within tolerance.
 
-        // FIXME: this test assumes the TRC RGB curves equal 1.0 for the white
-        // input (255,255,255) RGB test color. For user display profiles, that
-        // is the normal case. Profiles with abnormal TRC exist. A better test
-        // would transform 255,255,255 white through the profile to either XYZ
-        // or L*a*b color and compare the result to D50 in XYZ or L*a*b color.
+    // FIXME: this test assumes the TRC RGB curves equal 1.0 for the white
+    // input (255,255,255) RGB test color. For user display profiles, that
+    // is the normal case. Profiles with abnormal TRC exist. A better test
+    // would transform 255,255,255 white through the profile to either XYZ
+    // or L*a*b color and compare the result to D50 in XYZ or L*a*b color.
 
-        sum[0] = rX + gX + bX;
-        sum[1] = rY + gY + bY;
-        sum[2] = rZ + gZ + bZ;
+    sum[0] = rX + gX + bX;
+    sum[1] = rY + gY + bY;
+    sum[2] = rZ + gZ + bZ;
 
-        for (i = 0; i < 3; ++i) {
-            if (!(((sum[i] - tolerance[i]) <= target[i]) &&
-                  ((sum[i] + tolerance[i]) >= target[i]))) {
-                return true; // out of tolerance: bogus
-            }
+    for (i = 0; i < 3; ++i) {
+        if (!(((sum[i] - tolerance[i]) <= target[i]) &&
+              ((sum[i] + tolerance[i]) >= target[i]))) {
+            return true; // out of tolerance: bogus
         }
+    }
 
 #ifndef __APPLE__
+    // Check if any of the XYZ values are negative (see mozilla bug 498245)
+    // CIEXYZ tristimulus values cannot be negative according to the spec.
 
-        // Check if any of the XYZ values are negative (see mozilla bug 498245)
-        // CIEXYZ tristimulus values cannot be negative according to the spec.
+    bool negative =
+        (rX < 0) || (rY < 0) || (rZ < 0) ||
+        (gX < 0) || (gY < 0) || (gZ < 0) ||
+        (bX < 0) || (bY < 0) || (bZ < 0);
 
-        bool negative =
-            (rX < 0) || (rY < 0) || (rZ < 0) ||
-            (gX < 0) || (gY < 0) || (gZ < 0) ||
-            (bX < 0) || (bY < 0) || (bZ < 0);
-
-        if (negative)
-            return true; // bogus
+    if (negative)
+        return true; // bogus
 #else
-        // Chromatic adaption to D50 can result in negative XYZ, but the white
-        // point D50 tolerance test has passed. Accept negative values herein.
-        // See https://bugzilla.mozilla.org/show_bug.cgi?id=498245#c18 onwards
-        // for discussion about whether profile XYZ can or cannot be negative,
-        // per the spec. Also the https://bugzil.la/450923 user report.
+    // Chromatic adaption to D50 can result in negative XYZ, but the white
+    // point D50 tolerance test has passed. Accept negative values herein.
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=498245#c18 onwards
+    // for discussion about whether profile XYZ can or cannot be negative,
+    // per the spec. Also the https://bugzil.la/450923 user report.
 
-        // FIXME: allow this relaxation on all ports?
+    // FIXME: allow this relaxation on all ports?
 #endif
-        // All good.
-        return false;
+    // All good.
+    return false;
+}
+
+qcms_bool qcms_profile_has_white_point(qcms_profile *profile)
+{
+    struct XYZNumber wp = profile->mediaWhitePoint;
+
+    return (wp.X != 0) && (wp.Y != 0) && (wp.Z != 0);
+}
+
+qcms_xyz_float qcms_profile_get_white_point(qcms_profile *profile)
+{
+    qcms_xyz_float wp = { 0.0f, 0.0f, 0.0f };
+
+    if (qcms_profile_has_white_point(profile)) {
+        wp.X = s15Fixed16Number_to_float(profile->mediaWhitePoint.X);
+        wp.Y = s15Fixed16Number_to_float(profile->mediaWhitePoint.Y);
+        wp.Z = s15Fixed16Number_to_float(profile->mediaWhitePoint.Z);
+    }
+
+    return wp;
 }
 
 #define TAG_bXYZ 0x6258595a
@@ -354,6 +373,7 @@ qcms_bool qcms_profile_is_bogus(qcms_profile *profile)
 #define TAG_CHAD 0x63686164
 #define TAG_desc 0x64657363
 #define TAG_vcgt 0x76636774
+#define TAG_wtpt 0x77747074
 
 static struct tag *find_tag(struct tag_index index, uint32_t tag_id)
 {
@@ -1142,6 +1162,7 @@ static struct curveType *curve_from_gamma(float gamma)
 	curve = malloc(sizeof(struct curveType) + sizeof(uInt16Number)*num_entries);
 	if (!curve)
 		return NULL;
+	curve->type = CURVE_TYPE;
 	curve->count = num_entries;
 	curve->data[0] = float_to_u8Fixed8Number(gamma);
 	return curve;
@@ -1162,7 +1183,6 @@ qcms_profile* qcms_profile_create_rgb_with_gamma(
 	if (!profile)
 		return NO_MEM_PROFILE;
 
-	//XXX: should store the whitepoint
 	if (!set_rgb_colorants(profile, white_point, primaries)) {
 		qcms_profile_release(profile);
 		return INVALID_PROFILE;
@@ -1176,6 +1196,7 @@ qcms_profile* qcms_profile_create_rgb_with_gamma(
 		qcms_profile_release(profile);
 		return NO_MEM_PROFILE;
 	}
+
 	profile->class = DISPLAY_DEVICE_PROFILE;
 	profile->rendering_intent = QCMS_INTENT_PERCEPTUAL;
 	profile->color_space = RGB_SIGNATURE;
@@ -1192,7 +1213,6 @@ qcms_profile* qcms_profile_create_rgb_with_table(
 	if (!profile)
 		return NO_MEM_PROFILE;
 
-	//XXX: should store the whitepoint
 	if (!set_rgb_colorants(profile, white_point, primaries)) {
 		qcms_profile_release(profile);
 		return INVALID_PROFILE;
@@ -1206,6 +1226,7 @@ qcms_profile* qcms_profile_create_rgb_with_table(
 		qcms_profile_release(profile);
 		return NO_MEM_PROFILE;
 	}
+
 	profile->class = DISPLAY_DEVICE_PROFILE;
 	profile->rendering_intent = QCMS_INTENT_PERCEPTUAL;
 	profile->color_space = RGB_SIGNATURE;
@@ -1218,7 +1239,7 @@ qcms_profile* qcms_profile_create_rgb_with_table(
  * Invalid values of tempK will return
  * (x,y,Y) = (-1.0, -1.0, -1.0)
  * similar to argyll: icx_DTEMP2XYZ() */
-static qcms_CIE_xyY white_point_from_temp(int temp_K)
+qcms_CIE_xyY white_point_from_temp(int temp_K)
 {
 	qcms_CIE_xyY white_point;
 	double x, y;
@@ -1271,25 +1292,78 @@ qcms_profile* qcms_profile_sRGB(void)
 	qcms_profile *profile;
 	uint16_t *table;
 
-	qcms_CIE_xyYTRIPLE Rec709Primaries = {
-		{0.6400, 0.3300, 1.0},
-		{0.3000, 0.6000, 1.0},
-		{0.1500, 0.0600, 1.0}
+	// Standard Illuminant D65 in XYZ coordinates, which is the standard
+	// sRGB IEC61966-2.1 / Rec.709 profile reference media white point.
+	struct XYZNumber D65 = {
+		0xf351, 0x10000, 0x116cc // ( 0.950455, 1.000000, 1.089050 )
 	};
-	qcms_CIE_xyY D65;
 
-	D65 = white_point_from_temp(6504);
+	// sRGB IEC61966-2.1 / Rec.709 color profile primaries, chromatically
+	// adapted (via Bradford procedures) to D50 white point.
+	// For details, refer to crbug/580917
+#if 0
+	// lindbloom: ASTM E308-01 D50 White point.
+	s15Fixed16Number primaries[3][3] = {
+		{ 0x06fa3, 0x06294, 0x024a1 }, // ( 0.436081, 0.385071, 0.143082 )
+		{ 0x038f6, 0x0b785, 0x00f85 }, // ( 0.222504, 0.716873, 0.060623 )
+		{ 0x00391, 0x018dc, 0x0b6d4 }, // ( 0.013931, 0.097107, 0.714172 )
+	};
+#else
+	// ninedegreesbelow: ICC D50 White point.
+	s15Fixed16Number primaries[3][3] = {
+		{ 0x06fa0, 0x06296, 0x024a0 }, // ( 0.436035, 0.385101, 0.143066 )
+		{ 0x038f2, 0x0b789, 0x00f85 }, // ( 0.222443, 0.716934, 0.060623 )
+		{ 0x0038f, 0x018da, 0x0b6c4 }, // ( 0.013901, 0.097076, 0.713928 )
+	};
+#endif
 
 	table = build_sRGB_gamma_table(1024);
 
 	if (!table)
 		return NO_MEM_PROFILE;
 
-	profile = qcms_profile_create_rgb_with_table(D65, Rec709Primaries, table, 1024);
-	if (profile)
-		strcpy(profile->description, "sRGB IEC61966-2.1");
+	profile = qcms_profile_create();
+
+	if (!profile) {
+		free(table);
+		return NO_MEM_PROFILE;
+	}
+
+	profile->redTRC = curve_from_table(table, 1024);
+	profile->blueTRC = curve_from_table(table, 1024);
+	profile->greenTRC = curve_from_table(table, 1024);
+
+	if (!profile->redTRC || !profile->blueTRC || !profile->greenTRC) {
+		qcms_profile_release(profile);
+		free(table);
+		return NO_MEM_PROFILE;
+	}
+
+	profile->redColorant.X = primaries[0][0];
+	profile->redColorant.Y = primaries[1][0];
+	profile->redColorant.Z = primaries[2][0];
+
+	profile->greenColorant.X = primaries[0][1];
+	profile->greenColorant.Y = primaries[1][1];
+	profile->greenColorant.Z = primaries[2][1];
+
+	profile->blueColorant.X = primaries[0][2];
+	profile->blueColorant.Y = primaries[1][2];
+	profile->blueColorant.Z = primaries[2][2];
+
+	profile->mediaWhitePoint.X = D65.X;
+	profile->mediaWhitePoint.Y = D65.Y;
+	profile->mediaWhitePoint.Z = D65.Z;
+
+	profile->class = DISPLAY_DEVICE_PROFILE;
+	profile->rendering_intent = QCMS_INTENT_PERCEPTUAL;
+	profile->color_space = RGB_SIGNATURE;
+	profile->pcs = XYZ_SIGNATURE;
+
+	strcpy(profile->description, "sRGB IEC61966-2.1");
 
 	free(table);
+
 	return profile;
 }
 
@@ -1408,6 +1482,12 @@ qcms_profile* qcms_profile_from_memory(const void *mem, size_t size)
 		}
 	} else {
 		goto invalid_tag_table;
+	}
+
+	// Profiles other than DeviceLink should have a media white point.
+	// Here we read it if present.
+	if (find_tag(index, TAG_wtpt)) {
+		profile->mediaWhitePoint = read_tag_XYZType(src, index, TAG_wtpt);
 	}
 
 	if (!src->valid)

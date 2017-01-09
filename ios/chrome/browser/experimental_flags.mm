@@ -15,49 +15,128 @@
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
+#include "base/strings/sys_string_conversions.h"
 #include "components/autofill/core/common/autofill_switches.h"
-#include "components/enhanced_bookmarks/enhanced_bookmark_features.h"
+#include "components/reading_list/core/reading_list_switches.h"
 #include "components/variations/variations_associated_data.h"
 #include "ios/chrome/browser/chrome_switches.h"
 #include "ios/web/public/web_view_creation_util.h"
 
 namespace {
+
 NSString* const kEnableAlertOnBackgroundUpload =
     @"EnableAlertsOnBackgroundUpload";
+NSString* const kEnableNewClearBrowsingDataUI = @"EnableNewClearBrowsingDataUI";
+NSString* const kEnableStartupCrash = @"EnableStartupCrash";
 NSString* const kEnableViewCopyPasswords = @"EnableViewCopyPasswords";
+NSString* const kExternalAppPromptDisabled = @"ExternalAppPromptDisabled";
+NSString* const kFirstRunForceEnabled = @"FirstRunForceEnabled";
+NSString* const kForceResetContextualSearch = @"ForceResetContextualSearch";
+NSString* const kGaiaEnvironment = @"GAIAEnvironment";
 NSString* const kHeuristicsForPasswordGeneration =
     @"HeuristicsForPasswordGeneration";
-const char* const kWKWebViewTrialName = "IOSUseWKWebView";
+NSString* const kMDMIntegrationDisabled = @"MDMIntegrationDisabled";
+NSString* const kOriginServerHost = @"AlternateOriginServerHost";
+NSString* const kPendingIndexNavigationDisabled =
+    @"PendingIndexNavigationDisabled";
+NSString* const kSafariVCSignInDisabled = @"SafariVCSignInDisabled";
+NSString* const kWhatsNewPromoStatus = @"WhatsNewPromoStatus";
 
-enum class WKWebViewEligibility {
-  // UNSET indicates that no explicit call to set eligibility has been made,
-  // nor has a default value been assumed due to checking eligibility.
-  UNSET,
-  ELIGIBLE,
-  INELIGIBLE
-};
-WKWebViewEligibility g_wkwebview_trial_eligibility =
-    WKWebViewEligibility::UNSET;
+const base::Feature kIOSDownloadImageRenaming{
+    "IOSDownloadImageRenaming", base::FEATURE_DISABLED_BY_DEFAULT};
+
 }  // namespace
 
 namespace experimental_flags {
+
+bool AlwaysDisplayFirstRun() {
+  return
+      [[NSUserDefaults standardUserDefaults] boolForKey:kFirstRunForceEnabled];
+}
+
+GaiaEnvironment GetGaiaEnvironment() {
+  NSString* gaia_environment =
+      [[NSUserDefaults standardUserDefaults] objectForKey:kGaiaEnvironment];
+  if ([gaia_environment isEqualToString:@"Staging"])
+    return GAIA_ENVIRONMENT_STAGING;
+  if ([gaia_environment isEqualToString:@"Test"])
+    return GAIA_ENVIRONMENT_TEST;
+  return GAIA_ENVIRONMENT_PROD;
+}
+
+std::string GetOriginServerHost() {
+  NSString* alternateHost =
+      [[NSUserDefaults standardUserDefaults] stringForKey:kOriginServerHost];
+  return base::SysNSStringToUTF8(alternateHost);
+}
+
+WhatsNewPromoStatus GetWhatsNewPromoStatus() {
+  NSInteger status = [[NSUserDefaults standardUserDefaults]
+      integerForKey:kWhatsNewPromoStatus];
+  return static_cast<WhatsNewPromoStatus>(status);
+}
 
 bool IsAlertOnBackgroundUploadEnabled() {
   return [[NSUserDefaults standardUserDefaults]
       boolForKey:kEnableAlertOnBackgroundUpload];
 }
 
-bool IsBookmarkCollectionEnabled() {
-  return enhanced_bookmarks::IsEnhancedBookmarksEnabled();
+bool IsAllBookmarksEnabled() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kEnableAllBookmarksView)) {
+    return true;
+  } else if (command_line->HasSwitch(switches::kDisableAllBookmarksView)) {
+    return false;
+  }
+
+  // Check if the finch experiment exists.
+  std::string group_name =
+      base::FieldTrialList::FindFullName("RemoveAllBookmarks");
+
+  if (group_name.empty()) {
+    return false;  // If no finch experiment, all bookmarks is disabled.
+  }
+  return base::StartsWith(group_name, "Enabled",
+                          base::CompareCase::INSENSITIVE_ASCII);
 }
 
-void SetWKWebViewTrialEligibility(bool eligible) {
-  // It's critical that the enabled state be consistently reported throughout
-  // the life of the app, so ensure that this has not already been set.
-  DCHECK(g_wkwebview_trial_eligibility == WKWebViewEligibility::UNSET);
+bool IsAutoReloadEnabled() {
+  std::string group_name = base::FieldTrialList::FindFullName("IOSAutoReload");
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kEnableOfflineAutoReload))
+    return true;
+  if (command_line->HasSwitch(switches::kDisableOfflineAutoReload))
+    return false;
+  return base::StartsWith(group_name, "Enabled",
+                          base::CompareCase::INSENSITIVE_ASCII);
+}
 
-  g_wkwebview_trial_eligibility = eligible ? WKWebViewEligibility::ELIGIBLE
-                                           : WKWebViewEligibility::INELIGIBLE;
+bool IsCredentialManagementEnabled() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  return command_line->HasSwitch(switches::kEnableCredentialManagerAPI);
+}
+
+bool IsDownloadRenamingEnabled() {
+  // Check if the experimental flag is forced on or off.
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kEnableDownloadImageRenaming)) {
+    return true;
+  } else if (command_line->HasSwitch(switches::kDisableDownloadImageRenaming)) {
+    return false;
+  }
+
+  // Check if the finch experiment is turned on.
+  return base::FeatureList::IsEnabled(kIOSDownloadImageRenaming);
+}
+
+bool IsExternalApplicationPromptEnabled() {
+  return ![[NSUserDefaults standardUserDefaults]
+      boolForKey:kExternalAppPromptDisabled];
+}
+
+bool IsForceResetContextualSearchEnabled() {
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:kForceResetContextualSearch];
 }
 
 bool IsLRUSnapshotCacheEnabled() {
@@ -76,116 +155,38 @@ bool IsLRUSnapshotCacheEnabled() {
                           base::CompareCase::INSENSITIVE_ASCII);
 }
 
-// Helper method that returns true if it is safe to check the finch group for
-// the IOSUseWKWebView experiment.  Some users are ineligible to be in the
-// trial, so for those users, this method returns false.  If this method returns
-// false, do not check for the current finch group, as doing so will incorrectly
-// mark the current user as being in the experiment.
-bool CanCheckWKWebViewExperiment() {
-  // True if this user is eligible for the WKWebView experiment and it is ok to
-  // check the experiment group.
-  static bool ok_to_check_finch = false;
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    // If g_wkwebview_trial_eligibility hasn't been set, default it to
-    // ineligible. This ensures future calls to try to set it will DCHECK.
-    if (g_wkwebview_trial_eligibility == WKWebViewEligibility::UNSET) {
-      g_wkwebview_trial_eligibility = WKWebViewEligibility::INELIGIBLE;
-    }
-
-    // If WKWebView isn't supported, don't activate the experiment at all. This
-    // avoids someone being slotted into the WKWebView bucket (and thus
-    // reporting as WKWebView), but actually running UIWebView.
-    if (!web::IsWKWebViewSupported()) {
-      ok_to_check_finch = false;
-      return;
-    }
-
-    // Check for a flag forcing a specific group.  Even ineligible users can be
-    // opted into WKWebView if an override flag is set.
-    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-    bool trial_overridden =
-        command_line->HasSwitch(switches::kEnableIOSWKWebView) ||
-        command_line->HasSwitch(switches::kDisableIOSWKWebView);
-
-    // If the user isn't eligible for the trial (i.e., their state is such that
-    // they should not be automatically selected for the group), and there's no
-    // explicit override, don't check the group (again, to avoid having them
-    // report as part of a group at all).
-    if (g_wkwebview_trial_eligibility == WKWebViewEligibility::INELIGIBLE &&
-        !trial_overridden) {
-      ok_to_check_finch = false;
-      return;
-    }
-
-    ok_to_check_finch = true;
-  });
-
-  return ok_to_check_finch;
+bool IsMDMIntegrationEnabled() {
+  return ![[NSUserDefaults standardUserDefaults]
+      boolForKey:kMDMIntegrationDisabled];
 }
 
-bool IsWKWebViewEnabled() {
-  if (!CanCheckWKWebViewExperiment()) {
-    return false;
-  }
-
-  // Now that it's been established that user is a candidate, set up the trial
-  // by checking the group.
-  std::string group_name =
-      base::FieldTrialList::FindFullName(kWKWebViewTrialName);
-
-  // Check if the experimental flag is turned on.
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kEnableIOSWKWebView))
-    return true;
-  else if (command_line->HasSwitch(switches::kDisableIOSWKWebView))
-    return false;
-
-  // Check if the finch experiment is turned on.
-  return base::StartsWith(group_name, "Enabled",
-                          base::CompareCase::INSENSITIVE_ASCII);
+bool IsMemoryDebuggingEnabled() {
+// Always return true for Chromium builds, but check the user default for
+// official builds because memory debugging should never be enabled on stable.
+#if CHROMIUM_BUILD
+  return true;
+#else
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:@"EnableMemoryDebugging"];
+#endif  // CHROMIUM_BUILD
 }
 
-bool IsTargetedToWKWebViewExperimentControlGroup() {
-  base::FieldTrial* trial = base::FieldTrialList::Find(kWKWebViewTrialName);
-  if (!trial)
-    return false;
-  std::string group_name = trial->GetGroupNameWithoutActivation();
-  return base::StartsWith(group_name, "Control",
-                          base::CompareCase::INSENSITIVE_ASCII);
-}
-
-bool IsInWKWebViewExperimentControlGroup() {
-  if (!CanCheckWKWebViewExperiment()) {
-    return false;
-  }
-  std::string group_name =
-      base::FieldTrialList::FindFullName(kWKWebViewTrialName);
-  return base::StartsWith(group_name, "Control",
-                          base::CompareCase::INSENSITIVE_ASCII);
-}
-
-std::string GetWKWebViewSearchParams() {
-  if (!CanCheckWKWebViewExperiment()) {
-    return std::string();
-  }
-
-  return variations::GetVariationParamValue(kWKWebViewTrialName, "esrch");
-}
-
-bool AreKeyboardCommandsEnabled() {
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  return command_line &&
-         !command_line->HasSwitch(switches::kDisableKeyboardCommands);
-}
-
-bool IsViewCopyPasswordsEnabled() {
-  NSString* viewCopyPasswordFlag = [[NSUserDefaults standardUserDefaults]
-      objectForKey:kEnableViewCopyPasswords];
-  if ([viewCopyPasswordFlag isEqualToString:@"Enabled"])
+bool IsNewClearBrowsingDataUIEnabled() {
+  NSString* countersFlag = [[NSUserDefaults standardUserDefaults]
+      objectForKey:kEnableNewClearBrowsingDataUI];
+  if ([countersFlag isEqualToString:@"Enabled"])
     return true;
   return false;
+}
+
+// Emergency switch for https://crbug.com/527084 in case of unforeseen UX
+// regressions.
+// Defaults to Enabled unless the Finch trial has explicitly disabled it.
+bool IsPageIconForDowngradedHTTPSEnabled() {
+  std::string group_name =
+      base::FieldTrialList::FindFullName("IOSPageIconForDowngradedHTTPS");
+  return !base::StartsWith(group_name, "Disabled",
+                           base::CompareCase::INSENSITIVE_ASCII);
 }
 
 bool IsPasswordGenerationEnabled() {
@@ -199,6 +200,96 @@ bool IsPasswordGenerationEnabled() {
   if (command_line->HasSwitch(switches::kDisableIOSPasswordGeneration))
     return false;
   return group_name != "Disabled";
+}
+
+bool IsPaymentRequestEnabled() {
+  // This call activates the field trial, if needed, so it must come before any
+  // early returns.
+  std::string group_name =
+      base::FieldTrialList::FindFullName("IOSPaymentRequest");
+
+  // Check if the experimental flag is forced on or off.
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kEnablePaymentRequest)) {
+    return true;
+  } else if (command_line->HasSwitch(switches::kDisablePaymentRequest)) {
+    return false;
+  }
+
+  // Check if the Finch experiment is turned on.
+  return base::StartsWith(group_name, "Enabled",
+                          base::CompareCase::INSENSITIVE_ASCII);
+}
+
+bool IsPendingIndexNavigationEnabled() {
+  return ![[NSUserDefaults standardUserDefaults]
+      boolForKey:kPendingIndexNavigationDisabled];
+}
+
+bool IsPhysicalWebEnabled() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kEnableIOSPhysicalWeb)) {
+    return true;
+  } else if (command_line->HasSwitch(switches::kDisableIOSPhysicalWeb)) {
+    return false;
+  }
+
+  // Check if the finch experiment is turned on
+  std::string group_name =
+      base::FieldTrialList::FindFullName("PhysicalWebEnabled");
+  return base::StartsWith(group_name, "Enabled",
+                          base::CompareCase::INSENSITIVE_ASCII);
+}
+
+bool IsQRCodeReaderEnabled() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  return !command_line->HasSwitch(switches::kDisableQRScanner);
+}
+
+bool IsReaderModeEnabled() {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableReaderModeToolbarIcon);
+}
+
+bool IsReadingListEnabled() {
+  return reading_list::switches::IsReadingListEnabled();
+}
+
+bool IsSafariVCSignInEnabled() {
+  return ![[NSUserDefaults standardUserDefaults]
+      boolForKey:kSafariVCSignInDisabled];
+}
+
+bool IsSpotlightActionsEnabled() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  return !command_line->HasSwitch(switches::kDisableSpotlightActions);
+}
+
+bool IsStartupCrashEnabled() {
+  return [[NSUserDefaults standardUserDefaults] boolForKey:kEnableStartupCrash];
+}
+
+bool IsTabSwitcherEnabled() {
+  // Check if the experimental flag is forced on or off.
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kEnableTabSwitcher)) {
+    return true;
+  } else if (command_line->HasSwitch(switches::kDisableTabSwitcher)) {
+    return false;
+  }
+
+  // Check if the finch experiment is turned on.
+  std::string group_name = base::FieldTrialList::FindFullName("IOSTabSwitcher");
+  return base::StartsWith(group_name, "Enabled",
+                          base::CompareCase::INSENSITIVE_ASCII);
+}
+
+bool IsViewCopyPasswordsEnabled() {
+  NSString* viewCopyPasswordFlag = [[NSUserDefaults standardUserDefaults]
+      objectForKey:kEnableViewCopyPasswords];
+  if ([viewCopyPasswordFlag isEqualToString:@"Enabled"])
+    return true;
+  return false;
 }
 
 bool UseOnlyLocalHeuristicsForPasswordGeneration() {

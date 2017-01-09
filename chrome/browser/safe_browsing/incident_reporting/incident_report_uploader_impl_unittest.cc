@@ -5,6 +5,7 @@
 #include "chrome/browser/safe_browsing/incident_reporting/incident_report_uploader_impl.h"
 
 #include <string>
+#include <utility>
 
 #include "base/test/test_simple_task_runner.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
@@ -20,9 +21,9 @@ class IncidentReportUploaderImplTest : public testing::Test {
   // safe_browsing::IncidentReportUploader::OnResultCallback implementation.
   void OnReportUploadResult(
       safe_browsing::IncidentReportUploader::Result result,
-      scoped_ptr<safe_browsing::ClientIncidentResponse> response) {
+      std::unique_ptr<safe_browsing::ClientIncidentResponse> response) {
     result_ = result;
-    response_ = response.Pass();
+    response_ = std::move(response);
   }
 
  protected:
@@ -33,17 +34,16 @@ class IncidentReportUploaderImplTest : public testing::Test {
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
   net::TestURLFetcherFactory url_fetcher_factory_;
   safe_browsing::IncidentReportUploader::Result result_;
-  scoped_ptr<safe_browsing::ClientIncidentResponse> response_;
+  std::unique_ptr<safe_browsing::ClientIncidentResponse> response_;
 };
 
 TEST_F(IncidentReportUploaderImplTest, Success) {
   safe_browsing::ClientIncidentReport report;
-  scoped_ptr<safe_browsing::IncidentReportUploader> instance(
+  std::unique_ptr<safe_browsing::IncidentReportUploader> instance(
       safe_browsing::IncidentReportUploaderImpl::UploadReport(
           base::Bind(&IncidentReportUploaderImplTest::OnReportUploadResult,
                      base::Unretained(this)),
-          NULL,
-          report));
+          NULL, report));
 
   net::TestURLFetcher* fetcher = url_fetcher_factory_.GetFetcherByID(
       safe_browsing::IncidentReportUploaderImpl::kTestUrlFetcherId);

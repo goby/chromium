@@ -7,7 +7,6 @@ package org.chromium.components.precache;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.net.ConnectivityManager;
 import android.os.BatteryManager;
 
 import org.chromium.base.VisibleForTesting;
@@ -17,6 +16,9 @@ import org.chromium.base.VisibleForTesting;
  */
 public class DeviceState {
     private static DeviceState sDeviceState = null;
+
+    // Saved battery level percentage.
+    private int mSavedBatteryPercentage = 0;
 
     /** Disallow Construction of DeviceState objects. Use {@link #getInstance()} instead to create
      * a singleton instance.
@@ -59,12 +61,42 @@ public class DeviceState {
                 || status == BatteryManager.BATTERY_STATUS_FULL;
     }
 
-    /** @return whether the currently active network is Wi-Fi, not roaming, and not metered. */
-    public boolean isWifiAvailable(Context context) {
+    /**
+     * @return the previously saved battery level percentage.
+     * @param context the application context
+     */
+    public int getSavedBatteryPercentage() {
+        return mSavedBatteryPercentage;
+    }
+
+    /**
+     * Saves the current battery level percentage to be retrieved later.
+     */
+    public void saveCurrentBatteryPercentage(Context context) {
+        mSavedBatteryPercentage = getCurrentBatteryPercentage(context);
+    }
+
+    /**
+     * @return the current battery level as percentage.
+     * @param context the application context
+     */
+    public int getCurrentBatteryPercentage(Context context) {
+        IntentFilter iFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        Intent batteryStatus = context.registerReceiver(null, iFilter);
+        if (batteryStatus == null) return 0;
+        int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        if (level == -1 || scale == -1) return 0;
+        if (scale == 0) return 0;
+
+        return Math.round(100 * level / (float) scale);
+    }
+
+    /** @return whether the currently active network is unmetered. */
+    public boolean isUnmeteredNetworkAvailable(Context context) {
         NetworkInfoDelegate networkInfo =
                 mNetworkInfoDelegateFactory.getNetworkInfoDelegate(context);
         return (networkInfo.isValid()
-                && networkInfo.getType() == ConnectivityManager.TYPE_WIFI
                 && networkInfo.isAvailable()
                 && networkInfo.isConnected()
                 && !networkInfo.isRoaming()

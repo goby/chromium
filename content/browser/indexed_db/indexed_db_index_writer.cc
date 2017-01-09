@@ -4,6 +4,9 @@
 
 #include "content/browser/indexed_db/indexed_db_index_writer.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
@@ -21,9 +24,8 @@ IndexWriter::IndexWriter(
     const IndexedDBIndexMetadata& index_metadata)
     : index_metadata_(index_metadata) {}
 
-IndexWriter::IndexWriter(
-    const IndexedDBIndexMetadata& index_metadata,
-    const IndexedDBDatabase::IndexKeys& index_keys)
+IndexWriter::IndexWriter(const IndexedDBIndexMetadata& index_metadata,
+                         const IndexedDBIndexKeys& index_keys)
     : index_metadata_(index_metadata), index_keys_(index_keys) {}
 
 IndexWriter::~IndexWriter() {}
@@ -31,22 +33,17 @@ IndexWriter::~IndexWriter() {}
 bool IndexWriter::VerifyIndexKeys(
     IndexedDBBackingStore* backing_store,
     IndexedDBBackingStore::Transaction* transaction,
-    int64 database_id,
-    int64 object_store_id,
-    int64 index_id,
+    int64_t database_id,
+    int64_t object_store_id,
+    int64_t index_id,
     bool* can_add_keys,
     const IndexedDBKey& primary_key,
     base::string16* error_message) const {
   *can_add_keys = false;
   DCHECK_EQ(index_id, index_keys_.first);
-  for (size_t i = 0; i < index_keys_.second.size(); ++i) {
-    bool ok = AddingKeyAllowed(backing_store,
-                               transaction,
-                               database_id,
-                               object_store_id,
-                               index_id,
-                               (index_keys_.second)[i],
-                               primary_key,
+  for (const auto& key : index_keys_.second) {
+    bool ok = AddingKeyAllowed(backing_store, transaction, database_id,
+                               object_store_id, index_id, key, primary_key,
                                can_add_keys);
     if (!ok)
       return false;
@@ -68,18 +65,14 @@ void IndexWriter::WriteIndexKeys(
     const IndexedDBBackingStore::RecordIdentifier& record_identifier,
     IndexedDBBackingStore* backing_store,
     IndexedDBBackingStore::Transaction* transaction,
-    int64 database_id,
-    int64 object_store_id) const {
-  int64 index_id = index_metadata_.id;
+    int64_t database_id,
+    int64_t object_store_id) const {
+  int64_t index_id = index_metadata_.id;
   DCHECK_EQ(index_id, index_keys_.first);
-  for (size_t i = 0; i < index_keys_.second.size(); ++i) {
-    leveldb::Status s =
-        backing_store->PutIndexDataForRecord(transaction,
-                                             database_id,
-                                             object_store_id,
-                                             index_id,
-                                             index_keys_.second[i],
-                                             record_identifier);
+  for (const auto& key : index_keys_.second) {
+    leveldb::Status s = backing_store->PutIndexDataForRecord(
+        transaction, database_id, object_store_id, index_id, key,
+        record_identifier);
     // This should have already been verified as a valid write during
     // verify_index_keys.
     DCHECK(s.ok());
@@ -89,9 +82,9 @@ void IndexWriter::WriteIndexKeys(
 bool IndexWriter::AddingKeyAllowed(
     IndexedDBBackingStore* backing_store,
     IndexedDBBackingStore::Transaction* transaction,
-    int64 database_id,
-    int64 object_store_id,
-    int64 index_id,
+    int64_t database_id,
+    int64_t object_store_id,
+    int64_t index_id,
     const IndexedDBKey& index_key,
     const IndexedDBKey& primary_key,
     bool* allowed) const {
@@ -101,7 +94,7 @@ bool IndexWriter::AddingKeyAllowed(
     return true;
   }
 
-  scoped_ptr<IndexedDBKey> found_primary_key;
+  std::unique_ptr<IndexedDBKey> found_primary_key;
   bool found = false;
   leveldb::Status s = backing_store->KeyExistsInIndex(transaction,
                                                       database_id,
@@ -118,33 +111,32 @@ bool IndexWriter::AddingKeyAllowed(
   return true;
 }
 
-bool MakeIndexWriters(
-    IndexedDBTransaction* transaction,
-    IndexedDBBackingStore* backing_store,
-    int64 database_id,
-    const IndexedDBObjectStoreMetadata& object_store,
-    const IndexedDBKey& primary_key,  // makes a copy
-    bool key_was_generated,
-    const std::vector<IndexedDBDatabase::IndexKeys>& index_keys,
-    ScopedVector<IndexWriter>* index_writers,
-    base::string16* error_message,
-    bool* completed) {
+bool MakeIndexWriters(IndexedDBTransaction* transaction,
+                      IndexedDBBackingStore* backing_store,
+                      int64_t database_id,
+                      const IndexedDBObjectStoreMetadata& object_store,
+                      const IndexedDBKey& primary_key,  // makes a copy
+                      bool key_was_generated,
+                      const std::vector<IndexedDBIndexKeys>& index_keys,
+                      std::vector<std::unique_ptr<IndexWriter>>* index_writers,
+                      base::string16* error_message,
+                      bool* completed) {
   *completed = false;
 
   for (const auto& it : index_keys) {
-    IndexedDBObjectStoreMetadata::IndexMap::const_iterator found =
-        object_store.indexes.find(it.first);
+    const auto& found = object_store.indexes.find(it.first);
     if (found == object_store.indexes.end())
       continue;
     const IndexedDBIndexMetadata& index = found->second;
-    IndexedDBDatabase::IndexKeys keys = it;
+    IndexedDBIndexKeys keys = it;
 
     // If the object_store is using auto_increment, then any indexes with an
     // identical key_path need to also use the primary (generated) key as a key.
     if (key_was_generated && (index.key_path == object_store.key_path))
       keys.second.push_back(primary_key);
 
-    scoped_ptr<IndexWriter> index_writer(new IndexWriter(index, keys));
+    std::unique_ptr<IndexWriter> index_writer(
+        base::MakeUnique<IndexWriter>(index, keys));
     bool can_add_keys = false;
     bool backing_store_success =
         index_writer->VerifyIndexKeys(backing_store,
@@ -160,7 +152,7 @@ bool MakeIndexWriters(
     if (!can_add_keys)
       return true;
 
-    index_writers->push_back(index_writer.Pass());
+    index_writers->push_back(std::move(index_writer));
   }
 
   *completed = true;

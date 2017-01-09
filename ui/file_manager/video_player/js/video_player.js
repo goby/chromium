@@ -29,43 +29,60 @@ function FullWindowVideoControls(
   currentWindow.onRestored.addListener(
       this.onFullScreenChanged.bind(this, false));
   document.addEventListener('keydown', function(e) {
-    switch (util.getKeyModifiers(e) + e.keyIdentifier) {
+    this.inactivityWatcher_.kick();
+    switch (util.getKeyModifiers(e) + e.key) {
       // Handle debug shortcut keys.
-      case 'Ctrl-Shift-U+0049': // Ctrl+Shift+I
+      case 'Ctrl-Shift-I': // Ctrl+Shift+I
         chrome.fileManagerPrivate.openInspector('normal');
         break;
-      case 'Ctrl-Shift-U+004A': // Ctrl+Shift+J
+      case 'Ctrl-Shift-J': // Ctrl+Shift+J
         chrome.fileManagerPrivate.openInspector('console');
         break;
-      case 'Ctrl-Shift-U+0043': // Ctrl+Shift+C
+      case 'Ctrl-Shift-C': // Ctrl+Shift+C
         chrome.fileManagerPrivate.openInspector('element');
         break;
-      case 'Ctrl-Shift-U+0042': // Ctrl+Shift+B
+      case 'Ctrl-Shift-B': // Ctrl+Shift+B
         chrome.fileManagerPrivate.openInspector('background');
         break;
 
-      case 'U+0020': // Space
+      case ' ': // Space
+      case 'k':
       case 'MediaPlayPause':
         if (!e.target.classList.contains('menu-button'))
           this.togglePlayStateWithFeedback();
         break;
-      case 'U+001B': // Escape
+      case 'Escape':
         util.toggleFullScreen(
             chrome.app.window.current(),
             false);  // Leave the full screen mode.
         break;
-      case 'Right':
-      case 'MediaNextTrack':
+      case 'MediaTrackNext':
         player.advance_(1);
         break;
-      case 'Left':
-      case 'MediaPreviousTrack':
+      case 'MediaTrackPrevious':
         player.advance_(0);
+        break;
+      case 'ArrowRight':
+        if (!e.target.classList.contains('volume'))
+          this.smallSkip(true);
+        break;
+      case 'ArrowLeft':
+        if (!e.target.classList.contains('volume'))
+          this.smallSkip(false);
+        break;
+      case 'l':
+        this.bigSkip(true);
+        break;
+      case 'j':
+        this.bigSkip(false);
         break;
       case 'MediaStop':
         // TODO: Define "Stop" behavior.
         break;
     }
+  }.wrap(this));
+  document.addEventListener('keypress', function(e) {
+    this.inactivityWatcher_.kick();
   }.wrap(this));
 
   // TODO(mtomasz): Simplify. crbug.com/254318.
@@ -260,6 +277,10 @@ VideoPlayer.prototype.prepare = function(videos) {
   else
     videoPlayerElement.removeAttribute('multiple');
 
+  var castButton = queryRequiredElement('.cast-button');
+  castButton.addEventListener('click',
+      this.onCastButtonClicked_.wrap(this));
+
   document.addEventListener('keydown', reloadVideo);
   document.addEventListener('click', reloadVideo);
 };
@@ -342,8 +363,6 @@ VideoPlayer.prototype.loadVideo_ = function(video, opt_callback) {
     if (this.currentCast_) {
       metrics.recordPlayType(metrics.PLAY_TYPE.CAST);
 
-      videoPlayerElement.setAttribute('casting', true);
-
       getRequiredElement('cast-name').textContent =
           this.currentCast_.friendlyName;
 
@@ -355,14 +374,18 @@ VideoPlayer.prototype.loadVideo_ = function(video, opt_callback) {
               return Promise.reject('No casts are available.');
 
             return new Promise(function(fulfill, reject) {
-              chrome.cast.requestSession(
-                  fulfill, reject, undefined, this.currentCast_.label);
+              if (this.currentSession_) {
+                fulfill(this.currentSession_);
+              } else {
+                chrome.cast.requestSession(
+                    fulfill, reject, undefined, this.currentCast_.label);
+              }
             }.bind(this)).then(function(session) {
+              videoPlayerElement.setAttribute('casting', true);
               session.addUpdateListener(this.onCastSessionUpdateBound_);
 
               this.currentSession_ = session;
               this.videoElement_ = new CastVideoElement(media, session);
-              this.controls.attachMedia(this.videoElement_);
             }.bind(this));
           }.bind(this));
     } else {
@@ -372,8 +395,10 @@ VideoPlayer.prototype.loadVideo_ = function(video, opt_callback) {
       this.videoElement_ = document.createElement('video');
       getRequiredElement('video-container').appendChild(this.videoElement_);
 
-      this.controls.attachMedia(this.videoElement_);
-      this.videoElement_.src = video.toURL();
+      var videoUrl = video.toURL();
+      var source = document.createElement('source');
+      source.src = videoUrl;
+      this.videoElement_.appendChild(source);
 
       media.isAvailableForCast().then(function(result) {
         if (result)
@@ -384,9 +409,17 @@ VideoPlayer.prototype.loadVideo_ = function(video, opt_callback) {
         videoPlayerElement.setAttribute('castable', true);
       });
 
-      videoElementInitializePromise = Promise.resolve();
+      videoElementInitializePromise = this.searchSubtitle_(videoUrl)
+          .then(function(subltitleUrl) {
+            if (subltitleUrl) {
+              var track = document.createElement('track');
+              track.src = subltitleUrl;
+              track.kind = 'subtitles';
+              track.default = true;
+              this.videoElement_.appendChild(track);
+            }
+          }.bind(this));
     }
-
     videoElementInitializePromise
         .then(function() {
           var handler = function(currentPos) {
@@ -409,7 +442,7 @@ VideoPlayer.prototype.loadVideo_ = function(video, opt_callback) {
             chrome.power.releaseKeepAwake();
             this.updateInactivityWatcherState_();
           }.wrap(this));
-
+          this.controls.attachMedia(this.videoElement_);
           this.videoElement_.load();
           callback();
         }.bind(this))
@@ -426,6 +459,24 @@ VideoPlayer.prototype.loadVideo_ = function(video, opt_callback) {
           callback();
         }.bind(this));
   }.wrap(this));
+};
+
+/**
+ * Search subtile file corresponding to a video.
+ * @param {string} url a url of a video.
+ * @return {string} a url of subtitle file, or an empty string.
+ */
+VideoPlayer.prototype.searchSubtitle_ = function(url) {
+  var baseUrl = util.splitExtension(url)[0];
+  var resolveLocalFileSystemWithExtension = function(extension) {
+    return new Promise(
+        window.webkitResolveLocalFileSystemURL.bind(null, baseUrl + extension));
+  };
+  return resolveLocalFileSystemWithExtension('.vtt').then(function(subtitle) {
+    return subtitle.toURL();
+  }).catch(function() {
+    return '';
+  });
 };
 
 /**
@@ -459,7 +510,12 @@ VideoPlayer.prototype.unloadVideo = function(opt_keepSession) {
     this.videoElement_ = null;
 
     if (!opt_keepSession && this.currentSession_) {
-      this.currentSession_.stop(callback, callback);
+      // We should not request stop() if the current session is not connected to
+      // the receiver.
+      if (this.currentSession_.status === chrome.cast.SessionStatus.CONNECTED)
+        this.currentSession_.stop(callback, callback);
+      else
+        setTimeout(callback);
       this.currentSession_.removeUpdateListener(this.onCastSessionUpdateBound_);
       this.currentSession_ = null;
     } else {
@@ -494,8 +550,8 @@ VideoPlayer.prototype.onFirstVideoReady_ = function() {
 
   var oldLeft = window.screenX;
   var oldTop = window.screenY;
-  var oldWidth = window.outerWidth;
-  var oldHeight = window.outerHeight;
+  var oldWidth = window.innerWidth;
+  var oldHeight = window.innerHeight;
 
   if (!oldWidth && !oldHeight) {
     oldLeft = window.screen.availWidth / 2;
@@ -505,8 +561,10 @@ VideoPlayer.prototype.onFirstVideoReady_ = function() {
   var appWindow = chrome.app.window.current();
   appWindow.innerBounds.width = Math.round(newWidth);
   appWindow.innerBounds.height = Math.round(newHeight);
-  appWindow.outerBounds.left = Math.round(oldLeft - (newWidth - oldWidth) / 2);
-  appWindow.outerBounds.top = Math.round(oldTop - (newHeight - oldHeight) / 2);
+  appWindow.outerBounds.left = Math.max(
+      0, Math.round(oldLeft - (newWidth - oldWidth) / 2));
+  appWindow.outerBounds.top = Math.max(
+      0, Math.round(oldTop - (newHeight - oldHeight) / 2));
   appWindow.show();
 
   this.videoElement_.play();
@@ -607,6 +665,50 @@ VideoPlayer.prototype.setCastList = function(casts) {
 };
 
 /**
+ * Tells the availability of cast receivers to VideoPlayeru topdate the
+ * visibility of the cast button..
+ * @param {boolean} available Whether at least one cast receiver is available.
+ */
+VideoPlayer.prototype.setCastAvailability = function(available) {
+  var videoPlayerElement = getRequiredElement('video-player');
+  if (available) {
+    videoPlayerElement.setAttribute('mr-cast-available', true);
+  } else {
+    videoPlayerElement.removeAttribute('mr-cast-available');
+    if (this.currentCast_)
+      this.onCurrentCastDisappear_();
+  }
+};
+
+/**
+ * Handles click event on cast button to request a session.
+ * @private
+ */
+VideoPlayer.prototype.onCastButtonClicked_ = function() {
+  // This method is called only when Media Router is enabled.
+  // In this case, requestSession() will open a built-in dialog (not a dropdown
+  // menu) to choose the receiver, and callback is called with the session
+  // object after user's operation..
+  chrome.cast.requestSession(
+      function(session) {
+        this.unloadVideo(true);
+        this.loadQueue_.run(function(callback) {
+          this.currentCast_ = {
+            label: session.receiver.label,
+            friendlyName: session.receiver.friendlyName
+          };
+          this.currentSession_ = session;
+          this.reloadCurrentVideo();
+          callback();
+        }.bind(this));
+      }.bind(this),
+      function(error) {
+        if (error.code !== chrome.cast.ErrorCode.CANCEL)
+          console.error('requestSession from cast button failed', error);
+      });
+};
+
+/**
  * Updates the check status of the cast menu items.
  * @private
  */
@@ -650,8 +752,20 @@ VideoPlayer.prototype.onCurrentCastDisappear_ = function() {
  * @private
  */
 VideoPlayer.prototype.onCastSessionUpdate_ = function(alive) {
-  if (!alive)
+  if (!alive) {
+    var videoPlayerElement = getRequiredElement('video-player');
+    videoPlayerElement.removeAttribute('casting');
+
+    // Loads the current video in local player.
     this.unloadVideo();
+    this.loadQueue_.run(function(callback) {
+      this.currentCast_ = null;
+      if (!chrome.cast.usingPresentationApi)
+        this.updateCheckOnCastMenu_();
+      this.reloadCurrentVideo();
+      callback();
+    }.wrap(this));
+  }
 };
 
 /**
@@ -686,8 +800,7 @@ function initStrings(callback) {
 }
 
 function initVolumeManager(callback) {
-  var volumeManager = new VolumeManagerWrapper(
-      VolumeManagerWrapper.NonNativeVolumeStatus.ENABLED);
+  var volumeManager = new VolumeManagerWrapper(AllowedPaths.ANY_PATH);
   volumeManager.ensureInitialized(callback);
 }
 

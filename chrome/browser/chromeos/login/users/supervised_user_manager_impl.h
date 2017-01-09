@@ -7,8 +7,8 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
 #include "chrome/browser/chromeos/login/users/supervised_user_manager.h"
 
@@ -107,7 +107,7 @@ class SupervisedUserManagerImpl
   // Interface to the signed settings store.
   CrosSettings* cros_settings_;
 
-  scoped_ptr<SupervisedUserAuthentication> authentication_;
+  std::unique_ptr<SupervisedUserAuthentication> authentication_;
 
   DISALLOW_COPY_AND_ASSIGN(SupervisedUserManagerImpl);
 };

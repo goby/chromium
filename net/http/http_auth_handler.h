@@ -10,12 +10,13 @@
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 #include "net/http/http_auth.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 
 namespace net {
 
 class HttpAuthChallengeTokenizer;
 struct HttpRequestInfo;
+class SSLInfo;
 
 // HttpAuthHandler is the interface for the authentication schemes
 // (basic, digest, NTLM, Negotiate).
@@ -32,8 +33,9 @@ class NET_EXPORT_PRIVATE HttpAuthHandler {
   // for later use, and are not part of the initial challenge.
   bool InitFromChallenge(HttpAuthChallengeTokenizer* challenge,
                          HttpAuth::Target target,
+                         const SSLInfo& ssl_info,
                          const GURL& origin,
-                         const BoundNetLog& net_log);
+                         const NetLogWithSource& net_log);
 
   // Determines how the previous authorization attempt was received.
   //
@@ -148,9 +150,14 @@ class NET_EXPORT_PRIVATE HttpAuthHandler {
   // |challenge| must be non-NULL and have already tokenized the
   // authentication scheme, but none of the tokens occurring after the
   // authentication scheme.
+  //
+  // If the request was sent over an encrypted connection, |ssl_info| is valid
+  // and describes the connection.
+  //
   // Implementations are expected to initialize the following members:
   // scheme_, realm_, score_, properties_
-  virtual bool Init(HttpAuthChallengeTokenizer* challenge) = 0;
+  virtual bool Init(HttpAuthChallengeTokenizer* challenge,
+                    const SSLInfo& ssl_info) = 0;
 
   // |GenerateAuthTokenImpl()} is the auth-scheme specific implementation
   // of generating the next auth token. Callers should use |GenerateAuthToken()|
@@ -183,7 +190,7 @@ class NET_EXPORT_PRIVATE HttpAuthHandler {
   // A bitmask of the properties of the authentication scheme.
   int properties_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
  private:
   void OnGenerateAuthTokenComplete(int rv);

@@ -7,18 +7,22 @@
 
 #include <stdint.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
-#include "net/log/net_log.h"
 #include "net/socket/connection_attempts.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_socket.h"
 
 namespace net {
+
+class NetLog;
+struct NetLogSource;
+class SocketPerformanceWatcher;
 
 // A client socket that uses TCP as the transport layer.
 class NET_EXPORT TCPClientSocket : public StreamSocket {
@@ -26,13 +30,15 @@ class NET_EXPORT TCPClientSocket : public StreamSocket {
   // The IP address(es) and port number to connect to.  The TCP socket will try
   // each IP address in the list until it succeeds in establishing a
   // connection.
-  TCPClientSocket(const AddressList& addresses,
-                  net::NetLog* net_log,
-                  const net::NetLog::Source& source);
+  TCPClientSocket(
+      const AddressList& addresses,
+      std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+      net::NetLog* net_log,
+      const net::NetLogSource& source);
 
   // Adopts the given, connected socket and then acts as if Connect() had been
   // called. This function is used by TCPServerSocket and for testing.
-  TCPClientSocket(scoped_ptr<TCPSocket> connected_socket,
+  TCPClientSocket(std::unique_ptr<TCPSocket> connected_socket,
                   const IPEndPoint& peer_address);
 
   ~TCPClientSocket() override;
@@ -47,11 +53,10 @@ class NET_EXPORT TCPClientSocket : public StreamSocket {
   bool IsConnectedAndIdle() const override;
   int GetPeerAddress(IPEndPoint* address) const override;
   int GetLocalAddress(IPEndPoint* address) const override;
-  const BoundNetLog& NetLog() const override;
+  const NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   void EnableTCPFastOpenIfSupported() override;
   bool WasNpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
@@ -66,8 +71,8 @@ class NET_EXPORT TCPClientSocket : public StreamSocket {
   int Write(IOBuffer* buf,
             int buf_len,
             const CompletionCallback& callback) override;
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
 
   virtual bool SetKeepAlive(bool enable, int delay);
   virtual bool SetNoDelay(bool no_delay);
@@ -105,11 +110,18 @@ class NET_EXPORT TCPClientSocket : public StreamSocket {
   // disconnected.
   void EmitTCPMetricsHistogramsOnDisconnect();
 
-  scoped_ptr<TCPSocket> socket_;
+  // Socket performance statistics (such as RTT) are reported to the
+  // |socket_performance_watcher_|. May be nullptr.
+  // |socket_performance_watcher_| is owned by |socket_|. If non-null,
+  // |socket_performance_watcher_| is guaranteed to be destroyed when |socket_|
+  // is destroyed.
+  SocketPerformanceWatcher* socket_performance_watcher_;
+
+  std::unique_ptr<TCPSocket> socket_;
 
   // Local IP address and port we are bound to. Set to NULL if Bind()
   // wasn't called (in that case OS chooses address/port).
-  scoped_ptr<IPEndPoint> bind_address_;
+  std::unique_ptr<IPEndPoint> bind_address_;
 
   // The list of addresses we should try in order to establish a connection.
   AddressList addresses_;

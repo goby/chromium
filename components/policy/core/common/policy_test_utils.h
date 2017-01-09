@@ -9,7 +9,8 @@
 #include <ostream>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "components/policy/core/common/policy_details.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_service.h"
@@ -51,7 +52,7 @@ bool PolicyServiceIsEmpty(const PolicyService* service);
 
 // Converts a base::Value to the equivalent CFPropertyListRef.
 // The returned value is owned by the caller.
-CFPropertyListRef ValueToProperty(const base::Value* value);
+CFPropertyListRef ValueToProperty(const base::Value& value);
 
 #endif
 

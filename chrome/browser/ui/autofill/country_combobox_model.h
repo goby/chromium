@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_UI_AUTOFILL_COUNTRY_COMBOBOX_MODEL_H_
 #define CHROME_BROWSER_UI_AUTOFILL_COUNTRY_COMBOBOX_MODEL_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "ui/base/models/combobox_model.h"
 
@@ -22,6 +24,8 @@ class PersonalDataManager;
 // A model for countries to be used to enter addresses.
 class CountryComboboxModel : public ui::ComboboxModel {
  public:
+  using CountryVector = std::vector<std::unique_ptr<AutofillCountry>>;
+
   CountryComboboxModel();
   ~CountryComboboxModel() override;
 
@@ -36,9 +40,7 @@ class CountryComboboxModel : public ui::ComboboxModel {
   base::string16 GetItemAt(int index) override;
   bool IsItemSeparatorAt(int index) override;
 
-  const std::vector<AutofillCountry*>& countries() const {
-    return countries_.get();
-  }
+  const CountryVector& countries() const { return countries_; }
 
   // Returns the default country code for this model.
   std::string GetDefaultCountryCode() const;
@@ -46,7 +48,7 @@ class CountryComboboxModel : public ui::ComboboxModel {
  private:
   // The countries to show in the model, including NULL for entries that are
   // not countries (the separator entry).
-  ScopedVector<AutofillCountry> countries_;
+  CountryVector countries_;
 
   DISALLOW_COPY_AND_ASSIGN(CountryComboboxModel);
 };

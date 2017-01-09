@@ -5,10 +5,12 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_GRAPHICS_2D_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_GRAPHICS_2D_HOST_H_
 
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "ppapi/c/ppb_graphics_2d.h"
@@ -16,6 +18,7 @@
 #include "ppapi/host/resource_host.h"
 #include "third_party/WebKit/public/platform/WebCanvas.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace cc {
@@ -30,10 +33,6 @@ class Rect;
 
 namespace gpu {
 struct SyncToken;
-}
-
-namespace ppapi {
-struct ViewData;
 }
 
 namespace content {
@@ -75,20 +74,25 @@ class CONTENT_EXPORT PepperGraphics2DHost
 
   bool PrepareTextureMailbox(
       cc::TextureMailbox* mailbox,
-      scoped_ptr<cc::SingleReleaseCallback>* release_callback);
+      std::unique_ptr<cc::SingleReleaseCallback>* release_callback);
   void AttachedToNewLayer();
 
   // Notifications about the view's progress painting.  See PluginInstance.
   // These messages are used to send Flush callbacks to the plugin.
   void ViewInitiatedPaint();
 
-  void SetScale(float scale);
   float GetScale() const;
+  void SetLayerTransform(float scale, const PP_Point& transform);
   bool IsAlwaysOpaque() const;
   PPB_ImageData_Impl* ImageData();
   gfx::Size Size() const;
 
   void ClearCache();
+
+  void set_viewport_to_dip_scale(float viewport_to_dip_scale) {
+    DCHECK_LT(0, viewport_to_dip_scale_);
+    viewport_to_dip_scale_ = viewport_to_dip_scale;
+  }
 
  private:
   PepperGraphics2DHost(RendererPpapiHost* host,
@@ -114,6 +118,9 @@ class CONTENT_EXPORT PepperGraphics2DHost
   int32_t OnHostMsgFlush(ppapi::host::HostMessageContext* context);
   int32_t OnHostMsgSetScale(ppapi::host::HostMessageContext* context,
                             float scale);
+  int32_t OnHostMsgSetLayerTransform(ppapi::host::HostMessageContext* context,
+                                     float Scale,
+                                     const PP_FloatPoint& Transform);
   int32_t OnHostMsgReadImageData(ppapi::host::HostMessageContext* context,
                                  PP_Resource image,
                                  const PP_Point& top_left);
@@ -127,6 +134,9 @@ class CONTENT_EXPORT PepperGraphics2DHost
   // rect argument will be filled by each function with the area affected by
   // the update that requires invalidation. If there were no pixels changed,
   // this rect can be untouched.
+  void ExecuteTransform(const float& scale,
+                        const gfx::PointF& translate,
+                        gfx::Rect* invalidated_rect);
   void ExecutePaintImageData(PPB_ImageData_Impl* image,
                              int x,
                              int y,
@@ -161,7 +171,7 @@ class CONTENT_EXPORT PepperGraphics2DHost
                                      gfx::Rect* op_rect,
                                      gfx::Point* delta);
 
-  void ReleaseCallback(scoped_ptr<cc::SharedBitmap> bitmap,
+  void ReleaseCallback(std::unique_ptr<cc::SharedBitmap> bitmap,
                        const gfx::Size& bitmap_size,
                        const gpu::SyncToken& sync_token,
                        bool lost_resource);
@@ -195,16 +205,18 @@ class CONTENT_EXPORT PepperGraphics2DHost
   // DIP
   float scale_;
 
+  // The scale between the viewport and dip.
+  float viewport_to_dip_scale_ = 1.0f;
+
   ppapi::host::ReplyMessageContext flush_reply_context_;
 
   bool is_running_in_process_;
 
   bool texture_mailbox_modified_;
-  bool is_using_texture_layer_;
 
   // This is a bitmap that was recently released by the compositor and may be
   // used to transfer bytes to the compositor again.
-  scoped_ptr<cc::SharedBitmap> cached_bitmap_;
+  std::unique_ptr<cc::SharedBitmap> cached_bitmap_;
   gfx::Size cached_bitmap_size_;
 
   friend class PepperGraphics2DHostTest;

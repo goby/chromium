@@ -4,8 +4,10 @@
 
 #include "ash/accelerators/magnifier_key_scroller.h"
 
+#include <utility>
+
 #include "ash/accelerators/key_hold_detector.h"
-#include "ash/ash_switches.h"
+#include "ash/common/ash_switches.h"
 #include "ash/magnifier/magnification_controller.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
@@ -25,7 +27,7 @@ bool MagnifierKeyScroller::IsEnabled() {
 #endif
 
   return (magnifier_key_scroller_enabled || has_switch) &&
-      ash::Shell::GetInstance()->magnification_controller()->IsEnabled();
+         ash::Shell::GetInstance()->magnification_controller()->IsEnabled();
 }
 
 // static
@@ -34,22 +36,23 @@ void MagnifierKeyScroller::SetEnabled(bool enabled) {
 }
 
 // static
-scoped_ptr<ui::EventHandler> MagnifierKeyScroller::CreateHandler() {
-  scoped_ptr<KeyHoldDetector::Delegate> delegate(new MagnifierKeyScroller());
-  return scoped_ptr<ui::EventHandler>(new KeyHoldDetector(delegate.Pass()));
+std::unique_ptr<ui::EventHandler> MagnifierKeyScroller::CreateHandler() {
+  std::unique_ptr<KeyHoldDetector::Delegate> delegate(
+      new MagnifierKeyScroller());
+  return std::unique_ptr<ui::EventHandler>(
+      new KeyHoldDetector(std::move(delegate)));
 }
 
 bool MagnifierKeyScroller::ShouldProcessEvent(const ui::KeyEvent* event) const {
-  return IsEnabled() &&
-      (event->key_code() == ui::VKEY_UP ||
-       event->key_code() == ui::VKEY_DOWN ||
-       event->key_code() == ui::VKEY_LEFT ||
-       event->key_code() == ui::VKEY_RIGHT);
+  return IsEnabled() && (event->key_code() == ui::VKEY_UP ||
+                         event->key_code() == ui::VKEY_DOWN ||
+                         event->key_code() == ui::VKEY_LEFT ||
+                         event->key_code() == ui::VKEY_RIGHT);
 }
 
 bool MagnifierKeyScroller::IsStartEvent(const ui::KeyEvent* event) const {
   return event->type() == ui::ET_KEY_PRESSED &&
-      event->flags() & ui::EF_SHIFT_DOWN;
+         event->flags() & ui::EF_SHIFT_DOWN;
 }
 
 bool MagnifierKeyScroller::ShouldStopEventPropagation() const {

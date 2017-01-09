@@ -26,6 +26,7 @@ component("snapshot") {
     "//base",
     "//skia",
     "//ui/base",
+    "//ui/display",
     "//ui/gfx",
     "//ui/gfx/geometry",
   ]
@@ -58,6 +59,13 @@ component("snapshot") {
   } else {
     sources -= [ "snapshot_aura.cc" ]
   }
+
+  if (is_mac) {
+    libs = [
+      "AppKit.framework",
+      "CoreGraphics.framework",
+    ]
+  }
 }
 
 test("snapshot_unittests") {
@@ -70,7 +78,6 @@ test("snapshot_unittests") {
   deps = [
     ":snapshot",
     "//base",
-    "//base/allocator",
     "//base/test:test_support",
     "//skia",
     "//testing/gtest",

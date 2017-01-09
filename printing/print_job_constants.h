@@ -6,6 +6,7 @@
 #define PRINTING_PRINT_JOB_CONSTANTS_H_
 
 #include "build/build_config.h"
+#include "printing/features/features.h"
 #include "printing/printing_export.h"
 
 namespace printing {
@@ -26,9 +27,9 @@ PRINTING_EXPORT extern const char kSettingContentWidth[];
 PRINTING_EXPORT extern const char kSettingCopies[];
 PRINTING_EXPORT extern const char kSettingDeviceName[];
 PRINTING_EXPORT extern const char kSettingDisableScaling[];
-PRINTING_EXPORT extern const char kSettingDistillPageEnabled[];
 PRINTING_EXPORT extern const char kSettingDuplexMode[];
 PRINTING_EXPORT extern const char kSettingFitToPageEnabled[];
+PRINTING_EXPORT extern const char kSettingFitToPageScaling[];
 PRINTING_EXPORT extern const char kSettingGenerateDraftData[];
 PRINTING_EXPORT extern const char kSettingHeaderFooterEnabled[];
 PRINTING_EXPORT extern const float kSettingHeaderFooterInterstice;
@@ -64,10 +65,13 @@ PRINTING_EXPORT extern const char kSettingPrintableAreaY[];
 PRINTING_EXPORT extern const char kSettingPrinterDescription[];
 PRINTING_EXPORT extern const char kSettingPrinterName[];
 PRINTING_EXPORT extern const char kSettingPrinterOptions[];
+PRINTING_EXPORT extern const char kSettingScaleFactor[];
 PRINTING_EXPORT extern const char kSettingTicket[];
 PRINTING_EXPORT extern const char kSettingShouldPrintBackgrounds[];
 PRINTING_EXPORT extern const char kSettingShouldPrintSelectionOnly[];
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
 PRINTING_EXPORT extern const char kSettingShowSystemDialog[];
+#endif
 
 PRINTING_EXPORT extern const int FIRST_PAGE_INDEX;
 PRINTING_EXPORT extern const int COMPLETE_PREVIEW_DOCUMENT_INDEX;

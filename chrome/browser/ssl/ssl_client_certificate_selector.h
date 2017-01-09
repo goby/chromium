@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_SSL_SSL_CLIENT_CERTIFICATE_SELECTOR_H_
 #define CHROME_BROWSER_SSL_SSL_CLIENT_CERTIFICATE_SELECTOR_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace content {
 class ClientCertificateDelegate;
@@ -15,7 +16,6 @@ class WebContents;
 
 namespace net {
 class SSLCertRequestInfo;
-class X509Certificate;
 }
 
 namespace chrome {
@@ -27,7 +27,7 @@ namespace chrome {
 void ShowSSLClientCertificateSelector(
     content::WebContents* contents,
     net::SSLCertRequestInfo* cert_request_info,
-    scoped_ptr<content::ClientCertificateDelegate> delegate);
+    std::unique_ptr<content::ClientCertificateDelegate> delegate);
 
 }  // namespace chrome
 

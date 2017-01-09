@@ -6,10 +6,12 @@
 #define SANDBOX_SRC_WIN_UTILS_H_
 
 #include <windows.h>
+#include <stddef.h>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
+#include "sandbox/win/src/nt_internals.h"
 
 namespace sandbox {
 
@@ -106,6 +108,17 @@ bool WriteProtectedChildMemory(HANDLE child_process, void* address,
 
 // Returns true if the provided path points to a pipe.
 bool IsPipe(const base::string16& path);
+
+// Converts a NTSTATUS code to a Win32 error code.
+DWORD GetLastErrorFromNtStatus(NTSTATUS status);
+
+// Returns the address of the main exe module in memory taking in account
+// address space layout randomization. While it will work on running processes
+// it's recommended to only call this for a suspended process. Ideally also
+// a process which has not been started. There's a slim chance that a process
+// could map its own executables file multiple times, but this is pretty
+// unlikely to occur in practice.
+void* GetProcessBaseAddress(HANDLE process);
 
 }  // namespace sandbox
 

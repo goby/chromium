@@ -11,6 +11,7 @@
 
 #include "base/macros.h"
 #include "base/time/time.h"
+#include "chrome/browser/installable/installable_logging.h"
 #include "ui/base/page_transition_types.h"
 
 namespace content {
@@ -39,6 +40,20 @@ class Profile;
 // what we count as a day matches what the user perceives to be days.
 class AppBannerSettingsHelper {
  public:
+  // An enum for determining the title to use for the add to homescreen / app
+  // banner functionality.
+  // A Java counterpart will be generated for this enum.
+  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.banners
+  enum LanguageOption {
+    LANGUAGE_OPTION_DEFAULT = 0,
+    LANGUAGE_OPTION_MIN = LANGUAGE_OPTION_DEFAULT,
+    LANGUAGE_OPTION_ADD = 1,
+    LANGUAGE_OPTION_INSTALL = 2,
+    LANGUAGE_OPTION_MAX = LANGUAGE_OPTION_INSTALL,
+  };
+
+  // TODO(mariakhomenko): Rename events to reflect that they are used in more
+  // contexts now.
   enum AppBannerEvent {
     APP_BANNER_EVENT_COULD_SHOW,
     APP_BANNER_EVENT_DID_SHOW,
@@ -52,11 +67,13 @@ class AppBannerSettingsHelper {
     NATIVE,
   };
 
+  static const char kInstantAppsKey[];
+
   // BannerEvents record the time that a site was accessed, along with an
   // engagement weight representing the importance of the access.
   struct BannerEvent {
-   base::Time time;
-   double engagement;
+    base::Time time;
+    double engagement;
   };
 
   // The content setting basically records a simplified subset of history.
@@ -95,11 +112,13 @@ class AppBannerSettingsHelper {
       ui::PageTransition transition_type);
 
   // Determine if the banner should be shown, given the recorded events for the
-  // supplied app.
-  static bool ShouldShowBanner(content::WebContents* web_contents,
-                               const GURL& origin_url,
-                               const std::string& package_name_or_start_url,
-                               base::Time time);
+  // supplied app. Returns an InstallableStatusCode indicated the reason why the
+  // banner shouldn't be shown, or NO_ERROR_DETECTED if it should be shown.
+  static InstallableStatusCode ShouldShowBanner(
+      content::WebContents* web_contents,
+      const GURL& origin_url,
+      const std::string& package_name_or_start_url,
+      base::Time time);
 
   // Gets the could have been shown events that are stored for the given package
   // or start url. This is only exposed for testing.
@@ -117,6 +136,11 @@ class AppBannerSettingsHelper {
       const std::string& package_name_or_start_url,
       AppBannerEvent event);
 
+  // Returns true if |total_engagement| is sufficiently high to warrant
+  // triggering a banner, or if the command-line flag to bypass engagement
+  // checking is true.
+  static bool HasSufficientEngagement(double total_engagement);
+
   // Record a UMA statistic measuring the minutes between the first visit to the
   // site and the first showing of the banner.
   static void RecordMinutesFromFirstVisitToShow(
@@ -124,6 +148,19 @@ class AppBannerSettingsHelper {
       const GURL& origin_url,
       const std::string& package_name_or_start_url,
       base::Time time);
+
+  // Returns true if any site under |origin| was launched from homescreen in the
+  // last ten days. This allows services outside app banners to utilise the
+  // content setting that ensures app banners are not shown for sites which ave
+  // already been added to homescreen.
+  static bool WasLaunchedRecently(Profile* profile,
+                                  const GURL& origin_url,
+                                  base::Time now);
+
+  // Set the number of days which dismissing/ignoring the banner should prevent
+  // a banner from showing.
+  static void SetDaysAfterDismissAndIgnoreToTrigger(unsigned int dismiss_days,
+                                                    unsigned int ignore_days);
 
   // Set the engagement weights assigned to direct and indirect navigations.
   static void SetEngagementWeights(double direct_engagement,
@@ -138,12 +175,20 @@ class AppBannerSettingsHelper {
   // Set the total engagement weight required to trigger a banner.
   static void SetTotalEngagementToTrigger(double total_engagement);
 
+  // Resets the engagement weights, minimum minutes, and total engagement to
+  // trigger to their default values.
+  static void SetDefaultParameters();
+
   // Bucket a given time to the given resolution in local time.
   static base::Time BucketTimeToResolution(base::Time time,
                                            unsigned int minutes);
 
   // Updates all values from field trial.
   static void UpdateFromFieldTrial();
+
+  // Queries variations to determine which language option should be used for
+  // app banners and add to homescreen.
+  static LanguageOption GetHomescreenLanguageOption();
 
   // Returns true if the app banner trigger condition should use the site
   // engagement score instead of the navigation-based heuristic.

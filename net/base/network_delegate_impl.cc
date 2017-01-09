@@ -14,31 +14,22 @@ int NetworkDelegateImpl::OnBeforeURLRequest(URLRequest* request,
   return OK;
 }
 
-void NetworkDelegateImpl::OnResolveProxy(const GURL& url,
-                                         int load_flags,
-                                         const ProxyService& proxy_service,
-                                         ProxyInfo* result) {
-}
-
-void NetworkDelegateImpl::OnProxyFallback(const ProxyServer& bad_proxy,
-                                          int net_error) {
-}
-
-int NetworkDelegateImpl::OnBeforeSendHeaders(URLRequest* request,
-                                             const CompletionCallback& callback,
-                                             HttpRequestHeaders* headers) {
+int NetworkDelegateImpl::OnBeforeStartTransaction(
+    URLRequest* request,
+    const CompletionCallback& callback,
+    HttpRequestHeaders* headers) {
   return OK;
 }
 
-void NetworkDelegateImpl::OnBeforeSendProxyHeaders(
+void NetworkDelegateImpl::OnBeforeSendHeaders(
     URLRequest* request,
     const ProxyInfo& proxy_info,
-    HttpRequestHeaders* headers) {
-}
+    const ProxyRetryInfoMap& proxy_retry_info,
+    HttpRequestHeaders* headers) {}
 
-void NetworkDelegateImpl::OnSendHeaders(URLRequest* request,
-                                        const HttpRequestHeaders& headers) {
-}
+void NetworkDelegateImpl::OnStartTransaction(
+    URLRequest* request,
+    const HttpRequestHeaders& headers) {}
 
 int NetworkDelegateImpl::OnHeadersReceived(
     URLRequest* request,
@@ -50,11 +41,15 @@ int NetworkDelegateImpl::OnHeadersReceived(
 }
 
 void NetworkDelegateImpl::OnBeforeRedirect(URLRequest* request,
-                                           const GURL& new_location) {
+                                           const GURL& new_location) {}
+
+void NetworkDelegateImpl::OnResponseStarted(URLRequest* request,
+                                            int net_error) {
+  OnResponseStarted(request);
 }
 
-void NetworkDelegateImpl::OnResponseStarted(URLRequest* request) {
-}
+// Deprecated.
+void NetworkDelegateImpl::OnResponseStarted(URLRequest* request) {}
 
 void NetworkDelegateImpl::OnNetworkBytesReceived(URLRequest* request,
                                                  int64_t bytes_received) {}
@@ -62,8 +57,14 @@ void NetworkDelegateImpl::OnNetworkBytesReceived(URLRequest* request,
 void NetworkDelegateImpl::OnNetworkBytesSent(URLRequest* request,
                                              int64_t bytes_sent) {}
 
-void NetworkDelegateImpl::OnCompleted(URLRequest* request, bool started) {
+void NetworkDelegateImpl::OnCompleted(URLRequest* request,
+                                      bool started,
+                                      int net_error) {
+  OnCompleted(request, started);
 }
+
+// Deprecated.
+void NetworkDelegateImpl::OnCompleted(URLRequest* request, bool started) {}
 
 void NetworkDelegateImpl::OnURLRequestDestroyed(URLRequest* request) {
 }
@@ -103,6 +104,10 @@ bool NetworkDelegateImpl::OnCanEnablePrivacyMode(
 }
 
 bool NetworkDelegateImpl::OnAreExperimentalCookieFeaturesEnabled() const {
+  return false;
+}
+
+bool NetworkDelegateImpl::OnAreStrictSecureCookiesEnabled() const {
   return false;
 }
 

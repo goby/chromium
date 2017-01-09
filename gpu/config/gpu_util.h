@@ -20,22 +20,24 @@ namespace gpu {
 
 struct GPUInfo;
 
-// Merge features in src into dst.
-GPU_EXPORT void MergeFeatureSets(
-    std::set<int>* dst, const std::set<int>& src);
-
-// Collect basic GPUInfo, compute the driver bug workarounds for the current
-// system, and append the |command_line|.
-GPU_EXPORT void ApplyGpuDriverBugWorkarounds(base::CommandLine* command_line);
-
-// With provided GPUInfo, compute the driver bug workarounds for the current
-// system, and append the |command_line|.
+// With provided GPUInfo, compute the driver bug workarounds and disabled
+// extensions for the current system, and append the |command_line|.
 GPU_EXPORT void ApplyGpuDriverBugWorkarounds(
-    const GPUInfo& gpu_inco, base::CommandLine* command_line);
+    const GPUInfo& gpu_info,
+    base::CommandLine* command_line);
 
 // |str| is in the format of "feature1,feature2,...,featureN".
 GPU_EXPORT void StringToFeatureSet(
     const std::string& str, std::set<int>* feature_set);
+
+// With provided command line, fill gpu_info->secondary_gpus with parsed
+// secondary vendor and device ids.
+GPU_EXPORT void ParseSecondaryGpuDevicesFromCommandLine(
+    const base::CommandLine& command_line,
+    GPUInfo* gpu_info);
+
+GPU_EXPORT void InitializeDualGpusIfSupported(
+    const std::set<int>& driver_bug_workarounds);
 
 }  // namespace gpu
 

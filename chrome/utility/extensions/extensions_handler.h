@@ -5,22 +5,22 @@
 #ifndef CHROME_UTILITY_EXTENSIONS_EXTENSIONS_HANDLER_H_
 #define CHROME_UTILITY_EXTENSIONS_EXTENSIONS_HANDLER_H_
 
+#include <stdint.h>
+
 #include "base/base64.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/common/media_galleries/picasa_types.h"
 #include "chrome/utility/utility_message_handler.h"
+#include "extensions/features/features.h"
 #include "extensions/utility/utility_handler.h"
 
-#if !defined(ENABLE_EXTENSIONS)
+#if !BUILDFLAG(ENABLE_EXTENSIONS)
 #error "Extensions must be enabled"
 #endif
 
 class ChromeContentUtilityClient;
-
-namespace metadata {
-class MediaMetadataParser;
-}
 
 namespace extensions {
 
@@ -37,21 +37,16 @@ class ExtensionsHandler : public UtilityMessageHandler {
 
  private:
   // IPC message handlers.
-  void OnCheckMediaFile(int64 milliseconds_of_decoding,
+  void OnCheckMediaFile(int64_t milliseconds_of_decoding,
                         const IPC::PlatformFileForTransit& media_file);
 
   void OnParseMediaMetadata(const std::string& mime_type,
-                            int64 total_size,
+                            int64_t total_size,
                             bool get_attached_images);
 
 #if defined(OS_WIN)
   void OnParseITunesPrefXml(const std::string& itunes_xml_data);
 #endif  // defined(OS_WIN)
-
-#if defined(OS_MACOSX)
-  void OnParseIPhotoLibraryXmlFile(
-      const IPC::PlatformFileForTransit& iphoto_library_file);
-#endif  // defined(OS_MACOSX)
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
   void OnParseITunesLibraryXmlFile(

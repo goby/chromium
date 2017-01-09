@@ -12,12 +12,12 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/cookies/canonical_cookie.h"
-#include "net/cookies/cookie_monster.h"
 #include "net/cookies/cookie_store.h"
 #include "net/http/http_auth_cache.h"
 #include "net/http/http_network_session.h"
@@ -36,6 +36,39 @@ namespace {
 
 const char kSAMLStartCookie[] = "google-accounts-saml-start";
 const char kSAMLEndCookie[] = "google-accounts-saml-end";
+
+// Import |cookies| into |cookie_store|.
+void ImportCookies(const net::CookieList& cookies,
+                   net::CookieStore* cookie_store) {
+  for (const auto& cookie : cookies) {
+    // To re-create the original cookie, a domain should only be passed in to
+    // SetCookieWithDetailsAsync if cookie.Domain() has a leading period, to
+    // re-create the original cookie.
+    std::string effective_domain = cookie.Domain();
+    std::string host;
+    if (effective_domain.length() > 1 && effective_domain[0] == '.') {
+      host = effective_domain.substr(1);
+    } else {
+      host = effective_domain;
+      effective_domain = "";
+    }
+
+    // Assume HTTPS - since the cookies are being restored from another store,
+    // they have already gone through the strict secure check.
+    GURL url(std::string(url::kHttpsScheme) + url::kStandardSchemeSeparator +
+             host + "/");
+
+    cookie_store->SetCookieWithDetailsAsync(
+        url, cookie.Name(), cookie.Value(), effective_domain, cookie.Path(),
+        cookie.CreationDate(), cookie.ExpiryDate(), cookie.LastAccessDate(),
+        cookie.IsSecure(), cookie.IsHttpOnly(), cookie.SameSite(),
+        // enforce_strict_secure should have been applied on the original
+        // cookie, prior to import. This allows URL to be treated as an HTTPS
+        // URL, whether the cookie was set by an HTTP or HTTPS domain (Something
+        // that can't be determined by just looking at the CanonicalCookie).
+        false, cookie.Priority(), net::CookieStore::SetCookiesCallback());
+  }
+}
 
 class ProfileAuthDataTransferer {
  public:
@@ -162,10 +195,8 @@ void ProfileAuthDataTransferer::BeginTransferOnIOThread() {
     // Retrieve the contents of |to_context_|'s cookie jar.
     net::CookieStore* to_store =
         to_context_->GetURLRequestContext()->cookie_store();
-    net::CookieMonster* to_monster = to_store->GetCookieMonster();
-    to_monster->GetAllCookiesAsync(
-        base::Bind(
-            &ProfileAuthDataTransferer::OnTargetCookieJarContentsRetrieved,
+    to_store->GetAllCookiesAsync(base::Bind(
+        &ProfileAuthDataTransferer::OnTargetCookieJarContentsRetrieved,
         base::Unretained(this)));
   } else {
     Finish();
@@ -212,9 +243,7 @@ void ProfileAuthDataTransferer::RetrieveCookiesToTransfer() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   net::CookieStore* from_store =
       from_context_->GetURLRequestContext()->cookie_store();
-  net::CookieMonster* from_monster = from_store->GetCookieMonster();
-  from_monster->SetKeepExpiredCookies();
-  from_monster->GetAllCookiesAsync(
+  from_store->GetAllCookiesAsync(
       base::Bind(&ProfileAuthDataTransferer::OnCookiesToTransferRetrieved,
                  base::Unretained(this)));
 }
@@ -284,9 +313,8 @@ void ProfileAuthDataTransferer::MaybeTransferCookiesAndChannelIDs() {
 
   net::CookieStore* to_store =
       to_context_->GetURLRequestContext()->cookie_store();
-  net::CookieMonster* to_monster = to_store->GetCookieMonster();
   if (first_login_) {
-    to_monster->ImportCookies(cookies_to_transfer_);
+    ImportCookies(cookies_to_transfer_, to_store);
     net::ChannelIDService* to_cert_service =
         to_context_->GetURLRequestContext()->channel_id_service();
     to_cert_service->GetChannelIDStore()->InitializeFrom(
@@ -298,7 +326,7 @@ void ProfileAuthDataTransferer::MaybeTransferCookiesAndChannelIDs() {
       if (!IsGAIACookie(*it))
         non_gaia_cookies.push_back(*it);
     }
-    to_monster->ImportCookies(non_gaia_cookies);
+    ImportCookies(non_gaia_cookies, to_store);
   }
 
   Finish();
@@ -308,7 +336,7 @@ void ProfileAuthDataTransferer::Finish() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!completion_callback_.is_null())
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, completion_callback_);
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 }  // namespace

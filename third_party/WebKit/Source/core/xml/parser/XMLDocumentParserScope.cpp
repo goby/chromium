@@ -23,7 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/xml/parser/XMLDocumentParserScope.h"
 
 namespace blink {
@@ -31,32 +30,33 @@ namespace blink {
 Document* XMLDocumentParserScope::currentDocument = 0;
 
 XMLDocumentParserScope::XMLDocumentParserScope(Document* document)
-    : m_oldDocument(currentDocument)
-    , m_oldGenericErrorFunc(xmlGenericError)
-    , m_oldStructuredErrorFunc(xmlStructuredError)
-    , m_oldErrorContext(xmlGenericErrorContext)
-{
-    currentDocument = document;
+    : m_oldDocument(currentDocument),
+      m_oldGenericErrorFunc(xmlGenericError),
+      m_oldStructuredErrorFunc(xmlStructuredError),
+      m_oldErrorContext(xmlGenericErrorContext) {
+  currentDocument = document;
 }
 
-XMLDocumentParserScope::XMLDocumentParserScope(Document* document, xmlGenericErrorFunc genericErrorFunc, xmlStructuredErrorFunc structuredErrorFunc, void* errorContext)
-    : m_oldDocument(currentDocument)
-    , m_oldGenericErrorFunc(xmlGenericError)
-    , m_oldStructuredErrorFunc(xmlStructuredError)
-    , m_oldErrorContext(xmlGenericErrorContext)
-{
-    currentDocument = document;
-    if (genericErrorFunc)
-        xmlSetGenericErrorFunc(errorContext, genericErrorFunc);
-    if (structuredErrorFunc)
-        xmlSetStructuredErrorFunc(errorContext, structuredErrorFunc);
+XMLDocumentParserScope::XMLDocumentParserScope(
+    Document* document,
+    xmlGenericErrorFunc genericErrorFunc,
+    xmlStructuredErrorFunc structuredErrorFunc,
+    void* errorContext)
+    : m_oldDocument(currentDocument),
+      m_oldGenericErrorFunc(xmlGenericError),
+      m_oldStructuredErrorFunc(xmlStructuredError),
+      m_oldErrorContext(xmlGenericErrorContext) {
+  currentDocument = document;
+  if (genericErrorFunc)
+    xmlSetGenericErrorFunc(errorContext, genericErrorFunc);
+  if (structuredErrorFunc)
+    xmlSetStructuredErrorFunc(errorContext, structuredErrorFunc);
 }
 
-XMLDocumentParserScope::~XMLDocumentParserScope()
-{
-    currentDocument = m_oldDocument;
-    xmlSetGenericErrorFunc(m_oldErrorContext, m_oldGenericErrorFunc);
-    xmlSetStructuredErrorFunc(m_oldErrorContext, m_oldStructuredErrorFunc);
+XMLDocumentParserScope::~XMLDocumentParserScope() {
+  currentDocument = m_oldDocument;
+  xmlSetGenericErrorFunc(m_oldErrorContext, m_oldGenericErrorFunc);
+  xmlSetStructuredErrorFunc(m_oldErrorContext, m_oldStructuredErrorFunc);
 }
 
-}
+}  // namespace blink

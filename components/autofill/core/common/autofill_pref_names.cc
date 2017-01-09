@@ -7,29 +7,29 @@
 namespace autofill {
 namespace prefs {
 
+// Number of times the credit card signin promo has been shown.
+const char kAutofillCreditCardSigninPromoImpressionCount[] =
+    "autofill.credit_card_signin_promo_impression_count";
+
 // Boolean that is true if Autofill is enabled and allowed to save profile data.
 const char kAutofillEnabled[] = "autofill.enabled";
 
-// Double that indicates negative (for not matched forms) upload rate.
-const char kAutofillNegativeUploadRate[] = "autofill.negative_upload_rate";
-
-// Double that indicates positive (for matched forms) upload rate.
-const char kAutofillPositiveUploadRate[] = "autofill.positive_upload_rate";
+// Boolean that is true if Autofill address profiles were fixed regarding their
+// bad use dates.
+const char kAutofillProfileUseDatesFixed[] = "autofill.profile_use_dates_fixed";
 
 // Boolean that's true when Wallet card and address import is enabled by the
-// user. This will only be available to the user if the overall feature is
-// enabled.
+// user.
 const char kAutofillWalletImportEnabled[] = "autofill.wallet_import_enabled";
+
+// Integer that is set to the last version where the profile deduping routine
+// was run. This routine will be run once per version.
+const char kAutofillLastVersionDeduped[] = "autofill.last_version_deduped";
 
 // Boolean that allows the "Don't ask again for this card" checkbox to be
 // sticky.
 const char kAutofillWalletImportStorageCheckboxState[] =
     "autofill.wallet_import_storage_checkbox_state";
-
-// Enables/disables the Wallet card and address feature. Set via sync
-// experiment.
-const char kAutofillWalletSyncExperimentEnabled[] =
-    "autofill.wallet_import_sync_experiment_enabled";
 
 }  // namespace prefs
 }  // namespace autofill

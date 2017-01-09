@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_CLIENT_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_CLIENT_H_
 
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
@@ -15,23 +17,25 @@
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 
+class GURL;
 class IdentityProvider;
+class PrefService;
 
 namespace content {
 class RenderFrameHost;
 }
 
 namespace gfx {
-class Rect;
 class RectF;
 }
 
 namespace rappor {
-class RapporService;
+class RapporServiceImpl;
 }
 
-class GURL;
-class PrefService;
+namespace syncer {
+class SyncService;
+}
 
 namespace autofill {
 
@@ -41,7 +45,6 @@ class CardUnmaskDelegate;
 class CreditCard;
 class FormStructure;
 class PersonalDataManager;
-struct FormData;
 struct Suggestion;
 
 // A client interface that needs to be supplied to the Autofill component by the
@@ -53,14 +56,6 @@ struct Suggestion;
 // for the tab the AutofillManager is attached to).
 class AutofillClient {
  public:
-  // Copy of blink::WebFormElement::AutocompleteResult.
-  enum RequestAutocompleteResult {
-    AutocompleteResultSuccess,
-    AutocompleteResultErrorDisabled,
-    AutocompleteResultErrorCancel,
-    AutocompleteResultErrorInvalid,
-  };
-
   enum PaymentsRpcResult {
     // Empty result. Used for initializing variables and should generally
     // not be returned nor passed as arguments unless explicitly allowed by
@@ -81,13 +76,15 @@ class AutofillClient {
     NETWORK_ERROR,
   };
 
-  typedef base::Callback<void(RequestAutocompleteResult,
-                              const base::string16&,
-                              const FormStructure*)> ResultCallback;
+  enum UnmaskCardReason {
+    // The card is being unmasked for PaymentRequest.
+    UNMASK_FOR_PAYMENT_REQUEST,
 
-  typedef base::Callback<void(const base::string16& /* card number */,
-                              int /* exp month */,
-                              int /* exp year */)> CreditCardScanCallback;
+    // The card is being unmasked for Autofill.
+    UNMASK_FOR_AUTOFILL,
+  };
+
+  typedef base::Callback<void(const CreditCard&)> CreditCardScanCallback;
 
   virtual ~AutofillClient() {}
 
@@ -100,14 +97,14 @@ class AutofillClient {
   // Gets the preferences associated with the client.
   virtual PrefService* GetPrefs() = 0;
 
+  // Gets the sync service associated with the client.
+  virtual syncer::SyncService* GetSyncService() = 0;
+
   // Gets the IdentityProvider associated with the client (for OAuth2).
   virtual IdentityProvider* GetIdentityProvider() = 0;
 
-  // Gets the RapporService associated with the client (for metrics).
-  virtual rappor::RapporService* GetRapporService() = 0;
-
-  // Hides the associated request autocomplete dialog (if it exists).
-  virtual void HideRequestAutocompleteDialog() = 0;
+  // Gets the RapporServiceImpl associated with the client (for metrics).
+  virtual rappor::RapporServiceImpl* GetRapporServiceImpl() = 0;
 
   // Causes the Autofill settings UI to be shown.
   virtual void ShowAutofillSettings() = 0;
@@ -115,18 +112,26 @@ class AutofillClient {
   // A user has attempted to use a masked card. Prompt them for further
   // information to proceed.
   virtual void ShowUnmaskPrompt(const CreditCard& card,
+                                UnmaskCardReason reason,
                                 base::WeakPtr<CardUnmaskDelegate> delegate) = 0;
   virtual void OnUnmaskVerificationResult(PaymentsRpcResult result) = 0;
 
-  // Runs |callback| if the credit card should be imported as personal
-  // data. |metric_logger| can be used to log user actions.
-  virtual void ConfirmSaveCreditCardLocally(const base::Closure& callback) = 0;
+  // Runs |callback| if the |card| should be imported as personal data.
+  // |metric_logger| can be used to log user actions.
+  virtual void ConfirmSaveCreditCardLocally(const CreditCard& card,
+                                            const base::Closure& callback) = 0;
 
-  // Runs |callback| if the credit card should be uploaded to Payments. Displays
-  // the contents of |legal_message| to the user.
+  // Runs |callback| if the |card| should be uploaded to Payments. Displays the
+  // contents of |legal_message| to the user.
   virtual void ConfirmSaveCreditCardToCloud(
-      const base::Closure& callback,
-      scoped_ptr<base::DictionaryValue> legal_message) = 0;
+      const CreditCard& card,
+      std::unique_ptr<base::DictionaryValue> legal_message,
+      const base::Closure& callback) = 0;
+
+  // Will show an infobar to get user consent for Credit Card assistive filling.
+  // Will run |callback| on success.
+  virtual void ConfirmCreditCardFillAssist(const CreditCard& card,
+                                           const base::Closure& callback) = 0;
 
   // Gathers risk data and provides it to |callback|.
   virtual void LoadRiskData(
@@ -140,12 +145,6 @@ class AutofillClient {
   // when a credit card is scanned successfully. Should be called only if
   // HasCreditCardScanFeature() returns true.
   virtual void ScanCreditCard(const CreditCardScanCallback& callback) = 0;
-
-  // Causes the dialog for request autocomplete feature to be shown.
-  virtual void ShowRequestAutocompleteDialog(
-      const FormData& form,
-      content::RenderFrameHost* render_frame_host,
-      const ResultCallback& callback) = 0;
 
   // Shows an Autofill popup with the given |values|, |labels|, |icons|, and
   // |identifiers| for the element at |element_bounds|. |delegate| will be
@@ -183,6 +182,16 @@ class AutofillClient {
 
   // If the context is secure.
   virtual bool IsContextSecure(const GURL& form_origin) = 0;
+
+  // Whether it is appropriate to show a signin promo for this user.
+  virtual bool ShouldShowSigninPromo() = 0;
+
+  // Starts the signin flow. Should not be called if ShouldShowSigninPromo()
+  // returns false.
+  virtual void StartSigninFlow() = 0;
+
+  // Shows the explanation of http not secure warning message.
+  virtual void ShowHttpNotSecureExplanation() = 0;
 };
 
 }  // namespace autofill

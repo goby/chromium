@@ -5,11 +5,14 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_AUDIO_INPUT_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_AUDIO_INPUT_HOST_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/sync_socket.h"
 #include "content/renderer/pepper/pepper_device_enumeration_host_helper.h"

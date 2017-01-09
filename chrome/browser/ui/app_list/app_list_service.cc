@@ -4,15 +4,18 @@
 
 #include "chrome/browser/ui/app_list/app_list_service.h"
 
+#include <stdint.h>
+
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_registry_simple.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process_info.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
 
 namespace {
 
@@ -35,14 +38,14 @@ base::Time GetOriginalProcessStartTime(const base::CommandLine& command_line) {
   if (command_line.HasSwitch(switches::kOriginalProcessStartTime)) {
     std::string start_time_string =
         command_line.GetSwitchValueASCII(switches::kOriginalProcessStartTime);
-    int64 remote_start_time;
+    int64_t remote_start_time;
     base::StringToInt64(start_time_string, &remote_start_time);
     return base::Time::FromInternalValue(remote_start_time);
   }
 
 // base::CurrentProcessInfo::CreationTime() is only defined on some
 // platforms.
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#if defined(OS_LINUX)
   return base::CurrentProcessInfo::CreationTime();
 #else
   return base::Time();
@@ -62,7 +65,7 @@ StartupType GetStartupType(const base::CommandLine& command_line) {
 // The time the process that caused the app list to be shown started. This isn't
 // necessarily the currently executing process as we may be processing a command
 // line given to a short-lived Chrome instance.
-int64 g_original_process_start_time;
+int64_t g_original_process_start_time;
 
 // The type of startup the the current app list show has gone through.
 StartupType g_app_show_startup_type;
@@ -145,7 +148,6 @@ void AppListService::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(prefs::kAppListEnableMethod,
                                 ENABLE_NOT_RECORDED);
   registry->RegisterInt64Pref(prefs::kAppListEnableTime, 0);
-  registry->RegisterInt64Pref(prefs::kAppListLastLaunchTime, 0);
 
 #if defined(OS_MACOSX)
   registry->RegisterIntegerPref(prefs::kAppLauncherShortcutVersion, 0);
@@ -164,8 +166,7 @@ bool AppListService::HandleLaunchCommandLine(
   if (!command_line.HasSwitch(switches::kShowAppList))
     return false;
 
-  // The --show-app-list switch is used for shortcuts on the native desktop.
-  AppListService* service = Get(chrome::HOST_DESKTOP_TYPE_NATIVE);
+  AppListService* service = Get();
   DCHECK(service);
   RecordStartupInfo(service, command_line, launch_profile);
   service->ShowForProfile(launch_profile);

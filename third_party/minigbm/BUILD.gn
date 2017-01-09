@@ -23,18 +23,25 @@ if (!use_system_minigbm) {
     packages = [ "libdrm" ]
   }
 
-  static_library("minigbm") {
+  shared_library("minigbm") {
     sources = [
+      "src/amdgpu.c",
       "src/cirrus.c",
+      "src/drv.c",
+      "src/evdi.c",
       "src/exynos.c",
       "src/gbm.c",
+      "src/gbm_helpers.c",
       "src/gma500.c",
       "src/helpers.c",
       "src/i915.c",
+      "src/marvell.c",
       "src/mediatek.c",
       "src/rockchip.c",
       "src/tegra.c",
       "src/udl.c",
+      "src/vgem.c",
+      "src/virtio_gpu.c",
     ]
 
     configs -= [ "//build/config/compiler:chromium_code" ]
@@ -44,6 +51,10 @@ if (!use_system_minigbm) {
     ]
 
     public_configs = [ ":minigbm_config" ]
+
+    # Clients need this to pick up the shared library correctly.
+    all_dependent_configs =
+        [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
   }
 }
 

@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_AUTO_ENROLLMENT_CLIENT_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_AUTO_ENROLLMENT_CLIENT_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "net/base/network_change_notifier.h"
@@ -54,9 +56,9 @@ enum AutoEnrollmentState {
 class AutoEnrollmentClient
     : public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
-  // The modulus value is sent in an int64 field in the protobuf, whose maximum
-  // value is 2^63-1. So 2^64 and 2^63 can't be represented as moduli and the
-  // max is 2^62 (when the moduli are restricted to powers-of-2).
+  // The modulus value is sent in an int64_t field in the protobuf, whose
+  // maximum value is 2^63-1. So 2^64 and 2^63 can't be represented as moduli
+  // and the max is 2^62 (when the moduli are restricted to powers-of-2).
   static const int kMaximumPower = 62;
 
   // Used for signaling progress to a consumer.
@@ -193,7 +195,7 @@ class AutoEnrollmentClient
 
   // Used to communicate with the device management service.
   DeviceManagementService* device_management_service_;
-  scoped_ptr<DeviceManagementRequestJob> request_job_;
+  std::unique_ptr<DeviceManagementRequestJob> request_job_;
 
   // PrefService where the protocol's results are cached.
   PrefService* local_state_;

@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_UI_CONTENT_SETTINGS_CONTENT_SETTING_IMAGE_MODEL_H_
 #define CHROME_BROWSER_UI_CONTENT_SETTINGS_CONTENT_SETTING_IMAGE_MODEL_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "base/memory/scoped_vector.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model_delegate.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -49,12 +51,15 @@ class ContentSettingImageModel {
   virtual void SetAnimationHasRun(content::WebContents* web_contents) = 0;
 
   bool is_visible() const { return is_visible_; }
+
 #if defined(OS_MACOSX)
-  const gfx::Image& icon() const { return icon_; }
-  int icon_id() const { return icon_id_; }
-#else
-  gfx::Image GetIcon(SkColor nearby_text_color) const;
+  // Calls UpdateFromWebContents() and returns true if the icon has changed.
+  bool UpdateFromWebContentsAndCheckIfIconChanged(
+      content::WebContents* web_contents);
 #endif
+
+  gfx::Image GetIcon(SkColor nearby_text_color) const;
+
   // Returns the resource ID of a string to show when the icon appears, or 0 if
   // we don't wish to show anything.
   int explanatory_string_id() const { return explanatory_string_id_; }
@@ -62,15 +67,13 @@ class ContentSettingImageModel {
 
  protected:
   ContentSettingImageModel();
-  void SetIconByResourceId(int id);
-#if !defined(OS_MACOSX)
+
   void set_icon_by_vector_id(gfx::VectorIconId id, gfx::VectorIconId badge_id) {
-    vector_icon_id_ = id;
-    vector_icon_badge_id_ = badge_id;
+    icon_id_ = id;
+    icon_badge_id_ = badge_id;
   }
-#endif
+
   void set_visible(bool visible) { is_visible_ = visible; }
-  void set_icon(const gfx::Image& image) { icon_ = image; }
   void set_explanatory_string_id(int text_id) {
     explanatory_string_id_ = text_id;
   }
@@ -78,12 +81,9 @@ class ContentSettingImageModel {
 
  private:
   bool is_visible_;
-  // |icon_id_| and |icon_| are only used for pre-MD.
-  int icon_id_;
-  gfx::Image icon_;
-  // Vector icons are used for MD.
-  gfx::VectorIconId vector_icon_id_;
-  gfx::VectorIconId vector_icon_badge_id_;
+
+  gfx::VectorIconId icon_id_;
+  gfx::VectorIconId icon_badge_id_;
   int explanatory_string_id_;
   base::string16 tooltip_;
 
@@ -104,8 +104,8 @@ class ContentSettingSimpleImageModel : public ContentSettingImageModel {
   void SetAnimationHasRun(content::WebContents* web_contents) override;
 
   // Factory method. Used only for testing.
-  static scoped_ptr<ContentSettingImageModel> CreateForContentTypeForTesting(
-      ContentSettingsType content_type);
+  static std::unique_ptr<ContentSettingImageModel>
+  CreateForContentTypeForTesting(ContentSettingsType content_type);
 
  protected:
   ContentSettingsType content_type() { return content_type_; }
@@ -114,6 +114,26 @@ class ContentSettingSimpleImageModel : public ContentSettingImageModel {
   ContentSettingsType content_type_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingSimpleImageModel);
+};
+
+// Image model for subresource filter icons in the location bar.
+class ContentSettingSubresourceFilterImageModel
+    : public ContentSettingImageModel {
+ public:
+  ContentSettingSubresourceFilterImageModel();
+
+  void UpdateFromWebContents(content::WebContents* web_contents) override;
+
+  ContentSettingBubbleModel* CreateBubbleModel(
+      ContentSettingBubbleModel::Delegate* delegate,
+      content::WebContents* web_contents,
+      Profile* profile) override;
+
+  bool ShouldRunAnimation(content::WebContents* web_contents) override;
+  void SetAnimationHasRun(content::WebContents* web_contents) override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ContentSettingSubresourceFilterImageModel);
 };
 
 #endif  // CHROME_BROWSER_UI_CONTENT_SETTINGS_CONTENT_SETTING_IMAGE_MODEL_H_

@@ -23,71 +23,63 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/track/TrackEvent.h"
 
-#include "bindings/core/v8/UnionTypesCore.h"
+#include "bindings/core/v8/VideoTrackOrAudioTrackOrTextTrack.h"
 #include "core/html/track/AudioTrack.h"
 #include "core/html/track/TextTrack.h"
 #include "core/html/track/VideoTrack.h"
+#include "public/platform/WebMediaPlayer.h"
 
 namespace blink {
 
-TrackEvent::TrackEvent()
-{
+TrackEvent::TrackEvent() {}
+
+TrackEvent::TrackEvent(const AtomicString& type,
+                       const TrackEventInit& initializer)
+    : Event(type, initializer) {
+  if (!initializer.hasTrack())
+    return;
+
+  const VideoTrackOrAudioTrackOrTextTrack& track = initializer.track();
+  if (track.isVideoTrack())
+    m_track = track.getAsVideoTrack();
+  else if (track.isAudioTrack())
+    m_track = track.getAsAudioTrack();
+  else if (track.isTextTrack())
+    m_track = track.getAsTextTrack();
+  else
+    NOTREACHED();
 }
 
-TrackEvent::TrackEvent(const AtomicString& type, const TrackEventInit& initializer)
-    : Event(type, initializer)
-{
-    if (!initializer.hasTrack())
-        return;
+TrackEvent::~TrackEvent() {}
 
-    const VideoTrackOrAudioTrackOrTextTrack& track = initializer.track();
-    if (track.isVideoTrack())
-        m_track = track.getAsVideoTrack();
-    else if (track.isAudioTrack())
-        m_track = track.getAsAudioTrack();
-    else if (track.isTextTrack())
-        m_track = track.getAsTextTrack();
-    else
-        ASSERT_NOT_REACHED();
+const AtomicString& TrackEvent::interfaceName() const {
+  return EventNames::TrackEvent;
 }
 
-TrackEvent::~TrackEvent()
-{
-}
+void TrackEvent::track(VideoTrackOrAudioTrackOrTextTrack& returnValue) {
+  if (!m_track)
+    return;
 
-const AtomicString& TrackEvent::interfaceName() const
-{
-    return EventNames::TrackEvent;
-}
-
-void TrackEvent::track(VideoTrackOrAudioTrackOrTextTrack& returnValue)
-{
-    if (!m_track)
-        return;
-
-    switch (m_track->type()) {
-    case TrackBase::TextTrack:
-        returnValue.setTextTrack(toTextTrack(m_track.get()));
-        break;
-    case TrackBase::AudioTrack:
-        returnValue.setAudioTrack(toAudioTrack(m_track.get()));
-        break;
-    case TrackBase::VideoTrack:
-        returnValue.setVideoTrack(toVideoTrack(m_track.get()));
-        break;
+  switch (m_track->type()) {
+    case WebMediaPlayer::TextTrack:
+      returnValue.setTextTrack(toTextTrack(m_track.get()));
+      break;
+    case WebMediaPlayer::AudioTrack:
+      returnValue.setAudioTrack(toAudioTrack(m_track.get()));
+      break;
+    case WebMediaPlayer::VideoTrack:
+      returnValue.setVideoTrack(toVideoTrack(m_track.get()));
+      break;
     default:
-        ASSERT_NOT_REACHED();
-    }
+      NOTREACHED();
+  }
 }
 
-DEFINE_TRACE(TrackEvent)
-{
-    visitor->trace(m_track);
-    Event::trace(visitor);
+DEFINE_TRACE(TrackEvent) {
+  visitor->trace(m_track);
+  Event::trace(visitor);
 }
 
-} // namespace blink
-
+}  // namespace blink

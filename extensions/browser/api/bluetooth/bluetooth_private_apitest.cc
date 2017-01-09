@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 #include "device/bluetooth/test/mock_bluetooth_device.h"
 #include "device/bluetooth/test/mock_bluetooth_discovery_session.h"
@@ -57,18 +61,17 @@ class BluetoothPrivateApiTest : public ExtensionApiTest {
   ~BluetoothPrivateApiTest() override {}
 
   void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
         switches::kWhitelistedExtensionID, kTestExtensionId);
     mock_adapter_ = new NiceMock<MockBluetoothAdapter>();
     event_router()->SetAdapterForTest(mock_adapter_.get());
     mock_device_.reset(new NiceMock<MockBluetoothDevice>(
         mock_adapter_.get(), 0, kDeviceName, kDeviceAddress, false, false));
-    ON_CALL(*mock_adapter_.get(), GetDevice(kDeviceAddress))
+    ON_CALL(*mock_adapter_, GetDevice(kDeviceAddress))
         .WillByDefault(Return(mock_device_.get()));
-    ON_CALL(*mock_adapter_.get(), IsPresent()).WillByDefault(Return(true));
+    ON_CALL(*mock_adapter_, IsPresent()).WillByDefault(Return(true));
   }
-
-  void TearDownOnMainThread() override {}
 
   BluetoothEventRouter* event_router() {
     return BluetoothAPI::Get(browser()->profile())->event_router();
@@ -103,13 +106,13 @@ class BluetoothPrivateApiTest : public ExtensionApiTest {
     pairing_event.device.vendor_id_source = bt::VENDOR_ID_SOURCE_USB;
     pairing_event.device.type = bt::DEVICE_TYPE_PHONE;
 
-    scoped_ptr<base::ListValue> args =
+    std::unique_ptr<base::ListValue> args =
         bt_private::OnPairing::Create(pairing_event);
-    scoped_ptr<Event> event(new Event(events::BLUETOOTH_PRIVATE_ON_PAIRING,
-                                      bt_private::OnPairing::kEventName,
-                                      args.Pass()));
-    EventRouter::Get(browser()->profile())->DispatchEventToExtension(
-        kTestExtensionId, event.Pass());
+    std::unique_ptr<Event> event(new Event(events::BLUETOOTH_PRIVATE_ON_PAIRING,
+                                           bt_private::OnPairing::kEventName,
+                                           std::move(args)));
+    EventRouter::Get(browser()->profile())
+        ->DispatchEventToExtension(kTestExtensionId, std::move(event));
   }
 
   void DispatchAuthorizePairingEvent() {
@@ -130,10 +133,10 @@ class BluetoothPrivateApiTest : public ExtensionApiTest {
 
   void CallSetDiscoveryFilterCallback(
       device::BluetoothAdapter::DiscoverySessionCallback callback) {
-    auto session_ptr = scoped_ptr<NiceMock<MockBluetoothDiscoverySession>>(
+    auto session_ptr = std::unique_ptr<NiceMock<MockBluetoothDiscoverySession>>(
         mock_discovery_session_);
 
-    callback.Run(session_ptr.Pass());
+    callback.Run(std::move(session_ptr));
   }
 
  protected:
@@ -142,7 +145,7 @@ class BluetoothPrivateApiTest : public ExtensionApiTest {
   bool adapter_discoverable_;
 
   scoped_refptr<NiceMock<MockBluetoothAdapter> > mock_adapter_;
-  scoped_ptr<NiceMock<MockBluetoothDevice> > mock_device_;
+  std::unique_ptr<NiceMock<MockBluetoothDevice>> mock_device_;
 
   // This discovery session will be owned by EventRouter, we'll only keep
   // pointer to it.
@@ -156,33 +159,36 @@ ACTION_TEMPLATE(InvokeCallbackArgument,
 }
 
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, SetAdapterState) {
-  ON_CALL(*mock_adapter_.get(), GetName())
+  ON_CALL(*mock_adapter_, GetName())
       .WillByDefault(ReturnPointee(&adapter_name_));
-  ON_CALL(*mock_adapter_.get(), IsPowered())
+  ON_CALL(*mock_adapter_, IsPowered())
       .WillByDefault(ReturnPointee(&adapter_powered_));
-  ON_CALL(*mock_adapter_.get(), IsDiscoverable())
+  ON_CALL(*mock_adapter_, IsDiscoverable())
       .WillByDefault(ReturnPointee(&adapter_discoverable_));
 
-  EXPECT_CALL(*mock_adapter_.get(), SetName("Dome", _, _)).WillOnce(
-      WithArgs<0, 1>(Invoke(this, &BluetoothPrivateApiTest::SetName)));
-  EXPECT_CALL(*mock_adapter_.get(), SetPowered(true, _, _)).WillOnce(
-      WithArgs<0, 1>(Invoke(this, &BluetoothPrivateApiTest::SetPowered)));
-  EXPECT_CALL(*mock_adapter_.get(), SetDiscoverable(true, _, _)).WillOnce(
-      WithArgs<0, 1>(Invoke(this, &BluetoothPrivateApiTest::SetDiscoverable)));
+  EXPECT_CALL(*mock_adapter_, SetName("Dome", _, _))
+      .WillOnce(
+          WithArgs<0, 1>(Invoke(this, &BluetoothPrivateApiTest::SetName)));
+  EXPECT_CALL(*mock_adapter_, SetPowered(true, _, _))
+      .WillOnce(
+          WithArgs<0, 1>(Invoke(this, &BluetoothPrivateApiTest::SetPowered)));
+  EXPECT_CALL(*mock_adapter_, SetDiscoverable(true, _, _))
+      .WillOnce(WithArgs<0, 1>(
+          Invoke(this, &BluetoothPrivateApiTest::SetDiscoverable)));
 
   ASSERT_TRUE(RunComponentExtensionTest("bluetooth_private/adapter_state"))
       << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, NoBluetoothAdapter) {
-  ON_CALL(*mock_adapter_.get(), IsPresent()).WillByDefault(Return(false));
+  ON_CALL(*mock_adapter_, IsPresent()).WillByDefault(Return(false));
   ASSERT_TRUE(RunComponentExtensionTest("bluetooth_private/no_adapter"))
       << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, CancelPairing) {
   InSequence s;
-  EXPECT_CALL(*mock_adapter_.get(),
+  EXPECT_CALL(*mock_adapter_,
               AddPairingDelegate(
                   _, device::BluetoothAdapter::PAIRING_DELEGATE_PRIORITY_HIGH))
       .WillOnce(WithoutArgs(Invoke(
@@ -195,7 +201,7 @@ IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, CancelPairing) {
 }
 
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, PincodePairing) {
-  EXPECT_CALL(*mock_adapter_.get(),
+  EXPECT_CALL(*mock_adapter_,
               AddPairingDelegate(
                   _, device::BluetoothAdapter::PAIRING_DELEGATE_PRIORITY_HIGH))
       .WillOnce(WithoutArgs(
@@ -207,7 +213,7 @@ IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, PincodePairing) {
 }
 
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, PasskeyPairing) {
-  EXPECT_CALL(*mock_adapter_.get(),
+  EXPECT_CALL(*mock_adapter_,
               AddPairingDelegate(
                   _, device::BluetoothAdapter::PAIRING_DELEGATE_PRIORITY_HIGH))
       .WillOnce(WithoutArgs(
@@ -237,7 +243,7 @@ IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, DisconnectAll) {
 // Device::Forget not implemented on OSX.
 #if !defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, ForgetDevice) {
-  EXPECT_CALL(*mock_device_.get(), Forget(_, _))
+  EXPECT_CALL(*mock_device_, Forget(_, _))
       .WillOnce(
           WithArgs<0>(Invoke(this, &BluetoothPrivateApiTest::ForgetDevice)));
   ASSERT_TRUE(RunComponentExtensionTest("bluetooth_private/forget_device"))
@@ -248,15 +254,14 @@ IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, ForgetDevice) {
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, DiscoveryFilter) {
   mock_discovery_session_ = new NiceMock<MockBluetoothDiscoverySession>();
 
-  BluetoothDiscoveryFilter discovery_filter(
-      BluetoothDiscoveryFilter::Transport::TRANSPORT_LE);
+  BluetoothDiscoveryFilter discovery_filter(device::BLUETOOTH_TRANSPORT_LE);
   discovery_filter.SetPathloss(50);
   discovery_filter.AddUUID(BluetoothUUID("cafe"));
   discovery_filter.AddUUID(
       BluetoothUUID("0000bebe-0000-1000-8000-00805f9b34fb"));
 
-  EXPECT_CALL(*mock_adapter_.get(), StartDiscoverySessionWithFilterRaw(
-                                        IsFilterEqual(&discovery_filter), _, _))
+  EXPECT_CALL(*mock_adapter_, StartDiscoverySessionWithFilterRaw(
+                                  IsFilterEqual(&discovery_filter), _, _))
       .Times(1)
       .WillOnce(WithArgs<1>(Invoke(
           this, &BluetoothPrivateApiTest::CallSetDiscoveryFilterCallback)));
@@ -272,23 +277,23 @@ IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, DiscoveryFilter) {
 }
 
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, Connect) {
-  EXPECT_CALL(*mock_device_.get(), IsConnected())
+  EXPECT_CALL(*mock_device_, IsConnected())
       .Times(2)
       .WillOnce(Return(false))
       .WillOnce(Return(true));
-  EXPECT_CALL(*mock_device_.get(), Connect(_, _, _))
+  EXPECT_CALL(*mock_device_, Connect(_, _, _))
       .WillOnce(InvokeCallbackArgument<1>());
   ASSERT_TRUE(RunComponentExtensionTest("bluetooth_private/connect"))
       << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(BluetoothPrivateApiTest, Pair) {
-  EXPECT_CALL(*mock_adapter_.get(),
+  EXPECT_CALL(*mock_adapter_,
               AddPairingDelegate(
                   _, device::BluetoothAdapter::PAIRING_DELEGATE_PRIORITY_HIGH));
   EXPECT_CALL(*mock_device_, ExpectingConfirmation())
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock_device_.get(), Pair(_, _, _))
+  EXPECT_CALL(*mock_device_, Pair(_, _, _))
       .WillOnce(DoAll(
           WithoutArgs(Invoke(
               this,

@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/safe_json/safe_json_parser.h"
@@ -37,7 +38,7 @@ class SafeJsonParserTest : public InProcessBrowserTest {
     message_loop_runner_ = new content::MessageLoopRunner;
 
     std::string error;
-    scoped_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
+    std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
         json, base::JSON_PARSE_RFC, nullptr, &error);
 
     SafeJsonParser::SuccessCallback success_callback;
@@ -61,8 +62,8 @@ class SafeJsonParserTest : public InProcessBrowserTest {
   }
 
  private:
-  void ExpectValue(scoped_ptr<base::Value> expected_value,
-                   scoped_ptr<base::Value> actual_value) {
+  void ExpectValue(std::unique_ptr<base::Value> expected_value,
+                   std::unique_ptr<base::Value> actual_value) {
     EXPECT_TRUE(base::Value::Equals(actual_value.get(), expected_value.get()))
         << "Expected: " << MaybeToJson(expected_value.get())
         << " Actual: " << MaybeToJson(actual_value.get());
@@ -75,7 +76,7 @@ class SafeJsonParserTest : public InProcessBrowserTest {
     message_loop_runner_->Quit();
   }
 
-  void FailWithValue(scoped_ptr<base::Value> value) {
+  void FailWithValue(std::unique_ptr<base::Value> value) {
     ADD_FAILURE() << MaybeToJson(value.get());
     message_loop_runner_->Quit();
   }
@@ -88,7 +89,8 @@ class SafeJsonParserTest : public InProcessBrowserTest {
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
 };
 
-IN_PROC_BROWSER_TEST_F(SafeJsonParserTest, Parse) {
+// Flaky in debug builds: http://crbug.com/611067
+IN_PROC_BROWSER_TEST_F(SafeJsonParserTest, DISABLED_Parse) {
   TestParse("{}");
   TestParse("choke");
   TestParse("{\"awesome\": true}");

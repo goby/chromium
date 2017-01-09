@@ -4,6 +4,8 @@
 
 #include "chrome/browser/thumbnails/thumbnail_list_source.h"
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/base64.h"
@@ -95,12 +97,11 @@ std::string ThumbnailListSource::GetSource() const {
 
 void ThumbnailListSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
     const content::URLDataSource::GotDataCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!top_sites_) {
-    callback.Run(NULL);
+    callback.Run(nullptr);
     return;
   }
 
@@ -114,11 +115,12 @@ std::string ThumbnailListSource::GetMimeType(const std::string& path) const {
   return "text/html";
 }
 
-base::MessageLoop* ThumbnailListSource::MessageLoopForRequestPath(
-    const std::string& path) const {
+scoped_refptr<base::SingleThreadTaskRunner>
+ThumbnailListSource::TaskRunnerForRequestPath(const std::string& path) const {
   // TopSites can be accessed from the IO thread.
-  return thumbnail_service_.get() ?
-      NULL : content::URLDataSource::MessageLoopForRequestPath(path);
+  return thumbnail_service_.get()
+             ? nullptr
+             : content::URLDataSource::TaskRunnerForRequestPath(path);
 }
 
 bool ThumbnailListSource::ShouldServiceRequest(
@@ -144,8 +146,9 @@ void ThumbnailListSource::OnMostVisitedURLsAvailable(
   for (size_t i = 0; i < num_mv; ++i) {
     scoped_refptr<base::RefCountedMemory> data;
     if (thumbnail_service_->GetPageThumbnail(mvurl_list[i].url, false, &data)) {
-      base::Base64Encode(std::string(data->front_as<char>(), data->size()),
-                         &base64_encoded_pngs[i]);
+      base::Base64Encode(
+          base::StringPiece(data->front_as<char>(), data->size()),
+          &base64_encoded_pngs[i]);
       ++num_mv_with_thumb;
     }
   }

@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
+
+#include <utility>
+
 #include "base/lazy_instance.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/image_writer_private/destroy_partitions_operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
-#include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
 #include "chrome/browser/extensions/api/image_writer_private/write_from_file_operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/write_from_url_operation.h"
 #include "chrome/browser/extensions/event_router_forwarder.h"
@@ -15,6 +19,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
@@ -75,13 +80,14 @@ void OperationManager::StartWriteFromUrl(
     return callback.Run(false, error::kOperationAlreadyInProgress);
   }
 
-  scoped_refptr<Operation> operation(
-      new WriteFromUrlOperation(weak_factory_.GetWeakPtr(),
-                                extension_id,
-                                browser_context_->GetRequestContext(),
-                                url,
-                                hash,
-                                device_path));
+  scoped_refptr<Operation> operation(new WriteFromUrlOperation(
+      weak_factory_.GetWeakPtr(),
+      extension_id,
+      content::BrowserContext::GetDefaultStoragePartition(browser_context_)->
+          GetURLRequestContext(),
+      url,
+      hash,
+      device_path));
   operations_[extension_id] = operation;
   BrowserThread::PostTask(BrowserThread::FILE,
                           FROM_HERE,
@@ -158,26 +164,27 @@ void OperationManager::OnProgress(const ExtensionId& extension_id,
   info.stage = stage;
   info.percent_complete = progress;
 
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       image_writer_api::OnWriteProgress::Create(info));
-  scoped_ptr<Event> event(
-      new Event(events::IMAGE_WRITER_PRIVATE_ON_WRITE_PROGRESS,
-                image_writer_api::OnWriteProgress::kEventName, args.Pass()));
+  std::unique_ptr<Event> event(new Event(
+      events::IMAGE_WRITER_PRIVATE_ON_WRITE_PROGRESS,
+      image_writer_api::OnWriteProgress::kEventName, std::move(args)));
 
   EventRouter::Get(browser_context_)
-      ->DispatchEventToExtension(extension_id, event.Pass());
+      ->DispatchEventToExtension(extension_id, std::move(event));
 }
 
 void OperationManager::OnComplete(const ExtensionId& extension_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  scoped_ptr<base::ListValue> args(image_writer_api::OnWriteComplete::Create());
-  scoped_ptr<Event> event(
-      new Event(events::IMAGE_WRITER_PRIVATE_ON_WRITE_COMPLETE,
-                image_writer_api::OnWriteComplete::kEventName, args.Pass()));
+  std::unique_ptr<base::ListValue> args(
+      image_writer_api::OnWriteComplete::Create());
+  std::unique_ptr<Event> event(new Event(
+      events::IMAGE_WRITER_PRIVATE_ON_WRITE_COMPLETE,
+      image_writer_api::OnWriteComplete::kEventName, std::move(args)));
 
   EventRouter::Get(browser_context_)
-      ->DispatchEventToExtension(extension_id, event.Pass());
+      ->DispatchEventToExtension(extension_id, std::move(event));
 
   DeleteOperation(extension_id);
 }
@@ -194,14 +201,14 @@ void OperationManager::OnError(const ExtensionId& extension_id,
   info.stage = stage;
   info.percent_complete = progress;
 
-  scoped_ptr<base::ListValue> args(
+  std::unique_ptr<base::ListValue> args(
       image_writer_api::OnWriteError::Create(info, error_message));
-  scoped_ptr<Event> event(new Event(events::IMAGE_WRITER_PRIVATE_ON_WRITE_ERROR,
-                                    image_writer_api::OnWriteError::kEventName,
-                                    args.Pass()));
+  std::unique_ptr<Event> event(
+      new Event(events::IMAGE_WRITER_PRIVATE_ON_WRITE_ERROR,
+                image_writer_api::OnWriteError::kEventName, std::move(args)));
 
   EventRouter::Get(browser_context_)
-      ->DispatchEventToExtension(extension_id, event.Pass());
+      ->DispatchEventToExtension(extension_id, std::move(event));
 
   DeleteOperation(extension_id);
 }
@@ -236,16 +243,14 @@ void OperationManager::Observe(int type,
       DeleteOperation(content::Details<const Extension>(details).ptr()->id());
       break;
     }
-    case extensions::NOTIFICATION_EXTENSION_HOST_VIEW_SHOULD_CLOSE: {
+    case extensions::NOTIFICATION_EXTENSION_HOST_VIEW_SHOULD_CLOSE:
+      // Intentional fall-through.
+    case extensions::NOTIFICATION_EXTENSION_HOST_DESTROYED:
+      // Note: |ExtensionHost::extension()| can be null if the extension was
+      // already unloaded, use ExtensionHost::extension_id() instead.
       DeleteOperation(
-        content::Details<ExtensionHost>(details)->extension()->id());
+          content::Details<ExtensionHost>(details)->extension_id());
       break;
-    }
-    case extensions::NOTIFICATION_EXTENSION_HOST_DESTROYED: {
-      DeleteOperation(
-        content::Details<ExtensionHost>(details)->extension()->id());
-      break;
-    }
     default: {
       NOTREACHED();
       break;

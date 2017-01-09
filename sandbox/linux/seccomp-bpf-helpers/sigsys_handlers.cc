@@ -6,6 +6,8 @@
 
 #include "sandbox/linux/seccomp-bpf-helpers/sigsys_handlers.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -47,7 +49,8 @@ void WriteToStdErr(const char* error_message, size_t size) {
   while (size > 0) {
     // TODO(jln): query the current policy to check if send() is available and
     // use it to perform a non-blocking write.
-    const int ret = HANDLE_EINTR(write(STDERR_FILENO, error_message, size));
+    const int ret = HANDLE_EINTR(
+        sandbox::sys_write(STDERR_FILENO, error_message, size));
     // We can't handle any type of error here.
     if (ret <= 0 || static_cast<size_t>(ret) > size) break;
     size -= ret;
@@ -103,7 +106,7 @@ void PrintSyscallError(uint32_t sysno) {
   WriteToStdErr(kSeccompErrorPostfix, sizeof(kSeccompErrorPostfix) - 1);
 }
 
-}  // namespace.
+}  // namespace
 
 namespace sandbox {
 

@@ -5,6 +5,7 @@
 #ifndef NET_BASE_DIRECTORY_LISTER_H_
 #define NET_BASE_DIRECTORY_LISTER_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/atomicops.h"
@@ -12,11 +13,10 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/net_export.h"
 
 namespace base {
-class SingleThreadTaskRunner;
+class TaskRunner;
 }
 
 namespace net {
@@ -69,7 +69,7 @@ class NET_EXPORT DirectoryLister  {
   ~DirectoryLister();
 
   // Call this method to start the directory enumeration thread.
-  bool Start();
+  bool Start(base::TaskRunner* dir_task_runner);
 
   // Call this method to asynchronously stop directory enumeration.  The
   // delegate will not be called back.
@@ -105,12 +105,12 @@ class NET_EXPORT DirectoryLister  {
     bool IsCancelled() const;
 
     // Called on origin thread.
-    void DoneOnOriginThread(scoped_ptr<DirectoryList> directory_list,
+    void DoneOnOriginThread(std::unique_ptr<DirectoryList> directory_list,
                             int error) const;
 
     const base::FilePath dir_;
     const ListingType type_;
-    const scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner_;
+    const scoped_refptr<base::TaskRunner> origin_task_runner_;
 
     // Only used on the origin thread.
     DirectoryLister* lister_;

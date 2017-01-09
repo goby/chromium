@@ -5,12 +5,14 @@
 #ifndef THIRD_PARTY_LIBADDRESSINPUT_CHROMIUM_CHROME_ADDRESS_VALIDATOR_H_
 #define THIRD_PARTY_LIBADDRESSINPUT_CHROMIUM_CHROME_ADDRESS_VALIDATOR_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_field.h"
@@ -74,8 +76,8 @@ class AddressValidator {
   };
 
   // Takes ownership of |source| and |storage|.
-  AddressValidator(scoped_ptr< ::i18n::addressinput::Source> source,
-                   scoped_ptr< ::i18n::addressinput::Storage> storage,
+  AddressValidator(std::unique_ptr<::i18n::addressinput::Source> source,
+                   std::unique_ptr<::i18n::addressinput::Storage> storage,
                    LoadRulesListener* load_rules_listener);
 
   virtual ~AddressValidator();
@@ -133,11 +135,14 @@ class AddressValidator {
       size_t suggestion_limit,
       std::vector< ::i18n::addressinput::AddressData>* suggestions) const;
 
-  // Canonicalizes the administrative area in |address_data|. For example,
-  // "texas" changes to "TX". Returns true on success, otherwise leaves
-  // |address_data| alone and returns false.
-  virtual bool CanonicalizeAdministrativeArea(
+  // Normalizes the |address_data|. For example, "texas" changes to "TX".
+  // Returns true on success, otherwise leaves |address_data| alone and returns
+  // false.
+  virtual bool NormalizeAddress(
       ::i18n::addressinput::AddressData* address) const;
+
+  // Returns whether the rules associated with the |region_code| are loaded.
+  virtual bool AreRulesLoadedForRegion(const std::string& region_code);
 
  protected:
   // Constructor used only for MockAddressValidator.
@@ -161,24 +166,25 @@ class AddressValidator {
   void RetryLoadRules(const std::string& region_code);
 
   // Loads and stores aggregate rules at COUNTRY level.
-  const scoped_ptr< ::i18n::addressinput::PreloadSupplier> supplier_;
+  const std::unique_ptr<::i18n::addressinput::PreloadSupplier> supplier_;
 
   // Suggests addresses based on user input.
-  const scoped_ptr<InputSuggester> input_suggester_;
+  const std::unique_ptr<InputSuggester> input_suggester_;
 
   // Normalizes addresses into a canonical form.
-  const scoped_ptr< ::i18n::addressinput::AddressNormalizer> normalizer_;
+  const std::unique_ptr<::i18n::addressinput::AddressNormalizer> normalizer_;
 
   // Validates addresses.
-  const scoped_ptr<const ::i18n::addressinput::AddressValidator> validator_;
+  const std::unique_ptr<const ::i18n::addressinput::AddressValidator>
+      validator_;
 
   // The callback that |validator_| invokes when it finished validating an
   // address.
-  const scoped_ptr<const ::i18n::addressinput::AddressValidator::Callback>
+  const std::unique_ptr<const ::i18n::addressinput::AddressValidator::Callback>
       validated_;
 
   // The callback that |supplier_| invokes when it finished loading rules.
-  const scoped_ptr<const ::i18n::addressinput::PreloadSupplier::Callback>
+  const std::unique_ptr<const ::i18n::addressinput::PreloadSupplier::Callback>
       rules_loaded_;
 
   // Not owned delegate to invoke when |suppler_| finished loading rules. Can be

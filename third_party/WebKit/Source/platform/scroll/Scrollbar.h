@@ -33,188 +33,235 @@
 #include "platform/scroll/ScrollTypes.h"
 #include "platform/scroll/ScrollbarThemeClient.h"
 #include "wtf/MathExtras.h"
-#include "wtf/PassRefPtr.h"
 
 namespace blink {
 
 class GraphicsContext;
+class HostWindow;
 class IntRect;
 class PlatformGestureEvent;
 class PlatformMouseEvent;
-class ScrollAnimatorBase;
 class ScrollableArea;
 class ScrollbarTheme;
 
-class PLATFORM_EXPORT Scrollbar : public Widget, public ScrollbarThemeClient {
-public:
-    static PassRefPtrWillBeRawPtr<Scrollbar> create(ScrollableArea*, ScrollbarOrientation, ScrollbarControlSize);
+class PLATFORM_EXPORT Scrollbar : public Widget,
+                                  public ScrollbarThemeClient,
+                                  public DisplayItemClient {
+ public:
+  static Scrollbar* create(ScrollableArea* scrollableArea,
+                           ScrollbarOrientation orientation,
+                           ScrollbarControlSize size,
+                           HostWindow* hostWindow) {
+    return new Scrollbar(scrollableArea, orientation, size, hostWindow);
+  }
 
-    ~Scrollbar() override;
+  // Theme object ownership remains with the caller and it must outlive the
+  // scrollbar.
+  static Scrollbar* createForTesting(ScrollableArea* scrollableArea,
+                                     ScrollbarOrientation orientation,
+                                     ScrollbarControlSize size,
+                                     ScrollbarTheme* theme) {
+    return new Scrollbar(scrollableArea, orientation, size, nullptr, theme);
+  }
 
-    // ScrollbarThemeClient implementation.
-    int x() const override { return Widget::x(); }
-    int y() const override { return Widget::y(); }
-    int width() const override { return Widget::width(); }
-    int height() const override { return Widget::height(); }
-    IntSize size() const override { return Widget::size(); }
-    IntPoint location() const override { return Widget::location(); }
+  ~Scrollbar() override;
 
-    Widget* parent() const override { return Widget::parent(); }
-    Widget* root() const override { return Widget::root(); }
+  // ScrollbarThemeClient implementation.
+  int x() const override { return Widget::x(); }
+  int y() const override { return Widget::y(); }
+  int width() const override { return Widget::width(); }
+  int height() const override { return Widget::height(); }
+  IntSize size() const override { return Widget::size(); }
+  IntPoint location() const override { return Widget::location(); }
 
-    void setFrameRect(const IntRect&) override;
-    IntRect frameRect() const override { return Widget::frameRect(); }
+  Widget* parent() const override { return Widget::parent(); }
+  Widget* root() const override { return Widget::root(); }
 
-    ScrollbarOverlayStyle scrollbarOverlayStyle() const override;
-    void getTickmarks(Vector<IntRect>&) const override;
-    bool isScrollableAreaActive() const override;
+  void setFrameRect(const IntRect&) override;
+  IntRect frameRect() const override { return Widget::frameRect(); }
 
-    IntPoint convertFromRootFrame(const IntPoint& pointInRootFrame) const override { return Widget::convertFromRootFrame(pointInRootFrame); }
+  ScrollbarOverlayColorTheme getScrollbarOverlayColorTheme() const override;
+  void getTickmarks(Vector<IntRect>&) const override;
+  bool isScrollableAreaActive() const override;
 
-    bool isCustomScrollbar() const override { return false; }
-    ScrollbarOrientation orientation() const override { return m_orientation; }
-    bool isLeftSideVerticalScrollbar() const override;
+  IntPoint convertFromRootFrame(
+      const IntPoint& pointInRootFrame) const override {
+    return Widget::convertFromRootFrame(pointInRootFrame);
+  }
 
-    int value() const override { return lroundf(m_currentPos); }
-    float currentPos() const override { return m_currentPos; }
-    int visibleSize() const override { return m_visibleSize; }
-    int totalSize() const override { return m_totalSize; }
-    int maximum() const override { return m_totalSize - m_visibleSize; }
-    ScrollbarControlSize controlSize() const override { return m_controlSize; }
+  bool isCustomScrollbar() const override { return false; }
+  ScrollbarOrientation orientation() const override { return m_orientation; }
+  bool isLeftSideVerticalScrollbar() const override;
 
-    ScrollbarPart pressedPart() const override { return m_pressedPart; }
-    ScrollbarPart hoveredPart() const override { return m_hoveredPart; }
+  int value() const override { return lroundf(m_currentPos); }
+  float currentPos() const override { return m_currentPos; }
+  int visibleSize() const override { return m_visibleSize; }
+  int totalSize() const override { return m_totalSize; }
+  int maximum() const override { return m_totalSize - m_visibleSize; }
+  ScrollbarControlSize controlSize() const override { return m_controlSize; }
 
-    void styleChanged() override { }
-    void visibilityChanged() override;
-    bool enabled() const override { return m_enabled; }
-    void setEnabled(bool) override;
+  ScrollbarPart pressedPart() const override { return m_pressedPart; }
+  ScrollbarPart hoveredPart() const override { return m_hoveredPart; }
 
-    // Called by the ScrollableArea when the scroll offset changes.
-    void offsetDidChange();
+  void styleChanged() override {}
+  void setScrollbarsHidden(bool) override;
+  bool enabled() const override { return m_enabled; }
+  void setEnabled(bool) override;
 
-    void disconnectFromScrollableArea();
-    ScrollableArea* scrollableArea() const { return m_scrollableArea; }
+  // This returns device-scale-factor-aware pixel value.
+  // e.g. 15 in dsf=1.0, 30 in dsf=2.0.
+  // See also ScrolbarTheme::scrollbatThickness().
+  int scrollbarThickness() const;
 
-    int pressedPos() const { return m_pressedPos; }
+  // Called by the ScrollableArea when the scroll offset changes.
+  // Will trigger paint invalidation if required.
+  void offsetDidChange();
 
-    virtual void setHoveredPart(ScrollbarPart);
-    virtual void setPressedPart(ScrollbarPart);
+  void disconnectFromScrollableArea();
+  ScrollableArea* getScrollableArea() const { return m_scrollableArea; }
 
-    void setProportion(int visibleSize, int totalSize);
-    void setPressedPos(int p) { m_pressedPos = p; }
+  int pressedPos() const { return m_pressedPos; }
 
-    void paint(GraphicsContext*, const CullRect&) const final;
+  virtual void setHoveredPart(ScrollbarPart);
+  virtual void setPressedPart(ScrollbarPart);
 
-    bool isOverlayScrollbar() const override;
-    bool shouldParticipateInHitTesting();
+  void setProportion(int visibleSize, int totalSize);
+  void setPressedPos(int p) { m_pressedPos = p; }
 
-    void windowActiveChangedForSnowLeopardOnly();
-    bool isWindowActive() const;
+  void paint(GraphicsContext&, const CullRect&) const final;
 
-    bool gestureEvent(const PlatformGestureEvent&);
+  bool isOverlayScrollbar() const override;
+  bool shouldParticipateInHitTesting();
 
-    // These methods are used for platform scrollbars to give :hover feedback.  They will not get called
-    // when the mouse went down in a scrollbar, since it is assumed the scrollbar will start
-    // grabbing all events in that case anyway.
-    void mouseMoved(const PlatformMouseEvent&);
-    void mouseEntered();
-    void mouseExited();
+  bool isWindowActive() const;
 
-    // Used by some platform scrollbars to know when they've been released from capture.
-    void mouseUp(const PlatformMouseEvent&);
-    void mouseDown(const PlatformMouseEvent&);
+  // Return if the gesture event was handled. |shouldUpdateCapture|
+  // will be set to true if the handler should update the capture
+  // state for this scrollbar.
+  bool gestureEvent(const PlatformGestureEvent&, bool* shouldUpdateCapture);
 
-    ScrollbarTheme* theme() const { return m_theme; }
+  // These methods are used for platform scrollbars to give :hover feedback.
+  // They will not get called when the mouse went down in a scrollbar, since it
+  // is assumed the scrollbar will start
+  // grabbing all events in that case anyway.
+  void mouseMoved(const PlatformMouseEvent&);
+  void mouseEntered();
+  void mouseExited();
 
-    IntRect convertToContainingWidget(const IntRect&) const override;
-    IntRect convertFromContainingWidget(const IntRect&) const override;
+  // Used by some platform scrollbars to know when they've been released from
+  // capture.
+  void mouseUp(const PlatformMouseEvent&);
+  void mouseDown(const PlatformMouseEvent&);
 
-    IntPoint convertToContainingWidget(const IntPoint&) const override;
-    IntPoint convertFromContainingWidget(const IntPoint&) const override;
+  ScrollbarTheme& theme() const { return m_theme; }
 
-    void moveThumb(int pos, bool draggingDocument = false);
+  IntRect convertToContainingWidget(const IntRect&) const override;
+  IntRect convertFromContainingWidget(const IntRect&) const override;
 
-    bool isAlphaLocked() const override { return m_isAlphaLocked; }
-    void setIsAlphaLocked(bool flag) override { m_isAlphaLocked = flag; }
+  IntPoint convertToContainingWidget(const IntPoint&) const override;
+  IntPoint convertFromContainingWidget(const IntPoint&) const override;
 
-    float elasticOverscroll() const override { return m_elasticOverscroll; }
-    void setElasticOverscroll(float elasticOverscroll) override { m_elasticOverscroll = elasticOverscroll; }
+  void moveThumb(int pos, bool draggingDocument = false);
 
-    bool trackNeedsRepaint() const override { return m_trackNeedsRepaint; }
-    void setTrackNeedsRepaint(bool trackNeedsRepaint) override { m_trackNeedsRepaint = trackNeedsRepaint; }
-    bool thumbNeedsRepaint() const override { return m_thumbNeedsRepaint; }
-    void setThumbNeedsRepaint(bool thumbNeedsRepaint) override { m_thumbNeedsRepaint = thumbNeedsRepaint; }
+  float elasticOverscroll() const override { return m_elasticOverscroll; }
+  void setElasticOverscroll(float elasticOverscroll) override {
+    m_elasticOverscroll = elasticOverscroll;
+  }
 
-    bool overlapsResizer() const { return m_overlapsResizer; }
-    void setOverlapsResizer(bool overlapsResizer) { m_overlapsResizer = overlapsResizer; }
+  // Use setNeedsPaintInvalidation to cause the scrollbar (or parts thereof)
+  // to repaint.
+  bool trackNeedsRepaint() const { return m_trackNeedsRepaint; }
+  void clearTrackNeedsRepaint() { m_trackNeedsRepaint = false; }
+  bool thumbNeedsRepaint() const { return m_thumbNeedsRepaint; }
+  void clearThumbNeedsRepaint() { m_thumbNeedsRepaint = false; }
 
-    DisplayItemClient displayItemClient() const override { return toDisplayItemClient(this); }
-    String debugName() const override { return m_orientation == HorizontalScrollbar ? "HorizontalScrollbar" : "VerticalScrollbar"; }
+  // DisplayItemClient methods.
+  String debugName() const final {
+    return m_orientation == HorizontalScrollbar ? "HorizontalScrollbar"
+                                                : "VerticalScrollbar";
+  }
+  LayoutRect visualRect() const override;
 
-    void setNeedsPaintInvalidation();
+  // Marks the scrollbar as needing to be redrawn.
+  //
+  // If invalid parts are provided, then those parts will also be repainted.
+  // Otherwise, the ScrollableArea may redraw using cached renderings of
+  // individual parts. For instance, if the scrollbar is composited, the thumb
+  // may be cached in a GPU texture (and is only guaranteed to be repainted if
+  // ThumbPart is invalidated).
+  //
+  // Even if no parts are invalidated, the scrollbar may need to be redrawn
+  // if, for instance, the thumb moves without changing the appearance of any
+  // part.
+  void setNeedsPaintInvalidation(ScrollbarPart invalidParts);
 
-    // Promptly unregister from the theme manager + run finalizers of derived Scrollbars.
-    EAGERLY_FINALIZE();
-#if ENABLE(OILPAN)
-    DECLARE_EAGER_FINALIZATION_OPERATOR_NEW();
-#endif
-    DECLARE_VIRTUAL_TRACE();
+  // Promptly unregister from the theme manager + run finalizers of derived
+  // Scrollbars.
+  EAGERLY_FINALIZE();
+  DECLARE_EAGER_FINALIZATION_OPERATOR_NEW();
+  DECLARE_VIRTUAL_TRACE();
 
-protected:
-    Scrollbar(ScrollableArea*, ScrollbarOrientation, ScrollbarControlSize, ScrollbarTheme* = 0);
+ protected:
+  Scrollbar(ScrollableArea*,
+            ScrollbarOrientation,
+            ScrollbarControlSize,
+            HostWindow* = 0,
+            ScrollbarTheme* = 0);
 
-    void updateThumb();
-    virtual void updateThumbPosition();
-    virtual void updateThumbProportion();
+  void autoscrollTimerFired(TimerBase*);
+  void startTimerIfNeeded(double delay);
+  void stopTimerIfNeeded();
+  void autoscrollPressedPart(double delay);
+  ScrollDirectionPhysical pressedPartScrollDirectionPhysical();
+  ScrollGranularity pressedPartScrollGranularity();
 
-    void autoscrollTimerFired(Timer<Scrollbar>*);
-    void startTimerIfNeeded(double delay);
-    void stopTimerIfNeeded();
-    void autoscrollPressedPart(double delay);
-    ScrollDirectionPhysical pressedPartScrollDirectionPhysical();
-    ScrollGranularity pressedPartScrollGranularity();
+  Member<ScrollableArea> m_scrollableArea;
+  ScrollbarOrientation m_orientation;
+  ScrollbarControlSize m_controlSize;
+  ScrollbarTheme& m_theme;
+  Member<HostWindow> m_hostWindow;
 
-    RawPtrWillBeMember<ScrollableArea> m_scrollableArea;
-    ScrollbarOrientation m_orientation;
-    ScrollbarControlSize m_controlSize;
-    ScrollbarTheme* m_theme;
+  int m_visibleSize;
+  int m_totalSize;
+  float m_currentPos;
+  float m_dragOrigin;
 
-    int m_visibleSize;
-    int m_totalSize;
-    float m_currentPos;
-    float m_dragOrigin;
+  ScrollbarPart m_hoveredPart;
+  ScrollbarPart m_pressedPart;
+  int m_pressedPos;
+  float m_scrollPos;
+  bool m_draggingDocument;
+  int m_documentDragPos;
 
-    ScrollbarPart m_hoveredPart;
-    ScrollbarPart m_pressedPart;
-    int m_pressedPos;
-    float m_scrollPos;
-    bool m_draggingDocument;
-    int m_documentDragPos;
+  bool m_enabled;
 
-    bool m_enabled;
+  Timer<Scrollbar> m_scrollTimer;
 
-    Timer<Scrollbar> m_scrollTimer;
-    bool m_overlapsResizer;
+  float m_elasticOverscroll;
 
-    bool m_isAlphaLocked;
+ private:
+  bool isScrollbar() const override { return true; }
 
-    float m_elasticOverscroll;
+  void invalidate() override { setNeedsPaintInvalidation(AllParts); }
+  void invalidateRect(const IntRect&) override {
+    setNeedsPaintInvalidation(AllParts);
+  }
 
-private:
-    bool isScrollbar() const override { return true; }
+  float scrollableAreaCurrentPos() const;
+  float scrollableAreaTargetPos() const;
+  bool thumbWillBeUnderMouse() const;
 
-    void invalidate() override { setNeedsPaintInvalidation(); }
-    void invalidateRect(const IntRect&) override { setNeedsPaintInvalidation(); }
-
-    float scrollableAreaCurrentPos() const;
-
-    bool m_trackNeedsRepaint;
-    bool m_thumbNeedsRepaint;
+  int m_themeScrollbarThickness;
+  bool m_trackNeedsRepaint;
+  bool m_thumbNeedsRepaint;
 };
 
-DEFINE_TYPE_CASTS(Scrollbar, Widget, widget, widget->isScrollbar(), widget.isScrollbar());
+DEFINE_TYPE_CASTS(Scrollbar,
+                  Widget,
+                  widget,
+                  widget->isScrollbar(),
+                  widget.isScrollbar());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // Scrollbar_h
+#endif  // Scrollbar_h

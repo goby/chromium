@@ -2,29 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/supervised_user/supervised_user_whitelist_service.h"
+
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/component_updater/supervised_user_whitelist_installer.h"
 #include "chrome/browser/supervised_user/supervised_user_site_list.h"
-#include "chrome/browser/supervised_user/supervised_user_whitelist_service.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if !defined(OS_ANDROID)
@@ -47,9 +49,10 @@ class MockSupervisedUserWhitelistInstaller
 
   void NotifyWhitelistReady(const std::string& crx_id,
                             const base::string16& title,
-                            const base::FilePath& path) {
+                            const base::FilePath& large_icon_path,
+                            const base::FilePath& whitelist_path) {
     for (const auto& callback : ready_callbacks_)
-      callback.Run(crx_id, title, path);
+      callback.Run(crx_id, title, large_icon_path, whitelist_path);
   }
 
   // SupervisedUserWhitelistInstaller implementation:
@@ -104,7 +107,8 @@ class SupervisedUserWhitelistServiceTest : public testing::Test {
                                 prefs::kSupervisedUserWhitelists);
     base::DictionaryValue* dict = update.Get();
 
-    scoped_ptr<base::DictionaryValue> whitelist_dict(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> whitelist_dict(
+        new base::DictionaryValue);
     whitelist_dict->SetString("name", "Whitelist A");
     dict->Set("aaaa", whitelist_dict.release());
 
@@ -160,8 +164,8 @@ class SupervisedUserWhitelistServiceTest : public testing::Test {
   safe_json::TestingJsonParser::ScopedFactoryOverride factory_override_;
 #endif
 
-  scoped_ptr<MockSupervisedUserWhitelistInstaller> installer_;
-  scoped_ptr<SupervisedUserWhitelistService> service_;
+  std::unique_ptr<MockSupervisedUserWhitelistInstaller> installer_;
+  std::unique_ptr<SupervisedUserWhitelistService> service_;
 
   std::vector<scoped_refptr<SupervisedUserSiteList>> site_lists_;
   base::Closure site_lists_changed_callback_;
@@ -172,8 +176,8 @@ TEST_F(SupervisedUserWhitelistServiceTest, MergeEmpty) {
 
   syncer::SyncMergeResult result = service_->MergeDataAndStartSyncing(
       syncer::SUPERVISED_USER_WHITELISTS, syncer::SyncDataList(),
-      scoped_ptr<syncer::SyncChangeProcessor>(),
-      scoped_ptr<syncer::SyncErrorFactory>());
+      std::unique_ptr<syncer::SyncChangeProcessor>(),
+      std::unique_ptr<syncer::SyncErrorFactory>());
   EXPECT_FALSE(result.error().IsSet());
   EXPECT_EQ(0, result.num_items_added());
   EXPECT_EQ(0, result.num_items_modified());
@@ -199,7 +203,7 @@ TEST_F(SupervisedUserWhitelistServiceTest, MergeExisting) {
   base::FilePath whitelist_path =
       test_data_dir.AppendASCII("whitelists/content_pack/site_list.json");
   installer_->NotifyWhitelistReady("aaaa", base::ASCIIToUTF16("Title"),
-                                   whitelist_path);
+                                   base::FilePath(), whitelist_path);
   run_loop.Run();
 
   ASSERT_EQ(1u, site_lists_.size());
@@ -217,8 +221,8 @@ TEST_F(SupervisedUserWhitelistServiceTest, MergeExisting) {
           "cccc", "Whitelist C"));
   syncer::SyncMergeResult result = service_->MergeDataAndStartSyncing(
       syncer::SUPERVISED_USER_WHITELISTS, initial_data,
-      scoped_ptr<syncer::SyncChangeProcessor>(),
-      scoped_ptr<syncer::SyncErrorFactory>());
+      std::unique_ptr<syncer::SyncChangeProcessor>(),
+      std::unique_ptr<syncer::SyncErrorFactory>());
   EXPECT_FALSE(result.error().IsSet());
   EXPECT_EQ(1, result.num_items_added());
   EXPECT_EQ(1, result.num_items_modified());
@@ -259,7 +263,7 @@ TEST_F(SupervisedUserWhitelistServiceTest, ApplyChanges) {
 
   // If whitelist A now becomes ready, it should be ignored.
   installer_->NotifyWhitelistReady(
-      "aaaa", base::ASCIIToUTF16("Title"),
+      "aaaa", base::ASCIIToUTF16("Title"), base::FilePath(),
       base::FilePath(FILE_PATH_LITERAL("/path/to/aaaa")));
   EXPECT_EQ(0u, site_lists_.size());
 

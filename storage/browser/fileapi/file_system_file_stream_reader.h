@@ -5,8 +5,13 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_FILE_STREAM_READER_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_FILE_STREAM_READER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "storage/browser/blob/shareable_file_reference.h"
@@ -16,7 +21,6 @@
 
 namespace base {
 class FilePath;
-class SequencedTaskRunner;
 }
 
 namespace content {
@@ -41,7 +45,7 @@ class STORAGE_EXPORT FileSystemFileStreamReader
   int Read(net::IOBuffer* buf,
            int buf_len,
            const net::CompletionCallback& callback) override;
-  int64 GetLength(const net::Int64CompletionCallback& callback) override;
+  int64_t GetLength(const net::Int64CompletionCallback& callback) override;
 
  private:
   friend class storage::FileStreamReader;
@@ -49,7 +53,7 @@ class STORAGE_EXPORT FileSystemFileStreamReader
 
   FileSystemFileStreamReader(FileSystemContext* file_system_context,
                              const FileSystemURL& url,
-                             int64 initial_offset,
+                             int64_t initial_offset,
                              const base::Time& expected_modification_time);
 
   int CreateSnapshot(const base::Closure& callback,
@@ -64,9 +68,9 @@ class STORAGE_EXPORT FileSystemFileStreamReader
 
   scoped_refptr<FileSystemContext> file_system_context_;
   FileSystemURL url_;
-  const int64 initial_offset_;
+  const int64_t initial_offset_;
   const base::Time expected_modification_time_;
-  scoped_ptr<storage::FileStreamReader> local_file_reader_;
+  std::unique_ptr<storage::FileStreamReader> local_file_reader_;
   scoped_refptr<storage::ShareableFileReference> snapshot_ref_;
   bool has_pending_create_snapshot_;
   base::WeakPtrFactory<FileSystemFileStreamReader> weak_factory_;

@@ -5,12 +5,11 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_WEBSTORE_PRIVATE_WEBSTORE_PRIVATE_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_WEBSTORE_PRIVATE_WEBSTORE_PRIVATE_API_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_delegate.h"
 #include "chrome/browser/extensions/active_install_data.h"
-#include "chrome/browser/extensions/bundle_installer.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/webstore_install_helper.h"
@@ -21,11 +20,6 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 
 class GPUFeatureChecker;
-class GURL;
-
-namespace chrome {
-class BitmapFetcher;
-}  // namespace chrome
 
 namespace extensions {
 
@@ -40,13 +34,13 @@ class WebstorePrivateApi {
   // Gets the pending approval for the |extension_id| in |profile|. Pending
   // approvals are held between the calls to beginInstallWithManifest and
   // completeInstall. This should only be used for testing.
-  static scoped_ptr<WebstoreInstaller::Approval> PopApprovalForTesting(
-      Profile* profile, const std::string& extension_id);
+  static std::unique_ptr<WebstoreInstaller::Approval> PopApprovalForTesting(
+      Profile* profile,
+      const std::string& extension_id);
 };
 
 class WebstorePrivateBeginInstallWithManifest3Function
     : public UIThreadExtensionFunction,
-      public ExtensionInstallPrompt::Delegate,
       public WebstoreInstallHelper::Delegate {
  public:
   DECLARE_EXTENSION_FUNCTION("webstorePrivate.beginInstallWithManifest3",
@@ -70,32 +64,33 @@ class WebstorePrivateBeginInstallWithManifest3Function
                               InstallHelperResultCode result,
                               const std::string& error_message) override;
 
-  // ExtensionInstallPrompt::Delegate:
-  void InstallUIProceed() override;
-  void InstallUIAbort(bool user_initiated) override;
+  void OnInstallPromptDone(ExtensionInstallPrompt::Result result);
+
+  void HandleInstallProceed();
+  void HandleInstallAbort(bool user_initiated);
 
   ExtensionFunction::ResponseValue BuildResponse(
       api::webstore_private::Result result,
       const std::string& error);
-  scoped_ptr<base::ListValue> CreateResults(
+  std::unique_ptr<base::ListValue> CreateResults(
       api::webstore_private::Result result) const;
 
   const Params::Details& details() const { return params_->details; }
 
   ChromeExtensionFunctionDetails chrome_details_;
 
-  scoped_ptr<Params> params_;
+  std::unique_ptr<Params> params_;
 
-  scoped_ptr<ScopedActiveInstall> scoped_active_install_;
+  std::unique_ptr<ScopedActiveInstall> scoped_active_install_;
 
-  scoped_ptr<base::DictionaryValue> parsed_manifest_;
+  std::unique_ptr<base::DictionaryValue> parsed_manifest_;
   SkBitmap icon_;
 
   // A dummy Extension object we create for the purposes of using
   // ExtensionInstallPrompt to prompt for confirmation of the install.
   scoped_refptr<Extension> dummy_extension_;
 
-  scoped_ptr<ExtensionInstallPrompt> install_prompt_;
+  std::unique_ptr<ExtensionInstallPrompt> install_prompt_;
 };
 
 class WebstorePrivateCompleteInstallFunction
@@ -124,41 +119,8 @@ class WebstorePrivateCompleteInstallFunction
 
   ChromeExtensionFunctionDetails chrome_details_;
 
-  scoped_ptr<WebstoreInstaller::Approval> approval_;
-  scoped_ptr<ScopedActiveInstall> scoped_active_install_;
-};
-
-class WebstorePrivateInstallBundleFunction
-    : public UIThreadExtensionFunction,
-      public chrome::BitmapFetcherDelegate {
- public:
-  DECLARE_EXTENSION_FUNCTION("webstorePrivate.installBundle",
-                             WEBSTOREPRIVATE_INSTALLBUNDLE)
-
-  WebstorePrivateInstallBundleFunction();
-
- private:
-  using Params = api::webstore_private::InstallBundle::Params;
-
-  ~WebstorePrivateInstallBundleFunction() override;
-
-  // ExtensionFunction:
-  ExtensionFunction::ResponseAction Run() override;
-
-  // chrome::BitmapFetcherDelegate:
-  void OnFetchComplete(const GURL& url, const SkBitmap* bitmap) override;
-
-  void OnInstallApproval(BundleInstaller::ApprovalState state);
-  void OnInstallComplete();
-
-  const Params::Details& details() const { return params_->details; }
-
-  ChromeExtensionFunctionDetails chrome_details_;
-
-  scoped_ptr<Params> params_;
-
-  scoped_ptr<extensions::BundleInstaller> bundle_;
-  scoped_ptr<chrome::BitmapFetcher> icon_fetcher_;
+  std::unique_ptr<WebstoreInstaller::Approval> approval_;
+  std::unique_ptr<ScopedActiveInstall> scoped_active_install_;
 };
 
 class WebstorePrivateEnableAppLauncherFunction
@@ -319,6 +281,25 @@ class WebstorePrivateGetEphemeralAppsEnabledFunction
 
   // ExtensionFunction:
   ExtensionFunction::ResponseAction Run() override;
+};
+
+class WebstorePrivateIsPendingCustodianApprovalFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.isPendingCustodianApproval",
+                             WEBSTOREPRIVATE_ISPENDINGCUSTODIANAPPROVAL)
+
+  WebstorePrivateIsPendingCustodianApprovalFunction();
+
+ private:
+  ~WebstorePrivateIsPendingCustodianApprovalFunction() override;
+
+  // ExtensionFunction:
+  ExtensionFunction::ResponseAction Run() override;
+
+  ExtensionFunction::ResponseValue BuildResponse(bool result);
+
+  ChromeExtensionFunctionDetails chrome_details_;
 };
 
 }  // namespace extensions

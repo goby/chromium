@@ -7,6 +7,7 @@
 
 #include <stddef.h>   // Required to define size_t on GCC
 
+#include "base/files/file.h"
 #include "base/files/file_path.h"
 
 namespace courgette {
@@ -48,7 +49,6 @@ enum Status {
   C_DISASSEMBLY_FAILED = 25,      //
   C_ASSEMBLY_FAILED = 26,         //
   C_ADJUSTMENT_FAILED = 27,       //
-  C_TRIM_FAILED = 28,             // TrimLabels failed
 };
 
 // What type of executable is something
@@ -64,7 +64,6 @@ enum ExecutableType {
 class SinkStream;
 class SinkStreamSet;
 class SourceStream;
-class SourceStreamSet;
 
 class AssemblyProgram;
 class EncodedProgram;
@@ -74,6 +73,15 @@ class EncodedProgram;
 // Returns C_OK unless something went wrong.
 Status ApplyEnsemblePatch(SourceStream* old, SourceStream* patch,
                           SinkStream* output);
+
+// Applies the patch in |patch_file| to the bytes in |old_file| and writes the
+// transformed ensemble to |new_file|.
+// Returns C_OK unless something went wrong.
+// This function first validates that the patch file has a proper header, so the
+// function can be used to 'try' a patch.
+Status ApplyEnsemblePatch(base::File old_file,
+                          base::File patch_file,
+                          base::File new_file);
 
 // Applies the patch in |patch_file_name| to the bytes in |old_file_name| and
 // writes the transformed ensemble to |new_file_name|.
@@ -90,34 +98,6 @@ Status ApplyEnsemblePatch(const base::FilePath::CharType* old_file_name,
 Status GenerateEnsemblePatch(SourceStream* old, SourceStream* target,
                              SinkStream* patch);
 
-// Detects the type of an executable file, and it's length. The length
-// may be slightly smaller than some executables (like ELF), but will include
-// all bytes the courgette algorithm has special benefit for.
-// On success:
-//   Fill in type and detected_length, and return C_OK.
-// On failure:
-//   Fill in type with UNKNOWN, detected_length with 0, and
-//   return C_INPUT_NOT_RECOGNIZED
-Status DetectExecutableType(const void* buffer, size_t length,
-                            ExecutableType* type,
-                            size_t* detected_length);
-
-// Attempts to detect the type of executable, and parse it with the
-// appropriate tools, storing the pointer to the AssemblyProgram in |*output|.
-// Returns C_OK if successful, otherwise returns an error status and sets
-// |*output| to NULL.
-Status ParseDetectedExecutable(const void* buffer, size_t length,
-                               AssemblyProgram** output);
-
-// Trims labels used fewer than a given number of times from an
-// assembly program in-place.
-Status TrimLabels(AssemblyProgram* program);
-
-// Converts |program| into encoded form, returning it as |*output|.
-// Returns C_OK if succeeded, otherwise returns an error status and
-// sets |*output| to NULL
-Status Encode(AssemblyProgram* program, EncodedProgram** output);
-
 // Serializes |encoded| into the stream set.
 // Returns C_OK if succeeded, otherwise returns an error status.
 Status WriteEncodedProgram(EncodedProgram* encoded, SinkStreamSet* sink);
@@ -127,20 +107,10 @@ Status WriteEncodedProgram(EncodedProgram* encoded, SinkStreamSet* sink);
 // |buffer| in an undefined state.
 Status Assemble(EncodedProgram* encoded, SinkStream* buffer);
 
-// Deserializes program from the stream set.
-// Returns C_OK if succeeded, otherwise returns an error status and
-// sets |*output| to NULL
-Status ReadEncodedProgram(SourceStreamSet* source, EncodedProgram** output);
-
-// Used to free an AssemblyProgram returned by other APIs.
-void DeleteAssemblyProgram(AssemblyProgram* program);
-
-// Used to free an EncodedProgram returned by other APIs.
-void DeleteEncodedProgram(EncodedProgram* encoded);
-
 // Adjusts |program| to look more like |model|.
 //
 Status Adjust(const AssemblyProgram& model, AssemblyProgram *program);
 
 }  // namespace courgette
+
 #endif  // COURGETTE_COURGETTE_H_

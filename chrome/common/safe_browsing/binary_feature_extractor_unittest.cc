@@ -4,6 +4,11 @@
 
 #include "chrome/common/safe_browsing/binary_feature_extractor.h"
 
+#include <stdint.h>
+#include <string.h>
+
+#include <memory>
+
 #include "base/base_paths.h"
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
@@ -20,7 +25,7 @@ class BinaryFeatureExtractorTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    path_ = temp_dir_.path().Append(FILE_PATH_LITERAL("file.dll"));
+    path_ = temp_dir_.GetPath().Append(FILE_PATH_LITERAL("file.dll"));
   }
 
   // Writes |size| bytes from |data| to |path_|.
@@ -50,7 +55,7 @@ class BinaryFeatureExtractorTest : public testing::Test {
 
 TEST_F(BinaryFeatureExtractorTest, ExtractDigestNoFile) {
   base::FilePath no_file =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("does_not_exist.dll"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("does_not_exist.dll"));
 
   ClientDownloadRequest_Digests digests;
   extractor_->ExtractDigest(no_file, &digests);
@@ -78,7 +83,7 @@ TEST_F(BinaryFeatureExtractorTest, ExtractOneBlockDigest) {
       0x82, 0x20, 0xe3, 0x93, 0x4c, 0x65, 0xe0, 0xc1, 0xc0, 0x19};
 
   const int kDataLen = kBlockSize;
-  scoped_ptr<char[]> data(new char[kDataLen]);
+  std::unique_ptr<char[]> data(new char[kDataLen]);
   memset(data.get(), 71, kDataLen);
   WriteFileToHash(data.get(), kDataLen);
   ExpectFileDigestEq(kDigest);
@@ -92,7 +97,7 @@ TEST_F(BinaryFeatureExtractorTest, ExtractBigBlockDigest) {
       0x33, 0xa7, 0x70, 0xf3, 0x6b, 0x85, 0xbf, 0xce, 0x9d, 0x5c};
 
   const int kDataLen = kBlockSize + 1;
-  scoped_ptr<char[]> data(new char[kDataLen]);
+  std::unique_ptr<char[]> data(new char[kDataLen]);
   memset(data.get(), 71, kDataLen);
   WriteFileToHash(data.get(), kDataLen);
   ExpectFileDigestEq(kDigest);

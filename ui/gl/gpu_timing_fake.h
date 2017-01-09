@@ -5,12 +5,14 @@
 #ifndef UI_GL_GPU_TIMING_FAKE_H_
 #define UI_GL_GPU_TIMING_FAKE_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <set>
 
 #include "ui/gl/gl_bindings.h"
 
-namespace gfx {
+namespace gl {
 class MockGLInterface;
 
 class GPUTimingFake {
@@ -83,6 +85,6 @@ class GPUTimingFake {
   ElapsedQuery current_elapsed_query_;
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GPU_TIMING_FAKE_H_

@@ -5,13 +5,14 @@
 #ifndef REMOTING_PROTOCOL_CONNECTION_TESTER_H_
 #define REMOTING_PROTOCOL_CONNECTION_TESTER_H_
 
+#include <list>
+#include <memory>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-
-namespace base {
-class MessageLoop;
-}
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "remoting/protocol/message_pipe.h"
 
 namespace net {
 class DrainableIOBuffer;
@@ -20,6 +21,10 @@ class IOBuffer;
 }  // namespace net
 
 namespace remoting {
+
+class CompoundBuffer;
+class VideoPacket;
+
 namespace protocol {
 
 class P2PDatagramSocket;
@@ -51,7 +56,7 @@ class StreamConnectionTester {
   void HandleReadResult(int result);
 
  private:
-  base::MessageLoop* message_loop_;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   P2PStreamSocket* host_socket_;
   P2PStreamSocket* client_socket_;
   int message_size_;
@@ -86,7 +91,7 @@ class DatagramConnectionTester {
   void OnRead(int result);
   void HandleReadResult(int result);
 
-  base::MessageLoop* message_loop_;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   P2PDatagramSocket* host_socket_;
   P2PDatagramSocket* client_socket_;
   int message_size_;
@@ -102,6 +107,33 @@ class DatagramConnectionTester {
   int packets_sent_;
   int packets_received_;
   int bad_packets_received_;
+};
+
+class MessagePipeConnectionTester : public MessagePipe::EventHandler {
+ public:
+  MessagePipeConnectionTester(MessagePipe* client_pipe,
+                              MessagePipe* host_pipe,
+                              int message_size,
+                              int message_count);
+  ~MessagePipeConnectionTester() override;
+
+  void RunAndCheckResults();
+
+ protected:
+  // MessagePipe::EventHandler interface.
+  void OnMessagePipeOpen() override;
+  void OnMessageReceived(std::unique_ptr<CompoundBuffer> message) override;
+  void OnMessagePipeClosed() override;
+
+ private:
+  base::RunLoop run_loop_;
+  MessagePipe* host_pipe_;
+  MessagePipe* client_pipe_;
+  int message_size_;
+  int message_count_;
+
+  std::vector<std::unique_ptr<VideoPacket>> sent_messages_;
+  std::vector<std::unique_ptr<VideoPacket>> received_messages_;
 };
 
 }  // namespace protocol

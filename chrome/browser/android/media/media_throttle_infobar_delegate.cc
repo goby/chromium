@@ -4,13 +4,17 @@
 
 #include "chrome/browser/android/media/media_throttle_infobar_delegate.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/metrics/histogram_macros.h"
+#include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/infobars/core/infobar.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -20,21 +24,22 @@ void MediaThrottleInfoBarDelegate::Create(
     const DecodeRequestGrantedCallback& callback) {
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents);
-  scoped_ptr<infobars::InfoBar> new_infobar(
-      infobar_service->CreateConfirmInfoBar(scoped_ptr<ConfirmInfoBarDelegate>(
-          new MediaThrottleInfoBarDelegate(callback))));
+  std::unique_ptr<infobars::InfoBar> new_infobar(
+      infobar_service->CreateConfirmInfoBar(
+          std::unique_ptr<ConfirmInfoBarDelegate>(
+              new MediaThrottleInfoBarDelegate(callback))));
 
   for (size_t i = 0; i < infobar_service->infobar_count(); ++i) {
     infobars::InfoBar* old_infobar = infobar_service->infobar_at(i);
     MediaThrottleInfoBarDelegate* delegate =
         old_infobar->delegate()->AsMediaThrottleInfoBarDelegate();
     if (delegate != nullptr) {
-      infobar_service->ReplaceInfoBar(old_infobar, new_infobar.Pass());
+      infobar_service->ReplaceInfoBar(old_infobar, std::move(new_infobar));
       return;
     }
   }
 
-  infobar_service->AddInfoBar(new_infobar.Pass());
+  infobar_service->AddInfoBar(std::move(new_infobar));
 }
 
 MediaThrottleInfoBarDelegate::MediaThrottleInfoBarDelegate(
@@ -49,6 +54,11 @@ MediaThrottleInfoBarDelegate::~MediaThrottleInfoBarDelegate() {
                             UMA_THROTTLE_INFOBAR_RESPONSE_COUNT);
 }
 
+infobars::InfoBarDelegate::InfoBarIdentifier
+MediaThrottleInfoBarDelegate::GetIdentifier() const {
+  return MEDIA_THROTTLE_INFOBAR_DELEGATE;
+}
+
 MediaThrottleInfoBarDelegate*
     MediaThrottleInfoBarDelegate::AsMediaThrottleInfoBarDelegate() {
   return this;
@@ -59,7 +69,7 @@ base::string16 MediaThrottleInfoBarDelegate::GetMessageText() const {
 }
 
 int MediaThrottleInfoBarDelegate::GetIconId() const {
-  return IDR_INFOBAR_WARNING;
+  return IDR_ANDROID_INFOBAR_WARNING;
 }
 
 base::string16 MediaThrottleInfoBarDelegate::GetButtonLabel(

@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/input_method_observer.h"
@@ -43,7 +43,7 @@ class UI_BASE_IME_EXPORT MockInputMethod
   void OnCaretBoundsChanged(const TextInputClient* client) override;
   void CancelComposition(const TextInputClient* client) override;
   void OnInputLocaleChanged() override;
-  std::string GetInputLocale() override;
+  bool IsInputLocaleCJK() const override;
   TextInputType GetTextInputType() const override;
   TextInputMode GetTextInputMode() const override;
   int GetTextInputFlags() const override;
@@ -54,9 +54,15 @@ class UI_BASE_IME_EXPORT MockInputMethod
   void RemoveObserver(InputMethodObserver* observer) override;
 
  private:
+  // InputMethod:
+  const std::vector<std::unique_ptr<ui::KeyEvent>>& GetKeyEventsForTesting()
+      override;
+
   TextInputClient* text_input_client_;
   base::ObserverList<InputMethodObserver> observer_list_;
   internal::InputMethodDelegate* delegate_;
+
+  std::vector<std::unique_ptr<ui::KeyEvent>> key_events_for_testing_;
 
   DISALLOW_COPY_AND_ASSIGN(MockInputMethod);
 };

@@ -4,8 +4,13 @@
 
 #include "content/browser/media/capture/web_contents_audio_muter.h"
 
+#include <memory>
+#include <set>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
+#include "base/time/time.h"
 #include "content/browser/media/capture/audio_mirroring_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
@@ -49,12 +54,13 @@ class AudioDiscarder : public media::AudioOutputStream {
   ~AudioDiscarder() override {}
 
   void FetchAudioData(AudioSourceCallback* callback) {
-    callback->OnMoreData(audio_bus_.get(), 0);
+    callback->OnMoreData(base::TimeDelta(), base::TimeTicks::Now(), 0,
+                         audio_bus_.get());
   }
 
   // Calls FetchAudioData() at regular intervals and discards the data.
   media::FakeAudioWorker worker_;
-  scoped_ptr<media::AudioBus> audio_bus_;
+  std::unique_ptr<media::AudioBus> audio_bus_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioDiscarder);
 };
@@ -103,12 +109,18 @@ class WebContentsAudioMuter::MuteDestination
       if (contents_containing_frame == web_contents_)
         matches.insert(*i);
     }
-    results_callback.Run(matches);
+    results_callback.Run(matches, false);
   }
 
   media::AudioOutputStream* AddInput(
       const media::AudioParameters& params) override {
     return new AudioDiscarder(params);
+  }
+
+  media::AudioPushSink* AddPushInput(
+      const media::AudioParameters& params) override {
+    NOTREACHED();
+    return nullptr;
   }
 
   WebContents* const web_contents_;
@@ -132,11 +144,10 @@ void WebContentsAudioMuter::StartMuting() {
     return;
   is_muting_ = true;
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
+      BrowserThread::IO, FROM_HERE,
       base::Bind(&AudioMirroringManager::StartMirroring,
                  base::Unretained(AudioMirroringManager::GetInstance()),
-                 destination_));
+                 base::RetainedRef(destination_)));
 }
 
 void WebContentsAudioMuter::StopMuting() {
@@ -145,11 +156,10 @@ void WebContentsAudioMuter::StopMuting() {
     return;
   is_muting_ = false;
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
+      BrowserThread::IO, FROM_HERE,
       base::Bind(&AudioMirroringManager::StopMirroring,
                  base::Unretained(AudioMirroringManager::GetInstance()),
-                 destination_));
+                 base::RetainedRef(destination_)));
 }
 
 }  // namespace content

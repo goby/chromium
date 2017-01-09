@@ -4,11 +4,14 @@
 
 #include "components/nacl/browser/pnacl_translation_cache.h"
 
+#include <string.h>
+
 #include <string>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_checker.h"
 #include "components/nacl/common/pnacl_types.h"
@@ -335,12 +338,9 @@ int PnaclTranslationCache::Init(net::CacheType cache_type,
                                 int cache_size,
                                 const CompletionCallback& callback) {
   int rv = disk_cache::CreateCacheBackend(
-      cache_type,
-      net::CACHE_BACKEND_DEFAULT,
-      cache_dir,
-      cache_size,
+      cache_type, net::CACHE_BACKEND_DEFAULT, cache_dir, cache_size,
       true /* force_initialize */,
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::CACHE).get(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::CACHE).get(),
       NULL, /* dummy net log */
       &disk_cache_,
       base::Bind(&PnaclTranslationCache::OnCreateBackendComplete, AsWeakPtr()));

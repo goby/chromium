@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
+#include "base/bind_helpers.h"
 #include "base/location.h"
-#include "base/prefs/pref_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/browser/lifetime/keep_alive_types.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/net/prediction_options.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,6 +24,7 @@
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/translate/core/common/translate_pref_names.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
@@ -26,14 +32,7 @@
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-
-namespace {
-
-void ReleaseBrowserProcessModule() {
-  g_browser_process->ReleaseModule();
-}
-
-}  // namespace
+#include "media/media_features.h"
 
 class ExtensionPreferenceApiTest : public ExtensionApiTest {
  protected:
@@ -89,20 +88,23 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
     // Closing the last browser window also releases a module reference. Make
     // sure it's not the last one, so the message loop doesn't quit
     // unexpectedly.
-    g_browser_process->AddRefModule();
+    keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::BROWSER,
+                                          KeepAliveRestartOption::DISABLED));
   }
 
   void TearDownOnMainThread() override {
-    // ReleaseBrowserProcessModule() needs to be called in a message loop, so we
-    // post a task to do it, then run the message loop.
+    // BrowserProcess::Shutdown() needs to be called in a message loop, so we
+    // post a task to release the keep alive, then run the message loop.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&ReleaseBrowserProcessModule));
+        FROM_HERE, base::Bind(&std::unique_ptr<ScopedKeepAlive>::reset,
+                              base::Unretained(&keep_alive_), nullptr));
     content::RunAllPendingInMessageLoop();
 
     ExtensionApiTest::TearDownOnMainThread();
   }
 
   Profile* profile_;
+  std::unique_ptr<ScopedKeepAlive> keep_alive_;
 };
 
 // http://crbug.com/177163
@@ -125,7 +127,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, MAYBE_Standard) {
                     false);
   prefs->SetBoolean(prefs::kSafeBrowsingEnabled, false);
   prefs->SetBoolean(prefs::kSearchSuggestEnabled, false);
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   prefs->SetBoolean(prefs::kWebRTCMultipleRoutesEnabled, false);
   prefs->SetBoolean(prefs::kWebRTCNonProxiedUdpEnabled, false);
   prefs->SetString(prefs::kWebRTCIPHandlingPolicy,
@@ -344,12 +346,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, OnChangeSplit) {
   EXPECT_TRUE(catcher_incognito.GetNextResult()) << catcher.message();
 }
 
-#if defined(OS_WIN)  // http://crbug.com/477844
-#define MAYBE_DataReductionProxy DISABLED_DataReductionProxy
-#else
-#define MAYBE_DataReductionProxy DataReductionProxy
-#endif
-IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, MAYBE_DataReductionProxy) {
+IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, DataReductionProxy) {
   EXPECT_TRUE(RunExtensionTest("preference/data_reduction_proxy")) <<
       message_;
 }

@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//testing/libfuzzer/fuzzer_test.gni")
+
 config("hunspell_config") {
   defines = [
     "HUNSPELL_STATIC",
@@ -16,7 +18,7 @@ config("hunspell_warnings") {
   }
 }
 
-source_set("hunspell") {
+static_library("hunspell") {
   sources = [
     "google/bdict.cc",
     "google/bdict.h",
@@ -82,7 +84,7 @@ source_set("hunspell") {
     ]
   }
 
-  if (is_posix && !is_mac) {
+  if (is_posix && !is_mac && !is_clang) {
     cflags += [
       "-Wno-unused-value",
       "-Wno-unused-variable",
@@ -90,7 +92,7 @@ source_set("hunspell") {
     ]
   }
 
-  if (is_posix && !is_mac && !is_ios) {
+  if (is_posix && !is_mac && !is_ios && !is_clang) {
     cflags += [
       # affentry.hxx has NULL as default parameter for a FLAG in two
       # places.
@@ -108,4 +110,18 @@ source_set("hunspell") {
       "-Wno-null-conversion",
     ]
   }
+}
+
+fuzzer_test("hunspell_fuzzer") {
+  sources = [
+    "fuzz/hunspell_fuzzer.cc",
+    "fuzz/hunspell_fuzzer_hunspell_dictionary.h",
+  ]
+  deps = [
+    ":hunspell",
+    "//base:base",
+  ]
+
+  # This is a dictionary for the fuzzer, not a spellcheck dictionary.
+  dict = "fuzz/hunspell.dict"
 }

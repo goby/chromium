@@ -4,11 +4,14 @@
 
 #include "media/base/text_renderer.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer.h"
@@ -27,7 +30,7 @@ TextRenderer::TextRenderer(
 
 TextRenderer::~TextRenderer() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  STLDeleteValues(&text_track_state_map_);
+  text_track_state_map_.clear();
   if (!pause_cb_.is_null())
     base::ResetAndReturn(&pause_cb_).Run();
 }
@@ -49,9 +52,9 @@ void TextRenderer::StartPlaying() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_EQ(state_, kPaused) << "state_ " << state_;
 
-  for (TextTrackStateMap::iterator itr = text_track_state_map_.begin();
+  for (auto itr = text_track_state_map_.begin();
        itr != text_track_state_map_.end(); ++itr) {
-    TextTrackState* state = itr->second;
+    TextTrackState* state = itr->second.get();
     if (state->read_state == TextTrackState::kReadPending) {
       DCHECK_GT(pending_read_count_, 0);
       continue;
@@ -83,7 +86,7 @@ void TextRenderer::Flush(const base::Closure& callback) {
   DCHECK_EQ(pending_read_count_, 0);
   DCHECK(state_ == kPaused) << "state_ " << state_;
 
-  for (TextTrackStateMap::iterator itr = text_track_state_map_.begin();
+  for (auto itr = text_track_state_map_.begin();
        itr != text_track_state_map_.end(); ++itr) {
     pending_eos_set_.insert(itr->first);
     itr->second->text_ranges_.Reset();
@@ -112,12 +115,11 @@ void TextRenderer::AddTextStream(DemuxerStream* text_stream,
 void TextRenderer::RemoveTextStream(DemuxerStream* text_stream) {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
-  TextTrackStateMap::iterator itr = text_track_state_map_.find(text_stream);
+  auto itr = text_track_state_map_.find(text_stream);
   DCHECK(itr != text_track_state_map_.end());
 
-  TextTrackState* state = itr->second;
+  TextTrackState* state = itr->second.get();
   DCHECK_EQ(state->read_state, TextTrackState::kReadIdle);
-  delete state;
   text_track_state_map_.erase(itr);
 
   pending_eos_set_.erase(text_stream);
@@ -140,10 +142,10 @@ void TextRenderer::BufferReady(
     DCHECK_GT(pending_read_count_, 0);
     DCHECK(pending_eos_set_.find(stream) != pending_eos_set_.end());
 
-    TextTrackStateMap::iterator itr = text_track_state_map_.find(stream);
+    auto itr = text_track_state_map_.find(stream);
     DCHECK(itr != text_track_state_map_.end());
 
-    TextTrackState* state = itr->second;
+    TextTrackState* state = itr->second.get();
     DCHECK_EQ(state->read_state, TextTrackState::kReadPending);
 
     --pending_read_count_;
@@ -178,7 +180,7 @@ void TextRenderer::BufferReady(
   }
 
   DCHECK_EQ(status, DemuxerStream::kOk);
-  DCHECK_GE(input->side_data_size(), 2);
+  DCHECK_GE(input->side_data_size(), 2u);
 
   // The side data contains both the cue id and cue settings,
   // each terminated with a NUL.
@@ -211,10 +213,10 @@ void TextRenderer::CueReady(
   DCHECK_GT(pending_read_count_, 0);
   DCHECK(pending_eos_set_.find(text_stream) != pending_eos_set_.end());
 
-  TextTrackStateMap::iterator itr = text_track_state_map_.find(text_stream);
+  auto itr = text_track_state_map_.find(text_stream);
   DCHECK(itr != text_track_state_map_.end());
 
-  TextTrackState* state = itr->second;
+  TextTrackState* state = itr->second.get();
   DCHECK_EQ(state->read_state, TextTrackState::kReadPending);
   DCHECK(state->text_track);
 
@@ -288,18 +290,19 @@ void TextRenderer::CueReady(
 }
 
 void TextRenderer::OnAddTextTrackDone(DemuxerStream* text_stream,
-                                      scoped_ptr<TextTrack> text_track) {
+                                      std::unique_ptr<TextTrack> text_track) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_NE(state_, kUninitialized);
   DCHECK(text_stream);
   DCHECK(text_track);
 
-  scoped_ptr<TextTrackState> state(new TextTrackState(text_track.Pass()));
-  text_track_state_map_[text_stream] = state.release();
+  std::unique_ptr<TextTrackState> state(
+      new TextTrackState(std::move(text_track)));
+  text_track_state_map_[text_stream] = std::move(state);
   pending_eos_set_.insert(text_stream);
 
   if (state_ == kPlaying)
-    Read(text_track_state_map_[text_stream], text_stream);
+    Read(text_track_state_map_[text_stream].get(), text_stream);
 }
 
 void TextRenderer::Read(
@@ -314,10 +317,8 @@ void TextRenderer::Read(
       &TextRenderer::BufferReady, weak_factory_.GetWeakPtr(), text_stream));
 }
 
-TextRenderer::TextTrackState::TextTrackState(scoped_ptr<TextTrack> tt)
-    : read_state(kReadIdle),
-      text_track(tt.Pass()) {
-}
+TextRenderer::TextTrackState::TextTrackState(std::unique_ptr<TextTrack> tt)
+    : read_state(kReadIdle), text_track(std::move(tt)) {}
 
 TextRenderer::TextTrackState::~TextTrackState() {
 }

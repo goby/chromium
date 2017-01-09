@@ -25,12 +25,15 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <memory>
+
 #include "base/at_exit.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/sys_info.h"
 #include "base/threading/thread.h"
@@ -109,13 +112,6 @@ namespace {
 void DoPipe(base::ScopedFD* fds) {
   int tmp_fds[2];
   BPF_ASSERT_EQ(0, pipe(tmp_fds));
-  fds[0].reset(tmp_fds[0]);
-  fds[1].reset(tmp_fds[1]);
-}
-
-void DoSocketpair(base::ScopedFD* fds) {
-  int tmp_fds[2];
-  BPF_ASSERT_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, tmp_fds));
   fds[0].reset(tmp_fds[0]);
   fds[1].reset(tmp_fds[1]);
 }
@@ -613,14 +609,14 @@ class TgkillDelegate : public sandbox::BPFTesterDelegate {
   TgkillDelegate() {}
   ~TgkillDelegate() override {}
 
-  scoped_ptr<sandbox::bpf_dsl::Policy> GetSandboxBPFPolicy() override {
+  std::unique_ptr<sandbox::bpf_dsl::Policy> GetSandboxBPFPolicy() override {
     // These two values must be obtained when running in the sandboxed process.
     // They cannot be set in the constructor and are also not available from
     // within |RunTestFunction|.
     pid_ = getpid();
     tid_ = syscall(__NR_gettid);
 
-    return scoped_ptr<sandbox::bpf_dsl::Policy>(
+    return std::unique_ptr<sandbox::bpf_dsl::Policy>(
         new nacl::nonsfi::NaClNonSfiBPFSandboxPolicy());
   }
 

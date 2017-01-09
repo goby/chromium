@@ -4,21 +4,21 @@
 
 #include "chrome/browser/android/compositor/compositor_view.h"
 
-#include <vector>
-
 #include <android/bitmap.h>
 #include <android/native_window_jni.h>
+
+#include <memory>
+#include <vector>
 
 #include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/id_map.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/rand_util.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/layers/layer.h"
-#include "cc/layers/layer_lists.h"
+#include "cc/layers/layer_collections.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
 #include "chrome/browser/android/compositor/layer/toolbar_layer.h"
@@ -37,13 +37,13 @@
 #include "ui/android/window_android.h"
 #include "ui/gfx/android/java_bitmap.h"
 
-namespace chrome {
+using base::android::JavaParamRef;
+
 namespace android {
 
 jlong Init(JNIEnv* env,
            const JavaParamRef<jobject>& obj,
            jboolean low_mem_device,
-           jint empty_background_color,
            jlong native_window_android,
            const JavaParamRef<jobject>& jlayer_title_cache,
            const JavaParamRef<jobject>& jtab_content_manager) {
@@ -58,8 +58,7 @@ jlong Init(JNIEnv* env,
   DCHECK(tab_content_manager);
 
   // TODO(clholgat): Remove the compositor tabstrip flag.
-  view = new CompositorView(env, obj, empty_background_color, low_mem_device,
-                            window_android, layer_title_cache,
+  view = new CompositorView(env, obj, low_mem_device, window_android,
                             tab_content_manager);
 
   ui::UIResourceProvider* ui_resource_provider = view->GetUIResourceProvider();
@@ -75,34 +74,23 @@ jlong Init(JNIEnv* env,
 
 CompositorView::CompositorView(JNIEnv* env,
                                jobject obj,
-                               jint empty_background_color,
                                jboolean low_mem_device,
                                ui::WindowAndroid* window_android,
-                               LayerTitleCache* layer_title_cache,
                                TabContentManager* tab_content_manager)
-    : layer_title_cache_(layer_title_cache),
-      tab_content_manager_(tab_content_manager),
-      root_layer_(
-          cc::SolidColorLayer::Create(content::Compositor::LayerSettings())),
+    : tab_content_manager_(tab_content_manager),
+      root_layer_(cc::SolidColorLayer::Create()),
       scene_layer_(nullptr),
       current_surface_format_(0),
       content_width_(0),
       content_height_(0),
-      overdraw_bottom_height_(0),
       overlay_video_mode_(false),
-      empty_background_color_(empty_background_color),
       weak_factory_(this) {
   content::BrowserChildProcessObserver::Add(this);
   obj_.Reset(env, obj);
   compositor_.reset(content::Compositor::Create(this, window_android));
 
-  toolbar_layer_ = ToolbarLayer::Create(&(compositor_->GetResourceManager()));
-
   root_layer_->SetIsDrawable(true);
   root_layer_->SetBackgroundColor(SK_ColorWHITE);
-
-  toolbar_layer_->layer()->SetHideLayerAndSubtree(true);
-  root_layer_->AddChild(toolbar_layer_->layer());
 }
 
 CompositorView::~CompositorView() {
@@ -111,7 +99,7 @@ CompositorView::~CompositorView() {
 
   // Explicitly reset these scoped_ptrs here because otherwise we callbacks will
   // try to access member variables during destruction.
-  compositor_.reset(NULL);
+  compositor_.reset();
 }
 
 void CompositorView::Destroy(JNIEnv* env, const JavaParamRef<jobject>& object) {
@@ -119,9 +107,7 @@ void CompositorView::Destroy(JNIEnv* env, const JavaParamRef<jobject>& object) {
 }
 
 ui::ResourceManager* CompositorView::GetResourceManager() {
-  if (!compositor_)
-    return NULL;
-  return &compositor_->GetResourceManager();
+  return compositor_ ? &compositor_->GetResourceManager() : nullptr;
 }
 
 base::android::ScopedJavaLocalRef<jobject> CompositorView::GetResourceManager(
@@ -133,19 +119,16 @@ base::android::ScopedJavaLocalRef<jobject> CompositorView::GetResourceManager(
 void CompositorView::UpdateLayerTreeHost() {
   JNIEnv* env = base::android::AttachCurrentThread();
   // TODO(wkorman): Rename JNI interface to onCompositorUpdateLayerTreeHost.
-  Java_CompositorView_onCompositorLayout(env, obj_.obj());
+  Java_CompositorView_onCompositorLayout(env, obj_);
 }
 
 void CompositorView::OnSwapBuffersCompleted(int pending_swap_buffers) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_CompositorView_onSwapBuffersCompleted(env, obj_.obj(),
-                                             pending_swap_buffers);
+  Java_CompositorView_onSwapBuffersCompleted(env, obj_, pending_swap_buffers);
 }
 
 ui::UIResourceProvider* CompositorView::GetUIResourceProvider() {
-  if (!compositor_)
-    return NULL;
-  return &compositor_->GetUIResourceProvider();
+  return compositor_ ? &compositor_->GetUIResourceProvider() : nullptr;
 }
 
 void CompositorView::SurfaceCreated(JNIEnv* env,
@@ -156,7 +139,7 @@ void CompositorView::SurfaceCreated(JNIEnv* env,
 
 void CompositorView::SurfaceDestroyed(JNIEnv* env,
                                       const JavaParamRef<jobject>& object) {
-  compositor_->SetSurface(NULL);
+  compositor_->SetSurface(nullptr);
   current_surface_format_ = 0;
   tab_content_manager_->OnUIResourcesWereEvicted();
 }
@@ -179,18 +162,8 @@ void CompositorView::SurfaceChanged(JNIEnv* env,
   root_layer_->SetBounds(gfx::Size(content_width_, content_height_));
 }
 
-void CompositorView::SetLayoutViewport(JNIEnv* env,
-                                       const JavaParamRef<jobject>& object,
-                                       jfloat x,
-                                       jfloat y,
-                                       jfloat width,
-                                       jfloat height,
-                                       jfloat visible_x_offset,
-                                       jfloat visible_y_offset,
-                                       jfloat overdraw_bottom_height,
-                                       jfloat dp_to_pixel) {
-  overdraw_bottom_height_ = overdraw_bottom_height;
-  compositor_->setDeviceScaleFactor(dp_to_pixel);
+void CompositorView::SetLayoutBounds(JNIEnv* env,
+                                     const JavaParamRef<jobject>& object) {
   root_layer_->SetBounds(gfx::Size(content_width_, content_height_));
 }
 
@@ -217,13 +190,16 @@ void CompositorView::SetSceneLayer(JNIEnv* env,
   SceneLayer* scene_layer = SceneLayer::FromJavaObject(env, jscene_layer);
 
   if (scene_layer_ != scene_layer) {
-    // Old tree provider is being detached.
-    if (scene_layer_ != nullptr)
+    // The old tree should be detached only if it is not the cached layer or
+    // the cached layer is not somewhere in the new root.
+    if (scene_layer_ &&
+        !scene_layer_->layer()->HasAncestor(scene_layer->layer().get())) {
       scene_layer_->OnDetach();
+    }
 
     scene_layer_ = scene_layer;
 
-    if (scene_layer == nullptr) {
+    if (!scene_layer) {
       scene_layer_layer_ = nullptr;
       return;
     }
@@ -245,58 +221,11 @@ void CompositorView::SetSceneLayer(JNIEnv* env,
   }
 }
 
-int CompositorView::GetUsableContentHeight() {
-  return std::max(content_height_ - overdraw_bottom_height_, 0);
-}
-
-void CompositorView::UpdateToolbarLayer(JNIEnv* env,
-                                        const JavaParamRef<jobject>& object,
-                                        jint toolbar_resource_id,
-                                        jint toolbar_background_color,
-                                        jint url_bar_resource_id,
-                                        jfloat url_bar_alpha,
-                                        jfloat top_offset,
-                                        jfloat brightness,
-                                        bool visible,
-                                        bool show_shadow) {
-  toolbar_layer_->layer()->SetHideLayerAndSubtree(!visible);
-  if (visible) {
-    toolbar_layer_->layer()->SetPosition(gfx::PointF(0, top_offset));
-    // If we're at rest, hide the shadow.  The Android view should be drawing.
-    bool clip_shadow = top_offset >= 0.f && !show_shadow;
-    toolbar_layer_->PushResource(toolbar_resource_id, toolbar_background_color,
-                                 false, SK_ColorWHITE, url_bar_resource_id,
-                                 url_bar_alpha, false, brightness, clip_shadow);
-  }
-}
-
-void CompositorView::UpdateProgressBar(JNIEnv* env,
-                                       const JavaParamRef<jobject>& object,
-                                       jint progress_bar_x,
-                                       jint progress_bar_y,
-                                       jint progress_bar_width,
-                                       jint progress_bar_height,
-                                       jint progress_bar_color,
-                                       jint progress_bar_background_x,
-                                       jint progress_bar_background_y,
-                                       jint progress_bar_background_width,
-                                       jint progress_bar_background_height,
-                                       jint progress_bar_background_color) {
-  toolbar_layer_->UpdateProgressBar(progress_bar_x,
-                                    progress_bar_y,
-                                    progress_bar_width,
-                                    progress_bar_height,
-                                    progress_bar_color,
-                                    progress_bar_background_x,
-                                    progress_bar_background_y,
-                                    progress_bar_background_width,
-                                    progress_bar_background_height,
-                                    progress_bar_background_color);
-}
-
 void CompositorView::FinalizeLayers(JNIEnv* env,
                                     const JavaParamRef<jobject>& jobj) {
-  UNSHIPPED_TRACE_EVENT0("compositor", "CompositorView::FinalizeLayers");
+#if !defined(OFFICIAL_BUILD)
+  TRACE_EVENT0("compositor", "CompositorView::FinalizeLayers");
+#endif
 }
 
 void CompositorView::SetNeedsComposite(JNIEnv* env,
@@ -314,7 +243,7 @@ void CompositorView::BrowserChildProcessHostDisconnected(
     JNIEnv* env = base::android::AttachCurrentThread();
     compositor_->SetSurface(nullptr);
     Java_CompositorView_onJellyBeanSurfaceDisconnectWorkaround(
-        env, obj_.obj(), overlay_video_mode_);
+        env, obj_, overlay_video_mode_);
   }
 }
 
@@ -331,4 +260,3 @@ bool RegisterCompositorView(JNIEnv* env) {
 }
 
 }  // namespace android
-}  // namespace chrome

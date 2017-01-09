@@ -5,15 +5,17 @@
 // This file provides a command-line interface to
 // upgrade_test::GenerateAlternateVersion().
 
+#include <stddef.h>
+
 #include <cstdio>
 #include <cstdlib>
 
 #include "base/at_exit.h"
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "chrome/installer/test/alternate_version_generator.h"
 
@@ -158,8 +160,10 @@ int wmain(int argc, wchar_t *argv[]) {
   std::wstring original_version;
   std::wstring new_version;
 
-  if (upgrade_test::GenerateAlternateVersion(mini_installer, out, direction,
-                                             &original_version, &new_version)) {
+  if (upgrade_test::GenerateAlternateVersion(
+          base::MakeAbsoluteFilePath(mini_installer),
+          base::MakeAbsoluteFilePath(out), direction, &original_version,
+          &new_version)) {
     fwprintf(stdout, L"Generated version %s from version %s\n",
              new_version.c_str(), original_version.c_str());
     return EXIT_SUCCESS;

@@ -4,18 +4,20 @@
 
 #include "components/invalidation/impl/sync_system_resources.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/invalidation/impl/gcm_network_channel.h"
 #include "components/invalidation/impl/gcm_network_channel_delegate.h"
 #include "components/invalidation/impl/push_client_channel.h"
@@ -66,20 +68,20 @@ void SyncLogger::SetSystemResources(invalidation::SystemResources* resources) {
 }
 
 SyncInvalidationScheduler::SyncInvalidationScheduler()
-    : created_on_loop_(base::MessageLoop::current()),
+    : created_on_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       is_started_(false),
       is_stopped_(false),
       weak_factory_(this) {
-  CHECK(created_on_loop_);
+  CHECK(!!created_on_task_runner_);
 }
 
 SyncInvalidationScheduler::~SyncInvalidationScheduler() {
-  CHECK_EQ(created_on_loop_, base::MessageLoop::current());
+  CHECK(IsRunningOnThread());
   CHECK(is_stopped_);
 }
 
 void SyncInvalidationScheduler::Start() {
-  CHECK_EQ(created_on_loop_, base::MessageLoop::current());
+  CHECK(IsRunningOnThread());
   CHECK(!is_started_);
   is_started_ = true;
   is_stopped_ = false;
@@ -87,24 +89,24 @@ void SyncInvalidationScheduler::Start() {
 }
 
 void SyncInvalidationScheduler::Stop() {
-  CHECK_EQ(created_on_loop_, base::MessageLoop::current());
+  CHECK(IsRunningOnThread());
   is_stopped_ = true;
   is_started_ = false;
   weak_factory_.InvalidateWeakPtrs();
-  STLDeleteElements(&posted_tasks_);
+  posted_tasks_.clear();
 }
 
 void SyncInvalidationScheduler::Schedule(invalidation::TimeDelta delay,
                                          invalidation::Closure* task) {
   DCHECK(invalidation::IsCallbackRepeatable(task));
-  CHECK_EQ(created_on_loop_, base::MessageLoop::current());
+  CHECK(IsRunningOnThread());
 
   if (!is_started_) {
     delete task;
     return;
   }
 
-  posted_tasks_.insert(task);
+  posted_tasks_.insert(base::WrapUnique(task));
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::Bind(&SyncInvalidationScheduler::RunPostedTask,
                             weak_factory_.GetWeakPtr(), task),
@@ -112,11 +114,11 @@ void SyncInvalidationScheduler::Schedule(invalidation::TimeDelta delay,
 }
 
 bool SyncInvalidationScheduler::IsRunningOnThread() const {
-  return created_on_loop_ == base::MessageLoop::current();
+  return created_on_task_runner_->BelongsToCurrentThread();
 }
 
 invalidation::Time SyncInvalidationScheduler::GetCurrentTime() const {
-  CHECK_EQ(created_on_loop_, base::MessageLoop::current());
+  CHECK(IsRunningOnThread());
   return base::Time::Now();
 }
 
@@ -126,10 +128,14 @@ void SyncInvalidationScheduler::SetSystemResources(
 }
 
 void SyncInvalidationScheduler::RunPostedTask(invalidation::Closure* task) {
-  CHECK_EQ(created_on_loop_, base::MessageLoop::current());
+  CHECK(IsRunningOnThread());
   task->Run();
-  posted_tasks_.erase(task);
-  delete task;
+  auto it =
+      std::find_if(posted_tasks_.begin(), posted_tasks_.end(),
+                   [task](const std::unique_ptr<invalidation::Closure>& ptr) {
+                     return ptr.get() == task;
+                   });
+  posted_tasks_.erase(it);
 }
 
 SyncNetworkChannel::SyncNetworkChannel()
@@ -137,7 +143,6 @@ SyncNetworkChannel::SyncNetworkChannel()
       received_messages_count_(0) {}
 
 SyncNetworkChannel::~SyncNetworkChannel() {
-  STLDeleteElements(&network_status_receivers_);
 }
 
 void SyncNetworkChannel::SetMessageReceiver(
@@ -148,7 +153,8 @@ void SyncNetworkChannel::SetMessageReceiver(
 void SyncNetworkChannel::AddNetworkStatusReceiver(
     invalidation::NetworkStatusCallback* network_status_receiver) {
   network_status_receiver->Run(last_network_status_);
-  network_status_receivers_.push_back(network_status_receiver);
+  network_status_receivers_.push_back(
+      base::WrapUnique(network_status_receiver));
 }
 
 void SyncNetworkChannel::SetSystemResources(
@@ -164,36 +170,33 @@ void SyncNetworkChannel::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-scoped_ptr<SyncNetworkChannel> SyncNetworkChannel::CreatePushClientChannel(
+std::unique_ptr<SyncNetworkChannel> SyncNetworkChannel::CreatePushClientChannel(
     const notifier::NotifierOptions& notifier_options) {
-  scoped_ptr<notifier::PushClient> push_client(
+  std::unique_ptr<notifier::PushClient> push_client(
       notifier::PushClient::CreateDefaultOnIOThread(notifier_options));
-  return scoped_ptr<SyncNetworkChannel>(
-      new PushClientChannel(push_client.Pass()));
+  return base::MakeUnique<PushClientChannel>(std::move(push_client));
 }
 
-scoped_ptr<SyncNetworkChannel> SyncNetworkChannel::CreateGCMNetworkChannel(
+std::unique_ptr<SyncNetworkChannel> SyncNetworkChannel::CreateGCMNetworkChannel(
     scoped_refptr<net::URLRequestContextGetter> request_context_getter,
-    scoped_ptr<GCMNetworkChannelDelegate> delegate) {
-  return scoped_ptr<SyncNetworkChannel>(new GCMNetworkChannel(
-      request_context_getter, delegate.Pass()));
+    std::unique_ptr<GCMNetworkChannelDelegate> delegate) {
+  return base::MakeUnique<GCMNetworkChannel>(request_context_getter,
+                                             std::move(delegate));
 }
 
 void SyncNetworkChannel::NotifyNetworkStatusChange(bool online) {
   // Remember network state for future NetworkStatusReceivers.
   last_network_status_ = online;
   // Notify NetworkStatusReceivers in cacheinvalidation.
-  for (NetworkStatusReceiverList::const_iterator it =
-           network_status_receivers_.begin();
-       it != network_status_receivers_.end(); ++it) {
-    (*it)->Run(online);
+  for (const auto& receiver : network_status_receivers_) {
+    receiver->Run(online);
   }
 }
 
 void SyncNetworkChannel::NotifyChannelStateChange(
     InvalidatorState invalidator_state) {
-  FOR_EACH_OBSERVER(Observer, observers_,
-                    OnNetworkChannelStateChanged(invalidator_state));
+  for (auto& observer : observers_)
+    observer.OnNetworkChannelStateChanged(invalidator_state);
 }
 
 bool SyncNetworkChannel::DeliverIncomingMessage(const std::string& message) {
@@ -229,7 +232,7 @@ void SyncStorage::WriteKey(const std::string& key, const std::string& value,
   cached_state_ = value;
   // According to the cache invalidation API folks, we can do this as
   // long as we make sure to clear the persistent state that we start
-  // up the cache invalidation client with.  However, we musn't do it
+  // up the cache invalidation client with.  However, we mustn't do it
   // right away, as we may be called under a lock that the callback
   // uses.
   scheduler_->Schedule(

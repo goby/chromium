@@ -10,7 +10,7 @@ config("wayland_config") {
   ]
 }
 
-source_set("wayland_util") {
+static_library("wayland_util") {
   sources = [
     "src/src/wayland-util.c",
     "src/src/wayland-util.h",
@@ -22,7 +22,7 @@ source_set("wayland_util") {
   public_configs = [ ":wayland_config" ]
 }
 
-source_set("wayland_private") {
+static_library("wayland_private") {
   sources = [
     "src/src/connection.c",
     "src/src/wayland-os.c",
@@ -33,12 +33,12 @@ source_set("wayland_private") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [
     "//build/config/compiler:no_chromium_code",
-    "//build/config/linux:libffi",
+    "//build/config/linux/libffi",
     ":wayland_config",
   ]
 }
 
-source_set("wayland_protocol") {
+static_library("wayland_protocol") {
   sources = [
     "protocol/wayland-protocol.c",
   ]
@@ -53,7 +53,7 @@ source_set("wayland_protocol") {
   public_configs = [ ":wayland_config" ]
 }
 
-source_set("wayland_server") {
+static_library("wayland_server") {
   sources = [
     "include/protocol/wayland-server-protocol.h",
     "src/src/event-loop.c",
@@ -70,13 +70,13 @@ source_set("wayland_server") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [
     "//build/config/compiler:no_chromium_code",
-    "//build/config/linux:libffi",
+    "//build/config/linux/libffi",
   ]
 
   public_configs = [ ":wayland_config" ]
 }
 
-source_set("wayland_client") {
+static_library("wayland_client") {
   sources = [
     "include/protocol/wayland-client-protocol.h",
     "src/src/wayland-client.c",
@@ -91,7 +91,7 @@ source_set("wayland_client") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [
     "//build/config/compiler:no_chromium_code",
-    "//build/config/linux:libffi",
+    "//build/config/linux/libffi",
   ]
 
   public_configs = [ ":wayland_config" ]

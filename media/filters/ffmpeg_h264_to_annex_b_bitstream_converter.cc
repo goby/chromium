@@ -4,6 +4,8 @@
 
 #include "media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "media/ffmpeg/ffmpeg_common.h"
 #include "media/formats/mp4/box_definitions.h"
@@ -11,37 +13,36 @@
 namespace media {
 
 FFmpegH264ToAnnexBBitstreamConverter::FFmpegH264ToAnnexBBitstreamConverter(
-    AVCodecContext* stream_codec_context)
+    AVCodecParameters* stream_codec_parameters)
     : configuration_processed_(false),
-      stream_codec_context_(stream_codec_context) {
-  CHECK(stream_codec_context_);
+      stream_codec_parameters_(stream_codec_parameters) {
+  CHECK(stream_codec_parameters_);
 }
 
 FFmpegH264ToAnnexBBitstreamConverter::~FFmpegH264ToAnnexBBitstreamConverter() {}
 
 bool FFmpegH264ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
-  scoped_ptr<mp4::AVCDecoderConfigurationRecord> avc_config;
+  std::unique_ptr<mp4::AVCDecoderConfigurationRecord> avc_config;
 
   if (packet == NULL || !packet->data)
     return false;
 
   // Calculate the needed output buffer size.
   if (!configuration_processed_) {
-    if (!stream_codec_context_->extradata ||
-        stream_codec_context_->extradata_size <= 0)
+    if (!stream_codec_parameters_->extradata ||
+        stream_codec_parameters_->extradata_size <= 0)
       return false;
 
     avc_config.reset(new mp4::AVCDecoderConfigurationRecord());
 
-    if (!converter_.ParseConfiguration(
-            stream_codec_context_->extradata,
-            stream_codec_context_->extradata_size,
-            avc_config.get())) {
+    if (!converter_.ParseConfiguration(stream_codec_parameters_->extradata,
+                                       stream_codec_parameters_->extradata_size,
+                                       avc_config.get())) {
       return false;
     }
   }
 
-  uint32 output_packet_size = converter_.CalculateNeededOutputBufferSize(
+  uint32_t output_packet_size = converter_.CalculateNeededOutputBufferSize(
       packet->data, packet->size, avc_config.get());
 
   if (output_packet_size == 0)
@@ -59,7 +60,7 @@ bool FFmpegH264ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
 
   // Proceed with the conversion of the actual in-band NAL units, leave room
   // for configuration in the beginning.
-  uint32 io_size = dest_packet.size;
+  uint32_t io_size = dest_packet.size;
   if (!converter_.ConvertNalUnitStreamToByteStream(
           packet->data, packet->size,
           avc_config.get(),

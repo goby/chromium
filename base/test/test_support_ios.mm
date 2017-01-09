@@ -160,8 +160,8 @@ static char** g_argv;
 
   // If a test app is too fast, it will exit before Instruments has has a
   // a chance to initialize and no test results will be seen.
-  // TODO(ios): crbug.com/137010 Figure out how much time is actually needed,
-  // and sleep only to make sure that much time has elapsed since launch.
+  // TODO(crbug.com/137010): Figure out how much time is actually needed, and
+  // sleep only to make sure that much time has elapsed since launch.
   [NSThread sleepUntilDate:[NSDate dateWithTimeIntervalSinceNow:2.0]];
   window_.reset();
 
@@ -179,9 +179,9 @@ static char** g_argv;
 
 namespace {
 
-scoped_ptr<base::MessagePump> CreateMessagePumpForUIForTests() {
+std::unique_ptr<base::MessagePump> CreateMessagePumpForUIForTests() {
   // A default MessagePump will do quite nicely in tests.
-  return scoped_ptr<base::MessagePump>(new base::MessagePumpDefault());
+  return std::unique_ptr<base::MessagePump>(new base::MessagePumpDefault());
 }
 
 }  // namespace

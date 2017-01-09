@@ -13,7 +13,6 @@
 #include "mojo/edk/system/awakable.h"
 #include "mojo/edk/system/core_test_base.h"
 #include "mojo/edk/system/test_utils.h"
-#include "mojo/public/cpp/system/macros.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -158,9 +157,7 @@ TEST_F(CoreTest, Basic) {
 
   ASSERT_EQ(0u, info.GetDtorCallCount());
   ASSERT_EQ(0u, info.GetCloseCallCount());
-  ASSERT_EQ(0u, info.GetCancelAllAwakablesCallCount());
   ASSERT_EQ(MOJO_RESULT_OK, core()->Close(h));
-  ASSERT_EQ(1u, info.GetCancelAllAwakablesCallCount());
   ASSERT_EQ(1u, info.GetCloseCallCount());
   ASSERT_EQ(1u, info.GetDtorCallCount());
 
@@ -330,6 +327,18 @@ TEST_F(CoreTest, InvalidArguments) {
                              MOJO_WRITE_MESSAGE_FLAG_NONE));
     ASSERT_EQ(0u, info.GetWriteMessageCallCount());
 
+    // Null |bytes| with non-zero message size.
+    ASSERT_EQ(MOJO_RESULT_INVALID_ARGUMENT,
+              core()->WriteMessage(h, nullptr, 1, nullptr, 0,
+                                   MOJO_WRITE_MESSAGE_FLAG_NONE));
+    ASSERT_EQ(0u, info.GetWriteMessageCallCount());
+
+    // Null |handles| with non-zero handle count.
+    ASSERT_EQ(MOJO_RESULT_INVALID_ARGUMENT,
+              core()->WriteMessage(h, nullptr, 0, nullptr, 1,
+                                   MOJO_WRITE_MESSAGE_FLAG_NONE));
+    ASSERT_EQ(0u, info.GetWriteMessageCallCount());
+
     // Huge handle count (plausibly big).
     ASSERT_EQ(MOJO_RESULT_RESOURCE_EXHAUSTED,
               core()->WriteMessage(
@@ -352,19 +361,21 @@ TEST_F(CoreTest, InvalidArguments) {
                              MOJO_WRITE_MESSAGE_FLAG_NONE));
     ASSERT_EQ(0u, info.GetWriteMessageCallCount());
 
-    // Can't send a handle over itself.
+    // Can't send a handle over itself. Note that this will also cause |h| to be
+    // closed.
     handles[0] = h;
     ASSERT_EQ(
-        MOJO_RESULT_BUSY,
+        MOJO_RESULT_INVALID_ARGUMENT,
         core()->WriteMessage(h, nullptr, 0, handles, 1,
                              MOJO_WRITE_MESSAGE_FLAG_NONE));
     ASSERT_EQ(0u, info.GetWriteMessageCallCount());
 
+    h = CreateMockHandle(&info);
+
     MockHandleInfo info2;
-    MojoHandle h2 = CreateMockHandle(&info2);
 
     // This is "okay", but |MockDispatcher| doesn't implement it.
-    handles[0] = h2;
+    handles[0] = CreateMockHandle(&info2);
     ASSERT_EQ(
         MOJO_RESULT_UNIMPLEMENTED,
         core()->WriteMessage(h, nullptr, 0, handles, 1,
@@ -372,31 +383,32 @@ TEST_F(CoreTest, InvalidArguments) {
     ASSERT_EQ(1u, info.GetWriteMessageCallCount());
 
     // One of the |handles| is still invalid.
+    handles[0] = CreateMockHandle(&info2);
     ASSERT_EQ(
         MOJO_RESULT_INVALID_ARGUMENT,
         core()->WriteMessage(h, nullptr, 0, handles, 2,
                              MOJO_WRITE_MESSAGE_FLAG_NONE));
     ASSERT_EQ(1u, info.GetWriteMessageCallCount());
 
-    // One of the |handles| is the same as |handle|.
+    // One of the |handles| is the same as |h|. Both handles are closed.
+    handles[0] = CreateMockHandle(&info2);
     handles[1] = h;
     ASSERT_EQ(
-        MOJO_RESULT_BUSY,
+        MOJO_RESULT_INVALID_ARGUMENT,
         core()->WriteMessage(h, nullptr, 0, handles, 2,
                              MOJO_WRITE_MESSAGE_FLAG_NONE));
     ASSERT_EQ(1u, info.GetWriteMessageCallCount());
 
+    h = CreateMockHandle(&info);
+
     // Can't send a handle twice in the same message.
-    handles[1] = h2;
+    handles[0] = CreateMockHandle(&info2);
+    handles[1] = handles[0];
     ASSERT_EQ(
         MOJO_RESULT_BUSY,
         core()->WriteMessage(h, nullptr, 0, handles, 2,
                              MOJO_WRITE_MESSAGE_FLAG_NONE));
     ASSERT_EQ(1u, info.GetWriteMessageCallCount());
-
-    // Note: Since we never successfully sent anything with it, |h2| should
-    // still be valid.
-    ASSERT_EQ(MOJO_RESULT_OK, core()->Close(h2));
 
     ASSERT_EQ(MOJO_RESULT_OK, core()->Close(h));
   }
@@ -433,7 +445,11 @@ TEST_F(CoreTest, InvalidArguments) {
 // (for required pointer arguments) will still cause death, but perhaps not
 // predictably.
 TEST_F(CoreTest, InvalidArgumentsDeath) {
+#if defined(OFFICIAL_BUILD)
+  const char kMemoryCheckFailedRegex[] = "";
+#else
   const char kMemoryCheckFailedRegex[] = "Check failed";
+#endif
 
   // |WaitMany()|:
   {
@@ -463,22 +479,6 @@ TEST_F(CoreTest, InvalidArgumentsDeath) {
     ASSERT_DEATH_IF_SUPPORTED(
         core()->CreateMessagePipe(nullptr, nullptr, &h),
         kMemoryCheckFailedRegex);
-  }
-
-  // |WriteMessage()|:
-  // Only check arguments checked by |Core|, namely |handle|, |handles|, and
-  // |num_handles|.
-  {
-    MockHandleInfo info;
-    MojoHandle h = CreateMockHandle(&info);
-
-    // Null |handles| with nonzero |num_handles|.
-    ASSERT_DEATH_IF_SUPPORTED(
-        core()->WriteMessage(h, nullptr, 0, nullptr, 1,
-                             MOJO_WRITE_MESSAGE_FLAG_NONE),
-        kMemoryCheckFailedRegex);
-
-    ASSERT_EQ(MOJO_RESULT_OK, core()->Close(h));
   }
 
   // |ReadMessage()|:
@@ -703,7 +703,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing1) {
             hss.satisfied_signals);
   ASSERT_EQ(kAllSignals, hss.satisfiable_signals);
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_passing[1], buffer, &num_bytes, handles, &num_handles,
@@ -714,20 +714,19 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing1) {
 
   // Make sure that you can't pass either of the message pipe's handles over
   // itself.
-  ASSERT_EQ(MOJO_RESULT_BUSY,
+  ASSERT_EQ(MOJO_RESULT_INVALID_ARGUMENT,
             core()->WriteMessage(h_passing[0], kHello, kHelloSize,
                                  &h_passing[0], 1,
                                  MOJO_WRITE_MESSAGE_FLAG_NONE));
-#if defined(OS_WIN)
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-#endif
+  ASSERT_EQ(MOJO_RESULT_OK,
+            core()->CreateMessagePipe(nullptr, &h_passing[0], &h_passing[1]));
+
   ASSERT_EQ(MOJO_RESULT_INVALID_ARGUMENT,
             core()->WriteMessage(h_passing[0], kHello, kHelloSize,
                                  &h_passing[1], 1,
                                  MOJO_WRITE_MESSAGE_FLAG_NONE));
-#if defined(OS_WIN)
-  }
-#endif
+  ASSERT_EQ(MOJO_RESULT_OK,
+            core()->CreateMessagePipe(nullptr, &h_passing[0], &h_passing[1]));
 
   MojoHandle h_passed[2];
   ASSERT_EQ(MOJO_RESULT_OK,
@@ -745,7 +744,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing1) {
             hss.satisfied_signals);
   ASSERT_EQ(kAllSignals, hss.satisfiable_signals);
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_passed[1], buffer, &num_bytes, handles, &num_handles,
@@ -767,7 +766,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing1) {
             hss.satisfied_signals);
   ASSERT_EQ(kAllSignals, hss.satisfiable_signals);
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_passing[1], buffer, &num_bytes, handles, &num_handles,
@@ -800,7 +799,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing1) {
             hss.satisfied_signals);
   ASSERT_EQ(kAllSignals, hss.satisfiable_signals);
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_received, buffer, &num_bytes, handles, &num_handles,
@@ -1052,7 +1051,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing2) {
             hss.satisfied_signals);
   ASSERT_EQ(kAllSignals, hss.satisfiable_signals);
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_passing[1], buffer, &num_bytes, handles, &num_handles,
@@ -1104,7 +1103,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing2) {
             hss.satisfied_signals);
   ASSERT_EQ(kAllSignals, hss.satisfiable_signals);
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_passing[1], buffer, &num_bytes, handles, &num_handles,
@@ -1169,7 +1168,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing2) {
             core()->Wait(h_passing[1], MOJO_HANDLE_SIGNAL_READABLE, 1000000000,
                          nullptr));
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_passing[1], buffer, &num_bytes, handles, &num_handles,
@@ -1215,7 +1214,7 @@ TEST_F(CoreTest, MessagePipeBasicLocalHandlePassing2) {
             hss.satisfied_signals);
   ASSERT_EQ(kAllSignals, hss.satisfiable_signals);
   num_bytes = kBufferSize;
-  num_handles = MOJO_ARRAYSIZE(handles);
+  num_handles = arraysize(handles);
   ASSERT_EQ(MOJO_RESULT_OK,
             core()->ReadMessage(
                 h_passing[1], buffer, &num_bytes, handles, &num_handles,
@@ -1243,30 +1242,6 @@ struct TestAsyncWaiter {
 
   MojoResult result;
 };
-
-TEST_F(CoreTest, AsyncWait) {
-  TestAsyncWaiter waiter;
-  MockHandleInfo info;
-  MojoHandle h = CreateMockHandle(&info);
-
-  ASSERT_EQ(MOJO_RESULT_FAILED_PRECONDITION,
-            core()->AsyncWait(h, MOJO_HANDLE_SIGNAL_READABLE,
-                              base::Bind(&TestAsyncWaiter::Awake,
-                                         base::Unretained(&waiter))));
-  ASSERT_EQ(0u, info.GetAddedAwakableSize());
-
-  info.AllowAddAwakable(true);
-  ASSERT_EQ(MOJO_RESULT_OK,
-            core()->AsyncWait(h, MOJO_HANDLE_SIGNAL_READABLE,
-                              base::Bind(&TestAsyncWaiter::Awake,
-                                         base::Unretained(&waiter))));
-  ASSERT_EQ(1u, info.GetAddedAwakableSize());
-
-  ASSERT_FALSE(info.GetAddedAwakableAt(0)->Awake(MOJO_RESULT_BUSY, 0));
-  ASSERT_EQ(MOJO_RESULT_BUSY, waiter.result);
-
-  ASSERT_EQ(MOJO_RESULT_OK, core()->Close(h));
-}
 
 // TODO(vtl): Test |DuplicateBufferHandle()| and |MapBuffer()|.
 

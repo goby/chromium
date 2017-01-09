@@ -2,8 +2,8 @@
 <title>Service Worker: CSS's base URL must be the request URL even when fetched from other URL</title>
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
-<script src="../resources/get-host-info.js"></script>
-<script src="resources/test-helpers.js?pipe=sub"></script>
+<script src="../resources/get-host-info.js?pipe=sub"></script>
+<script src="resources/test-helpers.js"></script>
 <script>
 async_test(function(t) {
     var SCOPE = 'resources/fetch-request-css-base-url-iframe.html';
@@ -36,7 +36,6 @@ async_test(function(t) {
                   base + 'resources/fetch-request-css-base-url-style.css',
                   'While loading the image defined in CSS the referrer must ' +
                   'be the request URL of CSS.');
-                frame.remove();
                 service_worker_unregister_and_done(t, SCOPE);
               });
               worker.postMessage(

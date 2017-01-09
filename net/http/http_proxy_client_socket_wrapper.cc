@@ -4,16 +4,20 @@
 
 #include "net/http/http_proxy_client_socket_wrapper.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/values.h"
-#include "net/base/net_util.h"
 #include "net/base/proxy_delegate.h"
 #include "net/http/http_proxy_client_socket.h"
 #include "net/http/http_response_info.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_source_type.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/spdy/spdy_proxy_client_socket.h"
 #include "net/spdy/spdy_session.h"
@@ -27,6 +31,7 @@ namespace net {
 HttpProxyClientSocketWrapper::HttpProxyClientSocketWrapper(
     const std::string& group_name,
     RequestPriority priority,
+    ClientSocketPool::RespectLimits respect_limits,
     base::TimeDelta connect_timeout_duration,
     base::TimeDelta proxy_negotiation_timeout_duration,
     TransportClientSocketPool* transport_pool,
@@ -40,10 +45,11 @@ HttpProxyClientSocketWrapper::HttpProxyClientSocketWrapper(
     SpdySessionPool* spdy_session_pool,
     bool tunnel,
     ProxyDelegate* proxy_delegate,
-    const BoundNetLog& net_log)
+    const NetLogWithSource& net_log)
     : next_state_(STATE_NONE),
       group_name_(group_name),
       priority_(priority),
+      respect_limits_(respect_limits),
       connect_timeout_duration_(connect_timeout_duration),
       proxy_negotiation_timeout_duration_(proxy_negotiation_timeout_duration),
       transport_pool_(transport_pool),
@@ -52,8 +58,6 @@ HttpProxyClientSocketWrapper::HttpProxyClientSocketWrapper(
       ssl_params_(ssl_params),
       user_agent_(user_agent),
       endpoint_(endpoint),
-      http_auth_cache_(http_auth_cache),
-      http_auth_handler_factory_(http_auth_handler_factory),
       spdy_session_pool_(spdy_session_pool),
       tunnel_(tunnel),
       proxy_delegate_(proxy_delegate),
@@ -66,9 +70,10 @@ HttpProxyClientSocketWrapper::HttpProxyClientSocketWrapper(
                        http_auth_cache,
                        http_auth_handler_factory)
                  : nullptr),
-      net_log_(BoundNetLog::Make(net_log.net_log(),
-                                 NetLog::SOURCE_PROXY_CLIENT_SOCKET_WRAPPER)) {
-  net_log_.BeginEvent(NetLog::TYPE_SOCKET_ALIVE,
+      net_log_(NetLogWithSource::Make(
+          net_log.net_log(),
+          NetLogSourceType::PROXY_CLIENT_SOCKET_WRAPPER)) {
+  net_log_.BeginEvent(NetLogEventType::SOCKET_ALIVE,
                       net_log.source().ToEventParametersCallback());
   DCHECK(transport_params || ssl_params);
   DCHECK(!transport_params || !ssl_params);
@@ -78,7 +83,7 @@ HttpProxyClientSocketWrapper::~HttpProxyClientSocketWrapper() {
   // Make sure no sockets are returned to the lower level socket pools.
   Disconnect();
 
-  net_log_.EndEvent(NetLog::TYPE_SOCKET_ALIVE);
+  net_log_.EndEvent(NetLogEventType::SOCKET_ALIVE);
 }
 
 LoadState HttpProxyClientSocketWrapper::GetConnectLoadState() const {
@@ -105,9 +110,9 @@ LoadState HttpProxyClientSocketWrapper::GetConnectLoadState() const {
   return LOAD_STATE_IDLE;
 }
 
-scoped_ptr<HttpResponseInfo>
+std::unique_ptr<HttpResponseInfo>
 HttpProxyClientSocketWrapper::GetAdditionalErrorState() {
-  return error_response_info_.Pass();
+  return std::move(error_response_info_);
 }
 
 const HttpResponseInfo* HttpProxyClientSocketWrapper::GetConnectResponseInfo()
@@ -146,9 +151,9 @@ bool HttpProxyClientSocketWrapper::IsUsingSpdy() const {
   return false;
 }
 
-NextProto HttpProxyClientSocketWrapper::GetProtocolNegotiated() const {
+NextProto HttpProxyClientSocketWrapper::GetProxyNegotiatedProtocol() const {
   if (transport_socket_)
-    return transport_socket_->GetProtocolNegotiated();
+    return transport_socket_->GetProxyNegotiatedProtocol();
   return kProtoUnknown;
 }
 
@@ -203,7 +208,7 @@ bool HttpProxyClientSocketWrapper::IsConnectedAndIdle() const {
   return false;
 }
 
-const BoundNetLog& HttpProxyClientSocketWrapper::NetLog() const {
+const NetLogWithSource& HttpProxyClientSocketWrapper::NetLog() const {
   return net_log_;
 }
 
@@ -226,12 +231,6 @@ bool HttpProxyClientSocketWrapper::WasEverUsed() const {
   // be done.
   if (transport_socket_)
     return transport_socket_->WasEverUsed();
-  return false;
-}
-
-bool HttpProxyClientSocketWrapper::UsingTCPFastOpen() const {
-  if (transport_socket_)
-    return transport_socket_->UsingTCPFastOpen();
   return false;
 }
 
@@ -294,7 +293,7 @@ int HttpProxyClientSocketWrapper::Write(IOBuffer* buf,
   return ERR_SOCKET_NOT_CONNECTED;
 }
 
-int HttpProxyClientSocketWrapper::SetReceiveBufferSize(int32 size) {
+int HttpProxyClientSocketWrapper::SetReceiveBufferSize(int32_t size) {
   // TODO(mmenke):  Should this persist across reconnects?  Seems a little
   //     weird, and not done for normal reconnects.
   if (transport_socket_)
@@ -302,7 +301,7 @@ int HttpProxyClientSocketWrapper::SetReceiveBufferSize(int32 size) {
   return ERR_SOCKET_NOT_CONNECTED;
 }
 
-int HttpProxyClientSocketWrapper::SetSendBufferSize(int32 size) {
+int HttpProxyClientSocketWrapper::SetSendBufferSize(int32_t size) {
   if (transport_socket_)
     return transport_socket_->SetSendBufferSize(size);
   return ERR_SOCKET_NOT_CONNECTED;
@@ -402,7 +401,7 @@ int HttpProxyClientSocketWrapper::DoTransportConnect() {
   next_state_ = STATE_TCP_CONNECT_COMPLETE;
   transport_socket_handle_.reset(new ClientSocketHandle());
   return transport_socket_handle_->Init(
-      group_name_, transport_params_, priority_,
+      group_name_, transport_params_, priority_, respect_limits_,
       base::Bind(&HttpProxyClientSocketWrapper::OnIOComplete,
                  base::Unretained(this)),
       transport_pool_, net_log_);
@@ -425,7 +424,7 @@ int HttpProxyClientSocketWrapper::DoSSLConnect() {
   if (tunnel_) {
     SpdySessionKey key(GetDestination().host_port_pair(), ProxyServer::Direct(),
                        PRIVACY_MODE_DISABLED);
-    if (spdy_session_pool_->FindAvailableSession(key, net_log_)) {
+    if (spdy_session_pool_->FindAvailableSession(key, GURL(), net_log_)) {
       using_spdy_ = true;
       next_state_ = STATE_SPDY_PROXY_CREATE_STREAM;
       return OK;
@@ -434,7 +433,7 @@ int HttpProxyClientSocketWrapper::DoSSLConnect() {
   next_state_ = STATE_SSL_CONNECT_COMPLETE;
   transport_socket_handle_.reset(new ClientSocketHandle());
   return transport_socket_handle_->Init(
-      group_name_, ssl_params_, priority_,
+      group_name_, ssl_params_, priority_, respect_limits_,
       base::Bind(&HttpProxyClientSocketWrapper::OnIOComplete,
                  base::Unretained(this)),
       ssl_pool_, net_log_);
@@ -475,8 +474,8 @@ int HttpProxyClientSocketWrapper::DoSSLConnectComplete(int result) {
 
   SSLClientSocket* ssl =
       static_cast<SSLClientSocket*>(transport_socket_handle_->socket());
-  protocol_negotiated_ = ssl->GetNegotiatedProtocol();
-  using_spdy_ = NextProtoIsSPDY(protocol_negotiated_);
+  negotiated_protocol_ = ssl->GetNegotiatedProtocol();
+  using_spdy_ = negotiated_protocol_ == kProtoHTTP2;
 
   // Reset the timer to just the length of time allowed for HttpProxy handshake
   // so that a fast SSL connection plus a slow HttpProxy failure doesn't take
@@ -504,7 +503,7 @@ int HttpProxyClientSocketWrapper::DoHttpProxyConnect() {
   transport_socket_.reset(new HttpProxyClientSocket(
       transport_socket_handle_.release(), user_agent_, endpoint_,
       GetDestination().host_port_pair(), http_auth_controller_.get(), tunnel_,
-      using_spdy_, protocol_negotiated_, proxy_delegate_,
+      using_spdy_, negotiated_protocol_, proxy_delegate_,
       ssl_params_.get() != nullptr));
   return transport_socket_->Connect(base::Bind(
       &HttpProxyClientSocketWrapper::OnIOComplete, base::Unretained(this)));
@@ -523,7 +522,7 @@ int HttpProxyClientSocketWrapper::DoSpdyProxyCreateStream() {
   SpdySessionKey key(GetDestination().host_port_pair(), ProxyServer::Direct(),
                      PRIVACY_MODE_DISABLED);
   base::WeakPtr<SpdySession> spdy_session =
-      spdy_session_pool_->FindAvailableSession(key, net_log_);
+      spdy_session_pool_->FindAvailableSession(key, GURL(), net_log_);
   // It's possible that a session to the proxy has recently been created
   if (spdy_session) {
     if (transport_socket_handle_.get()) {
@@ -534,7 +533,7 @@ int HttpProxyClientSocketWrapper::DoSpdyProxyCreateStream() {
   } else {
     // Create a session direct to the proxy itself
     spdy_session = spdy_session_pool_->CreateAvailableSessionFromSocket(
-        key, transport_socket_handle_.Pass(), net_log_, OK,
+        key, std::move(transport_socket_handle_), net_log_,
         /*using_ssl_*/ true);
     DCHECK(spdy_session);
   }
@@ -585,7 +584,7 @@ int HttpProxyClientSocketWrapper::DoRestartWithAuthComplete(int result) {
     // TODO(mmenke): This may still result in waiting in line, if there are
     //               other HIGHEST priority requests. Consider a workaround for
     //               that. Starting the new request before releasing the old
-    //               socket and using LOAD_IGNORE_LIMITS would do the trick,
+    //               socket and using RespectLimits::Disabled would work,
     //               without exceding the the socket pool limits (Since the old
     //               socket would free up the extra socket slot when destroyed).
     priority_ = HIGHEST;

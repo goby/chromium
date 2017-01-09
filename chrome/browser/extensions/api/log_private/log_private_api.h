@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/files/scoped_file.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/api/log_private/filter_handler.h"
 #include "chrome/browser/extensions/api/log_private/log_parser.h"
@@ -78,16 +79,21 @@ class LogPrivateAPI : public BrowserContextKeyedAPI,
   friend class BrowserContextKeyedAPIFactory<LogPrivateAPI>;
 
   void Initialize();
+
+  void RegisterTempFileOnFileResourceSequence(
+      const std::string& owner_extension_id,
+      const base::FilePath& file_path);
+
   // ExtensionRegistryObserver implementation.
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
                            UnloadedExtensionInfo::Reason reason) override;
 
   // NetLog::ThreadSafeObserver implementation:
-  void OnAddEntry(const net::NetLog::Entry& entry) override;
+  void OnAddEntry(const net::NetLogEntry& entry) override;
 
   void PostPendingEntries();
-  void AddEntriesOnUI(scoped_ptr<base::ListValue> value);
+  void AddEntriesOnUI(std::unique_ptr<base::ListValue> value);
 
   // Creates a file that will be written to by net::WriteToFileNetLogObserver.
   void CreateTempNetLogFile(const std::string& owner_extension_id,
@@ -112,8 +118,8 @@ class LogPrivateAPI : public BrowserContextKeyedAPI,
   bool logging_net_internals_;
   api::log_private::EventSink event_sink_;
   std::set<std::string> net_internal_watches_;
-  scoped_ptr<base::ListValue> pending_entries_;
-  scoped_ptr<net::WriteToFileNetLogObserver> write_to_file_observer_;
+  std::unique_ptr<base::ListValue> pending_entries_;
+  std::unique_ptr<net::WriteToFileNetLogObserver> write_to_file_observer_;
   // Listen to extension unloaded notifications.
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
       extension_registry_observer_;
@@ -135,9 +141,10 @@ class LogPrivateGetHistoricalFunction : public AsyncExtensionFunction {
   bool RunAsync() override;
 
  private:
-  void OnSystemLogsLoaded(scoped_ptr<system_logs::SystemLogsResponse> sys_info);
+  void OnSystemLogsLoaded(
+      std::unique_ptr<system_logs::SystemLogsResponse> sys_info);
 
-  scoped_ptr<FilterHandler> filter_handler_;
+  std::unique_ptr<FilterHandler> filter_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(LogPrivateGetHistoricalFunction);
 };

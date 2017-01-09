@@ -5,7 +5,9 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_UI_MOTION_EVENT_GENERIC_H_
 #define UI_EVENTS_GESTURE_DETECTION_UI_MOTION_EVENT_GENERIC_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/containers/stack_container.h"
 #include "base/memory/scoped_vector.h"
 #include "ui/events/gesture_detection/gesture_detection_export.h"
@@ -17,6 +19,7 @@ struct GESTURE_DETECTION_EXPORT PointerProperties {
   PointerProperties();
   PointerProperties(float x, float y, float touch_major);
   PointerProperties(const MotionEvent& event, size_t pointer_index);
+  PointerProperties(const PointerProperties& other);
 
   // Sets |touch_major|, |touch_minor|, and |orientation| from the given radius
   // and rotation angle (in degrees).
@@ -50,7 +53,7 @@ class GESTURE_DETECTION_EXPORT MotionEventGeneric : public MotionEvent {
   ~MotionEventGeneric() override;
 
   // MotionEvent implementation.
-  uint32 GetUniqueEventId() const override;
+  uint32_t GetUniqueEventId() const override;
   Action GetAction() const override;
   int GetActionIndex() const override;
   size_t GetPointerCount() const override;
@@ -91,19 +94,21 @@ class GESTURE_DETECTION_EXPORT MotionEventGeneric : public MotionEvent {
 
   // Add an event to the history. |this| and |event| must have the same pointer
   // count and must both have an action of ACTION_MOVE.
-  void PushHistoricalEvent(scoped_ptr<MotionEvent> event);
+  void PushHistoricalEvent(std::unique_ptr<MotionEvent> event);
 
   void set_action(Action action) { action_ = action; }
   void set_event_time(base::TimeTicks event_time) { event_time_ = event_time; }
-  void set_unique_event_id(uint32 unique_event_id) {
+  void set_unique_event_id(uint32_t unique_event_id) {
     unique_event_id_ = unique_event_id;
   }
   void set_action_index(int action_index) { action_index_ = action_index; }
   void set_button_state(int button_state) { button_state_ = button_state; }
   void set_flags(int flags) { flags_ = flags; }
 
-  static scoped_ptr<MotionEventGeneric> CloneEvent(const MotionEvent& event);
-  static scoped_ptr<MotionEventGeneric> CancelEvent(const MotionEvent& event);
+  static std::unique_ptr<MotionEventGeneric> CloneEvent(
+      const MotionEvent& event);
+  static std::unique_ptr<MotionEventGeneric> CancelEvent(
+      const MotionEvent& event);
 
  protected:
   MotionEventGeneric();
@@ -117,7 +122,7 @@ class GESTURE_DETECTION_EXPORT MotionEventGeneric : public MotionEvent {
 
   Action action_;
   base::TimeTicks event_time_;
-  uint32 unique_event_id_;
+  uint32_t unique_event_id_;
   int action_index_;
   int button_state_;
   int flags_;

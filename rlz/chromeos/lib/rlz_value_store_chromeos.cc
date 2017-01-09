@@ -10,6 +10,7 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -94,14 +95,14 @@ bool RlzValueStoreChromeOS::HasAccess(AccessType type) {
   return type == kReadAccess || !read_only_;
 }
 
-bool RlzValueStoreChromeOS::WritePingTime(Product product, int64 time) {
+bool RlzValueStoreChromeOS::WritePingTime(Product product, int64_t time) {
   DCHECK(CalledOnValidThread());
   rlz_store_->SetString(GetKeyName(kPingTimeKey, product),
                         base::Int64ToString(time));
   return true;
 }
 
-bool RlzValueStoreChromeOS::ReadPingTime(Product product, int64* time) {
+bool RlzValueStoreChromeOS::ReadPingTime(Product product, int64_t* time) {
   DCHECK(CalledOnValidThread());
   std::string ping_time;
   return rlz_store_->GetString(GetKeyName(kPingTimeKey, product), &ping_time) &&
@@ -147,7 +148,7 @@ bool RlzValueStoreChromeOS::AddProductEvent(Product product,
                                             const char* event_rlz) {
   DCHECK(CalledOnValidThread());
   return AddValueToList(GetKeyName(kProductEventKey, product),
-                        new base::StringValue(event_rlz));
+                        base::MakeUnique<base::StringValue>(event_rlz));
 }
 
 bool RlzValueStoreChromeOS::ReadProductEvents(
@@ -184,7 +185,7 @@ bool RlzValueStoreChromeOS::AddStatefulEvent(Product product,
                                              const char* event_rlz) {
   DCHECK(CalledOnValidThread());
   return AddValueToList(GetKeyName(kStatefulEventKey, product),
-                        new base::StringValue(event_rlz));
+                        base::MakeUnique<base::StringValue>(event_rlz));
 }
 
 bool RlzValueStoreChromeOS::IsStatefulEvent(Product product,
@@ -212,7 +213,7 @@ void RlzValueStoreChromeOS::ReadStore() {
   int error_code = 0;
   std::string error_msg;
   JSONFileValueDeserializer deserializer(store_path_);
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       deserializer.Deserialize(&error_code, &error_msg);
   switch (error_code) {
     case JSONFileValueDeserializer::JSON_NO_SUCH_FILE:
@@ -231,7 +232,7 @@ void RlzValueStoreChromeOS::WriteStore() {
   std::string json_data;
   JSONStringValueSerializer serializer(&json_data);
   serializer.set_pretty_print(true);
-  scoped_ptr<base::DictionaryValue> copy =
+  std::unique_ptr<base::DictionaryValue> copy =
       rlz_store_->DeepCopyWithoutEmptyChildren();
   if (!serializer.Serialize(*copy.get())) {
     LOG(ERROR) << "Failed to serialize RLZ data";
@@ -243,13 +244,13 @@ void RlzValueStoreChromeOS::WriteStore() {
 }
 
 bool RlzValueStoreChromeOS::AddValueToList(const std::string& list_name,
-                                           base::Value* value) {
+                                           std::unique_ptr<base::Value> value) {
   base::ListValue* list_value = NULL;
   if (!rlz_store_->GetList(list_name, &list_value)) {
     list_value = new base::ListValue;
     rlz_store_->Set(list_name, list_value);
   }
-  list_value->AppendIfNotPresent(value);
+  list_value->AppendIfNotPresent(std::move(value));
   return true;
 }
 

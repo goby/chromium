@@ -7,8 +7,10 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/cocoa/location_bar/image_decoration.h"
 #include "chrome/browser/ui/passwords/manage_passwords_icon.h"
 
@@ -55,6 +57,10 @@ class ManagePasswordsDecoration : public ImageDecoration {
   // Accessor for the platform-independent interface.
   ManagePasswordsIconCocoa* icon() { return icon_.get(); }
 
+ protected:
+  // Overridden from LocationBarDecoration:
+  gfx::VectorIconId GetMaterialVectorIconId() const override;
+
  private:
   // Triggers a redraw after a state change.
   void OnChange();
@@ -69,7 +75,7 @@ class ManagePasswordsDecoration : public ImageDecoration {
   LocationBarViewMac* location_bar_;  // Weak, owns us.
 
   // The platform-independent interface.
-  scoped_ptr<ManagePasswordsIconCocoa> icon_;
+  std::unique_ptr<ManagePasswordsIconCocoa> icon_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagePasswordsDecoration);
 };

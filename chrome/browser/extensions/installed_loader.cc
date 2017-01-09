@@ -4,10 +4,14 @@
 
 #include "chrome/browser/extensions/installed_loader.h"
 
+#include <stddef.h>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/files/file_path.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
@@ -19,7 +23,6 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/chrome_manifest_url_handlers.h"
-#include "components/crx_file/id_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/user_metrics.h"
@@ -204,16 +207,28 @@ void InstalledLoader::Load(const ExtensionInfo& info, bool write_to_prefs) {
   if (extension.get()) {
     Extension::DisableReason disable_reason = Extension::DISABLE_NONE;
     bool force_disabled = false;
-    if (!policy->UserMayLoad(extension.get(), NULL)) {
+    if (!policy->UserMayLoad(extension.get(), nullptr)) {
       // The error message from UserMayInstall() often contains the extension ID
       // and is therefore not well suited to this UI.
       error = errors::kDisabledByPolicy;
       extension = NULL;
     } else if (!extension_prefs_->IsExtensionDisabled(extension->id()) &&
-               policy->MustRemainDisabled(
-                   extension.get(), &disable_reason, NULL)) {
+               policy->MustRemainDisabled(extension.get(), &disable_reason,
+                                          nullptr)) {
       extension_prefs_->SetExtensionDisabled(extension->id(), disable_reason);
       force_disabled = true;
+    } else if (extension_prefs_->IsExtensionDisabled(extension->id()) &&
+               policy->MustRemainEnabled(extension.get(), nullptr) &&
+               extension_prefs_->HasDisableReason(
+                   extension->id(), Extension::DISABLE_CORRUPTED)) {
+      // This extension must have been disabled due to corruption on a previous
+      // run of chrome, and for some reason we weren't successful in
+      // auto-reinstalling it. So we want to notify the PendingExtensionManager
+      // that we'd still like to keep attempt to re-download and reinstall it
+      // whenever the ExtensionService checks for external updates.
+      PendingExtensionManager* pending_manager =
+          extension_service_->pending_extension_manager();
+      pending_manager->ExpectPolicyReinstallForCorruption(extension->id());
     }
     UMA_HISTOGRAM_BOOLEAN("ExtensionInstalledLoader.ForceDisabled",
                           force_disabled);
@@ -241,7 +256,7 @@ void InstalledLoader::LoadAllExtensions() {
   base::TimeTicks start_time = base::TimeTicks::Now();
 
   Profile* profile = extension_service_->profile();
-  scoped_ptr<ExtensionPrefs::ExtensionsInfo> extensions_info(
+  std::unique_ptr<ExtensionPrefs::ExtensionsInfo> extensions_info(
       extension_prefs_->GetInstalledExtensionsInfo());
 
   std::vector<int> reload_reason_counts(NUM_MANIFEST_RELOAD_REASONS, 0);
@@ -421,30 +436,14 @@ void InstalledLoader::RecordExtensionsMetrics() {
                                 NUM_BACKGROUND_PAGE_TYPES);
 
       if (GetBackgroundPageType(extension) == EVENT_PAGE) {
-        size_t num_registered_events =
-            EventRouter::Get(extension_service_->profile())
-                ->GetRegisteredEvents(extension->id())
-                .size();
         // Count extension event pages with no registered events. Either the
         // event page is badly designed, or there may be a bug where the event
         // page failed to start after an update (crbug.com/469361).
-        if (num_registered_events == 0u) {
+        if (EventRouter::Get(extension_service_->profile())->
+                GetRegisteredEvents(extension->id()).size() == 0) {
           ++eventless_event_pages_count;
           VLOG(1) << "Event page without registered event listeners: "
                   << extension->id() << " " << extension->name();
-        }
-        // Count the number of event listeners the Enhanced Bookmarks Manager
-        // has for crbug.com/469361, but only if it's using an event page (not
-        // necessarily the case). This should always be > 0, because that's how
-        // the bookmarks extension works, but Chrome may have a bug - it has in
-        // the past. In fact, this metric may generally be useful for tracking
-        // the frequency of event page bugs.
-        std::string hashed_id =
-            crx_file::id_util::HashedIdInHex(extension->id());
-        if (hashed_id == "D5736E4B5CF695CB93A2FB57E4FDC6E5AFAB6FE2") {
-          UMA_HISTOGRAM_CUSTOM_COUNTS(
-              "Extensions.EnhancedBookmarksManagerNumEventListeners",
-              num_registered_events, 1, 10, 10);
         }
       }
     }
@@ -554,7 +553,7 @@ void InstalledLoader::RecordExtensionsMetrics() {
     }
   }
 
-  scoped_ptr<ExtensionPrefs::ExtensionsInfo> uninstalled_extensions_info(
+  std::unique_ptr<ExtensionPrefs::ExtensionsInfo> uninstalled_extensions_info(
       extension_prefs_->GetUninstalledExtensionsInfo());
   for (size_t i = 0; i < uninstalled_extensions_info->size(); ++i) {
     ExtensionInfo* info = uninstalled_extensions_info->at(i).get();

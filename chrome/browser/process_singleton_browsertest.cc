@@ -10,11 +10,16 @@
 // makes sense to test that the system services are giving the behavior we
 // want?)
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
@@ -24,6 +29,7 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -39,12 +45,13 @@ namespace {
 class ChromeStarter : public base::RefCountedThreadSafe<ChromeStarter> {
  public:
   ChromeStarter(base::TimeDelta timeout, const base::FilePath& user_data_dir)
-      : ready_event_(false /* manual */, false /* signaled */),
-        done_event_(false /* manual */, false /* signaled */),
+      : ready_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                     base::WaitableEvent::InitialState::NOT_SIGNALED),
+        done_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                    base::WaitableEvent::InitialState::NOT_SIGNALED),
         process_terminated_(false),
         timeout_(timeout),
-        user_data_dir_(user_data_dir) {
-  }
+        user_data_dir_(user_data_dir) {}
 
   // We must reset some data members since we reuse the same ChromeStarter
   // object and start/stop it a few times. We must start fresh! :-)
@@ -133,7 +140,8 @@ class ProcessSingletonTest : public InProcessBrowserTest {
   ProcessSingletonTest()
       // We use a manual reset so that all threads wake up at once when signaled
       // and thus we must manually reset it for each attempt.
-      : threads_waker_(true /* manual */, false /* signaled */) {
+      : threads_waker_(base::WaitableEvent::ResetPolicy::MANUAL,
+                       base::WaitableEvent::InitialState::NOT_SIGNALED) {
     EXPECT_TRUE(temp_profile_dir_.CreateUniqueTempDir());
   }
 
@@ -144,7 +152,7 @@ class ProcessSingletonTest : public InProcessBrowserTest {
       chrome_starter_threads_[i].reset(new base::Thread("ChromeStarter"));
       ASSERT_TRUE(chrome_starter_threads_[i]->Start());
       chrome_starters_[i] = new ChromeStarter(
-          TestTimeouts::action_max_timeout(), temp_profile_dir_.path());
+          TestTimeouts::action_max_timeout(), temp_profile_dir_.GetPath());
     }
   }
 
@@ -206,7 +214,7 @@ class ProcessSingletonTest : public InProcessBrowserTest {
   // The idea is to start chrome from multiple threads all at once.
   static const size_t kNbThreads = 5;
   scoped_refptr<ChromeStarter> chrome_starters_[kNbThreads];
-  scoped_ptr<base::Thread> chrome_starter_threads_[kNbThreads];
+  std::unique_ptr<base::Thread> chrome_starter_threads_[kNbThreads];
 
   // The event that will get all threads to wake up simultaneously and try
   // to start a chrome process at the same time.
@@ -254,7 +262,7 @@ IN_PROC_BROWSER_TEST_F(ProcessSingletonTest, DISABLED_StartupRaceCondition) {
 
       chrome_starter_threads_[i]->task_runner()->PostTask(
           FROM_HERE,
-          base::Bind(&ChromeStarter::StartChrome, chrome_starters_[i].get(),
+          base::Bind(&ChromeStarter::StartChrome, chrome_starters_[i],
                      &threads_waker_, first_run));
     }
 

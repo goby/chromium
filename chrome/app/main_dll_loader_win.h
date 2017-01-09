@@ -11,8 +11,12 @@
 
 #include <string>
 
-#include "base/files/file_path.h"
 #include "base/strings/string16.h"
+#include "base/time/time.h"
+
+namespace base {
+class FilePath;
+}
 
 // Implements the common aspects of loading the main dll for both chrome and
 // chromium scenarios, which are in charge of implementing two abstract
@@ -23,10 +27,11 @@ class MainDllLoader {
   virtual ~MainDllLoader();
 
   // Loads and calls the entry point of chrome.dll. |instance| is the exe
-  // instance retrieved from wWinMain.
+  // instance retrieved from wWinMain. |exe_entry_point_ticks| is the time
+  // when wWinMain was entered.
   // The return value is what the main entry point of chrome.dll returns
   // upon termination.
-  int Launch(HINSTANCE instance);
+  int Launch(HINSTANCE instance, base::TimeTicks exe_entry_point_ticks);
 
   // Launches a new instance of the browser if the current instance in
   // persistent mode an upgrade is detected.
@@ -47,15 +52,14 @@ class MainDllLoader {
   virtual int OnBeforeExit(int return_code, const base::FilePath& dll_path) = 0;
 
  private:
-  // Loads chrome.dll, populating |version| with the version of the DLL loaded
-  // and |module| with the path of the loaded DLL. Returns a reference to the
+  // Loads the appropriate DLL for the process type |process_type_|. Populates
+  // |module| with the path of the loaded DLL. Returns a reference to the
   // module, or null on failure.
-  HMODULE Load(base::string16* version, base::FilePath* module);
+  HMODULE Load(base::FilePath* module);
 
  private:
   HMODULE dll_;
   std::string process_type_;
-  const bool metro_mode_;
 };
 
 // Factory for the MainDllLoader. Caller owns the pointer and should call

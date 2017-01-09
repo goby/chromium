@@ -5,14 +5,14 @@
 #ifndef NET_SOCKET_UNIX_DOMAIN_SERVER_SOCKET_POSIX_H_
 #define NET_SOCKET_UNIX_DOMAIN_SERVER_SOCKET_POSIX_H_
 
+#include <stdint.h>
 #include <sys/types.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/net_export.h"
 #include "net/socket/server_socket.h"
 #include "net/socket/socket_descriptor.h"
@@ -52,12 +52,16 @@ class NET_EXPORT UnixDomainServerSocket : public ServerSocket {
 
   // ServerSocket implementation.
   int Listen(const IPEndPoint& address, int backlog) override;
-  int ListenWithAddressAndPort(const std::string& unix_domain_path,
-                               uint16 port_unused,
+  int ListenWithAddressAndPort(const std::string& address_string,
+                               uint16_t port,
                                int backlog) override;
   int GetLocalAddress(IPEndPoint* address) const override;
-  int Accept(scoped_ptr<StreamSocket>* socket,
+  int Accept(std::unique_ptr<StreamSocket>* socket,
              const CompletionCallback& callback) override;
+
+  // Creates a server socket, binds it to the specified |socket_path| and
+  // starts listening for incoming connections with the specified |backlog|.
+  int BindAndListen(const std::string& socket_path, int backlog);
 
   // Accepts an incoming connection on |listen_socket_|, but passes back
   // a raw SocketDescriptor instead of a StreamSocket.
@@ -68,7 +72,7 @@ class NET_EXPORT UnixDomainServerSocket : public ServerSocket {
   // A callback to wrap the setting of the out-parameter to Accept().
   // This allows the internal machinery of that call to be implemented in
   // a manner that's agnostic to the caller's desired output.
-  typedef base::Callback<void(scoped_ptr<SocketPosix>)> SetterCallback;
+  typedef base::Callback<void(std::unique_ptr<SocketPosix>)> SetterCallback;
 
   int DoAccept(const SetterCallback& setter_callback,
                const CompletionCallback& callback);
@@ -77,15 +81,15 @@ class NET_EXPORT UnixDomainServerSocket : public ServerSocket {
                        int rv);
   bool AuthenticateAndGetStreamSocket(const SetterCallback& setter_callback);
 
-  scoped_ptr<SocketPosix> listen_socket_;
+  std::unique_ptr<SocketPosix> listen_socket_;
   const AuthCallback auth_callback_;
   const bool use_abstract_namespace_;
 
-  scoped_ptr<SocketPosix> accept_socket_;
+  std::unique_ptr<SocketPosix> accept_socket_;
 
   DISALLOW_COPY_AND_ASSIGN(UnixDomainServerSocket);
 };
 
 }  // namespace net
 
-#endif  // NET_SOCKET_UNIX_DOMAIN_SOCKET_POSIX_H_
+#endif  // NET_SOCKET_UNIX_DOMAIN_SERVER_SOCKET_POSIX_H_

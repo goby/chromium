@@ -3,7 +3,12 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
+#include "base/location.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_reauth.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
@@ -86,15 +91,16 @@ class ReauthHandler : public content::NotificationObserver,
     DCHECK(lock_users.size() == 1);
     proximity_auth::ScreenlockBridge::Get()
         ->lock_handler()
-        ->ShowUserPodCustomIcon(lock_users[0]->email(), icon_options);
+        ->ShowUserPodCustomIcon(lock_users[0]->GetAccountId(), icon_options);
   }
 
   // chromeos::AuthStatusConsumer:
   void OnAuthSuccess(const chromeos::UserContext& user_context) override {
+    DCHECK(base::MessageLoopForUI::IsCurrent());
     callback_.Run(user_context);
     // Schedule deletion.
-    base::MessageLoopForUI::current()->PostTask(FROM_HERE,
-                                                base::Bind(&EndReauthAttempt));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(&EndReauthAttempt));
   }
 
   void OnAuthFailure(const chromeos::AuthFailure& error) override {}

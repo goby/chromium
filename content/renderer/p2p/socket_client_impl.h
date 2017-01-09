@@ -5,8 +5,11 @@
 #ifndef CONTENT_RENDERER_P2P_SOCKET_CLIENT_IMPL_H_
 #define CONTENT_RENDERER_P2P_SOCKET_CLIENT_IMPL_H_
 
+#include <stdint.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/p2p_socket_type.h"
 #include "content/renderer/p2p/socket_client.h"
@@ -36,6 +39,8 @@ class P2PSocketClientImpl : public P2PSocketClient {
   // P2P_SOCKET_TCP_CLIENT.
   virtual void Init(P2PSocketType type,
                     const net::IPEndPoint& local_address,
+                    uint16_t min_port,
+                    uint16_t max_port,
                     const P2PHostAndIPEndPoint& remote_address,
                     P2PSocketClientDelegate* delegate);
 
@@ -101,6 +106,8 @@ class P2PSocketClientImpl : public P2PSocketClient {
   // Scheduled on the IPC thread to finish initialization.
   void DoInit(P2PSocketType type,
               const net::IPEndPoint& local_address,
+              uint16_t min_port,
+              uint16_t max_port,
               const P2PHostAndIPEndPoint& remote_address);
 
   // Scheduled on the IPC thread to finish closing the connection.
@@ -117,8 +124,8 @@ class P2PSocketClientImpl : public P2PSocketClient {
   State state_;
 
   // These two fields are used to identify packets for tracing.
-  uint32 random_socket_id_;
-  uint32 next_packet_id_;
+  uint32_t random_socket_id_;
+  uint32_t next_packet_id_;
 
   DISALLOW_COPY_AND_ASSIGN(P2PSocketClientImpl);
 };

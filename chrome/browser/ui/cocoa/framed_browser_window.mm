@@ -4,6 +4,10 @@
 
 #import "chrome/browser/ui/cocoa/framed_browser_window.h"
 
+#include <math.h>
+#include <objc/runtime.h>
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "chrome/browser/global_keyboard_shortcuts_mac.h"
@@ -11,12 +15,16 @@
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
+#import "chrome/browser/ui/cocoa/browser_window_layout.h"
 #import "chrome/browser/ui/cocoa/browser_window_utils.h"
+#include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_controller.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/cocoa/nsgraphics_context_additions.h"
 #import "ui/base/cocoa/nsview_additions.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 // Implementer's note: Moving the window controls is tricky. When altering the
 // code, ensure that:
@@ -24,6 +32,17 @@
 // - the accessibility hierarchy is correct
 // - close/min in the background don't bring the window forward
 // - rollover effects work correctly
+
+// The NSLayoutConstraint class hierarchy only exists in the 10.11 SDK. When
+// targeting something lower, constraintEqualToAnchor:constant: needs to be
+// invoked using duck typing.
+#if !defined(MAC_OS_X_VERSION_10_11) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_11
+@interface NSObject (NSLayoutConstraint)
+- (NSLayoutConstraint*)constraintEqualToAnchor:(id)anchor constant:(CGFloat)c;
+- (NSLayoutConstraint*)constraintEqualToAnchor:(id)anchor;
+@end
+#endif
 
 namespace {
 
@@ -35,15 +54,43 @@ const CGFloat kWindowGradientHeight = 24.0;
 
 @interface FramedBrowserWindow (Private)
 
+// Updates the title bar's frame so it moves the windows buttons to correct
+// location (frame bottom is moved down so the buttons are moved down as well).
+- (void)adjustTitlebarContainer:(NSView*)titlebarContainer;
+// Adds layout constraints to window buttons, respecting flag returned by
+// |ShouldFlipWindowControlsInRTL| method.
+- (void)setWindowButtonsConstraints;
+// Replaces -[NSThemeFrame addTrackingArea:] with implementation that ignores
+// tracking rect if its size is the same as the size of window buttons rect
+// (rect where close, miniaturize and zoom buttons are located). This is
+// needed to workaround macOS bug (rdar://28535344) which unnecessarily adds
+// window buttons tracking rect even if those buttons were moved.
+// TODO(crbug.com/651287): Remove this workaround once macOS bug is fixed.
+- (void)forbidAddingWindowButtonsTrackingArea;
+// Called when titlebar container changes its frame. This method adjusts
+// titlebar container with correct frame.
+- (void)titlebarDidChangeFrameNotification:(NSNotification*)notification;
+// Adds layout constraints to the given window button so it displayed at correct
+// location. This respects flag returned by |ShouldFlipWindowControlsInRTL|
+// method.
+- (void)setLeadingOffset:(CGFloat)leadingOffset
+                toButton:(NSWindowButton)buttonType;
+
 - (void)adjustCloseButton:(NSNotification*)notification;
 - (void)adjustMiniaturizeButton:(NSNotification*)notification;
 - (void)adjustZoomButton:(NSNotification*)notification;
 - (void)adjustButton:(NSButton*)button
               ofKind:(NSWindowButton)kind;
+- (void)childWindowsDidChange;
 
 @end
 
 @implementation FramedBrowserWindow
+
++ (CGFloat)browserFrameViewPaintHeight {
+  return chrome::ShouldUseFullSizeContentView() ? chrome::kTabStripHeight
+                                                : 60.0;
+}
 
 - (void)setStyleMask:(NSUInteger)styleMask {
   if (styleMaskLock_)
@@ -58,6 +105,12 @@ const CGFloat kWindowGradientHeight = 24.0;
                          NSMiniaturizableWindowMask |
                          NSResizableWindowMask |
                          NSTexturedBackgroundWindowMask;
+  bool shouldUseFullSizeContentView =
+      chrome::ShouldUseFullSizeContentView() && hasTabStrip;
+  if (shouldUseFullSizeContentView) {
+    styleMask |= NSFullSizeContentViewWindowMask;
+  }
+
   if ((self = [super initWithContentRect:contentRect
                                styleMask:styleMask
                                  backing:NSBackingStoreBuffered
@@ -77,32 +130,59 @@ const CGFloat kWindowGradientHeight = 24.0;
 
     hasTabStrip_ = hasTabStrip;
     closeButton_ = [self standardWindowButton:NSWindowCloseButton];
-    [closeButton_ setPostsFrameChangedNotifications:YES];
     miniaturizeButton_ = [self standardWindowButton:NSWindowMiniaturizeButton];
-    [miniaturizeButton_ setPostsFrameChangedNotifications:YES];
     zoomButton_ = [self standardWindowButton:NSWindowZoomButton];
-    [zoomButton_ setPostsFrameChangedNotifications:YES];
 
     windowButtonsInterButtonSpacing_ =
         NSMinX([miniaturizeButton_ frame]) - NSMaxX([closeButton_ frame]);
-
-    [self adjustButton:closeButton_ ofKind:NSWindowCloseButton];
-    [self adjustButton:miniaturizeButton_ ofKind:NSWindowMiniaturizeButton];
-    [self adjustButton:zoomButton_ ofKind:NSWindowZoomButton];
+    if (windowButtonsInterButtonSpacing_ < 0)
+      // Sierra RTL
+      windowButtonsInterButtonSpacing_ =
+          NSMinX([miniaturizeButton_ frame]) - NSMaxX([zoomButton_ frame]);
 
     NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
-    [center addObserver:self
-               selector:@selector(adjustCloseButton:)
-                   name:NSViewFrameDidChangeNotification
-                 object:closeButton_];
-    [center addObserver:self
-               selector:@selector(adjustMiniaturizeButton:)
-                   name:NSViewFrameDidChangeNotification
-                 object:miniaturizeButton_];
-    [center addObserver:self
-               selector:@selector(adjustZoomButton:)
-                   name:NSViewFrameDidChangeNotification
-                 object:zoomButton_];
+    if (shouldUseFullSizeContentView) {
+      // If Chrome uses full sized content view then window buttons are placed
+      // inside titlebar (which height is 22 points). In order to move window
+      // buttons down the whole toolbar should be moved down.
+      DCHECK(closeButton_);
+      NSView* titlebarContainer = [[closeButton_ superview] superview];
+      [self adjustTitlebarContainer:titlebarContainer];
+      [center addObserver:self
+                 selector:@selector(titlebarDidChangeFrameNotification:)
+                     name:NSViewFrameDidChangeNotification
+                   object:titlebarContainer];
+      // Window buttons are not movable unless their positioning is forced via
+      // layout constraints.
+      [self setWindowButtonsConstraints];
+      // Remove an extra tracking rect unnecessarily added by AppKit which
+      // highlights the buttons on mouse enter event. That rect is added where
+      // buttons used to be previously.
+      [self forbidAddingWindowButtonsTrackingArea];
+    } else {
+      // If Chrome does not use a full sized content view then AppKit adds the
+      // window buttons to the root view, where they must be manually
+      // re-positioned.
+      [self adjustButton:closeButton_ ofKind:NSWindowCloseButton];
+      [self adjustButton:miniaturizeButton_ ofKind:NSWindowMiniaturizeButton];
+      [self adjustButton:zoomButton_ ofKind:NSWindowZoomButton];
+      [closeButton_ setPostsFrameChangedNotifications:YES];
+      [miniaturizeButton_ setPostsFrameChangedNotifications:YES];
+      [zoomButton_ setPostsFrameChangedNotifications:YES];
+
+      [center addObserver:self
+                 selector:@selector(adjustCloseButton:)
+                     name:NSViewFrameDidChangeNotification
+                   object:closeButton_];
+      [center addObserver:self
+                 selector:@selector(adjustMiniaturizeButton:)
+                     name:NSViewFrameDidChangeNotification
+                   object:miniaturizeButton_];
+      [center addObserver:self
+                 selector:@selector(adjustZoomButton:)
+                     name:NSViewFrameDidChangeNotification
+                   object:zoomButton_];
+    }
   }
 
   return self;
@@ -111,6 +191,109 @@ const CGFloat kWindowGradientHeight = 24.0;
 - (void)dealloc {
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   [super dealloc];
+}
+
+- (void)adjustTitlebarContainer:(NSView*)titlebarContainer {
+  DCHECK(chrome::ShouldUseFullSizeContentView());
+  DCHECK([NSStringFromClass([titlebarContainer class])
+      isEqual:@"NSTitlebarContainerView"]);
+
+  NSRect newFrame = [titlebarContainer frame];
+  NSRect superviewFrame = [[titlebarContainer superview] frame];
+  // Increase toolbar height to move window buttons down where they should be.
+  newFrame.size.height =
+      floor((chrome::kTabStripHeight + NSHeight([closeButton_ frame])) / 2.0);
+  newFrame.size.width = NSWidth(superviewFrame);
+  newFrame.origin.y = NSHeight(superviewFrame) - NSHeight(newFrame);
+  newFrame.origin.x = NSMinX(superviewFrame);
+  [titlebarContainer setFrame:newFrame];
+}
+
+- (void)setWindowButtonsConstraints {
+  DCHECK(chrome::ShouldUseFullSizeContentView());
+
+  CGFloat leadingOffset =
+      hasTabStrip_ ? kFramedWindowButtonsWithTabStripOffsetFromLeft
+                   : kFramedWindowButtonsWithoutTabStripOffsetFromLeft;
+  [self setLeadingOffset:leadingOffset toButton:NSWindowCloseButton];
+
+  leadingOffset +=
+      windowButtonsInterButtonSpacing_ + NSWidth([closeButton_ frame]);
+  [self setLeadingOffset:leadingOffset toButton:NSWindowMiniaturizeButton];
+
+  leadingOffset +=
+      windowButtonsInterButtonSpacing_ + NSWidth([miniaturizeButton_ frame]);
+  [self setLeadingOffset:leadingOffset toButton:NSWindowZoomButton];
+}
+
+- (void)forbidAddingWindowButtonsTrackingArea {
+  DCHECK(chrome::ShouldUseFullSizeContentView());
+
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    NSView* themeFrame = [[[closeButton_ superview] superview] superview];
+    Class themeFrameClass = [themeFrame class];
+    DCHECK([NSStringFromClass(themeFrameClass) isEqual:@"NSThemeFrame"]);
+    SEL addTrackingAreaSelector = @selector(addTrackingArea:);
+    Method originalMethod =
+        class_getInstanceMethod(themeFrameClass, addTrackingAreaSelector);
+    IMP originalImp = method_getImplementation(originalMethod);
+    NSRect windowButtonsRect = NSUnionRect(
+        NSUnionRect([closeButton_ frame], [miniaturizeButton_ frame]),
+        [zoomButton_ frame]);
+    NSSize buttonsAreaSize = NSIntegralRect(windowButtonsRect).size;
+
+    // |newImp| is never released with |imp_removeBlock|.
+    IMP newImp = imp_implementationWithBlock(^(id self, id area) {
+      // There is no other way to ensure that |area| is responsible for buttons
+      // highlighting except by relying on its size.
+      if (!NSEqualSizes(buttonsAreaSize, NSIntegralRect([area rect]).size)) {
+        originalImp(self, addTrackingAreaSelector, area);
+      }
+    });
+
+    // Do not use base::mac::ScopedObjCClassSwizzler as it replaces existing
+    // implementation which is defined in NSView and will affect the whole app
+    // performance.
+    class_replaceMethod(themeFrameClass, addTrackingAreaSelector, newImp,
+                        method_getTypeEncoding(originalMethod));
+  });
+}
+
+- (void)titlebarDidChangeFrameNotification:(NSNotification*)notification {
+  [self adjustTitlebarContainer:[notification object]];
+}
+
+- (void)setLeadingOffset:(CGFloat)leadingOffset
+                toButton:(NSWindowButton)buttonType {
+  DCHECK(chrome::ShouldUseFullSizeContentView());
+
+  NSButton* button = [self standardWindowButton:buttonType];
+  [button setTranslatesAutoresizingMaskIntoConstraints:NO];
+
+  // Do not use leadingAnchor because |ShouldFlipWindowControlsInRTL|
+  // should determine if current locale is RTL.
+  NSLayoutXAxisAnchor* leadingSourceAnchor = [button leftAnchor];
+  NSLayoutXAxisAnchor* leadingTargetAnchor = [[button superview] leftAnchor];
+  if (cocoa_l10n_util::ShouldFlipWindowControlsInRTL()) {
+    leadingSourceAnchor = [button rightAnchor];
+    leadingTargetAnchor = [[button superview] rightAnchor];
+    leadingOffset = -leadingOffset;
+  }
+
+#if !defined(MAC_OS_X_VERSION_10_11) || \
+    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_11
+  id leadingSourceAnchorDuck = leadingSourceAnchor;
+#else
+  NSLayoutXAxisAnchor* leadingSourceAnchorDuck = leadingSourceAnchor;
+#endif
+  [[leadingSourceAnchorDuck constraintEqualToAnchor:leadingTargetAnchor
+                                           constant:leadingOffset]
+      setActive:YES];
+
+  [[[button bottomAnchor]
+      constraintEqualToAnchor:[[button superview] bottomAnchor]]
+          setActive:YES];
 }
 
 - (void)adjustCloseButton:(NSNotification*)notification {
@@ -155,6 +338,11 @@ const CGFloat kWindowGradientHeight = 24.0;
       break;
   }
 
+  if (cocoa_l10n_util::ShouldFlipWindowControlsInRTL()) {
+    buttonFrame.origin.x =
+        NSWidth([self frame]) - buttonFrame.origin.x - NSWidth([button frame]);
+  }
+
   BOOL didPost = [button postsBoundsChangedNotifications];
   [button setPostsFrameChangedNotifications:NO];
   [button setFrame:buttonFrame];
@@ -164,7 +352,7 @@ const CGFloat kWindowGradientHeight = 24.0;
 // The tab strip view covers our window buttons. So we add hit testing here
 // to find them properly and return them to the accessibility system.
 - (id)accessibilityHitTest:(NSPoint)point {
-  NSPoint windowPoint = [self convertScreenToBase:point];
+  NSPoint windowPoint = ui::ConvertPointFromScreenToWindow(self, point);
   NSControl* controls[] = { closeButton_, zoomButton_, miniaturizeButton_ };
   id value = nil;
   for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
@@ -209,21 +397,6 @@ const CGFloat kWindowGradientHeight = 24.0;
   return [super constrainFrameRect:frame toScreen:screen];
 }
 
-// This method is overridden in order to send the toggle fullscreen message
-// through the cross-platform browser framework before going fullscreen.  The
-// message will eventually come back as a call to |-toggleSystemFullScreen|,
-// which in turn calls AppKit's |NSWindow -toggleFullScreen:|.
-- (void)toggleFullScreen:(id)sender {
-  id delegate = [self delegate];
-  if ([delegate respondsToSelector:@selector(handleLionToggleFullscreen)])
-    [delegate handleLionToggleFullscreen];
-}
-
-- (void)toggleSystemFullScreen {
-  if ([super respondsToSelector:@selector(toggleFullScreen:)])
-    [super toggleFullScreen:nil];
-}
-
 - (NSPoint)fullScreenButtonOriginAdjustment {
   if (!hasTabStrip_)
     return NSZeroPoint;
@@ -250,7 +423,7 @@ const CGFloat kWindowGradientHeight = 24.0;
                            forView:(NSView*)view
                             bounds:(NSRect)bounds
               forceBlackBackground:(BOOL)forceBlackBackground {
-  ui::ThemeProvider* themeProvider = [[view window] themeProvider];
+  const ui::ThemeProvider* themeProvider = [[view window] themeProvider];
   if (!themeProvider)
     return NO;
 
@@ -280,13 +453,6 @@ const CGFloat kWindowGradientHeight = 24.0;
       themeImageColor = themeProvider->GetNSImageColorNamed(themeImageID);
   }
 
-  // If no theme image, use a gradient if incognito.
-  NSGradient* gradient = nil;
-  if (!themeImageColor && incognito)
-    gradient = themeProvider->GetNSGradient(
-        active ? ThemeProperties::GRADIENT_FRAME_INCOGNITO :
-                 ThemeProperties::GRADIENT_FRAME_INCOGNITO_INACTIVE);
-
   BOOL themed = NO;
   if (themeImageColor) {
     // Default to replacing any existing pixels with the theme image, but if
@@ -305,12 +471,6 @@ const CGFloat kWindowGradientHeight = 24.0;
 
     [themeImageColor set];
     NSRectFillUsingOperation(dirtyRect, operation);
-    themed = YES;
-  } else if (gradient) {
-    NSPoint startPoint = NSMakePoint(NSMinX(bounds), NSMaxY(bounds));
-    NSPoint endPoint = startPoint;
-    endPoint.y -= kBrowserFrameViewPaintHeight;
-    [gradient drawFromPoint:startPoint toPoint:endPoint options:0];
     themed = YES;
   }
 
@@ -341,7 +501,7 @@ const CGFloat kWindowGradientHeight = 24.0;
 }
 
 - (NSColor*)titleColor {
-  ui::ThemeProvider* themeProvider = [self themeProvider];
+  const ui::ThemeProvider* themeProvider = [self themeProvider];
   if (!themeProvider)
     return [NSColor windowFrameTextColor];
 
@@ -352,6 +512,23 @@ const CGFloat kWindowGradientHeight = 24.0;
     return [NSColor whiteColor];
   else
     return [NSColor windowFrameTextColor];
+}
+
+- (void)addChildWindow:(NSWindow*)childWindow
+               ordered:(NSWindowOrderingMode)orderingMode {
+  [super addChildWindow:childWindow ordered:orderingMode];
+  [self childWindowsDidChange];
+}
+
+- (void)removeChildWindow:(NSWindow*)childWindow {
+  [super removeChildWindow:childWindow];
+  [self childWindowsDidChange];
+}
+
+- (void)childWindowsDidChange {
+  id delegate = [self delegate];
+  if ([delegate respondsToSelector:@selector(childWindowsDidChange)])
+    [delegate childWindowsDidChange];
 }
 
 @end

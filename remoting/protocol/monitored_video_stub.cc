@@ -4,6 +4,8 @@
 
 #include "remoting/protocol/monitored_video_stub.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "remoting/proto/video.pb.h"
@@ -27,7 +29,7 @@ MonitoredVideoStub::MonitoredVideoStub(VideoStub* video_stub,
 MonitoredVideoStub::~MonitoredVideoStub() {
 }
 
-void MonitoredVideoStub::ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
+void MonitoredVideoStub::ProcessVideoPacket(std::unique_ptr<VideoPacket> packet,
                                             const base::Closure& done) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -35,7 +37,7 @@ void MonitoredVideoStub::ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
 
   NotifyChannelState(true);
 
-  video_stub_->ProcessVideoPacket(packet.Pass(), done);
+  video_stub_->ProcessVideoPacket(std::move(packet), done);
 }
 
 void MonitoredVideoStub::OnConnectivityCheckTimeout() {

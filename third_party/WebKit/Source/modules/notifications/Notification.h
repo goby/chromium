@@ -31,10 +31,12 @@
 #ifndef Notification_h
 #define Notification_h
 
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptValue.h"
 #include "bindings/core/v8/SerializedScriptValue.h"
-#include "core/dom/ActiveDOMObject.h"
+#include "core/dom/DOMTimeStamp.h"
+#include "core/dom/SuspendableObject.h"
 #include "modules/EventTargetModules.h"
 #include "modules/ModulesExport.h"
 #include "modules/vibration/NavigatorVibration.h"
@@ -44,118 +46,140 @@
 #include "public/platform/WebVector.h"
 #include "public/platform/modules/notifications/WebNotificationData.h"
 #include "public/platform/modules/notifications/WebNotificationDelegate.h"
-#include "public/platform/modules/notifications/WebNotificationPermission.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
+#include "public/platform/modules/permissions/permission.mojom-blink.h"
+#include "public/platform/modules/permissions/permission_status.mojom-blink.h"
 
 namespace blink {
 
 class ExecutionContext;
-class NotificationAction;
 class NotificationOptions;
 class NotificationPermissionCallback;
+class NotificationResourcesLoader;
 class ScriptState;
 
-class MODULES_EXPORT Notification final : public RefCountedGarbageCollectedEventTargetWithInlineData<Notification>, public ActiveDOMObject, public WebNotificationDelegate {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(Notification);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(Notification);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    // Used for JavaScript instantiations of the Notification object. Will automatically schedule for
-    // the notification to be displayed to the user when the developer-provided data is valid.
-    static Notification* create(ExecutionContext*, const String& title, const NotificationOptions&, ExceptionState&);
+class MODULES_EXPORT Notification final : public EventTargetWithInlineData,
+                                          public ActiveScriptWrappable,
+                                          public SuspendableObject,
+                                          public WebNotificationDelegate {
+  USING_GARBAGE_COLLECTED_MIXIN(Notification);
+  DEFINE_WRAPPERTYPEINFO();
 
-    // Used for embedder-created Notification objects. Will initialize the Notification's state as showing.
-    static Notification* create(ExecutionContext*, int64_t persistentId, const WebNotificationData&);
+ public:
+  // Used for JavaScript instantiations of non-persistent notifications. Will
+  // automatically schedule for the notification to be displayed to the user
+  // when the developer-provided data is valid.
+  static Notification* create(ExecutionContext*,
+                              const String& title,
+                              const NotificationOptions&,
+                              ExceptionState&);
 
-    ~Notification() override;
+  // Used for embedder-created persistent notifications. Initializes the state
+  // of the notification as either Showing or Closed based on |showing|.
+  static Notification* create(ExecutionContext*,
+                              const String& notificationId,
+                              const WebNotificationData&,
+                              bool showing);
 
-    void close();
+  ~Notification() override;
 
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(click);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(show);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(close);
+  void close();
 
-    // WebNotificationDelegate implementation.
-    void dispatchShowEvent() override;
-    void dispatchClickEvent() override;
-    void dispatchErrorEvent() override;
-    void dispatchCloseEvent() override;
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(click);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(show);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(close);
 
-    String title() const;
-    String dir() const;
-    String lang() const;
-    String body() const;
-    String tag() const;
-    String icon() const;
-    NavigatorVibration::VibrationPattern vibrate(bool& isNull) const;
-    bool silent() const;
-    bool requireInteraction() const;
-    ScriptValue data(ScriptState*);
-    HeapVector<NotificationAction> actions() const;
+  // WebNotificationDelegate interface.
+  void dispatchShowEvent() override;
+  void dispatchClickEvent() override;
+  void dispatchErrorEvent() override;
+  void dispatchCloseEvent() override;
 
-    static String permissionString(WebNotificationPermission);
-    static String permission(ExecutionContext*);
-    static WebNotificationPermission checkPermission(ExecutionContext*);
-    static ScriptPromise requestPermission(ScriptState*, NotificationPermissionCallback*);
+  String title() const;
+  String dir() const;
+  String lang() const;
+  String body() const;
+  String tag() const;
+  String image() const;
+  String icon() const;
+  String badge() const;
+  NavigatorVibration::VibrationPattern vibrate() const;
+  DOMTimeStamp timestamp() const;
+  bool renotify() const;
+  bool silent() const;
+  bool requireInteraction() const;
+  ScriptValue data(ScriptState*);
+  Vector<v8::Local<v8::Value>> actions(ScriptState*) const;
 
-    static size_t maxActions();
+  static String permissionString(mojom::blink::PermissionStatus);
+  static String permission(ExecutionContext*);
+  static ScriptPromise requestPermission(ScriptState*,
+                                         NotificationPermissionCallback*);
 
-    // EventTarget interface.
-    ExecutionContext* executionContext() const final { return ActiveDOMObject::executionContext(); }
-    const AtomicString& interfaceName() const override;
+  static size_t maxActions();
 
-    // ActiveDOMObject interface.
-    void stop() override;
-    bool hasPendingActivity() const override;
+  // EventTarget interface.
+  ExecutionContext* getExecutionContext() const final {
+    return SuspendableObject::getExecutionContext();
+  }
+  const AtomicString& interfaceName() const override;
 
-    DECLARE_VIRTUAL_TRACE();
+  // SuspendableObject interface.
+  void contextDestroyed() override;
 
-protected:
-    // EventTarget interface.
-    bool dispatchEventInternal(PassRefPtrWillBeRawPtr<Event>) final;
+  // ScriptWrappable interface.
+  bool hasPendingActivity() const final;
 
-private:
-    Notification(ExecutionContext*, const WebNotificationData&);
+  DECLARE_VIRTUAL_TRACE();
 
-    void scheduleShow();
+ protected:
+  // EventTarget interface.
+  DispatchEventResult dispatchEventInternal(Event*) final;
 
-    // Calling show() may start asynchronous operation. If this object has
-    // a V8 wrapper, hasPendingActivity() prevents the wrapper from being
-    // collected while m_state is Showing, and so this instance stays alive
-    // until the operation completes. Otherwise, you need to hold a ref on this
-    // instance until the operation completes.
-    void show();
+ private:
+  // The type of notification this instance represents. Non-persistent
+  // notifications will have events delivered to their instance, whereas
+  // persistent notification will be using a Service Worker.
+  enum class Type { NonPersistent, Persistent };
 
-    void setPersistentId(int64_t persistentId) { m_persistentId = persistentId; }
+  // The current phase of the notification in its lifecycle.
+  enum class State { Loading, Showing, Closing, Closed };
 
-    WebNotificationData m_data;
+  Notification(ExecutionContext*, Type, const WebNotificationData&);
 
-    // ScriptValue representations of the developer-associated data. Initialized lazily on first access.
-    ScriptValue m_developerData;
+  // Sets the state of the notification in its lifecycle.
+  void setState(State state) { m_state = state; }
 
-    // Notifications can either be bound to the page, which means they're identified by
-    // their delegate, or persistent, which means they're identified by a persistent Id
-    // given to us by the embedder. This influences how we close the notification.
-    int64_t m_persistentId;
+  // Sets the notification ID to |notificationId|. This should be done once
+  // the notification has shown for non-persistent notifications, and at
+  // object initialisation time for persistent notifications.
+  void setNotificationId(const String& notificationId) {
+    m_notificationId = notificationId;
+  }
 
-    enum NotificationState {
-        NotificationStateIdle,
-        NotificationStateShowing,
-        NotificationStateClosing,
-        NotificationStateClosed
-    };
+  // Schedules an asynchronous call to |prepareShow|, allowing the constructor
+  // to return so that events can be fired on the notification object.
+  void schedulePrepareShow();
 
-    // Only to be used by the Notification::create() method when notifications were created
-    // by the embedder rather than by Blink.
-    void setState(NotificationState state) { m_state = state; }
+  // Verifies that permission has been granted, then asynchronously starts
+  // loading the resources associated with this notification.
+  void prepareShow();
 
-    NotificationState m_state;
+  // Shows the notification through the embedder using the loaded resources.
+  void didLoadResources(NotificationResourcesLoader*);
 
-    AsyncMethodRunner<Notification> m_asyncRunner;
+  Type m_type;
+  State m_state;
+
+  WebNotificationData m_data;
+
+  String m_notificationId;
+
+  Member<AsyncMethodRunner<Notification>> m_prepareShowMethodRunner;
+
+  Member<NotificationResourcesLoader> m_loader;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // Notification_h
+#endif  // Notification_h

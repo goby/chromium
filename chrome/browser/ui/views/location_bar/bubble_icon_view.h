@@ -5,9 +5,14 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_BUBBLE_ICON_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_BUBBLE_ICON_VIEW_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/vector_icons_public.h"
+#include "ui/views/animation/ink_drop_host_view.h"
 #include "ui/views/controls/image_view.h"
+#include "ui/views/widget/widget_observer.h"
 
 class CommandUpdater;
 
@@ -16,11 +21,12 @@ enum class VectorIconId;
 }
 
 namespace views {
-class BubbleDelegateView;
+class BubbleDialogDelegateView;
 }
 
 // Represents an icon on the omnibox that shows a bubble when clicked.
-class BubbleIconView : public views::ImageView {
+class BubbleIconView : public views::InkDropHostView,
+                       public views::WidgetObserver {
  protected:
   enum ExecuteSource {
     EXECUTE_SOURCE_MOUSE,
@@ -34,38 +40,56 @@ class BubbleIconView : public views::ImageView {
   // Returns true if a related bubble is showing.
   bool IsBubbleShowing() const;
 
+  // Sets the image that should be displayed in |image_|.
+  void SetImage(const gfx::ImageSkia* image_skia);
+
+  // Returns the image currently displayed, which can be empty if not set.
+  // The returned image is owned by |image_|.
+  const gfx::ImageSkia& GetImage() const;
+
+  // Sets the tooltip text.
+  void SetTooltipText(const base::string16& tooltip);
+
   // Invoked prior to executing the command.
   virtual void OnExecuting(ExecuteSource execute_source) = 0;
 
-  // views::ImageView:
-  void GetAccessibleState(ui::AXViewState* state) override;
-  bool GetTooltipText(const gfx::Point& p, base::string16* tooltip) const
-      override;
+  // Invoked after the icon is pressed.
+  virtual void OnPressed(bool activated) {}
+
+  // views::View:
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  bool GetTooltipText(const gfx::Point& p,
+                      base::string16* tooltip) const override;
+  gfx::Size GetPreferredSize() const override;
+  void Layout() override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
+  bool OnKeyReleased(const ui::KeyEvent& event) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
+  void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
+  std::unique_ptr<views::InkDrop> CreateInkDrop() override;
+  SkColor GetInkDropBaseColor() const override;
 
   // ui::EventHandler:
   void OnGestureEvent(ui::GestureEvent* event) override;
+
+  // views::WidgetObserver:
+  void OnWidgetDestroying(views::Widget* widget) override;
+  void OnWidgetVisibilityChanged(views::Widget* widget, bool visible) override;
 
  protected:
   // Calls OnExecuting and runs |command_id_| with a valid |command_updater_|.
   virtual void ExecuteCommand(ExecuteSource source);
 
   // Returns the bubble instance for the icon.
-  virtual views::BubbleDelegateView* GetBubble() const = 0;
+  virtual views::BubbleDialogDelegateView* GetBubble() const = 0;
 
-  // Gets the given vector icon in the correct color and size based on |active|
-  // and whether Chrome's in material design mode.
-  virtual gfx::VectorIconId GetVectorIcon() const = 0;
-
-  // Sets the image using a PNG from the resource bundle. Returns true if an
-  // image was set, or false if the icon should use a vector asset. This only
-  // exists for non-MD mode. TODO(estade): remove it.
-  virtual bool SetRasterIcon();
+  // Gets the given vector icon in the correct color and size based on |active|.
+  virtual gfx::VectorIconId GetVectorIcon() const;
 
   // views::View:
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
@@ -80,13 +104,16 @@ class BubbleIconView : public views::ImageView {
   bool active() const { return active_; }
 
  private:
+  // The image shown in the button.
+  views::ImageView* image_;
+
   // The CommandUpdater for the Browser object that owns the location bar.
   CommandUpdater* command_updater_;
 
   // The command ID executed when the user clicks this icon.
   const int command_id_;
 
-  // The active state. The precise definition of "active" is unique to each
+  // The active node_data. The precise definition of "active" is unique to each
   // subclass, but generally indicates that the associated feature is acting on
   // the web page.
   bool active_;

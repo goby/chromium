@@ -7,15 +7,12 @@
 
 #include <string>
 
-#if defined(__OBJC__)
 @class UIColor;
 @class UIView;
-#else
-class UIColor;
-class UIView;
-#endif  // __OBJC__
 
 namespace web {
+
+class NavigationItem;
 
 // Superclass for delegates that provide data to a WebInterstitial.  After the
 // WebInterstitial is shown, it takes ownership of its delegate.
@@ -28,6 +25,13 @@ class WebInterstitialDelegate {
   // on WebInterstitial, since navigations etc may cancel them.
   virtual void OnProceed() {}
   virtual void OnDontProceed() {}
+
+  // Called with the NavigationItem that is going to be added to the navigation
+  // manager.
+  // Gives an opportunity to delegates to set states on the |item|.
+  // Note that this is only called if the WebInterstitial was constructed with
+  // |new_navigation| set to true.
+  virtual void OverrideItem(NavigationItem* item) {}
 };
 
 // Provides HTML to an HTMLWebInterstitialImpl.

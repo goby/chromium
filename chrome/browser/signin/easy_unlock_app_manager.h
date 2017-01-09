@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_SIGNIN_EASY_UNLOCK_APP_MANAGER_H_
 #define CHROME_BROWSER_SIGNIN_EASY_UNLOCK_APP_MANAGER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
@@ -23,7 +24,7 @@ class EasyUnlockAppManager {
   virtual ~EasyUnlockAppManager();
 
   // Creates EasyUnlockAppManager object that should be used in production.
-  static scoped_ptr<EasyUnlockAppManager> Create(
+  static std::unique_ptr<EasyUnlockAppManager> Create(
       extensions::ExtensionSystem* extension_system,
       int manifest_id,
       const base::FilePath& app_path);

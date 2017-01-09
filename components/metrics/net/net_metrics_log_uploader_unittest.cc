@@ -5,6 +5,7 @@
 #include "components/metrics/net/net_metrics_log_uploader.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -34,7 +35,7 @@ class NetMetricsLogUploaderTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<NetMetricsLogUploader> uploader_;
+  std::unique_ptr<NetMetricsLogUploader> uploader_;
   int on_upload_complete_count_;
 
   DISALLOW_COPY_AND_ASSIGN(NetMetricsLogUploaderTest);

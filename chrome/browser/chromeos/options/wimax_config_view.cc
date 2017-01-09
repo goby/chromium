@@ -6,26 +6,26 @@
 
 #include "base/bind.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/enrollment_dialog_view.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
-#include "chrome/browser/chromeos/net/onc_utils.h"
+#include "chrome/browser/chromeos/net/shill_error.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "chromeos/login/login_state.h"
 #include "chromeos/network/network_configuration_handler.h"
+#include "chromeos/network/network_connect.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_profile.h"
 #include "chromeos/network/network_profile_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/onc/onc_utils.h"
 #include "components/onc/onc_constants.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/chromeos/network/network_connect.h"
 #include "ui/events/event.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/image_button.h"
@@ -42,7 +42,7 @@ namespace {
 
 void ShillError(const std::string& function,
                 const std::string& error_name,
-                scoped_ptr<base::DictionaryValue> error_data) {
+                std::unique_ptr<base::DictionaryValue> error_data) {
   NET_LOG_ERROR("Shill Error from WimaxConfigView: " + error_name, function);
 }
 
@@ -100,8 +100,8 @@ void WimaxConfigView::UpdateErrorLabel() {
     const NetworkState* wimax = NetworkHandler::Get()->network_state_handler()->
         GetNetworkState(service_path_);
     if (wimax && wimax->connection_state() == shill::kStateFailure)
-      error_msg = ui::NetworkConnect::Get()->GetShillErrorString(
-          wimax->last_error(), wimax->path());
+      error_msg =
+          shill_error::GetShillErrorString(wimax->last_error(), wimax->guid());
   }
   if (!error_msg.empty()) {
     error_label_->SetText(error_msg);
@@ -119,6 +119,7 @@ void WimaxConfigView::ContentsChanged(views::Textfield* sender,
 bool WimaxConfigView::HandleKeyEvent(views::Textfield* sender,
                                      const ui::KeyEvent& key_event) {
   if (sender == passphrase_textfield_ &&
+      key_event.type() == ui::ET_KEY_PRESSED &&
       key_event.key_code() == ui::VKEY_RETURN) {
     parent_->GetDialogClientView()->AcceptWindow();
   }
@@ -167,8 +168,8 @@ bool WimaxConfigView::Login() {
                                               false);
   }
 
-  ui::NetworkConnect::Get()->ConfigureNetworkAndConnect(
-      service_path_, properties, share_network);
+  NetworkConnect::Get()->ConfigureNetworkIdAndConnect(wimax->guid(), properties,
+                                                      share_network);
   return true;  // dialog will be closed
 }
 
@@ -269,7 +270,8 @@ void WimaxConfigView::Init() {
   } else {
     // Password visible button.
     passphrase_visible_button_ = new views::ToggleImageButton(this);
-    passphrase_visible_button_->SetFocusable(true);
+    passphrase_visible_button_->SetFocusForPlatform();
+    passphrase_visible_button_->set_request_focus_on_press(true);
     passphrase_visible_button_->SetTooltipText(
         l10n_util::GetStringUTF16(
             IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_PASSPHRASE_SHOW));

@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
+#include "chrome/browser/ui/location_bar/location_bar.h"
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
@@ -14,7 +18,6 @@
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
@@ -53,8 +56,8 @@ class LocationBarBrowserTest : public ExtensionBrowserTest {
       extensions::TestExtensionDir* dir);
 
  private:
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> enable_override_;
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> enable_redesign_;
+  std::unique_ptr<extensions::FeatureSwitch::ScopedOverride> enable_override_;
+  std::unique_ptr<extensions::FeatureSwitch::ScopedOverride> disable_redesign_;
 
   DISALLOW_COPY_AND_ASSIGN(LocationBarBrowserTest);
 };
@@ -66,7 +69,7 @@ void LocationBarBrowserTest::SetUpCommandLine(base::CommandLine* command_line) {
       extensions::FeatureSwitch::enable_override_bookmarks_ui(), true));
   // For testing page actions in the location bar, we also have to be sure to
   // *not* have the redesign turned on.
-  enable_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
+  disable_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
       extensions::FeatureSwitch::extension_action_redesign(), false));
   ExtensionBrowserTest::SetUpCommandLine(command_line);
 }
@@ -79,7 +82,7 @@ const extensions::Extension* LocationBarBrowserTest::LoadPageActionExtension(
   dir->WriteFile(FILE_PATH_LITERAL("background.js"), kBackgroundScriptSource);
 
   ExtensionTestMessageListener registered_listener("registered", false);
-  const extensions::Extension* extension = LoadExtension(dir->unpacked_path());
+  const extensions::Extension* extension = LoadExtension(dir->UnpackedPath());
   registered_listener.WaitUntilSatisfied();
 
   return extension;
@@ -145,18 +148,20 @@ IN_PROC_BROWSER_TEST_F(LocationBarBrowserTest,
 
   // Create and install an extension that overrides the bookmark star.
   extensions::DictionaryBuilder chrome_ui_overrides;
-  chrome_ui_overrides.Set(
-      "bookmarks_ui",
-      extensions::DictionaryBuilder().SetBoolean("remove_button", true));
+  chrome_ui_overrides.Set("bookmarks_ui", extensions::DictionaryBuilder()
+                                              .SetBoolean("remove_button", true)
+                                              .Build());
   scoped_refptr<const extensions::Extension> extension =
-      extensions::ExtensionBuilder().
-          SetManifest(extensions::DictionaryBuilder().
-                          Set("name", "overrides star").
-                          Set("manifest_version", 2).
-                          Set("version", "0.1").
-                          Set("description", "override the star").
-                          Set("chrome_ui_overrides",
-                              chrome_ui_overrides.Pass())).Build();
+      extensions::ExtensionBuilder()
+          .SetManifest(
+              extensions::DictionaryBuilder()
+                  .Set("name", "overrides star")
+                  .Set("manifest_version", 2)
+                  .Set("version", "0.1")
+                  .Set("description", "override the star")
+                  .Set("chrome_ui_overrides", chrome_ui_overrides.Build())
+                  .Build())
+          .Build();
   extension_service()->AddExtension(extension.get());
 
   // The star should now be hidden.
@@ -171,7 +176,7 @@ class LocationBarBrowserTestWithRedesign : public LocationBarBrowserTest {
  private:
   void SetUpCommandLine(base::CommandLine* command_line) override;
 
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> enable_redesign_;
+  std::unique_ptr<extensions::FeatureSwitch::ScopedOverride> disable_redesign_;
 
   DISALLOW_COPY_AND_ASSIGN(LocationBarBrowserTestWithRedesign);
 };
@@ -179,7 +184,7 @@ class LocationBarBrowserTestWithRedesign : public LocationBarBrowserTest {
 void LocationBarBrowserTestWithRedesign::SetUpCommandLine(
     base::CommandLine* command_line) {
   LocationBarBrowserTest::SetUpCommandLine(command_line);
-  enable_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
+  disable_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
       extensions::FeatureSwitch::extension_action_redesign(), true));
 }
 

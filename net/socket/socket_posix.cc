@@ -7,14 +7,19 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <utility>
 
 #include "base/callback_helpers.h"
+#include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
+#include "net/base/sockaddr_storage.h"
+#include "net/base/trace_constants.h"
 
 namespace net {
 
@@ -79,7 +84,7 @@ int SocketPosix::Open(int address_family) {
     return MapSystemError(errno);
   }
 
-  if (SetNonBlocking(socket_fd_)) {
+  if (!base::SetNonBlocking(socket_fd_)) {
     int rv = MapSystemError(errno);
     Close();
     return rv;
@@ -95,7 +100,7 @@ int SocketPosix::AdoptConnectedSocket(SocketDescriptor socket,
 
   socket_fd_ = socket;
 
-  if (SetNonBlocking(socket_fd_)) {
+  if (!base::SetNonBlocking(socket_fd_)) {
     int rv = MapSystemError(errno);
     Close();
     return rv;
@@ -139,7 +144,7 @@ int SocketPosix::Listen(int backlog) {
   return OK;
 }
 
-int SocketPosix::Accept(scoped_ptr<SocketPosix>* socket,
+int SocketPosix::Accept(std::unique_ptr<SocketPosix>* socket,
                         const CompletionCallback& callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
@@ -181,6 +186,25 @@ int SocketPosix::Connect(const SockaddrStorage& address,
           &write_socket_watcher_, this)) {
     PLOG(ERROR) << "WatchFileDescriptor failed on connect, errno " << errno;
     return MapSystemError(errno);
+  }
+
+  // There is a race-condition in the above code if the kernel receive a RST
+  // packet for the "connect" call before the registration of the socket file
+  // descriptor to the message loop pump. On most platform it is benign as the
+  // message loop pump is awakened for that socket in an error state, but on
+  // iOS this does not happens. Check the status of the socket at this point
+  // and if in error, consider the connection as failed.
+  int os_error = 0;
+  socklen_t len = sizeof(os_error);
+  if (getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &os_error, &len) == 0) {
+    // TCPSocketPosix expects errno to be set.
+    errno = os_error;
+  }
+
+  rv = MapConnectError(errno);
+  if (rv != OK && rv != ERR_IO_PENDING) {
+    write_socket_watcher_.StopWatchingFileDescriptor();
+    return rv;
   }
 
   write_callback_ = callback;
@@ -346,6 +370,8 @@ void SocketPosix::DetachFromThread() {
 }
 
 void SocketPosix::OnFileCanReadWithoutBlocking(int fd) {
+  TRACE_EVENT0(kNetTracingCategory,
+               "SocketPosix::OnFileCanReadWithoutBlocking");
   DCHECK(!accept_callback_.is_null() || !read_callback_.is_null());
   if (!accept_callback_.is_null()) {
     AcceptCompleted();
@@ -363,7 +389,7 @@ void SocketPosix::OnFileCanWriteWithoutBlocking(int fd) {
   }
 }
 
-int SocketPosix::DoAccept(scoped_ptr<SocketPosix>* socket) {
+int SocketPosix::DoAccept(std::unique_ptr<SocketPosix>* socket) {
   SockaddrStorage new_peer_address;
   int new_socket = HANDLE_EINTR(accept(socket_fd_,
                                        new_peer_address.addr,
@@ -371,12 +397,12 @@ int SocketPosix::DoAccept(scoped_ptr<SocketPosix>* socket) {
   if (new_socket < 0)
     return MapAcceptError(errno);
 
-  scoped_ptr<SocketPosix> accepted_socket(new SocketPosix);
+  std::unique_ptr<SocketPosix> accepted_socket(new SocketPosix);
   int rv = accepted_socket->AdoptConnectedSocket(new_socket, new_peer_address);
   if (rv != OK)
     return rv;
 
-  *socket = accepted_socket.Pass();
+  *socket = std::move(accepted_socket);
   return OK;
 }
 
@@ -437,7 +463,15 @@ void SocketPosix::ReadCompleted() {
 }
 
 int SocketPosix::DoWrite(IOBuffer* buf, int buf_len) {
+#if defined(OS_LINUX) || defined(OS_ANDROID)
+  // Disable SIGPIPE for this write. Although Chromium globally disables
+  // SIGPIPE, the net stack may be used in other consumers which do not do
+  // this. MSG_NOSIGNAL is a Linux-only API. On OS X, this is a setsockopt on
+  // socket creation.
+  int rv = HANDLE_EINTR(send(socket_fd_, buf->data(), buf_len, MSG_NOSIGNAL));
+#else
   int rv = HANDLE_EINTR(write(socket_fd_, buf->data(), buf_len));
+#endif
   return rv >= 0 ? rv : MapSystemError(errno);
 }
 

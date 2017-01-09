@@ -4,14 +4,14 @@
 
 package org.chromium.chrome.browser.webapps;
 
+import android.content.Intent;
 import android.test.UiThreadTest;
 import android.test.suitebuilder.annotation.MediumTest;
 
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ShortcutHelper;
-import org.chromium.chrome.browser.ShortcutSource;
-import org.chromium.chrome.browser.ssl.ConnectionSecurityLevel;
-import org.chromium.content_public.common.ScreenOrientationValues;
+import org.chromium.components.security_state.ConnectionSecurityLevel;
 
 /**
  * Tests whether the URL bar updates itself properly.
@@ -21,21 +21,23 @@ public class WebappUrlBarTest extends WebappActivityTestBase {
     private WebappUrlBar mUrlBar;
 
     @Override
+    protected Intent createIntent() {
+        Intent intent = super.createIntent();
+        intent.putExtra(ShortcutHelper.EXTRA_URL, WEBAPP_URL);
+        return intent;
+    }
+
+    @Override
     protected void setUp() throws Exception {
         super.setUp();
         startWebappActivity();
-
-        WebappInfo mockInfo = WebappInfo.create(WEBAPP_ID, WEBAPP_URL, null, null, null,
-                ScreenOrientationValues.DEFAULT, ShortcutSource.UNKNOWN,
-                ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING,
-                ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING, false);
-        getActivity().getWebappInfo().copy(mockInfo);
         mUrlBar = getActivity().getUrlBarForTests();
     }
 
     @UiThreadTest
     @MediumTest
     @Feature({"Webapps"})
+    @RetryOnFailure
     public void testUrlDisplay() {
         final String scheme = "https://";
         final String host = "lorem.com";
@@ -46,12 +48,12 @@ public class WebappUrlBarTest extends WebappActivityTestBase {
         final int[] securityLevels = {ConnectionSecurityLevel.NONE,
                 ConnectionSecurityLevel.EV_SECURE, ConnectionSecurityLevel.SECURE,
                 ConnectionSecurityLevel.SECURITY_WARNING,
-                ConnectionSecurityLevel.SECURITY_POLICY_WARNING,
-                ConnectionSecurityLevel.SECURITY_ERROR};
+                ConnectionSecurityLevel.SECURE_WITH_POLICY_INSTALLED_CERT,
+                ConnectionSecurityLevel.DANGEROUS};
 
         for (int i : securityLevels) {
             // TODO(palmer): http://crbug.com/297249
-            if (i == ConnectionSecurityLevel.SECURITY_POLICY_WARNING) continue;
+            if (i == ConnectionSecurityLevel.SECURE_WITH_POLICY_INSTALLED_CERT) continue;
             mUrlBar.update(url, i);
 
             int iconResource = mUrlBar.getCurrentIconResourceForTests();

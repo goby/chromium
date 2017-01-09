@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "web/DatabaseClientImpl.h"
 
 #include "core/dom/Document.h"
@@ -38,34 +37,31 @@
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<DatabaseClientImpl> DatabaseClientImpl::create()
-{
-    return adoptPtrWillBeNoop(new DatabaseClientImpl());
+DatabaseClientImpl* DatabaseClientImpl::create() {
+  return new DatabaseClientImpl();
 }
 
-DatabaseClientImpl::~DatabaseClientImpl()
-{
+DatabaseClientImpl::~DatabaseClientImpl() {}
+
+DEFINE_TRACE(DatabaseClientImpl) {
+  DatabaseClient::trace(visitor);
 }
 
-DEFINE_TRACE(DatabaseClientImpl)
-{
-    DatabaseClient::trace(visitor);
+bool DatabaseClientImpl::allowDatabase(ExecutionContext* executionContext,
+                                       const String& name,
+                                       const String& displayName,
+                                       unsigned estimatedSize) {
+  DCHECK(executionContext->isContextThread());
+  Document* document = toDocument(executionContext);
+  WebLocalFrameImpl* webFrame = WebLocalFrameImpl::fromFrame(document->frame());
+  if (!webFrame)
+    return false;
+  if (webFrame->contentSettingsClient())
+    return webFrame->contentSettingsClient()->allowDatabase(name, displayName,
+                                                            estimatedSize);
+  return true;
 }
 
-bool DatabaseClientImpl::allowDatabase(ExecutionContext* executionContext, const String& name, const String& displayName, unsigned long estimatedSize)
-{
-    ASSERT(executionContext->isContextThread());
-    Document* document = toDocument(executionContext);
-    WebLocalFrameImpl* webFrame = WebLocalFrameImpl::fromFrame(document->frame());
-    if (!webFrame)
-        return false;
-    if (webFrame->contentSettingsClient())
-        return webFrame->contentSettingsClient()->allowDatabase(name, displayName, estimatedSize);
-    return true;
-}
+DatabaseClientImpl::DatabaseClientImpl() {}
 
-DatabaseClientImpl::DatabaseClientImpl()
-{
-}
-
-} // namespace blink
+}  // namespace blink

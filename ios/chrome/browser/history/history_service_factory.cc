@@ -4,19 +4,22 @@
 
 #include "ios/chrome/browser/history/history_service_factory.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
-#include "base/prefs/pref_service.h"
 #include "components/history/core/browser/history_database_params.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/visit_delegate.h"
 #include "components/history/ios/browser/history_database_helper.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
+#include "components/prefs/pref_service.h"
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "ios/chrome/browser/browser_state/browser_state_otr_helper.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/history/history_client_impl.h"
 #include "ios/chrome/browser/pref_names.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 namespace ios {
 
@@ -27,7 +30,7 @@ history::HistoryService* HistoryServiceFactory::GetForBrowserState(
   // If saving history is disabled, only allow explicit access.
   if (access_type != ServiceAccessType::EXPLICIT_ACCESS &&
       browser_state->GetPrefs()->GetBoolean(
-          ios::prefs::kSavingBrowserHistoryDisabled)) {
+          prefs::kSavingBrowserHistoryDisabled)) {
     return nullptr;
   }
 
@@ -42,7 +45,7 @@ history::HistoryService* HistoryServiceFactory::GetForBrowserStateIfExists(
   // If saving history is disabled, only allow explicit access.
   if (access_type != ServiceAccessType::EXPLICIT_ACCESS &&
       browser_state->GetPrefs()->GetBoolean(
-          ios::prefs::kSavingBrowserHistoryDisabled)) {
+          prefs::kSavingBrowserHistoryDisabled)) {
     return nullptr;
   }
 
@@ -65,22 +68,20 @@ HistoryServiceFactory::HistoryServiceFactory()
 HistoryServiceFactory::~HistoryServiceFactory() {
 }
 
-scoped_ptr<KeyedService> HistoryServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService> HistoryServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  scoped_ptr<history::HistoryService> history_service(
+  std::unique_ptr<history::HistoryService> history_service(
       new history::HistoryService(
-          make_scoped_ptr(new HistoryClientImpl(
-              ios::BookmarkModelFactory::GetForBrowserState(browser_state))),
+          base::MakeUnique<HistoryClientImpl>(
+              ios::BookmarkModelFactory::GetForBrowserState(browser_state)),
           nullptr));
-  if (!history_service->Init(
-          browser_state->GetPrefs()->GetString(ios::prefs::kAcceptLanguages),
-          history::HistoryDatabaseParamsForPath(
-              browser_state->GetStatePath()))) {
+  if (!history_service->Init(history::HistoryDatabaseParamsForPath(
+          browser_state->GetStatePath()))) {
     return nullptr;
   }
-  return history_service.Pass();
+  return std::move(history_service);
 }
 
 web::BrowserState* HistoryServiceFactory::GetBrowserStateToUse(

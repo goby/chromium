@@ -4,9 +4,12 @@
 
 #include "remoting/host/native_messaging/native_messaging_writer.h"
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
 #include "base/values.h"
 #include "remoting/host/setup/test_util.h"
@@ -22,18 +25,17 @@ class NativeMessagingWriterTest : public testing::Test {
   void SetUp() override;
 
  protected:
-  scoped_ptr<NativeMessagingWriter> writer_;
+  std::unique_ptr<NativeMessagingWriter> writer_;
   base::File read_file_;
   base::File write_file_;
 };
 
 NativeMessagingWriterTest::NativeMessagingWriterTest() {}
-
 NativeMessagingWriterTest::~NativeMessagingWriterTest() {}
 
 void NativeMessagingWriterTest::SetUp() {
   ASSERT_TRUE(MakePipe(&read_file_, &write_file_));
-  writer_.reset(new NativeMessagingWriter(write_file_.Pass()));
+  writer_.reset(new NativeMessagingWriter(std::move(write_file_)));
 }
 
 TEST_F(NativeMessagingWriterTest, GoodMessage) {
@@ -42,15 +44,16 @@ TEST_F(NativeMessagingWriterTest, GoodMessage) {
   EXPECT_TRUE(writer_->WriteMessage(message));
 
   // Read from the pipe and verify the content.
-  uint32 length;
+  uint32_t length;
   int read = read_file_.ReadAtCurrentPos(reinterpret_cast<char*>(&length), 4);
   EXPECT_EQ(4, read);
   std::string content(length, '\0');
-  read = read_file_.ReadAtCurrentPos(string_as_array(&content), length);
+  read = read_file_.ReadAtCurrentPos(base::string_as_array(&content), length);
   EXPECT_EQ(static_cast<int>(length), read);
 
   // |content| should now contain serialized |message|.
-  scoped_ptr<base::Value> written_message = base::JSONReader::Read(content);
+  std::unique_ptr<base::Value> written_message =
+      base::JSONReader::Read(content);
   EXPECT_TRUE(message.Equals(written_message.get()));
 
   // Nothing more should have been written. Close the write-end of the pipe,
@@ -70,19 +73,20 @@ TEST_F(NativeMessagingWriterTest, SecondMessage) {
   writer_.reset(nullptr);
 
   // Read two messages.
-  uint32 length;
+  uint32_t length;
   int read;
   std::string content;
   for (int i = 0; i < 2; i++) {
     read = read_file_.ReadAtCurrentPos(reinterpret_cast<char*>(&length), 4);
     EXPECT_EQ(4, read) << "i = " << i;
     content.resize(length);
-    read = read_file_.ReadAtCurrentPos(string_as_array(&content), length);
+    read = read_file_.ReadAtCurrentPos(base::string_as_array(&content), length);
     EXPECT_EQ(static_cast<int>(length), read) << "i = " << i;
   }
 
   // |content| should now contain serialized |message2|.
-  scoped_ptr<base::Value> written_message2 = base::JSONReader::Read(content);
+  std::unique_ptr<base::Value> written_message2 =
+      base::JSONReader::Read(content);
   EXPECT_TRUE(message2.Equals(written_message2.get()));
 }
 

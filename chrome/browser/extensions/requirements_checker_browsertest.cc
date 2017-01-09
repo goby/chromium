@@ -10,6 +10,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/chrome_requirements_checker.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/common/chrome_paths.h"
@@ -75,7 +76,7 @@ class RequirementsCheckerBrowserTest : public ExtensionBrowserTest {
   }
 
  protected:
-  scoped_ptr<RequirementsChecker> checker_;
+  std::unique_ptr<RequirementsChecker> checker_;
 };
 
 IN_PROC_BROWSER_TEST_F(RequirementsCheckerBrowserTest, CheckEmptyExtension) {

@@ -6,19 +6,23 @@ package org.chromium.content_shell_apk;
 
 import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 
+import android.annotation.TargetApi;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
+import android.os.PowerManager;
 import android.text.TextUtils;
 import android.view.ViewGroup;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityInstrumentationTestCase;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.content.browser.ContentView;
 import org.chromium.content.browser.ContentViewCore;
-import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
@@ -32,7 +36,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import java.lang.reflect.Method;
+import java.lang.reflect.AnnotatedElement;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -50,6 +54,25 @@ public class ContentShellTestBase
 
     public ContentShellTestBase() {
         super(ContentShellActivity.class);
+    }
+
+    @Override
+    protected void setUp() throws Exception {
+        super.setUp();
+        assertScreenIsOn();
+    }
+
+    @TargetApi(Build.VERSION_CODES.KITKAT_WATCH)
+    @SuppressWarnings("deprecation")
+    private void assertScreenIsOn() {
+        PowerManager pm = (PowerManager) getInstrumentation().getContext().getSystemService(
+                Context.POWER_SERVICE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+            assertTrue("Many tests will fail if the screen is not on.", pm.isInteractive());
+        } else {
+            assertTrue("Many tests will fail if the screen is not on.", pm.isScreenOn());
+        }
     }
 
     /**
@@ -74,8 +97,9 @@ public class ContentShellTestBase
      * Starts the content shell activity with the provided test url.
      * The url is synchronously loaded.
      * @param url Test url to load.
+     * @throws InterruptedException
      */
-    protected void startActivityWithTestUrl(String url) throws Throwable {
+    protected void startActivityWithTestUrl(String url) throws InterruptedException {
         launchContentShellWithUrl(UrlUtils.getIsolatedTestFileUrl(url));
         assertNotNull(getActivity());
         waitForActiveShellToBeDoneLoading();
@@ -108,7 +132,7 @@ public class ContentShellTestBase
         final ContentShellActivity activity = getActivity();
 
         // Wait for the Content Shell to be initialized.
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 Shell shell = activity.getActiveShell();
@@ -198,14 +222,15 @@ public class ContentShellTestBase
      * Waits till the ContentViewCore receives the expected page scale factor
      * from the compositor and asserts that this happens.
      */
-    protected void assertWaitForPageScaleFactorMatch(final float expectedScale)
+    protected void assertWaitForPageScaleFactorMatch(float expectedScale)
             throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria() {
-            @Override
-            public boolean isSatisfied() {
-                return getContentViewCore().getScale() == expectedScale;
-            }
-        });
+        CriteriaHelper.pollInstrumentationThread(
+                Criteria.equals(expectedScale, new Callable<Float>() {
+                    @Override
+                    public Float call() {
+                        return getContentViewCore().getScale();
+                    }
+                }));
     }
 
     /**
@@ -230,7 +255,7 @@ public class ContentShellTestBase
     protected void runTest() throws Throwable {
         super.runTest();
         try {
-            Method method = getClass().getMethod(getName(), (Class[]) null);
+            AnnotatedElement method = getClass().getMethod(getName(), (Class[]) null);
             if (method.isAnnotationPresent(RerunWithUpdatedContainerView.class)) {
                 replaceContainerView();
                 super.runTest();

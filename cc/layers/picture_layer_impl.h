@@ -5,17 +5,19 @@
 #ifndef CC_LAYERS_PICTURE_LAYER_IMPL_H_
 #define CC_LAYERS_PICTURE_LAYER_IMPL_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/tiles/picture_layer_tiling.h"
 #include "cc/tiles/picture_layer_tiling_set.h"
 #include "cc/tiles/tiling_set_eviction_queue.h"
-#include "skia/ext/refptr.h"
-#include "third_party/skia/include/core/SkPicture.h"
 
 namespace cc {
 
@@ -27,13 +29,10 @@ class CC_EXPORT PictureLayerImpl
     : public LayerImpl,
       NON_EXPORTED_BASE(public PictureLayerTilingClient) {
  public:
-  static scoped_ptr<PictureLayerImpl> Create(
-      LayerTreeImpl* tree_impl,
-      int id,
-      bool is_mask,
-      scoped_refptr<SyncedScrollOffset> scroll_offset) {
-    return make_scoped_ptr(
-        new PictureLayerImpl(tree_impl, id, is_mask, scroll_offset));
+  static std::unique_ptr<PictureLayerImpl> Create(LayerTreeImpl* tree_impl,
+                                                  int id,
+                                                  bool is_mask) {
+    return base::WrapUnique(new PictureLayerImpl(tree_impl, id, is_mask));
   }
   ~PictureLayerImpl() override;
 
@@ -41,16 +40,17 @@ class CC_EXPORT PictureLayerImpl
 
   // LayerImpl overrides.
   const char* LayerTypeAsString() const override;
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
   void PushPropertiesTo(LayerImpl* layer) override;
   void AppendQuads(RenderPass* render_pass,
                    AppendQuadsData* append_quads_data) override;
   void NotifyTileStateChanged(const Tile* tile) override;
+  void ResetRasterScale();
   void DidBeginTracing() override;
   void ReleaseResources() override;
-  void RecreateResources() override;
-  skia::RefPtr<SkPicture> GetPicture() override;
-  Region GetInvalidationRegion() override;
+  void ReleaseTileResources() override;
+  void RecreateTileResources() override;
+  Region GetInvalidationRegionForDebugging() override;
 
   // PictureLayerTilingClient overrides.
   ScopedTilePtr CreateTile(const Tile::CreateInfo& info) override;
@@ -65,10 +65,10 @@ class CC_EXPORT PictureLayerImpl
   void set_gpu_raster_max_texture_size(gfx::Size gpu_raster_max_texture_size) {
     gpu_raster_max_texture_size_ = gpu_raster_max_texture_size;
   }
-  void UpdateRasterSource(scoped_refptr<DisplayListRasterSource> raster_source,
+  void UpdateRasterSource(scoped_refptr<RasterSource> raster_source,
                           Region* new_invalidation,
                           const PictureLayerTilingSet* pending_set);
-  bool UpdateTiles(bool resourceless_software_draw);
+  bool UpdateTiles();
   void UpdateCanUseLCDTextAfterCommit();
   bool RasterSourceUsesLCDText() const;
   WhichTree GetTree() const;
@@ -92,48 +92,42 @@ class CC_EXPORT PictureLayerImpl
   bool IsOnActiveOrPendingTree() const;
 
   // Used for benchmarking
-  DisplayListRasterSource* GetRasterSource() const {
-    return raster_source_.get();
+  RasterSource* GetRasterSource() const { return raster_source_.get(); }
+
+  void set_is_directly_composited_image(bool is_directly_composited_image) {
+    is_directly_composited_image_ = is_directly_composited_image;
   }
 
  protected:
-  friend class LayerRasterTileIterator;
-  using TileRequirementCheck = bool (PictureLayerTiling::*)(const Tile*) const;
-
-  PictureLayerImpl(LayerTreeImpl* tree_impl,
-                   int id,
-                   bool is_mask,
-                   scoped_refptr<SyncedScrollOffset> scroll_offset);
+  PictureLayerImpl(LayerTreeImpl* tree_impl, int id, bool is_mask);
   PictureLayerTiling* AddTiling(float contents_scale);
   void RemoveAllTilings();
   void AddTilingsForRasterScale();
   void AddLowResolutionTilingIfNeeded();
-  virtual bool ShouldAdjustRasterScale() const;
-  virtual void RecalculateRasterScales();
+  bool ShouldAdjustRasterScale() const;
+  void RecalculateRasterScales();
   void CleanUpTilingsOnActiveLayer(
       const std::vector<PictureLayerTiling*>& used_tilings);
   float MinimumContentsScale() const;
   float MaximumContentsScale() const;
-  void ResetRasterScale();
   void UpdateViewportRectForTilePriorityInContentSpace();
   PictureLayerImpl* GetRecycledTwinLayer() const;
 
   void SanityCheckTilingState() const;
-  bool ShouldAdjustRasterScaleDuringScaleAnimations() const;
 
   void GetDebugBorderProperties(SkColor* color, float* width) const override;
   void GetAllPrioritizedTilesForTracing(
       std::vector<PrioritizedTile>* prioritized_tiles) const override;
   void AsValueInto(base::trace_event::TracedValue* dict) const override;
 
-  virtual void UpdateIdealScales();
+  void UpdateIdealScales();
   float MaximumTilingContentsScale() const;
-  scoped_ptr<PictureLayerTilingSet> CreatePictureLayerTilingSet();
+  std::unique_ptr<PictureLayerTilingSet> CreatePictureLayerTilingSet();
 
   PictureLayerImpl* twin_layer_;
 
-  scoped_ptr<PictureLayerTilingSet> tilings_;
-  scoped_refptr<DisplayListRasterSource> raster_source_;
+  std::unique_ptr<PictureLayerTilingSet> tilings_;
+  scoped_refptr<RasterSource> raster_source_;
   Region invalidation_;
 
   float ideal_page_scale_;
@@ -152,14 +146,10 @@ class CC_EXPORT PictureLayerImpl
   const bool is_mask_;
 
   bool nearest_neighbor_;
+  bool is_directly_composited_image_;
 
-  // Any draw properties derived from |transform|, |viewport|, and |clip|
-  // parameters in LayerTreeHostImpl::SetExternalDrawConstraints are not valid
-  // for prioritizing tiles during resourceless software draws. This is because
-  // resourceless software draws can have wildly different transforms/viewports
-  // from regular draws. Save a copy of the required draw properties of the last
-  // frame that has a valid viewport for prioritizing tiles.
-  gfx::Rect visible_rect_for_tile_priority_;
+  // Use this instead of |visible_layer_rect()| for tiling calculations. This
+  // takes external viewport and transform for tile priority into account.
   gfx::Rect viewport_rect_for_tile_priority_in_content_space_;
 
   gfx::Size gpu_raster_max_texture_size_;

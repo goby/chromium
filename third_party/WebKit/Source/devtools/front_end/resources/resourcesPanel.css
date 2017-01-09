@@ -27,49 +27,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-.resources.panel .sidebar {
-    padding-left: 0;
-    z-index: 10;
-    display: block;
-}
-
-.resources.panel .sidebar li {
-    height: 18px;
-    white-space: nowrap;
-    padding-top: 1px;
-}
-
-.resources.panel .sidebar li.selected {
-    color: white;
-}
-
-.resources.panel .sidebar li.selected .selection {
-    background-color: rgb(160, 160, 160);
-    border-top: 1px solid #979797;
-    height: 18px;
-}
-
-.resources.panel .sidebar :focus li.selected .selection {
-    background-color: rgb(56, 121, 217);
-    border-top: 1px solid rgb(68, 128, 200);
-}
-
-.resources.panel .sidebar .icon {
-    width: 16px;
-    height: 16px;
-    position: relative;
-    top: 3px;
-    margin-top: -3px;
-    display: inline-block;
-}
-
-.resources.panel .base-storage-tree-element-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding-left: 2px;
-    display: inline;
-}
-
 .resources-toolbar {
     border-top: 1px solid #ccc;
     background-color: #eee;
@@ -132,32 +89,13 @@ li.selected .base-storage-tree-element-subtitle {
     -webkit-user-select: text;
 }
 
-.database-user-query::before,
-.database-query-prompt::before,
-.database-query-result::before {
+.prompt-icon {
     position: absolute;
     display: block;
-    content: "";
     left: 7px;
     top: 0.8em;
-    width: 10px;
-    height: 10px;
     margin-top: -7px;
     -webkit-user-select: none;
-    background-image: url(Images/toolbarButtonGlyphs.png);
-    background-size: 352px 168px;
-}
-
-@media (-webkit-min-device-pixel-ratio: 1.5) {
-.database-user-query::before,
-.database-query-prompt::before,
-.database-query-result::before {
-    background-image: url(Images/toolbarButtonGlyphs_2x.png);
-}
-} /* media */
-
-.database-query-prompt::before {
-    background-position: -192px -96px;
 }
 
 .database-user-query {
@@ -166,10 +104,6 @@ li.selected .base-storage-tree-element-subtitle {
     padding: 1px 22px 1px 24px;
     min-height: 16px;
     flex-shrink: 0;
-}
-
-.database-user-query::before {
-    background-position: -192px -107px;
 }
 
 .database-query-text {
@@ -190,15 +124,7 @@ li.selected .base-storage-tree-element-subtitle {
     -webkit-user-select: text;
 }
 
-.database-query-result.error::before {
-    background-position: -213px -96px;
-}
-
 .resource-sidebar-tree-item .icon {
-    content: url(Images/resourcePlainIcon.png);
-}
-
-.children.small .resource-sidebar-tree-item .icon {
     content: url(Images/resourcePlainIconSmall.png);
 }
 
@@ -212,22 +138,8 @@ li.selected .base-storage-tree-element-subtitle {
 .resources-type-image .image-resource-icon-preview {
     position: absolute;
     margin: auto;
-    top: 3px;
-    bottom: 4px;
-    left: 5px;
-    right: 5px;
-    max-width: 18px;
-    max-height: 21px;
     min-width: 1px;
     min-height: 1px;
-}
-
-.children.small .resource-sidebar-tree-item.resources-type-image .icon {
-    background-image: url(Images/resourcePlainIconSmall.png);
-    content: "";
-}
-
-.children.small .resources-type-image .image-resource-icon-preview {
     top: 2px;
     bottom: 1px;
     left: 3px;
@@ -237,114 +149,6 @@ li.selected .base-storage-tree-element-subtitle {
     overflow: hidden;
 }
 
-.resource-sidebar-tree-item.resources-type-document .icon {
-    content: url(Images/resourceDocumentIcon.png);
-}
-
-.children.small .resource-sidebar-tree-item.resources-type-document .icon {
-    content: url(Images/resourceDocumentIconSmall.png);
-}
-
-.resource-sidebar-tree-item.resources-type-stylesheet .icon {
-    content: url(Images/resourceCSSIcon.png);
-}
-
-.children.small .resource-sidebar-tree-item.resources-type-stylesheet .icon {
-    content: url(Images/resourceDocumentIconSmall.png);
-}
-
-.resource-sidebar-tree-item.resources-type-image .icon {
-    position: relative;
-    background-image: url(Images/resourcePlainIcon.png);
-    background-repeat: no-repeat;
-    content: "";
-}
-
-.children.small .resource-sidebar-tree-item.resources-type-image .icon {
-    background-image: url(Images/resourcePlainIconSmall.png);
-    content: "";
-}
-
-.resource-sidebar-tree-item.resources-type-font .icon {
-    content: url(Images/resourcePlainIcon.png);
-}
-
-.children.small .resource-sidebar-tree-item.resources-type-font .icon {
-    content: url(Images/resourcePlainIconSmall.png);
-}
-
-.resource-sidebar-tree-item.resources-type-script .icon {
-    content: url(Images/resourceJSIcon.png);
-}
-
-.children.small .resource-sidebar-tree-item.resources-type-script .icon {
-    content: url(Images/resourceDocumentIconSmall.png);
-}
-
-.resource-sidebar-tree-item.resources-type-xhr .icon {
-    content: url(Images/resourcePlainIcon.png);
-}
-
-.children.small .resource-sidebar-tree-item.resources-type-xhr .icon {
-    content: url(Images/resourceDocumentIconSmall.png);
-}
-
-.frame-storage-tree-item .icon {
-    content: url(Images/frame.png);
-}
-
-.database-storage-tree-item .icon {
-    content: url(Images/database.png);
-}
-
-.database-table-storage-tree-item .icon {
-    content: url(Images/databaseTable.png);
-}
-
-.indexed-db-storage-tree-item .icon {
-    content: url(Images/indexedDB.png);
-}
-
-.indexed-db-object-store-storage-tree-item .icon {
-    content: url(Images/indexedDBObjectStore.png);
-}
-
-.indexed-db-index-storage-tree-item .icon {
-    content: url(Images/indexedDBIndex.png);
-}
-
-.service-worker-cache-tree-item .icon {
-    content: url(Images/indexedDBObjectStore.png);
-}
-
-.service-worker-cache-storage-tree-item .icon {
-    content: url(Images/indexedDB.png);
-}
-
-.service-workers-tree-item .icon {
-    content: url(Images/serviceWorker.svg);
-}
-
-.-theme-with-dark-background .service-workers-tree-item .icon {
-    -webkit-filter: invert(70%);
-}
-
-.domstorage-storage-tree-item.local-storage .icon {
-    content: url(Images/localStorage.png);
-}
-
-.domstorage-storage-tree-item.session-storage .icon {
-    content: url(Images/sessionStorage.png);
-}
-
-.cookie-storage-tree-item .icon {
-    content: url(Images/cookie.png);
-}
-
-.application-cache-storage-tree-item .icon {
-    content: url(Images/applicationCache.png);
-}
-
-.file-system-storage-tree-item .icon {
-    content: url(Images/fileSystem.png);
+.resources-sidebar {
+    padding: 0;
 }

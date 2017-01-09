@@ -29,9 +29,6 @@
 
 #include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
-#include "wtf/PassOwnPtr.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
 #include "wtf/Vector.h"
 #include "wtf/text/StringHash.h"
 
@@ -40,23 +37,23 @@ namespace blink {
 class Attribute;
 class ShareableElementData;
 
-class ElementDataCache final : public NoBaseWillBeGarbageCollected<ElementDataCache>  {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ElementDataCache);
-    DECLARE_EMPTY_DESTRUCTOR_WILL_BE_REMOVED(ElementDataCache)
-public:
-    static PassOwnPtrWillBeRawPtr<ElementDataCache> create() { return adoptPtrWillBeNoop(new ElementDataCache); }
+class ElementDataCache final : public GarbageCollected<ElementDataCache> {
+ public:
+  static ElementDataCache* create() { return new ElementDataCache; }
 
-    PassRefPtrWillBeRawPtr<ShareableElementData> cachedShareableElementDataWithAttributes(const Vector<Attribute>&);
+  ShareableElementData* cachedShareableElementDataWithAttributes(
+      const Vector<Attribute>&);
 
-    DECLARE_TRACE();
+  DECLARE_TRACE();
 
-private:
-    ElementDataCache();
+ private:
+  ElementDataCache();
 
-    typedef WillBeHeapHashMap<unsigned, RefPtrWillBeMember<ShareableElementData>, AlreadyHashed> ShareableElementDataCache;
-    ShareableElementDataCache m_shareableElementDataCache;
+  typedef HeapHashMap<unsigned, Member<ShareableElementData>, AlreadyHashed>
+      ShareableElementDataCache;
+  ShareableElementDataCache m_shareableElementDataCache;
 };
 
-}
+}  // namespace blink
 
 #endif

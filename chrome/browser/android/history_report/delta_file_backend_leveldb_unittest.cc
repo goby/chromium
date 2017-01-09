@@ -4,11 +4,14 @@
 
 #include "chrome/browser/android/history_report/delta_file_backend_leveldb.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/android/history_report/delta_file_commons.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -23,10 +26,10 @@ class DeltaFileBackendTest : public testing::Test {
  protected:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    backend_.reset(new DeltaFileBackend(temp_dir_.path()));
+    backend_.reset(new DeltaFileBackend(temp_dir_.GetPath()));
   }
 
-  scoped_ptr<DeltaFileBackend> backend_;
+  std::unique_ptr<DeltaFileBackend> backend_;
 
  private:
   base::ScopedTempDir temp_dir_;
@@ -37,7 +40,7 @@ class DeltaFileBackendTest : public testing::Test {
 TEST_F(DeltaFileBackendTest, AddPage) {
   GURL test_url("test.org");
   backend_->PageAdded(test_url);
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(1u, result->size());
@@ -50,7 +53,7 @@ TEST_F(DeltaFileBackendTest, AddPage) {
 TEST_F(DeltaFileBackendTest, DelPage) {
   GURL test_url("test.org");
   backend_->PageDeleted(test_url);
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(1u, result->size());
@@ -73,7 +76,7 @@ TEST_F(DeltaFileBackendTest, Recreate) {
   urls.push_back("test.org");
   urls.push_back("test2.org");
   EXPECT_TRUE(backend_->Recreate(urls));
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(2u, result->size());
@@ -97,7 +100,7 @@ TEST_F(DeltaFileBackendTest, Clear) {
   backend_->PageDeleted(test_url);
   backend_->Clear();
 
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(0u, result->size());
@@ -113,7 +116,7 @@ TEST_F(DeltaFileBackendTest, QueryStart) {
   backend_->PageDeleted(test_url);
 
   // Skip first entry (start with sequence number == 2).
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(1, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(4u, result->size());
@@ -134,7 +137,7 @@ TEST_F(DeltaFileBackendTest, QueryLimit) {
   backend_->PageDeleted(test_url);
 
   // Query for up to 3 results.
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 3);
   EXPECT_TRUE(result.get() != NULL);
   // Check that we got exactly 3 results
@@ -155,9 +158,9 @@ TEST_F(DeltaFileBackendTest, Trim) {
   backend_->PageDeleted(test_url);
   backend_->PageDeleted(test_url);
   // Trim all entries with sequence number <= 3.
-  int64 max_seq_no = backend_->Trim(3);
+  int64_t max_seq_no = backend_->Trim(3);
   EXPECT_EQ(5, max_seq_no);
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(2u, result->size());
@@ -179,9 +182,9 @@ TEST_F(DeltaFileBackendTest, TrimLowerBoundEqualToMaxSeqNo) {
   backend_->PageDeleted(test_url);
   // Trim all entries with sequence number <= 5 but leave at least one entry
   // in delta file.
-  int64 max_seq_no = backend_->Trim(5);
+  int64_t max_seq_no = backend_->Trim(5);
   EXPECT_EQ(5, max_seq_no);
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(1u, result->size());
@@ -202,9 +205,9 @@ TEST_F(DeltaFileBackendTest, TrimLowerBoundGreaterThanMaxSeqNo) {
   backend_->PageDeleted(test_url);
   // Trim all entries with sequence number <= 6 but leave at least one entry
   // in delta file.
-  int64 max_seq_no = backend_->Trim(6);
+  int64_t max_seq_no = backend_->Trim(6);
   EXPECT_EQ(5, max_seq_no);
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(1u, result->size());
@@ -221,9 +224,9 @@ TEST_F(DeltaFileBackendTest, TrimDeltaFileWithSingleEntry) {
   // Trim all entries with sequence number <= 1 but leave at least one entry
   // in delta file. Should not remove any entries since there's only one
   // in delta file.
-  int64 max_seq_no = backend_->Trim(1);
+  int64_t max_seq_no = backend_->Trim(1);
   EXPECT_EQ(1, max_seq_no);
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(0, 10);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(1u, result->size());
@@ -242,7 +245,7 @@ TEST_F(DeltaFileBackendTest, LevelDbComparator) {
   }
 
   // Skip first entry (start with sequence number == 2).
-  scoped_ptr<std::vector<DeltaFileEntryWithData> > result =
+  std::unique_ptr<std::vector<DeltaFileEntryWithData>> result =
       backend_->Query(1, 100);
   EXPECT_TRUE(result.get() != NULL);
   EXPECT_EQ(49u, result->size());

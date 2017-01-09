@@ -44,47 +44,38 @@
 #endif
 
 #if defined(COMPONENT_BUILD)
-    #if defined(WIN32)
-        #if BLINK_IMPLEMENTATION
-            #define BLINK_EXPORT __declspec(dllexport)
-        #else // BLINK_IMPLEMENTATION
-            #define BLINK_EXPORT __declspec(dllimport)
-        #endif
-        #if BLINK_PLATFORM_IMPLEMENTATION
-            #define BLINK_PLATFORM_EXPORT __declspec(dllexport)
-        #else // BLINK_PLATFORM_IMPLEMENTATION
-            #define BLINK_PLATFORM_EXPORT __declspec(dllimport)
-        #endif
-        #if BLINK_COMMON_IMPLEMENTATION
-            #define BLINK_COMMON_EXPORT __declspec(dllexport)
-        #else // BLINK_COMMON_IMPLEMENTATION
-            #define BLINK_COMMON_EXPORT __declspec(dllimport)
-        #endif
-    #else // defined(WIN32)
-        #define BLINK_EXPORT __attribute__((visibility("default")))
-        #define BLINK_PLATFORM_EXPORT __attribute__((visibility("default")))
-        #define BLINK_COMMON_EXPORT __attribute__((visibility("default")))
-    #endif
-
-    #if BLINK_IMPLEMENTATION && !BLINK_CORE_IMPLEMENTATION && !BLINK_MODULES_IMPLEMENTATION
-        #define BLINK_WEB_IMPLEMENTATION 1
-    #else
-        #define BLINK_WEB_IMPLEMENTATION 0
-    #endif
-#else // defined(COMPONENT_BUILD)
-    #define BLINK_EXPORT
-    #define BLINK_PLATFORM_EXPORT
-    #define BLINK_COMMON_EXPORT
-
-    #define BLINK_WEB_IMPLEMENTATION 0
+#if defined(WIN32)
+#if BLINK_IMPLEMENTATION
+#define BLINK_EXPORT __declspec(dllexport)
+#else  // BLINK_IMPLEMENTATION
+#define BLINK_EXPORT __declspec(dllimport)
 #endif
-
+#if BLINK_PLATFORM_IMPLEMENTATION
+#define BLINK_PLATFORM_EXPORT __declspec(dllexport)
+#else  // BLINK_PLATFORM_IMPLEMENTATION
+#define BLINK_PLATFORM_EXPORT __declspec(dllimport)
+#endif
+#if BLINK_COMMON_IMPLEMENTATION
+#define BLINK_COMMON_EXPORT __declspec(dllexport)
+#else  // BLINK_COMMON_IMPLEMENTATION
+#define BLINK_COMMON_EXPORT __declspec(dllimport)
+#endif
+#else  // defined(WIN32)
+#define BLINK_EXPORT __attribute__((visibility("default")))
+#define BLINK_PLATFORM_EXPORT __attribute__((visibility("default")))
+#define BLINK_COMMON_EXPORT __attribute__((visibility("default")))
+#endif
+#else  // defined(COMPONENT_BUILD)
+#define BLINK_EXPORT
+#define BLINK_PLATFORM_EXPORT
+#define BLINK_COMMON_EXPORT
+#endif
 
 // -----------------------------------------------------------------------------
 // Basic types
 
-#include <stddef.h> // For size_t
-#include <stdint.h> // For int32_t
+#include <stddef.h>  // For size_t
+#include <stdint.h>  // For int32_t
 
 namespace blink {
 
@@ -101,23 +92,6 @@ typedef unsigned short WebUChar;
 // Latin-1 character type
 typedef unsigned char WebLChar;
 
-// -----------------------------------------------------------------------------
-// Assertions
-
-BLINK_COMMON_EXPORT void failedAssertion(const char* file, int line, const char* function, const char* assertion);
-
-} // namespace blink
-
-// Ideally, only use inside the public directory but outside of INSIDE_BLINK blocks.  (Otherwise use WTF's ASSERT.)
-#if defined(NDEBUG)
-#define BLINK_ASSERT(assertion) ((void)0)
-#else
-#define BLINK_ASSERT(assertion) do { \
-    if (!(assertion)) \
-        failedAssertion(__FILE__, __LINE__, __FUNCTION__, #assertion); \
-} while (0)
-#endif
-
-#define BLINK_ASSERT_NOT_REACHED() BLINK_ASSERT(0)
+}  // namespace blink
 
 #endif

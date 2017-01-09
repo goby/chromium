@@ -4,23 +4,28 @@
 
 #include "chrome/browser/notifications/extension_welcome_notification.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
-#include "sync/api/fake_sync_change_processor.h"
-#include "sync/api/sync_error_factory_mock.h"
+#include "components/prefs/pref_service.h"
+#include "components/sync/model/fake_sync_change_processor.h"
+#include "components/sync/model/sync_error_factory_mock.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/browser/quota_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/fake_message_center.h"
 #include "ui/message_center/notification.h"
@@ -48,7 +53,7 @@ class MockMessageCenter : public message_center::FakeMessageCenter {
   }
 
   void AddNotification(
-      scoped_ptr<message_center::Notification> notification) override {
+      std::unique_ptr<message_center::Notification> notification) override {
     EXPECT_FALSE(last_notification.get());
     last_notification.swap(notification);
     add_notification_calls_++;
@@ -69,7 +74,7 @@ class MockMessageCenter : public message_center::FakeMessageCenter {
   }
 
  private:
-  scoped_ptr<message_center::Notification> last_notification;
+  std::unique_ptr<message_center::Notification> last_notification;
   int add_notification_calls_;
   int remove_notification_calls_;
   int notifications_with_shown_as_popup_;
@@ -116,7 +121,7 @@ public:
  private:
   const base::Time start_time_;
   base::TimeDelta elapsed_time_;
-  scoped_ptr<MockMessageCenter> message_center_;
+  std::unique_ptr<MockMessageCenter> message_center_;
   base::Closure pending_task_;
 
   DISALLOW_COPY_AND_ASSIGN(WelcomeNotificationDelegate);
@@ -132,8 +137,7 @@ class ExtensionWelcomeNotificationTest : public testing::Test {
 
   void SetUp() override {
     task_runner_ = new base::TestSimpleTaskRunner();
-    thread_task_runner_handle_.reset(
-        new base::ThreadTaskRunnerHandle(task_runner_));
+    base::MessageLoop::current()->SetTaskRunner(task_runner_);
     profile_.reset(new TestingProfile());
     delegate_ = new WelcomeNotificationDelegate();
     welcome_notification_.reset(
@@ -145,18 +149,16 @@ class ExtensionWelcomeNotificationTest : public testing::Test {
     welcome_notification_.reset();
     profile_.reset();
     TestingBrowserProcess::DeleteInstance();
-    thread_task_runner_handle_.reset();
     task_runner_ = NULL;
   }
 
   void StartPreferenceSyncing() const {
     PrefServiceSyncableFromProfile(profile_.get())
         ->GetSyncableService(syncer::PREFERENCES)
-        ->MergeDataAndStartSyncing(syncer::PREFERENCES,
-                                   syncer::SyncDataList(),
-                                   scoped_ptr<syncer::SyncChangeProcessor>(
+        ->MergeDataAndStartSyncing(syncer::PREFERENCES, syncer::SyncDataList(),
+                                   std::unique_ptr<syncer::SyncChangeProcessor>(
                                        new syncer::FakeSyncChangeProcessor),
-                                   scoped_ptr<syncer::SyncErrorFactory>(
+                                   std::unique_ptr<syncer::SyncErrorFactory>(
                                        new syncer::SyncErrorFactoryMock()));
   }
 
@@ -195,10 +197,10 @@ class ExtensionWelcomeNotificationTest : public testing::Test {
   void SetBooleanPref(const char* path, bool value) const {
     profile_->GetPrefs()->SetBoolean(path, value);
   }
-  int64 GetInt64Pref(const char* path) const {
+  int64_t GetInt64Pref(const char* path) const {
     return profile_->GetPrefs()->GetInt64(path);
   }
-  void SetInt64Pref(const char* path, int64 value) const {
+  void SetInt64Pref(const char* path, int64_t value) const {
     profile_->GetPrefs()->SetInt64(path, value);
   }
 
@@ -231,12 +233,14 @@ class ExtensionWelcomeNotificationTest : public testing::Test {
     welcome_notification_->ShowWelcomeNotificationIfNecessary(notification);
   }
 
+  content::TestBrowserThreadBundle thread_bundle_;
+  extensions::QuotaService::ScopedDisablePurgeForTesting
+      disable_purge_for_testing_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  scoped_ptr<base::ThreadTaskRunnerHandle> thread_task_runner_handle_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   // Weak Ref owned by welcome_notification_
   WelcomeNotificationDelegate* delegate_;
-  scoped_ptr<ExtensionWelcomeNotification> welcome_notification_;
+  std::unique_ptr<ExtensionWelcomeNotification> welcome_notification_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionWelcomeNotificationTest);
 };
@@ -469,7 +473,7 @@ TEST_F(ExtensionWelcomeNotificationTest, TimeExpiredNotification) {
   EXPECT_FALSE(GetBooleanPref(prefs::kWelcomeNotificationDismissedLocal));
   EXPECT_FALSE(GetBooleanPref(prefs::kWelcomeNotificationPreviouslyPoppedUp));
   EXPECT_EQ(GetInt64Pref(prefs::kWelcomeNotificationExpirationTimestamp), 0);
-  EXPECT_TRUE(task_runner()->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner()->HasPendingTask());
 
   ShowChromeNowNotification();
 
@@ -477,7 +481,7 @@ TEST_F(ExtensionWelcomeNotificationTest, TimeExpiredNotification) {
       base::TimeDelta::FromDays(
           ExtensionWelcomeNotification::kRequestedShowTimeDays);
 
-  EXPECT_EQ(task_runner()->GetPendingTasks().size(), 1U);
+  EXPECT_EQ(task_runner()->NumPendingTasks(), 1U);
   EXPECT_EQ(task_runner()->NextPendingTaskDelay(), requested_show_time);
 
   EXPECT_EQ(message_center()->add_notification_calls(), 1);
@@ -493,7 +497,7 @@ TEST_F(ExtensionWelcomeNotificationTest, TimeExpiredNotification) {
   SetElapsedTime(requested_show_time);
   task_runner()->RunPendingTasks();
 
-  EXPECT_TRUE(task_runner()->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner()->HasPendingTask());
   EXPECT_EQ(message_center()->add_notification_calls(), 1);
   EXPECT_EQ(message_center()->remove_notification_calls(), 1);
   EXPECT_EQ(message_center()->notifications_with_shown_as_popup(), 0);
@@ -515,7 +519,7 @@ TEST_F(ExtensionWelcomeNotificationTest, NotificationPreviouslyExpired) {
   EXPECT_FALSE(GetBooleanPref(prefs::kWelcomeNotificationDismissedLocal));
   EXPECT_TRUE(GetBooleanPref(prefs::kWelcomeNotificationPreviouslyPoppedUp));
   EXPECT_EQ(GetInt64Pref(prefs::kWelcomeNotificationExpirationTimestamp), 1);
-  EXPECT_TRUE(task_runner()->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner()->HasPendingTask());
 
   const base::TimeDelta requested_show_time =
       base::TimeDelta::FromDays(
@@ -523,7 +527,7 @@ TEST_F(ExtensionWelcomeNotificationTest, NotificationPreviouslyExpired) {
   SetElapsedTime(requested_show_time);
   ShowChromeNowNotification();
 
-  EXPECT_TRUE(task_runner()->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner()->HasPendingTask());
   EXPECT_EQ(message_center()->add_notification_calls(), 0);
   EXPECT_EQ(message_center()->remove_notification_calls(), 0);
   EXPECT_EQ(message_center()->notifications_with_shown_as_popup(), 0);

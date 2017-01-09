@@ -6,26 +6,22 @@
 #define CONTENT_PUBLIC_UTILITY_CONTENT_UTILITY_CLIENT_H_
 
 #include <map>
+#include <memory>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/service_info.h"
 
-class GURL;
-
-namespace mojo {
-class ApplicationDelegate;
+namespace service_manager {
+class InterfaceRegistry;
 }
 
 namespace content {
 
-class ServiceRegistry;
-
 // Embedder API for participating in renderer logic.
 class CONTENT_EXPORT ContentUtilityClient {
  public:
-  using StaticMojoApplicationMap =
-      std::map<GURL, base::Callback<scoped_ptr<mojo::ApplicationDelegate>()>>;
+  using StaticServiceMap = std::map<std::string, ServiceInfo>;
 
   virtual ~ContentUtilityClient() {}
 
@@ -35,11 +31,12 @@ class CONTENT_EXPORT ContentUtilityClient {
   // Allows the embedder to filter messages.
   virtual bool OnMessageReceived(const IPC::Message& message);
 
-  // Registers Mojo services.
-  virtual void RegisterMojoServices(ServiceRegistry* registry) {}
+  // Allows the client to expose interfaces from this utility process to the
+  // browser process via |registry|.
+  virtual void ExposeInterfacesToBrowser(
+      service_manager::InterfaceRegistry* registry) {}
 
-  // Registers Mojo applications.
-  virtual void RegisterMojoApplications(StaticMojoApplicationMap* apps) {}
+  virtual void RegisterServices(StaticServiceMap* services) {}
 };
 
 }  // namespace content

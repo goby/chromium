@@ -5,9 +5,13 @@
 #ifndef CHROME_BROWSER_UI_TABS_TAB_STRIP_MODEL_H_
 #define CHROME_BROWSER_UI_TABS_TAB_STRIP_MODEL_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "ui/base/models/list_selection_model.h"
@@ -174,7 +178,7 @@ class TabStripModel {
   // WebContents was closed immediately, false if it was not closed (we
   // may be waiting for a response from an onunload handler, or waiting for the
   // user to confirm closure).
-  bool CloseWebContentsAt(int index, uint32 close_types);
+  bool CloseWebContentsAt(int index, uint32_t close_types);
 
   // Replaces the WebContents at |index| with |new_contents|. The
   // WebContents that was at |index| is returned and its ownership returns
@@ -458,8 +462,7 @@ class TabStripModel {
   //
   // Returns true if the WebContentses were closed immediately, false if we
   // are waiting for the result of an onunload handler.
-  bool InternalCloseTabs(const std::vector<int>& indices,
-                         uint32 close_types);
+  bool InternalCloseTabs(const std::vector<int>& indices, uint32_t close_types);
 
   // Invoked from InternalCloseTabs and when an extension is removed for an app
   // tab. Notifies observers of TabClosingAt and deletes |contents|. If
@@ -515,7 +518,7 @@ class TabStripModel {
   // Returns true if the tab represented by the specified data has an opener
   // that matches the specified one. If |use_group| is true, then this will
   // fall back to check the group relationship as well.
-  static bool OpenerMatches(const WebContentsData* data,
+  static bool OpenerMatches(const std::unique_ptr<WebContentsData>& data,
                             const content::WebContents* opener,
                             bool use_group);
 
@@ -527,8 +530,7 @@ class TabStripModel {
   TabStripModelDelegate* delegate_;
 
   // The WebContents data currently hosted within this TabStripModel.
-  typedef std::vector<WebContentsData*> WebContentsDataVector;
-  WebContentsDataVector contents_data_;
+  std::vector<std::unique_ptr<WebContentsData>> contents_data_;
 
   // A profile associated with this TabStripModel.
   Profile* profile_;
@@ -538,11 +540,10 @@ class TabStripModel {
 
   // An object that determines where new Tabs should be inserted and where
   // selection should move when a Tab is closed.
-  scoped_ptr<TabStripModelOrderController> order_controller_;
+  std::unique_ptr<TabStripModelOrderController> order_controller_;
 
   // Our observers.
-  typedef base::ObserverList<TabStripModelObserver> TabStripModelObservers;
-  TabStripModelObservers observers_;
+  base::ObserverList<TabStripModelObserver> observers_;
 
   ui::ListSelectionModel selection_model_;
 

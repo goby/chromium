@@ -6,7 +6,6 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/hash.h"
 #include "base/mac/sdk_forward_declarations.h"
@@ -14,6 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/time/time.h"
 #include "device/bluetooth/bluetooth_socket_mac.h"
 #include "device/bluetooth/bluetooth_uuid.h"
 
@@ -46,7 +46,8 @@ BluetoothUUID ExtractUuid(IOBluetoothSDPDataElement* service_class_data) {
   if (!sdp_uuid)
     return BluetoothUUID();
 
-  const uint8* uuid_bytes = reinterpret_cast<const uint8*>([sdp_uuid bytes]);
+  const uint8_t* uuid_bytes =
+      reinterpret_cast<const uint8_t*>([sdp_uuid bytes]);
   std::string uuid_str = base::HexEncode(uuid_bytes, 16);
   DCHECK_EQ(uuid_str.size(), 32U);
   uuid_str.insert(8, "-");
@@ -61,17 +62,15 @@ BluetoothUUID ExtractUuid(IOBluetoothSDPDataElement* service_class_data) {
 BluetoothClassicDeviceMac::BluetoothClassicDeviceMac(
     BluetoothAdapterMac* adapter,
     IOBluetoothDevice* device)
-    : BluetoothDeviceMac(adapter), device_([device retain]) {}
+    : BluetoothDeviceMac(adapter), device_([device retain]) {
+  UpdateTimestamp();
+}
 
 BluetoothClassicDeviceMac::~BluetoothClassicDeviceMac() {
 }
 
-uint32 BluetoothClassicDeviceMac::GetBluetoothClass() const {
+uint32_t BluetoothClassicDeviceMac::GetBluetoothClass() const {
   return [device_ classOfDevice];
-}
-
-std::string BluetoothClassicDeviceMac::GetDeviceName() const {
-  return base::SysNSStringToUTF8([device_ name]);
 }
 
 void BluetoothClassicDeviceMac::CreateGattConnectionImpl() {
@@ -90,16 +89,29 @@ BluetoothDevice::VendorIDSource BluetoothClassicDeviceMac::GetVendorIDSource()
   return VENDOR_ID_UNKNOWN;
 }
 
-uint16 BluetoothClassicDeviceMac::GetVendorID() const {
+uint16_t BluetoothClassicDeviceMac::GetVendorID() const {
   return 0;
 }
 
-uint16 BluetoothClassicDeviceMac::GetProductID() const {
+uint16_t BluetoothClassicDeviceMac::GetProductID() const {
   return 0;
 }
 
-uint16 BluetoothClassicDeviceMac::GetDeviceID() const {
+uint16_t BluetoothClassicDeviceMac::GetDeviceID() const {
   return 0;
+}
+
+uint16_t BluetoothClassicDeviceMac::GetAppearance() const {
+  // TODO(crbug.com/588083): Implementing GetAppearance()
+  // on mac, win, and android platforms for chrome
+  NOTIMPLEMENTED();
+  return 0;
+}
+
+base::Optional<std::string> BluetoothClassicDeviceMac::GetName() const {
+  if ([device_ name])
+    return base::SysNSStringToUTF8([device_ name]);
+  return base::nullopt;
 }
 
 bool BluetoothClassicDeviceMac::IsPaired() const {
@@ -122,8 +134,8 @@ bool BluetoothClassicDeviceMac::IsConnecting() const {
   return false;
 }
 
-BluetoothDevice::UUIDList BluetoothClassicDeviceMac::GetUUIDs() const {
-  UUIDList uuids;
+BluetoothDevice::UUIDSet BluetoothClassicDeviceMac::GetUUIDs() const {
+  UUIDSet uuids;
   for (IOBluetoothSDPServiceRecord* service_record in [device_ services]) {
     IOBluetoothSDPDataElement* service_class_data =
         [service_record getAttributeDataElement:
@@ -132,19 +144,18 @@ BluetoothDevice::UUIDList BluetoothClassicDeviceMac::GetUUIDs() const {
         kBluetoothSDPDataElementTypeDataElementSequence) {
       BluetoothUUID uuid = ExtractUuid(service_class_data);
       if (uuid.IsValid())
-        uuids.push_back(uuid);
+        uuids.insert(uuid);
     }
   }
   return uuids;
 }
 
-int16 BluetoothClassicDeviceMac::GetInquiryRSSI() const {
-  return kUnknownPower;
+base::Optional<int8_t> BluetoothClassicDeviceMac::GetInquiryRSSI() const {
+  return base::nullopt;
 }
 
-int16 BluetoothClassicDeviceMac::GetInquiryTxPower() const {
-  NOTIMPLEMENTED();
-  return kUnknownPower;
+base::Optional<int8_t> BluetoothClassicDeviceMac::GetInquiryTxPower() const {
+  return base::nullopt;
 }
 
 bool BluetoothClassicDeviceMac::ExpectingPinCode() const {
@@ -195,7 +206,7 @@ void BluetoothClassicDeviceMac::SetPinCode(const std::string& pincode) {
   NOTIMPLEMENTED();
 }
 
-void BluetoothClassicDeviceMac::SetPasskey(uint32 passkey) {
+void BluetoothClassicDeviceMac::SetPasskey(uint32_t passkey) {
   NOTIMPLEMENTED();
 }
 
@@ -245,8 +256,10 @@ void BluetoothClassicDeviceMac::CreateGattConnection(
   error_callback.Run(ERROR_UNSUPPORTED_DEVICE);
 }
 
-NSDate* BluetoothClassicDeviceMac::GetLastUpdateTime() const {
-  return [device_ getLastInquiryUpdate];
+base::Time BluetoothClassicDeviceMac::GetLastUpdateTime() const {
+  // getLastInquiryUpdate returns nil unpredictably so just use the
+  // cross platform implementation of last update time.
+  return last_update_time_;
 }
 
 int BluetoothClassicDeviceMac::GetHostTransmitPower(

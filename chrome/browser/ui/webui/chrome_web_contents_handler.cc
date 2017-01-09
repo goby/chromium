@@ -10,7 +10,6 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/web_contents.h"
 
@@ -38,24 +37,17 @@ WebContents* ChromeWebContentsHandler::OpenURLFromTab(
 
   Profile* profile = Profile::FromBrowserContext(context);
 
-  chrome::HostDesktopType desktop_type = chrome::HOST_DESKTOP_TYPE_NATIVE;
-  if (source) {
-    Browser* source_browser = chrome::FindBrowserWithWebContents(source);
-    if (source_browser)
-      desktop_type = source_browser->host_desktop_type();
-  }
-
-  Browser* browser = chrome::FindTabbedBrowser(profile, false, desktop_type);
+  Browser* browser = chrome::FindTabbedBrowser(profile, false);
   const bool browser_created = !browser;
   if (!browser)
-    browser = new Browser(
-        Browser::CreateParams(Browser::TYPE_TABBED, profile, desktop_type));
+    browser = new Browser(Browser::CreateParams(Browser::TYPE_TABBED, profile));
   chrome::NavigateParams nav_params(browser, params.url, params.transition);
   nav_params.referrer = params.referrer;
   if (source && source->IsCrashed() &&
-      params.disposition == CURRENT_TAB &&
-      params.transition == ui::PAGE_TRANSITION_LINK) {
-    nav_params.disposition = NEW_FOREGROUND_TAB;
+      params.disposition == WindowOpenDisposition::CURRENT_TAB &&
+      ui::PageTransitionCoreTypeIs(params.transition,
+                                   ui::PAGE_TRANSITION_LINK)) {
+    nav_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   } else {
     nav_params.disposition = params.disposition;
   }
@@ -88,18 +80,10 @@ void ChromeWebContentsHandler::AddNewContents(
 
   Profile* profile = Profile::FromBrowserContext(context);
 
-  chrome::HostDesktopType desktop_type = chrome::HOST_DESKTOP_TYPE_NATIVE;
-  if (source) {
-    Browser* source_browser = chrome::FindBrowserWithWebContents(source);
-    if (source_browser)
-      desktop_type = source_browser->host_desktop_type();
-  }
-
-  Browser* browser = chrome::FindTabbedBrowser(profile, false, desktop_type);
+  Browser* browser = chrome::FindTabbedBrowser(profile, false);
   const bool browser_created = !browser;
   if (!browser)
-    browser = new Browser(
-        Browser::CreateParams(Browser::TYPE_TABBED, profile, desktop_type));
+    browser = new Browser(Browser::CreateParams(Browser::TYPE_TABBED, profile));
   chrome::NavigateParams params(browser, new_contents);
   params.source_contents = source;
   params.disposition = disposition;

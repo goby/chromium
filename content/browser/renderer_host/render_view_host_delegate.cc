@@ -36,11 +36,27 @@ FrameTree* RenderViewHostDelegate::GetFrameTree() {
   return NULL;
 }
 
+double RenderViewHostDelegate::GetPendingPageZoomLevel() {
+  return 0.0;
+}
+
 bool RenderViewHostDelegate::IsNeverVisible() {
   return false;
 }
 
 bool RenderViewHostDelegate::IsVirtualKeyboardRequested() {
+  return false;
+}
+
+bool RenderViewHostDelegate::IsOverridingUserAgent() {
+  return false;
+}
+
+bool RenderViewHostDelegate::IsJavaScriptDialogShowing() const {
+  return false;
+}
+
+bool RenderViewHostDelegate::HideDownloadUI() const {
   return false;
 }
 

@@ -453,6 +453,14 @@ EVENT_TYPE(SOCKS_UNEXPECTED_AUTH)
 EVENT_TYPE(SOCKS_UNKNOWN_ADDRESS_TYPE)
 
 // The start/end of an SSL "connect" (aka client handshake).
+// The following parameters are attached to the END event:
+//
+//  {
+//    "version": <String name of the TLS version negotiated>,
+//    "cipher_suite": <Integer code for the cipher suite>,
+//    "is_resumed": <Whether we resumed a session>,
+//    "next_proto": <The next protocol negotiated via ALPN>,
+//  }
 EVENT_TYPE(SSL_CONNECT)
 
 // The start/end of an SSL server handshake (aka "accept").
@@ -461,8 +469,13 @@ EVENT_TYPE(SSL_SERVER_HANDSHAKE)
 // The SSL server requested a client certificate.
 EVENT_TYPE(SSL_CLIENT_CERT_REQUESTED)
 
-// The SSL stack blocked on a private key operation.
-EVENT_TYPE(SSL_PRIVATE_KEY_OPERATION)
+// The SSL stack blocked on a private key operation. The following parameters
+// are attached to the event.
+//   {
+//     "type": <type of the key>,
+//     "hash": <hash function used>,
+//   }
+EVENT_TYPE(SSL_PRIVATE_KEY_OP)
 
 // The start/end of getting a domain-bound certificate and private key.
 //
@@ -471,12 +484,31 @@ EVENT_TYPE(SSL_PRIVATE_KEY_OPERATION)
 //   {
 //     "net_error": <Net integer error code>,
 //   }
+// TODO(nharper): remove this event.
 EVENT_TYPE(SSL_GET_DOMAIN_BOUND_CERT)
 
+// The start/end of getting a Channel ID key.
+//
+// The START event contains these parameters:
+//   {
+//     "ephemeral": <Whether or not the Channel ID store is ephemeral>,
+//     "service": <Unique identifier for the ChannelIDService used>,
+//     "store": <Unique identifier for the ChannelIDStore used>,
+//   }
+//
+// The END event may contain these parameters:
+//   {
+//     "net_error": <Net error code>,
+//     "key": <Hex-encoded EC point of public key (uncompressed point format)>,
+//   }
+EVENT_TYPE(SSL_GET_CHANNEL_ID)
+
 // The SSL server requested a channel id.
+// TODO(nharper): Remove this event.
 EVENT_TYPE(SSL_CHANNEL_ID_REQUESTED)
 
 // A channel ID was provided to the SSL library to be sent to the SSL server.
+// TODO(nharper): Remove this event.
 EVENT_TYPE(SSL_CHANNEL_ID_PROVIDED)
 
 // A client certificate (or none) was provided to the SSL library to be sent
@@ -509,6 +541,9 @@ EVENT_TYPE(SSL_WRITE_ERROR)
 //     "version_before": <SSL version before the fallback>,
 //     "version_after": <SSL version after the fallback>,
 //   }
+//
+// TODO(davidben): Remove this event and the corresponding log_view_painter.js
+// logic in M56.
 EVENT_TYPE(SSL_VERSION_FALLBACK)
 
 // An SSL connection needs to be retried with more cipher suites because the
@@ -599,7 +634,7 @@ EVENT_TYPE(SIGNED_CERTIFICATE_TIMESTAMPS_RECEIVED)
 //
 // Where each SCT is an object:
 // {
-//    "origin": <one of: "embedded_in_certificate", "tls_extension", "ocsp">,
+//    "origin": <one of: "Embedded in certificate", "tls_extension", "ocsp">,
 //    "version": <numeric version>,
 //    "log_id": <base64-encoded log id>,
 //    "timestamp": <numeric timestamp in milliseconds since the Unix epoch>,
@@ -608,6 +643,18 @@ EVENT_TYPE(SIGNED_CERTIFICATE_TIMESTAMPS_RECEIVED)
 //    "signature_data": <base64-encoded signature bytes>,
 // }
 EVENT_TYPE(SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED)
+
+// The certificate was checked for compliance with Certificate Transparency
+// requirements.
+//
+// The following parameters are attached to the event:
+// {
+//    "certificate": <An X.509 certificate, same format as in
+//                   CERT_VERIFIER_JOB.>
+//    "build_timely": <boolean>
+//    "ct_compliance_status": <string describing compliance status>
+// }
+EVENT_TYPE(CERT_CT_COMPLIANCE_CHECKED)
 
 // The EV certificate was checked for compliance with Certificate Transparency
 // requirements.
@@ -633,6 +680,9 @@ EVENT_TYPE(EV_CERT_CT_COMPLIANCE_CHECKED)
 //
 //   {
 //     "address": <Remote address being connected to>,
+//     "bound_to_network": <optional; network handle for the network that this
+//                          socket is bound to.  Only present when this socket
+//                          is bound to a network.>
 //   }
 //
 // And the END event will contain the following parameter:
@@ -646,6 +696,9 @@ EVENT_TYPE(UDP_CONNECT)
 // The following parameters are attached:
 //   {
 //     "address": <Local address bound to the socket>,
+//     "bound_to_network": <optional; network handle for the network that this
+//                          socket is bound to.  Only present when this socket
+//                          is bound to a network.>
 //   }
 EVENT_TYPE(UDP_LOCAL_ADDRESS)
 
@@ -744,7 +797,7 @@ EVENT_TYPE(BACKUP_CONNECT_JOB_CREATED)
 //   }
 EVENT_TYPE(SOCKET_POOL_BOUND_TO_CONNECT_JOB)
 
-// Identifies the NetLog::Source() for the Socket assigned to the pending
+// Identifies the NetLogSource() for the Socket assigned to the pending
 // request. The event parameters are:
 //   {
 //      "source_dependency": <Source identifier for the socket we acquired>,
@@ -990,21 +1043,21 @@ EVENT_TYPE(HTTP_STREAM_REQUEST)
 //   }
 EVENT_TYPE(HTTP_STREAM_JOB)
 
-// Identifies the NetLog::Source() for a Job started by the Request.
+// Identifies the NetLogSource() for a Job started by the Request.
 // The event parameters are:
 //   {
 //      "source_dependency": <Source identifier for Job we started>,
 //   }
 EVENT_TYPE(HTTP_STREAM_REQUEST_STARTED_JOB)
 
-// Identifies the NetLog::Source() for the Job that fulfilled the Request.
+// Identifies the NetLogSource() for the Job that fulfilled the Request.
 // The event parameters are:
 //   {
 //      "source_dependency": <Source identifier for Job we acquired>,
 //   }
 EVENT_TYPE(HTTP_STREAM_REQUEST_BOUND_TO_JOB)
 
-// Identifies the NetLog::Source() for the Request that the Job was attached to.
+// Identifies the NetLogSource() for the Request that the Job was attached to.
 // The event parameters are:
 //   {
 //      "source_dependency": <Source identifier for the Request to which we were
@@ -1023,6 +1076,12 @@ EVENT_TYPE(HTTP_STREAM_REQUEST_PROTO)
 // Emitted when a Job is orphaned because the Request was bound to a different
 // Job. The orphaned Job will continue to run to completion.
 EVENT_TYPE(HTTP_STREAM_JOB_ORPHANED)
+
+// Emitted when a job is asked to resume after non-zero microseconds.
+//   {
+//     "resume_after_ms": <Number of milliseconds until job will be unblocked>
+//   }
+EVENT_TYPE(HTTP_STREAM_JOB_DELAYED)
 
 // ------------------------------------------------------------------------
 // HttpNetworkTransaction
@@ -1104,6 +1163,15 @@ EVENT_TYPE(HTTP_TRANSACTION_READ_BODY)
 // restarting for authentication, on keep alive connections.
 EVENT_TYPE(HTTP_TRANSACTION_DRAIN_BODY_FOR_AUTH_RESTART)
 
+// Measures the time taken to look up the key used for Token Binding.
+EVENT_TYPE(HTTP_TRANSACTION_GET_TOKEN_BINDING_KEY)
+
+// Measures the time taken due to throttling by the NetworkThrottleManager.
+EVENT_TYPE(HTTP_TRANSACTION_THROTTLED)
+
+// Record priority changes on the network transaction.
+EVENT_TYPE(HTTP_TRANSACTION_SET_PRIORITY)
+
 // This event is sent when we try to restart a transaction after an error.
 // The following parameters are attached:
 //   {
@@ -1112,6 +1180,92 @@ EVENT_TYPE(HTTP_TRANSACTION_DRAIN_BODY_FOR_AUTH_RESTART)
 //                          applicable>,
 //   }
 EVENT_TYPE(HTTP_TRANSACTION_RESTART_AFTER_ERROR)
+
+// ------------------------------------------------------------------------
+// BidirectionalStream
+// ------------------------------------------------------------------------
+
+// Marks the creation/destruction of a net::BidirectionalStream.
+// The following parameters are attached:
+//   {
+//      "url": <The URL being used>,
+//      "method": <The HTTP method being used>,
+//      "headers": <The list of header:value pairs>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_ALIVE)
+
+// Marks the ReadData call of a net::BidirectionalStream.
+// The following parameters are attached:
+// {
+//     "rv": <The value in int that is returned to the caller>
+// }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_READ_DATA)
+
+// Marks the SendData call of a net::BidirectionalStream.
+EVENT_TYPE(BIDIRECTIONAL_STREAM_SEND_DATA)
+
+// Marks the SendvData call of a net::BidirectionalStream.
+// The following parameters are attached:
+// {
+//     "num_buffers": <The number of buffers passed to SendvData>
+// }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_SENDV_DATA)
+
+// Marks the beginning/end of buffers sent in a net::BidirectionalStream.
+// The following parameters are attached:
+//   {
+//      "num_buffers_coalesced": <number of buffers that were sent together>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_BYTES_SENT_COALESCED)
+
+// The specified number of bytes were sent on the stream.  Depending on the
+// source of the event, may be logged either once the data is sent, or when it
+// is queued to be sent.
+// The following parameters are attached:
+//   {
+//     "byte_count": <Number of bytes that were just sent>,
+//     "hex_encoded_bytes": <The exact bytes sent, as a hexadecimal string.
+//                           Only present when byte logging is enabled>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_BYTES_SENT)
+
+// The specified number of bytes were received on the stream.
+// The following parameters are attached:
+//   {
+//     "byte_count": <Number of bytes that were just received>,
+//     "hex_encoded_bytes": <The exact bytes received, as a hexadecimal string.
+//                           Only present when byte logging is enabled>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_BYTES_RECEIVED)
+
+// This event is sent for receiving headers on the stream.
+// The following parameters are attached:
+//   {
+//     "headers": <The list of header:value pairs>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_RECV_HEADERS)
+
+// This event is sent for receiving trailers on the stream.
+// The following parameters are attached:
+//   {
+//     "headers": <The list of header:value pairs>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_RECV_TRAILERS)
+
+// This event is used when stream is successfully negotiated and is ready for
+// sending data and reading data.
+// The following parameters are attached:
+//   {
+//     "request_headers_sent": <boolean>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_READY)
+
+// This event is used when stream has failed.
+// The following parameters are attached:
+//   {
+//     "net_error": <Net error code for the failure>,
+//   }
+EVENT_TYPE(BIDIRECTIONAL_STREAM_FAILED)
 
 // ------------------------------------------------------------------------
 // SpdySession
@@ -1130,47 +1284,20 @@ EVENT_TYPE(HTTP2_SESSION)
 //   }
 EVENT_TYPE(HTTP2_SESSION_INITIALIZED)
 
-// This event is sent for a SPDY SYN_STREAM.  Note that there is no SYN_STREAM
-// frame in HTTP/2.
+// This event is sent for sending an HTTP/2 HEADERS frame.
 // The following parameters are attached:
 //   {
-//     "flags": <The control frame flags>,
 //     "headers": <The list of header:value pairs>,
 //     "fin": <True if this is the final data set by the peer on this stream>,
-//     "unidirectional": <True if this stream is unidirectional>,
-//     "priority": <The priority value of the stream>,
 //     "stream_id": <The stream id>,
-//   }
-EVENT_TYPE(HTTP2_SESSION_SYN_STREAM)
-
-// This event is sent for a SPDY SYN_STREAM pushed by the server, where a
-// net::URLRequest is already waiting for the stream.  Note that there is no
-// SYN_STREAM frame in HTTP/2.
-// The following parameters are attached:
-//   {
-//     "flags": <The control frame flags>,
-//     "headers": <The list of header:value pairs>,
-//     "fin": <True if this is the final data set by the peer on this stream>,
-//     "unidirectional": <True if this stream is unidirectional>,
-//     "priority": <The priority value of the stream>,
-//     "stream_id": <The stream id>,
-//     "associated_stream": <The stream id>,
-//   }
-EVENT_TYPE(HTTP2_SESSION_PUSHED_SYN_STREAM)
-
-// This event is sent for sending an HTTP/2 (or SPDY) HEADERS frame.
-// The following parameters are attached:
-//   {
-//     "flags": <The control frame flags>,
-//     "headers": <The list of header:value pairs>,
-//     "fin": <True if this is the final data set by the peer on this stream>,
-//     "unidirectional": <True if this stream is unidirectional>,
-//     "priority": <The priority value of the stream>,
-//     "stream_id": <The stream id>,
+//     "has_priority": <True if the PRIORITY flag is set>,
+//     "parent_stream_id": <Optional; the stream id of the parent stream>,
+//     "priority": <Optional; the priority value of the stream>,
+//     "exclusive": <Optional; true if the exclusive bit is set>.
 //   }
 EVENT_TYPE(HTTP2_SESSION_SEND_HEADERS)
 
-// This event is sent for receiving an HTTP/2 (or SPDY) HEADERS frame.
+// This event is sent for receiving an HTTP/2 HEADERS frame.
 // The following parameters are attached:
 //   {
 //     "flags": <The control frame flags>,
@@ -1179,24 +1306,14 @@ EVENT_TYPE(HTTP2_SESSION_SEND_HEADERS)
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECV_HEADERS)
 
-// This event is sent for a SPDY SYN_REPLY.  Not that there is no SYN_REPLY
-// frame in HTTP/2.
-// The following parameters are attached:
-//   {
-//     "flags": <The control frame flags>,
-//     "headers": <The list of header:value pairs>,
-//     "id": <The stream id>,
-//   }
-EVENT_TYPE(HTTP2_SESSION_SYN_REPLY)
-
-// On sending an HTTP/2 (or SPDY) SETTINGS frame.
+// On sending an HTTP/2 SETTINGS frame.
 // The following parameters are attached:
 //   {
 //     "settings": <The list of setting id, flags and value>,
 //   }
 EVENT_TYPE(HTTP2_SESSION_SEND_SETTINGS)
 
-// Receipt of an HTTP/2 (or SPDY) SETTINGS frame is received.
+// Receipt of an HTTP/2 SETTINGS frame.
 // The following parameters are attached:
 //   {
 //     "host": <The host-port string>,
@@ -1205,7 +1322,7 @@ EVENT_TYPE(HTTP2_SESSION_SEND_SETTINGS)
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECV_SETTINGS)
 
-// Receipt of an individual HTTP/2 (or SPDY) setting.
+// Receipt of an individual HTTP/2 setting.
 // The following parameters are attached:
 //   {
 //     "id":    <The setting id>,
@@ -1214,7 +1331,7 @@ EVENT_TYPE(HTTP2_SESSION_RECV_SETTINGS)
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECV_SETTING)
 
-// The receipt of a RST_STREAM
+// The receipt of a RST_STREAM frame.
 // The following parameters are attached:
 //   {
 //     "stream_id": <The stream ID for the window update>,
@@ -1231,7 +1348,7 @@ EVENT_TYPE(HTTP2_SESSION_RST_STREAM)
 //   }
 EVENT_TYPE(HTTP2_SESSION_SEND_RST_STREAM)
 
-// Sending of an HTTP/2 (or SPDY) PING frame.
+// Sending of an HTTP/2 PING frame.
 // The following parameters are attached:
 //   {
 //     "unique_id": <The unique id of the PING message>,
@@ -1239,7 +1356,7 @@ EVENT_TYPE(HTTP2_SESSION_SEND_RST_STREAM)
 //   }
 EVENT_TYPE(HTTP2_SESSION_PING)
 
-// Receipt of an HTTP/2 (or SPDY) GOAWAY frame.
+// Receipt of an HTTP/2 GOAWAY frame.
 // The following parameters are attached:
 //   {
 //     "last_accepted_stream_id": <Last stream id accepted by the server, duh>,
@@ -1249,15 +1366,14 @@ EVENT_TYPE(HTTP2_SESSION_PING)
 //   }
 EVENT_TYPE(HTTP2_SESSION_GOAWAY)
 
-// Receipt of an HTTP/2 (or SPDY) WINDOW_UPDATE frame (which controls the send
-// window).
+// Receipt of an HTTP/2 WINDOW_UPDATE frame (which controls the send window).
 //   {
 //     "stream_id": <The stream ID for the window update>,
 //     "delta"    : <The delta window size>,
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECEIVED_WINDOW_UPDATE_FRAME)
 
-// Sending of an HTTP/2 (or SPDY) WINDOW_UPDATE frame (which controls the
+// Sending of an HTTP/2 WINDOW_UPDATE frame (which controls the
 // receive window).
 //   {
 //     "stream_id": <The stream ID for the window update>,
@@ -1295,7 +1411,7 @@ EVENT_TYPE(HTTP2_SESSION_SEND_DATA)
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECV_DATA)
 
-// This event is sent for receiving an HTTP/2 (or SPDY) PUSH_PROMISE frame.
+// This event is sent for receiving an HTTP/2 PUSH_PROMISE frame.
 // The following parameters are attached:
 //   {
 //     "headers": <The list of header:value pairs>,
@@ -1320,10 +1436,6 @@ EVENT_TYPE(HTTP2_SESSION_CLOSE)
 // Event when the creation of a stream is stalled because we're at
 // the maximum number of concurrent streams.
 EVENT_TYPE(HTTP2_SESSION_STALLED_MAX_STREAMS)
-
-// Received a value for initial window size in SETTINGS frame with
-// flow control turned off.
-EVENT_TYPE(HTTP2_SESSION_INITIAL_WINDOW_SIZE_NO_FLOW_CONTROL)
 
 // Received an out-of-range value for initial window size in SETTINGS
 // frame.
@@ -1361,8 +1473,8 @@ EVENT_TYPE(HTTP2_SESSION_POOL_FOUND_EXISTING_SESSION_FROM_IP_POOL)
 //   }
 EVENT_TYPE(HTTP2_SESSION_POOL_CREATED_NEW_SESSION)
 
-// This event indicates that a SSL socket has been upgraded to an HTTP/2 (or
-// SPDY) session.
+// This event indicates that a SSL socket has been upgraded to an HTTP/2
+// session.
 //   {
 //     "source_dependency": <The session id>,
 //   }
@@ -1378,7 +1490,7 @@ EVENT_TYPE(HTTP2_SESSION_POOL_REMOVE_SESSION)
 // SpdyStream
 // ------------------------------------------------------------------------
 
-// The begin and end of an HTTP/2 (or SPDY) STREAM.
+// The begin and end of an HTTP/2 STREAM.
 EVENT_TYPE(HTTP2_STREAM)
 
 // A stream is attached to a pushed stream.
@@ -1420,7 +1532,7 @@ EVENT_TYPE(HTTP2_STREAM_ERROR)
 // ------------------------------------------------------------------------
 
 EVENT_TYPE(HTTP2_PROXY_CLIENT_SESSION)
-// Identifies the HTTP/2 (or SPDY) session a source is using.
+// Identifies the HTTP/2 session a source is using.
 //   {
 //     "source_dependency":  <Source identifier for the underlying session>,
 //   }
@@ -1642,48 +1754,6 @@ EVENT_TYPE(QUIC_SESSION_RST_STREAM_FRAME_RECEIVED)
 //   }
 EVENT_TYPE(QUIC_SESSION_RST_STREAM_FRAME_SENT)
 
-// Session received a CONGESTION_FEEDBACK frame.
-//   {
-//     "type": <The specific type of feedback being provided>,
-//     Other per-feedback type details:
-//
-//     for InterArrival:
-//     "accumulated_number_of_lost_packets": <Total number of lost packets
-//                                            over the life of this session>,
-//     "received_packets": <List of strings of the form:
-//                          <sequence_number>@<receive_time_in_ms>>,
-//
-//     for FixRate:
-//     "bitrate_in_bytes_per_second": <The configured bytes per second>,
-//
-//     for TCP:
-//     "accumulated_number_of_lost_packets": <Total number of lost packets
-//                                            over the life of this session>,
-//     "receive_window": <Number of bytes in the receive window>,
-//   }
-EVENT_TYPE(QUIC_SESSION_CONGESTION_FEEDBACK_FRAME_RECEIVED)
-
-// Session received a CONGESTION_FEEDBACK frame.
-//   {
-//     "type": <The specific type of feedback being provided>,
-//     Other per-feedback type details:
-//
-//     for InterArrival:
-//     "accumulated_number_of_lost_packets": <Total number of lost packets
-//                                            over the life of this session>,
-//     "received_packets": <List of strings of the form:
-//                          <sequence_number>@<receive_time_in_ms>>,
-//
-//     for FixRate:
-//     "bitrate_in_bytes_per_second": <The configured bytes per second>,
-//
-//     for TCP:
-//     "accumulated_number_of_lost_packets": <Total number of lost packets
-//                                            over the life of this session>,
-//     "receive_window": <Number of bytes in the receive window>,
-//   }
-EVENT_TYPE(QUIC_SESSION_CONGESTION_FEEDBACK_FRAME_SENT)
-
 // Session received a CONNECTION_CLOSE frame.
 //   {
 //     "quic_error": <QuicErrorCode in the frame>,
@@ -1741,6 +1811,15 @@ EVENT_TYPE(QUIC_SESSION_CRYPTO_HANDSHAKE_MESSAGE_RECEIVED)
 //   }
 EVENT_TYPE(QUIC_SESSION_CRYPTO_HANDSHAKE_MESSAGE_SENT)
 
+// A QUIC connection received a PUSH_PROMISE frame.  The following
+// parameters are attached:
+//   {
+//     "headers": <The list of header:value pairs>,
+//     "id": <The stream id>,
+//     "promised_stream_id": <The stream id>,
+//   }
+EVENT_TYPE(QUIC_SESSION_PUSH_PROMISE_RECEIVED)
+
 // Session was closed, either remotely or by the peer.
 //   {
 //     "quic_error": <QuicErrorCode which caused the connection to be closed>,
@@ -1752,24 +1831,76 @@ EVENT_TYPE(QUIC_SESSION_CLOSED)
 // QuicHttpStream
 // ------------------------------------------------------------------------
 
-// The stream is sending the request headers.
+// A stream request's url matches a received push promise.  The
+// promised stream can be adopted for this request once vary header
+// validation is complete (as part of response header processing).
 //   {
-//     "headers": <The list of header:value pairs>
+//     "stream_id":  <The stream id>,
+//     "url":        <The url of the pushed resource>,
 //   }
-EVENT_TYPE(QUIC_HTTP_STREAM_SEND_REQUEST_HEADERS)
+EVENT_TYPE(QUIC_HTTP_STREAM_PUSH_PROMISE_RENDEZVOUS)
 
-// The stream has read the response headers.
+// Vary validation has succeeded, a http stream is attached to
+// a pushed QUIC stream.
 //   {
-//     "headers": <The list of header:value pairs>
+//     "stream_id":  <The stream id>,
+//     "url":        <The url of the pushed resource>,
 //   }
-EVENT_TYPE(QUIC_HTTP_STREAM_READ_RESPONSE_HEADERS)
+EVENT_TYPE(QUIC_HTTP_STREAM_ADOPTED_PUSH_STREAM)
 
-// Identifies the NetLog::Source() for the QuicSesssion that handled the stream.
+// Identifies the NetLogSource() for the QuicSesssion that handled the stream.
 // The event parameters are:
 //   {
 //      "source_dependency": <Source identifier for session that was used>,
 //   }
 EVENT_TYPE(HTTP_STREAM_REQUEST_BOUND_TO_QUIC_SESSION)
+
+// ------------------------------------------------------------------------
+// QuicChromiumClientStream
+// ------------------------------------------------------------------------
+
+// The stream is sending the request headers.
+//   {
+//     "headers": <The list of header:value pairs>
+//   }
+EVENT_TYPE(QUIC_CHROMIUM_CLIENT_STREAM_SEND_REQUEST_HEADERS)
+
+// The stream has read the response headers.
+//   {
+//     "headers": <The list of header:value pairs>
+//   }
+EVENT_TYPE(QUIC_CHROMIUM_CLIENT_STREAM_READ_RESPONSE_HEADERS)
+
+// The stream has read the response trailers.
+//   {
+//     "headers": <The list of header:value pairs>
+//   }
+EVENT_TYPE(QUIC_CHROMIUM_CLIENT_STREAM_READ_RESPONSE_TRAILERS)
+
+// ------------------------------------------------------------------------
+// QuicConnectionMigration
+// ------------------------------------------------------------------------
+
+// Records that QUIC connection migration has been triggered.
+//  {
+//     "trigger": <The reason for the migration attempt>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_TRIGGERED)
+
+// Records that a QUIC connection migration attempt of the session
+// identified by connection_id failed.
+//  {
+//     "connection_id": <Connection ID of the session>
+//     "reason": <Failure reason>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_FAILURE)
+
+// Records that a QUIC connection migration attempt of the session
+// identified by connection_id succeeded.
+//  {
+//     "connection_id": <Connection ID of the session>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_SUCCESS)
 
 // ------------------------------------------------------------------------
 // HttpStreamParser
@@ -1803,6 +1934,9 @@ EVENT_TYPE(AUTH_PROXY)
 
 // The time spent authentication to the server.
 EVENT_TYPE(AUTH_SERVER)
+
+// The channel bindings generated for the connection.
+EVENT_TYPE(AUTH_CHANNEL_BINDINGS)
 
 // ------------------------------------------------------------------------
 // HTML5 Application Cache
@@ -1868,6 +2002,10 @@ EVENT_TYPE(SERVICE_WORKER_ERROR_NO_ACTIVE_VERSION)
 EVENT_TYPE(SERVICE_WORKER_ERROR_NO_REQUEST)
 
 // This event is emitted when Service Worker fails to respond because
+// the job delegate behaved incorrectly.
+EVENT_TYPE(SERVICE_WORKER_ERROR_BAD_DELEGATE)
+
+// This event is emitted when Service Worker fails to respond because
 // the fetch event could not be dispatched to the worker.
 EVENT_TYPE(SERVICE_WORKER_ERROR_FETCH_EVENT_DISPATCH)
 
@@ -1890,6 +2028,58 @@ EVENT_TYPE(SERVICE_WORKER_ERROR_KILLED_WITH_BLOB)
 // This event is emitted when Service Worker is destroyed before it
 // finishes responding with a stream.
 EVENT_TYPE(SERVICE_WORKER_ERROR_KILLED_WITH_STREAM)
+
+// This event is emitted when a request to be forwarded to a Service Worker has
+// request body, and it may be necessary to wait for sizes of files in the body
+// to be resolved. The END phase event parameter is:
+//   {
+//     "success": Whether file sizes in the request body have been resolved
+//     successfully
+//   }
+EVENT_TYPE(SERVICE_WORKER_WAITING_FOR_REQUEST_BODY_FILES)
+
+// This event is emitted when a request failed to be forwarded to a Service
+// Worker, because it had a request body with a blob that failed to be
+// constructed.
+EVENT_TYPE(SERVICE_WORKER_ERROR_REQUEST_BODY_BLOB_FAILED)
+
+// The start/end of dispatching a fetch event to a service worker. This includes
+// waiting for the worker to activate and starting the worker if neccessary.
+//
+// The BEGIN phase consists of the following parameters:
+// {
+//   "event_type": A string indicating the type of fetch event. Generally it is
+//   either a fetch or foreignfetch event; fetch events are additionally
+//   categorized by resource type.
+// }
+//
+// For the END phase, the following parameters are attached. No parameters are
+// attached when cancelled:
+// {
+//   "status": The ServiceWorkerStatusCode as a string.
+//   "has_response": True if the service worker provided a response to the fetch
+//   event. False means to fall back to network.
+// }
+EVENT_TYPE(SERVICE_WORKER_DISPATCH_FETCH_EVENT)
+
+// Measures the time waiting for a service worker to go from ACTIVATING to
+// ACTIVATED.
+EVENT_TYPE(SERVICE_WORKER_WAIT_FOR_ACTIVATION)
+
+// The start/end of starting a service worker.
+// For the END phase, the following parameters are attached:
+// {
+//   "status": The ServiceWorkerStatusCode as a string. Only present on failure.
+// }
+EVENT_TYPE(SERVICE_WORKER_START_WORKER)
+
+// The start/end of dispatching a fetch event to an activated, running service
+// worker.
+// For the END phase, the following parameters are attached:
+// {
+//   "status": The ServiceWorkerStatusCode as a string. Only present on failure.
+// }
+EVENT_TYPE(SERVICE_WORKER_FETCH_EVENT)
 
 // ------------------------------------------------------------------------
 // Global events
@@ -1925,6 +2115,58 @@ EVENT_TYPE(NETWORK_CHANGED)
 //     <other>:                      <See DnsConfig>
 //   }
 EVENT_TYPE(DNS_CONFIG_CHANGED)
+
+// This event is emitted whenever NetworkChangeNotifier determines that a
+// network has connected and network-specific information is available
+// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+//   {
+//     "changed_network_handle":        <Network handle>
+//     "changed_network_type":          <Type of network>
+//     "default_active_network_handle": <Network handle of default network>
+//     "current_active_networks":       <Mapping from network handle to network
+//                                       type, containing entries for all active
+//                                       networks.>
+//   }
+EVENT_TYPE(SPECIFIC_NETWORK_CONNECTED)
+
+// This event is emitted whenever NetworkChangeNotifier determines that a
+// network has disconnected and network-specific information is available
+// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+//   {
+//     "changed_network_handle":        <Network handle>
+//     "changed_network_type":          <Type of network>
+//     "default_active_network_handle": <Network handle of default network>
+//     "current_active_networks":       <Mapping from network handle to network
+//                                       type, containing entries for all active
+//                                       networks.>
+//   }
+EVENT_TYPE(SPECIFIC_NETWORK_DISCONNECTED)
+
+// This event is emitted whenever NetworkChangeNotifier determines that a
+// network is soon to disconnect and network-specific information is available
+// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+//   {
+//     "changed_network_handle":        <Network handle>
+//     "changed_network_type":          <Type of network>
+//     "default_active_network_handle": <Network handle of default network>
+//     "current_active_networks":       <Mapping from network handle to network
+//                                       type, containing entries for all active
+//                                       networks.>
+//   }
+EVENT_TYPE(SPECIFIC_NETWORK_SOON_TO_DISCONNECT)
+
+// This event is emitted whenever NetworkChangeNotifier determines that a
+// network has become the default and network-specific information is available
+// (i.e. the NetworkChangeNotifier::NetworkHandle of the network is known).
+//   {
+//     "changed_network_handle":        <Network handle>
+//     "changed_network_type":          <Type of network>
+//     "default_active_network_handle": <Network handle of default network>
+//     "current_active_networks":       <Mapping from network handle to network
+//                                       type, containing entries for all active
+//                                       networks.>
+//   }
+EVENT_TYPE(SPECIFIC_NETWORK_MADE_DEFAULT)
 
 // ------------------------------------------------------------------------
 // Exponential back-off throttling events
@@ -2185,6 +2427,12 @@ EVENT_TYPE(DOWNLOAD_URL_REQUEST)
 // one of these events.
 EVENT_TYPE(DOWNLOAD_ITEM_ACTIVE)
 
+// Recorded when the DownloadFile is created.
+//   {
+//     "source_dependency": <Source ID of DownloadFile>
+//   }
+EVENT_TYPE(DOWNLOAD_FILE_CREATED)
+
 // This event is created when a download item's danger type
 // has been modified.
 //   {
@@ -2247,6 +2495,12 @@ EVENT_TYPE(DOWNLOAD_ITEM_CANCELED)
 // DownloadFile events.
 // ------------------------------------------------------------------------
 
+// A new download file was created.
+//   {
+//     "source_dependency": <Source ID of owning DownloadItem>
+//   }
+EVENT_TYPE(DOWNLOAD_FILE_ACTIVE)
+
 // This event is created when a download file is opened, and lasts until
 // the file is closed.
 // The BEGIN event has the following parameters:
@@ -2264,16 +2518,19 @@ EVENT_TYPE(DOWNLOAD_FILE_OPENED)
 //   }
 EVENT_TYPE(DOWNLOAD_STREAM_DRAINED)
 
+// Created when a buffer is written to the download file. The END event has the
+// following paramters:
+//   {
+//     "bytes": <Count of bytes written>
+//   }
+EVENT_TYPE(DOWNLOAD_FILE_WRITTEN)
+
 // This event is created when a download file is renamed.
 //   {
 //     "old_filename": <Old filename>,
 //     "new_filename": <New filename>,
 //   }
 EVENT_TYPE(DOWNLOAD_FILE_RENAMED)
-
-// This event is created when a download file is closed.  This event is allowed
-// to occur even if the file is not open.
-EVENT_TYPE(DOWNLOAD_FILE_CLOSED)
 
 // This event is created when a download file is detached.
 EVENT_TYPE(DOWNLOAD_FILE_DETACHED)
@@ -2417,14 +2674,12 @@ EVENT_TYPE(SIMPLE_CACHE_ENTRY_CREATE_BEGIN)
 // }
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_CREATE_END)
 
-// This event is created when ReadEntry is called.
+// This event is created when ReadData is called.
 // It contains the following parameters:
 //   {
 //     "index": <Index being read/written>,
 //     "offset": <Offset being read/written>,
 //     "buf_len": <Length of buffer being read to/written from>,
-//     "truncate": <If present for a write, the truncate flag is set to true.
-//                  Not present in reads or writes where it is false>,
 //   }
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_READ_CALL)
 
@@ -2435,12 +2690,10 @@ EVENT_TYPE(SIMPLE_CACHE_ENTRY_READ_CALL)
 //     "index": <Index being read/written>,
 //     "offset": <Offset being read/written>,
 //     "buf_len": <Length of buffer being read to/written from>,
-//     "truncate": <If present for a write, the truncate flag is set to true.
-//                  Not present in reads or writes where it is false>,
 //   }
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_READ_BEGIN)
 
-// This event is created when the Simple Cache finishes a ReadEntry call.
+// This event is created when the Simple Cache finishes a ReadData call.
 // It contains the following parameters:
 //   {
 //     "bytes_copied": <Number of bytes copied.  Not present on error>,
@@ -2461,7 +2714,7 @@ EVENT_TYPE(SIMPLE_CACHE_ENTRY_CHECKSUM_BEGIN)
 // }
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_CHECKSUM_END)
 
-// This event is created when WriteEntry is called.
+// This event is created when WriteData is called.
 // It contains the following parameters:
 //   {
 //     "index": <Index being read/written>,
@@ -2493,13 +2746,67 @@ EVENT_TYPE(SIMPLE_CACHE_ENTRY_WRITE_OPTIMISTIC)
 //   }
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_WRITE_BEGIN)
 
-// This event is created when the Simple Cache finishes a WriteEntry call.
+// This event is created when the Simple Cache finishes a WriteData call.
 // It contains the following parameters:
 //   {
 //     "bytes_copied": <Number of bytes copied.  Not present on error>,
 //     "net_error": <Network error code.  Only present on error>,
 //   }
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_WRITE_END)
+
+// This event is created when ReadSparseData is called.
+// It contains the following parameters:
+//   {
+//     "offset": <Offset being read/written>,
+//     "buf_len": <Length of buffer being read to/written from>,
+//     "truncate": <If present for a write, the truncate flag is set to true.
+//                  Not present in reads or writes where it is false>,
+//   }
+EVENT_TYPE(SIMPLE_CACHE_ENTRY_READ_SPARSE_CALL)
+
+// This event is created when the Simple Cache actually begins reading sparse
+// data from the cache entry.
+// It contains the following parameters:
+//   {
+//     "offset": <Offset being read/written>,
+//     "buf_len": <Length of buffer being read to/written from>,
+//     "truncate": <If present for a write, the truncate flag is set to true.
+//                  Not present in reads or writes where it is false>,
+//   }
+EVENT_TYPE(SIMPLE_CACHE_ENTRY_READ_SPARSE_BEGIN)
+
+// This event is created when the Simple Cache finishes a ReadSparseData call.
+// It contains the following parameters:
+//   {
+//     "bytes_copied": <Number of bytes copied.  Not present on error>,
+//     "net_error": <Network error code.  Only present on error>,
+//   }
+EVENT_TYPE(SIMPLE_CACHE_ENTRY_READ_SPARSE_END)
+
+// This event is created when WriteSparseData is called.
+// It contains the following parameters:
+//   {
+//     "offset": <Offset being read/written>,
+//     "buf_len": <Length of buffer being read to/written from>,
+//   }
+EVENT_TYPE(SIMPLE_CACHE_ENTRY_WRITE_SPARSE_CALL)
+
+// This event is created when the Simple Cache actually begins writing sparse
+// data to the cache entry.
+// It contains the following parameters:
+//   {
+//     "offset": <Offset being read/written>,
+//     "buf_len": <Length of buffer being read to/written from>,
+//   }
+EVENT_TYPE(SIMPLE_CACHE_ENTRY_WRITE_SPARSE_BEGIN)
+
+// This event is created when the Simple Cache finishes a WriteSparseData call.
+// It contains the following parameters:
+//   {
+//     "bytes_copied": <Number of bytes copied.  Not present on error>,
+//     "net_error": <Network error code.  Only present on error>,
+//   }
+EVENT_TYPE(SIMPLE_CACHE_ENTRY_WRITE_SPARSE_END)
 
 // This event is created when DoomEntry is called.  It contains no parameters.
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_DOOM_CALL)
@@ -2677,3 +2984,41 @@ EVENT_TYPE(SAFE_BROWSING_CHECKING_URL)
 //                       "resumed_redirect", "unchecked_redirect">
 //  }
 EVENT_TYPE(SAFE_BROWSING_DEFERRED)
+
+// The start/end of a Safe Browsing ping being sent.
+//
+// The BEGIN phase contains the following parameters:
+//  {
+//    "url": <The URL the ping is going to, which identifies the type of ping
+//            that is being sent (eg: ThreatReport, SafeBrowsingHit)>
+//    "data": <The base64 encoding of the payload sent with the ping>
+//
+// The END phase contains the following parameters:
+//  {
+//    "status": <The integer status of the report transmission. Corresponds to
+//               URLRequestStatus::Status>
+//    "error": <The error code returned by the server, 0 indicating success>
+EVENT_TYPE(SAFE_BROWSING_PING)
+
+// Marks start of UploadDataStream that is logged on initialization.
+// The END phase contains the following parameters:
+// {
+//   "net_error": <Result of the initialization step>,
+//   "total_size": <Shows total content length>,
+//   "is_chunked": <Shows whether data is chunked or not>
+// }
+EVENT_TYPE(UPLOAD_DATA_STREAM_INIT)
+
+// The start/end of UploadDataStream::Read method.
+//
+// The BEGIN phase contains the following information:
+// {
+//   "current_position": <Shows current read position>,
+// }
+//
+// The END phase contains the following information:
+// {
+//   "result": <Result of reading. Result > 0 is bytes read. Result == 0 means
+//              the end of file. Result < 0 means an error.>
+// }
+EVENT_TYPE(UPLOAD_DATA_STREAM_READ)

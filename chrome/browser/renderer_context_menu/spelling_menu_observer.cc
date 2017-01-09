@@ -4,27 +4,31 @@
 
 #include "chrome/browser/renderer_context_menu/spelling_menu_observer.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/i18n/case_conversion.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/renderer_context_menu/spelling_bubble_model.h"
-#include "chrome/browser/spellchecker/feedback_sender.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
-#include "chrome/browser/spellchecker/spellcheck_host_metrics.h"
-#include "chrome/browser/spellchecker/spellcheck_platform.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
-#include "chrome/browser/spellchecker/spelling_service_client.h"
 #include "chrome/browser/ui/confirm_bubble.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/spellcheck_common.h"
-#include "chrome/common/spellcheck_result.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
+#include "components/spellcheck/browser/feedback_sender.h"
+#include "components/spellcheck/browser/pref_names.h"
+#include "components/spellcheck/browser/spellcheck_host_metrics.h"
+#include "components/spellcheck/browser/spellcheck_platform.h"
+#include "components/spellcheck/browser/spelling_service_client.h"
+#include "components/spellcheck/common/spellcheck_common.h"
+#include "components/spellcheck/common/spellcheck_result.h"
+#include "components/spellcheck/spellcheck_build_features.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -46,8 +50,8 @@ SpellingMenuObserver::SpellingMenuObserver(RenderViewContextMenuProxy* proxy)
       client_(new SpellingServiceClient) {
   if (proxy_ && proxy_->GetBrowserContext()) {
     Profile* profile = Profile::FromBrowserContext(proxy_->GetBrowserContext());
-    integrate_spelling_service_.Init(prefs::kSpellCheckUseSpellingService,
-                                     profile->GetPrefs());
+    integrate_spelling_service_.Init(
+        spellcheck::prefs::kSpellCheckUseSpellingService, profile->GetPrefs());
   }
 }
 
@@ -156,6 +160,7 @@ void SpellingMenuObserver::InitMenu(const content::ContextMenuParams& params) {
         SpellcheckServiceFactory::GetForContext(browser_context);
     if (spellcheck_service && spellcheck_service->GetMetrics())
       spellcheck_service->GetMetrics()->RecordSuggestionStats(1);
+    proxy_->AddSeparator();
   }
 
   // If word is misspelled, give option for "Add to dictionary" and, if
@@ -163,11 +168,7 @@ void SpellingMenuObserver::InitMenu(const content::ContextMenuParams& params) {
   // suggestions".
   proxy_->AddMenuItem(IDC_SPELLCHECK_ADD_TO_DICTIONARY,
       l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_ADD_TO_DICTIONARY));
-
-  proxy_->AddCheckItem(
-      IDC_CONTENT_CONTEXT_SPELLING_TOGGLE,
-      l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_SPELLING_ASK_GOOGLE));
-
+  proxy_->AddSpellCheckServiceItem(integrate_spelling_service_.GetValue());
   proxy_->AddSeparator();
 }
 
@@ -271,7 +272,7 @@ void SpellingMenuObserver::ExecuteCommand(int command_id) {
         spellcheck->GetFeedbackSender()->AddedToDictionary(misspelling_hash_);
       }
     }
-#if defined(USE_BROWSER_SPELLCHECKER)
+#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
     spellcheck_platform::AddWord(misspelled_word_);
 #endif
   }
@@ -288,16 +289,16 @@ void SpellingMenuObserver::ExecuteCommand(int command_id) {
     if (!integrate_spelling_service_.GetValue()) {
       content::RenderViewHost* rvh = proxy_->GetRenderViewHost();
       gfx::Rect rect = rvh->GetWidget()->GetView()->GetViewBounds();
-      scoped_ptr<SpellingBubbleModel> model(
+      std::unique_ptr<SpellingBubbleModel> model(
           new SpellingBubbleModel(profile, proxy_->GetWebContents()));
       chrome::ShowConfirmBubble(
           proxy_->GetWebContents()->GetTopLevelNativeWindow(),
           rvh->GetWidget()->GetView()->GetNativeView(),
-          gfx::Point(rect.CenterPoint().x(), rect.y()), model.Pass());
+          gfx::Point(rect.CenterPoint().x(), rect.y()), std::move(model));
     } else {
       if (profile) {
-        profile->GetPrefs()->SetBoolean(prefs::kSpellCheckUseSpellingService,
-                                        false);
+        profile->GetPrefs()->SetBoolean(
+            spellcheck::prefs::kSpellCheckUseSpellingService, false);
       }
     }
   }

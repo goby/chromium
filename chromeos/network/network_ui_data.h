@@ -5,10 +5,9 @@
 #ifndef CHROMEOS_NETWORK_NETWORK_UI_DATA_H_
 #define CHROMEOS_NETWORK_NETWORK_UI_DATA_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "chromeos/chromeos_export.h"
 #include "components/onc/onc_constants.h"
 
@@ -39,7 +38,7 @@ class CHROMEOS_EXPORT NetworkUIData {
   const base::DictionaryValue* user_settings() const {
     return user_settings_.get();
   }
-  void set_user_settings(scoped_ptr<base::DictionaryValue> dict);
+  void set_user_settings(std::unique_ptr<base::DictionaryValue> dict);
 
   // Returns |onc_source_| as a string, one of kONCSource*.
   std::string GetONCSourceAsString() const;
@@ -50,7 +49,8 @@ class CHROMEOS_EXPORT NetworkUIData {
 
   // Creates a NetworkUIData object from |onc_source|. This function is used to
   // create the "UIData" property of the Shill configuration.
-  static scoped_ptr<NetworkUIData> CreateFromONC(::onc::ONCSource onc_source);
+  static std::unique_ptr<NetworkUIData> CreateFromONC(
+      ::onc::ONCSource onc_source);
 
   // Key for storing source of the ONC network.
   static const char kKeyONCSource[];
@@ -65,7 +65,7 @@ class CHROMEOS_EXPORT NetworkUIData {
 
  private:
   ::onc::ONCSource onc_source_;
-  scoped_ptr<base::DictionaryValue> user_settings_;
+  std::unique_ptr<base::DictionaryValue> user_settings_;
 };
 
 }  // namespace chromeos

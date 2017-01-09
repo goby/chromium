@@ -39,9 +39,24 @@ class DataUseUserData : public base::SupportsUserData::Data {
     AUTOFILL,
     POLICY,
     SPELL_CHECKER,
+    NTP_SNIPPETS,
+    SAFE_BROWSING,
+    DATA_REDUCTION_PROXY,
+    PRECACHE,
+    NTP_TILES,
+    FEEDBACK_UPLOADER,
+    TRACING_UPLOADER,
+    DOM_DISTILLER,
+    CLOUD_PRINT,
+    SEARCH_PROVIDER_LOGOS,
+    UPDATE_CLIENT,
   };
 
-  explicit DataUseUserData(ServiceName service_name);
+  // The state of the application. Only available on Android and on other
+  // platforms it is always FOREGROUND.
+  enum AppState { UNKNOWN, BACKGROUND, FOREGROUND };
+
+  DataUseUserData(ServiceName service_name, AppState app_state);
   ~DataUseUserData() override;
 
   // Helper function to create DataUseUserData. The caller takes the ownership
@@ -53,17 +68,24 @@ class DataUseUserData : public base::SupportsUserData::Data {
   static std::string GetServiceNameAsString(ServiceName service);
 
   // Services should use this function to attach their |service_name| to the
-  // URLFethcer serving them.
+  // URLFetcher serving them.
   static void AttachToFetcher(net::URLFetcher* fetcher,
                               ServiceName service_name);
 
   ServiceName service_name() const { return service_name_; }
+
+  AppState app_state() const { return app_state_; }
+
+  void set_app_state(AppState app_state) { app_state_ = app_state; }
 
   // The key for retrieving back this type of user data.
   static const void* const kUserDataKey;
 
  private:
   const ServiceName service_name_;
+
+  // App state when network access was performed for the request previously.
+  AppState app_state_;
 
   DISALLOW_COPY_AND_ASSIGN(DataUseUserData);
 };

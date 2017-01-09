@@ -4,7 +4,7 @@
 
 package org.chromium.net.urlconnection;
 
-import org.chromium.net.CronetEngine;
+import org.chromium.net.impl.CronetEngineBase;
 
 import java.io.IOException;
 import java.net.Proxy;
@@ -23,9 +23,9 @@ import java.net.URLStreamHandler;
  * listed {@link CronetURLStreamHandlerFactory here}.
  */
 class CronetHttpURLStreamHandler extends URLStreamHandler {
-    private final CronetEngine mCronetEngine;
+    private final CronetEngineBase mCronetEngine;
 
-    public CronetHttpURLStreamHandler(CronetEngine cronetEngine) {
+    public CronetHttpURLStreamHandler(CronetEngineBase cronetEngine) {
         mCronetEngine = cronetEngine;
     }
 
@@ -44,7 +44,7 @@ class CronetHttpURLStreamHandler extends URLStreamHandler {
      * @return an {@link java.net.HttpURLConnection} instance implemented by Cronet.
      */
     @Override
-    public URLConnection openConnection(URL url, Proxy proxy) {
+    public URLConnection openConnection(URL url, Proxy proxy) throws IOException {
         return mCronetEngine.openConnection(url, proxy);
     }
 }

@@ -5,6 +5,7 @@
 #include "ui/keyboard/content/keyboard_ui_content.h"
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_iterator.h"
@@ -56,10 +57,12 @@ class KeyboardContentsDelegate : public content::WebContentsDelegate,
 
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
-      int route_id,
-      int main_frame_route_id,
-      int main_frame_widget_route_id,
+      content::SiteInstance* source_site_instance,
+      int32_t route_id,
+      int32_t main_frame_route_id,
+      int32_t main_frame_widget_route_id,
       WindowContainerType window_container_type,
+      const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
       const std::string& partition_id,
@@ -160,18 +163,19 @@ void KeyboardUIContent::LoadSystemKeyboard() {
 }
 
 void KeyboardUIContent::UpdateInsetsForWindow(aura::Window* window) {
-  aura::Window* keyboard_window = GetKeyboardWindow();
+  aura::Window* keyboard_container =
+      keyboard_controller()->GetContainerWindow();
   if (!ShouldWindowOverscroll(window))
     return;
 
-  scoped_ptr<content::RenderWidgetHostIterator> widgets(
+  std::unique_ptr<content::RenderWidgetHostIterator> widgets(
       content::RenderWidgetHost::GetRenderWidgetHosts());
   while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
     content::RenderWidgetHostView* view = widget->GetView();
     if (view && window->Contains(view->GetNativeView())) {
       gfx::Rect window_bounds = view->GetNativeView()->GetBoundsInScreen();
       gfx::Rect intersect =
-          gfx::IntersectRects(window_bounds, keyboard_window->bounds());
+          gfx::IntersectRects(window_bounds, keyboard_container->bounds());
       int overlap = ShouldEnableInsets(window) ? intersect.height() : 0;
       if (overlap > 0 && overlap < window_bounds.height())
         view->SetInsets(gfx::Insets(0, 0, overlap, 0));
@@ -199,7 +203,7 @@ aura::Window* KeyboardUIContent::GetKeyboardWindow() {
 }
 
 bool KeyboardUIContent::HasKeyboardWindow() const {
-  return keyboard_contents_;
+  return !!keyboard_contents_;
 }
 
 bool KeyboardUIContent::ShouldWindowOverscroll(aura::Window* window) const {
@@ -228,7 +232,7 @@ void KeyboardUIContent::InitInsets(const gfx::Rect& new_bounds) {
   // display.
   // TODO(kevers): Add EnvObserver to properly initialize insets if a
   // window is created while the keyboard is visible.
-  scoped_ptr<content::RenderWidgetHostIterator> widgets(
+  std::unique_ptr<content::RenderWidgetHostIterator> widgets(
       content::RenderWidgetHost::GetRenderWidgetHosts());
   while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
     content::RenderWidgetHostView* view = widget->GetView();
@@ -236,6 +240,12 @@ void KeyboardUIContent::InitInsets(const gfx::Rect& new_bounds) {
     // the render process crashed.
     if (view) {
       aura::Window* window = view->GetNativeView();
+      // Added while we determine if RenderWidgetHostViewChildFrame can be
+      // changed to always return a non-null value: https://crbug.com/644726 .
+      // If we cannot guarantee a non-null value, then this may need to stay.
+      if (!window)
+        continue;
+
       if (ShouldWindowOverscroll(window)) {
         gfx::Rect window_bounds = window->GetBoundsInScreen();
         gfx::Rect intersect = gfx::IntersectRects(window_bounds,
@@ -253,7 +263,7 @@ void KeyboardUIContent::InitInsets(const gfx::Rect& new_bounds) {
 
 void KeyboardUIContent::ResetInsets() {
   const gfx::Insets insets;
-  scoped_ptr<content::RenderWidgetHostIterator> widgets(
+  std::unique_ptr<content::RenderWidgetHostIterator> widgets(
       content::RenderWidgetHost::GetRenderWidgetHosts());
   while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
     content::RenderWidgetHostView* view = widget->GetView();
@@ -294,12 +304,9 @@ const aura::Window* KeyboardUIContent::GetKeyboardRootWindow() const {
 
 void KeyboardUIContent::LoadContents(const GURL& url) {
   if (keyboard_contents_) {
-    content::OpenURLParams params(
-        url,
-        content::Referrer(),
-        SINGLETON_TAB,
-        ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
-        false);
+    content::OpenURLParams params(url, content::Referrer(),
+                                  WindowOpenDisposition::SINGLETON_TAB,
+                                  ui::PAGE_TRANSITION_AUTO_TOPLEVEL, false);
     keyboard_contents_->OpenURL(params);
   }
 }

@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_PROTOCOL_INPUT_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_PROTOCOL_INPUT_HANDLER_H_
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/devtools/protocol/devtools_protocol_dispatcher.h"
 #include "content/browser/renderer_host/input/synthetic_gesture.h"
@@ -13,10 +14,6 @@
 
 namespace cc {
 class CompositorFrameMetadata;
-}
-
-namespace gfx {
-class Point;
 }
 
 namespace content {
@@ -34,7 +31,7 @@ class InputHandler {
   virtual ~InputHandler();
 
   void SetRenderWidgetHost(RenderWidgetHostImpl* host);
-  void SetClient(scoped_ptr<Client> client);
+  void SetClient(std::unique_ptr<Client> client);
   void OnSwapCompositorFrame(const cc::CompositorFrameMetadata& frame_metadata);
 
   Response DispatchKeyEvent(const std::string& type,
@@ -97,6 +94,12 @@ class InputHandler {
                                 const int* tap_count,
                                 const std::string* gesture_source_type);
 
+  Response DispatchTouchEvent(
+      const std::string& type,
+      const std::vector<std::unique_ptr<base::DictionaryValue>>& touch_points,
+      const int* modifiers,
+      const double* timestamp);
+
  private:
   void SendSynthesizePinchGestureResponse(DevToolsCommandId command_id,
                                           SyntheticGesture::Result result);
@@ -123,7 +126,7 @@ class InputHandler {
                         SyntheticGesture::Result result);
 
   RenderWidgetHostImpl* host_;
-  scoped_ptr<Client> client_;
+  std::unique_ptr<Client> client_;
   float page_scale_factor_;
   gfx::SizeF scrollable_viewport_size_;
   base::WeakPtrFactory<InputHandler> weak_factory_;

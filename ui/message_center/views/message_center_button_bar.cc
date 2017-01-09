@@ -4,6 +4,8 @@
 
 #include "ui/message_center/views/message_center_button_bar.h"
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
@@ -74,8 +76,7 @@ NotificationCenterButton::NotificationCenterButton(
   if (text_id)
     SetTooltipText(resource_bundle.GetLocalizedString(text_id));
 
-  SetFocusable(true);
-  set_request_focus_on_press(false);
+  SetFocusForPlatform();
 
   SetFocusPainter(views::Painter::CreateSolidFocusPainter(
       kFocusBorderColor,
@@ -117,7 +118,7 @@ MessageCenterButtonBar::MessageCenterButtonBar(
   title_arrow_->set_size(gfx::Size(kButtonSize, kButtonSize));
 
   // Keyboardists can use the gear button to switch modes.
-  title_arrow_->SetFocusable(false);
+  title_arrow_->SetFocusBehavior(FocusBehavior::NEVER);
   AddChildView(title_arrow_);
 
   notification_label_ = new views::Label(title);
@@ -253,9 +254,8 @@ void MessageCenterButtonBar::ViewVisibilityChanged() {
 
 MessageCenterButtonBar::~MessageCenterButtonBar() {}
 
-void MessageCenterButtonBar::SetAllButtonsEnabled(bool enabled) {
-  if (close_all_button_)
-    close_all_button_->SetEnabled(enabled);
+void MessageCenterButtonBar::SetSettingsAndQuietModeButtonsEnabled(
+    bool enabled) {
   settings_button_->SetEnabled(enabled);
   quiet_mode_button_->SetEnabled(enabled);
 }
@@ -265,11 +265,19 @@ void MessageCenterButtonBar::SetCloseAllButtonEnabled(bool enabled) {
     close_all_button_->SetEnabled(enabled);
 }
 
+views::Button* MessageCenterButtonBar::GetCloseAllButtonForTest() const {
+  return close_all_button_;
+}
+
 void MessageCenterButtonBar::SetBackArrowVisible(bool visible) {
   if (title_arrow_)
     title_arrow_->SetVisible(visible);
   ViewVisibilityChanged();
   Layout();
+}
+
+void MessageCenterButtonBar::SetTitle(const base::string16& title) {
+  notification_label_->SetText(title);
 }
 
 void MessageCenterButtonBar::ChildVisibilityChanged(views::View* child) {
@@ -279,7 +287,7 @@ void MessageCenterButtonBar::ChildVisibilityChanged(views::View* child) {
 void MessageCenterButtonBar::ButtonPressed(views::Button* sender,
                                            const ui::Event& event) {
   if (sender == close_all_button_) {
-    message_center_view()->ClearAllNotifications();
+    message_center_view()->ClearAllClosableNotifications();
   } else if (sender == settings_button_ || sender == title_arrow_) {
     MessageCenterView* center_view = message_center_view();
     center_view->SetSettingsVisible(!center_view->settings_visible());

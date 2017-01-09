@@ -15,6 +15,7 @@ import mock  # pylint: disable=import-error
 
 
 class TestOilpanGCTimesPage(page_module.Page):
+
   def __init__(self, page_set):
     super(TestOilpanGCTimesPage, self).__init__(
         'file://blank.html', page_set, page_set.base_dir)
@@ -25,6 +26,7 @@ class TestOilpanGCTimesPage(page_module.Page):
 
 
 class OilpanGCTimesTestData(object):
+
   def __init__(self, thread_name):
     self._model = model.TimelineModel()
     self._renderer_process = self._model.GetOrCreateProcess(1)
@@ -65,6 +67,7 @@ class OilpanGCTimesTestData(object):
   def ClearResults(self):
     self._results = page_test_results.PageTestResults()
 
+
 class OilpanGCTimesTest(page_test_test_case.PageTestTestCase):
   """Smoke test for Oilpan GC pause time measurements.
 
@@ -72,7 +75,7 @@ class OilpanGCTimesTest(page_test_test_case.PageTestTestCase):
      that all metrics were added to the results.  The test is purely functional,
      i.e. it only checks if the metrics are present and non-zero.
   """
-  _KEY_MARK = 'Heap::collectGarbage'
+  _KEY_MARK = 'BlinkGCMarking'
   _KEY_LAZY_SWEEP = 'ThreadHeap::lazySweepPages'
   _KEY_COMPLETE_SWEEP = 'ThreadState::completeSweep'
   _KEY_COALESCE = 'ThreadHeap::coalesce'

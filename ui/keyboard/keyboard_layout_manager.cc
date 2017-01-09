@@ -19,7 +19,11 @@ void KeyboardLayoutManager::OnWindowResized() {
     // desired bounds before changing the bounds of the virtual keyboard window.
     gfx::Rect container_bounds = controller_->GetContainerWindow()->bounds();
     // Always align container window and keyboard window.
-    SetChildBoundsDirect(keyboard_, gfx::Rect(container_bounds.size()));
+    if (controller_->keyboard_mode() == FULL_WIDTH) {
+      SetChildBounds(keyboard_, gfx::Rect(container_bounds.size()));
+    } else {
+      SetChildBoundsDirect(keyboard_, gfx::Rect(container_bounds.size()));
+    }
   }
 }
 
@@ -42,7 +46,6 @@ void KeyboardLayoutManager::SetChildBounds(aura::Window* child,
   // window) should change the container window first. Then the child window is
   // resized and covers the container window. Note the child's bound is only set
   // in OnWindowResized.
-  gfx::Rect old_bounds = controller_->GetContainerWindow()->bounds();
   gfx::Rect new_bounds = requested_bounds;
   if (controller_->keyboard_mode() == FULL_WIDTH) {
     const gfx::Rect& window_bounds =
@@ -57,9 +60,12 @@ void KeyboardLayoutManager::SetChildBounds(aura::Window* child,
   // Keyboard bounds should only be reset when it actually changes. Otherwise
   // it interrupts the initial animation of showing the keyboard. Described in
   // crbug.com/356753.
-  if (new_bounds == old_bounds) {
+  gfx::Rect old_bounds = keyboard_->GetTargetBounds();
+  aura::Window::ConvertRectToTarget(keyboard_,
+                                    keyboard_->GetRootWindow(),
+                                    &old_bounds);
+  if (new_bounds == old_bounds)
     return;
-  }
 
   ui::LayerAnimator* animator =
       controller_->GetContainerWindow()->layer()->GetAnimator();
@@ -70,21 +76,21 @@ void KeyboardLayoutManager::SetChildBounds(aura::Window* child,
   controller_->GetContainerWindow()->SetBounds(new_bounds);
   SetChildBoundsDirect(keyboard_, gfx::Rect(new_bounds.size()));
 
-  if (controller_->keyboard_mode() == FULL_WIDTH) {
-    if (old_bounds.height() == 0 && child->bounds().height() != 0 &&
-        controller_->show_on_resize()) {
-      // The window height is set to 0 initially or before switch to an IME in a
-      // different extension. Virtual keyboard window may wait for this bounds
-      // change to correctly animate in.
-      controller_->ShowKeyboard(false);
-    } else {
+  if (old_bounds.height() == 0 && child->bounds().height() != 0 &&
+      controller_->show_on_resize()) {
+    // The window height is set to 0 initially or before switch to an IME in a
+    // different extension. Virtual keyboard window may wait for this bounds
+    // change to correctly animate in.
+    controller_->ShowKeyboard(controller_->keyboard_locked());
+  } else {
+    if (controller_->keyboard_mode() == FULL_WIDTH) {
       // We need to send out this notification only if keyboard is visible since
       // keyboard window is resized even if keyboard is hidden.
       if (controller_->keyboard_visible())
         controller_->NotifyKeyboardBoundsChanging(requested_bounds);
+    } else if (controller_->keyboard_mode() == FLOATING) {
+      controller_->NotifyKeyboardBoundsChanging(gfx::Rect());
     }
-  } else if (controller_->keyboard_mode() == FLOATING) {
-    controller_->NotifyKeyboardBoundsChanging(gfx::Rect());
   }
 }
 

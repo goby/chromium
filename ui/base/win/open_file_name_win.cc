@@ -6,66 +6,9 @@
 
 #include "base/files/file_path.h"
 #include "base/strings/string_util.h"
-#include "base/win/windows_version.h"
 
 namespace ui {
 namespace win {
-
-namespace {
-
-// Ensures that the Save As dialog is on-screen.
-UINT_PTR CALLBACK SaveAsDialogHook(HWND dialog, UINT message,
-                                   WPARAM wparam, LPARAM lparam) {
-  static const UINT kPrivateMessage = 0x2F3F;
-  switch (message) {
-    case WM_INITDIALOG: {
-      // Do nothing here. Just post a message to defer actual processing.
-      ::PostMessage(dialog, kPrivateMessage, 0, 0);
-      return TRUE;
-    }
-    case kPrivateMessage: {
-      // The dialog box is the parent of the current handle.
-      HWND real_dialog = ::GetParent(dialog);
-
-      // Retrieve the final size.
-      RECT dialog_rect;
-      ::GetWindowRect(real_dialog, &dialog_rect);
-
-      // Verify that the upper left corner is visible.
-      POINT point = { dialog_rect.left, dialog_rect.top };
-      HMONITOR monitor1 = ::MonitorFromPoint(point, MONITOR_DEFAULTTONULL);
-      point.x = dialog_rect.right;
-      point.y = dialog_rect.bottom;
-
-      // Verify that the lower right corner is visible.
-      HMONITOR monitor2 = ::MonitorFromPoint(point, MONITOR_DEFAULTTONULL);
-      if (monitor1 && monitor2)
-        return 0;
-
-      // Some part of the dialog box is not visible, fix it by moving is to the
-      // client rect position of the browser window.
-      HWND parent_window = ::GetParent(real_dialog);
-      if (!parent_window)
-        return 0;
-      WINDOWINFO parent_info;
-      parent_info.cbSize = sizeof(WINDOWINFO);
-      ::GetWindowInfo(parent_window, &parent_info);
-      ::SetWindowPos(
-          real_dialog,
-          NULL,
-          parent_info.rcClient.left,
-          parent_info.rcClient.top,
-          0,
-          0,  // Size.
-          SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_NOZORDER);
-
-      return 0;
-    }
-  }
-  return 0;
-}
-
-}  // namespace
 
 OpenFileName::OpenFileName(HWND parent_window, DWORD flags) {
   ::ZeroMemory(&openfilename_, sizeof(openfilename_));
@@ -85,15 +28,15 @@ OpenFileName::~OpenFileName() {
 }
 
 void OpenFileName::SetFilters(
-    const std::vector<base::Tuple<base::string16, base::string16>>& filters) {
+    const std::vector<std::tuple<base::string16, base::string16>>& filters) {
   openfilename_.lpstrFilter = NULL;
   filter_buffer_.clear();
   if (filters.empty())
     return;
   for (const auto& filter : filters) {
-    filter_buffer_.append(base::get<0>(filter));
+    filter_buffer_.append(std::get<0>(filter));
     filter_buffer_.push_back(0);
-    filter_buffer_.append(base::get<1>(filter));
+    filter_buffer_.append(std::get<1>(filter));
     filter_buffer_.push_back(0);
   }
   filter_buffer_.push_back(0);
@@ -124,15 +67,6 @@ void OpenFileName::SetInitialSelection(const base::FilePath& initial_directory,
   base::wcslcpy(filename_buffer_,
                 initial_filename.value().c_str(),
                 arraysize(filename_buffer_));
-}
-
-void OpenFileName::MaybeInstallWindowPositionHookForSaveAsOnXP() {
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA)
-    return;
-
-  openfilename_.Flags |= OFN_ENABLEHOOK;
-  DCHECK(!openfilename_.lpfnHook);
-  openfilename_.lpfnHook = &SaveAsDialogHook;
 }
 
 base::FilePath OpenFileName::GetSingleResult() {
@@ -202,9 +136,9 @@ void OpenFileName::SetResult(const base::FilePath& directory,
 }
 
 // static
-std::vector<base::Tuple<base::string16, base::string16>>
+std::vector<std::tuple<base::string16, base::string16>>
 OpenFileName::GetFilters(const OPENFILENAME* openfilename) {
-  std::vector<base::Tuple<base::string16, base::string16>> filters;
+  std::vector<std::tuple<base::string16, base::string16>> filters;
 
   const base::char16* display_string = openfilename->lpstrFilter;
   if (!display_string)
@@ -219,7 +153,7 @@ OpenFileName::GetFilters(const OPENFILENAME* openfilename) {
     while (*pattern_end)
       ++pattern_end;
     filters.push_back(
-        base::MakeTuple(base::string16(display_string, display_string_end),
+        std::make_tuple(base::string16(display_string, display_string_end),
                   base::string16(pattern, pattern_end)));
     display_string = pattern_end + 1;
   }

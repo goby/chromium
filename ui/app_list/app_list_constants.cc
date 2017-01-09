@@ -4,6 +4,7 @@
 
 #include "ui/app_list/app_list_constants.h"
 
+#include "build/build_config.h"
 #include "ui/gfx/color_palette.h"
 
 namespace app_list {
@@ -81,7 +82,7 @@ const gfx::Tween::Type kFolderFadeInTweenType = gfx::Tween::EASE_IN_2;
 const gfx::Tween::Type kFolderFadeOutTweenType = gfx::Tween::FAST_OUT_LINEAR_IN;
 
 // Preferred number of columns and rows in apps grid.
-const int kPreferredCols = 4;
+const int kPreferredCols = 6;
 const int kPreferredRows = 4;
 const int kGridIconDimension = 48;
 
@@ -94,24 +95,20 @@ const int kTileIconSize = 48;
 
 const SkColor kIconColor = gfx::kChromeIconGrey;
 
-// Preferred number of columns and rows in the centered app list apps grid.
-const int kCenteredPreferredCols = 6;
-const int kCenteredPreferredRows = 3;
+// The number of apps shown in the start page app grid.
+const size_t kNumStartPageTiles = 9;
 
-// Preferred number of columns and rows in the experimental app list apps grid.
-const int kExperimentalPreferredCols = 6;
-const int kExperimentalPreferredRows = 4;
+// Maximum number of results to show in the launcher Search UI.
+const size_t kMaxSearchResults = 6;
 
 // Radius of the circle, in which if entered, show re-order preview.
 const int kReorderDroppingCircleRadius = 35;
 
-// The padding around the outside of the experimental app list apps grid
-// (sides).
-const int kExperimentalAppsGridPadding = 24;
+// The padding around the outside of the apps grid (sides).
+const int kAppsGridPadding = 24;
 
-// The padding around the outside of the experimental app list search box (top
-// and sides).
-const int kExperimentalSearchBoxPadding = 16;
+// The padding around the outside of the search box (top and sides).
+const int kSearchBoxPadding = 16;
 
 // Max items allowed in a folder.
 size_t kMaxFolderItems = 16;
@@ -121,7 +118,7 @@ size_t kMaxFolderItems = 16;
 const size_t kNumFolderTopItems = 4;
 
 // Maximum length of the folder name in chars.
-const size_t kMaxFolderNameChars = 40;
+const size_t kMaxFolderNameChars = 80;
 
 // Font style for app item labels.
 const ui::ResourceBundle::FontStyle kItemTextFontStyle =

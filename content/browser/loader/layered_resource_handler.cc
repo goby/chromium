@@ -4,16 +4,16 @@
 
 #include "content/browser/loader/layered_resource_handler.h"
 
+#include <utility>
+
 #include "base/logging.h"
 
 namespace content {
 
 LayeredResourceHandler::LayeredResourceHandler(
     net::URLRequest* request,
-    scoped_ptr<ResourceHandler> next_handler)
-    : ResourceHandler(request),
-      next_handler_(next_handler.Pass()) {
-}
+    std::unique_ptr<ResourceHandler> next_handler)
+    : ResourceHandler(request), next_handler_(std::move(next_handler)) {}
 
 LayeredResourceHandler::~LayeredResourceHandler() {
 }
@@ -49,12 +49,6 @@ bool LayeredResourceHandler::OnWillStart(const GURL& url,
   return next_handler_->OnWillStart(url, defer);
 }
 
-bool LayeredResourceHandler::OnBeforeNetworkStart(const GURL& url,
-                                                  bool* defer) {
-  DCHECK(next_handler_.get());
-  return next_handler_->OnBeforeNetworkStart(url, defer);
-}
-
 bool LayeredResourceHandler::OnWillRead(scoped_refptr<net::IOBuffer>* buf,
                                         int* buf_size,
                                         int min_size) {
@@ -69,10 +63,9 @@ bool LayeredResourceHandler::OnReadCompleted(int bytes_read, bool* defer) {
 
 void LayeredResourceHandler::OnResponseCompleted(
     const net::URLRequestStatus& status,
-    const std::string& security_info,
     bool* defer) {
   DCHECK(next_handler_.get());
-  next_handler_->OnResponseCompleted(status, security_info, defer);
+  next_handler_->OnResponseCompleted(status, defer);
 }
 
 void LayeredResourceHandler::OnDataDownloaded(int bytes_downloaded) {

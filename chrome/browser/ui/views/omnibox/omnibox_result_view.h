@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_OMNIBOX_OMNIBOX_RESULT_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_OMNIBOX_OMNIBOX_RESULT_VIEW_H_
 
+#include <stddef.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/suggestion_answer.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -17,7 +20,6 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/view.h"
 
-class LocationBarView;
 class OmniboxPopupContentsView;
 
 namespace gfx {
@@ -47,7 +49,6 @@ class OmniboxResultView : public views::View,
 
   OmniboxResultView(OmniboxPopupContentsView* model,
                     int model_index,
-                    LocationBarView* location_bar_view,
                     const gfx::FontList& font_list);
   ~OmniboxResultView() override;
 
@@ -67,7 +68,7 @@ class OmniboxResultView : public views::View,
 
   // views::View:
   gfx::Size GetPreferredSize() const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   ResultViewState GetState() const;
 
@@ -112,12 +113,12 @@ class OmniboxResultView : public views::View,
                      int max_width) const;
 
   // Creates a RenderText with given |text| and rendering defaults.
-  scoped_ptr<gfx::RenderText> CreateRenderText(
+  std::unique_ptr<gfx::RenderText> CreateRenderText(
       const base::string16& text) const;
 
   // Creates a RenderText with default rendering for the given |text|. The
   // |classifications| and |force_dim| are used to style the text.
-  scoped_ptr<gfx::RenderText> CreateClassifiedRenderText(
+  std::unique_ptr<gfx::RenderText> CreateClassifiedRenderText(
       const base::string16& text,
       const ACMatchClassifications& classifications,
       bool force_dim) const;
@@ -130,8 +131,6 @@ class OmniboxResultView : public views::View,
 
   gfx::ImageSkia GetIcon() const;
 
-  gfx::ImageSkia GetKeywordIcon() const;
-
   // Utility function for creating vector icons.
   gfx::ImageSkia GetVectorIcon(gfx::VectorIconId icon_id) const;
 
@@ -139,10 +138,6 @@ class OmniboxResultView : public views::View,
   // associated keyword match that has been animated so close to the start that
   // the keyword match will hide even the icon of the regular match.
   bool ShowOnlyKeywordMatch() const;
-
-  // Resets all RenderTexts for contents and description of the |match_| and its
-  // associated keyword match.
-  void ResetRenderTexts() const;
 
   // Initializes |contents_rendertext_| if it is NULL.
   void InitContentsRenderTextIfNecessary() const;
@@ -166,9 +161,9 @@ class OmniboxResultView : public views::View,
   int GetContentLineHeight() const;
 
   // Creates a RenderText with text and styling from the image line.
-  scoped_ptr<gfx::RenderText> CreateAnswerLine(
+  std::unique_ptr<gfx::RenderText> CreateAnswerLine(
       const SuggestionAnswer::ImageLine& line,
-      gfx::FontList font_list);
+      gfx::FontList font_list) const;
 
   // Adds |text| to |destination|.  |text_type| is an index into the
   // kTextStyles constant defined in the .cc file and is used to style the text,
@@ -176,36 +171,25 @@ class OmniboxResultView : public views::View,
   // TextStyle struct in the .cc file for more.
   void AppendAnswerText(gfx::RenderText* destination,
                         const base::string16& text,
-                        int text_type);
+                        int text_type) const;
 
   // AppendAnswerText will break up the |text| into bold and non-bold pieces
   // and pass each to this helper with the correct |is_bold| value.
   void AppendAnswerTextHelper(gfx::RenderText* destination,
                               const base::string16& text,
                               int text_type,
-                              bool is_bold);
-
-  // Returns the necessary margin, if any, at the start and end of the view.
-  // This allows us to keep the icon and text in the view aligned with the
-  // location bar contents. For a left-to-right language, StartMargin()
-  // and EndMargin() correspond to the left and right margins, respectively.
-  int StartMargin() const;
-  int EndMargin() const;
-
-  static int default_icon_size_;
+                              bool is_bold) const;
 
   // This row's model and model index.
   OmniboxPopupContentsView* model_;
   size_t model_index_;
-
-  LocationBarView* location_bar_view_;
 
   const gfx::FontList font_list_;
   int font_height_;
 
   // A context used for mirroring regions.
   class MirroringContext;
-  scoped_ptr<MirroringContext> mirroring_context_;
+  std::unique_ptr<MirroringContext> mirroring_context_;
 
   AutocompleteMatch match_;
 
@@ -213,20 +197,20 @@ class OmniboxResultView : public views::View,
   gfx::Rect icon_bounds_;
 
   gfx::Rect keyword_text_bounds_;
-  scoped_ptr<views::ImageView> keyword_icon_;
+  std::unique_ptr<views::ImageView> keyword_icon_;
 
-  scoped_ptr<gfx::SlideAnimation> animation_;
+  std::unique_ptr<gfx::SlideAnimation> animation_;
 
   // If the answer has an icon, cache the image.
   gfx::ImageSkia answer_image_;
 
   // We preserve these RenderTexts so that we won't recreate them on every call
   // to GetMatchContentsWidth() or OnPaint().
-  mutable scoped_ptr<gfx::RenderText> contents_rendertext_;
-  mutable scoped_ptr<gfx::RenderText> description_rendertext_;
-  mutable scoped_ptr<gfx::RenderText> separator_rendertext_;
-  mutable scoped_ptr<gfx::RenderText> keyword_contents_rendertext_;
-  mutable scoped_ptr<gfx::RenderText> keyword_description_rendertext_;
+  mutable std::unique_ptr<gfx::RenderText> contents_rendertext_;
+  mutable std::unique_ptr<gfx::RenderText> description_rendertext_;
+  mutable std::unique_ptr<gfx::RenderText> separator_rendertext_;
+  mutable std::unique_ptr<gfx::RenderText> keyword_contents_rendertext_;
+  mutable std::unique_ptr<gfx::RenderText> keyword_description_rendertext_;
 
   mutable int separator_width_;
 

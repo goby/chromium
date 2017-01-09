@@ -24,22 +24,15 @@ ServiceWorkerScriptCacheMap::ServiceWorkerScriptCacheMap(
 ServiceWorkerScriptCacheMap::~ServiceWorkerScriptCacheMap() {
 }
 
-int64 ServiceWorkerScriptCacheMap::LookupResourceId(const GURL& url) {
+int64_t ServiceWorkerScriptCacheMap::LookupResourceId(const GURL& url) {
   ResourceMap::const_iterator found = resource_map_.find(url);
   if (found == resource_map_.end())
     return kInvalidServiceWorkerResourceId;
   return found->second.resource_id;
 }
 
-int64 ServiceWorkerScriptCacheMap::LookupResourceSize(const GURL& url) {
-  ResourceMap::const_iterator found = resource_map_.find(url);
-  if (found == resource_map_.end())
-    return kInvalidServiceWorkerResourceId;
-  return found->second.size_bytes;
-}
-
-void ServiceWorkerScriptCacheMap::NotifyStartedCaching(
-    const GURL& url, int64 resource_id) {
+void ServiceWorkerScriptCacheMap::NotifyStartedCaching(const GURL& url,
+                                                       int64_t resource_id) {
   DCHECK_EQ(kInvalidServiceWorkerResourceId, LookupResourceId(url));
   DCHECK(owner_->status() == ServiceWorkerVersion::NEW ||
          owner_->status() == ServiceWorkerVersion::INSTALLING)
@@ -53,20 +46,21 @@ void ServiceWorkerScriptCacheMap::NotifyStartedCaching(
 
 void ServiceWorkerScriptCacheMap::NotifyFinishedCaching(
     const GURL& url,
-    int64 size_bytes,
-    const net::URLRequestStatus& status,
+    int64_t size_bytes,
+    net::Error net_error,
     const std::string& status_message) {
   DCHECK_NE(kInvalidServiceWorkerResourceId, LookupResourceId(url));
+  DCHECK_NE(net::ERR_IO_PENDING, net_error);
   DCHECK(owner_->status() == ServiceWorkerVersion::NEW ||
          owner_->status() == ServiceWorkerVersion::INSTALLING ||
          owner_->status() == ServiceWorkerVersion::REDUNDANT);
   if (!context_)
     return;  // Our storage has been wiped via DeleteAndStartOver.
-  if (!status.is_success()) {
+  if (net_error != net::OK) {
     context_->storage()->DoomUncommittedResource(LookupResourceId(url));
     resource_map_.erase(url);
     if (owner_->script_url() == url) {
-      main_script_status_ = status;
+      main_script_status_ = net::URLRequestStatus::FromError(net_error);
       main_script_status_message_ = status_message;
     }
   } else {
@@ -107,7 +101,7 @@ void ServiceWorkerScriptCacheMap::WriteMetadata(
   scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(data.size()));
   if (data.size())
     memmove(buffer->data(), &data[0], data.size());
-  scoped_ptr<ServiceWorkerResponseMetadataWriter> writer;
+  std::unique_ptr<ServiceWorkerResponseMetadataWriter> writer;
   writer = context_->storage()->CreateResponseMetadataWriter(
       found->second.resource_id);
   ServiceWorkerResponseMetadataWriter* raw_writer = writer.get();
@@ -124,7 +118,7 @@ void ServiceWorkerScriptCacheMap::ClearMetadata(
 }
 
 void ServiceWorkerScriptCacheMap::OnMetadataWritten(
-    scoped_ptr<ServiceWorkerResponseMetadataWriter> writer,
+    std::unique_ptr<ServiceWorkerResponseMetadataWriter> writer,
     const net::CompletionCallback& callback,
     int result) {
   callback.Run(result);

@@ -6,24 +6,18 @@
 #define CHROME_BROWSER_EXTENSIONS_API_PASSWORDS_PRIVATE_PASSWORDS_PRIVATE_DELEGATE_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list_threadsafe.h"
 #include "chrome/browser/ui/passwords/password_manager_presenter.h"
 #include "chrome/browser/ui/passwords/password_ui_view.h"
 #include "chrome/common/extensions/api/passwords_private.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/extension_function.h"
-
-class Profile;
-
-namespace base {
-class Value;
-}
 
 namespace content {
 class WebContents;
@@ -38,30 +32,22 @@ class PasswordsPrivateDelegate : public KeyedService {
  public:
   ~PasswordsPrivateDelegate() override {}
 
-  // An interface used to notify clients (observers) of this object that
-  // saved passwords, password exceptions, and plaintext passwords are ready to
-  // be consumed by the UI. Register an observer via
-  // PasswordsPrivateDelegate::AddObserver().
-  class Observer {
-   public:
-    virtual void OnSavedPasswordsListChanged(const std::vector<linked_ptr<
-        api::passwords_private::PasswordUiEntry>>& entries) {}
-    virtual void OnPasswordExceptionsListChanged(
-        const std::vector<std::string>& exceptions) {}
-    virtual void OnPlaintextPasswordFetched(
-        const std::string& origin_url,
-        const std::string& username,
-        const std::string& plaintext_password) {}
+  // Sends the saved passwords list to the event router.
+  virtual void SendSavedPasswordsList() = 0;
 
-   protected:
-    virtual ~Observer() {}
-  };
+  // Gets the saved passwords list.
+  using UiEntries = std::vector<api::passwords_private::PasswordUiEntry>;
+  using UiEntriesCallback = base::Callback<void(const UiEntries&)>;
+  virtual void GetSavedPasswordsList(const UiEntriesCallback& callback) = 0;
 
-  // Adds |observer| to be notified when password data changes.
-  virtual void AddObserver(Observer* observer) = 0;
+  // Sends the password exceptions list to the event router.
+  virtual void SendPasswordExceptionsList() = 0;
 
-  // Removes |observer| from the observer list.
-  virtual void RemoveObserver(Observer* observer) = 0;
+  // Gets the password exceptions list.
+  using ExceptionPairs = std::vector<api::passwords_private::ExceptionPair>;
+  using ExceptionPairsCallback = base::Callback<void(const ExceptionPairs&)>;
+  virtual void GetPasswordExceptionsList(
+      const ExceptionPairsCallback& callback) = 0;
 
   // Removes the saved password entry corresponding to |origin_url| and
   // |username|.

@@ -8,7 +8,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <xf86drm.h>
 #include <xf86drmMode.h>
+#include <utility>
 
 #include "ui/display/util/edid_parser.h"
 
@@ -16,9 +18,33 @@
 #define DRM_MODE_CONNECTOR_DSI 16
 #endif
 
+#if !defined(DRM_CAP_CURSOR_WIDTH)
+#define DRM_CAP_CURSOR_WIDTH 0x8
+#endif
+
+#if !defined(DRM_CAP_CURSOR_HEIGHT)
+#define DRM_CAP_CURSOR_HEIGHT 0x9
+#endif
+
+#if !defined(DRM_FORMAT_R8)
+// TODO(dshwang): after most linux and libdrm has this definition, remove it.
+#define DRM_FORMAT_R8 fourcc_code('R', '8', ' ', ' ')
+#endif
+#if !defined(DRM_FORMAT_GR88)
+// TODO(dshwang): after most linux and libdrm has this definition, remove it.
+#define DRM_FORMAT_GR88 fourcc_code('G', 'R', '8', '8')
+#endif
+#if !defined(DRM_FORMAT_YV12)
+// TODO(dcastagna): after libdrm has this definition, remove it.
+#define DRM_FORMAT_YV12 fourcc_code('Y', 'V', '1', '2')
+#endif
+
 namespace ui {
 
 namespace {
+
+static const size_t kDefaultCursorWidth = 64;
+static const size_t kDefaultCursorHeight = 64;
 
 bool IsCrtcInUse(uint32_t crtc,
                  const ScopedVector<HardwareDisplayControllerInfo>& displays) {
@@ -108,7 +134,7 @@ int GetDrmProperty(int fd,
       continue;
 
     if (name == tmp->name) {
-      *property = tmp.Pass();
+      *property = std::move(tmp);
       return i;
     }
   }
@@ -156,13 +182,40 @@ int ConnectorIndex(int device_index, int display_index) {
   return ((device_index << 4) + display_index) & 0xFF;
 }
 
+bool HasColorCorrectionMatrix(int fd, drmModeCrtc* crtc) {
+  ScopedDrmObjectPropertyPtr crtc_props(
+      drmModeObjectGetProperties(fd, crtc->crtc_id, DRM_MODE_OBJECT_CRTC));
+
+  for (uint32_t i = 0; i < crtc_props->count_props; ++i) {
+    ScopedDrmPropertyPtr property(drmModeGetProperty(fd, crtc_props->props[i]));
+    if (property && !strcmp(property->name, "CTM")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
+
+gfx::Size GetMaximumCursorSize(int fd) {
+  uint64_t width = 0, height = 0;
+  if (drmGetCap(fd, DRM_CAP_CURSOR_WIDTH, &width)) {
+    VPLOG(1) << "Unable to get cursor width capability";
+    return gfx::Size(kDefaultCursorWidth, kDefaultCursorHeight);
+  }
+  if (drmGetCap(fd, DRM_CAP_CURSOR_HEIGHT, &height)) {
+    VPLOG(1) << "Unable to get cursor height capability";
+    return gfx::Size(kDefaultCursorWidth, kDefaultCursorHeight);
+  }
+
+  return gfx::Size(width, height);
+}
 
 HardwareDisplayControllerInfo::HardwareDisplayControllerInfo(
     ScopedDrmConnectorPtr connector,
     ScopedDrmCrtcPtr crtc,
     size_t index)
-    : connector_(connector.Pass()), crtc_(crtc.Pass()), index_(index) {}
+    : connector_(std::move(connector)), crtc_(std::move(crtc)), index_(index) {}
 
 HardwareDisplayControllerInfo::~HardwareDisplayControllerInfo() {
 }
@@ -186,11 +239,11 @@ ScopedVector<HardwareDisplayControllerInfo> GetAvailableDisplayControllerInfos(
       continue;
 
     ScopedDrmCrtcPtr crtc(drmModeGetCrtc(fd, crtc_id));
-    displays.push_back(
-        new HardwareDisplayControllerInfo(connector.Pass(), crtc.Pass(), i));
+    displays.push_back(new HardwareDisplayControllerInfo(std::move(connector),
+                                                         std::move(crtc), i));
   }
 
-  return displays.Pass();
+  return displays;
 }
 
 bool SameMode(const drmModeModeInfo& lhs, const drmModeModeInfo& rhs) {
@@ -215,32 +268,37 @@ DisplayMode_Params CreateDisplayModeParams(const drmModeModeInfo& mode) {
 DisplaySnapshot_Params CreateDisplaySnapshotParams(
     HardwareDisplayControllerInfo* info,
     int fd,
+    const base::FilePath& sys_path,
     size_t device_index,
     const gfx::Point& origin) {
   DisplaySnapshot_Params params;
-  int64 connector_index = ConnectorIndex(device_index, info->index());
+  int64_t connector_index = ConnectorIndex(device_index, info->index());
   params.display_id = connector_index;
   params.origin = origin;
+  params.sys_path = sys_path;
   params.physical_size =
       gfx::Size(info->connector()->mmWidth, info->connector()->mmHeight);
   params.type = GetDisplayType(info->connector());
   params.is_aspect_preserving_scaling =
       IsAspectPreserving(fd, info->connector());
+  params.has_color_correction_matrix =
+      HasColorCorrectionMatrix(fd, info->crtc());
+  params.maximum_cursor_size = GetMaximumCursorSize(fd);
 
   ScopedDrmPropertyBlobPtr edid_blob(
       GetDrmPropertyBlob(fd, info->connector(), "EDID"));
 
   if (edid_blob) {
-    std::vector<uint8_t> edid(
+    params.edid.assign(
         static_cast<uint8_t*>(edid_blob->data),
         static_cast<uint8_t*>(edid_blob->data) + edid_blob->length);
 
-    GetDisplayIdFromEDID(edid, connector_index, &params.display_id,
-                         &params.product_id);
+    display::GetDisplayIdFromEDID(params.edid, connector_index,
+                                  &params.display_id, &params.product_id);
 
-    ParseOutputDeviceData(edid, nullptr, nullptr, &params.display_name, nullptr,
-                          nullptr);
-    ParseOutputOverscanFlag(edid, &params.has_overscan);
+    display::ParseOutputDeviceData(params.edid, nullptr, nullptr,
+                                   &params.display_name, nullptr, nullptr);
+    display::ParseOutputOverscanFlag(params.edid, &params.has_overscan);
   } else {
     VLOG(1) << "Failed to get EDID blob for connector "
             << info->connector()->connector_id;
@@ -273,12 +331,26 @@ DisplaySnapshot_Params CreateDisplaySnapshotParams(
 
 int GetFourCCFormatFromBufferFormat(gfx::BufferFormat format) {
   switch (format) {
+    case gfx::BufferFormat::R_8:
+      return DRM_FORMAT_R8;
+    case gfx::BufferFormat::RG_88:
+      return DRM_FORMAT_GR88;
+    case gfx::BufferFormat::RGBA_8888:
+      return DRM_FORMAT_ABGR8888;
+    case gfx::BufferFormat::RGBX_8888:
+      return DRM_FORMAT_XBGR8888;
     case gfx::BufferFormat::BGRA_8888:
       return DRM_FORMAT_ARGB8888;
     case gfx::BufferFormat::BGRX_8888:
       return DRM_FORMAT_XRGB8888;
+    case gfx::BufferFormat::BGR_565:
+      return DRM_FORMAT_RGB565;
     case gfx::BufferFormat::UYVY_422:
       return DRM_FORMAT_UYVY;
+    case gfx::BufferFormat::YVU_420:
+      return DRM_FORMAT_YV12;
+    case gfx::BufferFormat::YUV_420_BIPLANAR:
+      return DRM_FORMAT_NV12;
     default:
       NOTREACHED();
       return 0;
@@ -287,15 +359,48 @@ int GetFourCCFormatFromBufferFormat(gfx::BufferFormat format) {
 
 gfx::BufferFormat GetBufferFormatFromFourCCFormat(int format) {
   switch (format) {
+    case DRM_FORMAT_R8:
+      return gfx::BufferFormat::R_8;
+    case DRM_FORMAT_GR88:
+      return gfx::BufferFormat::RG_88;
+    case DRM_FORMAT_ABGR8888:
+      return gfx::BufferFormat::RGBA_8888;
+    case DRM_FORMAT_XBGR8888:
+      return gfx::BufferFormat::RGBX_8888;
     case DRM_FORMAT_ARGB8888:
       return gfx::BufferFormat::BGRA_8888;
     case DRM_FORMAT_XRGB8888:
       return gfx::BufferFormat::BGRX_8888;
+    case DRM_FORMAT_RGB565:
+      return gfx::BufferFormat::BGR_565;
     case DRM_FORMAT_UYVY:
       return gfx::BufferFormat::UYVY_422;
+    case DRM_FORMAT_NV12:
+      return gfx::BufferFormat::YUV_420_BIPLANAR;
+    case DRM_FORMAT_YV12:
+      return gfx::BufferFormat::YVU_420;
     default:
       NOTREACHED();
       return gfx::BufferFormat::BGRA_8888;
+  }
+}
+
+int GetFourCCFormatForFramebuffer(gfx::BufferFormat format) {
+  // Currently, drm supports 24 bitcolordepth for hardware overlay.
+  switch (format) {
+    case gfx::BufferFormat::RGBA_8888:
+    case gfx::BufferFormat::RGBX_8888:
+      return DRM_FORMAT_XBGR8888;
+    case gfx::BufferFormat::BGRA_8888:
+    case gfx::BufferFormat::BGRX_8888:
+      return DRM_FORMAT_XRGB8888;
+    case gfx::BufferFormat::BGR_565:
+      return DRM_FORMAT_RGB565;
+    case gfx::BufferFormat::UYVY_422:
+      return DRM_FORMAT_UYVY;
+    default:
+      NOTREACHED();
+      return 0;
   }
 }
 }  // namespace ui

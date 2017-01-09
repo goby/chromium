@@ -9,6 +9,8 @@
 #include <propvarutil.h>
 #include <shlguid.h>
 #include <shlobj.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <urlhist.h>
 
 #include <algorithm>
@@ -18,8 +20,10 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
-#include "base/stl_util.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -125,8 +129,8 @@ bool CreateOrderBlob(const base::FilePath& favorites_folder,
   // Create a binary sequence for setting a specific order of favorites.
   // The format depends on the version of Shell32.dll, so we cannot embed
   // a binary constant here.
-  std::vector<uint8> blob(20, 0);
-  blob[16] = static_cast<uint8>(entries.size());
+  std::vector<uint8_t> blob(20, 0);
+  blob[16] = static_cast<uint8_t>(entries.size());
 
   for (size_t i = 0; i < entries.size(); ++i) {
     PIDLIST_ABSOLUTE id_list_full = ILCreateFromPath(
@@ -137,9 +141,9 @@ bool CreateOrderBlob(const base::FilePath& favorites_folder,
     size_t id_list_size = id_list->mkid.cb + sizeof(id_list->mkid.cb);
 
     blob.resize(blob.size() + 8);
-    uint32 total_size = id_list_size + 8;
+    uint32_t total_size = id_list_size + 8;
     memcpy(&blob[blob.size() - 8], &total_size, 4);
-    uint32 sort_index = i;
+    uint32_t sort_index = i;
     memcpy(&blob[blob.size() - 4], &sort_index, 4);
     blob.resize(blob.size() + id_list_size);
     memcpy(&blob[blob.size() - id_list_size], id_list, id_list_size);
@@ -223,7 +227,7 @@ class TestObserver : public ProfileWriter,
     IE7,
   };
 
-  explicit TestObserver(uint16 importer_items, TestIEVersion ie_version)
+  explicit TestObserver(uint16_t importer_items, TestIEVersion ie_version)
       : ProfileWriter(NULL),
         bookmark_count_(0),
         history_count_(0),
@@ -232,8 +236,7 @@ class TestObserver : public ProfileWriter,
         homepage_count_(0),
         ie7_password_count_(0),
         importer_items_(importer_items),
-        ie_version_(ie_version) {
-  }
+        ie_version_(ie_version) {}
 
   // importer::ImporterProgressObserver:
   void ImportStarted() override {}
@@ -246,11 +249,11 @@ class TestObserver : public ProfileWriter,
       EXPECT_EQ(arraysize(kIEFaviconGroup), favicon_count_);
     }
     if (importer_items_ & importer::HISTORY)
-      EXPECT_EQ(2, history_count_);
+      EXPECT_EQ(2u, history_count_);
     if (importer_items_ & importer::HOME_PAGE)
-      EXPECT_EQ(1, homepage_count_);
+      EXPECT_EQ(1u, homepage_count_);
     if ((importer_items_ & importer::PASSWORDS) && (ie_version_ == IE7))
-      EXPECT_EQ(1, ie7_password_count_);
+      EXPECT_EQ(1u, ie7_password_count_);
     // We need to test the IE6 password importer code.
     // https://crbug.com/257100
     // EXPECT_EQ(1, password_count_);
@@ -315,14 +318,6 @@ class TestObserver : public ProfileWriter,
     }
   }
 
-  virtual void AddKeyword(std::vector<TemplateURL*> template_url,
-                          int default_keyword_index) {
-    // TODO(jcampan): bug 1169230: we should test keyword importing for IE.
-    // In order to do that we'll probably need to mock the Windows registry.
-    NOTREACHED();
-    STLDeleteContainerPointers(template_url.begin(), template_url.end());
-  }
-
   void AddFavicons(const favicon_base::FaviconUsageDataList& usage) override {
     // Importer should group the favicon information for each favicon URL.
     for (size_t i = 0; i < arraysize(kIEFaviconGroup); ++i) {
@@ -352,7 +347,7 @@ class TestObserver : public ProfileWriter,
     if (ie_version_ == IE7) {
       EXPECT_EQ(L"Test1", info.url_hash);
       EXPECT_EQ(1, info.encrypted_data[0]);
-      EXPECT_EQ(4, info.encrypted_data.size());
+      EXPECT_EQ(4u, info.encrypted_data.size());
       ++ie7_password_count_;
     }
   }
@@ -371,7 +366,7 @@ class TestObserver : public ProfileWriter,
   size_t favicon_count_;
   size_t homepage_count_;
   size_t ie7_password_count_;
-  uint16 importer_items_;
+  uint16_t importer_items_;
   TestIEVersion ie_version_;
 };
 
@@ -399,7 +394,7 @@ class MalformedFavoritesRegistryTestObserver
   void AddPasswordForm(const autofill::PasswordForm& form) override {}
   void AddHistoryPage(const history::URLRows& page,
                       history::VisitSource visit_source) override {}
-  void AddKeywords(ScopedVector<TemplateURL> template_urls,
+  void AddKeywords(TemplateURLService::OwnedTemplateURLVector template_urls,
                    bool unique_on_host_and_path) override {}
   void AddBookmarks(const std::vector<ImportedBookmarkEntry>& bookmarks,
                     const base::string16& top_level_folder_name) override {
@@ -441,7 +436,7 @@ class IEImporterBrowserTest : public InProcessBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporter) {
   // Sets up a favorites folder.
-  base::FilePath path = temp_dir_.path().AppendASCII("Favorites");
+  base::FilePath path = temp_dir_.GetPath().AppendASCII("Favorites");
   CreateDirectory(path.value().c_str(), NULL);
   CreateDirectory(path.AppendASCII("SubFolder").value().c_str(), NULL);
   base::FilePath links_path = path.AppendASCII("Links");
@@ -512,14 +507,14 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporter) {
 
   importer::SourceProfile source_profile;
   source_profile.importer_type = importer::TYPE_IE;
-  source_profile.source_path = temp_dir_.path();
+  source_profile.source_path = temp_dir_.GetPath();
 
   host->StartImportSettings(
       source_profile,
       browser()->profile(),
       importer::HISTORY | importer::PASSWORDS | importer::FAVORITES,
       observer);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // Cleans up.
   url_history_stg2->DeleteUrl(kIEIdentifyUrl, 0);
@@ -530,7 +525,7 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporter) {
 IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest,
                        IEImporterMalformedFavoritesRegistry) {
   // Sets up a favorites folder.
-  base::FilePath path = temp_dir_.path().AppendASCII("Favorites");
+  base::FilePath path = temp_dir_.GetPath().AppendASCII("Favorites");
   CreateDirectory(path.value().c_str(), NULL);
   CreateDirectory(path.AppendASCII("b").value().c_str(), NULL);
   ASSERT_TRUE(CreateUrlFile(path.AppendASCII("a.url"),
@@ -590,14 +585,14 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest,
 
     importer::SourceProfile source_profile;
     source_profile.importer_type = importer::TYPE_IE;
-    source_profile.source_path = temp_dir_.path();
+    source_profile.source_path = temp_dir_.GetPath();
 
     host->StartImportSettings(
         source_profile,
         browser()->profile(),
         importer::FAVORITES,
         observer);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 }
 
@@ -617,14 +612,14 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IE7ImporterPasswordsTest) {
 
   importer::SourceProfile source_profile;
   source_profile.importer_type = importer::TYPE_IE;
-  source_profile.source_path = temp_dir_.path();
+  source_profile.source_path = temp_dir_.GetPath();
 
   host->StartImportSettings(
       source_profile,
       browser()->profile(),
       importer::PASSWORDS,
       observer);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporterHomePageTest) {
@@ -643,13 +638,13 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporterHomePageTest) {
 
   importer::SourceProfile source_profile;
   source_profile.importer_type = importer::TYPE_IE;
-  source_profile.source_path = temp_dir_.path();
+  source_profile.source_path = temp_dir_.GetPath();
 
   host->StartImportSettings(
       source_profile,
       browser()->profile(),
       importer::HOME_PAGE,
       observer);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 

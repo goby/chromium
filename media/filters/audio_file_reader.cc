@@ -4,23 +4,29 @@
 
 #include "media/filters/audio_file_reader.h"
 
+#include <stddef.h>
+
 #include <cmath>
 
 #include "base/logging.h"
+#include "base/numerics/safe_math.h"
 #include "base/time/time.h"
 #include "media/base/audio_bus.h"
 #include "media/ffmpeg/ffmpeg_common.h"
 
 namespace media {
 
+// AAC(M4A) decoding specific constants.
+static const int kAACPrimingFrameCount = 2112;
+static const int kAACRemainderFrameCount = 519;
+
 AudioFileReader::AudioFileReader(FFmpegURLProtocol* protocol)
-    : codec_context_(NULL),
-      stream_index_(0),
+    : stream_index_(0),
       protocol_(protocol),
+      audio_codec_(kUnknownAudioCodec),
       channels_(0),
       sample_rate_(0),
-      av_sample_format_(0) {
-}
+      av_sample_format_(0) {}
 
 AudioFileReader::~AudioFileReader() {
   Close();
@@ -29,7 +35,12 @@ AudioFileReader::~AudioFileReader() {
 bool AudioFileReader::Open() {
   if (!OpenDemuxer())
     return false;
-  return OpenDecoder();
+  if (!OpenDecoder())
+    return false;
+
+  // If the duration is unknown, fail out; this API can not work with streams of
+  // unknown duration currently.
+  return glue_->format_context()->duration != AV_NOPTS_VALUE;
 }
 
 bool AudioFileReader::OpenDemuxer() {
@@ -42,19 +53,19 @@ bool AudioFileReader::OpenDemuxer() {
     return false;
   }
 
-  // Get the codec context.
-  codec_context_ = NULL;
+  // Find the first audio stream, if any.
+  codec_context_.reset();
+  bool found_stream = false;
   for (size_t i = 0; i < format_context->nb_streams; ++i) {
-    AVCodecContext* c = format_context->streams[i]->codec;
-    if (c->codec_type == AVMEDIA_TYPE_AUDIO) {
-      codec_context_ = c;
+    if (format_context->streams[i]->codecpar->codec_type ==
+        AVMEDIA_TYPE_AUDIO) {
       stream_index_ = i;
+      found_stream = true;
       break;
     }
   }
 
-  // Get the codec.
-  if (!codec_context_)
+  if (!found_stream)
     return false;
 
   const int result = avformat_find_stream_info(format_context, NULL);
@@ -64,6 +75,13 @@ bool AudioFileReader::OpenDemuxer() {
     return false;
   }
 
+  // Get the codec context.
+  codec_context_ =
+      AVStreamToAVCodecContext(format_context->streams[stream_index_]);
+  if (!codec_context_)
+    return false;
+
+  DCHECK_EQ(codec_context_->codec_type, AVMEDIA_TYPE_AUDIO);
   return true;
 }
 
@@ -74,7 +92,7 @@ bool AudioFileReader::OpenDecoder() {
     if (codec_context_->sample_fmt == AV_SAMPLE_FMT_S16P)
       codec_context_->request_sample_fmt = AV_SAMPLE_FMT_S16;
 
-    const int result = avcodec_open2(codec_context_, codec, NULL);
+    const int result = avcodec_open2(codec_context_.get(), codec, nullptr);
     if (result < 0) {
       DLOG(WARNING) << "AudioFileReader::Open() : could not open codec -"
                     << " result: " << result;
@@ -103,16 +121,15 @@ bool AudioFileReader::OpenDecoder() {
 
   // Store initial values to guard against midstream configuration changes.
   channels_ = codec_context_->channels;
+  audio_codec_ = CodecIDToAudioCodec(codec_context_->codec_id);
   sample_rate_ = codec_context_->sample_rate;
   av_sample_format_ = codec_context_->sample_fmt;
   return true;
 }
 
 void AudioFileReader::Close() {
-  // |codec_context_| is a stream inside glue_->format_context(), so it is
-  // closed when |glue_| is disposed.
+  codec_context_.reset();
   glue_.reset();
-  codec_context_ = NULL;
 }
 
 int AudioFileReader::Read(AudioBus* audio_bus) {
@@ -126,7 +143,7 @@ int AudioFileReader::Read(AudioBus* audio_bus) {
   size_t bytes_per_sample = av_get_bytes_per_sample(codec_context_->sample_fmt);
 
   // Holds decoded audio.
-  scoped_ptr<AVFrame, ScopedPtrAVFreeFrame> av_frame(av_frame_alloc());
+  std::unique_ptr<AVFrame, ScopedPtrAVFreeFrame> av_frame(av_frame_alloc());
 
   // Read until we hit EOF or we've read the requested number of frames.
   AVPacket packet;
@@ -143,8 +160,8 @@ int AudioFileReader::Read(AudioBus* audio_bus) {
       av_frame_unref(av_frame.get());
 
       int frame_decoded = 0;
-      int result = avcodec_decode_audio4(
-          codec_context_, av_frame.get(), &frame_decoded, &packet_temp);
+      int result = avcodec_decode_audio4(codec_context_.get(), av_frame.get(),
+                                         &frame_decoded, &packet_temp);
 
       if (result < 0) {
         DLOG(WARNING)
@@ -236,12 +253,30 @@ int AudioFileReader::Read(AudioBus* audio_bus) {
 base::TimeDelta AudioFileReader::GetDuration() const {
   const AVRational av_time_base = {1, AV_TIME_BASE};
 
-  // Add one microsecond to avoid rounding-down errors which can occur when
-  // |duration| has been calculated from an exact number of sample-frames.
-  // One microsecond is much less than the time of a single sample-frame
-  // at any real-world sample-rate.
-  return ConvertFromTimeBase(av_time_base,
-                             glue_->format_context()->duration + 1);
+  DCHECK_NE(glue_->format_context()->duration, AV_NOPTS_VALUE);
+  base::CheckedNumeric<int64_t> estimated_duration_us =
+      glue_->format_context()->duration;
+
+  if (audio_codec_ == kCodecAAC) {
+    // For certain AAC-encoded files, FFMPEG's estimated frame count might not
+    // be sufficient to capture the entire audio content that we want. This is
+    // especially noticeable for short files (< 10ms) resulting in silence
+    // throughout the decoded buffer. Thus we add the priming frames and the
+    // remainder frames to the estimation.
+    // (See: crbug.com/513178)
+    estimated_duration_us +=
+        ceil(1000000.0 * static_cast<double>(kAACPrimingFrameCount +
+                                             kAACRemainderFrameCount) /
+             sample_rate());
+  } else {
+    // Add one microsecond to avoid rounding-down errors which can occur when
+    // |duration| has been calculated from an exact number of sample-frames.
+    // One microsecond is much less than the time of a single sample-frame
+    // at any real-world sample-rate.
+    estimated_duration_us += 1;
+  }
+
+  return ConvertFromTimeBase(av_time_base, estimated_duration_us.ValueOrDie());
 }
 
 int AudioFileReader::GetNumberOfFrames() const {
@@ -269,10 +304,12 @@ bool AudioFileReader::ReadPacket(AVPacket* output_packet) {
 }
 
 bool AudioFileReader::SeekForTesting(base::TimeDelta seek_time) {
-  return av_seek_frame(glue_->format_context(),
-                       stream_index_,
-                       ConvertToTimeBase(codec_context_->time_base, seek_time),
-                       AVSEEK_FLAG_BACKWARD) >= 0;
+  // Use the AVStream's time_base, since |codec_context_| does not have
+  // time_base populated until after OpenDecoder().
+  return av_seek_frame(
+             glue_->format_context(), stream_index_,
+             ConvertToTimeBase(GetAVStreamForTesting()->time_base, seek_time),
+             AVSEEK_FLAG_BACKWARD) >= 0;
 }
 
 const AVStream* AudioFileReader::GetAVStreamForTesting() const {

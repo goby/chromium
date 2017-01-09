@@ -4,16 +4,19 @@
 
 #include "storage/browser/fileapi/quota/quota_reservation.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "storage/browser/fileapi/quota/open_file_handle.h"
 #include "storage/browser/fileapi/quota/quota_reservation_buffer.h"
 
 namespace storage {
 
-void QuotaReservation::RefreshReservation(
-    int64 size,
-    const StatusCallback& callback) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+void QuotaReservation::RefreshReservation(int64_t size,
+                                          const StatusCallback& callback) {
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(!running_refresh_request_);
   DCHECK(!client_crashed_);
   if (!reservation_manager())
@@ -31,15 +34,15 @@ void QuotaReservation::RefreshReservation(
     remaining_quota_ = 0;
 }
 
-scoped_ptr<OpenFileHandle> QuotaReservation::GetOpenFileHandle(
+std::unique_ptr<OpenFileHandle> QuotaReservation::GetOpenFileHandle(
     const base::FilePath& platform_path) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(!client_crashed_);
   return reservation_buffer_->GetOpenFileHandle(this, platform_path);
 }
 
 void QuotaReservation::OnClientCrash() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   client_crashed_ = true;
 
   if (remaining_quota_) {
@@ -48,8 +51,8 @@ void QuotaReservation::OnClientCrash() {
   }
 }
 
-void QuotaReservation::ConsumeReservation(int64 size) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+void QuotaReservation::ConsumeReservation(int64_t size) {
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK_LT(0, size);
   DCHECK_LE(size, remaining_quota_);
   if (client_crashed_)
@@ -78,11 +81,11 @@ QuotaReservation::QuotaReservation(
       remaining_quota_(0),
       reservation_buffer_(reservation_buffer),
       weak_ptr_factory_(this) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 }
 
 QuotaReservation::~QuotaReservation() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   if (remaining_quota_ && reservation_manager()) {
     reservation_manager()->ReleaseReservedQuota(
@@ -93,10 +96,10 @@ QuotaReservation::~QuotaReservation() {
 // static
 bool QuotaReservation::AdaptDidUpdateReservedQuota(
     const base::WeakPtr<QuotaReservation>& reservation,
-    int64 previous_size,
+    int64_t previous_size,
     const StatusCallback& callback,
     base::File::Error error,
-    int64 delta) {
+    int64_t delta) {
   if (!reservation)
     return false;
 
@@ -104,12 +107,11 @@ bool QuotaReservation::AdaptDidUpdateReservedQuota(
       previous_size, callback, error, delta);
 }
 
-bool QuotaReservation::DidUpdateReservedQuota(
-    int64 previous_size,
-    const StatusCallback& callback,
-    base::File::Error error,
-    int64 delta) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+bool QuotaReservation::DidUpdateReservedQuota(int64_t previous_size,
+                                              const StatusCallback& callback,
+                                              base::File::Error error,
+                                              int64_t delta) {
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(running_refresh_request_);
   running_refresh_request_ = false;
 

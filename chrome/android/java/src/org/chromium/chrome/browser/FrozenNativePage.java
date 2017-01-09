@@ -39,6 +39,7 @@ public class FrozenNativePage implements NativePage {
 
     @Override
     public View getView() {
+        assert false;
         return null;
     }
 
@@ -65,6 +66,11 @@ public class FrozenNativePage implements NativePage {
     @Override
     public int getThemeColor() {
         return mThemeColor;
+    }
+
+    @Override
+    public boolean needsToolbarShadow() {
+        return true;
     }
 
     @Override

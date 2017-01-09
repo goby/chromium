@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_INSTALL_DIALOG_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_INSTALL_DIALOG_VIEW_H_
 
+#include "base/macros.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/slide_animation.h"
@@ -41,8 +42,8 @@ class ExtensionInstallDialogView : public views::DialogDelegateView,
   ExtensionInstallDialogView(
       Profile* profile,
       content::PageNavigator* navigator,
-      ExtensionInstallPrompt::Delegate* delegate,
-      scoped_refptr<ExtensionInstallPrompt::Prompt> prompt);
+      const ExtensionInstallPrompt::DoneCallback& done_callback,
+      std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt);
   ~ExtensionInstallDialogView() override;
 
   // Returns the interior ScrollView of the dialog. This allows us to inspect
@@ -50,6 +51,9 @@ class ExtensionInstallDialogView : public views::DialogDelegateView,
   const views::ScrollView* scroll_view() const { return scroll_view_; }
 
  private:
+  // views::View:
+  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+
   // views::DialogDelegateView:
   int GetDialogButtons() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
@@ -76,12 +80,6 @@ class ExtensionInstallDialogView : public views::DialogDelegateView,
   // Creates a layout consisting of dialog header, extension name and icon.
   views::GridLayout* CreateLayout(int left_column_width, int column_set_id);
 
-  bool is_bundle_install() const {
-    return prompt_->type() == ExtensionInstallPrompt::BUNDLE_INSTALL_PROMPT ||
-           prompt_->type() ==
-               ExtensionInstallPrompt::DELEGATED_BUNDLE_PERMISSIONS_PROMPT;
-  }
-
   bool is_external_install() const {
     return prompt_->type() == ExtensionInstallPrompt::EXTERNAL_INSTALL_PROMPT;
   }
@@ -91,8 +89,8 @@ class ExtensionInstallDialogView : public views::DialogDelegateView,
 
   Profile* profile_;
   content::PageNavigator* navigator_;
-  ExtensionInstallPrompt::Delegate* delegate_;
-  scoped_refptr<ExtensionInstallPrompt::Prompt> prompt_;
+  ExtensionInstallPrompt::DoneCallback done_callback_;
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt_;
 
   // The container view that contains all children (heading, icon, webstore
   // data, and the scroll view with permissions etc.), excluding the buttons,
@@ -107,10 +105,10 @@ class ExtensionInstallDialogView : public views::DialogDelegateView,
   gfx::Size dialog_size_;
 
   // ExperienceSampling: Track this UI event.
-  scoped_ptr<extensions::ExperienceSamplingEvent> sampling_event_;
+  std::unique_ptr<extensions::ExperienceSamplingEvent> sampling_event_;
 
-  // Set to true once the user's selection has been received and the
-  // |delegate_| has been notified.
+  // Set to true once the user's selection has been received and the callback
+  // has been run.
   bool handled_result_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionInstallDialogView);
@@ -125,24 +123,13 @@ class BulletedView : public views::View {
   DISALLOW_COPY_AND_ASSIGN(BulletedView);
 };
 
-// A simple view that prepends a view with an icon with the help of a grid
-// layout.
-class IconedView : public views::View {
- public:
-  IconedView(views::View* view, const gfx::ImageSkia& image);
- private:
-  DISALLOW_COPY_AND_ASSIGN(IconedView);
-};
-
 // A view to display text with an expandable details section.
 class ExpandableContainerView : public views::View,
                                 public views::ButtonListener,
                                 public views::LinkListener,
                                 public gfx::AnimationDelegate {
  public:
-  ExpandableContainerView(ExtensionInstallDialogView* owner,
-                          const base::string16& description,
-                          const PermissionDetails& details,
+  ExpandableContainerView(const PermissionDetails& details,
                           int horizontal_space,
                           bool parent_bulleted);
   ~ExpandableContainerView() override;
@@ -187,9 +174,6 @@ class ExpandableContainerView : public views::View,
 
   // Updates |arrow_toggle_| according to the given state.
   void UpdateArrowToggle(bool expanded);
-
-  // The dialog that owns |this|. It's also an ancestor in the View hierarchy.
-  ExtensionInstallDialogView* owner_;
 
   // A view for showing |issue_advice.details|.
   DetailsView* details_view_;

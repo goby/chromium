@@ -10,6 +10,7 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -44,7 +45,7 @@ const char* kUpstreamNotificationNotifyKey = "notify";
 const char* kUpstreamNotificationRegIdKey = "registration_id";
 
 // If we get an error registering with GCM, try again in two minutes.
-const int64 kRegistrationRetryDelayMs = 2 * 60 * 1000;
+const int64_t kRegistrationRetryDelayMs = 2 * 60 * 1000;
 
 const char* kHeartbeatSchedulerScope =
     "policy.heartbeat_scheduler.upstream_notification";
@@ -64,8 +65,8 @@ std::string GetDestinationID() {
 
 namespace policy {
 
-const int64 HeartbeatScheduler::kDefaultHeartbeatIntervalMs =
-    2 * 60 * 1000; // 2 minutes
+const int64_t HeartbeatScheduler::kDefaultHeartbeatIntervalMs =
+    2 * 60 * 1000;  // 2 minutes
 
 // Helper class used to manage GCM registration (handles retrying after
 // errors, etc).
@@ -208,6 +209,10 @@ HeartbeatScheduler::HeartbeatScheduler(
   // Update the heartbeat frequency from settings. This will trigger a
   // heartbeat as appropriate once the settings have been refreshed.
   RefreshHeartbeatSettings();
+
+  // Initialize the default heartbeats interval for GCM driver.
+  gcm_driver_->AddHeartbeatInterval(kHeartbeatSchedulerScope,
+                                    heartbeat_interval_.InMilliseconds());
 }
 
 void HeartbeatScheduler::RefreshHeartbeatSettings() {
@@ -242,7 +247,6 @@ void HeartbeatScheduler::RefreshHeartbeatSettings() {
     // outstanding registration attempts and disconnect from GCM so the
     // connection can be shut down. If heartbeats are re-enabled later, we
     // will re-register with GCM.
-    heartbeat_callback_.Cancel();
     ShutdownGCM();
   } else {
     // Schedule a new upload with the new frequency.
@@ -254,6 +258,7 @@ void HeartbeatScheduler::RefreshHeartbeatSettings() {
 }
 
 void HeartbeatScheduler::ShutdownGCM() {
+  heartbeat_callback_.Cancel();
   registration_helper_.reset();
   registration_id_.clear();
   if (registered_app_handler_) {
@@ -364,7 +369,14 @@ void HeartbeatScheduler::SendHeartbeat() {
 void HeartbeatScheduler::SignUpUpstreamNotification() {
   DCHECK(gcm_driver_);
 
-  if (registration_id_.empty())
+  // Registration ID is a hard requirement for upstream notification signup,
+  // so we need to send the sign up message after registration is completed,
+  // as well as registration ID changes.
+  // We also listen to GCM driver connected events, so that once we
+  // reconnected to GCM server, we can resend the signup message immediately.
+  // Having both conditional checks here ensures that during the start up, the
+  // sign up message will be sent at most once.
+  if (registration_id_.empty() || !gcm_driver_->IsConnected())
     return;
 
   gcm::OutgoingMessage message;
@@ -410,6 +422,15 @@ void HeartbeatScheduler::ShutdownHandler() {
   // shutdown before GCMDriver is shut down, rather than trying to handle the
   // case when GCMDriver goes away.
   NOTREACHED() << "HeartbeatScheduler should be destroyed before GCMDriver";
+}
+
+void HeartbeatScheduler::OnStoreReset() {
+  // TODO(crbug.com/661660): Tell server that |registration_id_| is no longer
+  // valid. See also crbug.com/516375.
+  if (!registration_helper_) {
+    ShutdownGCM();
+    RefreshHeartbeatSettings();
+  }  // Otherwise let the pending registration complete normally.
 }
 
 void HeartbeatScheduler::OnMessage(const std::string& app_id,

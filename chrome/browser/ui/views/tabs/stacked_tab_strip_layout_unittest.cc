@@ -4,8 +4,11 @@
 
 #include "chrome/browser/ui/views/tabs/stacked_tab_strip_layout.h"
 
+#include <stddef.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -131,7 +134,7 @@ class StackedTabStripLayoutTest : public testing::Test {
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<StackedTabStripLayout> layout_;
+  std::unique_ptr<StackedTabStripLayout> layout_;
   views::ViewModel view_model_;
 
  private:

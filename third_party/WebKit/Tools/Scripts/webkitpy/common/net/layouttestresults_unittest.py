@@ -29,10 +29,6 @@
 import unittest
 
 from webkitpy.common.net.layouttestresults import LayoutTestResults
-from webkitpy.common.system.outputcapture import OutputCapture
-from webkitpy.layout_tests.models import test_results
-from webkitpy.layout_tests.models import test_failures
-from webkitpy.thirdparty.BeautifulSoup import BeautifulSoup
 
 
 class LayoutTestResultsTest(unittest.TestCase):
@@ -64,6 +60,17 @@ class LayoutTestResultsTest(unittest.TestCase):
                     "expected": "PASS",
                     "actual": "IMAGE PASS",
                     "is_unexpected": true
+                },
+                "prototype-crashy.html": {
+                    "expected": "PASS",
+                    "actual": "CRASH",
+                    "is_unexpected": true
+                },
+                "prototype-newtest.html": {
+                    "expected": "PASS",
+                    "actual": "MISSING",
+                    "is_unexpected": true,
+                    "is_missing_text": true
                 }
             }
         },
@@ -80,14 +87,15 @@ class LayoutTestResultsTest(unittest.TestCase):
     },
     "skipped": 450,
     "num_regressions": 15,
-    "layout_tests_dir": "\/b\/build\/slave\/Webkit_Mac10_5\/build\/src\/third_party\/WebKit\/LayoutTests",
+    "layout_tests_dir": "/b/build/slave/Webkit_Mac10_5/build/src/third_party/WebKit/LayoutTests",
     "version": 3,
     "num_passes": 77,
     "has_pretty_patch": false,
     "fixable": 1220,
     "num_flaky": 0,
     "chromium_revision": "1234",
-    "has_wdiff": false
+    "has_wdiff": false,
+    "builder_name": "mock_builder_name"
 });"""
 
     def test_results_from_string(self):
@@ -95,14 +103,30 @@ class LayoutTestResultsTest(unittest.TestCase):
         self.assertIsNone(LayoutTestResults.results_from_string(""))
 
     def test_was_interrupted(self):
-        self.assertTrue(LayoutTestResults.results_from_string('ADD_RESULTS({"tests":{},"interrupted":true});').run_was_interrupted())
-        self.assertFalse(LayoutTestResults.results_from_string('ADD_RESULTS({"tests":{},"interrupted":false});').run_was_interrupted())
+        self.assertTrue(LayoutTestResults.results_from_string(
+            'ADD_RESULTS({"tests":{},"interrupted":true});').run_was_interrupted())
+        self.assertFalse(LayoutTestResults.results_from_string(
+            'ADD_RESULTS({"tests":{},"interrupted":false});').run_was_interrupted())
 
     def test_chromium_revision(self):
         self.assertEqual(LayoutTestResults.results_from_string(self.example_full_results_json).chromium_revision(), 1234)
 
     def test_actual_results(self):
         results = LayoutTestResults.results_from_string(self.example_full_results_json)
-        self.assertEqual(results.actual_results("fast/dom/prototype-banana.html"), "PASS")
-        self.assertEqual(results.actual_results("fast/dom/prototype-taco.html"), "PASS TEXT")
-        self.assertEqual(results.actual_results("nonexistant.html"), "")
+        self.assertEqual(results.result_for_test("fast/dom/prototype-banana.html").actual_results(), "PASS")
+        self.assertEqual(results.result_for_test("fast/dom/prototype-taco.html").actual_results(), "PASS TEXT")
+        self.assertFalse(results.result_for_test("nonexistant.html"))
+
+    def test_didnt_run_as_expected_results(self):
+        results = LayoutTestResults.results_from_string(self.example_full_results_json)
+        self.assertEqual(
+            [r.test_name() for r in results.didnt_run_as_expected_results()],
+            [
+                'fast/dom/prototype-banana.html',
+                'fast/dom/prototype-crashy.html',
+                'fast/dom/prototype-inheritance.html',
+                'fast/dom/prototype-newtest.html',
+                'fast/dom/prototype-strawberry.html',
+                'fast/dom/prototype-taco.html',
+                'svg/dynamic-updates/SVGFEDropShadowElement-dom-stdDeviation-attr.html',
+            ])

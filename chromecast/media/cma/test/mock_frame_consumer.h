@@ -5,6 +5,9 @@
 #ifndef CHROMECAST_MEDIA_CMA_TEST_MOCK_FRAME_CONSUMER_H_
 #define CHROMECAST_MEDIA_CMA_TEST_MOCK_FRAME_CONSUMER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/callback.h"
@@ -28,7 +31,7 @@ class MockFrameConsumer {
 
   void Configure(const std::vector<bool>& delayed_task_pattern,
                  bool last_read_aborted_by_flush,
-                 scoped_ptr<FrameGeneratorForTest> frame_generator);
+                 std::unique_ptr<FrameGeneratorForTest> frame_generator);
 
   // Starts consuming frames. Invoke |done_cb| when all the expected frames
   // have been received.
@@ -58,7 +61,7 @@ class MockFrameConsumer {
   bool last_read_aborted_by_flush_;
 
   // Expected results.
-  scoped_ptr<FrameGeneratorForTest> frame_generator_;
+  std::unique_ptr<FrameGeneratorForTest> frame_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(MockFrameConsumer);
 };

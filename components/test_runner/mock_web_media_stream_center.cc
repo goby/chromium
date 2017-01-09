@@ -4,7 +4,10 @@
 
 #include "components/test_runner/mock_web_media_stream_center.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "components/test_runner/test_interfaces.h"
 #include "components/test_runner/web_test_delegate.h"
 #include "third_party/WebKit/public/platform/WebAudioDestinationConsumer.h"
@@ -13,39 +16,11 @@
 #include "third_party/WebKit/public/platform/WebMediaStreamCenterClient.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrackSourcesRequest.h"
-#include "third_party/WebKit/public/platform/WebSourceInfo.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 
 namespace test_runner {
 
 namespace {
-class NewTrackTask : public WebMethodTask<MockWebMediaStreamCenter> {
- public:
-  NewTrackTask(MockWebMediaStreamCenter* object,
-               const blink::WebMediaStream& stream)
-      : WebMethodTask<MockWebMediaStreamCenter>(object), stream_(stream) {
-    DCHECK(!stream_.isNull());
-  }
-
-  ~NewTrackTask() override {}
-
-  void RunIfValid() override {
-    blink::WebMediaStreamSource source;
-    blink::WebMediaStreamTrack track;
-    source.initialize("MagicVideoDevice#1",
-                      blink::WebMediaStreamSource::TypeVideo,
-                      "Magic video track",
-                      false /* remote */, true /* readonly */);
-    track.initialize(source);
-    stream_.addTrack(track);
-  }
-
- private:
-  blink::WebMediaStream stream_;
-
-  DISALLOW_COPY_AND_ASSIGN(NewTrackTask);
-};
 
 class MockWebAudioDestinationConsumer
     : public blink::WebAudioDestinationConsumer {
@@ -60,15 +35,6 @@ class MockWebAudioDestinationConsumer
 };
 
 }  // namespace
-
-MockWebMediaStreamCenter::MockWebMediaStreamCenter(
-    blink::WebMediaStreamCenterClient* client,
-    TestInterfaces* interfaces)
-    : interfaces_(interfaces) {
-}
-
-MockWebMediaStreamCenter::~MockWebMediaStreamCenter() {
-}
 
 void MockWebMediaStreamCenter::didEnableMediaStreamTrack(
     const blink::WebMediaStreamTrack& track) {
@@ -125,7 +91,6 @@ void MockWebMediaStreamCenter::didCreateMediaStream(
       delete consumer;
     }
   }
-  interfaces_->GetDelegate()->PostTask(new NewTrackTask(this, stream));
 }
 
 blink::WebAudioSourceProvider*

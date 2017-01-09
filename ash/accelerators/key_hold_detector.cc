@@ -4,8 +4,10 @@
 
 #include "ash/accelerators/key_hold_detector.h"
 
+#include <utility>
+
 #include "ash/shell.h"
-#include "base/message_loop/message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/event_dispatcher.h"
@@ -15,7 +17,7 @@ namespace ash {
 namespace {
 
 void DispatchPressedEvent(const ui::KeyEvent& key_event,
-                          scoped_ptr<aura::WindowTracker> tracker) {
+                          std::unique_ptr<aura::WindowTracker> tracker) {
   // The target window may be gone.
   if (tracker->windows().empty())
     return;
@@ -28,23 +30,20 @@ void DispatchPressedEvent(const ui::KeyEvent& key_event,
 void PostPressedEvent(ui::KeyEvent* event) {
   // Modify RELEASED event to PRESSED event.
   const ui::KeyEvent pressed_event(
-      ui::ET_KEY_PRESSED,
-      event->key_code(),
-      event->code(),
+      ui::ET_KEY_PRESSED, event->key_code(), event->code(),
       event->flags() | ui::EF_SHIFT_DOWN | ui::EF_IS_SYNTHESIZED);
-  scoped_ptr<aura::WindowTracker> tracker(new aura::WindowTracker);
+  std::unique_ptr<aura::WindowTracker> tracker(new aura::WindowTracker);
   tracker->Add(static_cast<aura::Window*>(event->target()));
 
-  base::MessageLoopForUI::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&DispatchPressedEvent, pressed_event, base::Passed(&tracker)));
 }
 
 }  // namespace
 
-KeyHoldDetector::KeyHoldDetector(scoped_ptr<Delegate> delegate)
-    : state_(INITIAL),
-      delegate_(delegate.Pass()) {}
+KeyHoldDetector::KeyHoldDetector(std::unique_ptr<Delegate> delegate)
+    : state_(INITIAL), delegate_(std::move(delegate)) {}
 
 KeyHoldDetector::~KeyHoldDetector() {}
 
@@ -69,13 +68,13 @@ void KeyHoldDetector::OnKeyEvent(ui::KeyEvent* event) {
         break;
       case PRESSED:
         state_ = HOLD;
-        // pass through
+      // pass through
       case HOLD:
         delegate_->OnKeyHold(event);
         if (delegate_->ShouldStopEventPropagation())
           event->StopPropagation();
         break;
-      }
+    }
   } else if (event->type() == ui::ET_KEY_RELEASED) {
     switch (state_) {
       case INITIAL:

@@ -29,23 +29,27 @@ void Release(int* release_call_count) {
 
 TEST_F(BufferTest, ReleaseCallback) {
   gfx::Size buffer_size(256, 256);
-  scoped_ptr<Buffer> buffer(
-      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size).Pass(),
-                 GL_TEXTURE_2D));
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
 
   // Set the release callback.
   int release_call_count = 0;
   buffer->set_release_callback(
       base::Bind(&Release, base::Unretained(&release_call_count)));
 
+  buffer->OnAttach();
   // Produce a texture mailbox for the contents of the buffer.
   cc::TextureMailbox texture_mailbox;
-  scoped_ptr<cc::SingleReleaseCallback> buffer_release_callback =
-      buffer->ProduceTextureMailbox(&texture_mailbox);
+  std::unique_ptr<cc::SingleReleaseCallback> buffer_release_callback =
+      buffer->ProduceTextureMailbox(&texture_mailbox, false, true);
   ASSERT_TRUE(buffer_release_callback);
 
   // Release buffer.
   buffer_release_callback->Run(gpu::SyncToken(), false);
+
+  ASSERT_EQ(release_call_count, 0);
+
+  buffer->OnDetach();
 
   // Release() should have been called exactly once.
   ASSERT_EQ(release_call_count, 1);
@@ -53,14 +57,14 @@ TEST_F(BufferTest, ReleaseCallback) {
 
 TEST_F(BufferTest, IsLost) {
   gfx::Size buffer_size(256, 256);
-  scoped_ptr<Buffer> buffer(
-      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size).Pass(),
-                 GL_TEXTURE_2D));
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
 
+  buffer->OnAttach();
   // Acquire a texture mailbox for the contents of the buffer.
   cc::TextureMailbox texture_mailbox;
-  scoped_ptr<cc::SingleReleaseCallback> buffer_release_callback =
-      buffer->ProduceTextureMailbox(&texture_mailbox);
+  std::unique_ptr<cc::SingleReleaseCallback> buffer_release_callback =
+      buffer->ProduceTextureMailbox(&texture_mailbox, false, true);
   ASSERT_TRUE(buffer_release_callback);
 
   scoped_refptr<cc::ContextProvider> context_provider =
@@ -78,11 +82,12 @@ TEST_F(BufferTest, IsLost) {
   buffer_release_callback->Run(gpu::SyncToken(), is_lost);
 
   // Producing a new texture mailbox for the contents of the buffer.
-  buffer_release_callback = buffer->ProduceTextureMailbox(&texture_mailbox);
-  ASSERT_TRUE(buffer_release_callback);
+  std::unique_ptr<cc::SingleReleaseCallback> buffer_release_callback2 =
+      buffer->ProduceTextureMailbox(&texture_mailbox, false, false);
+  ASSERT_TRUE(buffer_release_callback2);
+  buffer->OnDetach();
 
-  // Release buffer.
-  buffer_release_callback->Run(gpu::SyncToken(), false);
+  buffer_release_callback2->Run(gpu::SyncToken(), false);
 }
 
 }  // namespace

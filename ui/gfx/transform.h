@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/gfx_export.h"
 
@@ -40,6 +40,7 @@ class GFX_EXPORT Transform {
   // Initialize with the concatenation of lhs * rhs.
   Transform(const Transform& lhs, const Transform& rhs)
       : matrix_(lhs.matrix_, rhs.matrix_) {}
+  explicit Transform(const SkMatrix44& matrix) : matrix_(matrix) {}
   // Constructs a transform from explicit 16 matrix elements. Elements
   // should be given in row-major order.
   Transform(SkMScalar col1row1,
@@ -67,7 +68,6 @@ class GFX_EXPORT Transform {
             SkMScalar col2row2,
             SkMScalar x_translation,
             SkMScalar y_translation);
-  ~Transform() {}
 
   bool operator==(const Transform& rhs) const { return matrix_ == rhs.matrix_; }
   bool operator!=(const Transform& rhs) const { return matrix_ != rhs.matrix_; }
@@ -96,7 +96,9 @@ class GFX_EXPORT Transform {
 
   // Applies the current transformation on a translation and assigns the result
   // to |this|.
+  void Translate(const Vector2dF& offset);
   void Translate(SkMScalar x, SkMScalar y);
+  void Translate3d(const Vector3dF& offset);
   void Translate3d(SkMScalar x, SkMScalar y, SkMScalar z);
 
   // Applies the current transformation on a skew and assigns the result
@@ -197,6 +199,9 @@ class GFX_EXPORT Transform {
   // Applies the transformation to the point.
   void TransformPoint(Point* point) const;
 
+  // Applies the transformation to the vector.
+  void TransformVector(Vector3dF* vector) const;
+
   // Applies the reverse transformation on the point. Returns true if the
   // transformation can be inverted.
   bool TransformPointReverse(Point3F* point) const;
@@ -254,6 +259,7 @@ class GFX_EXPORT Transform {
   // Returns the underlying matrix.
   const SkMatrix44& matrix() const { return matrix_; }
   SkMatrix44& matrix() { return matrix_; }
+  bool ApproximatelyEqual(const gfx::Transform& transform) const;
 
   std::string ToString() const;
 
@@ -264,14 +270,17 @@ class GFX_EXPORT Transform {
   void TransformPointInternal(const SkMatrix44& xform,
                               Point3F* point) const;
 
+  void TransformVectorInternal(const SkMatrix44& xform,
+                               Vector3dF* vector) const;
+
   SkMatrix44 matrix_;
 
   // copy/assign are allowed.
 };
 
 // This is declared here for use in gtest-based unit tests but is defined in
-// the gfx_test_support target. Depend on that to use this in your unit test.
-// This should not be used in production code - call ToString() instead.
+// the //ui/gfx:test_support target. Depend on that to use this in your unit
+// test. This should not be used in production code - call ToString() instead.
 void PrintTo(const Transform& transform, ::std::ostream* os);
 
 }  // namespace gfx

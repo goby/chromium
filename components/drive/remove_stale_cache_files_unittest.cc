@@ -2,20 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/drive/chromeos/remove_stale_cache_files.h"
+
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "components/drive/chromeos/drive_test_util.h"
+#include "components/drive/chromeos/fake_free_disk_space_getter.h"
+#include "components/drive/chromeos/resource_metadata.h"
 #include "components/drive/drive.pb.h"
-#include "components/drive/drive_test_util.h"
-#include "components/drive/fake_free_disk_space_getter.h"
 #include "components/drive/file_system_core_util.h"
-#include "components/drive/remove_stale_cache_files.h"
-#include "components/drive/resource_metadata.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "google_apis/drive/test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,10 +32,9 @@ class RemoveStaleCacheFilesTest : public testing::Test {
     fake_free_disk_space_getter_.reset(new FakeFreeDiskSpaceGetter);
 
     metadata_storage_.reset(new ResourceMetadataStorage(
-        temp_dir_.path(), base::ThreadTaskRunnerHandle::Get().get()));
+        temp_dir_.GetPath(), base::ThreadTaskRunnerHandle::Get().get()));
 
-    cache_.reset(new FileCache(metadata_storage_.get(),
-                               temp_dir_.path(),
+    cache_.reset(new FileCache(metadata_storage_.get(), temp_dir_.GetPath(),
                                base::ThreadTaskRunnerHandle::Get().get(),
                                fake_free_disk_space_getter_.get()));
 
@@ -50,17 +50,17 @@ class RemoveStaleCacheFilesTest : public testing::Test {
   content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir temp_dir_;
 
-  scoped_ptr<ResourceMetadataStorage,
-             test_util::DestroyHelperForTests> metadata_storage_;
-  scoped_ptr<FileCache, test_util::DestroyHelperForTests> cache_;
-  scoped_ptr<ResourceMetadata, test_util::DestroyHelperForTests>
+  std::unique_ptr<ResourceMetadataStorage, test_util::DestroyHelperForTests>
+      metadata_storage_;
+  std::unique_ptr<FileCache, test_util::DestroyHelperForTests> cache_;
+  std::unique_ptr<ResourceMetadata, test_util::DestroyHelperForTests>
       resource_metadata_;
-  scoped_ptr<FakeFreeDiskSpaceGetter> fake_free_disk_space_getter_;
+  std::unique_ptr<FakeFreeDiskSpaceGetter> fake_free_disk_space_getter_;
 };
 
 TEST_F(RemoveStaleCacheFilesTest, RemoveStaleCacheFiles) {
   base::FilePath dummy_file;
-  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &dummy_file));
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &dummy_file));
   std::string md5_metadata("abcdef0123456789"), md5_cache("ABCDEF9876543210");
 
   // Create a stale cache file.
@@ -86,7 +86,7 @@ TEST_F(RemoveStaleCacheFilesTest, RemoveStaleCacheFiles) {
 
 TEST_F(RemoveStaleCacheFilesTest, DirtyCacheFiles) {
   base::FilePath dummy_file;
-  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &dummy_file));
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &dummy_file));
 
   // Dirty entry.
   std::string md5_metadata("abcdef0123456789");

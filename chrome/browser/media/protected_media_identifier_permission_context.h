@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_MEDIA_PROTECTED_MEDIA_IDENTIFIER_PERMISSION_CONTEXT_H_
 #define CHROME_BROWSER_MEDIA_PROTECTED_MEDIA_IDENTIFIER_PERMISSION_CONTEXT_H_
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/permissions/permission_context_base.h"
 #include "chrome/browser/permissions/permission_request_id.h"
 
@@ -23,12 +25,7 @@ class Widget;
 }
 
 namespace content {
-class RenderViewHost;
 class WebContents;
-}
-
-namespace user_prefs {
-class PrefRegistrySyncable;
 }
 
 // Manages protected media identifier permissions flow, and delegates UI
@@ -37,14 +34,16 @@ class ProtectedMediaIdentifierPermissionContext
     : public PermissionContextBase {
  public:
   explicit ProtectedMediaIdentifierPermissionContext(Profile* profile);
+  ~ProtectedMediaIdentifierPermissionContext() override;
 
   // PermissionContextBase implementation.
 #if defined(OS_CHROMEOS)
-  void RequestPermission(content::WebContents* web_contents,
-                         const PermissionRequestID& id,
-                         const GURL& requesting_origin,
-                         bool user_gesture,
-                         const BrowserPermissionCallback& callback) override;
+  void DecidePermission(content::WebContents* web_contents,
+                        const PermissionRequestID& id,
+                        const GURL& requesting_origin,
+                        const GURL& embedding_origin,
+                        bool user_gesture,
+                        const BrowserPermissionCallback& callback) override;
 #endif  // defined(OS_CHROMEOS)
   ContentSetting GetPermissionStatus(
       const GURL& requesting_origin,
@@ -53,8 +52,6 @@ class ProtectedMediaIdentifierPermissionContext
                                const PermissionRequestID& id) override;
 
  private:
-  ~ProtectedMediaIdentifierPermissionContext() override;
-
   void UpdateTabContext(const PermissionRequestID& id,
                         const GURL& requesting_frame,
                         bool allowed) override;

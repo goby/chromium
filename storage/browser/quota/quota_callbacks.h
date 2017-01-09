@@ -5,11 +5,14 @@
 #ifndef STORAGE_BROWSER_QUOTA_QUOTA_CALLBACKS_H_
 #define STORAGE_BROWSER_QUOTA_QUOTA_CALLBACKS_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
 #include <set>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "storage/common/quota/quota_status_code.h"
 #include "storage/common/quota/quota_types.h"
@@ -22,11 +25,12 @@ struct UsageInfo;
 typedef std::vector<UsageInfo> UsageInfoEntries;
 
 // Common callback types that are used throughout in the quota module.
-typedef base::Callback<void(int64 usage,
-                            int64 unlimited_usage)> GlobalUsageCallback;
-typedef base::Callback<void(QuotaStatusCode status, int64 quota)> QuotaCallback;
-typedef base::Callback<void(int64 usage)> UsageCallback;
-typedef base::Callback<void(QuotaStatusCode, int64)> AvailableSpaceCallback;
+typedef base::Callback<void(int64_t usage, int64_t unlimited_usage)>
+    GlobalUsageCallback;
+typedef base::Callback<void(QuotaStatusCode status, int64_t quota)>
+    QuotaCallback;
+typedef base::Callback<void(int64_t usage)> UsageCallback;
+typedef base::Callback<void(QuotaStatusCode, int64_t)> AvailableSpaceCallback;
 typedef base::Callback<void(QuotaStatusCode)> StatusCallback;
 typedef base::Callback<void(const std::set<GURL>& origins,
                             StorageType type)> GetOriginsCallback;
@@ -48,12 +52,11 @@ class CallbackQueue {
   }
 
   // Runs the callbacks added to the queue and clears the queue.
-  void Run(
-      typename base::internal::CallbackParamTraits<Args>::ForwardType... args) {
+  void Run(Args... args) {
     std::vector<CallbackType> callbacks;
     callbacks.swap(callbacks_);
     for (const auto& callback : callbacks)
-      callback.Run(base::internal::CallbackForward(args)...);
+      callback.Run(args...);
   }
 
   void Swap(CallbackQueue<CallbackType, Args...>* other) {
@@ -94,15 +97,14 @@ class CallbackQueueMap {
 
   // Runs the callbacks added for the given |key| and clears the key
   // from the map.
-  void Run(
-      const Key& key,
-      typename base::internal::CallbackParamTraits<Args>::ForwardType... args) {
+  template <typename... RunArgs>
+  void Run(const Key& key, RunArgs&&... args) {
     if (!this->HasCallbacks(key))
       return;
     CallbackQueueType queue;
     queue.Swap(&callback_map_[key]);
     callback_map_.erase(key);
-    queue.Run(base::internal::CallbackForward(args)...);
+    queue.Run(std::forward<RunArgs>(args)...);
   }
 
  private:

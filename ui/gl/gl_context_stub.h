@@ -5,24 +5,28 @@
 #ifndef UI_GL_GL_CONTEXT_STUB_H_
 #define UI_GL_GL_CONTEXT_STUB_H_
 
+#include "base/macros.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_export.h"
 
-namespace gfx {
+namespace gl {
+
+class GLShareGroup;
 
 // A GLContext that does nothing for unit tests.
 class GL_EXPORT GLContextStub : public GLContextReal {
  public:
   GLContextStub();
+  explicit GLContextStub(GLShareGroup* share_group);
 
   // Implement GLContext.
   bool Initialize(GLSurface* compatible_surface,
-                  GpuPreference gpu_preference) override;
+                  const GLContextAttribs& attribs) override;
   bool MakeCurrent(GLSurface* surface) override;
   void ReleaseCurrent(GLSurface* surface) override;
   bool IsCurrent(GLSurface* surface) override;
   void* GetHandle() override;
   void OnSetSwapInterval(int interval) override;
-  std::string GetExtensions() override;
   std::string GetGLRenderer() override;
 
  protected:
@@ -32,6 +36,6 @@ class GL_EXPORT GLContextStub : public GLContextReal {
   DISALLOW_COPY_AND_ASSIGN(GLContextStub);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_CONTEXT_STUB_H_

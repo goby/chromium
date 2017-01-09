@@ -30,9 +30,10 @@ class ExtensionActionManagerTest : public testing::Test {
  protected:
   // Build an extension, populating |action_type| key with |action|, and
   // "icons" key with |extension_icons|.
-  scoped_refptr<Extension> BuildExtension(DictionaryBuilder& extension_icons,
-                                          DictionaryBuilder& action,
-                                          const char* action_type);
+  scoped_refptr<Extension> BuildExtension(
+      std::unique_ptr<base::DictionaryValue> extension_icons,
+      std::unique_ptr<base::DictionaryValue> action,
+      const char* action_type);
 
   // Returns true if |action|'s title matches |extension|'s name.
   bool TitlesMatch(const Extension& extension, const ExtensionAction& action);
@@ -60,7 +61,7 @@ class ExtensionActionManagerTest : public testing::Test {
   ExtensionRegistry* registry_;
   int curr_id_;
   ExtensionActionManager* manager_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
 };
 
 ExtensionActionManagerTest::ExtensionActionManagerTest()
@@ -71,19 +72,22 @@ ExtensionActionManagerTest::ExtensionActionManagerTest()
 }
 
 scoped_refptr<Extension> ExtensionActionManagerTest::BuildExtension(
-    DictionaryBuilder& extension_icons,
-    DictionaryBuilder& action,
+    std::unique_ptr<base::DictionaryValue> extension_icons,
+    std::unique_ptr<base::DictionaryValue> action,
     const char* action_type) {
   std::string id = base::IntToString(curr_id_++);
-  scoped_refptr<Extension> extension = ExtensionBuilder()
-      .SetManifest(DictionaryBuilder().Set("version", "1")
-          .Set("manifest_version", 2)
-          .Set("icons", extension_icons)
-          .Set(action_type, action)
-          .Set("name",
-              std::string("Test Extension").append(id)))
-      .SetID(id)
-      .Build();
+  scoped_refptr<Extension> extension =
+      ExtensionBuilder()
+          .SetManifest(
+              DictionaryBuilder()
+                  .Set("version", "1")
+                  .Set("manifest_version", 2)
+                  .Set("icons", std::move(extension_icons))
+                  .Set(action_type, std::move(action))
+                  .Set("name", std::string("Test Extension").append(id))
+                  .Build())
+          .SetID(id)
+          .Build();
   registry_->AddEnabled(extension);
   return extension;
 }
@@ -116,63 +120,68 @@ void ExtensionActionManagerTest::TestPopulateMissingValues(
   // Test that the largest icon from the extension's "icons" key is chosen as a
   // replacement for missing action default_icons keys. "19" should not be
   // replaced because "38" can always be used in its place.
-  scoped_refptr<Extension> extension = BuildExtension(
-      DictionaryBuilder().Set("48", "icon48.png")
-                         .Set("128", "icon128.png"),
-      DictionaryBuilder().Pass(),
-      action_type);
+  scoped_refptr<Extension> extension =
+      BuildExtension(DictionaryBuilder()
+                         .Set("48", "icon48.png")
+                         .Set("128", "icon128.png")
+                         .Build(),
+                     DictionaryBuilder().Build(), action_type);
 
   ASSERT_TRUE(extension.get());
-  const ExtensionAction* action = GetAction(action_type, *extension.get());
+  const ExtensionAction* action = GetAction(action_type, *extension);
   ASSERT_TRUE(action);
 
-  ASSERT_TRUE(TitlesMatch(*extension.get(), *action));
-  ASSERT_TRUE(IconsMatch(*extension.get(), 48, *action, 38));
+  ASSERT_TRUE(TitlesMatch(*extension, *action));
+  ASSERT_TRUE(IconsMatch(*extension, 48, *action, 38));
 
   // Test that the action's missing default_icons are not replaced with smaller
   // icons.
-  extension = BuildExtension(
-      DictionaryBuilder().Set("24", "icon24.png"),
-      DictionaryBuilder().Pass(),
-      action_type);
+  extension =
+      BuildExtension(DictionaryBuilder().Set("24", "icon24.png").Build(),
+                     DictionaryBuilder().Build(), action_type);
 
   ASSERT_TRUE(extension.get());
-  action = GetAction(action_type, *extension.get());
+  action = GetAction(action_type, *extension);
   ASSERT_TRUE(action);
 
-  ASSERT_TRUE(IconsMatch(*extension.get(), 24, *action, 19));
-  ASSERT_FALSE(IconsMatch(*extension.get(), 24, *action, 38));
+  ASSERT_TRUE(IconsMatch(*extension, 24, *action, 19));
+  ASSERT_FALSE(IconsMatch(*extension, 24, *action, 38));
 
   // Test that an action's 19px icon is not replaced if a 38px action icon
   // exists.
   extension = BuildExtension(
-      DictionaryBuilder().Set("128", "icon128.png"),
-      DictionaryBuilder().Set("default_icon", DictionaryBuilder()
-                                              .Set("38", "action38.png")),
+      DictionaryBuilder().Set("128", "icon128.png").Build(),
+      DictionaryBuilder()
+          .Set("default_icon",
+               DictionaryBuilder().Set("38", "action38.png").Build())
+          .Build(),
       action_type);
 
   ASSERT_TRUE(extension.get());
-  action = GetAction(action_type, *extension.get());
+  action = GetAction(action_type, *extension);
   ASSERT_TRUE(action);
 
-  ASSERT_FALSE(IconsMatch(*extension.get(), 128, *action, 19));
+  ASSERT_FALSE(IconsMatch(*extension, 128, *action, 19));
 
   // Test that existing default_icons and default_title are not replaced.
-  extension = BuildExtension(
-      DictionaryBuilder().Set("128", "icon128.png"),
-      DictionaryBuilder().Set("default_title", "Action!")
+  extension =
+      BuildExtension(DictionaryBuilder().Set("128", "icon128.png").Build(),
+                     DictionaryBuilder()
+                         .Set("default_title", "Action!")
                          .Set("default_icon", DictionaryBuilder()
-                                              .Set("19", "action19.png")
-                                              .Set("38", "action38.png")),
-      action_type);
+                                                  .Set("19", "action19.png")
+                                                  .Set("38", "action38.png")
+                                                  .Build())
+                         .Build(),
+                     action_type);
 
   ASSERT_TRUE(extension.get());
-  action = GetAction(action_type, *extension.get());
+  action = GetAction(action_type, *extension);
   ASSERT_TRUE(action);
 
-  ASSERT_FALSE(TitlesMatch(*extension.get(), *action));
-  ASSERT_FALSE(IconsMatch(*extension.get(), 128, *action, 19));
-  ASSERT_FALSE(IconsMatch(*extension.get(), 128, *action, 38));
+  ASSERT_FALSE(TitlesMatch(*extension, *action));
+  ASSERT_FALSE(IconsMatch(*extension, 128, *action, 19));
+  ASSERT_FALSE(IconsMatch(*extension, 128, *action, 38));
 }
 
 namespace {
@@ -188,16 +197,18 @@ TEST_F(ExtensionActionManagerTest, PopulatePageAction) {
 TEST_F(ExtensionActionManagerTest, GetBestFitActionTest) {
   // Create an extension with page action defaults.
   scoped_refptr<Extension> extension = BuildExtension(
-      DictionaryBuilder().Set("48", "icon48.png"),
-      DictionaryBuilder().Set("default_title", "Action!")
-                         .Set("default_icon", DictionaryBuilder()
-                                              .Set("38", "action38.png")),
+      DictionaryBuilder().Set("48", "icon48.png").Build(),
+      DictionaryBuilder()
+          .Set("default_title", "Action!")
+          .Set("default_icon",
+               DictionaryBuilder().Set("38", "action38.png").Build())
+          .Build(),
       kPageAction);
   ASSERT_TRUE(extension.get());
 
   // Get a "best fit" browser action for |extension|.
-  scoped_ptr<ExtensionAction> action =
-      manager()->GetBestFitAction(*extension.get(), ActionInfo::TYPE_BROWSER);
+  std::unique_ptr<ExtensionAction> action =
+      manager()->GetBestFitAction(*extension, ActionInfo::TYPE_BROWSER);
   ASSERT_TRUE(action.get());
   ASSERT_EQ(action->action_type(), ActionInfo::TYPE_BROWSER);
 
@@ -207,19 +218,17 @@ TEST_F(ExtensionActionManagerTest, GetBestFitActionTest) {
             "action38.png");
 
   // Create a new extension without page action defaults.
-  extension = BuildExtension(
-      DictionaryBuilder().Set("48", "icon48.png"),
-      DictionaryBuilder().Pass(),
-      kPageAction);
+  extension =
+      BuildExtension(DictionaryBuilder().Set("48", "icon48.png").Build(),
+                     DictionaryBuilder().Build(), kPageAction);
   ASSERT_TRUE(extension.get());
 
-  action =
-      manager()->GetBestFitAction(*extension.get(), ActionInfo::TYPE_BROWSER);
+  action = manager()->GetBestFitAction(*extension, ActionInfo::TYPE_BROWSER);
 
   // Now these values match because |extension| does not have page action
   // defaults.
-  ASSERT_TRUE(TitlesMatch(*extension.get(), *action));
-  ASSERT_TRUE(IconsMatch(*extension.get(), 48, *action, 38));
+  ASSERT_TRUE(TitlesMatch(*extension, *action));
+  ASSERT_TRUE(IconsMatch(*extension, 48, *action, 38));
 }
 
 }  // namespace

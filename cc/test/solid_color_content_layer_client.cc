@@ -4,6 +4,8 @@
 
 #include "cc/test/solid_color_content_layer_client.h"
 
+#include <stddef.h>
+
 #include "cc/playback/display_item_list_settings.h"
 #include "cc/playback/drawing_display_item.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -24,26 +26,35 @@ SolidColorContentLayerClient::PaintContentsToDisplayList(
     PaintingControlSetting painting_control) {
   SkPictureRecorder recorder;
   gfx::Rect clip(PaintableRegion());
-  skia::RefPtr<SkCanvas> canvas =
-      skia::SharePtr(recorder.beginRecording(gfx::RectToSkRect(clip)));
+  SkCanvas* canvas = recorder.beginRecording(gfx::RectToSkRect(clip));
+
+  canvas->clear(SK_ColorTRANSPARENT);
+
+  if (border_size_ != 0) {
+    SkPaint paint;
+    paint.setStyle(SkPaint::kFill_Style);
+    paint.setColor(border_color_);
+    canvas->drawRect(
+        SkRect::MakeXYWH(clip.x(), clip.y(), clip.width(), clip.height()),
+        paint);
+  }
 
   SkPaint paint;
   paint.setStyle(SkPaint::kFill_Style);
   paint.setColor(color_);
-
-  canvas->clear(SK_ColorTRANSPARENT);
   canvas->drawRect(
-      SkRect::MakeXYWH(clip.x(), clip.y(), clip.width(), clip.height()), paint);
+      SkRect::MakeXYWH(clip.x() + border_size_, clip.y() + border_size_,
+                       clip.width() - 2 * border_size_,
+                       clip.height() - 2 * border_size_),
+      paint);
 
   DisplayItemListSettings settings;
   settings.use_cached_picture = false;
   scoped_refptr<DisplayItemList> display_list =
-      DisplayItemList::Create(clip, settings);
-  auto* item = display_list->CreateAndAppendItem<DrawingDisplayItem>(clip);
+      DisplayItemList::Create(settings);
 
-  skia::RefPtr<SkPicture> picture =
-      skia::AdoptRef(recorder.endRecordingAsPicture());
-  item->SetNew(std::move(picture));
+  display_list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
+      clip, recorder.finishRecordingAsPicture());
 
   display_list->Finalize();
   return display_list;

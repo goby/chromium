@@ -5,17 +5,14 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_DOWNLOAD_DOWNLOAD_SHELF_CONTEXT_MENU_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_DOWNLOAD_DOWNLOAD_SHELF_CONTEXT_MENU_VIEW_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_shelf_context_menu.h"
+#include "chrome/browser/ui/views/download/download_item_view.h"
 #include "ui/base/ui_base_types.h"
-
-namespace content {
-class DownloadItem;
-class PageNavigator;
-}
 
 namespace gfx {
 class Rect;
@@ -28,7 +25,7 @@ class Widget;
 
 class DownloadShelfContextMenuView : public DownloadShelfContextMenu {
  public:
-  explicit DownloadShelfContextMenuView(content::DownloadItem* download_item);
+  explicit DownloadShelfContextMenuView(DownloadItemView* download_item_view);
   ~DownloadShelfContextMenuView() override;
 
   base::TimeTicks close_time() const { return close_time_; }
@@ -37,10 +34,19 @@ class DownloadShelfContextMenuView : public DownloadShelfContextMenu {
   // The menu will be positioned above or below but not overlapping |rect|.
   void Run(views::Widget* parent_widget,
            const gfx::Rect& rect,
-           ui::MenuSourceType source_type);
+           ui::MenuSourceType source_type,
+           const base::Closure& on_menu_closed_callback);
 
  private:
-  scoped_ptr<views::MenuRunner> menu_runner_;
+  // Callback for MenuRunner.
+  void OnMenuClosed(const base::Closure& on_menu_closed_callback);
+
+  void ExecuteCommand(int command_id, int event_flags) override;
+
+  // Parent download item view.
+  DownloadItemView* download_item_view_;
+
+  std::unique_ptr<views::MenuRunner> menu_runner_;
 
   // Time the menu was closed.
   base::TimeTicks close_time_;

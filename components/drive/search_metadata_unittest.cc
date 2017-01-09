@@ -2,20 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/drive/search_metadata.h"
+#include "components/drive/chromeos/search_metadata.h"
+
+#include <stddef.h>
+#include <stdint.h>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/i18n/string_search.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "components/drive/chromeos/drive_test_util.h"
+#include "components/drive/chromeos/fake_free_disk_space_getter.h"
+#include "components/drive/chromeos/file_cache.h"
 #include "components/drive/drive_api_util.h"
-#include "components/drive/drive_test_util.h"
-#include "components/drive/fake_free_disk_space_getter.h"
-#include "components/drive/file_cache.h"
 #include "components/drive/file_system_core_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -50,11 +54,10 @@ class SearchMetadataTest : public testing::Test {
     fake_free_disk_space_getter_.reset(new FakeFreeDiskSpaceGetter);
 
     metadata_storage_.reset(new ResourceMetadataStorage(
-        temp_dir_.path(), base::ThreadTaskRunnerHandle::Get().get()));
+        temp_dir_.GetPath(), base::ThreadTaskRunnerHandle::Get().get()));
     ASSERT_TRUE(metadata_storage_->Initialize());
 
-    cache_.reset(new FileCache(metadata_storage_.get(),
-                               temp_dir_.path(),
+    cache_.reset(new FileCache(metadata_storage_.get(), temp_dir_.GetPath(),
                                base::ThreadTaskRunnerHandle::Get().get(),
                                fake_free_disk_space_getter_.get()));
     ASSERT_TRUE(cache_->Initialize());
@@ -70,7 +73,8 @@ class SearchMetadataTest : public testing::Test {
 
   void AddEntriesToMetadata() {
     base::FilePath temp_file;
-    EXPECT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &temp_file));
+    EXPECT_TRUE(
+        base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file));
     const std::string temp_file_md5 = "md5";
 
     ResourceEntry entry;
@@ -132,7 +136,7 @@ class SearchMetadataTest : public testing::Test {
 
   ResourceEntry GetFileEntry(const std::string& name,
                              const std::string& resource_id,
-                             int64 last_accessed,
+                             int64_t last_accessed,
                              const std::string& parent_local_id) {
     ResourceEntry entry;
     entry.set_title(name);
@@ -144,7 +148,7 @@ class SearchMetadataTest : public testing::Test {
 
   ResourceEntry GetDirectoryEntry(const std::string& name,
                                   const std::string& resource_id,
-                                  int64 last_accessed,
+                                  int64_t last_accessed,
                                   const std::string& parent_local_id) {
     ResourceEntry entry;
     entry.set_title(name);
@@ -157,17 +161,17 @@ class SearchMetadataTest : public testing::Test {
 
   content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<FakeFreeDiskSpaceGetter> fake_free_disk_space_getter_;
-  scoped_ptr<ResourceMetadataStorage,
-             test_util::DestroyHelperForTests> metadata_storage_;
-  scoped_ptr<ResourceMetadata, test_util::DestroyHelperForTests>
+  std::unique_ptr<FakeFreeDiskSpaceGetter> fake_free_disk_space_getter_;
+  std::unique_ptr<ResourceMetadataStorage, test_util::DestroyHelperForTests>
+      metadata_storage_;
+  std::unique_ptr<ResourceMetadata, test_util::DestroyHelperForTests>
       resource_metadata_;
-  scoped_ptr<FileCache, test_util::DestroyHelperForTests> cache_;
+  std::unique_ptr<FileCache, test_util::DestroyHelperForTests> cache_;
 };
 
 TEST_F(SearchMetadataTest, SearchMetadata_ZeroMatches) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
@@ -182,7 +186,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_ZeroMatches) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_RegularFile) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
@@ -201,7 +205,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_RegularFile) {
 // Tricker test cases for |FindAndHighlightWrapper| can be found below.
 TEST_F(SearchMetadataTest, SearchMetadata_CaseInsensitiveSearch) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   // The query is all in lower case.
   SearchMetadata(
@@ -219,7 +223,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_CaseInsensitiveSearch) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_RegularFiles) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(), "SubDir",
@@ -240,7 +244,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_RegularFiles) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_AtMostOneFile) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   // There are two files matching "SubDir" but only one file should be
   // returned.
@@ -259,7 +263,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_AtMostOneFile) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_Directory) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
@@ -275,7 +279,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_Directory) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_HostedDocument) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(), "Document",
@@ -292,7 +296,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_HostedDocument) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_ExcludeHostedDocument) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(), "Document",
@@ -307,7 +311,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_ExcludeHostedDocument) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_SharedWithMe) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(), "",
@@ -324,7 +328,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_SharedWithMe) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_FileAndDirectory) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
@@ -345,7 +349,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_FileAndDirectory) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_ExcludeDirectory) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
@@ -368,7 +372,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_ExcludeSpecialDirectories) {
   const char* const kQueries[] = { "drive", "root", "other" };
   for (size_t i = 0; i < arraysize(kQueries); ++i) {
     FileError error = FILE_ERROR_FAILED;
-    scoped_ptr<MetadataSearchResultVector> result;
+    std::unique_ptr<MetadataSearchResultVector> result;
 
     const std::string query = kQueries[i];
     SearchMetadata(
@@ -385,7 +389,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_ExcludeSpecialDirectories) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_Offline) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(), "",
@@ -408,7 +412,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_Offline) {
 
 TEST_F(SearchMetadataTest, SearchMetadata_MultipleKeywords) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
@@ -429,7 +433,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_MultipleKeywords) {
 TEST_F(SearchMetadataTest,
        SearchMetadata_KeywordsSeparatedWithIdeographicSpace) {
   FileError error = FILE_ERROR_FAILED;
-  scoped_ptr<MetadataSearchResultVector> result;
+  std::unique_ptr<MetadataSearchResultVector> result;
 
   // \xE3\x80\x80 is ideographic space.
   SearchMetadata(

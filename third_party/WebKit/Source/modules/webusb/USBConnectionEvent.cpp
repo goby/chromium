@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/webusb/USBConnectionEvent.h"
 
 #include "modules/webusb/USBConnectionEventInit.h"
@@ -10,34 +9,29 @@
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<USBConnectionEvent> USBConnectionEvent::create(const AtomicString& type, const USBConnectionEventInit& initializer)
-{
-    return adoptRefWillBeNoop(new USBConnectionEvent(type, initializer));
+USBConnectionEvent* USBConnectionEvent::create(
+    const AtomicString& type,
+    const USBConnectionEventInit& initializer) {
+  return new USBConnectionEvent(type, initializer);
 }
 
-PassRefPtrWillBeRawPtr<USBConnectionEvent> USBConnectionEvent::create(const AtomicString& type, USBDevice* device)
-{
-    return adoptRefWillBeNoop(new USBConnectionEvent(type, device));
+USBConnectionEvent* USBConnectionEvent::create(const AtomicString& type,
+                                               USBDevice* device) {
+  return new USBConnectionEvent(type, device);
 }
 
-USBConnectionEvent::USBConnectionEvent(const AtomicString& type, const USBConnectionEventInit& initializer)
-    : Event(type, initializer)
-    , m_device(nullptr)
-{
-    if (initializer.hasDevice())
-        m_device = initializer.device();
+USBConnectionEvent::USBConnectionEvent(
+    const AtomicString& type,
+    const USBConnectionEventInit& initializer)
+    : Event(type, initializer), m_device(initializer.device()) {}
+
+USBConnectionEvent::USBConnectionEvent(const AtomicString& type,
+                                       USBDevice* device)
+    : Event(type, false, false), m_device(device) {}
+
+DEFINE_TRACE(USBConnectionEvent) {
+  visitor->trace(m_device);
+  Event::trace(visitor);
 }
 
-USBConnectionEvent::USBConnectionEvent(const AtomicString& type, USBDevice* device)
-    : Event(type, false, false)
-    , m_device(device)
-{
-}
-
-DEFINE_TRACE(USBConnectionEvent)
-{
-    visitor->trace(m_device);
-    Event::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

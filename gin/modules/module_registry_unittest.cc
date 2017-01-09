@@ -4,7 +4,12 @@
 
 #include "gin/modules/module_registry.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "gin/modules/module_registry_observer.h"
 #include "gin/modules/module_runner_delegate.h"
 #include "gin/public/context_holder.h"
@@ -25,7 +30,7 @@ struct TestHelper {
   }
 
   ModuleRunnerDelegate delegate;
-  scoped_ptr<ShellRunner> runner;
+  std::unique_ptr<ShellRunner> runner;
   Runner::Scope scope;
 };
 

@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_CHROMEOS_NET_WAKE_ON_WIFI_MANAGER_H_
 #define CHROME_BROWSER_CHROMEOS_NET_WAKE_ON_WIFI_MANAGER_H_
 
-#include "base/containers/scoped_ptr_hash_map.h"
+#include <map>
+
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/power/extension_event_observer.h"
 #include "chromeos/network/network_state_handler_observer.h"
@@ -21,6 +22,8 @@ class DictionaryValue;
 }
 
 namespace chromeos {
+
+class WakeOnWifiConnectionObserver;
 
 // This class is responsible for managing the various wake-on-wifi related bits
 // of functionality in chrome.  It is responsible for communicating the user's
@@ -41,6 +44,7 @@ class WakeOnWifiManager : public content::NotificationObserver,
   };
 
   static WakeOnWifiManager* Get();
+  static bool IsWakeOnPacketEnabled(WakeOnWifiFeature feature);
 
   WakeOnWifiManager();
   ~WakeOnWifiManager() override;
@@ -63,6 +67,11 @@ class WakeOnWifiManager : public content::NotificationObserver,
   void DevicePropertiesUpdated(const DeviceState* device) override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(WakeOnWifiObserverTest, TestWakeOnWifiPacketAdd);
+  FRIEND_TEST_ALL_PREFIXES(WakeOnWifiObserverTest, TestWakeOnWifiPacketRemove);
+  FRIEND_TEST_ALL_PREFIXES(WakeOnWifiObserverTest, TestWakeOnWifiNoneAdd);
+  FRIEND_TEST_ALL_PREFIXES(WakeOnWifiObserverTest, TestWakeOnWifiNoneRemove);
+
   // Sends the user's preference to shill, updates the timer used by the GCM
   // client to send heartbeats, and tells |extension_event_observer_| to block
   // (or not block) suspends based on the value of |current_feature_|.
@@ -85,11 +94,10 @@ class WakeOnWifiManager : public content::NotificationObserver,
   // shill.
   bool wifi_properties_received_;
 
-  class WakeOnPacketConnectionObserver;
-  base::ScopedPtrHashMap<Profile*, scoped_ptr<WakeOnPacketConnectionObserver>>
-      connection_observers_;
+  std::map<Profile*,
+           std::unique_ptr<WakeOnWifiConnectionObserver>> connection_observers_;
 
-  scoped_ptr<ExtensionEventObserver> extension_event_observer_;
+  std::unique_ptr<ExtensionEventObserver> extension_event_observer_;
 
   content::NotificationRegistrar registrar_;
 

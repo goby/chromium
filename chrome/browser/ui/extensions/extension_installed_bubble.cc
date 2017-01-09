@@ -5,26 +5,32 @@
 #include "chrome/browser/ui/extensions/extension_installed_bubble.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/sync/sync_promo_ui.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/common/extensions/api/omnibox/omnibox_handler.h"
 #include "chrome/common/extensions/command.h"
+#include "chrome/common/extensions/sync_helper.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
+#include "extensions/common/feature_switch.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using extensions::Extension;
@@ -42,8 +48,8 @@ class ExtensionInstalledBubbleObserver
       public extensions::ExtensionRegistryObserver {
  public:
   explicit ExtensionInstalledBubbleObserver(
-      scoped_ptr<ExtensionInstalledBubble> bubble)
-      : bubble_(bubble.Pass()),
+      std::unique_ptr<ExtensionInstalledBubble> bubble)
+      : bubble_(std::move(bubble)),
         extension_registry_observer_(this),
         animation_wait_retries_(0),
         weak_factory_(this) {
@@ -55,6 +61,8 @@ class ExtensionInstalledBubbleObserver
     registrar_.Add(this, chrome::NOTIFICATION_BROWSER_CLOSING,
                    content::Source<Browser>(bubble_->browser()));
   }
+
+  void Run() { OnExtensionLoaded(nullptr, bubble_->extension()); }
 
  private:
   ~ExtensionInstalledBubbleObserver() override {}
@@ -74,13 +82,12 @@ class ExtensionInstalledBubbleObserver
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const extensions::Extension* extension) override {
     if (extension == bubble_->extension()) {
-      bubble_->OnExtensionLoaded();
       // PostTask to ourself to allow all EXTENSION_LOADED Observers to run.
       // Only then can we be sure that a BrowserAction or PageAction has had
       // views created which we can inspect for the purpose of previewing of
       // pointing to them.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&ExtensionInstalledBubbleObserver::Show,
+          FROM_HERE, base::Bind(&ExtensionInstalledBubbleObserver::Initialize,
                                 weak_factory_.GetWeakPtr()));
     }
   }
@@ -95,6 +102,12 @@ class ExtensionInstalledBubbleObserver
     }
   }
 
+  void Initialize() {
+    DCHECK(bubble_);
+    bubble_->Initialize();
+    Show();
+  }
+
   // Called internally via PostTask to show the bubble.
   void Show() {
     DCHECK(bubble_);
@@ -104,7 +117,7 @@ class ExtensionInstalledBubbleObserver
     if (bubble_->ShouldShow()) {
       // Must be 2 lines because the manager will take ownership of bubble.
       BubbleManager* manager = bubble_->browser()->GetBubbleManager();
-      manager->ShowBubble(bubble_.Pass());
+      manager->ShowBubble(std::move(bubble_));
       delete this;
       return;
     }
@@ -121,7 +134,7 @@ class ExtensionInstalledBubbleObserver
   }
 
   // The bubble that will be shown when the extension has finished installing.
-  scoped_ptr<ExtensionInstalledBubble> bubble_;
+  std::unique_ptr<ExtensionInstalledBubble> bubble_;
 
   ScopedObserver<extensions::ExtensionRegistry,
                  extensions::ExtensionRegistryObserver>
@@ -139,11 +152,11 @@ class ExtensionInstalledBubbleObserver
 };
 
 // Returns the keybinding for an extension command, or a null if none exists.
-scoped_ptr<extensions::Command> GetCommand(
+std::unique_ptr<extensions::Command> GetCommand(
     const std::string& extension_id,
     Profile* profile,
     ExtensionInstalledBubble::BubbleType type) {
-  scoped_ptr<extensions::Command> result;
+  std::unique_ptr<extensions::Command> result;
   extensions::Command command;
   extensions::CommandService* command_service =
       extensions::CommandService::Get(profile);
@@ -157,7 +170,7 @@ scoped_ptr<extensions::Command> GetCommand(
   }
   if (has_command)
     result.reset(new extensions::Command(command));
-  return result.Pass();
+  return result;
 }
 
 }  // namespace
@@ -169,23 +182,24 @@ void ExtensionInstalledBubble::ShowBubble(
     const SkBitmap& icon) {
   // The ExtensionInstalledBubbleObserver will delete itself when the
   // ExtensionInstalledBubble is shown or when it can't be shown anymore.
-  new ExtensionInstalledBubbleObserver(
-      make_scoped_ptr(new ExtensionInstalledBubble(extension, browser, icon)));
+  auto* observer = new ExtensionInstalledBubbleObserver(
+      base::WrapUnique(new ExtensionInstalledBubble(extension, browser, icon)));
+  extensions::ExtensionRegistry* reg =
+      extensions::ExtensionRegistry::Get(browser->profile());
+  if (reg->enabled_extensions().GetByID(extension->id())) {
+    observer->Run();
+  }
 }
 
 ExtensionInstalledBubble::ExtensionInstalledBubble(const Extension* extension,
                                                    Browser* browser,
                                                    const SkBitmap& icon)
-    : extension_(extension), browser_(browser), icon_(icon) {
-  if (!extensions::OmniboxInfo::GetKeyword(extension).empty())
-    type_ = OMNIBOX_KEYWORD;
-  else if (extensions::ActionInfo::GetBrowserActionInfo(extension))
-    type_ = BROWSER_ACTION;
-  else if (extensions::ActionInfo::GetPageActionInfo(extension) &&
-           extensions::ActionInfo::IsVerboseInstallMessage(extension))
-    type_ = PAGE_ACTION;
-  else
-    type_ = GENERIC;
+    : extension_(extension),
+      browser_(browser),
+      icon_(icon),
+      type_(GENERIC),
+      options_(NONE),
+      anchor_position_(ANCHOR_APP_MENU) {
 }
 
 ExtensionInstalledBubble::~ExtensionInstalledBubble() {}
@@ -197,6 +211,10 @@ bool ExtensionInstalledBubble::ShouldClose(BubbleCloseReason reason) const {
 
 std::string ExtensionInstalledBubble::GetName() const {
   return "ExtensionInstalled";
+}
+
+const content::RenderFrameHost* ExtensionInstalledBubble::OwningFrame() const {
+  return nullptr;
 }
 
 base::string16 ExtensionInstalledBubble::GetHowToUseDescription() const {
@@ -229,6 +247,62 @@ base::string16 ExtensionInstalledBubble::GetHowToUseDescription() const {
       l10n_util::GetStringFUTF16(message_id, extra);
 }
 
-void ExtensionInstalledBubble::OnExtensionLoaded() {
+void ExtensionInstalledBubble::Initialize() {
+  bool extension_action_redesign_on =
+      extensions::FeatureSwitch::extension_action_redesign()->IsEnabled();
+
+  const extensions::ActionInfo* action_info = nullptr;
+  if ((action_info = extensions::ActionInfo::GetBrowserActionInfo(
+           extension_)) != nullptr) {
+    type_ = BROWSER_ACTION;
+  } else if ((action_info = extensions::ActionInfo::GetPageActionInfo(
+                  extension_)) != nullptr &&
+             (extensions::ActionInfo::IsVerboseInstallMessage(extension_) ||
+              extension_action_redesign_on)) {
+    type_ = PAGE_ACTION;
+  } else if (!extensions::OmniboxInfo::GetKeyword(extension_).empty()) {
+    type_ = OMNIBOX_KEYWORD;
+  } else {
+    type_ = GENERIC;
+  }
+
   action_command_ = GetCommand(extension_->id(), browser_->profile(), type_);
+  if (extensions::sync_helper::IsSyncable(extension_) &&
+      SyncPromoUI::ShouldShowSyncPromo(browser_->profile()))
+    options_ |= SIGN_IN_PROMO;
+
+  // Determine the bubble options we want, based on the extension type.
+  switch (type_) {
+    case BROWSER_ACTION:
+    case PAGE_ACTION:
+      DCHECK(action_info);
+      if (!action_info->synthesized)
+        options_ |= HOW_TO_USE;
+
+      if (has_command_keybinding()) {
+        options_ |= SHOW_KEYBINDING;
+      } else {
+        // The How-To-Use text makes the bubble seem a little crowded when the
+        // extension has a keybinding, so the How-To-Manage text is not shown
+        // in those cases.
+        options_ |= HOW_TO_MANAGE;
+      }
+
+      if (type_ == BROWSER_ACTION || extension_action_redesign_on) {
+        // If the toolbar redesign is enabled, all bubbles for extensions point
+        // to their toolbar action.
+        anchor_position_ = ANCHOR_BROWSER_ACTION;
+      } else {
+        DCHECK_EQ(type_, PAGE_ACTION);
+        anchor_position_ = ANCHOR_PAGE_ACTION;
+      }
+      break;
+    case OMNIBOX_KEYWORD:
+      options_ |= HOW_TO_USE | HOW_TO_MANAGE;
+      anchor_position_ = ANCHOR_OMNIBOX;
+      break;
+    case GENERIC:
+      anchor_position_ = ANCHOR_APP_MENU;
+      break;
+  }
 }

@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "url/gurl.h"
@@ -70,7 +71,8 @@ class WebstoreInstallerTest : public ExtensionBrowserTest {
 
   base::ScopedTempDir download_directory_;
 
-  scoped_ptr<extensions::ScopedTestDialogAutoConfirm> install_auto_confirm_;
+  std::unique_ptr<extensions::ScopedTestDialogAutoConfirm>
+      install_auto_confirm_;
 
   DISALLOW_COPY_AND_ASSIGN(WebstoreInstallerTest);
 };

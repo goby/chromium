@@ -7,22 +7,15 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/memory/scoped_ptr.h"
-#import "chrome/browser/ui/cocoa/clickhold_button_cell.h"
-#include "chrome/browser/ui/toolbar/app_menu_icon_painter.h"
+#include <memory>
 
-class AppMenuIconPainterDelegateMac;
+#import "chrome/browser/ui/cocoa/clickhold_button_cell.h"
+
 
 // Cell for the app toolbar button. This is used to draw the app menu icon
 // and paint severity levels.
 @interface AppToolbarButtonCell : ClickHoldButtonCell {
- @private
-  scoped_ptr<AppMenuIconPainter> iconPainter_;
-  scoped_ptr<AppMenuIconPainterDelegateMac> delegate_;
 }
-
-- (void)setSeverity:(AppMenuIconPainter::Severity)severity
-      shouldAnimate:(BOOL)shouldAnimate;
 
 @end
 

@@ -6,8 +6,10 @@
 
 #include <string>
 
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "content/public/common/origin_util.h"
 
 namespace content {
 
@@ -35,7 +37,6 @@ bool PathContainsDisallowedCharacter(const GURL& url) {
 // static
 bool ServiceWorkerUtils::ScopeMatches(const GURL& scope, const GURL& url) {
   DCHECK(!scope.has_ref());
-  DCHECK(!url.has_ref());
   return base::StartsWith(url.spec(), scope.spec(),
                           base::CompareCase::SENSITIVE);
 }
@@ -102,6 +103,39 @@ bool ServiceWorkerUtils::ContainsDisallowedCharacter(
     return true;
   }
   return false;
+}
+
+// static
+bool ServiceWorkerUtils::AllOriginsMatchAndCanAccessServiceWorkers(
+    const std::vector<GURL>& urls) {
+  // (A) Check if all origins can access service worker. Every URL must be
+  // checked despite the same-origin check below in (B), because GetOrigin()
+  // uses the inner URL for filesystem URLs so that https://foo/ and
+  // filesystem:https://foo/ are considered equal, but filesystem URLs cannot
+  // access service worker.
+  for (const GURL& url : urls) {
+    if (!OriginCanAccessServiceWorkers(url))
+      return false;
+  }
+
+  // (B) Check if all origins are equal. Cross-origin access is permitted when
+  // --disable-web-security is set.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableWebSecurity)) {
+    return true;
+  }
+  const GURL& first = urls.front();
+  for (const GURL& url : urls) {
+    if (first.GetOrigin() != url.GetOrigin())
+      return false;
+  }
+  return true;
+}
+
+// static
+bool ServiceWorkerUtils::IsMojoForServiceWorkerEnabled() {
+  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableMojoServiceWorker);
 }
 
 bool LongestScopeMatcher::MatchLongest(const GURL& scope) {

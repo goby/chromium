@@ -5,15 +5,17 @@
 #ifndef UI_BASE_RESOURCE_RESOURCE_BUNDLE_H_
 #define UI_BASE_RESOURCE_RESOURCE_BUNDLE_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
@@ -29,7 +31,7 @@ class SkBitmap;
 namespace base {
 class File;
 class Lock;
-class RefCountedStaticMemory;
+class RefCountedMemory;
 }
 
 namespace ui {
@@ -41,27 +43,22 @@ class ResourceHandle;
 // such as theme graphics. Every resource is loaded only once.
 class UI_BASE_EXPORT ResourceBundle {
  public:
-  // An enumeration of the various font styles used throughout Chrome.
-  // The following holds true for the font sizes:
-  // Small <= SmallBold <= Base <= Bold <= Medium <= MediumBold <= Large.
+  // Legacy font size deltas. Consider these to be magic numbers. New code
+  // should declare their own size delta constant using an identifier that
+  // imparts some semantic meaning.
+  static const int kSmallFontDelta = -1;
+  static const int kMediumFontDelta = 3;
+  static const int kLargeFontDelta = 8;
+
+  // Legacy font style mappings. TODO(tapted): Phase these out in favour of
+  // client code providing their own constant with the desired font size delta.
   enum FontStyle {
-    // NOTE: depending upon the locale, using one of the *BoldFont below
-    // may *not* actually result in a bold font.
     SmallFont,
-    SmallBoldFont,
     BaseFont,
     BoldFont,
     MediumFont,
     MediumBoldFont,
     LargeFont,
-    LargeBoldFont,
-  };
-
-  enum ImageRTL {
-    // Images are flipped in RTL locales.
-    RTL_ENABLED,
-    // Images are never flipped.
-    RTL_DISABLED,
   };
 
   enum LoadResources {
@@ -95,11 +92,11 @@ class UI_BASE_EXPORT ResourceBundle {
 
     // Return an image resource or an empty value to attempt retrieval of the
     // default resource.
-    virtual gfx::Image GetNativeImageNamed(int resource_id, ImageRTL rtl) = 0;
+    virtual gfx::Image GetNativeImageNamed(int resource_id) = 0;
 
-    // Return a static memory resource or NULL to attempt retrieval of the
+    // Return a ref counted memory resource or NULL to attempt retrieval of the
     // default resource.
-    virtual base::RefCountedStaticMemory* LoadDataResourceBytes(
+    virtual base::RefCountedMemory* LoadDataResourceBytes(
         int resource_id,
         ScaleFactor scale_factor) = 0;
 
@@ -112,9 +109,6 @@ class UI_BASE_EXPORT ResourceBundle {
     // Retrieve a localized string. Return true if a string was provided or
     // false to attempt retrieval of the default string.
     virtual bool GetLocalizedString(int message_id, base::string16* value) = 0;
-
-    // Returns a font or NULL to attempt retrieval of the default resource.
-    virtual scoped_ptr<gfx::Font> GetFont(FontStyle style) = 0;
 
    protected:
     virtual ~Delegate() {}
@@ -181,15 +175,6 @@ class UI_BASE_EXPORT ResourceBundle {
   void AddOptionalDataPackFromPath(const base::FilePath& path,
                                    ScaleFactor scale_factor);
 
-  // The same as AddDataPackFromPath() and AddOptionalDataPackFromPath(),
-  // except the data pack is flagged as containing only material design assets.
-  // TODO(tdanderson): These methods are temporary and should be removed after
-  //                   the transition to material design in the browser UI.
-  void AddMaterialDesignDataPackFromPath(const base::FilePath& path,
-                                         ScaleFactor scale_factor);
-  void AddOptionalMaterialDesignDataPackFromPath(const base::FilePath& path,
-                                                 ScaleFactor scale_factor);
-
   // Changes the locale for an already-initialized ResourceBundle, returning the
   // name of the newly-loaded locale.  Future calls to get strings will return
   // the strings for this new locale.  This has no effect on existing or future
@@ -217,27 +202,22 @@ class UI_BASE_EXPORT ResourceBundle {
   // Note that if the same resource has already been loaded in GetImageNamed(),
   // gfx::Image will perform a conversion, rather than using the native image
   // loading code of ResourceBundle.
-  //
-  // If |rtl| is RTL_ENABLED then the image is flipped in RTL locales.
-  gfx::Image& GetNativeImageNamed(int resource_id, ImageRTL rtl);
-
-  // Same as GetNativeImageNamed() except that RTL is not enabled.
   gfx::Image& GetNativeImageNamed(int resource_id);
 
   // Loads the raw bytes of a scale independent data resource.
-  base::RefCountedStaticMemory* LoadDataResourceBytes(int resource_id) const;
+  base::RefCountedMemory* LoadDataResourceBytes(int resource_id) const;
 
   // Loads the raw bytes of a data resource nearest the scale factor
   // |scale_factor| into |bytes|, without doing any processing or
   // interpretation of the resource. Use ResourceHandle::SCALE_FACTOR_NONE
   // for scale independent image resources (such as wallpaper).
   // Returns NULL if we fail to read the resource.
-  base::RefCountedStaticMemory* LoadDataResourceBytesForScale(
+  base::RefCountedMemory* LoadDataResourceBytesForScale(
       int resource_id,
       ScaleFactor scale_factor) const;
 
   // Return the contents of a scale independent resource in a
-  // StringPiece given the resource id
+  // StringPiece given the resource id.
   base::StringPiece GetRawDataResource(int resource_id) const;
 
   // Return the contents of a resource in a StringPiece given the resource id
@@ -251,10 +231,25 @@ class UI_BASE_EXPORT ResourceBundle {
   // string if the message_id is not found.
   base::string16 GetLocalizedString(int message_id);
 
-  // Returns the font list for the specified style.
-  const gfx::FontList& GetFontList(FontStyle style);
+  // Get a localized resource (for example, localized image logo) given a
+  // resource id.
+  base::RefCountedMemory* LoadLocalizedResourceBytes(int resource_id);
 
-  // Returns the font for the specified style.
+  // Returns a font list derived from the platform-specific "Base" font list.
+  // The result is always cached and exists for the lifetime of the process.
+  const gfx::FontList& GetFontListWithDelta(
+      int size_delta,
+      gfx::Font::FontStyle style = gfx::Font::NORMAL,
+      gfx::Font::Weight weight = gfx::Font::Weight::NORMAL);
+
+  // Returns the primary font from the FontList given by GetFontListWithDelta().
+  const gfx::Font& GetFontWithDelta(
+      int size_delta,
+      gfx::Font::FontStyle style = gfx::Font::NORMAL,
+      gfx::Font::Weight weight = gfx::Font::Weight::NORMAL);
+
+  // Deprecated. Returns fonts using hard-coded size deltas implied by |style|.
+  const gfx::FontList& GetFontList(FontStyle style);
   const gfx::Font& GetFont(FontStyle style);
 
   // Resets and reloads the cached fonts.  This is useful when the fonts of the
@@ -285,7 +280,6 @@ class UI_BASE_EXPORT ResourceBundle {
   // Returns SCALE_FACTOR_100P if no resource is loaded.
   ScaleFactor GetMaxScaleFactor() const;
 
- protected:
   // Returns true if |scale_factor| is supported by this platform.
   static bool IsScaleFactorSupported(ScaleFactor scale_factor);
 
@@ -293,17 +287,16 @@ class UI_BASE_EXPORT ResourceBundle {
   FRIEND_TEST_ALL_PREFIXES(ResourceBundleTest, DelegateGetPathForLocalePack);
   FRIEND_TEST_ALL_PREFIXES(ResourceBundleTest, DelegateGetImageNamed);
   FRIEND_TEST_ALL_PREFIXES(ResourceBundleTest, DelegateGetNativeImageNamed);
-  FRIEND_TEST_ALL_PREFIXES(ResourceBundleImageTest,
-                           CountMaterialDesignDataPacksInResourceBundle);
-  FRIEND_TEST_ALL_PREFIXES(ResourceBundleMacImageTest,
-                           CheckImageFromMaterialDesign);
 
   friend class ResourceBundleMacImageTest;
   friend class ResourceBundleImageTest;
   friend class ResourceBundleTest;
+  friend class ChromeBrowserMainMacBrowserTest;
 
   class ResourceBundleImageSource;
   friend class ResourceBundleImageSource;
+
+  struct FontKey;
 
   typedef base::hash_map<int, base::string16> IdToStringMap;
 
@@ -320,19 +313,14 @@ class UI_BASE_EXPORT ResourceBundle {
   // Load the main resources.
   void LoadCommonResources();
 
-  // Loads the resource paks chrome_{100,200}_percent.pak. Also loads the
-  // resource paks chrome_material_{100,200}_percent.pak contaning top
-  // chrome material design assets if the runtime flag is enabled.
+  // Loads the resource paks chrome_{100,200}_percent.pak.
   void LoadChromeResources();
 
   // Implementation for the public methods which add a DataPack from a path. If
-  // |optional| is false, an error is logged on failure to load. Sets the
-  // member |has_only_material_design_assets_| on the created DataPack to the
-  // value of |has_only_material_assets|.
+  // |optional| is false, an error is logged on failure to load.
   void AddDataPackFromPathInternal(const base::FilePath& path,
                                    ScaleFactor scale_factor,
-                                   bool optional,
-                                   bool has_only_material_assets);
+                                   bool optional);
 
   // Inserts |data_pack| to |data_pack_| and updates |max_scale_factor_|
   // accordingly.
@@ -354,14 +342,6 @@ class UI_BASE_EXPORT ResourceBundle {
   // Initializes the font description of default gfx::FontList.
   void InitDefaultFontList();
 
-  // Initializes all the gfx::FontList members if they haven't yet been
-  // initialized.
-  void LoadFontsIfNecessary();
-
-  // Returns a FontList or NULL by calling Delegate::GetFont and converting
-  // scoped_ptr<gfx::Font> to scoped_ptr<gfx::FontList>.
-  scoped_ptr<gfx::FontList> GetFontListFromDelegate(FontStyle style);
-
   // Fills the |bitmap| given the data file to look in and the |resource_id|.
   // Returns false if the resource does not exist.
   //
@@ -375,7 +355,7 @@ class UI_BASE_EXPORT ResourceBundle {
   // Fills the |bitmap| given the |resource_id| and |scale_factor|.
   // Returns false if the resource does not exist. This may fall back to
   // the data pack with SCALE_FACTOR_NONE, and when this happens,
-  // |scale_factor| will be set to SCALE_FACTOR_100P.
+  // |scale_factor| will be set to SCALE_FACTOR_NONE.
   bool LoadBitmap(int resource_id,
                   ScaleFactor* scale_factor,
                   SkBitmap* bitmap,
@@ -409,13 +389,13 @@ class UI_BASE_EXPORT ResourceBundle {
   Delegate* delegate_;
 
   // Protects |images_| and font-related members.
-  scoped_ptr<base::Lock> images_and_fonts_lock_;
+  std::unique_ptr<base::Lock> images_and_fonts_lock_;
 
   // Protects |locale_resources_data_|.
-  scoped_ptr<base::Lock> locale_resources_data_lock_;
+  std::unique_ptr<base::Lock> locale_resources_data_lock_;
 
   // Handles for data sources.
-  scoped_ptr<ResourceHandle> locale_resources_data_;
+  std::unique_ptr<ResourceHandle> locale_resources_data_;
   ScopedVector<ResourceHandle> data_packs_;
 
   // The maximum scale factor currently loaded.
@@ -428,21 +408,17 @@ class UI_BASE_EXPORT ResourceBundle {
 
   gfx::Image empty_image_;
 
-  // The various font lists used. Cached to avoid repeated GDI
-  // creation/destruction.
-  scoped_ptr<gfx::FontList> base_font_list_;
-  scoped_ptr<gfx::FontList> bold_font_list_;
-  scoped_ptr<gfx::FontList> small_font_list_;
-  scoped_ptr<gfx::FontList> small_bold_font_list_;
-  scoped_ptr<gfx::FontList> medium_font_list_;
-  scoped_ptr<gfx::FontList> medium_bold_font_list_;
-  scoped_ptr<gfx::FontList> large_font_list_;
-  scoped_ptr<gfx::FontList> large_bold_font_list_;
-  scoped_ptr<gfx::FontList> web_font_list_;
+  // The various font lists used, as a map from a signed size delta from the
+  // platform base font size, plus style, to the FontList. Cached to avoid
+  // repeated GDI creation/destruction and font derivation.
+  // Must be accessed only while holding |images_and_fonts_lock_|.
+  std::map<FontKey, gfx::FontList> font_cache_;
 
   base::FilePath overridden_pak_path_;
 
   IdToStringMap overridden_locale_strings_;
+
+  bool is_test_resources_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ResourceBundle);
 };

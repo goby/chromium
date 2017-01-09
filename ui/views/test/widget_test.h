@@ -5,18 +5,13 @@
 #ifndef UI_VIEWS_TEST_WIDGET_TEST_H_
 #define UI_VIEWS_TEST_WIDGET_TEST_H_
 
+#include "base/macros.h"
+#include "base/run_loop.h"
+#include "build/build_config.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget_delegate.h"
-
-#if defined(USE_AURA)
-#include "ui/views/widget/native_widget_aura.h"
-#if !defined(OS_CHROMEOS)
-#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
-#endif
-#elif defined(OS_MACOSX)
-#include "ui/views/widget/native_widget_mac.h"
-#endif
+#include "ui/views/widget/widget_observer.h"
 
 namespace ui {
 namespace internal {
@@ -27,18 +22,7 @@ class EventProcessor;
 
 namespace views {
 
-class NativeWidget;
 class Widget;
-
-#if defined(USE_AURA)
-typedef NativeWidgetAura PlatformNativeWidget;
-#if !defined(OS_CHROMEOS)
-typedef DesktopNativeWidgetAura PlatformDesktopNativeWidget;
-#endif
-#elif defined(OS_MACOSX)
-typedef NativeWidgetMac PlatformNativeWidget;
-typedef NativeWidgetMac PlatformDesktopNativeWidget;
-#endif
 
 namespace internal {
 
@@ -48,45 +32,13 @@ class RootView;
 
 namespace test {
 
-// A widget that assumes mouse capture always works. It won't on Aura in
-// testing, so we mock it.
-class NativeWidgetCapture : public PlatformNativeWidget {
- public:
-  explicit NativeWidgetCapture(internal::NativeWidgetDelegate* delegate);
-  ~NativeWidgetCapture() override;
-
-  void SetCapture() override;
-  void ReleaseCapture() override;
-  bool HasCapture() const override;
-
- private:
-  bool mouse_capture_;
-
-  DISALLOW_COPY_AND_ASSIGN(NativeWidgetCapture);
-};
-
 class WidgetTest : public ViewsTestBase {
  public:
-  // Scoped handle that fakes all widgets into claiming they are active. This
-  // allows a test to assume active status does not get stolen by a test that
-  // may be running in parallel. It shouldn't be used in tests that create
-  // multiple widgets.
-  class FakeActivation {
-   public:
-    virtual ~FakeActivation() {}
-
-   protected:
-    FakeActivation() {}
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(FakeActivation);
-  };
-
   WidgetTest();
   ~WidgetTest() override;
 
   // Create Widgets with |native_widget| in InitParams set to an instance of
-  // test::NativeWidgetCapture.
+  // platform specific widget type that has stubbled capture calls.
   Widget* CreateTopLevelPlatformWidget();
   Widget* CreateTopLevelFramelessPlatformWidget();
   Widget* CreateChildPlatformWidget(gfx::NativeView parent_native_view);
@@ -109,9 +61,6 @@ class WidgetTest : public ViewsTestBase {
 
   View* GetGestureHandler(internal::RootView* root_view);
 
-  // Simulate an OS-level destruction of the native window held by |widget|.
-  static void SimulateNativeDestroy(Widget* widget);
-
   // Simulate an activation of the native window held by |widget|, as if it was
   // clicked by the user. This is a synchronous method for use in
   // non-interactive tests that do not spin a RunLoop in the test body (since
@@ -127,7 +76,7 @@ class WidgetTest : public ViewsTestBase {
 
   // Query the native window system for the minimum size configured for user
   // initiated window resizes.
-  static gfx::Size GetNativeWidgetMinimumContentSize(Widget* widget);
+  gfx::Size GetNativeWidgetMinimumContentSize(Widget* widget);
 
   // Return the event processor for |widget|. On aura platforms, this is an
   // aura::WindowEventDispatcher. Otherwise, it is a bridge to the OS event
@@ -138,9 +87,8 @@ class WidgetTest : public ViewsTestBase {
   static ui::internal::InputMethodDelegate* GetInputMethodDelegateForWidget(
       Widget* widget);
 
-#if defined(OS_MACOSX)
-  static scoped_ptr<FakeActivation> FakeWidgetIsActiveAlways();
-#endif
+  // Return true if |window| is transparent according to the native platform.
+  static bool IsNativeWindowTransparent(gfx::NativeWindow window);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WidgetTest);
@@ -183,6 +131,47 @@ class TestDesktopWidgetDelegate : public WidgetDelegate {
   gfx::Rect initial_bounds_ = gfx::Rect(100, 100, 200, 200);
 
   DISALLOW_COPY_AND_ASSIGN(TestDesktopWidgetDelegate);
+};
+
+// Testing widget delegate that creates a widget with a single view, which is
+// the initially focused view.
+class TestInitialFocusWidgetDelegate : public TestDesktopWidgetDelegate {
+ public:
+  explicit TestInitialFocusWidgetDelegate(gfx::NativeWindow context);
+  ~TestInitialFocusWidgetDelegate() override;
+
+  View* view() { return view_; }
+
+  // WidgetDelegate override:
+  View* GetInitiallyFocusedView() override;
+
+ private:
+  View* view_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestInitialFocusWidgetDelegate);
+};
+
+// Use in tests to wait until a Widget's activation change to a particular
+// value. To use create and call Wait().
+class WidgetActivationWaiter : public WidgetObserver {
+ public:
+  WidgetActivationWaiter(Widget* widget, bool active);
+  ~WidgetActivationWaiter() override;
+
+  // Returns when the active status matches that supplied to the constructor. If
+  // the active status does not match that of the constructor a RunLoop is used
+  // until the active status matches, otherwise this returns immediately.
+  void Wait();
+
+ private:
+  // views::WidgetObserver override:
+  void OnWidgetActivationChanged(Widget* widget, bool active) override;
+
+  base::RunLoop run_loop_;
+  bool observed_;
+  bool active_;
+
+  DISALLOW_COPY_AND_ASSIGN(WidgetActivationWaiter);
 };
 
 }  // namespace test

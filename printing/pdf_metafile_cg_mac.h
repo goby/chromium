@@ -7,15 +7,11 @@
 
 #include <ApplicationServices/ApplicationServices.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/threading/thread_checker.h"
+#include "base/macros.h"
 #include "printing/metafile.h"
-
-namespace base {
-class FilePath;
-}
 
 namespace gfx {
 class Rect;
@@ -32,10 +28,8 @@ class PRINTING_EXPORT PdfMetafileCg : public Metafile {
 
   // Metafile methods.
   bool Init() override;
-  bool InitFromData(const void* src_buffer, uint32_t src_buffer_size) override;
-
-  // Not implemented on mac.
-  bool StartPage(const gfx::Size& page_size,
+  bool InitFromData(const void* src_buffer, size_t src_buffer_size) override;
+  void StartPage(const gfx::Size& page_size,
                  const gfx::Rect& content_area,
                  const float& scale_factor) override;
   bool FinishPage() override;
@@ -52,15 +46,13 @@ class PRINTING_EXPORT PdfMetafileCg : public Metafile {
   CGContextRef context() const override;
 
   bool RenderPage(unsigned int page_number,
-                  gfx::NativeDrawingContext context,
+                  skia::NativeDrawingContext context,
                   const CGRect rect,
                   const MacRenderPageParams& params) const override;
 
  private:
-  // Returns a CGPDFDocumentRef version of pdf_data_.
+  // Returns a CGPDFDocumentRef version of |pdf_data_|.
   CGPDFDocumentRef GetPDFDocument() const;
-
-  base::ThreadChecker thread_checker_;
 
   // Context for rendering to the pdf.
   base::ScopedCFTypeRef<CGContextRef> context_;
@@ -68,14 +60,11 @@ class PRINTING_EXPORT PdfMetafileCg : public Metafile {
   // PDF backing store.
   base::ScopedCFTypeRef<CFMutableDataRef> pdf_data_;
 
-  // Lazily-created CGPDFDocument representation of pdf_data_.
+  // Lazily-created CGPDFDocument representation of |pdf_data_|.
   mutable base::ScopedCFTypeRef<CGPDFDocumentRef> pdf_doc_;
 
   // Whether or not a page is currently open.
   bool page_is_open_;
-
-  // Whether this instantiation of the PdfMetafileCg owns the thread_pdf_docs.
-  bool thread_pdf_docs_owned_;
 
   DISALLOW_COPY_AND_ASSIGN(PdfMetafileCg);
 };

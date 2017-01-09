@@ -37,7 +37,6 @@ import datetime
 
 from webkitpy.common import find_files
 from webkitpy.common.checkout.scm.detection import SCMDetector
-from webkitpy.common.config.urls import view_source_url
 from webkitpy.common.host import Host
 from webkitpy.common.net.file_uploader import FileUploader
 from webkitpy.performance_tests.perftest import PerfTestFactory
@@ -71,7 +70,6 @@ class PerfTestsRunner(object):
         self._timestamp = time.time()
         self._utc_timestamp = datetime.datetime.utcnow()
 
-
     @staticmethod
     def _parse_args(args=None):
         def _expand_path(option, opt_str, value, parser):
@@ -79,59 +77,61 @@ class PerfTestsRunner(object):
             setattr(parser.values, option.dest, path)
         perf_option_list = [
             optparse.make_option('--debug', action='store_const', const='Debug', dest="configuration",
-                help='Set the configuration to Debug'),
+                                 help='Set the configuration to Debug'),
             optparse.make_option('--release', action='store_const', const='Release', dest="configuration",
-                help='Set the configuration to Release'),
+                                 help='Set the configuration to Release'),
+            optparse.make_option('-t', '--target', dest='configuration',
+                                 help='Specify the target build subdirectory under src/out/'),
             optparse.make_option("--platform",
-                help="Specify port/platform being tested (e.g. mac)"),
+                                 help="Specify port/platform being tested (e.g. mac)"),
             optparse.make_option("--chromium",
-                action="store_const", const='chromium', dest='platform', help='Alias for --platform=chromium'),
+                                 action="store_const", const='chromium', dest='platform', help='Alias for --platform=chromium'),
             optparse.make_option("--android",
-                action="store_const", const='android', dest='platform', help='Alias for --platform=android'),
+                                 action="store_const", const='android', dest='platform', help='Alias for --platform=android'),
             optparse.make_option("--builder-name",
-                help=("The name of the builder shown on the waterfall running this script e.g. google-mac-2.")),
+                                 help=("The name of the builder shown on the waterfall running this script e.g. google-mac-2.")),
             optparse.make_option("--build-number",
-                help=("The build number of the builder running this script.")),
+                                 help=("The build number of the builder running this script.")),
             optparse.make_option("--build", dest="build", action="store_true", default=True,
-                help="Check to ensure the DumpRenderTree build is up-to-date (default)."),
+                                 help="Check to ensure the DumpRenderTree build is up to date (default)."),
             optparse.make_option("--no-build", dest="build", action="store_false",
-                help="Don't check to see if the DumpRenderTree build is up-to-date."),
+                                 help="Don't check to see if the DumpRenderTree build is up to date."),
             optparse.make_option("--build-directory",
-                help="Path to the directory under which build files are kept (should not include configuration)"),
+                                 help="Path to the directory under which build files are kept (should not include configuration)"),
             optparse.make_option("--time-out-ms", default=600 * 1000,
-                help="Set the timeout for each test"),
+                                 help="Set the timeout for each test"),
             optparse.make_option("--no-results", action="store_false", dest="generate_results", default=True,
-                help="Do no generate results JSON and results page."),
+                                 help="Do no generate results JSON and results page."),
             optparse.make_option("--output-json-path", action='callback', callback=_expand_path, type="str",
-                help="Path to generate a JSON file at; may contain previous results if it already exists."),
+                                 help="Path to generate a JSON file at; may contain previous results if it already exists."),
             optparse.make_option("--reset-results", action="store_true",
-                help="Clears the content in the generated JSON file before adding the results."),
+                                 help="Clears the content in the generated JSON file before adding the results."),
             optparse.make_option("--slave-config-json-path", action='callback', callback=_expand_path, type="str",
-                help="Only used on bots. Path to a slave configuration file."),
+                                 help="Only used on bots. Path to a slave configuration file."),
             optparse.make_option("--description",
-                help="Add a description to the output JSON file if one is generated"),
+                                 help="Add a description to the output JSON file if one is generated"),
             optparse.make_option("--no-show-results", action="store_false", default=True, dest="show_results",
-                help="Don't launch a browser with results after the tests are done"),
+                                 help="Don't launch a browser with results after the tests are done"),
             optparse.make_option("--test-results-server",
-                help="Upload the generated JSON file to the specified server when --output-json-path is present."),
+                                 help="Upload the generated JSON file to the specified server when --output-json-path is present."),
             optparse.make_option("--force", dest="use_skipped_list", action="store_false", default=True,
-                help="Run all tests, including the ones in the Skipped list."),
+                                 help="Run all tests, including the ones in the Skipped list."),
             optparse.make_option("--profile", action="store_true",
-                help="Output per-test profile information."),
+                                 help="Output per-test profile information."),
             optparse.make_option("--profiler", action="store",
-                help="Output per-test profile information, using the specified profiler."),
+                                 help="Output per-test profile information, using the specified profiler."),
             optparse.make_option("--additional-driver-flag", action="append",
-                default=[], help="Additional command line flag to pass to DumpRenderTree "
-                     "Specify multiple times to add multiple flags."),
+                                 default=[], help="Additional command line flag to pass to DumpRenderTree "
+                                 "Specify multiple times to add multiple flags."),
             optparse.make_option("--driver-name", type="string",
-                help="Alternative DumpRenderTree binary to use"),
+                                 help="Alternative DumpRenderTree binary to use"),
             optparse.make_option("--content-shell", action="store_true",
-                help="Use Content Shell instead of DumpRenderTree"),
+                                 help="Use Content Shell instead of DumpRenderTree"),
             optparse.make_option("--repeat", default=1, type="int",
-                help="Specify number of times to run test set (default: 1)."),
+                                 help="Specify number of times to run test set (default: 1)."),
             optparse.make_option("--test-runner-count", default=DEFAULT_TEST_RUNNER_COUNT, type="int",
-                help="Specify number of times to invoke test runner for each performance test."),
-            ]
+                                 help="Specify number of times to invoke test runner for each performance test."),
+        ]
         return optparse.OptionParser(option_list=(perf_option_list)).parse_args(args)
 
     def _collect_tests(self):
@@ -151,16 +151,18 @@ class PerfTestsRunner(object):
                 if filesystem.exists(filesystem.join(self._base_path, relpath)):
                     paths.append(filesystem.normpath(relpath))
                 else:
-                    _log.warn('Path was not found:' + arg)
+                    _log.warning('Path was not found:' + arg)
 
         skipped_directories = set(['.svn', 'resources'])
         test_files = find_files.find(filesystem, self._base_path, paths, skipped_directories, _is_test_file)
         tests = []
         for path in test_files:
             relative_path = filesystem.relpath(path, self._base_path).replace('\\', '/')
-            if self._options.use_skipped_list and self._port.skips_perf_test(relative_path) and filesystem.normpath(relative_path) not in paths:
+            if self._options.use_skipped_list and self._port.skips_perf_test(
+                    relative_path) and filesystem.normpath(relative_path) not in paths:
                 continue
-            test = PerfTestFactory.create_perf_test(self._port, relative_path, path, test_runner_count=self._options.test_runner_count)
+            test = PerfTestFactory.create_perf_test(self._port, relative_path, path,
+                                                    test_runner_count=self._options.test_runner_count)
             tests.append(test)
 
         return tests
@@ -177,6 +179,7 @@ class PerfTestsRunner(object):
         needs_http = self._port.requires_http_server()
 
         class FakePrinter(object):
+
             def write_update(self, msg):
                 print msg
 
@@ -189,16 +192,12 @@ class PerfTestsRunner(object):
 
         run_count = 0
         repeat = self._options.repeat
-        while (run_count < repeat):
+        while run_count < repeat:
             run_count += 1
 
             tests = self._collect_tests()
             runs = ' (Run %d of %d)' % (run_count, repeat) if repeat > 1 else ''
-            _log.info("Running %d tests%s" % (len(tests), runs))
-
-            for test in tests:
-                if not test.prepare(self._options.time_out_ms):
-                    return self.EXIT_CODE_BAD_PREPARATION
+            _log.info("Running %d tests%s", len(tests), runs)
 
             try:
                 if needs_http:
@@ -236,7 +235,8 @@ class PerfTestsRunner(object):
     def _generate_results(self):
         options = self._options
         output_json_path = self._output_json_path()
-        output = self._generate_results_dict(self._timestamp, options.description, options.platform, options.builder_name, options.build_number)
+        output = self._generate_results_dict(self._timestamp, options.description,
+                                             options.platform, options.builder_name, options.build_number)
 
         if options.slave_config_json_path:
             output = self._merge_slave_config_json(options.slave_config_json_path, output)
@@ -289,7 +289,8 @@ class PerfTestsRunner(object):
                 path = test.test_name_without_file_extension().split('/')
                 for i in range(0, len(path)):
                     is_last_token = i + 1 == len(path)
-                    url = view_source_url('PerformanceTests/' + (test.test_name() if is_last_token else '/'.join(path[0:i + 1])))
+                    url = self.view_source_url(
+                        'PerformanceTests/' + (test.test_name() if is_last_token else '/'.join(path[0:i + 1])))
                     tests.setdefault(path[i], {'url': url})
                     current_test = tests[path[i]]
                     if is_last_token:
@@ -303,12 +304,16 @@ class PerfTestsRunner(object):
         return contents
 
     @staticmethod
+    def view_source_url(path_from_blink):
+        return 'https://chromium.googlesource.com/chromium/src/+/master/third_party/WebKit/%s' % path_from_blink
+
+    @staticmethod
     def _datetime_in_ES5_compatible_iso_format(datetime):
         return datetime.strftime('%Y-%m-%dT%H:%M:%S.%f')
 
     def _merge_slave_config_json(self, slave_config_json_path, contents):
         if not self._host.filesystem.isfile(slave_config_json_path):
-            _log.error("Missing slave configuration JSON file: %s" % slave_config_json_path)
+            _log.error("Missing slave configuration JSON file: %s", slave_config_json_path)
             return None
 
         try:
@@ -317,8 +322,8 @@ class PerfTestsRunner(object):
             for key in slave_config:
                 contents['builder' + key.capitalize()] = slave_config[key]
             return contents
-        except Exception, error:
-            _log.error("Failed to merge slave configuration JSON file %s: %s" % (slave_config_json_path, error))
+        except Exception as error:
+            _log.error("Failed to merge slave configuration JSON file %s: %s", slave_config_json_path, error)
         return None
 
     def _merge_outputs_if_needed(self, output_json_path, output):
@@ -327,8 +332,8 @@ class PerfTestsRunner(object):
         try:
             existing_outputs = json.loads(self._host.filesystem.read_text_file(output_json_path))
             return existing_outputs + [output]
-        except Exception, error:
-            _log.error("Failed to merge output JSON file %s: %s" % (output_json_path, error))
+        except Exception as error:
+            _log.error("Failed to merge output JSON file %s: %s", output_json_path, error)
         return None
 
     def _upload_json(self, test_results_server, json_path, host_path="/api/report", file_uploader=FileUploader):
@@ -336,8 +341,8 @@ class PerfTestsRunner(object):
         uploader = file_uploader(url, 120)
         try:
             response = uploader.upload_single_text_file(self._host.filesystem, 'application/json', json_path)
-        except Exception, error:
-            _log.error("Failed to upload JSON file to %s in 120s: %s" % (url, error))
+        except Exception as error:
+            _log.error("Failed to upload JSON file to %s in 120s: %s", url, error)
             return False
 
         response_body = [line.strip('\n') for line in response]
@@ -345,25 +350,24 @@ class PerfTestsRunner(object):
             try:
                 parsed_response = json.loads('\n'.join(response_body))
             except:
-                _log.error("Uploaded JSON to %s but got a bad response:" % url)
+                _log.error("Uploaded JSON to %s but got a bad response:", url)
                 for line in response_body:
                     _log.error(line)
                 return False
             if parsed_response.get('status') != 'OK':
-                _log.error("Uploaded JSON to %s but got an error:" % url)
+                _log.error("Uploaded JSON to %s but got an error:", url)
                 _log.error(json.dumps(parsed_response, indent=4))
                 return False
 
-        _log.info("JSON file uploaded to %s." % url)
+        _log.info("JSON file uploaded to %s.", url)
         return True
 
     def _run_tests_set(self, tests):
-        result_count = len(tests)
         failures = 0
         self._results = []
 
         for i, test in enumerate(tests):
-            _log.info('Running %s (%d of %d)' % (test.test_name(), i + 1, len(tests)))
+            _log.info('Running %s (%d of %d)', test.test_name(), i + 1, len(tests))
             start_time = time.time()
             metrics = test.run(self._options.time_out_ms)
             if metrics:
@@ -372,7 +376,7 @@ class PerfTestsRunner(object):
                 failures += 1
                 _log.error('FAILED')
 
-            _log.info('Finished: %f s' % (time.time() - start_time))
+            _log.info('Finished: %f s', time.time() - start_time)
             _log.info('')
 
         return failures

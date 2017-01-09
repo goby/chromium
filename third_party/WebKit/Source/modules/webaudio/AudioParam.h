@@ -31,16 +31,58 @@
 
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/DOMTypedArray.h"
-#include "modules/webaudio/AbstractAudioContext.h"
 #include "modules/webaudio/AudioParamTimeline.h"
 #include "modules/webaudio/AudioSummingJunction.h"
+#include "modules/webaudio/BaseAudioContext.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/ThreadSafeRefCounted.h"
 #include "wtf/text/WTFString.h"
 #include <sys/types.h>
 
 namespace blink {
 
 class AudioNodeOutput;
+
+// Each AudioParam gets an identifier here.  This is mostly for instrospection
+// if warnings or other messages need to be printed. It's useful to know what
+// the AudioParam represents.  The name should include the node type and the
+// name of the AudioParam.
+enum AudioParamType {
+  ParamTypeAudioBufferSourcePlaybackRate,
+  ParamTypeAudioBufferSourceDetune,
+  ParamTypeBiquadFilterFrequency,
+  ParamTypeBiquadFilterQ,
+  ParamTypeBiquadFilterQLowpass,
+  ParamTypeBiquadFilterQHighpass,
+  ParamTypeBiquadFilterGain,
+  ParamTypeBiquadFilterDetune,
+  ParamTypeDelayDelayTime,
+  ParamTypeDynamicsCompressorThreshold,
+  ParamTypeDynamicsCompressorKnee,
+  ParamTypeDynamicsCompressorRatio,
+  ParamTypeDynamicsCompressorAttack,
+  ParamTypeDynamicsCompressorRelease,
+  ParamTypeGainGain,
+  ParamTypeOscillatorFrequency,
+  ParamTypeOscillatorDetune,
+  ParamTypeStereoPannerPan,
+  ParamTypePannerPositionX,
+  ParamTypePannerPositionY,
+  ParamTypePannerPositionZ,
+  ParamTypePannerOrientationX,
+  ParamTypePannerOrientationY,
+  ParamTypePannerOrientationZ,
+  ParamTypeAudioListenerPositionX,
+  ParamTypeAudioListenerPositionY,
+  ParamTypeAudioListenerPositionZ,
+  ParamTypeAudioListenerForwardX,
+  ParamTypeAudioListenerForwardY,
+  ParamTypeAudioListenerForwardZ,
+  ParamTypeAudioListenerUpX,
+  ParamTypeAudioListenerUpY,
+  ParamTypeAudioListenerUpZ,
+  ParamTypeConstantSourceValue,
+};
 
 // AudioParamHandler is an actual implementation of web-exposed AudioParam
 // interface. Each of AudioParam object creates and owns an AudioParamHandler,
@@ -49,113 +91,180 @@ class AudioNodeOutput;
 // processing classes have additional references. An AudioParamHandler can
 // outlive the owner AudioParam, and it never dies before the owner AudioParam
 // dies.
-class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>, public AudioSummingJunction {
-public:
-    static const double DefaultSmoothingConstant;
-    static const double SnapThreshold;
+class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
+                                public AudioSummingJunction {
+ public:
+  AudioParamType getParamType() const { return m_paramType; }
+  void setParamType(AudioParamType);
+  // Return a nice name for the AudioParam.
+  String getParamName() const;
 
-    static PassRefPtr<AudioParamHandler> create(AbstractAudioContext& context, double defaultValue)
-    {
-        return adoptRef(new AudioParamHandler(context, defaultValue));
-    }
+  static const double DefaultSmoothingConstant;
+  static const double SnapThreshold;
 
-    // This should be used only in audio rendering thread.
-    AbstractAudioContext* context() const;
+  static PassRefPtr<AudioParamHandler> create(BaseAudioContext& context,
+                                              AudioParamType paramType,
+                                              double defaultValue,
+                                              float minValue,
+                                              float maxValue) {
+    return adoptRef(new AudioParamHandler(context, paramType, defaultValue,
+                                          minValue, maxValue));
+  }
 
-    // AudioSummingJunction
-    void didUpdate() override { }
+  // This should be used only in audio rendering thread.
+  AudioDestinationHandler& destinationHandler() const;
 
-    AudioParamTimeline& timeline() { return m_timeline; }
+  // AudioSummingJunction
+  void didUpdate() override {}
 
-    // Intrinsic value.
-    float value();
-    void setValue(float);
+  AudioParamTimeline& timeline() { return m_timeline; }
 
-    // Final value for k-rate parameters, otherwise use calculateSampleAccurateValues() for a-rate.
-    // Must be called in the audio thread.
-    float finalValue();
+  // Intrinsic value.
+  float value();
+  void setValue(float);
 
-    float defaultValue() const { return static_cast<float>(m_defaultValue); }
+  // Final value for k-rate parameters, otherwise use
+  // calculateSampleAccurateValues() for a-rate.
+  // Must be called in the audio thread.
+  float finalValue();
 
-    // Value smoothing:
+  float defaultValue() const { return static_cast<float>(m_defaultValue); }
+  float minValue() const { return m_minValue; }
+  float maxValue() const { return m_maxValue; }
 
-    // When a new value is set with setValue(), in our internal use of the parameter we don't immediately jump to it.
-    // Instead we smoothly approach this value to avoid glitching.
-    float smoothedValue();
+  // Value smoothing:
 
-    // Smoothly exponentially approaches to (de-zippers) the desired value.
-    // Returns true if smoothed value has already snapped exactly to value.
-    bool smooth();
+  // When a new value is set with setValue(), in our internal use of the
+  // parameter we don't immediately jump to it.  Instead we smoothly approach
+  // this value to avoid glitching.
+  float smoothedValue();
 
-    void resetSmoothedValue() { m_smoothedValue = intrinsicValue(); }
+  // Smoothly exponentially approaches to (de-zippers) the desired value.
+  // Returns true if smoothed value has already snapped exactly to value.
+  bool smooth();
 
-    bool hasSampleAccurateValues() { return m_timeline.hasValues() || numberOfRenderingConnections(); }
+  void resetSmoothedValue() { m_timeline.setSmoothedValue(intrinsicValue()); }
 
-    // Calculates numberOfValues parameter values starting at the context's current time.
-    // Must be called in the context's render thread.
-    void calculateSampleAccurateValues(float* values, unsigned numberOfValues);
+  bool hasSampleAccurateValues() {
+    return m_timeline.hasValues() || numberOfRenderingConnections();
+  }
 
-    // Connect an audio-rate signal to control this parameter.
-    void connect(AudioNodeOutput&);
-    void disconnect(AudioNodeOutput&);
+  // Calculates numberOfValues parameter values starting at the context's
+  // current time.
+  // Must be called in the context's render thread.
+  void calculateSampleAccurateValues(float* values, unsigned numberOfValues);
 
-private:
-    AudioParamHandler(AbstractAudioContext& context, double defaultValue)
-        : AudioSummingJunction(context.deferredTaskHandler())
-        , m_intrinsicValue(defaultValue)
-        , m_defaultValue(defaultValue)
-        , m_smoothedValue(defaultValue)
-        , m_context(&context) { }
+  // Connect an audio-rate signal to control this parameter.
+  void connect(AudioNodeOutput&);
+  void disconnect(AudioNodeOutput&);
 
-    // sampleAccurate corresponds to a-rate (audio rate) vs. k-rate in the Web Audio specification.
-    void calculateFinalValues(float* values, unsigned numberOfValues, bool sampleAccurate);
-    void calculateTimelineValues(float* values, unsigned numberOfValues);
+  float intrinsicValue() const { return noBarrierLoad(&m_intrinsicValue); }
 
-    // Intrinsic value
-    float m_intrinsicValue;
-    float intrinsicValue() const { return noBarrierLoad(&m_intrinsicValue); }
-    void setIntrinsicValue(float newValue) { noBarrierStore(&m_intrinsicValue, newValue); }
+  // Update any histograms with the given value.
+  void updateHistograms(float newValue);
 
-    float m_defaultValue;
+ private:
+  AudioParamHandler(BaseAudioContext&,
+                    AudioParamType,
+                    double defaultValue,
+                    float min,
+                    float max);
 
-    // Smoothing (de-zippering)
-    float m_smoothedValue;
+  void warnIfOutsideRange(float value, float minValue, float maxValue);
 
-    AudioParamTimeline m_timeline;
+  // sampleAccurate corresponds to a-rate (audio rate) vs. k-rate in the Web
+  // Audio specification.
+  void calculateFinalValues(float* values,
+                            unsigned numberOfValues,
+                            bool sampleAccurate);
+  void calculateTimelineValues(float* values, unsigned numberOfValues);
 
-    // We can't make this Persistent because of a reference cycle. It's safe to
-    // access this field only when we're rendering audio.
-    UntracedMember<AbstractAudioContext> m_context;
+  int computeQHistogramValue(float) const;
+
+  // The type of AudioParam, indicating what this AudioParam represents and what
+  // node it belongs to.  Mostly for informational purposes and doesn't affect
+  // implementation.
+  AudioParamType m_paramType;
+
+  // Intrinsic value
+  float m_intrinsicValue;
+  void setIntrinsicValue(float newValue);
+
+  float m_defaultValue;
+
+  // Nominal range for the value
+  float m_minValue;
+  float m_maxValue;
+
+  AudioParamTimeline m_timeline;
+
+  // The destination node used to get necessary information like the smaple rate
+  // and context time.
+  RefPtr<AudioDestinationHandler> m_destinationHandler;
 };
 
 // AudioParam class represents web-exposed AudioParam interface.
-class AudioParam final : public GarbageCollectedFinalized<AudioParam>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static AudioParam* create(AbstractAudioContext&, double defaultValue);
-    DECLARE_TRACE();
-    // |handler| always returns a valid object.
-    AudioParamHandler& handler() const { return *m_handler; }
-    // |context| always returns a valid object.
-    AbstractAudioContext* context() const { return m_context; }
+class AudioParam final : public GarbageCollectedFinalized<AudioParam>,
+                         public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    float value() const;
-    void setValue(float);
-    float defaultValue() const;
-    AudioParam* setValueAtTime(float value, double time, ExceptionState&);
-    AudioParam* linearRampToValueAtTime(float value, double time, ExceptionState&);
-    AudioParam* exponentialRampToValueAtTime(float value, double time, ExceptionState&);
-    AudioParam* setTargetAtTime(float target, double time, double timeConstant, ExceptionState&);
-    AudioParam* setValueCurveAtTime(DOMFloat32Array* curve, double time, double duration, ExceptionState&);
-    AudioParam* cancelScheduledValues(double startTime, ExceptionState&);
+ public:
+  static AudioParam* create(BaseAudioContext&,
+                            AudioParamType,
+                            double defaultValue);
+  static AudioParam* create(BaseAudioContext&,
+                            AudioParamType,
+                            double defaultValue,
+                            float minValue,
+                            float maxValue);
 
-private:
-    AudioParam(AbstractAudioContext&, double defaultValue);
+  DECLARE_TRACE();
+  // |handler| always returns a valid object.
+  AudioParamHandler& handler() const { return *m_handler; }
+  // |context| always returns a valid object.
+  BaseAudioContext* context() const { return m_context; }
 
-    RefPtr<AudioParamHandler> m_handler;
-    Member<AbstractAudioContext> m_context;
+  AudioParamType getParamType() const { return handler().getParamType(); }
+  void setParamType(AudioParamType);
+  String getParamName() const;
+
+  float value() const;
+  void setValue(float);
+  float defaultValue() const;
+
+  float minValue() const;
+  float maxValue() const;
+
+  AudioParam* setValueAtTime(float value, double time, ExceptionState&);
+  AudioParam* linearRampToValueAtTime(float value,
+                                      double time,
+                                      ExceptionState&);
+  AudioParam* exponentialRampToValueAtTime(float value,
+                                           double time,
+                                           ExceptionState&);
+  AudioParam* setTargetAtTime(float target,
+                              double time,
+                              double timeConstant,
+                              ExceptionState&);
+  AudioParam* setValueCurveAtTime(DOMFloat32Array* curve,
+                                  double time,
+                                  double duration,
+                                  ExceptionState&);
+  AudioParam* cancelScheduledValues(double startTime, ExceptionState&);
+
+ private:
+  AudioParam(BaseAudioContext&,
+             AudioParamType,
+             double defaultValue,
+             float min,
+             float max);
+
+  void warnIfOutsideRange(const String& paramMethd, float value);
+
+  RefPtr<AudioParamHandler> m_handler;
+  Member<BaseAudioContext> m_context;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // AudioParam_h
+#endif  // AudioParam_h

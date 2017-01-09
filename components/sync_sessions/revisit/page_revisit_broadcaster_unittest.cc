@@ -4,13 +4,11 @@
 
 #include "components/sync_sessions/revisit/page_revisit_broadcaster.h"
 
-#include "components/sync_sessions/revisit/page_visit_observer.h"
+#include <stdint.h>
+
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/page_transition_types.h"
 
-using sync_sessions::PageVisitObserver;
-
-namespace browser_sync {
+namespace sync_sessions {
 
 class SyncPageRevisitBroadcasterTest : public ::testing::Test {
  protected:
@@ -25,7 +23,7 @@ class SyncPageRevisitBroadcasterTest : public ::testing::Test {
   }
 
   void Check(const PageVisitObserver::TransitionType expected,
-             const int32 conversionInput) {
+             const int32_t conversionInput) {
     Check(expected, ui::PageTransitionFromInt(conversionInput));
   }
 };
@@ -107,4 +105,4 @@ TEST_F(SyncPageRevisitBroadcasterTest, ConvertUnknown) {
         ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
 }
 
-}  // namespace browser_sync
+}  // namespace sync_sessions

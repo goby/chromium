@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_HISTORY_CORE_BROWSER_HISTORY_DATABASE_H_
 #define COMPONENTS_HISTORY_CORE_BROWSER_HISTORY_DATABASE_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "build/build_config.h"
 #include "components/history/core/browser/download_database.h"
 #include "components/history/core/browser/history_types.h"
@@ -27,7 +29,6 @@ namespace base {
 class FilePath;
 }
 
-class HistoryQuickProviderTest;
 class InMemoryURLIndexTest;
 
 namespace history {
@@ -73,7 +74,7 @@ class HistoryDatabase : public DownloadDatabase,
   // underlying database connection.
   void set_error_callback(
       const sql::Connection::ErrorCallback& error_callback) {
-    error_callback_ = error_callback;
+    db_.set_error_callback(error_callback);
   }
 
   // Must call this function to complete initialization. Will return
@@ -87,7 +88,7 @@ class HistoryDatabase : public DownloadDatabase,
 
   // Computes the |num_hosts| most-visited hostnames in the past 30 days. See
   // history_service.h for details.
-  TopHostsList TopHosts(int num_hosts);
+  TopHostsList TopHosts(size_t num_hosts);
 
   // Call to set the mode on the database to exclusive. The default locking mode
   // is "normal" but we want to run in exclusive mode for slightly better
@@ -143,6 +144,8 @@ class HistoryDatabase : public DownloadDatabase,
   // Razes the database. Returns true if successful.
   bool Raze();
 
+  std::string GetDiagnosticInfo(int extended_error, sql::Statement* statement);
+
   // Visit table functions ----------------------------------------------------
 
   // Update the segment id of a visit. Return true on success.
@@ -164,7 +167,6 @@ class HistoryDatabase : public DownloadDatabase,
   friend class AndroidProviderBackend;
   FRIEND_TEST_ALL_PREFIXES(AndroidURLsMigrationTest, MigrateToVersion22);
 #endif
-  friend class ::HistoryQuickProviderTest;
   friend class ::InMemoryURLIndexTest;
 
   // Overridden from URLDatabase:
@@ -172,9 +174,9 @@ class HistoryDatabase : public DownloadDatabase,
 
   // Migration -----------------------------------------------------------------
 
-  // Makes sure the version is up-to-date, updating if necessary. If the
+  // Makes sure the version is up to date, updating if necessary. If the
   // database is too old to migrate, the user will be notified. Returns
-  // sql::INIT_OK iff  the DB is up-to-date and ready for use.
+  // sql::INIT_OK iff  the DB is up to date and ready for use.
   //
   // This assumes it is called from the init function inside a transaction. It
   // may commit the transaction and start a new one if migration requires it.
@@ -188,7 +190,6 @@ class HistoryDatabase : public DownloadDatabase,
 
   // ---------------------------------------------------------------------------
 
-  sql::Connection::ErrorCallback error_callback_;
   sql::Connection db_;
   sql::MetaTable meta_table_;
 

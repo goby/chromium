@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/toolchain/toolchain.gni")
+
 if (is_mac) {
   import("//build/config/sysroot.gni")
 }
@@ -9,7 +11,7 @@ if (is_mac) {
 # Allows the source set to inject ldflags for targets that link to it.
 config("util_link_config") {
   if (is_mac) {
-    ldflags = [ "/usr/lib/libbsm.dylib" ]
+    libs = [ "bsm" ]
   }
 }
 
@@ -32,10 +34,13 @@ if (is_mac) {
 
     args = [ "{{source}}" ]
     args += rebase_path(outputs, root_build_dir)
+    if (!use_system_xcode) {
+      args += [ hermetic_xcode_path ]
+    }
   }
 }
 
-source_set("util") {
+static_library("util") {
   sources = [
     "file/file_io.cc",
     "file/file_io.h",
@@ -58,6 +63,8 @@ source_set("util") {
     "mac/service_management.h",
     "mac/xattr.cc",
     "mac/xattr.h",
+    "misc/address_sanitizer.h",
+    "misc/arraysize_unsafe.h",
     "misc/clock.h",
     "misc/clock_mac.cc",
     "misc/clock_posix.cc",
@@ -66,6 +73,8 @@ source_set("util") {
     "misc/initialization_state.h",
     "misc/initialization_state_dcheck.cc",
     "misc/initialization_state_dcheck.h",
+    "misc/metrics.cc",
+    "misc/metrics.h",
     "misc/pdb_structures.cc",
     "misc/pdb_structures.h",
     "misc/random_string.cc",
@@ -102,6 +111,8 @@ source_set("util") {
     "posix/process_info_mac.cc",
     "posix/symbolic_constants_posix.cc",
     "posix/symbolic_constants_posix.h",
+    "stdlib/aligned_allocator.cc",
+    "stdlib/aligned_allocator.h",
     "stdlib/cxx.h",
     "stdlib/map_insert.h",
     "stdlib/objc.h",
@@ -124,6 +135,8 @@ source_set("util") {
     "thread/thread_log_messages.h",
     "thread/thread_posix.cc",
     "thread/thread_win.cc",
+    "thread/worker_thread.cc",
+    "thread/worker_thread.h",
     "win/address_types.h",
     "win/capture_context.asm",
     "win/capture_context.h",
@@ -136,8 +149,12 @@ source_set("util") {
     "win/exception_handler_server.h",
     "win/get_function.cc",
     "win/get_function.h",
+    "win/get_module_information.cc",
+    "win/get_module_information.h",
     "win/handle.cc",
     "win/handle.h",
+    "win/initial_client_data.cc",
+    "win/initial_client_data.h",
     "win/module_version.cc",
     "win/module_version.h",
     "win/nt_internals.cc",
@@ -155,6 +172,7 @@ source_set("util") {
     "win/scoped_local_alloc.h",
     "win/scoped_process_suspend.cc",
     "win/scoped_process_suspend.h",
+    "win/termination_codes.h",
     "win/time.cc",
     "win/time.h",
     "win/xp_compat.h",
@@ -213,13 +231,15 @@ source_set("util") {
   ]
 
   if (is_win) {
-    libs = [
-      "rpcrt4.lib",
-      "winhttp.lib",
+    libs = [ "winhttp.lib" ]
+    cflags = [
+      "/wd4201",  # nonstandard extension used : nameless struct/union.
+      "/wd4577",  # 'noexcept' used with no exception handling mode specified.
     ]
-    cflags = [ "/wd4201" ]  # nonstandard extension used : nameless struct/union.
 
-    # TODO(GYP) UseSafeExceptionHandlers masm rule.
+    if (current_cpu == "x86") {
+      asmflags = [ "/safeseh" ]
+    }
   } else if (is_mac) {
     sources += get_target_outputs(":mig")
     deps += [ ":mig" ]

@@ -5,29 +5,31 @@
 #ifndef VRGetDevicesCallback_h
 #define VRGetDevicesCallback_h
 
+#include "device/vr/vr_service.mojom-blink.h"
+#include "modules/vr/VRDisplay.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/modules/vr/WebVRClient.h"
+#include "public/platform/WebCallbacks.h"
 
 namespace blink {
 
-class VRHardwareUnitCollection;
 class ScriptPromiseResolver;
-class WebVRClient;
 
-class VRGetDevicesCallback final : public WebVRGetDevicesCallback {
-    USING_FAST_MALLOC(VRGetDevicesCallback);
-public:
-    VRGetDevicesCallback(ScriptPromiseResolver*, VRHardwareUnitCollection*);
-    ~VRGetDevicesCallback() override;
+// Success and failure callbacks for getDisplays.
+using WebVRGetDisplaysCallback = WebCallbacks<VRDisplayVector, void>;
+class VRGetDevicesCallback final : public WebVRGetDisplaysCallback {
+  USING_FAST_MALLOC(VRGetDevicesCallback);
 
-    void onSuccess(const WebVector<WebVRDevice>&) override;
-    void onError() override;
+ public:
+  VRGetDevicesCallback(ScriptPromiseResolver*);
+  ~VRGetDevicesCallback() override;
 
-private:
-    Persistent<ScriptPromiseResolver> m_resolver;
-    Persistent<VRHardwareUnitCollection> m_hardwareUnits;
+  void onSuccess(VRDisplayVector) override;
+  void onError() override;
+
+ private:
+  Persistent<ScriptPromiseResolver> m_resolver;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // VRGetDevicesCallback_h
+#endif  // VRGetDevicesCallback_h

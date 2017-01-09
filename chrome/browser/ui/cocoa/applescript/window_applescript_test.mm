@@ -4,6 +4,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "base/mac/foundation_util.h"
+#include "base/mac/mac_util.h"
 #import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/app_controller_mac.h"
@@ -13,7 +15,7 @@
 #import "chrome/browser/ui/cocoa/applescript/error_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/tab_applescript.h"
 #import "chrome/browser/ui/cocoa/applescript/window_applescript.h"
-#include "chrome/browser/ui/cocoa/run_loop_testing.h"
+#include "chrome/browser/ui/cocoa/test/run_loop_testing.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
@@ -40,7 +42,9 @@ IN_PROC_BROWSER_TEST_F(WindowAppleScriptTest, CreationWithNoProfile) {
 
 // Create a window with a particular profile.
 IN_PROC_BROWSER_TEST_F(WindowAppleScriptTest, CreationWithProfile) {
-  Profile* lastProfile = [[NSApp delegate] lastProfile];
+  AppController* appController =
+      base::mac::ObjCCastStrict<AppController>([NSApp delegate]);
+  Profile* lastProfile = [appController lastProfile];
   base::scoped_nsobject<WindowAppleScript> aWindow(
       [[WindowAppleScript alloc] initWithProfile:lastProfile]);
   EXPECT_TRUE(aWindow.get());
@@ -144,6 +148,8 @@ IN_PROC_BROWSER_TEST_F(WindowAppleScriptTest, InsertAndDeleteTabs) {
 
 // Getting and setting values from the NSWindow.
 IN_PROC_BROWSER_TEST_F(WindowAppleScriptTest, NSWindowTest) {
+  if (base::mac::IsOS10_10())
+    return;  // Fails when swarmed. http://crbug.com/660582
   base::scoped_nsobject<WindowAppleScript> aWindow(
       [[WindowAppleScript alloc] initWithBrowser:browser()]);
   [aWindow.get() setValue:[NSNumber numberWithBool:YES]

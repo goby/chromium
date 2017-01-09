@@ -5,7 +5,7 @@
 #include "ui/views/window/client_view.h"
 
 #include "base/logging.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/hit_test.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -74,8 +74,8 @@ const char* ClientView::GetClassName() const {
   return kViewClassName;
 }
 
-void ClientView::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_CLIENT;
+void ClientView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_CLIENT;
 }
 
 void ClientView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
@@ -92,6 +92,8 @@ void ClientView::ViewHierarchyChanged(
     // Insert |contents_view_| at index 0 so it is first in the focus chain.
     // (the OK/Cancel buttons are inserted before contents_view_)
     AddChildViewAt(contents_view_, 0);
+  } else if (!details.is_add && details.child == contents_view_) {
+    contents_view_ = nullptr;
   }
 }
 

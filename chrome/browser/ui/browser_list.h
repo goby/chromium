@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_UI_BROWSER_LIST_H_
 #define CHROME_BROWSER_UI_BROWSER_LIST_H_
 
+#include <stddef.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
-#include "chrome/browser/ui/host_desktop.h"
 
 class Browser;
 class Profile;
@@ -23,13 +24,13 @@ namespace chrome {
 class BrowserListObserver;
 }
 
-// Maintains a list of Browser objects present in a given HostDesktop (see
-// HostDesktopType).
+// Maintains a list of Browser objects.
 class BrowserList {
  public:
-  typedef std::vector<Browser*> BrowserVector;
-  typedef BrowserVector::const_iterator const_iterator;
-  typedef BrowserVector::const_reverse_iterator const_reverse_iterator;
+  using BrowserVector = std::vector<Browser*>;
+  using CloseCallback = base::Callback<void(const base::FilePath&)>;
+  using const_iterator = BrowserVector::const_iterator;
+  using const_reverse_iterator = BrowserVector::const_reverse_iterator;
 
   // Returns the last active browser for this list.
   Browser* GetLastActive() const;
@@ -55,7 +56,7 @@ class BrowserList {
     return last_active_browsers_.rend();
   }
 
-  static BrowserList* GetInstance(chrome::HostDesktopType type);
+  static BrowserList* GetInstance();
 
   // Adds or removes |browser| from the list it is associated with. The browser
   // object should be valid BEFORE these calls (for the benefit of observers),
@@ -69,11 +70,16 @@ class BrowserList {
   static void AddObserver(chrome::BrowserListObserver* observer);
   static void RemoveObserver(chrome::BrowserListObserver* observer);
 
+  // Moves all the browsers that show on workspace |new_workspace| to the end of
+  // the browser list (i.e. the browsers that were "activated" most recently).
+  static void MoveBrowsersInWorkspaceToFront(const std::string& new_workspace);
+
   // Called by Browser objects when their window is activated (focused).  This
   // allows us to determine what the last active Browser was on each desktop.
-  // Note: This only takes effect on the appropriate browser list as determined
-  // by |browser->host_desktop_type()|.
   static void SetLastActive(Browser* browser);
+
+  // Notifies the observers when the current active browser becomes not active.
+  static void NotifyBrowserNoLongerActive(Browser* browser);
 
   // Closes all browsers for |profile| across all desktops.
   // TODO(mlerman): Move the Profile Deletion flow to use the overloaded
@@ -83,18 +89,19 @@ class BrowserList {
   // Closes all browsers for |profile| across all desktops. Uses
   // TryToCloseBrowserList() to do the actual closing and trigger any
   // OnBeforeUnload events. If all OnBeforeUnload events are confirmed,
-  // |on_close_success| is called.
+  // |on_close_success| is called, otherwise |on_close_aborted| is called.
   static void CloseAllBrowsersWithProfile(
       Profile* profile,
-      const base::Callback<void(const base::FilePath&)>& on_close_success);
+      const CloseCallback& on_close_success,
+      const CloseCallback& on_close_aborted);
 
   // Returns true if at least one incognito session is active across all
   // desktops.
-  static bool IsOffTheRecordSessionActive();
+  static bool IsIncognitoSessionActive();
 
   // Returns true if at least one incognito session is active for |profile|
   // across all desktops.
-  static bool IsOffTheRecordSessionActiveForProfile(Profile* profile);
+  static bool IsIncognitoSessionActiveForProfile(Profile* profile);
 
  private:
   BrowserList();
@@ -105,23 +112,28 @@ class BrowserList {
 
   // Attempts to close |browsers_to_close| while respecting OnBeforeUnload
   // events. If there are no OnBeforeUnload events to be called,
-  // |on_close_confirmed| will be called, with a parameter of |profile_path|,
+  // |on_close_success| will be called, with a parameter of |profile_path|,
   // and the Browsers will then be closed. If at least one unfired
   // OnBeforeUnload event is found, handle it with a callback to
   // PostBeforeUnloadHandlers, which upon success will recursively call this
-  // method to handle any other OnBeforeUnload events.
+  // method to handle any other OnBeforeUnload events. If aborted in the
+  // OnBeforeUnload event, PostBeforeUnloadHandlers will call |on_close_aborted|
+  // instead and reset all OnBeforeUnload event handlers.
   static void TryToCloseBrowserList(
       const BrowserVector& browsers_to_close,
-      const base::Callback<void(const base::FilePath&)>& on_close_success,
+      const CloseCallback& on_close_success,
+      const CloseCallback& on_close_aborted,
       const base::FilePath& profile_path);
 
   // Called after handling an OnBeforeUnload event. If |tab_close_confirmed| is
   // true, calls |TryToCloseBrowserList()|, passing the parameters
-  // |browsers_to_close|, |on_close_confirmed|, and |profile_path|. Otherwise,
-  // resets all the OnBeforeUnload event handlers.
+  // |browsers_to_close|, |on_close_success|, |on_close_aborted|, and
+  // |profile_path|. Otherwise, resets all the OnBeforeUnload event handlers and
+  // calls |on_close_aborted|.
   static void PostBeforeUnloadHandlers(
       const BrowserVector& browsers_to_close,
-      const base::Callback<void(const base::FilePath&)>& on_close_success,
+      const CloseCallback& on_close_success,
+      const CloseCallback& on_close_aborted,
       const base::FilePath& profile_path,
       bool tab_close_confirmed);
 
@@ -136,9 +148,7 @@ class BrowserList {
   static base::LazyInstance<
       base::ObserverList<chrome::BrowserListObserver>>::Leaky observers_;
 
-  // Nothing fancy, since we only have two HDTs.
-  static BrowserList* native_instance_;
-  static BrowserList* ash_instance_;
+  static BrowserList* instance_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserList);
 };

@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_ANDROID_DOCUMENT_DOCUMENT_WEB_CONTENTS_DELEGATE_H_
 #define CHROME_BROWSER_ANDROID_DOCUMENT_DOCUMENT_WEB_CONTENTS_DELEGATE_H_
 
+#include <stdint.h>
+
 #include "components/web_contents_delegate_android/web_contents_delegate_android.h"
 
 // Stub WebContentsDelegateAndroid that is meant to be a temporary substitute
@@ -39,10 +41,12 @@ class DocumentWebContentsDelegate
   void CloseContents(content::WebContents* source) override;
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
+      content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
       WindowContainerType window_container_type,
+      const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
       const std::string& partition_id,

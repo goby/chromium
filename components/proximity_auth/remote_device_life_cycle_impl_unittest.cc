@@ -4,10 +4,15 @@
 
 #include "components/proximity_auth/remote_device_life_cycle_impl.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/proximity_auth/authenticator.h"
 #include "components/proximity_auth/connection_finder.h"
 #include "components/proximity_auth/fake_connection.h"
@@ -56,16 +61,16 @@ class StubSecureContext : public SecureContext {
 
 class FakeConnectionFinder : public ConnectionFinder {
  public:
-  FakeConnectionFinder(const RemoteDevice& remote_device)
+  FakeConnectionFinder(const cryptauth::RemoteDevice& remote_device)
       : remote_device_(remote_device), connection_(nullptr) {}
   ~FakeConnectionFinder() override {}
 
   void OnConnectionFound() {
     ASSERT_FALSE(connection_callback_.is_null());
-    scoped_ptr<FakeConnection> scoped_connection_(
+    std::unique_ptr<FakeConnection> scoped_connection_(
         new FakeConnection(remote_device_));
     connection_ = scoped_connection_.get();
-    connection_callback_.Run(scoped_connection_.Pass());
+    connection_callback_.Run(std::move(scoped_connection_));
   }
 
   FakeConnection* connection() { return connection_; }
@@ -77,7 +82,7 @@ class FakeConnectionFinder : public ConnectionFinder {
     connection_callback_ = connection_callback;
   }
 
-  const RemoteDevice remote_device_;
+  const cryptauth::RemoteDevice remote_device_;
 
   FakeConnection* connection_;
 
@@ -99,10 +104,10 @@ class FakeAuthenticator : public Authenticator {
 
   void OnAuthenticationResult(Authenticator::Result result) {
     ASSERT_FALSE(callback_.is_null());
-    scoped_ptr<SecureContext> secure_context;
+    std::unique_ptr<SecureContext> secure_context;
     if (result == Authenticator::Result::SUCCESS)
       secure_context.reset(new StubSecureContext());
-    callback_.Run(result, secure_context.Pass());
+    callback_.Run(result, std::move(secure_context));
   }
 
  private:
@@ -122,7 +127,8 @@ class FakeAuthenticator : public Authenticator {
 // Subclass of RemoteDeviceLifeCycleImpl to make it testable.
 class TestableRemoteDeviceLifeCycleImpl : public RemoteDeviceLifeCycleImpl {
  public:
-  TestableRemoteDeviceLifeCycleImpl(const RemoteDevice& remote_device)
+  TestableRemoteDeviceLifeCycleImpl(
+      const cryptauth::RemoteDevice& remote_device)
       : RemoteDeviceLifeCycleImpl(remote_device, nullptr),
         remote_device_(remote_device) {}
 
@@ -132,22 +138,22 @@ class TestableRemoteDeviceLifeCycleImpl : public RemoteDeviceLifeCycleImpl {
   FakeAuthenticator* authenticator() { return authenticator_; }
 
  private:
-  scoped_ptr<ConnectionFinder> CreateConnectionFinder() override {
-    scoped_ptr<FakeConnectionFinder> scoped_connection_finder(
+  std::unique_ptr<ConnectionFinder> CreateConnectionFinder() override {
+    std::unique_ptr<FakeConnectionFinder> scoped_connection_finder(
         new FakeConnectionFinder(remote_device_));
     connection_finder_ = scoped_connection_finder.get();
-    return scoped_connection_finder.Pass();
+    return std::move(scoped_connection_finder);
   }
 
-  scoped_ptr<Authenticator> CreateAuthenticator() override {
+  std::unique_ptr<Authenticator> CreateAuthenticator() override {
     EXPECT_TRUE(connection_finder_);
-    scoped_ptr<FakeAuthenticator> scoped_authenticator(
+    std::unique_ptr<FakeAuthenticator> scoped_authenticator(
         new FakeAuthenticator(connection_finder_->connection()));
     authenticator_ = scoped_authenticator.get();
-    return scoped_authenticator.Pass();
+    return std::move(scoped_authenticator);
   }
 
-  const RemoteDevice remote_device_;
+  const cryptauth::RemoteDevice remote_device_;
   FakeConnectionFinder* connection_finder_;
   FakeAuthenticator* authenticator_;
 
@@ -234,8 +240,9 @@ class ProximityAuthRemoteDeviceLifeCycleImplTest
 };
 
 TEST_F(ProximityAuthRemoteDeviceLifeCycleImplTest, GetRemoteDevice) {
-  RemoteDevice expected_remote_device = CreateClassicRemoteDeviceForTest();
-  RemoteDevice remote_device = life_cycle_.GetRemoteDevice();
+  cryptauth::RemoteDevice expected_remote_device =
+      CreateClassicRemoteDeviceForTest();
+  cryptauth::RemoteDevice remote_device = life_cycle_.GetRemoteDevice();
   EXPECT_EQ(expected_remote_device.user_id, remote_device.user_id);
   EXPECT_EQ(expected_remote_device.name, remote_device.name);
   EXPECT_EQ(expected_remote_device.public_key, remote_device.public_key);

@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/shell_integration.h"
+#include "chrome/browser/shell_integration_win.h"
+
+#include <stddef.h>
 
 #include <vector>
 
@@ -25,6 +27,9 @@
 #include "chrome/installer/util/util_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+namespace shell_integration {
+namespace win {
+
 namespace {
 
 struct ShortcutTestObject {
@@ -34,18 +39,16 @@ struct ShortcutTestObject {
 
 class ShellIntegrationWinMigrateShortcutTest : public testing::Test {
  protected:
-  ShellIntegrationWinMigrateShortcutTest()
-      : desired_dual_mode_for_os_version(
-            InstallUtil::ShouldInstallMetroProperties()) {}
+  ShellIntegrationWinMigrateShortcutTest() {}
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
     // A path to a random target.
-    base::CreateTemporaryFileInDir(temp_dir_.path(), &other_target_);
+    base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &other_target_);
 
     // This doesn't need to actually have a base name of "chrome.exe".
-    base::CreateTemporaryFileInDir(temp_dir_.path(), &chrome_exe_);
+    base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &chrome_exe_);
 
     chrome_app_id_ =
         ShellUtil::GetBrowserModelId(BrowserDistribution::GetDistribution(),
@@ -55,33 +58,24 @@ class ShellIntegrationWinMigrateShortcutTest : public testing::Test {
     chrome::GetDefaultUserDataDirectory(&default_user_data_dir);
     base::FilePath default_profile_path =
         default_user_data_dir.AppendASCII(chrome::kInitialProfile);
-    app_list_app_id_ =
-        ShellIntegration::GetAppListAppModelIdForProfile(default_profile_path);
     non_default_user_data_dir_ = base::FilePath(FILE_PATH_LITERAL("root"))
         .Append(FILE_PATH_LITERAL("Non Default Data Dir"));
     non_default_profile_ = L"NonDefault";
-    non_default_profile_chrome_app_id_ =
-        ShellIntegration::GetChromiumModelIdForProfile(
+    non_default_profile_chrome_app_id_ = GetChromiumModelIdForProfile(
         default_user_data_dir.Append(non_default_profile_));
-    non_default_user_data_dir_chrome_app_id_ =
-        ShellIntegration::GetChromiumModelIdForProfile(
+    non_default_user_data_dir_chrome_app_id_ = GetChromiumModelIdForProfile(
         non_default_user_data_dir_.AppendASCII(chrome::kInitialProfile));
     non_default_user_data_dir_and_profile_chrome_app_id_ =
-        ShellIntegration::GetChromiumModelIdForProfile(
-        non_default_user_data_dir_.Append(non_default_profile_));
-
+        GetChromiumModelIdForProfile(
+            non_default_user_data_dir_.Append(non_default_profile_));
 
     extension_id_ = L"chromiumexampleappidforunittests";
     base::string16 app_name =
         base::UTF8ToUTF16(web_app::GenerateApplicationNameFromExtensionId(
         base::UTF16ToUTF8(extension_id_)));
-    extension_app_id_ =
-        ShellIntegration::GetAppModelIdForProfile(app_name,
-                                                  default_profile_path);
-    non_default_profile_extension_app_id_ =
-        ShellIntegration::GetAppModelIdForProfile(
-        app_name,
-        default_user_data_dir.Append(non_default_profile_));
+    extension_app_id_ = GetAppModelIdForProfile(app_name, default_profile_path);
+    non_default_profile_extension_app_id_ = GetAppModelIdForProfile(
+        app_name, default_user_data_dir.Append(non_default_profile_));
 
     CreateShortcuts();
   }
@@ -92,10 +86,9 @@ class ShellIntegrationWinMigrateShortcutTest : public testing::Test {
   void AddTestShortcutAndResetProperties(
       base::win::ShortcutProperties* shortcut_properties) {
     ShortcutTestObject shortcut_test_object;
-    base::FilePath shortcut_path =
-        temp_dir_.path().Append(L"Shortcut " +
-                                base::IntToString16(shortcuts_.size()) +
-                                installer::kLnkExt);
+    base::FilePath shortcut_path = temp_dir_.GetPath().Append(
+        L"Shortcut " + base::IntToString16(shortcuts_.size()) +
+        installer::kLnkExt);
     shortcut_test_object.path = shortcut_path;
     shortcut_test_object.properties = *shortcut_properties;
     shortcuts_.push_back(shortcut_test_object);
@@ -202,8 +195,8 @@ class ShellIntegrationWinMigrateShortcutTest : public testing::Test {
         AddTestShortcutAndResetProperties(&temp_properties));
 
     // Shortcut 11 points to chrome.exe, already has the right appid, and has
-    // dual_mode set and thus should only be migrated if dual_mode is checked
-    // and not desired for this OS version.
+    // dual_mode set and thus should only be migrated if dual_mode is being
+    // cleared.
     temp_properties.set_target(chrome_exe_);
     temp_properties.set_app_id(chrome_app_id_);
     temp_properties.set_dual_mode(true);
@@ -250,9 +243,6 @@ class ShellIntegrationWinMigrateShortcutTest : public testing::Test {
   // profile.
   base::string16 non_default_user_data_dir_and_profile_chrome_app_id_;
 
-  // The app launcher's app id.
-  base::string16 app_list_app_id_;
-
   // An example extension id of an example app.
   base::string16 extension_id_;
 
@@ -262,26 +252,22 @@ class ShellIntegrationWinMigrateShortcutTest : public testing::Test {
   // The app id of the example app for the non-default profile.
   base::string16 non_default_profile_extension_app_id_;
 
-  // True if the dual mode property should be set for the default chrome
-  // shortcut on the current OS version.
-  const bool desired_dual_mode_for_os_version;
-
  private:
   DISALLOW_COPY_AND_ASSIGN(ShellIntegrationWinMigrateShortcutTest);
 };
 
 }  // namespace
 
-// Test migration when not checking for dual mode.
-TEST_F(ShellIntegrationWinMigrateShortcutTest, DontCheckDualMode) {
+TEST_F(ShellIntegrationWinMigrateShortcutTest, ClearDualModeAndAdjustAppIds) {
   if (base::win::GetVersion() < base::win::VERSION_WIN7)
     return;
 
-  EXPECT_EQ(9,
-            ShellIntegration::MigrateShortcutsInPathInternal(
-                chrome_exe_, temp_dir_.path(), false));
+  // 9 shortcuts should have their app id updated below and shortcut 11 should
+  // be migrated away from dual_mode for a total of 10 shortcuts migrated.
+  EXPECT_EQ(10,
+            MigrateShortcutsInPathInternal(chrome_exe_, temp_dir_.GetPath()));
 
-  // Only shortcut 1, 3, 4, 5, 6, 7, 8, 9, and 10 should have been migrated.
+  // Shortcut 1, 3, 4, 5, 6, 7, 8, 9, and 10 should have had their app_id fixed.
   shortcuts_[1].properties.set_app_id(chrome_app_id_);
   shortcuts_[3].properties.set_app_id(chrome_app_id_);
   shortcuts_[4].properties.set_app_id(chrome_app_id_);
@@ -293,14 +279,9 @@ TEST_F(ShellIntegrationWinMigrateShortcutTest, DontCheckDualMode) {
   shortcuts_[9].properties.set_app_id(extension_app_id_);
   shortcuts_[10].properties.set_app_id(non_default_profile_extension_app_id_);
 
-  // Explicitly set the dual_mode expectations on all shortcuts to ensure
-  // ValidateShortcut verifies it.
-  for (size_t i = 0; i < shortcuts_.size(); ++i) {
-    if (!(shortcuts_[i].properties.options &
-          base::win::ShortcutProperties::PROPERTIES_DUAL_MODE)) {
-      shortcuts_[i].properties.set_dual_mode(false);
-    }
-  }
+  // No shortcut should still have the dual_mode property.
+  for (size_t i = 0; i < shortcuts_.size(); ++i)
+    shortcuts_[i].properties.set_dual_mode(false);
 
   for (size_t i = 0; i < shortcuts_.size(); ++i) {
     SCOPED_TRACE(i);
@@ -309,67 +290,7 @@ TEST_F(ShellIntegrationWinMigrateShortcutTest, DontCheckDualMode) {
 
   // Make sure shortcuts are not re-migrated.
   EXPECT_EQ(0,
-            ShellIntegration::MigrateShortcutsInPathInternal(
-                chrome_exe_, temp_dir_.path(), false));
-}
-
-// Test migration when also checking for dual mode.
-TEST_F(ShellIntegrationWinMigrateShortcutTest, CheckDualMode) {
-  if (base::win::GetVersion() < base::win::VERSION_WIN7)
-    return;
-
-  // 9 shortcuts should have their app id updated below.
-
-  // If |desired_dual_mode_for_os_version| is true: shortcut 2 and 13 should
-  //   also be migrated to dual_mode for a total of 11 shortcuts migrated.
-  // If |desired_dual_mode_for_os_version| is false: shortcut 11 should
-  //   be migrate away from dual_mode for a total of 10 shortcuts migrated.
-  EXPECT_EQ(desired_dual_mode_for_os_version ? 11 : 10,
-            ShellIntegration::MigrateShortcutsInPathInternal(
-                chrome_exe_, temp_dir_.path(), true));
-
-  // Shortcut 1, 3, 4, 5, 6, 7, 8, 9, and 10 should have had both their app_id
-  // fixed and shortcut 1, 2, 3, 4, and 5 should also have had their dual_mode
-  // property added if it is desired (or 11 should have had it removed if it is
-  // not).
-  shortcuts_[1].properties.set_app_id(chrome_app_id_);
-  shortcuts_[3].properties.set_app_id(chrome_app_id_);
-  shortcuts_[4].properties.set_app_id(chrome_app_id_);
-  shortcuts_[5].properties.set_app_id(chrome_app_id_);
-  shortcuts_[6].properties.set_app_id(non_default_profile_chrome_app_id_);
-  shortcuts_[7].properties.set_app_id(non_default_user_data_dir_chrome_app_id_);
-  shortcuts_[8].properties.set_app_id(
-      non_default_user_data_dir_and_profile_chrome_app_id_);
-  shortcuts_[9].properties.set_app_id(extension_app_id_);
-  shortcuts_[10].properties.set_app_id(non_default_profile_extension_app_id_);
-
-  // Explicitly flag the expected dual_mode properties.
-  shortcuts_[0].properties.set_dual_mode(false);
-  if (desired_dual_mode_for_os_version) {
-    shortcuts_[1].properties.set_dual_mode(true);
-    shortcuts_[2].properties.set_dual_mode(true);
-    shortcuts_[3].properties.set_dual_mode(true);
-    shortcuts_[4].properties.set_dual_mode(true);
-    shortcuts_[5].properties.set_dual_mode(true);
-    shortcuts_[12].properties.set_dual_mode(true);
-  } else {
-    shortcuts_[11].properties.set_dual_mode(false);
-  }
-  shortcuts_[6].properties.set_dual_mode(false);
-  shortcuts_[7].properties.set_dual_mode(false);
-  shortcuts_[8].properties.set_dual_mode(false);
-  shortcuts_[9].properties.set_dual_mode(false);
-  shortcuts_[10].properties.set_dual_mode(false);
-
-  for (size_t i = 0; i < shortcuts_.size(); ++i) {
-    SCOPED_TRACE(i);
-    base::win::ValidateShortcut(shortcuts_[i].path, shortcuts_[i].properties);
-  }
-
-  // Make sure shortcuts are not re-migrated.
-  EXPECT_EQ(0,
-            ShellIntegration::MigrateShortcutsInPathInternal(
-                chrome_exe_, temp_dir_.path(), false));
+            MigrateShortcutsInPathInternal(chrome_exe_, temp_dir_.GetPath()));
 }
 
 TEST(ShellIntegrationWinTest, GetAppModelIdForProfileTest) {
@@ -378,8 +299,7 @@ TEST(ShellIntegrationWinTest, GetAppModelIdForProfileTest) {
 
   // Empty profile path should get chrome::kBrowserAppID
   base::FilePath empty_path;
-  EXPECT_EQ(base_app_id,
-            ShellIntegration::GetAppModelIdForProfile(base_app_id, empty_path));
+  EXPECT_EQ(base_app_id, GetAppModelIdForProfile(base_app_id, empty_path));
 
   // Default profile path should get chrome::kBrowserAppID
   base::FilePath default_user_data_dir;
@@ -387,8 +307,7 @@ TEST(ShellIntegrationWinTest, GetAppModelIdForProfileTest) {
   base::FilePath default_profile_path =
       default_user_data_dir.AppendASCII(chrome::kInitialProfile);
   EXPECT_EQ(base_app_id,
-            ShellIntegration::GetAppModelIdForProfile(base_app_id,
-                                                      default_profile_path));
+            GetAppModelIdForProfile(base_app_id, default_profile_path));
 
   // Non-default profile path should get chrome::kBrowserAppID joined with
   // profile info.
@@ -396,34 +315,8 @@ TEST(ShellIntegrationWinTest, GetAppModelIdForProfileTest) {
   profile_path = profile_path.Append(FILE_PATH_LITERAL("udd"));
   profile_path = profile_path.Append(FILE_PATH_LITERAL("User Data - Test"));
   EXPECT_EQ(base_app_id + L".udd.UserDataTest",
-            ShellIntegration::GetAppModelIdForProfile(base_app_id,
-                                                      profile_path));
+            GetAppModelIdForProfile(base_app_id, profile_path));
 }
 
-TEST(ShellIntegrationWinTest, GetAppListAppModelIdForProfileTest) {
-  base::string16 base_app_id(
-      BrowserDistribution::GetDistribution()->GetBaseAppId());
-  base_app_id.append(L"AppList");
-
-  // Empty profile path should get chrome::kBrowserAppID + AppList
-  base::FilePath empty_path;
-  EXPECT_EQ(base_app_id,
-            ShellIntegration::GetAppListAppModelIdForProfile(empty_path));
-
-  // Default profile path should get chrome::kBrowserAppID + AppList
-  base::FilePath default_user_data_dir;
-  chrome::GetDefaultUserDataDirectory(&default_user_data_dir);
-  base::FilePath default_profile_path =
-      default_user_data_dir.AppendASCII(chrome::kInitialProfile);
-  EXPECT_EQ(base_app_id,
-            ShellIntegration::GetAppListAppModelIdForProfile(
-                default_profile_path));
-
-  // Non-default profile path should get chrome::kBrowserAppID + AppList joined
-  // with profile info.
-  base::FilePath profile_path(FILE_PATH_LITERAL("root"));
-  profile_path = profile_path.Append(FILE_PATH_LITERAL("udd"));
-  profile_path = profile_path.Append(FILE_PATH_LITERAL("User Data - Test"));
-  EXPECT_EQ(base_app_id + L".udd.UserDataTest",
-            ShellIntegration::GetAppListAppModelIdForProfile(profile_path));
-}
+}  // namespace win
+}  // namespace shell_integration

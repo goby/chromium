@@ -4,35 +4,51 @@
 
 #include "content/browser/permissions/permission_service_impl.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_manager.h"
 #include "content/public/browser/permission_type.h"
+
+using blink::mojom::PermissionDescriptorPtr;
+using blink::mojom::PermissionName;
+using blink::mojom::PermissionStatus;
 
 namespace content {
 
 namespace {
 
-PermissionType PermissionNameToPermissionType(PermissionName name) {
-  switch(name) {
-    case PERMISSION_NAME_GEOLOCATION:
+PermissionType PermissionDescriptorToPermissionType(
+    const PermissionDescriptorPtr& descriptor) {
+  switch (descriptor->name) {
+    case PermissionName::GEOLOCATION:
       return PermissionType::GEOLOCATION;
-    case PERMISSION_NAME_NOTIFICATIONS:
+    case PermissionName::NOTIFICATIONS:
       return PermissionType::NOTIFICATIONS;
-    case PERMISSION_NAME_PUSH_NOTIFICATIONS:
+    case PermissionName::PUSH_NOTIFICATIONS:
       return PermissionType::PUSH_MESSAGING;
-    case PERMISSION_NAME_MIDI:
+    case PermissionName::MIDI: {
+      if (descriptor->extension && descriptor->extension->is_midi() &&
+          descriptor->extension->get_midi()->sysex) {
+        return PermissionType::MIDI_SYSEX;
+      }
       return PermissionType::MIDI;
-    case PERMISSION_NAME_MIDI_SYSEX:
-      return PermissionType::MIDI_SYSEX;
-    case PERMISSION_NAME_PROTECTED_MEDIA_IDENTIFIER:
+    }
+    case PermissionName::PROTECTED_MEDIA_IDENTIFIER:
       return PermissionType::PROTECTED_MEDIA_IDENTIFIER;
-    case PERMISSION_NAME_DURABLE_STORAGE:
+    case PermissionName::DURABLE_STORAGE:
       return PermissionType::DURABLE_STORAGE;
-    case PERMISSION_NAME_AUDIO_CAPTURE:
+    case PermissionName::AUDIO_CAPTURE:
       return PermissionType::AUDIO_CAPTURE;
-    case PERMISSION_NAME_VIDEO_CAPTURE:
+    case PermissionName::VIDEO_CAPTURE:
       return PermissionType::VIDEO_CAPTURE;
+    case PermissionName::BACKGROUND_SYNC:
+      return PermissionType::BACKGROUND_SYNC;
   }
 
   NOTREACHED();
@@ -42,8 +58,8 @@ PermissionType PermissionNameToPermissionType(PermissionName name) {
 // This function allows the usage of the the multiple request map
 // with single requests.
 void PermissionRequestResponseCallbackWrapper(
-    const mojo::Callback<void(PermissionStatus)>& callback,
-    const mojo::Array<PermissionStatus>& vector) {
+    const base::Callback<void(PermissionStatus)>& callback,
+    const std::vector<PermissionStatus>& vector) {
   DCHECK_EQ(vector.size(), 1ul);
   callback.Run(vector[0]);
 }
@@ -51,7 +67,7 @@ void PermissionRequestResponseCallbackWrapper(
 } // anonymous namespace
 
 PermissionServiceImpl::PendingRequest::PendingRequest(
-    const PermissionsStatusCallback& callback,
+    const RequestPermissionsCallback& callback,
     int request_count)
     : callback(callback),
       request_count(request_count) {
@@ -61,33 +77,26 @@ PermissionServiceImpl::PendingRequest::~PendingRequest() {
   if (callback.is_null())
     return;
 
-  mojo::Array<PermissionStatus> result =
-      mojo::Array<PermissionStatus>::New(request_count);
-  for (int i = 0; i < request_count; ++i)
-    result[i] = PERMISSION_STATUS_DENIED;
-  callback.Run(result.Pass());
+  std::vector<PermissionStatus> result(request_count, PermissionStatus::DENIED);
+  callback.Run(result);
 }
 
 PermissionServiceImpl::PendingSubscription::PendingSubscription(
     PermissionType permission,
-    const GURL& origin,
+    const url::Origin& origin,
     const PermissionStatusCallback& callback)
-    : id(-1),
-      permission(permission),
-      origin(origin),
-      callback(callback) {
-}
+    : id(-1), permission(permission), origin(origin), callback(callback) {}
 
 PermissionServiceImpl::PendingSubscription::~PendingSubscription() {
   if (!callback.is_null())
-    callback.Run(PERMISSION_STATUS_ASK);
+    callback.Run(PermissionStatus::ASK);
 }
 
 PermissionServiceImpl::PermissionServiceImpl(
     PermissionServiceContext* context,
-    mojo::InterfaceRequest<PermissionService> request)
+    mojo::InterfaceRequest<blink::mojom::PermissionService> request)
     : context_(context),
-      binding_(this, request.Pass()),
+      binding_(this, std::move(request)),
       weak_factory_(this) {
   binding_.set_connection_error_handler(
       base::Bind(&PermissionServiceImpl::OnConnectionError,
@@ -99,13 +108,14 @@ PermissionServiceImpl::~PermissionServiceImpl() {
 }
 
 void PermissionServiceImpl::OnConnectionError() {
+  CancelPendingOperations();
   context_->ServiceHadConnectionError(this);
   // After that call, |this| will be deleted.
 }
 
 void PermissionServiceImpl::RequestPermission(
-    PermissionName permission,
-    const mojo::String& origin,
+    PermissionDescriptorPtr permission,
+    const url::Origin& origin,
     bool user_gesture,
     const PermissionStatusCallback& callback) {
   // This condition is valid if the call is coming from a ChildThread instead of
@@ -119,20 +129,18 @@ void PermissionServiceImpl::RequestPermission(
   DCHECK(browser_context);
   if (!context_->render_frame_host() ||
       !browser_context->GetPermissionManager()) {
-    callback.Run(GetPermissionStatusFromName(permission, GURL(origin)));
+    callback.Run(GetPermissionStatus(permission, origin));
     return;
   }
 
-  int pending_request_id = pending_requests_.Add(new PendingRequest(
-      base::Bind(&PermissionRequestResponseCallbackWrapper, callback), 1));
+  int pending_request_id =
+      pending_requests_.Add(base::MakeUnique<PendingRequest>(
+          base::Bind(&PermissionRequestResponseCallbackWrapper, callback), 1));
   int id = browser_context->GetPermissionManager()->RequestPermission(
-      PermissionNameToPermissionType(permission),
-      context_->render_frame_host(),
-      GURL(origin),
-      user_gesture, // TODO(mlamouri): should be removed (crbug.com/423770)
+      PermissionDescriptorToPermissionType(permission),
+      context_->render_frame_host(), origin.GetURL(), user_gesture,
       base::Bind(&PermissionServiceImpl::OnRequestPermissionResponse,
-                 weak_factory_.GetWeakPtr(),
-                 pending_request_id));
+                 weak_factory_.GetWeakPtr(), pending_request_id));
 
   // Check if the request still exists. It might have been removed by the
   // callback if it was run synchronously.
@@ -147,19 +155,14 @@ void PermissionServiceImpl::OnRequestPermissionResponse(
     int pending_request_id,
     PermissionStatus status) {
   OnRequestPermissionsResponse(pending_request_id,
-      std::vector<PermissionStatus>(1, status));
+                               std::vector<PermissionStatus>(1, status));
 }
 
 void PermissionServiceImpl::RequestPermissions(
-    mojo::Array<PermissionName> permissions,
-    const mojo::String& origin,
+    std::vector<PermissionDescriptorPtr> permissions,
+    const url::Origin& origin,
     bool user_gesture,
-    const PermissionsStatusCallback& callback) {
-  if (permissions.is_null()) {
-    callback.Run(mojo::Array<PermissionStatus>());
-    return;
-  }
-
+    const RequestPermissionsCallback& callback) {
   // This condition is valid if the call is coming from a ChildThread instead of
   // a RenderFrame. Some consumers of the service run in Workers and some in
   // Frames. In the context of a Worker, it is not possible to show a
@@ -171,27 +174,23 @@ void PermissionServiceImpl::RequestPermissions(
   DCHECK(browser_context);
   if (!context_->render_frame_host() ||
       !browser_context->GetPermissionManager()) {
-    mojo::Array<PermissionStatus> result(permissions.size());
+    std::vector<PermissionStatus> result(permissions.size());
     for (size_t i = 0; i < permissions.size(); ++i)
-      result[i] = GetPermissionStatusFromName(permissions[i], GURL(origin));
-    callback.Run(result.Pass());
+      result[i] = GetPermissionStatus(permissions[i], origin);
+    callback.Run(result);
     return;
   }
 
   std::vector<PermissionType> types(permissions.size());
   for (size_t i = 0; i < types.size(); ++i)
-    types[i] = PermissionNameToPermissionType(permissions[i]);
+    types[i] = PermissionDescriptorToPermissionType(permissions[i]);
 
   int pending_request_id = pending_requests_.Add(
-      new PendingRequest(callback, permissions.size()));
+      base::MakeUnique<PendingRequest>(callback, permissions.size()));
   int id = browser_context->GetPermissionManager()->RequestPermissions(
-      types,
-      context_->render_frame_host(),
-      GURL(origin),
-      user_gesture, // TODO(mlamouri): should be removed (crbug.com/423770)
+      types, context_->render_frame_host(), origin.GetURL(), user_gesture,
       base::Bind(&PermissionServiceImpl::OnRequestPermissionsResponse,
-                 weak_factory_.GetWeakPtr(),
-                 pending_request_id));
+                 weak_factory_.GetWeakPtr(), pending_request_id));
 
   // Check if the request still exists. It may have been removed by the
   // the response callback.
@@ -206,10 +205,10 @@ void PermissionServiceImpl::OnRequestPermissionsResponse(
     int pending_request_id,
     const std::vector<PermissionStatus>& result) {
   PendingRequest* request = pending_requests_.Lookup(pending_request_id);
-  PermissionsStatusCallback callback(request->callback);
-  request->callback.reset();
+  RequestPermissionsCallback callback(request->callback);
+  request->callback.Reset();
   pending_requests_.Remove(pending_request_id);
-  callback.Run(mojo::Array<PermissionStatus>::From(result));
+  callback.Run(result);
 }
 
 void PermissionServiceImpl::CancelPendingOperations() {
@@ -233,7 +232,7 @@ void PermissionServiceImpl::CancelPendingOperations() {
           it(&pending_subscriptions_); !it.IsAtEnd(); it.Advance()) {
     it.GetCurrentValue()->callback.Run(GetPermissionStatusFromType(
         it.GetCurrentValue()->permission, it.GetCurrentValue()->origin));
-    it.GetCurrentValue()->callback.reset();
+    it.GetCurrentValue()->callback.Reset();
     permission_manager->UnsubscribePermissionStatusChange(
         it.GetCurrentValue()->id);
   }
@@ -241,41 +240,39 @@ void PermissionServiceImpl::CancelPendingOperations() {
 }
 
 void PermissionServiceImpl::HasPermission(
-    PermissionName permission,
-    const mojo::String& origin,
+    PermissionDescriptorPtr permission,
+    const url::Origin& origin,
     const PermissionStatusCallback& callback) {
-  callback.Run(GetPermissionStatusFromName(permission, GURL(origin)));
+  callback.Run(GetPermissionStatus(permission, origin));
 }
 
 void PermissionServiceImpl::RevokePermission(
-    PermissionName permission,
-    const mojo::String& origin,
+    PermissionDescriptorPtr permission,
+    const url::Origin& origin,
     const PermissionStatusCallback& callback) {
-  GURL origin_url(origin);
-  PermissionType permission_type = PermissionNameToPermissionType(permission);
-  PermissionStatus status = GetPermissionStatusFromType(permission_type,
-                                                        origin_url);
+  PermissionType permission_type =
+      PermissionDescriptorToPermissionType(permission);
+  PermissionStatus status =
+      GetPermissionStatusFromType(permission_type, origin);
 
   // Resetting the permission should only be possible if the permission is
   // already granted.
-  if (status != PERMISSION_STATUS_GRANTED) {
+  if (status != PermissionStatus::GRANTED) {
     callback.Run(status);
     return;
   }
 
-  ResetPermissionStatus(permission_type, origin_url);
+  ResetPermissionStatus(permission_type, origin);
 
-  callback.Run(GetPermissionStatusFromType(permission_type, origin_url));
+  callback.Run(GetPermissionStatusFromType(permission_type, origin));
 }
 
 void PermissionServiceImpl::GetNextPermissionChange(
-    PermissionName permission,
-    const mojo::String& mojo_origin,
+    PermissionDescriptorPtr permission,
+    const url::Origin& origin,
     PermissionStatus last_known_status,
     const PermissionStatusCallback& callback) {
-  GURL origin(mojo_origin);
-  PermissionStatus current_status =
-      GetPermissionStatusFromName(permission, origin);
+  PermissionStatus current_status = GetPermissionStatus(permission, origin);
   if (current_status != last_known_status) {
     callback.Run(current_status);
     return;
@@ -288,57 +285,65 @@ void PermissionServiceImpl::GetNextPermissionChange(
     return;
   }
 
-  PermissionType permission_type = PermissionNameToPermissionType(permission);
+  PermissionType permission_type =
+      PermissionDescriptorToPermissionType(permission);
 
   // We need to pass the id of PendingSubscription in pending_subscriptions_
   // to the callback but SubscribePermissionStatusChange() will also return an
   // id which is different.
-  PendingSubscription* subscription =
-      new PendingSubscription(permission_type, origin, callback);
-  int pending_subscription_id = pending_subscriptions_.Add(subscription);
+  auto subscription =
+      base::MakeUnique<PendingSubscription>(permission_type, origin, callback);
+  PendingSubscription* subscription_raw = subscription.get();
+  int pending_subscription_id =
+      pending_subscriptions_.Add(std::move(subscription));
 
+  GURL requesting_origin(origin.Serialize());
   GURL embedding_origin = context_->GetEmbeddingOrigin();
-  subscription->id =
+  subscription_raw->id =
       browser_context->GetPermissionManager()->SubscribePermissionStatusChange(
-          permission_type,
-          origin,
+          permission_type, requesting_origin,
           // If the embedding_origin is empty, we,ll use the |origin| instead.
-          embedding_origin.is_empty() ? origin : embedding_origin,
+          embedding_origin.is_empty() ? requesting_origin : embedding_origin,
           base::Bind(&PermissionServiceImpl::OnPermissionStatusChanged,
-                     weak_factory_.GetWeakPtr(),
-                     pending_subscription_id));
+                     weak_factory_.GetWeakPtr(), pending_subscription_id));
 }
 
-PermissionStatus PermissionServiceImpl::GetPermissionStatusFromName(
-    PermissionName permission, const GURL& origin) {
-  return GetPermissionStatusFromType(PermissionNameToPermissionType(permission),
-                                     origin);
+PermissionStatus PermissionServiceImpl::GetPermissionStatus(
+    const PermissionDescriptorPtr& permission,
+    const url::Origin& origin) {
+  return GetPermissionStatusFromType(
+      PermissionDescriptorToPermissionType(permission), origin);
 }
 
 PermissionStatus PermissionServiceImpl::GetPermissionStatusFromType(
-    PermissionType type, const GURL& origin) {
+    PermissionType type,
+    const url::Origin& origin) {
   BrowserContext* browser_context = context_->GetBrowserContext();
   DCHECK(browser_context);
   if (!browser_context->GetPermissionManager())
-    return PERMISSION_STATUS_DENIED;
+    return PermissionStatus::DENIED;
 
+  GURL requesting_origin(origin.Serialize());
   // If the embedding_origin is empty we'll use |origin| instead.
   GURL embedding_origin = context_->GetEmbeddingOrigin();
   return browser_context->GetPermissionManager()->GetPermissionStatus(
-      type, origin, embedding_origin.is_empty() ? origin : embedding_origin);
+      type, requesting_origin,
+      embedding_origin.is_empty() ? requesting_origin : embedding_origin);
 }
 
 void PermissionServiceImpl::ResetPermissionStatus(PermissionType type,
-                                                  const GURL& origin) {
+                                                  const url::Origin& origin) {
   BrowserContext* browser_context = context_->GetBrowserContext();
   DCHECK(browser_context);
   if (!browser_context->GetPermissionManager())
     return;
 
+  GURL requesting_origin(origin.Serialize());
   // If the embedding_origin is empty we'll use |origin| instead.
   GURL embedding_origin = context_->GetEmbeddingOrigin();
   browser_context->GetPermissionManager()->ResetPermission(
-      type, origin, embedding_origin.is_empty() ? origin : embedding_origin);
+      type, requesting_origin,
+      embedding_origin.is_empty() ? requesting_origin : embedding_origin);
 }
 
 void PermissionServiceImpl::OnPermissionStatusChanged(
@@ -356,7 +361,7 @@ void PermissionServiceImpl::OnPermissionStatusChanged(
 
   PermissionStatusCallback callback = subscription->callback;
 
-  subscription->callback.reset();
+  subscription->callback.Reset();
   pending_subscriptions_.Remove(pending_subscription_id);
 
   callback.Run(status);

@@ -20,9 +20,6 @@ const int kPanelHorizMargin = 13;
 // Top or bottom margin.
 const int kPanelVertMargin = 13;
 
-// If some UI has some sub UI. Indent horizontally by the following value.
-const int kPanelHorizIndentation = 24;
-
 // When several controls are aligned vertically, the baseline should be spaced
 // by the following number of pixels.
 const int kPanelVerticalSpacing = 32;
@@ -82,13 +79,6 @@ const int kCheckboxIndent = 10;
 // Horizontal spacing between the end of an item (i.e. an icon or a checkbox)
 // and the start of its corresponding text.
 const int kItemLabelSpacing = 10;
-
-// Horizontal alignment used for a control's introductory label in a GridLayout.
-#if defined(OS_MACOSX)
-const GridLayout::Alignment kControlLabelGridAlignment = GridLayout::TRAILING;
-#else
-const GridLayout::Alignment kControlLabelGridAlignment = GridLayout::LEADING;
-#endif
 
 }  // namespace views
 

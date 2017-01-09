@@ -4,12 +4,14 @@
 
 #include "chrome/browser/ui/browser_tab_strip_model_delegate.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
-#include "chrome/browser/task_management/web_contents_tags.h"
+#include "chrome/browser/task_manager/web_contents_tags.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -55,8 +57,7 @@ Browser* BrowserTabStripModelDelegate::CreateNewStripWithContents(
   DCHECK(browser_->CanSupportWindowFeature(Browser::FEATURE_TABSTRIP));
 
   // Create an empty new browser window the same size as the old one.
-  Browser::CreateParams params(browser_->profile(),
-                               browser_->host_desktop_type());
+  Browser::CreateParams params(browser_->profile());
   params.initial_bounds = window_bounds;
   params.initial_show_state =
       maximize ? ui::SHOW_STATE_MAXIMIZED : ui::SHOW_STATE_NORMAL;
@@ -88,7 +89,7 @@ void BrowserTabStripModelDelegate::WillAddWebContents(
   TabHelpers::AttachTabHelpers(contents);
 
   // Make the tab show up in the task manager.
-  task_management::WebContentsTags::CreateForTabContents(contents);
+  task_manager::WebContentsTags::CreateForTabContents(contents);
 }
 
 int BrowserTabStripModelDelegate::GetDragActions() const {
@@ -125,20 +126,12 @@ void BrowserTabStripModelDelegate::CreateHistoricalTab(
 
 bool BrowserTabStripModelDelegate::RunUnloadListenerBeforeClosing(
     content::WebContents* contents) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableFastUnload)) {
-    return chrome::FastUnloadController::RunUnloadEventsHelper(contents);
-  }
-  return chrome::UnloadController::RunUnloadEventsHelper(contents);
+  return browser_->RunUnloadListenerBeforeClosing(contents);
 }
 
 bool BrowserTabStripModelDelegate::ShouldRunUnloadListenerBeforeClosing(
     content::WebContents* contents) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableFastUnload)) {
-    return chrome::FastUnloadController::ShouldRunUnloadEventsHelper(contents);
-  }
-  return chrome::UnloadController::ShouldRunUnloadEventsHelper(contents);
+  return browser_->ShouldRunUnloadListenerBeforeClosing(contents);
 }
 
 bool BrowserTabStripModelDelegate::CanBookmarkAllTabs() const {

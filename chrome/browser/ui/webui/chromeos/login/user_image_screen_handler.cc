@@ -4,23 +4,26 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/user_image_screen_handler.h"
 
-#include "ash/audio/sounds.h"
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/values.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/existing_user_controller.h"
 #include "chrome/browser/chromeos/login/screens/user_image_model.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_display.h"
-#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/browser/chromeos/login/users/default_user_image/default_user_images.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/audio/chromeos_sounds.h"
 #include "components/login/localized_values_builder.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user.h"
-#include "components/user_manager/user_image/default_user_images.h"
-#include "grit/browser_resources.h"
 #include "media/audio/sounds/sounds_manager.h"
 #include "net/base/data_url.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -76,7 +79,7 @@ void UserImageScreenHandler::Show() {
     return;
   }
   screen_show_time_ = base::Time::Now();
-  ShowScreen(OobeUI::kScreenUserImagePicker, NULL);
+  ShowScreen(OobeScreen::SCREEN_USER_IMAGE_PICKER);
 
   // When shown, query camera presence.
   if (model_ && is_ready_)
@@ -84,9 +87,6 @@ void UserImageScreenHandler::Show() {
 }
 
 void UserImageScreenHandler::Hide() {
-}
-
-void UserImageScreenHandler::PrepareToShow() {
 }
 
 void UserImageScreenHandler::DeclareLocalizedValues(
@@ -130,19 +130,20 @@ void UserImageScreenHandler::RegisterMessages() {
 // TODO(antrim) : It looks more like parameters for "Init" rather than callback.
 void UserImageScreenHandler::HandleGetImages() {
   base::ListValue image_urls;
-  for (int i = user_manager::kFirstDefaultImageIndex;
-       i < user_manager::kDefaultImagesCount;
-       ++i) {
-    scoped_ptr<base::DictionaryValue> image_data(new base::DictionaryValue);
-    image_data->SetString("url", user_manager::GetDefaultImageUrl(i));
-    image_data->SetString(
-        "author",
-        l10n_util::GetStringUTF16(user_manager::kDefaultImageAuthorIDs[i]));
-    image_data->SetString(
-        "website",
-        l10n_util::GetStringUTF16(user_manager::kDefaultImageWebsiteIDs[i]));
-    image_data->SetString("title", user_manager::GetDefaultImageDescription(i));
-    image_urls.Append(image_data.release());
+  for (int i = default_user_image::kFirstDefaultImageIndex;
+       i < default_user_image::kDefaultImagesCount; ++i) {
+    std::unique_ptr<base::DictionaryValue> image_data(
+        new base::DictionaryValue);
+    image_data->SetString("url", default_user_image::GetDefaultImageUrl(i));
+    image_data->SetString("author",
+                          l10n_util::GetStringUTF16(
+                              default_user_image::kDefaultImageAuthorIDs[i]));
+    image_data->SetString("website",
+                          l10n_util::GetStringUTF16(
+                              default_user_image::kDefaultImageWebsiteIDs[i]));
+    image_data->SetString("title",
+                          default_user_image::GetDefaultImageDescription(i));
+    image_urls.Append(std::move(image_data));
   }
   CallJS("setDefaultImages", image_urls);
 }
@@ -164,11 +165,13 @@ void UserImageScreenHandler::HandlePhotoTaken(const std::string& image_url) {
 }
 
 void UserImageScreenHandler::HandleTakePhoto() {
-  ash::PlaySystemSoundIfSpokenFeedback(SOUND_CAMERA_SNAP);
+  AccessibilityManager::Get()->PlayEarcon(
+      SOUND_CAMERA_SNAP, PlaySoundOption::SPOKEN_FEEDBACK_ENABLED);
 }
 
 void UserImageScreenHandler::HandleDiscardPhoto() {
-  ash::PlaySystemSoundIfSpokenFeedback(SOUND_OBJECT_DELETE);
+  AccessibilityManager::Get()->PlayEarcon(
+      SOUND_OBJECT_DELETE, PlaySoundOption::SPOKEN_FEEDBACK_ENABLED);
 }
 
 void UserImageScreenHandler::HandleSelectImage(const std::string& image_url,

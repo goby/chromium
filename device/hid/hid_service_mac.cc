@@ -6,6 +6,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/hid/IOHIDDevice.h>
+#include <stdint.h>
 
 #include <set>
 #include <string>
@@ -19,8 +20,8 @@
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/hid/hid_connection_mac.h"
 
@@ -67,14 +68,14 @@ std::string GetHidStringProperty(IOHIDDeviceRef device, CFStringRef key) {
 
 bool TryGetHidDataProperty(IOHIDDeviceRef device,
                            CFStringRef key,
-                           std::vector<uint8>* result) {
+                           std::vector<uint8_t>* result) {
   CFDataRef ref =
       base::mac::CFCast<CFDataRef>(IOHIDDeviceGetProperty(device, key));
   if (!ref) {
     return false;
   }
-  STLClearObject(result);
-  const uint8* bytes = CFDataGetBytePtr(ref);
+  base::STLClearObject(result);
+  const uint8_t* bytes = CFDataGetBytePtr(ref);
   result->insert(result->begin(), bytes, bytes + CFDataGetLength(ref));
   return true;
 }
@@ -87,19 +88,15 @@ HidServiceMac::HidServiceMac(
   task_runner_ = base::ThreadTaskRunnerHandle::Get();
   DCHECK(task_runner_.get());
 
-  notify_port_ = IONotificationPortCreate(kIOMasterPortDefault);
+  notify_port_.reset(IONotificationPortCreate(kIOMasterPortDefault));
   CFRunLoopAddSource(CFRunLoopGetMain(),
-                     IONotificationPortGetRunLoopSource(notify_port_),
+                     IONotificationPortGetRunLoopSource(notify_port_.get()),
                      kCFRunLoopDefaultMode);
 
-  io_iterator_t iterator;
-  IOReturn result =
-      IOServiceAddMatchingNotification(notify_port_,
-                                       kIOFirstMatchNotification,
-                                       IOServiceMatching(kIOHIDDeviceKey),
-                                       FirstMatchCallback,
-                                       this,
-                                       &iterator);
+  IOReturn result = IOServiceAddMatchingNotification(
+      notify_port_.get(), kIOFirstMatchNotification,
+      IOServiceMatching(kIOHIDDeviceKey), FirstMatchCallback, this,
+      devices_added_iterator_.InitializeInto());
   if (result != kIOReturnSuccess) {
     HID_LOG(ERROR) << "Failed to listen for device arrival: "
                    << HexErrorCode(result);
@@ -107,16 +104,12 @@ HidServiceMac::HidServiceMac(
   }
 
   // Drain the iterator to arm the notification.
-  devices_added_iterator_.reset(iterator);
   AddDevices();
-  iterator = IO_OBJECT_NULL;
 
-  result = IOServiceAddMatchingNotification(notify_port_,
-                                            kIOTerminatedNotification,
-                                            IOServiceMatching(kIOHIDDeviceKey),
-                                            TerminatedCallback,
-                                            this,
-                                            &iterator);
+  result = IOServiceAddMatchingNotification(
+      notify_port_.get(), kIOTerminatedNotification,
+      IOServiceMatching(kIOHIDDeviceKey), TerminatedCallback, this,
+      devices_removed_iterator_.InitializeInto());
   if (result != kIOReturnSuccess) {
     HID_LOG(ERROR) << "Failed to listen for device removal: "
                    << HexErrorCode(result);
@@ -124,7 +117,6 @@ HidServiceMac::HidServiceMac(
   }
 
   // Drain devices_added_iterator_ to arm the notification.
-  devices_removed_iterator_.reset(iterator);
   RemoveDevices();
   FirstEnumerationComplete();
 }
@@ -251,7 +243,7 @@ scoped_refptr<HidDeviceInfo> HidServiceMac::CreateDeviceInfo(
     return nullptr;
   }
 
-  std::vector<uint8> report_descriptor;
+  std::vector<uint8_t> report_descriptor;
   if (!TryGetHidDataProperty(hid_device, CFSTR(kIOHIDReportDescriptorKey),
                              &report_descriptor)) {
     HID_LOG(DEBUG) << "Device report descriptor not available.";

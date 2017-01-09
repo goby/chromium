@@ -7,11 +7,15 @@ from core import perf_benchmark
 from benchmarks import silk_flags
 import ct_benchmarks_util
 from measurements import smoothness
+
 import page_sets
+from page_sets import repaint_helpers
+
 from telemetry import benchmark
 
 
 class _Repaint(perf_benchmark.PerfBenchmark):
+
   @classmethod
   def AddBenchmarkCommandLineArgs(cls, parser):
     parser.add_option('--mode', type='string',
@@ -36,8 +40,10 @@ class _Repaint(perf_benchmark.PerfBenchmark):
   def CreatePageTest(self, options):
     return smoothness.Repaint()
 
-#crbug.com/499320
+# crbug.com/499320
 #@benchmark.Enabled('android')
+
+
 @benchmark.Disabled('all')
 class RepaintKeyMobileSites(_Repaint):
   """Measures repaint performance on the key mobile sites.
@@ -49,7 +55,7 @@ class RepaintKeyMobileSites(_Repaint):
     return 'repaint.key_mobile_sites_repaint'
 
 
-#crbug.com/502179
+# crbug.com/502179
 @benchmark.Enabled('android')
 @benchmark.Disabled('all')
 class RepaintGpuRasterizationKeyMobileSites(_Repaint):
@@ -58,6 +64,7 @@ class RepaintGpuRasterizationKeyMobileSites(_Repaint):
 
   http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
   tag = 'gpu_rasterization'
+
   def SetExtraBrowserOptions(self, options):
     silk_flags.CustomizeBrowserOptionsForGpuRasterization(options)
 
@@ -87,4 +94,5 @@ class RepaintCT(_Repaint):
 
   def CreateStorySet(self, options):
     return page_sets.CTPageSet(
-        options.urls_list, options.user_agent, options.archive_data_file)
+        options.urls_list, options.user_agent, options.archive_data_file,
+        run_page_interaction_callback=repaint_helpers.WaitThenRepaint)

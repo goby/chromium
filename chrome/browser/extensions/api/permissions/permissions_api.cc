@@ -4,7 +4,9 @@
 
 #include "chrome/browser/extensions/api/permissions/permissions_api.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/permissions/permissions_api_helpers.h"
 #include "chrome/browser/extensions/extension_management.h"
@@ -52,50 +54,50 @@ bool ignore_user_gesture_for_tests = false;
 
 }  // namespace
 
-bool PermissionsContainsFunction::RunSync() {
-  scoped_ptr<Contains::Params> params(Contains::Params::Create(*args_));
+ExtensionFunction::ResponseAction PermissionsContainsFunction::Run() {
+  std::unique_ptr<Contains::Params> params(Contains::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  scoped_ptr<const PermissionSet> permissions = helpers::UnpackPermissionSet(
-      params->permissions,
-      ExtensionPrefs::Get(GetProfile())->AllowFileAccess(extension_->id()),
-      &error_);
+  // NOTE: |permissions| is not used to make any security decisions. Therefore,
+  // it is entirely fine to set |allow_file_access| to true below. This will
+  // avoid throwing error when extension() doesn't have access to file://.
+  std::string error;
+  std::unique_ptr<const PermissionSet> permissions =
+      helpers::UnpackPermissionSet(params->permissions,
+                                   true /* allow_file_access */, &error);
   if (!permissions.get())
-    return false;
+    return RespondNow(Error(error));
 
-  results_ = Contains::Results::Create(
+  return RespondNow(ArgumentList(Contains::Results::Create(
       extension()->permissions_data()->active_permissions().Contains(
-          *permissions));
-  return true;
+          *permissions))));
 }
 
-bool PermissionsGetAllFunction::RunSync() {
-  scoped_ptr<Permissions> permissions = helpers::PackPermissionSet(
+ExtensionFunction::ResponseAction PermissionsGetAllFunction::Run() {
+  std::unique_ptr<Permissions> permissions = helpers::PackPermissionSet(
       extension()->permissions_data()->active_permissions());
-  results_ = GetAll::Results::Create(*permissions);
-  return true;
+  return RespondNow(ArgumentList(GetAll::Results::Create(*permissions)));
 }
 
-bool PermissionsRemoveFunction::RunSync() {
-  scoped_ptr<Remove::Params> params(Remove::Params::Create(*args_));
+ExtensionFunction::ResponseAction PermissionsRemoveFunction::Run() {
+  std::unique_ptr<Remove::Params> params(Remove::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  scoped_ptr<const PermissionSet> permissions = helpers::UnpackPermissionSet(
-      params->permissions,
-      ExtensionPrefs::Get(GetProfile())->AllowFileAccess(extension_->id()),
-      &error_);
+  std::string error;
+  std::unique_ptr<const PermissionSet> permissions =
+      helpers::UnpackPermissionSet(params->permissions,
+                                   ExtensionPrefs::Get(browser_context())
+                                       ->AllowFileAccess(extension_->id()),
+                                   &error);
+
   if (!permissions.get())
-    return false;
+    return RespondNow(Error(error));
 
   // Make sure they're only trying to remove permissions supported by this API.
   APIPermissionSet apis = permissions->apis();
-  for (APIPermissionSet::const_iterator i = apis.begin();
-       i != apis.end(); ++i) {
-    if (!i->info()->supports_optional()) {
-      error_ = ErrorUtils::FormatErrorMessage(
-          kNotWhitelistedError, i->name());
-      return false;
-    }
+  for (const APIPermission* permission : apis) {
+    if (!permission->info()->supports_optional())
+      return RespondNow(Error(kNotWhitelistedError, permission->name()));
   }
 
   // Make sure we only remove optional permissions, and not required
@@ -108,11 +110,10 @@ bool PermissionsRemoveFunction::RunSync() {
   const PermissionSet& required =
       PermissionsParser::GetRequiredPermissions(extension());
   if (!optional.Contains(*permissions) ||
-      !scoped_ptr<const PermissionSet>(
+      !std::unique_ptr<const PermissionSet>(
            PermissionSet::CreateIntersection(*permissions, required))
            ->IsEmpty()) {
-    error_ = kCantRemoveRequiredPermissionsError;
-    return false;
+    return RespondNow(Error(kCantRemoveRequiredPermissionsError));
   }
 
   // Only try and remove those permissions that are active on the extension.
@@ -121,11 +122,10 @@ bool PermissionsRemoveFunction::RunSync() {
   permissions = PermissionSet::CreateIntersection(
       *permissions, extension()->permissions_data()->active_permissions());
 
-  PermissionsUpdater(GetProfile())
+  PermissionsUpdater(browser_context())
       .RemovePermissions(extension(), *permissions,
                          PermissionsUpdater::REMOVE_SOFT);
-  results_ = Remove::Results::Create(true);
-  return true;
+  return RespondNow(ArgumentList(Remove::Results::Create(true)));
 }
 
 // static
@@ -141,22 +141,6 @@ void PermissionsRequestFunction::SetIgnoreUserGestureForTests(
 
 PermissionsRequestFunction::PermissionsRequestFunction() {}
 
-void PermissionsRequestFunction::InstallUIProceed() {
-  PermissionsUpdater perms_updater(GetProfile());
-  perms_updater.AddPermissions(extension(), *requested_permissions_);
-
-  results_ = Request::Results::Create(true);
-  SendResponse(true);
-
-  Release();  // Balanced in RunAsync().
-}
-
-void PermissionsRequestFunction::InstallUIAbort(bool user_initiated) {
-  SendResponse(true);
-
-  Release();  // Balanced in RunAsync().
-}
-
 PermissionsRequestFunction::~PermissionsRequestFunction() {}
 
 bool PermissionsRequestFunction::RunAsync() {
@@ -169,7 +153,7 @@ bool PermissionsRequestFunction::RunAsync() {
     return false;
   }
 
-  scoped_ptr<Request::Params> params(Request::Params::Create(*args_));
+  std::unique_ptr<Request::Params> params(Request::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
   requested_permissions_ = helpers::UnpackPermissionSet(
@@ -207,7 +191,7 @@ bool PermissionsRequestFunction::RunAsync() {
 
   // We don't need to prompt the user if the requested permissions are a subset
   // of the granted permissions set.
-  scoped_ptr<const PermissionSet> granted =
+  std::unique_ptr<const PermissionSet> granted =
       ExtensionPrefs::Get(GetProfile())
           ->GetGrantedPermissions(extension()->id());
   if (granted.get() && granted->Contains(*requested_permissions_)) {
@@ -227,7 +211,7 @@ bool PermissionsRequestFunction::RunAsync() {
       *requested_permissions_,
       extension()->permissions_data()->active_permissions());
 
-  AddRef();  // Balanced in InstallUIProceed() / InstallUIAbort().
+  AddRef();  // Balanced in OnInstallPromptDone().
 
   // We don't need to show the prompt if there are no new warnings, or if
   // we're skipping the confirmation UI. All extension types but INTERNAL
@@ -241,18 +225,35 @@ bool PermissionsRequestFunction::RunAsync() {
           .empty();
   if (auto_confirm_for_tests == PROCEED || has_no_warnings ||
       extension_->location() == Manifest::COMPONENT) {
-    InstallUIProceed();
+    OnInstallPromptDone(ExtensionInstallPrompt::Result::ACCEPTED);
   } else if (auto_confirm_for_tests == ABORT) {
     // Pretend the user clicked cancel.
-    InstallUIAbort(true);
+    OnInstallPromptDone(ExtensionInstallPrompt::Result::USER_CANCELED);
   } else {
     CHECK_EQ(DO_NOT_SKIP, auto_confirm_for_tests);
     install_ui_.reset(new ExtensionInstallPrompt(GetAssociatedWebContents()));
-    install_ui_->ConfirmPermissions(this, extension(),
-                                    requested_permissions_->Clone());
+    install_ui_->ShowDialog(
+        base::Bind(&PermissionsRequestFunction::OnInstallPromptDone, this),
+        extension(), nullptr, base::MakeUnique<ExtensionInstallPrompt::Prompt>(
+                                  ExtensionInstallPrompt::PERMISSIONS_PROMPT),
+        requested_permissions_->Clone(),
+        ExtensionInstallPrompt::GetDefaultShowDialogCallback());
   }
 
   return true;
+}
+
+void PermissionsRequestFunction::OnInstallPromptDone(
+    ExtensionInstallPrompt::Result result) {
+  if (result == ExtensionInstallPrompt::Result::ACCEPTED) {
+    PermissionsUpdater perms_updater(GetProfile());
+    perms_updater.AddPermissions(extension(), *requested_permissions_);
+
+    results_ = Request::Results::Create(true);
+  }
+
+  SendResponse(true);
+  Release();  // Balanced in RunAsync().
 }
 
 }  // namespace extensions

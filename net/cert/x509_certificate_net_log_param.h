@@ -2,20 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_BASE_X509_CERT_NET_LOG_PARAM_H_
-#define NET_BASE_X509_CERT_NET_LOG_PARAM_H_
+#ifndef NET_CERT_X509_CERTIFICATE_NET_LOG_PARAM_H_
+#define NET_CERT_X509_CERTIFICATE_NET_LOG_PARAM_H_
 
-#include "net/log/net_log.h"
+#include <memory>
+
+namespace base {
+class Value;
+}
 
 namespace net {
 
+class NetLogCaptureMode;
 class X509Certificate;
 
 // Creates NetLog parameter to describe an X509Certificate.
-scoped_ptr<base::Value> NetLogX509CertificateCallback(
+std::unique_ptr<base::Value> NetLogX509CertificateCallback(
     const X509Certificate* certificate,
     NetLogCaptureMode capture_mode);
 
 }  // namespace net
 
-#endif  // NET_BASE_X509_CERT_NET_LOG_PARAM_H_
+#endif  // NET_CERT_X509_CERTIFICATE_NET_LOG_PARAM_H_

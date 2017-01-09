@@ -4,7 +4,10 @@
 
 #include "chromecast/crash/linux/crash_testing_utils.h"
 
+#include <utility>
+
 #include "base/files/file_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -14,8 +17,8 @@
 
 #define RCHECK(cond, retval, err) \
   do {                            \
-    LOG(ERROR) << (err);          \
     if (!(cond)) {                \
+      LOG(ERROR) << (err);        \
       return (retval);            \
     }                             \
   } while (0)
@@ -27,7 +30,7 @@ const char kRatelimitKey[] = "ratelimit";
 const char kRatelimitPeriodStartKey[] = "period_start";
 const char kRatelimitPeriodDumpsKey[] = "period_dumps";
 
-scoped_ptr<base::ListValue> ParseLockFile(const std::string& path) {
+std::unique_ptr<base::ListValue> ParseLockFile(const std::string& path) {
   std::string lockfile_string;
   RCHECK(base::ReadFileToString(base::FilePath(path), &lockfile_string),
          nullptr,
@@ -36,22 +39,22 @@ scoped_ptr<base::ListValue> ParseLockFile(const std::string& path) {
   std::vector<std::string> lines = base::SplitString(
       lockfile_string, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
 
-  scoped_ptr<base::ListValue> dumps = make_scoped_ptr(new base::ListValue());
+  std::unique_ptr<base::ListValue> dumps = base::MakeUnique<base::ListValue>();
 
   // Validate dumps
   for (const std::string& line : lines) {
     if (line.size() == 0)
       continue;
-    scoped_ptr<base::Value> dump_info = DeserializeFromJson(line);
+    std::unique_ptr<base::Value> dump_info = DeserializeFromJson(line);
     DumpInfo info(dump_info.get());
     RCHECK(info.valid(), nullptr, "Invalid DumpInfo");
-    dumps->Append(dump_info.Pass());
+    dumps->Append(std::move(dump_info));
   }
 
   return dumps;
 }
 
-scoped_ptr<base::Value> ParseMetadataFile(const std::string& path) {
+std::unique_ptr<base::Value> ParseMetadataFile(const std::string& path) {
   return DeserializeJsonFromFile(base::FilePath(path));
 }
 
@@ -59,8 +62,8 @@ int WriteLockFile(const std::string& path, base::ListValue* contents) {
   DCHECK(contents);
   std::string lockfile;
 
-  for (const base::Value* elem : *contents) {
-    scoped_ptr<std::string> dump_info = SerializeToJson(*elem);
+  for (const auto& elem : *contents) {
+    std::unique_ptr<std::string> dump_info = SerializeToJson(*elem);
     RCHECK(dump_info, -1, "Failed to serialize DumpInfo");
     lockfile += *dump_info;
     lockfile += "\n";  // Add line seperatators
@@ -78,45 +81,45 @@ bool WriteMetadataFile(const std::string& path, const base::Value* metadata) {
 
 }  // namespace
 
-scoped_ptr<DumpInfo> CreateDumpInfo(const std::string& json_string) {
-  scoped_ptr<base::Value> value(DeserializeFromJson(json_string));
-  return make_scoped_ptr(new DumpInfo(value.get()));
+std::unique_ptr<DumpInfo> CreateDumpInfo(const std::string& json_string) {
+  std::unique_ptr<base::Value> value(DeserializeFromJson(json_string));
+  return base::MakeUnique<DumpInfo>(value.get());
 }
 
 bool FetchDumps(const std::string& lockfile_path,
-                ScopedVector<DumpInfo>* dumps) {
+                std::vector<std::unique_ptr<DumpInfo>>* dumps) {
   DCHECK(dumps);
-  scoped_ptr<base::ListValue> dump_list = ParseLockFile(lockfile_path);
+  std::unique_ptr<base::ListValue> dump_list = ParseLockFile(lockfile_path);
   RCHECK(dump_list, false, "Failed to parse lockfile");
 
   dumps->clear();
 
-  for (base::Value* elem : *dump_list) {
-    scoped_ptr<DumpInfo> dump = make_scoped_ptr(new DumpInfo(elem));
+  for (const auto& elem : *dump_list) {
+    std::unique_ptr<DumpInfo> dump(new DumpInfo(elem.get()));
     RCHECK(dump->valid(), false, "Invalid DumpInfo");
-    dumps->push_back(dump.Pass());
+    dumps->push_back(std::move(dump));
   }
 
   return true;
 }
 
 bool ClearDumps(const std::string& lockfile_path) {
-  scoped_ptr<base::ListValue> dump_list =
-      make_scoped_ptr(new base::ListValue());
+  std::unique_ptr<base::ListValue> dump_list =
+      base::MakeUnique<base::ListValue>();
   return WriteLockFile(lockfile_path, dump_list.get()) == 0;
 }
 
 bool CreateFiles(const std::string& lockfile_path,
                  const std::string& metadata_path) {
-  scoped_ptr<base::DictionaryValue> metadata =
-      make_scoped_ptr(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> metadata =
+      base::MakeUnique<base::DictionaryValue>();
 
   base::DictionaryValue* ratelimit_fields = new base::DictionaryValue();
-  metadata->Set(kRatelimitKey, make_scoped_ptr(ratelimit_fields));
-  ratelimit_fields->SetString(kRatelimitPeriodStartKey, "0");
+  metadata->Set(kRatelimitKey, base::WrapUnique(ratelimit_fields));
+  ratelimit_fields->SetDouble(kRatelimitPeriodStartKey, 0.0);
   ratelimit_fields->SetInteger(kRatelimitPeriodDumpsKey, 0);
 
-  scoped_ptr<base::ListValue> dumps = make_scoped_ptr(new base::ListValue());
+  std::unique_ptr<base::ListValue> dumps = base::MakeUnique<base::ListValue>();
 
   return WriteLockFile(lockfile_path, dumps.get()) == 0 &&
          WriteMetadataFile(metadata_path, metadata.get());
@@ -125,7 +128,7 @@ bool CreateFiles(const std::string& lockfile_path,
 bool AppendLockFile(const std::string& lockfile_path,
                     const std::string& metadata_path,
                     const DumpInfo& dump) {
-  scoped_ptr<base::ListValue> contents = ParseLockFile(lockfile_path);
+  std::unique_ptr<base::ListValue> contents = ParseLockFile(lockfile_path);
   if (!contents) {
     CreateFiles(lockfile_path, metadata_path);
     if (!(contents = ParseLockFile(lockfile_path))) {
@@ -138,8 +141,9 @@ bool AppendLockFile(const std::string& lockfile_path,
   return WriteLockFile(lockfile_path, contents.get()) == 0;
 }
 
-bool SetRatelimitPeriodStart(const std::string& metadata_path, time_t start) {
-  scoped_ptr<base::Value> contents = ParseMetadataFile(metadata_path);
+bool SetRatelimitPeriodStart(const std::string& metadata_path,
+                             const base::Time& start) {
+  std::unique_ptr<base::Value> contents = ParseMetadataFile(metadata_path);
 
   base::DictionaryValue* dict;
   base::DictionaryValue* ratelimit_params;
@@ -148,10 +152,7 @@ bool SetRatelimitPeriodStart(const std::string& metadata_path, time_t start) {
     return false;
   }
 
-  std::string period_start_str =
-      base::StringPrintf("%lld", static_cast<long long>(start));
-  ratelimit_params->SetString(kRatelimitPeriodStartKey, period_start_str);
-
+  ratelimit_params->SetDouble(kRatelimitPeriodStartKey, start.ToDoubleT());
   return WriteMetadataFile(metadata_path, contents.get()) == 0;
 }
 

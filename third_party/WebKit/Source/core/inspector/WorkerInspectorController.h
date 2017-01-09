@@ -31,76 +31,60 @@
 #ifndef WorkerInspectorController_h
 #define WorkerInspectorController_h
 
-#include "core/inspector/InspectorBaseAgent.h"
-#include "core/inspector/InspectorRuntimeAgent.h"
+#include "core/inspector/InspectorSession.h"
 #include "core/inspector/InspectorTaskRunner.h"
+#include "public/platform/WebThread.h"
 #include "wtf/Allocator.h"
 #include "wtf/Forward.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/RefPtr.h"
 
 namespace blink {
 
-class InjectedScriptManager;
-class InspectorBackendDispatcher;
-class InspectorFrontend;
-class InspectorFrontendChannel;
-class InspectorStateClient;
 class InstrumentingAgents;
-class WorkerDebuggerAgent;
-class WorkerGlobalScope;
-class WorkerRuntimeAgent;
+class WorkerThread;
 class WorkerThreadDebugger;
 
-class WorkerInspectorController final : public RefCountedWillBeGarbageCollectedFinalized<WorkerInspectorController>, public InspectorRuntimeAgent::Client {
-    WTF_MAKE_NONCOPYABLE(WorkerInspectorController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(WorkerInspectorController);
-public:
-    explicit WorkerInspectorController(WorkerGlobalScope*);
-    ~WorkerInspectorController();
-    DECLARE_TRACE();
+class WorkerInspectorController final
+    : public GarbageCollectedFinalized<WorkerInspectorController>,
+      public InspectorSession::Client,
+      private WebThread::TaskObserver {
+  WTF_MAKE_NONCOPYABLE(WorkerInspectorController);
 
-    void registerModuleAgent(PassOwnPtrWillBeRawPtr<InspectorAgent>);
-    void connectFrontend();
-    void disconnectFrontend();
-    void restoreInspectorStateFromCookie(const String& inspectorCookie);
-    void dispatchMessageFromFrontend(const String&);
-    void dispose();
-    void interruptAndDispatchInspectorCommands();
+ public:
+  static WorkerInspectorController* create(WorkerThread*);
+  ~WorkerInspectorController() override;
+  DECLARE_TRACE();
 
-    void workerContextInitialized(bool pauseOnStart);
+  InstrumentingAgents* instrumentingAgents() const {
+    return m_instrumentingAgents.get();
+  }
 
-private:
-    friend InstrumentingAgents* instrumentationForWorkerGlobalScope(WorkerGlobalScope*);
+  void connectFrontend();
+  void disconnectFrontend();
+  void dispatchMessageFromFrontend(const String&);
+  void dispose();
+  void flushProtocolNotifications();
 
-    // InspectorRuntimeAgent::Client implementation.
-    void pauseOnStart();
-    void resumeStartup() override;
-    bool isRunRequired() override;
+ private:
+  WorkerInspectorController(WorkerThread*, WorkerThreadDebugger*);
 
-    class PageInspectorProxy;
-    friend WTF::OwnedPtrDeleter<PageInspectorProxy>;
+  // InspectorSession::Client implementation.
+  void sendProtocolMessage(int sessionId,
+                           int callId,
+                           const String& response,
+                           const String& state) override;
 
-    InspectorFrontendChannel* frontendChannel() const;
+  // WebThread::TaskObserver implementation.
+  void willProcessTask() override;
+  void didProcessTask() override;
 
-    RawPtrWillBeMember<WorkerGlobalScope> m_workerGlobalScope;
-    OwnPtr<InspectorStateClient> m_stateClient;
-    OwnPtrWillBeMember<InspectorCompositeState> m_state;
-    RefPtrWillBeMember<InstrumentingAgents> m_instrumentingAgents;
-    OwnPtrWillBeMember<InjectedScriptManager> m_injectedScriptManager;
-    OwnPtr<WorkerThreadDebugger> m_workerThreadDebugger;
-    InspectorAgentRegistry m_agents;
-    OwnPtrWillBeMember<PageInspectorProxy> m_pageInspectorProxy;
-    OwnPtr<InspectorFrontend> m_frontend;
-    RefPtrWillBeMember<InspectorBackendDispatcher> m_backendDispatcher;
-    RawPtrWillBeMember<WorkerDebuggerAgent> m_workerDebuggerAgent;
-    RawPtrWillBeMember<WorkerRuntimeAgent> m_workerRuntimeAgent;
-    OwnPtr<InspectorTaskRunner> m_inspectorTaskRunner;
-    OwnPtr<InspectorTaskRunner::IgnoreInterruptsScope> m_beforeInitlizedScope;
-    bool m_paused;
+  WorkerThreadDebugger* m_debugger;
+  WorkerThread* m_thread;
+  Member<InstrumentingAgents> m_instrumentingAgents;
+  Member<InspectorSession> m_session;
 };
 
-}
+}  // namespace blink
 
-#endif // WorkerInspectorController_h
+#endif  // WorkerInspectorController_h

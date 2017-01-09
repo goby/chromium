@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
@@ -51,7 +52,7 @@ class HistoryEventRouter : public history::HistoryServiceObserver {
   void DispatchEvent(Profile* profile,
                      events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     scoped_ptr<base::ListValue> event_args);
+                     std::unique_ptr<base::ListValue> event_args);
 
   Profile* profile_;
   ScopedObserver<history::HistoryService, history::HistoryServiceObserver>
@@ -86,7 +87,7 @@ class HistoryAPI : public BrowserContextKeyedAPI, public EventRouter::Observer {
   static const bool kServiceIsNULLWhileTesting = true;
 
   // Created lazily upon OnListenerAdded.
-  scoped_ptr<HistoryEventRouter> history_event_router_;
+  std::unique_ptr<HistoryEventRouter> history_event_router_;
 };
 
 template <>

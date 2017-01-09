@@ -4,6 +4,10 @@
 
 #include "chrome/browser/printing/print_preview_message_handler.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -18,7 +22,6 @@
 #include "chrome/browser/ui/webui/print_preview/print_preview_ui.h"
 #include "components/printing/common/print_messages.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "printing/page_size_margins.h"
@@ -47,9 +50,10 @@ void StopWorker(int document_cookie) {
   }
 }
 
-base::RefCountedBytes* GetDataFromHandle(base::SharedMemoryHandle handle,
-                                         uint32_t data_size) {
-  scoped_ptr<base::SharedMemory> shared_buf(
+scoped_refptr<base::RefCountedBytes> GetDataFromHandle(
+    base::SharedMemoryHandle handle,
+    uint32_t data_size) {
+  std::unique_ptr<base::SharedMemory> shared_buf(
       new base::SharedMemory(handle, true));
   if (!shared_buf->Map(data_size)) {
     NOTREACHED();
@@ -88,9 +92,12 @@ PrintPreviewUI* PrintPreviewMessageHandler::GetPrintPreviewUI() {
 }
 
 void PrintPreviewMessageHandler::OnRequestPrintPreview(
+    content::RenderFrameHost* render_frame_host,
     const PrintHostMsg_RequestPrintPreview_Params& params) {
-  if (params.webnode_only)
-    PrintViewManager::FromWebContents(web_contents())->PrintPreviewForWebNode();
+  if (params.webnode_only) {
+    PrintViewManager::FromWebContents(web_contents())->PrintPreviewForWebNode(
+        render_frame_host);
+  }
   PrintPreviewDialogController::PrintPreview(web_contents());
   PrintPreviewUI::SetInitialParams(GetPrintPreviewDialog(), params);
 }
@@ -122,11 +129,12 @@ void PrintPreviewMessageHandler::OnDidPreviewPage(
   if (!print_preview_ui)
     return;
 
-  base::RefCountedBytes* data_bytes =
+  scoped_refptr<base::RefCountedBytes> data_bytes =
       GetDataFromHandle(params.metafile_data_handle, params.data_size);
   DCHECK(data_bytes);
 
-  print_preview_ui->SetPrintPreviewDataForIndex(page_number, data_bytes);
+  print_preview_ui->SetPrintPreviewDataForIndex(page_number,
+                                                std::move(data_bytes));
   print_preview_ui->OnDidPreviewPage(page_number, params.preview_request_id);
 }
 
@@ -147,13 +155,13 @@ void PrintPreviewMessageHandler::OnMetafileReadyForPrinting(
   // TODO(joth): This seems like a good match for using RefCountedStaticMemory
   // to avoid the memory copy, but the SetPrintPreviewData call chain below
   // needs updating to accept the RefCountedMemory* base class.
-  base::RefCountedBytes* data_bytes =
+  scoped_refptr<base::RefCountedBytes> data_bytes =
       GetDataFromHandle(params.metafile_data_handle, params.data_size);
   if (!data_bytes || !data_bytes->size())
     return;
 
   print_preview_ui->SetPrintPreviewDataForIndex(COMPLETE_PREVIEW_DOCUMENT_INDEX,
-                                                data_bytes);
+                                                std::move(data_bytes));
   print_preview_ui->OnPreviewDataIsAvailable(
       params.expected_pages_count, params.preview_request_id);
 }
@@ -201,11 +209,19 @@ void PrintPreviewMessageHandler::OnSetOptionsFromDocument(
 }
 
 bool PrintPreviewMessageHandler::OnMessageReceived(
-    const IPC::Message& message) {
+    const IPC::Message& message,
+    content::RenderFrameHost* render_frame_host) {
   bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(PrintPreviewMessageHandler, message)
+  IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(PrintPreviewMessageHandler, message,
+                                   render_frame_host)
     IPC_MESSAGE_HANDLER(PrintHostMsg_RequestPrintPreview,
                         OnRequestPrintPreview)
+    IPC_MESSAGE_UNHANDLED(handled = false)
+  IPC_END_MESSAGE_MAP()
+  if (handled)
+    return true;
+
+  IPC_BEGIN_MESSAGE_MAP(PrintPreviewMessageHandler, message)
     IPC_MESSAGE_HANDLER(PrintHostMsg_DidGetPreviewPageCount,
                         OnDidGetPreviewPageCount)
     IPC_MESSAGE_HANDLER(PrintHostMsg_DidPreviewPage,

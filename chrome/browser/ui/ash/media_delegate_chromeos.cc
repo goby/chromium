@@ -4,13 +4,17 @@
 
 #include "chrome/browser/ui/ash/media_delegate_chromeos.h"
 
+#include "ash/common/system/tray/system_tray_notifier.h"
+#include "ash/common/wm_shell.h"
 #include "ash/content/shell_content_state.h"
-#include "ash/shell.h"
-#include "ash/system/tray/system_tray_notifier.h"
+#include "base/location.h"
+#include "base/logging.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/extensions/media_player_api.h"
 #include "chrome/browser/chromeos/extensions/media_player_event_router.h"
-#include "chrome/browser/media/media_stream_capture_indicator.h"
+#include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -38,9 +42,7 @@ void GetBrowserMediaCaptureState(
     const MediaStreamCaptureIndicator* indicator,
     const content::BrowserContext* context,
     int* media_state_out) {
-
-  const BrowserList* desktop_list =
-      BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
+  const BrowserList* desktop_list = BrowserList::GetInstance();
 
   for (BrowserList::BrowserVector::const_iterator iter = desktop_list->begin();
        iter != desktop_list->end();
@@ -156,14 +158,12 @@ void MediaDelegateChromeOS::OnRequestUpdate(
     int render_frame_id,
     content::MediaStreamType stream_type,
     const content::MediaRequestState state) {
-  base::MessageLoopForUI::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&MediaDelegateChromeOS::NotifyMediaCaptureChange,
-                 weak_ptr_factory_.GetWeakPtr()));
+  DCHECK(base::MessageLoopForUI::IsCurrent());
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&MediaDelegateChromeOS::NotifyMediaCaptureChange,
+                            weak_ptr_factory_.GetWeakPtr()));
 }
 
 void MediaDelegateChromeOS::NotifyMediaCaptureChange() {
-  ash::Shell::GetInstance()
-      ->system_tray_notifier()
-      ->NotifyMediaCaptureChanged();
+  ash::WmShell::Get()->system_tray_notifier()->NotifyMediaCaptureChanged();
 }

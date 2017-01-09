@@ -6,6 +6,8 @@
 #define CHROME_BROWSER_UI_COCOA_VALIDATION_MESSAGE_BUBBLE_COCOA_H_
 
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/validation_message_bubble.h"
 
 @class ValidationMessageBubbleController;
@@ -14,7 +16,9 @@ namespace content {
 class WebContents;
 }
 
-class ValidationMessageBubbleCocoa : public ValidationMessageBubble {
+class ValidationMessageBubbleCocoa
+    : public ValidationMessageBubble,
+      public base::SupportsWeakPtr<ValidationMessageBubbleCocoa> {
  public:
   ValidationMessageBubbleCocoa(content::WebContents* web_contents,
                                const gfx::Rect& anchor_in_root_view,
@@ -26,6 +30,7 @@ class ValidationMessageBubbleCocoa : public ValidationMessageBubble {
   void SetPositionRelativeToAnchor(
       content::RenderWidgetHost* widget_host,
       const gfx::Rect& anchor_in_root_view) override;
+  void CloseValidationMessage() override;
 
  private:
   base::scoped_nsobject<ValidationMessageBubbleController> controller_;

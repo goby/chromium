@@ -1,13 +1,13 @@
 var initialize_ProfilerTest = function() {
 
 InspectorTest.preloadPanel("profiles");
-WebInspector.TempFile = InspectorTest.TempFileMock;
+Bindings.TempFile = InspectorTest.TempFileMock;
 
 InspectorTest.startProfilerTest = function(callback)
 {
     InspectorTest.addResult("Profiler was enabled.");
-    InspectorTest.addSniffer(WebInspector.panels.profiles, "_addProfileHeader", InspectorTest._profileHeaderAdded, true);
-    InspectorTest.addSniffer(WebInspector.CPUProfileView.prototype, "refresh", InspectorTest._profileViewRefresh, true);
+    InspectorTest.addSniffer(UI.panels.profiles, "_addProfileHeader", InspectorTest._profileHeaderAdded, true);
+    InspectorTest.addSniffer(Profiler.ProfileView.prototype, "refresh", InspectorTest._profileViewRefresh, true);
     InspectorTest.safeWrap(callback)();
 };
 
@@ -46,14 +46,14 @@ InspectorTest.showProfileWhenAdded = function(title)
 InspectorTest._profileHeaderAdded = function(profile)
 {
     if (InspectorTest._showProfileWhenAdded === profile.title)
-        WebInspector.panels.profiles.showProfile(profile);
+        UI.panels.profiles.showProfile(profile);
 };
 
 InspectorTest.waitUntilProfileViewIsShown = function(title, callback)
 {
     callback = InspectorTest.safeWrap(callback);
 
-    var profilesPanel = WebInspector.panels.profiles;
+    var profilesPanel = UI.panels.profiles;
     if (profilesPanel.visibleView && profilesPanel.visibleView.profile && profilesPanel.visibleView._profileHeader.title === title)
         callback(profilesPanel.visibleView);
     else
@@ -69,5 +69,15 @@ InspectorTest._profileViewRefresh = function()
         callback.callback(this);
     }
 };
+
+InspectorTest.startSamplingHeapProfiler = function()
+{
+    Profiler.SamplingHeapProfileType.instance.startRecordingProfile();
+}
+
+InspectorTest.stopSamplingHeapProfiler = function()
+{
+    Profiler.SamplingHeapProfileType.instance.stopRecordingProfile();
+}
 
 };

@@ -4,6 +4,8 @@
 
 #include "ppapi/nacl_irt/ppapi_dispatcher.h"
 
+#include <stddef.h>
+
 #include <map>
 #include <set>
 
@@ -12,7 +14,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "build/build_config.h"
-#include "components/tracing/child_trace_message_filter.h"
+#include "components/tracing/child/child_trace_message_filter.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/ipc_message.h"
@@ -32,15 +34,12 @@ namespace ppapi {
 PpapiDispatcher::PpapiDispatcher(
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     base::WaitableEvent* shutdown_event,
-    int browser_ipc_fd,
-    int renderer_ipc_fd)
+    IPC::ChannelHandle browser_ipc_handle,
+    IPC::ChannelHandle renderer_ipc_handle)
     : next_plugin_dispatcher_id_(0),
       task_runner_(io_task_runner),
       shutdown_event_(shutdown_event),
-      renderer_ipc_fd_(renderer_ipc_fd) {
-  IPC::ChannelHandle channel_handle(
-      "NaCl IPC", base::FileDescriptor(browser_ipc_fd, false));
-
+      renderer_ipc_handle_(renderer_ipc_handle) {
   proxy::PluginGlobals* globals = proxy::PluginGlobals::Get();
   // Delay initializing the SyncChannel until after we add filters. This
   // ensures that the filters won't miss any messages received by
@@ -54,7 +53,7 @@ PpapiDispatcher::PpapiDispatcher(
   globals->RegisterResourceMessageFilters(plugin_filter.get());
 
   channel_->AddFilter(new tracing::ChildTraceMessageFilter(task_runner_.get()));
-  channel_->Init(channel_handle, IPC::Channel::MODE_SERVER, true);
+  channel_->Init(browser_ipc_handle, IPC::Channel::MODE_SERVER, true);
 }
 
 base::SingleThreadTaskRunner* PpapiDispatcher::GetIPCTaskRunner() {
@@ -82,13 +81,13 @@ std::set<PP_Instance>* PpapiDispatcher::GetGloballySeenInstanceIDSet() {
   return &instances_;
 }
 
-uint32 PpapiDispatcher::Register(proxy::PluginDispatcher* plugin_dispatcher) {
+uint32_t PpapiDispatcher::Register(proxy::PluginDispatcher* plugin_dispatcher) {
   if (!plugin_dispatcher ||
-      plugin_dispatchers_.size() >= std::numeric_limits<uint32>::max()) {
+      plugin_dispatchers_.size() >= std::numeric_limits<uint32_t>::max()) {
     return 0;
   }
 
-  uint32 id = 0;
+  uint32_t id = 0;
   do {
     // Although it is unlikely, make sure that we won't cause any trouble
     // when the counter overflows.
@@ -99,7 +98,7 @@ uint32 PpapiDispatcher::Register(proxy::PluginDispatcher* plugin_dispatcher) {
   return id;
 }
 
-void PpapiDispatcher::Unregister(uint32 plugin_dispatcher_id) {
+void PpapiDispatcher::Unregister(uint32_t plugin_dispatcher_id) {
   plugin_dispatchers_.erase(plugin_dispatcher_id);
 }
 
@@ -182,11 +181,8 @@ void PpapiDispatcher::OnMsgInitializeNaClDispatcher(
   proxy::PluginDispatcher* dispatcher =
       new proxy::PluginDispatcher(::PPP_GetInterface, args.permissions,
                                   args.off_the_record);
-  IPC::ChannelHandle channel_handle(
-      "nacl",
-      base::FileDescriptor(renderer_ipc_fd_, false));
   if (!dispatcher->InitPluginWithChannel(this, base::kNullProcessId,
-                                         channel_handle, false)) {
+                                         renderer_ipc_handle_, false)) {
     delete dispatcher;
     return;
   }
@@ -203,12 +199,12 @@ void PpapiDispatcher::OnPluginDispatcherMessageReceived(
     const IPC::Message& msg) {
   // The first parameter should be a plugin dispatcher ID.
   base::PickleIterator iter(msg);
-  uint32 id = 0;
+  uint32_t id = 0;
   if (!iter.ReadUInt32(&id)) {
     NOTREACHED();
     return;
   }
-  std::map<uint32, proxy::PluginDispatcher*>::iterator dispatcher =
+  std::map<uint32_t, proxy::PluginDispatcher*>::iterator dispatcher =
       plugin_dispatchers_.find(id);
   if (dispatcher != plugin_dispatchers_.end())
     dispatcher->second->OnMessageReceived(msg);

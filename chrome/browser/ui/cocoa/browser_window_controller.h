@@ -12,18 +12,20 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
+#include "chrome/browser/extensions/browser_extension_window_controller.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
-#include "chrome/browser/ui/tabs/tab_utils.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bubble_controller.h"
-#import "chrome/browser/ui/cocoa/exclusive_access_bubble_window_controller.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_controller.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_window_controller.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
 #import "chrome/browser/ui/cocoa/url_drop_target.h"
 #import "chrome/browser/ui/cocoa/view_resizer.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
+#include "chrome/browser/ui/tabs/tab_utils.h"
 #include "components/translate/core/common/translate_errors.h"
 #include "ui/base/accelerators/accelerator_manager.h"
 #include "ui/gfx/geometry/rect.h"
@@ -37,14 +39,17 @@ class BrowserWindowCocoa;
 @class DevToolsController;
 @class DownloadShelfController;
 class ExtensionKeybindingRegistryCocoa;
+class ExclusiveAccessController;
+class ExclusiveAccessContext;
 @class FindBarCocoaController;
 @class FullscreenModeController;
+@class FullscreenToolbarController;
+@class FullscreenToolbarVisibilityLockController;
 @class FullscreenWindow;
+class FullscreenLowPowerCoordinatorCocoa;
 @class InfoBarContainerController;
 class LocationBarViewMac;
 @class OverlayableContentsController;
-class PermissionBubbleCocoa;
-@class PresentationModeController;
 class StatusBubbleMac;
 @class TabStripController;
 @class TabStripView;
@@ -68,9 +73,9 @@ class Command;
   // which they are destroyed. |browser_| needs to be destroyed last as most of
   // the other objects hold weak references to it or things it owns
   // (tab/toolbar/bookmark models, profiles, etc).
-  scoped_ptr<Browser> browser_;
+  std::unique_ptr<Browser> browser_;
   NSWindow* savedRegularWindow_;
-  scoped_ptr<BrowserWindowCocoa> windowShim_;
+  std::unique_ptr<BrowserWindowCocoa> windowShim_;
   base::scoped_nsobject<ToolbarController> toolbarController_;
   base::scoped_nsobject<TabStripController> tabStripController_;
   base::scoped_nsobject<FindBarCocoaController> findBarCocoaController_;
@@ -80,11 +85,13 @@ class Command;
   base::scoped_nsobject<DevToolsController> devToolsController_;
   base::scoped_nsobject<OverlayableContentsController>
       overlayableContentsController_;
-  base::scoped_nsobject<PresentationModeController> presentationModeController_;
-  base::scoped_nsobject<ExclusiveAccessBubbleWindowController>
-      exclusiveAccessBubbleWindowController_;
+  base::scoped_nsobject<FullscreenToolbarController>
+      fullscreenToolbarController_;
+  std::unique_ptr<ExclusiveAccessController> exclusiveAccessController_;
   base::scoped_nsobject<BrowserWindowFullscreenTransition>
       fullscreenTransition_;
+  std::unique_ptr<FullscreenLowPowerCoordinatorCocoa>
+      fullscreenLowPowerCoordinator_;
 
   // Strong. StatusBubble is a special case of a strong reference that
   // we don't wrap in a scoped_ptr because it is acting the same
@@ -92,7 +99,7 @@ class Command;
   // be shut down before our destructors are called.
   StatusBubbleMac* statusBubble_;
 
-  scoped_ptr<BookmarkBubbleObserverCocoa> bookmarkBubbleObserver_;
+  std::unique_ptr<BookmarkBubbleObserverCocoa> bookmarkBubbleObserver_;
   BookmarkBubbleController* bookmarkBubbleController_;  // Weak.
   BOOL initializing_;  // YES while we are currently in initWithBrowser:
   BOOL ownsBrowser_;  // Only ever NO when testing
@@ -123,6 +130,7 @@ class Command;
   // Lazily created view which draws the background for the floating set of bars
   // in presentation mode (for window types having a floating bar; it remains
   // nil for those which don't).
+  // TODO(spqchan): Rename this to "fullscreenToolbarBackingView"
   base::scoped_nsobject<NSView> floatingBarBackingView_;
 
   // The borderless window used in fullscreen mode when Cocoa's System
@@ -144,11 +152,6 @@ class Command;
   // AppKit fullscreen mode.
   BOOL enteringImmersiveFullscreen_;
 
-  // True between |-setPresentationMode:url:bubbleType:| and
-  // |-windowDidEnterFullScreen:| to indicate that the window is in the process
-  // of transitioning into fullscreen presentation mode.
-  BOOL enteringPresentationMode_;
-
   // When the window is in the process of entering AppKit Fullscreen, this
   // property indicates whether the window is being fullscreened on the
   // primary screen.
@@ -159,42 +162,32 @@ class Command;
   // return nil.
   BOOL isUsingCustomAnimation_;
 
-  // True if the toolbar needs to be hidden in fullscreen.
-  BOOL shouldHideFullscreenToolbar_;
+  // True if a call to exit AppKit fullscreen was made during the transition to
+  // fullscreen.
+  BOOL shouldExitAfterEnteringFullscreen_;
+
+  // True if AppKit has finished exiting fullscreen before the exit animation
+  // is completed. This flag is used to ensure that |windowDidExitFullscreen|
+  // is called after the exit fullscreen animation is complete.
+  BOOL appKitDidExitFullscreen_;
 
   // The size of the original (non-fullscreen) window.  This is saved just
   // before entering fullscreen mode and is only valid when |-isFullscreen|
   // returns YES.
   NSRect savedRegularWindowFrame_;
 
-  // The proportion of the floating bar which is shown (in presentation mode).
+  // The proportion of the floating bar which is shown.
   CGFloat floatingBarShownFraction_;
-
-  // Various UI elements/events may want to ensure that the floating bar is
-  // visible (in presentation mode), e.g., because of where the mouse is or
-  // where keyboard focus is. Whenever an object requires bar visibility, it has
-  // itself added to |barVisibilityLocks_|. When it no longer requires bar
-  // visibility, it has itself removed.
-  base::scoped_nsobject<NSMutableSet> barVisibilityLocks_;
-
-  // Bar visibility locks and releases only result (when appropriate) in changes
-  // in visible state when the following is |YES|.
-  BOOL barVisibilityUpdatesEnabled_;
 
   // If this ivar is set to YES, layoutSubviews calls will be ignored. This is
   // used in fullscreen transition to prevent spurious resize messages from
   // being sent to the renderer, which causes the transition to be janky.
   BOOL blockLayoutSubviews_;
 
-  // When going fullscreen for a tab, we need to store the URL and the
-  // fullscreen type, since we can't show the bubble until
-  // -windowDidEnterFullScreen: gets called.
-  GURL fullscreenUrl_;
-  ExclusiveAccessBubbleType exclusiveAccessBubbleType_;
-
   // The Extension Command Registry used to determine which keyboard events to
   // handle.
-  scoped_ptr<ExtensionKeybindingRegistryCocoa> extension_keybinding_registry_;
+  std::unique_ptr<ExtensionKeybindingRegistryCocoa>
+      extensionKeybindingRegistry_;
 }
 
 // A convenience class method which gets the |BrowserWindowController| for a
@@ -275,10 +268,6 @@ class Command;
 // whether it would be appropriate to show a zoom bubble or not.
 - (void)zoomChangedForActiveTab:(BOOL)canShowBubble;
 
-// Return the rect, in WebKit coordinates (flipped), of the window's grow box
-// in the coordinate system of the content area of the currently selected tab.
-- (NSRect)selectedTabGrowBoxRect;
-
 // Called to tell the selected tab to update its loading state.
 // |force| is set if the update is due to changing tabs, as opposed to
 // the page-load finishing.  See comment in reload_button_cocoa.h.
@@ -298,7 +287,7 @@ class Command;
 // coordinates (origin in bottom-left).
 - (NSRect)regularWindowFrame;
 
-// Whether or not to show the avatar, which is either the incognito guy or the
+// Whether or not to show the avatar, which is either the incognito icon or the
 // user's profile avatar.
 - (BOOL)shouldShowAvatar;
 
@@ -356,7 +345,7 @@ class Command;
 - (void)updateDevToolsForContents:(content::WebContents*)contents;
 
 // Gets the current theme provider.
-- (ui::ThemeProvider*)themeProvider;
+- (const ui::ThemeProvider*)themeProvider;
 
 // Gets the window style.
 - (ThemedWindowStyle)themedWindowStyle;
@@ -384,19 +373,19 @@ class Command;
 - (void)executeExtensionCommand:(const std::string&)extension_id
                         command:(const extensions::Command&)command;
 
-// To set whether the window has a tab playing audio or muted audio playing.
-- (void)setMediaState:(TabMediaState)mediaState;
+// Sets the alert state of the tab e.g. audio playing, media recording, etc.
+// See TabUtils::TabAlertState for a list of all possible alert states.
+- (void)setAlertState:(TabAlertState)alertState;
 
-// Returns current media state, determined by the media state of tabs, set by
-// UpdateMediaState.
-- (TabMediaState)mediaState;
+// Returns current alert state, determined by the alert state of tabs, set by
+// UpdateAlertState.
+- (TabAlertState)alertState;
 
 @end  // @interface BrowserWindowController
 
 
 // Methods having to do with the window type (normal/popup/app, and whether the
-// window has various features; fullscreen and presentation mode methods are
-// separate).
+// window has various features.
 @interface BrowserWindowController(WindowType)
 
 // Determines whether this controller's window supports a given feature (i.e.,
@@ -428,6 +417,13 @@ class Command;
 // deprecated.
 - (BOOL)isTabbedWindow;
 
+// Returns the size of the original (non-fullscreen) window.
+- (NSRect)savedRegularWindowFrame;
+
+// Returns true if the browser is in the process of entering/exiting
+// fullscreen.
+- (BOOL)isFullscreenTransitionInProgress;
+
 @end  // @interface BrowserWindowController(WindowType)
 
 // Fullscreen terminology:
@@ -440,29 +436,15 @@ class Command;
 // involves moving the current window to a different space, and resizing the
 // window to take up the entire size of the screen.
 //
-// + Immersive fullscreen: An alternative to AppKitFullscreen API. Uses on 10.6
-// (before AppKitFullscreen API was available), and on certain HTML/Flash
-// content. This is a method defined by Chrome.
+// + Immersive fullscreen: An alternative to AppKitFullscreen API. Uses on 10.9
+//  on certain HTML/Flash content. This is a method defined by Chrome.
 //
 // The Immersive fullscreen API can be called after the AppKitFullscreen API.
 // Calling the AppKitFullscreen API while immersive fullscreen API has been
 // invoked causes all fullscreen modes to exit.
 //
 // ----------------------------------------------------------------------------
-// There are 3 "styles" of omnibox sliding.
-// + OMNIBOX_TABS_PRESENT: Both the omnibox and the tabstrip are present.
-// Moving the cursor to the top causes the menubar to appear, and everything
-// else to slide down.
-// + OMNIBOX_TABS_HIDDEN: Both tabstrip and omnibox are hidden. Moving cursor
-// to top shows tabstrip, omnibox, and menu bar.
-// + OMNIBOX_TABS_NONE: Both tabstrip and omnibox are hidden. Moving cursor
-// to top causes the menubar to appear, but not the tabstrip and omnibox.
 //
-// The omnibox sliding styles are used in conjunction with the fullscreen APIs.
-// There is exactly 1 sliding style active at a time. The sliding is mangaged
-// by the presentationModeController_. (poorly named).
-//
-// ----------------------------------------------------------------------------
 // There are several "fullscreen modes" bantered around. Technically, any
 // fullscreen API can be combined with any sliding style.
 //
@@ -473,21 +455,14 @@ class Command;
 //
 // + Canonical Fullscreen: When a user clicks on the fullscreen button, they
 // expect a fullscreen behavior similar to other AppKit apps.
-//  - AppKitFullscreen API + OMNIBOX_TABS_PRESENT.
+//  - AppKitFullscreen API + TOOLBAR_PRESENT/TOOLBAR_HIDDEN.
 //  - The button click directly invokes the AppKitFullscreen API. This class
 //  get a callback, and calls adjustUIForOmniboxFullscreen.
 //  - There is a menu item that is intended to invoke the same behavior. When
 //  the user clicks the menu item, or use its hotkey, this class invokes the
 //  AppKitFullscreen API.
 //
-// + Presentation Mode:
-//  - OMNIBOX_TABS_HIDDEN, typically with AppKitFullscreen API, but can
-//  also be with Immersive fullscreen API.
-//  - This class sets a flag, indicating that it wants Presentation Mode
-//  instead of Canonical Fullscreen. Then it invokes the AppKitFullscreen API.
-//
-// + HTML5 fullscreen. <-- Currently uses AppKitFullscreen API. This should
-// eventually migrate to the Immersive Fullscreen API.
+// + HTML5 fullscreen. Uses AppKitFullscreen in 10.10+, otherwise Immersive.
 //
 // There are more fullscreen styles on OSX than other OSes. However, all OSes
 // share the same cross-platform code for entering fullscreen
@@ -498,11 +473,7 @@ class Command;
 //     -- This invokes -[BrowserWindowController windowWillEnterFullscreen:]
 //   - User selects the menu item "Enter Full Screen".
 //     -- This invokes FullscreenController::ToggleFullscreenModeInternal(
-//        BROWSER_WITH_CHROME)
-//   - User selects the menu item "Enter Presentation Mode".
-//     -- This invokes FullscreenController::ToggleFullscreenModeInternal(
 //        BROWSER)
-//     -- The corresponding URL will be empty.
 //   - User requests fullscreen via an extension.
 //     -- This invokes FullscreenController::ToggleFullscreenModeInternal(
 //        BROWSER)
@@ -514,31 +485,24 @@ class Command;
 //        IsWindowFullscreenForTabOrPending() returns true.
 //     -- The corresponding URL will be the url of the web page.
 
-// Methods having to do with fullscreen and presentation mode.
+// Methods having to do with fullscreen mode.
 @interface BrowserWindowController(Fullscreen)
 
-// Toggles fullscreen mode.  Meant to be called by Lion windows when they enter
-// or exit Lion fullscreen mode.  Must not be called on Snow Leopard or earlier.
-- (void)handleLionToggleFullscreen;
+// Enters Browser AppKit Fullscreen.
+- (void)enterBrowserFullscreen;
 
-// Enters Browser/Appkit Fullscreen.
-// If |withToolbar| is NO, the tab strip and toolbar are hidden
-// (aka Presentation Mode).
-- (void)enterBrowserFullscreenWithToolbar:(BOOL)withToolbar;
+// Updates the UI for tab fullscreen by adding or removing the tab strip and
+// toolbar from the current window. The window must already be in fullscreen.
+- (void)updateUIForTabFullscreen:
+    (ExclusiveAccessContext::TabFullscreenState)state;
 
-// Adds or removes the tab strip and toolbar from the current window. The
-// window must be in immersive or AppKit Fullscreen.
-- (void)updateFullscreenWithToolbar:(BOOL)withToolbar;
+// Exits extension fullscreen if we're currently in the mode. Returns YES
+// if we exited fullscreen.
+- (BOOL)exitExtensionFullscreenIfPossible;
 
 // Updates the contents of the fullscreen exit bubble with |url| and
 // |bubbleType|.
-- (void)updateFullscreenExitBubbleURL:(const GURL&)url
-                           bubbleType:(ExclusiveAccessBubbleType)bubbleType;
-
-// Toggles and updates the toolbar's visibility in fullscreen mode. This
-// function toggles between the sliding styles: OMNIBOX_TABS_PRESENT and
-// OMNIBOX_TABS_HIDDEN.
-- (void)toggleFullscreenToolbar;
+- (void)updateFullscreenExitBubble;
 
 // Returns YES if the browser window is in or entering any fullscreen mode.
 - (BOOL)isInAnyFullscreenMode;
@@ -551,49 +515,43 @@ class Command;
 // the AppKit Fullscreen API.
 - (BOOL)isInAppKitFullscreen;
 
-// Enter fullscreen for an extension.
-- (void)enterExtensionFullscreenForURL:(const GURL&)url
-                            bubbleType:(ExclusiveAccessBubbleType)bubbleType;
-
 // Enters Immersive Fullscreen for the given URL.
-- (void)enterWebContentFullscreenForURL:(const GURL&)url
-                             bubbleType:(ExclusiveAccessBubbleType)bubbleType;
+- (void)enterWebContentFullscreen;
 
 // Exits the current fullscreen mode.
 - (void)exitAnyFullscreen;
 
-// Whether the system is in the very specific fullscreen mode: Presentation
-// Mode.
-- (BOOL)inPresentationMode;
-
-// Whether if the toolbar should be hidden in fullscreen.
-- (BOOL)shouldHideFullscreenToolbar;
+// Called by BrowserWindowFullscreenTransition when the exit animation is
+// finished.
+- (void)exitFullscreenAnimationFinished;
 
 // Resizes the fullscreen window to fit the screen it's currently on.  Called by
-// the PresentationModeController when there is a change in monitor placement or
-// resolution.
+// the FullscreenToolbarController when there is a change in monitor placement
+// or resolution.
 - (void)resizeFullscreenWindow;
 
 // Query/lock/release the requirement that the tab strip/toolbar/attached
 // bookmark bar bar cluster is visible (e.g., when one of its elements has
-// focus). This is required for the floating bar in presentation mode, but
-// should also be called when not in presentation mode; see the comments for
+// focus). This is required for the floating bar if it's hidden in fullscreen,
+// but should also be called when not in fullscreen mode; see the comments for
 // |barVisibilityLocks_| for more details. Double locks/releases by the same
-// owner are ignored. If |animate:| is YES, then an animation may be performed,
-// possibly after a small delay if |delay:| is YES. If |animate:| is NO,
-// |delay:| will be ignored. In the case of multiple calls, later calls have
-// precedence with the rule that |animate:NO| has precedence over |animate:YES|,
-// and |delay:NO| has precedence over |delay:YES|.
-- (BOOL)isBarVisibilityLockedForOwner:(id)owner;
-- (void)lockBarVisibilityForOwner:(id)owner
-                    withAnimation:(BOOL)animate
-                            delay:(BOOL)delay;
-- (void)releaseBarVisibilityForOwner:(id)owner
-                       withAnimation:(BOOL)animate
-                               delay:(BOOL)delay;
+// owner are ignored. If |animate:| is YES, then an animation may be
+// performed. In the case of multiple calls, later calls have precedence with
+// the rule that |animate:NO| has precedence over |animate:YES|. If |owner| is
+// nil in isToolbarVisibilityLockedForOwner, the method returns YES if there are
+// any locks.
+- (BOOL)isToolbarVisibilityLockedForOwner:(id)owner;
+- (void)lockToolbarVisibilityForOwner:(id)owner withAnimation:(BOOL)animate;
+- (void)releaseToolbarVisibilityForOwner:(id)owner withAnimation:(BOOL)animate;
 
 // Returns YES if any of the views in the floating bar currently has focus.
 - (BOOL)floatingBarHasFocus;
+
+// Returns YES if the fullscreen is for tab content or an extension.
+- (BOOL)isFullscreenForTabContentOrExtension;
+
+// Accessor for the controller managing fullscreen ExclusiveAccessContext.
+- (ExclusiveAccessController*)exclusiveAccessController;
 
 @end  // @interface BrowserWindowController(Fullscreen)
 
@@ -631,12 +589,21 @@ class Command;
 - (NSSize)overflowFrom:(NSRect)source
                     to:(NSRect)target;
 
-// The fullscreen exit bubble controller, or nil if the bubble isn't showing.
-- (ExclusiveAccessBubbleWindowController*)exclusiveAccessBubbleWindowController;
-
 // Gets the rect, in window base coordinates, that the omnibox popup should be
 // positioned relative to.
 - (NSRect)omniboxPopupAnchorRect;
+
+// Returns the flag |blockLayoutSubviews_|.
+- (BOOL)isLayoutSubviewsBlocked;
+
+// Returns the active tab contents controller's |blockFullscreenResize_| flag.
+- (BOOL)isActiveTabContentsControllerResizeBlocked;
+
+// Returns the fullscreen toolbar controller.
+- (FullscreenToolbarController*)fullscreenToolbarController;
+
+// Sets the fullscreen toolbar controller.
+- (void)setFullscreenToolbarController:(FullscreenToolbarController*)controller;
 
 @end  // @interface BrowserWindowController (TestingAPI)
 

@@ -5,6 +5,9 @@
 #import "chrome/browser/ui/cocoa/ssl_client_certificate_selector_cocoa.h"
 
 #import <SecurityInterface/SFChooseIdentityPanel.h>
+#include <stddef.h>
+
+#include <utility>
 
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
@@ -15,6 +18,7 @@
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_mac.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/guest_view/browser/guest_view_base.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/client_certificate_delegate.h"
@@ -45,11 +49,11 @@ class SSLClientAuthObserverCocoaBridge : public SSLClientAuthObserver,
   SSLClientAuthObserverCocoaBridge(
       const content::BrowserContext* browser_context,
       net::SSLCertRequestInfo* cert_request_info,
-      scoped_ptr<content::ClientCertificateDelegate> delegate,
+      std::unique_ptr<content::ClientCertificateDelegate> delegate,
       SSLClientCertificateSelectorCocoa* controller)
       : SSLClientAuthObserver(browser_context,
                               cert_request_info,
-                              delegate.Pass()),
+                              std::move(delegate)),
         controller_(controller) {}
 
   // SSLClientAuthObserver implementation:
@@ -76,7 +80,7 @@ namespace chrome {
 void ShowSSLClientCertificateSelector(
     content::WebContents* contents,
     net::SSLCertRequestInfo* cert_request_info,
-    scoped_ptr<content::ClientCertificateDelegate> delegate) {
+    std::unique_ptr<content::ClientCertificateDelegate> delegate) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // Not all WebContentses can show modal dialogs.
@@ -95,28 +99,80 @@ void ShowSSLClientCertificateSelector(
       [[SSLClientCertificateSelectorCocoa alloc]
           initWithBrowserContext:contents->GetBrowserContext()
                  certRequestInfo:cert_request_info
-                        delegate:delegate.Pass()];
+                        delegate:std::move(delegate)];
   [selector displayForWebContents:contents];
 }
 
 }  // namespace chrome
 
+namespace {
+
+// These ClearTableViewDataSources... functions help work around a bug in macOS
+// 10.12 where SFChooseIdentityPanel leaks a window and some views, including
+// an NSTableView. Future events may make cause the table view to query its
+// dataSource, which will have been deallocated.
+//
+// NSTableView.dataSource becomes a zeroing weak reference starting in 10.11,
+// so this workaround can be removed once we're on the 10.11 SDK.
+//
+// See https://crbug.com/653093 and rdar://29409207 for more information.
+
+#if !defined(MAC_OS_X_VERSION_10_11) || \
+    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_11
+
+void ClearTableViewDataSources(NSView* view) {
+  if (auto table_view = base::mac::ObjCCast<NSTableView>(view)) {
+    table_view.dataSource = nil;
+  } else {
+    for (NSView* subview in view.subviews) {
+      ClearTableViewDataSources(subview);
+    }
+  }
+}
+
+void ClearTableViewDataSourcesIfWindowStillExists(NSWindow* leaked_window) {
+  for (NSWindow* window in [NSApp windows]) {
+    // If the window is still in the window list...
+    if (window == leaked_window) {
+      // ...search it for table views.
+      ClearTableViewDataSources(window.contentView);
+      break;
+    }
+  }
+}
+
+void ClearTableViewDataSourcesIfNeeded(NSWindow* leaked_window) {
+  // Let the autorelease pool drain before deciding if the window was leaked.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(ClearTableViewDataSourcesIfWindowStillExists,
+                            base::Unretained(leaked_window)));
+}
+
+#else
+
+void ClearTableViewDataSourcesIfNeeded(NSWindow*) {}
+
+#endif  // MAC_OS_X_VERSION_10_11
+
+}  // namespace
+
 @implementation SSLClientCertificateSelectorCocoa
 
 - (id)initWithBrowserContext:(const content::BrowserContext*)browserContext
              certRequestInfo:(net::SSLCertRequestInfo*)certRequestInfo
-                    delegate:(scoped_ptr<content::ClientCertificateDelegate>)
-                                 delegate {
+                    delegate:
+                        (std::unique_ptr<content::ClientCertificateDelegate>)
+                            delegate {
   DCHECK(browserContext);
   DCHECK(certRequestInfo);
   if ((self = [super init])) {
     observer_.reset(new SSLClientAuthObserverCocoaBridge(
-        browserContext, certRequestInfo, delegate.Pass(), self));
+        browserContext, certRequestInfo, std::move(delegate), self));
   }
   return self;
 }
 
-- (void)sheetDidEnd:(NSWindow*)parent
+- (void)sheetDidEnd:(NSWindow*)sheet
          returnCode:(NSInteger)returnCode
             context:(void*)context {
   net::X509Certificate* cert = NULL;
@@ -129,6 +185,9 @@ void ShowSSLClientCertificateSelector(
     else
       NOTREACHED();
   }
+
+  // See comment at definition; this works around a 10.12 bug.
+  ClearTableViewDataSourcesIfNeeded(sheet);
 
   if (!closePending_) {
     // If |closePending_| is already set, |closeSheetWithAnimation:| was called
@@ -175,8 +234,8 @@ void ShowSSLClientCertificateSelector(
     CFRelease(sslPolicy);
   }
 
-  constrainedWindow_.reset(
-      new ConstrainedWindowMac(observer_.get(), webContents, self));
+  constrainedWindow_ =
+      CreateAndShowWebModalDialogMac(observer_.get(), webContents, self);
   observer_->StartObserving();
 }
 
@@ -253,6 +312,10 @@ void ShowSSLClientCertificateSelector(
 }
 
 - (void)updateSheetPosition {
+  // NOOP
+}
+
+- (void)resizeWithNewSize:(NSSize)size {
   // NOOP
 }
 

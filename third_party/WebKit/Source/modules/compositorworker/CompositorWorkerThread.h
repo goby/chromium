@@ -5,47 +5,40 @@
 #ifndef CompositorWorkerThread_h
 #define CompositorWorkerThread_h
 
-#include "core/workers/WorkerThread.h"
 #include "modules/ModulesExport.h"
+#include "modules/compositorworker/AbstractAnimationWorkletThread.h"
+#include <memory>
 
 namespace blink {
 
-class WorkerObjectProxy;
+class InProcessWorkerObjectProxy;
 
-// This class is overridden in unit-tests.
-class MODULES_EXPORT CompositorWorkerThread : public WorkerThread {
-public:
-    static PassRefPtr<CompositorWorkerThread> create(PassRefPtr<WorkerLoaderProxy>, WorkerObjectProxy&, double timeOrigin);
-    ~CompositorWorkerThread() override;
+class MODULES_EXPORT CompositorWorkerThread final
+    : public AbstractAnimationWorkletThread {
+ public:
+  static std::unique_ptr<CompositorWorkerThread> create(
+      PassRefPtr<WorkerLoaderProxy>,
+      InProcessWorkerObjectProxy&,
+      double timeOrigin);
+  ~CompositorWorkerThread() override;
 
-    WorkerObjectProxy& workerObjectProxy() const { return m_workerObjectProxy; }
+  InProcessWorkerObjectProxy& workerObjectProxy() const {
+    return m_workerObjectProxy;
+  }
 
-    // Returns the shared backing thread for all CompositorWorkers.
-    static WebThreadSupportingGC* sharedBackingThread();
+ protected:
+  WorkerOrWorkletGlobalScope* createWorkerGlobalScope(
+      std::unique_ptr<WorkerThreadStartupData>) override;
 
-    static bool hasThreadForTest();
-    static bool hasIsolateForTest();
+ private:
+  CompositorWorkerThread(PassRefPtr<WorkerLoaderProxy>,
+                         InProcessWorkerObjectProxy&,
+                         double timeOrigin);
 
-protected:
-    CompositorWorkerThread(PassRefPtr<WorkerLoaderProxy>, WorkerObjectProxy&, double timeOrigin);
-
-    // WorkerThread:
-    PassRefPtrWillBeRawPtr<WorkerGlobalScope> createWorkerGlobalScope(PassOwnPtr<WorkerThreadStartupData>) override;
-    WebThreadSupportingGC& backingThread() override;
-    void didStartRunLoop() override { }
-    void didStopRunLoop() override { }
-    void initializeBackingThread() override;
-    void shutdownBackingThread() override;
-    v8::Isolate* initializeIsolate() override;
-    void willDestroyIsolate() override;
-    void destroyIsolate() override;
-    void terminateV8Execution() override;
-
-private:
-    WorkerObjectProxy& m_workerObjectProxy;
-    double m_timeOrigin;
+  InProcessWorkerObjectProxy& m_workerObjectProxy;
+  double m_timeOrigin;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CompositorWorkerThread_h
+#endif  // CompositorWorkerThread_h

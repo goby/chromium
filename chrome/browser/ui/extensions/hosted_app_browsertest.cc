@@ -11,7 +11,7 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_iterator.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/extensions/hosted_app_browser_controller.h"
@@ -60,16 +60,16 @@ class HostedAppTest : public ExtensionBrowserTest {
     // Launch it in a window.
     ASSERT_TRUE(OpenApplication(AppLaunchParams(
         browser()->profile(), app, extensions::LAUNCH_CONTAINER_WINDOW,
-        NEW_WINDOW, extensions::SOURCE_TEST)));
+        WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_TEST)));
 
-    for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-      if (*it == browser())
+    for (auto* b : *BrowserList::GetInstance()) {
+      if (b == browser())
         continue;
 
       std::string browser_app_id =
-          web_app::GetExtensionIdFromApplicationName((*it)->app_name());
+          web_app::GetExtensionIdFromApplicationName(b->app_name());
       if (browser_app_id == app->id()) {
-        app_browser_ = *it;
+        app_browser_ = b;
         break;
       }
     }
@@ -199,7 +199,7 @@ IN_PROC_BROWSER_TEST_F(HostedAppTest, ShouldUseWebAppFrame) {
   // Launch it in a window, as AppLauncherHandler::HandleLaunchApp() would.
   WebContents* bookmark_app_window = OpenApplication(AppLaunchParams(
       browser()->profile(), bookmark_app, extensions::LAUNCH_CONTAINER_WINDOW,
-      NEW_WINDOW, extensions::SOURCE_UNTRACKED));
+      WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_UNTRACKED));
   ASSERT_TRUE(bookmark_app_window);
 
   //  Load a packaged app.
@@ -217,30 +217,29 @@ IN_PROC_BROWSER_TEST_F(HostedAppTest, ShouldUseWebAppFrame) {
   // Launch it in a window, as AppLauncherHandler::HandleLaunchApp() would.
   WebContents* packaged_app_window = OpenApplication(AppLaunchParams(
       browser()->profile(), packaged_app, extensions::LAUNCH_CONTAINER_WINDOW,
-      NEW_WINDOW, extensions::SOURCE_UNTRACKED));
+      WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_UNTRACKED));
   ASSERT_TRUE(packaged_app_window);
 
   DevToolsWindow* devtools_window =
       DevToolsWindowTesting::OpenDevToolsWindowSync(browser(), false);
 
   // The launch should have created a new app browser and a dev tools browser.
-  ASSERT_EQ(4u, chrome::GetBrowserCount(browser()->profile(),
-                                        browser()->host_desktop_type()));
+  ASSERT_EQ(4u, chrome::GetBrowserCount(browser()->profile()));
 
   // Find the new browsers.
   Browser* bookmark_app_browser = nullptr;
   Browser* packaged_app_browser = nullptr;
   Browser* dev_tools_browser = nullptr;
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    if (*it == browser()) {
+  for (auto* b : *BrowserList::GetInstance()) {
+    if (b == browser()) {
       continue;
-    } else if ((*it)->app_name() == DevToolsWindow::kDevToolsApp) {
-      dev_tools_browser = *it;
-    } else if ((*it)->tab_strip_model()->GetActiveWebContents() ==
+    } else if (b->app_name() == DevToolsWindow::kDevToolsApp) {
+      dev_tools_browser = b;
+    } else if (b->tab_strip_model()->GetActiveWebContents() ==
                bookmark_app_window) {
-      bookmark_app_browser = *it;
+      bookmark_app_browser = b;
     } else {
-      packaged_app_browser = *it;
+      packaged_app_browser = b;
     }
   }
   ASSERT_TRUE(dev_tools_browser);
@@ -253,9 +252,13 @@ IN_PROC_BROWSER_TEST_F(HostedAppTest, ShouldUseWebAppFrame) {
   EXPECT_FALSE(browser()->SupportsWindowFeature(Browser::FEATURE_WEBAPPFRAME));
   EXPECT_FALSE(
       dev_tools_browser->SupportsWindowFeature(Browser::FEATURE_WEBAPPFRAME));
-  EXPECT_EQ(browser()->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH,
-            bookmark_app_browser->SupportsWindowFeature(
-                Browser::FEATURE_WEBAPPFRAME));
+#if defined(USE_ASH)
+  const bool kIsAsh = true;
+#else
+  const bool kIsAsh = false;
+#endif  // USE_ASH
+  EXPECT_EQ(kIsAsh, bookmark_app_browser->SupportsWindowFeature(
+                        Browser::FEATURE_WEBAPPFRAME));
   EXPECT_FALSE(packaged_app_browser->SupportsWindowFeature(
       Browser::FEATURE_WEBAPPFRAME));
 

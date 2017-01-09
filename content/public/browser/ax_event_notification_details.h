@@ -9,6 +9,7 @@
 
 #include "content/common/content_export.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/accessibility/ax_relative_bounds.h"
 #include "ui/accessibility/ax_tree_data.h"
 #include "ui/accessibility/ax_tree_update.h"
 
@@ -19,12 +20,28 @@ namespace content {
 struct CONTENT_EXPORT AXEventNotificationDetails {
  public:
   AXEventNotificationDetails();
+  AXEventNotificationDetails(const AXEventNotificationDetails& other);
   ~AXEventNotificationDetails();
 
   ui::AXTreeUpdate update;
   ui::AXEvent event_type;
   int id;
   int ax_tree_id;
+  ui::AXEventFrom event_from;
+};
+
+// Use this object in conjunction with the
+// |WebContentsObserver::AccessibilityLocationChangeReceived| method.
+struct CONTENT_EXPORT AXLocationChangeNotificationDetails {
+ public:
+  AXLocationChangeNotificationDetails();
+  AXLocationChangeNotificationDetails(
+      const AXLocationChangeNotificationDetails& other);
+  ~AXLocationChangeNotificationDetails();
+
+  int id;
+  int ax_tree_id;
+  ui::AXRelativeBounds new_location;
 };
 
 }  // namespace content

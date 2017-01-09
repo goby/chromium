@@ -1,13 +1,22 @@
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
+//
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
+
+namespace {
+bool IsForceSigninEnabled() {
+  PrefService* prefs = g_browser_process->local_state();
+  return prefs && prefs->GetBoolean(prefs::kForceBrowserSignin);
+}
+}  // namespace
 
 ProfileAttributesEntry::ProfileAttributesEntry()
-    : profile_info_cache_(nullptr),
-      profile_path_(base::FilePath()) {}
+    : profile_info_cache_(nullptr), profile_path_(base::FilePath()) {}
 
 void ProfileAttributesEntry::Initialize(
     ProfileInfoCache* cache, const base::FilePath& path) {
@@ -17,6 +26,9 @@ void ProfileAttributesEntry::Initialize(
   DCHECK(profile_path_.empty());
   DCHECK(!path.empty());
   profile_path_ = path;
+  is_force_signin_enabled_ = IsForceSigninEnabled();
+  if (!IsAuthenticated() && is_force_signin_enabled_)
+    is_force_signin_profile_locked_ = true;
 }
 
 base::string16 ProfileAttributesEntry::GetName() const {
@@ -39,7 +51,7 @@ base::string16 ProfileAttributesEntry::GetUserName() const {
   return profile_info_cache_->GetUserNameOfProfileAtIndex(profile_index());
 }
 
-const gfx::Image& ProfileAttributesEntry::GetAvatarIcon() {
+const gfx::Image& ProfileAttributesEntry::GetAvatarIcon() const {
   return profile_info_cache_->GetAvatarIconOfProfileAtIndex(profile_index());
 }
 
@@ -96,7 +108,8 @@ bool ProfileAttributesEntry::IsOmitted() const {
 }
 
 bool ProfileAttributesEntry::IsSigninRequired() const {
-  return profile_info_cache_->ProfileIsSigninRequiredAtIndex(profile_index());
+  return profile_info_cache_->ProfileIsSigninRequiredAtIndex(profile_index()) ||
+         is_force_signin_profile_locked_;
 }
 
 std::string ProfileAttributesEntry::GetSupervisedUserId() const {
@@ -176,6 +189,10 @@ void ProfileAttributesEntry::SetShortcutName(const base::string16& name) {
   profile_info_cache_->SetShortcutNameOfProfileAtIndex(profile_index(), name);
 }
 
+void ProfileAttributesEntry::SetActiveTimeToNow() {
+  profile_info_cache_->SetProfileActiveTimeAtIndex(profile_index());
+}
+
 void ProfileAttributesEntry::SetIsOmitted(bool is_omitted) {
   profile_info_cache_->SetIsOmittedProfileAtIndex(profile_index(), is_omitted);
 }
@@ -219,6 +236,13 @@ void ProfileAttributesEntry::SetIsUsingGAIAPicture(bool value) {
 
 void ProfileAttributesEntry::SetIsSigninRequired(bool value) {
   profile_info_cache_->SetProfileSigninRequiredAtIndex(profile_index(), value);
+  if (is_force_signin_enabled_)
+    LockForceSigninProfile(value);
+}
+
+void ProfileAttributesEntry::LockForceSigninProfile(bool is_lock) {
+  DCHECK(is_force_signin_enabled_);
+  is_force_signin_profile_locked_ = is_lock;
 }
 
 void ProfileAttributesEntry::SetIsEphemeral(bool value) {

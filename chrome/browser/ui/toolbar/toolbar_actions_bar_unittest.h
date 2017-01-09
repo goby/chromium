@@ -5,14 +5,18 @@
 #ifndef CHROME_BROWSER_UI_TOOLBAR_TOOLBAR_ACTIONS_BAR_UNITTEST_H_
 #define CHROME_BROWSER_UI_TOOLBAR_TOOLBAR_ACTIONS_BAR_UNITTEST_H_
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
-#include "extensions/common/feature_switch.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 class ExtensionAction;
+class ScopedTestingLocalState;
 class ToolbarActionsBar;
 
 namespace content {
@@ -28,15 +32,14 @@ class Extension;
 // TODO(devlin): Since this *does* use the real platform containers, in theory,
 // we can move all the BrowserActionsBarBrowserTests to be unittests. See about
 // doing this.
-class ToolbarActionsBarUnitTest : public BrowserWithTestWindowTest {
+class ToolbarActionsBarUnitTest :
+    public BrowserWithTestWindowTest,
+    public testing::WithParamInterface<ui::MaterialDesignController::Mode> {
  public:
   ToolbarActionsBarUnitTest();
   ~ToolbarActionsBarUnitTest() override;
 
  protected:
-  // A constructor to allow subclasses to override the redesign value.
-  explicit ToolbarActionsBarUnitTest(bool use_redesign);
-
   void SetUp() override;
   void TearDown() override;
 
@@ -89,27 +92,18 @@ class ToolbarActionsBarUnitTest : public BrowserWithTestWindowTest {
 
   // A BrowserActionTestUtil object constructed with the associated
   // ToolbarActionsBar.
-  scoped_ptr<BrowserActionTestUtil> browser_action_test_util_;
+  std::unique_ptr<BrowserActionTestUtil> browser_action_test_util_;
 
-  // The overflow container's BrowserActionTestUtil (only non-null if
-  // |use_redesign| is true).
-  scoped_ptr<BrowserActionTestUtil> overflow_browser_action_test_util_;
+  // The overflow container's BrowserActionTestUtil.
+  std::unique_ptr<BrowserActionTestUtil> overflow_browser_action_test_util_;
 
-  // True if the extension action redesign switch should be enabled.
-  bool use_redesign_;
+  std::unique_ptr<ui::test::MaterialDesignControllerTestAPI>
+      material_design_state_;
 
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> redesign_switch_;
+  // Local state for the browser process.
+  std::unique_ptr<ScopedTestingLocalState> local_state_;
 
   DISALLOW_COPY_AND_ASSIGN(ToolbarActionsBarUnitTest);
-};
-
-class ToolbarActionsBarRedesignUnitTest : public ToolbarActionsBarUnitTest {
- public:
-  ToolbarActionsBarRedesignUnitTest();
-  ~ToolbarActionsBarRedesignUnitTest() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ToolbarActionsBarRedesignUnitTest);
 };
 
 #endif  // CHROME_BROWSER_UI_TOOLBAR_TOOLBAR_ACTIONS_BAR_UNITTEST_H_

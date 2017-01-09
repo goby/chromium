@@ -4,19 +4,25 @@
 
 #include "chrome/test/chromedriver/chrome/chrome_desktop_impl.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/kill.h"
+#include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/test/chromedriver/chrome/automation_extension.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
 #include "chrome/test/chromedriver/chrome/devtools_http_client.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/chrome/web_view_impl.h"
 #include "chrome/test/chromedriver/net/port_server.h"
+#include "chrome/test/chromedriver/net/timeout.h"
 
 #if defined(OS_POSIX)
 #include <errno.h>
@@ -26,6 +32,9 @@
 #endif
 
 namespace {
+
+// Enables wifi and data only, not airplane mode.
+const int kDefaultConnectionType = 6;
 
 bool KillProcess(const base::Process& process, bool kill_gracefully) {
 #if defined(OS_POSIX)
@@ -62,20 +71,25 @@ bool KillProcess(const base::Process& process, bool kill_gracefully) {
 }  // namespace
 
 ChromeDesktopImpl::ChromeDesktopImpl(
-    scoped_ptr<DevToolsHttpClient> http_client,
-    scoped_ptr<DevToolsClient> websocket_client,
+    std::unique_ptr<DevToolsHttpClient> http_client,
+    std::unique_ptr<DevToolsClient> websocket_client,
     ScopedVector<DevToolsEventListener>& devtools_event_listeners,
-    scoped_ptr<PortReservation> port_reservation,
+    std::unique_ptr<PortReservation> port_reservation,
+    std::string page_load_strategy,
     base::Process process,
     const base::CommandLine& command,
     base::ScopedTempDir* user_data_dir,
-    base::ScopedTempDir* extension_dir)
-    : ChromeImpl(http_client.Pass(),
-                 websocket_client.Pass(),
+    base::ScopedTempDir* extension_dir,
+    bool network_emulation_enabled)
+    : ChromeImpl(std::move(http_client),
+                 std::move(websocket_client),
                  devtools_event_listeners,
-                 port_reservation.Pass()),
-      process_(process.Pass()),
-      command_(command) {
+                 std::move(port_reservation),
+                 page_load_strategy),
+      process_(std::move(process)),
+      command_(command),
+      network_connection_enabled_(network_emulation_enabled),
+      network_connection_(kDefaultConnectionType) {
   if (user_data_dir->IsValid())
     CHECK(user_data_dir_.Set(user_data_dir->Take()));
   if (extension_dir->IsValid())
@@ -96,13 +110,15 @@ ChromeDesktopImpl::~ChromeDesktopImpl() {
   }
 }
 
-Status ChromeDesktopImpl::WaitForPageToLoad(const std::string& url,
-                                            const base::TimeDelta& timeout,
-                                            scoped_ptr<WebView>* web_view) {
-  base::TimeTicks deadline = base::TimeTicks::Now() + timeout;
+Status ChromeDesktopImpl::WaitForPageToLoad(
+    const std::string& url,
+    const base::TimeDelta& timeout_raw,
+    std::unique_ptr<WebView>* web_view,
+    bool w3c_compliant) {
+  Timeout timeout(timeout_raw);
   std::string id;
   WebViewInfo::Type type = WebViewInfo::Type::kPage;
-  while (base::TimeTicks::Now() < deadline) {
+  while (timeout.GetRemainingTime() > base::TimeDelta()) {
     WebViewsInfo views_info;
     Status status = devtools_http_client_->GetWebViewsInfo(&views_info);
     if (status.IsError())
@@ -110,7 +126,7 @@ Status ChromeDesktopImpl::WaitForPageToLoad(const std::string& url,
 
     for (size_t i = 0; i < views_info.GetSize(); ++i) {
       const WebViewInfo& view_info = views_info.Get(i);
-      if (view_info.url.find(url) == 0) {
+      if (base::StartsWith(view_info.url, url, base::CompareCase::SENSITIVE)) {
         id = view_info.id;
         type = view_info.type;
         break;
@@ -132,35 +148,36 @@ Status ChromeDesktopImpl::WaitForPageToLoad(const std::string& url,
     // https://code.google.com/p/chromedriver/issues/detail?id=1205
     device_metrics = nullptr;
   }
-  scoped_ptr<WebView> web_view_tmp(
-      new WebViewImpl(id,
-                      devtools_http_client_->browser_info(),
-                      devtools_http_client_->CreateClient(id),
-                      device_metrics));
+  std::unique_ptr<WebView> web_view_tmp(
+      new WebViewImpl(id, w3c_compliant, devtools_http_client_->browser_info(),
+                      devtools_http_client_->CreateClient(id), device_metrics,
+                      page_load_strategy()));
   Status status = web_view_tmp->ConnectIfNecessary();
   if (status.IsError())
     return status;
 
   status = web_view_tmp->WaitForPendingNavigations(
-      std::string(), deadline - base::TimeTicks::Now(), false);
+      std::string(), timeout, false);
   if (status.IsOk())
-    *web_view = web_view_tmp.Pass();
+    *web_view = std::move(web_view_tmp);
   return status;
 }
 
 Status ChromeDesktopImpl::GetAutomationExtension(
-    AutomationExtension** extension) {
+    AutomationExtension** extension,
+    bool w3c_compliant) {
   if (!automation_extension_) {
-    scoped_ptr<WebView> web_view;
+    std::unique_ptr<WebView> web_view;
     Status status = WaitForPageToLoad(
         "chrome-extension://aapnijgdinlhnhlmodcfapnahmbfebeb/"
         "_generated_background_page.html",
         base::TimeDelta::FromSeconds(10),
-        &web_view);
+        &web_view,
+        w3c_compliant);
     if (status.IsError())
       return Status(kUnknownError, "cannot get automation extension", status);
 
-    automation_extension_.reset(new AutomationExtension(web_view.Pass()));
+    automation_extension_.reset(new AutomationExtension(std::move(web_view)));
   }
   *extension = automation_extension_.get();
   return Status(kOk);
@@ -183,6 +200,10 @@ bool ChromeDesktopImpl::HasTouchScreen() const {
   return IsMobileEmulationEnabled();
 }
 
+bool ChromeDesktopImpl::IsNetworkConnectionEnabled() const {
+  return network_connection_enabled_;
+}
+
 Status ChromeDesktopImpl::QuitImpl() {
   // If the Chrome session uses a custom user data directory, try sending a
   // SIGTERM signal before SIGKILL, so that Chrome has a chance to write
@@ -196,4 +217,13 @@ Status ChromeDesktopImpl::QuitImpl() {
 
 const base::CommandLine& ChromeDesktopImpl::command() const {
   return command_;
+}
+
+int ChromeDesktopImpl::GetNetworkConnection() const {
+  return network_connection_;
+}
+
+void ChromeDesktopImpl::SetNetworkConnection(
+    int network_connection) {
+  network_connection_ = network_connection;
 }

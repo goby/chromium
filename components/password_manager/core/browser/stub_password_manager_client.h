@@ -5,7 +5,9 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_STUB_PASSWORD_MANAGER_CLIENT_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_STUB_PASSWORD_MANAGER_CLIENT_H_
 
+#include "base/macros.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
+#include "components/password_manager/core/browser/stub_credentials_filter.h"
 #include "components/password_manager/core/browser/stub_log_manager.h"
 
 namespace password_manager {
@@ -20,19 +22,23 @@ class StubPasswordManagerClient : public PasswordManagerClient {
 
   // PasswordManagerClient:
   bool PromptUserToSaveOrUpdatePassword(
-      scoped_ptr<PasswordFormManager> form_to_save,
+      std::unique_ptr<PasswordFormManager> form_to_save,
       password_manager::CredentialSourceType type,
       bool update_password) override;
   bool PromptUserToChooseCredentials(
-      ScopedVector<autofill::PasswordForm> local_forms,
-      ScopedVector<autofill::PasswordForm> federated_forms,
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
       const GURL& origin,
-      base::Callback<void(const password_manager::CredentialInfo&)> callback)
-      override;
+      const CredentialsCallback& callback) override;
   void NotifyUserAutoSignin(
-      ScopedVector<autofill::PasswordForm> local_forms) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
+      const GURL& origin) override;
+  void NotifyUserCouldBeAutoSignedIn(
+      std::unique_ptr<autofill::PasswordForm>) override;
+  void NotifySuccessfulLoginWithExistingPassword(
+      const autofill::PasswordForm& form) override;
+  void NotifyStorePasswordCalled() override;
   void AutomaticPasswordSave(
-      scoped_ptr<PasswordFormManager> saved_manager) override;
+      std::unique_ptr<PasswordFormManager> saved_manager) override;
   PrefService* GetPrefs() override;
   PasswordStore* GetPasswordStore() const override;
   const GURL& GetLastCommittedEntryURL() const override;
@@ -40,19 +46,7 @@ class StubPasswordManagerClient : public PasswordManagerClient {
   const LogManager* GetLogManager() const override;
 
  private:
-  // This filter does not filter out anything, it is a dummy implementation of
-  // the filter interface.
-  class PassThroughCredentialsFilter : public CredentialsFilter {
-   public:
-    PassThroughCredentialsFilter() {}
-
-    // CredentialsFilter:
-    ScopedVector<autofill::PasswordForm> FilterResults(
-        ScopedVector<autofill::PasswordForm> results) const override;
-    bool ShouldSave(const autofill::PasswordForm& form) const override;
-  };
-
-  const PassThroughCredentialsFilter credentials_filter_;
+  const StubCredentialsFilter credentials_filter_;
   StubLogManager log_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(StubPasswordManagerClient);

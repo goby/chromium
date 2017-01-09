@@ -4,8 +4,11 @@
 
 #include "components/nacl/browser/pnacl_host.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/debug/leak_annotations.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -30,8 +33,7 @@ static const int kTranslationCacheInitializationDelayMs = 20;
 void CloseBaseFile(base::File auto_file_closer) {
 }
 
-void CloseScopedFile(scoped_ptr<base::File> auto_file_closer) {
-}
+void CloseScopedFile(std::unique_ptr<base::File> auto_file_closer) {}
 
 }  // namespace
 
@@ -39,20 +41,17 @@ namespace pnacl {
 
 class FileProxy {
  public:
-  FileProxy(scoped_ptr<base::File> file, base::WeakPtr<pnacl::PnaclHost> host);
+  FileProxy(std::unique_ptr<base::File> file, PnaclHost* host);
   int Write(scoped_refptr<net::DrainableIOBuffer> buffer);
   void WriteDone(const PnaclHost::TranslationID& id, int result);
 
  private:
-  scoped_ptr<base::File> file_;
-  base::WeakPtr<pnacl::PnaclHost> host_;
+  std::unique_ptr<base::File> file_;
+  PnaclHost* host_;
 };
 
-FileProxy::FileProxy(scoped_ptr<base::File> file,
-                     base::WeakPtr<pnacl::PnaclHost> host)
-    : file_(file.Pass()),
-      host_(host) {
-}
+FileProxy::FileProxy(std::unique_ptr<base::File> file, PnaclHost* host)
+    : file_(std::move(file)), host_(host) {}
 
 int FileProxy::Write(scoped_refptr<net::DrainableIOBuffer> buffer) {
   int rv = file_->Write(0, buffer->data(), buffer->size());
@@ -62,29 +61,18 @@ int FileProxy::Write(scoped_refptr<net::DrainableIOBuffer> buffer) {
 }
 
 void FileProxy::WriteDone(const PnaclHost::TranslationID& id, int result) {
-  if (host_) {
-    host_->OnBufferCopiedToTempFile(id, file_.Pass(), result);
-  } else {
-    BrowserThread::PostBlockingPoolTask(
-        FROM_HERE,
-        base::Bind(CloseScopedFile, Passed(&file_)));
-  }
+  host_->OnBufferCopiedToTempFile(id, std::move(file_), result);
 }
 
-PnaclHost::PnaclHost()
-    : pending_backend_operations_(0),
-      cache_state_(CacheUninitialized),
-      weak_factory_(this) {}
-
-PnaclHost::~PnaclHost() {
-  // When PnaclHost is destroyed, it's too late to post anything to the cache
-  // thread (it will hang shutdown). So just leak the cache backend.
-  pnacl::PnaclTranslationCache* cache = disk_cache_.release();
-  (void)cache;
-}
+PnaclHost::PnaclHost() = default;
 
 PnaclHost* PnaclHost::GetInstance() {
-  return base::Singleton<PnaclHost>::get();
+  static PnaclHost* instance = nullptr;
+  if (!instance) {
+    instance = new PnaclHost;
+    ANNOTATE_LEAKING_OBJECT_PTR(instance);
+  }
+  return instance;
 }
 
 PnaclHost::PendingTranslation::PendingTranslation()
@@ -98,6 +86,9 @@ PnaclHost::PendingTranslation::PendingTranslation()
       callback(NexeFdCallback()),
       cache_info(nacl::PnaclCacheInfo()) {
 }
+
+PnaclHost::PendingTranslation::PendingTranslation(
+    const PendingTranslation& other) = default;
 
 PnaclHost::PendingTranslation::~PendingTranslation() {
   if (nexe_fd)
@@ -153,11 +144,11 @@ void PnaclHost::Init() {
   base::FilePath cache_path(GetCachePath());
   if (cache_path.empty() || cache_state_ != CacheUninitialized)
     return;
-  disk_cache_.reset(new pnacl::PnaclTranslationCache());
+  disk_cache_.reset(new PnaclTranslationCache());
   cache_state_ = CacheInitializing;
   int rv = disk_cache_->InitOnDisk(
       cache_path,
-      base::Bind(&PnaclHost::OnCacheInitialized, weak_factory_.GetWeakPtr()));
+      base::Bind(&PnaclHost::OnCacheInitialized, base::Unretained(this)));
   if (rv != net::ERR_IO_PENDING)
     OnCacheInitialized(rv);
 }
@@ -166,17 +157,17 @@ void PnaclHost::Init() {
 // setting the temporary file directory instead of using the system directory.
 void PnaclHost::InitForTest(base::FilePath temp_dir, bool in_memory) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  disk_cache_.reset(new pnacl::PnaclTranslationCache());
+  disk_cache_.reset(new PnaclTranslationCache());
   cache_state_ = CacheInitializing;
   temp_dir_ = temp_dir;
   int rv;
   if (in_memory) {
     rv = disk_cache_->InitInMemory(
-      base::Bind(&PnaclHost::OnCacheInitialized, weak_factory_.GetWeakPtr()));
+        base::Bind(&PnaclHost::OnCacheInitialized, base::Unretained(this)));
   } else {
     rv = disk_cache_->InitOnDisk(
-      temp_dir,
-      base::Bind(&PnaclHost::OnCacheInitialized, weak_factory_.GetWeakPtr()));
+        temp_dir,
+        base::Bind(&PnaclHost::OnCacheInitialized, base::Unretained(this)));
   }
   if (rv != net::ERR_IO_PENDING)
     OnCacheInitialized(rv);
@@ -207,8 +198,8 @@ void PnaclHost::DoCreateTemporaryFile(base::FilePath temp_dir,
     if (!file.IsValid())
       PLOG(ERROR) << "Temp file open failed: " << file.error_details();
   }
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE, base::Bind(cb, Passed(file.Pass())));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(cb, Passed(std::move(file))));
 }
 
 void PnaclHost::CreateTemporaryFile(TempFileCallback cb) {
@@ -239,7 +230,7 @@ void PnaclHost::GetNexeFd(int render_process_id,
     BrowserThread::PostDelayedTask(BrowserThread::IO,
                                    FROM_HERE,
                                    base::Bind(&PnaclHost::GetNexeFd,
-                                              weak_factory_.GetWeakPtr(),
+                                              base::Unretained(this),
                                               render_process_id,
                                               render_view_id,
                                               pp_instance,
@@ -281,14 +272,13 @@ void PnaclHost::GetNexeFd(int render_process_id,
 // request hits.
 void PnaclHost::SendCacheQueryAndTempFileRequest(const std::string& cache_key,
                                                  const TranslationID& id) {
+  DCHECK(thread_checker_.CalledOnValidThread());
   pending_backend_operations_++;
-  disk_cache_->GetNexe(
-      cache_key,
-      base::Bind(
-          &PnaclHost::OnCacheQueryReturn, weak_factory_.GetWeakPtr(), id));
+  disk_cache_->GetNexe(cache_key, base::Bind(&PnaclHost::OnCacheQueryReturn,
+                                             base::Unretained(this), id));
 
   CreateTemporaryFile(
-      base::Bind(&PnaclHost::OnTempFileReturn, weak_factory_.GetWeakPtr(), id));
+      base::Bind(&PnaclHost::OnTempFileReturn, base::Unretained(this), id));
 }
 
 // Callback from the translation cache query. |id| is bound from
@@ -331,7 +321,7 @@ void PnaclHost::OnTempFileReturn(const TranslationID& id,
     // file was being created.
     LOG(ERROR) << "OnTempFileReturn: id not found";
     BrowserThread::PostBlockingPoolTask(
-        FROM_HERE, base::Bind(CloseBaseFile, Passed(file.Pass())));
+        FROM_HERE, base::Bind(CloseBaseFile, Passed(std::move(file))));
     return;
   }
   if (!file.IsValid()) {
@@ -349,7 +339,7 @@ void PnaclHost::OnTempFileReturn(const TranslationID& id,
   }
   PendingTranslation* pt = &entry->second;
   pt->got_nexe_fd = true;
-  pt->nexe_fd = new base::File(file.Pass());
+  pt->nexe_fd = new base::File(std::move(file));
   CheckCacheQueryReady(entry);
 }
 
@@ -357,6 +347,7 @@ void PnaclHost::OnTempFileReturn(const TranslationID& id,
 // whether we actually got a hit or not.
 void PnaclHost::CheckCacheQueryReady(
     const PendingTranslationMap::iterator& entry) {
+  DCHECK(thread_checker_.CalledOnValidThread());
   PendingTranslation* pt = &entry->second;
   if (!(pt->got_cache_reply && pt->got_nexe_fd))
     return;
@@ -382,10 +373,10 @@ void PnaclHost::CheckCacheQueryReady(
     return;
   }
 
-  scoped_ptr<base::File> file(pt->nexe_fd);
+  std::unique_ptr<base::File> file(pt->nexe_fd);
   pt->nexe_fd = NULL;
   pt->got_nexe_fd = false;
-  FileProxy* proxy(new FileProxy(file.Pass(), weak_factory_.GetWeakPtr()));
+  FileProxy* proxy(new FileProxy(std::move(file), this));
 
   if (!base::PostTaskAndReplyWithResult(
            BrowserThread::GetBlockingPool(),
@@ -414,29 +405,24 @@ void PnaclHost::ReturnMiss(const PendingTranslationMap::iterator& entry) {
 // On error, just return a null refptr.
 // static
 scoped_refptr<net::DrainableIOBuffer> PnaclHost::CopyFileToBuffer(
-    scoped_ptr<base::File> file) {
-  base::File::Info info;
+    std::unique_ptr<base::File> file) {
   scoped_refptr<net::DrainableIOBuffer> buffer;
-  bool error = false;
 
   // TODO(eroman): Maximum size should be changed to size_t once that is
   // what IOBuffer requires. crbug.com/488553. Also I don't think the
   // max size should be inclusive here...
-  if (!file->GetInfo(&info) ||
-      info.size >= std::numeric_limits<int>::max()) {
-    PLOG(ERROR) << "File::GetInfo failed";
-    error = true;
-  } else {
-    buffer = new net::DrainableIOBuffer(
-        new net::IOBuffer(base::CheckedNumeric<size_t>(info.size).ValueOrDie()),
-        base::CheckedNumeric<size_t>(info.size).ValueOrDie());
-    if (file->Read(0, buffer->data(), buffer->size()) != info.size) {
-      PLOG(ERROR) << "CopyFileToBuffer file read failed";
-      error = true;
-    }
+  int64_t file_size = file->GetLength();
+  if (file_size < 0 || file_size > std::numeric_limits<int>::max()) {
+    PLOG(ERROR) << "Get file length failed " << file_size;
+    return buffer;
   }
-  if (error) {
-    buffer = NULL;
+
+  buffer = new net::DrainableIOBuffer(
+      new net::IOBuffer(base::checked_cast<size_t>(file_size)),
+      base::checked_cast<size_t>(file_size));
+  if (file->Read(0, buffer->data(), buffer->size()) != file_size) {
+    PLOG(ERROR) << "CopyFileToBuffer file read failed";
+    buffer = nullptr;
   }
   return buffer;
 }
@@ -465,17 +451,15 @@ void PnaclHost::TranslationFinished(int render_process_id,
       !success || !TranslationMayBeCached(entry)) {
     store_nexe = false;
   } else {
-    scoped_ptr<base::File> file(entry->second.nexe_fd);
+    std::unique_ptr<base::File> file(entry->second.nexe_fd);
     entry->second.nexe_fd = NULL;
     entry->second.got_nexe_fd = false;
 
     if (!base::PostTaskAndReplyWithResult(
-             BrowserThread::GetBlockingPool(),
-             FROM_HERE,
-             base::Bind(&PnaclHost::CopyFileToBuffer, Passed(&file)),
-             base::Bind(&PnaclHost::StoreTranslatedNexe,
-                        weak_factory_.GetWeakPtr(),
-                        id))) {
+            BrowserThread::GetBlockingPool(), FROM_HERE,
+            base::Bind(&PnaclHost::CopyFileToBuffer, Passed(&file)),
+            base::Bind(&PnaclHost::StoreTranslatedNexe, base::Unretained(this),
+                       id))) {
       store_nexe = false;
     }
   }
@@ -483,7 +467,7 @@ void PnaclHost::TranslationFinished(int render_process_id,
   if (!store_nexe) {
     // If store_nexe is true, the fd will be closed by CopyFileToBuffer.
     if (entry->second.got_nexe_fd) {
-      scoped_ptr<base::File> file(entry->second.nexe_fd);
+      std::unique_ptr<base::File> file(entry->second.nexe_fd);
       entry->second.nexe_fd = NULL;
       BrowserThread::PostBlockingPoolTask(
           FROM_HERE,
@@ -515,11 +499,9 @@ void PnaclHost::StoreTranslatedNexe(
     return;
   }
   pending_backend_operations_++;
-  disk_cache_->StoreNexe(it->second.cache_key,
-                         buffer.get(),
+  disk_cache_->StoreNexe(it->second.cache_key, buffer.get(),
                          base::Bind(&PnaclHost::OnTranslatedNexeStored,
-                                    weak_factory_.GetWeakPtr(),
-                                    it->first));
+                                    base::Unretained(this), it->first));
 }
 
 // After we know the nexe has been stored, we can clean up, and unblock any
@@ -544,6 +526,7 @@ void PnaclHost::OnTranslatedNexeStored(const TranslationID& id, int net_error) {
 // query. In the overlapped miss case, we expect a hit this time, but a miss
 // is also possible in case of an error.
 void PnaclHost::RequeryMatchingTranslations(const std::string& key) {
+  DCHECK(thread_checker_.CalledOnValidThread());
   // Check for outstanding misses to this same file
   for (PendingTranslationMap::iterator it = pending_translations_.begin();
        it != pending_translations_.end();
@@ -553,10 +536,8 @@ void PnaclHost::RequeryMatchingTranslations(const std::string& key) {
       // something goes wrong, it will just handle it like a miss.
       it->second.got_cache_reply = false;
       pending_backend_operations_++;
-      disk_cache_->GetNexe(key,
-                           base::Bind(&PnaclHost::OnCacheQueryReturn,
-                                      weak_factory_.GetWeakPtr(),
-                                      it->first));
+      disk_cache_->GetNexe(key, base::Bind(&PnaclHost::OnCacheQueryReturn,
+                                           base::Unretained(this), it->first));
     }
   }
 }
@@ -564,7 +545,7 @@ void PnaclHost::RequeryMatchingTranslations(const std::string& key) {
 //////////////////// GetNexeFd hit path
 
 void PnaclHost::OnBufferCopiedToTempFile(const TranslationID& id,
-                                         scoped_ptr<base::File> file,
+                                         std::unique_ptr<base::File> file,
                                          int file_error) {
   DCHECK(thread_checker_.CalledOnValidThread());
   PendingTranslationMap::iterator entry(pending_translations_.find(id));
@@ -580,8 +561,7 @@ void PnaclHost::OnBufferCopiedToTempFile(const TranslationID& id,
         FROM_HERE,
         base::Bind(CloseScopedFile, Passed(&file)));
     CreateTemporaryFile(base::Bind(&PnaclHost::OnTempFileReturn,
-                                   weak_factory_.GetWeakPtr(),
-                                   entry->first));
+                                   base::Unretained(this), entry->first));
     return;
   }
   entry->second.callback.Run(*file.get(), true);
@@ -602,7 +582,7 @@ void PnaclHost::RendererClosing(int render_process_id) {
     PendingTranslationMap::iterator to_erase(it++);
     if (to_erase->first.first == render_process_id) {
       // Clean up the open files.
-      scoped_ptr<base::File> file(to_erase->second.nexe_fd);
+      std::unique_ptr<base::File> file(to_erase->second.nexe_fd);
       to_erase->second.nexe_fd = NULL;
       BrowserThread::PostBlockingPoolTask(
           FROM_HERE,
@@ -616,9 +596,8 @@ void PnaclHost::RendererClosing(int render_process_id) {
     }
   }
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&PnaclHost::DeInitIfSafe, weak_factory_.GetWeakPtr()));
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&PnaclHost::DeInitIfSafe, base::Unretained(this)));
 }
 
 ////////////////// Cache data removal
@@ -633,23 +612,17 @@ void PnaclHost::ClearTranslationCacheEntriesBetween(
   if (cache_state_ == CacheInitializing) {
     // If the backend hasn't yet initialized, try the request again later.
     BrowserThread::PostDelayedTask(
-        BrowserThread::IO,
-        FROM_HERE,
+        BrowserThread::IO, FROM_HERE,
         base::Bind(&PnaclHost::ClearTranslationCacheEntriesBetween,
-                   weak_factory_.GetWeakPtr(),
-                   initial_time,
-                   end_time,
-                   callback),
+                   base::Unretained(this), initial_time, end_time, callback),
         base::TimeDelta::FromMilliseconds(
             kTranslationCacheInitializationDelayMs));
     return;
   }
   pending_backend_operations_++;
   int rv = disk_cache_->DoomEntriesBetween(
-      initial_time,
-      end_time,
-      base::Bind(
-          &PnaclHost::OnEntriesDoomed, weak_factory_.GetWeakPtr(), callback));
+      initial_time, end_time, base::Bind(&PnaclHost::OnEntriesDoomed,
+                                         base::Unretained(this), callback));
   if (rv != net::ERR_IO_PENDING)
     OnEntriesDoomed(callback, rv);
 }
@@ -662,19 +635,19 @@ void PnaclHost::OnEntriesDoomed(const base::Closure& callback, int net_error) {
   // operations, and freeing the backend actually blocks the IO thread. So
   // instead of calling DeInitIfSafe directly, post it for later.
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&PnaclHost::DeInitIfSafe, weak_factory_.GetWeakPtr()));
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&PnaclHost::DeInitIfSafe, base::Unretained(this)));
 }
 
 // Destroying the cache backend causes it to post tasks to the cache thread to
-// flush to disk. Because PnaclHost is a singleton, it does not get destroyed
-// until all the browser threads have gone away and it's too late to post
-// anything (attempting to do so hangs shutdown).  So we make sure to destroy it
-// when we no longer have any outstanding operations that need it. These include
-// pending translations, cache clear requests, and requests to read or write
-// translated nexes.  We check when renderers close, when cache clear requests
-// finish, and when backend operations complete.
+// flush to disk. PnaclHost is leaked on shutdown because registering it as a
+// Singleton with AtExitManager would result in it not being destroyed until all
+// the browser threads have gone away and it's too late to post anything
+// (attempting to do so hangs shutdown) at that point anyways.  So we make sure
+// to destroy it when we no longer have any outstanding operations that need it.
+// These include pending translations, cache clear requests, and requests to
+// read or write translated nexes.  We check when renderers close, when cache
+// clear requests finish, and when backend operations complete.
 
 // It is not safe to delete the backend while it is initializing, nor if it has
 // outstanding entry open requests; it is in theory safe to delete it with

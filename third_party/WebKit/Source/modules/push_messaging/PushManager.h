@@ -6,35 +6,42 @@
 #define PushManager_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
+#include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class PushSubscriptionOptions;
+class ExceptionState;
+class PushSubscriptionOptionsInit;
 class ScriptPromise;
 class ScriptState;
 class ServiceWorkerRegistration;
 
-class PushManager final : public GarbageCollected<PushManager>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PushManager* create(ServiceWorkerRegistration* registration)
-    {
-        return new PushManager(registration);
-    }
+class MODULES_EXPORT PushManager final : public GarbageCollected<PushManager>,
+                                         public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    ScriptPromise subscribe(ScriptState*, const PushSubscriptionOptions&);
-    ScriptPromise getSubscription(ScriptState*);
-    ScriptPromise permissionState(ScriptState*, const PushSubscriptionOptions&);
+ public:
+  static PushManager* create(ServiceWorkerRegistration* registration) {
+    return new PushManager(registration);
+  }
 
-    DECLARE_TRACE();
+  ScriptPromise subscribe(ScriptState*,
+                          const PushSubscriptionOptionsInit&,
+                          ExceptionState&);
+  ScriptPromise getSubscription(ScriptState*);
+  ScriptPromise permissionState(ScriptState*,
+                                const PushSubscriptionOptionsInit&,
+                                ExceptionState&);
 
-private:
-    explicit PushManager(ServiceWorkerRegistration*);
+  DECLARE_TRACE();
 
-    Member<ServiceWorkerRegistration> m_registration;
+ private:
+  explicit PushManager(ServiceWorkerRegistration*);
+
+  Member<ServiceWorkerRegistration> m_registration;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PushManager_h
+#endif  // PushManager_h

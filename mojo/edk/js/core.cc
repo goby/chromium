@@ -4,6 +4,9 @@
 
 #include "mojo/edk/js/core.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "gin/arguments.h"
@@ -21,6 +24,7 @@
 
 namespace mojo {
 namespace edk {
+namespace js {
 
 namespace {
 
@@ -141,12 +145,10 @@ MojoResult WriteMessage(
                           raw_handles.empty() ? NULL : &raw_handles[0],
                           static_cast<uint32_t>(raw_handles.size()),
                           flags);
-  // MojoWriteMessage takes ownership of the handles upon success, so
-  // release them here.
-  if (rv == MOJO_RESULT_OK) {
-    for (size_t i = 0; i < handles.size(); ++i)
-      ignore_result(handles[i]->release());
-  }
+  // MojoWriteMessage takes ownership of the handles, so release them here.
+  for (size_t i = 0; i < handles.size(); ++i)
+    ignore_result(handles[i]->release());
+
   return rv;
 }
 
@@ -282,11 +284,92 @@ v8::Handle<v8::Value> DoDrainData(gin::Arguments* args,
 }
 
 bool IsHandle(gin::Arguments* args, v8::Handle<v8::Value> val) {
-  gin::Handle<mojo::edk::HandleWrapper> ignore_handle;
-  return gin::Converter<gin::Handle<mojo::edk::HandleWrapper>>::FromV8(
+  gin::Handle<mojo::edk::js::HandleWrapper> ignore_handle;
+  return gin::Converter<gin::Handle<mojo::edk::js::HandleWrapper>>::FromV8(
       args->isolate(), val, &ignore_handle);
 }
 
+gin::Dictionary CreateSharedBuffer(const gin::Arguments& args,
+                                   uint64_t num_bytes,
+                                   MojoCreateSharedBufferOptionsFlags flags) {
+  gin::Dictionary dictionary = gin::Dictionary::CreateEmpty(args.isolate());
+  MojoHandle handle = MOJO_HANDLE_INVALID;
+  MojoCreateSharedBufferOptions options;
+  // The |flags| is mandatory parameter for CreateSharedBuffer, and it will
+  // be always initialized in MojoCreateSharedBufferOptions struct. For
+  // forward compatibility, set struct_size to be 8 bytes (struct_size + flags),
+  // so that validator will only check the field that is set.
+  options.struct_size = 8;
+  options.flags = flags;
+  MojoResult result = MojoCreateSharedBuffer(&options, num_bytes, &handle);
+  if (result != MOJO_RESULT_OK) {
+    dictionary.Set("result", result);
+    return dictionary;
+  }
+
+  dictionary.Set("result", result);
+  dictionary.Set("handle", mojo::Handle(handle));
+
+  return dictionary;
+}
+
+gin::Dictionary DuplicateBufferHandle(
+    const gin::Arguments& args,
+    mojo::Handle handle,
+    MojoDuplicateBufferHandleOptionsFlags flags) {
+  gin::Dictionary dictionary = gin::Dictionary::CreateEmpty(args.isolate());
+  MojoHandle duped = MOJO_HANDLE_INVALID;
+  MojoDuplicateBufferHandleOptions options;
+  // The |flags| is mandatory parameter for DuplicateBufferHandle, and it will
+  // be always initialized in MojoDuplicateBufferHandleOptions struct. For
+  // forward compatibility, set struct_size to be 8 bytes (struct_size + flags),
+  // so that validator will only check the field that is set.
+  options.struct_size = 8;
+  options.flags = flags;
+  MojoResult result =
+      MojoDuplicateBufferHandle(handle.value(), &options, &duped);
+  if (result != MOJO_RESULT_OK) {
+    dictionary.Set("result", result);
+    return dictionary;
+  }
+
+  dictionary.Set("result", result);
+  dictionary.Set("handle", mojo::Handle(duped));
+
+  return dictionary;
+}
+
+gin::Dictionary MapBuffer(const gin::Arguments& args,
+                          mojo::Handle handle,
+                          uint64_t offset,
+                          uint64_t num_bytes,
+                          MojoMapBufferFlags flags) {
+  gin::Dictionary dictionary = gin::Dictionary::CreateEmpty(args.isolate());
+  void* data = nullptr;
+  MojoResult result =
+      MojoMapBuffer(handle.value(), offset, num_bytes, &data, flags);
+  if (result != MOJO_RESULT_OK) {
+    dictionary.Set("result", result);
+    return dictionary;
+  }
+
+  v8::Handle<v8::ArrayBuffer> array_buffer =
+      v8::ArrayBuffer::New(args.isolate(), data, num_bytes);
+
+  dictionary.Set("result", result);
+  dictionary.Set("buffer", array_buffer);
+
+  return dictionary;
+}
+
+MojoResult UnmapBuffer(const gin::Arguments& args,
+                       const v8::Handle<v8::ArrayBuffer>& buffer) {
+  // Buffer must be external, created by MapBuffer
+  if (!buffer->IsExternal())
+    return MOJO_RESULT_INVALID_ARGUMENT;
+
+  return MojoUnmapBuffer(buffer->GetContents().Data());
+}
 
 gin::WrapperInfo g_wrapper_info = { gin::kEmbedderNativeGin };
 
@@ -315,6 +398,10 @@ v8::Local<v8::Value> Core::GetModule(v8::Isolate* isolate) {
             .SetMethod("readData", ReadData)
             .SetMethod("drainData", DoDrainData)
             .SetMethod("isHandle", IsHandle)
+            .SetMethod("createSharedBuffer", CreateSharedBuffer)
+            .SetMethod("duplicateBufferHandle", DuplicateBufferHandle)
+            .SetMethod("mapBuffer", MapBuffer)
+            .SetMethod("unmapBuffer", UnmapBuffer)
 
             .SetValue("RESULT_OK", MOJO_RESULT_OK)
             .SetValue("RESULT_CANCELLED", MOJO_RESULT_CANCELLED)
@@ -367,6 +454,16 @@ v8::Local<v8::Value> Core::GetModule(v8::Isolate* isolate) {
             .SetValue("READ_DATA_FLAG_DISCARD", MOJO_READ_DATA_FLAG_DISCARD)
             .SetValue("READ_DATA_FLAG_QUERY", MOJO_READ_DATA_FLAG_QUERY)
             .SetValue("READ_DATA_FLAG_PEEK", MOJO_READ_DATA_FLAG_PEEK)
+            .SetValue("CREATE_SHARED_BUFFER_OPTIONS_FLAG_NONE",
+                      MOJO_CREATE_SHARED_BUFFER_OPTIONS_FLAG_NONE)
+
+            .SetValue("DUPLICATE_BUFFER_HANDLE_OPTIONS_FLAG_NONE",
+                      MOJO_DUPLICATE_BUFFER_HANDLE_OPTIONS_FLAG_NONE)
+
+            .SetValue("DUPLICATE_BUFFER_HANDLE_OPTIONS_FLAG_READ_ONLY",
+                      MOJO_DUPLICATE_BUFFER_HANDLE_OPTIONS_FLAG_READ_ONLY)
+
+            .SetValue("MAP_BUFFER_FLAG_NONE", MOJO_MAP_BUFFER_FLAG_NONE)
             .Build();
 
     data->SetObjectTemplate(&g_wrapper_info, templ);
@@ -375,5 +472,6 @@ v8::Local<v8::Value> Core::GetModule(v8::Isolate* isolate) {
   return templ->NewInstance();
 }
 
+}  // namespace js
 }  // namespace edk
 }  // namespace mojo

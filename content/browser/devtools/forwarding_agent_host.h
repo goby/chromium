@@ -5,8 +5,9 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_FORWARDING_AGENT_HOST_H_
 #define CONTENT_BROWSER_DEVTOOLS_FORWARDING_AGENT_HOST_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/public/browser/devtools_external_agent_proxy.h"
 #include "content/public/browser/devtools_external_agent_proxy_delegate.h"
@@ -17,7 +18,9 @@ class ForwardingAgentHost
     : public DevToolsAgentHostImpl,
       public DevToolsExternalAgentProxy {
  public:
-  ForwardingAgentHost(DevToolsExternalAgentProxyDelegate* delegate);
+  ForwardingAgentHost(
+      const std::string& id,
+      std::unique_ptr<DevToolsExternalAgentProxyDelegate> delegate);
 
  private:
   ~ForwardingAgentHost() override;
@@ -32,13 +35,19 @@ class ForwardingAgentHost
   bool DispatchProtocolMessage(const std::string& message) override;
 
   // DevToolsAgentHost implementation
-  Type GetType() override;
+  std::string GetType() override;
   std::string GetTitle() override;
   GURL GetURL() override;
+  GURL GetFaviconURL() override;
+  std::string GetFrontendURL() override;
   bool Activate() override;
+  void Reload() override;
   bool Close() override;
 
-  scoped_ptr<DevToolsExternalAgentProxyDelegate> delegate_;
+  std::unique_ptr<DevToolsExternalAgentProxyDelegate> delegate_;
+  std::string type_;
+  std::string title_;
+  GURL url_;
 };
 
 }  // namespace content

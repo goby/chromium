@@ -6,24 +6,25 @@
 #define PicturePattern_h
 
 #include "platform/graphics/Pattern.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace blink {
 
 class PLATFORM_EXPORT PicturePattern final : public Pattern {
-public:
-    static PassRefPtr<PicturePattern> create(PassRefPtr<const SkPicture>, RepeatMode);
+ public:
+  static PassRefPtr<PicturePattern> create(sk_sp<SkPicture>, RepeatMode);
 
-    ~PicturePattern() override;
+  ~PicturePattern() override;
 
-protected:
-    PassRefPtr<SkShader> createShader() override;
+ protected:
+  sk_sp<SkShader> createShader(const SkMatrix&) override;
 
-private:
-    PicturePattern(PassRefPtr<const SkPicture>, RepeatMode);
+ private:
+  PicturePattern(sk_sp<SkPicture>, RepeatMode);
 
-    RefPtr<const SkPicture> m_tilePicture;
+  sk_sp<SkPicture> m_tilePicture;
 };
 
-} // namespace
+}  // namespace blink
 
 #endif

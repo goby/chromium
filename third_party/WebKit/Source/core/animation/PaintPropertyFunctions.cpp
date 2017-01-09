@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/animation/PaintPropertyFunctions.h"
 
 #include "core/css/StyleColor.h"
@@ -10,51 +9,57 @@
 
 namespace blink {
 
-bool PaintPropertyFunctions::getInitialColor(CSSPropertyID property, StyleColor& result)
-{
-    return getColor(property, *ComputedStyle::initialStyle(), result);
+bool PaintPropertyFunctions::getInitialColor(CSSPropertyID property,
+                                             StyleColor& result) {
+  return getColor(property, ComputedStyle::initialStyle(), result);
 }
 
-static bool getColorFromPaint(const SVGPaintType type, const Color color, StyleColor& result)
-{
-    switch (type) {
+static bool getColorFromPaint(const SVGPaintType type,
+                              const Color color,
+                              StyleColor& result) {
+  switch (type) {
     case SVG_PAINTTYPE_RGBCOLOR:
-        result = color;
-        return true;
+      result = color;
+      return true;
     case SVG_PAINTTYPE_CURRENTCOLOR:
-        result = StyleColor::currentColor();
-        return true;
+      result = StyleColor::currentColor();
+      return true;
     default:
-        return false;
-    }
+      return false;
+  }
 }
 
-bool PaintPropertyFunctions::getColor(CSSPropertyID property, const ComputedStyle& style, StyleColor& result)
-{
-    switch (property) {
+bool PaintPropertyFunctions::getColor(CSSPropertyID property,
+                                      const ComputedStyle& style,
+                                      StyleColor& result) {
+  switch (property) {
     case CSSPropertyFill:
-        return getColorFromPaint(style.svgStyle().fillPaintType(), style.svgStyle().fillPaintColor(), result);
+      return getColorFromPaint(style.svgStyle().fillPaintType(),
+                               style.svgStyle().fillPaintColor(), result);
     case CSSPropertyStroke:
-        return getColorFromPaint(style.svgStyle().strokePaintType(), style.svgStyle().strokePaintColor(), result);
+      return getColorFromPaint(style.svgStyle().strokePaintType(),
+                               style.svgStyle().strokePaintColor(), result);
     default:
-        ASSERT_NOT_REACHED();
-        return false;
-    }
+      NOTREACHED();
+      return false;
+  }
 }
 
-void PaintPropertyFunctions::setColor(CSSPropertyID property, ComputedStyle& style, const Color& color)
-{
-    switch (property) {
+void PaintPropertyFunctions::setColor(CSSPropertyID property,
+                                      ComputedStyle& style,
+                                      const Color& color) {
+  switch (property) {
     case CSSPropertyFill:
-        style.accessSVGStyle().setFillPaint(SVG_PAINTTYPE_RGBCOLOR, color, String(), true, true);
-        break;
+      style.accessSVGStyle().setFillPaint(SVG_PAINTTYPE_RGBCOLOR, color,
+                                          String(), true, true);
+      break;
     case CSSPropertyStroke:
-        style.accessSVGStyle().setStrokePaint(SVG_PAINTTYPE_RGBCOLOR, color, String(), true, true);
-        break;
+      style.accessSVGStyle().setStrokePaint(SVG_PAINTTYPE_RGBCOLOR, color,
+                                            String(), true, true);
+      break;
     default:
-        ASSERT_NOT_REACHED();
-    }
+      NOTREACHED();
+  }
 }
 
-
-} // namespace blink
+}  // namespace blink

@@ -4,6 +4,10 @@
 
 #include "extensions/browser/api/device_permissions_manager.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string_number_conversions.h"
@@ -12,7 +16,7 @@
 #include "base/values.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/browser_thread.h"
-#include "device/core/device_client.h"
+#include "device/base/device_client.h"
 #include "device/hid/hid_device_info.h"
 #include "device/hid/hid_service.h"
 #include "device/usb/usb_device.h"
@@ -96,9 +100,9 @@ void SaveDevicePermissionEntry(BrowserContext* context,
     devices = update.Create();
   }
 
-  scoped_ptr<base::Value> device_entry(entry->ToValue());
-  DCHECK(devices->Find(*device_entry.get()) == devices->end());
-  devices->Append(device_entry.release());
+  std::unique_ptr<base::Value> device_entry(entry->ToValue());
+  DCHECK(devices->Find(*device_entry) == devices->end());
+  devices->Append(std::move(device_entry));
 }
 
 bool MatchesDevicePermissionEntry(const base::DictionaryValue* value,
@@ -214,7 +218,7 @@ scoped_refptr<DevicePermissionEntry> ReadDevicePermissionEntry(
   // If a last used time is not stored in ExtensionPrefs last_used.is_null()
   // will be true.
   std::string last_used_str;
-  int64 last_used_i64 = 0;
+  int64_t last_used_i64 = 0;
   base::Time last_used;
   if (entry->GetStringWithoutPathExpansion(kDeviceLastUsed, &last_used_str) &&
       base::StringToInt64(last_used_str, &last_used_i64)) {
@@ -248,7 +252,7 @@ std::set<scoped_refptr<DevicePermissionEntry>> GetDevicePermissionEntries(
     return result;
   }
 
-  for (const base::Value* entry : *devices) {
+  for (const auto& entry : *devices) {
     const base::DictionaryValue* entry_dict;
     if (entry->GetAsDictionary(&entry_dict)) {
       scoped_refptr<DevicePermissionEntry> device_entry =
@@ -307,13 +311,13 @@ bool DevicePermissionEntry::IsPersistent() const {
   return !serial_number_.empty();
 }
 
-scoped_ptr<base::Value> DevicePermissionEntry::ToValue() const {
+std::unique_ptr<base::Value> DevicePermissionEntry::ToValue() const {
   if (!IsPersistent()) {
     return nullptr;
   }
 
   DCHECK(!serial_number_.empty());
-  scoped_ptr<base::DictionaryValue> entry_dict(
+  std::unique_ptr<base::DictionaryValue> entry_dict(
       DictionaryBuilder()
           .Set(kDeviceType, TypeToString(type_))
           .Set(kDeviceVendorId, vendor_id_)
@@ -334,7 +338,7 @@ scoped_ptr<base::Value> DevicePermissionEntry::ToValue() const {
         kDeviceLastUsed, base::Int64ToString(last_used_.ToInternalValue()));
   }
 
-  return entry_dict.Pass();
+  return std::move(entry_dict);
 }
 
 base::string16 DevicePermissionEntry::GetPermissionMessageString() const {
@@ -405,8 +409,8 @@ DevicePermissionsManager* DevicePermissionsManager::Get(
 
 // static
 base::string16 DevicePermissionsManager::GetPermissionMessage(
-    uint16 vendor_id,
-    uint16 product_id,
+    uint16_t vendor_id,
+    uint16_t product_id,
     const base::string16& manufacturer_string,
     const base::string16& product_string,
     const base::string16& serial_number,

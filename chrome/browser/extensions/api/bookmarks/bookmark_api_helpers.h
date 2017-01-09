@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_BOOKMARKS_BOOKMARK_API_HELPERS_H_
 #define CHROME_BROWSER_EXTENSIONS_API_BOOKMARKS_BOOKMARK_API_HELPERS_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "chrome/common/extensions/api/bookmarks.h"
 
 namespace bookmarks {
@@ -21,8 +22,7 @@ class ManagedBookmarkService;
 namespace extensions {
 namespace bookmark_api_helpers {
 
-// The returned value is owned by the caller.
-api::bookmarks::BookmarkTreeNode* GetBookmarkTreeNode(
+api::bookmarks::BookmarkTreeNode GetBookmarkTreeNode(
     bookmarks::ManagedBookmarkService* managed,
     const bookmarks::BookmarkNode* node,
     bool recurse,
@@ -39,20 +39,19 @@ void PopulateBookmarkTreeNode(
 // Adds a JSON representation of |node| to the JSON |nodes|.
 void AddNode(bookmarks::ManagedBookmarkService* managed,
              const bookmarks::BookmarkNode* node,
-             std::vector<linked_ptr<api::bookmarks::BookmarkTreeNode>>* nodes,
+             std::vector<api::bookmarks::BookmarkTreeNode>* nodes,
              bool recurse);
 
 // Adds a JSON representation of |node| of folder type to the JSON |nodes|.
-void AddNodeFoldersOnly(
-    bookmarks::ManagedBookmarkService* managed,
-    const bookmarks::BookmarkNode* node,
-    std::vector<linked_ptr<api::bookmarks::BookmarkTreeNode>>* nodes,
-    bool recurse);
+void AddNodeFoldersOnly(bookmarks::ManagedBookmarkService* managed,
+                        const bookmarks::BookmarkNode* node,
+                        std::vector<api::bookmarks::BookmarkTreeNode>* nodes,
+                        bool recurse);
 
 // Remove node of |id|.
 bool RemoveNode(bookmarks::BookmarkModel* model,
                 bookmarks::ManagedBookmarkService* managed,
-                int64 id,
+                int64_t id,
                 bool recursive,
                 std::string* error);
 

@@ -4,8 +4,13 @@
 
 #include "device/bluetooth/dbus/bluetooth_le_advertisement_service_provider.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/platform_thread.h"
 #include "dbus/exported_object.h"
@@ -29,18 +34,18 @@ class BluetoothAdvertisementServiceProviderImpl
       const dbus::ObjectPath& object_path,
       Delegate* delegate,
       AdvertisementType type,
-      scoped_ptr<UUIDList> service_uuids,
-      scoped_ptr<ManufacturerData> manufacturer_data,
-      scoped_ptr<UUIDList> solicit_uuids,
-      scoped_ptr<ServiceData> service_data)
+      std::unique_ptr<UUIDList> service_uuids,
+      std::unique_ptr<ManufacturerData> manufacturer_data,
+      std::unique_ptr<UUIDList> solicit_uuids,
+      std::unique_ptr<ServiceData> service_data)
       : origin_thread_id_(base::PlatformThread::CurrentId()),
         bus_(bus),
         delegate_(delegate),
         type_(type),
-        service_uuids_(service_uuids.Pass()),
-        manufacturer_data_(manufacturer_data.Pass()),
-        solicit_uuids_(solicit_uuids.Pass()),
-        service_data_(service_data.Pass()),
+        service_uuids_(std::move(service_uuids)),
+        manufacturer_data_(std::move(manufacturer_data)),
+        solicit_uuids_(std::move(solicit_uuids)),
+        service_data_(std::move(service_data)),
         weak_ptr_factory_(this) {
     DCHECK(bus);
     DCHECK(delegate);
@@ -112,25 +117,25 @@ class BluetoothAdvertisementServiceProviderImpl
     std::string property_name;
     if (!reader.PopString(&interface_name) ||
         !reader.PopString(&property_name) || reader.HasMoreData()) {
-      scoped_ptr<dbus::ErrorResponse> error_response =
+      std::unique_ptr<dbus::ErrorResponse> error_response =
           dbus::ErrorResponse::FromMethodCall(method_call, kErrorInvalidArgs,
                                               "Expected 'ss'.");
-      response_sender.Run(error_response.Pass());
+      response_sender.Run(std::move(error_response));
       return;
     }
 
     // Only the advertisement interface is supported.
     if (interface_name !=
         bluetooth_advertisement::kBluetoothAdvertisementInterface) {
-      scoped_ptr<dbus::ErrorResponse> error_response =
+      std::unique_ptr<dbus::ErrorResponse> error_response =
           dbus::ErrorResponse::FromMethodCall(
               method_call, kErrorInvalidArgs,
               "No such interface: '" + interface_name + "'.");
-      response_sender.Run(error_response.Pass());
+      response_sender.Run(std::move(error_response));
       return;
     }
 
-    scoped_ptr<dbus::Response> response =
+    std::unique_ptr<dbus::Response> response =
         dbus::Response::FromMethodCall(method_call);
     dbus::MessageWriter writer(response.get());
     dbus::MessageWriter variant_writer(NULL);
@@ -163,15 +168,15 @@ class BluetoothAdvertisementServiceProviderImpl
       writer.OpenVariant("o", &variant_writer);
       AppendServiceDataVariant(&variant_writer);
     } else {
-      scoped_ptr<dbus::ErrorResponse> error_response =
+      std::unique_ptr<dbus::ErrorResponse> error_response =
           dbus::ErrorResponse::FromMethodCall(
               method_call, kErrorInvalidArgs,
               "No such property: '" + property_name + "'.");
-      response_sender.Run(error_response.Pass());
+      response_sender.Run(std::move(error_response));
     }
 
     writer.CloseContainer(&variant_writer);
-    response_sender.Run(response.Pass());
+    response_sender.Run(std::move(response));
   }
 
   // Called by dbus:: when the Bluetooth daemon fetches all properties of the
@@ -186,25 +191,25 @@ class BluetoothAdvertisementServiceProviderImpl
 
     std::string interface_name;
     if (!reader.PopString(&interface_name) || reader.HasMoreData()) {
-      scoped_ptr<dbus::ErrorResponse> error_response =
+      std::unique_ptr<dbus::ErrorResponse> error_response =
           dbus::ErrorResponse::FromMethodCall(method_call, kErrorInvalidArgs,
                                               "Expected 's'.");
-      response_sender.Run(error_response.Pass());
+      response_sender.Run(std::move(error_response));
       return;
     }
 
     // Only the advertisement interface is supported.
     if (interface_name !=
         bluetooth_advertisement::kBluetoothAdvertisementInterface) {
-      scoped_ptr<dbus::ErrorResponse> error_response =
+      std::unique_ptr<dbus::ErrorResponse> error_response =
           dbus::ErrorResponse::FromMethodCall(
               method_call, kErrorInvalidArgs,
               "No such interface: '" + interface_name + "'.");
-      response_sender.Run(error_response.Pass());
+      response_sender.Run(std::move(error_response));
       return;
     }
 
-    response_sender.Run(CreateGetAllResponse(method_call).Pass());
+    response_sender.Run(CreateGetAllResponse(method_call));
   }
 
   // Called by dbus:: when a method is exported.
@@ -216,12 +221,12 @@ class BluetoothAdvertisementServiceProviderImpl
   }
 
   // Helper for populating the DBus response with the advertisement data.
-  scoped_ptr<dbus::Response> CreateGetAllResponse(
+  std::unique_ptr<dbus::Response> CreateGetAllResponse(
       dbus::MethodCall* method_call) {
     VLOG(2) << "Descriptor value obtained from delegate. Responding to "
             << "GetAll.";
 
-    scoped_ptr<dbus::Response> response =
+    std::unique_ptr<dbus::Response> response =
         dbus::Response::FromMethodCall(method_call);
 
     dbus::MessageWriter writer(response.get());
@@ -243,9 +248,9 @@ class BluetoothAdvertisementServiceProviderImpl
   // descriptor value.
   void OnGet(dbus::MethodCall* method_call,
              dbus::ExportedObject::ResponseSender response_sender,
-             const std::vector<uint8>& value) {
+             const std::vector<uint8_t>& value) {
     VLOG(2) << "Returning descriptor value obtained from delegate.";
-    scoped_ptr<dbus::Response> response =
+    std::unique_ptr<dbus::Response> response =
         dbus::Response::FromMethodCall(method_call);
     dbus::MessageWriter writer(response.get());
     dbus::MessageWriter variant_writer(NULL);
@@ -254,7 +259,7 @@ class BluetoothAdvertisementServiceProviderImpl
     variant_writer.AppendArrayOfBytes(value.data(), value.size());
     writer.CloseContainer(&variant_writer);
 
-    response_sender.Run(response.Pass());
+    response_sender.Run(std::move(response));
   }
 
   void AppendArrayVariantOfStrings(dbus::MessageWriter* dict_writer,
@@ -375,10 +380,10 @@ class BluetoothAdvertisementServiceProviderImpl
 
   // Advertisement data that needs to be provided to BlueZ when requested.
   AdvertisementType type_;
-  scoped_ptr<UUIDList> service_uuids_;
-  scoped_ptr<ManufacturerData> manufacturer_data_;
-  scoped_ptr<UUIDList> solicit_uuids_;
-  scoped_ptr<ServiceData> service_data_;
+  std::unique_ptr<UUIDList> service_uuids_;
+  std::unique_ptr<ManufacturerData> manufacturer_data_;
+  std::unique_ptr<UUIDList> solicit_uuids_;
+  std::unique_ptr<ServiceData> service_data_;
 
   // D-Bus object we are exporting, owned by this object.
   scoped_refptr<dbus::ExportedObject> exported_object_;
@@ -400,24 +405,24 @@ BluetoothLEAdvertisementServiceProvider::
     ~BluetoothLEAdvertisementServiceProvider() {}
 
 // static
-scoped_ptr<BluetoothLEAdvertisementServiceProvider>
+std::unique_ptr<BluetoothLEAdvertisementServiceProvider>
 BluetoothLEAdvertisementServiceProvider::Create(
     dbus::Bus* bus,
     const dbus::ObjectPath& object_path,
     Delegate* delegate,
     AdvertisementType type,
-    scoped_ptr<UUIDList> service_uuids,
-    scoped_ptr<ManufacturerData> manufacturer_data,
-    scoped_ptr<UUIDList> solicit_uuids,
-    scoped_ptr<ServiceData> service_data) {
-  if (!bluez::BluezDBusManager::Get()->IsUsingStub()) {
-    return make_scoped_ptr(new BluetoothAdvertisementServiceProviderImpl(
-        bus, object_path, delegate, type, service_uuids.Pass(),
-        manufacturer_data.Pass(), solicit_uuids.Pass(), service_data.Pass()));
-  } else {
-    return make_scoped_ptr(
-        new FakeBluetoothLEAdvertisementServiceProvider(object_path, delegate));
+    std::unique_ptr<UUIDList> service_uuids,
+    std::unique_ptr<ManufacturerData> manufacturer_data,
+    std::unique_ptr<UUIDList> solicit_uuids,
+    std::unique_ptr<ServiceData> service_data) {
+  if (!bluez::BluezDBusManager::Get()->IsUsingFakes()) {
+    return base::MakeUnique<BluetoothAdvertisementServiceProviderImpl>(
+        bus, object_path, delegate, type, std::move(service_uuids),
+        std::move(manufacturer_data), std::move(solicit_uuids),
+        std::move(service_data));
   }
+  return base::MakeUnique<FakeBluetoothLEAdvertisementServiceProvider>(
+      object_path, delegate);
 }
 
 }  // namespace bluez

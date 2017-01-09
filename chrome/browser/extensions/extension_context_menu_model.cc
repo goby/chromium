@@ -4,13 +4,13 @@
 
 #include "chrome/browser/extensions/extension_context_menu_model.h"
 
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/extensions/active_script_controller.h"
 #include "chrome/browser/extensions/context_menu_matcher.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
+#include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -29,6 +29,8 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/grit/components_scaled_resources.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/context_menu_params.h"
 #include "extensions/browser/extension_registry.h"
@@ -41,7 +43,10 @@
 #include "extensions/common/manifest_url_handlers.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/vector_icons_public.h"
 
 namespace extensions {
 
@@ -140,7 +145,7 @@ class UninstallDialogHelper : public ExtensionUninstallDialog::Delegate {
     delete this;
   }
 
-  scoped_ptr<ExtensionUninstallDialog> uninstall_dialog_;
+  std::unique_ptr<ExtensionUninstallDialog> uninstall_dialog_;
 
   DISALLOW_COPY_AND_ASSIGN(UninstallDialogHelper);
 };
@@ -225,11 +230,6 @@ bool ExtensionContextMenuModel::IsCommandIdEnabled(int command_id) const {
   return true;
 }
 
-bool ExtensionContextMenuModel::GetAcceleratorForCommandId(
-    int command_id, ui::Accelerator* accelerator) {
-  return false;
-}
-
 void ExtensionContextMenuModel::ExecuteCommand(int command_id,
                                                int event_flags) {
   const Extension* extension = GetExtension();
@@ -240,14 +240,15 @@ void ExtensionContextMenuModel::ExecuteCommand(int command_id,
       command_id <= IDC_EXTENSIONS_CONTEXT_CUSTOM_LAST) {
     DCHECK(extension_items_);
     extension_items_->ExecuteCommand(command_id, GetActiveWebContents(),
-                                     content::ContextMenuParams());
+                                     nullptr, content::ContextMenuParams());
     return;
   }
 
   switch (command_id) {
     case NAME: {
       content::OpenURLParams params(ManifestURL::GetHomepageURL(extension),
-                                    content::Referrer(), NEW_FOREGROUND_TAB,
+                                    content::Referrer(),
+                                    WindowOpenDisposition::NEW_FOREGROUND_TAB,
                                     ui::PAGE_TRANSITION_LINK, false);
       browser_->OpenURL(params);
       break;
@@ -329,8 +330,8 @@ void ExtensionContextMenuModel::InitMenu(const Extension* extension,
     if (is_required_by_policy) {
       int uninstall_index = GetIndexOfCommandId(UNINSTALL);
       SetIcon(uninstall_index,
-              ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-                  IDR_OMNIBOX_HTTPS_POLICY_WARNING));
+              gfx::Image(gfx::CreateVectorIcon(gfx::VectorIconId::BUSINESS, 16,
+                                               gfx::kChromeIconGrey)));
     }
   }
 
@@ -346,8 +347,11 @@ void ExtensionContextMenuModel::InitMenu(const Extension* extension,
     AddItemWithStringId(MANAGE, IDS_MANAGE_EXTENSION);
   }
 
+  const ActionInfo* action_info = ActionInfo::GetPageActionInfo(extension);
+  if (!action_info)
+    action_info = ActionInfo::GetBrowserActionInfo(extension);
   if (profile_->GetPrefs()->GetBoolean(prefs::kExtensionsUIDeveloperMode) &&
-      delegate_ && !is_component_) {
+      delegate_ && !is_component_ && action_info && !action_info->synthesized) {
     AddSeparator(ui::NORMAL_SEPARATOR);
     AddItemWithStringId(INSPECT_POPUP, IDS_EXTENSION_ACTION_INSPECT_POPUP);
   }
@@ -378,7 +382,7 @@ ExtensionContextMenuModel::GetCurrentPageAccess(
     content::WebContents* web_contents) const {
   ScriptingPermissionsModifier modifier(profile_, extension);
   DCHECK(modifier.HasAffectedExtension());
-  if (util::AllowedScriptingOnAllUrls(extension->id(), profile_))
+  if (modifier.IsAllowedOnAllUrls())
     return PAGE_ACCESS_RUN_ON_ALL_SITES;
   if (modifier.HasGrantedHostPermission(
           GetActiveWebContents()->GetLastCommittedURL()))
@@ -428,21 +432,22 @@ void ExtensionContextMenuModel::HandlePageAccessCommand(
 
   const GURL& url = web_contents->GetLastCommittedURL();
   ScriptingPermissionsModifier modifier(profile_, extension);
+  DCHECK(modifier.HasAffectedExtension());
   switch (command_id) {
     case PAGE_ACCESS_RUN_ON_CLICK:
       if (current_access == PAGE_ACCESS_RUN_ON_ALL_SITES)
-        util::SetAllowedScriptingOnAllUrls(extension->id(), profile_, false);
+        modifier.SetAllowedOnAllUrls(false);
       if (modifier.HasGrantedHostPermission(url))
         modifier.RemoveGrantedHostPermission(url);
       break;
     case PAGE_ACCESS_RUN_ON_SITE:
       if (current_access == PAGE_ACCESS_RUN_ON_ALL_SITES)
-        util::SetAllowedScriptingOnAllUrls(extension->id(), profile_, false);
+        modifier.SetAllowedOnAllUrls(false);
       if (!modifier.HasGrantedHostPermission(url))
         modifier.GrantHostPermission(url);
       break;
     case PAGE_ACCESS_RUN_ON_ALL_SITES:
-      util::SetAllowedScriptingOnAllUrls(extension->id(), profile_, true);
+      modifier.SetAllowedOnAllUrls(true);
       break;
     default:
       NOTREACHED();
@@ -450,10 +455,10 @@ void ExtensionContextMenuModel::HandlePageAccessCommand(
 
   if (command_id == PAGE_ACCESS_RUN_ON_SITE ||
       command_id == PAGE_ACCESS_RUN_ON_ALL_SITES) {
-    ActiveScriptController* controller =
-        ActiveScriptController::GetForWebContents(web_contents);
-    if (controller && controller->WantsToRun(extension))
-      controller->OnClicked(extension);
+    ExtensionActionRunner* runner =
+        ExtensionActionRunner::GetForWebContents(web_contents);
+    if (runner && runner->WantsToRun(extension))
+      runner->RunBlockedActions(extension);
   }
 }
 

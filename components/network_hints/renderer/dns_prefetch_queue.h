@@ -24,10 +24,13 @@
 #ifndef COMPONENTS_NETWORK_HINTS_RENDERER_DNS_PREFETCH_QUEUE_H__
 #define COMPONENTS_NETWORK_HINTS_RENDERER_DNS_PREFETCH_QUEUE_H__
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace network_hints {
 
@@ -36,7 +39,7 @@ namespace network_hints {
 class DnsQueue {
  public:
   // BufferSize is a signed type used for indexing into a buffer.
-  typedef int32 BufferSize;
+  typedef int32_t BufferSize;
 
   enum PushResult { SUCCESSFUL_PUSH, OVERFLOW_PUSH, REDUNDANT_PUSH };
 
@@ -74,7 +77,8 @@ class DnsQueue {
  private:
   bool Validate();  // Checks that all internal data is valid.
 
-  const scoped_ptr<char[]> buffer_;  // Circular buffer, plus extra char ('\0').
+  // Circular buffer, plus extra char ('\0').
+  const std::unique_ptr<char[]> buffer_;
   const BufferSize buffer_size_;  // Size one smaller than allocated space.
   const BufferSize buffer_sentinel_;  // Index of extra '\0' at end of buffer_.
 

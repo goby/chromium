@@ -91,7 +91,8 @@
     color: #5a5a5a;
 }
 
-.tabbed-pane-header-tab:hover {
+.tabbed-pane-header-tab:hover,
+.tabbed-pane-header-tab.selected:hover {
     color: #333;
     background-color: #e5e5e5;
 }
@@ -157,7 +158,7 @@
     width: 24px;
 }
 
-@media (-webkit-min-device-pixel-ratio: 1.5) {
+@media (-webkit-min-device-pixel-ratio: 1.1) {
 .tabbed-pane-header-tabs-drop-down-container > .glyph {
     -webkit-mask-image: url(Images/toolbarButtonGlyphs_2x.png);
 }
@@ -192,6 +193,7 @@
     flex: 0 0 auto;
     flex-direction: column;
     padding-top: 10px;
+    overflow: hidden;
 }
 
 .tabbed-pane-shadow.vertical-tab-layout .tabbed-pane-content {
@@ -248,7 +250,7 @@
     border-top: 1px solid hsl(218, 82%, 78%);
 }
 
-@media (-webkit-min-device-pixel-ratio: 1.5) {
+@media (-webkit-min-device-pixel-ratio: 1.1) {
     .tabbed-pane-tab-slider {
         border-top: none;
     }
@@ -258,6 +260,21 @@
     visibility: visible;
 }
 
+.tabbed-pane-header-tab.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 .tabbed-pane-header.tabbed-pane-no-header-background {
     background-color: transparent;
+}
+
+.tabbed-pane-left-toolbar {
+    margin-right: -4px;
+    flex: none;
+}
+
+.tabbed-pane-right-toolbar {
+    margin-left: -4px;
+    flex: none;
 }

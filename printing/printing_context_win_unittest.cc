@@ -4,6 +4,9 @@
 
 #include "printing/printing_context_win.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/win/scoped_handle.h"
@@ -26,7 +29,7 @@ class PrintingContextTest : public PrintingTest<testing::Test>,
   }
 
   // PrintingContext::Delegate methods.
-  gfx::NativeView GetParentView() override { return NULL; }
+  gfx::NativeView GetParentView() override { return nullptr; }
   std::string GetAppLocale() override { return std::string(); }
 
  protected:
@@ -37,21 +40,24 @@ class PrintingContextTest : public PrintingTest<testing::Test>,
 };
 
 namespace {
+
 struct FreeHandleTraits {
   typedef HANDLE Handle;
   static void CloseHandle(HANDLE handle) { GlobalFree(handle); }
-  static bool IsHandleValid(HANDLE handle) { return handle != NULL; }
-  static HANDLE NullHandle() { return NULL; }
+  static bool IsHandleValid(HANDLE handle) { return handle != nullptr; }
+  static HANDLE NullHandle() { return nullptr; }
 };
-typedef base::win::GenericScopedHandle<FreeHandleTraits,
-                                       base::win::DummyVerifierTraits>
-    ScopedGlobalAlloc;
-}
 
-class MockPrintingContextWin : public PrintingContextSytemDialogWin {
+using ScopedGlobalAlloc =
+    base::win::GenericScopedHandle<FreeHandleTraits,
+                                   base::win::DummyVerifierTraits>;
+
+}  // namespace
+
+class MockPrintingContextWin : public PrintingContextSystemDialogWin {
  public:
-  MockPrintingContextWin(Delegate* delegate)
-      : PrintingContextSytemDialogWin(delegate) {}
+  explicit MockPrintingContextWin(Delegate* delegate)
+      : PrintingContextSystemDialogWin(delegate) {}
 
  protected:
   // This is a fake PrintDlgEx implementation that sets the right fields in
@@ -72,10 +78,10 @@ class MockPrintingContextWin : public PrintingContextSytemDialogWin {
     if (!printer.OpenPrinter(printer_name.c_str()))
       return E_FAIL;
 
-    const DEVMODE* dev_mode = NULL;
-    lppd->hDC = NULL;
-    lppd->hDevMode = NULL;
-    lppd->hDevNames = NULL;
+    const DEVMODE* dev_mode = nullptr;
+    lppd->hDC = nullptr;
+    lppd->hDevMode = nullptr;
+    lppd->hDevNames = nullptr;
 
     PrinterInfo2 info_2;
     if (info_2.Init(printer.Get()))
@@ -84,7 +90,7 @@ class MockPrintingContextWin : public PrintingContextSytemDialogWin {
       return E_FAIL;
 
     base::win::ScopedCreateDC hdc(
-        CreateDC(L"WINSPOOL", printer_name.c_str(), NULL, dev_mode));
+        CreateDC(L"WINSPOOL", printer_name.c_str(), nullptr, dev_mode));
     if (!hdc.Get())
       return E_FAIL;
 
@@ -97,7 +103,7 @@ class MockPrintingContextWin : public PrintingContextSytemDialogWin {
       return E_FAIL;
     memcpy(dev_mode_ptr, dev_mode, dev_mode_size);
     GlobalUnlock(dev_mode_mem.Get());
-    dev_mode_ptr = NULL;
+    dev_mode_ptr = nullptr;
 
     size_t driver_size =
         2 + sizeof(wchar_t) * lstrlen(info_2.get()->pDriverName);
@@ -115,21 +121,18 @@ class MockPrintingContextWin : public PrintingContextSytemDialogWin {
     DEVNAMES* dev_names = reinterpret_cast<DEVNAMES*>(dev_names_ptr);
     dev_names->wDefault = 1;
     dev_names->wDriverOffset = sizeof(DEVNAMES) / sizeof(wchar_t);
-    memcpy(reinterpret_cast<uint8*>(dev_names_ptr) + dev_names->wDriverOffset,
-           info_2.get()->pDriverName,
-           driver_size);
+    memcpy(reinterpret_cast<uint8_t*>(dev_names_ptr) + dev_names->wDriverOffset,
+           info_2.get()->pDriverName, driver_size);
     dev_names->wDeviceOffset = base::checked_cast<WORD>(
         dev_names->wDriverOffset + driver_size / sizeof(wchar_t));
-    memcpy(reinterpret_cast<uint8*>(dev_names_ptr) + dev_names->wDeviceOffset,
-           info_2.get()->pPrinterName,
-           printer_size);
+    memcpy(reinterpret_cast<uint8_t*>(dev_names_ptr) + dev_names->wDeviceOffset,
+           info_2.get()->pPrinterName, printer_size);
     dev_names->wOutputOffset = base::checked_cast<WORD>(
         dev_names->wDeviceOffset + printer_size / sizeof(wchar_t));
-    memcpy(reinterpret_cast<uint8*>(dev_names_ptr) + dev_names->wOutputOffset,
-           info_2.get()->pPortName,
-           port_size);
+    memcpy(reinterpret_cast<uint8_t*>(dev_names_ptr) + dev_names->wOutputOffset,
+           info_2.get()->pPortName, port_size);
     GlobalUnlock(dev_names_mem.Get());
-    dev_names_ptr = NULL;
+    dev_names_ptr = nullptr;
 
     lppd->hDC = hdc.Take();
     lppd->hDevMode = dev_mode_mem.Take();
@@ -152,7 +155,7 @@ TEST_F(PrintingContextTest, PrintAll) {
                  base::Unretained(this)));
   EXPECT_EQ(PrintingContext::OK, result());
   PrintSettings settings = context.settings();
-  EXPECT_EQ(settings.ranges().size(), 0);
+  EXPECT_EQ(0u, settings.ranges().size());
 }
 
 TEST_F(PrintingContextTest, Base) {
@@ -162,14 +165,14 @@ TEST_F(PrintingContextTest, Base) {
   PrintSettings settings;
   settings.set_device_name(GetDefaultPrinter());
   // Initialize it.
-  scoped_ptr<PrintingContext> context(PrintingContext::Create(this));
-  EXPECT_EQ(PrintingContext::OK, context->InitWithSettings(settings));
+  PrintingContextWin context(this);
+  EXPECT_EQ(PrintingContext::OK, context.InitWithSettingsForTest(settings));
 
   // The print may lie to use and may not support world transformation.
   // Verify right now.
   XFORM random_matrix = { 1, 0.1f, 0, 1.5f, 0, 1 };
-  EXPECT_TRUE(SetWorldTransform(context->context(), &random_matrix));
-  EXPECT_TRUE(ModifyWorldTransform(context->context(), NULL, MWT_IDENTITY));
+  EXPECT_TRUE(SetWorldTransform(context.context(), &random_matrix));
+  EXPECT_TRUE(ModifyWorldTransform(context.context(), nullptr, MWT_IDENTITY));
 }
 
 }  // namespace printing

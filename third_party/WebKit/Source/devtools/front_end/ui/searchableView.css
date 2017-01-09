@@ -10,10 +10,15 @@
     border-top: 1px solid #ccc;
     display: flex;
     overflow: hidden;
+    z-index: 0;
 }
 
 .search-bar.replaceable {
     flex: 0 0 44px;
+}
+
+.search-toolbar {
+    margin-top: -2px;
 }
 
 .search-replace {
@@ -68,6 +73,7 @@
     background-image: linear-gradient(rgb(241, 241, 241), rgb(220, 220, 220));
     width: 100%;
     height: 20px;
+    white-space: nowrap;
 }
 
 .toolbar-search button.search-action-button:active {

@@ -23,66 +23,68 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/scroll/ScrollbarThemeMock.h"
 
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/paint/DrawingRecorder.h"
-#include "platform/scroll/ScrollbarThemeClient.h"
+#include "platform/scroll/Scrollbar.h"
 
 namespace blink {
 
-static bool gShouldRepaintAllPartsOnInvalidation = true;
+static int cScrollbarThickness[] = {15, 11};
 
-void ScrollbarThemeMock::setShouldRepaintAllPartsOnInvalidation(bool shouldRepaint)
-{
-    gShouldRepaintAllPartsOnInvalidation = shouldRepaint;
+int ScrollbarThemeMock::scrollbarThickness(ScrollbarControlSize controlSize) {
+  return cScrollbarThickness[controlSize];
 }
 
-static int cScrollbarThickness[] = { 15, 11 };
-
-int ScrollbarThemeMock::scrollbarThickness(ScrollbarControlSize controlSize)
-{
-    return cScrollbarThickness[controlSize];
+bool ScrollbarThemeMock::usesOverlayScrollbars() const {
+  return RuntimeEnabledFeatures::overlayScrollbarsEnabled();
 }
 
-bool ScrollbarThemeMock::usesOverlayScrollbars() const
-{
-    return RuntimeEnabledFeatures::overlayScrollbarsEnabled();
+IntRect ScrollbarThemeMock::trackRect(const ScrollbarThemeClient& scrollbar,
+                                      bool) {
+  return scrollbar.frameRect();
 }
 
-bool ScrollbarThemeMock::shouldRepaintAllPartsOnInvalidation() const
-{
-    return gShouldRepaintAllPartsOnInvalidation;
+void ScrollbarThemeMock::paintTrackBackground(GraphicsContext& context,
+                                              const Scrollbar& scrollbar,
+                                              const IntRect& trackRect) {
+  if (DrawingRecorder::useCachedDrawingIfPossible(
+          context, scrollbar, DisplayItem::kScrollbarTrackBackground))
+    return;
+
+  DrawingRecorder recorder(context, scrollbar,
+                           DisplayItem::kScrollbarTrackBackground, trackRect);
+  context.fillRect(trackRect,
+                   scrollbar.enabled() ? Color::lightGray : Color(0xFFE0E0E0));
 }
 
-IntRect ScrollbarThemeMock::trackRect(const ScrollbarThemeClient* scrollbar, bool)
-{
-    return scrollbar->frameRect();
+void ScrollbarThemeMock::paintThumb(GraphicsContext& context,
+                                    const Scrollbar& scrollbar,
+                                    const IntRect& thumbRect) {
+  if (!scrollbar.enabled())
+    return;
+
+  if (DrawingRecorder::useCachedDrawingIfPossible(context, scrollbar,
+                                                  DisplayItem::kScrollbarThumb))
+    return;
+
+  DrawingRecorder recorder(context, scrollbar, DisplayItem::kScrollbarThumb,
+                           thumbRect);
+  context.fillRect(thumbRect, Color::darkGray);
 }
 
+void ScrollbarThemeMock::paintScrollCorner(GraphicsContext& context,
+                                           const DisplayItemClient& scrollbar,
+                                           const IntRect& cornerRect) {
+  if (DrawingRecorder::useCachedDrawingIfPossible(
+          context, scrollbar, DisplayItem::kScrollbarCorner))
+    return;
 
-void ScrollbarThemeMock::paintTrackBackground(GraphicsContext* context, const ScrollbarThemeClient* scrollbar, const IntRect& trackRect)
-{
-    if (DrawingRecorder::useCachedDrawingIfPossible(*context, *scrollbar, DisplayItem::ScrollbarTrackBackground))
-        return;
-
-    DrawingRecorder recorder(*context, *scrollbar, DisplayItem::ScrollbarTrackBackground, trackRect);
-    context->fillRect(trackRect, scrollbar->enabled() ? Color::lightGray : Color(0xFFE0E0E0));
+  DrawingRecorder recorder(context, scrollbar, DisplayItem::kScrollbarCorner,
+                           cornerRect);
+  context.fillRect(cornerRect, Color::white);
 }
 
-void ScrollbarThemeMock::paintThumb(GraphicsContext* context, const ScrollbarThemeClient* scrollbar, const IntRect& thumbRect)
-{
-    if (!scrollbar->enabled())
-        return;
-
-    if (DrawingRecorder::useCachedDrawingIfPossible(*context, *scrollbar, DisplayItem::ScrollbarThumb))
-        return;
-
-    DrawingRecorder recorder(*context, *scrollbar, DisplayItem::ScrollbarThumb, thumbRect);
-    context->fillRect(thumbRect, Color::darkGray);
-}
-
-}
-
+}  // namespace blink

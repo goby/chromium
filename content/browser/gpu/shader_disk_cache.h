@@ -5,13 +5,16 @@
 #ifndef CONTENT_BROWSER_GPU_SHADER_DISK_CACHE_H_
 #define CONTENT_BROWSER_GPU_SHADER_DISK_CACHE_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <queue>
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/singleton.h"
+#include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "net/disk_cache/disk_cache.h"
 
@@ -23,17 +26,15 @@ class ShaderClearHelper;
 
 // ShaderDiskCache is the interface to the on disk cache for
 // GL shaders.
-//
-// While this class is both RefCounted and SupportsWeakPtr
-// when using this class you should work with the RefCounting.
-// The WeakPtr is needed interally.
 class CONTENT_EXPORT ShaderDiskCache
-    : public base::RefCounted<ShaderDiskCache>,
-      public base::SupportsWeakPtr<ShaderDiskCache> {
+    : public base::RefCounted<ShaderDiskCache> {
  public:
-  void Init();
+  using ShaderLoadedCallback =
+      base::Callback<void(const std::string&, const std::string&)>;
 
-  void set_host_id(int host_id) { host_id_ = host_id; }
+  void set_shader_loaded_callback(const ShaderLoadedCallback& callback) {
+    shader_loaded_callback_ = callback;
+  }
 
   // Store the |shader| into the cache under |key|.
   void Cache(const std::string& key, const std::string& shader);
@@ -55,7 +56,7 @@ class CONTENT_EXPORT ShaderDiskCache
   int SetAvailableCallback(const net::CompletionCallback& callback);
 
   // Returns the number of elements currently in the cache.
-  int32 Size();
+  int32_t Size();
 
   // Set a callback notification for when all current entries have been
   // written to the cache.
@@ -73,32 +74,46 @@ class CONTENT_EXPORT ShaderDiskCache
   explicit ShaderDiskCache(const base::FilePath& cache_path);
   ~ShaderDiskCache();
 
+  void Init(scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner);
   void CacheCreatedCallback(int rv);
 
   disk_cache::Backend* backend() { return backend_.get(); }
 
-  void EntryComplete(void* entry);
+  void EntryComplete(ShaderDiskCacheEntry* entry);
   void ReadComplete();
 
   bool cache_available_;
-  int host_id_;
   base::FilePath cache_path_;
   bool is_initialized_;
   net::CompletionCallback available_callback_;
   net::CompletionCallback cache_complete_callback_;
+  ShaderLoadedCallback shader_loaded_callback_;
 
-  scoped_ptr<disk_cache::Backend> backend_;
+  std::unique_ptr<disk_cache::Backend> backend_;
 
-  scoped_refptr<ShaderDiskReadHelper> helper_;
-  std::map<void*, scoped_refptr<ShaderDiskCacheEntry> > entry_map_;
+  std::unique_ptr<ShaderDiskReadHelper> helper_;
+  std::unordered_map<ShaderDiskCacheEntry*,
+                     std::unique_ptr<ShaderDiskCacheEntry>>
+      entries_;
 
   DISALLOW_COPY_AND_ASSIGN(ShaderDiskCache);
 };
 
 // ShaderCacheFactory maintains a cache of ShaderDiskCache objects
 // so we only create one per profile directory.
-class CONTENT_EXPORT ShaderCacheFactory {
+class CONTENT_EXPORT ShaderCacheFactory
+    : NON_EXPORTED_BASE(public base::ThreadChecker) {
  public:
+  // Initializes the ShaderCacheFactory singleton instance. The singleton
+  // instance is created and used in the thread associated with |task_runner|.
+  // |cache_task_runner| is associated with the thread responsible for managing
+  // the disk cache.
+  static void InitInstance(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner);
+
+  // Returns an instance previously created by InitInstance(). This can return
+  // nullptr if an instance has not yet been created.
   static ShaderCacheFactory* GetInstance();
 
   // Clear the shader disk cache for the given |path|. This supports unbounded
@@ -111,13 +126,13 @@ class CONTENT_EXPORT ShaderCacheFactory {
                    const base::Closure& callback);
 
   // Retrieve the shader disk cache for the provided |client_id|.
-  scoped_refptr<ShaderDiskCache> Get(int32 client_id);
+  scoped_refptr<ShaderDiskCache> Get(int32_t client_id);
 
   // Set the |path| to be used for the disk cache for |client_id|.
-  void SetCacheInfo(int32 client_id, const base::FilePath& path);
+  void SetCacheInfo(int32_t client_id, const base::FilePath& path);
 
   // Remove the path mapping for |client_id|.
-  void RemoveCacheInfo(int32 client_id);
+  void RemoveCacheInfo(int32_t client_id);
 
   // Set the provided |cache| into the cache map for the given |path|.
   void AddToCache(const base::FilePath& path, ShaderDiskCache* cache);
@@ -126,23 +141,28 @@ class CONTENT_EXPORT ShaderCacheFactory {
   void RemoveFromCache(const base::FilePath& path);
 
  private:
-  friend struct base::DefaultSingletonTraits<ShaderCacheFactory>;
   friend class ShaderClearHelper;
 
-  ShaderCacheFactory();
+  explicit ShaderCacheFactory(
+      scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner);
   ~ShaderCacheFactory();
+
+  static void CreateFactoryInstance(
+      scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner);
+
+  scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner_;
 
   scoped_refptr<ShaderDiskCache> GetByPath(const base::FilePath& path);
   void CacheCleared(const base::FilePath& path);
 
-  typedef std::map<base::FilePath, ShaderDiskCache*> ShaderCacheMap;
+  using ShaderCacheMap = std::map<base::FilePath, ShaderDiskCache*>;
   ShaderCacheMap shader_cache_map_;
 
-  typedef std::map<int32, base::FilePath> ClientIdToPathMap;
+  using ClientIdToPathMap = std::map<int32_t, base::FilePath>;
   ClientIdToPathMap client_id_to_path_map_;
 
-  typedef std::queue<scoped_refptr<ShaderClearHelper> > ShaderClearQueue;
-  typedef std::map<base::FilePath, ShaderClearQueue> ShaderClearMap;
+  using ShaderClearQueue = std::queue<std::unique_ptr<ShaderClearHelper>>;
+  using ShaderClearMap = std::map<base::FilePath, ShaderClearQueue>;
   ShaderClearMap shader_clear_map_;
 
   DISALLOW_COPY_AND_ASSIGN(ShaderCacheFactory);

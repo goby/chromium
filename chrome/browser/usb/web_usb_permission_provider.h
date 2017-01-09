@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_USB_WEB_USB_PERMISSION_PROVIDER_H_
 #define CHROME_BROWSER_USB_WEB_USB_PERMISSION_PROVIDER_H_
 
-#include "device/devices_app/usb/public/interfaces/permission_provider.mojom.h"
-#include "mojo/common/weak_binding_set.h"
-#include "mojo/public/cpp/bindings/array.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
+#include <stdint.h>
+
+#include "base/memory/weak_ptr.h"
+#include "device/usb/mojo/permission_provider.h"
 
 namespace content {
 class RenderFrameHost;
@@ -20,30 +20,32 @@ class RenderFrameHost;
 // granted by the user through a device chooser UI.
 class WebUSBPermissionProvider : public device::usb::PermissionProvider {
  public:
+  static bool HasDevicePermission(
+      content::RenderFrameHost* render_frame_host,
+      scoped_refptr<const device::UsbDevice> device);
+
   explicit WebUSBPermissionProvider(
       content::RenderFrameHost* render_frame_host);
-
   ~WebUSBPermissionProvider() override;
 
+  base::WeakPtr<PermissionProvider> GetWeakPtr();
+
   // device::usb::PermissionProvider implementation.
-  void HasDevicePermission(
-      mojo::Array<device::usb::DeviceInfoPtr> requested_devices,
-      const HasDevicePermissionCallback& callback) override;
-  void HasConfigurationPermission(
+  bool HasDevicePermission(
+      scoped_refptr<const device::UsbDevice> device) const override;
+  bool HasConfigurationPermission(
       uint8_t requested_configuration,
-      device::usb::DeviceInfoPtr device,
-      const HasInterfacePermissionCallback& callback) override;
-  void HasInterfacePermission(
-      uint8_t requested_interface,
+      scoped_refptr<const device::UsbDevice> device) const override;
+  bool HasFunctionPermission(
+      uint8_t requested_function,
       uint8_t configuration_value,
-      device::usb::DeviceInfoPtr device,
-      const HasInterfacePermissionCallback& callback) override;
-  void Bind(
-      mojo::InterfaceRequest<device::usb::PermissionProvider> request) override;
+      scoped_refptr<const device::UsbDevice> device) const override;
+  void IncrementConnectionCount() override;
+  void DecrementConnectionCount() override;
 
  private:
-  mojo::WeakBindingSet<PermissionProvider> bindings_;
   content::RenderFrameHost* const render_frame_host_;
+  base::WeakPtrFactory<PermissionProvider> weak_factory_;
 };
 
 #endif  // CHROME_BROWSER_USB_WEB_USB_PERMISSION_PROVIDER_H_

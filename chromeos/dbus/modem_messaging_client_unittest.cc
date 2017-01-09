@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/values.h"
 #include "dbus/message.h"
@@ -131,7 +132,7 @@ class ModemMessagingClientTest : public testing::Test {
 
  protected:
   // The client to be tested.
-  scoped_ptr<ModemMessagingClient> client_;
+  std::unique_ptr<ModemMessagingClient> client_;
   // A message loop to emulate asynchronous behavior.
   base::MessageLoop message_loop_;
   // The mock bus.
@@ -174,7 +175,7 @@ TEST_F(ModemMessagingClientTest, SmsReceived) {
                                             base::Unretained(&handler)));
 
   // Run the message loop to run the signal connection result callback.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Send signal.
   dbus::Signal signal(modemmanager::kModemManager1MessagingInterface,
@@ -199,7 +200,7 @@ TEST_F(ModemMessagingClientTest, Delete) {
   MockDeleteCallback callback;
   EXPECT_CALL(callback, Run()).Times(1);
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   response_ = response.get();
   // Call Delete.
   client_->Delete(kServiceName, dbus::ObjectPath(kObjectPath), kSmsPath,
@@ -207,7 +208,7 @@ TEST_F(ModemMessagingClientTest, Delete) {
                              base::Unretained(&callback)));
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ModemMessagingClientTest, List) {
@@ -218,7 +219,7 @@ TEST_F(ModemMessagingClientTest, List) {
   EXPECT_CALL(callback, Run(_))
       .WillOnce(Invoke(this, &ModemMessagingClientTest::CheckResult));
   // Create response.
-  scoped_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::ObjectPath path1("/SMS/1");
   dbus::ObjectPath path2("/SMS/2");
   std::vector<dbus::ObjectPath> expected_result;
@@ -237,7 +238,7 @@ TEST_F(ModemMessagingClientTest, List) {
                            base::Unretained(&callback)));
 
   // Run the message loop.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace chromeos

@@ -4,9 +4,7 @@
 
 # The files here go into the "gpu" component in a component build (with
 # "command_buffer_client" and "gles2_cmd_helper" just forwarding) and goes into
-# separate static libraries in non-component build. This needs to match the
-# GYP build which was likely an attempt to make larger components to help with
-# loading.
+# separate static libraries in non-component build.
 group("client") {
   if (is_component_build) {
     public_deps = [
@@ -32,6 +30,8 @@ group("gles2_cmd_helper") {
 }
 
 source_set("client_sources") {
+  # External code should depend on this via //gpu/client above rather than
+  # depending on this directly or the component build will break.
   visibility = [ "//gpu/*" ]
 
   sources = [
@@ -58,8 +58,15 @@ source_set("client_sources") {
 
   all_dependent_configs = [ "//third_party/khronos:khronos_headers" ]
 
+  public_deps = [
+    "//base",
+    "//gpu/command_buffer/common:gles2_utils",
+  ]
   deps = [
     "//gpu/command_buffer/common:common_sources",
+    "//gpu/ipc/common:surface_handle_type",
+    "//ui/gfx:memory_buffer",
+    "//ui/gfx/geometry",
   ]
 }
 
@@ -79,6 +86,8 @@ source_set("gles2_cmd_helper_sources") {
 
   deps = [
     ":client_sources",
+    "//base",
+    "//gpu/command_buffer/common:common_sources",
   ]
 }
 
@@ -145,6 +154,8 @@ component("gles2_implementation") {
     ":gles2_cmd_helper",
     ":gles2_interface",
     "//base",
+    "//gpu/command_buffer/client",
+    "//gpu/command_buffer/common",
     "//gpu/command_buffer/common:gles2_utils",
     "//ui/gfx/geometry",
   ]
@@ -163,31 +174,14 @@ component("gles2_implementation_no_check") {
   ]
 
   deps = [
+    ":client",
     ":gles2_cmd_helper",
+    ":gles2_interface",
     "//base",
+    "//gpu/command_buffer/common",
     "//gpu/command_buffer/common:gles2_utils",
     "//ui/gfx",
     "//ui/gfx/geometry",
-  ]
-}
-
-component("gl_in_process_context") {
-  sources = [
-    "gl_in_process_context.cc",
-    "gl_in_process_context.h",
-    "gl_in_process_context_export.h",
-  ]
-
-  defines = [ "GL_IN_PROCESS_CONTEXT_IMPLEMENTATION" ]
-
-  deps = [
-    ":gles2_implementation",
-    "//base",
-    "//base/third_party/dynamic_annotations",
-    "//gpu",
-    "//gpu/command_buffer/common:gles2_utils",
-    "//ui/gfx/geometry",
-    "//ui/gl",
   ]
 }
 
@@ -207,7 +201,6 @@ component("gles2_c_lib") {
   ]
 }
 
-# GYP version: gpu/gpu.gyp:gles2_c_lib_nocheck
 # Same as gles2_c_lib except with no parameter checking. Required for
 # OpenGL ES 2.0 conformance tests.
 component("gles2_c_lib_nocheck") {

@@ -4,133 +4,205 @@
 
 #include "mojo/public/cpp/bindings/lib/validation_util.h"
 
+#include <stdint.h>
+
 #include <limits>
 
-#include "mojo/public/cpp/bindings/lib/bindings_serialization.h"
 #include "mojo/public/cpp/bindings/lib/message_internal.h"
+#include "mojo/public/cpp/bindings/lib/serialization_util.h"
 #include "mojo/public/cpp/bindings/lib/validation_errors.h"
 #include "mojo/public/interfaces/bindings/interface_control_messages.mojom.h"
 
 namespace mojo {
 namespace internal {
 
-bool ValidateEncodedPointer(const uint64_t* offset) {
-  // - Make sure |*offset| is no more than 32-bits.
-  // - Cast |offset| to uintptr_t so overflow behavior is well defined across
-  //   32-bit and 64-bit systems.
-  return *offset <= std::numeric_limits<uint32_t>::max() &&
-         (reinterpret_cast<uintptr_t>(offset) +
-              static_cast<uint32_t>(*offset) >=
-          reinterpret_cast<uintptr_t>(offset));
-}
-
 bool ValidateStructHeaderAndClaimMemory(const void* data,
-                                        BoundsChecker* bounds_checker) {
+                                        ValidationContext* validation_context) {
   if (!IsAligned(data)) {
-    ReportValidationError(VALIDATION_ERROR_MISALIGNED_OBJECT);
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_MISALIGNED_OBJECT);
     return false;
   }
-  if (!bounds_checker->IsValidRange(data, sizeof(StructHeader))) {
-    ReportValidationError(VALIDATION_ERROR_ILLEGAL_MEMORY_RANGE);
+  if (!validation_context->IsValidRange(data, sizeof(StructHeader))) {
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_ILLEGAL_MEMORY_RANGE);
     return false;
   }
 
   const StructHeader* header = static_cast<const StructHeader*>(data);
 
   if (header->num_bytes < sizeof(StructHeader)) {
-    ReportValidationError(VALIDATION_ERROR_UNEXPECTED_STRUCT_HEADER);
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_UNEXPECTED_STRUCT_HEADER);
     return false;
   }
 
-  if (!bounds_checker->ClaimMemory(data, header->num_bytes)) {
-    ReportValidationError(VALIDATION_ERROR_ILLEGAL_MEMORY_RANGE);
+  if (!validation_context->ClaimMemory(data, header->num_bytes)) {
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_ILLEGAL_MEMORY_RANGE);
     return false;
   }
 
   return true;
 }
 
-bool ValidateMessageIsRequestWithoutResponse(const Message* message) {
-  if (message->has_flag(kMessageIsResponse) ||
-      message->has_flag(kMessageExpectsResponse)) {
-    ReportValidationError(VALIDATION_ERROR_MESSAGE_HEADER_INVALID_FLAGS);
+bool ValidateNonInlinedUnionHeaderAndClaimMemory(
+    const void* data,
+    ValidationContext* validation_context) {
+  if (!IsAligned(data)) {
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_MISALIGNED_OBJECT);
+    return false;
+  }
+
+  if (!validation_context->ClaimMemory(data, kUnionDataSize) ||
+      *static_cast<const uint32_t*>(data) != kUnionDataSize) {
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_ILLEGAL_MEMORY_RANGE);
+    return false;
+  }
+
+  return true;
+}
+
+bool ValidateMessageIsRequestWithoutResponse(
+    const Message* message,
+    ValidationContext* validation_context) {
+  if (message->has_flag(Message::kFlagIsResponse) ||
+      message->has_flag(Message::kFlagExpectsResponse)) {
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_MESSAGE_HEADER_INVALID_FLAGS);
     return false;
   }
   return true;
 }
 
-bool ValidateMessageIsRequestExpectingResponse(const Message* message) {
-  if (message->has_flag(kMessageIsResponse) ||
-      !message->has_flag(kMessageExpectsResponse)) {
-    ReportValidationError(VALIDATION_ERROR_MESSAGE_HEADER_INVALID_FLAGS);
+bool ValidateMessageIsRequestExpectingResponse(
+    const Message* message,
+    ValidationContext* validation_context) {
+  if (message->has_flag(Message::kFlagIsResponse) ||
+      !message->has_flag(Message::kFlagExpectsResponse)) {
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_MESSAGE_HEADER_INVALID_FLAGS);
     return false;
   }
   return true;
 }
 
-bool ValidateMessageIsResponse(const Message* message) {
-  if (message->has_flag(kMessageExpectsResponse) ||
-      !message->has_flag(kMessageIsResponse)) {
-    ReportValidationError(VALIDATION_ERROR_MESSAGE_HEADER_INVALID_FLAGS);
+bool ValidateMessageIsResponse(const Message* message,
+                               ValidationContext* validation_context) {
+  if (message->has_flag(Message::kFlagExpectsResponse) ||
+      !message->has_flag(Message::kFlagIsResponse)) {
+    ReportValidationError(validation_context,
+                          VALIDATION_ERROR_MESSAGE_HEADER_INVALID_FLAGS);
     return false;
   }
   return true;
 }
 
-bool ValidateControlRequest(const Message* message) {
-  switch (message->header()->name) {
-    case kRunMessageId:
-      return ValidateMessageIsRequestExpectingResponse(message) &&
-             ValidateMessagePayload<RunMessageParams_Data>(message);
-    case kRunOrClosePipeMessageId:
-      return ValidateMessageIsRequestWithoutResponse(message) &&
-             ValidateMessagePayload<RunOrClosePipeMessageParams_Data>(message);
-  }
-  return false;
+bool IsHandleOrInterfaceValid(const AssociatedInterface_Data& input) {
+  return IsValidInterfaceId(input.interface_id);
 }
 
-bool ValidateControlResponse(const Message* message) {
-  if (!ValidateMessageIsResponse(message))
-    return false;
-  switch (message->header()->name) {
-    case kRunMessageId:
-      return ValidateMessagePayload<RunResponseMessageParams_Data>(message);
-  }
-  return false;
+bool IsHandleOrInterfaceValid(const AssociatedInterfaceRequest_Data& input) {
+  return IsValidInterfaceId(input.interface_id);
 }
 
-bool ValidateHandleNonNullable(const Handle& input, const char* error_message) {
-  if (input.value() != kEncodedInvalidHandleValue)
+bool IsHandleOrInterfaceValid(const Interface_Data& input) {
+  return input.handle.is_valid();
+}
+
+bool IsHandleOrInterfaceValid(const Handle_Data& input) {
+  return input.is_valid();
+}
+
+bool ValidateHandleOrInterfaceNonNullable(
+    const AssociatedInterface_Data& input,
+    const char* error_message,
+    ValidationContext* validation_context) {
+  if (IsHandleOrInterfaceValid(input))
     return true;
 
-  ReportValidationError(VALIDATION_ERROR_UNEXPECTED_INVALID_HANDLE,
+  ReportValidationError(validation_context,
+                        VALIDATION_ERROR_UNEXPECTED_INVALID_INTERFACE_ID,
                         error_message);
   return false;
 }
 
-bool ValidateInterfaceIdNonNullable(InterfaceId input,
-                                    const char* error_message) {
-  if (IsValidInterfaceId(input))
+bool ValidateHandleOrInterfaceNonNullable(
+    const AssociatedInterfaceRequest_Data& input,
+    const char* error_message,
+    ValidationContext* validation_context) {
+  if (IsHandleOrInterfaceValid(input))
     return true;
 
-  ReportValidationError(VALIDATION_ERROR_UNEXPECTED_INVALID_INTERFACE_ID,
+  ReportValidationError(validation_context,
+                        VALIDATION_ERROR_UNEXPECTED_INVALID_INTERFACE_ID,
                         error_message);
   return false;
 }
 
-bool ValidateHandle(const Handle& input, BoundsChecker* bounds_checker) {
-  if (bounds_checker->ClaimHandle(input))
+bool ValidateHandleOrInterfaceNonNullable(
+    const Interface_Data& input,
+    const char* error_message,
+    ValidationContext* validation_context) {
+  if (IsHandleOrInterfaceValid(input))
     return true;
 
-  ReportValidationError(VALIDATION_ERROR_ILLEGAL_HANDLE);
+  ReportValidationError(validation_context,
+                        VALIDATION_ERROR_UNEXPECTED_INVALID_HANDLE,
+                        error_message);
   return false;
 }
 
-bool ValidateAssociatedInterfaceId(InterfaceId input) {
-  if (!IsMasterInterfaceId(input))
+bool ValidateHandleOrInterfaceNonNullable(
+    const Handle_Data& input,
+    const char* error_message,
+    ValidationContext* validation_context) {
+  if (IsHandleOrInterfaceValid(input))
     return true;
 
-  ReportValidationError(VALIDATION_ERROR_ILLEGAL_INTERFACE_ID);
+  ReportValidationError(validation_context,
+                        VALIDATION_ERROR_UNEXPECTED_INVALID_HANDLE,
+                        error_message);
+  return false;
+}
+
+bool ValidateHandleOrInterface(const AssociatedInterface_Data& input,
+                               ValidationContext* validation_context) {
+  if (!IsMasterInterfaceId(input.interface_id))
+    return true;
+
+  ReportValidationError(validation_context,
+                        VALIDATION_ERROR_ILLEGAL_INTERFACE_ID);
+  return false;
+}
+
+bool ValidateHandleOrInterface(const AssociatedInterfaceRequest_Data& input,
+                               ValidationContext* validation_context) {
+  if (!IsMasterInterfaceId(input.interface_id))
+    return true;
+
+  ReportValidationError(validation_context,
+                        VALIDATION_ERROR_ILLEGAL_INTERFACE_ID);
+  return false;
+}
+
+bool ValidateHandleOrInterface(const Interface_Data& input,
+                               ValidationContext* validation_context) {
+  if (validation_context->ClaimHandle(input.handle))
+    return true;
+
+  ReportValidationError(validation_context, VALIDATION_ERROR_ILLEGAL_HANDLE);
+  return false;
+}
+
+bool ValidateHandleOrInterface(const Handle_Data& input,
+                               ValidationContext* validation_context) {
+  if (validation_context->ClaimHandle(input))
+    return true;
+
+  ReportValidationError(validation_context, VALIDATION_ERROR_ILLEGAL_HANDLE);
   return false;
 }
 

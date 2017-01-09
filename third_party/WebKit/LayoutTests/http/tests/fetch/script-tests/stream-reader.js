@@ -1,20 +1,6 @@
 if (self.importScripts) {
   importScripts('/fetch/resources/fetch-test-helpers.js');
-}
-
-function read_until_end(reader) {
-  var chunks = [];
-  function consume() {
-    return reader.read().then(function(r) {
-        if (r.done) {
-          return chunks;
-        } else {
-          chunks.push(r.value);
-          return consume();
-        }
-      });
-  }
-  return consume();
+  importScripts('/streams/resources/rs-utils.js');
 }
 
 promise_test(function(t) {
@@ -25,13 +11,14 @@ promise_test(function(t) {
         reader.releaseLock();
         var another = stream.getReader();
         assert_not_equals(another, reader);
+        another.releaseLock();
       });
   }, 'ReadableStreamReader acquisition / releasing');
 
 promise_test(function(t) {
     return fetch('/fetch/resources/doctype.html').then(function(res) {
         var reader = res.body.getReader();
-        return read_until_end(reader);
+        return readableStreamToArray(res.body, reader);
       }).then(function(chunks) {
         var size = 0;
         for (var chunk of chunks) {
@@ -50,16 +37,29 @@ promise_test(function(t) {
       });
   }, 'read contents with ReadableStreamReader');
 
+promise_test(() => {
+    let reader;
+    return fetch('/fetch/resources/progressive.php').then(res => {
+        reader = res.body.getReader();
+        return Promise.all([reader.read(), reader.read(), reader.read()]);
+      }).then(() => {
+        reader.releaseLock();
+        // We expect the test finishes without crashing.
+      });
+  }, 'parallel read');
+
 promise_test(function(t) {
     return fetch('/fetch/resources/progressive.php').then(function(res) {
         assert_false(res.bodyUsed);
         var reader = res.body.getReader();
-        assert_true(res.bodyUsed);
-        return res.text();
-      }).then(unreached_rejection(t), function() {
-        // text() should fail because bodyUsed is set.
+        assert_false(res.bodyUsed);
+        return res.text().then(unreached_fulfillment(t), function() {
+            // text() should fail because the body is locked.
+            // TODO(yhirano): Use finally once it gets available.
+            reader.releaseLock();
+          });
       });
-  }, 'acquiring a reader should set bodyUsed.');
+  }, 'acquiring a reader should not set bodyUsed.');
 
 promise_test(function(t) {
     var reader;
@@ -95,5 +95,16 @@ promise_test(function(t) {
         assert_true(clone.bodyUsed);
       });
   }, 'Cancelling stream should not affect cloned one.');
+
+promise_test(t => {
+    let reader;
+    return fetch('/fetch/resources/slow-failure.cgi').then(res => {
+        reader = res.body.getReader();
+        return readableStreamToArray(res.body, reader);
+      }).then(unreached_fulfillment(t), e => {
+        reader.releaseLock();
+        assert_equals(e.name, 'TypeError');
+      });
+  }, 'Streaming error should be reported as a TypeError.');
 
 done();

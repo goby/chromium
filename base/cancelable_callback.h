@@ -26,21 +26,25 @@
 // to the message loop, the intensive test runs, the message loop is run,
 // then the callback is cancelled.
 //
+// RunLoop run_loop;
+//
 // void TimeoutCallback(const std::string& timeout_message) {
 //   FAIL() << timeout_message;
-//   MessageLoop::current()->QuitWhenIdle();
+//   run_loop.QuitWhenIdle();
 // }
 //
 // CancelableClosure timeout(base::Bind(&TimeoutCallback, "Test timed out."));
-// MessageLoop::current()->PostDelayedTask(FROM_HERE, timeout.callback(),
-//                                         4000)  // 4 seconds to run.
+// ThreadTaskRunnerHandle::Get()->PostDelayedTask(FROM_HERE, timeout.callback(),
+//                                                TimeDelta::FromSeconds(4));
 // RunIntensiveTest();
-// MessageLoop::current()->Run();
+// run_loop.Run();
 // timeout.Cancel();  // Hopefully this is hit before the timeout callback runs.
 //
 
 #ifndef BASE_CANCELABLE_CALLBACK_H_
 #define BASE_CANCELABLE_CALLBACK_H_
+
+#include <utility>
 
 #include "base/base_export.h"
 #include "base/bind.h"
@@ -48,6 +52,7 @@
 #include "base/callback_internal.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 
 namespace base {
@@ -102,7 +107,7 @@ class CancelableCallback<void(A...)> {
 
  private:
   void Forward(A... args) const {
-    callback_.Run(args...);
+    callback_.Run(std::forward<A>(args)...);
   }
 
   // Helper method to bind |forwarder_| using a weak pointer from

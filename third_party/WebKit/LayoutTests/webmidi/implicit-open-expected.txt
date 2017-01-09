@@ -3,17 +3,18 @@ Tests MIDIPort implicit open.
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
 
 
+PASS PermissionsHelper.setPermission is defined.
 PASS requestMIDIAccess() succeeded with access [object MIDIAccess].
 Check state transition for setonmidimessage on closed state.
 - check initial state.
 PASS port.connection is "closed"
 - check port handler.
 PASS handler is called with port [object MIDIInput].
-PASS eventport.id is "MockInputID"
+PASS eventport.id is "MockInputID-0"
 PASS eventport.connection is "open"
 - check access handler.
 PASS handler is called with port [object MIDIInput].
-PASS eventport.id is "MockInputID"
+PASS eventport.id is "MockInputID-0"
 PASS eventport.connection is "open"
 - check final state.
 PASS port.connection is "open"
@@ -23,11 +24,11 @@ Check state transition for addeventlistener on closed state.
 PASS port.connection is "closed"
 - check port handler.
 PASS handler is called with port [object MIDIInput].
-PASS eventport.id is "MockInputID"
+PASS eventport.id is "MockInputID-0"
 PASS eventport.connection is "open"
 - check access handler.
 PASS handler is called with port [object MIDIInput].
-PASS eventport.id is "MockInputID"
+PASS eventport.id is "MockInputID-0"
 PASS eventport.connection is "open"
 - check final state.
 PASS port.connection is "open"
@@ -36,11 +37,11 @@ Check state transition for send on closed state.
 PASS port.connection is "closed"
 - check port handler.
 PASS handler is called with port [object MIDIOutput].
-PASS eventport.id is "MockOutputID"
+PASS eventport.id is "MockOutputID-0"
 PASS eventport.connection is "open"
 - check access handler.
 PASS handler is called with port [object MIDIOutput].
-PASS eventport.id is "MockOutputID"
+PASS eventport.id is "MockOutputID-0"
 PASS eventport.connection is "open"
 - check final state.
 PASS port.connection is "open"

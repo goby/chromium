@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_PROFILES_PROFILE_ATTRIBUTES_ENTRY_H_
 #define CHROME_BROWSER_PROFILES_PROFILE_ATTRIBUTES_ENTRY_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 
@@ -36,7 +39,7 @@ class ProfileAttributesEntry {
   base::string16 GetUserName() const;
   // Gets the icon used as this profile's avatar. This might not be the icon
   // displayed in the UI if IsUsingGAIAPicture() is true.
-  const gfx::Image& GetAvatarIcon();
+  const gfx::Image& GetAvatarIcon() const;
   std::string GetLocalAuthCredentials() const;
   std::string GetPasswordChangeDetectionToken() const;
   // Note that a return value of false could mean an error in collection or
@@ -96,6 +99,7 @@ class ProfileAttributesEntry {
 
   void SetName(const base::string16& name);
   void SetShortcutName(const base::string16& name);
+  void SetActiveTimeToNow();
   void SetIsOmitted(bool is_omitted);
   void SetSupervisedUserId(const std::string& id);
   void SetLocalAuthCredentials(const std::string& auth);
@@ -118,8 +122,10 @@ class ProfileAttributesEntry {
   void SetStatsBookmarks(int value);
   void SetStatsSettings(int value);
 
-  void SetAuthInfo(const std::string& gaia_id,
-                   const base::string16& user_name);
+  void SetAuthInfo(const std::string& gaia_id, const base::string16& user_name);
+
+  // Lock/Unlock the profile, should be called only if force-sign-in is enabled.
+  void LockForceSigninProfile(bool is_lock);
 
  private:
   // These members are an implementation detail meant to smooth the migration
@@ -133,6 +139,12 @@ class ProfileAttributesEntry {
   size_t profile_index() const;
   ProfileInfoCache* profile_info_cache_;
   base::FilePath profile_path_;
+
+  // A separate boolean flag indicates whether the signin is required when force
+  // signin is enabled. So that the profile locked status will be stored in
+  // memory only and can be easily reset once the policy is turned off.
+  bool is_force_signin_profile_locked_ = false;
+  bool is_force_signin_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileAttributesEntry);
 };

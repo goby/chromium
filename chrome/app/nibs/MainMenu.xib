@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="5056" systemVersion="13F34" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none">
     <dependencies>
-        <deployment version="1060" defaultVersion="1060" identifier="macosx"/>
+        <deployment version="1090" defaultVersion="1060" identifier="macosx"/>
         <development version="5100" identifier="xcode"/>
         <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="5056"/>
     </dependencies>
@@ -33,12 +33,6 @@
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="492"/>
-                            <menuItem title="^IDS_SYNC_MENU_PRE_SYNCED_LABEL$IDS_PRODUCT_NAME" tag="40030" hidden="YES" enabled="NO" id="664">
-                                <modifierMask key="keyEquivalentModifierMask"/>
-                                <connections>
-                                    <action selector="commandDispatch:" target="-1" id="666"/>
-                                </connections>
-                            </menuItem>
                             <menuItem title="^IDS_CLEAR_BROWSING_DATA" tag="40013" id="491">
                                 <string key="keyEquivalent" base64-UTF8="YES">
 CA
@@ -319,7 +313,7 @@ CA
                                     <action selector="commandDispatch:" target="-1" id="531"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="^IDS_TOGGLE_FULLSCREEN_TOOLBAR_MAC" tag="34039" keyEquivalent="F" id="70p-NK-bpU">
+                            <menuItem title="^IDS_TOGGLE_FULLSCREEN_TOOLBAR_MAC" tag="40251" keyEquivalent="F" id="70p-NK-bpU">
                                 <connections>
                                     <action selector="commandDispatch:" target="-1" id="0A7-Iy-65Q"/>
                                 </connections>
@@ -335,21 +329,16 @@ CA
                                     <action selector="commandDispatch:" target="-1" id="543"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="^IDS_RELOAD_IGNORING_CACHE_MENU_MAC" tag="33007" alternate="YES" keyEquivalent="R" id="676">
+                            <menuItem title="^IDS_RELOAD_BYPASSING_CACHE_MENU_MAC" tag="33007" alternate="YES" keyEquivalent="R" id="676">
                                 <connections>
                                     <action selector="commandDispatch:" target="-1" id="677"/>
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="457"/>
-                            <menuItem title="^IDS_ENTER_PRESENTATION_MAC" tag="34039" keyEquivalent="F" id="541">
-                                <connections>
-                                    <action selector="commandDispatch:" target="-1" id="630"/>
-                                </connections>
-                            </menuItem>
                             <menuItem title="^IDS_ENTER_FULLSCREEN_MAC" tag="34030" keyEquivalent="f" id="692">
                                 <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
                                 <connections>
-                                    <action selector="commandDispatch:" target="-1" id="693"/>
+                                    <action selector="toggleFullScreen:" target="-1" id="693"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="^IDS_TEXT_DEFAULT_MAC" tag="38002" keyEquivalent="0" id="460">
@@ -367,11 +356,14 @@ CA
                                     <action selector="commandDispatch:" target="-1" id="555"/>
                                 </connections>
                             </menuItem>
-                            <menuItem isSeparatorItem="YES" id="631"/>
-                            <menuItem title="^IDS_ENCODING_MENU" tag="35005" id="465">
+                            <menuItem isSeparatorItem="YES" id="AAx-VM-UbD"/>
+                            <menuItem title="^IDS_MEDIA_ROUTER_MENU_ITEM_TITLE" tag="35011" id="OVr-QF-3s6">
                                 <modifierMask key="keyEquivalentModifierMask"/>
-                                <menu key="submenu" title="^IDS_ENCODING_MENU" id="466"/>
+                                <connections>
+                                    <action selector="commandDispatch:" target="-1" id="i0s-9w-Djk"/>
+                                </connections>
                             </menuItem>
+                            <menuItem isSeparatorItem="YES" id="631"/>
                             <menuItem title="^IDS_DEVELOPER_MENU_MAC" id="501">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="^IDS_DEVELOPER_MENU_MAC" id="502">
@@ -428,7 +420,7 @@ CA
                                 <modifierMask key="keyEquivalentModifierMask"/>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" tag="480" id="545"/>
-                            <menuItem title="^IDS_SHOWFULLHISTORY_LINK" tag="40010" keyEquivalent="y" id="544">
+                            <menuItem title="^IDS_HISTORY_SHOWFULLHISTORY_LINK" tag="40010" keyEquivalent="y" id="544">
                                 <connections>
                                     <action selector="commandDispatch:" target="-1" id="549"/>
                                 </connections>
@@ -490,6 +482,11 @@ CA
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="commandDispatch:" target="-1" id="530"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="^IDS_SHOW_AS_TAB" tag="34029" id="470">
+                                <connections>
+                                    <action selector="commandDispatch:" target="-1" id="559"/>
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="551"/>

@@ -9,15 +9,14 @@
 #include <string>
 
 #include "base/android/jni_weak_ref.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/interstitial_page_delegate.h"
 
 namespace content {
 
 class InterstitialPage;
-class WebContents;
 
 // Native counterpart that allows interstitial pages to be constructed and
 // managed from Java.

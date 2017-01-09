@@ -13,12 +13,10 @@
 
 @class CRWSessionEntry;
 @class CRWSessionCertificatePolicyManager;
-@class XCallbackParameters;
 
 namespace web {
 class NavigationManagerImpl;
 struct Referrer;
-struct SSLStatus;
 }
 
 // A CRWSessionController is similar to a NavigationController object in desktop
@@ -28,33 +26,35 @@ struct SSLStatus;
 // NavigationManager.
 @interface CRWSessionController : NSObject<NSCoding, NSCopying>
 
-@property(nonatomic, readonly, retain) NSString* tabId;
+@property(nonatomic, readonly, copy) NSString* tabId;
 @property(nonatomic, readonly, assign) NSInteger currentNavigationIndex;
 @property(nonatomic, readonly, assign) NSInteger previousNavigationIndex;
-@property(nonatomic, readonly, retain) NSArray* entries;
+// The index of the pending entry if it is in entries_, or -1 if pendingEntry is
+// a new entry (created by addPendingEntry:).
+@property(nonatomic, readwrite, assign) NSInteger pendingEntryIndex;
+@property(nonatomic, readonly, strong) NSArray* entries;
 @property(nonatomic, copy) NSString* windowName;
 // Indicates whether the page was opened by DOM (e.g. with |window.open|
 // JavaScript call or by clicking a link with |_blank| target).
 @property(nonatomic, readonly, getter=isOpenedByDOM) BOOL openedByDOM;
-@property(nonatomic, readonly, retain)
+@property(nonatomic, readonly, strong)
     CRWSessionCertificatePolicyManager* sessionCertificatePolicyManager;
 // Returns the current entry in the session list, or the pending entry if there
 // is a navigation in progress.
-@property(nonatomic, readonly) CRWSessionEntry* currentEntry;
+@property(nonatomic, readonly, strong) CRWSessionEntry* currentEntry;
 // Returns the entry that should be displayed to users (e.g., in the omnibox).
-@property(nonatomic, readonly) CRWSessionEntry* visibleEntry;
+@property(nonatomic, readonly, strong) CRWSessionEntry* visibleEntry;
 // Returns the pending entry, if any.
-@property(nonatomic, readonly) CRWSessionEntry* pendingEntry;
+@property(nonatomic, readonly, strong) CRWSessionEntry* pendingEntry;
 // Returns the transient entry, if any.
-@property(nonatomic, readonly) CRWSessionEntry* transientEntry;
+@property(nonatomic, readonly, strong) CRWSessionEntry* transientEntry;
 // Returns the last committed entry.
-@property(nonatomic, readonly) CRWSessionEntry* lastCommittedEntry;
+@property(nonatomic, readonly, strong) CRWSessionEntry* lastCommittedEntry;
 // Returns the previous entry in the session list, or nil if there isn't any.
-@property(nonatomic, readonly) CRWSessionEntry* previousEntry;
+@property(nonatomic, readonly, strong) CRWSessionEntry* previousEntry;
 @property(nonatomic, assign) NSTimeInterval lastVisitedTimestamp;
 @property(nonatomic, readonly, copy) NSString* openerId;
 @property(nonatomic, readonly, assign) NSInteger openerNavigationIndex;
-@property(nonatomic, retain) XCallbackParameters* xCallbackParameters;
 
 // CRWSessionController doesn't have public constructors. New
 // CRWSessionControllers are created by deserialization, or via a
@@ -104,26 +104,12 @@ struct SSLStatus;
 // Returns YES if there is a pending entry.
 - (BOOL)hasPendingEntry;
 
-// Copies history state from the given CRWSessionController and adds it to this
-// controller. If |replaceState|, replaces the state of this controller with
-// the state of |otherSession|, instead of appending.
-- (void)copyStateFromAndPrune:(CRWSessionController*)otherSession
-                 replaceState:(BOOL)replaceState;
+// Inserts history state from the given CRWSessionController to the front of
+// this controller.
+- (void)insertStateFromSessionController:(CRWSessionController*)otherController;
 
-// Returns YES if there are entries to go back or forward to, given the
-// current entry.
-- (BOOL)canGoBack;
-- (BOOL)canGoForward;
-// Adjusts the current entry to reflect the navigation in the corresponding
-// direction in history.
-- (void)goBack;
-- (void)goForward;
-// Calls goBack or goForward the appropriate number of times to adjust
-// currentNavigationIndex_ by delta.
-- (void)goDelta:(int)delta;
-// Sets |currentNavigationIndex_| to the index of |entry| if |entries_| contains
-// |entry|.
-- (void)goToEntry:(CRWSessionEntry*)entry;
+// Sets |currentNavigationIndex_| to the |index| if it's in the entries bounds.
+- (void)goToEntryAtIndex:(NSInteger)index;
 
 // Removes the entry at |index| after discarding any noncomitted entries.
 // |index| must not be the index of the last committed entry, or a noncomitted
@@ -141,10 +127,10 @@ struct SSLStatus;
 // Returns the URLs in the entries that are redirected to the current entry.
 - (std::vector<GURL>)currentRedirectedUrls;
 
-// Determines if navigation between the two given entries is a push state
-// navigation. Entries can be passed in in any order.
-- (BOOL)isPushStateNavigationBetweenEntry:(CRWSessionEntry*)firstEntry
-                                 andEntry:(CRWSessionEntry*)secondEntry;
+// Determines whether a navigation between |firstEntry| and |secondEntry| is a
+// same-document navigation.  Entries can be passed in any order.
+- (BOOL)isSameDocumentNavigationBetweenEntry:(CRWSessionEntry*)firstEntry
+                                    andEntry:(CRWSessionEntry*)secondEntry;
 
 // Find the most recent session entry that is not a redirect. Returns nil if
 // |entries_| is empty.

@@ -4,17 +4,25 @@
 
 #include "extensions/shell/browser/shell_content_browser_client.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "components/guest_view/browser/guest_view_message_filter.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/site_instance.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
 #include "extensions/browser/extension_message_filter.h"
+#include "extensions/browser/extension_navigation_throttle.h"
+#include "extensions/browser/extension_navigation_ui_data.h"
 #include "extensions/browser/extension_protocols.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/guest_view/extensions_guest_view_message_filter.h"
@@ -27,6 +35,7 @@
 #include "extensions/shell/browser/shell_browser_context.h"
 #include "extensions/shell/browser/shell_browser_main_parts.h"
 #include "extensions/shell/browser/shell_extension_system.h"
+#include "extensions/shell/browser/shell_navigation_ui_data.h"
 #include "extensions/shell/browser/shell_speech_recognition_manager_delegate.h"
 #include "url/gurl.h"
 
@@ -97,7 +106,7 @@ void ShellContentBrowserClient::RenderProcessWillLaunch(
       render_process_id,
       browser_context->IsOffTheRecord(),
       browser_context->GetPath(),
-      browser_context->GetRequestContextForRenderProcess(render_process_id)));
+      host->GetStoragePartition()->GetURLRequestContext()));
 #endif
 }
 
@@ -111,28 +120,11 @@ bool ShellContentBrowserClient::ShouldUseProcessPerSite(
   return true;
 }
 
-net::URLRequestContextGetter* ShellContentBrowserClient::CreateRequestContext(
-    content::BrowserContext* content_browser_context,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  // Handle only chrome-extension:// requests. app_shell does not support
-  // chrome-extension-resource:// requests (it does not store shared extension
-  // data in its installation directory).
-  InfoMap* extension_info_map =
-      browser_main_parts_->extension_system()->info_map();
-  (*protocol_handlers)[kExtensionScheme] =
-      linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
-          CreateExtensionProtocolHandler(false /* is_incognito */,
-                                         extension_info_map)
-              .release());
-  return browser_main_parts_->browser_context()->CreateRequestContext(
-      protocol_handlers, request_interceptors.Pass(), extension_info_map);
-}
-
 bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
   if (!url.is_valid())
     return false;
-  // Keep in sync with ProtocolHandlers added in CreateRequestContext() and in
+  // Keep in sync with ProtocolHandlers added in
+  // ShellBrowserContext::CreateRequestContext() and in
   // content::ShellURLRequestContextGetter::GetURLRequestContext().
   static const char* const kProtocolList[] = {
       url::kBlobScheme,
@@ -237,6 +229,20 @@ void ShellContentBrowserClient::GetAdditionalAllowedSchemesForFileSystem(
 content::DevToolsManagerDelegate*
 ShellContentBrowserClient::GetDevToolsManagerDelegate() {
   return new content::ShellDevToolsManagerDelegate(GetBrowserContext());
+}
+
+ScopedVector<content::NavigationThrottle>
+ShellContentBrowserClient::CreateThrottlesForNavigation(
+    content::NavigationHandle* navigation_handle) {
+  ScopedVector<content::NavigationThrottle> throttles;
+  throttles.push_back(new ExtensionNavigationThrottle(navigation_handle));
+  return throttles;
+}
+
+std::unique_ptr<content::NavigationUIData>
+ShellContentBrowserClient::GetNavigationUIData(
+    content::NavigationHandle* navigation_handle) {
+  return base::MakeUnique<ShellNavigationUIData>(navigation_handle);
 }
 
 ShellBrowserMainParts* ShellContentBrowserClient::CreateShellBrowserMainParts(

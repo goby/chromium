@@ -24,48 +24,79 @@
 #ifndef HTMLIFrameElement_h
 #define HTMLIFrameElement_h
 
-#include "core/dom/DOMSettableTokenList.h"
+#include "core/CoreExport.h"
 #include "core/html/HTMLFrameElementBase.h"
+#include "core/html/HTMLIFrameElementPermissions.h"
+#include "core/html/HTMLIFrameElementSandbox.h"
+#include "platform/Supplementable.h"
+#include "public/platform/WebVector.h"
+#include "public/platform/modules/permissions/WebPermissionType.h"
 
 namespace blink {
 
-class HTMLIFrameElement final : public HTMLFrameElementBase, public DOMSettableTokenListObserver {
-    DEFINE_WRAPPERTYPEINFO();
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(HTMLIFrameElement);
-public:
-    DECLARE_NODE_FACTORY(HTMLIFrameElement);
-    DECLARE_VIRTUAL_TRACE();
-    ~HTMLIFrameElement() override;
-    DOMSettableTokenList* sandbox() const;
+class CORE_EXPORT HTMLIFrameElement final
+    : public HTMLFrameElementBase,
+      public Supplementable<HTMLIFrameElement> {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(HTMLIFrameElement);
 
-private:
-    explicit HTMLIFrameElement(Document&);
+ public:
+  DECLARE_NODE_FACTORY(HTMLIFrameElement);
+  DECLARE_VIRTUAL_TRACE();
+  ~HTMLIFrameElement() override;
+  DOMTokenList* sandbox() const;
+  DOMTokenList* permissions() const;
 
-    void parseAttribute(const QualifiedName&, const AtomicString&, const AtomicString&) override;
-    bool isPresentationAttribute(const QualifiedName&) const override;
-    void collectStyleForPresentationAttribute(const QualifiedName&, const AtomicString&, MutableStylePropertySet*) override;
+  void sandboxValueWasSet();
+  void permissionsValueWasSet();
 
-    InsertionNotificationRequest insertedInto(ContainerNode*) override;
-    void removedFrom(ContainerNode*) override;
+ private:
+  explicit HTMLIFrameElement(Document&);
 
-    bool layoutObjectIsNeeded(const ComputedStyle&) override;
-    LayoutObject* createLayoutObject(const ComputedStyle&) override;
+  void parseAttribute(const QualifiedName&,
+                      const AtomicString&,
+                      const AtomicString&) override;
+  bool isPresentationAttribute(const QualifiedName&) const override;
+  void collectStyleForPresentationAttribute(const QualifiedName&,
+                                            const AtomicString&,
+                                            MutableStylePropertySet*) override;
 
-    bool loadedNonEmptyDocument() const override { return m_didLoadNonEmptyDocument; }
-    void didLoadNonEmptyDocument() override { m_didLoadNonEmptyDocument = true; }
-    bool isInteractiveContent() const override;
+  InsertionNotificationRequest insertedInto(ContainerNode*) override;
+  void removedFrom(ContainerNode*) override;
 
-    void valueWasSet() override;
+  bool layoutObjectIsNeeded(const ComputedStyle&) override;
+  LayoutObject* createLayoutObject(const ComputedStyle&) override;
 
-    ReferrerPolicy referrerPolicyAttribute() override;
+  bool loadedNonEmptyDocument() const override {
+    return m_didLoadNonEmptyDocument;
+  }
+  void didLoadNonEmptyDocument() override { m_didLoadNonEmptyDocument = true; }
+  bool isInteractiveContent() const override;
 
-    AtomicString m_name;
-    bool m_didLoadNonEmptyDocument;
-    RefPtrWillBeMember<DOMSettableTokenList> m_sandbox;
+  ReferrerPolicy referrerPolicyAttribute() override;
 
-    ReferrerPolicy m_referrerPolicy;
+  bool allowFullscreen() const override { return m_allowFullscreen; }
+
+  AtomicString csp() const override { return m_csp; }
+
+  const WebVector<WebPermissionType>& delegatedPermissions() const override {
+    return m_delegatedPermissions;
+  }
+
+  bool initializePermissionsAttribute();
+
+  AtomicString m_name;
+  AtomicString m_csp;
+  bool m_didLoadNonEmptyDocument;
+  bool m_allowFullscreen;
+  Member<HTMLIFrameElementSandbox> m_sandbox;
+  Member<HTMLIFrameElementPermissions> m_permissions;
+
+  WebVector<WebPermissionType> m_delegatedPermissions;
+
+  ReferrerPolicy m_referrerPolicy;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLIFrameElement_h
+#endif  // HTMLIFrameElement_h

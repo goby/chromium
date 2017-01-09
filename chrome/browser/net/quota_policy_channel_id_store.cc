@@ -6,12 +6,11 @@
 
 #include <list>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
@@ -69,7 +68,7 @@ void QuotaPolicyChannelIDStore::SetForceKeepSessionState() {
 
 void QuotaPolicyChannelIDStore::OnLoad(
     const LoadedCallback& loaded_callback,
-    scoped_ptr<ChannelIDVector> channel_ids) {
+    std::unique_ptr<ChannelIDVector> channel_ids) {
   for (ChannelIDVector::const_iterator channel_id = channel_ids->begin();
        channel_id != channel_ids->end();
        ++channel_id) {

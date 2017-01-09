@@ -4,22 +4,32 @@
 
 #include "chrome/browser/ui/webui/instant_ui.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_instant_controller.h"
 #include "chrome/browser/ui/search/instant_controller.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#endif
 
 namespace {
 
@@ -34,7 +44,7 @@ content::WebUIDataSource* CreateInstantHTMLSource() {
 }
 
 #if !defined(OS_ANDROID)
-std::string FormatTime(int64 time) {
+std::string FormatTime(int64_t time) {
   base::Time::Exploded exploded;
   base::Time::FromInternalValue(time).UTCExplode(&exploded);
   return base::StringPrintf("%04d-%02d-%02d %02d:%02d:%02d.%03d",
@@ -96,7 +106,7 @@ void InstantUIMessageHandler::GetPreferenceValue(const base::ListValue* args) {
   if (pref_name == prefs::kInstantUIZeroSuggestUrlPrefix) {
     PrefService* prefs = Profile::FromWebUI(web_ui())->GetPrefs();
     base::StringValue arg(prefs->GetString(pref_name.c_str()));
-    web_ui()->CallJavascriptFunction(
+    web_ui()->CallJavascriptFunctionUnsafe(
         "instantConfig.getPreferenceValueResult", pref_name_value, arg);
   }
 }
@@ -116,7 +126,7 @@ void InstantUIMessageHandler::SetPreferenceValue(const base::ListValue* args) {
 
 void InstantUIMessageHandler::GetDebugInfo(const base::ListValue* args) {
 #if !defined(OS_ANDROID)
-  typedef std::pair<int64, std::string> DebugEvent;
+  typedef std::pair<int64_t, std::string> DebugEvent;
 
   if (!web_ui()->GetWebContents())
     return;
@@ -132,14 +142,15 @@ void InstantUIMessageHandler::GetDebugInfo(const base::ListValue* args) {
   base::ListValue* entries = new base::ListValue();
   for (std::list<DebugEvent>::const_iterator it = events.begin();
        it != events.end(); ++it) {
-    base::DictionaryValue* entry = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
     entry->SetString("time", FormatTime(it->first));
     entry->SetString("text", it->second);
-    entries->Append(entry);
+    entries->Append(std::move(entry));
   }
   data.Set("entries", entries);
 
-  web_ui()->CallJavascriptFunction("instantConfig.getDebugInfoResult", data);
+  web_ui()->CallJavascriptFunctionUnsafe("instantConfig.getDebugInfoResult",
+                                         data);
 #endif
 }
 

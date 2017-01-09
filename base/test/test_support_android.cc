@@ -8,13 +8,17 @@
 #include "base/android/path_utils.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_pump_android.h"
 #include "base/path_service.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/multiprocess_test.h"
 
 namespace {
+
+base::FilePath* g_test_data_dir = nullptr;
 
 struct RunState {
   RunState(base::MessagePump::Delegate* delegate, int run_depth)
@@ -39,29 +43,28 @@ RunState* g_state = NULL;
 // when there are no pending messages.
 class Waitable {
  public:
-  static Waitable* GetInstance() { return base::Singleton<Waitable>::get(); }
+  static Waitable* GetInstance() {
+    return base::Singleton<Waitable,
+                           base::LeakySingletonTraits<Waitable>>::get();
+  }
 
-   // Signals that there are more work to do.
-   void Signal() {
-     waitable_event_.Signal();
-   }
+  // Signals that there are more work to do.
+  void Signal() { waitable_event_.Signal(); }
 
-   // Blocks until more work is scheduled.
-   void Block() {
-     waitable_event_.Wait();
-   }
+  // Blocks until more work is scheduled.
+  void Block() { waitable_event_.Wait(); }
 
-   void Quit() {
-     g_state->should_quit = true;
-     Signal();
-   }
+  void Quit() {
+    g_state->should_quit = true;
+    Signal();
+  }
 
  private:
   friend struct base::DefaultSingletonTraits<Waitable>;
 
   Waitable()
-      : waitable_event_(false, false) {
-  }
+      : waitable_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                        base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   base::WaitableEvent waitable_event_;
 
@@ -126,17 +129,20 @@ class MessagePumpForUIStub : public base::MessagePumpForUI {
   }
 };
 
-scoped_ptr<base::MessagePump> CreateMessagePumpForUIStub() {
-  return scoped_ptr<base::MessagePump>(new MessagePumpForUIStub());
+std::unique_ptr<base::MessagePump> CreateMessagePumpForUIStub() {
+  return std::unique_ptr<base::MessagePump>(new MessagePumpForUIStub());
 };
 
-// Provides the test path for DIR_MODULE and DIR_ANDROID_APP_DATA.
+// Provides the test path for DIR_SOURCE_ROOT and DIR_ANDROID_APP_DATA.
 bool GetTestProviderPath(int key, base::FilePath* result) {
   switch (key) {
-    case base::DIR_ANDROID_APP_DATA: {
-      // For tests, app data is put in external storage.
-      return base::android::GetExternalStorageDirectory(result);
-    }
+    // TODO(agrieve): Stop overriding DIR_ANDROID_APP_DATA.
+    // https://crbug.com/617734
+    case base::DIR_ANDROID_APP_DATA:
+    case base::DIR_SOURCE_ROOT:
+      CHECK(g_test_data_dir != nullptr);
+      *result = *g_test_data_dir;
+      return true;
     default:
       return false;
   }
@@ -154,6 +160,9 @@ void InitPathProvider(int key) {
 namespace base {
 
 void InitAndroidTestLogging() {
+  if (base::AndroidIsChildProcess())
+    return;
+
   logging::LoggingSettings settings;
   settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
   logging::InitLogging(settings);
@@ -164,8 +173,13 @@ void InitAndroidTestLogging() {
                        false);   // Tick count
 }
 
-void InitAndroidTestPaths() {
-  InitPathProvider(DIR_MODULE);
+void InitAndroidTestPaths(const FilePath& test_data_dir) {
+  if (g_test_data_dir) {
+    CHECK(test_data_dir == *g_test_data_dir);
+    return;
+  }
+  g_test_data_dir = new FilePath(test_data_dir);
+  InitPathProvider(DIR_SOURCE_ROOT);
   InitPathProvider(DIR_ANDROID_APP_DATA);
 }
 
@@ -174,9 +188,4 @@ void InitAndroidTestMessageLoop() {
     LOG(INFO) << "MessagePumpForUIFactory already set, unable to override.";
 }
 
-void InitAndroidTest() {
-  InitAndroidTestLogging();
-  InitAndroidTestPaths();
-  InitAndroidTestMessageLoop();
-}
 }  // namespace base

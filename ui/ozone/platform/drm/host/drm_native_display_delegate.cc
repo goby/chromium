@@ -21,8 +21,8 @@ DrmNativeDisplayDelegate::~DrmNativeDisplayDelegate() {
 }
 
 void DrmNativeDisplayDelegate::OnConfigurationChanged() {
-  FOR_EACH_OBSERVER(NativeDisplayObserver, observers_,
-                    OnConfigurationChanged());
+  for (NativeDisplayObserver& observer : observers_)
+    observer.OnConfigurationChanged();
 }
 
 void DrmNativeDisplayDelegate::Initialize() {
@@ -102,11 +102,13 @@ bool DrmNativeDisplayDelegate::SetColorCalibrationProfile(
   return false;
 }
 
-bool DrmNativeDisplayDelegate::SetGammaRamp(
+bool DrmNativeDisplayDelegate::SetColorCorrection(
     const ui::DisplaySnapshot& output,
-    const std::vector<GammaRampRGBEntry>& lut) {
+    const std::vector<GammaRampRGBEntry>& degamma_lut,
+    const std::vector<GammaRampRGBEntry>& gamma_lut,
+    const std::vector<float>& correction_matrix) {
   DrmDisplayHost* display = display_manager_->GetDisplay(output.display_id());
-  display->SetGammaRamp(lut);
+  display->SetColorCorrection(degamma_lut, gamma_lut, correction_matrix);
   return true;
 }
 
@@ -116,6 +118,11 @@ void DrmNativeDisplayDelegate::AddObserver(NativeDisplayObserver* observer) {
 
 void DrmNativeDisplayDelegate::RemoveObserver(NativeDisplayObserver* observer) {
   observers_.RemoveObserver(observer);
+}
+
+display::FakeDisplayController*
+DrmNativeDisplayDelegate::GetFakeDisplayController() {
+  return nullptr;
 }
 
 }  // namespace ui

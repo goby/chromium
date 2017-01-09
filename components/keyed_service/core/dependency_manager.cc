@@ -41,11 +41,10 @@ void DependencyManager::RegisterPrefsForServices(
     NOTREACHED();
   }
 
-  for (const auto& dependency_node : construction_order) {
+  for (auto* dependency_node : construction_order) {
     KeyedServiceBaseFactory* factory =
         static_cast<KeyedServiceBaseFactory*>(dependency_node);
-    base::SupportsUserData* typed_context = factory->GetTypedContext(context);
-    factory->RegisterPrefsIfNecessaryForContext(typed_context, pref_registry);
+    factory->RegisterPrefsIfNecessaryForContext(context, pref_registry);
   }
 }
 
@@ -64,15 +63,14 @@ void DependencyManager::CreateContextServices(base::SupportsUserData* context,
   DumpContextDependencies(context);
 #endif
 
-  for (const auto& dependency_node : construction_order) {
+  for (auto* dependency_node : construction_order) {
     KeyedServiceBaseFactory* factory =
         static_cast<KeyedServiceBaseFactory*>(dependency_node);
-    base::SupportsUserData* typed_context = factory->GetTypedContext(context);
     if (is_testing_context && factory->ServiceIsNULLWhileTesting() &&
-        !factory->HasTestingFactory(typed_context)) {
-      factory->SetEmptyTestingFactory(typed_context);
+        !factory->HasTestingFactory(context)) {
+      factory->SetEmptyTestingFactory(context);
     } else if (factory->ServiceIsCreatedWithContext()) {
-      factory->CreateServiceNow(typed_context);
+      factory->CreateServiceNow(context);
     }
   }
 }
@@ -88,11 +86,10 @@ void DependencyManager::DestroyContextServices(
   DumpContextDependencies(context);
 #endif
 
-  for (const auto& dependency_node : destruction_order) {
+  for (auto* dependency_node : destruction_order) {
     KeyedServiceBaseFactory* factory =
         static_cast<KeyedServiceBaseFactory*>(dependency_node);
-    base::SupportsUserData* typed_context = factory->GetTypedContext(context);
-    factory->ContextShutdown(typed_context);
+    factory->ContextShutdown(context);
   }
 
 #ifndef NDEBUG
@@ -100,11 +97,10 @@ void DependencyManager::DestroyContextServices(
   dead_context_pointers_.insert(context);
 #endif
 
-  for (const auto& dependency_node : destruction_order) {
+  for (auto* dependency_node : destruction_order) {
     KeyedServiceBaseFactory* factory =
         static_cast<KeyedServiceBaseFactory*>(dependency_node);
-    base::SupportsUserData* typed_context = factory->GetTypedContext(context);
-    factory->ContextDestroyed(typed_context);
+    factory->ContextDestroyed(context);
   }
 }
 

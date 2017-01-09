@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_ANDROID_COMPOSITOR_SCENE_LAYER_TAB_LIST_SCENE_LAYER_H_
 #define CHROME_BROWSER_ANDROID_COMPOSITOR_SCENE_LAYER_TAB_LIST_SCENE_LAYER_H_
 
-#include <vector>
+#include <map>
+#include <memory>
+#include <set>
+#include <unordered_set>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "cc/layers/layer.h"
 #include "chrome/browser/android/compositor/layer/layer.h"
 #include "chrome/browser/android/compositor/scene_layer/scene_layer.h"
@@ -21,7 +23,6 @@ namespace ui {
 class ResourceManager;
 }
 
-namespace chrome {
 namespace android {
 
 class LayerTitleCache;
@@ -33,19 +34,23 @@ class TabListSceneLayer : public SceneLayer {
   TabListSceneLayer(JNIEnv* env, jobject jobj);
   ~TabListSceneLayer() override;
 
-  // TODO(changwan): remove this once we have refactored
-  // ContextualSearchSupportedLayout into LayoutHelper.
-  void SetContentTree(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
-      const base::android::JavaParamRef<jobject>& jcontent_tree);
-
   void BeginBuildingFrame(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& jobj);
   void FinishBuildingFrame(JNIEnv* env,
                            const base::android::JavaParamRef<jobject>& jobj);
+  void UpdateLayer(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jobj,
+      jint background_color,
+      jfloat viewport_x,
+      jfloat viewport_y,
+      jfloat viewport_width,
+      jfloat viewport_height,
+      const base::android::JavaParamRef<jobject>& jlayer_title_cache,
+      const base::android::JavaParamRef<jobject>& jtab_content_manager,
+      const base::android::JavaParamRef<jobject>& jresource_manager);
   // TODO(dtrainor): This method is ridiculous.  Break this apart?
-  void PutLayer(
+  void PutTabLayer(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jobj,
       jint id,
@@ -55,9 +60,10 @@ class TabListSceneLayer : public SceneLayer {
       jint contour_resource_id,
       jint back_logo_resource_id,
       jint border_resource_id,
+      jint border_inner_shadow_resource_id,
       jboolean can_use_live_layer,
+      jboolean browser_controls_at_bottom,
       jint tab_background_color,
-      jint background_color,
       jint back_logo_color,
       jboolean incognito,
       jboolean is_portrait,
@@ -68,10 +74,6 @@ class TabListSceneLayer : public SceneLayer {
       jfloat content_width,
       jfloat content_height,
       jfloat visible_content_height,
-      jfloat viewport_x,
-      jfloat viewport_y,
-      jfloat viewport_width,
-      jfloat viewport_height,
       jfloat shadow_x,
       jfloat shadow_y,
       jfloat shadow_width,
@@ -82,6 +84,7 @@ class TabListSceneLayer : public SceneLayer {
       jfloat rotation_y,
       jfloat alpha,
       jfloat border_alpha,
+      jfloat border_inner_shadow_alpha,
       jfloat contour_alpha,
       jfloat shadow_alpha,
       jfloat close_alpha,
@@ -91,7 +94,9 @@ class TabListSceneLayer : public SceneLayer {
       jfloat saturation,
       jfloat brightness,
       jboolean show_toolbar,
+      jint default_theme_color,
       jint toolbar_background_color,
+      jint close_button_color,
       jboolean anonymize_toolbar,
       jint toolbar_textbox_resource_id,
       jint toolbar_textbox_background_color,
@@ -99,11 +104,7 @@ class TabListSceneLayer : public SceneLayer {
       jfloat toolbar_alpha,
       jfloat toolbar_y_offset,
       jfloat side_border_scale,
-      jboolean attach_content,
-      jboolean inset_border,
-      const base::android::JavaParamRef<jobject>& jlayer_title_cache,
-      const base::android::JavaParamRef<jobject>& jtab_content_manager,
-      const base::android::JavaParamRef<jobject>& jresource_manager);
+      jboolean inset_border);
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject(JNIEnv* env);
 
@@ -112,25 +113,21 @@ class TabListSceneLayer : public SceneLayer {
   SkColor GetBackgroundColor() override;
 
  private:
-  void RemoveAllRemainingTabLayers();
-  void RemoveTabLayersInRange(unsigned start_index, unsigned end_index);
+  // The set of tint colors that were used for a frame.
+  std::unordered_set<int> used_tints_;
 
-  typedef std::vector<scoped_refptr<TabLayer>> TabLayerList;
-
-  scoped_refptr<TabLayer> GetNextLayer(bool incognito);
+  typedef std::map<int, scoped_refptr<TabLayer>> TabMap;
+  TabMap tab_map_;
+  std::set<int> visible_tabs_this_frame_;
 
   base::android::ScopedJavaGlobalRef<jobject> java_obj_;
   bool content_obscures_self_;
-  unsigned write_index_;
   ui::ResourceManager* resource_manager_;
   LayerTitleCache* layer_title_cache_;
   TabContentManager* tab_content_manager_;
-  TabLayerList layers_;
   SkColor background_color_;
 
-  // We need to make sure that content_tree_ is always in front of own_tree_.
   scoped_refptr<cc::Layer> own_tree_;
-  scoped_refptr<cc::Layer> content_tree_;
 
   DISALLOW_COPY_AND_ASSIGN(TabListSceneLayer);
 };
@@ -138,6 +135,5 @@ class TabListSceneLayer : public SceneLayer {
 bool RegisterTabListSceneLayer(JNIEnv* env);
 
 }  // namespace android
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_COMPOSITOR_SCENE_LAYER_TAB_LIST_SCENE_LAYER_H_

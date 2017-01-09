@@ -5,11 +5,14 @@
 #include <algorithm>
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
@@ -20,6 +23,7 @@
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/data_driven_test.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "content/public/common/content_switches.h"
 #include "url/gurl.h"
 
 #if defined(OS_MACOSX)
@@ -79,11 +83,19 @@ class FormStructureBrowserTest
   FormStructureBrowserTest();
   ~FormStructureBrowserTest() override;
 
+  // InProcessBrowserTest
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    // Suppress most output logs because we can't really control the output for
+    // arbitrary test sites.
+    command_line->AppendSwitch(switches::kDisableLogging);
+  }
+
   // DataDrivenTest:
   void GenerateResults(const std::string& input, std::string* output) override;
 
   // Serializes the given |forms| into a string.
-  std::string FormStructuresToString(const std::vector<FormStructure*>& forms);
+  std::string FormStructuresToString(
+      const std::vector<std::unique_ptr<FormStructure>>& forms);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FormStructureBrowserTest);
@@ -109,14 +121,15 @@ void FormStructureBrowserTest::GenerateResults(const std::string& input,
   ASSERT_NE(nullptr, autofill_driver);
   AutofillManager* autofill_manager = autofill_driver->autofill_manager();
   ASSERT_NE(nullptr, autofill_manager);
-  std::vector<FormStructure*> forms = autofill_manager->form_structures_.get();
+  const std::vector<std::unique_ptr<FormStructure>>& forms =
+      autofill_manager->form_structures_;
   *output = FormStructuresToString(forms);
 }
 
 std::string FormStructureBrowserTest::FormStructuresToString(
-    const std::vector<FormStructure*>& forms) {
+    const std::vector<std::unique_ptr<FormStructure>>& forms) {
   std::string forms_string;
-  for (const FormStructure* form : forms) {
+  for (const auto& form : forms) {
     for (const AutofillField* field : *form) {
       forms_string += field->Type().ToString();
       forms_string += " | " + base::UTF16ToUTF8(field->name);
@@ -130,6 +143,8 @@ std::string FormStructureBrowserTest::FormStructuresToString(
 }
 
 IN_PROC_BROWSER_TEST_P(FormStructureBrowserTest, DataDrivenHeuristics) {
+  // Prints the path of the test to be executed.
+  LOG(INFO) << GetParam().MaybeAsASCII();
   RunOneDataDrivenTest(GetParam(), GetOutputDirectory(kTestName));
 }
 

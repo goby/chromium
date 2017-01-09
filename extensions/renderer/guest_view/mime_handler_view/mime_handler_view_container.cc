@@ -7,6 +7,7 @@
 #include <map>
 #include <set>
 
+#include "base/macros.h"
 #include "components/guest_view/common/guest_view_constants.h"
 #include "components/guest_view/common/guest_view_messages.h"
 #include "content/public/child/v8_value_converter.h"
@@ -21,6 +22,8 @@
 #include "gin/interceptor.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
+#include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
+#include "third_party/WebKit/public/web/WebAssociatedURLLoaderOptions.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebRemoteFrame.h"
@@ -116,8 +119,10 @@ MimeHandlerViewContainer::MimeHandlerViewContainer(
 }
 
 MimeHandlerViewContainer::~MimeHandlerViewContainer() {
-  if (loader_)
+  if (loader_) {
+    DCHECK(is_embedded_);
     loader_->cancel();
+  }
 
   if (render_frame()) {
     g_mime_handler_view_container_map.Get()[render_frame()].erase(this);
@@ -138,15 +143,15 @@ MimeHandlerViewContainer::FromRenderFrame(content::RenderFrame* render_frame) {
 }
 
 void MimeHandlerViewContainer::OnReady() {
-  if (!render_frame())
+  if (!render_frame() || !is_embedded_)
     return;
 
   blink::WebFrame* frame = render_frame()->GetWebFrame();
-  blink::WebURLLoaderOptions options;
+  blink::WebAssociatedURLLoaderOptions options;
   // The embedded plugin is allowed to be cross-origin and we should always
   // send credentials/cookies with the request.
   options.crossOriginRequestPolicy =
-      blink::WebURLLoaderOptions::CrossOriginRequestPolicyAllow;
+      blink::WebAssociatedURLLoaderOptions::CrossOriginRequestPolicyAllow;
   options.allowCredentials = true;
   DCHECK(!loader_);
   loader_.reset(frame->createAssociatedURLLoader(options));
@@ -201,17 +206,12 @@ v8::Local<v8::Object> MimeHandlerViewContainer::V8ScriptableObject(
   return v8::Local<v8::Object>::New(isolate, scriptable_object_);
 }
 
-void MimeHandlerViewContainer::didReceiveData(blink::WebURLLoader* /* unused */,
-                                              const char* data,
-                                              int data_length,
-                                              int /* unused */) {
+void MimeHandlerViewContainer::didReceiveData(const char* data,
+                                              int data_length) {
   view_id_ += std::string(data, data_length);
 }
 
-void MimeHandlerViewContainer::didFinishLoading(
-    blink::WebURLLoader* /* unused */,
-    double /* unused */,
-    int64_t /* unused */) {
+void MimeHandlerViewContainer::didFinishLoading(double /* unused */) {
   DCHECK(is_embedded_);
   CreateMimeHandlerViewGuest();
 }
@@ -219,9 +219,7 @@ void MimeHandlerViewContainer::didFinishLoading(
 void MimeHandlerViewContainer::PostMessage(v8::Isolate* isolate,
                                            v8::Local<v8::Value> message) {
   if (!guest_loaded_) {
-    linked_ptr<v8::Global<v8::Value>> global(
-        new v8::Global<v8::Value>(isolate, message));
-    pending_messages_.push_back(global);
+    pending_messages_.push_back(v8::Global<v8::Value>(isolate, message));
     return;
   }
 
@@ -274,7 +272,7 @@ void MimeHandlerViewContainer::PostMessageFromValue(
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(frame->mainWorldScriptContext());
-  scoped_ptr<content::V8ValueConverter> converter(
+  std::unique_ptr<content::V8ValueConverter> converter(
       content::V8ValueConverter::create());
   PostMessage(isolate,
               converter->ToV8Value(&message, frame->mainWorldScriptContext()));
@@ -316,14 +314,17 @@ void MimeHandlerViewContainer::OnMimeHandlerViewGuestOnLoadCompleted(
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(frame->mainWorldScriptContext());
   for (const auto& pending_message : pending_messages_)
-    PostMessage(isolate, v8::Local<v8::Value>::New(isolate, *pending_message));
+    PostMessage(isolate, v8::Local<v8::Value>::New(isolate, pending_message));
 
   pending_messages_.clear();
 }
 
 void MimeHandlerViewContainer::CreateMimeHandlerViewGuest() {
   // The loader has completed loading |view_id_| so we can dispose it.
-  loader_.reset();
+  if (loader_) {
+    DCHECK(is_embedded_);
+    loader_.reset();
+  }
 
   DCHECK_NE(element_instance_id(), guest_view::kInstanceIDNone);
 

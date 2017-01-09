@@ -5,13 +5,15 @@
 #ifndef UI_BASE_L10N_L10N_UTIL_COLLATOR_H_
 #define UI_BASE_L10N_L10N_UTIL_COLLATOR_H_
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/i18n/string_compare.h"
-#include "base/memory/scoped_ptr.h"
 #include "third_party/icu/source/i18n/unicode/coll.h"
 #include "ui/base/ui_base_export.h"
 
@@ -20,20 +22,18 @@ namespace l10n_util {
 // Used by SortStringsUsingMethod. Invokes a method on the objects passed to
 // operator (), comparing the string results using a collator.
 template <class T, class Method>
-class StringMethodComparatorWithCollator
-    : public std::binary_function<const base::string16&,
-                                  const base::string16&,
-                                  bool> {
+class StringMethodComparatorWithCollator {
  public:
   StringMethodComparatorWithCollator(icu::Collator* collator, Method method)
       : collator_(collator),
         method_(method) { }
 
-  // Returns true if lhs preceeds rhs.
-  bool operator() (T* lhs_t, T* rhs_t) {
+  // Returns true if lhs precedes rhs.
+  bool operator()(const std::unique_ptr<T>& lhs_t,
+                  const std::unique_ptr<T>& rhs_t) {
     return base::i18n::CompareString16WithCollator(
-               *collator_, (lhs_t->*method_)(), (rhs_t->*method_)()) ==
-           UCOL_LESS;
+               *collator_, (lhs_t.get()->*method_)(),
+               (rhs_t.get()->*method_)()) == UCOL_LESS;
   }
 
  private:
@@ -44,16 +44,14 @@ class StringMethodComparatorWithCollator
 // Used by SortStringsUsingMethod. Invokes a method on the objects passed to
 // operator (), comparing the string results using <.
 template <class T, class Method>
-class StringMethodComparator
-    : public std::binary_function<const base::string16&,
-                                  const base::string16&,
-                                  bool> {
+class StringMethodComparator {
  public:
   explicit StringMethodComparator(Method method) : method_(method) { }
 
-  // Returns true if lhs preceeds rhs.
-  bool operator() (T* lhs_t, T* rhs_t) {
-    return (lhs_t->*method_)() < (rhs_t->*method_)();
+  // Returns true if lhs precedes rhs.
+  bool operator()(const std::unique_ptr<T>& lhs_t,
+                  const std::unique_ptr<T>& rhs_t) {
+    return (lhs_t.get()->*method_)() < (rhs_t.get()->*method_)();
   }
 
  private:
@@ -65,11 +63,12 @@ class StringMethodComparator
 // found in which case the strings are sorted using the operator <.
 template <class T, class Method>
 void SortStringsUsingMethod(const std::string& locale,
-                            std::vector<T*>* elements,
+                            std::vector<std::unique_ptr<T>>* elements,
                             Method method) {
   UErrorCode error = U_ZERO_ERROR;
   icu::Locale loc(locale.c_str());
-  scoped_ptr<icu::Collator> collator(icu::Collator::createInstance(loc, error));
+  std::unique_ptr<icu::Collator> collator(
+      icu::Collator::createInstance(loc, error));
   if (U_FAILURE(error)) {
     sort(elements->begin(), elements->end(),
          StringMethodComparator<T, Method>(method));
@@ -86,9 +85,7 @@ void SortStringsUsingMethod(const std::string& locale,
 // const base::string16& GetStringKey() const;
 // This uses the locale specified in the constructor.
 template <class Element>
-class StringComparator : public std::binary_function<const Element&,
-                                                     const Element&,
-                                                     bool> {
+class StringComparator {
  public:
   explicit StringComparator(icu::Collator* collator)
       : collator_(collator) { }
@@ -134,7 +131,8 @@ void SortVectorWithStringKey(const std::string& locale,
   DCHECK_LE(end_index, elements->size());
   UErrorCode error = U_ZERO_ERROR;
   icu::Locale loc(locale.c_str());
-  scoped_ptr<icu::Collator> collator(icu::Collator::createInstance(loc, error));
+  std::unique_ptr<icu::Collator> collator(
+      icu::Collator::createInstance(loc, error));
   if (U_FAILURE(error))
     collator.reset();
   StringComparator<Element> c(collator.get());

@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/net/prediction_options.h"
@@ -21,7 +22,7 @@
 #include "components/content_settings/core/browser/website_settings_registry.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/pref_names.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
@@ -34,8 +35,9 @@ class PrefsFunctionalTest : public InProcessBrowserTest {
  protected:
   // Create a DownloadTestObserverTerminal that will wait for the
   // specified number of downloads to finish.
-  scoped_ptr<content::DownloadTestObserver> CreateWaiter(Browser* browser,
-                                                         int num_downloads) {
+  std::unique_ptr<content::DownloadTestObserver> CreateWaiter(
+      Browser* browser,
+      int num_downloads) {
     DownloadManager* download_manager =
         BrowserContext::GetDownloadManager(browser->profile());
 
@@ -44,7 +46,7 @@ class PrefsFunctionalTest : public InProcessBrowserTest {
              download_manager,
              num_downloads,
              content::DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
-    return make_scoped_ptr(downloads_observer);
+    return base::WrapUnique(downloads_observer);
   }
 };
 
@@ -54,14 +56,14 @@ IN_PROC_BROWSER_TEST_F(PrefsFunctionalTest, TestDownloadDirPref) {
   ASSERT_TRUE(new_download_dir.CreateUniqueTempDir());
 
   base::FilePath downloaded_pkg =
-      new_download_dir.path().AppendASCII("a_zip_file.zip");
+      new_download_dir.GetPath().AppendASCII("a_zip_file.zip");
 
   // Set pref to download in new_download_dir.
   browser()->profile()->GetPrefs()->SetFilePath(
-      prefs::kDownloadDefaultDirectory, new_download_dir.path());
+      prefs::kDownloadDefaultDirectory, new_download_dir.GetPath());
 
   // Create a downloads observer.
-  scoped_ptr<content::DownloadTestObserver> downloads_observer(
+  std::unique_ptr<content::DownloadTestObserver> downloads_observer(
       CreateWaiter(browser(), 1));
   ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/downloads/a_zip_file.zip"));

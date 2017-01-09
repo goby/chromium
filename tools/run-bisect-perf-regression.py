@@ -199,7 +199,8 @@ def _CreateBisectOptionsFromConfig(config):
     opts_dict['truncate_percent'] = int(config['truncate_percent'])
 
   if config['max_time_minutes']:
-    opts_dict['max_time_minutes'] = int(config['max_time_minutes'])
+    opts_dict['max_time_minutes'] = _Clamp(
+        int(config['max_time_minutes']), low=1, high=60)
 
   if config.has_key('use_goma'):
     opts_dict['use_goma'] = config['use_goma']
@@ -209,11 +210,18 @@ def _CreateBisectOptionsFromConfig(config):
   if config.has_key('improvement_direction'):
     opts_dict['improvement_direction'] = int(config['improvement_direction'])
 
+  if config.has_key('required_initial_confidence'):
+    opts_dict['required_initial_confidence'] = float(
+        config['required_initial_confidence'])
+
   if config.has_key('target_arch'):
     opts_dict['target_arch'] = config['target_arch']
 
   if config.has_key('bug_id') and str(config['bug_id']).isdigit():
     opts_dict['bug_id'] = config['bug_id']
+
+  if config.has_key('try_job_id'):
+    opts_dict['try_job_id'] = config['try_job_id']
 
   opts_dict['build_preference'] = 'ninja'
   opts_dict['output_buildbot_annotations'] = True
@@ -236,6 +244,11 @@ def _CreateBisectOptionsFromConfig(config):
       opts_dict['target_platform'] = 'android'
 
   return bisect_perf_regression.BisectOptions.FromDict(opts_dict)
+
+
+def _Clamp(n, low, high):
+  """Clamps a value to a range."""
+  return min(high, max(low, n))
 
 
 def _ParseCloudLinksFromOutput(output):
@@ -517,8 +530,10 @@ def _RunBisectionScript(
       ('bisect_mode', '--bisect_mode'),
       ('improvement_direction', '--improvement_direction'),
       ('bug_id', '--bug_id'),
+      ('try_job_id', '--try_job_id'),
       ('builder_type', '--builder_type'),
       ('target_arch', '--target_arch'),
+      ('required_initial_confidence', '--required_initial_confidence'),
   ]
   for config_key, flag in options:
     if config.has_key(config_key):

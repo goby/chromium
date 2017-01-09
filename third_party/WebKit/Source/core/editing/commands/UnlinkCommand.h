@@ -31,19 +31,17 @@
 namespace blink {
 
 class UnlinkCommand final : public CompositeEditCommand {
-public:
-    static PassRefPtrWillBeRawPtr<UnlinkCommand> create(Document& document)
-    {
-        return adoptRefWillBeNoop(new UnlinkCommand(document));
-    }
+ public:
+  static UnlinkCommand* create(Document& document) {
+    return new UnlinkCommand(document);
+  }
 
-private:
-    explicit UnlinkCommand(Document&);
+ private:
+  explicit UnlinkCommand(Document&);
 
-    void doApply() override;
-    EditAction editingAction() const override { return EditActionUnlink; }
+  void doApply(EditingState*) override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // UnlinkCommand_h
+#endif  // UnlinkCommand_h

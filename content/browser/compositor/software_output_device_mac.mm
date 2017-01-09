@@ -4,12 +4,12 @@
 
 #include "content/browser/compositor/software_output_device_mac.h"
 
-#import <Cocoa/Cocoa.h>
-
 #include "base/mac/foundation_util.h"
+#include "base/trace_event/trace_event.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/accelerated_widget_mac/accelerated_widget_mac.h"
 #include "ui/compositor/compositor.h"
+#include "ui/gfx/mac/io_surface.h"
 #include "ui/gfx/skia_util.h"
 
 namespace content {
@@ -84,15 +84,8 @@ bool SoftwareOutputDeviceMac::EnsureBuffersExist() {
   for (int i = 0; i < 2; ++i) {
     if (!io_surfaces_[i]) {
       TRACE_EVENT0("browser", "IOSurfaceCreate");
-      unsigned pixel_format = 'BGRA';
-      unsigned bytes_per_element = 4;
-      NSDictionary* options = @{
-        static_cast<id>(kIOSurfaceWidth) : @(pixel_size_.width()),
-        static_cast<id>(kIOSurfaceHeight) : @(pixel_size_.height()),
-        static_cast<id>(kIOSurfacePixelFormat) : @(pixel_format),
-        static_cast<id>(kIOSurfaceBytesPerElement) : @(bytes_per_element),
-      };
-      io_surfaces_[i].reset(IOSurfaceCreate(base::mac::NSToCFCast(options)));
+      io_surfaces_[i].reset(
+          gfx::CreateIOSurface(pixel_size_, gfx::BufferFormat::BGRA_8888));
     }
     if (!io_surfaces_[i]) {
       DLOG(ERROR) << "Failed to allocate IOSurface";
@@ -121,8 +114,8 @@ SkCanvas* SoftwareOutputDeviceMac::BeginPaint(
       IOSurfaceGetBaseAddress(io_surfaces_[current_index_]));
   size_t stride = IOSurfaceGetBytesPerRow(io_surfaces_[current_index_]);
 
-  canvas_ = skia::AdoptRef(SkCanvas::NewRasterDirectN32(
-      pixel_size_.width(), pixel_size_.height(), pixels, stride));
+  canvas_ = SkCanvas::MakeRasterDirectN32(pixel_size_.width(),
+                                          pixel_size_.height(), pixels, stride);
 
   CopyPreviousBufferDamage(SkRegion(gfx::RectToSkIRect(new_damage_rect)));
 
@@ -138,15 +131,19 @@ void SoftwareOutputDeviceMac::EndPaint() {
     if (io_result)
       DLOG(ERROR) << "Failed to unlock IOSurface " << io_result;
   }
+  canvas_.reset();
 
-  canvas_ = nullptr;
-  base::TimeTicks vsync_timebase;
-  base::TimeDelta vsync_interval;
-  ui::AcceleratedWidgetMacGotFrame(
-      compositor_->widget(), 0, io_surfaces_[current_index_], pixel_size_,
-      scale_factor_, &vsync_timebase, &vsync_interval);
-  if (!update_vsync_callback_.is_null())
-    update_vsync_callback_.Run(vsync_timebase, vsync_interval);
+  ui::AcceleratedWidgetMac* widget =
+      ui::AcceleratedWidgetMac::Get(compositor_->widget());
+  if (widget) {
+    widget->GotIOSurfaceFrame(io_surfaces_[current_index_], pixel_size_,
+                              scale_factor_);
+    base::TimeTicks vsync_timebase;
+    base::TimeDelta vsync_interval;
+    widget->GetVSyncParameters(&vsync_timebase, &vsync_interval);
+    if (!update_vsync_callback_.is_null())
+      update_vsync_callback_.Run(vsync_timebase, vsync_interval);
+  }
 
   current_index_ = !current_index_;
 }

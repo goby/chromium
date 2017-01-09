@@ -6,15 +6,18 @@ package org.chromium.chrome.browser.compositor.bottombar;
 
 import android.view.ViewGroup;
 
+import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.StateChangeReason;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.PriorityQueue;
+import java.util.Queue;
 import java.util.Set;
 
 /**
  * Used to decide which panel should be showing on screen at any moment.
- * NOTE(mdjones): Currently only supports two panels.
  */
 public class OverlayPanelManager {
 
@@ -28,6 +31,9 @@ public class OverlayPanelManager {
         HIGH;
     }
 
+    /** The initial size of the priority queue for suppressed panels. */
+    private static final int INITIAL_QUEUE_CAPACITY = 3;
+
     /** A map of panels that this class is managing. */
     private final Set<OverlayPanel> mPanelSet;
 
@@ -37,18 +43,14 @@ public class OverlayPanelManager {
     /**
      * If a panel was being shown and another panel with higher priority was requested to show,
      * the lower priority one is stored here.
-     * TODO(mdjones): This should be a list in the case that there are more than two panels.
      */
-    private OverlayPanel mSuppressedPanel;
+    private Queue<OverlayPanel> mSuppressedPanels;
 
     /** When a panel is suppressed, this is the panel waiting for the close animation to finish. */
     private OverlayPanel mPendingPanel;
 
     /** When a panel is suppressed, this the reason the pending panel is to be shown. */
     private StateChangeReason mPendingReason;
-
-    /** This handles communication between each panel and it's host layout. */
-    private OverlayPanelHost mOverlayPanelHost;
 
     /** This handles resource loading for each panels. */
     private DynamicResourceLoader mDynamicResourceLoader;
@@ -60,6 +62,15 @@ public class OverlayPanelManager {
      * Default constructor.
      */
     public OverlayPanelManager() {
+        mSuppressedPanels = new PriorityQueue<>(INITIAL_QUEUE_CAPACITY,
+                new Comparator<OverlayPanel>() {
+                    @Override
+                    public int compare(OverlayPanel p1, OverlayPanel p2) {
+                        // The head of the queue is the smallest element, so subtract p1's priority
+                        // from p2's priority.
+                        return p2.getPriority().ordinal() - p1.getPriority().ordinal();
+                    }
+                });
         mPanelSet = new HashSet<>();
     }
 
@@ -81,8 +92,8 @@ public class OverlayPanelManager {
 
         } else if (panel.getPriority().ordinal() > mActivePanel.getPriority().ordinal()) {
             // If a panel with higher priority than the active one requests to be shown, suppress
-            // the active panel and show the requesting one.
-            // NOTE(mdjones): closePanel will trigger notifyPanelClosed.
+            // the active panel and show the requesting one. closePanel will trigger
+            // notifyPanelClosed.
             mPendingPanel = panel;
             mPendingReason = reason;
             mActivePanel.closePanel(StateChangeReason.SUPPRESS, true);
@@ -90,7 +101,7 @@ public class OverlayPanelManager {
         } else if (panel.canBeSuppressed()) {
             // If a panel was showing and the requesting panel has a lower priority, suppress it
             // if possible.
-            mSuppressedPanel = panel;
+            if (!mSuppressedPanels.contains(panel)) mSuppressedPanels.add(panel);
         }
     }
 
@@ -109,7 +120,7 @@ public class OverlayPanelManager {
         if (reason == StateChangeReason.SUPPRESS) {
             if (mActivePanel == panel) {
                 if (mActivePanel.canBeSuppressed()) {
-                    mSuppressedPanel = mActivePanel;
+                    mSuppressedPanels.add(mActivePanel);
                 }
                 mActivePanel = mPendingPanel;
                 mActivePanel.peekPanel(mPendingReason);
@@ -120,12 +131,13 @@ public class OverlayPanelManager {
             // Normal close panel flow.
             if (panel == mActivePanel) {
                 mActivePanel = null;
-                if (mSuppressedPanel != null) {
-                    mActivePanel = mSuppressedPanel;
+                if (!mSuppressedPanels.isEmpty()) {
+                    mActivePanel = mSuppressedPanels.poll();
                     mActivePanel.peekPanel(StateChangeReason.UNSUPPRESS);
                 }
+            } else {
+                mSuppressedPanels.remove(panel);
             }
-            mSuppressedPanel = null;
         }
     }
 
@@ -133,8 +145,17 @@ public class OverlayPanelManager {
      * Get the panel that has been determined to be active.
      * @return The active OverlayPanel.
      */
+    @VisibleForTesting
     public OverlayPanel getActivePanel() {
         return mActivePanel;
+    }
+
+    /**
+     * @return The size of the suppressed panel queue.
+     */
+    @VisibleForTesting
+    public int getSuppressedQueueSize() {
+        return mSuppressedPanels.size();
     }
 
     /**
@@ -146,23 +167,11 @@ public class OverlayPanelManager {
         }
         mPanelSet.clear();
         mActivePanel = null;
-        mSuppressedPanel = null;
+        mSuppressedPanels.clear();
 
         // Clear references to held resources.
-        mOverlayPanelHost = null;
         mDynamicResourceLoader = null;
         mContainerViewGroup = null;
-    }
-
-    /**
-     * Set the panel host for all OverlayPanels.
-     * @param host The OverlayPanel host.
-     */
-    public void setPanelHost(OverlayPanelHost host) {
-        mOverlayPanelHost = host;
-        for (OverlayPanel p : mPanelSet) {
-            p.setHost(host);
-        }
     }
 
     /**
@@ -188,18 +197,6 @@ public class OverlayPanelManager {
     }
 
     /**
-     * Send size change event to all panels.
-     * @param width The new width.
-     * @param height The new height.
-     * @param toolbarVisible True if the toolbar is visible.
-     */
-    public void onSizeChanged(float width, float height, boolean toolbarVisible) {
-        for (OverlayPanel p : mPanelSet) {
-            p.onSizeChanged(width, height, toolbarVisible);
-        }
-    }
-
-    /**
      * Add a panel to the collection that is managed by this class. If any of the setters for this
      * class were called before a panel was added, that panel will still get those resources.
      * @param panel An OverlayPanel to be managed.
@@ -207,9 +204,6 @@ public class OverlayPanelManager {
     public void registerPanel(OverlayPanel panel) {
         // If any of the setters for this manager were called before some panel registration,
         // make sure that panel gets the appropriate resources.
-        if (mOverlayPanelHost != null) {
-            panel.setHost(mOverlayPanelHost);
-        }
         if (mDynamicResourceLoader != null) {
             panel.setDynamicResourceLoader(mDynamicResourceLoader);
         }

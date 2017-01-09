@@ -13,7 +13,7 @@ Power usage is also measured.
 import time
 
 from telemetry.core import util
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.value import histogram
 from telemetry.value import histogram_util
 
@@ -22,7 +22,8 @@ from metrics import power
 
 # TODO: Revisit this test once multitab support is finalized.
 
-class TabSwitching(page_test.PageTest):
+
+class TabSwitching(legacy_page_test.LegacyPageTest):
 
   # Amount of time to measure, in seconds.
   SAMPLE_TIME = 30
@@ -47,6 +48,7 @@ class TabSwitching(page_test.PageTest):
     self._power_metric = power.PowerMetric(platform, TabSwitching.SAMPLE_TIME)
 
   def TabForPage(self, page, browser):
+    del page  # unused
     if self.first_page_in_storyset:
       # The initial browser window contains a single tab, navigate that tab
       # rather than creating a new one.
@@ -83,6 +85,7 @@ class TabSwitching(page_test.PageTest):
 
     for t in tab.browser.tabs:
       t.Activate()
+
       def _IsDone():
         cur_histogram = histogram_util.GetHistogram(
             histogram_type, histogram_name, tab)
@@ -96,7 +99,7 @@ class TabSwitching(page_test.PageTest):
     last_histogram = histogram_util.GetHistogram(
         histogram_type, histogram_name, tab)
     diff_histogram = histogram_util.SubtractHistogram(last_histogram,
-        first_histogram)
+                                                      first_histogram)
 
     results.AddSummaryValue(
         histogram.HistogramValue(None, display_name, 'ms',
@@ -106,4 +109,5 @@ class TabSwitching(page_test.PageTest):
     keychain_metric.KeychainMetric().AddResults(tab, results)
 
   def DidRunPage(self, platform):
+    del platform  # unused
     self._power_metric.Close()

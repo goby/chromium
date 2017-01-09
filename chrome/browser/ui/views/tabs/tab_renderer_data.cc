@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
 
 #include "base/process/kill.h"
+#include "build/build_config.h"
 
 TabRendererData::TabRendererData()
     : network_state(NETWORK_STATE_NONE),
@@ -15,8 +16,9 @@ TabRendererData::TabRendererData()
       pinned(false),
       blocked(false),
       app(false),
-      media_state(TAB_MEDIA_STATE_NONE) {
-}
+      alert_state(TabAlertState::NONE) {}
+
+TabRendererData::TabRendererData(const TabRendererData& other) = default;
 
 TabRendererData::~TabRendererData() {}
 
@@ -44,5 +46,5 @@ bool TabRendererData::Equals(const TabRendererData& data) {
       pinned == data.pinned &&
       blocked == data.blocked &&
       app == data.app &&
-      media_state == data.media_state;
+      alert_state == data.alert_state;
 }

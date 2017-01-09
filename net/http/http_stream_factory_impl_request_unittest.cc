@@ -4,94 +4,54 @@
 
 #include "net/http/http_stream_factory_impl_request.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/run_loop.h"
+#include "net/http/http_stream_factory_impl.h"
 #include "net/http/http_stream_factory_impl_job.h"
+#include "net/http/http_stream_factory_impl_job_controller.h"
+#include "net/http/http_stream_factory_test_util.h"
 #include "net/proxy/proxy_info.h"
 #include "net/proxy/proxy_service.h"
 #include "net/spdy/spdy_test_util_common.h"
-#include "net/ssl/ssl_failure_state.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using testing::_;
 
 namespace net {
 
-class HttpStreamFactoryImplRequestTest
-    : public ::testing::Test,
-      public ::testing::WithParamInterface<NextProto> {};
-
-INSTANTIATE_TEST_CASE_P(NextProto,
-                        HttpStreamFactoryImplRequestTest,
-                        testing::Values(kProtoSPDY31,
-                                        kProtoHTTP2));
-
-namespace {
-
-class DoNothingRequestDelegate : public HttpStreamRequest::Delegate {
- public:
-  DoNothingRequestDelegate() {}
-
-  ~DoNothingRequestDelegate() override {}
-
-  // HttpStreamRequest::Delegate
-  void OnStreamReady(const SSLConfig& used_ssl_config,
-                     const ProxyInfo& used_proxy_info,
-                     HttpStream* stream) override {}
-  void OnWebSocketHandshakeStreamReady(
-      const SSLConfig& used_ssl_config,
-      const ProxyInfo& used_proxy_info,
-      WebSocketHandshakeStreamBase* stream) override {}
-  void OnStreamFailed(int status,
-                      const SSLConfig& used_ssl_config,
-                      SSLFailureState ssl_failure_state) override {}
-  void OnCertificateError(int status,
-                          const SSLConfig& used_ssl_config,
-                          const SSLInfo& ssl_info) override {}
-  void OnNeedsProxyAuth(const HttpResponseInfo& proxy_response,
-                        const SSLConfig& used_ssl_config,
-                        const ProxyInfo& used_proxy_info,
-                        HttpAuthController* auth_controller) override {}
-  void OnNeedsClientAuth(const SSLConfig& used_ssl_config,
-                         SSLCertRequestInfo* cert_info) override {}
-  void OnHttpsProxyTunnelResponse(const HttpResponseInfo& response_info,
-                                  const SSLConfig& used_ssl_config,
-                                  const ProxyInfo& used_proxy_info,
-                                  HttpStream* stream) override {}
-};
-
-}  // namespace
+class HttpStreamFactoryImplRequestTest : public ::testing::Test {};
 
 // Make sure that Request passes on its priority updates to its jobs.
-TEST_P(HttpStreamFactoryImplRequestTest, SetPriority) {
-  SpdySessionDependencies session_deps(GetParam(),
-                                       ProxyService::CreateDirect());
-
-  scoped_ptr<HttpNetworkSession> session =
+TEST_F(HttpStreamFactoryImplRequestTest, SetPriority) {
+  SpdySessionDependencies session_deps(ProxyService::CreateDirect());
+  std::unique_ptr<HttpNetworkSession> session =
       SpdySessionDependencies::SpdyCreateSession(&session_deps);
   HttpStreamFactoryImpl* factory =
       static_cast<HttpStreamFactoryImpl*>(session->http_stream_factory());
+  MockHttpStreamRequestDelegate request_delegate;
+  TestJobFactory job_factory;
+  HttpStreamFactoryImpl::JobController* job_controller =
+      new HttpStreamFactoryImpl::JobController(factory, &request_delegate,
+                                               session.get(), &job_factory);
+  factory->job_controller_set_.insert(base::WrapUnique(job_controller));
 
-  DoNothingRequestDelegate request_delegate;
-  HttpStreamFactoryImpl::Request request(
-      GURL(), factory, &request_delegate, NULL, BoundNetLog());
+  HttpRequestInfo request_info;
+  std::unique_ptr<HttpStreamFactoryImpl::Request> request(
+      job_controller->Start(request_info, &request_delegate, nullptr,
+                            NetLogWithSource(), HttpStreamRequest::HTTP_STREAM,
+                            DEFAULT_PRIORITY, SSLConfig(), SSLConfig()));
+  EXPECT_TRUE(job_controller->main_job());
+  EXPECT_EQ(DEFAULT_PRIORITY, job_controller->main_job()->priority());
 
-  HttpStreamFactoryImpl::Job* job =
-      new HttpStreamFactoryImpl::Job(factory,
-                                     session.get(),
-                                     HttpRequestInfo(),
-                                     DEFAULT_PRIORITY,
-                                     SSLConfig(),
-                                     SSLConfig(),
-                                     NULL);
-  request.AttachJob(job);
-  EXPECT_EQ(DEFAULT_PRIORITY, job->priority());
+  request->SetPriority(MEDIUM);
+  EXPECT_EQ(MEDIUM, job_controller->main_job()->priority());
 
-  request.SetPriority(MEDIUM);
-  EXPECT_EQ(MEDIUM, job->priority());
+  EXPECT_CALL(request_delegate, OnStreamFailed(_, _)).Times(1);
+  job_controller->OnStreamFailed(job_factory.main_job(), ERR_FAILED,
+                                 SSLConfig());
 
-  // Make |job| the bound job.
-  request.OnStreamFailed(job, ERR_FAILED, SSLConfig(), SSL_FAILURE_NONE);
-
-  request.SetPriority(IDLE);
-  EXPECT_EQ(IDLE, job->priority());
+  request->SetPriority(IDLE);
+  EXPECT_EQ(IDLE, job_controller->main_job()->priority());
 }
-
 }  // namespace net

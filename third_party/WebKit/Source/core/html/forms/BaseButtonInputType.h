@@ -31,27 +31,37 @@
 #ifndef BaseButtonInputType_h
 #define BaseButtonInputType_h
 
-#include "core/html/forms/BaseClickableWithKeyInputType.h"
+#include "core/html/forms/InputType.h"
+#include "core/html/forms/KeyboardClickableInputTypeView.h"
 
 namespace blink {
 
-// Base of button, file, image, reset, and submit types.
-class BaseButtonInputType : public BaseClickableWithKeyInputType {
-protected:
-    BaseButtonInputType(HTMLInputElement& element) : BaseClickableWithKeyInputType(element) { }
-    void valueAttributeChanged() override;
-    void createShadowSubtree() override;
+// Base of button, image, reset, and submit types.
+class BaseButtonInputType : public InputType,
+                            public KeyboardClickableInputTypeView {
+  USING_GARBAGE_COLLECTED_MIXIN(BaseButtonInputType);
 
-private:
-    bool shouldSaveAndRestoreFormControlState() const override;
-    void appendToFormData(FormData&) const override;
-    LayoutObject* createLayoutObject(const ComputedStyle&) const override;
-    bool storesValueSeparateFromAttribute() override;
-    void setValue(const String&, bool, TextFieldEventBehavior) override;
+ public:
+  DECLARE_VIRTUAL_TRACE();
+  using InputType::element;
 
-    String displayValue() const;
+ protected:
+  explicit BaseButtonInputType(HTMLInputElement&);
+  void valueAttributeChanged() override;
+  void createShadowSubtree() override;
+
+ private:
+  InputTypeView* createView() override;
+  bool shouldSaveAndRestoreFormControlState() const override;
+  void appendToFormData(FormData&) const override;
+  LayoutObject* createLayoutObject(const ComputedStyle&) const override;
+  ValueMode valueMode() const override;
+  void setValue(const String&, bool, TextFieldEventBehavior) override;
+  bool matchesDefaultPseudoClass() override;
+
+  String displayValue() const;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // BaseButtonInputType_h
+#endif  // BaseButtonInputType_h

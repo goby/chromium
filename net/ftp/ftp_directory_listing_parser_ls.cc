@@ -52,8 +52,8 @@ bool TwoColumnDateListingToTime(const base::string16& date,
   if (!time_exploded.HasValidValues())
     return false;
 
-  // We don't know the time zone of the server, so just use local time.
-  *result = base::Time::FromLocalExploded(time_exploded);
+  // We don't know the time zone of the server, so just use UTC.
+  *result = base::Time::FromUTCExploded(time_exploded);
   return true;
 }
 
@@ -145,7 +145,7 @@ bool ParseFtpDirectoryListingLs(
       // Some FTP servers incorrectly return a negative integer for "n". Since
       // this value is ignored anyway, just check any valid integer was
       // provided.
-      int64 total_number;
+      int64_t total_number;
       if (!base::StringToInt64(columns[1], &total_number))
         return false;
 

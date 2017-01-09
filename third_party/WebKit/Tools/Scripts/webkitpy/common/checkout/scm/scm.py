@@ -33,7 +33,7 @@ import logging
 import re
 import sys
 
-from webkitpy.common.system.executive import Executive, ScriptError
+from webkitpy.common.system.executive import Executive
 from webkitpy.common.system.filesystem import FileSystem
 
 _log = logging.getLogger(__name__)
@@ -41,6 +41,10 @@ _log = logging.getLogger(__name__)
 
 # SCM methods are expected to return paths relative to self.checkout_root.
 class SCM:
+
+    # Arguments are generally unused in abstract base methods below.
+    # pylint: disable=unused-argument
+
     def __init__(self, cwd, executive=None, filesystem=None):
         self.cwd = cwd
         self._executive = executive or Executive()
@@ -48,15 +52,26 @@ class SCM:
         self.checkout_root = self.find_checkout_root(self.cwd)
 
     # A wrapper used by subclasses to create processes.
-    def _run(self, args, cwd=None, input=None, error_handler=None, return_exit_code=False, return_stderr=True, decode_output=True):
+    def _run(self,
+             args,
+             cwd=None,
+             # pylint: disable=W0622
+             # redefining built-in
+             input=None,
+             timeout_seconds=None,
+             error_handler=None,
+             return_exit_code=False,
+             return_stderr=True,
+             decode_output=True):
         # FIXME: We should set cwd appropriately.
         return self._executive.run_command(args,
-                           cwd=cwd,
-                           input=input,
-                           error_handler=error_handler,
-                           return_exit_code=return_exit_code,
-                           return_stderr=return_stderr,
-                           decode_output=decode_output)
+                                           cwd=cwd,
+                                           input=input,
+                                           timeout_seconds=timeout_seconds,
+                                           error_handler=error_handler,
+                                           return_exit_code=return_exit_code,
+                                           return_stderr=return_stderr,
+                                           decode_output=decode_output)
 
     # SCM always returns repository relative path, but sometimes we need
     # absolute paths to pass to rm, etc.
@@ -85,6 +100,9 @@ class SCM:
 
     def find_checkout_root(self, path):
         SCM._subclass_must_implement()
+
+    def add_all(self, pathspec=None):
+        self._subclass_must_implement()
 
     def add(self, path, return_exit_code=False, recurse=True):
         self.add_list([path], return_exit_code, recurse)
@@ -126,7 +144,7 @@ class SCM:
     def blame(self, path):
         self._subclass_must_implement()
 
-    def has_working_directory_changes(self):
+    def has_working_directory_changes(self, pathspec=None):
         self._subclass_must_implement()
 
     #--------------------------------------------------------------------------
@@ -136,6 +154,6 @@ class SCM:
     def supports_local_commits():
         SCM._subclass_must_implement()
 
-    def commit_locally_with_message(self, message, commit_all_working_directory_changes=True):
+    def commit_locally_with_message(self, message):
         _log.error("Your source control manager does not support local commits.")
         sys.exit(1)

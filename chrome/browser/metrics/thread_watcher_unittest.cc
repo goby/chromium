@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <math.h>
+#include "chrome/browser/metrics/thread_watcher.h"
 
-#include "base/basictypes.h"
+#include <math.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -22,7 +26,6 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "chrome/browser/metrics/thread_watcher.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -66,12 +69,12 @@ class CustomThreadWatcher : public ThreadWatcher {
   State thread_watcher_state_;
   WaitState wait_state_;
   CheckResponseState check_response_state_;
-  uint64 ping_sent_;
-  uint64 pong_received_;
+  uint64_t ping_sent_;
+  uint64_t pong_received_;
   base::subtle::Atomic32 success_response_;
   base::subtle::Atomic32 failed_response_;
   base::TimeTicks saved_ping_time_;
-  uint64 saved_ping_sequence_number_;
+  uint64_t saved_ping_sequence_number_;
 
   CustomThreadWatcher(const BrowserThread::ID thread_id,
                       const std::string thread_name,
@@ -140,13 +143,13 @@ class CustomThreadWatcher : public ThreadWatcher {
     ThreadWatcher::PostPingMessage();
   }
 
-  void OnPongMessage(uint64 ping_sequence_number) override {
+  void OnPongMessage(uint64_t ping_sequence_number) override {
     State old_state = UpdateState(RECEIVED_PONG);
     EXPECT_TRUE(old_state == SENT_PING || old_state == DEACTIVATED);
     ThreadWatcher::OnPongMessage(ping_sequence_number);
   }
 
-  void OnCheckResponsiveness(uint64 ping_sequence_number) override {
+  void OnCheckResponsiveness(uint64_t ping_sequence_number) override {
     ThreadWatcher::OnCheckResponsiveness(ping_sequence_number);
     {
       base::AutoLock auto_lock(custom_lock_);
@@ -188,7 +191,7 @@ class CustomThreadWatcher : public ThreadWatcher {
     State exit_state = INITIALIZED;
     // Keep the thread that is running the tests waiting until ThreadWatcher
     // object's state changes to the expected_state or until wait_time elapses.
-    for (uint32 i = 0; i < unresponsive_threshold_; ++i) {
+    for (uint32_t i = 0; i < unresponsive_threshold_; ++i) {
         TimeTicks end_time = TimeTicks::Now() + wait_time;
         {
           base::AutoLock auto_lock(custom_lock_);
@@ -217,7 +220,7 @@ class CustomThreadWatcher : public ThreadWatcher {
     // Keep the thread that is running the tests waiting until ThreadWatcher
     // object's check_response_state_ changes to the expected_state or until
     // wait_time elapses.
-    for (uint32 i = 0; i < unresponsive_threshold_; ++i) {
+    for (uint32_t i = 0; i < unresponsive_threshold_; ++i) {
         TimeTicks end_time = TimeTicks::Now() + wait_time;
         {
           base::AutoLock auto_lock(custom_lock_);
@@ -242,14 +245,12 @@ class ThreadWatcherTest : public ::testing::Test {
  public:
   static const TimeDelta kSleepTime;
   static const TimeDelta kUnresponsiveTime;
-  static const BrowserThread::ID io_thread_id;
-  static const std::string io_thread_name;
-  static const BrowserThread::ID db_thread_id;
-  static const std::string db_thread_name;
-  static const std::string crash_on_hang_seconds;
-  static const std::string crash_on_hang_thread_names;
-  static const std::string thread_names_and_live_threshold;
-  static const std::string crash_on_hang_thread_data;
+  static const char kIOThreadName[];
+  static const char kDBThreadName[];
+  static const char kCrashOnHangThreadNames[];
+  static const char kThreadNamesAndLiveThreshold[];
+  static const char kCrashOnHangThreadData[];
+
   CustomThreadWatcher* io_watcher_;
   CustomThreadWatcher* db_watcher_;
   ThreadWatcherList* thread_watcher_list_;
@@ -278,14 +279,24 @@ class ThreadWatcherTest : public ::testing::Test {
     thread_watcher_list_ = new ThreadWatcherList();
 
     // Create thread watcher object for the IO thread.
-    io_watcher_ = new CustomThreadWatcher(io_thread_id, io_thread_name,
-                                          kSleepTime, kUnresponsiveTime);
-    EXPECT_EQ(io_watcher_, thread_watcher_list_->Find(io_thread_id));
+    std::unique_ptr<CustomThreadWatcher> io_watcher(
+        new CustomThreadWatcher(BrowserThread::IO, kIOThreadName,
+                                kSleepTime, kUnresponsiveTime));
+    io_watcher_ = io_watcher.get();
+    ThreadWatcher* registered_io_watcher =
+        ThreadWatcherList::Register(std::move(io_watcher));
+    EXPECT_EQ(io_watcher_, registered_io_watcher);
+    EXPECT_EQ(io_watcher_, thread_watcher_list_->Find(BrowserThread::IO));
 
     // Create thread watcher object for the DB thread.
-    db_watcher_ = new CustomThreadWatcher(
-        db_thread_id, db_thread_name, kSleepTime, kUnresponsiveTime);
-    EXPECT_EQ(db_watcher_, thread_watcher_list_->Find(db_thread_id));
+    std::unique_ptr<CustomThreadWatcher> db_watcher(
+        new CustomThreadWatcher(BrowserThread::DB, kDBThreadName,
+                                kSleepTime, kUnresponsiveTime));
+    db_watcher_ = db_watcher.get();
+    ThreadWatcher* registered_db_watcher =
+        ThreadWatcherList::Register(std::move(db_watcher));
+    EXPECT_EQ(db_watcher_, registered_db_watcher);
+    EXPECT_EQ(db_watcher_, thread_watcher_list_->Find(BrowserThread::DB));
 
     {
       base::AutoLock lock(lock_);
@@ -319,41 +330,41 @@ class ThreadWatcherTest : public ::testing::Test {
   base::Lock lock_;
   base::ConditionVariable setup_complete_;
   bool initialized_;
-  scoped_ptr<content::TestBrowserThread> db_thread_;
-  scoped_ptr<content::TestBrowserThread> io_thread_;
-  scoped_ptr<WatchDogThread> watchdog_thread_;
+  std::unique_ptr<content::TestBrowserThread> db_thread_;
+  std::unique_ptr<content::TestBrowserThread> io_thread_;
+  std::unique_ptr<WatchDogThread> watchdog_thread_;
+
+  DISALLOW_COPY_AND_ASSIGN(ThreadWatcherTest);
 };
 
 // Define static constants.
-const TimeDelta ThreadWatcherTest::kSleepTime =
-    TimeDelta::FromMilliseconds(50);
+const TimeDelta ThreadWatcherTest::kSleepTime = TimeDelta::FromMilliseconds(50);
 const TimeDelta ThreadWatcherTest::kUnresponsiveTime =
     TimeDelta::FromMilliseconds(500);
-const BrowserThread::ID ThreadWatcherTest::io_thread_id = BrowserThread::IO;
-const std::string ThreadWatcherTest::io_thread_name = "IO";
-const BrowserThread::ID ThreadWatcherTest::db_thread_id = BrowserThread::DB;
-const std::string ThreadWatcherTest::db_thread_name = "DB";
-const std::string ThreadWatcherTest::crash_on_hang_thread_names = "UI,IO";
-const std::string ThreadWatcherTest::thread_names_and_live_threshold =
-    "UI:4,IO:4";
-const std::string ThreadWatcherTest::crash_on_hang_thread_data =
+const char ThreadWatcherTest::kIOThreadName[] = "IO";
+const char ThreadWatcherTest::kDBThreadName[] = "DB";
+const char ThreadWatcherTest::kCrashOnHangThreadNames[] = "UI,IO";
+const char ThreadWatcherTest::kThreadNamesAndLiveThreshold[] = "UI:4,IO:4";
+const char ThreadWatcherTest::kCrashOnHangThreadData[] =
     "UI:5:12,IO:5:12,FILE:5:12";
 
 TEST_F(ThreadWatcherTest, ThreadNamesOnlyArgs) {
   // Setup command_line arguments.
   base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
   command_line.AppendSwitchASCII(switches::kCrashOnHangThreads,
-                                 crash_on_hang_thread_names);
+                                 kCrashOnHangThreadNames);
 
   // Parse command_line arguments.
   ThreadWatcherList::CrashOnHangThreadMap crash_on_hang_threads;
-  uint32 unresponsive_threshold;
+  uint32_t unresponsive_threshold;
   ThreadWatcherList::ParseCommandLine(command_line,
                                       &unresponsive_threshold,
                                       &crash_on_hang_threads);
 
   // Verify the data.
-  base::StringTokenizer tokens(crash_on_hang_thread_names, ",");
+  base::CStringTokenizer tokens(
+      kCrashOnHangThreadNames,
+      kCrashOnHangThreadNames + (arraysize(kCrashOnHangThreadNames) - 1), ",");
   while (tokens.GetNext()) {
     std::vector<base::StringPiece> values = base::SplitStringPiece(
         tokens.token_piece(), ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
@@ -372,17 +383,21 @@ TEST_F(ThreadWatcherTest, ThreadNamesAndLiveThresholdArgs) {
   // Setup command_line arguments.
   base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
   command_line.AppendSwitchASCII(switches::kCrashOnHangThreads,
-                                 thread_names_and_live_threshold);
+                                 kThreadNamesAndLiveThreshold);
 
   // Parse command_line arguments.
   ThreadWatcherList::CrashOnHangThreadMap crash_on_hang_threads;
-  uint32 unresponsive_threshold;
+  uint32_t unresponsive_threshold;
   ThreadWatcherList::ParseCommandLine(command_line,
                                       &unresponsive_threshold,
                                       &crash_on_hang_threads);
 
   // Verify the data.
-  base::StringTokenizer tokens(thread_names_and_live_threshold, ",");
+  base::CStringTokenizer tokens(
+      kThreadNamesAndLiveThreshold,
+      kThreadNamesAndLiveThreshold +
+          (arraysize(kThreadNamesAndLiveThreshold) - 1),
+      ",");
   while (tokens.GetNext()) {
     std::vector<base::StringPiece> values = base::SplitStringPiece(
         tokens.token_piece(), ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
@@ -401,17 +416,19 @@ TEST_F(ThreadWatcherTest, CrashOnHangThreadsAllArgs) {
   // Setup command_line arguments.
   base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
   command_line.AppendSwitchASCII(switches::kCrashOnHangThreads,
-                                 crash_on_hang_thread_data);
+                                 kCrashOnHangThreadData);
 
   // Parse command_line arguments.
   ThreadWatcherList::CrashOnHangThreadMap crash_on_hang_threads;
-  uint32 unresponsive_threshold;
+  uint32_t unresponsive_threshold;
   ThreadWatcherList::ParseCommandLine(command_line,
                                       &unresponsive_threshold,
                                       &crash_on_hang_threads);
 
   // Verify the data.
-  base::StringTokenizer tokens(crash_on_hang_thread_data, ",");
+  base::CStringTokenizer tokens(
+      kCrashOnHangThreadData,
+      kCrashOnHangThreadData + (arraysize(kCrashOnHangThreadData) - 1), ",");
   while (tokens.GetNext()) {
     std::vector<base::StringPiece> values = base::SplitStringPiece(
         tokens.token_piece(), ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
@@ -423,11 +440,11 @@ TEST_F(ThreadWatcherTest, CrashOnHangThreadsAllArgs) {
     bool crash_on_hang = (it != crash_on_hang_threads.end());
     EXPECT_TRUE(crash_on_hang);
 
-    uint32 crash_live_threads_threshold = it->second.live_threads_threshold;
+    uint32_t crash_live_threads_threshold = it->second.live_threads_threshold;
     EXPECT_EQ(5u, crash_live_threads_threshold);
 
-    uint32 crash_unresponsive_threshold = it->second.unresponsive_threshold;
-    uint32 crash_on_unresponsive_seconds =
+    uint32_t crash_unresponsive_threshold = it->second.unresponsive_threshold;
+    uint32_t crash_on_unresponsive_seconds =
         ThreadWatcherList::kUnresponsiveSeconds * crash_unresponsive_threshold;
     EXPECT_EQ(12u, crash_on_unresponsive_seconds);
   }
@@ -437,15 +454,15 @@ TEST_F(ThreadWatcherTest, CrashOnHangThreadsAllArgs) {
 // TearDown, all thread watcher objects will be deleted.
 TEST_F(ThreadWatcherTest, Registration) {
   // Check ThreadWatcher object has all correct parameters.
-  EXPECT_EQ(io_thread_id, io_watcher_->thread_id());
-  EXPECT_EQ(io_thread_name, io_watcher_->thread_name());
+  EXPECT_EQ(BrowserThread::IO, io_watcher_->thread_id());
+  EXPECT_EQ(kIOThreadName, io_watcher_->thread_name());
   EXPECT_EQ(kSleepTime, io_watcher_->sleep_time());
   EXPECT_EQ(kUnresponsiveTime, io_watcher_->unresponsive_time());
   EXPECT_FALSE(io_watcher_->active());
 
   // Check ThreadWatcher object of watched DB thread has correct data.
-  EXPECT_EQ(db_thread_id, db_watcher_->thread_id());
-  EXPECT_EQ(db_thread_name, db_watcher_->thread_name());
+  EXPECT_EQ(BrowserThread::DB, db_watcher_->thread_id());
+  EXPECT_EQ(kDBThreadName, db_watcher_->thread_name());
   EXPECT_EQ(kSleepTime, db_watcher_->sleep_time());
   EXPECT_EQ(kUnresponsiveTime, db_watcher_->unresponsive_time());
   EXPECT_FALSE(db_watcher_->active());
@@ -468,11 +485,11 @@ TEST_F(ThreadWatcherTest, ThreadResponding) {
   // ping/pong messaging sequence to happen.
   io_watcher_->WaitForStateChange(kSleepTime + TimeDelta::FromMinutes(1),
                                   RECEIVED_PONG);
-  EXPECT_GT(io_watcher_->ping_sent_, static_cast<uint64>(0));
-  EXPECT_GT(io_watcher_->pong_received_, static_cast<uint64>(0));
+  EXPECT_GT(io_watcher_->ping_sent_, static_cast<uint64_t>(0));
+  EXPECT_GT(io_watcher_->pong_received_, static_cast<uint64_t>(0));
   EXPECT_TRUE(io_watcher_->active());
   EXPECT_GE(io_watcher_->saved_ping_time_, time_before_ping);
-  EXPECT_GE(io_watcher_->saved_ping_sequence_number_, static_cast<uint64>(0));
+  EXPECT_GE(io_watcher_->saved_ping_sequence_number_, static_cast<uint64_t>(0));
 
   // Verify watched thread is responding with ping/pong messaging.
   io_watcher_->WaitForCheckResponse(
@@ -499,11 +516,9 @@ TEST_F(ThreadWatcherTest, ThreadNotResponding) {
   // It is safe to use base::Unretained because test is waiting for the method
   // to finish.
   BrowserThread::PostTask(
-      io_thread_id,
-      FROM_HERE,
+      BrowserThread::IO, FROM_HERE,
       base::Bind(&CustomThreadWatcher::VeryLongMethod,
-                 base::Unretained(io_watcher_),
-                 kUnresponsiveTime * 10));
+                 base::Unretained(io_watcher_), kUnresponsiveTime * 10));
 
   // Activate thread watching.
   WatchDogThread::PostTask(
@@ -546,9 +561,9 @@ TEST_F(ThreadWatcherTest, MultipleThreadsResponding) {
   // Verify DB thread is responding with ping/pong messaging.
   db_watcher_->WaitForCheckResponse(
       kUnresponsiveTime + TimeDelta::FromMinutes(1), SUCCESSFUL);
-  EXPECT_GT(db_watcher_->ping_sent_, static_cast<uint64>(0));
-  EXPECT_GT(db_watcher_->pong_received_, static_cast<uint64>(0));
-  EXPECT_GE(db_watcher_->ping_sequence_number_, static_cast<uint64>(0));
+  EXPECT_GT(db_watcher_->ping_sent_, static_cast<uint64_t>(0));
+  EXPECT_GT(db_watcher_->pong_received_, static_cast<uint64_t>(0));
+  EXPECT_GE(db_watcher_->ping_sequence_number_, static_cast<uint64_t>(0));
   EXPECT_GT(base::subtle::NoBarrier_Load(&(db_watcher_->success_response_)),
       static_cast<base::subtle::Atomic32>(0));
   EXPECT_EQ(base::subtle::NoBarrier_Load(&(db_watcher_->failed_response_)),
@@ -557,9 +572,9 @@ TEST_F(ThreadWatcherTest, MultipleThreadsResponding) {
   // Verify IO thread is responding with ping/pong messaging.
   io_watcher_->WaitForCheckResponse(
       kUnresponsiveTime + TimeDelta::FromMinutes(1), SUCCESSFUL);
-  EXPECT_GT(io_watcher_->ping_sent_, static_cast<uint64>(0));
-  EXPECT_GT(io_watcher_->pong_received_, static_cast<uint64>(0));
-  EXPECT_GE(io_watcher_->ping_sequence_number_, static_cast<uint64>(0));
+  EXPECT_GT(io_watcher_->ping_sent_, static_cast<uint64_t>(0));
+  EXPECT_GT(io_watcher_->pong_received_, static_cast<uint64_t>(0));
+  EXPECT_GE(io_watcher_->ping_sequence_number_, static_cast<uint64_t>(0));
   EXPECT_GT(base::subtle::NoBarrier_Load(&(io_watcher_->success_response_)),
       static_cast<base::subtle::Atomic32>(0));
   EXPECT_EQ(base::subtle::NoBarrier_Load(&(io_watcher_->failed_response_)),
@@ -584,11 +599,9 @@ TEST_F(ThreadWatcherTest, MultipleThreadsNotResponding) {
   // It is safe ot use base::Unretained because test is waiting for the method
   // to finish.
   BrowserThread::PostTask(
-      io_thread_id,
-      FROM_HERE,
+      BrowserThread::IO, FROM_HERE,
       base::Bind(&CustomThreadWatcher::VeryLongMethod,
-                 base::Unretained(io_watcher_),
-                 kUnresponsiveTime * 10));
+                 base::Unretained(io_watcher_), kUnresponsiveTime * 10));
 
   // Activate watching of DB thread.
   WatchDogThread::PostTask(
@@ -690,7 +703,7 @@ TEST_F(ThreadWatcherListTest, Restart) {
   base::MessageLoopForUI message_loop_for_ui;
   content::TestBrowserThread ui_thread(BrowserThread::UI, &message_loop_for_ui);
 
-  scoped_ptr<WatchDogThread> watchdog_thread_(new WatchDogThread());
+  std::unique_ptr<WatchDogThread> watchdog_thread_(new WatchDogThread());
   watchdog_thread_->StartAndWaitForTesting();
 
   // See http://crbug.com/347887.
@@ -704,7 +717,7 @@ TEST_F(ThreadWatcherListTest, Restart) {
       FROM_HERE, message_loop_for_ui.QuitWhenIdleClosure(),
       base::TimeDelta::FromSeconds(
           ThreadWatcherList::g_initialize_delay_seconds));
-  message_loop_for_ui.Run();
+  base::RunLoop().Run();
 
   CheckState(false /* has_thread_watcher_list */,
              true /* stopped */,
@@ -716,7 +729,7 @@ TEST_F(ThreadWatcherListTest, Restart) {
       FROM_HERE, message_loop_for_ui.QuitWhenIdleClosure(),
       base::TimeDelta::FromSeconds(
           ThreadWatcherList::g_initialize_delay_seconds + 1));
-  message_loop_for_ui.Run();
+  base::RunLoop().Run();
 
   CheckState(true /* has_thread_watcher_list */,
              false /* stopped */,
@@ -728,7 +741,7 @@ TEST_F(ThreadWatcherListTest, Restart) {
       FROM_HERE, message_loop_for_ui.QuitWhenIdleClosure(),
       base::TimeDelta::FromSeconds(
           ThreadWatcherList::g_initialize_delay_seconds));
-  message_loop_for_ui.Run();
+  base::RunLoop().Run();
 
   CheckState(false /* has_thread_watcher_list */,
              true /* stopped */,
@@ -738,7 +751,7 @@ TEST_F(ThreadWatcherListTest, Restart) {
 class TestingJankTimeBomb : public JankTimeBomb {
  public:
   explicit TestingJankTimeBomb(base::TimeDelta duration)
-      : JankTimeBomb(duration),
+      : JankTimeBomb(duration, metrics::CallStackProfileParams::UI_THREAD),
         thread_id_(base::PlatformThread::CurrentId()),
         alarm_invoked_(false) {
   }
@@ -775,7 +788,9 @@ class JankTimeBombTest : public ::testing::Test {
   }
 
   static void WaitForWatchDogThreadPostTask() {
-    base::WaitableEvent watchdog_thread_event(false, false);
+    base::WaitableEvent watchdog_thread_event(
+        base::WaitableEvent::ResetPolicy::AUTOMATIC,
+        base::WaitableEvent::InitialState::NOT_SIGNALED);
     PostAndWaitForWatchdogThread(&watchdog_thread_event);
   }
 
@@ -793,7 +808,7 @@ class JankTimeBombTest : public ::testing::Test {
     event->Wait();
   }
 
-  scoped_ptr<WatchDogThread> watchdog_thread_;
+  std::unique_ptr<WatchDogThread> watchdog_thread_;
 
   DISALLOW_COPY_AND_ASSIGN(JankTimeBombTest);
 };

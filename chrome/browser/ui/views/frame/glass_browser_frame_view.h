@@ -6,14 +6,21 @@
 #define CHROME_BROWSER_UI_VIEWS_FRAME_GLASS_BROWSER_FRAME_VIEW_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "base/win/scoped_gdi_object.h"
+#include "chrome/browser/ui/views/frame/avatar_button_manager.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
+#include "chrome/browser/ui/views/frame/windows_10_caption_button.h"
+#include "chrome/browser/ui/views/tab_icon_view.h"
+#include "chrome/browser/ui/views/tab_icon_view_model.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/window/non_client_view.h"
 
 class BrowserView;
 
 class GlassBrowserFrameView : public BrowserNonClientFrameView,
-                              public views::ButtonListener {
+                              public views::ButtonListener,
+                              public TabIconViewModel {
  public:
   // Constructs a non-client view for an BrowserFrame.
   GlassBrowserFrameView(BrowserFrame* frame, BrowserView* browser_view);
@@ -25,65 +32,116 @@ class GlassBrowserFrameView : public BrowserNonClientFrameView,
   int GetThemeBackgroundXInset() const override;
   void UpdateThrobber(bool running) override;
   gfx::Size GetMinimumSize() const override;
+  views::View* GetProfileSwitcherView() const override;
 
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
   gfx::Rect GetWindowBoundsForClientBounds(
       const gfx::Rect& client_bounds) const override;
   int NonClientHitTest(const gfx::Point& point) override;
+  void UpdateWindowIcon() override;
+  void UpdateWindowTitle() override;
   void GetWindowMask(const gfx::Size& size, gfx::Path* window_mask) override {}
   void ResetWindowControls() override {}
-  void UpdateWindowIcon() override {}
-  void UpdateWindowTitle() override {}
   void SizeConstraintsChanged() override {}
+
+  // views::ButtonListener:
+  void ButtonPressed(views::Button* sender, const ui::Event& event) override;
+
+  // TabIconViewModel:
+  bool ShouldTabIconViewAnimate() const override;
+  gfx::ImageSkia GetFaviconForTabIconView() override;
+
+  bool IsMaximized() const;
+
+  // Visual height of the titlebar when the window is maximized (i.e. excluding
+  // the area above the top of the screen).
+  int TitlebarMaximizedVisualHeight() const;
+
+  SkColor GetTitlebarColor() const;
 
  protected:
   // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
   void Layout() override;
 
-  // views::ButtonListener:
-  void ButtonPressed(views::Button* sender, const ui::Event& event) override;
-
   // BrowserNonClientFrameView:
-  void UpdateNewAvatarButtonImpl() override;
+  void UpdateProfileIcons() override;
 
  private:
   // views::NonClientFrameView:
   bool DoesIntersectRect(const views::View* target,
                          const gfx::Rect& rect) const override;
 
-  // Returns the thickness of the border that makes up the window left, right,
-  // and bottom frame edges.  This does not include any client edge.
-  int FrameBorderThickness() const;
-
-  // Returns the height of the window top frame edge.  If |restored| is true,
-  // this is calculated as if the window was restored, regardless of its current
-  // state.
-  int FrameTopBorderHeight(bool restored) const;
-
-  // Returns the thickness of the entire nonclient left, right, and bottom
-  // borders, including both the window frame and any client edge. If |restored|
+  // Returns the thickness of the border around the client area (web content,
+  // toolbar, and tabs) that separates it from the frame border. If |restored|
   // is true, this is calculated as if the window was restored, regardless of
   // its current state.
-  int NonClientBorderThickness(bool restored) const;
+  int ClientBorderThickness(bool restored) const;
 
-  // Returns the height of the entire nonclient top border, including the window
-  // frame, any title area, and any connected client edge.  If |restored| is
-  // true, this is calculated as if the window was restored, regardless of its
-  // current state.
-  int NonClientTopBorderHeight(bool restored) const;
+  // Returns the thickness of the window border for the left, right, and bottom
+  // edges of the frame. On Windows 10 this is a mostly-transparent handle that
+  // allows you to resize the window.
+  int FrameBorderThickness() const;
+
+  // Returns the thickness of the window border for the top edge of the frame,
+  // which is sometimes different than FrameBorderThickness(). Does not include
+  // the titlebar/tabstrip area. If |restored| is true, this is calculated as if
+  // the window was restored, regardless of its current state.
+  int FrameTopBorderThickness(bool restored) const;
+  int FrameTopBorderThicknessPx(bool restored) const;
+
+  // Returns the height of everything above the tabstrip's hit-test region,
+  // including both the window border (i.e. FrameTopBorderThickness()) and any
+  // additional draggable area that's considered part of the window frame rather
+  // than the tabstrip. If |restored| is true, this is calculated as if the
+  // window was restored, regardless of its current state.
+  int TopAreaHeight(bool restored) const;
+
+  // Returns the height of the titlebar for popups or other browser types that
+  // don't have tabs.
+  int TitlebarHeight(bool restored) const;
+
+  // Returns the y coordinate for the top of the frame, which in maximized mode
+  // is the top of the screen and in restored mode is 1 pixel below the top of
+  // the window to leave room for the visual border that Windows draws.
+  int WindowTopY() const;
+
+  // Returns the distance from the leading edge of the window to the leading
+  // edge of the caption buttons.
+  int MinimizeButtonX() const;
 
   // Returns whether the toolbar is currently visible.
   bool IsToolbarVisible() const;
 
+  // Returns whether the caption buttons are drawn at the leading edge (i.e. the
+  // left in LTR mode, or the right in RTL mode).
+  bool CaptionButtonsOnLeadingEdge() const;
+
+  bool ShowCustomIcon() const;
+  bool ShowCustomTitle() const;
+  bool ShowSystemIcon() const;
+
+  Windows10CaptionButton* CreateCaptionButton(ViewID button_type);
+
   // Paint various sub-components of this view.
-  void PaintToolbarBackground(gfx::Canvas* canvas);
-  void PaintClientEdge(gfx::Canvas* canvas);
+  void PaintTitlebar(gfx::Canvas* canvas) const;
+  void PaintToolbarBackground(gfx::Canvas* canvas) const;
+  void PaintClientEdge(gfx::Canvas* canvas) const;
+  void FillClientEdgeRects(int x,
+                           int y,
+                           int right,
+                           int bottom,
+                           SkColor color,
+                           gfx::Canvas* canvas) const;
 
   // Layout various sub-components of this view.
   void LayoutIncognitoIcon();
-  void LayoutNewStyleAvatar();
+  void LayoutTitleBar();
+  void LayoutProfileSwitcher();
+  void LayoutCaptionButtons();
+  void LayoutCaptionButton(Windows10CaptionButton* button,
+                           int previous_button_x);
   void LayoutClientView();
 
   // Returns the insets of the client area. If |restored| is true, this is
@@ -105,6 +163,25 @@ class GlassBrowserFrameView : public BrowserNonClientFrameView,
 
   // The bounds of the ClientView.
   gfx::Rect client_view_bounds_;
+
+  // The small icon created from the bitmap image of the window icon.
+  base::win::ScopedHICON small_window_icon_;
+
+  // The big icon created from the bitmap image of the window icon.
+  base::win::ScopedHICON big_window_icon_;
+
+  // Icon and title. Only used when custom-drawing the titlebar for popups.
+  TabIconView* window_icon_;
+  views::Label* window_title_;
+
+  // Wrapper around the in-frame profile switcher.
+  AvatarButtonManager profile_switcher_;
+
+  // Custom-drawn caption buttons. Only used when custom-drawing the titlebar.
+  Windows10CaptionButton* minimize_button_;
+  Windows10CaptionButton* maximize_button_;
+  Windows10CaptionButton* restore_button_;
+  Windows10CaptionButton* close_button_;
 
   // Whether or not the window throbber is currently animating.
   bool throbber_running_;

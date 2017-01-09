@@ -5,8 +5,9 @@
 #ifndef CONTENT_BROWSER_WEBUI_URL_DATA_SOURCE_IMPL_H_
 #define CONTENT_BROWSER_WEBUI_URL_DATA_SOURCE_IMPL_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/browser/webui/url_data_manager.h"
 #include "content/common/content_export.h"
@@ -56,10 +57,13 @@ class URLDataSourceImpl : public base::RefCountedThreadSafe<
   // Report that a request has resulted in the data |bytes|.
   // If the request can't be satisfied, pass NULL for |bytes| to indicate
   // the request is over.
-  virtual void SendResponse(int request_id, base::RefCountedMemory* bytes);
+  virtual void SendResponse(int request_id,
+                            scoped_refptr<base::RefCountedMemory> bytes);
 
   const std::string& source_name() const { return source_name_; }
   URLDataSource* source() const { return source_.get(); }
+
+  virtual bool IsWebUIDataSourceImpl() const;
 
  protected:
   virtual ~URLDataSourceImpl();
@@ -89,7 +93,7 @@ class URLDataSourceImpl : public base::RefCountedThreadSafe<
   // source.
   URLDataManagerBackend* backend_;
 
-  scoped_ptr<URLDataSource> source_;
+  std::unique_ptr<URLDataSource> source_;
 };
 
 }  // namespace content

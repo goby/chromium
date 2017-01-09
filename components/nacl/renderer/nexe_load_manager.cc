@@ -4,6 +4,9 @@
 
 #include "components/nacl/renderer/nexe_load_manager.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
@@ -34,7 +37,6 @@
 #include "ppapi/shared_impl/var_tracker.h"
 #include "ppapi/thunk/enter.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
@@ -97,7 +99,7 @@ NexeLoadManager::NexeLoadManager(
   HistogramEnumerateOsArch(GetSandboxArch());
   if (plugin_instance_) {
     plugin_base_url_ =
-        plugin_instance_->GetContainer()->element().document().url();
+        plugin_instance_->GetContainer()->document().url();
   }
 }
 
@@ -274,7 +276,7 @@ void NexeLoadManager::NexeDidCrash() {
     crash_log_length = std::min<uint32_t>(crash_log_length,
                                           kNaClCrashInfoMaxLogSize);
 
-    scoped_ptr<char[]> crash_log_data(new char[kNaClCrashInfoShmemSize]);
+    std::unique_ptr<char[]> crash_log_data(new char[kNaClCrashInfoShmemSize]);
     memcpy(crash_log_data.get(),
            static_cast<char*>(shmem.memory()) + sizeof(uint32_t),
            crash_log_length);
@@ -284,13 +286,13 @@ void NexeLoadManager::NexeDidCrash() {
 }
 
 void NexeLoadManager::set_trusted_plugin_channel(
-    scoped_ptr<TrustedPluginChannel> channel) {
-  trusted_plugin_channel_ = channel.Pass();
+    std::unique_ptr<TrustedPluginChannel> channel) {
+  trusted_plugin_channel_ = std::move(channel);
 }
 
 void NexeLoadManager::set_manifest_service_channel(
-    scoped_ptr<ManifestServiceChannel> channel) {
-  manifest_service_channel_ = channel.Pass();
+    std::unique_ptr<ManifestServiceChannel> channel) {
+  manifest_service_channel_ = std::move(channel);
 }
 
 PP_NaClReadyState NexeLoadManager::nacl_ready_state() {
@@ -407,6 +409,10 @@ std::string NexeLoadManager::GetManifestURLArgument() const {
       VLOG(1) << "WARNING: 'nacl' property is incorrect. Use 'src'.";
   }
   return manifest_url;
+}
+
+void NexeLoadManager::CloseTrustedPluginChannel() {
+  trusted_plugin_channel_.reset();
 }
 
 bool NexeLoadManager::IsPNaCl() const {

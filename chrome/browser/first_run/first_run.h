@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_FIRST_RUN_FIRST_RUN_H_
 #define CHROME_BROWSER_FIRST_RUN_FIRST_RUN_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "build/build_config.h"
 
 class GURL;
 class Profile;
@@ -85,7 +87,8 @@ struct MasterPrefs {
   std::string suppress_default_browser_prompt_for_version;
 };
 
-// Returns true if this is the first time chrome is run for this user.
+// Returns true if Chrome should behave as if this is the first time Chrome is
+// run for this user.
 bool IsChromeFirstRun();
 
 #if defined(OS_MACOSX)
@@ -93,6 +96,16 @@ bool IsChromeFirstRun();
 // should be suppressed in the current run.
 bool IsFirstRunSuppressed(const base::CommandLine& command_line);
 #endif
+
+// Returns whether metrics reporting is currently opt-in. This is used to
+// determine if the enable metrics reporting checkbox on first-run should be
+// initially checked. Opt-in means it is not initially checked, opt-out means it
+// is. This is not guaranteed to be correct outside of the first-run situation,
+// as the default may change over time. For that, use
+// GetMetricsReportingDefaultState in
+// chrome/browser/metrics/metrics_reporting_state.h, which gives a value that
+// was stored during first-run.
+bool IsMetricsReportingOptIn();
 
 // Creates the first run sentinel if needed. This should only be called after
 // the process singleton has been grabbed by the current process
@@ -122,6 +135,10 @@ void SetShouldShowWelcomePage();
 // This will return true only once: The first time it is called after
 // SetShouldShowWelcomePage() is called.
 bool ShouldShowWelcomePage();
+
+// Iterates over the given tabs, replacing "magic words" designated for
+// use in Master Preferences files with corresponding URLs.
+std::vector<GURL> ProcessMasterPrefsTabs(const std::vector<GURL>& tabs);
 
 // Sets a flag that will cause ShouldDoPersonalDataManagerFirstRun()
 // to return true exactly once, so that the browser loads
@@ -155,7 +172,7 @@ void DoPostImportTasks(Profile* profile, bool make_chrome_default_for_user);
 
 // Returns the current state of AutoImport as recorded in a bitfield formed from
 // values in AutoImportState.
-uint16 auto_import_state();
+uint16_t auto_import_state();
 
 // Set a master preferences file path that overrides platform defaults.
 void SetMasterPrefsPathForTesting(const base::FilePath& master_prefs);

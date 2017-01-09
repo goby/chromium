@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/installer/util/delete_after_reboot_helper.h"
+
 #include <windows.h>
 #include <shlobj.h>
+#include <stddef.h>
+
+#include <memory>
 
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/win/registry.h"
-#include "chrome/installer/util/delete_after_reboot_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -111,7 +115,7 @@ TEST_F(DeleteAfterRebootHelperTest, TestStringListToMultiSZConversions) {
     { L"deletes", L"foo\0\0bar\0\0bizz\0\0", 16 * sizeof(wchar_t), 3 },
   };
 
-  for (int i = 0; i < arraysize(tests); i++) {
+  for (size_t i = 0; i < arraysize(tests); i++) {
     std::vector<PendingMove> string_list;
     EXPECT_TRUE(SUCCEEDED(
         MultiSZBytesToStringArray(reinterpret_cast<const char*>(tests[i].str),
@@ -132,7 +136,7 @@ TEST_F(DeleteAfterRebootHelperTest, TestStringListToMultiSZConversions) {
       {L"malformed", reinterpret_cast<const wchar_t*>("oddnumb\0\0"), 9, 1},
   };
 
-  for (int i = 0; i < arraysize(failures); i++) {
+  for (size_t i = 0; i < arraysize(failures); i++) {
     std::vector<PendingMove> string_list;
     EXPECT_FALSE(SUCCEEDED(MultiSZBytesToStringArray(
         reinterpret_cast<const char*>(failures[i].str),
@@ -171,7 +175,7 @@ TEST_F(DeleteAfterRebootHelperTest, TestFileDeleteScheduleAndUnschedule) {
   // Check that each of the deletes we expect are there in order.
   base::FilePath expected_paths[] =
       { temp_file_, temp_subdir_file_, temp_subdir_, temp_dir_ };
-  for (int i = 0; i < arraysize(expected_paths); ++i) {
+  for (size_t i = 0; i < arraysize(expected_paths); ++i) {
     EXPECT_FALSE(iter == pending_moves.end());
     if (iter != pending_moves.end()) {
       base::FilePath short_path_name(GetShortPathName(expected_paths[i]));
@@ -225,7 +229,7 @@ TEST_F(DeleteAfterRebootHelperTest, TestFileDeleteSchedulingWithActualDeletes) {
   // Check that each of the deletes we expect are there in order.
   base::FilePath expected_paths[] =
       { temp_file_, temp_subdir_file_, temp_subdir_, temp_dir_ };
-  for (int i = 0; i < arraysize(expected_paths); ++i) {
+  for (size_t i = 0; i < arraysize(expected_paths); ++i) {
     EXPECT_FALSE(iter == pending_moves.end());
     if (iter != pending_moves.end()) {
       base::FilePath short_path_name(GetShortPathName(expected_paths[i]));

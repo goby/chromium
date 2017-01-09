@@ -2,9 +2,11 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2001 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010 Apple Inc. All rights
+ * reserved.
  * Copyright (C) 2008 Nokia Corporation and/or its subsidiary(-ies)
- * Copyright (C) 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
+ * Copyright (C) 2009 Torch Mobile Inc. All rights reserved.
+ * (http://www.torchmobile.com/)
  * Copyright (C) 2011 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -27,6 +29,7 @@
 #define EventDispatcher_h
 
 #include "core/dom/SimulatedClickOptions.h"
+#include "core/events/EventDispatchResult.h"
 #include "platform/heap/Handle.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/RefPtr.h"
@@ -36,44 +39,51 @@ namespace blink {
 class Event;
 class EventDispatchMediator;
 class FrameView;
+class EventDispatchHandlingState;
 class Node;
-class NodeEventContext;
-class WindowEventContext;
 
-enum EventDispatchContinuation {
-    ContinueDispatching,
-    DoneDispatching
+class EventDispatchHandlingState
+    : public GarbageCollected<EventDispatchHandlingState> {
+ public:
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 };
 
+enum EventDispatchContinuation { ContinueDispatching, DoneDispatching };
+
 class EventDispatcher {
-    STACK_ALLOCATED();
-public:
-    static bool dispatchEvent(Node&, PassRefPtrWillBeRawPtr<EventDispatchMediator>);
-    static void dispatchScopedEvent(Node&, PassRefPtrWillBeRawPtr<EventDispatchMediator>);
+  STACK_ALLOCATED();
 
-    static void dispatchSimulatedClick(Node&, Event* underlyingEvent, SimulatedClickMouseEventOptions, SimulatedClickCreationScope);
+ public:
+  static DispatchEventResult dispatchEvent(Node&, EventDispatchMediator*);
+  static void dispatchScopedEvent(Node&, EventDispatchMediator*);
 
-    bool dispatch();
-    Node& node() const { return *m_node; }
-    Event& event() const { return *m_event; }
+  static void dispatchSimulatedClick(Node&,
+                                     Event* underlyingEvent,
+                                     SimulatedClickMouseEventOptions,
+                                     SimulatedClickCreationScope);
 
-private:
-    EventDispatcher(Node&, PassRefPtrWillBeRawPtr<Event>);
+  DispatchEventResult dispatch();
+  Node& node() const { return *m_node; }
+  Event& event() const { return *m_event; }
 
-    EventDispatchContinuation dispatchEventPreProcess(void*& preDispatchEventHandlerResult);
-    EventDispatchContinuation dispatchEventAtCapturing();
-    EventDispatchContinuation dispatchEventAtTarget();
-    void dispatchEventAtBubbling();
-    void dispatchEventPostProcess(void* preDispatchEventHandlerResult);
+ private:
+  EventDispatcher(Node&, Event*);
 
-    RefPtrWillBeMember<Node> m_node;
-    RefPtrWillBeMember<Event> m_event;
-    RefPtrWillBeMember<FrameView> m_view;
-#if ENABLE(ASSERT)
-    bool m_eventDispatched;
+  EventDispatchContinuation dispatchEventPreProcess(
+      EventDispatchHandlingState*&);
+  EventDispatchContinuation dispatchEventAtCapturing();
+  EventDispatchContinuation dispatchEventAtTarget();
+  void dispatchEventAtBubbling();
+  void dispatchEventPostProcess(EventDispatchHandlingState*);
+
+  Member<Node> m_node;
+  Member<Event> m_event;
+  Member<FrameView> m_view;
+#if DCHECK_IS_ON()
+  bool m_eventDispatched = false;
 #endif
 };
 
-}
+}  // namespace blink
 
 #endif

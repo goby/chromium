@@ -4,6 +4,8 @@
 
 #include "components/test_runner/mock_webrtc_dtmf_sender_handler.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "components/test_runner/web_test_delegate.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
@@ -13,29 +15,12 @@ using namespace blink;
 
 namespace test_runner {
 
-class DTMFSenderToneTask : public WebMethodTask<MockWebRTCDTMFSenderHandler> {
- public:
-  DTMFSenderToneTask(MockWebRTCDTMFSenderHandler* object,
-                     WebRTCDTMFSenderHandlerClient* client)
-      : WebMethodTask<MockWebRTCDTMFSenderHandler>(object), client_(client) {}
-
-  void RunIfValid() override {
-    WebString tones = object_->currentToneBuffer();
-    object_->ClearToneBuffer();
-    client_->didPlayTone(tones);
-  }
-
- private:
-  WebRTCDTMFSenderHandlerClient* client_;
-};
-
-/////////////////////
-
 MockWebRTCDTMFSenderHandler::MockWebRTCDTMFSenderHandler(
     const WebMediaStreamTrack& track,
     WebTestDelegate* delegate)
-    : client_(0), track_(track), delegate_(delegate) {
-}
+    : client_(0), track_(track), delegate_(delegate), weak_factory_(this) {}
+
+MockWebRTCDTMFSenderHandler::~MockWebRTCDTMFSenderHandler() {}
 
 void MockWebRTCDTMFSenderHandler::setClient(
     WebRTCDTMFSenderHandlerClient* client) {
@@ -48,9 +33,10 @@ WebString MockWebRTCDTMFSenderHandler::currentToneBuffer() {
 
 bool MockWebRTCDTMFSenderHandler::canInsertDTMF() {
   DCHECK(client_ && !track_.isNull());
-  return track_.source().type() == WebMediaStreamSource::TypeAudio &&
+  return track_.source().getType() == WebMediaStreamSource::TypeAudio &&
          track_.isEnabled() &&
-         track_.source().readyState() == WebMediaStreamSource::ReadyStateLive;
+         track_.source().getReadyState() ==
+             WebMediaStreamSource::ReadyStateLive;
 }
 
 bool MockWebRTCDTMFSenderHandler::insertDTMF(const WebString& tones,
@@ -61,9 +47,17 @@ bool MockWebRTCDTMFSenderHandler::insertDTMF(const WebString& tones,
     return false;
 
   tone_buffer_ = tones;
-  delegate_->PostTask(new DTMFSenderToneTask(this, client_));
-  delegate_->PostTask(new DTMFSenderToneTask(this, client_));
+  base::Closure closure = base::Bind(&MockWebRTCDTMFSenderHandler::PlayTone,
+                                     weak_factory_.GetWeakPtr());
+  delegate_->PostTask(closure);
+  delegate_->PostTask(closure);
   return true;
+}
+
+void MockWebRTCDTMFSenderHandler::PlayTone() {
+  WebString tones = currentToneBuffer();
+  ClearToneBuffer();
+  client_->didPlayTone(tones);
 }
 
 }  // namespace test_runner

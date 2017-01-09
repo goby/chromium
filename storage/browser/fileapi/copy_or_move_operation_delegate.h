@@ -5,11 +5,14 @@
 #ifndef STORAGE_BROWSER_FILEAPI_COPY_OR_MOVE_OPERATION_DELEGATE_H_
 #define STORAGE_BROWSER_FILEAPI_COPY_OR_MOVE_OPERATION_DELEGATE_H_
 
-#include <set>
+#include <stdint.h>
+
+#include <map>
+#include <memory>
 #include <stack>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "storage/browser/fileapi/recursive_operation_delegate.h"
 
@@ -20,13 +23,11 @@ class IOBufferWithSize;
 
 namespace storage {
 class FileStreamReader;
-class ShareableFileReference;
 enum class FlushPolicy;
 }
 
 namespace storage {
 
-class CopyOrMoveFileValidator;
 class FileStreamWriter;
 
 // A delegate class for recursive copy or move operations.
@@ -48,8 +49,8 @@ class CopyOrMoveOperationDelegate
   class STORAGE_EXPORT StreamCopyHelper {
    public:
     StreamCopyHelper(
-        scoped_ptr<storage::FileStreamReader> reader,
-        scoped_ptr<FileStreamWriter> writer,
+        std::unique_ptr<storage::FileStreamReader> reader,
+        std::unique_ptr<FileStreamWriter> writer,
         FlushPolicy flush_policy,
         int buffer_size,
         const FileSystemOperation::CopyFileProgressCallback&
@@ -78,13 +79,13 @@ class CopyOrMoveOperationDelegate
     void Flush(const StatusCallback& callback, bool is_eof);
     void DidFlush(const StatusCallback& callback, bool is_eof, int result);
 
-    scoped_ptr<storage::FileStreamReader> reader_;
-    scoped_ptr<FileStreamWriter> writer_;
+    std::unique_ptr<storage::FileStreamReader> reader_;
+    std::unique_ptr<FileStreamWriter> writer_;
     const FlushPolicy flush_policy_;
     FileSystemOperation::CopyFileProgressCallback file_progress_callback_;
     scoped_refptr<net::IOBufferWithSize> io_buffer_;
-    int64 num_copied_bytes_;
-    int64 previous_flush_offset_;
+    int64_t num_copied_bytes_;
+    int64_t previous_flush_offset_;
     base::Time last_progress_callback_invocation_time_;
     base::TimeDelta min_progress_callback_invocation_span_;
     bool cancel_requested_;
@@ -141,7 +142,7 @@ class CopyOrMoveOperationDelegate
   void DidRemoveSourceForMove(const StatusCallback& callback,
                               base::File::Error error);
 
-  void OnCopyFileProgress(const FileSystemURL& src_url, int64 size);
+  void OnCopyFileProgress(const FileSystemURL& src_url, int64_t size);
   FileSystemURL CreateDestURL(const FileSystemURL& src_url) const;
 
   FileSystemURL src_root_;
@@ -153,7 +154,7 @@ class CopyOrMoveOperationDelegate
   CopyProgressCallback progress_callback_;
   StatusCallback callback_;
 
-  std::set<CopyOrMoveImpl*> running_copy_set_;
+  std::map<CopyOrMoveImpl*, std::unique_ptr<CopyOrMoveImpl>> running_copy_set_;
   base::WeakPtrFactory<CopyOrMoveOperationDelegate> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CopyOrMoveOperationDelegate);

@@ -4,6 +4,9 @@
 
 #include "chromeos/accelerometer/accelerometer_reader.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
@@ -11,6 +14,7 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -19,21 +23,26 @@
 #include "base/sys_info.h"
 #include "base/task_runner.h"
 #include "base/task_runner_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace chromeos {
 
 namespace {
 
 // Paths to access necessary data from the accelerometer device.
-const base::FilePath::CharType kAccelerometerTriggerPath[] =
-    FILE_PATH_LITERAL("/sys/bus/iio/devices/trigger0/trigger_now");
 const base::FilePath::CharType kAccelerometerDevicePath[] =
     FILE_PATH_LITERAL("/dev/cros-ec-accel");
 const base::FilePath::CharType kAccelerometerIioBasePath[] =
     FILE_PATH_LITERAL("/sys/bus/iio/devices/");
+
+// Trigger created by accelerometer-init.sh to query the sensors.
+const char kTriggerPrefix[] = "trigger";
+const char kTriggerName[] = "sysfstrig0\n";
+
+// Sysfs entry to trigger readings.
+const base::FilePath::CharType kTriggerNow[] = "trigger_now";
 
 // This is the per source scale file in use on kernels older than 3.18. We
 // should remove this when all devices having accelerometers are on kernel 3.18
@@ -87,7 +96,7 @@ const int kSizeOfReading = kDataSize * kNumberOfAxes;
 bool ReadFileToInt(const base::FilePath& path, int* value) {
   std::string s;
   DCHECK(value);
-  if (!base::ReadFileToString(path, &s, kMaxAsciiUintLength)) {
+  if (!base::ReadFileToStringWithMaxSize(path, &s, kMaxAsciiUintLength)) {
     return false;
   }
   base::TrimWhitespaceASCII(s, base::TRIM_ALL, &s);
@@ -161,6 +170,9 @@ class AccelerometerFileReader
     // Number of accelerometers on device.
     size_t count;
 
+    // sysfs entry to trigger readings.
+    base::FilePath trigger_now;
+
     // Which accelerometers are present on device.
     bool has[ACCELEROMETER_SOURCE_COUNT];
 
@@ -223,23 +235,51 @@ AccelerometerFileReader::AccelerometerFileReader()
 
 void AccelerometerFileReader::Initialize(
     scoped_refptr<base::SequencedTaskRunner> sequenced_task_runner) {
-  DCHECK(
-      base::SequencedWorkerPool::GetSequenceTokenForCurrentThread().IsValid());
+  DCHECK(base::SequencedTaskRunnerHandle::IsSet());
   task_runner_ = sequenced_task_runner;
 
   // Check for accelerometer symlink which will be created by the udev rules
   // file on detecting the device.
   if (base::IsDirectoryEmpty(base::FilePath(kAccelerometerDevicePath))) {
     if (base::SysInfo::IsRunningOnChromeOS()) {
-      LOG(ERROR) << "Accelerometer device directory is empty at "
-                 << kAccelerometerDevicePath;
+      LOG(WARNING) << "Accelerometer device directory is empty at "
+                   << kAccelerometerDevicePath;
     }
     return;
   }
-  if (!base::PathExists(base::FilePath(kAccelerometerTriggerPath))) {
+
+  // Find trigger to use:
+  base::FileEnumerator trigger_dir(base::FilePath(kAccelerometerIioBasePath),
+                                   false, base::FileEnumerator::DIRECTORIES);
+  std::string prefix = kTriggerPrefix;
+  for (base::FilePath name = trigger_dir.Next(); !name.empty();
+       name = trigger_dir.Next()) {
+    if (name.BaseName().value().substr(0, prefix.size()) != prefix)
+      continue;
+    std::string trigger_name;
+    if (!base::ReadFileToString(name.Append("name"), &trigger_name)) {
+      if (base::SysInfo::IsRunningOnChromeOS()) {
+        LOG(WARNING) << "Unable to read the trigger name at " << name.value();
+      }
+      continue;
+    }
+    if (trigger_name == kTriggerName) {
+      base::FilePath trigger_now = name.Append(kTriggerNow);
+      if (!base::PathExists(trigger_now)) {
+        if (base::SysInfo::IsRunningOnChromeOS()) {
+          LOG(ERROR) << "Accelerometer trigger does not exist at "
+                     << trigger_now.value();
+        }
+        return;
+      } else {
+        configuration_.trigger_now = trigger_now;
+        break;
+      }
+    }
+  }
+  if (configuration_.trigger_now.empty()) {
     if (base::SysInfo::IsRunningOnChromeOS()) {
-      LOG(ERROR) << "Accelerometer trigger does not exist at"
-                 << kAccelerometerTriggerPath;
+      LOG(ERROR) << "Accelerometer trigger not found";
     }
     return;
   }
@@ -294,8 +334,7 @@ void AccelerometerFileReader::Initialize(
 }
 
 void AccelerometerFileReader::Read() {
-  DCHECK(
-      base::SequencedWorkerPool::GetSequenceTokenForCurrentThread().IsValid());
+  DCHECK(base::SequencedTaskRunnerHandle::IsSet());
   ReadFileAndNotify();
   task_runner_->PostNonNestableDelayedTask(
       FROM_HERE, base::Bind(&AccelerometerFileReader::Read, this),
@@ -422,8 +461,7 @@ void AccelerometerFileReader::ReadFileAndNotify() {
   DCHECK(initialization_successful_);
 
   // Initiate the trigger to read accelerometers simultaneously
-  int bytes_written = base::WriteFile(
-      base::FilePath(kAccelerometerTriggerPath), "1\n", 2);
+  int bytes_written = base::WriteFile(configuration_.trigger_now, "1\n", 2);
   if (bytes_written < 2) {
     PLOG(ERROR) << "Accelerometer trigger failure: " << bytes_written;
     return;
@@ -444,7 +482,7 @@ void AccelerometerFileReader::ReadFileAndNotify() {
     }
     for (AccelerometerSource source : reading_data.sources) {
       DCHECK(configuration_.has[source]);
-      int16* values = reinterpret_cast<int16*>(reading);
+      int16_t* values = reinterpret_cast<int16_t*>(reading);
       update_->Set(source, values[configuration_.index[source][0]] *
                                configuration_.scale[source][0],
                    values[configuration_.index[source][1]] *

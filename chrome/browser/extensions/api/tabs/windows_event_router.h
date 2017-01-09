@@ -6,19 +6,20 @@
 #define CHROME_BROWSER_EXTENSIONS_API_TABS_WINDOWS_EVENT_ROUTER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/window_controller_list_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 
-#if !defined(OS_MACOSX)
-#include "ui/views/focus/widget_focus_manager.h"
+#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
+#include "ui/views/focus/widget_focus_manager.h"  // nogncheck
 #endif
 
 class Profile;
@@ -39,7 +40,7 @@ class WindowControllerList;
 // same profile.
 class WindowsEventRouter : public AppWindowRegistry::Observer,
                            public WindowControllerListObserver,
-#if !defined(OS_MACOSX)
+#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
                            public views::WidgetFocusChangeListener,
 #endif
                            public content::NotificationObserver {
@@ -60,7 +61,7 @@ class WindowsEventRouter : public AppWindowRegistry::Observer,
   void OnWindowControllerAdded(WindowController* window_controller) override;
   void OnWindowControllerRemoved(WindowController* window) override;
 
-#if !defined(OS_MACOSX)
+#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
   void OnNativeFocusChanged(gfx::NativeView focused_now) override;
 #endif
 
@@ -72,7 +73,7 @@ class WindowsEventRouter : public AppWindowRegistry::Observer,
   void DispatchEvent(events::HistogramValue histogram_value,
                      const std::string& event_name,
                      WindowController* window_controller,
-                     scoped_ptr<base::ListValue> args);
+                     std::unique_ptr<base::ListValue> args);
   bool HasEventListener(const std::string& event_name);
   void AddAppWindow(extensions::AppWindow* app_window);
 
@@ -90,7 +91,7 @@ class WindowsEventRouter : public AppWindowRegistry::Observer,
   // windows.onFocusChanged events with the same windowId.
   int focused_window_id_;
 
-  using AppWindowMap = std::map<int, scoped_ptr<AppWindowController>>;
+  using AppWindowMap = std::map<int, std::unique_ptr<AppWindowController>>;
   // Map of application windows, the key to the session of the app window.
   AppWindowMap app_windows_;
 

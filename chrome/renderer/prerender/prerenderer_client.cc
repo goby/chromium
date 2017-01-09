@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "chrome/renderer/prerender/prerender_extra_data.h"
+#include "chrome/renderer/prerender/prerender_helper.h"
 #include "content/public/renderer/render_view.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
@@ -28,11 +29,19 @@ PrerendererClient::~PrerendererClient() {
 void PrerendererClient::willAddPrerender(
     blink::WebPrerender* prerender) {
   DVLOG(3) << "PrerendererClient::willAddPrerender url = "
-           << prerender->url().spec().data();
+           << prerender->url().string().utf8();
   prerender->setExtraData(new PrerenderExtraData(++s_last_prerender_id,
                                                  routing_id(),
                                                  render_view()->GetSize()));
 }
 
-}  // namespace prerender
+bool PrerendererClient::isPrefetchOnly() {
+  return PrerenderHelper::GetPrerenderMode(
+             render_view()->GetMainRenderFrame()) == PREFETCH_ONLY;
+}
 
+void PrerendererClient::OnDestruct() {
+  delete this;
+}
+
+}  // namespace prerender

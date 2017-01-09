@@ -5,25 +5,23 @@
 import("//build/config/features.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 
-# GYP version: device/serial/serial.gyp:device_serial
+# Library works only on desktop platforms.
+assert(is_win || is_linux || is_mac)
+
+config("platform_support") {
+  visibility = [ ":serial" ]
+  if (is_win) {
+    libs = [ "setupapi.lib" ]
+    ldflags = [ "/DELAYLOAD:setupapi.dll" ]
+  }
+}
+
 static_library("serial") {
   output_name = "device_serial"
 
   sources = [
     "buffer.cc",
     "buffer.h",
-    "data_receiver.cc",
-    "data_receiver.h",
-    "data_sender.cc",
-    "data_sender.h",
-    "data_sink_receiver.cc",
-    "data_sink_receiver.h",
-    "data_source_sender.cc",
-    "data_source_sender.h",
-    "serial_connection.cc",
-    "serial_connection.h",
-    "serial_connection_factory.cc",
-    "serial_connection_factory.h",
     "serial_device_enumerator.cc",
     "serial_device_enumerator.h",
     "serial_device_enumerator_linux.cc",
@@ -38,15 +36,16 @@ static_library("serial") {
     "serial_io_handler_posix.h",
     "serial_io_handler_win.cc",
     "serial_io_handler_win.h",
-    "serial_service_impl.cc",
-    "serial_service_impl.h",
   ]
+
+  public_configs = [ ":platform_support" ]
 
   public_deps = [
     ":serial_mojo",
     "//base",
-    "//device/core",
+    "//device/base",
   ]
+
   deps = [
     "//mojo/public/cpp/system",
     "//net",
@@ -62,21 +61,25 @@ static_library("serial") {
       "//dbus",
     ]
   }
+  if (is_mac) {
+    libs = [
+      "Foundation.framework",
+      "IOKit.framework",
+    ]
+  }
 }
 
-# GYP version: device/serial/serial.gyp:device_serial_test_util
 static_library("test_support") {
   sources = [
     "test_serial_io_handler.cc",
     "test_serial_io_handler.h",
   ]
 
-  deps = [
+  public_deps = [
     ":serial",
   ]
 }
 
-# GYP version: device/serial/serial.gyp:device_serial_mojo
 mojom("serial_mojo") {
   visibility = [
     ":serial",
@@ -84,9 +87,6 @@ mojom("serial_mojo") {
   ]
 
   sources = [
-    "data_stream.mojom",
-    "data_stream_serialization.mojom",
     "serial.mojom",
-    "serial_serialization.mojom",
   ]
 }

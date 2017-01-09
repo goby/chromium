@@ -4,11 +4,9 @@
 
 #include "media/audio/win/waveout_output_win.h"
 
-#pragma comment(lib, "winmm.lib")
-
 #include "base/atomicops.h"
-#include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/win/audio_manager_win.h"
@@ -25,7 +23,7 @@ namespace media {
 //   synchronized to the actual device state.
 
 // Sixty four MB is the maximum buffer size per AudioOutputStream.
-static const uint32 kMaxOpenBufferSize = 1024 * 1024 * 64;
+static const uint32_t kMaxOpenBufferSize = 1024 * 1024 * 64;
 
 // See Also
 // http://www.thx.com/consumer/home-entertainment/home-theater/surround-sound-speaker-set-up/
@@ -325,12 +323,14 @@ void PCMWaveOutAudioOutputStream::QueueNextPacket(WAVEHDR *buffer) {
   // return to us how many bytes were used.
   // TODO(fbarchard): Handle used 0 by queueing more.
 
-  // TODO(sergeyu): Specify correct hardware delay for |total_delay_bytes|.
-  uint32 total_delay_bytes = pending_bytes_;
-  int frames_filled = callback_->OnMoreData(
-      audio_bus_.get(), total_delay_bytes);
-  uint32 used = frames_filled * audio_bus_->channels() *
-      format_.Format.wBitsPerSample / 8;
+  // TODO(sergeyu): Specify correct hardware delay for |delay|.
+  const base::TimeDelta delay = base::TimeDelta::FromMicroseconds(
+      pending_bytes_ * base::Time::kMicrosecondsPerSecond /
+      format_.Format.nAvgBytesPerSec);
+  int frames_filled =
+      callback_->OnMoreData(delay, base::TimeTicks::Now(), 0, audio_bus_.get());
+  uint32_t used = frames_filled * audio_bus_->channels() *
+                  format_.Format.wBitsPerSample / 8;
 
   if (used <= buffer_size_) {
     // Note: If this ever changes to output raw float the data must be clipped

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <link href="resources/grid.css" rel="stylesheet">
+<link href="resources/grid-alignment.css" rel="stylesheet">
 <style>
 .grid {
     grid-template-columns: 5px;
@@ -36,11 +37,6 @@
     max-height: 75px;
 }
 
-.noStretch {
-    align-items: start;
-    justify-items: start;
-}
-
 .minHeightSmaller { min-height: 12px; }
 .minWidthSmaller { min-width: 12px; }
 </style>
@@ -51,7 +47,7 @@
 
 <div class="container">
     <div class="grid">
-        <div class="ahem" data-expected-width="100" data-expected-height="25">XXXX</div>
+        <div class="ahem" data-expected-width="5" data-expected-height="5">XXXX</div>
     </div>
 </div>
 
@@ -69,43 +65,43 @@
 
 <div class="container">
     <div class="grid">
-        <div class="ahem maxSmaller" data-expected-width="10" data-expected-height="10">XXXX</div>
+        <div class="ahem maxSmaller" data-expected-width="5" data-expected-height="5">XXXX</div>
     </div>
 </div>
 
 <div class="container">
     <div class="grid">
-        <div class="ahem maxBigger" data-expected-width="100" data-expected-height="25">XXXX</div>
+        <div class="ahem maxBigger" data-expected-width="5" data-expected-height="5">XXXX</div>
     </div>
 </div>
 
 <!-- Verify that the same cases without 'stretch' work as expected as well. -->
 <div class="container">
-    <div class="grid noStretch">
+    <div class="grid itemsStart">
         <div class="ahem" data-expected-width="100" data-expected-height="25">XXXX</div>
     </div>
 </div>
 
 <div class="container">
-    <div class="grid noStretch">
+    <div class="grid itemsStart">
         <div class="ahem minSmaller" data-expected-width="100" data-expected-height="25">XXXX</div>
     </div>
 </div>
 
 <div class="container">
-    <div class="grid noStretch">
+    <div class="grid itemsStart">
         <div class="ahem minBigger" data-expected-width="150" data-expected-height="75">XXXX</div>
     </div>
 </div>
 
 <div class="container">
-    <div class="grid noStretch">
+    <div class="grid itemsStart">
         <div class="ahem maxSmaller" data-expected-width="10" data-expected-height="10">XXXX</div>
     </div>
 </div>
 
 <div class="container">
-    <div class="grid noStretch">
+    <div class="grid itemsStart">
         <div class="ahem maxBigger" data-expected-width="100" data-expected-height="25">XXXX</div>
     </div>
 </div>
@@ -113,12 +109,12 @@
 <!-- Verify we are applying correctly the min-content size. -->
 <div class="container">
     <div class="grid">
-        <div class="ahem" data-expected-width="75" data-expected-height="50">XXX X</div>
+        <div class="ahem" data-expected-width="5" data-expected-height="5">XXX X</div>
     </div>
 </div>
 
 <div class="container">
-    <div class="grid noStretch">
+    <div class="grid itemsStart">
         <div class="ahem" data-expected-width="75" data-expected-height="50">XXX X</div>
     </div>
 </div>
@@ -126,19 +122,19 @@
 <!-- Check that min-width min-height behavior is preserved when using vertical writing modes -->
 <div class="container">
     <div class="grid verticalLR">
-        <div class="ahem" data-expected-width="25" data-expected-height="100">XXXX</div>
+        <div class="ahem" data-expected-width="5" data-expected-height="5">XXXX</div>
     </div>
 </div>
 
 <div class="container">
     <div class="grid verticalLR">
-        <div class="ahem minHeightSmaller" data-expected-width="25" data-expected-height="12">XXXX</div>
+        <div class="ahem minHeightSmaller" data-expected-width="5" data-expected-height="12">XXXX</div>
     </div>
 </div>
 
 <div class="container">
     <div class="grid verticalLR">
-        <div class="ahem minWidthSmaller" data-expected-width="12" data-expected-height="100">XXXX</div>
+        <div class="ahem minWidthSmaller" data-expected-width="12" data-expected-height="5">XXXX</div>
     </div>
 </div>
 

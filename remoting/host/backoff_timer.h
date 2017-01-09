@@ -5,8 +5,10 @@
 #ifndef REMOTING_HOST_BACKOFF_TIMER_H_
 #define REMOTING_HOST_BACKOFF_TIMER_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "net/base/backoff_entry.h"
 
@@ -30,19 +32,19 @@ class BackoffTimer {
   void Stop();
 
   // Returns true if the user task may be invoked in the future.
-  bool IsRunning() const { return backoff_entry_; }
+  bool IsRunning() const { return !!backoff_entry_; }
 
-  void SetTimerForTest(scoped_ptr<base::Timer> timer) { timer_ = timer.Pass(); }
+  void SetTimerForTest(std::unique_ptr<base::Timer> timer);
 
  private:
   void StartTimer();
   void OnTimerFired();
 
-  scoped_ptr<base::Timer> timer_;
+  std::unique_ptr<base::Timer> timer_;
   base::Closure user_task_;
   tracked_objects::Location posted_from_;
   net::BackoffEntry::Policy backoff_policy_ = {};
-  scoped_ptr<net::BackoffEntry> backoff_entry_;
+  std::unique_ptr<net::BackoffEntry> backoff_entry_;
 
   DISALLOW_COPY_AND_ASSIGN(BackoffTimer);
 };

@@ -2,13 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/dom_distiller/content/browser/distiller_page_web_contents.h"
+
+#include <utility>
+
+#include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/dom_distiller/content/browser/distiller_javascript_utils.h"
-#include "components/dom_distiller/content/browser/distiller_page_web_contents.h"
 #include "components/dom_distiller/content/browser/web_contents_main_frame_observer.h"
 #include "components/dom_distiller/core/distiller_page.h"
 #include "components/dom_distiller/core/proto/distilled_article.pb.h"
@@ -95,14 +102,14 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
         embedded_test_server()->GetURL(url),
         dom_distiller::proto::DomDistillerOptions(),
         base::Bind(&DistillerPageWebContentsTest::OnPageDistillationFinished,
-                   this, quit_closure));
+                   base::Unretained(this), quit_closure));
   }
 
   void OnPageDistillationFinished(
       base::Closure quit_closure,
-      scoped_ptr<proto::DomDistillerResult> distiller_result,
+      std::unique_ptr<proto::DomDistillerResult> distiller_result,
       bool distillation_successful) {
-    distiller_result_ = distiller_result.Pass();
+    distiller_result_ = std::move(distiller_result);
     quit_closure.Run();
   }
 
@@ -144,8 +151,8 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
                                     bool wait_for_document_loaded);
 
   DistillerPageWebContents* distiller_page_;
-  scoped_ptr<proto::DomDistillerResult> distiller_result_;
-  scoped_ptr<base::Value> js_result_;
+  std::unique_ptr<proto::DomDistillerResult> distiller_result_;
+  std::unique_ptr<base::Value> js_result_;
 };
 
 // Use this class to be able to leak the WebContents, which is needed for when
@@ -155,10 +162,11 @@ class TestDistillerPageWebContents : public DistillerPageWebContents {
   TestDistillerPageWebContents(
       content::BrowserContext* browser_context,
       const gfx::Size& render_view_size,
-      scoped_ptr<SourcePageHandleWebContents> optional_web_contents_handle,
+      std::unique_ptr<SourcePageHandleWebContents> optional_web_contents_handle,
       bool expect_new_web_contents)
-      : DistillerPageWebContents(browser_context, render_view_size,
-                                 optional_web_contents_handle.Pass()),
+      : DistillerPageWebContents(browser_context,
+                                 render_view_size,
+                                 std::move(optional_web_contents_handle)),
         expect_new_web_contents_(expect_new_web_contents),
         new_web_contents_created_(false) {}
 
@@ -179,7 +187,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, BasicDistillationWorks) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
-      scoped_ptr<SourcePageHandleWebContents>());
+      std::unique_ptr<SourcePageHandleWebContents>());
   distiller_page_ = &distiller_page;
 
   base::RunLoop run_loop;
@@ -199,7 +207,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeLinks) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
-      scoped_ptr<SourcePageHandleWebContents>());
+      std::unique_ptr<SourcePageHandleWebContents>());
   distiller_page_ = &distiller_page;
 
   base::RunLoop run_loop;
@@ -217,7 +225,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeImages) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
-      scoped_ptr<SourcePageHandleWebContents>());
+      std::unique_ptr<SourcePageHandleWebContents>());
   distiller_page_ = &distiller_page;
 
   base::RunLoop run_loop;
@@ -236,7 +244,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeVideos) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
-      scoped_ptr<SourcePageHandleWebContents>());
+      std::unique_ptr<SourcePageHandleWebContents>());
   distiller_page_ = &distiller_page;
 
   base::RunLoop run_loop;
@@ -245,7 +253,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeVideos) {
 
   // A relative source/track should've been updated.
   EXPECT_THAT(distiller_result_->distilled_content().html(),
-              ContainsRegex("src=\"http://127.0.0.1:.*/relative_video.mp4\""));
+              ContainsRegex("src=\"http://127.0.0.1:.*/relative_video.webm\""));
   EXPECT_THAT(
       distiller_result_->distilled_content().html(),
       ContainsRegex("src=\"http://127.0.0.1:.*/relative_track_en.vtt\""));
@@ -259,7 +267,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, VisibilityDetection) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
-      scoped_ptr<SourcePageHandleWebContents>());
+      std::unique_ptr<SourcePageHandleWebContents>());
   distiller_page_ = &distiller_page;
 
   // visble_style.html and invisible_style.html only differ by the visibility
@@ -307,7 +315,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       UsingCurrentWebContentsNotFinishedLoadingYet) {
+                       DISABLED_UsingCurrentWebContentsNotFinishedLoadingYet) {
   std::string url(kSimpleArticlePath);
   bool expect_new_web_contents = false;
   bool setup_main_frame_observer = true;
@@ -319,7 +327,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       UsingCurrentWebContentsReadyForDistillation) {
+                       DISABLED_UsingCurrentWebContentsReadyForDistillation) {
   std::string url(kSimpleArticlePath);
   bool expect_new_web_contents = false;
   bool setup_main_frame_observer = true;
@@ -351,14 +359,13 @@ void DistillerPageWebContentsTest::RunUseCurrentWebContentsTest(
       std::string());
   url_loaded_runner.Run();
 
-  scoped_ptr<SourcePageHandleWebContents> source_page_handle(
+  std::unique_ptr<SourcePageHandleWebContents> source_page_handle(
       new SourcePageHandleWebContents(current_web_contents, false));
 
   TestDistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
-      source_page_handle.Pass(),
-      expect_new_web_contents);
+      std::move(source_page_handle), expect_new_web_contents);
   distiller_page_ = &distiller_page;
 
   base::RunLoop run_loop;
@@ -389,15 +396,13 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
       std::string());
   url_loaded_runner.Run();
 
-  scoped_ptr<SourcePageHandleWebContents> source_page_handle(
+  std::unique_ptr<SourcePageHandleWebContents> source_page_handle(
       new SourcePageHandleWebContents(current_web_contents, false));
 
-  TestDistillerPageWebContents* distiller_page(
-      new TestDistillerPageWebContents(
-          current_web_contents->GetBrowserContext(),
-          current_web_contents->GetContainerBounds().size(),
-          source_page_handle.Pass(),
-          false));
+  TestDistillerPageWebContents* distiller_page(new TestDistillerPageWebContents(
+      current_web_contents->GetBrowserContext(),
+      current_web_contents->GetContainerBounds().size(),
+      std::move(source_page_handle), false));
   distiller_page_ = distiller_page;
 
   base::RunLoop run_loop;
@@ -407,7 +412,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
   delete distiller_page_;
 
   // Make sure the test ends when it does not crash.
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), base::TimeDelta::FromSeconds(2));
 
   run_loop.Run();
@@ -417,7 +422,7 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, MarkupInfo) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
-      scoped_ptr<SourcePageHandleWebContents>());
+      std::unique_ptr<SourcePageHandleWebContents>());
   distiller_page_ = &distiller_page;
 
   base::RunLoop run_loop;
@@ -470,14 +475,14 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
       l10n_util::GetStringUTF8(IDS_DOM_DISTILLER_VIEWER_NO_DATA_CONTENT);
 
   {  // Test zero pages.
-    scoped_ptr<DistilledArticleProto> article_proto(
+    std::unique_ptr<DistilledArticleProto> article_proto(
         new DistilledArticleProto());
     std::string js = viewer::GetUnsafeArticleContentJs(article_proto.get());
     EXPECT_THAT(js, HasSubstr(no_content));
   }
 
   {  // Test empty content.
-    scoped_ptr<DistilledArticleProto> article_proto(
+    std::unique_ptr<DistilledArticleProto> article_proto(
         new DistilledArticleProto());
     (*(article_proto->add_pages())).set_html("");
     std::string js = viewer::GetUnsafeArticleContentJs(article_proto.get());

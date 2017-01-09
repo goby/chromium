@@ -3,63 +3,114 @@
 // found in the LICENSE file.
 
 /**
- * @fileoverview 'cr-search-engine-entry' is a component for showing a search
- * engine with its name, domain and query URL.
- *
- * @group Chrome Settings Elements
- * @element cr-search-engine-entry
+ * @fileoverview 'settings-search-engine-entry' is a component for showing a
+ * search engine with its name, domain and query URL.
  */
 Polymer({
-  is: 'cr-search-engine-entry',
+  is: 'settings-search-engine-entry',
 
   properties: {
     /** @type {!SearchEngine} */
-    engine: Object
+    engine: Object,
+
+    /** @type {boolean} */
+    isDefault: {
+      reflectToAttribute: true,
+      type: Boolean,
+      computed: 'computeIsDefault_(engine)'
+    },
+
+    /** @private {boolean} */
+    showDots_: {
+      reflectToAttribute: true,
+      type: Boolean,
+      computed: 'computeShowDots_(engine.canBeDefault,' +
+                                 'engine.canBeEdited,' +
+                                 'engine.canBeRemoved)',
+    },
+
+    /** @private {boolean} */
+    showEditSearchEngineDialog_: Boolean,
+  },
+
+  /** @private {settings.SearchEnginesBrowserProxy} */
+  browserProxy_: null,
+
+  /** @override */
+  created: function() {
+    this.browserProxy_ = settings.SearchEnginesBrowserProxyImpl.getInstance();
   },
 
   /** @private */
-  deleteEngine_: function() {
-    chrome.searchEnginesPrivate.removeSearchEngine(this.engine.guid);
+  closePopupMenu_: function() {
+    this.$$('dialog[is=cr-action-menu]').close();
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computeIsDefault_: function() {
+    return this.engine.default;
+  },
+
+  /**
+   * @param {boolean} canBeDefault
+   * @param {boolean} canBeEdited
+   * @param {boolean} canBeRemoved
+   * @return {boolean} Whether to show the dots menu.
+   * @private
+   */
+  computeShowDots_: function(canBeDefault, canBeEdited, canBeRemoved) {
+    return canBeDefault || canBeEdited || canBeRemoved;
+  },
+
+  /**
+   * @param {?string} url The icon URL if available.
+   * @return {string} A set of icon URLs.
+   * @private
+   */
+  getIconSet_: function(url) {
+    // Force default icon, if no |engine.iconURL| is available.
+    return cr.icon.getFavicon(url || '');
   },
 
   /** @private */
-  makeDefault_: function() {
-    chrome.searchEnginesPrivate.setSelectedSearchEngine(this.engine.guid);
-    this.makeNotEditable_();
+  onDeleteTap_: function() {
+    this.browserProxy_.removeSearchEngine(this.engine.modelIndex);
+    this.closePopupMenu_();
   },
 
   /** @private */
-  toggleEditable_: function() {
-    this.$.domainField.disabled = !this.$.domainField.disabled;
-    this.$.keywordField.disabled = !this.$.keywordField.disabled;
-    this.$.queryURLField.disabled = !this.$.queryURLField.disabled;
+  onDotsTap_: function() {
+    /** @type {!CrActionMenuElement} */ (
+        this.$$('dialog[is=cr-action-menu]')).showAt(
+            assert(this.$$('paper-icon-button')));
+  },
 
-    this.$.checkIcon.hidden =
-        !this.$.checkIcon.hidden || this.engine.isSelected;
-    this.$.deleteIcon.hidden =
-        !this.$.deleteIcon.hidden || this.engine.isSelected;
+  /**
+   * @param {!Event} e
+   * @private
+   */
+  onEditTap_: function(e) {
+    e.preventDefault();
+    this.closePopupMenu_();
+
+    this.showEditSearchEngineDialog_ = true;
+    this.async(function() {
+      var dialog = this.$$('settings-search-engine-dialog');
+      // Register listener to detect when the dialog is closed. Flip the boolean
+      // once closed to force a restamp next time it is shown such that the
+      // previous dialog's contents are cleared.
+      dialog.addEventListener('close', function() {
+        this.showEditSearchEngineDialog_ = false;
+      }.bind(this));
+    }.bind(this));
   },
 
   /** @private */
-  makeNotEditable_: function() {
-    this.$.domainField.disabled = true;
-    this.$.keywordField.disabled = true;
-    this.$.queryURLField.disabled = true;
-
-    this.$.checkIcon.hidden = true;
-    this.$.deleteIcon.hidden = true;
+  onMakeDefaultTap_: function() {
+    this.closePopupMenu_();
+    this.browserProxy_.setDefaultSearchEngine(this.engine.modelIndex);
   },
-
-  /** @private */
-  fieldChanged_: function() {
-    // NOTE: This currently doesn't fire in response to a change event from the
-    // paper-input, even though it should. This Polymer change should fix the
-    // issue:  https://github.com/PolymerElements/paper-input/pull/33
-    chrome.searchEnginesPrivate.updateSearchEngine(
-        this.engine.guid,
-        this.$.domainField.value,
-        this.$.keywordField.value,
-        this.$.queryURLField.value);
-    this.makeNotEditable_();
-  }
 });

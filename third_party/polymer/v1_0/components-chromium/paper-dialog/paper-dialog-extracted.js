@@ -14,16 +14,12 @@
     },
 
     _renderOpened: function() {
-      if (this.withBackdrop) {
-        this.backdropElement.open();
-      }
+      this.cancelAnimation();
       this.playAnimation('entry');
     },
 
     _renderClosed: function() {
-      if (this.withBackdrop) {
-        this.backdropElement.close();
-      }
+      this.cancelAnimation();
       this.playAnimation('exit');
     },
 

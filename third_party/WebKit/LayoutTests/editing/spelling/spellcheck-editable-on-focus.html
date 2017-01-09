@@ -1,61 +1,46 @@
-<!DOCTYPE html>
-<html>
-<head>
-<script src="../editing.js"></script>
-<script src="resources/util.js"></script>
-<script src="../../resources/js-test.js"></script>
-</head>
-<body onload="test();">
-<div id="container">
-  <div id="test_editable" contentEditable>zz zz zz.</div>
-  <textarea id="test_textarea">zz zz zz.</textarea>
-  <input type="text" id="test_textfield" value="zz zz zz."></input>
-</div>
+<!doctype html>
+<script src="../../resources/testharness.js"></script>
+<script src="../../resources/testharnessreport.js"></script>
+<script src="../assert_selection.js"></script>
+<script src="spellcheck_test.js"></script>
+
 <script>
-description("Spell checking should be triggered on focus of an editable. "
-    + "To test manually, set focus on above elements. The test succeed if "
-    + "misspellings are marked.");
-
-jsTestIsAsync = true;
-
-var testEditable = document.getElementById('test_editable');
-var testTextArea = document.getElementById('test_textarea');
-var testTextField = document.getElementById('test_textfield');
-
-function triggerSpellingForEditables() {
-    testEditable.focus();
-    testTextArea.focus();
-    testTextField.focus();
-}
-
-var expectedNumberOfMarkers;
-var textNode;
-function verifySpellingMarkers(expectation, doneCallback) {
-    expectedNumberOfMarkers = expectation;
-    shouldBecomeEqual('internals.markerCountForNode(findFirstTextNode(testEditable), "spelling")', 'expectedNumberOfMarkers', function() {
-        shouldBecomeEqual('internals.markerCountForNode(findFirstTextNode(testTextArea), "spelling")', 'expectedNumberOfMarkers', function() {
-            shouldBecomeEqual('internals.markerCountForNode(findFirstTextNode(testTextField), "spelling")', 'expectedNumberOfMarkers', function() {
-                doneCallback();
-                // After focusing the editable elements, check whether they have spelling markers.
-                verifySpellingMarkers(3, finishJSTest);
-             });
-        });
+spellcheck_test(
+    '<div contenteditable>zz zz zz.</div>',
+    '',
+    '<div contenteditable>zz zz zz.</div>',
+    {
+      title: 'Misspelled text in editable DIV is not marked before focused.',
+      callback: sample => spellcheck_test(
+          sample,
+          document => document.querySelector('div').focus(),
+          '<div contenteditable>#zz# #zz# #zz#.</div>',
+          'Spellchecking in editable DIV triggered on focus.')
     });
-}
 
-function test() {
-    if (!window.internals) {
-        debug("Automatic testing impossible. Test manually.");
-        return;
-    }
+spellcheck_test(
+    '<textarea>zz zz zz.</textarea>',
+    '',
+    '<textarea>zz zz zz.</textarea>',
+    {
+      title: 'Misspelled text in TEXTAREA is not marked before focused.',
+      callback: sample => spellcheck_test(
+          sample,
+          document => document.querySelector('textarea').focus(),
+          '<textarea>#zz# #zz# #zz#.</textarea>',
+          'Spellchecking in TEXTAREA triggered on focus.')
+    });
 
-    internals.settings.setUnifiedTextCheckerEnabled(true);
-
-    // Check whether non-focused elements do not have spelling markers, then
-    // verify them when they get focused.
-    verifySpellingMarkers(0, triggerSpellingForEditables);
-}
-
+spellcheck_test(
+    '<input value="zz zz zz.">',
+    '',
+    '<input value="zz zz zz.">',
+    {
+      title: 'Misspelled text in INPUT is not marked before focused.',
+      callback: sample => spellcheck_test(
+          sample,
+          document => document.querySelector('input').focus(),
+          '<input value="#zz# #zz# #zz#.">',
+          'Spellchecking in INPUT triggered on focus.')
+    });
 </script>
-</body>
-</html>

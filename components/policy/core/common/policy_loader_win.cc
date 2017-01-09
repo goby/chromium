@@ -5,32 +5,26 @@
 #include "components/policy/core/common/policy_loader_win.h"
 
 #include <windows.h>
-#include <lm.h>       // For limits.
 #include <ntdsapi.h>  // For Ds[Un]Bind
 #include <rpc.h>      // For struct GUID
 #include <shlwapi.h>  // For PathIsUNC()
+#include <stddef.h>
 #include <userenv.h>  // For GPO functions
 
+#include <memory>
 #include <string>
 #include <vector>
 
-// shlwapi.dll is required for PathIsUNC().
-#pragma comment(lib, "shlwapi.lib")
-// userenv.dll is required for various GPO functions.
-#pragma comment(lib, "userenv.lib")
-// ntdsapi.dll is required for Ds[Un]Bind calls.
-#pragma comment(lib, "ntdsapi.lib")
-
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/scoped_native_library.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
@@ -45,10 +39,10 @@
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_types.h"
-#include "components/policy/core/common/preg_parser_win.h"
-#include "components/policy/core/common/registry_dict_win.h"
+#include "components/policy/core/common/preg_parser.h"
+#include "components/policy/core/common/registry_dict.h"
 #include "components/policy/core/common/schema.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 
 namespace schema = json_schema_constants;
 
@@ -58,15 +52,7 @@ namespace {
 
 const char kKeyMandatory[] = "policy";
 const char kKeyRecommended[] = "recommended";
-const char kKeySchema[] = "schema";
 const char kKeyThirdParty[] = "3rdparty";
-
-// The Legacy Browser Support was the first user of the policy-for-extensions
-// API, and relied on behavior that will be phased out. If this extension is
-// present then its policies will be loaded in a special way.
-// TODO(joaodasilva): remove this for M35. http://crbug.com/325349
-const char kLegacyBrowserSupportExtensionId[] =
-    "heildphpnddilhkemkielfhnkaagiabh";
 
 // The web store url that is the only trusted source for extensions.
 const char kExpectedWebStoreUrl[] =
@@ -100,43 +86,11 @@ GUID kRegistrySettingsCSEGUID = REGISTRY_EXTENSION_GUID;
 //   (a) existing enumerated constants should never be deleted or reordered, and
 //   (b) new constants should only be appended at the end of the enumeration.
 enum DomainCheckErrors {
-  DOMAIN_CHECK_ERROR_GET_JOIN_INFO = 0,
+  // The check error below is no longer possible.
+  DEPRECATED_DOMAIN_CHECK_ERROR_GET_JOIN_INFO = 0,
   DOMAIN_CHECK_ERROR_DS_BIND = 1,
   DOMAIN_CHECK_ERROR_SIZE,  // Not a DomainCheckError.  Must be last.
 };
-
-// If the LBS extension is found and contains a schema in the registry then this
-// function is used to patch it, and make it compliant. The fix is to
-// add an "items" attribute to lists that don't declare it.
-std::string PatchSchema(const std::string& schema) {
-  base::JSONParserOptions options = base::JSON_PARSE_RFC;
-  scoped_ptr<base::Value> json = base::JSONReader::Read(schema, options);
-  base::DictionaryValue* dict = NULL;
-  base::DictionaryValue* properties = NULL;
-  if (!json ||
-      !json->GetAsDictionary(&dict) ||
-      !dict->GetDictionary(schema::kProperties, &properties)) {
-    return schema;
-  }
-
-  for (base::DictionaryValue::Iterator it(*properties);
-       !it.IsAtEnd(); it.Advance()) {
-    base::DictionaryValue* policy_schema = NULL;
-    std::string type;
-    if (properties->GetDictionary(it.key(), &policy_schema) &&
-        policy_schema->GetString(schema::kType, &type) &&
-        type == schema::kArray &&
-        !policy_schema->HasKey(schema::kItems)) {
-      scoped_ptr<base::DictionaryValue> items(new base::DictionaryValue());
-      items->SetString(schema::kType, schema::kString);
-      policy_schema->Set(schema::kItems, items.release());
-    }
-  }
-
-  std::string serialized;
-  base::JSONWriter::Write(*json, &serialized);
-  return serialized;
-}
 
 // Verifies that untrusted policies contain only safe values. Modifies the
 // |policy| in place.
@@ -152,11 +106,10 @@ void FilterUntrustedPolicy(PolicyMap* policy) {
     if (!map_entry->value->GetAsList(&policy_list_value))
       return;
 
-    scoped_ptr<base::ListValue> filtered_values(new base::ListValue);
-    for (base::ListValue::const_iterator list_entry(policy_list_value->begin());
-         list_entry != policy_list_value->end(); ++list_entry) {
+    std::unique_ptr<base::ListValue> filtered_values(new base::ListValue);
+    for (const auto& list_entry : *policy_list_value) {
       std::string entry;
-      if (!(*list_entry)->GetAsString(&entry))
+      if (!list_entry->GetAsString(&entry))
         continue;
       size_t pos = entry.find(';');
       if (pos == std::string::npos)
@@ -171,10 +124,9 @@ void FilterUntrustedPolicy(PolicyMap* policy) {
       filtered_values->AppendString(entry);
     }
     if (invalid_policies) {
-      policy->Set(key::kExtensionInstallForcelist,
-                  map_entry->level, map_entry->scope, map_entry->source,
-                  filtered_values.release(),
-                  map_entry->external_data_fetcher);
+      PolicyMap::Entry filtered_entry = map_entry->DeepCopy();
+      filtered_entry.value = std::move(filtered_values);
+      policy->Set(key::kExtensionInstallForcelist, std::move(filtered_entry));
 
       const PolicyDetails* details = GetChromePolicyDetails(
           key::kExtensionInstallForcelist);
@@ -323,7 +275,7 @@ void ParsePolicy(const RegistryDict* gpo_dict,
   if (!gpo_dict)
     return;
 
-  scoped_ptr<base::Value> policy_value(gpo_dict->ConvertToJSON(schema));
+  std::unique_ptr<base::Value> policy_value(gpo_dict->ConvertToJSON(schema));
   const base::DictionaryValue* policy_dict = NULL;
   if (!policy_value->GetAsDictionary(&policy_dict) || !policy_dict) {
     LOG(WARNING) << "Root policy object is not a dictionary!";
@@ -341,32 +293,8 @@ void CollectEnterpriseUMAs() {
                             base::win::OSInfo::GetInstance()->version_type(),
                             base::win::SUITE_LAST);
 
-  // Get the computer's domain status.
-  LPWSTR domain;
-  NETSETUP_JOIN_STATUS join_status;
-  if (NERR_Success != ::NetGetJoinInformation(NULL, &domain, &join_status)) {
-    UMA_HISTOGRAM_ENUMERATION("EnterpriseCheck.DomainCheckFailed",
-                              DOMAIN_CHECK_ERROR_GET_JOIN_INFO,
-                              DOMAIN_CHECK_ERROR_SIZE);
-    return;
-  }
-  ::NetApiBufferFree(domain);
-
-  bool in_domain = join_status == NetSetupDomainName;
+  bool in_domain = base::win::IsEnrolledToDomain();
   UMA_HISTOGRAM_BOOLEAN("EnterpriseCheck.InDomain", in_domain);
-  if (in_domain) {
-    // This check will tell us how often are domain computers actually
-    // connected to the enterprise network while Chrome is running.
-    HANDLE server_bind;
-    if (ERROR_SUCCESS == ::DsBind(NULL, NULL, &server_bind)) {
-      UMA_HISTOGRAM_COUNTS("EnterpriseCheck.DomainBindSucceeded", 1);
-      ::DsUnBind(&server_bind);
-    } else {
-      UMA_HISTOGRAM_ENUMERATION("EnterpriseCheck.DomainCheckFailed",
-                                DOMAIN_CHECK_ERROR_DS_BIND,
-                                DOMAIN_CHECK_ERROR_SIZE);
-    }
-  }
 }
 
 }  // namespace
@@ -382,8 +310,12 @@ PolicyLoaderWin::PolicyLoaderWin(
       is_initialized_(false),
       chrome_policy_key_(chrome_policy_key),
       gpo_provider_(gpo_provider),
-      user_policy_changed_event_(false, false),
-      machine_policy_changed_event_(false, false),
+      user_policy_changed_event_(
+          base::WaitableEvent::ResetPolicy::AUTOMATIC,
+          base::WaitableEvent::InitialState::NOT_SIGNALED),
+      machine_policy_changed_event_(
+          base::WaitableEvent::ResetPolicy::AUTOMATIC,
+          base::WaitableEvent::InitialState::NOT_SIGNALED),
       user_policy_watcher_failed_(false),
       machine_policy_watcher_failed_(false) {
   if (!::RegisterGPNotification(user_policy_changed_event_.handle(), false)) {
@@ -408,13 +340,11 @@ PolicyLoaderWin::~PolicyLoaderWin() {
 }
 
 // static
-scoped_ptr<PolicyLoaderWin> PolicyLoaderWin::Create(
+std::unique_ptr<PolicyLoaderWin> PolicyLoaderWin::Create(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     const base::string16& chrome_policy_key) {
-  return make_scoped_ptr(
-      new PolicyLoaderWin(task_runner,
-                          chrome_policy_key,
-                          g_win_gpo_list_provider.Pointer()));
+  return base::WrapUnique(new PolicyLoaderWin(
+      task_runner, chrome_policy_key, g_win_gpo_list_provider.Pointer()));
 }
 
 void PolicyLoaderWin::InitOnBackgroundThread() {
@@ -423,7 +353,7 @@ void PolicyLoaderWin::InitOnBackgroundThread() {
   CollectEnterpriseUMAs();
 }
 
-scoped_ptr<PolicyBundle> PolicyLoaderWin::Load() {
+std::unique_ptr<PolicyBundle> PolicyLoaderWin::Load() {
   // Reset the watches BEFORE reading the individual policies to avoid
   // missing a change notification.
   if (is_initialized_)
@@ -443,7 +373,7 @@ scoped_ptr<PolicyBundle> PolicyLoaderWin::Load() {
           << (is_enterprise ? "enabled." : "disabled.");
 
   // Load policy data for the different scopes/levels and merge them.
-  scoped_ptr<PolicyBundle> bundle(new PolicyBundle());
+  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle());
   PolicyMap* chrome_policy =
       &bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()));
   for (size_t i = 0; i < arraysize(kScopes); ++i) {
@@ -476,9 +406,9 @@ scoped_ptr<PolicyBundle> PolicyLoaderWin::Load() {
     }
 
     // Remove special-cased entries from the GPO dictionary.
-    scoped_ptr<RegistryDict> recommended_dict(
+    std::unique_ptr<RegistryDict> recommended_dict(
         gpo_dict.RemoveKey(kKeyRecommended));
-    scoped_ptr<RegistryDict> third_party_dict(
+    std::unique_ptr<RegistryDict> third_party_dict(
         gpo_dict.RemoveKey(kKeyThirdParty));
 
     // Load Chrome policy.
@@ -491,7 +421,7 @@ scoped_ptr<PolicyBundle> PolicyLoaderWin::Load() {
       Load3rdPartyPolicy(third_party_dict.get(), scope, bundle.get());
   }
 
-  return bundle.Pass();
+  return bundle;
 }
 
 bool PolicyLoaderWin::ReadPRegFile(const base::FilePath& preg_file,
@@ -549,6 +479,7 @@ bool PolicyLoaderWin::LoadGPOPolicy(PolicyScope scope,
 
       // Merge with existing forced policy, giving precedence to the existing
       // forced policy.
+      // TODO(ljusten): Same problem as below.
       new_forced_policy.Merge(forced_policy);
       forced_policy.Swap(&new_forced_policy);
     } else {
@@ -558,6 +489,11 @@ bool PolicyLoaderWin::LoadGPOPolicy(PolicyScope scope,
   }
 
   // Merge, give precedence to forced policy.
+  // TODO(ljusten): This doesn't work properly if policies are explicitly
+  // disabled or string list policies have less entries in the forced_policy.
+  // The merged dictionary still has excessive policies and strings. To fix
+  // this, use only one dict and call ReadPRegFile in the proper order (forced
+  // last). See crbug.com/659979.
   parsed_policy.Merge(forced_policy);
   policy->Swap(&parsed_policy);
 
@@ -640,20 +576,6 @@ void PolicyLoaderWin::Load3rdPartyPolicy(const RegistryDict* gpo_dict,
         continue;
       }
       Schema schema = *schema_from_map;
-
-      if (!schema.valid() &&
-          policy_namespace.domain == POLICY_DOMAIN_EXTENSIONS &&
-          policy_namespace.component_id == kLegacyBrowserSupportExtensionId) {
-        // TODO(joaodasilva): remove this special treatment for LBS by M35.
-        std::string schema_json;
-        const base::Value* value = component->second->GetValue(kKeySchema);
-        if (value && value->GetAsString(&schema_json)) {
-          std::string error;
-          schema = Schema::Parse(PatchSchema(schema_json), &error);
-          if (!schema.valid())
-            LOG(WARNING) << "Invalid schema in the registry for LBS: " << error;
-        }
-      }
 
       // Parse policy.
       for (size_t j = 0; j < arraysize(kLevels); j++) {

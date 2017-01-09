@@ -7,9 +7,10 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/prefs/pref_member.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_member.h"
 
 class PrefService;
 
@@ -21,7 +22,7 @@ class PrefService;
 // callback returned by ResourceContext::GetMediaDeviceIDSalt.
 class MediaDeviceIDSalt : public base::RefCountedThreadSafe<MediaDeviceIDSalt> {
  public:
-  MediaDeviceIDSalt(PrefService* pref_service, bool incognito);
+  explicit MediaDeviceIDSalt(PrefService* pref_service);
   void ShutdownOnUIThread();
 
   std::string GetSalt() const;
@@ -33,9 +34,6 @@ class MediaDeviceIDSalt : public base::RefCountedThreadSafe<MediaDeviceIDSalt> {
   friend class base::RefCountedThreadSafe<MediaDeviceIDSalt>;
   ~MediaDeviceIDSalt();
 
-  // |incognito_salt_| is initialized in ctor on UI thread but only read
-  //  on the IO thread.
-  std::string incognito_salt_;
   mutable StringPrefMember media_device_id_salt_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaDeviceIDSalt);

@@ -5,8 +5,11 @@
 #ifndef NET_URL_REQUEST_VIEW_CACHE_HELPER_H_
 #define NET_URL_REQUEST_VIEW_CACHE_HELPER_H_
 
+#include <stddef.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/completion_callback.h"
 #include "net/base/io_buffer.h"
@@ -98,7 +101,7 @@ class NET_EXPORT ViewCacheHelper {
   const URLRequestContext* context_;
   disk_cache::Backend* disk_cache_;
   disk_cache::Entry* entry_;
-  scoped_ptr<disk_cache::Backend::Iterator> iter_;
+  std::unique_ptr<disk_cache::Backend::Iterator> iter_;
   scoped_refptr<IOBuffer> buf_;
   int buf_len_;
   int index_;

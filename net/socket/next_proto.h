@@ -7,59 +7,28 @@
 
 #include <vector>
 
+#include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 
 namespace net {
 
-// Next Protocol Negotiation (NPN), if successful, results in agreement on an
-// application-level string that specifies the application level protocol to
-// use over the TLS connection. NextProto enumerates the application level
-// protocols that we recognize.  Do not change or reuse values, because they
-// are used to collect statistics on UMA.  Also, values must be in [0,499),
-// because of the way TLS protocol negotiation extension information is added to
-// UMA histogram.
+// This enum is used in Net.SSLNegotiatedAlpnProtocol histogram.
+// Do not change or re-use values.
 enum NextProto {
   kProtoUnknown = 0,
   kProtoHTTP11 = 1,
-  kProtoMinimumVersion = kProtoHTTP11,
-
-  kProtoDeprecatedSPDY2 = 100,
-  kProtoSPDYMinimumVersion = kProtoDeprecatedSPDY2,
-  kProtoSPDYHistogramOffset = kProtoDeprecatedSPDY2,
-  kProtoSPDY3 = 101,
-  kProtoSPDY31 = 102,
-  // kProtoHTTP2_14 = 103,  // HTTP/2 draft-14
-  // kProtoHTTP2_15 = 104,  // HTTP/2 draft-15
-  // kProtoHTTP2_16 = 105,  // HTTP/2 draft-16
-  // kProtoHTTP2_17 = 106,  // HTTP/2 draft-17
-  kProtoHTTP2 = 107,  // HTTP/2, see https://tools.ietf.org/html/rfc7540.
-  kProtoSPDYMaximumVersion = kProtoHTTP2,
-
-  kProtoQUIC1SPDY3 = 200,
-
-  kProtoMaximumVersion = kProtoQUIC1SPDY3,
+  kProtoHTTP2 = 2,
+  kProtoQUIC = 3,
+  kProtoLast = kProtoQUIC
 };
 
 // List of protocols to use for NPN, used for configuring HttpNetworkSessions.
 typedef std::vector<NextProto> NextProtoVector;
 
-// Convenience functions to create NextProtoVector.
+NET_EXPORT_PRIVATE NextProto
+NextProtoFromString(base::StringPiece proto_string);
 
-// Default values, which are subject to change over time.
-NET_EXPORT NextProtoVector NextProtosDefaults();
-
-// Enable SPDY/3.1 and QUIC, but not HTTP/2.
-NET_EXPORT NextProtoVector NextProtosSpdy31();
-
-// Control SPDY/3.1 and HTTP/2 separately.
-NET_EXPORT NextProtoVector NextProtosWithSpdyAndQuic(bool spdy_enabled,
-                                                     bool quic_enabled);
-
-// Returns true if |next_proto| is a version of SPDY or HTTP/2.
-bool NextProtoIsSPDY(NextProto next_proto);
-
-// Remove HTTP/2 from |next_protos|.
-NET_EXPORT void DisableHTTP2(NextProtoVector* next_protos);
+NET_EXPORT_PRIVATE const char* NextProtoToString(NextProto next_proto);
 
 }  // namespace net
 

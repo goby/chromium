@@ -5,26 +5,26 @@
 #ifndef COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_COMPRESSION_STATS_H_
 #define COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_COMPRESSION_STATS_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_member.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
 #include "components/data_reduction_proxy/core/browser/db_data_owner.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
-#include "components/data_reduction_proxy/proto/data_store.pb.h"
-#include "net/base/network_change_notifier.h"
+#include "components/data_reduction_proxy/core/common/data_savings_recorder.h"
+#include "components/prefs/pref_member.h"
 
-class PrefChangeRegistrar;
 class PrefService;
 
 namespace base {
@@ -32,32 +32,20 @@ class ListValue;
 class Value;
 }
 
-// Custom std::hash for |ConnectionType| so that it can be used as a key in
-// |ScopedPtrHashMap|.
-namespace BASE_HASH_NAMESPACE {
-
-template <>
-struct hash<data_reduction_proxy::ConnectionType> {
-  std::size_t operator()(
-      const data_reduction_proxy::ConnectionType& type) const {
-    return hash<int>()(type);
-  }
-};
-
-}  // namespace BASE_HASH_NAMESPACE
-
 namespace data_reduction_proxy {
 class DataReductionProxyService;
+class DataUsageBucket;
+class DataUseGroup;
+class PerSiteDataUsage;
 
 // Data reduction proxy delayed pref service reduces the number calls to pref
 // service by storing prefs in memory and writing to the given PrefService after
 // |delay| amount of time. If |delay| is zero, the delayed pref service writes
 // directly to the PrefService and does not store the prefs in memory. All
 // prefs must be stored and read on the UI thread.
-class DataReductionProxyCompressionStats
-    : public net::NetworkChangeNotifier::ConnectionTypeObserver {
+class DataReductionProxyCompressionStats {
  public:
-  typedef base::ScopedPtrHashMap<std::string, scoped_ptr<PerSiteDataUsage>>
+  typedef base::ScopedPtrHashMap<std::string, std::unique_ptr<PerSiteDataUsage>>
       SiteUsageMap;
 
   // Collects and store data usage and compression statistics. Basic data usage
@@ -72,26 +60,32 @@ class DataReductionProxyCompressionStats
   DataReductionProxyCompressionStats(DataReductionProxyService* service,
                                      PrefService* pref_service,
                                      const base::TimeDelta& delay);
-  ~DataReductionProxyCompressionStats() override;
+  ~DataReductionProxyCompressionStats();
+
+  // Records detailed data usage broken down by connection type and domain.
+  // Assumes that the |data_used| has been recoreded by previous calls to
+  // UpdateContentLengths.
+  void UpdateDataSavings(const std::string& data_usage_host,
+                         int64_t data_used,
+                         int64_t original_size);
 
   // Records detailed data usage broken down by connection type and domain. Also
   // records daily data savings statistics to prefs and reports data savings
   // UMA. |compressed_size| and |original_size| are measured in bytes.
-  void UpdateContentLengths(int64 compressed_size,
-                            int64 original_size,
+  void UpdateContentLengths(int64_t compressed_size,
+                            int64_t original_size,
                             bool data_reduction_proxy_enabled,
                             DataReductionProxyRequestType request_type,
-                            const std::string& data_usage_host,
+                            const scoped_refptr<DataUseGroup>& data_use_group,
                             const std::string& mime_type);
 
   // Creates a |Value| summary of the persistent state of the network session.
-  // The caller is responsible for deleting the returned value.
   // Must be called on the UI thread.
-  base::Value* HistoricNetworkStatsInfoToValue();
+  std::unique_ptr<base::Value> HistoricNetworkStatsInfoToValue();
 
   // Returns the time in milliseconds since epoch that the last update was made
   // to the daily original and received content lengths.
-  int64 GetLastUpdateTime();
+  int64_t GetLastUpdateTime();
 
   // Resets daily content length statistics.
   void ResetStatistics();
@@ -99,15 +93,22 @@ class DataReductionProxyCompressionStats
   // Clears all data saving statistics.
   void ClearDataSavingStatistics();
 
+  // Returns the total size of all HTTP content received from the network.
+  int64_t GetHttpReceivedContentLength();
+
+  // Returns the value the total original size of all HTTP content received from
+  // the network.
+  int64_t GetHttpOriginalContentLength();
+
   // Returns a list of all the daily content lengths.
   ContentLengthList GetDailyContentLengths(const char* pref_name);
 
   // Returns aggregate received and original content lengths over the specified
   // number of days, as well as the time these stats were last updated.
   void GetContentLengths(unsigned int days,
-                         int64* original_content_length,
-                         int64* received_content_length,
-                         int64* last_update_time);
+                         int64_t* original_content_length,
+                         int64_t* received_content_length,
+                         int64_t* last_update_time);
 
   // Calls |get_data_usage_callback| with full data usage history. In-memory
   // data usage stats are flushed to storage before querying for full history.
@@ -122,16 +123,10 @@ class DataReductionProxyCompressionStats
   // range. Currently, this method deletes all data usage for the given range.
   void DeleteBrowsingHistory(const base::Time& start, const base::Time& end);
 
-  // Called by |net::NetworkChangeNotifier| when network type changes. Used to
-  // keep track of connection type for reporting data usage breakdown by
-  // connection type.
-  void OnConnectionTypeChanged(
-      net::NetworkChangeNotifier::ConnectionType type) override;
-
   // Callback from loading detailed data usage. Initializes in memory data
   // structures used to collect data usage. |data_usage| contains the data usage
   // for the last stored interval.
-  void OnCurrentDataUsageLoaded(scoped_ptr<DataUsageBucket> data_usage);
+  void OnCurrentDataUsageLoaded(std::unique_ptr<DataUsageBucket> data_usage);
 
  private:
   // Enum to track the state of loading data usage from storage.
@@ -139,9 +134,12 @@ class DataReductionProxyCompressionStats
 
   friend class DataReductionProxyCompressionStatsTest;
 
-  typedef std::map<const char*, int64> DataReductionProxyPrefMap;
-  typedef base::ScopedPtrHashMap<const char*, scoped_ptr<base::ListValue>>
+  typedef std::map<const char*, int64_t> DataReductionProxyPrefMap;
+  typedef base::ScopedPtrHashMap<const char*, std::unique_ptr<base::ListValue>>
       DataReductionProxyListPrefMap;
+
+  class DailyContentLengthUpdate;
+  class DailyDataSavingUpdate;
 
   // Loads all data_reduction_proxy::prefs into the |pref_map_| and
   // |list_pref_map_|.
@@ -157,16 +155,16 @@ class DataReductionProxyCompressionStats
 
   void OnUpdateContentLengths();
 
-  // Gets the int64 pref at |pref_path| from the |DataReductionProxyPrefMap|.
-  int64 GetInt64(const char* pref_path);
+  // Gets the int64_t pref at |pref_path| from the |DataReductionProxyPrefMap|.
+  int64_t GetInt64(const char* pref_path);
 
   // Updates the pref value in the |DataReductionProxyPrefMap| map.
   // The pref is later written to |pref service_|.
-  void SetInt64(const char* pref_path, int64 pref_value);
+  void SetInt64(const char* pref_path, int64_t pref_value);
 
-  // Increments the pref value in the |DataReductionProxyPrefMap| map.
+  // Increases the pref value in the |DataReductionProxyPrefMap| map.
   // The pref is later written to |pref service_|.
-  void IncrementInt64Pref(const char* pref_path, int64_t pref_increment);
+  void IncreaseInt64Pref(const char* pref_path, int64_t delta);
 
   // Gets the pref list at |pref_path| from the |DataReductionProxyPrefMap|.
   base::ListValue* GetList(const char* pref_path);
@@ -184,13 +182,9 @@ class DataReductionProxyCompressionStats
   void TransferList(const base::ListValue& from_list,
                     base::ListValue* to_list);
 
-  // Gets an int64, stored as a string, in a ListPref at the specified
-  // index.
-  int64 GetListPrefInt64Value(const base::ListValue& list_update, size_t index);
-
   // Records content length updates to prefs.
-  void RecordRequestSizePrefs(int64 compressed_size,
-                              int64 original_size,
+  void RecordRequestSizePrefs(int64_t compressed_size,
+                              int64_t original_size,
                               bool with_data_reduction_proxy_enabled,
                               DataReductionProxyRequestType request_type,
                               const std::string& mime_type,
@@ -216,8 +210,8 @@ class DataReductionProxyCompressionStats
   // is the time at which the data usage occurred. This method should be called
   // in real time, so |time| is expected to be |Time::Now()|.
   void RecordDataUsage(const std::string& data_usage_host,
-                       int64 original_request_size,
-                       int64 data_used,
+                       int64_t original_request_size,
+                       int64_t data_used,
                        const base::Time& time);
 
   // Persists the in memory data usage information to storage and clears all
@@ -245,14 +239,22 @@ class DataReductionProxyCompressionStats
   // Example: "http://www.finance.google.com" -> "www.finance.google.com"
   static std::string NormalizeHostname(const std::string& host);
 
+  // Records detailed data usage broken down by |host|. Also records daily data
+  // savings statistics to prefs and reports data savings UMA. |data_used| and
+  // |original_size| are measured in bytes.
+  void RecordData(int64_t data_used,
+                  int64_t original_size,
+                  bool data_saver_enabled,
+                  DataReductionProxyRequestType request_type,
+                  const std::string& data_use_host,
+                  const std::string& mime_type);
+
   DataReductionProxyService* service_;
   PrefService* pref_service_;
   const base::TimeDelta delay_;
   DataReductionProxyPrefMap pref_map_;
   DataReductionProxyListPrefMap list_pref_map_;
-  scoped_ptr<PrefChangeRegistrar> pref_change_registrar_;
   BooleanPrefMember data_usage_reporting_enabled_;
-  ConnectionType connection_type_;
 
   // Maintains detailed data usage for current interval.
   SiteUsageMap data_usage_map_;

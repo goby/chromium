@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/public/cpp/shell_window_ids.h"
+#include "base/auto_reset.h"
 #include "chrome/browser/chromeos/bluetooth/bluetooth_pairing_dialog.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/web_ui_browser_test.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/test/browser_test_utils.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 #include "device/bluetooth/test/mock_bluetooth_device.h"
+#include "extensions/browser/extension_function.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 class BluetoothPairingUITest : public WebUIBrowserTest {
@@ -22,7 +23,7 @@ class BluetoothPairingUITest : public WebUIBrowserTest {
 
  private:
   scoped_refptr<testing::NiceMock<device::MockBluetoothAdapter>> mock_adapter_;
-  scoped_ptr<device::MockBluetoothDevice> mock_device_;
+  std::unique_ptr<device::MockBluetoothDevice> mock_device_;
 };
 
 BluetoothPairingUITest::BluetoothPairingUITest() {}
@@ -30,6 +31,10 @@ BluetoothPairingUITest::BluetoothPairingUITest() {}
 BluetoothPairingUITest::~BluetoothPairingUITest() {}
 
 void BluetoothPairingUITest::ShowDialog() {
+  // Since we use mocks, callbacks are never called for the bluetooth API
+  // functions. :(
+  base::AutoReset<bool> ignore_did_respond(
+      &ExtensionFunction::ignore_all_did_respond_for_testing_do_not_use, true);
   mock_adapter_ = new testing::NiceMock<device::MockBluetoothAdapter>();
   device::BluetoothAdapterFactory::SetAdapterForTesting(mock_adapter_);
   EXPECT_CALL(*mock_adapter_, IsPresent())
@@ -52,9 +57,8 @@ void BluetoothPairingUITest::ShowDialog() {
       .WillOnce(testing::Return(mock_device_.get()));
 
   chromeos::BluetoothPairingDialog* dialog =
-      new chromeos::BluetoothPairingDialog(
-          browser()->window()->GetNativeWindow(), mock_device_.get());
-  dialog->Show();
+      new chromeos::BluetoothPairingDialog(mock_device_.get());
+  dialog->ShowInContainer(ash::kShellWindowId_SystemModalContainer);
 
   content::WebUI* webui = dialog->GetWebUIForTest();
   content::WebContents* webui_webcontents = webui->GetWebContents();

@@ -4,12 +4,21 @@
 
 #include "chromecast/common/cast_content_client.h"
 
+#include <stdint.h>
+
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
+#include "build/build_config.h"
+#include "chromecast/base/cast_constants.h"
 #include "chromecast/base/version.h"
 #include "content/public/common/user_agent.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "url/url_util.h"
+
+#if defined(OS_ANDROID)
+#include "chromecast/common/media/cast_media_client_android.h"
+#endif
 
 namespace chromecast {
 namespace shell {
@@ -18,9 +27,9 @@ namespace {
 
 #if defined(OS_ANDROID)
 std::string BuildAndroidOsInfo() {
-  int32 os_major_version = 0;
-  int32 os_minor_version = 0;
-  int32 os_bugfix_version = 0;
+  int32_t os_major_version = 0;
+  int32_t os_minor_version = 0;
+  int32_t os_bugfix_version = 0;
   base::SysInfo::OperatingSystemVersionNumbers(&os_major_version,
                                                &os_minor_version,
                                                &os_bugfix_version);
@@ -47,6 +56,10 @@ std::string BuildAndroidOsInfo() {
 }
 #endif
 
+const url::SchemeWithType kChromeResourceSchemeWithType = {
+  kChromeResourceScheme, url::SCHEME_WITHOUT_PORT
+};
+
 }  // namespace
 
 std::string GetUserAgent() {
@@ -70,6 +83,13 @@ std::string GetUserAgent() {
 CastContentClient::~CastContentClient() {
 }
 
+void CastContentClient::AddAdditionalSchemes(
+    std::vector<url::SchemeWithType>* standard_schemes,
+    std::vector<url::SchemeWithType>* referrer_schemes,
+    std::vector<std::string>* savable_schemes) {
+  standard_schemes->push_back(kChromeResourceSchemeWithType);
+}
+
 std::string CastContentClient::GetUserAgent() const {
   return chromecast::shell::GetUserAgent();
 }
@@ -85,9 +105,9 @@ base::StringPiece CastContentClient::GetDataResource(
       resource_id, scale_factor);
 }
 
-base::RefCountedStaticMemory* CastContentClient::GetDataResourceBytes(
+base::RefCountedMemory* CastContentClient::GetDataResourceBytes(
     int resource_id) const {
-  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
+  return ui::ResourceBundle::GetSharedInstance().LoadLocalizedResourceBytes(
       resource_id);
 }
 
@@ -95,6 +115,12 @@ gfx::Image& CastContentClient::GetNativeImageNamed(int resource_id) const {
   return ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
       resource_id);
 }
+
+#if defined(OS_ANDROID)
+::media::MediaClientAndroid* CastContentClient::GetMediaClientAndroid() {
+  return new media::CastMediaClientAndroid();
+}
+#endif  // OS_ANDROID
 
 }  // namespace shell
 }  // namespace chromecast

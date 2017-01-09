@@ -59,7 +59,11 @@
 
 #include "net/android/network_change_notifier_android.h"
 
+#include <unordered_set>
+
 #include "base/android/build_info.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/threading/thread.h"
 #include "net/base/address_tracker_linux.h"
 #include "net/dns/dns_config_service_posix.h"
@@ -83,7 +87,7 @@ class NetworkChangeNotifierAndroid::DnsConfigServiceThread
     : public base::Thread,
       public NetworkChangeNotifier::NetworkChangeObserver {
  public:
-  DnsConfigServiceThread(const DnsConfig* dns_config_for_testing)
+  explicit DnsConfigServiceThread(const DnsConfig* dns_config_for_testing)
       : base::Thread("DnsConfigService"),
         dns_config_for_testing_(dns_config_for_testing),
         creation_time_(base::Time::Now()),
@@ -91,7 +95,7 @@ class NetworkChangeNotifierAndroid::DnsConfigServiceThread
                          base::Bind(base::DoNothing),
                          // We're only interested in tunnel interface changes.
                          base::Bind(NotifyNetworkChangeNotifierObservers),
-                         base::hash_set<std::string>()) {}
+                         std::unordered_set<std::string>()) {}
 
   ~DnsConfigServiceThread() override {
     NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
@@ -140,7 +144,7 @@ class NetworkChangeNotifierAndroid::DnsConfigServiceThread
 
   const DnsConfig* dns_config_for_testing_;
   const base::Time creation_time_;
-  scoped_ptr<internal::DnsConfigServicePosix> dns_config_service_;
+  std::unique_ptr<internal::DnsConfigServicePosix> dns_config_service_;
   // Used to detect tunnel state changes.
   internal::AddressTrackerLinux address_tracker_;
 
@@ -260,6 +264,21 @@ NetworkChangeNotifierAndroid::NetworkChangeCalculatorParamsAndroid() {
   params.connection_type_offline_delay_ = base::TimeDelta::FromSeconds(0);
   params.connection_type_online_delay_ = base::TimeDelta::FromSeconds(0);
   return params;
+}
+
+void NetworkChangeNotifierAndroid::OnFinalizingMetricsLogRecord() {
+  // Metrics logged here will be included in every metrics log record.  It's not
+  // yet clear if these metrics are generally useful enough to warrant being
+  // added to the SystemProfile proto, so they are logged here as histograms for
+  // now.
+  const NetworkChangeNotifier::ConnectionType type =
+      NetworkChangeNotifier::GetConnectionType();
+  NetworkChangeNotifier::LogOperatorCodeHistogram(type);
+  if (NetworkChangeNotifier::IsConnectionCellular(type)) {
+    UMA_HISTOGRAM_ENUMERATION("NCN.CellularConnectionSubtype",
+                              delegate_->GetCurrentConnectionSubtype(),
+                              SUBTYPE_LAST + 1);
+  }
 }
 
 }  // namespace net

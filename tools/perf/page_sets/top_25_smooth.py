@@ -5,6 +5,7 @@ from telemetry.page import page as page_module
 from telemetry.page import shared_page_state
 from telemetry import story
 
+from page_sets.login_helpers import google_login
 from page_sets import top_pages
 
 
@@ -17,6 +18,7 @@ def _CreatePageClassWithSmoothInteractions(page_cls):
   class DerivedSmoothPage(page_cls):  # pylint: disable=no-init
 
     def RunPageInteractions(self, action_runner):
+      action_runner.Wait(1)
       _IssueMarkerAndScroll(action_runner)
   return DerivedSmoothPage
 
@@ -31,12 +33,34 @@ class TopSmoothPage(page_module.Page):
     self.credentials = credentials
 
   def RunPageInteractions(self, action_runner):
+    action_runner.Wait(1)
     _IssueMarkerAndScroll(action_runner)
 
 
-class GmailSmoothPage(top_pages.GmailPage):
+class GmailSmoothPage(top_pages.TopPages):
 
   """ Why: productivity, top google properties """
+
+  def __init__(self, page_set,
+               shared_page_state_class=shared_page_state.SharedPageState):
+    # TODO(flackr): This is duplicating page logic from top_pages.py but is
+    # the only way to update https://mail.google.com/mail/ for this test without
+    # updating the 14 other recordings, as the gmail login flow has changed.
+    # https://crbug.com/590766 tracks updating google_login.py to support
+    # legacy and new login flow.
+    super(GmailSmoothPage, self).__init__(
+        url='https://mail.google.com/mail/',
+        page_set=page_set,
+        shared_page_state_class=shared_page_state_class)
+
+  def RunNavigateSteps(self, action_runner):
+    google_login.LoginGoogleAccount(action_runner, 'google3',
+                                    self.credentials_path)
+    super(GmailSmoothPage, self).RunNavigateSteps(action_runner)
+    action_runner.WaitForJavaScriptCondition(
+        'window.gmonkey !== undefined &&'
+        'document.getElementById("gb") !== null',
+        timeout_in_seconds=120)
 
   def RunPageInteractions(self, action_runner):
     action_runner.ExecuteJavaScript('''
@@ -45,6 +69,7 @@ class GmailSmoothPage(top_pages.GmailPage):
         });''')
     action_runner.WaitForJavaScriptCondition(
         'window.__scrollableElementForTelemetry != null')
+    action_runner.Wait(1)
     with action_runner.CreateGestureInteraction('ScrollAction'):
       action_runner.ScrollElement(
           element_function='window.__scrollableElementForTelemetry')
@@ -55,6 +80,7 @@ class GoogleCalendarSmoothPage(top_pages.GoogleCalendarPage):
   """ Why: productivity, top google properties """
 
   def RunPageInteractions(self, action_runner):
+    action_runner.Wait(1)
     with action_runner.CreateGestureInteraction('ScrollAction'):
       action_runner.ScrollElement(selector='#scrolltimedeventswk')
 
@@ -64,6 +90,7 @@ class GoogleDocSmoothPage(top_pages.GoogleDocPage):
   """ Why: productivity, top google properties; Sample doc in the link """
 
   def RunPageInteractions(self, action_runner):
+    action_runner.Wait(1)
     with action_runner.CreateGestureInteraction('ScrollAction'):
       action_runner.ScrollElement(selector='.kix-appview-editor')
 
@@ -73,6 +100,7 @@ class ESPNSmoothPage(top_pages.ESPNPage):
   """ Why: #1 sports """
 
   def RunPageInteractions(self, action_runner):
+    action_runner.Wait(1)
     with action_runner.CreateGestureInteraction('ScrollAction'):
       action_runner.ScrollPage(left_start_ratio=0.1)
 

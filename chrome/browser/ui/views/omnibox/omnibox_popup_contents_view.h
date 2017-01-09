@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_OMNIBOX_OMNIBOX_POPUP_CONTENTS_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_OMNIBOX_OMNIBOX_POPUP_CONTENTS_VIEW_H_
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/omnibox_popup_view.h"
@@ -12,6 +15,7 @@
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/font_list.h"
+#include "ui/gfx/image/image.h"
 #include "ui/views/view.h"
 #include "ui/views/view_targeter_delegate.h"
 
@@ -20,7 +24,6 @@ class LocationBarView;
 class OmniboxEditModel;
 class OmniboxResultView;
 class OmniboxView;
-class Profile;
 
 // A view representing the contents of the autocomplete popup.
 class OmniboxPopupContentsView : public views::View,
@@ -70,8 +73,6 @@ class OmniboxPopupContentsView : public views::View,
   bool IsStarredMatch(const AutocompleteMatch& match) const;
 
   int max_match_contents_width() const { return max_match_contents_width_; }
-  int start_margin() const { return start_margin_; }
-  int end_margin() const { return end_margin_; }
 
  protected:
   OmniboxPopupContentsView(const gfx::FontList& font_list,
@@ -124,7 +125,7 @@ class OmniboxPopupContentsView : public views::View,
 
   OmniboxResultView* result_view_at(size_t i);
 
-  scoped_ptr<OmniboxPopupModel> model_;
+  std::unique_ptr<OmniboxPopupModel> model_;
 
   // The popup that contains this view.  We create this, but it deletes itself
   // when its window is destroyed.  This is a WeakPtr because it's possible for
@@ -156,10 +157,6 @@ class OmniboxPopupContentsView : public views::View,
 
   int start_margin_;
   int end_margin_;
-
-  // These pointers are owned by the resource bundle.
-  const gfx::ImageSkia* top_shadow_ = nullptr;
-  const gfx::ImageSkia* bottom_shadow_ = nullptr;
 
   // When the dropdown is not wide enough while displaying postfix suggestions,
   // we use the width of widest match contents to shift the suggestions so that

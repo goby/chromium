@@ -5,6 +5,9 @@
 #ifndef BASE_TEST_TEST_DISCARDABLE_MEMORY_ALLOCATOR_H_
 #define BASE_TEST_TEST_DISCARDABLE_MEMORY_ALLOCATOR_H_
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/memory/discardable_memory_allocator.h"
 
 namespace base {
@@ -18,7 +21,7 @@ class TestDiscardableMemoryAllocator : public DiscardableMemoryAllocator {
   ~TestDiscardableMemoryAllocator() override;
 
   // Overridden from DiscardableMemoryAllocator:
-  scoped_ptr<DiscardableMemory> AllocateLockedDiscardableMemory(
+  std::unique_ptr<DiscardableMemory> AllocateLockedDiscardableMemory(
       size_t size) override;
 
  private:

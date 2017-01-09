@@ -7,15 +7,18 @@
 #import <CoreLocation/CoreLocation.h>
 
 #include "base/logging.h"
-#include "base/mac/scoped_nsobject.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "ios/chrome/browser/application_context.h"
 #import "ios/chrome/browser/geolocation/location_manager.h"
 #import "ios/chrome/browser/pref_names.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 @interface OmniboxGeolocationLocalState () {
-  base::scoped_nsobject<LocationManager> locationManager_;
+  LocationManager* _locationManager;
 }
 
 - (int)intForPath:(const char*)path;
@@ -39,7 +42,7 @@
   DCHECK(locationManager);
   self = [super init];
   if (self) {
-    locationManager_.reset([locationManager retain]);
+    _locationManager = locationManager;
   }
   return self;
 }
@@ -65,7 +68,7 @@
       break;
   }
 
-  switch ([locationManager_ authorizationStatus]) {
+  switch ([_locationManager authorizationStatus]) {
     case kCLAuthorizationStatusNotDetermined:
       // If the user previously authorized or denied geolocation but reset the
       // system settings, then start over.
@@ -81,7 +84,7 @@
       authorizationState = geolocation::kAuthorizationStateDenied;
       break;
 
-    case kCLAuthorizationStatusAuthorized:
+    case kCLAuthorizationStatusAuthorizedAlways:
     case kCLAuthorizationStatusAuthorizedWhenInUse:
       break;
   }

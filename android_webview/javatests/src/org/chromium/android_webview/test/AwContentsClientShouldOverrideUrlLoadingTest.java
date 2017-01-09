@@ -4,31 +4,31 @@
 
 package org.chromium.android_webview.test;
 
+import android.annotation.SuppressLint;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.util.Pair;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsClient;
-import org.chromium.android_webview.test.TestAwContentsClient.OnFailedLoadHelper;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.android_webview.test.util.JSUtils;
-import org.chromium.android_webview.test.util.JavascriptEventObserver;
 import org.chromium.base.annotations.SuppressFBWarnings;
+import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.test.util.CallbackHelper;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnEvaluateJavaScriptResultHelper;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageStartedHelper;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnReceivedErrorHelper;
+import org.chromium.content.common.ContentSwitches;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -40,6 +40,15 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
     private static final String REDIRECT_TARGET_PATH = "/redirect_target.html";
     private static final String TITLE = "TITLE";
     private static final String TAG = "AwContentsClientShouldOverrideUrlLoadingTest";
+    private static final String TEST_EMAIL = "nobody@example.org";
+    private static final String TEST_EMAIL_URI = "mailto:" + TEST_EMAIL.replace("@", "%40");
+    private static final String TEST_PHONE = "+16503336000";
+    private static final String TEST_PHONE_URI = "tel:" + TEST_PHONE.replace("+", "%2B");
+    // Use the shortest possible address to ensure it fits into one line.
+    // Otherwise, click on the center of the HTML element may get into empty space.
+    private static final String TEST_ADDRESS = "1 st. long enough, CA 90000";
+    private static final String TEST_ADDRESS_URI = "geo:0,0?q="
+            + TEST_ADDRESS.replace(" ", "+").replace(",", "%2C");
 
     private TestWebServer mWebServer;
     private TestAwContentsClient mContentsClient;
@@ -109,6 +118,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
                 "<div>Meta refresh redirect</div>");
     }
 
+    @SuppressLint("DefaultLocale")
     private String getHtmlForPageWithJsRedirectTo(String url, String method, int timeout) {
         return makeHtmlPageFrom(""
                 + "<script>"
@@ -333,9 +343,8 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
     /*
     @SmallTest
     @Feature({"AndroidWebView", "Navigation"})
-    crbug.com/462306
     */
-    @DisabledTest
+    @DisabledTest(message = "crbug.com/462306")
     public void testCalledWhenTopLevelAboutBlankNavigation() throws Throwable {
         standardSetup();
 
@@ -535,7 +544,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         clickOnLinkUsingJs();
 
         // Wait for the target URL to be fetched from the server.
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return mWebServer.getRequestCount(REDIRECT_TARGET_PATH) == 1;
@@ -568,7 +577,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         mShouldOverrideUrlLoadingHelper.waitForCallback(shouldOverrideUrlLoadingCallCount);
 
         // Wait for the target URL to be fetched from the server.
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return mWebServer.getRequestCount(REDIRECT_TARGET_PATH) == 1;
@@ -601,7 +610,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(), pageWithIframeUrl);
 
         // Wait for the redirect target URL to be fetched from the server.
-        poll(new Callable<Boolean>() {
+        pollInstrumentationThread(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
                 return mWebServer.getRequestCount(REDIRECT_TARGET_PATH) == 1;
@@ -696,7 +705,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         assertTrue(mShouldOverrideUrlLoadingHelper.isMainFrame());
 
         // Make sure the redirect target page has finished loading.
-        pollOnUiThread(new Callable<Boolean>() {
+        pollUiThread(new Callable<Boolean>() {
             @Override
             public Boolean call() {
                 return !mAwContents.getTitle().equals(pageTitle);
@@ -704,7 +713,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         });
         indirectLoadCallCount = mShouldOverrideUrlLoadingHelper.getCallCount();
         loadUrlAsync(mAwContents, pageWithLinkToRedirectUrl);
-        pollOnUiThread(new Callable<Boolean>() {
+        pollUiThread(new Callable<Boolean>() {
             @Override
             public Boolean call() {
                 return mAwContents.getTitle().equals(pageTitle);
@@ -725,9 +734,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         assertEquals(redirectTarget,
                 mShouldOverrideUrlLoadingHelper.getShouldOverrideUrlLoadingUrl());
         assertEquals(serverSideRedirect, mShouldOverrideUrlLoadingHelper.isRedirect());
-        // We keep the user gesture from the initial navigation for serverside redirects but drop
-        // the user gesture for browser initiated redirects.
-        assertEquals(serverSideRedirect, mShouldOverrideUrlLoadingHelper.hasUserGesture());
+        assertFalse(mShouldOverrideUrlLoadingHelper.hasUserGesture());
         assertTrue(mShouldOverrideUrlLoadingHelper.isMainFrame());
     }
 
@@ -771,6 +778,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView", "Navigation"})
+    @RetryOnFailure
     public void testCalledOnJavaScriptLocationDelayedAssignRedirect()
             throws Throwable {
         final String redirectTargetUrl = createRedirectTargetPage();
@@ -781,6 +789,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView", "Navigation"})
+    @RetryOnFailure
     public void testCalledOnJavaScriptLocationDelayedReplaceRedirect()
             throws Throwable {
         final String redirectTargetUrl = createRedirectTargetPage();
@@ -840,7 +849,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         clickOnLinkUsingJs();
         mShouldOverrideUrlLoadingHelper.waitForCallback(shouldOverrideUrlLoadingCallCount);
 
-        pollOnUiThread(new Callable<Boolean>() {
+        pollUiThread(new Callable<Boolean>() {
             @Override
             public Boolean call() {
                 return AwContents.getNativeInstanceCount() == 0;
@@ -865,7 +874,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
                 }
             });
             loadUrlAsync(mAwContents, testUrl);
-            pollOnUiThread(new Callable<Boolean>() {
+            pollUiThread(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return mAwContents.getTitle().equals(CommonResources.ABOUT_TITLE);
@@ -883,7 +892,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
                     path2, CommonResources.ABOUT_HTML, CommonResources.getTextHtmlHeaders(true));
             loadUrlAsync(mAwContents, fromUrl);
 
-            pollOnUiThread(new Callable<Boolean>() {
+            pollUiThread(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return getActivity().getLastSentIntent() != null;
@@ -911,7 +920,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
                     return false;
                 }
             });
-            mAwContents.getSettings().setJavaScriptEnabled(true);
+            enableJavaScriptOnUiThread(mAwContents);
             final String pageTitle = "Click Title";
             final String htmlWithLink = "<html><title>" + pageTitle + "</title>"
                     + "<body><a id='link' href='" + testUrl + "'>Click this!</a></body></html>";
@@ -919,7 +928,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
                     "/html_with_link.html", htmlWithLink, CommonResources.getTextHtmlHeaders(true));
 
             loadUrlAsync(mAwContents, urlWithLink);
-            pollOnUiThread(new Callable<Boolean>() {
+            pollUiThread(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return mAwContents.getTitle().equals(pageTitle);
@@ -933,7 +942,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
 
             // Clicking on a link should create an intent.
             DOMUtils.clickNode(this, mAwContents.getContentViewCore(), "link");
-            pollOnUiThread(new Callable<Boolean>() {
+            pollUiThread(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return getActivity().getLastSentIntent() != null;
@@ -945,9 +954,37 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
         }
     }
 
-    @SmallTest
-    @Feature({"AndroidWebView"})
-    public void testNullContentsClientClickableContent() throws Throwable {
+    private String setupForContentClickTest(final String content, boolean inMainFrame)
+            throws Exception {
+        final String contentId = "content";
+        final String findContentJs = inMainFrame
+                ? "document.getElementById(\"" + contentId + "\")"
+                : "window.frames[0].document.getElementById(\"" + contentId + "\")";
+        final String pageHtml = inMainFrame
+                ? "<html><body onload='document.title=" + findContentJs + ".innerText'>"
+                + "<span id='" + contentId + "'>" + content + "</span></body></html>"
+                : "<html>"
+                + "<body style='margin:0;' onload='document.title=" + findContentJs + ".innerText'>"
+                + " <iframe style='border:none;width:100%;' srcdoc=\""
+                + "   <body style='margin:0;'><span id='" + contentId + "'>"
+                + content + "</span></body>"
+                + "\" src='iframe.html'></iframe>"
+                + "</body></html>";
+        final String testUrl = mWebServer.setResponse("/content_test.html", pageHtml, null);
+
+        enableJavaScriptOnUiThread(mAwContents);
+        loadUrlAsync(mAwContents, testUrl);
+        pollUiThread(new Callable<Boolean>() {
+            @Override
+            public Boolean call() {
+                return mAwContents.getTitle().equals(content);
+            }
+        });
+        return findContentJs;
+    }
+
+    private void doTestNullContentsClientClickableContent(String pageContent,
+            String intentContent) throws Throwable {
         try {
             // The test will fire real intents through the test activity.
             // Need to temporarily suppress startActivity otherwise there will be a
@@ -959,69 +996,54 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
                     return false;
                 }
             });
-            final String pageTitle = "Click Title";
-            final String testEmail = "nobody@example.org";
-            final String testUrl = mWebServer.setResponse("/email_test.html",
-                    "<html><head><title>" + pageTitle + "</title></head>"
-                    + "<body><span id='email'>" + testEmail + "</span></body>", null);
 
-            // JS is required for the click simulator.
-            mAwContents.getSettings().setJavaScriptEnabled(true);
-            loadUrlAsync(mAwContents, testUrl);
-            pollOnUiThread(new Callable<Boolean>() {
-                @Override
-                public Boolean call() {
-                    return mAwContents.getTitle().equals(pageTitle);
-                }
-            });
-
-            // Clicking on an email should create an intent.
-            DOMUtils.clickNode(this, mAwContents.getContentViewCore(), "email");
-            pollOnUiThread(new Callable<Boolean>() {
+            final String findContentJs = setupForContentClickTest(pageContent, true);
+            // Clicking on the content should create an intent.
+            DOMUtils.clickNodeByJs(this, mAwContents.getContentViewCore(), findContentJs);
+            pollUiThread(new Callable<Boolean>() {
                 @Override
                 public Boolean call() {
                     return getActivity().getLastSentIntent() != null;
                 }
             });
-            assertEquals("mailto:" + testEmail.replace("@", "%40"),
+            assertEquals(intentContent,
                     getActivity().getLastSentIntent().getData().toString());
         } finally {
             getActivity().setIgnoreStartActivity(false);
         }
     }
 
-    private void doTestClickableContent(boolean inMainFrame) throws Throwable {
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @CommandLineFlags.Add({ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testNullContentsClientClickableEmail() throws Throwable {
+        doTestNullContentsClientClickableContent(TEST_EMAIL, TEST_EMAIL_URI);
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @CommandLineFlags.Add({ContentSwitches.NETWORK_COUNTRY_ISO + "=us",
+            ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testNullContentsClientClickablePhone() throws Throwable {
+        doTestNullContentsClientClickableContent(TEST_PHONE, TEST_PHONE_URI);
+    }
+
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @CommandLineFlags.Add({ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testNullContentsClientClickableAddress() throws Throwable {
+        doTestNullContentsClientClickableContent(TEST_ADDRESS, TEST_ADDRESS_URI);
+    }
+
+    private void doTestClickableContent(String pageContent, String intentContent,
+            boolean inMainFrame) throws Throwable {
         standardSetup();
 
-        final String testEmail = "nobody@example.org";
-        final String findEmailJs = inMainFrame
-                ? "document.getElementById(\"email\")"
-                : "window.frames[0].document.getElementById(\"email\")";
-        final String pageHtml = inMainFrame
-                ? "<html><body onload='document.title=" + findEmailJs + ".innerText'>"
-                + "<span id='email'>" + testEmail + "</span></body></html>"
-                : "<html>"
-                + "<body style='margin:0;' onload='document.title=" + findEmailJs + ".innerText'>"
-                + " <iframe style='border:none;' srcdoc=\""
-                + "   <body style='margin:0;'><span id='email'>" + testEmail + "</span></body>"
-                + "\" src='iframe.html'></iframe>"
-                + "</body></html>";
-        final String testUrl = mWebServer.setResponse("/email_test.html", pageHtml, null);
-
-        // JS is required for the click simulator.
-        mAwContents.getSettings().setJavaScriptEnabled(true);
-        loadUrlAsync(mAwContents, testUrl);
-        pollOnUiThread(new Callable<Boolean>() {
-            @Override
-            public Boolean call() {
-                return mAwContents.getTitle().equals(testEmail);
-            }
-        });
-
+        final String findContentJs = setupForContentClickTest(pageContent, inMainFrame);
         int callCount = mShouldOverrideUrlLoadingHelper.getCallCount();
-        DOMUtils.clickNodeByJs(this, mAwContents.getContentViewCore(), findEmailJs);
+        DOMUtils.clickNodeByJs(this, mAwContents.getContentViewCore(), findContentJs);
         mShouldOverrideUrlLoadingHelper.waitForCallback(callCount);
-        assertEquals("mailto:" + testEmail.replace("@", "%40"),
+        assertEquals(intentContent,
                 mShouldOverrideUrlLoadingHelper.getShouldOverrideUrlLoadingUrl());
         assertFalse(mShouldOverrideUrlLoadingHelper.isRedirect());
         assertTrue(mShouldOverrideUrlLoadingHelper.hasUserGesture());
@@ -1030,173 +1052,45 @@ public class AwContentsClientShouldOverrideUrlLoadingTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView"})
-    public void testClickableContent() throws Throwable {
-        doTestClickableContent(true);
+    @CommandLineFlags.Add({ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testClickableEmail() throws Throwable {
+        doTestClickableContent(TEST_EMAIL, TEST_EMAIL_URI, true);
     }
 
     @SmallTest
     @Feature({"AndroidWebView"})
-    public void testClickableContentInIframe() throws Throwable {
-        doTestClickableContent(false);
+    @CommandLineFlags.Add({ContentSwitches.NETWORK_COUNTRY_ISO + "=us",
+            ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testClickablePhone() throws Throwable {
+        doTestClickableContent(TEST_PHONE, TEST_PHONE_URI, true);
     }
 
     @SmallTest
     @Feature({"AndroidWebView"})
-    public void testXhrInLink() throws Throwable {
-        standardSetup();
-        final CountDownLatch shouldOverrideUrlLoadingSignal = new CountDownLatch(1);
-
-        final String xhrPath = "/xhrPath.html";
-        final String xhrUrl = mWebServer.setResponseWithRunnableAction(
-                xhrPath, CommonResources.makeHtmlPageFrom("", ""), null, new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            shouldOverrideUrlLoadingSignal.await();
-                        } catch (InterruptedException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-                });
-
-        final String xhrJs = "function xhrFunction() {"
-                + "  var xhr = new XMLHttpRequest();"
-                + "  xhr.onload=function() {"
-                + "     console.info('xhr loaded');"
-                + "     window.jsInterface.setValue(true);"
-                + "  };"
-                + "  xhr.onerror=function() {"
-                + "     console.info('xhr failed, status ' + xhr.status);"
-                + "     window.jsInterface.setValue(false);"
-                + "  };"
-                + "  xhr.open('GET', '" + xhrUrl + "', true);"
-                + "  xhr.send();"
-                + "};";
-
-        String pageWithXhrLink = makeHtmlPageFrom(
-                "<script>" + xhrJs + "</script>", "<img onclick=\"xhrFunction(); location.href='"
-                        + "thiswillbe://intercepted/"
-                        + "'\" class=\"big\" id=\"link\" />");
-
-        final String startPath = "/startPath.html";
-        final String startUrl = addPageToTestServer(startPath, pageWithXhrLink);
-
-        enableJavaScriptOnUiThread(mAwContents);
-        final BooleanValueJavascriptObserver jsInterface = new BooleanValueJavascriptObserver();
-
-        // add javascript interface
-        getInstrumentation().runOnMainSync(new Runnable() {
-            @Override
-            public void run() {
-                jsInterface.register(mAwContents.getContentViewCore(), "jsInterface");
-            }
-        });
-
-        loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(), startUrl);
-
-        setShouldOverrideUrlLoadingReturnValueOnUiThread(true);
-        final int shouldOverrideUrlLoadingCallCount =
-                mShouldOverrideUrlLoadingHelper.getCallCount();
-
-        assertEquals(0, mWebServer.getRequestCount(xhrPath));
-
-        clickOnLinkUsingJs();
-
-        // Make the server xhr response wait until the navigation request is intercepted.
-        mShouldOverrideUrlLoadingHelper.waitForCallback(shouldOverrideUrlLoadingCallCount);
-        shouldOverrideUrlLoadingSignal.countDown();
-
-        jsInterface.waitForEvent(WAIT_TIMEOUT_MS);
-        assertTrue(jsInterface.getValue());
-        assertEquals(1, mWebServer.getRequestCount(xhrPath));
+    @CommandLineFlags.Add({ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testClickableAddress() throws Throwable {
+        doTestClickableContent(TEST_ADDRESS, TEST_ADDRESS_URI, true);
     }
 
-    private static class BooleanValueJavascriptObserver extends JavascriptEventObserver {
-        private boolean mValue = false;
-
-        public void setValue(boolean value) {
-            mValue = value;
-            notifyJava();
-        }
-
-        public boolean getValue() {
-            return mValue;
-        }
-    }
-
-    /**
-     * This is to test a bug where a JS redirect failing in its provisional state would prevent us
-     * from posting onPageFinished for the original page load.
-     * The original page contains an iframe so that we can commit the original load but then
-     * prevent it from finishing until the JS redirect fails by having the test server defer the
-     * response to the iframe.
-     */
     @SmallTest
     @Feature({"AndroidWebView"})
-    public void testOnPageFinishedOnFailedJSRedirect() throws Throwable {
-        final CountDownLatch jsRedirectSignal = new CountDownLatch(1);
+    @CommandLineFlags.Add({ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testClickableEmailInIframe() throws Throwable {
+        doTestClickableContent(TEST_EMAIL, TEST_EMAIL_URI, false);
+    }
 
-        final String redirectTargetPath = "/redirectTargetPath.html";
-        final String redirectTargetUrl = mWebServer.setResponse(
-                redirectTargetPath, CommonResources.makeHtmlPageFrom("", ""), null);
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @CommandLineFlags.Add({ContentSwitches.NETWORK_COUNTRY_ISO + "=us",
+            ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testClickablePhoneInIframe() throws Throwable {
+        doTestClickableContent(TEST_PHONE, TEST_PHONE_URI, false);
+    }
 
-        class DelayingOverrideClient extends TestAwContentsClient {
-            @Override
-            public boolean shouldOverrideUrlLoading(AwWebResourceRequest request) {
-                if (redirectTargetUrl.equals(request.url)) {
-                    try {
-                        // Wait here to make sure the load reaches its provisional state before we
-                        // cancel it. Waiting for a callback to the WebContentsObserver to make sure
-                        // we have reached the provisional state causes a deadlock here.
-                        Thread.sleep(Math.min(WAIT_TIMEOUT_MS / 2, 2000));
-                    } catch (InterruptedException e) {
-                    }
-                    return true;
-                }
-                return false;
-            }
-        }
-        mContentsClient = new DelayingOverrideClient();
-        setupWithProvidedContentsClient(mContentsClient);
-
-        final String redirectJs = "window.location.href='" + redirectTargetUrl + "';";
-
-        final String iframePath = "/iframePath.html";
-        final String iframeUrl = mWebServer.setResponseWithRunnableAction(
-                iframePath, CommonResources.makeHtmlPageFrom("", ""), null, new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            mAwContents.evaluateJavaScriptForTests(redirectJs, null);
-                            jsRedirectSignal.await();
-                        } catch (InterruptedException e) {
-                        }
-                    }
-                });
-        final String iframeJs = "<iframe src='" + iframeUrl + "'></iframe>";
-
-        String startPage = makeHtmlPageFrom("", iframeJs);
-        final String startPath = "/startPath.html";
-        final String startUrl = addPageToTestServer(startPath, startPage);
-
-        enableJavaScriptOnUiThread(mAwContents);
-
-        OnPageFinishedHelper onPageFinishedHelper = mContentsClient.getOnPageFinishedHelper();
-        int onPageFinishedCallCount = onPageFinishedHelper.getCallCount();
-
-        OnFailedLoadHelper onFailedLoadHelper = mContentsClient.getOnFailedLoadHelper();
-        int onFailedLoadCallCount = onFailedLoadHelper.getCallCount();
-
-        // load start url -> iframe -> JS redirect -> fail JS redirect -> finish start URL
-        loadUrlAsync(mAwContents, startUrl);
-
-        onFailedLoadHelper.waitForCallback(onFailedLoadCallCount);
-        assertEquals(redirectTargetUrl, onFailedLoadHelper.getUrl());
-
-        // let iframe finish
-        jsRedirectSignal.countDown();
-
-        onPageFinishedHelper.waitForCallback(onPageFinishedCallCount);
-        assertEquals(startUrl, onPageFinishedHelper.getUrl());
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    @CommandLineFlags.Add({ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
+    public void testClickableAddressInIframe() throws Throwable {
+        doTestClickableContent(TEST_ADDRESS, TEST_ADDRESS_URI, false);
     }
 }

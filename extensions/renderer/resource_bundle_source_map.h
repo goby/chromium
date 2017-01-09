@@ -8,11 +8,8 @@
 #include <map>
 #include <string>
 
-#include "base/compiler_specific.h"
-#include "base/memory/linked_ptr.h"
-#include "base/strings/string_piece.h"
-#include "extensions/renderer/module_system.h"
-#include "extensions/renderer/static_v8_external_one_byte_string_resource.h"
+#include "base/macros.h"
+#include "extensions/renderer/source_map.h"
 #include "v8/include/v8.h"
 
 namespace ui {
@@ -21,23 +18,22 @@ class ResourceBundle;
 
 namespace extensions {
 
-class ResourceBundleSourceMap : public extensions::ModuleSystem::SourceMap {
+class ResourceBundleSourceMap : public SourceMap {
  public:
   explicit ResourceBundleSourceMap(const ui::ResourceBundle* resource_bundle);
   ~ResourceBundleSourceMap() override;
 
-  v8::Local<v8::Value> GetSource(v8::Isolate* isolate,
-                                 const std::string& name) override;
-  bool Contains(const std::string& name) override;
+  v8::Local<v8::String> GetSource(v8::Isolate* isolate,
+                                  const std::string& name) const override;
+  bool Contains(const std::string& name) const override;
 
   void RegisterSource(const std::string& name, int resource_id);
 
  private:
-  v8::Local<v8::String> ConvertString(v8::Isolate* isolate,
-                                      const base::StringPiece& string);
-
   const ui::ResourceBundle* resource_bundle_;
   std::map<std::string, int> resource_id_map_;
+
+  DISALLOW_COPY_AND_ASSIGN(ResourceBundleSourceMap);
 };
 
 }  // namespace extensions

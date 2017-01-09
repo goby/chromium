@@ -189,7 +189,7 @@ cvox.ChromeVoxEventWatcher.init = function(doc) {
   /**
    * A list of callbacks to be called when the EventWatcher has
    * completed processing all events in its queue.
-   * @type {Array<function()>}
+   * @type {Array<function()?>}
    * @private
    */
   cvox.ChromeVoxEventWatcher.readyCallbacks_ = new Array();
@@ -491,6 +491,7 @@ cvox.ChromeVoxEventWatcher.mutationHandler = function(mutations) {
         cvox.ChromeVoxEventWatcher.addEvent(evt);
         return true;
       });
+  return false;
 };
 
 
@@ -887,8 +888,6 @@ cvox.ChromeVoxEventWatcher.clipboardEventWatcher = function(evt) {
     return true;
   }
 
-  cvox.ChromeVox.tts.speak(Msgs.getMsg(evt.type).toLowerCase(),
-                           cvox.QueueMode.QUEUE);
   var text = '';
   switch (evt.type) {
   case 'paste':
@@ -899,7 +898,8 @@ cvox.ChromeVoxEventWatcher.clipboardEventWatcher = function(evt) {
     text = window.getSelection().toString();
     break;
   }
-  cvox.ChromeVox.tts.speak(text, cvox.QueueMode.QUEUE);
+  cvox.ChromeVox.tts.speak(
+      Msgs.getMsg(evt.type, [text]), cvox.QueueMode.QUEUE);
   cvox.ChromeVox.navigationManager.clearPageSel();
   return true;
 };
@@ -1043,6 +1043,7 @@ cvox.ChromeVoxEventWatcher.setUpTextHandler = function() {
 
     return (null != cvox.ChromeVoxEventWatcher.currentTextHandler);
   }
+  return false;
 };
 
 /**
@@ -1149,7 +1150,8 @@ cvox.ChromeVoxEventWatcher.handleControlChanged = function(control) {
     announceChange = true;
   }
 
-  if (announceChange && !cvox.ChromeVoxEventSuspender.areEventsSuspended()) {
+  if (newValue && announceChange &&
+      !cvox.ChromeVoxEventSuspender.areEventsSuspended()) {
     cvox.ChromeVox.tts.speak(newValue,
                              cvox.ChromeVoxEventWatcher.queueMode_(),
                              null);

@@ -4,6 +4,8 @@
 
 #include "gpu/command_buffer/service/renderbuffer_manager.h"
 
+#include <stdint.h>
+
 #include <set>
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
@@ -34,7 +36,8 @@ class RenderbufferManagerTestBase : public GpuServiceTest {
         gl_.get(),
         depth24_supported ? "GL_OES_depth24" : "",
         "",
-        use_gles ? "OpenGL ES 2.0" : "OpenGL 2.1");
+        use_gles ? "OpenGL ES 2.0" : "2.1",
+        feature_info_->context_type());
     feature_info_->InitializeForTesting();
     manager_.reset(new RenderbufferManager(
         memory_tracker, kMaxSize, kMaxSamples, feature_info_.get()));
@@ -47,7 +50,7 @@ class RenderbufferManagerTestBase : public GpuServiceTest {
   }
 
   scoped_refptr<FeatureInfo> feature_info_;
-  scoped_ptr<RenderbufferManager> manager_;
+  std::unique_ptr<RenderbufferManager> manager_;
 };
 
 class RenderbufferManagerTest : public RenderbufferManagerTestBase {
@@ -191,8 +194,8 @@ TEST_F(RenderbufferManagerMemoryTrackerTest, Basic) {
   const GLsizei kWidth = 128;
   const GLsizei kHeight1 = 64;
   const GLsizei kHeight2 = 32;
-  uint32 expected_size_1 = 0;
-  uint32 expected_size_2 = 0;
+  uint32_t expected_size_1 = 0;
+  uint32_t expected_size_2 = 0;
   manager_->ComputeEstimatedRenderbufferSize(
       kWidth, kHeight1, kSamples, kFormat, &expected_size_1);
   manager_->ComputeEstimatedRenderbufferSize(

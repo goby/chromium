@@ -5,7 +5,8 @@
 #ifndef NET_BASE_LOAD_TIMING_INFO_H_
 #define NET_BASE_LOAD_TIMING_INFO_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 
@@ -37,11 +38,19 @@ namespace net {
 // send_end
 // receive_headers_end
 //
-// Times represent when a request starts/stops blocking on an event, not the
-// time the events actually occurred.  In particular, in the case of preconnects
+// Times represent when a request starts/stops blocking on an event(*), not the
+// time the events actually occurred. In particular, in the case of preconnects
 // and socket reuse, no time may be spent blocking on establishing a connection.
 // In the case of SPDY, PAC scripts are only run once for each shared session,
 // so no time may be spent blocking on them.
+//
+// (*) Note 1: push_start and push_end are the exception to this, as they
+// represent the operation which is asynchronous to normal request flow and
+// hence are provided as absolute values and not converted to "blocking" time.
+//
+// (*) Note 2: Internally to the network stack, times are those of actual event
+// occurrence. URLRequest converts them to time which the network stack was
+// blocked on each state, as per resource timing specs.
 //
 // DNS and SSL times are both times for the host, not the proxy, so DNS times
 // when using proxies are null, and only requests to HTTPS hosts (Not proxies)
@@ -51,9 +60,6 @@ namespace net {
 // See HttpNetworkTransaction::OnHttpsProxyTunnelResponse.
 // TODO(mmenke):  Is this worth fixing?
 //
-// Note that internal to the network stack, times are when events actually
-// occurred.  URLRequest converts them to time which the network stack was
-// blocked on each state.
 struct NET_EXPORT LoadTimingInfo {
   // Contains the LoadTimingInfo events related to establishing a connection.
   // These are all set by ConnectJobs.
@@ -71,8 +77,8 @@ struct NET_EXPORT LoadTimingInfo {
     base::TimeTicks dns_end;
 
     // The time spent establishing the connection. Connect time includes proxy
-    // connect times (Though not proxy_resolve times), DNS lookup times, time
-    // spent waiting in certain queues, TCP, and SSL time.
+    // connect times (though not proxy_resolve or DNS lookup times), time spent
+    // waiting in certain queues, TCP, and SSL time.
     // TODO(mmenke):  For proxies, this includes time spent blocking on higher
     //                level socket pools.  Fix this.
     // TODO(mmenke):  Retried connections to the same server should apparently
@@ -92,6 +98,7 @@ struct NET_EXPORT LoadTimingInfo {
   };
 
   LoadTimingInfo();
+  LoadTimingInfo(const LoadTimingInfo& other);
   ~LoadTimingInfo();
 
   // True if the socket was reused.  When true, DNS, connect, and SSL times
@@ -134,6 +141,13 @@ struct NET_EXPORT LoadTimingInfo {
 
   // The time at which the end of the HTTP headers were received.
   base::TimeTicks receive_headers_end;
+
+  // In case the resource was proactively pushed by the server, these are
+  // the times that push started and ended. Note that push_end will be null
+  // if the request is still being transmitted, i.e. the underlying h2 stream
+  // is not closed by the server.
+  base::TimeTicks push_start;
+  base::TimeTicks push_end;
 };
 
 }  // namespace net

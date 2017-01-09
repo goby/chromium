@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_UPDATE_CLIENT_TEST_CONFIGURATOR_H_
 #define COMPONENTS_UPDATE_CLIENT_TEST_CONFIGURATOR_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,21 +14,25 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/update_client/configurator.h"
-#include "net/url_request/url_request_test_util.h"
+#include "url/gurl.h"
 
-class GURL;
+class PrefService;
 
 namespace base {
 class SequencedTaskRunner;
+class SingleThreadTaskRunner;
 }  // namespace base
+
+namespace net {
+class TestURLRequestContextGetter;
+class URLRequestContextGetter;
+}  // namespace net
 
 namespace update_client {
 
 #define POST_INTERCEPT_SCHEME "https"
 #define POST_INTERCEPT_HOSTNAME "localhost2"
 #define POST_INTERCEPT_PATH "/update2"
-
-struct CrxComponent;
 
 // component 1 has extension id "jebgalgnebhfojomionfpkfelancnnkf", and
 // the RSA public key the following hash:
@@ -61,20 +67,33 @@ class TestConfigurator : public Configurator {
   int UpdateDelay() const override;
   std::vector<GURL> UpdateUrl() const override;
   std::vector<GURL> PingUrl() const override;
+  std::string GetProdId() const override;
   base::Version GetBrowserVersion() const override;
   std::string GetChannel() const override;
+  std::string GetBrand() const override;
   std::string GetLang() const override;
   std::string GetOSLongName() const override;
   std::string ExtraRequestParams() const override;
+  std::string GetDownloadPreference() const override;
   net::URLRequestContextGetter* RequestContext() const override;
   scoped_refptr<OutOfProcessPatcher> CreateOutOfProcessPatcher() const override;
-  bool DeltasEnabled() const override;
-  bool UseBackgroundDownloader() const override;
+  bool EnabledDeltas() const override;
+  bool EnabledComponentUpdates() const override;
+  bool EnabledBackgroundDownloader() const override;
+  bool EnabledCupSigning() const override;
   scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner()
       const override;
+  PrefService* GetPrefService() const override;
+  bool IsPerUserInstall() const override;
 
+  void SetBrand(const std::string& brand);
   void SetOnDemandTime(int seconds);
   void SetInitialDelay(int seconds);
+  void SetDownloadPreference(const std::string& download_preference);
+  void SetEnabledCupSigning(bool use_cup_signing);
+  void SetEnabledComponentUpdates(bool enabled_component_updates);
+  void SetUpdateCheckUrl(const GURL& url);
+  void SetPingUrl(const GURL& url);
 
  private:
   friend class base::RefCountedThreadSafe<TestConfigurator>;
@@ -83,8 +102,14 @@ class TestConfigurator : public Configurator {
 
   scoped_refptr<base::SequencedTaskRunner> worker_task_runner_;
 
+  std::string brand_;
   int initial_time_;
   int ondemand_time_;
+  std::string download_preference_;
+  bool enabled_cup_signing_;
+  bool enabled_component_updates_;
+  GURL update_check_url_;
+  GURL ping_url_;
 
   scoped_refptr<net::TestURLRequestContextGetter> context_;
 

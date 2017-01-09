@@ -4,25 +4,35 @@
 
 #include "chrome/browser/history/top_sites_factory.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "build/build_config.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/history/history_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/top_sites_impl.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "content/public/browser/browser_thread.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
 namespace {
+
+const char kDisableTopSites[] = "disable-top-sites";
+
+bool IsTopSitesDisabled() {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(kDisableTopSites);
+}
 
 struct RawPrepopulatedPage {
   int url_id;        // The resource for the page URL.
@@ -73,6 +83,8 @@ void InitializePrepopulatedPageList(
 // static
 scoped_refptr<history::TopSites> TopSitesFactory::GetForProfile(
     Profile* profile) {
+  if (IsTopSitesDisabled())
+    return nullptr;
   return static_cast<history::TopSites*>(
       GetInstance()->GetServiceForBrowserContext(profile, true).get());
 }
@@ -92,7 +104,7 @@ scoped_refptr<history::TopSites> TopSitesFactory::BuildTopSites(
                                profile, ServiceAccessType::EXPLICIT_ACCESS),
       prepopulated_page_list, base::Bind(CanAddURLToHistory)));
   top_sites->Init(context->GetPath().Append(history::kTopSitesFilename),
-                  content::BrowserThread::GetMessageLoopProxyForThread(
+                  content::BrowserThread::GetTaskRunnerForThread(
                       content::BrowserThread::DB));
   return top_sites;
 }

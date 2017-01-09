@@ -5,7 +5,9 @@
 #ifndef CONTENT_RENDERER_PEPPER_HOST_RESOURCE_VAR_H_
 #define CONTENT_RENDERER_PEPPER_HOST_RESOURCE_VAR_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ipc/ipc_message.h"
 #include "ppapi/c/pp_resource.h"
 #include "ppapi/shared_impl/resource_var.h"
@@ -56,7 +58,7 @@ class HostResourceVar : public ppapi::ResourceVar {
 
   // If the plugin-side resource has not yet been created, carries a message to
   // create a resource of the specific type on the plugin side. Otherwise, NULL.
-  scoped_ptr<IPC::Message> creation_message_;
+  std::unique_ptr<IPC::Message> creation_message_;
 
   DISALLOW_COPY_AND_ASSIGN(HostResourceVar);
 };

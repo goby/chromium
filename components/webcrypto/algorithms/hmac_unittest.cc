@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "base/values.h"
 #include "components/webcrypto/algorithm_dispatch.h"
@@ -43,7 +47,7 @@ blink::WebCryptoAlgorithm CreateHmacImportAlgorithmWithLength(
 class WebCryptoHmacTest : public WebCryptoTestBase {};
 
 TEST_F(WebCryptoHmacTest, HMACSampleSets) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("hmac.json", &tests));
   for (size_t test_index = 0; test_index < tests->GetSize(); ++test_index) {
     SCOPED_TRACE(test_index);

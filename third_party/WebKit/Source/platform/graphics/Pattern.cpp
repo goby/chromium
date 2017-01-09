@@ -25,11 +25,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/Pattern.h"
 
 #include "platform/graphics/ImagePattern.h"
 #include "platform/graphics/PicturePattern.h"
+#include "platform/graphics/skia/SkiaUtils.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkShader.h"
@@ -37,54 +37,42 @@
 
 namespace blink {
 
-PassRefPtr<Pattern> Pattern::createImagePattern(PassRefPtr<Image> tileImage, RepeatMode repeatMode)
-{
-    return ImagePattern::create(tileImage, repeatMode);
+PassRefPtr<Pattern> Pattern::createImagePattern(PassRefPtr<Image> tileImage,
+                                                RepeatMode repeatMode) {
+  return ImagePattern::create(std::move(tileImage), repeatMode);
 }
 
-PassRefPtr<Pattern> Pattern::createPicturePattern(PassRefPtr<const SkPicture> picture,
-    RepeatMode repeatMode)
-{
-    return PicturePattern::create(picture, repeatMode);
+PassRefPtr<Pattern> Pattern::createPicturePattern(sk_sp<SkPicture> picture,
+                                                  RepeatMode repeatMode) {
+  return PicturePattern::create(std::move(picture), repeatMode);
 }
 
 Pattern::Pattern(RepeatMode repeatMode, int64_t externalMemoryAllocated)
-    : m_repeatMode(repeatMode)
-    , m_externalMemoryAllocated(0)
-{
-    adjustExternalMemoryAllocated(externalMemoryAllocated);
+    : m_repeatMode(repeatMode), m_externalMemoryAllocated(0) {
+  adjustExternalMemoryAllocated(externalMemoryAllocated);
 }
 
-Pattern::~Pattern()
-{
-    adjustExternalMemoryAllocated(-m_externalMemoryAllocated);
+Pattern::~Pattern() {
+  adjustExternalMemoryAllocated(-m_externalMemoryAllocated);
 }
 
-void Pattern::applyToPaint(SkPaint& paint)
-{
-    if (!m_pattern) {
-        m_pattern = createShader();
-    }
+void Pattern::applyToPaint(SkPaint& paint, const SkMatrix& localMatrix) {
+  if (!m_cachedShader || isLocalMatrixChanged(localMatrix))
+    m_cachedShader = createShader(localMatrix);
 
-    paint.setShader(m_pattern.get());
+  paint.setShader(m_cachedShader);
 }
 
-void Pattern::setPatternSpaceTransform(const AffineTransform& patternSpaceTransformation)
-{
-    if (patternSpaceTransformation == m_patternSpaceTransformation)
-        return;
-
-    m_patternSpaceTransformation = patternSpaceTransformation;
-    m_pattern.clear();
+bool Pattern::isLocalMatrixChanged(const SkMatrix& localMatrix) const {
+  return localMatrix != m_cachedShader->getLocalMatrix();
 }
 
-void Pattern::adjustExternalMemoryAllocated(int64_t delta)
-{
-    delta = std::max(-m_externalMemoryAllocated, delta);
+void Pattern::adjustExternalMemoryAllocated(int64_t delta) {
+  delta = std::max(-m_externalMemoryAllocated, delta);
 
-    v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(delta);
+  v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(delta);
 
-    m_externalMemoryAllocated += delta;
+  m_externalMemoryAllocated += delta;
 }
 
-} // namespace blink
+}  // namespace blink

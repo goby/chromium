@@ -27,10 +27,12 @@
 #ifndef NET_BASE_FILE_STREAM_CONTEXT_H_
 #define NET_BASE_FILE_STREAM_CONTEXT_H_
 
+#include <stdint.h>
+
 #include "base/files/file.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/move.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
 #include "net/base/completion_callback.h"
@@ -110,7 +112,6 @@ class FileStream::Context {
   };
 
   struct OpenResult {
-    MOVE_ONLY_TYPE_FOR_CPP_03(OpenResult)
    public:
     OpenResult();
     OpenResult(base::File file, IOResult error_code);
@@ -119,7 +120,31 @@ class FileStream::Context {
 
     base::File file;
     IOResult error_code;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(OpenResult);
   };
+
+  // TODO(xunjieli): Remove after crbug.com/487732 is fixed.
+  enum LastOperation {
+    // FileStream has a pending Open().
+    OPEN,
+    // FileStream has a pending Write().
+    WRITE,
+    // FileStream has a pending Read().
+    READ,
+    // FileStream has a pending Seek().
+    SEEK,
+    // FileStream has a pending Flush().
+    FLUSH,
+    // FileStream has a pending Close().
+    CLOSE,
+    // FileStream doesn't have any pending operation.
+    NONE
+  };
+
+  // TODO(xunjieli): Remove after crbug.com/487732 is fixed.
+  void CheckNoAsyncInProgress() const;
 
   ////////////////////////////////////////////////////////////////////////////
   // Platform-independent methods implemented in file_stream_context.cc.
@@ -213,6 +238,10 @@ class FileStream::Context {
 
   base::File file_;
   bool async_in_progress_;
+
+  // TODO(xunjieli): Remove after crbug.com/487732 is fixed.
+  LastOperation last_operation_;
+
   bool orphaned_;
   scoped_refptr<base::TaskRunner> task_runner_;
 

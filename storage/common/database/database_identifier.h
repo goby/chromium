@@ -7,7 +7,6 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/strings/string_piece.h"
 #include "storage/common/storage_common_export.h"
 #include "url/gurl.h"
@@ -17,6 +16,8 @@ namespace storage {
 STORAGE_COMMON_EXPORT std::string GetIdentifierFromOrigin(
     const GURL& origin);
 STORAGE_COMMON_EXPORT GURL GetOriginFromIdentifier(
+    const std::string& identifier);
+STORAGE_COMMON_EXPORT bool IsValidOriginIdentifier(
     const std::string& identifier);
 
 class STORAGE_COMMON_EXPORT DatabaseIdentifier {

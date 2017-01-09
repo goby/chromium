@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
@@ -97,12 +98,9 @@ static const int kMaxAgeSeconds = 2;
 // ImageDataCacheEntry ---------------------------------------------------------
 
 struct ImageDataCacheEntry {
-  ImageDataCacheEntry() : added_time(), usable(false), image() {}
-  ImageDataCacheEntry(ImageData* i)
-      : added_time(base::TimeTicks::Now()),
-        usable(false),
-        image(i) {
-  }
+  ImageDataCacheEntry() : usable(false) {}
+  explicit ImageDataCacheEntry(ImageData* i)
+      : added_time(base::TimeTicks::Now()), usable(false), image(i) {}
 
   base::TimeTicks added_time;
 
@@ -134,12 +132,12 @@ class ImageDataInstanceCache {
   void IncrementInsertionPoint();
 
   // We'll store this many ImageDatas per instance.
-  const static int kCacheSize = 2;
+  static const size_t kCacheSize = 2;
 
   ImageDataCacheEntry images_[kCacheSize];
 
   // Index into cache where the next item will go.
-  int next_insertion_point_;
+  size_t next_insertion_point_;
 };
 
 scoped_refptr<ImageData> ImageDataInstanceCache::Get(
@@ -147,7 +145,7 @@ scoped_refptr<ImageData> ImageDataInstanceCache::Get(
     int width, int height,
     PP_ImageDataFormat format) {
   // Just do a brute-force search since the cache is so small.
-  for (int i = 0; i < kCacheSize; i++) {
+  for (size_t i = 0; i < kCacheSize; i++) {
     if (!images_[i].usable)
       continue;
     if (images_[i].image->type() != type)
@@ -173,7 +171,7 @@ void ImageDataInstanceCache::Add(ImageData* image_data) {
 }
 
 void ImageDataInstanceCache::ImageDataUsable(ImageData* image_data) {
-  for (int i = 0; i < kCacheSize; i++) {
+  for (size_t i = 0; i < kCacheSize; i++) {
     if (images_[i].image.get() == image_data) {
       images_[i].usable = true;
 
@@ -195,7 +193,7 @@ bool ImageDataInstanceCache::ExpireEntries() {
       base::TimeTicks::Now() - base::TimeDelta::FromSeconds(kMaxAgeSeconds);
 
   bool has_entry = false;
-  for (int i = 0; i < kCacheSize; i++) {
+  for (size_t i = 0; i < kCacheSize; i++) {
     if (images_[i].image.get()) {
       // Entry present.
       if (images_[i].added_time <= threshold_time) {
@@ -375,8 +373,7 @@ PlatformImageData::PlatformImageData(const HostResource& resource,
                                      ImageHandle handle)
     : ImageData(resource, PPB_ImageData_Shared::PLATFORM, desc) {
 #if defined(OS_WIN)
-  transport_dib_.reset(TransportDIB::CreateWithHandle(
-      base::SharedMemoryHandle(handle, base::GetCurrentProcId())));
+  transport_dib_.reset(TransportDIB::CreateWithHandle(handle));
 #else
   transport_dib_.reset(TransportDIB::Map(handle));
 #endif  // defined(OS_WIN)
@@ -391,9 +388,8 @@ void* PlatformImageData::Map() {
       return NULL;
 
     const bool is_opaque = false;
-    mapped_canvas_.reset(transport_dib_->GetPlatformCanvas(desc_.size.width,
-                                                           desc_.size.height,
-                                                           is_opaque));
+    mapped_canvas_ = transport_dib_->GetPlatformCanvas(
+        desc_.size.width, desc_.size.height, is_opaque);
     if (!mapped_canvas_.get())
       return NULL;
   }
@@ -418,19 +414,7 @@ SkCanvas* PlatformImageData::GetCanvas() {
 
 // static
 ImageHandle PlatformImageData::NullHandle() {
-#if defined(OS_WIN)
-  return NULL;
-#else
   return ImageHandle();
-#endif
-}
-
-ImageHandle PlatformImageData::HandleFromInt(int32_t i) {
-#if defined(OS_WIN)
-    return reinterpret_cast<ImageHandle>(i);
-#else
-    return ImageHandle(i, false);
-#endif
 }
 #endif  // !defined(OS_NACL)
 
@@ -507,9 +491,10 @@ PP_Resource PPB_ImageData_Proxy::CreateProxyResource(
           &result, &desc, &image_handle_wrapper));
       if (image_handle_wrapper.is_shmem()) {
         base::SharedMemoryHandle image_handle = image_handle_wrapper.shmem();
-        if (!result.is_null())
+        if (!result.is_null()) {
           return
               (new SimpleImageData(result, desc, image_handle))->GetReference();
+        }
       }
       break;
     }
@@ -519,9 +504,10 @@ PP_Resource PPB_ImageData_Proxy::CreateProxyResource(
       dispatcher->Send(new PpapiHostMsg_PPBImageData_CreatePlatform(
           kApiID, instance, format, size, init_to_zero,
           &result, &desc, &image_handle));
-      if (!result.is_null())
+      if (!result.is_null()) {
         return
             (new PlatformImageData(result, desc, image_handle))->GetReference();
+      }
 #else
       // PlatformImageData shouldn't be created in untrusted code.
       NOTREACHED();
@@ -617,7 +603,7 @@ void PPB_ImageData_Proxy::OnHostMsgCreatePlatform(
     HostResource* result,
     PP_ImageDataDesc* desc,
     ImageHandle* result_image_handle) {
-  // Clear |desc| so we don't send unitialized memory to the plugin.
+  // Clear |desc| so we don't send uninitialized memory to the plugin.
   // https://crbug.com/391023.
   *desc = PP_ImageDataDesc();
   base::SharedMemoryHandle image_handle;
@@ -630,15 +616,8 @@ void PPB_ImageData_Proxy::OnHostMsgCreatePlatform(
                       true /* init_to_zero */,
                       desc, &image_handle, &byte_count);
   result->SetHostResource(instance, resource);
-  if (resource) {
-#if defined(OS_WIN)
-    *result_image_handle = image_handle.GetHandle();
-#else
-    *result_image_handle = image_handle;
-#endif
-  } else {
-    *result_image_handle = PlatformImageData::NullHandle();
-  }
+  *result_image_handle =
+      resource ? image_handle : PlatformImageData::NullHandle();
 }
 
 void PPB_ImageData_Proxy::OnHostMsgCreateSimple(
@@ -649,7 +628,7 @@ void PPB_ImageData_Proxy::OnHostMsgCreateSimple(
     HostResource* result,
     PP_ImageDataDesc* desc,
     ppapi::proxy::SerializedHandle* result_image_handle) {
-  // Clear |desc| so we don't send unitialized memory to the plugin.
+  // Clear |desc| so we don't send uninitialized memory to the plugin.
   // https://crbug.com/391023.
   *desc = PP_ImageDataDesc();
   base::SharedMemoryHandle image_handle;
@@ -674,9 +653,10 @@ void PPB_ImageData_Proxy::OnHostMsgCreateSimple(
 void PPB_ImageData_Proxy::OnPluginMsgNotifyUnusedImageData(
     const HostResource& old_image_data) {
   PluginGlobals* plugin_globals = PluginGlobals::Get();
-  if (!plugin_globals)
+  if (!plugin_globals) {
     return;  // This may happen if the plugin is maliciously sending this
              // message to the renderer.
+  }
 
   EnterPluginFromHostResource<PPB_ImageData_API> enter(old_image_data);
   if (enter.succeeded()) {

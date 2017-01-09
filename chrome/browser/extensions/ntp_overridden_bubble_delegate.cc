@@ -4,7 +4,7 @@
 
 #include "chrome/browser/extensions/ntp_overridden_bubble_delegate.h"
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_web_ui.h"
 #include "chrome/browser/profiles/profile.h"
@@ -13,7 +13,6 @@
 #include "chrome/grit/generated_resources.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -43,7 +42,7 @@ bool NtpOverriddenBubbleDelegate::ShouldIncludeExtension(
   if (!ExtensionWebUI::HandleChromeURLOverride(&url, profile()))
     return false;  // No override for newtab found.
 
-  if (extension->id() != url.host())
+  if (extension->id() != url.host_piece())
     return false;
 
   if (HasBubbleInfoBeenAcknowledged(extension->id()))
@@ -131,6 +130,10 @@ void NtpOverriddenBubbleDelegate::LogAction(
 
 const char* NtpOverriddenBubbleDelegate::GetKey() {
   return "NtpOverriddenBubbleDelegate";
+}
+
+bool NtpOverriddenBubbleDelegate::SupportsPolicyIndicator() {
+  return true;
 }
 
 }  // namespace extensions

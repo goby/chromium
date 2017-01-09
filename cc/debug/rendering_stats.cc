@@ -9,6 +9,9 @@ namespace cc {
 RenderingStats::TimeDeltaList::TimeDeltaList() {
 }
 
+RenderingStats::TimeDeltaList::TimeDeltaList(const TimeDeltaList& other) =
+    default;
+
 RenderingStats::TimeDeltaList::~TimeDeltaList() {
 }
 
@@ -42,13 +45,15 @@ RenderingStats::RenderingStats()
       checkerboarded_no_recording_content_area(0),
       checkerboarded_needs_raster_content_area(0) {}
 
+RenderingStats::RenderingStats(const RenderingStats& other) = default;
+
 RenderingStats::~RenderingStats() {
 }
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 RenderingStats::AsTraceableData() const {
-  scoped_refptr<base::trace_event::TracedValue> record_data =
-      new base::trace_event::TracedValue();
+  std::unique_ptr<base::trace_event::TracedValue> record_data(
+      new base::trace_event::TracedValue());
   record_data->SetInteger("frame_count", frame_count);
   record_data->SetInteger("visible_content_area", visible_content_area);
   record_data->SetInteger("approximated_visible_content_area",
@@ -67,15 +72,12 @@ RenderingStats::AsTraceableData() const {
   begin_main_frame_to_commit_duration.AddToTracedValue(
       "begin_main_frame_to_commit_duration_ms", record_data.get());
 
-  begin_main_frame_to_commit_duration_estimate.AddToTracedValue(
-      "begin_main_frame_to_commit_duration_estimate_ms", record_data.get());
-
   commit_to_activate_duration.AddToTracedValue("commit_to_activate_duration_ms",
                                                record_data.get());
 
   commit_to_activate_duration_estimate.AddToTracedValue(
       "commit_to_activate_duration_estimate_ms", record_data.get());
-  return record_data;
+  return std::move(record_data);
 }
 
 void RenderingStats::Add(const RenderingStats& other) {
@@ -93,8 +95,6 @@ void RenderingStats::Add(const RenderingStats& other) {
   draw_duration_estimate.Add(other.draw_duration_estimate);
   begin_main_frame_to_commit_duration.Add(
       other.begin_main_frame_to_commit_duration);
-  begin_main_frame_to_commit_duration_estimate.Add(
-      other.begin_main_frame_to_commit_duration_estimate);
   commit_to_activate_duration.Add(other.commit_to_activate_duration);
   commit_to_activate_duration_estimate.Add(
       other.commit_to_activate_duration_estimate);

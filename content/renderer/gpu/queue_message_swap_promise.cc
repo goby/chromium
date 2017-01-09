@@ -4,6 +4,9 @@
 
 #include "content/renderer/gpu/queue_message_swap_promise.h"
 
+#include "base/command_line.h"
+#include "content/public/common/content_switches.h"
+#include "content/public/renderer/render_thread.h"
 #include "content/renderer/gpu/frame_swap_message_queue.h"
 #include "ipc/ipc_sync_message_filter.h"
 
@@ -38,6 +41,20 @@ void QueueMessageSwapPromise::DidActivate() {
 #endif
   message_queue_->DidActivate(source_frame_number_);
   // The OutputSurface will take care of the Drain+Send.
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kUseRemoteCompositing)) {
+    // The remote compositing mode doesn't have an output surface, so we need to
+    // Drain+Send on activation. Also, we can't use the SyncMessageFilter, since
+    // this call is actually made on the main thread.
+    std::vector<std::unique_ptr<IPC::Message>> messages_to_deliver;
+    std::unique_ptr<FrameSwapMessageQueue::SendMessageScope>
+        send_message_scope = message_queue_->AcquireSendMessageScope();
+    message_queue_->DrainMessages(&messages_to_deliver);
+    for (auto& message : messages_to_deliver)
+      RenderThread::Get()->Send(message.release());
+    PromiseCompleted();
+  }
 }
 
 void QueueMessageSwapPromise::DidSwap(cc::CompositorFrameMetadata* metadata) {
@@ -49,19 +66,18 @@ void QueueMessageSwapPromise::DidSwap(cc::CompositorFrameMetadata* metadata) {
   PromiseCompleted();
 }
 
-void QueueMessageSwapPromise::DidNotSwap(DidNotSwapReason reason) {
+cc::SwapPromise::DidNotSwapAction QueueMessageSwapPromise::DidNotSwap(
+    DidNotSwapReason reason) {
 #if DCHECK_IS_ON()
   DCHECK(!completed_);
 #endif
-  ScopedVector<IPC::Message> messages;
+  std::vector<std::unique_ptr<IPC::Message>> messages;
   message_queue_->DidNotSwap(source_frame_number_, reason, &messages);
-  for (ScopedVector<IPC::Message>::iterator i = messages.begin();
-       i != messages.end();
-       ++i) {
-    message_sender_->Send(*i);
+  for (auto& msg : messages) {
+    message_sender_->Send(msg.release());
   }
-  messages.weak_clear();
   PromiseCompleted();
+  return DidNotSwapAction::BREAK_PROMISE;
 }
 
 void QueueMessageSwapPromise::PromiseCompleted() {
@@ -70,7 +86,7 @@ void QueueMessageSwapPromise::PromiseCompleted() {
 #endif
 }
 
-int64 QueueMessageSwapPromise::TraceId() const {
+int64_t QueueMessageSwapPromise::TraceId() const {
   return 0;
 }
 

@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/tab_modal_confirm_dialog_delegate.h"
 
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
@@ -53,10 +53,10 @@ void TabModalConfirmDialogDelegate::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  // Close the dialog if we load a page (because the action might not apply to
-  // the same page anymore).
   DCHECK_EQ(content::NOTIFICATION_LOAD_START, type);
 
+  // Close the dialog if we load a page (because the action might not apply to
+  // the same page anymore).
   Close();
 }
 

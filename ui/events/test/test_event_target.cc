@@ -4,6 +4,10 @@
 
 #include "ui/events/test/test_event_target.h"
 
+#include <algorithm>
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "ui/events/event.h"
 #include "ui/events/event_target_iterator.h"
 #include "ui/events/event_targeter.h"
@@ -20,30 +24,32 @@ TestEventTarget::TestEventTarget()
 }
 TestEventTarget::~TestEventTarget() {}
 
-void TestEventTarget::AddChild(scoped_ptr<TestEventTarget> child) {
+void TestEventTarget::AddChild(std::unique_ptr<TestEventTarget> child) {
   TestEventTarget* child_r = child.get();
   if (child->parent()) {
     AddChild(child->parent()->RemoveChild(child.release()));
   } else {
-    children_.push_back(child.Pass());
+    children_.push_back(std::move(child));
   }
   child_r->set_parent(this);
 }
 
-scoped_ptr<TestEventTarget> TestEventTarget::RemoveChild(TestEventTarget *c) {
+std::unique_ptr<TestEventTarget> TestEventTarget::RemoveChild(
+    TestEventTarget* c) {
   ScopedVector<TestEventTarget>::iterator iter = std::find(children_.begin(),
                                                            children_.end(),
                                                            c);
   if (iter != children_.end()) {
     children_.weak_erase(iter);
     c->set_parent(NULL);
-    return make_scoped_ptr(c);
+    return base::WrapUnique(c);
   }
   return nullptr;
 }
 
-void TestEventTarget::SetEventTargeter(scoped_ptr<EventTargeter> targeter) {
-  targeter_ = targeter.Pass();
+void TestEventTarget::SetEventTargeter(
+    std::unique_ptr<EventTargeter> targeter) {
+  targeter_ = std::move(targeter);
 }
 
 bool TestEventTarget::DidReceiveEvent(ui::EventType type) const {
@@ -65,9 +71,9 @@ EventTarget* TestEventTarget::GetParentTarget() {
   return parent_;
 }
 
-scoped_ptr<EventTargetIterator> TestEventTarget::GetChildIterator() const {
-  return make_scoped_ptr(
-      new EventTargetIteratorImpl<TestEventTarget>(children_.get()));
+std::unique_ptr<EventTargetIterator> TestEventTarget::GetChildIterator() const {
+  return base::MakeUnique<EventTargetIteratorImpl<TestEventTarget>>(
+      children_.get());
 }
 
 EventTargeter* TestEventTarget::GetEventTargeter() {

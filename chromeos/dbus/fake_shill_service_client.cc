@@ -7,10 +7,10 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_device_client.h"
@@ -55,8 +55,6 @@ FakeShillServiceClient::FakeShillServiceClient() : weak_ptr_factory_(this) {
 }
 
 FakeShillServiceClient::~FakeShillServiceClient() {
-  STLDeleteContainerPairSecondPointers(
-      observer_list_.begin(), observer_list_.end());
 }
 
 
@@ -81,7 +79,7 @@ void FakeShillServiceClient::GetProperties(
     const dbus::ObjectPath& service_path,
     const DictionaryValueCallback& callback) {
   base::DictionaryValue* nested_dict = NULL;
-  scoped_ptr<base::DictionaryValue> result_properties;
+  std::unique_ptr<base::DictionaryValue> result_properties;
   DBusMethodCallStatus call_status;
   stub_services_.GetDictionaryWithoutPathExpansion(service_path.value(),
                                                    &nested_dict);
@@ -159,7 +157,7 @@ void FakeShillServiceClient::ClearProperties(
     error_callback.Run("Error.InvalidService", "Invalid Service");
     return;
   }
-  scoped_ptr<base::ListValue> results(new base::ListValue);
+  std::unique_ptr<base::ListValue> results(new base::ListValue);
   for (std::vector<std::string>::const_iterator iter = names.begin();
       iter != names.end(); ++iter) {
     dict->RemoveWithoutPathExpansion(*iter, NULL);
@@ -267,7 +265,7 @@ void FakeShillServiceClient::GetLoadableProfileEntries(
     const DictionaryValueCallback& callback) {
   // Provide a dictionary with a single { profile_path, service_path } entry
   // if the Profile property is set, or an empty dictionary.
-  scoped_ptr<base::DictionaryValue> result_properties(
+  std::unique_ptr<base::DictionaryValue> result_properties(
       new base::DictionaryValue);
   base::DictionaryValue* service_properties =
       GetModifiableServiceProperties(service_path.value(), false);
@@ -422,11 +420,11 @@ bool FakeShillServiceClient::SetServiceProperty(const std::string& service_path,
     provider->SetWithoutPathExpansion(key, value.DeepCopy());
     new_properties.SetWithoutPathExpansion(shill::kProviderProperty, provider);
     changed_property = shill::kProviderProperty;
-  } else if (value.GetType() == base::Value::TYPE_DICTIONARY) {
+  } else if (value.GetType() == base::Value::Type::DICTIONARY) {
     const base::DictionaryValue* new_dict = NULL;
     value.GetAsDictionary(&new_dict);
     CHECK(new_dict);
-    scoped_ptr<base::Value> cur_value;
+    std::unique_ptr<base::Value> cur_value;
     base::DictionaryValue* cur_dict;
     if (dict->RemoveWithoutPathExpansion(property, &cur_value) &&
         cur_value->GetAsDictionary(&cur_dict)) {
@@ -523,9 +521,8 @@ void FakeShillServiceClient::NotifyObserversPropertyChanged(
                << path << " : " << property;
     return;
   }
-  FOR_EACH_OBSERVER(ShillPropertyChangedObserver,
-                    GetObserverList(service_path),
-                    OnPropertyChanged(property, *value));
+  for (auto& observer : GetObserverList(service_path))
+    observer.OnPropertyChanged(property, *value);
 }
 
 base::DictionaryValue* FakeShillServiceClient::GetModifiableServiceProperties(
@@ -542,12 +539,11 @@ base::DictionaryValue* FakeShillServiceClient::GetModifiableServiceProperties(
 
 FakeShillServiceClient::PropertyObserverList&
 FakeShillServiceClient::GetObserverList(const dbus::ObjectPath& device_path) {
-  std::map<dbus::ObjectPath, PropertyObserverList*>::iterator iter =
-      observer_list_.find(device_path);
+  auto iter = observer_list_.find(device_path);
   if (iter != observer_list_.end())
     return *(iter->second);
   PropertyObserverList* observer_list = new PropertyObserverList();
-  observer_list_[device_path] = observer_list;
+  observer_list_[device_path] = base::WrapUnique(observer_list);
   return *observer_list;
 }
 
@@ -604,7 +600,7 @@ void FakeShillServiceClient::ContinueConnect(const std::string& service_path) {
     return;
   }
 
-  if (ContainsKey(connect_behavior_, service_path)) {
+  if (base::ContainsKey(connect_behavior_, service_path)) {
     const base::Closure& custom_connect_behavior =
         connect_behavior_[service_path];
     VLOG(1) << "Running custom connect behavior for " << service_path;

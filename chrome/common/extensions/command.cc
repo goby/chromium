@@ -4,16 +4,17 @@
 
 #include "chrome/common/extensions/command.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
-#include "chrome/grit/generated_resources.h"
+#include "build/build_config.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace extensions {
 
@@ -191,11 +192,9 @@ ui::Accelerator ParseImpl(const std::string& accelerator,
       } else if (tokens[i] == values::kKeyMediaStop &&
                  should_parse_media_keys) {
         key = ui::VKEY_MEDIA_STOP;
-      } else if (tokens[i].size() == 1 &&
-                 tokens[i][0] >= 'A' && tokens[i][0] <= 'Z') {
+      } else if (tokens[i].size() == 1 && base::IsAsciiUpper(tokens[i][0])) {
         key = static_cast<ui::KeyboardCode>(ui::VKEY_A + (tokens[i][0] - 'A'));
-      } else if (tokens[i].size() == 1 &&
-                 tokens[i][0] >= '0' && tokens[i][0] <= '9') {
+      } else if (tokens[i].size() == 1 && base::IsAsciiDigit(tokens[i][0])) {
         key = static_cast<ui::KeyboardCode>(ui::VKEY_0 + (tokens[i][0] - '0'));
       } else {
         key = ui::VKEY_UNKNOWN;
@@ -290,6 +289,8 @@ Command::Command(const std::string& command_name,
   accelerator_ = ParseImpl(accelerator, CommandPlatform(), 0,
                            IsNamedCommand(command_name), &error);
 }
+
+Command::Command(const Command& other) = default;
 
 Command::~Command() {}
 

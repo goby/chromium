@@ -5,29 +5,16 @@
 #ifndef CHROME_BROWSER_PAGE_LOAD_METRICS_PAGE_LOAD_METRICS_INITIALIZE_H_
 #define CHROME_BROWSER_PAGE_LOAD_METRICS_PAGE_LOAD_METRICS_INITIALIZE_H_
 
-#include "components/page_load_metrics/browser/metrics_web_contents_observer.h"
+#include "chrome/browser/page_load_metrics/metrics_web_contents_observer.h"
 
 namespace content {
 class WebContents;
-}
-
-namespace rappor {
-class RapporService;
 }
 
 namespace chrome {
 
 void InitializePageLoadMetricsForWebContents(
     content::WebContents* web_contents);
-
-class PageLoadMetricsEmbedderInterfaceImpl
-    : public page_load_metrics::PageLoadMetricsEmbedderInterface {
- public:
-  // PageLoadMetricsEmbedderInterface:
-  ~PageLoadMetricsEmbedderInterfaceImpl() override;
-  rappor::RapporService* GetRapporService() override;
-  bool IsPrerendering(content::WebContents* web_contents) override;
-};
 
 }  // namespace chrome
 

@@ -4,29 +4,33 @@
 
 // For WinDDK ATL compatibility, these ATL headers must come first.
 #include "build/build_config.h"
+
 #if defined(OS_WIN)
 #include <atlbase.h>  // NOLINT
 #include <atlwin.h>  // NOLINT
 #endif
 
+#include "base/macros.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_result_view.h"
+
+#include <limits.h>
 
 #include <algorithm>  // NOLINT
 
 #include "base/i18n/bidi_line_iterator.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "chrome/browser/ui/views/layout_constants.h"
+#include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/views/location_bar/background_with_1_px_border.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_contents_view.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/grit/components_scaled_resources.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
-#include "grit/components_scaled_resources.h"
-#include "grit/theme_resources.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/theme_provider.h"
 #include "ui/gfx/canvas.h"
@@ -81,92 +85,61 @@ struct TextStyle {
   ui::ResourceBundle::FontStyle font;
   ui::NativeTheme::ColorId colors[OmniboxResultView::NUM_STATES];
   gfx::BaselineStyle baseline;
-} const kTextStyles[] = {
-    // 1  ANSWER_TEXT
-    {ui::ResourceBundle::LargeFont,
-     {NativeTheme::kColorId_ResultsTableNormalText,
-      NativeTheme::kColorId_ResultsTableHoveredText,
-      NativeTheme::kColorId_ResultsTableSelectedText},
-     gfx::NORMAL_BASELINE},
-    // 2  HEADLINE_TEXT
-    {ui::ResourceBundle::LargeFont,
-     {NativeTheme::kColorId_ResultsTableNormalHeadline,
-      NativeTheme::kColorId_ResultsTableHoveredHeadline,
-      NativeTheme::kColorId_ResultsTableSelectedHeadline},
-     gfx::NORMAL_BASELINE},
-    // 3  TOP_ALIGNED_TEXT
-    {ui::ResourceBundle::LargeFont,
-     {NativeTheme::kColorId_ResultsTableNormalDimmedText,
-      NativeTheme::kColorId_ResultsTableHoveredDimmedText,
-      NativeTheme::kColorId_ResultsTableSelectedDimmedText},
-     gfx::SUPERIOR},
-    // 4  DESCRIPTION_TEXT
-    {ui::ResourceBundle::BaseFont,
-     {NativeTheme::kColorId_ResultsTableNormalDimmedText,
-      NativeTheme::kColorId_ResultsTableHoveredDimmedText,
-      NativeTheme::kColorId_ResultsTableSelectedDimmedText},
-     gfx::NORMAL_BASELINE},
-    // 5  DESCRIPTION_TEXT_NEGATIVE
-    {ui::ResourceBundle::LargeFont,
-     {NativeTheme::kColorId_ResultsTableNegativeText,
-      NativeTheme::kColorId_ResultsTableNegativeHoveredText,
-      NativeTheme::kColorId_ResultsTableNegativeSelectedText},
-     gfx::INFERIOR},
-    // 6  DESCRIPTION_TEXT_POSITIVE
-    {ui::ResourceBundle::LargeFont,
-     {NativeTheme::kColorId_ResultsTablePositiveText,
-      NativeTheme::kColorId_ResultsTablePositiveHoveredText,
-      NativeTheme::kColorId_ResultsTablePositiveSelectedText},
-     gfx::INFERIOR},
-    // 7  MORE_INFO_TEXT
-    {ui::ResourceBundle::BaseFont,
-     {NativeTheme::kColorId_ResultsTableNormalDimmedText,
-      NativeTheme::kColorId_ResultsTableHoveredDimmedText,
-      NativeTheme::kColorId_ResultsTableSelectedDimmedText},
-     gfx::INFERIOR},
-    // 8  SUGGESTION_TEXT
-    {ui::ResourceBundle::BaseFont,
-     {NativeTheme::kColorId_ResultsTableNormalText,
-      NativeTheme::kColorId_ResultsTableHoveredText,
-      NativeTheme::kColorId_ResultsTableSelectedText},
-     gfx::NORMAL_BASELINE},
-    // 9  SUGGESTION_TEXT_POSITIVE
-    {ui::ResourceBundle::BaseFont,
-     {NativeTheme::kColorId_ResultsTablePositiveText,
-      NativeTheme::kColorId_ResultsTablePositiveHoveredText,
-      NativeTheme::kColorId_ResultsTablePositiveSelectedText},
-     gfx::NORMAL_BASELINE},
-    // 10 SUGGESTION_TEXT_NEGATIVE
-    {ui::ResourceBundle::BaseFont,
-     {NativeTheme::kColorId_ResultsTableNegativeText,
-      NativeTheme::kColorId_ResultsTableNegativeHoveredText,
-      NativeTheme::kColorId_ResultsTableNegativeSelectedText},
-     gfx::NORMAL_BASELINE},
-    // 11 SUGGESTION_LINK_COLOR
-    {ui::ResourceBundle::BaseFont,
-     {NativeTheme::kColorId_ResultsTableNormalUrl,
-      NativeTheme::kColorId_ResultsTableHoveredUrl,
-      NativeTheme::kColorId_ResultsTableSelectedUrl},
-     gfx::NORMAL_BASELINE},
-    // 12 STATUS_TEXT
-    {ui::ResourceBundle::LargeFont,
-     {NativeTheme::kColorId_ResultsTableNormalDimmedText,
-      NativeTheme::kColorId_ResultsTableHoveredDimmedText,
-      NativeTheme::kColorId_ResultsTableSelectedDimmedText},
-     gfx::INFERIOR},
-    // 13 PERSONALIZED_SUGGESTION_TEXT
-    {ui::ResourceBundle::BaseFont,
-     {NativeTheme::kColorId_ResultsTableNormalText,
-      NativeTheme::kColorId_ResultsTableHoveredText,
-      NativeTheme::kColorId_ResultsTableSelectedText},
-     gfx::NORMAL_BASELINE},
 };
 
-const TextStyle& GetTextStyle(int type) {
-  if (type < 1 || static_cast<size_t>(type) > arraysize(kTextStyles))
-    type = 1;
-  // Subtract one because the types are one based (not zero based).
-  return kTextStyles[type - 1];
+TextStyle GetTextStyle(int type) {
+  switch (type) {
+    case SuggestionAnswer::TOP_ALIGNED:
+      return {ui::ResourceBundle::LargeFont,
+              {NativeTheme::kColorId_ResultsTableNormalDimmedText,
+               NativeTheme::kColorId_ResultsTableHoveredDimmedText,
+               NativeTheme::kColorId_ResultsTableSelectedDimmedText},
+              gfx::SUPERIOR};
+    case SuggestionAnswer::DESCRIPTION_NEGATIVE:
+      return {ui::ResourceBundle::LargeFont,
+              {NativeTheme::kColorId_ResultsTableNegativeText,
+               NativeTheme::kColorId_ResultsTableNegativeHoveredText,
+               NativeTheme::kColorId_ResultsTableNegativeSelectedText},
+              gfx::INFERIOR};
+    case SuggestionAnswer::DESCRIPTION_POSITIVE:
+      return {ui::ResourceBundle::LargeFont,
+              {NativeTheme::kColorId_ResultsTablePositiveText,
+               NativeTheme::kColorId_ResultsTablePositiveHoveredText,
+               NativeTheme::kColorId_ResultsTablePositiveSelectedText},
+              gfx::INFERIOR};
+    case SuggestionAnswer::PERSONALIZED_SUGGESTION:
+      return {ui::ResourceBundle::BaseFont,
+              {NativeTheme::kColorId_ResultsTableNormalText,
+               NativeTheme::kColorId_ResultsTableHoveredText,
+               NativeTheme::kColorId_ResultsTableSelectedText},
+              gfx::NORMAL_BASELINE};
+    case SuggestionAnswer::ANSWER_TEXT_MEDIUM:
+      return {ui::ResourceBundle::BaseFont,
+              {NativeTheme::kColorId_ResultsTableNormalText,
+               NativeTheme::kColorId_ResultsTableHoveredText,
+               NativeTheme::kColorId_ResultsTableSelectedText},
+              gfx::NORMAL_BASELINE};
+    case SuggestionAnswer::ANSWER_TEXT_LARGE:
+      return {ui::ResourceBundle::LargeFont,
+              {NativeTheme::kColorId_ResultsTableNormalText,
+               NativeTheme::kColorId_ResultsTableHoveredText,
+               NativeTheme::kColorId_ResultsTableSelectedText},
+              gfx::NORMAL_BASELINE};
+    case SuggestionAnswer::SUGGESTION_SECONDARY_TEXT_SMALL:  // Fall through.
+    case SuggestionAnswer::SUGGESTION_SECONDARY_TEXT_MEDIUM:
+      return {ui::ResourceBundle::BaseFont,
+              {NativeTheme::kColorId_ResultsTableNormalDimmedText,
+               NativeTheme::kColorId_ResultsTableHoveredDimmedText,
+               NativeTheme::kColorId_ResultsTableSelectedDimmedText},
+              gfx::NORMAL_BASELINE};
+    case SuggestionAnswer::SUGGESTION:  // Fall through.
+    default:
+      return {ui::ResourceBundle::BaseFont,
+              {NativeTheme::kColorId_ResultsTableNormalText,
+               NativeTheme::kColorId_ResultsTableHoveredText,
+               NativeTheme::kColorId_ResultsTableSelectedText},
+              gfx::NORMAL_BASELINE};
+  }
 }
 
 }  // namespace
@@ -212,28 +185,21 @@ class OmniboxResultView::MirroringContext {
 
 OmniboxResultView::OmniboxResultView(OmniboxPopupContentsView* model,
                                      int model_index,
-                                     LocationBarView* location_bar_view,
                                      const gfx::FontList& font_list)
     : model_(model),
       model_index_(model_index),
-      location_bar_view_(location_bar_view),
       font_list_(font_list),
-      font_height_(
-          std::max(font_list.GetHeight(),
-                   font_list.DeriveWithStyle(gfx::Font::BOLD).GetHeight())),
+      font_height_(std::max(
+          font_list.GetHeight(),
+          font_list.DeriveWithWeight(gfx::Font::Weight::BOLD).GetHeight())),
       mirroring_context_(new MirroringContext()),
       keyword_icon_(new views::ImageView()),
       animation_(new gfx::SlideAnimation(this)) {
   CHECK_GE(model_index, 0);
-  if (default_icon_size_ == 0) {
-    default_icon_size_ =
-        location_bar_view_->GetThemeProvider()->GetImageSkiaNamed(
-            AutocompleteMatch::TypeToIcon(
-                AutocompleteMatchType::URL_WHAT_YOU_TYPED))->width();
-  }
   keyword_icon_->set_owned_by_client();
   keyword_icon_->EnableCanvasFlippingForRTLUI(true);
-  keyword_icon_->SetImage(GetKeywordIcon());
+  keyword_icon_->SetImage(
+      GetVectorIcon(gfx::VectorIconId::OMNIBOX_KEYWORD_SEARCH));
   keyword_icon_->SizeToPreferredSize();
 }
 
@@ -257,19 +223,18 @@ SkColor OmniboxResultView::GetColor(
 void OmniboxResultView::SetMatch(const AutocompleteMatch& match) {
   match_ = match;
   match_.PossiblySwapContentsAndDescriptionForDisplay();
-  ResetRenderTexts();
   animation_->Reset();
   answer_image_ = gfx::ImageSkia();
 
   AutocompleteMatch* associated_keyword_match = match_.associated_keyword.get();
   if (associated_keyword_match) {
-    keyword_icon_->SetImage(GetKeywordIcon());
     if (!keyword_icon_->parent())
       AddChildView(keyword_icon_.get());
   } else if (keyword_icon_->parent()) {
     RemoveChildView(keyword_icon_.get());
   }
 
+  Invalidate();
   if (GetWidget())
     Layout();
 }
@@ -282,12 +247,22 @@ void OmniboxResultView::ShowKeyword(bool show_keyword) {
 }
 
 void OmniboxResultView::Invalidate() {
-  keyword_icon_->SetImage(GetKeywordIcon());
+  const ResultViewState state = GetState();
+  if (state == NORMAL) {
+    set_background(nullptr);
+  } else {
+    const SkColor bg_color = GetColor(state, BACKGROUND);
+    set_background(new BackgroundWith1PxBorder(bg_color, bg_color));
+  }
+
   // While the text in the RenderTexts may not have changed, the styling
   // (color/bold) may need to change. So we reset them to cause them to be
   // recomputed in OnPaint().
-  ResetRenderTexts();
-  SchedulePaint();
+  contents_rendertext_.reset();
+  description_rendertext_.reset();
+  separator_rendertext_.reset();
+  keyword_contents_rendertext_.reset();
+  keyword_description_rendertext_.reset();
 }
 
 void OmniboxResultView::OnSelected() {
@@ -295,7 +270,7 @@ void OmniboxResultView::OnSelected() {
 
   // Notify assistive technology when results with answers attached are
   // selected. The non-answer text is already accessible as a consequence of
-  // updating the text in the omnibox but this alert and GetAccessibleState
+  // updating the text in the omnibox but this alert and GetAccessibleNodeData
   // below make the answer contents accessible.
   if (match_.answer)
     NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
@@ -305,15 +280,26 @@ gfx::Size OmniboxResultView::GetPreferredSize() const {
   if (!match_.answer)
     return gfx::Size(0, GetContentLineHeight());
   // An answer implies a match and a description in a large font.
-  return gfx::Size(0, GetContentLineHeight() + GetAnswerLineHeight());
+  if (match_.answer->second_line().num_text_lines() == 1)
+    return gfx::Size(0, GetContentLineHeight() + GetAnswerLineHeight());
+  if (!description_rendertext_) {
+    description_rendertext_ =
+        CreateAnswerLine(match_.answer->second_line(), font_list_);
+  }
+  description_rendertext_->SetDisplayRect(
+      gfx::Rect(text_bounds_.width(), 0));
+  description_rendertext_->GetStringSize();
+  return gfx::Size(
+      0, GetContentLineHeight() +
+             GetAnswerLineHeight() * description_rendertext_->GetNumLines());
 }
 
-void OmniboxResultView::GetAccessibleState(ui::AXViewState* state) {
-  state->name = match_.answer
-                    ? l10n_util::GetStringFUTF16(
-                          IDS_OMNIBOX_ACCESSIBLE_ANSWER, match_.contents,
-                          match_.answer->second_line().AccessibleText())
-                    : match_.contents;
+void OmniboxResultView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->SetName(match_.answer
+                         ? l10n_util::GetStringFUTF16(
+                               IDS_OMNIBOX_ACCESSIBLE_ANSWER, match_.contents,
+                               match_.answer->second_line().AccessibleText())
+                         : match_.contents);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -339,7 +325,7 @@ void OmniboxResultView::PaintMatch(const AutocompleteMatch& match,
   if (!separator_rendertext_) {
     const base::string16& separator =
         l10n_util::GetStringUTF16(IDS_AUTOCOMPLETE_MATCH_DESCRIPTION_SEPARATOR);
-    separator_rendertext_.reset(CreateRenderText(separator).release());
+    separator_rendertext_ = CreateRenderText(separator);
     separator_rendertext_->SetColor(GetColor(GetState(), DIMMED_TEXT));
     separator_width_ = separator_rendertext_->GetContentWidth();
   }
@@ -353,6 +339,7 @@ void OmniboxResultView::PaintMatch(const AutocompleteMatch& match,
       separator_width_,
       description ? description->GetContentWidth() : 0,
       mirroring_context_->remaining_width(x),
+      match.answer != nullptr,
       !AutocompleteMatch::IsSearchType(match.type),
       &contents_max_width,
       &description_max_width);
@@ -369,9 +356,12 @@ void OmniboxResultView::PaintMatch(const AutocompleteMatch& match,
             answer_image_,
             0, 0, answer_image_.width(), answer_image_.height(),
             GetMirroredXInView(x), y, answer_icon_size, answer_icon_size, true);
-        // See TODO in Layout().
-        x += answer_icon_size +
-             GetLayoutConstant(ICON_LABEL_VIEW_TRAILING_PADDING);
+        // TODO(dschuyler): Perhaps this should be based on the font size
+        // instead of hardcoded to 2 dp (e.g. by adding a space in an
+        // appropriate font to the beginning of the description, then reducing
+        // the additional padding here to zero).
+        const int kAnswerIconToTextPadding = 2;
+        x += answer_icon_size + kAnswerIconToTextPadding;
       }
     } else {
       x = DrawRenderText(match, separator_rendertext_.get(), SEPARATOR, canvas,
@@ -408,7 +398,7 @@ int OmniboxResultView::DrawRenderText(
     const int offset =
         GetDisplayOffset(match, is_ui_rtl, is_match_contents_rtl);
 
-    scoped_ptr<gfx::RenderText> prefix_render_text(
+    std::unique_ptr<gfx::RenderText> prefix_render_text(
         CreateRenderText(base::UTF8ToUTF16(
             match.GetAdditionalInfo(kACMatchPropertyContentsPrefix))));
     const int prefix_width = prefix_render_text->GetContentWidth();
@@ -453,32 +443,38 @@ int OmniboxResultView::DrawRenderText(
     prefix_render_text->Draw(canvas);
   }
 
-  // Set the display rect to trigger eliding.
-  const int height = (render_text_type == DESCRIPTION && match.answer) ?
-      GetAnswerLineHeight() : GetContentLineHeight();
+  // Set the display rect to trigger elision.
+  const int final_width = right_x - x;
+  int height = GetContentLineHeight();
+  if (render_text_type == DESCRIPTION && match.answer) {
+    render_text->SetDisplayRect(gfx::Rect(gfx::Size(final_width, 0)));
+    render_text->GetStringSize();
+    height = GetAnswerLineHeight() * render_text->GetNumLines();
+  }
   render_text->SetDisplayRect(
       gfx::Rect(mirroring_context_->mirrored_left_coord(x, right_x), y,
-                right_x - x, height));
+                final_width, height));
   render_text->Draw(canvas);
   return right_x;
 }
 
-scoped_ptr<gfx::RenderText> OmniboxResultView::CreateRenderText(
+std::unique_ptr<gfx::RenderText> OmniboxResultView::CreateRenderText(
     const base::string16& text) const {
-  scoped_ptr<gfx::RenderText> render_text(gfx::RenderText::CreateInstance());
+  std::unique_ptr<gfx::RenderText> render_text(
+      gfx::RenderText::CreateInstance());
   render_text->SetDisplayRect(gfx::Rect(gfx::Size(INT_MAX, 0)));
   render_text->SetCursorEnabled(false);
   render_text->SetElideBehavior(gfx::ELIDE_TAIL);
   render_text->SetFontList(font_list_);
   render_text->SetText(text);
-  return render_text.Pass();
+  return render_text;
 }
 
-scoped_ptr<gfx::RenderText> OmniboxResultView::CreateClassifiedRenderText(
+std::unique_ptr<gfx::RenderText> OmniboxResultView::CreateClassifiedRenderText(
     const base::string16& text,
     const ACMatchClassifications& classifications,
     bool force_dim) const {
-  scoped_ptr<gfx::RenderText> render_text(CreateRenderText(text));
+  std::unique_ptr<gfx::RenderText> render_text(CreateRenderText(text));
   const size_t text_length = render_text->text().length();
   for (size_t i = 0; i < classifications.size(); ++i) {
     const size_t text_start = classifications[i].offset;
@@ -492,7 +488,7 @@ scoped_ptr<gfx::RenderText> OmniboxResultView::CreateClassifiedRenderText(
 
     // Calculate style-related data.
     if (classifications[i].style & ACMatchClassification::MATCH)
-      render_text->ApplyStyle(gfx::BOLD, true, current_range);
+      render_text->ApplyWeight(gfx::Font::Weight::BOLD, current_range);
 
     ColorKind color_kind = TEXT;
     if (classifications[i].style & ACMatchClassification::URL) {
@@ -515,7 +511,7 @@ scoped_ptr<gfx::RenderText> OmniboxResultView::CreateClassifiedRenderText(
     }
     render_text->ApplyColor(GetColor(GetState(), color_kind), current_range);
   }
-  return render_text.Pass();
+  return render_text;
 }
 
 int OmniboxResultView::GetMatchContentsWidth() const {
@@ -544,7 +540,8 @@ int OmniboxResultView::GetDisplayOffset(
   base::StringToInt(match.GetAdditionalInfo(kACMatchPropertyContentsStartIndex),
                     &contents_start_index);
 
-  scoped_ptr<gfx::RenderText> input_render_text(CreateRenderText(input_text));
+  std::unique_ptr<gfx::RenderText> input_render_text(
+      CreateRenderText(input_text));
   const gfx::Range& glyph_bounds =
       input_render_text->GetGlyphBounds(contents_start_index);
   const int start_padding = is_match_contents_rtl ?
@@ -555,9 +552,6 @@ int OmniboxResultView::GetDisplayOffset(
       (input_render_text->GetContentWidth() - start_padding) : start_padding;
 }
 
-// static
-int OmniboxResultView::default_icon_size_ = 0;
-
 const char* OmniboxResultView::GetClassName() const {
   return "OmniboxResultView";
 }
@@ -567,70 +561,24 @@ gfx::ImageSkia OmniboxResultView::GetIcon() const {
   if (!image.IsEmpty())
     return image.AsImageSkia();
 
-  if (ui::MaterialDesignController::IsModeMaterial()) {
-    return GetVectorIcon(
-        model_->IsStarredMatch(match_)
-            ? gfx::VectorIconId::OMNIBOX_STAR
-            : AutocompleteMatch::TypeToVectorIcon(match_.type));
-  }
-
-  int icon = model_->IsStarredMatch(match_) ?
-      IDR_OMNIBOX_STAR : AutocompleteMatch::TypeToIcon(match_.type);
-  if (GetState() == SELECTED) {
-    switch (icon) {
-      case IDR_OMNIBOX_CALCULATOR:
-        icon = IDR_OMNIBOX_CALCULATOR_SELECTED;
-        break;
-      case IDR_OMNIBOX_EXTENSION_APP:
-        icon = IDR_OMNIBOX_EXTENSION_APP_SELECTED;
-        break;
-      case IDR_OMNIBOX_HTTP:
-        icon = IDR_OMNIBOX_HTTP_SELECTED;
-        break;
-      case IDR_OMNIBOX_SEARCH:
-        icon = IDR_OMNIBOX_SEARCH_SELECTED;
-        break;
-      case IDR_OMNIBOX_STAR:
-        icon = IDR_OMNIBOX_STAR_SELECTED;
-        break;
-      default:
-        NOTREACHED();
-        break;
-    }
-  }
-  return *location_bar_view_->GetThemeProvider()->GetImageSkiaNamed(icon);
-}
-
-gfx::ImageSkia OmniboxResultView::GetKeywordIcon() const {
-  if (ui::MaterialDesignController::IsModeMaterial())
-    return GetVectorIcon(gfx::VectorIconId::OMNIBOX_KEYWORD_SEARCH);
-
-  // NOTE: If we ever begin returning icons of varying size, then callers need
-  // to ensure that |keyword_icon_| is resized each time its image is reset.
-  int icon = IDR_OMNIBOX_TTS;
-  if (GetState() == SELECTED)
-    icon = IDR_OMNIBOX_TTS_SELECTED;
-
-  return *location_bar_view_->GetThemeProvider()->GetImageSkiaNamed(icon);
+  return GetVectorIcon(
+      model_->IsStarredMatch(match_)
+          ? gfx::VectorIconId::OMNIBOX_STAR
+          : AutocompleteMatch::TypeToVectorIcon(match_.type));
 }
 
 gfx::ImageSkia OmniboxResultView::GetVectorIcon(
     gfx::VectorIconId icon_id) const {
-  return gfx::CreateVectorIcon(icon_id, 16, color_utils::DeriveDefaultIconColor(
-                                                GetColor(GetState(), TEXT)));
+  // For selected rows, paint the icon the same color as the text.
+  SkColor color = GetColor(GetState(), TEXT);
+  if (GetState() != SELECTED)
+    color = color_utils::DeriveDefaultIconColor(color);
+  return gfx::CreateVectorIcon(icon_id, 16, color);
 }
 
 bool OmniboxResultView::ShowOnlyKeywordMatch() const {
   return match_.associated_keyword &&
       (keyword_icon_->x() <= icon_bounds_.right());
-}
-
-void OmniboxResultView::ResetRenderTexts() const {
-  contents_rendertext_.reset();
-  description_rendertext_.reset();
-  separator_rendertext_.reset();
-  keyword_contents_rendertext_.reset();
-  keyword_description_rendertext_.reset();
 }
 
 void OmniboxResultView::InitContentsRenderTextIfNecessary() const {
@@ -642,19 +590,20 @@ void OmniboxResultView::InitContentsRenderTextIfNecessary() const {
 }
 
 void OmniboxResultView::Layout() {
-  const int horizontal_padding =
+  int horizontal_padding =
       GetLayoutConstant(LOCATION_BAR_HORIZONTAL_PADDING);
-  const int start_x = StartMargin() + horizontal_padding;
-  const int end_x = width() - EndMargin() - horizontal_padding;
+  // The horizontal bounds we're given are the outside bounds, so we can match
+  // the omnibox border outline shape exactly in OnPaint().  We have to inset
+  // here to keep the icons lined up.
+  const int start_x =
+      GetLayoutConstant(LOCATION_BAR_BORDER_THICKNESS) + horizontal_padding;
+  const int end_x = width() - start_x;
 
   const gfx::ImageSkia icon = GetIcon();
-  icon_bounds_.SetRect(
-      start_x + ((icon.width() == default_icon_size_) ?
-          0 : GetLayoutConstant(ICON_LABEL_VIEW_TRAILING_PADDING)),
-      (GetContentLineHeight() - icon.height()) / 2,
-      icon.width(), icon.height());
+  icon_bounds_.SetRect(start_x, (GetContentLineHeight() - icon.height()) / 2,
+                       icon.width(), icon.height());
 
-  const int text_x = start_x + default_icon_size_ + horizontal_padding;
+  const int text_x = start_x + LocationBarView::kIconWidth + horizontal_padding;
   int text_width = end_x - text_x;
 
   if (match_.associated_keyword.get()) {
@@ -673,13 +622,11 @@ void OmniboxResultView::Layout() {
 }
 
 void OmniboxResultView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
-  animation_->SetSlideDuration((width() - StartMargin() - EndMargin()) / 4);
+  animation_->SetSlideDuration(width() / 4);
 }
 
 void OmniboxResultView::OnPaint(gfx::Canvas* canvas) {
-  const ResultViewState state = GetState();
-  if (state != NORMAL)
-    canvas->DrawColor(GetColor(state, BACKGROUND));
+  View::OnPaint(canvas);
 
   // NOTE: While animating the keyword match, both matches may be visible.
 
@@ -694,10 +641,8 @@ void OmniboxResultView::OnPaint(gfx::Canvas* canvas) {
       if (match_.answer) {
         contents_rendertext_ =
             CreateAnswerLine(match_.answer->first_line(), font_list_);
-        description_rendertext_ = CreateAnswerLine(
-            match_.answer->second_line(),
-            ui::ResourceBundle::GetSharedInstance().GetFontList(
-                ui::ResourceBundle::LargeFont));
+        description_rendertext_ =
+            CreateAnswerLine(match_.answer->second_line(), font_list_);
       } else if (!match_.description.empty()) {
         description_rendertext_ = CreateClassifiedRenderText(
             match_.description, match_.description_class, true);
@@ -735,27 +680,41 @@ void OmniboxResultView::AnimationProgressed(const gfx::Animation* animation) {
 }
 
 int OmniboxResultView::GetAnswerLineHeight() const {
-  // GetTextStyle(1) is the largest font used and so defines the boundary that
+  // ANSWER_TEXT_LARGE is the largest font used and so defines the boundary that
   // all the other answer styles fit within.
   return ui::ResourceBundle::GetSharedInstance()
-      .GetFontList(GetTextStyle(1).font)
+      .GetFontList(GetTextStyle(SuggestionAnswer::ANSWER_TEXT_LARGE).font)
       .GetHeight();
 }
 
 int OmniboxResultView::GetContentLineHeight() const {
+  using Md = ui::MaterialDesignController;
+  const int kIconVerticalPad = Md::GetMode() == Md::MATERIAL_HYBRID ? 8 : 4;
+  const int kTextVerticalPad = 3;
   return std::max(
-      default_icon_size_ + GetLayoutInsets(OMNIBOX_DROPDOWN_ICON).height(),
-      GetTextHeight() + GetLayoutInsets(OMNIBOX_DROPDOWN_TEXT).height());
+      LocationBarView::kIconWidth + 2 * kIconVerticalPad,
+      GetTextHeight() + 2 * kTextVerticalPad);
 }
 
-scoped_ptr<gfx::RenderText> OmniboxResultView::CreateAnswerLine(
+std::unique_ptr<gfx::RenderText> OmniboxResultView::CreateAnswerLine(
     const SuggestionAnswer::ImageLine& line,
-    gfx::FontList font_list) {
-  scoped_ptr<gfx::RenderText> destination = CreateRenderText(base::string16());
+    gfx::FontList font_list) const {
+  std::unique_ptr<gfx::RenderText> destination =
+      CreateRenderText(base::string16());
   destination->SetFontList(font_list);
 
   for (const SuggestionAnswer::TextField& text_field : line.text_fields())
     AppendAnswerText(destination.get(), text_field.text(), text_field.type());
+  if (!line.text_fields().empty()) {
+    constexpr int kMaxDisplayLines = 3;
+    const SuggestionAnswer::TextField& first_field = line.text_fields().front();
+    if (first_field.has_num_lines() && first_field.num_lines() > 1 &&
+        destination->MultilineSupported()) {
+      destination->SetMultiline(true);
+      destination->SetMaxLines(
+          std::min(kMaxDisplayLines, first_field.num_lines()));
+    }
+  }
   const base::char16 space(' ');
   const auto* text_field = line.additional_text();
   if (text_field) {
@@ -767,12 +726,12 @@ scoped_ptr<gfx::RenderText> OmniboxResultView::CreateAnswerLine(
     AppendAnswerText(destination.get(), space + text_field->text(),
                      text_field->type());
   }
-  return destination.Pass();
+  return destination;
 }
 
 void OmniboxResultView::AppendAnswerText(gfx::RenderText* destination,
                                          const base::string16& text,
-                                         int text_type) {
+                                         int text_type) const {
   // TODO(dschuyler): make this better.  Right now this only supports unnested
   // bold tags.  In the future we'll need to flag unexpected tags while adding
   // support for b, i, u, sub, and sup.  We'll also need to support HTML
@@ -801,7 +760,7 @@ void OmniboxResultView::AppendAnswerText(gfx::RenderText* destination,
 void OmniboxResultView::AppendAnswerTextHelper(gfx::RenderText* destination,
                                                const base::string16& text,
                                                int text_type,
-                                               bool is_bold) {
+                                               bool is_bold) const {
   if (text.empty())
     return;
   int offset = destination->text().length();
@@ -810,18 +769,9 @@ void OmniboxResultView::AppendAnswerTextHelper(gfx::RenderText* destination,
   const TextStyle& text_style = GetTextStyle(text_type);
   // TODO(dschuyler): follow up on the problem of different font sizes within
   // one RenderText.  Maybe with destination->SetFontList(...).
-  destination->ApplyStyle(gfx::BOLD, is_bold, range);
+  destination->ApplyWeight(
+      is_bold ? gfx::Font::Weight::BOLD : gfx::Font::Weight::NORMAL, range);
   destination->ApplyColor(
       GetNativeTheme()->GetSystemColor(text_style.colors[GetState()]), range);
   destination->ApplyBaselineStyle(text_style.baseline, range);
-}
-
-int OmniboxResultView::StartMargin() const {
-  return ui::MaterialDesignController::IsModeMaterial() ?
-      model_->start_margin() : 0;
-}
-
-int OmniboxResultView::EndMargin() const {
-  return ui::MaterialDesignController::IsModeMaterial() ?
-      model_->end_margin() : 0;
 }

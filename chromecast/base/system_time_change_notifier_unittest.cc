@@ -4,12 +4,16 @@
 
 #include "chromecast/base/system_time_change_notifier.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -25,7 +29,7 @@ class SequencedTaskRunnerNoDelay : public base::SequencedTaskRunner {
   bool PostDelayedTask(const tracked_objects::Location& from_here,
                        const base::Closure& task,
                        base::TimeDelta delay) override {
-    base::MessageLoop::current()->PostTask(from_here, task);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(from_here, task);
     return true;
   }
 
@@ -81,13 +85,14 @@ class SystemTimeChangeNotifierTest : public testing::Test {
   // Runs pending tasks. It doesn't run tasks schedule after this call.
   void RunPendingTasks() {
     base::RunLoop run_loop;
-    base::MessageLoop::current()->PostTask(FROM_HERE, run_loop.QuitClosure());
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  run_loop.QuitClosure());
     run_loop.Run();
   }
 
-  scoped_ptr<base::MessageLoop> message_loop_;
-  scoped_ptr<SystemTimeChangeNotifierPeriodicMonitor> notifier_;
-  scoped_ptr<TimeChangeObserver> observer_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<SystemTimeChangeNotifierPeriodicMonitor> notifier_;
+  std::unique_ptr<TimeChangeObserver> observer_;
 };
 
 TEST_F(SystemTimeChangeNotifierTest, NotChanged) {

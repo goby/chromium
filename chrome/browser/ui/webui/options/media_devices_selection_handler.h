@@ -5,7 +5,8 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_MEDIA_DEVICES_SELECTION_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_MEDIA_DEVICES_SELECTION_HANDLER_H_
 
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
+#include "base/macros.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
 #include "content/public/browser/web_contents.h"
 

@@ -27,7 +27,8 @@ base::string16 LoadLocalString(DWORD id) {
   static wchar_t dummy = L'\0';
   HMODULE module = NULL;
   ::GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT |
-                      GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, &dummy, &module);
+                          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                      &dummy, &module);
   LPCWSTR buffer = NULL;
   // If the last parameter is 0, LoadString assume that 3rd parameter type is
   // LPCWSTR* and assign pointer to read-only memory with resource.
@@ -40,7 +41,7 @@ base::string16 LoadLocalString(DWORD id) {
 base::string16 GetErrorMessage(HRESULT hr) {
   LPWSTR buffer = NULL;
   ::FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS |
-                  FORMAT_MESSAGE_ALLOCATE_BUFFER,
+                      FORMAT_MESSAGE_ALLOCATE_BUFFER,
                   0, hr, 0, reinterpret_cast<LPWSTR>(&buffer), 0, NULL);
   base::string16 result(buffer);
   ::LocalFree(buffer);
@@ -50,8 +51,7 @@ base::string16 GetErrorMessage(HRESULT hr) {
 void SetGoogleUpdateUsage(const base::string16& product_id) {
   // Set appropriate key to 1 to let Omaha record usage.
   base::win::RegKey key;
-  if (key.Create(HKEY_CURRENT_USER,
-                 (kClientStateKey + product_id).c_str(),
+  if (key.Create(HKEY_CURRENT_USER, (kClientStateKey + product_id).c_str(),
                  KEY_SET_VALUE) != ERROR_SUCCESS ||
       key.WriteValue(kUsageKey, L"1") != ERROR_SUCCESS) {
     LOG(ERROR) << "Unable to set usage key";

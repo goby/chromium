@@ -4,15 +4,16 @@
 
 #include "chrome/browser/ui/views/app_list/linux/app_list_linux.h"
 
+#include "build/build_config.h"
 #include "ui/app_list/app_list_switches.h"
 #include "ui/app_list/views/app_list_view.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/screen.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #include "ui/views/widget/widget.h"
 
 // static
 AppListPositioner::ScreenEdge AppListLinux::ShelfLocationInDisplay(
-    const gfx::Display& display) {
+    const display::Display& display) {
   // On Linux, it is difficult to find the shelf (due to the large variety of
   // desktop environments). The shelf can usually be found on the edge where the
   // display edge and work area do not match up, but there can be more than one
@@ -51,7 +52,7 @@ AppListPositioner::ScreenEdge AppListLinux::ShelfLocationInDisplay(
 
 // static
 gfx::Point AppListLinux::FindAnchorPoint(const gfx::Size& view_size,
-                                         const gfx::Display& display,
+                                         const display::Display& display,
                                          const gfx::Point& cursor,
                                          AppListPositioner::ScreenEdge edge,
                                          bool center_window) {
@@ -83,10 +84,9 @@ gfx::Point AppListLinux::FindAnchorPoint(const gfx::Size& view_size,
 
 // static
 void AppListLinux::MoveNearCursor(app_list::AppListView* view) {
-  gfx::Point cursor = gfx::Screen::GetNativeScreen()->GetCursorScreenPoint();
-  gfx::Screen* screen =
-      gfx::Screen::GetScreenFor(view->GetWidget()->GetNativeView());
-  gfx::Display display = screen->GetDisplayNearestPoint(cursor);
+  display::Screen* screen = display::Screen::GetScreen();
+  gfx::Point cursor = screen->GetCursorScreenPoint();
+  display::Display display = screen->GetDisplayNearestPoint(cursor);
 
   view->SetBubbleArrow(views::BubbleBorder::FLOAT);
 

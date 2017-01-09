@@ -6,18 +6,23 @@
 #define NET_WEBSOCKETS_WEBSOCKET_EVENT_INTERFACE_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"  // for WARN_UNUSED_RESULT
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
 
 class GURL;
 
 namespace net {
 
+class IOBuffer;
 class SSLInfo;
+class URLRequest;
 struct WebSocketHandshakeRequestInfo;
 struct WebSocketHandshakeResponseInfo;
 
@@ -37,6 +42,9 @@ class NET_EXPORT WebSocketEventInterface {
 
   virtual ~WebSocketEventInterface() {}
 
+  // Called when a URLRequest is created for handshaking.
+  virtual void OnCreateURLRequest(URLRequest* request) = 0;
+
   // Called in response to an AddChannelRequest. This means that a response has
   // been received from the remote server.
   virtual ChannelState OnAddChannelResponse(
@@ -45,10 +53,10 @@ class NET_EXPORT WebSocketEventInterface {
 
   // Called when a data frame has been received from the remote host and needs
   // to be forwarded to the renderer process.
-  virtual ChannelState OnDataFrame(
-      bool fin,
-      WebSocketMessageType type,
-      const std::vector<char>& data) WARN_UNUSED_RESULT = 0;
+  virtual ChannelState OnDataFrame(bool fin,
+                                   WebSocketMessageType type,
+                                   scoped_refptr<IOBuffer> buffer,
+                                   size_t buffer_size) WARN_UNUSED_RESULT = 0;
 
   // Called to provide more send quota for this channel to the renderer
   // process. Currently the quota units are always bytes of message body
@@ -93,11 +101,12 @@ class NET_EXPORT WebSocketEventInterface {
 
   // Called when the browser starts the WebSocket Opening Handshake.
   virtual ChannelState OnStartOpeningHandshake(
-      scoped_ptr<WebSocketHandshakeRequestInfo> request) WARN_UNUSED_RESULT = 0;
+      std::unique_ptr<WebSocketHandshakeRequestInfo> request)
+      WARN_UNUSED_RESULT = 0;
 
   // Called when the browser finishes the WebSocket Opening Handshake.
   virtual ChannelState OnFinishOpeningHandshake(
-      scoped_ptr<WebSocketHandshakeResponseInfo> response)
+      std::unique_ptr<WebSocketHandshakeResponseInfo> response)
       WARN_UNUSED_RESULT = 0;
 
   // Callbacks to be used in response to a call to OnSSLCertificateError. Very
@@ -121,7 +130,7 @@ class NET_EXPORT WebSocketEventInterface {
   // make the actual decision. The callbacks must not be called after the
   // WebSocketChannel has been destroyed.
   virtual ChannelState OnSSLCertificateError(
-      scoped_ptr<SSLErrorCallbacks> ssl_error_callbacks,
+      std::unique_ptr<SSLErrorCallbacks> ssl_error_callbacks,
       const GURL& url,
       const SSLInfo& ssl_info,
       bool fatal) WARN_UNUSED_RESULT = 0;

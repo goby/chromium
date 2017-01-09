@@ -4,12 +4,16 @@
 
 #include "chrome/browser/prerender/prerender_contents.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <functional>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/process/process_metrics.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/history/history_tab_helper.h"
 #include "chrome/browser/prerender/prerender_field_trial.h"
@@ -19,13 +23,12 @@
 #include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/prerender/prerender_resource_throttle.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/task_management/web_contents_tags.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/task_manager/web_contents_tags.h"
 #include "chrome/browser/ui/tab_helpers.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
 #include "chrome/common/prerender_messages.h"
+#include "chrome/common/prerender_types.h"
 #include "chrome/common/render_messages.h"
-#include "chrome/common/url_constants.h"
 #include "components/history/core/browser/history_types.h"
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/browser_thread.h"
@@ -40,14 +43,12 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/frame_navigate_params.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
 
 using content::BrowserThread;
-using content::DownloadItem;
 using content::OpenURLParams;
 using content::RenderViewHost;
 using content::ResourceRedirectDetails;
-using content::ResourceType;
 using content::SessionStorageNamespace;
 using content::WebContents;
 
@@ -55,11 +56,21 @@ namespace prerender {
 
 namespace {
 
+// Valid HTTP methods for both prefetch and prerendering.
+const char* const kValidHttpMethods[] = {
+    "GET", "HEAD",
+};
+
+// Additional valid HTTP methods for prerendering.
+const char* const kValidHttpMethodsForPrerendering[] = {
+    "OPTIONS", "POST", "TRACE",
+};
+
 void ResumeThrottles(
     std::vector<base::WeakPtr<PrerenderResourceThrottle> > throttles) {
   for (size_t i = 0; i < throttles.size(); i++) {
     if (throttles[i])
-      throttles[i]->Resume();
+      throttles[i]->ResumeHandler();
   }
 }
 
@@ -92,13 +103,19 @@ class PrerenderContents::WebContentsDelegateImpl
                               const OpenURLParams& params) override {
     // |OpenURLFromTab| is typically called when a frame performs a navigation
     // that requires the browser to perform the transition instead of WebKit.
-    // Examples include prerendering a site that redirects to an app URL, or if
-    // --site-per-process is specified and the prerendered frame redirects to a
-    // different origin.
+    // Examples include client redirects to hosted app URLs.
     // TODO(cbentzel): Consider supporting this for CURRENT_TAB dispositions, if
     // it is a common case during prerenders.
     prerender_contents_->Destroy(FINAL_STATUS_OPEN_URL);
     return NULL;
+  }
+
+  bool ShouldTransferNavigation(bool is_main_frame_navigation) override {
+    // Cancel the prerender if the navigation attempts to transfer to a
+    // different process.  Examples include server redirects to privileged pages
+    // or cross-site subframe navigations in --site-per-process.
+    prerender_contents_->Destroy(FINAL_STATUS_OPEN_URL);
+    return false;
   }
 
   void CloseContents(content::WebContents* contents) override {
@@ -114,11 +131,13 @@ class PrerenderContents::WebContentsDelegateImpl
   }
 
   bool ShouldCreateWebContents(
-      WebContents* web_contents,
+      content::WebContents* web_contents,
+      content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
       WindowContainerType window_container_type,
+      const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
       const std::string& partition_id,
@@ -160,30 +179,14 @@ class PrerenderContents::WebContentsDelegateImpl
   gfx::Size GetSizeForNewRenderView(WebContents* web_contents) const override {
     // Have to set the size of the RenderView on initialization to be sure it is
     // set before the RenderView is hidden on all platforms (esp. Android).
-    return prerender_contents_->size_;
+    return prerender_contents_->bounds_.size();
   }
 
  private:
   PrerenderContents* prerender_contents_;
 };
 
-void PrerenderContents::Observer::OnPrerenderStopLoading(
-    PrerenderContents* contents) {
-}
-
-void PrerenderContents::Observer::OnPrerenderDomContentLoaded(
-    PrerenderContents* contents) {
-}
-
-void PrerenderContents::Observer::OnPrerenderCreatedMatchCompleteReplacement(
-    PrerenderContents* contents, PrerenderContents* replacement) {
-}
-
-PrerenderContents::Observer::Observer() {
-}
-
-PrerenderContents::Observer::~Observer() {
-}
+PrerenderContents::Observer::~Observer() {}
 
 PrerenderContents::PrerenderContents(
     PrerenderManager* prerender_manager,
@@ -191,7 +194,8 @@ PrerenderContents::PrerenderContents(
     const GURL& url,
     const content::Referrer& referrer,
     Origin origin)
-    : prerendering_has_started_(false),
+    : prerender_mode_(FULL_PRERENDER),
+      prerendering_has_started_(false),
       session_storage_namespace_id_(-1),
       prerender_manager_(prerender_manager),
       prerender_url_(url),
@@ -200,40 +204,42 @@ PrerenderContents::PrerenderContents(
       has_stopped_loading_(false),
       has_finished_loading_(false),
       final_status_(FINAL_STATUS_MAX),
-      match_complete_status_(MATCH_COMPLETE_DEFAULT),
       prerendering_has_been_cancelled_(false),
       child_id_(-1),
       route_id_(-1),
       origin_(origin),
       network_bytes_(0) {
-  DCHECK(prerender_manager != NULL);
-}
-
-PrerenderContents* PrerenderContents::CreateMatchCompleteReplacement() {
-  PrerenderContents* new_contents = prerender_manager_->CreatePrerenderContents(
-      prerender_url(), referrer(), origin());
-
-  new_contents->load_start_time_ = load_start_time_;
-  new_contents->session_storage_namespace_id_ = session_storage_namespace_id_;
-  new_contents->set_match_complete_status(
-      PrerenderContents::MATCH_COMPLETE_REPLACEMENT_PENDING);
-
-  const bool did_init = new_contents->Init();
-  DCHECK(did_init);
-  DCHECK_EQ(alias_urls_.front(), new_contents->alias_urls_.front());
-  DCHECK_EQ(1u, new_contents->alias_urls_.size());
-  new_contents->alias_urls_ = alias_urls_;
-  // Erase all but the first alias URL; the replacement has adopted the
-  // remainder without increasing the renderer-side reference count.
-  alias_urls_.resize(1);
-  new_contents->set_match_complete_status(
-      PrerenderContents::MATCH_COMPLETE_REPLACEMENT);
-  NotifyPrerenderCreatedMatchCompleteReplacement(new_contents);
-  return new_contents;
+  DCHECK(prerender_manager);
 }
 
 bool PrerenderContents::Init() {
   return AddAliasURL(prerender_url_);
+}
+
+void PrerenderContents::SetPrerenderMode(PrerenderMode mode) {
+  DCHECK(!prerendering_has_started_);
+  prerender_mode_ = mode;
+}
+
+bool PrerenderContents::IsValidHttpMethod(const std::string& method) {
+  DCHECK_NE(prerender_mode(), NO_PRERENDER);
+  // |method| has been canonicalized to upper case at this point so we can just
+  // compare them.
+  DCHECK_EQ(method, base::ToUpperASCII(method));
+  for (const auto& valid_method : kValidHttpMethods) {
+    if (method == valid_method)
+      return true;
+  }
+
+  if (prerender_mode() == PREFETCH_ONLY)
+    return false;
+
+  for (const auto& valid_method : kValidHttpMethodsForPrerendering) {
+    if (method == valid_method)
+      return true;
+  }
+
+  return false;
 }
 
 // static
@@ -246,34 +252,28 @@ PrerenderContents* PrerenderContents::FromWebContents(
     content::WebContents* web_contents) {
   if (!web_contents)
     return NULL;
-  PrerenderManager* prerender_manager = PrerenderManagerFactory::GetForProfile(
-      Profile::FromBrowserContext(web_contents->GetBrowserContext()));
+  PrerenderManager* prerender_manager =
+      PrerenderManagerFactory::GetForBrowserContext(
+          web_contents->GetBrowserContext());
   if (!prerender_manager)
     return NULL;
   return prerender_manager->GetPrerenderContents(web_contents);
 }
 
 void PrerenderContents::StartPrerendering(
-    const gfx::Size& size,
+    const gfx::Rect& bounds,
     SessionStorageNamespace* session_storage_namespace) {
-  DCHECK(profile_ != NULL);
-  DCHECK(!size.IsEmpty());
+  DCHECK(profile_);
+  DCHECK(!bounds.IsEmpty());
   DCHECK(!prerendering_has_started_);
-  DCHECK(prerender_contents_.get() == NULL);
-  DCHECK(size_.IsEmpty());
+  DCHECK(!prerender_contents_);
   DCHECK_EQ(1U, alias_urls_.size());
 
   session_storage_namespace_id_ = session_storage_namespace->id();
-  size_ = size;
+  bounds_ = bounds;
 
   DCHECK(load_start_time_.is_null());
   load_start_time_ = base::TimeTicks::Now();
-
-  // Everything after this point sets up the WebContents object and associated
-  // RenderView for the prerender page. Don't do this for members of the
-  // control group.
-  if (prerender_manager_->IsControlGroup())
-    return;
 
   prerendering_has_started_ = true;
 
@@ -283,13 +283,13 @@ void PrerenderContents::StartPrerendering(
 
   // Tag the prerender contents with the task manager specific prerender tag, so
   // that it shows up in the task manager.
-  task_management::WebContentsTags::CreateForPrerenderContents(
+  task_manager::WebContentsTags::CreateForPrerenderContents(
       prerender_contents_.get());
 
   web_contents_delegate_.reset(new WebContentsDelegateImpl(this));
   prerender_contents_.get()->SetDelegate(web_contents_delegate_.get());
   // Set the size of the prerender WebContents.
-  ResizeWebContents(prerender_contents_.get(), size_);
+  ResizeWebContents(prerender_contents_.get(), bounds_);
 
   // TODO(davidben): This logic assumes each prerender has at most one
   // route. https://crbug.com/440544
@@ -365,8 +365,7 @@ PrerenderContents::~PrerenderContents() {
       prerendering_has_been_cancelled() || final_status() == FINAL_STATUS_USED);
   DCHECK_NE(ORIGIN_MAX, origin());
 
-  prerender_manager_->RecordFinalStatusWithMatchCompleteStatus(
-      origin(), match_complete_status(), final_status());
+  prerender_manager_->RecordFinalStatus(origin(), final_status());
 
   bool used = final_status() == FINAL_STATUS_USED ||
               final_status() == FINAL_STATUS_WOULD_HAVE_BEEN_USED;
@@ -381,10 +380,12 @@ PrerenderContents::~PrerenderContents() {
     host->Send(new PrerenderMsg_OnPrerenderRemoveAliases(alias_urls_));
   }
 
+  if (!prerender_contents_)
+    return;
+
   // If we still have a WebContents, clean up anything we need to and then
   // destroy it.
-  if (prerender_contents_.get())
-    delete ReleasePrerenderContents();
+  std::unique_ptr<WebContents> contents = ReleasePrerenderContents();
 }
 
 void PrerenderContents::AddObserver(Observer* observer) {
@@ -448,29 +449,25 @@ WebContents* PrerenderContents::CreateWebContents(
 
 void PrerenderContents::NotifyPrerenderStart() {
   DCHECK_EQ(FINAL_STATUS_MAX, final_status_);
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnPrerenderStart(this));
+  for (Observer& observer : observer_list_)
+    observer.OnPrerenderStart(this);
 }
 
 void PrerenderContents::NotifyPrerenderStopLoading() {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnPrerenderStopLoading(this));
+  for (Observer& observer : observer_list_)
+    observer.OnPrerenderStopLoading(this);
 }
 
 void PrerenderContents::NotifyPrerenderDomContentLoaded() {
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnPrerenderDomContentLoaded(this));
+  for (Observer& observer : observer_list_)
+    observer.OnPrerenderDomContentLoaded(this);
 }
 
 void PrerenderContents::NotifyPrerenderStop() {
   DCHECK_NE(FINAL_STATUS_MAX, final_status_);
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnPrerenderStop(this));
+  for (Observer& observer : observer_list_)
+    observer.OnPrerenderStop(this);
   observer_list_.Clear();
-}
-
-void PrerenderContents::NotifyPrerenderCreatedMatchCompleteReplacement(
-    PrerenderContents* replacement) {
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnPrerenderCreatedMatchCompleteReplacement(this,
-                                                               replacement));
 }
 
 bool PrerenderContents::OnMessageReceived(const IPC::Message& message) {
@@ -487,11 +484,10 @@ bool PrerenderContents::OnMessageReceived(const IPC::Message& message) {
 
 bool PrerenderContents::CheckURL(const GURL& url) {
   if (!url.SchemeIsHTTPOrHTTPS()) {
-    DCHECK_NE(MATCH_COMPLETE_REPLACEMENT_PENDING, match_complete_status_);
     Destroy(FINAL_STATUS_UNSUPPORTED_SCHEME);
     return false;
   }
-  if (match_complete_status_ != MATCH_COMPLETE_REPLACEMENT_PENDING &&
+  if (origin() != ORIGIN_OFFLINE &&
       prerender_manager_->HasRecentlyBeenNavigatedTo(origin(), url)) {
     Destroy(FINAL_STATUS_RECENTLY_VISITED);
     return false;
@@ -530,6 +526,11 @@ bool PrerenderContents::Matches(
 }
 
 void PrerenderContents::RenderProcessGone(base::TerminationStatus status) {
+  if (status == base::TERMINATION_STATUS_STILL_RUNNING) {
+    // The renderer process is being killed because of the browser/test
+    // shutdown, before the termination notification is received.
+    Destroy(FINAL_STATUS_APP_TERMINATING);
+  }
   Destroy(FINAL_STATUS_RENDERER_CRASHED);
 }
 
@@ -540,7 +541,7 @@ void PrerenderContents::RenderFrameCreated(
   // occur.  Note that this is always triggered before the first navigation, so
   // there's no need to send the message just after the WebContents is created.
   render_frame_host->Send(new PrerenderMsg_SetIsPrerendering(
-      render_frame_host->GetRoutingID(), true));
+      render_frame_host->GetRoutingID(), prerender_mode_));
 }
 
 void PrerenderContents::DidStopLoading() {
@@ -557,8 +558,7 @@ void PrerenderContents::DocumentLoadedInFrame(
 void PrerenderContents::DidStartProvisionalLoadForFrame(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url,
-    bool is_error_page,
-    bool is_iframe_srcdoc) {
+    bool is_error_page) {
   if (!render_frame_host->GetParent()) {
     if (!CheckURL(validated_url))
       return;
@@ -608,7 +608,6 @@ void PrerenderContents::DidNavigateMainFrame(
 }
 
 void PrerenderContents::DidGetRedirectForResourceRequest(
-    content::RenderFrameHost* render_frame_host,
     const content::ResourceRedirectDetails& details) {
   // DidGetRedirectForResourceRequest can come for any resource on a page.  If
   // it's a redirect on the top-level resource, the name needs to be remembered
@@ -631,32 +630,30 @@ void PrerenderContents::Destroy(FinalStatus final_status) {
   prerender_manager_->AddToHistory(this);
   prerender_manager_->MoveEntryToPendingDelete(this, final_status);
 
-  // Note that if this PrerenderContents was made into a MatchComplete
-  // replacement by MoveEntryToPendingDelete, NotifyPrerenderStop will
-  // not reach the PrerenderHandle. Rather
-  // OnPrerenderCreatedMatchCompleteReplacement will propogate that
-  // information to the referer.
-  if (!prerender_manager_->IsControlGroup() &&
-      (prerendering_has_started() ||
-       match_complete_status() == MATCH_COMPLETE_REPLACEMENT)) {
+  if (prerendering_has_started())
     NotifyPrerenderStop();
-  }
 }
 
 base::ProcessMetrics* PrerenderContents::MaybeGetProcessMetrics() {
-  if (process_metrics_.get() == NULL) {
+  if (!process_metrics_) {
     // If a PrenderContents hasn't started prerending, don't be fully formed.
-    if (!GetRenderViewHost() || !GetRenderViewHost()->GetProcess())
-      return NULL;
-    base::ProcessHandle handle = GetRenderViewHost()->GetProcess()->GetHandle();
+    const RenderViewHost* rvh = GetRenderViewHost();
+    if (!rvh)
+      return nullptr;
+
+    const content::RenderProcessHost* rph = rvh->GetProcess();
+    if (!rph)
+      return nullptr;
+
+    base::ProcessHandle handle = rph->GetHandle();
     if (handle == base::kNullProcessHandle)
-      return NULL;
+      return nullptr;
+
 #if !defined(OS_MACOSX)
-    process_metrics_.reset(base::ProcessMetrics::CreateProcessMetrics(handle));
+    process_metrics_ = base::ProcessMetrics::CreateProcessMetrics(handle);
 #else
-    process_metrics_.reset(base::ProcessMetrics::CreateProcessMetrics(
-        handle,
-        content::BrowserChildProcessHost::GetPortProvider()));
+    process_metrics_ = base::ProcessMetrics::CreateProcessMetrics(
+        handle, content::BrowserChildProcessHost::GetPortProvider());
 #endif
   }
 
@@ -665,7 +662,7 @@ base::ProcessMetrics* PrerenderContents::MaybeGetProcessMetrics() {
 
 void PrerenderContents::DestroyWhenUsingTooManyResources() {
   base::ProcessMetrics* metrics = MaybeGetProcessMetrics();
-  if (metrics == NULL)
+  if (!metrics)
     return;
 
   size_t private_bytes, shared_bytes;
@@ -675,15 +672,15 @@ void PrerenderContents::DestroyWhenUsingTooManyResources() {
   }
 }
 
-WebContents* PrerenderContents::ReleasePrerenderContents() {
-  prerender_contents_->SetDelegate(NULL);
-  content::WebContentsObserver::Observe(NULL);
+std::unique_ptr<WebContents> PrerenderContents::ReleasePrerenderContents() {
+  prerender_contents_->SetDelegate(nullptr);
+  content::WebContentsObserver::Observe(nullptr);
 
   // Clear the task manager tag we added earlier to our
   // WebContents since it's no longer a prerender contents.
-  task_management::WebContentsTags::ClearTag(prerender_contents_.get());
+  task_manager::WebContentsTags::ClearTag(prerender_contents_.get());
 
-  return prerender_contents_.release();
+  return std::move(prerender_contents_);
 }
 
 RenderViewHost* PrerenderContents::GetRenderViewHostMutable() {
@@ -691,9 +688,8 @@ RenderViewHost* PrerenderContents::GetRenderViewHostMutable() {
 }
 
 const RenderViewHost* PrerenderContents::GetRenderViewHost() const {
-  if (!prerender_contents_.get())
-    return NULL;
-  return prerender_contents_->GetRenderViewHost();
+  return prerender_contents_ ? prerender_contents_->GetRenderViewHost()
+                             : nullptr;
 }
 
 void PrerenderContents::DidNavigate(
@@ -707,10 +703,10 @@ void PrerenderContents::CommitHistory(WebContents* tab) {
     history_tab_helper->UpdateHistoryForNavigation(add_page_vector_[i]);
 }
 
-base::Value* PrerenderContents::GetAsValue() const {
-  if (!prerender_contents_.get())
-    return NULL;
-  base::DictionaryValue* dict_value = new base::DictionaryValue();
+std::unique_ptr<base::DictionaryValue> PrerenderContents::GetAsValue() const {
+  if (!prerender_contents_)
+    return nullptr;
+  auto dict_value = base::MakeUnique<base::DictionaryValue>();
   dict_value->SetString("url", prerender_url_.spec());
   base::TimeTicks current_time = base::TimeTicks::Now();
   base::TimeDelta duration = current_time - load_start_time_;
@@ -721,10 +717,9 @@ base::Value* PrerenderContents::GetAsValue() const {
 }
 
 bool PrerenderContents::IsCrossSiteNavigationPending() const {
-  if (!prerender_contents_)
-    return false;
-  return (prerender_contents_->GetSiteInstance() !=
-          prerender_contents_->GetPendingSiteInstance());
+  return prerender_contents_ &&
+         prerender_contents_->GetSiteInstance() !=
+             prerender_contents_->GetPendingSiteInstance();
 }
 
 void PrerenderContents::PrepareForUse() {
@@ -732,7 +727,7 @@ void PrerenderContents::PrepareForUse() {
 
   if (prerender_contents_.get()) {
     prerender_contents_->SendToAllFrames(
-        new PrerenderMsg_SetIsPrerendering(MSG_ROUTING_NONE, false));
+        new PrerenderMsg_SetIsPrerendering(MSG_ROUTING_NONE, NO_PRERENDER));
   }
 
   NotifyPrerenderStop();
@@ -753,7 +748,7 @@ void PrerenderContents::AddResourceThrottle(
   resource_throttles_.push_back(throttle);
 }
 
-void PrerenderContents::AddNetworkBytes(int64 bytes) {
+void PrerenderContents::AddNetworkBytes(int64_t bytes) {
   network_bytes_ += bytes;
 }
 

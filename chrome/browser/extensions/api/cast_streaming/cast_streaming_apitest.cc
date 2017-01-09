@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -26,9 +30,9 @@
 #include "media/cast/test/utility/net_utility.h"
 #include "media/cast/test/utility/standalone_cast_environment.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/rand_callback.h"
-#include "net/udp/udp_server_socket.h"
+#include "net/log/net_log_source.h"
+#include "net/socket/udp_server_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using media::cast::test::GetFreeLocalPort;
@@ -153,7 +157,7 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
   }
 
   // Invoked by InProcessReceiver for each received audio frame.
-  void OnAudioFrame(scoped_ptr<media::AudioBus> audio_frame,
+  void OnAudioFrame(std::unique_ptr<media::AudioBus> audio_frame,
                     const base::TimeTicks& playout_time,
                     bool is_continuous) override {
     DCHECK(cast_env()->CurrentlyOn(media::cast::CastEnvironment::MAIN));
@@ -254,10 +258,10 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
     // Scan from the bottom-right until the first non-black pixel is
     // encountered.
     for (int y = height - 1; y >= 0; --y) {
-      const uint8* const start =
+      const uint8_t* const start =
           frame->data(media::VideoFrame::kYPlane) + y * stride;
-      const uint8* const end = start + width;
-      for (const uint8* p = end - 1; p >= start; --p) {
+      const uint8_t* const end = start + width;
+      for (const uint8_t* p = end - 1; p >= start; --p) {
         if (*p > kNonBlackIntensityThreshold) {
           result.set_width(p - start + 1);
           result.set_height(y + 1);
@@ -269,10 +273,10 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
 
     // Scan from the upper-left until the first non-black pixel is encountered.
     for (int y = 0; y < result.height(); ++y) {
-      const uint8* const start =
+      const uint8_t* const start =
           frame->data(media::VideoFrame::kYPlane) + y * stride;
-      const uint8* const end = start + result.width();
-      for (const uint8* p = start; p < end; ++p) {
+      const uint8_t* const end = start + result.width();
+      for (const uint8_t* p = start; p < end; ++p) {
         if (*p > kNonBlackIntensityThreshold) {
           result.set_x(p - start);
           result.set_width(result.width() - result.x());
@@ -287,13 +291,13 @@ class TestPatternReceiver : public media::cast::InProcessReceiver {
     return result;
   }
 
-  static uint8 ComputeMedianIntensityInRegionInPlane(const gfx::Rect& region,
-                                                     int stride,
-                                                     const uint8* data) {
+  static uint8_t ComputeMedianIntensityInRegionInPlane(const gfx::Rect& region,
+                                                       int stride,
+                                                       const uint8_t* data) {
     if (region.IsEmpty())
       return 0;
     const size_t num_values = region.size().GetArea();
-    scoped_ptr<uint8[]> values(new uint8[num_values]);
+    std::unique_ptr<uint8_t[]> values(new uint8_t[num_values]);
     for (int y = 0; y < region.height(); ++y) {
       memcpy(values.get() + y * region.width(),
              data + (region.y() + y) * stride + region.x(),
@@ -341,8 +345,8 @@ class CastStreamingApiTestWithPixelOutput : public CastStreamingApiTest {
 #define MAYBE_EndToEnd DISABLED_EndToEnd
 #endif
 IN_PROC_BROWSER_TEST_F(CastStreamingApiTestWithPixelOutput, MAYBE_EndToEnd) {
-  scoped_ptr<net::UDPServerSocket> receive_socket(
-      new net::UDPServerSocket(NULL, net::NetLog::Source()));
+  std::unique_ptr<net::UDPServerSocket> receive_socket(
+      new net::UDPServerSocket(NULL, net::NetLogSource()));
   receive_socket->AllowAddressReuse();
   ASSERT_EQ(net::OK, receive_socket->Listen(GetFreeLocalPort()));
   net::IPEndPoint receiver_end_point;

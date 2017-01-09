@@ -4,45 +4,69 @@
 
 # Intermediate target grouping the android tools needed to run native
 # unittests and instrumentation test apks.
-#
-# GYP: //tools/android/android_tools.gyp:android_tools
 group("android_tools") {
   deps = [
+    "//build/android:wrapper_scripts",
+    "//build/android/pylib/device/commands",
+    "//third_party/android_platform:stack_wrapper",
+    "//third_party/catapult/telemetry:bitmaptools($host_toolchain)",
     "//tools/android/adb_reboot",
     "//tools/android/file_poller",
     "//tools/android/forwarder2",
     "//tools/android/md5sum",
     "//tools/android/memtrack_helper:memtrack_helper",
     "//tools/android/purge_ashmem",
-    "//tools/telemetry:bitmaptools($host_toolchain)",
+    "//tools/perf:run_benchmark_wrapper",
   ]
 }
 
-# GYP: //tools/android/android_tools.gyp:heap_profiler
-group("heap_profiler") {
-  deps = [
-    "//tools/android/heap_profiler:heap_dump",
-    "//tools/android/heap_profiler:heap_profiler",
-  ]
-}
-
-# GYP: //tools/android/android_tools.gyp:memdump
 group("memdump") {
   deps = [
     "//tools/android/memdump",
   ]
 }
 
-# GYP: //tools/android/android_tools.gyp:ps_ext
+group("memconsumer") {
+  deps = [
+    "//tools/android/memconsumer:memconsumer_apk",
+  ]
+}
+
+group("memtrack_helper") {
+  deps = [
+    "//tools/android/memtrack_helper",
+  ]
+}
+
 group("ps_ext") {
   deps = [
     "//tools/android/ps_ext",
   ]
 }
 
-# GYP: //tools/android/android_tools.gyp:customtabs_benchmark
+group("spnego_authenticator") {
+  testonly = true
+  deps = [
+    "//tools/android/kerberos/SpnegoAuthenticator:spnego_authenticator_apk",
+  ]
+}
+
 group("customtabs_benchmark") {
   deps = [
     "//tools/android/customtabs_benchmark:customtabs_benchmark_apk",
+  ]
+}
+
+group("audio_focus_grabber") {
+  testonly = true
+  deps = [
+    "//tools/android/audio_focus_grabber:audio_focus_grabber_apk",
+  ]
+}
+
+group("push_apps_to_background") {
+  testonly = true
+  deps = [
+    "//tools/android/push_apps_to_background:push_apps_to_background_apk",
   ]
 }

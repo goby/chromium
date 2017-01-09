@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_SUSPICIOUS_EXTENSION_BUBBLE_DELEGATE_H_
 #define CHROME_BROWSER_EXTENSIONS_SUSPICIOUS_EXTENSION_BUBBLE_DELEGATE_H_
 
+#include <stddef.h>
+
 #include "base/macros.h"
 #include "chrome/browser/extensions/extension_message_bubble_controller.h"
-
-class Browser;
 
 namespace extensions {
 
@@ -39,6 +39,7 @@ class SuspiciousExtensionBubbleDelegate
   void LogExtensionCount(size_t count) override;
   void LogAction(ExtensionMessageBubbleController::BubbleAction) override;
   const char* GetKey() override;
+  bool SupportsPolicyIndicator() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SuspiciousExtensionBubbleDelegate);

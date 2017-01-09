@@ -11,8 +11,10 @@
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
+#include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 
 using content::WebContents;
 
@@ -23,8 +25,12 @@ void FullscreenControllerTest::RequestToLockMouse(
     bool user_gesture,
     bool last_unlocked_by_target) {
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
+  MouseLockController* mouse_lock_controller =
+      GetExclusiveAccessManager()->mouse_lock_controller();
+  mouse_lock_controller->set_fake_mouse_lock_for_test(true);
   browser()->RequestToLockMouse(tab, user_gesture,
       last_unlocked_by_target);
+  mouse_lock_controller->set_fake_mouse_lock_for_test(false);
 }
 
 FullscreenController* FullscreenControllerTest::GetFullscreenController() {
@@ -40,7 +46,9 @@ void FullscreenControllerTest::LostMouseLock() {
 }
 
 bool FullscreenControllerTest::SendEscapeToFullscreenController() {
-  return GetExclusiveAccessManager()->HandleUserPressedEscape();
+  content::NativeWebKeyboardEvent event;
+  event.windowsKeyCode = ui::VKEY_ESCAPE;
+  return GetExclusiveAccessManager()->HandleUserKeyPress(event);
 }
 
 bool FullscreenControllerTest::IsFullscreenForBrowser() {
@@ -49,20 +57,6 @@ bool FullscreenControllerTest::IsFullscreenForBrowser() {
 
 bool FullscreenControllerTest::IsWindowFullscreenForTabOrPending() {
   return GetFullscreenController()->IsWindowFullscreenForTabOrPending();
-}
-
-bool FullscreenControllerTest::IsMouseLockPermissionRequested() {
-  ExclusiveAccessBubbleType type = GetExclusiveAccessBubbleType();
-  bool mouse_lock = false;
-  exclusive_access_bubble::PermissionRequestedByType(type, NULL, &mouse_lock);
-  return mouse_lock;
-}
-
-bool FullscreenControllerTest::IsFullscreenPermissionRequested() {
-  ExclusiveAccessBubbleType type = GetExclusiveAccessBubbleType();
-  bool fullscreen = false;
-  exclusive_access_bubble::PermissionRequestedByType(type, &fullscreen, NULL);
-  return fullscreen;
 }
 
 ExclusiveAccessBubbleType
@@ -74,30 +68,17 @@ bool FullscreenControllerTest::IsFullscreenBubbleDisplayed() {
   return GetExclusiveAccessBubbleType() != EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE;
 }
 
-bool FullscreenControllerTest::IsFullscreenBubbleDisplayingButtons() {
-  return exclusive_access_bubble::ShowButtonsForType(
-      GetExclusiveAccessBubbleType());
-}
-
-void FullscreenControllerTest::AcceptCurrentFullscreenOrMouseLockRequest() {
-  GetExclusiveAccessManager()->OnAcceptExclusiveAccessPermission();
-}
-
-void FullscreenControllerTest::DenyCurrentFullscreenOrMouseLockRequest() {
-  GetExclusiveAccessManager()->OnDenyExclusiveAccessPermission();
-}
-
 void FullscreenControllerTest::GoBack() {
   content::TestNavigationObserver observer(
       browser()->tab_strip_model()->GetActiveWebContents(), 1);
-  chrome::GoBack(browser(), CURRENT_TAB);
+  chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
   observer.Wait();
 }
 
 void FullscreenControllerTest::Reload() {
   content::TestNavigationObserver observer(
       browser()->tab_strip_model()->GetActiveWebContents(), 1);
-  chrome::Reload(browser(), CURRENT_TAB);
+  chrome::Reload(browser(), WindowOpenDisposition::CURRENT_TAB);
   observer.Wait();
 }
 

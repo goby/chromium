@@ -4,10 +4,10 @@
 
 #include "components/update_client/update_query_params.h"
 
-#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/win/windows_version.h"
+#include "build/build_config.h"
 #include "components/update_client/update_query_params_delegate.h"
 
 namespace update_client {
@@ -44,6 +44,8 @@ const char kArch[] =
     "arm";
 #elif defined(__aarch64__)
     "arm64";
+#elif defined(__mips__) && (__mips == 64)
+    "mips64el";
 #elif defined(__mips__)
     "mipsel";
 #else
@@ -115,6 +117,8 @@ const char* UpdateQueryParams::GetNaclArch() {
   return "arm64";
 #elif defined(ARCH_CPU_MIPSEL)
   return "mips32";
+#elif defined(ARCH_CPU_MIPS64EL)
+  return "mips64";
 #else
 // NOTE: when adding new values here, please remember to update the
 // comment in the .h file about possible return values from this function.

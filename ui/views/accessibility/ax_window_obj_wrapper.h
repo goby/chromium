@@ -5,6 +5,9 @@
 #ifndef UI_VIEWS_ACCESSIBILITY_AX_WINDOW_OBJ_WRAPPER_H_
 #define UI_VIEWS_ACCESSIBILITY_AX_WINDOW_OBJ_WRAPPER_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "ui/aura/window_observer.h"
 #include "ui/views/accessibility/ax_aura_obj_wrapper.h"
 
@@ -31,10 +34,12 @@ class AXWindowObjWrapper : public AXAuraObjWrapper,
   AXAuraObjWrapper* GetParent() override;
   void GetChildren(std::vector<AXAuraObjWrapper*>* out_children) override;
   void Serialize(ui::AXNodeData* out_node_data) override;
-  int32 GetID() override;
+  int32_t GetID() override;
 
   // WindowObserver overrides.
+  void OnWindowDestroyed(aura::Window* window) override;
   void OnWindowDestroying(aura::Window* window) override;
+  void OnWindowHierarchyChanged(const HierarchyChangeParams& params) override;
 
  private:
   aura::Window* window_;

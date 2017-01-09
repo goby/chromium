@@ -4,6 +4,10 @@
 
 #include "extensions/browser/api/cast_channel/cast_test_util.h"
 
+#include <utility>
+
+#include "net/base/ip_address.h"
+
 namespace extensions {
 namespace api {
 namespace cast_channel {
@@ -21,8 +25,8 @@ CastTransport::Delegate* MockCastTransport::current_delegate() const {
 }
 
 void MockCastTransport::SetReadDelegate(
-    scoped_ptr<CastTransport::Delegate> delegate) {
-  delegate_ = delegate.Pass();
+    std::unique_ptr<CastTransport::Delegate> delegate) {
+  delegate_ = std::move(delegate);
 }
 
 MockCastTransportDelegate::MockCastTransportDelegate() {
@@ -37,12 +41,7 @@ MockCastSocket::~MockCastSocket() {
 }
 
 net::IPEndPoint CreateIPEndPointForTest() {
-  net::IPAddressNumber number;
-  number.push_back(192);
-  number.push_back(168);
-  number.push_back(1);
-  number.push_back(1);
-  return net::IPEndPoint(number, 8009);
+  return net::IPEndPoint(net::IPAddress(192, 168, 1, 1), 8009);
 }
 
 }  // namespace cast_channel

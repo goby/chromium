@@ -19,7 +19,9 @@
 #include "base/test/test_reg_util_win.h"
 #include "base/win/registry.h"
 #include "chrome/installer/util/google_update_constants.h"
+#include "chrome/installer/util/test_app_registration_data.h"
 #include "chrome/installer/util/work_item.h"
+#include "chrome/installer/util/work_item_list.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -31,6 +33,14 @@ using ::testing::StrEq;
 class MockRegistryValuePredicate : public InstallUtil::RegistryValuePredicate {
  public:
   MOCK_CONST_METHOD1(Evaluate, bool(const std::wstring&));
+};
+
+class TestBrowserDistribution : public BrowserDistribution {
+ public:
+  TestBrowserDistribution()
+      : BrowserDistribution(CHROME_BROWSER,
+                            std::unique_ptr<AppRegistrationData>(
+                                new TestAppRegistrationData())) {}
 };
 
 class InstallUtilTest : public testing::Test {
@@ -49,7 +59,8 @@ class InstallUtilTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<registry_util::RegistryOverrideManager> registry_override_manager_;
+  std::unique_ptr<registry_util::RegistryOverrideManager>
+      registry_override_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(InstallUtilTest);
 };
@@ -64,8 +75,7 @@ TEST_F(InstallUtilTest, ComposeCommandLine) {
     std::make_pair(std::wstring(L"spam.exe"),
                    std::wstring(L"--do-something --silly")),
   };
-  for (int i = 0; i < arraysize(params); ++i) {
-    std::pair<std::wstring, std::wstring>& param = params[i];
+  for (std::pair<std::wstring, std::wstring>& param : params) {
     InstallUtil::ComposeCommandLine(param.first, param.second, &command_line);
     EXPECT_EQ(param.first, command_line.GetProgram().value());
     if (param.second.empty()) {
@@ -80,7 +90,7 @@ TEST_F(InstallUtilTest, ComposeCommandLine) {
 
 TEST_F(InstallUtilTest, GetCurrentDate) {
   std::wstring date(InstallUtil::GetCurrentDate());
-  EXPECT_EQ(8, date.length());
+  EXPECT_EQ(8u, date.length());
   if (date.length() == 8) {
     // For an invalid date value, SystemTimeToFileTime will fail.
     // We use this to validate that we have a correct date string.
@@ -94,101 +104,6 @@ TEST_F(InstallUtilTest, GetCurrentDate) {
     systime.wDay = _wtoi(date.substr(6, 2).c_str());
     // Check if they make sense.
     EXPECT_TRUE(SystemTimeToFileTime(&systime, &ft));
-  }
-}
-
-TEST_F(InstallUtilTest, UpdateInstallerStageAP) {
-  const bool system_level = false;
-  const HKEY root = system_level ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
-  std::wstring state_key_path(L"PhonyClientState");
-
-  // Update the stage when there's no "ap" value.
-  {
-    ResetRegistryOverrides();
-    RegKey(root, state_key_path.c_str(), KEY_SET_VALUE);
-    InstallUtil::UpdateInstallerStage(system_level, state_key_path,
-                                      installer::BUILDING);
-    std::wstring value;
-    EXPECT_EQ(ERROR_SUCCESS,
-              RegKey(root, state_key_path.c_str(), KEY_QUERY_VALUE)
-                  .ReadValue(google_update::kRegApField, &value));
-    EXPECT_EQ(L"-stage:building", value);
-  }
-
-  // Update the stage when there is an "ap" value.
-  {
-    ResetRegistryOverrides();
-    RegKey(root, state_key_path.c_str(), KEY_SET_VALUE)
-        .WriteValue(google_update::kRegApField, L"2.0-dev");
-    InstallUtil::UpdateInstallerStage(system_level, state_key_path,
-                                      installer::BUILDING);
-    std::wstring value;
-    EXPECT_EQ(ERROR_SUCCESS,
-              RegKey(root, state_key_path.c_str(), KEY_QUERY_VALUE)
-                  .ReadValue(google_update::kRegApField, &value));
-    EXPECT_EQ(L"2.0-dev-stage:building", value);
-  }
-
-  // Clear the stage.
-  {
-    ResetRegistryOverrides();
-    RegKey(root, state_key_path.c_str(), KEY_SET_VALUE)
-      .WriteValue(google_update::kRegApField, L"2.0-dev-stage:building");
-    InstallUtil::UpdateInstallerStage(system_level, state_key_path,
-                                      installer::NO_STAGE);
-    std::wstring value;
-    EXPECT_EQ(ERROR_SUCCESS,
-              RegKey(root, state_key_path.c_str(), KEY_QUERY_VALUE)
-                  .ReadValue(google_update::kRegApField, &value));
-    EXPECT_EQ(L"2.0-dev", value);
-  }
-}
-
-TEST_F(InstallUtilTest, UpdateInstallerStage) {
-  const bool system_level = false;
-  const HKEY root = system_level ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
-  std::wstring state_key_path(L"PhonyClientState");
-
-  // Update the stage when there's no "InstallerExtraCode1" value.
-  {
-    ResetRegistryOverrides();
-    RegKey(root, state_key_path.c_str(), KEY_SET_VALUE)
-        .DeleteValue(installer::kInstallerExtraCode1);
-    InstallUtil::UpdateInstallerStage(system_level, state_key_path,
-                                      installer::BUILDING);
-    DWORD value;
-    EXPECT_EQ(ERROR_SUCCESS,
-              RegKey(root, state_key_path.c_str(), KEY_QUERY_VALUE)
-                  .ReadValueDW(installer::kInstallerExtraCode1, &value));
-    EXPECT_EQ(static_cast<DWORD>(installer::BUILDING), value);
-  }
-
-  // Update the stage when there is an "InstallerExtraCode1" value.
-  {
-    ResetRegistryOverrides();
-    RegKey(root, state_key_path.c_str(), KEY_SET_VALUE)
-        .WriteValue(installer::kInstallerExtraCode1,
-                    static_cast<DWORD>(installer::UNPACKING));
-    InstallUtil::UpdateInstallerStage(system_level, state_key_path,
-                                      installer::BUILDING);
-    DWORD value;
-    EXPECT_EQ(ERROR_SUCCESS,
-              RegKey(root, state_key_path.c_str(), KEY_QUERY_VALUE)
-                  .ReadValueDW(installer::kInstallerExtraCode1, &value));
-    EXPECT_EQ(static_cast<DWORD>(installer::BUILDING), value);
-  }
-
-  // Clear the stage.
-  {
-    ResetRegistryOverrides();
-    RegKey(root, state_key_path.c_str(), KEY_SET_VALUE)
-        .WriteValue(installer::kInstallerExtraCode1, static_cast<DWORD>(5));
-    InstallUtil::UpdateInstallerStage(system_level, state_key_path,
-                                      installer::NO_STAGE);
-    DWORD value;
-    EXPECT_EQ(ERROR_FILE_NOT_FOUND,
-              RegKey(root, state_key_path.c_str(), KEY_QUERY_VALUE)
-                  .ReadValueDW(installer::kInstallerExtraCode1, &value));
   }
 }
 
@@ -409,7 +324,7 @@ TEST_F(InstallUtilTest, ProgramCompare) {
   base::ScopedTempDir test_dir;
   ASSERT_TRUE(test_dir.CreateUniqueTempDir());
   const base::FilePath some_long_dir(
-      test_dir.path().Append(L"Some Long Directory Name"));
+      test_dir.GetPath().Append(L"Some Long Directory Name"));
   const base::FilePath expect(some_long_dir.Append(L"file.txt"));
   const base::FilePath expect_upcase(some_long_dir.Append(L"FILE.txt"));
   const base::FilePath other(some_long_dir.Append(L"otherfile.txt"));
@@ -459,6 +374,8 @@ TEST_F(InstallUtilTest, ProgramCompare) {
 // DIR_PROGRAM_FILESX86 as a suffix but not DIR_PROGRAM_FILES when the two are
 // unrelated.
 TEST_F(InstallUtilTest, IsPerUserInstall) {
+  InstallUtil::ResetIsPerUserInstallForTest();
+
 #if defined(_WIN64)
   const int kChromeProgramFilesKey = base::DIR_PROGRAM_FILESX86;
 #else
@@ -471,6 +388,7 @@ TEST_F(InstallUtilTest, IsPerUserInstall) {
       .AppendASCII("Product")
       .AppendASCII("product.exe");
   EXPECT_FALSE(InstallUtil::IsPerUserInstall(some_exe));
+  InstallUtil::ResetIsPerUserInstallForTest();
 
 #if defined(_WIN64)
   const int kOtherProgramFilesKey = base::DIR_PROGRAM_FILES;
@@ -480,5 +398,109 @@ TEST_F(InstallUtilTest, IsPerUserInstall) {
       .AppendASCII("Product")
       .AppendASCII("product.exe");
   EXPECT_TRUE(InstallUtil::IsPerUserInstall(some_exe));
+  InstallUtil::ResetIsPerUserInstallForTest();
 #endif  // defined(_WIN64)
+}
+
+TEST_F(InstallUtilTest, AddDowngradeVersion) {
+  TestBrowserDistribution dist;
+  bool system_install = true;
+  RegKey(HKEY_LOCAL_MACHINE, dist.GetStateKey().c_str(),
+         KEY_SET_VALUE | KEY_WOW64_32KEY);
+  std::unique_ptr<WorkItemList> list;
+
+  base::Version current_version("1.1.1.1");
+  base::Version higer_new_version("1.1.1.2");
+  base::Version lower_new_version_1("1.1.1.0");
+  base::Version lower_new_version_2("1.1.0.0");
+
+  ASSERT_FALSE(
+      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
+
+  // Upgrade should not create the value.
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &current_version, higer_new_version, &dist, list.get());
+  ASSERT_TRUE(list->Do());
+  ASSERT_FALSE(
+      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
+
+  // Downgrade should create the value.
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &current_version, lower_new_version_1, &dist, list.get());
+  ASSERT_TRUE(list->Do());
+  EXPECT_EQ(current_version,
+            InstallUtil::GetDowngradeVersion(system_install, &dist));
+
+  // Multiple downgrades should not change the value.
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &lower_new_version_1, lower_new_version_2, &dist,
+      list.get());
+  ASSERT_TRUE(list->Do());
+  EXPECT_EQ(current_version,
+            InstallUtil::GetDowngradeVersion(system_install, &dist));
+}
+
+TEST_F(InstallUtilTest, DeleteDowngradeVersion) {
+  TestBrowserDistribution dist;
+  bool system_install = true;
+  RegKey(HKEY_LOCAL_MACHINE, dist.GetStateKey().c_str(),
+         KEY_SET_VALUE | KEY_WOW64_32KEY);
+  std::unique_ptr<WorkItemList> list;
+
+  base::Version current_version("1.1.1.1");
+  base::Version higer_new_version("1.1.1.2");
+  base::Version lower_new_version_1("1.1.1.0");
+  base::Version lower_new_version_2("1.1.0.0");
+
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &current_version, lower_new_version_2, &dist, list.get());
+  ASSERT_TRUE(list->Do());
+  EXPECT_EQ(current_version,
+            InstallUtil::GetDowngradeVersion(system_install, &dist));
+
+  // Upgrade should not delete the value if it still lower than the version that
+  // downgrade from.
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &lower_new_version_2, lower_new_version_1, &dist,
+      list.get());
+  ASSERT_TRUE(list->Do());
+  EXPECT_EQ(current_version,
+            InstallUtil::GetDowngradeVersion(system_install, &dist));
+
+  // Repair should not delete the value.
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &lower_new_version_1, lower_new_version_1, &dist,
+      list.get());
+  ASSERT_TRUE(list->Do());
+  EXPECT_EQ(current_version,
+            InstallUtil::GetDowngradeVersion(system_install, &dist));
+
+  // Fully upgrade should delete the value.
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &lower_new_version_1, higer_new_version, &dist,
+      list.get());
+  ASSERT_TRUE(list->Do());
+  ASSERT_FALSE(
+      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
+
+  // Fresh install should delete the value if it exists.
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, &current_version, lower_new_version_2, &dist, list.get());
+  ASSERT_TRUE(list->Do());
+  EXPECT_EQ(current_version,
+            InstallUtil::GetDowngradeVersion(system_install, &dist));
+  list.reset(WorkItem::CreateWorkItemList());
+  InstallUtil::AddUpdateDowngradeVersionItem(
+      system_install, nullptr, lower_new_version_1, &dist, list.get());
+  ASSERT_TRUE(list->Do());
+  ASSERT_FALSE(
+      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
 }

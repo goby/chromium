@@ -10,6 +10,7 @@
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 
 #if defined(OS_MACOSX)
@@ -27,7 +28,7 @@ namespace {
 base::LazyInstance<base::WeakPtr<BluetoothAdapter> >::Leaky default_adapter =
     LAZY_INSTANCE_INITIALIZER;
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS)
 typedef std::vector<BluetoothAdapterFactory::AdapterCallback>
     AdapterCallbackList;
 
@@ -48,7 +49,7 @@ void RunAdapterCallbacks() {
   }
   adapter_callbacks.Get().clear();
 }
-#endif  // defined(OS_WIN)
+#endif  // defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS)
 
 }  // namespace
 
@@ -58,27 +59,38 @@ bool BluetoothAdapterFactory::IsBluetoothAdapterAvailable() {
   // instance even on platforms that would otherwise not support it.
   if (default_adapter.Get())
     return true;
-// Even though the adapter is available on Linux, we only want to use it for
-// the Chrome API, which is why defines(OS_LINUX) is missing from here.
-#if defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(OS_WIN)
+#if defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(OS_WIN) || \
+    defined(OS_LINUX) || defined(OS_MACOSX)
   return true;
-#elif defined(OS_MACOSX)
-  return base::mac::IsOSLionOrLater();
 #else
   return false;
 #endif
 }
 
 // static
-void BluetoothAdapterFactory::GetAdapter(const AdapterCallback& callback) {
-// TODO(rkc): This is a very slight hack to allow us to be able to create
-// an adapter on Linux, 'without' exposing the adapter to all Bluetooth
-// services within the browser.
-#if !defined(OS_LINUX)
+bool BluetoothAdapterFactory::IsLowEnergyAvailable() {
   DCHECK(IsBluetoothAdapterAvailable());
-#endif
 
-#if defined(OS_WIN)
+  // SetAdapterForTesting() may be used to provide a test or mock adapter
+  // instance even on platforms that would otherwise not support it.
+  if (default_adapter.Get())
+    return true;
+#if defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(OS_WIN) || \
+    defined(OS_LINUX)
+  return true;
+#elif defined(OS_MACOSX)
+  return base::mac::IsAtLeastOS10_10();
+#else
+  return false;
+#endif  // defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(OS_WIN) ||
+        // defined(OS_LINUX)
+}
+
+// static
+void BluetoothAdapterFactory::GetAdapter(const AdapterCallback& callback) {
+  DCHECK(IsBluetoothAdapterAvailable());
+
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS)
   if (!default_adapter.Get()) {
     default_adapter.Get() =
         BluetoothAdapter::CreateAdapter(base::Bind(&RunAdapterCallbacks));
@@ -87,18 +99,17 @@ void BluetoothAdapterFactory::GetAdapter(const AdapterCallback& callback) {
 
   if (!default_adapter.Get()->IsInitialized())
     adapter_callbacks.Get().push_back(callback);
-#else  // !defined(OS_WIN)
+#else   // !defined(OS_WIN) && !defined(OS_LINUX) && !defined(OS_CHROMEOS)
   if (!default_adapter.Get()) {
     default_adapter.Get() =
         BluetoothAdapter::CreateAdapter(BluetoothAdapter::InitCallback());
   }
 
   DCHECK(default_adapter.Get()->IsInitialized());
-#endif  // defined(OS_WIN)
+#endif  // defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS)
 
   if (default_adapter.Get()->IsInitialized())
     callback.Run(scoped_refptr<BluetoothAdapter>(default_adapter.Get().get()));
-
 }
 
 #if defined(OS_CHROMEOS) || defined(OS_LINUX)
@@ -117,7 +128,7 @@ void BluetoothAdapterFactory::SetAdapterForTesting(
 
 // static
 bool BluetoothAdapterFactory::HasSharedInstanceForTesting() {
-  return default_adapter.Get();
+  return default_adapter.Get() != nullptr;
 }
 
 }  // namespace device

@@ -4,11 +4,12 @@
 
 #include "chrome/browser/ui/views/translate/translate_bubble_view.h"
 
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/translate/cld_data_harness.h"
-#include "chrome/browser/translate/cld_data_harness_factory.h"
+#include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -21,19 +22,13 @@
 
 class TranslateBubbleViewBrowserTest : public InProcessBrowserTest {
  public:
-  TranslateBubbleViewBrowserTest():
-    cld_data_harness(
-      test::CldDataHarnessFactory::Get()->CreateCldDataHarness()) {}
+  TranslateBubbleViewBrowserTest() {}
   ~TranslateBubbleViewBrowserTest() override {}
   void SetUpOnMainThread() override {
-    // We can't Init() until PathService has been initialized. This happens
-    // very late in the test fixture setup process.
-    cld_data_harness->Init();
     InProcessBrowserTest::SetUpOnMainThread();
   }
 
  private:
-  scoped_ptr<test::CldDataHarness> cld_data_harness;
   DISALLOW_COPY_AND_ASSIGN(TranslateBubbleViewBrowserTest);
 };
 
@@ -100,15 +95,8 @@ IN_PROC_BROWSER_TEST_F(TranslateBubbleViewBrowserTest,
   EXPECT_EQ(active_index, browser()->tab_strip_model()->active_index());
   EXPECT_EQ(2, browser()->tab_strip_model()->count());
 
-  // Wait until the language is detected.
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetWebContentsAt(french_index);
-  content::Source<content::WebContents> source(web_contents);
-  ui_test_utils::WindowedNotificationObserverWithDetails<
-      translate::LanguageDetectionDetails>
-      fr_language_detected_signal(chrome::NOTIFICATION_TAB_LANGUAGE_DETERMINED,
-                                  source);
-  fr_language_detected_signal.Wait();
 
   // The bubble is not shown because the tab is not activated.
   EXPECT_FALSE(TranslateBubbleView::GetCurrentBubble());

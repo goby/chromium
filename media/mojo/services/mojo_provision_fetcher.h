@@ -5,18 +5,21 @@
 #ifndef MEDIA_MOJO_SERVICES_MOJO_PROVISION_FETCHER_H_
 #define MEDIA_MOJO_SERVICES_MOJO_PROVISION_FETCHER_H_
 
+#include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "media/base/android/provision_fetcher.h"
+#include "media/base/provision_fetcher.h"
 #include "media/mojo/interfaces/provision_fetcher.mojom.h"
+#include "media/mojo/services/media_mojo_export.h"
 
 namespace media {
 
-// A ProvisionFetcher that proxies to a interfaces::ProvisionFetcherPtr.
-class MojoProvisionFetcher : public ProvisionFetcher {
+// A ProvisionFetcher that proxies to a mojom::ProvisionFetcherPtr.
+class MEDIA_MOJO_EXPORT MojoProvisionFetcher
+    : NON_EXPORTED_BASE(public ProvisionFetcher) {
  public:
   explicit MojoProvisionFetcher(
-      interfaces::ProvisionFetcherPtr provision_fetcher_ptr);
+      mojom::ProvisionFetcherPtr provision_fetcher_ptr);
   ~MojoProvisionFetcher() final;
 
   // ProvisionFetcher implementation:
@@ -25,12 +28,12 @@ class MojoProvisionFetcher : public ProvisionFetcher {
                 const ResponseCB& response_cb) final;
 
  private:
-  // Callback for interfaces::ProvisionFetcherPtr::Retrieve().
+  // Callback for mojom::ProvisionFetcherPtr::Retrieve().
   void OnResponse(const ResponseCB& response_cb,
                   bool success,
                   const std::string& response);
 
-  interfaces::ProvisionFetcherPtr provision_fetcher_ptr_;
+  mojom::ProvisionFetcherPtr provision_fetcher_ptr_;
 
   base::WeakPtrFactory<MojoProvisionFetcher> weak_factory_;
 

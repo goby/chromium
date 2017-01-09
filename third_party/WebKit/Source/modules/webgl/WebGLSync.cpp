@@ -2,31 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
-
 #include "modules/webgl/WebGLSync.h"
 
+#include "gpu/command_buffer/client/gles2_interface.h"
 #include "modules/webgl/WebGL2RenderingContextBase.h"
 
 namespace blink {
 
-WebGLSync::~WebGLSync()
-{
-    // See the comment in WebGLObject::detachAndDeleteObject().
-    detachAndDeleteObject();
+WebGLSync::WebGLSync(WebGL2RenderingContextBase* ctx,
+                     GLsync object,
+                     GLenum objectType)
+    : WebGLSharedObject(ctx), m_object(object), m_objectType(objectType) {}
+
+WebGLSync::~WebGLSync() {
+  runDestructor();
 }
 
-WebGLSync::WebGLSync(WebGL2RenderingContextBase* ctx, WGC3Dsync object, GLenum objectType)
-    : WebGLSharedObject(ctx)
-    , m_object(object)
-    , m_objectType(objectType)
-{
+void WebGLSync::deleteObjectImpl(gpu::gles2::GLES2Interface* gl) {
+  gl->DeleteSync(m_object);
+  m_object = 0;
 }
 
-void WebGLSync::deleteObjectImpl(WebGraphicsContext3D* context3d)
-{
-    context3d->deleteSync(m_object);
-    m_object = 0;
-}
-
-} // namespace blink
+}  // namespace blink

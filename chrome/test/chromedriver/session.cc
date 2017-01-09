@@ -5,6 +5,7 @@
 #include "chrome/test/chromedriver/session.h"
 
 #include <list>
+#include <utility>
 
 #include "base/lazy_instance.h"
 #include "base/threading/thread_local.h"
@@ -33,6 +34,7 @@ const base::TimeDelta Session::kDefaultPageLoadTimeout =
 
 Session::Session(const std::string& id)
     : id(id),
+      w3c_compliant(false),
       quit(false),
       detach(false),
       force_devtools_screenshot(false),
@@ -41,12 +43,13 @@ Session::Session(const std::string& id)
       page_load_timeout(kDefaultPageLoadTimeout),
       auto_reporting_enabled(false) {}
 
-Session::Session(const std::string& id, scoped_ptr<Chrome> chrome)
+Session::Session(const std::string& id, std::unique_ptr<Chrome> chrome)
     : id(id),
+      w3c_compliant(false),
       quit(false),
       detach(false),
       force_devtools_screenshot(false),
-      chrome(chrome.Pass()),
+      chrome(std::move(chrome)),
       sticky_modifiers(0),
       mouse_position(0, 0),
       page_load_timeout(kDefaultPageLoadTimeout),
@@ -116,6 +119,6 @@ Session* GetThreadLocalSession() {
   return lazy_tls_session.Pointer()->Get();
 }
 
-void SetThreadLocalSession(scoped_ptr<Session> session) {
+void SetThreadLocalSession(std::unique_ptr<Session> session) {
   lazy_tls_session.Pointer()->Set(session.release());
 }

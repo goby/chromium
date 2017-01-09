@@ -5,9 +5,12 @@
 #ifndef NET_PROXY_PROXY_SCRIPT_DECIDER_H_
 #define NET_PROXY_PROXY_SCRIPT_DECIDER_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
@@ -16,16 +19,20 @@
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 #include "net/dns/host_resolver.h"
-#include "net/dns/single_request_host_resolver.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_resolver.h"
 #include "url/gurl.h"
 
+namespace base {
+class Value;
+}
+
 namespace net {
 
 class DhcpProxyScriptFetcher;
-class NetLogParameter;
+class NetLog;
+class NetLogCaptureMode;
 class ProxyResolver;
 class ProxyScriptFetcher;
 
@@ -100,7 +107,7 @@ class NET_EXPORT_PRIVATE ProxyScriptDecider {
     // Returns a Value representing the PacSource.  |effective_pac_url| must
     // be non-NULL and point to the URL derived from information contained in
     // |this|, if Type is not WPAD_DHCP.
-    scoped_ptr<base::Value> NetLogCallback(
+    std::unique_ptr<base::Value> NetLogCallback(
         const GURL* effective_pac_url,
         NetLogCaptureMode capture_mode) const;
 
@@ -180,7 +187,7 @@ class NET_EXPORT_PRIVATE ProxyScriptDecider {
   PacSourceList pac_sources_;
   State next_state_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   bool fetch_pac_bytes_;
 
@@ -196,7 +203,8 @@ class NET_EXPORT_PRIVATE ProxyScriptDecider {
 
   AddressList wpad_addresses_;
   base::OneShotTimer quick_check_timer_;
-  scoped_ptr<SingleRequestHostResolver> host_resolver_;
+  HostResolver* host_resolver_;
+  std::unique_ptr<HostResolver::Request> request_;
   base::Time quick_check_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(ProxyScriptDecider);

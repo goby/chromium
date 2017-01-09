@@ -13,16 +13,16 @@ namespace remoting {
 
 VideoEncoderHelper::VideoEncoderHelper() {}
 
-scoped_ptr<VideoPacket> VideoEncoderHelper::CreateVideoPacket(
+std::unique_ptr<VideoPacket> VideoEncoderHelper::CreateVideoPacket(
     const webrtc::DesktopFrame& frame) {
   return CreateVideoPacketWithUpdatedRegion(frame, frame.updated_region());
 }
 
-scoped_ptr<VideoPacket>
+std::unique_ptr<VideoPacket>
 VideoEncoderHelper::CreateVideoPacketWithUpdatedRegion(
     const webrtc::DesktopFrame& frame,
     const webrtc::DesktopRegion& updated_region) {
-  scoped_ptr<VideoPacket> packet(new VideoPacket());
+  std::unique_ptr<VideoPacket> packet(new VideoPacket());
 
   // Set |screen_width| and |screen_height| iff they have changed.
   if (!frame.size().equals(screen_size_)) {
@@ -44,26 +44,13 @@ VideoEncoderHelper::CreateVideoPacketWithUpdatedRegion(
     dirty_rect->set_height(rect.height());
   }
 
-  // Record the shape of the frame, if specified.
-  if (frame.shape()) {
-    packet->set_use_desktop_shape(true);
-    for (webrtc::DesktopRegion::Iterator r(*frame.shape());
-         !r.IsAtEnd(); r.Advance()) {
-      Rect* rect = packet->add_desktop_shape_rects();
-      rect->set_x(r.rect().left());
-      rect->set_y(r.rect().top());
-      rect->set_width(r.rect().width());
-      rect->set_height(r.rect().height());
-    }
-  }
-
   // Store frame DPI.
   if (!frame.dpi().is_zero()) {
     packet->mutable_format()->set_x_dpi(frame.dpi().x());
     packet->mutable_format()->set_y_dpi(frame.dpi().y());
   }
 
-  return packet.Pass();
+  return packet;
 }
 
 }  // namespace remoting

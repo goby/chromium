@@ -6,14 +6,16 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/prefs/pref_registry_simple.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/browser_otr_state.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "content/public/browser/notification_service.h"
-#include "grit/theme_resources.h"
+#include "ui/gfx/color_palette.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/vector_icons_public.h"
 
 // How long to wait between checks for whether the user has been idle.
 static const int kIdleRepeatingTimerWait = 10;  // Minutes (seconds if testing).
@@ -36,23 +38,27 @@ void UpgradeDetector::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kAttemptedToEnableAutoupdate, false);
 }
 
-int UpgradeDetector::GetIconResourceID() {
+gfx::Image UpgradeDetector::GetIcon() {
+  SkColor color = gfx::kPlaceholderColor;
   switch (upgrade_notification_stage_) {
     case UPGRADE_ANNOYANCE_NONE:
-      return 0;
+      return gfx::Image();
     case UPGRADE_ANNOYANCE_LOW:
-      return IDR_UPDATE_MENU_SEVERITY_LOW;
+      color = gfx::kGoogleGreen700;
+      break;
     case UPGRADE_ANNOYANCE_ELEVATED:
-      return IDR_UPDATE_MENU_SEVERITY_MEDIUM;
+      color = gfx::kGoogleYellow700;
+      break;
     case UPGRADE_ANNOYANCE_HIGH:
-      return IDR_UPDATE_MENU_SEVERITY_HIGH;
     case UPGRADE_ANNOYANCE_SEVERE:
-      return IDR_UPDATE_MENU_SEVERITY_HIGH;
     case UPGRADE_ANNOYANCE_CRITICAL:
-      return IDR_UPDATE_MENU_SEVERITY_HIGH;
+      color = gfx::kGoogleRed700;
+      break;
   }
-  NOTREACHED();
-  return 0;
+  DCHECK_NE(gfx::kPlaceholderColor, color);
+
+  return gfx::Image(
+      gfx::CreateVectorIcon(gfx::VectorIconId::BROWSER_TOOLS_UPDATE, color));
 }
 
 UpgradeDetector::UpgradeDetector()
@@ -110,7 +116,7 @@ void UpgradeDetector::TriggerNotification(chrome::NotificationType type) {
 void UpgradeDetector::IdleCallback(ui::IdleState state) {
   // Don't proceed while an incognito window is open. The timer will still
   // keep firing, so this function will get a chance to re-evaluate this.
-  if (chrome::IsOffTheRecordSessionActive())
+  if (chrome::IsIncognitoSessionActive())
     return;
 
   switch (state) {

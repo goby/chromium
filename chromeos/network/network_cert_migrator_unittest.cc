@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "chromeos/cert_loader.h"
@@ -18,10 +19,10 @@
 #include "chromeos/network/network_state_handler.h"
 #include "crypto/scoped_nss_types.h"
 #include "crypto/scoped_test_nss_db.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/nss_cert_database_chromeos.h"
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -88,7 +89,7 @@ class NetworkCertMigratorTest : public testing::Test {
   }
 
   void SetupNetworkHandlers() {
-    network_state_handler_.reset(NetworkStateHandler::InitializeForTest());
+    network_state_handler_ = NetworkStateHandler::InitializeForTest();
     network_cert_migrator_.reset(new NetworkCertMigrator);
     network_cert_migrator_->Init(network_state_handler_.get());
   }
@@ -190,10 +191,10 @@ class NetworkCertMigratorTest : public testing::Test {
   base::MessageLoop message_loop_;
 
  private:
-  scoped_ptr<NetworkStateHandler> network_state_handler_;
-  scoped_ptr<NetworkCertMigrator> network_cert_migrator_;
+  std::unique_ptr<NetworkStateHandler> network_state_handler_;
+  std::unique_ptr<NetworkCertMigrator> network_cert_migrator_;
   crypto::ScopedTestNSSDB test_nssdb_;
-  scoped_ptr<net::NSSCertDatabaseChromeOS> test_nsscertdb_;
+  std::unique_ptr<net::NSSCertDatabaseChromeOS> test_nsscertdb_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkCertMigratorTest);
 };

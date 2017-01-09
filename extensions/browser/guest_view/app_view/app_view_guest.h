@@ -6,6 +6,7 @@
 #define EXTENSIONS_BROWSER_GUEST_VIEW_APP_VIEW_APP_VIEW_GUEST_H_
 
 #include "base/id_map.h"
+#include "base/macros.h"
 #include "components/guest_view/browser/guest_view.h"
 #include "extensions/browser/guest_view/app_view/app_view_guest_delegate.h"
 
@@ -71,14 +72,14 @@ class AppViewGuest : public guest_view::GuestView<AppViewGuest> {
                                  const Extension* guest_extension,
                                  const WebContentsCreatedCallback& callback);
 
-  void LaunchAppAndFireEvent(scoped_ptr<base::DictionaryValue> data,
+  void LaunchAppAndFireEvent(std::unique_ptr<base::DictionaryValue> data,
                              const WebContentsCreatedCallback& callback,
                              ExtensionHost* extension_host);
 
   GURL url_;
   std::string guest_extension_id_;
-  scoped_ptr<AppViewGuestDelegate> app_view_guest_delegate_;
-  scoped_ptr<AppDelegate> app_delegate_;
+  std::unique_ptr<AppViewGuestDelegate> app_view_guest_delegate_;
+  std::unique_ptr<AppDelegate> app_delegate_;
 
   // This is used to ensure pending tasks will not fire after this object is
   // destroyed.

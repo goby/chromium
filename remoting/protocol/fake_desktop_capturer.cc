@@ -4,8 +4,11 @@
 
 #include "remoting/protocol/fake_desktop_capturer.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 
@@ -32,22 +35,20 @@ class DefaultFrameGenerator
     : public base::RefCountedThreadSafe<DefaultFrameGenerator> {
  public:
   DefaultFrameGenerator()
-      : bytes_per_row_(0),
-        box_pos_x_(0),
+      : box_pos_x_(0),
         box_pos_y_(0),
         box_speed_x_(kSpeed),
         box_speed_y_(kSpeed),
         first_frame_(true) {}
 
-  scoped_ptr<webrtc::DesktopFrame> GenerateFrame(
-      webrtc::DesktopCapturer::Callback* callback);
+  std::unique_ptr<webrtc::DesktopFrame> GenerateFrame(
+      webrtc::SharedMemoryFactory* shared_memory_factory);
 
  private:
   friend class base::RefCountedThreadSafe<DefaultFrameGenerator>;
   ~DefaultFrameGenerator() {}
 
   webrtc::DesktopSize size_;
-  int bytes_per_row_;
   int box_pos_x_;
   int box_pos_y_;
   int box_speed_x_;
@@ -57,16 +58,15 @@ class DefaultFrameGenerator
   DISALLOW_COPY_AND_ASSIGN(DefaultFrameGenerator);
 };
 
-scoped_ptr<webrtc::DesktopFrame> DefaultFrameGenerator::GenerateFrame(
-    webrtc::DesktopCapturer::Callback* callback) {
+std::unique_ptr<webrtc::DesktopFrame> DefaultFrameGenerator::GenerateFrame(
+    webrtc::SharedMemoryFactory* shared_memory_factory) {
   const int kBytesPerPixel = webrtc::DesktopFrame::kBytesPerPixel;
-  int buffer_size = kWidth * kHeight * kBytesPerPixel;
-  webrtc::SharedMemory* shared_memory =
-      callback->CreateSharedMemory(buffer_size);
-  scoped_ptr<webrtc::DesktopFrame> frame;
-  if (shared_memory) {
+  std::unique_ptr<webrtc::DesktopFrame> frame;
+  if (shared_memory_factory) {
+    int buffer_size = kWidth * kHeight * kBytesPerPixel;
     frame.reset(new webrtc::SharedMemoryDesktopFrame(
-        webrtc::DesktopSize(kWidth, kHeight), bytes_per_row_, shared_memory));
+        webrtc::DesktopSize(kWidth, kHeight), kWidth * kBytesPerPixel,
+        shared_memory_factory->CreateSharedMemory(buffer_size).release()));
   } else {
     frame.reset(
         new webrtc::BasicDesktopFrame(webrtc::DesktopSize(kWidth, kHeight)));
@@ -89,8 +89,8 @@ scoped_ptr<webrtc::DesktopFrame> DefaultFrameGenerator::GenerateFrame(
   //     cyan....yellow
   //     ..............
   //     blue.......red
-  uint8* row = frame->data() +
-      (box_pos_y_ * size_.width() + box_pos_x_) * kBytesPerPixel;
+  uint8_t* row = frame->data() +
+                 (box_pos_y_ * size_.width() + box_pos_x_) * kBytesPerPixel;
   for (int y = 0; y < kBoxHeight; ++y) {
     for (int x = 0; x < kBoxWidth; ++x) {
       int r = x * 255 / kBoxWidth;
@@ -115,7 +115,7 @@ scoped_ptr<webrtc::DesktopFrame> DefaultFrameGenerator::GenerateFrame(
         box_pos_x_, box_pos_y_, kBoxWidth, kBoxHeight));
   }
 
-  return frame.Pass();
+  return frame;
 }
 
 }  // namespace
@@ -140,14 +140,33 @@ void FakeDesktopCapturer::Start(Callback* callback) {
   callback_ = callback;
 }
 
-void FakeDesktopCapturer::Capture(const webrtc::DesktopRegion& region) {
+void FakeDesktopCapturer::SetSharedMemoryFactory(
+    std::unique_ptr<webrtc::SharedMemoryFactory> shared_memory_factory) {
+  shared_memory_factory_ = std::move(shared_memory_factory);
+}
+
+void FakeDesktopCapturer::CaptureFrame() {
   base::Time capture_start_time = base::Time::Now();
-  scoped_ptr<webrtc::DesktopFrame> frame = frame_generator_.Run(callback_);
+  std::unique_ptr<webrtc::DesktopFrame> frame =
+      frame_generator_.Run(shared_memory_factory_.get());
   if (frame) {
     frame->set_capture_time_ms(
         (base::Time::Now() - capture_start_time).InMillisecondsRoundedUp());
   }
-  callback_->OnCaptureCompleted(frame.release());
+  callback_->OnCaptureResult(
+      frame ? webrtc::DesktopCapturer::Result::SUCCESS
+            : webrtc::DesktopCapturer::Result::ERROR_TEMPORARY,
+      std::move(frame));
+}
+
+bool FakeDesktopCapturer::GetSourceList(SourceList* sources) {
+  NOTIMPLEMENTED();
+  return false;
+}
+
+bool FakeDesktopCapturer::SelectSource(SourceId id) {
+  NOTIMPLEMENTED();
+  return false;
 }
 
 }  // namespace protocol

@@ -5,7 +5,7 @@
 #include "ui/views/controls/button/button.h"
 
 #include "base/strings/utf_string_conversions.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 
 namespace views {
 
@@ -28,6 +28,15 @@ Button::ButtonState Button::GetButtonStateFrom(ui::NativeTheme::State state) {
 // Button, public:
 
 Button::~Button() {
+}
+
+void Button::SetFocusForPlatform() {
+#if defined(OS_MACOSX)
+  // On Mac, buttons are focusable only in full keyboard access mode.
+  SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
+#else
+  SetFocusBehavior(FocusBehavior::ALWAYS);
+#endif
 }
 
 void Button::SetTooltipText(const base::string16& tooltip_text) {
@@ -53,9 +62,9 @@ bool Button::GetTooltipText(const gfx::Point& p,
   return true;
 }
 
-void Button::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_BUTTON;
-  state->name = accessible_name_;
+void Button::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_BUTTON;
+  node_data->SetName(accessible_name_);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -64,7 +73,7 @@ void Button::GetAccessibleState(ui::AXViewState* state) {
 Button::Button(ButtonListener* listener)
     : listener_(listener),
       tag_(-1) {
-  SetAccessibilityFocusable(true);
+  SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
 }
 
 void Button::NotifyClick(const ui::Event& event) {

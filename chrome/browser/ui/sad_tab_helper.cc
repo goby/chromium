@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/sad_tab_helper.h"
 
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/ui/sad_tab.h"
 #include "content/public/browser/web_contents.h"
@@ -23,6 +24,8 @@ chrome::SadTabKind SadTabKindFromTerminationStatus(
     case base::TERMINATION_STATUS_PROCESS_WAS_KILLED:
     case base::TERMINATION_STATUS_LAUNCH_FAILED:
       return chrome::SAD_TAB_KIND_KILLED;
+    case base::TERMINATION_STATUS_OOM:
+      return chrome::SAD_TAB_KIND_OOM;
     default:
       return chrome::SAD_TAB_KIND_CRASHED;
   }
@@ -38,10 +41,7 @@ SadTabHelper::SadTabHelper(content::WebContents* web_contents)
 }
 
 void SadTabHelper::RenderViewReady() {
-  if (sad_tab_) {
-    sad_tab_->Close();
-    sad_tab_.reset();
-  }
+  sad_tab_.reset();
 }
 
 void SadTabHelper::RenderProcessGone(base::TerminationStatus status) {
@@ -61,5 +61,4 @@ void SadTabHelper::RenderProcessGone(base::TerminationStatus status) {
 void SadTabHelper::InstallSadTab(base::TerminationStatus status) {
   sad_tab_.reset(chrome::SadTab::Create(
       web_contents(), SadTabKindFromTerminationStatus(status)));
-  sad_tab_->Show();
 }

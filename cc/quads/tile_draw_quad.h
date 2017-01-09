@@ -5,12 +5,16 @@
 #ifndef CC_QUADS_TILE_DRAW_QUAD_H_
 #define CC_QUADS_TILE_DRAW_QUAD_H_
 
+#include <stddef.h>
+
 #include "cc/quads/content_draw_quad_base.h"
 
 namespace cc {
 
 class CC_EXPORT TileDrawQuad : public ContentDrawQuadBase {
  public:
+  static const size_t kResourceIdIndex = 0;
+
   TileDrawQuad();
   ~TileDrawQuad() override;
 
@@ -46,8 +50,6 @@ class CC_EXPORT TileDrawQuad : public ContentDrawQuadBase {
   ResourceId resource_id() const { return resources.ids[kResourceIdIndex]; }
 
  private:
-  static const size_t kResourceIdIndex = 0;
-
   void ExtendValue(base::trace_event::TracedValue* value) const override;
 };
 

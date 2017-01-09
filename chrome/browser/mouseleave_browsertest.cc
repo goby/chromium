@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_browsertest_util.h"
 #include "chrome/browser/ui/browser.h"
@@ -105,14 +107,14 @@ IN_PROC_BROWSER_TEST_F(MouseLeaveTest, MouseDownOnBrowserCaption) {
 }
 #endif
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_MACOSX) || defined(OS_WIN)
 // Test that a mouseleave is not triggered when showing the context menu.
 // If the test is failed, it means that Blink gets the mouseleave event
 // when showing the context menu and it could make the unexpecting
 // content behavior such as clearing the hover status.
 // Please refer to the below issue for understanding what happens .
 // TODO: Make test pass on OS_WIN and OS_MACOSX
-// OS_WIN: http://crbug.com/450138
+// OS_WIN: Flaky. See http://crbug.com/656101.
 // OS_MACOSX: Missing automation provider support: http://crbug.com/45892.
 #define MAYBE_ContextMenu DISABLED_ContextMenu
 #else

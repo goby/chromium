@@ -4,6 +4,8 @@
 
 #include "extensions/browser/guest_view/extensions_guest_view_manager_delegate.h"
 
+#include <utility>
+
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/common/guest_view_constants.h"
@@ -37,13 +39,13 @@ ExtensionsGuestViewManagerDelegate::~ExtensionsGuestViewManagerDelegate() {
 
 void ExtensionsGuestViewManagerDelegate::DispatchEvent(
     const std::string& event_name,
-    scoped_ptr<base::DictionaryValue> args,
+    std::unique_ptr<base::DictionaryValue> args,
     GuestViewBase* guest,
     int instance_id) {
   EventFilteringInfo info;
   info.SetInstanceID(instance_id);
-  scoped_ptr<base::ListValue> event_args(new base::ListValue());
-  event_args->Append(args.release());
+  std::unique_ptr<base::ListValue> event_args(new base::ListValue());
+  event_args->Append(std::move(args));
 
   // GetEventHistogramValue maps guest view event names to their histogram
   // value. It needs to be like this because the guest view component doesn't
@@ -55,16 +57,18 @@ void ExtensionsGuestViewManagerDelegate::DispatchEvent(
                                               << " must have a histogram value";
 
   content::WebContents* owner = guest->owner_web_contents();
-  EventRouter::DispatchEventToSender(
-      owner, guest->browser_context(), guest->owner_host(), histogram_value,
-      event_name, event_args.Pass(), EventRouter::USER_GESTURE_UNKNOWN, info);
+  EventRouter::DispatchEventToSender(owner, guest->browser_context(),
+                                     guest->owner_host(), histogram_value,
+                                     event_name, std::move(event_args),
+                                     EventRouter::USER_GESTURE_UNKNOWN, info);
 }
 
 bool ExtensionsGuestViewManagerDelegate::IsGuestAvailableToContext(
     GuestViewBase* guest) {
   const Feature* feature =
       FeatureProvider::GetAPIFeature(guest->GetAPINamespace());
-  CHECK(feature);
+  if (!feature)
+    return false;
 
   ProcessMap* process_map = ProcessMap::Get(context_);
   CHECK(process_map);

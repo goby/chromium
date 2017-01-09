@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/test_message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_unittest_util.h"
@@ -24,37 +25,43 @@ using testing::Return;
 namespace media {
 
 ACTION(ZeroBuffer) {
-  arg0->Zero();
+  arg3->Zero();
 }
 
-ACTION_P(SignalEvent, event) {
-  event->Signal();
+ACTION_P3(MaybeSignalEvent, counter, signal_at_count, event) {
+  if (++(*counter) == signal_at_count)
+    event->Signal();
 }
 
 class AUHALStreamTest : public testing::Test {
  public:
   AUHALStreamTest()
       : message_loop_(base::MessageLoop::TYPE_UI),
-        manager_(AudioManager::CreateForTesting()) {
+        manager_(AudioManager::CreateForTesting(
+            base::ThreadTaskRunnerHandle::Get())) {
     // Wait for the AudioManager to finish any initialization on the audio loop.
     base::RunLoop().RunUntilIdle();
   }
 
-  ~AUHALStreamTest() override { base::RunLoop().RunUntilIdle(); }
+  ~AUHALStreamTest() override {}
 
   AudioOutputStream* Create() {
     return manager_->MakeAudioOutputStream(
-        manager_->GetDefaultOutputStreamParameters(), "");
+        manager_->GetDefaultOutputStreamParameters(), "",
+        base::Bind(&AUHALStreamTest::OnLogMessage, base::Unretained(this)));
   }
 
   bool OutputDevicesAvailable() {
     return manager_->HasAudioOutputDevices();
   }
 
+  void OnLogMessage(const std::string& message) { log_message_ = message; }
+
  protected:
-  base::MessageLoop message_loop_;
-  scoped_ptr<AudioManager> manager_;
+  base::TestMessageLoop message_loop_;
+  ScopedAudioManagerPtr manager_;
   MockAudioSourceCallback source_;
+  std::string log_message_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AUHALStreamTest);
@@ -86,16 +93,25 @@ TEST_F(AUHALStreamTest, CreateOpenStartStopClose) {
   AudioOutputStream* stream = Create();
   EXPECT_TRUE(stream->Open());
 
-  // Wait for the first data callback from the OS.
-  base::WaitableEvent event(false, false);
-  EXPECT_CALL(source_, OnMoreData(_, _))
-      .WillOnce(DoAll(ZeroBuffer(), SignalEvent(&event), Return(0)));
+  // Wait for the first two data callback from the OS.
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
+  int callback_counter = 0;
+  const int number_of_callbacks = 2;
+  EXPECT_CALL(source_, OnMoreData(_, _, _, _))
+      .Times(number_of_callbacks)
+      .WillRepeatedly(DoAll(
+          ZeroBuffer(),
+          MaybeSignalEvent(&callback_counter, number_of_callbacks, &event),
+          Return(0)));
   EXPECT_CALL(source_, OnError(_)).Times(0);
   stream->Start(&source_);
   event.Wait();
 
   stream->Stop();
   stream->Close();
+
+  EXPECT_FALSE(log_message_.empty());
 }
 
 }  // namespace media

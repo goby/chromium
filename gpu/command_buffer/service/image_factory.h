@@ -7,6 +7,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "gpu/gpu_export.h"
+#include "gpu/ipc/common/surface_handle.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
@@ -15,31 +16,10 @@ class GLImage;
 }
 
 namespace gpu {
-struct Capabilities;
 
 class GPU_EXPORT ImageFactory {
  public:
   ImageFactory();
-
-  // Returns a valid GpuMemoryBuffer format given a valid internalformat as
-  // defined by CHROMIUM_gpu_memory_buffer_image.
-  static gfx::BufferFormat DefaultBufferFormatForImageFormat(
-      unsigned internalformat);
-
-  // Returns true if |internalformat| is compatible with |format|.
-  static bool IsImageFormatCompatibleWithGpuMemoryBufferFormat(
-      unsigned internalformat,
-      gfx::BufferFormat format);
-
-  // Returns true if |format| is supported by |capabilities|.
-  static bool IsGpuMemoryBufferFormatSupported(
-      gfx::BufferFormat format,
-      const Capabilities& capabilities);
-
-  // Returns true if |size| is valid for |format|.
-  static bool IsImageSizeValidForGpuMemoryBufferFormat(
-      const gfx::Size& size,
-      gfx::BufferFormat format);
 
   // Creates a GLImage instance for GPU memory buffer identified by |handle|.
   // |client_id| should be set to the client requesting the creation of instance
@@ -49,7 +29,21 @@ class GPU_EXPORT ImageFactory {
       const gfx::Size& size,
       gfx::BufferFormat format,
       unsigned internalformat,
-      int client_id) = 0;
+      int client_id,
+      SurfaceHandle surface_handle) = 0;
+
+  // Create an anonymous GLImage backed by a GpuMemoryBuffer that doesn't have a
+  // client_id. It can't be passed to other processes.
+  virtual scoped_refptr<gl::GLImage> CreateAnonymousImage(
+      const gfx::Size& size,
+      gfx::BufferFormat format,
+      unsigned internalformat);
+
+  // An image can only be bound to a texture with the appropriate type.
+  virtual unsigned RequiredTextureType();
+
+  // Whether a created image can have format GL_RGB.
+  virtual bool SupportsFormatRGB();
 
  protected:
   virtual ~ImageFactory();

@@ -12,8 +12,9 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "remoting/host/client_session_control.h"
 #include "remoting/protocol/errors.h"
@@ -113,20 +114,6 @@ SessionWatcher::~SessionWatcher() {
 }
 
 void SessionWatcher::ActivateCurtain() {
-  // Curtain mode causes problems with the login screen on Lion only (starting
-  // with 10.7.3), so disable it on that platform. There is a work-around, but
-  // it involves modifying a system Plist pertaining to power-management, so
-  // it's not something that should be done automatically. For more details,
-  // see https://discussions.apple.com/thread/3209415?start=690&tstart=0
-  //
-  // TODO(jamiewalch): If the underlying OS bug is ever fixed, we should support
-  // curtain mode on suitable versions of Lion.
-  if (base::mac::IsOSLion()) {
-    LOG(ERROR) << "Host curtaining is not supported on Mac OS X 10.7.";
-    DisconnectSession(protocol::ErrorCode::HOST_CONFIGURATION_ERROR);
-    return;
-  }
-
   // Try to install the switch-in handler. Do this before switching out the
   // current session so that the console session is not affected if it fails.
   if (!InstallEventHandler()) {
@@ -259,12 +246,12 @@ bool CurtainModeMac::Activate() {
 }
 
 // static
-scoped_ptr<CurtainMode> CurtainMode::Create(
+std::unique_ptr<CurtainMode> CurtainMode::Create(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     base::WeakPtr<ClientSessionControl> client_session_control) {
-  return make_scoped_ptr(new CurtainModeMac(
-      caller_task_runner, ui_task_runner, client_session_control));
+  return base::WrapUnique(new CurtainModeMac(caller_task_runner, ui_task_runner,
+                                             client_session_control));
 }
 
 }  // namespace remoting

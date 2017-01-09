@@ -4,8 +4,10 @@
 
 #include "net/cert/internal/verify_signed_data.h"
 
+#include <memory>
 #include <set>
 
+#include "net/cert/internal/cert_errors.h"
 #include "net/cert/internal/signature_algorithm.h"
 #include "net/cert/internal/signature_policy.h"
 #include "net/cert/internal/test_helpers.h"
@@ -13,10 +15,7 @@
 #include "net/der/parse_values.h"
 #include "net/der/parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if defined(USE_OPENSSL)
-#include <openssl/obj.h>
-#endif
+#include "third_party/boringssl/src/include/openssl/obj.h"
 
 namespace net {
 
@@ -38,11 +37,6 @@ enum VerifyResult {
 void RunTestCaseUsingPolicy(VerifyResult expected_result,
                             const char* file_name,
                             const SignaturePolicy* policy) {
-#if !defined(USE_OPENSSL)
-  LOG(INFO) << "Skipping test, only implemented for BoringSSL";
-  return;
-#endif
-
   std::string path =
       std::string("net/data/verify_signed_data_unittest/") + file_name;
 
@@ -60,22 +54,27 @@ void RunTestCaseUsingPolicy(VerifyResult expected_result,
 
   ASSERT_TRUE(ReadTestDataFromPemFile(path, mappings));
 
-  scoped_ptr<SignatureAlgorithm> signature_algorithm =
-      SignatureAlgorithm::CreateFromDer(InputFromString(&algorithm));
-  ASSERT_TRUE(signature_algorithm);
+  CertErrors algorithm_errors;
+  std::unique_ptr<SignatureAlgorithm> signature_algorithm =
+      SignatureAlgorithm::Create(der::Input(&algorithm), &algorithm_errors);
+  ASSERT_TRUE(signature_algorithm) << algorithm_errors.ToDebugString();
 
   der::BitString signature_value_bit_string;
-  der::Parser signature_value_parser(InputFromString(&signature_value));
+  der::Parser signature_value_parser((der::Input(&signature_value)));
   ASSERT_TRUE(signature_value_parser.ReadBitString(&signature_value_bit_string))
       << "The signature value is not a valid BIT STRING";
 
   bool expected_result_bool = expected_result == SUCCESS;
 
-  EXPECT_EQ(
-      expected_result_bool,
-      VerifySignedData(*signature_algorithm, InputFromString(&signed_data),
-                       signature_value_bit_string, InputFromString(&public_key),
-                       policy));
+  CertErrors verify_errors;
+  bool result =
+      VerifySignedData(*signature_algorithm, der::Input(&signed_data),
+                       signature_value_bit_string, der::Input(&public_key),
+                       policy, &verify_errors);
+  EXPECT_EQ(expected_result_bool, result);
+  // TODO(crbug.com/634443): Verify the returned errors.
+  // if (!result)
+  //   EXPECT_FALSE(verify_errors.empty());
 }
 
 // RunTestCase() is the same as RunTestCaseUsingPolicy(), only it uses a
@@ -102,9 +101,7 @@ TEST(VerifySignedDataTest, Rsa2048Pkcs1Sha512) {
 }
 
 TEST(VerifySignedDataTest, RsaPkcs1Sha256KeyEncodedBer) {
-  // TODO(eroman): This should fail! (SPKI should be DER-encoded). See
-  // https://crbug.com/522228
-  RunTestCase(SUCCESS, "rsa-pkcs1-sha256-key-encoded-ber.pem");
+  RunTestCase(FAILURE, "rsa-pkcs1-sha256-key-encoded-ber.pem");
 }
 
 TEST(VerifySignedDataTest, EcdsaSecp384r1Sha256) {
@@ -176,9 +173,7 @@ TEST(VerifySignedDataTest, EcdsaPrime256v1Sha512UsingEcmqvKey) {
 }
 
 TEST(VerifySignedDataTest, RsaPkcs1Sha1KeyParamsAbsent) {
-  // TODO(eroman): This should fail! (key algoritm parsing is too permissive)
-  // See https://crbug.com/522228
-  RunTestCase(SUCCESS, "rsa-pkcs1-sha1-key-params-absent.pem");
+  RunTestCase(FAILURE, "rsa-pkcs1-sha1-key-params-absent.pem");
 }
 
 TEST(VerifySignedDataTest, RsaPssSha1Salt20UsingPssKeyNoParams) {
@@ -212,15 +207,11 @@ TEST(VerifySignedDataTest, EcdsaPrime256v1Sha512SpkiParamsNull) {
 }
 
 TEST(VerifySignedDataTest, RsaPkcs1Sha256UsingIdEaRsa) {
-  // TODO(eroman): This should fail! (shouldn't recognize this weird OID).
-  // See https://crbug.com/522228
-  RunTestCase(SUCCESS, "rsa-pkcs1-sha256-using-id-ea-rsa.pem");
+  RunTestCase(FAILURE, "rsa-pkcs1-sha256-using-id-ea-rsa.pem");
 }
 
 TEST(VerifySignedDataTest, RsaPkcs1Sha256SpkiNonNullParams) {
-  // TODO(eroman): This should fail! (shouldn't recognize bogus params in rsa
-  // SPKI). See https://crbug.com/522228
-  RunTestCase(SUCCESS, "rsa-pkcs1-sha256-spki-non-null-params.pem");
+  RunTestCase(FAILURE, "rsa-pkcs1-sha256-spki-non-null-params.pem");
 }
 
 TEST(VerifySignedDataTest, EcdsaPrime256v1Sha512UnusedBitsSignature) {
@@ -230,11 +221,10 @@ TEST(VerifySignedDataTest, EcdsaPrime256v1Sha512UnusedBitsSignature) {
 // This policy rejects specifically secp384r1 curves.
 class RejectSecp384r1Policy : public SignaturePolicy {
  public:
-  bool IsAcceptableCurveForEcdsa(int curve_nid) const override {
-#if defined(USE_OPENSSL)
+  bool IsAcceptableCurveForEcdsa(int curve_nid,
+                                 CertErrors* errors) const override {
     if (curve_nid == NID_secp384r1)
       return false;
-#endif
     return true;
   }
 };
@@ -270,8 +260,8 @@ class RejectSha512 : public SignaturePolicy {
  public:
   RejectSha512() : SignaturePolicy() {}
 
-  bool IsAcceptableSignatureAlgorithm(
-      const SignatureAlgorithm& algorithm) const override {
+  bool IsAcceptableSignatureAlgorithm(const SignatureAlgorithm& algorithm,
+                                      CertErrors* errors) const override {
     if (algorithm.algorithm() == SignatureAlgorithmId::RsaPss &&
         algorithm.ParamsForRsaPss()->mgf1_hash() == DigestAlgorithm::Sha512) {
       return false;
@@ -280,8 +270,8 @@ class RejectSha512 : public SignaturePolicy {
     return algorithm.digest() != DigestAlgorithm::Sha512;
   }
 
-  bool IsAcceptableModulusLengthForRsa(
-      size_t modulus_length_bits) const override {
+  bool IsAcceptableModulusLengthForRsa(size_t modulus_length_bits,
+                                       CertErrors* errors) const override {
     return true;
   }
 };

@@ -49,17 +49,23 @@ SkBaseDevice* BitmapPlatformDevice::onCreateDevice(const CreateInfo& info,
                                       info.fInfo.isOpaque());
 }
 
-PlatformSurface BitmapPlatformDevice::BeginPlatformPaint() {
+NativeDrawingContext BitmapPlatformDevice::BeginPlatformPaint(
+    const SkMatrix& transform,
+    const SkIRect& clip_bounds) {
   // TODO(zhenghao): What should we return? The ptr to the address of the
   // pixels? Maybe this won't be called at all.
-  return accessBitmap(true).getPixels();
+  SkPixmap pixmap;
+  return accessPixels(&pixmap) ? pixmap.writable_addr() : nullptr;
 }
 
 // PlatformCanvas impl
 
-SkCanvas* CreatePlatformCanvas(int width, int height, bool is_opaque,
-                               uint8_t* data, OnFailureType failureType) {
-  skia::RefPtr<SkBaseDevice> dev = skia::AdoptRef(
+std::unique_ptr<SkCanvas> CreatePlatformCanvas(int width,
+                                               int height,
+                                               bool is_opaque,
+                                               uint8_t* data,
+                                               OnFailureType failureType) {
+  sk_sp<SkBaseDevice> dev(
       BitmapPlatformDevice::Create(width, height, is_opaque, data));
   return CreateCanvas(dev, failureType);
 }

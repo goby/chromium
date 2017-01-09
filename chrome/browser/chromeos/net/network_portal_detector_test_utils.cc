@@ -4,10 +4,12 @@
 
 #include "chrome/browser/chromeos/net/network_portal_detector_test_utils.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
@@ -42,7 +44,8 @@ bool EnumHistogramChecker::Check() {
     }
     return true;
   }
-  scoped_ptr<base::HistogramSamples> samples = histogram->SnapshotSamples();
+  std::unique_ptr<base::HistogramSamples> samples =
+      histogram->SnapshotSamples();
   if (!samples.get()) {
     if (!empty) {
       LOG(ERROR) << "Non-empty expectations for " << histogram_ << " "

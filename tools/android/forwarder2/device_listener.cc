@@ -4,13 +4,15 @@
 
 #include "tools/android/forwarder2/device_listener.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "tools/android/forwarder2/command.h"
 #include "tools/android/forwarder2/forwarder.h"
 #include "tools/android/forwarder2/socket.h"
@@ -18,26 +20,26 @@
 namespace forwarder2 {
 
 // static
-scoped_ptr<DeviceListener> DeviceListener::Create(
-    scoped_ptr<Socket> host_socket,
+std::unique_ptr<DeviceListener> DeviceListener::Create(
+    std::unique_ptr<Socket> host_socket,
     int listener_port,
     const ErrorCallback& error_callback) {
-  scoped_ptr<Socket> listener_socket(new Socket());
-  scoped_ptr<DeviceListener> device_listener;
+  std::unique_ptr<Socket> listener_socket(new Socket());
+  std::unique_ptr<DeviceListener> device_listener;
   if (!listener_socket->BindTcp("", listener_port)) {
     LOG(ERROR) << "Device could not bind and listen to local port "
                << listener_port;
     SendCommand(command::BIND_ERROR, listener_port, host_socket.get());
-    return device_listener.Pass();
+    return device_listener;
   }
   // In case the |listener_port_| was zero, GetPort() will return the
   // currently (non-zero) allocated port for this socket.
   listener_port = listener_socket->GetPort();
   SendCommand(command::BIND_SUCCESS, listener_port, host_socket.get());
-  device_listener.reset(
-      new DeviceListener(listener_socket.Pass(), host_socket.Pass(),
-                         listener_port, error_callback));
-  return device_listener.Pass();
+  device_listener.reset(new DeviceListener(std::move(listener_socket),
+                                           std::move(host_socket),
+                                           listener_port, error_callback));
+  return device_listener;
 }
 
 DeviceListener::~DeviceListener() {
@@ -50,20 +52,20 @@ void DeviceListener::Start() {
   AcceptNextClientSoon();
 }
 
-void DeviceListener::SetAdbDataSocket(scoped_ptr<Socket> adb_data_socket) {
+void DeviceListener::SetAdbDataSocket(std::unique_ptr<Socket> adb_data_socket) {
   thread_.task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&DeviceListener::OnAdbDataSocketReceivedOnInternalThread,
                  base::Unretained(this), base::Passed(&adb_data_socket)));
 }
 
-DeviceListener::DeviceListener(scoped_ptr<Socket> listener_socket,
-                               scoped_ptr<Socket> host_socket,
+DeviceListener::DeviceListener(std::unique_ptr<Socket> listener_socket,
+                               std::unique_ptr<Socket> host_socket,
                                int port,
                                const ErrorCallback& error_callback)
     : self_deleter_helper_(this, error_callback),
-      listener_socket_(listener_socket.Pass()),
-      host_socket_(host_socket.Pass()),
+      listener_socket_(std::move(listener_socket)),
+      host_socket_(std::move(host_socket)),
       listener_port_(port),
       deletion_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       thread_("DeviceListener") {
@@ -114,12 +116,12 @@ void DeviceListener::AcceptClientOnInternalThread() {
 }
 
 void DeviceListener::OnAdbDataSocketReceivedOnInternalThread(
-    scoped_ptr<Socket> adb_data_socket) {
+    std::unique_ptr<Socket> adb_data_socket) {
   DCHECK(adb_data_socket);
   SendCommand(command::ADB_DATA_SOCKET_SUCCESS, listener_port_,
               host_socket_.get());
-  forwarders_manager_.CreateAndStartNewForwarder(
-      device_data_socket_.Pass(), adb_data_socket.Pass());
+  forwarders_manager_.CreateAndStartNewForwarder(std::move(device_data_socket_),
+                                                 std::move(adb_data_socket));
   AcceptNextClientSoon();
 }
 

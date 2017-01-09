@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/base_export.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 
 namespace base {
@@ -25,7 +26,8 @@ enum SdkVersion {
   SDK_VERSION_KITKAT_WEAR = 20,
   SDK_VERSION_LOLLIPOP = 21,
   SDK_VERSION_LOLLIPOP_MR1 = 22,
-  SDK_VERSION_MARSHMALLOW = 23
+  SDK_VERSION_MARSHMALLOW = 23,
+  SDK_VERSION_NOUGAT = 24
 };
 
 // BuildInfo is a singleton class that stores android build and device
@@ -73,6 +75,10 @@ class BASE_EXPORT BuildInfo {
     return android_build_fp_;
   }
 
+  const char* gms_version_code() const {
+    return gms_version_code_;
+  }
+
   const char* package_version_code() const {
     return package_version_code_;
   }
@@ -97,10 +103,6 @@ class BASE_EXPORT BuildInfo {
     return sdk_int_;
   }
 
-  int has_language_apk_splits() const {
-    return has_language_apk_splits_;
-  }
-
   const char* java_exception_info() const {
     return java_exception_info_;
   }
@@ -108,8 +110,6 @@ class BASE_EXPORT BuildInfo {
   void SetJavaExceptionInfo(const std::string& info);
 
   void ClearJavaExceptionInfo();
-
-  static bool RegisterBindings(JNIEnv* env);
 
  private:
   friend struct BuildInfoSingletonTraits;
@@ -126,13 +126,13 @@ class BASE_EXPORT BuildInfo {
   const char* const brand_;
   const char* const android_build_id_;
   const char* const android_build_fp_;
+  const char* const gms_version_code_;
   const char* const package_version_code_;
   const char* const package_version_name_;
   const char* const package_label_;
   const char* const package_name_;
   const char* const build_type_;
   const int sdk_int_;
-  const bool has_language_apk_splits_;
   // This is set via set_java_exception_info, not at constructor time.
   const char* java_exception_info_;
 

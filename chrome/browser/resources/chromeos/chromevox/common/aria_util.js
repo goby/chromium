@@ -215,17 +215,13 @@ cvox.AriaUtil.isForcedVisibleRecursive = function(targetNode) {
 /**
  * Checks if a node should be treated as a leaf node because of its ARIA
  * markup. Does not check recursively, and does not check isControlWidget.
- * Note that elements with aria-label are treated as leaf elements. See:
- * http://www.w3.org/TR/wai-aria/roles#textalternativecomputation
  *
  * @param {Element} targetElement The node to check.
  * @return {boolean} True if the targetNode should be treated as a leaf node.
  */
 cvox.AriaUtil.isLeafElement = function(targetElement) {
   var role = targetElement.getAttribute('role');
-  var hasArialLabel = targetElement.hasAttribute('aria-label') &&
-      (targetElement.getAttribute('aria-label').length > 0);
-  return (role == 'img' || role == 'progressbar' || hasArialLabel);
+  return role == 'img' || role == 'progressbar';
 };
 
 
@@ -597,7 +593,7 @@ cvox.AriaUtil.getNextLevel = function(parentControl, role) {
 /**
  * Recursively finds the first node(s) that match the role.
  *
- * @param {Element} current The node to start looking at.
+ * @param {Node} current The node to start looking at.
  * @param {Array<string>} role The role(s) to match.
  * @return {Array<Element>} The array of matching nodes.
  */

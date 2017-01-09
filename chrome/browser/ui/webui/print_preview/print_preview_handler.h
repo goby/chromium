@@ -5,27 +5,28 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_PRINT_PREVIEW_PRINT_PREVIEW_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_PRINT_PREVIEW_PRINT_PREVIEW_HANDLER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/printing/print_view_manager_observer.h"
-#include "chrome/browser/ui/webui/print_preview/print_preview_distiller.h"
+#include "chrome/common/features.h"
 #include "components/signin/core/browser/gaia_cookie_manager_service.h"
 #include "content/public/browser/web_ui_message_handler.h"
+#include "printing/backend/print_backend.h"
+#include "printing/features/features.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
-#if defined(ENABLE_SERVICE_DISCOVERY)
-#include "chrome/browser/local_discovery/privet_local_printer_lister.h"
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
 #include "chrome/browser/local_discovery/service_discovery_shared_client.h"
-#endif  // ENABLE_SERVICE_DISCOVERY
+#include "chrome/browser/printing/cloud_print/privet_local_printer_lister.h"
+#endif
 
 class PrinterHandler;
 class PrintPreviewUI;
-class PrintSystemTaskProxy;
 
 namespace base {
 class DictionaryValue;
@@ -40,15 +41,18 @@ namespace gfx {
 class Size;
 }
 
+namespace printing {
+class PrinterBackendProxy;
+}
+
 // The handler for Javascript messages related to the print preview dialog.
 class PrintPreviewHandler
     : public content::WebUIMessageHandler,
-#if defined(ENABLE_SERVICE_DISCOVERY)
-      public local_discovery::PrivetLocalPrinterLister::Delegate,
-      public local_discovery::PrivetLocalPrintOperation::Delegate,
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
+      public cloud_print::PrivetLocalPrinterLister::Delegate,
+      public cloud_print::PrivetLocalPrintOperation::Delegate,
 #endif
       public ui::SelectFileDialog::Listener,
-      public printing::PrintViewManagerObserver,
       public GaiaCookieManagerService::Observer {
  public:
   PrintPreviewHandler();
@@ -63,45 +67,37 @@ class PrintPreviewHandler
                     void* params) override;
   void FileSelectionCanceled(void* params) override;
 
-  // PrintViewManagerObserver implementation.
-  void OnPrintDialogShown() override;
-
   // GaiaCookieManagerService::Observer implementation.
   void OnAddAccountToCookieCompleted(
       const std::string& account_id,
       const GoogleServiceAuthError& error) override;
 
-  // Called when the print preview dialog is destroyed. This is the last time
-  // this object has access to the PrintViewManager in order to disconnect the
-  // observer.
-  void OnPrintPreviewDialogDestroyed();
-
   // Called when print preview failed.
   void OnPrintPreviewFailed();
 
-#if defined(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
   // Called when the user press ctrl+shift+p to display the native system
   // dialog.
   void ShowSystemDialog();
-#endif  // ENABLE_BASIC_PRINTING
+#endif  // BUILDFLAG(ENABLE_BASIC_PRINTING)
 
-#if defined(ENABLE_SERVICE_DISCOVERY)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
   // PrivetLocalPrinterLister::Delegate implementation.
   void LocalPrinterChanged(
-      bool added,
       const std::string& name,
       bool has_local_printing,
-      const local_discovery::DeviceDescription& description) override;
+      const cloud_print::DeviceDescription& description) override;
   void LocalPrinterRemoved(const std::string& name) override;
   void LocalPrinterCacheFlushed() override;
 
   // PrivetLocalPrintOperation::Delegate implementation.
-  void OnPrivetPrintingDone(const local_discovery::PrivetLocalPrintOperation*
-                                print_operation) override;
+  void OnPrivetPrintingDone(
+      const cloud_print::PrivetLocalPrintOperation* print_operation) override;
   void OnPrivetPrintingError(
-      const local_discovery::PrivetLocalPrintOperation* print_operation,
+      const cloud_print::PrivetLocalPrintOperation* print_operation,
       int http_code) override;
-#endif  // ENABLE_SERVICE_DISCOVERY
+#endif
+
   int regenerate_preview_request_count() const {
     return regenerate_preview_request_count_;
   }
@@ -115,11 +111,11 @@ class PrintPreviewHandler
                            MANUAL_DummyTest);
   class AccessTokenService;
 
-  static bool PrivetPrintingEnabled();
-
   content::WebContents* preview_web_contents() const;
 
   PrintPreviewUI* print_preview_ui() const;
+
+  printing::PrinterBackendProxy* printer_backend_proxy();
 
   // Gets the list of printers. |args| is unused.
   void HandleGetPrinters(const base::ListValue* args);
@@ -159,11 +155,11 @@ class PrintPreviewHandler
   // Gets the printer capabilities. First element of |args| is the printer name.
   void HandleGetPrinterCapabilities(const base::ListValue* args);
 
-#if defined(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_BASIC_PRINT_DIALOG)
   // Asks the initiator renderer to show the native print system dialog. |args|
   // is unused.
   void HandleShowSystemDialog(const base::ListValue* args);
-#endif  // ENABLE_BASIC_PRINTING
+#endif
 
   // Callback for the signin dialog to call once signin is complete.
   void OnSigninComplete();
@@ -217,15 +213,14 @@ class PrintPreviewHandler
                        const std::string& access_token);
 
   // Sends the printer capabilities to the Web UI. |settings_info| contains
-  // printer capabilities information.
-  void SendPrinterCapabilities(const base::DictionaryValue* settings_info);
-
-  // Sends error notification to the Web UI when unable to return the printer
-  // capabilities.
-  void SendFailedToGetPrinterCapabilities(const std::string& printer_name);
+  // printer capabilities information. If |settings_info| is empty, sends
+  // error notification to the Web UI instead.
+  void SendPrinterCapabilities(
+      const std::string& printer_name,
+      std::unique_ptr<base::DictionaryValue> settings_info);
 
   // Send the list of printers to the Web UI.
-  void SetupPrinterList(const base::ListValue* printers);
+  void SetupPrinterList(const printing::PrinterList& printer_list);
 
   // Send whether cloud print integration should be enabled.
   void SendCloudPrintEnabled();
@@ -272,19 +267,19 @@ class PrintPreviewHandler
       base::DictionaryValue* settings) const;
 #endif
 
-#if defined(ENABLE_SERVICE_DISCOVERY)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
   void StartPrivetLister(const scoped_refptr<
       local_discovery::ServiceDiscoverySharedClient>& client);
   void OnPrivetCapabilities(const base::DictionaryValue* capabilities);
   void PrivetCapabilitiesUpdateClient(
-      scoped_ptr<local_discovery::PrivetHTTPClient> http_client);
+      std::unique_ptr<cloud_print::PrivetHTTPClient> http_client);
   void PrivetLocalPrintUpdateClient(
       std::string print_ticket,
       std::string capabilities,
       gfx::Size page_size,
-      scoped_ptr<local_discovery::PrivetHTTPClient> http_client);
+      std::unique_ptr<cloud_print::PrivetHTTPClient> http_client);
   bool PrivetUpdateClient(
-      scoped_ptr<local_discovery::PrivetHTTPClient> http_client);
+      std::unique_ptr<cloud_print::PrivetHTTPClient> http_client);
   void StartPrivetLocalPrint(const std::string& print_ticket,
                              const std::string& capabilities,
                              const gfx::Size& page_size);
@@ -295,11 +290,11 @@ class PrintPreviewHandler
                             const gfx::Size& page_size);
   bool CreatePrivetHTTP(
       const std::string& name,
-      const local_discovery::PrivetHTTPAsynchronousFactory::ResultCallback&
+      const cloud_print::PrivetHTTPAsynchronousFactory::ResultCallback&
           callback);
   void FillPrinterDescription(
       const std::string& name,
-      const local_discovery::DeviceDescription& description,
+      const cloud_print::DeviceDescription& description,
       bool has_local_printing,
       base::DictionaryValue* printer_value);
 #endif
@@ -362,38 +357,38 @@ class PrintPreviewHandler
   base::FilePath print_to_pdf_path_;
 
   // Holds token service to get OAuth2 access tokens.
-  scoped_ptr<AccessTokenService> token_service_;
+  std::unique_ptr<AccessTokenService> token_service_;
 
   // Pointer to cookie manager service so that print preview can listen for GAIA
   // cookie changes.
   GaiaCookieManagerService* gaia_cookie_manager_service_;
 
-#if defined(ENABLE_SERVICE_DISCOVERY)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
   scoped_refptr<local_discovery::ServiceDiscoverySharedClient>
       service_discovery_client_;
-  scoped_ptr<local_discovery::PrivetLocalPrinterLister> printer_lister_;
+  std::unique_ptr<cloud_print::PrivetLocalPrinterLister> printer_lister_;
 
-  scoped_ptr<local_discovery::PrivetHTTPAsynchronousFactory>
+  std::unique_ptr<cloud_print::PrivetHTTPAsynchronousFactory>
       privet_http_factory_;
-  scoped_ptr<local_discovery::PrivetHTTPResolution> privet_http_resolution_;
-  scoped_ptr<local_discovery::PrivetV1HTTPClient> privet_http_client_;
-  scoped_ptr<local_discovery::PrivetJSONOperation>
+  std::unique_ptr<cloud_print::PrivetHTTPResolution> privet_http_resolution_;
+  std::unique_ptr<cloud_print::PrivetV1HTTPClient> privet_http_client_;
+  std::unique_ptr<cloud_print::PrivetJSONOperation>
       privet_capabilities_operation_;
-  scoped_ptr<local_discovery::PrivetLocalPrintOperation>
+  std::unique_ptr<cloud_print::PrivetLocalPrintOperation>
       privet_local_print_operation_;
 #endif
 
   // Handles requests for extension printers. Created lazily by calling
   // |EnsureExtensionPrinterHandlerSet|.
-  scoped_ptr<PrinterHandler> extension_printer_handler_;
+  std::unique_ptr<PrinterHandler> extension_printer_handler_;
 
   // Notifies tests that want to know if the PDF has been saved. This doesn't
   // notify the test if it was a successful save, only that it was attempted.
   base::Closure pdf_file_saved_closure_;
 
-  // A print preview that is responsible for rendering the page after
-  // being processed by the DOM Distiller.
-  scoped_ptr<PrintPreviewDistiller> print_preview_distiller_;
+  // Proxy for calls to the print backend.  Lazily initialized since web_ui() is
+  // not available at construction time.
+  std::unique_ptr<printing::PrinterBackendProxy> printer_backend_proxy_;
 
   base::WeakPtrFactory<PrintPreviewHandler> weak_factory_;
 

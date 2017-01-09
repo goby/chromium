@@ -5,9 +5,12 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_BOOKMARK_PROVIDER_H_
 #define COMPONENTS_OMNIBOX_BROWSER_BOOKMARK_PROVIDER_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
@@ -73,9 +76,6 @@ class BookmarkProvider : public AutocompleteProvider {
 
   AutocompleteProviderClient* client_;
   bookmarks::BookmarkModel* bookmark_model_;
-
-  // Languages used during the URL formatting.
-  std::string languages_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkProvider);
 };

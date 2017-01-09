@@ -5,8 +5,10 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "components/web_modal/single_web_contents_dialog_manager.h"
 #include "components/web_modal/test_web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/test/test_renderer_host.h"
@@ -114,23 +116,12 @@ class WebContentsModalDialogManagerTest
   }
 
   int next_dialog_id;
-  scoped_ptr<TestWebContentsModalDialogManagerDelegate> delegate;
+  std::unique_ptr<TestWebContentsModalDialogManagerDelegate> delegate;
   WebContentsModalDialogManager* manager;
-  scoped_ptr<WebContentsModalDialogManager::TestApi> test_api;
+  std::unique_ptr<WebContentsModalDialogManager::TestApi> test_api;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsModalDialogManagerTest);
 };
-
-SingleWebContentsDialogManager*
-WebContentsModalDialogManager::CreateNativeWebModalManager(
-    gfx::NativeWindow dialog,
-    SingleWebContentsDialogManagerDelegate* native_delegate) {
-  NOTREACHED();
-  return new TestNativeWebContentsModalDialogManager(
-      dialog,
-      native_delegate,
-      &unused_tracker);
-}
 
 // Test that the dialog is shown immediately when the delegate indicates the web
 // contents is visible.
@@ -141,8 +132,7 @@ TEST_F(WebContentsModalDialogManagerTest, WebContentsVisible) {
   NativeManagerTracker tracker;
   TestNativeWebContentsModalDialogManager* native_manager =
       new TestNativeWebContentsModalDialogManager(dialog, manager, &tracker);
-  manager->ShowDialogWithManager(dialog,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager).Pass());
+  manager->ShowDialogWithManager(dialog, base::WrapUnique(native_manager));
 
   EXPECT_EQ(NativeManagerTracker::SHOWN, tracker.state_);
   EXPECT_TRUE(manager->IsDialogActive());
@@ -163,8 +153,7 @@ TEST_F(WebContentsModalDialogManagerTest, WebContentsNotVisible) {
   NativeManagerTracker tracker;
   TestNativeWebContentsModalDialogManager* native_manager =
       new TestNativeWebContentsModalDialogManager(dialog, manager, &tracker);
-  manager->ShowDialogWithManager(dialog,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager).Pass());
+  manager->ShowDialogWithManager(dialog, base::WrapUnique(native_manager));
 
   EXPECT_EQ(NativeManagerTracker::NOT_SHOWN, tracker.state_);
   EXPECT_TRUE(manager->IsDialogActive());
@@ -189,12 +178,9 @@ TEST_F(WebContentsModalDialogManagerTest, ShowDialogs) {
       new TestNativeWebContentsModalDialogManager(dialog2, manager, &tracker2);
   TestNativeWebContentsModalDialogManager* native_manager3 =
       new TestNativeWebContentsModalDialogManager(dialog3, manager, &tracker3);
-  manager->ShowDialogWithManager(dialog1,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager1).Pass());
-  manager->ShowDialogWithManager(dialog2,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager2).Pass());
-  manager->ShowDialogWithManager(dialog3,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager3).Pass());
+  manager->ShowDialogWithManager(dialog1, base::WrapUnique(native_manager1));
+  manager->ShowDialogWithManager(dialog2, base::WrapUnique(native_manager2));
+  manager->ShowDialogWithManager(dialog3, base::WrapUnique(native_manager3));
 
   EXPECT_TRUE(delegate->web_contents_blocked());
   EXPECT_EQ(NativeManagerTracker::SHOWN, tracker1.state_);
@@ -213,8 +199,7 @@ TEST_F(WebContentsModalDialogManagerTest, VisibilityObservation) {
   NativeManagerTracker tracker;
   TestNativeWebContentsModalDialogManager* native_manager =
       new TestNativeWebContentsModalDialogManager(dialog, manager, &tracker);
-  manager->ShowDialogWithManager(dialog,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager).Pass());
+  manager->ShowDialogWithManager(dialog, base::WrapUnique(native_manager));
 
   EXPECT_TRUE(manager->IsDialogActive());
   EXPECT_TRUE(delegate->web_contents_blocked());
@@ -246,10 +231,8 @@ TEST_F(WebContentsModalDialogManagerTest, InterstitialPage) {
       new TestNativeWebContentsModalDialogManager(dialog1, manager, &tracker1);
   TestNativeWebContentsModalDialogManager* native_manager2 =
       new TestNativeWebContentsModalDialogManager(dialog2, manager, &tracker2);
-  manager->ShowDialogWithManager(dialog1,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager1).Pass());
-  manager->ShowDialogWithManager(dialog2,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager2).Pass());
+  manager->ShowDialogWithManager(dialog1, base::WrapUnique(native_manager1));
+  manager->ShowDialogWithManager(dialog2, base::WrapUnique(native_manager2));
 
   test_api->DidAttachInterstitialPage();
 
@@ -282,14 +265,10 @@ TEST_F(WebContentsModalDialogManagerTest, CloseDialogs) {
       new TestNativeWebContentsModalDialogManager(dialog3, manager, &tracker3);
   TestNativeWebContentsModalDialogManager* native_manager4 =
       new TestNativeWebContentsModalDialogManager(dialog4, manager, &tracker4);
-  manager->ShowDialogWithManager(dialog1,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager1).Pass());
-  manager->ShowDialogWithManager(dialog2,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager2).Pass());
-  manager->ShowDialogWithManager(dialog3,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager3).Pass());
-  manager->ShowDialogWithManager(dialog4,
-      scoped_ptr<SingleWebContentsDialogManager>(native_manager4).Pass());
+  manager->ShowDialogWithManager(dialog1, base::WrapUnique(native_manager1));
+  manager->ShowDialogWithManager(dialog2, base::WrapUnique(native_manager2));
+  manager->ShowDialogWithManager(dialog3, base::WrapUnique(native_manager3));
+  manager->ShowDialogWithManager(dialog4, base::WrapUnique(native_manager4));
 
   native_manager1->Close();
 
@@ -345,8 +324,7 @@ TEST_F(WebContentsModalDialogManagerTest, CloseAllDialogs) {
         new TestNativeWebContentsModalDialogManager(
             dialog, manager, &(trackers[i]));
     manager->ShowDialogWithManager(dialog,
-    scoped_ptr<SingleWebContentsDialogManager>(
-        native_managers[i]).Pass());
+                                   base::WrapUnique(native_managers[i]));
   }
 
   for (int i = 0; i < kWindowCount; i++)

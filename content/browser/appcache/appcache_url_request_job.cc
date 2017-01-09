@@ -14,7 +14,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_histograms.h"
@@ -25,7 +25,8 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_with_source.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_status.h"
 
@@ -41,9 +42,11 @@ AppCacheURLRequestJob::AppCacheURLRequestJob(
     : net::URLRequestJob(request, network_delegate),
       host_(host),
       storage_(storage),
-      has_been_started_(false), has_been_killed_(false),
+      has_been_started_(false),
+      has_been_killed_(false),
       delivery_type_(AWAITING_DELIVERY_ORDERS),
-      group_id_(0), cache_id_(kAppCacheNoCacheId), is_fallback_(false),
+      cache_id_(kAppCacheNoCacheId),
+      is_fallback_(false),
       is_main_resource_(is_main_resource),
       cache_entry_not_found_(false),
       on_prepare_to_restart_callback_(restart_callback),
@@ -51,14 +54,19 @@ AppCacheURLRequestJob::AppCacheURLRequestJob(
   DCHECK(storage_);
 }
 
-void AppCacheURLRequestJob::DeliverAppCachedResponse(
-    const GURL& manifest_url, int64 group_id, int64 cache_id,
-    const AppCacheEntry& entry, bool is_fallback) {
+AppCacheURLRequestJob::~AppCacheURLRequestJob() {
+  if (storage_)
+    storage_->CancelDelegateCallbacks(this);
+}
+
+void AppCacheURLRequestJob::DeliverAppCachedResponse(const GURL& manifest_url,
+                                                     int64_t cache_id,
+                                                     const AppCacheEntry& entry,
+                                                     bool is_fallback) {
   DCHECK(!has_delivery_orders());
   DCHECK(entry.has_response_id());
   delivery_type_ = APPCACHED_DELIVERY;
   manifest_url_ = manifest_url;
-  group_id_ = group_id;
   cache_id_ = cache_id;
   entry_ = entry;
   is_fallback_ = is_fallback;
@@ -114,7 +122,7 @@ void AppCacheURLRequestJob::BeginDelivery() {
       AppCacheHistograms::AddErrorJobStartDelaySample(
           base::TimeTicks::Now() - start_time_tick_);
       request()->net_log().AddEvent(
-          net::NetLog::TYPE_APPCACHE_DELIVERING_ERROR_RESPONSE);
+          net::NetLogEventType::APPCACHE_DELIVERING_ERROR_RESPONSE);
       NotifyStartError(net::URLRequestStatus(net::URLRequestStatus::FAILED,
                                              net::ERR_FAILED));
       break;
@@ -127,11 +135,10 @@ void AppCacheURLRequestJob::BeginDelivery() {
       AppCacheHistograms::AddAppCacheJobStartDelaySample(
           base::TimeTicks::Now() - start_time_tick_);
       request()->net_log().AddEvent(
-          is_fallback_ ?
-              net::NetLog::TYPE_APPCACHE_DELIVERING_FALLBACK_RESPONSE :
-              net::NetLog::TYPE_APPCACHE_DELIVERING_CACHED_RESPONSE);
-      storage_->LoadResponseInfo(
-          manifest_url_, group_id_, entry_.response_id(), this);
+          is_fallback_
+              ? net::NetLogEventType::APPCACHE_DELIVERING_FALLBACK_RESPONSE
+              : net::NetLogEventType::APPCACHE_DELIVERING_CACHED_RESPONSE);
+      storage_->LoadResponseInfo(manifest_url_, entry_.response_id(), this);
       break;
 
     default:
@@ -149,7 +156,7 @@ void AppCacheURLRequestJob::BeginExecutableHandlerDelivery() {
   }
 
   request()->net_log().AddEvent(
-      net::NetLog::TYPE_APPCACHE_DELIVERING_EXECUTABLE_RESPONSE);
+      net::NetLogEventType::APPCACHE_DELIVERING_EXECUTABLE_RESPONSE);
 
   // We defer job delivery until the executable handler is spun up and
   // provides a response. The sequence goes like this...
@@ -162,7 +169,7 @@ void AppCacheURLRequestJob::BeginExecutableHandlerDelivery() {
   storage_->LoadCache(cache_id_, this);
 }
 
-void AppCacheURLRequestJob::OnCacheLoaded(AppCache* cache, int64 cache_id) {
+void AppCacheURLRequestJob::OnCacheLoaded(AppCache* cache, int64_t cache_id) {
   DCHECK_EQ(cache_id_, cache_id);
   DCHECK(!has_been_killed());
 
@@ -191,11 +198,11 @@ void AppCacheURLRequestJob::OnCacheLoaded(AppCache* cache, int64 cache_id) {
   // Read the script data, truncating if its too large.
   // NOTE: we just issue one read and don't bother chaining if the resource
   // is very (very) large, close enough for now.
-  const int64 kLimit = 500 * 1000;
+  const int64_t kLimit = 500 * 1000;
   handler_source_buffer_ = new net::GrowableIOBuffer();
   handler_source_buffer_->SetCapacity(kLimit);
-  handler_source_reader_.reset(storage_->CreateResponseReader(
-      manifest_url_, group_id_, entry_.response_id()));
+  handler_source_reader_.reset(
+      storage_->CreateResponseReader(manifest_url_, entry_.response_id()));
   handler_source_reader_->ReadData(
       handler_source_buffer_.get(),
       kLimit,
@@ -270,18 +277,14 @@ void AppCacheURLRequestJob::BeginErrorDelivery(const char* message) {
   BeginDelivery();
 }
 
-AppCacheURLRequestJob::~AppCacheURLRequestJob() {
-  if (storage_)
-    storage_->CancelDelegateCallbacks(this);
-}
-
 void AppCacheURLRequestJob::OnResponseInfoLoaded(
-      AppCacheResponseInfo* response_info, int64 response_id) {
+    AppCacheResponseInfo* response_info,
+    int64_t response_id) {
   DCHECK(is_delivering_appcache_response());
   if (response_info) {
     info_ = response_info;
-    reader_.reset(storage_->CreateResponseReader(
-        manifest_url_, group_id_, entry_.response_id()));
+    reader_.reset(
+        storage_->CreateResponseReader(manifest_url_, entry_.response_id()));
 
     if (is_range_request())
       SetupRangeResponse();
@@ -428,6 +431,12 @@ int AppCacheURLRequestJob::ReadRawData(net::IOBuffer* buf, int buf_size) {
                     base::Bind(&AppCacheURLRequestJob::OnReadComplete,
                                base::Unretained(this)));
   return net::ERR_IO_PENDING;
+}
+
+net::HostPortPair AppCacheURLRequestJob::GetSocketAddress() const {
+  if (!http_info())
+    return net::HostPortPair();
+  return http_info()->socket_address;
 }
 
 void AppCacheURLRequestJob::SetExtraRequestHeaders(

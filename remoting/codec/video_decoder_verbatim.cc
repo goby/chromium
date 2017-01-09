@@ -4,6 +4,8 @@
 
 #include "remoting/codec/video_decoder_verbatim.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "remoting/base/util.h"
 #include "remoting/proto/video.pb.h"
@@ -17,6 +19,11 @@ static const int kBytesPerPixel = 4;
 
 VideoDecoderVerbatim::VideoDecoderVerbatim() {}
 VideoDecoderVerbatim::~VideoDecoderVerbatim() {}
+
+void VideoDecoderVerbatim::SetPixelFormat(
+    VideoDecoder::PixelFormat pixel_format) {
+  NOTIMPLEMENTED();
+}
 
 bool VideoDecoderVerbatim::DecodePacket(const VideoPacket& packet,
                                         webrtc::DesktopFrame* frame) {

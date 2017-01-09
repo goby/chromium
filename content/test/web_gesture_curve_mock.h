@@ -5,7 +5,9 @@
 #ifndef CONTENT_TEST_WEB_GESTURE_CURVE_MOCK_H_
 #define CONTENT_TEST_WEB_GESTURE_CURVE_MOCK_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
 #include "third_party/WebKit/public/platform/WebGestureCurve.h"
 #include "third_party/WebKit/public/platform/WebSize.h"

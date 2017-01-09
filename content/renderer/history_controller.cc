@@ -35,6 +35,9 @@
 
 #include "content/renderer/history_controller.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "content/common/navigation_params.h"
 #include "content/common/site_isolation_policy.h"
 #include "content/renderer/render_frame_impl.h"
@@ -42,6 +45,7 @@
 #include "third_party/WebKit/public/web/WebFrameLoadType.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 
+using blink::WebCachePolicy;
 using blink::WebFrame;
 using blink::WebHistoryCommitType;
 using blink::WebHistoryItem;
@@ -58,17 +62,17 @@ HistoryController::HistoryController(RenderViewImpl* render_view)
 HistoryController::~HistoryController() {
 }
 
-void HistoryController::GoToEntry(
+bool HistoryController::GoToEntry(
     blink::WebLocalFrame* main_frame,
-    scoped_ptr<HistoryEntry> target_entry,
-    scoped_ptr<NavigationParams> navigation_params,
-    WebURLRequest::CachePolicy cache_policy) {
+    std::unique_ptr<HistoryEntry> target_entry,
+    std::unique_ptr<NavigationParams> navigation_params,
+    WebCachePolicy cache_policy) {
   DCHECK(!main_frame->parent());
   HistoryFrameLoadVector same_document_loads;
   HistoryFrameLoadVector different_document_loads;
 
-  set_provisional_entry(target_entry.Pass());
-  navigation_params_ = navigation_params.Pass();
+  set_provisional_entry(std::move(target_entry));
+  navigation_params_ = std::move(navigation_params);
 
   if (current_entry_) {
     RecursiveGoToEntry(
@@ -87,32 +91,39 @@ void HistoryController::GoToEntry(
         std::make_pair(main_frame, provisional_entry_->root()));
   }
 
+  bool has_main_frame_request = false;
   for (const auto& item : same_document_loads) {
     WebFrame* frame = item.first;
     RenderFrameImpl* render_frame = RenderFrameImpl::FromWebFrame(frame);
     if (!render_frame)
       continue;
-    render_frame->SetPendingNavigationParams(make_scoped_ptr(
-        new NavigationParams(*navigation_params_.get())));
+    render_frame->SetPendingNavigationParams(
+        base::MakeUnique<NavigationParams>(*navigation_params_.get()));
     WebURLRequest request = frame->toWebLocalFrame()->requestFromHistoryItem(
         item.second, cache_policy);
     frame->toWebLocalFrame()->load(
         request, blink::WebFrameLoadType::BackForward, item.second,
         blink::WebHistorySameDocumentLoad);
+    if (frame == main_frame)
+      has_main_frame_request = true;
   }
   for (const auto& item : different_document_loads) {
     WebFrame* frame = item.first;
     RenderFrameImpl* render_frame = RenderFrameImpl::FromWebFrame(frame);
     if (!render_frame)
       continue;
-    render_frame->SetPendingNavigationParams(make_scoped_ptr(
-        new NavigationParams(*navigation_params_.get())));
+    render_frame->SetPendingNavigationParams(
+        base::MakeUnique<NavigationParams>(*navigation_params_.get()));
     WebURLRequest request = frame->toWebLocalFrame()->requestFromHistoryItem(
         item.second, cache_policy);
     frame->toWebLocalFrame()->load(
         request, blink::WebFrameLoadType::BackForward, item.second,
         blink::WebHistoryDifferentDocumentLoad);
+    if (frame == main_frame)
+      has_main_frame_request = true;
   }
+
+  return has_main_frame_request;
 }
 
 void HistoryController::RecursiveGoToEntry(
@@ -124,19 +135,32 @@ void HistoryController::RecursiveGoToEntry(
   RenderFrameImpl* render_frame = RenderFrameImpl::FromWebFrame(frame);
   const WebHistoryItem& new_item =
       provisional_entry_->GetItemForFrame(render_frame);
-  const WebHistoryItem& old_item =
-      current_entry_->GetItemForFrame(render_frame);
+
+  // Use the last committed history item for the frame rather than
+  // current_entry_, since the latter may not accurately reflect which URL is
+  // currently committed in the frame.  See https://crbug.com/612713#c12.
+  const WebHistoryItem& old_item = render_frame->current_history_item();
+
   if (new_item.isNull())
     return;
 
   if (old_item.isNull() ||
       new_item.itemSequenceNumber() != old_item.itemSequenceNumber()) {
     if (!old_item.isNull() &&
-        new_item.documentSequenceNumber() == old_item.documentSequenceNumber())
+        new_item.documentSequenceNumber() ==
+            old_item.documentSequenceNumber()) {
       same_document_loads.push_back(std::make_pair(frame, new_item));
-    else
+
+      // Returning here (and omitting child frames which have also changed) is
+      // wrong, but not returning here is worse. See the discussion in
+      // NavigationControllerImpl::FindFramesToNavigate for more information.
+      return;
+    } else {
       different_document_loads.push_back(std::make_pair(frame, new_item));
-    return;
+      // For a different document, the subframes will be destroyed, so there's
+      // no need to consider them.
+      return;
+    }
   }
 
   for (WebFrame* child = frame->firstChild(); child;
@@ -153,6 +177,13 @@ void HistoryController::UpdateForInitialLoadInChildFrame(
     return;
   if (HistoryEntry::HistoryNode* existing_node =
           current_entry_->GetHistoryNodeForFrame(frame)) {
+    // Clear the children and any NavigationParams if this commit isn't for
+    // the same item.  Otherwise we might have stale data after a redirect.
+    if (existing_node->item().itemSequenceNumber() !=
+        item.itemSequenceNumber()) {
+      existing_node->RemoveChildren();
+      navigation_params_.reset();
+    }
     existing_node->set_item(item);
     return;
   }
@@ -172,11 +203,71 @@ void HistoryController::UpdateForCommit(RenderFrameImpl* frame,
                                         bool navigation_within_page) {
   switch (commit_type) {
     case blink::WebBackForwardCommit:
-      if (!provisional_entry_)
+      if (!provisional_entry_) {
+        // The provisional entry may have been discarded due to a navigation in
+        // a different frame.  For main frames, it is not safe to leave the
+        // current_entry_ in place, which may have a cross-site page and will be
+        // included in the PageState for this commit.  Replace it with a new
+        // HistoryEntry corresponding to the commit, and clear any stale
+        // NavigationParams which might point to the wrong entry.
+        //
+        // This will lack any subframe history items that were in the original
+        // provisional entry, but we don't know what those were after discarding
+        // it.  We'll load the default URL in those subframes instead.
+        //
+        // TODO(creis): It's also possible to get here for subframe commits.
+        // We'll leave a stale current_entry_ in that case, but that only causes
+        // an earlier URL to load in the subframe when leaving and coming back,
+        // and only in rare cases.  It does not risk a URL spoof, unlike the
+        // main frame case.  Since this bug is not present in the new
+        // FrameNavigationEntry-based navigation path (https://crbug.com/236848)
+        // we'll wait for that to fix the subframe case.
+        if (frame->IsMainFrame()) {
+          current_entry_.reset(new HistoryEntry(item));
+          navigation_params_.reset();
+        }
+
         return;
-      current_entry_.reset(provisional_entry_.release());
+      }
+
+      // If the current entry is null, this must be a main frame commit.
+      DCHECK(current_entry_ || frame->IsMainFrame());
+
+      // Commit the provisional entry, but only if it is a plausible transition.
+      // Do not commit it if the navigation is in a subframe and the provisional
+      // entry's main frame item does not match the current entry's main frame,
+      // which can happen if multiple forward navigations occur.  In that case,
+      // committing the provisional entry would corrupt it, leading to a URL
+      // spoof.  See https://crbug.com/597322.  (Note that the race in this bug
+      // does not affect main frame navigations, only navigations in subframes.)
+      //
+      // Note that we cannot compare the provisional entry against |item|, since
+      // |item| may have redirected to a different URL and ISN.  We also cannot
+      // compare against the main frame's URL, since that may have changed due
+      // to a replaceState.  (Even origin can change on replaceState in certain
+      // modes.)
+      //
+      // It would be safe to additionally check the ISNs of all parent frames
+      // (and not just the root), but that is less critical because it won't
+      // lead to a URL spoof.
+      if (frame->IsMainFrame() ||
+          current_entry_->root().itemSequenceNumber() ==
+              provisional_entry_->root().itemSequenceNumber()) {
+        current_entry_ = std::move(provisional_entry_);
+      }
+
+      // We're guaranteed to have a current entry now.
+      DCHECK(current_entry_);
+
       if (HistoryEntry::HistoryNode* node =
               current_entry_->GetHistoryNodeForFrame(frame)) {
+        // Clear the children and any NavigationParams if this commit isn't for
+        // the same item.  Otherwise we might have stale data from a race.
+        if (node->item().itemSequenceNumber() != item.itemSequenceNumber()) {
+          node->RemoveChildren();
+          navigation_params_.reset();
+        }
+
         node->set_item(item);
       }
       break;
@@ -212,8 +303,8 @@ HistoryEntry* HistoryController::GetCurrentEntry() {
 WebHistoryItem HistoryController::GetItemForNewChildFrame(
     RenderFrameImpl* frame) const {
   if (navigation_params_.get()) {
-    frame->SetPendingNavigationParams(make_scoped_ptr(
-        new NavigationParams(*navigation_params_.get())));
+    frame->SetPendingNavigationParams(
+        base::MakeUnique<NavigationParams>(*navigation_params_.get()));
   }
 
   if (!current_entry_)

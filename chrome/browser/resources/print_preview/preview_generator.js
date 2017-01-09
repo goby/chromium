@@ -72,13 +72,6 @@ cr.define('print_preview', function() {
     this.isLandscapeEnabled_ = false;
 
     /**
-     * Whether the previews are being generated from a distilled page.
-     * @type {boolean}
-     * @private
-     */
-    this.isDistillPageEnabled_ = false;
-
-    /**
      * Whether the previews are being generated with a header and footer.
      * @type {boolean}
      * @private
@@ -98,6 +91,14 @@ cr.define('print_preview', function() {
      * @private
      */
     this.isFitToPageEnabled_ = false;
+
+    /**
+     * The scaling factor (in percent) for the document. Ignored if fit to page
+     * is true.
+     * @type {number}
+     * @private
+     */
+    this.scalingValue_ = 100;
 
     /**
      * Page ranges setting used used to generate the last preview.
@@ -182,10 +183,9 @@ cr.define('print_preview', function() {
       this.isLandscapeEnabled_ = this.printTicketStore_.landscape.getValue();
       this.isHeaderFooterEnabled_ =
           this.printTicketStore_.headerFooter.getValue();
-      this.isDistillPageEnabled_ =
-          this.printTicketStore_.distillPage.getValue();
       this.colorValue_ = this.printTicketStore_.color.getValue();
       this.isFitToPageEnabled_ = this.printTicketStore_.fitToPage.getValue();
+      this.scalingValue_ = this.printTicketStore_.scaling.getValueAsNumber();
       this.pageRanges_ = this.printTicketStore_.pageRange.getPageRanges();
       this.marginsType_ = this.printTicketStore_.marginsType.getValue();
       this.isCssBackgroundEnabled_ =
@@ -283,9 +283,8 @@ cr.define('print_preview', function() {
           !ticketStore.mediaSize.isValueEqual(this.mediaSize_) ||
           !ticketStore.landscape.isValueEqual(this.isLandscapeEnabled_) ||
           !ticketStore.headerFooter.isValueEqual(this.isHeaderFooterEnabled_) ||
-          !ticketStore.distillPage.isValueEqual(
-              this.isDistillPageEnabled_) ||
           !ticketStore.color.isValueEqual(this.colorValue_) ||
+          !ticketStore.scaling.isValueEqual(this.scalingValue_) ||
           !ticketStore.fitToPage.isValueEqual(this.isFitToPageEnabled_) ||
           this.pageRanges_ == null ||
           !areRangesEqual(ticketStore.pageRange.getPageRanges(),

@@ -5,10 +5,11 @@
 #ifndef CONTENT_PUBLIC_COMMON_CHILD_PROCESS_HOST_H_
 #define CONTENT_PUBLIC_COMMON_CHILD_PROCESS_HOST_H_
 
+#include <stdint.h>
+
 #include "base/files/scoped_file.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "ipc/attachment_broker_privileged.h"
 #include "ipc/ipc_channel_proxy.h"
 
 namespace base {
@@ -17,6 +18,10 @@ class FilePath;
 
 namespace IPC {
 class MessageFilter;
+}
+
+namespace service_manager {
+class InterfaceProvider;
 }
 
 namespace content {
@@ -37,7 +42,7 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
   // This value is used as the tracing id of the browser process for identifying
   // cross-process shared memory segments when tracing.
   // Note: In single-process mode all the clients of tracing will use this id.
-  static uint64 kBrowserTracingProcessId;
+  static uint64_t kBrowserTracingProcessId;
 
   // Used to create a child process host. The delegate must outlive this object.
   static ChildProcessHost* Create(ChildProcessHostDelegate* delegate);
@@ -75,9 +80,16 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
   // Does not check with the delegate's CanShutdown.
   virtual void ForceShutdown() = 0;
 
-  // Creates the IPC channel.  Returns the channel id if it succeeded, an
-  // empty string otherwise
-  virtual std::string CreateChannel() = 0;
+  // Creates the IPC channel on top of Mojo. Returns the Mojo channel token if
+  // succeeded, or an empty string on failure.
+  //
+  // DEPRECATED: Don't use this. Instead implement GetRemoteInterfaces() in the
+  // delegate and use the CreateChannelMojo() version below.
+  virtual std::string CreateChannelMojo(const std::string& child_token) = 0;
+
+  // Creates the IPC channel over a Mojo message pipe. The pipe connection is
+  // brokered through the Service Manager like any other service connection.
+  virtual void CreateChannelMojo() = 0;
 
   // Returns true iff the IPC channel is currently being opened;
   virtual bool IsChannelOpening() = 0;
@@ -85,10 +97,10 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
   // Adds an IPC message filter.  A reference will be kept to the filter.
   virtual void AddFilter(IPC::MessageFilter* filter) = 0;
 
-#if defined(OS_POSIX)
-  // See IPC::Channel::TakeClientFileDescriptor.
-  virtual base::ScopedFD TakeClientFileDescriptor() = 0;
-#endif
+  // Returns the service_manager::InterfaceProvider the process host can use to
+  // bind
+  // interfaces exposed to it from the child.
+  virtual service_manager::InterfaceProvider* GetRemoteInterfaces() = 0;
 };
 
 };  // namespace content

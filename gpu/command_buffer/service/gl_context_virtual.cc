@@ -15,34 +15,17 @@
 
 namespace gpu {
 
-GLContextVirtual::GLContextVirtual(
-    gfx::GLShareGroup* share_group,
-    gfx::GLContext* shared_context,
-    base::WeakPtr<gles2::GLES2Decoder> decoder)
-  : GLContext(share_group),
-    shared_context_(shared_context),
-    decoder_(decoder) {
-}
+GLContextVirtual::GLContextVirtual(gl::GLShareGroup* share_group,
+                                   gl::GLContext* shared_context,
+                                   base::WeakPtr<gles2::GLES2Decoder> decoder)
+    : GLContext(share_group),
+      shared_context_(shared_context),
+      decoder_(decoder) {}
 
-bool GLContextVirtual::Initialize(
-    gfx::GLSurface* compatible_surface, gfx::GpuPreference gpu_preference) {
+bool GLContextVirtual::Initialize(gl::GLSurface* compatible_surface,
+                                  const gl::GLContextAttribs& attribs) {
   SetGLStateRestorer(new GLStateRestorerImpl(decoder_));
-
-  // Virtual contexts obviously can't make a context that is compatible
-  // with the surface (the context already exists), but we do need to
-  // make a context current for SetupForVirtualization() below.
-  if (!IsCurrent(compatible_surface)) {
-    if (!shared_context_->MakeCurrent(compatible_surface)) {
-      // This is likely an error. The real context should be made as
-      // compatible with all required surfaces when it was created.
-      LOG(ERROR) << "Failed MakeCurrent(compatible_surface)";
-      return false;
-    }
-  }
-
-  shared_context_->SetupForVirtualization();
-  shared_context_->MakeVirtuallyCurrent(this, compatible_surface);
-  return true;
+  return shared_context_->MakeVirtuallyCurrent(this, compatible_surface);
 }
 
 void GLContextVirtual::Destroy() {
@@ -50,7 +33,7 @@ void GLContextVirtual::Destroy() {
   shared_context_ = NULL;
 }
 
-bool GLContextVirtual::MakeCurrent(gfx::GLSurface* surface) {
+bool GLContextVirtual::MakeCurrent(gl::GLSurface* surface) {
   if (decoder_.get())
     return shared_context_->MakeVirtuallyCurrent(this, surface);
 
@@ -58,14 +41,14 @@ bool GLContextVirtual::MakeCurrent(gfx::GLSurface* surface) {
   return false;
 }
 
-void GLContextVirtual::ReleaseCurrent(gfx::GLSurface* surface) {
+void GLContextVirtual::ReleaseCurrent(gl::GLSurface* surface) {
   if (IsCurrent(surface)) {
     shared_context_->OnReleaseVirtuallyCurrent(this);
     shared_context_->ReleaseCurrent(surface);
   }
 }
 
-bool GLContextVirtual::IsCurrent(gfx::GLSurface* surface) {
+bool GLContextVirtual::IsCurrent(gl::GLSurface* surface) {
   // If it's a real surface it needs to be current.
   if (surface &&
       !surface->IsOffscreen())
@@ -79,7 +62,7 @@ void* GLContextVirtual::GetHandle() {
   return shared_context_->GetHandle();
 }
 
-scoped_refptr<gfx::GPUTimingClient> GLContextVirtual::CreateGPUTimingClient() {
+scoped_refptr<gl::GPUTimingClient> GLContextVirtual::CreateGPUTimingClient() {
   return shared_context_->CreateGPUTimingClient();
 }
 
@@ -106,19 +89,8 @@ void GLContextVirtual::SetUnbindFboOnMakeCurrent() {
   shared_context_->SetUnbindFboOnMakeCurrent();
 }
 
-base::Closure GLContextVirtual::GetStateWasDirtiedExternallyCallback() {
-  return shared_context_->GetStateWasDirtiedExternallyCallback();
-}
-
-void GLContextVirtual::RestoreStateIfDirtiedExternally() {
-  // The dirty bit should only be cleared after the state has been restored,
-  // which should be done only when the context is current.
-  DCHECK(IsCurrent(NULL));
-  if (!shared_context_->GetStateWasDirtiedExternally())
-    return;
-  gfx::ScopedSetGLToRealGLApi scoped_set_gl_api;
-  GetGLStateRestorer()->RestoreState(NULL);
-  shared_context_->SetStateWasDirtiedExternally(false);
+gl::YUVToRGBConverter* GLContextVirtual::GetYUVToRGBConverter() {
+  return shared_context_->GetYUVToRGBConverter();
 }
 
 GLContextVirtual::~GLContextVirtual() {

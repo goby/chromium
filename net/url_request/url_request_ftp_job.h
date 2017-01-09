@@ -5,8 +5,10 @@
 #ifndef NET_URL_REQUEST_URL_REQUEST_FTP_JOB_H_
 #define NET_URL_REQUEST_URL_REQUEST_FTP_JOB_H_
 
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/auth.h"
 #include "net/base/net_export.h"
@@ -48,6 +50,8 @@ class NET_EXPORT_PRIVATE URLRequestFtpJob : public URLRequestJob {
   RequestPriority priority() const { return priority_; }
 
  private:
+  class AuthData;
+
   void OnResolveProxyComplete(int result);
 
   void StartFtpTransaction();
@@ -69,8 +73,6 @@ class NET_EXPORT_PRIVATE URLRequestFtpJob : public URLRequestJob {
   void SetAuth(const AuthCredentials& credentials) override;
   void CancelAuth() override;
 
-  // TODO(ibrar):  Yet to give another look at this function.
-  UploadProgress GetUploadProgress() const override;
   int ReadRawData(IOBuffer* buf, int buf_size) override;
 
   void HandleAuthNeededResponse();
@@ -82,15 +84,15 @@ class NET_EXPORT_PRIVATE URLRequestFtpJob : public URLRequestJob {
   ProxyService::PacRequest* pac_request_;
 
   FtpRequestInfo ftp_request_info_;
-  scoped_ptr<FtpTransaction> ftp_transaction_;
+  std::unique_ptr<FtpTransaction> ftp_transaction_;
 
   HttpRequestInfo http_request_info_;
-  scoped_ptr<HttpTransaction> http_transaction_;
+  std::unique_ptr<HttpTransaction> http_transaction_;
   const HttpResponseInfo* http_response_info_;
 
   bool read_in_progress_;
 
-  scoped_refptr<AuthData> auth_data_;
+  std::unique_ptr<AuthData> auth_data_;
 
   FtpTransactionFactory* ftp_transaction_factory_;
   FtpAuthCache* ftp_auth_cache_;

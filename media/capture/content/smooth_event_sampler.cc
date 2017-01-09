@@ -4,17 +4,16 @@
 
 #include "media/capture/content/smooth_event_sampler.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/trace_event/trace_event.h"
 
 namespace media {
 
-SmoothEventSampler::SmoothEventSampler(base::TimeDelta min_capture_period,
-                                       int redundant_capture_goal)
-    : redundant_capture_goal_(redundant_capture_goal),
-      overdue_sample_count_(0),
-      token_bucket_(base::TimeDelta::Max()) {
+SmoothEventSampler::SmoothEventSampler(base::TimeDelta min_capture_period)
+    : token_bucket_(base::TimeDelta::Max()) {
   SetMinCapturePeriod(min_capture_period);
 }
 
@@ -41,7 +40,7 @@ void SmoothEventSampler::ConsiderPresentationEvent(base::TimeTicks event_time) {
         token_bucket_ = token_bucket_capacity_;
     }
     TRACE_COUNTER1("gpu.capture", "MirroringTokenBucketUsec",
-                   std::max<int64>(0, token_bucket_.InMicroseconds()));
+                   std::max<int64_t>(0, token_bucket_.InMicroseconds()));
   }
   current_event_ = event_time;
 }
@@ -55,31 +54,10 @@ void SmoothEventSampler::RecordSample() {
   if (token_bucket_ < base::TimeDelta())
     token_bucket_ = base::TimeDelta();
   TRACE_COUNTER1("gpu.capture", "MirroringTokenBucketUsec",
-                 std::max<int64>(0, token_bucket_.InMicroseconds()));
+                 std::max<int64_t>(0, token_bucket_.InMicroseconds()));
 
-  if (HasUnrecordedEvent()) {
+  if (HasUnrecordedEvent())
     last_sample_ = current_event_;
-    overdue_sample_count_ = 0;
-  } else {
-    ++overdue_sample_count_;
-  }
-}
-
-bool SmoothEventSampler::IsOverdueForSamplingAt(
-    base::TimeTicks event_time) const {
-  DCHECK(!event_time.is_null());
-
-  if (!HasUnrecordedEvent() && overdue_sample_count_ >= redundant_capture_goal_)
-    return false;  // Not dirty.
-
-  if (last_sample_.is_null())
-    return true;
-
-  // If we're dirty but not yet old, then we've recently gotten updates, so we
-  // won't request a sample just yet.
-  base::TimeDelta dirty_interval = event_time - last_sample_;
-  return dirty_interval >=
-         base::TimeDelta::FromMilliseconds(OVERDUE_DIRTY_THRESHOLD_MILLIS);
 }
 
 bool SmoothEventSampler::HasUnrecordedEvent() const {

@@ -4,10 +4,12 @@
 
 #include "media/audio/win/audio_low_latency_input_win.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
+#include "media/audio/audio_device_description.h"
 #include "media/audio/win/audio_manager_win.h"
 #include "media/audio/win/avrt_wrapper_win.h"
 #include "media/audio/win/core_audio_util_win.h"
@@ -33,7 +35,8 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(AudioManagerWin* manager,
       perf_count_to_100ns_units_(0.0),
       ms_to_frame_count_(0.0),
       sink_(NULL),
-      audio_bus_(media::AudioBus::Create(params)) {
+      audio_bus_(media::AudioBus::Create(params)),
+      mute_done_(false) {
   DCHECK(manager_);
 
   // Load the Avrt DLL if not already loaded. Required to support MMCSS.
@@ -133,6 +136,20 @@ void WASAPIAudioInputStream::Start(AudioInputCallback* callback) {
   if (started_)
     return;
 
+  if (device_id_ == AudioDeviceDescription::kLoopbackWithMuteDeviceId &&
+      system_audio_volume_) {
+    BOOL muted = false;
+    system_audio_volume_->GetMute(&muted);
+
+    // If the system audio is muted at the time of capturing, then no need to
+    // mute it again, and later we do not unmute system audio when stopping
+    // capturing.
+    if (!muted) {
+      system_audio_volume_->SetMute(true, NULL);
+      mute_done_ = true;
+    }
+  }
+
   DCHECK(!sink_);
   sink_ = callback;
 
@@ -162,6 +179,17 @@ void WASAPIAudioInputStream::Stop() {
   DVLOG(1) << "WASAPIAudioInputStream::Stop()";
   if (!started_)
     return;
+
+  // We have muted system audio for capturing, so we need to unmute it when
+  // capturing stops.
+  if (device_id_ == AudioDeviceDescription::kLoopbackWithMuteDeviceId &&
+      mute_done_) {
+    DCHECK(system_audio_volume_);
+    if (system_audio_volume_) {
+      system_audio_volume_->SetMute(false, NULL);
+      mute_done_ = false;
+    }
+  }
 
   // Stops periodic AGC microphone measurements.
   StopAgc();
@@ -291,7 +319,7 @@ void WASAPIAudioInputStream::Run() {
   size_t capture_buffer_size = std::max(
       2 * endpoint_buffer_size_frames_ * frame_size_,
       2 * packet_size_frames_ * frame_size_);
-  scoped_ptr<uint8[]> capture_buffer(new uint8[capture_buffer_size]);
+  std::unique_ptr<uint8_t[]> capture_buffer(new uint8_t[capture_buffer_size]);
 
   LARGE_INTEGER now_count = {};
   bool recording = true;
@@ -387,10 +415,12 @@ void WASAPIAudioInputStream::Run() {
 
           // Deliver captured data to the registered consumer using a packet
           // size which was specified at construction.
-          uint32 delay_frames = static_cast<uint32>(audio_delay_frames + 0.5);
+          uint32_t delay_frames =
+              static_cast<uint32_t>(audio_delay_frames + 0.5);
           while (buffer_frame_index >= packet_size_frames_) {
             // Copy data to audio bus to match the OnData interface.
-            uint8* audio_data = reinterpret_cast<uint8*>(capture_buffer.get());
+            uint8_t* audio_data =
+                reinterpret_cast<uint8_t*>(capture_buffer.get());
             audio_bus_->FromInterleaved(
                 audio_data, audio_bus_->frames(), format_.wBitsPerSample / 8);
 
@@ -458,16 +488,23 @@ HRESULT WASAPIAudioInputStream::SetCaptureDevice() {
   // Retrieve the IMMDevice by using the specified role or the specified
   // unique endpoint device-identification string.
 
-  if (device_id_ == AudioManagerBase::kDefaultDeviceId) {
+  if (device_id_ == AudioDeviceDescription::kDefaultDeviceId) {
     // Retrieve the default capture audio endpoint for the specified role.
     // Note that, in Windows Vista, the MMDevice API supports device roles
     // but the system-supplied user interface programs do not.
     hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole,
                                              endpoint_device_.Receive());
-  } else if (device_id_ == AudioManagerBase::kCommunicationsDeviceId) {
+  } else if (device_id_ == AudioDeviceDescription::kCommunicationsDeviceId) {
     hr = enumerator->GetDefaultAudioEndpoint(eCapture, eCommunications,
                                              endpoint_device_.Receive());
-  } else if (device_id_ == AudioManagerBase::kLoopbackInputDeviceId) {
+  } else if (device_id_ == AudioDeviceDescription::kLoopbackWithMuteDeviceId) {
+    // Capture the default playback stream.
+    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole,
+                                             endpoint_device_.Receive());
+
+    endpoint_device_->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, NULL,
+                               system_audio_volume_.ReceiveVoid());
+  } else if (device_id_ == AudioDeviceDescription::kLoopbackInputDeviceId) {
     // Capture the default playback stream.
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole,
                                              endpoint_device_.Receive());
@@ -568,7 +605,8 @@ HRESULT WASAPIAudioInputStream::InitializeAudioEngine() {
   // Use event-driven mode only fo regular input devices. For loopback the
   // EVENTCALLBACK flag is specified when intializing
   // |audio_render_client_for_loopback_|.
-  if (device_id_ == AudioManagerBase::kLoopbackInputDeviceId) {
+  if (device_id_ == AudioDeviceDescription::kLoopbackInputDeviceId ||
+      device_id_ == AudioDeviceDescription::kLoopbackWithMuteDeviceId) {
     flags = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_NOPERSIST;
   } else {
     flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST;
@@ -581,13 +619,11 @@ HRESULT WASAPIAudioInputStream::InitializeAudioEngine() {
   // that glitches do not occur between the periodic processing passes.
   // This setting should lead to lowest possible latency.
   HRESULT hr = audio_client_->Initialize(
-      AUDCLNT_SHAREMODE_SHARED,
-      flags,
+      AUDCLNT_SHAREMODE_SHARED, flags,
       0,  // hnsBufferDuration
-      0,
-      &format_,
-      device_id_ == AudioManagerBase::kCommunicationsDeviceId ?
-          &kCommunicationsSessionId : nullptr);
+      0, &format_, device_id_ == AudioDeviceDescription::kCommunicationsDeviceId
+                       ? &kCommunicationsSessionId
+                       : nullptr);
 
   if (FAILED(hr))
     return hr;
@@ -644,7 +680,8 @@ HRESULT WASAPIAudioInputStream::InitializeAudioEngine() {
   //   samples from the capture endpoint buffer.
   //
   // http://msdn.microsoft.com/en-us/library/windows/desktop/dd316551(v=vs.85).aspx
-  if (device_id_ == AudioManagerBase::kLoopbackInputDeviceId) {
+  if (device_id_ == AudioDeviceDescription::kLoopbackInputDeviceId ||
+      device_id_ == AudioDeviceDescription::kLoopbackWithMuteDeviceId) {
     hr = endpoint_device_->Activate(
         __uuidof(IAudioClient), CLSCTX_INPROC_SERVER, NULL,
         audio_render_client_for_loopback_.ReceiveVoid());

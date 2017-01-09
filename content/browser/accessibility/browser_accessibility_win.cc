@@ -8,7 +8,10 @@
 #include <UIAutomationCoreApi.h>
 
 #include <algorithm>
+#include <iterator>
+#include <utility>
 
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -16,14 +19,191 @@
 #include "base/win/enum_variant.h"
 #include "base/win/scoped_comptr.h"
 #include "base/win/windows_version.h"
+#include "content/browser/accessibility/browser_accessibility_event_win.h"
 #include "content/browser/accessibility/browser_accessibility_manager_win.h"
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
 #include "content/common/accessibility_messages.h"
 #include "content/public/common/content_client.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/accessibility/ax_text_utils.h"
 #include "ui/base/win/accessibility_ids_win.h"
 #include "ui/base/win/accessibility_misc_utils.h"
 #include "ui/base/win/atl_module.h"
+
+namespace {
+
+// IMPORTANT!
+// These values are written to logs.  Do not renumber or delete
+// existing items; add new entries to the end of the list.
+enum {
+  UMA_API_ACC_DO_DEFAULT_ACTION = 0,
+  UMA_API_ACC_HIT_TEST = 1,
+  UMA_API_ACC_LOCATION = 2,
+  UMA_API_ACC_NAVIGATE = 3,
+  UMA_API_ACC_SELECT = 4,
+  UMA_API_ADD_SELECTION = 5,
+  UMA_API_CONVERT_RETURNED_ELEMENT = 6,
+  UMA_API_DO_ACTION = 7,
+  UMA_API_GET_ACCESSIBLE_AT = 8,
+  UMA_API_GET_ACC_CHILD = 9,
+  UMA_API_GET_ACC_CHILD_COUNT = 10,
+  UMA_API_GET_ACC_DEFAULT_ACTION = 11,
+  UMA_API_GET_ACC_DESCRIPTION = 12,
+  UMA_API_GET_ACC_FOCUS = 13,
+  UMA_API_GET_ACC_HELP = 14,
+  UMA_API_GET_ACC_HELP_TOPIC = 15,
+  UMA_API_GET_ACC_KEYBOARD_SHORTCUT = 16,
+  UMA_API_GET_ACC_NAME = 17,
+  UMA_API_GET_ACC_PARENT = 18,
+  UMA_API_GET_ACC_ROLE = 19,
+  UMA_API_GET_ACC_SELECTION = 20,
+  UMA_API_GET_ACC_STATE = 21,
+  UMA_API_GET_ACC_VALUE = 22,
+  UMA_API_GET_ANCHOR = 23,
+  UMA_API_GET_ANCHOR_TARGET = 24,
+  UMA_API_GET_APP_NAME = 25,
+  UMA_API_GET_APP_VERSION = 26,
+  UMA_API_GET_ATTRIBUTES_FOR_NAMES = 27,
+  UMA_API_GET_CAPTION = 28,
+  UMA_API_GET_CARET_OFFSET = 29,
+  UMA_API_GET_CELL_AT = 30,
+  UMA_API_GET_CHARACTER_EXTENTS = 31,
+  UMA_API_GET_CHILD_AT = 32,
+  UMA_API_GET_CHILD_INDEX = 33,
+  UMA_API_GET_CLIPPED_SUBSTRING_BOUNDS = 34,
+  UMA_API_GET_COLUMN_DESCRIPTION = 35,
+  UMA_API_GET_COLUMN_EXTENT = 36,
+  UMA_API_GET_COLUMN_EXTENT_AT = 37,
+  UMA_API_GET_COLUMN_HEADER = 38,
+  UMA_API_GET_COLUMN_HEADER_CELLS = 39,
+  UMA_API_GET_COLUMN_INDEX = 40,
+  UMA_API_GET_COMPUTED_STYLE = 41,
+  UMA_API_GET_COMPUTED_STYLE_FOR_PROPERTIES = 42,
+  UMA_API_GET_CURRENT_VALUE = 43,
+  UMA_API_GET_DESCRIPTION = 44,
+  UMA_API_GET_DOC_TYPE = 45,
+  UMA_API_GET_DOM_TEXT = 46,
+  UMA_API_GET_END_INDEX = 47,
+  UMA_API_GET_EXTENDED_ROLE = 48,
+  UMA_API_GET_EXTENDED_STATES = 49,
+  UMA_API_GET_FIRST_CHILD = 50,
+  UMA_API_GET_FONT_FAMILY = 51,
+  UMA_API_GET_GROUP_POSITION = 52,
+  UMA_API_GET_HOST_RAW_ELEMENT_PROVIDER = 53,
+  UMA_API_GET_HYPERLINK = 54,
+  UMA_API_GET_HYPERLINK_INDEX = 55,
+  UMA_API_GET_IACCESSIBLE_PAIR = 56,
+  UMA_API_GET_IMAGE_POSITION = 57,
+  UMA_API_GET_IMAGE_SIZE = 58,
+  UMA_API_GET_INDEX_IN_PARENT = 59,
+  UMA_API_GET_INNER_HTML = 60,
+  UMA_API_GET_IS_COLUMN_SELECTED = 61,
+  UMA_API_GET_IS_ROW_SELECTED = 62,
+  UMA_API_GET_IS_SELECTED = 63,
+  UMA_API_GET_KEY_BINDING = 64,
+  UMA_API_GET_LANGUAGE = 65,
+  UMA_API_GET_LAST_CHILD = 66,
+  UMA_API_GET_LOCALE = 67,
+  UMA_API_GET_LOCALIZED_EXTENDED_ROLE = 68,
+  UMA_API_GET_LOCALIZED_EXTENDED_STATES = 69,
+  UMA_API_GET_LOCALIZED_NAME = 70,
+  UMA_API_GET_LOCAL_INTERFACE = 71,
+  UMA_API_GET_MAXIMUM_VALUE = 72,
+  UMA_API_GET_MIME_TYPE = 73,
+  UMA_API_GET_MINIMUM_VALUE = 74,
+  UMA_API_GET_NAME = 75,
+  UMA_API_GET_NAMESPACE_URI_FOR_ID = 76,
+  UMA_API_GET_NEW_TEXT = 77,
+  UMA_API_GET_NEXT_SIBLING = 78,
+  UMA_API_GET_NODE_INFO = 79,
+  UMA_API_GET_N_CHARACTERS = 80,
+  UMA_API_GET_N_COLUMNS = 81,
+  UMA_API_GET_N_EXTENDED_STATES = 82,
+  UMA_API_GET_N_HYPERLINKS = 83,
+  UMA_API_GET_N_RELATIONS = 84,
+  UMA_API_GET_N_ROWS = 85,
+  UMA_API_GET_N_SELECTED_CELLS = 86,
+  UMA_API_GET_N_SELECTED_CHILDREN = 87,
+  UMA_API_GET_N_SELECTED_COLUMNS = 88,
+  UMA_API_GET_N_SELECTED_ROWS = 89,
+  UMA_API_GET_N_SELECTIONS = 90,
+  UMA_API_GET_OBJECT_FOR_CHILD = 91,
+  UMA_API_GET_OFFSET_AT_POINT = 92,
+  UMA_API_GET_OLD_TEXT = 93,
+  UMA_API_GET_PARENT_NODE = 94,
+  UMA_API_GET_PATTERN_PROVIDER = 95,
+  UMA_API_GET_PREVIOUS_SIBLING = 96,
+  UMA_API_GET_PROPERTY_VALUE = 97,
+  UMA_API_GET_PROVIDER_OPTIONS = 98,
+  UMA_API_GET_RELATION = 99,
+  UMA_API_GET_RELATIONS = 100,
+  UMA_API_GET_ROW_COLUMN_EXTENTS = 101,
+  UMA_API_GET_ROW_COLUMN_EXTENTS_AT_INDEX = 102,
+  UMA_API_GET_ROW_DESCRIPTION = 103,
+  UMA_API_GET_ROW_EXTENT = 104,
+  UMA_API_GET_ROW_EXTENT_AT = 105,
+  UMA_API_GET_ROW_HEADER = 106,
+  UMA_API_GET_ROW_HEADER_CELLS = 107,
+  UMA_API_GET_ROW_INDEX = 108,
+  UMA_API_GET_RUNTIME_ID = 109,
+  UMA_API_GET_SELECTED_CELLS = 110,
+  UMA_API_GET_SELECTED_CHILDREN = 111,
+  UMA_API_GET_SELECTED_COLUMNS = 112,
+  UMA_API_GET_SELECTED_ROWS = 113,
+  UMA_API_GET_SELECTION = 114,
+  UMA_API_GET_START_INDEX = 115,
+  UMA_API_GET_STATES = 116,
+  UMA_API_GET_SUMMARY = 117,
+  UMA_API_GET_TABLE = 118,
+  UMA_API_GET_TEXT = 119,
+  UMA_API_GET_TEXT_AFTER_OFFSET = 120,
+  UMA_API_GET_TEXT_AT_OFFSET = 121,
+  UMA_API_GET_TEXT_BEFORE_OFFSET = 122,
+  UMA_API_GET_TITLE = 123,
+  UMA_API_GET_TOOLKIT_NAME = 124,
+  UMA_API_GET_TOOLKIT_VERSION = 125,
+  UMA_API_GET_UNCLIPPED_SUBSTRING_BOUNDS = 126,
+  UMA_API_GET_UNIQUE_ID = 127,
+  UMA_API_GET_URL = 128,
+  UMA_API_GET_VALID = 129,
+  UMA_API_GET_WINDOW_HANDLE = 130,
+  UMA_API_IA2_GET_ATTRIBUTES = 131,
+  UMA_API_IA2_SCROLL_TO = 132,
+  UMA_API_IAACTION_GET_DESCRIPTION = 133,
+  UMA_API_IATEXT_GET_ATTRIBUTES = 134,
+  UMA_API_ISIMPLEDOMNODE_GET_ATTRIBUTES = 135,
+  UMA_API_ISIMPLEDOMNODE_SCROLL_TO = 136,
+  UMA_API_N_ACTIONS = 137,
+  UMA_API_PUT_ALTERNATE_VIEW_MEDIA_TYPES = 138,
+  UMA_API_QUERY_SERVICE = 139,
+  UMA_API_REMOVE_SELECTION = 140,
+  UMA_API_ROLE = 141,
+  UMA_API_SCROLL_SUBSTRING_TO = 142,
+  UMA_API_SCROLL_SUBSTRING_TO_POINT = 143,
+  UMA_API_SCROLL_TO_POINT = 144,
+  UMA_API_SCROLL_TO_SUBSTRING = 145,
+  UMA_API_SELECT_COLUMN = 146,
+  UMA_API_SELECT_ROW = 147,
+  UMA_API_SET_CARET_OFFSET = 148,
+  UMA_API_SET_CURRENT_VALUE = 149,
+  UMA_API_SET_SELECTION = 150,
+  UMA_API_TABLE2_GET_SELECTED_COLUMNS = 151,
+  UMA_API_TABLE2_GET_SELECTED_ROWS = 152,
+  UMA_API_TABLECELL_GET_COLUMN_INDEX = 153,
+  UMA_API_TABLECELL_GET_IS_SELECTED = 154,
+  UMA_API_TABLECELL_GET_ROW_INDEX = 155,
+  UMA_API_UNSELECT_COLUMN = 156,
+  UMA_API_UNSELECT_ROW = 157,
+
+  // This must always be the last enum. It's okay for its value to
+  // increase, but none of the other enum values may change.
+  UMA_API_MAX
+};
+
+#define WIN_ACCESSIBILITY_API_HISTOGRAM(enum_value) \
+    UMA_HISTOGRAM_ENUMERATION("Accessibility.WinAPIs", enum_value, UMA_API_MAX)
+
+}  // namespace
 
 namespace content {
 
@@ -41,10 +221,6 @@ const GUID GUID_IAccessibleContentDocument = {
     {0x95, 0x21, 0x07, 0xed, 0x28, 0xfb, 0x07, 0x2e}};
 
 const base::char16 BrowserAccessibilityWin::kEmbeddedCharacter = L'\xfffc';
-
-// static
-LONG BrowserAccessibilityWin::next_unique_id_win_ =
-    base::win::kFirstBrowserAccessibilityManagerAccessibilityId;
 
 //
 // BrowserAccessibilityRelation
@@ -66,6 +242,11 @@ class BrowserAccessibilityRelation
   CONTENT_EXPORT void Initialize(BrowserAccessibilityWin* owner,
                                  const base::string16& type);
   CONTENT_EXPORT void AddTarget(int target_id);
+  CONTENT_EXPORT void RemoveTarget(int target_id);
+
+  // Accessors.
+  const base::string16& get_type() const { return type_; }
+  const std::vector<int>& get_target_ids() const { return target_ids_; }
 
   // IAccessibleRelation methods.
   CONTENT_EXPORT STDMETHODIMP get_relationType(BSTR* relation_type) override;
@@ -97,6 +278,12 @@ void BrowserAccessibilityRelation::AddTarget(int target_id) {
   target_ids_.push_back(target_id);
 }
 
+void BrowserAccessibilityRelation::RemoveTarget(int target_id) {
+  target_ids_.erase(
+      std::remove(target_ids_.begin(), target_ids_.end(), target_id),
+      target_ids_.end());
+}
+
 STDMETHODIMP BrowserAccessibilityRelation::get_relationType(
     BSTR* relation_type) {
   if (!relation_type)
@@ -119,9 +306,8 @@ STDMETHODIMP BrowserAccessibilityRelation::get_nTargets(long* n_targets) {
 
   *n_targets = static_cast<long>(target_ids_.size());
 
-  BrowserAccessibilityManager* manager = owner_->manager();
   for (long i = *n_targets - 1; i >= 0; --i) {
-    BrowserAccessibility* result = manager->GetFromID(target_ids_[i]);
+    BrowserAccessibilityWin* result = owner_->GetFromID(target_ids_[i]);
     if (!result || !result->instance_active()) {
       *n_targets = 0;
       break;
@@ -143,14 +329,12 @@ STDMETHODIMP BrowserAccessibilityRelation::get_target(long target_index,
     return E_INVALIDARG;
   }
 
-  BrowserAccessibilityManager* manager = owner_->manager();
-  BrowserAccessibility* result =
-      manager->GetFromID(target_ids_[target_index]);
+  BrowserAccessibility* result = owner_->GetFromID(target_ids_[target_index]);
   if (!result || !result->instance_active())
     return E_FAIL;
 
   *target = static_cast<IAccessible*>(
-      result->ToBrowserAccessibilityWin()->NewReference());
+      ToBrowserAccessibilityWin(result)->NewReference());
   return S_OK;
 }
 
@@ -207,34 +391,15 @@ BrowserAccessibility* BrowserAccessibility::Create() {
   return instance->NewReference();
 }
 
-const BrowserAccessibilityWin* BrowserAccessibility::ToBrowserAccessibilityWin()
-    const {
-  return static_cast<const BrowserAccessibilityWin*>(this);
-}
-
-BrowserAccessibilityWin* BrowserAccessibility::ToBrowserAccessibilityWin() {
-  return static_cast<BrowserAccessibilityWin*>(this);
-}
-
 BrowserAccessibilityWin::BrowserAccessibilityWin()
     : win_attributes_(new WinAttributes()),
       previous_scroll_x_(0),
       previous_scroll_y_(0) {
-  // Start unique IDs at -1 and decrement each time, because get_accChild
-  // uses positive IDs to enumerate children, so we use negative IDs to
-  // clearly distinguish between indices and unique IDs.
-  unique_id_win_ = next_unique_id_win_;
-  if (next_unique_id_win_ ==
-          base::win::kLastBrowserAccessibilityManagerAccessibilityId) {
-    next_unique_id_win_ =
-        base::win::kFirstBrowserAccessibilityManagerAccessibilityId;
-  }
-  next_unique_id_win_--;
 }
 
 BrowserAccessibilityWin::~BrowserAccessibilityWin() {
-  for (size_t i = 0; i < relations_.size(); ++i)
-    relations_[i]->Release();
+  for (BrowserAccessibilityRelation* relation : relations_)
+    relation->Release();
 }
 
 //
@@ -247,12 +412,17 @@ BrowserAccessibilityWin::~BrowserAccessibilityWin() {
 //
 
 HRESULT BrowserAccessibilityWin::accDoDefaultAction(VARIANT var_id) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ACC_DO_DEFAULT_ACTION);
   if (!instance_active())
     return E_FAIL;
 
   BrowserAccessibilityWin* target = GetTargetFromChildID(var_id);
   if (!target)
     return E_INVALIDARG;
+
+  // Return an error if it's not clickable.
+  if (!target->HasStringAttribute(ui::AX_ATTR_ACTION))
+    return DISP_E_MEMBERNOTFOUND;
 
   manager()->DoDefaultAction(*target);
   return S_OK;
@@ -261,6 +431,7 @@ HRESULT BrowserAccessibilityWin::accDoDefaultAction(VARIANT var_id) {
 STDMETHODIMP BrowserAccessibilityWin::accHitTest(LONG x_left,
                                                  LONG y_top,
                                                  VARIANT* child) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ACC_HIT_TEST);
   if (!instance_active())
     return E_FAIL;
 
@@ -268,20 +439,20 @@ STDMETHODIMP BrowserAccessibilityWin::accHitTest(LONG x_left,
     return E_INVALIDARG;
 
   gfx::Point point(x_left, y_top);
-  if (!GetGlobalBoundsRect().Contains(point)) {
+  if (!GetScreenBoundsRect().Contains(point)) {
     // Return S_FALSE and VT_EMPTY when outside the object's boundaries.
     child->vt = VT_EMPTY;
     return S_FALSE;
   }
 
-  BrowserAccessibility* result = BrowserAccessibilityForPoint(point);
+  BrowserAccessibility* result = manager()->CachingAsyncHitTest(point);
   if (result == this) {
     // Point is within this object.
     child->vt = VT_I4;
     child->lVal = CHILDID_SELF;
   } else {
     child->vt = VT_DISPATCH;
-    child->pdispVal = result->ToBrowserAccessibilityWin()->NewReference();
+    child->pdispVal = ToBrowserAccessibilityWin(result)->NewReference();
   }
   return S_OK;
 }
@@ -291,6 +462,7 @@ STDMETHODIMP BrowserAccessibilityWin::accLocation(LONG* x_left,
                                                   LONG* width,
                                                   LONG* height,
                                                   VARIANT var_id) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ACC_LOCATION);
   if (!instance_active())
     return E_FAIL;
 
@@ -301,7 +473,7 @@ STDMETHODIMP BrowserAccessibilityWin::accLocation(LONG* x_left,
   if (!target)
     return E_INVALIDARG;
 
-  gfx::Rect bounds = target->GetGlobalBoundsRect();
+  gfx::Rect bounds = target->GetScreenBoundsRect();
   *x_left = bounds.x();
   *y_top  = bounds.y();
   *width  = bounds.width();
@@ -313,6 +485,7 @@ STDMETHODIMP BrowserAccessibilityWin::accLocation(LONG* x_left,
 STDMETHODIMP BrowserAccessibilityWin::accNavigate(LONG nav_dir,
                                                   VARIANT start,
                                                   VARIANT* end) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ACC_NAVIGATE);
   BrowserAccessibilityWin* target = GetTargetFromChildID(start);
   if (!target)
     return E_INVALIDARG;
@@ -323,7 +496,7 @@ STDMETHODIMP BrowserAccessibilityWin::accNavigate(LONG nav_dir,
     return E_INVALIDARG;
   }
 
-  uint32 child_count = target->PlatformChildCount();
+  uint32_t child_count = target->PlatformChildCount();
 
   BrowserAccessibility* result = NULL;
   switch (nav_dir) {
@@ -355,12 +528,13 @@ STDMETHODIMP BrowserAccessibilityWin::accNavigate(LONG nav_dir,
   }
 
   end->vt = VT_DISPATCH;
-  end->pdispVal = result->ToBrowserAccessibilityWin()->NewReference();
+  end->pdispVal = ToBrowserAccessibilityWin(result)->NewReference();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_accChild(VARIANT var_child,
                                                    IDispatch** disp_child) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_CHILD);
   if (!instance_active())
     return E_FAIL;
 
@@ -378,6 +552,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accChild(VARIANT var_child,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_accChildCount(LONG* child_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_CHILD_COUNT);
   if (!instance_active())
     return E_FAIL;
 
@@ -391,6 +566,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accChildCount(LONG* child_count) {
 
 STDMETHODIMP BrowserAccessibilityWin::get_accDefaultAction(VARIANT var_id,
                                                            BSTR* def_action) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_DEFAULT_ACTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -407,6 +583,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accDefaultAction(VARIANT var_id,
 
 STDMETHODIMP BrowserAccessibilityWin::get_accDescription(VARIANT var_id,
                                                          BSTR* desc) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_DESCRIPTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -428,6 +605,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accDescription(VARIANT var_id,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_accFocus(VARIANT* focus_child) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_FOCUS);
   if (!instance_active())
     return E_FAIL;
 
@@ -435,7 +613,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accFocus(VARIANT* focus_child) {
     return E_INVALIDARG;
 
   BrowserAccessibilityWin* focus = static_cast<BrowserAccessibilityWin*>(
-      manager()->GetFocus(this));
+      manager()->GetFocus());
   if (focus == this) {
     focus_child->vt = VT_I4;
     focus_child->lVal = CHILDID_SELF;
@@ -450,6 +628,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accFocus(VARIANT* focus_child) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_accHelp(VARIANT var_id, BSTR* help) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_HELP);
   if (!instance_active())
     return E_FAIL;
 
@@ -461,6 +640,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accHelp(VARIANT var_id, BSTR* help) {
 
 STDMETHODIMP BrowserAccessibilityWin::get_accKeyboardShortcut(VARIANT var_id,
                                                               BSTR* acc_key) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_KEYBOARD_SHORTCUT);
   if (!instance_active())
     return E_FAIL;
 
@@ -476,6 +656,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accKeyboardShortcut(VARIANT var_id,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_accName(VARIANT var_id, BSTR* name) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_NAME);
   if (!instance_active())
     return E_FAIL;
 
@@ -487,8 +668,16 @@ STDMETHODIMP BrowserAccessibilityWin::get_accName(VARIANT var_id, BSTR* name) {
     return E_INVALIDARG;
 
   base::string16 name_str = target->name();
-  if (name_str.empty())
-    return S_FALSE;
+  if (name_str.empty()) {
+    if (target->ia2_role() == ROLE_SYSTEM_DOCUMENT && GetParent()) {
+      // Hack: Some versions of JAWS crash if they get an empty name on
+      // a document that's the child of an iframe, so always return a
+      // nonempty string for this role.  https://crbug.com/583057
+      name_str = L" ";
+    } else {
+      return S_FALSE;
+    }
+  }
 
   *name = SysAllocString(name_str.c_str());
 
@@ -497,13 +686,14 @@ STDMETHODIMP BrowserAccessibilityWin::get_accName(VARIANT var_id, BSTR* name) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_accParent(IDispatch** disp_parent) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_PARENT);
   if (!instance_active())
     return E_FAIL;
 
   if (!disp_parent)
     return E_INVALIDARG;
 
-  IAccessible* parent_obj = GetParent()->ToBrowserAccessibilityWin();
+  IAccessible* parent_obj = ToBrowserAccessibilityWin(GetParent());
   if (parent_obj == NULL) {
     // This happens if we're the root of the tree;
     // return the IAccessible for the window.
@@ -515,8 +705,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accParent(IDispatch** disp_parent) {
     // destruction. Possible cases where this could occur include tabs being
     // dragged to a new window, etc.
     if (!parent_obj) {
-      DVLOG(1) <<  "In Function: "
-               << __FUNCTION__
+      DVLOG(1) << "In Function: " << __func__
                << ". Parent IAccessible interface is NULL. Returning failure";
       return E_FAIL;
     }
@@ -528,6 +717,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accParent(IDispatch** disp_parent) {
 
 STDMETHODIMP BrowserAccessibilityWin::get_accRole(VARIANT var_id,
                                                   VARIANT* role) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_ROLE);
   if (!instance_active())
     return E_FAIL;
 
@@ -550,6 +740,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accRole(VARIANT var_id,
 
 STDMETHODIMP BrowserAccessibilityWin::get_accState(VARIANT var_id,
                                                    VARIANT* state) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_STATE);
   if (!instance_active())
     return E_FAIL;
 
@@ -562,7 +753,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accState(VARIANT var_id,
 
   state->vt = VT_I4;
   state->lVal = target->ia_state();
-  if (manager()->GetFocus(NULL) == this)
+  if (manager()->GetFocus() == this)
     state->lVal |= STATE_SYSTEM_FOCUSED;
 
   return S_OK;
@@ -570,6 +761,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accState(VARIANT var_id,
 
 STDMETHODIMP BrowserAccessibilityWin::get_accValue(VARIANT var_id,
                                                    BSTR* value) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_VALUE);
   if (!instance_active())
     return E_FAIL;
 
@@ -591,14 +783,15 @@ STDMETHODIMP BrowserAccessibilityWin::get_accValue(VARIANT var_id,
 
   // Expose color well value.
   if (target->ia2_role() == IA2_ROLE_COLOR_CHOOSER) {
-    int color = target->GetIntAttribute(ui::AX_ATTR_COLOR_VALUE);
-    int red = (color >> 16) & 0xFF;
-    int green = (color >> 8) & 0xFF;
-    int blue = color & 0xFF;
+    unsigned int color = static_cast<unsigned int>(
+        target->GetIntAttribute(ui::AX_ATTR_COLOR_VALUE));
+    unsigned int red = SkColorGetR(color);
+    unsigned int green = SkColorGetG(color);
+    unsigned int blue = SkColorGetB(color);
     base::string16 value_text;
-    value_text = base::IntToString16((red * 100) / 255) + L"% red " +
-                 base::IntToString16((green * 100) / 255) + L"% green " +
-                 base::IntToString16((blue * 100) / 255) + L"% blue";
+    value_text = base::UintToString16(red * 100 / 255) + L"% red " +
+                 base::UintToString16(green * 100 / 255) + L"% green " +
+                 base::UintToString16(blue * 100 / 255) + L"% blue";
     *value = SysAllocString(value_text.c_str());
     DCHECK(*value);
     return S_OK;
@@ -612,10 +805,12 @@ STDMETHODIMP BrowserAccessibilityWin::get_accValue(VARIANT var_id,
 STDMETHODIMP BrowserAccessibilityWin::get_accHelpTopic(BSTR* help_file,
                                                        VARIANT var_id,
                                                        LONG* topic_id) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_HELP_TOPIC);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_accSelection(VARIANT* selected) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACC_SELECTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -638,7 +833,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accSelection(VARIANT* selected) {
       if (InternalGetChild(i)->HasState(ui::AX_STATE_SELECTED)) {
         selected->vt = VT_DISPATCH;
         selected->pdispVal =
-            InternalGetChild(i)->ToBrowserAccessibilityWin()->NewReference();
+            ToBrowserAccessibilityWin(InternalGetChild(i))->NewReference();
         return S_OK;
       }
     }
@@ -653,7 +848,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accSelection(VARIANT* selected) {
     if (InternalGetChild(i)->HasState(ui::AX_STATE_SELECTED)) {
       enum_variant->ItemAt(index)->vt = VT_DISPATCH;
       enum_variant->ItemAt(index)->pdispVal =
-        InternalGetChild(i)->ToBrowserAccessibilityWin()->NewReference();
+          ToBrowserAccessibilityWin(InternalGetChild(i))->NewReference();
       ++index;
     }
   }
@@ -665,11 +860,12 @@ STDMETHODIMP BrowserAccessibilityWin::get_accSelection(VARIANT* selected) {
 
 STDMETHODIMP BrowserAccessibilityWin::accSelect(
     LONG flags_sel, VARIANT var_id) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ACC_SELECT);
   if (!instance_active())
     return E_FAIL;
 
   if (flags_sel & SELFLAG_TAKEFOCUS) {
-    manager()->SetFocus(this, true);
+    manager()->SetFocus(*this);
     return S_OK;
   }
 
@@ -690,6 +886,7 @@ BrowserAccessibilityWin::put_accValue(VARIANT var_id, BSTR put_val) {
 //
 
 STDMETHODIMP BrowserAccessibilityWin::role(LONG* role) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ROLE);
   if (!instance_active())
     return E_FAIL;
 
@@ -697,24 +894,21 @@ STDMETHODIMP BrowserAccessibilityWin::role(LONG* role) {
     return E_INVALIDARG;
 
   *role = ia2_role();
-
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_attributes(BSTR* attributes) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_IA2_GET_ATTRIBUTES);
+  if (!attributes)
+    return E_INVALIDARG;
+  *attributes = nullptr;
+
   if (!instance_active())
     return E_FAIL;
 
-  if (!attributes)
-    return E_INVALIDARG;
-
-  // The iaccessible2 attributes are a set of key-value pairs
-  // separated by semicolons, with a colon between the key and the value.
   base::string16 str;
-  const std::vector<base::string16>& attributes_list = ia2_attributes();
-  for (unsigned int i = 0; i < attributes_list.size(); ++i) {
-    str += attributes_list[i] + L';';
-  }
+  for (const base::string16& attribute : ia2_attributes())
+    str += attribute + L';';
 
   if (str.empty())
     return S_FALSE;
@@ -725,6 +919,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_attributes(BSTR* attributes) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_states(AccessibleStates* states) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_STATES);
   if (!instance_active())
     return E_FAIL;
 
@@ -737,17 +932,19 @@ STDMETHODIMP BrowserAccessibilityWin::get_states(AccessibleStates* states) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_uniqueID(LONG* unique_id) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_UNIQUE_ID);
   if (!instance_active())
     return E_FAIL;
 
   if (!unique_id)
     return E_INVALIDARG;
 
-  *unique_id = unique_id_win_;
+  *unique_id = -this->unique_id();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_windowHandle(HWND* window_handle) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_WINDOW_HANDLE);
   if (!instance_active())
     return E_FAIL;
 
@@ -763,6 +960,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_windowHandle(HWND* window_handle) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_indexInParent(LONG* index_in_parent) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_INDEX_IN_PARENT);
   if (!instance_active())
     return E_FAIL;
 
@@ -774,6 +972,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_indexInParent(LONG* index_in_parent) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nRelations(LONG* n_relations) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_RELATIONS);
   if (!instance_active())
     return E_FAIL;
 
@@ -787,6 +986,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nRelations(LONG* n_relations) {
 STDMETHODIMP BrowserAccessibilityWin::get_relation(
     LONG relation_index,
     IAccessibleRelation** relation) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_RELATION);
   if (!instance_active())
     return E_FAIL;
 
@@ -807,6 +1007,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_relations(
     LONG max_relations,
     IAccessibleRelation** relations,
     LONG* n_relations) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_RELATIONS);
   if (!instance_active())
     return E_FAIL;
 
@@ -826,11 +1027,12 @@ STDMETHODIMP BrowserAccessibilityWin::get_relations(
   return S_OK;
 }
 
-STDMETHODIMP BrowserAccessibilityWin::scrollTo(enum IA2ScrollType scroll_type) {
+STDMETHODIMP BrowserAccessibilityWin::scrollTo(IA2ScrollType scroll_type) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_IA2_SCROLL_TO);
   if (!instance_active())
     return E_FAIL;
 
-  gfx::Rect r = GetLocation();
+  gfx::Rect r = GetFrameBoundsRect();
   switch(scroll_type) {
     case IA2_SCROLL_TYPE_TOP_LEFT:
       manager()->ScrollToMakeVisible(*this, gfx::Rect(r.x(), r.y(), 0, 0));
@@ -862,14 +1064,14 @@ STDMETHODIMP BrowserAccessibilityWin::scrollTo(enum IA2ScrollType scroll_type) {
   }
 
   manager()->ToBrowserAccessibilityManagerWin()->TrackScrollingObject(this);
-
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::scrollToPoint(
-    enum IA2CoordinateType coordinate_type,
+    IA2CoordinateType coordinate_type,
     LONG x,
     LONG y) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SCROLL_TO_POINT);
   if (!instance_active())
     return E_FAIL;
 
@@ -879,7 +1081,7 @@ STDMETHODIMP BrowserAccessibilityWin::scrollToPoint(
     scroll_to -= manager()->GetViewBounds().OffsetFromOrigin();
   } else if (coordinate_type == IA2_COORDTYPE_PARENT_RELATIVE) {
     if (GetParent())
-      scroll_to += GetParent()->GetLocation().OffsetFromOrigin();
+      scroll_to += GetParent()->GetFrameBoundsRect().OffsetFromOrigin();
   } else {
     return E_INVALIDARG;
   }
@@ -894,15 +1096,19 @@ STDMETHODIMP BrowserAccessibilityWin::get_groupPosition(
     LONG* group_level,
     LONG* similar_items_in_group,
     LONG* position_in_group) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_GROUP_POSITION);
   if (!instance_active())
     return E_FAIL;
 
   if (!group_level || !similar_items_in_group || !position_in_group)
     return E_INVALIDARG;
 
-  *group_level = 0;
+  *group_level = GetIntAttribute(ui::AX_ATTR_HIERARCHICAL_LEVEL);
   *similar_items_in_group = GetIntAttribute(ui::AX_ATTR_SET_SIZE);
   *position_in_group = GetIntAttribute(ui::AX_ATTR_POS_IN_SET);
+
+  if (*group_level == *similar_items_in_group == *position_in_group == 0)
+    return S_FALSE;
   return S_OK;
 }
 
@@ -911,21 +1117,25 @@ STDMETHODIMP BrowserAccessibilityWin::get_groupPosition(
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_extendedRole(BSTR* extended_role) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_EXTENDED_ROLE);
   return E_NOTIMPL;
 }
 STDMETHODIMP
 BrowserAccessibilityWin::get_localizedExtendedRole(
     BSTR* localized_extended_role) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_LOCALIZED_EXTENDED_ROLE);
   return E_NOTIMPL;
 }
 STDMETHODIMP
 BrowserAccessibilityWin::get_nExtendedStates(LONG* n_extended_states) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_EXTENDED_STATES);
   return E_NOTIMPL;
 }
 STDMETHODIMP
 BrowserAccessibilityWin::get_extendedStates(LONG max_extended_states,
                                             BSTR** extended_states,
                                             LONG* n_extended_states) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_EXTENDED_STATES);
   return E_NOTIMPL;
 }
 STDMETHODIMP
@@ -933,9 +1143,11 @@ BrowserAccessibilityWin::get_localizedExtendedStates(
     LONG max_localized_extended_states,
     BSTR** localized_extended_states,
     LONG* n_localized_extended_states) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_LOCALIZED_EXTENDED_STATES);
   return E_NOTIMPL;
 }
 STDMETHODIMP BrowserAccessibilityWin::get_locale(IA2Locale* locale) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_LOCALE);
   return E_NOTIMPL;
 }
 
@@ -944,6 +1156,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_locale(IA2Locale* locale) {
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_appName(BSTR* app_name) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_APP_NAME);
   // No need to check |instance_active()| because this interface is
   // global, and doesn't depend on any local state.
 
@@ -964,6 +1177,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_appName(BSTR* app_name) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_appVersion(BSTR* app_version) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_APP_VERSION);
   // No need to check |instance_active()| because this interface is
   // global, and doesn't depend on any local state.
 
@@ -985,6 +1199,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_appVersion(BSTR* app_version) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_toolkitName(BSTR* toolkit_name) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TOOLKIT_NAME);
   // No need to check |instance_active()| because this interface is
   // global, and doesn't depend on any local state.
 
@@ -1001,6 +1216,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_toolkitName(BSTR* toolkit_name) {
 
 STDMETHODIMP BrowserAccessibilityWin::get_toolkitVersion(
     BSTR* toolkit_version) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TOOLKIT_VERSION);
   // No need to check |instance_active()| because this interface is
   // global, and doesn't depend on any local state.
 
@@ -1018,6 +1234,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_toolkitVersion(
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_description(BSTR* desc) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_DESCRIPTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -1034,9 +1251,10 @@ STDMETHODIMP BrowserAccessibilityWin::get_description(BSTR* desc) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_imagePosition(
-    enum IA2CoordinateType coordinate_type,
+    IA2CoordinateType coordinate_type,
     LONG* x,
     LONG* y) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_IMAGE_POSITION);
   if (!instance_active())
     return E_FAIL;
 
@@ -1044,21 +1262,15 @@ STDMETHODIMP BrowserAccessibilityWin::get_imagePosition(
     return E_INVALIDARG;
 
   if (coordinate_type == IA2_COORDTYPE_SCREEN_RELATIVE) {
-    HWND parent_hwnd =
-        manager()->ToBrowserAccessibilityManagerWin()->GetParentHWND();
-    if (!parent_hwnd)
-      return E_FAIL;
-    POINT top_left = {0, 0};
-    ::ClientToScreen(parent_hwnd, &top_left);
-    *x = GetLocation().x() + top_left.x;
-    *y = GetLocation().y() + top_left.y;
+    gfx::Rect bounds = GetScreenBoundsRect();
+    *x = bounds.x();
+    *y = bounds.y();
   } else if (coordinate_type == IA2_COORDTYPE_PARENT_RELATIVE) {
-    *x = GetLocation().x();
-    *y = GetLocation().y();
-    if (GetParent()) {
-      *x -= GetParent()->GetLocation().x();
-      *y -= GetParent()->GetLocation().y();
-    }
+    gfx::Rect bounds = GetPageBoundsRect();
+    gfx::Rect parent_bounds =
+        GetParent() ? GetParent()->GetPageBoundsRect() : gfx::Rect();
+    *x = bounds.x() - parent_bounds.x();
+    *y = bounds.y() - parent_bounds.y();
   } else {
     return E_INVALIDARG;
   }
@@ -1067,14 +1279,15 @@ STDMETHODIMP BrowserAccessibilityWin::get_imagePosition(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_imageSize(LONG* height, LONG* width) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_IMAGE_SIZE);
   if (!instance_active())
     return E_FAIL;
 
   if (!height || !width)
     return E_INVALIDARG;
 
-  *height = GetLocation().height();
-  *width = GetLocation().width();
+  *height = GetPageBoundsRect().height();
+  *width = GetPageBoundsRect().width();
   return S_OK;
 }
 
@@ -1086,6 +1299,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accessibleAt(
     long row,
     long column,
     IUnknown** accessible) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ACCESSIBLE_AT);
   if (!instance_active())
     return E_FAIL;
 
@@ -1106,8 +1320,8 @@ STDMETHODIMP BrowserAccessibilityWin::get_accessibleAt(
   if (row < 0 || row >= rows || column < 0 || column >= columns)
     return E_INVALIDARG;
 
-  const std::vector<int32>& cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
   DCHECK_EQ(columns * rows, static_cast<int>(cell_ids.size()));
 
   int cell_id = cell_ids[row * columns + column];
@@ -1122,6 +1336,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_accessibleAt(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_caption(IUnknown** accessible) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CAPTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -1135,6 +1350,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_caption(IUnknown** accessible) {
 STDMETHODIMP BrowserAccessibilityWin::get_childIndex(long row,
                                                      long column,
                                                      long* cell_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CHILD_INDEX);
   if (!instance_active())
     return E_FAIL;
 
@@ -1155,10 +1371,10 @@ STDMETHODIMP BrowserAccessibilityWin::get_childIndex(long row,
   if (row < 0 || row >= rows || column < 0 || column >= columns)
     return E_INVALIDARG;
 
-  const std::vector<int32>& cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
-  const std::vector<int32>& unique_cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_UNIQUE_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& unique_cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS);
   DCHECK_EQ(columns * rows, static_cast<int>(cell_ids.size()));
   int cell_id = cell_ids[row * columns + column];
   for (size_t i = 0; i < unique_cell_ids.size(); ++i) {
@@ -1173,6 +1389,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_childIndex(long row,
 
 STDMETHODIMP BrowserAccessibilityWin::get_columnDescription(long column,
                                                             BSTR* description) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COLUMN_DESCRIPTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -1192,12 +1409,11 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnDescription(long column,
   if (column < 0 || column >= columns)
     return E_INVALIDARG;
 
-  const std::vector<int32>& cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
   for (int i = 0; i < rows; ++i) {
     int cell_id = cell_ids[i * columns + column];
-    BrowserAccessibilityWin* cell = static_cast<BrowserAccessibilityWin*>(
-        manager()->GetFromID(cell_id));
+    BrowserAccessibilityWin* cell = GetFromID(cell_id);
     if (cell && cell->GetRole() == ui::AX_ROLE_COLUMN_HEADER) {
       base::string16 cell_name = cell->GetString16Attribute(
           ui::AX_ATTR_NAME);
@@ -1220,6 +1436,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnExtentAt(
     long row,
     long column,
     long* n_columns_spanned) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COLUMN_EXTENT_AT);
   if (!instance_active())
     return E_FAIL;
 
@@ -1239,11 +1456,10 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnExtentAt(
   if (row < 0 || row >= rows || column < 0 || column >= columns)
     return E_INVALIDARG;
 
-  const std::vector<int32>& cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
   int cell_id = cell_ids[row * columns + column];
-  BrowserAccessibilityWin* cell = static_cast<BrowserAccessibilityWin*>(
-      manager()->GetFromID(cell_id));
+  BrowserAccessibilityWin* cell = GetFromID(cell_id);
   int colspan;
   if (cell &&
       cell->GetIntAttribute(
@@ -1259,20 +1475,22 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnExtentAt(
 STDMETHODIMP BrowserAccessibilityWin::get_columnHeader(
     IAccessibleTable** accessible_table,
     long* starting_row_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COLUMN_HEADER);
   // TODO(dmazzoni): implement
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_columnIndex(long cell_index,
                                                       long* column_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COLUMN_INDEX);
   if (!instance_active())
     return E_FAIL;
 
   if (!column_index)
     return E_INVALIDARG;
 
-  const std::vector<int32>& unique_cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_UNIQUE_CELL_IDS);
+  const std::vector<int32_t>& unique_cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS);
   int cell_id_count = static_cast<int>(unique_cell_ids.size());
   if (cell_index < 0)
     return E_INVALIDARG;
@@ -1280,8 +1498,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnIndex(long cell_index,
     return S_FALSE;
 
   int cell_id = unique_cell_ids[cell_index];
-  BrowserAccessibilityWin* cell =
-      manager()->GetFromID(cell_id)->ToBrowserAccessibilityWin();
+  BrowserAccessibilityWin* cell = GetFromID(cell_id);
   int col_index;
   if (cell &&
       cell->GetIntAttribute(
@@ -1294,6 +1511,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnIndex(long cell_index,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nColumns(long* column_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_COLUMNS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1311,6 +1529,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nColumns(long* column_count) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nRows(long* row_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_ROWS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1327,6 +1546,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nRows(long* row_count) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nSelectedChildren(long* cell_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_SELECTED_CHILDREN);
   if (!instance_active())
     return E_FAIL;
 
@@ -1339,6 +1559,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nSelectedChildren(long* cell_count) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nSelectedColumns(long* column_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_SELECTED_COLUMNS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1350,6 +1571,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nSelectedColumns(long* column_count) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nSelectedRows(long* row_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_SELECTED_ROWS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1362,6 +1584,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nSelectedRows(long* row_count) {
 
 STDMETHODIMP BrowserAccessibilityWin::get_rowDescription(long row,
                                                          BSTR* description) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_DESCRIPTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -1381,12 +1604,11 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowDescription(long row,
   if (row < 0 || row >= rows)
     return E_INVALIDARG;
 
-  const std::vector<int32>& cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
   for (int i = 0; i < columns; ++i) {
     int cell_id = cell_ids[row * columns + i];
-    BrowserAccessibilityWin* cell =
-        manager()->GetFromID(cell_id)->ToBrowserAccessibilityWin();
+    BrowserAccessibilityWin* cell = GetFromID(cell_id);
     if (cell && cell->GetRole() == ui::AX_ROLE_ROW_HEADER) {
       base::string16 cell_name = cell->GetString16Attribute(
           ui::AX_ATTR_NAME);
@@ -1408,6 +1630,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowDescription(long row,
 STDMETHODIMP BrowserAccessibilityWin::get_rowExtentAt(long row,
                                                       long column,
                                                       long* n_rows_spanned) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_EXTENT_AT);
   if (!instance_active())
     return E_FAIL;
 
@@ -1427,11 +1650,10 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowExtentAt(long row,
   if (row < 0 || row >= rows || column < 0 || column >= columns)
     return E_INVALIDARG;
 
-  const std::vector<int32>& cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
   int cell_id = cell_ids[row * columns + column];
-  BrowserAccessibilityWin* cell =
-      manager()->GetFromID(cell_id)->ToBrowserAccessibilityWin();
+  BrowserAccessibilityWin* cell = GetFromID(cell_id);
   int rowspan;
   if (cell &&
       cell->GetIntAttribute(
@@ -1447,20 +1669,22 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowExtentAt(long row,
 STDMETHODIMP BrowserAccessibilityWin::get_rowHeader(
     IAccessibleTable** accessible_table,
     long* starting_column_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_HEADER);
   // TODO(dmazzoni): implement
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_rowIndex(long cell_index,
                                                    long* row_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_INDEX);
   if (!instance_active())
     return E_FAIL;
 
   if (!row_index)
     return E_INVALIDARG;
 
-  const std::vector<int32>& unique_cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_UNIQUE_CELL_IDS);
+  const std::vector<int32_t>& unique_cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS);
   int cell_id_count = static_cast<int>(unique_cell_ids.size());
   if (cell_index < 0)
     return E_INVALIDARG;
@@ -1468,8 +1692,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowIndex(long cell_index,
     return S_FALSE;
 
   int cell_id = unique_cell_ids[cell_index];
-  BrowserAccessibilityWin* cell =
-      manager()->GetFromID(cell_id)->ToBrowserAccessibilityWin();
+  BrowserAccessibilityWin* cell = GetFromID(cell_id);
   int cell_row_index;
   if (cell &&
       cell->GetIntAttribute(
@@ -1484,6 +1707,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowIndex(long cell_index,
 STDMETHODIMP BrowserAccessibilityWin::get_selectedChildren(long max_children,
                                                            long** children,
                                                            long* n_children) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_SELECTED_CHILDREN);
   if (!instance_active())
     return E_FAIL;
 
@@ -1498,6 +1722,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_selectedChildren(long max_children,
 STDMETHODIMP BrowserAccessibilityWin::get_selectedColumns(long max_columns,
                                                           long** columns,
                                                           long* n_columns) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_SELECTED_COLUMNS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1512,6 +1737,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_selectedColumns(long max_columns,
 STDMETHODIMP BrowserAccessibilityWin::get_selectedRows(long max_rows,
                                                        long** rows,
                                                        long* n_rows) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_SELECTED_ROWS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1524,6 +1750,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_selectedRows(long max_rows,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_summary(IUnknown** accessible) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_SUMMARY);
   if (!instance_active())
     return E_FAIL;
 
@@ -1537,6 +1764,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_summary(IUnknown** accessible) {
 STDMETHODIMP BrowserAccessibilityWin::get_isColumnSelected(
     long column,
     boolean* is_selected) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_IS_COLUMN_SELECTED);
   if (!instance_active())
     return E_FAIL;
 
@@ -1550,6 +1778,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_isColumnSelected(
 
 STDMETHODIMP BrowserAccessibilityWin::get_isRowSelected(long row,
                                                         boolean* is_selected) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_IS_ROW_SELECTED);
   if (!instance_active())
     return E_FAIL;
 
@@ -1564,6 +1793,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_isRowSelected(long row,
 STDMETHODIMP BrowserAccessibilityWin::get_isSelected(long row,
                                                      long column,
                                                      boolean* is_selected) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_IS_SELECTED);
   if (!instance_active())
     return E_FAIL;
 
@@ -1582,14 +1812,15 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowColumnExtentsAtIndex(
     long* row_extents,
     long* column_extents,
     boolean* is_selected) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_COLUMN_EXTENTS_AT_INDEX);
   if (!instance_active())
     return E_FAIL;
 
   if (!row || !column || !row_extents || !column_extents || !is_selected)
     return E_INVALIDARG;
 
-  const std::vector<int32>& unique_cell_ids = GetIntListAttribute(
-      ui::AX_ATTR_UNIQUE_CELL_IDS);
+  const std::vector<int32_t>& unique_cell_ids =
+      GetIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS);
   int cell_id_count = static_cast<int>(unique_cell_ids.size());
   if (index < 0)
     return E_INVALIDARG;
@@ -1597,8 +1828,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowColumnExtentsAtIndex(
     return S_FALSE;
 
   int cell_id = unique_cell_ids[index];
-  BrowserAccessibilityWin* cell =
-      manager()->GetFromID(cell_id)->ToBrowserAccessibilityWin();
+  BrowserAccessibilityWin* cell = GetFromID(cell_id);
   int rowspan;
   int colspan;
   if (cell &&
@@ -1617,18 +1847,22 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowColumnExtentsAtIndex(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::selectRow(long row) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SELECT_ROW);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::selectColumn(long column) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SELECT_COLUMN);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::unselectRow(long row) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_UNSELECT_ROW);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::unselectColumn(long column) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_UNSELECT_COLUMN);
   return E_NOTIMPL;
 }
 
@@ -1644,16 +1878,19 @@ BrowserAccessibilityWin::get_modelChange(IA2TableModelChange* model_change) {
 STDMETHODIMP BrowserAccessibilityWin::get_cellAt(long row,
                                                  long column,
                                                  IUnknown** cell) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CELL_AT);
   return get_accessibleAt(row, column, cell);
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nSelectedCells(long* cell_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_SELECTED_CELLS);
   return get_nSelectedChildren(cell_count);
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_selectedCells(
     IUnknown*** cells,
     long* n_selected_cells) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_SELECTED_CELLS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1667,6 +1904,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_selectedCells(
 
 STDMETHODIMP BrowserAccessibilityWin::get_selectedColumns(long** columns,
                                                           long* n_columns) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TABLE2_GET_SELECTED_COLUMNS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1680,6 +1918,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_selectedColumns(long** columns,
 
 STDMETHODIMP BrowserAccessibilityWin::get_selectedRows(long** rows,
                                                        long* n_rows) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TABLE2_GET_SELECTED_ROWS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1698,6 +1937,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_selectedRows(long** rows,
 
 STDMETHODIMP BrowserAccessibilityWin::get_columnExtent(
     long* n_columns_spanned) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COLUMN_EXTENT);
   if (!instance_active())
     return E_FAIL;
 
@@ -1718,6 +1958,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnExtent(
 STDMETHODIMP BrowserAccessibilityWin::get_columnHeaderCells(
     IUnknown*** cell_accessibles,
     long* n_column_header_cells) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COLUMN_HEADER_CELLS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1751,13 +1992,12 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnHeaderCells(
   if (columns <= 0 || rows <= 0 || column < 0 || column >= columns)
     return S_FALSE;
 
-  const std::vector<int32>& cell_ids = table->GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      table->GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
 
   for (int i = 0; i < rows; ++i) {
     int cell_id = cell_ids[i * columns + column];
-    BrowserAccessibilityWin* cell =
-        manager()->GetFromID(cell_id)->ToBrowserAccessibilityWin();
+    BrowserAccessibilityWin* cell = GetFromID(cell_id);
     if (cell && cell->GetRole() == ui::AX_ROLE_COLUMN_HEADER)
       (*n_column_header_cells)++;
   }
@@ -1770,7 +2010,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnHeaderCells(
     BrowserAccessibility* cell = manager()->GetFromID(cell_id);
     if (cell && cell->GetRole() == ui::AX_ROLE_COLUMN_HEADER) {
       (*cell_accessibles)[index] = static_cast<IAccessible*>(
-          cell->ToBrowserAccessibilityWin()->NewReference());
+          ToBrowserAccessibilityWin(cell)->NewReference());
       ++index;
     }
   }
@@ -1779,6 +2019,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnHeaderCells(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_columnIndex(long* column_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TABLECELL_GET_COLUMN_INDEX);
   if (!instance_active())
     return E_FAIL;
 
@@ -1796,6 +2037,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_columnIndex(long* column_index) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_rowExtent(long* n_rows_spanned) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_EXTENT);
   if (!instance_active())
     return E_FAIL;
 
@@ -1816,6 +2058,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowExtent(long* n_rows_spanned) {
 STDMETHODIMP BrowserAccessibilityWin::get_rowHeaderCells(
     IUnknown*** cell_accessibles,
     long* n_row_header_cells) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_HEADER_CELLS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1849,8 +2092,8 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowHeaderCells(
   if (columns <= 0 || rows <= 0 || row < 0 || row >= rows)
     return S_FALSE;
 
-  const std::vector<int32>& cell_ids = table->GetIntListAttribute(
-      ui::AX_ATTR_CELL_IDS);
+  const std::vector<int32_t>& cell_ids =
+      table->GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
 
   for (int i = 0; i < columns; ++i) {
     int cell_id = cell_ids[row * columns + i];
@@ -1867,7 +2110,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowHeaderCells(
     BrowserAccessibility* cell = manager()->GetFromID(cell_id);
     if (cell && cell->GetRole() == ui::AX_ROLE_ROW_HEADER) {
       (*cell_accessibles)[index] = static_cast<IAccessible*>(
-          cell->ToBrowserAccessibilityWin()->NewReference());
+          ToBrowserAccessibilityWin(cell)->NewReference());
       ++index;
     }
   }
@@ -1876,6 +2119,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowHeaderCells(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_rowIndex(long* row_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TABLECELL_GET_ROW_INDEX);
   if (!instance_active())
     return E_FAIL;
 
@@ -1891,6 +2135,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowIndex(long* row_index) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_isSelected(boolean* is_selected) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_TABLECELL_GET_IS_SELECTED);
   if (!instance_active())
     return E_FAIL;
 
@@ -1907,6 +2152,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowColumnExtents(
     long* row_extents,
     long* column_extents,
     boolean* is_selected) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ROW_COLUMN_EXTENTS);
   if (!instance_active())
     return E_FAIL;
 
@@ -1941,6 +2187,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_rowColumnExtents(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_table(IUnknown** table) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TABLE);
   if (!instance_active())
     return E_FAIL;
 
@@ -1962,7 +2209,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_table(IUnknown** table) {
   }
 
   *table = static_cast<IAccessibleTable*>(
-      find_table->ToBrowserAccessibilityWin()->NewReference());
+      ToBrowserAccessibilityWin(find_table)->NewReference());
 
   return S_OK;
 }
@@ -1972,17 +2219,19 @@ STDMETHODIMP BrowserAccessibilityWin::get_table(IUnknown** table) {
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_nCharacters(LONG* n_characters) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_CHARACTERS);
   if (!instance_active())
     return E_FAIL;
 
   if (!n_characters)
     return E_INVALIDARG;
 
-  *n_characters = hypertext().length();
+  *n_characters = static_cast<LONG>(GetText().size());
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_caretOffset(LONG* offset) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CARET_OFFSET);
   if (!instance_active())
     return E_FAIL;
 
@@ -2004,18 +2253,19 @@ STDMETHODIMP BrowserAccessibilityWin::get_caretOffset(LONG* offset) {
 
 STDMETHODIMP BrowserAccessibilityWin::get_characterExtents(
     LONG offset,
-    enum IA2CoordinateType coordinate_type,
+    IA2CoordinateType coordinate_type,
     LONG* out_x,
     LONG* out_y,
     LONG* out_width,
     LONG* out_height) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CHARACTER_EXTENTS);
   if (!instance_active())
     return E_FAIL;
 
   if (!out_x || !out_y || !out_width || !out_height)
     return E_INVALIDARG;
 
-  const base::string16& text_str = hypertext();
+  const base::string16& text_str = GetText();
   HandleSpecialTextOffset(text_str, &offset);
 
   if (offset < 0 || offset > static_cast<LONG>(text_str.size()))
@@ -2023,10 +2273,11 @@ STDMETHODIMP BrowserAccessibilityWin::get_characterExtents(
 
   gfx::Rect character_bounds;
   if (coordinate_type == IA2_COORDTYPE_SCREEN_RELATIVE) {
-    character_bounds = GetGlobalBoundsForRange(offset, 1);
+    character_bounds = GetScreenBoundsForRange(offset, 1);
   } else if (coordinate_type == IA2_COORDTYPE_PARENT_RELATIVE) {
-    character_bounds = GetLocalBoundsForRange(offset, 1);
-    character_bounds -= GetLocation().OffsetFromOrigin();
+    character_bounds = GetPageBoundsForRange(offset, 1);
+    if (GetParent())
+      character_bounds -= GetParent()->GetPageBoundsRect().OffsetFromOrigin();
   } else {
     return E_INVALIDARG;
   }
@@ -2040,6 +2291,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_characterExtents(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nSelections(LONG* n_selections) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_SELECTIONS);
   if (!instance_active())
     return E_FAIL;
 
@@ -2060,6 +2312,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nSelections(LONG* n_selections) {
 STDMETHODIMP BrowserAccessibilityWin::get_selection(LONG selection_index,
                                                     LONG* start_offset,
                                                     LONG* end_offset) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_SELECTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -2092,15 +2345,14 @@ STDMETHODIMP BrowserAccessibilityWin::get_selection(LONG selection_index,
 STDMETHODIMP BrowserAccessibilityWin::get_text(LONG start_offset,
                                                LONG end_offset,
                                                BSTR* text) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TEXT);
   if (!instance_active())
     return E_FAIL;
 
   if (!text)
     return E_INVALIDARG;
 
-  const base::string16& text_str = hypertext();
-
-  // Handle special text offsets.
+  const base::string16& text_str = GetText();
   HandleSpecialTextOffset(text_str, &start_offset);
   HandleSpecialTextOffset(text_str, &end_offset);
 
@@ -2132,17 +2384,18 @@ STDMETHODIMP BrowserAccessibilityWin::get_text(LONG start_offset,
 
 STDMETHODIMP BrowserAccessibilityWin::get_textAtOffset(
     LONG offset,
-    enum IA2TextBoundaryType boundary_type,
+    IA2TextBoundaryType boundary_type,
     LONG* start_offset,
     LONG* end_offset,
     BSTR* text) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TEXT_AT_OFFSET);
   if (!instance_active())
     return E_FAIL;
 
   if (!start_offset || !end_offset || !text)
     return E_INVALIDARG;
 
-  const base::string16& text_str = hypertext();
+  const base::string16& text_str = GetText();
   HandleSpecialTextOffset(text_str, &offset);
   if (offset < 0)
     return E_INVALIDARG;
@@ -2162,11 +2415,15 @@ STDMETHODIMP BrowserAccessibilityWin::get_textAtOffset(
 
   // According to the IA2 Spec, only line boundaries should succeed when
   // the offset is one past the end of the text.
-  if (offset == text_len && boundary_type != IA2_TEXT_BOUNDARY_LINE) {
-    *start_offset = 0;
-    *end_offset = 0;
-    *text = nullptr;
-    return S_FALSE;
+  if (offset == text_len) {
+    if (boundary_type == IA2_TEXT_BOUNDARY_LINE) {
+      --offset;
+    } else {
+      *start_offset = 0;
+      *end_offset = 0;
+      *text = nullptr;
+      return S_FALSE;
+    }
   }
 
   *start_offset = FindBoundary(
@@ -2178,10 +2435,11 @@ STDMETHODIMP BrowserAccessibilityWin::get_textAtOffset(
 
 STDMETHODIMP BrowserAccessibilityWin::get_textBeforeOffset(
     LONG offset,
-    enum IA2TextBoundaryType boundary_type,
+    IA2TextBoundaryType boundary_type,
     LONG* start_offset,
     LONG* end_offset,
     BSTR* text) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TEXT_BEFORE_OFFSET);
   if (!instance_active())
     return E_FAIL;
 
@@ -2197,7 +2455,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_textBeforeOffset(
     return S_FALSE;
   }
 
-  const base::string16& text_str = hypertext();
+  const base::string16& text_str = GetText();
 
   *start_offset = FindBoundary(
       text_str, boundary_type, offset, ui::BACKWARDS_DIRECTION);
@@ -2207,10 +2465,11 @@ STDMETHODIMP BrowserAccessibilityWin::get_textBeforeOffset(
 
 STDMETHODIMP BrowserAccessibilityWin::get_textAfterOffset(
     LONG offset,
-    enum IA2TextBoundaryType boundary_type,
+    IA2TextBoundaryType boundary_type,
     LONG* start_offset,
     LONG* end_offset,
     BSTR* text) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TEXT_AFTER_OFFSET);
   if (!instance_active())
     return E_FAIL;
 
@@ -2226,7 +2485,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_textAfterOffset(
     return S_FALSE;
   }
 
-  const base::string16& text_str = hypertext();
+  const base::string16& text_str = GetText();
 
   *start_offset = offset;
   *end_offset = FindBoundary(
@@ -2235,6 +2494,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_textAfterOffset(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_newText(IA2TextSegment* new_text) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_NEW_TEXT);
   if (!instance_active())
     return E_FAIL;
 
@@ -2249,7 +2509,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_newText(IA2TextSegment* new_text) {
   if (new_len == 0)
     return E_FAIL;
 
-  base::string16 substr = hypertext().substr(start, new_len);
+  base::string16 substr = GetText().substr(start, new_len);
   new_text->text = SysAllocString(substr.c_str());
   new_text->start = static_cast<long>(start);
   new_text->end = static_cast<long>(start + new_len);
@@ -2257,6 +2517,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_newText(IA2TextSegment* new_text) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_oldText(IA2TextSegment* old_text) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_OLD_TEXT);
   if (!instance_active())
     return E_FAIL;
 
@@ -2282,8 +2543,9 @@ STDMETHODIMP BrowserAccessibilityWin::get_oldText(IA2TextSegment* old_text) {
 STDMETHODIMP BrowserAccessibilityWin::get_offsetAtPoint(
     LONG x,
     LONG y,
-    enum IA2CoordinateType coord_type,
+    IA2CoordinateType coord_type,
     LONG* offset) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_OFFSET_AT_POINT);
   if (!instance_active())
     return E_FAIL;
 
@@ -2300,7 +2562,8 @@ STDMETHODIMP BrowserAccessibilityWin::get_offsetAtPoint(
 STDMETHODIMP BrowserAccessibilityWin::scrollSubstringTo(
     LONG start_index,
     LONG end_index,
-    enum IA2ScrollType scroll_type) {
+    IA2ScrollType scroll_type) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SCROLL_SUBSTRING_TO);
   // TODO(dmazzoni): adjust this for the start and end index, too.
   return scrollTo(scroll_type);
 }
@@ -2308,18 +2571,21 @@ STDMETHODIMP BrowserAccessibilityWin::scrollSubstringTo(
 STDMETHODIMP BrowserAccessibilityWin::scrollSubstringToPoint(
     LONG start_index,
     LONG end_index,
-    enum IA2CoordinateType coordinate_type,
-    LONG x, LONG y) {
+    IA2CoordinateType coordinate_type,
+    LONG x,
+    LONG y) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SCROLL_SUBSTRING_TO_POINT);
   // TODO(dmazzoni): adjust this for the start and end index, too.
   return scrollToPoint(coordinate_type, x, y);
 }
 
 STDMETHODIMP BrowserAccessibilityWin::addSelection(LONG start_offset,
                                                    LONG end_offset) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ADD_SELECTION);
   if (!instance_active())
     return E_FAIL;
 
-  const base::string16& text_str = hypertext();
+  const base::string16& text_str = GetText();
   HandleSpecialTextOffset(text_str, &start_offset);
   HandleSpecialTextOffset(text_str, &end_offset);
 
@@ -2328,6 +2594,7 @@ STDMETHODIMP BrowserAccessibilityWin::addSelection(LONG start_offset,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::removeSelection(LONG selection_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_REMOVE_SELECTION);
   if (!instance_active())
     return E_FAIL;
 
@@ -2339,10 +2606,11 @@ STDMETHODIMP BrowserAccessibilityWin::removeSelection(LONG selection_index) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::setCaretOffset(LONG offset) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SET_CARET_OFFSET);
   if (!instance_active())
     return E_FAIL;
 
-  const base::string16& text_str = hypertext();
+  const base::string16& text_str = GetText();
   HandleSpecialTextOffset(text_str, &offset);
   manager()->SetTextSelection(*this, offset, offset);
   return S_OK;
@@ -2351,13 +2619,14 @@ STDMETHODIMP BrowserAccessibilityWin::setCaretOffset(LONG offset) {
 STDMETHODIMP BrowserAccessibilityWin::setSelection(LONG selection_index,
                                                    LONG start_offset,
                                                    LONG end_offset) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SET_SELECTION);
   if (!instance_active())
     return E_FAIL;
 
   if (selection_index != 0)
     return E_INVALIDARG;
 
-  const base::string16& text_str = hypertext();
+  const base::string16& text_str = GetText();
   HandleSpecialTextOffset(text_str, &start_offset);
   HandleSpecialTextOffset(text_str, &end_offset);
 
@@ -2365,15 +2634,41 @@ STDMETHODIMP BrowserAccessibilityWin::setSelection(LONG selection_index,
   return S_OK;
 }
 
-//
-// IAccessibleText methods not implemented.
-//
-
 STDMETHODIMP BrowserAccessibilityWin::get_attributes(LONG offset,
                                                      LONG* start_offset,
                                                      LONG* end_offset,
                                                      BSTR* text_attributes) {
-  return E_NOTIMPL;
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_IATEXT_GET_ATTRIBUTES);
+  if (!start_offset || !end_offset || !text_attributes)
+    return E_INVALIDARG;
+
+  *start_offset = *end_offset = 0;
+  *text_attributes = nullptr;
+  if (!instance_active())
+    return E_FAIL;
+
+  const base::string16& text = GetText();
+  HandleSpecialTextOffset(text, &offset);
+  if (offset < 0 || offset > static_cast<LONG>(text.size()))
+    return E_INVALIDARG;
+
+  ComputeStylesIfNeeded();
+  *start_offset = FindStartOfStyle(offset, ui::BACKWARDS_DIRECTION);
+  *end_offset = FindStartOfStyle(offset, ui::FORWARDS_DIRECTION);
+
+  base::string16 attributes_str;
+  const std::vector<base::string16>& attributes =
+      offset_to_text_attributes().find(*start_offset)->second;
+  for (const base::string16& attribute : attributes) {
+    attributes_str += attribute + L';';
+  }
+
+  if (attributes.empty())
+    return S_FALSE;
+
+  *text_attributes = SysAllocString(attributes_str.c_str());
+  DCHECK(*text_attributes);
+  return S_OK;
 }
 
 //
@@ -2381,6 +2676,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_attributes(LONG offset,
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_nHyperlinks(long* hyperlink_count) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_N_HYPERLINKS);
   if (!instance_active())
     return E_FAIL;
 
@@ -2394,6 +2690,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nHyperlinks(long* hyperlink_count) {
 STDMETHODIMP BrowserAccessibilityWin::get_hyperlink(
     long index,
     IAccessibleHyperlink** hyperlink) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_HYPERLINK);
   if (!instance_active())
     return E_FAIL;
 
@@ -2403,32 +2700,31 @@ STDMETHODIMP BrowserAccessibilityWin::get_hyperlink(
     return E_INVALIDARG;
   }
 
-  int32 id = hyperlinks()[index];
-  BrowserAccessibilityWin* child =
-      manager()->GetFromID(id)->ToBrowserAccessibilityWin();
-  if (child) {
-    *hyperlink = static_cast<IAccessibleHyperlink*>(child->NewReference());
-    return S_OK;
-  }
+  int32_t id = hyperlinks()[index];
+  BrowserAccessibilityWin* link =
+      ToBrowserAccessibilityWin(GetFromUniqueID(id));
+  if (!link)
+    return E_FAIL;
 
-  return E_FAIL;
+  *hyperlink = static_cast<IAccessibleHyperlink*>(link->NewReference());
+  return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_hyperlinkIndex(
     long char_index,
     long* hyperlink_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_HYPERLINK_INDEX);
   if (!instance_active())
     return E_FAIL;
 
   if (!hyperlink_index)
     return E_INVALIDARG;
 
-  if (char_index < 0 ||
-      char_index >= static_cast<long>(hypertext().size())) {
+  if (char_index < 0 || char_index >= static_cast<long>(GetText().size())) {
     return E_INVALIDARG;
   }
 
-  std::map<int32, int32>::iterator it =
+  std::map<int32_t, int32_t>::iterator it =
       hyperlink_offset_to_index().find(char_index);
   if (it == hyperlink_offset_to_index().end()) {
     *hyperlink_index = -1;
@@ -2445,6 +2741,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_hyperlinkIndex(
 
 // Currently, only text links are supported.
 STDMETHODIMP BrowserAccessibilityWin::get_anchor(long index, VARIANT* anchor) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ANCHOR);
   if (!instance_active() || !IsHyperlink())
     return E_FAIL;
 
@@ -2452,7 +2749,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_anchor(long index, VARIANT* anchor) {
   if (index != 0 || !anchor)
     return E_INVALIDARG;
 
-  BSTR ia2_hypertext = SysAllocString(hypertext().c_str());
+  BSTR ia2_hypertext = SysAllocString(GetText().c_str());
   DCHECK(ia2_hypertext);
   anchor->vt = VT_BSTR;
   anchor->bstrVal = ia2_hypertext;
@@ -2468,6 +2765,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_anchor(long index, VARIANT* anchor) {
 // Currently, only text links are supported.
 STDMETHODIMP BrowserAccessibilityWin::get_anchorTarget(long index,
                                                        VARIANT* anchor_target) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ANCHOR_TARGET);
   if (!instance_active() || !IsHyperlink())
     return E_FAIL;
 
@@ -2494,23 +2792,25 @@ STDMETHODIMP BrowserAccessibilityWin::get_anchorTarget(long index,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_startIndex(long* index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_START_INDEX);
   if (!instance_active() || !IsHyperlink())
     return E_FAIL;
 
   if (!index)
     return E_INVALIDARG;
 
-  int32 hypertext_offset = 0;
-  const auto parent = GetParent();
+  int32_t hypertext_offset = 0;
+  auto* parent = GetParent();
   if (parent) {
     hypertext_offset =
-        parent->ToBrowserAccessibilityWin()->GetHypertextOffsetFromChild(*this);
+        ToBrowserAccessibilityWin(parent)->GetHypertextOffsetFromChild(*this);
   }
   *index = static_cast<LONG>(hypertext_offset);
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_endIndex(long* index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_END_INDEX);
   LONG start_index;
   HRESULT hr = get_startIndex(&start_index);
   if (hr == S_OK)
@@ -2520,48 +2820,84 @@ STDMETHODIMP BrowserAccessibilityWin::get_endIndex(long* index) {
 
 // This method is deprecated in the IA2 Spec.
 STDMETHODIMP BrowserAccessibilityWin::get_valid(boolean* valid) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_VALID);
   return E_NOTIMPL;
 }
 
 //
-// IAccessibleAction mostly not implemented.
+// IAccessibleAction partly implemented.
 //
 
 STDMETHODIMP BrowserAccessibilityWin::nActions(long* n_actions) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_N_ACTIONS);
   if (!instance_active())
     return E_FAIL;
 
   if (!n_actions)
     return E_INVALIDARG;
 
-  // Required for IAccessibleHyperlink::anchor/anchorTarget to work properly.
-  // TODO(nektar): Implement the rest of the logic required by this interface.
-  if (IsHyperlink())
+  // |IsHyperlink| is required for |IAccessibleHyperlink::anchor/anchorTarget|
+  // to work properly because the |IAccessibleHyperlink| interface inherits from
+  // |IAccessibleAction|.
+  if (IsHyperlink() || HasStringAttribute(ui::AX_ATTR_ACTION)) {
     *n_actions = 1;
-  else
+  } else {
     *n_actions = 0;
+  }
+
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::doAction(long action_index) {
-  return E_NOTIMPL;
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_DO_ACTION);
+  if (!instance_active())
+    return E_FAIL;
+
+  if (!HasStringAttribute(ui::AX_ATTR_ACTION) || action_index != 0)
+    return E_INVALIDARG;
+
+  manager()->DoDefaultAction(*this);
+  return S_OK;
 }
+
 STDMETHODIMP
 BrowserAccessibilityWin::get_description(long action_index, BSTR* description) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_IAACTION_GET_DESCRIPTION);
   return E_NOTIMPL;
 }
+
 STDMETHODIMP BrowserAccessibilityWin::get_keyBinding(long action_index,
                                                      long n_max_bindings,
                                                      BSTR** key_bindings,
                                                      long* n_bindings) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_KEY_BINDING);
   return E_NOTIMPL;
 }
+
 STDMETHODIMP BrowserAccessibilityWin::get_name(long action_index, BSTR* name) {
-  return E_NOTIMPL;
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_NAME);
+  if (!instance_active())
+    return E_FAIL;
+
+  if (!name)
+    return E_INVALIDARG;
+
+  base::string16 action_verb;
+  if (!GetString16Attribute(ui::AX_ATTR_ACTION, &action_verb) ||
+      action_index != 0) {
+    *name = nullptr;
+    return E_INVALIDARG;
+  }
+
+  *name = SysAllocString(action_verb.c_str());
+  DCHECK(name);
+  return S_OK;
 }
+
 STDMETHODIMP
 BrowserAccessibilityWin::get_localizedName(long action_index,
                                            BSTR* localized_name) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_LOCALIZED_NAME);
   return E_NOTIMPL;
 }
 
@@ -2570,6 +2906,7 @@ BrowserAccessibilityWin::get_localizedName(long action_index,
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_currentValue(VARIANT* value) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CURRENT_VALUE);
   if (!instance_active())
     return E_FAIL;
 
@@ -2589,6 +2926,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_currentValue(VARIANT* value) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_minimumValue(VARIANT* value) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_MINIMUM_VALUE);
   if (!instance_active())
     return E_FAIL;
 
@@ -2608,6 +2946,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_minimumValue(VARIANT* value) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_maximumValue(VARIANT* value) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_MAXIMUM_VALUE);
   if (!instance_active())
     return E_FAIL;
 
@@ -2627,6 +2966,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_maximumValue(VARIANT* value) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::setCurrentValue(VARIANT new_value) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SET_CURRENT_VALUE);
   // TODO(dmazzoni): Implement this.
   return E_NOTIMPL;
 }
@@ -2636,6 +2976,7 @@ STDMETHODIMP BrowserAccessibilityWin::setCurrentValue(VARIANT new_value) {
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_URL(BSTR* url) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_URL);
   if (!instance_active())
     return E_FAIL;
 
@@ -2656,6 +2997,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_URL(BSTR* url) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_title(BSTR* title) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_TITLE);
   if (!instance_active())
     return E_FAIL;
 
@@ -2673,6 +3015,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_title(BSTR* title) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_mimeType(BSTR* mime_type) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_MIME_TYPE);
   if (!instance_active())
     return E_FAIL;
 
@@ -2690,6 +3033,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_mimeType(BSTR* mime_type) {
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_docType(BSTR* doc_type) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_DOC_TYPE);
   if (!instance_active())
     return E_FAIL;
 
@@ -2709,11 +3053,14 @@ STDMETHODIMP BrowserAccessibilityWin::get_docType(BSTR* doc_type) {
 STDMETHODIMP
 BrowserAccessibilityWin::get_nameSpaceURIForID(short name_space_id,
                                                BSTR* name_space_uri) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_NAMESPACE_URI_FOR_ID);
   return E_NOTIMPL;
 }
+
 STDMETHODIMP
 BrowserAccessibilityWin::put_alternateViewMediaTypes(
     BSTR* comma_separated_media_types) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_PUT_ALTERNATE_VIEW_MEDIA_TYPES);
   return E_NOTIMPL;
 }
 
@@ -2728,6 +3075,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nodeInfo(
     unsigned int* num_children,
     unsigned int* unique_id,
     unsigned short* node_type) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_NODE_INFO);
   if (!instance_active())
     return E_FAIL;
 
@@ -2745,7 +3093,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_nodeInfo(
   *name_space_id = 0;
   *node_value = SysAllocString(value().c_str());
   *num_children = PlatformChildCount();
-  *unique_id = unique_id_win_;
+  *unique_id = -this->unique_id();
 
   if (GetRole() == ui::AX_ROLE_ROOT_WEB_AREA ||
     GetRole() == ui::AX_ROLE_WEB_AREA) {
@@ -2765,6 +3113,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_attributes(
     short* name_space_id,
     BSTR* attrib_values,
     unsigned short* num_attribs) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ISIMPLEDOMNODE_GET_ATTRIBUTES);
   if (!instance_active())
     return E_FAIL;
 
@@ -2790,6 +3139,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_attributesForNames(
     BSTR* attrib_names,
     short* name_space_id,
     BSTR* attrib_values) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_ATTRIBUTES_FOR_NAMES);
   if (!instance_active())
     return E_FAIL;
 
@@ -2821,6 +3171,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_computedStyle(
     BSTR* style_properties,
     BSTR* style_values,
     unsigned short *num_style_properties)  {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COMPUTED_STYLE);
   if (!instance_active())
     return E_FAIL;
 
@@ -2848,6 +3199,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_computedStyleForProperties(
     boolean use_alternate_view,
     BSTR* style_properties,
     BSTR* style_values) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_COMPUTED_STYLE_FOR_PROPERTIES);
   if (!instance_active())
     return E_FAIL;
 
@@ -2872,22 +3224,25 @@ STDMETHODIMP BrowserAccessibilityWin::get_computedStyleForProperties(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::scrollTo(boolean placeTopLeft) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_ISIMPLEDOMNODE_SCROLL_TO);
   return scrollTo(placeTopLeft ?
       IA2_SCROLL_TYPE_TOP_LEFT : IA2_SCROLL_TYPE_ANYWHERE);
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_parentNode(ISimpleDOMNode** node) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_PARENT_NODE);
   if (!instance_active())
     return E_FAIL;
 
   if (!node)
     return E_INVALIDARG;
 
-  *node = GetParent()->ToBrowserAccessibilityWin()->NewReference();
+  *node = ToBrowserAccessibilityWin(GetParent())->NewReference();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_firstChild(ISimpleDOMNode** node)  {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_FIRST_CHILD);
   if (!instance_active())
     return E_FAIL;
 
@@ -2899,11 +3254,12 @@ STDMETHODIMP BrowserAccessibilityWin::get_firstChild(ISimpleDOMNode** node)  {
     return S_FALSE;
   }
 
-  *node = PlatformGetChild(0)->ToBrowserAccessibilityWin()->NewReference();
+  *node = ToBrowserAccessibilityWin(PlatformGetChild(0))->NewReference();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_lastChild(ISimpleDOMNode** node) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_LAST_CHILD);
   if (!instance_active())
     return E_FAIL;
 
@@ -2915,13 +3271,14 @@ STDMETHODIMP BrowserAccessibilityWin::get_lastChild(ISimpleDOMNode** node) {
     return S_FALSE;
   }
 
-  *node = PlatformGetChild(PlatformChildCount() - 1)
-      ->ToBrowserAccessibilityWin()->NewReference();
+  *node = ToBrowserAccessibilityWin(
+      PlatformGetChild(PlatformChildCount() - 1))->NewReference();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_previousSibling(
     ISimpleDOMNode** node) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_PREVIOUS_SIBLING);
   if (!instance_active())
     return E_FAIL;
 
@@ -2933,12 +3290,13 @@ STDMETHODIMP BrowserAccessibilityWin::get_previousSibling(
     return S_FALSE;
   }
 
-  *node = GetParent()->InternalGetChild(GetIndexInParent() - 1)->
-      ToBrowserAccessibilityWin()->NewReference();
+  *node = ToBrowserAccessibilityWin(
+      GetParent()->InternalGetChild(GetIndexInParent() - 1))->NewReference();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_nextSibling(ISimpleDOMNode** node) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_NEXT_SIBLING);
   if (!instance_active())
     return E_FAIL;
 
@@ -2953,14 +3311,15 @@ STDMETHODIMP BrowserAccessibilityWin::get_nextSibling(ISimpleDOMNode** node) {
     return S_FALSE;
   }
 
-  *node = GetParent()->InternalGetChild(GetIndexInParent() + 1)->
-      ToBrowserAccessibilityWin()->NewReference();
+  *node = ToBrowserAccessibilityWin(
+      GetParent()->InternalGetChild(GetIndexInParent() + 1))->NewReference();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_childAt(
     unsigned int child_index,
     ISimpleDOMNode** node) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CHILD_AT);
   if (!instance_active())
     return E_FAIL;
 
@@ -2976,21 +3335,37 @@ STDMETHODIMP BrowserAccessibilityWin::get_childAt(
     return S_FALSE;
   }
 
-  *node = child->ToBrowserAccessibilityWin()->NewReference();
+  *node = ToBrowserAccessibilityWin(child)->NewReference();
   return S_OK;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_innerHTML(BSTR* innerHTML) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_INNER_HTML);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP
 BrowserAccessibilityWin::get_localInterface(void** local_interface) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_LOCAL_INTERFACE);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_language(BSTR* language) {
-  return E_NOTIMPL;
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_LANGUAGE);
+  if (!language)
+    return E_INVALIDARG;
+  *language = nullptr;
+
+  if (!instance_active())
+    return E_FAIL;
+
+  base::string16 lang = GetInheritedString16Attribute(ui::AX_ATTR_LANGUAGE);
+  if (lang.empty())
+    lang = L"en-US";
+
+  *language = SysAllocString(lang.c_str());
+  DCHECK(*language);
+  return S_OK;
 }
 
 //
@@ -2998,6 +3373,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_language(BSTR* language) {
 //
 
 STDMETHODIMP BrowserAccessibilityWin::get_domText(BSTR* dom_text) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_DOM_TEXT);
   if (!instance_active())
     return E_FAIL;
 
@@ -3015,6 +3391,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_clippedSubstringBounds(
     int* out_y,
     int* out_width,
     int* out_height) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_CLIPPED_SUBSTRING_BOUNDS);
   // TODO(dmazzoni): fully support this API by intersecting the
   // rect with the container's rect.
   return get_unclippedSubstringBounds(
@@ -3028,20 +3405,20 @@ STDMETHODIMP BrowserAccessibilityWin::get_unclippedSubstringBounds(
     int* out_y,
     int* out_width,
     int* out_height) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_UNCLIPPED_SUBSTRING_BOUNDS);
   if (!instance_active())
     return E_FAIL;
 
   if (!out_x || !out_y || !out_width || !out_height)
     return E_INVALIDARG;
 
-  const base::string16& text_str = hypertext();
-  if (start_index > text_str.size() ||
-      end_index > text_str.size() ||
+  unsigned int text_length = static_cast<unsigned int>(GetText().size());
+  if (start_index > text_length || end_index > text_length ||
       start_index > end_index) {
     return E_INVALIDARG;
   }
 
-  gfx::Rect bounds = GetGlobalBoundsForRange(
+  gfx::Rect bounds = GetScreenBoundsForRange(
       start_index, end_index - start_index);
   *out_x = bounds.x();
   *out_y = bounds.y();
@@ -3053,17 +3430,17 @@ STDMETHODIMP BrowserAccessibilityWin::get_unclippedSubstringBounds(
 STDMETHODIMP BrowserAccessibilityWin::scrollToSubstring(
     unsigned int start_index,
     unsigned int end_index) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_SCROLL_TO_SUBSTRING);
   if (!instance_active())
     return E_FAIL;
 
-  const base::string16& text_str = hypertext();
-  if (start_index > text_str.size() ||
-      end_index > text_str.size() ||
+  unsigned int text_length = static_cast<unsigned int>(GetText().size());
+  if (start_index > text_length || end_index > text_length ||
       start_index > end_index) {
     return E_INVALIDARG;
   }
 
-  manager()->ScrollToMakeVisible(*this, GetLocalBoundsForRange(
+  manager()->ScrollToMakeVisible(*this, GetPageBoundsForRange(
       start_index, end_index - start_index));
   manager()->ToBrowserAccessibilityManagerWin()->TrackScrollingObject(this);
 
@@ -3071,7 +3448,22 @@ STDMETHODIMP BrowserAccessibilityWin::scrollToSubstring(
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_fontFamily(BSTR* font_family) {
-  return E_NOTIMPL;
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_FONT_FAMILY);
+  if (!font_family)
+    return E_INVALIDARG;
+  *font_family = nullptr;
+
+  if (!instance_active())
+    return E_FAIL;
+
+  base::string16 family =
+      GetInheritedString16Attribute(ui::AX_ATTR_FONT_FAMILY);
+  if (family.empty())
+    return S_FALSE;
+
+  *font_family = SysAllocString(family.c_str());
+  DCHECK(*font_family);
+  return S_OK;
 }
 
 //
@@ -3081,6 +3473,7 @@ STDMETHODIMP BrowserAccessibilityWin::get_fontFamily(BSTR* font_family) {
 STDMETHODIMP BrowserAccessibilityWin::QueryService(REFGUID guid_service,
                                                    REFIID riid,
                                                    void** object) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_QUERY_SERVICE);
   if (!instance_active())
     return E_FAIL;
 
@@ -3094,7 +3487,10 @@ STDMETHODIMP BrowserAccessibilityWin::QueryService(REFGUID guid_service,
     // Special Mozilla extension: return the accessible for the root document.
     // Screen readers use this to distinguish between a document loaded event
     // on the root document vs on an iframe.
-    return manager()->GetRoot()->ToBrowserAccessibilityWin()->QueryInterface(
+    BrowserAccessibility* node = this;
+    while (node->GetParent())
+      node = node->GetParent()->manager()->GetRoot();
+    return ToBrowserAccessibilityWin(node)->QueryInterface(
         IID_IAccessible2, object);
   }
 
@@ -3132,15 +3528,18 @@ STDMETHODIMP BrowserAccessibilityWin::QueryService(REFGUID guid_service,
 
 STDMETHODIMP
 BrowserAccessibilityWin::GetObjectForChild(long child_id, IAccessibleEx** ret) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_OBJECT_FOR_CHILD);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP
 BrowserAccessibilityWin::GetIAccessiblePair(IAccessible** acc, long* child_id) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_IACCESSIBLE_PAIR);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::GetRuntimeId(SAFEARRAY** runtime_id) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_RUNTIME_ID);
   return E_NOTIMPL;
 }
 
@@ -3148,17 +3547,16 @@ STDMETHODIMP
 BrowserAccessibilityWin::ConvertReturnedElement(
     IRawElementProviderSimple* element,
     IAccessibleEx** acc) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_CONVERT_RETURNED_ELEMENT);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::GetPatternProvider(PATTERNID id,
                                                          IUnknown** provider) {
-  DVLOG(1) << "In Function: "
-           << __FUNCTION__
-           << " for pattern id: "
-           << id;
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_PATTERN_PROVIDER);
+  DVLOG(1) << "In Function: " << __func__ << " for pattern id: " << id;
   if (id == UIA_ValuePatternId || id == UIA_TextPatternId) {
-    if (IsEditableText()) {
+    if (HasState(ui::AX_STATE_EDITABLE)) {
       DVLOG(1) << "Returning UIA text provider";
       base::win::UIATextProvider::CreateTextProvider(
           GetValueText(), true, provider);
@@ -3170,13 +3568,11 @@ STDMETHODIMP BrowserAccessibilityWin::GetPatternProvider(PATTERNID id,
 
 STDMETHODIMP BrowserAccessibilityWin::GetPropertyValue(PROPERTYID id,
                                                        VARIANT* ret) {
-  DVLOG(1) << "In Function: "
-           << __FUNCTION__
-           << " for property id: "
-           << id;
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_PROPERTY_VALUE);
+  DVLOG(1) << "In Function: " << __func__ << " for property id: " << id;
   V_VT(ret) = VT_EMPTY;
   if (id == UIA_ControlTypePropertyId) {
-    if (IsEditableText()) {
+    if (HasState(ui::AX_STATE_EDITABLE)) {
       V_VT(ret) = VT_I4;
       ret->lVal = UIA_EditControlTypeId;
       DVLOG(1) << "Returning Edit control type";
@@ -3188,12 +3584,14 @@ STDMETHODIMP BrowserAccessibilityWin::GetPropertyValue(PROPERTYID id,
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_ProviderOptions(
-    enum ProviderOptions* ret) {
+    ProviderOptions* ret) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_PROVIDER_OPTIONS);
   return E_NOTIMPL;
 }
 
 STDMETHODIMP BrowserAccessibilityWin::get_HostRawElementProvider(
     IRawElementProviderSimple** provider) {
+  WIN_ACCESSIBILITY_API_HISTOGRAM(UMA_API_GET_HOST_RAW_ELEMENT_PROVIDER);
   return E_NOTIMPL;
 }
 
@@ -3209,7 +3607,7 @@ HRESULT WINAPI BrowserAccessibilityWin::InternalQueryInterface(
     void** object) {
   BrowserAccessibilityWin* accessibility =
       reinterpret_cast<BrowserAccessibilityWin*>(this_ptr);
-  int32 ia_role = accessibility->ia_role();
+  int32_t ia_role = accessibility->ia_role();
   if (iid == IID_IAccessibleImage) {
     if (ia_role != ROLE_SYSTEM_GRAPHIC) {
       *object = NULL;
@@ -3238,7 +3636,8 @@ HRESULT WINAPI BrowserAccessibilityWin::InternalQueryInterface(
       return E_NOINTERFACE;
     }
   } else if (iid == IID_IAccessibleHyperlink) {
-    auto ax_object = reinterpret_cast<const BrowserAccessibilityWin*>(this_ptr);
+    auto* ax_object =
+        reinterpret_cast<const BrowserAccessibilityWin*>(this_ptr);
     if (!ax_object || !ax_object->IsHyperlink()) {
       *object = nullptr;
       return E_NOINTERFACE;
@@ -3247,6 +3646,75 @@ HRESULT WINAPI BrowserAccessibilityWin::InternalQueryInterface(
 
   return CComObjectRootBase::InternalQueryInterface(
       this_ptr, entries, iid, object);
+}
+
+void BrowserAccessibilityWin::ComputeStylesIfNeeded() {
+  if (!offset_to_text_attributes().empty())
+    return;
+
+  std::map<int, std::vector<base::string16>> attributes_map;
+  if (PlatformIsLeaf() || IsSimpleTextControl()) {
+    attributes_map[0] = ComputeTextAttributes();
+    std::map<int, std::vector<base::string16>> spelling_attributes =
+        GetSpellingAttributes();
+    for (auto& spelling_attribute : spelling_attributes) {
+      auto attributes_iterator = attributes_map.find(spelling_attribute.first);
+      if (attributes_iterator == attributes_map.end()) {
+        attributes_map[spelling_attribute.first] =
+            std::move(spelling_attribute.second);
+      } else {
+        std::vector<base::string16>& existing_attributes =
+            attributes_iterator->second;
+
+        // There might be a spelling attribute already in the list of text
+        // attributes, originating from "aria-invalid".
+        auto existing_spelling_attribute =
+            std::find(existing_attributes.begin(), existing_attributes.end(),
+                      L"invalid:false");
+        if (existing_spelling_attribute != existing_attributes.end())
+          existing_attributes.erase(existing_spelling_attribute);
+
+        existing_attributes.insert(existing_attributes.end(),
+                                   spelling_attribute.second.begin(),
+                                   spelling_attribute.second.end());
+      }
+    }
+    win_attributes_->offset_to_text_attributes.swap(attributes_map);
+    return;
+  }
+
+  int start_offset = 0;
+  for (size_t i = 0; i < PlatformChildCount(); ++i) {
+    auto* child = ToBrowserAccessibilityWin(PlatformGetChild(i));
+    DCHECK(child);
+    std::vector<base::string16> attributes(child->ComputeTextAttributes());
+
+    if (attributes_map.empty()) {
+      attributes_map[start_offset] = attributes;
+    } else {
+      // Only add the attributes for this child if we are at the start of a new
+      // style span.
+      std::vector<base::string16> previous_attributes =
+          attributes_map.rbegin()->second;
+      if (!std::equal(attributes.begin(), attributes.end(),
+                      previous_attributes.begin())) {
+        attributes_map[start_offset] = attributes;
+      }
+    }
+
+    if (child->IsTextOnlyObject())
+      start_offset += child->GetText().length();
+    else
+      start_offset += 1;
+  }
+
+  win_attributes_->offset_to_text_attributes.swap(attributes_map);
+}
+
+base::string16 BrowserAccessibilityWin::GetText() const {
+  if (PlatformIsChildOfLeaf())
+    return BrowserAccessibility::GetText();
+  return win_attributes_->hypertext;
 }
 
 //
@@ -3272,10 +3740,7 @@ void BrowserAccessibilityWin::UpdateStep1ComputeWinAttributes() {
   StringAttributeToIA2(ui::AX_ATTR_HTML_TAG, "tag");
   StringAttributeToIA2(ui::AX_ATTR_ROLE, "xml-roles");
 
-  // Expose "level" attribute for headings, trees, etc.
   IntAttributeToIA2(ui::AX_ATTR_HIERARCHICAL_LEVEL, "level");
-
-  // Expose the set size and position in set.
   IntAttributeToIA2(ui::AX_ATTR_SET_SIZE, "setsize");
   IntAttributeToIA2(ui::AX_ATTR_POS_IN_SET, "posinset");
 
@@ -3303,14 +3768,51 @@ void BrowserAccessibilityWin::UpdateStep1ComputeWinAttributes() {
   BoolAttributeToIA2(ui::AX_ATTR_CONTAINER_LIVE_BUSY,
                      "container-busy");
 
+  // Expose the non-standard explicit-name IA2 attribute.
+  int name_from;
+  if (GetIntAttribute(ui::AX_ATTR_NAME_FROM, &name_from) &&
+      name_from != ui::AX_NAME_FROM_CONTENTS) {
+    win_attributes_->ia2_attributes.push_back(L"explicit-name:true");
+  }
+
+  // Expose the aria-current attribute.
+  int32_t aria_current_state;
+  if (GetIntAttribute(ui::AX_ATTR_ARIA_CURRENT_STATE, &aria_current_state)) {
+    switch (static_cast<ui::AXAriaCurrentState>(aria_current_state)) {
+      case ui::AX_ARIA_CURRENT_STATE_NONE:
+        break;
+      case ui::AX_ARIA_CURRENT_STATE_FALSE:
+        win_attributes_->ia2_attributes.push_back(L"current:false");
+        break;
+      case ui::AX_ARIA_CURRENT_STATE_TRUE:
+        win_attributes_->ia2_attributes.push_back(L"current:true");
+        break;
+      case ui::AX_ARIA_CURRENT_STATE_PAGE:
+        win_attributes_->ia2_attributes.push_back(L"current:page");
+        break;
+      case ui::AX_ARIA_CURRENT_STATE_STEP:
+        win_attributes_->ia2_attributes.push_back(L"current:step");
+        break;
+      case ui::AX_ARIA_CURRENT_STATE_LOCATION:
+        win_attributes_->ia2_attributes.push_back(L"current:location");
+        break;
+      case ui::AX_ARIA_CURRENT_STATE_DATE:
+        win_attributes_->ia2_attributes.push_back(L"current:date");
+        break;
+      case ui::AX_ARIA_CURRENT_STATE_TIME:
+        win_attributes_->ia2_attributes.push_back(L"current:time");
+        break;
+    }
+  }
+
   // Expose table cell index.
   if (IsCellOrTableHeaderRole()) {
     BrowserAccessibility* table = GetParent();
     while (table && table->GetRole() != ui::AX_ROLE_TABLE)
       table = table->GetParent();
     if (table) {
-      const std::vector<int32>& unique_cell_ids = table->GetIntListAttribute(
-          ui::AX_ATTR_UNIQUE_CELL_IDS);
+      const std::vector<int32_t>& unique_cell_ids =
+          table->GetIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS);
       for (size_t i = 0; i < unique_cell_ids.size(); ++i) {
         if (unique_cell_ids[i] == GetId()) {
           win_attributes_->ia2_attributes.push_back(
@@ -3320,50 +3822,14 @@ void BrowserAccessibilityWin::UpdateStep1ComputeWinAttributes() {
     }
   }
 
-  // Expose invalid state for form controls and elements with aria-invalid.
-  int invalid_state;
-  if (GetIntAttribute(ui::AX_ATTR_INVALID_STATE, &invalid_state)) {
-    // TODO(nektar): Handle the possibility of having multiple aria-invalid
-    // attributes defined, e.g., "invalid:spelling,grammar".
-    switch (invalid_state) {
-      case ui::AX_INVALID_STATE_FALSE:
-        win_attributes_->ia2_attributes.push_back(L"invalid:false");
-        break;
-      case ui::AX_INVALID_STATE_TRUE:
-        win_attributes_->ia2_attributes.push_back(L"invalid:true");
-        break;
-      case ui::AX_INVALID_STATE_SPELLING:
-        win_attributes_->ia2_attributes.push_back(L"invalid:spelling");
-        break;
-      case ui::AX_INVALID_STATE_GRAMMAR:
-        win_attributes_->ia2_attributes.push_back(L"invalid:grammar");
-        break;
-      case ui::AX_INVALID_STATE_OTHER:
-        {
-          base::string16 aria_invalid_value;
-          if (GetString16Attribute(ui::AX_ATTR_ARIA_INVALID_VALUE,
-                                   &aria_invalid_value)) {
-            SanitizeStringAttributeForIA2(aria_invalid_value,
-                                          &aria_invalid_value);
-            win_attributes_->ia2_attributes.push_back(
-                L"invalid:" + aria_invalid_value);
-          } else {
-            // Set the attribute to L"true", since we cannot be more specific.
-            win_attributes_->ia2_attributes.push_back(L"invalid:true");
-          }
-        }
-        break;
-      default:
-        NOTREACHED();
-    }
-  }
-
   // Expose row or column header sort direction.
-  int32 sort_direction;
+  int32_t sort_direction;
   if ((ia_role() == ROLE_SYSTEM_COLUMNHEADER ||
       ia_role() == ROLE_SYSTEM_ROWHEADER) &&
       GetIntAttribute(ui::AX_ATTR_SORT_DIRECTION, &sort_direction)) {
-    switch (sort_direction) {
+    switch (static_cast<ui::AXSortDirection>(sort_direction)) {
+      case ui::AX_SORT_DIRECTION_NONE:
+        break;
       case ui::AX_SORT_DIRECTION_UNSORTED:
         win_attributes_->ia2_attributes.push_back(L"sort:none");
         break;
@@ -3376,39 +3842,40 @@ void BrowserAccessibilityWin::UpdateStep1ComputeWinAttributes() {
       case ui::AX_SORT_DIRECTION_OTHER:
         win_attributes_->ia2_attributes.push_back(L"sort:other");
         break;
-      default:
-        NOTREACHED();
     }
   }
 
   win_attributes_->name = GetString16Attribute(ui::AX_ATTR_NAME);
   win_attributes_->description = GetString16Attribute(ui::AX_ATTR_DESCRIPTION);
+  StringAttributeToIA2(ui::AX_ATTR_PLACEHOLDER, "placeholder");
 
-  base::string16 value = GetString16Attribute(ui::AX_ATTR_VALUE);
-
+  base::string16 value = GetValue();
   // On Windows, the value of a document should be its url.
   if (GetRole() == ui::AX_ROLE_ROOT_WEB_AREA ||
       GetRole() == ui::AX_ROLE_WEB_AREA) {
     value = base::UTF8ToUTF16(manager()->GetTreeData().url);
   }
-
   // If this doesn't have a value and is linked then set its value to the url
   // attribute. This allows screen readers to read an empty link's destination.
   if (value.empty() && (ia_state() & STATE_SYSTEM_LINKED))
     value = GetString16Attribute(ui::AX_ATTR_URL);
-
   win_attributes_->value = value;
 
-  // Clear any old relationships between this node and other nodes.
-  for (size_t i = 0; i < relations_.size(); ++i)
-    relations_[i]->Release();
-  relations_.clear();
+  ClearOwnRelations();
+  AddBidirectionalRelations(IA2_RELATION_CONTROLLER_FOR,
+                            IA2_RELATION_CONTROLLED_BY,
+                            ui::AX_ATTR_CONTROLS_IDS);
+  AddBidirectionalRelations(IA2_RELATION_DESCRIBED_BY,
+                            IA2_RELATION_DESCRIPTION_FOR,
+                            ui::AX_ATTR_DESCRIBEDBY_IDS);
+  AddBidirectionalRelations(IA2_RELATION_FLOWS_TO, IA2_RELATION_FLOWS_FROM,
+                            ui::AX_ATTR_FLOWTO_IDS);
+  AddBidirectionalRelations(IA2_RELATION_LABELLED_BY, IA2_RELATION_LABEL_FOR,
+                            ui::AX_ATTR_LABELLEDBY_IDS);
 
-  // Handle title UI element.
-  AddRelations(ui::AX_ATTR_CONTROLS_IDS, IA2_RELATION_CONTROLLER_FOR);
-  AddRelations(ui::AX_ATTR_DESCRIBEDBY_IDS, IA2_RELATION_DESCRIBED_BY);
-  AddRelations(ui::AX_ATTR_FLOWTO_IDS, IA2_RELATION_FLOWS_TO);
-  AddRelations(ui::AX_ATTR_LABELLEDBY_IDS, IA2_RELATION_LABELLED_BY);
+  int member_of_id;
+  if (GetIntAttribute(ui::AX_ATTR_MEMBER_OF_ID, &member_of_id))
+    AddRelation(IA2_RELATION_MEMBER_OF, member_of_id);
 
   UpdateRequiredAttributes();
   // If this is a web area for a presentational iframe, give it a role of
@@ -3421,12 +3888,17 @@ void BrowserAccessibilityWin::UpdateStep1ComputeWinAttributes() {
 }
 
 void BrowserAccessibilityWin::UpdateStep2ComputeHypertext() {
-  if (PlatformIsLeaf()) {
-    if (IsSimpleTextControl())
-      win_attributes_->hypertext += value();
-    else
-      win_attributes_->hypertext += name();
+  if (IsSimpleTextControl()) {
+    win_attributes_->hypertext = value();
+    return;
+  }
 
+  if (!PlatformChildCount()) {
+    if (IsRichTextControl()) {
+      // We don't want to expose any associated label in IA2 Hypertext.
+      return;
+    }
+    win_attributes_->hypertext = name();
     return;
   }
 
@@ -3436,61 +3908,39 @@ void BrowserAccessibilityWin::UpdateStep2ComputeHypertext() {
   // the character index of each embedded object character to the id of the
   // child object it points to.
   for (unsigned int i = 0; i < PlatformChildCount(); ++i) {
-    BrowserAccessibilityWin* child =
-        PlatformGetChild(i)->ToBrowserAccessibilityWin();
+    auto* child = ToBrowserAccessibilityWin(PlatformGetChild(i));
     DCHECK(child);
     // Similar to Firefox, we don't expose text-only objects in IA2 hypertext.
     if (child->IsTextOnlyObject()) {
       win_attributes_->hypertext += child->name();
     } else {
-      int32 char_offset = hypertext().size();
-      int32 child_id = child->GetId();
-      int32 index = hyperlinks().size();
+      int32_t char_offset = static_cast<int32_t>(GetText().size());
+      int32_t child_unique_id = child->unique_id();
+      int32_t index = hyperlinks().size();
       win_attributes_->hyperlink_offset_to_index[char_offset] = index;
-      win_attributes_->hyperlinks.push_back(child_id);
+      win_attributes_->hyperlinks.push_back(child_unique_id);
       win_attributes_->hypertext += kEmbeddedCharacter;
     }
   }
 }
 
 void BrowserAccessibilityWin::UpdateStep3FireEvents(bool is_subtree_creation) {
-  BrowserAccessibilityManagerWin* manager =
-      this->manager()->ToBrowserAccessibilityManagerWin();
-
-  // Fire an event when an alert first appears.
-  if (ia_role() == ROLE_SYSTEM_ALERT &&
-      old_win_attributes_->ia_role != ROLE_SYSTEM_ALERT) {
-    manager->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, this);
-  }
-
   // Fire an event when a new subtree is created.
   if (is_subtree_creation)
-    manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_SHOW, this);
+    FireNativeEvent(EVENT_OBJECT_SHOW);
 
   // The rest of the events only fire on changes, not on new objects.
   if (old_win_attributes_->ia_role != 0 ||
       !old_win_attributes_->role_name.empty()) {
     // Fire an event if the name, description, help, or value changes.
     if (name() != old_win_attributes_->name)
-      manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_NAMECHANGE, this);
+      FireNativeEvent(EVENT_OBJECT_NAMECHANGE);
     if (description() != old_win_attributes_->description)
-      manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_DESCRIPTIONCHANGE, this);
+      FireNativeEvent(EVENT_OBJECT_DESCRIPTIONCHANGE);
     if (value() != old_win_attributes_->value)
-      manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_VALUECHANGE, this);
+      FireNativeEvent(EVENT_OBJECT_VALUECHANGE);
     if (ia_state() != old_win_attributes_->ia_state)
-      manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_STATECHANGE, this);
-
-    // Normally focus events are handled elsewhere, however
-    // focus for managed descendants is platform-specific.
-    // Fire a focus event if the focused descendant in a multi-select
-    // list box changes.
-    if (GetRole() == ui::AX_ROLE_LIST_BOX_OPTION &&
-        (ia_state() & STATE_SYSTEM_FOCUSABLE) &&
-        (ia_state() & STATE_SYSTEM_SELECTABLE) &&
-        (ia_state() & STATE_SYSTEM_FOCUSED) &&
-        !(old_win_attributes_->ia_state & STATE_SYSTEM_FOCUSED)) {
-      manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_FOCUS, this);
-    }
+      FireNativeEvent(EVENT_OBJECT_STATECHANGE);
 
     // Handle selection being added or removed.
     bool is_selected_now = (ia_state() & STATE_SYSTEM_SELECTED) != 0;
@@ -3504,13 +3954,13 @@ void BrowserAccessibilityWin::UpdateStep3FireEvents(bool is_subtree_creation) {
       if (multiselect) {
         // In a multi-select box, fire SELECTIONADD and SELECTIONREMOVE events.
         if (is_selected_now && !was_selected_before) {
-          manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_SELECTIONADD, this);
+          FireNativeEvent(EVENT_OBJECT_SELECTIONADD);
         } else if (!is_selected_now && was_selected_before) {
-          manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_SELECTIONREMOVE, this);
+          FireNativeEvent(EVENT_OBJECT_SELECTIONREMOVE);
         }
       } else if (is_selected_now && !was_selected_before) {
         // In a single-select box, only fire SELECTION events.
-        manager->MaybeCallNotifyWinEvent(EVENT_OBJECT_SELECTION, this);
+        FireNativeEvent(EVENT_OBJECT_SELECTION);
       }
     }
 
@@ -3520,7 +3970,7 @@ void BrowserAccessibilityWin::UpdateStep3FireEvents(bool is_subtree_creation) {
     if (GetIntAttribute(ui::AX_ATTR_SCROLL_X, &sx) &&
         GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &sy)) {
       if (sx != previous_scroll_x_ || sy != previous_scroll_y_)
-        manager->MaybeCallNotifyWinEvent(EVENT_SYSTEM_SCROLLINGEND, this);
+        FireNativeEvent(EVENT_SYSTEM_SCROLLINGEND);
       previous_scroll_x_ = sx;
       previous_scroll_y_ = sy;
     }
@@ -3531,31 +3981,34 @@ void BrowserAccessibilityWin::UpdateStep3FireEvents(bool is_subtree_creation) {
     if (old_len > 0) {
       // In-process screen readers may call IAccessibleText::get_oldText
       // in reaction to this event to retrieve the text that was removed.
-      manager->MaybeCallNotifyWinEvent(IA2_EVENT_TEXT_REMOVED, this);
+      FireNativeEvent(IA2_EVENT_TEXT_REMOVED);
     }
     if (new_len > 0) {
       // In-process screen readers may call IAccessibleText::get_newText
       // in reaction to this event to retrieve the text that was inserted.
-      manager->MaybeCallNotifyWinEvent(IA2_EVENT_TEXT_INSERTED, this);
+      FireNativeEvent(IA2_EVENT_TEXT_INSERTED);
     }
 
     // Changing a static text node can affect the IAccessibleText hypertext
     // of the parent node, so force an update on the parent.
-    BrowserAccessibilityWin* parent = GetParent()->ToBrowserAccessibilityWin();
+    BrowserAccessibilityWin* parent = ToBrowserAccessibilityWin(GetParent());
     if (parent && IsTextOnlyObject() &&
         name() != old_win_attributes_->name) {
-      parent->UpdateStep1ComputeWinAttributes();
-      parent->UpdateStep2ComputeHypertext();
-      parent->UpdateStep3FireEvents(false);
+      parent->UpdatePlatformAttributes();
     }
   }
 
   old_win_attributes_.reset(nullptr);
 }
 
+void BrowserAccessibilityWin::UpdatePlatformAttributes() {
+  UpdateStep1ComputeWinAttributes();
+  UpdateStep2ComputeHypertext();
+  UpdateStep3FireEvents(false);
+}
+
 void BrowserAccessibilityWin::OnSubtreeWillBeDeleted() {
-  manager()->ToBrowserAccessibilityManagerWin()->MaybeCallNotifyWinEvent(
-      EVENT_OBJECT_HIDE, this);
+  FireNativeEvent(EVENT_OBJECT_HIDE);
 }
 
 void BrowserAccessibilityWin::NativeAddReference() {
@@ -3571,8 +4024,182 @@ bool BrowserAccessibilityWin::IsNative() const {
 }
 
 void BrowserAccessibilityWin::OnLocationChanged() {
-  manager()->ToBrowserAccessibilityManagerWin()->MaybeCallNotifyWinEvent(
-      EVENT_OBJECT_LOCATIONCHANGE, this);
+  FireNativeEvent(EVENT_OBJECT_LOCATIONCHANGE);
+}
+
+std::vector<base::string16> BrowserAccessibilityWin::ComputeTextAttributes()
+    const {
+  std::vector<base::string16> attributes;
+
+  // We include list markers for now, but there might be other objects that are
+  // auto generated.
+  // TODO(nektar): Compute what objects are auto-generated in Blink.
+  if (GetRole() == ui::AX_ROLE_LIST_MARKER)
+    attributes.push_back(L"auto-generated:true");
+  else
+    attributes.push_back(L"auto-generated:false");
+
+  int color;
+  base::string16 color_value(L"transparent");
+  if (GetIntAttribute(ui::AX_ATTR_BACKGROUND_COLOR, &color)) {
+    unsigned int alpha = SkColorGetA(color);
+    unsigned int red = SkColorGetR(color);
+    unsigned int green = SkColorGetG(color);
+    unsigned int blue = SkColorGetB(color);
+    if (alpha) {
+      color_value = L"rgb(" + base::UintToString16(red) + L',' +
+                    base::UintToString16(green) + L',' +
+                    base::UintToString16(blue) + L')';
+    }
+  }
+  SanitizeStringAttributeForIA2(color_value, &color_value);
+  attributes.push_back(L"background-color:" + color_value);
+
+  if (GetIntAttribute(ui::AX_ATTR_COLOR, &color)) {
+    unsigned int red = SkColorGetR(color);
+    unsigned int green = SkColorGetG(color);
+    unsigned int blue = SkColorGetB(color);
+    color_value = L"rgb(" + base::UintToString16(red) + L',' +
+                  base::UintToString16(green) + L',' +
+                  base::UintToString16(blue) + L')';
+  } else {
+    color_value = L"rgb(0,0,0)";
+  }
+  SanitizeStringAttributeForIA2(color_value, &color_value);
+  attributes.push_back(L"color:" + color_value);
+
+  base::string16 font_family(
+      GetInheritedString16Attribute(ui::AX_ATTR_FONT_FAMILY));
+  // Attribute has no default value.
+  if (!font_family.empty()) {
+    SanitizeStringAttributeForIA2(font_family, &font_family);
+    attributes.push_back(L"font-family:" + font_family);
+  }
+
+  float font_size;
+  // Attribute has no default value.
+  if (GetFloatAttribute(ui::AX_ATTR_FONT_SIZE, &font_size)) {
+    // The IA2 Spec requires the value to be in pt, not in pixels.
+    // There are 72 points per inch.
+    // We assume that there are 96 pixels per inch on a standard display.
+    // TODO(nektar): Figure out the current value of pixels per inch.
+    float points = font_size * 72.0 / 96.0;
+    attributes.push_back(L"font-size:" +
+                         base::UTF8ToUTF16(base::DoubleToString(points)) +
+                         L"pt");
+  }
+
+  auto text_style =
+      static_cast<ui::AXTextStyle>(GetIntAttribute(ui::AX_ATTR_TEXT_STYLE));
+  if (text_style == ui::AX_TEXT_STYLE_NONE) {
+    attributes.push_back(L"font-weight:normal");
+    attributes.push_back(L"font-style:normal");
+  } else {
+    if (text_style & ui::AX_TEXT_STYLE_BOLD) {
+      attributes.push_back(L"font-weight:bold");
+    } else {
+      attributes.push_back(L"font-weight:normal");
+    }
+
+    base::string16 font_style;
+    if (text_style & ui::AX_TEXT_STYLE_ITALIC)
+      font_style += L",italic";
+    if (text_style & ui::AX_TEXT_STYLE_UNDERLINE)
+      font_style += L",underline";
+    if (text_style & ui::AX_TEXT_STYLE_LINE_THROUGH)
+      font_style += L",line-through";
+    // TODO(nektar): Support more font style attributes in Blink.
+
+    if (font_style.empty()) {
+      font_style = L"normal";
+    } else {
+      // Remove the leading comma.
+      font_style.erase(0, 1);
+    }
+    attributes.push_back(L"font-style:" + font_style);
+  }
+
+  auto invalid_state = static_cast<ui::AXInvalidState>(
+      GetIntAttribute(ui::AX_ATTR_INVALID_STATE));
+  switch (invalid_state) {
+    case ui::AX_INVALID_STATE_NONE:
+    case ui::AX_INVALID_STATE_FALSE:
+      attributes.push_back(L"invalid:false");
+      break;
+    case ui::AX_INVALID_STATE_TRUE:
+      attributes.push_back(L"invalid:true");
+      break;
+    case ui::AX_INVALID_STATE_SPELLING:
+    case ui::AX_INVALID_STATE_GRAMMAR: {
+      base::string16 spelling_grammar_value;
+      if (invalid_state & ui::AX_INVALID_STATE_SPELLING)
+        spelling_grammar_value = L"spelling";
+      else if (invalid_state & ui::AX_INVALID_STATE_GRAMMAR)
+        spelling_grammar_value = L"grammar";
+      else
+        spelling_grammar_value = L"spelling,grammar";
+      attributes.push_back(L"invalid:" + spelling_grammar_value);
+      break;
+    }
+    case ui::AX_INVALID_STATE_OTHER: {
+      base::string16 aria_invalid_value;
+      if (GetString16Attribute(ui::AX_ATTR_ARIA_INVALID_VALUE,
+                               &aria_invalid_value)) {
+        SanitizeStringAttributeForIA2(aria_invalid_value, &aria_invalid_value);
+        attributes.push_back(L"invalid:" + aria_invalid_value);
+      } else {
+        // Set the attribute to L"true", since we cannot be more specific.
+        attributes.push_back(L"invalid:true");
+      }
+      break;
+    }
+  }
+
+  base::string16 language(GetInheritedString16Attribute(ui::AX_ATTR_LANGUAGE));
+  // Default value should be L"en-US".
+  if (language.empty()) {
+    attributes.push_back(L"language:en-US");
+  } else {
+    SanitizeStringAttributeForIA2(language, &language);
+    attributes.push_back(L"language:" + language);
+  }
+
+  // TODO(nektar): Add Blink support for the following attributes.
+  // Currently set to their default values as dictated by the IA2 Spec.
+  attributes.push_back(L"text-line-through-mode:continuous");
+  attributes.push_back(L"text-line-through-style:none");
+  // Default value must be the empty string.
+  attributes.push_back(L"text-line-through-text:");
+  attributes.push_back(L"text-line-through-type:none");
+  attributes.push_back(L"text-line-through-width:auto");
+  attributes.push_back(L"text-outline:false");
+  attributes.push_back(L"text-position:baseline");
+  attributes.push_back(L"text-shadow:none");
+  attributes.push_back(L"text-underline-mode:continuous");
+  attributes.push_back(L"text-underline-style:none");
+  attributes.push_back(L"text-underline-type:none");
+  attributes.push_back(L"text-underline-width:auto");
+
+  auto text_direction = static_cast<ui::AXTextDirection>(
+      GetIntAttribute(ui::AX_ATTR_TEXT_DIRECTION));
+  switch (text_direction) {
+    case ui::AX_TEXT_DIRECTION_NONE:
+    case ui::AX_TEXT_DIRECTION_LTR:
+      attributes.push_back(L"writing-mode:lr");
+      break;
+    case ui::AX_TEXT_DIRECTION_RTL:
+      attributes.push_back(L"writing-mode:rl");
+      break;
+    case ui::AX_TEXT_DIRECTION_TTB:
+      attributes.push_back(L"writing-mode:tb");
+      break;
+    case ui::AX_TEXT_DIRECTION_BTT:
+      // Not listed in the IA2 Spec.
+      attributes.push_back(L"writing-mode:bt");
+      break;
+  }
+
+  return attributes;
 }
 
 BrowserAccessibilityWin* BrowserAccessibilityWin::NewReference() {
@@ -3580,20 +4207,69 @@ BrowserAccessibilityWin* BrowserAccessibilityWin::NewReference() {
   return this;
 }
 
+std::map<int, std::vector<base::string16>>
+BrowserAccessibilityWin::GetSpellingAttributes() const {
+  std::map<int, std::vector<base::string16>> spelling_attributes;
+  if (IsTextOnlyObject()) {
+    const std::vector<int32_t>& marker_types =
+        GetIntListAttribute(ui::AX_ATTR_MARKER_TYPES);
+    const std::vector<int>& marker_starts =
+        GetIntListAttribute(ui::AX_ATTR_MARKER_STARTS);
+    const std::vector<int>& marker_ends =
+        GetIntListAttribute(ui::AX_ATTR_MARKER_ENDS);
+    for (size_t i = 0; i < marker_types.size(); ++i) {
+      if (!(static_cast<ui::AXMarkerType>(marker_types[i]) &
+            ui::AX_MARKER_TYPE_SPELLING))
+        continue;
+      int start_offset = marker_starts[i];
+      int end_offset = marker_ends[i];
+      std::vector<base::string16> start_attributes;
+      start_attributes.push_back(L"invalid:spelling");
+      std::vector<base::string16> end_attributes;
+      end_attributes.push_back(L"invalid:false");
+      spelling_attributes[start_offset] = start_attributes;
+      spelling_attributes[end_offset] = end_attributes;
+    }
+  }
+  if (IsSimpleTextControl()) {
+    int start_offset = 0;
+    for (const BrowserAccessibility* static_text =
+             BrowserAccessibilityManager::NextTextOnlyObject(
+                 InternalGetChild(0));
+         static_text; static_text = static_text->GetNextSibling()) {
+      auto* text_win = ToBrowserAccessibilityWin(static_text);
+      if (text_win) {
+        std::map<int, std::vector<base::string16>> text_spelling_attributes =
+            text_win->GetSpellingAttributes();
+        for (auto& attribute : text_spelling_attributes) {
+          spelling_attributes[start_offset + attribute.first] =
+              std::move(attribute.second);
+        }
+        start_offset += static_cast<int>(text_win->GetText().length());
+      }
+    }
+  }
+  return spelling_attributes;
+}
+
 BrowserAccessibilityWin* BrowserAccessibilityWin::GetTargetFromChildID(
     const VARIANT& var_id) {
   if (var_id.vt != VT_I4)
-    return NULL;
+    return nullptr;
 
   LONG child_id = var_id.lVal;
   if (child_id == CHILDID_SELF)
     return this;
 
   if (child_id >= 1 && child_id <= static_cast<LONG>(PlatformChildCount()))
-    return PlatformGetChild(child_id - 1)->ToBrowserAccessibilityWin();
+    return ToBrowserAccessibilityWin(PlatformGetChild(child_id - 1));
 
-  return manager()->ToBrowserAccessibilityManagerWin()->
-      GetFromUniqueIdWin(child_id);
+  BrowserAccessibilityWin* child = ToBrowserAccessibilityWin(
+      BrowserAccessibility::GetFromUniqueID(-child_id));
+  if (child && child->IsDescendantOf(this))
+    return child;
+
+  return nullptr;
 }
 
 HRESULT BrowserAccessibilityWin::GetStringAttributeAsBstr(
@@ -3662,11 +4338,11 @@ void BrowserAccessibilityWin::IntAttributeToIA2(
 }
 
 bool BrowserAccessibilityWin::IsHyperlink() const {
-  int32 hyperlink_index = -1;
-  const auto parent = GetParent();
+  int32_t hyperlink_index = -1;
+  auto* parent = GetParent();
   if (parent) {
     hyperlink_index =
-        parent->ToBrowserAccessibilityWin()->GetHyperlinkIndexFromChild(*this);
+        ToBrowserAccessibilityWin(parent)->GetHyperlinkIndexFromChild(*this);
   }
 
   if (hyperlink_index >= 0)
@@ -3674,21 +4350,39 @@ bool BrowserAccessibilityWin::IsHyperlink() const {
   return false;
 }
 
-int32 BrowserAccessibilityWin::GetHyperlinkIndexFromChild(
+BrowserAccessibilityWin*
+BrowserAccessibilityWin::GetHyperlinkFromHypertextOffset(int offset) const {
+  std::map<int32_t, int32_t>::iterator iterator =
+      hyperlink_offset_to_index().find(offset);
+  if (iterator == hyperlink_offset_to_index().end())
+    return nullptr;
+
+  int32_t index = iterator->second;
+  DCHECK_GE(index, 0);
+  DCHECK_LT(index, static_cast<int32_t>(hyperlinks().size()));
+  int32_t id = hyperlinks()[index];
+  BrowserAccessibilityWin* hyperlink =
+      ToBrowserAccessibilityWin(GetFromUniqueID(id));
+  if (!hyperlink)
+    return nullptr;
+  return hyperlink;
+}
+
+int32_t BrowserAccessibilityWin::GetHyperlinkIndexFromChild(
     const BrowserAccessibilityWin& child) const {
   if (hyperlinks().empty())
     return -1;
 
-  auto iterator = std::find(
-      hyperlinks().begin(), hyperlinks().end(), child.GetId());
+  auto iterator =
+      std::find(hyperlinks().begin(), hyperlinks().end(), child.unique_id());
   if (iterator == hyperlinks().end())
     return -1;
 
-  return static_cast<int32>(iterator - hyperlinks().begin());
+  return static_cast<int32_t>(iterator - hyperlinks().begin());
 }
 
-int32 BrowserAccessibilityWin::GetHypertextOffsetFromHyperlinkIndex(
-    int32 hyperlink_index) const {
+int32_t BrowserAccessibilityWin::GetHypertextOffsetFromHyperlinkIndex(
+    int32_t hyperlink_index) const {
   for (auto& offset_index : hyperlink_offset_to_index()) {
     if (offset_index.second == hyperlink_index)
       return offset_index.first;
@@ -3697,46 +4391,46 @@ int32 BrowserAccessibilityWin::GetHypertextOffsetFromHyperlinkIndex(
   return -1;
 }
 
-int32 BrowserAccessibilityWin::GetHypertextOffsetFromChild(
+int32_t BrowserAccessibilityWin::GetHypertextOffsetFromChild(
     const BrowserAccessibilityWin& child) const {
   DCHECK(child.GetParent() == this);
 
   // Handle the case when we are dealing with a direct text-only child.
   // (Note that this object might be a platform leaf, e.g. an ARIA searchbox,
-  // and so InternalChild... functions need to be used. Also, direct text-only
+  // and so |InternalChild...| functions need to be used. Also, direct text-only
   // children should not be present at tree roots and so no cross-tree traversal
   // is necessary.)
   if (child.IsTextOnlyObject()) {
-    int32 hypertextOffset = 0;
-    int32 index_in_parent = child.GetIndexInParent();
+    int32_t hypertextOffset = 0;
+    int32_t index_in_parent = child.GetIndexInParent();
     DCHECK_GE(index_in_parent, 0);
-    DCHECK_LT(index_in_parent, static_cast<int32>(InternalChildCount()));
-    for (uint32 i = 0; i < static_cast<uint32>(index_in_parent); ++i) {
+    DCHECK_LT(index_in_parent, static_cast<int32_t>(InternalChildCount()));
+    for (uint32_t i = 0; i < static_cast<uint32_t>(index_in_parent); ++i) {
       const BrowserAccessibilityWin* sibling =
-          InternalGetChild(i)->ToBrowserAccessibilityWin();
+          ToBrowserAccessibilityWin(InternalGetChild(i));
       DCHECK(sibling);
       if (sibling->IsTextOnlyObject())
-        hypertextOffset += sibling->hypertext().length();
+        hypertextOffset += sibling->GetText().size();
       else
         ++hypertextOffset;
     }
     return hypertextOffset;
   }
 
-  int32 hyperlink_index = GetHyperlinkIndexFromChild(child);
+  int32_t hyperlink_index = GetHyperlinkIndexFromChild(child);
   if (hyperlink_index < 0)
     return -1;
 
   return GetHypertextOffsetFromHyperlinkIndex(hyperlink_index);
 }
 
-int32 BrowserAccessibilityWin::GetHypertextOffsetFromDescendant(
+int32_t BrowserAccessibilityWin::GetHypertextOffsetFromDescendant(
     const BrowserAccessibilityWin& descendant) const {
-  auto parent_object = descendant.GetParent()->ToBrowserAccessibilityWin();
-  auto current_object = const_cast<BrowserAccessibilityWin*>(&descendant);
+  auto* parent_object = ToBrowserAccessibilityWin(descendant.GetParent());
+  auto* current_object = const_cast<BrowserAccessibilityWin*>(&descendant);
   while (parent_object && parent_object != this) {
     current_object = parent_object;
-    parent_object = current_object->GetParent()->ToBrowserAccessibilityWin();
+    parent_object = ToBrowserAccessibilityWin(current_object->GetParent());
   }
   if (!parent_object)
     return -1;
@@ -3764,7 +4458,7 @@ int BrowserAccessibilityWin::GetHypertextOffsetFromEndpoint(
     return endpoint_offset;
 
   const BrowserAccessibility* common_parent = this;
-  int32 index_in_common_parent = GetIndexInParent();
+  int32_t index_in_common_parent = GetIndexInParent();
   while (common_parent && !endpoint_object.IsDescendantOf(common_parent)) {
     index_in_common_parent = common_parent->GetIndexInParent();
     common_parent = common_parent->GetParent();
@@ -3781,7 +4475,8 @@ int BrowserAccessibilityWin::GetHypertextOffsetFromEndpoint(
   // We can safely assume that it is a descendant or in a completely different
   // part of the tree.
   if (common_parent == this) {
-    int32 hypertext_offset = GetHypertextOffsetFromDescendant(endpoint_object);
+    int32_t hypertext_offset =
+        GetHypertextOffsetFromDescendant(endpoint_object);
     if (endpoint_object.GetParent() == this &&
         endpoint_object.IsTextOnlyObject()) {
       hypertext_offset += endpoint_offset;
@@ -3794,8 +4489,8 @@ int BrowserAccessibilityWin::GetHypertextOffsetFromEndpoint(
   //
   // We can safely assume that the endpoint is in another part of the tree or
   // at common parent, and that this object is a descendant of common parent.
-  int32 endpoint_index_in_common_parent = -1;
-  for (uint32 i = 0; i < common_parent->InternalChildCount(); ++i) {
+  int32_t endpoint_index_in_common_parent = -1;
+  for (uint32_t i = 0; i < common_parent->InternalChildCount(); ++i) {
     const BrowserAccessibility* child = common_parent->InternalGetChild(i);
     DCHECK(child);
     if (endpoint_object.IsDescendantOf(child)) {
@@ -3808,16 +4503,15 @@ int BrowserAccessibilityWin::GetHypertextOffsetFromEndpoint(
   if (endpoint_index_in_common_parent < index_in_common_parent)
     return 0;
   if (endpoint_index_in_common_parent > index_in_common_parent)
-    return hypertext().length();
+    return GetText().size();
 
   NOTREACHED();
   return -1;
 }
 
 int BrowserAccessibilityWin::GetSelectionAnchor() const {
-  int32 anchor_id = manager()->GetTreeData().sel_anchor_object_id;
-  const auto anchor_object =
-      manager()->GetFromID(anchor_id)->ToBrowserAccessibilityWin();
+  int32_t anchor_id = manager()->GetTreeData().sel_anchor_object_id;
+  const BrowserAccessibilityWin* anchor_object = GetFromID(anchor_id);
   if (!anchor_object)
     return -1;
 
@@ -3826,9 +4520,8 @@ int BrowserAccessibilityWin::GetSelectionAnchor() const {
 }
 
 int BrowserAccessibilityWin::GetSelectionFocus() const {
-  int32 focus_id = manager()->GetTreeData().sel_focus_object_id;
-  const auto focus_object =
-      manager()->GetFromID(focus_id)->ToBrowserAccessibilityWin();
+  int32_t focus_id = manager()->GetTreeData().sel_focus_object_id;
+  const BrowserAccessibilityWin* focus_object = GetFromID(focus_id);
   if (!focus_object)
     return -1;
 
@@ -3840,7 +4533,7 @@ void BrowserAccessibilityWin::GetSelectionOffsets(
     int* selection_start, int* selection_end) const {
   DCHECK(selection_start && selection_end);
 
-  if (IsEditableText() && !HasState(ui::AX_STATE_RICHLY_EDITABLE) &&
+  if (IsSimpleTextControl() &&
       GetIntAttribute(ui::AX_ATTR_TEXT_SEL_START, selection_start) &&
       GetIntAttribute(ui::AX_ATTR_TEXT_SEL_END, selection_end)) {
     return;
@@ -3877,38 +4570,16 @@ void BrowserAccessibilityWin::GetSelectionOffsets(
   // the selection.
   int* largest_offset =
       (*selection_start <= *selection_end) ? selection_end : selection_start;
-  auto current_object = const_cast<BrowserAccessibilityWin*>(this);
-  LONG hyperlink_index;
-  HRESULT hr =
-      current_object->get_hyperlinkIndex(*largest_offset, &hyperlink_index);
-  if (hr != S_OK)
+  BrowserAccessibilityWin* hyperlink =
+      GetHyperlinkFromHypertextOffset(*largest_offset);
+  if (!hyperlink)
     return;
 
-  DCHECK_GE(hyperlink_index, 0);
-  base::win::ScopedComPtr<IAccessibleHyperlink> hyperlink;
-  hr = current_object->get_hyperlink(hyperlink_index, hyperlink.Receive());
-  DCHECK(SUCCEEDED(hr));
-  base::win::ScopedComPtr<IAccessibleText> hyperlink_text;
-  hr = hyperlink.QueryInterface(hyperlink_text.Receive());
-  DCHECK(SUCCEEDED(hr));
   LONG n_selections = 0;
-  hr = hyperlink_text->get_nSelections(&n_selections);
+  HRESULT hr = hyperlink->get_nSelections(&n_selections);
   DCHECK(SUCCEEDED(hr));
   if (n_selections > 0)
     ++(*largest_offset);
-}
-
-base::string16 BrowserAccessibilityWin::GetNameRecursive() const {
-  if (!name().empty()) {
-    return name();
-  }
-
-  base::string16 result;
-  for (uint32 i = 0; i < PlatformChildCount(); ++i) {
-    result += PlatformGetChild(i)->ToBrowserAccessibilityWin()->
-        GetNameRecursive();
-  }
-  return result;
 }
 
 base::string16 BrowserAccessibilityWin::GetValueText() {
@@ -3937,20 +4608,20 @@ bool BrowserAccessibilityWin::IsSameHypertextCharacter(size_t old_char_index,
 
   // If it's an embedded character, they're only identical if the child id
   // the hyperlink points to is the same.
-  std::map<int32, int32>& old_offset_to_index =
+  std::map<int32_t, int32_t>& old_offset_to_index =
       old_win_attributes_->hyperlink_offset_to_index;
-  std::vector<int32>& old_hyperlinks = old_win_attributes_->hyperlinks;
-  int32 old_hyperlinks_count = static_cast<int32>(old_hyperlinks.size());
-  std::map<int32, int32>::iterator iter;
+  std::vector<int32_t>& old_hyperlinks = old_win_attributes_->hyperlinks;
+  int32_t old_hyperlinks_count = static_cast<int32_t>(old_hyperlinks.size());
+  std::map<int32_t, int32_t>::iterator iter;
   iter = old_offset_to_index.find(old_char_index);
   int old_index = (iter != old_offset_to_index.end()) ? iter->second : -1;
   int old_child_id = (old_index >= 0 && old_index < old_hyperlinks_count) ?
       old_hyperlinks[old_index] : -1;
 
-  std::map<int32, int32>& new_offset_to_index =
+  std::map<int32_t, int32_t>& new_offset_to_index =
       win_attributes_->hyperlink_offset_to_index;
-  std::vector<int32>& new_hyperlinks = win_attributes_->hyperlinks;
-  int32 new_hyperlinks_count = static_cast<int32>(new_hyperlinks.size());
+  std::vector<int32_t>& new_hyperlinks = win_attributes_->hyperlinks;
+  int32_t new_hyperlinks_count = static_cast<int32_t>(new_hyperlinks.size());
   iter = new_offset_to_index.find(new_char_index);
   int new_index = (iter != new_offset_to_index.end()) ? iter->second : -1;
   int new_child_id = (new_index >= 0 && new_index < new_hyperlinks_count) ?
@@ -3968,7 +4639,7 @@ void BrowserAccessibilityWin::ComputeHypertextRemovedAndInserted(
   *new_len = 0;
 
   const base::string16& old_text = old_win_attributes_->hypertext;
-  const base::string16& new_text = hypertext();
+  const base::string16& new_text = GetText();
 
   size_t common_prefix = 0;
   while (common_prefix < old_text.size() &&
@@ -4015,9 +4686,8 @@ ui::TextBoundaryType BrowserAccessibilityWin::IA2TextBoundaryToTextBoundary(
       return ui::PARAGRAPH_BOUNDARY;
     case IA2_TEXT_BOUNDARY_ALL:
       return ui::ALL_BOUNDARY;
-    default:
-      NOTREACHED();
   }
+  NOTREACHED();
   return ui::CHAR_BOUNDARY;
 }
 
@@ -4026,27 +4696,67 @@ LONG BrowserAccessibilityWin::FindBoundary(
     IA2TextBoundaryType ia2_boundary,
     LONG start_offset,
     ui::TextBoundaryDirection direction) {
+  // If the boundary is relative to the caret, use the selection
+  // affinity, otherwise default to downstream affinity.
+  ui::AXTextAffinity affinity =
+      start_offset == IA2_TEXT_OFFSET_CARET ?
+      manager()->GetTreeData().sel_focus_affinity :
+      ui::AX_TEXT_AFFINITY_DOWNSTREAM;
+
   HandleSpecialTextOffset(text, &start_offset);
-  if (ia2_boundary == IA2_TEXT_BOUNDARY_WORD && IsSimpleTextControl())
+  if (ia2_boundary == IA2_TEXT_BOUNDARY_WORD)
     return GetWordStartBoundary(static_cast<int>(start_offset), direction);
+  if (ia2_boundary == IA2_TEXT_BOUNDARY_LINE) {
+    return GetLineStartBoundary(
+        static_cast<int>(start_offset), direction, affinity);
+  }
 
   ui::TextBoundaryType boundary = IA2TextBoundaryToTextBoundary(ia2_boundary);
-  const std::vector<int32>& line_breaks = GetIntListAttribute(
-      ui::AX_ATTR_LINE_BREAKS);
-  return ui::FindAccessibleTextBoundary(
-      text, line_breaks, boundary, start_offset, direction);
+  return ui::FindAccessibleTextBoundary(text, GetLineStartOffsets(), boundary,
+                                        start_offset, direction, affinity);
 }
 
-BrowserAccessibilityWin* BrowserAccessibilityWin::GetFromID(int32 id) {
-  return manager()->GetFromID(id)->ToBrowserAccessibilityWin();
+LONG BrowserAccessibilityWin::FindStartOfStyle(
+    LONG start_offset,
+    ui::TextBoundaryDirection direction) const {
+  LONG text_length = static_cast<LONG>(GetText().length());
+  DCHECK_GE(start_offset, 0);
+  DCHECK_LE(start_offset, text_length);
+
+  switch (direction) {
+    case ui::BACKWARDS_DIRECTION: {
+      if (offset_to_text_attributes().empty())
+        return 0;
+
+      auto iterator = offset_to_text_attributes().upper_bound(start_offset);
+      --iterator;
+      return static_cast<LONG>(iterator->first);
+    }
+    case ui::FORWARDS_DIRECTION: {
+      const auto iterator =
+          offset_to_text_attributes().upper_bound(start_offset);
+      if (iterator == offset_to_text_attributes().end())
+        return text_length;
+      return static_cast<LONG>(iterator->first);
+    }
+  }
+
+  NOTREACHED();
+  return start_offset;
+}
+
+BrowserAccessibilityWin* BrowserAccessibilityWin::GetFromID(int32_t id) const {
+  if (!instance_active())
+    return nullptr;
+  return ToBrowserAccessibilityWin(manager()->GetFromID(id));
 }
 
 bool BrowserAccessibilityWin::IsListBoxOptionOrMenuListOption() {
   if (!GetParent())
     return false;
 
-  int32 role = GetRole();
-  int32 parent_role = GetParent()->GetRole();
+  int32_t role = GetRole();
+  int32_t parent_role = GetParent()->GetRole();
 
   if (role == ui::AX_ROLE_LIST_BOX_OPTION &&
       parent_role == ui::AX_ROLE_LIST_BOX) {
@@ -4059,6 +4769,125 @@ bool BrowserAccessibilityWin::IsListBoxOptionOrMenuListOption() {
   }
 
   return false;
+}
+
+void BrowserAccessibilityWin::AddRelation(const base::string16& relation_type,
+                                          int target_id) {
+  // Reflexive relations don't need to be exposed through IA2.
+  if (target_id == GetId())
+    return;
+
+  CComObject<BrowserAccessibilityRelation>* relation;
+  HRESULT hr =
+      CComObject<BrowserAccessibilityRelation>::CreateInstance(&relation);
+  DCHECK(SUCCEEDED(hr));
+  relation->AddRef();
+  relation->Initialize(this, relation_type);
+  relation->AddTarget(target_id);
+  relations_.push_back(relation);
+}
+
+void BrowserAccessibilityWin::AddBidirectionalRelations(
+    const base::string16& relation_type,
+    const base::string16& reverse_relation_type,
+    ui::AXIntListAttribute attribute) {
+  if (!HasIntListAttribute(attribute))
+    return;
+
+  const std::vector<int32_t>& target_ids = GetIntListAttribute(attribute);
+  // Reflexive relations don't need to be exposed through IA2.
+  std::vector<int32_t> filtered_target_ids;
+  int32_t current_id = GetId();
+  std::copy_if(target_ids.begin(), target_ids.end(),
+               std::back_inserter(filtered_target_ids),
+               [current_id](int32_t id) { return id != current_id; });
+  if (filtered_target_ids.empty())
+    return;
+
+  CComObject<BrowserAccessibilityRelation>* relation;
+  HRESULT hr =
+      CComObject<BrowserAccessibilityRelation>::CreateInstance(&relation);
+  DCHECK(SUCCEEDED(hr));
+  relation->AddRef();
+  relation->Initialize(this, relation_type);
+
+  for (int target_id : filtered_target_ids) {
+    BrowserAccessibilityWin* target =
+        GetFromID(static_cast<int32_t>(target_id));
+    if (!target || !target->instance_active())
+      continue;
+    relation->AddTarget(target_id);
+    target->AddRelation(reverse_relation_type, GetId());
+  }
+
+  relations_.push_back(relation);
+}
+
+// Clears all the forward relations from this object to any other object and the
+// associated  reverse relations on the other objects, but leaves any reverse
+// relations on this object alone.
+void BrowserAccessibilityWin::ClearOwnRelations() {
+  RemoveBidirectionalRelationsOfType(IA2_RELATION_CONTROLLER_FOR,
+                                     IA2_RELATION_CONTROLLED_BY);
+  RemoveBidirectionalRelationsOfType(IA2_RELATION_DESCRIBED_BY,
+                                     IA2_RELATION_DESCRIPTION_FOR);
+  RemoveBidirectionalRelationsOfType(IA2_RELATION_FLOWS_TO,
+                                     IA2_RELATION_FLOWS_FROM);
+  RemoveBidirectionalRelationsOfType(IA2_RELATION_LABELLED_BY,
+                                     IA2_RELATION_LABEL_FOR);
+
+  relations_.erase(
+      std::remove_if(relations_.begin(), relations_.end(),
+                     [](BrowserAccessibilityRelation* relation) {
+                       if (relation->get_type() == IA2_RELATION_MEMBER_OF) {
+                         relation->Release();
+                         return true;
+                       }
+                       return false;
+                     }),
+      relations_.end());
+}
+
+void BrowserAccessibilityWin::RemoveBidirectionalRelationsOfType(
+    const base::string16& relation_type,
+    const base::string16& reverse_relation_type) {
+  for (auto iter = relations_.begin(); iter != relations_.end();) {
+    BrowserAccessibilityRelation* relation = *iter;
+    DCHECK(relation);
+    if (relation->get_type() == relation_type) {
+      for (int target_id : relation->get_target_ids()) {
+        BrowserAccessibilityWin* target =
+            GetFromID(static_cast<int32_t>(target_id));
+        if (!target || !target->instance_active())
+          continue;
+        DCHECK_NE(target, this);
+        target->RemoveTargetFromRelation(reverse_relation_type, GetId());
+      }
+      iter = relations_.erase(iter);
+      relation->Release();
+    } else {
+      ++iter;
+    }
+  }
+}
+
+void BrowserAccessibilityWin::RemoveTargetFromRelation(
+    const base::string16& relation_type,
+    int target_id) {
+  for (auto iter = relations_.begin(); iter != relations_.end();) {
+    BrowserAccessibilityRelation* relation = *iter;
+    DCHECK(relation);
+    if (relation->get_type() == relation_type) {
+      // If |target_id| is not present, |RemoveTarget| will do nothing.
+      relation->RemoveTarget(target_id);
+    }
+    if (relation->get_target_ids().empty()) {
+      iter = relations_.erase(iter);
+      relation->Release();
+    } else {
+      ++iter;
+    }
+  }
 }
 
 void BrowserAccessibilityWin::UpdateRequiredAttributes() {
@@ -4124,31 +4953,20 @@ void BrowserAccessibilityWin::UpdateRequiredAttributes() {
   }
 }
 
-void BrowserAccessibilityWin::AddRelations(
-    ui::AXIntListAttribute src_attr,
-    const base::string16& iaccessiblerelation_type) {
-  if (!HasIntListAttribute(src_attr))
-    return;
-
-  const std::vector<int32>& ids = GetIntListAttribute(src_attr);
-  for (size_t i = 0; i < ids.size(); ++i) {
-    CComObject<BrowserAccessibilityRelation>* relation;
-    HRESULT hr = CComObject<BrowserAccessibilityRelation>::CreateInstance(
-        &relation);
-    DCHECK(SUCCEEDED(hr));
-    relation->AddRef();
-    relation->Initialize(this, iaccessiblerelation_type);
-    relation->AddTarget(ids[i]);
-    relations_.push_back(relation);
-  }
+void BrowserAccessibilityWin::FireNativeEvent(LONG win_event_type) const {
+  (new BrowserAccessibilityEventWin(
+      BrowserAccessibilityEvent::FromTreeChange,
+      ui::AX_EVENT_NONE,
+      win_event_type,
+      this))->Fire();
 }
 
 void BrowserAccessibilityWin::InitRoleAndState() {
-  int32 ia_role = 0;
-  int32 ia_state = 0;
+  int32_t ia_role = 0;
+  int32_t ia_state = 0;
   base::string16 role_name;
-  int32 ia2_role = 0;
-  int32 ia2_state = IA2_STATE_OPAQUE;
+  int32_t ia2_role = 0;
+  int32_t ia2_state = IA2_STATE_OPAQUE;
 
   if (HasState(ui::AX_STATE_BUSY))
     ia_state |= STATE_SYSTEM_BUSY;
@@ -4188,7 +5006,7 @@ void BrowserAccessibilityWin::InitRoleAndState() {
     ia_state |= STATE_SYSTEM_SELECTED;
   if (HasState(ui::AX_STATE_VISITED))
     ia_state |= STATE_SYSTEM_TRAVERSED;
-  if (!HasState(ui::AX_STATE_ENABLED))
+  if (HasState(ui::AX_STATE_DISABLED))
     ia_state |= STATE_SYSTEM_UNAVAILABLE;
   if (HasState(ui::AX_STATE_VERTICAL))
     ia2_state |= IA2_STATE_VERTICAL;
@@ -4207,7 +5025,7 @@ void BrowserAccessibilityWin::InitRoleAndState() {
       ia_state |= STATE_SYSTEM_HOTTRACKED;
   }
 
-  if (IsEditableText())
+  if (HasState(ui::AX_STATE_EDITABLE))
     ia2_state |= IA2_STATE_EDITABLE;
 
   if (GetBoolAttribute(ui::AX_ATTR_STATE_MIXED))
@@ -4234,6 +5052,9 @@ void BrowserAccessibilityWin::InitRoleAndState() {
     case ui::AX_ROLE_ARTICLE:
       ia_role = ROLE_SYSTEM_DOCUMENT;
       ia_state |= STATE_SYSTEM_READONLY;
+      break;
+    case ui::AX_ROLE_AUDIO:
+      ia_role = ROLE_SYSTEM_GROUPING;
       break;
     case ui::AX_ROLE_BANNER:
       ia_role = ROLE_SYSTEM_GROUPING;
@@ -4337,8 +5158,15 @@ void BrowserAccessibilityWin::InitRoleAndState() {
       ia_state |= STATE_SYSTEM_FOCUSABLE;
       break;
     case ui::AX_ROLE_EMBEDDED_OBJECT:
-      ia_role = ROLE_SYSTEM_CLIENT;
-      ia2_role = IA2_ROLE_EMBEDDED_OBJECT;
+      if (PlatformChildCount()) {
+        // Windows screen readers assume that IA2_ROLE_EMBEDDED_OBJECT
+        // doesn't have any children, but it may be something like a
+        // browser plugin that has a document inside.
+        ia_role = ROLE_SYSTEM_GROUPING;
+      } else {
+        ia_role = ROLE_SYSTEM_CLIENT;
+        ia2_role = IA2_ROLE_EMBEDDED_OBJECT;
+      }
       break;
     case ui::AX_ROLE_FIGCAPTION:
       role_name = html_tag;
@@ -4425,8 +5253,6 @@ void BrowserAccessibilityWin::InitRoleAndState() {
       ia_role = ROLE_SYSTEM_LISTITEM;
       if (ia_state & STATE_SYSTEM_SELECTABLE) {
         ia_state |= STATE_SYSTEM_FOCUSABLE;
-        if (HasState(ui::AX_STATE_FOCUSED))
-          ia_state |= STATE_SYSTEM_FOCUSED;
       }
       break;
     case ui::AX_ROLE_LIST_ITEM:
@@ -4475,8 +5301,6 @@ void BrowserAccessibilityWin::InitRoleAndState() {
       ia2_state &= ~(IA2_STATE_EDITABLE);
       if (ia_state & STATE_SYSTEM_SELECTABLE) {
         ia_state |= STATE_SYSTEM_FOCUSABLE;
-        if (HasState(ui::AX_STATE_FOCUSED))
-          ia_state |= STATE_SYSTEM_FOCUSED;
       }
       break;
     case ui::AX_ROLE_METER:
@@ -4615,12 +5439,16 @@ void BrowserAccessibilityWin::InitRoleAndState() {
     case ui::AX_ROLE_TEXT_FIELD:
     case ui::AX_ROLE_SEARCH_BOX:
       ia_role = ROLE_SYSTEM_TEXT;
-      if (HasState(ui::AX_STATE_MULTILINE))
+      if (HasState(ui::AX_STATE_MULTILINE)) {
         ia2_state |= IA2_STATE_MULTI_LINE;
-      else
+      } else {
         ia2_state |= IA2_STATE_SINGLE_LINE;
+      }
+      if (HasState(ui::AX_STATE_READ_ONLY))
+        ia_state |= STATE_SYSTEM_READONLY;
       ia2_state |= IA2_STATE_SELECTABLE_TEXT;
       break;
+    case ui::AX_ROLE_ABBR:
     case ui::AX_ROLE_TIME:
       role_name = html_tag;
       ia_role = ROLE_SYSTEM_TEXT;
@@ -4650,6 +5478,9 @@ void BrowserAccessibilityWin::InitRoleAndState() {
     case ui::AX_ROLE_LINE_BREAK:
       ia_role = ROLE_SYSTEM_WHITESPACE;
       break;
+    case ui::AX_ROLE_VIDEO:
+      ia_role = ROLE_SYSTEM_GROUPING;
+      break;
     case ui::AX_ROLE_WINDOW:
       ia_role = ROLE_SYSTEM_WINDOW;
       break;
@@ -4669,11 +5500,11 @@ void BrowserAccessibilityWin::InitRoleAndState() {
   // Compute the final value of READONLY for MSAA.
   //
   // We always set the READONLY state for elements that have the
-  // aria-readonly attribute and for a few roles (in the switch above).
-  // We clear the READONLY state on focusable controls and on a document.
-  // Everything else, the majority of objects, do not have this state set.
-  if (HasState(ui::AX_STATE_FOCUSABLE) &&
-      ia_role != ROLE_SYSTEM_DOCUMENT) {
+  // aria-readonly attribute and for a few roles (in the switch above),
+  // including read-only text fields.
+  // The majority of focusable controls should not have the read-only state set.
+  if (HasState(ui::AX_STATE_FOCUSABLE) && ia_role != ROLE_SYSTEM_DOCUMENT &&
+      ia_role != ROLE_SYSTEM_TEXT) {
     ia_state &= ~(STATE_SYSTEM_READONLY);
   }
   if (!HasState(ui::AX_STATE_READ_ONLY))
@@ -4694,6 +5525,17 @@ void BrowserAccessibilityWin::InitRoleAndState() {
   win_attributes_->role_name = role_name;
   win_attributes_->ia2_role = ia2_role;
   win_attributes_->ia2_state = ia2_state;
+}
+
+BrowserAccessibilityWin* ToBrowserAccessibilityWin(BrowserAccessibility* obj) {
+  DCHECK(!obj || obj->IsNative());
+  return static_cast<BrowserAccessibilityWin*>(obj);
+}
+
+const BrowserAccessibilityWin*
+ToBrowserAccessibilityWin(const BrowserAccessibility* obj) {
+  DCHECK(!obj || obj->IsNative());
+  return static_cast<const BrowserAccessibilityWin*>(obj);
 }
 
 }  // namespace content

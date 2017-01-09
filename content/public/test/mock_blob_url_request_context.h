@@ -5,6 +5,7 @@
 #ifndef CONTENT_PUBLIC_TEST_MOCK_BLOB_URL_REQUEST_CONTEXT_H_
 #define CONTENT_PUBLIC_TEST_MOCK_BLOB_URL_REQUEST_CONTEXT_H_
 
+#include "base/macros.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_job_factory_impl.h"
@@ -31,7 +32,7 @@ class MockBlobURLRequestContext : public net::URLRequestContext {
 
  private:
   net::URLRequestJobFactoryImpl job_factory_;
-  scoped_ptr<storage::BlobStorageContext> blob_storage_context_;
+  std::unique_ptr<storage::BlobStorageContext> blob_storage_context_;
 
   DISALLOW_COPY_AND_ASSIGN(MockBlobURLRequestContext);
 };
@@ -45,12 +46,12 @@ class ScopedTextBlob {
   ~ScopedTextBlob();
 
   // Returns a BlobDataHandle referring to the scoped blob.
-  scoped_ptr<storage::BlobDataHandle> GetBlobDataHandle();
+  std::unique_ptr<storage::BlobDataHandle> GetBlobDataHandle();
 
  private:
   const std::string blob_id_;
   storage::BlobStorageContext* context_;
-  scoped_ptr<storage::BlobDataHandle> handle_;
+  std::unique_ptr<storage::BlobDataHandle> handle_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedTextBlob);
 };

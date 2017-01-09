@@ -5,47 +5,53 @@
 #ifndef InterpolationValue_h
 #define InterpolationValue_h
 
-#include "core/animation/InterpolationComponent.h"
+#include "core/animation/InterpolableValue.h"
+#include "core/animation/NonInterpolableValue.h"
+#include "platform/heap/Handle.h"
+#include <memory>
 
 namespace blink {
 
-class InterpolationType;
+// Represents a (non-strict) subset of a PropertySpecificKeyframe's value broken
+// down into interpolable and non-interpolable parts. InterpolationValues can be
+// composed together to represent a whole PropertySpecificKeyframe value.
+struct InterpolationValue {
+  DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
 
-class InterpolationValue {
-public:
-    static PassOwnPtr<InterpolationValue> create(const InterpolationType& type, InterpolationComponent& component)
-    {
-        return adoptPtr(new InterpolationValue(type, component.interpolableValue.release(), component.nonInterpolableValue.release()));
-    }
-    static PassOwnPtr<InterpolationValue> create(const InterpolationType& type, PassOwnPtr<InterpolableValue> interpolableValue, PassRefPtr<NonInterpolableValue> nonInterpolableValue = nullptr)
-    {
-        return adoptPtr(new InterpolationValue(type, interpolableValue, nonInterpolableValue));
-    }
+  explicit InterpolationValue(
+      std::unique_ptr<InterpolableValue> interpolableValue,
+      PassRefPtr<NonInterpolableValue> nonInterpolableValue = nullptr)
+      : interpolableValue(std::move(interpolableValue)),
+        nonInterpolableValue(nonInterpolableValue) {}
 
-    PassOwnPtr<InterpolationValue> clone() const
-    {
-        return create(m_type, m_component.interpolableValue->clone(), m_component.nonInterpolableValue);
-    }
+  InterpolationValue(std::nullptr_t) {}
 
-    const InterpolationType& type() const { return m_type; }
-    const InterpolableValue& interpolableValue() const { return *m_component.interpolableValue; }
-    const NonInterpolableValue* nonInterpolableValue() const { return m_component.nonInterpolableValue.get(); }
-    const InterpolationComponent& component() const { return m_component; }
+  InterpolationValue(InterpolationValue&& other)
+      : interpolableValue(std::move(other.interpolableValue)),
+        nonInterpolableValue(other.nonInterpolableValue.release()) {}
 
-    InterpolationComponent& mutableComponent() { return m_component; }
+  void operator=(InterpolationValue&& other) {
+    interpolableValue = std::move(other.interpolableValue);
+    nonInterpolableValue = other.nonInterpolableValue.release();
+  }
 
-private:
-    InterpolationValue(const InterpolationType& type, PassOwnPtr<InterpolableValue> interpolableValue, PassRefPtr<NonInterpolableValue> nonInterpolableValue)
-        : m_type(type)
-        , m_component(interpolableValue, nonInterpolableValue)
-    {
-        ASSERT(m_component.interpolableValue);
-    }
+  operator bool() const { return interpolableValue.get(); }
 
-    const InterpolationType& m_type;
-    InterpolationComponent m_component;
+  InterpolationValue clone() const {
+    return InterpolationValue(
+        interpolableValue ? interpolableValue->clone() : nullptr,
+        nonInterpolableValue);
+  }
+
+  void clear() {
+    interpolableValue.reset();
+    nonInterpolableValue.clear();
+  }
+
+  std::unique_ptr<InterpolableValue> interpolableValue;
+  RefPtr<NonInterpolableValue> nonInterpolableValue;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InterpolationValue_h
+#endif  // InterpolationValue_h

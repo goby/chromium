@@ -18,8 +18,7 @@
 
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/url_request/url_fetcher.h"
 
@@ -44,8 +43,8 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   void SetUploadFilePath(
       const std::string& upload_content_type,
       const base::FilePath& file_path,
-      uint64 range_offset,
-      uint64 range_length,
+      uint64_t range_offset,
+      uint64_t range_length,
       scoped_refptr<base::TaskRunner> file_task_runner) override;
   void SetUploadStreamFactory(
       const std::string& upload_content_type,
@@ -62,7 +61,7 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   void AddExtraRequestHeader(const std::string& header_line) override;
   void SetRequestContext(
       URLRequestContextGetter* request_context_getter) override;
-  void SetFirstPartyForCookies(const GURL& first_party_for_cookies) override;
+  void SetInitiator(const base::Optional<url::Origin>& initiator) override;
   void SetURLRequestUserData(
       const void* key,
       const CreateDataCallback& create_data_callback) override;
@@ -78,7 +77,7 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   void SaveResponseToTemporaryFile(
       scoped_refptr<base::SequencedTaskRunner> file_task_runner) override;
   void SaveResponseWithWriter(
-      scoped_ptr<URLFetcherResponseWriter> response_writer) override;
+      std::unique_ptr<URLFetcherResponseWriter> response_writer) override;
   HttpResponseHeaders* GetResponseHeaders() const override;
   HostPortPair GetSocketAddress() const override;
   bool WasFetchedViaProxy() const override;
@@ -90,7 +89,6 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   const GURL& GetURL() const override;
   const URLRequestStatus& GetStatus() const override;
   int GetResponseCode() const override;
-  const ResponseCookies& GetCookies() const override;
   void ReceivedContentWasMalformed() override;
   bool GetResponseAsString(std::string* out_response_string) const override;
   bool GetResponseAsFilePath(bool take_ownership,

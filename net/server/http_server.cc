@@ -4,17 +4,18 @@
 
 #include "net/server/http_server.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "net/base/net_errors.h"
 #include "net/server/http_connection.h"
@@ -27,9 +28,9 @@
 
 namespace net {
 
-HttpServer::HttpServer(scoped_ptr<ServerSocket> server_socket,
+HttpServer::HttpServer(std::unique_ptr<ServerSocket> server_socket,
                        HttpServer::Delegate* delegate)
-    : server_socket_(server_socket.Pass()),
+    : server_socket_(std::move(server_socket)),
       delegate_(delegate),
       last_id_(0),
       weak_ptr_factory_(this) {
@@ -42,8 +43,6 @@ HttpServer::HttpServer(scoped_ptr<ServerSocket> server_socket,
 }
 
 HttpServer::~HttpServer() {
-  STLDeleteContainerPairSecondPointers(
-      id_to_connection_.begin(), id_to_connection_.end());
 }
 
 void HttpServer::AcceptWebSocket(
@@ -105,31 +104,33 @@ void HttpServer::Send500(int connection_id, const std::string& message) {
 }
 
 void HttpServer::Close(int connection_id) {
-  HttpConnection* connection = FindConnection(connection_id);
-  if (connection == NULL)
+  auto it = id_to_connection_.find(connection_id);
+  if (it == id_to_connection_.end())
     return;
 
-  id_to_connection_.erase(connection_id);
+  std::unique_ptr<HttpConnection> connection = std::move(it->second);
+  id_to_connection_.erase(it);
   delegate_->OnClose(connection_id);
 
   // The call stack might have callbacks which still have the pointer of
   // connection. Instead of referencing connection with ID all the time,
   // destroys the connection in next run loop to make sure any pending
   // callbacks in the call stack return.
-  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, connection);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE,
+                                                  connection.release());
 }
 
 int HttpServer::GetLocalAddress(IPEndPoint* address) {
   return server_socket_->GetLocalAddress(address);
 }
 
-void HttpServer::SetReceiveBufferSize(int connection_id, int32 size) {
+void HttpServer::SetReceiveBufferSize(int connection_id, int32_t size) {
   HttpConnection* connection = FindConnection(connection_id);
   if (connection)
     connection->read_buf()->set_max_buffer_size(size);
 }
 
-void HttpServer::SetSendBufferSize(int connection_id, int32 size) {
+void HttpServer::SetSendBufferSize(int connection_id, int32_t size) {
   HttpConnection* connection = FindConnection(connection_id);
   if (connection)
     connection->write_buf()->set_max_buffer_size(size);
@@ -158,9 +159,10 @@ int HttpServer::HandleAcceptResult(int rv) {
     return rv;
   }
 
-  HttpConnection* connection =
-      new HttpConnection(++last_id_, accepted_socket_.Pass());
-  id_to_connection_[connection->id()] = connection;
+  std::unique_ptr<HttpConnection> connection_ptr =
+      base::MakeUnique<HttpConnection>(++last_id_, std::move(accepted_socket_));
+  HttpConnection* connection = connection_ptr.get();
+  id_to_connection_[connection->id()] = std::move(connection_ptr);
   delegate_->OnConnect(connection->id());
   if (!HasClosedConnection(connection))
     DoReadLoop(connection);
@@ -229,6 +231,13 @@ int HttpServer::HandleReadResult(HttpConnection* connection, int rv) {
     size_t pos = 0;
     if (!ParseHeaders(read_buf->StartOfBuffer(), read_buf->GetSize(),
                       &request, &pos)) {
+      // An error has occured. Close the connection.
+      Close(connection->id());
+      return ERR_CONNECTION_CLOSED;
+    } else if (!pos) {
+      // If pos is 0, all the data in read_buf has been consumed, but the
+      // headers have not been fully parsed yet. Continue parsing when more data
+      // rolls in.
       break;
     }
 
@@ -236,8 +245,7 @@ int HttpServer::HandleReadResult(HttpConnection* connection, int rv) {
     connection->socket()->GetPeerAddress(&request.peer);
 
     if (request.HasHeaderValue("connection", "upgrade")) {
-      connection->SetWebSocket(
-          make_scoped_ptr(new WebSocket(this, connection)));
+      connection->SetWebSocket(base::MakeUnique<WebSocket>(this, connection));
       read_buf->DidConsume(pos);
       delegate_->OnWebSocketRequest(connection->id(), request);
       if (HasClosedConnection(connection))
@@ -346,21 +354,20 @@ enum header_parse_states {
 };
 
 // State transition table
-int parser_state[MAX_STATES][MAX_INPUTS] = {
-/* METHOD    */ { ST_URL,       ST_ERR,     ST_ERR,   ST_ERR,       ST_METHOD },
-/* URL       */ { ST_PROTO,     ST_ERR,     ST_ERR,   ST_URL,       ST_URL },
-/* PROTOCOL  */ { ST_ERR,       ST_HEADER,  ST_NAME,  ST_ERR,       ST_PROTO },
-/* HEADER    */ { ST_ERR,       ST_ERR,     ST_NAME,  ST_ERR,       ST_ERR },
-/* NAME      */ { ST_SEPARATOR, ST_DONE,    ST_ERR,   ST_VALUE,     ST_NAME },
-/* SEPARATOR */ { ST_SEPARATOR, ST_ERR,     ST_ERR,   ST_VALUE,     ST_ERR },
-/* VALUE     */ { ST_VALUE,     ST_HEADER,  ST_NAME,  ST_VALUE,     ST_VALUE },
-/* DONE      */ { ST_DONE,      ST_DONE,    ST_DONE,  ST_DONE,      ST_DONE },
-/* ERR       */ { ST_ERR,       ST_ERR,     ST_ERR,   ST_ERR,       ST_ERR }
-};
+const int parser_state[MAX_STATES][MAX_INPUTS] = {
+    /* METHOD    */ {ST_URL, ST_ERR, ST_ERR, ST_ERR, ST_METHOD},
+    /* URL       */ {ST_PROTO, ST_ERR, ST_ERR, ST_URL, ST_URL},
+    /* PROTOCOL  */ {ST_ERR, ST_HEADER, ST_NAME, ST_ERR, ST_PROTO},
+    /* HEADER    */ {ST_ERR, ST_ERR, ST_NAME, ST_ERR, ST_ERR},
+    /* NAME      */ {ST_SEPARATOR, ST_DONE, ST_ERR, ST_VALUE, ST_NAME},
+    /* SEPARATOR */ {ST_SEPARATOR, ST_ERR, ST_ERR, ST_VALUE, ST_ERR},
+    /* VALUE     */ {ST_VALUE, ST_HEADER, ST_NAME, ST_VALUE, ST_VALUE},
+    /* DONE      */ {ST_DONE, ST_DONE, ST_DONE, ST_DONE, ST_DONE},
+    /* ERR       */ {ST_ERR, ST_ERR, ST_ERR, ST_ERR, ST_ERR}};
 
 // Convert an input character to the parser's input token.
 int charToInput(char ch) {
-  switch(ch) {
+  switch (ch) {
     case ' ':
     case '\t':
       return INPUT_LWS;
@@ -404,8 +411,10 @@ bool HttpServer::ParseHeaders(const char* data,
           buffer.clear();
           break;
         case ST_PROTO:
-          // TODO(mbelshe): Deal better with parsing protocol.
-          DCHECK(buffer == "HTTP/1.1");
+          if (buffer != "HTTP/1.1") {
+            LOG(ERROR) << "Cannot handle request with protocol: " << buffer;
+            next_state = ST_ERR;
+          }
           buffer.clear();
           break;
         case ST_NAME:
@@ -447,15 +456,17 @@ bool HttpServer::ParseHeaders(const char* data,
       }
     }
   }
-  // No more characters, but we haven't finished parsing yet.
-  return false;
+  // No more characters, but we haven't finished parsing yet. Signal this to
+  // the caller by setting |pos| to zero.
+  pos = 0;
+  return true;
 }
 
 HttpConnection* HttpServer::FindConnection(int connection_id) {
-  IdToConnectionMap::iterator it = id_to_connection_.find(connection_id);
+  auto it = id_to_connection_.find(connection_id);
   if (it == id_to_connection_.end())
-    return NULL;
-  return it->second;
+    return nullptr;
+  return it->second.get();
 }
 
 // This is called after any delegate callbacks are called to check if Close()

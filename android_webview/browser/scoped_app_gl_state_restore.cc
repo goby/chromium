@@ -11,6 +11,7 @@
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_surface_stub.h"
+#include "ui/gl/init/gl_factory.h"
 
 namespace android_webview {
 
@@ -21,15 +22,15 @@ namespace {
 class AppContextSurface {
  public:
   AppContextSurface()
-      : surface(new gfx::GLSurfaceStub),
-        context(gfx::GLContext::CreateGLContext(NULL,
-                                                surface.get(),
-                                                gfx::PreferDiscreteGpu)) {}
+      : surface(new gl::GLSurfaceStub),
+        context(gl::init::CreateGLContext(nullptr,
+                                          surface.get(),
+                                          gl::GLContextAttribs())) {}
   void MakeCurrent() { context->MakeCurrent(surface.get()); }
 
  private:
-  scoped_refptr<gfx::GLSurfaceStub> surface;
-  scoped_refptr<gfx::GLContext> context;
+  scoped_refptr<gl::GLSurfaceStub> surface;
+  scoped_refptr<gl::GLContext> context;
 
   DISALLOW_COPY_AND_ASSIGN(AppContextSurface);
 };
@@ -64,7 +65,9 @@ bool ClearGLErrors(bool warn, const char* msg) {
 
 bool g_globals_initialized = false;
 GLint g_gl_max_texture_units = 0;
+GLint g_gl_max_vertex_attribs = 0;
 bool g_supports_oes_vertex_array_object = false;
+ScopedAppGLStateRestore* g_current_instance = nullptr;
 
 }  // namespace
 
@@ -72,10 +75,10 @@ namespace internal {
 
 class ScopedAppGLStateRestoreImpl {
  public:
-  ScopedAppGLStateRestoreImpl(ScopedAppGLStateRestore::CallMode mode);
+  explicit ScopedAppGLStateRestoreImpl(ScopedAppGLStateRestore::CallMode mode);
   ~ScopedAppGLStateRestoreImpl();
 
-  bool stencil_enabled() const { return stencil_test_; }
+  StencilState stencil_state() const { return stencil_state_; }
   GLint framebuffer_binding_ext() const { return framebuffer_binding_ext_; }
 
  private:
@@ -84,7 +87,7 @@ class ScopedAppGLStateRestoreImpl {
   GLint pack_alignment_;
   GLint unpack_alignment_;
 
-  struct {
+  struct VertexAttributes {
     GLint enabled;
     GLint size;
     GLint type;
@@ -93,7 +96,8 @@ class ScopedAppGLStateRestoreImpl {
     GLvoid* pointer;
     GLint vertex_attrib_array_buffer_binding;
     GLfloat current_vertex_attrib[4];
-  } vertex_attrib_[3];
+  };
+  std::vector<VertexAttributes> vertex_attrib_;
 
   GLint vertex_array_buffer_binding_;
   GLint index_array_buffer_binding_;
@@ -135,22 +139,7 @@ class ScopedAppGLStateRestoreImpl {
   GLboolean scissor_test_;
   GLint scissor_box_[4];
 
-  GLboolean stencil_test_;
-  GLint stencil_front_func_;
-  GLint stencil_front_ref_;
-  GLint stencil_front_mask_;
-  GLint stencil_back_func_;
-  GLint stencil_back_ref_;
-  GLint stencil_back_mask_;
-  GLint stencil_clear_;
-  GLint stencil_front_writemask_;
-  GLint stencil_back_writemask_;
-  GLint stencil_front_fail_op_;
-  GLint stencil_front_z_fail_op_;
-  GLint stencil_front_z_pass_op_;
-  GLint stencil_back_fail_op_;
-  GLint stencil_back_z_fail_op_;
-  GLint stencil_back_z_pass_op_;
+  StencilState stencil_state_;
 
   GLint framebuffer_binding_ext_;
 
@@ -179,6 +168,7 @@ ScopedAppGLStateRestoreImpl::ScopedAppGLStateRestoreImpl(
   if (!g_globals_initialized) {
     g_globals_initialized = true;
 
+    glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &g_gl_max_vertex_attribs);
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &g_gl_max_texture_units);
 
     std::string extensions;
@@ -239,22 +229,27 @@ ScopedAppGLStateRestoreImpl::ScopedAppGLStateRestoreImpl(
   glGetBooleanv(GL_SAMPLE_ALPHA_TO_COVERAGE, &enable_sample_alpha_to_coverage_);
   glGetBooleanv(GL_SAMPLE_COVERAGE, &enable_sample_coverage_);
 
-  glGetBooleanv(GL_STENCIL_TEST, &stencil_test_);
-  glGetIntegerv(GL_STENCIL_FUNC, &stencil_front_func_);
-  glGetIntegerv(GL_STENCIL_VALUE_MASK, &stencil_front_mask_);
-  glGetIntegerv(GL_STENCIL_REF, &stencil_front_ref_);
-  glGetIntegerv(GL_STENCIL_BACK_FUNC, &stencil_back_func_);
-  glGetIntegerv(GL_STENCIL_BACK_VALUE_MASK, &stencil_back_mask_);
-  glGetIntegerv(GL_STENCIL_BACK_REF, &stencil_back_ref_);
-  glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &stencil_clear_);
-  glGetIntegerv(GL_STENCIL_WRITEMASK, &stencil_front_writemask_);
-  glGetIntegerv(GL_STENCIL_BACK_WRITEMASK, &stencil_back_writemask_);
-  glGetIntegerv(GL_STENCIL_FAIL, &stencil_front_fail_op_);
-  glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL, &stencil_front_z_fail_op_);
-  glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS, &stencil_front_z_pass_op_);
-  glGetIntegerv(GL_STENCIL_BACK_FAIL, &stencil_back_fail_op_);
-  glGetIntegerv(GL_STENCIL_BACK_PASS_DEPTH_FAIL, &stencil_back_z_fail_op_);
-  glGetIntegerv(GL_STENCIL_BACK_PASS_DEPTH_PASS, &stencil_back_z_pass_op_);
+  glGetBooleanv(GL_STENCIL_TEST, &stencil_state_.stencil_test_enabled);
+  glGetIntegerv(GL_STENCIL_FUNC, &stencil_state_.stencil_front_func);
+  glGetIntegerv(GL_STENCIL_VALUE_MASK, &stencil_state_.stencil_front_mask);
+  glGetIntegerv(GL_STENCIL_REF, &stencil_state_.stencil_front_ref);
+  glGetIntegerv(GL_STENCIL_BACK_FUNC, &stencil_state_.stencil_back_func);
+  glGetIntegerv(GL_STENCIL_BACK_VALUE_MASK, &stencil_state_.stencil_back_mask);
+  glGetIntegerv(GL_STENCIL_BACK_REF, &stencil_state_.stencil_back_ref);
+  glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &stencil_state_.stencil_clear);
+  glGetIntegerv(GL_STENCIL_WRITEMASK, &stencil_state_.stencil_front_writemask);
+  glGetIntegerv(GL_STENCIL_BACK_WRITEMASK,
+                &stencil_state_.stencil_back_writemask);
+  glGetIntegerv(GL_STENCIL_FAIL, &stencil_state_.stencil_front_fail_op);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_FAIL,
+                &stencil_state_.stencil_front_z_fail_op);
+  glGetIntegerv(GL_STENCIL_PASS_DEPTH_PASS,
+                &stencil_state_.stencil_front_z_pass_op);
+  glGetIntegerv(GL_STENCIL_BACK_FAIL, &stencil_state_.stencil_back_fail_op);
+  glGetIntegerv(GL_STENCIL_BACK_PASS_DEPTH_FAIL,
+                &stencil_state_.stencil_back_z_fail_op);
+  glGetIntegerv(GL_STENCIL_BACK_PASS_DEPTH_PASS,
+                &stencil_state_.stencil_back_z_pass_op);
 
   glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &framebuffer_binding_ext_);
 
@@ -275,7 +270,8 @@ ScopedAppGLStateRestoreImpl::ScopedAppGLStateRestoreImpl(
     glBindVertexArrayOES(0);
   }
 
-  for (size_t i = 0; i < arraysize(vertex_attrib_); ++i) {
+  vertex_attrib_.resize(g_gl_max_vertex_attribs);
+  for (GLint i = 0; i < g_gl_max_vertex_attribs; ++i) {
     glGetVertexAttribiv(
         i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &vertex_attrib_[i].enabled);
     glGetVertexAttribiv(
@@ -286,8 +282,6 @@ ScopedAppGLStateRestoreImpl::ScopedAppGLStateRestoreImpl(
         i, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &vertex_attrib_[i].normalized);
     glGetVertexAttribiv(
         i, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &vertex_attrib_[i].stride);
-    glGetVertexAttribPointerv(
-        i, GL_VERTEX_ATTRIB_ARRAY_POINTER, &vertex_attrib_[i].pointer);
     glGetVertexAttribPointerv(
         i, GL_VERTEX_ATTRIB_ARRAY_POINTER, &vertex_attrib_[i].pointer);
     glGetVertexAttribiv(i,
@@ -317,7 +311,7 @@ ScopedAppGLStateRestoreImpl::~ScopedAppGLStateRestoreImpl() {
   if (g_supports_oes_vertex_array_object)
     glBindVertexArrayOES(0);
 
-  for (size_t i = 0; i < arraysize(vertex_attrib_); ++i) {
+  for (GLint i = 0; i < g_gl_max_vertex_attribs; ++i) {
     glBindBuffer(GL_ARRAY_BUFFER,
                  vertex_attrib_[i].vertex_attrib_array_buffer_binding);
     glVertexAttribPointer(i,
@@ -402,22 +396,22 @@ ScopedAppGLStateRestoreImpl::~ScopedAppGLStateRestoreImpl() {
       break;
   }
 
-  GLEnableDisable(GL_STENCIL_TEST, stencil_test_);
-  glStencilFuncSeparate(
-      GL_FRONT, stencil_front_func_, stencil_front_mask_, stencil_front_ref_);
-  glStencilFuncSeparate(
-      GL_BACK, stencil_back_func_, stencil_back_mask_, stencil_back_ref_);
-  glClearStencil(stencil_clear_);
-  glStencilMaskSeparate(GL_FRONT, stencil_front_writemask_);
-  glStencilMaskSeparate(GL_BACK, stencil_back_writemask_);
-  glStencilOpSeparate(GL_FRONT,
-                      stencil_front_fail_op_,
-                      stencil_front_z_fail_op_,
-                      stencil_front_z_pass_op_);
-  glStencilOpSeparate(GL_BACK,
-                      stencil_back_fail_op_,
-                      stencil_back_z_fail_op_,
-                      stencil_back_z_pass_op_);
+  GLEnableDisable(GL_STENCIL_TEST, stencil_state_.stencil_test_enabled);
+  glStencilFuncSeparate(GL_FRONT, stencil_state_.stencil_front_func,
+                        stencil_state_.stencil_front_mask,
+                        stencil_state_.stencil_front_ref);
+  glStencilFuncSeparate(GL_BACK, stencil_state_.stencil_back_func,
+                        stencil_state_.stencil_back_mask,
+                        stencil_state_.stencil_back_ref);
+  glClearStencil(stencil_state_.stencil_clear);
+  glStencilMaskSeparate(GL_FRONT, stencil_state_.stencil_front_writemask);
+  glStencilMaskSeparate(GL_BACK, stencil_state_.stencil_back_writemask);
+  glStencilOpSeparate(GL_FRONT, stencil_state_.stencil_front_fail_op,
+                      stencil_state_.stencil_front_z_fail_op,
+                      stencil_state_.stencil_front_z_pass_op);
+  glStencilOpSeparate(GL_BACK, stencil_state_.stencil_back_fail_op,
+                      stencil_state_.stencil_back_z_fail_op,
+                      stencil_state_.stencil_back_z_pass_op);
 
   // Do not leak GLError out of chromium.
   ClearGLErrors(true, "Chromium GLError");
@@ -425,14 +419,25 @@ ScopedAppGLStateRestoreImpl::~ScopedAppGLStateRestoreImpl() {
 
 }  // namespace internal
 
-ScopedAppGLStateRestore::ScopedAppGLStateRestore(CallMode mode)
-    : impl_(new internal::ScopedAppGLStateRestoreImpl(mode)) {
+// static
+ScopedAppGLStateRestore* ScopedAppGLStateRestore::Current() {
+  DCHECK(g_current_instance);
+  return g_current_instance;
 }
 
-ScopedAppGLStateRestore::~ScopedAppGLStateRestore() {}
+ScopedAppGLStateRestore::ScopedAppGLStateRestore(CallMode mode)
+    : impl_(new internal::ScopedAppGLStateRestoreImpl(mode)) {
+  DCHECK(!g_current_instance);
+  g_current_instance = this;
+}
 
-bool ScopedAppGLStateRestore::stencil_enabled() const {
-  return impl_->stencil_enabled();
+ScopedAppGLStateRestore::~ScopedAppGLStateRestore() {
+  DCHECK_EQ(this, g_current_instance);
+  g_current_instance = nullptr;
+}
+
+StencilState ScopedAppGLStateRestore::stencil_state() const {
+  return impl_->stencil_state();
 }
 int ScopedAppGLStateRestore::framebuffer_binding_ext() const {
   return impl_->framebuffer_binding_ext();

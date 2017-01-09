@@ -4,6 +4,8 @@
 
 #include "ppapi/shared_impl/private/ppb_x509_certificate_private_shared.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/var.h"
@@ -15,15 +17,15 @@ PPB_X509Certificate_Fields::PPB_X509Certificate_Fields() {}
 
 PPB_X509Certificate_Fields::PPB_X509Certificate_Fields(
     const PPB_X509Certificate_Fields& fields) {
-  scoped_ptr<base::ListValue> new_values(fields.values_.DeepCopy());
+  std::unique_ptr<base::ListValue> new_values(fields.values_.DeepCopy());
   values_.Swap(new_values.get());
 }
 
 void PPB_X509Certificate_Fields::SetField(
     PP_X509Certificate_Private_Field field,
-    base::Value* value) {
+    std::unique_ptr<base::Value> value) {
   uint32_t index = static_cast<uint32_t>(field);
-  bool success = values_.Set(index, value);
+  bool success = values_.Set(index, std::move(value));
   DCHECK(success);
 }
 
@@ -39,29 +41,29 @@ PP_Var PPB_X509Certificate_Fields::GetFieldAsPPVar(
   }
 
   switch (value->GetType()) {
-    case base::Value::TYPE_NULL:
+    case base::Value::Type::NONE:
       return PP_MakeNull();
-    case base::Value::TYPE_BOOLEAN: {
+    case base::Value::Type::BOOLEAN: {
       bool val;
       value->GetAsBoolean(&val);
       return PP_MakeBool(PP_FromBool(val));
     }
-    case base::Value::TYPE_INTEGER: {
+    case base::Value::Type::INTEGER: {
       int val;
       value->GetAsInteger(&val);
       return PP_MakeInt32(val);
     }
-    case base::Value::TYPE_DOUBLE: {
+    case base::Value::Type::DOUBLE: {
       double val;
       value->GetAsDouble(&val);
       return PP_MakeDouble(val);
     }
-    case base::Value::TYPE_STRING: {
+    case base::Value::Type::STRING: {
       std::string val;
       value->GetAsString(&val);
       return StringVar::StringToPPVar(val);
     }
-    case base::Value::TYPE_BINARY: {
+    case base::Value::Type::BINARY: {
       const base::BinaryValue* binary =
           static_cast<const base::BinaryValue*>(value);
       uint32_t size = static_cast<uint32_t>(binary->GetSize());
@@ -71,8 +73,8 @@ PP_Var PPB_X509Certificate_Fields::GetFieldAsPPVar(
                                                                      buffer);
       return array_buffer;
     }
-    case base::Value::TYPE_DICTIONARY:
-    case base::Value::TYPE_LIST:
+    case base::Value::Type::DICTIONARY:
+    case base::Value::Type::LIST:
       // Not handled.
       break;
   }
@@ -115,7 +117,7 @@ PP_Bool PPB_X509Certificate_Private_Shared::Initialize(const char* bytes,
     return PP_FALSE;
 
   std::vector<char> der(bytes, bytes + length);
-  scoped_ptr<PPB_X509Certificate_Fields> fields(
+  std::unique_ptr<PPB_X509Certificate_Fields> fields(
       new PPB_X509Certificate_Fields());
   bool success = ParseDER(der, fields.get());
   if (success) {

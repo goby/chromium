@@ -4,15 +4,20 @@
 
 #include "chrome/browser/printing/print_job_worker.h"
 
+#include <memory>
+#include <string>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/printing/print_job.h"
@@ -20,7 +25,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "printing/print_job_constants.h"
 #include "printing/printed_document.h"
@@ -39,14 +44,14 @@ namespace printing {
 namespace {
 
 // Helper function to ensure |owner| is valid until at least |callback| returns.
-void HoldRefCallback(const scoped_refptr<printing::PrintJobWorkerOwner>& owner,
+void HoldRefCallback(const scoped_refptr<PrintJobWorkerOwner>& owner,
                      const base::Closure& callback) {
   callback.Run();
 }
 
 class PrintingContextDelegate : public PrintingContext::Delegate {
  public:
-  PrintingContextDelegate(int render_process_id, int render_view_id);
+  PrintingContextDelegate(int render_process_id, int render_frame_id);
   ~PrintingContextDelegate() override;
 
   gfx::NativeView GetParentView() override;
@@ -56,15 +61,14 @@ class PrintingContextDelegate : public PrintingContext::Delegate {
   content::WebContents* GetWebContents();
 
  private:
-  int render_process_id_;
-  int render_view_id_;
+  const int render_process_id_;
+  const int render_frame_id_;
 };
 
 PrintingContextDelegate::PrintingContextDelegate(int render_process_id,
-                                                 int render_view_id)
+                                                 int render_frame_id)
     : render_process_id_(render_process_id),
-      render_view_id_(render_view_id) {
-}
+      render_frame_id_(render_frame_id) {}
 
 PrintingContextDelegate::~PrintingContextDelegate() {
 }
@@ -76,9 +80,9 @@ gfx::NativeView PrintingContextDelegate::GetParentView() {
 
 content::WebContents* PrintingContextDelegate::GetWebContents() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  content::RenderViewHost* view =
-      content::RenderViewHost::FromID(render_process_id_, render_view_id_);
-  return view ? content::WebContents::FromRenderViewHost(view) : nullptr;
+  auto* rfh =
+      content::RenderFrameHost::FromID(render_process_id_, render_frame_id_);
+  return rfh ? content::WebContents::FromRenderFrameHost(rfh) : nullptr;
 }
 
 std::string PrintingContextDelegate::GetAppLocale() {
@@ -107,14 +111,14 @@ void PostOnOwnerThread(const scoped_refptr<PrintJobWorkerOwner>& owner,
 }  // namespace
 
 PrintJobWorker::PrintJobWorker(int render_process_id,
-                               int render_view_id,
+                               int render_frame_id,
                                PrintJobWorkerOwner* owner)
     : owner_(owner), thread_("Printing_Worker"), weak_factory_(this) {
   // The object is created in the IO thread.
   DCHECK(owner_->RunsTasksOnCurrentThread());
 
-  printing_context_delegate_.reset(
-      new PrintingContextDelegate(render_process_id, render_view_id));
+  printing_context_delegate_ = base::MakeUnique<PrintingContextDelegate>(
+      render_process_id, render_frame_id);
   printing_context_ = PrintingContext::Create(printing_context_delegate_.get());
 }
 
@@ -131,12 +135,12 @@ void PrintJobWorker::SetNewOwner(PrintJobWorkerOwner* new_owner) {
   owner_ = new_owner;
 }
 
-void PrintJobWorker::GetSettings(
-    bool ask_user_for_settings,
-    int document_page_count,
-    bool has_selection,
-    MarginType margin_type,
-    bool is_scripted) {
+void PrintJobWorker::GetSettings(bool ask_user_for_settings,
+                                 int document_page_count,
+                                 bool has_selection,
+                                 MarginType margin_type,
+                                 bool is_scripted,
+                                 bool is_modifiable) {
   DCHECK(task_runner_->RunsTasksOnCurrentThread());
   DCHECK_EQ(page_number_, PageNumber::npos());
 
@@ -147,6 +151,7 @@ void PrintJobWorker::GetSettings(
   // should happen on the same thread. See http://crbug.com/73466
   // MessageLoop::current()->SetNestableTasksAllowed(true);
   printing_context_->set_margin_type(margin_type);
+  printing_context_->set_is_modifiable(is_modifiable);
 
   // When we delegate to a destination, we don't ask the user for settings.
   // TODO(mad): Ask the destination for settings.
@@ -169,7 +174,7 @@ void PrintJobWorker::GetSettings(
 }
 
 void PrintJobWorker::SetSettings(
-    scoped_ptr<base::DictionaryValue> new_settings) {
+    std::unique_ptr<base::DictionaryValue> new_settings) {
   DCHECK(task_runner_->RunsTasksOnCurrentThread());
 
   BrowserThread::PostTask(
@@ -183,7 +188,7 @@ void PrintJobWorker::SetSettings(
 }
 
 void PrintJobWorker::UpdatePrintSettings(
-    scoped_ptr<base::DictionaryValue> new_settings) {
+    std::unique_ptr<base::DictionaryValue> new_settings) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   PrintingContext::Result result =
       printing_context_->UpdatePrintSettings(*new_settings);
@@ -255,10 +260,9 @@ void PrintJobWorker::StartPrinting(PrintedDocument* new_document) {
     return;
   }
 
-  base::string16 document_name =
-      printing::SimplifyDocumentTitle(document_->name());
+  base::string16 document_name = SimplifyDocumentTitle(document_->name());
   if (document_name.empty()) {
-    document_name = printing::SimplifyDocumentTitle(
+    document_name = SimplifyDocumentTitle(
         l10n_util::GetStringUTF16(IDS_DEFAULT_PRINT_DOCUMENT_TITLE));
   }
   PrintingContext::Result result =
@@ -373,11 +377,9 @@ void PrintJobWorker::OnDocumentDone() {
   }
 
   owner_->PostTask(FROM_HERE,
-                   base::Bind(&NotificationCallback,
-                              make_scoped_refptr(owner_),
+                   base::Bind(&NotificationCallback, base::RetainedRef(owner_),
                               JobEventDetails::DOC_DONE,
-                              document_,
-                              scoped_refptr<PrintedPage>()));
+                              base::RetainedRef(document_), nullptr));
 
   // Makes sure the variables are reinitialized.
   document_ = NULL;
@@ -388,12 +390,11 @@ void PrintJobWorker::SpoolPage(PrintedPage* page) {
   DCHECK_NE(page_number_, PageNumber::npos());
 
   // Signal everyone that the page is about to be printed.
-  owner_->PostTask(FROM_HERE,
-                   base::Bind(&NotificationCallback,
-                              make_scoped_refptr(owner_),
-                              JobEventDetails::NEW_PAGE,
-                              document_,
-                              make_scoped_refptr(page)));
+  owner_->PostTask(
+      FROM_HERE,
+      base::Bind(&NotificationCallback, base::RetainedRef(owner_),
+                 JobEventDetails::NEW_PAGE, base::RetainedRef(document_),
+                 base::RetainedRef(page)));
 
   // Preprocess.
   if (printing_context_->NewPage() != PrintingContext::OK) {
@@ -415,12 +416,11 @@ void PrintJobWorker::SpoolPage(PrintedPage* page) {
   }
 
   // Signal everyone that the page is printed.
-  owner_->PostTask(FROM_HERE,
-                   base::Bind(&NotificationCallback,
-                              make_scoped_refptr(owner_),
-                              JobEventDetails::PAGE_DONE,
-                              document_,
-                              make_scoped_refptr(page)));
+  owner_->PostTask(
+      FROM_HERE,
+      base::Bind(&NotificationCallback, base::RetainedRef(owner_),
+                 JobEventDetails::PAGE_DONE, base::RetainedRef(document_),
+                 base::RetainedRef(page)));
 }
 
 void PrintJobWorker::OnFailure() {
@@ -430,11 +430,9 @@ void PrintJobWorker::OnFailure() {
   scoped_refptr<PrintJobWorkerOwner> handle(owner_);
 
   owner_->PostTask(FROM_HERE,
-                   base::Bind(&NotificationCallback,
-                              make_scoped_refptr(owner_),
+                   base::Bind(&NotificationCallback, base::RetainedRef(owner_),
                               JobEventDetails::FAILED,
-                              document_,
-                              scoped_refptr<PrintedPage>()));
+                              base::RetainedRef(document_), nullptr));
   Cancel();
 
   // Makes sure the variables are reinitialized.

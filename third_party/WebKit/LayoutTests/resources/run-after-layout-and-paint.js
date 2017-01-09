@@ -21,6 +21,9 @@
 //       ... // some code which modifies style/layout
 //     }, true);
 
+if (window.internals)
+    internals.runtimeFlags.paintUnderInvalidationCheckingEnabled = true;
+
 function runAfterLayoutAndPaint(callback, autoNotifyDone) {
     if (!window.testRunner) {
         // For manual test. Delay 500ms to allow us to see the visual change

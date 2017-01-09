@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 #include "cc/trees/proxy_common.h"
+
 #include "cc/trees/layer_tree_host.h"
 
 namespace cc {
 
-BeginMainFrameAndCommitState::BeginMainFrameAndCommitState()
-    : memory_allocation_limit_bytes(0), evicted_ui_resources(false) {}
+BeginMainFrameAndCommitState::BeginMainFrameAndCommitState() {}
 
 BeginMainFrameAndCommitState::~BeginMainFrameAndCommitState() {}
 

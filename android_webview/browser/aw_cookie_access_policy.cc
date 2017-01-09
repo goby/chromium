@@ -4,17 +4,19 @@
 
 #include "android_webview/browser/aw_cookie_access_policy.h"
 
-#include "android_webview/browser/aw_contents_io_thread_client.h"
+#include <memory>
 
+#include "android_webview/browser/aw_contents_io_thread_client.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_request_info.h"
+#include "content/public/browser/websocket_handshake_request_info.h"
 #include "net/base/net_errors.h"
 
 using base::AutoLock;
 using content::BrowserThread;
 using content::ResourceRequestInfo;
+using content::WebSocketHandshakeRequestInfo;
 using net::StaticCookiePolicy;
 
 namespace android_webview {
@@ -47,7 +49,7 @@ void AwCookieAccessPolicy::SetShouldAcceptCookies(bool allow) {
 bool AwCookieAccessPolicy::GetShouldAcceptThirdPartyCookies(
     int render_process_id,
     int render_frame_id) {
-  scoped_ptr<AwContentsIoThreadClient> io_thread_client =
+  std::unique_ptr<AwContentsIoThreadClient> io_thread_client =
       AwContentsIoThreadClient::FromID(render_process_id, render_frame_id);
   if (!io_thread_client) {
     return false;
@@ -57,12 +59,21 @@ bool AwCookieAccessPolicy::GetShouldAcceptThirdPartyCookies(
 
 bool AwCookieAccessPolicy::GetShouldAcceptThirdPartyCookies(
     const net::URLRequest& request) {
+  int child_id = 0;
+  int frame_id = 0;
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(&request);
-  if (!info) {
-    return false;
+  if (info) {
+    child_id = info->GetChildID();
+    frame_id = info->GetRenderFrameID();
+  } else {
+    const WebSocketHandshakeRequestInfo* websocket_info =
+        WebSocketHandshakeRequestInfo::ForRequest(&request);
+    if (!websocket_info)
+      return false;
+    child_id = websocket_info->GetChildId();
+    frame_id = websocket_info->GetRenderFrameId();
   }
-  return GetShouldAcceptThirdPartyCookies(info->GetChildID(),
-                                          info->GetRenderFrameID());
+  return GetShouldAcceptThirdPartyCookies(child_id, frame_id);
 }
 
 bool AwCookieAccessPolicy::OnCanGetCookies(const net::URLRequest& request,
@@ -100,7 +111,7 @@ bool AwCookieAccessPolicy::AllowSetCookie(const GURL& url,
                                           content::ResourceContext* context,
                                           int render_process_id,
                                           int render_frame_id,
-                                          net::CookieOptions* options) {
+                                          const net::CookieOptions& options) {
   bool global = GetShouldAcceptCookies();
   bool thirdParty =
       GetShouldAcceptThirdPartyCookies(render_process_id, render_frame_id);

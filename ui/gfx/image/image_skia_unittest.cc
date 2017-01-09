@@ -4,8 +4,11 @@
 
 #include "ui/gfx/image/image_skia.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/threading/simple_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -387,7 +390,7 @@ TEST_F(ImageSkiaTest, StaticOnThreadTest) {
   EXPECT_TRUE(image.CanModify());
 
   image.DetachStorageFromThread();
-  scoped_ptr<ImageSkia> deep_copy(image.DeepCopy());
+  std::unique_ptr<ImageSkia> deep_copy(image.DeepCopy());
   EXPECT_FALSE(deep_copy->IsThreadSafe());
   test::TestOnThread deepcopy_on_thread(deep_copy.get());
   deepcopy_on_thread.StartAndJoin();
@@ -396,7 +399,7 @@ TEST_F(ImageSkiaTest, StaticOnThreadTest) {
   EXPECT_FALSE(deep_copy->CanRead());
   EXPECT_FALSE(deep_copy->CanModify());
 
-  scoped_ptr<ImageSkia> deep_copy2(image.DeepCopy());
+  std::unique_ptr<ImageSkia> deep_copy2(image.DeepCopy());
   EXPECT_EQ(1U, deep_copy2->image_reps().size());
   // Access it from current thread so that it can't be
   // accessed from another thread.

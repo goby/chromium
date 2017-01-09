@@ -29,7 +29,8 @@
 
 #include "core/CoreExport.h"
 #include "core/page/Page.h"
-#include "platform/RefCountedSupplement.h"
+#include "platform/heap/Handle.h"
+#include <memory>
 
 namespace blink {
 
@@ -37,81 +38,78 @@ class ContextFeaturesClient;
 class Document;
 class Page;
 
-#if ENABLE(OILPAN)
-class ContextFeatures final : public GarbageCollectedFinalized<ContextFeatures>, public HeapSupplement<Page> {
-    USING_GARBAGE_COLLECTED_MIXIN(ContextFeatures);
-public:
-    typedef HeapSupplement<Page> SupplementType;
-#else
-class ContextFeatures : public RefCountedSupplement<Page, ContextFeatures> {
-public:
-    typedef RefCountedSupplement<Page, ContextFeatures> SupplementType;
-#endif
-    enum FeatureType {
-        PagePopup = 0,
-        MutationEvents,
-        FeatureTypeSize // Should be the last entry.
-    };
+class ContextFeatures final : public GarbageCollectedFinalized<ContextFeatures>,
+                              public Supplement<Page> {
+  USING_GARBAGE_COLLECTED_MIXIN(ContextFeatures);
 
-    static const char* supplementName();
-    static ContextFeatures* defaultSwitch();
-    static PassRefPtrWillBeRawPtr<ContextFeatures> create(PassOwnPtr<ContextFeaturesClient>);
+ public:
+  enum FeatureType {
+    PagePopup = 0,
+    MutationEvents,
+    FeatureTypeSize  // Should be the last entry.
+  };
 
-    static bool pagePopupEnabled(Document*);
-    static bool mutationEventsEnabled(Document*);
+  static const char* supplementName();
+  static ContextFeatures& defaultSwitch();
+  static ContextFeatures* create(std::unique_ptr<ContextFeaturesClient>);
 
-    bool isEnabled(Document*, FeatureType, bool) const;
-    void urlDidChange(Document*);
+  static bool pagePopupEnabled(Document*);
+  static bool mutationEventsEnabled(Document*);
 
-#if ENABLE(OILPAN)
-    DEFINE_INLINE_VIRTUAL_TRACE() { HeapSupplement<Page>::trace(visitor); }
-#endif
+  bool isEnabled(Document*, FeatureType, bool) const;
+  void urlDidChange(Document*);
 
-private:
-    explicit ContextFeatures(PassOwnPtr<ContextFeaturesClient> client)
-        : m_client(client)
-    { }
+ private:
+  explicit ContextFeatures(std::unique_ptr<ContextFeaturesClient> client)
+      : m_client(std::move(client)) {}
 
-    OwnPtr<ContextFeaturesClient> m_client;
+  std::unique_ptr<ContextFeaturesClient> m_client;
 };
 
 class ContextFeaturesClient {
-    USING_FAST_MALLOC(ContextFeaturesClient);
-public:
-    static PassOwnPtr<ContextFeaturesClient> empty();
+  USING_FAST_MALLOC(ContextFeaturesClient);
 
-    virtual ~ContextFeaturesClient() { }
-    virtual bool isEnabled(Document*, ContextFeatures::FeatureType, bool defaultValue) { return defaultValue; }
-    virtual void urlDidChange(Document*) { }
+ public:
+  static std::unique_ptr<ContextFeaturesClient> empty();
+
+  virtual ~ContextFeaturesClient() {}
+  virtual bool isEnabled(Document*,
+                         ContextFeatures::FeatureType,
+                         bool defaultValue) {
+    return defaultValue;
+  }
+  virtual void urlDidChange(Document*) {}
 };
 
-CORE_EXPORT void provideContextFeaturesTo(Page&, PassOwnPtr<ContextFeaturesClient>);
+CORE_EXPORT void provideContextFeaturesTo(
+    Page&,
+    std::unique_ptr<ContextFeaturesClient>);
 void provideContextFeaturesToDocumentFrom(Document&, Page&);
 
-inline PassRefPtrWillBeRawPtr<ContextFeatures> ContextFeatures::create(PassOwnPtr<ContextFeaturesClient> client)
-{
-    return adoptRefWillBeNoop(new ContextFeatures(client));
+inline ContextFeatures* ContextFeatures::create(
+    std::unique_ptr<ContextFeaturesClient> client) {
+  return new ContextFeatures(std::move(client));
 }
 
-inline bool ContextFeatures::isEnabled(Document* document, FeatureType type, bool defaultValue) const
-{
-    if (!m_client)
-        return defaultValue;
-    return m_client->isEnabled(document, type, defaultValue);
+inline bool ContextFeatures::isEnabled(Document* document,
+                                       FeatureType type,
+                                       bool defaultValue) const {
+  if (!m_client)
+    return defaultValue;
+  return m_client->isEnabled(document, type, defaultValue);
 }
 
-inline void ContextFeatures::urlDidChange(Document* document)
-{
-    // FIXME: The original code, commented out below, is obviously
-    // wrong, but the seemingly correct fix of negating the test to
-    // the more logical 'if (!m_client)' crashes the renderer.
-    // See issue 294180
-    //
-    // if (m_client)
-    //     return;
-    // m_client->urlDidChange(document);
+inline void ContextFeatures::urlDidChange(Document* document) {
+  // FIXME: The original code, commented out below, is obviously
+  // wrong, but the seemingly correct fix of negating the test to
+  // the more logical 'if (!m_client)' crashes the renderer.
+  // See issue 294180
+  //
+  // if (m_client)
+  //     return;
+  // m_client->urlDidChange(document);
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ContextFeatures_h
+#endif  // ContextFeatures_h

@@ -28,19 +28,15 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import datetime
-import logging
-import os
 import re
 
-import webkitpy.common.config
 from webkitpy.common.checkout.scm.scm import SCM
 from webkitpy.common.memoized import memoized
 from webkitpy.common.system.executive import Executive, ScriptError
 
-_log = logging.getLogger(__name__)
-
 
 class AmbiguousCommitError(Exception):
+
     def __init__(self, num_local_commits, has_working_directory_changes):
         Exception.__init__(self, "Found %s local commits and the working directory is %s" % (
             num_local_commits, ["clean", "not clean"][has_working_directory_changes]))
@@ -70,8 +66,9 @@ class Git(SCM):
     def in_working_directory(cls, path, executive=None):
         try:
             executive = executive or Executive()
-            return executive.run_command([cls.executable_name, 'rev-parse', '--is-inside-work-tree'], cwd=path, error_handler=Executive.ignore_error).rstrip() == "true"
-        except OSError, e:
+            return executive.run_command([cls.executable_name, 'rev-parse', '--is-inside-work-tree'],
+                                         cwd=path, error_handler=Executive.ignore_error).rstrip() == "true"
+        except OSError:
             # The Windows bots seem to through a WindowsError when git isn't installed.
             return False
 
@@ -89,7 +86,8 @@ class Git(SCM):
         # Pass the cwd if provided so that we can handle the case of running webkit-patch outside of the working directory.
         # FIXME: This should use an Executive.
         executive = executive or Executive()
-        return executive.run_command([cls.executable_name, "config", "--get-all", key], error_handler=Executive.ignore_error, cwd=cwd).rstrip('\n')
+        return executive.run_command(
+            [cls.executable_name, "config", "--get-all", key], error_handler=Executive.ignore_error, cwd=cwd).rstrip('\n')
 
     def _discard_local_commits(self):
         self._run_git(['reset', '--hard', self._remote_branch_ref()])
@@ -100,8 +98,12 @@ class Git(SCM):
     def _rebase_in_progress(self):
         return self._filesystem.exists(self.absolute_path(self._filesystem.join('.git', 'rebase-apply')))
 
-    def has_working_directory_changes(self):
-        return self._run_git(['diff', 'HEAD', '--no-renames', '--name-only']) != ""
+    def has_working_directory_changes(self, pathspec=None):
+        """Checks whether there are uncommitted changes."""
+        command = ['diff', 'HEAD', '--no-renames', '--name-only']
+        if pathspec:
+            command.extend(['--', pathspec])
+        return self._run_git(command) != ''
 
     def _discard_working_directory_changes(self):
         # Could run git clean here too, but that wouldn't match subversion
@@ -117,6 +119,12 @@ class Git(SCM):
 
     def _status_regexp(self, expected_types):
         return '^(?P<status>[%s])\t(?P<filename>.+)$' % expected_types
+
+    def add_all(self, pathspec=None):
+        command = ['add', '--all']
+        if pathspec:
+            command.append(pathspec)
+        return self._run_git(command)
 
     def add_list(self, paths, return_exit_code=False, recurse=True):
         return self._run_git(["add"] + paths, return_exit_code=return_exit_code)
@@ -135,13 +143,25 @@ class Git(SCM):
         return ref.replace('refs/heads/', '')
 
     def current_branch(self):
+        """Returns the name of the current branch, or empty string if HEAD is detached."""
         ref = self._run_git(['rev-parse', '--symbolic-full-name', 'HEAD']).strip()
-        # Return an empty string if HEAD is detached.
-        return self._branch_from_ref('' if ref == 'HEAD' else ref)
+        if ref == 'HEAD':
+            # HEAD is detached; return an empty string.
+            return ''
+        return self._branch_from_ref(ref)
+
+    def current_branch_or_ref(self):
+        """Returns the name of the current branch, or the commit hash if HEAD is detached."""
+        branch_name = self.current_branch()
+        if not branch_name:
+            # HEAD is detached; use commit SHA instead.
+            return self._run_git(['rev-parse', 'HEAD']).strip()
+        return branch_name
 
     def _upstream_branch(self):
         current_branch = self.current_branch()
-        return self._branch_from_ref(self.read_git_config('branch.%s.merge' % current_branch, cwd=self.checkout_root, executive=self._executive).strip())
+        return self._branch_from_ref(self.read_git_config(
+            'branch.%s.merge' % current_branch, cwd=self.checkout_root, executive=self._executive).strip())
 
     def _merge_base(self, git_commit=None):
         if git_commit:
@@ -164,7 +184,8 @@ class Git(SCM):
 
     def changed_files(self, git_commit=None):
         # FIXME: --diff-filter could be used to avoid the "extract_filenames" step.
-        status_command = [self.executable_name, 'diff', '-r', '--name-status', "--no-renames", "--no-ext-diff", "--full-index", self._merge_base(git_commit)]
+        status_command = [self.executable_name, 'diff', '-r', '--name-status',
+                          "--no-renames", "--no-ext-diff", "--full-index", self._merge_base(git_commit)]
         # FIXME: I'm not sure we're returning the same set of files that SVN.changed_files is.
         # Added (A), Copied (C), Deleted (D), Modified (M), Renamed (R)
         return self._run_status_and_extract_filenames(status_command, self._status_regexp("ADM"))
@@ -188,7 +209,7 @@ class Git(SCM):
         return self._run_git(['log', '-1', '--grep=' + grep_str, '--date=iso', self.find_checkout_root(path)])
 
     def _commit_position_from_git_log(self, git_log):
-        match = re.search("^\s*Cr-Commit-Position:.*@\{#(?P<commit_position>\d+)\}", git_log, re.MULTILINE)
+        match = re.search(r"^\s*Cr-Commit-Position:.*@\{#(?P<commit_position>\d+)\}", git_log, re.MULTILINE)
         if not match:
             return ""
         return int(match.group('commit_position'))
@@ -202,7 +223,7 @@ class Git(SCM):
 
     def timestamp_of_revision(self, path, revision):
         git_log = self.most_recent_log_matching(self._commit_position_regex_for_timestamp() % revision, path)
-        match = re.search("^Date:\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$", git_log, re.MULTILINE)
+        match = re.search(r"^Date:\s*(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$", git_log, re.MULTILINE)
         if not match:
             return ""
 
@@ -212,13 +233,15 @@ class Git(SCM):
                                                int(match.group(4)), int(match.group(5)), int(match.group(6)), 0)
 
         sign = 1 if match.group(7) == '+' else -1
-        time_without_timezone = time_with_timezone - datetime.timedelta(hours=sign * int(match.group(8)), minutes=int(match.group(9)))
+        time_without_timezone = time_with_timezone - \
+            datetime.timedelta(hours=sign * int(match.group(8)), minutes=int(match.group(9)))
         return time_without_timezone.strftime('%Y-%m-%dT%H:%M:%SZ')
 
     def create_patch(self, git_commit=None, changed_files=None):
         """Returns a byte array (str()) representing the patch file.
         Patch files are effectively binary since they may contain
-        files of multiple different encodings."""
+        files of multiple different encodings.
+        """
 
         # Put code changes at the top of the patch and layout tests
         # at the bottom, this makes for easier reviewing.
@@ -228,7 +251,9 @@ class Git(SCM):
         if self._filesystem.exists(order_file):
             order = "-O%s" % order_file
 
-        command = [self.executable_name, 'diff', '--binary', '--no-color', "--no-ext-diff", "--full-index", "--no-renames", order, self._merge_base(git_commit), "--"]
+        command = [self.executable_name, 'diff', '--binary', '--no-color', "--no-ext-diff",
+                   "--full-index", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
+                   order, self._merge_base(git_commit), "--"]
         if changed_files:
             command += changed_files
         return self._run(command, decode_output=False, cwd=self.checkout_root)
@@ -265,17 +290,15 @@ class Git(SCM):
             raise ScriptError(message="Can't find a branch to diff against. %s does not exist" % remote_master_ref)
         return remote_master_ref
 
-    def commit_locally_with_message(self, message, commit_all_working_directory_changes=True):
-        command = ['commit', '-F', '-']
-        if commit_all_working_directory_changes:
-            command.insert(1, '--all')
+    def commit_locally_with_message(self, message):
+        command = ['commit', '--all', '-F', '-']
         self._run_git(command, input=message)
 
     # These methods are git specific and are meant to provide support for the Git oriented workflow
     # that Blink is moving towards, hence there are no equivalent methods in the SVN class.
 
-    def pull(self):
-        self._run_git(['pull'])
+    def pull(self, timeout_seconds=None):
+        self._run_git(['pull'], timeout_seconds=timeout_seconds)
 
     def latest_git_commit(self):
         return self._run_git(['log', '-1', '--format=%H']).strip()
@@ -295,7 +318,7 @@ class Git(SCM):
 
     def _branch_tracking_remote_master(self):
         origin_info = self._run_git(['remote', 'show', 'origin', '-n'])
-        match = re.search("^\s*(?P<branch_name>\S+)\s+merges with remote master$", origin_info, re.MULTILINE)
+        match = re.search(r"^\s*(?P<branch_name>\S+)\s+merges with remote master$", origin_info, re.MULTILINE)
         if not match:
             raise ScriptError(message="Unable to find local branch tracking origin/master.")
         branch = str(match.group("branch_name"))

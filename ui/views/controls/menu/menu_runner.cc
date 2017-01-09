@@ -4,19 +4,25 @@
 
 #include "ui/views/controls/menu/menu_runner.h"
 
+#include <utility>
+
 #include "ui/views/controls/menu/menu_runner_handler.h"
 #include "ui/views/controls/menu/menu_runner_impl.h"
+#include "ui/views/widget/widget.h"
 
 namespace views {
 
-MenuRunner::MenuRunner(ui::MenuModel* menu_model, int32 run_types)
+MenuRunner::MenuRunner(ui::MenuModel* menu_model,
+                       int32_t run_types,
+                       const base::Closure& on_menu_closed_callback)
     : run_types_(run_types),
-      impl_(internal::MenuRunnerImplInterface::Create(menu_model, run_types)) {
-}
+      impl_(
+          internal::MenuRunnerImplInterface::Create(menu_model,
+                                                    run_types,
+                                                    on_menu_closed_callback)) {}
 
-MenuRunner::MenuRunner(MenuItemView* menu_view, int32 run_types)
-    : run_types_(run_types), impl_(new internal::MenuRunnerImpl(menu_view)) {
-}
+MenuRunner::MenuRunner(MenuItemView* menu_view, int32_t run_types)
+    : run_types_(run_types), impl_(new internal::MenuRunnerImpl(menu_view)) {}
 
 MenuRunner::~MenuRunner() {
   impl_->Release();
@@ -27,6 +33,12 @@ MenuRunner::RunResult MenuRunner::RunMenuAt(Widget* parent,
                                             const gfx::Rect& bounds,
                                             MenuAnchorPosition anchor,
                                             ui::MenuSourceType source_type) {
+  // If we are shown on mouse press, we will eat the subsequent mouse down and
+  // the parent widget will not be able to reset its state (it might have mouse
+  // capture from the mouse down). So we clear its state here.
+  if (parent && parent->GetRootView())
+    parent->GetRootView()->SetMouseHandler(nullptr);
+
   if (runner_handler_.get()) {
     return runner_handler_->RunMenuAt(
         parent, button, bounds, anchor, source_type, run_types_);
@@ -67,13 +79,13 @@ void MenuRunner::Cancel() {
   impl_->Cancel();
 }
 
-base::TimeDelta MenuRunner::closing_event_time() const {
+base::TimeTicks MenuRunner::closing_event_time() const {
   return impl_->GetClosingEventTime();
 }
 
 void MenuRunner::SetRunnerHandler(
-    scoped_ptr<MenuRunnerHandler> runner_handler) {
-  runner_handler_ = runner_handler.Pass();
+    std::unique_ptr<MenuRunnerHandler> runner_handler) {
+  runner_handler_ = std::move(runner_handler);
 }
 
 }  // namespace views

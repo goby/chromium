@@ -2,11 +2,6 @@
 
 [TOC]
 
-TODO: although cs.chromium.org
-[finds](https://code.google.com/p/chromium/codesearch#chromium/src/third_party/llvm/)
-`src/third_party/llvm`, it
-[does not exist in Gitiles](https://chromium.googlesource.com/src/third_party/llvm/).
-
 Make sure you really want to write a clang plugin.
 
 *   The clang plugin api is not stable. If you write a plugin, _you_ are
@@ -22,7 +17,7 @@ Valid reasons for writing a plugin are for example:
 *   You want to write an automatic code rewriter.
 
 In both cases, please inform
-[clang@chromium.org](http://groups.google.com/a/chromium.org/group/clang/topics)
+[clang@chromium.org](https://groups.google.com/a/chromium.org/group/clang/topics)
 of your plans before you pursue them.
 
 # Having said that

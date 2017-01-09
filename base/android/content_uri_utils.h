@@ -8,13 +8,10 @@
 #include <jni.h>
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 
 namespace base {
-
-bool RegisterContentUriUtils(JNIEnv* env);
 
 // Opens a content URI for read and returns the file descriptor to the caller.
 // Returns -1 if the URI is invalid.

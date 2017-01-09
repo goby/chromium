@@ -4,6 +4,8 @@
 
 #include "content/shell/browser/shell_browser_context.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/environment.h"
@@ -11,12 +13,15 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
 #include "content/shell/browser/shell_download_manager_delegate.h"
 #include "content/shell/browser/shell_permission_manager.h"
 #include "content/shell/common/shell_switches.h"
+#include "content/test/mock_background_sync_controller.h"
 
 #if defined(OS_WIN)
 #include "base/base_paths_win.h"
@@ -55,9 +60,14 @@ ShellBrowserContext::ShellBrowserContext(bool off_the_record,
       net_log_(net_log),
       guest_manager_(NULL) {
   InitWhileIOAllowed();
+  BrowserContextDependencyManager::GetInstance()->
+      CreateBrowserContextServices(this);
 }
 
 ShellBrowserContext::~ShellBrowserContext() {
+  BrowserContextDependencyManager::GetInstance()->
+      DestroyBrowserContextServices(this);
+  ShutdownStoragePartitions();
   if (resource_context_) {
     BrowserThread::DeleteSoon(
       BrowserThread::IO, FROM_HERE, resource_context_.release());
@@ -70,13 +80,25 @@ void ShellBrowserContext::InitWhileIOAllowed() {
     ignore_certificate_errors_ = true;
   if (cmd_line->HasSwitch(switches::kContentShellDataPath)) {
     path_ = cmd_line->GetSwitchValuePath(switches::kContentShellDataPath);
-    return;
+    if (base::DirectoryExists(path_) || base::CreateDirectory(path_))  {
+      // BrowserContext needs an absolute path, which we would normally get via
+      // PathService. In this case, manually ensure the path is absolute.
+      if (!path_.IsAbsolute())
+        path_ = base::MakeAbsoluteFilePath(path_);
+      if (!path_.empty()) {
+        BrowserContext::Initialize(this, path_);
+        return;
+      }
+    } else {
+      LOG(WARNING) << "Unable to create data-path directory: " << path_.value();
+    }
   }
+
 #if defined(OS_WIN)
   CHECK(PathService::Get(base::DIR_LOCAL_APP_DATA, &path_));
   path_ = path_.Append(std::wstring(L"content_shell"));
 #elif defined(OS_LINUX)
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   base::FilePath config_dir(
       base::nix::GetXDGDirectory(env.get(),
                                  base::nix::kXdgConfigHomeEnvVar,
@@ -94,11 +116,12 @@ void ShellBrowserContext::InitWhileIOAllowed() {
 
   if (!base::PathExists(path_))
     base::CreateDirectory(path_);
+  BrowserContext::Initialize(this, path_);
 }
 
-scoped_ptr<ZoomLevelDelegate> ShellBrowserContext::CreateZoomLevelDelegate(
+std::unique_ptr<ZoomLevelDelegate> ShellBrowserContext::CreateZoomLevelDelegate(
     const base::FilePath&) {
-  return scoped_ptr<ZoomLevelDelegate>();
+  return std::unique_ptr<ZoomLevelDelegate>();
 }
 
 base::FilePath ShellBrowserContext::GetPath() const {
@@ -119,22 +142,15 @@ DownloadManagerDelegate* ShellBrowserContext::GetDownloadManagerDelegate()  {
   return download_manager_delegate_.get();
 }
 
-net::URLRequestContextGetter* ShellBrowserContext::GetRequestContext()  {
-  return GetDefaultStoragePartition(this)->GetURLRequestContext();
-}
-
 ShellURLRequestContextGetter*
 ShellBrowserContext::CreateURLRequestContextGetter(
     ProtocolHandlerMap* protocol_handlers,
     URLRequestInterceptorScopedVector request_interceptors) {
   return new ShellURLRequestContextGetter(
-      ignore_certificate_errors_,
-      GetPath(),
-      BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::IO),
-      BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::FILE),
-      protocol_handlers,
-      request_interceptors.Pass(),
-      net_log_);
+      ignore_certificate_errors_, GetPath(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE),
+      protocol_handlers, std::move(request_interceptors), net_log_);
 }
 
 net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
@@ -142,33 +158,9 @@ net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
     URLRequestInterceptorScopedVector request_interceptors) {
   DCHECK(!url_request_getter_.get());
   url_request_getter_ = CreateURLRequestContextGetter(
-      protocol_handlers, request_interceptors.Pass());
+      protocol_handlers, std::move(request_interceptors));
   resource_context_->set_url_request_context_getter(url_request_getter_.get());
   return url_request_getter_.get();
-}
-
-net::URLRequestContextGetter*
-    ShellBrowserContext::GetRequestContextForRenderProcess(
-        int renderer_child_id)  {
-  return GetRequestContext();
-}
-
-net::URLRequestContextGetter*
-    ShellBrowserContext::GetMediaRequestContext()  {
-  return GetRequestContext();
-}
-
-net::URLRequestContextGetter*
-    ShellBrowserContext::GetMediaRequestContextForRenderProcess(
-        int renderer_child_id)  {
-  return GetRequestContext();
-}
-
-net::URLRequestContextGetter*
-    ShellBrowserContext::GetMediaRequestContextForStoragePartition(
-        const base::FilePath& partition_path,
-        bool in_memory) {
-  return GetRequestContext();
 }
 
 net::URLRequestContextGetter*
@@ -177,7 +169,20 @@ ShellBrowserContext::CreateRequestContextForStoragePartition(
     bool in_memory,
     ProtocolHandlerMap* protocol_handlers,
     URLRequestInterceptorScopedVector request_interceptors) {
-  return NULL;
+  return nullptr;
+}
+
+net::URLRequestContextGetter*
+    ShellBrowserContext::CreateMediaRequestContext()  {
+  DCHECK(url_request_getter_.get());
+  return url_request_getter_.get();
+}
+
+net::URLRequestContextGetter*
+    ShellBrowserContext::CreateMediaRequestContextForStoragePartition(
+        const base::FilePath& partition_path,
+        bool in_memory) {
+  return nullptr;
 }
 
 ResourceContext* ShellBrowserContext::GetResourceContext()  {
@@ -207,7 +212,9 @@ PermissionManager* ShellBrowserContext::GetPermissionManager() {
 }
 
 BackgroundSyncController* ShellBrowserContext::GetBackgroundSyncController() {
-  return nullptr;
+  if (!background_sync_controller_)
+    background_sync_controller_.reset(new MockBackgroundSyncController());
+  return background_sync_controller_.get();
 }
 
 }  // namespace content

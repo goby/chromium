@@ -7,9 +7,9 @@
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/infobars/core/infobar.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -28,7 +28,7 @@ void NaClInfoBarDelegate::Create(int render_process_id, int render_view_id) {
       InfoBarService::FromWebContents(web_contents);
   if (infobar_service) {
     infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-        scoped_ptr<ConfirmInfoBarDelegate>(new NaClInfoBarDelegate())));
+        std::unique_ptr<ConfirmInfoBarDelegate>(new NaClInfoBarDelegate())));
   }
 }
 
@@ -36,6 +36,11 @@ NaClInfoBarDelegate::NaClInfoBarDelegate() : ConfirmInfoBarDelegate() {
 }
 
 NaClInfoBarDelegate::~NaClInfoBarDelegate() {
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+NaClInfoBarDelegate::GetIdentifier() const {
+  return NACL_INFOBAR_DELEGATE;
 }
 
 base::string16 NaClInfoBarDelegate::GetMessageText() const {

@@ -5,18 +5,22 @@
 #ifndef CONTENT_BROWSER_WEBUI_WEB_UI_DATA_SOURCE_IMPL_H_
 #define CONTENT_BROWSER_WEBUI_WEB_UI_DATA_SOURCE_IMPL_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
+#include <unordered_set>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "content/browser/webui/url_data_manager.h"
 #include "content/browser/webui/url_data_source_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "ui/base/template_expressions.h"
 
 namespace content {
 
@@ -33,17 +37,24 @@ class CONTENT_EXPORT WebUIDataSourceImpl
   void AddLocalizedStrings(
       const base::DictionaryValue& localized_strings) override;
   void AddBoolean(const std::string& name, bool value) override;
+  void AddInteger(const std::string& name, int32_t value) override;
   void SetJsonPath(const std::string& path) override;
   void AddResourcePath(const std::string& path, int resource_id) override;
   void SetDefaultResource(int resource_id) override;
   void SetRequestFilter(
       const WebUIDataSource::HandleRequestCallback& callback) override;
-  void AddMojoResources() override;
   void DisableReplaceExistingSource() override;
   void DisableContentSecurityPolicy() override;
+  void OverrideContentSecurityPolicyScriptSrc(const std::string& data) override;
   void OverrideContentSecurityPolicyObjectSrc(const std::string& data) override;
-  void OverrideContentSecurityPolicyFrameSrc(const std::string& data) override;
+  void OverrideContentSecurityPolicyChildSrc(const std::string& data) override;
   void DisableDenyXFrameOptions() override;
+  void DisableI18nAndUseGzipForAllPaths() override;
+
+  // When DisableI18nAndUseGzipForAllPaths is enabled, exclude the given |path|.
+  void ExcludePathFromGzip(const std::string& path);
+
+  bool IsWebUIDataSourceImpl() const override;
 
  protected:
   ~WebUIDataSourceImpl() override;
@@ -51,10 +62,6 @@ class CONTENT_EXPORT WebUIDataSourceImpl
   // Completes a request by sending our dictionary of localized strings.
   void SendLocalizedStringsAsJSON(
       const URLDataSource::GotDataCallback& callback);
-
-  // Completes a request by sending the file specified by |idr|.
-  void SendFromResourceBundle(
-      const URLDataSource::GotDataCallback& callback, int idr);
 
  private:
   class InternalDataSource;
@@ -70,12 +77,12 @@ class CONTENT_EXPORT WebUIDataSourceImpl
   std::string GetMimeType(const std::string& path) const;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const ResourceRequestInfo::WebContentsGetter& wc_getter,
       const URLDataSource::GotDataCallback& callback);
 
-  void disable_set_font_strings_for_testing() {
-    disable_set_font_strings_ = true;
+  // Note: this must be called before StartDataRequest() to have an effect.
+  void disable_load_time_data_defaults_for_testing() {
+    add_load_time_data_defaults_ = false;
   }
 
   // The name of this source.
@@ -85,20 +92,28 @@ class CONTENT_EXPORT WebUIDataSourceImpl
   int default_resource_;
   std::string json_path_;
   std::map<std::string, int> path_to_idr_map_;
+  std::unordered_set<std::string> excluded_paths_;
+  // The |replacements_| is intended to replace |localized_strings_|.
+  // TODO(dschuyler): phase out |localized_strings_| in Q1 2016. (Or rename
+  // to |load_time_flags_| if the usage is reduced to storing flags only).
+  ui::TemplateReplacements replacements_;
   base::DictionaryValue localized_strings_;
   WebUIDataSource::HandleRequestCallback filter_callback_;
   bool add_csp_;
+  bool script_src_set_;
+  std::string script_src_;
   bool object_src_set_;
   std::string object_src_;
   bool frame_src_set_;
   std::string frame_src_;
   bool deny_xframe_options_;
-  bool disable_set_font_strings_;
+  bool add_load_time_data_defaults_;
   bool replace_existing_source_;
+  bool use_gzip_for_all_paths_;
 
   DISALLOW_COPY_AND_ASSIGN(WebUIDataSourceImpl);
 };
 
-}  // content
+}  // namespace content
 
 #endif  // CONTENT_BROWSER_WEBUI_WEB_UI_DATA_SOURCE_IMPL_H_

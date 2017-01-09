@@ -19,6 +19,59 @@ test(() => {
 
 }, 'Readable stream: throwing strategy.size getter');
 
+promise_test(t => {
+
+  const controllerError = { name: 'controller error' };
+  const thrownError = { name: 'thrown error' };
+
+  let controller;
+  const rs = new ReadableStream(
+    {
+      start(c) {
+        controller = c;
+      }
+    },
+    {
+      size() {
+        controller.error(controllerError);
+        throw thrownError;
+      },
+      highWaterMark: 5
+    }
+  );
+
+  assert_throws(thrownError, () => controller.enqueue('a'), 'enqueue should re-throw the error');
+
+  return promise_rejects(t, controllerError, rs.getReader().closed);
+
+}, 'Readable stream: strategy.size errors the stream and then throws');
+
+promise_test(t => {
+
+  const theError = { name: 'my error' };
+
+  let controller;
+  const rs = new ReadableStream(
+    {
+      start(c) {
+        controller = c;
+      }
+    },
+    {
+      size() {
+        controller.error(theError);
+        return Infinity;
+      },
+      highWaterMark: 5
+    }
+  );
+
+  assert_throws(new RangeError(), () => controller.enqueue('a'), 'enqueue should throw a RangeError');
+
+  return promise_rejects(t, theError, rs.getReader().closed, 'closed should reject with the error');
+
+}, 'Readable stream: strategy.size errors the stream and then returns Infinity');
+
 promise_test(() => {
 
   const theError = new Error('a unique string');
@@ -73,14 +126,14 @@ test(() => {
   }
 
   for (const highWaterMark of [NaN, 'foo', {}]) {
-    assert_throws(new TypeError(), () => {
+    assert_throws(new RangeError(), () => {
       new ReadableStream({}, {
         size() {
           return 1;
         },
         highWaterMark
       });
-    }, 'construction should throw a TypeError for ' + highWaterMark);
+    }, 'construction should throw a RangeError for ' + highWaterMark);
   }
 
 }, 'Readable stream: invalid strategy.highWaterMark');

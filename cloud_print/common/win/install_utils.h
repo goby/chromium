@@ -47,4 +47,3 @@ bool IsProgramsFilesParent(const base::FilePath& path);
 }  // namespace cloud_print
 
 #endif  // CLOUD_PRINT_COMMON_INSTALL_UTILS_H_
-

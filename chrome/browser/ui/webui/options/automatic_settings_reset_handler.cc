@@ -6,13 +6,14 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/prefs/chrome_pref_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
-#include "grit/components_strings.h"
 
 namespace {
 
@@ -36,7 +37,8 @@ void AutomaticSettingsResetHandler::InitializePage() {
   if (!then.is_null()) {
     const base::Time now = base::Time::Now();
     if ((now - then).InDays() < kBannerShowTimeInDays)
-      web_ui()->CallJavascriptFunction("AutomaticSettingsResetBanner.show");
+      web_ui()->CallJavascriptFunctionUnsafe(
+          "AutomaticSettingsResetBanner.show");
   }
 }
 

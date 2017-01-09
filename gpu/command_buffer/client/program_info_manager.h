@@ -6,6 +6,7 @@
 #define GPU_COMMAND_BUFFER_CLIENT_PROGRAM_INFO_MANAGER_H_
 
 #include <GLES3/gl3.h>
+#include <stdint.h>
 
 #include <string>
 #include <vector>
@@ -105,6 +106,7 @@ class GLES2_IMPL_EXPORT ProgramInfoManager {
    public:
     struct UniformInfo {
       UniformInfo(GLsizei _size, GLenum _type, const std::string& _name);
+      UniformInfo(const UniformInfo& other);
       ~UniformInfo();
 
       GLsizei size;
@@ -135,6 +137,7 @@ class GLES2_IMPL_EXPORT ProgramInfoManager {
     };
     struct UniformBlock {
       UniformBlock();
+      UniformBlock(const UniformBlock& other);
       ~UniformBlock();
 
       GLuint binding;
@@ -154,6 +157,7 @@ class GLES2_IMPL_EXPORT ProgramInfoManager {
     };
 
     Program();
+    Program(const Program& other);
     ~Program();
 
     const VertexAttrib* GetAttribInfo(GLint index) const;
@@ -188,16 +192,16 @@ class GLES2_IMPL_EXPORT ProgramInfoManager {
         GLuint index) const;
 
     // Updates the ES2 only program info after a successful link.
-    void UpdateES2(const std::vector<int8>& result);
+    void UpdateES2(const std::vector<int8_t>& result);
 
     // Updates the ES3 UniformBlock info after a successful link.
-    void UpdateES3UniformBlocks(const std::vector<int8>& result);
+    void UpdateES3UniformBlocks(const std::vector<int8_t>& result);
 
     // Updates the ES3 Uniformsiv info after a successful link.
-    void UpdateES3Uniformsiv(const std::vector<int8>& result);
+    void UpdateES3Uniformsiv(const std::vector<int8_t>& result);
 
     // Updates the ES3 TransformFeedbackVaryings info after a successful link.
-    void UpdateES3TransformFeedbackVaryings(const std::vector<int8>& result);
+    void UpdateES3TransformFeedbackVaryings(const std::vector<int8_t>& result);
 
     bool IsCached(ProgramInfoType type) const;
 

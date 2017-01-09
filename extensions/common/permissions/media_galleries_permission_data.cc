@@ -23,8 +23,8 @@ bool MediaGalleriesPermissionData::Check(
   return permission_ == specific_param.permission;
 }
 
-scoped_ptr<base::Value> MediaGalleriesPermissionData::ToValue() const {
-  return scoped_ptr<base::Value>(new base::StringValue(permission_));
+std::unique_ptr<base::Value> MediaGalleriesPermissionData::ToValue() const {
+  return std::unique_ptr<base::Value>(new base::StringValue(permission_));
 }
 
 bool MediaGalleriesPermissionData::FromValue(const base::Value* value) {
@@ -39,7 +39,6 @@ bool MediaGalleriesPermissionData::FromValue(const base::Value* value) {
   base::TrimWhitespaceASCII(raw_permission, base::TRIM_ALL, &permission);
 
   if (permission == MediaGalleriesPermission::kAllAutoDetectedPermission ||
-      permission == MediaGalleriesPermission::kScanPermission ||
       permission == MediaGalleriesPermission::kReadPermission ||
       permission == MediaGalleriesPermission::kCopyToPermission ||
       permission == MediaGalleriesPermission::kDeletePermission) {

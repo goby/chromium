@@ -4,9 +4,13 @@
 
 #include "chrome/utility/importer/bookmark_html_reader.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/i18n/icu_string_conversions.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -86,6 +90,20 @@ void DataURLToFaviconUsage(const GURL& link_url,
 }  // namespace
 
 namespace bookmark_html_reader {
+
+static std::string stripDt(const std::string& lineDt) {
+  // Remove "<DT>" if the line starts with "<DT>".  This may not occur if
+  // "<DT>" was on the previous line.  Liberally accept entries that do not
+  // have an opening "<DT>" at all.
+  std::string line = lineDt;
+  static const char kDtTag[] = "<DT>";
+  if (base::StartsWith(line, kDtTag,
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+    line.erase(0, arraysize(kDtTag) - 1);
+    base::TrimString(line, " ", &line);
+  }
+  return line;
+}
 
 void ImportBookmarksFile(
     const base::Callback<bool(void)>& cancellation_callback,
@@ -263,8 +281,8 @@ bool CanImportURLAsSearchEngine(const GURL& url,
   if (url_spec.empty())
     return false;
 
-  url_spec = net::UnescapeURLComponent(url_spec,
-                                       net::UnescapeRule::URL_SPECIAL_CHARS);
+  url_spec = net::UnescapeURLComponent(
+      url_spec, net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
 
   // Replace replacement terms ("%s") in |url_spec| with {searchTerms}.
   url_spec =
@@ -279,30 +297,33 @@ bool CanImportURLAsSearchEngine(const GURL& url,
 namespace internal {
 
 bool ParseCharsetFromLine(const std::string& line, std::string* charset) {
-  const char kCharset[] = "charset=";
-  if (base::StartsWith(line, "<META", base::CompareCase::INSENSITIVE_ASCII) &&
-      (line.find("CONTENT=\"") != std::string::npos ||
-       line.find("content=\"") != std::string::npos)) {
-    size_t begin = line.find(kCharset);
-    if (begin == std::string::npos)
-      return false;
-    begin += std::string(kCharset).size();
-    size_t end = line.find_first_of('\"', begin);
-    *charset = line.substr(begin, end - begin);
-    return true;
+  if (!base::StartsWith(line, "<META", base::CompareCase::INSENSITIVE_ASCII) ||
+      (line.find("CONTENT=\"") == std::string::npos &&
+       line.find("content=\"") == std::string::npos)) {
+    return false;
   }
-  return false;
+
+  const char kCharset[] = "charset=";
+  size_t begin = line.find(kCharset);
+  if (begin == std::string::npos)
+    return false;
+  begin += sizeof(kCharset) - 1;
+  size_t end = line.find_first_of('\"', begin);
+  *charset = line.substr(begin, end - begin);
+  return true;
 }
 
-bool ParseFolderNameFromLine(const std::string& line,
+bool ParseFolderNameFromLine(const std::string& lineDt,
                              const std::string& charset,
                              base::string16* folder_name,
                              bool* is_toolbar_folder,
                              base::Time* add_date) {
-  const char kFolderOpen[] = "<DT><H3";
+  const char kFolderOpen[] = "<H3";
   const char kFolderClose[] = "</H3>";
   const char kToolbarFolderAttribute[] = "PERSONAL_TOOLBAR_FOLDER";
   const char kAddDateAttribute[] = "ADD_DATE";
+
+  std::string line = stripDt(lineDt);
 
   if (!base::StartsWith(line, kFolderOpen, base::CompareCase::SENSITIVE))
     return false;
@@ -323,7 +344,7 @@ bool ParseFolderNameFromLine(const std::string& line,
 
   // Add date
   if (GetAttribute(attribute_list, kAddDateAttribute, &value)) {
-    int64 time;
+    int64_t time;
     base::StringToInt64(value, &time);
     // Upper bound it at 32 bits.
     if (0 < time && time < (1LL << 32))
@@ -339,7 +360,7 @@ bool ParseFolderNameFromLine(const std::string& line,
   return true;
 }
 
-bool ParseBookmarkFromLine(const std::string& line,
+bool ParseBookmarkFromLine(const std::string& lineDt,
                            const std::string& charset,
                            base::string16* title,
                            GURL* url,
@@ -347,7 +368,7 @@ bool ParseBookmarkFromLine(const std::string& line,
                            base::string16* shortcut,
                            base::Time* add_date,
                            base::string16* post_data) {
-  const char kItemOpen[] = "<DT><A";
+  const char kItemOpen[] = "<A";
   const char kItemClose[] = "</A>";
   const char kFeedURLAttribute[] = "FEEDURL";
   const char kHrefAttribute[] = "HREF";
@@ -356,6 +377,7 @@ bool ParseBookmarkFromLine(const std::string& line,
   const char kAddDateAttribute[] = "ADD_DATE";
   const char kPostDataAttribute[] = "POST_DATA";
 
+  std::string line = stripDt(lineDt);
   title->clear();
   *url = GURL();
   *favicon = GURL();
@@ -409,7 +431,7 @@ bool ParseBookmarkFromLine(const std::string& line,
 
   // Add date
   if (GetAttribute(attribute_list, kAddDateAttribute, &value)) {
-    int64 time;
+    int64_t time;
     base::StringToInt64(value, &time);
     // Upper bound it at 32 bits.
     if (0 < time && time < (1LL << 32))
@@ -426,15 +448,16 @@ bool ParseBookmarkFromLine(const std::string& line,
   return true;
 }
 
-bool ParseMinimumBookmarkFromLine(const std::string& line,
+bool ParseMinimumBookmarkFromLine(const std::string& lineDt,
                                   const std::string& charset,
                                   base::string16* title,
                                   GURL* url) {
-  const char kItemOpen[] = "<DT><A";
+  const char kItemOpen[] = "<A";
   const char kItemClose[] = "</";
   const char kHrefAttributeUpper[] = "HREF";
   const char kHrefAttributeLower[] = "href";
 
+  std::string line = stripDt(lineDt);
   title->clear();
   *url = GURL();
 

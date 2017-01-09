@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CONSTRAINED_WEB_DIALOG_DELEGATE_BASE_H_
 #define CHROME_BROWSER_UI_WEBUI_CONSTRAINED_WEB_DIALOG_DELEGATE_BASE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 #include "ui/web_dialogs/web_dialog_web_contents_delegate.h"
@@ -23,6 +25,8 @@ class ConstrainedWebDialogDelegateBase
     : public ConstrainedWebDialogDelegate,
       public ui::WebDialogWebContentsDelegate {
  public:
+  // |browser_context| and |delegate| must outlive |this| instance, whereas
+  // |this| will take ownership of |tab_delegate|.
   ConstrainedWebDialogDelegateBase(content::BrowserContext* browser_context,
                                    ui::WebDialogDelegate* delegate,
                                    WebDialogWebContentsDelegate* tab_delegate);
@@ -46,11 +50,14 @@ class ConstrainedWebDialogDelegateBase
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
 
+  // Resize the dialog to the given size.
+  virtual void ResizeToGivenSize(const gfx::Size size);
+
  private:
-  scoped_ptr<ui::WebDialogDelegate> web_dialog_delegate_;
+  std::unique_ptr<ui::WebDialogDelegate> web_dialog_delegate_;
 
   // Holds the HTML to display in the constrained dialog.
-  scoped_ptr<content::WebContents> web_contents_;
+  std::unique_ptr<content::WebContents> web_contents_;
 
   // Was the dialog closed from WebUI (in which case |web_dialog_delegate_|'s
   // OnDialogClosed() method has already been called)?
@@ -59,7 +66,7 @@ class ConstrainedWebDialogDelegateBase
   // If true, release |web_contents_| on close instead of destroying it.
   bool release_contents_on_close_;
 
-  scoped_ptr<WebDialogWebContentsDelegate> override_tab_delegate_;
+  std::unique_ptr<WebDialogWebContentsDelegate> override_tab_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ConstrainedWebDialogDelegateBase);
 };

@@ -20,8 +20,8 @@ namespace content {
 RendererClipboardDelegate::RendererClipboardDelegate() {
 }
 
-uint64 RendererClipboardDelegate::GetSequenceNumber(ui::ClipboardType type) {
-  uint64 sequence_number = 0;
+uint64_t RendererClipboardDelegate::GetSequenceNumber(ui::ClipboardType type) {
+  uint64_t sequence_number = 0;
   RenderThreadImpl::current()->Send(
       new ClipboardHostMsg_GetSequenceNumber(type, &sequence_number));
   return sequence_number;
@@ -57,8 +57,8 @@ void RendererClipboardDelegate::ReadText(ui::ClipboardType type,
 void RendererClipboardDelegate::ReadHTML(ui::ClipboardType type,
                                          base::string16* markup,
                                          GURL* url,
-                                         uint32* fragment_start,
-                                         uint32* fragment_end) {
+                                         uint32_t* fragment_start,
+                                         uint32_t* fragment_end) {
   RenderThreadImpl::current()->Send(new ClipboardHostMsg_ReadHTML(
       type, markup, url, fragment_start, fragment_end));
 }
@@ -69,16 +69,11 @@ void RendererClipboardDelegate::ReadRTF(ui::ClipboardType type,
 }
 
 void RendererClipboardDelegate::ReadImage(ui::ClipboardType type,
-                                          std::string* data) {
-  base::SharedMemoryHandle image_handle;
-  uint32 image_size = 0;
+                                          std::string* blob_uuid,
+                                          std::string* mime_type,
+                                          int64_t* size) {
   RenderThreadImpl::current()->Send(
-      new ClipboardHostMsg_ReadImage(type, &image_handle, &image_size));
-  if (base::SharedMemory::IsHandleValid(image_handle)) {
-    base::SharedMemory buffer(image_handle, true);
-    buffer.Map(image_size);
-    data->append(static_cast<char*>(buffer.memory()), image_size);
-  }
+      new ClipboardHostMsg_ReadImage(type, blob_uuid, mime_type, size));
 }
 
 void RendererClipboardDelegate::ReadCustomData(ui::ClipboardType clipboard_type,
@@ -127,7 +122,7 @@ bool RendererClipboardDelegate::WriteImage(ui::ClipboardType clipboard_type,
   DCHECK_EQ(bitmap.colorType(), kN32_SkColorType);
 
   const gfx::Size size(bitmap.width(), bitmap.height());
-  scoped_ptr<base::SharedMemory> shared_buf;
+  std::unique_ptr<base::SharedMemory> shared_buf;
   {
     SkAutoLockPixels locked(bitmap);
     void* pixels = bitmap.getPixels();
@@ -135,15 +130,15 @@ bool RendererClipboardDelegate::WriteImage(ui::ClipboardType clipboard_type,
     if (!pixels)
       return false;
 
-    base::CheckedNumeric<uint32> checked_buf_size = 4;
+    base::CheckedNumeric<uint32_t> checked_buf_size = 4;
     checked_buf_size *= size.width();
     checked_buf_size *= size.height();
     if (!checked_buf_size.IsValid())
       return false;
 
     // Allocate a shared memory buffer to hold the bitmap bits.
-    uint32 buf_size = checked_buf_size.ValueOrDie();
-    shared_buf = ChildThreadImpl::current()->AllocateSharedMemory(buf_size);
+    uint32_t buf_size = checked_buf_size.ValueOrDie();
+    shared_buf = ChildThreadImpl::AllocateSharedMemory(buf_size);
     if (!shared_buf)
       return false;
     if (!shared_buf->Map(buf_size))

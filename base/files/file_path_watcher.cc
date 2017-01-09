@@ -8,33 +8,22 @@
 #include "base/files/file_path_watcher.h"
 
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
-
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-#include "base/mac/mac_util.h"
-#endif
+#include "build/build_config.h"
 
 namespace base {
 
 FilePathWatcher::~FilePathWatcher() {
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   impl_->Cancel();
 }
 
 // static
-void FilePathWatcher::CancelWatch(
-    const scoped_refptr<PlatformDelegate>& delegate) {
-  delegate->CancelOnMessageLoopThread();
-}
-
-// static
 bool FilePathWatcher::RecursiveWatchAvailable() {
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // FSEvents isn't available on iOS and is broken on OSX 10.6 and earlier.
-  // See http://crbug.com/54822#c31
-  return mac::IsOSLionOrLater();
-#elif defined(OS_WIN) || defined(OS_LINUX) || defined(OS_ANDROID)
+#if (defined(OS_MACOSX) && !defined(OS_IOS)) || defined(OS_WIN) || \
+    defined(OS_LINUX) || defined(OS_ANDROID)
   return true;
 #else
+  // FSEvents isn't available on iOS.
   return false;
 #endif
 }
@@ -49,6 +38,7 @@ FilePathWatcher::PlatformDelegate::~PlatformDelegate() {
 bool FilePathWatcher::Watch(const FilePath& path,
                             bool recursive,
                             const Callback& callback) {
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(path.IsAbsolute());
   return impl_->Watch(path, recursive, callback);
 }

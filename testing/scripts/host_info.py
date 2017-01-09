@@ -10,7 +10,6 @@ import platform
 import subprocess
 import sys
 
-
 import common
 
 
@@ -28,8 +27,7 @@ def get_free_disk_space(failures):
     # Stat the current path for info on the current disk.
     stat_result = os.statvfs('.')
     # Multiply block size by number of free blocks, express in GiB.
-    return stat_result.f_frsize * stat_result.f_bavail / (
-        1024.0 / 1024.0 / 1024.0)
+    return stat_result.f_frsize * stat_result.f_bavail / (1024.0 ** 3)
 
   failures.append('get_free_disk_space: OS %s not supported.' % os.name)
   return 0
@@ -59,19 +57,26 @@ def get_device_info(args, failures):
     return {}
 
   with common.temporary_file() as tempfile_path:
-    rc = common.run_command([
+    test_cmd = [
         sys.executable,
         os.path.join(args.paths['checkout'],
-                     'build',
+                     'third_party',
+                     'catapult',
+                     'devil',
+                     'devil',
                      'android',
-                     'buildbot',
-                     'bb_device_status_check.py'),
+                     'tools',
+                     'device_status.py'),
         '--json-output', tempfile_path,
         '--blacklist-file', os.path.join(
-            args.paths['checkout'], 'out', 'bad_devices.json')])
+              args.paths['checkout'], 'out', 'bad_devices.json')
+    ]
+    if args.args:
+      test_cmd.extend(args.args)
 
+    rc = common.run_command(test_cmd)
     if rc:
-      failures.append('bb_device_status_check')
+      failures.append('device_status')
       return {}
 
     with open(tempfile_path, 'r') as src:
@@ -80,7 +85,8 @@ def get_device_info(args, failures):
   results = {}
   results['devices'] = sorted(v['serial'] for v in device_info)
 
-  details = [v['build_detail'] for v in device_info]
+  details = [
+      v['ro.build.fingerprint'] for v in device_info if not v['blacklisted']]
 
   def unique_build_details(index):
     return sorted(list(set([v.split(':')[index] for v in details])))
@@ -98,6 +104,10 @@ def get_device_info(args, failures):
       results[k] = 'MISMATCH'
       results['%s_list' % k] = v
       failures.append(k)
+
+  for v in device_info:
+    if v['blacklisted']:
+      failures.append('Device %s blacklisted' % v['serial'])
 
   return results
 
@@ -123,7 +133,9 @@ def main_run(args):
       '_host_info': host_info,
   }, args.output)
 
-  return len(failures) != 0
+  if len(failures) != 0:
+    return common.INFRA_FAILURE_EXIT_CODE
+  return 0
 
 
 def main_compile_targets(args):

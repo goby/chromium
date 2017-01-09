@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/ptr_util.h"
+
 #include "ui/ozone/common/display_snapshot_proxy.h"
+
+#include <stddef.h>
 
 #include "ui/ozone/common/display_mode_proxy.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
@@ -16,13 +20,6 @@ bool SameModes(const DisplayMode_Params& lhs, const DisplayMode_Params& rhs) {
          lhs.refresh_rate == rhs.refresh_rate;
 }
 
-// Exclude 4K@60kHz becaseu this doesn't work in most devices/configuration now.
-// TODO(marcheu|oshima): Revisit this. crbug.com/39397
-bool IsModeBlackListed(const DisplayMode_Params& mode_params) {
-  return mode_params.size.width() >= 3840 &&
-         mode_params.size.height() >= 2160 && mode_params.refresh_rate >= 60.0f;
-}
-
 }  // namespace
 
 DisplaySnapshotProxy::DisplaySnapshotProxy(const DisplaySnapshot_Params& params)
@@ -32,27 +29,28 @@ DisplaySnapshotProxy::DisplaySnapshotProxy(const DisplaySnapshot_Params& params)
                       params.type,
                       params.is_aspect_preserving_scaling,
                       params.has_overscan,
+                      params.has_color_correction_matrix,
                       params.display_name,
-                      std::vector<const DisplayMode*>(),
+                      params.sys_path,
+                      std::vector<std::unique_ptr<const DisplayMode>>(),
+                      params.edid,
                       NULL,
                       NULL),
       string_representation_(params.string_representation) {
   for (size_t i = 0; i < params.modes.size(); ++i) {
-    const DisplayMode_Params& mode_params = params.modes[i];
-    if (IsModeBlackListed(mode_params))
-      continue;
-    modes_.push_back(new DisplayModeProxy(mode_params));
+    modes_.push_back(base::MakeUnique<DisplayModeProxy>(params.modes[i]));
 
     if (params.has_current_mode &&
         SameModes(params.modes[i], params.current_mode))
-      current_mode_ = modes_.back();
+      current_mode_ = modes_.back().get();
 
     if (params.has_native_mode &&
         SameModes(params.modes[i], params.native_mode))
-      native_mode_ = modes_.back();
+      native_mode_ = modes_.back().get();
   }
 
   product_id_ = params.product_id;
+  maximum_cursor_size_ = params.maximum_cursor_size;
 }
 
 DisplaySnapshotProxy::~DisplaySnapshotProxy() {

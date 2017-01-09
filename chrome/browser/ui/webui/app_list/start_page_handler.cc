@@ -4,10 +4,10 @@
 
 #include "chrome/browser/ui/webui/app_list/start_page_handler.h"
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/values.h"
 #include "base/version.h"
@@ -15,7 +15,6 @@
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/start_page_service.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/common/pref_names.h"
 #include "components/update_client/update_query_params.h"
@@ -102,10 +101,8 @@ void StartPageHandler::HandleLaunchApp(const base::ListValue* args) {
     return;
   }
 
-  AppListControllerDelegate* controller = AppListService::Get(
-      chrome::GetHostDesktopTypeForNativeView(
-          web_ui()->GetWebContents()->GetNativeView()))->
-              GetControllerDelegate();
+  AppListControllerDelegate* controller =
+      AppListService::Get()->GetControllerDelegate();
   controller->ActivateApp(profile,
                           app,
                           AppListControllerDelegate::LAUNCH_FROM_APP_LIST,

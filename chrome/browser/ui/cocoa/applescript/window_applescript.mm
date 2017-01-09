@@ -4,9 +4,11 @@
 
 #import "chrome/browser/ui/cocoa/applescript/window_applescript.h"
 
+#include <memory>
+
 #include "base/logging.h"
+#import "base/mac/foundation_util.h"
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #import "chrome/browser/app_controller_mac.h"
 #import "chrome/browser/chrome_browser_application_mac.h"
@@ -24,7 +26,6 @@
 #import "chrome/browser/ui/cocoa/applescript/tab_applescript.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/url_constants.h"
@@ -42,7 +43,8 @@
   NSScriptCommand* command = [NSScriptCommand currentCommand];
   NSString* mode = [[[command evaluatedArguments]
       objectForKey:@"KeyDictionary"] objectForKey:@"mode"];
-  AppController* appDelegate = [NSApp delegate];
+  AppController* appDelegate =
+      base::mac::ObjCCastStrict<AppController>([NSApp delegate]);
 
   Profile* lastProfile = [appDelegate lastProfile];
 
@@ -75,8 +77,7 @@
   }
 
   if ((self = [super init])) {
-    browser_ = new Browser(
-        Browser::CreateParams(aProfile, chrome::HOST_DESKTOP_TYPE_NATIVE));
+    browser_ = new Browser(Browser::CreateParams(aProfile));
     chrome::NewTab(browser_);
     browser_->window()->Show();
     base::scoped_nsobject<NSNumber> numID(
@@ -199,7 +200,7 @@
   base::TimeTicks newTabStartTime = base::TimeTicks::Now();
   chrome::NavigateParams params(browser_, GURL(chrome::kChromeUINewTabURL),
                                 ui::PAGE_TRANSITION_TYPED);
-  params.disposition = NEW_FOREGROUND_TAB;
+  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   params.tabstrip_index = index;
   chrome::Navigate(&params);
   CoreTabHelper* core_tab_helper =
@@ -256,26 +257,6 @@
   // window() can be NULL during startup.
   if (browser_->window())
     browser_->window()->Close();
-}
-
-- (NSNumber*)presenting {
-  BOOL presentingValue = browser_->window() &&
-                         browser_->window()->IsFullscreen() &&
-                         !browser_->window()->IsFullscreenWithToolbar();
-  return [NSNumber numberWithBool:presentingValue];
-}
-
-- (void)handlesEnterPresentationMode:(NSScriptCommand*)command {
-  AppleScript::LogAppleScriptUMA(
-      AppleScript::AppleScriptCommand::WINDOW_ENTER_PRESENTATION_MODE);
-  browser_->exclusive_access_manager()->context()->EnterFullscreen(
-      GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION, false);
-}
-
-- (void)handlesExitPresentationMode:(NSScriptCommand*)command {
-  AppleScript::LogAppleScriptUMA(
-      AppleScript::AppleScriptCommand::WINDOW_EXIT_PRESENTATION_MODE);
-  browser_->exclusive_access_manager()->context()->ExitFullscreen();
 }
 
 @end

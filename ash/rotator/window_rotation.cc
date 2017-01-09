@@ -37,8 +37,7 @@ WindowRotation::WindowRotation(int degrees, ui::Layer* layer)
   InitTransform(layer);
 }
 
-WindowRotation::~WindowRotation() {
-}
+WindowRotation::~WindowRotation() {}
 
 void WindowRotation::InitTransform(ui::Layer* layer) {
   // No rotation required, use the identity transform.
@@ -77,20 +76,20 @@ void WindowRotation::InitTransform(ui::Layer* layer) {
   current_transform.TransformPoint(&new_pivot);
   current_transform.TransformPoint(&new_origin_);
 
-  scoped_ptr<ui::InterpolatedTransform> rotation(
+  std::unique_ptr<ui::InterpolatedTransform> rotation(
       new ui::InterpolatedTransformAboutPivot(
           old_pivot, new ui::InterpolatedRotation(0, degrees_)));
 
-  scoped_ptr<ui::InterpolatedTransform> translation(
+  std::unique_ptr<ui::InterpolatedTransform> translation(
       new ui::InterpolatedTranslation(
           gfx::PointF(), gfx::PointF(new_pivot.x() - old_pivot.x(),
                                      new_pivot.y() - old_pivot.y())));
 
   float scale_factor = 0.9f;
-  scoped_ptr<ui::InterpolatedTransform> scale_down(
+  std::unique_ptr<ui::InterpolatedTransform> scale_down(
       new ui::InterpolatedScale(1.0f, scale_factor, 0.0f, 0.5f));
 
-  scoped_ptr<ui::InterpolatedTransform> scale_up(
+  std::unique_ptr<ui::InterpolatedTransform> scale_up(
       new ui::InterpolatedScale(1.0f, 1.0f / scale_factor, 0.5f, 1.0f));
 
   interpolated_transform_.reset(
@@ -102,8 +101,7 @@ void WindowRotation::InitTransform(ui::Layer* layer) {
   interpolated_transform_->SetChild(rotation.release());
 }
 
-void WindowRotation::OnStart(ui::LayerAnimationDelegate* delegate) {
-}
+void WindowRotation::OnStart(ui::LayerAnimationDelegate* delegate) {}
 
 bool WindowRotation::OnProgress(double t,
                                 ui::LayerAnimationDelegate* delegate) {
@@ -115,7 +113,6 @@ void WindowRotation::OnGetTarget(TargetValue* target) const {
   target->transform = interpolated_transform_->Interpolate(1.0);
 }
 
-void WindowRotation::OnAbort(ui::LayerAnimationDelegate* delegate) {
-}
+void WindowRotation::OnAbort(ui::LayerAnimationDelegate* delegate) {}
 
 }  // namespace ash

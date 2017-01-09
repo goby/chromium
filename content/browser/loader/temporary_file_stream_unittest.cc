@@ -5,13 +5,13 @@
 #include "content/browser/loader/temporary_file_stream.h"
 
 #include <string.h>
-
 #include <string>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/file_stream.h"
@@ -39,10 +39,10 @@ class WaitForFileStream {
   }
 
   void OnFileStreamCreated(base::File::Error error,
-                           scoped_ptr<net::FileStream> file_stream,
+                           std::unique_ptr<net::FileStream> file_stream,
                            ShareableFileReference* deletable_file) {
     error_ = error;
-    file_stream_ = file_stream.Pass();
+    file_stream_ = std::move(file_stream);
     deletable_file_ = deletable_file;
     loop_.Quit();
   }
@@ -58,7 +58,7 @@ class WaitForFileStream {
  private:
   base::RunLoop loop_;
   base::File::Error error_;
-  scoped_ptr<net::FileStream> file_stream_;
+  std::unique_ptr<net::FileStream> file_stream_;
   scoped_refptr<ShareableFileReference> deletable_file_;
 };
 
@@ -111,7 +111,7 @@ TEST(TemporaryFileStreamTest, Basic) {
 
   // Release everything. The file should be gone now.
   file_stream_waiter.Release();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The temporary should be gone now.
   EXPECT_FALSE(base::PathExists(file_path));

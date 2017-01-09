@@ -10,16 +10,22 @@ noop();
 
 Running: inlinedScriptFormatting
 ====== 8< ------
-<html><body><script>
-function f() {}
-</script><script>
-function g() {
-    var a;
-    window.return = 10;
-    if (a)
-        return;
-}
-</script></body></html>
+<html>
+    <body>
+        <script>
+            function f() {}
+        </script>
+        <script>
+            function g() {
+                var a;
+                window.return = 10;
+                if (a)
+                    return;
+            }
+        </script>
+    </body>
+</html>
+
 ------ >8 ======
 
 Running: generatorFormatter
@@ -79,4 +85,17 @@ Correct mapping for <setTimeout>
 Correct mapping for <function>
 Correct mapping for <alert>
 Correct mapping for <2000>
+
+Running: arrowFunction
+====== 8< ------
+function test(arg) {
+    console.log(arg);
+}
+test(a=>a + 2);
+
+------ >8 ======
+Correct mapping for <function>
+Correct mapping for <console>
+Correct mapping for <=>>
+Correct mapping for <2>
 

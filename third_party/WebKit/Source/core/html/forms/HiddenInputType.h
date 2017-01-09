@@ -32,29 +32,36 @@
 #define HiddenInputType_h
 
 #include "core/html/forms/InputType.h"
+#include "core/html/forms/InputTypeView.h"
 
 namespace blink {
 
-class HiddenInputType final : public InputType {
-public:
-    static PassRefPtrWillBeRawPtr<InputType> create(HTMLInputElement&);
+class HiddenInputType final : public InputType, private InputTypeView {
+  USING_GARBAGE_COLLECTED_MIXIN(HiddenInputType);
 
-private:
-    HiddenInputType(HTMLInputElement& element) : InputType(element) { }
-    const AtomicString& formControlType() const override;
-    FormControlState saveFormControlState() const override;
-    void restoreFormControlState(const FormControlState&) override;
-    bool supportsValidation() const override;
-    LayoutObject* createLayoutObject(const ComputedStyle&) const override;
-    void accessKeyAction(bool sendMouseEvents) override;
-    bool layoutObjectIsNeeded() override;
-    bool storesValueSeparateFromAttribute() override;
-    bool isInteractiveContent() const override { return false; }
-    bool shouldRespectHeightAndWidthAttributes() override;
-    void setValue(const String&, bool, TextFieldEventBehavior) override;
-    void appendToFormData(FormData&) const override;
+ public:
+  static InputType* create(HTMLInputElement&);
+  DECLARE_VIRTUAL_TRACE();
+  using InputType::element;
+
+ private:
+  HiddenInputType(HTMLInputElement& element)
+      : InputType(element), InputTypeView(element) {}
+  InputTypeView* createView() override;
+  const AtomicString& formControlType() const override;
+  FormControlState saveFormControlState() const override;
+  void restoreFormControlState(const FormControlState&) override;
+  bool supportsValidation() const override;
+  LayoutObject* createLayoutObject(const ComputedStyle&) const override;
+  void accessKeyAction(bool sendMouseEvents) override;
+  bool layoutObjectIsNeeded() override;
+  ValueMode valueMode() const override;
+  bool isInteractiveContent() const override { return false; }
+  bool shouldRespectHeightAndWidthAttributes() override;
+  void setValue(const String&, bool, TextFieldEventBehavior) override;
+  void appendToFormData(FormData&) const override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HiddenInputType_h
+#endif  // HiddenInputType_h

@@ -6,12 +6,22 @@
 
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/timer/timer.h"
 
-StatusChangeChecker::StatusChangeChecker() : timed_out_(false) {
-}
+StatusChangeChecker::StatusChangeChecker() : timed_out_(false) {}
 
 StatusChangeChecker::~StatusChangeChecker() {}
+
+bool StatusChangeChecker::Wait() {
+  if (IsExitConditionSatisfied()) {
+    DVLOG(1) << "Already satisfied: " << GetDebugMessage();
+  } else {
+    DVLOG(1) << "Blocking: " << GetDebugMessage();
+    StartBlockingWait();
+  }
+  return !TimedOut();
+}
 
 bool StatusChangeChecker::TimedOut() const {
   return timed_out_;
@@ -31,7 +41,7 @@ void StatusChangeChecker::StartBlockingWait() {
   {
     base::MessageLoop* loop = base::MessageLoop::current();
     base::MessageLoop::ScopedNestableTaskAllower allow(loop);
-    loop->Run();
+    base::RunLoop().Run();
   }
 }
 

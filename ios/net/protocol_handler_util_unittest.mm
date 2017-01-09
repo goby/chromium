@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "ios/net/protocol_handler_util.h"
+
+#include <memory>
+#include <utility>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
-#import "ios/net/protocol_handler_util.h"
 #include "net/base/elements_upload_data_stream.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/base/upload_bytes_element_reader.h"
@@ -111,9 +115,9 @@ class ProtocolHandlerUtilTest : public testing::Test,
   ProtocolHandlerUtilTest() : request_context_(new TestURLRequestContext) {
     // Ownership of the protocol handlers is transferred to the factory.
     job_factory_.SetProtocolHandler("http",
-                                    make_scoped_ptr(new NetProtocolHandler));
+                                    base::WrapUnique(new NetProtocolHandler));
     job_factory_.SetProtocolHandler("data",
-                                    make_scoped_ptr(new DataProtocolHandler));
+                                    base::WrapUnique(new DataProtocolHandler));
     request_context_->set_job_factory(&job_factory_);
   }
 
@@ -128,7 +132,7 @@ class ProtocolHandlerUtilTest : public testing::Test,
     url_string += ",";
     GURL url(url_string);
 
-    scoped_ptr<URLRequest> request(
+    std::unique_ptr<URLRequest> request(
         request_context_->CreateRequest(url, DEFAULT_PRIORITY, this));
     request->Start();
     base::RunLoop loop;
@@ -146,13 +150,13 @@ class ProtocolHandlerUtilTest : public testing::Test,
     EXPECT_TRUE([response isMemberOfClass:[NSURLResponse class]]);
   }
 
-  void OnResponseStarted(URLRequest* request) override {}
+  void OnResponseStarted(URLRequest* request, int net_error) override {}
   void OnReadCompleted(URLRequest* request, int bytes_read) override {}
 
  protected:
   base::MessageLoop loop_;
   URLRequestJobFactoryImpl job_factory_;
-  scoped_ptr<URLRequestContext> request_context_;
+  std::unique_ptr<URLRequestContext> request_context_;
 };
 
 }  // namespace
@@ -170,7 +174,7 @@ TEST_F(ProtocolHandlerUtilTest, GetResponseDataSchemeTest) {
 TEST_F(ProtocolHandlerUtilTest, GetResponseHttpTest) {
   // Create a request.
   GURL url(std::string("http://url"));
-  scoped_ptr<URLRequest> request(
+  std::unique_ptr<URLRequest> request(
       request_context_->CreateRequest(url, DEFAULT_PRIORITY, this));
   request->Start();
   // Create a response from the request.
@@ -197,7 +201,7 @@ TEST_F(ProtocolHandlerUtilTest, BadHttpContentType) {
   // Create a request using the magic domain that triggers a garbage
   // content-type in the test framework.
   GURL url(std::string("http://badcontenttype"));
-  scoped_ptr<URLRequest> request(
+  std::unique_ptr<URLRequest> request(
       request_context_->CreateRequest(url, DEFAULT_PRIORITY, this));
   request->Start();
   // Create a response from the request.
@@ -213,7 +217,7 @@ TEST_F(ProtocolHandlerUtilTest, MultipleHttpContentType) {
   // Create a request using the magic domain that triggers a garbage
   // content-type in the test framework.
   GURL url(std::string("http://multiplecontenttype"));
-  scoped_ptr<URLRequest> request(
+  std::unique_ptr<URLRequest> request(
       request_context_->CreateRequest(url, DEFAULT_PRIORITY, this));
   request->Start();
   // Create a response from the request.
@@ -236,7 +240,7 @@ TEST_F(ProtocolHandlerUtilTest, CopyHttpHeaders) {
       @"Accept" : @"money/cash",
       @"Foo" : @"bar",
   }];
-  scoped_ptr<URLRequest> out_request(
+  std::unique_ptr<URLRequest> out_request(
       request_context_->CreateRequest(url, DEFAULT_PRIORITY, nullptr));
   CopyHttpHeaders(in_request, out_request.get());
 
@@ -255,13 +259,13 @@ TEST_F(ProtocolHandlerUtilTest, AddMissingHeaders) {
   GURL url(std::string("http://url"));
   base::scoped_nsobject<NSMutableURLRequest> in_request(
       [[NSMutableURLRequest alloc] initWithURL:NSURLWithGURL(url)]);
-  scoped_ptr<URLRequest> out_request(
+  std::unique_ptr<URLRequest> out_request(
       request_context_->CreateRequest(url, DEFAULT_PRIORITY, nullptr));
   out_request->set_method("POST");
-  scoped_ptr<UploadElementReader> reader(
+  std::unique_ptr<UploadElementReader> reader(
       new UploadBytesElementReader(nullptr, 0));
   out_request->set_upload(
-      ElementsUploadDataStream::CreateWithReader(reader.Pass(), 0));
+      ElementsUploadDataStream::CreateWithReader(std::move(reader), 0));
   CopyHttpHeaders(in_request, out_request.get());
 
   // Some headers are added by default if missing.

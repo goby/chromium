@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -12,13 +13,13 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/affiliated_cloud_policy_invalidator.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
@@ -36,13 +37,12 @@
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/cloud/resource_cache.h"
-#include "components/policy/core/common/cloud/system_policy_request_context.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_switches.h"
+#include "components/policy/policy_constants.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "policy/policy_constants.h"
-#include "policy/proto/device_management_backend.pb.h"
 #include "url/gurl.h"
 
 namespace em = enterprise_management;
@@ -52,29 +52,28 @@ namespace policy {
 namespace {
 
 // Creates and initializes a cloud policy client. Returns nullptr if the device
-// is not enterprise-enrolled.
-scoped_ptr<CloudPolicyClient> CreateClient(
+// doesn't have credentials in device settings (i.e. is not
+// enterprise-enrolled).
+std::unique_ptr<CloudPolicyClient> CreateClient(
     chromeos::DeviceSettingsService* device_settings_service,
     DeviceManagementService* device_management_service,
     scoped_refptr<net::URLRequestContextGetter> system_request_context) {
   const em::PolicyData* policy_data = device_settings_service->policy_data();
   if (!policy_data ||
-      GetManagementMode(*policy_data) != MANAGEMENT_MODE_ENTERPRISE_MANAGED ||
+      !policy_data->has_request_token() ||
+      !policy_data->has_device_id() ||
       !device_management_service) {
-    return scoped_ptr<CloudPolicyClient>();
+    return std::unique_ptr<CloudPolicyClient>();
   }
 
-  scoped_refptr<net::URLRequestContextGetter> request_context =
-      new SystemPolicyRequestContext(
-          system_request_context, GetUserAgent());
-
-  scoped_ptr<CloudPolicyClient> client(
-      new CloudPolicyClient(std::string(), std::string(),
-                            kPolicyVerificationKeyHash,
-                            device_management_service, request_context));
+  std::unique_ptr<CloudPolicyClient> client =
+      base::MakeUnique<CloudPolicyClient>(
+          std::string() /* machine_id */, std::string() /* machine_model */,
+          device_management_service, system_request_context,
+          nullptr /* signing_service */);
   client->SetupRegistration(policy_data->request_token(),
                             policy_data->device_id());
-  return client.Pass();
+  return client;
 }
 
 // Get the subdirectory of the force-installed extension cache and the component
@@ -95,7 +94,7 @@ void DeleteOrphanedCaches(
   for (base::FilePath path = enumerator.Next(); !path.empty();
        path = enumerator.Next()) {
     const std::string subdirectory(path.BaseName().MaybeAsASCII());
-    if (!ContainsKey(subdirectories_to_keep, subdirectory))
+    if (!base::ContainsKey(subdirectories_to_keep, subdirectory))
       base::DeleteFile(path, true);
   }
 }
@@ -118,7 +117,7 @@ void DeleteObsoleteExtensionCache(const std::string& account_id_to_delete) {
 DeviceLocalAccountPolicyBroker::DeviceLocalAccountPolicyBroker(
     const DeviceLocalAccount& account,
     const base::FilePath& component_policy_cache_path,
-    scoped_ptr<DeviceLocalAccountPolicyStore> store,
+    std::unique_ptr<DeviceLocalAccountPolicyStore> store,
     scoped_refptr<DeviceLocalAccountExternalDataManager> external_data_manager,
     const base::Closure& policy_update_callback,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
@@ -127,14 +126,17 @@ DeviceLocalAccountPolicyBroker::DeviceLocalAccountPolicyBroker(
       account_id_(account.account_id),
       user_id_(account.user_id),
       component_policy_cache_path_(component_policy_cache_path),
-      store_(store.Pass()),
-      extension_tracker_(account, store_.get(), &schema_registry_),
+      store_(std::move(store)),
       external_data_manager_(external_data_manager),
       core_(dm_protocol::kChromePublicAccountPolicyType,
             store_->account_id(),
             store_.get(),
             task_runner),
       policy_update_callback_(policy_update_callback) {
+  if (account.type != DeviceLocalAccount::TYPE_ARC_KIOSK_APP) {
+    extension_tracker_.reset(new DeviceLocalAccountExtensionTracker(
+        account, store_.get(), &schema_registry_));
+  }
   base::FilePath cache_root_dir;
   CHECK(PathService::Get(chromeos::DIR_DEVICE_LOCAL_ACCOUNT_EXTENSIONS,
                          &cache_root_dir));
@@ -149,8 +151,7 @@ DeviceLocalAccountPolicyBroker::DeviceLocalAccountPolicyBroker(
   schema_registry_.RegisterComponent(
       PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()),
       g_browser_process->browser_policy_connector()->GetChromeSchema());
-  schema_registry_.SetReady(POLICY_DOMAIN_CHROME);
-  schema_registry_.SetReady(POLICY_DOMAIN_EXTENSIONS);
+  schema_registry_.SetAllDomainsReady();
 }
 
 DeviceLocalAccountPolicyBroker::~DeviceLocalAccountPolicyBroker() {
@@ -164,7 +165,7 @@ void DeviceLocalAccountPolicyBroker::Initialize() {
 }
 
 bool DeviceLocalAccountPolicyBroker::HasInvalidatorForTest() const {
-  return invalidator_;
+  return invalidator_ != nullptr;
 }
 
 void DeviceLocalAccountPolicyBroker::ConnectIfPossible(
@@ -174,14 +175,13 @@ void DeviceLocalAccountPolicyBroker::ConnectIfPossible(
   if (core_.client())
     return;
 
-  scoped_ptr<CloudPolicyClient> client(CreateClient(device_settings_service,
-                                                    device_management_service,
-                                                    request_context));
+  std::unique_ptr<CloudPolicyClient> client(CreateClient(
+      device_settings_service, device_management_service, request_context));
   if (!client)
     return;
 
   CreateComponentCloudPolicyService(request_context, client.get());
-  core_.Connect(client.Pass());
+  core_.Connect(std::move(client));
   external_data_manager_->Connect(request_context);
   core_.StartRefreshScheduler();
   UpdateRefreshDelay();
@@ -197,7 +197,7 @@ void DeviceLocalAccountPolicyBroker::UpdateRefreshDelay() {
         store_->policy_map().GetValue(key::kPolicyRefreshRate);
     int delay = 0;
     if (policy_value && policy_value->GetAsInteger(&delay))
-      core_.refresh_scheduler()->SetRefreshDelay(delay);
+      core_.refresh_scheduler()->SetDesiredRefreshDelay(delay);
   }
 }
 
@@ -232,21 +232,17 @@ void DeviceLocalAccountPolicyBroker::CreateComponentCloudPolicyService(
     return;
   }
 
-  scoped_ptr<ResourceCache> resource_cache(
+  std::unique_ptr<ResourceCache> resource_cache(
       new ResourceCache(component_policy_cache_path_,
-                        content::BrowserThread::GetMessageLoopProxyForThread(
+                        content::BrowserThread::GetTaskRunnerForThread(
                             content::BrowserThread::FILE)));
 
   component_policy_service_.reset(new ComponentCloudPolicyService(
-      this,
-      &schema_registry_,
-      core(),
-      client,
-      resource_cache.Pass(),
-      request_context,
-      content::BrowserThread::GetMessageLoopProxyForThread(
+      dm_protocol::kChromeExtensionPolicyType, this, &schema_registry_, core(),
+      client, std::move(resource_cache), request_context,
+      content::BrowserThread::GetTaskRunnerForThread(
           content::BrowserThread::FILE),
-      content::BrowserThread::GetMessageLoopProxyForThread(
+      content::BrowserThread::GetTaskRunnerForThread(
           content::BrowserThread::IO)));
 }
 
@@ -432,7 +428,10 @@ void DeviceLocalAccountPolicyService::UpdateAccountList() {
       break;
     case chromeos::CrosSettingsProvider::TEMPORARILY_UNTRUSTED:
       waiting_for_cros_settings_ = true;
-      return;
+      // Purposely break to allow initialization with temporarily untrusted
+      // settings so that a crash-n-restart public session have its loader
+      // properly registered as ExtensionService's external provider.
+      break;
     case chromeos::CrosSettingsProvider::PERMANENTLY_UNTRUSTED:
       waiting_for_cros_settings_ = false;
       return;
@@ -449,7 +448,7 @@ void DeviceLocalAccountPolicyService::UpdateAccountList() {
        it != device_local_accounts.end(); ++it) {
     PolicyBrokerMap::iterator broker_it = old_policy_brokers.find(it->user_id);
 
-    scoped_ptr<DeviceLocalAccountPolicyBroker> broker;
+    std::unique_ptr<DeviceLocalAccountPolicyBroker> broker;
     bool broker_initialized = false;
     if (broker_it != old_policy_brokers.end()) {
       // Reuse the existing broker if present.
@@ -457,26 +456,21 @@ void DeviceLocalAccountPolicyService::UpdateAccountList() {
       old_policy_brokers.erase(broker_it);
       broker_initialized = true;
     } else {
-      scoped_ptr<DeviceLocalAccountPolicyStore> store(
-          new DeviceLocalAccountPolicyStore(it->account_id,
-                                            session_manager_client_,
-                                            device_settings_service_,
-                                            store_background_task_runner_));
+      std::unique_ptr<DeviceLocalAccountPolicyStore> store(
+          new DeviceLocalAccountPolicyStore(
+              it->account_id, session_manager_client_, device_settings_service_,
+              store_background_task_runner_));
       scoped_refptr<DeviceLocalAccountExternalDataManager>
           external_data_manager =
               external_data_service_->GetExternalDataManager(it->account_id,
                                                              store.get());
       broker.reset(new DeviceLocalAccountPolicyBroker(
-          *it,
-          component_policy_cache_root_.Append(
-              GetCacheSubdirectoryForAccountID(it->account_id)),
-          store.Pass(),
-          external_data_manager,
+          *it, component_policy_cache_root_.Append(
+                   GetCacheSubdirectoryForAccountID(it->account_id)),
+          std::move(store), external_data_manager,
           base::Bind(&DeviceLocalAccountPolicyService::NotifyPolicyUpdated,
-                     base::Unretained(this),
-                     it->user_id),
-          base::ThreadTaskRunnerHandle::Get(),
-          invalidation_service_provider_));
+                     base::Unretained(this), it->user_id),
+          base::ThreadTaskRunnerHandle::Get(), invalidation_service_provider_));
     }
 
     // Fire up the cloud connection for fetching policy for the account from
@@ -543,7 +537,8 @@ void DeviceLocalAccountPolicyService::UpdateAccountList() {
                                               component_policy_cache_root_,
                                               subdirectories_to_keep));
 
-  FOR_EACH_OBSERVER(Observer, observers_, OnDeviceLocalAccountsChanged());
+  for (auto& observer : observers_)
+    observer.OnDeviceLocalAccountsChanged();
 }
 
 void DeviceLocalAccountPolicyService::DeleteBrokers(PolicyBrokerMap* map) {
@@ -577,7 +572,8 @@ DeviceLocalAccountPolicyBroker*
 
 void DeviceLocalAccountPolicyService::NotifyPolicyUpdated(
     const std::string& user_id) {
-  FOR_EACH_OBSERVER(Observer, observers_, OnPolicyUpdated(user_id));
+  for (auto& observer : observers_)
+    observer.OnPolicyUpdated(user_id);
 }
 
 }  // namespace policy

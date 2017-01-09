@@ -6,6 +6,7 @@ package org.chromium.content.browser;
 
 import android.os.Bundle;
 
+import org.chromium.content.common.FileDescriptorInfo;
 import org.chromium.content.common.IChildProcessCallback;
 import org.chromium.content.common.IChildProcessService;
 
@@ -36,22 +37,11 @@ public interface ChildProcessConnection {
         void onConnected(int pid);
     }
 
-    // Names of items placed in the bind intent or connection bundle.
-    public static final String EXTRA_COMMAND_LINE =
-            "com.google.android.apps.chrome.extra.command_line";
-    // Note the FDs may only be passed in the connection bundle.
-    public static final String EXTRA_FILES = "com.google.android.apps.chrome.extra.extraFiles";
-
-    // Used to pass the CPU core count to child processes.
-    public static final String EXTRA_CPU_COUNT =
-            "com.google.android.apps.chrome.extra.cpu_count";
-    // Used to pass the CPU features mask to child processes.
-    public static final String EXTRA_CPU_FEATURES =
-            "com.google.android.apps.chrome.extra.cpu_features";
-
     int getServiceNumber();
 
     boolean isInSandbox();
+
+    String getPackageName();
 
     IChildProcessService getService();
 

@@ -4,16 +4,16 @@
 
 from collections import defaultdict
 from itertools import starmap
-from telemetry.core import exceptions
 from telemetry.core import util
-from telemetry.page import action_runner
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.value import scalar
 
 from measurements import timeline_controller
+import py_utils
 
 
-class BlinkStyle(page_test.PageTest):
+class BlinkStyle(legacy_page_test.LegacyPageTest):
+
   def __init__(self):
     super(BlinkStyle, self).__init__()
     self._controller = None
@@ -29,12 +29,11 @@ class BlinkStyle(page_test.PageTest):
       self._controller.CleanUp(platform)
 
   def ValidateAndMeasurePage(self, page, tab, results):
-    runner = action_runner.ActionRunner(tab)
-    with runner.CreateInteraction('wait-for-quiescence'):
+    with tab.action_runner.CreateInteraction('wait-for-quiescence'):
       tab.ExecuteJavaScript('console.time("");')
       try:
         util.WaitFor(tab.HasReachedQuiescence, 15)
-      except exceptions.TimeoutException:
+      except py_utils.TimeoutException:
         # Some sites never reach quiesence. As this benchmark normalizes/
         # categories results, it shouldn't be necessary to reach the same
         # state on every run.
@@ -66,7 +65,7 @@ class BlinkStyle(page_test.PageTest):
     renderer = self._controller.model.GetRendererThreadFromTabId(tab.id)
     markers = [event for event in renderer.async_slices
                if event.name.startswith('update_style')
-                  and event.category == 'blink.console']
+               and event.category == 'blink.console']
     # Drop the first run.
     markers = markers[1:]
     assert len(markers) == 10
@@ -94,6 +93,7 @@ class BlinkStyle(page_test.PageTest):
                 page, marker.name, 'ms/1000 elements', result))
 
     class ParserEvent(object):
+
       def __init__(self, summary_event, tokenize_event, parse_event):
         min_sheet_length = 1000
         ua_sheet_mode = 5
@@ -122,7 +122,7 @@ class BlinkStyle(page_test.PageTest):
                      or event.name == 'CSSParserImpl::parseStyleSheet.tokenize'
                      or event.name == 'CSSParserImpl::parseStyleSheet.parse']
 
-    merged_events = starmap(ParserEvent, zip(*[iter(parser_events)]*3))
+    merged_events = starmap(ParserEvent, zip(*[iter(parser_events)] * 3))
 
     events_by_category = defaultdict(list)
     for event in merged_events:

@@ -4,6 +4,8 @@
 
 #include "ui/views/controls/styled_label.h"
 
+#include <stddef.h>
+
 #include <limits>
 #include <vector>
 
@@ -30,12 +32,12 @@ int CalculateLineHeight(const gfx::FontList& font_list) {
   return label.GetPreferredSize().height();
 }
 
-scoped_ptr<Label> CreateLabelRange(
+std::unique_ptr<Label> CreateLabelRange(
     const base::string16& text,
     const gfx::FontList& font_list,
     const StyledLabel::RangeStyleInfo& style_info,
     views::LinkListener* link_listener) {
-  scoped_ptr<Label> result;
+  std::unique_ptr<Label> result;
 
   if (style_info.is_link) {
     Link* link = new Link(text);
@@ -52,12 +54,13 @@ scoped_ptr<Label> CreateLabelRange(
 
   if (!style_info.tooltip.empty())
     result->SetTooltipText(style_info.tooltip);
-  if (style_info.font_style != gfx::Font::NORMAL) {
-    result->SetFontList(
-        result->font_list().DeriveWithStyle(style_info.font_style));
+  if (style_info.font_style != gfx::Font::NORMAL ||
+      style_info.weight != gfx::Font::Weight::NORMAL) {
+    result->SetFontList(result->font_list().Derive(0, style_info.font_style,
+                                                   style_info.weight));
   }
 
-  return result.Pass();
+  return result;
 }
 
 }  // namespace
@@ -67,6 +70,7 @@ scoped_ptr<Label> CreateLabelRange(
 
 StyledLabel::RangeStyleInfo::RangeStyleInfo()
     : font_style(gfx::Font::NORMAL),
+      weight(gfx::Font::Weight::NORMAL),
       color(SK_ColorTRANSPARENT),
       disable_line_wrapping(false),
       is_link(false) {}
@@ -97,7 +101,8 @@ const char StyledLabel::kViewClassName[] = "StyledLabel";
 
 StyledLabel::StyledLabel(const base::string16& text,
                          StyledLabelListener* listener)
-    : specified_line_height_(0),
+    : font_list_(Label().font_list()),
+      specified_line_height_(0),
       listener_(listener),
       width_at_last_size_calculation_(0),
       width_at_last_layout_(0),
@@ -244,6 +249,7 @@ gfx::Size StyledLabel::CalculateAndDoLayout(int width, bool dry_run) {
   // The x position (in pixels) of the line we're on, relative to content
   // bounds.
   int x = 0;
+  int total_height = 0;
   // The width that was actually used. Guaranteed to be no larger than |width|.
   int used_width = 0;
 
@@ -273,8 +279,9 @@ gfx::Size StyledLabel::CalculateAndDoLayout(int width, bool dry_run) {
     // style may differ from the base font. The font specified by the range
     // should be used when eliding text.
     if (position >= range.start()) {
-      text_font_list = text_font_list.DeriveWithStyle(
-          current_range->style_info.font_style);
+      text_font_list =
+          text_font_list.Derive(0, current_range->style_info.font_style,
+                                current_range->style_info.weight);
     }
     gfx::ElideRectangleText(remaining_string,
                             text_font_list,
@@ -304,7 +311,7 @@ gfx::Size StyledLabel::CalculateAndDoLayout(int width, bool dry_run) {
 
     base::string16 chunk = substrings[0];
 
-    scoped_ptr<Label> label;
+    std::unique_ptr<Label> label;
     if (position >= range.start()) {
       const RangeStyleInfo& style_info = current_range->style_info;
 
@@ -343,16 +350,16 @@ gfx::Size StyledLabel::CalculateAndDoLayout(int width, bool dry_run) {
     gfx::Insets focus_border_insets(label->GetInsets());
     focus_border_insets += -label->View::GetInsets();
     const gfx::Size view_size = label->GetPreferredSize();
-    if (!dry_run) {
-      label->SetBoundsRect(gfx::Rect(
-          gfx::Point(GetInsets().left() + x - focus_border_insets.left(),
-                     GetInsets().top() + line * line_height -
-                         focus_border_insets.top()),
-          view_size));
-      AddChildView(label.release());
-    }
+    label->SetBoundsRect(gfx::Rect(
+        gfx::Point(
+            GetInsets().left() + x - focus_border_insets.left(),
+            GetInsets().top() + line * line_height - focus_border_insets.top()),
+        view_size));
     x += view_size.width() - focus_border_insets.width();
     used_width = std::max(used_width, x);
+    total_height = std::max(total_height, label->bounds().bottom());
+    if (!dry_run)
+      AddChildView(label.release());
 
     // If |gfx::ElideRectangleText| returned more than one substring, that
     // means the whole text did not fit into remaining line width, with text
@@ -368,10 +375,6 @@ gfx::Size StyledLabel::CalculateAndDoLayout(int width, bool dry_run) {
   }
 
   DCHECK_LE(used_width, width);
-  // The user-specified line height only applies to interline spacing, so the
-  // final line's height is unaffected.
-  int total_height = line * line_height +
-      CalculateLineHeight(font_list_) + GetInsets().height();
   calculated_size_ = gfx::Size(used_width + GetInsets().width(), total_height);
   return calculated_size_;
 }

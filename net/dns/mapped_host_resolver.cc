@@ -4,16 +4,17 @@
 
 #include "net/dns/mapped_host_resolver.h"
 
+#include <utility>
+
 #include "base/strings/string_util.h"
+#include "base/values.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 
 namespace net {
 
-MappedHostResolver::MappedHostResolver(scoped_ptr<HostResolver> impl)
-    : impl_(impl.Pass()) {
-}
+MappedHostResolver::MappedHostResolver(std::unique_ptr<HostResolver> impl)
+    : impl_(std::move(impl)) {}
 
 MappedHostResolver::~MappedHostResolver() {
 }
@@ -22,29 +23,25 @@ int MappedHostResolver::Resolve(const RequestInfo& original_info,
                                 RequestPriority priority,
                                 AddressList* addresses,
                                 const CompletionCallback& callback,
-                                RequestHandle* out_req,
-                                const BoundNetLog& net_log) {
+                                std::unique_ptr<Request>* request,
+                                const NetLogWithSource& net_log) {
   RequestInfo info = original_info;
   int rv = ApplyRules(&info);
   if (rv != OK)
     return rv;
 
-  return impl_->Resolve(info, priority, addresses, callback, out_req, net_log);
+  return impl_->Resolve(info, priority, addresses, callback, request, net_log);
 }
 
 int MappedHostResolver::ResolveFromCache(const RequestInfo& original_info,
                                          AddressList* addresses,
-                                         const BoundNetLog& net_log) {
+                                         const NetLogWithSource& net_log) {
   RequestInfo info = original_info;
   int rv = ApplyRules(&info);
   if (rv != OK)
     return rv;
 
   return impl_->ResolveFromCache(info, addresses, net_log);
-}
-
-void MappedHostResolver::CancelRequest(RequestHandle req) {
-  impl_->CancelRequest(req);
 }
 
 void MappedHostResolver::SetDnsClientEnabled(bool enabled) {
@@ -55,7 +52,7 @@ HostCache* MappedHostResolver::GetHostCache() {
   return impl_->GetHostCache();
 }
 
-base::Value* MappedHostResolver::GetDnsConfigAsValue() const {
+std::unique_ptr<base::Value> MappedHostResolver::GetDnsConfigAsValue() const {
   return impl_->GetDnsConfigAsValue();
 }
 

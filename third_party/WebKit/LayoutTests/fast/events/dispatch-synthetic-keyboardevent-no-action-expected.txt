@@ -4,8 +4,8 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 
 
  
-FAIL document.getElementById('radio1').checked should be true. Was false.
-FAIL document.getElementById('radio2').checked should be false. Was true.
+PASS document.getElementById('radio1').checked is true
+PASS document.getElementById('radio2').checked is false
 PASS successfullyParsed is true
 
 TEST COMPLETE

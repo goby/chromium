@@ -5,9 +5,10 @@
 #ifndef NET_DISK_CACHE_SIMPLE_SIMPLE_TEST_UTIL_H_
 #define NET_DISK_CACHE_SIMPLE_SIMPLE_TEST_UTIL_H_
 
+#include <stddef.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 
 namespace base {
@@ -41,6 +42,18 @@ class ImmutableArray {
 // Creates a corrupt file to be used in tests.
 bool CreateCorruptFileForTests(const std::string& key,
                                const base::FilePath& cache_path);
+
+// Removes the key SHA256 from an entry.
+bool RemoveKeySHA256FromEntry(const std::string& key,
+                              const base::FilePath& cache_path);
+
+// Modifies the key SHA256 from an entry so that it is corrupt.
+bool CorruptKeySHA256FromEntry(const std::string& key,
+                               const base::FilePath& cache_path);
+
+// Modifies the stream 0 length field from an entry so it is invalid.
+bool CorruptStream0LengthFromEntry(const std::string& key,
+                                   const base::FilePath& cache_path);
 
 }  // namespace simple_backend
 }  // namespace disk_cache

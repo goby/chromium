@@ -8,8 +8,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
-#include "components/translate/content/common/translate_messages.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/browser/translate_manager.h"
 #include "content/public/browser/browser_context.h"
@@ -39,11 +38,17 @@ ContentTranslateDriver::ContentTranslateDriver(
       navigation_controller_(nav_controller),
       translate_manager_(NULL),
       max_reload_check_attempts_(kMaxTranslateLoadCheckAttempts),
+      next_page_seq_no_(0),
       weak_pointer_factory_(this) {
   DCHECK(navigation_controller_);
 }
 
 ContentTranslateDriver::~ContentTranslateDriver() {}
+
+void ContentTranslateDriver::BindRequest(
+    mojom::ContentTranslateDriverRequest request) {
+  bindings_.AddBinding(this, std::move(request));
+}
 
 void ContentTranslateDriver::AddObserver(Observer* observer) {
   observer_list_.AddObserver(observer);
@@ -81,37 +86,43 @@ void ContentTranslateDriver::InitiateTranslation(const std::string& page_lang,
 bool ContentTranslateDriver::IsLinkNavigation() {
   return navigation_controller_ &&
          navigation_controller_->GetLastCommittedEntry() &&
-         navigation_controller_->GetLastCommittedEntry()->GetTransitionType() ==
-             ui::PAGE_TRANSITION_LINK;
+         ui::PageTransitionCoreTypeIs(
+             navigation_controller_->GetLastCommittedEntry()
+                 ->GetTransitionType(),
+             ui::PAGE_TRANSITION_LINK);
 }
 
 void ContentTranslateDriver::OnTranslateEnabledChanged() {
   content::WebContents* web_contents = navigation_controller_->GetWebContents();
-  FOR_EACH_OBSERVER(
-      Observer, observer_list_, OnTranslateEnabledChanged(web_contents));
+  for (auto& observer : observer_list_)
+    observer.OnTranslateEnabledChanged(web_contents);
 }
 
 void ContentTranslateDriver::OnIsPageTranslatedChanged() {
-    content::WebContents* web_contents =
-        navigation_controller_->GetWebContents();
-    FOR_EACH_OBSERVER(
-        Observer, observer_list_, OnIsPageTranslatedChanged(web_contents));
+  content::WebContents* web_contents = navigation_controller_->GetWebContents();
+  for (auto& observer : observer_list_)
+    observer.OnIsPageTranslatedChanged(web_contents);
 }
 
 void ContentTranslateDriver::TranslatePage(int page_seq_no,
                                            const std::string& translate_script,
                                            const std::string& source_lang,
                                            const std::string& target_lang) {
-  content::WebContents* web_contents = navigation_controller_->GetWebContents();
-  web_contents->GetMainFrame()->Send(new ChromeFrameMsg_TranslatePage(
-      web_contents->GetMainFrame()->GetRoutingID(), page_seq_no,
-      translate_script, source_lang, target_lang));
+  auto it = pages_.find(page_seq_no);
+  if (it == pages_.end())
+    return;  // This page has navigated away.
+
+  it->second->Translate(translate_script, source_lang, target_lang,
+                        base::Bind(&ContentTranslateDriver::OnPageTranslated,
+                                   base::Unretained(this)));
 }
 
 void ContentTranslateDriver::RevertTranslation(int page_seq_no) {
-  content::WebContents* web_contents = navigation_controller_->GetWebContents();
-  web_contents->GetMainFrame()->Send(new ChromeFrameMsg_RevertTranslation(
-      web_contents->GetMainFrame()->GetRoutingID(), page_seq_no));
+  auto it = pages_.find(page_seq_no);
+  if (it == pages_.end())
+    return;  // This page has navigated away.
+
+  it->second->RevertTranslation();
 }
 
 bool ContentTranslateDriver::IsOffTheRecord() {
@@ -135,11 +146,9 @@ bool ContentTranslateDriver::HasCurrentPage() {
 }
 
 void ContentTranslateDriver::OpenUrlInNewTab(const GURL& url) {
-  content::OpenURLParams params(url,
-                                content::Referrer(),
-                                NEW_FOREGROUND_TAB,
-                                ui::PAGE_TRANSITION_LINK,
-                                false);
+  content::OpenURLParams params(url, content::Referrer(),
+                                WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                                ui::PAGE_TRANSITION_LINK, false);
   navigation_controller_->GetWebContents()->OpenURL(params);
 }
 
@@ -174,8 +183,16 @@ void ContentTranslateDriver::NavigationEntryCommitted(
   }
 
   // If not a reload, return.
-  if (entry->GetTransitionType() != ui::PAGE_TRANSITION_RELOAD &&
+  if (!ui::PageTransitionCoreTypeIs(entry->GetTransitionType(),
+                                    ui::PAGE_TRANSITION_RELOAD) &&
       load_details.type != content::NAVIGATION_TYPE_SAME_PAGE) {
+    return;
+  }
+
+  if (entry->GetTransitionType() & ui::PAGE_TRANSITION_FORWARD_BACK) {
+    // Workaround for http://crbug.com/653051: back navigation sometimes have
+    // the reload core type. Once http://crbug.com/669008 got resolved, we
+    // could revisit here for a thorough solution.
     return;
   }
 
@@ -200,54 +217,50 @@ void ContentTranslateDriver::DidNavigateAnyFrame(
     const content::FrameNavigateParams& params) {
   // Let the LanguageState clear its state.
   const bool reload =
-      details.entry->GetTransitionType() == ui::PAGE_TRANSITION_RELOAD ||
+      ui::PageTransitionCoreTypeIs(details.entry->GetTransitionType(),
+                                   ui::PAGE_TRANSITION_RELOAD) ||
       details.type == content::NAVIGATION_TYPE_SAME_PAGE;
   translate_manager_->GetLanguageState().DidNavigate(
       details.is_in_page, details.is_main_frame, reload);
 }
 
-bool ContentTranslateDriver::OnMessageReceived(
-    const IPC::Message& message,
-    content::RenderFrameHost* render_frame_host) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(ContentTranslateDriver, message)
-    IPC_MESSAGE_HANDLER(ChromeFrameHostMsg_TranslateAssignedSequenceNumber,
-                        OnTranslateAssignedSequenceNumber)
-    IPC_MESSAGE_HANDLER(ChromeFrameHostMsg_TranslateLanguageDetermined,
-                        OnLanguageDetermined)
-    IPC_MESSAGE_HANDLER(ChromeFrameHostMsg_PageTranslated, OnPageTranslated)
-  IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled;
+void ContentTranslateDriver::OnPageAway(int page_seq_no) {
+  pages_.erase(page_seq_no);
 }
 
-void ContentTranslateDriver::OnTranslateAssignedSequenceNumber(
-    int page_seq_no) {
-  translate_manager_->set_current_seq_no(page_seq_no);
-}
-
-void ContentTranslateDriver::OnLanguageDetermined(
+// mojom::ContentTranslateDriver implementation.
+void ContentTranslateDriver::RegisterPage(
+    mojom::PagePtr page,
     const LanguageDetectionDetails& details,
     bool page_needs_translation) {
+  pages_[++next_page_seq_no_] = std::move(page);
+  pages_[next_page_seq_no_].set_connection_error_handler(
+      base::Bind(&ContentTranslateDriver::OnPageAway, base::Unretained(this),
+                 next_page_seq_no_));
+  translate_manager_->set_current_seq_no(next_page_seq_no_);
+
   translate_manager_->GetLanguageState().LanguageDetermined(
       details.adopted_language, page_needs_translation);
 
   if (web_contents())
     translate_manager_->InitiateTranslation(details.adopted_language);
 
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnLanguageDetermined(details));
+  for (auto& observer : observer_list_)
+    observer.OnLanguageDetermined(details);
 }
 
 void ContentTranslateDriver::OnPageTranslated(
+    bool cancelled,
     const std::string& original_lang,
     const std::string& translated_lang,
     TranslateErrors::Type error_type) {
+  if (cancelled)
+    return;
+
   translate_manager_->PageTranslated(
       original_lang, translated_lang, error_type);
-  FOR_EACH_OBSERVER(
-      Observer,
-      observer_list_,
-      OnPageTranslated(original_lang, translated_lang, error_type));
+  for (auto& observer : observer_list_)
+    observer.OnPageTranslated(original_lang, translated_lang, error_type);
 }
 
 }  // namespace translate

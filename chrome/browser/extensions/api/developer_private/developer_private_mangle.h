@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_DEVELOPER_PRIVATE_DEVELOPER_PRIVATE_MANGLE_H_
 #define CHROME_BROWSER_EXTENSIONS_API_DEVELOPER_PRIVATE_DEVELOPER_PRIVATE_MANGLE_H_
 
-#include "base/memory/linked_ptr.h"
-
 namespace extensions {
 
 namespace api {
@@ -21,7 +19,7 @@ namespace developer_private_mangle {
 // Converts a developer_private::ExtensionInfo into a
 // developer_private::ItemInfo for compatability with deprecated API
 // functions.
-linked_ptr<api::developer_private::ItemInfo> MangleExtensionInfo(
+api::developer_private::ItemInfo MangleExtensionInfo(
     const api::developer_private::ExtensionInfo& info);
 
 }  // namespace developer_private_mangle

@@ -5,9 +5,9 @@
 #ifndef TOOLS_GN_DEPS_ITERATOR_H_
 #define TOOLS_GN_DEPS_ITERATOR_H_
 
-#include "tools/gn/label_ptr.h"
+#include <stddef.h>
 
-class Target;
+#include "tools/gn/label_ptr.h"
 
 // Provides an iterator for iterating over multiple LabelTargetVectors to
 // make it convenient to iterate over all deps of a target.

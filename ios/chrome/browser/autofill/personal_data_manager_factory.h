@@ -5,8 +5,9 @@
 #ifndef IOS_CHROME_BROWSER_AUTOFILL_PERSONAL_DATA_MANAGER_FACTORY_H_
 #define IOS_CHROME_BROWSER_AUTOFILL_PERSONAL_DATA_MANAGER_FACTORY_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
 
 namespace base {
@@ -14,19 +15,19 @@ template <typename T>
 struct DefaultSingletonTraits;
 }  // namespace base
 
-namespace autofill {
-class PersonalDataManager;
-}
-
 namespace ios {
 class ChromeBrowserState;
 }
+
+namespace autofill {
+
+class PersonalDataManager;
 
 // Singleton that owns all PersonalDataManagers and associates them with
 // ios::ChromeBrowserState.
 class PersonalDataManagerFactory : public BrowserStateKeyedServiceFactory {
  public:
-  static autofill::PersonalDataManager* GetForBrowserState(
+  static PersonalDataManager* GetForBrowserState(
       ios::ChromeBrowserState* browser_state);
   static PersonalDataManagerFactory* GetInstance();
 
@@ -37,10 +38,12 @@ class PersonalDataManagerFactory : public BrowserStateKeyedServiceFactory {
   ~PersonalDataManagerFactory() override;
 
   // BrowserStateKeyedServiceFactory implementation.
-  scoped_ptr<KeyedService> BuildServiceInstanceFor(
+  std::unique_ptr<KeyedService> BuildServiceInstanceFor(
       web::BrowserState* context) const override;
 
   DISALLOW_COPY_AND_ASSIGN(PersonalDataManagerFactory);
 };
+
+}  // namespace autofill
 
 #endif  // IOS_CHROME_BROWSER_AUTOFILL_PERSONAL_DATA_MANAGER_FACTORY_H_

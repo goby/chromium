@@ -62,7 +62,8 @@ AppCacheHost::AppCacheHost(int host_id, AppCacheFrontend* frontend,
 
 AppCacheHost::~AppCacheHost() {
   service_->RemoveObserver(this);
-  FOR_EACH_OBSERVER(Observer, observers_, OnDestructionImminent(this));
+  for (auto& observer : observers_)
+    observer.OnDestructionImminent(this);
   if (associated_cache_.get())
     associated_cache_->UnassociateHost(this);
   if (group_being_updated_.get())
@@ -81,7 +82,7 @@ void AppCacheHost::RemoveObserver(Observer* observer) {
 }
 
 bool AppCacheHost::SelectCache(const GURL& document_url,
-                               const int64 cache_document_was_loaded_from,
+                               const int64_t cache_document_was_loaded_from,
                                const GURL& manifest_url) {
   if (was_select_cache_called_)
     return false;
@@ -170,7 +171,7 @@ bool AppCacheHost::SelectCacheForWorker(int parent_process_id,
   return true;
 }
 
-bool AppCacheHost::SelectCacheForSharedWorker(int64 appcache_id) {
+bool AppCacheHost::SelectCacheForSharedWorker(int64_t appcache_id) {
   if (was_select_cache_called_)
     return false;
 
@@ -190,7 +191,7 @@ bool AppCacheHost::SelectCacheForSharedWorker(int64 appcache_id) {
 
 // TODO(michaeln): change method name to MarkEntryAsForeign for consistency
 bool AppCacheHost::MarkAsForeignEntry(const GURL& document_url,
-                                      int64 cache_document_was_loaded_from) {
+                                      int64_t cache_document_was_loaded_from) {
   if (was_select_cache_called_)
     return false;
 
@@ -378,13 +379,13 @@ void AppCacheHost::OnGroupLoaded(AppCacheGroup* group,
   FinishCacheSelection(NULL, group);
 }
 
-void AppCacheHost::LoadSelectedCache(int64 cache_id) {
+void AppCacheHost::LoadSelectedCache(int64_t cache_id) {
   DCHECK(cache_id != kAppCacheNoCacheId);
   pending_selected_cache_id_ = cache_id;
   storage()->LoadCache(cache_id, this);
 }
 
-void AppCacheHost::OnCacheLoaded(AppCache* cache, int64 cache_id) {
+void AppCacheHost::OnCacheLoaded(AppCache* cache, int64_t cache_id) {
   if (cache_id == pending_main_resource_cache_id_) {
     pending_main_resource_cache_id_ = kAppCacheNoCacheId;
     main_resource_cache_ = cache;
@@ -453,7 +454,8 @@ void AppCacheHost::FinishCacheSelection(
   else if (!pending_swap_cache_callback_.is_null())
     DoPendingSwapCache();
 
-  FOR_EACH_OBSERVER(Observer, observers_, OnCacheSelectionComplete(this));
+  for (auto& observer : observers_)
+    observer.OnCacheSelectionComplete(this);
 }
 
 void AppCacheHost::OnServiceReinitialized(
@@ -503,7 +505,7 @@ void AppCacheHost::SetSwappableCache(AppCacheGroup* group) {
   }
 }
 
-void AppCacheHost::LoadMainResourceCache(int64 cache_id) {
+void AppCacheHost::LoadMainResourceCache(int64_t cache_id) {
   DCHECK(cache_id != kAppCacheNoCacheId);
   if (pending_main_resource_cache_id_ == cache_id ||
       (main_resource_cache_.get() &&

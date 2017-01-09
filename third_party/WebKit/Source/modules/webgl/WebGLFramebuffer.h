@@ -26,8 +26,15 @@
 #ifndef WebGLFramebuffer_h
 #define WebGLFramebuffer_h
 
+#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "modules/webgl/WebGLContextObject.h"
 #include "modules/webgl/WebGLSharedObject.h"
+
+namespace gpu {
+namespace gles2 {
+class GLES2Interface;
+}
+}
 
 namespace blink {
 
@@ -35,117 +42,122 @@ class WebGLRenderbuffer;
 class WebGLTexture;
 
 class WebGLFramebuffer final : public WebGLContextObject {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    class WebGLAttachment : public GarbageCollectedFinalized<WebGLAttachment> {
-    public:
-        virtual ~WebGLAttachment();
+  DEFINE_WRAPPERTYPEINFO();
 
-        virtual GLsizei width() const = 0;
-        virtual GLsizei height() const = 0;
-        virtual GLenum format() const = 0;
-        // For texture attachment, type() returns the type of the attached texture.
-        // For renderbuffer attachment, the type of the renderbuffer may vary with GL implementation.
-        // To avoid confusion, it would be better to not implement type() for renderbuffer attachment and
-        // we should always use the internalformat of the renderbuffer and avoid using type() API.
-        virtual GLenum type() const = 0;
-        virtual bool isCubeComplete() const = 0;
-        virtual WebGLSharedObject* object() const = 0;
-        virtual bool isSharedObject(WebGLSharedObject*) const = 0;
-        virtual bool valid() const = 0;
-        virtual void onDetached(WebGraphicsContext3D*) = 0;
-        virtual void attach(WebGraphicsContext3D*, GLenum target, GLenum attachment) = 0;
-        virtual void unattach(WebGraphicsContext3D*, GLenum target, GLenum attachment) = 0;
+ public:
+  class WebGLAttachment : public GarbageCollected<WebGLAttachment>,
+                          public TraceWrapperBase {
+   public:
+    virtual WebGLSharedObject* object() const = 0;
+    virtual bool isSharedObject(WebGLSharedObject*) const = 0;
+    virtual bool valid() const = 0;
+    virtual void onDetached(gpu::gles2::GLES2Interface*) = 0;
+    virtual void attach(gpu::gles2::GLES2Interface*,
+                        GLenum target,
+                        GLenum attachment) = 0;
+    virtual void unattach(gpu::gles2::GLES2Interface*,
+                          GLenum target,
+                          GLenum attachment) = 0;
 
-        DEFINE_INLINE_VIRTUAL_TRACE() { }
+    DEFINE_INLINE_VIRTUAL_TRACE() {}
 
-    protected:
-        WebGLAttachment();
-    };
+   protected:
+    WebGLAttachment();
+  };
 
-    ~WebGLFramebuffer() override;
+  ~WebGLFramebuffer() override;
 
-    static WebGLFramebuffer* create(WebGLRenderingContextBase*);
+  static WebGLFramebuffer* create(WebGLRenderingContextBase*);
 
-    Platform3DObject object() const { return m_object; }
+  GLuint object() const { return m_object; }
 
-    void setAttachmentForBoundFramebuffer(GLenum target, GLenum attachment, GLenum texTarget, WebGLTexture*, GLint level, GLint layer);
-    void setAttachmentForBoundFramebuffer(GLenum target, GLenum attachment, WebGLRenderbuffer*);
-    // If an object is attached to the currently bound framebuffer, remove it.
-    void removeAttachmentFromBoundFramebuffer(GLenum target, WebGLSharedObject*);
-    // If a given attachment point for the currently bound framebuffer is not null, remove the attached object.
-    void removeAttachmentFromBoundFramebuffer(GLenum target, GLenum attachment);
-    WebGLSharedObject* getAttachmentObject(GLenum) const;
+  void setAttachmentForBoundFramebuffer(GLenum target,
+                                        GLenum attachment,
+                                        GLenum texTarget,
+                                        WebGLTexture*,
+                                        GLint level,
+                                        GLint layer);
+  void setAttachmentForBoundFramebuffer(GLenum target,
+                                        GLenum attachment,
+                                        WebGLRenderbuffer*);
+  // If an object is attached to the currently bound framebuffer, remove it.
+  void removeAttachmentFromBoundFramebuffer(GLenum target, WebGLSharedObject*);
+  WebGLSharedObject* getAttachmentObject(GLenum) const;
 
-    GLenum colorBufferFormat() const;
+  // WebGL 1 specific:
+  //   1) can't allow depth_stencil for depth/stencil attachments, and vice
+  //      versa.
+  //   2) no conflicting DEPTH/STENCIL/DEPTH_STENCIL attachments.
+  GLenum checkDepthStencilStatus(const char** reason) const;
 
-    // This should always be called before drawArray, drawElements, clear,
-    // readPixels, copyTexImage2D, copyTexSubImage2D if this framebuffer is
-    // currently bound.
-    // Return false if the framebuffer is incomplete.
-    bool onAccess(WebGraphicsContext3D*, const char** reason);
+  bool hasEverBeenBound() const { return object() && m_hasEverBeenBound; }
 
-    // Software version of glCheckFramebufferStatus(), except that when
-    // FRAMEBUFFER_COMPLETE is returned, it is still possible for
-    // glCheckFramebufferStatus() to return FRAMEBUFFER_UNSUPPORTED,
-    // depending on hardware implementation.
-    GLenum checkStatus(const char** reason) const;
+  void setHasEverBeenBound() { m_hasEverBeenBound = true; }
 
-    bool hasEverBeenBound() const { return object() && m_hasEverBeenBound; }
+  bool hasStencilBuffer() const;
 
-    void setHasEverBeenBound() { m_hasEverBeenBound = true; }
+  // Wrapper for drawBuffersEXT/drawBuffersARB to work around a driver bug.
+  void drawBuffers(const Vector<GLenum>& bufs);
 
-    bool hasStencilBuffer() const;
+  GLenum getDrawBuffer(GLenum);
 
-    // Wrapper for drawBuffersEXT/drawBuffersARB to work around a driver bug.
-    void drawBuffers(const Vector<GLenum>& bufs);
+  void readBuffer(const GLenum colorBuffer) { m_readBuffer = colorBuffer; }
 
-    GLenum getDrawBuffer(GLenum);
+  GLenum getReadBuffer() const { return m_readBuffer; }
 
-    void readBuffer(const GLenum colorBuffer) { m_readBuffer = colorBuffer; }
+  virtual void visitChildDOMWrappers(v8::Isolate*,
+                                     const v8::Persistent<v8::Object>&);
 
-    GLenum getReadBuffer() const { return m_readBuffer; }
+  DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
-    // If readbuffer is GL_NONE or no image is attached, return false.
-    // Note: it's ok for format or type to be nullptr.
-    bool getReadBufferFormatAndType(GLenum* format, GLenum* type) const;
+ protected:
+  explicit WebGLFramebuffer(WebGLRenderingContextBase*);
 
-    DECLARE_VIRTUAL_TRACE();
+  bool hasObject() const override { return m_object != 0; }
+  void deleteObjectImpl(gpu::gles2::GLES2Interface*) override;
 
-protected:
-    explicit WebGLFramebuffer(WebGLRenderingContextBase*);
+ private:
+  WebGLAttachment* getAttachment(GLenum attachment) const;
 
-    bool hasObject() const override { return m_object != 0; }
-    void deleteObjectImpl(WebGraphicsContext3D*) override;
+  // Check if the framebuffer is currently bound.
+  bool isBound(GLenum target) const;
 
-private:
-    WebGLAttachment* getAttachment(GLenum attachment) const;
-    bool isAttachmentComplete(WebGLAttachment* attachedObject, GLenum attachment, const char** reason) const;
+  // Check if a new drawBuffers call should be issued. This is called when we
+  // add or remove an attachment.
+  void drawBuffersIfNecessary(bool force);
 
-    // Check if the framebuffer is currently bound.
-    bool isBound(GLenum target) const;
+  void setAttachmentInternal(GLenum target,
+                             GLenum attachment,
+                             GLenum texTarget,
+                             WebGLTexture*,
+                             GLint level,
+                             GLint layer);
+  void setAttachmentInternal(GLenum target,
+                             GLenum attachment,
+                             WebGLRenderbuffer*);
+  // If a given attachment point for the currently bound framebuffer is not
+  // null, remove the attached object.
+  void removeAttachmentInternal(GLenum target, GLenum attachment);
 
-    // attach 'attachment' at 'attachmentPoint'.
-    void attach(GLenum target, GLenum attachment, GLenum attachmentPoint);
+  void commitWebGL1DepthStencilIfConsistent(GLenum target);
 
-    // Check if a new drawBuffers call should be issued. This is called when we add or remove an attachment.
-    void drawBuffersIfNecessary(bool force);
+  GLuint m_object;
 
-    Platform3DObject m_object;
+  typedef HeapHashMap<GLenum, TraceWrapperMember<WebGLAttachment>>
+      AttachmentMap;
 
-    typedef HeapHashMap<GLenum, Member<WebGLAttachment>> AttachmentMap;
+  AttachmentMap m_attachments;
 
-    AttachmentMap m_attachments;
-    bool m_destructionInProgress;
+  bool m_hasEverBeenBound;
+  bool m_webGL1DepthStencilConsistent;
 
-    bool m_hasEverBeenBound;
+  Vector<GLenum> m_drawBuffers;
+  Vector<GLenum> m_filteredDrawBuffers;
 
-    Vector<GLenum> m_drawBuffers;
-    Vector<GLenum> m_filteredDrawBuffers;
-
-    GLenum m_readBuffer;
+  GLenum m_readBuffer;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebGLFramebuffer_h
+#endif  // WebGLFramebuffer_h

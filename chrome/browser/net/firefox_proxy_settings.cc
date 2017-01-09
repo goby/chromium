@@ -4,6 +4,8 @@
 
 #include "chrome/browser/net/firefox_proxy_settings.h"
 
+#include <stddef.h>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -102,7 +104,7 @@ bool ParsePrefFile(const base::FilePath& pref_file,
     }
     std::string value = line.substr(start_value + 1,
                                     stop_value - start_value - 1);
-    base::TrimWhitespace(value, base::TRIM_ALL, &value);
+    base::TrimWhitespaceASCII(value, base::TRIM_ALL, &value);
     // Value could be a boolean.
     bool is_value_true = base::LowerCaseEqualsASCII(value, "true");
     if (is_value_true || base::LowerCaseEqualsASCII(value, "false")) {
@@ -111,8 +113,7 @@ bool ParsePrefFile(const base::FilePath& pref_file,
     }
 
     // Value could be a string.
-    if (value.size() >= 2U &&
-        value[0] == '"' && value[value.size() - 1] == '"') {
+    if (value.size() >= 2U && value[0] == '"' && value.back() == '"') {
       value = value.substr(1, value.size() - 2);
       // ValueString only accept valid UTF-8.  Simply ignore that entry if it is
       // not UTF-8.

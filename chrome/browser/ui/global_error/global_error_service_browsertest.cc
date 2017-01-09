@@ -4,7 +4,10 @@
 
 #include "chrome/browser/ui/global_error/global_error_service.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_bubble_view_base.h"
@@ -118,7 +121,7 @@ IN_PROC_BROWSER_TEST_F(GlobalErrorServiceBrowserTest, CloseBubbleView) {
 #endif
 IN_PROC_BROWSER_TEST_F(GlobalErrorServiceBrowserTest,
                        MAYBE_BubbleViewDismissedOnRemove) {
-  scoped_ptr<BubbleViewError> error(new BubbleViewError);
+  std::unique_ptr<BubbleViewError> error(new BubbleViewError);
 
   GlobalErrorService* service =
       GlobalErrorServiceFactory::GetForProfile(browser()->profile());

@@ -108,9 +108,9 @@ SharedModuleService::ImportStatus SharedModuleService::SatisfyImports(
   return status;
 }
 
-scoped_ptr<ExtensionSet> SharedModuleService::GetDependentExtensions(
+std::unique_ptr<ExtensionSet> SharedModuleService::GetDependentExtensions(
     const Extension* extension) {
-  scoped_ptr<ExtensionSet> dependents(new ExtensionSet());
+  std::unique_ptr<ExtensionSet> dependents(new ExtensionSet());
 
   if (SharedModuleInfo::IsSharedModule(extension)) {
     ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context_);
@@ -131,7 +131,23 @@ scoped_ptr<ExtensionSet> SharedModuleService::GetDependentExtensions(
       }
     }
   }
-  return dependents.Pass();
+  return dependents;
+}
+
+InstallGate::Action SharedModuleService::ShouldDelay(const Extension* extension,
+                                                     bool install_immediately) {
+  ImportStatus status = SatisfyImports(extension);
+  switch (status) {
+    case IMPORT_STATUS_OK:
+      return INSTALL;
+    case IMPORT_STATUS_UNSATISFIED:
+      return DELAY;
+    case IMPORT_STATUS_UNRECOVERABLE:
+      return ABORT;
+  }
+
+  NOTREACHED();
+  return INSTALL;
 }
 
 void SharedModuleService::PruneSharedModules() {
@@ -187,6 +203,11 @@ void SharedModuleService::OnExtensionUninstalled(
     content::BrowserContext* browser_context,
     const Extension* extension,
     extensions::UninstallReason reason) {
+  // Do not call PruneSharedModules() for an uninstall that we were responsible
+  // for.
+  if (reason == extensions::UNINSTALL_REASON_ORPHANED_SHARED_MODULE)
+    return;
+
   PruneSharedModules();
 }
 

@@ -34,8 +34,40 @@ class PowerTypical10Mobile(perf_benchmark.PerfBenchmark):
     options.full_performance_mode = False
 
   @classmethod
+  def ShouldDisable(cls, possible_browser):
+    # http://crbug.com/597656
+    if (possible_browser.browser_type == 'reference' and
+        possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X'):
+      return True
+
+    # crbug.com/671631
+    return possible_browser.platform.GetDeviceTypeName() == 'Nexus 9'
+
+  @classmethod
   def Name(cls):
     return 'power.typical_10_mobile'
+
+
+@benchmark.Enabled('android')
+@benchmark.Disabled('android-webview')  # http://crbug.com/622300
+class PowerToughAdCases(perf_benchmark.PerfBenchmark):
+  """Android power test with tough ad pages."""
+  test = power.Power
+  page_set = page_sets.ToughAdCasesPageSet
+
+  def SetExtraBrowserOptions(self, options):
+    options.full_performance_mode = False
+
+  @classmethod
+  def Name(cls):
+    return 'power.tough_ad_cases'
+
+  @classmethod
+  def ShouldDisable(cls, possible_browser):
+     # http://crbug.com/563968, http://crbug.com/593973
+    return (cls.IsSvelte(possible_browser) or
+      (possible_browser.browser_type ==  'reference' and
+       possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X'))
 
 
 @benchmark.Enabled('android')
@@ -70,14 +102,17 @@ class PowerGpuRasterizationTypical10Mobile(perf_benchmark.PerfBenchmark):
 
   @classmethod
   def ShouldDisable(cls, possible_browser):
-    return cls.IsSvelte(possible_browser)  # http://crbug.com/563968
+     # http://crbug.com/563968, http://crbug.com/593973
+    return (cls.IsSvelte(possible_browser) or
+      (possible_browser.browser_type ==  'reference' and
+       possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X'))
 
 
 @benchmark.Enabled('mac')
 class PowerTop10(perf_benchmark.PerfBenchmark):
   """Top 10 quiescent power test."""
   test = power.QuiescentPower
-  page_set = page_sets.Top10PageSet
+  page_set = page_sets.Top10QuiescentPageSet
 
   def SetExtraBrowserOptions(self, options):
     options.full_performance_mode = False
@@ -86,12 +121,13 @@ class PowerTop10(perf_benchmark.PerfBenchmark):
   def Name(cls):
     return 'power.top_10'
 
+
 @benchmark.Enabled('mac')
 class PowerGpuRasterizationTop10(perf_benchmark.PerfBenchmark):
   """Top 10 quiescent power test with GPU rasterization enabled."""
   tag = 'gpu_rasterization'
   test = power.QuiescentPower
-  page_set = page_sets.Top10PageSet
+  page_set = page_sets.Top10QuiescentPageSet
 
   def SetExtraBrowserOptions(self, options):
     silk_flags.CustomizeBrowserOptionsForGpuRasterization(options)
@@ -103,7 +139,6 @@ class PowerGpuRasterizationTop10(perf_benchmark.PerfBenchmark):
 
 
 @benchmark.Enabled('mac')
-@benchmark.Disabled('reference') # crbug.com/547833
 class PowerTop25(perf_benchmark.PerfBenchmark):
   """Top 25 quiescent power test."""
   test = power.QuiescentPower
@@ -117,21 +152,29 @@ class PowerTop25(perf_benchmark.PerfBenchmark):
     return 'power.top_25'
 
   def CreateStorySet(self, _):
-    # Exclude techcrunch.com. It is not suitable for this benchmark because it
-    # does not consistently become quiescent within 60 seconds.
     stories = self.page_set()
-    found = next((x for x in stories if 'techcrunch.com' in x.url), None)
-    if found:
-      stories.RemoveStory(found)
+    to_remove = [x for x in stories if self.IsPageNotQuiescent(x.url)]
+    for story in to_remove:
+      stories.RemoveStory(story)
     return stories
 
+  @staticmethod
+  def IsPageNotQuiescent(page_url):
+    # Exclude sites not suitable for this benchmark because they do not
+    # consistently become quiescent within 60 seconds.
+    non_quiescent_urls = [
+      'techcrunch.com',
+      'docs.google.com',
+      'plus.google.com'
+    ]
+
+    return any(url in page_url for url in non_quiescent_urls)
+
+
 @benchmark.Enabled('mac')
-@benchmark.Disabled('reference') # crbug.com/549302
-class PowerGpuRasterizationTop25(perf_benchmark.PerfBenchmark):
+class PowerGpuRasterizationTop25(PowerTop25):
   """Top 25 quiescent power test with GPU rasterization enabled."""
   tag = 'gpu_rasterization'
-  test = power.QuiescentPower
-  page_set = page_sets.Top25PageSet
 
   def SetExtraBrowserOptions(self, options):
     silk_flags.CustomizeBrowserOptionsForGpuRasterization(options)
@@ -141,80 +184,24 @@ class PowerGpuRasterizationTop25(perf_benchmark.PerfBenchmark):
   def Name(cls):
     return 'power.gpu_rasterization.top_25'
 
-  def CreateStorySet(self, _):
-    # Exclude techcrunch.com. It is not suitable for this benchmark because it
-    # does not consistently become quiescent within 60 seconds.
-    stories = self.page_set()
-    found = next((x for x in stories if 'techcrunch.com' in x.url), None)
-    if found:
-      stories.RemoveStory(found)
-    return stories
 
-@benchmark.Enabled('linux', 'mac', 'win', 'chromeos')
-class PowerPPSControlDisabled(perf_benchmark.PerfBenchmark):
-  """A single page with a small-ish non-essential plugin. In this test, Plugin
-  Power Saver (PPS) is disabled, so the plugin should continue animating and
-  taking power."""
+@benchmark.Enabled('mac')
+class PowerScrollingTrivialPage(perf_benchmark.PerfBenchmark):
+  """Measure power consumption for some very simple pages."""
   test = power.QuiescentPower
-  page_set = page_sets.PluginPowerSaverPageSet
-  options = {'pageset_repeat': 5}
-
-  def SetExtraBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs(['--disable-plugin-power-saver'])
-    options.full_performance_mode = False
+  page_set = page_sets.MacGpuTrivialPagesStorySet
 
   @classmethod
   def Name(cls):
-    return 'power.pps_control_disabled'
+    return 'power.trivial_pages'
 
-
-@benchmark.Enabled('linux', 'mac', 'win', 'chromeos')
-class PowerPPSControlEnabled(perf_benchmark.PerfBenchmark):
-  """A single page with a small-ish non-essential plugin. In this test, Plugin
-  Power Saver (PPS) is enabled, so the plugin should be throttled (idle with a
-  "Click to play" button)."""
+@benchmark.Enabled('mac')
+class PowerSteadyStatePages(perf_benchmark.PerfBenchmark):
+  """Measure power consumption for real web sites in steady state (no user
+  interactions)."""
   test = power.QuiescentPower
-  page_set = page_sets.PluginPowerSaverPageSet
-  options = {'pageset_repeat': 5}
-
-  def SetExtraBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs(['--enable-plugin-power-saver'])
-    options.full_performance_mode = False
+  page_set = page_sets.IdleAfterLoadingStories
 
   @classmethod
   def Name(cls):
-    return 'power.pps_control_enabled'
-
-
-@benchmark.Enabled('linux', 'mac', 'win', 'chromeos')
-class PowerThrottledPlugins(perf_benchmark.PerfBenchmark):
-  """Tests that pages with flash ads take more power without Plugin Power Saver
-  (PPS) throttling them."""
-  test = power.QuiescentPower
-  page_set = page_sets.ThrottledPluginsPageSet
-  options = {'pageset_repeat': 5}
-
-  def SetExtraBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs(['--disable-plugin-power-saver'])
-    options.full_performance_mode = False
-
-  @classmethod
-  def Name(cls):
-    return 'power.throttled_plugins_pps_disabled'
-
-
-@benchmark.Enabled('linux', 'mac', 'win', 'chromeos')
-class PowerThrottledPluginsPPS(perf_benchmark.PerfBenchmark):
-  """Tests that pages with flash ads take less power with Plugin Power Saver
-  (PPS) enabled to throttle them."""
-  test = power.QuiescentPower
-  page_set = page_sets.ThrottledPluginsPageSet
-  options = {'pageset_repeat': 5}
-
-  def SetExtraBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs(['--enable-plugin-power-saver'])
-    options.full_performance_mode = False
-
-  @classmethod
-  def Name(cls):
-    return 'power.throttled_plugins_pps_enabled'
+    return 'power.steady_state'

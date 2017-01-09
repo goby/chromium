@@ -7,10 +7,12 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/sequenced_worker_pool_owner.h"
 #include "base/values.h"
@@ -60,7 +62,7 @@ class ExternalCacheTest : public testing::Test,
   // testing::Test overrides:
   void SetUp() override {
     request_context_getter_ = new net::TestURLRequestContextGetter(
-        content::BrowserThread::GetMessageLoopProxyForThread(
+        content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO));
     fetcher_factory_.reset(new net::TestURLFetcherFactory());
 
@@ -84,13 +86,13 @@ class ExternalCacheTest : public testing::Test,
   base::FilePath CreateCacheDir(bool initialized) {
     EXPECT_TRUE(cache_dir_.CreateUniqueTempDir());
     if (initialized)
-      CreateFlagFile(cache_dir_.path());
-    return cache_dir_.path();
+      CreateFlagFile(cache_dir_.GetPath());
+    return cache_dir_.GetPath();
   }
 
   base::FilePath CreateTempDir() {
     EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
-    return temp_dir_.path();
+    return temp_dir_.GetPath();
   }
 
   void CreateFlagFile(const base::FilePath& dir) {
@@ -138,14 +140,14 @@ class ExternalCacheTest : public testing::Test,
   content::TestBrowserThreadBundle thread_bundle_;
 
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
-  scoped_ptr<net::TestURLFetcherFactory> fetcher_factory_;
+  std::unique_ptr<net::TestURLFetcherFactory> fetcher_factory_;
 
-  scoped_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
   scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
 
   base::ScopedTempDir cache_dir_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<base::DictionaryValue> prefs_;
+  std::unique_ptr<base::DictionaryValue> prefs_;
   std::map<std::string, std::string> installed_extensions_;
 
   ScopedTestDeviceSettingsService test_device_settings_service_;
@@ -159,7 +161,7 @@ TEST_F(ExternalCacheTest, Basic) {
   ExternalCache external_cache(cache_dir, request_context_getter(),
       background_task_runner(), this, true, false);
 
-  scoped_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
   base::DictionaryValue* dict = CreateEntryWithUpdateUrl(true);
   prefs->Set(kTestExtensionId1, dict);
   CreateExtensionFile(cache_dir, kTestExtensionId1, "1");
@@ -169,7 +171,7 @@ TEST_F(ExternalCacheTest, Basic) {
   CreateExtensionFile(cache_dir, kTestExtensionId3, "3");
   prefs->Set(kTestExtensionId4, CreateEntryWithUpdateUrl(false));
 
-  external_cache.UpdateExtensionsList(prefs.Pass());
+  external_cache.UpdateExtensionsList(std::move(prefs));
   WaitForCompletion();
 
   ASSERT_TRUE(provided_prefs());
@@ -261,7 +263,7 @@ TEST_F(ExternalCacheTest, Basic) {
       GetExtensionFile(cache_dir, kTestExtensionId2, "2")));
 
   // Shutdown with callback OnExtensionListsUpdated that clears prefs.
-  scoped_ptr<base::DictionaryValue> empty(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> empty(new base::DictionaryValue);
   external_cache.Shutdown(
         base::Bind(&ExternalCacheTest::OnExtensionListsUpdated,
                    base::Unretained(this),
@@ -282,13 +284,13 @@ TEST_F(ExternalCacheTest, PreserveInstalled) {
   ExternalCache external_cache(cache_dir, request_context_getter(),
       background_task_runner(), this, true, false);
 
-  scoped_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
   prefs->Set(kTestExtensionId1, CreateEntryWithUpdateUrl(true));
   prefs->Set(kTestExtensionId2, CreateEntryWithUpdateUrl(true));
 
   AddInstalledExtension(kTestExtensionId1, "1");
 
-  external_cache.UpdateExtensionsList(prefs.Pass());
+  external_cache.UpdateExtensionsList(std::move(prefs));
   WaitForCompletion();
 
   ASSERT_TRUE(provided_prefs());

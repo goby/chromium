@@ -29,86 +29,73 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/platform/WebBlobData.h"
 
 #include "platform/blob/BlobData.h"
-#include "wtf/PassOwnPtr.h"
+#include <memory>
 
 namespace blink {
 
-WebBlobData::WebBlobData()
-{
+WebBlobData::WebBlobData() {}
+
+WebBlobData::~WebBlobData() {}
+
+size_t WebBlobData::itemCount() const {
+  ASSERT(!isNull());
+  return m_private->items().size();
 }
 
-WebBlobData::~WebBlobData()
-{
-    m_private.reset(0);
-}
+bool WebBlobData::itemAt(size_t index, Item& result) const {
+  ASSERT(!isNull());
 
-size_t WebBlobData::itemCount() const
-{
-    ASSERT(!isNull());
-    return m_private->items().size();
-}
-
-bool WebBlobData::itemAt(size_t index, Item& result) const
-{
-    ASSERT(!isNull());
-
-    if (index >= m_private->items().size())
-        return false;
-
-    const BlobDataItem& item = m_private->items()[index];
-    result.data.reset();
-    result.filePath.reset();
-    result.blobUUID.reset();
-    result.offset = item.offset;
-    result.length = item.length;
-    result.expectedModificationTime = item.expectedModificationTime;
-
-    switch (item.type) {
-    case BlobDataItem::Data:
-        result.type = Item::TypeData;
-        result.data = item.data;
-        return true;
-    case BlobDataItem::File:
-        result.type = Item::TypeFile;
-        result.filePath = item.path;
-        return true;
-    case BlobDataItem::Blob:
-        result.type = Item::TypeBlob;
-        result.blobUUID = item.blobDataHandle->uuid();
-        return true;
-    case BlobDataItem::FileSystemURL:
-        result.type = Item::TypeFileSystemURL;
-        result.fileSystemURL = item.fileSystemURL;
-        return true;
-    }
-    ASSERT_NOT_REACHED();
+  if (index >= m_private->items().size())
     return false;
+
+  const BlobDataItem& item = m_private->items()[index];
+  result.data.reset();
+  result.filePath.reset();
+  result.blobUUID.reset();
+  result.offset = item.offset;
+  result.length = item.length;
+  result.expectedModificationTime = item.expectedModificationTime;
+
+  switch (item.type) {
+    case BlobDataItem::Data:
+      result.type = Item::TypeData;
+      result.data = item.data;
+      return true;
+    case BlobDataItem::File:
+      result.type = Item::TypeFile;
+      result.filePath = item.path;
+      return true;
+    case BlobDataItem::Blob:
+      result.type = Item::TypeBlob;
+      result.blobUUID = item.blobDataHandle->uuid();
+      return true;
+    case BlobDataItem::FileSystemURL:
+      result.type = Item::TypeFileSystemURL;
+      result.fileSystemURL = item.fileSystemURL;
+      return true;
+  }
+  ASSERT_NOT_REACHED();
+  return false;
 }
 
-WebString WebBlobData::contentType() const
-{
-    ASSERT(!isNull());
-    return m_private->contentType();
+WebString WebBlobData::contentType() const {
+  ASSERT(!isNull());
+  return m_private->contentType();
 }
 
-WebBlobData::WebBlobData(const PassOwnPtr<BlobData>& data)
-    : m_private(data)
-{
+WebBlobData::WebBlobData(std::unique_ptr<BlobData> data)
+    : m_private(std::move(data)) {}
+
+WebBlobData& WebBlobData::operator=(std::unique_ptr<BlobData> data) {
+  m_private = std::move(data);
+  return *this;
 }
 
-WebBlobData& WebBlobData::operator=(const PassOwnPtr<BlobData>& data)
-{
-    m_private.reset(data);
-    return *this;
+WebBlobData::operator std::unique_ptr<BlobData>() {
+  return std::move(m_private);
 }
 
-WebBlobData::operator PassOwnPtr<BlobData>()
-{
-    return m_private.release();
-}
-
-} // namespace blink
+}  // namespace blink

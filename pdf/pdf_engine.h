@@ -5,6 +5,8 @@
 #ifndef PDF_PDF_ENGINE_H_
 #define PDF_PDF_ENGINE_H_
 
+#include <stdint.h>
+
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
@@ -25,6 +27,13 @@
 #include "ppapi/cpp/size.h"
 #include "ppapi/cpp/url_loader.h"
 #include "ppapi/cpp/var_array.h"
+#include "ui/base/window_open_disposition.h"
+
+#if defined(OS_WIN)
+typedef void (*PDFEnsureTypefaceCharactersAccessible)(const LOGFONT* font,
+                                                      const wchar_t* text,
+                                                      size_t text_length);
+#endif
 
 namespace pp {
 class InputEvent;
@@ -32,14 +41,6 @@ class VarDictionary;
 }
 
 namespace chrome_pdf {
-
-class Stream;
-
-#if defined(OS_MACOSX)
-const uint32 kDefaultKeyModifier = PP_INPUTEVENT_MODIFIER_METAKEY;
-#else  // !OS_MACOSX
-const uint32 kDefaultKeyModifier = PP_INPUTEVENT_MODIFIER_CONTROLKEY;
-#endif  // OS_MACOSX
 
 // Do one time initialization of the SDK.
 bool InitializeSDK();
@@ -59,6 +60,8 @@ class PDFEngine {
   // The interface that's provided to the rendering engine.
   class Client {
    public:
+    virtual ~Client() {}
+
     // Informs the client about the document's size in pixels.
     virtual void DocumentSizeUpdated(const pp::Size& size) = 0;
 
@@ -72,11 +75,12 @@ class PDFEngine {
     virtual void ScrollToX(int position) = 0;
     virtual void ScrollToY(int position) = 0;
 
-    // Scroll to the specified page.
+    // Scroll to zero-based |page|.
     virtual void ScrollToPage(int page) = 0;
 
     // Navigate to the given url.
-    virtual void NavigateTo(const std::string& url, bool open_in_new_tab) = 0;
+    virtual void NavigateTo(const std::string& url,
+                            WindowOpenDisposition disposition) = 0;
 
     // Updates the cursor.
     virtual void UpdateCursor(PP_CursorType_Dev cursor) = 0;
@@ -159,13 +163,17 @@ class PDFEngine {
     // Notifies the client that the document has failed to load.
     virtual void DocumentLoadFailed() = 0;
 
+    // Notifies the client that the document has requested substitute fonts.
+    virtual void FontSubstituted() = 0;
+
     virtual pp::Instance* GetPluginInstance() = 0;
 
     // Notifies that an unsupported feature in the PDF was encountered.
     virtual void DocumentHasUnsupportedFeature(const std::string& feature) = 0;
 
     // Notifies the client about document load progress.
-    virtual void DocumentLoadProgress(uint32 available, uint32 doc_size) = 0;
+    virtual void DocumentLoadProgress(uint32_t available,
+                                      uint32_t doc_size) = 0;
 
     // Notifies the client about focus changes for form text fields.
     virtual void FormTextFieldFocusChange(bool in_focus) = 0;
@@ -174,7 +182,7 @@ class PDFEngine {
     virtual bool IsPrintPreview() = 0;
 
     // Get the background color of the PDF.
-    virtual uint32 GetBackgroundColor() = 0;
+    virtual uint32_t GetBackgroundColor() = 0;
 
     // Sets selection status.
     virtual void IsSelectingChanged(bool is_selecting) {}
@@ -217,7 +225,6 @@ class PDFEngine {
   virtual void RotateCounterclockwise() = 0;
   virtual std::string GetSelectedText() = 0;
   virtual std::string GetLinkAtPosition(const pp::Point& point) = 0;
-  virtual bool IsSelecting() = 0;
   // Checks the permissions associated with this document.
   virtual bool HasPermission(DocumentPermission permission) const = 0;
   virtual void SelectAll() = 0;
@@ -225,12 +232,12 @@ class PDFEngine {
   virtual int GetNumberOfPages() = 0;
   // Gets the 0-based page number of |destination|, or -1 if it does not exist.
   virtual int GetNamedDestinationPage(const std::string& destination) = 0;
-  // Gets the index of the first visible page, or -1 if none are visible.
-  virtual int GetFirstVisiblePage() = 0;
   // Gets the index of the most visible page, or -1 if none are visible.
   virtual int GetMostVisiblePage() = 0;
   // Gets the rectangle of the page including shadow.
   virtual pp::Rect GetPageRect(int index) = 0;
+  // Gets the rectangle of the page not including the shadow.
+  virtual pp::Rect GetPageBoundsRect(int index) = 0;
   // Gets the rectangle of the page excluding any additional areas.
   virtual pp::Rect GetPageContentsRect(int index) = 0;
   // Returns a page's rect in screen coordinates, as well as its surrounding
@@ -239,14 +246,24 @@ class PDFEngine {
   // Gets the offset of the vertical scrollbar from the top in document
   // coordinates.
   virtual int GetVerticalScrollbarYPosition() = 0;
-  // Paints page thumbnail to the ImageData.
-  virtual void PaintThumbnail(pp::ImageData* image_data, int index) = 0;
   // Set color / grayscale rendering modes.
   virtual void SetGrayscale(bool grayscale) = 0;
   // Callback for timer that's set with ScheduleCallback().
   virtual void OnCallback(int id) = 0;
-  // Gets the JSON representation of the PDF file
-  virtual std::string GetPageAsJSON(int index) = 0;
+  // Get the number of characters on a given page.
+  virtual int GetCharCount(int page_index) = 0;
+  // Get the bounds in page pixels of a character on a given page.
+  virtual pp::FloatRect GetCharBounds(int page_index, int char_index) = 0;
+  // Get a given unicode character on a given page.
+  virtual uint32_t GetCharUnicode(int page_index, int char_index) = 0;
+  // Given a start char index, find the longest continuous run of text that's
+  // in a single direction and with the same style and font size. Return the
+  // length of that sequence and its font size and bounding box.
+  virtual void GetTextRunInfo(int page_index,
+                              int start_char_index,
+                              uint32_t* out_len,
+                              double* out_font_size,
+                              pp::FloatRect* out_bounds) = 0;
   // Gets the PDF document's print scaling preference. True if the document can
   // be scaled to fit.
   virtual bool GetPrintScaling() = 0;
@@ -272,11 +289,12 @@ class PDFEngine {
   // document at page |index|.
   virtual void AppendPage(PDFEngine* engine, int index) = 0;
 
-  // Allow client to query and reset scroll positions in document coordinates.
-  // Note that this is meant for cases where the device scale factor changes,
-  // and not for general scrolling - the engine will not repaint due to this.
-  virtual pp::Point GetScrollPosition() = 0;
+#if defined(PDF_ENABLE_XFA)
+  // Allow client to set scroll positions in document coordinates. Note that
+  // this is meant for cases where the device scale factor changes, and not for
+  // general scrolling - the engine will not repaint due to this.
   virtual void SetScrollPosition(const pp::Point& position) = 0;
+#endif
 
   virtual bool IsProgressiveLoad() = 0;
 
@@ -294,12 +312,9 @@ class PDFEngineExports {
                       bool stretch_to_bounds,
                       bool keep_aspect_ratio,
                       bool center_in_bounds,
-                      bool autorotate)
-        : dpi_x(dpi_x), dpi_y(dpi_y), bounds(bounds),
-        fit_to_bounds(fit_to_bounds), stretch_to_bounds(stretch_to_bounds),
-        keep_aspect_ratio(keep_aspect_ratio),
-        center_in_bounds(center_in_bounds), autorotate(autorotate) {
-    }
+                      bool autorotate);
+    RenderingSettings(const RenderingSettings& that);
+
     int dpi_x;
     int dpi_y;
     pp::Rect bounds;
@@ -312,7 +327,8 @@ class PDFEngineExports {
 
   PDFEngineExports() {}
   virtual ~PDFEngineExports() {}
-  static PDFEngineExports* Create();
+  static PDFEngineExports* Get();
+
 #if defined(OS_WIN)
   // See the definition of RenderPDFPageToDC in pdf.cc for details.
   virtual bool RenderPDFPageToDC(const void* pdf_buffer,
@@ -320,7 +336,13 @@ class PDFEngineExports {
                                  int page_number,
                                  const RenderingSettings& settings,
                                  HDC dc) = 0;
-#endif  // OS_WIN
+
+  virtual void SetPDFEnsureTypefaceCharactersAccessible(
+      PDFEnsureTypefaceCharactersAccessible func) = 0;
+
+  virtual void SetPDFUseGDIPrinting(bool enable) = 0;
+#endif  // defined(OS_WIN)
+
   // See the definition of RenderPDFPageToBitmap in pdf.cc for details.
   virtual bool RenderPDFPageToBitmap(const void* pdf_buffer,
                                      int pdf_buffer_size,
@@ -335,8 +357,10 @@ class PDFEngineExports {
 
   // See the definition of GetPDFPageSizeByIndex in pdf.cc for details.
   virtual bool GetPDFPageSizeByIndex(const void* pdf_buffer,
-                                     int pdf_buffer_size, int page_number,
-                                     double* width, double* height) = 0;
+                                     int pdf_buffer_size,
+                                     int page_number,
+                                     double* width,
+                                     double* height) = 0;
 };
 
 }  // namespace chrome_pdf

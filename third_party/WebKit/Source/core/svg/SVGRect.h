@@ -20,6 +20,7 @@
 #ifndef SVGRect_h
 #define SVGRect_h
 
+#include "core/svg/SVGParsingError.h"
 #include "core/svg/properties/SVGPropertyHelper.h"
 #include "platform/geometry/FloatRect.h"
 #include "wtf/Allocator.h"
@@ -28,66 +29,66 @@ namespace blink {
 
 class SVGRectTearOff;
 
-class SVGRect : public SVGPropertyHelper<SVGRect> {
-public:
-    typedef SVGRectTearOff TearOffType;
+class SVGRect final : public SVGPropertyHelper<SVGRect> {
+ public:
+  typedef SVGRectTearOff TearOffType;
 
-    static PassRefPtrWillBeRawPtr<SVGRect> create()
-    {
-        return adoptRefWillBeNoop(new SVGRect());
-    }
+  static SVGRect* create() { return new SVGRect(); }
 
-    static PassRefPtrWillBeRawPtr<SVGRect> createInvalid()
-    {
-        RefPtrWillBeRawPtr<SVGRect> rect = adoptRefWillBeNoop(new SVGRect());
-        rect->setInvalid();
-        return rect.release();
-    }
+  static SVGRect* createInvalid() {
+    SVGRect* rect = new SVGRect();
+    rect->setInvalid();
+    return rect;
+  }
 
-    static PassRefPtrWillBeRawPtr<SVGRect> create(const FloatRect& rect)
-    {
-        return adoptRefWillBeNoop(new SVGRect(rect));
-    }
+  static SVGRect* create(const FloatRect& rect) { return new SVGRect(rect); }
 
-    PassRefPtrWillBeRawPtr<SVGRect> clone() const;
+  SVGRect* clone() const;
 
-    const FloatRect& value() const { return m_value; }
-    void setValue(const FloatRect& v) { m_value = v; }
+  const FloatRect& value() const { return m_value; }
+  void setValue(const FloatRect& v) { m_value = v; }
 
-    float x() const { return m_value.x(); }
-    float y() const { return m_value.y(); }
-    float width() const { return m_value.width(); }
-    float height() const { return m_value.height(); }
-    void setX(float f) { m_value.setX(f); }
-    void setY(float f) { m_value.setY(f); }
-    void setWidth(float f) { m_value.setWidth(f); }
-    void setHeight(float f) { m_value.setHeight(f); }
+  float x() const { return m_value.x(); }
+  float y() const { return m_value.y(); }
+  float width() const { return m_value.width(); }
+  float height() const { return m_value.height(); }
+  void setX(float f) { m_value.setX(f); }
+  void setY(float f) { m_value.setY(f); }
+  void setWidth(float f) { m_value.setWidth(f); }
+  void setHeight(float f) { m_value.setHeight(f); }
 
-    String valueAsString() const override;
-    void setValueAsString(const String&, ExceptionState&);
+  String valueAsString() const override;
+  SVGParsingError setValueAsString(const String&);
 
-    void add(PassRefPtrWillBeRawPtr<SVGPropertyBase>, SVGElement*) override;
-    void calculateAnimatedValue(SVGAnimationElement*, float percentage, unsigned repeatCount, PassRefPtrWillBeRawPtr<SVGPropertyBase> from, PassRefPtrWillBeRawPtr<SVGPropertyBase> to, PassRefPtrWillBeRawPtr<SVGPropertyBase> toAtEndOfDurationValue, SVGElement* contextElement) override;
-    float calculateDistance(PassRefPtrWillBeRawPtr<SVGPropertyBase> to, SVGElement* contextElement) override;
+  void add(SVGPropertyBase*, SVGElement*) override;
+  void calculateAnimatedValue(SVGAnimationElement*,
+                              float percentage,
+                              unsigned repeatCount,
+                              SVGPropertyBase* from,
+                              SVGPropertyBase* to,
+                              SVGPropertyBase* toAtEndOfDurationValue,
+                              SVGElement* contextElement) override;
+  float calculateDistance(SVGPropertyBase* to,
+                          SVGElement* contextElement) override;
 
-    bool isValid() const { return m_isValid; }
-    void setInvalid();
+  bool isValid() const { return m_isValid; }
+  void setInvalid();
 
-    static AnimatedPropertyType classType() { return AnimatedRect; }
+  static AnimatedPropertyType classType() { return AnimatedRect; }
 
-private:
-    SVGRect();
-    SVGRect(const FloatRect&);
+ private:
+  SVGRect();
+  SVGRect(const FloatRect&);
 
-    template<typename CharType>
-    void parse(const CharType*& ptr, const CharType* end, ExceptionState&);
+  template <typename CharType>
+  SVGParsingError parse(const CharType*& ptr, const CharType* end);
 
-    bool m_isValid;
-    FloatRect m_value;
+  bool m_isValid;
+  FloatRect m_value;
 };
 
 DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGRect);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGRect_h
+#endif  // SVGRect_h

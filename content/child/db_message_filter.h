@@ -5,8 +5,14 @@
 #ifndef CONTENT_CHILD_DB_MESSAGE_FILTER_H_
 #define CONTENT_CHILD_DB_MESSAGE_FILTER_H_
 
+#include <stdint.h>
+
 #include "base/strings/string16.h"
 #include "ipc/message_filter.h"
+
+namespace url {
+class Origin;
+}  // namespace url
 
 namespace content {
 
@@ -23,13 +29,13 @@ class DBMessageFilter : public IPC::MessageFilter {
   ~DBMessageFilter() override {}
 
  private:
-  void OnDatabaseUpdateSize(const std::string& origin_identifier,
+  void OnDatabaseUpdateSize(const url::Origin& origin,
                             const base::string16& database_name,
-                            int64 database_size);
-  void OnDatabaseUpdateSpaceAvailable(const std::string& origin_identifier,
-                                      int64 space_available);
-  void OnDatabaseResetSpaceAvailable(const std::string& origin_identifier);
-  void OnDatabaseCloseImmediately(const std::string& origin_identifier,
+                            int64_t database_size);
+  void OnDatabaseUpdateSpaceAvailable(const url::Origin& origin,
+                                      int64_t space_available);
+  void OnDatabaseResetSpaceAvailable(const url::Origin& origin);
+  void OnDatabaseCloseImmediately(const url::Origin& origin,
                                   const base::string16& database_name);
 };
 

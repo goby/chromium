@@ -4,6 +4,7 @@
 
 #include "ios/chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
@@ -13,21 +14,21 @@
 #include "ios/chrome/browser/autocomplete/in_memory_url_index_factory.h"
 #include "ios/chrome/browser/autocomplete/shortcuts_backend_factory.h"
 #include "ios/chrome/browser/browser_state/browser_state_otr_helper.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 namespace ios {
 namespace {
 
-scoped_ptr<KeyedService> BuildAutocompleteClassifier(
+std::unique_ptr<KeyedService> BuildAutocompleteClassifier(
     web::BrowserState* context) {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return make_scoped_ptr(new AutocompleteClassifier(
-      make_scoped_ptr(new AutocompleteController(
-          make_scoped_ptr(new AutocompleteProviderClientImpl(browser_state)),
+  return base::MakeUnique<AutocompleteClassifier>(
+      base::WrapUnique(new AutocompleteController(
+          base::WrapUnique(new AutocompleteProviderClientImpl(browser_state)),
           nullptr, AutocompleteClassifier::kDefaultOmniboxProviders)),
-      make_scoped_ptr(new AutocompleteSchemeClassifierImpl)));
+      base::WrapUnique(new AutocompleteSchemeClassifierImpl));
 }
 
 }  // namespace
@@ -61,7 +62,8 @@ AutocompleteClassifierFactory::AutocompleteClassifierFactory()
 
 AutocompleteClassifierFactory::~AutocompleteClassifierFactory() {}
 
-scoped_ptr<KeyedService> AutocompleteClassifierFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AutocompleteClassifierFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   return BuildAutocompleteClassifier(context);
 }

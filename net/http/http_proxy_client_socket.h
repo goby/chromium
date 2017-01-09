@@ -9,22 +9,22 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "net/base/completion_callback.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_timing_info.h"
+#include "net/base/net_export.h"
 #include "net/http/http_auth_controller.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_request_info.h"
 #include "net/http/http_response_info.h"
 #include "net/http/proxy_client_socket.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/ssl_client_socket.h"
 
 namespace net {
 
-class AddressList;
 class ClientSocketHandle;
 class GrowableIOBuffer;
 class HttpStream;
@@ -32,7 +32,7 @@ class HttpStreamParser;
 class IOBuffer;
 class ProxyDelegate;
 
-class HttpProxyClientSocket : public ProxyClientSocket {
+class NET_EXPORT_PRIVATE HttpProxyClientSocket : public ProxyClientSocket {
  public:
   // Takes ownership of |transport_socket|, which should already be connected
   // by the time Connect() is called.  If tunnel is true then on Connect()
@@ -44,7 +44,7 @@ class HttpProxyClientSocket : public ProxyClientSocket {
                         HttpAuthController* http_auth_controller,
                         bool tunnel,
                         bool using_spdy,
-                        NextProto protocol_negotiated,
+                        NextProto negotiated_protocol,
                         ProxyDelegate* proxy_delegate,
                         bool is_https_proxy);
 
@@ -57,18 +57,17 @@ class HttpProxyClientSocket : public ProxyClientSocket {
   int RestartWithAuth(const CompletionCallback& callback) override;
   const scoped_refptr<HttpAuthController>& GetAuthController() const override;
   bool IsUsingSpdy() const override;
-  NextProto GetProtocolNegotiated() const override;
+  NextProto GetProxyNegotiatedProtocol() const override;
 
   // StreamSocket implementation.
   int Connect(const CompletionCallback& callback) override;
   void Disconnect() override;
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
-  const BoundNetLog& NetLog() const override;
+  const NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   bool WasNpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
@@ -84,8 +83,8 @@ class HttpProxyClientSocket : public ProxyClientSocket {
   int Write(IOBuffer* buf,
             int buf_len,
             const CompletionCallback& callback) override;
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
   int GetPeerAddress(IPEndPoint* address) const override;
   int GetLocalAddress(IPEndPoint* address) const override;
 
@@ -136,11 +135,11 @@ class HttpProxyClientSocket : public ProxyClientSocket {
   HttpResponseInfo response_;
 
   scoped_refptr<GrowableIOBuffer> parser_buf_;
-  scoped_ptr<HttpStreamParser> http_stream_parser_;
+  std::unique_ptr<HttpStreamParser> http_stream_parser_;
   scoped_refptr<IOBuffer> drain_buf_;
 
   // Stores the underlying socket.
-  scoped_ptr<ClientSocketHandle> transport_;
+  std::unique_ptr<ClientSocketHandle> transport_;
 
   // The hostname and port of the endpoint.  This is not necessarily the one
   // specified by the URL, due to Alternate-Protocol or fixed testing ports.
@@ -150,7 +149,7 @@ class HttpProxyClientSocket : public ProxyClientSocket {
   // If true, then the connection to the proxy is a SPDY connection.
   const bool using_spdy_;
   // Protocol negotiated with the server.
-  NextProto protocol_negotiated_;
+  NextProto negotiated_protocol_;
   // If true, then SSL is used to communicate with this proxy
   const bool is_https_proxy_;
 
@@ -166,7 +165,7 @@ class HttpProxyClientSocket : public ProxyClientSocket {
   // This delegate must outlive this proxy client socket.
   ProxyDelegate* proxy_delegate_;
 
-  const BoundNetLog net_log_;
+  const NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpProxyClientSocket);
 };

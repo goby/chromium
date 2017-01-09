@@ -5,11 +5,14 @@
 #ifndef EXTENSIONS_BROWSER_API_WEB_REQUEST_UPLOAD_DATA_PRESENTER_H_
 #define EXTENSIONS_BROWSER_API_WEB_REQUEST_UPLOAD_DATA_PRESENTER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace base {
 class DictionaryValue;
@@ -32,10 +35,9 @@ namespace subtle {
 
 // Helpers shared with unit-tests.
 
-// Appends a dictionary {'key': 'value'} to |list|. |list| becomes the owner of
-// |value|.
+// Appends a dictionary {'key': 'value'} to |list|.
 void AppendKeyValuePair(const char* key,
-                        base::Value* value,
+                        std::unique_ptr<base::Value> value,
                         base::ListValue* list);
 
 }  // namespace subtle
@@ -54,7 +56,7 @@ class UploadDataPresenter {
   virtual ~UploadDataPresenter();
   virtual void FeedNext(const net::UploadElementReader& reader) = 0;
   virtual bool Succeeded() = 0;
-  virtual scoped_ptr<base::Value> Result() = 0;
+  virtual std::unique_ptr<base::Value> Result() = 0;
 
  protected:
   UploadDataPresenter() {}
@@ -74,7 +76,7 @@ class RawDataPresenter : public UploadDataPresenter {
   // Implementation of UploadDataPresenter.
   void FeedNext(const net::UploadElementReader& reader) override;
   bool Succeeded() override;
-  scoped_ptr<base::Value> Result() override;
+  std::unique_ptr<base::Value> Result() override;
 
  private:
   void FeedNextBytes(const char* bytes, size_t size);
@@ -82,7 +84,7 @@ class RawDataPresenter : public UploadDataPresenter {
   FRIEND_TEST_ALL_PREFIXES(WebRequestUploadDataPresenterTest, RawData);
 
   bool success_;
-  scoped_ptr<base::ListValue> list_;
+  std::unique_ptr<base::ListValue> list_;
 
   DISALLOW_COPY_AND_ASSIGN(RawDataPresenter);
 };
@@ -104,12 +106,12 @@ class ParsedDataPresenter : public UploadDataPresenter {
   // Implementation of UploadDataPresenter.
   void FeedNext(const net::UploadElementReader& reader) override;
   bool Succeeded() override;
-  scoped_ptr<base::Value> Result() override;
+  std::unique_ptr<base::Value> Result() override;
 
   // Allows to create ParsedDataPresenter without the URLRequest. Uses the
   // parser for "application/x-www-form-urlencoded" form encoding. Only use this
   // in tests.
-  static scoped_ptr<ParsedDataPresenter> CreateForTests();
+  static std::unique_ptr<ParsedDataPresenter> CreateForTests();
 
  private:
   // This constructor is used in CreateForTests.
@@ -117,9 +119,9 @@ class ParsedDataPresenter : public UploadDataPresenter {
 
   // Clears resources and the success flag.
   void Abort();
-  scoped_ptr<FormDataParser> parser_;
+  std::unique_ptr<FormDataParser> parser_;
   bool success_;
-  scoped_ptr<base::DictionaryValue> dictionary_;
+  std::unique_ptr<base::DictionaryValue> dictionary_;
 
   DISALLOW_COPY_AND_ASSIGN(ParsedDataPresenter);
 };

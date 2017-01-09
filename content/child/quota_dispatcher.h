@@ -5,11 +5,14 @@
 #ifndef CONTENT_CHILD_QUOTA_DISPATCHER_H_
 #define CONTENT_CHILD_QUOTA_DISPATCHER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/id_map.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/public/child/worker_thread.h"
 #include "storage/common/quota/quota_types.h"
@@ -38,8 +41,8 @@ class QuotaDispatcher : public WorkerThread::Observer {
   class Callback {
    public:
     virtual ~Callback() {}
-    virtual void DidQueryStorageUsageAndQuota(int64 usage, int64 quota) = 0;
-    virtual void DidGrantStorageQuota(int64 usage, int64 granted_quota) = 0;
+    virtual void DidQueryStorageUsageAndQuota(int64_t usage, int64_t quota) = 0;
+    virtual void DidGrantStorageQuota(int64_t usage, int64_t granted_quota) = 0;
     virtual void DidFail(storage::QuotaStatusCode status) = 0;
   };
 
@@ -60,28 +63,28 @@ class QuotaDispatcher : public WorkerThread::Observer {
 
   void QueryStorageUsageAndQuota(const GURL& gurl,
                                  storage::StorageType type,
-                                 Callback* callback);
-  void RequestStorageQuota(int render_view_id,
+                                 std::unique_ptr<Callback> callback);
+  void RequestStorageQuota(int render_frame_id,
                            const GURL& gurl,
                            storage::StorageType type,
-                           uint64 requested_size,
-                           Callback* callback);
+                           uint64_t requested_size,
+                           std::unique_ptr<Callback> callback);
 
   // Creates a new Callback instance for WebStorageQuotaCallbacks.
-  static Callback* CreateWebStorageQuotaCallbacksWrapper(
+  static std::unique_ptr<Callback> CreateWebStorageQuotaCallbacksWrapper(
       blink::WebStorageQuotaCallbacks callbacks);
 
  private:
   // Message handlers.
   void DidQueryStorageUsageAndQuota(int request_id,
-                                    int64 current_usage,
-                                    int64 current_quota);
+                                    int64_t current_usage,
+                                    int64_t current_quota);
   void DidGrantStorageQuota(int request_id,
-                            int64 current_usage,
-                            int64 granted_quota);
+                            int64_t current_usage,
+                            int64_t granted_quota);
   void DidFail(int request_id, storage::QuotaStatusCode error);
 
-  IDMap<Callback, IDMapOwnPointer> pending_quota_callbacks_;
+  IDMap<std::unique_ptr<Callback>> pending_quota_callbacks_;
 
   scoped_refptr<ThreadSafeSender> thread_safe_sender_;
   scoped_refptr<QuotaMessageFilter> quota_message_filter_;

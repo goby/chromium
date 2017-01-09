@@ -4,10 +4,10 @@
 
 #include "chrome/browser/extensions/browser_context_keyed_service_factories.h"
 
+#include "build/build_config.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/api/activity_log_private/activity_log_private_api.h"
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_event_router_factory.h"
-#include "chrome/browser/extensions/api/bluetooth_low_energy/bluetooth_low_energy_api.h"
 #include "chrome/browser/extensions/api/bookmark_manager_private/bookmark_manager_private_api.h"
 #include "chrome/browser/extensions/api/bookmarks/bookmarks_api.h"
 #include "chrome/browser/extensions/api/braille_display_private/braille_display_private_api.h"
@@ -24,14 +24,12 @@
 #include "chrome/browser/extensions/api/hotword_private/hotword_private_api.h"
 #include "chrome/browser/extensions/api/identity/identity_api.h"
 #include "chrome/browser/extensions/api/language_settings_private/language_settings_private_delegate_factory.h"
-#include "chrome/browser/extensions/api/location/location_manager.h"
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_event_router_factory.h"
 #include "chrome/browser/extensions/api/preference/chrome_direct_setting_api.h"
 #include "chrome/browser/extensions/api/preference/preference_api.h"
 #include "chrome/browser/extensions/api/processes/processes_api.h"
 #include "chrome/browser/extensions/api/screenlock_private/screenlock_private_api.h"
-#include "chrome/browser/extensions/api/search_engines_private/search_engines_private_event_router_factory.h"
 #include "chrome/browser/extensions/api/sessions/sessions_api.h"
 #include "chrome/browser/extensions/api/settings_overrides/settings_overrides_api.h"
 #include "chrome/browser/extensions/api/settings_private/settings_private_event_router_factory.h"
@@ -41,7 +39,6 @@
 #include "chrome/browser/extensions/api/tabs/tabs_windows_api.h"
 #include "chrome/browser/extensions/api/web_navigation/web_navigation_api.h"
 #include "chrome/browser/extensions/api/webrtc_audio_private/webrtc_audio_private_api.h"
-#include "chrome/browser/extensions/api/webstore/webstore_api.h"
 #include "chrome/browser/extensions/extension_garbage_collector_factory.h"
 #include "chrome/browser/extensions/extension_gcm_app_handler.h"
 #include "chrome/browser/extensions/extension_storage_monitor_factory.h"
@@ -55,11 +52,10 @@
 #include "chrome/browser/extensions/warning_badge_service_factory.h"
 #include "chrome/browser/speech/extension_api/tts_extension_api.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
-
-#if !defined(OS_ANDROID)
-#include "chrome/browser/extensions/api/gcd_private/gcd_private_api.h"
-#include "chrome/browser/extensions/api/mdns/mdns_api.h"
-#endif
+#include "chrome/common/features.h"
+#include "components/spellcheck/spellcheck_build_features.h"
+#include "extensions/browser/api/bluetooth_low_energy/bluetooth_low_energy_api.h"
+#include "ppapi/features/features.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/extensions/file_manager/event_router_factory.h"
@@ -67,9 +63,16 @@
 #include "chrome/browser/chromeos/extensions/media_player_api.h"
 #include "chrome/browser/extensions/api/input_ime/input_ime_api.h"
 #include "chrome/browser/extensions/api/log_private/log_private_api.h"
+#elif defined(OS_LINUX) || defined(OS_WIN)
+#include "chrome/browser/extensions/api/input_ime/input_ime_api.h"
 #endif
 
-#if defined(ENABLE_SPELLCHECK)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
+#include "chrome/browser/extensions/api/gcd_private/gcd_private_api.h"
+#include "chrome/browser/extensions/api/mdns/mdns_api.h"
+#endif
+
+#if BUILDFLAG(ENABLE_SPELLCHECK)
 #include "chrome/browser/extensions/api/spellcheck/spellcheck_api.h"
 #endif
 
@@ -97,7 +100,7 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   extensions::ExtensionWebUIOverrideRegistrar::GetFactoryInstance();
   extensions::FeedbackPrivateAPI::GetFactoryInstance();
   extensions::FontSettingsAPI::GetFactoryInstance();
-#if !defined(OS_ANDROID)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
   extensions::GcdPrivateAPI::GetFactoryInstance();
 #endif
   extensions::HistoryAPI::GetFactoryInstance();
@@ -108,13 +111,14 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
 #if defined(OS_CHROMEOS)
   extensions::InputImeAPI::GetFactoryInstance();
   extensions::InputMethodAPI::GetFactoryInstance();
+#elif defined(OS_LINUX) || defined(OS_WIN)
+  extensions::InputImeAPI::GetFactoryInstance();
 #endif
   extensions::LanguageSettingsPrivateDelegateFactory::GetInstance();
-  extensions::LocationManager::GetFactoryInstance();
 #if defined(OS_CHROMEOS)
   extensions::LogPrivateAPI::GetFactoryInstance();
 #endif
-#if !defined(OS_ANDROID)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
   extensions::MDnsAPI::GetFactoryInstance();
 #endif
 #if defined(OS_CHROMEOS)
@@ -123,18 +127,17 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   extensions::MenuManagerFactory::GetInstance();
   extensions::OmniboxAPI::GetFactoryInstance();
   extensions::PasswordsPrivateEventRouterFactory::GetInstance();
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   extensions::PluginManager::GetFactoryInstance();
-#endif  // defined(ENABLE_PLUGINS)
+#endif
   extensions::PreferenceAPI::GetFactoryInstance();
   extensions::ProcessesAPI::GetFactoryInstance();
   extensions::ScreenlockPrivateEventRouter::GetFactoryInstance();
-  extensions::SearchEnginesPrivateEventRouterFactory::GetInstance();
   extensions::SessionsAPI::GetFactoryInstance();
   extensions::SettingsPrivateEventRouterFactory::GetInstance();
   extensions::SettingsOverridesAPI::GetFactoryInstance();
   extensions::SignedInDevicesManager::GetFactoryInstance();
-#if defined(ENABLE_SPELLCHECK)
+#if BUILDFLAG(ENABLE_SPELLCHECK)
   extensions::SpellcheckAPI::GetFactoryInstance();
 #endif
   extensions::StreamsPrivateAPI::GetFactoryInstance();
@@ -144,7 +147,6 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   extensions::WarningBadgeServiceFactory::GetInstance();
   extensions::WebNavigationAPI::GetFactoryInstance();
   extensions::WebrtcAudioPrivateEventService::GetFactoryInstance();
-  extensions::WebstoreAPI::GetFactoryInstance();
 #if defined(OS_CHROMEOS)
   file_manager::EventRouterFactory::GetInstance();
 #endif

@@ -7,8 +7,8 @@
 
 #include <map>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "ui/wm/public/activation_change_observer.h"
 #include "ui/wm/wm_export.h"
@@ -18,9 +18,6 @@ class Window;
 namespace client {
 class ActivationClient;
 }
-}
-namespace gfx {
-class Rect;
 }
 
 namespace wm {
@@ -34,18 +31,8 @@ class Shadow;
 class WM_EXPORT ShadowController :
     public aura::client::ActivationChangeObserver {
  public:
-  class WM_EXPORT TestApi {
-   public:
-    explicit TestApi(ShadowController* controller) : controller_(controller) {}
-    ~TestApi() {}
-
-    Shadow* GetShadowForWindow(aura::Window* window);
-
-   private:
-    ShadowController* controller_;  // not owned
-
-    DISALLOW_COPY_AND_ASSIGN(TestApi);
-  };
+  // Returns the shadow for the |window|, or NULL if no shadow exists.
+  static Shadow* GetShadowForWindow(aura::Window* window);
 
   explicit ShadowController(aura::client::ActivationClient* activation_client);
   ~ShadowController() override;

@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
+import("//extensions/features/features.gni")
 import("//testing/test.gni")
 
 declare_args() {
@@ -78,98 +79,122 @@ config("key_defines") {
   }
 }
 
-source_set("google_apis") {
-  sources = [
-    "gaia/account_tracker.cc",
-    "gaia/account_tracker.h",
-    "gaia/gaia_auth_consumer.cc",
-    "gaia/gaia_auth_consumer.h",
-    "gaia/gaia_auth_fetcher.cc",
-    "gaia/gaia_auth_fetcher.h",
-    "gaia/gaia_auth_util.cc",
-    "gaia/gaia_auth_util.h",
-    "gaia/gaia_constants.cc",
-    "gaia/gaia_constants.h",
-    "gaia/gaia_oauth_client.cc",
-    "gaia/gaia_oauth_client.h",
-    "gaia/gaia_switches.cc",
-    "gaia/gaia_switches.h",
-    "gaia/gaia_urls.cc",
-    "gaia/gaia_urls.h",
-    "gaia/google_service_auth_error.cc",
-    "gaia/google_service_auth_error.h",
-    "gaia/identity_provider.cc",
-    "gaia/identity_provider.h",
-    "gaia/oauth2_access_token_consumer.h",
-    "gaia/oauth2_access_token_fetcher.cc",
-    "gaia/oauth2_access_token_fetcher.h",
-    "gaia/oauth2_access_token_fetcher_immediate_error.cc",
-    "gaia/oauth2_access_token_fetcher_immediate_error.h",
-    "gaia/oauth2_access_token_fetcher_impl.cc",
-    "gaia/oauth2_access_token_fetcher_impl.h",
-    "gaia/oauth2_api_call_flow.cc",
-    "gaia/oauth2_api_call_flow.h",
-    "gaia/oauth2_mint_token_flow.cc",
-    "gaia/oauth2_mint_token_flow.h",
-    "gaia/oauth2_token_service.cc",
-    "gaia/oauth2_token_service.h",
-    "gaia/oauth2_token_service_delegate.cc",
-    "gaia/oauth2_token_service_delegate.h",
-    "gaia/oauth2_token_service_request.cc",
-    "gaia/oauth2_token_service_request.h",
-    "gaia/oauth_request_signer.cc",
-    "gaia/oauth_request_signer.h",
-    "gaia/ubertoken_fetcher.cc",
-    "gaia/ubertoken_fetcher.h",
-    "google_api_keys.cc",
-    "google_api_keys.h",
-  ]
-
-  configs += [
-    ":key_defines",
-    "//build/config/compiler:no_size_t_to_int_warning",
-  ]
-
-  deps = [
-    "//base",
-    "//base/third_party/dynamic_annotations",
-    "//crypto",
-    "//net",
-    "//third_party/libxml",
-  ]
-
-  if (enable_extensions) {
-    sources += [
-      "drive/auth_service.cc",
-      "drive/auth_service.h",
-      "drive/auth_service_interface.h",
-      "drive/auth_service_observer.h",
-      "drive/base_requests.cc",
-      "drive/base_requests.h",
-      "drive/drive_api_error_codes.cc",
-      "drive/drive_api_error_codes.h",
-      "drive/drive_api_parser.cc",
-      "drive/drive_api_parser.h",
-      "drive/drive_api_requests.cc",
-      "drive/drive_api_requests.h",
-      "drive/drive_api_url_generator.cc",
-      "drive/drive_api_url_generator.h",
-      "drive/drive_common_callbacks.h",
-      "drive/files_list_request_runner.cc",
-      "drive/files_list_request_runner.h",
-      "drive/request_sender.cc",
-      "drive/request_sender.h",
-      "drive/request_util.cc",
-      "drive/request_util.h",
-      "drive/task_util.cc",
-      "drive/task_util.h",
-      "drive/time_util.cc",
-      "drive/time_util.h",
+# Variables:
+#   deps: Extra dependencies
+template("google_apis_tmpl") {
+  source_set(target_name) {
+    sources = [
+      "gaia/account_tracker.cc",
+      "gaia/account_tracker.h",
+      "gaia/gaia_auth_consumer.cc",
+      "gaia/gaia_auth_consumer.h",
+      "gaia/gaia_auth_fetcher.cc",
+      "gaia/gaia_auth_fetcher.h",
+      "gaia/gaia_auth_util.cc",
+      "gaia/gaia_auth_util.h",
+      "gaia/gaia_constants.cc",
+      "gaia/gaia_constants.h",
+      "gaia/gaia_oauth_client.cc",
+      "gaia/gaia_oauth_client.h",
+      "gaia/gaia_switches.cc",
+      "gaia/gaia_switches.h",
+      "gaia/gaia_urls.cc",
+      "gaia/gaia_urls.h",
+      "gaia/google_service_auth_error.cc",
+      "gaia/google_service_auth_error.h",
+      "gaia/identity_provider.cc",
+      "gaia/identity_provider.h",
+      "gaia/oauth2_access_token_consumer.h",
+      "gaia/oauth2_access_token_fetcher.cc",
+      "gaia/oauth2_access_token_fetcher.h",
+      "gaia/oauth2_access_token_fetcher_immediate_error.cc",
+      "gaia/oauth2_access_token_fetcher_immediate_error.h",
+      "gaia/oauth2_access_token_fetcher_impl.cc",
+      "gaia/oauth2_access_token_fetcher_impl.h",
+      "gaia/oauth2_api_call_flow.cc",
+      "gaia/oauth2_api_call_flow.h",
+      "gaia/oauth2_mint_token_flow.cc",
+      "gaia/oauth2_mint_token_flow.h",
+      "gaia/oauth2_token_service.cc",
+      "gaia/oauth2_token_service.h",
+      "gaia/oauth2_token_service_delegate.cc",
+      "gaia/oauth2_token_service_delegate.h",
+      "gaia/oauth2_token_service_request.cc",
+      "gaia/oauth2_token_service_request.h",
+      "gaia/oauth_request_signer.cc",
+      "gaia/oauth_request_signer.h",
+      "gaia/ubertoken_fetcher.cc",
+      "gaia/ubertoken_fetcher.h",
+      "google_api_keys.cc",
+      "google_api_keys.h",
     ]
+
+    configs += [
+      ":key_defines",
+      "//build/config/compiler:no_size_t_to_int_warning",
+    ]
+
+    deps = [
+      "//base",
+      "//base/third_party/dynamic_annotations",
+      "//crypto",
+      "//third_party/libxml",
+    ]
+
+    if (defined(invoker.deps)) {
+      deps += invoker.deps
+    }
+
+    if (enable_extensions) {
+      sources += [
+        "drive/auth_service.cc",
+        "drive/auth_service.h",
+        "drive/auth_service_interface.h",
+        "drive/auth_service_observer.h",
+        "drive/base_requests.cc",
+        "drive/base_requests.h",
+        "drive/drive_api_error_codes.cc",
+        "drive/drive_api_error_codes.h",
+        "drive/drive_api_parser.cc",
+        "drive/drive_api_parser.h",
+        "drive/drive_api_requests.cc",
+        "drive/drive_api_requests.h",
+        "drive/drive_api_url_generator.cc",
+        "drive/drive_api_url_generator.h",
+        "drive/drive_common_callbacks.h",
+        "drive/files_list_request_runner.cc",
+        "drive/files_list_request_runner.h",
+        "drive/request_sender.cc",
+        "drive/request_sender.h",
+        "drive/request_util.cc",
+        "drive/request_util.h",
+        "drive/task_util.cc",
+        "drive/task_util.h",
+        "drive/time_util.cc",
+        "drive/time_util.h",
+      ]
+    }
+
+    if (is_mac || is_ios) {
+      set_sources_assignment_filter([])
+      sources += [
+        "google_api_keys_mac.h",
+        "google_api_keys_mac.mm",
+      ]
+      set_sources_assignment_filter(sources_assignment_filter)
+
+      libs = [ "Foundation.framework" ]
+    }
   }
 }
 
-source_set("test_support") {
+google_apis_tmpl("google_apis") {
+  deps = [
+    "//net",
+  ]
+}
+
+static_library("test_support") {
   testonly = true
   sources = [
     "gaia/fake_gaia.cc",
@@ -189,7 +214,6 @@ source_set("test_support") {
     ":google_apis",
     "//base",
     "//base/test:test_support",
-    "//net",
     "//net:test_support",
   ]
 
@@ -203,17 +227,9 @@ source_set("test_support") {
   }
 }
 
-# TODO(GYP): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("google_apis_unittests_run") {
-  testonly = true
-  deps = [
-    ":google_apis_unittests",
-  ]
-}
-
 test("google_apis_unittests") {
   sources = [
+    "gaia/account_tracker_unittest.cc",
     "gaia/gaia_auth_fetcher_unittest.cc",
     "gaia/gaia_auth_util_unittest.cc",
     "gaia/gaia_oauth_client_unittest.cc",
@@ -221,10 +237,12 @@ test("google_apis_unittests") {
     "gaia/oauth2_access_token_fetcher_impl_unittest.cc",
     "gaia/oauth2_api_call_flow_unittest.cc",
     "gaia/oauth2_mint_token_flow_unittest.cc",
+    "gaia/oauth2_token_service_request_unittest.cc",
     "gaia/oauth2_token_service_unittest.cc",
     "gaia/oauth_request_signer_unittest.cc",
     "gaia/ubertoken_fetcher_unittest.cc",
     "google_api_keys_unittest.cc",
+    "google_api_keys_unittest.h",
   ]
 
   data = [
@@ -249,9 +267,18 @@ test("google_apis_unittests") {
       "drive/drive_api_parser_unittest.cc",
       "drive/drive_api_requests_unittest.cc",
       "drive/drive_api_url_generator_unittest.cc",
+      "drive/files_list_request_runner_unittest.cc",
       "drive/request_sender_unittest.cc",
       "drive/request_util_unittest.cc",
       "drive/time_util_unittest.cc",
     ]
+  }
+
+  if (is_mac || is_ios) {
+    set_sources_assignment_filter([])
+    sources += [ "google_api_keys_mac_unittest.mm" ]
+    set_sources_assignment_filter(sources_assignment_filter)
+
+    deps += [ "//third_party/ocmock" ]
   }
 }

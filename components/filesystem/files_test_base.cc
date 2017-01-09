@@ -4,36 +4,31 @@
 
 #include "components/filesystem/files_test_base.h"
 
+#include <utility>
+
 #include "components/filesystem/public/interfaces/directory.mojom.h"
 #include "components/filesystem/public/interfaces/types.mojom.h"
-#include "mojo/application/public/cpp/application_impl.h"
-#include "mojo/util/capture_util.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace filesystem {
 
-FilesTestBase::FilesTestBase() : binding_(this) {
+FilesTestBase::FilesTestBase()
+    : ServiceTest("filesystem_service_unittests") {
 }
 
 FilesTestBase::~FilesTestBase() {
 }
 
 void FilesTestBase::SetUp() {
-  ApplicationTestBase::SetUp();
-  application_impl()->ConnectToService("mojo:filesystem", &files_);
+  ServiceTest::SetUp();
+  connector()->ConnectToInterface("filesystem", &files_);
 }
 
-void FilesTestBase::OnFileSystemShutdown() {
-}
-
-void FilesTestBase::GetTemporaryRoot(DirectoryPtr* directory) {
-  filesystem::FileSystemClientPtr client;
-  binding_.Bind(GetProxy(&client));
-
-  FileError error = FILE_ERROR_FAILED;
-  files()->OpenFileSystem("temp", GetProxy(directory), client.Pass(),
-                          mojo::Capture(&error));
-  ASSERT_TRUE(files().WaitForIncomingResponse());
-  ASSERT_EQ(FILE_ERROR_OK, error);
+void FilesTestBase::GetTemporaryRoot(mojom::DirectoryPtr* directory) {
+  mojom::FileError error = mojom::FileError::FAILED;
+  bool handled = files()->OpenTempDirectory(GetProxy(directory), &error);
+  ASSERT_TRUE(handled);
+  ASSERT_EQ(mojom::FileError::OK, error);
 }
 
 }  // namespace filesystem

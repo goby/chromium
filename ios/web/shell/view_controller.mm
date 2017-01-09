@@ -4,48 +4,49 @@
 
 #import "ios/web/shell/view_controller.h"
 
-#include "base/mac/objc_property_releaser.h"
+#import <MobileCoreServices/MobileCoreServices.h>
+
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ios/net/cookies/cookie_store_ios.h"
 #import "ios/net/crn_http_protocol_handler.h"
 #import "ios/net/empty_nsurlcache.h"
-#import "ios/web/navigation/crw_session_controller.h"
-#include "ios/web/navigation/web_load_params.h"
-#import "ios/web/net/crw_url_verifying_protocol_handler.h"
-#include "ios/web/net/request_tracker_factory_impl.h"
-#import "ios/web/net/web_http_protocol_handler_delegate.h"
+#import "ios/net/request_tracker.h"
+#import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/referrer.h"
-#import "ios/web/public/web_controller_factory.h"
+#import "ios/web/public/web_state/context_menu_params.h"
 #include "ios/web/public/web_state/web_state.h"
-#include "ios/web/public/web_view_creation_util.h"
-#include "ios/web/shell/shell_browser_state.h"
-#include "ios/web/web_state/ui/crw_web_controller.h"
-#include "ios/web/web_state/web_state_impl.h"
+#import "ios/web/public/web_state/web_state_delegate_bridge.h"
+#import "ios/web/public/web_state/web_state_observer_bridge.h"
+#import "net/base/mac/url_conversions.h"
 #include "ui/base/page_transition_types.h"
 
-namespace {
-// Returns true if WKWebView should be used instead of UIWebView.
-// TODO(stuartmorgan): Decide on a better way to control this.
-bool UseWKWebView() {
-#if defined(FORCE_ENABLE_WKWEBVIEW)
-  return web::IsWKWebViewSupported();
-#else
-  return false;
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
 #endif
-}
-}
 
-@interface ViewController () {
+NSString* const kWebShellBackButtonAccessibilityLabel = @"Back";
+NSString* const kWebShellForwardButtonAccessibilityLabel = @"Forward";
+NSString* const kWebShellAddressFieldAccessibilityLabel = @"Address field";
+
+using web::NavigationManager;
+
+@interface ViewController ()<CRWWebStateDelegate,
+                             CRWWebStateObserver,
+                             UITextFieldDelegate,
+                             UIToolbarDelegate> {
   web::BrowserState* _browserState;
-  base::scoped_nsobject<CRWWebController> _webController;
-  scoped_ptr<web::RequestTrackerFactoryImpl> _requestTrackerFactory;
-  scoped_ptr<web::WebHTTPProtocolHandlerDelegate> _httpProtocolDelegate;
-
-  base::mac::ObjCPropertyReleaser _propertyReleaser_ViewController;
+  std::unique_ptr<web::WebState> _webState;
+  std::unique_ptr<web::WebStateObserverBridge> _webStateObserver;
+  std::unique_ptr<web::WebStateDelegateBridge> _webStateDelegate;
 }
-@property(nonatomic, readwrite, retain) UITextField* field;
+@property(nonatomic, assign, readonly) NavigationManager* navigationManager;
+@property(nonatomic, readwrite, strong) UITextField* field;
 @end
 
 @implementation ViewController
@@ -55,9 +56,8 @@ bool UseWKWebView() {
 @synthesize toolbarView = _toolbarView;
 
 - (instancetype)initWithBrowserState:(web::BrowserState*)browserState {
-  self = [super initWithNibName:@"MainView" bundle:nil];
+  self = [super initWithNibName:nil bundle:nil];
   if (self) {
-    _propertyReleaser_ViewController.Init(self, [ViewController class]);
     _browserState = browserState;
   }
   return self;
@@ -66,11 +66,31 @@ bool UseWKWebView() {
 - (void)dealloc {
   net::HTTPProtocolHandlerDelegate::SetInstance(nullptr);
   net::RequestTracker::SetRequestTrackerFactory(nullptr);
-  [super dealloc];
 }
 
 - (void)viewDidLoad {
   [super viewDidLoad];
+
+  CGRect bounds = self.view.bounds;
+
+  // Set up the toolbar.
+  _toolbarView = [[UIToolbar alloc] init];
+  _toolbarView.barTintColor =
+      [UIColor colorWithRed:0.337 green:0.467 blue:0.988 alpha:1.0];
+  _toolbarView.frame = CGRectMake(0, 20, CGRectGetWidth(bounds), 44);
+  _toolbarView.autoresizingMask =
+      UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
+  _toolbarView.delegate = self;
+  [self.view addSubview:_toolbarView];
+
+  // Set up the container view.
+  _containerView = [[UIView alloc] init];
+  _containerView.frame =
+      CGRectMake(0, 64, CGRectGetWidth(bounds), CGRectGetHeight(bounds) - 64);
+  _containerView.backgroundColor = [UIColor lightGrayColor];
+  _containerView.autoresizingMask =
+      UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  [self.view addSubview:_containerView];
 
   // Set up the toolbar buttons.
   UIButton* back = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -82,6 +102,7 @@ bool UseWKWebView() {
   [back addTarget:self
                 action:@selector(back)
       forControlEvents:UIControlEventTouchUpInside];
+  [back setAccessibilityLabel:kWebShellBackButtonAccessibilityLabel];
 
   UIButton* forward = [UIButton buttonWithType:UIButtonTypeCustom];
   [forward setImage:[UIImage imageNamed:@"toolbar_forward"]
@@ -92,6 +113,7 @@ bool UseWKWebView() {
   [forward addTarget:self
                 action:@selector(forward)
       forControlEvents:UIControlEventTouchUpInside];
+  [forward setAccessibilityLabel:kWebShellForwardButtonAccessibilityLabel];
 
   base::scoped_nsobject<UITextField> field([[UITextField alloc]
       initWithFrame:CGRectMake(88, 6, CGRectGetWidth([_toolbarView frame]) - 98,
@@ -103,6 +125,7 @@ bool UseWKWebView() {
   [field setAutoresizingMask:UIViewAutoresizingFlexibleWidth];
   [field setKeyboardType:UIKeyboardTypeWebSearch];
   [field setAutocorrectionType:UITextAutocorrectionTypeNo];
+  [field setAccessibilityLabel:kWebShellAddressFieldAccessibilityLabel];
   [field setClearButtonMode:UITextFieldViewModeWhileEditing];
   self.field = field;
 
@@ -113,40 +136,35 @@ bool UseWKWebView() {
   // Set up the network stack before creating the WebState.
   [self setUpNetworkStack];
 
-  scoped_ptr<web::WebStateImpl> webState(new web::WebStateImpl(_browserState));
-  webState->GetNavigationManagerImpl().InitializeSession(nil, nil, NO, 0);
-  web::WebViewType webViewType =
-      UseWKWebView() ? web::WK_WEB_VIEW_TYPE : web::UI_WEB_VIEW_TYPE;
-  _webController.reset(web::CreateWebController(webViewType, webState.Pass()));
-  [_webController setDelegate:self];
-  [_webController setWebUsageEnabled:YES];
+  web::WebState::CreateParams webStateCreateParams(_browserState);
+  _webState = web::WebState::Create(webStateCreateParams);
+  _webState->SetWebUsageEnabled(true);
 
-  [[_webController view] setFrame:[_containerView bounds]];
-  [_containerView addSubview:[_webController view]];
+  _webStateObserver.reset(
+      new web::WebStateObserverBridge(_webState.get(), self));
+  _webStateDelegate.reset(new web::WebStateDelegateBridge(self));
+  _webState->SetDelegate(_webStateDelegate.get());
 
-  web::WebLoadParams params(GURL("https://dev.chromium.org/"));
+  UIView* view = _webState->GetView();
+  [view setFrame:[_containerView bounds]];
+  [_containerView addSubview:view];
+
+  NavigationManager::WebLoadParams params(GURL("https://dev.chromium.org/"));
   params.transition_type = ui::PAGE_TRANSITION_TYPED;
-  [_webController loadWithParams:params];
+  self.navigationManager->LoadURLWithParams(params);
+}
+
+- (NavigationManager*)navigationManager {
+  return _webState->GetNavigationManager();
+}
+
+- (web::WebState*)webState {
+  return _webState.get();
 }
 
 - (void)setUpNetworkStack {
   // Disable the default cache.
   [NSURLCache setSharedURLCache:[EmptyNSURLCache emptyNSURLCache]];
-
-  _httpProtocolDelegate.reset(new web::WebHTTPProtocolHandlerDelegate(
-      _browserState->GetRequestContext()));
-  net::HTTPProtocolHandlerDelegate::SetInstance(_httpProtocolDelegate.get());
-  BOOL success = [NSURLProtocol registerClass:[CRNHTTPProtocolHandler class]];
-  DCHECK(success);
-  // The CRWURLVerifyingProtocolHandler is used to verify URL in the
-  // CRWWebController. It must be registered after the HttpProtocolHandler
-  // because handlers are called in the reverse order of declaration.
-  success =
-      [NSURLProtocol registerClass:[CRWURLVerifyingProtocolHandler class]];
-  DCHECK(success);
-  _requestTrackerFactory.reset(
-      new web::RequestTrackerFactoryImpl(std::string()));
-  net::RequestTracker::SetRequestTrackerFactory(_requestTrackerFactory.get());
   net::CookieStoreIOS::SetCookiePolicy(net::CookieStoreIOS::ALLOW);
 }
 
@@ -162,25 +180,25 @@ bool UseWKWebView() {
 }
 
 - (void)back {
-  if ([_webController canGoBack]) {
-    [_webController goBack];
+  if (self.navigationManager->CanGoBack()) {
+    self.navigationManager->GoBack();
   }
 }
 
 - (void)forward {
-  if ([_webController canGoForward]) {
-    [_webController goForward];
+  if (self.navigationManager->CanGoForward()) {
+    self.navigationManager->GoForward();
   }
 }
 
 - (BOOL)textFieldShouldReturn:(UITextField*)field {
-  GURL url = GURL(base::SysNSStringToUTF8([field text]));
+  GURL URL = GURL(base::SysNSStringToUTF8([field text]));
 
   // Do not try to load invalid URLs.
-  if (url.is_valid()) {
-    web::WebLoadParams params(url);
+  if (URL.is_valid()) {
+    NavigationManager::WebLoadParams params(URL);
     params.transition_type = ui::PAGE_TRANSITION_TYPED;
-    [_webController loadWithParams:params];
+    self.navigationManager->LoadURLWithParams(params);
   }
 
   [field resignFirstResponder];
@@ -194,8 +212,8 @@ bool UseWKWebView() {
     return;
   }
 
-  const GURL& url = [_webController webStateImpl]->GetVisibleURL();
-  [_field setText:base::SysUTF8ToNSString(url.spec())];
+  const GURL& visibleURL = _webState->GetVisibleURL();
+  [_field setText:base::SysUTF8ToNSString(visibleURL.spec())];
 }
 
 // -----------------------------------------------------------------------
@@ -253,103 +271,59 @@ bool UseWKWebView() {
 }
 
 // -----------------------------------------------------------------------
-// WebDelegate implementation.
+// WebStateObserver implementation.
 
-- (void)webWillAddPendingURL:(const GURL&)url
-                  transition:(ui::PageTransition)transition {
-}
-- (void)webDidAddPendingURL {
-  [self updateToolbar];
-}
-- (void)webCancelStartLoadingRequest {
-}
-- (void)webDidStartLoadingURL:(const GURL&)currentUrl
-          shouldUpdateHistory:(BOOL)updateHistory {
-  [self updateToolbar];
-}
-- (void)webDidFinishWithURL:(const GURL&)url loadSuccess:(BOOL)loadSuccess {
+- (void)didStartProvisionalNavigationForURL:(const GURL&)URL {
   [self updateToolbar];
 }
 
-- (CRWWebController*)webPageOrderedOpen:(const GURL&)url
-                               referrer:(const web::Referrer&)referrer
-                             windowName:(NSString*)windowName
-                           inBackground:(BOOL)inBackground {
-  return nil;
+- (void)didCommitNavigationWithDetails:
+    (const web::LoadCommittedDetails&)details {
+  [self updateToolbar];
 }
 
-- (CRWWebController*)webPageOrderedOpenBlankWithReferrer:
-                         (const web::Referrer&)referrer
-                                            inBackground:(BOOL)inBackground {
-  return nil;
+- (void)webStateDidLoadPage:(web::WebState*)webState {
+  DCHECK_EQ(_webState.get(), webState);
+  [self updateToolbar];
 }
 
-- (void)webPageOrderedClose {
-}
-- (void)goDelta:(int)delta {
-}
-- (void)openURLWithParams:(const web::WebState::OpenURLParams&)params {
-}
-- (BOOL)openExternalURL:(const GURL&)url {
-  return NO;
-}
+// -----------------------------------------------------------------------
+// WebStateDelegate implementation.
 
-- (void)presentSSLError:(const net::SSLInfo&)info
-           forSSLStatus:(const web::SSLStatus&)status
-            recoverable:(BOOL)recoverable
-               callback:(SSLErrorCallback)shouldContinue {
+- (BOOL)webState:(web::WebState*)webState
+    handleContextMenu:(const web::ContextMenuParams&)params {
+  GURL link = params.link_url;
+  if (!link.is_valid()) {
+    return NO;
+  }
+
   UIAlertController* alert = [UIAlertController
-      alertControllerWithTitle:@"Your connection is not private"
+      alertControllerWithTitle:params.menu_title
                        message:nil
                 preferredStyle:UIAlertControllerStyleActionSheet];
-  [alert addAction:[UIAlertAction actionWithTitle:@"Go Back"
+  alert.popoverPresentationController.sourceView = params.view;
+  alert.popoverPresentationController.sourceRect =
+      CGRectMake(params.location.x, params.location.y, 1.0, 1.0);
+
+  void (^handler)(UIAlertAction*) = ^(UIAlertAction*) {
+    NSDictionary* item = @{
+      static_cast<NSString*>(kUTTypeURL) : net::NSURLWithGURL(link),
+      static_cast<NSString*>(kUTTypeUTF8PlainText) : [base::SysUTF8ToNSString(
+          link.spec()) dataUsingEncoding:NSUTF8StringEncoding],
+    };
+    [[UIPasteboard generalPasteboard] setItems:@[ item ]];
+  };
+  [alert addAction:[UIAlertAction actionWithTitle:@"Copy Link"
+                                            style:UIAlertActionStyleDefault
+                                          handler:handler]];
+
+  [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
                                             style:UIAlertActionStyleCancel
-                                          handler:^(UIAlertAction*) {
-                                            shouldContinue(NO);
-                                          }]];
+                                          handler:nil]];
 
-  if (recoverable) {
-    [alert addAction:[UIAlertAction actionWithTitle:@"Continue"
-                                              style:UIAlertActionStyleDefault
-                                            handler:^(UIAlertAction*) {
-                                              shouldContinue(YES);
-                                            }]];
-  }
   [self presentViewController:alert animated:YES completion:nil];
-}
 
-- (void)presentSpoofingError {
-}
-- (void)webLoadCancelled:(const GURL&)url {
-}
-- (void)webDidUpdateHistoryStateWithPageURL:(const GURL&)pageUrl {
-}
-- (void)webController:(CRWWebController*)webController
-    retrievePlaceholderOverlayImage:(void (^)(UIImage*))block {
-}
-- (void)webController:(CRWWebController*)webController
-    onFormResubmissionForRequest:(NSURLRequest*)request
-                   continueBlock:(ProceduralBlock)continueBlock
-                     cancelBlock:(ProceduralBlock)cancelBlock {
-}
-- (void)webWillReload {
-}
-- (void)webWillInitiateLoadWithParams:(web::WebLoadParams&)params {
-}
-- (void)webDidUpdateSessionForLoadWithParams:(const web::WebLoadParams&)params
-                        wasInitialNavigation:(BOOL)initialNavigation {
-}
-- (void)webWillFinishHistoryNavigationFromEntry:(CRWSessionEntry*)fromEntry {
-}
-- (void)webWillGoDelta:(int)delta {
-}
-- (void)webDidPrepareForGoBack {
-}
-- (int)downloadImageAtUrl:(const GURL&)url
-            maxBitmapSize:(uint32_t)maxBitmapSize
-                 callback:
-                     (const web::WebState::ImageDownloadCallback&)callback {
-  return -1;
+  return YES;
 }
 
 @end

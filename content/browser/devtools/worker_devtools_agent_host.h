@@ -5,14 +5,16 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_WORKER_DEVTOOLS_AGENT_HOST_H_
 #define CONTENT_BROWSER_DEVTOOLS_WORKER_DEVTOOLS_AGENT_HOST_H_
 
+#include "base/macros.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "ipc/ipc_listener.h"
 
 namespace content {
 
+namespace devtools { namespace schema { class SchemaHandler; }}
+
 class BrowserContext;
 class DevToolsProtocolHandler;
-class SharedWorkerInstance;
 
 class WorkerDevToolsAgentHost : public DevToolsAgentHostImpl,
                                 public IPC::Listener {
@@ -64,7 +66,8 @@ class WorkerDevToolsAgentHost : public DevToolsAgentHostImpl,
   void WorkerCreated();
   void OnDispatchOnInspectorFrontend(const DevToolsMessageChunk& message);
 
-  scoped_ptr<DevToolsProtocolHandler> protocol_handler_;
+  std::unique_ptr<devtools::schema::SchemaHandler> schema_handler_;
+  std::unique_ptr<DevToolsProtocolHandler> protocol_handler_;
   DevToolsMessageChunkProcessor chunk_processor_;
   WorkerState state_;
   WorkerId worker_id_;

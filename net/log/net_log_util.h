@@ -5,15 +5,14 @@
 #ifndef NET_LOG_NET_LOG_UTIL_H_
 #define NET_LOG_NET_LOG_UTIL_H_
 
+#include <memory>
 #include <set>
 
-#include "base/memory/scoped_ptr.h"
 #include "net/base/net_export.h"
 #include "net/log/net_log.h"
 
 namespace base {
 class DictionaryValue;
-class Value;
 }
 
 namespace net {
@@ -32,7 +31,7 @@ enum NetInfoSource {
 // Utility methods for creating NetLog dumps.
 
 // Create a dictionary containing a legend for net/ constants.
-NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetConstants();
+NET_EXPORT std::unique_ptr<base::DictionaryValue> GetNetConstants();
 
 // Retrieves a dictionary containing information about the current state of
 // |context|.  |info_sources| is a set of NetInfoSources OR'd together,
@@ -40,12 +39,12 @@ NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetConstants();
 // one top-level entry to the returned dictionary.
 //
 // May only be called on |context|'s thread.
-NET_EXPORT scoped_ptr<base::DictionaryValue> GetNetInfo(
+NET_EXPORT std::unique_ptr<base::DictionaryValue> GetNetInfo(
     URLRequestContext* context,
     int info_sources);
 
 // Takes in a set of contexts and a NetLog::Observer, and passes in
-// NetLog::Entries to the observer for certain NetLog::Sources with pending
+// NetLog::Entries to the observer for certain NetLogSources with pending
 // events.  This allows requests that were ongoing when logging was started to
 // have an initial event that has some information.  This is particularly useful
 // for hung requests.  Note that these calls are not protected by the NetLog's

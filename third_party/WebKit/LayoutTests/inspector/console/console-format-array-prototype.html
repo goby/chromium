@@ -29,13 +29,14 @@ for (var i = 1; i < 5; ++i) {
 }
 a9.length = 11;
 a9.foo = "bar";
+a10 = Object.create([1,2]);
 //# sourceURL=console-format-array-prototype.html
 </script>
 
 <script>
 function test()
 {
-    loopOverGlobals(0, 10);
+    loopOverGlobals(0, 11);
 
     function loopOverGlobals(current, total)
     {
@@ -44,8 +45,7 @@ function test()
             var next = current + 1;
             if (next === total) {
                 InspectorTest.evaluateInPage("tearDown()");
-                InspectorTest.expandConsoleMessages();
-                InspectorTest.runAfterPendingDispatches(finish);
+                InspectorTest.deprecatedRunAfterPendingDispatches(finish);
             } else {
                 loopOverGlobals(next, total);
             }
@@ -58,11 +58,11 @@ function test()
         }
 
         InspectorTest.evaluateInConsole("a" + current);
-        InspectorTest.runAfterPendingDispatches(invokeConsoleLog);
+        InspectorTest.deprecatedRunAfterPendingDispatches(invokeConsoleLog);
         function invokeConsoleLog()
         {
             InspectorTest.evaluateInPage("log(a" + current + ")");
-            InspectorTest.runAfterPendingDispatches(advance);
+            InspectorTest.deprecatedRunAfterPendingDispatches(advance);
         }
     }
 }

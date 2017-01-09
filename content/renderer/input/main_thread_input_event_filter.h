@@ -5,15 +5,13 @@
 #ifndef CONTENT_RENDERER_INPUT_MAIN_THREAD_INPUT_EVENT_FILTER_H_
 #define CONTENT_RENDERER_INPUT_MAIN_THREAD_INPUT_EVENT_FILTER_H_
 
+#include <stdint.h>
+
 #include "base/callback.h"
 #include "ipc/message_filter.h"
 
 namespace base {
 class SingleThreadTaskRunner;
-}
-
-namespace IPC {
-class Listener;
 }
 
 namespace content {
@@ -31,7 +29,7 @@ class MainThreadInputEventFilter : public IPC::MessageFilter {
   // IPC::MessageFilter implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
   bool GetSupportedMessageClasses(
-      std::vector<uint32>* supported_message_classes) const override;
+      std::vector<uint32_t>* supported_message_classes) const override;
 
  private:
   ~MainThreadInputEventFilter() override;

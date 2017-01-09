@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_ENROLLMENT_SCREEN_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_ENROLLMENT_SCREEN_HANDLER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/login/enrollment/enrollment_screen_actor.h"
 #include "chrome/browser/chromeos/login/enrollment/enterprise_enrollment_helper.h"
 #include "chrome/browser/chromeos/login/screens/network_error_model.h"
@@ -20,6 +20,7 @@
 namespace chromeos {
 
 class ErrorScreensHistogramHelper;
+class HelpAppLauncher;
 
 // WebUIMessageHandler implementation which handles events occurring on the
 // page, such as the user pressing the signin button.
@@ -39,12 +40,14 @@ class EnrollmentScreenHandler
   // Implements EnrollmentScreenActor:
   void SetParameters(Controller* controller,
                      const policy::EnrollmentConfig& config) override;
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void ShowSigninScreen() override;
+  void ShowAdJoin() override;
   void ShowAttributePromptScreen(const std::string& asset_id,
                                  const std::string& location) override;
+  void ShowAttestationBasedEnrollmentSuccessScreen(
+      const std::string& enterprise_domain) override;
   void ShowEnrollmentSpinnerScreen() override;
   void ShowAuthError(const GoogleServiceAuthError& error) override;
   void ShowEnrollmentStatus(policy::EnrollmentStatus status) override;
@@ -61,9 +64,13 @@ class EnrollmentScreenHandler
 
  private:
   // Handlers for WebUI messages.
+  void HandleToggleFakeEnrollment();
   void HandleClose(const std::string& reason);
   void HandleCompleteLogin(const std::string& user,
                            const std::string& auth_code);
+  void HandleAdCompleteLogin(const std::string& machine_name,
+                             const std::string& user_name,
+                             const std::string& password);
   void HandleRetry();
   void HandleFrameLoadingCompleted();
   void HandleDeviceAttributesProvided(const std::string& asset_id,
@@ -82,6 +89,10 @@ class EnrollmentScreenHandler
   // Display the given i18n resource as error message.
   void ShowError(int message_id, bool retry);
 
+  // Display the given i18n resource as an error message, with the $1
+  // substitution parameter replaced with the device's product name.
+  void ShowErrorForDevice(int message_id, bool retry);
+
   // Display the given string as error message.
   void ShowErrorMessage(const std::string& message, bool retry);
 
@@ -91,15 +102,21 @@ class EnrollmentScreenHandler
   // Shows the screen.
   void DoShow();
 
-  // Returns current visible screen.
-  OobeUI::Screen GetCurrentScreen() const;
-
   // Returns true if current visible screen is the enrollment sign-in page.
   bool IsOnEnrollmentScreen() const;
 
   // Returns true if current visible screen is the error screen over
   // enrollment sign-in page.
   bool IsEnrollmentScreenHiddenByError() const;
+
+  // Helper function to wait for AD password written to a pipe.
+  void OnPasswordPipeReady(const std::string& machine_name,
+                           const std::string& user_name,
+                           base::ScopedFD password_fd);
+  // Handler callback from AuthPolicyClient.
+  void HandleAdDomainJoin(const std::string& machine_name,
+                          const std::string& user_name,
+                          int code);
 
   // Keeps the controller for this actor.
   Controller* controller_;
@@ -121,7 +138,7 @@ class EnrollmentScreenHandler
 
   NetworkErrorModel* network_error_model_;
 
-  scoped_ptr<ErrorScreensHistogramHelper> histogram_helper_;
+  std::unique_ptr<ErrorScreensHistogramHelper> histogram_helper_;
 
   // Help application used for help dialogs.
   scoped_refptr<HelpAppLauncher> help_app_;

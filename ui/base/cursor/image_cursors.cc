@@ -5,13 +5,15 @@
 #include "ui/base/cursor/image_cursors.h"
 
 #include <float.h>
+#include <stddef.h>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/cursor_loader.h"
 #include "ui/base/cursor/cursors_aura.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/point.h"
 
 namespace ui {
@@ -76,17 +78,17 @@ float ImageCursors::GetScale() const {
   return cursor_loader_->scale();
 }
 
-gfx::Display::Rotation ImageCursors::GetRotation() const {
+display::Display::Rotation ImageCursors::GetRotation() const {
   if (!cursor_loader_) {
     NOTREACHED();
     // Returning default on release build as it's not serious enough to crash
     // even if this ever happens.
-    return gfx::Display::ROTATE_0;
+    return display::Display::ROTATE_0;
   }
   return cursor_loader_->rotation();
 }
 
-bool ImageCursors::SetDisplay(const gfx::Display& display,
+bool ImageCursors::SetDisplay(const display::Display& display,
                               float scale_factor) {
   if (!cursor_loader_) {
     cursor_loader_.reset(CursorLoader::Create());

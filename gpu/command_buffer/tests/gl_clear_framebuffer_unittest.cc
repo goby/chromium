@@ -9,6 +9,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <GLES2/gl2extchromium.h>
+#include <stdint.h>
 
 #include <vector>
 
@@ -19,6 +20,8 @@
 #include "gpu/config/gpu_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gl/gl_context.h"
+#include "ui/gl/gl_version_info.h"
 
 namespace gpu {
 
@@ -34,12 +37,20 @@ class GLClearFramebufferTest : public testing::TestWithParam<bool> {
       base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
       command_line.AppendSwitchASCII(switches::kGpuDriverBugWorkarounds,
                                      base::IntToString(gpu::GL_CLEAR_BROKEN));
-      gl_.InitializeWithCommandLine(GLManager::Options(), &command_line);
+      gl_.InitializeWithCommandLine(GLManager::Options(), command_line);
       DCHECK(gl_.workarounds().gl_clear_broken);
     } else {
       gl_.Initialize(GLManager::Options());
       DCHECK(!gl_.workarounds().gl_clear_broken);
     }
+  }
+
+  bool IsApplicable() {
+    // The workaround doesn't use VAOs which would cause a failure on a core
+    // context and the hardware for each the workaround is necessary has a buggy
+    // VAO implementation. So we skip testing the workaround on core profiles.
+    return !GetParam() ||
+           !gl_.context()->GetVersionInfo()->is_desktop_core_profile;
   }
 
   void InitDraw();
@@ -107,22 +118,30 @@ INSTANTIATE_TEST_CASE_P(GLClearFramebufferTestWithParam,
                         ::testing::Values(true, false));
 
 TEST_P(GLClearFramebufferTest, ClearColor) {
+  if (!IsApplicable()) {
+    return;
+  }
+
   glClearColor(1.0f, 0.5f, 0.25f, 0.5f);
   glClear(GL_COLOR_BUFFER_BIT);
 
   // Verify.
-  const uint8 expected[] = {255, 128, 64, 128};
+  const uint8_t expected[] = {255, 128, 64, 128};
   EXPECT_TRUE(
       GLTestHelper::CheckPixels(0, 0, 1, 1, 1 /* tolerance */, expected));
 }
 
 TEST_P(GLClearFramebufferTest, ClearColorWithMask) {
+  if (!IsApplicable()) {
+    return;
+  }
+
   glColorMask(GL_TRUE, GL_FALSE, GL_FALSE, GL_FALSE);
   glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT);
 
   // Verify.
-  const uint8 expected[] = {255, 0, 0, 0};
+  const uint8_t expected[] = {255, 0, 0, 0};
   EXPECT_TRUE(
       GLTestHelper::CheckPixels(0, 0, 1, 1, 0 /* tolerance */, expected));
 }
@@ -130,11 +149,15 @@ TEST_P(GLClearFramebufferTest, ClearColorWithMask) {
 // crbug.com/434094
 #if !defined(OS_MACOSX)
 TEST_P(GLClearFramebufferTest, ClearColorWithScissor) {
+  if (!IsApplicable()) {
+    return;
+  }
+
   glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT);
 
   // Verify.
-  const uint8 expected[] = {255, 255, 255, 255};
+  const uint8_t expected[] = {255, 255, 255, 255};
   EXPECT_TRUE(
       GLTestHelper::CheckPixels(0, 0, 1, 1, 0 /* tolerance */, expected));
 
@@ -150,13 +173,17 @@ TEST_P(GLClearFramebufferTest, ClearColorWithScissor) {
 #endif
 
 TEST_P(GLClearFramebufferTest, ClearDepthStencil) {
+  if (!IsApplicable()) {
+    return;
+  }
+
   const GLuint kStencilRef = 1 << 2;
   InitDraw();
   SetDrawColor(1.0f, 0.0f, 0.0f, 1.0f);
   DrawQuad();
   // Verify.
-  const uint8 kRed[] = {255, 0, 0, 255};
-  const uint8 kGreen[] = {0, 255, 0, 255};
+  const uint8_t kRed[] = {255, 0, 0, 255};
+  const uint8_t kGreen[] = {0, 255, 0, 255};
   EXPECT_TRUE(
       GLTestHelper::CheckPixels(0, 0, 1, 1, 0 /* tolerance */, kRed));
 

@@ -9,29 +9,31 @@
 namespace base {
 
 PendingTask::PendingTask(const tracked_objects::Location& posted_from,
-                         const base::Closure& task)
+                         OnceClosure task)
     : base::TrackingInfo(posted_from, TimeTicks()),
-      task(task),
+      task(std::move(task)),
       posted_from(posted_from),
       sequence_num(0),
       nestable(true),
-      is_high_res(false) {
-}
+      is_high_res(false) {}
 
 PendingTask::PendingTask(const tracked_objects::Location& posted_from,
-                         const base::Closure& task,
+                         OnceClosure task,
                          TimeTicks delayed_run_time,
                          bool nestable)
     : base::TrackingInfo(posted_from, delayed_run_time),
-      task(task),
+      task(std::move(task)),
       posted_from(posted_from),
       sequence_num(0),
       nestable(nestable),
-      is_high_res(false) {
-}
+      is_high_res(false) {}
+
+PendingTask::PendingTask(PendingTask&& other) = default;
 
 PendingTask::~PendingTask() {
 }
+
+PendingTask& PendingTask::operator=(PendingTask&& other) = default;
 
 bool PendingTask::operator<(const PendingTask& other) const {
   // Since the top of a priority queue is defined as the "greatest" element, we
@@ -47,10 +49,6 @@ bool PendingTask::operator<(const PendingTask& other) const {
   // If the times happen to match, then we use the sequence number to decide.
   // Compare the difference to support integer roll-over.
   return (sequence_num - other.sequence_num) > 0;
-}
-
-void TaskQueue::Swap(TaskQueue* queue) {
-  c.swap(queue->c);  // Calls std::deque::swap.
 }
 
 }  // namespace base

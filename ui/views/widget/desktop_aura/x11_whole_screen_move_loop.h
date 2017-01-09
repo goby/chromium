@@ -5,8 +5,11 @@
 #ifndef UI_VIEWS_WIDGET_DESKTOP_AURA_X11_WHOLE_SCREEN_MOVE_LOOP_H_
 #define UI_VIEWS_WIDGET_DESKTOP_AURA_X11_WHOLE_SCREEN_MOVE_LOOP_H_
 
+#include <stdint.h>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
@@ -24,11 +27,10 @@ class Window;
 namespace ui {
 class MouseEvent;
 class ScopedEventDispatcher;
+class XScopedEventSelector;
 }
 
 namespace views {
-
-class Widget;
 
 // Runs a nested message loop and grabs the mouse. This is used to implement
 // dragging.
@@ -55,7 +57,7 @@ class X11WholeScreenMoveLoop : public X11MoveLoop,
   void GrabEscKey();
 
   // Creates an input-only window to be used during the drag.
-  XID CreateDragInputWindow(XDisplay* display);
+  void CreateDragInputWindow(XDisplay* display);
 
   // Dispatch mouse movement event to |delegate_| in a posted task.
   void DispatchMouseMovement();
@@ -64,7 +66,7 @@ class X11WholeScreenMoveLoop : public X11MoveLoop,
 
   // Are we running a nested message loop from RunMoveLoop()?
   bool in_move_loop_;
-  scoped_ptr<ui::ScopedEventDispatcher> nested_dispatcher_;
+  std::unique_ptr<ui::ScopedEventDispatcher> nested_dispatcher_;
 
   // Cursor in use prior to the move loop starting. Restored when the move loop
   // quits.
@@ -76,6 +78,9 @@ class X11WholeScreenMoveLoop : public X11MoveLoop,
   // are set on this window.
   XID grab_input_window_;
 
+  // Events selected on |grab_input_window_|.
+  std::unique_ptr<ui::XScopedEventSelector> grab_input_window_events_;
+
   // Whether the pointer was grabbed on |grab_input_window_|.
   bool grabbed_pointer_;
 
@@ -85,7 +90,7 @@ class X11WholeScreenMoveLoop : public X11MoveLoop,
   // pressing escape).
   bool canceled_;
 
-  scoped_ptr<ui::MouseEvent> last_motion_in_screen_;
+  std::unique_ptr<ui::MouseEvent> last_motion_in_screen_;
   base::WeakPtrFactory<X11WholeScreenMoveLoop> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(X11WholeScreenMoveLoop);

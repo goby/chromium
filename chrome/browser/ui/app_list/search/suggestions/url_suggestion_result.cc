@@ -50,12 +50,12 @@ void URLSuggestionResult::Open(int event_flags) {
                             ui::DispositionFromEventFlags(event_flags));
 }
 
-scoped_ptr<SearchResult> URLSuggestionResult::Duplicate() const {
+std::unique_ptr<SearchResult> URLSuggestionResult::Duplicate() const {
   URLSuggestionResult* new_result = new URLSuggestionResult(
       profile_, list_controller_, favicon_service_, suggestions_service_,
       suggestion_);
   new_result->set_relevance(relevance());
-  return scoped_ptr<SearchResult>(new_result);
+  return std::unique_ptr<SearchResult>(new_result);
 }
 
 void URLSuggestionResult::UpdateIcon() {
@@ -102,9 +102,9 @@ void URLSuggestionResult::OnDidGetIcon(
 }
 
 void URLSuggestionResult::OnSuggestionsThumbnailAvailable(
-    const GURL& url, const SkBitmap* bitmap) {
-  if (bitmap) {
-    SetIcon(gfx::ImageSkia::CreateFrom1xBitmap(*bitmap));
+    const GURL& url, const gfx::Image& image) {
+  if (!image.IsEmpty()) {
+    SetIcon(*image.ToImageSkia());
   } else {
     // There is no image for this suggestion. Disable being shown on the start
     // screen.

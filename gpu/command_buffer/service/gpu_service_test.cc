@@ -9,6 +9,8 @@
 #include "ui/gl/gl_context_stub_with_extensions.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_mock.h"
+#include "ui/gl/gl_surface_stub.h"
+#include "ui/gl/init/gl_factory.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
 namespace gpu {
@@ -25,15 +27,16 @@ void GpuServiceTest::SetUpWithGLVersion(const char* gl_version,
                                         const char* gl_extensions) {
   testing::Test::SetUp();
 
-  gfx::SetGLGetProcAddressProc(gfx::MockGLInterface::GetGLProcAddress);
-  gfx::GLSurfaceTestSupport::InitializeOneOffWithMockBindings();
-  gl_.reset(new ::testing::StrictMock< ::gfx::MockGLInterface>());
-  ::gfx::MockGLInterface::SetGLInterface(gl_.get());
+  gl::SetGLGetProcAddressProc(gl::MockGLInterface::GetGLProcAddress);
+  gl::GLSurfaceTestSupport::InitializeOneOffWithMockBindings();
+  gl_.reset(new ::testing::StrictMock<::gl::MockGLInterface>());
+  ::gl::MockGLInterface::SetGLInterface(gl_.get());
 
-  context_ = new gfx::GLContextStubWithExtensions;
+  context_ = new gl::GLContextStubWithExtensions;
   context_->AddExtensionsString(gl_extensions);
   context_->SetGLVersionString(gl_version);
-  gfx::GLSurfaceTestSupport::InitializeDynamicMockBindings(context_.get());
+  surface_ = new gl::GLSurfaceStub;
+  context_->MakeCurrent(surface_.get());
   ran_setup_ = true;
 }
 
@@ -43,16 +46,23 @@ void GpuServiceTest::SetUp() {
 
 void GpuServiceTest::TearDown() {
   DCHECK(ran_setup_);
-  ::gfx::MockGLInterface::SetGLInterface(NULL);
+  context_ = nullptr;
+  surface_ = nullptr;
+  ::gl::MockGLInterface::SetGLInterface(NULL);
   gl_.reset();
-  gfx::ClearGLBindings();
+  gl::init::ShutdownGL();
   ran_teardown_ = true;
 
   testing::Test::TearDown();
 }
 
-gfx::GLContext* GpuServiceTest::GetGLContext() {
+gl::GLContext* GpuServiceTest::GetGLContext() {
   return context_.get();
 }
+
+gl::GLSurface* GpuServiceTest::GetGLSurface() {
+  return surface_.get();
+}
+
 }  // namespace gles2
 }  // namespace gpu

@@ -7,15 +7,14 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "gpu/gpu_export.h"
 #include "third_party/angle/include/GLSLANG/ShaderLang.h"
 
-namespace gfx {
+namespace gl {
 struct GLVersionInfo;
 }
 
@@ -44,7 +43,8 @@ class ShaderTranslatorInterface
                     ShShaderSpec shader_spec,
                     const ShBuiltInResources* resources,
                     ShShaderOutput shader_output_language,
-                    ShCompileOptions driver_bug_workarounds) = 0;
+                    ShCompileOptions driver_bug_workarounds,
+                    bool gl_shader_interm_output) = 0;
 
   // Translates the given shader source.
   // Returns true if translation is successful, false otherwise.
@@ -93,14 +93,15 @@ class GPU_EXPORT ShaderTranslator
 
   // Return shader output lanaguage type based on the context version.
   static ShShaderOutput GetShaderOutputLanguageForContext(
-      const gfx::GLVersionInfo& context_version);
+      const gl::GLVersionInfo& context_version);
 
   // Overridden from ShaderTranslatorInterface.
   bool Init(sh::GLenum shader_type,
             ShShaderSpec shader_spec,
             const ShBuiltInResources* resources,
             ShShaderOutput shader_output_language,
-            ShCompileOptions driver_bug_workarounds) override;
+            ShCompileOptions driver_bug_workarounds,
+            bool gl_shader_interm_output) override;
 
   // Overridden from ShaderTranslatorInterface.
   bool Translate(const std::string& shader_source,
@@ -122,10 +123,10 @@ class GPU_EXPORT ShaderTranslator
  private:
   ~ShaderTranslator() override;
 
-  int GetCompileOptions() const;
+  ShCompileOptions GetCompileOptions() const;
 
   ShHandle compiler_;
-  ShCompileOptions driver_bug_workarounds_;
+  ShCompileOptions compile_options_;
   base::ObserverList<DestructionObserver> destruction_observers_;
 };
 

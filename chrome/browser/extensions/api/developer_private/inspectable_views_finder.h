@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "extensions/common/view_type.h"
 
 class Profile;
@@ -28,7 +27,7 @@ struct ExtensionView;
 // by the developerPrivate API structure and schema compiler.
 class InspectableViewsFinder {
  public:
-  using View = linked_ptr<api::developer_private::ExtensionView>;
+  using View = api::developer_private::ExtensionView;
   using ViewList = std::vector<View>;
 
   explicit InspectableViewsFinder(Profile* profile);

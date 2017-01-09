@@ -5,9 +5,11 @@
 #ifndef CRYPTO_HKDF_H_
 #define CRYPTO_HKDF_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/strings/string_piece.h"
 #include "crypto/crypto_export.h"
 
@@ -38,6 +40,17 @@ class CRYPTO_EXPORT HKDF {
        size_t key_bytes_to_generate,
        size_t iv_bytes_to_generate,
        size_t subkey_secret_bytes_to_generate);
+
+  // An alternative constructor that allows the client and server key/IV
+  // lengths to be different.
+  HKDF(const base::StringPiece& secret,
+       const base::StringPiece& salt,
+       const base::StringPiece& info,
+       size_t client_key_bytes_to_generate,
+       size_t server_key_bytes_to_generate,
+       size_t client_iv_bytes_to_generate,
+       size_t server_iv_bytes_to_generate,
+       size_t subkey_secret_bytes_to_generate);
   ~HKDF();
 
   base::StringPiece client_write_key() const {
@@ -57,7 +70,7 @@ class CRYPTO_EXPORT HKDF {
   }
 
  private:
-  std::vector<uint8> output_;
+  std::vector<uint8_t> output_;
 
   base::StringPiece client_write_key_;
   base::StringPiece server_write_key_;

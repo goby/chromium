@@ -11,18 +11,17 @@
  * @extends {cr.EventTarget}
  * @implements {VolumeManagerCommon.VolumeInfoProvider}
  *
- * @param {VolumeManagerWrapper.NonNativeVolumeStatus} nonNativeEnabled ENABLED
- *     if non-native volumes should be available. DISABLED if non-native volumes
- *     related data/events should be hidden.
+ * @param {!AllowedPaths} allowedPaths Which paths are supported in the Files
+ *     app dialog.
  * @param {Window=} opt_backgroundPage Window object of the background
  *     page. If this is specified, the class skips to get background page.
  *     TOOD(hirono): Let all clients of the class pass the background page and
  *     make the argument not optional.
  */
-function VolumeManagerWrapper(nonNativeEnabled, opt_backgroundPage) {
+function VolumeManagerWrapper(allowedPaths, opt_backgroundPage) {
   cr.EventTarget.call(this);
 
-  this.nonNativeEnabled_ = nonNativeEnabled;
+  this.allowedPaths_ = allowedPaths;
   this.volumeInfoList = new cr.ui.ArrayDataModel([]);
 
   this.volumeManager_ = null;
@@ -49,26 +48,40 @@ function VolumeManagerWrapper(nonNativeEnabled, opt_backgroundPage) {
   }
 
   queue.run(function(callNextStep) {
-    this.backgroundPage_.VolumeManager.getInstance(function(volumeManager) {
-      this.onReady_(volumeManager);
-      callNextStep();
-    }.bind(this));
+    this.backgroundPage_.volumeManagerFactory.getInstance(
+        function(volumeManager) {
+          this.onReady_(volumeManager);
+          callNextStep();
+        }.bind(this));
   }.bind(this));
 }
-
-/**
- * If the non-native volumes are enabled on the wrapper.
- * @enum {boolean}
- */
-VolumeManagerWrapper.NonNativeVolumeStatus = {
-  ENABLED: true,
-  DISABLED: false
-};
 
 /**
  * Extends cr.EventTarget.
  */
 VolumeManagerWrapper.prototype.__proto__ = cr.EventTarget.prototype;
+
+/**
+ * @param {VolumeManagerCommon.VolumeType} volumeType
+ * @return {boolean}
+ */
+VolumeManagerWrapper.prototype.isAllowedVolume_ = function(volumeType) {
+  if (this.allowedPaths_ === AllowedPaths.ANY_PATH)
+    return true;
+
+  if (this.allowedPaths_ === AllowedPaths.NATIVE_OR_DRIVE_PATH &&
+      (VolumeManagerCommon.VolumeType.isNative(volumeType) ||
+       volumeType == VolumeManagerCommon.VolumeType.DRIVE)) {
+    return true;
+  }
+
+  if (this.allowedPaths_ === AllowedPaths.NATIVE_PATH &&
+      VolumeManagerCommon.VolumeType.isNative(volumeType)) {
+    return true;
+  }
+
+  return false;
+};
 
 /**
  * Called when the VolumeManager gets ready for post initialization.
@@ -97,10 +110,8 @@ VolumeManagerWrapper.prototype.onReady_ = function(volumeManager) {
   for (var i = 0; i < this.volumeManager_.volumeInfoList.length; i++) {
     var volumeInfo = this.volumeManager_.volumeInfoList.item(i);
     // TODO(hidehiko): Filter mounted volumes located on Drive File System.
-    if (!this.nonNativeEnabled_ &&
-        !VolumeManagerCommon.VolumeType.isNative(volumeInfo.volumeType)) {
+    if (!this.isAllowedVolume_(volumeInfo.volumeType))
       continue;
-    }
     volumeInfoList.push(volumeInfo);
   }
   this.volumeInfoList.splice.apply(
@@ -143,18 +154,19 @@ VolumeManagerWrapper.prototype.dispose = function() {
  * @private
  */
 VolumeManagerWrapper.prototype.onEvent_ = function(event) {
-  if (!this.nonNativeEnabled_) {
-    // If non-native volumes are disabled, ignore all the events related with
-    // the non-native volumes.
-    if (event.type === 'drive-connection-changed' ||
-        (event.type === 'externally-unmounted' &&
-         !VolumeManagerCommon.VolumeType.isNative(
-             event.volumeInfo.volumeType))) {
-      return;
-    }
+  var eventVolumeType;
+  switch (event.type) {
+    case 'drive-connection-changed':
+      eventVolumeType = VolumeManagerCommon.VolumeType.DRIVE;
+      break;
+    case 'externally-unmounted':
+      event = /** @type {!ExternallyUnmountedEvent} */ (event);
+      eventVolumeType = event.volumeInfo.volumeType;
+      break;
   }
 
-  this.dispatchEvent(event);
+  if (eventVolumeType && this.isAllowedVolume_(eventVolumeType))
+    this.dispatchEvent(event);
 };
 
 /**
@@ -163,42 +175,38 @@ VolumeManagerWrapper.prototype.onEvent_ = function(event) {
  * @private
  */
 VolumeManagerWrapper.prototype.onVolumeInfoListUpdated_ = function(event) {
-  if (this.nonNativeEnabled_) {
+  if (this.allowedPaths_ === AllowedPaths.ANY_PATH) {
     // Apply the splice as is.
     this.volumeInfoList.splice.apply(
-        this.volumeInfoList,
-        [event.index, event.removed.length].concat(event.added));
-  } else {
-    // Filters drive related volumes.
-    var index = event.index;
-    for (var i = 0; i < event.index; i++) {
-      if (!VolumeManagerCommon.VolumeType.isNative(
-              this.volumeManager_.volumeInfoList.item(i).volumeType)) {
-        index--;
-      }
-    }
-
-    var numRemovedVolumes = 0;
-    for (var i = 0; i < event.removed.length; i++) {
-      if (VolumeManagerCommon.VolumeType.isNative(
-              event.removed[i].volumeType)) {
-        numRemovedVolumes++;
-      }
-    }
-
-    var addedVolumes = [];
-    for (var i = 0; i < event.added.length; i++) {
-      var volumeInfo = event.added[i];
-      if (VolumeManagerCommon.VolumeType.isNative(
-              event.removed[i].volumeType)) {
-        addedVolumes.push(volumeInfo);
-      }
-    }
-
-    this.volumeInfoList.splice.apply(
-        this.volumeInfoList,
-        [index, numRemovedVolumes].concat(addedVolumes));
+         this.volumeInfoList,
+         [event.index, event.removed.length].concat(event.added));
+    return;
   }
+
+  // Filters Drive related volumes.
+  var index = event.index;
+  for (var i = 0; i < event.index; i++) {
+    var volumeType = this.volumeManager_.volumeInfoList.item(i).volumeType;
+    if (!this.isAllowedVolume_(volumeType))
+      index--;
+  }
+
+  var numRemovedVolumes = 0;
+  for (var i = 0; i < event.removed.length; i++) {
+    if (this.isAllowedVolume_(event.removed[i].volumeType))
+      numRemovedVolumes++;
+  }
+
+  var addedVolumes = [];
+  for (var i = 0; i < event.added.length; i++) {
+    var volumeInfo = event.added[i];
+    if (this.isAllowedVolume_(volumeInfo.volumeType)) {
+      addedVolumes.push(volumeInfo);
+    }
+  }
+
+  this.volumeInfoList.splice.apply(
+      this.volumeInfoList, [index, numRemovedVolumes].concat(addedVolumes));
 };
 
 /**
@@ -229,7 +237,8 @@ VolumeManagerWrapper.prototype.ensureInitialized = function(callback) {
  *     state.
  */
 VolumeManagerWrapper.prototype.getDriveConnectionState = function() {
-  if (!this.nonNativeEnabled_ || !this.volumeManager_) {
+  if (!this.isAllowedVolume_(VolumeManagerCommon.VolumeType.DRIVE) ||
+      !this.volumeManager_) {
     return {
       type: VolumeManagerCommon.DriveConnectionType.OFFLINE,
       reason: VolumeManagerCommon.DriveConnectionReason.NO_SERVICE
@@ -241,7 +250,7 @@ VolumeManagerWrapper.prototype.getDriveConnectionState = function() {
 
 /** @override */
 VolumeManagerWrapper.prototype.getVolumeInfo = function(entry) {
-  return this.filterDisabledDriveVolume_(
+  return this.filterDisabledVolume_(
       this.volumeManager_ && this.volumeManager_.getVolumeInfo(entry));
 };
 
@@ -252,7 +261,7 @@ VolumeManagerWrapper.prototype.getVolumeInfo = function(entry) {
  */
 VolumeManagerWrapper.prototype.getCurrentProfileVolumeInfo =
     function(volumeType) {
-  return this.filterDisabledDriveVolume_(
+  return this.filterDisabledVolume_(
       this.volumeManager_ &&
       this.volumeManager_.getCurrentProfileVolumeInfo(volumeType));
 };
@@ -285,7 +294,7 @@ VolumeManagerWrapper.prototype.getLocationInfo = function(entry) {
       this.volumeManager_ && this.volumeManager_.getLocationInfo(entry);
   if (!locationInfo)
     return null;
-  if (!this.filterDisabledDriveVolume_(locationInfo.volumeInfo))
+  if (!this.filterDisabledVolume_(locationInfo.volumeInfo))
     return null;
   return locationInfo;
 };
@@ -346,18 +355,20 @@ VolumeManagerWrapper.prototype.configure = function(volumeInfo) {
 };
 
 /**
- * Filters volume info by referring nonNativeEnabled.
+ * Filters volume info by referring allowedPaths_.
  *
  * @param {VolumeInfo} volumeInfo Volume info.
- * @return {VolumeInfo} Null if the drive is disabled and the given volume is
- *     drive. Otherwise just returns the volume.
+ * @return {VolumeInfo} Null if the volume is disabled. Otherwise just returns
+ *     the volume.
  * @private
  */
-VolumeManagerWrapper.prototype.filterDisabledDriveVolume_ =
+VolumeManagerWrapper.prototype.filterDisabledVolume_ =
     function(volumeInfo) {
-  var isNative = volumeInfo &&
-      VolumeManagerCommon.VolumeType.isNative(volumeInfo.volumeType);
-  return this.nonNativeEnabled_ || isNative ? volumeInfo : null;
+  if (volumeInfo && this.isAllowedVolume_(volumeInfo.volumeType)) {
+    return volumeInfo;
+  } else {
+    return null;
+  }
 };
 
 /**
@@ -368,7 +379,7 @@ VolumeManagerWrapper.prototype.toString = function() {
   var initialized = this.isInitialized();
   var volumeManager = initialized ?
       this.volumeManager_ :
-      this.backgroundPage_.VolumeManager.getInstanceForDebug();
+      this.backgroundPage_.volumeManagerFactory.getInstanceForDebug();
 
   var str = 'VolumeManagerWrapper\n' +
       '- Initialized: ' + initialized + '\n';

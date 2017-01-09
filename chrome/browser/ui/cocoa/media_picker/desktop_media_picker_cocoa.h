@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_UI_COCOA_MEDIA_PICKER_DESKTOP_MEDIA_PICKER_COCOA_H_
 #define CHROME_BROWSER_UI_COCOA_MEDIA_PICKER_DESKTOP_MEDIA_PICKER_COCOA_H_
 
-#import "base/mac/scoped_nsobject.h"
-#include "chrome/browser/media/desktop_media_picker.h"
+#include <memory>
 
+#import "base/mac/scoped_nsobject.h"
+#include "chrome/browser/media/webrtc/desktop_media_picker.h"
+
+@class DesktopMediaPickerControllerDeprecated;
 @class DesktopMediaPickerController;
 
 // Cocoa's DesktopMediaPicker implementation.
@@ -22,10 +25,16 @@ class DesktopMediaPickerCocoa : public DesktopMediaPicker {
             gfx::NativeWindow parent,
             const base::string16& app_name,
             const base::string16& target_name,
-            scoped_ptr<DesktopMediaList> media_list,
+            std::unique_ptr<DesktopMediaList> screen_list,
+            std::unique_ptr<DesktopMediaList> window_list,
+            std::unique_ptr<DesktopMediaList> tab_list,
+            bool request_audio,
             const DoneCallback& done_callback) override;
 
  private:
+  base::scoped_nsobject<DesktopMediaPickerControllerDeprecated>
+      controller_deprecated_;
+
   base::scoped_nsobject<DesktopMediaPickerController> controller_;
 };
 

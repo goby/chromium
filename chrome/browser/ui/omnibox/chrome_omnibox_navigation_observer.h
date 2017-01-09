@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_UI_OMNIBOX_CHROME_OMNIBOX_NAVIGATION_OBSERVER_H_
 #define CHROME_BROWSER_UI_OMNIBOX_CHROME_OMNIBOX_NAVIGATION_OBSERVER_H_
 
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_navigation_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
@@ -21,7 +23,6 @@ class ShortcutsBackend;
 
 namespace net {
 class URLFetcher;
-class URLRequestStatus;
 }
 
 // Monitors omnibox navigations in order to trigger behaviors that depend on
@@ -80,7 +81,7 @@ class ChromeOmniboxNavigationObserver : public OmniboxNavigationObserver,
   // content::WebContentsObserver:
   void DidStartNavigationToPendingEntry(
       const GURL& url,
-      content::NavigationController::ReloadType reload_type) override;
+      content::ReloadType reload_type) override;
   void DidFailProvisionalLoad(content::RenderFrameHost* render_frame_host,
                               const GURL& validated_url,
                               int error_code,
@@ -101,7 +102,7 @@ class ChromeOmniboxNavigationObserver : public OmniboxNavigationObserver,
   const AutocompleteMatch match_;
   const AutocompleteMatch alternate_nav_match_;
   scoped_refptr<ShortcutsBackend> shortcuts_backend_;  // NULL in incognito.
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
   LoadState load_state_;
   FetchState fetch_state_;
 

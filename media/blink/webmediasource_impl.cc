@@ -8,7 +8,6 @@
 #include "media/base/mime_util.h"
 #include "media/blink/websourcebuffer_impl.h"
 #include "media/filters/chunk_demuxer.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 
 using ::blink::WebString;
@@ -39,12 +38,8 @@ WebMediaSource::AddStatus WebMediaSourceImpl::addSourceBuffer(
     blink::WebSourceBuffer** source_buffer) {
   std::string id = base::GenerateGUID();
 
-  std::vector<std::string> parsed_codec_ids;
-  media::ParseCodecString(codecs.utf8().data(), &parsed_codec_ids, false);
-
-  WebMediaSource::AddStatus result =
-      static_cast<WebMediaSource::AddStatus>(
-          demuxer_->AddId(id, type.utf8().data(), parsed_codec_ids));
+  WebMediaSource::AddStatus result = static_cast<WebMediaSource::AddStatus>(
+      demuxer_->AddId(id, type.utf8().data(), codecs.utf8().data()));
 
   if (result == WebMediaSource::AddStatusOk)
     *source_buffer = new WebSourceBufferImpl(id, demuxer_);
@@ -69,10 +64,10 @@ void WebMediaSourceImpl::markEndOfStream(
     case WebMediaSource::EndOfStreamStatusNoError:
       break;
     case WebMediaSource::EndOfStreamStatusNetworkError:
-      pipeline_status = PIPELINE_ERROR_NETWORK;
+      pipeline_status = CHUNK_DEMUXER_ERROR_EOS_STATUS_NETWORK_ERROR;
       break;
     case WebMediaSource::EndOfStreamStatusDecodeError:
-      pipeline_status = PIPELINE_ERROR_DECODE;
+      pipeline_status = CHUNK_DEMUXER_ERROR_EOS_STATUS_DECODE_ERROR;
       break;
   }
 

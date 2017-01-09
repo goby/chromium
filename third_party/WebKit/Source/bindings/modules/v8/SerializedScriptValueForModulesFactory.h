@@ -10,22 +10,27 @@
 
 namespace blink {
 
-class SerializedScriptValueForModulesFactory final : public SerializedScriptValueFactory {
-    USING_FAST_MALLOC(SerializedScriptValueForModulesFactory);
-    WTF_MAKE_NONCOPYABLE(SerializedScriptValueForModulesFactory);
-public:
-    SerializedScriptValueForModulesFactory() : SerializedScriptValueFactory() { }
+class SerializedScriptValueForModulesFactory final
+    : public SerializedScriptValueFactory {
+  USING_FAST_MALLOC(SerializedScriptValueForModulesFactory);
+  WTF_MAKE_NONCOPYABLE(SerializedScriptValueForModulesFactory);
 
-    PassRefPtr<SerializedScriptValue> create(v8::Isolate*, v8::Local<v8::Value>, MessagePortArray*, ArrayBufferArray*, ImageBitmapArray*, WebBlobInfoArray*, ExceptionState&) override;
-    PassRefPtr<SerializedScriptValue> create(v8::Isolate*, const String&) override;
+ public:
+  SerializedScriptValueForModulesFactory() : SerializedScriptValueFactory() {}
 
-protected:
-    ScriptValueSerializer::Status doSerialize(v8::Local<v8::Value>, SerializedScriptValueWriter&, MessagePortArray*, ArrayBufferArray*, ImageBitmapArray*, WebBlobInfoArray*, BlobDataHandleMap&, v8::TryCatch&, String& errorMessage, v8::Isolate*) override;
+  PassRefPtr<SerializedScriptValue> create(v8::Isolate*,
+                                           v8::Local<v8::Value>,
+                                           Transferables*,
+                                           WebBlobInfoArray*,
+                                           ExceptionState&) override;
 
-    v8::Local<v8::Value> deserialize(String& data, BlobDataHandleMap& blobDataHandles, ArrayBufferContentsArray*, ImageBitmapContentsArray*, v8::Isolate*, MessagePortArray* messagePorts, const WebBlobInfoArray*) override;
+ protected:
+  v8::Local<v8::Value> deserialize(SerializedScriptValue*,
+                                   v8::Isolate*,
+                                   MessagePortArray*,
+                                   const WebBlobInfoArray*) override;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SerializedScriptValueForModulesFactory_h
-
+#endif  // SerializedScriptValueForModulesFactory_h

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -23,7 +26,7 @@ const char kAllCommands[] = "shell:"
     "echo " SEPARATOR "\n"
     "dumpsys user\n";
 
-const char kSeparator[] = SEPARATOR "\r\n";
+const char kSeparator[] = SEPARATOR;
 
 #undef SEPARATOR
 
@@ -259,11 +262,15 @@ std::string GetUserName(const std::string& unix_user,
 
 AndroidDeviceManager::BrowserInfo::Type
 GetBrowserType(const std::string& socket) {
-  if (socket.find(kChromeDefaultSocket) == 0)
+  if (base::StartsWith(socket, kChromeDefaultSocket,
+                       base::CompareCase::SENSITIVE)) {
     return AndroidDeviceManager::BrowserInfo::kTypeChrome;
+  }
 
-  if (socket.find(kWebViewSocketPrefix) == 0)
+  if (base::StartsWith(socket, kWebViewSocketPrefix,
+                       base::CompareCase::SENSITIVE)) {
     return AndroidDeviceManager::BrowserInfo::kTypeWebView;
+  }
 
   return AndroidDeviceManager::BrowserInfo::kTypeOther;
 }
@@ -276,8 +283,8 @@ void ReceivedResponse(const AndroidDeviceManager::DeviceInfoCallback& callback,
     callback.Run(device_info);
     return;
   }
-  std::vector<std::string> outputs;
-  base::SplitStringUsingSubstr(response, kSeparator, &outputs);
+  std::vector<std::string> outputs = base::SplitStringUsingSubstr(
+      response, kSeparator, base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   if (outputs.size() != 5) {
     callback.Run(device_info);
     return;

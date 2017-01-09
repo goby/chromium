@@ -10,6 +10,10 @@
 #include "ios/web/public/web_client.h"
 #include "url/url_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 namespace {
@@ -18,19 +22,19 @@ void AddStandardSchemeHelper(const url::SchemeWithType& scheme) {
 }
 }  // namespace
 
-void RegisterWebSchemes(bool lock_standard_schemes) {
+void RegisterWebSchemes(bool lock_schemes) {
   std::vector<url::SchemeWithType> additional_standard_schemes;
   GetWebClient()->AddAdditionalSchemes(&additional_standard_schemes);
   std::for_each(additional_standard_schemes.begin(),
                 additional_standard_schemes.end(), AddStandardSchemeHelper);
 
-  // Prevent future modification of the standard schemes list. This is to
-  // prevent accidental creation of data races in the program. AddStandardScheme
-  // isn't threadsafe so must be called when GURL isn't used on any other
-  // thread. This is really easy to mess up, so we say that all calls to
-  // AddStandardScheme in Chrome must be inside this function.
-  if (lock_standard_schemes)
-    url::LockStandardSchemes();
+  // Prevent future modification of the schemes lists. This is to prevent
+  // accidental creation of data races in the program. Add*Scheme aren't
+  // threadsafe so must be called when GURL isn't used on any other thread. This
+  // is really easy to mess up, so we say that all calls to Add*Scheme in Chrome
+  // must be inside this function.
+  if (lock_schemes)
+    url::LockSchemeRegistries();
 }
 
 }  // namespace web

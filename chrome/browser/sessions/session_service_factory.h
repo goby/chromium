@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_SESSIONS_SESSION_SERVICE_FACTORY_H_
 #define CHROME_BROWSER_SESSIONS_SESSION_SERVICE_FACTORY_H_
 
+#include <utility>
+
 #include "base/gtest_prod_util.h"
 #include "base/memory/singleton.h"
 #include "chrome/browser/profiles/profile.h"
@@ -46,10 +48,10 @@ class SessionServiceFactory : public BrowserContextKeyedServiceFactory {
   // For test use: force setting of the session service for a given profile.
   // This will delete a previous session service for this profile if it exists.
   static void SetForTestProfile(Profile* profile,
-                                scoped_ptr<SessionService> service) {
+                                std::unique_ptr<SessionService> service) {
     GetInstance()->BrowserContextShutdown(profile);
     GetInstance()->BrowserContextDestroyed(profile);
-    GetInstance()->Associate(profile, service.Pass());
+    GetInstance()->Associate(profile, std::move(service));
   }
 #endif
 

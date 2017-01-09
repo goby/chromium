@@ -8,9 +8,11 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/supervised_user/supervised_user_service_observer.h"
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
+#include "components/supervised_user_error_page/supervised_user_error_page.h"
 #include "content/public/browser/interstitial_page_delegate.h"
 #include "url/gurl.h"
 
@@ -32,18 +34,23 @@ class SupervisedUserInterstitial : public content::InterstitialPageDelegate,
 
   static void Show(content::WebContents* web_contents,
                    const GURL& url,
-                   SupervisedUserURLFilter::FilteringBehaviorReason reason,
+                   supervised_user_error_page::FilteringBehaviorReason reason,
+                   bool initial_page_load,
                    const base::Callback<void(bool)>& callback);
+
+  static std::string GetHTMLContents(
+      Profile* profile,
+      supervised_user_error_page::FilteringBehaviorReason reason);
 
  private:
   SupervisedUserInterstitial(
       content::WebContents* web_contents,
       const GURL& url,
-      SupervisedUserURLFilter::FilteringBehaviorReason reason,
+      supervised_user_error_page::FilteringBehaviorReason reason,
       const base::Callback<void(bool)>& callback);
   ~SupervisedUserInterstitial() override;
 
-  bool Init();
+  bool Init(bool initial_page_load);
 
   // InterstitialPageDelegate implementation.
   std::string GetHTMLContents() override;
@@ -75,7 +82,7 @@ class SupervisedUserInterstitial : public content::InterstitialPageDelegate,
   content::InterstitialPage* interstitial_page_;  // Owns us.
 
   GURL url_;
-  SupervisedUserURLFilter::FilteringBehaviorReason reason_;
+  supervised_user_error_page::FilteringBehaviorReason reason_;
 
   base::Callback<void(bool)> callback_;
 

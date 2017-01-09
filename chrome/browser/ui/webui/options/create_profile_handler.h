@@ -5,12 +5,15 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_CREATE_PROFILE_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_CREATE_PROFILE_HANDLER_H_
 
+#include <string>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
+#include "chrome/common/features.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 
 
@@ -19,7 +22,7 @@ class DictionaryValue;
 class ListValue;
 }
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 class SupervisedUserRegistrationUtility;
 #endif
 
@@ -49,7 +52,7 @@ class CreateProfileHandler: public OptionsPageUIHandler {
   // It is used to map the type of the profile creation operation to the
   // correct UMA metric name.
   enum ProfileCreationOperationType {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
     SUPERVISED_PROFILE_CREATION,
     SUPERVISED_PROFILE_IMPORT,
 #endif
@@ -74,21 +77,17 @@ class CreateProfileHandler: public OptionsPageUIHandler {
   // then proceed with the registration step. Otherwise, update the UI
   // as the final task after a new profile has been created.
   void OnProfileCreated(bool create_shortcut,
-                        chrome::HostDesktopType desktop_type,
                         const std::string& supervised_user_id,
                         Profile* profile,
                         Profile::CreateStatus status);
 
   void HandleProfileCreationSuccess(bool create_shortcut,
-                                    chrome::HostDesktopType desktop_type,
                                     const std::string& supervised_user_id,
                                     Profile* profile);
 
   // Creates desktop shortcut and updates the UI to indicate success
   // when creating a profile.
-  void CreateShortcutAndShowSuccess(bool create_shortcut,
-                                    chrome::HostDesktopType desktop_type,
-                                    Profile* profile);
+  void CreateShortcutAndShowSuccess(bool create_shortcut, Profile* profile);
 
   // Updates the UI to show an error when creating a profile.
   void ShowProfileCreationError(Profile* profile, const base::string16& error);
@@ -100,7 +99,7 @@ class CreateProfileHandler: public OptionsPageUIHandler {
   void RecordProfileCreationMetrics(Profile::CreateStatus status);
 
   base::string16 GetProfileCreationErrorMessageLocal() const;
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // The following error messages only apply to supervised profiles.
   base::string16 GetProfileCreationErrorMessageRemote() const;
   base::string16 GetProfileCreationErrorMessageSignin() const;
@@ -120,7 +119,7 @@ class CreateProfileHandler: public OptionsPageUIHandler {
   // The value is only relevant while we are creating/importing a profile.
   ProfileCreationOperationType profile_creation_type_;
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // Extracts the supervised user ID from the args passed into CreateProfile,
   // sets |profile_creation_type_| if necessary, and returns true if the
   // supervised user id specified in |args| are valid.
@@ -142,13 +141,11 @@ class CreateProfileHandler: public OptionsPageUIHandler {
   // After a new supervised-user profile has been created, registers the user
   // with the management server.
   void RegisterSupervisedUser(bool create_shortcut,
-                              chrome::HostDesktopType desktop_type,
                               const std::string& managed_user_id,
                               Profile* new_profile);
 
   // Called back with the result of the supervised user registration.
   void OnSupervisedUserRegistered(bool create_shortcut,
-                                  chrome::HostDesktopType desktop_type,
                                   Profile* profile,
                                   const GoogleServiceAuthError& error);
 
@@ -160,7 +157,7 @@ class CreateProfileHandler: public OptionsPageUIHandler {
   bool IsValidExistingSupervisedUserId(
       const std::string& existing_supervised_user_id) const;
 
-  scoped_ptr<SupervisedUserRegistrationUtility>
+  std::unique_ptr<SupervisedUserRegistrationUtility>
       supervised_user_registration_utility_;
 #endif
 

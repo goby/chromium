@@ -5,6 +5,7 @@
 #include "chrome/browser/history/android/bookmark_model_sql_handler.h"
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -43,7 +44,7 @@ void BookmarkModelSQLHandler::Task::AddBookmarkToMobileFolder(
 
 void BookmarkModelSQLHandler::Task::AddBookmark(const GURL& url,
                                                 const base::string16& title,
-                                                int64 parent_id) {
+                                                int64_t parent_id) {
   BookmarkModel* bookmark_model = GetBookmarkModel();
   if (!bookmark_model)
     return;
@@ -87,7 +88,7 @@ BookmarkModel* BookmarkModelSQLHandler::Task::GetBookmarkModel() {
   Profile* profile = ProfileManager::GetLastUsedProfile();
   if (!profile)
     return NULL;
-  return BookmarkModelFactory::GetForProfile(profile);
+  return BookmarkModelFactory::GetForBrowserContext(profile);
 }
 
 BookmarkModelSQLHandler::BookmarkModelSQLHandler(

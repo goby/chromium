@@ -5,15 +5,18 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <GLES2/gl2extchromium.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <cmath>
+#include <memory>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
+#include "base/bit_cast.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "gpu/command_buffer/tests/gl_manager.h"
 #include "gpu/command_buffer/tests/gl_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -27,14 +30,16 @@ class GLReadbackTest : public testing::Test {
 
   void TearDown() override { gl_.Destroy(); }
 
-  static void WaitForQueryCallback(int q, base::Closure cb) {
+  void WaitForQueryCallback(int q, base::Closure cb) {
     unsigned int done = 0;
+    gl_.PerformIdleWork();
     glGetQueryObjectuivEXT(q, GL_QUERY_RESULT_AVAILABLE_EXT, &done);
     if (done) {
       cb.Run();
     } else {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&WaitForQueryCallback, q, cb),
+          FROM_HERE, base::Bind(&GLReadbackTest::WaitForQueryCallback,
+                                base::Unretained(this), q, cb),
           base::TimeDelta::FromMilliseconds(3));
     }
   }
@@ -47,7 +52,6 @@ class GLReadbackTest : public testing::Test {
 
   GLManager gl_;
 };
-
 
 TEST_F(GLReadbackTest, ReadPixelsWithPBOAndQuery) {
   const GLint kBytesPerPixel = 4;
@@ -86,14 +90,14 @@ TEST_F(GLReadbackTest, ReadPixelsWithPBOAndQuery) {
   GLTestHelper::CheckGLError("no errors", __LINE__);
 }
 
-static float HalfToFloat32(uint16 value) {
-  int32 s = (value >> 15) & 0x00000001;
-  int32 e = (value >> 10) & 0x0000001f;
-  int32 m =  value        & 0x000003ff;
+static float HalfToFloat32(uint16_t value) {
+  int32_t s = (value >> 15) & 0x00000001;
+  int32_t e = (value >> 10) & 0x0000001f;
+  int32_t m = value & 0x000003ff;
 
   if (e == 0) {
     if (m == 0) {
-      uint32 result = s << 31;
+      uint32_t result = s << 31;
       return bit_cast<float>(result);
     } else {
       while (!(m & 0x00000400)) {
@@ -106,10 +110,10 @@ static float HalfToFloat32(uint16 value) {
     }
   } else if (e == 31) {
     if (m == 0) {
-      uint32 result = (s << 31) | 0x7f800000;
+      uint32_t result = (s << 31) | 0x7f800000;
       return bit_cast<float>(result);
     } else {
-      uint32 result = (s << 31) | 0x7f800000 | (m << 13);
+      uint32_t result = (s << 31) | 0x7f800000 | (m << 13);
       return bit_cast<float>(result);
     }
   }
@@ -117,7 +121,7 @@ static float HalfToFloat32(uint16 value) {
   e = e + (127 - 15);
   m = m << 13;
 
-  uint32 result = (s << 31) | (e << 23) | m;
+  uint32_t result = (s << 31) | (e << 23) | m;
   return bit_cast<float>(result);
 }
 
@@ -138,7 +142,16 @@ static GLuint CompileShader(GLenum type, const char *data) {
   return shader;
 }
 
-TEST_F(GLReadbackTest, ReadPixelsFloat) {
+// TODO(zmo): ReadPixels with float type isn't implemented in ANGLE ES2
+// backend. crbug.com/607283.
+// TODO(zmo): This test also fails on some android devices when the readback
+// type is HALF_FLOAT_OES. Likely it's due to a driver bug. crbug.com/607936.
+#if defined(OS_WIN) || defined(OS_ANDROID)
+#define MAYBE_ReadPixelsFloat DISABLED_ReadPixelsFloat
+#else
+#define MAYBE_ReadPixelsFloat ReadPixelsFloat
+#endif
+TEST_F(GLReadbackTest, MAYBE_ReadPixelsFloat) {
   const GLsizei kTextureSize = 4;
   const GLfloat kDrawColor[4] = { -10.9f, 0.5f, 10.5f, 100.12f };
   const GLfloat kEpsilon = 0.01f;
@@ -146,7 +159,7 @@ TEST_F(GLReadbackTest, ReadPixelsFloat) {
   struct TestFormat {
     GLint format;
     GLint type;
-    uint32 comp_count;
+    uint32_t comp_count;
   };
   TestFormat test_formats[4];
   size_t test_count = 0;
@@ -260,7 +273,7 @@ TEST_F(GLReadbackTest, ReadPixelsFloat) {
         glClear(GL_COLOR_BUFFER_BIT);
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
-        uint32 read_comp_count = 0;
+        uint32_t read_comp_count = 0;
         switch (read_format) {
           case GL_RGB:
             read_comp_count = 3;
@@ -272,14 +285,14 @@ TEST_F(GLReadbackTest, ReadPixelsFloat) {
 
         switch (read_type) {
           case GL_HALF_FLOAT_OES: {
-            scoped_ptr<GLushort[]> buf(
+            std::unique_ptr<GLushort[]> buf(
                 new GLushort[kTextureSize * kTextureSize * read_comp_count]);
             glReadPixels(
                 0, 0, kTextureSize, kTextureSize, read_format, read_type,
                 buf.get());
             EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
-            for (uint32 jj = 0; jj < kTextureSize * kTextureSize; ++jj) {
-              for (uint32 kk = 0; kk < test_formats[ii].comp_count; ++kk) {
+            for (uint32_t jj = 0; jj < kTextureSize * kTextureSize; ++jj) {
+              for (uint32_t kk = 0; kk < test_formats[ii].comp_count; ++kk) {
                 EXPECT_LE(
                     std::abs(HalfToFloat32(buf[jj * read_comp_count + kk]) -
                         kDrawColor[kk]),
@@ -289,14 +302,14 @@ TEST_F(GLReadbackTest, ReadPixelsFloat) {
             break;
           }
           case GL_FLOAT: {
-            scoped_ptr<GLfloat[]> buf(
+            std::unique_ptr<GLfloat[]> buf(
                 new GLfloat[kTextureSize * kTextureSize * read_comp_count]);
             glReadPixels(
                 0, 0, kTextureSize, kTextureSize, read_format, read_type,
                 buf.get());
             EXPECT_EQ(glGetError(), GLenum(GL_NO_ERROR));
-            for (uint32 jj = 0; jj < kTextureSize * kTextureSize; ++jj) {
-              for (uint32 kk = 0; kk < test_formats[ii].comp_count; ++kk) {
+            for (uint32_t jj = 0; jj < kTextureSize * kTextureSize; ++jj) {
+              for (uint32_t kk = 0; kk < test_formats[ii].comp_count; ++kk) {
                 EXPECT_LE(
                     std::abs(buf[jj * read_comp_count + kk] - kDrawColor[kk]),
                     std::abs(kDrawColor[kk] * kEpsilon));

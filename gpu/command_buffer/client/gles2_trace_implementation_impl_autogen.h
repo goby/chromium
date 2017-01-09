@@ -738,6 +738,11 @@ const GLubyte* GLES2TraceImplementation::GetString(GLenum name) {
   return gl_->GetString(name);
 }
 
+const GLubyte* GLES2TraceImplementation::GetStringi(GLenum name, GLuint index) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::GetStringi");
+  return gl_->GetStringi(name, index);
+}
+
 void GLES2TraceImplementation::GetSynciv(GLsync sync,
                                          GLenum pname,
                                          GLsizei bufsize,
@@ -1815,6 +1820,13 @@ GLboolean GLES2TraceImplementation::UnmapBuffer(GLenum target) {
   return gl_->UnmapBuffer(target);
 }
 
+void GLES2TraceImplementation::FlushMappedBufferRange(GLenum target,
+                                                      GLintptr offset,
+                                                      GLsizeiptr size) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::FlushMappedBufferRange");
+  gl_->FlushMappedBufferRange(target, offset, size);
+}
+
 void* GLES2TraceImplementation::MapTexSubImage2DCHROMIUM(GLenum target,
                                                          GLint level,
                                                          GLint xoffset,
@@ -1912,6 +1924,12 @@ GLuint GLES2TraceImplementation::CreateGpuMemoryBufferImageCHROMIUM(
                                                  usage);
 }
 
+void GLES2TraceImplementation::DescheduleUntilFinishedCHROMIUM() {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "GLES2Trace::DescheduleUntilFinishedCHROMIUM");
+  gl_->DescheduleUntilFinishedCHROMIUM();
+}
+
 void GLES2TraceImplementation::GetTranslatedShaderSourceANGLE(GLuint shader,
                                                               GLsizei bufsize,
                                                               GLsizei* length,
@@ -1929,18 +1947,7 @@ void GLES2TraceImplementation::PostSubBufferCHROMIUM(GLint x,
   gl_->PostSubBufferCHROMIUM(x, y, width, height);
 }
 
-void GLES2TraceImplementation::TexImageIOSurface2DCHROMIUM(GLenum target,
-                                                           GLsizei width,
-                                                           GLsizei height,
-                                                           GLuint ioSurfaceId,
-                                                           GLuint plane) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "GLES2Trace::TexImageIOSurface2DCHROMIUM");
-  gl_->TexImageIOSurface2DCHROMIUM(target, width, height, ioSurfaceId, plane);
-}
-
 void GLES2TraceImplementation::CopyTextureCHROMIUM(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint internalformat,
@@ -1949,13 +1956,12 @@ void GLES2TraceImplementation::CopyTextureCHROMIUM(
     GLboolean unpack_premultiply_alpha,
     GLboolean unpack_unmultiply_alpha) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::CopyTextureCHROMIUM");
-  gl_->CopyTextureCHROMIUM(target, source_id, dest_id, internalformat,
-                           dest_type, unpack_flip_y, unpack_premultiply_alpha,
+  gl_->CopyTextureCHROMIUM(source_id, dest_id, internalformat, dest_type,
+                           unpack_flip_y, unpack_premultiply_alpha,
                            unpack_unmultiply_alpha);
 }
 
 void GLES2TraceImplementation::CopySubTextureCHROMIUM(
-    GLenum target,
     GLenum source_id,
     GLenum dest_id,
     GLint xoffset,
@@ -1968,33 +1974,16 @@ void GLES2TraceImplementation::CopySubTextureCHROMIUM(
     GLboolean unpack_premultiply_alpha,
     GLboolean unpack_unmultiply_alpha) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::CopySubTextureCHROMIUM");
-  gl_->CopySubTextureCHROMIUM(
-      target, source_id, dest_id, xoffset, yoffset, x, y, width, height,
-      unpack_flip_y, unpack_premultiply_alpha, unpack_unmultiply_alpha);
+  gl_->CopySubTextureCHROMIUM(source_id, dest_id, xoffset, yoffset, x, y, width,
+                              height, unpack_flip_y, unpack_premultiply_alpha,
+                              unpack_unmultiply_alpha);
 }
 
-void GLES2TraceImplementation::CompressedCopyTextureCHROMIUM(GLenum target,
-                                                             GLenum source_id,
+void GLES2TraceImplementation::CompressedCopyTextureCHROMIUM(GLenum source_id,
                                                              GLenum dest_id) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu",
                                 "GLES2Trace::CompressedCopyTextureCHROMIUM");
-  gl_->CompressedCopyTextureCHROMIUM(target, source_id, dest_id);
-}
-
-void GLES2TraceImplementation::CompressedCopySubTextureCHROMIUM(
-    GLenum target,
-    GLenum source_id,
-    GLenum dest_id,
-    GLint xoffset,
-    GLint yoffset,
-    GLint x,
-    GLint y,
-    GLsizei width,
-    GLsizei height) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "GLES2Trace::CompressedCopySubTextureCHROMIUM");
-  gl_->CompressedCopySubTextureCHROMIUM(target, source_id, dest_id, xoffset,
-                                        yoffset, x, y, width, height);
+  gl_->CompressedCopyTextureCHROMIUM(source_id, dest_id);
 }
 
 void GLES2TraceImplementation::DrawArraysInstancedANGLE(GLenum mode,
@@ -2063,51 +2052,6 @@ void GLES2TraceImplementation::BindUniformLocationCHROMIUM(GLuint program,
   gl_->BindUniformLocationCHROMIUM(program, location, name);
 }
 
-void GLES2TraceImplementation::GenValuebuffersCHROMIUM(GLsizei n,
-                                                       GLuint* buffers) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::GenValuebuffersCHROMIUM");
-  gl_->GenValuebuffersCHROMIUM(n, buffers);
-}
-
-void GLES2TraceImplementation::DeleteValuebuffersCHROMIUM(
-    GLsizei n,
-    const GLuint* valuebuffers) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "GLES2Trace::DeleteValuebuffersCHROMIUM");
-  gl_->DeleteValuebuffersCHROMIUM(n, valuebuffers);
-}
-
-GLboolean GLES2TraceImplementation::IsValuebufferCHROMIUM(GLuint valuebuffer) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::IsValuebufferCHROMIUM");
-  return gl_->IsValuebufferCHROMIUM(valuebuffer);
-}
-
-void GLES2TraceImplementation::BindValuebufferCHROMIUM(GLenum target,
-                                                       GLuint valuebuffer) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::BindValuebufferCHROMIUM");
-  gl_->BindValuebufferCHROMIUM(target, valuebuffer);
-}
-
-void GLES2TraceImplementation::SubscribeValueCHROMIUM(GLenum target,
-                                                      GLenum subscription) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::SubscribeValueCHROMIUM");
-  gl_->SubscribeValueCHROMIUM(target, subscription);
-}
-
-void GLES2TraceImplementation::PopulateSubscribedValuesCHROMIUM(GLenum target) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "GLES2Trace::PopulateSubscribedValuesCHROMIUM");
-  gl_->PopulateSubscribedValuesCHROMIUM(target);
-}
-
-void GLES2TraceImplementation::UniformValuebufferCHROMIUM(GLint location,
-                                                          GLenum target,
-                                                          GLenum subscription) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "GLES2Trace::UniformValuebufferCHROMIUM");
-  gl_->UniformValuebufferCHROMIUM(location, target, subscription);
-}
-
 void GLES2TraceImplementation::BindTexImage2DCHROMIUM(GLenum target,
                                                       GLint imageId) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::BindTexImage2DCHROMIUM");
@@ -2145,16 +2089,6 @@ void GLES2TraceImplementation::LoseContextCHROMIUM(GLenum current,
   gl_->LoseContextCHROMIUM(current, other);
 }
 
-GLuint GLES2TraceImplementation::InsertSyncPointCHROMIUM() {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::InsertSyncPointCHROMIUM");
-  return gl_->InsertSyncPointCHROMIUM();
-}
-
-void GLES2TraceImplementation::WaitSyncPointCHROMIUM(GLuint sync_point) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::WaitSyncPointCHROMIUM");
-  gl_->WaitSyncPointCHROMIUM(sync_point);
-}
-
 GLuint64 GLES2TraceImplementation::InsertFenceSyncCHROMIUM() {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::InsertFenceSyncCHROMIUM");
   return gl_->InsertFenceSyncCHROMIUM();
@@ -2172,6 +2106,12 @@ void GLES2TraceImplementation::GenUnverifiedSyncTokenCHROMIUM(
   TRACE_EVENT_BINARY_EFFICIENT0("gpu",
                                 "GLES2Trace::GenUnverifiedSyncTokenCHROMIUM");
   gl_->GenUnverifiedSyncTokenCHROMIUM(fence_sync, sync_token);
+}
+
+void GLES2TraceImplementation::VerifySyncTokensCHROMIUM(GLbyte** sync_tokens,
+                                                        GLsizei count) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::VerifySyncTokensCHROMIUM");
+  gl_->VerifySyncTokensCHROMIUM(sync_tokens, count);
 }
 
 void GLES2TraceImplementation::WaitSyncTokenCHROMIUM(const GLbyte* sync_token) {
@@ -2209,16 +2149,37 @@ void GLES2TraceImplementation::ScheduleOverlayPlaneCHROMIUM(
       bounds_width, bounds_height, uv_x, uv_y, uv_width, uv_height);
 }
 
+void GLES2TraceImplementation::ScheduleCALayerSharedStateCHROMIUM(
+    GLfloat opacity,
+    GLboolean is_clipped,
+    const GLfloat* clip_rect,
+    GLint sorting_context_id,
+    const GLfloat* transform) {
+  TRACE_EVENT_BINARY_EFFICIENT0(
+      "gpu", "GLES2Trace::ScheduleCALayerSharedStateCHROMIUM");
+  gl_->ScheduleCALayerSharedStateCHROMIUM(opacity, is_clipped, clip_rect,
+                                          sorting_context_id, transform);
+}
+
 void GLES2TraceImplementation::ScheduleCALayerCHROMIUM(
     GLuint contents_texture_id,
     const GLfloat* contents_rect,
-    GLfloat opacity,
-    const GLuint background_color,
-    const GLfloat* bounds_size,
-    const GLfloat* transform) {
+    GLuint background_color,
+    GLuint edge_aa_mask,
+    const GLfloat* bounds_rect,
+    GLuint filter) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::ScheduleCALayerCHROMIUM");
-  gl_->ScheduleCALayerCHROMIUM(contents_texture_id, contents_rect, opacity,
-                               background_color, bounds_size, transform);
+  gl_->ScheduleCALayerCHROMIUM(contents_texture_id, contents_rect,
+                               background_color, edge_aa_mask, bounds_rect,
+                               filter);
+}
+
+void GLES2TraceImplementation::ScheduleCALayerInUseQueryCHROMIUM(
+    GLsizei count,
+    const GLuint* textures) {
+  TRACE_EVENT_BINARY_EFFICIENT0(
+      "gpu", "GLES2Trace::ScheduleCALayerInUseQueryCHROMIUM");
+  gl_->ScheduleCALayerInUseQueryCHROMIUM(count, textures);
 }
 
 void GLES2TraceImplementation::CommitOverlayPlanesCHROMIUM() {
@@ -2235,6 +2196,11 @@ void GLES2TraceImplementation::SwapInterval(GLint interval) {
 void GLES2TraceImplementation::FlushDriverCachesCHROMIUM() {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::FlushDriverCachesCHROMIUM");
   gl_->FlushDriverCachesCHROMIUM();
+}
+
+GLuint GLES2TraceImplementation::GetLastFlushIdCHROMIUM() {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::GetLastFlushIdCHROMIUM");
+  return gl_->GetLastFlushIdCHROMIUM();
 }
 
 void GLES2TraceImplementation::MatrixLoadfCHROMIUM(GLenum matrixMode,
@@ -2459,6 +2425,20 @@ void GLES2TraceImplementation::ProgramPathFragmentInputGenCHROMIUM(
                                            components, coeffs);
 }
 
+void* GLES2TraceImplementation::GetBufferSubDataAsyncCHROMIUM(GLenum target,
+                                                              GLintptr offset,
+                                                              GLsizeiptr size) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "GLES2Trace::GetBufferSubDataAsyncCHROMIUM");
+  return gl_->GetBufferSubDataAsyncCHROMIUM(target, offset, size);
+}
+
+void GLES2TraceImplementation::CoverageModulationCHROMIUM(GLenum components) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "GLES2Trace::CoverageModulationCHROMIUM");
+  gl_->CoverageModulationCHROMIUM(components);
+}
+
 GLenum GLES2TraceImplementation::GetGraphicsResetStatusKHR() {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::GetGraphicsResetStatusKHR");
   return gl_->GetGraphicsResetStatusKHR();
@@ -2496,6 +2476,25 @@ GLint GLES2TraceImplementation::GetFragDataIndexEXT(GLuint program,
                                                     const char* name) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::GetFragDataIndexEXT");
   return gl_->GetFragDataIndexEXT(program, name);
+}
+
+void GLES2TraceImplementation::UniformMatrix4fvStreamTextureMatrixCHROMIUM(
+    GLint location,
+    GLboolean transpose,
+    const GLfloat* transform) {
+  TRACE_EVENT_BINARY_EFFICIENT0(
+      "gpu", "GLES2Trace::UniformMatrix4fvStreamTextureMatrixCHROMIUM");
+  gl_->UniformMatrix4fvStreamTextureMatrixCHROMIUM(location, transpose,
+                                                   transform);
+}
+
+void GLES2TraceImplementation::SwapBuffersWithDamageCHROMIUM(GLint x,
+                                                             GLint y,
+                                                             GLint width,
+                                                             GLint height) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "GLES2Trace::SwapBuffersWithDamageCHROMIUM");
+  gl_->SwapBuffersWithDamageCHROMIUM(x, y, width, height);
 }
 
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_TRACE_IMPLEMENTATION_IMPL_AUTOGEN_H_

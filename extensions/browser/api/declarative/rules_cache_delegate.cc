@@ -4,6 +4,8 @@
 
 #include "extensions/browser/api/declarative/rules_cache_delegate.h"
 
+#include <utility>
+
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
@@ -92,7 +94,7 @@ void RulesCacheDelegate::Init(RulesRegistry* registry) {
 }
 
 void RulesCacheDelegate::WriteToStorage(const std::string& extension_id,
-                                     scoped_ptr<base::Value> value) {
+                                        std::unique_ptr<base::Value> value) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -107,7 +109,7 @@ void RulesCacheDelegate::WriteToStorage(const std::string& extension_id,
 
   StateStore* store = ExtensionSystem::Get(browser_context_)->rules_store();
   if (store)
-    store->SetExtensionValue(extension_id, storage_key_, value.Pass());
+    store->SetExtensionValue(extension_id, storage_key_, std::move(value));
 }
 
 void RulesCacheDelegate::CheckIfReady() {
@@ -179,7 +181,7 @@ void RulesCacheDelegate::ReadFromStorage(const std::string& extension_id) {
 
 void RulesCacheDelegate::ReadFromStorageCallback(
     const std::string& extension_id,
-    scoped_ptr<base::Value> value) {
+    std::unique_ptr<base::Value> value) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   content::BrowserThread::PostTask(
       rules_registry_thread_,

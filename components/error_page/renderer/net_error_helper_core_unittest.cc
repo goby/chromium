@@ -4,22 +4,26 @@
 
 #include "components/error_page/renderer/net_error_helper_core.h"
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/histogram_tester.h"
 #include "base/timer/mock_timer.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/error_page/common/error_page_params.h"
 #include "components/error_page/common/net_error_info.h"
-#include "components/test_runner/test_common.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/net_errors.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -52,8 +56,8 @@ struct NavigationCorrection {
   bool is_porn;
   bool is_soft_porn;
 
-  base::Value* ToValue() const {
-    base::DictionaryValue* dict = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> ToValue() const {
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
     dict->SetString("correctionType", correction_type);
     dict->SetString("urlCorrection", url_correction);
     dict->SetString("clickType", click_type);
@@ -160,14 +164,12 @@ class NetErrorHelperCoreTest : public testing::Test,
         reload_bypassing_cache_count_(0),
         show_saved_copy_count_(0),
         diagnose_error_count_(0),
-        show_offline_pages_count_(0),
-        load_offline_copy_count_(0),
+        download_count_(0),
         enable_page_helper_functions_count_(0),
         default_url_(GURL(kFailedUrl)),
         error_url_(GURL(content::kUnreachableWebDataURL)),
         tracking_request_count_(0) {
     SetUpCore(false, false, true);
-    test_runner::EnsureBlinkInitialized();
   }
 
   ~NetErrorHelperCoreTest() override {
@@ -187,7 +189,7 @@ class NetErrorHelperCoreTest : public testing::Test,
                                        auto_reload_enabled,
                                        auto_reload_visible_only,
                                        visible));
-    core_->set_timer_for_testing(scoped_ptr<base::Timer>(timer_));
+    core_->set_timer_for_testing(std::unique_ptr<base::Timer>(timer_));
   }
 
   NetErrorHelperCore* core() { return core_.get(); }
@@ -219,9 +221,7 @@ class NetErrorHelperCoreTest : public testing::Test,
     return diagnose_error_url_;
   }
 
-  int show_offline_pages_count() const { return show_offline_pages_count_; }
-
-  int load_offline_copy_count() const { return load_offline_copy_count_; }
+  int download_count() const { return download_count_; }
 
   const GURL& default_url() const {
     return default_url_;
@@ -243,10 +243,6 @@ class NetErrorHelperCoreTest : public testing::Test,
 
   bool last_can_show_network_diagnostics_dialog() const {
     return last_can_show_network_diagnostics_dialog_;
-  }
-
-  OfflinePageStatus last_offline_page_status() const {
-    return last_offline_page_status_;
   }
 
   const ErrorPageParams* last_error_page_params() const {
@@ -273,7 +269,7 @@ class NetErrorHelperCoreTest : public testing::Test,
 
   void NavigationCorrectionsLoadFinished(const std::string& result) {
     url_being_fetched_ = GURL();
-    core()->OnNavigationCorrectionsFetched(result, "en", false);
+    core()->OnNavigationCorrectionsFetched(result, false);
   }
 
   void DoErrorLoadOfURL(net::Error error, const GURL& url) {
@@ -338,7 +334,7 @@ class NetErrorHelperCoreTest : public testing::Test,
     // Checks that the last error page params correspond to kDefaultSuggestions.
     ASSERT_TRUE(last_error_page_params());
     EXPECT_TRUE(last_error_page_params()->suggest_reload);
-    EXPECT_EQ(2u, last_error_page_params()->override_suggestions->GetSize());
+    EXPECT_EQ(1u, last_error_page_params()->override_suggestions->GetSize());
     EXPECT_EQ(GURL(kSearchUrl), last_error_page_params()->search_url);
     EXPECT_EQ(kSuggestedSearchTerms, last_error_page_params()->search_terms);
   }
@@ -354,23 +350,19 @@ class NetErrorHelperCoreTest : public testing::Test,
   void GenerateLocalizedErrorPage(const WebURLError& error,
                                   bool is_failed_post,
                                   bool can_show_network_diagnostics_dialog,
-                                  OfflinePageStatus offline_page_status,
-                                  scoped_ptr<ErrorPageParams> params,
+                                  std::unique_ptr<ErrorPageParams> params,
                                   bool* reload_button_shown,
                                   bool* show_saved_copy_button_shown,
                                   bool* show_cached_copy_button_shown,
-                                  bool* show_offline_pages_button_shown,
-                                  bool* show_offline_copy_button_shown,
+                                  bool* download_button_shown,
                                   std::string* html) const override {
     last_can_show_network_diagnostics_dialog_ =
         can_show_network_diagnostics_dialog;
-    last_offline_page_status_ = offline_page_status;
-    last_error_page_params_.reset(params.release());
+    last_error_page_params_ = std::move(params);
     *reload_button_shown = false;
     *show_saved_copy_button_shown = false;
     *show_cached_copy_button_shown = false;
-    *show_offline_pages_button_shown = false;
-    *show_offline_copy_button_shown = false;
+    *download_button_shown = false;
     *html = ErrorToString(error, is_failed_post);
   }
 
@@ -385,12 +377,10 @@ class NetErrorHelperCoreTest : public testing::Test,
 
   void UpdateErrorPage(const WebURLError& error,
                        bool is_failed_post,
-                       bool can_show_network_diagnostics_dialog,
-                       OfflinePageStatus offline_page_status) override {
+                       bool can_show_network_diagnostics_dialog) override {
     update_count_++;
     last_can_show_network_diagnostics_dialog_ =
         can_show_network_diagnostics_dialog;
-    last_offline_page_status_ = offline_page_status;
     last_error_page_params_.reset(nullptr);
     last_error_html_ = ErrorToString(error, is_failed_post);
   }
@@ -408,8 +398,8 @@ class NetErrorHelperCoreTest : public testing::Test,
     // Check the body of the request.
 
     base::JSONReader reader;
-    scoped_ptr<base::Value> parsed_body(reader.Read(
-        navigation_correction_request_body));
+    std::unique_ptr<base::Value> parsed_body(
+        reader.Read(navigation_correction_request_body));
     ASSERT_TRUE(parsed_body);
     base::DictionaryValue* dict = NULL;
     ASSERT_TRUE(parsed_body->GetAsDictionary(&dict));
@@ -425,9 +415,9 @@ class NetErrorHelperCoreTest : public testing::Test,
     request_body_.clear();
   }
 
-  void ReloadPage(bool ignore_cache) override {
+  void ReloadPage(bool bypass_cache) override {
     reload_count_++;
-    if (ignore_cache)
+    if (bypass_cache)
       reload_bypassing_cache_count_++;
   }
 
@@ -441,10 +431,8 @@ class NetErrorHelperCoreTest : public testing::Test,
     diagnose_error_url_ = page_url;
   }
 
-  void ShowOfflinePages() override { show_offline_pages_count_++; }
-
-  void LoadOfflineCopy(const GURL& page_url) override {
-    load_offline_copy_count_++;
+  void DownloadPageLater() override {
+    download_count_++;
   }
 
   void SendTrackingRequest(const GURL& tracking_url,
@@ -456,7 +444,8 @@ class NetErrorHelperCoreTest : public testing::Test,
     // Check the body of the request.
 
     base::JSONReader reader;
-    scoped_ptr<base::Value> parsed_body(reader.Read(tracking_request_body));
+    std::unique_ptr<base::Value> parsed_body(
+        reader.Read(tracking_request_body));
     ASSERT_TRUE(parsed_body);
     base::DictionaryValue* dict = NULL;
     ASSERT_TRUE(parsed_body->GetAsDictionary(&dict));
@@ -470,7 +459,7 @@ class NetErrorHelperCoreTest : public testing::Test,
 
   base::MockTimer* timer_;
 
-  scoped_ptr<NetErrorHelperCore> core_;
+  std::unique_ptr<NetErrorHelperCore> core_;
 
   GURL url_being_fetched_;
   std::string request_body_;
@@ -489,8 +478,7 @@ class NetErrorHelperCoreTest : public testing::Test,
   // Values passed in to the last call of GenerateLocalizedErrorPage or
   // UpdateErrorPage.  Mutable because GenerateLocalizedErrorPage is const.
   mutable bool last_can_show_network_diagnostics_dialog_;
-  mutable OfflinePageStatus last_offline_page_status_;
-  mutable scoped_ptr<ErrorPageParams> last_error_page_params_;
+  mutable std::unique_ptr<ErrorPageParams> last_error_page_params_;
 
   int reload_count_;
   int reload_bypassing_cache_count_;
@@ -498,8 +486,7 @@ class NetErrorHelperCoreTest : public testing::Test,
   GURL show_saved_copy_url_;
   int diagnose_error_count_;
   GURL diagnose_error_url_;
-  int show_offline_pages_count_;
-  int load_offline_copy_count_;
+  int download_count_;
 
   int enable_page_helper_functions_count_;
 
@@ -2582,26 +2569,11 @@ TEST_F(NetErrorHelperCoreTest, CanShowNetworkDiagnostics) {
 }
 
 #if defined(OS_ANDROID)
-TEST_F(NetErrorHelperCoreTest, ShowOfflinePages) {
-  core()->OnSetOfflinePageInfo(OfflinePageStatus::HAS_OTHER_OFFLINE_PAGES);
+TEST_F(NetErrorHelperCoreTest, Download) {
   DoErrorLoad(net::ERR_INTERNET_DISCONNECTED);
-  EXPECT_EQ(OfflinePageStatus::HAS_OTHER_OFFLINE_PAGES,
-            last_offline_page_status());
-  EXPECT_EQ(0, show_offline_pages_count());
-  EXPECT_EQ(0, load_offline_copy_count());
-  core()->ExecuteButtonPress(NetErrorHelperCore::SHOW_OFFLINE_PAGES_BUTTON);
-  EXPECT_EQ(1, show_offline_pages_count());
-}
-
-TEST_F(NetErrorHelperCoreTest, LoadOfflineCopy) {
-  core()->OnSetOfflinePageInfo(OfflinePageStatus::HAS_OFFLINE_PAGE);
-  DoErrorLoad(net::ERR_INTERNET_DISCONNECTED);
-  EXPECT_EQ(OfflinePageStatus::HAS_OFFLINE_PAGE, last_offline_page_status());
-  EXPECT_EQ(0, show_offline_pages_count());
-  EXPECT_EQ(0, load_offline_copy_count());
-  core()->ExecuteButtonPress(NetErrorHelperCore::SHOW_OFFLINE_COPY_BUTTON);
-  EXPECT_EQ(0, show_offline_pages_count());
-  EXPECT_EQ(1, load_offline_copy_count());
+  EXPECT_EQ(0, download_count());
+  core()->ExecuteButtonPress(NetErrorHelperCore::DOWNLOAD_BUTTON);
+  EXPECT_EQ(1, download_count());
 }
 #endif  // defined(OS_ANDROID)
 

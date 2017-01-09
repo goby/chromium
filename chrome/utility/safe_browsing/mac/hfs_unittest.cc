@@ -4,8 +4,12 @@
 
 #include "chrome/utility/safe_browsing/mac/hfs.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/files/file.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -127,14 +131,14 @@ class HFSFileReadTest : public testing::TestWithParam<const char*> {
 
  private:
   base::File hfs_file_;
-  scoped_ptr<FileReadStream> hfs_stream_;
-  scoped_ptr<HFSIterator> hfs_reader_;
+  std::unique_ptr<FileReadStream> hfs_stream_;
+  std::unique_ptr<HFSIterator> hfs_reader_;
 };
 
 TEST_P(HFSFileReadTest, ReadReadme) {
   ASSERT_TRUE(GoToFile("README.txt"));
 
-  scoped_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
+  std::unique_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
   ASSERT_TRUE(stream.get());
 
   EXPECT_FALSE(hfs_reader()->IsSymbolicLink());
@@ -164,7 +168,7 @@ TEST_P(HFSFileReadTest, ReadReadme) {
 TEST_P(HFSFileReadTest, ReadRandom) {
   ASSERT_TRUE(GoToFile("fifth/random"));
 
-  scoped_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
+  std::unique_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
   ASSERT_TRUE(stream.get());
 
   EXPECT_FALSE(hfs_reader()->IsSymbolicLink());
@@ -179,7 +183,7 @@ TEST_P(HFSFileReadTest, ReadRandom) {
 TEST_P(HFSFileReadTest, Symlink) {
   ASSERT_TRUE(GoToFile("symlink-random"));
 
-  scoped_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
+  std::unique_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
   ASSERT_TRUE(stream.get());
 
   EXPECT_TRUE(hfs_reader()->IsSymbolicLink());
@@ -205,7 +209,7 @@ TEST_P(HFSFileReadTest, HardLink) {
 TEST_P(HFSFileReadTest, DecmpfsFile) {
   ASSERT_TRUE(GoToFile("first/second/goat-output.txt"));
 
-  scoped_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
+  std::unique_ptr<ReadStream> stream = hfs_reader()->GetReadStream();
   ASSERT_TRUE(stream.get());
 
   EXPECT_FALSE(hfs_reader()->IsSymbolicLink());

@@ -4,25 +4,33 @@
 
 #include "net/base/file_stream.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/sequenced_worker_pool_owner.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
 #include "net/log/test_net_log.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 #if defined(OS_ANDROID)
 #include "base/test/test_file_util.h"
@@ -76,25 +84,25 @@ TEST_F(FileStreamTest, OpenExplicitClose) {
               base::File::FLAG_READ |
               base::File::FLAG_ASYNC;
   int rv = stream.Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_TRUE(stream.IsOpen());
-  EXPECT_EQ(ERR_IO_PENDING, stream.Close(callback.callback()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(stream.Close(callback.callback()), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_FALSE(stream.IsOpen());
 }
 
 TEST_F(FileStreamTest, OpenExplicitCloseOrphaned) {
   TestCompletionCallback callback;
-  scoped_ptr<FileStream> stream(
+  std::unique_ptr<FileStream> stream(
       new FileStream(base::ThreadTaskRunnerHandle::Get()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_READ |
               base::File::FLAG_ASYNC;
   int rv = stream->Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_TRUE(stream->IsOpen());
-  EXPECT_EQ(ERR_IO_PENDING, stream->Close(callback.callback()));
+  EXPECT_THAT(stream->Close(callback.callback()), IsError(ERR_IO_PENDING));
   stream.reset();
   // File isn't actually closed yet.
   base::RunLoop runloop;
@@ -115,9 +123,10 @@ TEST_F(FileStreamTest, UseFileHandle) {
   base::File file(temp_file_path(), flags);
 
   // Seek to the beginning of the file and read.
-  scoped_ptr<FileStream> read_stream(
-      new FileStream(file.Pass(), base::ThreadTaskRunnerHandle::Get()));
-  ASSERT_EQ(ERR_IO_PENDING, read_stream->Seek(0, callback64.callback()));
+  std::unique_ptr<FileStream> read_stream(
+      new FileStream(std::move(file), base::ThreadTaskRunnerHandle::Get()));
+  ASSERT_THAT(read_stream->Seek(0, callback64.callback()),
+              IsError(ERR_IO_PENDING));
   ASSERT_EQ(0, callback64.WaitForResult());
   // Read into buffer and compare.
   scoped_refptr<IOBufferWithSize> read_buffer =
@@ -133,9 +142,10 @@ TEST_F(FileStreamTest, UseFileHandle) {
           base::File::FLAG_ASYNC;
   file.Initialize(temp_file_path(), flags);
 
-  scoped_ptr<FileStream> write_stream(
-      new FileStream(file.Pass(), base::ThreadTaskRunnerHandle::Get()));
-  ASSERT_EQ(ERR_IO_PENDING, write_stream->Seek(0, callback64.callback()));
+  std::unique_ptr<FileStream> write_stream(
+      new FileStream(std::move(file), base::ThreadTaskRunnerHandle::Get()));
+  ASSERT_THAT(write_stream->Seek(0, callback64.callback()),
+              IsError(ERR_IO_PENDING));
   ASSERT_EQ(0, callback64.WaitForResult());
   scoped_refptr<IOBufferWithSize> write_buffer = CreateTestDataBuffer();
   rv = write_stream->Write(write_buffer.get(), kTestDataSize,
@@ -161,12 +171,12 @@ TEST_F(FileStreamTest, UseClosedStream) {
 
   // Try seeking...
   rv = stream.Seek(5, callback64.callback());
-  EXPECT_EQ(ERR_UNEXPECTED, callback64.GetResult(rv));
+  EXPECT_THAT(callback64.GetResult(rv), IsError(ERR_UNEXPECTED));
 
   // Try reading...
   scoped_refptr<IOBufferWithSize> buf = new IOBufferWithSize(10);
   rv = stream.Read(buf.get(), buf->size(), callback.callback());
-  EXPECT_EQ(ERR_UNEXPECTED, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsError(ERR_UNEXPECTED));
 }
 
 TEST_F(FileStreamTest, Read) {
@@ -178,7 +188,7 @@ TEST_F(FileStreamTest, Read) {
               base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream.Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 
   int total_bytes_read = 0;
 
@@ -201,20 +211,20 @@ TEST_F(FileStreamTest, Read_EarlyDelete) {
   int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(temp_file_path(), &file_size));
 
-  scoped_ptr<FileStream> stream(
+  std::unique_ptr<FileStream> stream(
       new FileStream(base::ThreadTaskRunnerHandle::Get()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_READ |
               base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream->Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   scoped_refptr<IOBufferWithSize> buf = new IOBufferWithSize(4);
   rv = stream->Read(buf.get(), buf->size(), callback.callback());
   stream.reset();  // Delete instead of closing it.
   if (rv < 0) {
-    EXPECT_EQ(ERR_IO_PENDING, rv);
+    EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
     // The callback should not be called if the request is cancelled.
     base::RunLoop().RunUntilIdle();
     EXPECT_FALSE(callback.have_result());
@@ -232,13 +242,13 @@ TEST_F(FileStreamTest, Read_FromOffset) {
               base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream.Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   TestInt64CompletionCallback callback64;
   const int64_t kOffset = 3;
   rv = stream.Seek(kOffset, callback64.callback());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
   int64_t new_offset = callback64.WaitForResult();
   EXPECT_EQ(kOffset, new_offset);
 
@@ -266,7 +276,7 @@ TEST_F(FileStreamTest, Write) {
               base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream.Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 
   int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(temp_file_path(), &file_size));
@@ -286,14 +296,14 @@ TEST_F(FileStreamTest, Write) {
 }
 
 TEST_F(FileStreamTest, Write_EarlyDelete) {
-  scoped_ptr<FileStream> stream(
+  std::unique_ptr<FileStream> stream(
       new FileStream(base::ThreadTaskRunnerHandle::Get()));
   int flags = base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE |
               base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream->Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(temp_file_path(), &file_size));
@@ -303,7 +313,7 @@ TEST_F(FileStreamTest, Write_EarlyDelete) {
   rv = stream->Write(buf.get(), buf->size(), callback.callback());
   stream.reset();
   if (rv < 0) {
-    EXPECT_EQ(ERR_IO_PENDING, rv);
+    EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
     // The callback should not be called if the request is cancelled.
     base::RunLoop().RunUntilIdle();
     EXPECT_FALSE(callback.have_result());
@@ -322,13 +332,13 @@ TEST_F(FileStreamTest, Write_FromOffset) {
               base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream.Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   TestInt64CompletionCallback callback64;
   const int64_t kOffset = kTestDataSize;
   rv = stream.Seek(kOffset, callback64.callback());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
   int64_t new_offset = callback64.WaitForResult();
   EXPECT_EQ(kTestDataSize, new_offset);
 
@@ -356,14 +366,14 @@ TEST_F(FileStreamTest, BasicReadWrite) {
   int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(temp_file_path(), &file_size));
 
-  scoped_ptr<FileStream> stream(
+  std::unique_ptr<FileStream> stream(
       new FileStream(base::ThreadTaskRunnerHandle::Get()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_READ |
               base::File::FLAG_WRITE | base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream->Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   int64_t total_bytes_read = 0;
 
@@ -409,18 +419,18 @@ TEST_F(FileStreamTest, BasicWriteRead) {
   int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(temp_file_path(), &file_size));
 
-  scoped_ptr<FileStream> stream(
+  std::unique_ptr<FileStream> stream(
       new FileStream(base::ThreadTaskRunnerHandle::Get()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_READ |
               base::File::FLAG_WRITE | base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream->Open(temp_file_path(), flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   TestInt64CompletionCallback callback64;
   rv = stream->Seek(file_size, callback64.callback());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
   int64_t offset = callback64.WaitForResult();
   EXPECT_EQ(offset, file_size);
 
@@ -444,7 +454,7 @@ TEST_F(FileStreamTest, BasicWriteRead) {
   EXPECT_EQ(kTestDataSize, total_bytes_written);
 
   rv = stream->Seek(0, callback64.callback());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
   offset = callback64.WaitForResult();
   EXPECT_EQ(0, offset);
 
@@ -546,7 +556,8 @@ class TestWriteReadCompletionCallback {
       *data_read_ += data_read;
     } else {  // We're done writing all data.  Start reading the data.
       TestInt64CompletionCallback callback64;
-      EXPECT_EQ(ERR_IO_PENDING, stream_->Seek(0, callback64.callback()));
+      EXPECT_THAT(stream_->Seek(0, callback64.callback()),
+                  IsError(ERR_IO_PENDING));
       {
         base::MessageLoop::ScopedNestableTaskAllower allow(
             base::MessageLoop::current());
@@ -578,17 +589,18 @@ TEST_F(FileStreamTest, WriteRead) {
   int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(temp_file_path(), &file_size));
 
-  scoped_ptr<FileStream> stream(
+  std::unique_ptr<FileStream> stream(
       new FileStream(base::ThreadTaskRunnerHandle::Get()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_READ |
               base::File::FLAG_WRITE | base::File::FLAG_ASYNC;
   TestCompletionCallback open_callback;
   int rv = stream->Open(temp_file_path(), flags, open_callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, open_callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(open_callback.WaitForResult(), IsOk());
 
   TestInt64CompletionCallback callback64;
-  EXPECT_EQ(ERR_IO_PENDING, stream->Seek(file_size, callback64.callback()));
+  EXPECT_THAT(stream->Seek(file_size, callback64.callback()),
+              IsError(ERR_IO_PENDING));
   EXPECT_EQ(file_size, callback64.WaitForResult());
 
   int total_bytes_written = 0;
@@ -684,17 +696,18 @@ TEST_F(FileStreamTest, WriteClose) {
   int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(temp_file_path(), &file_size));
 
-  scoped_ptr<FileStream> stream(
+  std::unique_ptr<FileStream> stream(
       new FileStream(base::ThreadTaskRunnerHandle::Get()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_READ |
               base::File::FLAG_WRITE | base::File::FLAG_ASYNC;
   TestCompletionCallback open_callback;
   int rv = stream->Open(temp_file_path(), flags, open_callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, open_callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(open_callback.WaitForResult(), IsOk());
 
   TestInt64CompletionCallback callback64;
-  EXPECT_EQ(ERR_IO_PENDING, stream->Seek(file_size, callback64.callback()));
+  EXPECT_THAT(stream->Seek(file_size, callback64.callback()),
+              IsError(ERR_IO_PENDING));
   EXPECT_EQ(file_size, callback64.WaitForResult());
 
   int total_bytes_written = 0;
@@ -714,25 +727,28 @@ TEST_F(FileStreamTest, WriteClose) {
 }
 
 TEST_F(FileStreamTest, OpenAndDelete) {
-  base::SequencedWorkerPoolOwner pool_owner(1, "StreamTest");
+  base::Thread worker_thread("StreamTest");
+  ASSERT_TRUE(worker_thread.Start());
 
   bool prev = base::ThreadRestrictions::SetIOAllowed(false);
-  scoped_ptr<FileStream> stream(new FileStream(pool_owner.pool()));
+  std::unique_ptr<FileStream> stream(
+      new FileStream(worker_thread.task_runner()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_WRITE |
               base::File::FLAG_ASYNC;
   TestCompletionCallback open_callback;
   int rv = stream->Open(temp_file_path(), flags, open_callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Delete the stream without waiting for the open operation to be
   // complete. Should be safe.
   stream.reset();
 
-  // Force an operation through the pool.
-  scoped_ptr<FileStream> stream2(new FileStream(pool_owner.pool()));
+  // Force an operation through the worker.
+  std::unique_ptr<FileStream> stream2(
+      new FileStream(worker_thread.task_runner()));
   TestCompletionCallback open_callback2;
   rv = stream2->Open(temp_file_path(), flags, open_callback2.callback());
-  EXPECT_EQ(OK, open_callback2.GetResult(rv));
+  EXPECT_THAT(open_callback2.GetResult(rv), IsOk());
   stream2.reset();
 
   // open_callback won't be called.
@@ -750,8 +766,8 @@ TEST_F(FileStreamTest, WriteError) {
   base::File file(temp_file_path(), flags);
   ASSERT_TRUE(file.IsValid());
 
-  scoped_ptr<FileStream> stream(
-      new FileStream(file.Pass(), base::ThreadTaskRunnerHandle::Get()));
+  std::unique_ptr<FileStream> stream(
+      new FileStream(std::move(file), base::ThreadTaskRunnerHandle::Get()));
 
   scoped_refptr<IOBuffer> buf = new IOBuffer(1);
   buf->data()[0] = 0;
@@ -775,8 +791,8 @@ TEST_F(FileStreamTest, ReadError) {
   base::File file(temp_file_path(), flags);
   ASSERT_TRUE(file.IsValid());
 
-  scoped_ptr<FileStream> stream(
-      new FileStream(file.Pass(), base::ThreadTaskRunnerHandle::Get()));
+  std::unique_ptr<FileStream> stream(
+      new FileStream(std::move(file), base::ThreadTaskRunnerHandle::Get()));
 
   scoped_refptr<IOBuffer> buf = new IOBuffer(1);
   TestCompletionCallback callback;
@@ -813,8 +829,8 @@ TEST_F(FileStreamTest, ContentUriRead) {
               base::File::FLAG_ASYNC;
   TestCompletionCallback callback;
   int rv = stream.Open(path, flags, callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   int total_bytes_read = 0;
 

@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/incognito_mode_policy_handler.h"
+
+#include "base/memory/ptr_util.h"
+#include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/common/pref_names.h"
 #include "components/policy/core/browser/configuration_policy_pref_store.h"
 #include "components/policy/core/browser/configuration_policy_pref_store_test.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 
 namespace policy {
 
@@ -17,8 +19,8 @@ class IncognitoModePolicyHandlerTest
     : public ConfigurationPolicyPrefStoreTest {
  public:
   void SetUp() override {
-    handler_list_.AddHandler(make_scoped_ptr<ConfigurationPolicyHandler>(
-          new IncognitoModePolicyHandler));
+    handler_list_.AddHandler(base::WrapUnique<ConfigurationPolicyHandler>(
+        new IncognitoModePolicyHandler));
   }
  protected:
   static const int kIncognitoModeAvailabilityNotSet = -1;
@@ -33,21 +35,17 @@ class IncognitoModePolicyHandlerTest
                    int availability) {
     PolicyMap policy;
     if (incognito_enabled != INCOGNITO_ENABLED_UNKNOWN) {
-      policy.Set(key::kIncognitoEnabled,
-                 POLICY_LEVEL_MANDATORY,
-                 POLICY_SCOPE_USER,
-                 POLICY_SOURCE_CLOUD,
-                 new base::FundamentalValue(incognito_enabled ==
-                                            INCOGNITO_ENABLED_TRUE),
-                 NULL);
+      policy.Set(key::kIncognitoEnabled, POLICY_LEVEL_MANDATORY,
+                 POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+                 base::MakeUnique<base::FundamentalValue>(
+                     incognito_enabled == INCOGNITO_ENABLED_TRUE),
+                 nullptr);
     }
     if (availability >= 0) {
-      policy.Set(key::kIncognitoModeAvailability,
-                 POLICY_LEVEL_MANDATORY,
-                 POLICY_SCOPE_USER,
-                 POLICY_SOURCE_CLOUD,
-                 new base::FundamentalValue(availability),
-                 NULL);
+      policy.Set(key::kIncognitoModeAvailability, POLICY_LEVEL_MANDATORY,
+                 POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+                 base::MakeUnique<base::FundamentalValue>(availability),
+                 nullptr);
     }
     UpdateProviderPolicy(policy);
   }

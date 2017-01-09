@@ -5,18 +5,18 @@
 #include "net/base/address_family.h"
 
 #include "base/logging.h"
+#include "net/base/ip_address.h"
 #include "net/base/sys_addrinfo.h"
 
 namespace net {
 
-AddressFamily GetAddressFamily(const IPAddressNumber& address) {
-  switch (address.size()) {
-    case kIPv4AddressSize:
-      return ADDRESS_FAMILY_IPV4;
-    case kIPv6AddressSize:
-      return ADDRESS_FAMILY_IPV6;
-    default:
-      return ADDRESS_FAMILY_UNSPECIFIED;
+AddressFamily GetAddressFamily(const IPAddress& address) {
+  if (address.IsIPv4()) {
+    return ADDRESS_FAMILY_IPV4;
+  } else if (address.IsIPv6()) {
+    return ADDRESS_FAMILY_IPV6;
+  } else {
+    return ADDRESS_FAMILY_UNSPECIFIED;
   }
 }
 

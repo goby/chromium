@@ -4,12 +4,13 @@
 
 #include "components/webdata/common/web_data_request_manager.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/profiler/scoped_tracker.h"
-#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -21,16 +22,13 @@ WebDataRequest::WebDataRequest(WebDataServiceConsumer* consumer,
                                WebDataRequestManager* manager)
     : manager_(manager), cancelled_(false), consumer_(consumer) {
   handle_ = manager_->GetNextRequestHandle();
-  message_loop_ = base::MessageLoop::current();
+  task_runner_ = base::ThreadTaskRunnerHandle::Get();
   manager_->RegisterRequest(this);
 }
 
 WebDataRequest::~WebDataRequest() {
   if (manager_) {
     manager_->CancelRequest(handle_);
-  }
-  if (result_.get()) {
-    result_->Destroy();
   }
 }
 
@@ -42,8 +40,9 @@ WebDataServiceConsumer* WebDataRequest::GetConsumer() const {
   return consumer_;
 }
 
-base::MessageLoop* WebDataRequest::GetMessageLoop() const {
-  return message_loop_;
+scoped_refptr<base::SingleThreadTaskRunner> WebDataRequest::GetTaskRunner()
+    const {
+  return task_runner_;
 }
 
 bool WebDataRequest::IsCancelled() const {
@@ -62,12 +61,12 @@ void WebDataRequest::OnComplete() {
   manager_= NULL;
 }
 
-void WebDataRequest::SetResult(scoped_ptr<WDTypedResult> r) {
-  result_ = r.Pass();
+void WebDataRequest::SetResult(std::unique_ptr<WDTypedResult> r) {
+  result_ = std::move(r);
 }
 
-scoped_ptr<WDTypedResult> WebDataRequest::GetResult(){
-  return result_.Pass();
+std::unique_ptr<WDTypedResult> WebDataRequest::GetResult() {
+  return std::move(result_);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -82,10 +81,8 @@ WebDataRequestManager::WebDataRequestManager()
 
 WebDataRequestManager::~WebDataRequestManager() {
   base::AutoLock l(pending_lock_);
-  for (RequestMap::iterator i = pending_requests_.begin();
-       i != pending_requests_.end(); ++i) {
+  for (auto i = pending_requests_.begin(); i != pending_requests_.end(); ++i)
     i->second->Cancel();
-  }
   pending_requests_.clear();
 }
 
@@ -101,25 +98,23 @@ int WebDataRequestManager::GetNextRequestHandle() {
 
 void WebDataRequestManager::CancelRequest(WebDataServiceBase::Handle h) {
   base::AutoLock l(pending_lock_);
-  RequestMap::iterator i = pending_requests_.find(h);
-  if (i == pending_requests_.end()) {
-    NOTREACHED() << "Canceling a nonexistent web data service request";
-    return;
-  }
+  auto i = pending_requests_.find(h);
+  DCHECK(i != pending_requests_.end());
   i->second->Cancel();
   pending_requests_.erase(i);
 }
 
 void WebDataRequestManager::RequestCompleted(
-    scoped_ptr<WebDataRequest> request) {
-  base::MessageLoop* loop = request->GetMessageLoop();
-  loop->task_runner()->PostTask(
+    std::unique_ptr<WebDataRequest> request) {
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      request->GetTaskRunner();
+  task_runner->PostTask(
       FROM_HERE, base::Bind(&WebDataRequestManager::RequestCompletedOnThread,
                             this, base::Passed(&request)));
 }
 
 void WebDataRequestManager::RequestCompletedOnThread(
-    scoped_ptr<WebDataRequest> request) {
+    std::unique_ptr<WebDataRequest> request) {
   if (request->IsCancelled())
     return;
 
@@ -130,11 +125,8 @@ void WebDataRequestManager::RequestCompletedOnThread(
           "422460 WebDataRequestManager::RequestCompletedOnThread::UpdateMap"));
   {
     base::AutoLock l(pending_lock_);
-    RequestMap::iterator i = pending_requests_.find(request->GetHandle());
-    if (i == pending_requests_.end()) {
-      NOTREACHED() << "Request completed called for an unknown request";
-      return;
-    }
+    auto i = pending_requests_.find(request->GetHandle());
+    DCHECK(i != pending_requests_.end());
 
     // Take ownership of the request object and remove it from the map.
     pending_requests_.erase(i);
@@ -152,8 +144,8 @@ void WebDataRequestManager::RequestCompletedOnThread(
     WebDataServiceConsumer* consumer = request->GetConsumer();
     request->OnComplete();
     if (consumer) {
-      scoped_ptr<WDTypedResult> r = request->GetResult();
-      consumer->OnWebDataServiceRequestDone(request->GetHandle(), r.get());
+      consumer->OnWebDataServiceRequestDone(request->GetHandle(),
+                                            request->GetResult());
     }
   }
 

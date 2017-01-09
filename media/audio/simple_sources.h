@@ -5,8 +5,13 @@
 #ifndef MEDIA_AUDIO_SIMPLE_SOURCES_H_
 #define MEDIA_AUDIO_SIMPLE_SOURCES_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 #include "media/audio/audio_io.h"
 #include "media/base/audio_converter.h"
 #include "media/base/seekable_buffer.h"
@@ -31,7 +36,10 @@ class MEDIA_EXPORT SineWaveAudioSource
   void Reset();
 
   // Implementation of AudioSourceCallback.
-  int OnMoreData(AudioBus* audio_bus, uint32 total_bytes_delay) override;
+  int OnMoreData(base::TimeDelta delay,
+                 base::TimeTicks timestamp,
+                 int prior_frames_skipped,
+                 AudioBus* dest) override;
   void OnError(AudioOutputStream* stream) override;
 
   // The number of OnMoreData() and OnError() calls respectively.
@@ -52,11 +60,15 @@ class MEDIA_EXPORT FileSource : public AudioOutputStream::AudioSourceCallback,
                                 public AudioConverter::InputCallback {
  public:
   FileSource(const AudioParameters& params,
-             const base::FilePath& path_to_wav_file);
+             const base::FilePath& path_to_wav_file,
+             bool loop);
   ~FileSource() override;
 
   // Implementation of AudioSourceCallback.
-  int OnMoreData(AudioBus* audio_bus, uint32 total_bytes_delay) override;
+  int OnMoreData(base::TimeDelta delay,
+                 base::TimeTicks delay_timestamp,
+                 int prior_frames_skipped,
+                 AudioBus* dest) override;
   void OnError(AudioOutputStream* stream) override;
 
  private:
@@ -66,34 +78,40 @@ class MEDIA_EXPORT FileSource : public AudioOutputStream::AudioSourceCallback,
   // The WAV data at |path_to_wav_file_| is read into memory and kept here.
   // This memory needs to survive for the lifetime of |wav_audio_handler_|,
   // so declare it first. Do not access this member directly.
-  scoped_ptr<char[]> raw_wav_data_;
+  std::unique_ptr<char[]> raw_wav_data_;
 
-  scoped_ptr<WavAudioHandler> wav_audio_handler_;
-  scoped_ptr<AudioConverter> file_audio_converter_;
+  std::unique_ptr<WavAudioHandler> wav_audio_handler_;
+  std::unique_ptr<AudioConverter> file_audio_converter_;
   int wav_file_read_pos_;
   bool load_failed_;
+  bool looping_;
 
   // Provides audio data from wav_audio_handler_ into the file audio converter.
-  double ProvideInput(AudioBus* audio_bus,
-                      base::TimeDelta buffer_delay) override;
+  double ProvideInput(AudioBus* audio_bus, uint32_t frames_delayed) override;
 
   // Loads the wav file on the first OnMoreData invocation.
   void LoadWavFile(const base::FilePath& path_to_wav_file);
+
+  // Rewinds the player to the start of the loaded wav file.
+  void Rewind();
 };
 
 class BeepingSource : public AudioOutputStream::AudioSourceCallback {
  public:
-  BeepingSource(const AudioParameters& params);
+  explicit BeepingSource(const AudioParameters& params);
   ~BeepingSource() override;
 
   // Implementation of AudioSourceCallback.
-  int OnMoreData(AudioBus* audio_bus, uint32 total_bytes_delay) override;
+  int OnMoreData(base::TimeDelta delay,
+                 base::TimeTicks delay_timestamp,
+                 int prior_frames_skipped,
+                 AudioBus* dest) override;
   void OnError(AudioOutputStream* stream) override;
 
   static void BeepOnce();
  private:
   int buffer_size_;
-  scoped_ptr<uint8[]> buffer_;
+  std::unique_ptr<uint8_t[]> buffer_;
   AudioParameters params_;
   base::TimeTicks last_callback_time_;
   base::TimeDelta interval_from_last_beep_;

@@ -22,12 +22,15 @@ class FakeMBW(mb.MetaBuildWrapper):
     if win32:
       self.chromium_src_dir = 'c:\\fake_src'
       self.default_config = 'c:\\fake_src\\tools\\mb\\mb_config.pyl'
+      self.default_isolate_map = ('c:\\fake_src\\testing\\buildbot\\'
+                                  'gn_isolate_map.pyl')
       self.platform = 'win32'
       self.executable = 'c:\\python\\python.exe'
       self.sep = '\\'
     else:
       self.chromium_src_dir = '/fake_src'
       self.default_config = '/fake_src/tools/mb/mb_config.pyl'
+      self.default_isolate_map = '/fake_src/testing/buildbot/gn_isolate_map.pyl'
       self.executable = '/usr/bin/python'
       self.platform = 'linux2'
       self.sep = '/'
@@ -56,6 +59,8 @@ class FakeMBW(mb.MetaBuildWrapper):
     return self.files[path]
 
   def WriteFile(self, path, contents, force_verbose=False):
+    if self.args.dryrun or self.args.verbose or force_verbose:
+      self.Print('\nWriting """\\\n%s""" to %s.\n' % (contents, path))
     self.files[path] = contents
 
   def Call(self, cmd, env=None, buffer_output=True):
@@ -103,37 +108,48 @@ class FakeFile(object):
 
 TEST_CONFIG = """\
 {
-  'common_dev_configs': ['gn_debug'],
-  'configs': {
-    'gyp_rel_bot': ['gyp', 'rel', 'goma'],
-    'gn_debug': ['gn', 'debug', 'goma'],
-    'gyp_debug': ['gyp', 'debug'],
-    'gn_rel_bot': ['gn', 'rel', 'goma'],
-    'private': ['gyp', 'rel', 'fake_feature1'],
-    'unsupported': ['gn', 'fake_feature2'],
-  },
   'masters': {
+    'chromium': {},
     'fake_master': {
       'fake_builder': 'gyp_rel_bot',
       'fake_gn_builder': 'gn_rel_bot',
+      'fake_gyp_crosscompile_builder': 'gyp_crosscompile',
+      'fake_gn_debug_builder': 'gn_debug_goma',
       'fake_gyp_builder': 'gyp_debug',
+      'fake_gn_args_bot': '//build/args/bots/fake_master/fake_gn_args_bot.gn',
+      'fake_multi_phase': { 'phase_1': 'gn_phase_1', 'phase_2': 'gn_phase_2'},
     },
   },
+  'configs': {
+    'gyp_rel_bot': ['gyp', 'rel', 'goma'],
+    'gn_debug_goma': ['gn', 'debug', 'goma'],
+    'gyp_debug': ['gyp', 'debug', 'fake_feature1'],
+    'gn_rel_bot': ['gn', 'rel', 'goma'],
+    'gyp_crosscompile': ['gyp', 'crosscompile'],
+    'gn_phase_1': ['gn', 'phase_1'],
+    'gn_phase_2': ['gn', 'phase_2'],
+  },
   'mixins': {
+    'crosscompile': {
+      'gyp_crosscompile': True,
+    },
     'fake_feature1': {
       'gn_args': 'enable_doom_melon=true',
-      'gyp_crosscompile': True,
       'gyp_defines': 'doom_melon=1',
-    },
-    'fake_feature2': {
-      'gn_args': 'enable_doom_melon=false',
-      'gyp_defaults': 'doom_melon=0',
     },
     'gyp': {'type': 'gyp'},
     'gn': {'type': 'gn'},
     'goma': {
-      'gn_args': 'use_goma=true goma_dir="$(goma_dir)"',
-      'gyp_defines': 'goma=1 gomadir=$(goma_dir)',
+      'gn_args': 'use_goma=true',
+      'gyp_defines': 'goma=1',
+    },
+    'phase_1': {
+      'gn_args': 'phase=1',
+      'gyp_args': 'phase=1',
+    },
+    'phase_2': {
+      'gn_args': 'phase=2',
+      'gyp_args': 'phase=2',
     },
     'rel': {
       'gn_args': 'is_debug=false',
@@ -142,8 +158,58 @@ TEST_CONFIG = """\
       'gn_args': 'is_debug=true',
     },
   },
-  'private_configs': ['private'],
-  'unsupported_configs': ['unsupported'],
+}
+"""
+
+
+TEST_BAD_CONFIG = """\
+{
+  'configs': {
+    'gn_rel_bot_1': ['gn', 'rel', 'chrome_with_codecs'],
+    'gn_rel_bot_2': ['gn', 'rel', 'bad_nested_config'],
+  },
+  'masters': {
+    'chromium': {
+      'a': 'gn_rel_bot_1',
+      'b': 'gn_rel_bot_2',
+    },
+  },
+  'mixins': {
+    'gn': {'type': 'gn'},
+    'chrome_with_codecs': {
+      'gn_args': 'proprietary_codecs=true',
+    },
+    'bad_nested_config': {
+      'mixins': ['chrome_with_codecs'],
+    },
+    'rel': {
+      'gn_args': 'is_debug=false',
+    },
+  },
+}
+"""
+
+
+GYP_HACKS_CONFIG = """\
+{
+  'masters': {
+    'chromium': {},
+    'fake_master': {
+      'fake_builder': 'fake_config',
+    },
+  },
+  'configs': {
+    'fake_config': ['fake_mixin'],
+  },
+  'mixins': {
+    'fake_mixin': {
+      'type': 'gyp',
+      'gn_args': '',
+      'gyp_defines':
+         ('foo=bar llvm_force_head_revision=1 '
+          'gyp_link_concurrency=1 baz=1'),
+    },
+  },
 }
 """
 
@@ -152,6 +218,18 @@ class UnitTest(unittest.TestCase):
   def fake_mbw(self, files=None, win32=False):
     mbw = FakeMBW(win32=win32)
     mbw.files.setdefault(mbw.default_config, TEST_CONFIG)
+    mbw.files.setdefault(
+      mbw.ToAbsPath('//testing/buildbot/gn_isolate_map.pyl'),
+      '''{
+        "foo_unittests": {
+          "label": "//foo:foo_unittests",
+          "type": "console_test_launcher",
+          "args": [],
+        },
+      }''')
+    mbw.files.setdefault(
+        mbw.ToAbsPath('//build/args/bots/fake_master/fake_gn_args_bot.gn'),
+        'is_debug = false\n')
     if files:
       for path, contents in files.items():
         mbw.files[path] = contents
@@ -160,10 +238,10 @@ class UnitTest(unittest.TestCase):
   def check(self, args, mbw=None, files=None, out=None, err=None, ret=None):
     if not mbw:
       mbw = self.fake_mbw(files)
-    mbw.ParseArgs(args)
-    actual_ret = mbw.args.func()
-    if ret is not None:
-      self.assertEqual(actual_ret, ret)
+
+    actual_ret = mbw.Main(args)
+
+    self.assertEqual(actual_ret, ret)
     if out is not None:
       self.assertEqual(mbw.out, out)
     if err is not None:
@@ -178,13 +256,13 @@ class UnitTest(unittest.TestCase):
     mbw = self.fake_mbw(files)
 
     # The first time we run this, the build dir doesn't exist, so no clobber.
-    self.check(['gen', '-c', 'gn_debug', '//out/Debug'], mbw=mbw, ret=0)
+    self.check(['gen', '-c', 'gn_debug_goma', '//out/Debug'], mbw=mbw, ret=0)
     self.assertEqual(mbw.rmdirs, [])
     self.assertEqual(mbw.files['/fake_src/out/Debug/mb_type'], 'gn')
 
     # The second time we run this, the build dir exists and matches, so no
     # clobber.
-    self.check(['gen', '-c', 'gn_debug', '//out/Debug'], mbw=mbw, ret=0)
+    self.check(['gen', '-c', 'gn_debug_goma', '//out/Debug'], mbw=mbw, ret=0)
     self.assertEqual(mbw.rmdirs, [])
     self.assertEqual(mbw.files['/fake_src/out/Debug/mb_type'], 'gn')
 
@@ -202,84 +280,66 @@ class UnitTest(unittest.TestCase):
     self.assertEqual(mbw.files['/fake_src/out/Debug/mb_type'], 'gyp')
 
   def test_gn_analyze(self):
-    files = {'/tmp/in.json': """{\
+    files = {'/tmp/in.json': '''{\
                "files": ["foo/foo_unittest.cc"],
-               "test_targets": ["foo_unittests", "bar_unittests"],
-               "additional_compile_targets": []
-             }"""}
+               "test_targets": ["foo_unittests"],
+               "additional_compile_targets": ["all"]
+             }''',
+             '/tmp/out.json.gn': '''{\
+               "status": "Found dependency",
+               "compile_targets": ["//foo:foo_unittests"],
+               "test_targets": ["//foo:foo_unittests"]
+             }'''}
 
     mbw = self.fake_mbw(files)
-    mbw.Call = lambda cmd, env=None, buffer_output=True: (
-        0, 'out/Default/foo_unittests\n', '')
+    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
 
-    self.check(['analyze', '-c', 'gn_debug', '//out/Default',
+    self.check(['analyze', '-c', 'gn_debug_goma', '//out/Default',
                 '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
     out = json.loads(mbw.files['/tmp/out.json'])
     self.assertEqual(out, {
       'status': 'Found dependency',
-      'compile_targets': ['foo_unittests'],
+      'compile_targets': ['foo:foo_unittests'],
       'test_targets': ['foo_unittests']
     })
 
-  def test_gn_analyze_all(self):
-    files = {'/tmp/in.json': """{\
-               "files": ["foo/foo_unittest.cc"],
-               "test_targets": ["bar_unittests"],
-               "additional_compile_targets": ["all"]
-             }"""}
-    mbw = self.fake_mbw(files)
-    mbw.Call = lambda cmd, env=None, buffer_output=True: (
-        0, 'out/Default/foo_unittests\n', '')
-    self.check(['analyze', '-c', 'gn_debug', '//out/Default',
-                '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
-    out = json.loads(mbw.files['/tmp/out.json'])
-    self.assertEqual(out, {
-      'status': 'Found dependency (all)',
-      'compile_targets': ['all', 'bar_unittests'],
-      'test_targets': ['bar_unittests'],
-    })
-
-  def test_gn_analyze_missing_file(self):
-    files = {'/tmp/in.json': """{\
-               "files": ["foo/foo_unittest.cc"],
-               "test_targets": ["bar_unittests"],
-               "additional_compile_targets": []
-             }"""}
-    mbw = self.fake_mbw(files)
-    mbw.cmds = [
-        (0, '', ''),
-        (1, 'The input matches no targets, configs, or files\n', ''),
-        (1, 'The input matches no targets, configs, or files\n', ''),
-    ]
-
-    self.check(['analyze', '-c', 'gn_debug', '//out/Default',
-                '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
-    out = json.loads(mbw.files['/tmp/out.json'])
-    self.assertEqual(out, {
-      'status': 'No dependency',
-      'compile_targets': [],
-      'test_targets': [],
-    })
-
   def test_gn_gen(self):
-    self.check(['gen', '-c', 'gn_debug', '//out/Default', '-g', '/goma'],
-               ret=0,
-               out=('/fake_src/buildtools/linux64/gn gen //out/Default '
-                    '\'--args=is_debug=true use_goma=true goma_dir="/goma"\' '
-                    '--check\n'))
+    mbw = self.fake_mbw()
+    self.check(['gen', '-c', 'gn_debug_goma', '//out/Default', '-g', '/goma'],
+               mbw=mbw, ret=0)
+    self.assertMultiLineEqual(mbw.files['/fake_src/out/Default/args.gn'],
+                              ('goma_dir = "/goma"\n'
+                               'is_debug = true\n'
+                               'use_goma = true\n'))
+
+    # Make sure we log both what is written to args.gn and the command line.
+    self.assertIn('Writing """', mbw.out)
+    self.assertIn('/fake_src/buildtools/linux64/gn gen //out/Default --check',
+                  mbw.out)
 
     mbw = self.fake_mbw(win32=True)
-    self.check(['gen', '-c', 'gn_debug', '-g', 'c:\\goma', '//out/Debug'],
-               mbw=mbw, ret=0,
-               out=('c:\\fake_src\\buildtools\\win\\gn gen //out/Debug '
-                    '"--args=is_debug=true use_goma=true goma_dir=\\"'
-                    'c:\\goma\\"" --check\n'))
+    self.check(['gen', '-c', 'gn_debug_goma', '-g', 'c:\\goma', '//out/Debug'],
+               mbw=mbw, ret=0)
+    self.assertMultiLineEqual(mbw.files['c:\\fake_src\\out\\Debug\\args.gn'],
+                              ('goma_dir = "c:\\\\goma"\n'
+                               'is_debug = true\n'
+                               'use_goma = true\n'))
+    self.assertIn('c:\\fake_src\\buildtools\\win\\gn.exe gen //out/Debug '
+                  '--check\n', mbw.out)
+
+    mbw = self.fake_mbw()
+    self.check(['gen', '-m', 'fake_master', '-b', 'fake_gn_args_bot',
+                '//out/Debug'],
+               mbw=mbw, ret=0)
+    self.assertEqual(
+        mbw.files['/fake_src/out/Debug/args.gn'],
+        'import("//build/args/bots/fake_master/fake_gn_args_bot.gn")\n')
 
 
   def test_gn_gen_fails(self):
     mbw = self.fake_mbw()
     mbw.Call = lambda cmd, env=None, buffer_output=True: (1, '', '')
-    self.check(['gen', '-c', 'gn_debug', '//out/Default'], mbw=mbw, ret=1)
+    self.check(['gen', '-c', 'gn_debug_goma', '//out/Default'], mbw=mbw, ret=1)
 
   def test_gn_gen_swarming(self):
     files = {
@@ -297,7 +357,7 @@ class UnitTest(unittest.TestCase):
     }
     mbw = self.fake_mbw(files)
     self.check(['gen',
-                '-c', 'gn_debug',
+                '-c', 'gn_debug_goma',
                 '--swarming-targets-file', '/tmp/swarming_targets',
                 '//out/Default'], mbw=mbw, ret=0)
     self.assertIn('/fake_src/out/Default/base_unittests.isolate',
@@ -305,8 +365,37 @@ class UnitTest(unittest.TestCase):
     self.assertIn('/fake_src/out/Default/base_unittests.isolated.gen.json',
                   mbw.files)
 
+  def test_gn_gen_swarming_script(self):
+    files = {
+      '/tmp/swarming_targets': 'cc_perftests\n',
+      '/fake_src/testing/buildbot/gn_isolate_map.pyl': (
+          "{'cc_perftests': {"
+          "  'label': '//cc:cc_perftests',"
+          "  'type': 'script',"
+          "  'script': '/fake_src/out/Default/test_script.py',"
+          "  'args': [],"
+          "}}\n"
+      ),
+      'c:\\fake_src\out\Default\cc_perftests.exe.runtime_deps': (
+          "cc_perftests\n"
+      ),
+    }
+    mbw = self.fake_mbw(files=files, win32=True)
+    self.check(['gen',
+                '-c', 'gn_debug_goma',
+                '--swarming-targets-file', '/tmp/swarming_targets',
+                '--isolate-map-file',
+                '/fake_src/testing/buildbot/gn_isolate_map.pyl',
+                '//out/Default'], mbw=mbw, ret=0)
+    self.assertIn('c:\\fake_src\\out\\Default\\cc_perftests.isolate',
+                  mbw.files)
+    self.assertIn('c:\\fake_src\\out\\Default\\cc_perftests.isolated.gen.json',
+                  mbw.files)
+
+
   def test_gn_isolate(self):
     files = {
+      '/fake_src/out/Default/toolchain.ninja': "",
       '/fake_src/testing/buildbot/gn_isolate_map.pyl': (
           "{'base_unittests': {"
           "  'label': '//base:base_unittests',"
@@ -318,8 +407,8 @@ class UnitTest(unittest.TestCase):
           "base_unittests\n"
       ),
     }
-    self.check(['isolate', '-c', 'gn_debug', '//out/Default', 'base_unittests'],
-               files=files, ret=0)
+    self.check(['isolate', '-c', 'gn_debug_goma', '//out/Default',
+                'base_unittests'], files=files, ret=0)
 
     # test running isolate on an existing build_dir
     files['/fake_src/out/Default/args.gn'] = 'is_debug = True\n'
@@ -343,27 +432,31 @@ class UnitTest(unittest.TestCase):
           "base_unittests\n"
       ),
     }
-    self.check(['run', '-c', 'gn_debug', '//out/Default', 'base_unittests'],
-               files=files, ret=0)
+    self.check(['run', '-c', 'gn_debug_goma', '//out/Default',
+                'base_unittests'], files=files, ret=0)
 
   def test_gn_lookup(self):
-    self.check(['lookup', '-c', 'gn_debug'], ret=0)
+    self.check(['lookup', '-c', 'gn_debug_goma'], ret=0)
 
   def test_gn_lookup_goma_dir_expansion(self):
     self.check(['lookup', '-c', 'gn_rel_bot', '-g', '/foo'], ret=0,
-               out=("/fake_src/buildtools/linux64/gn gen _path_ "
-                    "'--args=is_debug=false use_goma=true "
-                    "goma_dir=\"/foo\"'\n" ))
+               out=('\n'
+                    'Writing """\\\n'
+                    'goma_dir = "/foo"\n'
+                    'is_debug = false\n'
+                    'use_goma = true\n'
+                    '""" to _path_/args.gn.\n\n'
+                    '/fake_src/buildtools/linux64/gn gen _path_\n'))
 
   def test_gyp_analyze(self):
     mbw = self.check(['analyze', '-c', 'gyp_rel_bot', '//out/Release',
-                     '/tmp/in.json', '/tmp/out.json'],
-                     ret=0)
+                      '/tmp/in.json', '/tmp/out.json'], ret=0)
     self.assertIn('analyzer', mbw.calls[0])
 
   def test_gyp_crosscompile(self):
     mbw = self.fake_mbw()
-    self.check(['gen', '-c', 'private', '//out/Release'], mbw=mbw)
+    self.check(['gen', '-c', 'gyp_crosscompile', '//out/Release'],
+               mbw=mbw, ret=0)
     self.assertTrue(mbw.cross_compile)
 
   def test_gyp_gen(self):
@@ -398,9 +491,72 @@ class UnitTest(unittest.TestCase):
     finally:
       sys.stdout = orig_stdout
 
+  def test_multiple_phases(self):
+    # Check that not passing a --phase to a multi-phase builder fails.
+    mbw = self.check(['lookup', '-m', 'fake_master', '-b', 'fake_multi_phase'],
+                     ret=1)
+    self.assertIn('Must specify a build --phase', mbw.out)
+
+    # Check that passing a --phase to a single-phase builder fails.
+    mbw = self.check(['lookup', '-m', 'fake_master', '-b', 'fake_gn_builder',
+                      '--phase', 'phase_1'], ret=1)
+    self.assertIn('Must not specify a build --phase', mbw.out)
+
+    # Check that passing a wrong phase key to a multi-phase builder fails.
+    mbw = self.check(['lookup', '-m', 'fake_master', '-b', 'fake_multi_phase',
+                      '--phase', 'wrong_phase'], ret=1)
+    self.assertIn('Phase wrong_phase doesn\'t exist', mbw.out)
+
+    # Check that passing a correct phase key to a multi-phase builder passes.
+    mbw = self.check(['lookup', '-m', 'fake_master', '-b', 'fake_multi_phase',
+                      '--phase', 'phase_1'], ret=0)
+    self.assertIn('phase = 1', mbw.out)
+
+    mbw = self.check(['lookup', '-m', 'fake_master', '-b', 'fake_multi_phase',
+                      '--phase', 'phase_2'], ret=0)
+    self.assertIn('phase = 2', mbw.out)
 
   def test_validate(self):
-    self.check(['validate'], ret=0)
+    mbw = self.fake_mbw()
+    self.check(['validate'], mbw=mbw, ret=0)
+
+  def test_bad_validate(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config] = TEST_BAD_CONFIG
+    self.check(['validate'], mbw=mbw, ret=1)
+
+  def test_gyp_env_hacks(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config] = GYP_HACKS_CONFIG
+    self.check(['lookup', '-c', 'fake_config'], mbw=mbw,
+               ret=0,
+               out=("GYP_DEFINES='foo=bar baz=1'\n"
+                    "GYP_LINK_CONCURRENCY=1\n"
+                    "LLVM_FORCE_HEAD_REVISION=1\n"
+                    "python build/gyp_chromium -G output_dir=_path_\n"))
+
+
+if __name__ == '__main__':
+  unittest.main()
+
+  def test_validate(self):
+    mbw = self.fake_mbw()
+    self.check(['validate'], mbw=mbw, ret=0)
+
+  def test_bad_validate(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config] = TEST_BAD_CONFIG
+    self.check(['validate'], mbw=mbw, ret=1)
+
+  def test_gyp_env_hacks(self):
+    mbw = self.fake_mbw()
+    mbw.files[mbw.default_config] = GYP_HACKS_CONFIG
+    self.check(['lookup', '-c', 'fake_config'], mbw=mbw,
+               ret=0,
+               out=("GYP_DEFINES='foo=bar baz=1'\n"
+                    "GYP_LINK_CONCURRENCY=1\n"
+                    "LLVM_FORCE_HEAD_REVISION=1\n"
+                    "python build/gyp_chromium -G output_dir=_path_\n"))
 
 
 if __name__ == '__main__':

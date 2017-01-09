@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "chrome/browser/extensions/api/dial/dial_device_data.h"
 #include "chrome/browser/extensions/api/dial/dial_service.h"
+
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
+#include "chrome/browser/extensions/api/dial/dial_device_data.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
-#include "net/base/net_util.h"
 #include "net/base/network_interfaces.h"
 #include "net/log/test_net_log.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -35,6 +41,8 @@ namespace extensions {
 
 class MockObserver : public DialService::Observer {
  public:
+  ~MockObserver() override {}
+
   MOCK_METHOD1(OnDiscoveryRequest, void(DialService*));
   MOCK_METHOD2(OnDeviceDiscovered, void(DialService*, const DialDeviceData&));
   MOCK_METHOD1(OnDiscoveryFinished, void(DialService*));
@@ -45,21 +53,22 @@ class MockObserver : public DialService::Observer {
 class DialServiceTest : public testing::Test {
  public:
   DialServiceTest()
-    : dial_service_(&test_net_log_) {
-    CHECK(net::ParseIPLiteralToNumber("0.0.0.0", &mock_ip_));
+      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
+        mock_ip_(net::IPAddress::IPv4AllZeros()),
+        dial_service_(&test_net_log_) {
     dial_service_.AddObserver(&mock_observer_);
     dial_socket_ = dial_service_.CreateDialSocket();
   }
  protected:
+  content::TestBrowserThreadBundle thread_bundle_;
   net::TestNetLog test_net_log_;
-  net::IPAddressNumber mock_ip_;
+  net::IPAddress mock_ip_;
   DialServiceImpl dial_service_;
-  scoped_ptr<DialServiceImpl::DialSocket> dial_socket_;
+  std::unique_ptr<DialServiceImpl::DialSocket> dial_socket_;
   MockObserver mock_observer_;
 };
 
 TEST_F(DialServiceTest, TestSendMultipleRequests) {
-  base::MessageLoopForIO loop;
   // Setting the finish delay to zero disables the timer that invokes
   // FinishDiscovery().
   dial_service_.finish_delay_ = TimeDelta::FromSeconds(0);
@@ -71,12 +80,11 @@ TEST_F(DialServiceTest, TestSendMultipleRequests) {
   dial_service_.BindAndAddSocket(mock_ip_);
   EXPECT_EQ(1u, dial_service_.dial_sockets_.size());
   dial_service_.SendOneRequest();
-  loop.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   dial_service_.FinishDiscovery();
 }
 
 TEST_F(DialServiceTest, TestMultipleNetworkInterfaces) {
-  base::MessageLoopForIO loop;
   // Setting the finish delay to zero disables the timer that invokes
   // FinishDiscovery().
   dial_service_.finish_delay_ = TimeDelta::FromSeconds(0);
@@ -127,7 +135,7 @@ TEST_F(DialServiceTest, TestMultipleNetworkInterfaces) {
   dial_service_.SendNetworkList(interface_list);
   EXPECT_EQ(3u, dial_service_.dial_sockets_.size());
 
-  loop.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   dial_service_.FinishDiscovery();
 }
 
@@ -157,7 +165,7 @@ TEST_F(DialServiceTest, TestOnDeviceDiscovered) {
               OnDeviceDiscovered(A<DialService*>(), expected_device))
       .Times(1);
   dial_socket_->OnSocketRead(response_size);
-};
+}
 
 TEST_F(DialServiceTest, TestOnDiscoveryFinished) {
   dial_service_.discovery_active_ = true;

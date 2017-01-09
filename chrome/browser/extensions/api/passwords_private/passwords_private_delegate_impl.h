@@ -5,14 +5,17 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_PASSWORDS_PRIVATE_PASSWORDS_PRIVATE_DELEGATE_IMPL_H_
 #define CHROME_BROWSER_EXTENSIONS_API_PASSWORDS_PRIVATE_PASSWORDS_PRIVATE_DELEGATE_IMPL_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/observer_list_threadsafe.h"
+#include "base/observer_list.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_delegate.h"
 #include "chrome/browser/ui/passwords/password_manager_presenter.h"
 #include "chrome/browser/ui/passwords/password_ui_view.h"
@@ -36,8 +39,11 @@ class PasswordsPrivateDelegateImpl : public PasswordsPrivateDelegate,
   ~PasswordsPrivateDelegateImpl() override;
 
   // PasswordsPrivateDelegate implementation.
-  void AddObserver(Observer* observer) override;
-  void RemoveObserver(Observer* observer) override;
+  void SendSavedPasswordsList() override;
+  void GetSavedPasswordsList(const UiEntriesCallback& callback) override;
+  void SendPasswordExceptionsList() override;
+  void GetPasswordExceptionsList(
+      const ExceptionPairsCallback& callback) override;
   void RemoveSavedPassword(
       const std::string& origin_url, const std::string& username) override;
   void RemovePasswordException(const std::string& exception_url) override;
@@ -53,10 +59,10 @@ class PasswordsPrivateDelegateImpl : public PasswordsPrivateDelegate,
       const std::string& username,
       const base::string16& plaintext_password) override;
   void SetPasswordList(
-      const std::vector<scoped_ptr<autofill::PasswordForm>>& password_list,
-      bool show_passwords) override;
+      const std::vector<std::unique_ptr<autofill::PasswordForm>>& password_list)
+      override;
   void SetPasswordExceptionList(
-      const std::vector<scoped_ptr<autofill::PasswordForm>>&
+      const std::vector<std::unique_ptr<autofill::PasswordForm>>&
           password_exception_list) override;
 #if !defined(OS_ANDROID)
   gfx::NativeWindow GetNativeWindow() const override;
@@ -73,7 +79,7 @@ class PasswordsPrivateDelegateImpl : public PasswordsPrivateDelegate,
 
   // Executes a given callback by either invoking it immediately if the class
   // has been initialized or by deferring it until initialization has completed.
-  void ExecuteFunction(const base::Callback<void()>& callback);
+  void ExecuteFunction(const base::Closure& callback);
 
   void RemoveSavedPasswordInternal(
       const std::string& origin_url, const std::string& username);
@@ -81,43 +87,36 @@ class PasswordsPrivateDelegateImpl : public PasswordsPrivateDelegate,
   void RequestShowPasswordInternal(const std::string& origin_url,
                                    const std::string& username,
                                    content::WebContents* web_contents);
-  void SendSavedPasswordsList();
-  void SendPasswordExceptionsList();
 
   // Not owned by this class.
   Profile* profile_;
 
   // Used to communicate with the password store.
-  scoped_ptr<PasswordManagerPresenter> password_manager_presenter_;
+  std::unique_ptr<PasswordManagerPresenter> password_manager_presenter_;
 
   // The current list of entries/exceptions. Cached here so that when new
   // observers are added, this delegate can send the current lists without
   // having to request them from |password_manager_presenter_| again.
-  std::vector<linked_ptr<api::passwords_private::PasswordUiEntry>>
-      current_entries_;
-  std::vector<std::string> current_exceptions_;
+  UiEntries current_entries_;
+  ExceptionPairs current_exceptions_;
 
   // Whether SetPasswordList and SetPasswordExceptionList have been called, and
   // whether this class has been initialized, meaning both have been called.
-  bool set_password_list_called_;
-  bool set_password_exception_list_called_;
+  bool current_entries_initialized_;
+  bool current_exceptions_initialized_;
   bool is_initialized_;
 
   // Vector of callbacks which are queued up before the password store has been
   // initialized. Once both SetPasswordList() and SetPasswordExceptionList()
   // have been called, this class is considered initialized and can these
   // callbacks are invoked.
-  std::vector<base::Callback<void()>> pre_initialization_callbacks_;
-
-  // User pref for storing accept languages.
-  std::string languages_;
+  std::vector<base::Closure> pre_initialization_callbacks_;
+  std::vector<UiEntriesCallback> get_saved_passwords_list_callbacks_;
+  std::vector<ExceptionPairsCallback> get_password_exception_list_callbacks_;
 
   // The WebContents used when invoking this API. Used to fetch the
   // NativeWindow for the window where the API was called.
   content::WebContents* web_contents_;
-
-  // The observers.
-  scoped_refptr<base::ObserverListThreadSafe<Observer>> observers_;
 
   // Map from origin URL and username to the index of |password_list_| at which
   // the corresponding entry resides.

@@ -7,6 +7,7 @@
 #include <bitset>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 
 namespace {
@@ -75,6 +76,8 @@ Word::Word(const base::string16::const_iterator& begin,
       end(end) {
   DCHECK(begin <= end);
 }
+
+Word::Word(const Word& other) = default;
 
 HouseNumberParser::HouseNumberParser() {
 }

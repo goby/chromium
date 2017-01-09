@@ -14,7 +14,7 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_network_session.h"
-#include "net/quic/quic_server_id.h"
+#include "net/quic/core/quic_server_id.h"
 
 namespace net {
 
@@ -326,7 +326,7 @@ int DiskCacheBasedQuicServerInfo::DoOpen() {
 }
 
 int DiskCacheBasedQuicServerInfo::DoRead() {
-  const int32 size = entry_->GetDataSize(0 /* index */);
+  const int32_t size = entry_->GetDataSize(0 /* index */);
   if (!size) {
     state_ = WAIT_FOR_DATA_READY_DONE;
     return OK;

@@ -4,17 +4,22 @@
 
 #include "extensions/browser/api/app_window/app_window_api.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_client.h"
@@ -66,22 +71,22 @@ const char kImeOptionIsNotSupported[] =
 const char kImeWindowUnsupportedPlatform[] =
     "The \"ime\" option can only be used on ChromeOS.";
 #else
-const char kImeOptionMustBeTrueAndNeedsFrameNone[] =
-    "IME extensions must create window with \"ime: true\" and "
-    "\"frame: 'none'\".";
+const char kImeWindowMustBeImeWindowOrPanel[] =
+    "IME extensions must create ime window ( with \"ime: true\" and "
+    "\"frame: 'none'\") or panel window (with \"type: panel\").";
 #endif
+const char kShowInShelfWindowKeyNotSet[] =
+    "The \"showInShelf\" option requires the \"id\" option to be set.";
 }  // namespace app_window_constants
 
 const char kNoneFrameOption[] = "none";
-  // TODO(benwells): Remove HTML titlebar injection.
-const char kHtmlFrameOption[] = "experimental-html";
 
 namespace {
 
 // If the same property is specified for the inner and outer bounds, raise an
 // error.
-bool CheckBoundsConflict(const scoped_ptr<int>& inner_property,
-                         const scoped_ptr<int>& outer_property,
+bool CheckBoundsConflict(const std::unique_ptr<int>& inner_property,
+                         const std::unique_ptr<int>& outer_property,
                          const std::string& property_name,
                          std::string* error) {
   if (inner_property.get() && outer_property.get()) {
@@ -122,15 +127,14 @@ void CopyBoundsSpec(const app_window::BoundsSpecification* input_spec,
 
 }  // namespace
 
-AppWindowCreateFunction::AppWindowCreateFunction()
-    : inject_html_titlebar_(false) {}
+AppWindowCreateFunction::AppWindowCreateFunction() {}
 
 bool AppWindowCreateFunction::RunAsync() {
   // Don't create app window if the system is shutting down.
   if (ExtensionsBrowserClient::Get()->IsShuttingDown())
     return false;
 
-  scoped_ptr<Create::Params> params(Create::Params::Create(*args_));
+  std::unique_ptr<Create::Params> params(Create::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   GURL url = extension()->GetResourceURL(params->url);
@@ -185,20 +189,19 @@ bool AppWindowCreateFunction::RunAsync() {
             frame_id = existing_frame->GetRoutingID();
           }
 
-          if (!options->hidden.get() || !*options->hidden.get()) {
-            if (options->focused.get() && !*options->focused.get())
+          if (!options->hidden.get() || !*options->hidden) {
+            if (options->focused.get() && !*options->focused)
               existing_window->Show(AppWindow::SHOW_INACTIVE);
             else
               existing_window->Show(AppWindow::SHOW_ACTIVE);
           }
 
-          base::DictionaryValue* result = new base::DictionaryValue;
+          std::unique_ptr<base::DictionaryValue> result(
+              new base::DictionaryValue);
           result->Set("frameId", new base::FundamentalValue(frame_id));
-          existing_window->GetSerializedState(result);
+          existing_window->GetSerializedState(result.get());
           result->SetBoolean("existingWindow", true);
-          // TODO(benwells): Remove HTML titlebar injection.
-          result->SetBoolean("injectTitlebar", false);
-          SetResult(result);
+          SetResult(std::move(result));
           SendResponse(true);
           return true;
         }
@@ -235,13 +238,17 @@ bool AppWindowCreateFunction::RunAsync() {
       error_ = app_window_constants::kImeWindowUnsupportedPlatform;
       return false;
 #else
-      // IME extensions must create window with "ime: true" and "frame: none".
-      if (!options->ime.get() || !*options->ime.get() ||
-          create_params.frame != AppWindow::FRAME_NONE) {
-        error_ = app_window_constants::kImeOptionMustBeTrueAndNeedsFrameNone;
+      // IME extensions must create ime window (with "ime: true" and
+      // "frame: none") or panel window (with "type: panel").
+      if (options->ime.get() && *options->ime.get() &&
+          create_params.frame == AppWindow::FRAME_NONE) {
+        create_params.is_ime_window = true;
+      } else if (options->type == app_window::WINDOW_TYPE_PANEL) {
+        create_params.window_type = AppWindow::WINDOW_TYPE_PANEL;
+      } else {
+        error_ = app_window_constants::kImeWindowMustBeImeWindowOrPanel;
         return false;
       }
-      create_params.is_ime_window = true;
 #endif  // OS_CHROMEOS
     } else {
       if (options->ime.get()) {
@@ -292,13 +299,13 @@ bool AppWindowCreateFunction::RunAsync() {
     }
 
     if (options->hidden.get())
-      create_params.hidden = *options->hidden.get();
+      create_params.hidden = *options->hidden;
 
     if (options->resizable.get())
-      create_params.resizable = *options->resizable.get();
+      create_params.resizable = *options->resizable;
 
     if (options->always_on_top.get()) {
-      create_params.always_on_top = *options->always_on_top.get();
+      create_params.always_on_top = *options->always_on_top;
 
       if (create_params.always_on_top &&
           !extension()->permissions_data()->HasAPIPermission(
@@ -309,11 +316,31 @@ bool AppWindowCreateFunction::RunAsync() {
     }
 
     if (options->focused.get())
-      create_params.focused = *options->focused.get();
+      create_params.focused = *options->focused;
 
     if (options->visible_on_all_workspaces.get()) {
       create_params.visible_on_all_workspaces =
-          *options->visible_on_all_workspaces.get();
+          *options->visible_on_all_workspaces;
+    }
+
+    if (options->show_in_shelf.get()) {
+      create_params.show_in_shelf = *options->show_in_shelf.get();
+
+      if (create_params.show_in_shelf && create_params.window_key.empty()) {
+        error_ = app_window_constants::kShowInShelfWindowKeyNotSet;
+        return false;
+      }
+    }
+
+    if (options->icon.get()) {
+      // First, check if the window icon URL is a valid global URL.
+      create_params.window_icon_url = GURL(*options->icon.get());
+
+      // If the URL is not global, check for a valid extension local URL.
+      if (!create_params.window_icon_url.is_valid()) {
+        create_params.window_icon_url =
+            extension()->GetResourceURL(*options->icon.get());
+      }
     }
 
     if (options->type != app_window::WINDOW_TYPE_PANEL) {
@@ -339,7 +366,8 @@ bool AppWindowCreateFunction::RunAsync() {
 
   AppWindow* app_window =
       AppWindowClient::Get()->CreateAppWindow(browser_context(), extension());
-  app_window->Init(url, new AppWindowContentsImpl(app_window), create_params);
+  app_window->Init(url, new AppWindowContentsImpl(app_window),
+                   render_frame_host(), create_params);
 
   if (ExtensionsBrowserClient::Get()->IsRunningInForcedAppMode() &&
       !app_window->is_ime_window()) {
@@ -352,13 +380,11 @@ bool AppWindowCreateFunction::RunAsync() {
   if (create_params.creator_process_id == created_frame->GetProcess()->GetID())
     frame_id = created_frame->GetRoutingID();
 
-  base::DictionaryValue* result = new base::DictionaryValue;
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
   result->Set("frameId", new base::FundamentalValue(frame_id));
-  result->Set("injectTitlebar",
-      new base::FundamentalValue(inject_html_titlebar_));
   result->Set("id", new base::StringValue(app_window->window_key()));
-  app_window->GetSerializedState(result);
-  SetResult(result);
+  app_window->GetSerializedState(result.get());
+  SetResult(std::move(result));
 
   if (AppWindowRegistry::Get(browser_context())
           ->HadDevToolsAttached(app_window->web_contents())) {
@@ -371,15 +397,13 @@ bool AppWindowCreateFunction::RunAsync() {
   // PlzNavigate: delay sending the response until the newly created window has
   // been told to navigate, and blink has been correctly initialized in the
   // renderer.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          ::switches::kEnableBrowserSideNavigation)) {
+  if (content::IsBrowserSideNavigationEnabled()) {
     app_window->SetOnFirstCommitCallback(
         base::Bind(&AppWindowCreateFunction::SendResponse, this, true));
     return true;
   }
 
   SendResponse(true);
-  app_window->WindowEventsReady();
 
   return true;
 }
@@ -452,33 +476,33 @@ bool AppWindowCreateFunction::GetBoundsSpec(
     // This will be preserved as apps may be relying on this behavior.
 
     if (options.default_width.get())
-      params->content_spec.bounds.set_width(*options.default_width.get());
+      params->content_spec.bounds.set_width(*options.default_width);
     if (options.default_height.get())
-      params->content_spec.bounds.set_height(*options.default_height.get());
+      params->content_spec.bounds.set_height(*options.default_height);
     if (options.default_left.get())
-      params->window_spec.bounds.set_x(*options.default_left.get());
+      params->window_spec.bounds.set_x(*options.default_left);
     if (options.default_top.get())
-      params->window_spec.bounds.set_y(*options.default_top.get());
+      params->window_spec.bounds.set_y(*options.default_top);
 
     if (options.width.get())
-      params->content_spec.bounds.set_width(*options.width.get());
+      params->content_spec.bounds.set_width(*options.width);
     if (options.height.get())
-      params->content_spec.bounds.set_height(*options.height.get());
+      params->content_spec.bounds.set_height(*options.height);
     if (options.left.get())
-      params->window_spec.bounds.set_x(*options.left.get());
+      params->window_spec.bounds.set_x(*options.left);
     if (options.top.get())
-      params->window_spec.bounds.set_y(*options.top.get());
+      params->window_spec.bounds.set_y(*options.top);
 
     if (options.bounds.get()) {
       app_window::ContentBounds* bounds = options.bounds.get();
       if (bounds->width.get())
-        params->content_spec.bounds.set_width(*bounds->width.get());
+        params->content_spec.bounds.set_width(*bounds->width);
       if (bounds->height.get())
-        params->content_spec.bounds.set_height(*bounds->height.get());
+        params->content_spec.bounds.set_height(*bounds->height);
       if (bounds->left.get())
-        params->window_spec.bounds.set_x(*bounds->left.get());
+        params->window_spec.bounds.set_x(*bounds->left);
       if (bounds->top.get())
-        params->window_spec.bounds.set_y(*bounds->top.get());
+        params->window_spec.bounds.set_y(*bounds->top);
     }
 
     gfx::Size& minimum_size = params->content_spec.minimum_size;
@@ -498,15 +522,6 @@ bool AppWindowCreateFunction::GetBoundsSpec(
 
 AppWindow::Frame AppWindowCreateFunction::GetFrameFromString(
     const std::string& frame_string) {
-  if (frame_string == kHtmlFrameOption &&
-      (extension()->permissions_data()->HasAPIPermission(
-           APIPermission::kExperimental) ||
-       base::CommandLine::ForCurrentProcess()->HasSwitch(
-           switches::kEnableExperimentalExtensionApis))) {
-     inject_html_titlebar_ = true;
-     return AppWindow::FRAME_NONE;
-  }
-
   if (frame_string == kNoneFrameOption)
     return AppWindow::FRAME_NONE;
 

@@ -5,6 +5,8 @@
 #ifndef UI_MESSAGE_CENTER_NOTIFICATION_H_
 #define UI_MESSAGE_CENTER_NOTIFICATION_H_
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -18,7 +20,17 @@
 #include "ui/message_center/notifier_settings.h"
 #include "url/gurl.h"
 
+#if !defined(OS_IOS)
+#include "mojo/public/cpp/bindings/struct_traits.h"  // nogncheck
+#endif
+
 namespace message_center {
+
+#if !defined(OS_IOS)
+namespace mojom {
+class NotificationDataView;
+}
+#endif
 
 struct MESSAGE_CENTER_EXPORT NotificationItem {
   base::string16 title;
@@ -27,11 +39,18 @@ struct MESSAGE_CENTER_EXPORT NotificationItem {
   NotificationItem(const base::string16& title, const base::string16& message);
 };
 
+enum class ButtonType { BUTTON, TEXT };
+
 struct MESSAGE_CENTER_EXPORT ButtonInfo {
   base::string16 title;
   gfx::Image icon;
+  ButtonType type = ButtonType::BUTTON;
+  base::string16 placeholder;
 
-  ButtonInfo(const base::string16& title);
+  explicit ButtonInfo(const base::string16& title);
+  ButtonInfo(const ButtonInfo& other);
+  ~ButtonInfo();
+  ButtonInfo& operator=(const ButtonInfo& other);
 };
 
 class MESSAGE_CENTER_EXPORT RichNotificationData {
@@ -51,12 +70,22 @@ class MESSAGE_CENTER_EXPORT RichNotificationData {
   std::vector<ButtonInfo> buttons;
   bool should_make_spoken_feedback_for_popup_updates;
   bool clickable;
+#if defined(OS_CHROMEOS)
+  // Flag if the notification is pinned. If true, the notification is pinned
+  // and user can't remove it.
+  bool pinned;
+#endif  // defined(OS_CHROMEOS)
   std::vector<int> vibration_pattern;
+  bool renotify;
   bool silent;
+  base::string16 accessible_name;
 };
 
 class MESSAGE_CENTER_EXPORT Notification {
  public:
+  // Default constructor needed for generated mojom files
+  Notification();
+
   Notification(NotificationType type,
                const std::string& id,
                const base::string16& title,
@@ -71,6 +100,8 @@ class MESSAGE_CENTER_EXPORT Notification {
   Notification(const std::string& id, const Notification& other);
 
   Notification(const Notification& other);
+
+  Notification& operator=(const Notification& other);
 
   virtual ~Notification();
 
@@ -121,6 +152,13 @@ class MESSAGE_CENTER_EXPORT Notification {
     optional_fields_.vibration_pattern = vibration_pattern;
   }
 
+  // This property currently only works in platforms that support native
+  // notifications.
+  // It determines whether the sound and vibration effects should signal
+  // if the notification is replacing another notification.
+  bool renotify() const { return optional_fields_.renotify; }
+  void set_renotify(bool renotify) { optional_fields_.renotify = renotify; }
+
   // This property currently has no effect on non-Android platforms.
   bool silent() const { return optional_fields_.silent; }
   void set_silent(bool silent) { optional_fields_.silent = silent; }
@@ -155,13 +193,6 @@ class MESSAGE_CENTER_EXPORT Notification {
   // Images fetched asynchronously.
   const gfx::Image& icon() const { return icon_; }
   void set_icon(const gfx::Image& icon) { icon_ = icon; }
-
-  // Gets and sets whether to adjust the icon before displaying. The adjustment
-  // is designed to accomodate legacy HTML icons but isn't necessary for
-  // Chrome's hardcoded notifications. NB: this is currently ignored outside of
-  // Views.
-  bool adjust_icon() const { return adjust_icon_; }
-  void set_adjust_icon(bool adjust) { adjust_icon_ = adjust; }
 
   const gfx::Image& image() const { return optional_fields_.image; }
   void set_image(const gfx::Image& image) { optional_fields_.image = image; }
@@ -204,6 +235,22 @@ class MESSAGE_CENTER_EXPORT Notification {
     optional_fields_.clickable = clickable;
   }
 
+  bool pinned() const {
+#if defined(OS_CHROMEOS)
+    return optional_fields_.pinned;
+#else
+    return false;
+#endif  // defined(OS_CHROMEOS)
+  }
+#if defined(OS_CHROMEOS)
+  void set_pinned(bool pinned) { optional_fields_.pinned = pinned; }
+#endif  // defined(OS_CHROMEOS)
+
+  // Gets a text for spoken feedback.
+  const base::string16& accessible_name() const {
+    return optional_fields_.accessible_name;
+  }
+
   NotificationDelegate* delegate() const { return delegate_.get(); }
 
   const RichNotificationData& rich_notification_data() const {
@@ -223,7 +270,7 @@ class MESSAGE_CENTER_EXPORT Notification {
 
   // Helper method to create a simple system notification. |click_callback|
   // will be invoked when the notification is clicked.
-  static scoped_ptr<Notification> CreateSystemNotification(
+  static std::unique_ptr<Notification> CreateSystemNotification(
       const std::string& notification_id,
       const base::string16& title,
       const base::string16& message,
@@ -232,8 +279,6 @@ class MESSAGE_CENTER_EXPORT Notification {
       const base::Closure& click_callback);
 
  protected:
-  Notification& operator=(const Notification& other);
-
   // The type of notification we'd like displayed.
   NotificationType type_;
 
@@ -243,10 +288,6 @@ class MESSAGE_CENTER_EXPORT Notification {
 
   // Image data for the associated icon, used by Ash when available.
   gfx::Image icon_;
-
-  // True by default; controls whether to apply adjustments such as BG color and
-  // size scaling to |icon_|.
-  bool adjust_icon_;
 
   // The display string for the source of the notification.  Could be
   // the same as origin_url_, or the name of an extension.
@@ -266,6 +307,10 @@ class MESSAGE_CENTER_EXPORT Notification {
   // A proxy object that allows access back to the JavaScript object that
   // represents the notification, for firing events.
   scoped_refptr<NotificationDelegate> delegate_;
+
+#if !defined(OS_IOS)
+  friend struct mojo::StructTraits<mojom::NotificationDataView, Notification>;
+#endif
 };
 
 }  // namespace message_center

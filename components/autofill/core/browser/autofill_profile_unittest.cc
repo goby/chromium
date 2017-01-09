@@ -2,19 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include "components/autofill/core/browser/autofill_profile.h"
+
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/format_macros.h"
 #include "base/guid.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -68,7 +73,7 @@ struct TestCase {
 
 void SetupTestProfile(AutofillProfile& profile) {
   profile.set_guid(base::GenerateGUID());
-  profile.set_origin("Chrome settings");
+  profile.set_origin(kSettingsOrigin);
   test::SetProfileInfo(&profile, "Marion", "Mitchell", "Morrison",
                        "marion@me.xyz", "Fox", "123 Zoo St.", "unit 5",
                        "Hollywood", "CA", "91601", "US", "12345678910");
@@ -220,7 +225,7 @@ TEST(AutofillProfileTest, AdjustInferredLabels) {
   EXPECT_EQ(ASCIIToUTF16("Jane Doe, 123 Letha Shore."), labels[1]);
 
   profiles.push_back(
-      new AutofillProfile(base::GenerateGUID(), "Chrome settings"));
+      new AutofillProfile(base::GenerateGUID(), kSettingsOrigin));
   test::SetProfileInfo(
       profiles[2],
       "John",
@@ -364,7 +369,7 @@ TEST(AutofillProfileTest, CreateInferredLabelsI18n_CH) {
     "Beispiel Inc, H. R. Giger, Brandschenkestrasse 110, CH-8002 Zurich, "
         "Switzerland, hrgiger@beispiel.com",
     "Beispiel Inc, H. R. Giger, Brandschenkestrasse 110, CH-8002 Zurich, "
-        "Switzerland, hrgiger@beispiel.com, +41446681800",
+        "Switzerland, hrgiger@beispiel.com, +41 44-668-1800",
   };
 
   std::vector<base::string16> labels;
@@ -410,9 +415,9 @@ TEST(AutofillProfileTest, CreateInferredLabelsI18n_FR) {
       "Exemple Inc, Antoine de Saint-Exupéry, 8 Rue de Londres, 75009 Paris "
           "CEDEX, France, antoine@exemple.com",
       "Exemple Inc, Antoine de Saint-Exupéry, 8 Rue de Londres, 75009 Paris "
-          "CEDEX, France, antoine@exemple.com, +33142685300",
+          "CEDEX, France, antoine@exemple.com, +33 (0) 1 42 68 53 00",
       "Exemple Inc, Antoine de Saint-Exupéry, 8 Rue de Londres, 75009 Paris "
-          "CEDEX, France, antoine@exemple.com, +33142685300",
+          "CEDEX, France, antoine@exemple.com, +33 (0) 1 42 68 53 00",
   };
 
   std::vector<base::string16> labels;
@@ -465,7 +470,7 @@ TEST(AutofillProfileTest, CreateInferredLabelsI18n_KR) {
           "park@yeleul.com",
       "Park Jae-sang, Yeleul Inc, Gangnam Finance Center, 152 Teheran-ro, "
           "Yeoksam-Dong, Gangnam-Gu, Seoul, 135-984, South Korea, "
-          "park@yeleul.com, +8225319000",
+          "park@yeleul.com, +82-2-531-9000",
   };
 
   std::vector<base::string16> labels;
@@ -511,7 +516,7 @@ TEST(AutofillProfileTest, CreateInferredLabelsI18n_JP_Latn) {
     "Miku Hatsune, Rei Inc, Roppongi Hills Mori Tower, 6-10-1 Roppongi, "
         "Minato-ku, Tokyo, 106-6126, Japan, miku@rei.com",
     "Miku Hatsune, Rei Inc, Roppongi Hills Mori Tower, 6-10-1 Roppongi, "
-        "Minato-ku, Tokyo, 106-6126, Japan, miku@rei.com, +81363849000",
+        "Minato-ku, Tokyo, 106-6126, Japan, miku@rei.com, +81-3-6384-9000",
   };
 
   std::vector<base::string16> labels;
@@ -542,18 +547,18 @@ TEST(AutofillProfileTest, CreateInferredLabelsI18n_JP_ja) {
   profiles.back()->set_language_code("ja_JP");
   static const char* kExpectedLabels[] = {
     "",
-    "ミク 初音",
-    "六本木ヒルズ森タワーミク 初音",
-    "六本木ヒルズ森タワー六本木 6-10-1ミク 初音",
-    "港区六本木ヒルズ森タワー六本木 6-10-1ミク 初音",
-    "東京都港区六本木ヒルズ森タワー六本木 6-10-1ミク 初音",
-    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1ミク 初音",
-    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例ミク 初音",
-    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例ミク 初音, Japan",
-    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例ミク 初音, Japan, "
+    "初音ミク",
+    "六本木ヒルズ森タワー初音ミク",
+    "六本木ヒルズ森タワー六本木 6-10-1初音ミク",
+    "港区六本木ヒルズ森タワー六本木 6-10-1初音ミク",
+    "東京都港区六本木ヒルズ森タワー六本木 6-10-1初音ミク",
+    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1初音ミク",
+    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例初音ミク",
+    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例初音ミク, Japan",
+    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例初音ミク, Japan, "
         "miku@rei.com",
-    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例ミク 初音, Japan, "
-        "miku@rei.com, 0363849000",
+    "〒106-6126東京都港区六本木ヒルズ森タワー六本木 6-10-1例初音ミク, Japan, "
+        "miku@rei.com, 03-6384-9000",
   };
 
   std::vector<base::string16> labels;
@@ -803,7 +808,7 @@ TEST(AutofillProfileTest, CreateInferredLabelsFlattensMultiLineValues) {
 }
 
 TEST(AutofillProfileTest, IsSubsetOf) {
-  scoped_ptr<AutofillProfile> a, b;
+  std::unique_ptr<AutofillProfile> a, b;
 
   // |a| is a subset of |b|.
   a.reset(
@@ -838,7 +843,7 @@ TEST(AutofillProfileTest, IsSubsetOf) {
   EXPECT_FALSE(a->IsSubsetOf(*b, "en-US"));
 }
 
-TEST(AutofillProfileTest, OverwriteWith_DifferentProfile) {
+TEST(AutofillProfileTest, MergeDataFrom_DifferentProfile) {
   AutofillProfile a;
   SetupTestProfile(a);
 
@@ -850,51 +855,78 @@ TEST(AutofillProfileTest, OverwriteWith_DifferentProfile) {
   //   (5) Has a language code.
   AutofillProfile b = a;
   b.set_guid(base::GenerateGUID());
-  b.set_origin("Chrome settings");
-  b.SetRawInfo(ADDRESS_HOME_LINE2, ASCIIToUTF16("area 51"));
+  b.set_origin(kSettingsOrigin);
+  b.SetRawInfo(ADDRESS_HOME_LINE2, ASCIIToUTF16("Unit 5, area 51"));
   b.SetRawInfo(COMPANY_NAME, base::string16());
 
+  b.SetRawInfo(NAME_MIDDLE, ASCIIToUTF16("M."));
   b.SetRawInfo(NAME_FULL, ASCIIToUTF16("Marion M. Morrison"));
   b.set_language_code("en");
 
-  EXPECT_TRUE(a.OverwriteWith(b, "en-US"));
-  EXPECT_EQ("Chrome settings", a.origin());
-  EXPECT_EQ(ASCIIToUTF16("area 51"), a.GetRawInfo(ADDRESS_HOME_LINE2));
+  EXPECT_TRUE(a.MergeDataFrom(b, "en-US"));
+  EXPECT_EQ(kSettingsOrigin, a.origin());
+  EXPECT_EQ(ASCIIToUTF16("Unit 5, area 51"), a.GetRawInfo(ADDRESS_HOME_LINE2));
   EXPECT_EQ(ASCIIToUTF16("Fox"), a.GetRawInfo(COMPANY_NAME));
   base::string16 name = a.GetInfo(AutofillType(NAME_FULL), "en-US");
-  EXPECT_EQ(ASCIIToUTF16("Marion M. Morrison"), name);
+  EXPECT_EQ(ASCIIToUTF16("Marion Mitchell Morrison"), name);
   EXPECT_EQ("en", a.language_code());
 }
 
-TEST(AutofillProfileTest, OverwriteWith_SameProfile) {
+TEST(AutofillProfileTest, MergeDataFrom_SameProfile) {
   AutofillProfile a;
   SetupTestProfile(a);
 
+  // The profile has no full name yet. Merge will add it.
   AutofillProfile b = a;
   b.set_guid(base::GenerateGUID());
-  EXPECT_FALSE(a.OverwriteWith(b, "en-US"));
+  EXPECT_TRUE(a.MergeDataFrom(b, "en-US"));
+  EXPECT_EQ(1u, a.use_count());
+
+  // Now the profile is fully populated. Merging it again has no effect (except
+  // for usage statistics).
+  AutofillProfile c = a;
+  c.set_guid(base::GenerateGUID());
+  c.set_use_count(3);
+  EXPECT_FALSE(a.MergeDataFrom(c, "en-US"));
+  EXPECT_EQ(3u, a.use_count());
 }
 
-TEST(AutofillProfileTest, OverwriteWith_DifferentName) {
+TEST(AutofillProfileTest, OverwriteName_AddNameFull) {
   AutofillProfile a;
-  SetupTestProfile(a);
+
+  a.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("Marion"));
+  a.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("Mitchell"));
+  a.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("Morrison"));
 
   AutofillProfile b = a;
-  b.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Mario"));
-  EXPECT_TRUE(a.OverwriteWith(b, "en-US"));
-  base::string16 name_full = a.GetInfo(AutofillType(NAME_FULL), "en-US");
-  EXPECT_EQ(ASCIIToUTF16("Mario Mitchell Morrison"), name_full);
+  b.SetRawInfo(NAME_FULL, base::ASCIIToUTF16("Marion Mitchell Morrison"));
+
+  EXPECT_TRUE(a.MergeDataFrom(b, "en-US"));
+  EXPECT_EQ(base::ASCIIToUTF16("Marion"), a.GetRawInfo(NAME_FIRST));
+  EXPECT_EQ(base::ASCIIToUTF16("Mitchell"), a.GetRawInfo(NAME_MIDDLE));
+  EXPECT_EQ(base::ASCIIToUTF16("Morrison"), a.GetRawInfo(NAME_LAST));
+  EXPECT_EQ(base::ASCIIToUTF16("Marion Mitchell Morrison"),
+            a.GetRawInfo(NAME_FULL));
 }
 
-TEST(AutofillProfileTest, OverwriteWith_DifferentAddress) {
+// Tests that OverwriteName overwrites the name parts if they have different
+// case.
+TEST(AutofillProfileTest, OverwriteName_DifferentCase) {
   AutofillProfile a;
-  SetupTestProfile(a);
+
+  a.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("marion"));
+  a.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("mitchell"));
+  a.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("morrison"));
 
   AutofillProfile b = a;
-  b.SetRawInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("123 Aquarium St."));
-  EXPECT_TRUE(a.OverwriteWith(b, "en-US"));
-  base::string16 address = a.GetRawInfo(ADDRESS_HOME_LINE1);
-  EXPECT_EQ(ASCIIToUTF16("123 Aquarium St."), address);
+  b.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("Marion"));
+  b.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("Mitchell"));
+  b.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("Morrison"));
+
+  EXPECT_TRUE(a.MergeDataFrom(b, "en-US"));
+  EXPECT_EQ(base::ASCIIToUTF16("Marion"), a.GetRawInfo(NAME_FIRST));
+  EXPECT_EQ(base::ASCIIToUTF16("Mitchell"), a.GetRawInfo(NAME_MIDDLE));
+  EXPECT_EQ(base::ASCIIToUTF16("Morrison"), a.GetRawInfo(NAME_LAST));
 }
 
 TEST(AutofillProfileTest, AssignmentOperator) {
@@ -1091,25 +1123,113 @@ TEST(AutofillProfileTest, FullAddress) {
   EXPECT_TRUE(profile.GetInfo(full_address, "en-US").empty());
 }
 
-TEST(AutofillProfileTest, CanonicalizeProfileString) {
-  // NOP.
-  EXPECT_EQ(base::string16(),
-            AutofillProfile::CanonicalizeProfileString(base::string16()));
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_AddingNameFull) {
+  AutofillProfile a;
 
-  // Simple punctuation removed.
-  EXPECT_EQ(ASCIIToUTF16("1600 amphitheatre pkwy"),
-            AutofillProfile::CanonicalizeProfileString(ASCIIToUTF16(
-                "1600 Amphitheatre, Pkwy.")));
+  a.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("Marion"));
+  a.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("Mitchell"));
+  a.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("Morrison"));
 
-  // Unicode punctuation (hyphen and space), multiple spaces collapsed.
-  EXPECT_EQ(ASCIIToUTF16("mid island plaza"),
-            AutofillProfile::CanonicalizeProfileString(base::WideToUTF16(
-                L"Mid\x2013Island\x2003 Plaza")));
+  AutofillProfile b = a;
+  b.SetRawInfo(NAME_FULL, base::ASCIIToUTF16("Marion Mitchell Morrison"));
 
-  // Newline character removed.
-  EXPECT_EQ(ASCIIToUTF16("1600 amphitheatre pkwy app 2"),
-            AutofillProfile::CanonicalizeProfileString(
-                ASCIIToUTF16("1600 amphitheatre pkwy \n App. 2")));
+  EXPECT_TRUE(a.SaveAdditionalInfo(b, "en-US"));
+
+  EXPECT_EQ(base::ASCIIToUTF16("Marion"), a.GetRawInfo(NAME_FIRST));
+  EXPECT_EQ(base::ASCIIToUTF16("Mitchell"), a.GetRawInfo(NAME_MIDDLE));
+  EXPECT_EQ(base::ASCIIToUTF16("Morrison"), a.GetRawInfo(NAME_LAST));
+  EXPECT_EQ(base::ASCIIToUTF16("Marion Mitchell Morrison"),
+            a.GetRawInfo(NAME_FULL));
+}
+
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_KeepNameFull) {
+  AutofillProfile a;
+
+  a.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("Marion"));
+  a.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("Mitchell"));
+  a.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("Morrison"));
+  a.SetRawInfo(NAME_FULL, base::ASCIIToUTF16("Marion Mitchell Morrison"));
+
+  AutofillProfile b = a;
+  b.SetRawInfo(NAME_FULL, base::ASCIIToUTF16(""));
+
+  EXPECT_TRUE(a.SaveAdditionalInfo(b, "en-US"));
+
+  EXPECT_EQ(base::ASCIIToUTF16("Marion"), a.GetRawInfo(NAME_FIRST));
+  EXPECT_EQ(base::ASCIIToUTF16("Mitchell"), a.GetRawInfo(NAME_MIDDLE));
+  EXPECT_EQ(base::ASCIIToUTF16("Morrison"), a.GetRawInfo(NAME_LAST));
+  EXPECT_EQ(base::ASCIIToUTF16("Marion Mitchell Morrison"),
+            a.GetRawInfo(NAME_FULL));
+}
+
+// Tests the merging of two similar profiles results in the second profile's
+// non-empty fields overwriting the initial profiles values.
+TEST(AutofillProfileTest,
+     SaveAdditionalInfo_Name_DifferentCaseAndDiacriticsNoNameFull) {
+  AutofillProfile a;
+
+  a.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("marion"));
+  a.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("mitchell"));
+  a.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("morrison"));
+  a.SetRawInfo(NAME_FULL, base::ASCIIToUTF16("marion mitchell morrison"));
+
+  AutofillProfile b = a;
+  b.SetRawInfo(NAME_FIRST, UTF8ToUTF16("Märion"));
+  b.SetRawInfo(NAME_MIDDLE, UTF8ToUTF16("Mitchéll"));
+  b.SetRawInfo(NAME_LAST,UTF8ToUTF16("Morrison"));
+  b.SetRawInfo(NAME_FULL, UTF8ToUTF16(""));
+
+  EXPECT_TRUE(a.SaveAdditionalInfo(b, "en-US"));
+
+  // The first, middle and last names should have their first letter in
+  // uppercase and have acquired diacritics.
+  EXPECT_EQ(UTF8ToUTF16("Märion"), a.GetRawInfo(NAME_FIRST));
+  EXPECT_EQ(UTF8ToUTF16("Mitchéll"), a.GetRawInfo(NAME_MIDDLE));
+  EXPECT_EQ(UTF8ToUTF16("Morrison"), a.GetRawInfo(NAME_LAST));
+  EXPECT_EQ(UTF8ToUTF16("Märion Mitchéll Morrison"),
+            a.GetRawInfo(NAME_FULL));
+}
+
+// Tests that no loss of information happens when SavingAdditionalInfo with a
+// profile with an empty name part.
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_LossOfInformation) {
+  AutofillProfile a;
+
+  a.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("Marion"));
+  a.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("Mitchell"));
+  a.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("Morrison"));
+
+  AutofillProfile b = a;
+  b.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16(""));
+
+  EXPECT_TRUE(a.SaveAdditionalInfo(b, "en-US"));
+
+  EXPECT_EQ(base::ASCIIToUTF16("Marion"), a.GetRawInfo(NAME_FIRST));
+  EXPECT_EQ(base::ASCIIToUTF16("Mitchell"), a.GetRawInfo(NAME_MIDDLE));
+  EXPECT_EQ(base::ASCIIToUTF16("Morrison"), a.GetRawInfo(NAME_LAST));
+}
+
+// Tests that merging two complementary profiles for names results in a profile
+// with a complete name.
+TEST(AutofillProfileTest, SaveAdditionalInfo_Name_ComplementaryInformation) {
+  AutofillProfile a;
+
+  a.SetRawInfo(NAME_FIRST, base::ASCIIToUTF16("Marion"));
+  a.SetRawInfo(NAME_MIDDLE, base::ASCIIToUTF16("Mitchell"));
+  a.SetRawInfo(NAME_LAST, base::ASCIIToUTF16("Morrison"));
+
+  AutofillProfile b;
+  b.SetRawInfo(NAME_FULL, base::ASCIIToUTF16("Marion Mitchell Morrison"));
+
+  EXPECT_TRUE(a.SaveAdditionalInfo(b, "en-US"));
+
+  // The first, middle and last names should be kept and name full should be
+  // added.
+  EXPECT_EQ(base::ASCIIToUTF16("Marion"), a.GetRawInfo(NAME_FIRST));
+  EXPECT_EQ(base::ASCIIToUTF16("Mitchell"), a.GetRawInfo(NAME_MIDDLE));
+  EXPECT_EQ(base::ASCIIToUTF16("Morrison"), a.GetRawInfo(NAME_LAST));
+  EXPECT_EQ(base::ASCIIToUTF16("Marion Mitchell Morrison"),
+            a.GetRawInfo(NAME_FULL));
 }
 
 }  // namespace autofill

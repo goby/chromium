@@ -5,13 +5,11 @@
 #include "chrome/browser/chromeos/extensions/echo_private_api.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -24,6 +22,9 @@
 #include "chrome/common/extensions/api/echo_private.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/system/statistics_provider.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/common/extension.h"
@@ -59,7 +60,8 @@ EchoPrivateGetRegistrationCodeFunction::
 EchoPrivateGetRegistrationCodeFunction::
     ~EchoPrivateGetRegistrationCodeFunction() {}
 
-void EchoPrivateGetRegistrationCodeFunction::GetRegistrationCode(
+ExtensionFunction::ResponseValue
+EchoPrivateGetRegistrationCodeFunction::GetRegistrationCode(
     const std::string& type) {
   // Possible ECHO code type and corresponding key name in StatisticsProvider.
   const std::string kCouponType = "COUPON_CODE";
@@ -76,43 +78,42 @@ void EchoPrivateGetRegistrationCodeFunction::GetRegistrationCode(
                                   &result);
   }
 
-  results_ = echo_api::GetRegistrationCode::Results::Create(result);
-  SendResponse(true);
+  return ArgumentList(echo_api::GetRegistrationCode::Results::Create(result));
 }
 
-bool EchoPrivateGetRegistrationCodeFunction::RunSync() {
-  scoped_ptr<echo_api::GetRegistrationCode::Params> params =
+ExtensionFunction::ResponseAction
+EchoPrivateGetRegistrationCodeFunction::Run() {
+  std::unique_ptr<echo_api::GetRegistrationCode::Params> params =
       echo_api::GetRegistrationCode::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
-  GetRegistrationCode(params->type);
-  return true;
+  return RespondNow(GetRegistrationCode(params->type));
 }
 
 EchoPrivateSetOfferInfoFunction::EchoPrivateSetOfferInfoFunction() {}
 
 EchoPrivateSetOfferInfoFunction::~EchoPrivateSetOfferInfoFunction() {}
 
-bool EchoPrivateSetOfferInfoFunction::RunSync() {
-  scoped_ptr<echo_api::SetOfferInfo::Params> params =
+ExtensionFunction::ResponseAction EchoPrivateSetOfferInfoFunction::Run() {
+  std::unique_ptr<echo_api::SetOfferInfo::Params> params =
       echo_api::SetOfferInfo::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
   const std::string& service_id = params->id;
-  scoped_ptr<base::DictionaryValue> dict =
+  std::unique_ptr<base::DictionaryValue> dict =
       params->offer_info.additional_properties.DeepCopyWithoutEmptyChildren();
 
   PrefService* local_state = g_browser_process->local_state();
   DictionaryPrefUpdate offer_update(local_state, prefs::kEchoCheckedOffers);
-  offer_update->SetWithoutPathExpansion("echo." + service_id, dict.Pass());
-  return true;
+  offer_update->SetWithoutPathExpansion("echo." + service_id, std::move(dict));
+  return RespondNow(NoArguments());
 }
 
 EchoPrivateGetOfferInfoFunction::EchoPrivateGetOfferInfoFunction() {}
 
 EchoPrivateGetOfferInfoFunction::~EchoPrivateGetOfferInfoFunction() {}
 
-bool EchoPrivateGetOfferInfoFunction::RunSync() {
-  scoped_ptr<echo_api::GetOfferInfo::Params> params =
+ExtensionFunction::ResponseAction EchoPrivateGetOfferInfoFunction::Run() {
+  std::unique_ptr<echo_api::GetOfferInfo::Params> params =
       echo_api::GetOfferInfo::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -124,14 +125,13 @@ bool EchoPrivateGetOfferInfoFunction::RunSync() {
   const base::DictionaryValue* offer_info = NULL;
   if (!offer_infos->GetDictionaryWithoutPathExpansion(
          "echo." + service_id, &offer_info)) {
-    error_ = "Not found";
-    return false;
+    return RespondNow(Error("Not found"));
   }
 
   echo_api::GetOfferInfo::Results::Result result;
   result.additional_properties.MergeDictionary(offer_info);
-  results_ = echo_api::GetOfferInfo::Results::Create(result);
-  return true;
+  return RespondNow(
+      ArgumentList(echo_api::GetOfferInfo::Results::Create(result)));
 }
 
 EchoPrivateGetOobeTimestampFunction::EchoPrivateGetOobeTimestampFunction() {
@@ -207,7 +207,7 @@ void EchoPrivateGetUserConsentFunction::OnMoreInfoLinkClicked() {
       GetProfile(), GURL(kMoreInfoLink), ui::PAGE_TRANSITION_LINK);
   // Open the link in a new window. The echo dialog is modal, so the current
   // window is useless until the dialog is closed.
-  params.disposition = NEW_WINDOW;
+  params.disposition = WindowOpenDisposition::NEW_WINDOW;
   chrome::Navigate(&params);
 }
 
@@ -230,7 +230,7 @@ void EchoPrivateGetUserConsentFunction::OnRedeemOffersAllowedChecked(
     bool is_allowed) {
   redeem_offers_allowed_ = is_allowed;
 
-  scoped_ptr<echo_api::GetUserConsent::Params> params =
+  std::unique_ptr<echo_api::GetUserConsent::Params> params =
       echo_api::GetUserConsent::Params::Create(*args_);
 
   // Verify that the passed origin URL is valid.

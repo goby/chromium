@@ -4,6 +4,8 @@
 
 #include "ui/accessibility/ax_serializable_tree.h"
 
+#include <stdint.h>
+
 #include "ui/accessibility/ax_node.h"
 
 namespace ui {
@@ -21,13 +23,16 @@ class AX_EXPORT AXTreeSourceAdapter
   ~AXTreeSourceAdapter() override {}
 
   // AXTreeSource implementation.
-  AXTreeData GetTreeData() const override { return tree_->data(); }
+  bool GetTreeData(AXTreeData* data) const override {
+    *data = tree_->data();
+    return true;
+  }
 
   AXNode* GetRoot() const override { return tree_->root(); }
 
-  AXNode* GetFromId(int32 id) const override { return tree_->GetFromId(id); }
+  AXNode* GetFromId(int32_t id) const override { return tree_->GetFromId(id); }
 
-  int32 GetId(const AXNode* node) const override { return node->id(); }
+  int32_t GetId(const AXNode* node) const override { return node->id(); }
 
   void GetChildren(const AXNode* node,
                    std::vector<const AXNode*>* out_children) const override {

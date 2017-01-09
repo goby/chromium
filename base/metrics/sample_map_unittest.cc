@@ -4,14 +4,16 @@
 
 #include "base/metrics/sample_map.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/test/gtest_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
 namespace {
 
 TEST(SampleMapTest, AccumulateTest) {
-  SampleMap samples;
+  SampleMap samples(1);
 
   samples.Accumulate(1, 100);
   samples.Accumulate(2, 200);
@@ -24,9 +26,23 @@ TEST(SampleMapTest, AccumulateTest) {
   EXPECT_EQ(samples.redundant_count(), samples.TotalCount());
 }
 
+TEST(SampleMapTest, Accumulate_LargeValuesDontOverflow) {
+  SampleMap samples(1);
+
+  samples.Accumulate(250000000, 100);
+  samples.Accumulate(500000000, 200);
+  samples.Accumulate(250000000, -200);
+  EXPECT_EQ(-100, samples.GetCount(250000000));
+  EXPECT_EQ(200, samples.GetCount(500000000));
+
+  EXPECT_EQ(75000000000LL, samples.sum());
+  EXPECT_EQ(100, samples.TotalCount());
+  EXPECT_EQ(samples.redundant_count(), samples.TotalCount());
+}
+
 TEST(SampleMapTest, AddSubtractTest) {
-  SampleMap samples1;
-  SampleMap samples2;
+  SampleMap samples1(1);
+  SampleMap samples2(2);
 
   samples1.Accumulate(1, 100);
   samples1.Accumulate(2, 100);
@@ -56,13 +72,13 @@ TEST(SampleMapTest, AddSubtractTest) {
 }
 
 TEST(SampleMapIteratorTest, IterateTest) {
-  SampleMap samples;
+  SampleMap samples(1);
   samples.Accumulate(1, 100);
   samples.Accumulate(2, 200);
   samples.Accumulate(4, -300);
   samples.Accumulate(5, 0);
 
-  scoped_ptr<SampleCountIterator> it = samples.Iterator();
+  std::unique_ptr<SampleCountIterator> it = samples.Iterator();
 
   HistogramBase::Sample min;
   HistogramBase::Sample max;
@@ -91,21 +107,21 @@ TEST(SampleMapIteratorTest, IterateTest) {
 }
 
 TEST(SampleMapIteratorTest, SkipEmptyRanges) {
-  SampleMap samples;
+  SampleMap samples(1);
   samples.Accumulate(5, 1);
   samples.Accumulate(10, 2);
   samples.Accumulate(15, 3);
   samples.Accumulate(20, 4);
   samples.Accumulate(25, 5);
 
-  SampleMap samples2;
+  SampleMap samples2(2);
   samples2.Accumulate(5, 1);
   samples2.Accumulate(20, 4);
   samples2.Accumulate(25, 5);
 
   samples.Subtract(samples2);
 
-  scoped_ptr<SampleCountIterator> it = samples.Iterator();
+  std::unique_ptr<SampleCountIterator> it = samples.Iterator();
   EXPECT_FALSE(it->Done());
 
   HistogramBase::Sample min;
@@ -129,29 +145,24 @@ TEST(SampleMapIteratorTest, SkipEmptyRanges) {
   EXPECT_TRUE(it->Done());
 }
 
-#if (!defined(NDEBUG) || defined(DCHECK_ALWAYS_ON)) && GTEST_HAS_DEATH_TEST
-
 TEST(SampleMapIteratorDeathTest, IterateDoneTest) {
-  SampleMap samples;
+  SampleMap samples(1);
 
-  scoped_ptr<SampleCountIterator> it = samples.Iterator();
+  std::unique_ptr<SampleCountIterator> it = samples.Iterator();
 
   EXPECT_TRUE(it->Done());
 
   HistogramBase::Sample min;
   HistogramBase::Sample max;
   HistogramBase::Count count;
-  EXPECT_DEATH(it->Get(&min, &max, &count), "");
+  EXPECT_DCHECK_DEATH(it->Get(&min, &max, &count));
 
-  EXPECT_DEATH(it->Next(), "");
+  EXPECT_DCHECK_DEATH(it->Next());
 
   samples.Accumulate(1, 100);
   it = samples.Iterator();
   EXPECT_FALSE(it->Done());
 }
-
-#endif
-// (!defined(NDEBUG) || defined(DCHECK_ALWAYS_ON)) && GTEST_HAS_DEATH_TEST
 
 }  // namespace
 }  // namespace base

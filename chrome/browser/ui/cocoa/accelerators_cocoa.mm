@@ -5,10 +5,15 @@
 #include "chrome/browser/ui/cocoa/accelerators_cocoa.h"
 
 #import <Cocoa/Cocoa.h>
+#include <stddef.h>
+
+#include <utility>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "chrome/app/chrome_command_ids.h"
+#include "printing/features/features.h"
 #import "ui/base/accelerators/platform_accelerator_cocoa.h"
 #import "ui/events/cocoa/cocoa_event_utils.h"
 #import "ui/events/keycodes/keyboard_code_conversion_mac.h"
@@ -68,7 +73,7 @@ const struct AcceleratorMapping {
   {IDC_FOCUS_LOCATION, NSCommandKeyMask, ui::VKEY_L},
   {IDC_CLOSE_WINDOW, NSCommandKeyMask, ui::VKEY_W},
   {IDC_EMAIL_PAGE_LOCATION, NSCommandKeyMask | NSShiftKeyMask, ui::VKEY_I},
-#if defined(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
   {IDC_BASIC_PRINT, NSCommandKeyMask | NSAlternateKeyMask, ui::VKEY_P},
 #endif  // ENABLE_BASIC_PRINTING
   {IDC_CONTENT_CONTEXT_UNDO, NSCommandKeyMask, ui::VKEY_Z},
@@ -86,8 +91,7 @@ const struct AcceleratorMapping {
   {IDC_ZOOM_MINUS, NSCommandKeyMask, ui::VKEY_OEM_MINUS},
   {IDC_STOP, NSCommandKeyMask, ui::VKEY_OEM_PERIOD},
   {IDC_RELOAD, NSCommandKeyMask, ui::VKEY_R},
-  {IDC_RELOAD_IGNORING_CACHE, NSCommandKeyMask | NSShiftKeyMask, ui::VKEY_R},
-  {IDC_PRESENTATION_MODE, NSCommandKeyMask | NSShiftKeyMask, ui::VKEY_F},
+  {IDC_RELOAD_BYPASSING_CACHE, NSCommandKeyMask | NSShiftKeyMask, ui::VKEY_R},
   {IDC_ZOOM_NORMAL, NSCommandKeyMask, ui::VKEY_0},
   {IDC_HOME, NSCommandKeyMask | NSShiftKeyMask, ui::VKEY_H},
   {IDC_BACK, NSCommandKeyMask, ui::VKEY_OEM_4},
@@ -102,7 +106,7 @@ const struct AcceleratorMapping {
 
 // Create a Cocoa platform accelerator given a cross platform |key_code| and
 // the |cocoa_modifiers|.
-scoped_ptr<ui::PlatformAccelerator> PlatformAcceleratorFromKeyCode(
+std::unique_ptr<ui::PlatformAccelerator> PlatformAcceleratorFromKeyCode(
     ui::KeyboardCode key_code,
     NSUInteger cocoa_modifiers) {
   unichar shifted_character;
@@ -112,7 +116,7 @@ scoped_ptr<ui::PlatformAccelerator> PlatformAcceleratorFromKeyCode(
   NSString* key_equivalent =
       [NSString stringWithFormat:@"%C", shifted_character];
 
-  return scoped_ptr<ui::PlatformAccelerator>(
+  return std::unique_ptr<ui::PlatformAccelerator>(
       new ui::PlatformAcceleratorCocoa(key_equivalent, cocoa_modifiers));
 }
 
@@ -123,9 +127,9 @@ ui::Accelerator AcceleratorFromKeyCode(ui::KeyboardCode key_code,
   int cross_platform_modifiers = ui::EventFlagsFromModifiers(cocoa_modifiers);
   ui::Accelerator accelerator(key_code, cross_platform_modifiers);
 
-  scoped_ptr<ui::PlatformAccelerator> platform_accelerator =
+  std::unique_ptr<ui::PlatformAccelerator> platform_accelerator =
       PlatformAcceleratorFromKeyCode(key_code, cocoa_modifiers);
-  accelerator.set_platform_accelerator(platform_accelerator.Pass());
+  accelerator.set_platform_accelerator(std::move(platform_accelerator));
   return accelerator;
 }
 

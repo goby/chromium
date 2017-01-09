@@ -10,6 +10,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "google_apis/gaia/gaia_auth_fetcher.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_status.h"
@@ -26,7 +27,6 @@ class MockFetcher : public net::TestURLFetcher {
   MockFetcher(const GURL& url,
               const net::URLRequestStatus& status,
               int response_code,
-              const net::ResponseCookies& cookies,
               const std::string& results,
               net::URLFetcher::RequestType request_type,
               net::URLFetcherDelegate* d);
@@ -48,12 +48,12 @@ class MockURLFetcherFactory : public net::URLFetcherFactory,
         success_(true) {
   }
   ~MockURLFetcherFactory() {}
-  scoped_ptr<net::URLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::URLFetcher> CreateURLFetcher(
       int id,
       const GURL& url,
       net::URLFetcher::RequestType request_type,
       net::URLFetcherDelegate* d) override {
-    return scoped_ptr<net::URLFetcher>(
+    return std::unique_ptr<net::URLFetcher>(
         new T(success_, url, results_, request_type, d));
   }
   void set_success(bool success) {

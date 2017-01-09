@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/basictypes.h"
 #include "chrome/installer/util/util_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -206,82 +205,73 @@ TEST(ChannelInfoTest, Combinations) {
   EXPECT_TRUE(ci.IsChrome());
 }
 
-TEST(ChannelInfoTest, GetStage) {
+TEST(ChannelInfoTest, ClearStage) {
   ChannelInfo ci;
 
   ci.set_value(L"");
-  EXPECT_EQ(L"", ci.GetStage());
-  ci.set_value(L"-stage");
-  EXPECT_EQ(L"", ci.GetStage());
-  ci.set_value(L"-stage:");
-  EXPECT_EQ(L"", ci.GetStage());
+  EXPECT_FALSE(ci.ClearStage());
+  EXPECT_EQ(L"", ci.value());
   ci.set_value(L"-stage:spammy");
-  EXPECT_EQ(L"spammy", ci.GetStage());
+  EXPECT_TRUE(ci.ClearStage());
+  EXPECT_EQ(L"", ci.value());
 
   ci.set_value(L"-multi");
-  EXPECT_EQ(L"", ci.GetStage());
-  ci.set_value(L"-stage-multi");
-  EXPECT_EQ(L"", ci.GetStage());
-  ci.set_value(L"-stage:-multi");
-  EXPECT_EQ(L"", ci.GetStage());
+  EXPECT_FALSE(ci.ClearStage());
+  EXPECT_EQ(L"-multi", ci.value());
   ci.set_value(L"-stage:spammy-multi");
-  EXPECT_EQ(L"spammy", ci.GetStage());
+  EXPECT_TRUE(ci.ClearStage());
+  EXPECT_EQ(L"-multi", ci.value());
 
   ci.set_value(L"2.0-beta-multi");
-  EXPECT_EQ(L"", ci.GetStage());
-  ci.set_value(L"2.0-beta-stage-multi");
-  EXPECT_EQ(L"", ci.GetStage());
-  ci.set_value(L"2.0-beta-stage:-multi");
-  EXPECT_EQ(L"", ci.GetStage());
+  EXPECT_FALSE(ci.ClearStage());
+  EXPECT_EQ(L"2.0-beta-multi", ci.value());
   ci.set_value(L"2.0-beta-stage:spammy-multi");
-  EXPECT_EQ(L"spammy", ci.GetStage());
+  EXPECT_TRUE(ci.ClearStage());
+  EXPECT_EQ(L"2.0-beta-multi", ci.value());
+
+  ci.set_value(L"2.0-beta-stage:-multi");
+  EXPECT_TRUE(ci.ClearStage());
+  EXPECT_EQ(L"2.0-beta-multi", ci.value());
 }
 
-TEST(ChannelInfoTest, SetStage) {
-  ChannelInfo ci;
+TEST(ChannelInfoTest, GetStatsDefault) {
+  struct {
+    const base::string16 base_value;
+    const base::string16& expected_channel;
+  } test_cases[] = {
+    {L"", kChannelStable},
+    {L"x64-stable", kChannelStable},
+    {L"1.1-beta", kChannelBeta},
+    {L"x64-beta", kChannelBeta},
+    {L"2.0-dev", kChannelDev},
+    {L"x64-dev", kChannelDev},
+  };
+  const base::string16 suffixes[] = {L"", L"-multi", L"-multi-chrome"};
 
-  ci.set_value(L"");
-  EXPECT_FALSE(ci.SetStage(NULL));
-  EXPECT_EQ(L"", ci.value());
-  EXPECT_TRUE(ci.SetStage(L"spammy"));
-  EXPECT_EQ(L"-stage:spammy", ci.value());
-  EXPECT_FALSE(ci.SetStage(L"spammy"));
-  EXPECT_EQ(L"-stage:spammy", ci.value());
-  EXPECT_TRUE(ci.SetStage(NULL));
-  EXPECT_EQ(L"", ci.value());
-  EXPECT_TRUE(ci.SetStage(L"spammy"));
-  EXPECT_TRUE(ci.SetStage(L""));
-  EXPECT_EQ(L"", ci.value());
+  for (const auto& test_case : test_cases) {
+    const base::string16& base_value = test_case.base_value;
+    const base::string16& expected_channel = test_case.expected_channel;
 
-  ci.set_value(L"-multi");
-  EXPECT_FALSE(ci.SetStage(NULL));
-  EXPECT_EQ(L"-multi", ci.value());
-  EXPECT_TRUE(ci.SetStage(L"spammy"));
-  EXPECT_EQ(L"-stage:spammy-multi", ci.value());
-  EXPECT_FALSE(ci.SetStage(L"spammy"));
-  EXPECT_EQ(L"-stage:spammy-multi", ci.value());
-  EXPECT_TRUE(ci.SetStage(NULL));
-  EXPECT_EQ(L"-multi", ci.value());
-  EXPECT_TRUE(ci.SetStage(L"spammy"));
-  EXPECT_TRUE(ci.SetStage(L""));
-  EXPECT_EQ(L"-multi", ci.value());
+    for (const auto& suffix : suffixes) {
+      ChannelInfo ci;
+      base::string16 channel;
 
-  ci.set_value(L"2.0-beta-multi");
-  EXPECT_FALSE(ci.SetStage(NULL));
-  EXPECT_EQ(L"2.0-beta-multi", ci.value());
-  EXPECT_TRUE(ci.SetStage(L"spammy"));
-  EXPECT_EQ(L"2.0-beta-stage:spammy-multi", ci.value());
-  EXPECT_FALSE(ci.SetStage(L"spammy"));
-  EXPECT_EQ(L"2.0-beta-stage:spammy-multi", ci.value());
-  EXPECT_TRUE(ci.SetStage(NULL));
-  EXPECT_EQ(L"2.0-beta-multi", ci.value());
-  EXPECT_TRUE(ci.SetStage(L"spammy"));
-  EXPECT_TRUE(ci.SetStage(L""));
-  EXPECT_EQ(L"2.0-beta-multi", ci.value());
-
-  ci.set_value(L"2.0-beta-stage:-multi");
-  EXPECT_TRUE(ci.SetStage(NULL));
-  EXPECT_EQ(L"2.0-beta-multi", ci.value());
+      ci.set_value(base_value + suffix);
+      EXPECT_EQ(L"", ci.GetStatsDefault());
+      ci.set_value(base_value + L"-statsdef" + suffix);
+      EXPECT_EQ(L"", ci.GetStatsDefault());
+      ci.set_value(base_value + L"-statsdef_" + suffix);
+      EXPECT_EQ(L"", ci.GetStatsDefault());
+      ci.set_value(base_value + L"-statsdef_0" + suffix);
+      EXPECT_EQ(L"0", ci.GetStatsDefault());
+      EXPECT_TRUE(ci.GetChannelName(&channel));
+      EXPECT_EQ(expected_channel, channel);
+      ci.set_value(base_value + L"-statsdef_1" + suffix);
+      EXPECT_EQ(L"1", ci.GetStatsDefault());
+      EXPECT_TRUE(ci.GetChannelName(&channel));
+      EXPECT_EQ(expected_channel, channel);
+    }
+  }
 }
 
 TEST(ChannelInfoTest, RemoveAllModifiersAndSuffixes) {

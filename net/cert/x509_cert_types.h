@@ -5,6 +5,7 @@
 #ifndef NET_CERT_X509_CERT_TYPES_H_
 #define NET_CERT_X509_CERT_TYPES_H_
 
+#include <stddef.h>
 #include <string.h>
 
 #include <map>
@@ -28,8 +29,6 @@ class Time;
 }  // namespace base
 
 namespace net {
-
-class X509Certificate;
 
 // CertPrincipal represents the issuer or subject field of an X.509 certificate.
 struct NET_EXPORT CertPrincipal {

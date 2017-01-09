@@ -5,19 +5,22 @@
 #ifndef NET_CERT_CERT_VERIFIER_H_
 #define NET_CERT_CERT_VERIFIER_H_
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "net/base/completion_callback.h"
+#include "net/base/hash_value.h"
 #include "net/base/net_export.h"
+#include "net/cert/x509_certificate.h"
 
 namespace net {
 
-class BoundNetLog;
 class CertVerifyResult;
 class CRLSet;
-class X509Certificate;
+class NetLogWithSource;
 
 // CertVerifier represents a service for verifying certificates.
 //
@@ -72,6 +75,64 @@ class NET_EXPORT CertVerifier {
     // can only provide information for the leaf, and not for any
     // intermediates.
     VERIFY_REV_CHECKING_REQUIRED_LOCAL_ANCHORS = 1 << 4,
+
+    // If set, certificates with SHA-1 signatures will be allowed, but only if
+    // they are issued by non-public trust anchors.
+    VERIFY_ENABLE_SHA1_LOCAL_ANCHORS = 1 << 5,
+  };
+
+  // Parameters to verify |certificate| against the supplied
+  // |hostname| as an SSL server.
+  //
+  // |hostname| should be a canonicalized hostname (in A-Label form) or IP
+  // address in string form, following the rules of a URL host portion. In
+  // the case of |hostname| being a domain name, it may contain a trailing
+  // dot (e.g. "example.com."), as used to signal to DNS not to perform
+  // suffix search, and it will safely be ignored. If |hostname| is an IPv6
+  // address, it MUST be in URL form - that is, surrounded in square
+  // brackets, such as "[::1]".
+  //
+  // |flags| is a bitwise OR of VerifyFlags.
+  //
+  // |ocsp_response| is optional, but if non-empty, should contain an OCSP
+  // response obtained via OCSP stapling. It may be ignored by the
+  // CertVerifier.
+  //
+  // |additional_trust_anchors| is optional, but if non-empty, should contain
+  // additional certificates to be treated as trust anchors. It may be ignored
+  // by the CertVerifier.
+  class NET_EXPORT RequestParams {
+   public:
+    RequestParams(scoped_refptr<X509Certificate> certificate,
+                  const std::string& hostname,
+                  int flags,
+                  const std::string& ocsp_response,
+                  CertificateList additional_trust_anchors);
+    RequestParams(const RequestParams& other);
+    ~RequestParams();
+
+    const scoped_refptr<X509Certificate>& certificate() const {
+      return certificate_;
+    }
+    const std::string& hostname() const { return hostname_; }
+    int flags() const { return flags_; }
+    const std::string& ocsp_response() const { return ocsp_response_; }
+    const CertificateList& additional_trust_anchors() const {
+      return additional_trust_anchors_;
+    }
+
+    bool operator==(const RequestParams& other) const;
+    bool operator<(const RequestParams& other) const;
+
+   private:
+    scoped_refptr<X509Certificate> certificate_;
+    std::string hostname_;
+    int flags_;
+    std::string ocsp_response_;
+    CertificateList additional_trust_anchors_;
+
+    // Used to optimize sorting/indexing comparisons.
+    std::string key_;
   };
 
   // When the verifier is destroyed, all certificate verification requests are
@@ -87,17 +148,6 @@ class NET_EXPORT CertVerifier {
   // |verify_result->cert_status|, and the error code for the most serious
   // error is returned.
   //
-  // |ocsp_response|, if non-empty, is a stapled OCSP response to use.
-  //
-  // |flags| is bitwise OR'd of VerifyFlags.
-  // If VERIFY_REV_CHECKING_ENABLED is set in |flags|, certificate revocation
-  // checking is performed.
-  //
-  // If VERIFY_EV_CERT is set in |flags| too, EV certificate verification is
-  // performed.  If |flags| is VERIFY_EV_CERT (that is,
-  // VERIFY_REV_CHECKING_ENABLED is not set), EV certificate verification will
-  // not be performed.
-  //
   // |crl_set| points to an optional CRLSet structure which can be used to
   // avoid revocation checks over the network.
   //
@@ -112,24 +162,19 @@ class NET_EXPORT CertVerifier {
   // If Verify() completes synchronously then |out_req| *may* be reset to
   // nullptr. However it is not guaranteed that all implementations will reset
   // it in this case.
-  //
-  // TODO(rsleevi): Move CRLSet* out of the CertVerifier signature.
-  virtual int Verify(X509Certificate* cert,
-                     const std::string& hostname,
-                     const std::string& ocsp_response,
-                     int flags,
+  virtual int Verify(const RequestParams& params,
                      CRLSet* crl_set,
                      CertVerifyResult* verify_result,
                      const CompletionCallback& callback,
-                     scoped_ptr<Request>* out_req,
-                     const BoundNetLog& net_log) = 0;
+                     std::unique_ptr<Request>* out_req,
+                     const NetLogWithSource& net_log) = 0;
 
   // Returns true if this CertVerifier supports stapled OCSP responses.
   virtual bool SupportsOCSPStapling();
 
   // Creates a CertVerifier implementation that verifies certificates using
   // the preferred underlying cryptographic libraries.
-  static scoped_ptr<CertVerifier> CreateDefault();
+  static std::unique_ptr<CertVerifier> CreateDefault();
 };
 
 }  // namespace net

@@ -4,14 +4,17 @@
 
 #include "chrome/browser/extensions/api/preference/chrome_direct_setting_api.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/containers/hash_tables.h"
 #include "base/lazy_instance.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/api/preference/preference_api_constants.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/prefs/pref_service.h"
 #include "extensions/browser/extension_registry.h"
 
 namespace extensions {
@@ -28,10 +31,8 @@ class PreferenceWhitelist {
     // installed. Otherwise, users may install your extension, the extension may
     // toggle settings, and after the extension has been disabled/uninstalled
     // the toggled setting remains in place. See http://crbug.com/164227#c157 .
-    whitelist_.insert("googlegeolocationaccess.enabled");
     // The following settings need to be checked and probably removed. See
     // http://crbug.com/164227#c157 .
-    whitelist_.insert("data_reduction.update_daily_lengths");
     whitelist_.insert("easy_unlock.proximity_required");
   }
 
@@ -135,16 +136,16 @@ void ChromeDirectSettingAPI::OnPrefChanged(
         profile_->GetPrefs()->FindPreference(pref_key.c_str());
     const base::Value* value = preference->GetValue();
 
-    scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
     result->Set(preference_api_constants::kValue, value->DeepCopy());
     base::ListValue args;
-    args.Append(result.release());
+    args.Append(std::move(result));
 
     for (const scoped_refptr<const extensions::Extension>& extension :
          ExtensionRegistry::Get(profile_)->enabled_extensions()) {
       const std::string& extension_id = extension->id();
       if (router->ExtensionHasEventListener(extension_id, event_name)) {
-        scoped_ptr<base::ListValue> args_copy(args.DeepCopy());
+        std::unique_ptr<base::ListValue> args_copy(args.DeepCopy());
         // TODO(kalman): Have a histogram value for each pref type.
         // This isn't so important for the current use case of these
         // histograms, which is to track which event types are waking up event
@@ -156,9 +157,9 @@ void ChromeDirectSettingAPI::OnPrefChanged(
         // to change.
         events::HistogramValue histogram_value =
             events::TYPES_PRIVATE_CHROME_DIRECT_SETTING_ON_CHANGE;
-        scoped_ptr<Event> event(
-            new Event(histogram_value, event_name, args_copy.Pass()));
-        router->DispatchEventToExtension(extension_id, event.Pass());
+        std::unique_ptr<Event> event(
+            new Event(histogram_value, event_name, std::move(args_copy)));
+        router->DispatchEventToExtension(extension_id, std::move(event));
       }
     }
   }

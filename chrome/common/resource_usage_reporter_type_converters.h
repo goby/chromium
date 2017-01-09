@@ -12,15 +12,17 @@
 namespace mojo {
 
 template <>
-struct TypeConverter<ResourceTypeStatsPtr, blink::WebCache::ResourceTypeStats> {
-  static ResourceTypeStatsPtr Convert(
+struct TypeConverter<chrome::mojom::ResourceTypeStatsPtr,
+                     blink::WebCache::ResourceTypeStats> {
+  static chrome::mojom::ResourceTypeStatsPtr Convert(
       const blink::WebCache::ResourceTypeStats& obj);
 };
 
 template <>
-struct TypeConverter<blink::WebCache::ResourceTypeStats, ResourceTypeStats> {
+struct TypeConverter<blink::WebCache::ResourceTypeStats,
+                     chrome::mojom::ResourceTypeStats> {
   static blink::WebCache::ResourceTypeStats Convert(
-      const ResourceTypeStats& obj);
+      const chrome::mojom::ResourceTypeStats& obj);
 };
 
 }  // namespace mojo

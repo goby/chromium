@@ -4,9 +4,10 @@
 
 #include "components/proximity_auth/cryptauth_enroller_factory_impl.h"
 
-#include "components/proximity_auth/cryptauth/cryptauth_client_impl.h"
-#include "components/proximity_auth/cryptauth/cryptauth_enroller_impl.h"
-#include "components/proximity_auth/cryptauth/secure_message_delegate.h"
+#include "base/memory/ptr_util.h"
+#include "components/cryptauth/cryptauth_client_impl.h"
+#include "components/cryptauth/cryptauth_enroller_impl.h"
+#include "components/cryptauth/secure_message_delegate.h"
 
 namespace proximity_auth {
 
@@ -16,10 +17,11 @@ CryptAuthEnrollerFactoryImpl::CryptAuthEnrollerFactoryImpl(
 
 CryptAuthEnrollerFactoryImpl::~CryptAuthEnrollerFactoryImpl() {}
 
-scoped_ptr<CryptAuthEnroller> CryptAuthEnrollerFactoryImpl::CreateInstance() {
-  return make_scoped_ptr(new CryptAuthEnrollerImpl(
+std::unique_ptr<cryptauth::CryptAuthEnroller>
+CryptAuthEnrollerFactoryImpl::CreateInstance() {
+  return base::MakeUnique<cryptauth::CryptAuthEnrollerImpl>(
       proximity_auth_client_->CreateCryptAuthClientFactory(),
-      proximity_auth_client_->CreateSecureMessageDelegate()));
+      proximity_auth_client_->CreateSecureMessageDelegate());
 }
 
 }  // namespace proximity_auth

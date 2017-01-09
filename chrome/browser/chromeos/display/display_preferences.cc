@@ -4,14 +4,11 @@
 
 #include "chrome/browser/chromeos/display/display_preferences.h"
 
-#include "ash/display/display_layout_store.h"
-#include "ash/display/display_manager.h"
+#include <stddef.h>
+
 #include "ash/display/display_pref_util.h"
-#include "ash/display/display_util.h"
+#include "ash/display/json_converter.h"
 #include "ash/shell.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -20,11 +17,17 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_manager.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/display/manager/display_layout_store.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/manager/display_manager_utilities.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/insets.h"
-#include "ui/gfx/screen.h"
 #include "url/url_canon.h"
 #include "url/url_util.h"
 
@@ -35,6 +38,10 @@ const char kInsetsTopKey[] = "insets_top";
 const char kInsetsLeftKey[] = "insets_left";
 const char kInsetsBottomKey[] = "insets_bottom";
 const char kInsetsRightKey[] = "insets_right";
+
+const char kTouchCalibrationWidth[] = "touch_calibration_width";
+const char kTouchCalibrationHeight[] = "touch_calibration_height";
+const char kTouchCalibrationPointPairs[] = "touch_calibration_point_pairs";
 
 // This kind of boilerplates should be done by base::JSONValueConverter but it
 // doesn't support classes like gfx::Insets for now.
@@ -61,6 +68,87 @@ void InsetsToValue(const gfx::Insets& insets, base::DictionaryValue* value) {
   value->SetInteger(kInsetsLeftKey, insets.left());
   value->SetInteger(kInsetsBottomKey, insets.bottom());
   value->SetInteger(kInsetsRightKey, insets.right());
+}
+
+// Unmarshalls the string containing CalibrationPointPairQuad and populates
+// |point_pair_quad| with the unmarshalled data.
+bool ParseTouchCalibrationStringValue(
+    const std::string& str,
+    display::TouchCalibrationData::CalibrationPointPairQuad* point_pair_quad) {
+  DCHECK(point_pair_quad);
+  int x = 0, y = 0;
+  std::vector<std::string> parts = base::SplitString(
+      str, " ", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  size_t total = point_pair_quad->size();
+  gfx::Point display_point, touch_point;
+  for (std::size_t row = 0; row < total; row++) {
+    if (!base::StringToInt(parts[row * total], &x) ||
+        !base::StringToInt(parts[row * total + 1], &y)) {
+      return false;
+    }
+    display_point.SetPoint(x, y);
+
+    if (!base::StringToInt(parts[row * total + 2], &x) ||
+        !base::StringToInt(parts[row * total + 3], &y)) {
+      return false;
+    }
+    touch_point.SetPoint(x, y);
+
+    (*point_pair_quad)[row] = std::make_pair(display_point, touch_point);
+  }
+  return true;
+}
+
+// Retrieves touch calibration associated data from the dictionary and stores
+// it in an instance of TouchCalibrationData struct.
+bool ValueToTouchData(const base::DictionaryValue& value,
+                      display::TouchCalibrationData* touch_calibration_data) {
+  display::TouchCalibrationData::CalibrationPointPairQuad* point_pair_quad =
+      &(touch_calibration_data->point_pairs);
+
+  std::string str;
+  if (!value.GetString(kTouchCalibrationPointPairs, &str))
+    return false;
+
+  if (!ParseTouchCalibrationStringValue(str, point_pair_quad))
+    return false;
+
+  int width, height;
+  if (!value.GetInteger(kTouchCalibrationWidth, &width) ||
+      !value.GetInteger(kTouchCalibrationHeight, &height)) {
+    return false;
+  }
+  touch_calibration_data->bounds = gfx::Size(width, height);
+  return true;
+}
+
+// Stores the touch calibration data into the dictionary.
+void TouchDataToValue(
+    const display::TouchCalibrationData& touch_calibration_data,
+    base::DictionaryValue* value) {
+  DCHECK(value);
+  std::string str;
+  for (std::size_t row = 0; row < touch_calibration_data.point_pairs.size();
+       row++) {
+    str +=
+        base::IntToString(touch_calibration_data.point_pairs[row].first.x()) +
+        " ";
+    str +=
+        base::IntToString(touch_calibration_data.point_pairs[row].first.y()) +
+        " ";
+    str +=
+        base::IntToString(touch_calibration_data.point_pairs[row].second.x()) +
+        " ";
+    str +=
+        base::IntToString(touch_calibration_data.point_pairs[row].second.y());
+    if (row != touch_calibration_data.point_pairs.size() - 1)
+      str += " ";
+  }
+  value->SetString(kTouchCalibrationPointPairs, str);
+  value->SetInteger(kTouchCalibrationWidth,
+                    touch_calibration_data.bounds.width());
+  value->SetInteger(kTouchCalibrationHeight,
+                    touch_calibration_data.bounds.height());
 }
 
 std::string ColorProfileToString(ui::ColorCalibrationProfile profile) {
@@ -93,7 +181,7 @@ ui::ColorCalibrationProfile StringToColorProfile(const std::string& value) {
   return ui::COLOR_PROFILE_STANDARD;
 }
 
-ash::DisplayManager* GetDisplayManager() {
+display::DisplayManager* GetDisplayManager() {
   return ash::Shell::GetInstance()->display_manager();
 }
 
@@ -109,30 +197,32 @@ bool UserCanSaveDisplayPreference() {
 
 void LoadDisplayLayouts() {
   PrefService* local_state = g_browser_process->local_state();
-  ash::DisplayLayoutStore* layout_store = GetDisplayManager()->layout_store();
+  display::DisplayLayoutStore* layout_store =
+      GetDisplayManager()->layout_store();
 
   const base::DictionaryValue* layouts = local_state->GetDictionary(
       prefs::kSecondaryDisplays);
   for (base::DictionaryValue::Iterator it(*layouts);
        !it.IsAtEnd(); it.Advance()) {
-    ash::DisplayLayout layout;
-    if (!ash::DisplayLayout::ConvertFromValue(it.value(), &layout)) {
+    std::unique_ptr<display::DisplayLayout> layout(new display::DisplayLayout);
+    if (!ash::JsonToDisplayLayout(it.value(), layout.get())) {
       LOG(WARNING) << "Invalid preference value for " << it.key();
       continue;
     }
 
     if (it.key().find(",") != std::string::npos) {
-      std::vector<std::string> ids = base::SplitString(
+      std::vector<std::string> ids_str = base::SplitString(
           it.key(), ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-      int64 id1 = gfx::Display::kInvalidDisplayID;
-      int64 id2 = gfx::Display::kInvalidDisplayID;
-      if (!base::StringToInt64(ids[0], &id1) ||
-          !base::StringToInt64(ids[1], &id2) ||
-          id1 == gfx::Display::kInvalidDisplayID ||
-          id2 == gfx::Display::kInvalidDisplayID) {
-        continue;
+      std::vector<int64_t> ids;
+      for (std::string id_str : ids_str) {
+        int64_t id;
+        if (!base::StringToInt64(id_str, &id))
+          continue;
+        ids.push_back(id);
       }
-      layout_store->RegisterLayoutForDisplayIdPair(id1, id2, layout);
+      display::DisplayIdList list =
+          display::GenerateDisplayIdList(ids.begin(), ids.end());
+      layout_store->RegisterLayoutForDisplayIdList(list, std::move(layout));
     }
   }
 }
@@ -143,21 +233,21 @@ void LoadDisplayProperties() {
       prefs::kDisplayProperties);
   for (base::DictionaryValue::Iterator it(*properties);
        !it.IsAtEnd(); it.Advance()) {
-    const base::DictionaryValue* dict_value = NULL;
-    if (!it.value().GetAsDictionary(&dict_value) || dict_value == NULL)
+    const base::DictionaryValue* dict_value = nullptr;
+    if (!it.value().GetAsDictionary(&dict_value) || dict_value == nullptr)
       continue;
-    int64 id = gfx::Display::kInvalidDisplayID;
+    int64_t id = display::kInvalidDisplayId;
     if (!base::StringToInt64(it.key(), &id) ||
-        id == gfx::Display::kInvalidDisplayID) {
+        id == display::kInvalidDisplayId) {
       continue;
     }
-    gfx::Display::Rotation rotation = gfx::Display::ROTATE_0;
+    display::Display::Rotation rotation = display::Display::ROTATE_0;
     float ui_scale = 1.0f;
-    const gfx::Insets* insets_to_set = NULL;
+    const gfx::Insets* insets_to_set = nullptr;
 
     int rotation_value = 0;
     if (dict_value->GetInteger("rotation", &rotation_value)) {
-      rotation = static_cast<gfx::Display::Rotation>(rotation_value);
+      rotation = static_cast<display::Display::Rotation>(rotation_value);
     }
     int ui_scale_value = 0;
     if (dict_value->GetInteger("ui-scale", &ui_scale_value))
@@ -177,17 +267,18 @@ void LoadDisplayProperties() {
     if (ValueToInsets(*dict_value, &insets))
       insets_to_set = &insets;
 
+    display::TouchCalibrationData calibration_data;
+    display::TouchCalibrationData* calibration_data_to_set = nullptr;
+    if (ValueToTouchData(*dict_value, &calibration_data))
+      calibration_data_to_set = &calibration_data;
+
     ui::ColorCalibrationProfile color_profile = ui::COLOR_PROFILE_STANDARD;
     std::string color_profile_name;
     if (dict_value->GetString("color_profile_name", &color_profile_name))
       color_profile = StringToColorProfile(color_profile_name);
-    GetDisplayManager()->RegisterDisplayProperty(id,
-                                                 rotation,
-                                                 ui_scale,
-                                                 insets_to_set,
-                                                 resolution_in_pixels,
-                                                 device_scale_factor,
-                                                 color_profile);
+    GetDisplayManager()->RegisterDisplayProperty(
+        id, rotation, ui_scale, insets_to_set, resolution_in_pixels,
+        device_scale_factor, color_profile, calibration_data_to_set);
   }
 }
 
@@ -200,47 +291,46 @@ void LoadDisplayRotationState() {
   if (!properties->GetBoolean("lock", &rotation_lock))
     return;
 
-  int rotation = gfx::Display::ROTATE_0;
+  int rotation = display::Display::ROTATE_0;
   if (!properties->GetInteger("orientation", &rotation))
     return;
 
-  GetDisplayManager()->RegisterDisplayRotationProperties(rotation_lock,
-      static_cast<gfx::Display::Rotation>(rotation));
+  GetDisplayManager()->RegisterDisplayRotationProperties(
+      rotation_lock, static_cast<display::Display::Rotation>(rotation));
 }
 
-void StoreDisplayLayoutPref(const ash::DisplayIdPair& pair,
-                            const ash::DisplayLayout& display_layout) {
-  std::string name =
-      base::Int64ToString(pair.first) + "," + base::Int64ToString(pair.second);
+void StoreDisplayLayoutPref(const display::DisplayIdList& list,
+                            const display::DisplayLayout& display_layout) {
+  std::string name = display::DisplayIdListToString(list);
 
   PrefService* local_state = g_browser_process->local_state();
   DictionaryPrefUpdate update(local_state, prefs::kSecondaryDisplays);
   base::DictionaryValue* pref_data = update.Get();
-  scoped_ptr<base::Value> layout_value(new base::DictionaryValue());
+  std::unique_ptr<base::Value> layout_value(new base::DictionaryValue());
   if (pref_data->HasKey(name)) {
-    base::Value* value = NULL;
-    if (pref_data->Get(name, &value) && value != NULL)
+    base::Value* value = nullptr;
+    if (pref_data->Get(name, &value) && value != nullptr)
       layout_value.reset(value->DeepCopy());
   }
-  if (ash::DisplayLayout::ConvertToValue(display_layout, layout_value.get()))
+  if (ash::DisplayLayoutToJson(display_layout, layout_value.get()))
     pref_data->Set(name, layout_value.release());
 }
 
 void StoreCurrentDisplayLayoutPrefs() {
-  ash::DisplayManager* display_manager = GetDisplayManager();
+  display::DisplayManager* display_manager = GetDisplayManager();
   if (!UserCanSaveDisplayPreference() ||
       display_manager->num_connected_displays() < 2) {
     return;
   }
 
-  ash::DisplayIdPair pair = display_manager->GetCurrentDisplayIdPair();
-  ash::DisplayLayout display_layout =
-      display_manager->layout_store()->GetRegisteredDisplayLayout(pair);
-  StoreDisplayLayoutPref(pair, display_layout);
+  display::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
+  const display::DisplayLayout& display_layout =
+      display_manager->layout_store()->GetRegisteredDisplayLayout(list);
+  StoreDisplayLayoutPref(list, display_layout);
 }
 
 void StoreCurrentDisplayProperties() {
-  ash::DisplayManager* display_manager = GetDisplayManager();
+  display::DisplayManager* display_manager = GetDisplayManager();
   PrefService* local_state = g_browser_process->local_state();
 
   DictionaryPrefUpdate update(local_state, prefs::kDisplayProperties);
@@ -248,31 +338,30 @@ void StoreCurrentDisplayProperties() {
 
   size_t num = display_manager->GetNumDisplays();
   for (size_t i = 0; i < num; ++i) {
-    const gfx::Display& display = display_manager->GetDisplayAt(i);
-    int64 id = display.id();
-    ash::DisplayInfo info = display_manager->GetDisplayInfo(id);
+    const display::Display& display = display_manager->GetDisplayAt(i);
+    int64_t id = display.id();
+    display::ManagedDisplayInfo info = display_manager->GetDisplayInfo(id);
 
-    scoped_ptr<base::DictionaryValue> property_value(
+    std::unique_ptr<base::DictionaryValue> property_value(
         new base::DictionaryValue());
     // Don't save the display preference in unified mode because its
     // size and modes can change depending on the combination of displays.
     if (display_manager->IsInUnifiedMode())
       continue;
-    property_value->SetInteger(
-        "rotation",
-        static_cast<int>(info.GetRotation(gfx::Display::ROTATION_SOURCE_USER)));
+    property_value->SetInteger("rotation",
+                               static_cast<int>(info.GetRotation(
+                                   display::Display::ROTATION_SOURCE_USER)));
     property_value->SetInteger(
         "ui-scale", static_cast<int>(info.configured_ui_scale() * 1000));
 
-    ash::DisplayMode mode;
-    if (!display.IsInternal() &&
-        display_manager->GetSelectedModeForDisplayId(id, &mode) &&
-        !mode.native) {
-      property_value->SetInteger("width", mode.size.width());
-      property_value->SetInteger("height", mode.size.height());
+    scoped_refptr<display::ManagedDisplayMode> mode =
+        display_manager->GetSelectedModeForDisplayId(id);
+    if (!display.IsInternal() && mode && !mode->native()) {
+      property_value->SetInteger("width", mode->size().width());
+      property_value->SetInteger("height", mode->size().height());
       property_value->SetInteger(
           "device-scale-factor",
-          static_cast<int>(mode.device_scale_factor * 1000));
+          static_cast<int>(mode->device_scale_factor() * 1000));
     }
     if (!info.overscan_insets_in_dip().IsEmpty())
       InsetsToValue(info.overscan_insets_in_dip(), property_value.get());
@@ -280,6 +369,8 @@ void StoreCurrentDisplayProperties() {
       property_value->SetString(
           "color_profile_name", ColorProfileToString(info.color_profile()));
     }
+    if (info.has_touch_calibration_data())
+      TouchDataToValue(info.GetTouchCalibrationData(), property_value.get());
     pref_data->Set(base::Int64ToString(id), property_value.release());
   }
 }
@@ -357,22 +448,18 @@ void StoreDisplayPrefs() {
 }
 
 void StoreDisplayRotationPrefs(bool rotation_lock) {
-  if (!gfx::Display::HasInternalDisplay())
+  if (!display::Display::HasInternalDisplay())
     return;
 
   PrefService* local_state = g_browser_process->local_state();
   DictionaryPrefUpdate update(local_state, prefs::kDisplayRotationLock);
   base::DictionaryValue* pref_data = update.Get();
   pref_data->SetBoolean("lock", rotation_lock);
-  gfx::Display::Rotation rotation =
+  display::Display::Rotation rotation =
       GetDisplayManager()
-          ->GetDisplayInfo(gfx::Display::InternalDisplayId())
-          .GetRotation(gfx::Display::ROTATION_SOURCE_ACCELEROMETER);
+          ->GetDisplayInfo(display::Display::InternalDisplayId())
+          .GetRotation(display::Display::ROTATION_SOURCE_ACCELEROMETER);
   pref_data->SetInteger("orientation", static_cast<int>(rotation));
-}
-
-void SetCurrentDisplayLayout(const ash::DisplayLayout& layout) {
-  GetDisplayManager()->SetLayoutForCurrentDisplays(layout);
 }
 
 void LoadDisplayPreferences(bool first_run_after_boot) {
@@ -392,15 +479,20 @@ void LoadDisplayPreferences(bool first_run_after_boot) {
 }
 
 // Stores the display layout for given display pairs.
-void StoreDisplayLayoutPrefForTest(int64 id1,
-                                   int64 id2,
-                                   const ash::DisplayLayout& layout) {
-  StoreDisplayLayoutPref(ash::CreateDisplayIdPair(id1, id2), layout);
+void StoreDisplayLayoutPrefForTest(const display::DisplayIdList& list,
+                                   const display::DisplayLayout& layout) {
+  StoreDisplayLayoutPref(list, layout);
 }
 
 // Stores the given |power_state|.
 void StoreDisplayPowerStateForTest(DisplayPowerState power_state) {
   StoreDisplayPowerState(power_state);
+}
+
+bool ParseTouchCalibrationStringForTest(
+    const std::string& str,
+    display::TouchCalibrationData::CalibrationPointPairQuad* point_pair_quad) {
+  return ParseTouchCalibrationStringValue(str, point_pair_quad);
 }
 
 }  // namespace chromeos

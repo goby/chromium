@@ -6,18 +6,19 @@
 
 #include <Foundation/Foundation.h>
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/signin_client.h"
@@ -32,12 +33,13 @@ namespace {
 // google_apis/gaia/oauth2_access_token_fetcher.cc:
 GoogleServiceAuthError GetGoogleServiceAuthErrorFromNSError(
     ProfileOAuth2TokenServiceIOSProvider* provider,
+    const std::string& gaia_id,
     NSError* error) {
   if (!error)
     return GoogleServiceAuthError::AuthErrorNone();
 
   AuthenticationErrorCategory errorCategory =
-      provider->GetAuthenticationErrorCategory(error);
+      provider->GetAuthenticationErrorCategory(gaia_id, error);
   switch (errorCategory) {
     case kAuthenticationErrorCategoryUnknownErrors:
       // Treat all unknown error as unexpected service response errors.
@@ -128,7 +130,7 @@ void SSOAccessTokenFetcher::OnAccessTokenResponse(NSString* token,
     return;
   }
   GoogleServiceAuthError auth_error =
-      GetGoogleServiceAuthErrorFromNSError(provider_, error);
+      GetGoogleServiceAuthErrorFromNSError(provider_, account_.gaia, error);
   if (auth_error.state() == GoogleServiceAuthError::NONE) {
     base::Time expiration_date =
         base::Time::FromDoubleT([expiration timeIntervalSince1970]);
@@ -175,11 +177,11 @@ ProfileOAuth2TokenServiceIOSDelegate::AccountStatus::GetAuthStatus() const {
 
 ProfileOAuth2TokenServiceIOSDelegate::ProfileOAuth2TokenServiceIOSDelegate(
     SigninClient* client,
-    ProfileOAuth2TokenServiceIOSProvider* provider,
+    std::unique_ptr<ProfileOAuth2TokenServiceIOSProvider> provider,
     AccountTrackerService* account_tracker_service,
     SigninErrorController* signin_error_controller)
     : client_(client),
-      provider_(provider),
+      provider_(std::move(provider)),
       account_tracker_service_(account_tracker_service),
       signin_error_controller_(signin_error_controller) {
   DCHECK(client_);
@@ -300,7 +302,7 @@ ProfileOAuth2TokenServiceIOSDelegate::CreateAccessTokenFetcher(
     OAuth2AccessTokenConsumer* consumer) {
   AccountInfo account_info =
       account_tracker_service_->GetAccountInfo(account_id);
-  return new SSOAccessTokenFetcher(consumer, provider_, account_info);
+  return new SSOAccessTokenFetcher(consumer, provider_.get(), account_info);
 }
 
 std::vector<std::string> ProfileOAuth2TokenServiceIOSDelegate::GetAccounts() {

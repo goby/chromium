@@ -4,10 +4,14 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/environment_data_collection_win.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/i18n/case_conversion.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
@@ -92,7 +96,7 @@ void CollectRegistryDataForKey(
   std::vector<wchar_t> name_buffer(max_name_len);
   // Read the values.
   if (num_values != 0) {
-    std::vector<uint8> value_buffer(max_value_len != 0 ? max_value_len : 1);
+    std::vector<uint8_t> value_buffer(max_value_len != 0 ? max_value_len : 1);
     DWORD name_size = 0;
     DWORD value_type = REG_NONE;
     DWORD value_size = 0;
@@ -230,18 +234,6 @@ void RecordLspFeature(ClientIncidentReport_EnvironmentData_Process* process) {
   }
 }
 
-void CollectDllBlacklistData(
-    ClientIncidentReport_EnvironmentData_Process* process) {
-  PathSanitizer path_sanitizer;
-  base::win::RegistryValueIterator iter(HKEY_CURRENT_USER,
-                                        blacklist::kRegistryFinchListPath);
-  for (; iter.Valid(); ++iter) {
-    base::FilePath dll_name(iter.Value());
-    path_sanitizer.StripHomeDirectory(&dll_name);
-    process->add_blacklisted_dll(dll_name.AsUTF8Unsafe());
-  }
-}
-
 void CollectModuleVerificationData(
     const wchar_t* const modules_to_verify[],
     size_t num_modules_to_verify,
@@ -250,7 +242,7 @@ void CollectModuleVerificationData(
   using ModuleState = ClientIncidentReport_EnvironmentData_Process_ModuleState;
 
   for (size_t i = 0; i < num_modules_to_verify; ++i) {
-    scoped_ptr<ModuleState> module_state(new ModuleState());
+    std::unique_ptr<ModuleState> module_state(new ModuleState());
 
     int num_bytes_different = 0;
     bool scan_complete = VerifyModule(modules_to_verify[i],
@@ -307,7 +299,6 @@ void CollectPlatformProcessData(
     ClientIncidentReport_EnvironmentData_Process* process) {
   CollectDlls(process);
   RecordLspFeature(process);
-  CollectDllBlacklistData(process);
   CollectModuleVerificationData(
       kModulesToVerify, arraysize(kModulesToVerify), process);
 }

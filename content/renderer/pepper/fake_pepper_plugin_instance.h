@@ -5,6 +5,8 @@
 #ifndef CONTENT_RENDERER_PEPPER_FAKE_PEPPER_PLUGIN_INSTANCE_H_
 #define CONTENT_RENDERER_PEPPER_FAKE_PEPPER_PLUGIN_INSTANCE_H_
 
+#include <stdint.h>
+
 #include "content/public/renderer/pepper_plugin_instance.h"
 #include "url/gurl.h"
 
@@ -15,7 +17,7 @@ class FakePepperPluginInstance : public PepperPluginInstance {
   ~FakePepperPluginInstance() override;
 
   // PepperPluginInstance overrides.
-  content::RenderView* GetRenderView() override;
+  content::RenderFrame* GetRenderFrame() override;
   blink::WebPluginContainer* GetContainer() override;
   v8::Isolate* GetIsolate() const override;
   ppapi::VarTracker* GetVarTracker() override;

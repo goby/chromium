@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/updater/local_extension_cache.h"
 
 #include "base/bind.h"
+#include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/sequenced_task_runner.h"
@@ -30,7 +31,7 @@ const char LocalExtensionCache::kCacheReadyFlagFileName[] = ".initialized";
 
 LocalExtensionCache::LocalExtensionCache(
     const base::FilePath& cache_dir,
-    uint64 max_cache_size,
+    uint64_t max_cache_size,
     const base::TimeDelta& max_cache_age,
     const scoped_refptr<base::SequencedTaskRunner>& backend_task_runner)
     : cache_dir_(cache_dir),
@@ -40,8 +41,7 @@ LocalExtensionCache::LocalExtensionCache(
       state_(kUninitialized),
       cache_status_polling_delay_(
           base::TimeDelta::FromMilliseconds(kCacheStatusPollingDelayMs)),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 LocalExtensionCache::~LocalExtensionCache() {
   if (state_ == kReady)
@@ -133,8 +133,8 @@ bool LocalExtensionCache::NewerOrSame(const CacheMap::iterator& entry,
                                       const std::string& version,
                                       const std::string& expected_hash,
                                       int* compare) {
-  Version new_version(version);
-  Version prev_version(entry->second.version);
+  base::Version new_version(version);
+  base::Version prev_version(entry->second.version);
   int cmp = new_version.CompareTo(prev_version);
 
   if (compare)
@@ -157,7 +157,7 @@ void LocalExtensionCache::PutExtension(const std::string& id,
     return;
   }
 
-  Version version_validator(version);
+  base::Version version_validator(version);
   if (!version_validator.IsValid()) {
     LOG(ERROR) << "Extension " << id << " has bad version " << version;
     callback.Run(file_path, true);
@@ -213,7 +213,7 @@ bool LocalExtensionCache::RemoveExtension(const std::string& id,
   return true;
 }
 
-bool LocalExtensionCache::GetStatistics(uint64* cache_size,
+bool LocalExtensionCache::GetStatistics(uint64_t* cache_size,
                                         size_t* extensions_count) {
   if (state_ != kReady)
     return false;
@@ -252,16 +252,29 @@ void LocalExtensionCache::BackendCheckCacheStatus(
     base::WeakPtr<LocalExtensionCache> local_cache,
     const base::FilePath& cache_dir,
     const base::Closure& callback) {
-  const bool exists =
-      base::PathExists(cache_dir.AppendASCII(kCacheReadyFlagFileName));
+  base::FilePath ready_flag_file =
+      cache_dir.AppendASCII(kCacheReadyFlagFileName);
+  bool exists = base::PathExists(ready_flag_file);
 
-  static bool first_check = true;
-  if (first_check && !exists && !base::SysInfo::IsRunningOnChromeOS()) {
-    LOG(WARNING) << "Extensions will not be installed from update URLs until "
-                 << cache_dir.AppendASCII(kCacheReadyFlagFileName).value()
-                 << " exists.";
+  static bool already_warned = false;
+  if (!exists && !base::SysInfo::IsRunningOnChromeOS()) {
+    // This is a developer build. Automatically create the directory.
+    if (base::CreateDirectory(cache_dir)) {
+      base::File file(ready_flag_file, base::File::FLAG_OPEN_ALWAYS);
+      if (file.IsValid()) {
+        exists = true;
+      } else if (!already_warned) {
+        LOG(WARNING) << "Could not create cache file "
+                     << ready_flag_file.value()
+                     << "; extensions cannot be installed from update URLs.";
+        already_warned = true;
+      }
+    } else if (!already_warned) {
+      LOG(WARNING) << "Could not create cache directory " << cache_dir.value()
+                   << "; extensions cannot be installed from update URLs.";
+      already_warned = true;
+    }
   }
-  first_check = false;
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI,
@@ -307,7 +320,7 @@ void LocalExtensionCache::BackendCheckCacheContents(
     base::WeakPtr<LocalExtensionCache> local_cache,
     const base::FilePath& cache_dir,
     const base::Closure& callback) {
-  scoped_ptr<CacheMap> cache_content(new CacheMap);
+  std::unique_ptr<CacheMap> cache_content(new CacheMap);
   BackendCheckCacheContentsInternal(cache_dir, cache_content.get());
   content::BrowserThread::PostTask(
       content::BrowserThread::UI,
@@ -443,7 +456,7 @@ void LocalExtensionCache::BackendCheckCacheContentsInternal(
       id.clear();
     }
 
-    if (!Version(version).IsValid()) {
+    if (!base::Version(version).IsValid()) {
       LOG(ERROR) << "Bad extension version in cache: " << version;
       version.clear();
     }
@@ -466,7 +479,7 @@ void LocalExtensionCache::BackendCheckCacheContentsInternal(
 }
 
 void LocalExtensionCache::OnCacheContentsChecked(
-    scoped_ptr<CacheMap> cache_content,
+    std::unique_ptr<CacheMap> cache_content,
     const base::Closure& callback) {
   cache_content->swap(cached_extensions_);
   state_ = kReady;
@@ -609,14 +622,16 @@ LocalExtensionCache::CacheItemInfo::CacheItemInfo(
     const std::string& version,
     const std::string& expected_hash,
     const base::Time& last_used,
-    uint64 size,
+    uint64_t size,
     const base::FilePath& file_path)
     : version(version),
       expected_hash(base::ToLowerASCII(expected_hash)),
       last_used(last_used),
       size(size),
-      file_path(file_path) {
-}
+      file_path(file_path) {}
+
+LocalExtensionCache::CacheItemInfo::CacheItemInfo(const CacheItemInfo& other) =
+    default;
 
 LocalExtensionCache::CacheItemInfo::~CacheItemInfo() {
 }

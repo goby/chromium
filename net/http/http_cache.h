@@ -15,13 +15,13 @@
 #define NET_HTTP_HTTP_CACHE_H_
 
 #include <list>
-#include <set>
+#include <map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 
-#include "base/basictypes.h"
-#include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/time/clock.h"
@@ -47,20 +47,10 @@ class Entry;
 
 namespace net {
 
-class CertVerifier;
-class ChannelIDService;
-class DiskBasedCertCache;
-class HostResolver;
-class HttpAuthHandlerFactory;
 class HttpNetworkSession;
 class HttpResponseInfo;
-class HttpServerProperties;
 class IOBuffer;
 class NetLog;
-class NetworkDelegate;
-class ProxyService;
-class SSLConfigService;
-class TransportSecurityState;
 class ViewCacheHelper;
 struct HttpRequestInfo;
 
@@ -88,7 +78,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
     // The implementation must not access the factory object after invoking the
     // |callback| because the object can be deleted from within the callback.
     virtual int CreateBackend(NetLog* net_log,
-                              scoped_ptr<disk_cache::Backend>* backend,
+                              std::unique_ptr<disk_cache::Backend>* backend,
                               const CompletionCallback& callback) = 0;
   };
 
@@ -106,11 +96,11 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
     ~DefaultBackend() override;
 
     // Returns a factory for an in-memory cache.
-    static scoped_ptr<BackendFactory> InMemory(int max_bytes);
+    static std::unique_ptr<BackendFactory> InMemory(int max_bytes);
 
     // BackendFactory implementation.
     int CreateBackend(NetLog* net_log,
-                      scoped_ptr<disk_cache::Backend>* backend,
+                      std::unique_ptr<disk_cache::Backend>* backend,
                       const CompletionCallback& callback) override;
 
    private:
@@ -136,20 +126,18 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
   // If |set_up_quic_server_info| is true, configures the cache to track
   // information about servers supporting QUIC.
   HttpCache(HttpNetworkSession* session,
-            scoped_ptr<BackendFactory> backend_factory,
+            std::unique_ptr<BackendFactory> backend_factory,
             bool set_up_quic_server_info);
 
   // Initialize the cache from its component parts. |network_layer| and
   // |backend_factory| will be destroyed when the HttpCache is.
-  HttpCache(scoped_ptr<HttpTransactionFactory> network_layer,
-            scoped_ptr<BackendFactory> backend_factory,
+  HttpCache(std::unique_ptr<HttpTransactionFactory> network_layer,
+            std::unique_ptr<BackendFactory> backend_factory,
             bool set_up_quic_server_info);
 
   ~HttpCache() override;
 
   HttpTransactionFactory* network_layer() { return network_layer_.get(); }
-
-  DiskBasedCertCache* cert_cache() const { return cert_cache_.get(); }
 
   // Retrieves the cache backend for this HttpCache instance. If the backend
   // is not initialized yet, this method will initialize it. The return value is
@@ -183,8 +171,8 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
   Mode mode() { return mode_; }
 
   // Get/Set the cache's clock. These are public only for testing.
-  void SetClockForTesting(scoped_ptr<base::Clock> clock) {
-    clock_.reset(clock.release());
+  void SetClockForTesting(std::unique_ptr<base::Clock> clock) {
+    clock_ = std::move(clock);
   }
   base::Clock* clock() const { return clock_.get(); }
 
@@ -214,7 +202,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
 
   // HttpTransactionFactory implementation:
   int CreateTransaction(RequestPriority priority,
-                        scoped_ptr<HttpTransaction>* trans) override;
+                        std::unique_ptr<HttpTransaction>* trans) override;
   HttpCache* GetCache() override;
   HttpNetworkSession* GetSession() override;
 
@@ -224,9 +212,9 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
   // network changes (e.g. host unreachable).  The old network layer is
   // returned to allow for filter patterns that only intercept
   // some creation requests.  Note ownership exchange.
-  scoped_ptr<HttpTransactionFactory>
-      SetHttpNetworkTransactionFactoryForTesting(
-          scoped_ptr<HttpTransactionFactory> new_network_layer);
+  std::unique_ptr<HttpTransactionFactory>
+  SetHttpNetworkTransactionFactoryForTesting(
+      std::unique_ptr<HttpTransactionFactory> new_network_layer);
 
  private:
   // Types --------------------------------------------------------------------
@@ -250,7 +238,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
   struct PendingOp;  // Info for an entry under construction.
 
   typedef std::list<Transaction*> TransactionList;
-  typedef std::list<WorkItem*> WorkItemList;
+  typedef std::list<std::unique_ptr<WorkItem>> WorkItemList;
 
   struct ActiveEntry {
     explicit ActiveEntry(disk_cache::Entry* entry);
@@ -264,10 +252,11 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
     bool               doomed;
   };
 
-  typedef base::hash_map<std::string, ActiveEntry*> ActiveEntriesMap;
-  typedef base::hash_map<std::string, PendingOp*> PendingOpsMap;
-  typedef std::set<ActiveEntry*> ActiveEntriesSet;
-  typedef base::hash_map<std::string, int> PlaybackCacheMap;
+  using ActiveEntriesMap =
+      std::unordered_map<std::string, std::unique_ptr<ActiveEntry>>;
+  using PendingOpsMap = std::unordered_map<std::string, PendingOp*>;
+  using ActiveEntriesSet = std::map<ActiveEntry*, std::unique_ptr<ActiveEntry>>;
+  using PlaybackCacheMap = std::unordered_map<std::string, int>;
 
   // Methods ------------------------------------------------------------------
 
@@ -408,18 +397,16 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
   NetLog* net_log_;
 
   // Used when lazily constructing the disk_cache_.
-  scoped_ptr<BackendFactory> backend_factory_;
+  std::unique_ptr<BackendFactory> backend_factory_;
   bool building_backend_;
   bool bypass_lock_for_test_;
   bool fail_conditionalization_for_test_;
 
   Mode mode_;
 
-  scoped_ptr<HttpTransactionFactory> network_layer_;
+  std::unique_ptr<HttpTransactionFactory> network_layer_;
 
-  scoped_ptr<disk_cache::Backend> disk_cache_;
-
-  scoped_ptr<DiskBasedCertCache> cert_cache_;
+  std::unique_ptr<disk_cache::Backend> disk_cache_;
 
   // The set of active entries indexed by cache key.
   ActiveEntriesMap active_entries_;
@@ -430,10 +417,10 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory,
   // The set of entries "under construction".
   PendingOpsMap pending_ops_;
 
-  scoped_ptr<PlaybackCacheMap> playback_cache_map_;
+  std::unique_ptr<PlaybackCacheMap> playback_cache_map_;
 
   // A clock that can be swapped out for testing.
-  scoped_ptr<base::Clock> clock_;
+  std::unique_ptr<base::Clock> clock_;
 
   base::WeakPtrFactory<HttpCache> weak_factory_;
 

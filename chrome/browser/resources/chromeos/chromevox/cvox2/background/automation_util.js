@@ -7,31 +7,19 @@
  */
 
 goog.provide('AutomationUtil');
-goog.provide('AutomationUtil.Dir');
 
 goog.require('AutomationPredicate');
+goog.require('AutomationTreeWalker');
+goog.require('constants');
 
 /**
  * @constructor
  */
 AutomationUtil = function() {};
 
-/**
- * Possible directions to perform tree traversals.
- * @enum {string}
- */
-AutomationUtil.Dir = {
-  // Search from left to right.
-  FORWARD: 'forward',
-
-  // Search from right to left.
-  BACKWARD: 'backward'
-};
-
-
 goog.scope(function() {
 var AutomationNode = chrome.automation.AutomationNode;
-var Dir = AutomationUtil.Dir;
+var Dir = constants.Dir;
 var RoleType = chrome.automation.RoleType;
 
 /**
@@ -43,7 +31,10 @@ var RoleType = chrome.automation.RoleType;
  * @return {AutomationNode}
  */
 AutomationUtil.findNodePre = function(cur, dir, pred) {
-  if (pred(cur))
+  if (!cur)
+    return null;
+
+  if (pred(cur) && !AutomationPredicate.shouldIgnoreNode(cur))
     return cur;
 
   var child = dir == Dir.BACKWARD ? cur.lastChild : cur.firstChild;
@@ -54,6 +45,7 @@ AutomationUtil.findNodePre = function(cur, dir, pred) {
     child = dir == Dir.BACKWARD ?
         child.previousSibling : child.nextSibling;
   }
+  return null;
 };
 
 /**
@@ -65,6 +57,9 @@ AutomationUtil.findNodePre = function(cur, dir, pred) {
  * @return {AutomationNode}
  */
 AutomationUtil.findNodePost = function(cur, dir, pred) {
+  if (!cur)
+    return null;
+
   var child = dir == Dir.BACKWARD ? cur.lastChild : cur.firstChild;
   while (child) {
     var ret = AutomationUtil.findNodePost(child, dir, pred);
@@ -74,95 +69,79 @@ AutomationUtil.findNodePost = function(cur, dir, pred) {
         child.previousSibling : child.nextSibling;
   }
 
-  if (pred(cur))
+  if (pred(cur) && !AutomationPredicate.shouldIgnoreNode(cur))
     return cur;
-};
 
-/**
- * Find the next node in the given direction that is either an immediate sibling
- * or a sibling of an ancestor.
- * @param {AutomationNode} cur Node to start search from.
- * @param {Dir} dir
- * @return {AutomationNode}
- */
-AutomationUtil.findNextSubtree = function(cur, dir) {
-  while (cur) {
-    var next = dir == Dir.BACKWARD ?
-        cur.previousSibling : cur.nextSibling;
-    if (!AutomationUtil.isInSameTree(cur, next))
-      return null;
-    if (next)
-      return next;
-    if (!AutomationUtil.isInSameTree(cur, cur.parent))
-      return null;
-    cur = cur.parent;
-    if (!cur || AutomationUtil.isTraversalRoot(cur))
-      return null;
-  }
+  return null;
 };
 
 /**
  * Find the next node in the given direction in depth first order.
- * @param {AutomationNode} cur Node to begin the search from.
+ *
+ * Let D be the dfs linearization of |cur.root|. Then, let F be the list after
+ * applying |pred| as a filter to D. This method will return the directed next
+ * node of |cur| in F.
+ * The restrictions option will further filter F. For example,
+ * |skipInitialSubtree| will remove any |pred| matches in the subtree of |cur|
+ * from F.
+ * @param {!AutomationNode} cur Node to begin the search from.
  * @param {Dir} dir
  * @param {AutomationPredicate.Unary} pred A predicate to apply
  *     to a candidate node.
+ * @param {AutomationTreeWalkerRestriction=} opt_restrictions |leaf|, |root|,
+ *     |skipInitialAncestry|, and |skipInitialSubtree| are valid restrictions
+ *     used when finding the next node.
+ *     By default:
+ *        the root predicate ges set to |AutomationPredicate.root|.
+ *        |skipInitialSubtree| is false if |cur| is a container or matches
+ *        |pred|. This alleviates the caller from syncing forwards.
+ *        Leaves are nodes matched by |prred| which are not also containers.
+ *        This takes care of syncing backwards.
  * @return {AutomationNode}
  */
-AutomationUtil.findNextNode = function(cur, dir, pred) {
-  var next = cur;
-  do {
-    if (!(next = AutomationUtil.findNextSubtree(cur, dir)))
-      return null;
-    cur = next;
-    next = AutomationUtil.findNodePre(next, dir, pred);
-    if (next && AutomationPredicate.shouldIgnoreLeaf(next)) {
-      cur = next;
-      next = null;
-    }
-  } while (!next);
-  return next;
+AutomationUtil.findNextNode = function(cur, dir, pred, opt_restrictions) {
+  var restrictions = {};
+  opt_restrictions = opt_restrictions || {leaf: undefined,
+      root: undefined,
+      visit: undefined,
+      skipInitialSubtree: !AutomationPredicate.container(cur) && pred(cur)};
+
+  restrictions.root = opt_restrictions.root || AutomationPredicate.root;
+  restrictions.leaf = opt_restrictions.leaf || function(node) {
+    // Treat nodes matched by |pred| as leaves except for containers.
+    return !AutomationPredicate.container(node) && pred(node);
+  };
+
+  restrictions.skipInitialSubtree = opt_restrictions.skipInitialSubtree;
+  restrictions.skipInitialAncestry = opt_restrictions.skipInitialAncestry;
+
+  restrictions.visit = function(node) {
+    return pred(node) && !AutomationPredicate.shouldIgnoreNode(node);
+  };
+
+  var walker = new AutomationTreeWalker(cur, dir, restrictions);
+  return walker.next().node;
 };
 
 /**
  * Given nodes a_1, ..., a_n starting at |cur| in pre order traversal, apply
  * |pred| to a_i and a_(i - 1) until |pred| is satisfied.  Returns a_(i - 1) or
- * a_i (depending on opt_options.before) or null if no match was found.
- * @param {AutomationNode} cur
+ * a_i (depending on opt_before) or null if no match was found.
+ * @param {!AutomationNode} cur
  * @param {Dir} dir
  * @param {AutomationPredicate.Binary} pred
- * @param {{filter: (AutomationPredicate.Unary|undefined),
- *      before: boolean?}=} opt_options
- *     filter - Filters which candidate nodes to consider. Defaults to leaf
- *         only.
- *     before - True to return a_(i - 1); a_i otherwise. Defaults to false.
+ * @param {boolean=} opt_before True to return a_(i - 1); a_i otherwise.
+ *                              Defaults to false.
  * @return {AutomationNode}
  */
-AutomationUtil.findNodeUntil = function(cur, dir, pred, opt_options) {
-  opt_options =
-      opt_options || {filter: AutomationPredicate.leaf, before: false};
-  if (!opt_options.filter)
-    opt_options.filter = AutomationPredicate.leaf;
-
-  var before = null;
-  var after = null;
-  var prev = cur;
-  AutomationUtil.findNextNode(cur,
-      dir,
-      function(candidate) {
-        if (!opt_options.filter(candidate))
-          return false;
-
-        var satisfied = pred(prev, candidate);
-
-        prev = candidate;
-        if (!satisfied)
-          before = candidate;
-        else
-          after = candidate;
-        return satisfied;
-    });
-  return opt_options.before ? before : after;
+AutomationUtil.findNodeUntil = function(cur, dir, pred, opt_before) {
+  var before = cur;
+  var after = before;
+  do {
+    before = after;
+    after = AutomationUtil.findNextNode(before, dir, AutomationPredicate.leaf);
+  } while (after && !pred(before, after));
+  return opt_before ? before : after;
 };
 
 /**
@@ -175,9 +154,6 @@ AutomationUtil.getAncestors = function(node) {
   var candidate = node;
   while (candidate) {
     ret.push(candidate);
-
-    if (!AutomationUtil.isInSameTree(candidate, candidate.parent))
-      break;
 
     candidate = candidate.parent;
   }
@@ -219,7 +195,7 @@ AutomationUtil.getUniqueAncestors = function(prevNode, node) {
  * document.
  * @param {!AutomationNode} nodeA
  * @param {!AutomationNode} nodeB
- * @return {AutomationUtil.Dir}
+ * @return {Dir}
  */
 AutomationUtil.getDirection = function(nodeA, nodeB) {
   var ancestorsA = AutomationUtil.getAncestors(nodeA);
@@ -233,9 +209,17 @@ AutomationUtil.getDirection = function(nodeA, nodeB) {
   var divA = ancestorsA[divergence];
   var divB = ancestorsB[divergence];
 
-  // One of the nodes is an ancestor of the other. Don't distinguish and just
-  // consider it Dir.FORWARD.
-  if (!divA || !divB || divA.parent === nodeB || divB.parent === nodeA)
+  // One of the nodes is an ancestor of the other. Order this relationship in
+  // the same way dfs would. nodeA <= nodeB if nodeA is a descendant of
+  // nodeB. nodeA > nodeB if nodeB is a descendant of nodeA.
+
+  if (!divA)
+    return Dir.FORWARD;
+  if (!divB)
+    return Dir.BACKWARD;
+  if (divA.parent === nodeB)
+    return Dir.BACKWARD;
+  if (divB.parent === nodeA)
     return Dir.FORWARD;
 
   return divA.indexInParent <= divB.indexInParent ? Dir.FORWARD : Dir.BACKWARD;
@@ -257,44 +241,90 @@ AutomationUtil.isInSameTree = function(a, b) {
 };
 
 /**
- * Returns whether the given node should not be crossed when performing
- * traversals up the ancestry chain.
- * @param {AutomationNode} node
+ * Determines whether or not a node is or is the descendant of another node.
+ * @param {!AutomationNode} node
+ * @param {!AutomationNode} ancestor
  * @return {boolean}
  */
-AutomationUtil.isTraversalRoot = function(node) {
-  switch (node.role) {
-    case RoleType.dialog:
-    case RoleType.window:
-      return true;
-    case RoleType.toolbar:
-      return node.root.role == RoleType.desktop;
-    case RoleType.rootWebArea:
-      return !!(node.parent && node.parent.root.role == RoleType.desktop);
-    default:
-      return false;
-  }
+AutomationUtil.isDescendantOf = function(node, ancestor) {
+  var testNode = node;
+  while (testNode && testNode !== ancestor)
+    testNode = testNode.parent;
+  return testNode === ancestor;
 };
 
 /**
- * Determines whether the two given nodes come from the same webpage.
- * @param {AutomationNode} a
- * @param {AutomationNode} b
- * @return {boolean}
+ * Finds the deepest node containing point. Since the automation tree does not
+ * maintain a containment invariant when considering child node bounding rects
+ * with respect to their parents, the hit test considers all children before
+ * their parents when looking for a matching node.
+ * @param {AutomationNode} node Subtree to search.
+ * @param {cvox.Point} point
+ * @return {AutomationNode}
  */
-AutomationUtil.isInSameWebpage = function(a, b) {
-  if (!a || !b)
-    return false;
+AutomationUtil.hitTest = function(node, point) {
+  var loc = node.location;
+  var child = node.firstChild;
+  while (child) {
+    var hit = AutomationUtil.hitTest(child, point);
+    if (hit)
+      return hit;
+    child = child.nextSibling;
+  }
 
-  a = a.root;
-  while (a && a.parent && AutomationUtil.isInSameTree(a.parent, a))
-    a = a.parent.root;
+  if (point.x <= (loc.left + loc.width) && point.x >= loc.left &&
+      point.y <= (loc.top + loc.height) && point.y >= loc.top)
+    return node;
+  return null;
+};
 
-  b = b.root;
-  while (b && b.parent && AutomationUtil.isInSameTree(b.parent, b))
-    b = b.parent.root;
+/**
+ * Gets a top level root.
+ * @param {!AutomationNode} node
+ * @return {AutomationNode}
+ */
+AutomationUtil.getTopLevelRoot = function(node) {
+  var root = node.root;
+  if (!root || root.role == RoleType.desktop)
+    return null;
 
-  return a == b;
+  while (root &&
+      root.parent &&
+      root.parent.root &&
+      root.parent.root.role != RoleType.desktop) {
+    root = root.parent.root;
+  }
+  return root;
+};
+
+/**
+ * @param {!AutomationNode} prevNode
+ * @param {!AutomationNode} node
+ * @return {AutomationNode}
+ */
+AutomationUtil.getLeastCommonAncestor = function(prevNode, node) {
+  if (prevNode == node)
+    return node;
+
+  var prevAncestors = AutomationUtil.getAncestors(prevNode);
+  var ancestors = AutomationUtil.getAncestors(node);
+  var divergence = AutomationUtil.getDivergence(prevAncestors, ancestors);
+  return ancestors[divergence - 1];
+};
+
+/**
+ * Gets the accessible text for this node based on its role.
+ * This text is suitable for caret navigation and selection in the node.
+ * @param {AutomationNode} node
+ * @return {string}
+ */
+AutomationUtil.getText = function(node) {
+  if (!node)
+    return '';
+
+  if (node.role === RoleType.textField)
+    return node.value;
+  return node.name || '';
 };
 
 });  // goog.scope

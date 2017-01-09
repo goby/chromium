@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 
@@ -61,10 +62,13 @@ class CastMetricsHelper {
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   virtual ~CastMetricsHelper();
 
-  // This function updates the info and stores the startup time of the current
-  // active application
-  virtual void UpdateCurrentAppInfo(const std::string& app_id,
-                                    const std::string& session_id);
+  // This records the startup time of an app load (note: another app
+  // may be running and still collecting metrics).
+  virtual void DidStartLoad(const std::string& app_id);
+  // This function marks the completion of a successful app load. It switches
+  // metric collection to this app.
+  virtual void DidCompleteLoad(const std::string& app_id,
+                               const std::string& session_id);
   // This function updates the sdk version of the current active application
   virtual void UpdateSDKInfo(const std::string& sdk_version);
 
@@ -75,6 +79,14 @@ class CastMetricsHelper {
   // Logs a simple UMA user action.
   // This is used as an in-place replacement of content::RecordComputedAction().
   virtual void RecordSimpleAction(const std::string& action);
+
+  // Logs a generic event.
+  virtual void RecordEventWithValue(const std::string& action, int value);
+
+  // Logs application specific events.
+  virtual void RecordApplicationEvent(const std::string& event);
+  virtual void RecordApplicationEventWithValue(const std::string& event,
+                                               int value);
 
   // Logs UMA record of the time the app made its first paint.
   virtual void LogTimeToFirstPaint();
@@ -103,6 +115,9 @@ class CastMetricsHelper {
   // CastMetricsHelper only honors the last one.
   virtual void SetRecordActionCallback(const RecordActionCallback& callback);
 
+  // Sets an all-0's session ID for running browser tests.
+  void SetDummySessionIdForTesting();
+
  protected:
   // Creates a CastMetricsHelper instance with no task runner. This should only
   // be used by tests, since invoking any non-overridden methods on this
@@ -128,8 +143,15 @@ class CastMetricsHelper {
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
-  // Start time of the most recent app.
+  // Start time for loading the next app.
+  base::TimeTicks app_load_start_time_;
+  // Start time for the currently running app.
   base::TimeTicks app_start_time_;
+
+  // The app id for the app that is currently loading and, if the load is
+  // successful, will replace the currently running app.  The currently running
+  // app is still collecting metrics.
+  std::string loading_app_id_;
 
   // Currently running app id. Used to construct histogram name.
   std::string app_id_;

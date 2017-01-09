@@ -2,34 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/svg/SVGAnimatedString.h"
-
-#include "core/XLinkNames.h"
-#include "core/frame/UseCounter.h"
-#include "core/svg/SVGElement.h"
 
 namespace blink {
 
-String SVGAnimatedString::baseVal()
-{
-    if (this->attributeName() == XLinkNames::hrefAttr)
-        UseCounter::count(this->contextElement()->document(), UseCounter::SVGHrefBaseVal);
-    return SVGAnimatedProperty<SVGString>::baseVal();
+String SVGAnimatedString::baseVal() {
+  return SVGAnimatedProperty<SVGString>::baseVal();
 }
 
-void SVGAnimatedString::setBaseVal(String value, ExceptionState& exceptionState)
-{
-    if (this->attributeName() == XLinkNames::hrefAttr)
-        UseCounter::count(this->contextElement()->document(), UseCounter::SVGHrefBaseVal);
-    return SVGAnimatedProperty<SVGString>::setBaseVal(value, exceptionState);
+void SVGAnimatedString::setBaseVal(const String& value,
+                                   ExceptionState& exceptionState) {
+  return SVGAnimatedProperty<SVGString>::setBaseVal(value, exceptionState);
 }
 
-String SVGAnimatedString::animVal()
-{
-    if (this->attributeName() == XLinkNames::hrefAttr)
-        UseCounter::count(this->contextElement()->document(), UseCounter::SVGHrefAnimVal);
-    return SVGAnimatedProperty<SVGString>::animVal();
+String SVGAnimatedString::animVal() {
+  return SVGAnimatedProperty<SVGString>::animVal();
 }
 
-} // namespace blink
+DEFINE_TRACE_WRAPPERS(SVGAnimatedString) {
+  visitor->traceWrappers(contextElement());
+}
+
+}  // namespace blink

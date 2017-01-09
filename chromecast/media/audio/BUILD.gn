@@ -6,8 +6,8 @@ source_set("audio") {
   sources = [
     "cast_audio_manager.cc",
     "cast_audio_manager.h",
-    "cast_audio_manager_factory.cc",
-    "cast_audio_manager_factory.h",
+    "cast_audio_mixer.cc",
+    "cast_audio_mixer.h",
     "cast_audio_output_stream.cc",
     "cast_audio_output_stream.h",
   ]
@@ -16,6 +16,7 @@ source_set("audio") {
     "//base",
     "//chromecast/base",
     "//chromecast/media/base",
+    "//chromecast/media/cma/backend",
     "//chromecast/media/cma/base",
     "//chromecast/public/media",
     "//media",

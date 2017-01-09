@@ -5,21 +5,27 @@
 #ifndef CHROME_BROWSER_UI_ANDROID_TAB_MODEL_TAB_MODEL_H_
 #define CHROME_BROWSER_UI_ANDROID_TAB_MODEL_TAB_MODEL_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "chrome/browser/ui/toolbar/toolbar_model_delegate.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "chrome/browser/ui/android/tab_model/android_live_tab_context.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sync_sessions/synced_window_delegate.h"
 #include "components/toolbar/toolbar_model.h"
+#include "components/toolbar/toolbar_model_delegate.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
 namespace browser_sync {
-class SyncedWindowDelegate;
 class SyncedWindowDelegateAndroid;
 }
 
 namespace content {
 class WebContents;
+}
+
+namespace sync_sessions {
+class SyncedWindowDelegate;
 }
 
 class Profile;
@@ -32,8 +38,10 @@ class TabModel : public content::NotificationObserver {
  public:
   virtual Profile* GetProfile() const;
   virtual bool IsOffTheRecord() const;
-  virtual browser_sync::SyncedWindowDelegate* GetSyncedWindowDelegate() const;
+  virtual sync_sessions::SyncedWindowDelegate* GetSyncedWindowDelegate() const;
   virtual SessionID::id_type GetSessionId() const;
+  virtual const SessionID& SessionId() const;
+  virtual sessions::LiveTabContext* GetLiveTabContext() const;
 
   virtual int GetTabCount() const = 0;
   virtual int GetActiveIndex() const = 0;
@@ -46,7 +54,8 @@ class TabModel : public content::NotificationObserver {
   virtual void CloseTabAt(int index) = 0;
 
   // Used for restoring tabs from synced foreign sessions.
-  virtual void CreateTab(content::WebContents* web_contents,
+  virtual void CreateTab(TabAndroid* parent,
+                         content::WebContents* web_contents,
                          int parent_tab_id) = 0;
 
   // Used by Developer Tools to create a new tab with a given URL.
@@ -57,7 +66,7 @@ class TabModel : public content::NotificationObserver {
   virtual bool IsSessionRestoreInProgress() const = 0;
 
  protected:
-  explicit TabModel(Profile* profile);
+  explicit TabModel(Profile* profile, bool is_tabbed_activity);
   ~TabModel() override;
 
   // Instructs the TabModel to broadcast a notification that all tabs are now
@@ -75,11 +84,16 @@ class TabModel : public content::NotificationObserver {
   // The profile associated with this TabModel.
   Profile* profile_;
 
+  // The LiveTabContext associated with TabModel.
+  // Used to restore closed tabs through the TabRestoreService.
+  std::unique_ptr<AndroidLiveTabContext> live_tab_context_;
+
   // Describes if this TabModel contains an off-the-record profile.
   bool is_off_the_record_;
 
   // The SyncedWindowDelegate associated with this TabModel.
-  scoped_ptr<browser_sync::SyncedWindowDelegateAndroid> synced_window_delegate_;
+  std::unique_ptr<browser_sync::SyncedWindowDelegateAndroid>
+      synced_window_delegate_;
 
   // Unique identifier of this TabModel for session restore. This id is only
   // unique within the current session, and is not guaranteed to be unique

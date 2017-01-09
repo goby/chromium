@@ -5,14 +5,13 @@
 #ifndef NET_TOOLS_QUIC_TEST_TOOLS_QUIC_CLIENT_PEER_H_
 #define NET_TOOLS_QUIC_TEST_TOOLS_QUIC_CLIENT_PEER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace net {
 
 class QuicCryptoClientConfig;
 class QuicPacketWriter;
 
-namespace tools {
 
 class QuicClient;
 
@@ -20,15 +19,17 @@ namespace test {
 
 class QuicClientPeer {
  public:
-  static bool CreateUDPSocket(QuicClient* client);
+  static QuicCryptoClientConfig* GetCryptoConfig(QuicClient* client);
+  static bool CreateUDPSocketAndBind(QuicClient* client);
+  static void CleanUpUDPSocket(QuicClient* client, int fd);
   static void SetClientPort(QuicClient* client, int port);
+  static void SetWriter(QuicClient* client, QuicPacketWriter* writer);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(QuicClientPeer);
 };
 
 }  // namespace test
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_TEST_TOOLS_QUIC_CLIENT_PEER_H_

@@ -4,10 +4,13 @@
 
 #include "ui/app_list/views/app_list_main_view.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/app_list/app_list_switches.h"
 #include "ui/app_list/test/app_list_test_model.h"
@@ -58,7 +61,7 @@ class GridViewVisibleWaiter {
   }
 
   AppsGridView* grid_view_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   base::RepeatingTimer check_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(GridViewVisibleWaiter);
@@ -204,10 +207,6 @@ class AppListMainViewTest : public views::ViewsTestBase {
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(FolderView()->visible());
 
-#if defined(OS_WIN)
-    AppsGridViewTestApi folder_grid_view_test_api(FolderGridView());
-    folder_grid_view_test_api.DisableSynchronousDrag();
-#endif
     return folder_item_view;
   }
 
@@ -241,7 +240,7 @@ class AppListMainViewTest : public views::ViewsTestBase {
  protected:
   views::Widget* main_widget_;  // Owned by native window.
   AppListMainView* main_view_;  // Owned by |main_widget_|.
-  scoped_ptr<AppListTestViewDelegate> delegate_;
+  std::unique_ptr<AppListTestViewDelegate> delegate_;
   views::Widget* search_box_widget_;  // Owned by |main_widget_|.
   SearchBoxView* search_box_view_;    // Owned by |search_box_widget_|.
 
@@ -258,7 +257,7 @@ TEST_F(AppListMainViewTest, ModelChanged) {
 
   // The model is owned by a profile keyed service, which is never destroyed
   // until after profile switching.
-  scoped_ptr<AppListModel> old_model(delegate_->ReleaseTestModel());
+  std::unique_ptr<AppListModel> old_model(delegate_->ReleaseTestModel());
 
   const int kReplacementItems = 5;
   delegate_->ReplaceTestModel(kReplacementItems);
@@ -276,11 +275,9 @@ TEST_F(AppListMainViewTest, MouseHoverToHighlight) {
   AppListItemView* item0 = RootViewModel()->view_at(0);
   AppListItemView* item1 = RootViewModel()->view_at(1);
 
-  // If experimental launcher, switch to All Apps page
-  if (app_list::switches::IsExperimentalAppListEnabled()) {
-    GetContentsView()->SetActiveState(AppListModel::STATE_APPS);
-    GetContentsView()->Layout();
-  }
+  // Switch to All Apps page.
+  GetContentsView()->SetActiveState(AppListModel::STATE_APPS);
+  GetContentsView()->Layout();
 
   generator.MoveMouseTo(item0->GetBoundsInScreen().CenterPoint());
   EXPECT_TRUE(item0->is_highlighted());
@@ -311,11 +308,9 @@ TEST_F(AppListMainViewTest, MAYBE_TapGestureToHighlight) {
                                      main_widget_->GetNativeWindow());
   AppListItemView* item = RootViewModel()->view_at(0);
 
-  // If experimental launcher, switch to All Apps page
-  if (app_list::switches::IsExperimentalAppListEnabled()) {
-    GetContentsView()->SetActiveState(AppListModel::STATE_APPS);
-    GetContentsView()->Layout();
-  }
+  // Switch to All Apps page.
+  GetContentsView()->SetActiveState(AppListModel::STATE_APPS);
+  GetContentsView()->Layout();
 
   generator.set_current_location(item->GetBoundsInScreen().CenterPoint());
   generator.PressTouch();

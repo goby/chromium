@@ -10,30 +10,28 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button.h"
-#import "chrome/browser/ui/cocoa/bookmarks/bookmark_sync_promo_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
+#import "chrome/browser/ui/cocoa/bubble_sync_promo_controller.h"
 #import "chrome/browser/ui/cocoa/info_bubble_view.h"
+#import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#import "chrome/browser/ui/cocoa/location_bar/star_decoration.h"
 #include "chrome/browser/ui/sync/sync_promo_ui.h"
+#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/user_metrics.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
 using base::UserMetricsAction;
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
-
-// An object to represent the ChooseAnotherFolder item in the pop up.
-@interface ChooseAnotherFolder : NSObject
-@end
-
-@implementation ChooseAnotherFolder
-@end
 
 @interface BookmarkBubbleController (PrivateAPI)
 - (void)updateBookmarkNode;
@@ -44,13 +42,10 @@ using bookmarks::BookmarkNode;
 
 @synthesize node = node_;
 
-+ (id)chooseAnotherFolderObject {
   // Singleton object to act as a representedObject for the "choose another
   // folder" item in the pop up.
-  static ChooseAnotherFolder* object = nil;
-  if (!object) {
-    object = [[ChooseAnotherFolder alloc] init];
-  }
++ (id)chooseAnotherFolderObject {
+  static id object = [[NSObject alloc] init];
   return object;
 }
 
@@ -81,8 +76,16 @@ using bookmarks::BookmarkNode;
 
   Browser* browser = chrome::FindBrowserWithWindow(self.parentWindow);
   if (SyncPromoUI::ShouldShowSyncPromo(browser->profile())) {
+    content::RecordAction(
+        base::UserMetricsAction("Signin_Impression_FromBookmarkBubble"));
+
     syncPromoController_.reset(
-        [[BookmarkSyncPromoController alloc] initWithBrowser:browser]);
+        [[BubbleSyncPromoController alloc]
+            initWithBrowser:browser
+              promoStringId:IDS_BOOKMARK_SYNC_PROMO_MESSAGE
+               linkStringId:IDS_BOOKMARK_SYNC_PROMO_LINK
+                accessPoint:
+                    signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_BUBBLE]);
     [syncPromoPlaceholder_ addSubview:[syncPromoController_ view]];
 
     // Resize the sync promo and its placeholder.
@@ -147,7 +150,7 @@ using bookmarks::BookmarkNode;
   // which will occur for some unit tests.
   NSPoint arrowTip = bwc ? [bwc bookmarkBubblePoint] :
       NSMakePoint([window frame].size.width, [window frame].size.height);
-  arrowTip = [parentWindow convertBaseToScreen:arrowTip];
+  arrowTip = ui::ConvertPointFromWindowToScreen(parentWindow, arrowTip);
   NSPoint bubbleArrowTip = [bubble arrowTip];
   bubbleArrowTip = [bubble convertPoint:bubbleArrowTip toView:nil];
   arrowTip.y -= bubbleArrowTip.y;
@@ -178,11 +181,14 @@ using bookmarks::BookmarkNode;
   [self registerKeyStateEventTap];
 
   bookmarkBubbleObserver_->OnBookmarkBubbleShown(node_);
+
+  [self decorationForBubble]->SetActive(true);
 }
 
 - (void)close {
   [[BrowserWindowController browserWindowControllerForWindow:self.parentWindow]
-      releaseBarVisibilityForOwner:self withAnimation:YES delay:NO];
+      releaseToolbarVisibilityForOwner:self
+                         withAnimation:YES];
 
   [super close];
 }
@@ -233,8 +239,8 @@ using bookmarks::BookmarkNode;
   if (!self.parentWindow)
     return;
   NSMenuItem* selected = [folderPopUpButton_ selectedItem];
-  ChooseAnotherFolder* chooseItem = [[self class] chooseAnotherFolderObject];
-  if ([[selected representedObject] isEqual:chooseItem]) {
+  if ([selected representedObject] ==
+      [[self class] chooseAnotherFolderObject]) {
     content::RecordAction(
         UserMetricsAction("BookmarkBubble_EditFromCombobox"));
     [self showEditor];
@@ -271,7 +277,7 @@ using bookmarks::BookmarkNode;
   const BookmarkNode* oldParent = node_->parent();
   NSMenuItem* selectedItem = [folderPopUpButton_ selectedItem];
   id representedObject = [selectedItem representedObject];
-  if ([representedObject isEqual:[[self class] chooseAnotherFolderObject]]) {
+  if (representedObject == [[self class] chooseAnotherFolderObject]) {
     // "Choose another folder..."
     return;
   }
@@ -298,12 +304,17 @@ using bookmarks::BookmarkNode;
   NSMenuItem *item = [menu addItemWithTitle:title
                                      action:NULL
                               keyEquivalent:@""];
-  ChooseAnotherFolder* obj = [[self class] chooseAnotherFolderObject];
-  [item setRepresentedObject:obj];
+  [item setRepresentedObject:[[self class] chooseAnotherFolderObject]];
   // Finally, select the current parent.
   NSValue* parentValue = [NSValue valueWithPointer:node_->parent()];
   NSInteger idx = [menu indexOfItemWithRepresentedObject:parentValue];
   [folderPopUpButton_ selectItemAtIndex:idx];
+}
+
+- (LocationBarDecoration*)decorationForBubble {
+  LocationBarViewMac* locationBar =
+      [[[self parentWindow] windowController] locationBarBridge];
+  return locationBar ? locationBar->star_decoration() : nullptr;
 }
 
 @end  // BookmarkBubbleController

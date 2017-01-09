@@ -5,16 +5,20 @@
 #ifndef CHROME_BROWSER_UI_COCOA_MEDIA_PICKER_DESKTOP_MEDIA_PICKER_BRIDGE_H_
 #define CHROME_BROWSER_UI_COCOA_MEDIA_PICKER_DESKTOP_MEDIA_PICKER_BRIDGE_H_
 
-#include "base/basictypes.h"
-#include "chrome/browser/media/desktop_media_list_observer.h"
+#include "base/macros.h"
+#include "chrome/browser/media/webrtc/desktop_media_list.h"
+#include "chrome/browser/media/webrtc/desktop_media_list_observer.h"
 
 // Protocol corresponding to |DesktopMediaListObserver|.
 @protocol DesktopMediaPickerObserver
-- (void)sourceAddedAtIndex:(int)index;
-- (void)sourceRemovedAtIndex:(int)index;
-- (void)sourceMovedFrom:(int)oldIndex to:(int)newIndex;
-- (void)sourceNameChangedAtIndex:(int)index;
-- (void)sourceThumbnailChangedAtIndex:(int)index;
+- (void)sourceAddedForList:(DesktopMediaList*)list atIndex:(int)index;
+- (void)sourceRemovedForList:(DesktopMediaList*)list atIndex:(int)index;
+- (void)sourceMovedForList:(DesktopMediaList*)list
+                      from:(int)oldIndex
+                        to:(int)newIndex;
+- (void)sourceNameChangedForList:(DesktopMediaList*)list atIndex:(int)index;
+- (void)sourceThumbnailChangedForList:(DesktopMediaList*)list
+                              atIndex:(int)index;
 @end
 
 // Provides a |DesktopMediaListObserver| implementation that forwards
@@ -26,11 +30,13 @@ class DesktopMediaPickerBridge : public DesktopMediaListObserver {
   ~DesktopMediaPickerBridge() override;
 
   // DesktopMediaListObserver overrides.
-  void OnSourceAdded(int index) override;
-  void OnSourceRemoved(int index) override;
-  void OnSourceMoved(int old_index, int new_index) override;
-  void OnSourceNameChanged(int index) override;
-  void OnSourceThumbnailChanged(int index) override;
+  void OnSourceAdded(DesktopMediaList* list, int index) override;
+  void OnSourceRemoved(DesktopMediaList* list, int index) override;
+  void OnSourceMoved(DesktopMediaList* list,
+                     int old_index,
+                     int new_index) override;
+  void OnSourceNameChanged(DesktopMediaList* list, int index) override;
+  void OnSourceThumbnailChanged(DesktopMediaList* list, int index) override;
 
  private:
   id<DesktopMediaPickerObserver> observer_;  // weak; owns this

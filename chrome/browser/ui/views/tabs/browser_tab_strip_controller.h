@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TABS_BROWSER_TAB_STRIP_CONTROLLER_H_
 #define CHROME_BROWSER_UI_VIEWS_TABS_BROWSER_TAB_STRIP_CONTROLLER_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/tabs/hover_tab_selector.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
+#include "components/prefs/pref_change_registrar.h"
 
 class Browser;
 class Tab;
@@ -52,7 +54,6 @@ class BrowserTabStripController : public TabStripController,
   int GetActiveIndex() const override;
   bool IsTabSelected(int model_index) const override;
   bool IsTabPinned(int model_index) const override;
-  bool IsNewTabPage(int model_index) const override;
   void SelectTab(int model_index) override;
   void ExtendSelectionTo(int model_index) override;
   void ToggleSelected(int model_index) override;
@@ -74,9 +75,11 @@ class BrowserTabStripController : public TabStripController,
   void OnStartedDraggingTabs() override;
   void OnStoppedDraggingTabs() override;
   void CheckFileSupported(const GURL& url) override;
+  SkColor GetToolbarTopSeparatorColor() const override;
 
   // TabStripModelObserver implementation:
-  void TabInsertedAt(content::WebContents* contents,
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     content::WebContents* contents,
                      int model_index,
                      bool is_active) override;
   void TabDetachedAt(content::WebContents* contents, int model_index) override;
@@ -92,7 +95,8 @@ class BrowserTabStripController : public TabStripController,
                      content::WebContents* old_contents,
                      content::WebContents* new_contents,
                      int model_index) override;
-  void TabPinnedStateChanged(content::WebContents* contents,
+  void TabPinnedStateChanged(TabStripModel* tab_strip_model,
+                             content::WebContents* contents,
                              int model_index) override;
   void TabBlockedStateChanged(content::WebContents* contents,
                               int model_index) override;
@@ -148,7 +152,7 @@ class BrowserTabStripController : public TabStripController,
   Browser* browser_;
 
   // If non-NULL it means we're showing a menu for the tab.
-  scoped_ptr<TabContextMenuContents> context_menu_contents_;
+  std::unique_ptr<TabContextMenuContents> context_menu_contents_;
 
   // Helper for performing tab selection as a result of dragging over a tab.
   HoverTabSelector hover_tab_selector_;
@@ -156,7 +160,7 @@ class BrowserTabStripController : public TabStripController,
   // Forces the tabs to use the regular (non-immersive) style and the
   // top-of-window views to be revealed when the user is dragging |tabstrip|'s
   // tabs.
-  scoped_ptr<ImmersiveRevealedLock> immersive_reveal_lock_;
+  std::unique_ptr<ImmersiveRevealedLock> immersive_reveal_lock_;
 
   PrefChangeRegistrar local_pref_registrar_;
 

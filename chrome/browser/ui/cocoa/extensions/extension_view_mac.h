@@ -7,14 +7,12 @@
 
 #include <ApplicationServices/ApplicationServices.h>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "chrome/browser/extensions/extension_view.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
 
 class Browser;
-class SkBitmap;
 
 namespace content {
 class RenderViewHost;
@@ -51,9 +49,6 @@ class ExtensionViewMac : public extensions::ExtensionView {
 
   // Sets the container for this view.
   void set_container(Container* container) { container_ = container; }
-
-  // Informs the view that its containing window's frame changed.
-  void WindowFrameChanged();
 
   // Create the host view, adding it as a subview of |superview|.
   void CreateWidgetHostViewIn(gfx::NativeView superview);

@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "media/audio/audio_io.h"
+#include "media/audio/win/audio_manager_win.h"
 
 #include <windows.h>
 #include <objbase.h>  // This has to be before initguid.h
 #include <initguid.h>
 #include <mmsystem.h>
 #include <setupapi.h>
+#include <stddef.h>
+
+#include <memory>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/path_service.h"
@@ -22,22 +24,20 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/win/windows_version.h"
-#include "media/audio/audio_parameters.h"
+#include "media/audio/audio_device_description.h"
+#include "media/audio/audio_io.h"
 #include "media/audio/win/audio_device_listener_win.h"
 #include "media/audio/win/audio_low_latency_input_win.h"
 #include "media/audio/win/audio_low_latency_output_win.h"
-#include "media/audio/win/audio_manager_win.h"
 #include "media/audio/win/core_audio_util_win.h"
 #include "media/audio/win/device_enumeration_win.h"
 #include "media/audio/win/wavein_input_win.h"
 #include "media/audio/win/waveout_output_win.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/channel_layout.h"
 #include "media/base/limits.h"
 #include "media/base/media_switches.h"
-
-// Libraries required for the SetupAPI and Wbem APIs used here.
-#pragma comment(lib, "setupapi.lib")
 
 // The following are defined in various DDK headers, and we (re)define them here
 // to avoid adding the DDK as a chrome dependency.
@@ -128,14 +128,19 @@ static int NumberOfWaveOutBuffers() {
   return (base::win::GetVersion() == base::win::VERSION_VISTA) ? 4 : 3;
 }
 
-AudioManagerWin::AudioManagerWin(AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(audio_log_factory),
+AudioManagerWin::AudioManagerWin(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+    AudioLogFactory* audio_log_factory)
+    : AudioManagerBase(std::move(task_runner),
+                       std::move(worker_task_runner),
+                       audio_log_factory),
       // |CoreAudioUtil::IsSupported()| uses static variables to avoid doing
       // multiple initializations.  This is however not thread safe.
       // So, here we call it explicitly before we kick off the audio thread
       // or do any other work.
-      enumeration_type_(CoreAudioUtil::IsSupported() ?
-          kMMDeviceEnumeration : kWaveEnumeration) {
+      enumeration_type_(CoreAudioUtil::IsSupported() ? kMMDeviceEnumeration
+                                                     : kWaveEnumeration) {
   SetMaxOutputStreamsAllowed(kMaxOutputStreams);
 
   // WARNING: This is executed on the UI loop, do not add any code here which
@@ -149,10 +154,6 @@ AudioManagerWin::AudioManagerWin(AudioLogFactory* audio_log_factory)
 }
 
 AudioManagerWin::~AudioManagerWin() {
-  // It's safe to post a task here since Shutdown() will wait for all tasks to
-  // complete before returning.
-  GetTaskRunner()->PostTask(FROM_HERE, base::Bind(
-      &AudioManagerWin::ShutdownOnAudioThread, base::Unretained(this)));
   Shutdown();
 }
 
@@ -174,11 +175,6 @@ void AudioManagerWin::InitializeOnAudioThread() {
         base::Bind(&AudioManagerWin::NotifyAllOutputDeviceChangeListeners,
                    base::Unretained(this)))));
   }
-}
-
-void AudioManagerWin::ShutdownOnAudioThread() {
-  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
-  output_device_listener_.reset();
 }
 
 base::string16 AudioManagerWin::GetAudioInputDeviceModel() {
@@ -225,7 +221,8 @@ base::string16 AudioManagerWin::GetAudioInputDeviceModel() {
     if (!interface_detail_size)
       continue;
 
-    scoped_ptr<char[]> interface_detail_buffer(new char[interface_detail_size]);
+    std::unique_ptr<char[]> interface_detail_buffer(
+        new char[interface_detail_size]);
     SP_DEVICE_INTERFACE_DETAIL_DATA* interface_detail =
         reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA*>(
             interface_detail_buffer.get());
@@ -284,16 +281,11 @@ void AudioManagerWin::GetAudioDeviceNamesImpl(
   }
 
   if (!device_names->empty()) {
-    AudioDeviceName name;
-    if (enumeration_type() == kMMDeviceEnumeration) {
-      name.device_name = AudioManager::GetCommunicationsDeviceName();
-      name.unique_id = AudioManagerBase::kCommunicationsDeviceId;
-      device_names->push_front(name);
-    }
+    if (enumeration_type() == kMMDeviceEnumeration)
+      device_names->push_front(AudioDeviceName::CreateCommunications());
+
     // Always add default device parameters as first element.
-    name.device_name = AudioManager::GetDefaultDeviceName();
-    name.unique_id = AudioManagerBase::kDefaultDeviceId;
-    device_names->push_front(name);
+    device_names->push_front(AudioDeviceName::CreateDefault());
   }
 }
 
@@ -339,11 +331,16 @@ std::string AudioManagerWin::GetAssociatedOutputDeviceID(
   return CoreAudioUtil::GetMatchingOutputDeviceID(input_device_id);
 }
 
+const char* AudioManagerWin::GetName() {
+  return "Windows";
+}
+
 // Factory for the implementations of AudioOutputStream for AUDIO_PCM_LINEAR
 // mode.
 // - PCMWaveOutAudioOutputStream: Based on the waveOut API.
 AudioOutputStream* AudioManagerWin::MakeLinearOutputStream(
-    const AudioParameters& params) {
+    const AudioParameters& params,
+    const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
   if (params.channels() > kWinMaxChannels)
     return NULL;
@@ -361,7 +358,8 @@ AudioOutputStream* AudioManagerWin::MakeLinearOutputStream(
 // - WASAPIAudioOutputStream: Based on Core Audio (WASAPI) API.
 AudioOutputStream* AudioManagerWin::MakeLowLatencyOutputStream(
     const AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
   if (params.channels() > kWinMaxChannels)
     return NULL;
@@ -369,7 +367,7 @@ AudioOutputStream* AudioManagerWin::MakeLowLatencyOutputStream(
   if (!core_audio_supported()) {
     // Fall back to Windows Wave implementation on Windows XP or lower.
     DLOG_IF(ERROR, !device_id.empty() &&
-        device_id != AudioManagerBase::kDefaultDeviceId)
+                       device_id != AudioDeviceDescription::kDefaultDeviceId)
         << "Opening by device id not supported by PCMWaveOutAudioOutputStream";
     DVLOG(1) << "Using WaveOut since WASAPI requires at least Vista.";
     return new PCMWaveOutAudioOutputStream(
@@ -379,18 +377,22 @@ AudioOutputStream* AudioManagerWin::MakeLowLatencyOutputStream(
   // Pass an empty string to indicate that we want the default device
   // since we consistently only check for an empty string in
   // WASAPIAudioOutputStream.
-  bool communications = device_id == AudioManagerBase::kCommunicationsDeviceId;
-  return new WASAPIAudioOutputStream(this,
-      communications || device_id == AudioManagerBase::kDefaultDeviceId ?
-          std::string() : device_id,
-      params,
-      communications ? eCommunications : eConsole);
+  bool communications =
+      device_id == AudioDeviceDescription::kCommunicationsDeviceId;
+  return new WASAPIAudioOutputStream(
+      this,
+      communications || device_id == AudioDeviceDescription::kDefaultDeviceId
+          ? std::string()
+          : device_id,
+      params, communications ? eCommunications : eConsole);
 }
 
 // Factory for the implementations of AudioInputStream for AUDIO_PCM_LINEAR
 // mode.
 AudioInputStream* AudioManagerWin::MakeLinearInputStream(
-    const AudioParameters& params, const std::string& device_id) {
+    const AudioParameters& params,
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
   return CreatePCMWaveInAudioInputStream(params, device_id);
 }
@@ -398,7 +400,9 @@ AudioInputStream* AudioManagerWin::MakeLinearInputStream(
 // Factory for the implementations of AudioInputStream for
 // AUDIO_PCM_LOW_LATENCY mode.
 AudioInputStream* AudioManagerWin::MakeLowLatencyInputStream(
-    const AudioParameters& params, const std::string& device_id) {
+    const AudioParameters& params,
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
   DVLOG(1) << "MakeLowLatencyInputStream: " << device_id;
   AudioInputStream* stream = NULL;
@@ -524,7 +528,7 @@ AudioInputStream* AudioManagerWin::CreatePCMWaveInAudioInputStream(
     const AudioParameters& params,
     const std::string& device_id) {
   std::string xp_device_id = device_id;
-  if (device_id != AudioManagerBase::kDefaultDeviceId &&
+  if (device_id != AudioDeviceDescription::kDefaultDeviceId &&
       enumeration_type_ == kMMDeviceEnumeration) {
     xp_device_id = ConvertToWinXPInputDeviceId(device_id);
     if (xp_device_id.empty()) {
@@ -539,8 +543,13 @@ AudioInputStream* AudioManagerWin::CreatePCMWaveInAudioInputStream(
 }
 
 /// static
-AudioManager* CreateAudioManager(AudioLogFactory* audio_log_factory) {
-  return new AudioManagerWin(audio_log_factory);
+ScopedAudioManagerPtr CreateAudioManager(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+    AudioLogFactory* audio_log_factory) {
+  return ScopedAudioManagerPtr(
+      new AudioManagerWin(std::move(task_runner), std::move(worker_task_runner),
+                          audio_log_factory));
 }
 
 }  // namespace media

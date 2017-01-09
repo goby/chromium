@@ -45,13 +45,11 @@ cvox.ChromeVox.MAX_INIT_TIMEOUT_ = 30000;
 
 /**
  * Flag indicating if ChromeVox Classic is enabled based on the Next
- * background page. Initializes to true for non-top level
- * (i.e. iframes) windows. For top level windows, left undefined and
- * set when background page replies.
+ * background page  which sends the state at page load.
  * @type {boolean|undefined}
  * @private
  */
-cvox.ChromeVox.isClassicEnabled_ = window.top == window ? undefined : true;
+cvox.ChromeVox.isClassicEnabled_ = undefined;
 
 
 /**
@@ -82,6 +80,28 @@ cvox.ChromeVox.recallInit_ = function(reason) {
 cvox.ChromeVox.initDocument = function() {
   // Don't start the content script on the ChromeVox background page.
   if (/^chrome-extension:\/\/.*background\.html$/.test(window.location.href)) {
+    return;
+  }
+
+  // Look for ChromeVox-specific meta attributes.
+  var disableContentScript = false;
+  if (document.head) {
+    var metaNodes = document.head.querySelectorAll('meta[name="chromevox"]');
+    for (var i = 0, meta; meta = metaNodes[i]; i++) {
+      var contentScript = meta.getAttribute('content-script');
+      if (contentScript && contentScript.toLowerCase() == 'no') {
+        disableContentScript = true;
+      }
+    }
+  }
+  if (disableContentScript) {
+    var url = location.href;
+    url = url.substring(0, url.indexOf('#')) || url;
+    cvox.ExtensionBridge.send({
+      target: 'next',
+      action: 'enableClassicCompatForUrl',
+      url: url
+    });
     return;
   }
 

@@ -16,14 +16,14 @@
 #include "ui/accessibility/ax_enums.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/slide_animation.h"
-#include "ui/gfx/screen.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_style.h"
 #include "ui/message_center/message_center_tray.h"
 #include "ui/message_center/notification.h"
 #include "ui/message_center/notification_list.h"
+#include "ui/message_center/views/message_view.h"
 #include "ui/message_center/views/message_view_context_menu_controller.h"
-#include "ui/message_center/views/notification_view.h"
+#include "ui/message_center/views/message_view_factory.h"
 #include "ui/message_center/views/popup_alignment_delegate.h"
 #include "ui/message_center/views/toast_contents_view.h"
 #include "ui/views/background.h"
@@ -48,17 +48,16 @@ const int kToastMarginY = kMarginBetweenItems;
 }  // namespace.
 
 MessagePopupCollection::MessagePopupCollection(
-    gfx::NativeView parent,
     MessageCenter* message_center,
     MessageCenterTray* tray,
     PopupAlignmentDelegate* alignment_delegate)
-    : parent_(parent),
-      message_center_(message_center),
+    : message_center_(message_center),
       tray_(tray),
       alignment_delegate_(alignment_delegate),
       defer_counter_(0),
       latest_toast_entered_(NULL),
       user_is_closing_toasts_by_clicking_(false),
+      target_top_edge_(0),
       context_menu_controller_(new MessageViewContextMenuController(this)),
       weak_factory_(this) {
   DCHECK(message_center_);
@@ -83,10 +82,28 @@ void MessagePopupCollection::ClickOnNotification(
 void MessagePopupCollection::RemoveNotification(
     const std::string& notification_id,
     bool by_user) {
-  message_center_->RemoveNotification(notification_id, by_user);
+  NotificationList::PopupNotifications notifications =
+      message_center_->GetPopupNotifications();
+  for (NotificationList::PopupNotifications::iterator iter =
+           notifications.begin();
+       iter != notifications.end(); ++iter) {
+    Notification* notification = *iter;
+    DCHECK(notification);
+
+    if (notification->id() != notification_id)
+      continue;
+
+    // Don't remove the notification only when it's not pinned.
+    if (!notification->pinned())
+      message_center_->RemoveNotification(notification_id, by_user);
+    else
+      message_center_->MarkSinglePopupAsShown(notification_id, true /* read */);
+
+    break;
+  }
 }
 
-scoped_ptr<ui::MenuModel> MessagePopupCollection::CreateMenuModel(
+std::unique_ptr<ui::MenuModel> MessagePopupCollection::CreateMenuModel(
     const NotifierId& notifier_id,
     const base::string16& display_source) {
   return tray_->CreateNotificationMenuModel(notifier_id, display_source);
@@ -139,22 +156,34 @@ void MessagePopupCollection::UpdateWidgets() {
     if (FindToast((*iter)->id()))
       continue;
 
-    NotificationView* view =
-        NotificationView::Create(NULL,
-                                 *(*iter),
-                                 true); // Create top-level notification.
+    MessageView* view;
+    // Create top-level notification.
+#if defined(OS_CHROMEOS)
+    if ((*iter)->pinned()) {
+      Notification notification = *(*iter);
+      // Override pinned status, since toasts should be closable even when it's
+      // pinned.
+      notification.set_pinned(false);
+      view = MessageViewFactory::Create(NULL, notification, true);
+    } else
+#endif  // defined(OS_CHROMEOS)
+    {
+      view = MessageViewFactory::Create(NULL, *(*iter), true);
+    }
+
     view->set_context_menu_controller(context_menu_controller_.get());
     int view_height = ToastContentsView::GetToastSizeForView(view).height();
     int height_available =
-        top_down ? alignment_delegate_->GetWorkAreaBottom() - base : base;
+        top_down ? alignment_delegate_->GetWorkArea().bottom() - base
+                 : base - alignment_delegate_->GetWorkArea().y();
 
     if (height_available - view_height - kToastMarginY < 0) {
       delete view;
       break;
     }
 
-    ToastContentsView* toast =
-        new ToastContentsView((*iter)->id(), weak_factory_.GetWeakPtr());
+    ToastContentsView* toast = new ToastContentsView(
+        (*iter)->id(), alignment_delegate_, weak_factory_.GetWeakPtr());
     // There will be no contents already since this is a new ToastContentsView.
     toast->SetContents(view, /*a11y_feedback_for_updates=*/false);
     toasts_.push_back(toast);
@@ -267,8 +296,9 @@ void MessagePopupCollection::RepositionWidgets() {
     // load and such notifications should disappear. Do not call
     // CloseWithAnimation, we don't want to show the closing animation, and we
     // don't want to mark such notifications as shown. See crbug.com/233424
-    if ((top_down ? alignment_delegate_->GetWorkAreaBottom() - bounds.bottom()
-                  : bounds.y()) >= 0)
+    if ((top_down
+             ? alignment_delegate_->GetWorkArea().bottom() - bounds.bottom()
+             : bounds.y() - alignment_delegate_->GetWorkArea().y()) >= 0)
       (*curr)->SetBoundsWithAnimation(bounds);
     else
       RemoveToast(*curr, /*mark_as_shown=*/false);
@@ -477,7 +507,7 @@ void MessagePopupCollection::DoUpdateIfPossible() {
 }
 
 void MessagePopupCollection::OnDisplayMetricsChanged(
-    const gfx::Display& display) {
+    const display::Display& display) {
   alignment_delegate_->RecomputeAlignment(display);
 }
 

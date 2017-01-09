@@ -8,7 +8,6 @@
 #include "core/layout/LayoutText.h"
 #include "core/layout/api/LineLayoutItem.h"
 #include "platform/LayoutUnit.h"
-#include "platform/text/TextPath.h"
 #include "wtf/Forward.h"
 
 namespace blink {
@@ -16,134 +15,113 @@ namespace blink {
 class LayoutText;
 
 class LineLayoutText : public LineLayoutItem {
-public:
-    explicit LineLayoutText(LayoutText* layoutObject) : LineLayoutItem(layoutObject) { }
+ public:
+  explicit LineLayoutText(LayoutText* layoutObject)
+      : LineLayoutItem(layoutObject) {}
 
-    explicit LineLayoutText(const LineLayoutItem& item)
-        : LineLayoutItem(item)
-    {
-        ASSERT(!item || item.isText());
-    }
+  explicit LineLayoutText(const LineLayoutItem& item) : LineLayoutItem(item) {
+    SECURITY_DCHECK(!item || item.isText());
+  }
 
-    explicit LineLayoutText(std::nullptr_t) : LineLayoutItem(nullptr) { }
+  explicit LineLayoutText(std::nullptr_t) : LineLayoutItem(nullptr) {}
 
-    LineLayoutText() { }
+  LineLayoutText() {}
 
-    InlineTextBox* firstTextBox() const
-    {
-        return toText()->firstTextBox();
-    }
+  InlineTextBox* firstTextBox() const { return toText()->firstTextBox(); }
 
-    void extractTextBox(InlineTextBox* inlineTextBox)
-    {
-        toText()->extractTextBox(inlineTextBox);
-    }
+  InlineTextBox* lastTextBox() const { return toText()->lastTextBox(); }
 
-    void attachTextBox(InlineTextBox* inlineTextBox)
-    {
-        toText()->attachTextBox(inlineTextBox);
-    }
+  InlineTextBox* createInlineTextBox(int start, unsigned short length) {
+    return toText()->createInlineTextBox(start, length);
+  }
 
-    void removeTextBox(InlineTextBox* inlineTextBox)
-    {
-        toText()->removeTextBox(inlineTextBox);
-    }
+  void extractTextBox(InlineTextBox* inlineTextBox) {
+    toText()->extractTextBox(inlineTextBox);
+  }
 
-    bool isWordBreak() const
-    {
-        return toText()->isWordBreak();
-    }
+  void attachTextBox(InlineTextBox* inlineTextBox) {
+    toText()->attachTextBox(inlineTextBox);
+  }
 
-    bool isAllCollapsibleWhitespace() const
-    {
-        return toText()->isAllCollapsibleWhitespace();
-    }
+  void removeTextBox(InlineTextBox* inlineTextBox) {
+    toText()->removeTextBox(inlineTextBox);
+  }
 
-    UChar characterAt(unsigned offset) const
-    {
-        return toText()->characterAt(offset);
-    }
+  bool isWordBreak() const { return toText()->isWordBreak(); }
 
-    UChar uncheckedCharacterAt(unsigned offset) const
-    {
-        return toText()->uncheckedCharacterAt(offset);
-    }
+  bool isAllCollapsibleWhitespace() const {
+    return toText()->isAllCollapsibleWhitespace();
+  }
 
-    UChar32 codepointAt(unsigned offset) const
-    {
-        return toText()->codepointAt(offset);
-    }
+  UChar characterAt(unsigned offset) const {
+    return toText()->characterAt(offset);
+  }
 
-    bool is8Bit() const
-    {
-        return toText()->is8Bit();
-    }
+  UChar uncheckedCharacterAt(unsigned offset) const {
+    return toText()->uncheckedCharacterAt(offset);
+  }
 
-    const LChar* characters8() const
-    {
-        return toText()->characters8();
-    }
+  UChar32 codepointAt(unsigned offset) const {
+    return toText()->codepointAt(offset);
+  }
 
-    const UChar* characters16() const
-    {
-        return toText()->characters16();
-    }
+  bool is8Bit() const { return toText()->is8Bit(); }
 
-    bool hasEmptyText() const
-    {
-        return toText()->hasEmptyText();
-    }
+  const LChar* characters8() const { return toText()->characters8(); }
 
-    unsigned textLength() const
-    {
-        return toText()->textLength();
-    }
+  const UChar* characters16() const { return toText()->characters16(); }
 
-    unsigned resolvedTextLength() const
-    {
-        return toText()->resolvedTextLength();
-    }
+  bool hasEmptyText() const { return toText()->hasEmptyText(); }
 
-    const String& text() const
-    {
-        return toText()->text();
-    }
+  unsigned textLength() const { return toText()->textLength(); }
 
-    bool canUseSimpleFontCodePath() const
-    {
-        return toText()->canUseSimpleFontCodePath();
-    }
+  unsigned resolvedTextLength() const { return toText()->resolvedTextLength(); }
 
-    float width(unsigned from, unsigned len, const Font& font, LayoutUnit xPos, TextDirection textDirection, HashSet<const SimpleFontData*>* fallbackFonts, FloatRect* glyphBounds) const
-    {
-        return toText()->width(from, len, font, xPos, textDirection, fallbackFonts, glyphBounds);
-    }
+  const String& text() const { return toText()->text(); }
 
-    float width(unsigned from, unsigned len, LayoutUnit xPos, TextDirection textDirection, bool firstLine) const
-    {
-        return toText()->width(from, len, xPos, textDirection, firstLine);
-    }
+  bool containsOnlyWhitespace(unsigned from, unsigned len) const {
+    return toText()->containsOnlyWhitespace(from, len);
+  }
 
-    float hyphenWidth(const Font& font, TextDirection textDirection)
-    {
-        return toText()->hyphenWidth(font, textDirection);
-    }
+  float width(unsigned from,
+              unsigned len,
+              const Font& font,
+              LayoutUnit xPos,
+              TextDirection textDirection,
+              HashSet<const SimpleFontData*>* fallbackFonts,
+              FloatRect* glyphBounds) const {
+    return toText()->width(from, len, font, xPos, textDirection, fallbackFonts,
+                           glyphBounds);
+  }
 
-    void selectionStartEnd(int& spos, int& epos) const
-    {
-        return toText()->selectionStartEnd(spos, epos);
-    }
+  float width(unsigned from,
+              unsigned len,
+              LayoutUnit xPos,
+              TextDirection textDirection,
+              bool firstLine,
+              HashSet<const SimpleFontData*>* fallbackFonts = nullptr,
+              FloatRect* glyphBounds = nullptr) const {
+    return toText()->width(from, len, xPos, textDirection, firstLine,
+                           fallbackFonts, glyphBounds);
+  }
 
-    unsigned textStartOffset() const
-    {
-        return toText()->textStartOffset();
-    }
+  float hyphenWidth(const Font& font, TextDirection textDirection) {
+    return toText()->hyphenWidth(font, textDirection);
+  }
 
-private:
-    LayoutText* toText() { return toLayoutText(layoutObject()); }
-    const LayoutText* toText() const { return toLayoutText(layoutObject()); }
+  void selectionStartEnd(int& spos, int& epos) const {
+    return toText()->selectionStartEnd(spos, epos);
+  }
+
+  unsigned textStartOffset() const { return toText()->textStartOffset(); }
+
+  float minLogicalWidth() const { return toText()->minLogicalWidth(); }
+
+ private:
+  LayoutText* toText() { return toLayoutText(layoutObject()); }
+  const LayoutText* toText() const { return toLayoutText(layoutObject()); }
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // LineLayoutText_h
+#endif  // LineLayoutText_h

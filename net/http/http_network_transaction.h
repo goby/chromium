@@ -7,42 +7,50 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
+#include "crypto/ec_private_key.h"
+#include "net/base/net_error_details.h"
+#include "net/base/net_export.h"
+#include "net/base/network_throttle_manager.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_stream_factory.h"
 #include "net/http/http_transaction.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_service.h"
 #include "net/socket/connection_attempts.h"
+#include "net/ssl/channel_id_service.h"
 #include "net/ssl/ssl_config_service.h"
-#include "net/ssl/ssl_failure_state.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
+
+namespace crypto {
+class ECPrivateKey;
+}
 
 namespace net {
 
-class ClientSocketHandle;
+class BidirectionalStreamImpl;
 class HttpAuthController;
 class HttpNetworkSession;
 class HttpStream;
 class HttpStreamRequest;
 class IOBuffer;
 class ProxyInfo;
-class SpdySession;
 class SSLPrivateKey;
 struct HttpRequestInfo;
 
 class NET_EXPORT_PRIVATE HttpNetworkTransaction
     : public HttpTransaction,
-      public HttpStreamRequest::Delegate {
+      public HttpStreamRequest::Delegate,
+      public NetworkThrottleManager::ThrottleDelegate {
  public:
   HttpNetworkTransaction(RequestPriority priority,
                          HttpNetworkSession* session);
@@ -52,7 +60,7 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // HttpTransaction methods:
   int Start(const HttpRequestInfo* request_info,
             const CompletionCallback& callback,
-            const BoundNetLog& net_log) override;
+            const NetLogWithSource& net_log) override;
   int RestartIgnoringLastError(const CompletionCallback& callback) override;
   int RestartWithCertificate(X509Certificate* client_cert,
                              SSLPrivateKey* client_private_key,
@@ -71,30 +79,31 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   void DoneReading() override;
   const HttpResponseInfo* GetResponseInfo() const override;
   LoadState GetLoadState() const override;
-  UploadProgress GetUploadProgress() const override;
   void SetQuicServerInfo(QuicServerInfo* quic_server_info) override;
   bool GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const override;
   bool GetRemoteEndpoint(IPEndPoint* endpoint) const override;
+  void PopulateNetErrorDetails(NetErrorDetails* details) const override;
   void SetPriority(RequestPriority priority) override;
   void SetWebSocketHandshakeStreamCreateHelper(
       WebSocketHandshakeStreamBase::CreateHelper* create_helper) override;
   void SetBeforeNetworkStartCallback(
       const BeforeNetworkStartCallback& callback) override;
-  void SetBeforeProxyHeadersSentCallback(
-      const BeforeProxyHeadersSentCallback& callback) override;
+  void SetBeforeHeadersSentCallback(
+      const BeforeHeadersSentCallback& callback) override;
   int ResumeNetworkStart() override;
 
   // HttpStreamRequest::Delegate methods:
   void OnStreamReady(const SSLConfig& used_ssl_config,
                      const ProxyInfo& used_proxy_info,
                      HttpStream* stream) override;
+  void OnBidirectionalStreamImplReady(const SSLConfig& used_ssl_config,
+                                      const ProxyInfo& used_proxy_info,
+                                      BidirectionalStreamImpl* stream) override;
   void OnWebSocketHandshakeStreamReady(
       const SSLConfig& used_ssl_config,
       const ProxyInfo& used_proxy_info,
       WebSocketHandshakeStreamBase* stream) override;
-  void OnStreamFailed(int status,
-                      const SSLConfig& used_ssl_config,
-                      SSLFailureState ssl_failure_state) override;
+  void OnStreamFailed(int status, const SSLConfig& used_ssl_config) override;
   void OnCertificateError(int status,
                           const SSLConfig& used_ssl_config,
                           const SSLInfo& ssl_info) override;
@@ -109,29 +118,26 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
                                   const ProxyInfo& used_proxy_info,
                                   HttpStream* stream) override;
 
+  void OnQuicBroken() override;
   void GetConnectionAttempts(ConnectionAttempts* out) const override;
 
- private:
-  friend class HttpNetworkTransactionSSLTest;
+  // NetworkThrottleManager::Delegate methods:
+  void OnThrottleUnblocked(NetworkThrottleManager::Throttle* throttle) override;
 
-  FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest,
-                           ResetStateForRestart);
-  FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, EnableNPN);
-  FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, DisableNPN);
-  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
-                           WindowUpdateReceived);
-  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
-                           WindowUpdateSent);
-  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
-                           WindowUpdateOverflow);
-  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
-                           FlowControlStallResume);
+ private:
+  FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, ResetStateForRestart);
+  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateReceived);
+  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateSent);
+  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateOverflow);
+  FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, FlowControlStallResume);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
                            FlowControlStallResumeAfterSettings);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest,
                            FlowControlNegativeSendWindowSize);
 
   enum State {
+    STATE_THROTTLE,
+    STATE_THROTTLE_COMPLETE,
     STATE_NOTIFY_BEFORE_CREATE_STREAM,
     STATE_CREATE_STREAM,
     STATE_CREATE_STREAM_COMPLETE,
@@ -141,6 +147,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
     STATE_GENERATE_PROXY_AUTH_TOKEN_COMPLETE,
     STATE_GENERATE_SERVER_AUTH_TOKEN,
     STATE_GENERATE_SERVER_AUTH_TOKEN_COMPLETE,
+    STATE_GET_PROVIDED_TOKEN_BINDING_KEY,
+    STATE_GET_PROVIDED_TOKEN_BINDING_KEY_COMPLETE,
+    STATE_GET_REFERRED_TOKEN_BINDING_KEY,
+    STATE_GET_REFERRED_TOKEN_BINDING_KEY_COMPLETE,
     STATE_INIT_REQUEST_BODY,
     STATE_INIT_REQUEST_BODY_COMPLETE,
     STATE_BUILD_REQUEST,
@@ -157,6 +167,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   };
 
   bool IsSecureRequest() const;
+  bool IsTokenBindingEnabled() const;
+  void RecordTokenBindingSupport() const;
 
   // Returns true if the request is using an HTTP(S) proxy without being
   // tunneled via the CONNECT method.
@@ -172,6 +184,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // argument receive the result from the previous state.  If a method returns
   // ERR_IO_PENDING, then the result from OnIOComplete will be passed to the
   // next state method as the result arg.
+  int DoThrottle();
+  int DoThrottleComplete();
   int DoNotifyBeforeCreateStream();
   int DoCreateStream();
   int DoCreateStreamComplete(int result);
@@ -181,6 +195,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   int DoGenerateProxyAuthTokenComplete(int result);
   int DoGenerateServerAuthToken();
   int DoGenerateServerAuthTokenComplete(int result);
+  int DoGetProvidedTokenBindingKey();
+  int DoGetProvidedTokenBindingKeyComplete(int result);
+  int DoGetReferredTokenBindingKey();
+  int DoGetReferredTokenBindingKeyComplete(int result);
   int DoInitRequestBody();
   int DoInitRequestBodyComplete(int result);
   int DoBuildRequest();
@@ -194,7 +212,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   int DoDrainBodyForAuthRestart();
   int DoDrainBodyForAuthRestartComplete(int result);
 
-  void BuildRequestHeaders(bool using_http_proxy_without_tunnel);
+  int BuildRequestHeaders(bool using_http_proxy_without_tunnel);
+  int BuildTokenBindingHeader(std::string* out);
 
   // Writes a log message to help debugging in the field when we block a proxy
   // response to a CONNECT request.
@@ -246,6 +265,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // to be maintained for multi-round auth.
   void ResetStateForAuthRestart();
 
+  // Caches network error details from the stream if available
+  // and resets the stream.
+  void CacheNetErrorDetailsAndResetStream();
+
   // Records metrics relating to SSL fallbacks.
   void RecordSSLFallbackMetrics(int result);
 
@@ -269,9 +292,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // Returns true if this transaction is for a WebSocket handshake
   bool ForWebSocketHandshake() const;
 
-  // Debug helper.
-  static std::string DescribeState(State state);
-
   void SetStream(HttpStream* stream);
 
   void CopyConnectionAttemptsFromStreamRequest();
@@ -289,32 +309,34 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   HttpNetworkSession* session_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
+
+  // Reset to null at the start of the Read state machine.
   const HttpRequestInfo* request_;
+
+  // The requested URL.
+  GURL url_;
   RequestPriority priority_;
   HttpResponseInfo response_;
 
   // |proxy_info_| is the ProxyInfo used by the HttpStreamRequest.
   ProxyInfo proxy_info_;
 
-  scoped_ptr<HttpStreamRequest> stream_request_;
-  scoped_ptr<HttpStream> stream_;
+  std::unique_ptr<HttpStreamRequest> stream_request_;
+  std::unique_ptr<HttpStream> stream_;
 
   // True if we've validated the headers that the stream parser has returned.
   bool headers_valid_;
 
   SSLConfig server_ssl_config_;
   SSLConfig proxy_ssl_config_;
-  // The SSLFailureState of the most recent failed stream.
-  SSLFailureState server_ssl_failure_state_;
-  // fallback_error_code contains the error code that caused the last TLS
-  // fallback. If the fallback connection results in
-  // ERR_SSL_INAPPROPRIATE_FALLBACK (i.e. the server indicated that the
-  // fallback should not have been needed) then we use this value to return the
-  // original error that triggered the fallback.
-  int fallback_error_code_;
-  // The SSLFailureState which caused the last TLS version fallback.
-  SSLFailureState fallback_failure_state_;
+
+  // Keys to use for signing message in Token Binding header.
+  std::unique_ptr<crypto::ECPrivateKey> provided_token_binding_key_;
+  std::unique_ptr<crypto::ECPrivateKey> referred_token_binding_key_;
+  // Object to manage lookup of |provided_token_binding_key_| and
+  // |referred_token_binding_key_|.
+  ChannelIDService::Request token_binding_request_;
 
   HttpRequestHeaders request_headers_;
 
@@ -353,10 +375,16 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
       websocket_handshake_stream_base_create_helper_;
 
   BeforeNetworkStartCallback before_network_start_callback_;
-  BeforeProxyHeadersSentCallback before_proxy_headers_sent_callback_;
+  BeforeHeadersSentCallback before_headers_sent_callback_;
 
   ConnectionAttempts connection_attempts_;
   IPEndPoint remote_endpoint_;
+  // Network error details for this transaction.
+  NetErrorDetails net_error_details_;
+
+  // Communicate lifetime of transaction to the throttler, and
+  // throttled state to the transaction.
+  std::unique_ptr<NetworkThrottleManager::Throttle> throttle_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpNetworkTransaction);
 };

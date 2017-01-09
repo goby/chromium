@@ -5,20 +5,21 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_FEATURE_INFO_H_
 #define GPU_COMMAND_BUFFER_SERVICE_FEATURE_INFO_H_
 
+#include <memory>
 #include <string>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/gles2_cmd_validation.h"
-#include "gpu/config/gpu_driver_bug_workaround_type.h"
+#include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "gpu/gpu_export.h"
 
 namespace base {
 class CommandLine;
 }
 
-namespace gfx {
+namespace gl {
 struct GLVersionInfo;
 }
 
@@ -31,8 +32,6 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
   struct FeatureFlags {
     FeatureFlags();
 
-    bool chromium_color_buffer_float_rgba;
-    bool chromium_color_buffer_float_rgb;
     bool chromium_framebuffer_multisample;
     bool chromium_sync_query;
     // Use glBlitFramebuffer() and glRenderbufferStorageMultisample() with
@@ -43,8 +42,10 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     // Use the IMG GLenum values and functions rather than EXT.
     bool use_img_for_multisampled_render_to_texture;
     bool chromium_screen_space_antialiasing;
+    bool use_chromium_screen_space_antialiasing_via_shaders;
     bool oes_standard_derivatives;
     bool oes_egl_image_external;
+    bool nv_egl_stream_consumer_external;
     bool oes_depth24;
     bool oes_compressed_etc1_rgb8_texture;
     bool packed_depth24_stencil8;
@@ -78,39 +79,37 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool angle_texture_usage;
     bool ext_texture_storage;
     bool chromium_path_rendering;
+    bool chromium_framebuffer_mixed_samples;
     bool blend_equation_advanced;
     bool blend_equation_advanced_coherent;
     bool ext_texture_rg;
     bool chromium_image_ycbcr_420v;
     bool chromium_image_ycbcr_422;
-    bool enable_subscribe_uniform;
     bool emulate_primitive_restart_fixed_index;
     bool ext_render_buffer_format_bgra8888;
     bool ext_multisample_compatibility;
     bool ext_blend_func_extended;
+    bool ext_read_format_bgra;
+    bool desktop_srgb_support;
+    bool arb_es3_compatibility;
+    bool chromium_color_buffer_float_rgb = false;
+    bool chromium_color_buffer_float_rgba = false;
+    bool angle_robust_client_memory = false;
+    bool khr_debug = false;
+    bool chromium_bind_generates_resource = false;
+    bool angle_webgl_compatibility = false;
+    bool ext_srgb_write_control = false;
   };
 
-  struct Workarounds {
-    Workarounds();
-
-#define GPU_OP(type, name) bool name;
-    GPU_DRIVER_BUG_WORKAROUNDS(GPU_OP)
-#undef GPU_OP
-
-    // Note: 0 here means use driver limit.
-    GLint max_texture_size;
-    GLint max_cube_map_texture_size;
-    GLint max_fragment_uniform_vectors;
-    GLint max_varying_vectors;
-    GLint max_vertex_uniform_vectors;
-    GLint max_copy_texture_chromium_size;
-  };
-
-  // Constructor with workarounds taken from the current process's CommandLine
   FeatureInfo();
 
-  // Constructor with workarounds taken from |command_line|
-  FeatureInfo(const base::CommandLine& command_line);
+  // Constructor with workarounds taken from the current process's CommandLine
+  explicit FeatureInfo(
+      const GpuDriverBugWorkarounds& gpu_driver_bug_workarounds);
+
+  // Constructor with workarounds taken from |command_line|.
+  FeatureInfo(const base::CommandLine& command_line,
+              const GpuDriverBugWorkarounds& gpu_driver_bug_workarounds);
 
   // Initializes the feature information. Needs a current GL context.
   bool Initialize(ContextType context_type,
@@ -118,6 +117,10 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
 
   // Helper that defaults to no disallowed features and a GLES2 context.
   bool InitializeForTesting();
+  // Helper that defaults to no disallowed Features.
+  bool InitializeForTesting(ContextType context_type);
+  // Helper that defaults to a GLES2 context.
+  bool InitializeForTesting(const DisallowedFeatures& disallowed_features);
 
   const Validators* validators() const {
     return &validators_;
@@ -133,11 +136,13 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     return feature_flags_;
   }
 
-  const Workarounds& workarounds() const {
-    return workarounds_;
+  const GpuDriverBugWorkarounds& workarounds() const { return workarounds_; }
+
+  const DisallowedFeatures& disallowed_features() const {
+    return disallowed_features_;
   }
 
-  const gfx::GLVersionInfo& gl_version_info() const {
+  const gl::GLVersionInfo& gl_version_info() const {
     DCHECK(gl_version_info_.get());
     return *(gl_version_info_.get());
   }
@@ -145,13 +150,25 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
   bool IsES3Capable() const;
   void EnableES3Validators();
 
-  bool IsES3Enabled() const {
-    return unsafe_es3_apis_enabled_;
-  }
-
   bool disable_shader_translator() const { return disable_shader_translator_; }
 
   bool IsWebGLContext() const;
+  bool IsWebGL1OrES2Context() const;
+  bool IsWebGL2OrES3Context() const;
+
+  void EnableCHROMIUMColorBufferFloatRGBA();
+  void EnableCHROMIUMColorBufferFloatRGB();
+  void EnableEXTColorBufferFloat();
+  void EnableOESTextureFloatLinear();
+  void EnableOESTextureHalfFloatLinear();
+
+  bool ext_color_buffer_float_available() const {
+    return ext_color_buffer_float_available_;
+  }
+
+  bool oes_texture_float_linear_available() const {
+    return oes_texture_float_linear_available_;
+  }
 
  private:
   friend class base::RefCounted<FeatureInfo>;
@@ -176,18 +193,14 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
   FeatureFlags feature_flags_;
 
   // Flags for Workarounds.
-  Workarounds workarounds_;
+  const GpuDriverBugWorkarounds workarounds_;
 
-  // Whether the command line switch kEnableUnsafeES3APIs is passed in.
-  bool enable_unsafe_es3_apis_switch_;
-
-  bool unsafe_es3_apis_enabled_;
-
-  // Whether the command line switch kEnableGLPathRendering is passed in.
-  bool enable_gl_path_rendering_switch_;
+  bool ext_color_buffer_float_available_;
+  bool oes_texture_float_linear_available_;
+  bool oes_texture_half_float_linear_available_;
 
   bool disable_shader_translator_;
-  scoped_ptr<gfx::GLVersionInfo> gl_version_info_;
+  std::unique_ptr<gl::GLVersionInfo> gl_version_info_;
 
   DISALLOW_COPY_AND_ASSIGN(FeatureInfo);
 };

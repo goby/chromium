@@ -5,15 +5,15 @@
 #ifndef CHROME_BROWSER_CAPTIVE_PORTAL_CAPTIVE_PORTAL_SERVICE_H_
 #define CHROME_BROWSER_CAPTIVE_PORTAL_CAPTIVE_PORTAL_SERVICE_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_member.h"
-#include "base/threading/non_thread_safe.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/captive_portal/captive_portal_detector.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/pref_member.h"
 #include "net/base/backoff_entry.h"
 #include "url/gurl.h"
 
@@ -26,7 +26,7 @@ class Profile;
 // Captive portal checks are rate-limited.  The CaptivePortalService may only
 // be accessed on the UI thread.
 // Design doc: https://docs.google.com/document/d/1k-gP2sswzYNvryu9NcgN7q5XrsMlUdlUdoW9WRaEmfM/edit
-class CaptivePortalService : public KeyedService, public base::NonThreadSafe {
+class CaptivePortalService : public KeyedService {
  public:
   enum TestingState {
     NOT_TESTING,
@@ -150,7 +150,7 @@ class CaptivePortalService : public KeyedService, public base::NonThreadSafe {
   void set_test_url(const GURL& test_url) { test_url_ = test_url; }
 
   // The profile that owns this CaptivePortalService.
-  Profile* profile_;
+  Profile* const profile_;
 
   State state_;
 
@@ -180,7 +180,7 @@ class CaptivePortalService : public KeyedService, public base::NonThreadSafe {
   // captive_portal::CaptivePortalResult, BackoffEntry::Policy is updated and
   // |backoff_entry_| is recreated.  Each check that returns the same result
   // is considered a "failure", to trigger throttling.
-  scoped_ptr<net::BackoffEntry> backoff_entry_;
+  std::unique_ptr<net::BackoffEntry> backoff_entry_;
 
   // URL that returns a 204 response code when connected to the Internet.
   GURL test_url_;
@@ -195,7 +195,7 @@ class CaptivePortalService : public KeyedService, public base::NonThreadSafe {
   static TestingState testing_state_;
 
   // Test tick clock used by unit tests.
-  base::TickClock* tick_clock_for_testing_;  // Not owned.
+  base::TickClock* const tick_clock_for_testing_;  // Not owned.
 
   DISALLOW_COPY_AND_ASSIGN(CaptivePortalService);
 };

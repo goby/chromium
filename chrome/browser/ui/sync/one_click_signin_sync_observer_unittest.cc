@@ -4,18 +4,25 @@
 
 #include "chrome/browser/ui/sync/one_click_signin_sync_observer.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/test_profile_sync_service.h"
+#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/browser_sync/test_profile_sync_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/sync_driver/startup_controller.h"
+#include "components/sync/driver/startup_controller.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_utils.h"
@@ -39,18 +46,20 @@ class MockWebContentsObserver : public content::WebContentsObserver {
   // navigation start is a sufficient signal for the purposes of this test.
   // Listening for this call also has the advantage of being synchronous.
   MOCK_METHOD2(DidStartNavigationToPendingEntry,
-               void(const GURL&, content::NavigationController::ReloadType));
+               void(const GURL&, content::ReloadType));
 };
 
-class OneClickTestProfileSyncService : public TestProfileSyncService {
+class OneClickTestProfileSyncService
+    : public browser_sync::TestProfileSyncService {
  public:
   ~OneClickTestProfileSyncService() override {}
 
   // Helper routine to be used in conjunction with
   // BrowserContextKeyedServiceFactory::SetTestingFactory().
-  static scoped_ptr<KeyedService> Build(content::BrowserContext* profile) {
-    return make_scoped_ptr(
-        new OneClickTestProfileSyncService(static_cast<Profile*>(profile)));
+  static std::unique_ptr<KeyedService> Build(content::BrowserContext* profile) {
+    return base::WrapUnique(new OneClickTestProfileSyncService(
+        CreateProfileSyncServiceParamsForTest(
+            Profile::FromBrowserContext(profile))));
   }
 
   bool IsFirstSetupInProgress() const override {
@@ -68,17 +77,15 @@ class OneClickTestProfileSyncService : public TestProfileSyncService {
   }
 
  private:
-  explicit OneClickTestProfileSyncService(Profile* profile)
-      : TestProfileSyncService(
-          profile,
-          SigninManagerFactory::GetForProfile(profile),
-          ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
-          browser_sync::MANUAL_START),
+  explicit OneClickTestProfileSyncService(InitParams init_params)
+      : browser_sync::TestProfileSyncService(std::move(init_params)),
         first_setup_in_progress_(false),
         sync_active_(false) {}
 
   bool first_setup_in_progress_;
   bool sync_active_;
+
+  DISALLOW_COPY_AND_ASSIGN(OneClickTestProfileSyncService);
 };
 
 class TestOneClickSigninSyncObserver : public OneClickSigninSyncObserver {
@@ -102,7 +109,8 @@ class TestOneClickSigninSyncObserver : public OneClickSigninSyncObserver {
 };
 
 // A trivial factory to build a null service.
-scoped_ptr<KeyedService> BuildNullService(content::BrowserContext* context) {
+std::unique_ptr<KeyedService> BuildNullService(
+    content::BrowserContext* context) {
   return nullptr;
 }
 
@@ -118,10 +126,9 @@ class OneClickSigninSyncObserverTest : public ChromeRenderViewHostTestHarness {
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     web_contents_observer_.reset(new MockWebContentsObserver(web_contents()));
-    sync_service_ =
-        static_cast<OneClickTestProfileSyncService*>(
-            ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-                profile(), OneClickTestProfileSyncService::Build));
+    sync_service_ = static_cast<OneClickTestProfileSyncService*>(
+        ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+            profile(), OneClickTestProfileSyncService::Build));
   }
 
   void TearDown() override {
@@ -146,7 +153,7 @@ class OneClickSigninSyncObserverTest : public ChromeRenderViewHostTestHarness {
   }
 
   OneClickTestProfileSyncService* sync_service_;
-  scoped_ptr<MockWebContentsObserver> web_contents_observer_;
+  std::unique_ptr<MockWebContentsObserver> web_contents_observer_;
 
  private:
   void OnSyncObserverDestroyed(TestOneClickSigninSyncObserver* observer) {
@@ -157,16 +164,17 @@ class OneClickSigninSyncObserverTest : public ChromeRenderViewHostTestHarness {
 
   TestOneClickSigninSyncObserver* sync_observer_;
   bool sync_observer_destroyed_;
+
+  DISALLOW_COPY_AND_ASSIGN(OneClickSigninSyncObserverTest);
 };
 
 // Verify that if no Sync service is present, e.g. because Sync is disabled, the
 // observer immediately loads the continue URL.
 TEST_F(OneClickSigninSyncObserverTest, NoSyncService_RedirectsImmediately) {
   // Simulate disabling Sync.
-  sync_service_ =
-      static_cast<OneClickTestProfileSyncService*>(
-          ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-              profile(), BuildNullService));
+  sync_service_ = static_cast<OneClickTestProfileSyncService*>(
+      ProfileSyncServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+          profile(), BuildNullService));
 
   // The observer should immediately redirect to the continue URL.
   EXPECT_CALL(*web_contents_observer_, DidStartNavigationToPendingEntry(_, _));
@@ -236,7 +244,8 @@ TEST_F(OneClickSigninSyncObserverTest,
 TEST_F(OneClickSigninSyncObserverTest,
        OnSyncStateChanged_SyncConfiguredSuccessfully_SourceIsSettings) {
   GURL continue_url = signin::GetPromoURL(
-      signin_metrics::SOURCE_SETTINGS, false);
+      signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS,
+      signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, false);
   CreateSyncObserver(continue_url.spec());
   sync_service_->set_first_setup_in_progress(false);
   sync_service_->set_sync_active(true);

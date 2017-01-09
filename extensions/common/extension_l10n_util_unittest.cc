@@ -4,11 +4,12 @@
 
 #include "extensions/common/extension_l10n_util.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -32,7 +33,7 @@ TEST(ExtensionL10nUtil, ValidateLocalesWithBadLocale) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(kLocaleFolder);
   base::FilePath locale = src_path.AppendASCII("ms");
   ASSERT_TRUE(base::CreateDirectory(locale));
 
@@ -44,7 +45,7 @@ TEST(ExtensionL10nUtil, ValidateLocalesWithBadLocale) {
   manifest.SetString(keys::kDefaultLocale, "en");
   std::string error;
   EXPECT_FALSE(extension_l10n_util::ValidateExtensionLocales(
-      temp.path(), &manifest, &error));
+      temp.GetPath(), &manifest, &error));
   EXPECT_THAT(
       error,
       testing::HasSubstr(base::UTF16ToUTF8(messages_file.LossyDisplayName())));
@@ -54,7 +55,7 @@ TEST(ExtensionL10nUtil, GetValidLocalesEmptyLocaleFolder) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(kLocaleFolder);
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   std::string error;
@@ -69,7 +70,7 @@ TEST(ExtensionL10nUtil, GetValidLocalesWithValidLocaleNoMessagesFile) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(kLocaleFolder);
   ASSERT_TRUE(base::CreateDirectory(src_path));
   ASSERT_TRUE(base::CreateDirectory(src_path.AppendASCII("sr")));
 
@@ -85,7 +86,7 @@ TEST(ExtensionL10nUtil, GetValidLocalesWithUnsupportedLocale) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(kLocaleFolder);
   ASSERT_TRUE(base::CreateDirectory(src_path));
   // Supported locale.
   base::FilePath locale_1 = src_path.AppendASCII("sr");
@@ -128,8 +129,9 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsValidFallback) {
       install_dir.AppendASCII("extension_with_locales").Append(kLocaleFolder);
 
   std::string error;
-  scoped_ptr<MessageBundle> bundle(extension_l10n_util::LoadMessageCatalogs(
-      install_dir, "sr", "en_US", &error));
+  std::unique_ptr<MessageBundle> bundle(
+      extension_l10n_util::LoadMessageCatalogs(install_dir, "sr", "en_US",
+                                               &error));
   ASSERT_FALSE(NULL == bundle.get());
   EXPECT_TRUE(error.empty());
   EXPECT_EQ("Color", bundle->GetL10nMessage("color"));
@@ -140,7 +142,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsMissingFiles) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(kLocaleFolder);
   ASSERT_TRUE(base::CreateDirectory(src_path));
   ASSERT_TRUE(base::CreateDirectory(src_path.AppendASCII("en")));
   ASSERT_TRUE(base::CreateDirectory(src_path.AppendASCII("sr")));
@@ -155,7 +157,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsBadJSONFormat) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(kLocaleFolder);
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   base::FilePath locale = src_path.AppendASCII("sr");
@@ -179,7 +181,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsDuplicateKeys) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(kLocaleFolder);
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   base::FilePath locale_1 = src_path.AppendASCII("en");
@@ -200,7 +202,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsDuplicateKeys) {
   std::string error;
   // JSON parser hides duplicates. We are going to get only one key/value
   // pair at the end.
-  scoped_ptr<MessageBundle> message_bundle(
+  std::unique_ptr<MessageBundle> message_bundle(
       extension_l10n_util::LoadMessageCatalogs(src_path, "en", "sr", &error));
   EXPECT_TRUE(NULL != message_bundle.get());
   EXPECT_TRUE(error.empty());
@@ -208,7 +210,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsDuplicateKeys) {
 
 // Caller owns the returned object.
 MessageBundle* CreateManifestBundle() {
-  linked_ptr<base::DictionaryValue> catalog(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> catalog(new base::DictionaryValue);
 
   base::DictionaryValue* name_tree = new base::DictionaryValue();
   name_tree->SetString("message", "name");
@@ -256,8 +258,8 @@ MessageBundle* CreateManifestBundle() {
   url_country_tree->SetString("message", "de");
   catalog->Set("country", url_country_tree);
 
-  std::vector<linked_ptr<base::DictionaryValue> > catalogs;
-  catalogs.push_back(catalog);
+  std::vector<std::unique_ptr<base::DictionaryValue>> catalogs;
+  catalogs.push_back(std::move(catalog));
 
   std::string error;
   MessageBundle* bundle = MessageBundle::Create(catalogs, &error);
@@ -270,7 +272,7 @@ MessageBundle* CreateManifestBundle() {
 TEST(ExtensionL10nUtil, LocalizeEmptyManifest) {
   base::DictionaryValue manifest;
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_FALSE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -281,7 +283,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithoutNameMsgAndEmptyDescription) {
   base::DictionaryValue manifest;
   manifest.SetString(keys::kName, "no __MSG");
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -299,7 +301,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameMsgAndEmptyDescription) {
   base::DictionaryValue manifest;
   manifest.SetString(keys::kName, "__MSG_name__");
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -318,7 +320,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithLocalLaunchURL) {
   manifest.SetString(keys::kName, "name");
   manifest.SetString(keys::kLaunchLocalPath, "__MSG_launch_local_path__");
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -335,7 +337,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithHostedLaunchURL) {
   manifest.SetString(keys::kName, "name");
   manifest.SetString(keys::kLaunchWebURL, "__MSG_launch_web_url__");
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -352,7 +354,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithBadNameMsg) {
   manifest.SetString(keys::kName, "__MSG_name_is_bad__");
   manifest.SetString(keys::kDescription, "__MSG_description__");
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_FALSE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -377,7 +379,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameDescriptionDefaultTitleMsgs) {
   manifest.SetString(action_title, "__MSG_title__");
 
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -402,7 +404,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameDescriptionOmniboxMsgs) {
   manifest.SetString(keys::kOmniboxKeyword, "__MSG_omnibox_keyword__");
 
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -427,12 +429,12 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameDescriptionFileHandlerTitle) {
   base::ListValue* handlers = new base::ListValue();
   manifest.Set(keys::kFileBrowserHandlers, handlers);
   base::DictionaryValue* handler = new base::DictionaryValue();
-  handlers->Append(handler);
+  handlers->Append(base::WrapUnique(handler));
   handler->SetString(keys::kPageActionDefaultTitle,
                      "__MSG_file_handler_title__");
 
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -469,7 +471,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameDescriptionCommandDescription) {
                             "__MSG_second_command_description__");
 
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -498,7 +500,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithShortName) {
   manifest.SetString(keys::kShortName, "__MSG_short_name__");
 
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -515,7 +517,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithBadShortName) {
   manifest.SetString(keys::kShortName, "__MSG_short_name_bad__");
 
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_FALSE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));
@@ -546,7 +548,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithSearchProviderMsgs) {
   manifest.Set(keys::kOverrideStartupPage, startup_pages);
 
   std::string error;
-  scoped_ptr<MessageBundle> messages(CreateManifestBundle());
+  std::unique_ptr<MessageBundle> messages(CreateManifestBundle());
 
   EXPECT_TRUE(
       extension_l10n_util::LocalizeManifest(*messages, &manifest, &error));

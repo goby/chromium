@@ -4,6 +4,8 @@
 
 #include "content/browser/cache_storage/cache_storage_blob_to_disk_cache.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "net/base/io_buffer.h"
 #include "net/url_request/url_request_context.h"
@@ -30,34 +32,38 @@ CacheStorageBlobToDiskCache::~CacheStorageBlobToDiskCache() {
 void CacheStorageBlobToDiskCache::StreamBlobToCache(
     disk_cache::ScopedEntryPtr entry,
     int disk_cache_body_index,
-    const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
-    scoped_ptr<storage::BlobDataHandle> blob_data_handle,
+    net::URLRequestContextGetter* request_context_getter,
+    std::unique_ptr<storage::BlobDataHandle> blob_data_handle,
     const EntryAndBoolCallback& callback) {
   DCHECK(entry);
   DCHECK_LE(0, disk_cache_body_index);
   DCHECK(blob_data_handle);
   DCHECK(!blob_request_);
+  DCHECK(request_context_getter);
 
   if (!request_context_getter->GetURLRequestContext()) {
-    callback.Run(entry.Pass(), false /* success */);
+    callback.Run(std::move(entry), false /* success */);
     return;
   }
 
   disk_cache_body_index_ = disk_cache_body_index;
 
-  entry_ = entry.Pass();
+  entry_ = std::move(entry);
   callback_ = callback;
   request_context_getter_ = request_context_getter;
 
   blob_request_ = storage::BlobProtocolHandler::CreateBlobRequest(
-      blob_data_handle.Pass(), request_context_getter->GetURLRequestContext(),
-      this);
+      std::move(blob_data_handle),
+      request_context_getter->GetURLRequestContext(), this);
   request_context_getter_->AddObserver(this);
   blob_request_->Start();
 }
 
-void CacheStorageBlobToDiskCache::OnResponseStarted(net::URLRequest* request) {
-  if (!request->status().is_success()) {
+void CacheStorageBlobToDiskCache::OnResponseStarted(net::URLRequest* request,
+                                                    int net_error) {
+  DCHECK_NE(net::ERR_IO_PENDING, net_error);
+
+  if (net_error != net::OK) {
     RunCallbackAndRemoveObserver(false);
     return;
   }
@@ -67,9 +73,11 @@ void CacheStorageBlobToDiskCache::OnResponseStarted(net::URLRequest* request) {
 
 void CacheStorageBlobToDiskCache::OnReadCompleted(net::URLRequest* request,
                                                   int bytes_read) {
-  if (!request->status().is_success()) {
-    RunCallbackAndRemoveObserver(false);
-    return;
+  if (bytes_read < 0) {
+    if (bytes_read != net::ERR_IO_PENDING) {
+      RunCallbackAndRemoveObserver(false);
+      return;
+    }
   }
 
   if (bytes_read == 0) {
@@ -111,10 +119,6 @@ void CacheStorageBlobToDiskCache::OnSSLCertificateError(
     bool fatal) {
   NOTREACHED();
 }
-void CacheStorageBlobToDiskCache::OnBeforeNetworkStart(net::URLRequest* request,
-                                                       bool* defer) {
-  NOTREACHED();
-}
 
 void CacheStorageBlobToDiskCache::OnContextShuttingDown() {
   DCHECK(blob_request_);
@@ -122,9 +126,8 @@ void CacheStorageBlobToDiskCache::OnContextShuttingDown() {
 }
 
 void CacheStorageBlobToDiskCache::ReadFromBlob() {
-  int bytes_read = 0;
-  bool done = blob_request_->Read(buffer_.get(), buffer_->size(), &bytes_read);
-  if (done)
+  int bytes_read = blob_request_->Read(buffer_.get(), buffer_->size());
+  if (bytes_read != net::ERR_IO_PENDING)
     OnReadCompleted(blob_request_.get(), bytes_read);
 }
 
@@ -144,7 +147,7 @@ void CacheStorageBlobToDiskCache::RunCallbackAndRemoveObserver(bool success) {
 
   request_context_getter_->RemoveObserver(this);
   blob_request_.reset();
-  callback_.Run(entry_.Pass(), success);
+  callback_.Run(std::move(entry_), success);
 }
 
 }  // namespace content

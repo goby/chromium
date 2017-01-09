@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_COCOA_HANDOFF_ACTIVE_URL_OBSERVER_H_
 #define CHROME_BROWSER_UI_COCOA_HANDOFF_ACTIVE_URL_OBSERVER_H_
 
+#include "base/macros.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -15,7 +16,6 @@ class WebContents;
 
 class Browser;
 class HandoffActiveURLObserverDelegate;
-class TabStripModel;
 
 // This class observes changes to the "active URL". This is defined as the
 // visible URL of the WebContents of the selected tab of the most recently

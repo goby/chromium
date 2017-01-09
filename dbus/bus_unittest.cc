@@ -5,6 +5,7 @@
 #include "dbus/bus.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -47,7 +48,7 @@ class RunLoopWithExpectedCount {
   }
 
  private:
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   int expected_quit_calls_;
   int actual_quit_calls_;
 

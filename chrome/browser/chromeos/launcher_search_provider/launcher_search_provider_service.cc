@@ -4,6 +4,11 @@
 
 #include "chrome/browser/chromeos/launcher_search_provider/launcher_search_provider_service.h"
 
+#include <stdint.h>
+
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/launcher_search_provider/launcher_search_provider_service_factory.h"
@@ -55,14 +60,14 @@ void Service::OnQueryStarted(app_list::LauncherSearchProvider* provider,
   CacheListenerExtensionIds();
   for (const ExtensionId extension_id : *cached_listener_extension_ids_.get()) {
     // Convert query_id_ to string here since queryId is defined as string in
-    // javascript side API while we use uint32 internally to generate it.
+    // javascript side API while we use uint32_t internally to generate it.
     event_router->DispatchEventToExtension(
         extension_id,
-        make_scoped_ptr(new extensions::Event(
+        base::MakeUnique<extensions::Event>(
             extensions::events::LAUNCHER_SEARCH_PROVIDER_ON_QUERY_STARTED,
             api_launcher_search_provider::OnQueryStarted::kEventName,
             api_launcher_search_provider::OnQueryStarted::Create(
-                query_id_, query, max_result))));
+                query_id_, query, max_result)));
   }
 }
 
@@ -77,10 +82,10 @@ void Service::OnQueryEnded() {
   for (const ExtensionId extension_id : *cached_listener_extension_ids_.get()) {
     event_router->DispatchEventToExtension(
         extension_id,
-        make_scoped_ptr(new extensions::Event(
+        base::MakeUnique<extensions::Event>(
             extensions::events::LAUNCHER_SEARCH_PROVIDER_ON_QUERY_ENDED,
             api_launcher_search_provider::OnQueryEnded::kEventName,
-            api_launcher_search_provider::OnQueryEnded::Create(query_id_))));
+            api_launcher_search_provider::OnQueryEnded::Create(query_id_)));
   }
 
   is_query_running_ = false;
@@ -89,24 +94,25 @@ void Service::OnQueryEnded() {
 void Service::OnOpenResult(const ExtensionId& extension_id,
                            const std::string& item_id) {
   CacheListenerExtensionIds();
-  CHECK(ContainsValue(*cached_listener_extension_ids_.get(), extension_id));
+  CHECK(
+      base::ContainsValue(*cached_listener_extension_ids_.get(), extension_id));
 
   extensions::EventRouter* event_router =
       extensions::EventRouter::Get(profile_);
   event_router->DispatchEventToExtension(
       extension_id,
-      make_scoped_ptr(new extensions::Event(
+      base::MakeUnique<extensions::Event>(
           extensions::events::LAUNCHER_SEARCH_PROVIDER_ON_OPEN_RESULT,
           api_launcher_search_provider::OnOpenResult::kEventName,
-          api_launcher_search_provider::OnOpenResult::Create(item_id))));
+          api_launcher_search_provider::OnOpenResult::Create(item_id)));
 }
 
 void Service::SetSearchResults(
     const extensions::Extension* extension,
-    scoped_ptr<ErrorReporter> error_reporter,
+    std::unique_ptr<ErrorReporter> error_reporter,
     const int query_id,
-    const std::vector<linked_ptr<
-        extensions::api::launcher_search_provider::SearchResult>>& results) {
+    const std::vector<extensions::api::launcher_search_provider::SearchResult>&
+        results) {
   // If query is not running or query_id is different from current query id,
   // discard the results.
   if (!is_query_running_ || query_id != query_id_)
@@ -114,26 +120,28 @@ void Service::SetSearchResults(
 
   // If |extension| is not in the listener extensions list, ignore it.
   CacheListenerExtensionIds();
-  if (!ContainsValue(*cached_listener_extension_ids_.get(), extension->id()))
+  if (!base::ContainsValue(*cached_listener_extension_ids_.get(),
+                           extension->id())) {
     return;
+  }
 
   // Set search results to provider.
   DCHECK(provider_);
   ScopedVector<app_list::LauncherSearchResult> search_results;
   for (const auto& result : results) {
     const int relevance =
-        std::min(kMaxSearchResultScore, std::max(result->relevance, 0));
+        std::min(kMaxSearchResultScore, std::max(result.relevance, 0));
     const GURL icon_url =
-        result->icon_url ? GURL(*result->icon_url.get()) : GURL();
+        result.icon_url ? GURL(*result.icon_url.get()) : GURL();
 
     app_list::LauncherSearchResult* search_result =
-        new app_list::LauncherSearchResult(result->item_id, icon_url, relevance,
+        new app_list::LauncherSearchResult(result.item_id, icon_url, relevance,
                                            profile_, extension,
                                            error_reporter->Duplicate());
-    search_result->set_title(base::UTF8ToUTF16(result->title));
+    search_result->set_title(base::UTF8ToUTF16(result.title));
     search_results.push_back(search_result);
   }
-  provider_->SetSearchResults(extension->id(), search_results.Pass());
+  provider_->SetSearchResults(extension->id(), std::move(search_results));
 }
 
 bool Service::IsQueryRunning() const {

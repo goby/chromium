@@ -8,6 +8,7 @@
 module net.interfaces;
 
 import "host_resolver_service.mojom";
+import "url/mojo/url.mojom";
 
 // Mirror of net::ProxyServer::Scheme.
 enum ProxyScheme {
@@ -25,18 +26,22 @@ struct ProxyServer {
   ProxyScheme scheme;
 
   // |host| and |port| are only valid if |scheme| is not INVALID or DIRECT.
-  string? host;
+  string host;
   uint16 port;
+};
+
+struct ProxyInfo {
+  array<ProxyServer> proxy_servers;
 };
 
 interface ProxyResolver {
   // Use a ProxyResolverRequestClient instead of returning a result so we can
   // cancel in-flight requests by destroying the client.
-  GetProxyForUrl(string url, ProxyResolverRequestClient client);
+  GetProxyForUrl(url.mojom.Url url, ProxyResolverRequestClient client);
 };
 
 interface ProxyResolverRequestClient {
-  ReportResult(int32 error, array<ProxyServer>? proxy_servers);
+  ReportResult(int32 error, ProxyInfo proxy_info);
 
   Alert(string error);
   OnError(int32 line_number, string error);

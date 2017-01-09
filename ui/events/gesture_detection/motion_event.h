@@ -5,7 +5,11 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_MOTION_EVENT_H_
 #define UI_EVENTS_GESTURE_DETECTION_MOTION_EVENT_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/time/time.h"
 #include "ui/events/gesture_detection/gesture_detection_export.h"
 
@@ -23,6 +27,12 @@ class GESTURE_DETECTION_EXPORT MotionEvent {
     ACTION_CANCEL,
     ACTION_POINTER_DOWN,
     ACTION_POINTER_UP,
+    ACTION_HOVER_ENTER,
+    ACTION_HOVER_EXIT,
+    ACTION_HOVER_MOVE,
+    ACTION_BUTTON_PRESS,
+    ACTION_BUTTON_RELEASE,
+    ACTION_LAST = ACTION_BUTTON_RELEASE
   };
 
   enum ToolType {
@@ -30,7 +40,8 @@ class GESTURE_DETECTION_EXPORT MotionEvent {
     TOOL_TYPE_FINGER,
     TOOL_TYPE_STYLUS,
     TOOL_TYPE_MOUSE,
-    TOOL_TYPE_ERASER
+    TOOL_TYPE_ERASER,
+    TOOL_TYPE_LAST = TOOL_TYPE_ERASER
   };
 
   enum ButtonType {
@@ -40,7 +51,7 @@ class GESTURE_DETECTION_EXPORT MotionEvent {
     BUTTON_BACK = 1 << 3,
     BUTTON_FORWARD = 1 << 4,
     BUTTON_STYLUS_PRIMARY = 1 << 5,
-    BUTTON_STYLUS_SECONDARY = 1 << 6,
+    BUTTON_STYLUS_SECONDARY = 1 << 6
   };
 
   // The implementer promises that |GetPointerId()| will never exceed
@@ -50,7 +61,7 @@ class GESTURE_DETECTION_EXPORT MotionEvent {
   virtual ~MotionEvent() {}
 
   // An unique identifier this motion event.
-  virtual uint32 GetUniqueEventId() const = 0;
+  virtual uint32_t GetUniqueEventId() const = 0;
   virtual Action GetAction() const = 0;
   // Only valid if |GetAction()| returns ACTION_POINTER_UP or
   // ACTION_POINTER_DOWN.
@@ -114,8 +125,8 @@ class GESTURE_DETECTION_EXPORT MotionEvent {
   // They guarantee only that the returned type will reflect the same
   // data exposed by the MotionEvent interface; no guarantees are made that the
   // underlying implementation is identical to the source implementation.
-  scoped_ptr<MotionEvent> Clone() const;
-  scoped_ptr<MotionEvent> Cancel() const;
+  std::unique_ptr<MotionEvent> Clone() const;
+  std::unique_ptr<MotionEvent> Cancel() const;
 };
 
 }  // namespace ui

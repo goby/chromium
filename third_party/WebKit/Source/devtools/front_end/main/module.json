@@ -1,25 +1,31 @@
 {
     "extensions": [
         {
-            "type": "@WebInspector.AppProvider",
-            "condition": "can_dock",
-            "className": "WebInspector.AdvancedAppProvider",
-            "order": 0
-        },
-        {
-            "type": "@WebInspector.AppProvider",
-            "className": "WebInspector.SimpleAppProvider",
+            "type": "@Common.AppProvider",
+            "className": "Main.SimpleAppProvider",
             "order": 10
         },
         {
-            "type": "@WebInspector.ContextMenu.Provider",
-            "contextTypes": ["WebInspector.UISourceCode", "WebInspector.Resource", "WebInspector.NetworkRequest", "Node"],
-            "className": "WebInspector.HandlerRegistry.ContextMenuProvider"
+            "type": "@UI.ContextMenu.Provider",
+            "contextTypes": ["Workspace.UISourceCode", "SDK.Resource", "SDK.NetworkRequest"],
+            "className": "Components.Linkifier.ContentProviderContextMenuProvider"
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ContextMenu.Provider",
+            "contextTypes": ["Node"],
+            "className": "UI.ExternaLinkContextMenuProvider"
+        },
+        {
+            "type": "@UI.ContextMenu.Provider",
+            "contextTypes": ["Node"],
+            "className": "Components.Linkifier.LinkContextMenuProvider"
+        },
+        {
+            "type": "@UI.ActionDelegate",
+            "category": "Navigation",
             "actionId": "main.reload",
-            "className": "WebInspector.Main.ReloadActionDelegate",
+            "className": "Main.Main.ReloadActionDelegate",
+            "title": "Reload page",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -32,9 +38,11 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
+            "category": "Navigation",
             "actionId": "main.hard-reload",
-            "className": "WebInspector.Main.ReloadActionDelegate",
+            "className": "Main.Main.ReloadActionDelegate",
+            "title": "Hard reload page",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -47,10 +55,12 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
+            "category": "Drawer",
             "actionId": "main.toggle-drawer",
-            "className": "WebInspector.InspectorView.DrawerToggleActionDelegate",
+            "className": "UI.InspectorView.DrawerToggleActionDelegate",
             "order": 100,
+            "title": "Toggle drawer",
             "bindings": [
                 {
                     "shortcut": "Esc"
@@ -58,9 +68,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.debug-reload",
-            "className": "WebInspector.Main.ReloadActionDelegate",
+            "className": "Main.Main.ReloadActionDelegate",
             "bindings": [
                 {
                     "shortcut": "Alt+R"
@@ -68,9 +78,11 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
+            "category": "DevTools",
+            "title": "Restore last dock position",
             "actionId": "main.toggle-dock",
-            "className": "WebInspector.DockController.ToggleDockActionDelegate",
+            "className": "Components.DockController.ToggleDockActionDelegate",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -83,9 +95,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.zoom-in",
-            "className": "WebInspector.Main.ZoomActionDelegate",
+            "className": "Main.Main.ZoomActionDelegate",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -98,9 +110,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.zoom-out",
-            "className": "WebInspector.Main.ZoomActionDelegate",
+            "className": "Main.Main.ZoomActionDelegate",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -113,9 +125,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.zoom-reset",
-            "className": "WebInspector.Main.ZoomActionDelegate",
+            "className": "Main.Main.ZoomActionDelegate",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -128,9 +140,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.search-in-panel.find",
-            "className": "WebInspector.Main.SearchActionDelegate",
+            "className": "Main.Main.SearchActionDelegate",
             "bindings": [
                 {
                     "platform": "windows,linux",
@@ -143,9 +155,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.search-in-panel.cancel",
-            "className": "WebInspector.Main.SearchActionDelegate",
+            "className": "Main.Main.SearchActionDelegate",
             "order": 10,
             "bindings": [
                 {
@@ -154,9 +166,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.search-in-panel.find-next",
-            "className": "WebInspector.Main.SearchActionDelegate",
+            "className": "Main.Main.SearchActionDelegate",
             "bindings": [
                 {
                     "platform": "mac",
@@ -165,9 +177,9 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
+            "type": "@UI.ActionDelegate",
             "actionId": "main.search-in-panel.find-previous",
-            "className": "WebInspector.Main.SearchActionDelegate",
+            "className": "Main.Main.SearchActionDelegate",
             "bindings": [
                 {
                     "platform": "mac",
@@ -176,62 +188,73 @@
             ]
         },
         {
-            "type": "@WebInspector.ActionDelegate",
-            "actionId": "main.show-rendering-options",
-            "title": "Rendering settings",
-            "className": "WebInspector.RenderingOptionsView.ShowActionDelegate"
-        },
-        {
-            "type": "@WebInspector.ToolbarItem.Provider",
+            "type": "@UI.ToolbarItem.Provider",
             "separator": true,
             "location": "main-toolbar-left",
             "order": 100
         },
         {
-            "type": "@WebInspector.ToolbarItem.Provider",
-            "className": "WebInspector.Main.WarningErrorCounter",
+            "type": "@UI.ToolbarItem.Provider",
+            "className": "Main.Main.WarningErrorCounter",
             "order": 1,
             "location": "main-toolbar-right"
         },
         {
-            "type": "@WebInspector.ToolbarItem.Provider",
+            "type": "@UI.ToolbarItem.Provider",
             "separator": true,
             "order": 98,
             "location": "main-toolbar-right"
         },
         {
-            "type": "@WebInspector.ToolbarItem.Provider",
-            "className": "WebInspector.Main.MainMenuItem",
+            "type": "@UI.ToolbarItem.Provider",
+            "className": "Main.Main.MainMenuItem",
             "order": 99,
             "location": "main-toolbar-right"
         },
         {
-            "type": "@WebInspector.ToolbarItem.Provider",
-            "className": "WebInspector.DockController.CloseButtonProvider",
+            "type": "@UI.ToolbarItem.Provider",
+            "className": "Components.DockController.CloseButtonProvider",
             "order": 100,
             "location": "main-toolbar-right"
         },
         {
             "type": "setting",
-            "category": "",
+            "category": "Network",
             "title": "Disable cache (while DevTools is open)",
             "settingName": "cacheDisabled",
             "settingType": "boolean",
-            "defaultValue": false
+            "order": 0,
+            "defaultValue": false,
+            "options": [
+                { "value": true, "title": "Disable cache (while DevTools is open)" },
+                { "value": false, "title": "Enable cache" }
+            ]
         },
         {
             "type": "setting",
-            "settingName": "networkConditions",
-            "settingType": "object",
-            "defaultValue": { "throughput": -1, "latency": 0 }
-        },
-        {
-            "type": "setting",
-            "category": "",
+            "category": "Debugger",
             "title": "Disable JavaScript",
             "settingName": "javaScriptDisabled",
             "settingType": "boolean",
-            "defaultValue": false
+            "order": 1,
+            "defaultValue": false,
+            "options": [
+                { "value": true, "title": "Disable JavaScript" },
+                { "value": false, "title": "Enable JavaScript" }
+            ]
+        },
+        {
+            "type": "setting",
+            "category": "DevTools",
+            "title": "Auto-open DevTools for popups",
+            "settingName": "autoAttachToCreatedPages",
+            "settingType": "boolean",
+            "order": 2,
+            "defaultValue": false,
+            "options": [
+                { "value": true, "title": "Auto-open DevTools for popups" },
+                { "value": false, "title": "Do not auto-open DevTools for popups" }
+            ]
         },
         {
             "type": "setting",
@@ -241,8 +264,8 @@
             "settingType": "enum",
             "defaultValue": "default",
             "options": [
-                ["Default", "default"],
-                ["Dark", "dark"]
+                { "title": "Switch to default theme", "text": "Default", "value": "default" },
+                { "title": "Switch to dark theme", "text": "Dark", "value": "dark" }
             ]
         },
         {
@@ -253,25 +276,17 @@
             "settingType": "enum",
             "defaultValue": "auto",
             "options": [
-                ["horizontal", "bottom"],
-                ["vertical", "right"],
-                ["auto", "auto"]
+                { "title": "Use horizontal panel layout", "text": "horizontal", "value": "bottom" },
+                { "title": "Use vertical panel layout", "text": "vertical", "value": "right" },
+                { "title": "Use automatic panel layout", "text": "auto", "value": "auto" }
             ]
         },
         {
             "type": "setting",
             "category": "Appearance",
             "title": "Enable Ctrl + 1-9 shortcut to switch panels",
-            "title-mac": "Enable Cmd + 1-9 shortcut to switch panels",
+            "title-mac": "Enable \u2318 + 1-9 shortcut to switch panels",
             "settingName": "shortcutPanelSwitch",
-            "settingType": "boolean",
-            "defaultValue": false
-        },
-        {
-            "type": "setting",
-            "category": "Appearance",
-            "title": "Don't show emulation warnings",
-            "settingName": "disableOverridesWarning",
             "settingType": "boolean",
             "defaultValue": false
         },
@@ -292,30 +307,48 @@
             "defaultValue": false
         },
         {
-            "type": "@WebInspector.SettingUI",
+            "type": "@UI.SettingUI",
             "category": "Extensions",
-            "className": "WebInspector.HandlerRegistry.OpenAnchorLocationSettingUI"
+            "className": "Components.Linkifier.LinkHandlerSettingUI"
+        },
+        {
+            "type": "@UI.SettingUI",
+            "category": "Elements",
+            "order": 3,
+            "className": "Main.ShowMetricsRulersSettingUI"
         },
         {
             "type": "context-menu-item",
             "location": "mainMenu/navigate",
             "title": "More tools",
-            "subMenuId": "mainMenu/tools",
+            "subMenuId": "mainMenuMoreTools",
             "order": 80
         },
         {
-            "type": "context-menu-item",
-            "location": "mainMenu/tools/open",
-            "order": 80,
-            "actionId": "main.show-rendering-options"
-        },
-        {
-            "type": "drawer-view",
-            "name": "rendering",
+            "type": "view",
+            "location": "drawer-view",
+            "id": "rendering",
             "title": "Rendering",
             "persistence": "closeable",
             "order": 50,
-            "className": "WebInspector.RenderingOptionsView"
+            "className": "Main.RenderingOptionsView"
+        },
+        {
+            "type": "setting",
+            "category": "DevTools",
+            "settingName": "currentDockState",
+            "settingType": "enum",
+            "defaultValue": "right",
+            "options": [
+                { "value": "right", "title": "Dock to right" },
+                { "value": "bottom", "title": "Dock to bottom" },
+                { "value": "undocked", "title": "Undock into separate window" }
+            ]
+        },
+        {
+            "type": "@UI.ViewLocationResolver",
+            "name": "drawer-view",
+            "className": "UI.InspectorView"
         }
     ],
     "dependencies": [
@@ -323,19 +356,13 @@
         "host",
         "platform",
         "sdk",
-        "emulation"
+        "persistence"
     ],
     "scripts": [
-        "AdvancedApp.js",
-        "FrontendWebSocketAPI.js",
         "RenderingOptions.js",
         "SimpleApp.js",
-        "Tests.js",
         "OverlayController.js",
         "Main.js"
-    ],
-    "skip_compilation": [
-        "Tests.js"
     ],
     "resources": [
         "errorWarningCounter.css",

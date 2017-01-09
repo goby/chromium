@@ -4,6 +4,8 @@
 
 #include "tools/gn/input_file_manager.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/stl_util.h"
 #include "tools/gn/filesystem_utils.h"
@@ -25,7 +27,7 @@ bool DoLoadFile(const LocationRange& origin,
                 const SourceFile& name,
                 InputFile* file,
                 std::vector<Token>* tokens,
-                scoped_ptr<ParseNode>* root,
+                std::unique_ptr<ParseNode>* root,
                 Err* err) {
   // Do all of this stuff outside the lock. We should not give out file
   // pointers until the read is complete.
@@ -92,9 +94,6 @@ InputFileManager::InputFileManager() {
 
 InputFileManager::~InputFileManager() {
   // Should be single-threaded by now.
-  STLDeleteContainerPairSecondPointers(input_files_.begin(),
-                                       input_files_.end());
-  STLDeleteContainerPointers(dynamic_inputs_.begin(), dynamic_inputs_.end());
 }
 
 bool InputFileManager::AsyncLoadFile(const LocationRange& origin,
@@ -112,18 +111,18 @@ bool InputFileManager::AsyncLoadFile(const LocationRange& origin,
     InputFileMap::const_iterator found = input_files_.find(file_name);
     if (found == input_files_.end()) {
       // New file, schedule load.
-      InputFileData* data = new InputFileData(file_name);
+      std::unique_ptr<InputFileData> data(new InputFileData(file_name));
       data->scheduled_callbacks.push_back(callback);
-      input_files_[file_name] = data;
-
       schedule_this = base::Bind(&InputFileManager::BackgroundLoadFile,
                                  this,
                                  origin,
                                  build_settings,
                                  file_name,
                                  &data->file);
+      input_files_[file_name] = std::move(data);
+
     } else {
-      InputFileData* data = found->second;
+      InputFileData* data = found->second.get();
 
       // Prevent mixing async and sync loads. See SyncLoadFile for discussion.
       if (data->sync_invocation) {
@@ -148,9 +147,7 @@ bool InputFileManager::AsyncLoadFile(const LocationRange& origin,
       }
     }
   }
-  g_scheduler->pool()->PostWorkerTaskWithShutdownBehavior(
-      FROM_HERE, schedule_this,
-      base::SequencedWorkerPool::BLOCK_SHUTDOWN);
+  g_scheduler->ScheduleWork(schedule_this);
   return true;
 }
 
@@ -165,16 +162,17 @@ const ParseNode* InputFileManager::SyncLoadFile(
   InputFileMap::iterator found = input_files_.find(file_name);
   if (found == input_files_.end()) {
     // Haven't seen this file yet, start loading right now.
-    data = new InputFileData(file_name);
+    std::unique_ptr<InputFileData> new_data(new InputFileData(file_name));
+    data = new_data.get();
     data->sync_invocation = true;
-    input_files_[file_name] = data;
+    input_files_[file_name] = std::move(new_data);
 
     base::AutoUnlock unlock(lock_);
     if (!LoadFile(origin, build_settings, file_name, &data->file, err))
       return nullptr;
   } else {
     // This file has either been loaded or is pending loading.
-    data = found->second;
+    data = found->second.get();
 
     if (!data->sync_invocation) {
       // Don't allow mixing of sync and async loads. If an async load is
@@ -203,8 +201,11 @@ const ParseNode* InputFileManager::SyncLoadFile(
 
     if (!data->loaded) {
       // Wait for the already-pending sync load to complete.
-      if (!data->completion_event)
-        data->completion_event.reset(new base::WaitableEvent(false, false));
+      if (!data->completion_event) {
+        data->completion_event.reset(new base::WaitableEvent(
+            base::WaitableEvent::ResetPolicy::AUTOMATIC,
+            base::WaitableEvent::InitialState::NOT_SIGNALED));
+      }
       {
         base::AutoUnlock unlock(lock_);
         data->completion_event->Wait();
@@ -224,18 +225,19 @@ const ParseNode* InputFileManager::SyncLoadFile(
   return data->parsed_root.get();
 }
 
-void InputFileManager::AddDynamicInput(const SourceFile& name,
-                                       InputFile** file,
-                                       std::vector<Token>** tokens,
-                                       scoped_ptr<ParseNode>** parse_root) {
-  InputFileData* data = new InputFileData(name);
-  {
-    base::AutoLock lock(lock_);
-    dynamic_inputs_.push_back(data);
-  }
+void InputFileManager::AddDynamicInput(
+    const SourceFile& name,
+    InputFile** file,
+    std::vector<Token>** tokens,
+    std::unique_ptr<ParseNode>** parse_root) {
+  std::unique_ptr<InputFileData> data(new InputFileData(name));
   *file = &data->file;
   *tokens = &data->tokens;
   *parse_root = &data->parsed_root;
+  {
+    base::AutoLock lock(lock_);
+    dynamic_inputs_.push_back(std::move(data));
+  }
 }
 
 int InputFileManager::GetInputFileCount() const {
@@ -268,7 +270,7 @@ bool InputFileManager::LoadFile(const LocationRange& origin,
                                 InputFile* file,
                                 Err* err) {
   std::vector<Token> tokens;
-  scoped_ptr<ParseNode> root;
+  std::unique_ptr<ParseNode> root;
   bool success = DoLoadFile(origin, build_settings, name, file,
                             &tokens, &root, err);
   // Can't return early. We have to ensure that the completion event is
@@ -283,11 +285,11 @@ bool InputFileManager::LoadFile(const LocationRange& origin,
     base::AutoLock lock(lock_);
     DCHECK(input_files_.find(name) != input_files_.end());
 
-    InputFileData* data = input_files_[name];
+    InputFileData* data = input_files_[name].get();
     data->loaded = true;
     if (success) {
       data->tokens.swap(tokens);
-      data->parsed_root = root.Pass();
+      data->parsed_root = std::move(root);
     } else {
       data->parse_error = *err;
     }

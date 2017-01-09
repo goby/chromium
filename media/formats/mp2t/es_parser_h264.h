@@ -5,23 +5,26 @@
 #ifndef MEDIA_FORMATS_MP2T_ES_PARSER_H264_H_
 #define MEDIA_FORMATS_MP2T_ES_PARSER_H264_H_
 
-#include <list>
+#include <stdint.h>
+
+#include <memory>
 #include <utility>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "media/base/media_export.h"
+#include "media/base/ranges.h"
 #include "media/base/video_decoder_config.h"
 #include "media/formats/mp2t/es_adapter_video.h"
 #include "media/formats/mp2t/es_parser.h"
+#include "media/media_features.h"
 
 namespace media {
+class EncryptionScheme;
 class H264Parser;
 struct H264SPS;
-class OffsetByteQueue;
 }
 
 namespace media {
@@ -42,6 +45,12 @@ class MEDIA_EXPORT EsParserH264 : public EsParser {
 
   EsParserH264(const NewVideoConfigCB& new_video_config_cb,
                const EmitBufferCB& emit_buffer_cb);
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+  EsParserH264(const NewVideoConfigCB& new_video_config_cb,
+               const EmitBufferCB& emit_buffer_cb,
+               bool use_hls_sample_aes,
+               const GetDecryptConfigCB& get_decrypt_config_cb);
+#endif
   ~EsParserH264() override;
 
   // EsParser implementation.
@@ -57,25 +66,35 @@ class MEDIA_EXPORT EsParserH264 : public EsParser {
   // If found, |*stream_pos| corresponds to the position of the AUD start code
   // in the stream. Otherwise, |*stream_pos| corresponds to the last position
   // of the start code parser.
-  bool FindAUD(int64* stream_pos);
+  bool FindAUD(int64_t* stream_pos);
 
   // Emit a frame whose position in the ES queue starts at |access_unit_pos|.
   // Returns true if successful, false if no PTS is available for the frame.
-  bool EmitFrame(int64 access_unit_pos, int access_unit_size,
-                 bool is_key_frame, int pps_id);
+  bool EmitFrame(int64_t access_unit_pos,
+                 int access_unit_size,
+                 bool is_key_frame,
+                 int pps_id);
 
   // Update the video decoder config based on an H264 SPS.
   // Return true if successful.
-  bool UpdateVideoDecoderConfig(const H264SPS* sps);
+  bool UpdateVideoDecoderConfig(const H264SPS* sps,
+                                const EncryptionScheme& scheme);
 
   EsAdapterVideo es_adapter_;
 
   // H264 parser state.
   // - |current_access_unit_pos_| is pointing to an annexB syncword
   // representing the first NALU of an H264 access unit.
-  scoped_ptr<H264Parser> h264_parser_;
-  int64 current_access_unit_pos_;
-  int64 next_access_unit_pos_;
+  std::unique_ptr<H264Parser> h264_parser_;
+  int64_t current_access_unit_pos_;
+  int64_t next_access_unit_pos_;
+#if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
+  bool use_hls_sample_aes_;
+  // Callback to obtain the current decrypt_config.
+  // Only called if use_hls_sample_aes_ is true.
+  GetDecryptConfigCB get_decrypt_config_cb_;
+  Ranges<int> protected_blocks_;
+#endif
 
   // Last video decoder config.
   VideoDecoderConfig last_video_decoder_config_;
@@ -86,4 +105,4 @@ class MEDIA_EXPORT EsParserH264 : public EsParser {
 }  // namespace mp2t
 }  // namespace media
 
-#endif
+#endif  // MEDIA_FORMATS_MP2T_ES_PARSER_H264_H_

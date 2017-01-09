@@ -6,8 +6,9 @@
 #define UI_OZONE_PLATFORM_DRM_HOST_DRM_WINDOW_HOST_MANAGER_H_
 
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
@@ -16,7 +17,6 @@ class Point;
 
 namespace ui {
 
-class DrmGpuPlatformSupportHost;
 class DrmWindowHost;
 
 // Responsible for keeping the mapping between the allocated widgets and

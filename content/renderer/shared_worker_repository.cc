@@ -27,6 +27,8 @@ SharedWorkerRepository::createSharedWorkerConnector(
     DocumentID document_id,
     const blink::WebString& content_security_policy,
     blink::WebContentSecurityPolicyType security_policy_type,
+    blink::WebAddressSpace creation_address_space,
+    blink::WebSharedWorkerCreationContextType creation_context_type,
     blink::WebWorkerCreationError* error) {
   ViewHostMsg_CreateWorker_Params params;
   params.url = url;
@@ -35,16 +37,17 @@ SharedWorkerRepository::createSharedWorkerConnector(
   params.security_policy_type = security_policy_type;
   params.document_id = document_id;
   params.render_frame_route_id = render_frame()->GetRoutingID();
+  params.creation_address_space = creation_address_space;
+  params.creation_context_type = creation_context_type;
   ViewHostMsg_CreateWorker_Reply reply;
   Send(new ViewHostMsg_CreateWorker(params, &reply));
+  *error = reply.error;
   if (reply.route_id == MSG_ROUTING_NONE) {
-    *error = reply.error;
     return NULL;
   }
   documents_with_workers_.insert(document_id);
   return new WebSharedWorkerProxy(ChildThreadImpl::current()->GetRouter(),
-                                  document_id, reply.route_id,
-                                  params.render_frame_route_id);
+                                  reply.route_id);
 }
 
 void SharedWorkerRepository::documentDetached(DocumentID document) {
@@ -54,6 +57,10 @@ void SharedWorkerRepository::documentDetached(DocumentID document) {
     Send(new ViewHostMsg_DocumentDetached(document));
     documents_with_workers_.erase(iter);
   }
+}
+
+void SharedWorkerRepository::OnDestruct() {
+  delete this;
 }
 
 }  // namespace content

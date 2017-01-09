@@ -2,21 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "content/browser/frame_host/navigation_request_info.h"
-#include "content/browser/loader/navigation_url_loader_delegate.h"
 #include "content/browser/loader/navigation_url_loader_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
+#include "content/browser/loader_delegate_impl.h"
 #include "content/browser/streams/stream.h"
 #include "content/browser/streams/stream_context.h"
 #include "content/browser/streams/stream_registry.h"
 #include "content/browser/streams/stream_url_request_job.h"
 #include "content/common/navigation_params.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/navigation_ui_data.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/stream_handle.h"
@@ -24,6 +28,7 @@
 #include "content/public/common/resource_response.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/test/test_navigation_url_loader_delegate.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
@@ -34,6 +39,7 @@
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -60,84 +66,6 @@ class StreamProtocolHandler
   DISALLOW_COPY_AND_ASSIGN(StreamProtocolHandler);
 };
 
-class TestNavigationURLLoaderDelegate : public NavigationURLLoaderDelegate {
- public:
-  TestNavigationURLLoaderDelegate()
-      : net_error_(0), on_request_handled_counter_(0) {}
-
-  const net::RedirectInfo& redirect_info() const { return redirect_info_; }
-  ResourceResponse* redirect_response() const {
-    return redirect_response_.get();
-  }
-  ResourceResponse* response() const { return response_.get(); }
-  StreamHandle* body() const { return body_.get(); }
-  int net_error() const { return net_error_; }
-  int on_request_handled_counter() const { return on_request_handled_counter_; }
-
-  void WaitForRequestRedirected() {
-    request_redirected_.reset(new base::RunLoop);
-    request_redirected_->Run();
-    request_redirected_.reset();
-  }
-
-  void WaitForResponseStarted() {
-    response_started_.reset(new base::RunLoop);
-    response_started_->Run();
-    response_started_.reset();
-  }
-
-  void WaitForRequestFailed() {
-    request_failed_.reset(new base::RunLoop);
-    request_failed_->Run();
-    request_failed_.reset();
-  }
-
-  void ReleaseBody() {
-    body_.reset();
-  }
-
-  // NavigationURLLoaderDelegate implementation.
-  void OnRequestRedirected(
-      const net::RedirectInfo& redirect_info,
-      const scoped_refptr<ResourceResponse>& response) override {
-    redirect_info_ = redirect_info;
-    redirect_response_ = response;
-    ASSERT_TRUE(request_redirected_);
-    request_redirected_->Quit();
-  }
-
-  void OnResponseStarted(const scoped_refptr<ResourceResponse>& response,
-                         scoped_ptr<StreamHandle> body) override {
-    response_ = response;
-    body_ = body.Pass();
-    ASSERT_TRUE(response_started_);
-    response_started_->Quit();
-  }
-
-  void OnRequestFailed(bool in_cache, int net_error) override {
-    net_error_ = net_error;
-    ASSERT_TRUE(request_failed_);
-    request_failed_->Quit();
-  }
-
-  void OnRequestStarted(base::TimeTicks timestamp) override {
-    ASSERT_FALSE(timestamp.is_null());
-    ++on_request_handled_counter_;
-  }
-
- private:
-  net::RedirectInfo redirect_info_;
-  scoped_refptr<ResourceResponse> redirect_response_;
-  scoped_refptr<ResourceResponse> response_;
-  scoped_ptr<StreamHandle> body_;
-  int net_error_;
-  int on_request_handled_counter_;
-
-  scoped_ptr<base::RunLoop> request_redirected_;
-  scoped_ptr<base::RunLoop> response_started_;
-  scoped_ptr<base::RunLoop> request_failed_;
-};
-
 class RequestBlockingResourceDispatcherHostDelegate
     : public ResourceDispatcherHostDelegate {
  public:
@@ -157,6 +85,7 @@ class NavigationURLLoaderTest : public testing::Test {
   NavigationURLLoaderTest()
       : thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP),
         browser_context_(new TestBrowserContext) {
+    host_.SetLoaderDelegate(&loader_delegate_);
     BrowserContext::EnsureResourceContextInitialized(browser_context_.get());
     base::RunLoop().RunUntilIdle();
     net::URLRequestContext* request_context =
@@ -165,9 +94,8 @@ class NavigationURLLoaderTest : public testing::Test {
     job_factory_.SetProtocolHandler(
         "test", net::URLRequestTestJob::CreateProtocolHandler());
     job_factory_.SetProtocolHandler(
-        "blob",
-        make_scoped_ptr(new StreamProtocolHandler(
-            StreamContext::GetFor(browser_context_.get())->registry())));
+        "blob", base::MakeUnique<StreamProtocolHandler>(
+                    StreamContext::GetFor(browser_context_.get())->registry()));
     request_context->set_job_factory(&job_factory_);
 
     // NavigationURLLoader is only used for browser-side navigations.
@@ -175,20 +103,21 @@ class NavigationURLLoaderTest : public testing::Test {
         switches::kEnableBrowserSideNavigation);
   }
 
-  scoped_ptr<NavigationURLLoader> MakeTestLoader(
+  std::unique_ptr<NavigationURLLoader> MakeTestLoader(
       const GURL& url,
       NavigationURLLoaderDelegate* delegate) {
-    BeginNavigationParams begin_params("GET", std::string(), net::LOAD_NORMAL,
-                                       false, false,
+    BeginNavigationParams begin_params(std::string(), net::LOAD_NORMAL, false,
                                        REQUEST_CONTEXT_TYPE_LOCATION);
     CommonNavigationParams common_params;
     common_params.url = url;
-    scoped_ptr<NavigationRequestInfo> request_info(
-        new NavigationRequestInfo(common_params, begin_params, url, true, false,
-                                  -1, scoped_refptr<ResourceRequestBody>()));
+    std::unique_ptr<NavigationRequestInfo> request_info(
+        new NavigationRequestInfo(common_params, begin_params, url,
+                                  url::Origin(url), true, false, false, -1,
+                                  false, false));
 
     return NavigationURLLoader::Create(browser_context_.get(),
-                                       request_info.Pass(), nullptr, delegate);
+                                       std::move(request_info), nullptr,
+                                       nullptr, nullptr, delegate);
   }
 
   // Helper function for fetching the body of a URL to a string.
@@ -196,8 +125,8 @@ class NavigationURLLoaderTest : public testing::Test {
     net::TestDelegate delegate;
     net::URLRequestContext* request_context =
         browser_context_->GetResourceContext()->GetRequestContext();
-    scoped_ptr<net::URLRequest> request(request_context->CreateRequest(
-        url, net::DEFAULT_PRIORITY, &delegate));
+    std::unique_ptr<net::URLRequest> request(
+        request_context->CreateRequest(url, net::DEFAULT_PRIORITY, &delegate));
     request->Start();
     base::RunLoop().Run();
 
@@ -209,18 +138,22 @@ class NavigationURLLoaderTest : public testing::Test {
  protected:
   TestBrowserThreadBundle thread_bundle_;
   net::URLRequestJobFactoryImpl job_factory_;
-  scoped_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  LoaderDelegateImpl loader_delegate_;
   ResourceDispatcherHostImpl host_;
 };
 
 // Tests that a basic request works.
 TEST_F(NavigationURLLoaderTest, Basic) {
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
+  std::unique_ptr<NavigationURLLoader> loader =
       MakeTestLoader(net::URLRequestTestJob::test_url_1(), &delegate);
 
   // Wait for the response to come back.
   delegate.WaitForResponseStarted();
+
+  // Proceed with the response.
+  loader->ProceedWithResponse();
 
   // Check the response is correct.
   EXPECT_EQ("text/html", delegate.response()->head.mime_type);
@@ -236,7 +169,7 @@ TEST_F(NavigationURLLoaderTest, Basic) {
 // Tests that request failures are propagated correctly.
 TEST_F(NavigationURLLoaderTest, RequestFailed) {
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
+  std::unique_ptr<NavigationURLLoader> loader =
       MakeTestLoader(GURL("bogus:bogus"), &delegate);
 
   // Wait for the request to fail as expected.
@@ -250,9 +183,8 @@ TEST_F(NavigationURLLoaderTest, RequestRedirected) {
   // Fake a top-level request. Choose a URL which redirects so the request can
   // be paused before the response comes in.
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
-      MakeTestLoader(net::URLRequestTestJob::test_url_redirect_to_url_2(),
-                     &delegate);
+  std::unique_ptr<NavigationURLLoader> loader = MakeTestLoader(
+      net::URLRequestTestJob::test_url_redirect_to_url_2(), &delegate);
 
   // Wait for the request to redirect.
   delegate.WaitForRequestRedirected();
@@ -267,6 +199,9 @@ TEST_F(NavigationURLLoaderTest, RequestRedirected) {
   // Wait for the response to complete.
   loader->FollowRedirect();
   delegate.WaitForResponseStarted();
+
+  // Proceed with the response.
+  loader->ProceedWithResponse();
 
   // Check the response is correct.
   EXPECT_EQ("text/html", delegate.response()->head.mime_type);
@@ -285,9 +220,8 @@ TEST_F(NavigationURLLoaderTest, CancelOnDestruct) {
   // Fake a top-level request. Choose a URL which redirects so the request can
   // be paused before the response comes in.
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
-      MakeTestLoader(net::URLRequestTestJob::test_url_redirect_to_url_2(),
-                     &delegate);
+  std::unique_ptr<NavigationURLLoader> loader = MakeTestLoader(
+      net::URLRequestTestJob::test_url_redirect_to_url_2(), &delegate);
 
   // Wait for the request to redirect.
   delegate.WaitForRequestRedirected();
@@ -303,9 +237,8 @@ TEST_F(NavigationURLLoaderTest, CancelOnDestruct) {
 // loader race.
 TEST_F(NavigationURLLoaderTest, CancelResponseRace) {
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
-      MakeTestLoader(net::URLRequestTestJob::test_url_redirect_to_url_2(),
-                     &delegate);
+  std::unique_ptr<NavigationURLLoader> loader = MakeTestLoader(
+      net::URLRequestTestJob::test_url_redirect_to_url_2(), &delegate);
 
   // Wait for the request to redirect.
   delegate.WaitForRequestRedirected();
@@ -325,9 +258,8 @@ TEST_F(NavigationURLLoaderTest, CancelResponseRace) {
 // Tests that the loader may be canceled by context.
 TEST_F(NavigationURLLoaderTest, CancelByContext) {
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
-      MakeTestLoader(net::URLRequestTestJob::test_url_redirect_to_url_2(),
-                     &delegate);
+  std::unique_ptr<NavigationURLLoader> loader = MakeTestLoader(
+      net::URLRequestTestJob::test_url_redirect_to_url_2(), &delegate);
 
   // Wait for the request to redirect.
   delegate.WaitForRequestRedirected();
@@ -348,7 +280,7 @@ TEST_F(NavigationURLLoaderTest, RequestBlocked) {
   host_.SetDelegate(&rdh_delegate);
 
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
+  std::unique_ptr<NavigationURLLoader> loader =
       MakeTestLoader(net::URLRequestTestJob::test_url_1(), &delegate);
 
   // Wait for the request to fail as expected.
@@ -363,11 +295,14 @@ TEST_F(NavigationURLLoaderTest, RequestBlocked) {
 TEST_F(NavigationURLLoaderTest, LoaderDetached) {
   // Fake a top-level request to a URL whose body does not load immediately.
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
+  std::unique_ptr<NavigationURLLoader> loader =
       MakeTestLoader(net::URLRequestTestJob::test_url_2(), &delegate);
 
   // Wait for the response to come back.
   delegate.WaitForResponseStarted();
+
+  // Proceed with the response.
+  loader->ProceedWithResponse();
 
   // Check the response is correct.
   EXPECT_EQ("text/html", delegate.response()->head.mime_type);
@@ -387,11 +322,14 @@ TEST_F(NavigationURLLoaderTest, LoaderDetached) {
 TEST_F(NavigationURLLoaderTest, OwnedByHandle) {
   // Fake a top-level request to a URL whose body does not load immediately.
   TestNavigationURLLoaderDelegate delegate;
-  scoped_ptr<NavigationURLLoader> loader =
+  std::unique_ptr<NavigationURLLoader> loader =
       MakeTestLoader(net::URLRequestTestJob::test_url_2(), &delegate);
 
   // Wait for the response to come back.
   delegate.WaitForResponseStarted();
+
+  // Proceed with the response.
+  loader->ProceedWithResponse();
 
   // Release the body.
   delegate.ReleaseBody();

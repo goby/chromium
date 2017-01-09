@@ -5,6 +5,7 @@
 #ifndef UI_APP_LIST_VIEWS_TILE_ITEM_VIEW_H_
 #define UI_APP_LIST_VIEWS_TILE_ITEM_VIEW_H_
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/app_list/app_list_export.h"
@@ -70,8 +71,7 @@ class APP_LIST_EXPORT TileItemView : public views::CustomButton,
                       base::string16* tooltip) const override;
 
   SkColor parent_background_color_;
-  HoverStyle hover_style_;
-  scoped_ptr<ImageShadowAnimator> image_shadow_animator_;
+  std::unique_ptr<ImageShadowAnimator> image_shadow_animator_;
 
   views::ImageView* icon_;  // Owned by views hierarchy.
   views::Label* title_;     // Owned by views hierarchy.

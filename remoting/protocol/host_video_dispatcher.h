@@ -6,9 +6,8 @@
 #define REMOTING_PROTOCOL_HOST_VIDEO_DISPATCHER_H_
 
 #include "base/compiler_specific.h"
-#include "remoting/proto/video.pb.h"
+#include "base/macros.h"
 #include "remoting/protocol/channel_dispatcher_base.h"
-#include "remoting/protocol/protobuf_message_parser.h"
 #include "remoting/protocol/video_stub.h"
 
 namespace remoting {
@@ -26,15 +25,13 @@ class HostVideoDispatcher : public ChannelDispatcherBase, public VideoStub {
   }
 
   // VideoStub interface.
-  void ProcessVideoPacket(scoped_ptr<VideoPacket> packet,
+  void ProcessVideoPacket(std::unique_ptr<VideoPacket> packet,
                           const base::Closure& done) override;
 
  private:
-  void OnVideoAck(scoped_ptr<VideoAck> ack, const base::Closure& done);
+  void OnIncomingMessage(std::unique_ptr<CompoundBuffer> message) override;
 
-  ProtobufMessageParser<VideoAck> parser_;
-
-  VideoFeedbackStub* video_feedback_stub_;
+  VideoFeedbackStub* video_feedback_stub_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(HostVideoDispatcher);
 };

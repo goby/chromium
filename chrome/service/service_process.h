@@ -5,13 +5,17 @@
 #ifndef CHROME_SERVICE_SERVICE_PROCESS_H_
 #define CHROME_SERVICE_SERVICE_PROCESS_H_
 
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread.h"
 #include "chrome/service/cloud_print/cloud_print_proxy.h"
 #include "chrome/service/service_ipc_server.h"
+#include "mojo/edk/embedder/named_platform_handle.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 
 class ServiceProcessPrefs;
 class ServiceURLRequestContextGetter;
@@ -21,6 +25,12 @@ namespace base {
 class CommandLine;
 class SequencedWorkerPool;
 class WaitableEvent;
+}
+
+namespace mojo {
+namespace edk {
+class ScopedIPCSupport;
+}
 }
 
 namespace net {
@@ -75,6 +85,7 @@ class ServiceProcess : public ServiceIPCServer::Client,
   void OnShutdown() override;
   void OnUpdateAvailable() override;
   bool OnIPCClientDisconnect() override;
+  mojo::ScopedMessagePipeHandle CreateChannelMessagePipe() override;
 
   // CloudPrintProxy::Provider implementation.
   cloud_print::CloudPrintProxy* GetCloudPrintProxy() override;
@@ -106,14 +117,15 @@ class ServiceProcess : public ServiceIPCServer::Client,
   // Terminate forces the service process to quit.
   void Terminate();
 
-  scoped_ptr<net::NetworkChangeNotifier> network_change_notifier_;
-  scoped_ptr<base::Thread> io_thread_;
-  scoped_ptr<base::Thread> file_thread_;
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
+  std::unique_ptr<base::Thread> io_thread_;
+  std::unique_ptr<base::Thread> file_thread_;
   scoped_refptr<base::SequencedWorkerPool> blocking_pool_;
-  scoped_ptr<cloud_print::CloudPrintProxy> cloud_print_proxy_;
-  scoped_ptr<ServiceProcessPrefs> service_prefs_;
-  scoped_ptr<ServiceIPCServer> ipc_server_;
-  scoped_ptr<ServiceProcessState> service_process_state_;
+  std::unique_ptr<cloud_print::CloudPrintProxy> cloud_print_proxy_;
+  std::unique_ptr<ServiceProcessPrefs> service_prefs_;
+  std::unique_ptr<ServiceIPCServer> ipc_server_;
+  std::unique_ptr<ServiceProcessState> service_process_state_;
+  std::unique_ptr<mojo::edk::ScopedIPCSupport> mojo_ipc_support_;
 
   // An event that will be signalled when we shutdown.
   base::WaitableEvent shutdown_event_;
@@ -128,6 +140,12 @@ class ServiceProcess : public ServiceIPCServer::Client,
   bool update_available_;
 
   scoped_refptr<ServiceURLRequestContextGetter> request_context_getter_;
+
+#if defined(OS_POSIX)
+  mojo::edk::ScopedPlatformHandle server_handle_;
+#elif defined(OS_WIN)
+  mojo::edk::NamedPlatformHandle server_handle_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(ServiceProcess);
 };

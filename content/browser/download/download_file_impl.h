@@ -7,8 +7,15 @@
 
 #include "content/browser/download/download_file.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <string>
+
+#include "base/files/file.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -16,33 +23,27 @@
 #include "content/browser/download/base_file.h"
 #include "content/browser/download/rate_estimator.h"
 #include "content/public/browser/download_save_info.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 
 namespace content {
 class ByteStreamReader;
 class DownloadDestinationObserver;
-class DownloadManager;
-struct DownloadCreateInfo;
 
 class CONTENT_EXPORT DownloadFileImpl : public DownloadFile {
  public:
   // Takes ownership of the object pointed to by |request_handle|.
-  // |bound_net_log| will be used for logging the download file's events.
+  // |net_log| will be used for logging the download file's events.
   // May be constructed on any thread.  All methods besides the constructor
   // (including destruction) must occur on the FILE thread.
   //
   // Note that the DownloadFileImpl automatically reads from the passed in
   // stream, and sends updates and status of those reads to the
   // DownloadDestinationObserver.
-  DownloadFileImpl(
-    scoped_ptr<DownloadSaveInfo> save_info,
-    const base::FilePath& default_downloads_directory,
-    const GURL& url,
-    const GURL& referrer_url,
-    bool calculate_hash,
-    scoped_ptr<ByteStreamReader> stream,
-    const net::BoundNetLog& bound_net_log,
-    base::WeakPtr<DownloadDestinationObserver> observer);
+  DownloadFileImpl(std::unique_ptr<DownloadSaveInfo> save_info,
+                   const base::FilePath& default_downloads_directory,
+                   std::unique_ptr<ByteStreamReader> byte_stream,
+                   const net::NetLogWithSource& net_log,
+                   base::WeakPtr<DownloadDestinationObserver> observer);
 
   ~DownloadFileImpl() override;
 
@@ -51,15 +52,14 @@ class CONTENT_EXPORT DownloadFileImpl : public DownloadFile {
   void RenameAndUniquify(const base::FilePath& full_path,
                          const RenameCompletionCallback& callback) override;
   void RenameAndAnnotate(const base::FilePath& full_path,
+                         const std::string& client_guid,
+                         const GURL& source_url,
+                         const GURL& referrer_url,
                          const RenameCompletionCallback& callback) override;
   void Detach() override;
   void Cancel() override;
-  base::FilePath FullPath() const override;
+  const base::FilePath& FullPath() const override;
   bool InProgress() const override;
-  int64 CurrentSpeed() const override;
-  bool GetHash(std::string* hash) override;
-  std::string GetHashState() override;
-  void SetClientGuid(const std::string& guid) override;
 
  protected:
   // For test class overrides.
@@ -81,20 +81,29 @@ class CONTENT_EXPORT DownloadFileImpl : public DownloadFile {
     ANNOTATE_WITH_SOURCE_INFORMATION = 1 << 1
   };
 
-  // Rename file_ to |new_path|.
-  // |option| specifies additional operations to be performed during the rename.
-  //     See RenameOption above.
-  // |retries_left| indicates how many times to retry the operation if the
-  //     rename fails with a transient error.
-  // |time_of_first_failure| Set to an empty base::TimeTicks during the first
-  //     call. Once the first failure is seen, subsequent calls of
-  //     RenameWithRetryInternal will have a non-empty value keeping track of
-  //     the time of first observed failure.  Used for UMA.
-  void RenameWithRetryInternal(const base::FilePath& new_path,
-                               RenameOption option,
-                               int retries_left,
-                               base::TimeTicks time_of_first_failure,
-                               const RenameCompletionCallback& callback);
+  struct RenameParameters {
+    RenameParameters(RenameOption option,
+                     const base::FilePath& new_path,
+                     const RenameCompletionCallback& completion_callback);
+    ~RenameParameters();
+
+    RenameOption option;
+    base::FilePath new_path;
+    std::string client_guid;  // See BaseFile::AnnotateWithSourceInformation()
+    GURL source_url;          // See BaseFile::AnnotateWithSourceInformation()
+    GURL referrer_url;        // See BaseFile::AnnotateWithSourceInformation()
+    int retries_left;         // RenameWithRetryInternal() will
+                              // automatically retry until this
+                              // count reaches 0. Each attempt
+                              // decrements this counter.
+    base::TimeTicks time_of_first_failure;  // Set to empty at first, but is set
+                                            // when a failure is first
+                                            // encountered. Used for UMA.
+    RenameCompletionCallback completion_callback;
+  };
+
+  // Rename file_ based on |parameters|.
+  void RenameWithRetryInternal(std::unique_ptr<RenameParameters> parameters);
 
   // Send an update on our progress.
   void SendUpdate();
@@ -103,8 +112,15 @@ class CONTENT_EXPORT DownloadFileImpl : public DownloadFile {
   // handled.
   void StreamActive();
 
+  net::NetLogWithSource net_log_;
+
   // The base file instance.
   BaseFile file_;
+
+  // DownloadSaveInfo provided during construction. Since the DownloadFileImpl
+  // can be created on any thread, this holds the save_info_ until it can be
+  // used to initialize file_ on the FILE thread.
+  std::unique_ptr<DownloadSaveInfo> save_info_;
 
   // The default directory for creating the download file.
   base::FilePath default_download_directory_;
@@ -113,18 +129,16 @@ class CONTENT_EXPORT DownloadFileImpl : public DownloadFile {
   // TODO(rdsmith): Move this into BaseFile; requires using the same
   // stream semantics in SavePackage.  Alternatively, replace SaveFile
   // with DownloadFile and get rid of BaseFile.
-  scoped_ptr<ByteStreamReader> stream_reader_;
+  std::unique_ptr<ByteStreamReader> stream_reader_;
 
   // Used to trigger progress updates.
-  scoped_ptr<base::RepeatingTimer> update_timer_;
+  std::unique_ptr<base::RepeatingTimer> update_timer_;
 
   // Statistics
   size_t bytes_seen_;
   base::TimeDelta disk_writes_time_;
   base::TimeTicks download_start_;
   RateEstimator rate_estimator_;
-
-  net::BoundNetLog bound_net_log_;
 
   base::WeakPtr<DownloadDestinationObserver> observer_;
 

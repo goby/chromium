@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_PRINTING_BROWSER_PRINT_MANAGER_H_
 #define COMPONENTS_PRINTING_BROWSER_PRINT_MANAGER_H_
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "content/public/browser/web_contents_observer.h"
 
 #if defined(OS_ANDROID)
@@ -37,10 +39,11 @@ class PrintManager : public content::WebContentsObserver {
   explicit PrintManager(content::WebContents* contents);
 
   // Terminates or cancels the print job if one was pending.
-  void RenderProcessGone(base::TerminationStatus status) override;
+  void PrintingRenderFrameDeleted();
 
   // content::WebContentsObserver
-  bool OnMessageReceived(const IPC::Message& message) override;
+  bool OnMessageReceived(const IPC::Message& message,
+                         content::RenderFrameHost* render_frame_host) override;
 
   // IPC handlers
   virtual void OnDidGetPrintedPagesCount(int cookie, int number_pages);

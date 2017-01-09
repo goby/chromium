@@ -5,10 +5,15 @@
 #ifndef MEDIA_CAST_RECEIVER_CAST_RECEIVER_IMPL_H_
 #define MEDIA_CAST_RECEIVER_CAST_RECEIVER_IMPL_H_
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/cast_receiver.h"
+#include "media/cast/common/rtp_time.h"
 #include "media/cast/net/pacing/paced_sender.h"
 #include "media/cast/receiver/frame_receiver.h"
 
@@ -26,12 +31,12 @@ class CastReceiverImpl : public CastReceiver {
   CastReceiverImpl(scoped_refptr<CastEnvironment> cast_environment,
                    const FrameReceiverConfig& audio_config,
                    const FrameReceiverConfig& video_config,
-                   CastTransportSender* const transport);
+                   CastTransport* const transport);
 
   ~CastReceiverImpl() final;
 
   // CastReceiver implementation.
-  void ReceivePacket(scoped_ptr<Packet> packet) final;
+  void ReceivePacket(std::unique_ptr<Packet> packet) final;
   void RequestDecodedAudioFrame(
       const AudioFrameDecodedCallback& callback) final;
   void RequestEncodedAudioFrame(
@@ -44,15 +49,13 @@ class CastReceiverImpl : public CastReceiver {
  private:
   // Feeds an EncodedFrame into |audio_decoder_|.  RequestDecodedAudioFrame()
   // uses this as a callback for RequestEncodedAudioFrame().
-  void DecodeEncodedAudioFrame(
-      const AudioFrameDecodedCallback& callback,
-      scoped_ptr<EncodedFrame> encoded_frame);
+  void DecodeEncodedAudioFrame(const AudioFrameDecodedCallback& callback,
+                               std::unique_ptr<EncodedFrame> encoded_frame);
 
   // Feeds an EncodedFrame into |video_decoder_|.  RequestDecodedVideoFrame()
   // uses this as a callback for RequestEncodedVideoFrame().
-  void DecodeEncodedVideoFrame(
-      const VideoFrameDecodedCallback& callback,
-      scoped_ptr<EncodedFrame> encoded_frame);
+  void DecodeEncodedVideoFrame(const VideoFrameDecodedCallback& callback,
+                               std::unique_ptr<EncodedFrame> encoded_frame);
 
   // Receives an AudioBus from |audio_decoder_|, logs the event, and passes the
   // data on by running the given |callback|.  This method is static to ensure
@@ -62,10 +65,10 @@ class CastReceiverImpl : public CastReceiver {
   static void EmitDecodedAudioFrame(
       const scoped_refptr<CastEnvironment>& cast_environment,
       const AudioFrameDecodedCallback& callback,
-      uint32 frame_id,
-      uint32 rtp_timestamp,
+      FrameId frame_id,
+      RtpTimeTicks rtp_timestamp,
       const base::TimeTicks& playout_time,
-      scoped_ptr<AudioBus> audio_bus,
+      std::unique_ptr<AudioBus> audio_bus,
       bool is_continuous);
 
   // Receives a VideoFrame from |video_decoder_|, logs the event, and passes the
@@ -76,8 +79,8 @@ class CastReceiverImpl : public CastReceiver {
   static void EmitDecodedVideoFrame(
       const scoped_refptr<CastEnvironment>& cast_environment,
       const VideoFrameDecodedCallback& callback,
-      uint32 frame_id,
-      uint32 rtp_timestamp,
+      FrameId frame_id,
+      RtpTimeTicks rtp_timestamp,
       const base::TimeTicks& playout_time,
       const scoped_refptr<VideoFrame>& video_frame,
       bool is_continuous);
@@ -88,8 +91,8 @@ class CastReceiverImpl : public CastReceiver {
 
   // Used by DispatchReceivedPacket() to direct packets to the appropriate frame
   // receiver.
-  const uint32 ssrc_of_audio_sender_;
-  const uint32 ssrc_of_video_sender_;
+  const uint32_t ssrc_of_audio_sender_;
+  const uint32_t ssrc_of_video_sender_;
 
   // Parameters for the decoders that are created on-demand.  The values here
   // might be nonsense if the client of CastReceiverImpl never intends to use
@@ -101,11 +104,11 @@ class CastReceiverImpl : public CastReceiver {
 
   // Created on-demand to decode frames from |audio_receiver_| into AudioBuses
   // for playback.
-  scoped_ptr<AudioDecoder> audio_decoder_;
+  std::unique_ptr<AudioDecoder> audio_decoder_;
 
   // Created on-demand to decode frames from |video_receiver_| into VideoFrame
   // images for playback.
-  scoped_ptr<VideoDecoder> video_decoder_;
+  std::unique_ptr<VideoDecoder> video_decoder_;
 
   DISALLOW_COPY_AND_ASSIGN(CastReceiverImpl);
 };
@@ -113,4 +116,4 @@ class CastReceiverImpl : public CastReceiver {
 }  // namespace cast
 }  // namespace media
 
-#endif  // MEDIA_CAST_RECEIVER_CAST_RECEIVER_IMPL_
+#endif  // MEDIA_CAST_RECEIVER_CAST_RECEIVER_IMPL_H_

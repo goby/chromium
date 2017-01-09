@@ -5,9 +5,12 @@
 #import "content/browser/renderer_host/render_widget_host_view_mac_editcommand_helper.h"
 
 #import <Cocoa/Cocoa.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/message_loop/message_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/compositor/test/no_transport_image_transport_factory.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
@@ -18,6 +21,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+#include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #include "ui/base/layout.h"
 
 using content::RenderWidgetHostViewMac;
@@ -86,7 +90,7 @@ class RenderWidgetHostEditCommandCounter : public RenderWidgetHostImpl {
  public:
   RenderWidgetHostEditCommandCounter(RenderWidgetHostDelegate* delegate,
                                      RenderProcessHost* process,
-                                     int32 routing_id)
+                                     int32_t routing_id)
       : RenderWidgetHostImpl(delegate, process, routing_id, false),
         edit_command_message_count_(0) {}
 
@@ -103,7 +107,7 @@ class RenderWidgetHostViewMacEditCommandHelperTest : public PlatformTest {
  protected:
   void SetUp() override {
     ImageTransportFactory::InitializeForUnitTests(
-        scoped_ptr<ImageTransportFactory>(
+        std::unique_ptr<ImageTransportFactory>(
             new NoTransportImageTransportFactory));
   }
   void TearDown() override { ImageTransportFactory::Terminate(); }
@@ -124,12 +128,15 @@ TEST_F(RenderWidgetHostViewMacEditCommandHelperTest,
   supported_factors.push_back(ui::SCALE_FACTOR_100P);
   ui::test::ScopedSetSupportedScaleFactors scoped_supported(supported_factors);
 
-  int32 routing_id = process_host.GetNextRoutingID();
+  int32_t routing_id = process_host.GetNextRoutingID();
   RenderWidgetHostEditCommandCounter* render_widget =
       new RenderWidgetHostEditCommandCounter(&delegate, &process_host,
                                              routing_id);
 
   base::mac::ScopedNSAutoreleasePool pool;
+
+  base::MessageLoop message_loop;
+  ui::WindowResizeHelperMac::Get()->Init(base::ThreadTaskRunnerHandle::Get());
 
   // Owned by its |cocoa_view()|, i.e. |rwhv_cocoa|.
   RenderWidgetHostViewMac* rwhv_mac = new RenderWidgetHostViewMac(
@@ -155,11 +162,10 @@ TEST_F(RenderWidgetHostViewMacEditCommandHelperTest,
   rwhv_cocoa.reset();
   pool.Recycle();
 
-  {
-    // The |render_widget|'s process needs to be deleted within |message_loop|.
-    base::MessageLoop message_loop;
-    delete render_widget;
-  }
+  // The |render_widget|'s process needs to be deleted within |message_loop|.
+  delete render_widget;
+
+  ui::WindowResizeHelperMac::Get()->ShutdownForTests();
 }
 
 // Test RenderWidgetHostViewMacEditCommandHelper::AddEditingSelectorsToClass

@@ -5,11 +5,14 @@
 #ifndef BASE_DEBUG_CRASH_LOGGING_H_
 #define BASE_DEBUG_CRASH_LOGGING_H_
 
+#include <stddef.h>
+
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 
 // These functions add metadata to the upload payload when sending crash reports
@@ -23,7 +26,7 @@ namespace debug {
 
 class StackTrace;
 
-// Set or clear a specific key-value pair from the crash metadata. Keys and
+// Sets or clears a specific key-value pair from the crash metadata. Keys and
 // values are terminated at the null byte.
 BASE_EXPORT void SetCrashKeyValue(const base::StringPiece& key,
                                   const base::StringPiece& value);
@@ -47,11 +50,46 @@ class BASE_EXPORT ScopedCrashKey {
   ScopedCrashKey(const base::StringPiece& key, const base::StringPiece& value);
   ~ScopedCrashKey();
 
+  // Helper to force a static_assert when instantiating a ScopedCrashKey
+  // temporary without a name. The usual idiom is to just #define a macro that
+  // static_asserts with the message; however, that doesn't work well when the
+  // type is in a namespace.
+  //
+  // Instead, we use a templated helper to trigger the static_assert, observing
+  //   two rules:
+  // - The static_assert needs to be in a normally uninstantiated template;
+  //   otherwise, it will fail to compile =)
+  // - Similarly, the static_assert must be dependent on the template argument,
+  //   to prevent it from being evaluated until the template is instantiated.
+  //
+  // To prevent this constructor from being accidentally invoked, it takes a
+  // special enum as an argument.
+
+  // Finally, note that this can't just be a template function that takes only
+  // one parameter, because this ends up triggering the vexing parse issue.
+  enum ScopedCrashKeyNeedsNameTag {
+    KEY_NEEDS_NAME,
+  };
+
+  template <typename... Args>
+  explicit ScopedCrashKey(ScopedCrashKeyNeedsNameTag, const Args&...) {
+    constexpr bool always_false = sizeof...(Args) == 0 && sizeof...(Args) != 0;
+    static_assert(
+        always_false,
+        "scoped crash key objects should not be unnamed temporaries.");
+  }
+
  private:
   std::string key_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedCrashKey);
 };
+
+// Disallow an instantation of ScopedCrashKey without a name, since this results
+// in a temporary that is immediately destroyed. Doing so will trigger the
+// static_assert in the templated constructor helper in ScopedCrashKey.
+#define ScopedCrashKey(...) \
+  ScopedCrashKey(base::debug::ScopedCrashKey::KEY_NEEDS_NAME, __VA_ARGS__)
 
 // Before setting values for a key, all the keys must be registered.
 struct BASE_EXPORT CrashKey {
@@ -73,11 +111,11 @@ struct BASE_EXPORT CrashKey {
 BASE_EXPORT size_t InitCrashKeys(const CrashKey* const keys, size_t count,
                                  size_t chunk_max_length);
 
-// Returns the correspnding crash key object or NULL for a given key.
+// Returns the corresponding crash key object or NULL for a given key.
 BASE_EXPORT const CrashKey* LookupCrashKey(const base::StringPiece& key);
 
 // In the platform crash reporting implementation, these functions set and
-// clear the NUL-termianted key-value pairs.
+// clear the NUL-terminated key-value pairs.
 typedef void (*SetCrashKeyValueFuncT)(const base::StringPiece&,
                                       const base::StringPiece&);
 typedef void (*ClearCrashKeyValueFuncT)(const base::StringPiece&);

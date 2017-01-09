@@ -8,6 +8,7 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/path_service.h"
+#include "build/build_config.h"
 #include "chromecast/base/cast_paths.h"
 #include "chromecast/browser/cast_download_manager_delegate.h"
 #include "chromecast/browser/cast_permission_manager.h"
@@ -56,6 +57,7 @@ CastBrowserContext::CastBrowserContext(
 }
 
 CastBrowserContext::~CastBrowserContext() {
+  ShutdownStoragePartitions();
   content::BrowserThread::DeleteSoon(
       content::BrowserThread::IO,
       FROM_HERE,
@@ -76,9 +78,10 @@ void CastBrowserContext::InitWhileIOAllowed() {
   // shared in a single location as defined here.
   CHECK(PathService::Get(DIR_CAST_HOME, &path_));
 #endif  // defined(OS_ANDROID)
+  BrowserContext::Initialize(this, path_);
 }
 
-scoped_ptr<content::ZoomLevelDelegate>
+std::unique_ptr<content::ZoomLevelDelegate>
 CastBrowserContext::CreateZoomLevelDelegate(
     const base::FilePath& partition_path) {
   return nullptr;
@@ -90,31 +93,6 @@ base::FilePath CastBrowserContext::GetPath() const {
 
 bool CastBrowserContext::IsOffTheRecord() const {
   return false;
-}
-
-net::URLRequestContextGetter* CastBrowserContext::GetRequestContext() {
-  return GetDefaultStoragePartition(this)->GetURLRequestContext();
-}
-
-net::URLRequestContextGetter*
-CastBrowserContext::GetRequestContextForRenderProcess(int renderer_child_id) {
-  return GetRequestContext();
-}
-
-net::URLRequestContextGetter* CastBrowserContext::GetMediaRequestContext() {
-  return url_request_context_factory_->GetMediaGetter();
-}
-
-net::URLRequestContextGetter*
-CastBrowserContext::GetMediaRequestContextForRenderProcess(
-    int renderer_child_id) {
-  return GetMediaRequestContext();
-}
-
-net::URLRequestContextGetter*
-CastBrowserContext::GetMediaRequestContextForStoragePartition(
-    const base::FilePath& partition_path, bool in_memory) {
-  return GetMediaRequestContext();
 }
 
 net::URLRequestContextGetter* CastBrowserContext::GetSystemRequestContext() {
@@ -154,6 +132,32 @@ content::PermissionManager* CastBrowserContext::GetPermissionManager() {
 
 content::BackgroundSyncController*
 CastBrowserContext::GetBackgroundSyncController() {
+  return nullptr;
+}
+
+net::URLRequestContextGetter* CastBrowserContext::CreateRequestContext(
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::URLRequestInterceptorScopedVector request_interceptors) {
+  return url_request_context_factory_->CreateMainGetter(
+      this, protocol_handlers, std::move(request_interceptors));
+}
+
+net::URLRequestContextGetter*
+CastBrowserContext::CreateRequestContextForStoragePartition(
+    const base::FilePath& partition_path,
+    bool in_memory,
+    content::ProtocolHandlerMap* protocol_handlers,
+    content::URLRequestInterceptorScopedVector request_interceptors) {
+  return nullptr;
+}
+
+net::URLRequestContextGetter* CastBrowserContext::CreateMediaRequestContext() {
+  return url_request_context_factory_->GetMediaGetter();
+}
+
+net::URLRequestContextGetter*
+CastBrowserContext::CreateMediaRequestContextForStoragePartition(
+    const base::FilePath& partition_path, bool in_memory) {
   return nullptr;
 }
 

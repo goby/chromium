@@ -32,39 +32,39 @@
 #define InspectorInputAgent_h
 
 #include "core/CoreExport.h"
-#include "core/InspectorFrontend.h"
 #include "core/inspector/InspectorBaseAgent.h"
+#include "core/inspector/protocol/Input.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 class InspectedFrames;
-class PlatformKeyboardEvent;
-class PlatformMouseEvent;
 
-typedef String ErrorString;
+class CORE_EXPORT InspectorInputAgent final
+    : public InspectorBaseAgent<protocol::Input::Metainfo> {
+  WTF_MAKE_NONCOPYABLE(InspectorInputAgent);
 
-class CORE_EXPORT InspectorInputAgent final : public InspectorBaseAgent<InspectorInputAgent, InspectorFrontend::Input>, public InspectorBackendDispatcher::InputCommandHandler {
-    WTF_MAKE_NONCOPYABLE(InspectorInputAgent);
-public:
-    static PassOwnPtrWillBeRawPtr<InspectorInputAgent> create(InspectedFrames* inspectedFrames)
-    {
-        return adoptPtrWillBeNoop(new InspectorInputAgent(inspectedFrames));
-    }
+ public:
+  static InspectorInputAgent* create(InspectedFrames* inspectedFrames) {
+    return new InspectorInputAgent(inspectedFrames);
+  }
 
-    ~InspectorInputAgent() override;
-    DECLARE_VIRTUAL_TRACE();
+  ~InspectorInputAgent() override;
+  DECLARE_VIRTUAL_TRACE();
 
-    // Methods called from the frontend for simulating input.
-    void dispatchTouchEvent(ErrorString*, const String& type, const RefPtr<JSONArray>& touchPoints, const int* modifiers, const double* timestamp) override;
-private:
-    explicit InspectorInputAgent(InspectedFrames*);
+  // Methods called from the frontend for simulating input.
+  Response dispatchTouchEvent(
+      const String& type,
+      std::unique_ptr<protocol::Array<protocol::Input::TouchPoint>> touchPoints,
+      Maybe<int> modifiers,
+      Maybe<double> timestamp) override;
 
-    RawPtrWillBeMember<InspectedFrames> m_inspectedFrames;
+ private:
+  explicit InspectorInputAgent(InspectedFrames*);
+
+  Member<InspectedFrames> m_inspectedFrames;
 };
 
+}  // namespace blink
 
-} // namespace blink
-
-#endif // !defined(InspectorInputAgent_h)
+#endif  // !defined(InspectorInputAgent_h)

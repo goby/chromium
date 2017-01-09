@@ -6,11 +6,11 @@
 #define NET_PROXY_MOJO_PROXY_RESOLVER_IMPL_H_
 
 #include <map>
+#include <memory>
 #include <queue>
-#include <set>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/interfaces/proxy_resolver_service.mojom.h"
 #include "net/proxy/proxy_resolver.h"
 
@@ -19,7 +19,8 @@ class ProxyResolverV8Tracing;
 
 class MojoProxyResolverImpl : public interfaces::ProxyResolver {
  public:
-  explicit MojoProxyResolverImpl(scoped_ptr<ProxyResolverV8Tracing> resolver);
+  explicit MojoProxyResolverImpl(
+      std::unique_ptr<ProxyResolverV8Tracing> resolver);
 
   ~MojoProxyResolverImpl() override;
 
@@ -28,13 +29,13 @@ class MojoProxyResolverImpl : public interfaces::ProxyResolver {
 
   // interfaces::ProxyResolver overrides.
   void GetProxyForUrl(
-      const mojo::String& url,
+      const GURL& url,
       interfaces::ProxyResolverRequestClientPtr client) override;
 
   void DeleteJob(Job* job);
 
-  scoped_ptr<ProxyResolverV8Tracing> resolver_;
-  std::set<Job*> resolve_jobs_;
+  std::unique_ptr<ProxyResolverV8Tracing> resolver_;
+  std::map<Job*, std::unique_ptr<Job>> resolve_jobs_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoProxyResolverImpl);
 };

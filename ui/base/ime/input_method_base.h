@@ -5,10 +5,13 @@
 #ifndef UI_BASE_IME_INPUT_METHOD_BASE_H_
 #define UI_BASE_IME_INPUT_METHOD_BASE_H_
 
-#include "base/basictypes.h"
+#include <vector>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "ui/base/ime/ime_input_context_handler_interface.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/ui_base_ime_export.h"
 #include "ui/events/event_dispatcher.h"
@@ -27,16 +30,14 @@ class TextInputClient;
 // implementations.
 class UI_BASE_IME_EXPORT InputMethodBase
     : NON_EXPORTED_BASE(public InputMethod),
-      public base::SupportsWeakPtr<InputMethodBase> {
+      public base::SupportsWeakPtr<InputMethodBase>,
+      public IMEInputContextHandlerInterface {
  public:
   InputMethodBase();
   ~InputMethodBase() override;
 
   // Overriden from InputMethod.
   void SetDelegate(internal::InputMethodDelegate* delegate) override;
-  // If a derived class overrides OnFocus()/OnBlur(), it should call parent's
-  // implementation first, to make sure |system_toplevel_window_focused_| flag
-  // can be updated correctly.
   void OnFocus() override;
   void OnBlur() override;
   void SetFocusedTextInputClient(TextInputClient* client) override;
@@ -46,6 +47,8 @@ class UI_BASE_IME_EXPORT InputMethodBase
   // If a derived class overrides this method, it should call parent's
   // implementation.
   void OnTextInputTypeChanged(const TextInputClient* client) override;
+  void OnInputLocaleChanged() override;
+  bool IsInputLocaleCJK() const override;
 
   TextInputType GetTextInputType() const override;
   TextInputMode GetTextInputMode() const override;
@@ -61,6 +64,19 @@ class UI_BASE_IME_EXPORT InputMethodBase
                                          TextInputClient* focused) {}
   virtual void OnDidChangeFocusedClient(TextInputClient* focused_before,
                                         TextInputClient* focused) {}
+
+  // IMEInputContextHandlerInterface:
+  void CommitText(const std::string& text) override;
+  void UpdateCompositionText(const CompositionText& text,
+                             uint32_t cursor_pos,
+                             bool visible) override;
+  void DeleteSurroundingText(int32_t offset, uint32_t length) override;
+  void SendKeyEvent(KeyEvent* event) override;
+  InputMethod* GetInputMethod() override;
+
+  // Sends a fake key event for IME composing without physical key events.
+  // Returns true if the faked key event is stopped propagation.
+  bool SendFakeProcessKeyEvent(bool pressed) const;
 
   // Returns true if |client| is currently focused.
   bool IsTextInputClientFocused(const TextInputClient* client);
@@ -87,11 +103,18 @@ class UI_BASE_IME_EXPORT InputMethodBase
   // |client| which is the text input client with focus.
   void NotifyTextInputCaretBoundsChanged(const TextInputClient* client);
 
-  bool system_toplevel_window_focused() const {
-    return system_toplevel_window_focused_;
-  }
+  // Gets the bounds of the composition text or cursor in |client|.
+  std::vector<gfx::Rect> GetCompositionBounds(const TextInputClient* client);
+
+  // Indicates whether the IME extension is currently sending a fake key event.
+  // This is used in SendKeyEvent.
+  bool sending_key_event_;
 
  private:
+  // InputMethod:
+  const std::vector<std::unique_ptr<ui::KeyEvent>>& GetKeyEventsForTesting()
+      override;
+
   void SetFocusedTextInputClientInternal(TextInputClient* client);
 
   internal::InputMethodDelegate* delegate_;
@@ -99,7 +122,7 @@ class UI_BASE_IME_EXPORT InputMethodBase
 
   base::ObserverList<InputMethodObserver> observer_list_;
 
-  bool system_toplevel_window_focused_;
+  std::vector<std::unique_ptr<ui::KeyEvent>> key_events_for_testing_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodBase);
 };

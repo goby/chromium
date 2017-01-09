@@ -31,11 +31,10 @@
 #ifndef PrerenderHandle_h
 #define PrerenderHandle_h
 
-#include "core/dom/DocumentLifecycleObserver.h"
+#include "core/dom/ContextLifecycleObserver.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
 
 namespace blink {
@@ -44,31 +43,36 @@ class Document;
 class Prerender;
 class PrerenderClient;
 
-class PrerenderHandle final : public NoBaseWillBeGarbageCollectedFinalized<PrerenderHandle>, public DocumentLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(PrerenderHandle);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(PrerenderHandle);
-    WTF_MAKE_NONCOPYABLE(PrerenderHandle);
-public:
-    static PassOwnPtrWillBeRawPtr<PrerenderHandle> create(Document&, PrerenderClient*, const KURL&, unsigned prerenderRelTypes);
+class PrerenderHandle final : public GarbageCollectedFinalized<PrerenderHandle>,
+                              public ContextLifecycleObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(PrerenderHandle);
+  WTF_MAKE_NONCOPYABLE(PrerenderHandle);
 
-    virtual ~PrerenderHandle();
+ public:
+  static PrerenderHandle* create(Document&,
+                                 PrerenderClient*,
+                                 const KURL&,
+                                 unsigned prerenderRelTypes);
 
-    void cancel();
-    const KURL& url() const;
+  virtual ~PrerenderHandle();
 
-    // From DocumentLifecycleObserver:
-    void documentWasDetached() override;
+  void cancel();
+  const KURL& url() const;
 
-    DECLARE_VIRTUAL_TRACE();
+  // ContextLifecycleObserver:
+  void contextDestroyed() override;
 
-private:
-    PrerenderHandle(Document&, PassRefPtr<Prerender>);
+  DECLARE_VIRTUAL_TRACE();
+  EAGERLY_FINALIZE();
 
-    void detach();
+ private:
+  PrerenderHandle(Document&, Prerender*);
 
-    RefPtr<Prerender> m_prerender;
+  void detach();
+
+  Member<Prerender> m_prerender;
 };
 
-}
+}  // namespace blink
 
-#endif // PrerenderHandle_h
+#endif  // PrerenderHandle_h

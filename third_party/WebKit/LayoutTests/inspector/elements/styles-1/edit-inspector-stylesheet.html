@@ -7,36 +7,33 @@
 
 function test()
 {
-    var inspectorResource;
+    InspectorTest.selectNodeAndWaitForStyles("inspected", onStylesSelected);
 
-    InspectorTest.selectNodeAndWaitForStyles("inspected", step1);
-
-    function step1(node)
+    function onStylesSelected(node)
     {
-        InspectorTest.addNewRule("#inspected", stylesReceived);
+        Workspace.workspace.addEventListener(Workspace.Workspace.Events.WorkingCopyCommitted, onWorkingCopyCommitted);
+        InspectorTest.addNewRule("#inspected", new Function());
+    }
 
-        function stylesReceived()
+    function onWorkingCopyCommitted(event)
+    {
+        Workspace.workspace.removeEventListener(Workspace.Workspace.Events.WorkingCopyCommitted, onWorkingCopyCommitted);
+        var uiSourceCode = event.data.uiSourceCode;
+        InspectorTest.addResult("Inspector stylesheet URL: " + uiSourceCode.displayName());
+        uiSourceCode.requestContent().then(printContent(onContent))
+
+        function onContent()
         {
-            // UISourceCode.prototype.addRevision() must finish before step2 is called.
-            InspectorTest.showScriptSource("inspector-stylesheet", step2);
+            InspectorTest.addResult("\nSetting new content");
+            uiSourceCode.setWorkingCopy("#inspected { background-color: green; }");
+            uiSourceCode.commitWorkingCopy();
+            onUpdatedWorkingCopy(uiSourceCode);
         }
     }
 
-    function step2(sourceFrame)
+    function onUpdatedWorkingCopy(uiSourceCode)
     {
-        var uiSourceCode = sourceFrame._uiSourceCode;
-        InspectorTest.addResult("Inspector stylesheet URL: " + uiSourceCode.displayName());
-        uiSourceCode.requestContent(printContent());
-
-        InspectorTest.addResult("\nSetting new content");
-        uiSourceCode.setWorkingCopy("#inspected { background-color: green; }");
-        uiSourceCode.commitWorkingCopy();
-        step3(uiSourceCode);
-    }
-
-    function step3(uiSourceCode)
-    {
-        uiSourceCode.requestContent(printContent(selectNode));
+        uiSourceCode.requestContent().then(printContent(selectNode));
         function selectNode()
         {
             InspectorTest.selectNodeAndWaitForStyles("inspected", dumpStyles);

@@ -4,7 +4,10 @@
 
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/common/accessibility_messages.h"
 #include "ui/accessibility/ax_tree_serializer.h"
@@ -40,6 +43,10 @@ using AXTreeIDMap =
     base::hash_map<AXTreeIDRegistry::AXTreeID, BrowserAccessibilityManager*>;
 base::LazyInstance<AXTreeIDMap> g_ax_tree_id_map = LAZY_INSTANCE_INITIALIZER;
 
+// A function to call when focus changes, for testing only.
+base::LazyInstance<base::Closure> g_focus_change_callback_for_testing =
+    LAZY_INSTANCE_INITIALIZER;
+
 ui::AXTreeUpdate MakeAXTreeUpdate(
     const ui::AXNodeData& node1,
     const ui::AXNodeData& node2 /* = ui::AXNodeData() */,
@@ -49,11 +56,15 @@ ui::AXTreeUpdate MakeAXTreeUpdate(
     const ui::AXNodeData& node6 /* = ui::AXNodeData() */,
     const ui::AXNodeData& node7 /* = ui::AXNodeData() */,
     const ui::AXNodeData& node8 /* = ui::AXNodeData() */,
-    const ui::AXNodeData& node9 /* = ui::AXNodeData() */) {
+    const ui::AXNodeData& node9 /* = ui::AXNodeData() */,
+    const ui::AXNodeData& node10 /* = ui::AXNodeData() */,
+    const ui::AXNodeData& node11 /* = ui::AXNodeData() */,
+    const ui::AXNodeData& node12 /* = ui::AXNodeData() */) {
   CR_DEFINE_STATIC_LOCAL(ui::AXNodeData, empty_data, ());
-  int32 no_id = empty_data.id;
+  int32_t no_id = empty_data.id;
 
   ui::AXTreeUpdate update;
+  update.root_id = node1.id;
   update.nodes.push_back(node1);
   if (node2.id != no_id)
     update.nodes.push_back(node2);
@@ -71,16 +82,17 @@ ui::AXTreeUpdate MakeAXTreeUpdate(
     update.nodes.push_back(node8);
   if (node9.id != no_id)
     update.nodes.push_back(node9);
+  if (node10.id != no_id)
+    update.nodes.push_back(node10);
+  if (node11.id != no_id)
+    update.nodes.push_back(node11);
+  if (node12.id != no_id)
+    update.nodes.push_back(node12);
   return update;
 }
 
 BrowserAccessibility* BrowserAccessibilityFactory::Create() {
-  // TODO(mfomitchev): Accessibility on Android Aura - crbug.com/543262.
-#if defined(OS_ANDROID) && defined(USE_AURA)
-  return nullptr;
-#else
   return BrowserAccessibility::Create();
-#endif
 }
 
 BrowserAccessibilityFindInPageInfo::BrowserAccessibilityFindInPageInfo()
@@ -116,9 +128,11 @@ BrowserAccessibilityManager::BrowserAccessibilityManager(
     : delegate_(delegate),
       factory_(factory),
       tree_(new ui::AXSerializableTree()),
-      focus_(NULL),
       user_is_navigating_away_(false),
       osk_state_(OSK_ALLOWED),
+      last_focused_node_(nullptr),
+      last_focused_manager_(nullptr),
+      connected_to_parent_tree_node_(false),
       ax_tree_id_(AXTreeIDRegistry::kNoAXTreeID),
       parent_node_id_from_parent_tree_(0) {
   tree_->SetDelegate(this);
@@ -131,9 +145,10 @@ BrowserAccessibilityManager::BrowserAccessibilityManager(
     : delegate_(delegate),
       factory_(factory),
       tree_(new ui::AXSerializableTree()),
-      focus_(NULL),
       user_is_navigating_away_(false),
       osk_state_(OSK_ALLOWED),
+      last_focused_node_(nullptr),
+      last_focused_manager_(nullptr),
       ax_tree_id_(AXTreeIDRegistry::kNoAXTreeID),
       parent_node_id_from_parent_tree_(0) {
   tree_->SetDelegate(this);
@@ -155,9 +170,6 @@ void BrowserAccessibilityManager::Initialize(
       LOG(FATAL) << tree_->error();
     }
   }
-
-  if (!focus_)
-    SetFocus(tree_->root(), false);
 }
 
 // static
@@ -171,7 +183,64 @@ BrowserAccessibilityManager::GetEmptyDocument() {
   return update;
 }
 
+void BrowserAccessibilityManager::NotifyAccessibilityEvent(
+    BrowserAccessibilityEvent::Source source,
+    ui::AXEvent event_type,
+    BrowserAccessibility* node) {
+  BrowserAccessibilityEvent::Create(source, event_type, node)->Fire();
+}
+
+void BrowserAccessibilityManager::FireFocusEventsIfNeeded(
+    BrowserAccessibilityEvent::Source source) {
+  BrowserAccessibility* focus = GetFocus();
+
+  // Don't fire focus events if the window itself doesn't have focus.
+  // Bypass this check if a global focus listener was set up for testing
+  // so that the test passes whether the window is active or not.
+  if (g_focus_change_callback_for_testing.Get().is_null()) {
+    if (delegate_ && !delegate_->AccessibilityViewHasFocus())
+      focus = nullptr;
+
+    if (!CanFireEvents())
+      focus = nullptr;
+  }
+
+  // Don't allow the document to be focused if it has no children and
+  // hasn't finished loading yet. Wait for at least a tiny bit of content,
+  // or for the document to actually finish loading.
+  if (focus &&
+      focus == focus->manager()->GetRoot() &&
+      focus->PlatformChildCount() == 0 &&
+      !focus->HasState(ui::AX_STATE_BUSY) &&
+      !focus->manager()->GetTreeData().loaded) {
+    focus = nullptr;
+  }
+
+  if (focus && focus != last_focused_node_)
+    FireFocusEvent(source, focus);
+
+  last_focused_node_ = focus;
+  last_focused_manager_ = focus ? focus->manager() : nullptr;
+}
+
+bool BrowserAccessibilityManager::CanFireEvents() {
+  return true;
+}
+
+void BrowserAccessibilityManager::FireFocusEvent(
+    BrowserAccessibilityEvent::Source source,
+    BrowserAccessibility* node) {
+  NotifyAccessibilityEvent(source, ui::AX_EVENT_FOCUS, node);
+
+  if (!g_focus_change_callback_for_testing.Get().is_null())
+    g_focus_change_callback_for_testing.Get().Run();
+}
+
 BrowserAccessibility* BrowserAccessibilityManager::GetRoot() {
+  // tree_ can be null during destruction.
+  if (!tree_)
+    return nullptr;
+
   // tree_->root() can be null during AXTreeDelegate callbacks.
   ui::AXNode* root = tree_->root();
   return root ? GetFromAXNode(root) : nullptr;
@@ -184,7 +253,7 @@ BrowserAccessibility* BrowserAccessibilityManager::GetFromAXNode(
   return GetFromID(node->id());
 }
 
-BrowserAccessibility* BrowserAccessibilityManager::GetFromID(int32 id) const {
+BrowserAccessibility* BrowserAccessibilityManager::GetFromID(int32_t id) const {
   const auto iter = id_wrapper_map_.find(id);
   if (iter != id_wrapper_map_.end())
     return iter->second;
@@ -232,13 +301,15 @@ const ui::AXTreeData& BrowserAccessibilityManager::GetTreeData() {
 }
 
 void BrowserAccessibilityManager::OnWindowFocused() {
-  if (focus_)
-    NotifyAccessibilityEvent(ui::AX_EVENT_FOCUS, GetFromAXNode(focus_));
+  if (this == GetRootManager())
+    FireFocusEventsIfNeeded(BrowserAccessibilityEvent::FromWindowFocusChange);
 }
 
 void BrowserAccessibilityManager::OnWindowBlurred() {
-  if (focus_)
-    NotifyAccessibilityEvent(ui::AX_EVENT_BLUR, GetFromAXNode(focus_));
+  if (this == GetRootManager()) {
+    last_focused_node_ = nullptr;
+    last_focused_manager_ = nullptr;
+  }
 }
 
 void BrowserAccessibilityManager::UserIsNavigatingAway() {
@@ -257,24 +328,14 @@ void BrowserAccessibilityManager::NavigationFailed() {
   user_is_navigating_away_ = false;
 }
 
-void BrowserAccessibilityManager::GotMouseDown() {
-  if (!focus_)
-    return;
-
-  osk_state_ = OSK_ALLOWED_WITHIN_FOCUSED_OBJECT;
-  NotifyAccessibilityEvent(ui::AX_EVENT_FOCUS, GetFromAXNode(focus_));
-}
-
 bool BrowserAccessibilityManager::UseRootScrollOffsetsWhenComputingBounds() {
   return true;
 }
 
 void BrowserAccessibilityManager::OnAccessibilityEvents(
     const std::vector<AXEventNotificationDetails>& details) {
-  bool should_send_initial_focus = false;
-
   // Process all changes to the accessibility tree first.
-  for (uint32 index = 0; index < details.size(); ++index) {
+  for (uint32_t index = 0; index < details.size(); ++index) {
     const AXEventNotificationDetails& detail = details[index];
     if (!tree_->Unserialize(detail.update)) {
       if (delegate_) {
@@ -285,21 +346,35 @@ void BrowserAccessibilityManager::OnAccessibilityEvents(
       }
       return;
     }
+  }
 
-    // Set focus to the root if it's not anywhere else.
-    if (!focus_) {
-      SetFocus(tree_->root(), false);
-      should_send_initial_focus = true;
+  // If the root's parent is in another accessibility tree but it wasn't
+  // previously connected, post the proper notifications on the parent.
+  BrowserAccessibility* parent = GetParentNodeFromParentTree();
+  if (parent) {
+    if (!connected_to_parent_tree_node_) {
+      parent->OnDataChanged();
+      parent->UpdatePlatformAttributes();
+      NotifyAccessibilityEvent(
+          BrowserAccessibilityEvent::FromChildFrameLoading,
+          ui::AX_EVENT_CHILDREN_CHANGED,
+          parent);
+      connected_to_parent_tree_node_ = true;
     }
+  } else {
+    connected_to_parent_tree_node_ = false;
   }
 
-  if (should_send_initial_focus &&
-      (!delegate_ || delegate_->AccessibilityViewHasFocus())) {
-    NotifyAccessibilityEvent(ui::AX_EVENT_FOCUS, GetFromAXNode(focus_));
-  }
+  // Based on the changes to the tree, first fire focus events if needed.
+  // Screen readers might not do the right thing if they're not aware of what
+  // has focus, so always try that first. Nothing will be fired if the window
+  // itself isn't focused or if focus hasn't changed.
+  GetRootManager()->FireFocusEventsIfNeeded(
+      BrowserAccessibilityEvent::FromBlink);
 
-  // Now iterate over the events again and fire the events.
-  for (uint32 index = 0; index < details.size(); index++) {
+  // Now iterate over the events again and fire the events other than focus
+  // events.
+  for (uint32_t index = 0; index < details.size(); index++) {
     const AXEventNotificationDetails& detail = details[index];
 
     // Find the node corresponding to the id that's the target of the
@@ -311,20 +386,26 @@ void BrowserAccessibilityManager::OnAccessibilityEvents(
     ui::AXEvent event_type = detail.event_type;
     if (event_type == ui::AX_EVENT_FOCUS ||
         event_type == ui::AX_EVENT_BLUR) {
-      SetFocus(node, false);
-
       if (osk_state_ != OSK_DISALLOWED_BECAUSE_TAB_HIDDEN &&
-          osk_state_ != OSK_DISALLOWED_BECAUSE_TAB_JUST_APPEARED)
+          osk_state_ != OSK_DISALLOWED_BECAUSE_TAB_JUST_APPEARED) {
         osk_state_ = OSK_ALLOWED;
+      }
 
-      // Don't send a native focus event if the window itself doesn't
-      // have focus.
-      if (delegate_ && !delegate_->AccessibilityViewHasFocus())
-        continue;
+      // We already handled all focus events above.
+      continue;
     }
 
-    // Send the event event to the operating system.
-    NotifyAccessibilityEvent(event_type, GetFromAXNode(node));
+    // Fire the native event.
+    BrowserAccessibility* event_target = GetFromAXNode(node);
+    if (event_target) {
+      if (event_type == ui::AX_EVENT_HOVER)
+        GetRootManager()->CacheHitTestResult(event_target);
+
+      NotifyAccessibilityEvent(
+          BrowserAccessibilityEvent::FromBlink,
+          event_type,
+          event_target);
+    }
   }
 }
 
@@ -335,8 +416,19 @@ void BrowserAccessibilityManager::OnLocationChanges(
     if (!obj)
       continue;
     ui::AXNode* node = obj->node();
-    node->SetLocation(params[i].new_location);
-    obj->OnLocationChanged();
+    node->SetLocation(params[i].new_location.offset_container_id,
+                      params[i].new_location.bounds,
+                      params[i].new_location.transform.get());
+  }
+  SendLocationChangeEvents(params);
+}
+
+void BrowserAccessibilityManager::SendLocationChangeEvents(
+    const std::vector<AccessibilityHostMsg_LocationChangeParams>& params) {
+  for (size_t i = 0; i < params.size(); ++i) {
+    BrowserAccessibility* obj = GetFromID(params[i].id);
+    if (obj)
+      obj->OnLocationChanged();
   }
 }
 
@@ -354,6 +446,25 @@ void BrowserAccessibilityManager::OnFindInPageResult(
     ActivateFindInPageResult(request_id);
 }
 
+void BrowserAccessibilityManager::OnChildFrameHitTestResult(
+    const gfx::Point& point,
+    int hit_obj_id) {
+  BrowserAccessibility* obj = GetFromID(hit_obj_id);
+  if (!obj || !obj->HasIntAttribute(ui::AX_ATTR_CHILD_TREE_ID))
+    return;
+
+  BrowserAccessibilityManager* child_manager =
+      BrowserAccessibilityManager::FromID(
+          obj->GetIntAttribute(ui::AX_ATTR_CHILD_TREE_ID));
+  if (!child_manager || !child_manager->delegate())
+    return;
+
+  ui::AXActionData action_data;
+  action_data.target_point = point;
+  action_data.action = ui::AX_ACTION_HIT_TEST;
+  return child_manager->delegate()->AccessibilityPerformAction(action_data);
+}
+
 void BrowserAccessibilityManager::ActivateFindInPageResult(
     int request_id) {
   find_in_page_info_.active_request_id = request_id;
@@ -365,112 +476,253 @@ void BrowserAccessibilityManager::ActivateFindInPageResult(
     return;
 
   // If an ancestor of this node is a leaf node, fire the notification on that.
-  BrowserAccessibility* ancestor = node->GetParent();
-  while (ancestor && ancestor != GetRoot()) {
-    if (ancestor->PlatformIsLeaf())
-      node = ancestor;
-    ancestor = ancestor->GetParent();
-  }
+  node = node->GetClosestPlatformObject();
 
   // The "scrolled to anchor" notification is a great way to get a
   // screen reader to jump directly to a specific location in a document.
-  NotifyAccessibilityEvent(ui::AX_EVENT_SCROLLED_TO_ANCHOR, node);
+  NotifyAccessibilityEvent(
+      BrowserAccessibilityEvent::FromFindInPageResult,
+      ui::AX_EVENT_SCROLLED_TO_ANCHOR,
+      node);
 }
 
-BrowserAccessibility* BrowserAccessibilityManager::GetActiveDescendantFocus(
-    BrowserAccessibility* root) {
-  BrowserAccessibility* node = BrowserAccessibilityManager::GetFocus(root);
-  if (!node)
-    return NULL;
+BrowserAccessibility* BrowserAccessibilityManager::GetActiveDescendant(
+    BrowserAccessibility* focus) {
+  if (!focus)
+    return nullptr;
 
-  int active_descendant_id;
-  if (node->GetIntAttribute(ui::AX_ATTR_ACTIVEDESCENDANT_ID,
-                            &active_descendant_id)) {
-    BrowserAccessibility* active_descendant =
-        node->manager()->GetFromID(active_descendant_id);
-    if (active_descendant)
-      return active_descendant;
+  int32_t active_descendant_id;
+  BrowserAccessibility* active_descendant = nullptr;
+  if (focus->GetIntAttribute(ui::AX_ATTR_ACTIVEDESCENDANT_ID,
+                             &active_descendant_id)) {
+    active_descendant = focus->manager()->GetFromID(active_descendant_id);
   }
-  return node;
+
+  if (focus->GetRole() == ui::AX_ROLE_POP_UP_BUTTON) {
+    BrowserAccessibility* child = focus->InternalGetChild(0);
+    if (child && child->GetRole() == ui::AX_ROLE_MENU_LIST_POPUP) {
+      // The active descendant is found on the menu list popup, i.e. on the
+      // actual list and not on the button that opens it.
+      // If there is no active descendant, focus should stay on the button so
+      // that Windows screen readers would enable their virtual cursor.
+      if (child->GetIntAttribute(ui::AX_ATTR_ACTIVEDESCENDANT_ID,
+                                 &active_descendant_id)) {
+        active_descendant = child->manager()->GetFromID(active_descendant_id);
+      }
+    }
+  }
+
+  if (active_descendant)
+    return active_descendant;
+
+  return focus;
 }
 
-BrowserAccessibility* BrowserAccessibilityManager::GetFocus(
-    BrowserAccessibility* root) {
-  if (!focus_)
-    return nullptr;
+bool BrowserAccessibilityManager::NativeViewHasFocus() {
+  BrowserAccessibilityDelegate* delegate = GetDelegateFromRootManager();
+  return delegate && delegate->AccessibilityViewHasFocus();
+}
 
-  if (root && !focus_->IsDescendantOf(root->node()))
-    return nullptr;
+BrowserAccessibility* BrowserAccessibilityManager::GetFocus() {
+  BrowserAccessibilityManager* root_manager = GetRootManager();
+  if (!root_manager)
+    root_manager = this;
+  int32_t focused_tree_id = root_manager->GetTreeData().focused_tree_id;
 
-  BrowserAccessibility* obj = GetFromAXNode(focus_);
-  DCHECK(obj);
+  BrowserAccessibilityManager* focused_manager = nullptr;
+  if (focused_tree_id)
+    focused_manager = BrowserAccessibilityManager::FromID(focused_tree_id);
+
+  // BrowserAccessibilityManager::FromID(focused_tree_id) may return nullptr
+  // if the tree is not created or has been destroyed.
+  if (!focused_manager)
+    focused_manager = root_manager;
+
+  return focused_manager->GetFocusFromThisOrDescendantFrame();
+}
+
+BrowserAccessibility*
+BrowserAccessibilityManager::GetFocusFromThisOrDescendantFrame() {
+  int32_t focus_id = GetTreeData().focus_id;
+  BrowserAccessibility* obj = GetFromID(focus_id);
+  if (!obj)
+    return GetRoot();
+
   if (obj->HasIntAttribute(ui::AX_ATTR_CHILD_TREE_ID)) {
     BrowserAccessibilityManager* child_manager =
         BrowserAccessibilityManager::FromID(
             obj->GetIntAttribute(ui::AX_ATTR_CHILD_TREE_ID));
     if (child_manager)
-      return child_manager->GetFocus(child_manager->GetRoot());
+      return child_manager->GetFocusFromThisOrDescendantFrame();
   }
 
   return obj;
 }
 
-void BrowserAccessibilityManager::SetFocus(ui::AXNode* node, bool notify) {
-  if (focus_ != node)
-    focus_ = node;
+void BrowserAccessibilityManager::SetFocus(const BrowserAccessibility& node) {
+  if (!delegate_)
+    return;
 
-  if (notify && node && delegate_)
-    delegate_->AccessibilitySetFocus(node->id());
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_FOCUS;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
-void BrowserAccessibilityManager::SetFocus(
-    BrowserAccessibility* obj, bool notify) {
-  if (obj->node())
-    SetFocus(obj->node(), notify);
+void BrowserAccessibilityManager::SetFocusLocallyForTesting(
+    BrowserAccessibility* node) {
+  ui::AXTreeData data = GetTreeData();
+  data.focus_id = node->GetId();
+  tree_->UpdateData(data);
+}
+
+// static
+void BrowserAccessibilityManager::SetFocusChangeCallbackForTesting(
+    const base::Closure& callback) {
+  g_focus_change_callback_for_testing.Get() = callback;
+}
+
+void BrowserAccessibilityManager::Decrement(
+    const BrowserAccessibility& node) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_DECREMENT;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
 void BrowserAccessibilityManager::DoDefaultAction(
     const BrowserAccessibility& node) {
-  if (delegate_)
-    delegate_->AccessibilityDoDefaultAction(node.GetId());
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_DO_DEFAULT;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
+}
+
+void BrowserAccessibilityManager::GetImageData(
+    const BrowserAccessibility& node,
+    const gfx::Size& max_size) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_GET_IMAGE_DATA;
+  action_data.target_node_id = node.GetId();
+  action_data.target_rect = gfx::Rect(gfx::Point(), max_size);
+  delegate_->AccessibilityPerformAction(action_data);
+}
+
+void BrowserAccessibilityManager::Increment(
+    const BrowserAccessibility& node) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_INCREMENT;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
+}
+
+void BrowserAccessibilityManager::ShowContextMenu(
+    const BrowserAccessibility& node) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_SHOW_CONTEXT_MENU;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
 void BrowserAccessibilityManager::ScrollToMakeVisible(
     const BrowserAccessibility& node, gfx::Rect subfocus) {
-  if (delegate_) {
-    delegate_->AccessibilityScrollToMakeVisible(node.GetId(), subfocus);
-  }
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.target_node_id = node.GetId();
+  action_data.action = ui::AX_ACTION_SCROLL_TO_MAKE_VISIBLE;
+  action_data.target_rect = subfocus;
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
 void BrowserAccessibilityManager::ScrollToPoint(
     const BrowserAccessibility& node, gfx::Point point) {
-  if (delegate_) {
-    delegate_->AccessibilityScrollToPoint(node.GetId(), point);
-  }
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.target_node_id = node.GetId();
+  action_data.action = ui::AX_ACTION_SCROLL_TO_POINT;
+  action_data.target_point = point;
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
 void BrowserAccessibilityManager::SetScrollOffset(
     const BrowserAccessibility& node, gfx::Point offset) {
-  if (delegate_) {
-    delegate_->AccessibilitySetScrollOffset(node.GetId(), offset);
-  }
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.target_node_id = node.GetId();
+  action_data.action = ui::AX_ACTION_SET_SCROLL_OFFSET;
+  action_data.target_point = offset;
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
 void BrowserAccessibilityManager::SetValue(
     const BrowserAccessibility& node,
     const base::string16& value) {
-  if (delegate_)
-    delegate_->AccessibilitySetValue(node.GetId(), value);
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.target_node_id = node.GetId();
+  action_data.action = ui::AX_ACTION_SET_VALUE;
+  action_data.value = value;
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
 void BrowserAccessibilityManager::SetTextSelection(
     const BrowserAccessibility& node,
     int start_offset,
     int end_offset) {
-  if (delegate_) {
-    delegate_->AccessibilitySetSelection(node.GetId(), start_offset,
-                                         node.GetId(), end_offset);
-  }
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.anchor_node_id = node.GetId();
+  action_data.anchor_offset = start_offset;
+  action_data.focus_node_id = node.GetId();
+  action_data.focus_offset = end_offset;
+  action_data.action = ui::AX_ACTION_SET_SELECTION;
+  delegate_->AccessibilityPerformAction(action_data);
+}
+
+void BrowserAccessibilityManager::SetAccessibilityFocus(
+    const BrowserAccessibility& node) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_SET_ACCESSIBILITY_FOCUS;
+  action_data.target_node_id = node.GetId();
+  delegate_->AccessibilityPerformAction(action_data);
+}
+
+void BrowserAccessibilityManager::HitTest(const gfx::Point& point) {
+  if (!delegate_)
+    return;
+
+  ui::AXActionData action_data;
+  action_data.action = ui::AX_ACTION_HIT_TEST;
+  action_data.target_point = point;
+  delegate_->AccessibilityPerformAction(action_data);
 }
 
 gfx::Rect BrowserAccessibilityManager::GetViewBounds() {
@@ -480,33 +732,37 @@ gfx::Rect BrowserAccessibilityManager::GetViewBounds() {
   return gfx::Rect();
 }
 
+// static
+// Next object in tree using depth-first pre-order traversal.
 BrowserAccessibility* BrowserAccessibilityManager::NextInTreeOrder(
-    BrowserAccessibility* node) const {
-  if (!node)
+    const BrowserAccessibility* object) {
+  if (!object)
     return nullptr;
 
-  if (node->PlatformChildCount())
-    return node->PlatformGetChild(0);
+  if (object->PlatformChildCount())
+    return object->PlatformGetChild(0);
 
-  while (node) {
-    const auto sibling = node->GetNextSibling();
+  while (object) {
+    BrowserAccessibility* sibling = object->GetNextSibling();
     if (sibling)
       return sibling;
 
-    node = node->GetParent();
+    object = object->GetParent();
   }
 
   return nullptr;
 }
 
+// static
+// Previous object in tree using depth-first pre-order traversal.
 BrowserAccessibility* BrowserAccessibilityManager::PreviousInTreeOrder(
-    BrowserAccessibility* node) const {
-  if (!node)
+    const BrowserAccessibility* object) {
+  if (!object)
     return nullptr;
 
-  const auto sibling = node->GetPreviousSibling();
+  BrowserAccessibility* sibling = object->GetPreviousSibling();
   if (!sibling)
-    return node->GetParent();
+    return object->GetParent();
 
   if (sibling->PlatformChildCount())
     return sibling->PlatformDeepestLastChild();
@@ -514,23 +770,296 @@ BrowserAccessibility* BrowserAccessibilityManager::PreviousInTreeOrder(
   return sibling;
 }
 
+// static
 BrowserAccessibility* BrowserAccessibilityManager::PreviousTextOnlyObject(
-    BrowserAccessibility* node) const {
-      BrowserAccessibility* previous_node = PreviousInTreeOrder(node);
-  while (previous_node && !previous_node->IsTextOnlyObject())
-    previous_node = PreviousInTreeOrder(previous_node);
+    const BrowserAccessibility* object) {
+  BrowserAccessibility* previous_object = PreviousInTreeOrder(object);
+  while (previous_object && !previous_object->IsTextOnlyObject())
+    previous_object = PreviousInTreeOrder(previous_object);
 
-  return previous_node;
+  return previous_object;
 }
 
+// static
 BrowserAccessibility* BrowserAccessibilityManager::NextTextOnlyObject(
-    BrowserAccessibility* node) const {
-  BrowserAccessibility* next_node = NextInTreeOrder(node);
-  while (next_node && !next_node->IsTextOnlyObject())
-    next_node = NextInTreeOrder(next_node);
+    const BrowserAccessibility* object) {
+  BrowserAccessibility* next_object = NextInTreeOrder(object);
+  while (next_object && !next_object->IsTextOnlyObject())
+    next_object = NextInTreeOrder(next_object);
 
-  return next_node;
+  return next_object;
 }
+
+// static
+bool BrowserAccessibilityManager::FindIndicesInCommonParent(
+    const BrowserAccessibility& object1,
+    const BrowserAccessibility& object2,
+    BrowserAccessibility** common_parent,
+    int* child_index1,
+    int* child_index2) {
+  DCHECK(common_parent && child_index1 && child_index2);
+  auto* ancestor1 = const_cast<BrowserAccessibility*>(&object1);
+  auto* ancestor2 = const_cast<BrowserAccessibility*>(&object2);
+  do {
+    *child_index1 = ancestor1->GetIndexInParent();
+    ancestor1 = ancestor1->GetParent();
+  } while (
+      ancestor1 &&
+      // |BrowserAccessibility::IsAncestorOf| returns true if objects are equal.
+      (ancestor1 == ancestor2 || !ancestor2->IsDescendantOf(ancestor1)));
+
+  if (!ancestor1) {
+    *common_parent = nullptr;
+    *child_index1 = -1;
+    *child_index2 = -1;
+    return false;
+  }
+
+  do {
+    *child_index2 = ancestor2->GetIndexInParent();
+    ancestor2 = ancestor2->GetParent();
+  } while (ancestor1 != ancestor2);
+
+  *common_parent = ancestor1;
+  return true;
+}
+
+// static
+ui::AXTreeOrder BrowserAccessibilityManager::CompareNodes(
+    const BrowserAccessibility& object1,
+    const BrowserAccessibility& object2) {
+  if (&object1 == &object2)
+    return ui::AX_TREE_ORDER_EQUAL;
+
+  BrowserAccessibility* common_parent;
+  int child_index1;
+  int child_index2;
+  if (FindIndicesInCommonParent(
+          object1, object2, &common_parent, &child_index1, &child_index2)) {
+    if (child_index1 < child_index2)
+      return ui::AX_TREE_ORDER_BEFORE;
+    if (child_index1 > child_index2)
+      return ui::AX_TREE_ORDER_AFTER;
+  }
+
+  if (object2.IsDescendantOf(&object1))
+    return ui::AX_TREE_ORDER_BEFORE;
+  if (object1.IsDescendantOf(&object2))
+    return ui::AX_TREE_ORDER_AFTER;
+
+  return ui::AX_TREE_ORDER_UNDEFINED;
+}
+
+std::vector<const BrowserAccessibility*>
+BrowserAccessibilityManager::FindTextOnlyObjectsInRange(
+    const BrowserAccessibility& start_object,
+    const BrowserAccessibility& end_object) {
+  std::vector<const BrowserAccessibility*> text_only_objects;
+  int child_index1 = -1;
+  int child_index2 = -1;
+  if (&start_object != &end_object) {
+    BrowserAccessibility* common_parent;
+    if (!FindIndicesInCommonParent(start_object, end_object, &common_parent,
+                                   &child_index1, &child_index2)) {
+      return text_only_objects;
+    }
+
+    DCHECK(common_parent);
+    DCHECK_GE(child_index1, 0);
+    DCHECK_GE(child_index2, 0);
+    // If the child indices are equal, one object is a descendant of the other.
+    DCHECK(child_index1 != child_index2 ||
+           start_object.IsDescendantOf(&end_object) ||
+           end_object.IsDescendantOf(&start_object));
+  }
+
+  const BrowserAccessibility* start_text_object = nullptr;
+  const BrowserAccessibility* end_text_object = nullptr;
+  if (&start_object == &end_object && start_object.IsSimpleTextControl()) {
+    // We need to get to the shadow DOM that is inside the text control in order
+    // to find the text-only objects.
+    if (!start_object.InternalChildCount())
+      return text_only_objects;
+    start_text_object = start_object.InternalGetChild(0);
+    end_text_object =
+        start_object.InternalGetChild(start_object.InternalChildCount() - 1);
+  } else if (child_index1 <= child_index2 ||
+             end_object.IsDescendantOf(&start_object)) {
+    start_text_object = &start_object;
+    end_text_object = &end_object;
+  } else if (child_index1 > child_index2 ||
+             start_object.IsDescendantOf(&end_object)) {
+    start_text_object = &end_object;
+    end_text_object = &start_object;
+  }
+
+  // Pre-order traversal might leave some text-only objects behind if we don't
+  // start from the deepest children of the end object.
+  if (!end_text_object->PlatformIsLeaf())
+    end_text_object = end_text_object->PlatformDeepestLastChild();
+
+  if (!start_text_object->IsTextOnlyObject())
+    start_text_object = NextTextOnlyObject(start_text_object);
+  if (!end_text_object->IsTextOnlyObject())
+    end_text_object = PreviousTextOnlyObject(end_text_object);
+
+  if (!start_text_object || !end_text_object)
+    return text_only_objects;
+
+  while (start_text_object && start_text_object != end_text_object) {
+    text_only_objects.push_back(start_text_object);
+    start_text_object = NextTextOnlyObject(start_text_object);
+  }
+  text_only_objects.push_back(end_text_object);
+
+  return text_only_objects;
+}
+
+// static
+base::string16 BrowserAccessibilityManager::GetTextForRange(
+    const BrowserAccessibility& start_object,
+    const BrowserAccessibility& end_object) {
+  return GetTextForRange(start_object, 0, end_object,
+                         end_object.GetText().length());
+}
+
+// static
+base::string16 BrowserAccessibilityManager::GetTextForRange(
+    const BrowserAccessibility& start_object,
+    int start_offset,
+    const BrowserAccessibility& end_object,
+    int end_offset) {
+  DCHECK_GE(start_offset, 0);
+  DCHECK_GE(end_offset, 0);
+
+  if (&start_object == &end_object && start_object.IsSimpleTextControl()) {
+    if (start_offset > end_offset)
+      std::swap(start_offset, end_offset);
+
+    if (start_offset >= static_cast<int>(start_object.GetText().length()) ||
+        end_offset > static_cast<int>(start_object.GetText().length())) {
+      return base::string16();
+    }
+
+    return start_object.GetText().substr(start_offset,
+                                         end_offset - start_offset);
+  }
+
+  std::vector<const BrowserAccessibility*> text_only_objects =
+      FindTextOnlyObjectsInRange(start_object, end_object);
+  if (text_only_objects.empty())
+    return base::string16();
+
+  if (text_only_objects.size() == 1) {
+    // Be a little permissive with the start and end offsets.
+    if (start_offset > end_offset)
+      std::swap(start_offset, end_offset);
+
+    const BrowserAccessibility* text_object = text_only_objects[0];
+    if (start_offset < static_cast<int>(text_object->GetText().length()) &&
+        end_offset <= static_cast<int>(text_object->GetText().length())) {
+      return text_object->GetText().substr(start_offset,
+                                           end_offset - start_offset);
+    }
+    return text_object->GetText();
+  }
+
+  base::string16 text;
+  const BrowserAccessibility* start_text_object = text_only_objects[0];
+  // Figure out if the start and end positions have been reversed.
+  const BrowserAccessibility* first_object = &start_object;
+  if (!first_object->IsTextOnlyObject())
+    first_object = NextTextOnlyObject(first_object);
+  if (!first_object || first_object != start_text_object)
+    std::swap(start_offset, end_offset);
+
+  if (start_offset < static_cast<int>(start_text_object->GetText().length())) {
+    text += start_text_object->GetText().substr(start_offset);
+  } else {
+    text += start_text_object->GetText();
+  }
+
+  for (size_t i = 1; i < text_only_objects.size() - 1; ++i) {
+    text += text_only_objects[i]->GetText();
+  }
+
+  const BrowserAccessibility* end_text_object = text_only_objects.back();
+  if (end_offset <= static_cast<int>(end_text_object->GetText().length())) {
+    text += end_text_object->GetText().substr(0, end_offset);
+  } else {
+    text += end_text_object->GetText();
+  }
+
+  return text;
+}
+
+// static
+gfx::Rect BrowserAccessibilityManager::GetPageBoundsForRange(
+    const BrowserAccessibility& start_object,
+    int start_offset,
+    const BrowserAccessibility& end_object,
+    int end_offset) {
+  DCHECK_GE(start_offset, 0);
+  DCHECK_GE(end_offset, 0);
+
+  if (&start_object == &end_object && start_object.IsSimpleTextControl()) {
+    if (start_offset > end_offset)
+      std::swap(start_offset, end_offset);
+
+    if (start_offset >= static_cast<int>(start_object.GetText().length()) ||
+        end_offset > static_cast<int>(start_object.GetText().length())) {
+      return gfx::Rect();
+    }
+
+    return start_object.GetPageBoundsForRange(
+        start_offset, end_offset - start_offset);
+  }
+
+  gfx::Rect result;
+  const BrowserAccessibility* first = &start_object;
+  const BrowserAccessibility* last = &end_object;
+
+  switch (CompareNodes(*first, *last)) {
+    case ui::AX_TREE_ORDER_BEFORE:
+    case ui::AX_TREE_ORDER_EQUAL:
+      break;
+    case ui::AX_TREE_ORDER_AFTER:
+      std::swap(first, last);
+      std::swap(start_offset, end_offset);
+      break;
+    default:
+      return gfx::Rect();
+  }
+
+  const BrowserAccessibility* current = first;
+  do {
+    if (current->IsTextOnlyObject()) {
+      int len = static_cast<int>(current->GetText().size());
+      int start_char_index = 0;
+      int end_char_index = len;
+      if (current == first)
+        start_char_index = start_offset;
+      if (current == last)
+        end_char_index = end_offset;
+      result.Union(current->GetPageBoundsForRange(
+          start_char_index, end_char_index - start_char_index));
+    } else {
+      result.Union(current->GetPageBoundsRect());
+    }
+
+    if (current == last)
+      break;
+
+    current = NextInTreeOrder(current);
+  } while (current);
+
+  return result;
+}
+
+void BrowserAccessibilityManager::OnNodeDataWillChange(
+    ui::AXTree* tree,
+    const ui::AXNodeData& old_node_data,
+    const ui::AXNodeData& new_node_data) {}
 
 void BrowserAccessibilityManager::OnTreeDataChanged(ui::AXTree* tree) {
 }
@@ -538,12 +1067,6 @@ void BrowserAccessibilityManager::OnTreeDataChanged(ui::AXTree* tree) {
 void BrowserAccessibilityManager::OnNodeWillBeDeleted(ui::AXTree* tree,
                                                       ui::AXNode* node) {
   DCHECK(node);
-  if (node == focus_ && tree_) {
-    if (node != tree_->root())
-      SetFocus(tree_->root(), false);
-    else
-      focus_ = NULL;
-  }
   if (id_wrapper_map_.find(node->id()) == id_wrapper_map_.end())
     return;
   GetFromAXNode(node)->Destroy();
@@ -558,12 +1081,39 @@ void BrowserAccessibilityManager::OnSubtreeWillBeDeleted(ui::AXTree* tree,
     obj->OnSubtreeWillBeDeleted();
 }
 
+void BrowserAccessibilityManager::OnNodeWillBeReparented(ui::AXTree* tree,
+                                                         ui::AXNode* node) {
+  // BrowserAccessibility should probably ask the tree source for the AXNode via
+  // an id rather than weakly holding a pointer to a AXNode that might have been
+  // destroyed under the hood and re-created later on. Treat this as a delete to
+  // make things work.
+  OnNodeWillBeDeleted(tree, node);
+}
+
+void BrowserAccessibilityManager::OnSubtreeWillBeReparented(ui::AXTree* tree,
+                                                            ui::AXNode* node) {
+  // BrowserAccessibility should probably ask the tree source for the AXNode via
+  // an id rather than weakly holding a pointer to a AXNode that might have been
+  // destroyed under the hood and re-created later on. Treat this as a delete to
+  // make things work.
+  OnSubtreeWillBeDeleted(tree, node);
+}
+
 void BrowserAccessibilityManager::OnNodeCreated(ui::AXTree* tree,
                                                 ui::AXNode* node) {
   BrowserAccessibility* wrapper = factory_->Create();
   wrapper->Init(this, node);
   id_wrapper_map_[node->id()] = wrapper;
   wrapper->OnDataChanged();
+}
+
+void BrowserAccessibilityManager::OnNodeReparented(ui::AXTree* tree,
+                                                   ui::AXNode* node) {
+  // BrowserAccessibility should probably ask the tree source for the AXNode via
+  // an id rather than weakly holding a pointer to a AXNode that might have been
+  // destroyed under the hood and re-created later on. Treat this as a create to
+  // make things work.
+  OnNodeCreated(tree, node);
 }
 
 void BrowserAccessibilityManager::OnNodeChanged(ui::AXTree* tree,
@@ -576,37 +1126,129 @@ void BrowserAccessibilityManager::OnAtomicUpdateFinished(
     ui::AXTree* tree,
     bool root_changed,
     const std::vector<ui::AXTreeDelegate::Change>& changes) {
+  bool ax_tree_id_changed = false;
   if (GetTreeData().tree_id != -1 && GetTreeData().tree_id != ax_tree_id_) {
     g_ax_tree_id_map.Get().erase(ax_tree_id_);
     ax_tree_id_ = GetTreeData().tree_id;
     g_ax_tree_id_map.Get().insert(std::make_pair(ax_tree_id_, this));
+    ax_tree_id_changed = true;
   }
+
+  // Whenever the tree ID or the root of this tree changes we may need to
+  // fire an event on our parent node in the parent tree to ensure that
+  // we're properly connected.
+  if (ax_tree_id_changed || root_changed)
+    connected_to_parent_tree_node_ = false;
+
+  // When the root changes and this is the root manager, we may need to
+  // fire a new focus event.
+  if (root_changed && last_focused_manager_ == this) {
+    last_focused_node_ = nullptr;
+    last_focused_manager_ = nullptr;
+  }
+
+  // Notify ATs if any live regions have been created.
+  for (auto& change : changes) {
+    if (change.type != NODE_CREATED && change.type != SUBTREE_CREATED)
+      continue;
+
+    const ui::AXNode* created_node = change.node;
+    DCHECK(created_node);
+    BrowserAccessibility* object = GetFromAXNode(created_node);
+    if (object && object->HasStringAttribute(ui::AX_ATTR_LIVE_STATUS)) {
+      if (object->GetRole() == ui::AX_ROLE_ALERT) {
+        NotifyAccessibilityEvent(BrowserAccessibilityEvent::FromTreeChange,
+                                 ui::AX_EVENT_ALERT, object);
+      } else {
+        NotifyAccessibilityEvent(BrowserAccessibilityEvent::FromTreeChange,
+                                 ui::AX_EVENT_LIVE_REGION_CREATED, object);
+      }
+    }
+  }
+}
+
+BrowserAccessibilityManager* BrowserAccessibilityManager::GetRootManager() {
+  BrowserAccessibility* parent = GetParentNodeFromParentTree();
+  if (!parent)
+    return this;
+
+  return parent->manager()->GetRootManager();
 }
 
 BrowserAccessibilityDelegate*
     BrowserAccessibilityManager::GetDelegateFromRootManager() {
-  if (!GetRoot())
-    return nullptr;
-  int parent_tree_id = GetTreeData().parent_tree_id;
-  BrowserAccessibilityManager* parent_manager =
-      BrowserAccessibilityManager::FromID(parent_tree_id);
-  if (parent_manager)
-    return parent_manager->GetDelegateFromRootManager();
-  return delegate();
+  BrowserAccessibilityManager* root_manager = GetRootManager();
+  if (root_manager)
+    return root_manager->delegate();
+  return nullptr;
+}
+
+bool BrowserAccessibilityManager::IsRootTree() {
+  return delegate() && delegate()->AccessibilityGetAcceleratedWidget();
 }
 
 ui::AXTreeUpdate
 BrowserAccessibilityManager::SnapshotAXTreeForTesting() {
-  scoped_ptr<ui::AXTreeSource<const ui::AXNode*,
-                              ui::AXNodeData,
-                              ui::AXTreeData> > tree_source(
-      tree_->CreateTreeSource());
+  std::unique_ptr<
+      ui::AXTreeSource<const ui::AXNode*, ui::AXNodeData, ui::AXTreeData>>
+      tree_source(tree_->CreateTreeSource());
   ui::AXTreeSerializer<const ui::AXNode*,
                        ui::AXNodeData,
                        ui::AXTreeData> serializer(tree_source.get());
   ui::AXTreeUpdate update;
   serializer.SerializeChanges(tree_->root(), &update);
   return update;
+}
+
+BrowserAccessibility* BrowserAccessibilityManager::CachingAsyncHitTest(
+    const gfx::Point& screen_point) {
+  BrowserAccessibilityManager* root_manager = GetRootManager();
+  if (root_manager && root_manager != this)
+    return root_manager->CachingAsyncHitTest(screen_point);
+
+  if (delegate()) {
+    // This triggers an asynchronous request to compute the true object that's
+    // under |screen_point|.
+    HitTest(screen_point - GetViewBounds().OffsetFromOrigin());
+
+    // Unfortunately we still have to return an answer synchronously because
+    // the APIs were designed that way. The best case scenario is that the
+    // screen point is within the bounds of the last result we got from a
+    // call to AccessibilityHitTest - in that case, we can return that object!
+    if (last_hover_bounds_.Contains(screen_point)) {
+      BrowserAccessibilityManager* manager =
+          BrowserAccessibilityManager::FromID(last_hover_ax_tree_id_);
+      if (manager) {
+        BrowserAccessibility* node = manager->GetFromID(last_hover_node_id_);
+        if (node)
+        return node;
+      }
+    }
+  }
+
+  // If that test failed we have to fall back on searching the accessibility
+  // tree locally for the best bounding box match. This is generally right
+  // for simple pages but wrong in cases of z-index, overflow, and other
+  // more complicated layouts. The hope is that if the user is moving the
+  // mouse, this fallback will only be used transiently, and the asynchronous
+  // result will be used for the next call.
+  return GetRoot()->ApproximateHitTest(screen_point);
+}
+
+void BrowserAccessibilityManager::CacheHitTestResult(
+    BrowserAccessibility* hit_test_result) {
+  // Walk up to the highest ancestor that's a leaf node; we don't want to
+  // return a node that's hidden from the tree.
+  BrowserAccessibility* parent = hit_test_result->GetParent();
+  while (parent) {
+    if (parent->PlatformChildCount() == 0)
+      hit_test_result = parent;
+    parent = parent->GetParent();
+  }
+
+  last_hover_ax_tree_id_ = hit_test_result->manager()->ax_tree_id();
+  last_hover_node_id_ = hit_test_result->GetId();
+  last_hover_bounds_ = hit_test_result->GetScreenBoundsRect();
 }
 
 }  // namespace content

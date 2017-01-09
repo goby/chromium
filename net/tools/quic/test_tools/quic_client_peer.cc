@@ -7,19 +7,35 @@
 #include "net/tools/quic/quic_client.h"
 
 namespace net {
-namespace tools {
 namespace test {
 
 // static
-bool QuicClientPeer::CreateUDPSocket(QuicClient* client) {
-  return client->CreateUDPSocket();
+QuicCryptoClientConfig* QuicClientPeer::GetCryptoConfig(QuicClient* client) {
+  return client->crypto_config();
+}
+
+// static
+bool QuicClientPeer::CreateUDPSocketAndBind(QuicClient* client) {
+  return client->CreateUDPSocketAndBind(client->server_address(),
+                                        client->bind_to_address(),
+                                        client->local_port());
+}
+
+// static
+void QuicClientPeer::CleanUpUDPSocket(QuicClient* client, int fd) {
+  client->CleanUpUDPSocket(fd);
 }
 
 // static
 void QuicClientPeer::SetClientPort(QuicClient* client, int port) {
-  client->client_address_ = IPEndPoint(client->client_address_.address(), port);
+  client->fd_address_map_.back().second =
+      QuicSocketAddress(client->GetLatestClientAddress().host(), port);
+}
+
+// static
+void QuicClientPeer::SetWriter(QuicClient* client, QuicPacketWriter* writer) {
+  client->set_writer(writer);
 }
 
 }  // namespace test
-}  // namespace tools
 }  // namespace net

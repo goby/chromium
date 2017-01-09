@@ -34,11 +34,17 @@
 namespace blink {
 
 enum WebContentSecurityPolicyType {
-    WebContentSecurityPolicyTypeReport,
-    WebContentSecurityPolicyTypeEnforce,
-    WebContentSecurityPolicyTypeLast = WebContentSecurityPolicyTypeEnforce
+  WebContentSecurityPolicyTypeReport,
+  WebContentSecurityPolicyTypeEnforce,
+  WebContentSecurityPolicyTypeLast = WebContentSecurityPolicyTypeEnforce
 };
 
-} // namespace blink
+enum WebContentSecurityPolicySource {
+  WebContentSecurityPolicySourceHTTP,
+  WebContentSecurityPolicySourceMeta,
+  WebContentSecurityPolicySourceLast = WebContentSecurityPolicySourceMeta
+};
+
+}  // namespace blink
 
 #endif

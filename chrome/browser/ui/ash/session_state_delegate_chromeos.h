@@ -5,9 +5,9 @@
 #ifndef CHROME_BROWSER_UI_ASH_SESSION_STATE_DELEGATE_CHROMEOS_H_
 #define CHROME_BROWSER_UI_ASH_SESSION_STATE_DELEGATE_CHROMEOS_H_
 
-#include "ash/session/session_state_delegate.h"
-#include "base/basictypes.h"
+#include "ash/common/session/session_state_delegate.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
 #include "chromeos/login/login_state.h"
@@ -29,19 +29,19 @@ class SessionStateDelegateChromeos
   // ash::SessionStateDelegate:
   int GetMaximumNumberOfLoggedInUsers() const override;
   int NumberOfLoggedInUsers() const override;
-  bool CanAddUserToMultiProfile(AddUserError* error) const override;
+  ash::AddUserSessionPolicy GetAddUserSessionPolicy() const override;
   bool IsActiveUserSessionStarted() const override;
   bool CanLockScreen() const override;
   bool IsScreenLocked() const override;
-  bool ShouldLockScreenBeforeSuspending() const override;
+  bool ShouldLockScreenAutomatically() const override;
   void LockScreen() override;
   void UnlockScreen() override;
   bool IsUserSessionBlocked() const override;
-  SessionState GetSessionState() const override;
+  session_manager::SessionState GetSessionState() const override;
   const user_manager::UserInfo* GetUserInfo(
       ash::UserIndex index) const override;
-  bool ShouldShowAvatar(aura::Window* window) const override;
-  gfx::ImageSkia GetAvatarImageForWindow(aura::Window* window) const override;
+  bool ShouldShowAvatar(ash::WmWindow* window) const override;
+  gfx::ImageSkia GetAvatarImageForWindow(ash::WmWindow* window) const override;
   void SwitchActiveUser(const AccountId& account_id) override;
   void CycleActiveUser(CycleUser cycle_user) override;
   bool IsMultiProfileAllowedByPrimaryUserPolicy() const override;
@@ -63,20 +63,20 @@ class SessionStateDelegateChromeos
   // Sets session state to |new_state|.
   // If |force| is true then |new_state| is set even if existing session
   // state is the same (used for explicit initialization).
-  void SetSessionState(SessionState new_state, bool force);
+  void SetSessionState(session_manager::SessionState new_state, bool force);
 
   // Notify observers about session state change.
   void NotifySessionStateChanged();
 
-  // Switches to a new user. This call might show a dialog asking the user if he
-  // wants to stop desktop casting before switching.
+  // Switches to a new user. This call might show a dialog asking the user if
+  // they want to stop desktop casting before switching.
   void TryToSwitchUser(const AccountId& account_id);
 
   // List of observers is only used on Chrome OS for now.
   base::ObserverList<ash::SessionStateObserver> session_state_observer_list_;
 
   // Session state (e.g. login screen vs. user session).
-  SessionState session_state_;
+  session_manager::SessionState session_state_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionStateDelegateChromeos);
 };

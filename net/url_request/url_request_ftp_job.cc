@@ -6,14 +6,14 @@
 
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/auth.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/ftp/ftp_auth_cache.h"
 #include "net/ftp/ftp_response_info.h"
 #include "net/ftp/ftp_transaction_factory.h"
@@ -24,6 +24,19 @@
 #include "net/url_request/url_request_error_job.h"
 
 namespace net {
+
+class URLRequestFtpJob::AuthData {
+ public:
+  AuthState state;  // Whether we need, have, or gave up on authentication.
+  AuthCredentials credentials;  // The credentials to use for auth.
+
+  AuthData();
+  ~AuthData();
+};
+
+URLRequestFtpJob::AuthData::AuthData() : state(AUTH_STATE_NEED_AUTH) {}
+
+URLRequestFtpJob::AuthData::~AuthData() {}
 
 URLRequestFtpJob::URLRequestFtpJob(
     URLRequest* request,
@@ -102,14 +115,10 @@ void URLRequestFtpJob::Start() {
   } else {
     DCHECK_EQ(request_->context()->proxy_service(), proxy_service_);
     rv = proxy_service_->ResolveProxy(
-        request_->url(),
-        request_->load_flags(),
-        &proxy_info_,
+        request_->url(), "GET", &proxy_info_,
         base::Bind(&URLRequestFtpJob::OnResolveProxyComplete,
                    base::Unretained(this)),
-        &pac_request_,
-        NULL,
-        request_->net_log());
+        &pac_request_, NULL, request_->net_log());
 
     if (rv == ERR_IO_PENDING)
       return;
@@ -158,11 +167,8 @@ void URLRequestFtpJob::StartFtpTransaction() {
   DCHECK(!ftp_transaction_);
 
   ftp_request_info_.url = request_->url();
-  ftp_transaction_.reset(ftp_transaction_factory_->CreateTransaction());
+  ftp_transaction_ = ftp_transaction_factory_->CreateTransaction();
 
-  // No matter what, we want to report our status as IO pending since we will
-  // be notifying our consumer asynchronously via OnStartCompleted.
-  SetStatus(URLRequestStatus(URLRequestStatus::IO_PENDING, 0));
   int rv;
   if (ftp_transaction_) {
     rv = ftp_transaction_->Start(
@@ -211,9 +217,6 @@ void URLRequestFtpJob::StartHttpTransaction() {
 }
 
 void URLRequestFtpJob::OnStartCompleted(int result) {
-  // Clear the IO_PENDING status
-  SetStatus(URLRequestStatus());
-
   // Note that ftp_transaction_ may be NULL due to a creation failure.
   if (ftp_transaction_) {
     // FTP obviously doesn't have HTTP Content-Length header. We have to pass
@@ -256,10 +259,6 @@ void URLRequestFtpJob::OnReadCompleted(int result) {
 
 void URLRequestFtpJob::RestartTransactionWithAuth() {
   DCHECK(auth_data_.get() && auth_data_->state == AUTH_STATE_HAVE_AUTH);
-
-  // No matter what, we want to report our status as IO pending since we will
-  // be notifying our consumer asynchronously via OnStartCompleted.
-  SetStatus(URLRequestStatus(URLRequestStatus::IO_PENDING, 0));
 
   int rv;
   if (proxy_info_.is_direct()) {
@@ -306,7 +305,7 @@ void URLRequestFtpJob::GetAuthChallengeInfo(
 
   scoped_refptr<AuthChallengeInfo> auth_info(new AuthChallengeInfo);
   auth_info->is_proxy = false;
-  auth_info->challenger = HostPortPair::FromURL(request_->url());
+  auth_info->challenger = url::Origin(request_->url());
   // scheme and realm are kept empty.
   DCHECK(auth_info->scheme.empty());
   DCHECK(auth_info->realm.empty());
@@ -338,10 +337,6 @@ void URLRequestFtpJob::CancelAuth() {
   // there were no auth.  Schedule this for later so that we don't cause
   // any recursing into the caller as a result of this call.
   OnStartCompletedAsync(OK);
-}
-
-UploadProgress URLRequestFtpJob::GetUploadProgress() const {
-  return UploadProgress();
 }
 
 int URLRequestFtpJob::ReadRawData(IOBuffer* buf, int buf_size) {
@@ -377,7 +372,7 @@ void URLRequestFtpJob::HandleAuthNeededResponse() {
     if (ftp_transaction_ && auth_data_->state == AUTH_STATE_HAVE_AUTH)
       ftp_auth_cache_->Remove(origin, auth_data_->credentials);
   } else {
-    auth_data_ = new AuthData;
+    auth_data_ = base::MakeUnique<AuthData>();
   }
   auth_data_->state = AUTH_STATE_NEED_AUTH;
 

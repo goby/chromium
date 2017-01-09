@@ -4,6 +4,8 @@
 
 #include "extensions/browser/event_router.h"
 
+#include <stddef.h>
+
 #include <tuple>
 #include <utility>
 
@@ -11,6 +13,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
@@ -60,24 +63,11 @@ const char kFilteredEvents[] = "filtered_events";
 void NotifyEventDispatched(void* browser_context_id,
                            const std::string& extension_id,
                            const std::string& event_name,
-                           scoped_ptr<ListValue> args) {
-  // The ApiActivityMonitor can only be accessed from the UI thread.
-  if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(&NotifyEventDispatched, browser_context_id, extension_id,
-                   event_name, base::Passed(&args)));
-    return;
-  }
-
+                           const base::ListValue& args) {
   // Notify the ApiActivityMonitor about the event dispatch.
   BrowserContext* context = static_cast<BrowserContext*>(browser_context_id);
-  if (!ExtensionsBrowserClient::Get()->IsValidContext(context))
-    return;
-  ApiActivityMonitor* monitor =
-      ExtensionsBrowserClient::Get()->GetApiActivityMonitor(context);
-  if (monitor)
-    monitor->OnApiEventDispatched(extension_id, event_name, args.Pass());
+  activity_monitor::OnApiEventDispatched(context, extension_id, event_name,
+                                         args);
 }
 
 // A global identifier used to distinguish extension events.
@@ -111,28 +101,16 @@ void EventRouter::DispatchExtensionMessage(IPC::Sender* ipc_sender,
                                            UserGestureState user_gesture,
                                            const EventFilteringInfo& info) {
   NotifyEventDispatched(browser_context_id, extension_id, event_name,
-                        make_scoped_ptr(event_args->DeepCopy()));
+                        *event_args);
 
-  // TODO(chirantan): Make event dispatch a separate IPC so that it doesn't
-  // piggyback off MessageInvoke, which is used for other things.
-  ListValue args;
-  args.Set(0, new base::StringValue(event_name));
-  args.Set(1, event_args);
-  args.Set(2, info.AsValue().release());
-  args.Set(3, new base::FundamentalValue(event_id));
-  ipc_sender->Send(new ExtensionMsg_MessageInvoke(
-      MSG_ROUTING_CONTROL,
-      extension_id,
-      kEventBindings,
-      "dispatchEvent",
-      args,
-      user_gesture == USER_GESTURE_ENABLED));
+  ExtensionMsg_DispatchEvent_Params params;
+  params.extension_id = extension_id;
+  params.event_name = event_name;
+  params.event_id = event_id;
+  params.is_user_gesture = user_gesture == USER_GESTURE_ENABLED;
+  params.filtering_info.Swap(info.AsValue().get());
 
-  // DispatchExtensionMessage does _not_ take ownership of event_args, so we
-  // must ensure that the destruction of args does not attempt to free it.
-  scoped_ptr<base::Value> removed_event_args;
-  args.Remove(1, &removed_event_args);
-  ignore_result(removed_event_args.release());
+  ipc_sender->Send(new ExtensionMsg_DispatchEvent(params, *event_args));
 }
 
 // static
@@ -152,7 +130,7 @@ void EventRouter::DispatchEventToSender(IPC::Sender* ipc_sender,
                                         const std::string& extension_id,
                                         events::HistogramValue histogram_value,
                                         const std::string& event_name,
-                                        scoped_ptr<ListValue> event_args,
+                                        std::unique_ptr<ListValue> event_args,
                                         UserGestureState user_gesture,
                                         const EventFilteringInfo& info) {
   int event_id = g_extension_event_id.GetNext();
@@ -189,7 +167,7 @@ EventRouter::EventRouter(BrowserContext* browser_context,
 }
 
 EventRouter::~EventRouter() {
-  for (auto process : observed_process_set_)
+  for (auto* process : observed_process_set_)
     process->RemoveObserver(this);
 }
 
@@ -197,14 +175,14 @@ void EventRouter::AddEventListener(const std::string& event_name,
                                    content::RenderProcessHost* process,
                                    const std::string& extension_id) {
   listeners_.AddListener(EventListener::ForExtension(
-      event_name, extension_id, process, scoped_ptr<DictionaryValue>()));
+      event_name, extension_id, process, std::unique_ptr<DictionaryValue>()));
 }
 
 void EventRouter::RemoveEventListener(const std::string& event_name,
                                       content::RenderProcessHost* process,
                                       const std::string& extension_id) {
-  scoped_ptr<EventListener> listener = EventListener::ForExtension(
-      event_name, extension_id, process, scoped_ptr<DictionaryValue>());
+  std::unique_ptr<EventListener> listener = EventListener::ForExtension(
+      event_name, extension_id, process, std::unique_ptr<DictionaryValue>());
   listeners_.RemoveListener(listener.get());
 }
 
@@ -212,14 +190,14 @@ void EventRouter::AddEventListenerForURL(const std::string& event_name,
                                          content::RenderProcessHost* process,
                                          const GURL& listener_url) {
   listeners_.AddListener(EventListener::ForURL(
-      event_name, listener_url, process, scoped_ptr<DictionaryValue>()));
+      event_name, listener_url, process, std::unique_ptr<DictionaryValue>()));
 }
 
 void EventRouter::RemoveEventListenerForURL(const std::string& event_name,
                                             content::RenderProcessHost* process,
                                             const GURL& listener_url) {
-  scoped_ptr<EventListener> listener = EventListener::ForURL(
-      event_name, listener_url, process, scoped_ptr<DictionaryValue>());
+  std::unique_ptr<EventListener> listener = EventListener::ForURL(
+      event_name, listener_url, process, std::unique_ptr<DictionaryValue>());
   listeners_.RemoveListener(listener.get());
 }
 
@@ -287,7 +265,7 @@ void EventRouter::RenderProcessHostDestroyed(content::RenderProcessHost* host) {
 void EventRouter::AddLazyEventListener(const std::string& event_name,
                                        const std::string& extension_id) {
   bool is_new = listeners_.AddListener(EventListener::ForExtension(
-      event_name, extension_id, NULL, scoped_ptr<DictionaryValue>()));
+      event_name, extension_id, NULL, std::unique_ptr<DictionaryValue>()));
 
   if (is_new) {
     std::set<std::string> events = GetRegisteredEvents(extension_id);
@@ -299,8 +277,8 @@ void EventRouter::AddLazyEventListener(const std::string& event_name,
 
 void EventRouter::RemoveLazyEventListener(const std::string& event_name,
                                           const std::string& extension_id) {
-  scoped_ptr<EventListener> listener = EventListener::ForExtension(
-      event_name, extension_id, NULL, scoped_ptr<DictionaryValue>());
+  std::unique_ptr<EventListener> listener = EventListener::ForExtension(
+      event_name, extension_id, NULL, std::unique_ptr<DictionaryValue>());
   bool did_exist = listeners_.RemoveListener(listener.get());
 
   if (did_exist) {
@@ -317,17 +295,13 @@ void EventRouter::AddFilteredEventListener(const std::string& event_name,
                                            const base::DictionaryValue& filter,
                                            bool add_lazy_listener) {
   listeners_.AddListener(EventListener::ForExtension(
-      event_name,
-      extension_id,
-      process,
-      scoped_ptr<DictionaryValue>(filter.DeepCopy())));
+      event_name, extension_id, process,
+      std::unique_ptr<DictionaryValue>(filter.DeepCopy())));
 
   if (add_lazy_listener) {
     bool added = listeners_.AddListener(EventListener::ForExtension(
-        event_name,
-        extension_id,
-        NULL,
-        scoped_ptr<DictionaryValue>(filter.DeepCopy())));
+        event_name, extension_id, NULL,
+        std::unique_ptr<DictionaryValue>(filter.DeepCopy())));
 
     if (added)
       AddFilterToEvent(event_name, extension_id, &filter);
@@ -340,11 +314,9 @@ void EventRouter::RemoveFilteredEventListener(
     const std::string& extension_id,
     const base::DictionaryValue& filter,
     bool remove_lazy_listener) {
-  scoped_ptr<EventListener> listener = EventListener::ForExtension(
-      event_name,
-      extension_id,
-      process,
-      scoped_ptr<DictionaryValue>(filter.DeepCopy()));
+  std::unique_ptr<EventListener> listener = EventListener::ForExtension(
+      event_name, extension_id, process,
+      std::unique_ptr<DictionaryValue>(filter.DeepCopy()));
 
   listeners_.RemoveListener(listener.get());
 
@@ -409,7 +381,7 @@ void EventRouter::SetRegisteredEvents(const std::string& extension_id,
   ListValue* events_value = new ListValue;
   for (std::set<std::string>::const_iterator iter = events.begin();
        iter != events.end(); ++iter) {
-    events_value->Append(new base::StringValue(*iter));
+    events_value->AppendString(*iter);
   }
   extension_prefs_->UpdateExtensionPref(
       extension_id, kRegisteredEvents, events_value);
@@ -424,13 +396,14 @@ void EventRouter::AddFilterToEvent(const std::string& event_name,
   if (!filtered_events)
     filtered_events = update.Create();
 
-  ListValue* filter_list = NULL;
-  if (!filtered_events->GetList(event_name, &filter_list)) {
+  ListValue* filter_list = nullptr;
+  if (!filtered_events->GetListWithoutPathExpansion(event_name, &filter_list)) {
     filter_list = new ListValue;
-    filtered_events->SetWithoutPathExpansion(event_name, filter_list);
+    filtered_events->SetWithoutPathExpansion(event_name,
+                                             base::WrapUnique(filter_list));
   }
 
-  filter_list->Append(filter->DeepCopy());
+  filter_list->Append(filter->CreateDeepCopy());
 }
 
 void EventRouter::RemoveFilterFromEvent(const std::string& event_name,
@@ -446,10 +419,10 @@ void EventRouter::RemoveFilterFromEvent(const std::string& event_name,
   }
 
   for (size_t i = 0; i < filter_list->GetSize(); i++) {
-    DictionaryValue* filter = NULL;
-    CHECK(filter_list->GetDictionary(i, &filter));
-    if (filter->Equals(filter)) {
-      filter_list->Remove(i, NULL);
+    DictionaryValue* filter_value = nullptr;
+    CHECK(filter_list->GetDictionary(i, &filter_value));
+    if (filter_value->Equals(filter)) {
+      filter_list->Remove(i, nullptr);
       break;
     }
   }
@@ -463,24 +436,24 @@ const DictionaryValue* EventRouter::GetFilteredEvents(
   return events;
 }
 
-void EventRouter::BroadcastEvent(scoped_ptr<Event> event) {
+void EventRouter::BroadcastEvent(std::unique_ptr<Event> event) {
   DispatchEventImpl(std::string(), linked_ptr<Event>(event.release()));
 }
 
 void EventRouter::DispatchEventToExtension(const std::string& extension_id,
-                                           scoped_ptr<Event> event) {
+                                           std::unique_ptr<Event> event) {
   DCHECK(!extension_id.empty());
   DispatchEventImpl(extension_id, linked_ptr<Event>(event.release()));
 }
 
 void EventRouter::DispatchEventWithLazyListener(const std::string& extension_id,
-                                                scoped_ptr<Event> event) {
+                                                std::unique_ptr<Event> event) {
   DCHECK(!extension_id.empty());
   std::string event_name = event->event_name;
   bool has_listener = ExtensionHasEventListener(extension_id, event_name);
   if (!has_listener)
     AddLazyEventListener(event_name, extension_id);
-  DispatchEventToExtension(extension_id, event.Pass());
+  DispatchEventToExtension(extension_id, std::move(event));
   if (!has_listener)
     RemoveLazyEventListener(event_name, extension_id);
 }
@@ -519,7 +492,7 @@ void EventRouter::DispatchEventImpl(const std::string& restrict_to_extension_id,
       if (listener->process()) {
         EventDispatchIdentifier dispatch_id(listener->GetBrowserContext(),
                                             listener->extension_id());
-        if (!ContainsKey(already_dispatched, dispatch_id)) {
+        if (!base::ContainsKey(already_dispatched, dispatch_id)) {
           DispatchEventToProcess(listener->extension_id(),
                                  listener->listener_url(), listener->process(),
                                  event, listener->filter(),
@@ -615,7 +588,8 @@ void EventRouter::DispatchEventToProcess(
 
   Feature::Availability availability =
       ExtensionAPI::GetSharedInstance()->IsAvailable(
-          event->event_name, extension, target_context, listener_url);
+          event->event_name, extension, target_context, listener_url,
+          CheckAliasStatus::ALLOWED);
   if (!availability.is_available()) {
     // It shouldn't be possible to reach here, because access is checked on
     // registration. However, for paranoia, check on dispatch as well.
@@ -758,10 +732,12 @@ void EventRouter::ReportEvent(events::HistogramValue histogram_value,
   UMA_HISTOGRAM_ENUMERATION("Extensions.Events.Dispatch", histogram_value,
                             events::ENUM_BOUNDARY);
 
+  bool is_component = Manifest::IsComponentLocation(extension->location());
+
   // Record events for component extensions. These should be kept to a minimum,
   // especially if they wake its event page. Component extensions should use
   // declarative APIs as much as possible.
-  if (Manifest::IsComponentLocation(extension->location())) {
+  if (is_component) {
     UMA_HISTOGRAM_ENUMERATION("Extensions.Events.DispatchToComponent",
                               histogram_value, events::ENUM_BOUNDARY);
   }
@@ -786,6 +762,11 @@ void EventRouter::ReportEvent(events::HistogramValue histogram_value,
       UMA_HISTOGRAM_ENUMERATION(
           "Extensions.Events.DispatchWithSuspendedEventPage", histogram_value,
           events::ENUM_BOUNDARY);
+      if (is_component) {
+        UMA_HISTOGRAM_ENUMERATION(
+            "Extensions.Events.DispatchToComponentWithSuspendedEventPage",
+            histogram_value, events::ENUM_BOUNDARY);
+      }
     } else {
       UMA_HISTOGRAM_ENUMERATION(
           "Extensions.Events.DispatchWithRunningEventPage", histogram_value,
@@ -849,16 +830,16 @@ void EventRouter::OnExtensionUnloaded(content::BrowserContext* browser_context,
 
 Event::Event(events::HistogramValue histogram_value,
              const std::string& event_name,
-             scoped_ptr<base::ListValue> event_args)
-    : Event(histogram_value, event_name, event_args.Pass(), nullptr) {}
+             std::unique_ptr<base::ListValue> event_args)
+    : Event(histogram_value, event_name, std::move(event_args), nullptr) {}
 
 Event::Event(events::HistogramValue histogram_value,
              const std::string& event_name,
-             scoped_ptr<base::ListValue> event_args,
+             std::unique_ptr<base::ListValue> event_args,
              BrowserContext* restrict_to_browser_context)
     : Event(histogram_value,
             event_name,
-            event_args.Pass(),
+            std::move(event_args),
             restrict_to_browser_context,
             GURL(),
             EventRouter::USER_GESTURE_UNKNOWN,
@@ -866,14 +847,14 @@ Event::Event(events::HistogramValue histogram_value,
 
 Event::Event(events::HistogramValue histogram_value,
              const std::string& event_name,
-             scoped_ptr<ListValue> event_args_tmp,
+             std::unique_ptr<ListValue> event_args_tmp,
              BrowserContext* restrict_to_browser_context,
              const GURL& event_url,
              EventRouter::UserGestureState user_gesture,
              const EventFilteringInfo& filter_info)
     : histogram_value(histogram_value),
       event_name(event_name),
-      event_args(event_args_tmp.Pass()),
+      event_args(std::move(event_args_tmp)),
       restrict_to_browser_context(restrict_to_browser_context),
       event_url(event_url),
       user_gesture(user_gesture),
@@ -890,10 +871,10 @@ Event::Event(events::HistogramValue histogram_value,
 Event::~Event() {}
 
 Event* Event::DeepCopy() {
-  Event* copy = new Event(histogram_value, event_name,
-                          scoped_ptr<base::ListValue>(event_args->DeepCopy()),
-                          restrict_to_browser_context, event_url, user_gesture,
-                          filter_info);
+  Event* copy = new Event(
+      histogram_value, event_name,
+      std::unique_ptr<base::ListValue>(event_args->DeepCopy()),
+      restrict_to_browser_context, event_url, user_gesture, filter_info);
   copy->will_dispatch_callback = will_dispatch_callback;
   return copy;
 }

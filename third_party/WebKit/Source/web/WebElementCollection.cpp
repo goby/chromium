@@ -29,7 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebElementCollection.h"
 
 #include "core/dom/Element.h"
@@ -39,44 +38,36 @@
 
 namespace blink {
 
-void WebElementCollection::reset()
-{
-    m_private.reset();
+void WebElementCollection::reset() {
+  m_private.reset();
 }
 
-void WebElementCollection::assign(const WebElementCollection& other)
-{
-    m_private = other.m_private;
+void WebElementCollection::assign(const WebElementCollection& other) {
+  m_private = other.m_private;
 }
 
-WebElementCollection::WebElementCollection(const PassRefPtrWillBeRawPtr<HTMLCollection>& col)
-    : m_private(col)
-{
+WebElementCollection::WebElementCollection(HTMLCollection* col)
+    : m_private(col) {}
+
+WebElementCollection& WebElementCollection::operator=(HTMLCollection* col) {
+  m_private = col;
+  return *this;
 }
 
-WebElementCollection& WebElementCollection::operator=(const PassRefPtrWillBeRawPtr<HTMLCollection>& col)
-{
-    m_private = col;
-    return *this;
+unsigned WebElementCollection::length() const {
+  return m_private->length();
 }
 
-unsigned WebElementCollection::length() const
-{
-    return m_private->length();
+WebElement WebElementCollection::nextItem() const {
+  Element* element = m_private->item(m_current);
+  if (element)
+    m_current++;
+  return WebElement(element);
 }
 
-WebElement WebElementCollection::nextItem() const
-{
-    Element* element = m_private->item(m_current);
-    if (element)
-        m_current++;
-    return WebElement(element);
+WebElement WebElementCollection::firstItem() const {
+  m_current = 0;
+  return nextItem();
 }
 
-WebElement WebElementCollection::firstItem() const
-{
-    m_current = 0;
-    return nextItem();
-}
-
-} // namespace blink
+}  // namespace blink

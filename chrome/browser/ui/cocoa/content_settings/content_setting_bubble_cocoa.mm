@@ -4,9 +4,12 @@
 
 #import "chrome/browser/ui/cocoa/content_settings/content_setting_bubble_cocoa.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/stl_util.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/plugins/plugin_finder.h"
@@ -15,6 +18,7 @@
 #import "chrome/browser/ui/cocoa/l10n_util.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/content_settings/content_setting_media_menu_model.h"
+#import "chrome/browser/ui/cocoa/location_bar/content_setting_decoration.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/plugin_service.h"
@@ -201,13 +205,16 @@ class ContentSettingBubbleWebContentsObserverBridge
 - (id)initWithModel:(ContentSettingBubbleModel*)settingsBubbleModel
         webContents:(content::WebContents*)webContents
        parentWindow:(NSWindow*)parentWindow
+         decoration:(ContentSettingDecoration*)decoration
          anchoredAt:(NSPoint)anchoredAt;
+- (NSString*)getNibPathForModel:(ContentSettingBubbleModel*)model;
 - (NSButton*)hyperlinkButtonWithFrame:(NSRect)frame
                                 title:(NSString*)title
                                  icon:(NSImage*)icon
                        referenceFrame:(NSRect)referenceFrame;
 - (void)initializeBlockedPluginsList;
 - (void)initializeTitle;
+- (void)initializeMessage;
 - (void)initializeRadioGroup;
 - (void)initializeItemList;
 - (void)initializeGeoLists;
@@ -224,16 +231,18 @@ class ContentSettingBubbleWebContentsObserverBridge
 @implementation ContentSettingBubbleController
 
 + (ContentSettingBubbleController*)
-    showForModel:(ContentSettingBubbleModel*)contentSettingBubbleModel
-     webContents:(content::WebContents*)webContents
-    parentWindow:(NSWindow*)parentWindow
-      anchoredAt:(NSPoint)anchor {
+showForModel:(ContentSettingBubbleModel*)contentSettingBubbleModel
+ webContents:(content::WebContents*)webContents
+parentWindow:(NSWindow*)parentWindow
+  decoration:(ContentSettingDecoration*)decoration
+  anchoredAt:(NSPoint)anchor {
   // Autoreleases itself on bubble close.
   return [[ContentSettingBubbleController alloc]
-             initWithModel:contentSettingBubbleModel
-               webContents:webContents
-              parentWindow:parentWindow
-                anchoredAt:anchor];
+      initWithModel:contentSettingBubbleModel
+        webContents:webContents
+       parentWindow:parentWindow
+         decoration:decoration
+         anchoredAt:anchor];
 }
 
 struct ContentTypeToNibPath {
@@ -251,7 +260,6 @@ const ContentTypeToNibPath kNibPaths[] = {
     {CONTENT_SETTINGS_TYPE_GEOLOCATION, @"ContentBlockedGeolocation"},
     {CONTENT_SETTINGS_TYPE_MIXEDSCRIPT, @"ContentBlockedMixedScript"},
     {CONTENT_SETTINGS_TYPE_PROTOCOL_HANDLERS, @"ContentProtocolHandlers"},
-    {CONTENT_SETTINGS_TYPE_MEDIASTREAM, @"ContentBlockedMedia"},
     {CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, @"ContentBlockedDownloads"},
     {CONTENT_SETTINGS_TYPE_MIDI_SYSEX, @"ContentBlockedMIDISysEx"},
 };
@@ -259,43 +267,56 @@ const ContentTypeToNibPath kNibPaths[] = {
 - (id)initWithModel:(ContentSettingBubbleModel*)contentSettingBubbleModel
         webContents:(content::WebContents*)webContents
        parentWindow:(NSWindow*)parentWindow
+         decoration:(ContentSettingDecoration*)decoration
          anchoredAt:(NSPoint)anchoredAt {
   // This method takes ownership of |contentSettingBubbleModel| in all cases.
-  scoped_ptr<ContentSettingBubbleModel> model(contentSettingBubbleModel);
+  std::unique_ptr<ContentSettingBubbleModel> model(contentSettingBubbleModel);
   DCHECK(model.get());
   observerBridge_.reset(
     new ContentSettingBubbleWebContentsObserverBridge(webContents, self));
 
-  ContentSettingsType settingsType = model->content_type();
+  NSString* nibPath = [self getNibPathForModel:model.get()];
 
-  NSString* nibPath = @"";
-  for (const ContentTypeToNibPath& type_to_path : kNibPaths) {
-    if (settingsType == type_to_path.type) {
-      nibPath = type_to_path.path;
-      break;
-    }
-  }
   DCHECK_NE(0u, [nibPath length]);
 
   if ((self = [super initWithWindowNibPath:nibPath
                               parentWindow:parentWindow
                                 anchoredAt:anchoredAt])) {
     contentSettingBubbleModel_.reset(model.release());
+    decoration_ = decoration;
     [self showWindow:nil];
   }
   return self;
 }
 
-- (void)dealloc {
-  STLDeleteValues(&mediaMenus_);
-  [super dealloc];
+- (NSString*)getNibPathForModel:(ContentSettingBubbleModel*)model {
+  NSString* nibPath = @"";
+
+  ContentSettingSimpleBubbleModel* simple_bubble = model->AsSimpleBubbleModel();
+  if (simple_bubble) {
+    ContentSettingsType settingsType = simple_bubble->content_type();
+
+    for (const ContentTypeToNibPath& type_to_path : kNibPaths) {
+      if (settingsType == type_to_path.type) {
+        nibPath = type_to_path.path;
+        break;
+      }
+    }
+  }
+
+  if (model->AsMediaStreamBubbleModel())
+    nibPath = @"ContentBlockedMedia";
+
+  if (model->AsSubresourceFilterBubbleModel())
+    nibPath = @"ContentSubresourceFilter";
+  return nibPath;
 }
 
 - (void)initializeTitle {
   if (!titleLabel_)
     return;
 
-  NSString* label = base::SysUTF8ToNSString(
+  NSString* label = base::SysUTF16ToNSString(
       contentSettingBubbleModel_->bubble_content().title);
   [titleLabel_ setStringValue:label];
 
@@ -310,11 +331,31 @@ const ContentTypeToNibPath kNibPaths[] = {
   [titleLabel_ setFrame:titleFrame];
 }
 
+- (void)initializeMessage {
+  if (!messageLabel_)
+    return;
+
+  NSString* label = base::SysUTF16ToNSString(
+      contentSettingBubbleModel_->bubble_content().message);
+  [messageLabel_ setStringValue:label];
+
+  CGFloat deltaY = [GTMUILocalizerAndLayoutTweaker
+      sizeToFitFixedWidthTextField:messageLabel_];
+  NSRect windowFrame = [[self window] frame];
+  windowFrame.size.height += deltaY;
+  [[self window] setFrame:windowFrame display:NO];
+  NSRect messageFrame = [messageLabel_ frame];
+  messageFrame.origin.y -= deltaY;
+  [messageLabel_ setFrame:messageFrame];
+}
+
 - (void)initializeRadioGroup {
   // NOTE! Tags in the xib files must match the order of the radio buttons
   // passed in the radio_group and be 1-based, not 0-based.
+  const ContentSettingBubbleModel::BubbleContent& bubble_content =
+      contentSettingBubbleModel_->bubble_content();
   const ContentSettingBubbleModel::RadioGroup& radio_group =
-      contentSettingBubbleModel_->bubble_content().radio_group;
+      bubble_content.radio_group;
 
   // Xcode 5.1 Interface Builder doesn't allow a font property to be set for
   // NSMatrix. The implementation of GTMUILocalizerAndLayoutTweaker assumes that
@@ -328,6 +369,7 @@ const ContentTypeToNibPath kNibPaths[] = {
     DCHECK([font isEqual:[cell font]]);
   }
   [allowBlockRadioGroup_ setFont:font];
+  [allowBlockRadioGroup_ setEnabled:bubble_content.radio_group_enabled];
 
   // Select appropriate radio button.
   [allowBlockRadioGroup_ selectCellWithTag: radio_group.default_item + 1];
@@ -567,7 +609,7 @@ const ContentTypeToNibPath kNibPaths[] = {
     menuParts->model.reset(new ContentSettingMediaMenuModel(
         map_entry.first, contentSettingBubbleModel_.get(),
         ContentSettingMediaMenuModel::MenuLabelChangedCallback()));
-    mediaMenus_[button] = menuParts;
+    mediaMenus_[button] = base::WrapUnique(menuParts);
     CGFloat width = BuildPopUpMenuFromModel(
         button, menuParts->model.get(), map_entry.second.selected_device.name,
         map_entry.second.disabled);
@@ -602,8 +644,7 @@ const ContentTypeToNibPath kNibPaths[] = {
   // Resize and reposition the media menus layout.
   CGFloat topMenuY = NSMinY(radioFrame) - kMediaMenuVerticalPadding;
   maxMenuWidth = std::max(maxMenuWidth, kMinMediaMenuButtonWidth);
-  for (const std::pair<NSPopUpButton*, content_setting_bubble::MediaMenuParts*>&
-           map_entry : mediaMenus_) {
+  for (const auto& map_entry : mediaMenus_) {
     NSRect labelFrame = [map_entry.second->label frame];
     // Align the label text with the button text.
     labelFrame.origin.y =
@@ -720,7 +761,7 @@ const ContentTypeToNibPath kNibPaths[] = {
 - (void)initManageDoneButtons {
   const ContentSettingBubbleModel::BubbleContent& content =
       contentSettingBubbleModel_->bubble_content();
-  [manageButton_ setTitle:base::SysUTF8ToNSString(content.manage_link)];
+  [manageButton_ setTitle:base::SysUTF8ToNSString(content.manage_text)];
   [GTMUILocalizerAndLayoutTweaker sizeToFitView:[manageButton_ superview]];
 
   CGFloat actualWidth = NSWidth([[[self window] contentView] frame]);
@@ -747,25 +788,36 @@ const ContentTypeToNibPath kNibPaths[] = {
   [self initManageDoneButtons];
 
   [self initializeTitle];
+  [self initializeMessage];
 
-  ContentSettingsType type = contentSettingBubbleModel_->content_type();
-  if (type == CONTENT_SETTINGS_TYPE_PLUGINS) {
+  // Note that the per-content-type methods and |initializeRadioGroup| below
+  // must be kept in the correct order, as they make interdependent adjustments
+  // of the bubble's height.
+  ContentSettingSimpleBubbleModel* simple_bubble =
+      contentSettingBubbleModel_->AsSimpleBubbleModel();
+  if (simple_bubble &&
+      simple_bubble->content_type() == CONTENT_SETTINGS_TYPE_PLUGINS) {
     [self sizeToFitLoadButton];
     [self initializeBlockedPluginsList];
   }
 
-  if (allowBlockRadioGroup_)  // not bound in cookie bubble xib
+  if (allowBlockRadioGroup_)  // Some xibs do not bind |allowBlockRadioGroup_|.
     [self initializeRadioGroup];
 
-  if (type == CONTENT_SETTINGS_TYPE_POPUPS ||
-      type == CONTENT_SETTINGS_TYPE_PLUGINS)
-    [self initializeItemList];
-  if (type == CONTENT_SETTINGS_TYPE_GEOLOCATION)
-    [self initializeGeoLists];
-  if (type == CONTENT_SETTINGS_TYPE_MEDIASTREAM)
+  if (simple_bubble) {
+    ContentSettingsType type = simple_bubble->content_type();
+
+    if (type == CONTENT_SETTINGS_TYPE_POPUPS ||
+        type == CONTENT_SETTINGS_TYPE_PLUGINS)
+      [self initializeItemList];
+    if (type == CONTENT_SETTINGS_TYPE_GEOLOCATION)
+      [self initializeGeoLists];
+    if (type == CONTENT_SETTINGS_TYPE_MIDI_SYSEX)
+      [self initializeMIDISysExLists];
+  }
+
+  if (contentSettingBubbleModel_->AsMediaStreamBubbleModel())
     [self initializeMediaMenus];
-  if (type == CONTENT_SETTINGS_TYPE_MIDI_SYSEX)
-    [self initializeMIDISysExLists];
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -817,8 +869,7 @@ const ContentTypeToNibPath kNibPaths[] = {
 
 - (IBAction)mediaMenuChanged:(id)sender {
   NSPopUpButton* button = static_cast<NSPopUpButton*>(sender);
-  content_setting_bubble::MediaMenuPartsMap::const_iterator it(
-      mediaMenus_.find(sender));
+  auto it = mediaMenus_.find(sender);
   DCHECK(it != mediaMenus_.end());
   NSInteger index = [[button selectedItem] tag];
 
@@ -830,6 +881,10 @@ const ContentTypeToNibPath kNibPaths[] = {
 
 - (content_setting_bubble::MediaMenuPartsMap*)mediaMenus {
   return &mediaMenus_;
+}
+
+- (LocationBarDecoration*)decorationForBubble {
+  return decoration_;
 }
 
 @end  // ContentSettingBubbleController

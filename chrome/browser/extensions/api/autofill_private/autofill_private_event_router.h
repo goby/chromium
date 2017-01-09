@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_AUTOFILL_PRIVATE_AUTOFILL_PRIVATE_EVENT_ROUTER_H_
 #define CHROME_BROWSER_EXTENSIONS_API_AUTOFILL_PRIVATE_AUTOFILL_PRIVATE_EVENT_ROUTER_H_
 
+#include "base/macros.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/browser/event_router.h"
@@ -37,26 +38,15 @@ class AutofillPrivateEventRouter :
   // KeyedService overrides:
   void Shutdown() override;
 
-  // EventRouter::Observer overrides:
-  void OnListenerAdded(const EventListenerInfo& details) override;
-  void OnListenerRemoved(const EventListenerInfo& details) override;
-
   // PersonalDataManagerObserver implementation.
   void OnPersonalDataChanged() override;
 
  private:
-  // Either listens or unlistens for changes to |personal_data_|, depending on
-  // whether clients are listening to the autofillPrivate API events.
-  void StartOrStopListeningForChanges();
-
   content::BrowserContext* context_;
 
   EventRouter* event_router_;
 
   autofill::PersonalDataManager* personal_data_;
-
-  // Whether this class is currently listening for changes to |personal_data_|.
-  bool listening_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillPrivateEventRouter);
 };

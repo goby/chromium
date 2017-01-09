@@ -4,11 +4,16 @@
 
 #include "chrome/browser/ui/browser_command_controller.h"
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/command_line.h"
 #include "base/debug/debugging_flags.h"
-#include "base/prefs/pref_service.h"
+#include "base/debug/profiler.h"
+#include "base/feature_list.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -23,6 +28,7 @@
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -31,12 +37,14 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_utils.h"
 #include "chrome/browser/ui/webui/inspect_ui.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/content_restriction.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/profiling.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/dom_distiller/core/dom_distiller_switches.h"
+#include "components/prefs/pref_service.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/signin/core/common/signin_pref_names.h"
 #include "content/public/browser/native_web_keyboard_event.h"
@@ -45,8 +53,12 @@
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/service_manager_connection.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_system.h"
+#include "mash/public/interfaces/launchable.mojom.h"
+#include "printing/features/features.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
 #if defined(OS_MACOSX)
@@ -54,28 +66,23 @@
 #endif
 
 #if defined(OS_WIN)
-#include "base/win/metro.h"
 #include "base/win/windows_version.h"
-#include "chrome/browser/ui/apps/apps_metro_handler_win.h"
 #include "content/public/browser/gpu_data_manager.h"
 #endif
 
 #if defined(USE_ASH)
-#include "ash/accelerators/accelerator_commands.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "ash/accelerators/accelerator_commands_aura.h"  // nogncheck
+#include "chrome/browser/ui/ash/ash_util.h"  // nogncheck
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "ash/multi_profile_uma.h"
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_context_menu.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "chrome/browser/ui/browser_commands_chromeos.h"
 #endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-#include "ui/events/linux/text_edit_key_bindings_delegate_auralinux.h"
+#include "ui/base/ime/linux/text_edit_key_bindings_delegate_auralinux.h"
 #endif
 
 using content::NavigationEntry;
@@ -90,96 +97,7 @@ enum WindowState {
 
   // Fullscreen mode, occupying the whole screen.
   WINDOW_STATE_FULLSCREEN,
-
-  // Fullscreen mode for metro snap, occupying the full height and 20% of
-  // the screen width.
-  WINDOW_STATE_METRO_SNAP,
 };
-
-// Returns |true| if entry has an internal chrome:// URL, |false| otherwise.
-bool HasInternalURL(const NavigationEntry* entry) {
-  if (!entry)
-    return false;
-
-  // Check the |virtual_url()| first. This catches regular chrome:// URLs
-  // including URLs that were rewritten (such as chrome://bookmarks).
-  if (entry->GetVirtualURL().SchemeIs(content::kChromeUIScheme))
-    return true;
-
-  // If the |virtual_url()| isn't a chrome:// URL, check if it's actually
-  // view-source: of a chrome:// URL.
-  if (entry->GetVirtualURL().SchemeIs(content::kViewSourceScheme))
-    return entry->GetURL().SchemeIs(content::kChromeUIScheme);
-
-  return false;
-}
-
-#if defined(OS_WIN)
-// Windows 8 specific helper class to manage DefaultBrowserWorker. It does the
-// following asynchronous actions in order:
-// 1- Check that chrome is the default browser
-// 2- If we are the default, restart chrome in metro and exit
-// 3- If not the default browser show the 'select default browser' system dialog
-// 4- When dialog dismisses check again who got made the default
-// 5- If we are the default then restart chrome in metro and exit
-// 6- If we are not the default exit.
-//
-// Note: this class deletes itself.
-class SwitchToMetroUIHandler
-    : public ShellIntegration::DefaultWebClientObserver {
- public:
-  SwitchToMetroUIHandler()
-      : default_browser_worker_(
-            new ShellIntegration::DefaultBrowserWorker(this)),
-        first_check_(true) {
-    default_browser_worker_->StartCheckIsDefault();
-  }
-
-  ~SwitchToMetroUIHandler() override {
-    default_browser_worker_->ObserverDestroyed();
-  }
-
- private:
-  void SetDefaultWebClientUIState(
-      ShellIntegration::DefaultWebClientUIState state) override {
-    switch (state) {
-      case ShellIntegration::STATE_PROCESSING:
-        return;
-      case ShellIntegration::STATE_UNKNOWN :
-        break;
-      case ShellIntegration::STATE_IS_DEFAULT:
-        chrome::AttemptRestartToMetroMode();
-        break;
-      case ShellIntegration::STATE_NOT_DEFAULT:
-        if (first_check_) {
-          default_browser_worker_->StartSetAsDefault();
-          return;
-        }
-        break;
-      default:
-        NOTREACHED();
-    }
-    delete this;
-  }
-
-  void OnSetAsDefaultConcluded(bool success) override {
-    if (!success) {
-      delete this;
-      return;
-    }
-    first_check_ = false;
-  }
-
-  bool IsInteractiveSetDefaultPermitted() override {
-    return true;
-  }
-
-  scoped_refptr<ShellIntegration::DefaultBrowserWorker> default_browser_worker_;
-  bool first_check_;
-
-  DISALLOW_COPY_AND_ASSIGN(SwitchToMetroUIHandler);
-};
-#endif  // defined(OS_WIN)
 
 }  // namespace
 
@@ -193,7 +111,7 @@ BrowserCommandController::BrowserCommandController(Browser* browser)
       command_updater_(this),
       block_command_execution_(false),
       last_blocked_command_id_(-1),
-      last_blocked_command_disposition_(CURRENT_TAB) {
+      last_blocked_command_disposition_(WindowOpenDisposition::CURRENT_TAB) {
   browser_->tab_strip_model()->AddObserver(this);
   PrefService* local_state = g_browser_process->local_state();
   if (local_state) {
@@ -309,7 +227,7 @@ void BrowserCommandController::SetBlockCommandExecution(bool block) {
   block_command_execution_ = block;
   if (block) {
     last_blocked_command_id_ = -1;
-    last_blocked_command_disposition_ = CURRENT_TAB;
+    last_blocked_command_disposition_ = WindowOpenDisposition::CURRENT_TAB;
   }
 }
 
@@ -383,10 +301,24 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
   // declaration order in browser.h!
   switch (id) {
     // Navigation commands
+    case IDC_BACKSPACE_BACK:
+      if (base::FeatureList::IsEnabled(features::kBackspaceGoesBackFeature))
+        GoBack(browser_, disposition);
+      else
+        browser_->window()->MaybeShowNewBackShortcutBubble(false);
+      break;
     case IDC_BACK:
+      browser_->window()->HideNewBackShortcutBubble();
       GoBack(browser_, disposition);
       break;
+    case IDC_BACKSPACE_FORWARD:
+      if (base::FeatureList::IsEnabled(features::kBackspaceGoesBackFeature))
+        GoForward(browser_, disposition);
+      else
+        browser_->window()->MaybeShowNewBackShortcutBubble(true);
+      break;
     case IDC_FORWARD:
+      browser_->window()->HideNewBackShortcutBubble();
       GoForward(browser_, disposition);
       break;
     case IDC_RELOAD:
@@ -395,8 +327,8 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_RELOAD_CLEARING_CACHE:
       ClearCache(browser_);
       // FALL THROUGH
-    case IDC_RELOAD_IGNORING_CACHE:
-      ReloadIgnoringCache(browser_, disposition);
+    case IDC_RELOAD_BYPASSING_CACHE:
+      ReloadBypassingCache(browser_, disposition);
       break;
     case IDC_HOME:
       Home(browser_, disposition);
@@ -464,11 +396,7 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
       ConvertPopupToTabbedBrowser(browser_);
       break;
     case IDC_FULLSCREEN:
-#if defined(OS_MACOSX)
-      chrome::ToggleFullscreenWithToolbarOrFallback(browser_);
-#else
       chrome::ToggleFullscreenMode(browser_);
-#endif
       break;
 
 #if defined(OS_CHROMEOS)
@@ -487,47 +415,7 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
     }
 #endif
 
-#if defined(OS_WIN)
-    // Windows 8 specific commands.
-    case IDC_METRO_SNAP_ENABLE:
-      browser_->SetMetroSnapMode(true);
-      break;
-    case IDC_METRO_SNAP_DISABLE:
-      browser_->SetMetroSnapMode(false);
-      break;
-    case IDC_WIN_DESKTOP_RESTART:
-      if (!VerifyASHSwitchForApps(window()->GetNativeWindow(), id))
-        break;
-
-      chrome::AttemptRestartToDesktopMode();
-      if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
-        content::RecordAction(base::UserMetricsAction("Win8DesktopRestart"));
-      } else {
-        content::RecordAction(base::UserMetricsAction("Win7DesktopRestart"));
-      }
-      break;
-    case IDC_WIN8_METRO_RESTART:
-    case IDC_WIN_CHROMEOS_RESTART:
-      if (!VerifyASHSwitchForApps(window()->GetNativeWindow(), id))
-        break;
-      if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
-        // SwitchToMetroUIHandler deletes itself.
-        new SwitchToMetroUIHandler;
-        content::RecordAction(base::UserMetricsAction("Win8MetroRestart"));
-      } else {
-        content::RecordAction(base::UserMetricsAction("Win7ASHRestart"));
-        chrome::AttemptRestartToMetroMode();
-      }
-      break;
-    case IDC_PIN_TO_START_SCREEN:
-      TogglePagePinnedToStartScreen(browser_);
-      break;
-#endif
-
 #if defined(OS_MACOSX)
-    case IDC_PRESENTATION_MODE:
-      chrome::ToggleFullscreenMode(browser_);
-      break;
     case IDC_TOGGLE_FULLSCREEN_TOOLBAR:
       chrome::ToggleFullscreenToolbar(browser_);
       break;
@@ -556,68 +444,21 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
       Print(browser_);
       break;
 
-#if defined(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
     case IDC_BASIC_PRINT:
       content::RecordAction(base::UserMetricsAction("Accel_Advanced_Print"));
       BasicPrint(browser_);
       break;
 #endif  // ENABLE_BASIC_PRINTING
 
-// TODO(bondd): Implement save credit card bubble and icon on Mac.
-#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
     case IDC_SAVE_CREDIT_CARD_FOR_PAGE:
       SaveCreditCard(browser_);
       break;
-#endif
-
     case IDC_TRANSLATE_PAGE:
       Translate(browser_);
       break;
     case IDC_MANAGE_PASSWORDS_FOR_PAGE:
       ManagePasswordsForPage(browser_);
-      break;
-
-    // Page encoding commands
-    case IDC_ENCODING_AUTO_DETECT:
-      browser_->ToggleEncodingAutoDetect();
-      break;
-    case IDC_ENCODING_UTF8:
-    case IDC_ENCODING_UTF16LE:
-    case IDC_ENCODING_WINDOWS1252:
-    case IDC_ENCODING_GBK:
-    case IDC_ENCODING_GB18030:
-    case IDC_ENCODING_BIG5:
-    case IDC_ENCODING_KOREAN:
-    case IDC_ENCODING_SHIFTJIS:
-    case IDC_ENCODING_ISO2022JP:
-    case IDC_ENCODING_EUCJP:
-    case IDC_ENCODING_THAI:
-    case IDC_ENCODING_ISO885915:
-    case IDC_ENCODING_MACINTOSH:
-    case IDC_ENCODING_ISO88592:
-    case IDC_ENCODING_WINDOWS1250:
-    case IDC_ENCODING_ISO88595:
-    case IDC_ENCODING_WINDOWS1251:
-    case IDC_ENCODING_KOI8R:
-    case IDC_ENCODING_KOI8U:
-    case IDC_ENCODING_IBM866:
-    case IDC_ENCODING_ISO88597:
-    case IDC_ENCODING_WINDOWS1253:
-    case IDC_ENCODING_ISO88594:
-    case IDC_ENCODING_ISO885913:
-    case IDC_ENCODING_WINDOWS1257:
-    case IDC_ENCODING_ISO88593:
-    case IDC_ENCODING_ISO885910:
-    case IDC_ENCODING_ISO885914:
-    case IDC_ENCODING_ISO885916:
-    case IDC_ENCODING_WINDOWS1254:
-    case IDC_ENCODING_ISO88596:
-    case IDC_ENCODING_WINDOWS1256:
-    case IDC_ENCODING_ISO88598:
-    case IDC_ENCODING_ISO88598I:
-    case IDC_ENCODING_WINDOWS1255:
-    case IDC_ENCODING_WINDOWS1258:
-      browser_->OverrideEncoding(id);
       break;
 
     // Clipboard commands
@@ -781,14 +622,24 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
       ShowHelp(browser_, HELP_SOURCE_MENU);
       break;
     case IDC_SHOW_SIGNIN:
-      ShowBrowserSigninOrSettings(browser_, signin_metrics::SOURCE_MENU);
+      ShowBrowserSigninOrSettings(
+          browser_, signin_metrics::AccessPoint::ACCESS_POINT_MENU);
       break;
     case IDC_DISTILL_PAGE:
       DistillCurrentPage(browser_);
       break;
 #if defined(OS_CHROMEOS)
     case IDC_TOUCH_HUD_PROJECTION_TOGGLE:
-      ash::accelerators::ToggleTouchHudProjection();
+      if (chrome::IsRunningInMash()) {
+        service_manager::Connector* connector =
+            content::ServiceManagerConnection::GetForProcess()->GetConnector();
+        mash::mojom::LaunchablePtr launchable;
+        connector->ConnectToInterface("touch_hud", &launchable);
+        launchable->Launch(mash::mojom::kWindow,
+                           mash::mojom::LaunchMode::DEFAULT);
+      } else {
+        ash::accelerators::ToggleTouchHudProjection();
+      }
       break;
 #endif
     case IDC_ROUTE_MEDIA:
@@ -813,7 +664,8 @@ void BrowserCommandController::OnSigninAllowedPrefChange() {
 
 // BrowserCommandController, TabStripModelObserver implementation:
 
-void BrowserCommandController::TabInsertedAt(WebContents* contents,
+void BrowserCommandController::TabInsertedAt(TabStripModel* tab_strip_model,
+                                             WebContents* contents,
                                              int index,
                                              bool foreground) {
   AddInterstitialObservers(contents);
@@ -896,7 +748,7 @@ void BrowserCommandController::InitCommandState() {
 
   // Navigation commands
   command_updater_.UpdateCommandEnabled(IDC_RELOAD, true);
-  command_updater_.UpdateCommandEnabled(IDC_RELOAD_IGNORING_CACHE, true);
+  command_updater_.UpdateCommandEnabled(IDC_RELOAD_BYPASSING_CACHE, true);
   command_updater_.UpdateCommandEnabled(IDC_RELOAD_CLEARING_CACHE, true);
 
   // Window management commands
@@ -905,12 +757,7 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_CLOSE_TAB, true);
   command_updater_.UpdateCommandEnabled(IDC_DUPLICATE_TAB, true);
   UpdateTabRestoreCommandState();
-#if defined(OS_WIN) && defined(USE_ASH)
-  if (browser_->host_desktop_type() != chrome::HOST_DESKTOP_TYPE_ASH)
-    command_updater_.UpdateCommandEnabled(IDC_EXIT, true);
-#else
   command_updater_.UpdateCommandEnabled(IDC_EXIT, true);
-#endif
   command_updater_.UpdateCommandEnabled(IDC_DEBUG_FRAME_TOGGLE, true);
 #if defined(USE_ASH)
   command_updater_.UpdateCommandEnabled(IDC_MINIMIZE_WINDOW, true);
@@ -926,43 +773,6 @@ void BrowserCommandController::InitCommandState() {
   // Page-related commands
   command_updater_.UpdateCommandEnabled(IDC_EMAIL_PAGE_LOCATION, true);
   command_updater_.UpdateCommandEnabled(IDC_MANAGE_PASSWORDS_FOR_PAGE, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_AUTO_DETECT, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_UTF8, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_UTF16LE, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1252, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_GBK, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_GB18030, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_BIG5, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_THAI, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_KOREAN, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_SHIFTJIS, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO2022JP, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_EUCJP, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO885915, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_MACINTOSH, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88592, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1250, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88595, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1251, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_KOI8R, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_KOI8U, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_IBM866, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88597, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1253, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88594, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO885913, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1257, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88593, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO885910, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO885914, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO885916, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1254, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88596, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1256, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88598, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_ISO88598I, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1255, true);
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_WINDOWS1258, true);
 
   // Zoom
   command_updater_.UpdateCommandEnabled(IDC_ZOOM_MENU, true);
@@ -1024,15 +834,6 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_SELECT_TAB_6, normal_window);
   command_updater_.UpdateCommandEnabled(IDC_SELECT_TAB_7, normal_window);
   command_updater_.UpdateCommandEnabled(IDC_SELECT_LAST_TAB, normal_window);
-#if defined(OS_WIN)
-  bool metro = browser_->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH;
-  command_updater_.UpdateCommandEnabled(IDC_METRO_SNAP_ENABLE, metro);
-  command_updater_.UpdateCommandEnabled(IDC_METRO_SNAP_DISABLE, metro);
-  int restart_mode = metro ? IDC_WIN_DESKTOP_RESTART :
-      (base::win::GetVersion() >= base::win::VERSION_WIN8 ?
-          IDC_WIN8_METRO_RESTART : IDC_WIN_CHROMEOS_RESTART);
-  command_updater_.UpdateCommandEnabled(restart_mode, normal_window);
-#endif
 
   // These are always enabled; the menu determines their menu item visibility.
   command_updater_.UpdateCommandEnabled(IDC_UPGRADE_DIALOG, true);
@@ -1103,10 +904,14 @@ void BrowserCommandController::UpdateCommandsForTabState() {
     return;
 
   // Navigation commands
+  command_updater_.UpdateCommandEnabled(IDC_BACKSPACE_BACK,
+                                        CanGoBack(browser_));
   command_updater_.UpdateCommandEnabled(IDC_BACK, CanGoBack(browser_));
+  command_updater_.UpdateCommandEnabled(IDC_BACKSPACE_FORWARD,
+                                        CanGoForward(browser_));
   command_updater_.UpdateCommandEnabled(IDC_FORWARD, CanGoForward(browser_));
   command_updater_.UpdateCommandEnabled(IDC_RELOAD, CanReload(browser_));
-  command_updater_.UpdateCommandEnabled(IDC_RELOAD_IGNORING_CACHE,
+  command_updater_.UpdateCommandEnabled(IDC_RELOAD_BYPASSING_CACHE,
                                         CanReload(browser_));
   command_updater_.UpdateCommandEnabled(IDC_RELOAD_CLEARING_CACHE,
                                         CanReload(browser_));
@@ -1125,13 +930,6 @@ void BrowserCommandController::UpdateCommandsForTabState() {
                                         CanEmailPageLocation(browser_));
   if (browser_->is_devtools())
     command_updater_.UpdateCommandEnabled(IDC_OPEN_FILE, false);
-
-  // Changing the encoding is not possible on Chrome-internal webpages.
-  NavigationController& nc = current_web_contents->GetController();
-  bool is_chrome_internal = HasInternalURL(nc.GetLastCommittedEntry()) ||
-      current_web_contents->ShowingInterstitialPage();
-  command_updater_.UpdateCommandEnabled(IDC_ENCODING_MENU,
-      !is_chrome_internal && current_web_contents->IsSavable());
 
   // Show various bits of UI
   // TODO(pinkerton): Disable app-mode in the model until we implement it
@@ -1226,10 +1024,6 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
   WindowState window_state = WINDOW_STATE_NOT_FULLSCREEN;
   if (window() && window()->IsFullscreen()) {
     window_state = WINDOW_STATE_FULLSCREEN;
-#if defined(OS_WIN)
-    if (window()->IsInMetroSnapMode())
-      window_state = WINDOW_STATE_METRO_SNAP;
-#endif
   }
   bool show_main_ui = IsShowingMainUI();
   bool main_not_fullscreen =
@@ -1280,12 +1074,11 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
   command_updater_.UpdateCommandEnabled(IDC_VIEW_PASSWORDS, show_main_ui);
   command_updater_.UpdateCommandEnabled(IDC_ABOUT, show_main_ui);
   command_updater_.UpdateCommandEnabled(IDC_SHOW_APP_MENU, show_main_ui);
-#if BUILDFLAG(ENABLE_PROFILING) && !defined(NO_TCMALLOC)
-  command_updater_.UpdateCommandEnabled(IDC_PROFILING_ENABLED, show_main_ui);
-#endif
 
-  // Disable explicit fullscreen toggling when in metro snap mode.
-  bool fullscreen_enabled = window_state != WINDOW_STATE_METRO_SNAP;
+  if (base::debug::IsProfilingSupported())
+    command_updater_.UpdateCommandEnabled(IDC_PROFILING_ENABLED, show_main_ui);
+
+  bool fullscreen_enabled = true;
 #if !defined(OS_MACOSX)
   if (window_state == WINDOW_STATE_NOT_FULLSCREEN &&
       !profile()->GetPrefs()->GetBoolean(prefs::kFullscreenAllowed)) {
@@ -1295,8 +1088,6 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
 #endif
 
   command_updater_.UpdateCommandEnabled(IDC_FULLSCREEN, fullscreen_enabled);
-  command_updater_.UpdateCommandEnabled(IDC_PRESENTATION_MODE,
-                                        fullscreen_enabled);
   command_updater_.UpdateCommandEnabled(IDC_TOGGLE_FULLSCREEN_TOOLBAR,
                                         fullscreen_enabled);
 
@@ -1306,7 +1097,7 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
 void BrowserCommandController::UpdatePrintingState() {
   bool print_enabled = CanPrint(browser_);
   command_updater_.UpdateCommandEnabled(IDC_PRINT, print_enabled);
-#if defined(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
   command_updater_.UpdateCommandEnabled(IDC_BASIC_PRINT,
                                         CanBasicPrint(browser_));
 #endif  // ENABLE_BASIC_PRINTING

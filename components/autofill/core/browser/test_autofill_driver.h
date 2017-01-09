@@ -5,8 +5,10 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_TEST_AUTOFILL_DRIVER_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_TEST_AUTOFILL_DRIVER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/autofill/core/browser/autofill_driver.h"
 
@@ -44,6 +46,9 @@ class TestAutofillDriver : public AutofillDriver {
   void RendererShouldPreviewFieldWithValue(
       const base::string16& value) override;
   void PopupHidden() override;
+  gfx::RectF TransformBoundingBoxToViewportCoordinates(
+      const gfx::RectF& bounding_box) override;
+  void DidInteractWithCreditCardForm() override;
 
   // Methods that tests can use to specialize functionality.
 
@@ -52,7 +57,7 @@ class TestAutofillDriver : public AutofillDriver {
   void SetURLRequestContext(net::URLRequestContextGetter* url_request_context);
 
  private:
-  scoped_ptr<base::SequencedWorkerPoolOwner> blocking_pool_owner_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> blocking_pool_owner_;
   net::URLRequestContextGetter* url_request_context_;
 
   DISALLOW_COPY_AND_ASSIGN(TestAutofillDriver);

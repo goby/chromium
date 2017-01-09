@@ -4,10 +4,14 @@
 
 #include "chrome/browser/download/download_status_updater.h"
 
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/logging.h"
-#include "base/stl_util.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 #include "ui/views/linux_ui/linux_ui.h"
@@ -52,7 +56,6 @@ DownloadStatusUpdater::DownloadStatusUpdater() {
 }
 
 DownloadStatusUpdater::~DownloadStatusUpdater() {
-  STLDeleteElements(&notifiers_);
 }
 
 bool DownloadStatusUpdater::GetProgress(float* progress,
@@ -60,24 +63,22 @@ bool DownloadStatusUpdater::GetProgress(float* progress,
   *progress = 0;
   *download_count = 0;
   bool progress_certain = true;
-  int64 received_bytes = 0;
-  int64 total_bytes = 0;
+  int64_t received_bytes = 0;
+  int64_t total_bytes = 0;
 
-  for (std::vector<AllDownloadItemNotifier*>::const_iterator it =
-       notifiers_.begin(); it != notifiers_.end(); ++it) {
-    if ((*it)->GetManager()) {
+  for (const auto& notifier : notifiers_) {
+    if (notifier->GetManager()) {
       content::DownloadManager::DownloadVector items;
-      (*it)->GetManager()->GetAllDownloads(&items);
-      for (content::DownloadManager::DownloadVector::const_iterator it =
-          items.begin(); it != items.end(); ++it) {
-        if ((*it)->GetState() == content::DownloadItem::IN_PROGRESS) {
+      notifier->GetManager()->GetAllDownloads(&items);
+      for (auto* item : items) {
+        if (item->GetState() == content::DownloadItem::IN_PROGRESS) {
           ++*download_count;
-          if ((*it)->GetTotalBytes() <= 0) {
+          if (item->GetTotalBytes() <= 0) {
             // There may or may not be more data coming down this pipe.
             progress_certain = false;
           } else {
-            received_bytes += (*it)->GetReceivedBytes();
-            total_bytes += (*it)->GetTotalBytes();
+            received_bytes += item->GetReceivedBytes();
+            total_bytes += item->GetTotalBytes();
           }
         }
       }
@@ -90,13 +91,12 @@ bool DownloadStatusUpdater::GetProgress(float* progress,
 }
 
 void DownloadStatusUpdater::AddManager(content::DownloadManager* manager) {
-  notifiers_.push_back(new AllDownloadItemNotifier(manager, this));
+  notifiers_.push_back(
+      base::MakeUnique<AllDownloadItemNotifier>(manager, this));
   content::DownloadManager::DownloadVector items;
   manager->GetAllDownloads(&items);
-  for (content::DownloadManager::DownloadVector::const_iterator
-       it = items.begin(); it != items.end(); ++it) {
-    OnDownloadCreated(manager, *it);
-  }
+  for (auto* item : items)
+    OnDownloadCreated(manager, item);
 }
 
 void DownloadStatusUpdater::OnDownloadCreated(

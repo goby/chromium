@@ -5,9 +5,10 @@
 #ifndef CONTENT_PUBLIC_COMMON_RESOURCE_RESPONSE_INFO_H_
 #define CONTENT_PUBLIC_COMMON_RESOURCE_RESPONSE_INFO_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
@@ -15,8 +16,10 @@
 #include "content/public/common/resource_devtools_info.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_timing_info.h"
+#include "net/cert/signed_certificate_timestamp_and_status.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/nqe/effective_connection_type.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
 #include "url/gurl.h"
 
@@ -24,9 +27,10 @@ namespace content {
 
 // Note: when modifying this structure, also update ResourceResponse::DeepCopy
 // in resource_response.cc.
-struct ResourceResponseInfo {
-  CONTENT_EXPORT ResourceResponseInfo();
-  CONTENT_EXPORT ~ResourceResponseInfo();
+struct CONTENT_EXPORT ResourceResponseInfo {
+  ResourceResponseInfo();
+  ResourceResponseInfo(const ResourceResponseInfo& other);
+  ~ResourceResponseInfo();
 
   // The time at which the request was made that resulted in this response.
   // For cached responses, this time could be "far" in the past.
@@ -46,22 +50,22 @@ struct ResourceResponseInfo {
   // response's mime type.  This may be a derived value.
   std::string charset;
 
-  // An opaque string carrying security information pertaining to this
-  // response.  This may include information about the SSL connection used.
-  std::string security_info;
-
   // True if the resource was loaded in spite of certificate errors.
   bool has_major_certificate_errors;
 
   // Content length if available. -1 if not available
-  int64 content_length;
+  int64_t content_length;
 
   // Length of the encoded data transferred over the network. In case there is
   // no data, contains -1.
-  int64 encoded_data_length;
+  int64_t encoded_data_length;
+
+  // Length of the response body data before decompression. -1 unless the body
+  // has been read to the end.
+  int64_t encoded_body_length;
 
   // The appcache this response was loaded from, or kAppCacheNoCacheId.
-  int64 appcache_id;
+  int64_t appcache_id;
 
   // The manifest url of the appcache this response was loaded from.
   // Note: this value is only populated for main resource requests.
@@ -85,7 +89,7 @@ struct ResourceResponseInfo {
   bool was_fetched_via_spdy;
 
   // True if the response was delivered after NPN is negotiated.
-  bool was_npn_negotiated;
+  bool was_alpn_negotiated;
 
   // True if response could use alternate protocol. However, browser will
   // ignore the alternate protocol when spdy is not enabled on browser side.
@@ -94,15 +98,8 @@ struct ResourceResponseInfo {
   // Information about the type of connection used to fetch this response.
   net::HttpResponseInfo::ConnectionInfo connection_info;
 
-  // True if the response was fetched via an explicit proxy (as opposed to a
-  // transparent proxy). The proxy could be any type of proxy, HTTP or SOCKS.
-  // Note: we cannot tell if a transparent proxy may have been involved. If
-  // true, |proxy_server| contains the name of the proxy server that was used.
-  bool was_fetched_via_proxy;
-  net::HostPortPair proxy_server;
-
-  // NPN protocol negotiated with the server.
-  std::string npn_negotiated_protocol;
+  // ALPN protocol negotiated with the server.
+  std::string alpn_negotiated_protocol;
 
   // Remote address of the socket which fetched this resource.
   net::HostPortPair socket_address;
@@ -110,15 +107,18 @@ struct ResourceResponseInfo {
   // True if the response was fetched by a ServiceWorker.
   bool was_fetched_via_service_worker;
 
+  // True if the response was fetched by a foreign fetch ServiceWorker;
+  bool was_fetched_via_foreign_fetch;
+
   // True when the request whoes mode is |CORS| or |CORS-with-forced-preflight|
   // is sent to a ServiceWorker but FetchEvent.respondWith is not called. So the
   // renderer have to resend the request with skip service worker flag
   // considering the CORS preflight logic.
   bool was_fallback_required_by_service_worker;
 
-  // The original URL of the response which was fetched by the ServiceWorker.
-  // This may be empty if the response was created inside the ServiceWorker.
-  GURL original_url_via_service_worker;
+  // The URL list of the response which was served by the ServiceWorker. See
+  // ServiceWorkerResponseInfo::url_list_via_service_worker().
+  std::vector<GURL> url_list_via_service_worker;
 
   // The type of the response which was fetched by the ServiceWorker.
   blink::WebServiceWorkerResponseType response_type_via_service_worker;
@@ -133,8 +133,49 @@ struct ResourceResponseInfo {
   // TODO(ksakamoto): Move this to net::LoadTimingInfo.
   base::TimeTicks service_worker_ready_time;
 
+  // True when the response is served from the CacheStorage via the
+  // ServiceWorker.
+  bool is_in_cache_storage = false;
+
+  // The cache name of the CacheStorage from where the response is served via
+  // the ServiceWorker. Empty if the response isn't from the CacheStorage.
+  std::string cache_storage_cache_name;
+
   // Whether or not the request was for a LoFi version of the resource.
   bool is_using_lofi;
+
+  // Effective connection type when the resource was fetched. This is populated
+  // only for responses that correspond to main frame requests.
+  net::EffectiveConnectionType effective_connection_type;
+
+  // DER-encoded X509Certificate certificate chain. Only present if the renderer
+  // process set report_raw_headers to true.
+  std::vector<std::string> certificate;
+
+  // Bitmask of status info of the SSL certificate. See cert_status_flags.h for
+  // values. Only present if the renderer process set report_raw_headers to
+  // true.
+  net::CertStatus cert_status;
+
+  // Information about the SSL connection itself. See
+  // ssl_connection_status_flags.h for values. The protocol version,
+  // ciphersuite, and compression in use are encoded within. Only present if
+  // the renderer process set report_raw_headers to true.
+  int ssl_connection_status;
+
+  // The key exchange group used by the SSL connection or zero if unknown or not
+  // applicable. Only present if the renderer process set report_raw_headers to
+  // true.
+  uint16_t ssl_key_exchange_group;
+
+  // List of Signed Certificate Timestamps (SCTs) and their corresponding
+  // validation status. Only present if the renderer process set
+  // report_raw_headers to true.
+  net::SignedCertificateTimestampAndStatusList signed_certificate_timestamps;
+
+  // In case this is a CORS response fetched by a ServiceWorker, this is the
+  // set of headers that should be exposed.
+  std::vector<std::string> cors_exposed_header_names;
 };
 
 }  // namespace content

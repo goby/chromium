@@ -7,16 +7,21 @@
 
 #include <oleacc.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/win/scoped_comptr.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "ui/accessibility/platform/ax_platform_node_win.h"
 
 namespace content {
+class BrowserAccessibilityEventWin;
 class BrowserAccessibilityWin;
 
 // Manages a tree of BrowserAccessibilityWin objects.
 class CONTENT_EXPORT BrowserAccessibilityManagerWin
-    : public BrowserAccessibilityManager {
+    : public BrowserAccessibilityManager,
+      public ui::IAccessible2UsageObserver {
  public:
   BrowserAccessibilityManagerWin(
       const ui::AXTreeUpdate& initial_tree,
@@ -33,29 +38,33 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
   // The IAccessible for the parent window.
   IAccessible* GetParentIAccessible();
 
-  // Calls NotifyWinEvent if the parent window's IAccessible pointer is known.
-  void MaybeCallNotifyWinEvent(DWORD event, BrowserAccessibility* node);
+  // IAccessible2UsageObserver
+  void OnIAccessible2Used() override;
 
   // BrowserAccessibilityManager methods
-  void OnWindowFocused() override;
   void UserIsReloading() override;
+  BrowserAccessibility* GetFocus() override;
   void NotifyAccessibilityEvent(
-      ui::AXEvent event_type, BrowserAccessibility* node) override;
+      BrowserAccessibilityEvent::Source source,
+      ui::AXEvent event_type,
+      BrowserAccessibility* node) override;
+  BrowserAccessibilityEvent::Result
+      FireWinAccessibilityEvent(BrowserAccessibilityEventWin* event);
+  bool CanFireEvents() override;
+  void FireFocusEvent(
+      BrowserAccessibilityEvent::Source source,
+      BrowserAccessibility* node) override;
 
   // Track this object and post a VISIBLE_DATA_CHANGED notification when
   // its container scrolls.
   // TODO(dmazzoni): remove once http://crbug.com/113483 is fixed.
   void TrackScrollingObject(BrowserAccessibilityWin* node);
 
-  // Return a pointer to the object corresponding to the given windows-specific
-  // unique id, does not make a new reference.
-  BrowserAccessibilityWin* GetFromUniqueIdWin(LONG unique_id_win);
-
   // Called when |accessible_hwnd_| is deleted by its parent.
   void OnAccessibleHwndDeleted();
 
  protected:
-  // AXTree methods.
+  // AXTreeDelegate methods.
   void OnNodeWillBeDeleted(ui::AXTree* tree, ui::AXNode* node) override;
   void OnNodeCreated(ui::AXTree* tree, ui::AXNode* node) override;
   void OnAtomicUpdateFinished(
@@ -72,21 +81,11 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
   // TODO(dmazzoni): remove once http://crbug.com/113483 is fixed.
   BrowserAccessibilityWin* tracked_scroll_object_;
 
-  // A mapping from the Windows-specific unique IDs (unique within the
-  // browser process) to accessibility ids within this page.
-  base::hash_map<long, int32> unique_id_to_ax_id_map_;
-
-  // A mapping from the Windows-specific unique IDs (unique within the
-  // browser process) to the AXTreeID that contains this unique ID.
-  base::hash_map<long, AXTreeIDRegistry::AXTreeID> unique_id_to_ax_tree_id_map_;
-
-  // Set to true if we need to fire a focus event on the root as soon as
-  // possible.
-  bool focus_event_on_root_needed_;
-
-  // A flag to keep track of if we're inside the OnWindowFocused call stack
-  // so we don't keep calling it recursively.
-  bool inside_on_window_focused_;
+  // Keep track of if we got a "load complete" event but were unable to fire
+  // it because of no HWND, because otherwise JAWS can get very confused.
+  // TODO(dmazzoni): a better fix would be to always have an HWND.
+  // http://crbug.com/521877
+  bool load_complete_pending_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityManagerWin);
 };

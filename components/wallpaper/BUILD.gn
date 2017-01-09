@@ -4,6 +4,8 @@
 
 component("wallpaper") {
   sources = [
+    "wallpaper_files_id.cc",
+    "wallpaper_files_id.h",
     "wallpaper_layout.h",
     "wallpaper_resizer.cc",
     "wallpaper_resizer.h",
@@ -17,8 +19,7 @@ component("wallpaper") {
     "//skia",
   ]
   deps = [
-    "//base:prefs",
-    "//content",
+    "//components/prefs",
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//url",
@@ -28,12 +29,9 @@ component("wallpaper") {
       "wallpaper_manager_base.cc",
       "wallpaper_manager_base.h",
     ]
-    public_deps += [ "//third_party/icu" ]
     deps += [
-      "//chromeos",
       "//components/signin/core/account_id",
       "//components/user_manager",
-      "//content/public/browser",
     ]
   }
 }
@@ -46,7 +44,7 @@ source_set("unit_tests") {
 
   deps = [
     ":wallpaper",
-    "//content/test:test_support",
+    "//base/test:test_support",
     "//testing/gtest",
     "//ui/gfx",
   ]

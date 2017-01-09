@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/stl_util.h"
 #include "extensions/common/extension_builder.h"
@@ -26,16 +27,16 @@ TEST(BaseFeatureProviderTest, ManifestFeatureTypes) {
   const SimpleFeature* feature = static_cast<const SimpleFeature*>(
       FeatureProvider::GetManifestFeature("description"));
   ASSERT_TRUE(feature);
-  const std::vector<Manifest::Type>* extension_types =
+  const std::vector<Manifest::Type>& extension_types =
       feature->extension_types();
-  EXPECT_EQ(6u, extension_types->size());
-  EXPECT_EQ(1, STLCount(*(extension_types), Manifest::TYPE_EXTENSION));
-  EXPECT_EQ(1,
-            STLCount(*(extension_types), Manifest::TYPE_LEGACY_PACKAGED_APP));
-  EXPECT_EQ(1, STLCount(*(extension_types), Manifest::TYPE_PLATFORM_APP));
-  EXPECT_EQ(1, STLCount(*(extension_types), Manifest::TYPE_HOSTED_APP));
-  EXPECT_EQ(1, STLCount(*(extension_types), Manifest::TYPE_THEME));
-  EXPECT_EQ(1, STLCount(*(extension_types), Manifest::TYPE_SHARED_MODULE));
+  EXPECT_EQ(6u, extension_types.size());
+  EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_EXTENSION));
+  EXPECT_EQ(
+      1, base::STLCount(extension_types, Manifest::TYPE_LEGACY_PACKAGED_APP));
+  EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_PLATFORM_APP));
+  EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_HOSTED_APP));
+  EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_THEME));
+  EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_SHARED_MODULE));
 }
 
 // Tests that real manifest features have the correct availability for an
@@ -48,7 +49,8 @@ TEST(BaseFeatureProviderTest, ManifestFeatureAvailability) {
           .SetManifest(DictionaryBuilder()
                            .Set("name", "test extension")
                            .Set("version", "1")
-                           .Set("description", "hello there"))
+                           .Set("description", "hello there")
+                           .Build())
           .Build();
   ASSERT_TRUE(extension.get());
 
@@ -83,13 +85,13 @@ TEST(BaseFeatureProviderTest, PermissionFeatureTypes) {
   const SimpleFeature* feature = static_cast<const SimpleFeature*>(
       BaseFeatureProvider::GetPermissionFeature("power"));
   ASSERT_TRUE(feature);
-  const std::vector<Manifest::Type>* extension_types =
+  const std::vector<Manifest::Type>& extension_types =
       feature->extension_types();
-  EXPECT_EQ(3u, extension_types->size());
-  EXPECT_EQ(1, STLCount(*(extension_types), Manifest::TYPE_EXTENSION));
-  EXPECT_EQ(1,
-            STLCount(*(extension_types), Manifest::TYPE_LEGACY_PACKAGED_APP));
-  EXPECT_EQ(1, STLCount(*(extension_types), Manifest::TYPE_PLATFORM_APP));
+  EXPECT_EQ(3u, extension_types.size());
+  EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_EXTENSION));
+  EXPECT_EQ(
+      1, base::STLCount(extension_types, Manifest::TYPE_LEGACY_PACKAGED_APP));
+  EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_PLATFORM_APP));
 }
 
 // Tests that real permission features have the correct availability for an app.
@@ -99,16 +101,21 @@ TEST(BaseFeatureProviderTest, PermissionFeatureAvailability) {
 
   scoped_refptr<const Extension> app =
       ExtensionBuilder()
-          .SetManifest(DictionaryBuilder()
-                           .Set("name", "test app")
-                           .Set("version", "1")
-                           .Set("app",
-                                DictionaryBuilder().Set(
-                                    "background",
-                                    DictionaryBuilder().Set(
-                                        "scripts",
-                                        ListBuilder().Append("background.js"))))
-                           .Set("permissions", ListBuilder().Append("power")))
+          .SetManifest(
+              DictionaryBuilder()
+                  .Set("name", "test app")
+                  .Set("version", "1")
+                  .Set("app",
+                       DictionaryBuilder()
+                           .Set("background",
+                                DictionaryBuilder()
+                                    .Set("scripts", ListBuilder()
+                                                        .Append("background.js")
+                                                        .Build())
+                                    .Build())
+                           .Build())
+                  .Set("permissions", ListBuilder().Append("power").Build())
+                  .Build())
           .Build();
   ASSERT_TRUE(app.get());
   ASSERT_TRUE(app->is_platform_app());

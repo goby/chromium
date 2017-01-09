@@ -5,6 +5,7 @@
 #include "components/sync_sessions/revisit/bookmarks_page_revisit_observer.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
@@ -15,8 +16,8 @@
 namespace sync_sessions {
 
 BookmarksPageRevisitObserver::BookmarksPageRevisitObserver(
-    scoped_ptr<BookmarksByUrlProvider> provider)
-    : provider_(provider.Pass()) {}
+    std::unique_ptr<BookmarksByUrlProvider> provider)
+    : provider_(std::move(provider)) {}
 
 BookmarksPageRevisitObserver::~BookmarksPageRevisitObserver() {}
 

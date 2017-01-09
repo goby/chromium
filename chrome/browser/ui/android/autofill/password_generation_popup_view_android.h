@@ -9,7 +9,9 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/autofill/password_generation_popup_view.h"
+#include "ui/android/view_android.h"
 
 namespace autofill {
 
@@ -54,6 +56,9 @@ class PasswordGenerationPopupViewAndroid : public PasswordGenerationPopupView {
 
   // The corresponding java object.
   base::android::ScopedJavaGlobalRef<jobject> java_object_;
+
+  // Popup view to be anchored to the container.
+  ui::ViewAndroid::ScopedAnchorView popup_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordGenerationPopupViewAndroid);
 };

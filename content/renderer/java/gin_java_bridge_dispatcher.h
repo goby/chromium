@@ -6,18 +6,15 @@
 #define CONTENT_RENDERER_JAVA_GIN_JAVA_BRIDGE_DISPATCHER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/id_map.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "content/common/android/gin_java_bridge_errors.h"
 #include "content/public/renderer/render_frame_observer.h"
-
-namespace blink {
-class WebFrame;
-}
 
 namespace content {
 
@@ -37,8 +34,8 @@ class GinJavaBridgeDispatcher
   // when it is no more referenced from JS. As GinJavaBridgeObject reports
   // deletion of self to GinJavaBridgeDispatcher, we would not have stale
   // pointers here.
-  typedef IDMap<GinJavaBridgeObject, IDMapExternalPointer> ObjectMap;
-  typedef ObjectMap::KeyType ObjectID;
+  using ObjectMap = IDMap<GinJavaBridgeObject*>;
+  using ObjectID = ObjectMap::KeyType;
 
   explicit GinJavaBridgeDispatcher(RenderFrame* render_frame);
   ~GinJavaBridgeDispatcher() override;
@@ -49,14 +46,18 @@ class GinJavaBridgeDispatcher
 
   void GetJavaMethods(ObjectID object_id, std::set<std::string>* methods);
   bool HasJavaMethod(ObjectID object_id, const std::string& method_name);
-  scoped_ptr<base::Value> InvokeJavaMethod(ObjectID object_id,
-                                           const std::string& method_name,
-                                           const base::ListValue& arguments,
-                                           GinJavaBridgeError* error);
+  std::unique_ptr<base::Value> InvokeJavaMethod(
+      ObjectID object_id,
+      const std::string& method_name,
+      const base::ListValue& arguments,
+      GinJavaBridgeError* error);
   GinJavaBridgeObject* GetObject(ObjectID object_id);
   void OnGinJavaBridgeObjectDeleted(GinJavaBridgeObject* object);
 
  private:
+  // RenderFrameObserver implementation.
+  void OnDestruct() override;
+
   void OnAddNamedObject(const std::string& name,
                         ObjectID object_id);
   void OnRemoveNamedObject(const std::string& name);

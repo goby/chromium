@@ -5,8 +5,11 @@
 #ifndef CONTENT_BROWSER_FILE_DESCRIPTOR_INFO_IMPL_H_
 #define CONTENT_BROWSER_FILE_DESCRIPTOR_INFO_IMPL_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include <stddef.h>
+
+#include <memory>
+#include <vector>
+
 #include "content/common/content_export.h"
 #include "content/public/browser/file_descriptor_info.h"
 
@@ -14,7 +17,7 @@ namespace content {
 
 class FileDescriptorInfoImpl : public FileDescriptorInfo {
  public:
-  CONTENT_EXPORT static scoped_ptr<FileDescriptorInfo> Create();
+  CONTENT_EXPORT static std::unique_ptr<FileDescriptorInfo> Create();
 
   ~FileDescriptorInfoImpl() override;
   void Share(int id, base::PlatformFile fd) override;
@@ -34,7 +37,7 @@ class FileDescriptorInfoImpl : public FileDescriptorInfo {
   void AddToMapping(int id, base::PlatformFile fd);
   bool HasID(int id) const;
   base::FileHandleMappingVector mapping_;
-  ScopedVector<base::ScopedFD> owned_descriptors_;
+  std::vector<base::ScopedFD> owned_descriptors_;
 };
 }
 

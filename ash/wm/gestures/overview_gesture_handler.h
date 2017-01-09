@@ -5,14 +5,9 @@
 #ifndef ASH_WM_GESTURES_OVERVIEW_GESTURE_HANDLER_H_
 #define ASH_WM_GESTURES_OVERVIEW_GESTURE_HANDLER_H_
 
-#include "base/basictypes.h"
-
-namespace aura {
-class Window;
-}
+#include "base/macros.h"
 
 namespace ui {
-class GestureEvent;
 class ScrollEvent;
 }
 

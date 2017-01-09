@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_INTERSTITIALS_SECURITY_INTERSTITIAL_PAGE_H_
 #define CHROME_BROWSER_INTERSTITIALS_SECURITY_INTERSTITIAL_PAGE_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "content/public/browser/interstitial_page_delegate.h"
 #include "url/gurl.h"
@@ -23,11 +26,14 @@ class MetricsHelper;
 }
 
 class ChromeControllerClient;
+class Profile;
 
 class SecurityInterstitialPage : public content::InterstitialPageDelegate {
  public:
-  SecurityInterstitialPage(content::WebContents* web_contents,
-                           const GURL& url);
+  SecurityInterstitialPage(
+      content::WebContents* web_contents,
+      const GURL& url,
+      std::unique_ptr<security_interstitials::MetricsHelper> metrics_helper);
   ~SecurityInterstitialPage() override;
 
   // Creates an interstitial and shows it.
@@ -46,7 +52,7 @@ class SecurityInterstitialPage : public content::InterstitialPageDelegate {
 
   // Gives an opportunity for child classes to react to Show() having run. The
   // interstitial_page_ will now have a value.
-  virtual void AfterShow() = 0;
+  virtual void AfterShow() {}
 
   // InterstitialPageDelegate method:
   std::string GetHTMLContents() override;
@@ -58,18 +64,16 @@ class SecurityInterstitialPage : public content::InterstitialPageDelegate {
   content::WebContents* web_contents() const;
   GURL request_url() const;
 
+  // Returns a pointer to the Profile associated with |web_contents_|.
+  Profile* profile();
+
   // Returns the boolean value of the given |pref| from the PrefService of the
   // Profile associated with |web_contents_|.
   bool IsPrefEnabled(const char* pref);
 
-  // TODO(felt): Remove these. They are temporary methods, used to pass along
-  // calls to the |controller_| for subclasses that don't yet have their own
-  // ChromeControllerClients. crbug.com/488673
-  void SetReportingPreference(bool report);
-  void OpenExtendedReportingPrivacyPolicy();
+  ChromeControllerClient* controller();
+
   security_interstitials::MetricsHelper* metrics_helper();
-  void set_metrics_helper(
-      scoped_ptr<security_interstitials::MetricsHelper> metrics_helper);
 
  private:
   // The WebContents with which this interstitial page is
@@ -83,7 +87,9 @@ class SecurityInterstitialPage : public content::InterstitialPageDelegate {
   // Whether the interstitial should create a view.
   bool create_view_;
   // For subclasses that don't have their own ChromeControllerClients yet.
-  scoped_ptr<ChromeControllerClient> controller_;
+  std::unique_ptr<ChromeControllerClient> controller_;
+
+  std::unique_ptr<security_interstitials::MetricsHelper> metrics_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(SecurityInterstitialPage);
 };

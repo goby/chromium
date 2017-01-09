@@ -98,7 +98,8 @@ bool FileURLToFilePath(const GURL& url, base::FilePath* file_path) {
 
   // GURL stores strings as percent-encoded 8-bit, this will undo if possible.
   path = UnescapeURLComponent(
-      path, UnescapeRule::SPACES | UnescapeRule::URL_SPECIAL_CHARS);
+      path, UnescapeRule::SPACES |
+                UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
 
 #if defined(OS_WIN)
   if (base::IsStringUTF8(path)) {
@@ -173,8 +174,10 @@ bool IsReservedNameOnWindows(const base::FilePath::StringType& filename) {
     if (filename_lower == known_devices[i])
       return true;
     // Starts with "DEVICE.".
-    if (filename_lower.find(std::string(known_devices[i]) + ".") == 0)
+    if (base::StartsWith(filename_lower, std::string(known_devices[i]) + ".",
+                         base::CompareCase::SENSITIVE)) {
       return true;
+    }
   }
 
   static const char* const magic_names[] = {

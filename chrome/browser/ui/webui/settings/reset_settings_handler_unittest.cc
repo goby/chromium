@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/values.h"
+#include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/profile_resetter/profile_resetter.h"
 #include "chrome/browser/ui/webui/settings/reset_settings_handler.h"
 #include "chrome/test/base/testing_profile.h"
@@ -27,7 +31,7 @@ class MockProfileResetter : public ProfileResetter {
   }
 
   void Reset(ResettableFlags resettable_flags,
-             scoped_ptr<BrandcodedDefaultSettings> master_settings,
+             std::unique_ptr<BrandcodedDefaultSettings> master_settings,
              const base::Closure& callback) override {
     resets_++;
     callback.Run();
@@ -44,8 +48,8 @@ class MockProfileResetter : public ProfileResetter {
 class TestingResetSettingsHandler : public ResetSettingsHandler {
  public:
   TestingResetSettingsHandler(
-      TestingProfile* profile, bool allow_powerwash, content::WebUI* web_ui)
-      : ResetSettingsHandler(profile, allow_powerwash),
+      TestingProfile* profile, content::WebUI* web_ui)
+      : ResetSettingsHandler(profile),
         resetter_(profile) {
     set_web_ui(web_ui);
   }
@@ -67,10 +71,12 @@ private:
 
 class ResetSettingsHandlerTest : public testing::Test {
  public:
-  ResetSettingsHandlerTest() : handler_(&profile_, false, &web_ui_) {
+  ResetSettingsHandlerTest() {
+    google_brand::BrandForTesting brand_for_testing("");
+    handler_.reset(new TestingResetSettingsHandler(&profile_, &web_ui_));
   }
 
-  TestingResetSettingsHandler* handler() { return &handler_; }
+  TestingResetSettingsHandler* handler() { return handler_.get(); }
   content::TestWebUI* web_ui() { return &web_ui_; }
 
  private:
@@ -78,18 +84,24 @@ class ResetSettingsHandlerTest : public testing::Test {
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile profile_;
   content::TestWebUI web_ui_;
-  TestingResetSettingsHandler handler_;
+  std::unique_ptr<TestingResetSettingsHandler> handler_;
 };
 
 TEST_F(ResetSettingsHandlerTest, HandleResetProfileSettings) {
   base::ListValue list;
+  std::string expected_callback_id("dummyCallbackId");
+  list.AppendString(expected_callback_id);
   list.AppendBoolean(false);
+  list.AppendString("");
   handler()->HandleResetProfileSettings(&list);
   // Check that the delegate ProfileResetter was called.
   EXPECT_EQ(1u, handler()->resets());
   // Check that Javascript side is notified after resetting is done.
-  EXPECT_EQ("SettingsResetPage.doneResetting",
+  EXPECT_EQ("cr.webUIResponse",
             web_ui()->call_data()[0]->function_name());
+  std::string callback_id;
+  EXPECT_TRUE(web_ui()->call_data()[0]->arg1()->GetAsString(&callback_id));
+  EXPECT_EQ(expected_callback_id, callback_id);
 }
 
 }  // namespace

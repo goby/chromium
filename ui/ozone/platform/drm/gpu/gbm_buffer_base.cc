@@ -7,23 +7,25 @@
 #include <gbm.h>
 
 #include "base/logging.h"
-#include "ui/ozone/platform/drm/gpu/drm_device.h"
+#include "ui/ozone/platform/drm/common/drm_util.h"
+#include "ui/ozone/platform/drm/gpu/gbm_device.h"
 
 namespace ui {
 
-GbmBufferBase::GbmBufferBase(const scoped_refptr<DrmDevice>& drm,
+GbmBufferBase::GbmBufferBase(const scoped_refptr<GbmDevice>& drm,
                              gbm_bo* bo,
-                             bool scanout)
+                             uint32_t format,
+                             uint32_t flags)
     : drm_(drm), bo_(bo) {
-  if (scanout) {
-    fb_pixel_format_ = gbm_bo_get_format(bo);
-    if (fb_pixel_format_ == GBM_FORMAT_ARGB8888)
-      fb_pixel_format_ = GBM_FORMAT_XRGB8888;
+  if (flags & GBM_BO_USE_SCANOUT) {
+    DCHECK(bo_);
+    // The framebuffer format might be different than the format:
+    // drm supports 24 bit color depth and formats with alpha will
+    // be converted to one without it.
+    framebuffer_pixel_format_ =
+        GetFourCCFormatForFramebuffer(GetBufferFormatFromFourCCFormat(format));
 
-    // For now, we only support XRGB and UYVY format.
-    DCHECK(fb_pixel_format_ == GBM_FORMAT_XRGB8888 ||
-           fb_pixel_format_ == GBM_FORMAT_UYVY);
-
+    // TODO(dcastagna): Add multi-planar support.
     uint32_t handles[4] = {0};
     handles[0] = gbm_bo_get_handle(bo).u32;
     uint32_t strides[4] = {0};
@@ -31,8 +33,8 @@ GbmBufferBase::GbmBufferBase(const scoped_refptr<DrmDevice>& drm,
     uint32_t offsets[4] = {0};
 
     if (!drm_->AddFramebuffer2(gbm_bo_get_width(bo), gbm_bo_get_height(bo),
-                               fb_pixel_format_, handles, strides, offsets,
-                               &framebuffer_, 0)) {
+                               framebuffer_pixel_format_, handles, strides,
+                               offsets, &framebuffer_, 0)) {
       PLOG(ERROR) << "Failed to register buffer";
       return;
     }
@@ -57,7 +59,12 @@ gfx::Size GbmBufferBase::GetSize() const {
 }
 
 uint32_t GbmBufferBase::GetFramebufferPixelFormat() const {
-  return fb_pixel_format_;
+  DCHECK(framebuffer_);
+  return framebuffer_pixel_format_;
+}
+
+const DrmDevice* GbmBufferBase::GetDrmDevice() const {
+  return drm_.get();
 }
 
 bool GbmBufferBase::RequiresGlFinish() const {

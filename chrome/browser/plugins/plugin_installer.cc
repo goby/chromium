@@ -4,6 +4,8 @@
 
 #include "chrome/browser/plugins/plugin_installer.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/process/process.h"
@@ -35,8 +37,8 @@ void PluginInstaller::OnDownloadUpdated(DownloadItem* download) {
     case DownloadItem::COMPLETE: {
       DCHECK_EQ(INSTALLER_STATE_DOWNLOADING, state_);
       state_ = INSTALLER_STATE_IDLE;
-      FOR_EACH_OBSERVER(PluginInstallerObserver, observers_,
-                        DownloadFinished());
+      for (PluginInstallerObserver& observer : observers_)
+        observer.DownloadFinished();
       break;
     }
     case DownloadItem::CANCELLED: {
@@ -71,8 +73,8 @@ void PluginInstaller::RemoveObserver(PluginInstallerObserver* observer) {
   strong_observer_count_--;
   observers_.RemoveObserver(observer);
   if (strong_observer_count_ == 0) {
-    FOR_EACH_OBSERVER(WeakPluginInstallerObserver, weak_observers_,
-                      OnlyWeakObserversLeft());
+    for (WeakPluginInstallerObserver& observer : weak_observers_)
+      observer.OnlyWeakObserversLeft();
   }
 }
 
@@ -100,14 +102,15 @@ void PluginInstaller::StartInstallingWithDownloadManager(
     content::DownloadManager* download_manager) {
   DCHECK_EQ(INSTALLER_STATE_IDLE, state_);
   state_ = INSTALLER_STATE_DOWNLOADING;
-  FOR_EACH_OBSERVER(PluginInstallerObserver, observers_, DownloadStarted());
-  scoped_ptr<content::DownloadUrlParameters> download_parameters(
-      content::DownloadUrlParameters::FromWebContents(web_contents,
-                                                      plugin_url));
+  for (PluginInstallerObserver& observer : observers_)
+    observer.DownloadStarted();
+  std::unique_ptr<content::DownloadUrlParameters> download_parameters(
+      content::DownloadUrlParameters::CreateForWebContentsMainFrame(
+          web_contents, plugin_url));
   download_parameters->set_callback(
       base::Bind(&PluginInstaller::DownloadStarted, base::Unretained(this)));
   RecordDownloadSource(DOWNLOAD_INITIATED_BY_PLUGIN_INSTALLER);
-  download_manager->DownloadUrl(download_parameters.Pass());
+  download_manager->DownloadUrl(std::move(download_parameters));
 }
 
 void PluginInstaller::DownloadStarted(
@@ -129,21 +132,24 @@ void PluginInstaller::OpenDownloadURL(const GURL& plugin_url,
                                       content::WebContents* web_contents) {
   DCHECK_EQ(INSTALLER_STATE_IDLE, state_);
   web_contents->OpenURL(content::OpenURLParams(
-      plugin_url,
-      content::Referrer(web_contents->GetURL(),
-                        blink::WebReferrerPolicyDefault),
-      NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_TYPED, false));
-  FOR_EACH_OBSERVER(PluginInstallerObserver, observers_, DownloadFinished());
+      plugin_url, content::Referrer(web_contents->GetURL(),
+                                    blink::WebReferrerPolicyDefault),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_TYPED,
+      false));
+  for (PluginInstallerObserver& observer : observers_)
+    observer.DownloadFinished();
 }
 
 void PluginInstaller::DownloadError(const std::string& msg) {
   DCHECK_EQ(INSTALLER_STATE_DOWNLOADING, state_);
   state_ = INSTALLER_STATE_IDLE;
-  FOR_EACH_OBSERVER(PluginInstallerObserver, observers_, DownloadError(msg));
+  for (PluginInstallerObserver& observer : observers_)
+    observer.DownloadError(msg);
 }
 
 void PluginInstaller::DownloadCancelled() {
   DCHECK_EQ(INSTALLER_STATE_DOWNLOADING, state_);
   state_ = INSTALLER_STATE_IDLE;
-  FOR_EACH_OBSERVER(PluginInstallerObserver, observers_, DownloadCancelled());
+  for (PluginInstallerObserver& observer : observers_)
+    observer.DownloadCancelled();
 }

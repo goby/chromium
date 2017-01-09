@@ -5,7 +5,7 @@
 #include "content/browser/histogram_controller.h"
 
 #include "base/bind.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process_handle.h"
 #include "content/browser/histogram_subscriber.h"
 #include "content/common/child_process_messages.h"
@@ -74,13 +74,11 @@ void HistogramController::GetHistogramDataFromChildProcesses(
   int pending_processes = 0;
   for (BrowserChildProcessHostIterator iter; !iter.Done(); ++iter) {
     const ChildProcessData& data = iter.GetData();
-    int type = data.process_type;
-    if (type != PROCESS_TYPE_PLUGIN &&
-        type != PROCESS_TYPE_GPU &&
-        type != PROCESS_TYPE_PPAPI_PLUGIN &&
-        type != PROCESS_TYPE_PPAPI_BROKER) {
+
+    // Only get histograms from content process types; skip "embedder" process
+    // types.
+    if (data.process_type >= PROCESS_TYPE_CONTENT_END)
       continue;
-    }
 
     // In some cases, there may be no child process of the given type (for
     // example, the GPU process may not exist and there may instead just be a
@@ -90,8 +88,10 @@ void HistogramController::GetHistogramDataFromChildProcesses(
       continue;
 
     ++pending_processes;
-    if (!iter.Send(new ChildProcessMsg_GetChildHistogramData(sequence_number)))
+    if (!iter.Send(new ChildProcessMsg_GetChildNonPersistentHistogramData(
+            sequence_number))) {
       --pending_processes;
+    }
   }
 
   BrowserThread::PostTask(
@@ -113,7 +113,8 @@ void HistogramController::GetHistogramData(int sequence_number) {
        !it.IsAtEnd(); it.Advance()) {
     ++pending_processes;
     if (!it.GetCurrentValue()->Send(
-            new ChildProcessMsg_GetChildHistogramData(sequence_number))) {
+            new ChildProcessMsg_GetChildNonPersistentHistogramData(
+                sequence_number))) {
       --pending_processes;
     }
   }

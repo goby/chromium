@@ -6,15 +6,16 @@
 #define CHROME_BROWSER_PRINTING_BACKGROUND_PRINTING_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
 namespace content {
-class RenderProcessHost;
 class WebContents;
 }
 
@@ -28,7 +29,6 @@ class BackgroundPrintingManager : public base::NonThreadSafe,
                                   public content::NotificationObserver {
  public:
   class Observer;
-  typedef std::map<content::WebContents*, Observer*> WebContentsObserverMap;
 
   BackgroundPrintingManager();
   ~BackgroundPrintingManager() override;
@@ -55,7 +55,8 @@ class BackgroundPrintingManager : public base::NonThreadSafe,
 
   // A map from print preview WebContentses (managed by
   // BackgroundPrintingManager) to the Observers that observe them.
-  WebContentsObserverMap printing_contents_map_;
+  std::map<content::WebContents*, std::unique_ptr<Observer>>
+      printing_contents_map_;
 
   content::NotificationRegistrar registrar_;
 

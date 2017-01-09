@@ -4,22 +4,24 @@
 
 #include "chrome/browser/search/local_files_ntp_source.h"
 
-#if !defined(GOOGLE_CHROME_BUILD) && !defined(OS_IOS)
+#include <memory>
+
+#if !defined(GOOGLE_CHROME_BUILD)
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/url_data_source.h"
-#include "third_party/re2/re2/re2.h"
-#include "third_party/re2/re2/stringpiece.h"
+#include "third_party/re2/src/re2/re2.h"
+#include "third_party/re2/src/re2/stringpiece.h"
 
 namespace {
 
@@ -36,9 +38,7 @@ void CallbackWithLoadedResource(
   if (!origin.empty())
     base::ReplaceFirstSubstringAfterOffset(&output, 0, "{{ORIGIN}}", origin);
 
-  scoped_refptr<base::RefCountedString> response(
-      base::RefCountedString::TakeString(&output));
-  callback.Run(response.get());
+  callback.Run(base::RefCountedString::TakeString(&output));
 }
 
 // Read a file to a string and return.
@@ -57,7 +57,7 @@ namespace local_ntp {
 void FlattenLocalInclude(
     const content::URLDataSource::GotDataCallback& callback,
     std::string topLevelResource,
-    base::RefCountedMemory* inlineResource);
+    scoped_refptr<base::RefCountedMemory> inlineResource);
 
 // Helper method invoked by both CheckLocalIncludes and FlattenLocalInclude.
 // Checks for any <include> directives; if any are found, loads the associated
@@ -80,9 +80,8 @@ void CheckLocalIncludesHelper(
 
 // Wrapper around the above helper function for use as a callback. Processes
 // local files to inline any files indicated by an <include> directive.
-void CheckLocalIncludes(
-    const content::URLDataSource::GotDataCallback& callback,
-    base::RefCountedMemory* resource) {
+void CheckLocalIncludes(const content::URLDataSource::GotDataCallback& callback,
+                        scoped_refptr<base::RefCountedMemory> resource) {
   std::string resourceAsStr(resource->front_as<char>(), resource->size());
   CheckLocalIncludesHelper(callback, resourceAsStr);
 }
@@ -94,7 +93,7 @@ void CheckLocalIncludes(
 void FlattenLocalInclude(
     const content::URLDataSource::GotDataCallback& callback,
     std::string topLevelResource,
-    base::RefCountedMemory* inlineResource) {
+    scoped_refptr<base::RefCountedMemory> inlineResource) {
   std::string inlineAsStr(inlineResource->front_as<char>(),
                           inlineResource->size());
   re2::RE2::Replace(&topLevelResource, kInlineResourceRegex, inlineAsStr);
@@ -124,4 +123,4 @@ void SendLocalFileResourceWithOrigin(
 
 }  // namespace local_ntp
 
-#endif  //  !defined(GOOGLE_CHROME_BUILD) && !defined(OS_IOS)
+#endif  //  !defined(GOOGLE_CHROME_BUILD)

@@ -4,29 +4,36 @@
 
 #include "base/test/test_suite.h"
 
+#include <memory>
+
 #include "base/at_exit.h"
 #include "base/base_paths.h"
 #include "base/base_switches.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/debugger.h"
+#include "base/debug/profiler.h"
 #include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/process/memory.h"
 #include "base/test/gtest_xml_unittest_result_printer.h"
 #include "base/test/gtest_xml_util.h"
+#include "base/test/icu_test_util.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_switches.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -88,6 +95,38 @@ class TestClientInitializer : public testing::EmptyTestEventListener {
   DISALLOW_COPY_AND_ASSIGN(TestClientInitializer);
 };
 
+std::string GetProfileName() {
+  static const char kDefaultProfileName[] = "test-profile-{pid}";
+  CR_DEFINE_STATIC_LOCAL(std::string, profile_name, ());
+  if (profile_name.empty()) {
+    const base::CommandLine& command_line =
+        *base::CommandLine::ForCurrentProcess();
+    if (command_line.HasSwitch(switches::kProfilingFile))
+      profile_name = command_line.GetSwitchValueASCII(switches::kProfilingFile);
+    else
+      profile_name = std::string(kDefaultProfileName);
+  }
+  return profile_name;
+}
+
+void InitializeLogging() {
+#if defined(OS_ANDROID)
+  InitAndroidTestLogging();
+#else
+  FilePath exe;
+  PathService::Get(FILE_EXE, &exe);
+  FilePath log_filename = exe.ReplaceExtension(FILE_PATH_LITERAL("log"));
+  logging::LoggingSettings settings;
+  settings.logging_dest = logging::LOG_TO_ALL;
+  settings.log_file = log_filename.value().c_str();
+  settings.delete_old = logging::DELETE_OLD_LOG_FILE;
+  logging::InitLogging(settings);
+  // We want process and thread IDs because we may have multiple processes.
+  // Note: temporarily enabled timestamps in an effort to catch bug 6361.
+  logging::SetLogItems(true, true, true, true);
+#endif  // !defined(OS_ANDROID)
+}
+
 }  // namespace
 
 int RunUnitTestsUsingBaseTestSuite(int argc, char **argv) {
@@ -96,24 +135,25 @@ int RunUnitTestsUsingBaseTestSuite(int argc, char **argv) {
                          Bind(&TestSuite::Run, Unretained(&test_suite)));
 }
 
-TestSuite::TestSuite(int argc, char** argv) : initialized_command_line_(false) {
-  PreInitialize(true);
+TestSuite::TestSuite(int argc, char** argv)
+    : initialized_command_line_(false), created_feature_list_(false) {
+  PreInitialize();
   InitializeFromCommandLine(argc, argv);
+  // Logging must be initialized before any thread has a chance to call logging
+  // functions.
+  InitializeLogging();
 }
 
 #if defined(OS_WIN)
 TestSuite::TestSuite(int argc, wchar_t** argv)
-    : initialized_command_line_(false) {
-  PreInitialize(true);
+    : initialized_command_line_(false), created_feature_list_(false) {
+  PreInitialize();
   InitializeFromCommandLine(argc, argv);
+  // Logging must be initialized before any thread has a chance to call logging
+  // functions.
+  InitializeLogging();
 }
 #endif  // defined(OS_WIN)
-
-TestSuite::TestSuite(int argc, char** argv, bool create_at_exit_manager)
-    : initialized_command_line_(false) {
-  PreInitialize(create_at_exit_manager);
-  InitializeFromCommandLine(argc, argv);
-}
 
 TestSuite::~TestSuite() {
   if (initialized_command_line_)
@@ -139,7 +179,7 @@ void TestSuite::InitializeFromCommandLine(int argc, wchar_t** argv) {
 }
 #endif  // defined(OS_WIN)
 
-void TestSuite::PreInitialize(bool create_at_exit_manager) {
+void TestSuite::PreInitialize() {
 #if defined(OS_WIN)
   testing::GTEST_FLAG(catch_exceptions) = false;
 #endif
@@ -154,8 +194,7 @@ void TestSuite::PreInitialize(bool create_at_exit_manager) {
   // On Android, AtExitManager is created in
   // testing/android/native_test_wrapper.cc before main() is called.
 #if !defined(OS_ANDROID)
-  if (create_at_exit_manager)
-    at_exit_manager_.reset(new AtExitManager);
+  at_exit_manager_.reset(new AtExitManager);
 #endif
 
   // Don't add additional code to this function.  Instead add it to
@@ -229,14 +268,7 @@ int TestSuite::Run() {
   test_listener_ios::RegisterTestEndListener();
 #endif
 
-  // Set up a FeatureList instance, so that code using that API will not hit a
-  // an error that it's not set. Cleared by ClearInstanceForTesting() below.
-  base::FeatureList::SetInstance(make_scoped_ptr(new base::FeatureList));
-
   int result = RUN_ALL_TESTS();
-
-  // Clear the FeatureList that was registered above.
-  FeatureList::ClearInstanceForTesting();
 
 #if defined(OS_MACOSX)
   // This MUST happen before Shutdown() since Shutdown() tears down
@@ -299,25 +331,19 @@ void TestSuite::Initialize() {
   }
 #endif
 
+  // Set up a FeatureList instance, so that code using that API will not hit a
+  // an error that it's not set. If a FeatureList was created in this way (i.e.
+  // one didn't exist previously), it will be cleared in Shutdown() via
+  // ClearInstanceForTesting().
+  created_feature_list_ =
+      FeatureList::InitializeInstance(std::string(), std::string());
+
 #if defined(OS_IOS)
   InitIOSTestMessageLoop();
 #endif  // OS_IOS
 
 #if defined(OS_ANDROID)
-  InitAndroidTest();
-#else
-  // Initialize logging.
-  FilePath exe;
-  PathService::Get(FILE_EXE, &exe);
-  FilePath log_filename = exe.ReplaceExtension(FILE_PATH_LITERAL("log"));
-  logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_ALL;
-  settings.log_file = log_filename.value().c_str();
-  settings.delete_old = logging::DELETE_OLD_LOG_FILE;
-  logging::InitLogging(settings);
-  // We want process and thread IDs because we may have multiple processes.
-  // Note: temporarily enabled timestamps in an effort to catch bug 6361.
-  logging::SetLogItems(true, true, true, true);
+  InitAndroidTestMessageLoop();
 #endif  // else defined(OS_ANDROID)
 
   CHECK(debug::EnableInProcessStackDumping());
@@ -336,7 +362,8 @@ void TestSuite::Initialize() {
     logging::SetLogAssertHandler(UnitTestAssertHandler);
   }
 
-  i18n::InitializeICU();
+  base::test::InitializeICUForTesting();
+
   // On the Mac OS X command line, the default locale is *_POSIX. In Chromium,
   // the locale is set via an OS X locale API and is never *_POSIX.
   // Some tests (such as those involving word break iterator) will behave
@@ -354,6 +381,11 @@ void TestSuite::Initialize() {
 #endif
 #endif
 
+  // Enable SequencedWorkerPool in tests.
+  // TODO(fdoray): Remove this once the SequencedWorkerPool to TaskScheduler
+  // redirection experiment concludes https://crbug.com/622400.
+  SequencedWorkerPool::EnableForProcess();
+
   CatchMaybeTests();
   ResetCommandLine();
   AddTestLauncherResultPrinter();
@@ -361,9 +393,16 @@ void TestSuite::Initialize() {
   TestTimeouts::Initialize();
 
   trace_to_file_.BeginTracingFromCommandLineOptions();
+
+  base::debug::StartProfiling(GetProfileName());
 }
 
 void TestSuite::Shutdown() {
+  base::debug::StopProfiling();
+
+  // Clear the FeatureList that was created by Initialize().
+  if (created_feature_list_)
+    FeatureList::ClearInstanceForTesting();
 }
 
 }  // namespace base

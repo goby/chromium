@@ -5,9 +5,11 @@
 #include "chrome/browser/ui/webui/options/cookies_view_handler.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browsing_data/browsing_data_appcache_helper.h"
@@ -19,6 +21,7 @@
 #include "chrome/browser/browsing_data/browsing_data_flash_lso_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_indexed_db_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_local_storage_helper.h"
+#include "chrome/browser/browsing_data/browsing_data_media_license_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_quota_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_service_worker_helper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -108,6 +111,12 @@ void CookiesViewHandler::GetLocalizedValues(
       {"label_channel_id_expires", IDS_COOKIES_CHANNEL_ID_EXPIRES_LABEL},
       {"label_protected_by_apps",
        IDS_GEOLOCATION_SET_BY_HOVER},  // TODO(bauerb): Use a better string
+      {"cookie_media_license", IDS_COOKIES_MEDIA_LICENSE},
+      {"label_media_license_origin", IDS_COOKIES_LOCAL_STORAGE_ORIGIN_LABEL},
+      {"label_media_license_size",
+       IDS_COOKIES_LOCAL_STORAGE_SIZE_ON_DISK_LABEL},
+      {"label_media_license_last_modified",
+       IDS_COOKIES_LOCAL_STORAGE_LAST_MODIFIED_LABEL},
   };
 
   RegisterStrings(localized_strings, resources, arraysize(resources));
@@ -144,8 +153,9 @@ void CookiesViewHandler::TreeNodesAdded(ui::TreeModel* model,
   CookiesTreeModel* tree_model = static_cast<CookiesTreeModel*>(model);
   CookieTreeNode* parent_node = tree_model->AsNode(parent);
 
-  scoped_ptr<base::ListValue> children(new base::ListValue);
-  model_util_->GetChildNodeList(parent_node, start, count, children.get());
+  std::unique_ptr<base::ListValue> children(new base::ListValue);
+  model_util_->GetChildNodeList(
+      parent_node, start, count, /*include_quota_nodes=*/true, children.get());
 
   base::ListValue args;
   if (parent == tree_model->GetRoot())
@@ -153,8 +163,8 @@ void CookiesViewHandler::TreeNodesAdded(ui::TreeModel* model,
   else
     args.AppendString(model_util_->GetTreeNodeId(parent_node));
   args.AppendInteger(start);
-  args.Append(children.Pass());
-  web_ui()->CallJavascriptFunction("CookiesView.onTreeItemAdded", args);
+  args.Append(std::move(children));
+  web_ui()->CallJavascriptFunctionUnsafe("CookiesView.onTreeItemAdded", args);
 }
 
 void CookiesViewHandler::TreeNodesRemoved(ui::TreeModel* model,
@@ -174,7 +184,7 @@ void CookiesViewHandler::TreeNodesRemoved(ui::TreeModel* model,
     args.AppendString(model_util_->GetTreeNodeId(tree_model->AsNode(parent)));
   args.AppendInteger(start);
   args.AppendInteger(count);
-  web_ui()->CallJavascriptFunction("CookiesView.onTreeItemRemoved", args);
+  web_ui()->CallJavascriptFunctionUnsafe("CookiesView.onTreeItemRemoved", args);
 }
 
 void CookiesViewHandler::TreeModelBeginBatch(CookiesTreeModel* model) {
@@ -213,11 +223,10 @@ void CookiesViewHandler::EnsureCookiesTreeModelCreated() {
         BrowsingDataChannelIDHelper::Create(profile->GetRequestContext()),
         new BrowsingDataServiceWorkerHelper(service_worker_context),
         new BrowsingDataCacheStorageHelper(cache_storage_context),
-        BrowsingDataFlashLSOHelper::Create(profile));
-    cookies_tree_model_.reset(
-        new CookiesTreeModel(container,
-                             profile->GetExtensionSpecialStoragePolicy(),
-                             false));
+        BrowsingDataFlashLSOHelper::Create(profile),
+        BrowsingDataMediaLicenseHelper::Create(file_system_context));
+    cookies_tree_model_.reset(new CookiesTreeModel(
+        container, profile->GetExtensionSpecialStoragePolicy()));
     cookies_tree_model_->AddCookiesTreeObserver(this);
   }
 }
@@ -264,18 +273,18 @@ void CookiesViewHandler::LoadChildren(const base::ListValue* args) {
 }
 
 void CookiesViewHandler::SendChildren(const CookieTreeNode* parent) {
-  scoped_ptr<base::ListValue> children(new base::ListValue);
-  model_util_->GetChildNodeList(parent, 0, parent->child_count(),
-                                children.get());
+  std::unique_ptr<base::ListValue> children(new base::ListValue);
+  model_util_->GetChildNodeList(parent,  /*start=*/0, parent->child_count(),
+      /*include_quota_nodes=*/true, children.get());
 
   base::ListValue args;
   if (parent == cookies_tree_model_->GetRoot())
     args.Append(base::Value::CreateNullValue());
   else
     args.AppendString(model_util_->GetTreeNodeId(parent));
-  args.Append(children.Pass());
+  args.Append(std::move(children));
 
-  web_ui()->CallJavascriptFunction("CookiesView.loadChildren", args);
+  web_ui()->CallJavascriptFunctionUnsafe("CookiesView.loadChildren", args);
 }
 
 void CookiesViewHandler::ReloadCookies(const base::ListValue* args) {

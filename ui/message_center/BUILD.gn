@@ -6,34 +6,38 @@ import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//testing/test.gni")
 
+# TODO(msw|mukai|dewittj): Move ash-specific files: crbug.com/585175
 component("message_center") {
   deps = [
     "//base",
-    "//base:i18n",
-    "//base/third_party/dynamic_annotations",
-    "//components/url_formatter",
-    "//skia",
-    "//ui/accessibility",
     "//ui/base",
-    "//ui/events",
-    "//ui/gfx",
-    "//ui/gfx/geometry",
-    "//ui/native_theme",
-    "//ui/resources",
-    "//ui/strings",
     "//url",
-  ]
-
-  configs += [
-    "//build/config:precompiled_headers",
-
-    # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-    "//build/config/compiler:no_size_t_to_int_warning",
   ]
 
   defines = [ "MESSAGE_CENTER_IMPLEMENTATION" ]
 
-  if (enable_notifications && !is_android) {
+  if (!is_ios && !is_android) {
+    deps += [
+      "//base:i18n",
+      "//base/third_party/dynamic_annotations",
+      "//components/url_formatter",
+      "//skia",
+      "//ui/accessibility",
+      "//ui/display",
+      "//ui/events",
+      "//ui/gfx",
+      "//ui/gfx/geometry",
+      "//ui/native_theme",
+      "//ui/resources",
+      "//ui/strings",
+    ]
+
+    configs += [
+      "//build/config:precompiled_headers",
+
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      "//build/config/compiler:no_size_t_to_int_warning",
+    ]
     sources = [
       "cocoa/notification_controller.h",
       "cocoa/notification_controller.mm",
@@ -71,21 +75,39 @@ component("message_center") {
       "notifier_settings.h",
       "popup_timer.cc",
       "popup_timer.h",
+      "popup_timers_controller.cc",
+      "popup_timers_controller.h",
     ]
 
     if (is_win) {
       deps += [ "//ui/aura" ]
     }
 
+    if (is_mac) {
+      libs = [
+        "AppKit.framework",
+        "Foundation.framework",
+      ]
+    }
+
     # On Mac, toolkit-views builds still use the Cocoa UI. Keep this in sync
     # with message_center_unittests below.
     if (toolkit_views && !is_mac) {
       sources += [
+        "notification_delegate_views.cc",
         "views/bounded_label.cc",
         "views/bounded_label.h",
         "views/constants.h",
+        "views/custom_notification_content_view_delegate.cc",
+        "views/custom_notification_content_view_delegate.h",
+        "views/custom_notification_view.cc",
+        "views/custom_notification_view.h",
         "views/desktop_popup_alignment_delegate.cc",
         "views/desktop_popup_alignment_delegate.h",
+        "views/message_bubble_base.cc",
+        "views/message_bubble_base.h",
+        "views/message_center_bubble.cc",
+        "views/message_center_bubble.h",
         "views/message_center_button_bar.cc",
         "views/message_center_button_bar.h",
         "views/message_center_controller.h",
@@ -99,10 +121,10 @@ component("message_center") {
         "views/message_view.h",
         "views/message_view_context_menu_controller.cc",
         "views/message_view_context_menu_controller.h",
+        "views/message_view_factory.cc",
+        "views/message_view_factory.h",
         "views/notification_button.cc",
         "views/notification_button.h",
-        "views/notification_progress_bar.cc",
-        "views/notification_progress_bar.h",
         "views/notification_view.cc",
         "views/notification_view.h",
         "views/notifier_settings_view.cc",
@@ -120,15 +142,6 @@ component("message_center") {
         "//ui/compositor",
         "//ui/events",
         "//ui/views",
-      ]
-    }
-
-    if (use_ash) {
-      sources += [
-        "views/message_bubble_base.cc",
-        "views/message_bubble_base.h",
-        "views/message_center_bubble.cc",
-        "views/message_center_bubble.h",
       ]
     }
   } else {
@@ -155,25 +168,27 @@ component("message_center") {
 
 static_library("test_support") {
   testonly = true
-  sources = [
-    "fake_message_center.cc",
-    "fake_message_center.h",
-    "fake_message_center_tray_delegate.cc",
-    "fake_message_center_tray_delegate.h",
-    "fake_notifier_settings_provider.cc",
-    "fake_notifier_settings_provider.h",
-  ]
+
+  if (!is_ios && !is_android) {
+    sources = [
+      "fake_message_center.cc",
+      "fake_message_center.h",
+      "fake_message_center_tray_delegate.cc",
+      "fake_message_center_tray_delegate.h",
+      "fake_notifier_settings_provider.cc",
+      "fake_notifier_settings_provider.h",
+    ]
+    deps = [
+      "//base",
+      "//base/test:test_support",
+      "//skia",
+      "//ui/gfx",
+      "//ui/gfx/geometry",
+    ]
+  }
 
   public_deps = [
     ":message_center",
-  ]
-
-  deps = [
-    "//base",
-    "//base/test:test_support",
-    "//skia",
-    "//ui/gfx",
-    "//ui/gfx/geometry",
   ]
 }
 
@@ -186,7 +201,6 @@ test("message_center_unittests") {
     ":message_center",
     ":test_support",
     "//base",
-    "//base/allocator",
     "//base/test:test_support",
     "//skia",
     "//testing/gtest",
@@ -201,7 +215,12 @@ test("message_center_unittests") {
     "//url",
   ]
 
-  if (enable_notifications && !is_android) {
+  data_deps = [
+    "//third_party/mesa:osmesa",
+    "//ui/resources:ui_test_pak_data",
+  ]
+
+  if (!is_ios && !is_android) {
     sources += [
       "cocoa/notification_controller_unittest.mm",
       "cocoa/popup_collection_unittest.mm",
@@ -219,7 +238,9 @@ test("message_center_unittests") {
     if (toolkit_views && !is_mac) {
       sources += [
         "views/bounded_label_unittest.cc",
+        "views/custom_notification_view_unittest.cc",
         "views/message_center_view_unittest.cc",
+        "views/message_list_view_unittest.cc",
         "views/message_popup_collection_unittest.cc",
         "views/notification_view_unittest.cc",
         "views/notifier_settings_view_unittest.cc",
@@ -228,9 +249,19 @@ test("message_center_unittests") {
         # Compositor is needed by message_center_view_unittest.cc and for the
         # fonts used by bounded_label_unittest.cc.
         "//ui/compositor",
+        "//ui/display",
         "//ui/views",
         "//ui/views:test_support",
       ]
     }
-  }  # enable_notifications && !is_android
+
+    if (!is_ios) {
+      sources += [ "mojo/struct_traits_unittest.cc" ]
+      deps += [
+        "//mojo/edk/system",
+        "//ui/gfx:test_support",
+        "//ui/message_center/mojo:test_interfaces",
+      ]
+    }
+  }  # !is_ios && !is_android
 }

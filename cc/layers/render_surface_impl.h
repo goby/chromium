@@ -5,16 +5,19 @@
 #ifndef CC_LAYERS_RENDER_SURFACE_IMPL_H_
 #define CC_LAYERS_RENDER_SURFACE_IMPL_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
-#include "cc/layers/layer_lists.h"
+#include "cc/layers/layer_collections.h"
 #include "cc/quads/render_pass.h"
 #include "cc/quads/shared_quad_state.h"
 #include "cc/trees/occlusion.h"
+#include "cc/trees/property_tree.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/transform.h"
@@ -22,12 +25,12 @@
 namespace cc {
 
 class DamageTracker;
-class DelegatedRendererLayerImpl;
+class FilterOperations;
 class Occlusion;
-class RenderPassId;
 class RenderPassSink;
 class LayerImpl;
 class LayerIterator;
+class LayerTreeImpl;
 
 struct AppendQuadsData;
 
@@ -36,18 +39,24 @@ class CC_EXPORT RenderSurfaceImpl {
   explicit RenderSurfaceImpl(LayerImpl* owning_layer);
   virtual ~RenderSurfaceImpl();
 
-  gfx::PointF ContentRectCenter() const {
-    return gfx::RectF(content_rect_).CenterPoint();
-  }
+  // Returns the RenderSurfaceImpl that this render surface contributes to. Root
+  // render surface's render_target is itself.
+  RenderSurfaceImpl* render_target();
+  const RenderSurfaceImpl* render_target() const;
 
   // Returns the rect that encloses the RenderSurfaceImpl including any
   // reflection.
   gfx::RectF DrawableContentRect() const;
 
-  void SetDrawOpacity(float opacity) { draw_opacity_ = opacity; }
-  float draw_opacity() const { return draw_opacity_; }
+  void SetDrawOpacity(float opacity) {
+    draw_properties_.draw_opacity = opacity;
+  }
+  float draw_opacity() const { return draw_properties_.draw_opacity; }
 
-  void SetNearestOcclusionImmuneAncestor(RenderSurfaceImpl* surface) {
+  SkBlendMode BlendMode() const;
+  bool UsesDefaultBlendMode() const;
+
+  void SetNearestOcclusionImmuneAncestor(const RenderSurfaceImpl* surface) {
     nearest_occlusion_immune_ancestor_ = surface;
   }
   const RenderSurfaceImpl* nearest_occlusion_immune_ancestor() const {
@@ -55,43 +64,29 @@ class CC_EXPORT RenderSurfaceImpl {
   }
 
   SkColor GetDebugBorderColor() const;
-  SkColor GetReplicaDebugBorderColor() const;
-
   float GetDebugBorderWidth() const;
-  float GetReplicaDebugBorderWidth() const;
 
   void SetDrawTransform(const gfx::Transform& draw_transform) {
-    draw_transform_ = draw_transform;
+    draw_properties_.draw_transform = draw_transform;
   }
-  const gfx::Transform& draw_transform() const { return draw_transform_; }
+  const gfx::Transform& draw_transform() const {
+    return draw_properties_.draw_transform;
+  }
 
   void SetScreenSpaceTransform(const gfx::Transform& screen_space_transform) {
-    screen_space_transform_ = screen_space_transform;
+    draw_properties_.screen_space_transform = screen_space_transform;
   }
   const gfx::Transform& screen_space_transform() const {
-    return screen_space_transform_;
+    return draw_properties_.screen_space_transform;
   }
 
-  void SetReplicaDrawTransform(const gfx::Transform& replica_draw_transform) {
-    replica_draw_transform_ = replica_draw_transform;
+  void SetIsClipped(bool is_clipped) {
+    draw_properties_.is_clipped = is_clipped;
   }
-  const gfx::Transform& replica_draw_transform() const {
-    return replica_draw_transform_;
-  }
-
-  void SetReplicaScreenSpaceTransform(
-      const gfx::Transform& replica_screen_space_transform) {
-    replica_screen_space_transform_ = replica_screen_space_transform;
-  }
-  const gfx::Transform& replica_screen_space_transform() const {
-    return replica_screen_space_transform_;
-  }
-
-  void SetIsClipped(bool is_clipped) { is_clipped_ = is_clipped; }
-  bool is_clipped() const { return is_clipped_; }
+  bool is_clipped() const { return draw_properties_.is_clipped; }
 
   void SetClipRect(const gfx::Rect& clip_rect);
-  gfx::Rect clip_rect() const { return clip_rect_; }
+  gfx::Rect clip_rect() const { return draw_properties_.clip_rect; }
 
   // When false, the RenderSurface does not contribute to another target
   // RenderSurface that is being drawn for the current frame. It could still be
@@ -104,15 +99,17 @@ class CC_EXPORT RenderSurfaceImpl {
     contributes_to_drawn_surface_ = contributes_to_drawn_surface;
   }
 
-  void SetContentRect(const gfx::Rect& content_rect);
-  gfx::Rect content_rect() const { return content_rect_; }
+  void CalculateContentRectFromAccumulatedContentRect(int max_texture_size);
+  void SetContentRectToViewport();
+  void SetContentRectForTesting(const gfx::Rect& rect);
+  gfx::Rect content_rect() const { return draw_properties_.content_rect; }
 
-  void SetContentRectFromPropertyTrees(const gfx::Rect& content_rect);
-  gfx::Rect content_rect_from_property_trees() const {
-    return content_rect_from_property_trees_;
-  }
+  void ClearAccumulatedContentRect();
+  void AccumulateContentRectFromContributingLayer(
+      LayerImpl* contributing_layer);
+  void AccumulateContentRectFromContributingRenderSurface(
+      RenderSurfaceImpl* contributing_surface);
 
-  void SetAccumulatedContentRect(const gfx::Rect& content_rect);
   gfx::Rect accumulated_content_rect() const {
     return accumulated_content_rect_;
   }
@@ -125,68 +122,89 @@ class CC_EXPORT RenderSurfaceImpl {
   }
 
   LayerImplList& layer_list() { return layer_list_; }
-  void AddContributingDelegatedRenderPassLayer(LayerImpl* layer);
   void ClearLayerLists();
 
-  int OwningLayerId() const;
-  bool HasReplica() const;
-  const LayerImpl* ReplicaLayer() const;
+  int id() const { return stable_effect_id_; }
 
-  void ResetPropertyChangedFlag() { surface_property_changed_ = false; }
+  LayerImpl* MaskLayer();
+  bool HasMask() const;
+
+  const FilterOperations& Filters() const;
+  const FilterOperations& BackgroundFilters() const;
+  gfx::PointF FiltersOrigin() const;
+  gfx::Transform FiltersTransform() const;
+
+  bool HasCopyRequest() const;
+
+  void ResetPropertyChangedFlags();
   bool SurfacePropertyChanged() const;
   bool SurfacePropertyChangedOnlyFromDescendant() const;
+  bool AncestorPropertyChanged() const;
+  void NoteAncestorPropertyChanged();
 
   DamageTracker* damage_tracker() const { return damage_tracker_.get(); }
 
-  RenderPassId GetRenderPassId();
+  int GetRenderPassId();
 
   void AppendRenderPasses(RenderPassSink* pass_sink);
-  void AppendQuads(RenderPass* render_pass,
-                   const gfx::Transform& draw_transform,
-                   const Occlusion& occlusion_in_content_space,
-                   SkColor debug_border_color,
-                   float debug_border_width,
-                   LayerImpl* mask_layer,
-                   AppendQuadsData* append_quads_data,
-                   RenderPassId render_pass_id);
+  void AppendQuads(RenderPass* render_pass, AppendQuadsData* append_quads_data);
 
   int TransformTreeIndex() const;
   int ClipTreeIndex() const;
   int EffectTreeIndex() const;
-  int TargetEffectTreeIndex() const;
 
  private:
+  void SetContentRect(const gfx::Rect& content_rect);
+  gfx::Rect CalculateClippedAccumulatedContentRect();
+
+  const EffectNode* OwningEffectNode() const;
+
   LayerImpl* owning_layer_;
 
-  // Uses this surface's space.
-  gfx::Rect content_rect_;
-  gfx::Rect content_rect_from_property_trees_;
+  LayerTreeImpl* layer_tree_impl_;
+  int stable_effect_id_;
+
+  // Container for properties that render surfaces need to compute before they
+  // can be drawn.
+  struct DrawProperties {
+    DrawProperties();
+    ~DrawProperties();
+
+    float draw_opacity;
+
+    // Transforms from the surface's own space to the space of its target
+    // surface.
+    gfx::Transform draw_transform;
+    // Transforms from the surface's own space to the viewport.
+    gfx::Transform screen_space_transform;
+
+    // This is in the surface's own space.
+    gfx::Rect content_rect;
+
+    // This is in the space of the surface's target surface.
+    gfx::Rect clip_rect;
+
+    // True if the surface needs to be clipped by clip_rect.
+    bool is_clipped : 1;
+  };
+
+  DrawProperties draw_properties_;
+
   // Is used to calculate the content rect from property trees.
   gfx::Rect accumulated_content_rect_;
   bool surface_property_changed_ : 1;
+  bool ancestor_property_changed_ : 1;
 
-  bool is_clipped_ : 1;
   bool contributes_to_drawn_surface_ : 1;
 
-  float draw_opacity_;
-  gfx::Transform draw_transform_;
-  gfx::Transform screen_space_transform_;
-  gfx::Transform replica_draw_transform_;
-  gfx::Transform replica_screen_space_transform_;
-
-  // Uses the space of the surface's target surface.
-  gfx::Rect clip_rect_;
-
   LayerImplList layer_list_;
-  std::vector<DelegatedRendererLayerImpl*>
-      contributing_delegated_render_pass_layer_list_;
   Occlusion occlusion_in_content_space_;
 
   // The nearest ancestor target surface that will contain the contents of this
   // surface, and that ignores outside occlusion. This can point to itself.
-  RenderSurfaceImpl* nearest_occlusion_immune_ancestor_;
+  const RenderSurfaceImpl* nearest_occlusion_immune_ancestor_;
 
-  scoped_ptr<DamageTracker> damage_tracker_;
+  std::unique_ptr<DamageTracker> damage_tracker_;
 
   // For LayerIteratorActions
   int target_render_surface_layer_index_history_;

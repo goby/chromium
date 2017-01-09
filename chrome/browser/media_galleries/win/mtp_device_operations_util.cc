@@ -5,10 +5,12 @@
 #include "chrome/browser/media_galleries/win/mtp_device_operations_util.h"
 
 #include <portabledevice.h>
+#include <stdint.h>
 
 #include <algorithm>
+#include <limits>
+#include <memory>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -150,13 +152,15 @@ void GetLastModifiedTime(IPortableDeviceValues* properties_values,
 
 // Gets the size of the file object in bytes from the property key values
 // specified by the |properties_values|. On failure, return -1.
-int64 GetObjectSize(IPortableDeviceValues* properties_values) {
+int64_t GetObjectSize(IPortableDeviceValues* properties_values) {
   DCHECK(properties_values);
   ULONGLONG actual_size;
   HRESULT hr = properties_values->GetUnsignedLargeIntegerValue(WPD_OBJECT_SIZE,
                                                                &actual_size);
-  bool success = SUCCEEDED(hr) && (actual_size <= kint64max);
-  return success ? static_cast<int64>(actual_size) : -1;
+  bool success = SUCCEEDED(hr) &&
+                 (actual_size <=
+                  static_cast<ULONGLONG>(std::numeric_limits<int64_t>::max()));
+  return success ? static_cast<int64_t>(actual_size) : -1;
 }
 
 // Gets the details of the object specified by the |object_id| given the media
@@ -167,7 +171,7 @@ bool GetObjectDetails(IPortableDevice* device,
                       const base::string16 object_id,
                       base::string16* name,
                       bool* is_directory,
-                      int64* size,
+                      int64_t* size,
                       base::Time* last_modified_time) {
   base::ThreadRestrictions::AssertIOAllowed();
   DCHECK(device);
@@ -225,7 +229,7 @@ bool GetObjectDetails(IPortableDevice* device,
   // Try to get the last modified time, but don't fail if we can't.
   GetLastModifiedTime(properties_values.get(), last_modified_time);
 
-  int64 object_size = GetObjectSize(properties_values.get());
+  int64_t object_size = GetObjectSize(properties_values.get());
   if (object_size < 0)
     return false;
   *size = object_size;
@@ -241,7 +245,7 @@ MTPDeviceObjectEntry GetMTPDeviceObjectEntry(IPortableDevice* device,
   DCHECK(!object_id.empty());
   base::string16 name;
   bool is_directory;
-  int64 size;
+  int64_t size;
   base::Time last_modified_time;
   MTPDeviceObjectEntry entry;
   if (GetObjectDetails(device, object_id, &name, &is_directory, &size,
@@ -274,7 +278,7 @@ bool GetMTPDeviceObjectEntries(IPortableDevice* device,
   const bool get_all_entries = object_name.empty();
   for (HRESULT hr = S_OK; hr == S_OK;) {
     DWORD num_objects_fetched = 0;
-    scoped_ptr<base::char16*[]> object_ids(
+    std::unique_ptr<base::char16* []> object_ids(
         new base::char16*[num_objects_to_request]);
     hr = enum_object_ids->Next(num_objects_to_request,
                                object_ids.get(),

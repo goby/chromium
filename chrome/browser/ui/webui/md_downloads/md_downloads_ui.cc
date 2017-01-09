@@ -6,7 +6,6 @@
 
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/singleton.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_piece.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
@@ -17,17 +16,19 @@
 #include "chrome/browser/ui/webui/md_downloads/md_downloads_dom_handler.h"
 #include "chrome/browser/ui/webui/theme_source.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "grit/browser_resources.h"
-#include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 
 using content::BrowserContext;
@@ -62,15 +63,14 @@ content::WebUIDataSource* CreateDownloadsUIHTMLSource(Profile* profile) {
   source->AddLocalizedString("statusRemoved", IDS_DOWNLOAD_FILE_REMOVED);
 
   // Dangerous file.
-  source->AddLocalizedString("dangerFileDesc", IDS_PROMPT_DANGEROUS_DOWNLOAD);
-  source->AddLocalizedString("dangerUrlDesc",
-                             IDS_PROMPT_MALICIOUS_DOWNLOAD_URL);
-  source->AddLocalizedString("dangerContentDesc",
-                             IDS_PROMPT_MALICIOUS_DOWNLOAD_CONTENT);
+  source->AddLocalizedString("dangerFileDesc",
+                             IDS_BLOCK_REASON_GENERIC_DOWNLOAD);
+  source->AddLocalizedString("dangerDownloadDesc",
+                             IDS_BLOCK_REASON_DANGEROUS_DOWNLOAD);
   source->AddLocalizedString("dangerUncommonDesc",
-                             IDS_PROMPT_UNCOMMON_DOWNLOAD_CONTENT);
+                             IDS_BLOCK_REASON_UNCOMMON_DOWNLOAD);
   source->AddLocalizedString("dangerSettingsDesc",
-                             IDS_PROMPT_DOWNLOAD_CHANGES_SETTINGS);
+                             IDS_BLOCK_REASON_UNWANTED_DOWNLOAD);
   source->AddLocalizedString("dangerSave", IDS_CONFIRM_DOWNLOAD);
   source->AddLocalizedString("dangerRestore", IDS_CONFIRM_DOWNLOAD_RESTORE);
   source->AddLocalizedString("dangerDiscard", IDS_DISCARD_DOWNLOAD);
@@ -102,29 +102,29 @@ content::WebUIDataSource* CreateDownloadsUIHTMLSource(Profile* profile) {
                           IDR_MD_DOWNLOADS_1X_NO_DOWNLOADS_PNG);
   source->AddResourcePath("2x/no_downloads.png",
                           IDR_MD_DOWNLOADS_2X_NO_DOWNLOADS_PNG);
+
+#if BUILDFLAG(USE_VULCANIZE)
+  source->AddResourcePath("crisper.js", IDR_MD_DOWNLOADS_CRISPER_JS);
+  source->SetDefaultResource(IDR_MD_DOWNLOADS_VULCANIZED_HTML);
+#else
   source->AddResourcePath("action_service.html",
                           IDR_MD_DOWNLOADS_ACTION_SERVICE_HTML);
   source->AddResourcePath("action_service.js",
                           IDR_MD_DOWNLOADS_ACTION_SERVICE_JS);
   source->AddResourcePath("constants.html", IDR_MD_DOWNLOADS_CONSTANTS_HTML);
   source->AddResourcePath("constants.js", IDR_MD_DOWNLOADS_CONSTANTS_JS);
-  source->AddResourcePath("crisper.js", IDR_MD_DOWNLOADS_CRISPER_JS);
-  source->AddResourcePath("dev.html", IDR_MD_DOWNLOADS_DOWNLOADS_HTML);
   source->AddResourcePath("downloads.js", IDR_MD_DOWNLOADS_DOWNLOADS_JS);
   source->AddResourcePath("i18n_setup.html", IDR_MD_DOWNLOADS_I18N_SETUP_HTML);
-  source->AddResourcePath("item.css", IDR_MD_DOWNLOADS_ITEM_CSS);
+  source->AddResourcePath("icons.html", IDR_MD_DOWNLOADS_ICONS_HTML);
   source->AddResourcePath("item.html", IDR_MD_DOWNLOADS_ITEM_HTML);
   source->AddResourcePath("item.js", IDR_MD_DOWNLOADS_ITEM_JS);
-  source->AddResourcePath("manager.css", IDR_MD_DOWNLOADS_MANAGER_CSS);
   source->AddResourcePath("manager.html", IDR_MD_DOWNLOADS_MANAGER_HTML);
   source->AddResourcePath("manager.js", IDR_MD_DOWNLOADS_MANAGER_JS);
-  source->AddResourcePath("shared_style.css",
-                          IDR_MD_DOWNLOADS_SHARED_STYLE_CSS);
-  source->AddResourcePath("toolbar.css", IDR_MD_DOWNLOADS_TOOLBAR_CSS);
   source->AddResourcePath("toolbar.html", IDR_MD_DOWNLOADS_TOOLBAR_HTML);
   source->AddResourcePath("toolbar.js", IDR_MD_DOWNLOADS_TOOLBAR_JS);
+  source->SetDefaultResource(IDR_MD_DOWNLOADS_DOWNLOADS_HTML);
+#endif
 
-  source->SetDefaultResource(IDR_MD_DOWNLOADS_VULCANIZED_HTML);
   source->SetJsonPath("strings.js");
 
   return source;
@@ -148,10 +148,8 @@ MdDownloadsUI::MdDownloadsUI(content::WebUI* web_ui) : WebUIController(web_ui) {
   // Set up the chrome://downloads/ source.
   content::WebUIDataSource* source = CreateDownloadsUIHTMLSource(profile);
   content::WebUIDataSource::Add(profile, source);
-#if defined(ENABLE_THEMES)
   ThemeSource* theme = new ThemeSource(profile);
   content::URLDataSource::Add(profile, theme);
-#endif
 }
 
 // static
@@ -159,9 +157,4 @@ base::RefCountedMemory* MdDownloadsUI::GetFaviconResourceBytes(
     ui::ScaleFactor scale_factor) {
   return ResourceBundle::GetSharedInstance().
       LoadDataResourceBytesForScale(IDR_DOWNLOADS_FAVICON, scale_factor);
-}
-
-void MdDownloadsUI::RenderViewReused(
-    content::RenderViewHost* render_view_host) {
-  handler_->RenderViewReused(render_view_host);
 }

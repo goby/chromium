@@ -16,9 +16,9 @@ void URLDataSource::Add(BrowserContext* browser_context,
   URLDataManager::AddDataSource(browser_context, source);
 }
 
-base::MessageLoop* URLDataSource::MessageLoopForRequestPath(
-    const std::string& path) const {
-  return BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::UI);
+scoped_refptr<base::SingleThreadTaskRunner>
+URLDataSource::TaskRunnerForRequestPath(const std::string& path) const {
+  return BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
 }
 
 bool URLDataSource::ShouldReplaceExistingSource() const {
@@ -33,12 +33,27 @@ bool URLDataSource::ShouldAddContentSecurityPolicy() const {
   return true;
 }
 
+std::string URLDataSource::GetContentSecurityPolicyScriptSrc() const {
+  // Specific resources require unsafe-eval in the Content Security Policy.
+  // TODO(tsepez,mfoltz): Remove 'unsafe-eval' when tests have been fixed to
+  // not use eval()/new Function().  http://crbug.com/525224
+  return "script-src chrome://resources 'self' 'unsafe-eval';";
+}
+
 std::string URLDataSource::GetContentSecurityPolicyObjectSrc() const {
   return "object-src 'none';";
 }
 
-std::string URLDataSource::GetContentSecurityPolicyFrameSrc() const {
-  return "frame-src 'none';";
+std::string URLDataSource::GetContentSecurityPolicyChildSrc() const {
+  return "child-src 'none';";
+}
+
+std::string URLDataSource::GetContentSecurityPolicyStyleSrc() const {
+  return std::string();
+}
+
+std::string URLDataSource::GetContentSecurityPolicyImgSrc() const {
+  return std::string();
 }
 
 bool URLDataSource::ShouldDenyXFrameOptions() const {
@@ -59,6 +74,10 @@ bool URLDataSource::ShouldServeMimeTypeAsContentTypeHeader() const {
 std::string URLDataSource::GetAccessControlAllowOriginForOrigin(
     const std::string& origin) const {
   return std::string();
+}
+
+bool URLDataSource::IsGzipped(const std::string& path) const {
+  return false;
 }
 
 }  // namespace content

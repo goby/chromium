@@ -13,7 +13,6 @@
 #include "chrome/browser/media/router/media_sink.h"
 #include "chrome/browser/media/router/media_source.h"
 #include "content/public/browser/presentation_session.h"
-#include "url/gurl.h"
 
 namespace media_router {
 
@@ -21,20 +20,22 @@ namespace media_router {
 // operation. The fields are immutable and reflect the route status
 // only at the time of object creation. Updated route statuses must
 // be retrieved as new MediaRoute objects from the Media Router.
+//
+// TODO(mfoltz): Convert to a simple struct and remove uncommon parameters from
+// the ctor.
 class MediaRoute {
  public:
   using Id = std::string;
 
-  // |media_route_id|: ID of the route. New route IDs should be created
-  //                   by the RouteIdManager class.
+  // |media_route_id|: ID of the route.
   // |media_source|: Description of source of the route.
   // |media_sink|: The sink that is receiving the media.
   // |description|: Description of the route to be displayed.
   // |is_local|: true if the route was created from this browser.
   // |custom_controller_path|: custom controller path if it is given by route
-  //                      provider. empty otherwise.
+  //     provider. empty otherwise.
   // |for_display|: Set to true if this route should be displayed for
-  //                |media_sink_id| in UI.
+  //     |media_sink_id| in UI.
   MediaRoute(const MediaRoute::Id& media_route_id,
              const MediaSource& media_source,
              const MediaSink::Id& media_sink_id,
@@ -42,6 +43,7 @@ class MediaRoute {
              bool is_local,
              const std::string& custom_controller_path,
              bool for_display);
+  MediaRoute(const MediaRoute& other);
   ~MediaRoute();
 
   // The media route identifier.
@@ -71,6 +73,19 @@ class MediaRoute {
 
   bool for_display() const { return for_display_; }
 
+  // Set this to true when the route was created by an incognito profile.
+  void set_incognito(bool is_incognito) { is_incognito_ = is_incognito; }
+
+  bool is_incognito() const { return is_incognito_; }
+
+  // Set to |true| if the presentation associated with this route is an
+  // offscreen presentation.
+  void set_offscreen_presentation(bool is_offscreen_presentation) {
+    is_offscreen_presentation_ = is_offscreen_presentation;
+  }
+
+  bool is_offscreen_presentation() const { return is_offscreen_presentation_; }
+
   bool Equals(const MediaRoute& other) const;
 
  private:
@@ -81,6 +96,8 @@ class MediaRoute {
   bool is_local_;
   std::string custom_controller_path_;
   bool for_display_;
+  bool is_incognito_;
+  bool is_offscreen_presentation_;
 };
 
 }  // namespace media_router

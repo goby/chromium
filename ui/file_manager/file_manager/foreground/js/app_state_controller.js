@@ -97,7 +97,7 @@ AppStateController.prototype.saveViewOptions = function() {
     sortField: sortStatus.field,
     sortDirection: sortStatus.direction,
     columnConfig: {},
-    listType: this.ui_.listContainer.currentListType
+    listType: this.ui_.listContainer.currentListType,
   };
   var cm = this.ui_.listContainer.table.columnModel;
   prefs.columnConfig = cm.exportColumnConfig();

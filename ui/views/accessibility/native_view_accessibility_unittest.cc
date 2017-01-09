@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/views/accessibility/native_view_accessibility.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
@@ -30,16 +32,27 @@ class NativeViewAccessibilityTest : public ViewsTestBase {
 
   void SetUp() override {
     ViewsTestBase::SetUp();
-    button_.reset(new TestButton());
-    button_->SetSize(gfx::Size(20, 20));
-    button_accessibility_ = NativeViewAccessibility::Create(button_.get());
 
-    label_.reset(new Label);
-    button_->AddChildView(label_.get());
-    label_accessibility_ = NativeViewAccessibility::Create(label_.get());
+    widget_ = new views::Widget;
+    views::Widget::InitParams params =
+        CreateParams(views::Widget::InitParams::TYPE_WINDOW);
+    params.bounds = gfx::Rect(0, 0, 200, 200);
+    widget_->Init(params);
+
+    button_ = new TestButton();
+    button_->SetSize(gfx::Size(20, 20));
+    button_accessibility_ = NativeViewAccessibility::Create(button_);
+
+    label_ = new Label();
+    button_->AddChildView(label_);
+    label_accessibility_ = NativeViewAccessibility::Create(label_);
+
+    widget_->GetContentsView()->AddChildView(button_);
   }
 
   void TearDown() override {
+    if (!widget_->IsClosed())
+      widget_->Close();
     button_accessibility_->Destroy();
     button_accessibility_ = NULL;
     label_accessibility_->Destroy();
@@ -48,9 +61,10 @@ class NativeViewAccessibilityTest : public ViewsTestBase {
   }
 
  protected:
-  scoped_ptr<TestButton> button_;
+  views::Widget* widget_;
+  TestButton* button_;
   NativeViewAccessibility* button_accessibility_;
-  scoped_ptr<Label> label_;
+  Label* label_;
   NativeViewAccessibility* label_accessibility_;
 };
 
@@ -60,7 +74,8 @@ TEST_F(NativeViewAccessibilityTest, RoleShouldMatch) {
 }
 
 TEST_F(NativeViewAccessibilityTest, BoundsShouldMatch) {
-  gfx::Rect bounds = button_accessibility_->GetData().location;
+  gfx::Rect bounds = gfx::ToEnclosingRect(
+      button_accessibility_->GetData().location);
   bounds.Offset(button_accessibility_->GetGlobalCoordinateOffset());
   EXPECT_EQ(button_->GetBoundsInScreen(), bounds);
 }
@@ -71,6 +86,25 @@ TEST_F(NativeViewAccessibilityTest, LabelIsChildOfButton) {
             button_accessibility_->ChildAtIndex(0));
   EXPECT_EQ(button_->GetNativeViewAccessible(),
             label_accessibility_->GetParent());
+}
+
+TEST_F(NativeViewAccessibilityTest, WritableFocus) {
+  widget_->Show();
+  // Make |button_| focusable, and focus/unfocus it via NativeViewAccessibility.
+  button_->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  EXPECT_EQ(nullptr, button_->GetFocusManager()->GetFocusedView());
+  EXPECT_EQ(nullptr, button_accessibility_->GetFocus());
+  EXPECT_TRUE(button_accessibility_->SetFocused(true));
+  EXPECT_EQ(button_, button_->GetFocusManager()->GetFocusedView());
+  EXPECT_EQ(button_->GetNativeViewAccessible(),
+            button_accessibility_->GetFocus());
+  EXPECT_TRUE(button_accessibility_->SetFocused(false));
+  EXPECT_EQ(nullptr, button_->GetFocusManager()->GetFocusedView());
+  EXPECT_EQ(nullptr, button_accessibility_->GetFocus());
+
+  // If not focusable at all, SetFocused() should return false.
+  button_->SetEnabled(false);
+  EXPECT_FALSE(button_accessibility_->SetFocused(true));
 }
 
 // Subclass of NativeViewAccessibility that destroys itself when its
@@ -90,13 +124,13 @@ class TestNativeViewAccessibility : public NativeViewAccessibility {
 };
 
 TEST_F(NativeViewAccessibilityTest, CrashOnWidgetDestroyed) {
-  scoped_ptr<Widget> parent_widget(new Widget);
+  std::unique_ptr<Widget> parent_widget(new Widget);
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.bounds = gfx::Rect(50, 50, 650, 650);
   parent_widget->Init(params);
 
-  scoped_ptr<Widget> child_widget(new Widget);
+  std::unique_ptr<Widget> child_widget(new Widget);
   child_widget->Init(params);
 
   // Make sure that deleting the parent widget can't cause a crash

@@ -1,16 +1,54 @@
-Tests that re-adding a removed target restores the last selected execution context.
+Tests how execution context and target are selected.
 
-Adding page target:
-Execution context selected: mock-target-page-target:pageFrame1
-Target selected: mock-target-page-target
 
-Adding sw target:
+Adding page target
+Execution context selected: contentScript1
+Target selected: page-target
+Execution context selected: page-target:42
 
-Removing page target:
-Execution context selected: mock-target-sw-target:
-Target selected: mock-target-sw-target
+Adding sw target
 
-Readding page target:
-Execution context selected: mock-target-page-target:pageFrame1
-Target selected: mock-target-page-target
+Removing page main frame
+Execution context selected: page-target:iframe1
+
+Readding page main frame
+Execution context selected: page-target:42
+
+Switching to sw target
+Target selected: sw-target
+Execution context selected: sw-target:
+
+Switching to page target
+Target selected: page-target
+Execution context selected: page-target:42
+
+User selected content script
+Execution context selected: contentScript1
+
+Switching to sw target
+Target selected: sw-target
+Execution context selected: sw-target:
+
+Switching to page target
+Target selected: page-target
+Execution context selected: page-target:42
+
+User selected iframe1
+Execution context selected: page-target:iframe1
+
+Switching to sw target
+Target selected: sw-target
+Execution context selected: sw-target:
+
+Switching to page target
+Target selected: page-target
+Execution context selected: page-target:iframe1
+
+Switching to sw target
+Target selected: sw-target
+Execution context selected: sw-target:
+
+Removing page main frame
+
+Readding page main frame
 

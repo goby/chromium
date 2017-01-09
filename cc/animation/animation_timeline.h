@@ -5,26 +5,25 @@
 #ifndef CC_ANIMATION_ANIMATION_TIMELINE_H_
 #define CC_ANIMATION_ANIMATION_TIMELINE_H_
 
-#include <vector>
+#include <memory>
+#include <unordered_map>
 
-#include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "cc/base/cc_export.h"
+#include "cc/animation/animation_export.h"
 
 namespace cc {
 
 class AnimationHost;
 class AnimationPlayer;
 
-typedef std::vector<scoped_refptr<AnimationPlayer>> AnimationPlayerList;
-
 // An AnimationTimeline owns a group of AnimationPlayers.
 // This is a cc counterpart for blink::AnimationTimeline (in 1:1 relationship).
 // Each AnimationTimeline and its AnimationPlayers have their copies on
 // the impl thread. We synchronize main thread and impl thread instances
 // using integer IDs.
-class CC_EXPORT AnimationTimeline : public base::RefCounted<AnimationTimeline> {
+class CC_ANIMATION_EXPORT AnimationTimeline
+    : public base::RefCounted<AnimationTimeline> {
  public:
   static scoped_refptr<AnimationTimeline> Create(int id);
   scoped_refptr<AnimationTimeline> CreateImplInstance() const;
@@ -48,6 +47,9 @@ class CC_EXPORT AnimationTimeline : public base::RefCounted<AnimationTimeline> {
 
   AnimationPlayer* GetPlayerById(int player_id) const;
 
+  void SetNeedsPushProperties();
+  bool needs_push_properties() const { return needs_push_properties_; }
+
  private:
   friend class base::RefCounted<AnimationTimeline>;
 
@@ -58,12 +60,15 @@ class CC_EXPORT AnimationTimeline : public base::RefCounted<AnimationTimeline> {
   void RemoveDetachedPlayersFromImplThread(AnimationTimeline* timeline) const;
   void PushPropertiesToImplThread(AnimationTimeline* timeline);
 
-  void ErasePlayers(AnimationPlayerList::iterator begin,
-                    AnimationPlayerList::iterator end);
+  void ErasePlayer(scoped_refptr<AnimationPlayer> player);
 
-  AnimationPlayerList players_;
+  // A list of all players which this timeline owns.
+  using IdToPlayerMap = std::unordered_map<int, scoped_refptr<AnimationPlayer>>;
+  IdToPlayerMap id_to_player_map_;
+
   int id_;
   AnimationHost* animation_host_;
+  bool needs_push_properties_;
 
   // Impl-only AnimationTimeline has no main thread instance and lives on
   // it's own.

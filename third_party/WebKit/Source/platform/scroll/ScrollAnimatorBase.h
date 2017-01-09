@@ -33,90 +33,91 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/PlatformWheelEvent.h"
-#include "platform/geometry/FloatSize.h"
 #include "platform/heap/Handle.h"
+#include "platform/scroll/ScrollAnimatorCompositorCoordinator.h"
 #include "platform/scroll/ScrollTypes.h"
 #include "wtf/Forward.h"
 
 namespace blink {
 
-class FloatPoint;
+class CompositorAnimationTimeline;
 class ScrollableArea;
 class Scrollbar;
 
-class PLATFORM_EXPORT ScrollAnimatorBase : public NoBaseWillBeGarbageCollectedFinalized<ScrollAnimatorBase> {
-public:
-    static PassOwnPtrWillBeRawPtr<ScrollAnimatorBase> create(ScrollableArea*);
+class PLATFORM_EXPORT ScrollAnimatorBase
+    : public ScrollAnimatorCompositorCoordinator {
+ public:
+  static ScrollAnimatorBase* create(ScrollableArea*);
 
-    virtual ~ScrollAnimatorBase();
+  virtual ~ScrollAnimatorBase();
 
-    virtual void dispose() { }
+  virtual void dispose() {}
 
-    // Computes a scroll destination for the given parameters.  The returned
-    // ScrollResultOneDimensional will have didScroll set to false if already at
-    // the destination.  Otherwise, starts scrolling towards the destination and
-    // didScroll is true.  Scrolling may be immediate or animated. The base
-    // class implementation always scrolls immediately, never animates.
-    virtual ScrollResultOneDimensional userScroll(ScrollbarOrientation, ScrollGranularity, float step, float delta);
+  // A possibly animated scroll. The base class implementation always scrolls
+  // immediately, never animates. If the scroll is animated and currently the
+  // animator has an in-progress animation, the ScrollResult will always return
+  // no unusedDelta and didScroll=true, i.e. fully consuming the scroll request.
+  // This makes animations latch to a single scroller. Note, the semantics are
+  // currently somewhat different on Mac - see ScrollAnimatorMac.mm.
+  virtual ScrollResult userScroll(ScrollGranularity, const ScrollOffset& delta);
 
-    virtual void scrollToOffsetWithoutAnimation(const FloatPoint&);
+  virtual void scrollToOffsetWithoutAnimation(const ScrollOffset&);
 
-    ScrollableArea* scrollableArea() const { return m_scrollableArea; }
+  void setCurrentOffset(const ScrollOffset&);
+  ScrollOffset currentOffset() const;
+  virtual ScrollOffset desiredTargetOffset() const { return currentOffset(); }
 
-    virtual void setIsActive() { }
+  // Returns how much of pixelDelta will be used by the underlying scrollable
+  // area.
+  virtual ScrollOffset computeDeltaToConsume(const ScrollOffset& delta) const;
 
-#if OS(MACOSX)
-    virtual void handleWheelEventPhase(PlatformWheelEventPhase) { }
-#endif
+  // ScrollAnimatorCompositorCoordinator implementation.
+  ScrollableArea* getScrollableArea() const override {
+    return m_scrollableArea;
+  }
+  void tickAnimation(double monotonicTime) override{};
+  void cancelAnimation() override {}
+  void takeOverCompositorAnimation() override {}
+  void updateCompositorAnimations() override{};
+  void notifyCompositorAnimationFinished(int groupId) override{};
+  void notifyCompositorAnimationAborted(int groupId) override{};
+  void layerForCompositedScrollingDidChange(
+      CompositorAnimationTimeline*) override{};
 
-    void setCurrentPosition(const FloatPoint&);
-    FloatPoint currentPosition() const;
+  virtual void contentAreaWillPaint() const {}
+  virtual void mouseEnteredContentArea() const {}
+  virtual void mouseExitedContentArea() const {}
+  virtual void mouseMovedInContentArea() const {}
+  virtual void mouseEnteredScrollbar(Scrollbar&) const {}
+  virtual void mouseExitedScrollbar(Scrollbar&) const {}
+  virtual void updateAfterLayout() {}
+  virtual void contentsResized() const {}
+  virtual void contentAreaDidShow() const {}
+  virtual void contentAreaDidHide() const {}
 
-    virtual void cancelAnimations() { }
-    virtual void serviceScrollAnimations() { }
-    virtual bool hasRunningAnimation() const { return false; }
+  virtual void finishCurrentScrollAnimations() {}
 
-    virtual void contentAreaWillPaint() const { }
-    virtual void mouseEnteredContentArea() const { }
-    virtual void mouseExitedContentArea() const { }
-    virtual void mouseMovedInContentArea() const { }
-    virtual void mouseEnteredScrollbar(Scrollbar*) const { }
-    virtual void mouseExitedScrollbar(Scrollbar*) const { }
-    virtual void willStartLiveResize() { }
-    virtual void updateAfterLayout() { }
-    virtual void contentsResized() const { }
-    virtual void willEndLiveResize() { }
-    virtual void contentAreaDidShow() const { }
-    virtual void contentAreaDidHide() const { }
+  virtual void didAddVerticalScrollbar(Scrollbar&) {}
+  virtual void willRemoveVerticalScrollbar(Scrollbar&) {}
+  virtual void didAddHorizontalScrollbar(Scrollbar&) {}
+  virtual void willRemoveHorizontalScrollbar(Scrollbar&) {}
 
-    virtual void finishCurrentScrollAnimations() { }
+  virtual void notifyContentAreaScrolled(const ScrollOffset&) {}
 
-    virtual void didAddVerticalScrollbar(Scrollbar*) { }
-    virtual void willRemoveVerticalScrollbar(Scrollbar*) { }
-    virtual void didAddHorizontalScrollbar(Scrollbar*) { }
-    virtual void willRemoveHorizontalScrollbar(Scrollbar*) { }
+  virtual bool setScrollbarsVisibleForTesting(bool) { return false; }
 
-    virtual bool shouldScrollbarParticipateInHitTesting(Scrollbar*) { return true; }
+  DECLARE_VIRTUAL_TRACE();
 
-    virtual void notifyContentAreaScrolled(const FloatSize&) { }
+ protected:
+  explicit ScrollAnimatorBase(ScrollableArea*);
 
-    virtual bool setScrollbarsVisibleForTesting(bool) { return false; }
+  virtual void notifyOffsetChanged();
 
-    DECLARE_VIRTUAL_TRACE();
+  Member<ScrollableArea> m_scrollableArea;
 
-protected:
-    explicit ScrollAnimatorBase(ScrollableArea*);
-
-    virtual void notifyPositionChanged();
-
-    RawPtrWillBeMember<ScrollableArea> m_scrollableArea;
-    float m_currentPosX; // We avoid using a FloatPoint in order to reduce
-    float m_currentPosY; // subclass code complexity.
-
-private:
-    float clampScrollPosition(ScrollbarOrientation, float);
+  ScrollOffset m_currentOffset;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ScrollAnimatorBase_h
+#endif  // ScrollAnimatorBase_h

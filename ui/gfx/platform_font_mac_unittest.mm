@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include <Cocoa/Cocoa.h>
+#include <stddef.h>
 
+#include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/font.h"
 
@@ -12,24 +14,50 @@ TEST(PlatformFontMacTest, DeriveFont) {
   gfx::Font base_font("Helvetica", 13);
 
   // Bold
-  gfx::Font bold_font(base_font.Derive(0, gfx::Font::BOLD));
+  gfx::Font bold_font(
+      base_font.Derive(0, gfx::Font::NORMAL, gfx::Font::Weight::BOLD));
   NSFontTraitMask traits = [[NSFontManager sharedFontManager]
       traitsOfFont:bold_font.GetNativeFont()];
   EXPECT_EQ(NSBoldFontMask, traits);
 
   // Italic
-  gfx::Font italic_font(base_font.Derive(0, gfx::Font::ITALIC));
+  gfx::Font italic_font(
+      base_font.Derive(0, gfx::Font::ITALIC, gfx::Font::Weight::NORMAL));
   traits = [[NSFontManager sharedFontManager]
       traitsOfFont:italic_font.GetNativeFont()];
   EXPECT_EQ(NSItalicFontMask, traits);
 
   // Bold italic
-  gfx::Font bold_italic_font(base_font.Derive(
-      0, gfx::Font::BOLD | gfx::Font::ITALIC));
+  gfx::Font bold_italic_font(
+      base_font.Derive(0, gfx::Font::ITALIC, gfx::Font::Weight::BOLD));
   traits = [[NSFontManager sharedFontManager]
       traitsOfFont:bold_italic_font.GetNativeFont()];
   EXPECT_EQ(static_cast<NSFontTraitMask>(NSBoldFontMask | NSItalicFontMask),
             traits);
+}
+
+TEST(PlatformFontMacTest, DeriveFontUnderline) {
+  // Create a default font.
+  gfx::Font base_font;
+
+  // Make the font underlined.
+  gfx::Font derived_font(base_font.Derive(
+      0, base_font.GetStyle() | gfx::Font::UNDERLINE, base_font.GetWeight()));
+
+  // Validate the derived font properties against its native font instance.
+  NSFontTraitMask traits = [[NSFontManager sharedFontManager]
+      traitsOfFont:derived_font.GetNativeFont()];
+  gfx::Font::Weight actual_weight = (traits & NSFontBoldTrait)
+                                        ? gfx::Font::Weight::BOLD
+                                        : gfx::Font::Weight::NORMAL;
+
+  int actual_style = gfx::Font::UNDERLINE;
+  if (traits & NSFontItalicTrait)
+    actual_style |= gfx::Font::ITALIC;
+
+  EXPECT_TRUE(derived_font.GetStyle() & gfx::Font::UNDERLINE);
+  EXPECT_EQ(derived_font.GetStyle(), actual_style);
+  EXPECT_EQ(derived_font.GetWeight(), actual_weight);
 }
 
 TEST(PlatformFontMacTest, ConstructFromNativeFont) {
@@ -41,7 +69,7 @@ TEST(PlatformFontMacTest, ConstructFromNativeFont) {
   gfx::Font bold_font([NSFont fontWithName:@"Helvetica-Bold" size:14]);
   EXPECT_EQ(14, bold_font.GetFontSize());
   EXPECT_EQ("Helvetica", bold_font.GetFontName());
-  EXPECT_EQ(gfx::Font::BOLD, bold_font.GetStyle());
+  EXPECT_EQ(gfx::Font::Weight::BOLD, bold_font.GetWeight());
 
   gfx::Font italic_font([NSFont fontWithName:@"Helvetica-Oblique" size:14]);
   EXPECT_EQ(14, italic_font.GetFontSize());
@@ -52,7 +80,8 @@ TEST(PlatformFontMacTest, ConstructFromNativeFont) {
       [NSFont fontWithName:@"Helvetica-BoldOblique" size:14]);
   EXPECT_EQ(14, bold_italic_font.GetFontSize());
   EXPECT_EQ("Helvetica", bold_italic_font.GetFontName());
-  EXPECT_EQ(gfx::Font::BOLD | gfx::Font::ITALIC, bold_italic_font.GetStyle());
+  EXPECT_EQ(gfx::Font::ITALIC, bold_italic_font.GetStyle());
+  EXPECT_EQ(gfx::Font::Weight::BOLD, bold_italic_font.GetWeight());
 }
 
 // Ensures that the Font's reported height is consistent with the native font's
@@ -61,15 +90,15 @@ TEST(PlatformFontMacTest, ValidateFontHeight) {
   // Use the default ResourceBundle system font. E.g. Helvetica Neue in 10.10,
   // Lucida Grande before that, and San Francisco after.
   gfx::Font default_font;
-  gfx::Font::FontStyle styles[] = {
-    gfx::Font::NORMAL, gfx::Font::BOLD, gfx::Font::ITALIC, gfx::Font::UNDERLINE
-  };
+  gfx::Font::FontStyle styles[] = {gfx::Font::NORMAL, gfx::Font::ITALIC,
+                                   gfx::Font::UNDERLINE};
 
   for (size_t i = 0; i < arraysize(styles); ++i) {
     SCOPED_TRACE(testing::Message() << "Font::FontStyle: " << styles[i]);
     // Include the range of sizes used by ResourceBundle::FontStyle (-1 to +8).
     for (int delta = -1; delta <= 8; ++delta) {
-      gfx::Font font = default_font.Derive(delta, styles[i]);
+      gfx::Font font =
+          default_font.Derive(delta, styles[i], gfx::Font::Weight::NORMAL);
       SCOPED_TRACE(testing::Message() << "FontSize(): " << font.GetFontSize());
       NSFont* native_font = font.GetNativeFont();
 

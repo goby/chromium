@@ -5,11 +5,13 @@
 #ifndef NET_URL_REQUEST_URL_REQUEST_NETLOG_PARAMS_H_
 #define NET_URL_REQUEST_URL_REQUEST_NETLOG_PARAMS_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
-#include "net/log/net_log.h"
 
 class GURL;
 
@@ -19,13 +21,15 @@ class Value;
 
 namespace net {
 
+class NetLogCaptureMode;
+
 // Returns a Value containing NetLog parameters for starting a URLRequest.
-NET_EXPORT scoped_ptr<base::Value> NetLogURLRequestStartCallback(
+NET_EXPORT std::unique_ptr<base::Value> NetLogURLRequestStartCallback(
     const GURL* url,
     const std::string* method,
     int load_flags,
     RequestPriority priority,
-    int64 upload_id,
+    int64_t upload_id,
     NetLogCaptureMode /* capture_mode */);
 
 }  // namespace net

@@ -5,6 +5,8 @@
 #ifndef TOOLS_BATTOR_AGENT_BATTOR_ERROR_H_
 #define TOOLS_BATTOR_AGENT_BATTOR_ERROR_H_
 
+#include <string>
+
 namespace battor {
 
 // A BattOrError is an error that occurs when communicating with a BattOr.
@@ -12,7 +14,14 @@ enum BattOrError {
   BATTOR_ERROR_NONE,
   BATTOR_ERROR_CONNECTION_FAILED,
   BATTOR_ERROR_TIMEOUT,
+  BATTOR_ERROR_SEND_ERROR,
+  BATTOR_ERROR_RECEIVE_ERROR,
+  BATTOR_ERROR_UNEXPECTED_MESSAGE,
+  BATTOR_ERROR_TOO_MANY_INIT_RETRIES,
+  BATTOR_ERROR_TOO_MANY_START_TRACING_RETRIES,
 };
+
+std::string BattOrErrorToString(BattOrError error);
 
 }
 

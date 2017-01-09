@@ -4,10 +4,10 @@
 
 #include "base/trace_event/heap_profiler_allocation_register.h"
 
+#include <stddef.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "base/basictypes.h"
 #include "base/bits.h"
 #include "base/logging.h"
 #include "base/process/process_metrics.h"
@@ -18,6 +18,7 @@
 
 namespace base {
 namespace trace_event {
+namespace internal {
 
 namespace {
 size_t GetGuardSize() {
@@ -25,8 +26,7 @@ size_t GetGuardSize() {
 }
 }
 
-// static
-void* AllocationRegister::AllocateVirtualMemory(size_t size) {
+void* AllocateGuardedVirtualMemory(size_t size) {
   size = bits::Align(size, GetPageSize());
 
   // Add space for a guard page at the end.
@@ -48,12 +48,11 @@ void* AllocationRegister::AllocateVirtualMemory(size_t size) {
   return addr;
 }
 
-// static
-void AllocationRegister::FreeVirtualMemory(void* address,
-                                           size_t allocated_size) {
+void FreeGuardedVirtualMemory(void* address, size_t allocated_size) {
   size_t size = bits::Align(allocated_size, GetPageSize()) + GetGuardSize();
   munmap(address, size);
 }
 
+}  // namespace internal
 }  // namespace trace_event
 }  // namespace base

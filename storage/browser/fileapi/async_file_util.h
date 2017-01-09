@@ -5,13 +5,15 @@
 #ifndef STORAGE_BROWSER_FILEAPI_ASYNC_FILE_UTIL_H_
 #define STORAGE_BROWSER_FILEAPI_ASYNC_FILE_UTIL_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/files/file.h"
 #include "base/files/file_util_proxy.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "storage/browser/fileapi/file_system_operation.h"
 #include "storage/browser/storage_browser_export.h"
 #include "storage/common/fileapi/directory_entry.h"
@@ -77,7 +79,7 @@ class AsyncFileUtil {
            const scoped_refptr<storage::ShareableFileReference>& file_ref)>
       CreateSnapshotFileCallback;
 
-  typedef base::Callback<void(int64 size)> CopyFileProgressCallback;
+  typedef base::Callback<void(int64_t size)> CopyFileProgressCallback;
 
   typedef FileSystemOperation::CopyOrMoveOption CopyOrMoveOption;
   typedef FileSystemOperation::GetMetadataField GetMetadataField;
@@ -99,11 +101,10 @@ class AsyncFileUtil {
   // FileSystemOperationImpl::OpenFile calls this.
   // This is used only by Pepper/NaCl File API.
   //
-  virtual void CreateOrOpen(
-      scoped_ptr<FileSystemOperationContext> context,
-      const FileSystemURL& url,
-      int file_flags,
-      const CreateOrOpenCallback& callback) = 0;
+  virtual void CreateOrOpen(std::unique_ptr<FileSystemOperationContext> context,
+                            const FileSystemURL& url,
+                            int file_flags,
+                            const CreateOrOpenCallback& callback) = 0;
 
   // Ensures that the given |url| exist.  This creates a empty new file
   // at |url| if the |url| does not exist.
@@ -118,7 +119,7 @@ class AsyncFileUtil {
   //   and there was an error while creating a new file.
   //
   virtual void EnsureFileExists(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& url,
       const EnsureFileExistsCallback& callback) = 0;
 
@@ -136,7 +137,7 @@ class AsyncFileUtil {
   // - Other error code if it failed to create a directory.
   //
   virtual void CreateDirectory(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& url,
       bool exclusive,
       bool recursive,
@@ -150,7 +151,7 @@ class AsyncFileUtil {
   // - File::FILE_ERROR_NOT_FOUND if the file doesn't exist.
   // - Other error code if there was an error while retrieving the file info.
   //
-  virtual void GetFileInfo(scoped_ptr<FileSystemOperationContext> context,
+  virtual void GetFileInfo(std::unique_ptr<FileSystemOperationContext> context,
                            const FileSystemURL& url,
                            int fields,
                            const GetFileInfoCallback& callback) = 0;
@@ -174,7 +175,7 @@ class AsyncFileUtil {
   //   is a file (not a directory).
   //
   virtual void ReadDirectory(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& url,
       const ReadDirectoryCallback& callback) = 0;
 
@@ -185,12 +186,11 @@ class AsyncFileUtil {
   // FileSystemOperationImpl::TouchFile calls this.
   // This is used only by Pepper/NaCl File API.
   //
-  virtual void Touch(
-      scoped_ptr<FileSystemOperationContext> context,
-      const FileSystemURL& url,
-      const base::Time& last_access_time,
-      const base::Time& last_modified_time,
-      const StatusCallback& callback) = 0;
+  virtual void Touch(std::unique_ptr<FileSystemOperationContext> context,
+                     const FileSystemURL& url,
+                     const base::Time& last_access_time,
+                     const base::Time& last_modified_time,
+                     const StatusCallback& callback) = 0;
 
   // Truncates a file at |path| to |length|. If |length| is larger than
   // the original file size, the file will be extended, and the extended
@@ -201,11 +201,10 @@ class AsyncFileUtil {
   // This reports following error code via |callback|:
   // - File::FILE_ERROR_NOT_FOUND if the file doesn't exist.
   //
-  virtual void Truncate(
-      scoped_ptr<FileSystemOperationContext> context,
-      const FileSystemURL& url,
-      int64 length,
-      const StatusCallback& callback) = 0;
+  virtual void Truncate(std::unique_ptr<FileSystemOperationContext> context,
+                        const FileSystemURL& url,
+                        int64_t length,
+                        const StatusCallback& callback) = 0;
 
   // Copies a file from |src_url| to |dest_url|.
   // This must be called for files that belong to the same filesystem
@@ -229,7 +228,7 @@ class AsyncFileUtil {
   //   its parent path is a file.
   //
   virtual void CopyFileLocal(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& src_url,
       const FileSystemURL& dest_url,
       CopyOrMoveOption option,
@@ -252,7 +251,7 @@ class AsyncFileUtil {
   //   its parent path is a file.
   //
   virtual void MoveFileLocal(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& src_url,
       const FileSystemURL& dest_url,
       CopyOrMoveOption option,
@@ -272,10 +271,10 @@ class AsyncFileUtil {
   //   its parent path is a file.
   //
   virtual void CopyInForeignFile(
-        scoped_ptr<FileSystemOperationContext> context,
-        const base::FilePath& src_file_path,
-        const FileSystemURL& dest_url,
-        const StatusCallback& callback) = 0;
+      std::unique_ptr<FileSystemOperationContext> context,
+      const base::FilePath& src_file_path,
+      const FileSystemURL& dest_url,
+      const StatusCallback& callback) = 0;
 
   // Deletes a single file.
   //
@@ -285,10 +284,9 @@ class AsyncFileUtil {
   // - File::FILE_ERROR_NOT_FOUND if |url| does not exist.
   // - File::FILE_ERROR_NOT_A_FILE if |url| is not a file.
   //
-  virtual void DeleteFile(
-      scoped_ptr<FileSystemOperationContext> context,
-      const FileSystemURL& url,
-      const StatusCallback& callback) = 0;
+  virtual void DeleteFile(std::unique_ptr<FileSystemOperationContext> context,
+                          const FileSystemURL& url,
+                          const StatusCallback& callback) = 0;
 
   // Removes a single empty directory.
   //
@@ -300,7 +298,7 @@ class AsyncFileUtil {
   // - File::FILE_ERROR_NOT_EMPTY if |url| is not empty.
   //
   virtual void DeleteDirectory(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& url,
       const StatusCallback& callback) = 0;
 
@@ -318,7 +316,7 @@ class AsyncFileUtil {
   // - File::FILE_ERROR_NOT_FOUND if |url| does not exist.
   // - File::FILE_ERROR_INVALID_OPERATION if this operation is not supported.
   virtual void DeleteRecursively(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& url,
       const StatusCallback& callback) = 0;
 
@@ -354,7 +352,7 @@ class AsyncFileUtil {
   // dependent) in error cases, and the caller should always
   // check the return code.
   virtual void CreateSnapshotFile(
-      scoped_ptr<FileSystemOperationContext> context,
+      std::unique_ptr<FileSystemOperationContext> context,
       const FileSystemURL& url,
       const CreateSnapshotFileCallback& callback) = 0;
 

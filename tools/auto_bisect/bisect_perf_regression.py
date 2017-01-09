@@ -41,11 +41,12 @@ try bots, and is started by tools/run-bisect-perf-regression.py using
 config parameters from tools/auto_bisect/bisect.cfg.
 """
 
+import argparse
 import copy
 import errno
 import hashlib
+import json
 import logging
-import argparse
 import os
 import re
 import shlex
@@ -53,12 +54,15 @@ import shutil
 import StringIO
 import sys
 import time
+import urllib
+import urllib2
 
-sys.path.append(os.path.join(
-    os.path.dirname(__file__), os.path.pardir, 'telemetry'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..',
+                             'third_party', 'catapult', 'telemetry'))
 
 from bisect_printer import BisectPrinter
 from bisect_results import BisectResults
+import bisect_results_json
 from bisect_state import BisectState
 import bisect_utils
 import builder
@@ -76,9 +80,6 @@ BUILD_RESULT_SUCCEED = 0
 BUILD_RESULT_FAIL = 1
 BUILD_RESULT_SKIPPED = 2
 
-# The confidence percentage we require to consider the initial range a
-# regression based on the test results of the initial good and bad revisions.
-REGRESSION_CONFIDENCE = 80
 # How many times to repeat the test on the last known good and first known bad
 # revisions in order to assess a more accurate confidence score in the
 # regression culprit.
@@ -127,6 +128,7 @@ PERF_SVN_REPO_URL = 'svn://svn.chromium.org/chrome-try/try-perf'
 FULL_SVN_REPO_URL = 'svn://svn.chromium.org/chrome-try/try'
 ANDROID_CHROME_SVN_REPO_URL = ('svn://svn.chromium.org/chrome-try-internal/'
                                'try-perf')
+PERF_DASH_RESULTS_URL = 'https://chromeperf.appspot.com/post_bisect_results'
 
 
 class RunGitError(Exception):
@@ -475,12 +477,15 @@ def _GenerateProfileIfNecessary(command_args):
   return True
 
 
-def _IsRegressionReproduced(known_good_result, known_bad_result):
+def _IsRegressionReproduced(known_good_result, known_bad_result,
+                            required_initial_confidence):
   """Checks whether the regression was reproduced based on the initial values.
 
   Args:
     known_good_result: A dict with the keys "values", "mean" and "std_err".
     known_bad_result: Same as above.
+    required_initial_confidence: Minimum confidence score for the given
+        good and bad revisions to avoid early aborting.
 
   Returns:
     True if there is a clear change between the result values for the given
@@ -492,12 +497,12 @@ def _IsRegressionReproduced(known_good_result, known_bad_result):
       return map(math_utils.Mean, values)
     return values
 
-  p_value = BisectResults.ConfidenceScore(
+  initial_confidence = BisectResults.ConfidenceScore(
       PossiblyFlatten(known_bad_result['values']),
       PossiblyFlatten(known_good_result['values']),
       accept_single_bad_or_good=True)
 
-  return p_value > REGRESSION_CONFIDENCE
+  return initial_confidence >= required_initial_confidence
 
 
 def _RegressionNotReproducedWarningMessage(
@@ -2141,6 +2146,23 @@ class BisectPerformanceMetrics(object):
 
     return (run_results_tot, run_results_reverted)
 
+  def PostBisectResults(self, bisect_results):
+    """Posts bisect results to Perf Dashboard."""
+    bisect_utils.OutputAnnotationStepStart('Post Results')
+
+    results = bisect_results_json.Get(
+        bisect_results, self.opts, self.depot_registry)
+    results_json = json.dumps(results)
+    data = urllib.urlencode({'data': results_json})
+    request = urllib2.Request(PERF_DASH_RESULTS_URL)
+    try:
+      urllib2.urlopen(request, data)
+    except urllib2.URLError as e:
+      print 'Failed to post bisect results. Error: %s.' % e
+      bisect_utils.OutputAnnotationStepWarning()
+
+    bisect_utils.OutputAnnotationStepClosed()
+
   def _RunTestWithAnnotations(
       self, step_text, error_text, head_revision,
       target_depot, command_to_run, metric, force_build):
@@ -2329,7 +2351,8 @@ class BisectPerformanceMetrics(object):
       # beyond chance-induced variation.
       if not (self.opts.debug_ignore_regression_confidence or
               self._IsBisectModeReturnCode()):
-        if not _IsRegressionReproduced(known_good_value, known_bad_value):
+        if not _IsRegressionReproduced(known_good_value, known_bad_value,
+                                       self.opts.required_initial_confidence):
           # If there is no significant difference between "good" and "bad"
           # revision results, then the "bad revision" is considered "good".
           # TODO(qyearsley): Remove this if it is not necessary.
@@ -2582,6 +2605,8 @@ class BisectOptions(object):
     self.bisect_mode = bisect_utils.BISECT_MODE_MEAN
     self.improvement_direction = 0
     self.bug_id = ''
+    self.required_initial_confidence = 80.0
+    self.try_job_id = None
 
   @staticmethod
   def _AddBisectOptionsGroup(parser):
@@ -2633,6 +2658,14 @@ class BisectOptions(object):
                             'If this number is given, bisect will attempt to ' +
                             'verify that the bug is not closed before '
                             'starting.')
+    group.add_argument('--try_job_id', default=None,
+                       help='The id assigned by Perf Dashboard when sending ' +
+                            'try jobs.')
+    group.add_argument('--required_initial_confidence', type=float,
+                       default=80.0,
+                       help='The required confidence score for the initial '
+                            'check to see whether there is a significant '
+                            'difference between given good and bad revisions.')
 
   @staticmethod
   def _AddBuildOptionsGroup(parser):
@@ -2851,6 +2884,7 @@ def main():
       if results.error:
         raise RuntimeError(results.error)
       bisect_test.printer.FormatAndPrintResults(results)
+      bisect_test.PostBisectResults(results)
       return 0
     finally:
       bisect_test.PerformCleanup()

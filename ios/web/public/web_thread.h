@@ -9,8 +9,11 @@
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 
 namespace base {
@@ -26,12 +29,9 @@ namespace web {
 
 class WebThreadDelegate;
 
-// Use DCHECK_CURRENTLY_ON_WEB_THREAD(WebThread::ID) to assert that a function
-// can only be called on the named WebThread.
-// TODO(ios): rename to DCHECK_CURRENTLY_ON once iOS is independent from
-// content/ so it won't collide with the macro DCHECK_CURRENTLY_ON in content/.
-// http://crbug.com/438202
-#define DCHECK_CURRENTLY_ON_WEB_THREAD(thread_identifier)   \
+// Use DCHECK_CURRENTLY_ON(WebThread::ID) to assert that a function can only be
+// called on the named WebThread.
+#define DCHECK_CURRENTLY_ON(thread_identifier)              \
   (DCHECK(::web::WebThread::CurrentlyOn(thread_identifier)) \
    << ::web::WebThread::GetDCheckCurrentlyOnErrorMessage(thread_identifier))
 
@@ -174,23 +174,12 @@ class WebThread {
   // perform random blocking operations such as file writes.
   static base::SequencedWorkerPool* GetBlockingPool() WARN_UNUSED_RESULT;
 
-  // Returns a pointer to the thread's message loop, which will become
-  // invalid during shutdown, so you probably shouldn't hold onto it.
-  //
-  // This must not be called before the thread is started, or after
-  // the thread is stopped, or it will DCHECK.
-  //
-  // Ownership remains with the WebThread implementation, so you must not
-  // delete the pointer.
-  static base::MessageLoop* UnsafeGetMessageLoopForThread(ID identifier);
-
   // Callable on any thread.  Returns whether the given well-known thread is
   // initialized.
   static bool IsThreadInitialized(ID identifier) WARN_UNUSED_RESULT;
 
   // Callable on any thread.  Returns whether execution is currently on the
-  // given thread.  To DCHECK this, use the DCHECK_CURRENTLY_ON_WEB_THREAD()
-  // macro above.
+  // given thread.  To DCHECK this, use the DCHECK_CURRENTLY_ON() macro above.
   static bool CurrentlyOn(ID identifier) WARN_UNUSED_RESULT;
 
   // Callable on any thread.  Returns whether the threads message loop is valid.
@@ -217,9 +206,55 @@ class WebThread {
   // not deleted while unregistering.
   static void SetDelegate(ID identifier, WebThreadDelegate* delegate);
 
-  // Returns an appropriate error message for when
-  // DCHECK_CURRENTLY_ON_WEB_THREAD() fails.
+  // Returns an appropriate error message for when DCHECK_CURRENTLY_ON() fails.
   static std::string GetDCheckCurrentlyOnErrorMessage(ID expected);
+
+  // Use these templates in conjunction with RefCountedThreadSafe or
+  // std::unique_ptr when you want to ensure that an object is deleted on a
+  // specific thread. This is needed when an object can hop between threads
+  // (i.e. IO -> FILE -> IO), and thread switching delays can mean that the
+  // final IO tasks executes before the FILE task's stack unwinds.
+  // This would lead to the object destructing on the FILE thread, which often
+  // is not what you want (i.e. to unregister from NotificationService, to
+  // notify other objects on the creating thread etc).
+  template <ID thread>
+  struct DeleteOnThread {
+    template <typename T>
+    static void Destruct(const T* x) {
+      if (CurrentlyOn(thread)) {
+        delete x;
+      } else {
+        if (!DeleteSoon(thread, FROM_HERE, x)) {
+          // Leaks at shutdown are acceptable under normal circumstances,
+          // do not report.
+        }
+      }
+    }
+    template <typename T>
+    inline void operator()(T* ptr) const {
+      enum { type_must_be_complete = sizeof(T) };
+      Destruct(ptr);
+    }
+  };
+
+  // Sample usage with RefCountedThreadSafe:
+  // class Foo
+  //     : public base::RefCountedThreadSafe<
+  //           Foo, web::WebThread::DeleteOnIOThread> {
+  //
+  // ...
+  //  private:
+  //   friend struct web::WebThread::DeleteOnThread<web::WebThread::IO>;
+  //   friend class base::DeleteHelper<Foo>;
+  //
+  //   ~Foo();
+  //
+  // Sample usage with std::unique_ptr:
+  // std::unique_ptr<Foo, web::WebThread::DeleteOnIOThread> ptr;
+  struct DeleteOnUIThread : public DeleteOnThread<UI> {};
+  struct DeleteOnIOThread : public DeleteOnThread<IO> {};
+  struct DeleteOnFileThread : public DeleteOnThread<FILE> {};
+  struct DeleteOnDBThread : public DeleteOnThread<DB> {};
 
  private:
   friend class WebThreadImpl;

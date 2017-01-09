@@ -12,7 +12,9 @@
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/signin/easy_unlock_service_signin_chromeos.h"
+#include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_names.h"
 #include "crypto/random.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -98,14 +100,14 @@ void BootstrapUserContextInitializer::OnGetEasyUnlockData(
   service->AddObserver(this);
 
   static_cast<EasyUnlockServiceSignin*>(service)
-      ->SetCurrentUser(user_context_.GetAccountId().GetUserEmail());
+      ->SetCurrentUser(user_context_.GetAccountId());
   OnScreenlockStateChanged(service->GetScreenlockState());
 }
 
 void BootstrapUserContextInitializer::OnEasyUnlockAuthenticated(
     EasyUnlockAuthAttempt::Type auth_attempt_type,
     bool success,
-    const std::string& user_id,
+    const AccountId& account_id,
     const std::string& key_secret,
     const std::string& key_label) {
   DCHECK_EQ(EasyUnlockAuthAttempt::TYPE_SIGNIN, auth_attempt_type);
@@ -165,7 +167,7 @@ void BootstrapUserContextInitializer::OnRefreshTokenResponse(
 }
 
 void BootstrapUserContextInitializer::OnGetUserInfoResponse(
-    scoped_ptr<base::DictionaryValue> user_info) {
+    std::unique_ptr<base::DictionaryValue> user_info) {
   std::string email;
   std::string gaia_id;
   if (!user_info->GetString("email", &email) ||
@@ -175,8 +177,8 @@ void BootstrapUserContextInitializer::OnGetUserInfoResponse(
     return;
   }
 
-  user_context_.SetUserID(email);
-  user_context_.SetGaiaID(gaia_id);
+  user_context_.SetAccountId(user_manager::known_user::GetAccountId(
+      user_manager::CanonicalizeUserID(email), gaia_id));
   StartCheckExistingKeys();
 }
 
@@ -202,7 +204,7 @@ void BootstrapUserContextInitializer::OnScreenlockStateChanged(
   service->RemoveObserver(this);
 
   service->AttemptAuth(
-      user_context_.GetAccountId().GetUserEmail(),
+      user_context_.GetAccountId(),
       base::Bind(&BootstrapUserContextInitializer::OnEasyUnlockAuthenticated,
                  weak_ptr_factory_.GetWeakPtr()));
 }

@@ -29,61 +29,54 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/filters/SpotLightSource.h"
 
 #include "platform/text/TextStream.h"
-#include <algorithm>
+#include "wtf/MathExtras.h"
 
 namespace blink {
 
-bool SpotLightSource::setPosition(const FloatPoint3D& position)
-{
-    if (m_position == position)
-        return false;
-    m_position = position;
-    return true;
+bool SpotLightSource::setPosition(const FloatPoint3D& position) {
+  if (m_position == position)
+    return false;
+  m_position = position;
+  return true;
 }
 
-bool SpotLightSource::setPointsAt(const FloatPoint3D& direction)
-{
-    if (m_direction == direction)
-        return false;
-    m_direction = direction;
-    return true;
+bool SpotLightSource::setPointsAt(const FloatPoint3D& direction) {
+  if (m_direction == direction)
+    return false;
+  m_direction = direction;
+  return true;
 }
 
-bool SpotLightSource::setSpecularExponent(float specularExponent)
-{
-    specularExponent = std::min(std::max(specularExponent, 1.0f), 128.0f);
-    if (m_specularExponent == specularExponent)
-        return false;
-    m_specularExponent = specularExponent;
-    return true;
+bool SpotLightSource::setSpecularExponent(float specularExponent) {
+  specularExponent = clampTo(specularExponent, 1.0f, 128.0f);
+  if (m_specularExponent == specularExponent)
+    return false;
+  m_specularExponent = specularExponent;
+  return true;
 }
 
-bool SpotLightSource::setLimitingConeAngle(float limitingConeAngle)
-{
-    if (m_limitingConeAngle == limitingConeAngle)
-        return false;
-    m_limitingConeAngle = limitingConeAngle;
-    return true;
+bool SpotLightSource::setLimitingConeAngle(float limitingConeAngle) {
+  if (m_limitingConeAngle == limitingConeAngle)
+    return false;
+  m_limitingConeAngle = limitingConeAngle;
+  return true;
 }
 
-static TextStream& operator<<(TextStream& ts, const FloatPoint3D& p)
-{
-    ts << "x=" << p.x() << " y=" << p.y() << " z=" << p.z();
-    return ts;
+static TextStream& operator<<(TextStream& ts, const FloatPoint3D& p) {
+  ts << "x=" << p.x() << " y=" << p.y() << " z=" << p.z();
+  return ts;
 }
 
-TextStream& SpotLightSource::externalRepresentation(TextStream& ts) const
-{
-    ts << "[type=SPOT-LIGHT] ";
-    ts << "[position=\"" << position() << "\"]";
-    ts << "[direction=\"" << direction() << "\"]";
-    ts << "[specularExponent=\"" << specularExponent() << "\"]";
-    ts << "[limitingConeAngle=\"" << limitingConeAngle() << "\"]";
-    return ts;
+TextStream& SpotLightSource::externalRepresentation(TextStream& ts) const {
+  ts << "[type=SPOT-LIGHT] ";
+  ts << "[position=\"" << position() << "\"]";
+  ts << "[direction=\"" << direction() << "\"]";
+  ts << "[specularExponent=\"" << specularExponent() << "\"]";
+  ts << "[limitingConeAngle=\"" << limitingConeAngle() << "\"]";
+  return ts;
 }
 
-} // namespace blink
+}  // namespace blink

@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/api/inline_install_private/inline_install_private_api.h"
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/extensions/webstore_install_with_prompt.h"
 #include "chrome/browser/profiles/profile.h"
@@ -32,8 +33,8 @@ class Installer : public WebstoreInstallWithPrompt {
   // webstore.
   const GURL& GetRequestorURL() const override { return requestor_url_; }
 
-  scoped_refptr<ExtensionInstallPrompt::Prompt> CreateInstallPrompt() const
-      override;
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> CreateInstallPrompt()
+      const override;
 
   void OnManifestParsed() override;
 
@@ -52,9 +53,9 @@ Installer::Installer(const std::string& id,
 Installer::~Installer() {
 }
 
-scoped_refptr<ExtensionInstallPrompt::Prompt>
-Installer::CreateInstallPrompt() const {
-  scoped_refptr<ExtensionInstallPrompt::Prompt> prompt(
+std::unique_ptr<ExtensionInstallPrompt::Prompt> Installer::CreateInstallPrompt()
+    const {
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt(
       new ExtensionInstallPrompt::Prompt(
           ExtensionInstallPrompt::INLINE_INSTALL_PROMPT));
   prompt->SetWebstoreData(localized_user_count(),
@@ -72,7 +73,7 @@ void Installer::OnManifestParsed() {
   }
 
   Manifest parsed_manifest(Manifest::INTERNAL,
-                           make_scoped_ptr(manifest()->DeepCopy()));
+                           base::WrapUnique(manifest()->DeepCopy()));
 
   std::string manifest_error;
   std::vector<InstallWarning> warnings;
@@ -99,7 +100,7 @@ InlineInstallPrivateInstallFunction::
 ExtensionFunction::ResponseAction
 InlineInstallPrivateInstallFunction::Run() {
   typedef api::inline_install_private::Install::Params Params;
-  scoped_ptr<Params> params(Params::Create(*args_));
+  std::unique_ptr<Params> params(Params::Create(*args_));
 
   if (!user_gesture())
     return RespondNow(CreateResponse("Must be called with a user gesture",
@@ -115,14 +116,10 @@ InlineInstallPrivateInstallFunction::Run() {
     return RespondNow(CreateResponse("Already installed",
                                      webstore_install::OTHER_ERROR));
 
-  scoped_refptr<Installer> installer =
-      new Installer(
-          params->id,
-          source_url_,
-          Profile::FromBrowserContext(browser_context()),
-          base::Bind(
-              &InlineInstallPrivateInstallFunction::InstallerCallback,
-              this));
+  scoped_refptr<Installer> installer = new Installer(
+      params->id, source_url(), Profile::FromBrowserContext(browser_context()),
+      base::Bind(&InlineInstallPrivateInstallFunction::InstallerCallback,
+                 this));
   installer->BeginInstall();
 
   return RespondLater();

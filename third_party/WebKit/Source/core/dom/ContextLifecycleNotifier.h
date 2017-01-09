@@ -34,33 +34,33 @@
 
 namespace blink {
 
-class ActiveDOMObject;
+class SuspendableObject;
 class ContextLifecycleObserver;
 class ExecutionContext;
 
-class CORE_EXPORT ContextLifecycleNotifier : public LifecycleNotifier<ExecutionContext, ContextLifecycleObserver> {
-    WTF_MAKE_NONCOPYABLE(ContextLifecycleNotifier);
-public:
-    void notifyResumingActiveDOMObjects();
-    void notifySuspendingActiveDOMObjects();
-    void notifyStoppingActiveDOMObjects();
+class CORE_EXPORT ContextLifecycleNotifier
+    : public LifecycleNotifier<ExecutionContext, ContextLifecycleObserver> {
+  WTF_MAKE_NONCOPYABLE(ContextLifecycleNotifier);
 
-    unsigned activeDOMObjectCount() const;
-    bool hasPendingActivity() const;
+ public:
+  void notifyResumingSuspendableObjects();
+  void notifySuspendingSuspendableObjects();
 
-protected:
-    // Need a default constructor to link core and modules separately.
-    // If no default constructor, we will see an error: "constructor for
-    // 'blink::ExecutionContext' must explicitly initialize the base class
-    // 'blink::ContextLifecycleNotifier' which does not have a default
-    // constructor ExecutionContext::ExecutionContext()".
-    ContextLifecycleNotifier() { }
+  unsigned activeDOMObjectCount() const;
 
-#if ENABLE(ASSERT)
-    bool contains(ActiveDOMObject*) const;
+ protected:
+  // Need a default constructor to link core and modules separately.
+  // If no default constructor, we will see an error: "constructor for
+  // 'blink::ExecutionContext' must explicitly initialize the base class
+  // 'blink::ContextLifecycleNotifier' which does not have a default
+  // constructor ExecutionContext::ExecutionContext()".
+  ContextLifecycleNotifier() {}
+
+#if DCHECK_IS_ON()
+  bool contains(SuspendableObject*) const;
 #endif
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ContextLifecycleNotifier_h
+#endif  // ContextLifecycleNotifier_h

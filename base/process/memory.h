@@ -5,14 +5,11 @@
 #ifndef BASE_PROCESS_MEMORY_H_
 #define BASE_PROCESS_MEMORY_H_
 
+#include <stddef.h>
+
 #include "base/base_export.h"
-#include "base/basictypes.h"
 #include "base/process/process_handle.h"
 #include "build/build_config.h"
-
-#if defined(OS_WIN)
-#include <windows.h>
-#endif
 
 #ifdef PVALLOC_AVAILABLE
 // Build config explicitly tells us whether or not pvalloc is available.
@@ -24,14 +21,6 @@
 
 namespace base {
 
-// Enables low fragmentation heap (LFH) for every heaps of this process. This
-// won't have any effect on heaps created after this function call. It will not
-// modify data allocated in the heaps before calling this function. So it is
-// better to call this function early in initialization and again before
-// entering the main loop.
-// Note: Returns true on Windows 2000 without doing anything.
-BASE_EXPORT bool EnableLowFragmentationHeap();
-
 // Enables 'terminate on heap corruption' flag. Helps protect against heap
 // overflow. Has no effect if the OS doesn't provide the necessary facility.
 BASE_EXPORT void EnableTerminationOnHeapCorruption();
@@ -42,12 +31,6 @@ BASE_EXPORT void EnableTerminationOnOutOfMemory();
 // Terminates process. Should be called only for out of memory errors.
 // Crash reporting classifies such crashes as OOM.
 BASE_EXPORT void TerminateBecauseOutOfMemory(size_t size);
-
-#if defined(OS_WIN)
-// Returns the module handle to which an address belongs. The reference count
-// of the module is not incremented.
-BASE_EXPORT HMODULE GetModuleFromAddress(void* address);
-#endif
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
 BASE_EXPORT extern size_t g_oom_size;
@@ -63,6 +46,20 @@ const int kMaxOomScore = 1000;
 // translate the given value into [0, 15].  Some aliasing of values
 // may occur in that case, of course.
 BASE_EXPORT bool AdjustOOMScore(ProcessId process, int score);
+#endif
+
+#if defined(OS_WIN)
+namespace win {
+
+// Custom Windows exception code chosen to indicate an out of memory error.
+// See https://msdn.microsoft.com/en-us/library/het71c37.aspx.
+// "To make sure that you do not define a code that conflicts with an existing
+// exception code" ... "The resulting error code should therefore have the
+// highest four bits set to hexadecimal E."
+// 0xe0000008 was chosen arbitrarily, as 0x00000008 is ERROR_NOT_ENOUGH_MEMORY.
+const DWORD kOomExceptionCode = 0xe0000008;
+
+}  // namespace win
 #endif
 
 // Special allocator functions for callers that want to check for OOM.

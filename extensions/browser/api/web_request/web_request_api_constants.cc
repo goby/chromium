@@ -10,6 +10,7 @@ const char kChallengerKey[] = "challenger";
 const char kErrorKey[] = "error";
 const char kFrameIdKey[] = "frameId";
 const char kParentFrameIdKey[] = "parentFrameId";
+const char kProcessIdKey[] = "processId";
 const char kFromCache[] = "fromCache";
 const char kHostKey[] = "host";
 const char kIpKey[] = "ip";
@@ -61,6 +62,8 @@ const char kOnResponseStarted[] = "onResponseStarted";
 const char kOnSendHeaders[] = "onSendHeaders";
 const char kOnAuthRequired[] = "onAuthRequired";
 
+const char kInvalidPublicSessionBlockingResponse[] =
+    "Only the 'cancel' action is allowed in Public Sessions.";
 const char kInvalidRedirectUrl[] = "redirectUrl '*' is not a valid URL.";
 const char kInvalidBlockingResponse[] =
     "cancel cannot be true in the presence of other keys.";

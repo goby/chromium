@@ -6,11 +6,11 @@
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/test/test_timeouts.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/common/chrome_result_codes.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/result_codes.h"
@@ -29,13 +29,6 @@ class CloudPrintPolicyTest : public InProcessBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(CloudPrintPolicyTest, NormalPassedFlag) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   base::FilePath test_file_path = ui_test_utils::GetTestFilePath(
       base::FilePath(), base::FilePath().AppendASCII("empty.html"));
   base::CommandLine new_command_line(GetCommandLineForRelaunch());

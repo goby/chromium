@@ -5,7 +5,9 @@
 #ifndef CONTENT_RENDERER_JAVA_GIN_JAVA_FUNCTION_INVOCATION_HELPER_H_
 #define CONTENT_RENDERER_JAVA_GIN_JAVA_FUNCTION_INVOCATION_HELPER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/renderer/java/gin_java_bridge_dispatcher.h"
 #include "gin/arguments.h"
@@ -27,7 +29,7 @@ class GinJavaFunctionInvocationHelper {
  private:
   std::string method_name_;
   base::WeakPtr<GinJavaBridgeDispatcher> dispatcher_;
-  scoped_ptr<GinJavaBridgeValueConverter> converter_;
+  std::unique_ptr<GinJavaBridgeValueConverter> converter_;
 
   DISALLOW_COPY_AND_ASSIGN(GinJavaFunctionInvocationHelper);
 };

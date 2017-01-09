@@ -5,11 +5,12 @@
 // IPC messages for drag and drop.
 // Multiply-included message file, hence no include guard.
 
+#include <vector>
+
 #include "content/common/drag_event_source_info.h"
-#include "content/public/common/common_param_traits.h"
 #include "content/public/common/drop_data.h"
 #include "ipc/ipc_message_macros.h"
-#include "third_party/WebKit/public/web/WebDragOperation.h"
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -19,7 +20,7 @@
 // Messages sent from the browser to the renderer.
 
 IPC_MESSAGE_ROUTED5(DragMsg_TargetDragEnter,
-                    content::DropData /* drop_data */,
+                    std::vector<content::DropData::Metadata> /* drop_data */,
                     gfx::Point /* client_pt */,
                     gfx::Point /* screen_pt */,
                     blink::WebDragOperationsMask /* ops_allowed */,
@@ -33,7 +34,8 @@ IPC_MESSAGE_ROUTED4(DragMsg_TargetDragOver,
 
 IPC_MESSAGE_ROUTED0(DragMsg_TargetDragLeave)
 
-IPC_MESSAGE_ROUTED3(DragMsg_TargetDrop,
+IPC_MESSAGE_ROUTED4(DragMsg_TargetDrop,
+                    content::DropData /* drop_data */,
                     gfx::Point /* client_pt */,
                     gfx::Point /* screen_pt */,
                     int /* key_modifiers */)

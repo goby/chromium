@@ -7,13 +7,14 @@
 #ifndef CHROME_INSTALLER_UTIL_GOOGLE_CHROME_BINARIES_DISTRIBUTION_H_
 #define CHROME_INSTALLER_UTIL_GOOGLE_CHROME_BINARIES_DISTRIBUTION_H_
 
+#include "base/macros.h"
 #include "chrome/installer/util/chromium_binaries_distribution.h"
 
 class GoogleChromeBinariesDistribution : public ChromiumBinariesDistribution {
  public:
   base::string16 GetDisplayName() override;
 
-  base::string16 GetShortcutName(ShortcutType shortcut_type) override;
+  base::string16 GetShortcutName() override;
 
   void UpdateInstallStatus(bool system_install,
                            installer::ArchiveType archive_type,

@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "build/build_config.h"
@@ -65,6 +65,25 @@ Process SpawnMultiProcessTestChild(
 // Gets the base command line for |SpawnMultiProcessTestChild()|. To this, you
 // may add any flags needed for your child process.
 CommandLine GetMultiProcessTestChildBaseCommandLine();
+
+#if defined(OS_ANDROID)
+
+// Enable the alternate test child implementation which support spawning a child
+// after threads have been created. If used, this MUST be the first line of
+// main(). The main function is passed in to avoid a link-time dependency in
+// component builds.
+void InitAndroidMultiProcessTestHelper(int (*main)(int, char**));
+
+// Returns true if the current process is a test child.
+bool AndroidIsChildProcess();
+
+// Wait for a test child to exit if the alternate test child implementation is
+// being used.
+bool AndroidWaitForChildExitWithTimeout(
+    const Process& process, TimeDelta timeout, int* exit_code)
+    WARN_UNUSED_RESULT;
+
+#endif  // defined(OS_ANDROID)
 
 // MultiProcessTest ------------------------------------------------------------
 

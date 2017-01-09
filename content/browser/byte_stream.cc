@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
 
@@ -21,10 +22,10 @@ ContentVector;
 
 class ByteStreamReaderImpl;
 
-// A poor man's weak pointer; a RefCountedThreadSafe boolean that can be
-// cleared in an object destructor and accessed to check for object
-// existence.  We can't use weak pointers because they're tightly tied to
-// threads rather than task runners.
+// A makeshift weak pointer; a RefCountedThreadSafe boolean that can be cleared
+// in an object destructor and accessed to check for object existence. We can't
+// use weak pointers because they're tightly tied to threads rather than task
+// runners.
 // TODO(rdsmith): A better solution would be extending weak pointers
 // to support SequencedTaskRunners.
 struct LifetimeFlag : public base::RefCountedThreadSafe<LifetimeFlag> {
@@ -125,21 +126,19 @@ class ByteStreamReaderImpl : public ByteStreamReader {
   // static because it may be called after the object it is targeting
   // has been destroyed.  It may not access |*target|
   // if |*object_lifetime_flag| is false.
-  static void TransferData(
-      scoped_refptr<LifetimeFlag> object_lifetime_flag,
-      ByteStreamReaderImpl* target,
-      scoped_ptr<ContentVector> transfer_buffer,
-      size_t transfer_buffer_bytes,
-      bool source_complete,
-      int status);
+  static void TransferData(scoped_refptr<LifetimeFlag> object_lifetime_flag,
+                           ByteStreamReaderImpl* target,
+                           std::unique_ptr<ContentVector> transfer_buffer,
+                           size_t transfer_buffer_bytes,
+                           bool source_complete,
+                           int status);
 
  private:
   // Called from TransferData once object existence has been validated.
-  void TransferDataInternal(
-      scoped_ptr<ContentVector> transfer_buffer,
-      size_t transfer_buffer_bytes,
-      bool source_complete,
-      int status);
+  void TransferDataInternal(std::unique_ptr<ContentVector> transfer_buffer,
+                            size_t transfer_buffer_bytes,
+                            bool source_complete,
+                            int status);
 
   void MaybeUpdateInput();
 
@@ -288,7 +287,7 @@ void ByteStreamWriterImpl::PostToPeer(bool complete, int status) {
   // Valid contexts in which to call.
   DCHECK(complete || 0 != input_contents_size_);
 
-  scoped_ptr<ContentVector> transfer_buffer;
+  std::unique_ptr<ContentVector> transfer_buffer;
   size_t buffer_size = 0;
   if (0 != input_contents_size_) {
     transfer_buffer.reset(new ContentVector);
@@ -376,19 +375,19 @@ void ByteStreamReaderImpl::RegisterCallback(
 void ByteStreamReaderImpl::TransferData(
     scoped_refptr<LifetimeFlag> object_lifetime_flag,
     ByteStreamReaderImpl* target,
-    scoped_ptr<ContentVector> transfer_buffer,
+    std::unique_ptr<ContentVector> transfer_buffer,
     size_t buffer_size,
     bool source_complete,
     int status) {
   // If our target is no longer alive, do nothing.
   if (!object_lifetime_flag->is_alive) return;
 
-  target->TransferDataInternal(
-      transfer_buffer.Pass(), buffer_size, source_complete, status);
+  target->TransferDataInternal(std::move(transfer_buffer), buffer_size,
+                               source_complete, status);
 }
 
 void ByteStreamReaderImpl::TransferDataInternal(
-    scoped_ptr<ContentVector> transfer_buffer,
+    std::unique_ptr<ContentVector> transfer_buffer,
     size_t buffer_size,
     bool source_complete,
     int status) {
@@ -447,8 +446,8 @@ void CreateByteStream(
     scoped_refptr<base::SequencedTaskRunner> input_task_runner,
     scoped_refptr<base::SequencedTaskRunner> output_task_runner,
     size_t buffer_size,
-    scoped_ptr<ByteStreamWriter>* input,
-    scoped_ptr<ByteStreamReader>* output) {
+    std::unique_ptr<ByteStreamWriter>* input,
+    std::unique_ptr<ByteStreamReader>* output) {
   scoped_refptr<LifetimeFlag> input_flag(new LifetimeFlag());
   scoped_refptr<LifetimeFlag> output_flag(new LifetimeFlag());
 

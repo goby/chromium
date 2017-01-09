@@ -4,7 +4,10 @@
 
 #include "chrome/test/chromedriver/net/test_http_server.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -12,6 +15,7 @@
 #include "base/time/time.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_source.h"
 #include "net/server/http_server_request_info.h"
 #include "net/socket/tcp_server_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,10 +24,10 @@ const int kBufferSize = 100 * 1024 * 1024;  // 100 MB
 
 TestHttpServer::TestHttpServer()
     : thread_("ServerThread"),
-      all_closed_event_(false, true),
+      all_closed_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                        base::WaitableEvent::InitialState::SIGNALED),
       request_action_(kAccept),
-      message_action_(kEchoMessage) {
-}
+      message_action_(kEchoMessage) {}
 
 TestHttpServer::~TestHttpServer() {
 }
@@ -35,7 +39,8 @@ bool TestHttpServer::Start() {
   if (!thread_started)
     return false;
   bool success;
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   thread_.task_runner()->PostTask(
       FROM_HERE, base::Bind(&TestHttpServer::StartOnServerThread,
                             base::Unretained(this), &success, &event));
@@ -46,7 +51,8 @@ bool TestHttpServer::Start() {
 void TestHttpServer::Stop() {
   if (!thread_.IsRunning())
     return;
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   thread_.task_runner()->PostTask(
       FROM_HERE, base::Bind(&TestHttpServer::StopOnServerThread,
                             base::Unretained(this), &event));
@@ -66,6 +72,11 @@ void TestHttpServer::SetRequestAction(WebSocketRequestAction action) {
 void TestHttpServer::SetMessageAction(WebSocketMessageAction action) {
   base::AutoLock lock(action_lock_);
   message_action_ = action;
+}
+
+void TestHttpServer::SetMessageCallback(const base::Closure& callback) {
+  base::AutoLock lock(action_lock_);
+  message_callback_ = callback;
 }
 
 GURL TestHttpServer::web_socket_url() const {
@@ -105,10 +116,14 @@ void TestHttpServer::OnWebSocketRequest(
 void TestHttpServer::OnWebSocketMessage(int connection_id,
                                         const std::string& data) {
   WebSocketMessageAction action;
+  base::Closure callback;
   {
     base::AutoLock lock(action_lock_);
     action = message_action_;
+    callback = base::ResetAndReturn(&message_callback_);
   }
+  if (!callback.is_null())
+    callback.Run();
   switch (action) {
     case kEchoMessage:
       server_->SendOverWebSocket(connection_id, data);
@@ -127,10 +142,10 @@ void TestHttpServer::OnClose(int connection_id) {
 
 void TestHttpServer::StartOnServerThread(bool* success,
                                          base::WaitableEvent* event) {
-  scoped_ptr<net::ServerSocket> server_socket(
-      new net::TCPServerSocket(NULL, net::NetLog::Source()));
+  std::unique_ptr<net::ServerSocket> server_socket(
+      new net::TCPServerSocket(NULL, net::NetLogSource()));
   server_socket->ListenWithAddressAndPort("127.0.0.1", 0, 1);
-  server_.reset(new net::HttpServer(server_socket.Pass(), this));
+  server_.reset(new net::HttpServer(std::move(server_socket), this));
 
   net::IPEndPoint address;
   int error = server_->GetLocalAddress(&address);

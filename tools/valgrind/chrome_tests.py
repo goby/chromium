@@ -111,6 +111,11 @@ class ChromeTests:
       if os.path.exists(platform_suppression_file):
         cmd.append("--suppressions=%s" % platform_suppression_file)
 
+    if tool_name == "drmemory":
+      if self._options.drmemory_ops:
+        # prepending " " to avoid Dr. Memory's option confusing optparse
+        cmd += ["--drmemory_ops", " " + self._options.drmemory_ops]
+
     if self._options.valgrind_tool_flags:
       cmd += self._options.valgrind_tool_flags.split(" ")
     if self._options.keep_logs:
@@ -169,8 +174,9 @@ class ChromeTests:
   def _AppendGtestFilter(self, tool, name, cmd):
     '''Append an appropriate --gtest_filter flag to the googletest binary
        invocation.
-       If the user passed his own filter mentioning only one test, just use it.
-       Othewise, filter out tests listed in the appropriate gtest_exclude files.
+       If the user passed their own filter mentioning only one test, just use
+       it. Otherwise, filter out tests listed in the appropriate gtest_exclude
+       files.
     '''
     if (self._gtest_filter and
         ":" not in self._gtest_filter and
@@ -317,7 +323,9 @@ class ChromeTests:
     return self.SimpleTest("chrome", "cast_unittests")
 
   def TestCC(self):
-    return self.SimpleTest("cc", "cc_unittests")
+    return self.SimpleTest("cc", "cc_unittests",
+                           cmd_args=[
+                               "--cc-layer-tree-test-long-timeout"])
 
   def TestChromeApp(self):
     return self.SimpleTest("chrome_app", "chrome_app_unittests")
@@ -330,9 +338,6 @@ class ChromeTests:
 
   def TestChromeOS(self):
     return self.SimpleTest("chromeos", "chromeos_unittests")
-
-  def TestCloudPrint(self):
-    return self.SimpleTest("cloud_print", "cloud_print_unittests")
 
   def TestComponents(self):
     return self.SimpleTest("components", "components_unittests")
@@ -386,6 +391,9 @@ class ChromeTests:
   def TestInstallerUtil(self):
     return self.SimpleTest("installer_util", "installer_util_unittests")
 
+  def TestInstallStatic(self):
+    return self.SimpleTest("install_static", "install_static_unittests")
+
   def TestJingle(self):
     return self.SimpleTest("chrome", "jingle_unittests")
 
@@ -408,10 +416,6 @@ class ChromeTests:
     return self.SimpleTest("mojo_public_bindings",
                            "mojo_public_bindings_unittests")
 
-  def TestMojoPublicEnv(self):
-    return self.SimpleTest("mojo_public_env",
-                           "mojo_public_environment_unittests")
-
   def TestMojoPublicSystem(self):
     return self.SimpleTest("mojo_public_system",
                            "mojo_public_system_unittests")
@@ -419,10 +423,6 @@ class ChromeTests:
   def TestMojoPublicSysPerf(self):
     return self.SimpleTest("mojo_public_sysperf",
                            "mojo_public_system_perftests")
-
-  def TestMojoPublicUtility(self):
-    return self.SimpleTest("mojo_public_utility",
-                           "mojo_public_utility_unittests")
 
   def TestMojoSystem(self):
     return self.SimpleTest("mojo_system", "mojo_system_unittests")
@@ -454,8 +454,8 @@ class ChromeTests:
   def TestSql(self):
     return self.SimpleTest("chrome", "sql_unittests")
 
-  def TestSync(self):
-    return self.SimpleTest("chrome", "sync_unit_tests")
+  def TestStorage(self):
+    return self.SimpleTest("storage", "storage_unittests")
 
   def TestLinuxSandbox(self):
     return self.SimpleTest("sandbox", "sandbox_linux_unittests")
@@ -511,11 +511,6 @@ class ChromeTests:
     return self.SimpleTest("chrome", "interactive_ui_tests",
                            valgrind_test_args=self.UI_VALGRIND_ARGS,
                            cmd_args=self.UI_TEST_ARGS)
-
-  def TestSafeBrowsing(self):
-    return self.SimpleTest("chrome", "safe_browsing_tests",
-                           valgrind_test_args=self.UI_VALGRIND_ARGS,
-                           cmd_args=(["--ui-test-action-max-timeout=450000"]))
 
   def TestSyncIntegration(self):
     return self.SimpleTest("chrome", "sync_integration_tests",
@@ -668,8 +663,6 @@ class ChromeTests:
     "chrome_elf": TestChromeElf,
     "chromedriver": TestChromeDriver,
     "chromeos": TestChromeOS,    "chromeos_unittests": TestChromeOS,
-    "cloud_print": TestCloudPrint,
-    "cloud_print_unittests": TestCloudPrint,
     "components": TestComponents,"components_unittests": TestComponents,
     "compositor": TestCompositor,"compositor_unittests": TestCompositor,
     "content": TestContent,      "content_unittests": TestContent,
@@ -688,6 +681,8 @@ class ChromeTests:
     "gpu": TestGPU,              "gpu_unittests": TestGPU,
     "ipc": TestIpc,              "ipc_tests": TestIpc,
     "installer_util": TestInstallerUtil,
+    "installer_util_unittests": TestInstallerUtil,
+    "install_static_unittests": TestInstallStatic,
     "interactive_ui": TestInteractiveUI,
     "jingle": TestJingle,        "jingle_unittests": TestJingle,
     "keyboard": TestKeyboard,    "keyboard_unittests": TestKeyboard,
@@ -697,11 +692,13 @@ class ChromeTests:
     "message_center_unittests" : TestMessageCenter,
     "midi": TestMidi,             "midi_unittests": TestMidi,
     "mojo_common": TestMojoCommon,
+    "mojo_common_unittests": TestMojoCommon,
     "mojo_system": TestMojoSystem,
+    "mojo_system_unittests": TestMojoSystem,
     "mojo_public_system": TestMojoPublicSystem,
-    "mojo_public_utility": TestMojoPublicUtility,
+    "mojo_public_system_unittests": TestMojoPublicSystem,
     "mojo_public_bindings": TestMojoPublicBindings,
-    "mojo_public_env": TestMojoPublicEnv,
+    "mojo_public_bindings_unittests": TestMojoPublicBindings,
     "mojo_public_sysperf": TestMojoPublicSysPerf,
     "net": TestNet,              "net_unittests": TestNet,
     "net_perf": TestNetPerf,     "net_perftests": TestNetPerf,
@@ -710,11 +707,10 @@ class ChromeTests:
     "ppapi": TestPPAPI,          "ppapi_unittests": TestPPAPI,
     "printing": TestPrinting,    "printing_unittests": TestPrinting,
     "remoting": TestRemoting,    "remoting_unittests": TestRemoting,
-    "safe_browsing": TestSafeBrowsing, "safe_browsing_tests": TestSafeBrowsing,
     "sandbox": TestLinuxSandbox, "sandbox_linux_unittests": TestLinuxSandbox,
     "skia": TestSkia,            "skia_unittests": TestSkia,
     "sql": TestSql,              "sql_unittests": TestSql,
-    "sync": TestSync,            "sync_unit_tests": TestSync,
+    "storage": TestStorage,      "storage_unittests": TestStorage,
     "sync_integration_tests": TestSyncIntegration,
     "sync_integration": TestSyncIntegration,
     "ui_base_unit": TestUIBaseUnit,       "ui_base_unittests": TestUIBaseUnit,
@@ -740,6 +736,8 @@ def _main():
                          "as well.")
   parser.add_option("--baseline", action="store_true", default=False,
                     help="generate baseline data instead of validating")
+  parser.add_option("-f", "--force", action="store_true", default=False,
+                    help="run a broken test anyway")
   parser.add_option("--gtest_filter",
                     help="additional arguments to --gtest_filter")
   parser.add_option("--gtest_repeat", help="argument for --gtest_repeat")
@@ -771,6 +769,8 @@ def _main():
                     help="run the tests with --test-launcher-total-shards")
   parser.add_option("--test-launcher-shard-index", type=int,
                     help="run the tests with --test-launcher-shard-index")
+  parser.add_option("--drmemory_ops",
+                    help="extra options passed to Dr. Memory")
 
   options, args = parser.parse_args()
 
@@ -796,7 +796,59 @@ def _main():
   if len(options.test) != 1 and options.gtest_filter:
     parser.error("--gtest_filter and multiple tests don't make sense together")
 
+  BROKEN_TESTS = {
+    'drmemory_light': [
+      'addressinput',
+      'aura',
+      'base_unittests',
+      'cc',
+      'components', # x64 only?
+      'content',
+      'gfx',
+      'mojo_public_bindings',
+    ],
+    'drmemory_full': [
+      'addressinput',
+      'aura',
+      'base_unittests',
+      'blink_heap',
+      'blink_platform',
+      'browser_tests',
+      'cast',
+      'cc',
+      'chromedriver',
+      'compositor',
+      'content',
+      'content_browsertests',
+      'device',
+      'events',
+      'extensions',
+      'gfx',
+      'google_apis',
+      'gpu',
+      'ipc_tests',
+      'jingle',
+      'keyboard',
+      'media',
+      'midi',
+      'mojo_common',
+      'mojo_public_bindings',
+      'mojo_public_sysperf',
+      'mojo_public_system',
+      'mojo_system',
+      'net',
+      'remoting',
+      'unit',
+      'url',
+    ],
+  }
+
   for t in options.test:
+    if t in BROKEN_TESTS[options.valgrind_tool] and not options.force:
+      logging.info("Skipping broken %s test %s -- see crbug.com/633693" %
+                   (options.valgrind_tool, t))
+      return 0
+
     tests = ChromeTests(options, args, t)
     ret = tests.Run()
     if ret: return ret

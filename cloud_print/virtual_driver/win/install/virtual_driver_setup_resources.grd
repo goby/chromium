@@ -131,12 +131,12 @@ file.
       </message>
       <message name="IDS_ERROR_NO_XPS"
                meaning="Error message" desc="XPS driver is not installed.">
-        <ph name="xps_url">&lt;a href=&quot;http://www.microsoft.com/download/details.aspx?id=11816&quot;&gt;<ex>&lt;a href=&quot;http://www.microsoft.com/download/details.aspx?id=11816&quot;&gt;</ex></ph>XPS driver<ph name="xps_url_end">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph> is not installed.
+        <ph name="xps_url">&lt;a href=&quot;https://www.microsoft.com/download/details.aspx?id=11816&quot;&gt;<ex>&lt;a href=&quot;https://www.microsoft.com/download/details.aspx?id=11816&quot;&gt;</ex></ph>XPS driver<ph name="xps_url_end">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph> is not installed.
       </message>
     </messages>
     <includes>
       <if expr="lang == 'en'">
-        <include name="IDI_ICON" file="../../../service/win/resources/cloudprint.ico" type="ICON" translateable="false" />
+        <include name="IDI_ICON" file="resources/cloudprint.ico" type="ICON" translateable="false" />
       </if>
     </includes>
   </release>

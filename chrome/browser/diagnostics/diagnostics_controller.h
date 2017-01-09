@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_DIAGNOSTICS_DIAGNOSTICS_CONTROLLER_H_
 #define CHROME_BROWSER_DIAGNOSTICS_DIAGNOSTICS_CONTROLLER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 
 namespace base {
@@ -52,7 +54,7 @@ class DiagnosticsController {
   DiagnosticsController();
   ~DiagnosticsController();
 
-  scoped_ptr<DiagnosticsModel> model_;
+  std::unique_ptr<DiagnosticsModel> model_;
   DiagnosticsWriter* writer_;
 
   DISALLOW_COPY_AND_ASSIGN(DiagnosticsController);

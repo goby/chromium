@@ -6,9 +6,12 @@
 
 #include "base/at_exit.h"
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/device_event_log/device_event_log.h"
 
 #if defined(OS_LINUX) && defined(USE_UDEV)
@@ -33,16 +36,23 @@ void HidService::Observer::OnDeviceRemovedCleanup(
     scoped_refptr<HidDeviceInfo> device_info) {
 }
 
-scoped_ptr<HidService> HidService::Create(
+std::unique_ptr<HidService> HidService::Create(
     scoped_refptr<base::SingleThreadTaskRunner> file_task_runner) {
 #if defined(OS_LINUX) && defined(USE_UDEV)
-  return make_scoped_ptr(new HidServiceLinux(file_task_runner));
+  return base::WrapUnique(new HidServiceLinux(file_task_runner));
 #elif defined(OS_MACOSX)
-  return make_scoped_ptr(new HidServiceMac(file_task_runner));
+  return base::WrapUnique(new HidServiceMac(file_task_runner));
 #elif defined(OS_WIN)
-  return make_scoped_ptr(new HidServiceWin(file_task_runner));
+  return base::WrapUnique(new HidServiceWin(file_task_runner));
 #else
   return nullptr;
+#endif
+}
+
+void HidService::Shutdown() {
+#if DCHECK_IS_ON()
+  DCHECK(!did_shutdown_);
+  did_shutdown_ = true;
 #endif
 }
 
@@ -53,8 +63,8 @@ void HidService::GetDevices(const GetDevicesCallback& callback) {
     for (const auto& map_entry : devices_) {
       devices.push_back(map_entry.second);
     }
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-                                           base::Bind(callback, devices));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, devices));
   } else {
     pending_enumerations_.push_back(callback);
   }
@@ -79,16 +89,18 @@ scoped_refptr<HidDeviceInfo> HidService::GetDeviceInfo(
   return it->second;
 }
 
-HidService::HidService() : enumeration_ready_(false) {
-}
+HidService::HidService() = default;
 
 HidService::~HidService() {
   DCHECK(thread_checker_.CalledOnValidThread());
+#if DCHECK_IS_ON()
+  DCHECK(did_shutdown_);
+#endif
 }
 
 void HidService::AddDevice(scoped_refptr<HidDeviceInfo> device_info) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!ContainsKey(devices_, device_info->device_id())) {
+  if (!base::ContainsKey(devices_, device_info->device_id())) {
     devices_[device_info->device_id()] = device_info;
 
     HID_LOG(USER) << "HID device "
@@ -100,7 +112,8 @@ void HidService::AddDevice(scoped_refptr<HidDeviceInfo> device_info) {
                   << device_info->device_id() << "'";
 
     if (enumeration_ready_) {
-      FOR_EACH_OBSERVER(Observer, observer_list_, OnDeviceAdded(device_info));
+      for (auto& observer : observer_list_)
+        observer.OnDeviceAdded(device_info);
     }
   }
 }
@@ -113,12 +126,13 @@ void HidService::RemoveDevice(const HidDeviceId& device_id) {
 
     scoped_refptr<HidDeviceInfo> device = it->second;
     if (enumeration_ready_) {
-      FOR_EACH_OBSERVER(Observer, observer_list_, OnDeviceRemoved(device));
+      for (auto& observer : observer_list_)
+        observer.OnDeviceRemoved(device);
     }
     devices_.erase(it);
     if (enumeration_ready_) {
-      FOR_EACH_OBSERVER(Observer, observer_list_,
-                        OnDeviceRemovedCleanup(device));
+      for (auto& observer : observer_list_)
+        observer.OnDeviceRemovedCleanup(device);
     }
   }
 }

@@ -73,6 +73,14 @@ def upper_first_letter(name):
     return name[0].upper() + name[1:]
 
 
+def camel_case(css_name):
+    """Convert hyphen-separated-name to UpperCamelCase.
+
+    E.g., '-foo-bar' becomes 'FooBar'.
+    """
+    return ''.join(upper_first_letter(word) for word in css_name.split('-'))
+
+
 def to_macro_style(name):
     s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
     return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).upper()
@@ -86,11 +94,13 @@ def cpp_name(entry):
     return entry['ImplementedAs'] or script_name(entry)
 
 
-def enable_conditional_if_endif(code, feature):
-    # Jinja2 filter to generate if/endif directive blocks based on a feature
-    if not feature:
-        return code
-    condition = 'ENABLE(%s)' % feature
-    return ('#if %s\n' % condition +
-            code +
-            '#endif // %s\n' % condition)
+def enum_for_css_keyword(keyword):
+    return 'CSSValue' + ''.join(camel_case(keyword))
+
+
+def enum_for_css_property(property_name):
+    return 'CSSProperty' + ''.join(camel_case(property_name))
+
+
+def enum_for_css_property_alias(property_name):
+    return 'CSSPropertyAlias' + camel_case(property_name)

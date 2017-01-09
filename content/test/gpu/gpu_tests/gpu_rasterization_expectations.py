@@ -12,6 +12,6 @@ class GpuRasterizationExpectations(GpuTestExpectations):
     # self.Fail('GpuRasterization.BlueBox',
     #     ['mac', 'amd', ('nvidia', 0x1234)], bug=123)
 
-    # Failing on Nexus 5 and 6
-    self.Fail('GpuRasterization.ConcavePaths',
-              ['android', 'qualcomm'], bug=499555)
+    # Seems to be flaky on the new AMD R7 240 drivers.
+    self.Flaky('GpuRasterization.BlueBox',
+        ['win', ('amd', 0x6613)], bug=653538)

@@ -5,8 +5,11 @@
 #ifndef CONTENT_RENDERER_PEPPER_PPB_IMAGE_DATA_IMPL_H_
 #define CONTENT_RENDERER_PEPPER_PPB_IMAGE_DATA_IMPL_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "content/common/content_export.h"
 #include "ppapi/c/ppb_image_data.h"
@@ -50,7 +53,7 @@ class CONTENT_EXPORT PPB_ImageData_Impl
                                     uint32_t* byte_count) = 0;
     virtual SkCanvas* GetPlatformCanvas() = 0;
     virtual SkCanvas* GetCanvas() = 0;
-    virtual const SkBitmap* GetMappedBitmap() const = 0;
+    virtual SkBitmap GetMappedBitmap() const = 0;
   };
 
   // If you call this constructor, you must also call Init before use. Normally
@@ -98,7 +101,11 @@ class CONTENT_EXPORT PPB_ImageData_Impl
   SkCanvas* GetCanvas() override;
   void SetIsCandidateForReuse() override;
 
-  const SkBitmap* GetMappedBitmap() const;
+  // Returns an *empty* bitmap on error.
+  // Users must call SkBitmap::lockPixels() before SkBitmap::getPixels();
+  // unlockPixels() will be automatically invoked if necessary when the
+  // bitmap goes out of scope.
+  SkBitmap GetMappedBitmap() const;
 
  private:
   ~PPB_ImageData_Impl() override;
@@ -106,7 +113,7 @@ class CONTENT_EXPORT PPB_ImageData_Impl
   PP_ImageDataFormat format_;
   int width_;
   int height_;
-  scoped_ptr<Backend> backend_;
+  std::unique_ptr<Backend> backend_;
 
   DISALLOW_COPY_AND_ASSIGN(PPB_ImageData_Impl);
 };
@@ -132,17 +139,17 @@ class ImageDataPlatformBackend : public PPB_ImageData_Impl::Backend {
                           uint32_t* byte_count) override;
   SkCanvas* GetPlatformCanvas() override;
   SkCanvas* GetCanvas() override;
-  const SkBitmap* GetMappedBitmap() const override;
+  SkBitmap GetMappedBitmap() const override;
 
  private:
   // This will be NULL before initialization, and if this PPB_ImageData_Impl is
   // swapped with another.
   int width_;
   int height_;
-  scoped_ptr<TransportDIB> dib_;
+  std::unique_ptr<TransportDIB> dib_;
 
   // When the device is mapped, this is the image. Null when umapped.
-  scoped_ptr<SkCanvas> mapped_canvas_;
+  std::unique_ptr<SkCanvas> mapped_canvas_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageDataPlatformBackend);
 };
@@ -166,14 +173,14 @@ class ImageDataSimpleBackend : public PPB_ImageData_Impl::Backend {
                           uint32_t* byte_count) override;
   SkCanvas* GetPlatformCanvas() override;
   SkCanvas* GetCanvas() override;
-  const SkBitmap* GetMappedBitmap() const override;
+  SkBitmap GetMappedBitmap() const override;
 
  private:
-  scoped_ptr<base::SharedMemory> shared_memory_;
+  std::unique_ptr<base::SharedMemory> shared_memory_;
   // skia_bitmap_ is backed by shared_memory_.
   SkBitmap skia_bitmap_;
-  scoped_ptr<SkCanvas> skia_canvas_;
-  uint32 map_count_;
+  std::unique_ptr<SkCanvas> skia_canvas_;
+  uint32_t map_count_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageDataSimpleBackend);
 };

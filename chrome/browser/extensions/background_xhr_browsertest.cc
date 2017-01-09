@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/profiles/profile.h"
@@ -22,7 +23,7 @@
 
 namespace {
 
-scoped_ptr<net::ClientCertStore> CreateNullCertStore() {
+std::unique_ptr<net::ClientCertStore> CreateNullCertStore() {
   return nullptr;
 }
 
@@ -66,7 +67,8 @@ IN_PROC_BROWSER_TEST_F(BackgroundXhrTest, TlsClientAuth) {
   // Launch HTTPS server.
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   net::SSLServerConfig ssl_config;
-  ssl_config.require_client_cert = true;
+  ssl_config.client_cert_type =
+      net::SSLServerConfig::ClientCertType::REQUIRE_CLIENT_CERT;
   https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK, ssl_config);
   https_server.ServeFilesFromSourceDirectory("content/test/data");
   ASSERT_TRUE(https_server.Start());

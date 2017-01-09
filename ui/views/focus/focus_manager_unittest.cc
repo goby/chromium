@@ -4,15 +4,17 @@
 
 #include "ui/views/focus/focus_manager.h"
 
+#include <stddef.h>
+
 #include <utility>
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/accessible_pane_view.h"
-#include "ui/views/controls/button/label_button.h"
 #include "ui/views/focus/focus_manager_factory.h"
 #include "ui/views/focus/widget_focus_manager.h"
 #include "ui/views/test/focus_manager_test.h"
@@ -40,7 +42,7 @@ class SimpleTestView : public View {
  public:
   SimpleTestView(std::vector<FocusTestEvent>* event_list, int view_id)
       : event_list_(event_list) {
-    SetFocusable(true);
+    SetFocusBehavior(FocusBehavior::ALWAYS);
     set_id(view_id);
   }
 
@@ -92,9 +94,9 @@ TEST_F(FocusManagerTest, ViewFocusCallbacks) {
 
 TEST_F(FocusManagerTest, FocusChangeListener) {
   View* view1 = new View();
-  view1->SetFocusable(true);
+  view1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   View* view2 = new View();
-  view2->SetFocusable(true);
+  view2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   GetContentsView()->AddChildView(view1);
   GetContentsView()->AddChildView(view2);
 
@@ -120,6 +122,12 @@ TEST_F(FocusManagerTest, FocusChangeListener) {
 }
 
 TEST_F(FocusManagerTest, WidgetFocusChangeListener) {
+  // TODO: this test ends up calling focus on the aura::Window associated with
+  // the Widget and expecting that to change activation. This should work for
+  // aura-mus-client as well. http://crbug.com/664261.
+  if (IsAuraMusClient())
+    return;
+
   // First, ensure the simulator is aware of the Widget created in SetUp() being
   // currently active.
   test::WidgetTest::SimulateNativeActivate(GetWidget());
@@ -132,11 +140,11 @@ TEST_F(FocusManagerTest, WidgetFocusChangeListener) {
   params.bounds = gfx::Rect(10, 10, 100, 100);
   params.parent = GetWidget()->GetNativeView();
 
-  scoped_ptr<Widget> widget1(new Widget);
+  std::unique_ptr<Widget> widget1(new Widget);
   widget1->Init(params);
   widget1->Show();
 
-  scoped_ptr<Widget> widget2(new Widget);
+  std::unique_ptr<Widget> widget2(new Widget);
   widget2->Init(params);
   widget2->Show();
 
@@ -195,10 +203,6 @@ TEST_F(FocusManagerTest, CallsNormalAcceleratorTarget) {
   TestAcceleratorTarget escape_target(true);
   EXPECT_EQ(return_target.accelerator_count(), 0);
   EXPECT_EQ(escape_target.accelerator_count(), 0);
-  EXPECT_EQ(NULL,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
-  EXPECT_EQ(NULL,
-            focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
 
   // Register targets.
   focus_manager->RegisterAccelerator(return_accelerator,
@@ -207,12 +211,6 @@ TEST_F(FocusManagerTest, CallsNormalAcceleratorTarget) {
   focus_manager->RegisterAccelerator(escape_accelerator,
                                      ui::AcceleratorManager::kNormalPriority,
                                      &escape_target);
-
-  // Checks if the correct target is registered.
-  EXPECT_EQ(&return_target,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
-  EXPECT_EQ(&escape_target,
-            focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
 
   // Hitting the return key.
   EXPECT_TRUE(focus_manager->ProcessAccelerator(return_accelerator));
@@ -230,8 +228,6 @@ TEST_F(FocusManagerTest, CallsNormalAcceleratorTarget) {
   focus_manager->RegisterAccelerator(return_accelerator,
                                      ui::AcceleratorManager::kNormalPriority,
                                      &return_target2);
-  EXPECT_EQ(&return_target2,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
 
   // Hitting the return key; return_target2 has the priority.
   EXPECT_TRUE(focus_manager->ProcessAccelerator(return_accelerator));
@@ -244,9 +240,6 @@ TEST_F(FocusManagerTest, CallsNormalAcceleratorTarget) {
   focus_manager->RegisterAccelerator(return_accelerator,
                                      ui::AcceleratorManager::kNormalPriority,
                                      &return_target3);
-  EXPECT_EQ(&return_target3,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
-
   // Hitting the return key.
   // Since the event handler of return_target3 returns false, return_target2
   // should be called too.
@@ -257,8 +250,6 @@ TEST_F(FocusManagerTest, CallsNormalAcceleratorTarget) {
 
   // Unregister return_target2.
   focus_manager->UnregisterAccelerator(return_accelerator, &return_target2);
-  EXPECT_EQ(&return_target3,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
 
   // Hitting the return key. return_target3 and return_target should be called.
   EXPECT_TRUE(focus_manager->ProcessAccelerator(return_accelerator));
@@ -270,12 +261,6 @@ TEST_F(FocusManagerTest, CallsNormalAcceleratorTarget) {
   focus_manager->UnregisterAccelerator(return_accelerator, &return_target);
   focus_manager->UnregisterAccelerator(return_accelerator, &return_target3);
   focus_manager->UnregisterAccelerator(escape_accelerator, &escape_target);
-
-  // Now there is no target registered.
-  EXPECT_EQ(NULL,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
-  EXPECT_EQ(NULL,
-            focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
 
   // Hitting the return key and the escape key. Nothing should happen.
   EXPECT_FALSE(focus_manager->ProcessAccelerator(return_accelerator));
@@ -294,16 +279,12 @@ TEST_F(FocusManagerTest, HighPriorityHandlers) {
   TestAcceleratorTarget escape_target_normal(true);
   EXPECT_EQ(escape_target_high.accelerator_count(), 0);
   EXPECT_EQ(escape_target_normal.accelerator_count(), 0);
-  EXPECT_EQ(NULL,
-      focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
   EXPECT_FALSE(focus_manager->HasPriorityHandler(escape_accelerator));
 
   // Register high priority target.
   focus_manager->RegisterAccelerator(escape_accelerator,
                                      ui::AcceleratorManager::kHighPriority,
                                      &escape_target_high);
-  EXPECT_EQ(&escape_target_high,
-     focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
   EXPECT_TRUE(focus_manager->HasPriorityHandler(escape_accelerator));
 
   // Hit the escape key.
@@ -318,8 +299,6 @@ TEST_F(FocusManagerTest, HighPriorityHandlers) {
 
   // Checks if the correct target is registered (same as before, the high
   // priority one).
-  EXPECT_EQ(&escape_target_high,
-      focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
   EXPECT_TRUE(focus_manager->HasPriorityHandler(escape_accelerator));
 
   // Hit the escape key.
@@ -329,8 +308,6 @@ TEST_F(FocusManagerTest, HighPriorityHandlers) {
 
   // Unregister the high priority accelerator.
   focus_manager->UnregisterAccelerator(escape_accelerator, &escape_target_high);
-  EXPECT_EQ(&escape_target_normal,
-      focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
   EXPECT_FALSE(focus_manager->HasPriorityHandler(escape_accelerator));
 
   // Hit the escape key.
@@ -342,8 +319,6 @@ TEST_F(FocusManagerTest, HighPriorityHandlers) {
   focus_manager->RegisterAccelerator(escape_accelerator,
                                      ui::AcceleratorManager::kHighPriority,
                                      &escape_target_high);
-  EXPECT_EQ(&escape_target_high,
-      focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
   EXPECT_TRUE(focus_manager->HasPriorityHandler(escape_accelerator));
 
   // Hit the escape key.
@@ -354,8 +329,6 @@ TEST_F(FocusManagerTest, HighPriorityHandlers) {
   // Unregister the normal priority accelerator.
   focus_manager->UnregisterAccelerator(
       escape_accelerator, &escape_target_normal);
-  EXPECT_EQ(&escape_target_high,
-      focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
   EXPECT_TRUE(focus_manager->HasPriorityHandler(escape_accelerator));
 
   // Hit the escape key.
@@ -365,8 +338,6 @@ TEST_F(FocusManagerTest, HighPriorityHandlers) {
 
   // Unregister the high priority accelerator.
   focus_manager->UnregisterAccelerator(escape_accelerator, &escape_target_high);
-  EXPECT_EQ(NULL,
-      focus_manager->GetCurrentTargetForAccelerator(escape_accelerator));
   EXPECT_FALSE(focus_manager->HasPriorityHandler(escape_accelerator));
 
   // Hit the escape key (no change, no targets registered).
@@ -446,21 +417,15 @@ TEST_F(FocusManagerTest, CallsSelfDeletingAcceleratorTarget) {
   ui::Accelerator return_accelerator(ui::VKEY_RETURN, ui::EF_NONE);
   SelfUnregisteringAcceleratorTarget target(return_accelerator, focus_manager);
   EXPECT_EQ(target.accelerator_count(), 0);
-  EXPECT_EQ(NULL,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
 
   // Register the target.
   focus_manager->RegisterAccelerator(return_accelerator,
                                      ui::AcceleratorManager::kNormalPriority,
                                      &target);
-  EXPECT_EQ(&target,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
 
   // Hitting the return key. The target will be unregistered.
   EXPECT_TRUE(focus_manager->ProcessAccelerator(return_accelerator));
   EXPECT_EQ(target.accelerator_count(), 1);
-  EXPECT_EQ(NULL,
-            focus_manager->GetCurrentTargetForAccelerator(return_accelerator));
 
   // Hitting the return key again; nothing should happen.
   EXPECT_FALSE(focus_manager->ProcessAccelerator(return_accelerator));
@@ -520,21 +485,6 @@ class FocusManagerDtorTest : public FocusManagerTest {
    private:
     DtorTrackVector* dtor_tracker_;
     DISALLOW_COPY_AND_ASSIGN(TestFocusManagerFactory);
-  };
-
-  class LabelButtonDtorTracked : public LabelButton {
-   public:
-    LabelButtonDtorTracked(const base::string16& text,
-                           DtorTrackVector* dtor_tracker)
-        : LabelButton(NULL, text),
-          dtor_tracker_(dtor_tracker) {
-      SetStyle(STYLE_BUTTON);
-    };
-    ~LabelButtonDtorTracked() override {
-      dtor_tracker_->push_back("LabelButtonDtorTracked");
-    }
-
-    DtorTrackVector* dtor_tracker_;
   };
 
   class WindowDtorTracked : public Widget {
@@ -599,17 +549,17 @@ TEST_F(FocusManagerTest, FocusInAboutToRequestFocusFromTabTraversal) {
   // Create 3 views focuses the 3 and advances to the second. The 2nd views
   // implementation of AboutToRequestFocusFromTabTraversal() focuses the first.
   views::View* v1 = new View;
-  v1->SetFocusable(true);
+  v1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   GetContentsView()->AddChildView(v1);
 
   FocusInAboutToRequestFocusFromTabTraversalView* v2 =
       new FocusInAboutToRequestFocusFromTabTraversalView;
-  v2->SetFocusable(true);
+  v2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   v2->set_view_to_focus(v1);
   GetContentsView()->AddChildView(v2);
 
   views::View* v3 = new View;
-  v3->SetFocusable(true);
+  v3->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   GetContentsView()->AddChildView(v3);
 
   v3->RequestFocus();
@@ -622,22 +572,22 @@ TEST_F(FocusManagerTest, RotatePaneFocus) {
   GetContentsView()->AddChildView(pane1);
 
   views::View* v1 = new View;
-  v1->SetFocusable(true);
+  v1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   pane1->AddChildView(v1);
 
   views::View* v2 = new View;
-  v2->SetFocusable(true);
+  v2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   pane1->AddChildView(v2);
 
   views::AccessiblePaneView* pane2 = new AccessiblePaneView();
   GetContentsView()->AddChildView(pane2);
 
   views::View* v3 = new View;
-  v3->SetFocusable(true);
+  v3->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   pane2->AddChildView(v3);
 
   views::View* v4 = new View;
-  v4->SetFocusable(true);
+  v4->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   pane2->AddChildView(v4);
 
   std::vector<views::View*> panes;
@@ -692,11 +642,11 @@ TEST_F(FocusManagerTest, RotatePaneFocus) {
 // Verifies the stored focus view tracks the focused view.
 TEST_F(FocusManagerTest, ImplicitlyStoresFocus) {
   views::View* v1 = new View;
-  v1->SetFocusable(true);
+  v1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   GetContentsView()->AddChildView(v1);
 
   views::View* v2 = new View;
-  v2->SetFocusable(true);
+  v2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   GetContentsView()->AddChildView(v2);
 
   // Verify a focus request on |v1| implicitly updates the stored focus view.
@@ -750,7 +700,7 @@ TEST_F(FocusManagerArrowKeyTraversalTest, ArrowKeyTraversal) {
   std::vector<views::View*> v;
   for (size_t i = 0; i < 2; ++i) {
     views::View* view = new View;
-    view->SetFocusable(true);
+    view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
     GetContentsView()->AddChildView(view);
     v.push_back(view);
   }
@@ -781,20 +731,97 @@ TEST_F(FocusManagerArrowKeyTraversalTest, ArrowKeyTraversal) {
 }
 
 TEST_F(FocusManagerTest, StoreFocusedView) {
-  View view;
-  GetFocusManager()->SetFocusedView(&view);
+  View* view = new View;
+  // Add view to the view hierarchy and make it focusable.
+  GetWidget()->GetRootView()->AddChildView(view);
+  view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  GetFocusManager()->SetFocusedView(view);
   GetFocusManager()->StoreFocusedView(false);
   EXPECT_EQ(NULL, GetFocusManager()->GetFocusedView());
   EXPECT_TRUE(GetFocusManager()->RestoreFocusedView());
-  EXPECT_EQ(&view, GetFocusManager()->GetStoredFocusView());
+  EXPECT_EQ(view, GetFocusManager()->GetStoredFocusView());
 
   // Repeat with |true|.
-  GetFocusManager()->SetFocusedView(&view);
+  GetFocusManager()->SetFocusedView(view);
   GetFocusManager()->StoreFocusedView(true);
   EXPECT_EQ(NULL, GetFocusManager()->GetFocusedView());
   EXPECT_TRUE(GetFocusManager()->RestoreFocusedView());
-  EXPECT_EQ(&view, GetFocusManager()->GetStoredFocusView());
+  EXPECT_EQ(view, GetFocusManager()->GetStoredFocusView());
 }
+
+#if defined(OS_MACOSX)
+// Test that the correct view is restored if full keyboard access is changed.
+TEST_F(FocusManagerTest, StoreFocusedViewFullKeyboardAccess) {
+  View* view1 = new View;
+  View* view2 = new View;
+  View* view3 = new View;
+
+  // Make view1 focusable in accessibility mode, view2 not focusable and view3
+  // always focusable.
+  view1->SetFocusBehavior(View::FocusBehavior::ACCESSIBLE_ONLY);
+  view2->SetFocusBehavior(View::FocusBehavior::NEVER);
+  view3->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  // Add views to the view hierarchy
+  GetWidget()->GetRootView()->AddChildView(view1);
+  GetWidget()->GetRootView()->AddChildView(view2);
+  GetWidget()->GetRootView()->AddChildView(view3);
+
+  view1->RequestFocus();
+  EXPECT_EQ(view1, GetFocusManager()->GetFocusedView());
+  GetFocusManager()->StoreFocusedView(true);
+  EXPECT_EQ(nullptr, GetFocusManager()->GetFocusedView());
+
+  // Turn off full keyboard access mode and restore focused view. Since view1 is
+  // no longer focusable, view3 should have focus.
+  GetFocusManager()->SetKeyboardAccessible(false);
+  EXPECT_FALSE(GetFocusManager()->RestoreFocusedView());
+  EXPECT_EQ(view3, GetFocusManager()->GetFocusedView());
+
+  GetFocusManager()->StoreFocusedView(false);
+  EXPECT_EQ(nullptr, GetFocusManager()->GetFocusedView());
+
+  // Turn on full keyboard access mode and restore focused view. Since view3 is
+  // still focusable, view3 should have focus.
+  GetFocusManager()->SetKeyboardAccessible(true);
+  EXPECT_TRUE(GetFocusManager()->RestoreFocusedView());
+  EXPECT_EQ(view3, GetFocusManager()->GetFocusedView());
+}
+
+// Test that View::RequestFocus() respects full keyboard access mode.
+TEST_F(FocusManagerTest, RequestFocus) {
+  View* view1 = new View();
+  View* view2 = new View();
+
+  // Make view1 always focusable, view2 only focusable in accessibility mode.
+  view1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  view2->SetFocusBehavior(View::FocusBehavior::ACCESSIBLE_ONLY);
+
+  // Adds views to the view hierarchy.
+  GetWidget()->GetRootView()->AddChildView(view1);
+  GetWidget()->GetRootView()->AddChildView(view2);
+
+  // Verify view1 can always get focus via View::RequestFocus, while view2 can
+  // only get focus in full keyboard accessibility mode.
+  EXPECT_TRUE(GetFocusManager()->keyboard_accessible());
+  view1->RequestFocus();
+  EXPECT_EQ(view1, GetFocusManager()->GetFocusedView());
+  view2->RequestFocus();
+  EXPECT_EQ(view2, GetFocusManager()->GetFocusedView());
+
+  // Toggle full keyboard accessibility.
+  GetFocusManager()->SetKeyboardAccessible(false);
+
+  GetFocusManager()->ClearFocus();
+  EXPECT_NE(view1, GetFocusManager()->GetFocusedView());
+  view1->RequestFocus();
+  EXPECT_EQ(view1, GetFocusManager()->GetFocusedView());
+  view2->RequestFocus();
+  EXPECT_EQ(view1, GetFocusManager()->GetFocusedView());
+}
+
+#endif
 
 namespace {
 
@@ -829,14 +856,17 @@ class AdvanceFocusWidgetDelegate : public WidgetDelegate {
 
 // Verifies focus wrapping happens in the same widget.
 TEST_F(FocusManagerTest, AdvanceFocusStaysInWidget) {
+  // Mus doesn't support child Widgets well yet. https://crbug.com/612820
+  if (IsMus())
+    return;
   // Add |widget_view| as a child of the Widget.
   View* widget_view = new View;
-  widget_view->SetFocusable(true);
+  widget_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   widget_view->SetBounds(20, 0, 20, 20);
   GetContentsView()->AddChildView(widget_view);
 
   // Create a widget with two views, focus the second.
-  scoped_ptr<AdvanceFocusWidgetDelegate> delegate;
+  std::unique_ptr<AdvanceFocusWidgetDelegate> delegate;
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.child = true;
@@ -847,10 +877,10 @@ TEST_F(FocusManagerTest, AdvanceFocusStaysInWidget) {
   params.delegate = delegate.get();
   child_widget.Init(params);
   View* view1 = new View;
-  view1->SetFocusable(true);
+  view1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   view1->SetBounds(0, 0, 20, 20);
   View* view2 = new View;
-  view2->SetFocusable(true);
+  view2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   view2->SetBounds(20, 0, 20, 20);
   child_widget.client_view()->AddChildView(view1);
   child_widget.client_view()->AddChildView(view2);

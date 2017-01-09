@@ -6,9 +6,12 @@
 
 #include <windows.h>
 #include <shlwapi.h>  // For SHDeleteKey.
+#include <stddef.h>
+
+#include <memory>
 
 #include "base/base_paths.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_path_override.h"
@@ -100,7 +103,7 @@ class GoogleUpdateSettingsTest : public testing::Test {
   // Note that ap= value has to match "^2.0-d.*" or ".*x64-dev.*" and "^1.1-.*"
   // or ".*x64-beta.*" for dev and beta channels respectively.
   void TestCurrentChromeChannelWithVariousApValues(SystemUserInstall install) {
-    static struct Expectations {
+    static struct Expectation {
       const wchar_t* ap_value;
       const wchar_t* channel;
       bool supports_prefixes;
@@ -123,13 +126,13 @@ class GoogleUpdateSettingsTest : public testing::Test {
       L"suffix-with-dash",
     };
 
-    for (size_t i = 0; i < arraysize(prefixes); ++i) {
-      for (size_t j = 0; j < arraysize(expectations); ++j) {
-        for (size_t k = 0; k < arraysize(suffixes); ++k) {
-          base::string16 ap = prefixes[i];
-          ap += expectations[j].ap_value;
-          ap += suffixes[k];
-          const wchar_t* channel = expectations[j].channel;
+    for (const wchar_t* prefix : prefixes) {
+      for (const Expectation& expectation : expectations) {
+        for (const wchar_t* suffix : suffixes) {
+          base::string16 ap = prefix;
+          ap += expectation.ap_value;
+          ap += suffix;
+          const wchar_t* channel = expectation.channel;
 
           SetApField(install, ap.c_str());
           base::string16 ret_channel;
@@ -139,7 +142,7 @@ class GoogleUpdateSettingsTest : public testing::Test {
 
           // If prefixes are not supported for a channel, we expect the channel
           // to be "unknown" if a non-empty prefix is present in ap_value.
-          if (!expectations[j].supports_prefixes && wcslen(prefixes[i]) > 0) {
+          if (!expectation.supports_prefixes && wcslen(prefix) > 0) {
             EXPECT_STREQ(installer::kChromeChannelUnknown, ret_channel.c_str())
                 << "Expecting channel \"" << installer::kChromeChannelUnknown
                 << "\" for ap=\"" << ap << "\"";
@@ -444,10 +447,8 @@ TEST_F(GoogleUpdateSettingsTest, UpdateGoogleUpdateApKey) {
     multifail_full
   };
   ChannelInfo v;
-  for (int type_idx = 0; type_idx < arraysize(archive_types); ++type_idx) {
-    const installer::ArchiveType archive_type = archive_types[type_idx];
-    for (int result_idx = 0; result_idx < arraysize(results); ++result_idx) {
-      const int result = results[result_idx];
+  for (const installer::ArchiveType archive_type : archive_types) {
+    for (const int result : results) {
       // The archive type will/must always be known on install success.
       if (archive_type == installer::UNKNOWN_ARCHIVE_TYPE &&
           result == installer::FIRST_INSTALL_SUCCESS) {
@@ -461,9 +462,7 @@ TEST_F(GoogleUpdateSettingsTest, UpdateGoogleUpdateApKey) {
         outputs = full;
       }  // else if (archive_type == UNKNOWN) see below
 
-      for (int inputs_idx = 0; inputs_idx < arraysize(input_arrays);
-           ++inputs_idx) {
-        const wchar_t* const* inputs = input_arrays[inputs_idx];
+      for (const wchar_t* const* inputs : input_arrays) {
         if (archive_type == installer::UNKNOWN_ARCHIVE_TYPE) {
           // "-full" is untouched if the archive type is unknown.
           // "-multifail" is unconditionally removed.
@@ -472,7 +471,7 @@ TEST_F(GoogleUpdateSettingsTest, UpdateGoogleUpdateApKey) {
           else
             outputs = plain;
         }
-        for (int input_idx = 0; input_idx < arraysize(plain); ++input_idx) {
+        for (size_t input_idx = 0; input_idx < arraysize(plain); ++input_idx) {
           const wchar_t* input = inputs[input_idx];
           const wchar_t* output = outputs[input_idx];
 
@@ -501,7 +500,7 @@ TEST_F(GoogleUpdateSettingsTest, UpdateGoogleUpdateApKey) {
 }
 
 TEST_F(GoogleUpdateSettingsTest, UpdateInstallStatusTest) {
-  scoped_ptr<WorkItemList> work_item_list(WorkItem::CreateWorkItemList());
+  std::unique_ptr<WorkItemList> work_item_list(WorkItem::CreateWorkItemList());
   // Test incremental install failure
   ASSERT_TRUE(CreateApKey(work_item_list.get(), L""))
       << "Failed to create ap key.";
@@ -592,7 +591,7 @@ TEST_F(GoogleUpdateSettingsTest, SetEULAConsent) {
 
   // Chrome is installed.
   machine_state.AddChrome(system_level, multi_install,
-      new Version(chrome::kChromeVersion));
+      new base::Version(chrome::kChromeVersion));
 
   RegKey key;
   DWORD value;
@@ -720,8 +719,8 @@ TEST_F(GoogleUpdateSettingsTest, UpdateProfileCountsSystemInstall) {
                                         &aggregate));
 
   // Verify the correct values were written.
-  EXPECT_EQ(3, num_profiles);
-  EXPECT_EQ(2, num_signed_in);
+  EXPECT_EQ(3u, num_profiles);
+  EXPECT_EQ(2u, num_signed_in);
   EXPECT_EQ(L"sum()", aggregate);
 }
 
@@ -992,6 +991,94 @@ TEST_F(GoogleUpdateSettingsTest, ExperimentsLabelHelperUser) {
 
 #endif  // defined(GOOGLE_CHROME_BUILD)
 
+TEST_F(GoogleUpdateSettingsTest, GetDownloadPreference) {
+  RegKey policy_key;
+
+  if (policy_key.Open(HKEY_LOCAL_MACHINE, GoogleUpdateSettings::kPoliciesKey,
+                      KEY_SET_VALUE) == ERROR_SUCCESS) {
+    policy_key.DeleteValue(
+        GoogleUpdateSettings::kDownloadPreferencePolicyValue);
+  }
+  policy_key.Close();
+
+  // When no policy is present expect to return an empty string.
+  EXPECT_TRUE(GoogleUpdateSettings::GetDownloadPreference().empty());
+
+  // Expect "cacheable" when the correct policy is present.
+  EXPECT_EQ(ERROR_SUCCESS, policy_key.Create(HKEY_LOCAL_MACHINE,
+                                             GoogleUpdateSettings::kPoliciesKey,
+                                             KEY_SET_VALUE));
+  EXPECT_EQ(
+      ERROR_SUCCESS,
+      policy_key.WriteValue(
+          GoogleUpdateSettings::kDownloadPreferencePolicyValue, L"cacheable"));
+  EXPECT_STREQ(L"cacheable",
+               GoogleUpdateSettings::GetDownloadPreference().c_str());
+
+  EXPECT_EQ(ERROR_SUCCESS,
+            policy_key.WriteValue(
+                GoogleUpdateSettings::kDownloadPreferencePolicyValue,
+                base::string16(32, L'a').c_str()));
+  EXPECT_STREQ(base::string16(32, L'a').c_str(),
+               GoogleUpdateSettings::GetDownloadPreference().c_str());
+
+  // Expect an empty string when an unsupported policy is set.
+  // It contains spaces.
+  EXPECT_EQ(ERROR_SUCCESS,
+            policy_key.WriteValue(
+                GoogleUpdateSettings::kDownloadPreferencePolicyValue, L"a b"));
+  EXPECT_TRUE(GoogleUpdateSettings::GetDownloadPreference().empty());
+
+  // It contains non alpha-numeric characters.
+  EXPECT_EQ(ERROR_SUCCESS,
+            policy_key.WriteValue(
+                GoogleUpdateSettings::kDownloadPreferencePolicyValue, L"<a>"));
+  EXPECT_TRUE(GoogleUpdateSettings::GetDownloadPreference().empty());
+
+  // It is too long.
+  EXPECT_EQ(ERROR_SUCCESS,
+            policy_key.WriteValue(
+                GoogleUpdateSettings::kDownloadPreferencePolicyValue,
+                base::string16(33, L'a').c_str()));
+  EXPECT_TRUE(GoogleUpdateSettings::GetDownloadPreference().empty());
+}
+
+class SetProgressTest : public GoogleUpdateSettingsTest,
+                        public testing::WithParamInterface<bool> {
+ protected:
+  SetProgressTest()
+      : system_install_(GetParam()),
+        root_key_(system_install_ ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER) {}
+
+  const bool system_install_;
+  const HKEY root_key_;
+};
+
+TEST_P(SetProgressTest, SetProgress) {
+  base::string16 path(google_update::kRegPathClientState);
+  path += L"\\";
+  path += kTestProductGuid;
+
+  constexpr int kValues[] = {0, 25, 50, 99, 100};
+  for (int value : kValues) {
+    GoogleUpdateSettings::SetProgress(system_install_, path, value);
+    DWORD progress = 0;
+    base::win::RegKey key(root_key_, path.c_str(),
+                          KEY_QUERY_VALUE | KEY_WOW64_32KEY);
+    ASSERT_TRUE(key.Valid());
+    ASSERT_EQ(ERROR_SUCCESS,
+              key.ReadValueDW(google_update::kRegInstallerProgress, &progress));
+    EXPECT_EQ(static_cast<DWORD>(value), progress);
+  }
+}
+
+INSTANTIATE_TEST_CASE_P(SetProgressUserLevel,
+                        SetProgressTest,
+                        testing::Values(false));
+INSTANTIATE_TEST_CASE_P(SetProgressSystemLevel,
+                        SetProgressTest,
+                        testing::Values(true));
+
 // Test GoogleUpdateSettings::GetUninstallCommandLine at system- or user-level,
 // according to the param.
 class GetUninstallCommandLine : public GoogleUpdateSettingsTest,
@@ -1099,9 +1186,9 @@ TEST_P(GetGoogleUpdateVersion, TestEmptyValue) {
 TEST_P(GetGoogleUpdateVersion, TestRealValue) {
   RegKey(root_key_, google_update::kRegPathGoogleUpdate, KEY_SET_VALUE)
       .WriteValue(google_update::kRegGoogleUpdateVersion, kDummyVersion);
-  Version expected(base::UTF16ToUTF8(kDummyVersion));
-  EXPECT_TRUE(expected.Equals(
-      GoogleUpdateSettings::GetGoogleUpdateVersion(system_install_)));
+  base::Version expected(base::UTF16ToUTF8(kDummyVersion));
+  EXPECT_EQ(expected,
+      GoogleUpdateSettings::GetGoogleUpdateVersion(system_install_));
   // Make sure that there's no value in the other level (user or system).
   EXPECT_FALSE(
       GoogleUpdateSettings::GetGoogleUpdateVersion(!system_install_)
@@ -1220,13 +1307,12 @@ void CollectStatsConsent::TearDownTestCase() {
 
 // Install the registry override and apply the settings to the registry.
 void CollectStatsConsent::SetUp() {
+  // Override both HKLM and HKCU as tests may touch either/both.
+  override_manager_.OverrideRegistry(HKEY_LOCAL_MACHINE);
+  override_manager_.OverrideRegistry(HKEY_CURRENT_USER);
+
   const StatsState& stats_state = GetParam();
   const HKEY root_key = stats_state.root_key();
-  base::string16 reg_temp_name(
-      stats_state.system_level() ? L"HKLM_" : L"HKCU_");
-  reg_temp_name += L"CollectStatsConsent";
-  override_manager_.OverrideRegistry(root_key);
-
   if (stats_state.multi_install()) {
     MakeChromeMultiInstall(root_key);
     ApplySetting(stats_state.state_value(), root_key, *binaries_state_key_);
@@ -1282,9 +1368,20 @@ TEST_P(CollectStatsConsent, GetCollectStatsConsentAtLevel) {
 // Test that stats consent can be flipped to the opposite setting, that the new
 // setting takes affect, and that the correct registry location is modified.
 TEST_P(CollectStatsConsent, SetCollectStatsConsentAtLevel) {
+  // When testing revoking consent, verify that backup client info is cleared.
+  // To do so, first add some backup client info.
+  if (GetParam().is_consent_granted()) {
+    metrics::ClientInfo client_info;
+    client_info.client_id = "01234567-89ab-cdef-fedc-ba9876543210";
+    client_info.installation_date = 123;
+    client_info.reporting_enabled_date = 345;
+    GoogleUpdateSettings::StoreMetricsClientInfo(client_info);
+  }
+
   EXPECT_TRUE(GoogleUpdateSettings::SetCollectStatsConsentAtLevel(
                   GetParam().system_level(),
                   !GetParam().is_consent_granted()));
+
   const base::string16* const reg_keys[] = {
     chrome_state_key_,
     chrome_state_medium_key_,
@@ -1308,6 +1405,8 @@ TEST_P(CollectStatsConsent, SetCollectStatsConsentAtLevel) {
     EXPECT_TRUE(GoogleUpdateSettings::GetCollectStatsConsentAtLevel(
                     GetParam().system_level()));
     EXPECT_EQ(1UL, value);
+    // Verify that backup client info has been cleared.
+    EXPECT_FALSE(GoogleUpdateSettings::LoadMetricsClientInfo());
   }
 }
 

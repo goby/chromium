@@ -45,9 +45,11 @@ class FakeHostPairingController
   std::string GetDeviceName() override;
   std::string GetConfirmationCode() override;
   std::string GetEnrollmentDomain() override;
+  void OnNetworkConnectivityChanged(Connectivity connectivity_status) override;
   void OnUpdateStatusChanged(UpdateStatus update_status) override;
   void OnEnrollmentStatusChanged(EnrollmentStatus enrollment_status) override;
   void SetPermanentId(const std::string& permanent_id) override;
+  void Reset() override;
 
   // HostPairingController::Observer:
   void PairingStageChanged(Stage new_stage) override;

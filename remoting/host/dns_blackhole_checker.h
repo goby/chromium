@@ -8,6 +8,7 @@
 #include "net/url_request/url_fetcher_delegate.h"
 
 #include "base/callback.h"
+#include "base/macros.h"
 
 namespace net {
 class URLRequestContextGetter;
@@ -40,7 +41,7 @@ class DnsBlackholeChecker : public net::URLFetcherDelegate {
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
 
   // URL fetcher used to verify access to the host talkgadget.
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
 
   // The string pre-pended to '.talkgadget.google.com' to create the full
   // talkgadget domain name for the host.

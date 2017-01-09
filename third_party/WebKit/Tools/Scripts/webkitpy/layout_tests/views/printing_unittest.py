@@ -28,17 +28,12 @@
 
 """Unit tests for printing.py."""
 
-import StringIO
 import optparse
+import StringIO
 import sys
-import time
 import unittest
 
 from webkitpy.common.host_mock import MockHost
-
-from webkitpy.common.system import logtesting
-from webkitpy.layout_tests import port
-from webkitpy.layout_tests.controllers import manager
 from webkitpy.layout_tests.models import test_expectations
 from webkitpy.layout_tests.models import test_failures
 from webkitpy.layout_tests.models import test_results
@@ -52,12 +47,14 @@ def get_options(args):
 
 
 class TestUtilityFunctions(unittest.TestCase):
+
     def test_print_options(self):
-        options, args = get_options([])
+        options, _ = get_options([])
         self.assertIsNotNone(options)
 
 
 class FakeRunResults(object):
+
     def __init__(self, total=1, expected=1, unexpected=0, fake_results=None):
         fake_results = fake_results or []
         self.total = total
@@ -74,12 +71,14 @@ class FakeRunResults(object):
 
 
 class FakeShard(object):
+
     def __init__(self, shard_name, total_run_time):
         self.shard_name = shard_name
         self.total_run_time = total_run_time
 
 
-class  Testprinter(unittest.TestCase):
+class Testprinter(unittest.TestCase):
+
     def assertEmpty(self, stream):
         self.assertFalse(stream.getvalue())
 
@@ -100,7 +99,6 @@ class  Testprinter(unittest.TestCase):
         options, args = option_parser.parse_args(args)
         host = MockHost()
         self._port = host.port_factory.get('test', options)
-        nproc = 2
 
         regular_output = StringIO.StringIO()
         printer = printing.Printer(self._port, options, regular_output)
@@ -117,33 +115,37 @@ class  Testprinter(unittest.TestCase):
     def test_configure_and_cleanup(self):
         # This test verifies that calling cleanup repeatedly and deleting
         # the object is safe.
-        printer, err = self.get_printer()
+        printer, _ = self.get_printer()
         printer.cleanup()
         printer.cleanup()
         printer = None
 
     def test_print_config(self):
         printer, err = self.get_printer()
-        # FIXME: it's lame that i have to set these options directly.
+        # FIXME: Make it so these options don't have to be set directly.
+        # pylint: disable=protected-access
         printer._options.pixel_tests = True
         printer._options.new_baseline = True
         printer._options.time_out_ms = 6000
         printer._options.slow_time_out_ms = 12000
+        printer._options.order = 'random'
+        printer._options.seed = 1234
         printer.print_config('/tmp')
-        self.assertIn("Using port 'test-mac-leopard'", err.getvalue())
-        self.assertIn('Test configuration: <leopard, x86, release>', err.getvalue())
+        self.assertIn("Using port 'test-mac-mac10.10'", err.getvalue())
+        self.assertIn('Test configuration: <mac10.10, x86, release>', err.getvalue())
         self.assertIn('View the test results at file:///tmp', err.getvalue())
         self.assertIn('View the archived results dashboard at file:///tmp', err.getvalue())
-        self.assertIn('Baseline search path: test-mac-leopard -> test-mac-snowleopard -> generic', err.getvalue())
+        self.assertIn('Baseline search path: test-mac-mac10.10 -> test-mac-mac10.11 -> generic', err.getvalue())
         self.assertIn('Using Release build', err.getvalue())
         self.assertIn('Pixel tests enabled', err.getvalue())
         self.assertIn('Command line:', err.getvalue())
         self.assertIn('Regular timeout: ', err.getvalue())
+        self.assertIn('Using random order with seed: 1234', err.getvalue())
 
         self.reset(err)
         printer._options.quiet = True
         printer.print_config('/tmp')
-        self.assertNotIn('Baseline search path: test-mac-leopard -> test-mac-snowleopard -> generic', err.getvalue())
+        self.assertNotIn('Baseline search path: test-mac-mac10.10 -> test-mac-mac10.11 -> generic', err.getvalue())
 
     def test_print_directory_timings(self):
         printer, err = self.get_printer()
@@ -157,7 +159,8 @@ class  Testprinter(unittest.TestCase):
         }
 
         printer._print_directory_timings(run_results)
-        self.assertWritten(err, ['Time to process slowest subdirectories:\n', '  slowShard took 16.0 seconds to run 1 tests.\n', '\n'])
+        self.assertWritten(err, ['Time to process slowest subdirectories:\n',
+                                 '  slowShard took 16.0 seconds to run 1 tests.\n', '\n'])
 
         printer, err = self.get_printer()
         printer._options.debug_rwt_logging = True
@@ -194,27 +197,32 @@ class  Testprinter(unittest.TestCase):
     def test_test_status_line(self):
         printer, _ = self.get_printer()
         printer._meter.number_of_columns = lambda: 80
-        actual = printer._test_status_line('fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
+        actual = printer._test_status_line(
+            'fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
         self.assertEqual(80, len(actual))
         self.assertEqual(actual, '[0/0] fast/dom/HTMLFormElement/associa...after-index-assertion-fail1.html passed')
 
         printer._meter.number_of_columns = lambda: 89
-        actual = printer._test_status_line('fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
+        actual = printer._test_status_line(
+            'fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
         self.assertEqual(89, len(actual))
         self.assertEqual(actual, '[0/0] fast/dom/HTMLFormElement/associated-...ents-after-index-assertion-fail1.html passed')
 
-        printer._meter.number_of_columns = lambda: sys.maxint
-        actual = printer._test_status_line('fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
+        printer._meter.number_of_columns = lambda: sys.maxsize
+        actual = printer._test_status_line(
+            'fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
         self.assertEqual(90, len(actual))
         self.assertEqual(actual, '[0/0] fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html passed')
 
         printer._meter.number_of_columns = lambda: 18
-        actual = printer._test_status_line('fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
+        actual = printer._test_status_line(
+            'fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
         self.assertEqual(18, len(actual))
         self.assertEqual(actual, '[0/0] f...l passed')
 
         printer._meter.number_of_columns = lambda: 10
-        actual = printer._test_status_line('fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
+        actual = printer._test_status_line(
+            'fast/dom/HTMLFormElement/associated-elements-after-index-assertion-fail1.html', ' passed')
         self.assertEqual(actual, '[0/0] associated-elements-after-index-assertion-fail1.html passed')
 
     def test_details(self):

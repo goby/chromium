@@ -4,10 +4,13 @@
 
 #include "cc/test/test_context_support.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace cc {
 
@@ -15,14 +18,6 @@ TestContextSupport::TestContextSupport()
     : out_of_order_callbacks_(false), weak_ptr_factory_(this) {}
 
 TestContextSupport::~TestContextSupport() {}
-
-void TestContextSupport::SignalSyncPoint(uint32 sync_point,
-                                         const base::Closure& callback) {
-  sync_point_callbacks_.push_back(callback);
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&TestContextSupport::CallAllSyncPointCallbacks,
-                            weak_ptr_factory_.GetWeakPtr()));
-}
 
 void TestContextSupport::SignalSyncToken(const gpu::SyncToken& sync_token,
                                          const base::Closure& callback) {
@@ -32,7 +27,11 @@ void TestContextSupport::SignalSyncToken(const gpu::SyncToken& sync_token,
                             weak_ptr_factory_.GetWeakPtr()));
 }
 
-void TestContextSupport::SignalQuery(uint32 query,
+bool TestContextSupport::IsFenceSyncReleased(uint64_t release) {
+  return true;
+}
+
+void TestContextSupport::SignalQuery(uint32_t query,
                                      const base::Closure& callback) {
   sync_point_callbacks_.push_back(callback);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -68,14 +67,7 @@ void TestContextSupport::SetScheduleOverlayPlaneCallback(
 void TestContextSupport::Swap() {
 }
 
-uint32 TestContextSupport::InsertFutureSyncPointCHROMIUM() {
-  NOTIMPLEMENTED();
-  return 0;
-}
-
-void TestContextSupport::RetireSyncPointCHROMIUM(uint32 sync_point) {
-  NOTIMPLEMENTED();
-}
+void TestContextSupport::SwapWithDamage(const gfx::Rect& damage) {}
 
 void TestContextSupport::PartialSwapBuffers(const gfx::Rect& sub_buffer) {
 }
@@ -101,5 +93,8 @@ uint64_t TestContextSupport::ShareGroupTracingGUID() const {
   NOTIMPLEMENTED();
   return 0;
 }
+
+void TestContextSupport::SetErrorMessageCallback(
+    const base::Callback<void(const char*, int32_t)>& callback) {}
 
 }  // namespace cc

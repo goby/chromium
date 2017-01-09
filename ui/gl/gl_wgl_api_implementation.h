@@ -14,15 +14,14 @@
 namespace base {
 class CommandLine;
 }
-namespace gfx {
+namespace gl {
 
-class GLContext;
 struct GLWindowSystemBindingInfo;
 
-void InitializeStaticGLBindingsWGL();
-void InitializeDebugGLBindingsWGL();
-void ClearGLBindingsWGL();
-bool GetGLWindowSystemBindingInfoWGL(GLWindowSystemBindingInfo* info);
+GL_EXPORT void InitializeStaticGLBindingsWGL();
+GL_EXPORT void InitializeDebugGLBindingsWGL();
+GL_EXPORT void ClearBindingsWGL();
+GL_EXPORT bool GetGLWindowSystemBindingInfoWGL(GLWindowSystemBindingInfo* info);
 
 class GL_EXPORT WGLApiBase : public WGLApi {
  public:
@@ -71,7 +70,7 @@ class GL_EXPORT TraceWGLApi : public WGLApi {
   WGLApi* wgl_api_;
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_WGL_API_IMPLEMENTATION_H_
 

@@ -8,9 +8,12 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/webui/help/version_updater.h"
+#include "components/policy/core/common/policy_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui_message_handler.h"
@@ -18,6 +21,7 @@
 #if defined(OS_CHROMEOS)
 #include "base/task/cancelable_task_tracker.h"
 #include "chromeos/system/version_loader.h"
+#include "third_party/cros_system_api/dbus/update_engine/dbus-constants.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace base {
@@ -48,6 +52,13 @@ class HelpHandler : public content::WebUIMessageHandler,
   static base::string16 BuildBrowserVersionString();
 
  private:
+  void OnDeviceAutoUpdatePolicyChanged(const base::Value* previous_policy,
+                                       const base::Value* current_policy);
+
+  // On ChromeOS, this gets the current update status. On other platforms, it
+  // will request and perform an update (if one is available).
+  void RefreshUpdateStatus();
+
   // Initializes querying values for the page.
   void OnPageLoaded(const base::ListValue* args);
 
@@ -89,6 +100,7 @@ class HelpHandler : public content::WebUIMessageHandler,
 #if defined(OS_CHROMEOS)
   // Callbacks from VersionLoader.
   void OnOSVersion(const std::string& version);
+  void OnARCVersion(const std::string& firmware);
   void OnOSFirmware(const std::string& firmware);
   void OnCurrentChannel(const std::string& channel);
   void OnTargetChannel(const std::string& channel);
@@ -102,13 +114,19 @@ class HelpHandler : public content::WebUIMessageHandler,
 
   // Callback for setting the regulatory label alt text.
   void OnRegulatoryLabelTextRead(const std::string& text);
+
+  // Callback for setting the eol string text.
+  void OnEolStatus(update_engine::EndOfLifeStatus status);
 #endif
 
   // Specialized instance of the VersionUpdater used to update the browser.
-  scoped_ptr<VersionUpdater> version_updater_;
+  std::unique_ptr<VersionUpdater> version_updater_;
 
   // Used to observe notifications.
   content::NotificationRegistrar registrar_;
+
+  // Used to observe changes in the |kDeviceAutoUpdateDisabled| policy.
+  policy::PolicyChangeRegistrar policy_registrar_;
 
   // Used for callbacks.
   base::WeakPtrFactory<HelpHandler> weak_factory_;

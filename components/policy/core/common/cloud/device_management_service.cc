@@ -9,8 +9,10 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
@@ -33,7 +35,7 @@ const char kServiceTokenAuthHeader[] = "Authorization: GoogleLogin auth=";
 const char kDMTokenAuthHeader[] = "Authorization: GoogleDMToken token=";
 
 // Number of times to retry on ERR_NETWORK_CHANGED errors.
-const int kMaxNetworkChangedRetries = 3;
+const int kMaxRetries = 3;
 
 // HTTP Error Codes of the DM Server with their concrete meanings in the context
 // of the DM Server communication.
@@ -53,6 +55,11 @@ const int kServiceUnavailable = 503;
 const int kPolicyNotFound = 902;
 const int kDeprovisioned = 903;
 
+// Delay after first unsuccessful upload attempt. After each additional failure,
+// the delay increases exponentially. Can be changed for testing to prevent
+// timeouts.
+long g_retry_delay_ms = 10000;
+
 bool IsProxyError(const net::URLRequestStatus status) {
   switch (status.error()) {
     case net::ERR_PROXY_CONNECTION_FAILED:
@@ -63,6 +70,19 @@ bool IsProxyError(const net::URLRequestStatus status) {
     case net::ERR_PROXY_CERTIFICATE_INVALID:
     case net::ERR_SOCKS_CONNECTION_FAILED:
     case net::ERR_SOCKS_CONNECTION_HOST_UNREACHABLE:
+      return true;
+  }
+  return false;
+}
+
+bool IsConnectionError(const net::URLRequestStatus status) {
+  switch (status.error()) {
+    case net::ERR_NETWORK_CHANGED:
+    case net::ERR_NAME_NOT_RESOLVED:
+    case net::ERR_INTERNET_DISCONNECTED:
+    case net::ERR_ADDRESS_UNREACHABLE:
+    case net::ERR_CONNECTION_TIMED_OUT:
+    case net::ERR_NAME_RESOLUTION_FAILED:
       return true;
   }
   return false;
@@ -126,6 +146,10 @@ const char* JobTypeToRequestType(DeviceManagementRequestJob::JobType type) {
       return dm_protocol::kValueRequestDeviceAttributeUpdate;
     case DeviceManagementRequestJob::TYPE_GCM_ID_UPDATE:
       return dm_protocol::kValueRequestGcmIdUpdate;
+    case DeviceManagementRequestJob::TYPE_ANDROID_MANAGEMENT_CHECK:
+      return dm_protocol::kValueRequestCheckAndroidManagement;
+    case DeviceManagementRequestJob::TYPE_CERT_BASED_REGISTRATION:
+      return dm_protocol::kValueRequestCertBasedRegister;
   }
   NOTREACHED() << "Invalid job type " << type;
   return "";
@@ -147,7 +171,6 @@ class DeviceManagementRequestJobImpl : public DeviceManagementRequestJob {
   // Handles the URL request response.
   void HandleResponse(const net::URLRequestStatus& status,
                       int response_code,
-                      const net::ResponseCookies& cookies,
                       const std::string& data);
 
   // Gets the URL to contact.
@@ -156,13 +179,30 @@ class DeviceManagementRequestJobImpl : public DeviceManagementRequestJob {
   // Configures the fetcher, setting up payload and headers.
   void ConfigureRequest(net::URLFetcher* fetcher);
 
-  // Returns true if this job should be retried. |fetcher| has just completed,
-  // and can be inspected to determine if the request failed and should be
-  // retried.
-  bool ShouldRetry(const net::URLFetcher* fetcher);
+  enum RetryMethod {
+    // No retry required for this request.
+    NO_RETRY,
+    // Should retry immediately (no delay).
+    RETRY_IMMEDIATELY,
+    // Should retry after a delay.
+    RETRY_WITH_DELAY
+  };
+
+  // Returns if and how this job should be retried. |fetcher| has just
+  // completed, and can be inspected to determine if the request failed and
+  // should be retried.
+  RetryMethod ShouldRetry(const net::URLFetcher* fetcher);
+
+  // Returns the delay before the next retry with the specified RetryMethod.
+  int GetRetryDelay(RetryMethod method);
 
   // Invoked right before retrying this job.
   void PrepareRetry();
+
+  // Get weak pointer
+  base::WeakPtr<DeviceManagementRequestJobImpl> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
 
  protected:
   // DeviceManagementRequestJob:
@@ -178,13 +218,35 @@ class DeviceManagementRequestJobImpl : public DeviceManagementRequestJob {
   // Whether the BYPASS_PROXY flag should be set by ConfigureRequest().
   bool bypass_proxy_;
 
-  // Number of times that this job has been retried due to ERR_NETWORK_CHANGED.
+  // Number of times that this job has been retried due to connection errors.
   int retries_count_;
+
+  // The last error why we had to retry.
+  int last_error_ = 0;
 
   // The request context to use for this job.
   scoped_refptr<net::URLRequestContextGetter> request_context_;
 
+  // Used to get notified if the job has been canceled while waiting for retry.
+  base::WeakPtrFactory<DeviceManagementRequestJobImpl> weak_ptr_factory_;
+
   DISALLOW_COPY_AND_ASSIGN(DeviceManagementRequestJobImpl);
+};
+
+// Used in the Enterprise.DMServerRequestSuccess histogram, shows how many
+// retries we had to do to execute the DeviceManagementRequestJob.
+enum DMServerRequestSuccess {
+  // No retries happened, the request succeeded for the first try.
+  REQUEST_NO_RETRY = 0,
+
+  // 1..kMaxRetries: number of retries
+
+  // The request failed (too many retries or non-retriable error).
+  REQUEST_FAILED = 10,
+  // The server responded with an error.
+  REQUEST_ERROR,
+
+  REQUEST_MAX
 };
 
 DeviceManagementRequestJobImpl::DeviceManagementRequestJobImpl(
@@ -197,8 +259,8 @@ DeviceManagementRequestJobImpl::DeviceManagementRequestJobImpl(
       service_(service),
       bypass_proxy_(false),
       retries_count_(0),
-      request_context_(request_context) {
-}
+      request_context_(request_context),
+      weak_ptr_factory_(this) {}
 
 DeviceManagementRequestJobImpl::~DeviceManagementRequestJobImpl() {
   service_->RemoveJob(this);
@@ -211,9 +273,11 @@ void DeviceManagementRequestJobImpl::Run() {
 void DeviceManagementRequestJobImpl::HandleResponse(
     const net::URLRequestStatus& status,
     int response_code,
-    const net::ResponseCookies& cookies,
     const std::string& data) {
   if (status.status() != net::URLRequestStatus::SUCCESS) {
+    UMA_HISTOGRAM_ENUMERATION("Enterprise.DMServerRequestSuccess",
+                              DMServerRequestSuccess::REQUEST_FAILED,
+                              DMServerRequestSuccess::REQUEST_MAX);
     LOG(WARNING) << "DMServer request failed, status: " << status.status()
                  << ", error: " << status.error();
     em::DeviceManagementResponse dummy_response;
@@ -221,8 +285,17 @@ void DeviceManagementRequestJobImpl::HandleResponse(
     return;
   }
 
-  if (response_code != kSuccess)
+  if (response_code != kSuccess) {
+    UMA_HISTOGRAM_ENUMERATION("Enterprise.DMServerRequestSuccess",
+                              DMServerRequestSuccess::REQUEST_ERROR,
+                              DMServerRequestSuccess::REQUEST_MAX);
     LOG(WARNING) << "DMServer sent an error response: " << response_code;
+  } else {
+    // Success with retries_count_ retries.
+    UMA_HISTOGRAM_ENUMERATION("Enterprise.DMServerRequestSuccess",
+                              retries_count_,
+                              DMServerRequestSuccess::REQUEST_MAX);
+  }
 
   switch (response_code) {
     case kSuccess: {
@@ -287,10 +360,20 @@ GURL DeviceManagementRequestJobImpl::GetURL(
     const std::string& server_url) {
   std::string result(server_url);
   result += '?';
-  for (ParameterMap::const_iterator entry(query_params_.begin());
-       entry != query_params_.end();
-       ++entry) {
-    if (entry != query_params_.begin())
+  ParameterMap current_query_params(query_params_);
+  if (last_error_ == 0) {
+    // Not a retry.
+    current_query_params.push_back(
+        std::make_pair(dm_protocol::kParamRetry, "false"));
+  } else {
+    current_query_params.push_back(
+        std::make_pair(dm_protocol::kParamRetry, "true"));
+    current_query_params.push_back(std::make_pair(dm_protocol::kParamLastError,
+                                                  std::to_string(last_error_)));
+  }
+  for (ParameterMap::const_iterator entry(current_query_params.begin());
+       entry != current_query_params.end(); ++entry) {
+    if (entry != current_query_params.begin())
       result += '&';
     result += net::EscapeQueryParamValue(entry->first, true);
     result += '=';
@@ -319,28 +402,46 @@ void DeviceManagementRequestJobImpl::ConfigureRequest(
   fetcher->SetExtraRequestHeaders(extra_headers);
 }
 
-bool DeviceManagementRequestJobImpl::ShouldRetry(
-    const net::URLFetcher* fetcher) {
+DeviceManagementRequestJobImpl::RetryMethod
+DeviceManagementRequestJobImpl::ShouldRetry(const net::URLFetcher* fetcher) {
+  last_error_ = fetcher->GetStatus().error();
   if (FailedWithProxy(fetcher) && !bypass_proxy_) {
-    // Retry the job if it failed due to a broken proxy, by bypassing the
-    // proxy on the next try.
+    // Retry the job immediately if it failed due to a broken proxy, by
+    // bypassing the proxy on the next try.
     bypass_proxy_ = true;
-    return true;
+    return RETRY_IMMEDIATELY;
   }
 
   // Early device policy fetches on ChromeOS and Auto-Enrollment checks are
-  // often interrupted during ChromeOS startup when network change notifications
-  // are sent. Allowing the fetcher to retry once after that is enough to
-  // recover; allow it to retry up to 3 times just in case.
-  if (fetcher->GetStatus().error() == net::ERR_NETWORK_CHANGED &&
-      retries_count_ < kMaxNetworkChangedRetries) {
+  // often interrupted during ChromeOS startup when network is not yet ready.
+  // Allowing the fetcher to retry once after that is enough to recover; allow
+  // it to retry up to 3 times just in case.
+  if (IsConnectionError(fetcher->GetStatus()) && retries_count_ < kMaxRetries) {
     ++retries_count_;
-    return true;
+    if (type_ == DeviceManagementRequestJob::TYPE_POLICY_FETCH) {
+      // We must not delay when retrying policy fetch, because it is a blocking
+      // call when logging in.
+      return RETRY_IMMEDIATELY;
+    } else {
+      return RETRY_WITH_DELAY;
+    }
   }
 
   // The request didn't fail, or the limit of retry attempts has been reached;
   // forward the result to the job owner.
-  return false;
+  return NO_RETRY;
+}
+
+int DeviceManagementRequestJobImpl::GetRetryDelay(RetryMethod method) {
+  switch (method) {
+    case RETRY_WITH_DELAY:
+      return g_retry_delay_ms << (retries_count_ - 1);
+    case RETRY_IMMEDIATELY:
+      return 0;
+    default:
+      NOTREACHED();
+      return 0;
+  }
 }
 
 void DeviceManagementRequestJobImpl::PrepareRetry() {
@@ -371,6 +472,11 @@ void DeviceManagementRequestJob::SetClientID(const std::string& client_id) {
   AddParameter(dm_protocol::kParamDeviceID, client_id);
 }
 
+void DeviceManagementRequestJob::SetCritical(bool critical) {
+  if (critical)
+    AddParameter(dm_protocol::kParamCritical, "true");
+}
+
 em::DeviceManagementRequest* DeviceManagementRequestJob::GetRequest() {
   return &request_;
 }
@@ -378,7 +484,8 @@ em::DeviceManagementRequest* DeviceManagementRequestJob::GetRequest() {
 DeviceManagementRequestJob::DeviceManagementRequestJob(
     JobType type,
     const std::string& agent_parameter,
-    const std::string& platform_parameter) {
+    const std::string& platform_parameter)
+    : type_(type) {
   AddParameter(dm_protocol::kParamRequest, JobTypeToRequestType(type));
   AddParameter(dm_protocol::kParamDeviceType, dm_protocol::kValueDeviceType);
   AddParameter(dm_protocol::kParamAppType, dm_protocol::kValueAppType);
@@ -413,6 +520,8 @@ DeviceManagementService::~DeviceManagementService() {
 DeviceManagementRequestJob* DeviceManagementService::CreateJob(
     DeviceManagementRequestJob::JobType type,
     const scoped_refptr<net::URLRequestContextGetter>& request_context) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   return new DeviceManagementRequestJobImpl(
       type,
       configuration_->GetAgentParameter(),
@@ -421,16 +530,20 @@ DeviceManagementRequestJob* DeviceManagementService::CreateJob(
       request_context);
 }
 
-void DeviceManagementService::ScheduleInitialization(int64 delay_milliseconds) {
+void DeviceManagementService::ScheduleInitialization(
+    int64_t delay_milliseconds) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   if (initialized_)
     return;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  task_runner_->PostDelayedTask(
       FROM_HERE, base::Bind(&DeviceManagementService::Initialize,
                             weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(delay_milliseconds));
 }
 
 void DeviceManagementService::Initialize() {
+  DCHECK(thread_checker_.CalledOnValidThread());
   if (initialized_)
     return;
   initialized_ = true;
@@ -442,6 +555,8 @@ void DeviceManagementService::Initialize() {
 }
 
 void DeviceManagementService::Shutdown() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  weak_ptr_factory_.InvalidateWeakPtrs();
   for (JobFetcherMap::iterator job(pending_jobs_.begin());
        job != pending_jobs_.end();
        ++job) {
@@ -452,18 +567,24 @@ void DeviceManagementService::Shutdown() {
 }
 
 DeviceManagementService::DeviceManagementService(
-    scoped_ptr<Configuration> configuration)
-    : configuration_(configuration.Pass()),
+    std::unique_ptr<Configuration> configuration)
+    : configuration_(std::move(configuration)),
       initialized_(false),
+      task_runner_(base::ThreadTaskRunnerHandle::Get()),
       weak_ptr_factory_(this) {
   DCHECK(configuration_);
 }
 
 void DeviceManagementService::StartJob(DeviceManagementRequestJobImpl* job) {
-  std::string server_url = GetServerUrl();
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  GURL url = job->GetURL(GetServerUrl());
+  DCHECK(url.is_valid()) << "Maybe invalid --device-management-url was passed?";
+
   net::URLFetcher* fetcher =
-      net::URLFetcher::Create(kURLFetcherID, job->GetURL(server_url),
-                              net::URLFetcher::POST, this).release();
+      net::URLFetcher::Create(kURLFetcherID, std::move(url),
+                              net::URLFetcher::POST, this)
+          .release();
   data_use_measurement::DataUseUserData::AttachToFetcher(
       fetcher, data_use_measurement::DataUseUserData::POLICY);
   job->ConfigureRequest(fetcher);
@@ -471,8 +592,24 @@ void DeviceManagementService::StartJob(DeviceManagementRequestJobImpl* job) {
   fetcher->Start();
 }
 
+void DeviceManagementService::StartJobAfterDelay(
+    base::WeakPtr<DeviceManagementRequestJobImpl> job) {
+  // Check if the job still exists (it is possible that it had been canceled
+  // while we were waiting for the retry).
+  if (job) {
+    StartJob(job.get());
+  }
+}
+
 std::string DeviceManagementService::GetServerUrl() {
+  DCHECK(thread_checker_.CalledOnValidThread());
   return configuration_->GetServerUrl();
+}
+
+// static
+void DeviceManagementService::SetRetryDelayForTesting(long retry_delay_ms) {
+  CHECK_GE(retry_delay_ms, 0);
+  g_retry_delay_ms = retry_delay_ms;
 }
 
 void DeviceManagementService::OnURLFetchComplete(
@@ -486,15 +623,22 @@ void DeviceManagementService::OnURLFetchComplete(
   DeviceManagementRequestJobImpl* job = entry->second;
   pending_jobs_.erase(entry);
 
-  if (job->ShouldRetry(source)) {
-    VLOG(1) << "Retrying dmserver request.";
+  DeviceManagementRequestJobImpl::RetryMethod retry_method =
+      job->ShouldRetry(source);
+  if (retry_method != DeviceManagementRequestJobImpl::RetryMethod::NO_RETRY) {
     job->PrepareRetry();
-    StartJob(job);
+    int delay = job->GetRetryDelay(retry_method);
+    LOG(WARNING) << "Dmserver request failed, retrying in " << delay / 1000
+                 << "s.";
+    task_runner_->PostDelayedTask(
+        FROM_HERE,
+        base::Bind(&DeviceManagementService::StartJobAfterDelay,
+                   weak_ptr_factory_.GetWeakPtr(), job->GetWeakPtr()),
+        base::TimeDelta::FromMilliseconds(delay));
   } else {
     std::string data;
     source->GetResponseAsString(&data);
-    job->HandleResponse(source->GetStatus(), source->GetResponseCode(),
-                        source->GetCookies(), data);
+    job->HandleResponse(source->GetStatus(), source->GetResponseCode(), data);
   }
   delete source;
 }

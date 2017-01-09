@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
@@ -15,7 +16,7 @@
 #include "components/history/core/test/database_test_utils.h"
 #include "sql/connection.h"
 #include "sql/recovery.h"
-#include "sql/test/scoped_error_ignorer.h"
+#include "sql/test/scoped_error_expecter.h"
 #include "sql/test/test_helpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/sqlite/sqlite3.h"
@@ -155,17 +156,17 @@ class ThumbnailDatabaseTest : public testing::Test {
 
   // Initialize a thumbnail database instance from the SQL file at
   // |golden_path| in the "History/" subdirectory of test data.
-  scoped_ptr<ThumbnailDatabase> LoadFromGolden(const char* golden_path) {
+  std::unique_ptr<ThumbnailDatabase> LoadFromGolden(const char* golden_path) {
     if (!CreateDatabaseFromSQL(file_name_, golden_path)) {
       ADD_FAILURE() << "Failed loading " << golden_path;
-      return scoped_ptr<ThumbnailDatabase>();
+      return std::unique_ptr<ThumbnailDatabase>();
     }
 
-    scoped_ptr<ThumbnailDatabase> db(new ThumbnailDatabase(NULL));
+    std::unique_ptr<ThumbnailDatabase> db(new ThumbnailDatabase(NULL));
     EXPECT_EQ(sql::INIT_OK, db->Init(file_name_));
     db->BeginTransaction();
 
-    return db.Pass();
+    return db;
   }
 
  protected:
@@ -173,7 +174,7 @@ class ThumbnailDatabaseTest : public testing::Test {
     // Get a temporary directory for the test DB files.
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
-    file_name_ = temp_dir_.path().AppendASCII("TestFavicons.db");
+    file_name_ = temp_dir_.GetPath().AppendASCII("TestFavicons.db");
   }
 
   base::ScopedTempDir temp_dir_;
@@ -601,7 +602,7 @@ TEST_F(ThumbnailDatabaseTest, HasMappingFor) {
 
 // Test loading version 3 database.
 TEST_F(ThumbnailDatabaseTest, Version3) {
-  scoped_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v3.sql");
+  std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v3.sql");
   ASSERT_TRUE(db.get() != NULL);
   VerifyTablesAndColumns(&db->db_);
 
@@ -611,7 +612,7 @@ TEST_F(ThumbnailDatabaseTest, Version3) {
 
 // Test loading version 4 database.
 TEST_F(ThumbnailDatabaseTest, Version4) {
-  scoped_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v4.sql");
+  std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v4.sql");
   ASSERT_TRUE(db.get() != NULL);
   VerifyTablesAndColumns(&db->db_);
 
@@ -621,7 +622,7 @@ TEST_F(ThumbnailDatabaseTest, Version4) {
 
 // Test loading version 5 database.
 TEST_F(ThumbnailDatabaseTest, Version5) {
-  scoped_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v5.sql");
+  std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v5.sql");
   ASSERT_TRUE(db.get() != NULL);
   VerifyTablesAndColumns(&db->db_);
 
@@ -631,7 +632,7 @@ TEST_F(ThumbnailDatabaseTest, Version5) {
 
 // Test loading version 6 database.
 TEST_F(ThumbnailDatabaseTest, Version6) {
-  scoped_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v6.sql");
+  std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v6.sql");
   ASSERT_TRUE(db.get() != NULL);
   VerifyTablesAndColumns(&db->db_);
 
@@ -667,7 +668,7 @@ TEST_F(ThumbnailDatabaseTest, Version6) {
 
 // Test loading version 7 database.
 TEST_F(ThumbnailDatabaseTest, Version7) {
-  scoped_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v7.sql");
+  std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v7.sql");
   ASSERT_TRUE(db.get() != NULL);
   VerifyTablesAndColumns(&db->db_);
 
@@ -703,7 +704,7 @@ TEST_F(ThumbnailDatabaseTest, Version7) {
 
 // Test loading version 8 database.
 TEST_F(ThumbnailDatabaseTest, Version8) {
-  scoped_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v8.sql");
+  std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v8.sql");
   ASSERT_TRUE(db.get() != NULL);
   VerifyTablesAndColumns(&db->db_);
 
@@ -799,8 +800,8 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
 
   // Open the database and access the corrupt index.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     ThumbnailDatabase db(NULL);
     ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
 
@@ -810,7 +811,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
     // fails.
     EXPECT_FALSE(db.GetIconMappingsForPageURL(kPageUrl2, NULL));
 
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // Check that the database is recovered at the SQLite level.
@@ -846,18 +847,18 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
 
   // Database is unusable at the SQLite level.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     sql::Connection raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // Database should be recovered during open.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     ThumbnailDatabase db(NULL);
     ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
 
@@ -870,7 +871,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
                                  sizeof(kBlob1),
                                  kBlob1));
 
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 }
 
@@ -911,8 +912,8 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
   // Open the database and access the corrupt index. Note that this upgrades
   // the database.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     ThumbnailDatabase db(NULL);
     ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
 
@@ -922,7 +923,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
     // fails.
     EXPECT_FALSE(db.GetIconMappingsForPageURL(kPageUrl2, NULL));
 
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // Check that the database is recovered at the SQLite level.
@@ -958,18 +959,18 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
 
   // Database is unusable at the SQLite level.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     sql::Connection raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // Database should be recovered during open.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     ThumbnailDatabase db(NULL);
     ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
 
@@ -982,7 +983,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
                                  sizeof(kBlob1),
                                  kBlob1));
 
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 }
 
@@ -1002,21 +1003,21 @@ TEST_F(ThumbnailDatabaseTest, Recovery6) {
 
   // Database is unusable at the SQLite level.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     sql::Connection raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // Database open should succeed.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     ThumbnailDatabase db(NULL);
     ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // The database should be usable at the SQLite level, with a current schema
@@ -1050,21 +1051,21 @@ TEST_F(ThumbnailDatabaseTest, Recovery5) {
 
   // Database is unusable at the SQLite level.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     sql::Connection raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // Database open should succeed.
   {
-    sql::ScopedErrorIgnorer ignore_errors;
-    ignore_errors.IgnoreError(SQLITE_CORRUPT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
     ThumbnailDatabase db(NULL);
     ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
-    ASSERT_TRUE(ignore_errors.CheckIgnoredErrors());
+    ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
   // The database should be usable at the SQLite level, with a current schema

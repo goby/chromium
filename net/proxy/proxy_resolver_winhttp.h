@@ -6,6 +6,7 @@
 #define NET_PROXY_PROXY_RESOLVER_WINHTTP_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/proxy/proxy_resolver_factory.h"
 #include "url/gurl.h"
@@ -21,9 +22,9 @@ class NET_EXPORT_PRIVATE ProxyResolverFactoryWinHttp
 
   int CreateProxyResolver(
       const scoped_refptr<ProxyResolverScriptData>& pac_script,
-      scoped_ptr<ProxyResolver>* resolver,
+      std::unique_ptr<ProxyResolver>* resolver,
       const CompletionCallback& callback,
-      scoped_ptr<Request>* request) override;
+      std::unique_ptr<Request>* request) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ProxyResolverFactoryWinHttp);

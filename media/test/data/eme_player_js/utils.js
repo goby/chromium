@@ -175,32 +175,18 @@ Utils.getHexString = function(uintArray) {
 };
 
 Utils.hasPrefix = function(msg, prefix) {
-  var message = String.fromCharCode.apply(null, msg);
+  var message = String.fromCharCode.apply(null, Utils.convertToUint8Array(msg));
   return message.substring(0, prefix.length) == prefix;
 };
 
 Utils.installTitleEventHandler = function(element, event) {
   element.addEventListener(event, function(e) {
-    Utils.setResultInTitle(e.type);
+    Utils.setResultInTitle(e.type.toUpperCase());
   }, false);
 };
 
 Utils.isRenewalMessage = function(message) {
-  if (message.messageType != 'license-renewal')
-    return false;
-
-  if (!Utils.isRenewalMessagePrefixed(message.message)) {
-    Utils.failTest('license-renewal message doesn\'t contain expected header',
-                   PREFIXED_EME_RENEWAL_MISSING_HEADER);
-  }
-  return true;
-};
-
-// For the prefixed API renewal messages are determined by looking at the
-// message and finding a known string.
-Utils.isRenewalMessagePrefixed = function(msg) {
-  return Utils.hasPrefix(Utils.convertToUint8Array(msg),
-                         PREFIXED_EME_RENEWAL_MESSAGE_HEADER);
+  return (message.messageType == 'license-renewal');
 };
 
 Utils.resetTitleChange = function() {
@@ -263,8 +249,8 @@ Utils.sendRequest = function(
 Utils.setResultInTitle = function(title) {
   // If document title is 'ENDED', then update it with new title to possibly
   // mark a test as failure.  Otherwise, keep the first title change in place.
-  if (!this.titleChanged || document.title.toUpperCase() == 'ENDED')
-    document.title = title.toUpperCase();
+  if (!this.titleChanged || document.title == 'ENDED')
+    document.title = title;
   Utils.timeLog('Set document title to: ' + title + ', updated title: ' +
                 document.title);
   this.titleChanged = true;

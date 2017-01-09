@@ -5,12 +5,16 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_COMMON_CREDENTIAL_MANAGER_TYPES_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_COMMON_CREDENTIAL_MANAGER_TYPES_H_
 
+#include <stddef.h>
+
+#include <memory>
+#include <ostream>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/strings/string16.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace autofill {
 struct PasswordForm;
@@ -29,9 +33,13 @@ enum class CredentialType {
   CREDENTIAL_TYPE_LAST = CREDENTIAL_TYPE_FEDERATED
 };
 
+std::string CredentialTypeToString(CredentialType value);
+std::ostream& operator<<(std::ostream& os, CredentialType value);
+
 struct CredentialInfo {
   CredentialInfo();
   CredentialInfo(const autofill::PasswordForm& form, CredentialType form_type);
+  CredentialInfo(const CredentialInfo& other);
   ~CredentialInfo();
 
   bool operator==(const CredentialInfo& rhs) const;
@@ -53,15 +61,20 @@ struct CredentialInfo {
   // Corresponds to WebPasswordCredential's password property.
   base::string16 password;
 
-  // Corresponds to WebFederatedCredential's federation property, which is an
-  // origin serialized as a URL (e.g. "https://example.com/").
-  GURL federation;
+  // Corresponds to WebFederatedCredential's provider property.
+  url::Origin federation;
 };
 
 // Create a new autofill::PasswordForm object based on |info|, valid in the
-// context of |origin|. Returns an empty scoped_ptr for CREDENTIAL_TYPE_EMPTY.
-scoped_ptr<autofill::PasswordForm> CreatePasswordFormFromCredentialInfo(
+// context of |origin|. Returns an empty std::unique_ptr for
+// CREDENTIAL_TYPE_EMPTY.
+std::unique_ptr<autofill::PasswordForm> CreatePasswordFormFromCredentialInfo(
     const CredentialInfo& info,
+    const GURL& origin);
+
+// Create a new autofill::PasswordForm object based on |origin|. The result
+// plays the role of an observed form on that page.
+std::unique_ptr<autofill::PasswordForm> CreateObservedPasswordFormFromOrigin(
     const GURL& origin);
 
 }  // namespace password_manager

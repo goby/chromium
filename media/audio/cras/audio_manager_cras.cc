@@ -4,6 +4,8 @@
 
 #include "media/audio/cras/audio_manager_cras.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/command_line.h"
@@ -13,8 +15,11 @@
 #include "base/metrics/histogram.h"
 #include "base/nix/xdg_util.h"
 #include "base/stl_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "chromeos/audio/audio_device.h"
 #include "chromeos/audio/cras_audio_handler.h"
+#include "media/audio/audio_device_description.h"
+#include "media/audio/audio_features.h"
 #include "media/audio/cras/cras_input.h"
 #include "media/audio/cras/cras_unified.h"
 #include "media/base/channel_layout.h"
@@ -62,14 +67,6 @@ bool IsBeamformingDefaultEnabled() {
          "Enabled";
 }
 
-void AddDefaultDevice(AudioDeviceNames* device_names) {
-  DCHECK(device_names->empty());
-
-  // Cras will route audio from a proper physical device automatically.
-  device_names->push_back(AudioDeviceName(AudioManager::GetDefaultDeviceName(),
-                                          AudioManagerBase::kDefaultDeviceId));
-}
-
 // Returns a mic positions string if the machine has a beamforming capable
 // internal mic and otherwise an empty string.
 std::string MicPositions() {
@@ -99,7 +96,7 @@ void AudioManagerCras::AddBeamformingDevices(AudioDeviceNames* device_names) {
   if (IsBeamformingDefaultEnabled()) {
     // The first device in the list is expected to have a "default" device ID.
     // Web apps may depend on this behavior.
-    beamforming_on_device_id_ = AudioManagerBase::kDefaultDeviceId;
+    beamforming_on_device_id_ = AudioDeviceDescription::kDefaultDeviceId;
     beamforming_off_device_id_ = kBeamformingOffDeviceId;
 
     // Users in the experiment will have the "beamforming on" device appear
@@ -109,7 +106,7 @@ void AudioManagerCras::AddBeamformingDevices(AudioDeviceNames* device_names) {
     device_names->push_back(
         AudioDeviceName(beamforming_off_name, beamforming_off_device_id_));
   } else {
-    beamforming_off_device_id_ = AudioManagerBase::kDefaultDeviceId;
+    beamforming_off_device_id_ = AudioDeviceDescription::kDefaultDeviceId;
     beamforming_on_device_id_ = kBeamformingOnDeviceId;
 
     device_names->push_back(
@@ -133,9 +130,13 @@ bool AudioManagerCras::HasAudioInputDevices() {
   return false;
 }
 
-AudioManagerCras::AudioManagerCras(AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(audio_log_factory),
-      has_keyboard_mic_(false),
+AudioManagerCras::AudioManagerCras(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+    AudioLogFactory* audio_log_factory)
+    : AudioManagerBase(std::move(task_runner),
+                       std::move(worker_task_runner),
+                       audio_log_factory),
       beamforming_on_device_id_(nullptr),
       beamforming_off_device_id_(nullptr) {
   SetMaxOutputStreamsAllowed(kMaxOutputStreams);
@@ -149,23 +150,38 @@ void AudioManagerCras::ShowAudioInputSettings() {
   NOTIMPLEMENTED();
 }
 
-void AudioManagerCras::GetAudioInputDeviceNames(
-    AudioDeviceNames* device_names) {
+void AudioManagerCras::GetAudioDeviceNamesImpl(bool is_input,
+                                               AudioDeviceNames* device_names) {
   DCHECK(device_names->empty());
-
-  mic_positions_ = ParsePointsFromString(MicPositions());
   // At least two mic positions indicates we have a beamforming capable mic
   // array. Add the virtual beamforming device to the list. When this device is
   // queried through GetInputStreamParameters, provide the cached mic positions.
-  if (mic_positions_.size() > 1)
+  if (is_input && mic_positions_.size() > 1)
     AddBeamformingDevices(device_names);
   else
-    AddDefaultDevice(device_names);
+    device_names->push_back(media::AudioDeviceName::CreateDefault());
+
+  if (base::FeatureList::IsEnabled(features::kEnumerateAudioDevices)) {
+    chromeos::AudioDeviceList devices;
+    chromeos::CrasAudioHandler::Get()->GetAudioDevices(&devices);
+    for (const auto& device : devices) {
+      if (device.is_input == is_input && device.is_for_simple_usage()) {
+        device_names->emplace_back(device.display_name,
+                                   base::Uint64ToString(device.id));
+      }
+    }
+  }
+}
+
+void AudioManagerCras::GetAudioInputDeviceNames(
+    AudioDeviceNames* device_names) {
+  mic_positions_ = ParsePointsFromString(MicPositions());
+  GetAudioDeviceNamesImpl(true, device_names);
 }
 
 void AudioManagerCras::GetAudioOutputDeviceNames(
     AudioDeviceNames* device_names) {
-  AddDefaultDevice(device_names);
+  GetAudioDeviceNamesImpl(false, device_names);
 }
 
 AudioParameters AudioManagerCras::GetInputStreamParameters(
@@ -181,7 +197,7 @@ AudioParameters AudioManagerCras::GetInputStreamParameters(
   AudioParameters params(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                          CHANNEL_LAYOUT_STEREO, kDefaultSampleRate, 16,
                          buffer_size);
-  if (has_keyboard_mic_)
+  if (chromeos::CrasAudioHandler::Get()->HasKeyboardMic())
     params.set_effects(AudioParameters::KEYBOARD_MIC);
 
   if (mic_positions_.size() > 1) {
@@ -212,20 +228,21 @@ AudioParameters AudioManagerCras::GetInputStreamParameters(
   return params;
 }
 
-void AudioManagerCras::SetHasKeyboardMic() {
-  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
-  has_keyboard_mic_ = true;
+const char* AudioManagerCras::GetName() {
+  return "CRAS";
 }
 
 AudioOutputStream* AudioManagerCras::MakeLinearOutputStream(
-    const AudioParameters& params) {
+    const AudioParameters& params,
+    const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
   return MakeOutputStream(params);
 }
 
 AudioOutputStream* AudioManagerCras::MakeLowLatencyOutputStream(
     const AudioParameters& params,
-    const std::string& device_id) {
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   DLOG_IF(ERROR, !device_id.empty()) << "Not implemented!";
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
   // TODO(dgreid): Open the correct input device for unified IO.
@@ -233,13 +250,17 @@ AudioOutputStream* AudioManagerCras::MakeLowLatencyOutputStream(
 }
 
 AudioInputStream* AudioManagerCras::MakeLinearInputStream(
-    const AudioParameters& params, const std::string& device_id) {
+    const AudioParameters& params,
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
   return MakeInputStream(params, device_id);
 }
 
 AudioInputStream* AudioManagerCras::MakeLowLatencyInputStream(
-    const AudioParameters& params, const std::string& device_id) {
+    const AudioParameters& params,
+    const std::string& device_id,
+    const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
   return MakeInputStream(params, device_id);
 }

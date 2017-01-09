@@ -5,12 +5,14 @@
 #ifndef UI_BASE_IME_CHROMEOS_INPUT_METHOD_MANAGER_H_
 #define UI_BASE_IME_CHROMEOS_INPUT_METHOD_MANAGER_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "ui/base/ime/chromeos/input_method_descriptor.h"
 #include "ui/base/ime/ui_base_ime_export.h"
 
@@ -20,10 +22,6 @@ namespace ui {
 class Accelerator;
 class IMEEngineHandlerInterface;
 }  // namespace ui
-
-namespace user_manager {
-class User;
-}  // namespace user_manager
 
 namespace chromeos {
 class ComponentExtensionIMEManager;
@@ -40,7 +38,31 @@ class UI_BASE_IME_EXPORT InputMethodManager {
     STATE_LOGIN_SCREEN = 0,
     STATE_BROWSER_SCREEN,
     STATE_LOCK_SCREEN,
+    STATE_SECONDARY_LOGIN_SCREEN,
     STATE_TERMINATING,
+  };
+
+  enum MenuItemStyle {
+    MENU_ITEM_STYLE_NONE,
+    MENU_ITEM_STYLE_CHECK,
+    MENU_ITEM_STYLE_RADIO,
+    MENU_ITEM_STYLE_SEPARATOR,
+  };
+
+  struct MenuItem {
+    MenuItem();
+    MenuItem(const MenuItem& other);
+    virtual ~MenuItem();
+
+    std::string id;
+    std::string label;
+    MenuItemStyle style;
+    bool visible;
+    bool enabled;
+    bool checked;
+
+    unsigned int modified;
+    std::vector<MenuItem> children;
   };
 
   class Observer {
@@ -65,6 +87,25 @@ class UI_BASE_IME_EXPORT InputMethodManager {
     virtual void CandidateWindowOpened(InputMethodManager* manager) = 0;
     // Called when the candidate window is closed.
     virtual void CandidateWindowClosed(InputMethodManager* manager) = 0;
+  };
+
+  // ImeMenuObserver is notified of events related to the IME menu on the shelf
+  // bar.
+  class ImeMenuObserver {
+   public:
+    virtual ~ImeMenuObserver() {}
+
+    // Called when the IME menu is activated or deactivated.
+    virtual void ImeMenuActivationChanged(bool is_active) = 0;
+    // Called when the current input method or the list of active input method
+    // IDs is changed.
+    virtual void ImeMenuListChanged() = 0;
+    // Called when the input.ime.setMenuItems or input.ime.updateMenuItems API
+    // is called.
+    virtual void ImeMenuItemsChanged(const std::string& engine_id,
+                                     const std::vector<MenuItem>& items) = 0;
+
+    DISALLOW_ASSIGN(ImeMenuObserver);
   };
 
   class State : public base::RefCounted<InputMethodManager::State> {
@@ -114,7 +155,7 @@ class UI_BASE_IME_EXPORT InputMethodManager {
 
     // Returns the list of input methods we can select (i.e. active) including
     // extension input methods.
-    virtual scoped_ptr<InputMethodDescriptors> GetActiveInputMethods()
+    virtual std::unique_ptr<InputMethodDescriptors> GetActiveInputMethods()
         const = 0;
 
     // Returns the list of input methods we can select (i.e. active) including
@@ -201,15 +242,17 @@ class UI_BASE_IME_EXPORT InputMethodManager {
   virtual void AddObserver(Observer* observer) = 0;
   virtual void AddCandidateWindowObserver(
       CandidateWindowObserver* observer) = 0;
+  virtual void AddImeMenuObserver(ImeMenuObserver* observer) = 0;
   virtual void RemoveObserver(Observer* observer) = 0;
   virtual void RemoveCandidateWindowObserver(
       CandidateWindowObserver* observer) = 0;
+  virtual void RemoveImeMenuObserver(ImeMenuObserver* observer) = 0;
 
   // Returns all input methods that are supported, including ones not active.
   // This function never returns NULL. Note that input method extensions are NOT
   // included in the result.
-  virtual scoped_ptr<InputMethodDescriptors>
-      GetSupportedInputMethods() const = 0;
+  virtual std::unique_ptr<InputMethodDescriptors> GetSupportedInputMethods()
+      const = 0;
 
   // Activates the input method property specified by the |key|.
   virtual void ActivateInputMethodMenuItem(const std::string& key) = 0;
@@ -243,6 +286,28 @@ class UI_BASE_IME_EXPORT InputMethodManager {
 
   // Replaces active state.
   virtual void SetState(scoped_refptr<State> state) = 0;
+
+  // Activates or deactivates the IME Menu.
+  virtual void ImeMenuActivationChanged(bool is_active) = 0;
+
+  // Notifies the input.ime.setMenuItems or input.ime.updateMenuItems API is
+  // called to update the IME menu items.
+  virtual void NotifyImeMenuItemsChanged(
+      const std::string& engine_id,
+      const std::vector<MenuItem>& items) = 0;
+
+  // Notify the IME menu activation changed if the current profile's activation
+  // is different from previous.
+  virtual void MaybeNotifyImeMenuActivationChanged() = 0;
+
+  // Overrides the keyboard url ref (stuff following '#' to the end of the
+  // string) with the given keyset (emoji, hwt or voice). If |keyset| is empty,
+  // it indicates that we should override the url back with the keyboard keyset.
+  virtual void OverrideKeyboardUrlRef(const std::string& keyset) = 0;
+
+  // Returns whether the extra inputs: emoji, handwriting and voice inputs on
+  // opt-in IME menu has been enabled.
+  virtual bool IsEmojiHandwritingVoiceOnImeMenuEnabled() = 0;
 };
 
 }  // namespace input_method

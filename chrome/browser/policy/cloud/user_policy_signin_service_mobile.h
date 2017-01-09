@@ -5,14 +5,15 @@
 #ifndef CHROME_BROWSER_POLICY_CLOUD_USER_POLICY_SIGNIN_SERVICE_MOBILE_H_
 #define CHROME_BROWSER_POLICY_CLOUD_USER_POLICY_SIGNIN_SERVICE_MOBILE_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "chrome/browser/policy/cloud/user_policy_signin_service_base.h"
 
 class ProfileOAuth2TokenService;
@@ -67,13 +68,17 @@ class UserPolicySigninService : public UserPolicySigninServiceBase {
   static std::vector<std::string> GetScopes();
 #endif
 
+  // Overridden from UserPolicySigninServiceBase to cancel the pending delayed
+  // registration.
+  void ShutdownUserCloudPolicyManager() override;
+
  private:
   void RegisterForPolicyInternal(const std::string& username,
                                  const std::string& account_id,
                                  const std::string& access_token,
                                  const PolicyRegistrationCallback& callback);
 
-  void CallPolicyRegistrationCallback(scoped_ptr<CloudPolicyClient> client,
+  void CallPolicyRegistrationCallback(std::unique_ptr<CloudPolicyClient> client,
                                       PolicyRegistrationCallback callback);
 
   // KeyedService implementation:
@@ -81,10 +86,6 @@ class UserPolicySigninService : public UserPolicySigninServiceBase {
 
   // CloudPolicyService::Observer implementation:
   void OnInitializationCompleted(CloudPolicyService* service) override;
-
-  // Overridden from UserPolicySigninServiceBase to cancel the pending delayed
-  // registration.
-  void ShutdownUserCloudPolicyManager() override;
 
   // Registers for cloud policy for an already signed-in user.
   void RegisterCloudPolicyService();
@@ -94,7 +95,7 @@ class UserPolicySigninService : public UserPolicySigninServiceBase {
 
   void OnRegistrationDone();
 
-  scoped_ptr<CloudPolicyClientRegistrationHelper> registration_helper_;
+  std::unique_ptr<CloudPolicyClientRegistrationHelper> registration_helper_;
 
   // Weak pointer to the token service used to authenticate the
   // CloudPolicyClient during registration.

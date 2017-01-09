@@ -4,23 +4,30 @@
 
 #include "components/url_formatter/elide_url.h"
 
+#include <stddef.h>
+
+#include "base/i18n/rtl.h"
 #include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/escape.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "url/url_constants.h"
 
-#if !defined(OS_ANDROID) || defined(USE_AURA)
+#if !defined(OS_ANDROID)
 #include "ui/gfx/text_elider.h"  // nogncheck
 #include "ui/gfx/text_utils.h"  // nogncheck
-#endif  // !defined(OS_ANDROID) || defined(USE_AURA)
+#endif
 
 namespace {
 
-#if !defined(OS_ANDROID) || defined(USE_AURA)
+#if !defined(OS_ANDROID)
 const base::char16 kDot = '.';
 
 // Build a path from the first |num_components| elements in |path_elements|.
@@ -75,15 +82,17 @@ void SplitHost(const GURL& url,
                base::string16* url_host,
                base::string16* url_domain,
                base::string16* url_subdomain) {
-  // Get Host.
-  *url_host = base::UTF8ToUTF16(url.host());
+  // GURL stores IDN hostnames in punycode.  Convert back to Unicode for
+  // display to the user.  (IDNToUnicode() will only perform this conversion
+  // if it's safe to display this host/domain in Unicode.)
+  *url_host = url_formatter::IDNToUnicode(url.host());
 
   // Get domain and registry information from the URL.
-  *url_domain =
-      base::UTF8ToUTF16(net::registry_controlled_domains::GetDomainAndRegistry(
-          url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES));
-  if (url_domain->empty())
-    *url_domain = *url_host;
+  std::string domain_puny =
+      net::registry_controlled_domains::GetDomainAndRegistry(
+          url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
+  *url_domain = domain_puny.empty() ?
+      *url_host : url_formatter::IDNToUnicode(domain_puny);
 
   // Add port if required.
   if (!url.port().empty()) {
@@ -101,60 +110,39 @@ void SplitHost(const GURL& url,
     url_subdomain->clear();
   }
 }
+#endif  // !defined(OS_ANDROID)
 
-#endif  // !defined(OS_ANDROID) || defined(USE_AURA)
+bool ShouldShowScheme(base::StringPiece scheme,
+                      const url_formatter::SchemeDisplay scheme_display) {
+  switch (scheme_display) {
+    case url_formatter::SchemeDisplay::SHOW:
+      return true;
 
-base::string16 FormatUrlForSecurityDisplayInternal(const GURL& url,
-                                                   const std::string& languages,
-                                                   bool omit_scheme) {
-  if (!url.is_valid() || url.is_empty() || !url.IsStandard())
-    return url_formatter::FormatUrl(url, languages);
+    case url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS:
+      return scheme != url::kHttpsScheme && scheme != url::kHttpScheme;
 
-  const base::string16 colon(base::ASCIIToUTF16(":"));
-  const base::string16 scheme_separator(
-      base::ASCIIToUTF16(url::kStandardSchemeSeparator));
-
-  if (url.SchemeIsFile()) {
-    return base::ASCIIToUTF16(url::kFileScheme) + scheme_separator +
-           base::UTF8ToUTF16(url.path());
+    case url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC:
+      return scheme != url::kHttpsScheme && scheme != url::kWssScheme;
   }
 
-  if (url.SchemeIsFileSystem()) {
-    const GURL* inner_url = url.inner_url();
-    if (inner_url->SchemeIsFile()) {
-      return base::ASCIIToUTF16(url::kFileSystemScheme) + colon +
-             FormatUrlForSecurityDisplayInternal(*inner_url, languages,
-                                                 false /*omit_scheme*/) +
-             base::UTF8ToUTF16(url.path());
-    }
-    return base::ASCIIToUTF16(url::kFileSystemScheme) + colon +
-           FormatUrlForSecurityDisplayInternal(*inner_url, languages,
-                                               false /*omit_scheme*/);
-  }
+  return true;
+}
 
-  const GURL origin = url.GetOrigin();
-  const std::string& scheme = origin.scheme();
-  const std::string& host = origin.host();
-
-  base::string16 result;
-  if (!omit_scheme || !url.SchemeIsHTTPOrHTTPS())
-    result = base::UTF8ToUTF16(scheme) + scheme_separator;
-  result += base::UTF8ToUTF16(host);
-
-  const int port = origin.IntPort();
-  const int default_port = url::DefaultPortForScheme(
-      scheme.c_str(), static_cast<int>(scheme.length()));
-  if (port != url::PORT_UNSPECIFIED && port != default_port)
-    result += colon + base::UTF8ToUTF16(origin.port());
-
-  return result;
+// TODO(jshin): Come up with a way to show Bidi URLs 'safely' (e.g. wrap up
+// the entire url with {LSI, PDI} and individual domain labels with {FSI, PDI}).
+// See http://crbug.com/650760 . For now, fall back to punycode if there's a
+// strong RTL character.
+base::string16 HostForDisplay(base::StringPiece host_in_puny) {
+  base::string16 host = url_formatter::IDNToUnicode(host_in_puny);
+  return base::i18n::StringContainsStrongRTLChars(host) ?
+      base::ASCIIToUTF16(host_in_puny) : host;
 }
 
 }  // namespace
 
 namespace url_formatter {
 
-#if !defined(OS_ANDROID) || defined(USE_AURA)
+#if !defined(OS_ANDROID)
 
 // TODO(pkasting): http://crbug.com/77883 This whole function gets
 // kerning/ligatures/etc. issues potentially wrong by assuming that the width of
@@ -162,12 +150,11 @@ namespace url_formatter {
 // suspect it could be made simpler.
 base::string16 ElideUrl(const GURL& url,
                         const gfx::FontList& font_list,
-                        float available_pixel_width,
-                        const std::string& languages) {
+                        float available_pixel_width) {
   // Get a formatted string and corresponding parsing of the url.
   url::Parsed parsed;
   const base::string16 url_string = url_formatter::FormatUrl(
-      url, languages, url_formatter::kFormatUrlOmitAll,
+      url, url_formatter::kFormatUrlOmitAll,
       net::UnescapeRule::SPACES, &parsed, nullptr, nullptr);
   if (available_pixel_width <= 0)
     return url_string;
@@ -353,17 +340,75 @@ base::string16 ElideHost(const GURL& url,
                         gfx::ELIDE_HEAD);
 }
 
-#endif  // !defined(OS_ANDROID) || defined(USE_AURA)
+#endif  // !defined(OS_ANDROID)
 
 base::string16 FormatUrlForSecurityDisplay(const GURL& url,
-                                           const std::string& languages) {
-  return FormatUrlForSecurityDisplayInternal(url, languages, false);
+                                           const SchemeDisplay scheme_display) {
+  if (!url.is_valid() || url.is_empty() || !url.IsStandard())
+    return url_formatter::FormatUrl(url);
+
+  const base::string16 colon(base::ASCIIToUTF16(":"));
+  const base::string16 scheme_separator(
+      base::ASCIIToUTF16(url::kStandardSchemeSeparator));
+
+  if (url.SchemeIsFile()) {
+    return base::ASCIIToUTF16(url::kFileScheme) + scheme_separator +
+           base::UTF8ToUTF16(url.path());
+  }
+
+  if (url.SchemeIsFileSystem()) {
+    const GURL* inner_url = url.inner_url();
+    if (inner_url->SchemeIsFile()) {
+      return base::ASCIIToUTF16(url::kFileSystemScheme) + colon +
+             FormatUrlForSecurityDisplay(*inner_url) +
+             base::UTF8ToUTF16(url.path());
+    }
+    return base::ASCIIToUTF16(url::kFileSystemScheme) + colon +
+           FormatUrlForSecurityDisplay(*inner_url);
+  }
+
+  const GURL origin = url.GetOrigin();
+  base::StringPiece scheme = origin.scheme_piece();
+  base::StringPiece host = origin.host_piece();
+
+  base::string16 result;
+  if (ShouldShowScheme(scheme, scheme_display))
+    result = base::UTF8ToUTF16(scheme) + scheme_separator;
+  result += HostForDisplay(host);
+
+  const int port = origin.IntPort();
+  const int default_port = url::DefaultPortForScheme(
+      scheme.data(), static_cast<int>(scheme.length()));
+  if (port != url::PORT_UNSPECIFIED && port != default_port)
+    result += colon + base::UTF8ToUTF16(origin.port_piece());
+
+  return result;
 }
 
-base::string16 FormatUrlForSecurityDisplayOmitScheme(
-    const GURL& url,
-    const std::string& languages) {
-  return FormatUrlForSecurityDisplayInternal(url, languages, true);
+base::string16 FormatOriginForSecurityDisplay(
+    const url::Origin& origin,
+    const SchemeDisplay scheme_display) {
+  base::StringPiece scheme = origin.scheme();
+  base::StringPiece host = origin.host();
+  if (scheme.empty() && host.empty())
+    return base::string16();
+
+  const base::string16 colon(base::ASCIIToUTF16(":"));
+  const base::string16 scheme_separator(
+      base::ASCIIToUTF16(url::kStandardSchemeSeparator));
+
+  base::string16 result;
+  if (ShouldShowScheme(scheme, scheme_display))
+    result = base::UTF8ToUTF16(scheme) + scheme_separator;
+  result += HostForDisplay(host);
+
+  int port = static_cast<int>(origin.port());
+  const int default_port = url::DefaultPortForScheme(
+      scheme.data(), static_cast<int>(scheme.length()));
+  if (port != 0 && port != default_port)
+    result += colon + base::UintToString16(origin.port());
+
+  return result;
 }
 
 }  // namespace url_formatter

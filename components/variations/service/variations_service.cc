@@ -4,29 +4,35 @@
 
 #include "components/variations/service/variations_service.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/build_time.h"
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/task_runner_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/metrics/metrics_state_manager.h"
 #include "components/network_time/network_time_tracker.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "components/variations/pref_names.h"
 #include "components/variations/proto/variations_seed.pb.h"
 #include "components/variations/variations_seed_processor.h"
 #include "components/variations/variations_seed_simulator.h"
 #include "components/variations/variations_switches.h"
 #include "components/variations/variations_url_constants.h"
-#include "components/version_info/version_info.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_change_notifier.h"
@@ -43,11 +49,9 @@ namespace variations {
 
 namespace {
 
-const int kMaxRetrySeedFetch = 5;
-
 // TODO(mad): To be removed when we stop updating the NetworkTimeTracker.
 // For the HTTP date headers, the resolution of the server time is 1 second.
-const int64 kServerTimeResolutionMs = 1000;
+const int64_t kServerTimeResolutionMs = 1000;
 
 // Maximum age permitted for a variations seed, in days.
 const int kMaxVariationsSeedAgeDays = 30;
@@ -195,7 +199,7 @@ std::string GetHardwareClass() {
 // Returns the date that should be used by the VariationsSeedProcessor to do
 // expiry and start date checks.
 base::Time GetReferenceDateForExpiryChecks(PrefService* local_state) {
-  const int64 date_value = local_state->GetInt64(prefs::kVariationsSeedDate);
+  const int64_t date_value = local_state->GetInt64(prefs::kVariationsSeedDate);
   const base::Time seed_date = base::Time::FromInternalValue(date_value);
   const base::Time build_time = base::GetBuildTime();
   // Use the build time for date checks if either the seed date is invalid or
@@ -211,7 +215,7 @@ base::Time GetReferenceDateForExpiryChecks(PrefService* local_state) {
 std::string GetHeaderValue(const net::HttpResponseHeaders* headers,
                            const base::StringPiece& name) {
   std::string value;
-  headers->EnumerateHeader(NULL, name, &value);
+  headers->EnumerateHeader(nullptr, name, &value);
   return value;
 }
 
@@ -221,7 +225,7 @@ std::vector<std::string> GetHeaderValuesList(
     const net::HttpResponseHeaders* headers,
     const base::StringPiece& name) {
   std::vector<std::string> values;
-  void* iter = NULL;
+  size_t iter = 0;
   std::string value;
   while (headers->EnumerateHeader(&iter, name, &value)) {
     values.push_back(value);
@@ -267,12 +271,12 @@ bool GetInstanceManipulations(const net::HttpResponseHeaders* headers,
 }  // namespace
 
 VariationsService::VariationsService(
-    scoped_ptr<VariationsServiceClient> client,
-    scoped_ptr<web_resource::ResourceRequestAllowedNotifier> notifier,
+    std::unique_ptr<VariationsServiceClient> client,
+    std::unique_ptr<web_resource::ResourceRequestAllowedNotifier> notifier,
     PrefService* local_state,
     metrics::MetricsStateManager* state_manager,
     const UIStringOverrider& ui_string_overrider)
-    : client_(client.Pass()),
+    : client_(std::move(client)),
       ui_string_overrider_(ui_string_overrider),
       local_state_(local_state),
       state_manager_(state_manager),
@@ -281,7 +285,7 @@ VariationsService::VariationsService(
       create_trials_from_seed_called_(false),
       initial_request_completed_(false),
       disable_deltas_for_next_request_(false),
-      resource_request_allowed_notifier_(notifier.Pass()),
+      resource_request_allowed_notifier_(std::move(notifier)),
       request_count_(0),
       weak_ptr_factory_(this) {
   DCHECK(client_.get());
@@ -295,6 +299,7 @@ VariationsService::~VariationsService() {
 
 bool VariationsService::CreateTrialsFromSeed(base::FeatureList* feature_list) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  CHECK(!create_trials_from_seed_called_);
 
   create_trials_from_seed_called_ = true;
 
@@ -302,7 +307,7 @@ bool VariationsService::CreateTrialsFromSeed(base::FeatureList* feature_list) {
   if (!LoadSeed(&seed))
     return false;
 
-  const int64 last_fetch_time_internal =
+  const int64_t last_fetch_time_internal =
       local_state_->GetInt64(prefs::kVariationsLastFetchTime);
   const base::Time last_fetch_time =
       base::Time::FromInternalValue(last_fetch_time_internal);
@@ -331,6 +336,9 @@ bool VariationsService::CreateTrialsFromSeed(base::FeatureList* feature_list) {
 
   const std::string latest_country =
       local_state_->GetString(prefs::kVariationsCountry);
+
+  std::unique_ptr<const base::FieldTrial::EntropyProvider> low_entropy_provider(
+      CreateLowEntropyProvider());
   // Note that passing |&ui_string_overrider_| via base::Unretained below is
   // safe because the callback is executed synchronously. It is not possible
   // to pass UIStringOverrider itself to VariationSeedProcesor as variations
@@ -342,7 +350,7 @@ bool VariationsService::CreateTrialsFromSeed(base::FeatureList* feature_list) {
       LoadPermanentConsistencyCountry(current_version, latest_country),
       base::Bind(&UIStringOverrider::OverrideUIString,
                  base::Unretained(&ui_string_overrider_)),
-      feature_list);
+      low_entropy_provider.get(), feature_list);
 
   const base::Time now = base::Time::Now();
 
@@ -475,13 +483,13 @@ void VariationsService::RegisterProfilePrefs(
 }
 
 // static
-scoped_ptr<VariationsService> VariationsService::Create(
-    scoped_ptr<VariationsServiceClient> client,
+std::unique_ptr<VariationsService> VariationsService::Create(
+    std::unique_ptr<VariationsServiceClient> client,
     PrefService* local_state,
     metrics::MetricsStateManager* state_manager,
     const char* disable_network_switch,
     const UIStringOverrider& ui_string_overrider) {
-  scoped_ptr<VariationsService> result;
+  std::unique_ptr<VariationsService> result;
 #if !defined(GOOGLE_CHROME_BUILD)
   // Unless the URL was provided, unsupported builds should return NULL to
   // indicate that the service should not be used.
@@ -489,25 +497,25 @@ scoped_ptr<VariationsService> VariationsService::Create(
           switches::kVariationsServerURL)) {
     DVLOG(1) << "Not creating VariationsService in unofficial build without --"
              << switches::kVariationsServerURL << " specified.";
-    return result.Pass();
+    return result;
   }
 #endif
   result.reset(new VariationsService(
-      client.Pass(),
-      make_scoped_ptr(new web_resource::ResourceRequestAllowedNotifier(
-          local_state, disable_network_switch)),
+      std::move(client),
+      base::MakeUnique<web_resource::ResourceRequestAllowedNotifier>(
+          local_state, disable_network_switch),
       local_state, state_manager, ui_string_overrider));
-  return result.Pass();
+  return result;
 }
 
 // static
-scoped_ptr<VariationsService> VariationsService::CreateForTesting(
-    scoped_ptr<VariationsServiceClient> client,
+std::unique_ptr<VariationsService> VariationsService::CreateForTesting(
+    std::unique_ptr<VariationsServiceClient> client,
     PrefService* local_state) {
-  return make_scoped_ptr(new VariationsService(
-      client.Pass(),
-      make_scoped_ptr(new web_resource::ResourceRequestAllowedNotifier(
-          local_state, nullptr)),
+  return base::WrapUnique(new VariationsService(
+      std::move(client),
+      base::MakeUnique<web_resource::ResourceRequestAllowedNotifier>(
+          local_state, nullptr),
       local_state, nullptr, UIStringOverrider()));
 }
 
@@ -523,7 +531,6 @@ void VariationsService::DoActualFetch() {
   pending_seed_request_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
                                       net::LOAD_DO_NOT_SAVE_COOKIES);
   pending_seed_request_->SetRequestContext(client_->GetURLRequestContext());
-  pending_seed_request_->SetMaxRetriesOn5xx(kMaxRetrySeedFetch);
   bool enable_deltas = false;
   if (!seed_store_.variations_serial_number().empty() &&
       !disable_deltas_for_next_request_) {
@@ -553,7 +560,7 @@ void VariationsService::DoActualFetch() {
   if (!last_request_started_time_.is_null())
     time_since_last_fetch = now - last_request_started_time_;
   UMA_HISTOGRAM_CUSTOM_COUNTS("Variations.TimeSinceLastFetchAttempt",
-                              time_since_last_fetch.InMinutes(), 0,
+                              time_since_last_fetch.InMinutes(), 1,
                               base::TimeDelta::FromDays(7).InMinutes(), 50);
   UMA_HISTOGRAM_COUNTS_100("Variations.RequestCount", request_count_);
   ++request_count_;
@@ -569,7 +576,8 @@ bool VariationsService::StoreSeed(const std::string& seed_data,
                                   bool is_gzip_compressed) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  scoped_ptr<variations::VariationsSeed> seed(new variations::VariationsSeed);
+  std::unique_ptr<variations::VariationsSeed> seed(
+      new variations::VariationsSeed);
   if (!seed_store_.StoreSeedData(seed_data, seed_signature, country_code,
                                  date_fetched, is_delta_compressed,
                                  is_gzip_compressed, seed.get())) {
@@ -588,6 +596,11 @@ bool VariationsService::StoreSeed(const std::string& seed_data,
       base::Bind(&VariationsService::PerformSimulationWithVersion,
                  weak_ptr_factory_.GetWeakPtr(), base::Passed(&seed)));
   return true;
+}
+
+std::unique_ptr<const base::FieldTrial::EntropyProvider>
+VariationsService::CreateLowEntropyProvider() {
+  return state_manager_->CreateLowEntropyProvider();
 }
 
 bool VariationsService::LoadSeed(VariationsSeed* seed) {
@@ -613,11 +626,11 @@ void VariationsService::NotifyObservers(
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (result.kill_critical_group_change_count > 0) {
-    FOR_EACH_OBSERVER(Observer, observer_list_,
-                      OnExperimentChangesDetected(Observer::CRITICAL));
+    for (auto& observer : observer_list_)
+      observer.OnExperimentChangesDetected(Observer::CRITICAL);
   } else if (result.kill_best_effort_group_change_count > 0) {
-    FOR_EACH_OBSERVER(Observer, observer_list_,
-                      OnExperimentChangesDetected(Observer::BEST_EFFORT));
+    for (auto& observer : observer_list_)
+      observer.OnExperimentChangesDetected(Observer::BEST_EFFORT);
   }
 }
 
@@ -629,14 +642,17 @@ void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
   initial_request_completed_ = true;
 
   // The fetcher will be deleted when the request is handled.
-  scoped_ptr<const net::URLFetcher> request(pending_seed_request_.release());
-  const net::URLRequestStatus& request_status = request->GetStatus();
-  if (request_status.status() != net::URLRequestStatus::SUCCESS) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Variations.FailedRequestErrorCode",
-                                -request_status.error());
+  std::unique_ptr<const net::URLFetcher> request(
+      pending_seed_request_.release());
+  const net::URLRequestStatus& status = request->GetStatus();
+  const int response_code = request->GetResponseCode();
+  UMA_HISTOGRAM_SPARSE_SLOWLY(
+      "Variations.SeedFetchResponseOrErrorCode",
+      status.is_success() ? response_code : status.error());
+
+  if (status.status() != net::URLRequestStatus::SUCCESS) {
     DVLOG(1) << "Variations server request failed with error: "
-             << request_status.error() << ": "
-             << net::ErrorToString(request_status.error());
+             << status.error() << ": " << net::ErrorToString(status.error());
     // It's common for the very first fetch attempt to fail (e.g. the network
     // may not yet be available). In such a case, try again soon, rather than
     // waiting the full time interval.
@@ -644,11 +660,6 @@ void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
       request_scheduler_->ScheduleFetchShortly();
     return;
   }
-
-  // Log the response code.
-  const int response_code = request->GetResponseCode();
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Variations.SeedFetchResponseCode",
-                              response_code);
 
   const base::TimeDelta latency =
       base::TimeTicks::Now() - last_request_started_time_;
@@ -724,7 +735,7 @@ void VariationsService::OnResourceRequestsAllowed() {
 }
 
 void VariationsService::PerformSimulationWithVersion(
-    scoped_ptr<variations::VariationsSeed> seed,
+    std::unique_ptr<variations::VariationsSeed> seed,
     const base::Version& version) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -733,9 +744,12 @@ void VariationsService::PerformSimulationWithVersion(
 
   const base::ElapsedTimer timer;
 
-  scoped_ptr<const base::FieldTrial::EntropyProvider> entropy_provider =
-      state_manager_->CreateEntropyProvider();
-  variations::VariationsSeedSimulator seed_simulator(*entropy_provider);
+  std::unique_ptr<const base::FieldTrial::EntropyProvider> default_provider =
+      state_manager_->CreateDefaultEntropyProvider();
+  std::unique_ptr<const base::FieldTrial::EntropyProvider> low_provider =
+      state_manager_->CreateLowEntropyProvider();
+  variations::VariationsSeedSimulator seed_simulator(*default_provider,
+                                                     *low_provider);
 
   const std::string latest_country =
       local_state_->GetString(prefs::kVariationsCountry);
@@ -794,7 +808,7 @@ std::string VariationsService::LoadPermanentConsistencyCountry(
 
   // Determine if the version from the saved pref matches |version|.
   const bool does_version_match =
-      is_pref_valid && version.Equals(base::Version(stored_version_string));
+      is_pref_valid && version == base::Version(stored_version_string);
 
   // Determine if the country in the saved pref matches the country in
   // |latest_country|.
@@ -839,12 +853,17 @@ std::string VariationsService::LoadPermanentConsistencyCountry(
   }
 
   // Otherwise, update the pref with the current Chrome version and country.
+  StorePermanentCountry(version, latest_country);
+  return latest_country;
+}
+
+void VariationsService::StorePermanentCountry(const base::Version& version,
+                                              const std::string& country) {
   base::ListValue new_list_value;
   new_list_value.AppendString(version.GetString());
-  new_list_value.AppendString(latest_country);
+  new_list_value.AppendString(country);
   local_state_->Set(prefs::kVariationsPermanentConsistencyCountry,
                     new_list_value);
-  return latest_country;
 }
 
 std::string VariationsService::GetStoredPermanentCountry() {
@@ -857,6 +876,28 @@ std::string VariationsService::GetStoredPermanentCountry() {
   }
 
   return stored_country;
+}
+
+bool VariationsService::OverrideStoredPermanentCountry(
+    const std::string& country_override) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  if (country_override.empty())
+    return false;
+
+  const base::ListValue* list_value =
+      local_state_->GetList(prefs::kVariationsPermanentConsistencyCountry);
+
+  std::string stored_country;
+  const bool got_stored_country =
+      list_value->GetSize() == 2 && list_value->GetString(1, &stored_country);
+
+  if (got_stored_country && stored_country == country_override)
+    return false;
+
+  base::Version version(version_info::GetVersionNumber());
+  StorePermanentCountry(version, country_override);
+  return true;
 }
 
 }  // namespace variations

@@ -17,7 +17,6 @@
 
 namespace base {
 class FilePath;
-class Version;
 }  // namespace base
 
 class WorkItemList;
@@ -25,15 +24,6 @@ class WorkItemList;
 namespace installer {
 
 class InstallerState;
-
-// Create Version key for a App Launcher (if not already present) and sets the
-// new product version as the last step.  We need this for App Launcher in
-// order for shadow registry key to work.
-void AddAppLauncherVersionKeyWorkItems(
-    HKEY root,
-    const base::Version& new_version,
-    bool add_language_identifier,
-    WorkItemList* list);
 
 // Remove App Launcher's registry key, so it is in sync with Google Chrome's.
 // Note: The key is added by App Launcher in SetDidRunForNDayActiveStats().

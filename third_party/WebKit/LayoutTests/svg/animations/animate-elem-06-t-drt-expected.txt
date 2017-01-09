@@ -1,4 +1,3 @@
-CONSOLE WARNING: SVG's SMIL animations (<animate>, <set>, etc.) are deprecated and will be removed. Please use CSS animations or Web animations instead.
 SVG 1.1 dynamic animation tests
 
 
@@ -9,7 +8,7 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 
 PASS getTransformToElement(rootSVGElement, path).e is -15
 PASS getTransformToElement(rootSVGElement, path).f is -43
-FAIL getTransformToElement(rootSVGElement, path).e should be close to -38.5. Was -38.3656120300293.
+FAIL getTransformToElement(rootSVGElement, path).e should be close to -38.5. Was -38.36632537841797.
 PASS getTransformToElement(rootSVGElement, path).f is -30
 PASS getTransformToElement(rootSVGElement, path).e is -65
 PASS getTransformToElement(rootSVGElement, path).f is -33

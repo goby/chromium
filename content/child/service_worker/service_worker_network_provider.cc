@@ -5,13 +5,16 @@
 #include "content/child/service_worker/service_worker_network_provider.h"
 
 #include "base/atomic_sequence_num.h"
-#include "base/command_line.h"
 #include "content/child/child_thread_impl.h"
 #include "content/child/service_worker/service_worker_provider_context.h"
 #include "content/common/navigation_params.h"
 #include "content/common/service_worker/service_worker_messages.h"
 #include "content/common/service_worker/service_worker_utils.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/browser_side_navigation_policy.h"
+#include "ipc/ipc_sync_channel.h"
+#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/WebKit/public/web/WebSandboxFlags.h"
 
 namespace content {
 
@@ -25,20 +28,24 @@ int GetNextProviderId() {
   return sequence.GetNext();  // We start at zero.
 }
 
-// When the provider is for a sandboxed iframe we use
-// kInvalidServiceWorkerProviderId as the provider type and we don't create
-// ServiceWorkerProviderContext and ServiceWorkerProviderHost.
-int GenerateProviderIdForType(const ServiceWorkerProviderType provider_type) {
-  if (provider_type == SERVICE_WORKER_PROVIDER_FOR_SANDBOXED_FRAME)
-    return kInvalidServiceWorkerProviderId;
-  return GetNextProviderId();
+// Returns whether it's possible for a document whose frame is a descendant of
+// |frame| to be a secure context, not considering scheme exceptions (since any
+// document can be a secure context if it has a scheme exception). See
+// Document::isSecureContextImpl for more details.
+bool IsFrameSecure(blink::WebFrame* frame) {
+  while (frame) {
+    if (!frame->getSecurityOrigin().isPotentiallyTrustworthy())
+      return false;
+    frame = frame->parent();
+  }
+  return true;
 }
 
 }  // namespace
 
 void ServiceWorkerNetworkProvider::AttachToDocumentState(
     base::SupportsUserData* datasource_userdata,
-    scoped_ptr<ServiceWorkerNetworkProvider> network_provider) {
+    std::unique_ptr<ServiceWorkerNetworkProvider> network_provider) {
   datasource_userdata->SetUserData(&kUserDataKey, network_provider.release());
 }
 
@@ -49,18 +56,16 @@ ServiceWorkerNetworkProvider* ServiceWorkerNetworkProvider::FromDocumentState(
 }
 
 // static
-scoped_ptr<ServiceWorkerNetworkProvider>
+std::unique_ptr<ServiceWorkerNetworkProvider>
 ServiceWorkerNetworkProvider::CreateForNavigation(
     int route_id,
     const RequestNavigationParams& request_params,
-    blink::WebSandboxFlags sandbox_flags,
+    blink::WebLocalFrame* frame,
     bool content_initiated) {
-  bool browser_side_navigation =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation);
+  bool browser_side_navigation = IsBrowserSideNavigationEnabled();
   bool should_create_provider_for_window = false;
   int service_worker_provider_id = kInvalidServiceWorkerProviderId;
-  scoped_ptr<ServiceWorkerNetworkProvider> network_provider;
+  std::unique_ptr<ServiceWorkerNetworkProvider> network_provider;
 
   // Determine if a ServiceWorkerNetworkProvider should be created and properly
   // initialized for the navigation. A default ServiceWorkerNetworkProvider
@@ -77,36 +82,45 @@ ServiceWorkerNetworkProvider::CreateForNavigation(
            service_worker_provider_id == kInvalidServiceWorkerProviderId);
   } else {
     should_create_provider_for_window =
-        (sandbox_flags & blink::WebSandboxFlags::Origin) !=
-        blink::WebSandboxFlags::Origin;
+        ((frame->effectiveSandboxFlags() & blink::WebSandboxFlags::Origin) !=
+         blink::WebSandboxFlags::Origin);
   }
 
   // Now create the ServiceWorkerNetworkProvider (with invalid id if needed).
   if (should_create_provider_for_window) {
+    // Ideally Document::isSecureContext would be called here, but the document
+    // is not created yet, and due to redirects the URL may change. So pass
+    // is_parent_frame_secure to the browser process, so it can determine the
+    // context security when deciding whether to allow a service worker to
+    // control the document.
+    const bool is_parent_frame_secure = IsFrameSecure(frame->parent());
+
     if (service_worker_provider_id == kInvalidServiceWorkerProviderId) {
-      network_provider = scoped_ptr<ServiceWorkerNetworkProvider>(
+      network_provider = std::unique_ptr<ServiceWorkerNetworkProvider>(
           new ServiceWorkerNetworkProvider(route_id,
-                                           SERVICE_WORKER_PROVIDER_FOR_WINDOW));
+                                           SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+                                           is_parent_frame_secure));
     } else {
       CHECK(browser_side_navigation);
       DCHECK(ServiceWorkerUtils::IsBrowserAssignedProviderId(
           service_worker_provider_id));
-      network_provider = scoped_ptr<ServiceWorkerNetworkProvider>(
-          new ServiceWorkerNetworkProvider(route_id,
-                                           SERVICE_WORKER_PROVIDER_FOR_WINDOW,
-                                           service_worker_provider_id));
+      network_provider = std::unique_ptr<ServiceWorkerNetworkProvider>(
+          new ServiceWorkerNetworkProvider(
+              route_id, SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+              service_worker_provider_id, is_parent_frame_secure));
     }
   } else {
-    network_provider = scoped_ptr<ServiceWorkerNetworkProvider>(
+    network_provider = std::unique_ptr<ServiceWorkerNetworkProvider>(
         new ServiceWorkerNetworkProvider());
   }
-  return network_provider.Pass();
+  return network_provider;
 }
 
 ServiceWorkerNetworkProvider::ServiceWorkerNetworkProvider(
     int route_id,
     ServiceWorkerProviderType provider_type,
-    int browser_provider_id)
+    int browser_provider_id,
+    bool is_parent_frame_secure)
     : provider_id_(browser_provider_id) {
   if (provider_id_ == kInvalidServiceWorkerProviderId)
     return;
@@ -115,16 +129,25 @@ ServiceWorkerNetworkProvider::ServiceWorkerNetworkProvider(
   context_ = new ServiceWorkerProviderContext(
       provider_id_, provider_type,
       ChildThreadImpl::current()->thread_safe_sender());
-  ChildThreadImpl::current()->Send(new ServiceWorkerHostMsg_ProviderCreated(
-      provider_id_, route_id, provider_type));
+  if (ServiceWorkerUtils::IsMojoForServiceWorkerEnabled()) {
+    ChildThreadImpl::current()->channel()->GetRemoteAssociatedInterface(
+        &dispatcher_host_);
+    dispatcher_host_->OnProviderCreated(provider_id_, route_id, provider_type,
+                                        is_parent_frame_secure);
+  } else {
+    ChildThreadImpl::current()->Send(new ServiceWorkerHostMsg_ProviderCreated(
+        provider_id_, route_id, provider_type, is_parent_frame_secure));
+  }
 }
 
 ServiceWorkerNetworkProvider::ServiceWorkerNetworkProvider(
     int route_id,
-    ServiceWorkerProviderType provider_type)
+    ServiceWorkerProviderType provider_type,
+    bool is_parent_frame_secure)
     : ServiceWorkerNetworkProvider(route_id,
                                    provider_type,
-                                   GenerateProviderIdForType(provider_type)) {}
+                                   GetNextProviderId(),
+                                   is_parent_frame_secure) {}
 
 ServiceWorkerNetworkProvider::ServiceWorkerNetworkProvider()
     : provider_id_(kInvalidServiceWorkerProviderId) {}
@@ -134,17 +157,27 @@ ServiceWorkerNetworkProvider::~ServiceWorkerNetworkProvider() {
     return;
   if (!ChildThreadImpl::current())
     return;  // May be null in some tests.
-  ChildThreadImpl::current()->Send(
-      new ServiceWorkerHostMsg_ProviderDestroyed(provider_id_));
+  if (ServiceWorkerUtils::IsMojoForServiceWorkerEnabled()) {
+    dispatcher_host_->OnProviderDestroyed(provider_id());
+  } else {
+    ChildThreadImpl::current()->Send(
+        new ServiceWorkerHostMsg_ProviderDestroyed(provider_id_));
+  }
 }
 
 void ServiceWorkerNetworkProvider::SetServiceWorkerVersionId(
-    int64 version_id) {
+    int64_t version_id,
+    int embedded_worker_id) {
   DCHECK_NE(kInvalidServiceWorkerProviderId, provider_id_);
   if (!ChildThreadImpl::current())
     return;  // May be null in some tests.
-  ChildThreadImpl::current()->Send(
-      new ServiceWorkerHostMsg_SetVersionId(provider_id_, version_id));
+  if (ServiceWorkerUtils::IsMojoForServiceWorkerEnabled()) {
+    dispatcher_host_->OnSetHostedVersionId(provider_id(), version_id,
+                                           embedded_worker_id);
+  } else {
+    ChildThreadImpl::current()->Send(new ServiceWorkerHostMsg_SetVersionId(
+        provider_id_, version_id, embedded_worker_id));
+  }
 }
 
 bool ServiceWorkerNetworkProvider::IsControlledByServiceWorker() const {

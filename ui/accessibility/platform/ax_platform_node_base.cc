@@ -7,6 +7,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 
 namespace ui {
 
@@ -21,7 +22,7 @@ const AXNodeData& AXPlatformNodeBase::GetData() const {
 
 gfx::Rect AXPlatformNodeBase::GetBoundsInScreen() const {
   CHECK(delegate_);
-  gfx::Rect bounds = GetData().location;
+  gfx::Rect bounds = gfx::ToEnclosingRect(GetData().location);
   bounds.Offset(delegate_->GetGlobalCoordinateOffset());
   return bounds;
 }
@@ -44,7 +45,12 @@ gfx::NativeViewAccessible AXPlatformNodeBase::ChildAtIndex(int index) {
 // AXPlatformNode overrides.
 
 void AXPlatformNodeBase::Destroy() {
+  AXPlatformNode::Destroy();
   delegate_ = nullptr;
+  Dispose();
+}
+
+void AXPlatformNodeBase::Dispose() {
   delete this;
 }
 
@@ -92,7 +98,10 @@ bool AXPlatformNodeBase::IsDescendant(AXPlatformNodeBase* node) {
     return false;
   if (node == this)
     return true;
-  AXPlatformNodeBase* parent = FromNativeViewAccessible(node->GetParent());
+  gfx::NativeViewAccessible native_parent = node->GetParent();
+  if (!native_parent)
+    return false;
+  AXPlatformNodeBase* parent = FromNativeViewAccessible(native_parent);
   return IsDescendant(parent);
 }
 
@@ -185,6 +194,7 @@ AXPlatformNodeBase::AXPlatformNodeBase() {
 }
 
 AXPlatformNodeBase::~AXPlatformNodeBase() {
+  CHECK(!delegate_);
 }
 
 // static

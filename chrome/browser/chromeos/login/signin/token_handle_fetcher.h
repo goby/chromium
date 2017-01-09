@@ -7,9 +7,9 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/containers/scoped_ptr_hash_map.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
@@ -58,7 +58,7 @@ class TokenHandleFetcher : public gaia::GaiaOAuthClient::Delegate,
   void OnOAuthError() override;
   void OnNetworkError(int response_code) override;
   void OnGetTokenInfoResponse(
-      scoped_ptr<base::DictionaryValue> token_info) override;
+      std::unique_ptr<base::DictionaryValue> token_info) override;
 
   void RequestAccessToken(const std::string& user_email);
   void FillForAccessToken(const std::string& access_token);
@@ -75,9 +75,9 @@ class TokenHandleFetcher : public gaia::GaiaOAuthClient::Delegate,
   Profile* profile_ = nullptr;
   base::TimeTicks tokeninfo_response_start_time_ = base::TimeTicks();
   TokenFetchingCallback callback_;
-  scoped_ptr<gaia::GaiaOAuthClient> gaia_client_;
-  scoped_ptr<OAuth2TokenService::Request> oauth2_access_token_request_;
-  scoped_ptr<KeyedServiceShutdownNotifier::Subscription>
+  std::unique_ptr<gaia::GaiaOAuthClient> gaia_client_;
+  std::unique_ptr<OAuth2TokenService::Request> oauth2_access_token_request_;
+  std::unique_ptr<KeyedServiceShutdownNotifier::Subscription>
       profile_shutdown_notification_;
 
   DISALLOW_COPY_AND_ASSIGN(TokenHandleFetcher);

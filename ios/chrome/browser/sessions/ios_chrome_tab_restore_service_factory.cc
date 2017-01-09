@@ -4,22 +4,24 @@
 
 #include "ios/chrome/browser/sessions/ios_chrome_tab_restore_service_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/sessions/core/persistent_tab_restore_service.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sessions/ios_chrome_tab_restore_service_client.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 namespace {
 
-scoped_ptr<KeyedService> BuildTabRestoreService(web::BrowserState* context) {
+std::unique_ptr<KeyedService> BuildTabRestoreService(
+    web::BrowserState* context) {
   DCHECK(!context->IsOffTheRecord());
 
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return make_scoped_ptr(new sessions::PersistentTabRestoreService(
-      make_scoped_ptr(new IOSChromeTabRestoreServiceClient(browser_state)),
-      nullptr));
+  return base::MakeUnique<sessions::PersistentTabRestoreService>(
+      base::WrapUnique(new IOSChromeTabRestoreServiceClient(browser_state)),
+      nullptr);
 }
 
 }  // namespace
@@ -55,7 +57,7 @@ bool IOSChromeTabRestoreServiceFactory::ServiceIsNULLWhileTesting() const {
   return true;
 }
 
-scoped_ptr<KeyedService>
+std::unique_ptr<KeyedService>
 IOSChromeTabRestoreServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   return BuildTabRestoreService(context);

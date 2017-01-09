@@ -2,163 +2,78 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/build_config.h"
-
-#include "base/single_thread_task_runner.h"
 #include "ipc/ipc_test_base.h"
 
-#include "base/command_line.h"
-#include "base/process/kill.h"
-#include "base/threading/thread.h"
-#include "base/time/time.h"
-#include "ipc/ipc_descriptors.h"
+#include <utility>
 
-#if defined(OS_POSIX)
-#include "base/posix/global_descriptors.h"
-#endif
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
+#include "ipc/ipc_channel_mojo.h"
 
-// static
-std::string IPCTestBase::GetChannelName(const std::string& test_client_name) {
-  DCHECK(!test_client_name.empty());
-  return test_client_name + "__Channel";
+IPCChannelMojoTestBase::IPCChannelMojoTestBase() = default;
+IPCChannelMojoTestBase::~IPCChannelMojoTestBase() = default;
+
+void IPCChannelMojoTestBase::Init(const std::string& test_client_name) {
+  InitWithCustomMessageLoop(test_client_name,
+                            base::MakeUnique<base::MessageLoop>());
 }
 
-IPCTestBase::IPCTestBase() {
-}
-
-IPCTestBase::~IPCTestBase() {
-}
-
-void IPCTestBase::TearDown() {
-  message_loop_.reset();
-  MultiProcessTest::TearDown();
-}
-
-void IPCTestBase::Init(const std::string& test_client_name) {
-  InitWithCustomMessageLoop(
-      test_client_name,
-      scoped_ptr<base::MessageLoop>(new base::MessageLoopForIO()));
-}
-
-void IPCTestBase::InitWithCustomMessageLoop(
+void IPCChannelMojoTestBase::InitWithCustomMessageLoop(
     const std::string& test_client_name,
-    scoped_ptr<base::MessageLoop> message_loop) {
-  DCHECK(!test_client_name.empty());
-  DCHECK(test_client_name_.empty());
-  DCHECK(!message_loop_);
-
-  test_client_name_ = test_client_name;
-  message_loop_ = message_loop.Pass();
+    std::unique_ptr<base::MessageLoop> message_loop) {
+  handle_ = helper_.StartChild(test_client_name);
+  message_loop_ = std::move(message_loop);
 }
 
-void IPCTestBase::CreateChannel(IPC::Listener* listener) {
-  CreateChannelFromChannelHandle(GetTestChannelHandle(), listener);
+bool IPCChannelMojoTestBase::WaitForClientShutdown() {
+  return helper_.WaitForChildTestShutdown();
 }
 
-bool IPCTestBase::ConnectChannel() {
-  CHECK(channel_.get());
+void IPCChannelMojoTestBase::TearDown() {
+  if (message_loop_)
+    base::RunLoop().RunUntilIdle();
+}
+
+void IPCChannelMojoTestBase::CreateChannel(IPC::Listener* listener) {
+  channel_ =
+      IPC::ChannelMojo::Create(TakeHandle(), IPC::Channel::MODE_SERVER,
+                               listener, base::ThreadTaskRunnerHandle::Get());
+}
+
+bool IPCChannelMojoTestBase::ConnectChannel() {
   return channel_->Connect();
 }
 
-scoped_ptr<IPC::Channel> IPCTestBase::ReleaseChannel() {
-  return channel_.Pass();
-}
-
-void IPCTestBase::SetChannel(scoped_ptr<IPC::Channel> channel) {
-  channel_ = channel.Pass();
-}
-
-
-void IPCTestBase::DestroyChannel() {
-  DCHECK(channel_.get());
+void IPCChannelMojoTestBase::DestroyChannel() {
   channel_.reset();
 }
 
-void IPCTestBase::CreateChannelFromChannelHandle(
-    const IPC::ChannelHandle& channel_handle,
-    IPC::Listener* listener) {
-  CHECK(!channel_.get());
-  CHECK(!channel_proxy_.get());
-  channel_ = CreateChannelFactory(
-      channel_handle, task_runner().get())->BuildChannel(listener);
+mojo::ScopedMessagePipeHandle IPCChannelMojoTestBase::TakeHandle() {
+  return std::move(handle_);
 }
 
-void IPCTestBase::CreateChannelProxy(
-    IPC::Listener* listener,
-    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
-  CHECK(!channel_.get());
-  CHECK(!channel_proxy_.get());
-  channel_proxy_ = IPC::ChannelProxy::Create(
-      CreateChannelFactory(GetTestChannelHandle(), ipc_task_runner.get()),
-      listener, ipc_task_runner);
+IpcChannelMojoTestClient::IpcChannelMojoTestClient() = default;
+
+IpcChannelMojoTestClient::~IpcChannelMojoTestClient() = default;
+
+void IpcChannelMojoTestClient::Init(mojo::ScopedMessagePipeHandle handle) {
+  handle_ = std::move(handle);
 }
 
-void IPCTestBase::DestroyChannelProxy() {
-  CHECK(channel_proxy_.get());
-  channel_proxy_.reset();
+void IpcChannelMojoTestClient::Connect(IPC::Listener* listener) {
+  channel_ =
+      IPC::ChannelMojo::Create(std::move(handle_), IPC::Channel::MODE_CLIENT,
+                               listener, base::ThreadTaskRunnerHandle::Get());
+  CHECK(channel_->Connect());
 }
 
-std::string IPCTestBase::GetTestMainName() const {
-  return test_client_name_ + "TestClientMain";
-}
+void IpcChannelMojoTestClient::Close() {
+  channel_->Close();
 
-bool IPCTestBase::DidStartClient() {
-  DCHECK(client_process_.IsValid());
-  return client_process_.IsValid();
-}
-
-#if defined(OS_POSIX)
-
-bool IPCTestBase::StartClient() {
-  return StartClientWithFD(channel_
-                               ? channel_->GetClientFileDescriptor()
-                               : channel_proxy_->GetClientFileDescriptor());
-}
-
-bool IPCTestBase::StartClientWithFD(int ipcfd) {
-  DCHECK(!client_process_.IsValid());
-
-  base::FileHandleMappingVector fds_to_map;
-  if (ipcfd > -1)
-    fds_to_map.push_back(std::pair<int, int>(ipcfd,
-        kPrimaryIPCChannel + base::GlobalDescriptors::kBaseDescriptor));
-  base::LaunchOptions options;
-  options.fds_to_remap = &fds_to_map;
-  client_process_ = SpawnChildWithOptions(GetTestMainName(), options);
-
-  return DidStartClient();
-}
-
-#elif defined(OS_WIN)
-
-bool IPCTestBase::StartClient() {
-  DCHECK(!client_process_.IsValid());
-  client_process_ = SpawnChild(GetTestMainName());
-  return DidStartClient();
-}
-
-#endif
-
-bool IPCTestBase::WaitForClientShutdown() {
-  DCHECK(client_process_.IsValid());
-
-  int exit_code;
-  bool rv = client_process_.WaitForExitWithTimeout(
-      base::TimeDelta::FromSeconds(5), &exit_code);
-  client_process_.Close();
-  return rv;
-}
-
-IPC::ChannelHandle IPCTestBase::GetTestChannelHandle() {
-  return GetChannelName(test_client_name_);
-}
-
-scoped_refptr<base::SequencedTaskRunner> IPCTestBase::task_runner() {
-  return message_loop_->task_runner();
-}
-
-scoped_ptr<IPC::ChannelFactory> IPCTestBase::CreateChannelFactory(
-    const IPC::ChannelHandle& handle,
-    base::SequencedTaskRunner* runner) {
-  return IPC::ChannelFactory::Create(handle, IPC::Channel::MODE_SERVER);
+  base::RunLoop run_loop;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                run_loop.QuitClosure());
+  run_loop.Run();
 }

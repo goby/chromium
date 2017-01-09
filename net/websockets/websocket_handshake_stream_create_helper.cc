@@ -4,8 +4,10 @@
 
 #include "net/websockets/websocket_handshake_stream_create_helper.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/spdy/spdy_session.h"
@@ -17,9 +19,8 @@ WebSocketHandshakeStreamCreateHelper::WebSocketHandshakeStreamCreateHelper(
     WebSocketStream::ConnectDelegate* connect_delegate,
     const std::vector<std::string>& requested_subprotocols)
     : requested_subprotocols_(requested_subprotocols),
-      stream_(NULL),
       connect_delegate_(connect_delegate),
-      failure_message_(NULL) {
+      request_(nullptr) {
   DCHECK(connect_delegate_);
 }
 
@@ -27,23 +28,20 @@ WebSocketHandshakeStreamCreateHelper::~WebSocketHandshakeStreamCreateHelper() {}
 
 WebSocketHandshakeStreamBase*
 WebSocketHandshakeStreamCreateHelper::CreateBasicStream(
-    scoped_ptr<ClientSocketHandle> connection,
+    std::unique_ptr<ClientSocketHandle> connection,
     bool using_proxy) {
-  DCHECK(failure_message_) << "set_failure_message() must be called";
+  DCHECK(request_) << "set_request() must be called";
+
   // The list of supported extensions and parameters is hard-coded.
   // TODO(ricea): If more extensions are added, consider a more flexible
   // method.
   std::vector<std::string> extensions(
       1, "permessage-deflate; client_max_window_bits");
-  WebSocketBasicHandshakeStream* stream =
-      new WebSocketBasicHandshakeStream(connection.Pass(),
-                                        connect_delegate_,
-                                        using_proxy,
-                                        requested_subprotocols_,
-                                        extensions,
-                                        failure_message_);
-  OnStreamCreated(stream);
-  stream_ = stream;
+  WebSocketBasicHandshakeStream* stream = new WebSocketBasicHandshakeStream(
+      std::move(connection), connect_delegate_, using_proxy,
+      requested_subprotocols_, extensions, request_);
+  OnBasicStreamCreated(stream);
+  request_->OnHandshakeStreamCreated(stream);
   return stream;
 }
 
@@ -56,15 +54,7 @@ WebSocketHandshakeStreamCreateHelper::CreateSpdyStream(
   return NULL;
 }
 
-scoped_ptr<WebSocketStream> WebSocketHandshakeStreamCreateHelper::Upgrade() {
-  DCHECK(stream_);
-  WebSocketHandshakeStreamBase* stream = stream_;
-  stream_ = NULL;
-  return stream->Upgrade();
-}
-
-void WebSocketHandshakeStreamCreateHelper::OnStreamCreated(
-    WebSocketBasicHandshakeStream* stream) {
-}
+void WebSocketHandshakeStreamCreateHelper::OnBasicStreamCreated(
+    WebSocketBasicHandshakeStream* stream) {}
 
 }  // namespace net

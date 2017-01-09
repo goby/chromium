@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/user_script_listener.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/timer/elapsed_timer.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -12,7 +13,6 @@
 #include "chrome/common/extensions/manifest_handlers/content_scripts_handler.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_throttle.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
@@ -32,14 +32,14 @@ class UserScriptListener::Throttle
   Throttle() : should_defer_(true), did_defer_(false) {
   }
 
-  void Resume() {
+  void ResumeIfDeferred() {
     DCHECK(should_defer_);
     should_defer_ = false;
     // Only resume the request if |this| has deferred it.
     if (did_defer_) {
       UMA_HISTOGRAM_TIMES("Extensions.ThrottledNetworkRequestDelay",
                           timer_->Elapsed());
-      controller()->Resume();
+      Resume();
     }
   }
 
@@ -60,7 +60,7 @@ class UserScriptListener::Throttle
  private:
   bool should_defer_;
   bool did_defer_;
-  scoped_ptr<base::ElapsedTimer> timer_;
+  std::unique_ptr<base::ElapsedTimer> timer_;
 
   DISALLOW_COPY_AND_ASSIGN(Throttle);
 };
@@ -145,7 +145,7 @@ void UserScriptListener::StartDelayedRequests() {
   WeakThrottleList::const_iterator it;
   for (it = throttles_.begin(); it != throttles_.end(); ++it) {
     if (it->get())
-      (*it)->Resume();
+      (*it)->ResumeIfDeferred();
   }
   throttles_.clear();
 }
@@ -205,13 +205,10 @@ void UserScriptListener::CollectURLPatterns(const Extension* extension,
                                             URLPatterns* patterns) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  const UserScriptList& scripts =
-      ContentScriptsInfo::GetContentScripts(extension);
-  for (UserScriptList::const_iterator iter = scripts.begin();
-       iter != scripts.end(); ++iter) {
-    patterns->insert(patterns->end(),
-                     (*iter).url_patterns().begin(),
-                     (*iter).url_patterns().end());
+  for (const std::unique_ptr<UserScript>& script :
+       ContentScriptsInfo::GetContentScripts(extension)) {
+    patterns->insert(patterns->end(), script->url_patterns().begin(),
+                     script->url_patterns().end());
   }
 }
 

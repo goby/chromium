@@ -4,13 +4,16 @@
 
 #include "components/data_usage/android/traffic_stats_amortizer.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_base.h"
 #include "base/run_loop.h"
@@ -55,6 +58,7 @@ const char kAmortizationDelayHistogram[] =
     "TrafficStatsAmortizer.AmortizationDelay";
 const char kBufferSizeOnFlushHistogram[] =
     "TrafficStatsAmortizer.BufferSizeOnFlush";
+const char kConcurrentTabs[] = "TrafficStatsAmortizer.ConcurrentTabs";
 
 // The maximum sample value that can be recorded in a histogram.
 const base::HistogramBase::Sample kMaxRecordableSample =
@@ -66,14 +70,50 @@ base::HistogramBase::Sample GetDelaySample(const base::TimeDelta& delay) {
   return static_cast<base::HistogramBase::Sample>(delay.InMilliseconds());
 }
 
-// Synthesizes a fake scoped_ptr<DataUse> with the given |tx_bytes| and
+// Synthesizes a fake std::unique_ptr<DataUse> with the given |url|, |tab_id|,
+// |tx_bytes| and |rx_bytes|, using arbitrary values for all other fields.
+std::unique_ptr<DataUse> CreateDataUseWithURLAndTab(const GURL& url,
+                                                    int32_t tab_id,
+                                                    int64_t tx_bytes,
+                                                    int64_t rx_bytes) {
+  return std::unique_ptr<DataUse>(
+      new DataUse(url, base::TimeTicks() /* request_start */,
+                  GURL("http://examplefirstparty.com"), tab_id,
+                  net::NetworkChangeNotifier::CONNECTION_2G, "example_mcc_mnc",
+                  tx_bytes, rx_bytes));
+}
+
+// Synthesizes a fake std::unique_ptr<DataUse> with the given |url|, |tx_bytes|
+// and
 // |rx_bytes|, using arbitrary values for all other fields.
-scoped_ptr<DataUse> CreateDataUse(int64_t tx_bytes, int64_t rx_bytes) {
-  return scoped_ptr<DataUse>(new DataUse(
-      GURL("http://example.com"), base::TimeTicks() /* request_start */,
-      GURL("http://examplefirstparty.com"), 10 /* tab_id */,
-      net::NetworkChangeNotifier::CONNECTION_2G, "example_mcc_mnc", tx_bytes,
-      rx_bytes));
+std::unique_ptr<DataUse> CreateDataUseWithURL(const GURL& url,
+                                              int64_t tx_bytes,
+                                              int64_t rx_bytes) {
+  return CreateDataUseWithURLAndTab(url, 10, tx_bytes, rx_bytes);
+}
+
+// Synthesizes a fake std::unique_ptr<DataUse> with the given |tab_id|,
+// |tx_bytes|
+// and |rx_bytes|, using arbitrary values for all other fields.
+std::unique_ptr<DataUse> CreateDataUseWithTab(int32_t tab_id,
+                                              int64_t tx_bytes,
+                                              int64_t rx_bytes) {
+  return CreateDataUseWithURLAndTab(GURL("http://example.com"), tab_id,
+                                    tx_bytes, rx_bytes);
+}
+
+// Synthesizes a fake std::unique_ptr<DataUse> with the given |tx_bytes| and
+// |rx_bytes|, using arbitrary values for all other fields.
+std::unique_ptr<DataUse> CreateDataUse(int64_t tx_bytes, int64_t rx_bytes) {
+  return CreateDataUseWithURL(GURL("http://example.com"), tx_bytes, rx_bytes);
+}
+
+// Appends |data_use| to |data_use_sequence|. |data_use_sequence| must not be
+// NULL.
+void AppendDataUseToSequence(
+    std::vector<std::unique_ptr<DataUse>>* data_use_sequence,
+    std::unique_ptr<DataUse> data_use) {
+  data_use_sequence->push_back(std::move(data_use));
 }
 
 // Class that represents a base::MockTimer with an attached base::TickClock, so
@@ -104,10 +144,11 @@ class MockTimerWithTickClock : public base::MockTimer {
 // byte counts returned from TrafficStats.
 class TestTrafficStatsAmortizer : public TrafficStatsAmortizer {
  public:
-  TestTrafficStatsAmortizer(scoped_ptr<base::TickClock> tick_clock,
-                            scoped_ptr<base::Timer> traffic_stats_query_timer)
-      : TrafficStatsAmortizer(tick_clock.Pass(),
-                              traffic_stats_query_timer.Pass(),
+  TestTrafficStatsAmortizer(
+      std::unique_ptr<base::TickClock> tick_clock,
+      std::unique_ptr<base::Timer> traffic_stats_query_timer)
+      : TrafficStatsAmortizer(std::move(tick_clock),
+                              std::move(traffic_stats_query_timer),
                               kTrafficStatsQueryDelay,
                               kMaxAmortizationDelay,
                               kMaxDataUseBufferSize),
@@ -148,8 +189,8 @@ class TrafficStatsAmortizerTest : public testing::Test {
   TrafficStatsAmortizerTest()
       : test_tick_clock_(new base::SimpleTestTickClock()),
         mock_timer_(new MockTimerWithTickClock(false, false, test_tick_clock_)),
-        amortizer_(scoped_ptr<base::TickClock>(test_tick_clock_),
-                   scoped_ptr<base::Timer>(mock_timer_)),
+        amortizer_(std::unique_ptr<base::TickClock>(test_tick_clock_),
+                   std::unique_ptr<base::Timer>(mock_timer_)),
         data_use_callback_call_count_(0) {}
 
   ~TrafficStatsAmortizerTest() override {
@@ -191,7 +232,8 @@ class TrafficStatsAmortizerTest : public testing::Test {
   }
 
   // Expects that |expected| and |actual| are equivalent.
-  void ExpectDataUse(scoped_ptr<DataUse> expected, scoped_ptr<DataUse> actual) {
+  void ExpectDataUse(std::unique_ptr<DataUse> expected,
+                     std::unique_ptr<DataUse> actual) {
     ++data_use_callback_call_count_;
 
     // Have separate checks for the |tx_bytes| and |rx_bytes|, since those are
@@ -211,7 +253,7 @@ class TrafficStatsAmortizerTest : public testing::Test {
 
   // Creates an ExpectDataUse callback, as a convenience.
   DataUseAmortizer::AmortizationCompleteCallback ExpectDataUseCallback(
-      scoped_ptr<DataUse> expected) {
+      std::unique_ptr<DataUse> expected) {
     return base::Bind(&TrafficStatsAmortizerTest::ExpectDataUse,
                       base::Unretained(this), base::Passed(&expected));
   }
@@ -278,6 +320,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithTrafficStatsAlwaysUnavailable) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 }
 
@@ -307,6 +350,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeDataUse) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 2, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 
   // Simulate the second amortization run.
@@ -344,6 +388,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeDataUse) {
         GetDelaySample(kTrafficStatsQueryDelay + kTrafficStatsQueryDelay / 2),
         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 2, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 }
 
@@ -366,6 +411,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithExtraBytes) {
   histogram_tester.ExpectUniqueSample(
       kAmortizationDelayHistogram, GetDelaySample(kTrafficStatsQueryDelay), 1);
   histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
 }
 
 TEST_F(TrafficStatsAmortizerTest, AmortizeWithNegativeOverhead) {
@@ -386,6 +432,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithNegativeOverhead) {
   histogram_tester.ExpectUniqueSample(
       kAmortizationDelayHistogram, GetDelaySample(kTrafficStatsQueryDelay), 1);
   histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
 }
 
 TEST_F(TrafficStatsAmortizerTest, AmortizeWithMaxIntByteCounts) {
@@ -413,6 +460,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithMaxIntByteCounts) {
   histogram_tester.ExpectUniqueSample(
       kAmortizationDelayHistogram, GetDelaySample(kTrafficStatsQueryDelay), 1);
   histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
 }
 
 TEST_F(TrafficStatsAmortizerTest, AmortizeWithMaxIntScaleFactor) {
@@ -438,6 +486,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithMaxIntScaleFactor) {
   histogram_tester.ExpectUniqueSample(
       kAmortizationDelayHistogram, GetDelaySample(kTrafficStatsQueryDelay), 1);
   histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
 }
 
 TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroScaleFactor) {
@@ -462,6 +511,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroScaleFactor) {
   histogram_tester.ExpectUniqueSample(
       kAmortizationDelayHistogram, GetDelaySample(kTrafficStatsQueryDelay), 1);
   histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
 }
 
 TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroPreAmortizationBytes) {
@@ -487,6 +537,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroPreAmortizationBytes) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 
   {
@@ -508,6 +559,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroPreAmortizationBytes) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 }
 
@@ -534,6 +586,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroTxPreAmortizationBytes) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 
   {
@@ -554,6 +607,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroTxPreAmortizationBytes) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 }
 
@@ -580,6 +634,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroRxPreAmortizationBytes) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 
   {
@@ -600,6 +655,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeWithZeroRxPreAmortizationBytes) {
                                         GetDelaySample(kTrafficStatsQueryDelay),
                                         1);
     histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
   }
 }
 
@@ -638,6 +694,7 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeAtMaxDelay) {
   histogram_tester.ExpectUniqueSample(kAmortizationDelayHistogram,
                                       GetDelaySample(kMaxAmortizationDelay), 1);
   histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 1, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
 }
 
 TEST_F(TrafficStatsAmortizerTest, AmortizeAtMaxBufferSize) {
@@ -669,6 +726,116 @@ TEST_F(TrafficStatsAmortizerTest, AmortizeAtMaxBufferSize) {
   histogram_tester.ExpectUniqueSample(kAmortizationDelayHistogram, 0, 1);
   histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram,
                                       kExpectedBufSize, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
+}
+
+TEST_F(TrafficStatsAmortizerTest, AmortizeCombinedDataUse) {
+  SkipFirstAmortizationRun();
+  base::HistogramTester histogram_tester;
+
+  const GURL foo_url("http://foo.com");
+  const GURL bar_url("http://bar.com");
+
+  std::vector<std::unique_ptr<DataUse>> baz_sequence;
+  const DataUseAmortizer::AmortizationCompleteCallback baz_callback =
+      base::Bind(&AppendDataUseToSequence, &baz_sequence);
+
+  std::vector<std::unique_ptr<DataUse>> qux_sequence;
+  const DataUseAmortizer::AmortizationCompleteCallback qux_callback =
+      base::Bind(&AppendDataUseToSequence, &qux_sequence);
+
+  // Byte counts should double, with some DataUse objects combined together.
+
+  // Two consecutive DataUse objects that are identical except for byte counts
+  // and with the same callback should be combined.
+  amortizer()->AmortizeDataUse(CreateDataUseWithURL(foo_url, 50, 500),
+                               baz_callback);
+  amortizer()->AmortizeDataUse(CreateDataUseWithURL(foo_url, 100, 1000),
+                               baz_callback);
+
+  // This DataUse object should not be combined with the previous one because it
+  // has a different URL.
+  amortizer()->AmortizeDataUse(CreateDataUseWithURL(bar_url, 50, 500),
+                               baz_callback);
+
+  // This DataUse object should not be combined with the previous one because it
+  // has a different callback.
+  amortizer()->AmortizeDataUse(CreateDataUseWithURL(bar_url, 50, 500),
+                               qux_callback);
+
+  // This DataUse object should not be combined with the previous foo/baz
+  // DataUse objects because other DataUse objects were reported in-between.
+  amortizer()->AmortizeDataUse(CreateDataUseWithURL(foo_url, 50, 500),
+                               baz_callback);
+
+  // Simulate that TrafficStats saw double the number of reported bytes across
+  // all reported DataUse.
+  amortizer()->AddTrafficStats(600, 6000);
+  AdvanceTime(kTrafficStatsQueryDelay);
+
+  EXPECT_EQ(3U, baz_sequence.size());
+  ExpectDataUse(CreateDataUseWithURL(foo_url, 300, 3000),
+                std::move(baz_sequence[0]));
+  ExpectDataUse(CreateDataUseWithURL(bar_url, 100, 1000),
+                std::move(baz_sequence[1]));
+  ExpectDataUse(CreateDataUseWithURL(foo_url, 100, 1000),
+                std::move(baz_sequence[2]));
+
+  EXPECT_EQ(1U, qux_sequence.size());
+  ExpectDataUse(CreateDataUseWithURL(bar_url, 100, 1000),
+                std::move(qux_sequence[0]));
+
+  histogram_tester.ExpectUniqueSample(kPreAmortizationTxHistogram, 300, 1);
+  histogram_tester.ExpectUniqueSample(kPreAmortizationRxHistogram, 3000, 1);
+  histogram_tester.ExpectUniqueSample(kPostAmortizationTxHistogram, 600, 1);
+  histogram_tester.ExpectUniqueSample(kPostAmortizationRxHistogram, 6000, 1);
+  histogram_tester.ExpectUniqueSample(
+      kAmortizationDelayHistogram, GetDelaySample(kTrafficStatsQueryDelay), 1);
+  histogram_tester.ExpectUniqueSample(kBufferSizeOnFlushHistogram, 4, 1);
+  histogram_tester.ExpectUniqueSample(kConcurrentTabs, 1, 1);
+}
+
+TEST_F(TrafficStatsAmortizerTest, ConcurrentTabsHistogram) {
+  SkipFirstAmortizationRun();
+
+  {
+    // Test data usage reported multiple times for two tabs.
+    base::HistogramTester histogram_tester;
+    amortizer()->SetNextTrafficStats(true, 0, 0);
+    amortizer()->AmortizeDataUse(
+        CreateDataUseWithTab(1, 50, 500),
+        ExpectDataUseCallback(CreateDataUseWithTab(1, 100, 1000)));
+    amortizer()->AmortizeDataUse(
+        CreateDataUseWithTab(2, 100, 1000),
+        ExpectDataUseCallback(CreateDataUseWithTab(2, 200, 2000)));
+    amortizer()->AmortizeDataUse(
+        CreateDataUseWithTab(1, 50, 500),
+        ExpectDataUseCallback(CreateDataUseWithTab(1, 100, 1000)));
+    amortizer()->AmortizeDataUse(
+        CreateDataUseWithTab(2, 100, 1000),
+        ExpectDataUseCallback(CreateDataUseWithTab(2, 200, 2000)));
+    amortizer()->SetNextTrafficStats(true, 600, 6000);
+    AdvanceTime(kTrafficStatsQueryDelay);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, 2, 1);
+    histogram_tester.ExpectUniqueSample(kPreAmortizationTxHistogram, 300, 1);
+    histogram_tester.ExpectUniqueSample(kPreAmortizationRxHistogram, 3000, 1);
+    histogram_tester.ExpectUniqueSample(kPostAmortizationTxHistogram, 600, 1);
+    histogram_tester.ExpectUniqueSample(kPostAmortizationRxHistogram, 6000, 1);
+  }
+
+  // Test data usage for 1-5 tabs.
+  for (int32_t total_tabs = 1; total_tabs <= 5; ++total_tabs) {
+    base::HistogramTester histogram_tester;
+
+    for (int32_t i = 1; i <= total_tabs; ++i) {
+      amortizer()->AmortizeDataUse(
+          CreateDataUseWithTab(i, 100, 1000),
+          ExpectDataUseCallback(CreateDataUseWithTab(i, 200, 2000)));
+    }
+    amortizer()->AddTrafficStats(total_tabs * 200, total_tabs * 2000);
+    AdvanceTime(kTrafficStatsQueryDelay);
+    histogram_tester.ExpectUniqueSample(kConcurrentTabs, total_tabs, 1);
+  }
 }
 
 }  // namespace

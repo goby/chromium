@@ -5,11 +5,13 @@
 #ifndef COMPONENTS_FAVICON_CORE_FAVICON_HANDLER_H_
 #define COMPONENTS_FAVICON_CORE_FAVICON_HANDLER_H_
 
+#include <stddef.h>
+
 #include <map>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon/core/favicon_driver_observer.h"
@@ -20,10 +22,6 @@
 #include "url/gurl.h"
 
 class SkBitmap;
-
-namespace base {
-class RefCountedMemory;
-}
 
 namespace favicon {
 

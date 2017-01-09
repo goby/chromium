@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/active_tab_permission_granter.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
@@ -561,17 +563,17 @@ IN_PROC_BROWSER_TEST_F(CommandsApiTest, ShortcutAddedOnUpdate) {
   base::FilePath pem_path = test_data_dir_.
       AppendASCII("keybinding").AppendASCII("keybinding.pem");
   base::FilePath path_v1_unassigned = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v1_unassigned"),
-      scoped_temp_dir.path().AppendASCII("v1_unassigned.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("v1_unassigned"),
+      scoped_temp_dir.GetPath().AppendASCII("v1_unassigned.crx"), pem_path,
       base::FilePath());
-  base::FilePath path_v2 = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v2"),
-      scoped_temp_dir.path().AppendASCII("v2.crx"),
-      pem_path,
-      base::FilePath());
+  base::FilePath path_v2 =
+      PackExtensionWithOptions(test_data_dir_.AppendASCII("keybinding")
+                                   .AppendASCII("update")
+                                   .AppendASCII("v2"),
+                               scoped_temp_dir.GetPath().AppendASCII("v2.crx"),
+                               pem_path, base::FilePath());
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());
   CommandService* command_service = CommandService::Get(browser()->profile());
@@ -605,17 +607,17 @@ IN_PROC_BROWSER_TEST_F(CommandsApiTest, ShortcutChangedOnUpdate) {
   EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
   base::FilePath pem_path = test_data_dir_.
       AppendASCII("keybinding").AppendASCII("keybinding.pem");
-  base::FilePath path_v1 = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v1"),
-      scoped_temp_dir.path().AppendASCII("v1.crx"),
-      pem_path,
-      base::FilePath());
+  base::FilePath path_v1 =
+      PackExtensionWithOptions(test_data_dir_.AppendASCII("keybinding")
+                                   .AppendASCII("update")
+                                   .AppendASCII("v1"),
+                               scoped_temp_dir.GetPath().AppendASCII("v1.crx"),
+                               pem_path, base::FilePath());
   base::FilePath path_v2_reassigned = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v2_reassigned"),
-      scoped_temp_dir.path().AppendASCII("v2_reassigned.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("v2_reassigned"),
+      scoped_temp_dir.GetPath().AppendASCII("v2_reassigned.crx"), pem_path,
       base::FilePath());
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());
@@ -653,17 +655,17 @@ IN_PROC_BROWSER_TEST_F(CommandsApiTest, ShortcutRemovedOnUpdate) {
   EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
   base::FilePath pem_path = test_data_dir_.
       AppendASCII("keybinding").AppendASCII("keybinding.pem");
-  base::FilePath path_v1 = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v1"),
-      scoped_temp_dir.path().AppendASCII("v1.crx"),
-      pem_path,
-      base::FilePath());
+  base::FilePath path_v1 =
+      PackExtensionWithOptions(test_data_dir_.AppendASCII("keybinding")
+                                   .AppendASCII("update")
+                                   .AppendASCII("v1"),
+                               scoped_temp_dir.GetPath().AppendASCII("v1.crx"),
+                               pem_path, base::FilePath());
   base::FilePath path_v2_unassigned = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v2_unassigned"),
-      scoped_temp_dir.path().AppendASCII("v2_unassigned.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("v2_unassigned"),
+      scoped_temp_dir.GetPath().AppendASCII("v2_unassigned.crx"), pem_path,
       base::FilePath());
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());
@@ -700,17 +702,17 @@ IN_PROC_BROWSER_TEST_F(CommandsApiTest,
   base::FilePath pem_path = test_data_dir_.
       AppendASCII("keybinding").AppendASCII("keybinding.pem");
   base::FilePath path_v1_unassigned = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v1_unassigned"),
-      scoped_temp_dir.path().AppendASCII("v1_unassigned.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("v1_unassigned"),
+      scoped_temp_dir.GetPath().AppendASCII("v1_unassigned.crx"), pem_path,
       base::FilePath());
-  base::FilePath path_v2 = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v2"),
-      scoped_temp_dir.path().AppendASCII("v2.crx"),
-      pem_path,
-      base::FilePath());
+  base::FilePath path_v2 =
+      PackExtensionWithOptions(test_data_dir_.AppendASCII("keybinding")
+                                   .AppendASCII("update")
+                                   .AppendASCII("v2"),
+                               scoped_temp_dir.GetPath().AppendASCII("v2.crx"),
+                               pem_path, base::FilePath());
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());
   CommandService* command_service = CommandService::Get(browser()->profile());
@@ -749,17 +751,17 @@ IN_PROC_BROWSER_TEST_F(CommandsApiTest,
   EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
   base::FilePath pem_path = test_data_dir_.
       AppendASCII("keybinding").AppendASCII("keybinding.pem");
-  base::FilePath path_v1 = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v1"),
-      scoped_temp_dir.path().AppendASCII("v1.crx"),
-      pem_path,
-      base::FilePath());
+  base::FilePath path_v1 =
+      PackExtensionWithOptions(test_data_dir_.AppendASCII("keybinding")
+                                   .AppendASCII("update")
+                                   .AppendASCII("v1"),
+                               scoped_temp_dir.GetPath().AppendASCII("v1.crx"),
+                               pem_path, base::FilePath());
   base::FilePath path_v2_reassigned = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v2_reassigned"),
-      scoped_temp_dir.path().AppendASCII("v2_reassigned.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("v2_reassigned"),
+      scoped_temp_dir.GetPath().AppendASCII("v2_reassigned.crx"), pem_path,
       base::FilePath());
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());
@@ -804,16 +806,16 @@ IN_PROC_BROWSER_TEST_F(CommandsApiTest,
   base::FilePath pem_path = test_data_dir_.
       AppendASCII("keybinding").AppendASCII("keybinding.pem");
   base::FilePath path_v1 = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("mk_v1"),
-      scoped_temp_dir.path().AppendASCII("mk_v1.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("mk_v1"),
+      scoped_temp_dir.GetPath().AppendASCII("mk_v1.crx"), pem_path,
       base::FilePath());
   base::FilePath path_v2_reassigned = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("mk_v2"),
-      scoped_temp_dir.path().AppendASCII("mk_v2.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("mk_v2"),
+      scoped_temp_dir.GetPath().AppendASCII("mk_v2.crx"), pem_path,
       base::FilePath());
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());
@@ -856,17 +858,17 @@ IN_PROC_BROWSER_TEST_F(CommandsApiTest,
   EXPECT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
   base::FilePath pem_path = test_data_dir_.
       AppendASCII("keybinding").AppendASCII("keybinding.pem");
-  base::FilePath path_v1 = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v1"),
-      scoped_temp_dir.path().AppendASCII("v1.crx"),
-      pem_path,
-      base::FilePath());
+  base::FilePath path_v1 =
+      PackExtensionWithOptions(test_data_dir_.AppendASCII("keybinding")
+                                   .AppendASCII("update")
+                                   .AppendASCII("v1"),
+                               scoped_temp_dir.GetPath().AppendASCII("v1.crx"),
+                               pem_path, base::FilePath());
   base::FilePath path_v2_unassigned = PackExtensionWithOptions(
-      test_data_dir_.AppendASCII("keybinding").AppendASCII("update")
-                    .AppendASCII("v2_unassigned"),
-      scoped_temp_dir.path().AppendASCII("v2_unassigned.crx"),
-      pem_path,
+      test_data_dir_.AppendASCII("keybinding")
+          .AppendASCII("update")
+          .AppendASCII("v2_unassigned"),
+      scoped_temp_dir.GetPath().AppendASCII("v2_unassigned.crx"), pem_path,
       base::FilePath());
 
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());

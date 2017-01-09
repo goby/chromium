@@ -4,6 +4,9 @@
 
 #include "chrome/browser/extensions/sync_bundle.h"
 
+#include <utility>
+#include <vector>
+
 #include "base/location.h"
 #include "chrome/browser/extensions/extension_sync_data.h"
 #include "chrome/browser/extensions/extension_sync_service.h"
@@ -17,8 +20,8 @@ SyncBundle::SyncBundle() {}
 SyncBundle::~SyncBundle() {}
 
 void SyncBundle::StartSyncing(
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor) {
-  sync_processor_.reset(sync_processor.release());
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor) {
+  sync_processor_ = std::move(sync_processor);
 }
 
 void SyncBundle::Reset() {
@@ -80,9 +83,9 @@ bool SyncBundle::HasPendingExtensionData(const std::string& id) const {
 }
 
 void SyncBundle::AddPendingExtensionData(
-    const std::string& id,
     const ExtensionSyncData& extension_sync_data) {
-  pending_sync_data_.insert(std::make_pair(id, extension_sync_data));
+  pending_sync_data_.insert(std::make_pair(extension_sync_data.id(),
+                                           extension_sync_data));
 }
 
 std::vector<ExtensionSyncData> SyncBundle::GetPendingExtensionData() const {

@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/mock_special_storage_policy.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -59,7 +61,7 @@ class FileSystemOperationRunnerTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(base_.CreateUniqueTempDir());
-    base::FilePath base_dir = base_.path();
+    base::FilePath base_dir = base_.GetPath();
     file_system_context_ = CreateFileSystemContextForTesting(nullptr, base_dir);
   }
 
@@ -188,17 +190,15 @@ class MultiThreadFileSystemOperationRunnerTest : public testing::Test {
   void SetUp() override {
     ASSERT_TRUE(base_.CreateUniqueTempDir());
 
-    base::FilePath base_dir = base_.path();
+    base::FilePath base_dir = base_.GetPath();
     ScopedVector<storage::FileSystemBackend> additional_providers;
     file_system_context_ = new FileSystemContext(
         base::ThreadTaskRunnerHandle::Get().get(),
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get(),
         storage::ExternalMountPoints::CreateRefCounted().get(),
-        make_scoped_refptr(new MockSpecialStoragePolicy()).get(),
-        nullptr,
-        additional_providers.Pass(),
-        std::vector<storage::URLRequestAutoMountHandler>(),
-        base_dir,
+        make_scoped_refptr(new MockSpecialStoragePolicy()).get(), nullptr,
+        std::move(additional_providers),
+        std::vector<storage::URLRequestAutoMountHandler>(), base_dir,
         CreateAllowFileAccessOptions());
 
     // Disallow IO on the main loop.

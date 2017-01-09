@@ -6,6 +6,8 @@
 
 #include "base/bits.h"
 
+#include <stddef.h>
+
 #include <limits>
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -57,6 +59,26 @@ TEST(BitsTest, Align) {
   EXPECT_EQ(8192ul, Align(4097, 4096));
   EXPECT_EQ(kSizeTMax - 31, Align(kSizeTMax - 62, 32));
   EXPECT_EQ(kSizeTMax / 2 + 1, Align(1, kSizeTMax / 2 + 1));
+}
+
+TEST(BitsTest, CLZWorks) {
+  EXPECT_EQ(32u, CountLeadingZeroBits32(0u));
+  EXPECT_EQ(31u, CountLeadingZeroBits32(1u));
+  EXPECT_EQ(1u, CountLeadingZeroBits32(1u << 30));
+  EXPECT_EQ(0u, CountLeadingZeroBits32(1u << 31));
+
+#if defined(ARCH_CPU_64_BITS)
+  EXPECT_EQ(64u, CountLeadingZeroBitsSizeT(0ull));
+  EXPECT_EQ(63u, CountLeadingZeroBitsSizeT(1ull));
+  EXPECT_EQ(32u, CountLeadingZeroBitsSizeT(1ull << 31));
+  EXPECT_EQ(1u, CountLeadingZeroBitsSizeT(1ull << 62));
+  EXPECT_EQ(0u, CountLeadingZeroBitsSizeT(1ull << 63));
+#else
+  EXPECT_EQ(32u, CountLeadingZeroBitsSizeT(0u));
+  EXPECT_EQ(31u, CountLeadingZeroBitsSizeT(1u));
+  EXPECT_EQ(1u, CountLeadingZeroBitsSizeT(1u << 30));
+  EXPECT_EQ(0u, CountLeadingZeroBitsSizeT(1u << 31));
+#endif
 }
 
 }  // namespace bits

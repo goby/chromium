@@ -8,34 +8,51 @@
 
 namespace content {
 
-presentation::PresentationErrorType PresentationErrorTypeToMojo(
+blink::mojom::PresentationErrorType PresentationErrorTypeToMojo(
     content::PresentationErrorType input) {
   switch (input) {
     case content::PRESENTATION_ERROR_NO_AVAILABLE_SCREENS:
-      return presentation::PRESENTATION_ERROR_TYPE_NO_AVAILABLE_SCREENS;
+      return blink::mojom::PresentationErrorType::NO_AVAILABLE_SCREENS;
     case content::PRESENTATION_ERROR_SESSION_REQUEST_CANCELLED:
-      return presentation::PRESENTATION_ERROR_TYPE_SESSION_REQUEST_CANCELLED;
+      return blink::mojom::PresentationErrorType::SESSION_REQUEST_CANCELLED;
     case content::PRESENTATION_ERROR_NO_PRESENTATION_FOUND:
-      return presentation::PRESENTATION_ERROR_TYPE_NO_PRESENTATION_FOUND;
+      return blink::mojom::PresentationErrorType::NO_PRESENTATION_FOUND;
     case content::PRESENTATION_ERROR_UNKNOWN:
-      return presentation::PRESENTATION_ERROR_TYPE_UNKNOWN;
+      return blink::mojom::PresentationErrorType::UNKNOWN;
   }
   NOTREACHED();
-  return presentation::PRESENTATION_ERROR_TYPE_UNKNOWN;
+  return blink::mojom::PresentationErrorType::UNKNOWN;
 }
 
-presentation::PresentationConnectionState PresentationConnectionStateToMojo(
+blink::mojom::PresentationConnectionState PresentationConnectionStateToMojo(
     content::PresentationConnectionState state) {
   switch (state) {
+    case content::PRESENTATION_CONNECTION_STATE_CONNECTING:
+      return blink::mojom::PresentationConnectionState::CONNECTING;
     case content::PRESENTATION_CONNECTION_STATE_CONNECTED:
-      return presentation::PRESENTATION_CONNECTION_STATE_CONNECTED;
+      return blink::mojom::PresentationConnectionState::CONNECTED;
     case content::PRESENTATION_CONNECTION_STATE_CLOSED:
-      return presentation::PRESENTATION_CONNECTION_STATE_CLOSED;
+      return blink::mojom::PresentationConnectionState::CLOSED;
     case content::PRESENTATION_CONNECTION_STATE_TERMINATED:
-      return presentation::PRESENTATION_CONNECTION_STATE_TERMINATED;
+      return blink::mojom::PresentationConnectionState::TERMINATED;
   }
   NOTREACHED();
-  return presentation::PRESENTATION_CONNECTION_STATE_TERMINATED;
+  return blink::mojom::PresentationConnectionState::TERMINATED;
+}
+
+blink::mojom::PresentationConnectionCloseReason
+PresentationConnectionCloseReasonToMojo(
+    content::PresentationConnectionCloseReason reason) {
+  switch (reason) {
+    case content::PRESENTATION_CONNECTION_CLOSE_REASON_CONNECTION_ERROR:
+      return blink::mojom::PresentationConnectionCloseReason::CONNECTION_ERROR;
+    case content::PRESENTATION_CONNECTION_CLOSE_REASON_CLOSED:
+      return blink::mojom::PresentationConnectionCloseReason::CLOSED;
+    case content::PRESENTATION_CONNECTION_CLOSE_REASON_WENT_AWAY:
+      return blink::mojom::PresentationConnectionCloseReason::WENT_AWAY;
+  }
+  NOTREACHED();
+  return blink::mojom::PresentationConnectionCloseReason::CONNECTION_ERROR;
 }
 
 }  // namespace content

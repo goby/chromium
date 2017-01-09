@@ -4,14 +4,20 @@
 
 // Tests for the Command Buffer Helper.
 
-#include <list>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
-#include "gpu/command_buffer/service/gpu_scheduler.h"
+#include "gpu/command_buffer/service/command_executor.h"
 #include "gpu/command_buffer/service/mocks.h"
 #include "gpu/command_buffer/service/transfer_buffer_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,10 +32,10 @@ using testing::DoAll;
 using testing::Invoke;
 using testing::_;
 
-const int32 kTotalNumCommandEntries = 32;
-const int32 kCommandBufferSizeBytes =
+const int32_t kTotalNumCommandEntries = 32;
+const int32_t kCommandBufferSizeBytes =
     kTotalNumCommandEntries * sizeof(CommandBufferEntry);
-const int32 kUnusedCommandId = 5;  // we use 0 and 2 currently.
+const int32_t kUnusedCommandId = 5;  // we use 0 and 2 currently.
 
 // Override CommandBufferService::Flush() to lock flushing and simulate
 // the buffer becoming full in asynchronous mode.
@@ -40,13 +46,16 @@ class CommandBufferServiceLocked : public CommandBufferService {
       : CommandBufferService(transfer_buffer_manager),
         flush_locked_(false),
         last_flush_(-1),
+        previous_put_offset_(0),
         flush_count_(0) {}
   ~CommandBufferServiceLocked() override {}
 
-  void Flush(int32 put_offset) override {
+  // Overridden from CommandBufferService
+  void Flush(int32_t put_offset) override {
     flush_count_++;
     if (!flush_locked_) {
       last_flush_ = -1;
+      previous_put_offset_ = put_offset;
       CommandBufferService::Flush(put_offset);
     } else {
       last_flush_ = put_offset;
@@ -59,17 +68,21 @@ class CommandBufferServiceLocked : public CommandBufferService {
 
   int FlushCount() { return flush_count_; }
 
-  void WaitForGetOffsetInRange(int32 start, int32 end) override {
-    if (last_flush_ != -1) {
+  State WaitForGetOffsetInRange(int32_t start, int32_t end) override {
+    // Flush only if it's required to unblock this Wait.
+    if (last_flush_ != -1 &&
+        !CommandBuffer::InRange(start, end, previous_put_offset_)) {
+      previous_put_offset_ = last_flush_;
       CommandBufferService::Flush(last_flush_);
       last_flush_ = -1;
     }
-    CommandBufferService::WaitForGetOffsetInRange(start, end);
+    return CommandBufferService::WaitForGetOffsetInRange(start, end);
   }
 
  private:
   bool flush_locked_;
   int last_flush_;
+  int previous_put_offset_;
   int flush_count_;
   DISALLOW_COPY_AND_ASSIGN(CommandBufferServiceLocked);
 };
@@ -94,16 +107,15 @@ class CommandBufferHelperTest : public testing::Test {
     }
     command_buffer_.reset(
         new CommandBufferServiceLocked(transfer_buffer_manager_.get()));
-    EXPECT_TRUE(command_buffer_->Initialize());
 
-    gpu_scheduler_.reset(new GpuScheduler(
-        command_buffer_.get(), api_mock_.get(), NULL));
+    executor_.reset(
+        new CommandExecutor(command_buffer_.get(), api_mock_.get(), NULL));
     command_buffer_->SetPutOffsetChangeCallback(base::Bind(
-        &GpuScheduler::PutChanged, base::Unretained(gpu_scheduler_.get())));
+        &CommandExecutor::PutChanged, base::Unretained(executor_.get())));
     command_buffer_->SetGetBufferChangeCallback(base::Bind(
-        &GpuScheduler::SetGetBuffer, base::Unretained(gpu_scheduler_.get())));
+        &CommandExecutor::SetGetBuffer, base::Unretained(executor_.get())));
 
-    api_mock_->set_engine(gpu_scheduler_.get());
+    api_mock_->set_engine(executor_.get());
 
     helper_.reset(new CommandBufferHelper(command_buffer_.get()));
     helper_->Initialize(kCommandBufferSizeBytes);
@@ -112,16 +124,16 @@ class CommandBufferHelperTest : public testing::Test {
   }
 
   virtual void TearDown() {
-    // If the GpuScheduler posts any tasks, this forces them to run.
-    base::MessageLoop::current()->RunUntilIdle();
+    // If the CommandExecutor posts any tasks, this forces them to run.
+    base::RunLoop().RunUntilIdle();
     test_command_args_.clear();
   }
 
-  const CommandParser* GetParser() const {
-    return gpu_scheduler_->parser();
-  }
+  const CommandParser* GetParser() const { return executor_->parser(); }
 
-  int32 ImmediateEntryCount() const { return helper_->immediate_entry_count_; }
+  int32_t ImmediateEntryCount() const {
+    return helper_->immediate_entry_count_;
+  }
 
   // Adds a command to the buffer through the helper, while adding it as an
   // expected call on the API mock.
@@ -152,30 +164,30 @@ class CommandBufferHelperTest : public testing::Test {
     int arg_count = cmd_size - 1;
 
     // Allocate array for args.
-    linked_ptr<std::vector<CommandBufferEntry> > args_ptr(
-        new std::vector<CommandBufferEntry>(arg_count ? arg_count : 1));
+    auto args_ptr =
+        base::MakeUnique<CommandBufferEntry[]>(arg_count ? arg_count : 1);
 
-    for (int32 ii = 0; ii < arg_count; ++ii) {
-      (*args_ptr)[ii].value_uint32 = 0xF00DF00D + ii;
+    for (int32_t ii = 0; ii < arg_count; ++ii) {
+      args_ptr[ii].value_uint32 = 0xF00DF00D + ii;
     }
 
     // Add command and save args in test_command_args_ until the test completes.
     AddCommandWithExpect(
-        _return, test_command_next_id_++, arg_count, &(*args_ptr)[0]);
-    test_command_args_.insert(test_command_args_.end(), args_ptr);
+        _return, test_command_next_id_++, arg_count, args_ptr.get());
+    test_command_args_.push_back(std::move(args_ptr));
   }
 
-  void TestCommandWrappingFull(int32 cmd_size, int32 start_commands) {
-    const int32 num_args = cmd_size - 1;
+  void TestCommandWrappingFull(int32_t cmd_size, int32_t start_commands) {
+    const int32_t num_args = cmd_size - 1;
     EXPECT_EQ(kTotalNumCommandEntries % cmd_size, 0);
 
     std::vector<CommandBufferEntry> args(num_args);
-    for (int32 ii = 0; ii < num_args; ++ii) {
+    for (int32_t ii = 0; ii < num_args; ++ii) {
       args[ii].value_uint32 = ii + 1;
     }
 
     // Initially insert commands up to start_commands and Finish().
-    for (int32 ii = 0; ii < start_commands; ++ii) {
+    for (int32_t ii = 0; ii < start_commands; ++ii) {
       AddCommandWithExpect(
           error::kNoError, ii + kUnusedCommandId, num_args, &args[0]);
     }
@@ -190,7 +202,7 @@ class CommandBufferHelperTest : public testing::Test {
     command_buffer_->LockFlush();
 
     // Add enough commands to over fill the buffer.
-    for (int32 ii = 0; ii < kTotalNumCommandEntries / cmd_size + 2; ++ii) {
+    for (int32_t ii = 0; ii < kTotalNumCommandEntries / cmd_size + 2; ++ii) {
       AddCommandWithExpect(error::kNoError,
                            start_commands + ii + kUnusedCommandId,
                            num_args,
@@ -231,19 +243,15 @@ class CommandBufferHelperTest : public testing::Test {
     }
   }
 
-  int32 GetGetOffset() {
-    return command_buffer_->GetLastState().get_offset;
-  }
+  int32_t GetGetOffset() { return command_buffer_->GetLastState().get_offset; }
 
-  int32 GetPutOffset() {
-    return command_buffer_->GetPutOffset();
-  }
+  int32_t GetPutOffset() { return command_buffer_->GetPutOffset(); }
 
-  int32 GetHelperGetOffset() { return helper_->get_offset(); }
+  int32_t GetHelperGetOffset() { return helper_->cached_get_offset_; }
 
-  int32 GetHelperPutOffset() { return helper_->put_; }
+  int32_t GetHelperPutOffset() { return helper_->put_; }
 
-  uint32 GetHelperFlushGeneration() { return helper_->flush_generation(); }
+  uint32_t GetHelperFlushGeneration() { return helper_->flush_generation(); }
 
   error::Error GetError() {
     return command_buffer_->GetLastState().error;
@@ -251,14 +259,15 @@ class CommandBufferHelperTest : public testing::Test {
 
   CommandBufferOffset get_helper_put() { return helper_->put_; }
 
-  scoped_ptr<AsyncAPIMock> api_mock_;
+  std::unique_ptr<AsyncAPIMock> api_mock_;
   scoped_refptr<TransferBufferManagerInterface> transfer_buffer_manager_;
-  scoped_ptr<CommandBufferServiceLocked> command_buffer_;
-  scoped_ptr<GpuScheduler> gpu_scheduler_;
-  scoped_ptr<CommandBufferHelper> helper_;
-  std::list<linked_ptr<std::vector<CommandBufferEntry> > > test_command_args_;
+  std::unique_ptr<CommandBufferServiceLocked> command_buffer_;
+  std::unique_ptr<CommandExecutor> executor_;
+  std::unique_ptr<CommandBufferHelper> helper_;
+  std::vector<std::unique_ptr<CommandBufferEntry[]>> test_command_args_;
   unsigned int test_command_next_id_;
   Sequence sequence_;
+  base::MessageLoop message_loop_;
 };
 
 // Checks immediate_entry_count_ changes based on 'usable' state.
@@ -484,7 +493,7 @@ TEST_F(CommandBufferHelperTest, TestCommandWrapping) {
 // Checks the case where the command inserted exactly matches the space left in
 // the command buffer.
 TEST_F(CommandBufferHelperTest, TestCommandWrappingExactMultiple) {
-  const int32 kCommandSize = kTotalNumCommandEntries / 2;
+  const int32_t kCommandSize = kTotalNumCommandEntries / 2;
   const size_t kNumArgs = kCommandSize - 1;
   static_assert(kTotalNumCommandEntries % kCommandSize == 0,
                 "kTotalNumCommandEntries should be a multiple of kCommandSize");
@@ -564,7 +573,7 @@ TEST_F(CommandBufferHelperTest, TestToken) {
   AddCommandWithExpect(error::kNoError, kUnusedCommandId + 3, 2, args);
   // keep track of the buffer position.
   CommandBufferOffset command1_put = get_helper_put();
-  int32 token = helper_->InsertToken();
+  int32_t token = helper_->InsertToken();
 
   EXPECT_CALL(*api_mock_.get(), DoCommand(cmd::kSetToken, 1, _))
       .WillOnce(DoAll(Invoke(api_mock_.get(), &AsyncAPIMock::SetToken),
@@ -591,7 +600,7 @@ TEST_F(CommandBufferHelperTest, TestWaitForTokenFlush) {
 
   // Add a first command.
   AddCommandWithExpect(error::kNoError, kUnusedCommandId + 3, 2, args);
-  int32 token = helper_->InsertToken();
+  int32_t token = helper_->InsertToken();
 
   EXPECT_CALL(*api_mock_.get(), DoCommand(cmd::kSetToken, 1, _))
       .WillOnce(DoAll(Invoke(api_mock_.get(), &AsyncAPIMock::SetToken),
@@ -631,7 +640,7 @@ TEST_F(CommandBufferHelperTest, FreeRingBuffer) {
   EXPECT_FALSE(helper_->HaveRingBuffer());
 
   // Test that InsertToken allocates a new one
-  int32 token = helper_->InsertToken();
+  int32_t token = helper_->InsertToken();
   EXPECT_TRUE(helper_->HaveRingBuffer());
   EXPECT_CALL(*api_mock_.get(), DoCommand(cmd::kSetToken, 1, _))
       .WillOnce(DoAll(Invoke(api_mock_.get(), &AsyncAPIMock::SetToken),
@@ -672,7 +681,7 @@ TEST_F(CommandBufferHelperTest, TestFlushGeneration) {
   helper_->SetAutomaticFlushes(false);
 
   // Generation should change after Flush() but not before.
-  uint32 gen1, gen2, gen3;
+  uint32_t gen1, gen2, gen3;
 
   gen1 = GetHelperFlushGeneration();
   AddUniqueCommandWithExpect(error::kNoError, 2);
@@ -705,7 +714,7 @@ TEST_F(CommandBufferHelperTest, TestOrderingBarrierFlushGeneration) {
   helper_->SetAutomaticFlushes(false);
 
   // Generation should change after OrderingBarrier() but not before.
-  uint32 gen1, gen2, gen3;
+  uint32_t gen1, gen2, gen3;
 
   gen1 = GetHelperFlushGeneration();
   AddUniqueCommandWithExpect(error::kNoError, 2);

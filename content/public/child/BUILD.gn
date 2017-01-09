@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//content/child/child.gni")
-
 # See //content/BUILD.gn for how this works.
 group("child") {
   if (is_component_build) {
@@ -24,19 +22,34 @@ group("child") {
 }
 
 source_set("child_sources") {
+  # External code should depend in via ":child" above.
   visibility = [ "//content/*" ]
 
-  sources = rebase_path(content_child_gypi_values.public_child_sources,
-                        ".",
-                        "//content")
+  sources = [
+    "child_thread.h",
+    "fixed_received_data.cc",
+    "fixed_received_data.h",
+    "image_decoder_utils.h",
+    "request_peer.h",
+    "resource_dispatcher_delegate.h",
+    "v8_value_converter.h",
+    "worker_thread.h",
+  ]
 
-  configs += [ "//content:content_implementation" ]
-
-  public_deps = [
-    "//content/child",
+  configs += [
+    "//build/config/compiler:wexit_time_destructors",
+    "//content:content_implementation",
   ]
 
   deps = [
+    "//content/child",  # Must not be public_deps!
     "//content/public/common:common_sources",
+    "//gin",
+  ]
+
+  allow_circular_includes_from = [
+    # This target is a pair with content/child. They always go together and
+    # include headers from each other.
+    "//content/child",
   ]
 }

@@ -5,6 +5,7 @@
 package org.chromium.ui.widget;
 
 import android.animation.AnimatorInflater;
+import android.animation.StateListAnimator;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.res.ColorStateList;
@@ -42,7 +43,7 @@ import org.chromium.ui.R;
 public class ButtonCompat extends Button {
 
     private static final float PRE_L_PRESSED_BRIGHTNESS = 0.85f;
-    private static final int DISABLED_COLOR = 0x1F000000;
+    private static final int DISABLED_COLOR = 0x424F4F4F;
 
     private int mColor;
 
@@ -54,43 +55,30 @@ public class ButtonCompat extends Button {
     }
 
     /**
-     * Constructs a button with the given buttonColor as its background.
+     * Constructs a button with the given buttonColor as its background. The button is raised if
+     * buttonRaised is true.
      */
-    public ButtonCompat(Context context, int buttonColor) {
-        this(context, buttonColor, null);
+    public ButtonCompat(Context context, int buttonColor, boolean buttonRaised) {
+        this(context, buttonColor, buttonRaised, null);
     }
 
     /**
      * Constructor for inflating from XML.
      */
     public ButtonCompat(Context context, AttributeSet attrs) {
-        this(context, getColorFromAttributeSet(context, attrs), attrs);
+        this(context, getColorFromAttributeSet(context, attrs),
+                getRaisedStatusFromAttributeSet(context, attrs), attrs);
     }
 
-    private ButtonCompat(Context context, int buttonColor, AttributeSet attrs) {
+    private ButtonCompat(
+            Context context, int buttonColor, boolean buttonRaised, AttributeSet attrs) {
         // To apply the ButtonCompat style to this view, use a ContextThemeWrapper to overlay the
         // ButtonCompatThemeOverlay, which simply sets the buttonStyle to @style/ButtonCompat.
         super(new ContextThemeWrapper(context, R.style.ButtonCompatOverlay), attrs);
 
         getBackground().mutate();
         setButtonColor(buttonColor);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            // Use the StateListAnimator from the Widget.Material.Button style to animate the
-            // elevation when the button is pressed.
-            TypedArray a = getContext().obtainStyledAttributes(null,
-                    new int[]{android.R.attr.stateListAnimator}, 0,
-                    android.R.style.Widget_Material_Button);
-            int stateListAnimatorId = a.getResourceId(0, 0);
-            a.recycle();
-            // stateListAnimatorId could be 0 on custom or future builds of Android, or when using a
-            // framework like Xposed. Handle these cases gracefully by simply not using a
-            // StateListAnimator.
-            if (stateListAnimatorId != 0) {
-                setStateListAnimator(AnimatorInflater.loadStateListAnimator(getContext(),
-                        stateListAnimatorId));
-            }
-        }
+        setRaised(buttonRaised);
     }
 
     /**
@@ -104,6 +92,39 @@ public class ButtonCompat extends Button {
             updateButtonBackgroundL();
         } else {
             updateButtonBackgroundPreL();
+        }
+    }
+
+    /**
+    * Sets whether the button is raised (has a shadow), or flat (has no shadow).
+    * Note that this function (setStateListAnimator) can not be called more than once due to
+    * incompatibilities in older android versions, crbug.com/608248.
+    */
+    private void setRaised(boolean raised) {
+        // All buttons are flat on pre-L devices.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return;
+
+        if (raised) {
+            // Use the StateListAnimator from the Widget.Material.Button style to animate the
+            // elevation when the button is pressed.
+            TypedArray a = getContext().obtainStyledAttributes(null,
+                    new int[]{android.R.attr.stateListAnimator}, 0,
+                    android.R.style.Widget_Material_Button);
+            int stateListAnimatorId = a.getResourceId(0, 0);
+            a.recycle();
+
+            // stateListAnimatorId could be 0 on custom or future builds of Android, or when
+            // using a framework like Xposed. Handle these cases gracefully by simply not using
+            // a StateListAnimator.
+            StateListAnimator stateListAnimator = null;
+            if (stateListAnimatorId != 0) {
+                stateListAnimator = AnimatorInflater.loadStateListAnimator(getContext(),
+                        stateListAnimatorId);
+            }
+            setStateListAnimator(stateListAnimator);
+        } else {
+            setElevation(0f);
+            setStateListAnimator(null);
         }
     }
 
@@ -155,5 +176,12 @@ public class ButtonCompat extends Button {
         int color = a.getColor(R.styleable.ButtonCompat_buttonColor, Color.WHITE);
         a.recycle();
         return color;
+    }
+
+    private static boolean getRaisedStatusFromAttributeSet(Context context, AttributeSet attrs) {
+        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.ButtonCompat, 0, 0);
+        boolean raised = a.getBoolean(R.styleable.ButtonCompat_buttonRaised, true);
+        a.recycle();
+        return raised;
     }
 }

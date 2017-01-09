@@ -4,7 +4,9 @@
 
 #include "components/favicon_base/fallback_icon_url_parser.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "components/favicon_base/fallback_icon_style.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -91,6 +93,7 @@ TEST_F(FallbackIconUrlParserTest, ParseSpecsEmpty) {
   EXPECT_TRUE(ParseSpecs(",,,,", &size, &style));
   EXPECT_EQ(16, size);
   EXPECT_EQ(kDefaultBackgroundColor, style.background_color);
+  EXPECT_TRUE(style.is_default_background_color);
   EXPECT_EQ(kDefaultTextColorLight, style.text_color);
   EXPECT_EQ(kDefaultFontSizeRatio, style.font_size_ratio);
   EXPECT_EQ(kDefaultRoundness, style.roundness);
@@ -102,6 +105,7 @@ TEST_F(FallbackIconUrlParserTest, ParseSpecsPartial) {
   EXPECT_TRUE(ParseSpecs(",,aCE,,0.1", &size, &style));
   EXPECT_EQ(16, size);
   EXPECT_EQ(kDefaultBackgroundColor, style.background_color);
+  EXPECT_TRUE(style.is_default_background_color);
   EXPECT_EQ(SkColorSetRGB(0xAA, 0xCC, 0xEE), style.text_color);
   EXPECT_EQ(kDefaultFontSizeRatio, style.font_size_ratio);
   EXPECT_EQ(0.1, style.roundness);
@@ -115,6 +119,7 @@ TEST_F(FallbackIconUrlParserTest, ParseSpecsFull) {
     EXPECT_TRUE(ParseSpecs("16,000,f01,0.75,0.25", &size, &style));
     EXPECT_EQ(16, size);
     EXPECT_EQ(SkColorSetRGB(0x00, 0x00, 0x00), style.background_color);
+    EXPECT_FALSE(style.is_default_background_color);
     EXPECT_EQ(SkColorSetRGB(0xff, 0x00, 0x11), style.text_color);
     EXPECT_EQ(0.75, style.font_size_ratio);
     EXPECT_EQ(0.25, style.roundness);
@@ -125,6 +130,7 @@ TEST_F(FallbackIconUrlParserTest, ParseSpecsFull) {
     EXPECT_TRUE(ParseSpecs("48,black,123456,0.5,0.3", &size, &style));
     EXPECT_EQ(48, size);
     EXPECT_EQ(SkColorSetRGB(0x00, 0x00, 0x00), style.background_color);
+    EXPECT_FALSE(style.is_default_background_color);
     EXPECT_EQ(SkColorSetRGB(0x12, 0x34, 0x56), style.text_color);
     EXPECT_EQ(0.5, style.font_size_ratio);
     EXPECT_EQ(0.3, style.roundness);
@@ -135,6 +141,7 @@ TEST_F(FallbackIconUrlParserTest, ParseSpecsFull) {
     EXPECT_TRUE(ParseSpecs("1,000,red,0,0", &size, &style));
     EXPECT_EQ(1, size);
     EXPECT_EQ(SkColorSetRGB(0x00, 0x00, 0x00), style.background_color);
+    EXPECT_FALSE(style.is_default_background_color);
     EXPECT_EQ(SkColorSetRGB(0xFF, 0x00, 0x00), style.text_color);
     EXPECT_EQ(0, style.font_size_ratio);
     EXPECT_EQ(0, style.roundness);
@@ -216,6 +223,7 @@ TEST_F(FallbackIconUrlParserTest, ParseFallbackIconPathSuccess) {
     EXPECT_EQ(31, parsed.size_in_pixels());
     const favicon_base::FallbackIconStyle& style = parsed.style();
     EXPECT_EQ(SkColorSetRGB(0x00, 0x00, 0x00), style.background_color);
+    EXPECT_FALSE(style.is_default_background_color);
     EXPECT_EQ(SkColorSetRGB(0xFF, 0xFF, 0xFF), style.text_color);
     EXPECT_EQ(0.75, style.font_size_ratio);
     EXPECT_EQ(0.25, style.roundness);
@@ -230,6 +238,7 @@ TEST_F(FallbackIconUrlParserTest, ParseFallbackIconPathSuccess) {
     EXPECT_EQ(31, parsed.size_in_pixels());
     const favicon_base::FallbackIconStyle& style = parsed.style();
     EXPECT_EQ(SkColorSetRGB(0x00, 0x00, 0x00), style.background_color);
+    EXPECT_FALSE(style.is_default_background_color);
     EXPECT_EQ(SkColorSetRGB(0xFF, 0xFF, 0xFF), style.text_color);
     EXPECT_EQ(0.75, style.font_size_ratio);
     EXPECT_EQ(0.25, style.roundness);
@@ -244,6 +253,7 @@ TEST_F(FallbackIconUrlParserTest, ParseFallbackIconPathSuccess) {
     EXPECT_EQ(31, parsed.size_in_pixels());
     const favicon_base::FallbackIconStyle& style = parsed.style();
     EXPECT_EQ(SkColorSetRGB(0x00, 0x00, 0x00), style.background_color);
+    EXPECT_FALSE(style.is_default_background_color);
     EXPECT_EQ(SkColorSetRGB(0xFF, 0xFF, 0xFF), style.text_color);
     EXPECT_EQ(0.75, style.font_size_ratio);
     EXPECT_EQ(0.25, style.roundness);
@@ -259,6 +269,7 @@ TEST_F(FallbackIconUrlParserTest, ParseFallbackIconPathSuccess) {
     EXPECT_EQ(gfx::kFaviconSize, parsed.size_in_pixels());
     const favicon_base::FallbackIconStyle& style = parsed.style();
     EXPECT_EQ(kDefaultBackgroundColor, style.background_color);
+    EXPECT_TRUE(style.is_default_background_color);
     EXPECT_EQ(kDefaultTextColorLight, style.text_color);
     EXPECT_EQ(kDefaultFontSizeRatio, style.font_size_ratio);
     EXPECT_EQ(kDefaultRoundness, style.roundness);

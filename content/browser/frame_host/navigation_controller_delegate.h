@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_FRAME_HOST_NAVIGATION_CONTROLLER_DELEGATE_H_
 #define CONTENT_BROWSER_FRAME_HOST_NAVIGATION_CONTROLLER_DELEGATE_H_
 
+#include <stdint.h>
+
 #include <string>
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_controller.h"
@@ -13,16 +15,12 @@
 namespace content {
 
 struct LoadCommittedDetails;
-struct LoadNotificationDetails;
-struct NativeWebKeyboardEvent;
 class FrameTree;
 class InterstitialPage;
 class InterstitialPageImpl;
 class RenderFrameHost;
 class RenderViewHost;
-class SiteInstance;
 class WebContents;
-class WebContentsDelegate;
 
 // Interface for objects embedding a NavigationController to provide the
 // functionality NavigationController needs.
@@ -38,9 +36,6 @@ class NavigationControllerDelegate {
   virtual const std::string& GetContentsMimeType() const = 0;
   virtual void NotifyNavigationStateChanged(InvalidateTypes changed_flags) = 0;
   virtual void Stop() = 0;
-  virtual int32 GetMaxPageID() = 0;
-  virtual int32 GetMaxPageIDForSiteInstance(SiteInstance* site_instance) = 0;
-  virtual bool IsLoading() const = 0;
   virtual bool IsBeingDestroyed() const = 0;
   virtual bool CanOverscrollContent() const = 0;
 
@@ -52,10 +47,6 @@ class NavigationControllerDelegate {
       const LoadCommittedDetails& load_details) = 0;
   virtual void SetHistoryOffsetAndLength(int history_offset,
                                          int history_length) = 0;
-  virtual void CopyMaxPageIDsFrom(WebContents* web_contents) = 0;
-  virtual void UpdateMaxPageID(int32 page_id) = 0;
-  virtual void UpdateMaxPageIDForSiteInstance(SiteInstance* site_instance,
-                                              int32 page_id) = 0;
   virtual void ActivateAndShowRepostFormWarningDialog() = 0;
   virtual bool HasAccessedInitialDocument() = 0;
 
@@ -69,10 +60,10 @@ class NavigationControllerDelegate {
       RenderFrameHost* render_frame_host) = 0;
   virtual void AttachInterstitialPage(
       InterstitialPageImpl* interstitial_page) = 0;
+  virtual void DidProceedOnInterstitial() = 0;
   virtual void DetachInterstitialPage() = 0;
-  virtual void SetIsLoading(bool is_loading,
-                            bool to_different_document,
-                            LoadNotificationDetails* details) = 0;
+
+  virtual void UpdateOverridingUserAgent() = 0;
 };
 
 }  // namespace content

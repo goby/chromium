@@ -5,8 +5,11 @@
 #ifndef IOS_WEB_PUBLIC_TEST_TEST_WEB_STATE_H_
 #define IOS_WEB_PUBLIC_TEST_TEST_WEB_STATE_H_
 
+#include <stdint.h>
+
 #include <string>
 
+#include "base/observer_list.h"
 #include "base/strings/string16.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
 #include "ios/web/public/web_state/web_state.h"
@@ -21,17 +24,28 @@ class TestWebState : public WebState {
   ~TestWebState() override;
 
   // WebState implementation.
+  WebStateDelegate* GetDelegate() override;
+  void SetDelegate(WebStateDelegate* delegate) override;
+  bool IsWebUsageEnabled() const override;
+  void SetWebUsageEnabled(bool enabled) override;
+  bool ShouldSuppressDialogs() const override;
+  void SetShouldSuppressDialogs(bool should_suppress) override;
   UIView* GetView() override;
-  WebViewType GetWebViewType() const override;
   BrowserState* GetBrowserState() const override;
   void OpenURL(const OpenURLParams& params) override {}
+  void Stop() override {}
+  const NavigationManager* GetNavigationManager() const override;
   NavigationManager* GetNavigationManager() override;
   CRWJSInjectionReceiver* GetJSInjectionReceiver() const override;
+  void ExecuteJavaScript(const base::string16& javascript) override;
+  void ExecuteJavaScript(const base::string16& javascript,
+                         const JavaScriptResultCallback& callback) override;
   const std::string& GetContentsMimeType() const override;
   const std::string& GetContentLanguageHeader() const override;
   bool ContentIsHTML() const override;
   const base::string16& GetTitle() const override;
   bool IsLoading() const override;
+  double GetLoadingProgress() const override;
   bool IsBeingDestroyed() const override;
   const GURL& GetVisibleURL() const override;
   const GURL& GetLastCommittedURL() const override;
@@ -44,8 +58,11 @@ class TestWebState : public WebState {
   CRWWebViewProxyType GetWebViewProxy() const override;
   bool IsShowingWebInterstitial() const override;
   WebInterstitial* GetWebInterstitial() const override;
-  void AddObserver(WebStateObserver* observer) override {}
-  void RemoveObserver(WebStateObserver* observer) override {}
+
+  void AddObserver(WebStateObserver* observer) override;
+
+  void RemoveObserver(WebStateObserver* observer) override;
+
   void AddPolicyDecider(WebStatePolicyDecider* decider) override {}
   void RemovePolicyDecider(WebStatePolicyDecider* decider) override {}
   int DownloadImage(const GURL& url,
@@ -53,19 +70,27 @@ class TestWebState : public WebState {
                     uint32_t max_bitmap_size,
                     bool bypass_cache,
                     const ImageDownloadCallback& callback) override;
+  service_manager::InterfaceRegistry* GetMojoInterfaceRegistry() override;
+  base::WeakPtr<WebState> AsWeakPtr() override;
 
   // Setters for test data.
   void SetContentIsHTML(bool content_is_html);
+  void SetLoading(bool is_loading);
   void SetCurrentURL(const GURL& url);
   void SetTrustLevel(URLVerificationTrustLevel trust_level);
 
  private:
+  bool web_usage_enabled_;
+  bool is_loading_;
   GURL url_;
   base::string16 title_;
   URLVerificationTrustLevel trust_level_;
   bool content_is_html_;
   std::string mime_type_;
   std::string content_language_;
+
+  // A list of observers notified when page state changes. Weak references.
+  base::ObserverList<WebStateObserver, true> observers_;
 };
 
 }  // namespace web

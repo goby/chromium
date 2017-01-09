@@ -5,10 +5,15 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_TCP_SERVER_SOCKET_MESSAGE_FILTER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_TCP_SERVER_SOCKET_MESSAGE_FILTER_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "net/base/ip_endpoint.h"
 #include "net/socket/tcp_socket.h"
@@ -97,7 +102,7 @@ class CONTENT_EXPORT PepperTCPServerSocketMessageFilter
                         int net_result);
   void OnFirewallHoleOpened(const ppapi::host::ReplyMessageContext& context,
                             int32_t net_result,
-                            scoped_ptr<chromeos::FirewallHole> hole);
+                            std::unique_ptr<chromeos::FirewallHole> hole);
 #endif  // defined(OS_CHROMEOS)
 
   // Following fields are initialized and used only on the IO thread.
@@ -108,12 +113,13 @@ class CONTENT_EXPORT PepperTCPServerSocketMessageFilter
   PP_Instance instance_;
 
   State state_;
-  scoped_ptr<net::TCPSocket> socket_;
-  scoped_ptr<net::TCPSocket> accepted_socket_;
+  std::unique_ptr<net::TCPSocket> socket_;
+  std::unique_ptr<net::TCPSocket> accepted_socket_;
   net::IPEndPoint accepted_address_;
 
 #if defined(OS_CHROMEOS)
-  scoped_ptr<chromeos::FirewallHole, content::BrowserThread::DeleteOnUIThread>
+  std::unique_ptr<chromeos::FirewallHole,
+                  content::BrowserThread::DeleteOnUIThread>
       firewall_hole_;
 #endif  // defined(OS_CHROMEOS)
 

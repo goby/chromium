@@ -5,7 +5,9 @@
 #ifndef REMOTING_HOST_IT2ME_DESKTOP_ENVIRONMENT_H_
 #define REMOTING_HOST_IT2ME_DESKTOP_ENVIRONMENT_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "remoting/host/basic_desktop_environment.h"
 
@@ -24,20 +26,21 @@ class It2MeDesktopEnvironment : public BasicDesktopEnvironment {
   friend class It2MeDesktopEnvironmentFactory;
   It2MeDesktopEnvironment(
       scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       base::WeakPtr<ClientSessionControl> client_session_control,
-      bool supports_touch_events);
+      const DesktopEnvironmentOptions& options);
 
  private:
   // Presents the continue window to the local user.
-  scoped_ptr<HostWindow> continue_window_;
+  std::unique_ptr<HostWindow> continue_window_;
 
   // Presents the disconnect window to the local user.
-  scoped_ptr<HostWindow> disconnect_window_;
+  std::unique_ptr<HostWindow> disconnect_window_;
 
   // Notifies the client session about the local mouse movements.
-  scoped_ptr<LocalInputMonitor> local_input_monitor_;
+  std::unique_ptr<LocalInputMonitor> local_input_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(It2MeDesktopEnvironment);
 };
@@ -47,13 +50,15 @@ class It2MeDesktopEnvironmentFactory : public BasicDesktopEnvironmentFactory {
  public:
   It2MeDesktopEnvironmentFactory(
       scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
   ~It2MeDesktopEnvironmentFactory() override;
 
   // DesktopEnvironmentFactory interface.
-  scoped_ptr<DesktopEnvironment> Create(
-      base::WeakPtr<ClientSessionControl> client_session_control) override;
+  std::unique_ptr<DesktopEnvironment> Create(
+      base::WeakPtr<ClientSessionControl> client_session_control,
+      const DesktopEnvironmentOptions& options) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(It2MeDesktopEnvironmentFactory);

@@ -8,23 +8,21 @@
 #ifndef COMPONENTS_METRICS_METRICS_LOG_H_
 #define COMPONENTS_METRICS_METRICS_LOG_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/time/time.h"
+#include "components/metrics/metrics_service_client.h"
 #include "components/metrics/proto/chrome_user_metrics_extension.pb.h"
 
 class PrefRegistrySimple;
 class PrefService;
 
 namespace base {
-class DictionaryValue;
 class HistogramSamples;
-}
-
-namespace content {
-struct WebPluginInfo;
 }
 
 namespace variations {
@@ -63,18 +61,18 @@ class MetricsLog {
 
   // Computes the MD5 hash of the given string, and returns the first 8 bytes of
   // the hash.
-  static uint64 Hash(const std::string& value);
+  static uint64_t Hash(const std::string& value);
 
   // Get the GMT buildtime for the current binary, expressed in seconds since
   // January 1, 1970 GMT.
   // The value is used to identify when a new build is run, so that previous
   // reliability stats, from other builds, can be abandoned.
-  static int64 GetBuildTime();
+  static int64_t GetBuildTime();
 
   // Convenience function to return the current time at a resolution in seconds.
   // This wraps base::TimeTicks, and hence provides an abstract time that is
   // always incrementing for use in measuring time durations.
-  static int64 GetCurrentTime();
+  static int64_t GetCurrentTime();
 
   // Records a user-initiated action.
   void RecordUserAction(const std::string& key);
@@ -84,22 +82,22 @@ class MetricsLog {
                             const base::HistogramSamples& snapshot);
 
   // Records the current operating environment, including metrics provided by
-  // the specified set of |metrics_providers|.  Takes the list of installed
-  // plugins, Google Update statistics, and synthetic trial IDs as parameters
-  // because those can't be obtained synchronously from the UI thread.
-  // A synthetic trial is one that is set up dynamically by code in Chrome. For
-  // example, a pref may be mapped to a synthetic trial such that the group
-  // is determined by the pref value.
-  void RecordEnvironment(
+  // the specified set of |metrics_providers|.  Takes the list of synthetic
+  // trial IDs as a parameter. A synthetic trial is one that is set up
+  // dynamically by code in Chrome. For example, a pref may be mapped to a
+  // synthetic trial such that the group is determined by the pref value. The
+  // current environment is returned serialized as a string.
+  std::string RecordEnvironment(
       const std::vector<MetricsProvider*>& metrics_providers,
       const std::vector<variations::ActiveGroupId>& synthetic_trials,
-      int64 install_date,
-      int64 metrics_reporting_enabled_date);
+      int64_t install_date,
+      int64_t metrics_reporting_enabled_date);
 
   // Loads the environment proto that was saved by the last RecordEnvironment()
-  // call from prefs and clears the pref value. Returns true on success or false
-  // if there was no saved environment in prefs or it could not be decoded.
-  bool LoadSavedEnvironmentFromPrefs();
+  // call from prefs. On success, returns true and |app_version| contains the
+  // recovered version. Otherwise (if there was no saved environment in prefs
+  // or it could not be decoded), returns false and |app_version| is empty.
+  bool LoadSavedEnvironmentFromPrefs(std::string* app_version);
 
   // Writes application stability metrics, including stability metrics provided
   // by the specified set of |metrics_providers|. The system profile portion of
@@ -158,6 +156,10 @@ class MetricsLog {
   // Returns true if the environment has already been filled in by a call to
   // RecordEnvironment() or LoadSavedEnvironmentFromPrefs().
   bool HasEnvironment() const;
+
+  // Write the default state of the enable metrics checkbox.
+  void WriteMetricsEnableDefault(EnableMetricsDefault metrics_default,
+                                 SystemProfileProto* system_profile);
 
   // Returns true if the stability metrics have already been filled in by a
   // call to RecordStabilityMetrics().

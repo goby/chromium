@@ -9,6 +9,7 @@
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 
 namespace base {
 class ListValue;
@@ -23,7 +24,7 @@ class PairingRegistryDelegateLinux
   ~PairingRegistryDelegateLinux() override;
 
   // PairingRegistry::Delegate interface
-  scoped_ptr<base::ListValue> LoadAll() override;
+  std::unique_ptr<base::ListValue> LoadAll() override;
   bool DeleteAll() override;
   protocol::PairingRegistry::Pairing Load(
       const std::string& client_id) override;

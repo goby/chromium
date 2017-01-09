@@ -5,6 +5,7 @@
 #ifndef CONTENT_SHELL_RENDERER_SHELL_RENDER_VIEW_OBSERVER_H_
 #define CONTENT_SHELL_RENDERER_SHELL_RENDER_VIEW_OBSERVER_H_
 
+#include "base/macros.h"
 #include "content/public/renderer/render_view_observer.h"
 
 namespace blink {
@@ -24,6 +25,7 @@ class ShellRenderViewObserver : public RenderViewObserver {
  private:
   // RenderViewObserver implementation.
   void DidClearWindowObject(blink::WebLocalFrame* frame) override;
+  void OnDestruct() override;
 
   DISALLOW_COPY_AND_ASSIGN(ShellRenderViewObserver);
 };

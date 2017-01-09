@@ -5,11 +5,15 @@
 #ifndef COMPONENTS_DOMAIN_RELIABILITY_CONTEXT_MANAGER_H_
 #define COMPONENTS_DOMAIN_RELIABILITY_CONTEXT_MANAGER_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
+#include <unordered_set>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "components/domain_reliability/beacon.h"
 #include "components/domain_reliability/config.h"
@@ -27,22 +31,31 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContextManager {
 
   // If |url| maps to a context added to this manager, calls |OnBeacon| on
   // that context with |beacon|. Otherwise, does nothing.
-  void RouteBeacon(scoped_ptr<DomainReliabilityBeacon> beacon);
+  void RouteBeacon(std::unique_ptr<DomainReliabilityBeacon> beacon);
 
-  // Calls |ClearBeacons| on all contexts added to this manager, but leaves
-  // the contexts themselves intact.
-  void ClearBeaconsInAllContexts();
+  void SetConfig(const GURL& origin,
+                 std::unique_ptr<DomainReliabilityConfig> config,
+                 base::TimeDelta max_age);
+  void ClearConfig(const GURL& origin);
 
-  // TODO(ttuttle): Once unit tests test ContextManager directly, they can use
-  // a custom Context::Factory to get the created Context, and this can be void.
+  // Calls |ClearBeacons| on all contexts matched by |origin_filter| added
+  // to this manager, but leaves the contexts themselves intact. A null
+  // |origin_filter| is interpreted as an always-true filter, indicating
+  // complete deletion.
+  void ClearBeacons(const base::Callback<bool(const GURL&)>& origin_filter);
+
+  // TODO(juliatuttle): Once unit tests test ContextManager directly, they can
+  // use a custom Context::Factory to get the created Context, and this can be
+  // void.
   DomainReliabilityContext* AddContextForConfig(
-      scoped_ptr<const DomainReliabilityConfig> config);
+      std::unique_ptr<const DomainReliabilityConfig> config);
 
-  // Removes all contexts from this manager (discarding all queued beacons in
-  // the process).
-  void RemoveAllContexts();
+  // Removes all contexts matched by |origin_filter| from this manager
+  // (discarding all queued beacons in the process). A null |origin_filter|
+  // is interpreted as an always-true filter, indicating complete deletion.
+  void RemoveContexts(const base::Callback<bool(const GURL&)>& origin_filter);
 
-  scoped_ptr<base::Value> GetWebUIData() const;
+  std::unique_ptr<base::Value> GetWebUIData() const;
 
   size_t contexts_size_for_testing() const { return contexts_.size(); }
 
@@ -54,6 +67,13 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContextManager {
   DomainReliabilityContext::Factory* context_factory_;
   // Owns DomainReliabilityContexts.
   ContextMap contexts_;
+  // Currently, Domain Reliability only allows header-based configuration by
+  // origins that already have baked-in configs. This is the set of origins
+  // that have removed their context (by sending "NEL: max-age=0"), so the
+  // context manager knows they are allowed to set a config again later.
+  std::unordered_set<std::string> removed_contexts_;
+
+  base::TimeTicks last_routed_beacon_time_;
 
   DISALLOW_COPY_AND_ASSIGN(DomainReliabilityContextManager);
 };

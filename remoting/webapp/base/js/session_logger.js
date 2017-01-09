@@ -48,8 +48,16 @@ remoting.SessionLogger = function(role, writeLogEntry) {
   this.hostOs_ = remoting.ChromotingEvent.Os.OTHER;
   /** @private */
   this.hostOsVersion_ = '';
-  /** @private {number} */
+  /**
+   * Elapsed time since last host list refresh in milliseconds.
+   * @private {number}
+   */
   this.hostStatusUpdateElapsedTime_;
+  /**
+   * Elapsed time since the last host heartbeat in milliseconds.
+   * @private {number}
+   */
+  this.hostLastHeartbeatElapsedTime_;
   /** @private */
   this.mode_ = remoting.ChromotingEvent.Mode.ME2ME;
   /** @private {remoting.ChromotingEvent.AuthMethod} */
@@ -59,7 +67,38 @@ remoting.SessionLogger = function(role, writeLogEntry) {
   /** @private {remoting.ChromotingEvent.SessionSummary} */
   this.previousSessionSummary_ = null;
 
+  /** @private {remoting.ChromotingEvent.FeatureTracker} */
+  this.featureTracker_ = null;
+
   this.setSessionId_();
+};
+
+/**
+ * Increments a numerical field in feature tracker. Creates feature tracker
+ * if it doesn't exist.
+ *
+ * @param {string} field
+ * @return {void} Nothing.
+ */
+remoting.SessionLogger.prototype.incrementFeatureUsage = function(field) {
+  this.ensureFeatureTracker_();
+  this.featureTracker_[field]++;
+};
+
+/**
+ * Logs and clears the feature tracker. Creates default feature tracker if
+ * it doesn't exist.
+ *
+ * @return {void} Nothing.
+ */
+remoting.SessionLogger.prototype.flushFeatureTracker = function() {
+  this.ensureFeatureTracker_();
+  var entry = new remoting.ChromotingEvent(
+    remoting.ChromotingEvent.Type.FEATURE_TRACKING);
+  entry.feature_tracker = this.featureTracker_;
+  this.fillEvent_(entry);
+  this.log_(entry);
+  this.featureTracker_ = null;
 };
 
 /**
@@ -78,28 +117,18 @@ remoting.SessionLogger.prototype.setAuthTotalTime = function(totalTime) {
 };
 
 /**
- * @param {string} hostVersion Version of the host for current session.
+ * @param {remoting.Host} host
  * @return {void} Nothing.
  */
-remoting.SessionLogger.prototype.setHostVersion = function(hostVersion) {
-  this.hostVersion_ = hostVersion;
-};
+remoting.SessionLogger.prototype.setHost = function(host) {
+  this.hostOs_ = host.hostOs;
+  this.hostOsVersion_ = host.hostOsVersion;
+  this.hostVersion_ = host.hostVersion;
 
-/**
- * @param {remoting.ChromotingEvent.Os} hostOs Type of the OS the host
- *        for the current session.
- * @return {void} Nothing.
- */
-remoting.SessionLogger.prototype.setHostOs = function(hostOs) {
-  this.hostOs_ = hostOs;
-};
-
-/**
- * @param {string} hostOsVersion Version of the host Os for current session.
- * @return {void} Nothing.
- */
-remoting.SessionLogger.prototype.setHostOsVersion = function(hostOsVersion) {
-  this.hostOsVersion_ = hostOsVersion;
+  if (host.updatedTime != '') {
+    this.hostLastHeartbeatElapsedTime_ =
+        (Date.now() - new Date(host.updatedTime));
+  }
 };
 
 /**
@@ -209,6 +238,11 @@ remoting.SessionLogger.prototype.logSessionStateChange =
   // Don't accumulate connection statistics across state changes.
   this.logAccumulatedStatistics_();
   this.statsAccumulator_.empty();
+
+    if (state == remoting.ChromotingEvent.SessionState.CLOSED ||
+      state == remoting.ChromotingEvent.SessionState.CONNECTION_DROPPED) {
+    this.flushFeatureTracker();
+  }
 };
 
 /**
@@ -226,6 +260,24 @@ remoting.SessionLogger.prototype.logStatistics = function(stats) {
       remoting.SessionLogger.CONNECTION_STATS_ACCUMULATE_TIME) {
     this.logAccumulatedStatistics_();
   }
+};
+
+/**
+ * Logs host and client dimensions.
+ *
+ * @param {{width: number, height: number}} hostSize
+ * @param {{width: number, height: number}} clientPluginSize
+ * @param {{width: number, height: number}} clientWindowSize
+ * @param {boolean} clientFullscreen
+ */
+remoting.SessionLogger.prototype.logScreenResolutions =
+    function(hostSize, hostDpi, clientPluginSize, clientWindowSize, clientDpi,
+             clientFullscreen) {
+  this.maybeExpireSessionId_();
+  var entry = this.makeScreenResolutions_(hostSize, hostDpi, clientPluginSize,
+                                          clientWindowSize, clientDpi,
+                                          clientFullscreen);
+  this.log_(entry);
 };
 
 /**
@@ -251,6 +303,30 @@ remoting.SessionLogger.prototype.makeSessionStateChange_ =
 
   entry.session_state = state;
 
+  this.fillEvent_(entry);
+  return entry;
+};
+
+/**
+ * @param {{width: number, height: number}} hostSize
+ * @param {{width: number, height: number}} clientPluginSize
+ * @param {{width: number, height: number}} clientWindowSize
+ * @param {boolean} clientFullscreen
+ * @return {remoting.ChromotingEvent}
+ * @private
+ */
+remoting.SessionLogger.prototype.makeScreenResolutions_ =
+    function(hostSize, hostDpi, clientPluginSize, clientWindowSize, clientDpi,
+             clientFullscreen) {
+  var entry = new remoting.ChromotingEvent(
+      remoting.ChromotingEvent.Type.SCREEN_RESOLUTIONS);
+  entry.client_video_size = new remoting.ChromotingEvent.ScreenResolution(
+      clientPluginSize.width, clientPluginSize.height, clientDpi);
+  entry.client_window_size = new remoting.ChromotingEvent.ScreenResolution(
+      clientWindowSize.width, clientWindowSize.height, clientDpi);
+  entry.host_all_screens_size = new remoting.ChromotingEvent.ScreenResolution(
+      hostSize.width, hostSize.height, hostDpi);
+  entry.client_fullscreen = clientFullscreen;
   this.fillEvent_(entry);
   return entry;
 };
@@ -293,6 +369,11 @@ remoting.SessionLogger.prototype.makeStats_ = function() {
     entry.decode_latency = perfStats.decodeLatency;
     entry.render_latency = perfStats.renderLatency;
     entry.roundtrip_latency = perfStats.roundtripLatency;
+    entry.max_capture_latency = perfStats.maxCaptureLatency;
+    entry.max_encode_latency = perfStats.maxEncodeLatency;
+    entry.max_decode_latency = perfStats.maxDecodeLatency;
+    entry.max_render_latency = perfStats.maxRenderLatency;
+    entry.max_roundtrip_latency = perfStats.maxRoundtripLatency;
     return entry;
   }
   return null;
@@ -332,6 +413,9 @@ remoting.SessionLogger.prototype.fillEvent_ = function(entry) {
   }
   if (this.hostStatusUpdateElapsedTime_ != undefined) {
     entry.host_status_update_elapsed_time = this.hostStatusUpdateElapsedTime_;
+  }
+  if (this.hostLastHeartbeatElapsedTime_ != undefined) {
+    entry.host_last_heartbeat_elapsed_time = this.hostLastHeartbeatElapsedTime_;
   }
   if (this.authMethod_ != undefined) {
     entry.auth_method = this.authMethod_;
@@ -396,6 +480,18 @@ remoting.SessionLogger.prototype.maybeExpireSessionId_ = function() {
     // Log the new session ID.
     entry = this.makeSessionIdNew_();
     this.log_(entry);
+  }
+};
+
+/**
+ * Creates feature tracker if it doesn't exist.
+ *
+ * @private
+ * @return {void} Nothing.
+ */
+remoting.SessionLogger.prototype.ensureFeatureTracker_ = function() {
+  if (!this.featureTracker_) {
+    this.featureTracker_ = new remoting.ChromotingEvent.FeatureTracker();
   }
 };
 

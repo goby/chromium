@@ -8,6 +8,8 @@
 #ifndef CONTENT_COMMON_P2P_SOCKET_TYPE_H_
 #define CONTENT_COMMON_P2P_SOCKET_TYPE_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/time/time.h"
@@ -66,6 +68,18 @@ struct P2PSendPacketMetrics {
   // combined with ACKs to compute inter-packet delay variations.
   int32_t rtc_packet_id = -1;
   base::TimeTicks send_time;
+};
+
+// Struct that carries a port range.
+struct P2PPortRange {
+  P2PPortRange() : P2PPortRange(0, 0) {}
+  P2PPortRange(uint16_t min_port, uint16_t max_port)
+      : min_port(min_port), max_port(max_port) {
+    DCHECK_LE(min_port, max_port);
+    DCHECK((min_port == 0 && max_port == 0) || min_port > 0);
+  }
+  uint16_t min_port;
+  uint16_t max_port;
 };
 
 }  // namespace content

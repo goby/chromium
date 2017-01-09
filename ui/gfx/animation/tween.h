@@ -5,11 +5,15 @@
 #ifndef UI_GFX_ANIMATION_TWEEN_H_
 #define UI_GFX_ANIMATION_TWEEN_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/gfx_export.h"
 #include "ui/gfx/transform.h"
+
+namespace base {
+class TimeTicks;
+}
 
 namespace gfx {
 
@@ -41,6 +45,11 @@ class GFX_EXPORT Tween {
   static SkColor ColorValueBetween(double value, SkColor start, SkColor target);
   static double DoubleValueBetween(double value, double start, double target);
   static float FloatValueBetween(double value, float start, float target);
+  static float ClampedFloatValueBetween(const base::TimeTicks& time,
+                                        const base::TimeTicks& start_time,
+                                        float start,
+                                        const base::TimeTicks& target_time,
+                                        float target);
 
   // Interpolated between start and target, with every integer in this range
   // given equal weight.

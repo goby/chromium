@@ -5,16 +5,18 @@
 #ifndef DEVICE_BLUETOOTH_BLUETOOTH_SOCKET_MAC_H_
 #define DEVICE_BLUETOOTH_BLUETOOTH_SOCKET_MAC_H_
 
+#import <IOBluetooth/IOBluetooth.h>
+#import <IOKit/IOReturn.h>
+#include <stddef.h>
+
+#include <memory>
 #include <queue>
 #include <string>
 
-#import <IOBluetooth/IOBluetooth.h>
-#import <IOKit/IOReturn.h>
-
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_socket.h"
@@ -99,7 +101,7 @@ class BluetoothSocketMac : public BluetoothSocket {
 
   // Called by BluetoothRfcommConnectionListener and
   // BluetoothL2capConnectionListener.
-  void OnChannelOpened(scoped_ptr<BluetoothChannelMac> channel);
+  void OnChannelOpened(std::unique_ptr<BluetoothChannelMac> channel);
 
   // Called by |channel_|.
   // Note: OnChannelOpenComplete might be called before the |channel_| is set.
@@ -152,7 +154,7 @@ class BluetoothSocketMac : public BluetoothSocket {
   void ReleaseChannel();
   void ReleaseListener();
 
-  bool is_connecting() const { return connect_callbacks_; }
+  bool is_connecting() const { return !!connect_callbacks_; }
 
   // Used to verify that all methods are called on the same thread.
   base::ThreadChecker thread_checker_;
@@ -171,28 +173,28 @@ class BluetoothSocketMac : public BluetoothSocket {
   base::scoped_nsobject<BluetoothL2capConnectionListener>
       l2cap_connection_listener_;
 
-  // A handle to the service record registered in the system SDP server.
-  // Used to eventually unregister the service.
-  BluetoothSDPServiceRecordHandle service_record_handle_;
+  // The service record registered in the system SDP server, used to
+  // eventually unregister the service.
+  base::scoped_nsobject<IOBluetoothSDPServiceRecord> service_record_;
 
   // The channel used to issue commands.
-  scoped_ptr<BluetoothChannelMac> channel_;
+  std::unique_ptr<BluetoothChannelMac> channel_;
 
   // Connection callbacks -- when a pending async connection is active.
-  scoped_ptr<ConnectCallbacks> connect_callbacks_;
+  std::unique_ptr<ConnectCallbacks> connect_callbacks_;
 
   // Packets received while there is no pending "receive" callback.
   std::queue<scoped_refptr<net::IOBufferWithSize> > receive_queue_;
 
   // Receive callbacks -- when a receive call is active.
-  scoped_ptr<ReceiveCallbacks> receive_callbacks_;
+  std::unique_ptr<ReceiveCallbacks> receive_callbacks_;
 
   // Send queue -- one entry per pending send operation.
   std::queue<linked_ptr<SendRequest>> send_queue_;
 
   // The pending request to an Accept() call, or null if there is no pending
   // request.
-  scoped_ptr<AcceptRequest> accept_request_;
+  std::unique_ptr<AcceptRequest> accept_request_;
 
   // Queue of incoming connections.
   std::queue<linked_ptr<BluetoothChannelMac>> accept_queue_;

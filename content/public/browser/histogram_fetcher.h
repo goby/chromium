@@ -5,14 +5,10 @@
 #ifndef CONTENT_PUBLIC_BROWSER_HISTOGRAM_FETCHER_H_
 #define CONTENT_PUBLIC_BROWSER_HISTOGRAM_FETCHER_H_
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/task_runner.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-
-namespace base {
-class MessageLoop;
-}
 
 namespace content {
 
@@ -21,10 +17,10 @@ namespace content {
 // preparation for a log upload. It contacts all processes, and get them to
 // upload to the browser any/all changes to histograms.  When all changes have
 // been acquired, or when the wait time expires (whichever is sooner), post the
-// callback to the specified message loop. Note the callback is posted exactly
+// callback to the specified TaskRunner. Note the callback is posted exactly
 // once.
 CONTENT_EXPORT void FetchHistogramsAsynchronously(
-    base::MessageLoop* callback_thread,
+    scoped_refptr<base::TaskRunner> task_runner,
     const base::Closure& callback,
     base::TimeDelta wait_time);
 

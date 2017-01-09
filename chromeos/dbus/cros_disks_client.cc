@@ -4,12 +4,16 @@
 
 #include "chromeos/dbus/cros_disks_client.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
@@ -29,11 +33,12 @@ namespace chromeos {
 namespace {
 
 const char* kDefaultMountOptions[] = {
-  "rw",
-  "nodev",
-  "noexec",
-  "nosuid",
+    "nodev", "noexec", "nosuid",
 };
+const char kReadOnlyOption[] = "ro";
+const char kReadWriteOption[] = "rw";
+const char kRemountOption[] = "remount";
+const char kMountLabelOption[] = "mountlabel";
 
 const char* kDefaultUnmountOptions[] = {
   "force",
@@ -41,17 +46,15 @@ const char* kDefaultUnmountOptions[] = {
 
 const char kLazyUnmountOption[] = "lazy";
 
-const char kMountLabelOption[] = "mountlabel";
-
 // Checks if retrieved media type is in boundaries of DeviceMediaType.
-bool IsValidMediaType(uint32 type) {
-  return type < static_cast<uint32>(cros_disks::DEVICE_MEDIA_NUM_VALUES);
+bool IsValidMediaType(uint32_t type) {
+  return type < static_cast<uint32_t>(cros_disks::DEVICE_MEDIA_NUM_VALUES);
 }
 
 // Translates enum used in cros-disks to enum used in Chrome.
 // Note that we could just do static_cast, but this is less sensitive to
 // changes in cros-disks.
-DeviceType DeviceMediaTypeToDeviceType(uint32 media_type_uint32) {
+DeviceType DeviceMediaTypeToDeviceType(uint32_t media_type_uint32) {
   if (!IsValidMediaType(media_type_uint32))
     return DEVICE_TYPE_UNKNOWN;
 
@@ -77,9 +80,9 @@ DeviceType DeviceMediaTypeToDeviceType(uint32 media_type_uint32) {
 }
 
 bool ReadMountEntryFromDbus(dbus::MessageReader* reader, MountEntry* entry) {
-  uint32 error_code = 0;
+  uint32_t error_code = 0;
   std::string source_path;
-  uint32 mount_type = 0;
+  uint32_t mount_type = 0;
   std::string mount_path;
   if (!reader->PopUint32(&error_code) ||
       !reader->PopString(&source_path) ||
@@ -101,6 +104,8 @@ class CrosDisksClientImpl : public CrosDisksClient {
   void Mount(const std::string& source_path,
              const std::string& source_format,
              const std::string& mount_label,
+             MountAccessMode access_mode,
+             RemountOption remount,
              const base::Closure& callback,
              const base::Closure& error_callback) override {
     dbus::MethodCall method_call(cros_disks::kCrosDisksInterface,
@@ -108,15 +113,8 @@ class CrosDisksClientImpl : public CrosDisksClient {
     dbus::MessageWriter writer(&method_call);
     writer.AppendString(source_path);
     writer.AppendString(source_format);
-    std::vector<std::string> mount_options(kDefaultMountOptions,
-                                           kDefaultMountOptions +
-                                           arraysize(kDefaultMountOptions));
-    if (!mount_label.empty()) {
-      std::string mount_label_option = base::StringPrintf("%s=%s",
-                                                          kMountLabelOption,
-                                                          mount_label.c_str());
-      mount_options.push_back(mount_label_option);
-    }
+    std::vector<std::string> mount_options =
+        ComposeMountOptions(mount_label, access_mode, remount);
     writer.AppendArrayOfStrings(mount_options);
     proxy_->CallMethod(&method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
                        base::Bind(&CrosDisksClientImpl::OnMount,
@@ -310,7 +308,7 @@ class CrosDisksClientImpl : public CrosDisksClient {
     // make this fail if reader is not able to read the error code value from
     // the response.
     dbus::MessageReader reader(response);
-    uint32 error_code = 0;
+    uint32_t error_code = 0;
     if (reader.PopUint32(&error_code) &&
         static_cast<MountError>(error_code) != MOUNT_ERROR_NONE) {
       error_callback.Run();
@@ -426,7 +424,7 @@ class CrosDisksClientImpl : public CrosDisksClient {
   // Handles FormatCompleted signal and calls |handler|.
   void OnFormatCompleted(FormatCompletedHandler handler, dbus::Signal* signal) {
     dbus::MessageReader reader(signal);
-    uint32 error_code = 0;
+    uint32_t error_code = 0;
     std::string device_path;
     if (!reader.PopUint32(&error_code) || !reader.PopString(&device_path)) {
       LOG(ERROR) << "Invalid signal: " << signal->ToString();
@@ -519,7 +517,7 @@ DiskInfo::~DiskInfo() {
 //   }
 //   dict entry {
 //     string "DeviceMediaType"
-//     variant       uint32 1
+//     variant       uint32_t 1
 //   }
 //   dict entry {
 //     string "DeviceMountPaths"
@@ -532,7 +530,7 @@ DiskInfo::~DiskInfo() {
 //   }
 //   dict entry {
 //     string "DeviceSize"
-//     variant       uint64 7998537728
+//     variant       uint64_t 7998537728
 //   }
 //   dict entry {
 //     string "DriveIsRotational"
@@ -573,7 +571,7 @@ DiskInfo::~DiskInfo() {
 // ]
 void DiskInfo::InitializeFromResponse(dbus::Response* response) {
   dbus::MessageReader reader(response);
-  scoped_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
+  std::unique_ptr<base::Value> value(dbus::PopDataAsValue(&reader));
   base::DictionaryValue* properties = NULL;
   if (!value || !value->GetAsDictionary(&properties))
     return;
@@ -606,15 +604,16 @@ void DiskInfo::InitializeFromResponse(dbus::Response* response) {
   properties->GetStringWithoutPathExpansion(cros_disks::kIdLabel, &label_);
   properties->GetStringWithoutPathExpansion(cros_disks::kIdUuid, &uuid_);
 
-  // dbus::PopDataAsValue() pops uint64 as double.
-  // The top 11 bits of uint64 are dropped by the use of double. But, this works
+  // dbus::PopDataAsValue() pops uint64_t as double.
+  // The top 11 bits of uint64_t are dropped by the use of double. But, this
+  // works
   // unless the size exceeds 8 PB.
   double device_size_double = 0;
   if (properties->GetDoubleWithoutPathExpansion(cros_disks::kDeviceSize,
                                                 &device_size_double))
     total_size_in_bytes_ = device_size_double;
 
-  // dbus::PopDataAsValue() pops uint32 as double.
+  // dbus::PopDataAsValue() pops uint32_t as double.
   double media_type_double = 0;
   if (properties->GetDoubleWithoutPathExpansion(cros_disks::kDeviceMediaType,
                                                 &media_type_double))
@@ -637,7 +636,7 @@ CrosDisksClient::~CrosDisksClient() {}
 CrosDisksClient* CrosDisksClient::Create(DBusClientImplementationType type) {
   if (type == REAL_DBUS_CLIENT_IMPLEMENTATION)
     return new CrosDisksClientImpl();
-  DCHECK_EQ(STUB_DBUS_CLIENT_IMPLEMENTATION, type);
+  DCHECK_EQ(FAKE_DBUS_CLIENT_IMPLEMENTATION, type);
   return new FakeCrosDisksClient();
 }
 
@@ -653,6 +652,34 @@ base::FilePath CrosDisksClient::GetRemovableDiskMountPoint() {
   return base::FilePath(base::SysInfo::IsRunningOnChromeOS() ?
                         FILE_PATH_LITERAL("/media/removable") :
                         FILE_PATH_LITERAL("/tmp/chromeos/media/removable"));
+}
+
+// static
+std::vector<std::string> CrosDisksClient::ComposeMountOptions(
+    const std::string& mount_label,
+    MountAccessMode access_mode,
+    RemountOption remount) {
+  std::vector<std::string> mount_options(
+      kDefaultMountOptions,
+      kDefaultMountOptions + arraysize(kDefaultMountOptions));
+  switch (access_mode) {
+    case MOUNT_ACCESS_MODE_READ_ONLY:
+      mount_options.push_back(kReadOnlyOption);
+      break;
+    case MOUNT_ACCESS_MODE_READ_WRITE:
+      mount_options.push_back(kReadWriteOption);
+      break;
+  }
+  if (remount == REMOUNT_OPTION_REMOUNT_EXISTING_DEVICE) {
+    mount_options.push_back(kRemountOption);
+  }
+
+  if (!mount_label.empty()) {
+    std::string mount_label_option =
+        base::StringPrintf("%s=%s", kMountLabelOption, mount_label.c_str());
+    mount_options.push_back(mount_label_option);
+  }
+  return mount_options;
 }
 
 }  // namespace chromeos

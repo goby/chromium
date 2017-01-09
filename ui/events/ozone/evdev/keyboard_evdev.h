@@ -5,9 +5,11 @@
 #ifndef UI_EVENTS_OZONE_EVDEV_KEYBOARD_EVDEV_H_
 #define UI_EVENTS_OZONE_EVDEV_KEYBOARD_EVDEV_H_
 
-#include <bitset>
 #include <linux/input.h>
 
+#include <bitset>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "ui/events/ozone/evdev/event_device_util.h"
@@ -42,7 +44,7 @@ class EVENTS_OZONE_EVDEV_EXPORT KeyboardEvdev {
   void OnKeyChange(unsigned int code,
                    bool down,
                    bool suppress_auto_repeat,
-                   base::TimeDelta timestamp,
+                   base::TimeTicks timestamp,
                    int device_id);
 
   // Handle Caps Lock modifier.
@@ -75,7 +77,7 @@ class EVENTS_OZONE_EVDEV_EXPORT KeyboardEvdev {
   void DispatchKey(unsigned int key,
                    bool down,
                    bool repeat,
-                   base::TimeDelta timestamp,
+                   base::TimeTicks timestamp,
                    int device_id);
 
   // Aggregated key state. There is only one bit of state per key; we do not

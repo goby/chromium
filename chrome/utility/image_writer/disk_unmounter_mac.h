@@ -8,6 +8,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <DiskArbitration/DiskArbitration.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/mac/foundation_util.h"
@@ -16,8 +18,6 @@
 #include "base/threading/thread.h"
 
 namespace image_writer {
-
-class ImageWriter;
 
 // Manages the unmounting of disks through Disk Arbitration.  Disk Arbitration
 // has to be run on a thread with a CFRunLoop.  In the utility process neither
@@ -50,7 +50,7 @@ class DiskUnmounterMac {
                             void* context);
 
   // A |MessagePumpFactory| for creating the thread.
-  static scoped_ptr<base::MessagePump> CreateMessagePump();
+  static std::unique_ptr<base::MessagePump> CreateMessagePump();
 
   // Starts the unmount process.  Should be posted to the |cf_thread_|.
   void UnmountOnWorker(const std::string& device_path);

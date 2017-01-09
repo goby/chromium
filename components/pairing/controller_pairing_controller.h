@@ -10,14 +10,6 @@
 
 #include "base/macros.h"
 
-namespace chromeos {
-class UserContext;
-}
-
-namespace content {
-class BrowserContext;
-}
-
 namespace pairing_chromeos {
 
 class ControllerPairingController {
@@ -31,6 +23,7 @@ class ControllerPairingController {
     STAGE_ESTABLISHING_CONNECTION_ERROR,
     STAGE_WAITING_FOR_CODE_CONFIRMATION,
     STAGE_PAIRING_DONE,
+    STAGE_HOST_NETWORK_ERROR,
     STAGE_HOST_UPDATE_IN_PROGRESS,
     STAGE_HOST_CONNECTION_LOST,
     STAGE_WAITING_FOR_CREDENTIALS,

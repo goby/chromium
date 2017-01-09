@@ -5,10 +5,13 @@
 #ifndef BASE_DEBUG_STACK_TRACE_H_
 #define BASE_DEBUG_STACK_TRACE_H_
 
+#include <stddef.h>
+
 #include <iosfwd>
 #include <string>
 
 #include "base/base_export.h"
+#include "base/macros.h"
 #include "build/build_config.h"
 
 #if defined(OS_POSIX)
@@ -18,6 +21,14 @@
 #if defined(OS_WIN)
 struct _EXCEPTION_POINTERS;
 struct _CONTEXT;
+#endif
+
+#if defined(OS_POSIX) && ( \
+    defined(__i386__) || defined(__x86_64__) || \
+    (defined(__arm__) && !defined(__thumb__)))
+#define HAVE_TRACE_STACK_FRAME_POINTERS 1
+#else
+#define HAVE_TRACE_STACK_FRAME_POINTERS 0
 #endif
 
 namespace base {
@@ -90,6 +101,71 @@ class BASE_EXPORT StackTrace {
   // The number of valid frames in |trace_|.
   size_t count_;
 };
+
+#if HAVE_TRACE_STACK_FRAME_POINTERS
+// Traces the stack by using frame pointers. This function is faster but less
+// reliable than StackTrace. It should work for debug and profiling builds,
+// but not for release builds (although there are some exceptions).
+//
+// Writes at most |max_depth| frames (instruction pointers) into |out_trace|
+// after skipping |skip_initial| frames. Note that the function itself is not
+// added to the trace so |skip_initial| should be 0 in most cases.
+// Returns number of frames written.
+BASE_EXPORT size_t TraceStackFramePointers(const void** out_trace,
+                                           size_t max_depth,
+                                           size_t skip_initial);
+
+// Links stack frame |fp| to |parent_fp|, so that during stack unwinding
+// TraceStackFramePointers() visits |parent_fp| after visiting |fp|.
+// Both frame pointers must come from __builtin_frame_address().
+// Destructor restores original linkage of |fp| to avoid corrupting caller's
+// frame register on return.
+//
+// This class can be used to repair broken stack frame chain in cases
+// when execution flow goes into code built without frame pointers:
+//
+// void DoWork() {
+//   Call_SomeLibrary();
+// }
+// static __thread void*  g_saved_fp;
+// void Call_SomeLibrary() {
+//   g_saved_fp = __builtin_frame_address(0);
+//   some_library_call(...); // indirectly calls SomeLibrary_Callback()
+// }
+// void SomeLibrary_Callback() {
+//   ScopedStackFrameLinker linker(__builtin_frame_address(0), g_saved_fp);
+//   ...
+//   TraceStackFramePointers(...);
+// }
+//
+// This produces the following trace:
+//
+// #0 SomeLibrary_Callback()
+// #1 <address of the code inside SomeLibrary that called #0>
+// #2 DoWork()
+// ...rest of the trace...
+//
+// SomeLibrary doesn't use frame pointers, so when SomeLibrary_Callback()
+// is called, stack frame register contains bogus value that becomes callback'
+// parent frame address. Without ScopedStackFrameLinker unwinding would've
+// stopped at that bogus frame address yielding just two first frames (#0, #1).
+// ScopedStackFrameLinker overwrites callback's parent frame address with
+// Call_SomeLibrary's frame, so unwinder produces full trace without even
+// noticing that stack frame chain was broken.
+class BASE_EXPORT ScopedStackFrameLinker {
+ public:
+  ScopedStackFrameLinker(void* fp, void* parent_fp);
+  ~ScopedStackFrameLinker();
+
+ private:
+  void* fp_;
+  void* parent_fp_;
+  void* original_parent_fp_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedStackFrameLinker);
+};
+
+#endif  // HAVE_TRACE_STACK_FRAME_POINTERS
 
 namespace internal {
 

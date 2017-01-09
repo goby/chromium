@@ -4,13 +4,16 @@
 
 #include "dbus/object_manager.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "dbus/bus.h"
@@ -33,7 +36,7 @@ class ObjectManagerTest
 
   struct Properties : public PropertySet {
     Property<std::string> name;
-    Property<int16> version;
+    Property<int16_t> version;
     Property<std::vector<std::string> > methods;
     Property<std::vector<ObjectPath> > objects;
 
@@ -85,7 +88,7 @@ class ObjectManagerTest
     ASSERT_TRUE(bus_->HasDBusThread());
 
     object_manager_ = bus_->GetObjectManager(
-        "org.chromium.TestService",
+        test_service_->service_name(),
         ObjectPath("/org/chromium/TestService"));
     object_manager_->RegisterInterface("org.chromium.TestInterface", this);
 
@@ -187,7 +190,7 @@ class ObjectManagerTest
 
   void PerformAction(const std::string& action, const ObjectPath& object_path) {
     ObjectProxy* object_proxy = bus_->GetObjectProxy(
-        "org.chromium.TestService",
+        test_service_->service_name(),
         ObjectPath("/org/chromium/TestObject"));
 
     MethodCall method_call("org.chromium.TestInterface", "PerformAction");
@@ -203,11 +206,11 @@ class ObjectManagerTest
   }
 
   base::MessageLoop message_loop_;
-  scoped_ptr<base::RunLoop> run_loop_;
-  scoped_ptr<base::Thread> dbus_thread_;
+  std::unique_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::Thread> dbus_thread_;
   scoped_refptr<Bus> bus_;
   ObjectManager* object_manager_;
-  scoped_ptr<TestService> test_service_;
+  std::unique_ptr<TestService> test_service_;
 
   std::string last_name_value_;
   bool timeout_expired_;
@@ -286,7 +289,7 @@ TEST_F(ObjectManagerTest, GetObjectsWithUnknownInterface) {
 
 TEST_F(ObjectManagerTest, SameObject) {
   ObjectManager* object_manager = bus_->GetObjectManager(
-      "org.chromium.TestService",
+      test_service_->service_name(),
       ObjectPath("/org/chromium/TestService"));
   EXPECT_EQ(object_manager_, object_manager);
 }
@@ -300,7 +303,7 @@ TEST_F(ObjectManagerTest, DifferentObjectForService) {
 
 TEST_F(ObjectManagerTest, DifferentObjectForPath) {
   ObjectManager* object_manager = bus_->GetObjectManager(
-      "org.chromium.TestService",
+      test_service_->service_name(),
       ObjectPath("/org/chromium/DifferentService"));
   EXPECT_NE(object_manager_, object_manager);
 }
@@ -385,7 +388,7 @@ TEST_F(ObjectManagerTest, PropertiesChangedAsObjectsReceived) {
   object_manager_->UnregisterInterface("org.chromium.TestInterface");
   run_loop_.reset(new base::RunLoop);
   EXPECT_TRUE(bus_->RemoveObjectManager(
-      "org.chromium.TestService",
+      test_service_->service_name(),
       ObjectPath("/org/chromium/TestService"),
       run_loop_->QuitClosure()));
   run_loop_->Run();
@@ -394,7 +397,7 @@ TEST_F(ObjectManagerTest, PropertiesChangedAsObjectsReceived) {
                 ObjectPath("/org/chromium/TestService"));
 
   object_manager_ = bus_->GetObjectManager(
-      "org.chromium.TestService",
+      test_service_->service_name(),
       ObjectPath("/org/chromium/TestService"));
   object_manager_->RegisterInterface("org.chromium.TestInterface", this);
 
@@ -402,10 +405,9 @@ TEST_F(ObjectManagerTest, PropertiesChangedAsObjectsReceived) {
   // after setting up the match rule for PropertiesChanged. We should process
   // the PropertiesChanged event right after that. If we don't receive it within
   // 2 seconds, then fail the test.
-  message_loop_.PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&ObjectManagerTest::PropertiesChangedTestTimeout,
-                 base::Unretained(this)),
+  message_loop_.task_runner()->PostDelayedTask(
+      FROM_HERE, base::Bind(&ObjectManagerTest::PropertiesChangedTestTimeout,
+                            base::Unretained(this)),
       base::TimeDelta::FromSeconds(2));
 
   while (last_name_value_ != "ChangedTestServiceName" && !timeout_expired_) {

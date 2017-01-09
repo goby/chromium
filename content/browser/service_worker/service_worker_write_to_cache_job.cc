@@ -6,17 +6,20 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/command_line.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/service_worker/service_worker_cache_writer.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_disk_cache.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
+#include "content/common/net/url_request_service_worker_data.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/base/url_util.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
@@ -41,16 +44,22 @@ const char kRedirectError[] =
     "The script resource is behind a redirect, which is disallowed.";
 const char kServiceWorkerAllowed[] = "Service-Worker-Allowed";
 
-// The net error code used when the job fails the update attempt because the new
-// script is byte-by-byte identical to the incumbent script. This error is shown
-// in DevTools and in netlog, so we want something obscure enough that it won't
-// conflict with a legitimate network error, and not too alarming if seen by
-// developers.
-// TODO(falken): Redesign this class so we don't have to fail at the network
-// stack layer just to cancel the update.
-const net::Error kIdenticalScriptError = net::ERR_FILE_EXISTS;
+bool ShouldIgnoreSSLError(net::URLRequest* request) {
+  const net::HttpNetworkSession::Params* session_params =
+      request->context()->GetNetworkSessionParams();
+  if (session_params && session_params->ignore_certificate_errors)
+    return true;
+  bool allow_localhost = base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kAllowInsecureLocalhost);
+  if (allow_localhost && net::IsLocalhost(request->url().host()))
+    return true;
+  return false;
+}
 
 }  // namespace
+
+const net::Error ServiceWorkerWriteToCacheJob::kIdenticalScriptError =
+    net::ERR_FILE_EXISTS;
 
 ServiceWorkerWriteToCacheJob::ServiceWorkerWriteToCacheJob(
     net::URLRequest* request,
@@ -59,8 +68,8 @@ ServiceWorkerWriteToCacheJob::ServiceWorkerWriteToCacheJob(
     base::WeakPtr<ServiceWorkerContextCore> context,
     ServiceWorkerVersion* version,
     int extra_load_flags,
-    int64 resource_id,
-    int64 incumbent_resource_id)
+    int64_t resource_id,
+    int64_t incumbent_resource_id)
     : net::URLRequestJob(request, network_delegate),
       resource_type_(resource_type),
       context_(context),
@@ -76,6 +85,7 @@ ServiceWorkerWriteToCacheJob::ServiceWorkerWriteToCacheJob(
 }
 
 ServiceWorkerWriteToCacheJob::~ServiceWorkerWriteToCacheJob() {
+  Kill();
   DCHECK_EQ(did_notify_started_, did_notify_finished_);
 }
 
@@ -97,13 +107,9 @@ void ServiceWorkerWriteToCacheJob::StartAsync() {
     return;
   }
 
-  // These uses of Unretained are safe because this object is the sole owner of
-  // |cache_writer_|, which in turn is the sole user of these callbacks.
   cache_writer_.reset(new ServiceWorkerCacheWriter(
-      base::Bind(&ServiceWorkerWriteToCacheJob::CreateCacheResponseReader,
-                 base::Unretained(this)),
-      base::Bind(&ServiceWorkerWriteToCacheJob::CreateCacheResponseWriter,
-                 base::Unretained(this))));
+      CreateCacheResponseReader(), CreateCacheResponseReader(),
+      CreateCacheResponseWriter()));
   version_->script_cache_map()->NotifyStartedCaching(url_, resource_id_);
   did_notify_started_ = true;
   StartNetRequest();
@@ -116,8 +122,7 @@ void ServiceWorkerWriteToCacheJob::Kill() {
   has_been_killed_ = true;
   net_request_.reset();
   if (did_notify_started_) {
-    net::Error error = NotifyFinishedCaching(
-        net::URLRequestStatus::FromError(net::ERR_ABORTED), kKilledError);
+    net::Error error = NotifyFinishedCaching(net::ERR_ABORTED, kKilledError);
     DCHECK_EQ(net::ERR_ABORTED, error);
   }
   writer_.reset();
@@ -167,18 +172,18 @@ void ServiceWorkerWriteToCacheJob::SetExtraRequestHeaders(
 
 int ServiceWorkerWriteToCacheJob::ReadRawData(net::IOBuffer* buf,
                                               int buf_size) {
-  int bytes_read = 0;
-  net::URLRequestStatus status = ReadNetData(buf, buf_size, &bytes_read);
-  if (status.is_io_pending())
+  int rv = ReadNetData(buf, buf_size);
+  if (rv == net::ERR_IO_PENDING)
     return net::ERR_IO_PENDING;
 
-  if (!status.is_success()) {
-    net::Error error = NotifyFinishedCaching(status, kFetchScriptError);
-    DCHECK_EQ(status.error(), error);
+  if (rv < 0) {
+    net::Error error = static_cast<net::Error>(rv);
+    error = NotifyFinishedCaching(error, kFetchScriptError);
+    DCHECK_EQ(rv, error);
     return error;
   }
 
-  return HandleNetData(bytes_read);
+  return HandleNetData(rv);
 }
 
 const net::HttpResponseInfo* ServiceWorkerWriteToCacheJob::http_info() const {
@@ -192,7 +197,10 @@ void ServiceWorkerWriteToCacheJob::InitNetRequest(
       request()->url(), request()->priority(), this);
   net_request_->set_first_party_for_cookies(
       request()->first_party_for_cookies());
+  net_request_->set_initiator(request()->initiator());
   net_request_->SetReferrer(request()->referrer());
+  net_request_->SetUserData(URLRequestServiceWorkerData::kUserDataKey,
+                            new URLRequestServiceWorkerData());
   if (extra_load_flags)
     net_request_->SetLoadFlags(net_request_->load_flags() | extra_load_flags);
 
@@ -211,18 +219,12 @@ void ServiceWorkerWriteToCacheJob::StartNetRequest() {
   net_request_->Start();  // We'll continue in OnResponseStarted.
 }
 
-net::URLRequestStatus ServiceWorkerWriteToCacheJob::ReadNetData(
-    net::IOBuffer* buf,
-    int buf_size,
-    int* bytes_read) {
+int ServiceWorkerWriteToCacheJob::ReadNetData(net::IOBuffer* buf,
+                                              int buf_size) {
   DCHECK_GT(buf_size, 0);
-  DCHECK(bytes_read);
   io_buffer_ = buf;
   io_buffer_bytes_ = 0;
-  if (!net_request_->Read(buf, buf_size, bytes_read))
-    DCHECK_NE(net::URLRequestStatus::SUCCESS, net_request_->status().status());
-
-  return net_request_->status();
+  return net_request_->Read(buf, buf_size);
 }
 
 void ServiceWorkerWriteToCacheJob::OnReceivedRedirect(
@@ -233,9 +235,7 @@ void ServiceWorkerWriteToCacheJob::OnReceivedRedirect(
   TRACE_EVENT0("ServiceWorker",
                "ServiceWorkerWriteToCacheJob::OnReceivedRedirect");
   // Script resources can't redirect.
-  NotifyStartErrorHelper(net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                               net::ERR_UNSAFE_REDIRECT),
-                         kRedirectError);
+  NotifyStartErrorHelper(net::ERR_UNSAFE_REDIRECT, kRedirectError);
 }
 
 void ServiceWorkerWriteToCacheJob::OnAuthRequired(
@@ -245,9 +245,7 @@ void ServiceWorkerWriteToCacheJob::OnAuthRequired(
   TRACE_EVENT0("ServiceWorker",
                "ServiceWorkerWriteToCacheJob::OnAuthRequired");
   // TODO(michaeln): Pass this thru to our jobs client.
-  NotifyStartErrorHelper(
-      net::URLRequestStatus(net::URLRequestStatus::FAILED, net::ERR_FAILED),
-      kClientAuthenticationError);
+  NotifyStartErrorHelper(net::ERR_FAILED, kClientAuthenticationError);
 }
 
 void ServiceWorkerWriteToCacheJob::OnCertificateRequested(
@@ -258,9 +256,7 @@ void ServiceWorkerWriteToCacheJob::OnCertificateRequested(
                "ServiceWorkerWriteToCacheJob::OnCertificateRequested");
   // TODO(michaeln): Pass this thru to our jobs client.
   // see NotifyCertificateRequested.
-  NotifyStartErrorHelper(
-      net::URLRequestStatus(net::URLRequestStatus::FAILED, net::ERR_FAILED),
-      kClientAuthenticationError);
+  NotifyStartErrorHelper(net::ERR_FAILED, kClientAuthenticationError);
 }
 
 void ServiceWorkerWriteToCacheJob::OnSSLCertificateError(
@@ -270,54 +266,42 @@ void ServiceWorkerWriteToCacheJob::OnSSLCertificateError(
   DCHECK_EQ(net_request_.get(), request);
   TRACE_EVENT0("ServiceWorker",
                "ServiceWorkerWriteToCacheJob::OnSSLCertificateError");
-  // TODO(michaeln): Pass this thru to our jobs client,
-  // see NotifySSLCertificateError.
-  NotifyStartErrorHelper(net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                               net::ERR_INSECURE_RESPONSE),
-                         kSSLError);
+  if (ShouldIgnoreSSLError(request))
+    request->ContinueDespiteLastError();
+  else
+    NotifyStartErrorHelper(net::ERR_INSECURE_RESPONSE, kSSLError);
 }
 
-void ServiceWorkerWriteToCacheJob::OnBeforeNetworkStart(
-    net::URLRequest* request,
-    bool* defer) {
+void ServiceWorkerWriteToCacheJob::OnResponseStarted(net::URLRequest* request,
+                                                     int net_error) {
+  DCHECK_NE(net::ERR_IO_PENDING, net_error);
   DCHECK_EQ(net_request_.get(), request);
-  TRACE_EVENT0("ServiceWorker",
-               "ServiceWorkerWriteToCacheJob::OnBeforeNetworkStart");
-  NotifyBeforeNetworkStart(defer);
-}
 
-void ServiceWorkerWriteToCacheJob::OnResponseStarted(
-    net::URLRequest* request) {
-  DCHECK_EQ(net_request_.get(), request);
-  if (!request->status().is_success()) {
-    NotifyStartErrorHelper(request->status(), kFetchScriptError);
+  if (net_error != net::OK) {
+    net::Error error = static_cast<net::Error>(net_error);
+    NotifyStartErrorHelper(error, kFetchScriptError);
     return;
   }
   if (request->GetResponseCode() / 100 != 2) {
     std::string error_message =
         base::StringPrintf(kBadHTTPResponseError, request->GetResponseCode());
-    NotifyStartErrorHelper(net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                                 net::ERR_INVALID_RESPONSE),
-                           error_message);
+    NotifyStartErrorHelper(net::ERR_INVALID_RESPONSE, error_message);
     // TODO(michaeln): Instead of error'ing immediately, send the net
     // response to our consumer, just don't cache it?
     return;
   }
   // OnSSLCertificateError is not called when the HTTPS connection is reused.
   // So we check cert_status here.
-  if (net::IsCertStatusError(request->ssl_info().cert_status)) {
-    const net::HttpNetworkSession::Params* session_params =
-        request->context()->GetNetworkSessionParams();
-    if (!session_params || !session_params->ignore_certificate_errors) {
-      NotifyStartErrorHelper(
-          net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                net::ERR_INSECURE_RESPONSE),
-          kSSLError);
-      return;
-    }
+  if (net::IsCertStatusError(request->ssl_info().cert_status) &&
+      !ShouldIgnoreSSLError(request)) {
+    NotifyStartErrorHelper(net::ERR_INSECURE_RESPONSE, kSSLError);
+    return;
   }
 
-  if (version_->script_url() == url_) {
+  if (resource_type_ == RESOURCE_TYPE_SERVICE_WORKER) {
+    // TODO(nhiroki): Temporary check for debugging (https://crbug.com/485900).
+    CHECK_EQ(version_->script_url(), url_);
+
     std::string mime_type;
     request->GetMimeType(&mime_type);
     if (mime_type != "application/x-javascript" &&
@@ -327,10 +311,7 @@ void ServiceWorkerWriteToCacheJob::OnResponseStarted(
           mime_type.empty()
               ? kNoMIMEError
               : base::StringPrintf(kBadMIMEError, mime_type.c_str());
-      NotifyStartErrorHelper(
-          net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                net::ERR_INSECURE_RESPONSE),
-          error_message);
+      NotifyStartErrorHelper(net::ERR_INSECURE_RESPONSE, error_message);
       return;
     }
 
@@ -340,8 +321,10 @@ void ServiceWorkerWriteToCacheJob::OnResponseStarted(
     version_->SetMainScriptHttpResponseInfo(net_request_->response_info());
   }
 
-  if (net_request_->response_info().network_accessed)
+  if (net_request_->response_info().network_accessed &&
+      !(net_request_->response_info().was_cached)) {
     version_->embedded_worker()->OnNetworkAccessedForScriptLoad();
+  }
 
   http_info_.reset(new net::HttpResponseInfo(net_request_->response_info()));
   scoped_refptr<HttpResponseInfoIOBuffer> info_buffer =
@@ -364,15 +347,13 @@ void ServiceWorkerWriteToCacheJob::OnWriteHeadersComplete(net::Error error) {
     NotifyStartError(net::URLRequestStatus::FromError(error));
     return;
   }
-  SetStatus(net::URLRequestStatus());
   NotifyHeadersComplete();
 }
 
 void ServiceWorkerWriteToCacheJob::OnWriteDataComplete(net::Error error) {
-  SetStatus(net::URLRequestStatus::FromError(error));
   DCHECK_NE(net::ERR_IO_PENDING, error);
   if (io_buffer_bytes_ == 0)
-    error = NotifyFinishedCaching(net::URLRequestStatus::FromError(error), "");
+    error = NotifyFinishedCaching(error, "");
   if (error != net::OK) {
     ServiceWorkerMetrics::CountWriteResponseResult(
         ServiceWorkerMetrics::WRITE_DATA_ERROR);
@@ -386,12 +367,13 @@ void ServiceWorkerWriteToCacheJob::OnWriteDataComplete(net::Error error) {
 
 void ServiceWorkerWriteToCacheJob::OnReadCompleted(net::URLRequest* request,
                                                    int bytes_read) {
+  DCHECK_NE(net::ERR_IO_PENDING, bytes_read);
   DCHECK_EQ(net_request_.get(), request);
 
   int result;
   if (bytes_read < 0) {
-    DCHECK(!request->status().is_success());
-    result = NotifyFinishedCaching(request->status(), kFetchScriptError);
+    net::Error error = static_cast<net::Error>(bytes_read);
+    result = NotifyFinishedCaching(error, kFetchScriptError);
   } else {
     result = HandleNetData(bytes_read);
   }
@@ -414,9 +396,7 @@ bool ServiceWorkerWriteToCacheJob::CheckPathRestriction(
   if (!ServiceWorkerUtils::IsPathRestrictionSatisfied(
           version_->scope(), url_,
           has_header ? &service_worker_allowed : nullptr, &error_message)) {
-    NotifyStartErrorHelper(net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                                 net::ERR_INSECURE_RESPONSE),
-                           error_message);
+    NotifyStartErrorHelper(net::ERR_INSECURE_RESPONSE, error_message);
     return false;
   }
   return true;
@@ -431,71 +411,65 @@ int ServiceWorkerWriteToCacheJob::HandleNetData(int bytes_read) {
 
   // In case of ERR_IO_PENDING, this logic is done in OnWriteDataComplete.
   if (error != net::ERR_IO_PENDING && bytes_read == 0) {
-    error = NotifyFinishedCaching(net::URLRequestStatus::FromError(error),
-                                  std::string());
+    error = NotifyFinishedCaching(error, std::string());
   }
   return error == net::OK ? bytes_read : error;
 }
 
 void ServiceWorkerWriteToCacheJob::NotifyStartErrorHelper(
-    const net::URLRequestStatus& status,
+    net::Error net_error,
     const std::string& status_message) {
-  DCHECK(!status.is_io_pending());
-
-  net::Error error = NotifyFinishedCaching(status, status_message);
-  // The special case mentioned in NotifyFinishedCaching about script being
-  // identical does not apply here, since the entire body needs to be read
-  // before this is relevant.
-  DCHECK_EQ(status.error(), error);
-
-  net::URLRequestStatus reported_status = status;
-  std::string reported_status_message = status_message;
-
-  SetStatus(reported_status);
-  NotifyStartError(reported_status);
+  NotifyFinishedCaching(net_error, status_message);
+  NotifyStartError(net::URLRequestStatus::FromError(net_error));
 }
 
 net::Error ServiceWorkerWriteToCacheJob::NotifyFinishedCaching(
-    net::URLRequestStatus status,
+    net::Error net_error,
     const std::string& status_message) {
-  net::Error result = static_cast<net::Error>(status.error());
+  DCHECK_NE(net::ERR_IO_PENDING, net_error);
+
   if (did_notify_finished_)
-    return result;
+    return net_error;
 
   int size = -1;
-  if (status.is_success())
+  if (net_error != net::OK) {
+    // AddMessageToConsole must be called before this job notifies that an error
+    // occurred because the worker stops soon after receiving the error
+    // response.
+    version_->embedded_worker()->AddMessageToConsole(
+        CONSOLE_MESSAGE_LEVEL_ERROR,
+        status_message.empty() ? kFetchScriptError : status_message);
+  } else {
     size = cache_writer_->bytes_written();
+  }
 
   // If all the calls to MaybeWriteHeaders/MaybeWriteData succeeded, but the
   // incumbent entry wasn't actually replaced because the new entry was
   // equivalent, the new version didn't actually install because it already
   // exists.
-  if (status.status() == net::URLRequestStatus::SUCCESS &&
-      !cache_writer_->did_replace()) {
-    result = kIdenticalScriptError;
-    status = net::URLRequestStatus::FromError(result);
+  if (net_error == net::OK && !cache_writer_->did_replace()) {
     version_->SetStartWorkerStatusCode(SERVICE_WORKER_ERROR_EXISTS);
-    version_->script_cache_map()->NotifyFinishedCaching(url_, size, status,
-                                                        std::string());
+    version_->script_cache_map()->NotifyFinishedCaching(
+        url_, size, kIdenticalScriptError, std::string());
   } else {
-    version_->script_cache_map()->NotifyFinishedCaching(url_, size, status,
+    version_->script_cache_map()->NotifyFinishedCaching(url_, size, net_error,
                                                         status_message);
   }
 
   did_notify_finished_ = true;
-  return result;
+  return net_error;
 }
 
-scoped_ptr<ServiceWorkerResponseReader>
+std::unique_ptr<ServiceWorkerResponseReader>
 ServiceWorkerWriteToCacheJob::CreateCacheResponseReader() {
   if (incumbent_resource_id_ == kInvalidServiceWorkerResourceId ||
-      version_->skip_script_comparison()) {
+      !version_->pause_after_download()) {
     return nullptr;
   }
   return context_->storage()->CreateResponseReader(incumbent_resource_id_);
 }
 
-scoped_ptr<ServiceWorkerResponseWriter>
+std::unique_ptr<ServiceWorkerResponseWriter>
 ServiceWorkerWriteToCacheJob::CreateCacheResponseWriter() {
   return context_->storage()->CreateResponseWriter(resource_id_);
 }

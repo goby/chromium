@@ -4,12 +4,15 @@
 
 #include "components/proximity_auth/messenger_impl.h"
 
+#include <utility>
+
 #include "base/base64url.h"
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/proximity_auth/connection.h"
 #include "components/proximity_auth/logging/logging.h"
@@ -65,17 +68,18 @@ std::string GetMessageType(const base::DictionaryValue& message) {
 
 }  // namespace
 
-MessengerImpl::MessengerImpl(scoped_ptr<Connection> connection,
-                             scoped_ptr<SecureContext> secure_context)
-    : connection_(connection.Pass()),
-      secure_context_(secure_context.Pass()),
+MessengerImpl::MessengerImpl(std::unique_ptr<Connection> connection,
+                             std::unique_ptr<SecureContext> secure_context)
+    : connection_(std::move(connection)),
+      secure_context_(std::move(secure_context)),
       weak_ptr_factory_(this) {
   DCHECK(connection_->IsConnected());
   connection_->AddObserver(this);
 
   // TODO(tengs): We need CryptAuth to report if the phone runs iOS or Android,
   // rather than relying on this heuristic.
-  if (connection_->remote_device().bluetooth_type == RemoteDevice::BLUETOOTH_LE)
+  if (connection_->remote_device().bluetooth_type ==
+      cryptauth::RemoteDevice::BLUETOOTH_LE)
     PollScreenStateForIOS();
 }
 
@@ -97,7 +101,7 @@ bool MessengerImpl::SupportsSignIn() const {
   return (secure_context_->GetProtocolVersion() ==
           SecureContext::PROTOCOL_VERSION_THREE_ONE) &&
          connection_->remote_device().bluetooth_type !=
-             RemoteDevice::BLUETOOTH_LE;
+             cryptauth::RemoteDevice::BLUETOOTH_LE;
 }
 
 void MessengerImpl::DispatchUnlockEvent() {
@@ -112,8 +116,8 @@ void MessengerImpl::RequestDecryption(const std::string& challenge) {
   if (!SupportsSignIn()) {
     PA_LOG(WARNING) << "Dropping decryption request, as remote device "
                     << "does not support protocol v3.1.";
-    FOR_EACH_OBSERVER(MessengerObserver, observers_,
-                      OnDecryptResponse(std::string()));
+    for (auto& observer : observers_)
+      observer.OnDecryptResponse(std::string());
     return;
   }
 
@@ -134,7 +138,8 @@ void MessengerImpl::RequestUnlock() {
   if (!SupportsSignIn()) {
     PA_LOG(WARNING) << "Dropping unlock request, as remote device does not "
                     << "support protocol v3.1.";
-    FOR_EACH_OBSERVER(MessengerObserver, observers_, OnUnlockResponse(false));
+    for (auto& observer : observers_)
+      observer.OnUnlockResponse(false);
     return;
   }
 
@@ -174,7 +179,7 @@ void MessengerImpl::ProcessMessageQueue() {
 }
 
 void MessengerImpl::OnMessageEncoded(const std::string& encoded_message) {
-  connection_->SendMessage(make_scoped_ptr(new WireMessage(encoded_message)));
+  connection_->SendMessage(base::MakeUnique<WireMessage>(encoded_message));
 }
 
 void MessengerImpl::OnMessageDecoded(const std::string& decoded_message) {
@@ -186,17 +191,17 @@ void MessengerImpl::OnMessageDecoded(const std::string& decoded_message) {
         (decoded_message == kScreenUnlocked ? USER_PRESENT : USER_ABSENT);
     update.secure_screen_lock_state = SECURE_SCREEN_LOCK_ENABLED;
     update.trust_agent_state = TRUST_AGENT_ENABLED;
-    FOR_EACH_OBSERVER(MessengerObserver, observers_,
-                      OnRemoteStatusUpdate(update));
+    for (auto& observer : observers_)
+      observer.OnRemoteStatusUpdate(update);
     pending_message_.reset();
     ProcessMessageQueue();
     return;
   }
 
   // The decoded message should be a JSON string.
-  scoped_ptr<base::Value> message_value =
+  std::unique_ptr<base::Value> message_value =
       base::JSONReader::Read(decoded_message);
-  if (!message_value || !message_value->IsType(base::Value::TYPE_DICTIONARY)) {
+  if (!message_value || !message_value->IsType(base::Value::Type::DICTIONARY)) {
     PA_LOG(ERROR) << "Unable to parse message as JSON:\n" << decoded_message;
     return;
   }
@@ -253,15 +258,15 @@ void MessengerImpl::OnMessageDecoded(const std::string& decoded_message) {
 
 void MessengerImpl::HandleRemoteStatusUpdateMessage(
     const base::DictionaryValue& message) {
-  scoped_ptr<RemoteStatusUpdate> status_update =
+  std::unique_ptr<RemoteStatusUpdate> status_update =
       RemoteStatusUpdate::Deserialize(message);
   if (!status_update) {
     PA_LOG(ERROR) << "Unexpected remote status update: " << message;
     return;
   }
 
-  FOR_EACH_OBSERVER(MessengerObserver, observers_,
-                    OnRemoteStatusUpdate(*status_update));
+  for (auto& observer : observers_)
+    observer.OnRemoteStatusUpdate(*status_update);
 }
 
 void MessengerImpl::HandleDecryptResponseMessage(
@@ -276,13 +281,14 @@ void MessengerImpl::HandleDecryptResponseMessage(
     PA_LOG(ERROR) << "Unable to base64-decode decrypt response.";
   }
 
-  FOR_EACH_OBSERVER(MessengerObserver, observers_,
-                    OnDecryptResponse(decrypted_data));
+  for (auto& observer : observers_)
+    observer.OnDecryptResponse(decrypted_data);
 }
 
 void MessengerImpl::HandleUnlockResponseMessage(
     const base::DictionaryValue& message) {
-  FOR_EACH_OBSERVER(MessengerObserver, observers_, OnUnlockResponse(true));
+  for (auto& observer : observers_)
+    observer.OnUnlockResponse(true);
 }
 
 void MessengerImpl::PollScreenStateForIOS() {
@@ -307,7 +313,8 @@ void MessengerImpl::OnConnectionStatusChanged(Connection* connection,
   if (new_status == Connection::DISCONNECTED) {
     PA_LOG(INFO) << "Secure channel disconnected...";
     connection_->RemoveObserver(this);
-    FOR_EACH_OBSERVER(MessengerObserver, observers_, OnDisconnected());
+    for (auto& observer : observers_)
+      observer.OnDisconnected();
     // TODO(isherman): Determine whether it's also necessary/appropriate to fire
     // this notification from the destructor.
   }
@@ -339,13 +346,14 @@ void MessengerImpl::OnSendCompleted(const Connection& connection,
   // For local events, we don't expect a response, so on success, we
   // notify observers right away.
   if (pending_message_->type == kMessageTypeDecryptRequest) {
-    FOR_EACH_OBSERVER(MessengerObserver, observers_,
-                      OnDecryptResponse(std::string()));
+    for (auto& observer : observers_)
+      observer.OnDecryptResponse(std::string());
   } else if (pending_message_->type == kMessageTypeUnlockRequest) {
-    FOR_EACH_OBSERVER(MessengerObserver, observers_, OnUnlockResponse(false));
+    for (auto& observer : observers_)
+      observer.OnUnlockResponse(false);
   } else if (pending_message_->type == kMessageTypeLocalEvent) {
-    FOR_EACH_OBSERVER(MessengerObserver, observers_,
-                      OnUnlockEventSent(success));
+    for (auto& observer : observers_)
+      observer.OnUnlockEventSent(success);
   } else {
     PA_LOG(ERROR) << "Message of unknown type '" << pending_message_->type
                   << "' sent.";

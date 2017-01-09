@@ -5,19 +5,22 @@
 #ifndef CC_SURFACES_DISPLAY_H_
 #define CC_SURFACES_DISPLAY_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "cc/output/output_surface_client.h"
-#include "cc/output/renderer.h"
 #include "cc/resources/returned_resource.h"
 #include "cc/scheduler/begin_frame_source.h"
 #include "cc/surfaces/display_scheduler.h"
+#include "cc/surfaces/frame_sink_id.h"
 #include "cc/surfaces/surface_aggregator.h"
 #include "cc/surfaces/surface_id.h"
 #include "cc/surfaces/surface_manager.h"
 #include "cc/surfaces/surfaces_export.h"
+#include "gpu/command_buffer/common/texture_in_use_response.h"
 #include "ui/events/latency_info.h"
+#include "ui/gfx/color_space.h"
 
 namespace gpu {
 class GpuMemoryBufferManager;
@@ -36,10 +39,8 @@ class OutputSurface;
 class RendererSettings;
 class ResourceProvider;
 class SharedBitmapManager;
-class Surface;
+class SoftwareRenderer;
 class SurfaceAggregator;
-class SurfaceIdAllocator;
-class SurfaceFactory;
 class TextureMailboxDeleter;
 
 // A Display produces a surface that can be used to draw to a physical display
@@ -47,82 +48,86 @@ class TextureMailboxDeleter;
 // surface IDs used to draw into the display and deciding when to draw.
 class CC_SURFACES_EXPORT Display : public DisplaySchedulerClient,
                                    public OutputSurfaceClient,
-                                   public RendererClient,
-                                   public SurfaceAggregatorClient,
-                                   public SurfaceDamageObserver {
+                                   public SurfaceObserver {
  public:
-  Display(DisplayClient* client,
-          SurfaceManager* manager,
-          SharedBitmapManager* bitmap_manager,
+  // The |begin_frame_source| and |scheduler| may be null (together). In that
+  // case, DrawAndSwap must be called externally when needed.
+  Display(SharedBitmapManager* bitmap_manager,
           gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
-          const RendererSettings& settings);
+          const RendererSettings& settings,
+          const FrameSinkId& frame_sink_id,
+          std::unique_ptr<BeginFrameSource> begin_frame_source,
+          std::unique_ptr<OutputSurface> output_surface,
+          std::unique_ptr<DisplayScheduler> scheduler,
+          std::unique_ptr<TextureMailboxDeleter> texture_mailbox_deleter);
+
   ~Display() override;
 
-  bool Initialize(scoped_ptr<OutputSurface> output_surface,
-                  DisplayScheduler* scheduler);
+  void Initialize(DisplayClient* client, SurfaceManager* surface_manager);
 
   // device_scale_factor is used to communicate to the external window system
   // what scale this was rendered at.
-  void SetSurfaceId(SurfaceId id, float device_scale_factor);
+  void SetLocalFrameId(const LocalFrameId& id, float device_scale_factor);
+  void SetVisible(bool visible);
   void Resize(const gfx::Size& new_size);
-  void SetExternalClip(const gfx::Rect& clip);
+  void SetColorSpace(const gfx::ColorSpace& color_space);
+  void SetOutputIsSecure(bool secure);
 
-  SurfaceId CurrentSurfaceId();
-
-  // SurfaceAggregatorClient implementation
-  void AddSurface(Surface* surface) override;
-  void RemoveSurface(Surface* surface) override;
+  const SurfaceId& CurrentSurfaceId();
 
   // DisplaySchedulerClient implementation.
   bool DrawAndSwap() override;
 
   // OutputSurfaceClient implementation.
-  void CommitVSyncParameters(base::TimeTicks timebase,
-                             base::TimeDelta interval) override;
   void SetNeedsRedrawRect(const gfx::Rect& damage_rect) override;
-  void DidSwapBuffers() override;
-  void DidSwapBuffersComplete() override;
-  void ReclaimResources(const CompositorFrameAck* ack) override;
-  void DidLoseOutputSurface() override;
-  void SetExternalDrawConstraints(
-      const gfx::Transform& transform,
-      const gfx::Rect& viewport,
-      const gfx::Rect& clip,
-      const gfx::Rect& viewport_rect_for_tile_priority,
-      const gfx::Transform& transform_for_tile_priority,
-      bool resourceless_software_draw) override;
-  void SetMemoryPolicy(const ManagedMemoryPolicy& policy) override;
-  void SetTreeActivationCallback(const base::Closure& callback) override;
-  void OnDraw() override;
+  void DidReceiveSwapBuffersAck() override;
+  void DidReceiveTextureInUseResponses(
+      const gpu::TextureInUseResponses& responses) override;
 
-  // RendererClient implementation.
-  void SetFullRootLayerDamage() override;
+  // SurfaceObserver implementation.
+  void OnSurfaceDamaged(const SurfaceId& surface, bool* changed) override;
+  void OnSurfaceCreated(const SurfaceId& surface_id,
+                        const gfx::Size& frame,
+                        float device_scale_factor) override;
 
-  // SurfaceDamageObserver implementation.
-  void OnSurfaceDamaged(SurfaceId surface, bool* changed) override;
+  bool has_scheduler() const { return !!scheduler_; }
+  DirectRenderer* renderer_for_testing() const { return renderer_.get(); }
+
+  void ForceImmediateDrawAndSwapIfPossible();
 
  private:
   void InitializeRenderer();
   void UpdateRootSurfaceResourcesLocked();
+  void DidLoseContextProvider();
 
-  DisplayClient* client_;
-  SurfaceManager* manager_;
-  SharedBitmapManager* bitmap_manager_;
-  gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager_;
-  RendererSettings settings_;
+  SharedBitmapManager* const bitmap_manager_;
+  gpu::GpuMemoryBufferManager* const gpu_memory_buffer_manager_;
+  const RendererSettings settings_;
+
+  DisplayClient* client_ = nullptr;
+  SurfaceManager* surface_manager_ = nullptr;
+  const FrameSinkId frame_sink_id_;
   SurfaceId current_surface_id_;
   gfx::Size current_surface_size_;
-  float device_scale_factor_;
-  bool swapped_since_resize_;
-  gfx::Rect external_clip_;
-  scoped_ptr<OutputSurface> output_surface_;
-  DisplayScheduler* scheduler_;
-  scoped_ptr<ResourceProvider> resource_provider_;
-  scoped_ptr<SurfaceAggregator> aggregator_;
-  scoped_ptr<DirectRenderer> renderer_;
-  scoped_ptr<TextureMailboxDeleter> texture_mailbox_deleter_;
+  float device_scale_factor_ = 1.f;
+  gfx::ColorSpace device_color_space_;
+  bool visible_ = false;
+  bool swapped_since_resize_ = false;
+  bool output_is_secure_ = false;
+
+  // The begin_frame_source_ is often known by the output_surface_ and
+  // the scheduler_.
+  std::unique_ptr<BeginFrameSource> begin_frame_source_;
+  std::unique_ptr<OutputSurface> output_surface_;
+  std::unique_ptr<DisplayScheduler> scheduler_;
+  std::unique_ptr<ResourceProvider> resource_provider_;
+  std::unique_ptr<SurfaceAggregator> aggregator_;
+  std::unique_ptr<TextureMailboxDeleter> texture_mailbox_deleter_;
+  std::unique_ptr<DirectRenderer> renderer_;
+  SoftwareRenderer* software_renderer_ = nullptr;
   std::vector<ui::LatencyInfo> stored_latency_info_;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(Display);
 };
 

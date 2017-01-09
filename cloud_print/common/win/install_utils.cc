@@ -12,6 +12,7 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
+#include "base/win/current_module.h"
 #include "base/win/registry.h"
 #include "cloud_print/common/win/cloud_print_utils.h"
 
@@ -48,7 +49,6 @@ const wchar_t kNoRepair[] = L"NoRepair";
 
 }  // namespace
 
-
 void SetGoogleUpdateKeys(const base::string16& product_id,
                          const base::string16& product_name) {
   base::win::RegKey key;
@@ -60,9 +60,8 @@ void SetGoogleUpdateKeys(const base::string16& product_id,
 
   // Get the version from the resource file.
   base::string16 version_string;
-  scoped_ptr<FileVersionInfo> version_info(
-      CREATE_FILE_VERSION_INFO_FOR_CURRENT_MODULE());
-
+  std::unique_ptr<FileVersionInfo> version_info(
+      FileVersionInfo::CreateFileVersionInfoForModule(CURRENT_MODULE()));
   if (version_info.get()) {
     FileVersionInfoWin* version_info_win =
         static_cast<FileVersionInfoWin*>(version_info.get());
@@ -91,9 +90,9 @@ void SetGoogleUpdateError(const base::string16& product_id,
 
   if (key.WriteValue(kRegValueInstallerResult,
                      INSTALLER_RESULT_FAILED_CUSTOM_ERROR) != ERROR_SUCCESS ||
-      key.WriteValue(kRegValueInstallerResultUIString,
-                     message.c_str()) != ERROR_SUCCESS) {
-      LOG(ERROR) << "Unable to set registry keys";
+      key.WriteValue(kRegValueInstallerResultUIString, message.c_str()) !=
+          ERROR_SUCCESS) {
+    LOG(ERROR) << "Unable to set registry keys";
   }
 }
 
@@ -101,8 +100,8 @@ void SetGoogleUpdateError(const base::string16& product_id, HRESULT hr) {
   LOG(ERROR) << cloud_print::GetErrorMessage(hr);
   base::win::RegKey key;
   if (key.Create(HKEY_LOCAL_MACHINE,
-    (cloud_print::kClientStateKey + product_id).c_str(),
-    KEY_SET_VALUE) != ERROR_SUCCESS) {
+                 (cloud_print::kClientStateKey + product_id).c_str(),
+                 KEY_SET_VALUE) != ERROR_SUCCESS) {
     LOG(ERROR) << "Unable to open key";
   }
 
@@ -147,18 +146,16 @@ void CreateUninstallKey(const base::string16& uninstall_id,
   uninstall_command.AppendSwitch(uninstall_switch);
   key.WriteValue(kUninstallString,
                  uninstall_command.GetCommandLineString().c_str());
-  key.WriteValue(kInstallLocation,
-                 unstall_binary.DirName().value().c_str());
+  key.WriteValue(kInstallLocation, unstall_binary.DirName().value().c_str());
 
   // Get the version resource.
-  scoped_ptr<FileVersionInfo> version_info(
-      CREATE_FILE_VERSION_INFO_FOR_CURRENT_MODULE());
+  std::unique_ptr<FileVersionInfo> version_info(
+      FileVersionInfo::CreateFileVersionInfoForModule(CURRENT_MODULE()));
 
   if (version_info.get()) {
     FileVersionInfoWin* version_info_win =
         static_cast<FileVersionInfoWin*>(version_info.get());
-    key.WriteValue(kDisplayVersion,
-                   version_info_win->file_version().c_str());
+    key.WriteValue(kDisplayVersion, version_info_win->file_version().c_str());
     key.WriteValue(kPublisher, version_info_win->company_name().c_str());
   } else {
     LOG(ERROR) << "Unable to get version string";
@@ -215,4 +212,3 @@ bool IsProgramsFilesParent(const base::FilePath& path) {
 }
 
 }  // namespace cloud_print
-

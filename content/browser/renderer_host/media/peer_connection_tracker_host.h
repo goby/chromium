@@ -5,6 +5,9 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MEDIA_PEER_CONNECTION_TRACKER_HOST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_PEER_CONNECTION_TRACKER_HOST_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/power_monitor/power_observer.h"
 #include "content/public/browser/browser_message_filter.h"
 
@@ -16,6 +19,8 @@ class ListValue;
 
 namespace content {
 
+class WebRTCEventLogHost;
+
 // This class is the host for PeerConnectionTracker in the browser process
 // managed by RenderProcessHostImpl. It receives PeerConnection events from
 // PeerConnectionTracker as IPC messages that it forwards to WebRTCInternals.
@@ -23,13 +28,15 @@ namespace content {
 class PeerConnectionTrackerHost : public BrowserMessageFilter,
                                   public base::PowerObserver {
  public:
-  explicit PeerConnectionTrackerHost(int render_process_id);
+  PeerConnectionTrackerHost(
+      int render_process_id,
+      const base::WeakPtr<WebRTCEventLogHost>& event_log_host);
 
   // content::BrowserMessageFilter override.
   bool OnMessageReceived(const IPC::Message& message) override;
   void OverrideThreadForMessage(const IPC::Message& message,
                                 BrowserThread::ID* thread) override;
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelClosing() override;
 
   // base::PowerObserver override.
@@ -53,6 +60,8 @@ class PeerConnectionTrackerHost : public BrowserMessageFilter,
   void SendOnSuspendOnUIThread();
 
   int render_process_id_;
+
+  base::WeakPtr<WebRTCEventLogHost> event_log_host_;
 
   DISALLOW_COPY_AND_ASSIGN(PeerConnectionTrackerHost);
 };

@@ -3,14 +3,22 @@
 <title>Test search in sources.</title>
 <script src="../inspector-test.js"></script>
 <script src="../isolated-filesystem-test.js"></script>
-<script src="../workspace-test.js"></script>
 <script src="../debugger-test.js"></script>
 <script src="./search-test.js"></script>
 <script>
 function test()
 {
-    var scope = new WebInspector.SourcesSearchScope();
-    var fs = new InspectorTest.TestFileSystem("/var/www");
+    function fileSystemUISourceCodes()
+    {
+        var uiSourceCodes = [];
+        var fileSystemProjects = Workspace.workspace.projectsForType(Workspace.projectTypes.FileSystem);
+        for (var project of fileSystemProjects)
+            uiSourceCodes = uiSourceCodes.concat(project.uiSourceCodes());
+        return uiSourceCodes;
+    }
+
+    var scope = new Sources.SourcesSearchScope();
+    var fs = new InspectorTest.TestFileSystem("file:///var/www");
     var names = ["search.html", "search.js", "search.css"];
     var resources = {};
     var jsFileSystemUISourceCode;
@@ -39,9 +47,9 @@ function test()
 
     function fileSystemCreated()
     {
-        WebInspector.inspectorView.showViewInDrawer("sources.search");
+        UI.viewManager.showView("sources.search");
 
-        var uiSourceCodes = InspectorTest.fileSystemUISourceCodes();
+        var uiSourceCodes = fileSystemUISourceCodes();
         for (var i = 0; i < uiSourceCodes.length; ++i) {
             if (uiSourceCodes[i].name() === "search.js") {
                 jsFileSystemUISourceCode = uiSourceCodes[i];
@@ -56,18 +64,18 @@ function test()
 
     function loadResource(name)
     {
-        var urlPrefix = InspectorTest.resourceTreeModel.inspectedPageURL().substr(0, InspectorTest.resourceTreeModel.inspectedPageURL().lastIndexOf("/") + 1);
+        var urlPrefix = InspectorTest.mainTarget.inspectedURL().substr(0, InspectorTest.mainTarget.inspectedURL().lastIndexOf("/") + 1);
         var url = urlPrefix + "resources/" + name;
-        return loadResourcePromise(url).then(function(text) {
+        return Runtime.loadResourcePromise(url).then(function(text) {
             resources[name] = text;
         });
     }
 
     function addNetworkUISourceCode(url, content)
     {
-        var contentProvider = new WebInspector.StaticContentProvider(WebInspector.resourceTypes.Script, content);
-        var networkProject = WebInspector.NetworkProject.forTarget(WebInspector.targetManager.mainTarget());
-        var uiSourceCode = networkProject.addFileForURL(url, contentProvider, false);
+        var contentProvider = Common.StaticContentProvider.fromString(url, Common.resourceTypes.Script, content);
+        var networkProject = Bindings.NetworkProject.forTarget(SDK.targetManager.mainTarget());
+        var uiSourceCode = networkProject.addFile(contentProvider, InspectorTest.mainFrame(), false);
         return uiSourceCode;
     }
 
@@ -80,7 +88,7 @@ function test()
             var paths = [];
             for (var i = 0; i < names.length; ++i)
                 paths.push("/var/www/" + names[i]);
-            WebInspector.networkMapping._fileSystemWorkspaceBinding._onSearchCompleted({data: {requestId: requestId, fileSystemPath: path, files: paths}});
+            Workspace.isolatedFileSystemManager._onSearchCompleted({data: {requestId: requestId, fileSystemPath: path, files: paths}});
         }
     }
 
@@ -88,7 +96,7 @@ function test()
         function testSearch(next)
         {
             var query = "searchTest" + "UniqueString";
-            var searchConfig = new WebInspector.SearchConfig(query, true, false);
+            var searchConfig = new Workspace.SearchConfig(query, true, false);
             InspectorTest.runSearchAndDumpResults(scope, searchConfig, false, next);
         },
 
@@ -98,7 +106,7 @@ function test()
             jsNetworkUISourceCode.setWorkingCopy("FOO " + "searchTest" + "UniqueString" + " BAR");
 
             var query = "searchTest" + "UniqueString";
-            var searchConfig = new WebInspector.SearchConfig(query, true, false);
+            var searchConfig = new Workspace.SearchConfig(query, true, false);
             InspectorTest.runSearchAndDumpResults(scope, searchConfig, false, next);
         }
     ];

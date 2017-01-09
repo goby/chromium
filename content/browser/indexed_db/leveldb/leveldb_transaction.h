@@ -6,12 +6,13 @@
 #define CONTENT_BROWSER_INDEXED_DB_LEVELDB_LEVELDB_TRANSACTION_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "content/browser/indexed_db/leveldb/leveldb_comparator.h"
 #include "content/browser/indexed_db/leveldb/leveldb_database.h"
@@ -25,14 +26,17 @@ class CONTENT_EXPORT LevelDBTransaction
     : public base::RefCounted<LevelDBTransaction> {
  public:
   void Put(const base::StringPiece& key, std::string* value);
-  void Remove(const base::StringPiece& key);
+
+  // Returns true if this operation performs a change, where the value wasn't
+  // already deleted.
+  bool Remove(const base::StringPiece& key);
   virtual leveldb::Status Get(const base::StringPiece& key,
                               std::string* value,
                               bool* found);
   virtual leveldb::Status Commit();
   void Rollback();
 
-  scoped_ptr<LevelDBIterator> CreateIterator();
+  std::unique_ptr<LevelDBIterator> CreateIterator();
 
  protected:
   virtual ~LevelDBTransaction();
@@ -66,11 +70,13 @@ class CONTENT_EXPORT LevelDBTransaction
     const LevelDBComparator* comparator_;
   };
 
-  typedef std::map<base::StringPiece, Record*, Comparator> DataType;
+  typedef std::map<base::StringPiece, std::unique_ptr<Record>, Comparator>
+      DataType;
 
   class DataIterator : public LevelDBIterator {
    public:
-    static scoped_ptr<DataIterator> Create(LevelDBTransaction* transaction);
+    static std::unique_ptr<DataIterator> Create(
+        LevelDBTransaction* transaction);
     ~DataIterator() override;
 
     bool IsValid() const override;
@@ -93,7 +99,7 @@ class CONTENT_EXPORT LevelDBTransaction
   class TransactionIterator : public LevelDBIterator {
    public:
     ~TransactionIterator() override;
-    static scoped_ptr<TransactionIterator> Create(
+    static std::unique_ptr<TransactionIterator> Create(
         scoped_refptr<LevelDBTransaction> transaction);
 
     bool IsValid() const override;
@@ -118,8 +124,8 @@ class CONTENT_EXPORT LevelDBTransaction
 
     scoped_refptr<LevelDBTransaction> transaction_;
     const LevelDBComparator* comparator_;
-    mutable scoped_ptr<DataIterator> data_iterator_;
-    scoped_ptr<LevelDBIterator> db_iterator_;
+    mutable std::unique_ptr<DataIterator> data_iterator_;
+    std::unique_ptr<LevelDBIterator> db_iterator_;
     LevelDBIterator* current_;
 
     Direction direction_;
@@ -127,9 +133,8 @@ class CONTENT_EXPORT LevelDBTransaction
 
     DISALLOW_COPY_AND_ASSIGN(TransactionIterator);
   };
-
-  void Set(const base::StringPiece& key, std::string* value, bool deleted);
-  void Clear();
+  // Returns true if the key was originally marked deleted, false otherwise.
+  bool Set(const base::StringPiece& key, std::string* value, bool deleted);
   void RegisterIterator(TransactionIterator* iterator);
   void UnregisterIterator(TransactionIterator* iterator);
   void NotifyIterators();
@@ -149,7 +154,7 @@ class CONTENT_EXPORT LevelDBTransaction
 // write_batch_, and writes are write-through, without consolidation.
 class LevelDBDirectTransaction {
  public:
-  static scoped_ptr<LevelDBDirectTransaction> Create(LevelDBDatabase* db);
+  static std::unique_ptr<LevelDBDirectTransaction> Create(LevelDBDatabase* db);
 
   ~LevelDBDirectTransaction();
   void Put(const base::StringPiece& key, const std::string* value);
@@ -163,7 +168,7 @@ class LevelDBDirectTransaction {
   explicit LevelDBDirectTransaction(LevelDBDatabase* db);
 
   LevelDBDatabase* db_;
-  scoped_ptr<LevelDBWriteBatch> write_batch_;
+  std::unique_ptr<LevelDBWriteBatch> write_batch_;
   bool finished_;
 
   DISALLOW_COPY_AND_ASSIGN(LevelDBDirectTransaction);

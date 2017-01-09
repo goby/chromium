@@ -4,7 +4,10 @@
 
 #include "components/nacl/common/nacl_debug_exception_handler_win.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/threading/platform_thread.h"
 #include "base/win/scoped_handle.h"
 #include "native_client/src/public/win/debug_exception_handler.h"
@@ -17,7 +20,7 @@ class DebugExceptionHandler : public base::PlatformThread::Delegate {
                         const std::string& startup_info,
                         scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                         const base::Callback<void(bool)>& on_connected)
-      : nacl_process_(nacl_process.Pass()),
+      : nacl_process_(std::move(nacl_process)),
         startup_info_(startup_info),
         task_runner_(task_runner),
         on_connected_(on_connected) {}
@@ -70,7 +73,7 @@ void NaClStartDebugExceptionHandlerThread(
   // The new PlatformThread will take ownership of the
   // DebugExceptionHandler object, which will delete itself on exit.
   DebugExceptionHandler* handler = new DebugExceptionHandler(
-      nacl_process.Pass(), startup_info, task_runner, on_connected);
+      std::move(nacl_process), startup_info, task_runner, on_connected);
   if (!base::PlatformThread::CreateNonJoinable(0, handler)) {
     on_connected.Run(false);
     delete handler;

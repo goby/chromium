@@ -13,18 +13,33 @@
 namespace blink {
 
 class EffectModel;
-class EffectModelOrDictionarySequenceOrDictionary;
+class DictionarySequenceOrDictionary;
 class Dictionary;
 class Element;
 class ExceptionState;
+class ExecutionContext;
 
 class CORE_EXPORT EffectInput {
-    STATIC_ONLY(EffectInput);
-public:
-    static EffectModel* convert(Element*, const Vector<Dictionary>& keyframeDictionaryVector, ExceptionState&);
-    static EffectModel* convert(Element*, const EffectModelOrDictionarySequenceOrDictionary&, ExceptionState&);
+  STATIC_ONLY(EffectInput);
+
+ public:
+  // TODO(alancutter): Replace Element* parameter with Document&.
+  static EffectModel* convert(Element*,
+                              const DictionarySequenceOrDictionary&,
+                              ExecutionContext*,
+                              ExceptionState&);
+
+ private:
+  static EffectModel* convertArrayForm(Element&,
+                                       const Vector<Dictionary>& keyframes,
+                                       ExecutionContext*,
+                                       ExceptionState&);
+  static EffectModel* convertObjectForm(Element&,
+                                        const Dictionary& keyframe,
+                                        ExecutionContext*,
+                                        ExceptionState&);
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

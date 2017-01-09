@@ -4,8 +4,12 @@
 
 #include "components/password_manager/core/browser/test_password_store.h"
 
-#include "base/thread_task_runner_handle.h"
+#include <stddef.h>
+
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/psl_matching_helper.h"
 #include "components/password_manager/core/browser/statistics_table.h"
 
 namespace password_manager {
@@ -78,53 +82,81 @@ PasswordStoreChangeList TestPasswordStore::RemoveLoginImpl(
   return changes;
 }
 
-ScopedVector<autofill::PasswordForm> TestPasswordStore::FillMatchingLogins(
-    const autofill::PasswordForm& form,
-    PasswordStore::AuthorizationPromptPolicy prompt_policy) {
-  ScopedVector<autofill::PasswordForm> matched_forms;
-  std::vector<autofill::PasswordForm> forms =
-      stored_passwords_[form.signon_realm];
-  for (const auto& stored_form : forms) {
-    matched_forms.push_back(new autofill::PasswordForm(stored_form));
+std::vector<std::unique_ptr<autofill::PasswordForm>>
+TestPasswordStore::FillMatchingLogins(const FormDigest& form) {
+  std::vector<std::unique_ptr<autofill::PasswordForm>> matched_forms;
+  for (const auto& elements : stored_passwords_) {
+    const bool realm_matches = elements.first == form.signon_realm;
+    const bool realm_psl_matches =
+        IsPublicSuffixDomainMatch(elements.first, form.signon_realm);
+    if (realm_matches || realm_psl_matches ||
+        (form.scheme == autofill::PasswordForm::SCHEME_HTML &&
+         password_manager::IsFederatedMatch(elements.first, form.origin))) {
+      const bool is_psl = !realm_matches && realm_psl_matches;
+      for (const auto& stored_form : elements.second) {
+        matched_forms.push_back(
+            base::MakeUnique<autofill::PasswordForm>(stored_form));
+        matched_forms.back()->is_public_suffix_match = is_psl;
+      }
+    }
   }
-  return matched_forms.Pass();
+  return matched_forms;
 }
 
 void TestPasswordStore::ReportMetricsImpl(const std::string& sync_username,
                                           bool custom_passphrase_sync_enabled) {
 }
 
+PasswordStoreChangeList TestPasswordStore::RemoveLoginsByURLAndTimeImpl(
+    const base::Callback<bool(const GURL&)>& url_filter,
+    base::Time begin,
+    base::Time end) {
+  return PasswordStoreChangeList();
+}
+
 PasswordStoreChangeList TestPasswordStore::RemoveLoginsCreatedBetweenImpl(
     base::Time begin,
     base::Time end) {
-  PasswordStoreChangeList changes;
-  return changes;
+  return PasswordStoreChangeList();
 }
 
 PasswordStoreChangeList TestPasswordStore::RemoveLoginsSyncedBetweenImpl(
     base::Time begin,
     base::Time end) {
-  PasswordStoreChangeList changes;
-  return changes;
+  return PasswordStoreChangeList();
 }
 
-bool TestPasswordStore::RemoveStatisticsCreatedBetweenImpl(
+PasswordStoreChangeList TestPasswordStore::DisableAutoSignInForOriginsImpl(
+    const base::Callback<bool(const GURL&)>& origin_filter) {
+  return PasswordStoreChangeList();
+}
+
+bool TestPasswordStore::RemoveStatisticsByOriginAndTimeImpl(
+    const base::Callback<bool(const GURL&)>& origin_filter,
     base::Time delete_begin,
     base::Time delete_end) {
   return false;
 }
 
 bool TestPasswordStore::FillAutofillableLogins(
-    ScopedVector<autofill::PasswordForm>* forms) {
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) {
   for (const auto& forms_for_realm : stored_passwords_) {
-    for (const autofill::PasswordForm& form : forms_for_realm.second)
-      forms->push_back(new autofill::PasswordForm(form));
+    for (const autofill::PasswordForm& form : forms_for_realm.second) {
+      if (!form.blacklisted_by_user)
+        forms->push_back(base::MakeUnique<autofill::PasswordForm>(form));
+    }
   }
   return true;
 }
 
 bool TestPasswordStore::FillBlacklistLogins(
-    ScopedVector<autofill::PasswordForm>* forms) {
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) {
+  for (const auto& forms_for_realm : stored_passwords_) {
+    for (const autofill::PasswordForm& form : forms_for_realm.second) {
+      if (form.blacklisted_by_user)
+        forms->push_back(base::MakeUnique<autofill::PasswordForm>(form));
+    }
+  }
   return true;
 }
 
@@ -134,9 +166,9 @@ void TestPasswordStore::AddSiteStatsImpl(const InteractionsStats& stats) {
 void TestPasswordStore::RemoveSiteStatsImpl(const GURL& origin_domain) {
 }
 
-std::vector<scoped_ptr<InteractionsStats>> TestPasswordStore::GetSiteStatsImpl(
+std::vector<InteractionsStats> TestPasswordStore::GetSiteStatsImpl(
     const GURL& origin_domain) {
-  return std::vector<scoped_ptr<InteractionsStats>>();
+  return std::vector<InteractionsStats>();
 }
 
 }  // namespace password_manager

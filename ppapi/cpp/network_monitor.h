@@ -5,12 +5,13 @@
 #ifndef PPAPI_CPP_NETWORK_MONITOR_H_
 #define PPAPI_CPP_NETWORK_MONITOR_H_
 
+#include <stdint.h>
+
 #include "ppapi/cpp/instance_handle.h"
 #include "ppapi/cpp/resource.h"
 
 namespace pp {
 
-class Instance;
 class NetworkList;
 
 template <typename T> class CompletionCallbackWithOutput;

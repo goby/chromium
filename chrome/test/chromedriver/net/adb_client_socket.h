@@ -6,6 +6,7 @@
 #define CHROME_TEST_CHROMEDRIVER_NET_ADB_CLIENT_SOCKET_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "net/base/io_buffer.h"
 #include "net/socket/stream_socket.h"
 
@@ -47,7 +48,7 @@ class AdbClientSocket {
                    bool has_length,
                    const CommandCallback& callback);
 
-  scoped_ptr<net::StreamSocket> socket_;
+  std::unique_ptr<net::StreamSocket> socket_;
 
  private:
   void ReadResponse(const CommandCallback& callback,
@@ -72,7 +73,6 @@ class AdbClientSocket {
                       int bytes_left,
                       int result);
 
-  std::string host_;
   int port_;
 
   DISALLOW_COPY_AND_ASSIGN(AdbClientSocket);

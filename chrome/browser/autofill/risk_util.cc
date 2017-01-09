@@ -4,10 +4,12 @@
 
 #include "chrome/browser/autofill/risk_util.h"
 
+#include <memory>
+
 #include "base/base64.h"
 #include "base/callback.h"
-#include "base/prefs/pref_service.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/apps/app_window_registry_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -17,6 +19,7 @@
 #include "components/autofill/content/browser/risk/fingerprint.h"
 #include "components/autofill/content/browser/risk/proto/fingerprint.pb.h"
 #include "components/metrics/metrics_service.h"
+#include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/web_contents.h"
 
@@ -33,7 +36,7 @@ namespace autofill {
 namespace {
 
 void PassRiskData(const base::Callback<void(const std::string&)>& callback,
-                  scoped_ptr<risk::Fingerprint> fingerprint) {
+                  std::unique_ptr<risk::Fingerprint> fingerprint) {
   std::string proto_data, risk_data;
   fingerprint->SerializeToString(&proto_data);
   base::Base64Encode(proto_data, &risk_data);
@@ -60,7 +63,7 @@ ui::BaseWindow* GetBaseWindowForWebContents(
 
 }  // namespace
 
-void LoadRiskData(uint64 obfuscated_gaia_id,
+void LoadRiskData(uint64_t obfuscated_gaia_id,
                   content::WebContents* web_contents,
                   const base::Callback<void(const std::string&)>& callback) {
   // No easy way to get window bounds on Android, and that signal isn't very

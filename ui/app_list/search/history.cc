@@ -4,6 +4,8 @@
 
 #include "ui/app_list/search/history.h"
 
+#include <stddef.h>
+
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/app_list/search/history_data.h"
@@ -47,10 +49,10 @@ void History::AddLaunchEvent(const std::string& query,
   data_->Add(NormalizeString(query), result_id);
 }
 
-scoped_ptr<KnownResults> History::GetKnownResults(
+std::unique_ptr<KnownResults> History::GetKnownResults(
     const std::string& query) const {
   DCHECK(IsReady());
-  return data_->GetKnownResults(NormalizeString(query)).Pass();
+  return data_->GetKnownResults(NormalizeString(query));
 }
 
 void History::OnHistoryDataLoadedFromStore() {

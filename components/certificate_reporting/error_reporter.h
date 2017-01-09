@@ -5,17 +5,18 @@
 #ifndef COMPONENTS_CERTIFICATE_REPORTING_CERTIFICATE_ERROR_REPORTER_H_
 #define COMPONENTS_CERTIFICATE_REPORTING_CERTIFICATE_ERROR_REPORTER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "net/url_request/certificate_report_sender.h"
+#include "net/url_request/report_sender.h"
 #include "url/gurl.h"
 
 namespace net {
 class URLRequestContext;
-class SSLInfo;
 }
 
 namespace certificate_reporting {
@@ -30,19 +31,17 @@ class ErrorReporter {
   // error reports to |upload_url|, using |request_context| as the
   // context for the reports. |cookies_preference| controls whether
   // cookies will be sent along with the reports.
-  ErrorReporter(
-      net::URLRequestContext* request_context,
-      const GURL& upload_url,
-      net::CertificateReportSender::CookiesPreference cookies_preference);
+  ErrorReporter(net::URLRequestContext* request_context,
+                const GURL& upload_url,
+                net::ReportSender::CookiesPreference cookies_preference);
 
   // Allows tests to use a server public key with known private key and
-  // a mock CertificateReportSender. |server_public_key| must outlive
+  // a mock ReportSender. |server_public_key| must outlive
   // the ErrorReporter.
-  ErrorReporter(
-      const GURL& upload_url,
-      const uint8 server_public_key[/* 32 */],
-      const uint32 server_public_key_version,
-      scoped_ptr<net::CertificateReportSender> certificate_report_sender);
+  ErrorReporter(const GURL& upload_url,
+                const uint8_t server_public_key[/* 32 */],
+                const uint32_t server_public_key_version,
+                std::unique_ptr<net::ReportSender> certificate_report_sender);
 
   virtual ~ErrorReporter();
 
@@ -61,26 +60,25 @@ class ErrorReporter {
   // unsupported platforms, callers must send extended reporting reports
   // over SSL.
   virtual void SendExtendedReportingReport(
-      const std::string& serialized_report);
+      const std::string& serialized_report,
+      const base::Callback<void()>& success_callback,
+      const base::Callback<void(const GURL&, int)>& error_callback);
 
-  // Whether sending reports over HTTP is supported.
-  static bool IsHttpUploadUrlSupported();
-
-#if defined(USE_OPENSSL)
   // Used by tests.
   static bool DecryptErrorReport(
-      const uint8 server_private_key[32],
+      const uint8_t server_private_key[32],
       const EncryptedCertLoggerRequest& encrypted_report,
       std::string* decrypted_serialized_report);
-#endif
+
+  void set_upload_url_for_testing(const GURL& url) { upload_url_ = url; }
 
  private:
-  scoped_ptr<net::CertificateReportSender> certificate_report_sender_;
+  std::unique_ptr<net::ReportSender> certificate_report_sender_;
 
-  const GURL upload_url_;
+  GURL upload_url_;
 
-  const uint8* server_public_key_;
-  const uint32 server_public_key_version_;
+  const uint8_t* server_public_key_;
+  const uint32_t server_public_key_version_;
 
   DISALLOW_COPY_AND_ASSIGN(ErrorReporter);
 };

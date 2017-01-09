@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_TRACING_NAVIGATION_TRACING_H_
 #define CHROME_BROWSER_TRACING_NAVIGATION_TRACING_H_
 
+#include "base/macros.h"
 #include "content/public/browser/background_tracing_manager.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -30,8 +31,7 @@ class NavigationTracingObserver
   void DidStartProvisionalLoadForFrame(
       content::RenderFrameHost* render_frame_host,
       const GURL& validated_url,
-      bool is_error_page,
-      bool is_iframe_srcdoc) override;
+      bool is_error_page) override;
 
   static content::BackgroundTracingManager::TriggerHandle navigation_handle;
 

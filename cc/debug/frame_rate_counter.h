@@ -5,8 +5,11 @@
 #ifndef CC_DEBUG_FRAME_RATE_COUNTER_H_
 #define CC_DEBUG_FRAME_RATE_COUNTER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "cc/debug/ring_buffer.h"
 
@@ -16,7 +19,7 @@ namespace cc {
 // intelligently compute average frames per second.
 class FrameRateCounter {
  public:
-  static scoped_ptr<FrameRateCounter> Create(bool has_impl_thread);
+  static std::unique_ptr<FrameRateCounter> Create(bool has_impl_thread);
 
   size_t current_frame_number() const { return ring_buffer_.CurrentIndex(); }
   int dropped_frame_count() const { return dropped_frame_count_; }

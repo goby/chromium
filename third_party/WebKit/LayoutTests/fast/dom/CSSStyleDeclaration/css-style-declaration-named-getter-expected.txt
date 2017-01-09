@@ -5,8 +5,8 @@ PASS document.body.style['border-TopWidth'] is undefined.
 PASS document.body.style['borderTop-width'] is undefined.
 PASS document.body.style['borderTop-Width'] is undefined.
 PASS document.body.style['border-top-width'] is "1px"
-PASS document.body.style['CssBorderTopWidth'] is "1px"
-PASS document.body.style['cssBorderTopWidth'] is "1px"
+PASS document.body.style['CssBorderTopWidth'] is undefined.
+PASS document.body.style['cssBorderTopWidth'] is undefined.
 PASS document.body.style['cssborderTopWidth'] is undefined.
 PASS document.body.style['cssBorder-top-width'] is undefined.
 PASS document.body.style['css-border-top-width'] is undefined.

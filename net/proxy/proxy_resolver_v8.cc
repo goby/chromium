@@ -6,13 +6,14 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <utility>
 
 #include "base/auto_reset.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/debug/leak_annotations.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -20,7 +21,7 @@
 #include "gin/array_buffer.h"
 #include "gin/public/isolate_holder.h"
 #include "gin/v8_initializer.h"
-#include "net/base/ip_address_number.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
 #include "net/proxy/proxy_info.h"
 #include "net/proxy/proxy_resolver_script.h"
@@ -97,7 +98,7 @@ class V8ExternalStringFromScriptData
       : script_data_(script_data) {}
 
   const uint16_t* data() const override {
-    return reinterpret_cast<const uint16*>(script_data_->utf16().data());
+    return reinterpret_cast<const uint16_t*>(script_data_->utf16().data());
   }
 
   size_t length() const override { return script_data_->utf16().size(); }
@@ -243,26 +244,29 @@ bool GetHostnameArgument(const v8::FunctionCallbackInfo<v8::Value>& args,
   return success;
 }
 
-// Wrapper for passing around IP address strings and IPAddressNumber objects.
-struct IPAddress {
-  IPAddress(const std::string& ip_string, const IPAddressNumber& ip_number)
-      : string_value(ip_string),
-        ip_address_number(ip_number) {
-  }
+// Wrapper around an IP address that stores the original string as well as a
+// corresponding parsed IPAddress.
+
+// This struct is used as a helper for sorting IP address strings - the IP
+// literal is parsed just once and used as the sorting key, while also
+// preserving the original IP literal string.
+struct IPAddressSortingEntry {
+  IPAddressSortingEntry(const std::string& ip_string,
+                        const IPAddress& ip_address)
+      : string_value(ip_string), ip_address(ip_address) {}
 
   // Used for sorting IP addresses in ascending order in SortIpAddressList().
-  // IP6 addresses are placed ahead of IPv4 addresses.
-  bool operator<(const IPAddress& rhs) const {
-    const IPAddressNumber& ip1 = this->ip_address_number;
-    const IPAddressNumber& ip2 = rhs.ip_address_number;
+  // IPv6 addresses are placed ahead of IPv4 addresses.
+  bool operator<(const IPAddressSortingEntry& rhs) const {
+    const IPAddress& ip1 = this->ip_address;
+    const IPAddress& ip2 = rhs.ip_address;
     if (ip1.size() != ip2.size())
       return ip1.size() > ip2.size();  // IPv6 before IPv4.
-    DCHECK(ip1.size() == ip2.size());
-    return memcmp(&ip1[0], &ip2[0], ip1.size()) < 0;  // Ascending order.
+    return ip1 < ip2;                  // Ascending order.
   }
 
   std::string string_value;
-  IPAddressNumber ip_address_number;
+  IPAddress ip_address;
 };
 
 // Handler for "sortIpAddressList(IpAddressList)". |ip_address_list| is a
@@ -283,13 +287,13 @@ bool SortIpAddressList(const std::string& ip_address_list,
     return false;
 
   // Split-up IP addresses and store them in a vector.
-  std::vector<IPAddress> ip_vector;
-  IPAddressNumber ip_num;
+  std::vector<IPAddressSortingEntry> ip_vector;
+  IPAddress ip_address;
   base::StringTokenizer str_tok(cleaned_ip_address_list, ";");
   while (str_tok.GetNext()) {
-    if (!ParseIPLiteralToNumber(str_tok.token(), &ip_num))
+    if (!ip_address.AssignFromIPLiteral(str_tok.token()))
       return false;
-    ip_vector.push_back(IPAddress(str_tok.token(), ip_num));
+    ip_vector.push_back(IPAddressSortingEntry(str_tok.token(), ip_address));
   }
 
   if (ip_vector.empty())  // Can happen if we have something like
@@ -319,11 +323,11 @@ bool SortIpAddressList(const std::string& ip_address_list,
 // format, or if an address and prefix of different types are used (e.g. IPv6
 // address and IPv4 prefix).
 bool IsInNetEx(const std::string& ip_address, const std::string& ip_prefix) {
-  IPAddressNumber address;
-  if (!ParseIPLiteralToNumber(ip_address, &address))
+  IPAddress address;
+  if (!address.AssignFromIPLiteral(ip_address))
     return false;
 
-  IPAddressNumber prefix;
+  IPAddress prefix;
   size_t prefix_length_in_bits;
   if (!ParseCIDRBlock(ip_prefix, &prefix, &prefix_length_in_bits))
     return false;
@@ -332,10 +336,10 @@ bool IsInNetEx(const std::string& ip_address, const std::string& ip_prefix) {
   if (address.size() != prefix.size())
     return false;
 
-  DCHECK((address.size() == 4 && prefix.size() == 4) ||
-         (address.size() == 16 && prefix.size() == 16));
+  DCHECK((address.IsIPv4() && prefix.IsIPv4()) ||
+         (address.IsIPv6() && prefix.IsIPv6()));
 
-  return IPNumberMatchesPrefix(address, prefix, prefix_length_in_bits);
+  return IPAddressMatchesPrefix(address, prefix, prefix_length_in_bits);
 }
 
 // Consider only single component domains like 'foo' as plain host names.
@@ -345,8 +349,8 @@ bool IsPlainHostName(const std::string& hostname_utf8) {
 
   // IPv6 literals might not contain any periods, however are not considered
   // plain host names.
-  IPAddressNumber unused;
-  return !ParseIPLiteralToNumber(hostname_utf8, &unused);
+  IPAddress unused;
+  return !unused.AssignFromIPLiteral(hostname_utf8);
 }
 
 // All instances of ProxyResolverV8 share the same v8::Isolate. This isolate is
@@ -372,8 +376,16 @@ class SharedIsolateFactory {
         gin::V8Initializer::LoadV8Natives();
 #endif
 
+        // The performance of the proxy resolver is limited by DNS resolution,
+        // and not V8, so tune down V8 to use as little memory as possible.
+        static const char kOptimizeForSize[] = "--optimize_for_size";
+        v8::V8::SetFlagsFromString(kOptimizeForSize, strlen(kOptimizeForSize));
+        static const char kNoOpt[] = "--noopt";
+        v8::V8::SetFlagsFromString(kNoOpt, strlen(kNoOpt));
+
         gin::IsolateHolder::Initialize(
             gin::IsolateHolder::kNonStrictMode,
+            gin::IsolateHolder::kStableV8Extras,
             gin::ArrayBufferAllocator::SharedInstance());
 
         has_initialized_v8_ = true;
@@ -392,7 +404,7 @@ class SharedIsolateFactory {
 
  private:
   base::Lock lock_;
-  scoped_ptr<gin::IsolateHolder> holder_;
+  std::unique_ptr<gin::IsolateHolder> holder_;
   bool has_initialized_v8_;
 
   DISALLOW_COPY_AND_ASSIGN(SharedIsolateFactory);
@@ -495,21 +507,25 @@ class ProxyResolverV8::Context {
     // Attach the javascript bindings.
     v8::Local<v8::FunctionTemplate> alert_template =
         v8::FunctionTemplate::New(isolate_, &AlertCallback, v8_this);
+    alert_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "alert"),
                          alert_template);
 
     v8::Local<v8::FunctionTemplate> my_ip_address_template =
         v8::FunctionTemplate::New(isolate_, &MyIpAddressCallback, v8_this);
+    my_ip_address_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "myIpAddress"),
                          my_ip_address_template);
 
     v8::Local<v8::FunctionTemplate> dns_resolve_template =
         v8::FunctionTemplate::New(isolate_, &DnsResolveCallback, v8_this);
+    dns_resolve_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "dnsResolve"),
                          dns_resolve_template);
 
     v8::Local<v8::FunctionTemplate> is_plain_host_name_template =
         v8::FunctionTemplate::New(isolate_, &IsPlainHostNameCallback, v8_this);
+    is_plain_host_name_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "isPlainHostName"),
                          is_plain_host_name_template);
 
@@ -517,11 +533,13 @@ class ProxyResolverV8::Context {
 
     v8::Local<v8::FunctionTemplate> dns_resolve_ex_template =
         v8::FunctionTemplate::New(isolate_, &DnsResolveExCallback, v8_this);
+    dns_resolve_ex_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "dnsResolveEx"),
                          dns_resolve_ex_template);
 
     v8::Local<v8::FunctionTemplate> my_ip_address_ex_template =
         v8::FunctionTemplate::New(isolate_, &MyIpAddressExCallback, v8_this);
+    my_ip_address_ex_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "myIpAddressEx"),
                          my_ip_address_ex_template);
 
@@ -529,11 +547,13 @@ class ProxyResolverV8::Context {
         v8::FunctionTemplate::New(isolate_,
                                   &SortIpAddressListCallback,
                                   v8_this);
+    sort_ip_address_list_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "sortIpAddressList"),
                          sort_ip_address_list_template);
 
     v8::Local<v8::FunctionTemplate> is_in_net_ex_template =
         v8::FunctionTemplate::New(isolate_, &IsInNetExCallback, v8_this);
+    is_in_net_ex_template->RemovePrototype();
     global_template->Set(ASCIILiteralToV8String(isolate_, "isInNetEx"),
                          is_in_net_ex_template);
 
@@ -824,8 +844,8 @@ class ProxyResolverV8::Context {
 
 // ProxyResolverV8 ------------------------------------------------------------
 
-ProxyResolverV8::ProxyResolverV8(scoped_ptr<Context> context)
-    : context_(context.Pass()) {
+ProxyResolverV8::ProxyResolverV8(std::unique_ptr<Context> context)
+    : context_(std::move(context)) {
   DCHECK(context_);
 }
 
@@ -841,7 +861,7 @@ int ProxyResolverV8::GetProxyForURL(const GURL& query_url,
 int ProxyResolverV8::Create(
     const scoped_refptr<ProxyResolverScriptData>& script_data,
     ProxyResolverV8::JSBindings* js_bindings,
-    scoped_ptr<ProxyResolverV8>* resolver) {
+    std::unique_ptr<ProxyResolverV8>* resolver) {
   DCHECK(script_data.get());
   DCHECK(js_bindings);
 
@@ -849,11 +869,11 @@ int ProxyResolverV8::Create(
     return ERR_PAC_SCRIPT_FAILED;
 
   // Try parsing the PAC script.
-  scoped_ptr<Context> context(
+  std::unique_ptr<Context> context(
       new Context(g_isolate_factory.Get().GetSharedIsolate()));
   int rv = context->InitV8(script_data, js_bindings);
   if (rv == OK)
-    resolver->reset(new ProxyResolverV8(context.Pass()));
+    resolver->reset(new ProxyResolverV8(std::move(context)));
   return rv;
 }
 

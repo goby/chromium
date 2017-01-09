@@ -5,9 +5,14 @@
 #ifndef CONTENT_BROWSER_FRAME_HOST_INTERSTITIAL_PAGE_IMPL_H_
 #define CONTENT_BROWSER_FRAME_HOST_INTERSTITIAL_PAGE_IMPL_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/navigator_delegate.h"
 #include "content/browser/frame_host/render_frame_host_delegate.h"
@@ -21,11 +26,15 @@
 #include "url/gurl.h"
 
 namespace content {
-class NavigationEntry;
 class NavigationControllerImpl;
 class RenderViewHostImpl;
 class RenderWidgetHostView;
+class TextInputManager;
 class WebContentsView;
+
+namespace mojom {
+class CreateNewWindowParams;
+}
 
 enum ResourceRequestAction {
   BLOCK,
@@ -60,6 +69,7 @@ class CONTENT_EXPORT InterstitialPageImpl
   void Hide() override;
   void DontProceed() override;
   void Proceed() override;
+  WebContents* GetWebContents() const override;
   RenderFrameHost* GetMainFrame() const override;
   InterstitialPageDelegate* GetDelegateForTesting() override;
   void DontCreateViewForTesting() override;
@@ -77,11 +87,7 @@ class CONTENT_EXPORT InterstitialPageImpl
 
   RenderWidgetHostView* GetView();
 
-  // See description above field.
-  void set_reload_on_dont_proceed(bool value) {
-    reload_on_dont_proceed_ = value;
-  }
-  bool reload_on_dont_proceed() const { return reload_on_dont_proceed_; }
+  bool pause_throbber() const { return pause_throbber_; }
 
   // TODO(nasko): This should move to InterstitialPageNavigatorImpl, but in
   // the meantime make it public, so it can be called directly.
@@ -100,9 +106,9 @@ class CONTENT_EXPORT InterstitialPageImpl
                          const IPC::Message& message) override;
   void RenderFrameCreated(RenderFrameHost* render_frame_host) override;
   void UpdateTitle(RenderFrameHost* render_frame_host,
-                   int32 page_id,
                    const base::string16& title,
                    base::i18n::TextDirection title_direction) override;
+  InterstitialPage* GetAsInterstitialPage() override;
   AccessibilityMode GetAccessibilityMode() const override;
   void Cut() override;
   void Copy() override;
@@ -124,19 +130,22 @@ class CONTENT_EXPORT InterstitialPageImpl
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
-      const ViewHostMsg_CreateWindow_Params& params,
+      const mojom::CreateNewWindowParams& params,
       SessionStorageNamespace* session_storage_namespace) override;
-  void CreateNewWidget(int32 render_process_id,
-                       int32 route_id,
+  void CreateNewWidget(int32_t render_process_id,
+                       int32_t route_id,
                        blink::WebPopupType popup_type) override;
-  void CreateNewFullscreenWidget(int32 render_process_id,
-                                 int32 route_id) override;
-  void ShowCreatedWindow(int route_id,
+  void CreateNewFullscreenWidget(int32_t render_process_id,
+                                 int32_t route_id) override;
+  void ShowCreatedWindow(int process_id,
+                         int route_id,
                          WindowOpenDisposition disposition,
                          const gfx::Rect& initial_rect,
                          bool user_gesture) override;
-  void ShowCreatedWidget(int route_id, const gfx::Rect& initial_rect) override;
-  void ShowCreatedFullscreenWidget(int route_id) override;
+  void ShowCreatedWidget(int process_id,
+                         int route_id,
+                         const gfx::Rect& initial_rect) override;
+  void ShowCreatedFullscreenWidget(int process_id, int route_id) override;
 
   SessionStorageNamespace* GetSessionStorageNamespace(
       SiteInstance* instance) override;
@@ -148,9 +157,9 @@ class CONTENT_EXPORT InterstitialPageImpl
   bool PreHandleKeyboardEvent(const NativeWebKeyboardEvent& event,
                               bool* is_keyboard_shortcut) override;
   void HandleKeyboardEvent(const NativeWebKeyboardEvent& event) override;
-#if defined(OS_WIN)
-  gfx::NativeViewAccessible GetParentNativeViewAccessible() override;
-#endif
+  TextInputManager* GetTextInputManager() override;
+  void GetScreenInfo(content::ScreenInfo* screen_info) override;
+  void UpdateDeviceScaleFactor(double device_scale_factor) override;
 
   bool enabled() const { return enabled_; }
   WebContents* web_contents() const;
@@ -235,12 +244,6 @@ class CONTENT_EXPORT InterstitialPageImpl
   // not discard it.
   bool should_discard_pending_nav_entry_;
 
-  // If true and the user chooses not to proceed the target NavigationController
-  // is reloaded. This is used when two NavigationControllers are merged
-  // (CopyStateFromAndPrune).
-  // The default is false.
-  bool reload_on_dont_proceed_;
-
   // Whether this interstitial is enabled.  See Disable() for more info.
   bool enabled_;
 
@@ -265,10 +268,6 @@ class CONTENT_EXPORT InterstitialPageImpl
   // revert it to its original value).
   bool should_revert_web_contents_title_;
 
-  // Whether or not the contents was loading resources when the interstitial was
-  // shown.  We restore this state if the user proceeds from the interstitial.
-  bool web_contents_was_loading_;
-
   // Whether the ResourceDispatcherHost has been notified to cancel/resume the
   // resource requests blocked for the RenderViewHost.
   bool resource_dispatcher_host_notified_;
@@ -277,15 +276,20 @@ class CONTENT_EXPORT InterstitialPageImpl
   // interstitial is hidden.
   base::string16 original_web_contents_title_;
 
-  // Our RenderViewHostViewDelegate, necessary for accelerators to work.
-  scoped_ptr<InterstitialPageRVHDelegateView> rvh_delegate_view_;
+  // Our RenderViewHostDelegateView, necessary for accelerators to work.
+  std::unique_ptr<InterstitialPageRVHDelegateView> rvh_delegate_view_;
 
   // Settings passed to the renderer.
   mutable RendererPreferences renderer_preferences_;
 
   bool create_view_;
 
-  scoped_ptr<InterstitialPageDelegate> delegate_;
+  // Whether the throbber should be paused. This is true from the moment the
+  // interstitial is shown until the moment the interstitial goes away or the
+  // user chooses to proceed.
+  bool pause_throbber_;
+
+  std::unique_ptr<InterstitialPageDelegate> delegate_;
 
   scoped_refptr<SessionStorageNamespace> session_storage_namespace_;
 

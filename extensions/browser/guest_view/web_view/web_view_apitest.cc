@@ -4,10 +4,14 @@
 
 #include "extensions/browser/guest_view/web_view/web_view_apitest.h"
 
+#include <utility>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
 #include "components/guest_view/browser/guest_view_manager_factory.h"
@@ -33,7 +37,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "ui/gfx/switches.h"
+#include "ui/display/display_switches.h"
 
 using guest_view::GuestViewManager;
 using guest_view::TestGuestViewManager;
@@ -51,25 +55,24 @@ const char kIsolateExtensions[] = "isolateExtensions";
 
 // Handles |request| by serving a redirect response if the |User-Agent| is
 // foobar.
-static scoped_ptr<net::test_server::HttpResponse> UserAgentResponseHandler(
+static std::unique_ptr<net::test_server::HttpResponse> UserAgentResponseHandler(
     const std::string& path,
     const GURL& redirect_target,
     const net::test_server::HttpRequest& request) {
   if (!base::StartsWith(path, request.relative_url,
                         base::CompareCase::SENSITIVE))
-    return scoped_ptr<net::test_server::HttpResponse>();
+    return std::unique_ptr<net::test_server::HttpResponse>();
 
-  std::map<std::string, std::string>::const_iterator it =
-        request.headers.find("User-Agent");
+  auto it = request.headers.find("User-Agent");
   EXPECT_TRUE(it != request.headers.end());
   if (!base::StartsWith("foobar", it->second, base::CompareCase::SENSITIVE))
-    return scoped_ptr<net::test_server::HttpResponse>();
+    return std::unique_ptr<net::test_server::HttpResponse>();
 
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse);
   http_response->set_code(net::HTTP_MOVED_PERMANENTLY);
   http_response->AddCustomHeader("Location", redirect_target.spec());
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 class WebContentsHiddenObserver : public content::WebContentsObserver {
@@ -97,32 +100,32 @@ class WebContentsHiddenObserver : public content::WebContentsObserver {
 };
 
 // Handles |request| by serving a redirect response.
-scoped_ptr<net::test_server::HttpResponse> RedirectResponseHandler(
+std::unique_ptr<net::test_server::HttpResponse> RedirectResponseHandler(
     const std::string& path,
     const GURL& redirect_target,
     const net::test_server::HttpRequest& request) {
   if (!base::StartsWith(path, request.relative_url,
                         base::CompareCase::SENSITIVE))
-    return scoped_ptr<net::test_server::HttpResponse>();
+    return std::unique_ptr<net::test_server::HttpResponse>();
 
-  scoped_ptr<net::test_server::BasicHttpResponse> http_response(
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
       new net::test_server::BasicHttpResponse);
   http_response->set_code(net::HTTP_MOVED_PERMANENTLY);
   http_response->AddCustomHeader("Location", redirect_target.spec());
-  return http_response.Pass();
+  return std::move(http_response);
 }
 
 // Handles |request| by serving an empty response.
-scoped_ptr<net::test_server::HttpResponse> EmptyResponseHandler(
+std::unique_ptr<net::test_server::HttpResponse> EmptyResponseHandler(
     const std::string& path,
     const net::test_server::HttpRequest& request) {
   if (base::StartsWith(path, request.relative_url,
                        base::CompareCase::SENSITIVE)) {
-    return scoped_ptr<net::test_server::HttpResponse>(
+    return std::unique_ptr<net::test_server::HttpResponse>(
         new net::test_server::RawHttpResponse("", ""));
   }
 
-  return scoped_ptr<net::test_server::HttpResponse>();
+  return std::unique_ptr<net::test_server::HttpResponse>();
 }
 
 }  // namespace
@@ -140,8 +143,6 @@ void WebViewAPITest::LaunchApp(const std::string& app_location) {
 
   test_config_.SetString(kTestDataDirectory,
                          net::FilePathToFileURL(test_data_dir).spec());
-
-  embedded_test_server()->ServeFilesFromDirectory(test_data_dir);
 
   const Extension* extension = extension_system_->LoadApp(test_data_dir);
   ASSERT_TRUE(extension);
@@ -197,14 +198,19 @@ void WebViewAPITest::SetUpOnMainThread() {
   test_config_.SetBoolean(kIsolateExtensions, isolate_extensions);
 }
 
-void WebViewAPITest::StartTestServer() {
+void WebViewAPITest::StartTestServer(const std::string& app_location) {
   // For serving guest pages.
-  if (!embedded_test_server()->Start()) {
+  if (!embedded_test_server()->InitializeAndListen()) {
     LOG(ERROR) << "Failed to start test server.";
     return;
   }
 
   test_config_.SetInteger(kTestServerPort, embedded_test_server()->port());
+
+  base::FilePath test_data_dir;
+  PathService::Get(DIR_TEST_DATA, &test_data_dir);
+  test_data_dir = test_data_dir.AppendASCII(app_location.c_str());
+  embedded_test_server()->ServeFilesFromDirectory(test_data_dir);
 
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&RedirectResponseHandler,
@@ -219,6 +225,8 @@ void WebViewAPITest::StartTestServer() {
           &UserAgentResponseHandler,
           kUserAgentRedirectResponsePath,
           embedded_test_server()->GetURL(kRedirectResponseFullPath)));
+
+  embedded_test_server()->StartAcceptingConnections();
 }
 
 void WebViewAPITest::StopTestServer() {
@@ -266,7 +274,7 @@ TestGuestViewManager* WebViewAPITest::GetGuestViewManager() {
 void WebViewAPITest::SendMessageToGuestAndWait(
     const std::string& message,
     const std::string& wait_message) {
-  scoped_ptr<ExtensionTestMessageListener> listener;
+  std::unique_ptr<ExtensionTestMessageListener> listener;
   if (!wait_message.empty())
     listener.reset(new ExtensionTestMessageListener(wait_message, false));
 
@@ -462,15 +470,17 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestContentLoadEvent) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestDeclarativeWebRequestAPI) {
-  StartTestServer();
-  RunTest("testDeclarativeWebRequestAPI", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testDeclarativeWebRequestAPI", app_location);
   StopTestServer();
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest,
                        TestDeclarativeWebRequestAPISendMessage) {
-  StartTestServer();
-  RunTest("testDeclarativeWebRequestAPISendMessage", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testDeclarativeWebRequestAPISendMessage", app_location);
   StopTestServer();
 }
 
@@ -559,8 +569,9 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest,
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestLoadAbortEmptyResponse) {
-  StartTestServer();
-  RunTest("testLoadAbortEmptyResponse", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testLoadAbortEmptyResponse", app_location);
   StopTestServer();
 }
 
@@ -589,8 +600,9 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestLoadProgressEvent) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestLoadStartLoadRedirect) {
-  StartTestServer();
-  RunTest("testLoadStartLoadRedirect", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testLoadStartLoadRedirect", app_location);
   StopTestServer();
 }
 
@@ -612,26 +624,30 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestNavOnSrcAttributeChange) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestNewWindow) {
-  StartTestServer();
-  RunTest("testNewWindow", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testNewWindow", app_location);
   StopTestServer();
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestNewWindowNoPreventDefault) {
-  StartTestServer();
-  RunTest("testNewWindowNoPreventDefault", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testNewWindowNoPreventDefault", app_location);
   StopTestServer();
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestNewWindowNoReferrerLink) {
-  StartTestServer();
-  RunTest("testNewWindowNoReferrerLink", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testNewWindowNoReferrerLink", app_location);
   StopTestServer();
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestNewWindowTwoListeners) {
-  StartTestServer();
-  RunTest("testNewWindowTwoListeners", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testNewWindowTwoListeners", app_location);
   StopTestServer();
 }
 
@@ -653,7 +669,8 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestReassignSrcAttribute) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestRemoveWebviewOnExit) {
-  StartTestServer();
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
 
   // Launch the app and wait until it's ready to load a test.
   LaunchApp("web_view/apitest");
@@ -707,14 +724,16 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestTerminateAfterExit) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestWebRequestAPI) {
-  StartTestServer();
-  RunTest("testWebRequestAPI", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testWebRequestAPI", app_location);
   StopTestServer();
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestWebRequestAPIWithHeaders) {
-  StartTestServer();
-  RunTest("testWebRequestAPIWithHeaders", "web_view/apitest");
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testWebRequestAPIWithHeaders", app_location);
   StopTestServer();
 }
 
@@ -733,5 +752,8 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestWebViewInsideFrame) {
   LaunchApp("web_view/inside_iframe");
 }
 
+IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestCaptureVisibleRegion) {
+  RunTest("testCaptureVisibleRegion", "web_view/apitest");
+}
 
 }  // namespace extensions

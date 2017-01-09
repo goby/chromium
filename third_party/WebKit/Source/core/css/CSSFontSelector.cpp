@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/css/CSSFontSelector.h"
 
 #include "core/css/CSSFontSelectorClient.h"
@@ -44,152 +43,140 @@
 namespace blink {
 
 CSSFontSelector::CSSFontSelector(Document* document)
-    : m_document(document)
-    , m_fontLoader(FontLoader::create(this, document))
-    , m_genericFontFamilySettings(document->frame()->settings()->genericFontFamilySettings())
-{
-    // FIXME: An old comment used to say there was no need to hold a reference to m_document
-    // because "we are guaranteed to be destroyed before the document". But there does not
-    // seem to be any such guarantee.
-
-    ASSERT(m_document);
-    ASSERT(m_document->frame());
-    FontCache::fontCache()->addClient(this);
-    FontFaceSet::from(*document)->addFontFacesToFontFaceCache(&m_fontFaceCache, this);
+    : m_document(document),
+      m_genericFontFamilySettings(
+          document->frame()->settings()->genericFontFamilySettings()) {
+  // FIXME: An old comment used to say there was no need to hold a reference to
+  // m_document because "we are guaranteed to be destroyed before the document".
+  // But there does not seem to be any such guarantee.
+  ASSERT(m_document);
+  DCHECK(m_document->frame());
+  FontCache::fontCache()->addClient(this);
+  FontFaceSet::from(*document)->addFontFacesToFontFaceCache(&m_fontFaceCache,
+                                                            this);
 }
 
-CSSFontSelector::~CSSFontSelector()
-{
-#if !ENABLE(OILPAN)
-    clearDocument();
-    FontCache::fontCache()->removeClient(this);
-#endif
+CSSFontSelector::~CSSFontSelector() {}
+
+void CSSFontSelector::registerForInvalidationCallbacks(
+    CSSFontSelectorClient* client) {
+  m_clients.add(client);
 }
 
-void CSSFontSelector::registerForInvalidationCallbacks(CSSFontSelectorClient* client)
-{
-    m_clients.add(client);
+void CSSFontSelector::unregisterForInvalidationCallbacks(
+    CSSFontSelectorClient* client) {
+  m_clients.remove(client);
 }
 
-#if !ENABLE(OILPAN)
-void CSSFontSelector::unregisterForInvalidationCallbacks(CSSFontSelectorClient* client)
-{
-    m_clients.remove(client);
-}
-#endif
+void CSSFontSelector::dispatchInvalidationCallbacks() {
+  m_fontFaceCache.incrementVersion();
 
-void CSSFontSelector::dispatchInvalidationCallbacks()
-{
-    m_fontFaceCache.incrementVersion();
-
-    WillBeHeapVector<RawPtrWillBeMember<CSSFontSelectorClient>> clients;
-    copyToVector(m_clients, clients);
-    for (size_t i = 0; i < clients.size(); ++i)
-        clients[i]->fontsNeedUpdate(this);
+  HeapVector<Member<CSSFontSelectorClient>> clients;
+  copyToVector(m_clients, clients);
+  for (auto& client : clients)
+    client->fontsNeedUpdate(this);
 }
 
-void CSSFontSelector::fontFaceInvalidated()
-{
-    dispatchInvalidationCallbacks();
+void CSSFontSelector::fontFaceInvalidated() {
+  dispatchInvalidationCallbacks();
 }
 
-void CSSFontSelector::fontCacheInvalidated()
-{
-    dispatchInvalidationCallbacks();
+void CSSFontSelector::fontCacheInvalidated() {
+  dispatchInvalidationCallbacks();
 }
 
-static AtomicString familyNameFromSettings(const GenericFontFamilySettings& settings, const FontDescription& fontDescription, const AtomicString& genericFamilyName)
-{
+static AtomicString familyNameFromSettings(
+    const GenericFontFamilySettings& settings,
+    const FontDescription& fontDescription,
+    const AtomicString& genericFamilyName) {
 #if OS(ANDROID)
-    if (fontDescription.genericFamily() == FontDescription::StandardFamily)
-        return FontCache::getGenericFamilyNameForScript(FontFamilyNames::webkit_standard, fontDescription);
+  if (fontDescription.genericFamily() == FontDescription::StandardFamily)
+    return FontCache::getGenericFamilyNameForScript(
+        FontFamilyNames::webkit_standard, fontDescription);
 
-    if (genericFamilyName.startsWith("-webkit-"))
-        return FontCache::getGenericFamilyNameForScript(genericFamilyName, fontDescription);
+  if (genericFamilyName.startsWith("-webkit-"))
+    return FontCache::getGenericFamilyNameForScript(genericFamilyName,
+                                                    fontDescription);
 #else
-    UScriptCode script = fontDescription.script();
-    if (fontDescription.genericFamily() == FontDescription::StandardFamily)
-        return settings.standard(script);
-    if (genericFamilyName == FontFamilyNames::webkit_serif)
-        return settings.serif(script);
-    if (genericFamilyName == FontFamilyNames::webkit_sans_serif)
-        return settings.sansSerif(script);
-    if (genericFamilyName == FontFamilyNames::webkit_cursive)
-        return settings.cursive(script);
-    if (genericFamilyName == FontFamilyNames::webkit_fantasy)
-        return settings.fantasy(script);
-    if (genericFamilyName == FontFamilyNames::webkit_monospace)
-        return settings.fixed(script);
-    if (genericFamilyName == FontFamilyNames::webkit_pictograph)
-        return settings.pictograph(script);
-    if (genericFamilyName == FontFamilyNames::webkit_standard)
-        return settings.standard(script);
+  UScriptCode script = fontDescription.script();
+  if (fontDescription.genericFamily() == FontDescription::StandardFamily)
+    return settings.standard(script);
+  if (genericFamilyName == FontFamilyNames::webkit_serif)
+    return settings.serif(script);
+  if (genericFamilyName == FontFamilyNames::webkit_sans_serif)
+    return settings.sansSerif(script);
+  if (genericFamilyName == FontFamilyNames::webkit_cursive)
+    return settings.cursive(script);
+  if (genericFamilyName == FontFamilyNames::webkit_fantasy)
+    return settings.fantasy(script);
+  if (genericFamilyName == FontFamilyNames::webkit_monospace)
+    return settings.fixed(script);
+  if (genericFamilyName == FontFamilyNames::webkit_pictograph)
+    return settings.pictograph(script);
+  if (genericFamilyName == FontFamilyNames::webkit_standard)
+    return settings.standard(script);
 #endif
-    return emptyAtom;
+  return emptyAtom;
 }
 
-PassRefPtr<FontData> CSSFontSelector::getFontData(const FontDescription& fontDescription, const AtomicString& familyName)
-{
-    if (CSSSegmentedFontFace* face = m_fontFaceCache.get(fontDescription, familyName))
-        return face->getFontData(fontDescription);
+PassRefPtr<FontData> CSSFontSelector::getFontData(
+    const FontDescription& fontDescription,
+    const AtomicString& familyName) {
+  if (CSSSegmentedFontFace* face =
+          m_fontFaceCache.get(fontDescription, familyName))
+    return face->getFontData(fontDescription);
 
-    // Try to return the correct font based off our settings, in case we were handed the generic font family name.
-    AtomicString settingsFamilyName = familyNameFromSettings(m_genericFontFamilySettings, fontDescription, familyName);
-    if (settingsFamilyName.isEmpty())
-        return nullptr;
+  // Try to return the correct font based off our settings, in case we were
+  // handed the generic font family name.
+  AtomicString settingsFamilyName = familyNameFromSettings(
+      m_genericFontFamilySettings, fontDescription, familyName);
+  if (settingsFamilyName.isEmpty())
+    return nullptr;
 
-    return FontCache::fontCache()->getFontData(fontDescription, settingsFamilyName);
+  return FontCache::fontCache()->getFontData(fontDescription,
+                                             settingsFamilyName);
 }
 
-void CSSFontSelector::willUseFontData(const FontDescription& fontDescription, const AtomicString& family, UChar32 character)
-{
-    CSSSegmentedFontFace* face = m_fontFaceCache.get(fontDescription, family);
-    if (face)
-        face->willUseFontData(fontDescription, character);
+void CSSFontSelector::willUseFontData(const FontDescription& fontDescription,
+                                      const AtomicString& family,
+                                      const String& text) {
+  CSSSegmentedFontFace* face = m_fontFaceCache.get(fontDescription, family);
+  if (face)
+    face->willUseFontData(fontDescription, text);
 }
 
-void CSSFontSelector::willUseRange(const FontDescription& fontDescription, const AtomicString& family, const FontDataRange& range)
-{
-    CSSSegmentedFontFace* face = m_fontFaceCache.get(fontDescription, family);
-    if (face)
-        face->willUseRange(fontDescription, range);
+void CSSFontSelector::willUseRange(const FontDescription& fontDescription,
+                                   const AtomicString& family,
+                                   const FontDataForRangeSet& rangeSet) {
+  CSSSegmentedFontFace* face = m_fontFaceCache.get(fontDescription, family);
+  if (face)
+    face->willUseRange(fontDescription, rangeSet);
 }
 
-bool CSSFontSelector::isPlatformFontAvailable(const FontDescription& fontDescription, const AtomicString& passedFamily)
-{
-    AtomicString family = familyNameFromSettings(m_genericFontFamilySettings, fontDescription, passedFamily);
-    if (family.isEmpty())
-        family = passedFamily;
-    return FontCache::fontCache()->isPlatformFontAvailable(fontDescription, family);
+bool CSSFontSelector::isPlatformFontAvailable(
+    const FontDescription& fontDescription,
+    const AtomicString& passedFamily) {
+  AtomicString family = familyNameFromSettings(m_genericFontFamilySettings,
+                                               fontDescription, passedFamily);
+  if (family.isEmpty())
+    family = passedFamily;
+  return FontCache::fontCache()->isPlatformFontAvailable(fontDescription,
+                                                         family);
 }
 
-#if !ENABLE(OILPAN)
-void CSSFontSelector::clearDocument()
-{
-    m_fontLoader->clearDocumentAndFontSelector();
-    m_document = nullptr;
-    m_fontFaceCache.clearAll();
-}
-#endif
-
-void CSSFontSelector::updateGenericFontFamilySettings(Document& document)
-{
-    if (!document.settings())
-        return;
-    m_genericFontFamilySettings = document.settings()->genericFontFamilySettings();
-    // Need to increment FontFaceCache version to update ComputedStyles.
-    m_fontFaceCache.incrementVersion();
+void CSSFontSelector::updateGenericFontFamilySettings(Document& document) {
+  if (!document.settings())
+    return;
+  m_genericFontFamilySettings =
+      document.settings()->genericFontFamilySettings();
+  fontCacheInvalidated();
 }
 
-DEFINE_TRACE(CSSFontSelector)
-{
-#if ENABLE(OILPAN)
-    visitor->trace(m_document);
-    visitor->trace(m_fontFaceCache);
-    visitor->trace(m_clients);
-    visitor->trace(m_fontLoader);
-#endif
-    FontSelector::trace(visitor);
+DEFINE_TRACE(CSSFontSelector) {
+  visitor->trace(m_document);
+  visitor->trace(m_fontFaceCache);
+  visitor->trace(m_clients);
+  FontSelector::trace(visitor);
 }
 
-}
+}  // namespace blink

@@ -6,6 +6,8 @@
 #define COMPONENTS_CRONET_ANDROID_CRONET_URL_REQUEST_ADAPTER_H_
 
 #include <jni.h>
+
+#include <memory>
 #include <string>
 
 #include "base/android/jni_android.h"
@@ -16,18 +18,13 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/time/time.h"
 #include "net/base/request_priority.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
 
-namespace base {
-class SingleThreadTaskRunner;
-}  // namespace base
-
 namespace net {
 class HttpRequestHeaders;
-class HttpResponseHeaders;
 class SSLCertRequestInfo;
 class SSLInfo;
 class UploadDataStream;
@@ -36,6 +33,8 @@ class UploadDataStream;
 namespace cronet {
 
 class CronetURLRequestContextAdapter;
+class IOBufferWithByteBuffer;
+class TestUtil;
 
 bool CronetUrlRequestAdapterRegisterJni(JNIEnv* env);
 
@@ -44,15 +43,22 @@ bool CronetUrlRequestAdapterRegisterJni(JNIEnv* env);
 // posted to network thread and all callbacks into the Java CronetUrlRequest are
 // done on the network thread. Java CronetUrlRequest is expected to initiate the
 // next step like FollowDeferredRedirect, ReadData or Destroy. Public methods
-// can be called on any thread except PopulateResponseHeaders and Get* methods,
-// which can only be called on the network thread.
+// can be called on any thread.
 class CronetURLRequestAdapter : public net::URLRequest::Delegate {
  public:
+  // Bypasses cache if |jdisable_cache| is true. If context is not set up to
+  // use cache, |jdisable_cache| has no effect. |jdisable_connection_migration|
+  // causes connection migration to be disabled for this request if true. If
+  // global connection migration flag is not enabled,
+  // |jdisable_connection_migration| has no effect.
   CronetURLRequestAdapter(CronetURLRequestContextAdapter* context,
                           JNIEnv* env,
                           jobject jurl_request,
                           const GURL& url,
-                          net::RequestPriority priority);
+                          net::RequestPriority priority,
+                          jboolean jdisable_cache,
+                          jboolean jdisable_connection_migration,
+                          jboolean jenable_metrics);
   ~CronetURLRequestAdapter() override;
 
   // Methods called prior to Start are never called on network thread.
@@ -68,13 +74,8 @@ class CronetURLRequestAdapter : public net::URLRequest::Delegate {
                             const base::android::JavaParamRef<jstring>& jname,
                             const base::android::JavaParamRef<jstring>& jvalue);
 
-  // Bypasses cache. If context is not set up to use cache, this call has no
-  // effect.
-  void DisableCache(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& jcaller);
-
   // Adds a request body to the request before it starts.
-  void SetUpload(scoped_ptr<net::UploadDataStream> upload);
+  void SetUpload(std::unique_ptr<net::UploadDataStream> upload);
 
   // Starts the request.
   void Start(JNIEnv* env, const base::android::JavaParamRef<jobject>& jcaller);
@@ -103,30 +104,6 @@ class CronetURLRequestAdapter : public net::URLRequest::Delegate {
                const base::android::JavaParamRef<jobject>& jcaller,
                jboolean jsend_on_canceled);
 
-  // When called during a OnRedirect or OnResponseStarted callback, these
-  // methods return the corresponding response information. These methods
-  // can only be called on the network thread.
-
-  // Gets http status text from the response headers.
-  base::android::ScopedJavaLocalRef<jstring> GetHttpStatusText(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller) const;
-
-  // Gets NPN or ALPN Negotiated Protocol (if any) from HttpResponseInfo.
-  base::android::ScopedJavaLocalRef<jstring> GetNegotiatedProtocol(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller) const;
-
-  // Returns the host and port of the proxy server, if one was used.
-  base::android::ScopedJavaLocalRef<jstring> GetProxyServer(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller) const;
-
-  // Returns true if response is coming from the cache.
-  jboolean GetWasCached(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller) const;
-
   // net::URLRequest::Delegate implementations:
 
   void OnReceivedRedirect(net::URLRequest* request,
@@ -138,11 +115,11 @@ class CronetURLRequestAdapter : public net::URLRequest::Delegate {
   void OnSSLCertificateError(net::URLRequest* request,
                              const net::SSLInfo& ssl_info,
                              bool fatal) override;
-  void OnResponseStarted(net::URLRequest* request) override;
+  void OnResponseStarted(net::URLRequest* request, int net_error) override;
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override;
 
  private:
-  class IOBufferWithByteBuffer;
+  friend class TestUtil;
 
   void StartOnNetworkThread();
   void GetStatusOnNetworkThread(
@@ -157,9 +134,10 @@ class CronetURLRequestAdapter : public net::URLRequest::Delegate {
       int buffer_size);
   void DestroyOnNetworkThread(bool send_on_canceled);
 
-  // Checks status of the request_adapter, return false if |is_success()| is
-  // true, otherwise report error and cancel request_adapter.
-  bool MaybeReportError(net::URLRequest* request) const;
+  // Report error and cancel request_adapter.
+  void ReportError(net::URLRequest* request, int net_error);
+  // Reports metrics collected to the Java layer
+  void MaybeReportMetrics(JNIEnv* env) const;
 
   CronetURLRequestContextAdapter* context_;
 
@@ -171,10 +149,14 @@ class CronetURLRequestAdapter : public net::URLRequest::Delegate {
   std::string initial_method_;
   int load_flags_;
   net::HttpRequestHeaders initial_request_headers_;
-  scoped_ptr<net::UploadDataStream> upload_;
+  std::unique_ptr<net::UploadDataStream> upload_;
 
   scoped_refptr<IOBufferWithByteBuffer> read_buffer_;
-  scoped_ptr<net::URLRequest> url_request_;
+  std::unique_ptr<net::URLRequest> url_request_;
+
+  // Whether detailed metrics should be collected and reported to Java for this
+  // request.
+  const bool enable_metrics_;
 
   DISALLOW_COPY_AND_ASSIGN(CronetURLRequestAdapter);
 };

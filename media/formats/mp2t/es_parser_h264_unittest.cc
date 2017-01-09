@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "media/base/stream_parser_buffer.h"
@@ -104,10 +108,10 @@ void EsParserH264Test::GetAccessUnits() {
 }
 
 void EsParserH264Test::InsertAUD() {
-  uint8 aud[] = { 0x00, 0x00, 0x01, 0x09 };
+  uint8_t aud[] = {0x00, 0x00, 0x01, 0x09};
 
-  std::vector<uint8> stream_with_aud(
-      stream_.size() + access_units_.size() * sizeof(aud));
+  std::vector<uint8_t> stream_with_aud(stream_.size() +
+                                       access_units_.size() * sizeof(aud));
   std::vector<EsParserTestBase::Packet> access_units_with_aud(
       access_units_.size());
 
@@ -135,7 +139,7 @@ void EsParserH264Test::GetPesTimestamps(std::vector<Packet>* pes_packets_ptr) {
 
   // Default: set to a negative timestamp to be able to differentiate from
   // real timestamps.
-  // Note: we don't use kNoTimestamp() here since this one has already
+  // Note: we don't use kNoTimestamp here since this one has already
   // a special meaning in EsParserH264. The negative timestamps should be
   // ultimately discarded by the H264 parser since not relevant.
   for (size_t k = 0; k < pes_packets.size(); k++) {

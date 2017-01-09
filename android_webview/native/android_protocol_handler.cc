@@ -4,6 +4,8 @@
 
 #include "android_webview/native/android_protocol_handler.h"
 
+#include <utility>
+
 #include "android_webview/browser/net/android_stream_reader_url_request_job.h"
 #include "android_webview/browser/net/aw_url_request_job_factory.h"
 #include "android_webview/common/url_constants.h"
@@ -12,12 +14,12 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/jni_weak_ref.h"
+#include "base/memory/ptr_util.h"
 #include "content/public/common/url_constants.h"
 #include "jni/AndroidProtocolHandler_jni.h"
 #include "net/base/io_buffer.h"
 #include "net/base/mime_util.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/http/http_util.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -30,6 +32,7 @@ using android_webview::InputStreamImpl;
 using base::android::AttachCurrentThread;
 using base::android::ClearException;
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 
@@ -62,8 +65,8 @@ class AndroidStreamReaderURLRequestJobDelegateImpl
  public:
   AndroidStreamReaderURLRequestJobDelegateImpl();
 
-  scoped_ptr<InputStream> OpenInputStream(JNIEnv* env,
-                                          const GURL& url) override;
+  std::unique_ptr<InputStream> OpenInputStream(JNIEnv* env,
+                                               const GURL& url) override;
 
   void OnInputStreamOpenFailed(net::URLRequest* request,
                                bool* restart) override;
@@ -109,12 +112,7 @@ class ContentSchemeRequestInterceptor : public AndroidRequestInterceptorBase {
 static ScopedJavaLocalRef<jobject> GetResourceContext(JNIEnv* env) {
   if (g_resource_context)
     return g_resource_context->get(env);
-  ScopedJavaLocalRef<jobject> context;
-  // We have to reset as GetApplicationContext() returns a jobject with a
-  // global ref. The constructor that takes a jobject would expect a local ref
-  // and would assert.
-  context.Reset(env, base::android::GetApplicationContext());
-  return context;
+  return ScopedJavaLocalRef<jobject>(base::android::GetApplicationContext());
 }
 
 // AndroidStreamReaderURLRequestJobDelegateImpl -------------------------------
@@ -126,9 +124,9 @@ AndroidStreamReaderURLRequestJobDelegateImpl::
 ~AndroidStreamReaderURLRequestJobDelegateImpl() {
 }
 
-scoped_ptr<InputStream>
-AndroidStreamReaderURLRequestJobDelegateImpl::OpenInputStream(
-    JNIEnv* env, const GURL& url) {
+std::unique_ptr<InputStream>
+AndroidStreamReaderURLRequestJobDelegateImpl::OpenInputStream(JNIEnv* env,
+                                                              const GURL& url) {
   DCHECK(url.is_valid());
   DCHECK(env);
 
@@ -137,15 +135,13 @@ AndroidStreamReaderURLRequestJobDelegateImpl::OpenInputStream(
       ConvertUTF8ToJavaString(env, url.spec());
   ScopedJavaLocalRef<jobject> stream =
       android_webview::Java_AndroidProtocolHandler_open(
-          env,
-          GetResourceContext(env).obj(),
-          jurl.obj());
+          env, GetResourceContext(env), jurl);
 
   if (stream.is_null()) {
     DLOG(ERROR) << "Unable to open input stream for Android URL";
-    return scoped_ptr<InputStream>();
+    return std::unique_ptr<InputStream>();
   }
-  return make_scoped_ptr<InputStream>(new InputStreamImpl(stream));
+  return base::MakeUnique<InputStreamImpl>(stream);
 }
 
 void AndroidStreamReaderURLRequestJobDelegateImpl::OnInputStreamOpenFailed(
@@ -173,9 +169,7 @@ bool AndroidStreamReaderURLRequestJobDelegateImpl::GetMimeType(
       InputStreamImpl::FromInputStream(stream);
   ScopedJavaLocalRef<jstring> returned_type =
       android_webview::Java_AndroidProtocolHandler_getMimeType(
-          env,
-          GetResourceContext(env).obj(),
-          stream_impl->jobj(), url.obj());
+          env, GetResourceContext(env), stream_impl->jobj(), url);
   if (returned_type.is_null())
     return false;
 
@@ -219,11 +213,11 @@ net::URLRequestJob* AndroidRequestInterceptorBase::MaybeInterceptRequest(
   if (HasRequestPreviouslyFailed(request))
     return NULL;
 
-  scoped_ptr<AndroidStreamReaderURLRequestJobDelegateImpl> reader_delegate(
+  std::unique_ptr<AndroidStreamReaderURLRequestJobDelegateImpl> reader_delegate(
       new AndroidStreamReaderURLRequestJobDelegateImpl());
 
-  return new AndroidStreamReaderURLRequestJob(
-      request, network_delegate, reader_delegate.Pass());
+  return new AndroidStreamReaderURLRequestJob(request, network_delegate,
+                                              std::move(reader_delegate));
 }
 
 // AssetFileRequestInterceptor ------------------------------------------------
@@ -255,15 +249,15 @@ bool RegisterAndroidProtocolHandler(JNIEnv* env) {
 }
 
 // static
-scoped_ptr<net::URLRequestInterceptor>
+std::unique_ptr<net::URLRequestInterceptor>
 CreateContentSchemeRequestInterceptor() {
-  return make_scoped_ptr<net::URLRequestInterceptor>(
-      new ContentSchemeRequestInterceptor());
+  return base::MakeUnique<ContentSchemeRequestInterceptor>();
 }
 
 // static
-scoped_ptr<net::URLRequestInterceptor> CreateAssetFileRequestInterceptor() {
-  return scoped_ptr<net::URLRequestInterceptor>(
+std::unique_ptr<net::URLRequestInterceptor>
+CreateAssetFileRequestInterceptor() {
+  return std::unique_ptr<net::URLRequestInterceptor>(
       new AssetFileRequestInterceptor());
 }
 

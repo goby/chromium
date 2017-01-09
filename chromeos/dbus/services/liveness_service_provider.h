@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chromeos/chromeos_export.h"
@@ -17,7 +17,6 @@
 
 namespace dbus {
 class MethodCall;
-class Response;
 }
 
 namespace chromeos {

@@ -8,10 +8,33 @@ See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into gcl.
 """
 
+import os
+import re
 import sys
 
 
-_EXCLUDED_PATHS = ()
+_EXCLUDED_PATHS = (
+    # LayoutTests/imported is excluded because these files are automatically
+    # imported, so we do not have direct control over their content.
+    r'^third_party[\\\/]WebKit[\\\/]LayoutTests[\\\/]imported[\\\/].*',
+)
+
+
+def _CheckForNonBlinkVariantMojomIncludes(input_api, output_api):
+    pattern = input_api.re.compile(r'#include\s+.+\.mojom(.*)\.h[>"]')
+    errors = []
+    for f in input_api.AffectedFiles():
+        for line_num, line in f.ChangedContents():
+            m = pattern.match(line)
+            if m and m.group(1) != '-blink' and m.group(1) != '-shared':
+                errors.append('    %s:%d %s' % (
+                    f.LocalPath(), line_num, line))
+
+    results = []
+    if errors:
+        results.append(output_api.PresubmitError(
+            'Files that include non-Blink variant mojoms found:', errors))
+    return results
 
 
 def _CheckForVersionControlConflictsInFile(input_api, f):
@@ -75,6 +98,8 @@ def _CommonChecks(input_api, output_api):
     results.extend(input_api.canned_checks.PanProjectChecks(
         input_api, output_api, excluded_paths=_EXCLUDED_PATHS,
         maxlen=800, license_header=license_header))
+    results.extend(input_api.canned_checks.CheckPatchFormatted(input_api, output_api))
+    results.extend(_CheckForNonBlinkVariantMojomIncludes(input_api, output_api))
     results.extend(_CheckForVersionControlConflicts(input_api, output_api))
     results.extend(_CheckPatchFiles(input_api, output_api))
     results.extend(_CheckTestExpectations(input_api, output_api))
@@ -113,11 +138,20 @@ def _CheckTestExpectations(input_api, output_api):
 
 
 def _CheckStyle(input_api, output_api):
+    # Files that follow Chromium's coding style do not include capital letters.
+    re_chromium_style_file = re.compile(r'\b[a-z_]+\.(cc|h)$')
     style_checker_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
         'Tools', 'Scripts', 'check-webkit-style')
-    args = ([input_api.python_executable, style_checker_path, '--diff-files']
-            + [input_api.os_path.join('..', '..', f.LocalPath())
-               for f in input_api.AffectedFiles()])
+    args = [input_api.python_executable, style_checker_path, '--diff-files']
+    files = [input_api.os_path.join('..', '..', f.LocalPath())
+             for f in input_api.AffectedFiles()
+             # Filter out files that follow Chromium's coding style.
+             if not re_chromium_style_file.search(f.LocalPath())]
+    # Do not call check-webkit-style with empty affected file list if all
+    # input_api.AffectedFiles got filtered.
+    if not files:
+        return []
+    args += files
     results = []
 
     try:
@@ -165,23 +199,27 @@ def _CheckForPrintfDebugging(input_api, output_api):
     return []
 
 
-def _CheckForDangerousTestFunctions(input_api, output_api):
-    """Tests should not be using serveAsynchronousMockedRequests, since it does
-    not guarantee that the threaded HTML parser will have completed."""
-    serve_async_requests_re = input_api.re.compile(
-        r'serveAsynchronousMockedRequests')
+def _CheckForJSTest(input_api, output_api):
+    """'js-test.js' is the past, 'testharness.js' is our glorious future"""
+    jstest_re = input_api.re.compile(r'resources/js-test.js')
+
+    def source_file_filter(path):
+        return input_api.FilterSourceFile(path,
+                                          white_list=[r'third_party/WebKit/LayoutTests/.*\.(html|js|php|pl|svg)$'])
+
     errors = input_api.canned_checks._FindNewViolationsOfRule(
-        lambda _, x: not serve_async_requests_re.search(x),
-        input_api, None)
+        lambda _, x: not jstest_re.search(x), input_api, source_file_filter)
     errors = ['  * %s' % violation for violation in errors]
     if errors:
-        return [output_api.PresubmitError(
-                    'You should be using FrameTestHelpers::'
-                    'pumpPendingRequests() instead of '
-                    'serveAsynchronousMockedRequests() in the following '
-                    'locations:\n%s' % '\n'.join(errors))]
+        return [output_api.PresubmitPromptOrNotify(
+            '"resources/js-test.js" is deprecated; please write new layout '
+            'tests using the assertions in "resources/testharness.js" '
+            'instead, as these can be more easily upstreamed to Web Platform '
+            'Tests for cross-vendor compatibility testing. If you\'re not '
+            'already familiar with this framework, a tutorial is available at '
+            'https://darobin.github.io/test-harness-tutorial/docs/using-testharness.html'
+            '\n\n%s' % '\n'.join(errors))]
     return []
-
 
 def _CheckForFailInFile(input_api, f):
     pattern = input_api.re.compile('^FAIL')
@@ -230,7 +268,8 @@ def _CheckForForbiddenNamespace(input_api, output_api):
     """Checks that Blink uses Chromium namespaces only in permitted code."""
     # This list is not exhaustive, but covers likely ones.
     chromium_namespaces = ["base", "cc", "content", "gfx", "net", "ui"]
-    chromium_classes = ["scoped_ptr", "scoped_refptr"]
+    chromium_forbidden_classes = ["scoped_refptr"]
+    chromium_allowed_classes = ["gfx::CubicBezier"]
 
     def source_file_filter(path):
         return input_api.FilterSourceFile(path,
@@ -240,13 +279,29 @@ def _CheckForForbiddenNamespace(input_api, output_api):
     comment_re = input_api.re.compile(r'^\s*//')
     result = []
     for namespace in chromium_namespaces:
-        namespace_re = input_api.re.compile(r'\b{0}::|^\s*using namespace {0};|^\s*namespace {0} \{{'.format(input_api.re.escape(namespace)))
+        namespace_re = input_api.re.compile(r'\b{0}::([A-Za-z_][A-Za-z0-9_]*)'.format(input_api.re.escape(namespace)))
+
+        def uses_namespace_outside_comments(line):
+            if comment_re.search(line):
+                return False
+            re_result = namespace_re.search(line)
+            if not re_result:
+                return False
+            parsed_class_name = namespace + "::" + re_result.group(1)
+            return not (parsed_class_name in chromium_allowed_classes)
+
+        errors = input_api.canned_checks._FindNewViolationsOfRule(lambda _, line: not uses_namespace_outside_comments(line),
+                                                                  input_api, source_file_filter)
+        if errors:
+            result += [output_api.PresubmitError('Do not use Chromium class from namespace {} inside Blink core:\n{}'.format(namespace, '\n'.join(errors)))]
+    for namespace in chromium_namespaces:
+        namespace_re = input_api.re.compile(r'^\s*using namespace {0};|^\s*namespace {0} \{{'.format(input_api.re.escape(namespace)))
         uses_namespace_outside_comments = lambda line: namespace_re.search(line) and not comment_re.search(line)
         errors = input_api.canned_checks._FindNewViolationsOfRule(lambda _, line: not uses_namespace_outside_comments(line),
                                                                   input_api, source_file_filter)
         if errors:
             result += [output_api.PresubmitError('Do not use Chromium namespace {} inside Blink core:\n{}'.format(namespace, '\n'.join(errors)))]
-    for class_name in chromium_classes:
+    for class_name in chromium_forbidden_classes:
         class_re = input_api.re.compile(r'\b{0}\b'.format(input_api.re.escape(class_name)))
         uses_class_outside_comments = lambda line: class_re.search(line) and not comment_re.search(line)
         errors = input_api.canned_checks._FindNewViolationsOfRule(lambda _, line: not uses_class_outside_comments(line),
@@ -261,7 +316,7 @@ def CheckChangeOnUpload(input_api, output_api):
     results.extend(_CommonChecks(input_api, output_api))
     results.extend(_CheckStyle(input_api, output_api))
     results.extend(_CheckForPrintfDebugging(input_api, output_api))
-    results.extend(_CheckForDangerousTestFunctions(input_api, output_api))
+    results.extend(_CheckForJSTest(input_api, output_api))
     results.extend(_CheckForInvalidPreferenceError(input_api, output_api))
     results.extend(_CheckForForbiddenNamespace(input_api, output_api))
     return results
@@ -278,28 +333,53 @@ def CheckChangeOnCommit(input_api, output_api):
     return results
 
 
-def GetPreferredTryMasters(project, change):
-    import json
-    import os.path
-    import platform
-    import subprocess
+def _ArePaintOrCompositingDirectoriesModified(change):  # pylint: disable=C0103
+    """Checks whether CL has changes to paint or compositing directories."""
+    paint_or_compositing_paths = [
+        os.path.join('third_party', 'WebKit', 'Source', 'platform', 'graphics',
+                     'compositing'),
+        os.path.join('third_party', 'WebKit', 'Source', 'platform', 'graphics',
+                     'paint'),
+        os.path.join('third_party', 'WebKit', 'Source', 'core', 'layout',
+                     'compositing'),
+        os.path.join('third_party', 'WebKit', 'Source', 'core', 'paint'),
+    ]
+    for affected_file in change.AffectedFiles():
+        file_path = affected_file.LocalPath()
+        if any(x in file_path for x in paint_or_compositing_paths):
+            return True
+    return False
 
-    cq_config_path = os.path.join(
-        change.RepositoryRoot(), 'infra', 'config', 'cq.cfg')
-    # commit_queue.py below is a script in depot_tools directory, which has a
-    # 'builders' command to retrieve a list of CQ builders from the CQ config.
-    is_win = platform.system() == 'Windows'
-    masters = json.loads(subprocess.check_output(
-        ['commit_queue', 'builders', cq_config_path], shell=is_win))
 
-    try_config = {}
-    for master in masters:
-        try_config.setdefault(master, {})
-        for builder in masters[master]:
-            # Do not trigger presubmit builders, since they're likely to fail
-            # (e.g. OWNERS checks before finished code review), and we're
-            # running local presubmit anyway.
-            if 'presubmit' not in builder:
-                try_config[master][builder] = ['defaulttests']
+def PostUploadHook(cl, change, output_api):  # pylint: disable=C0103
+    """git cl upload will call this hook after the issue is created/modified.
 
-    return try_config
+    This hook adds extra try bots to the CL description in order to run slimming
+    paint v2 tests in addition to the CQ try bots if the change contains paint
+    or compositing changes (see: _ArePaintOrCompositingDirectoriesModified). For
+    more information about slimming-paint-v2 tests see https://crbug.com/601275.
+    """
+    if not _ArePaintOrCompositingDirectoriesModified(change):
+        return []
+
+    rietveld_obj = cl.RpcServer()
+    issue = cl.issue
+    description = rietveld_obj.get_description(issue)
+    if re.search(r'^CQ_INCLUDE_TRYBOTS=.*', description, re.M | re.I):
+        return []
+
+    bots = [
+        'master.tryserver.chromium.linux:linux_layout_tests_slimming_paint_v2',
+    ]
+
+    results = []
+    new_description = description
+    new_description += '\nCQ_INCLUDE_TRYBOTS=%s' % ';'.join(bots)
+    results.append(output_api.PresubmitNotifyResult(
+        'Automatically added slimming-paint-v2 tests to run on CQ due to '
+        'changes in paint or compositing directories.'))
+
+    if new_description != description:
+        rietveld_obj.update_description(issue, new_description)
+
+    return results

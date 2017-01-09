@@ -10,11 +10,25 @@ from common import chrome_proxy_measurements as measurements
 from common.chrome_proxy_measurements import ChromeProxyValidation
 from integration_tests import chrome_proxy_metrics as metrics
 from metrics import loading
-from telemetry.core import exceptions
-from telemetry.page import page_test
+from telemetry.core import exceptions, util
+from telemetry.page import legacy_page_test
 
+class ChromeProxyBypassOnTimeout(ChromeProxyValidation):
+  """Checks the client bypasses when endpoint site times out."""
 
-class ChromeProxyDataSaving(page_test.PageTest):
+  def __init__(self):
+    super(ChromeProxyBypassOnTimeout, self).__init__(
+        restart_after_each_page=True,
+        metrics=metrics.ChromeProxyMetric())
+
+  def CustomizeBrowserOptions(self, options):
+    super(ChromeProxyBypassOnTimeout, self).CustomizeBrowserOptions(
+        options)
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForBypassOnTimeout(tab, results)
+
+class ChromeProxyDataSaving(legacy_page_test.LegacyPageTest):
   """Chrome proxy data saving measurement."""
   def __init__(self, *args, **kwargs):
     super(ChromeProxyDataSaving, self).__init__(*args, **kwargs)
@@ -60,6 +74,42 @@ class ChromeProxyBypass(ChromeProxyValidation):
 
   def AddResults(self, tab, results):
     self._metrics.AddResultsForBypass(tab, results)
+
+
+class ChromeProxyHTTPSBypass(ChromeProxyValidation):
+  """Correctness measurement for bypass responses."""
+
+  def __init__(self):
+    super(ChromeProxyHTTPSBypass, self).__init__(
+        restart_after_each_page=True,
+        metrics=metrics.ChromeProxyMetric())
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForHTTPSBypass(tab, results)
+
+
+class ChromeProxyYouTube(ChromeProxyValidation):
+  """Correctness measurement for youtube video playback."""
+
+  def __init__(self):
+    super(ChromeProxyYouTube, self).__init__(
+        restart_after_each_page=True,
+        metrics=metrics.ChromeProxyMetric())
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForYouTube(tab, results)
+
+
+class ChromeProxyHTML5Test(ChromeProxyValidation):
+  """Correctness measurement for html5test page."""
+
+  def __init__(self):
+    super(ChromeProxyHTML5Test, self).__init__(
+        restart_after_each_page=True,
+        metrics=metrics.ChromeProxyMetric())
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForHTML5Test(tab, results)
 
 
 class ChromeProxyCorsBypass(ChromeProxyValidation):
@@ -145,6 +195,21 @@ def GetResponseOverrideURL(url=_TEST_SERVER_DEFAULT_URL, respStatus=0,
   else:
     return url + '?' + "&".join(queries)
 
+class ChromeProxyBadHTTPSFallback(ChromeProxyValidation):
+  """Checks the client falls back to HTTP proxy when HTTPS proxy errors."""
+
+  def __init__(self):
+    super(ChromeProxyBadHTTPSFallback, self).__init__(
+        restart_after_each_page=True,
+        metrics=metrics.ChromeProxyMetric())
+    self._is_chrome_proxy_enabled = True
+
+  def CustomizeBrowserOptions(self, options):
+    super(ChromeProxyBadHTTPSFallback, self).CustomizeBrowserOptions(
+        options)
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForBadHTTPSFallback(tab, results)
 
 class ChromeProxyHTTPFallbackProbeURL(ChromeProxyValidation):
   """Correctness measurement for proxy fallback.
@@ -205,27 +270,6 @@ class ChromeProxyHTTPFallbackViaHeader(ChromeProxyValidation):
     self._metrics.AddResultsForHTTPFallback(tab, results)
 
 
-class ChromeProxyClientVersion(ChromeProxyValidation):
-  """Correctness measurement for version directives in Chrome-Proxy header.
-
-  The test verifies that the version information provided in the Chrome-Proxy
-  request header overrides any version, if specified, that is provided in the
-  user agent string.
-  """
-
-  def __init__(self):
-    super(ChromeProxyClientVersion, self).__init__(
-        metrics=metrics.ChromeProxyMetric())
-
-  def CustomizeBrowserOptions(self, options):
-    super(ChromeProxyClientVersion,
-          self).CustomizeBrowserOptions(options)
-    options.AppendExtraBrowserArgs('--user-agent="Chrome/32.0.1700.99"')
-
-  def AddResults(self, tab, results):
-    self._metrics.AddResultsForClientVersion(tab, results)
-
-
 class ChromeProxyClientType(ChromeProxyValidation):
   """Correctness measurement for Chrome-Proxy header client type directives."""
 
@@ -234,6 +278,10 @@ class ChromeProxyClientType(ChromeProxyValidation):
         restart_after_each_page=True,
         metrics=metrics.ChromeProxyMetric())
     self._chrome_proxy_client_type = None
+
+  def CustomizeBrowserOptions(self, options):
+    super(ChromeProxyClientType, self).CustomizeBrowserOptions(options)
+    options.AppendExtraBrowserArgs('--disable-quic')
 
   def AddResults(self, tab, results):
     # Get the Chrome-Proxy client type from the first page in the page set, so
@@ -260,9 +308,131 @@ class ChromeProxyLoFi(ChromeProxyValidation):
   def CustomizeBrowserOptions(self, options):
     super(ChromeProxyLoFi, self).CustomizeBrowserOptions(options)
     options.AppendExtraBrowserArgs('--data-reduction-proxy-lo-fi=always-on')
+    # Disable server experiments such as tamper detection.
+    options.AppendExtraBrowserArgs(
+        '--data-reduction-proxy-server-experiments-disabled')
+    options.AppendExtraBrowserArgs('--disable-quic')
 
   def AddResults(self, tab, results):
     self._metrics.AddResultsForLoFi(tab, results)
+
+class ChromeProxyCacheLoFiDisabled(ChromeProxyValidation):
+  """
+  Correctness measurement for Lo-Fi placeholder is not loaded from cache when a
+  page is reloaded with LoFi disabled. First a test page is opened with LoFi and
+  chrome proxy enabled. This allows Chrome to cache the LoFi placeholder image.
+  The browser is restarted with LoFi disabled and the same test page is loaded.
+  This second page load should not pick the LoFi placeholder from cache and
+  original image should be loaded. This test should be run with
+  --profile-type=default command line for the same user profile and cache to be
+  used across the two page loads.
+  """
+
+  def __init__(self):
+    super(ChromeProxyCacheLoFiDisabled, self).__init__(
+            restart_after_each_page=True,
+            metrics=metrics.ChromeProxyMetric(),
+            clear_cache_before_each_run=False)
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForLoFiCache(tab, results, self._is_lo_fi_enabled)
+
+  def WillStartBrowser(self, platform):
+    super(ChromeProxyCacheLoFiDisabled, self).WillStartBrowser(platform)
+    self.options.AppendExtraBrowserArgs('--disable-quic')
+    if not self._page:
+      # First page load, enable LoFi and chrome proxy. Disable server
+      # experiments such as tamper detection.
+      self.options.AppendExtraBrowserArgs(
+            '--data-reduction-proxy-lo-fi=always-on')
+      self.options.AppendExtraBrowserArgs(
+        '--data-reduction-proxy-server-experiments-disabled')
+      self._is_lo_fi_enabled = True
+    else:
+      # Second page load, disable LoFi. Chrome proxy is still enabled. Disable
+      # server experiments such as tamper detection.
+      self.options.browser_options.extra_browser_args.discard(
+            '--data-reduction-proxy-lo-fi=always-on')
+      self.options.AppendExtraBrowserArgs(
+        '--data-reduction-proxy-server-experiments-disabled')
+      self._is_lo_fi_enabled = False
+
+  def WillNavigateToPage(self, page, tab):
+    super(ChromeProxyCacheLoFiDisabled, self).WillNavigateToPage(page, tab)
+    if self._is_lo_fi_enabled:
+      # Clear cache for the first page to pick LoFi image from server.
+      tab.ClearCache(force=True)
+
+  def DidNavigateToPage(self, page, tab):
+    if not self._is_lo_fi_enabled:
+      tab.ExecuteJavaScript('window.location.reload()')
+      util.WaitFor(tab.HasReachedQuiescence, 3)
+
+class ChromeProxyCacheProxyDisabled(ChromeProxyValidation):
+  """
+  Correctness measurement for Lo-Fi placeholder is not loaded from cache when a
+  page is reloaded with data reduction proxy disabled. First a test page is
+  opened with LoFi and chrome proxy enabled. This allows Chrome to cache the
+  LoFi placeholder image. The browser is restarted with chrome proxy disabled
+  and the same test page is loaded. This second page load should not pick the
+  LoFi placeholder from cache and original image should be loaded. This test
+  should be run with --profile-type=default command line for the same user
+  profile and cache to be used across the two page loads.
+  """
+
+  def __init__(self):
+    super(ChromeProxyCacheProxyDisabled, self).__init__(
+            restart_after_each_page=True,
+            metrics=metrics.ChromeProxyMetric(),
+            clear_cache_before_each_run=False)
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForLoFiCache(tab, results,
+                                         self._is_chrome_proxy_enabled)
+
+  def WillStartBrowser(self, platform):
+    super(ChromeProxyCacheProxyDisabled, self).WillStartBrowser(platform)
+    self.options.AppendExtraBrowserArgs('--disable-quic')
+    if not self._page:
+      # First page load, enable LoFi and chrome proxy. Disable server
+      # experiments such as tamper detection.
+      self.options.AppendExtraBrowserArgs(
+            '--data-reduction-proxy-lo-fi=always-on')
+      self.options.AppendExtraBrowserArgs(
+        '--data-reduction-proxy-server-experiments-disabled')
+    else:
+      # Second page load, disable chrome proxy. LoFi is still enabled.
+      self.DisableChromeProxy()
+
+  def WillNavigateToPage(self, page, tab):
+    super(ChromeProxyCacheProxyDisabled, self).WillNavigateToPage(page, tab)
+    if self._is_chrome_proxy_enabled:
+      # Clear cache for the first page to pick LoFi image from server.
+      tab.ClearCache(force=True)
+
+  def DidNavigateToPage(self, page, tab):
+    if not self._is_chrome_proxy_enabled:
+      tab.ExecuteJavaScript('window.location.reload()')
+      util.WaitFor(tab.HasReachedQuiescence, 3)
+
+class ChromeProxyLitePage(ChromeProxyValidation):
+  """Correctness measurement for lite pages in the Chrome-Proxy header."""
+
+  def __init__(self):
+    super(ChromeProxyLitePage, self).__init__(
+        restart_after_each_page=True,
+        metrics=metrics.ChromeProxyMetric())
+
+  def CustomizeBrowserOptions(self, options):
+    super(ChromeProxyLitePage, self).CustomizeBrowserOptions(options)
+    options.AppendExtraBrowserArgs(
+        '--data-reduction-proxy-lo-fi=always-on')
+    options.AppendExtraBrowserArgs(
+        '--enable-data-reduction-proxy-lite-page')
+    options.AppendExtraBrowserArgs('--disable-quic')
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForLitePage(tab, results)
 
 class ChromeProxyExpDirective(ChromeProxyValidation):
   """Correctness measurement for experiment directives in Chrome-Proxy header.
@@ -284,10 +454,12 @@ class ChromeProxyExpDirective(ChromeProxyValidation):
     self._metrics.AddResultsForBypass(tab, results, url_pattern='/exp/')
 
 class ChromeProxyPassThrough(ChromeProxyValidation):
-  """Correctness measurement for Chrome-Proxy pass-through directives.
+  """Correctness measurement for Chrome-Proxy-Accept-Transform identity
+  directives.
 
-  This test verifies that "pass-through" in the Chrome-Proxy request header
-  causes a resource to be loaded without Data Reduction Proxy transformations.
+  This test verifies that "identity" in the Chrome-Proxy-Accept-Transform
+  request header causes a resource to be loaded without Data Reduction Proxy
+  transformations.
   """
 
   def __init__(self):
@@ -297,6 +469,7 @@ class ChromeProxyPassThrough(ChromeProxyValidation):
 
   def CustomizeBrowserOptions(self, options):
     super(ChromeProxyPassThrough, self).CustomizeBrowserOptions(options)
+    options.AppendExtraBrowserArgs('--disable-quic')
 
   def AddResults(self, tab, results):
     self._metrics.AddResultsForPassThrough(tab, results)
@@ -353,6 +526,23 @@ class ChromeProxyReenableAfterBypass(ChromeProxyValidation):
         self._page.bypass_seconds_max)
 
 
+class ChromeProxyReenableAfterSetBypass(ChromeProxyValidation):
+  """Correctness test for re-enabling proxies after bypasses with set duration.
+
+  This test loads a page that causes all data reduction proxies to be bypassed
+  for 20 seconds.
+  """
+
+  def __init__(self):
+    super(ChromeProxyReenableAfterSetBypass, self).__init__(
+        restart_after_each_page=True,
+        metrics=metrics.ChromeProxyMetric())
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForReenableAfterSetBypass(
+        tab, results, self._page.BYPASS_SECONDS)
+
+
 class ChromeProxySmoke(ChromeProxyValidation):
   """Smoke measurement for basic chrome proxy correctness."""
 
@@ -385,6 +575,58 @@ class ChromeProxySmoke(ChromeProxyValidation):
     for add_result in page_to_metrics[self._page.name]:
       add_result(tab, results)
 
+class ChromeProxyQuicSmoke(legacy_page_test.LegacyPageTest):
+  """Smoke measurement for basic chrome proxy correctness when using a
+  proxy that supports QUIC."""
+
+  def __init__(self, *args, **kwargs):
+    super(ChromeProxyQuicSmoke, self).__init__(*args, **kwargs)
+    self._metrics = metrics.ChromeProxyMetric()
+    self._enable_proxy = True
+
+  def CustomizeBrowserOptions(self, options):
+    super(ChromeProxyQuicSmoke, self).CustomizeBrowserOptions(options)
+    options.AppendExtraBrowserArgs(
+      '--enable-quic')
+    options.AppendExtraBrowserArgs(
+      '--data-reduction-proxy-http-proxies=https://proxy.googlezip.net:443')
+    options.AppendExtraBrowserArgs(
+      '--force-fieldtrials=DataReductionProxyUseQuic/Enabled')
+    options.AppendExtraBrowserArgs('--enable-spdy-proxy-auth')
+
+  def WillNavigateToPage(self, page, tab):
+    if self._enable_proxy:
+      measurements.WaitForViaHeader(tab)
+    tab.ClearCache(force=True)
+    self._metrics.Start(page, tab)
+
+  def ValidateAndMeasurePage(self, page, tab, results):
+    # Wait for the load event.
+    tab.WaitForJavaScriptExpression('performance.timing.loadEventStart', 300)
+    self._metrics.Stop(page, tab)
+    page_to_metrics = {
+        'header validation': [self._metrics.AddResultsForHeaderValidation],
+        'compression: image': [
+            self._metrics.AddResultsForHeaderValidation,
+            self._metrics.AddResultsForDataSaving,
+            ],
+        'compression: javascript': [
+            self._metrics.AddResultsForHeaderValidation,
+            self._metrics.AddResultsForDataSaving,
+            ],
+        'compression: css': [
+            self._metrics.AddResultsForHeaderValidation,
+            self._metrics.AddResultsForDataSaving,
+            ],
+        'bypass': [self._metrics.AddResultsForBypass],
+        }
+    if not page.name in page_to_metrics:
+      raise page_test.MeasurementFailure(
+          'Invalid page name (%s) in QUIC smoke. '
+          'Page name must be one of:\n%s' % (
+          page.name, page_to_metrics.keys()))
+    for add_result in page_to_metrics[page.name]:
+      add_result(tab, results)
 
 PROXIED = metrics.PROXIED
 DIRECT = metrics.DIRECT
@@ -401,11 +643,12 @@ class ChromeProxyClientConfig(ChromeProxyValidation):
     super(ChromeProxyClientConfig, self).CustomizeBrowserOptions(options)
     options.AppendExtraBrowserArgs(
       '--enable-data-reduction-proxy-config-client')
+    options.AppendExtraBrowserArgs('--disable-quic')
 
   def AddResults(self, tab, results):
     self._metrics.AddResultsForClientConfig(tab, results)
 
-class ChromeProxyVideoValidation(page_test.PageTest):
+class ChromeProxyVideoValidation(legacy_page_test.LegacyPageTest):
   """Validation for video pages.
 
   Measures pages using metrics.ChromeProxyVideoMetric. Pages can be fetched
@@ -491,7 +734,7 @@ class ChromeProxyVideoValidation(page_test.PageTest):
       err('Mismatch for content length (proxied=%s direct=%s): %s' %
           (str(pxocl), str(dcl), page.url))
 
-class ChromeProxyInstrumentedVideoValidation(page_test.PageTest):
+class ChromeProxyInstrumentedVideoValidation(legacy_page_test.LegacyPageTest):
   """Tests a specially instrumented page for correct video transcoding."""
 
   def __init__(self):
@@ -511,3 +754,52 @@ class ChromeProxyInstrumentedVideoValidation(page_test.PageTest):
   def ValidateAndMeasurePage(self, page, tab, results):
     self._metrics.Stop(page, tab)
     self._metrics.AddResults(tab, results)
+
+class ChromeProxyPingback(ChromeProxyValidation):
+  """Chrome proxy pageload metrics pingback service validation."""
+
+  def __init__(self):
+    super(ChromeProxyPingback, self).__init__(
+        metrics=metrics.ChromeProxyMetric())
+
+  def CustomizeBrowserOptions(self, options):
+    super(ChromeProxyPingback, self).CustomizeBrowserOptions(options)
+    options.AppendExtraBrowserArgs(
+      '--enable-data-reduction-proxy-force-pingback')
+    options.AppendExtraBrowserArgs(
+      '--enable-stats-collection-bindings')
+
+  def AddResults(self, tab, results):
+    self._metrics.AddResultsForPingback(tab, results)
+
+class ChromeProxyQuicTransaction(legacy_page_test.LegacyPageTest):
+  """Chrome quic proxy usage validation when connecting to a proxy that
+  supports QUIC."""
+
+  def __init__(self, *args, **kwargs):
+    super(ChromeProxyQuicTransaction, self).__init__(*args, **kwargs)
+    self._metrics = metrics.ChromeProxyMetric()
+    self._enable_proxy = True
+
+  def CustomizeBrowserOptions(self, options):
+    options.AppendExtraBrowserArgs(
+      '--enable-quic')
+    options.AppendExtraBrowserArgs(
+      '--data-reduction-proxy-http-proxies=https://proxy.googlezip.net:443')
+    options.AppendExtraBrowserArgs(
+      '--force-fieldtrials=DataReductionProxyUseQuic/Enabled')
+    options.AppendExtraBrowserArgs('--enable-spdy-proxy-auth')
+    options.AppendExtraBrowserArgs(
+      '--enable-stats-collection-bindings')
+
+  def WillNavigateToPage(self, page, tab):
+    if self._enable_proxy:
+      measurements.WaitForViaHeader(tab)
+    tab.ClearCache(force=True)
+    self._metrics.Start(page, tab)
+
+  def ValidateAndMeasurePage(self, page, tab, results):
+    # Wait for the load event.
+    tab.WaitForJavaScriptExpression('performance.timing.loadEventStart', 300)
+    self._metrics.Stop(page, tab)
+    self._metrics.AddResultsForQuicTransaction(tab, results)

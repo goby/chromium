@@ -6,13 +6,16 @@
 #define COMPONENTS_WIFI_WIFI_SERVICE_H_
 
 #include <list>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/values.h"
 #include "components/wifi/wifi_export.h"
 
@@ -67,7 +70,7 @@ class WIFI_EXPORT WiFiService {
   // Set Properties of network identified by |network_guid|. Populates |error|
   // on failure.
   virtual void SetProperties(const std::string& network_guid,
-                             scoped_ptr<base::DictionaryValue> properties,
+                             std::unique_ptr<base::DictionaryValue> properties,
                              std::string* error) = 0;
 
   // Creates a new network configuration from |properties|. If |shared| is true,
@@ -75,7 +78,7 @@ class WIFI_EXPORT WiFiService {
   // network already exists, this will fail and populate |error|. On success
   // populates the |network_guid| of the new network.
   virtual void CreateNetwork(bool shared,
-                             scoped_ptr<base::DictionaryValue> properties,
+                             std::unique_ptr<base::DictionaryValue> properties,
                              std::string* network_guid,
                              std::string* error) = 0;
 

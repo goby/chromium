@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "media/filters/h264_parser.h"
 #include "media/video/h264_poc.h"
 
@@ -59,16 +62,18 @@ bool H264POC::ComputePicOrderCnt(
     return false;
   }
 
-  // TODO(sandersd): Handle |gaps_in_frame_num_value|.
-  if (prev_frame_num_ > 0 && prev_frame_num_ < slice_hdr.frame_num - 1) {
-    DLOG(ERROR) << "Gaps in frame_num are not supported";
-    return false;
-  }
-
   bool mmco5 = HasMMCO5(slice_hdr);
   int32_t max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
   int32_t max_pic_order_cnt_lsb =
       1 << (sps->log2_max_pic_order_cnt_lsb_minus4 + 4);
+
+  // Note: Duplicate frame numbers are ignored. They occur in many videos
+  // despite appearing to be invalid according to the spec.
+  // TODO(sandersd): Check if these videos are using slices or have redundant
+  // streams.
+
+  // Note: Gaps in frame numbers are also ignored. They do not affect POC
+  // computation.
 
   // Based on T-REC-H.264 8.2.1, "Decoding process for picture order
   // count", available from http://www.itu.int/rec/T-REC-H.264.

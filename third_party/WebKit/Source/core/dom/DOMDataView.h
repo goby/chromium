@@ -5,24 +5,30 @@
 #ifndef DOMDataView_h
 #define DOMDataView_h
 
+#include "core/CoreExport.h"
 #include "core/dom/DOMArrayBufferView.h"
 
 namespace blink {
 
-class DOMDataView final : public DOMArrayBufferView {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    typedef char ValueType;
+class CORE_EXPORT DOMDataView final : public DOMArrayBufferView {
+  DEFINE_WRAPPERTYPEINFO();
 
-    static PassRefPtr<DOMDataView> create(PassRefPtr<DOMArrayBufferBase>, unsigned byteOffset, unsigned byteLength);
+ public:
+  typedef char ValueType;
 
-    v8::Local<v8::Object> wrap(v8::Isolate*, v8::Local<v8::Object> creationContext) override;
+  static DOMDataView* create(DOMArrayBufferBase*,
+                             unsigned byteOffset,
+                             unsigned byteLength);
 
-private:
-    DOMDataView(PassRefPtr<WTF::ArrayBufferView> dataView, PassRefPtr<DOMArrayBufferBase> domArrayBuffer)
-        : DOMArrayBufferView(dataView, domArrayBuffer) { }
+  v8::Local<v8::Object> wrap(v8::Isolate*,
+                             v8::Local<v8::Object> creationContext) override;
+
+ private:
+  DOMDataView(PassRefPtr<WTF::ArrayBufferView> dataView,
+              DOMArrayBufferBase* domArrayBuffer)
+      : DOMArrayBufferView(std::move(dataView), domArrayBuffer) {}
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DOMDataView_h
+#endif  // DOMDataView_h

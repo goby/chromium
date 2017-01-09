@@ -4,6 +4,9 @@
 
 #include "components/update_client/ping_manager.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -13,7 +16,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -22,6 +24,7 @@
 #include "components/update_client/configurator.h"
 #include "components/update_client/crx_update_item.h"
 #include "components/update_client/request_sender.h"
+#include "components/update_client/updater_state.h"
 #include "components/update_client/utils.h"
 #include "net/url_request/url_fetcher.h"
 #include "url/gurl.h"
@@ -79,7 +82,8 @@ std::string BuildDownloadCompleteEventElements(const CrxUpdateItem* item) {
   return download_events;
 }
 
-// Returns a string representing one ping event xml element for an update item.
+// Returns a string representing one ping event for the update of an item.
+// The event type for this ping event is 3.
 std::string BuildUpdateCompleteEventElement(const CrxUpdateItem* item) {
   DCHECK(item->state == CrxUpdateItem::State::kNoUpdate ||
          item->state == CrxUpdateItem::State::kUpdated);
@@ -115,6 +119,20 @@ std::string BuildUpdateCompleteEventElement(const CrxUpdateItem* item) {
   return ping_event;
 }
 
+// Returns a string representing one ping event for the uninstall of an item.
+// The event type for this ping event is 4.
+std::string BuildUninstalledEventElement(const CrxUpdateItem* item) {
+  DCHECK(item->state == CrxUpdateItem::State::kUninstalled);
+
+  using base::StringAppendF;
+
+  std::string ping_event("<event eventtype=\"4\" eventresult=\"1\"");
+  if (item->extra_code1)
+    StringAppendF(&ping_event, " extracode1=\"%d\"", item->extra_code1);
+  StringAppendF(&ping_event, "/>");
+  return ping_event;
+}
+
 // Builds a ping message for the specified update item.
 std::string BuildPing(const Configurator& config, const CrxUpdateItem* item) {
   const char app_element_format[] =
@@ -122,17 +140,34 @@ std::string BuildPing(const Configurator& config, const CrxUpdateItem* item) {
       "%s"
       "%s"
       "</app>";
+
+  std::string ping_event;
+  switch (item->state) {
+    case CrxUpdateItem::State::kNoUpdate:  // Fall through.
+    case CrxUpdateItem::State::kUpdated:
+      ping_event = BuildUpdateCompleteEventElement(item);
+      break;
+    case CrxUpdateItem::State::kUninstalled:
+      ping_event = BuildUninstalledEventElement(item);
+      break;
+    default:
+      NOTREACHED();
+      break;
+  }
+
   const std::string app_element(base::StringPrintf(
       app_element_format,
       item->id.c_str(),                                    // "appid"
       item->previous_version.GetString().c_str(),          // "version"
       item->next_version.GetString().c_str(),              // "nextversion"
-      BuildUpdateCompleteEventElement(item).c_str(),       // update event
+      ping_event.c_str(),                                  // ping event
       BuildDownloadCompleteEventElements(item).c_str()));  // download events
 
-  return BuildProtocolRequest(config.GetBrowserVersion().GetString(),
-                              config.GetChannel(), config.GetLang(),
-                              config.GetOSLongName(), app_element, "");
+  // The ping request does not include any updater state.
+  return BuildProtocolRequest(
+      config.GetProdId(), config.GetBrowserVersion().GetString(),
+      config.GetChannel(), config.GetLang(), config.GetOSLongName(),
+      config.GetDownloadPreference(), app_element, "", nullptr);
 }
 
 // Sends a fire and forget ping. The instances of this class have no
@@ -140,29 +175,33 @@ std::string BuildPing(const Configurator& config, const CrxUpdateItem* item) {
 // can send only one ping.
 class PingSender {
  public:
-  explicit PingSender(const Configurator& config);
+  explicit PingSender(const scoped_refptr<Configurator>& config);
   ~PingSender();
 
   bool SendPing(const CrxUpdateItem* item);
 
  private:
-  void OnRequestSenderComplete(const net::URLFetcher* source);
+  void OnRequestSenderComplete(int error,
+                               const std::string& response,
+                               int retry_after_sec);
 
-  const Configurator& config_;
-  scoped_ptr<RequestSender> request_sender_;
+  const scoped_refptr<Configurator> config_;
+  std::unique_ptr<RequestSender> request_sender_;
   base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(PingSender);
 };
 
-PingSender::PingSender(const Configurator& config) : config_(config) {
-}
+PingSender::PingSender(const scoped_refptr<Configurator>& config)
+    : config_(config) {}
 
 PingSender::~PingSender() {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
-void PingSender::OnRequestSenderComplete(const net::URLFetcher* source) {
+void PingSender::OnRequestSenderComplete(int error,
+                                         const std::string& response,
+                                         int retry_after_sec) {
   DCHECK(thread_checker_.CalledOnValidThread());
   delete this;
 }
@@ -171,32 +210,36 @@ bool PingSender::SendPing(const CrxUpdateItem* item) {
   DCHECK(item);
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  std::vector<GURL> urls(config_.PingUrl());
+  auto urls(config_->PingUrl());
+  if (item->component.requires_network_encryption)
+    RemoveUnsecureUrls(&urls);
 
   if (urls.empty())
     return false;
 
   request_sender_.reset(new RequestSender(config_));
   request_sender_->Send(
-      BuildPing(config_, item), urls,
+      false, BuildPing(*config_, item), urls,
       base::Bind(&PingSender::OnRequestSenderComplete, base::Unretained(this)));
   return true;
 }
 
 }  // namespace
 
-PingManager::PingManager(const Configurator& config) : config_(config) {
-}
+PingManager::PingManager(const scoped_refptr<Configurator>& config)
+    : config_(config) {}
 
 PingManager::~PingManager() {
 }
 
-// Sends a fire and forget ping when the updates are complete. The ping
-// sender object self-deletes after sending the ping has completed asynchrously.
-void PingManager::OnUpdateComplete(const CrxUpdateItem* item) {
-  PingSender* ping_sender(new PingSender(config_));
+bool PingManager::SendPing(const CrxUpdateItem* item) {
+  std::unique_ptr<PingSender> ping_sender(new PingSender(config_));
   if (!ping_sender->SendPing(item))
-    delete ping_sender;
+    return false;
+
+  // The ping sender object self-deletes after sending the ping asynchrously.
+  ping_sender.release();
+  return true;
 }
 
 }  // namespace update_client

@@ -14,6 +14,8 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Restriction;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
@@ -21,14 +23,16 @@ import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
+import org.chromium.chrome.test.util.ChromeRestriction;
 import org.chromium.chrome.test.util.ChromeTabUtils;
-import org.chromium.chrome.test.util.TestHttpServerClient;
+import org.chromium.chrome.test.util.PrerenderTestHelper;
 import org.chromium.content.browser.BindingManager;
 import org.chromium.content.browser.ChildProcessConnection;
 import org.chromium.content.browser.ChildProcessLauncher;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.PageTransition;
 
@@ -38,7 +42,7 @@ import java.util.concurrent.Callable;
  * Integration tests for the BindingManager API. This test plants a mock BindingManager
  * implementation and verifies that the signals it relies on are correctly delivered.
  */
-@CommandLineFlags.Add(ChromeSwitches.DISABLE_DOCUMENT_MODE)  // crbug.com/414719
+@RetryOnFailure
 public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<ChromeActivity> {
 
     private static class MockBindingManager implements BindingManager {
@@ -50,7 +54,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
 
         void assertIsInForeground(final int pid) {
             try {
-                CriteriaHelper.pollForCriteria(new Criteria() {
+                CriteriaHelper.pollInstrumentationThread(new Criteria() {
                     @Override
                     public boolean isSatisfied() {
                         return mProcessInForegroundMap.get(pid);
@@ -63,7 +67,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
 
         void assertIsInBackground(final int pid) {
             try {
-                CriteriaHelper.pollForCriteria(new Criteria() {
+                CriteriaHelper.pollInstrumentationThread(new Criteria() {
                     @Override
                     public boolean isSatisfied() {
                         return !mProcessInForegroundMap.get(pid);
@@ -76,7 +80,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
 
         void assertSetInForegroundWasCalled(String message, final int pid) {
             try {
-                CriteriaHelper.pollForCriteria(new Criteria(message) {
+                CriteriaHelper.pollInstrumentationThread(new Criteria(message) {
                     @Override
                     public boolean isSatisfied() {
                         return mProcessInForegroundMap.indexOfKey(pid) >= 0;
@@ -89,7 +93,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
 
         void assertIsReleaseAllModerateBindingsCalled() {
             try {
-                CriteriaHelper.pollForCriteria(new Criteria() {
+                CriteriaHelper.pollInstrumentationThread(new Criteria() {
                     @Override
                     public boolean isSatisfied() {
                         return mIsReleaseAllModerateBindingsCalled;
@@ -153,7 +157,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
 
         @Override
         public void startModerateBindingManagement(
-                Context context, int maxSize, float lowReduceRatio, float highReduceRatio) {}
+                Context context, int maxSize, boolean moderateBindingTillBackgrounded) {}
 
         @Override
         public void releaseAllModerateBindings() {
@@ -162,12 +166,14 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
     }
 
     private MockBindingManager mBindingManager;
+    private EmbeddedTestServer mTestServer;
 
-    private static final String FILE_PATH = "chrome/test/data/android/test.html";
+    private static final String FILE_PATH = "/chrome/test/data/android/test.html";
+    private static final String FILE_PATH2 = "/chrome/test/data/android/simple.html";
     // about:version will always be handled by a different renderer than a local file.
     private static final String ABOUT_VERSION_PATH = "chrome://version/";
     private static final String SHARED_RENDERER_PAGE_PATH =
-            "chrome/test/data/android/bindingmanager/shared_renderer1.html";
+            "/chrome/test/data/android/bindingmanager/shared_renderer1.html";
 
     public BindingManagerIntegrationTest() {
         super(ChromeActivity.class);
@@ -188,11 +194,11 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                 // Foreground tab.
                 TabCreator tabCreator = getActivity().getCurrentTabCreator();
                 tabs[0] = tabCreator.createNewTab(
-                        new LoadUrlParams(TestHttpServerClient.getUrl(FILE_PATH)),
-                                TabLaunchType.FROM_KEYBOARD, null);
+                        new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
+                                TabLaunchType.FROM_CHROME_UI, null);
                 // Background tab.
                 tabs[1] = tabCreator.createNewTab(
-                        new LoadUrlParams(TestHttpServerClient.getUrl(FILE_PATH)),
+                        new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
                                 TabLaunchType.FROM_LONGPRESS_BACKGROUND, null);
                 // On Svelte devices the background tab would not be loaded automatically, so
                 // trigger the load manually.
@@ -200,13 +206,13 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                 tabs[1].hide();
             }
         });
-        ChromeTabUtils.waitForTabPageLoaded(tabs[0], TestHttpServerClient.getUrl(FILE_PATH));
-        ChromeTabUtils.waitForTabPageLoaded(tabs[1], TestHttpServerClient.getUrl(FILE_PATH));
+        ChromeTabUtils.waitForTabPageLoaded(tabs[0], mTestServer.getURL(FILE_PATH));
+        ChromeTabUtils.waitForTabPageLoaded(tabs[1], mTestServer.getURL(FILE_PATH));
 
         // Wait for the new tab animations on phones to finish.
         if (!DeviceFormFactor.isTablet(getActivity())) {
             final ChromeActivity activity = getActivity();
-            CriteriaHelper.pollForUIThreadCriteria(new Criteria("Did not finish animation") {
+            CriteriaHelper.pollUiThread(new Criteria("Did not finish animation") {
                 @Override
                 public boolean isSatisfied() {
                     Layout layout = activity.getCompositorViewHolder()
@@ -247,7 +253,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
      * crashed in background is restored in foreground. This is a regression test for
      * http://crbug.com/399521.
      */
-    @DisabledTest // Flaked on the try bot: http://crbug.com/543153
+    @DisabledTest(message = "crbug.com/543153")
     @LargeTest
     @Feature({"ProcessManagement"})
     public void testCrashInBackground() throws InterruptedException {
@@ -259,11 +265,11 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                 // Foreground tab.
                 TabCreator tabCreator = getActivity().getCurrentTabCreator();
                 tabs[0] = tabCreator.createNewTab(
-                        new LoadUrlParams(TestHttpServerClient.getUrl(FILE_PATH)),
-                                TabLaunchType.FROM_KEYBOARD, null);
+                        new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
+                                TabLaunchType.FROM_CHROME_UI, null);
                 // Background tab.
                 tabs[1] = tabCreator.createNewTab(
-                        new LoadUrlParams(TestHttpServerClient.getUrl(FILE_PATH)),
+                        new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
                                 TabLaunchType.FROM_LONGPRESS_BACKGROUND, null);
                 // On Svelte devices the background tab would not be loaded automatically, so
                 // trigger the load manually.
@@ -271,13 +277,13 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                 tabs[1].hide();
             }
         });
-        ChromeTabUtils.waitForTabPageLoaded(tabs[0], TestHttpServerClient.getUrl(FILE_PATH));
-        ChromeTabUtils.waitForTabPageLoaded(tabs[1], TestHttpServerClient.getUrl(FILE_PATH));
+        ChromeTabUtils.waitForTabPageLoaded(tabs[0], mTestServer.getURL(FILE_PATH));
+        ChromeTabUtils.waitForTabPageLoaded(tabs[1], mTestServer.getURL(FILE_PATH));
 
         // Wait for the new tab animations on phones to finish.
         if (!DeviceFormFactor.isTablet(getActivity())) {
             final ChromeActivity activity = getActivity();
-            CriteriaHelper.pollForUIThreadCriteria(new Criteria("Did not finish animation") {
+            CriteriaHelper.pollUiThread(new Criteria("Did not finish animation") {
                 @Override
                 public boolean isSatisfied() {
                     Layout layout = activity.getCompositorViewHolder()
@@ -309,7 +315,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
         assertTrue(ChildProcessLauncher.crashProcessForTesting(
                 tabs[1].getContentViewCore().getCurrentRenderProcessId()));
 
-        CriteriaHelper.pollForCriteria(
+        CriteriaHelper.pollInstrumentationThread(
                 new Criteria("Renderer crash wasn't noticed by the browser.") {
                     @Override
                     public boolean isSatisfied() {
@@ -326,7 +332,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
         });
 
         // Wait until the process is spawned and its visibility is determined.
-        CriteriaHelper.pollForCriteria(
+        CriteriaHelper.pollInstrumentationThread(
                 new Criteria("Process for the crashed tab was not respawned.") {
                     @Override
                     public boolean isSatisfied() {
@@ -364,18 +370,18 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                     public Tab call() throws Exception {
                         TabCreator tabCreator = getActivity().getCurrentTabCreator();
                         return tabCreator.createNewTab(
-                                new LoadUrlParams(TestHttpServerClient.getUrl(FILE_PATH)),
-                                        TabLaunchType.FROM_KEYBOARD, null);
+                                new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
+                                        TabLaunchType.FROM_CHROME_UI, null);
                     }
                 });
-        ChromeTabUtils.waitForTabPageLoaded(tab, TestHttpServerClient.getUrl(FILE_PATH));
+        ChromeTabUtils.waitForTabPageLoaded(tab, mTestServer.getURL(FILE_PATH));
         getInstrumentation().waitForIdleSync();
 
         // Kill the renderer and wait for the crash to be noted by the browser process.
         assertTrue(ChildProcessLauncher.crashProcessForTesting(
                 tab.getContentViewCore().getCurrentRenderProcessId()));
 
-        CriteriaHelper.pollForCriteria(
+        CriteriaHelper.pollInstrumentationThread(
                 new Criteria("Renderer crash wasn't noticed by the browser.") {
                     @Override
                     public boolean isSatisfied() {
@@ -392,7 +398,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
         });
 
         // Wait until the process is spawned and its visibility is determined.
-        CriteriaHelper.pollForCriteria(
+        CriteriaHelper.pollInstrumentationThread(
                 new Criteria("Process for the crashed tab was not respawned.") {
                     @Override
                     public boolean isSatisfied() {
@@ -438,10 +444,10 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                     public Tab call() {
                         TabCreator tabCreator = getActivity().getCurrentTabCreator();
                         return tabCreator.createNewTab(
-                                new LoadUrlParams(TestHttpServerClient.getUrl(FILE_PATH)),
-                                        TabLaunchType.FROM_KEYBOARD, null);
+                                new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
+                                        TabLaunchType.FROM_CHROME_UI, null);
                     }});
-        ChromeTabUtils.waitForTabPageLoaded(fgTab, TestHttpServerClient.getUrl(FILE_PATH));
+        ChromeTabUtils.waitForTabPageLoaded(fgTab, mTestServer.getURL(FILE_PATH));
         int initialNavigationPid = getRenderProcessId(fgTab);
         // Ensure the following calls happened:
         //  - FG - setInForeground(true) - when the tab is created in the foreground
@@ -470,7 +476,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                     public Tab call() {
                         TabCreator tabCreator = getActivity().getCurrentTabCreator();
                         Tab tab = tabCreator.createNewTab(
-                                new LoadUrlParams(TestHttpServerClient.getUrl(FILE_PATH)),
+                                new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
                                         TabLaunchType.FROM_LONGPRESS_BACKGROUND, null);
                         // On Svelte devices the background tab would not be loaded automatically,
                         // so trigger the load manually.
@@ -478,12 +484,36 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
                         tab.hide();
                         return tab;
                     }});
-        ChromeTabUtils.waitForTabPageLoaded(bgTab, TestHttpServerClient.getUrl(FILE_PATH));
+        ChromeTabUtils.waitForTabPageLoaded(bgTab, mTestServer.getURL(FILE_PATH));
         int bgNavigationPid = getRenderProcessId(bgTab);
         // Ensure the following calls happened:
         //  - BG - setInForeground(false) - when tab is created in the background
         //  - DETERMINED - visibilityDetermined() - after the navigation is committed
         assertEquals("BG;DETERMINED;", mBindingManager.getVisibilityCalls(bgNavigationPid));
+    }
+
+    /**
+     * When a user navigates to a prererendered URL, the tab swaps in the prerender's render
+     * process and discards its old render process. Test that visibilityDetermined() is called for
+     * the swapped in render process.
+     */
+    @LargeTest
+    @Restriction({Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @Feature({"ProcessManagement"})
+    public void testVisibilityDeterminedNavigateToPrerenderedPage() throws InterruptedException {
+        loadUrl(mTestServer.getURL(FILE_PATH));
+        Tab tab = getActivity().getActivityTab();
+        int pid1 = getRenderProcessId(tab);
+
+        String prerenderUrl = mTestServer.getURL(FILE_PATH2);
+        PrerenderTestHelper.prerenderUrl(prerenderUrl, tab);
+        assertEquals(TabLoadStatus.FULL_PRERENDERED_PAGE_LOAD, loadUrl(prerenderUrl));
+
+        int pid2 = getRenderProcessId(tab);
+        MoreAsserts.assertNotEqual(pid1, pid2);
+
+        assertTrue(mBindingManager.getVisibilityCalls(pid1).contains("DETERMINED;"));
+        assertTrue(mBindingManager.getVisibilityCalls(pid2).contains("DETERMINED;"));
     }
 
     /**
@@ -501,10 +531,10 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
             public void run() {
                 // Foreground tab.
                 tabs[0] = tabCreator.createNewTab(
-                        new LoadUrlParams("about:blank"), TabLaunchType.FROM_KEYBOARD, null);
+                        new LoadUrlParams("about:blank"), TabLaunchType.FROM_CHROME_UI, null);
                 // Background tab.
                 tabs[1] = tabCreator.createNewTab(
-                        new LoadUrlParams("about:blank"), TabLaunchType.FROM_KEYBOARD, null);
+                        new LoadUrlParams("about:blank"), TabLaunchType.FROM_CHROME_UI, null);
             }
         });
         ChromeTabUtils.waitForTabPageLoaded(tabs[0], "about:blank");
@@ -517,7 +547,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
             public void run() {
                 // Foreground tab.
                 tabs[2] = tabCreator.createNewTab(
-                        new LoadUrlParams("about:blank"), TabLaunchType.FROM_KEYBOARD, null);
+                        new LoadUrlParams("about:blank"), TabLaunchType.FROM_CHROME_UI, null);
             }
         });
         ChromeTabUtils.waitForTabPageLoaded(tabs[2], "about:blank");
@@ -525,16 +555,18 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
         mBindingManager.assertIsReleaseAllModerateBindingsCalled();
     }
 
+    // Test crashes on tablets. See crbug.com/594407
     @LargeTest
     @Feature({"ProcessManagement"})
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_PHONE)
     public void testRestoreSharedRenderer() throws Exception {
-        loadUrl(TestHttpServerClient.getUrl(SHARED_RENDERER_PAGE_PATH));
+        loadUrl(mTestServer.getURL(SHARED_RENDERER_PAGE_PATH));
 
         final Tab[] tabs = new Tab[2];
         tabs[0] = getActivity().getActivityTab();
         singleClickView(tabs[0].getView());
 
-        CriteriaHelper.pollForCriteria(new Criteria("Child tab isn't opened.") {
+        CriteriaHelper.pollInstrumentationThread(new Criteria("Child tab isn't opened.") {
             @Override
             public boolean isSatisfied() {
                 return getActivity().getCurrentTabModel().getCount() == 2
@@ -562,7 +594,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
         assertTrue(ChildProcessLauncher.crashProcessForTesting(
                 tabs[1].getContentViewCore().getCurrentRenderProcessId()));
 
-        CriteriaHelper.pollForCriteria(
+        CriteriaHelper.pollInstrumentationThread(
                 new Criteria("Renderer crash wasn't noticed by the browser.") {
                     @Override
                     public boolean isSatisfied() {
@@ -578,7 +610,7 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
         });
 
         // Wait until the process is spawned and its visibility is determined.
-        CriteriaHelper.pollForCriteria(
+        CriteriaHelper.pollInstrumentationThread(
                 new Criteria("Process for the crashed tab was not respawned.") {
                     @Override
                     public boolean isSatisfied() {
@@ -610,11 +642,19 @@ public class BindingManagerIntegrationTest extends ChromeActivityTestCaseBase<Ch
 
     @Override
     protected void setUp() throws Exception {
-        super.setUp();
-
         // Hook in the test binding manager.
         mBindingManager = new MockBindingManager();
         ChildProcessLauncher.setBindingManagerForTesting(mBindingManager);
+
+        super.setUp();
+
+        mTestServer = EmbeddedTestServer.createAndStartServer(getInstrumentation().getContext());
+    }
+
+    @Override
+    protected void tearDown() throws Exception {
+        mTestServer.stopAndDestroyServer();
+        super.tearDown();
     }
 
     /**

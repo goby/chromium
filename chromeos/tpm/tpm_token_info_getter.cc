@@ -4,14 +4,17 @@
 
 #include "chromeos/tpm/tpm_token_info_getter.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/location.h"
+#include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/dbus/cryptohome_client.h"
 
 namespace {
 
-const int64 kInitialRequestDelayMs = 100;
-const int64 kMaxRequestDelayMs = 300000;  // 5 minutes
+const int64_t kInitialRequestDelayMs = 100;
+const int64_t kMaxRequestDelayMs = 300000;  // 5 minutes
 
 // Calculates the delay before running next attempt to initiatialize the TPM
 // token, if |last_delay| was the last or initial delay.
@@ -40,23 +43,21 @@ TPMTokenInfo::TPMTokenInfo()
 TPMTokenInfo::~TPMTokenInfo() {}
 
 // static
-scoped_ptr<TPMTokenInfoGetter> TPMTokenInfoGetter::CreateForUserToken(
-    const std::string& user_id,
+std::unique_ptr<TPMTokenInfoGetter> TPMTokenInfoGetter::CreateForUserToken(
+    const AccountId& account_id,
     CryptohomeClient* cryptohome_client,
     const scoped_refptr<base::TaskRunner>& delayed_task_runner) {
-  CHECK(!user_id.empty());
-  return scoped_ptr<TPMTokenInfoGetter>(
-      new TPMTokenInfoGetter(
-          TYPE_USER, user_id, cryptohome_client, delayed_task_runner));
+  CHECK(account_id.is_valid());
+  return std::unique_ptr<TPMTokenInfoGetter>(new TPMTokenInfoGetter(
+      TYPE_USER, account_id, cryptohome_client, delayed_task_runner));
 }
 
 // static
-scoped_ptr<TPMTokenInfoGetter> TPMTokenInfoGetter::CreateForSystemToken(
+std::unique_ptr<TPMTokenInfoGetter> TPMTokenInfoGetter::CreateForSystemToken(
     CryptohomeClient* cryptohome_client,
     const scoped_refptr<base::TaskRunner>& delayed_task_runner) {
-  return scoped_ptr<TPMTokenInfoGetter>(
-      new TPMTokenInfoGetter(
-          TYPE_SYSTEM, std::string(), cryptohome_client, delayed_task_runner));
+  return std::unique_ptr<TPMTokenInfoGetter>(new TPMTokenInfoGetter(
+      TYPE_SYSTEM, EmptyAccountId(), cryptohome_client, delayed_task_runner));
 }
 
 TPMTokenInfoGetter::~TPMTokenInfoGetter() {}
@@ -73,18 +74,17 @@ void TPMTokenInfoGetter::Start(const TPMTokenInfoCallback& callback) {
 
 TPMTokenInfoGetter::TPMTokenInfoGetter(
     TPMTokenInfoGetter::Type type,
-    const std::string& user_id,
+    const AccountId& account_id,
     CryptohomeClient* cryptohome_client,
     const scoped_refptr<base::TaskRunner>& delayed_task_runner)
     : delayed_task_runner_(delayed_task_runner),
       type_(type),
       state_(TPMTokenInfoGetter::STATE_INITIAL),
-      user_id_(user_id),
+      account_id_(account_id),
       tpm_request_delay_(
           base::TimeDelta::FromMilliseconds(kInitialRequestDelayMs)),
       cryptohome_client_(cryptohome_client),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
 void TPMTokenInfoGetter::Continue() {
   switch (state_) {
@@ -103,9 +103,9 @@ void TPMTokenInfoGetter::Continue() {
                        weak_factory_.GetWeakPtr()));
       } else {  // if (type_ == TYPE_USER)
         cryptohome_client_->Pkcs11GetTpmTokenInfoForUser(
-                user_id_,
-                base::Bind(&TPMTokenInfoGetter::OnPkcs11GetTpmTokenInfo,
-                           weak_factory_.GetWeakPtr()));
+            cryptohome::Identification(account_id_),
+            base::Bind(&TPMTokenInfoGetter::OnPkcs11GetTpmTokenInfo,
+                       weak_factory_.GetWeakPtr()));
       }
       break;
     case STATE_DONE:

@@ -18,7 +18,7 @@ SeekableBuffer::SeekableBuffer(int backward_capacity, int forward_capacity)
       backward_bytes_(0),
       forward_capacity_(forward_capacity),
       forward_bytes_(0),
-      current_time_(kNoTimestamp()) {
+      current_time_(kNoTimestamp) {
   current_buffer_ = buffers_.begin();
 }
 
@@ -31,20 +31,20 @@ void SeekableBuffer::Clear() {
   current_buffer_offset_ = 0;
   backward_bytes_ = 0;
   forward_bytes_ = 0;
-  current_time_ = kNoTimestamp();
+  current_time_ = kNoTimestamp;
 }
 
-int SeekableBuffer::Read(uint8* data, int size) {
+int SeekableBuffer::Read(uint8_t* data, int size) {
   DCHECK(data);
   return InternalRead(data, size, true, 0);
 }
 
-int SeekableBuffer::Peek(uint8* data, int size, int forward_offset) {
+int SeekableBuffer::Peek(uint8_t* data, int size, int forward_offset) {
   DCHECK(data);
   return InternalRead(data, size, false, forward_offset);
 }
 
-bool SeekableBuffer::GetCurrentChunk(const uint8** data, int* size) const {
+bool SeekableBuffer::GetCurrentChunk(const uint8_t** data, int* size) const {
   BufferQueue::iterator current_buffer = current_buffer_;
   int current_buffer_offset = current_buffer_offset_;
   // Advance position if we are in the end of the current buffer.
@@ -61,7 +61,7 @@ bool SeekableBuffer::GetCurrentChunk(const uint8** data, int* size) const {
 }
 
 bool SeekableBuffer::Append(const scoped_refptr<DataBuffer>& buffer_in) {
-  if (buffers_.empty() && buffer_in->timestamp() != kNoTimestamp()) {
+  if (buffers_.empty() && buffer_in->timestamp() != kNoTimestamp) {
     current_time_ = buffer_in->timestamp();
   }
 
@@ -87,7 +87,7 @@ bool SeekableBuffer::Append(const scoped_refptr<DataBuffer>& buffer_in) {
   return true;
 }
 
-bool SeekableBuffer::Append(const uint8* data, int size) {
+bool SeekableBuffer::Append(const uint8_t* data, int size) {
   if (size > 0) {
     scoped_refptr<DataBuffer> data_buffer = DataBuffer::CopyFrom(data, size);
     return Append(data_buffer);
@@ -97,7 +97,7 @@ bool SeekableBuffer::Append(const uint8* data, int size) {
   }
 }
 
-bool SeekableBuffer::Seek(int32 offset) {
+bool SeekableBuffer::Seek(int32_t offset) {
   if (offset > 0)
     return SeekForward(offset);
   else if (offset < 0)
@@ -180,7 +180,8 @@ void SeekableBuffer::EvictBackwardBuffers() {
   }
 }
 
-int SeekableBuffer::InternalRead(uint8* data, int size,
+int SeekableBuffer::InternalRead(uint8_t* data,
+                                 int size,
                                  bool advance_position,
                                  int forward_offset) {
   // Counts how many bytes are actually read from the buffer queue.
@@ -265,10 +266,9 @@ int SeekableBuffer::InternalRead(uint8* data, int size,
 void SeekableBuffer::UpdateCurrentTime(BufferQueue::iterator buffer,
                                        int offset) {
   // Garbage values are unavoidable, so this check will remain.
-  if (buffer != buffers_.end() &&
-      (*buffer)->timestamp() != kNoTimestamp()) {
-    int64 time_offset = ((*buffer)->duration().InMicroseconds() * offset) /
-                        (*buffer)->data_size();
+  if (buffer != buffers_.end() && (*buffer)->timestamp() != kNoTimestamp) {
+    int64_t time_offset = ((*buffer)->duration().InMicroseconds() * offset) /
+                          (*buffer)->data_size();
 
     current_time_ = (*buffer)->timestamp() +
                     base::TimeDelta::FromMicroseconds(time_offset);

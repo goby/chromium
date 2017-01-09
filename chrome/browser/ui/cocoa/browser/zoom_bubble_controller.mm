@@ -4,20 +4,21 @@
 
 #include "chrome/browser/ui/cocoa/browser/zoom_bubble_controller.h"
 
+#include "base/i18n/number_formatting.h"
 #include "base/mac/foundation_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/ui/cocoa/info_bubble_view.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/ui/zoom/page_zoom.h"
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/zoom/page_zoom.h"
+#include "components/zoom/zoom_controller.h"
 #include "content/public/common/page_zoom.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "ui/base/cocoa/hover_button.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/native_theme/native_theme.h"
-#include "ui/native_theme/native_theme_mac.h"
 
 @interface ZoomBubbleController (Private)
 - (void)performLayout;
@@ -91,11 +92,11 @@ void SetZoomBubbleAutoCloseDelayForTesting(NSTimeInterval time_interval) {
     [window setInfoBubbleCanBecomeKeyWindow:NO];
     delegate_ = delegate;
 
-    ui::NativeTheme* nativeTheme = ui::NativeThemeMac::instance();
-    [[self bubble] setAlignment:info_bubble::kAlignRightEdgeToAnchorEdge];
+    ui::NativeTheme* nativeTheme = ui::NativeTheme::GetInstanceForNativeUi();
+    [[self bubble] setAlignment:info_bubble::kAlignTrailingEdgeToAnchorEdge];
     [[self bubble] setArrowLocation:info_bubble::kNoArrow];
     [[self bubble] setBackgroundColor:
-        gfx::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
+        skia::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
             ui::NativeTheme::kColorId_DialogBackground))];
 
     [self performLayout];
@@ -141,14 +142,13 @@ void SetZoomBubbleAutoCloseDelayForTesting(NSTimeInterval time_interval) {
   if (!contents)
     return;
 
-  ui_zoom::ZoomController* zoomController =
-      ui_zoom::ZoomController::FromWebContents(contents);
+  zoom::ZoomController* zoomController =
+      zoom::ZoomController::FromWebContents(contents);
   if (!zoomController)
     return;
 
   int percent = zoomController->GetZoomPercent();
-  NSString* string =
-      l10n_util::GetNSStringF(IDS_ZOOM_PERCENT, base::IntToString16(percent));
+  NSString* string = base::SysUTF16ToNSString(base::FormatPercent(percent));
   [zoomPercent_ setAttributedStringValue:
       [self attributedStringWithString:string
                               fontSize:kTextFontSize]];
@@ -231,9 +231,9 @@ void SetZoomBubbleAutoCloseDelayForTesting(NSTimeInterval time_interval) {
   base::scoped_nsobject<NSBox> separatorView(
       [[NSBox alloc] initWithFrame:rect]);
   [separatorView setBoxType:NSBoxCustom];
-  ui::NativeTheme* nativeTheme = ui::NativeThemeMac::instance();
+  ui::NativeTheme* nativeTheme = ui::NativeTheme::GetInstanceForNativeUi();
   [separatorView setBorderColor:
-      gfx::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
+      skia::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
           ui::NativeTheme::kColorId_MenuSeparatorColor))];
   [[[self window] contentView] addSubview:separatorView];
 
@@ -324,7 +324,7 @@ void SetZoomBubbleAutoCloseDelayForTesting(NSTimeInterval time_interval) {
   // there haven't been associated crashes in the wild, so it seems
   // fine in practice.  It might make sense to close the bubble in
   // that case, though.
-  ui_zoom::PageZoom::Zoom(webContents, alterPageZoom);
+  zoom::PageZoom::Zoom(webContents, alterPageZoom);
 }
 
 @end
@@ -335,8 +335,8 @@ void SetZoomBubbleAutoCloseDelayForTesting(NSTimeInterval time_interval) {
   NSRect bounds = [self bounds];
   NSAttributedString* title = [self attributedTitle];
   if ([self hoverState] != kHoverStateNone) {
-    ui::NativeTheme* nativeTheme = ui::NativeThemeMac::instance();
-    [gfx::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
+    ui::NativeTheme* nativeTheme = ui::NativeTheme::GetInstanceForNativeUi();
+    [skia::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
         ui::NativeTheme::kColorId_FocusedMenuItemBackgroundColor)) set];
     NSRectFillUsingOperation(bounds, NSCompositeSourceOver);
 
@@ -344,7 +344,7 @@ void SetZoomBubbleAutoCloseDelayForTesting(NSTimeInterval time_interval) {
     base::scoped_nsobject<NSMutableAttributedString> selectedTitle(
         [[NSMutableAttributedString alloc] initWithAttributedString:title]);
     NSColor* selectedTitleColor =
-        gfx::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
+        skia::SkColorToCalibratedNSColor(nativeTheme->GetSystemColor(
             ui::NativeTheme::kColorId_SelectedMenuItemForegroundColor));
     [selectedTitle addAttribute:NSForegroundColorAttributeName
                           value:selectedTitleColor

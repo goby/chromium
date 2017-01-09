@@ -4,6 +4,7 @@
 
 #include "net/dns/dns_hosts.h"
 
+#include "net/base/ip_address.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -21,9 +22,9 @@ void PopulateExpectedHosts(const ExpectedHostsEntry* entries,
                            DnsHosts* expected_hosts_out) {
   for (size_t i = 0; i < num_entries; ++i) {
     DnsHostsKey key(entries[i].host, entries[i].family);
-    IPAddressNumber& ip_ref = (*expected_hosts_out)[key];
+    IPAddress& ip_ref = (*expected_hosts_out)[key];
     ASSERT_TRUE(ip_ref.empty());
-    ASSERT_TRUE(ParseIPLiteralToNumber(entries[i].ip, &ip_ref));
+    ASSERT_TRUE(ip_ref.AssignFromIPLiteral(entries[i].ip));
     ASSERT_EQ(ip_ref.size(),
         (entries[i].family == ADDRESS_FAMILY_IPV4) ? 4u : 16u);
   }
@@ -47,22 +48,26 @@ TEST(DnsHostsTest, ParseHosts) {
       "256.0.0.0 cache3 # bogus IP should not clear parsed IP cache\n"
       "127.0.0.1 cache4 # should still be reused\n"
       "127.0.0.2 cache5\n"
+      "127.0.0.3 .foo # entries with leading dot are ignored\n"
+      "127.0.0.3 . # just a dot is ignored\n"
+      "127.0.0.4 bar. # trailing dot is allowed, for now\n"
       "gibberish";
 
   const ExpectedHostsEntry kEntries[] = {
-    { "localhost", ADDRESS_FAMILY_IPV4, "127.0.0.1" },
-    { "localhost.localdomain", ADDRESS_FAMILY_IPV4, "127.0.0.1" },
-    { "company", ADDRESS_FAMILY_IPV4, "1.0.0.1" },
-    { "localhost", ADDRESS_FAMILY_IPV6, "::1" },
-    { "ip6-localhost", ADDRESS_FAMILY_IPV6, "::1" },
-    { "ip6-loopback", ADDRESS_FAMILY_IPV6, "::1" },
-    { "ip6-localnet", ADDRESS_FAMILY_IPV6, "fe00::0" },
-    { "company", ADDRESS_FAMILY_IPV6, "2048::1" },
-    { "example", ADDRESS_FAMILY_IPV6, "2048::2" },
-    { "cache1", ADDRESS_FAMILY_IPV4, "127.0.0.1" },
-    { "cache2", ADDRESS_FAMILY_IPV4, "127.0.0.1" },
-    { "cache4", ADDRESS_FAMILY_IPV4, "127.0.0.1" },
-    { "cache5", ADDRESS_FAMILY_IPV4, "127.0.0.2" },
+      {"localhost", ADDRESS_FAMILY_IPV4, "127.0.0.1"},
+      {"localhost.localdomain", ADDRESS_FAMILY_IPV4, "127.0.0.1"},
+      {"company", ADDRESS_FAMILY_IPV4, "1.0.0.1"},
+      {"localhost", ADDRESS_FAMILY_IPV6, "::1"},
+      {"ip6-localhost", ADDRESS_FAMILY_IPV6, "::1"},
+      {"ip6-loopback", ADDRESS_FAMILY_IPV6, "::1"},
+      {"ip6-localnet", ADDRESS_FAMILY_IPV6, "fe00::0"},
+      {"company", ADDRESS_FAMILY_IPV6, "2048::1"},
+      {"example", ADDRESS_FAMILY_IPV6, "2048::2"},
+      {"cache1", ADDRESS_FAMILY_IPV4, "127.0.0.1"},
+      {"cache2", ADDRESS_FAMILY_IPV4, "127.0.0.1"},
+      {"cache4", ADDRESS_FAMILY_IPV4, "127.0.0.1"},
+      {"cache5", ADDRESS_FAMILY_IPV4, "127.0.0.2"},
+      {"bar.", ADDRESS_FAMILY_IPV4, "127.0.0.4"},
   };
 
   DnsHosts expected_hosts, actual_hosts;
@@ -178,4 +183,3 @@ TEST(DnsHostsTest, HostsParser_EndsWithNewlineAndToken) {
 }  // namespace
 
 }  // namespace net
-

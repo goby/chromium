@@ -14,6 +14,7 @@
 #include "base/win/registry.h"
 #include "base/win/win_util.h"
 #include "chrome/installer/util/browser_distribution.h"
+#include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/test_app_registration_data.h"
 #include "chrome/installer/util/util_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -179,6 +180,9 @@ class DefaultBrowserBeaconTest
     registry_override_manager_.OverrideRegistry(HKEY_CURRENT_USER);
     registry_override_manager_.OverrideRegistry(HKEY_LOCAL_MACHINE);
 
+    // Ensure that IsPerUserInstall returns the proper value.
+    ASSERT_EQ(!system_install_, InstallUtil::IsPerUserInstall(chrome_exe_));
+
     distribution_ = BrowserDistribution::GetDistribution();
   }
 
@@ -223,9 +227,9 @@ class DefaultBrowserBeaconTest
 
 // Tests that the default browser beacons work as expected.
 TEST_P(DefaultBrowserBeaconTest, All) {
-  scoped_ptr<Beacon> last_was_default(MakeLastWasDefaultBeacon(
+  std::unique_ptr<Beacon> last_was_default(MakeLastWasDefaultBeacon(
       system_install_, distribution_->GetAppRegistrationData()));
-  scoped_ptr<Beacon> first_not_default(MakeFirstNotDefaultBeacon(
+  std::unique_ptr<Beacon> first_not_default(MakeFirstNotDefaultBeacon(
       system_install_, distribution_->GetAppRegistrationData()));
 
   ASSERT_TRUE(last_was_default->Get().is_null());

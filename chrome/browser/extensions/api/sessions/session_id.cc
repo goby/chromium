@@ -4,6 +4,9 @@
 
 #include "chrome/browser/extensions/api/sessions/session_id.h"
 
+#include <stddef.h>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 
 namespace extensions {
@@ -11,7 +14,7 @@ namespace extensions {
 const char kIdSeparator = '.';
 
 // static
-scoped_ptr<SessionId> SessionId::Parse(const std::string& session_id) {
+std::unique_ptr<SessionId> SessionId::Parse(const std::string& session_id) {
   std::string session_tag;
 
   // Populate session_tag if the |session_id| represents a foreign SessionId.
@@ -26,9 +29,9 @@ scoped_ptr<SessionId> SessionId::Parse(const std::string& session_id) {
   if (!base::StringToInt(
       session_tag.empty() ? session_id : session_id.substr(separator + 1),
       &id)) {
-    return scoped_ptr<SessionId>();
+    return std::unique_ptr<SessionId>();
   }
-  return make_scoped_ptr(new SessionId(session_tag, id));
+  return base::WrapUnique(new SessionId(session_tag, id));
 }
 
 SessionId::SessionId(const std::string& session_tag, int id)

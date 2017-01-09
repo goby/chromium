@@ -7,15 +7,17 @@
 #include "base/debug/crash_logging.h"
 #include "base/environment.h"
 #include "base/file_version_info.h"
+#include "base/files/file_path.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_version.h"
 #include "chrome/common/env_vars.h"
+#include "chrome/install_static/install_util.h"
 #include "chrome/installer/setup/installer_crash_reporting.h"
+#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_settings.h"
-#include "components/crash/core/common/crash_keys.h"
 
 InstallerCrashReporterClient::InstallerCrashReporterClient(
     bool is_per_user_install)
@@ -24,25 +26,18 @@ InstallerCrashReporterClient::InstallerCrashReporterClient(
 
 InstallerCrashReporterClient::~InstallerCrashReporterClient() = default;
 
-void InstallerCrashReporterClient::SetCrashReporterClientIdFromGUID(
-    const std::string& client_guid) {
-  crash_keys::SetMetricsClientIdFromGUID(client_guid);
-}
-
 bool InstallerCrashReporterClient::ShouldCreatePipeName(
     const base::string16& process_type) {
   return true;
 }
 
 bool InstallerCrashReporterClient::GetAlternativeCrashDumpLocation(
-    base::FilePath* crash_dir) {
-  // TODO(grt): Is there a reason to support the BREAKPAD_DUMP_LOCATION
-  // environment variable?
+    base::string16* crash_dir) {
   return false;
 }
 
 void InstallerCrashReporterClient::GetProductNameAndVersion(
-    const base::FilePath& exe_path,
+    const base::string16& exe_path,
     base::string16* product_name,
     base::string16* version,
     base::string16* special_build,
@@ -51,8 +46,8 @@ void InstallerCrashReporterClient::GetProductNameAndVersion(
   // MUST match server-side configuration.
   *product_name = base::ASCIIToUTF16(PRODUCT_SHORTNAME_STRING);
 
-  scoped_ptr<FileVersionInfo> version_info(
-      FileVersionInfo::CreateFileVersionInfo(exe_path));
+  std::unique_ptr<FileVersionInfo> version_info(
+      FileVersionInfo::CreateFileVersionInfo(base::FilePath(exe_path)));
   if (version_info) {
     *version = version_info->product_version();
     *special_build = version_info->special_build();
@@ -84,7 +79,7 @@ bool InstallerCrashReporterClient::GetDeferredUploadsSupported(
 }
 
 bool InstallerCrashReporterClient::GetIsPerUserInstall(
-    const base::FilePath& exe_path) {
+    const base::string16& exe_path) {
   return is_per_user_install_;
 }
 
@@ -103,25 +98,13 @@ int InstallerCrashReporterClient::GetResultCodeRespawnFailed() {
   return 0;
 }
 
-void InstallerCrashReporterClient::InitBrowserCrashDumpsRegKey() {
-  // The installer does not track dump attempts and results in the registry.
-}
-
-void InstallerCrashReporterClient::RecordCrashDumpAttempt(bool is_real_crash) {
-  // The installer does not track dump attempts and results in the registry.
-}
-
-void InstallerCrashReporterClient::RecordCrashDumpAttemptResult(
-    bool is_real_crash,
-    bool succeeded) {
-  // The installer does not track dump attempts and results in the registry.
-}
-
 bool InstallerCrashReporterClient::GetCrashDumpLocation(
-    base::FilePath* crash_dir) {
-  // TODO(grt): Is there a reason to support the BREAKPAD_DUMP_LOCATION
-  // environment variable?
-  return PathService::Get(chrome::DIR_CRASH_DUMPS, crash_dir);
+    base::string16* crash_dir) {
+  base::FilePath crash_directory_path;
+  bool ret = PathService::Get(chrome::DIR_CRASH_DUMPS, &crash_directory_path);
+  if (ret)
+    *crash_dir = crash_directory_path.value();
+  return ret;
 }
 
 size_t InstallerCrashReporterClient::RegisterCrashKeys() {
@@ -129,7 +112,7 @@ size_t InstallerCrashReporterClient::RegisterCrashKeys() {
 }
 
 bool InstallerCrashReporterClient::IsRunningUnattended() {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   return env->HasVar(env_vars::kHeadless);
 }
 
@@ -142,8 +125,22 @@ bool InstallerCrashReporterClient::GetCollectStatsConsent() {
 #endif
 }
 
-bool InstallerCrashReporterClient::ReportingIsEnforcedByPolicy(
-    bool* breakpad_enabled) {
+bool InstallerCrashReporterClient::GetCollectStatsInSample() {
+  // TODO(grt): remove duplication of code.
+  BrowserDistribution* dist = BrowserDistribution::GetDistribution();
+  base::win::RegKey key(HKEY_CURRENT_USER, dist->GetRegistryPath().c_str(),
+                        KEY_QUERY_VALUE | KEY_WOW64_32KEY);
+  if (!key.Valid())
+    return true;
+  DWORD out_value = 0;
+  if (key.ReadValueDW(install_static::kRegValueChromeStatsSample, &out_value) !=
+      ERROR_SUCCESS) {
+    return true;
+  }
+  return out_value == 1;
+}
+
+bool InstallerCrashReporterClient::ReportingIsEnforcedByPolicy(bool* enabled) {
   // From the generated policy/policy/policy_constants.cc:
 #if defined(GOOGLE_CHROME_BUILD)
   static const wchar_t kRegistryChromePolicyKey[] =
@@ -158,7 +155,7 @@ bool InstallerCrashReporterClient::ReportingIsEnforcedByPolicy(
   // reporter. Since the configuration management infrastructure is not
   // initialized in the installer, the corresponding registry keys are read
   // directly. The return status indicates whether policy data was successfully
-  // read. If it is true, |breakpad_enabled| contains the value set by policy.
+  // read. If it is true, |enabled| contains the value set by policy.
   DWORD value = 0;
   base::win::RegKey policy_key;
   static const HKEY kHives[] = { HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER };
@@ -167,7 +164,7 @@ bool InstallerCrashReporterClient::ReportingIsEnforcedByPolicy(
                         KEY_READ) == ERROR_SUCCESS &&
         policy_key.ReadValueDW(kMetricsReportingEnabled,
                                &value) == ERROR_SUCCESS) {
-      *breakpad_enabled = value != 0;
+      *enabled = value != 0;
       return true;
     }
   }

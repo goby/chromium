@@ -5,9 +5,9 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_AUTOCOMPLETE_CONTROLLER_H_
 #define COMPONENTS_OMNIBOX_BROWSER_AUTOCOMPLETE_CONTROLLER_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
@@ -53,9 +53,10 @@ class AutocompleteController : public AutocompleteProviderListener {
   // that will (potentially, depending on platform, flags, etc.) be
   // instantiated. |template_url_service| is used to create URLs from the
   // autocomplete results.
-  AutocompleteController(scoped_ptr<AutocompleteProviderClient> provider_client,
-                         AutocompleteControllerDelegate* delegate,
-                         int provider_types);
+  AutocompleteController(
+      std::unique_ptr<AutocompleteProviderClient> provider_client,
+      AutocompleteControllerDelegate* delegate,
+      int provider_types);
   ~AutocompleteController() override;
 
   // Starts an autocomplete query, which continues until all providers are
@@ -192,7 +193,7 @@ class AutocompleteController : public AutocompleteProviderListener {
   AutocompleteControllerDelegate* delegate_;
 
   // The client passed to the providers.
-  scoped_ptr<AutocompleteProviderClient> provider_client_;
+  std::unique_ptr<AutocompleteProviderClient> provider_client_;
 
   // A list of all providers.
   Providers providers_;

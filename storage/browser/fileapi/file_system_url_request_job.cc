@@ -4,21 +4,25 @@
 
 #include "storage/browser/fileapi/file_system_url_request_job.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util_proxy.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "net/base/file_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/mime_util.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_util.h"
@@ -68,10 +72,9 @@ FileSystemURLRequestJob::FileSystemURLRequestJob(
 FileSystemURLRequestJob::~FileSystemURLRequestJob() {}
 
 void FileSystemURLRequestJob::Start() {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&FileSystemURLRequestJob::StartAsync,
-                 weak_factory_.GetWeakPtr()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&FileSystemURLRequestJob::StartAsync,
+                            weak_factory_.GetWeakPtr()));
 }
 
 void FileSystemURLRequestJob::Kill() {

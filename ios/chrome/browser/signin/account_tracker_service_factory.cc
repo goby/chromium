@@ -4,11 +4,13 @@
 
 #include "ios/chrome/browser/signin/account_tracker_service_factory.h"
 
+#include <utility>
+
 #include "base/memory/singleton.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/signin/core/browser/account_tracker_service.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/signin/signin_client_factory.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 namespace ios {
 
@@ -38,14 +40,15 @@ void AccountTrackerServiceFactory::RegisterBrowserStatePrefs(
   AccountTrackerService::RegisterPrefs(registry);
 }
 
-scoped_ptr<KeyedService> AccountTrackerServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+AccountTrackerServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* chrome_browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  scoped_ptr<AccountTrackerService> service(new AccountTrackerService());
+  std::unique_ptr<AccountTrackerService> service(new AccountTrackerService());
   service->Initialize(
       SigninClientFactory::GetForBrowserState(chrome_browser_state));
-  return service.Pass();
+  return std::move(service);
 }
 
 }  // namespace ios

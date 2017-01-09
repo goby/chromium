@@ -4,32 +4,24 @@
 
 #import "chrome/browser/ui/cocoa/first_run_dialog.h"
 
-#include "base/bind.h"
 #include "base/mac/bundle_locations.h"
 #import "base/mac/scoped_nsobject.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/first_run/first_run_dialog.h"
+#include "chrome/browser/metrics/metrics_reporting_state.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/shell_integration.h"
-#include "chrome/common/channel_info.h"
 #include "chrome/common/url_constants.h"
-#include "components/metrics/metrics_pref_names.h"
 #include "components/search_engines/template_url_service.h"
-#include "components/version_info/version_info.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
-
-#if defined(GOOGLE_CHROME_BUILD)
-#include "base/prefs/pref_service.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/common/pref_names.h"
-#include "chrome/installer/util/google_update_settings.h"
-#endif
 
 @interface FirstRunDialogController (PrivateMethods)
 // Show the dialog.
@@ -73,10 +65,7 @@ bool ShowFirstRun(Profile* profile) {
   // in enterprise scenarios. If that is the case, skip the dialog entirely, as
   // it's not worth bothering the user for only the default browser question
   // (which is likely to be forced in enterprise deployments anyway).
-  const PrefService::Preference* metrics_reporting_pref =
-      g_browser_process->local_state()->FindPreference(
-          metrics::prefs::kMetricsReportingEnabled);
-  if (!metrics_reporting_pref || !metrics_reporting_pref->IsManaged()) {
+  if (!IsMetricsReportingPolicyManaged()) {
     base::scoped_nsobject<FirstRunDialogController> dialog(
         [[FirstRunDialogController alloc] init]);
 
@@ -85,13 +74,13 @@ bool ShowFirstRun(Profile* profile) {
 
     // If the dialog asked the user to opt-in for stats and crash reporting,
     // record the decision and enable the crash reporter if appropriate.
-    bool stats_enabled = [dialog.get() statsEnabled];
-    GoogleUpdateSettings::SetCollectStatsConsent(stats_enabled);
+    bool consent_given = [dialog.get() statsEnabled];
+    ChangeMetricsReportingState(consent_given);
 
     // If selected set as default browser.
     BOOL make_default_browser = [dialog.get() makeDefaultBrowser];
     if (make_default_browser) {
-      bool success = ShellIntegration::SetAsDefaultBrowser();
+      bool success = shell_integration::SetAsDefaultBrowser();
       DCHECK(success);
     }
   }
@@ -115,7 +104,8 @@ bool ShowFirstRun(Profile* profile) {
 // True when the stats checkbox should be checked by default. This is only
 // the case when the canary is running.
 bool StatsCheckboxDefault() {
-  return chrome::GetChannel() == version_info::Channel::CANARY;
+  // Opt-in means the checkbox is unchecked by default.
+  return !first_run::IsMetricsReportingOptIn();
 }
 
 }  // namespace
@@ -139,8 +129,7 @@ bool ShowFirstRunDialog(Profile* profile) {
                                              ofType:@"nib"];
   if ((self = [super initWithWindowNibPath:nibpath owner:self])) {
     // Bound to the dialog checkboxes.
-    makeDefaultBrowser_ = ShellIntegration::CanSetAsDefaultBrowser() !=
-        ShellIntegration::SET_DEFAULT_NOT_ALLOWED;
+    makeDefaultBrowser_ = shell_integration::CanSetAsDefaultBrowser();
     statsEnabled_ = StatsCheckboxDefault();
   }
   return self;
@@ -156,15 +145,15 @@ bool ShowFirstRunDialog(Profile* profile) {
   // Therefore the main MessageLoop is run so things work.
 
   scoped_refptr<FirstRunShowBridge> bridge(new FirstRunShowBridge(self));
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-      base::Bind(&FirstRunShowBridge::ShowDialog, bridge.get()));
-  base::MessageLoop::current()->Run();
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&FirstRunShowBridge::ShowDialog, bridge.get()));
+  base::RunLoop().Run();
 }
 
 - (void)show {
   NSWindow* win = [self window];
 
-  if (!ShellIntegration::CanSetAsDefaultBrowser()) {
+  if (!shell_integration::CanSetAsDefaultBrowser()) {
     [setAsDefaultCheckbox_ setHidden:YES];
   }
 

@@ -4,12 +4,16 @@
 
 #include "components/search_engines/template_url_parser.h"
 
+#include <string.h>
+
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -137,12 +141,12 @@ class TemplateURLParsingContext {
   static void EndElementImpl(void* ctx, const xmlChar* name);
   static void CharactersImpl(void* ctx, const xmlChar* ch, int len);
 
-  // Returns a heap-allocated TemplateURL representing the result of parsing.
-  // This will be NULL if parsing failed or if the results were invalid for some
-  // reason (e.g. the resulting URL was not HTTP[S], a name wasn't supplied,
-  // a resulting TemplateURLRef was invalid, etc.).
-  TemplateURL* GetTemplateURL(const SearchTermsData& search_terms_data,
-                              bool show_in_default_list);
+  // Returns a TemplateURL representing the result of parsing.  This will be
+  // null if parsing failed or if the results were invalid for some reason (e.g.
+  // the resulting URL was not HTTP[S], a name wasn't supplied, a resulting
+  // TemplateURLRef was invalid, etc.).
+  std::unique_ptr<TemplateURL> GetTemplateURL(
+      const SearchTermsData& search_terms_data);
 
  private:
   // Key is UTF8 encoded.
@@ -296,14 +300,13 @@ void TemplateURLParsingContext::CharactersImpl(void* ctx,
           base::StringPiece(reinterpret_cast<const char*>(ch), len));
 }
 
-TemplateURL* TemplateURLParsingContext::GetTemplateURL(
-    const SearchTermsData& search_terms_data,
-    bool show_in_default_list) {
+std::unique_ptr<TemplateURL> TemplateURLParsingContext::GetTemplateURL(
+    const SearchTermsData& search_terms_data) {
   // TODO(jcampan): Support engines that use POST; see http://crbug.com/18107
   if (method_ == TemplateURLParsingContext::POST ||
       data_.short_name().empty() || !IsHTTPRef(data_.url()) ||
       !IsHTTPRef(data_.suggestions_url))
-    return NULL;
+    return nullptr;
   if (suggestion_method_ == TemplateURLParsingContext::POST)
     data_.suggestions_url.clear();
 
@@ -316,21 +319,19 @@ TemplateURL* TemplateURLParsingContext::GetTemplateURL(
   // Generate a keyword for this search engine if a custom one was not present
   // in the imported data.
   if (!has_custom_keyword_)
-    data_.SetKeyword(TemplateURL::GenerateKeyword(
-        search_url, search_terms_data.GetAcceptLanguages()));
-
-  data_.show_in_default_list = show_in_default_list;
+    data_.SetKeyword(TemplateURL::GenerateKeyword(search_url));
 
   // Bail if the search URL is empty or if either TemplateURLRef is invalid.
-  scoped_ptr<TemplateURL> template_url(new TemplateURL(data_));
+  std::unique_ptr<TemplateURL> template_url =
+      base::MakeUnique<TemplateURL>(data_);
   if (template_url->url().empty() ||
       !template_url->url_ref().IsValid(search_terms_data) ||
       (!template_url->suggestions_url().empty() &&
        !template_url->suggestions_url_ref().IsValid(search_terms_data))) {
-    return NULL;
+    return nullptr;
   }
 
-  return template_url.release();
+  return template_url;
 }
 
 // static
@@ -488,9 +489,8 @@ TemplateURLParsingContext::ElementType
 // TemplateURLParser ----------------------------------------------------------
 
 // static
-TemplateURL* TemplateURLParser::Parse(
+std::unique_ptr<TemplateURL> TemplateURLParser::Parse(
     const SearchTermsData& search_terms_data,
-    bool show_in_default_list,
     const char* data,
     size_t length,
     TemplateURLParser::ParameterFilter* param_filter) {
@@ -509,6 +509,5 @@ TemplateURL* TemplateURLParser::Parse(
                                     static_cast<int>(length));
   xmlSubstituteEntitiesDefault(last_sub_entities_value);
 
-  return error ?
-      NULL : context.GetTemplateURL(search_terms_data, show_in_default_list);
+  return error ? nullptr : context.GetTemplateURL(search_terms_data);
 }

@@ -5,26 +5,46 @@
 #ifndef MASH_EXAMPLE_WINDOW_TYPE_LAUNCHER_WINDOW_TYPE_LAUNCHER_H_
 #define MASH_EXAMPLE_WINDOW_TYPE_LAUNCHER_WINDOW_TYPE_LAUNCHER_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "mojo/application/public/cpp/application_delegate.h"
+#include "mash/public/interfaces/launchable.mojom.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/service_manager/public/cpp/interface_factory.h"
+#include "services/service_manager/public/cpp/service.h"
 
 namespace views {
 class AuraInit;
+class Widget;
 }
 
-class WindowTypeLauncher : public mojo::ApplicationDelegate {
+class WindowTypeLauncher
+    : public service_manager::Service,
+      public mash::mojom::Launchable,
+      public service_manager::InterfaceFactory<mash::mojom::Launchable> {
  public:
   WindowTypeLauncher();
   ~WindowTypeLauncher() override;
 
- private:
-  // ApplicationDelegate:
-  void Initialize(mojo::ApplicationImpl* app) override;
-  bool ConfigureIncomingConnection(
-      mojo::ApplicationConnection* connection) override;
+  void RemoveWindow(views::Widget* window);
 
-  scoped_ptr<views::AuraInit> aura_init_;
+ private:
+  // service_manager::Service:
+  void OnStart() override;
+  bool OnConnect(const service_manager::ServiceInfo& remote_info,
+                 service_manager::InterfaceRegistry* registry) override;
+
+  // mash::mojom::Launchable:
+  void Launch(uint32_t what, mash::mojom::LaunchMode how) override;
+
+  // service_manager::InterfaceFactory<mash::mojom::Launchable>:
+  void Create(const service_manager::Identity& remote_identity,
+              mash::mojom::LaunchableRequest request) override;
+
+  mojo::BindingSet<mash::mojom::Launchable> bindings_;
+  std::vector<views::Widget*> windows_;
+
+  std::unique_ptr<views::AuraInit> aura_init_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowTypeLauncher);
 };

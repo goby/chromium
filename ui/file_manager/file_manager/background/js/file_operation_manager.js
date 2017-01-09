@@ -251,7 +251,7 @@ FileOperationManager.prototype.serviceAllTasks_ = function() {
   }
 
   if (!this.volumeManager_) {
-    VolumeManager.getInstance().then(function(volumeManager) {
+    volumeManagerFactory.getInstance().then(function(volumeManager) {
       this.volumeManager_ = volumeManager;
       this.serviceAllTasks_();
     }.bind(this));
@@ -371,7 +371,6 @@ FileOperationManager.prototype.deleteEntries = function(entries) {
   for (var i = 0; i < task.entries.length; i++) {
     group.add(function(entry, callback) {
       entry.getMetadata(function(metadata) {
-        var index = task.entries.indexOf(entries);
         task.entrySize[entry.toURL()] = metadata.size;
         task.totalBytes += metadata.size;
         callback();

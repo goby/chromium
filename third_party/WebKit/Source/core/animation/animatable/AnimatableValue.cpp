@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/animation/animatable/AnimatableValue.h"
 
 #include "core/animation/animatable/AnimatableNeutral.h"
@@ -37,23 +36,25 @@
 
 namespace blink {
 
-const AnimatableValue* AnimatableValue::neutralValue()
-{
-    DEFINE_STATIC_REF(AnimatableNeutral, neutralSentinelValue, (AnimatableNeutral::create()));
-    return neutralSentinelValue;
+PassRefPtr<AnimatableValue> AnimatableValue::neutralValue() {
+  DEFINE_STATIC_REF(AnimatableNeutral, neutralSentinelValue,
+                    (AnimatableNeutral::create()));
+  return neutralSentinelValue;
 }
 
-PassRefPtr<AnimatableValue> AnimatableValue::interpolate(const AnimatableValue* left, const AnimatableValue* right, double fraction)
-{
-    ASSERT(left);
-    ASSERT(right);
-    ASSERT(!left->isNeutral());
-    ASSERT(!right->isNeutral());
+PassRefPtr<AnimatableValue> AnimatableValue::interpolate(
+    const AnimatableValue* left,
+    const AnimatableValue* right,
+    double fraction) {
+  DCHECK(left);
+  DCHECK(right);
+  DCHECK(!left->isNeutral());
+  DCHECK(!right->isNeutral());
 
-    if (fraction && fraction != 1 && left->isSameType(right))
-        return left->interpolateTo(right, fraction);
+  if (fraction && fraction != 1 && left->isSameType(right))
+    return left->interpolateTo(right, fraction);
 
-    return defaultInterpolateTo(left, right, fraction);
+  return defaultInterpolateTo(left, right, fraction);
 }
 
-} // namespace blink
+}  // namespace blink

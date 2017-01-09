@@ -1,21 +1,48 @@
-<link rel="import" href="chrome://resources/polymer/v1_0/polymer/polymer.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/iron-icon/iron-icon.html">
-<link rel="import" href="search_engine_entry.html">
+<link rel="import" href="chrome://resources/cr_elements/shared_style_css.html">
+<link rel="import" href="chrome://resources/html/polymer.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/iron-list/iron-list.html">
+<link rel="import" href="/global_scroll_target_behavior.html">
+<link rel="import" href="/search_engines_page/search_engine_entry.html">
 
-<dom-module id="cr-search-engines-list">
-  <link rel="import" type="css" href="search_engines_list.css">
+<dom-module id="settings-search-engines-list">
   <template>
-    <div class="container">
-      <div class="headers">
-        <div class="narrow-label" i18n-content="searchEnginesDomainLabel"></div>
-        <div class="narrow-label" i18n-content="searchEnginesKeywordLabel">
-        </div>
-        <div class="wide-label" i18n-content="searchEnginesQueryURLLabel"></div>
-      </div>
-      <div class="entries">
-        <template is="dom-repeat" items="[[engines]]">
-          <cr-search-engine-entry engine="[[item]]"></cr-search-engine-entry>
-        </template>
+    <style include="cr-shared-style">
+      .headers {
+        display: flex;
+        padding: 10px 0;
+      }
+
+      .headers .name,
+      .headers .keyword {
+        flex: 3;
+      }
+
+      .headers .url {
+        flex: 4.5;
+      }
+
+      div#outer {
+        @apply(--settings-list-frame-padding);
+      }
+
+      settings-search-engine-entry {
+        border-top: var(--settings-separator-line);
+      }
+
+      settings-search-engine-entry:first-of-type {
+        border-top: none;
+      }
+    </style>
+    <div id="outer">
+      <content></content>
+      <div id="container" class="scroll-container">
+        <iron-list items="[[engines]]" scroll-target="[[subpageScrollTarget]]">
+          <template>
+            <settings-search-engine-entry engine="[[item]]"
+                tabindex$="[[tabIndex]]">
+            </settings-search-engine-entry>
+          </template>
+        </iron-list>
       </div>
     </div>
   </template>

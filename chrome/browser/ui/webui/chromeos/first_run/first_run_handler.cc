@@ -20,58 +20,54 @@ bool FirstRunHandler::IsInitialized() {
 }
 
 void FirstRunHandler::SetBackgroundVisible(bool visible) {
-  web_ui()->CallJavascriptFunction("cr.FirstRun.setBackgroundVisible",
-                                   base::FundamentalValue(visible));
+  web_ui()->CallJavascriptFunctionUnsafe("cr.FirstRun.setBackgroundVisible",
+                                         base::FundamentalValue(visible));
 }
 
 void FirstRunHandler::AddRectangularHole(int x, int y, int width, int height) {
-  web_ui()->CallJavascriptFunction("cr.FirstRun.addRectangularHole",
-                                   base::FundamentalValue(x),
-                                   base::FundamentalValue(y),
-                                   base::FundamentalValue(width),
-                                   base::FundamentalValue(height));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "cr.FirstRun.addRectangularHole", base::FundamentalValue(x),
+      base::FundamentalValue(y), base::FundamentalValue(width),
+      base::FundamentalValue(height));
 }
 
 void FirstRunHandler::AddRoundHole(int x, int y, float radius) {
-  web_ui()->CallJavascriptFunction("cr.FirstRun.addRoundHole",
-                                   base::FundamentalValue(x),
-                                   base::FundamentalValue(y),
-                                   base::FundamentalValue(radius));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "cr.FirstRun.addRoundHole", base::FundamentalValue(x),
+      base::FundamentalValue(y), base::FundamentalValue(radius));
 }
 
 void FirstRunHandler::RemoveBackgroundHoles() {
-  web_ui()->CallJavascriptFunction("cr.FirstRun.removeHoles");
+  web_ui()->CallJavascriptFunctionUnsafe("cr.FirstRun.removeHoles");
 }
 
 void FirstRunHandler::ShowStepPositioned(const std::string& name,
                                          const StepPosition& position) {
-  web_ui()->CallJavascriptFunction("cr.FirstRun.showStep",
-                                   base::StringValue(name),
-                                   *position.AsValue());
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "cr.FirstRun.showStep", base::StringValue(name), *position.AsValue());
 }
 
 void FirstRunHandler::ShowStepPointingTo(const std::string& name,
                                          int x,
                                          int y,
                                          int offset) {
-  scoped_ptr<base::Value> null = base::Value::CreateNullValue();
+  std::unique_ptr<base::Value> null = base::Value::CreateNullValue();
   base::ListValue point_with_offset;
   point_with_offset.AppendInteger(x);
   point_with_offset.AppendInteger(y);
   point_with_offset.AppendInteger(offset);
-  web_ui()->CallJavascriptFunction("cr.FirstRun.showStep",
-                                   base::StringValue(name),
-                                   *null,
-                                   point_with_offset);
+  web_ui()->CallJavascriptFunctionUnsafe("cr.FirstRun.showStep",
+                                         base::StringValue(name), *null,
+                                         point_with_offset);
 }
 
 void FirstRunHandler::HideCurrentStep() {
-  web_ui()->CallJavascriptFunction("cr.FirstRun.hideCurrentStep");
+  web_ui()->CallJavascriptFunctionUnsafe("cr.FirstRun.hideCurrentStep");
 }
 
 void FirstRunHandler::Finalize() {
   is_finalizing_ = true;
-  web_ui()->CallJavascriptFunction("cr.FirstRun.finalize");
+  web_ui()->CallJavascriptFunctionUnsafe("cr.FirstRun.finalize");
 }
 
 bool FirstRunHandler::IsFinalizing() {

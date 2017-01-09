@@ -39,24 +39,14 @@ PROXIED_IFACE(PPB_FLASHFULLSCREEN_INTERFACE_0_1,
               PPB_FlashFullscreen_0_1)
 PROXIED_IFACE(PPB_FLASHFULLSCREEN_INTERFACE_1_0,
               PPB_FlashFullscreen_0_1)
-PROXIED_IFACE(PPB_PDF_INTERFACE,
-              PPB_PDF)
-#if defined(OS_CHROMEOS)
-PROXIED_IFACE(PPB_PLATFORMVERIFICATION_PRIVATE_INTERFACE_0_2,
-              PPB_PlatformVerification_Private_0_2)
-#endif
-
-PROXIED_IFACE(PPB_URLLOADERTRUSTED_INTERFACE_0_3,
-              PPB_URLLoaderTrusted_0_3)
-
 PROXIED_IFACE(PPB_OUTPUTPROTECTION_PRIVATE_INTERFACE_0_1,
               PPB_OutputProtection_Private_0_1)
-
-// Hack to keep font working. The Font 0.6 API is binary compatible with
-// BrowserFont 1.0, so just map the string to the same thing.
-// TODO(brettw) remove support for the old Font API.
-PROXIED_IFACE(PPB_FONT_DEV_INTERFACE_0_6,
-              PPB_BrowserFont_Trusted_1_0)
+PROXIED_IFACE(PPB_PDF_INTERFACE,
+              PPB_PDF)
+PROXIED_IFACE(PPB_PLATFORMVERIFICATION_PRIVATE_INTERFACE_0_2,
+              PPB_PlatformVerification_Private_0_2)
+PROXIED_IFACE(PPB_URLLOADERTRUSTED_INTERFACE_0_3,
+              PPB_URLLoaderTrusted_0_3)
 #endif  // !defined(OS_NACL)
 
 #include "ppapi/thunk/interfaces_postamble.h"

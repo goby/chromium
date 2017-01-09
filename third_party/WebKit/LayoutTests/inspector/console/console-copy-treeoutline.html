@@ -19,7 +19,7 @@ function prepareForTest()
 function test()
 {
     InspectorTest.fixConsoleViewportDimensions(600, 200);
-    var consoleView = WebInspector.ConsolePanel._view();
+    var consoleView = Console.ConsoleView.instance();
     var viewport = consoleView._viewport;
 
     InspectorTest.runTestSuite([
@@ -28,7 +28,7 @@ function test()
             viewport.forceScrollItemToBeFirst(0);
 
             // Set some initial selection in console.
-            var base = consoleView.itemElement(0);
+            var base = consoleView.itemElement(0).element();
             window.getSelection().setBaseAndExtent(base, 0, base, 1);
 
             // Try to select all messages.

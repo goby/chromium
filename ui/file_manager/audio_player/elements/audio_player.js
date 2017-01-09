@@ -5,6 +5,14 @@
 Polymer({
   is: 'audio-player',
 
+  listeners: {
+    'toggle-pause-event': 'onTogglePauseEvent_',
+    'small-forward-skip-event': 'onSmallForwardSkipEvent_',
+    'small-backword-skip-event': 'onSmallBackwordSkipEvent_',
+    'big-forward-skip-event': 'onBigForwardSkipEvent_',
+    'big-backword-skip-event': 'onBigBackwordSkipEvent_',
+  },
+
   properties: {
     /**
      * Flag whether the audio is playing or paused. True if playing, or false
@@ -29,15 +37,16 @@ Polymer({
      */
     shuffle: {
       type: Boolean,
-      observer: 'shuffleChanged'
+      notify: true
     },
 
     /**
-     * Whether the repeat button is ON.
+     * What mode the repeat button idicates.
+     * repeat-modes can be "no-repeat", "repeat-all", "repeat-one".
      */
-    repeat: {
-      type: Boolean,
-      observer: 'repeatChanged'
+    repeatMode: {
+      type: String,
+      notify: true
     },
 
     /**
@@ -45,15 +54,22 @@ Polymer({
      */
     volume: {
       type: Number,
-      observer: 'volumeChanged'
+      notify: true
     },
 
     /**
-     * Whether the expanded button is ON.
+     * Whether the playlist is expanded or not.
      */
-    expanded: {
+    playlistExpanded: {
       type: Boolean,
-      observer: 'expandedChanged'
+      notify: true
+    },
+    /**
+     * Whether the artwork is expanded or not.
+     */
+    trackInfoExpanded: {
+      type: Boolean,
+      notify: true
     },
 
     /**
@@ -62,16 +78,6 @@ Polymer({
     currentTrackIndex: {
       type: Number,
       observer: 'currentTrackIndexChanged'
-    },
-
-    /**
-     * Model object of the Audio Player.
-     * @type {AudioPlayerModel}
-     */
-    model: {
-      type: Object,
-      value: null,
-      observer: 'modelChanged'
     },
 
     /**
@@ -104,41 +110,6 @@ Polymer({
   wasPlayingOnDragStart_: false,
 
   /**
-   * Handles change event for shuffle mode.
-   * @param {boolean} shuffle
-   */
-  shuffleChanged: function(shuffle) {
-    if (this.model)
-      this.model.shuffle = shuffle;
-  },
-
-  /**
-   * Handles change event for repeat mode.
-   * @param {boolean} repeat
-   */
-  repeatChanged: function(repeat) {
-    if (this.model)
-      this.model.repeat = repeat;
-  },
-
-  /**
-   * Handles change event for audio volume.
-   * @param {number} volume
-   */
-  volumeChanged: function(volume) {
-    if (this.model)
-      this.model.volume = volume;
-  },
-
-  /**
-   * Handles change event for expanded state of track list.
-   */
-  expandedChanged: function(expanded) {
-    if (this.model)
-      this.model.expanded = expanded;
-  },
-
-  /**
    * Initializes an element. This method is called automatically when the
    * element is ready.
    */
@@ -148,7 +119,6 @@ Polymer({
     this.$.audioController.addEventListener('dragging-changed',
         this.onDraggingChanged_.bind(this));
 
-    this.$.audio.volume = 0;  // Temporary initial volume.
     this.$.audio.addEventListener('ended', this.onAudioEnded.bind(this));
     this.$.audio.addEventListener('error', this.onAudioError.bind(this));
 
@@ -174,6 +144,10 @@ Polymer({
 
     if (oldValue != newValue) {
       var currentTrack = this.$.trackList.getCurrentTrack();
+      if(currentTrack && currentTrack != this.$.trackInfo.track){
+        this.$.trackInfo.track = currentTrack;
+        this.$.trackInfo.artworkAvailable = !!currentTrack.artworkUrl;
+      }
       if (currentTrack && currentTrack.url != this.$.audio.src) {
         this.$.audio.src = currentTrack.url;
         currentTrackUrl = this.$.audio.src;
@@ -215,21 +189,6 @@ Polymer({
   },
 
   /**
-   * Invoked when the model changed.
-   * @param {AudioPlayerModel} newModel New model.
-   * @param {AudioPlayerModel} oldModel Old model.
-   */
-  modelChanged: function(newModel, oldModel) {
-    // Setting up the UI
-    if (newModel !== oldModel && newModel) {
-      this.shuffle = newModel.shuffle;
-      this.repeat = newModel.repeat;
-      this.volume = newModel.volume;
-      this.expanded = newModel.expanded;
-    }
-  },
-
-  /**
    * Invoked when time is changed.
    * @param {number} newValue new time (in ms).
    * @param {number} oldValue old time (in ms).
@@ -265,7 +224,13 @@ Polymer({
    */
   onAudioEnded: function() {
     this.playcount++;
-    this.advance_(true /* forward */, this.repeat);
+
+    if(this.repeatMode === "repeat-one") {
+      this.playing = true;
+      this.$.audio.currentTime = 0;
+      return;
+    }
+    this.advance_(true /* forward */, this.repeatMode === "repeat-all");
   },
 
   /**
@@ -273,7 +238,12 @@ Polymer({
    * This handler is registered in this.ready().
    */
   onAudioError: function() {
-    this.scheduleAutoAdvance_(true /* forward */, this.repeat);
+    if(this.repeatMode === "repeat-one") {
+      this.playing = false;
+      return;
+    }
+    this.scheduleAutoAdvance_(
+        true /* forward */, this.repeatMode === "repeat-all");
   },
 
   /**
@@ -303,12 +273,14 @@ Polymer({
     // status (playing or paused).
     this.$.audio.currentTime = 0;
     this.time = 0;
+    this.$.audio.play();
   },
 
   /**
    * Goes to the previous or the next track.
    * @param {boolean} forward True if next, false if previous.
-   * @param {boolean} repeat True if repeat-mode is enabled. False otherwise.
+   * @param {boolean} repeat True if repeat-mode is "repeat-all". False
+   *     "no-repeat".
    * @private
    */
   advance_: function(forward, repeat) {
@@ -320,15 +292,16 @@ Polymer({
 
     this.playing = isNextTrackAvailable;
 
-    // If there is only a single file in the list, 'currentTrackInde' is not
-    // changed and the handler is not invoked. Instead, plays here.
-    // TODO(yoshiki): clean up the code around here.
-    if (isNextTrackAvailable &&
-        this.$.trackList.currentTrackIndex == nextTrackIndex) {
-      this.$.audio.play();
-    }
-
+    var shouldFireEvent = this.$.trackList.currentTrackIndex === nextTrackIndex;
     this.$.trackList.currentTrackIndex = nextTrackIndex;
+    this.$.audio.currentTime = 0;
+    // If the next track and current track is the same,
+    // the event will not be fired.
+    // So we will fire the event here.
+    // This happenes if there is only one song.
+    if (shouldFireEvent) {
+      this.$.trackList.fire('current-track-index-changed');
+    }
   },
 
   /**
@@ -409,6 +382,36 @@ Polymer({
   },
 
   /**
+   * Notifis the track-list element that the metadata for specified track is
+   * updated.
+   * @param {number} index The index of the track whose metadata is updated.
+   */
+  notifyTrackMetadataUpdated: function(index) {
+    if (index < 0 || index >= this.tracks.length)
+      return;
+
+    this.$.trackList.notifyPath('tracks.' + index + '.title',
+        this.tracks[index].title);
+    this.$.trackList.notifyPath('tracks.' + index + '.artist',
+        this.tracks[index].artist);
+
+    if (this.$.trackInfo.track &&
+        this.$.trackInfo.track.url === this.tracks[index].url){
+      this.$.trackInfo.notifyPath('track.title', this.tracks[index].title);
+      this.$.trackInfo.notifyPath('track.artist', this.tracks[index].artist);
+      var artworkUrl = this.tracks[index].artworkUrl;
+      if (artworkUrl) {
+        this.$.trackInfo.notifyPath('track.artworkUrl',
+            this.tracks[index].artworkUrl);
+        this.$.trackInfo.artworkAvailable = true;
+      } else {
+        this.$.trackInfo.notifyPath('track.artworkUrl', undefined);
+        this.$.trackInfo.artworkAvailable = false;
+      }
+    }
+  },
+
+  /**
    * Invoked when the audio player is being unloaded.
    */
   onPageUnload: function() {
@@ -438,14 +441,14 @@ Polymer({
    * @param {Event} event The event object.
    */
   onKeyDown_: function(event) {
-    switch (event.keyIdentifier) {
-      case 'MediaNextTrack':
+    switch (event.key) {
+      case 'MediaTrackNext':
         this.onControllerNextClicked();
         break;
       case 'MediaPlayPause':
         this.playing = !this.playing;
         break;
-      case 'MediaPreviousTrack':
+      case 'MediaTrackPrevious':
         this.onControllerPreviousClicked();
         break;
       case 'MediaStop':
@@ -461,5 +464,45 @@ Polymer({
    */
   computeAudioVolume_: function(volume) {
     return volume / 100;
-  }
+  },
+
+  /**
+   * Toggle pause.
+   * @private
+   */
+  onTogglePauseEvent_: function(event) {
+    this.$.audioController.playClick();
+  },
+
+  /**
+   * Small skip forward.
+   * @private
+   */
+  onSmallForwardSkipEvent_: function(event) {
+    this.$.audioController.smallSkip(true);
+  },
+
+  /**
+   * Small skip backword.
+   * @private
+   */
+  onSmallBackwordSkipEvent_: function(event) {
+    this.$.audioController.smallSkip(false);
+  },
+
+  /**
+   * Big skip forward.
+   * @private
+   */
+  onBigForwardSkipEvent_: function(event) {
+    this.$.audioController.bigSkip(true);
+  },
+
+  /**
+   * Big skip backword.
+   * @private
+   */
+  onBigBackwordSkipEvent_: function(event) {
+    this.$.audioController.bigSkip(false);
+  },
 });

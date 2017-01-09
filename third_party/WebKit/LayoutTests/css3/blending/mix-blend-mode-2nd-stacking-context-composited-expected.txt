@@ -1,29 +1,28 @@
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
+      "contentsOpaque": true
+    },
+    {
+      "name": "LayoutBlockFlow HTML",
+      "bounds": [800, 600],
+      "drawsContent": true
+    },
+    {
+      "name": "LayoutBlockFlow (positioned) DIV class='accelerated stacking-context'",
+      "position": [8, 8],
+      "transformOrigin": [0, 0],
+      "bounds": [160, 90],
       "contentsOpaque": true,
-      "children": [
-        {
-          "bounds": [800, 600],
-          "drawsContent": true,
-          "children": [
-            {
-              "position": [8, 8],
-              "transformOrigin": [0, 0],
-              "bounds": [160, 90],
-              "contentsOpaque": true,
-              "drawsContent": true,
-              "backgroundColor": "#FF0000"
-            },
-            {
-              "bounds": [800, 600],
-              "drawsContent": true
-            }
-          ]
-        }
-      ]
+      "drawsContent": true,
+      "backgroundColor": "#FF0000"
+    },
+    {
+      "name": "LayoutBlockFlow HTML (foreground) Layer",
+      "bounds": [800, 600],
+      "drawsContent": true
     }
   ]
 }

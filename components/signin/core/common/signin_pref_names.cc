@@ -14,15 +14,35 @@ const char kAccountIdMigrationState[] = "account_id_migration_state";
 // Boolean identifying whether reverse auto-login is enabled.
 const char kAutologinEnabled[] = "autologin.enabled";
 
+// A hash of the GAIA accounts present in the content area. Order does not
+// affect the hash, but signed in/out status will. Stored as the Base64 string.
+const char kGaiaCookieHash[] = "gaia_cookie.hash";
+
+// The last time that kGaiaCookieHash was last updated. Stored as a double that
+// should be converted into base::Time.
+const char kGaiaCookieChangedTime[] = "gaia_cookie.changed_time";
+
+// The last time that periodic reporting occured, to allow us to report as close
+// to once per intended interval as possible, through restarts. Stored as a
+// double that should be converted into base::Time.
+const char kGaiaCookiePeriodicReportTime[] = "gaia_cookie.periodic_report_time";
 
 // The profile's hosted domain; empty if unset;
 // AccountTrackerService::kNoHostedDomainFound if there is none.
 
+// Typically contains an obfuscated gaiaid and will match the value of
+// kGoogleServicesUserAccountId. Some platforms and legacy clients may have
+// an email stored in this preference instead. This is transitional and will
+// eventually be fixed, allowing the removal of kGoogleServicesUserAccountId.
 const char kGoogleServicesAccountId[] = "google.services.account_id";
 
 // The profile's hosted domain; empty if unset; Profile::kNoHostedDomainFound
 // if there is none.
 const char kGoogleServicesHostedDomain[] = "google.services.hosted_domain";
+
+// Similar to kGoogleServicesLastUsername, this is the corresponding version of
+// kGoogleServicesAccountId that is not cleared on signout.
+const char kGoogleServicesLastAccountId[] = "google.services.last_account_id";
 
 // String the identifies the last user that logged into sync and other
 // google services. As opposed to kGoogleServicesUsername, this value is not

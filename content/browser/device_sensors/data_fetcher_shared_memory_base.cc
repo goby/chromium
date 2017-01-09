@@ -4,16 +4,20 @@
 
 #include "content/browser/device_sensors/data_fetcher_shared_memory_base.h"
 
+#include <stddef.h>
+#include <string.h>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread.h"
 #include "base/timer/timer.h"
-#include "content/common/device_sensors/device_light_hardware_buffer.h"
-#include "content/common/device_sensors/device_motion_hardware_buffer.h"
-#include "content/common/device_sensors/device_orientation_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_light_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_motion_hardware_buffer.h"
+#include "device/sensors/public/cpp/device_orientation_hardware_buffer.h"
 
 namespace content {
 
@@ -52,7 +56,7 @@ class DataFetcherSharedMemoryBase::PollingThread : public base::Thread {
 
   unsigned consumers_bitmask_;
   DataFetcherSharedMemoryBase* fetcher_;
-  scoped_ptr<base::RepeatingTimer> timer_;
+  std::unique_ptr<base::RepeatingTimer> timer_;
 
   DISALLOW_COPY_AND_ASSIGN(PollingThread);
 };
@@ -115,9 +119,6 @@ DataFetcherSharedMemoryBase::~DataFetcherSharedMemoryBase() {
   // make sure polling thread stops asap.
   if (polling_thread_)
     polling_thread_->Stop();
-
-  STLDeleteContainerPairSecondPointers(shared_memory_map_.begin(),
-      shared_memory_map_.end());
 }
 
 bool DataFetcherSharedMemoryBase::StartFetchingDeviceData(
@@ -128,6 +129,12 @@ bool DataFetcherSharedMemoryBase::StartFetchingDeviceData(
   void* buffer = GetSharedMemoryBuffer(consumer_type);
   if (!buffer)
     return false;
+
+  size_t buffer_size = GetConsumerSharedMemoryBufferSize(consumer_type);
+  // buffer size should be strictly positive because buffer is non-zero.
+  DCHECK(buffer_size > 0);
+  // make sure to clear any potentially stale values in the memory buffer.
+  memset(buffer, 0, buffer_size);
 
   if (GetType() != FETCHER_TYPE_DEFAULT) {
     if (!InitAndStartPollingThreadIfNecessary())
@@ -173,28 +180,22 @@ void DataFetcherSharedMemoryBase::Shutdown() {
   StopFetchingDeviceData(CONSUMER_TYPE_LIGHT);
 }
 
-base::SharedMemoryHandle
-DataFetcherSharedMemoryBase::GetSharedMemoryHandleForProcess(
-    ConsumerType consumer_type, base::ProcessHandle process) {
-  SharedMemoryMap::const_iterator it = shared_memory_map_.find(consumer_type);
-  if (it == shared_memory_map_.end())
-    return base::SharedMemory::NULLHandle();
-
-  base::SharedMemoryHandle renderer_handle;
-  it->second->ShareToProcess(process, &renderer_handle);
-  return renderer_handle;
+mojo::ScopedSharedBufferHandle
+DataFetcherSharedMemoryBase::GetSharedMemoryHandle(ConsumerType consumer_type) {
+  auto it = shared_memory_map_.find(consumer_type);
+  DCHECK(it != shared_memory_map_.end());
+  return it->second.first->Clone();
 }
 
 bool DataFetcherSharedMemoryBase::InitAndStartPollingThreadIfNecessary() {
   if (polling_thread_)
     return true;
 
-  polling_thread_.reset(
-      new PollingThread("Inertial Device Sensor poller", this));
+  polling_thread_.reset(new PollingThread("Device Sensor poller", this));
 
   if (!polling_thread_->Start()) {
-      LOG(ERROR) << "Failed to start inertial sensor data polling thread";
-      return false;
+    LOG(ERROR) << "Failed to start sensor data polling thread";
+    return false;
   }
   return true;
 }
@@ -209,37 +210,29 @@ DataFetcherSharedMemoryBase::GetType() const {
 }
 
 base::TimeDelta DataFetcherSharedMemoryBase::GetInterval() const {
-  return base::TimeDelta::FromMicroseconds(kInertialSensorIntervalMicroseconds);
+  return base::TimeDelta::FromMicroseconds(kDeviceSensorIntervalMicroseconds);
 }
 
-base::SharedMemory* DataFetcherSharedMemoryBase::GetSharedMemory(
+void* DataFetcherSharedMemoryBase::GetSharedMemoryBuffer(
     ConsumerType consumer_type) {
-  SharedMemoryMap::const_iterator it = shared_memory_map_.find(consumer_type);
+  auto it = shared_memory_map_.find(consumer_type);
   if (it != shared_memory_map_.end())
-    return it->second;
+    return it->second.second.get();
 
   size_t buffer_size = GetConsumerSharedMemoryBufferSize(consumer_type);
   if (buffer_size == 0)
     return nullptr;
 
-  scoped_ptr<base::SharedMemory> new_shared_mem(new base::SharedMemory);
-  if (new_shared_mem->CreateAndMapAnonymous(buffer_size)) {
-    if (void* mem = new_shared_mem->memory()) {
-      memset(mem, 0, buffer_size);
-      base::SharedMemory* shared_mem = new_shared_mem.release();
-      shared_memory_map_[consumer_type] = shared_mem;
-      return shared_mem;
-    }
-  }
-  LOG(ERROR) << "Failed to initialize shared memory";
-  return nullptr;
-}
-
-void* DataFetcherSharedMemoryBase::GetSharedMemoryBuffer(
-    ConsumerType consumer_type) {
-  if (base::SharedMemory* shared_memory = GetSharedMemory(consumer_type))
-    return shared_memory->memory();
-  return nullptr;
+  mojo::ScopedSharedBufferHandle buffer =
+      mojo::SharedBufferHandle::Create(buffer_size);
+  mojo::ScopedSharedBufferMapping mapping = buffer->Map(buffer_size);
+  if (!mapping)
+    return nullptr;
+  void* mem = mapping.get();
+  memset(mem, 0, buffer_size);
+  shared_memory_map_[consumer_type] =
+      std::make_pair(std::move(buffer), std::move(mapping));
+  return mem;
 }
 
 base::MessageLoop* DataFetcherSharedMemoryBase::GetPollingMessageLoop() const {

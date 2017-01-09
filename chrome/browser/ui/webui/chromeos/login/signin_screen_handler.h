@@ -6,15 +6,16 @@
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_SIGNIN_SCREEN_HANDLER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
+#include "ash/public/interfaces/touch_view.mojom.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/containers/hash_tables.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/screens/network_error_model.h"
 #include "chrome/browser/chromeos/login/signin_specifics.h"
@@ -23,20 +24,20 @@
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
-#include "chrome/browser/ui/webui/chromeos/touch_view_controller_delegate.h"
+#include "chromeos/dbus/power_manager_client.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
 #include "components/proximity_auth/screenlock_bridge.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "net/base/net_errors.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/events/event_handler.h"
 
 class AccountId;
-class EasyUnlockService;
 
 namespace base {
 class DictionaryValue;
@@ -45,10 +46,10 @@ class ListValue;
 
 namespace chromeos {
 
-class CaptivePortalWindowProxy;
 class CoreOobeActor;
 class ErrorScreensHistogramHelper;
 class GaiaScreenHandler;
+class LoginFeedback;
 class NativeWindowDelegate;
 class SupervisedUserCreationScreenHandler;
 class User;
@@ -95,6 +96,7 @@ class LoginDisplayWebUIHandler {
   virtual void ShowSigninScreenForCreds(const std::string& username,
                                         const std::string& password) = 0;
   virtual void ShowWhitelistCheckFailedError() = 0;
+  virtual void ShowUnrecoverableCrypthomeErrorDialog() = 0;
   virtual void LoadUsers(const base::ListValue& users_list,
                          bool show_guest) = 0;
  protected:
@@ -137,6 +139,9 @@ class SigninScreenHandlerDelegate {
   // Notify the delegate when the sign-in UI is finished loading.
   virtual void OnSigninScreenReady() = 0;
 
+  // Notify the delegate when the GAIA UI is finished loading.
+  virtual void OnGaiaScreenReady() = 0;
+
   // Shows Enterprise Enrollment screen.
   virtual void ShowEnterpriseEnrollmentScreen() = 0;
 
@@ -160,8 +165,8 @@ class SigninScreenHandlerDelegate {
   // Cancels user adding.
   virtual void CancelUserAdding() = 0;
 
-  // Load wallpaper for given |username|.
-  virtual void LoadWallpaper(const std::string& username) = 0;
+  // Load wallpaper for given |account_id|.
+  virtual void LoadWallpaper(const AccountId& account_id) = 0;
 
   // Loads the default sign-in wallpaper.
   virtual void LoadSigninWallpaper() = 0;
@@ -175,9 +180,18 @@ class SigninScreenHandlerDelegate {
   // Whether login as guest is available.
   virtual bool IsShowGuest() const = 0;
 
-  // Weather to show the user pods or only GAIA sign in.
+  // Whether to show the user pods or only GAIA sign in.
   // Public sessions are always shown.
   virtual bool IsShowUsers() const = 0;
+
+  // Whether the show user pods setting has changed.
+  virtual bool ShowUsersHasChanged() const = 0;
+
+  // Whether the create new account option in GAIA is enabled by the setting.
+  virtual bool IsAllowNewUser() const = 0;
+
+  // Whether the allow new user setting has changed.
+  virtual bool AllowNewUserChanged() const = 0;
 
   // Whether user sign in has completed.
   virtual bool IsUserSigninCompleted() const = 0;
@@ -189,21 +203,22 @@ class SigninScreenHandlerDelegate {
   virtual void CheckUserStatus(const AccountId& account_id) = 0;
 
   // Returns true if user is allowed to log in by domain policy.
-  virtual bool IsUserWhitelisted(const std::string& user_id) = 0;
+  virtual bool IsUserWhitelisted(const AccountId& account_id) = 0;
 
  protected:
   virtual ~SigninScreenHandlerDelegate() {}
 };
 
-// A class that handles the WebUI hooks in sign-in screen in OobeDisplay
-// and LoginDisplay.
+// A class that handles the WebUI hooks in sign-in screen in OobeUI and
+// LoginDisplay.
 class SigninScreenHandler
     : public BaseScreenHandler,
       public LoginDisplayWebUIHandler,
       public content::NotificationObserver,
       public NetworkStateInformer::NetworkStateInformerObserver,
+      public PowerManagerClient::Observer,
       public input_method::ImeKeyboard::Observer,
-      public TouchViewControllerDelegate::Observer,
+      public ash::mojom::TouchViewObserver,
       public OobeUI::Observer {
  public:
   SigninScreenHandler(
@@ -238,8 +253,8 @@ class SigninScreenHandler
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
   // OobeUI::Observer implemetation.
-  void OnCurrentScreenChanged(OobeUI::Screen current_screen,
-                              OobeUI::Screen new_screen) override;
+  void OnCurrentScreenChanged(OobeScreen current_screen,
+                              OobeScreen new_screen) override;
 
   void SetFocusPODCallbackForTesting(base::Closure callback);
 
@@ -302,6 +317,7 @@ class SigninScreenHandler
   void ShowSigninScreenForCreds(const std::string& username,
                                 const std::string& password) override;
   void ShowWhitelistCheckFailedError() override;
+  void ShowUnrecoverableCrypthomeErrorDialog() override;
   void LoadUsers(const base::ListValue& users_list, bool show_guest) override;
 
   // content::NotificationObserver implementation:
@@ -309,19 +325,25 @@ class SigninScreenHandler
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  // TouchViewControllerDelegate::Observer implementation:
-  void OnMaximizeModeStarted() override;
-  void OnMaximizeModeEnded() override;
+  // PowerManagerClient::Observer implementation:
+  void SuspendDone(const base::TimeDelta& sleep_duration) override;
+
+  // ash::mojom::TouchView:
+  void OnTouchViewToggled(bool enabled) override;
 
   void UpdateAddButtonStatus();
 
   // Restore input focus to current user pod.
   void RefocusCurrentPod();
 
+  // Hides the PIN keyboard if it is no longer available.
+  void HidePinKeyboardIfNeeded(const AccountId& account_id);
+
   // WebUI message handlers.
   void HandleGetUsers();
   void HandleAuthenticateUser(const AccountId& account_id,
-                              const std::string& password);
+                              const std::string& password,
+                              bool authenticated_by_pin);
   void HandleAttemptUnlock(const std::string& username);
   void HandleLaunchIncognito();
   void HandleLaunchPublicSession(const AccountId& account_id,
@@ -334,6 +356,7 @@ class SigninScreenHandler
   void HandleRemoveUser(const AccountId& account_id);
   void HandleShowAddUser(const base::ListValue* args);
   void HandleToggleEnrollmentScreen();
+  void HandleToggleEnrollmentAd();
   void HandleToggleEnableDebuggingScreen();
   void HandleToggleKioskEnableScreen();
   void HandleToggleResetScreen();
@@ -356,19 +379,21 @@ class SigninScreenHandler
   void HandleHardlockPod(const std::string& user_id);
   void HandleLaunchKioskApp(const AccountId& app_account_id,
                             bool diagnostic_mode);
+  void HandleLaunchArcKioskApp(const AccountId& app_account_id);
   void HandleGetPublicSessionKeyboardLayouts(const AccountId& account_id,
                                              const std::string& locale);
   void HandleGetTouchViewState();
   void HandleLogRemoveUserWarningShown();
   void HandleFirstIncorrectPasswordAttempt(const AccountId& account_id);
   void HandleMaxIncorrectPasswordAttempts(const AccountId& account_id);
+  void HandleSendFeedbackAndResyncUserData();
 
   // Sends the list of |keyboard_layouts| available for the |locale| that is
   // currently selected for the public session identified by |user_id|.
   void SendPublicSessionKeyboardLayouts(
       const AccountId& account_id,
       const std::string& locale,
-      scoped_ptr<base::ListValue> keyboard_layouts);
+      std::unique_ptr<base::ListValue> keyboard_layouts);
 
   // Returns true iff
   // (i)   log in is restricted to some user list,
@@ -378,9 +403,6 @@ class SigninScreenHandler
   // Cancels password changed flow - switches back to login screen.
   // Called as a callback after cookies are cleared.
   void CancelPasswordChangedFlowInternal();
-
-  // Returns current visible screen.
-  OobeUI::Screen GetCurrentScreen() const;
 
   // Returns true if current visible screen is the Gaia sign-in page.
   bool IsGaiaVisible() const;
@@ -396,9 +418,6 @@ class SigninScreenHandler
   // Returns true if guest signin is allowed.
   bool IsGuestSigninAllowed() const;
 
-  // Returns true if offline login is allowed.
-  bool IsOfflineLoginAllowed() const;
-
   bool ShouldLoadGaia() const;
 
   // Shows signin.
@@ -409,13 +428,8 @@ class SigninScreenHandler
   // input_method::ImeKeyboard::Observer implementation:
   void OnCapsLockChanged(bool enabled) override;
 
-  // Returns OobeUI object of NULL.
-  OobeUI* GetOobeUI() const;
-
-  // Gets the easy unlock service associated with the user. Can return NULL if
-  // user cannot be found, or there is not associated service.
-  EasyUnlockService* GetEasyUnlockServiceForUser(
-      const std::string& username) const;
+  // Callback invoked after the feedback is finished.
+  void OnFeedbackFinished();
 
   // Current UI state of the signin screen.
   UIState ui_state_ = UI_STATE_UNKNOWN;
@@ -464,12 +478,23 @@ class SigninScreenHandler
 
   bool caps_lock_enabled_ = false;
 
+  // If network has accidentally changed to the one that requires proxy
+  // authentication, we will automatically reload gaia page that will bring
+  // "Proxy authentication" dialog to the user. To prevent flakiness, we will do
+  // it at most 3 times.
+  int proxy_auth_dialog_reload_times_;
+
+  // True if we need to reload gaia page to bring back "Proxy authentication"
+  // dialog.
+  bool proxy_auth_dialog_need_reload_ = false;
+
   // Non-owning ptr.
   // TODO(antrim@): remove this dependency.
   GaiaScreenHandler* gaia_screen_handler_ = nullptr;
 
-  // Maximized mode controller delegate.
-  scoped_ptr<TouchViewControllerDelegate> max_mode_delegate_;
+  mojo::Binding<ash::mojom::TouchViewObserver> touch_view_binding_;
+  ash::mojom::TouchViewManagerPtr touch_view_manager_ptr_;
+  bool touch_view_enabled_ = false;
 
   // Input Method Engine state used at signin screen.
   scoped_refptr<input_method::InputMethodManager::State> ime_state_;
@@ -482,7 +507,9 @@ class SigninScreenHandler
 
   bool zero_offline_timeout_for_test_ = false;
 
-  scoped_ptr<ErrorScreensHistogramHelper> histogram_helper_;
+  std::unique_ptr<ErrorScreensHistogramHelper> histogram_helper_;
+
+  std::unique_ptr<LoginFeedback> login_feedback_;
 
   base::WeakPtrFactory<SigninScreenHandler> weak_factory_;
 

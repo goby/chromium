@@ -4,9 +4,8 @@
 
 #include "media/audio/win/wavein_input_win.h"
 
-#pragma comment(lib, "winmm.lib")
-
 #include "base/logging.h"
+#include "media/audio/audio_device_description.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/win/audio_manager_win.h"
 #include "media/audio/win/device_enumeration_win.h"
@@ -86,7 +85,7 @@ void PCMWaveInAudioInputStream::SetupBuffers() {
   WAVEHDR* last = NULL;
   WAVEHDR* first = NULL;
   for (int ix = 0; ix != num_buffers_; ++ix) {
-    uint32 sz = sizeof(WAVEHDR) + buffer_size_;
+    uint32_t sz = sizeof(WAVEHDR) + buffer_size_;
     buffer_ =  reinterpret_cast<WAVEHDR*>(new char[sz]);
     buffer_->lpData = reinterpret_cast<char*>(buffer_) + sizeof(WAVEHDR);
     buffer_->dwBufferLength = buffer_size_;
@@ -247,7 +246,7 @@ void PCMWaveInAudioInputStream::QueueNextPacket(WAVEHDR *buffer) {
 bool PCMWaveInAudioInputStream::GetDeviceId(UINT* device_index) {
   // Deliver the default input device id (WAVE_MAPPER) if the default
   // device has been selected.
-  if (device_id_ == AudioManagerBase::kDefaultDeviceId) {
+  if (device_id_ == AudioDeviceDescription::kDefaultDeviceId) {
     *device_index = WAVE_MAPPER;
     return true;
   }
@@ -300,9 +299,9 @@ void PCMWaveInAudioInputStream::WaveCallback(HWAVEIN hwi, UINT msg,
       // there is currently no support for controlling the microphone volume
       // level.
       WAVEHDR* buffer = reinterpret_cast<WAVEHDR*>(param1);
-      obj->audio_bus_->FromInterleaved(reinterpret_cast<uint8*>(buffer->lpData),
-                                       obj->audio_bus_->frames(),
-                                       obj->format_.wBitsPerSample / 8);
+      obj->audio_bus_->FromInterleaved(
+          reinterpret_cast<uint8_t*>(buffer->lpData), obj->audio_bus_->frames(),
+          obj->format_.wBitsPerSample / 8);
       obj->callback_->OnData(
           obj, obj->audio_bus_.get(), buffer->dwBytesRecorded, 0.0);
 

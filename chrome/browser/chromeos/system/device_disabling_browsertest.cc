@@ -2,18 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
-#include "chrome/browser/chromeos/login/ui/oobe_display.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
@@ -30,10 +29,10 @@
 #include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/shill_service_client.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "dbus/object_path.h"
-#include "policy/proto/device_management_backend.pb.h"
 
 namespace chromeos {
 namespace system {
@@ -84,10 +83,9 @@ DeviceDisablingTest::DeviceDisablingTest()
 void DeviceDisablingTest::MarkDisabledAndWaitForPolicyFetch() {
   base::RunLoop run_loop;
   // Set up an |observer| that will wait for the disabled setting to change.
-  scoped_ptr<CrosSettings::ObserverSubscription> observer =
-      CrosSettings::Get()->AddSettingsObserver(
-           kDeviceDisabled,
-           run_loop.QuitClosure());
+  std::unique_ptr<CrosSettings::ObserverSubscription> observer =
+      CrosSettings::Get()->AddSettingsObserver(kDeviceDisabled,
+                                               run_loop.QuitClosure());
   // Prepare a policy fetch response that indicates the device is disabled.
   test_helper_.device_policy()->policy_data().mutable_device_state()->
       set_device_mode(enterprise_management::DeviceState::DEVICE_MODE_DISABLED);
@@ -116,7 +114,7 @@ void DeviceDisablingTest::SetUpInProcessBrowserTestFixture() {
   OobeBaseTest::SetUpInProcessBrowserTestFixture();
 
   DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-      scoped_ptr<SessionManagerClient>(fake_session_manager_client_));
+      std::unique_ptr<SessionManagerClient>(fake_session_manager_client_));
 
   test_helper_.InstallOwnerKey();
   test_helper_.MarkAsEnterpriseOwned();
@@ -167,7 +165,7 @@ IN_PROC_BROWSER_TEST_F(DeviceDisablingTest, DisableWithEphemeralUsers) {
   WizardController* wizard_controller = WizardController::default_controller();
   ASSERT_TRUE(wizard_controller);
   wizard_controller->SkipToLoginForTesting(LoginScreenContext());
-  OobeScreenWaiter(OobeDisplay::SCREEN_GAIA_SIGNIN).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_GAIA_SIGNIN).Wait();
 
   // Mark the device as disabled and wait until cros settings update.
   MarkDisabledAndWaitForPolicyFetch();
@@ -175,12 +173,11 @@ IN_PROC_BROWSER_TEST_F(DeviceDisablingTest, DisableWithEphemeralUsers) {
   // When the ephemeral users policy is enabled, Chrome OS removes any non-owner
   // cryptohomes on startup. At the end of that process, JavaScript attempts to
   // show the login screen. Simulate this.
-  const LoginDisplayHostImpl* const host =
-      static_cast<LoginDisplayHostImpl*>(LoginDisplayHostImpl::default_host());
+  const LoginDisplayHost* host = LoginDisplayHost::default_host();
   ASSERT_TRUE(host);
-  WebUILoginView* const webui_login_view = host->GetWebUILoginView();
+  WebUILoginView* webui_login_view = host->GetWebUILoginView();
   ASSERT_TRUE(webui_login_view);
-  content::WebContents* const web_contents = webui_login_view->GetWebContents();
+  content::WebContents* web_contents = webui_login_view->GetWebContents();
   ASSERT_TRUE(web_contents);
   ASSERT_TRUE(content::ExecuteScript(web_contents,
                                      "Oobe.showAddUserForTesting();"));
@@ -194,7 +191,8 @@ IN_PROC_BROWSER_TEST_F(DeviceDisablingTest, DisableWithEphemeralUsers) {
 
   // Verify that the login screen was not shown and the device disabled screen
   // is still being shown instead.
-  EXPECT_EQ(OobeUI::kScreenDeviceDisabled, GetCurrentScreenName(web_contents));
+  EXPECT_EQ(GetOobeScreenName(OobeScreen::SCREEN_DEVICE_DISABLED),
+            GetCurrentScreenName(web_contents));
 
   // Disconnect from the fake Ethernet network.
   OobeUI* const oobe_ui = host->GetOobeUI();
@@ -214,7 +212,8 @@ IN_PROC_BROWSER_TEST_F(DeviceDisablingTest, DisableWithEphemeralUsers) {
 
   // Verify that the offline error screen was not shown and the device disabled
   // screen is still being shown instead.
-  EXPECT_EQ(OobeUI::kScreenDeviceDisabled, GetCurrentScreenName(web_contents));
+  EXPECT_EQ(GetOobeScreenName(OobeScreen::SCREEN_DEVICE_DISABLED),
+            GetCurrentScreenName(web_contents));
 }
 
 }  // namespace system

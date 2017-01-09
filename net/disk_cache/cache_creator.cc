@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/single_thread_task_runner.h"
-#include "base/strings/stringprintf.h"
 #include "net/base/cache_type.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/blockfile/backend_impl.h"
@@ -26,10 +28,10 @@ class CacheCreator {
                int max_bytes,
                net::CacheType type,
                net::BackendType backend_type,
-               uint32 flags,
+               uint32_t flags,
                const scoped_refptr<base::SingleThreadTaskRunner>& thread,
                net::NetLog* net_log,
-               scoped_ptr<disk_cache::Backend>* backend,
+               std::unique_ptr<disk_cache::Backend>* backend,
                const net::CompletionCallback& callback);
 
   // Creates the backend.
@@ -48,11 +50,13 @@ class CacheCreator {
   int max_bytes_;
   net::CacheType type_;
   net::BackendType backend_type_;
-  uint32 flags_;
+#if !defined(OS_ANDROID)
+  uint32_t flags_;
+#endif
   scoped_refptr<base::SingleThreadTaskRunner> thread_;
-  scoped_ptr<disk_cache::Backend>* backend_;
+  std::unique_ptr<disk_cache::Backend>* backend_;
   net::CompletionCallback callback_;
-  scoped_ptr<disk_cache::Backend> created_cache_;
+  std::unique_ptr<disk_cache::Backend> created_cache_;
   net::NetLog* net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(CacheCreator);
@@ -64,10 +68,10 @@ CacheCreator::CacheCreator(
     int max_bytes,
     net::CacheType type,
     net::BackendType backend_type,
-    uint32 flags,
+    uint32_t flags,
     const scoped_refptr<base::SingleThreadTaskRunner>& thread,
     net::NetLog* net_log,
-    scoped_ptr<disk_cache::Backend>* backend,
+    std::unique_ptr<disk_cache::Backend>* backend,
     const net::CompletionCallback& callback)
     : path_(path),
       force_(force),
@@ -75,7 +79,9 @@ CacheCreator::CacheCreator(
       max_bytes_(max_bytes),
       type_(type),
       backend_type_(backend_type),
+#if !defined(OS_ANDROID)
       flags_(flags),
+#endif
       thread_(thread),
       backend_(backend),
       callback_(callback),
@@ -122,7 +128,7 @@ int CacheCreator::Run() {
 void CacheCreator::DoCallback(int result) {
   DCHECK_NE(net::ERR_IO_PENDING, result);
   if (result == net::OK) {
-    *backend_ = created_cache_.Pass();
+    *backend_ = std::move(created_cache_);
   } else {
     LOG(ERROR) << "Unable to create cache";
     created_cache_.reset();
@@ -162,7 +168,7 @@ int CreateCacheBackend(
     bool force,
     const scoped_refptr<base::SingleThreadTaskRunner>& thread,
     net::NetLog* net_log,
-    scoped_ptr<Backend>* backend,
+    std::unique_ptr<Backend>* backend,
     const net::CompletionCallback& callback) {
   DCHECK(!callback.is_null());
   if (type == net::MEMORY_CACHE) {

@@ -6,11 +6,17 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "base/prefs/scoped_user_pref_update.h"
-#include "components/pref_registry/testing_pref_service_syncable.h"
+#include "base/json/json_reader.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/values.h"
+#include "build/build_config.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/translate/core/browser/translate_download_manager.h"
+#include "components/translate/core/browser/translate_prefs.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -21,117 +27,10 @@ const char kTestLanguage[] = "en";
 
 namespace translate {
 
-TEST(TranslatePrefsTest, CreateBlockedLanguages) {
-  TranslateDownloadManager::GetInstance()->set_application_locale("en");
-  std::vector<std::string> blacklisted_languages;
-  blacklisted_languages.push_back("en");
-  blacklisted_languages.push_back("fr");
-  // Hebrew: synonym to 'he'
-  blacklisted_languages.push_back("iw");
-  // Haitian is not used as Accept-Language
-  blacklisted_languages.push_back("ht");
-
-  std::vector<std::string> accept_languages;
-  accept_languages.push_back("en");
-  // The subcode (IT) will be ignored when merging, except for Chinese.
-  accept_languages.push_back("it-IT");
-  accept_languages.push_back("ja");
-  // Filippino: synonym to 'tl'
-  accept_languages.push_back("fil");
-  // General Chinese is not used as Translate language, but not filtered
-  // when merging.
-  accept_languages.push_back("zh");
-  // Chinese with a sub code is acceptable for the blocked-language list.
-  accept_languages.push_back("zh-TW");
-
-  std::vector<std::string> blocked_languages;
-
-  TranslatePrefs::CreateBlockedLanguages(&blocked_languages,
-                                         blacklisted_languages,
-                                         accept_languages);
-
-  // The order of the elements cannot be determined.
-  std::vector<std::string> expected;
-  expected.push_back("en");
-  expected.push_back("fr");
-  expected.push_back("iw");
-  expected.push_back("ht");
-  expected.push_back("it");
-  expected.push_back("ja");
-  expected.push_back("tl");
-  expected.push_back("zh");
-  expected.push_back("zh-TW");
-
-  EXPECT_EQ(expected.size(), blocked_languages.size());
-  for (std::vector<std::string>::const_iterator it = expected.begin();
-       it != expected.end(); ++it) {
-    EXPECT_NE(blocked_languages.end(),
-              std::find(blocked_languages.begin(),
-                        blocked_languages.end(),
-                        *it));
-  }
-}
-
-TEST(TranslatePrefsTest, CreateBlockedLanguagesNonEnglishUI) {
-  std::vector<std::string> blacklisted_languages;
-  blacklisted_languages.push_back("fr");
-
-  std::vector<std::string> accept_languages;
-  accept_languages.push_back("en");
-  accept_languages.push_back("ja");
-  accept_languages.push_back("zh");
-
-  // Run in an English locale.
-  {
-    TranslateDownloadManager::GetInstance()->set_application_locale("en");
-    std::vector<std::string> blocked_languages;
-    TranslatePrefs::CreateBlockedLanguages(&blocked_languages,
-                                           blacklisted_languages,
-                                           accept_languages);
-    std::vector<std::string> expected;
-    expected.push_back("en");
-    expected.push_back("fr");
-    expected.push_back("ja");
-    expected.push_back("zh");
-
-    EXPECT_EQ(expected.size(), blocked_languages.size());
-    for (std::vector<std::string>::const_iterator it = expected.begin();
-         it != expected.end(); ++it) {
-      EXPECT_NE(blocked_languages.end(),
-                std::find(blocked_languages.begin(),
-                          blocked_languages.end(),
-                          *it));
-    }
-  }
-
-  // Run in a Japanese locale.
-  // English should not be included in the result even though Accept Languages
-  // has English because the UI is not English.
-  {
-    TranslateDownloadManager::GetInstance()->set_application_locale("ja");
-    std::vector<std::string> blocked_languages;
-    TranslatePrefs::CreateBlockedLanguages(&blocked_languages,
-                                           blacklisted_languages,
-                                           accept_languages);
-    std::vector<std::string> expected;
-    expected.push_back("fr");
-    expected.push_back("ja");
-    expected.push_back("zh");
-
-    EXPECT_EQ(expected.size(), blocked_languages.size());
-    for (std::vector<std::string>::const_iterator it = expected.begin();
-         it != expected.end(); ++it) {
-      EXPECT_NE(blocked_languages.end(),
-                std::find(blocked_languages.begin(),
-                          blocked_languages.end(),
-                          *it));
-    }
-  }
-}
-
 class TranslatePrefTest : public testing::Test {
  protected:
-  TranslatePrefTest() : prefs_(new user_prefs::TestingPrefServiceSyncable()) {
+  TranslatePrefTest()
+      : prefs_(new sync_preferences::TestingPrefServiceSyncable()) {
 #if defined(OS_CHROMEOS)
     const char* preferred_languages_prefs =
         "settings.language.preferred_languages";
@@ -155,13 +54,45 @@ class TranslatePrefTest : public testing::Test {
     return update.GetOldestDenialTime();
   }
 
-  scoped_ptr<user_prefs::TestingPrefServiceSyncable> prefs_;
-  scoped_ptr<translate::TranslatePrefs> translate_prefs_;
+  std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> prefs_;
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs_;
 
   // Shared time constants.
   base::Time now_;
   base::Time two_days_ago_;
 };
+
+TEST_F(TranslatePrefTest, IsTooOftenDeniedIn2016Q2UI) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(translate::kTranslateUI2016Q2);
+
+  translate_prefs_->ResetDenialState();
+  EXPECT_FALSE(translate_prefs_->IsTooOftenDenied(kTestLanguage));
+
+  for (int i = 0; i < 3; i++) {
+    translate_prefs_->IncrementTranslationDeniedCount(kTestLanguage);
+    EXPECT_FALSE(translate_prefs_->IsTooOftenDenied(kTestLanguage));
+  }
+
+  translate_prefs_->IncrementTranslationDeniedCount(kTestLanguage);
+  EXPECT_TRUE(translate_prefs_->IsTooOftenDenied(kTestLanguage));
+}
+
+TEST_F(TranslatePrefTest, IsTooOftenIgnoredIn2016Q2UI) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(translate::kTranslateUI2016Q2);
+
+  translate_prefs_->ResetDenialState();
+  EXPECT_FALSE(translate_prefs_->IsTooOftenDenied(kTestLanguage));
+
+  for (int i = 0; i < 10; i++) {
+    translate_prefs_->IncrementTranslationIgnoredCount(kTestLanguage);
+    EXPECT_FALSE(translate_prefs_->IsTooOftenDenied(kTestLanguage));
+  }
+
+  translate_prefs_->IncrementTranslationIgnoredCount(kTestLanguage);
+  EXPECT_TRUE(translate_prefs_->IsTooOftenDenied(kTestLanguage));
+}
 
 TEST_F(TranslatePrefTest, UpdateLastDeniedTime) {
   // Test that denials with more than 24 hours difference between them do not
@@ -214,16 +145,16 @@ TEST_F(TranslatePrefTest, DenialTimeUpdate_ForceListExistence) {
   DictionaryPrefUpdate dict_update(
       prefs_.get(), TranslatePrefs::kPrefTranslateLastDeniedTimeForLanguage);
   base::DictionaryValue* denial_dict = dict_update.Get();
-  ASSERT_TRUE(denial_dict);
+  EXPECT_TRUE(denial_dict);
 
   base::ListValue* list_value = nullptr;
   bool has_list = denial_dict->GetList(kTestLanguage, &list_value);
-  ASSERT_FALSE(has_list);
+  EXPECT_FALSE(has_list);
 
   // Calling GetDenialTimes will force creation of a properly populated list.
   DenialTimeUpdate update(prefs_.get(), kTestLanguage, 2);
   base::ListValue* time_list = update.GetDenialTimes();
-  ASSERT_TRUE(time_list);
+  EXPECT_TRUE(time_list);
   EXPECT_EQ(0U, time_list->GetSize());
 }
 
@@ -234,20 +165,20 @@ TEST_F(TranslatePrefTest, DenialTimeUpdate_Migrate) {
   DictionaryPrefUpdate dict_update(
       prefs_.get(), TranslatePrefs::kPrefTranslateLastDeniedTimeForLanguage);
   base::DictionaryValue* denial_dict = dict_update.Get();
-  ASSERT_TRUE(denial_dict);
+  EXPECT_TRUE(denial_dict);
   denial_dict->SetDouble(kTestLanguage, two_days_ago_.ToJsTime());
 
   base::ListValue* list_value = nullptr;
   bool has_list = denial_dict->GetList(kTestLanguage, &list_value);
-  ASSERT_FALSE(has_list);
+  EXPECT_FALSE(has_list);
 
   // Calling GetDenialTimes will force creation of a properly populated list.
   DenialTimeUpdate update(prefs_.get(), kTestLanguage, 2);
   base::ListValue* time_list = update.GetDenialTimes();
-  ASSERT_TRUE(time_list);
+  EXPECT_TRUE(time_list);
 
   has_list = denial_dict->GetList(kTestLanguage, &list_value);
-  ASSERT_TRUE(has_list);
+  EXPECT_TRUE(has_list);
   EXPECT_EQ(time_list, list_value);
   EXPECT_EQ(1U, time_list->GetSize());
   EXPECT_EQ(two_days_ago_, update.GetOldestDenialTime());
@@ -279,6 +210,131 @@ TEST_F(TranslatePrefTest, DenialTimeUpdate_SlidingWindow) {
   update.AddDenialTime(now_);
   EXPECT_EQ(update.GetOldestDenialTime(),
             now_ - base::TimeDelta::FromMinutes(2));
+}
+
+TEST_F(TranslatePrefTest, ULPPrefs) {
+  // Mock the pref.
+  // Case 1: well formed ULP.
+  const char json1[] =
+      "{\n"
+      "  \"reading\": {\n"
+      "    \"confidence\": 0.8,\n"
+      "    \"preference\": [\n"
+      "      {\n"
+      "        \"language\": \"en-AU\",\n"
+      "        \"probability\": 0.4\n"
+      "      }, {\n"
+      "        \"language\": \"fr\",\n"
+      "        \"probability\": 0.6\n"
+      "      }\n"
+      "    ]\n"
+      "  }\n"
+      "}";
+  int error_code = 0;
+  std::string error_msg;
+  int error_line = 0;
+  int error_column = 0;
+  std::unique_ptr<base::Value> profile(base::JSONReader::ReadAndReturnError(
+      json1, 0, &error_code, &error_msg, &error_line, &error_column));
+  ASSERT_EQ(0, error_code) << error_msg << " at " << error_line << ":"
+                           << error_column << std::endl
+                           << json1;
+
+  prefs_->SetUserPref(TranslatePrefs::kPrefLanguageProfile, profile.release());
+
+  TranslatePrefs::LanguageAndProbabilityList list;
+  EXPECT_EQ(0.8, translate_prefs_->GetReadingFromUserLanguageProfile(&list));
+  EXPECT_EQ(2UL, list.size());
+  // the order in the ULP is wrong, and our code will sort it and make the
+  // larger
+  // one first.
+  EXPECT_EQ("fr", list[0].first);
+  EXPECT_EQ(0.6, list[0].second);
+  EXPECT_EQ("en", list[1].first);  // the "en-AU" should be normalize to "en"
+  EXPECT_EQ(0.4, list[1].second);
+
+  // Case 2: ill-formed ULP.
+  // Test if the ULP lacking some fields the code will gracefully ignore those
+  // items without crash.
+  const char json2[] =
+      "{\n"
+      "  \"reading\": {\n"
+      "    \"confidence\": 0.3,\n"
+      "    \"preference\": [\n"
+      "      {\n"  // The first one do not have probability. Won't be counted.
+      "        \"language\": \"th\"\n"
+      "      }, {\n"
+      "        \"language\": \"zh-TW\",\n"
+      "        \"probability\": 0.4\n"
+      "      }, {\n"  // The third one has no language nor probability. Won't be
+                      //  counted.
+      "      }, {\n"  // The forth one has 'pt-BR' which is not supported by
+                      // Translate.
+                      // Should be normalize to 'pt'
+      "        \"language\": \"pt-BR\",\n"
+      "        \"probability\": 0.1\n"
+      "      }, {\n"  // The fifth one has no language. Won't be counted.
+      "        \"probability\": 0.1\n"
+      "      }\n"
+      "    ]\n"
+      "  }\n"
+      "}";
+
+  profile.reset(base::JSONReader::ReadAndReturnError(json2, 0, &error_code,
+                                                     &error_msg, &error_line,
+                                                     &error_column)
+                    .release());
+  ASSERT_EQ(0, error_code) << error_msg << " at " << error_line << ":"
+                           << error_column << std::endl
+                           << json2;
+
+  prefs_->SetUserPref(TranslatePrefs::kPrefLanguageProfile, profile.release());
+
+  list.clear();
+  EXPECT_EQ(0.3, translate_prefs_->GetReadingFromUserLanguageProfile(&list));
+  EXPECT_EQ(2UL, list.size());
+  EXPECT_EQ("zh-TW", list[0].first);
+  EXPECT_EQ(0.4, list[0].second);
+  EXPECT_EQ("pt", list[1].first);  // the "pt-BR" should be normalize to "pt"
+  EXPECT_EQ(0.1, list[1].second);
+
+  // Case 3: Language Code normalization and reordering.
+  const char json3[] =
+      "{\n"
+      "  \"reading\": {\n"
+      "    \"confidence\": 0.8,\n"
+      "    \"preference\": [\n"
+      "      {\n"
+      "        \"language\": \"fr\",\n"
+      "        \"probability\": 0.4\n"
+      "      }, {\n"
+      "        \"language\": \"en-US\",\n"
+      "        \"probability\": 0.31\n"
+      "      }, {\n"
+      "        \"language\": \"en-GB\",\n"
+      "        \"probability\": 0.29\n"
+      "      }\n"
+      "    ]\n"
+      "  }\n"
+      "}";
+  profile.reset(base::JSONReader::ReadAndReturnError(json3, 0, &error_code,
+                                                     &error_msg, &error_line,
+                                                     &error_column)
+                    .release());
+  ASSERT_EQ(0, error_code) << error_msg << " at " << error_line << ":"
+                           << error_column << std::endl
+                           << json3;
+
+  prefs_->SetUserPref(TranslatePrefs::kPrefLanguageProfile, profile.release());
+
+  list.clear();
+  EXPECT_EQ(0.8, translate_prefs_->GetReadingFromUserLanguageProfile(&list));
+  EXPECT_EQ(2UL, list.size());
+  EXPECT_EQ("en", list[0].first);  // en-US and en-GB will be normalize into en
+  EXPECT_EQ(0.6,
+            list[0].second);  // and their probability will add to gether be 0.6
+  EXPECT_EQ("fr", list[1].first);  // fr will move down to the 2nd one
+  EXPECT_EQ(0.4, list[1].second);
 }
 
 }  // namespace translate

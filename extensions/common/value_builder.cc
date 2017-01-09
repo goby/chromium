@@ -4,7 +4,11 @@
 
 #include "extensions/common/value_builder.h"
 
+#include <utility>
+
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
+#include "base/values.h"
 
 namespace extensions {
 
@@ -26,49 +30,43 @@ std::string DictionaryBuilder::ToJSON() const {
 
 DictionaryBuilder& DictionaryBuilder::Set(const std::string& path,
                                           int in_value) {
-  dict_->SetWithoutPathExpansion(path, new base::FundamentalValue(in_value));
+  dict_->SetWithoutPathExpansion(
+      path, base::MakeUnique<base::FundamentalValue>(in_value));
   return *this;
 }
 
 DictionaryBuilder& DictionaryBuilder::Set(const std::string& path,
                                           double in_value) {
-  dict_->SetWithoutPathExpansion(path, new base::FundamentalValue(in_value));
+  dict_->SetWithoutPathExpansion(
+      path, base::MakeUnique<base::FundamentalValue>(in_value));
   return *this;
 }
 
 DictionaryBuilder& DictionaryBuilder::Set(const std::string& path,
                                           const std::string& in_value) {
-  dict_->SetWithoutPathExpansion(path, new base::StringValue(in_value));
+  dict_->SetWithoutPathExpansion(path,
+                                 base::MakeUnique<base::StringValue>(in_value));
   return *this;
 }
 
 DictionaryBuilder& DictionaryBuilder::Set(const std::string& path,
                                           const base::string16& in_value) {
-  dict_->SetWithoutPathExpansion(path, new base::StringValue(in_value));
+  dict_->SetWithoutPathExpansion(path,
+                                 base::MakeUnique<base::StringValue>(in_value));
   return *this;
 }
 
-DictionaryBuilder& DictionaryBuilder::Set(const std::string& path,
-                                          DictionaryBuilder& in_value) {
-  dict_->SetWithoutPathExpansion(path, in_value.Build().Pass());
-  return *this;
-}
-
-DictionaryBuilder& DictionaryBuilder::Set(const std::string& path,
-                                          ListBuilder& in_value) {
-  dict_->SetWithoutPathExpansion(path, in_value.Build().Pass());
-  return *this;
-}
-
-DictionaryBuilder& DictionaryBuilder::Set(const std::string& path,
-                                          scoped_ptr<base::Value> in_value) {
-  dict_->SetWithoutPathExpansion(path, in_value.Pass());
+DictionaryBuilder& DictionaryBuilder::Set(
+    const std::string& path,
+    std::unique_ptr<base::Value> in_value) {
+  dict_->SetWithoutPathExpansion(path, std::move(in_value));
   return *this;
 }
 
 DictionaryBuilder& DictionaryBuilder::SetBoolean(
     const std::string& path, bool in_value) {
-  dict_->SetWithoutPathExpansion(path, new base::FundamentalValue(in_value));
+  dict_->SetWithoutPathExpansion(
+      path, base::MakeUnique<base::FundamentalValue>(in_value));
   return *this;
 }
 
@@ -80,37 +78,32 @@ ListBuilder::ListBuilder(const base::ListValue& init) : list_(init.DeepCopy()) {
 ListBuilder::~ListBuilder() {}
 
 ListBuilder& ListBuilder::Append(int in_value) {
-  list_->Append(new base::FundamentalValue(in_value));
+  list_->AppendInteger(in_value);
   return *this;
 }
 
 ListBuilder& ListBuilder::Append(double in_value) {
-  list_->Append(new base::FundamentalValue(in_value));
+  list_->AppendDouble(in_value);
   return *this;
 }
 
 ListBuilder& ListBuilder::Append(const std::string& in_value) {
-  list_->Append(new base::StringValue(in_value));
+  list_->AppendString(in_value);
   return *this;
 }
 
 ListBuilder& ListBuilder::Append(const base::string16& in_value) {
-  list_->Append(new base::StringValue(in_value));
+  list_->AppendString(in_value);
   return *this;
 }
 
-ListBuilder& ListBuilder::Append(DictionaryBuilder& in_value) {
-  list_->Append(in_value.Build().Pass());
-  return *this;
-}
-
-ListBuilder& ListBuilder::Append(ListBuilder& in_value) {
-  list_->Append(in_value.Build().Pass());
+ListBuilder& ListBuilder::Append(std::unique_ptr<base::Value> in_value) {
+  list_->Append(std::move(in_value));
   return *this;
 }
 
 ListBuilder& ListBuilder::AppendBoolean(bool in_value) {
-  list_->Append(new base::FundamentalValue(in_value));
+  list_->AppendBoolean(in_value);
   return *this;
 }
 

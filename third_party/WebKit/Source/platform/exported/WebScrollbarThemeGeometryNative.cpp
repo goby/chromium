@@ -23,133 +23,63 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "platform/exported/WebScrollbarThemeGeometryNative.h"
 
 #include "platform/exported/WebScrollbarThemeClientImpl.h"
 #include "platform/scroll/ScrollbarTheme.h"
 #include "public/platform/WebScrollbar.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<WebScrollbarThemeGeometryNative> WebScrollbarThemeGeometryNative::create(ScrollbarTheme* theme)
-{
-    return adoptPtr(new WebScrollbarThemeGeometryNative(theme));
+std::unique_ptr<WebScrollbarThemeGeometryNative>
+WebScrollbarThemeGeometryNative::create(ScrollbarTheme& theme) {
+  return WTF::wrapUnique(new WebScrollbarThemeGeometryNative(theme));
 }
 
-WebScrollbarThemeGeometryNative::WebScrollbarThemeGeometryNative(ScrollbarTheme* theme)
-    : m_theme(theme)
-{
+WebScrollbarThemeGeometryNative::WebScrollbarThemeGeometryNative(
+    ScrollbarTheme& theme)
+    : m_theme(theme) {}
+
+bool WebScrollbarThemeGeometryNative::hasButtons(WebScrollbar* scrollbar) {
+  return m_theme.hasButtons(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-WebScrollbarThemeGeometryNative* WebScrollbarThemeGeometryNative::clone() const
-{
-    return new WebScrollbarThemeGeometryNative(m_theme);
+bool WebScrollbarThemeGeometryNative::hasThumb(WebScrollbar* scrollbar) {
+  return m_theme.hasThumb(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-int WebScrollbarThemeGeometryNative::thumbPosition(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->thumbPosition(&client);
+WebRect WebScrollbarThemeGeometryNative::trackRect(WebScrollbar* scrollbar) {
+  return m_theme.trackRect(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-int WebScrollbarThemeGeometryNative::thumbLength(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->thumbLength(&client);
+WebRect WebScrollbarThemeGeometryNative::thumbRect(WebScrollbar* scrollbar) {
+  return m_theme.thumbRect(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-int WebScrollbarThemeGeometryNative::trackPosition(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->trackPosition(&client);
+WebRect WebScrollbarThemeGeometryNative::backButtonStartRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.backButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                BackButtonStartPart, false);
 }
 
-int WebScrollbarThemeGeometryNative::trackLength(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->trackLength(&client);
+WebRect WebScrollbarThemeGeometryNative::backButtonEndRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.backButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                BackButtonEndPart, false);
 }
 
-bool WebScrollbarThemeGeometryNative::hasButtons(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->hasButtons(&client);
+WebRect WebScrollbarThemeGeometryNative::forwardButtonStartRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.forwardButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                   ForwardButtonStartPart, false);
 }
 
-bool WebScrollbarThemeGeometryNative::hasThumb(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->hasThumb(&client);
+WebRect WebScrollbarThemeGeometryNative::forwardButtonEndRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.forwardButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                   ForwardButtonEndPart, false);
 }
 
-WebRect WebScrollbarThemeGeometryNative::trackRect(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->trackRect(&client);
-}
-
-WebRect WebScrollbarThemeGeometryNative::thumbRect(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->thumbRect(&client);
-}
-
-int WebScrollbarThemeGeometryNative::minimumThumbLength(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->minimumThumbLength(&client);
-}
-
-int WebScrollbarThemeGeometryNative::scrollbarThickness(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->scrollbarThickness(client.controlSize());
-}
-
-WebRect WebScrollbarThemeGeometryNative::backButtonStartRect(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->backButtonRect(&client, BackButtonStartPart, false);
-}
-
-WebRect WebScrollbarThemeGeometryNative::backButtonEndRect(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->backButtonRect(&client, BackButtonEndPart, false);
-}
-
-WebRect WebScrollbarThemeGeometryNative::forwardButtonStartRect(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->forwardButtonRect(&client, ForwardButtonStartPart, false);
-}
-
-WebRect WebScrollbarThemeGeometryNative::forwardButtonEndRect(WebScrollbar* scrollbar)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->forwardButtonRect(&client, ForwardButtonEndPart, false);
-}
-
-WebRect WebScrollbarThemeGeometryNative::constrainTrackRectToTrackPieces(WebScrollbar* scrollbar, const WebRect& rect)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    return m_theme->constrainTrackRectToTrackPieces(&client, IntRect(rect));
-}
-
-void WebScrollbarThemeGeometryNative::splitTrack(WebScrollbar* scrollbar, const WebRect& webTrack, WebRect& webStartTrack, WebRect& webThumb, WebRect& webEndTrack)
-{
-    WebScrollbarThemeClientImpl client(scrollbar);
-    IntRect track(webTrack);
-    IntRect startTrack;
-    IntRect thumb;
-    IntRect endTrack;
-    m_theme->splitTrack(&client, track, startTrack, thumb, endTrack);
-
-    webStartTrack = startTrack;
-    webThumb = thumb;
-    webEndTrack = endTrack;
-}
-
-} // namespace blink
+}  // namespace blink

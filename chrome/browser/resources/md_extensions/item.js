@@ -16,9 +16,6 @@ cr.define('extensions', function() {
      */
     setItemEnabled: assertNotReached,
 
-    /** @param {string} id */
-    showItemDetails: assertNotReached,
-
     /**
      * @param {string} id
      * @param {boolean} isAllowedIncognito
@@ -26,14 +23,40 @@ cr.define('extensions', function() {
     setItemAllowedIncognito: assertNotReached,
 
     /**
-     * @param {string} id,
+     * @param {string} id
+     * @param {boolean} isAllowedOnFileUrls
+     */
+    setItemAllowedOnFileUrls: assertNotReached,
+
+    /**
+     * @param {string} id
+     * @param {boolean} isAllowedOnAllSites
+     */
+    setItemAllowedOnAllSites: assertNotReached,
+
+    /**
+     * @param {string} id
+     * @param {boolean} collectsErrors
+     */
+    setItemCollectsErrors: assertNotReached,
+
+    /**
+     * @param {string} id
      * @param {chrome.developerPrivate.ExtensionView} view
      */
     inspectItemView: assertNotReached,
+
+    /** @param {string} id */
+    repairItem: assertNotReached,
+
+    /** @param {string} id */
+    showItemOptionsPage: assertNotReached,
   };
 
   var Item = Polymer({
     is: 'extensions-item',
+
+    behaviors: [I18nBehavior],
 
     properties: {
       // The item's delegate, or null.
@@ -47,23 +70,20 @@ cr.define('extensions', function() {
         value: false,
       },
 
-      // Whether or not the expanded view of the item is shown.
-      showingDetails_: {
-        type: Boolean,
-        value: false,
-      },
-
       // The underlying ExtensionInfo itself. Public for use in declarative
       // bindings.
       /** @type {chrome.developerPrivate.ExtensionInfo} */
       data: {
         type: Object,
       },
-    },
 
-    behaviors: [
-      I18nBehavior,
-    ],
+      // Whether or not the expanded view of the item is shown.
+      /** @private */
+      showingDetails_: {
+        type: Boolean,
+        value: false,
+      },
+    },
 
     observers: [
       'observeIdVisibility_(inDevMode, showingDetails_, data.id)',
@@ -80,30 +100,34 @@ cr.define('extensions', function() {
       this.fire('extension-item-size-changed', {item: this.data});
     },
 
-    /** @private */
-    onShowDetailsTap_: function() {
-      this.showingDetails_ = !this.showingDetails_;
+    /**
+     * @return {boolean}
+     * @private
+     */
+    computeErrorsHidden_: function() {
+      return !this.data.manifestErrors.length &&
+             !this.data.runtimeErrors.length;
     },
 
     /** @private */
-    onDeleteTap_: function() {
+    onRemoveTap_: function() {
       this.delegate.deleteItem(this.data.id);
     },
 
     /** @private */
     onEnableChange_: function() {
-      this.delegate.setItemEnabled(this.data.id, this.$.enabled.checked);
+      this.delegate.setItemEnabled(this.data.id,
+                                   this.$['enable-toggle'].checked);
+    },
+
+    /** @private */
+    onErrorsTap_: function() {
+      this.fire('extension-item-show-errors', {data: this.data});
     },
 
     /** @private */
     onDetailsTap_: function() {
-      this.delegate.showItemDetails(this.data.id);
-    },
-
-    /** @private */
-    onAllowIncognitoChange_: function() {
-      this.delegate.setItemAllowedIncognito(
-          this.data.id, this.$$('#allow-incognito').checked);
+      this.fire('extension-item-show-details', {data: this.data});
     },
 
     /**
@@ -112,6 +136,11 @@ cr.define('extensions', function() {
      */
     onInspectTap_: function(e) {
       this.delegate.inspectItemView(this.data.id, e.model.item);
+    },
+
+    /** @private */
+    onRepairTap_: function() {
+      this.delegate.repairItem(this.data.id);
     },
 
     /**
@@ -136,19 +165,36 @@ cr.define('extensions', function() {
       return this.isEnabled_() ? 'enabled' : 'disabled';
     },
 
-    /** @private */
-    computeExpandIcon_: function() {
-      return this.showingDetails_ ? 'expand-less' : 'expand-more';
+    /**
+     * @return {string}
+     * @private
+     */
+    computeSourceIndicatorIcon_: function() {
+      switch (extensions.getItemSource(this.data)) {
+        case SourceType.POLICY:
+          return 'communication:business';
+        case SourceType.SIDELOADED:
+          return 'input';
+        case SourceType.UNPACKED:
+          return 'extensions-icons:unpacked';
+        case SourceType.WEBSTORE:
+          return '';
+      }
+      assertNotReached();
     },
 
-    /** @private */
-    computeEnableCheckboxLabel_: function() {
-      return this.i18n(this.isEnabled_() ? 'itemEnabled' : 'itemDisabled');
+    /**
+     * @return {string}
+     * @private
+     */
+    computeSourceIndicatorText_: function() {
+      var sourceType = extensions.getItemSource(this.data);
+      return sourceType == SourceType.WEBSTORE ? '' :
+             extensions.getItemSourceString(sourceType);
     },
 
     /**
      * @param {chrome.developerPrivate.ExtensionView} view
-     * @suppress {checkTypes} Needed for URL externs. :(
      * @private
      */
     computeInspectLabel_: function(view) {
@@ -165,7 +211,25 @@ cr.define('extensions', function() {
                     ' ' + this.i18n('viewInactive') : '') +
                (view.isIframe ? ' ' + this.i18n('viewIframe') : '');
       return label;
-    }
+    },
+
+    /**
+     * @return {boolean}
+     * @private
+     */
+    hasWarnings_: function() {
+      return this.data.disableReasons.corruptInstall ||
+             this.data.disableReasons.suspiciousInstall ||
+             !!this.data.blacklistText;
+    },
+
+    /**
+     * @return {string}
+     * @private
+     */
+    computeWarningsClasses_: function() {
+      return this.data.blacklistText ? 'severe' : 'mild';
+    },
   });
 
   return {

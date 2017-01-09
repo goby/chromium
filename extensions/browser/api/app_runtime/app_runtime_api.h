@@ -5,10 +5,10 @@
 #ifndef EXTENSIONS_BROWSER_API_APP_RUNTIME_APP_RUNTIME_API_H_
 #define EXTENSIONS_BROWSER_API_APP_RUNTIME_APP_RUNTIME_API_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "extensions/common/constants.h"
 
 class GURL;
@@ -19,12 +19,19 @@ class DictionaryValue;
 
 namespace content {
 class BrowserContext;
-class WebContents;
 }
 
 namespace extensions {
 
+namespace api {
+namespace app_runtime {
+struct ActionData;
+struct LaunchData;
+}
+}
+
 class Extension;
+struct EntryInfo;
 struct GrantedFileEntry;
 
 class AppRuntimeEventRouter {
@@ -32,13 +39,15 @@ class AppRuntimeEventRouter {
   // Dispatches the onEmbedRequested event to the given app.
   static void DispatchOnEmbedRequestedEvent(
       content::BrowserContext* context,
-      scoped_ptr<base::DictionaryValue> app_embedding_request_data,
-      const extensions::Extension* extension);
+      std::unique_ptr<base::DictionaryValue> app_embedding_request_data,
+      const Extension* extension);
 
   // Dispatches the onLaunched event to the given app.
-  static void DispatchOnLaunchedEvent(content::BrowserContext* context,
-                                      const Extension* extension,
-                                      extensions::AppLaunchSource source);
+  static void DispatchOnLaunchedEvent(
+      content::BrowserContext* context,
+      const Extension* extension,
+      AppLaunchSource source,
+      std::unique_ptr<api::app_runtime::LaunchData> launch_data);
 
   // Dispatches the onRestarted event to the given app, providing a list of
   // restored file entries from the previous run.
@@ -63,9 +72,11 @@ class AppRuntimeEventRouter {
   static void DispatchOnLaunchedEventWithFileEntries(
       content::BrowserContext* context,
       const Extension* extension,
+      AppLaunchSource source,
       const std::string& handler_id,
-      const std::vector<std::string>& mime_types,
-      const std::vector<GrantedFileEntry>& file_entries);
+      const std::vector<EntryInfo>& entries,
+      const std::vector<GrantedFileEntry>& file_entries,
+      std::unique_ptr<api::app_runtime::ActionData> action_data);
 
   // |handler_id| corresponds to the id of the url_handlers item
   // in the manifest that resulted in a match which triggered this launch.

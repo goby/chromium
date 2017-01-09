@@ -6,10 +6,12 @@
 #define CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/cache_storage/cache_storage.h"
 #include "content/common/content_export.h"
@@ -38,12 +40,12 @@ class CacheStorageQuotaClient;
 // longer in active use.
 class CONTENT_EXPORT CacheStorageManager {
  public:
-  static scoped_ptr<CacheStorageManager> Create(
+  static std::unique_ptr<CacheStorageManager> Create(
       const base::FilePath& path,
-      const scoped_refptr<base::SequencedTaskRunner>& cache_task_runner,
-      const scoped_refptr<storage::QuotaManagerProxy>& quota_manager_proxy);
+      scoped_refptr<base::SequencedTaskRunner> cache_task_runner,
+      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy);
 
-  static scoped_ptr<CacheStorageManager> Create(
+  static std::unique_ptr<CacheStorageManager> Create(
       CacheStorageManager* old_manager);
 
   // Map a database identifier (computed from an origin) to the path.
@@ -64,19 +66,21 @@ class CONTENT_EXPORT CacheStorageManager {
                    const std::string& cache_name,
                    const CacheStorage::BoolAndErrorCallback& callback);
   void EnumerateCaches(const GURL& origin,
-                       const CacheStorage::StringsAndErrorCallback& callback);
+                       const CacheStorage::StringsCallback& callback);
   void MatchCache(const GURL& origin,
                   const std::string& cache_name,
-                  scoped_ptr<ServiceWorkerFetchRequest> request,
+                  std::unique_ptr<ServiceWorkerFetchRequest> request,
+                  const CacheStorageCacheQueryParams& match_params,
                   const CacheStorageCache::ResponseCallback& callback);
   void MatchAllCaches(const GURL& origin,
-                      scoped_ptr<ServiceWorkerFetchRequest> request,
+                      std::unique_ptr<ServiceWorkerFetchRequest> request,
+                      const CacheStorageCacheQueryParams& match_params,
                       const CacheStorageCache::ResponseCallback& callback);
 
   // This must be called before creating any of the public *Cache functions
   // above.
   void SetBlobParametersForCache(
-      const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
+      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
       base::WeakPtr<storage::BlobStorageContext> blob_storage_context);
 
   base::WeakPtr<CacheStorageManager> AsWeakPtr() {
@@ -88,15 +92,14 @@ class CONTENT_EXPORT CacheStorageManager {
  private:
   friend class CacheStorageContextImpl;
   friend class CacheStorageManagerTest;
-  friend class CacheStorageMigrationTest;
   friend class CacheStorageQuotaClient;
 
-  typedef std::map<GURL, scoped_ptr<CacheStorage>> CacheStorageMap;
+  typedef std::map<GURL, std::unique_ptr<CacheStorage>> CacheStorageMap;
 
   CacheStorageManager(
       const base::FilePath& path,
-      const scoped_refptr<base::SequencedTaskRunner>& cache_task_runner,
-      const scoped_refptr<storage::QuotaManagerProxy>& quota_manager_proxy);
+      scoped_refptr<base::SequencedTaskRunner> cache_task_runner,
+      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy);
 
   // The returned CacheStorage* is owned by this manager.
   CacheStorage* FindOrCreateCacheStorage(const GURL& origin);
@@ -104,6 +107,10 @@ class CONTENT_EXPORT CacheStorageManager {
   // QuotaClient and Browsing Data Deletion support
   void GetAllOriginsUsage(
       const CacheStorageContext::GetUsageInfoCallback& callback);
+  void GetAllOriginsUsageGetSizes(
+      std::unique_ptr<std::vector<CacheStorageUsageInfo>> usage_info,
+      const CacheStorageContext::GetUsageInfoCallback& callback);
+
   void GetOriginUsage(const GURL& origin_url,
                       const storage::QuotaClient::GetUsageCallback& callback);
   void GetOrigins(const storage::QuotaClient::GetOriginsCallback& callback);
@@ -113,11 +120,11 @@ class CONTENT_EXPORT CacheStorageManager {
   void DeleteOriginData(const GURL& origin,
                         const storage::QuotaClient::DeletionCallback& callback);
   void DeleteOriginData(const GURL& origin);
-  static void DeleteOriginDidClose(
+  void DeleteOriginDidClose(
       const GURL& origin,
       const storage::QuotaClient::DeletionCallback& callback,
-      scoped_ptr<CacheStorage> cache_storage,
-      base::WeakPtr<CacheStorageManager> cache_manager);
+      std::unique_ptr<CacheStorage> cache_storage,
+      int64_t origin_size);
 
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter()
       const {
@@ -128,22 +135,11 @@ class CONTENT_EXPORT CacheStorageManager {
     return blob_context_;
   }
 
-  const scoped_refptr<base::SequencedTaskRunner>& cache_task_runner() const {
+  scoped_refptr<base::SequencedTaskRunner> cache_task_runner() const {
     return cache_task_runner_;
   }
 
   bool IsMemoryBacked() const { return root_path_.empty(); }
-
-  // Map a origin to the path. Exposed for testing.
-  static base::FilePath ConstructLegacyOriginPath(
-      const base::FilePath& root_path,
-      const GURL& origin);
-
-  // Migrate from old origin-based path to storage identifier-based path.
-  // TODO(jsbell); Remove method and all calls after a few releases.
-  void MigrateOrigin(const GURL& origin);
-  static void MigrateOriginOnTaskRunner(const base::FilePath& old_path,
-                                        const base::FilePath& new_path);
 
   base::FilePath root_path_;
   scoped_refptr<base::SequencedTaskRunner> cache_task_runner_;

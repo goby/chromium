@@ -5,7 +5,13 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_BROWSER_SHORTCUT_LAUNCHER_ITEM_CONTROLLER_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_BROWSER_SHORTCUT_LAUNCHER_ITEM_CONTROLLER_H_
 
+#include "base/macros.h"
 #include "chrome/browser/ui/ash/launcher/launcher_item_controller.h"
+#include "chrome/browser/ui/browser_list.h"
+
+namespace ash {
+class ShelfModel;
+}
 
 namespace content {
 class WebContents;
@@ -21,8 +27,8 @@ class ChromeLauncherController;
 // Item controller for an browser shortcut.
 class BrowserShortcutLauncherItemController : public LauncherItemController {
  public:
-  explicit BrowserShortcutLauncherItemController(
-      ChromeLauncherController* controller);
+  BrowserShortcutLauncherItemController(ChromeLauncherController* controller,
+                                        ash::ShelfModel* shelf_model);
 
   ~BrowserShortcutLauncherItemController() override;
 
@@ -33,8 +39,10 @@ class BrowserShortcutLauncherItemController : public LauncherItemController {
   void SetShelfIDForBrowserWindowContents(Browser* browser,
                                           content::WebContents* web_contents);
 
+  // Check if there is any active browsers windows.
+  bool IsListOfActiveBrowserEmpty();
+
   // LauncherItemController overrides:
-  bool IsOpen() const override;
   bool IsVisible() const override;
   void Launch(ash::LaunchSource source, int event_flags) override;
   ShelfItemDelegate::PerformedAction Activate(
@@ -43,11 +51,9 @@ class BrowserShortcutLauncherItemController : public LauncherItemController {
   ash::ShelfItemDelegate::PerformedAction ItemSelected(
       const ui::Event& event) override;
   base::string16 GetTitle() override;
-  ui::MenuModel* CreateContextMenu(aura::Window* root_window) override;
   ash::ShelfMenuModel* CreateApplicationMenu(int event_flags) override;
   bool IsDraggable() override;
   bool CanPin() const override;
-  bool ShouldShowTooltip() override;
   void Close() override;
 
  private:
@@ -70,6 +76,11 @@ class BrowserShortcutLauncherItemController : public LauncherItemController {
   // Returns true when the given |browser| is listed in the browser application
   // list.
   bool IsBrowserRepresentedInBrowserList(Browser* browser);
+
+  // Get a list of active browsers.
+  BrowserList::BrowserVector GetListOfActiveBrowsers();
+
+  ash::ShelfModel* shelf_model_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserShortcutLauncherItemController);
 };

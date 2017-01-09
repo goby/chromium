@@ -4,16 +4,19 @@
 
 #include "android_webview/lib/main/aw_main_delegate.h"
 
+#include <memory>
+
 #include "android_webview/browser/aw_content_browser_client.h"
 #include "android_webview/browser/browser_view_renderer.h"
+#include "android_webview/browser/command_line_helper.h"
+#include "android_webview/browser/deferred_gpu_command_service.h"
 #include "android_webview/browser/scoped_allow_wait_for_legacy_web_view_api.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_switches.h"
 #include "android_webview/crash_reporter/aw_microdump_crash_reporter.h"
-#include "android_webview/lib/aw_browser_dependency_factory_impl.h"
+#include "android_webview/gpu/aw_content_gpu_client.h"
 #include "android_webview/native/aw_locale_manager_impl.h"
 #include "android_webview/native/aw_media_url_interceptor.h"
-#include "android_webview/native/aw_message_port_service_impl.h"
 #include "android_webview/native/aw_quota_manager_bridge_impl.h"
 #include "android_webview/native/aw_web_contents_view_delegate.h"
 #include "android_webview/native/aw_web_preferences_populater_impl.h"
@@ -24,21 +27,39 @@
 #include "base/i18n/icu_util.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_restrictions.h"
 #include "cc/base/switches.h"
-#include "components/external_video_surface/browser/android/external_video_surface_container_impl.h"
+#include "components/crash/content/app/breakpad_linux.h"
+#include "components/spellcheck/common/spellcheck_features.h"
 #include "content/public/browser/android/browser_media_player_manager_register.h"
 #include "content/public/browser/browser_main_runner.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_descriptors.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "gin/public/isolate_holder.h"
-#include "gpu/command_buffer/client/gl_in_process_context.h"
+#include "gin/v8_initializer.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
+#include "gpu/ipc/gl_in_process_context.h"
 #include "media/base/media_switches.h"
+#include "media/media_features.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
+
+// These declarations just provide the addresses determined by the
+// linker to this source file in order to determine the extent of the
+// webview text section. The declared types are irrelevant - only the
+// symbol names and the addresses they reference are important.
+extern "C" {
+#if defined(ARCH_CPU_MIPSEL)
+// the mipsel linker script invoked as a result of chromium link args
+// doesn't define __executable_start.
+extern char _ftext;
+#else
+extern char __executable_start;
+#endif
+extern char __etext;
+}
 
 namespace android_webview {
 
@@ -46,9 +67,8 @@ namespace {
 
 // TODO(boliu): Remove this global Allow once the underlying issues are
 // resolved - http://crbug.com/240453. See AwMainDelegate::RunProcess below.
-base::LazyInstance<scoped_ptr<ScopedAllowWaitForLegacyWebViewApi> >
+base::LazyInstance<std::unique_ptr<ScopedAllowWaitForLegacyWebViewApi>>
     g_allow_wait_in_ui_thread = LAZY_INSTANCE_INITIALIZER;
-
 }
 
 AwMainDelegate::AwMainDelegate() {
@@ -60,18 +80,7 @@ AwMainDelegate::~AwMainDelegate() {
 bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   content::SetContentClient(&content_client_);
 
-  content::RegisterMediaUrlInterceptor(new AwMediaUrlInterceptor());
-
-  BrowserViewRenderer::CalculateTileMemoryPolicy();
-
-  // WebView apps can override WebView#computeScroll to achieve custom
-  // scroll/fling. As a result, fling animations may not be ticked, potentially
-  // confusing the tap suppression controller. Simply disable it for WebView.
-  ui::GestureConfiguration::GetInstance()
-      ->set_fling_touchscreen_tap_suppression_enabled(false);
-
   base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
-  cl->AppendSwitch(cc::switches::kEnableBeginFrameScheduling);
 
   // WebView uses the Android system's scrollbars and overscroll glow.
   cl->AppendSwitch(switches::kDisableOverscrollEdgeEffect);
@@ -89,10 +98,9 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   cl->AppendSwitch(switches::kDisableNotifications);
 
   // WebRTC hardware decoding is not supported, internal bug 15075307
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   cl->AppendSwitch(switches::kDisableWebRtcHWDecoding);
 #endif
-  cl->AppendSwitch(switches::kDisableAcceleratedVideoDecode);
 
   // This is needed for sharing textures across the different GL threads.
   cl->AppendSwitch(switches::kEnableThreadedTextureMailboxes);
@@ -115,33 +123,45 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   // https://crbug.com/521319
   cl->AppendSwitch(switches::kDisablePresentationAPI);
 
+  // WebView doesn't support Remote Playback API for the same reason as the
+  // Presentation API, see https://crbug.com/521319.
+  cl->AppendSwitch(switches::kDisableRemotePlaybackAPI);
+
+#if defined(V8_USE_EXTERNAL_STARTUP_DATA)
   if (cl->GetSwitchValueASCII(switches::kProcessType).empty()) {
     // Browser process (no type specified).
 
-    // This code is needed to be able to mmap the V8 snapshot directly from
-    // the WebView .apk using architecture-specific names.
-    // This needs to be here so that it gets to run before the code in
-    // content_main_runner that reads these values tries to do so.
-#ifdef __LP64__
-    const char kNativesFileName[] = "assets/natives_blob_64.bin";
-    const char kSnapshotFileName[] = "assets/snapshot_blob_64.bin";
-#else
-    const char kNativesFileName[] = "assets/natives_blob_32.bin";
-    const char kSnapshotFileName[] = "assets/snapshot_blob_32.bin";
-#endif // __LP64__
-    // TODO(gsennton) we should use
-    // gin::IsolateHolder::kNativesFileName/kSnapshotFileName
-    // here when those files have arch specific names http://crbug.com/455699
-    CHECK(base::android::RegisterApkAssetWithGlobalDescriptors(
-        kV8NativesDataDescriptor, kNativesFileName));
-    CHECK(base::android::RegisterApkAssetWithGlobalDescriptors(
-        kV8SnapshotDataDescriptor, kSnapshotFileName));
+    content::RegisterMediaUrlInterceptor(new AwMediaUrlInterceptor());
+    BrowserViewRenderer::CalculateTileMemoryPolicy();
+    // WebView apps can override WebView#computeScroll to achieve custom
+    // scroll/fling. As a result, fling animations may not be ticked,
+    // potentially
+    // confusing the tap suppression controller. Simply disable it for WebView
+    ui::GestureConfiguration::GetInstance()
+        ->set_fling_touchscreen_tap_suppression_enabled(false);
+
+    base::android::RegisterApkAssetWithGlobalDescriptors(
+        kV8NativesDataDescriptor,
+        gin::V8Initializer::GetNativesFilePath().AsUTF8Unsafe());
+    base::android::RegisterApkAssetWithGlobalDescriptors(
+        kV8SnapshotDataDescriptor32,
+        gin::V8Initializer::GetSnapshotFilePath(true).AsUTF8Unsafe());
+    base::android::RegisterApkAssetWithGlobalDescriptors(
+        kV8SnapshotDataDescriptor64,
+        gin::V8Initializer::GetSnapshotFilePath(false).AsUTF8Unsafe());
   }
+#endif  // V8_USE_EXTERNAL_STARTUP_DATA
 
   if (cl->HasSwitch(switches::kWebViewSandboxedRenderer)) {
     cl->AppendSwitch(switches::kInProcessGPU);
     cl->AppendSwitchASCII(switches::kRendererProcessLimit, "1");
+    cl->AppendSwitch(switches::kDisableRendererBackgrounding);
   }
+
+  CommandLineHelper::AddEnabledFeature(
+      *cl, spellcheck::kAndroidSpellCheckerNonLowEnd.name);
+
+  CommandLineHelper::AddDisabledFeature(*cl, features::kWebPayments.name);
 
   return false;
 }
@@ -157,29 +177,44 @@ void AwMainDelegate::PreSandboxStartup() {
       *base::CommandLine::ForCurrentProcess();
   std::string process_type =
       command_line.GetSwitchValueASCII(switches::kProcessType);
+  int crash_signal_fd = -1;
   if (process_type == switches::kRendererProcess) {
-    auto global_descriptors = base::GlobalDescriptors::GetInstance();
+    auto* global_descriptors = base::GlobalDescriptors::GetInstance();
     int pak_fd = global_descriptors->Get(kAndroidWebViewLocalePakDescriptor);
     base::MemoryMappedFile::Region pak_region =
         global_descriptors->GetRegion(kAndroidWebViewLocalePakDescriptor);
     ResourceBundle::InitSharedInstanceWithPakFileRegion(base::File(pak_fd),
                                                         pak_region);
-    pak_fd = global_descriptors->Get(kAndroidWebViewMainPakDescriptor);
-    pak_region =
-        global_descriptors->GetRegion(kAndroidWebViewMainPakDescriptor);
-    ResourceBundle::GetSharedInstance().AddDataPackFromFileRegion(
-        base::File(pak_fd), pak_region, ui::SCALE_FACTOR_NONE);
+
+    std::pair<int, ui::ScaleFactor> extra_paks[] = {
+        {kAndroidWebViewMainPakDescriptor, ui::SCALE_FACTOR_NONE},
+        {kAndroidWebView100PercentPakDescriptor, ui::SCALE_FACTOR_100P}};
+
+    for (const auto& pak_info : extra_paks) {
+      pak_fd = global_descriptors->Get(pak_info.first);
+      pak_region = global_descriptors->GetRegion(pak_info.first);
+      ResourceBundle::GetSharedInstance().AddDataPackFromFileRegion(
+          base::File(pak_fd), pak_region, pak_info.second);
+    }
+
+    crash_signal_fd =
+        global_descriptors->Get(kAndroidWebViewCrashSignalDescriptor);
+  }
+  if (process_type.empty()) {
+    if (command_line.HasSwitch(switches::kSingleProcess)) {
+      process_type = breakpad::kWebViewSingleProcessType;
+    } else {
+      process_type = breakpad::kBrowserProcessType;
+    }
   }
 
-  crash_reporter::EnableMicrodumpCrashReporter();
+  crash_reporter::EnableMicrodumpCrashReporter(process_type, crash_signal_fd);
 }
 
 int AwMainDelegate::RunProcess(
     const std::string& process_type,
     const content::MainFunctionParams& main_function_params) {
   if (process_type.empty()) {
-    AwBrowserDependencyFactoryImpl::InstallInstance();
-
     browser_runner_.reset(content::BrowserMainRunner::Create());
     int exit_code = browser_runner_->Initialize(main_function_params);
     DCHECK_LT(exit_code, 0);
@@ -189,7 +224,15 @@ int AwMainDelegate::RunProcess(
     // crash handler on the same thread as the crash handler was initialized.
     crash_reporter::AddGpuFingerprintToMicrodumpCrashHandler(
         content_client_.gpu_fingerprint());
-
+#if !defined(COMPONENT_BUILD)
+    crash_reporter::SetWebViewTextAddrRange(
+#if defined(ARCH_CPU_MIPSEL)
+        reinterpret_cast<uintptr_t>(&_ftext),
+#else
+        reinterpret_cast<uintptr_t>(&__executable_start),
+#endif
+        reinterpret_cast<uintptr_t>(&__etext));
+#endif
     g_allow_wait_in_ui_thread.Get().reset(
         new ScopedAllowWaitForLegacyWebViewApi);
 
@@ -213,6 +256,19 @@ content::ContentBrowserClient*
   return content_browser_client_.get();
 }
 
+namespace {
+gpu::SyncPointManager* GetSyncPointManager() {
+  DCHECK(DeferredGpuCommandService::GetInstance());
+  return DeferredGpuCommandService::GetInstance()->sync_point_manager();
+}
+}  // namespace
+
+content::ContentGpuClient* AwMainDelegate::CreateContentGpuClient() {
+  content_gpu_client_.reset(
+      new AwContentGpuClient(base::Bind(&GetSyncPointManager)));
+  return content_gpu_client_.get();
+}
+
 content::ContentRendererClient*
     AwMainDelegate::CreateContentRendererClient() {
   content_renderer_client_.reset(new AwContentRendererClient());
@@ -233,21 +289,8 @@ AwWebPreferencesPopulater* AwMainDelegate::CreateWebPreferencesPopulater() {
   return new AwWebPreferencesPopulaterImpl();
 }
 
-AwMessagePortService* AwMainDelegate::CreateAwMessagePortService() {
-  return new AwMessagePortServiceImpl();
-}
-
 AwLocaleManager* AwMainDelegate::CreateAwLocaleManager() {
   return new AwLocaleManagerImpl();
 }
-
-#if defined(VIDEO_HOLE)
-content::ExternalVideoSurfaceContainer*
-AwMainDelegate::CreateExternalVideoSurfaceContainer(
-    content::WebContents* web_contents) {
-  return external_video_surface::ExternalVideoSurfaceContainerImpl::Create(
-      web_contents);
-}
-#endif
 
 }  // namespace android_webview

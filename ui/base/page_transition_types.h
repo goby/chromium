@@ -5,7 +5,8 @@
 #ifndef UI_BASE_PAGE_TRANSITION_TYPES_H_
 #define UI_BASE_PAGE_TRANSITION_TYPES_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "ui/base/ui_base_export.h"
 
 namespace ui {
@@ -150,13 +151,18 @@ enum PageTransition {
 UI_BASE_EXPORT bool PageTransitionCoreTypeIs(PageTransition lhs,
                                              PageTransition rhs);
 
+// Compares two PageTransition types including qualifiers. Rarely useful,
+// PageTransitionCoreTypeIs() is more likely what you need.
+UI_BASE_EXPORT bool PageTransitionTypeIncludingQualifiersIs(PageTransition lhs,
+                                                            PageTransition rhs);
+
 // Simplifies the provided transition by removing any qualifier
 UI_BASE_EXPORT PageTransition PageTransitionStripQualifier(
     PageTransition type);
 
-bool PageTransitionIsValidType(int32 type);
+bool PageTransitionIsValidType(int32_t type);
 
-UI_BASE_EXPORT PageTransition PageTransitionFromInt(int32 type);
+UI_BASE_EXPORT PageTransition PageTransitionFromInt(int32_t type);
 
 // Returns true if the given transition is a top-level frame transition, or
 // false if the transition was for a subframe.
@@ -170,7 +176,7 @@ UI_BASE_EXPORT bool PageTransitionIsRedirect(PageTransition type);
 UI_BASE_EXPORT bool PageTransitionIsNewNavigation(PageTransition type);
 
 // Return the qualifier
-UI_BASE_EXPORT int32 PageTransitionGetQualifier(PageTransition type);
+UI_BASE_EXPORT int32_t PageTransitionGetQualifier(PageTransition type);
 
 // Returns true if the transition can be triggered by the web instead of
 // through UI or similar.
@@ -187,7 +193,8 @@ UI_BASE_EXPORT const char* PageTransitionGetCoreTransitionString(
 class DontUseOperatorEquals;
 
 // Ban operator== as it's way too easy to forget to strip the qualifiers. Use
-// PageTransitionCoreTypeIs() instead.
+// PageTransitionCoreTypeIs() instead or, in rare cases,
+// PageTransitionTypeIncludingQualifiersIs().
 DontUseOperatorEquals operator==(PageTransition, PageTransition);
 DontUseOperatorEquals operator==(PageTransition, int);
 DontUseOperatorEquals operator==(int, PageTransition);

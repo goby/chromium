@@ -17,6 +17,7 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gl/android/surface_texture.h"
 #include "ui/gl/gl_surface.h"
+#include "ui/gl/init/gl_factory.h"
 
 namespace gpu {
 
@@ -34,13 +35,13 @@ TEST_F(GLSurfaceTextureTest, SimpleTest) {
   // abstraction for the SurfaceTexture in this test.
   GLuint texture = 0xFEEDBEEF;
 
-  scoped_refptr<gfx::SurfaceTexture> surface_texture(
-      gfx::SurfaceTexture::Create(texture));
+  scoped_refptr<gl::SurfaceTexture> surface_texture(
+      gl::SurfaceTexture::Create(texture));
   gfx::AcceleratedWidget window = surface_texture->CreateSurface();
   EXPECT_TRUE(window != NULL);
 
-  scoped_refptr<gfx::GLSurface> gl_surface =
-      gfx::GLSurface::CreateViewGLSurface(window);
+  scoped_refptr<gl::GLSurface> gl_surface =
+      gl::init::CreateViewGLSurface(window);
   EXPECT_TRUE(gl_surface.get() != NULL);
 
   gl_.SetSurface(gl_surface.get());

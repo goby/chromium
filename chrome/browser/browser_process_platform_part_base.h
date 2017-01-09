@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_BROWSER_PROCESS_PLATFORM_PART_BASE_H_
 #define CHROME_BROWSER_BROWSER_PROCESS_PLATFORM_PART_BASE_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 
 namespace base {
 class CommandLine;
@@ -37,10 +38,8 @@ class BrowserProcessPlatformPartBase {
   // Called at the end of BrowserProcessImpl::PreMainMessageLoopRun().
   virtual void PreMainMessageLoopRun();
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
-  virtual scoped_ptr<policy::BrowserPolicyConnector>
-      CreateBrowserPolicyConnector();
-#endif
+  virtual std::unique_ptr<policy::BrowserPolicyConnector>
+  CreateBrowserPolicyConnector();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BrowserProcessPlatformPartBase);

@@ -39,60 +39,83 @@ namespace blink {
 class FloatingObject;
 class LineLayoutRubyRun;
 
-enum IndentTextOrNot { DoNotIndentText, IndentText };
 enum WhitespaceTreatment { ExcludeWhitespace, IncludeWhitespace };
 
 class LineWidth {
-    STACK_ALLOCATED();
-public:
-    LineWidth(LineLayoutBlockFlow, bool isFirstLine, IndentTextOrNot shouldIndentText);
+  STACK_ALLOCATED();
 
-    bool fitsOnLine() const { return currentWidth() <= (m_availableWidth + LayoutUnit::epsilon()); }
-    bool fitsOnLine(float extra) const { return currentWidth() + extra <= (m_availableWidth + LayoutUnit::epsilon()); }
-    bool fitsOnLine(float extra, WhitespaceTreatment whitespaceTreatment) const
-    {
-        return currentWidth() - (whitespaceTreatment == ExcludeWhitespace ? trailingWhitespaceWidth() : 0) + extra <= (m_availableWidth + LayoutUnit::epsilon());
-    }
+ public:
+  LineWidth(LineLayoutBlockFlow, bool isFirstLine, IndentTextOrNot);
 
-    // Note that m_uncommittedWidth may not be LayoutUnit-snapped at this point.  Because
-    // currentWidth() is used by the code that lays out words in a single LayoutText, it's
-    // expected that offsets will not be snapped until an InlineBox boundary is reached.
-    float currentWidth() const { return m_committedWidth + m_uncommittedWidth; }
+  bool fitsOnLine() const {
+    return LayoutUnit::fromFloatFloor(currentWidth()) <=
+           m_availableWidth + LayoutUnit::epsilon();
+  }
+  bool fitsOnLine(float extra) const {
+    float totalWidth = currentWidth() + extra;
+    return LayoutUnit::fromFloatFloor(totalWidth) <=
+           m_availableWidth + LayoutUnit::epsilon();
+  }
+  bool fitsOnLine(float extra, WhitespaceTreatment whitespaceTreatment) const {
+    LayoutUnit w = LayoutUnit::fromFloatFloor(currentWidth() + extra);
+    if (whitespaceTreatment == ExcludeWhitespace)
+      w -= LayoutUnit::fromFloatCeil(trailingWhitespaceWidth());
+    return w <= m_availableWidth;
+  }
 
-    // FIXME: We should eventually replace these three functions by ones that work on a higher abstraction.
-    float uncommittedWidth() const { return m_uncommittedWidth; }
-    float committedWidth() const { return m_committedWidth; }
-    float availableWidth() const { return m_availableWidth; }
-    float trailingWhitespaceWidth() const { return m_trailingWhitespaceWidth; }
+  // Note that m_uncommittedWidth may not be LayoutUnit-snapped at this point.
+  // Because currentWidth() is used by the code that lays out words in a single
+  // LayoutText, it's expected that offsets will not be snapped until an
+  // InlineBox boundary is reached.
+  float currentWidth() const { return m_committedWidth + m_uncommittedWidth; }
 
-    void updateAvailableWidth(LayoutUnit minimumHeight = 0);
-    void shrinkAvailableWidthForNewFloatIfNeeded(const FloatingObject&);
-    void addUncommittedWidth(float delta) { m_uncommittedWidth += delta; }
-    void commit();
-    void applyOverhang(LineLayoutRubyRun, LineLayoutItem startLayoutItem, LineLayoutItem endLayoutItem);
-    void fitBelowFloats(bool isFirstLine = false);
-    void setTrailingWhitespaceWidth(float width) { m_trailingWhitespaceWidth = width; }
-    void snapUncommittedWidth() { m_uncommittedWidth = LayoutUnit(m_uncommittedWidth).toFloat(); }
+  // FIXME: We should eventually replace these three functions by ones that work
+  // on a higher abstraction.
+  float uncommittedWidth() const { return m_uncommittedWidth; }
+  float committedWidth() const { return m_committedWidth; }
+  float availableWidth() const { return m_availableWidth; }
+  float trailingWhitespaceWidth() const { return m_trailingWhitespaceWidth; }
 
-    bool shouldIndentText() const { return m_shouldIndentText == IndentText; }
+  void updateAvailableWidth(LayoutUnit minimumHeight = LayoutUnit());
+  void shrinkAvailableWidthForNewFloatIfNeeded(const FloatingObject&);
+  void addUncommittedWidth(float delta) { m_uncommittedWidth += delta; }
+  void commit();
+  void applyOverhang(LineLayoutRubyRun,
+                     LineLayoutItem startLayoutItem,
+                     LineLayoutItem endLayoutItem);
+  void fitBelowFloats(bool isFirstLine = false);
+  void setTrailingWhitespaceWidth(float width) {
+    m_trailingWhitespaceWidth = width;
+  }
+  void snapUncommittedWidth() {
+    m_uncommittedWidth =
+        LayoutUnit::fromFloatCeil(m_uncommittedWidth).toFloat();
+  }
 
-private:
-    void computeAvailableWidthFromLeftAndRight();
-    void updateLineDimension(LayoutUnit newLineTop, LayoutUnit newLineWidth, const float& newLineLeft, const float& newLineRight);
-    void wrapNextToShapeOutside(bool isFirstLine);
+  IndentTextOrNot indentText() const { return m_indentText; }
 
-    LineLayoutBlockFlow m_block;
-    float m_uncommittedWidth;
-    float m_committedWidth;
-    float m_overhangWidth; // The amount by which |m_availableWidth| has been inflated to account for possible contraction due to ruby overhang.
-    float m_trailingWhitespaceWidth;
-    float m_left;
-    float m_right;
-    float m_availableWidth;
-    bool m_isFirstLine;
-    IndentTextOrNot m_shouldIndentText;
+ private:
+  void computeAvailableWidthFromLeftAndRight();
+  void updateLineDimension(LayoutUnit newLineTop,
+                           LayoutUnit newLineWidth,
+                           const LayoutUnit& newLineLeft,
+                           const LayoutUnit& newLineRight);
+  void wrapNextToShapeOutside(bool isFirstLine);
+
+  LineLayoutBlockFlow m_block;
+  float m_uncommittedWidth;
+  float m_committedWidth;
+  // The amount by which |m_availableWidth| has been inflated to account for
+  // possible contraction due to ruby overhang.
+  float m_overhangWidth;
+  float m_trailingWhitespaceWidth;
+  LayoutUnit m_left;
+  LayoutUnit m_right;
+  LayoutUnit m_availableWidth;
+  bool m_isFirstLine;
+  IndentTextOrNot m_indentText;
 };
 
-}
+}  // namespace blink
 
-#endif // LineWidth_h
+#endif  // LineWidth_h

@@ -70,13 +70,10 @@ enum ButtonState {
 
 // Returns the theme provider for the given |window|; this allows subclasses to
 // pass in a different theme provider to use if appropriate.
-- (ui::ThemeProvider*)themeProviderForWindow:(NSWindow*)window;
+- (const ui::ThemeProvider*)themeProviderForWindow:(NSWindow*)window;
 
 // Draws the cell's image within |cellFrame|.
 - (void)drawImageWithFrame:(NSRect)cellFrame inView:(NSView*)controlView;
-
-// If |controlView| is a first responder then draws a blue focus ring.
-- (void)drawFocusRingWithFrame:(NSRect)cellFrame inView:(NSView*)controlView;
 
 @end
 

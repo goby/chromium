@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/test/views_test_base.h"
@@ -81,6 +82,10 @@ TEST_F(NativeWidgetTest, GetTopLevelNativeWidget1) {
 
 // |toplevel_widget| has the toplevel NativeWidget.
 TEST_F(NativeWidgetTest, GetTopLevelNativeWidget2) {
+  // This test relies on GetContext(). http://crbug.com/663809.
+  if (IsAuraMusClient())
+    return;
+
   internal::NativeWidgetPrivate* child_widget = CreateNativeSubWidget();
   {
     ScopedTestWidget toplevel_widget(CreateNativeWidget());

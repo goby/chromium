@@ -5,25 +5,19 @@
 #ifndef UI_APP_LIST_VIEWS_APP_LIST_VIEW_H_
 #define UI_APP_LIST_VIEWS_APP_LIST_VIEW_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
+#include "build/build_config.h"
 #include "ui/app_list/app_list_export.h"
-#include "ui/app_list/app_list_view_delegate_observer.h"
 #include "ui/app_list/speech_ui_model_observer.h"
-#include "ui/views/bubble/bubble_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "ui/views/widget/widget.h"
 
 namespace base {
 class FilePath;
-}
-
-namespace test {
-class AppListViewTestApi;
-}
-
-namespace views {
-class ImageView;
 }
 
 namespace app_list {
@@ -37,24 +31,18 @@ class PaginationModel;
 class SearchBoxView;
 class SpeechView;
 
+namespace test {
+class AppListViewTestApi;
+}
+
 // AppListView is the top-level view and controller of app list UI. It creates
 // and hosts a AppsGridView and passes AppListModel to it for display.
-class APP_LIST_EXPORT AppListView : public views::BubbleDelegateView,
-                                    public AppListViewDelegateObserver,
+class APP_LIST_EXPORT AppListView : public views::BubbleDialogDelegateView,
                                     public SpeechUIModelObserver {
  public:
   // Does not take ownership of |delegate|.
   explicit AppListView(AppListViewDelegate* delegate);
   ~AppListView() override;
-
-  // Initializes the widget and use a given |anchor| plus an |anchor_offset| for
-  // positioning.
-  void InitAsBubbleAttachedToAnchor(gfx::NativeView parent,
-                                    int initial_apps_page,
-                                    views::View* anchor,
-                                    const gfx::Vector2d& anchor_offset,
-                                    views::BubbleBorder::Arrow arrow,
-                                    bool border_accepts_events);
 
   // Initializes the widget and use a fixed |anchor_point_in_screen| for
   // positioning.
@@ -84,7 +72,7 @@ class APP_LIST_EXPORT AppListView : public views::BubbleDelegateView,
   // timer to show the UI when a maximum allowed wait time has expired.
   void ShowWhenReady();
 
-  void Close();
+  void CloseAppList();
 
   void UpdateBounds();
 
@@ -92,15 +80,11 @@ class APP_LIST_EXPORT AppListView : public views::BubbleDelegateView,
   // hiding the app list when a modal dialog is being shown).
   void SetAppListOverlayVisible(bool visible);
 
-  // Returns true if the app list should be centered and in landscape mode.
-  bool ShouldCenterWindow() const;
-
   views::Widget* search_box_widget() const { return search_box_widget_; }
 
   // Overridden from views::View:
   gfx::Size GetPreferredSize() const override;
   void OnPaint(gfx::Canvas* canvas) override;
-  void OnThemeChanged() override;
 
   // WidgetDelegate overrides:
   bool ShouldHandleSystemCommands() const override;
@@ -108,23 +92,10 @@ class APP_LIST_EXPORT AppListView : public views::BubbleDelegateView,
       gfx::NativeView child,
       const gfx::Point& location) override;
 
-  // Overridden from AppListViewDelegateObserver:
-  void OnProfilesChanged() override;
-  void OnShutdown() override;
-
-  void Prerender();
-
   void SetProfileByPath(const base::FilePath& profile_path);
 
   void AddObserver(AppListViewObserver* observer);
   void RemoveObserver(AppListViewObserver* observer);
-
-  // Set a callback to be called the next time any app list paints.
-  void SetNextPaintCallback(const base::Closure& callback);
-
-#if defined(OS_WIN)
-  HWND GetHWND() const;
-#endif
 
   AppListMainView* app_list_main_view() { return app_list_main_view_; }
 
@@ -137,7 +108,7 @@ class APP_LIST_EXPORT AppListView : public views::BubbleDelegateView,
   void SchedulePaintInRect(const gfx::Rect& rect) override;
 
  private:
-  friend class ::test::AppListViewTestApi;
+  friend class test::AppListViewTestApi;
 
   void InitContents(gfx::NativeView parent, int initial_apps_page);
 
@@ -149,13 +120,13 @@ class APP_LIST_EXPORT AppListView : public views::BubbleDelegateView,
                             bool border_accepts_events,
                             const gfx::Vector2d& anchor_offset);
 
-  // Overridden from views::BubbleDelegateView:
+  // Overridden from views::BubbleDialogDelegateView:
   void OnBeforeBubbleWidgetInit(views::Widget::InitParams* params,
                                 views::Widget* widget) const override;
+  int GetDialogButtons() const override;
 
   // Overridden from views::WidgetDelegateView:
   views::View* GetInitiallyFocusedView() override;
-  gfx::ImageSkia GetWindowIcon() override;
   bool WidgetHasHitTestMask() const override;
   void GetWidgetHitTestMask(gfx::Path* mask) const override;
 
@@ -182,7 +153,7 @@ class APP_LIST_EXPORT AppListView : public views::BubbleDelegateView,
   views::View* overlay_view_;
 
   base::ObserverList<AppListViewObserver> observers_;
-  scoped_ptr<HideViewAnimationObserver> animation_observer_;
+  std::unique_ptr<HideViewAnimationObserver> animation_observer_;
 
   // For UMA and testing. If non-null, triggered when the app list is painted.
   base::Closure next_paint_callback_;

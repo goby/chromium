@@ -4,8 +4,11 @@
 
 #include "chrome/browser/extensions/api/permissions/permissions_api_helpers.h"
 
+#include <stddef.h>
+
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/common/extensions/api/permissions.h"
 #include "extensions/common/error_utils.h"
@@ -35,12 +38,12 @@ const char kUnsupportedPermissionId[] =
 
 }  // namespace
 
-scoped_ptr<Permissions> PackPermissionSet(const PermissionSet& set) {
-  scoped_ptr<Permissions> permissions(new Permissions());
+std::unique_ptr<Permissions> PackPermissionSet(const PermissionSet& set) {
+  std::unique_ptr<Permissions> permissions(new Permissions());
 
   permissions->permissions.reset(new std::vector<std::string>());
   for (const APIPermission* api : set.apis()) {
-    scoped_ptr<base::Value> value(api->ToValue());
+    std::unique_ptr<base::Value> value(api->ToValue());
     if (!value) {
       permissions->permissions->push_back(api->name());
     } else {
@@ -58,10 +61,10 @@ scoped_ptr<Permissions> PackPermissionSet(const PermissionSet& set) {
   for (const URLPattern& pattern : set.explicit_hosts())
     permissions->origins->push_back(pattern.GetAsString());
 
-  return permissions.Pass();
+  return permissions;
 }
 
-scoped_ptr<const PermissionSet> UnpackPermissionSet(
+std::unique_ptr<const PermissionSet> UnpackPermissionSet(
     const Permissions& permissions,
     bool allow_file_access,
     std::string* error) {
@@ -81,7 +84,7 @@ scoped_ptr<const PermissionSet> UnpackPermissionSet(
         std::string permission_name = it->substr(0, delimiter);
         std::string permission_arg = it->substr(delimiter + 1);
 
-        scoped_ptr<base::Value> permission_json =
+        std::unique_ptr<base::Value> permission_json =
             base::JSONReader::Read(permission_arg);
         if (!permission_json.get()) {
           *error = ErrorUtils::FormatErrorMessage(kInvalidParameter, *it);
@@ -143,8 +146,8 @@ scoped_ptr<const PermissionSet> UnpackPermissionSet(
     }
   }
 
-  return make_scoped_ptr(
-      new PermissionSet(apis, manifest_permissions, origins, URLPatternSet()));
+  return base::MakeUnique<PermissionSet>(apis, manifest_permissions, origins,
+                                         URLPatternSet());
 }
 
 }  // namespace permissions_api_helpers

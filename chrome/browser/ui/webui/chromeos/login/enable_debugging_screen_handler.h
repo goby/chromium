@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_ENABLE_DEBUGGING_SCREEN_HANDLER_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
@@ -24,7 +25,6 @@ class EnableDebuggingScreenHandler : public EnableDebuggingScreenActor,
   ~EnableDebuggingScreenHandler() override;
 
   // EnableDebuggingScreenActor implementation:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void SetDelegate(Delegate* delegate) override;

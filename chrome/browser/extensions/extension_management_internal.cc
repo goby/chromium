@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/extension_management_internal.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/values.h"
 #include "base/version.h"
@@ -135,14 +137,14 @@ bool IndividualSettings::Parse(const base::DictionaryValue* dict,
       dict->GetStringWithoutPathExpansion(
           schema_constants::kMinimumVersionRequired,
           &minimum_version_required_str)) {
-    scoped_ptr<base::Version> version(
-        new Version(minimum_version_required_str));
+    std::unique_ptr<base::Version> version(
+        new base::Version(minimum_version_required_str));
     // We accept a general version string here. Note that count of components in
     // version string of extensions is limited to 4.
     if (!version->IsValid())
       LOG(WARNING) << kMalformedPreferenceWarning;
     else
-      minimum_version_required = version.Pass();
+      minimum_version_required = std::move(version);
   }
 
   return true;

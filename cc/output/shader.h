@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 
 namespace gfx {
@@ -766,8 +766,8 @@ class FragmentShaderYUVVideo : public FragmentTexBlendMode {
   FragmentShaderYUVVideo();
   std::string GetShaderString(
       TexCoordPrecision precision, SamplerType sampler) const;
-  static std::string GetShaderHead();
-  static std::string GetShaderBody();
+
+  void SetFeatures(bool use_alpha_texture, bool use_nv12, bool use_color_lut);
 
   void Init(gpu::gles2::GLES2Interface* context,
             unsigned program,
@@ -775,59 +775,39 @@ class FragmentShaderYUVVideo : public FragmentTexBlendMode {
   int y_texture_location() const { return y_texture_location_; }
   int u_texture_location() const { return u_texture_location_; }
   int v_texture_location() const { return v_texture_location_; }
+  int uv_texture_location() const { return uv_texture_location_; }
+  int a_texture_location() const { return a_texture_location_; }
+  int lut_texture_location() const { return lut_texture_location_; }
   int alpha_location() const { return alpha_location_; }
   int yuv_matrix_location() const { return yuv_matrix_location_; }
   int yuv_adj_location() const { return yuv_adj_location_; }
   int ya_clamp_rect_location() const { return ya_clamp_rect_location_; }
   int uv_clamp_rect_location() const { return uv_clamp_rect_location_; }
+  int resource_multiplier_location() const {
+    return resource_multiplier_location_;
+  }
+  int resource_offset_location() const { return resource_offset_location_; }
 
  private:
+  bool use_alpha_texture_;
+  bool use_nv12_;
+  bool use_color_lut_;
+
   int y_texture_location_;
   int u_texture_location_;
   int v_texture_location_;
+  int uv_texture_location_;
+  int a_texture_location_;
+  int lut_texture_location_;
   int alpha_location_;
   int yuv_matrix_location_;
   int yuv_adj_location_;
   int ya_clamp_rect_location_;
   int uv_clamp_rect_location_;
+  int resource_multiplier_location_;
+  int resource_offset_location_;
 
   DISALLOW_COPY_AND_ASSIGN(FragmentShaderYUVVideo);
-};
-
-class FragmentShaderYUVAVideo : public FragmentTexBlendMode {
- public:
-  FragmentShaderYUVAVideo();
-  std::string GetShaderString(
-      TexCoordPrecision precision, SamplerType sampler) const;
-  static std::string GetShaderHead();
-  static std::string GetShaderBody();
-
-  void Init(gpu::gles2::GLES2Interface* context,
-            unsigned program,
-            int* base_uniform_index);
-
-  int y_texture_location() const { return y_texture_location_; }
-  int u_texture_location() const { return u_texture_location_; }
-  int v_texture_location() const { return v_texture_location_; }
-  int a_texture_location() const { return a_texture_location_; }
-  int alpha_location() const { return alpha_location_; }
-  int yuv_matrix_location() const { return yuv_matrix_location_; }
-  int yuv_adj_location() const { return yuv_adj_location_; }
-  int ya_clamp_rect_location() const { return ya_clamp_rect_location_; }
-  int uv_clamp_rect_location() const { return uv_clamp_rect_location_; }
-
- private:
-  int y_texture_location_;
-  int u_texture_location_;
-  int v_texture_location_;
-  int a_texture_location_;
-  int alpha_location_;
-  int yuv_matrix_location_;
-  int yuv_adj_location_;
-  int ya_clamp_rect_location_;
-  int uv_clamp_rect_location_;
-
-  DISALLOW_COPY_AND_ASSIGN(FragmentShaderYUVAVideo);
 };
 
 class FragmentShaderColor : public FragmentTexBlendMode {

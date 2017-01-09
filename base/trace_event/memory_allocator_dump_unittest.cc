@@ -4,6 +4,8 @@
 
 #include "base/trace_event/memory_allocator_dump.h"
 
+#include <stdint.h>
+
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_allocator_dump_guid.h"
@@ -12,6 +14,7 @@
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -49,11 +52,12 @@ class FakeMemoryAllocatorDumpProvider : public MemoryDumpProvider {
   }
 };
 
-scoped_ptr<Value> CheckAttribute(const MemoryAllocatorDump* dump,
-                                 const std::string& name,
-                                 const char* expected_type,
-                                 const char* expected_units) {
-  scoped_ptr<Value> raw_attrs = dump->attributes_for_testing()->ToBaseValue();
+std::unique_ptr<Value> CheckAttribute(const MemoryAllocatorDump* dump,
+                                      const std::string& name,
+                                      const char* expected_type,
+                                      const char* expected_units) {
+  std::unique_ptr<Value> raw_attrs =
+      dump->attributes_for_testing()->ToBaseValue();
   DictionaryValue* args = nullptr;
   DictionaryValue* arg = nullptr;
   std::string arg_value;
@@ -65,7 +69,7 @@ scoped_ptr<Value> CheckAttribute(const MemoryAllocatorDump* dump,
   EXPECT_TRUE(arg->GetString("units", &arg_value));
   EXPECT_EQ(expected_units, arg_value);
   EXPECT_TRUE(arg->Get("value", &out_value));
-  return out_value ? out_value->CreateDeepCopy() : scoped_ptr<Value>();
+  return out_value ? out_value->CreateDeepCopy() : std::unique_ptr<Value>();
 }
 
 void CheckString(const MemoryAllocatorDump* dump,
@@ -82,7 +86,7 @@ void CheckString(const MemoryAllocatorDump* dump,
 void CheckScalar(const MemoryAllocatorDump* dump,
                  const std::string& name,
                  const char* expected_units,
-                 uint64 expected_value) {
+                 uint64_t expected_value) {
   CheckString(dump, name, MemoryAllocatorDump::kTypeScalar, expected_units,
               StringPrintf("%" PRIx64, expected_value));
 }
@@ -101,7 +105,7 @@ void CheckScalarF(const MemoryAllocatorDump* dump,
 }  // namespace
 
 TEST(MemoryAllocatorDumpTest, GuidGeneration) {
-  scoped_ptr<MemoryAllocatorDump> mad(
+  std::unique_ptr<MemoryAllocatorDump> mad(
       new MemoryAllocatorDump("foo", nullptr, MemoryAllocatorDumpGuid(0x42u)));
   ASSERT_EQ("42", mad->guid().ToString());
 
@@ -125,8 +129,8 @@ TEST(MemoryAllocatorDumpTest, GuidGeneration) {
 
 TEST(MemoryAllocatorDumpTest, DumpIntoProcessMemoryDump) {
   FakeMemoryAllocatorDumpProvider fmadp;
-  ProcessMemoryDump pmd(new MemoryDumpSessionState(nullptr, nullptr));
   MemoryDumpArgs dump_args = {MemoryDumpLevelOfDetail::DETAILED};
+  ProcessMemoryDump pmd(new MemoryDumpSessionState, dump_args);
 
   fmadp.OnMemoryDump(dump_args, &pmd);
 
@@ -164,7 +168,7 @@ TEST(MemoryAllocatorDumpTest, DumpIntoProcessMemoryDump) {
   ASSERT_FALSE(attrs->HasKey(MemoryAllocatorDump::kNameObjectCount));
 
   // Check that the AsValueInfo doesn't hit any DCHECK.
-  scoped_refptr<TracedValue> traced_value(new TracedValue());
+  std::unique_ptr<TracedValue> traced_value(new TracedValue);
   pmd.AsValueInto(traced_value.get());
 }
 
@@ -172,7 +176,8 @@ TEST(MemoryAllocatorDumpTest, DumpIntoProcessMemoryDump) {
 #if !defined(NDEBUG) && !defined(OS_ANDROID) && !defined(OS_IOS)
 TEST(MemoryAllocatorDumpTest, ForbidDuplicatesDeathTest) {
   FakeMemoryAllocatorDumpProvider fmadp;
-  ProcessMemoryDump pmd(new MemoryDumpSessionState(nullptr, nullptr));
+  MemoryDumpArgs dump_args = {MemoryDumpLevelOfDetail::DETAILED};
+  ProcessMemoryDump pmd(new MemoryDumpSessionState, dump_args);
   pmd.CreateAllocatorDump("foo_allocator");
   pmd.CreateAllocatorDump("bar_allocator/heap");
   ASSERT_DEATH(pmd.CreateAllocatorDump("foo_allocator"), "");

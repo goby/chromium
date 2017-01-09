@@ -6,43 +6,44 @@
 #define WebRTCOfferOptions_h
 
 #include "WebCommon.h"
-#include "WebNonCopyable.h"
 #include "WebPrivatePtr.h"
 
 namespace blink {
 
-class RTCOfferOptions;
+class RTCOfferOptionsPlatform;
 
-class WebRTCOfferOptions {
-public:
-    WebRTCOfferOptions() { }
-    WebRTCOfferOptions(const WebRTCOfferOptions& other) { assign(other); }
-    ~WebRTCOfferOptions() { reset(); }
+class BLINK_PLATFORM_EXPORT WebRTCOfferOptions {
+ public:
+  WebRTCOfferOptions(int32_t offerToReceiveAudio,
+                     int32_t offerToReceiveVideo,
+                     bool voiceActivityDetection,
+                     bool iceRestart);
+  WebRTCOfferOptions(const WebRTCOfferOptions& other) { assign(other); }
+  ~WebRTCOfferOptions() { reset(); }
 
-    WebRTCOfferOptions& operator=(const WebRTCOfferOptions& other)
-    {
-        assign(other);
-        return *this;
-    }
+  WebRTCOfferOptions& operator=(const WebRTCOfferOptions& other) {
+    assign(other);
+    return *this;
+  }
 
-    BLINK_PLATFORM_EXPORT void assign(const WebRTCOfferOptions&);
+  void assign(const WebRTCOfferOptions&);
 
-    BLINK_PLATFORM_EXPORT void reset();
-    bool isNull() const { return m_private.isNull(); }
+  void reset();
+  bool isNull() const { return m_private.isNull(); }
 
-    BLINK_PLATFORM_EXPORT int32_t offerToReceiveVideo() const;
-    BLINK_PLATFORM_EXPORT int32_t offerToReceiveAudio() const;
-    BLINK_PLATFORM_EXPORT bool voiceActivityDetection() const;
-    BLINK_PLATFORM_EXPORT bool iceRestart() const;
+  int32_t offerToReceiveVideo() const;
+  int32_t offerToReceiveAudio() const;
+  bool voiceActivityDetection() const;
+  bool iceRestart() const;
 
 #if INSIDE_BLINK
-    BLINK_PLATFORM_EXPORT WebRTCOfferOptions(RTCOfferOptions*);
+  WebRTCOfferOptions(RTCOfferOptionsPlatform*);
 #endif
 
-private:
-    WebPrivatePtr<RTCOfferOptions> m_private;
+ private:
+  WebPrivatePtr<RTCOfferOptionsPlatform> m_private;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebRTCOfferOptions_h
+#endif  // WebRTCOfferOptions_h

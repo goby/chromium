@@ -5,7 +5,7 @@
 #ifndef UI_APP_LIST_VIEWS_TEST_APPS_GRID_VIEW_TEST_API_H_
 #define UI_APP_LIST_VIEWS_TEST_APPS_GRID_VIEW_TEST_API_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace views {
 class View;
@@ -29,8 +29,6 @@ class AppsGridViewTestApi {
   void SetPageFlipDelay(int page_flip_delay_in_ms);
 
   void PressItemAt(int index);
-
-  void DisableSynchronousDrag();
 
   bool HasPendingPageFlip() const;
 

@@ -19,11 +19,15 @@ source_set("common") {
   sources = [
     "cast_config.cc",
     "cast_config.h",
-    "cast_defines.h",
     "cast_environment.cc",
     "cast_environment.h",
     "common/clock_drift_smoother.cc",
     "common/clock_drift_smoother.h",
+    "common/expanded_value_base.h",
+    "common/frame_id.cc",
+    "common/frame_id.h",
+    "common/rtp_time.cc",
+    "common/rtp_time.h",
     "common/transport_encryption_handler.cc",
     "common/transport_encryption_handler.h",
     "constants.h",
@@ -67,23 +71,25 @@ source_set("common") {
 
 source_set("net") {
   sources = [
+    "net/cast_transport.h",
     "net/cast_transport_config.cc",
     "net/cast_transport_config.h",
     "net/cast_transport_defines.h",
-    "net/cast_transport_sender.h",
-    "net/cast_transport_sender_impl.cc",
-    "net/cast_transport_sender_impl.h",
+    "net/cast_transport_impl.cc",
+    "net/cast_transport_impl.h",
     "net/pacing/paced_sender.cc",
     "net/pacing/paced_sender.h",
     "net/rtcp/receiver_rtcp_event_subscriber.cc",
-    "net/rtcp/rtcp.cc",
-    "net/rtcp/rtcp.h",
+    "net/rtcp/receiver_rtcp_session.cc",
+    "net/rtcp/receiver_rtcp_session.h",
     "net/rtcp/rtcp_builder.cc",
     "net/rtcp/rtcp_builder.h",
     "net/rtcp/rtcp_defines.cc",
     "net/rtcp/rtcp_defines.h",
     "net/rtcp/rtcp_utility.cc",
     "net/rtcp/rtcp_utility.h",
+    "net/rtcp/sender_rtcp_session.cc",
+    "net/rtcp/sender_rtcp_session.h",
     "net/rtp/packet_storage.cc",
     "net/rtp/packet_storage.h",
     "net/rtp/rtp_defines.cc",
@@ -99,6 +105,12 @@ source_set("net") {
   ]
 
   deps = [
+    ":common",
+    "//base",
+    "//net",
+  ]
+
+  public_deps = [
     ":common",
   ]
 }
@@ -143,32 +155,14 @@ source_set("sender") {
   deps = [
     ":common",
     ":net",
+    "//base",
     "//media",
+    "//media:media_features",
     "//media:shared_memory_support",
-    "//third_party/libvpx_new",
+    "//third_party/libvpx",
     "//third_party/opus",
     "//ui/gfx/geometry",
   ]
-
-  # use a restricted subset of media and no software codecs on iOS
-  if (is_ios) {
-    deps += [ "//media:media_for_cast_ios" ]
-    deps -= [
-      "//media",
-      "//third_party/libvpx_new",
-      "//third_party/opus",
-    ]
-    sources -= [
-      "sender/external_video_encoder.cc",
-      "sender/external_video_encoder.h",
-      "sender/video_encoder_impl.cc",
-      "sender/video_encoder_impl.h",
-      "sender/vp8_encoder.cc",
-      "sender/vp8_encoder.h",
-      "sender/vp8_quantizer_parser.cc",
-      "sender/vp8_quantizer_parser.h",
-    ]
-  }
 
   libs = []
 
@@ -181,7 +175,9 @@ source_set("sender") {
 
     libs += [
       "AudioToolbox.framework",
+      "CoreMedia.framework",
       "CoreVideo.framework",
+      "VideoToolbox.framework",
     ]
   }
 }
@@ -210,23 +206,14 @@ source_set("receiver") {
   deps = [
     ":common",
     ":net",
+    "//base",
     "//media",
     "//media:shared_memory_support",
-    "//third_party/libvpx_new",
+    "//third_party/libvpx",
     "//third_party/libyuv",
     "//third_party/opus",
     "//ui/gfx/geometry",
   ]
-
-  # use a restricted subset of media and no software codecs on iOS
-  if (is_ios) {
-    deps += [ "//media:media_for_cast_ios" ]
-    deps -= [
-      "//media",
-      "//third_party/libvpx_new",
-      "//third_party/opus",
-    ]
-  }
 }
 
 static_library("test_support") {
@@ -234,8 +221,6 @@ static_library("test_support") {
   sources = [
     "test/fake_receiver_time_offset_estimator.cc",
     "test/fake_receiver_time_offset_estimator.h",
-    "test/fake_single_thread_task_runner.cc",
-    "test/fake_single_thread_task_runner.h",
     "test/loopback_transport.cc",
     "test/loopback_transport.h",
     "test/skewed_single_thread_task_runner.cc",
@@ -267,8 +252,11 @@ static_library("test_support") {
   deps = [
     ":net",
     ":receiver",
+    ":sender",
     "//base/test:test_support",
     "//media:test_support",
+    "//media/base:test_support",
+    "//net",
     "//testing/gtest",
     "//third_party/libyuv",
     "//third_party/mt19937ar",
@@ -290,26 +278,18 @@ static_library("test_support") {
   }
 }
 
-# TODO(GYP): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("cast_unittests_run") {
-  testonly = true
-  deps = [
-    ":cast_unittests",
-  ]
-}
-
 test("cast_unittests") {
   sources = [
+    "common/expanded_value_base_unittest.cc",
+    "common/rtp_time_unittest.cc",
     "logging/encoding_event_subscriber_unittest.cc",
     "logging/receiver_time_offset_estimator_impl_unittest.cc",
     "logging/serialize_deserialize_test.cc",
     "logging/simple_event_subscriber_unittest.cc",
     "logging/stats_event_subscriber_unittest.cc",
-    "net/cast_transport_sender_impl_unittest.cc",
-    "net/frame_id_wrap_helper_test.cc",
-    "net/mock_cast_transport_sender.cc",
-    "net/mock_cast_transport_sender.h",
+    "net/cast_transport_impl_unittest.cc",
+    "net/mock_cast_transport.cc",
+    "net/mock_cast_transport.h",
     "net/pacing/mock_paced_packet_sender.cc",
     "net/pacing/mock_paced_packet_sender.h",
     "net/pacing/paced_sender_unittest.cc",
@@ -352,34 +332,29 @@ test("cast_unittests") {
 
   deps = [
     ":common",
+    ":net",
     ":receiver",
     ":sender",
     ":test_support",
+    "//base",
     "//base/test:run_all_unittests",
+    "//base/test:test_support",
+    "//media",
+    "//media/base:test_support",
+    "//net",
     "//testing/gmock",
     "//testing/gtest",
+    "//third_party/opus",
   ]
 
   if (is_android) {
     deps += [ "//testing/android/native_test:native_test_native_code" ]
   }
-}
 
-# TODO(miu): This can be rolled into cast_unittests now that FFMPEG dependency
-# issues are resolved for iOS; but there are bot/isolates to update too.
-if (is_ios || is_mac) {
-  test("cast_h264_vt_encoder_unittests") {
-    sources = [
-      "sender/h264_vt_encoder_unittest.cc",
-    ]
-    deps = [
-      ":common",
-      ":sender",
-      ":test_support",
-      "//testing/gmock",
-      "//testing/gtest",
-      "//third_party/ffmpeg",
-    ]
+  if (is_ios || is_mac) {
+    sources += [ "sender/h264_vt_encoder_unittest.cc" ]
+
+    deps += [ "//third_party/ffmpeg" ]
   }
 }
 
@@ -410,8 +385,13 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       ":receiver",
       ":sender",
       ":test_support",
+      "//base",
+      "//base/test:test_support",
+      "//media",
+      "//media/base:test_support",
       "//net",
       "//testing/gtest",
+      "//ui/gfx/geometry",
     ]
   }
 
@@ -425,6 +405,11 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       ":net",
       ":receiver",
       ":test_support",
+      "//base",
+      "//build/win:default_exe_manifest",
+      "//media",
+      "//net",
+      "//ui/gfx/geometry",
     ]
 
     if (is_linux && !is_chromeos && use_x11) {
@@ -450,6 +435,9 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       ":net",
       ":sender",
       ":test_support",
+      "//base",
+      "//build/win:default_exe_manifest",
+      "//media",
     ]
   }
 
@@ -469,8 +457,14 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       ":common",
       ":net",
       ":network_simulation_model_proto",
+      ":receiver",
       ":sender",
       ":test_support",
+      "//base",
+      "//base/test:test_support",
+      "//build/win:default_exe_manifest",
+      "//media",
+      "//media/base:test_support",
     ]
   }
 
@@ -483,6 +477,7 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       ":test_support",
       "//base",
       "//build/config/sanitizers:deps",
+      "//build/win:default_exe_manifest",
       "//media",
     ]
   }
@@ -496,6 +491,7 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       ":test_support",
       "//base",
       "//build/config/sanitizers:deps",
+      "//build/win:default_exe_manifest",
       "//media",
     ]
   }
@@ -509,6 +505,8 @@ if (is_win || is_mac || (is_linux && !is_chromeos)) {
       ":test_support",
       "//base",
       "//build/config/sanitizers:deps",
+      "//build/win:default_exe_manifest",
+      "//net",
     ]
   }
 } else {  # !(is_win || is_mac || (is_linux && !is_chromeos))
@@ -527,6 +525,7 @@ if (is_linux && !is_chromeos) {
       ":test_support",
       "//base",
       "//media",
+      "//net",
     ]
   }
 }
@@ -536,12 +535,14 @@ if (is_linux && !is_chromeos) {
 # not reference these.
 
 static_library("cast_sender") {
+  complete_static_lib = true
   deps = [
     ":sender",
   ]
 }
 
 static_library("cast_receiver") {
+  complete_static_lib = true
   deps = [
     ":receiver",
   ]

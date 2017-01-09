@@ -10,15 +10,21 @@
 #ifndef NET_HTTP_HTTP_REQUEST_HEADERS_H_
 #define NET_HTTP_HTTP_REQUEST_HEADERS_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
-#include "net/log/net_log.h"
+
+namespace base {
+class Value;
+}
 
 namespace net {
+
+class NetLogCaptureMode;
 
 class NET_EXPORT HttpRequestHeaders {
  public:
@@ -76,10 +82,12 @@ class NET_EXPORT HttpRequestHeaders {
   static const char kProxyConnection[];
   static const char kRange[];
   static const char kReferer[];
-  static const char kUserAgent[];
   static const char kTransferEncoding[];
+  static const char kTokenBinding[];
+  static const char kUserAgent[];
 
   HttpRequestHeaders();
+  HttpRequestHeaders(const HttpRequestHeaders& other);
   ~HttpRequestHeaders();
 
   bool IsEmpty() const { return headers_.empty(); }
@@ -98,6 +106,8 @@ class NET_EXPORT HttpRequestHeaders {
   // Sets the header value pair for |key| and |value|.  If |key| already exists,
   // then the header value is modified, but the key is untouched, and the order
   // in the vector remains the same.  When comparing |key|, case is ignored.
+  // The caller must ensure that |key| passes HttpUtil::IsValidHeaderName() and
+  // |value| passes HttpUtil::IsValidHeaderValue().
   void SetHeader(const base::StringPiece& key, const base::StringPiece& value);
 
   // Sets the header value pair for |key| and |value|, if |key| does not exist.
@@ -151,8 +161,9 @@ class NET_EXPORT HttpRequestHeaders {
 
   // Takes in the request line and returns a Value for use with the NetLog
   // containing both the request line and all headers fields.
-  scoped_ptr<base::Value> NetLogCallback(const std::string* request_line,
-                                         NetLogCaptureMode capture_mode) const;
+  std::unique_ptr<base::Value> NetLogCallback(
+      const std::string* request_line,
+      NetLogCaptureMode capture_mode) const;
 
   // Takes in a Value created by the above function, and attempts to extract the
   // request line and create a copy of the original headers.  Returns true on

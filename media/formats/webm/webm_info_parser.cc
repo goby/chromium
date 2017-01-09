@@ -20,7 +20,7 @@ WebMInfoParser::WebMInfoParser()
 
 WebMInfoParser::~WebMInfoParser() {}
 
-int WebMInfoParser::Parse(const uint8* buf, int size) {
+int WebMInfoParser::Parse(const uint8_t* buf, int size) {
   timecode_scale_ = -1;
   duration_ = -1;
 
@@ -45,7 +45,7 @@ bool WebMInfoParser::OnListEnd(int id) {
   return true;
 }
 
-bool WebMInfoParser::OnUInt(int id, int64 val) {
+bool WebMInfoParser::OnUInt(int id, int64_t val) {
   if (id != kWebMIdTimecodeScale)
     return true;
 
@@ -73,12 +73,12 @@ bool WebMInfoParser::OnFloat(int id, double val) {
   return true;
 }
 
-bool WebMInfoParser::OnBinary(int id, const uint8* data, int size) {
+bool WebMInfoParser::OnBinary(int id, const uint8_t* data, int size) {
   if (id == kWebMIdDateUTC) {
     if (size != 8)
       return false;
 
-    int64 date_in_nanoseconds = 0;
+    int64_t date_in_nanoseconds = 0;
     for (int i = 0; i < size; ++i)
       date_in_nanoseconds = (date_in_nanoseconds << 8) | data[i];
 
@@ -86,12 +86,16 @@ bool WebMInfoParser::OnBinary(int id, const uint8* data, int size) {
     exploded_epoch.year = 2001;
     exploded_epoch.month = 1;
     exploded_epoch.day_of_month = 1;
+    exploded_epoch.day_of_week = 1;
     exploded_epoch.hour = 0;
     exploded_epoch.minute = 0;
     exploded_epoch.second = 0;
     exploded_epoch.millisecond = 0;
-    date_utc_ = base::Time::FromUTCExploded(exploded_epoch) +
-        base::TimeDelta::FromMicroseconds(date_in_nanoseconds / 1000);
+    base::Time out_time;
+    if (!base::Time::FromUTCExploded(exploded_epoch, &out_time))
+      return false;
+    date_utc_ = out_time +
+                base::TimeDelta::FromMicroseconds(date_in_nanoseconds / 1000);
   }
   return true;
 }
